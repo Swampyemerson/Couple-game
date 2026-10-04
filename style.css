@@ -18,7 +18,7 @@
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #17111a;
     --bg2: #22182a;
     --card: #231a29;
@@ -29,6 +29,17 @@
     --shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
     color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+    --bg: #17111a;
+    --bg2: #22182a;
+    --card: #231a29;
+    --text: #f7ecf1;
+    --muted: #b49aa8;
+    --line: #3a2a40;
+    --accent-soft: #3d2133;
+    --shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+    color-scheme: dark;
 }
 body.spicy-mode {
   --bg: #1a0d14;
@@ -281,3 +292,10 @@ section { display: flex; flex-direction: column; gap: 8px; }
 @media (min-width: 520px) {
   .pgrid { grid-template-columns: 1fr 1fr 1fr; }
 }
+
+/* in-page confirm */
+.sheet-wrap { position: fixed; inset: 0; z-index: 60; background: rgba(20, 8, 14, 0.45); display: flex; align-items: flex-end; justify-content: center; padding: 16px; padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
+.sheet { background: var(--card); color: var(--text); border-radius: var(--radius); padding: 20px; width: 100%; max-width: 420px; box-shadow: var(--shadow); animation: pop 0.2s ease; }
+.sheet p { margin: 0 0 16px; font-weight: 700; font-size: 1.05rem; }
+.sheet-btns { display: flex; justify-content: flex-end; gap: 8px; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }

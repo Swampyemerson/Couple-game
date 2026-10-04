@@ -7,6 +7,10 @@ import { Store, randomId } from './store.js';
 const store = new Store(CONFIG);
 const $app = document.getElementById('app');
 const PACK = Object.fromEntries(PACKS.map((p) => [p.id, p]));
+const ARTIFACT = !!globalThis.JUST_US_ARTIFACT;
+
+// History can be unavailable inside sandboxed frames.
+const hist = (fn, ...args) => { try { history[fn](...args); return true; } catch { return false; } };
 const CAT = Object.fromEntries([...CATEGORIES, ...SPICY_CATEGORIES].map((c) => [c.id, c]));
 const SKIPPED = '—';
 
@@ -55,6 +59,23 @@ function toast(msg) {
   setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, 2600);
 }
 
+// confirm() is blocked inside artifacts, so ask in-page.
+function ask(msg, okLabel = 'Yes') {
+  return new Promise((resolve) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'sheet-wrap';
+    wrap.innerHTML = `<div class="sheet" role="dialog" aria-modal="true"><p>${esc(msg)}</p>
+      <div class="sheet-btns"><button class="btn ghost small" data-r="0">Cancel</button><button class="btn small" data-r="1">${esc(okLabel)}</button></div></div>`;
+    wrap.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-r]');
+      if (!b && e.target !== wrap) return;
+      wrap.remove();
+      resolve(!!(b && b.dataset.r === '1'));
+    });
+    document.body.appendChild(wrap);
+  });
+}
+
 async function copy(text) {
   try { await navigator.clipboard.writeText(text); return true; } catch {
     const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
@@ -64,6 +85,11 @@ async function copy(text) {
 }
 
 async function share(text, url) {
+  if (ARTIFACT) {
+    const ok = await copy(url ? `${text}\n${url}` : text);
+    toast(ok ? `Copied. Text it to ${store.name(them())}` : 'Couldn’t copy on this device');
+    return;
+  }
   if (navigator.share) {
     try { await navigator.share({ text, url }); return; } catch (e) { if (e.name === 'AbortError') return; }
   }
@@ -73,6 +99,7 @@ async function share(text, url) {
 
 // Message to send partner; in link mode it carries my answers.
 async function nudge(text) {
+  if (ARTIFACT) return share(text);
   if (store.mode === 'cloud') return share(text, appUrl());
   const url = await store.exportLink();
   markExported();
@@ -86,9 +113,12 @@ const needsExport = () => {
 };
 
 // ── navigation ────────────────────────────────────────────────────────
-function go(next) { ui = next; history.pushState(ui, ''); session.temp = null; render(true); }
-function update(patch, top = true) { Object.assign(ui, patch); history.replaceState(ui, ''); render(top); }
-function back() { if (history.state && history.length > 1 && ui.view !== 'tab') history.back(); else go({ view: 'tab', tab: 'home' }); }
+function go(next) { ui = next; session.pushed = hist('pushState', ui, '') || session.pushed; session.temp = null; render(true); }
+function update(patch, top = true) { Object.assign(ui, patch); hist('replaceState', ui, ''); render(top); }
+function back() {
+  if (session.pushed && ui.view !== 'tab' && hist('back')) return;
+  ui = { view: 'tab', tab: 'home' }; hist('replaceState', ui, ''); session.temp = null; render(true);
+}
 window.addEventListener('popstate', (e) => { ui = e.state || { view: 'tab', tab: 'home' }; session.temp = null; render(true); });
 
 // ── rendering ─────────────────────────────────────────────────────────
@@ -123,6 +153,10 @@ function restoreDrafts() {
 }
 
 function syncPill() {
+  if (store.mode === 'artifact') {
+    const bad = store.readOnly || store.full || !store.online;
+    return `<button class="pill ${bad ? 'warn' : 'ok'}" data-act="go" data-view="sync">${store.readOnly ? 'Can’t save' : store.full ? 'Storage full' : store.online ? '● Synced' : '○ Reconnecting'}</button>`;
+  }
   if (store.mode === 'cloud') {
     return `<button class="pill ${store.online ? 'ok' : ''}" data-act="go" data-view="sync">${store.online ? '● Synced' : '○ Offline'}</button>`;
   }
@@ -144,13 +178,20 @@ function tabbar() {
 
 // ── onboarding ────────────────────────────────────────────────────────
 function viewWho() {
+  if (ARTIFACT && !session.ready) {
+    return `<div class="screen center"><div class="hero-emoji">💞</div><p class="muted">Loading your stuff…</p></div>`;
+  }
+  const taken = (w) => store.uid && store.person(w).uid && store.person(w).uid !== store.uid;
+  const btn = (w, cls) => (taken(w)
+    ? `<button class="btn big-btn ${cls}" disabled>${N(w)} (already set up)</button>`
+    : `<button class="btn big-btn ${cls}" data-act="pickMe" data-who="${w}">I’m ${N(w)}</button>`);
   return `<div class="screen center">
     <div class="hero-emoji">💞</div>
     <h1 class="big">${esc(CONFIG.appName)}</h1>
-    <p class="muted">Our own little game app. Who’s holding this phone?</p>
+    <p class="muted">Our own little game app. Who’s playing on this device?</p>
     <div class="stack">
-      <button class="btn big-btn" data-act="pickMe" data-who="a">I’m ${N('a')}</button>
-      <button class="btn big-btn alt" data-act="pickMe" data-who="b">I’m ${N('b')}</button>
+      ${btn('a', '')}
+      ${btn('b', 'alt')}
     </div>
   </div>`;
 }
@@ -734,6 +775,22 @@ function viewHistory() {
 
 // ── sync ──────────────────────────────────────────────────────────────
 function viewSync() {
+  if (store.mode === 'artifact') {
+    return `${topbar('Sync')}
+    <div class="screen">
+      <div class="card">
+        <h2>${store.readOnly ? 'This device can’t save yet' : store.online ? '● Sync is on' : '○ Reconnecting…'}</h2>
+        ${store.readOnly
+    ? `<p class="muted">Your answers aren’t saving. ${N('a')} needs to share this artifact with you as an <b>Editor</b> (Share → invite by email → Editor). A public link won’t work.</p>`
+    : `<p class="muted">Everything saves automatically and shows up for both of you right away, on any device where you’re signed in to Claude.</p>`}
+        ${store.full ? '<p class="muted">The shared storage is full. Remove some bucket list items to free space.</p>' : ''}
+      </div>
+      <div class="card">
+        <h2>Adding ${N('b')}</h2>
+        <p class="muted tiny">In Claude, open this artifact → Share → invite ${N('b')}’s email with <b>Editor</b> access. Don’t turn on a public link, because that blocks guests from saving.</p>
+      </div>
+    </div>`;
+  }
   if (store.cloudAvailable) {
     return `${topbar('Sync')}
     <div class="screen">
@@ -777,13 +834,14 @@ function parseRoom(text) {
 const actions = {
   back,
   go: (d) => go({ view: d.view }),
-  tab: (d) => { ui = { view: 'tab', tab: d.tab }; history.replaceState(ui, ''); render(true); },
+  tab: (d) => { ui = { view: 'tab', tab: d.tab }; hist('replaceState', ui, ''); render(true); },
   pickMe: async (d) => {
     store.me = d.who;
+    if (store.mode === 'artifact' && store.uid && store.person(d.who).uid !== store.uid) store.setMine(['uid'], store.uid);
     if (session.pendingSync) { await doImport(session.pendingSync); session.pendingSync = null; }
     if (store.cloudAvailable && !store.room) go({ view: 'connect' }); else render(true);
   },
-  switchMe: () => { if (confirm(`Switch this phone to ${store.name(them())}?`)) { store.me = them(); render(true); } },
+  switchMe: async () => { if (await ask(`Switch this device to ${store.name(them())}?`, 'Switch')) { store.me = them(); render(true); } },
   createRoom: async () => { store.room = randomId(20); await store.connect(); render(); },
   joinRoom: async () => {
     const room = parseRoom(session.drafts.pair || '');
@@ -841,8 +899,8 @@ const actions = {
     saveAnswer(p, ui.idx, v.slice(0, 4000));
   },
   skipOpen: () => { const p = PACK[ui.packId]; delete session.drafts[`open-${p.id}-${ui.idx}`]; saveAnswer(p, ui.idx, SKIPPED); },
-  redoPack: () => {
-    if (!confirm('Clear your answers for this one and redo it?')) return;
+  redoPack: async () => {
+    if (!(await ask('Clear your answers for this one and redo it?', 'Redo'))) return;
     store.setMine(['packs', ui.packId], null);
     const s = readSet('jt.seen'); s.delete(ui.packId); saveSet('jt.seen', s);
     update({ step: 'play', idx: 0 });
@@ -867,7 +925,7 @@ const actions = {
     if (addBucket(el ? el.value : '')) { session.drafts.bucket = ''; if (el) { el.value = ''; el.blur(); } render(); }
   },
   toggleBucket: (d) => { const v = store.state.shared.bucket[d.id]; store.setShared(['bucket', d.id], { ...v, done: !v.done, ts: Date.now() }); },
-  delBucket: (d) => { const v = store.state.shared.bucket[d.id]; if (confirm(`Remove "${v.t}"?`)) store.setShared(['bucket', d.id], { ...v, del: true, ts: Date.now() }); },
+  delBucket: async (d) => { const v = store.state.shared.bucket[d.id]; if (await ask(`Remove "${v.t}"?`, 'Remove')) store.setShared(['bucket', d.id], { ...v, del: true, ts: Date.now() }); },
 };
 
 async function doImport(code) {
@@ -921,8 +979,25 @@ async function handleHash() {
   }
 }
 
+async function bootArtifact() {
+  hist('replaceState', ui, '');
+  store.onChange(() => render());
+  render(true);
+  const ok = await store.connectArtifact();
+  if (ok) await store.ready;
+  session.ready = true;
+  // Recognize this person on a new device.
+  if (!me() && store.uid) {
+    const w = ['a', 'b'].find((x) => store.person(x).uid === store.uid);
+    if (w) store.me = w;
+  }
+  if (!ok) toast('Sync isn’t available here. Answers stay on this device.');
+  render(true);
+}
+
 async function boot() {
   document.title = CONFIG.appName;
+  if (ARTIFACT) return bootArtifact();
   history.replaceState(ui, '');
   store.onChange(() => render());
   render(true);

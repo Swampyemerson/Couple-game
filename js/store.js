@@ -61,6 +61,7 @@ export class Store {
   get partner() { return this.me === 'a' ? 'b' : 'a'; }
   get room() { return read(LS.room); }
   set room(v) { write(LS.room, v); }
+  get live() { return this.mode === 'cloud' || this.mode === 'artifact'; }
   get cloudAvailable() { return !!(this.config.firebase && this.config.firebase.databaseURL); }
 
   name(who) { return this.config.names[who] || who; }
@@ -73,7 +74,13 @@ export class Store {
   // Write my own data. path is relative to people[me].
   setMine(path, value) {
     const me = this.me;
-    const ts = Date.now();
+    const ts = Math.max(Date.now(), (this.person(me).updated || 0) + 1);
+    if (this.mode === 'artifact') {
+      // one whole-doc write carries both changes
+      setIn(this.state, ['people', me, 'updated'], ts);
+      this._set(['people', me, ...path], value);
+      return;
+    }
     this._set(['people', me, ...path], value);
     this._set(['people', me, 'updated'], ts);
   }
@@ -84,6 +91,7 @@ export class Store {
     setIn(this.state, path, value);
     this.persist();
     this.emit();
+    if (this.mode === 'artifact') { this._artifactWrite(path, value); return; }
     if (this.mode === 'cloud' && this.fb) {
       const { ref, set, db } = this.fb;
       set(ref(db, `rooms/${this.room}/${path.join('/')}`), value ?? null).catch((e) => console.warn('sync write failed', e));
@@ -139,6 +147,94 @@ export class Store {
       this.mode = 'local';
       return false;
     }
+  }
+
+  // ── Claude artifact (built-in shared database) ─────────────────────
+  // Docs: people/a, people/b (each person's whole PersonData, written only by
+  // that person), shared/meta ({since}), bucket/<id> (one per item).
+  async connectArtifact() {
+    const c = globalThis.claude;
+    if (!c || typeof c.use !== 'function') return false;
+    const [db, user] = await Promise.all([c.use('db'), c.use('user')]);
+    if (!db) return false;
+    this.adb = db;
+    this.mode = 'artifact';
+    this.online = true;
+    this.uid = user ? await user.id() : null;
+    this._w = {};
+    const onErr = (e) => { console.warn('sync error', e); this.online = false; this.emit(true); };
+    let waiting = 2;
+    let markReady;
+    this.ready = new Promise((res) => { markReady = res; });
+    setTimeout(() => markReady(), 6000);
+    for (const w of ['a', 'b']) {
+      let first = true;
+      db.doc(`people/${w}`).onSnapshot((snap) => {
+        const remote = snap.exists ? snap.data() : null;
+        const local = this.state.people[w] || {};
+        const ru = (remote && remote.updated) || 0;
+        const lu = local.updated || 0;
+        if (remote && ru > lu) {
+          this.state.people[w] = JSON.parse(JSON.stringify(remote));
+          this.persist();
+          this.emit(true);
+        } else if (w === this.me && lu > ru && !snap.metadata.hasPendingWrites) {
+          this._push(w); // played offline / before syncing: upload
+        } else if (remote && remote.uid && !local.uid) {
+          this.state.people[w] = { ...local, uid: remote.uid };
+          this.emit(true);
+        }
+        if (first) { first = false; if (--waiting === 0) markReady(); }
+      }, onErr);
+    }
+    db.doc('shared/meta').onSnapshot((snap) => {
+      const since = snap.exists ? snap.data().since || null : null;
+      if (since && since !== this.state.shared.since) { this.state.shared.since = since; this.persist(); this.emit(true); }
+    }, onErr);
+    db.collection('bucket').onSnapshot((qs) => {
+      const bucket = {};
+      qs.docs.forEach((d) => { bucket[d.id] = d.data(); });
+      this.state.shared.bucket = bucket;
+      this.persist();
+      this.emit(true);
+    }, onErr);
+    return true;
+  }
+
+  // Write my whole person doc; one write in flight per doc, coalescing bursts.
+  _push(who) {
+    const st = this._w[who] || (this._w[who] = { busy: false, dirty: false });
+    if (st.busy) { st.dirty = true; return; }
+    st.busy = true;
+    (async () => {
+      do {
+        st.dirty = false;
+        const body = JSON.parse(JSON.stringify(this.state.people[who] || {}));
+        if (this.uid && who === this.me) body.uid = this.uid;
+        try { await this.adb.doc(`people/${who}`).set(body); } catch (e) { this._writeErr(e); break; }
+      } while (st.dirty);
+      st.busy = false;
+    })();
+  }
+
+  _artifactWrite(path, value) {
+    const db = this.adb;
+    let p;
+    if (path[0] === 'people') { this._push(path[1]); return; }
+    if (path[0] === 'shared' && path[1] === 'bucket') {
+      const ref = db.doc(`bucket/${path[2]}`);
+      p = value == null ? ref.delete() : ref.set(value);
+    } else if (path[0] === 'shared' && path[1] === 'since') {
+      p = db.doc('shared/meta').set({ since: value || null });
+    }
+    if (p) p.catch((e) => this._writeErr(e));
+  }
+
+  _writeErr(e) {
+    console.warn('sync write failed', e);
+    if (e && e.code === 'invalid_argument') this.readOnly = true;
+    if (e && e.code === 'quota_exceeded') this.full = true;
+    this.emit(true);
   }
 
   // ── Link sync (no backend) ─────────────────────────────────────────

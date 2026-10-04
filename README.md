@@ -20,6 +20,14 @@ It runs in the phone browser, can be added to the home screen like a real app, a
 
 All questions live in `js/content.js`. Add your own, or inside jokes, by editing the lists.
 
+## Claude artifact version (what we use)
+
+`python3 tools/build_artifact.py` bundles everything into `dist/just-us.html`, which is published as a Claude artifact with the `db` and `user` capabilities. Answers sync through the artifact's built-in shared database, so there's no Firebase and no sync links.
+
+- Share it from the artifact's Share menu by inviting the other person's email as an **Editor**. A public link stops guests from saving.
+- Each person picks their name once. Other devices signed in to the same Claude account recognize them automatically.
+- After changing questions or code, rebuild and republish to the same artifact.
+
 ## Put it online (free, ~2 minutes)
 
 **GitHub Pages:** Settings → Pages → *Deploy from a branch* → `main` / root → Save.
