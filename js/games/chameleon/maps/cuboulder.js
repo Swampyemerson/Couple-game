@@ -659,18 +659,18 @@ function ridge(b, R, profile, o = {}) {
 }
 
 /** One Flatiron: a tilted slab face (apex leaning back, i.e. dipping east toward campus). */
-function slabIron(b, R, brgL, brgR, brgTop, elev, { color = '#d99a82', lean = 0.32 } = {}) {
-  const H = R * Math.tan(elev * EXAG * DEG);
+function slabIron(b, R, brgL, brgR, brgTop, elev, baseEl, { color = '#d99a82', lean = 0.32 } = {}) {
+  const H = R * Math.tan(elev * EXAG * DEG); const Y0 = R * Math.tan(baseEl * EXAG * DEG);
   const [lx, lz] = dirOf(brgL); const [rx, rz] = dirOf(brgR); const [tx, tz] = dirOf(brgTop);
   const back = 1 + (H * lean) / R;
-  const P0 = [lx * R, -0.6, lz * R]; const P1 = [rx * R, -0.6, rz * R]; const P2 = [tx * R * back, H, tz * R * back];
+  const P0 = [lx * R, Y0, lz * R]; const P1 = [rx * R, Y0, rz * R]; const P2 = [tx * R * back, H, tz * R * back];
   const [cx, cz] = dirOf((brgL + brgR) / 2);
   const span = Math.hypot(P1[0] - P0[0], P1[2] - P0[2]);
   // face (lit pink) + a narrow shadowed north edge for depth
-  const g = { pos: [...P0, ...P1, ...P2], nrm: [-cx, 0.3, -cz, -cx, 0.3, -cz, -cx, 0.3, -cz], uv: [0, 0, span, 0, span * 0.45, H], idx: [0, 1, 2] };
+  const g = { pos: [...P0, ...P1, ...P2], nrm: [-cx, 0.3, -cz, -cx, 0.3, -cz, -cx, 0.3, -cz], uv: [0, Y0, span, Y0, span * 0.45, H], idx: [0, 1, 2] };
   b.add(fixWinding(g), { ...BD, color, tile: 'rockface', rep: 9 });
   const [ex, ez] = dirOf(brgR + 0.6);
-  const Q = [ex * R * 1.02, -0.6, ez * R * 1.02];
+  const Q = [ex * R * 1.02, Y0, ez * R * 1.02];
   b.add(fixWinding({ pos: [...P1, ...Q, ...P2], nrm: [-ex, 0.2, -ez, -ex, 0.2, -ez, -ex, 0.2, -ez], uv: [0, 0, 1, 0, 0.5, 1], idx: [0, 1, 2] }), { ...BD, color: '#9c5f55' });
 }
 
@@ -695,12 +695,14 @@ function landscape(b) {
   ridge(b, 86, [[236, 2.2], [242, 3.6], [248, 6.6], [253, 8.2], [256.1, 8.6], [260, 7.8], [266, 6.2], [274, 4.4], [282, 3.0], [292, 2.2], [300, 1.0]], { tile: 'forest', rep: 8, color: '#6c8a5e' });
   // the Flatirons: tilted pink slabs on Green Mountain's east face (south → north: Fifth/Fourth,
   // Third, Second, First), small irons by Royal Arch, a pine skirt along their feet
-  slabIron(b, 74, 205.5, 209.5, 207.6, 5.6, { color: '#cf927c' });
-  slabIron(b, 74, 209.0, 212.6, 210.6, 6.6, { color: '#d69a84' });
-  slabIron(b, 74, 212.4, 218.2, 215.6, 7.9, { color: '#dba08a' });
-  slabIron(b, 74, 216.6, 222.4, 219.4, 9.5, { color: '#d99883' });
-  slabIron(b, 74, 220.6, 228.4, 224.4, 11.4, { color: '#dea48c' });
-  ridge(b, 70, [[190, 1.0], [196, 2.2], [202, 2.8], [207, 3.4], [212, 2.9], [218, 3.6], [224, 3.2], [230, 3.8], [236, 2.8], [244, 2.2], [252, 1.6], [262, 1.0]], { tile: 'forest', rep: 6, color: '#3d5f45' });
+  // slabs sit on the forested flank: [left, right, apex bearing, apex elev°, base elev°] (true angles)
+  slabIron(b, 77, 203.0, 210.0, 206.4, 5.6, 3.6, { color: '#cf927c' });
+  slabIron(b, 76, 207.5, 214.0, 210.8, 6.6, 4.0, { color: '#d69a84' });
+  slabIron(b, 75, 211.0, 221.0, 215.8, 7.9, 4.6, { color: '#dba08a' });
+  slabIron(b, 74, 215.5, 225.0, 219.6, 9.5, 5.2, { color: '#d99883' });
+  slabIron(b, 73, 219.5, 231.0, 224.6, 11.4, 6.0, { color: '#dea48c' });
+  // the pine-forested flank under the irons (reaches their feet)
+  ridge(b, 71, [[188, 0.4], [196, 2.2], [203, 3.9], [209, 4.4], [215, 4.9], [221, 5.5], [227, 6.3], [232, 6.0], [237, 4.6], [246, 3.0], [256, 1.8], [266, 0.6]], { tile: 'forest', rep: 6, color: '#3d5f45' });
   // the afternoon sun, west-south-west, with a soft halo
   const sun = (r, col, R) => { const [dx, dz] = dirOf(258); const y = R * Math.tan(30 * DEG); b.add(cylGeo(r, r, 0.2, { radial: 20 }), { ...BD, at: [dx * R, y, dz * R], rot: [Math.PI / 2, Math.atan2(dx, dz), 0], color: col }); };
   sun(9, '#fff1c4', 116); sun(6, '#ffd36b', 112);
@@ -928,6 +930,8 @@ function norlin(b, R, kit) {
   // tall arched windows painted high on the north wall
   for (const x of [0.6, 3.85, 6.6]) {
     glazing(b, 'x', -13, x - 0.7, x + 0.7, 2.95, 3.85, C.walnut);
+    for (const [z, nz] of [[-12.885, 1], [-13.115, -1]]) b.add(sphereGeo(0.7, 0.7, 0.012, { w: 12, h: 3, thetaMax: Math.PI / 2 }), { at: [x, 3.85, z], color: '#d5e7ec', outline: false, rot: nz < 0 ? [0, Math.PI, 0] : undefined });
+    deco(b, x - 0.02, 3.85, -13.03, x + 0.02, 4.5, -12.97, { color: C.walnut, outline: false });
     arch(b, x, 3.85, -12.86, 1.4, { depth: 0.1, thick: 0.14, n: 5, color: '#e8d8b6', key: '#c9a24a' });
     arch(b, x, 3.85, -13.14, 1.4, { depth: 0.1, thick: 0.16, n: 5 });
   }
@@ -1351,10 +1355,10 @@ export const CUBOULDER = {
       { name: 'quad-looking-N', p: [1.5, 1.5, 7.2], t: [16, 2.2, 7.2] },
       { name: 'quad-looking-E', p: [5, 1.5, 3.2], t: [5, 2.0, 16] },
       { name: 'quad-looking-S', p: [15, 1.6, 9], t: [-4, 2.6, 9] },
-      { name: 'quad-looking-SW', p: [13, 1.8, 4.6], t: [-9.6, 8, -15.2] },
+      { name: 'quad-looking-SW', p: [8, 1.6, 12.5], t: [-14.6, 9, -7.1] },
       { name: 'quad-looking-W', p: [8, 1.8, 12.4], t: [6, 4.5, -10] },
       { name: 'norlin-west-window', p: [3.85, 3.0, -8.0], t: [3.0, 4.3, -20] },
-      { name: 'norlin-window-looking-SW', p: [4.6, 2.9, -9.2], t: [-1.5, 4.6, -18] },
+      { name: 'norlin-window-looking-SW', p: [5.5, 3.25, -9.6], t: [-9, 5.0, -22] },
       { name: 'umc-north-window', p: [13.6, 1.95, -5.8], t: [25, 2.4, -5.0] },
       { name: 'lab-east-window', p: [-11.6, 1.6, 6.0], t: [-11.6, 1.9, 20] },
       { name: 'arcade-east', p: [6.5, 1.5, -0.3], t: [7.5, 1.7, 14] },

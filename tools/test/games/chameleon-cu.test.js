@@ -275,8 +275,8 @@ async function geoSection(port) {
   // screen: map +x (north) → up, map +z (east) → right
   const px = (x, z) => [pad + (z + E.info.d / 2) * S, pad + (E.info.w / 2 - x) * S];
   const rooms = E.info.rooms.filter((r) => !r.floor).map((r) => { const [a1, b1] = px(r.x1, r.z0); const [a2, b2] = px(r.x0, r.z1); return `<rect x="${a1}" y="${b1}" width="${a2 - a1}" height="${b2 - b1}" fill="#f1e2cc" stroke="#2a2730"/><text x="${(a1 + a2) / 2}" y="${(b1 + b2) / 2}" text-anchor="middle" font-size="12">${r.name}</text>`; }).join('');
-  const [ox, oy] = px(0, -6); // Norlin quad-ish reference (map origin side)
-  const rays = imp.PEAKS.map(([n, brg, el]) => { const a = brg * Math.PI / 180; const L = 200; const x2 = ox + Math.sin(a) * L; const y2 = oy - Math.cos(a) * L; return `<line x1="${ox}" y1="${oy}" x2="${x2}" y2="${y2}" stroke="#b5482f" stroke-dasharray="4 3"/><text x="${x2}" y="${y2 + (y2 > oy ? 14 : -4)}" font-size="11" text-anchor="middle" fill="#7a2a1a">${n} ${brg}° (${el}°)</text>`; }).join('');
+  const [ox, oy] = px(0, 0); // the backdrop ring is centred on the map origin
+  const rays = imp.PEAKS.map(([n, brg, el]) => { const a = brg * Math.PI / 180; const L = 190 + (imp.PEAKS.findIndex((q) => q[0] === n) % 3) * 30; const x2 = ox + Math.sin(a) * L; const y2 = oy - Math.cos(a) * L; return `<line x1="${ox}" y1="${oy}" x2="${x2}" y2="${y2}" stroke="#b5482f" stroke-dasharray="4 3"/><text x="${x2}" y="${y2 + (y2 > oy ? 14 : -4)}" font-size="11" text-anchor="middle" fill="#7a2a1a">${n} ${brg}° (${el}°)</text>`; }).join('');
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${D + pad * 2}" height="${W + pad * 2}" font-family="system-ui" ><rect width="100%" height="100%" fill="#f6f2ea"/>${rooms}${rays}<circle cx="${ox}" cy="${oy}" r="4" fill="#b5482f"/>
     <g transform="translate(60,70)"><polygon points="0,-40 12,0 0,-8 -12,0" fill="#2a2730"/><text y="-46" text-anchor="middle" font-size="20" font-weight="700">N</text><text y="22" text-anchor="middle" font-size="11">map +x</text></g>
     <text x="${D + pad * 2 - 20}" y="${pad + W / 2}" text-anchor="end" font-size="13">E (+z): plains →</text>
