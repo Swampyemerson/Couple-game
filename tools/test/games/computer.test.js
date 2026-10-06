@@ -250,8 +250,8 @@ const GUIDE = {
   'b-3': 'Otherwise, if the button is white and there is a lit AUX indicator, hold it.',
   'b-4': 'Otherwise, if the button is red and says HALT, tap it.',
   'b-5': 'Otherwise, if the button is yellow, hold it.',
-  'b-6': 'Otherwise, if the button says PUSH, tap it.',
-  'b-7': 'Otherwise, hold it.',
+  'b-6': 'Otherwise, if the bomb has no batteries, hold it.',
+  'b-7': 'Otherwise, tap it.',
 };
 /** Solve a bomb the way a person reading the guide would (tables and columns come from the page). */
 function solveByGuide(f, page) {
@@ -272,7 +272,7 @@ function solveByGuide(f, page) {
       : b.color === 'white' && lit('AUX') ? 'hold'
         : b.color === 'red' && b.label === 'HALT' ? 'tap'
           : b.color === 'yellow' ? 'hold'
-            : b.label === 'PUSH' ? 'tap' : 'hold';
+            : f.batteries === 0 ? 'hold' : 'tap';
   const cols = page.columns.filter((c) => f.keypad.every((g) => c.includes(g)));
   const keypad = cols.length ? [...f.keypad].sort((x, y) => cols[0].indexOf(x) - cols[0].indexOf(y)) : null;
   const seq = [0, 1, 2].map((st) => f.seq.map((c) => page.seq[vowel ? 'v' : 'n'][st][c]));
@@ -386,10 +386,6 @@ async function defusePhones(h) {
   assert((await dx(h.a)).bomb.strikes === 1, 'a wrong wire is a strike');
   await until(async () => (await h.b.evaluate(() => document.querySelectorAll('.dx-mbar .dx-strikes i.on').length)) === 1, 'the manual to show the strike');
   assert(true, 'the manual sees the strike live');
-  const secs = (t) => { const [m, x] = t.trim().split(':').map(Number); return m * 60 + x; };
-  const tA = await h.a.textContent('.dx-time');
-  const tB = await h.b.textContent('.dx-time');
-  assert(Math.abs(secs(tA) - secs(tB)) <= 1, `the manual's clock follows the bomb (${tA.trim()} / ${tB.trim()})`);
   await h.b.click('.dx-index [data-page="wires"]');
   await sleep(200);
   await shot(h.a, 'defuse-phone-bomb-light');
@@ -405,6 +401,10 @@ async function defusePhones(h) {
   await h.settle();
   const mid = await dx(h.b);
   assert(mid.manual.solved === '1110' && mid.manual.strikes === 1, 'the manual shows three modules done and one strike');
+  await sleep(1500);
+  const secs = (t) => { const [m, x] = t.trim().split(':').map(Number); return m * 60 + x; };
+  const [tA, tB] = [await h.a.textContent('.dx-time'), await h.b.textContent('.dx-time')];
+  assert(secs(tA) < 300 && Math.abs(secs(tA) - secs(tB)) <= 1, `the manual's clock follows the bomb's (${tA.trim()} / ${tB.trim()})`);
   await shot(h.b, 'defuse-phone-manual-keypad-light');
   const seq = ans.seq[1]; // one strike so far
   for (let k = 0; k < seq.length; k++) for (let j = 0; j <= k; j++) { await h.a.click(`.dx-pad[data-color="${seq[j]}"]`); await sleep(30); }

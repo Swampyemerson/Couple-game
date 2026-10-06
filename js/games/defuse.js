@@ -72,8 +72,8 @@ const BUTTON_RULES = [
   ['Otherwise, if the button is white and there is a lit AUX indicator, hold it.', (b, K) => b.color === 'white' && K.lit('AUX'), 'hold'],
   ['Otherwise, if the button is red and says HALT, tap it.', (b) => b.color === 'red' && b.label === 'HALT', 'tap'],
   ['Otherwise, if the button is yellow, hold it.', (b) => b.color === 'yellow', 'hold'],
-  ['Otherwise, if the button says PUSH, tap it.', (b) => b.label === 'PUSH', 'tap'],
-  ['Otherwise, hold it.', () => true, 'hold'],
+  ['Otherwise, if the bomb has no batteries, hold it.', (b, K) => K.bat === 0, 'hold'],
+  ['Otherwise, tap it.', () => true, 'tap'],
 ];
 const STRIP_DIGIT = { blue: 3, white: 6, yellow: 1, red: 8 };
 // sequence: SEQ_MAP[vowel ? 'v' : 'n'][strikes][flash] -> pad to press

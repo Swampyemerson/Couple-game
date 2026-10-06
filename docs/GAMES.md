@@ -136,7 +136,10 @@ cream, shadows go black. Use the tokens, never hard-coded colours, and it follow
 | `--g-good` `--g-bad` | right / wrong (both are text-safe on paper) |
 | `--g-on-ink` | text **on** `--p-a`, `--p-b` or `--g-hl` (black overprint, ≥ 4.7:1 on all three, both themes) |
 | `--g-white` | paper white in both themes (knockouts, stickers on a 3D scene) |
-| `--g-edge` | colour of hard shadows (`--g-shadow-sm` 2 px, `--g-shadow` 3 px, `--g-shadow-lg` 6 px) |
+| `--g-edge` | colour of hard shadows: ink on paper, black on black stock |
+| `--g-shadow-sm` `--g-shadow` `--g-shadow-lg` | ready-made hard shadows: 2 px, 3 px, 6 px offset, no blur |
+| `--g-dim` | backdrop behind a sheet or modal of your own |
+| `--g-halftone` | a halftone dot screen: `background: var(--g-halftone) 0 0 / 5px 5px` (shading, "disabled" areas) |
 | `--g-radius` `--g-radius-sm` `--g-stroke` | 10 px, 6 px, 2 px outline |
 | `--g-font-display` | Rammetto One: titles, big numbers, piece labels. Never body text. It has one weight: in CSS ask for `font-weight: 900` (the room sets `font-synthesis: none`, so Rammetto stays clean and fallbacks come out heavy); on a canvas use `400` |
 | `--g-font-body` | Schibsted Grotesk 400–900: everything else (900 for small numbers) |
@@ -157,6 +160,12 @@ use `--p-a-text`/`--p-b-text`, or black text on an ink block.
 | `.g-key` | keyboard key for word games: 52 px tall, flexes to fill a row (`display: flex; gap: 5px` on the row). `.is-wide` for Enter/Delete; states `.is-a` `.is-b` `.is-hl` and `.is-out` (letter ruled out) |
 | `.g-label` | small caps label (0.7 rem, tracked, muted) |
 | `.g-num` | big score numeral in the display face. `.is-a` `.is-b` print it in the player's ink with a key-plate offset |
+| `.g-devices` `.g-device` | the printed phone / laptop badges the hub uses (`.is-best` = yellow) |
+
+The stage is its own stacking context (`isolation: isolate`), so your z-indexes can't climb over
+the end card, curtain or menu. On screens ≥ 900 px wide the game column grows to 1100 px
+(phones keep the full width minus 12 px gutters), so side-by-side layouts have room; the
+player chips stay a compact centred row.
 
 Immersive games (`immersive: true`): the stage is the whole viewport, `.gm-versus` and
 `.gm-status` are hidden (draw your own HUD), and back/menu become two 44 px yellow stickers in
