@@ -112,6 +112,9 @@ of them. Top: hearts, coins, distance; under the menu sticker: my pause button (
 in live play). Race: a bar with both runners and the finish, plus a gap pill ("Sydney +23 m").
 Brawl: the partner's hearts in the pill. Together: team hearts, team coins and the coin goal.
 Bottom-right: the weapon slot (Race). Buttons scheme: ROLL / JUMP in the bottom corners.
+Live: a name tag over the partner (positioned after the frame renders, so it never trails the
+camera); when they run level with you but outside the narrow portrait view, it pins to that screen
+edge and points at them.
 
 ## Art
 

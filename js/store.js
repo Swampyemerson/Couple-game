@@ -2,12 +2,24 @@
 //
 // Shape:
 //   { people: { a: PersonData, b: PersonData }, shared: { bucket: {id: Item}, since: 'YYYY-MM-DD' } }
-//   PersonData = { packs: { [packId]: { ans: { i0: value, … }, done: ts } }, daily: { [date]: text }, updated: ts }
+//   PersonData = { packs: { [packId]: { ans: { i0: value, … }, done: ts } }, daily: { [date]: text }, updated: ts,
+//                  uids: { [claudeUserId]: true } }
 //
-// Each person only ever writes to their own subtree, so merging two copies is
-// trivial: take each person's newest copy. Shared items carry timestamps.
+// Each person only ever writes to their own subtree. Shared items carry timestamps.
+//
+// Claude artifact mode (the one we ship) keeps these documents in the artifact's db:
+//   people/<w>                  that person's PersonData, minus new daily answers
+//   people/<w>/daily/<YYYY-MM>  { d: { 'YYYY-MM-DD': text } }: daily answers, one doc per month, so
+//                               the person doc never creeps toward the 256 KiB document cap
+//   shared/meta                 { since }
+//   bucket/<id>                 one bucket list item
+// A person can be signed in on several devices at once, so their writes are field-level merges
+// (`update`), never whole-document replaces: two devices answering different things at the
+// same moment both keep their answers. Unconfirmed writes wait in a small outbox that survives
+// reloads, and they are laid over every snapshot, so the UI never flickers back. A snapshot
+// marked `fromCache` is never treated as the truth about what the server has.
 
-const LS = { state: 'jt.state.v1', me: 'jt.me', room: 'jt.room' };
+const LS = { state: 'jt.state.v1', me: 'jt.me', room: 'jt.room', outbox: 'jt.outbox.v1' };
 const FB_VER = '10.12.2';
 
 const blank = () => ({ people: { a: {}, b: {} }, shared: {} });
@@ -29,6 +41,33 @@ function setIn(obj, path, value) {
   if (value === null || value === undefined) delete o[last];
   else o[last] = value;
 }
+
+// Like setIn, but keeps nulls: in an `update` body a null clears that field on the server.
+function putIn(obj, path, value) {
+  let o = obj;
+  for (let i = 0; i < path.length - 1; i++) {
+    if (typeof o[path[i]] !== 'object' || o[path[i]] === null) o[path[i]] = {};
+    o = o[path[i]];
+  }
+  o[path[path.length - 1]] = value;
+}
+
+// Fields cleared on the server come back as null: drop them so the app reads them as absent.
+function prune(o) {
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return o;
+  for (const k of Object.keys(o)) {
+    if (o[k] === null || o[k] === undefined) delete o[k];
+    else if (typeof o[k] === 'object') prune(o[k]);
+  }
+  return o;
+}
+
+const clone = (x) => (x === undefined ? undefined : JSON.parse(JSON.stringify(x)));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const monthOf = (dateKey) => String(dateKey).slice(0, 7);
+// db error codes that no retry can fix for the rest of this page load
+const FATAL = new Set(['revoked', 'not_granted', 'capability_disabled', 'capability_removed']);
+const hasAnswers = (p) => !!(p && ((p.packs && Object.keys(p.packs).length) || (p.daily && Object.keys(p.daily).length)));
 
 function normalize(s) {
   s = s && typeof s === 'object' ? s : {};

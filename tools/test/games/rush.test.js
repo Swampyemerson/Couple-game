@@ -147,12 +147,17 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         console.log('ok - roadblock placed by the victim device');
 
         // hearts + respawn
-        await b.evaluate(() => window.__rush.auto('b', false));
-        await until(b, () => !window.__rush.state().b.down, null, 4000, 'guest up and running');
-        const hb0 = (await S(b)).b.hearts;
-        await b.evaluate(() => window.__rush.crash('b'));
-        const sb2 = await S(b);
-        assert(sb2.b.down && sb2.b.hearts === hb0 - 1, `a crash costs a heart (${hb0}→${sb2.b.hearts})`);
+        // (atomic in the page: a manual runner can hit something on its own between two round trips)
+        const cr = await b.evaluate(async () => {
+          window.__rush.auto('b', false);
+          const r = () => window.__rush.internals.players.b.r;
+          for (let i = 0; i < 80 && r().down; i++) await new Promise((ok) => setTimeout(ok, 50));
+          const h0 = r().hearts;
+          window.__rush.crash('b');
+          return { h0, h1: r().hearts, down: !!r().down };
+        });
+        const hb0 = cr.h0;
+        assert(cr.down && cr.h1 === hb0 - 1, `a crash costs a heart (${hb0}→${cr.h1})`);
         await until(b, () => !window.__rush.state().b.down && window.__rush.state().b.invuln, null, 4000, 'respawn with invulnerability');
         console.log('ok - respawns after a moment, blinking');
         await until(a, (n) => window.__rush.state().b.hearts === n, hb0 - 1, 3000, 'host sees the guest hearts');
