@@ -74,11 +74,12 @@ export function wall(b, cfg) {
       const rep = d.rep || 1;
       // continuous pattern along the run (see boxGeo face axes)
       const uFwd = alongX ? side === 'p' : side === 'n';
-      const uo = uFwd ? sa / rep : -sb / rep;
+      const ru = Array.isArray(rep) ? rep[0] : rep; const rv = Array.isArray(rep) ? rep[1] : rep; // rep may be [u, v]
+      const uo = uFwd ? sa / ru : -sb / ru;
       const geo = alongX ? boxGeo(L, H, t / 2, { faces }) : boxGeo(t / 2, H, L, { faces });
       b.add(geo, {
         at: alongX ? [mid, y + ya + H / 2, fixed + off] : [fixed + off, y + ya + H / 2, mid],
-        color: d.color || '#ffffff', tile: d.tile, rep, uvOff: [uo, ya / rep + (d.v || 0)], outline,
+        color: d.color || '#ffffff', tile: d.tile, rep, uvOff: [uo, ya / rv + (d.v || 0)], outline,
       });
     }
     const hx = alongX ? L / 2 : t / 2; const hz = alongX ? t / 2 : L / 2;

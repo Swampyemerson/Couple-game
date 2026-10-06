@@ -38,7 +38,8 @@ rebalances so the seeker has a fair chance *before* adding new hiding places:
 - **Stronger tells.** Eye-blink glints (a small sparkle when the hider blinks, seen only by the
   seeker; Strong blinks more often), scans every 20 s instead of 30, a scan also makes a stuck
   hider's toe pads sparkle (so walls and ceilings are not blind spots), a hider on a ceiling casts
-  a faint soft shadow on the floor below, and tongue-zips / scurries leave a short trail.
+  a faint soft shadow on the floor below (opacity 0.2, fading out over 4.5 m of drop: still
+  ~0.1 under a 2.6 m house ceiling), and tongue-zips / scurries leave a short trail.
 - **Seeker freedom.** Free look up/down to ±83°, a Sprint toggle (1.55×), a minimap on big maps.
 - **Hider counterweight.** One escape (scurry or tongue-zip) per hunt in Classic, heartbeat hint on.
 
@@ -55,7 +56,7 @@ inside another box are rejected, so you can't crawl out of the diorama or into f
 
 | | |
 |---|---|
-| Stick | **Stick** button / **E**: grab the nearest wall or overhead face (else sticky floor: walk off a ledge to crawl down its side). Again to let go (drop, a radius off the surface). Walking into a wall with the stick pushed forward for 0.22 s also sticks. |
+| Stick | **Stick** button / **E**: grab the nearest wall or overhead face (else, with feet on something, sticky floor: walk off a ledge to crawl down its side; in mid-air with nothing in reach it refuses). Again to let go (drop, a radius off the surface). Walking into a wall with the stick pushed forward for 0.22 s also sticks. |
 | Crawl | the stick is **screen-relative on any surface**: the direction on the face whose on-screen image matches the stick (projected through the real camera), so "up the screen" is up a wall facing you and "away" on a ceiling seen from below. 0.78× walking speed. |
 | Jump | on a wall: leap off it (push 2.6 m/s off the wall + a jump). |
 | Tongue-zip | **Zip** / **Z**: the tongue lashes at the surface in the middle of the view (≤ 4.6 m × √size), the body follows in a 0.42 s arc and sticks there (or lands on its feet on a floor). 1.1 s cooldown while hiding; while hunted it costs an escape, 4 s cooldown, and the seeker sees the tongue and a trail. |
@@ -130,9 +131,23 @@ rounded to 5 s; the settings sheet shows the effective times) and the seeker's s
 crawlers but never a surface: feelers stop at them, Stick / zip / wall pose refuse them, and a
 contact whose body would poke into one is rejected; the third-person camera ignores them. A
 seeker-only minimap (rooms + furniture footprint + your arrow) shows on
-big maps unless Hard / off. Measured on the largest map (CU Boulder, 1768 m², 929 colliders,
-46 chunks, iPhone 13 profile): ≤ 55 draw calls, ≤ 70k triangles in view, ~0.05 ms game JS per
-frame, no per-frame allocations in game code.
+big maps unless Hard / off; on two-storey maps it shows the floor the seeker is on (one
+pre-drawn plan per `info.floors` entry, labelled). Measured on every map (iPhone 13 profile,
+third-person sweeps from every spawn × 4 headings; map switch = paint atlas + build + upload):
+
+| Map | draw calls | triangles in view | chunks | map switch (median) |
+|---|---|---|---|---|
+| Living Room | 32 | 39k | 1 | 71 ms |
+| The Whole House | 51 | 72k | 21 | 136 ms |
+| Corner Market | 49 | 50k | 23 | 109 ms |
+| Greenhouse & Shed | 48 | 60k | 25 | 82 ms |
+| Museum Night | 52 | 44k | 21 | 131 ms |
+| CU Boulder | 66 | 87k | 50 | 201 ms |
+
+~0.1 ms game JS per frame, no per-frame allocations in game code, and no heap growth from the
+game across open/close (what grows is the hub's match list). Geometry building got cheaper in
+the QA pass: the outline-hull smoothing groups vertices with a numeric key on the primitive's
+local positions instead of string keys on world positions (identical output, ~25 % faster).
 
 ### First-time tips
 
@@ -267,13 +282,15 @@ a lobby spot, a suggested camouflage wall and eyedropper probe points (all check
    TV unit, yarn basket, chevron pouf, floor cushions, toy chest, plants, window, art. v2 adds
    climbing: an exposed rafter across the room (a ceiling to crawl along and hang from), a
    pendant lamp on a cord over the dining table, a floating shelf on the right wall and a curtain
-   rail (perch).
+   rail (perch), and a board ceiling over the room (a seeker looking up no longer sees a blank
+   void; it's a real `{ ceil }` surface, with a non-climbable lip over the open front).
 2. **Garden** (12 × 10 m) — mown-stripe lawn, box hedges and topiary, three flower beds,
    picket fence + gate arch, striped deck chair, parasol table set, shed, log pile, stepping
    stones, pond with lily pads, washing line with towels, wheelbarrow, gnome, bird bath.
 3. **Art Studio** (10 × 8 m) — splattered floor, colour-swatch wall, tape-striped wall, white
    brick wall, easels with canvases, leaning canvases, jar shelves, paint cans, plinths with
-   sculptures, checker rug, drop cloth and a cloth pile, work table, apron rack.
+   sculptures, checker rug, drop cloth and a cloth pile, work table, apron rack, and (v2) a
+   panelled ceiling. `room(b, { ceiling: { tile, color, rep } })` draws the downward face only.
 4. **The level designer's big maps** (`maps/`, 430–1770 m², multi-room, two floors, stairs,
    ceilings): House, Market, CU Boulder, Greenhouse (see `maps/*.js`). They go through exactly the
    same tests (spawns clear, camo wall, probes) plus the big-map match and perf sections.
@@ -285,7 +302,9 @@ atlas tile via `onBeforeCompile`, 3-step gradient map), ink outlines **baked int
 merged geometry** as inverted-hull backfaces pushed along smoothed normals in the vertex
 shader (width grows gently with distance; big walls get a cheap ink cap instead), blob
 shadows (one merged transparent mesh), warm key light + hemisphere fill kept just under 1.0
-so painted colours never clip, paper-tone sky and fog from the theme (dark mode follows the
+so painted colours never clip (the hemisphere's ground colour is a light warm bounce and the
+ramp's darkest step is 0.42, so ceilings and undersides read as lit surfaces instead of mud;
+bodies share the lights and the ramp, so camouflage still matches), paper-tone sky and fog from the theme (dark mode follows the
 OS / app theme live). Player inks (`--p-a`, `--p-b`) colour liveries, pellets, splats, trails,
 paths, confetti and HUD accents; `--g-hl` is the scan glint and the reveal outline. The HUD is
 sticker-style DOM (card, ink border, hard shadow), sounds are synthesised WebAudio (unlocked on

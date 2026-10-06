@@ -86,7 +86,7 @@ function build(atlas) {
 
     // ── outer wall skins per room (night windows on the back + sides) ──
     const skin = (side, a0, a1, y0, y1, d) => {
-      const o = { tile: d.tile, rep: d.rep || 1, color: d.color || '#ffffff', outline: false }; const rep = o.rep;
+      const o = { tile: d.tile, rep: d.rep || 1, color: d.color || '#ffffff', outline: false }; const rep = Array.isArray(o.rep) ? o.rep[0] : o.rep;
       if (side === 'back') aabb(b, a0, y0, Z0, a1, y1, Z0 + 0.004, { ...o, faces: ['pz'], uvOff: [a0 / rep, 0] });
       if (side === 'left') aabb(b, X0, y0, a0, X0 + 0.004, y1, a1, { ...o, faces: ['px'], uvOff: [-a1 / rep, 0] });
       if (side === 'right') aabb(b, X1 - 0.004, y0, a0, X1, y1, a1, { ...o, faces: ['nx'], uvOff: [a0 / rep, 0] });

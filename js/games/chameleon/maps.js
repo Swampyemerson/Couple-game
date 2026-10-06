@@ -75,7 +75,7 @@ function frame(b, x, z, yaw = 0) {
 }
 
 // ── shared furniture ──
-function room(b, { w, d, h = 2.5, front = 0.7, t = 0.16, floorTile, floorRep = 1.2, floorColor = '#ffffff', walls, plinth = '#5a3d2b' }) {
+function room(b, { w, d, h = 2.5, front = 0.7, t = 0.16, floorTile, floorRep = 1.2, floorColor = '#ffffff', walls, plinth = '#5a3d2b', ceiling = null }) {
   // floor slab (diorama plinth)
   b.add(boxGeo(w + t * 2, 0.32, d + t * 2, { faces: ['py'] }), { at: [0, -0.16, 0], tile: floorTile, rep: floorRep, color: floorColor, outline: false });
   b.add(boxGeo(w + t * 2 + 0.24, 0.3, d + t * 2 + 0.24, { round: 0.04 }), { at: [0, -0.2, 0], color: plinth });
@@ -90,6 +90,14 @@ function room(b, { w, d, h = 2.5, front = 0.7, t = 0.16, floorTile, floorRep = 1
   wall(W.left || {}, [-w / 2 - t / 2, h / 2, 0], t, h, d, 'left');
   wall(W.right || {}, [w / 2 + t / 2, h / 2, 0], t, h, d, 'right');
   wall(W.front || {}, [0, front / 2, d / 2 + t / 2], w + t * 2, front, t, 'front');
+  // ceiling (v2): only the downward face is drawn (the title orbit and any camera above see in),
+  // a { ceil } slab over the wall tops, and a non-climbable lip along the open front edge so
+  // nobody crawls round onto the top of it
+  if (ceiling) {
+    b.add(boxGeo(w + t * 2, 0.1, d + t, { faces: ['ny'] }), { at: [0, h + 0.05, -t / 2], color: ceiling.color || '#ffffff', tile: ceiling.tile, rep: ceiling.rep || 1, outline: false });
+    b.collide(-w / 2 - t, h, -d / 2 - t, w / 2 + t, h + 0.1, d / 2, { wall: true, name: 'ceil:ceiling', ceil: true });
+    b.collide(-w / 2 - t, h, d / 2, w / 2 + t, h + 0.6, d / 2 + t + 0.3, { wall: true, name: 'ceiling-lip', climb: false });
+  }
   // skirting
   if (W.skirt) {
     b.add(boxGeo(w, 0.1, 0.03), { at: [0, 0.05, -d / 2 + 0.015], color: W.skirt });
@@ -162,11 +170,12 @@ function living(atlas) {
   atlas.add('gingham', P.check({ a: '#f7f3ea', b: C.sage, n: 4 }), { size: 'M' });
   atlas.add('curtain', P.stripes({ cols: [C.rose, '#f7f3ea', C.terracotta, '#f7f3ea'], widths: [3, 1, 1, 1], n: 2 }), { size: 'M' });
   atlas.add('wains', P.stripes({ cols: ['#6f8f7a', '#5f7f6a'], widths: [5, 1], n: 4 }), { size: 'M' });
+  atlas.add('ceilboards', P.stripes({ cols: ['#f3ead9', '#e2d6c0', '#efe5d2', '#d9ccb4'], widths: [7, 0.5, 7, 0.5], n: 3 }), { size: 'M' });
 
   return (b) => {
     const w = 10; const d = 8;
     room(b, {
-      w, d, h: 2.5, front: 0.7, floorTile: 'planks', floorRep: 1.3,
+      w, d, h: 2.5, front: 0.7, floorTile: 'planks', floorRep: 1.3, ceiling: { tile: 'ceilboards', rep: 1.1 },
       walls: {
         back: { tile: 'wallpaper', rep: 0.8 },
         left: { tile: 'dotwall', rep: 0.5 },
@@ -552,11 +561,12 @@ function studio(atlas) {
   atlas.add('rings', P.rings({ n: 3 }), { size: 'S' });
   atlas.add('dropcloth', P.cloth({ bg: '#e2d7c3', fold: '#cdbfa6', cols: [C.blue, C.red, C.yellow] }), { size: 'M' });
   atlas.add('herring', P.herringbone({ a: '#c99a6b', b: '#b8875b', seam: '#8a5d3b' }), { size: 'M' });
+  atlas.add('ceilpanel', P.check({ a: '#f1ede4', b: '#e4ddd0', n: 2 }), { size: 'M' });
 
   return (b) => {
     const w = 10; const d = 8;
     room(b, {
-      w, d, h: 2.7, front: 0.6, floorTile: 'splat', floorRep: 1.8, plinth: '#6f6a63',
+      w, d, h: 2.7, front: 0.6, floorTile: 'splat', floorRep: 1.8, plinth: '#6f6a63', ceiling: { tile: 'ceilpanel', rep: 1.6 },
       walls: {
         back: { tile: 'swatch', rep: 1.2 },
         left: { tile: 'tape', rep: 1.6 },

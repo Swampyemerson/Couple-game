@@ -473,6 +473,7 @@ export function createGame(el, api) {
   function onEnter(p, prev) {
     const name = p.name; const t = now();
     const v = viewer();
+    if (name !== 'lobby') S.sheet = false; // a guest's open settings sheet never outlives the lobby
     switch (name) {
       case 'lobby':
         S.match = null; S.actor = null;
@@ -1666,7 +1667,7 @@ export function createGame(el, api) {
       bl.position.set(rt.position.x, gy + 0.006, rt.position.z);
       let s = (pose === 'flat' ? 0.8 : pose === 'ball' ? 0.75 : 1) * Math.max(0.5, 1 - hgt) * sz;
       let op;
-      if (upTmp[1] < -0.5) { op = 0.16 * Math.max(0, 1 - hgt / 3.2); s = sz * (0.9 + hgt * 0.25); }
+      if (upTmp[1] < -0.5) { op = 0.2 * Math.max(0, 1 - hgt / 4.5); s = sz * (0.9 + hgt * 0.25); }
       else if (upTmp[1] < 0.5) op = 0;
       else op = (pose === 'flat' || pose === 'squeeze' ? 0.12 : 0.28) * Math.max(0, 1 - hgt * 1.4 / sz);
       bl.scale.set(0.62 * s, 1, 0.72 * s);
@@ -1766,7 +1767,7 @@ export function createGame(el, api) {
     C.frameCard = false;
     stage.vm.visible = false;
     if (S.boot !== 'ready') return;
-    if (!S.match || ph === 'lobby') {
+    if ((!S.match || ph === 'lobby') && !S.pendingTitle) {
       // frame both chameleons in the part of the screen the lobby card leaves free
       C.orbit += dt;
       const sw = Math.sin(C.orbit * 0.16) * 0.55;
@@ -2082,8 +2083,10 @@ export function createGame(el, api) {
     let kind = ''; let a = 0; let b = 0;
     if (S.ctxLost || S.ctxShown) kind = 'ctx';
     else if (S.paused || t < S.resumeAt) { kind = 'pause'; a = S.paused ? S.paused.reason : 'resume'; b = !S.paused; }
-    else if (ph === 'lobby') { kind = 'lobby'; a = S.setupVer; b = `${isHost}${S.sheet}`; }
+    // the round's title card wins over the lobby: round 1 used to show a dead lobby (Start still
+    // there) for the whole title lead instead of "Round 1 · … hides" over the map overview
     else if (S.pendingTitle && t < S.pendingTitle.at) { kind = 'title'; a = S.pendingTitle.seq; }
+    else if (ph === 'lobby') { kind = 'lobby'; a = S.setupVer; b = `${isHost}${S.sheet}`; }
     else if (ph === 'curtain') { kind = seekCountdown(t) >= 0 ? 'count' : 'curtain'; a = S.phase.seq; }
     else if (!local && isBlind()) { kind = ph === 'lock' ? 'lock' : 'blind'; a = S.phase.seq; }
     else if (ph === 'seek' && t < S.phase.at + 900 && t >= S.phase.at - 50) { kind = 'go'; a = S.phase.seq; }

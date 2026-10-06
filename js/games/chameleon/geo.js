@@ -235,6 +235,7 @@ export function createBuilder({ tiles, ink = [0.11, 0.1, 0.13], chunker = null }
   const colliders = []; const blobs = []; const probes = []; const spots = {}; const rooms = [];
   const white = tiles.white;
   const tp = []; const tn = [];
+  const sm = { grp: new Map(), acc: [], of: [] }; // outline smoothing scratch (reused)
 
   function colorOf(c) {
     if (Array.isArray(c)) return c;
@@ -282,20 +283,27 @@ export function createBuilder({ tiles, ink = [0.11, 0.1, 0.13], chunker = null }
     }
     for (let k = 0; k < g.idx.length; k++) IDX.push(base + g.idx[k]);
     if (opts.outline !== false) {
-      // Smoothed push directions: average normals of vertices sharing a position.
-      const key = (i) => `${Math.round(P[(base + i) * 3] * 2000)},${Math.round(P[(base + i) * 3 + 1] * 2000)},${Math.round(P[(base + i) * 3 + 2] * 2000)}`;
-      const acc = new Map();
+      // Smoothed push directions: average normals of vertices sharing a position. Grouped on the
+      // primitive's local positions with a numeric key (a rigid transform keeps coincident
+      // vertices coincident), then rotated like the normals; much cheaper than string keys.
+      const grp = sm.grp; const acc = sm.acc; grp.clear();
+      let ng = 0;
       for (let i = 0; i < n; i++) {
-        const k = key(i); let a = acc.get(k); if (!a) { a = [0, 0, 0]; acc.set(k, a); }
-        a[0] += N[(base + i) * 3]; a[1] += N[(base + i) * 3 + 1]; a[2] += N[(base + i) * 3 + 2];
+        const k = (Math.round(gp[i * 3] * 2000) + 65536) * 17179869184 + (Math.round(gp[i * 3 + 1] * 2000) + 65536) * 131072 + (Math.round(gp[i * 3 + 2] * 2000) + 65536);
+        let gi = grp.get(k);
+        if (gi === undefined) { gi = ng++; grp.set(k, gi); acc[gi * 3] = 0; acc[gi * 3 + 1] = 0; acc[gi * 3 + 2] = 0; }
+        sm.of[i] = gi;
+        acc[gi * 3] += gn[i * 3]; acc[gi * 3 + 1] += gn[i * 3 + 1]; acc[gi * 3 + 2] += gn[i * 3 + 2];
       }
       const hb = P.length / 3;
       for (let i = 0; i < n; i++) {
-        const a = acc.get(key(i)); const L = Math.hypot(a[0], a[1], a[2]) || 1;
-        P.push(P[(base + i) * 3], P[(base + i) * 3 + 1], P[(base + i) * 3 + 2]);
-        N.push(-N[(base + i) * 3], -N[(base + i) * 3 + 1], -N[(base + i) * 3 + 2]);
+        const gi = sm.of[i]; const a = acc[gi * 3]; const bb = acc[gi * 3 + 1]; const c = acc[gi * 3 + 2];
+        const ox = R[0] * a + R[1] * bb + R[2] * c; const oy = R[3] * a + R[4] * bb + R[5] * c; const oz = R[6] * a + R[7] * bb + R[8] * c;
+        const L = Math.hypot(ox, oy, oz) || 1;
+        P.push(tp[i * 3], tp[i * 3 + 1], tp[i * 3 + 2]);
+        N.push(-tn[i * 3], -tn[i * 3 + 1], -tn[i * 3 + 2]);
         U.push(0, 0); C.push(ink[0], ink[1], ink[2]); T.push(white[0], white[1], white[2], white[3]);
-        O.push(a[0] / L, a[1] / L, a[2] / L);
+        O.push(ox / L, oy / L, oz / L);
       }
       for (let k = 0; k < g.idx.length; k += 3) HULL.push(hb + g.idx[k], hb + g.idx[k + 2], hb + g.idx[k + 1]);
     }

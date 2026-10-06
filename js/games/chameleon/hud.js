@@ -158,6 +158,8 @@ export const CSS = `
 .chm-over { position: absolute; inset: 0; display: grid; place-items: center; padding: 16px; padding-top: calc(16px + var(--chm-st)); padding-bottom: calc(16px + var(--chm-sb)); z-index: 4; pointer-events: auto; }
 .chm-over.dim { background: color-mix(in srgb, var(--g-bg) 70%, transparent); }
 .chm-over.solid { background: var(--g-bg); }
+/* the round title floats over the map's overview orbit: a light veil, not a wash */
+.chm-over.dim.veil { background: color-mix(in srgb, var(--g-bg) 18%, transparent); }
 .chm-over.bottom { align-items: end; }
 .chm-card { width: min(100%, 400px); padding: 18px 18px 16px; display: flex; flex-direction: column; gap: 12px; text-align: center; max-height: 100%; overflow-y: auto; }
 .chm-card h2 { margin: 0; font-family: var(--g-font-display); font-size: 1.6rem; font-weight: 900; line-height: 1.05; }
@@ -254,7 +256,6 @@ export const CSS = `
   .chm-lobby .chm-mode { padding: 7px 9px; }
   .chm-lobby .chm-mode small { font-size: .68rem; }
   .chm-lobby .chm-plan { width: 52px; height: 40px; }
-  .chm-lobby .chm-plan.wide { width: 70px; }
   .chm-lobby .chm-mapcard { padding: 5px; }
   .chm-lobby .chm-mapinfo small { display: none; }
   .chm-lobby .chm-sizes button { min-height: 38px; }
@@ -280,7 +281,7 @@ export const CSS = `
 .chm-presets button.custom:not(.on) { opacity: .5; }
 .chm-mapcard { display: flex; align-items: center; gap: 8px; padding: 7px 6px; border: 2px solid var(--g-ink); border-radius: 14px; background: var(--g-bg); text-align: left; }
 .chm-plan { flex: none; width: 66px; height: 50px; overflow: visible; }
-.chm-plan.wide { width: 88px; }
+.chm-sheet .chm-plan.wide { width: 88px; }
 .chm-plan .pp { fill: var(--g-card); stroke: var(--g-line); stroke-width: 1.5px; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
 .chm-plan .pf { stroke: none; }
 .chm-plan .pf.a { fill: var(--p-a); opacity: .55; } .chm-plan .pf.b { fill: var(--p-b); opacity: .5; } .chm-plan .pf.hl { fill: var(--g-hl); opacity: .85; }
@@ -315,7 +316,8 @@ export const CSS = `
 .chm-lobby .chm-card[data-ro] .chm-presets button, .chm-lobby .chm-card[data-ro] .chm-sizes button { pointer-events: none; }
 .chm-lobby .chm-card[data-ro] .chm-arrow { pointer-events: none; }
 
-/* settings sheet */
+/* settings sheet (the lobby card underneath steps aside: only the dimmed diorama shows round it) */
+.chm-lobby.sheet-open > .chm-card { visibility: hidden; }
 .chm-sheetwrap { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; padding: 12px; padding-top: calc(var(--gm-corner-safe, 64px) + 4px); padding-bottom: calc(12px + var(--chm-sb)); background: var(--g-dim, color-mix(in srgb, var(--g-bg) 70%, transparent)); pointer-events: auto; }
 .chm-sheet { width: min(100%, 460px); max-height: 100%; min-height: 0; flex: none; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; touch-action: pan-y; padding: 14px 14px 16px; display: flex; flex-direction: column; gap: 9px; text-align: left; }
 .chm-sheethead { display: flex; align-items: center; justify-content: space-between; gap: 8px; position: sticky; top: -14px; background: var(--g-card); padding: 4px 0 6px; margin-top: -4px; z-index: 1; border-bottom: 2px solid var(--g-line); }
@@ -350,6 +352,10 @@ export const CSS = `
 .chm.acts3 .chm-poses { left: calc(10px + var(--chm-sl)); transform: none; bottom: calc(136px + var(--chm-sb)); flex-direction: column; padding: 5px; gap: 5px; }
 .chm.acts3 .chm-pose { width: 54px; height: 52px; }
 .chm.acts3.painting .chm-poses { left: 50%; transform: translateX(-50%); bottom: calc(146px + var(--chm-sb)); flex-direction: row; }
+/* …but a phone on its side keeps the bottom-left row (the column ran up under the back sticker) */
+@media (orientation: landscape) and (max-height: 520px) {
+  .chm.acts3 .chm-poses, .chm.acts3.painting .chm-poses { left: calc(10px + var(--chm-sl)); transform: none; bottom: calc(84px + var(--chm-sb)); flex-direction: row; }
+}
 
 /* minimap (seeker, big maps) */
 .chm-mini { position: absolute; left: calc(10px + var(--chm-sl)); top: calc(100px + var(--chm-st)); width: 112px; height: 112px; border-radius: 12px; padding: 4px; background: var(--g-card); }

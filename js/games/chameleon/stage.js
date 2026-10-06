@@ -28,8 +28,10 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
   camera.rotation.order = 'YXZ';
   scene.add(camera);
   // kept just under 1.0 total on lit faces so colours never clip (clipping would make painted
-  // skin read brighter than the surface it copies)
-  const hemi = new THREE.HemisphereLight(0xfffaf0, 0xd9ccbb, 0.56);
+  // skin read brighter than the surface it copies). The ground colour is a warm, light bounce so
+  // ceilings and undersides (which only get the darkest toon step of the sun) don't go muddy;
+  // bodies share these lights and the ramp, so a stamp still matches what the seeker sees.
+  const hemi = new THREE.HemisphereLight(0xfffaf0, 0xefe3d0, 0.56);
   const sun = new THREE.DirectionalLight(0xfff1dc, 0.52);
   sun.position.set(-3.2, 8, 4.6);
   scene.add(hemi, sun, sun.target);

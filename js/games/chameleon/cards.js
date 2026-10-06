@@ -100,7 +100,7 @@ function presetSeg(rules, canEdit) {
 export function lobbyCard(api, { canEdit, local, setup, waitingFor, sheet }) {
   const mode = setup.mode; const first = setup.first; const rules = setup.rules;
   const dis = canEdit ? '' : 'data-ro="1"';
-  const card = `<div class="chm-over chm-lobby bottom"><div class="chm-card chm-sticker" ${dis}>
+  const card = `<div class="chm-over chm-lobby bottom${sheet ? ' sheet-open' : ''}"><div class="chm-card chm-sticker" ${dis}>
     <div class="chm-col">
     <div class="chm-title"><span class="c1">Blend</span><span class="c2">&amp;</span><span class="c3">Seek</span></div>
     <p class="chm-tag">Paint yourself to vanish into the room. Then hunt.</p>
@@ -208,7 +208,7 @@ export function titleCard(api, { round, rounds, mode, hider, youHide, youSeek, m
     ? 'Both of you hide. Then hunt each other — slowly.'
     : `${nameSpan(api, hider)} hides · ${nameSpan(api, api.other(hider))} seeks`;
   const you = mode === 'db' ? 'Paint fast, pose, and don’t blink.' : youHide ? 'You hide. Find a spot, pose, then paint yourself to match.' : youSeek ? 'You seek. Eyes shut while they hide…' : '';
-  return `<div class="chm-over dim"><div class="chm-card chm-sticker">
+  return `<div class="chm-over dim veil chm-titlecard"><div class="chm-card chm-sticker">
     <div class="chm-kicker">Round ${round} of ${rounds} · ${esc(m ? m.name : '')}</div>
     <h2>${mode === 'db' ? 'Double Blind' : 'Hide &amp; Seek'}</h2>
     <p>${line}</p>
