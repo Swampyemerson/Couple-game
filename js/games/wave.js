@@ -98,6 +98,7 @@ registerGame({
   platforms: ['phone', 'computer'],
   minutes: 10,
   endDelay: 3000,
+  endLookLabel: 'See every round',
   howTo: [
     'The clue-giver sees a hidden target on a spectrum, like Cold to Hot.',
     'They type a short clue that lands right there.',
@@ -154,7 +155,7 @@ registerGame({
   css: `
     .g-wave { position: absolute; inset: 0; color: var(--g-ink); -webkit-user-select: none; user-select: none; }
     .g-wave .wv-scroll { position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
-    .g-wave .wv-scr { width: 100%; max-width: 540px; min-height: 100%; margin: 0 auto; padding: 2px 2px 14px; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+    .g-wave .wv-scr { width: 100%; max-width: 540px; min-height: 100%; margin: 0 auto; padding: 2px 2px calc(14px + var(--kb, 0px)); display: flex; flex-direction: column; align-items: center; gap: 12px; }
     .g-wave .wv-top { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 36px; }
     .g-wave .wv-round { font-family: var(--g-font-display); font-weight: 900; font-size: 0.95rem; letter-spacing: 0.02em; text-transform: uppercase; }
     .g-wave .wv-round i { font-style: normal; color: var(--g-muted); }
@@ -283,6 +284,34 @@ registerGame({
     let scr = null;
     const rafs = new Set();
 
+    // Drafts survive a reload on this device: a half-typed clue, or where the dial was left.
+    const DRAFT = 'ju.wave.draft.';
+    const draftGet = (k) => { try { const v = JSON.parse(localStorage.getItem(DRAFT + ctx.matchId) || 'null'); return v && v.k === k ? v : null; } catch { return null; } };
+    const draftPut = (k, data) => { try { if (data == null) localStorage.removeItem(DRAFT + ctx.matchId); else localStorage.setItem(DRAFT + ctx.matchId, JSON.stringify({ k, ...data })); } catch { /* storage off */ } };
+
+    // Keep the focused clue box above the on-screen keyboard: scroll our own scroller, padded by
+    // the keyboard's height when only the visual viewport shrinks (iOS).
+    const kb = { t: 0, off: 0 };
+    const kbFix = () => {
+      const a = document.activeElement;
+      if (!a || !a.matches || !a.matches('.wv-input') || !root.contains(a)) return;
+      const vv = window.visualViewport;
+      const vb = vv ? vv.offsetTop + vv.height : window.innerHeight;
+      scroller.style.setProperty('--kb', `${Math.max(0, Math.round(window.innerHeight - vb))}px`);
+      const box = (a.form || a).getBoundingClientRect();
+      const sb = scroller.getBoundingClientRect();
+      const limit = Math.min(vb, sb.bottom) - 30; // room for the character count under it
+      if (box.bottom > limit) scroller.scrollTop += box.bottom - limit;
+      else if (box.top < sb.top + 8) scroller.scrollTop -= sb.top + 8 - box.top;
+    };
+    const kbSoon = () => { requestAnimationFrame(kbFix); clearTimeout(kb.t); kb.t = setTimeout(kbFix, 350); };
+    const kbOff = () => { clearTimeout(kb.off); kb.off = setTimeout(() => { if (!root.contains(document.activeElement) || !document.activeElement.matches('.wv-input')) scroller.style.removeProperty('--kb'); }, 250); };
+    root.addEventListener('focusin', kbSoon);
+    root.addEventListener('focusout', kbOff);
+    const vvp = window.visualViewport || null;
+    if (vvp) { vvp.addEventListener('resize', kbSoon); vvp.addEventListener('scroll', kbSoon); }
+    window.addEventListener('resize', kbSoon);
+
     function animate(ms, fn, done) {
       if (reduced()) { fn(1); if (done) done(); return; }
       const t0 = performance.now();
@@ -378,14 +407,18 @@ registerGame({
       const input = node.querySelector('.wv-input');
       const btn = node.querySelector('.wv-form .gm-btn');
       const count = node.querySelector('.wv-count');
-      input.addEventListener('input', () => { btn.disabled = !input.value.trim(); count.textContent = `${input.value.length} / 40`; });
+      const slot = `${ctx.viewer}|clue|${s.r}`;
+      const paintCount = () => { btn.disabled = !input.value.trim(); count.textContent = `${input.value.length} / 40`; };
+      const saved = draftGet(slot);
+      if (saved && typeof saved.t === 'string') { input.value = saved.t.slice(0, 40); paintCount(); }
+      input.addEventListener('input', () => { paintCount(); draftPut(slot, input.value ? { t: input.value } : null); });
       node.querySelector('.wv-form').addEventListener('submit', (e) => {
         e.preventDefault();
         if (!ctx.canMove) return;
         const clue = input.value.trim();
         if (!clue) { api.toast('Write a clue first.'); input.focus(); return; }
         const res = api.move({ clue });
-        if (res.ok) { api.sfx('pop'); api.haptic(12); } else { api.toast(res.error); api.sfx('bad'); }
+        if (res.ok) { draftPut(slot, null); api.sfx('pop'); api.haptic(12); } else { api.toast(res.error); api.sfx('bad'); }
       });
       return {};
     }
@@ -409,7 +442,10 @@ registerGame({
         <button class="gm-btn wv-go">Lock it in</button>
         <p class="wv-note">Drag the needle to where the clue belongs.</p>
         ${ctx.mode === 'online' ? lastLine(s, r - 1) : ''}`;
-      let value = 50; let shown = 50;
+      const slot = `${ctx.viewer}|dial|${r}`;
+      const savedAt = draftGet(slot);
+      let value = savedAt && Number.isInteger(savedAt.at) && savedAt.at >= 0 && savedAt.at <= 100 ? savedAt.at : 50;
+      let shown = value;
       const D = dial(node.querySelector('.wv-host'), { card: Rd.card, lid: true, needle: { at: value, who: me } });
       const dEl = D.d;
       dEl.classList.add('live');
@@ -437,6 +473,7 @@ registerGame({
         const nv = Math.max(0, Math.min(100, Math.round(v)));
         if (nv === value) return;
         value = nv; paintAria();
+        draftPut(slot, { at: value });
         if (!raf) raf = requestAnimationFrame(loop);
       };
       const valueAt = (cx, cy) => {
@@ -475,7 +512,7 @@ registerGame({
       const lock = () => {
         if (!ctx.canMove) return;
         const res = api.move({ at: value });
-        if (res.ok) { api.sfx('place'); api.haptic(20); } else { api.toast(res.error); api.sfx('bad'); }
+        if (res.ok) { draftPut(slot, null); api.sfx('place'); api.haptic(20); } else { api.toast(res.error); api.sfx('bad'); }
       };
       node.querySelector('.wv-go').addEventListener('click', lock);
       paintAria();
@@ -592,6 +629,7 @@ registerGame({
         ctx = c;
         render();
         if (vs.wasOver === null || !c.over) vs.wasOver = c.over;
+        if (c.over) draftPut('', null);
         if (c.over && scr && scr.key === `reveal:${ROUNDS - 1}` && !vs.toRecap) {
           vs.toRecap = setTimeout(() => { vs.ack[ROUNDS - 1] = true; render(); }, 2900);
         }
@@ -600,6 +638,11 @@ registerGame({
         clearTimeout(vs.toRecap);
         if (scr && scr.destroy) scr.destroy();
         rafs.forEach((id) => cancelAnimationFrame(id));
+        clearTimeout(kb.t); clearTimeout(kb.off);
+        root.removeEventListener('focusin', kbSoon);
+        root.removeEventListener('focusout', kbOff);
+        if (vvp) { vvp.removeEventListener('resize', kbSoon); vvp.removeEventListener('scroll', kbSoon); }
+        window.removeEventListener('resize', kbSoon);
       },
     };
   },
