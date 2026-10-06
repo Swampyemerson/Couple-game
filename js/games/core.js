@@ -1013,7 +1013,7 @@ function cardHTML(def) {
   const rec = gameRecord(def.id);
   const recLine = def.team ? (rec.best != null ? `Best ${rec.best}` : '') : rec.plays ? `${rec.a}–${rec.b}` : '';
   const live = def.kind === 'live';
-  const meta = [def.team ? 'Co-op' : 'Versus', def.minutes ? `${def.minutes} min` : ''].filter(Boolean);
+  const meta = [def.team ? 'Co-op' : '', def.minutes ? `${def.minutes} min` : ''].filter(Boolean);
   const away = !platformsOf(def).includes(thisDevice());
   return `<button class="gh-card${live ? ' is-live' : ''}${def.team ? ' is-team' : ''}${away ? ' is-away' : ''}" data-g="sheet" data-game="${esc(def.id)}" style="--card-hue:${def.hue ?? 0}">
     <span class="gh-card-cover" aria-hidden="true">${def.cover || ''}${live ? '<span class="gh-sticker">Live</span>' : ''}</span>

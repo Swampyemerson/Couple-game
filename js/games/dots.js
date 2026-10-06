@@ -62,7 +62,7 @@ registerGame({
   tags: ['brainy'],
   platforms: ['phone', 'computer'],
   minutes: 8,
-  endDelay: 1500,
+  endDelay: 1700,
   howTo: [
     'Take turns drawing a line between two dots next to each other.',
     'Tap a gap to pick it, tap again to draw it.',
@@ -121,11 +121,14 @@ registerGame({
 .g-dots.is-done .gd-box.is-win .gd-stamp { animation: gd-cheer 520ms cubic-bezier(0.3, 1.6, 0.5, 1) both; animation-delay: var(--wd, 0ms); }
 @keyframes gd-cheer { 0% { transform: none; } 45% { transform: scale(1.12) rotate(-4deg); } 100% { transform: none; } }
 .g-dots.is-done.has-winner .gd-box:not(.is-win) { opacity: 0.45; transition: opacity 500ms; }
-.g-dots .gd-pl { fill: none; stroke-width: 9; stroke-linecap: round; opacity: 0; }
-.g-dots .gd-pl.gd-a { stroke: var(--p-a); } .g-dots .gd-pl.gd-b { stroke: var(--p-b); }
-.g-dots .gd-pl.is-hover { opacity: 0.55; }
-.g-dots .gd-pl.is-sel { opacity: 1; animation: gd-pulse 900ms ease-in-out infinite; }
-@keyframes gd-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+.g-dots .gd-pl, .g-dots .gd-pl-ink { fill: none; stroke-linecap: round; opacity: 0; }
+.g-dots .gd-pl { stroke-width: 9; }
+.g-dots .gd-pl-ink { stroke: var(--g-ink); stroke-width: 15; }
+.g-dots .gd-pg.gd-a .gd-pl { stroke: var(--p-a); } .g-dots .gd-pg.gd-b .gd-pl { stroke: var(--p-b); }
+.g-dots .gd-pg.is-hover .gd-pl { opacity: 0.6; }
+.g-dots .gd-pg.is-sel .gd-pl-ink { opacity: 1; }
+.g-dots .gd-pg.is-sel .gd-pl { opacity: 1; stroke-width: 8; stroke-linecap: butt; stroke-dasharray: 13 9; animation: gd-march 700ms linear infinite; }
+@keyframes gd-march { to { stroke-dashoffset: -22; } }
 .g-dots .gd-gb { stroke: none; opacity: 0.3; }
 .g-dots .gd-gb.gd-a { fill: var(--p-a); } .g-dots .gd-gb.gd-b { fill: var(--p-b); }
 .g-dots .gd-hit { fill: transparent; pointer-events: all; cursor: pointer; outline: none; }
@@ -156,7 +159,7 @@ registerGame({
           <g class="gd-hls"></g>
           <g class="gd-lines"></g>
           <g class="gd-ghosts"></g>
-          <path class="gd-pl" d="M0 0"/>
+          <g class="gd-pg"><path class="gd-pl-ink" d="M0 0"/><path class="gd-pl" d="M0 0"/></g>
           <g class="gd-dots">${dots.join('')}</g>
           <g class="gd-hits">${ALL.map(([l, r, c]) => `<polygon class="gd-hit" data-k="${key(l, r, c)}" data-l="${l}" data-r="${r}" data-c="${c}" points="${hitPoints(l, r, c)}" role="button" aria-label="${l === 'h' ? 'Across' : 'Down'} line, row ${r + 1}, column ${c + 1}"/>`).join('')}</g>
         </svg>
@@ -169,7 +172,7 @@ registerGame({
     const hlLayer = $('.gd-hls');
     const lineLayer = $('.gd-lines');
     const ghostLayer = $('.gd-ghosts');
-    const pl = $('.gd-pl');
+    const pg = $('.gd-pg');
     const hits = $('.gd-hits');
     const plate = $('.gd-plate');
     const guides = new Map([...root.querySelectorAll('.gd-guide')].map((g) => [g.dataset.k, g]));
@@ -217,7 +220,7 @@ registerGame({
         const x = px(bc) + S / 2;
         const y = px(br) + S / 2;
         const sd = isNew ? fresh.boxes.get(bi) : 0;
-        boxes += `<g class="gd-box gd-${w}${isNew ? ' is-new' : ''}${winner === w ? ' is-win' : ''}" transform="translate(${x} ${y})"><g class="gd-stamp" style="--sd:${sd}ms;--wd:${bi * 45}ms"><rect x="${-BOX_IN}" y="${-BOX_IN}" width="${2 * BOX_IN}" height="${2 * BOX_IN}" rx="7"/><text y="3">${initial(w)}</text></g></g>`;
+        boxes += `<g class="gd-box gd-${w}${isNew ? ' is-new' : ''}${winner === w ? ' is-win' : ''}" transform="translate(${x} ${y})"><g class="gd-stamp" style="--sd:${sd}ms;--wd:${bi * 25}ms"><rect x="${-BOX_IN}" y="${-BOX_IN}" width="${2 * BOX_IN}" height="${2 * BOX_IN}" rx="7"/><text y="3">${initial(w)}</text></g></g>`;
       });
       boxLayer.innerHTML = boxes;
       for (const h of hits.children) {
@@ -231,9 +234,9 @@ registerGame({
       const c = ctx;
       const on = sel && c && c.canMove;
       const who = (c && c.actor) || 'a';
-      if (!on) { pl.setAttribute('class', 'gd-pl'); ghostLayer.innerHTML = ''; return; }
-      pl.setAttribute('d', lineD(sel.l, sel.r, sel.c));
-      pl.setAttribute('class', `gd-pl gd-${who} ${sel.by === 'tap' ? 'is-sel' : 'is-hover'}`);
+      if (!on) { pg.setAttribute('class', 'gd-pg'); ghostLayer.innerHTML = ''; return; }
+      for (const p of pg.children) p.setAttribute('d', lineD(sel.l, sel.r, sel.c));
+      pg.setAttribute('class', `gd-pg gd-${who} ${sel.by === 'tap' ? 'is-sel' : 'is-hover'}`);
       ghostLayer.innerHTML = wouldClose(c.state, sel.l, sel.r, sel.c)
         .map(([br, bc]) => `<rect class="gd-gb gd-${who}" x="${px(bc) + S / 2 - BOX_IN}" y="${px(br) + S / 2 - BOX_IN}" width="${2 * BOX_IN}" height="${2 * BOX_IN}" rx="7"/>`).join('');
     }
@@ -255,15 +258,15 @@ registerGame({
         wait = true;
         text = c.last && c.last.who === who && c.state.got ? `${api.name(who)} closed a box and goes again` : `${api.name(who)}’s turn`;
       } else if (sel && sel.by === 'tap') {
-        text = 'Tap the same line again to draw it';
+        text = 'Tap it again to draw it';
       } else if (sel && sel.by === 'hover') {
-        text = 'Click to draw this line';
+        text = 'Click to draw it';
       } else if (c.last && c.last.who === who && c.state.got) {
         extra = true;
         const n = c.state.got;
         text = online ? `${n > 1 ? 'Two boxes' : 'Box'}! Go again` : `${n > 1 ? 'Two boxes' : 'Box'} for ${api.name(who)}! Go again`;
       } else {
-        text = online ? 'Your turn · tap between two dots' : `${api.name(who)}, tap between two dots`;
+        text = online ? 'Your turn · tap between dots' : `${api.name(who)}, tap between dots`;
       }
       $('.gd-chip').className = `gd-chip ${who ? 'gd-' + who : 'none'}`;
       plate.classList.toggle('wait', wait);

@@ -118,14 +118,50 @@ Messages can drop: design so the latest presence is always enough to recover.
 
 ## Look and feel
 
-Use the theme tokens, never hard-coded colours, so light/dark mode and the design pass apply:
+The game room is **printed in four Riso inks on paper**: Blue (Emerson), Fluorescent Pink
+(Sydney), Yellow (highlight) and a Black key plate for text and outlines. Flat ink, crisp
+2 px outlines, hard offset shadows (never blurred), chunky display type. Dark mode is the
+same job screen-printed on black card stock: the inks get brighter, the key plate turns
+cream, shadows go black. Use the tokens, never hard-coded colours, and it follows the theme.
 
-`--p-a` `--p-b` (each player's colour) · `--p-a-soft` `--p-b-soft` · `--g-bg` (page) ·
-`--g-card` (raised surface) · `--g-ink` (text, outlines) · `--g-muted` · `--g-line` ·
-`--g-hl` (highlight) · `--g-good` · `--g-bad` · `--g-on-ink` (text on a player colour) ·
-`--g-font-display` `--g-font-body` · `--g-radius` · `--g-shadow`
+| Token | Use it for |
+|---|---|
+| `--p-a` `--p-b` | each player's ink: pieces, fills, their side of the board |
+| `--p-a-soft` `--p-b-soft` `--g-hl-soft` | 20 % tints of the inks: backgrounds, hints, "last move" |
+| `--p-a-text` `--p-b-text` | a player's colour **as small text on paper** (the full inks are too light for that) |
+| `--g-bg` `--g-card` | paper; brighter stock for raised pieces and panels |
+| `--g-ink` | text, outlines, grid lines that matter |
+| `--g-muted` `--g-line` | secondary text; faint rules and empty grid lines |
+| `--g-hl` | yellow: whose turn, the winning line, "look here" |
+| `--g-good` `--g-bad` | right / wrong (both are text-safe on paper) |
+| `--g-on-ink` | text **on** `--p-a`, `--p-b` or `--g-hl` (black overprint, ≥ 4.7:1 on all three, both themes) |
+| `--g-white` | paper white in both themes (knockouts, stickers on a 3D scene) |
+| `--g-edge` | colour of hard shadows (`--g-shadow-sm` 2 px, `--g-shadow` 3 px, `--g-shadow-lg` 6 px) |
+| `--g-radius` `--g-radius-sm` `--g-stroke` | 10 px, 6 px, 2 px outline |
+| `--g-font-display` | Rammetto One: titles, big numbers, piece labels. Never body text. It has one weight: in CSS ask for `font-weight: 900` (the room sets `font-synthesis: none`, so Rammetto stays clean and fallbacks come out heavy); on a canvas use `400` |
+| `--g-font-body` | Schibsted Grotesk 400–900: everything else (900 for small numbers) |
 
-Shared classes you can use: `.gm-btn`, `.gm-btn-ghost`, `.gm-btn-big`.
+Rules of thumb: outline pieces in `--g-ink`; a "raised" piece gets a hard shadow and moves
+*into* it when pressed (`transform: translate(2px, 2px)` + smaller shadow); where blue and
+pink overlap you may `mix-blend-mode: multiply` them for a violet overprint (only over
+white, or it goes muddy in dark mode). Never put small text in `--p-a`/`--p-b` on paper;
+use `--p-a-text`/`--p-b-text`, or black text on an ink block.
+
+**Shared kit** (defined in `games.css`, so it matches the chrome):
+
+| Class | What |
+|---|---|
+| `.gm-btn` | primary button: ink block on a yellow plate. `.gm-btn-ghost` paper button, `.gm-btn-danger` red, `.gm-btn-big` full width 54 px |
+| `.g-panel` | a raised printed surface (card stock, outline, hard shadow). `.is-flat` no shadow; `.is-a` `.is-b` `.is-hl` tinted |
+| `.g-chip` | small pill label. `.is-a` `.is-b` `.is-hl` (ink fills) `.is-ink` |
+| `.g-key` | keyboard key for word games: 52 px tall, flexes to fill a row (`display: flex; gap: 5px` on the row). `.is-wide` for Enter/Delete; states `.is-a` `.is-b` `.is-hl` and `.is-out` (letter ruled out) |
+| `.g-label` | small caps label (0.7 rem, tracked, muted) |
+| `.g-num` | big score numeral in the display face. `.is-a` `.is-b` print it in the player's ink with a key-plate offset |
+
+Immersive games (`immersive: true`): the stage is the whole viewport, `.gm-versus` and
+`.gm-status` are hidden (draw your own HUD), and back/menu become two 44 px yellow stickers in
+the top corners, inside `env(safe-area-inset-top)`. Keep your HUD clear of the top ~64 px
+corners, and handle the other safe-area insets yourself.
 
 Phone first: it must work and look right at 360–430 px wide, portrait, with thumbs. Touch
 targets ≥ 44 px. Use `touch-action: manipulation` (or `none` for drag/draw surfaces). No
@@ -135,7 +171,8 @@ The stage (`el`) is a flex column that fills the space under the player chips.
 Design bar: this should feel like a well-made indie game, not a template. Concrete, tactile
 pieces (discs with weight, dice with depth, ink-on-paper boards), satisfying feedback on every
 action (sound + motion), clear whose turn it is, and a little finale when someone wins. No
-emoji as UI, no gradient-blob filler, no generic rounded-card soup.
+emoji as UI, no gradient-blob filler, no generic rounded-card soup, no soft blurry shadows.
+Preview the chrome around your game with `node tools/test/design-preview.js light`.
 
 ## Testing
 

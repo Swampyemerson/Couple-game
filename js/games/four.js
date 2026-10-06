@@ -154,7 +154,9 @@ registerGame({
 .g-four .g4-col:disabled { cursor: default; }
 .g-four .g4-col:focus { outline: none; }
 .g-four .g4-col:focus-visible { box-shadow: inset 0 0 0 3px var(--g-ink); }
-.g-four .g4-colhl { fill: color-mix(in srgb, var(--g-hl) 55%, var(--g-bg)); opacity: 0; transition: opacity 120ms; }
+.g-four .g4-colhl { opacity: 0; transition: opacity 120ms; }
+.g-four .g4-colhl.g4-a { fill: color-mix(in srgb, var(--p-a) 30%, var(--g-bg)); }
+.g-four .g4-colhl.g4-b { fill: color-mix(in srgb, var(--p-b) 30%, var(--g-bg)); }
 .g-four .g4-colhl.on { opacity: 1; }
 .g-four .g4-nums { display: none; width: 100%; padding: 0 ${pct(VW - BW + P, VW)} 0 ${pct(P, VW)}; margin-top: -2px; }
 .g-four .g4-nums span { flex: 1; text-align: center; font: 800 0.78rem/1 var(--g-font-display); color: var(--g-muted); }
@@ -297,7 +299,7 @@ registerGame({
       const canLand = on && !full(lifted);
       ghost.setAttribute('class', `g4-ghost${canLand ? ' on' : ''} g4-${who}`);
       if (canLand) { ghost.setAttribute('cx', cx(lifted)); ghost.setAttribute('cy', cy(ctx.state.cols[lifted].length)); }
-      colhl.setAttribute('class', `g4-colhl${on ? ' on' : ''}`);
+      colhl.setAttribute('class', `g4-colhl g4-${who}${on ? ' on' : ''}`);
       if (on) colhl.setAttribute('x', P + lifted * U);
       buttons.forEach((b, i) => { b.classList.toggle('is-lifted', on && i === lifted); b.setAttribute('aria-pressed', on && i === lifted ? 'true' : 'false'); });
       nums.forEach((n, i) => n.classList.toggle('on', on && i === lifted));
@@ -412,7 +414,7 @@ registerGame({
         seen = c.moves;
         const moved = prevSeen !== c.moves;
         // a new move since the last paint: animate it. On first paint, replay the partner's last move.
-        const animate = c.last && (prevSeen == null ? c.mode === 'online' && c.last.who !== c.me && !c.over : c.moves === prevSeen + 1);
+        const animate = c.last && (prevSeen == null ? c.mode === 'online' && c.last.who !== c.me : c.moves === prevSeen + 1);
         let landMs = 0;
         let animKey = null;
         let fallMs = 0;

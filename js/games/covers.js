@@ -136,20 +136,20 @@ function wordduel() {
     : R(x + 1.6, y + 1.6, 18, 18, 'k', 'n', 0, 3) + R(x, y, 18, 18, f, 'k', 2, 3));
   const row = (y, fills, flipAt = -1) => fills.map((f, i) => tile(27 + i * 22, y, f, i === flipAt)).join('');
   const glyph = (x, y, k) => [
-    L(`M${x + 5} ${y + 13}L${x + 9} ${y + 5}L${x + 13} ${y + 13}`, 'k', 2.2),
-    C(x + 9, y + 9, 3.6, 'n', 'k', 2.2),
-    L(`M${x + 6} ${y + 5}V${y + 13}H${x + 12}`, 'k', 2.2),
-    L(`M${x + 5} ${y + 5}H${x + 13}M${x + 9} ${y + 5}V${y + 13}`, 'k', 2.2),
+    P(`M${x + 9} ${y + 4.5}L${x + 13.5} ${y + 13}H${x + 4.5}Z`, 'k'),
+    C(x + 9, y + 9, 3.8, 'n', 'k', 2.4),
+    C(x + 9, y + 9, 2.6, 'k'),
+    R(x + 4.5, y + 7.6, 9, 2.8, 'k', 'n', 0, 1.4),
   ][k % 4];
   const g1 = [0, 1, 2, 3, 1].map((k, i) => glyph(27 + i * 22, 10, k)).join('');
-  const g2 = [2, 0, 1, 3, 0].map((k, i) => glyph(27 + i * 22, 33, k)).join('');
+  const g2 = [2, 0, 1, 3, 0].map((k, i) => (i === 3 ? '' : glyph(27 + i * 22, 33, k))).join('');
   let keys = '';
   const kb = [[10, 21], [9, 26], [7, 36]];
   const hot = { '0,2': 'a', '0,6': 'y', '1,1': 'b', '1,4': 'a', '2,3': 'y', '0,8': 'l', '1,7': 'l', '2,0': 'l', '2,5': 'b' };
   kb.forEach(([n, x0], r) => { for (let i = 0; i < n; i++) keys += R(x0 + i * 11.8, 62 + r * 12, 9.6, 9.6, hot[`${r},${i}`] || 'w', 'k', 1.4, 2); });
   return svg('sy',
     row(10, ['w', 'y', 'w', 'a', 'w']) + g1 +
-    row(33, ['b', 'b', 'y', 'w', 'b'], 3) + g2.replace(/<[^>]*?(?:M93|M98|cx="99")[^>]*>/g, '') +
+    row(33, ['b', 'b', 'y', 'w', 'b'], 3) + g2 +
     keys);
 }
 
@@ -223,7 +223,7 @@ function quickdraw() {
     return P(`M${p(-6, 0)}L${p(-4, -14)}L${p(-6, -26)}L${p(6, -26)}L${p(4, -14)}L${p(6, 0)}Z`, ink, 'k', 2) +
       L(`M${p(5, -24)}L${p(16, -21)}`, 'k', 3.4) +
       C(x, 70 - 31, 4.6, ink, 'k', 2) +
-      P(`M${p(-10, -34)}H${p(10, -34)}`, 'n', 'k', 2.8) + R(x - 4.5, 70 - 41, 9, 7, 'k', 'n', 0, 2);
+      L(`M${p(-10, -34)}L${p(10, -34)}`, 'k', 2.8) + R(x - 4.5, 70 - 41, 9, 7, 'k', 'n', 0, 2);
   };
   const cactus = (x, h) => L(`M${x} 70V${70 - h}M${x} ${70 - h * 0.45}h-6v-8M${x} ${70 - h * 0.6}h6v-9`, 'k', 4.4);
   let sun = '';
@@ -332,30 +332,38 @@ function chameleon() {
   const lw = [[cx, top], [-10, top + 45], [-10, top + 45 + ch + 20], [cx, top + ch + 20]];
   const rw = [[cx, top], [170, top + 45], [170, top + 45 + ch + 20], [cx, top + ch + 20]];
   const fl = [[cx, top + ch], [170, top + ch + 45], [cx, top + ch + 90], [-10, top + ch + 45]];
+  const wallX = (n) => 4 + n * 9;
   let stripes = '';
-  for (let x = 4; x < cx; x += 9) { const y0 = top + (cx - x) * 0.5; stripes += `M${f1(x)} ${f1(y0 + 2)}V${f1(y0 + ch - 2)}`; }
-  // the chameleon: body is an ellipse; the painted half carries the same stripes
-  const bx = 44, by = 52, rx = 21, ry = 10;
+  for (let n = 0; wallX(n) < cx; n++) { const x = wallX(n), y0 = top + (cx - x) * 0.5; stripes += `M${f1(x)} ${f1(y0 + 2)}V${f1(y0 + ch - 2)}`; }
+  // the hider, half painted to match the wallpaper behind it (drawn in local coords, then placed)
+  const T = [6, 25], S = 1.22;
+  const body = 'M20 30C18 18 30 10 44 11C52 12 58 15 62 19L70 12L79 22C80 26 77 29 72 29C66 31 60 32 56 33C48 36 34 37 26 35C22 34 20 33 20 30Z';
+  const ex = 41, ey = 24.5, erx = 21, ery = 10.6; // painted patch (left half of this ellipse)
   let paint = '';
-  for (let x = 4; x < bx; x += 9) {
-    if (x <= bx - rx + 1) continue;
-    const h = ry * Math.sqrt(Math.max(0, 1 - ((x - bx) / rx) ** 2));
-    paint += `M${f1(x)} ${f1(by - h + 1.2)}V${f1(by + h - 1.2)}`;
+  for (let n = 0; n < 20; n++) {
+    const lx = (wallX(n) - T[0]) / S;
+    if (lx <= ex - erx + 0.5 || lx >= ex) continue;
+    const h = ery * Math.sqrt(1 - ((lx - ex) / erx) ** 2);
+    paint += `M${f1(lx)} ${f1(ey - h + 0.8)}V${f1(ey + h - 0.8)}`;
   }
-  const body = E(bx, by, rx, ry, 'w', 'k', 2.4) + P(`M${bx - rx + 0.6} ${by}A${rx} ${ry} 0 0 1 ${bx} ${by - ry}V${by + ry}A${rx} ${ry} 0 0 1 ${bx - rx + 0.6} ${by}Z`, 'sb') + L(paint, 'b', 3.2) + E(bx, by, rx, ry, 'n', 'k', 2.4);
-  const lizard = L(`M${bx - rx + 2} ${by + 2}c-8 2-12 10-6 15 5 4 11-1 8-5-2-3-6-1-5 1`, 'k', 4.4) + L(`M${bx - rx + 2} ${by + 2}c-8 2-12 10-6 15 5 4 11-1 8-5-2-3-6-1-5 1`, 'w', 2) +
-    L(`M${bx - 9} ${by + 8}l-3 8M${bx + 9} ${by + 8}l4 8`, 'k', 2.6) +
-    body + P(`M${bx + 16} ${by - 6}l13 4-4 9-9 1z`, 'w', 'k', 2.2) + C(bx + 24, by - 1, 4, 'w', 'k', 2) + C(bx + 25, by - 1, 1.6, 'k') +
-    L(`M${bx - 12} ${by - 9}q6-5 12-2 6-5 12-1`, 'k', 2);
-  const splat = (x, y, s, ink) => P(`M${x} ${y - 5 * s}c3 0 2 3 5 3s3-3 5-1-2 4 0 6 2 4-1 5-3 1-1 5-4 4-4-3-6-1-2 3-5 1 0-4-3-5-5-1-2-4 2-3 1-4 4-4 3 3 5 2z`.replace(/(-?\d+(?:\.\d+)?)/g, (m, n, i, str) => m), ink, 'k', 1.6);
+  const tail = 'M21 31C12 33 8 42 14 46C19 49 25 45 23 41C21 38 17 40 18 42';
+  const hider = G(`translate(${T[0]} ${T[1]}) scale(${S})`,
+    L(tail, 'k', 4.8) + L(tail, 'w', 2) +
+    L('M31 35l-3 8h-4M31 43h5M54 32l3 9h-4M57 41h4', 'k', 2.4) +
+    P(body, 'w') +
+    P(`M${ex} ${ey - ery}A${erx} ${ery} 0 0 0 ${ex} ${ey + ery}Z`, 'sb') + L(paint, 'b', 3.2 / S) +
+    L(`M${ex} ${f1(ey - ery + 0.5)}c-3 4 2 6 -1 9s3 5 0 ${f1(2 * ery - 10)}`, 'b', 2.2) +
+    P(body, 'n', 'k', 2.2) +
+    C(65, 21, 4.4, 'w', 'k', 1.9) + C(66, 21, 1.8, 'k') + L('M72 27.4L77 25', 'k', 1.4));
+  const splat = (x, y, ink) => P(star(x, y, 8, 4.4, 7, 14), ink, 'k', 1.6) + C(x + 10, y + 7, 1.8, ink, 'k', 1.1) + C(x - 9, y - 6, 1.4, ink, 'k', 1);
   return svg('sy',
     P(poly(lw), 'sb', 'k', 2.4) + L(stripes, 'b', 3.2) +
     P(poly(rw), 'sy', 'k', 2.4) + dots(cx + 6, top + 10, 166, top + 70, 6, 'y', 1.3) +
-    P(poly(fl), 'w', 'k', 2.4) + E(cx + 6, top + ch + 30, 30, 12, 'a', 'k', 2.2) + E(cx + 6, top + ch + 30, 18, 7, 'n', 'w', 1.6, 'opacity:.7') +
+    P(poly(fl), 'w', 'k', 2.4) + E(cx + 8, top + ch + 30, 30, 12, 'a', 'k', 2.2) + E(cx + 8, top + ch + 30, 18, 7, 'n', 'w', 1.6, 'opacity:.7') +
     P(poly([[108, top + 26], [130, top + 37], [130, top + 55], [108, top + 44]]), 'w', 'k', 2.2) + P(poly([[112, top + 33], [126, top + 40], [126, top + 50], [112, top + 43]]), 'a') +
     R(136, top + 64, 14, 14, 'b', 'k', 2.2, 2) + L(`M143 ${top + 64}c-6-10-14-10-16-6M143 ${top + 64}c2-12 10-14 14-12M143 ${top + 64}c-1-14 3-18 4-18`, 'k', 3) +
-    splat(104, 60, 1, 'a') + C(118, 70, 2.2, 'a', 'k', 1.2) + C(96, 52, 1.8, 'a', 'k', 1.2) + C(112, 82, 2.6, 'a', 'k', 1.2) +
-    lizard);
+    splat(140, 36, 'a') + C(150, 48, 2.2, 'a', 'k', 1.2) + C(134, 28, 1.8, 'a', 'k', 1.2) + C(100, 88, 2.6, 'a', 'k', 1.2) +
+    hider);
 }
 
 export const COVERS = {

@@ -124,7 +124,7 @@ registerGame({
     if (!mv || typeof mv !== 'object') throw new Error('That move makes no sense.');
     const Rd = s.rounds[s.r];
     if (s.phase === 'clue') {
-      if (who !== Rd.giver) throw new Error('It’s not your turn to give the clue.');
+      if (who !== Rd.giver) throw new Error(mv.at != null ? 'Wait for the clue first.' : 'It’s not your turn to give the clue.');
       if (mv.clue != null && typeof mv.clue !== 'string') throw new Error('Write a clue first.');
       const clue = String(mv.clue || '').trim().replace(/\s+/g, ' ');
       if (!clue) throw new Error('Write a clue first.');
@@ -166,6 +166,7 @@ registerGame({
     .g-wave b.p-a, .g-wave b.p-b { font-weight: 900; }
 
     /* the dial */
+    .g-wave .wv-host { width: 100%; display: flex; justify-content: center; }
     .g-wave .wv-dialbox { width: 100%; max-width: 480px; display: flex; flex-direction: column; align-items: stretch; }
     .g-wave .wv-dial { position: relative; width: 100%; touch-action: none; outline: none; border-radius: 12px; }
     .g-wave .wv-dial.live { cursor: grab; }
@@ -177,14 +178,11 @@ registerGame({
     .g-wave .wv-rim { fill: none; stroke: var(--g-ink); stroke-width: 2.5; stroke-linejoin: round; }
     .g-wave .wv-tick { stroke: var(--g-ink); stroke-width: 1.6; stroke-linecap: round; }
     .g-wave .wv-tick.major { stroke-width: 2.6; }
-    .g-wave .wv-b2 { fill: color-mix(in srgb, var(--g-hl) 38%, var(--g-card)); }
-    .g-wave .wv-b3 { fill: color-mix(in srgb, var(--g-hl) 70%, var(--g-card)); }
-    .g-wave .wv-b4 { fill: var(--g-hl); }
+    .g-wave .wv-b4, .g-wave .wv-hlfill { fill: var(--g-hl); }
     .g-wave .wv-zone path { stroke: var(--g-ink); stroke-width: 1.5; stroke-linejoin: round; }
-    .g-wave .wv-zone text { font-family: var(--g-font-display); font-weight: 900; font-size: 13px; fill: var(--g-ink); text-anchor: middle; dominant-baseline: central; }
+    .g-wave .wv-zone text { font-family: var(--g-font-display); font-weight: 900; font-size: 13px; fill: var(--g-ink); stroke: var(--g-card); stroke-width: 3.5px; paint-order: stroke; stroke-linejoin: round; text-anchor: middle; dominant-baseline: central; }
     .g-wave .wv-lid-face { fill: var(--g-card); }
     .g-wave .wv-hatch { stroke: var(--g-line); stroke-width: 2.4; }
-    .g-wave .wv-lid-q { font-family: var(--g-font-display); font-weight: 900; font-size: 15px; fill: var(--g-muted); text-anchor: middle; letter-spacing: 0.12em; }
     .g-wave .wv-needle { stroke: var(--g-ink); stroke-width: 2.4; stroke-linejoin: round; }
     .g-wave .wv-needle.a { fill: var(--p-a); } .g-wave .wv-needle.b { fill: var(--p-b); }
     .g-wave .wv-needle-shadow { fill: var(--g-ink); }
@@ -221,7 +219,7 @@ registerGame({
     .g-wave .wv-pts { display: grid; place-items: center; min-width: 64px; height: 56px; padding: 0 10px; border: 2px solid var(--g-ink); border-radius: 10px; background: var(--g-hl); color: var(--g-ink); box-shadow: var(--g-shadow); font-family: var(--g-font-display); font-weight: 900; font-size: 1.8rem; transform: rotate(-4deg); }
     .g-wave .wv-pts.zero { background: var(--g-card); color: var(--g-bad); }
     .g-wave .wv-result-txt { display: flex; flex-direction: column; font-weight: 800; }
-    .g-wave .wv-result-txt b { font-family: var(--g-font-display); font-size: 1.3rem; font-weight: 900; }
+    .g-wave .wv-result-txt > b { font-family: var(--g-font-display); font-size: 1.3rem; font-weight: 900; }
     .g-wave .wv-result-txt span { color: var(--g-muted); font-size: 0.85rem; }
     .g-wave .wv-result.hide { visibility: hidden; }
     .g-wave .wv-result.anim .wv-pts { animation: wv-stamp 0.4s cubic-bezier(.2,1.6,.4,1) both; }
@@ -253,8 +251,9 @@ registerGame({
     .g-wave .wv-row-pts.zero { background: var(--g-card); color: var(--g-muted); border-color: var(--g-line); }
     .g-wave .wv-mini { position: relative; height: 16px; margin: 4px 0 6px; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-bg); }
     .g-wave .wv-mini > span { position: absolute; top: 0; bottom: 0; }
-    .g-wave .wv-mini .z2 { background: color-mix(in srgb, var(--g-hl) 38%, var(--g-card)); }
-    .g-wave .wv-mini .z3 { background: color-mix(in srgb, var(--g-hl) 70%, var(--g-card)); }
+    .g-wave .wv-mini .z2 { background: repeating-linear-gradient(-55deg, var(--g-hl) 0 2.5px, var(--g-card) 2.5px 7px); }
+    .g-wave .wv-mini .z3 { background: repeating-linear-gradient(-55deg, var(--g-hl) 0 5px, var(--g-card) 5px 7px); }
+    .g-wave .wv-mini .z4 { box-shadow: inset 2px 0 0 var(--g-ink), inset -2px 0 0 var(--g-ink); }
     .g-wave .wv-mini .z4 { background: var(--g-hl); }
     .g-wave .wv-mini .pin { top: -6px; bottom: -6px; width: 6px; margin-left: -3px; border: 2px solid var(--g-ink); border-radius: 3px; }
     .g-wave .wv-mini .pin.a { background: var(--p-a); } .g-wave .wv-mini .pin.b { background: var(--p-b); }
@@ -294,7 +293,7 @@ registerGame({
       rafs.add(id);
     }
 
-    const top = (s, ri = s.r) => `<div class="wv-top"><span class="wv-round">Round ${Math.min(ri + 1, ROUNDS)} <i>of ${ROUNDS}</i></span><span class="wv-team">Team <b>${s.score}</b></span></div>`;
+    const top = (s, ri = s.r) => `<div class="wv-top"><span class="wv-round">Round ${Math.min(ri + 1, ROUNDS)}<i>/${ROUNDS}</i></span><span class="wv-team">Team <b>${s.score}</b></span></div>`;
     const ARROW_L = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3L5 8l5 5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     const ARROW_R = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     const cardHTML = (c) => `<div class="wv-card"><div class="wv-end l">${ARROW_L}<span>${label(CARDS[c][0])}</span></div><div class="wv-end r"><span>${label(CARDS[c][1])}</span>${ARROW_R}</div></div>`;
@@ -303,7 +302,8 @@ registerGame({
     // needle: { at, who } or null.
     function dial(host, { card, zone = null, lid = false, needle = null, ghost = false }) {
       const id = `wv${++uid}`;
-      const zoneSvg = zone == null ? '' : `<g class="wv-zone" clip-path="url(#${id}c)">${BANDS.map(([, p]) => `<path class="wv-b${p}" d=""/>`).join('')}${[2, 3, 4, 3, 2].map(() => '<text></text>').join('')}</g>`;
+      const zoneSvg = zone == null ? '' : `<defs>${[[2, 3], [3, 6]].map(([p, w]) => `<pattern id="${id}s${p}" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(-35)"><rect width="8" height="8" class="wv-face"/><rect width="${w}" height="8" class="wv-hlfill"/></pattern>`).join('')}</defs>
+        <g class="wv-zone" clip-path="url(#${id}c)">${BANDS.map(([, p]) => `<path class="wv-b${p}" d=""${p < 4 ? ` fill="url(#${id}s${p})"` : ''}/>`).join('')}${[2, 3, 4, 3, 2].map(() => '<text></text>').join('')}</g>`;
       const needleSvg = needle ? `<g transform="translate(3 3)"><g class="wv-rot"><path class="wv-needle-shadow" d="${NEEDLE}"/></g></g>
         <g class="wv-rot"><path class="wv-needle ${needle.who}" d="${NEEDLE}"/></g>` : '';
       host.innerHTML = `<div class="wv-dialbox"><div class="wv-dial" aria-label="Dial"><svg class="wv-svg" viewBox="0 -4 240 156" aria-hidden="true">
@@ -313,13 +313,13 @@ registerGame({
         <rect class="wv-plinth-shadow" x="8" y="${CY + 2}" width="232" height="16" rx="4"/>
         <path class="wv-face" d="${FACE}"/>
         ${zoneSvg}
-        ${lid ? `<g clip-path="url(#${id}c)"><g class="wv-lid"><path class="wv-lid-face" d="${FACE}"/><path d="${FACE}" fill="url(#${id}h)"/><text class="wv-lid-q" x="${CX}" y="${CY - 44}">HIDDEN</text></g></g>` : ''}
+        ${lid ? `<g clip-path="url(#${id}c)"><g class="wv-lid"><path class="wv-lid-face" d="${FACE}"/><path d="${FACE}" fill="url(#${id}h)"/></g></g>` : ''}
         ${ghost ? `<path class="wv-ghost" d="M${CX} ${CY}L${CX} ${CY - R + 14}"/>` : ''}
         ${TICKS}
         <path class="wv-rim" d="${FACE}"/>
         ${needleSvg}
-        <circle class="wv-hub" cx="${CX}" cy="${CY}" r="13"/><circle class="wv-hub-dot" cx="${CX}" cy="${CY}" r="4.5"/>
         <rect class="wv-plinth" x="4" y="${CY - 1}" width="232" height="16" rx="4"/>
+        <circle class="wv-hub" cx="${CX}" cy="${CY}" r="13"/><circle class="wv-hub-dot" cx="${CX}" cy="${CY}" r="4.5"/>
       </svg></div>${cardHTML(card)}</div>`;
       const box = host.firstChild;
       const d = box.querySelector('.wv-dial');
@@ -496,7 +496,7 @@ registerGame({
         </div>
         ${next ? `<button class="gm-btn wv-go">${final ? 'See how you did' : 'Next round: your clue'}</button>
           ${ctx.mode === 'local' && nextGiver ? `<p class="wv-note">${esc(api.name(other(nextGiver)))}, look away. ${esc(api.name(nextGiver))} sees the next target.</p>` : ''}` : ''}
-        ${waiting && nextGiver ? `<div class="wv-wait">${nm(nextGiver)} is thinking of a clue <span class="wv-dots"><i></i><i></i><i></i></span></div>` : ''}`;
+        ${waiting && nextGiver ? `<div class="wv-wait"><span>${nm(nextGiver)} is thinking of a clue</span> <span class="wv-dots"><i></i><i></i><i></i></span></div>` : ''}`;
       const D = dial(node.querySelector('.wv-host'), { card: Rd.card, zone: Rd.target, lid: true, needle: { at: Rd.at, who: guesser } });
       const res = node.querySelector('.wv-result');
       const showResult = () => {
@@ -521,7 +521,7 @@ registerGame({
       node.innerHTML = `${top(s)}
         <h2 class="wv-h">${nm(Rd.giver)} is thinking of a clue</h2>
         <div class="wv-host"></div>
-        <div class="wv-wait">You’ll turn the dial next <span class="wv-dots"><i></i><i></i><i></i></span></div>`;
+        <div class="wv-wait"><span>You’ll turn the dial next</span> <span class="wv-dots"><i></i><i></i><i></i></span></div>`;
       dial(node.querySelector('.wv-host'), { card: Rd.card, lid: true });
       return {};
     }
@@ -532,7 +532,7 @@ registerGame({
       node.innerHTML = `${top(s)}
         ${clueBubble(Rd, true)}
         <div class="wv-host"></div>
-        <div class="wv-wait">${nm(guesser)} is turning the dial <span class="wv-dots"><i></i><i></i><i></i></span></div>`;
+        <div class="wv-wait"><span>${nm(guesser)} is turning the dial</span> <span class="wv-dots"><i></i><i></i><i></i></span></div>`;
       dial(node.querySelector('.wv-host'), { card: Rd.card, zone: Rd.target });
       return {};
     }

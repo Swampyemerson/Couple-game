@@ -98,7 +98,7 @@ async function rulesTests() {
     const r = four.result(s);
     ok(r.winner === null && /draw/i.test(r.sub), 'full board is a draw');
     const d = core.derive(four, { first: 'a', seed: 1, lists: { a: cols([0, 0, 0, 0, 1]), b: cols([0, 0, 0]) } });
-    ok(d.rejected.length === 1 && d.rejected[0].error === 'That column is full' && d.count === 6, 'engine replay drops a move into a full column');
+    ok(d.rejected.length === 1 && d.rejected[0].error === 'That column is full' && d.count === 7 && d.state.cols[1].length === 1, 'engine replay drops a move into a full column and plays on');
   });
 
   await section('dots rules', () => {
@@ -284,6 +284,10 @@ async function onlineGame(h, game, scheme, nextMove, { midAt, check } = {}) {
 }
 
 async function localId(pg) { return pg.evaluate(() => window.__lastMatchId); }
+/** Leave whatever game screen is open (so one failed section can't break the next). */
+async function leave(h, pg) {
+  for (let t = 0; t < 3 && await pg.isVisible('#game-root [data-g="close"]'); t++) { await pg.click('#game-root [data-g="close"]').catch(() => {}); await pg.waitForTimeout(150); }
+}
 const visibleToast = async (pg) => pg.$$eval('.toast', (ts) => ts.length);
 
 async function uiTests(scheme, port) {
@@ -293,6 +297,7 @@ async function uiTests(scheme, port) {
 
     // ── Four in a Row ──
     await section(`four online (${scheme})`, async () => {
+      await leave(h, h.a); await leave(h, h.b);
       await onlineGame(h, 'four', scheme, (s, actor, i) => FOUR_DIAG[i], {
         midAt: 6,
         check: (before, after) => { if (after.state.n !== before.state.n + 1) throw new Error('FAIL: four: one disc per move'); },
@@ -301,6 +306,7 @@ async function uiTests(scheme, port) {
 
     // ── Dots & Boxes ──
     await section(`dots online (${scheme})`, async () => {
+      await leave(h, h.a); await leave(h, h.b);
       const rnd = lcg(scheme === 'dark' ? 5 : 3);
       const order = [...DOT_KEYS];
       for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
@@ -322,6 +328,7 @@ async function uiTests(scheme, port) {
 
     // ── Ultimate ──
     await section(`ultimate online (${scheme})`, async () => {
+      await leave(h, h.a); await leave(h, h.b);
       await onlineGame(h, 'ultimate', scheme, (s, actor, i) => ULT_WIN[i], {
         midAt: 13,
         check: (before, after) => {
@@ -336,6 +343,7 @@ async function uiTests(scheme, port) {
 
     // ── same phone + illegal moves + keys/mouse (light only) ──
     await section('four same-phone draw, full column, keys, mouse', async () => {
+      await leave(h, h.a); await leave(h, h.b);
       await h.newLocalGame(h.a, 'four');
       const id = await localId(h.a);
       const pg = h.a;
@@ -355,6 +363,11 @@ async function uiTests(scheme, port) {
       e = await h.engine(pg, id);
       ok(e.state.cols[5].length === 1, 'four: a mouse click drops right away');
       await pg.mouse.move(5, 5);
+      await pg.tap(SEL.four(1));
+      await pg.tap(SEL.four(6));
+      ok(moveCount(await h.engine(pg, id)) === 2 && await pg.$eval(SEL.four(6), (x) => x.getAttribute('aria-pressed') === 'true'), 'four: tapping another column moves the lifted disc without dropping');
+      await pg.tap(SEL.four(6));
+      ok((await h.engine(pg, id)).state.cols[6].length === 1, 'four: a second tap on that column drops it there');
       await h.closeGame(pg);
 
       // scripted draw with taps; on the way, try dropping into a full column
@@ -387,18 +400,26 @@ async function uiTests(scheme, port) {
     });
 
     await section('dots same-phone with mouse, already-drawn lines', async () => {
+      await leave(h, h.a); await leave(h, h.b);
       await h.newLocalGame(h.a, 'dots');
       const pg = h.a;
       const id = await localId(pg);
       await pg.hover(SEL.dots('h-0-0'));
-      ok(await pg.$eval('.gd-pl', (x) => x.classList.contains('is-hover')), 'dots: mouse hover previews the line');
+      ok(await pg.$eval('.gd-pg', (x) => x.classList.contains('is-hover')), 'dots: mouse hover previews the line');
+      await pg.mouse.move(5, 5);
+      await pg.tap(SEL.dots('v-3-4'));
+      await pg.tap(SEL.dots('v-2-4'));
+      ok(moveCount(await h.engine(pg, id)) === 0 && /again/i.test(await pg.textContent('.gd-plate')), 'dots: tapping another gap moves the selection without drawing');
+      await pg.tap(SEL.dots('v-2-4'));
+      ok((await h.engine(pg, id)).state.order[0] === 'v-2-4', 'dots: a second tap on the same gap draws it');
       for (const k of DOT_KEYS) {
+        if (k === 'v-2-4') continue;
         await pg.click(SEL.dots(k));
         if (k === 'h-1-0') {
-          await pg.click(SEL.dots('h-0-0'));
+          await pg.click(SEL.dots('h-0-0'), { force: true });
           ok(await toastSays(pg, /already drawn/i), 'dots: clicking a drawn line is refused');
-          await pg.tap(SEL.dots('h-0-0'));
-          ok(moveCount(await h.engine(pg, id)) === 5, 'dots: tapping a drawn line does not select or play it');
+          await pg.tap(SEL.dots('h-0-0'), { force: true });
+          ok(moveCount(await h.engine(pg, id)) === 6, 'dots: tapping a drawn line does not select or play it');
         }
         if (k === 'v-0-1') {
           const e = await h.engine(pg, id);
@@ -413,6 +434,7 @@ async function uiTests(scheme, port) {
     });
 
     await section('ultimate same-phone with keys and mouse, wrong board', async () => {
+      await leave(h, h.a); await leave(h, h.b);
       await h.newLocalGame(h.a, 'ultimate');
       const pg = h.a;
       const id = await localId(pg);
@@ -436,6 +458,14 @@ async function uiTests(scheme, port) {
       await pg.hover(SEL.ultimate([forced, free]));
       ok(await pg.$eval(SEL.ultimate([forced, free]), (x) => !!x.querySelector('.ghost')), 'ultimate: mouse hover shows a ghost mark');
       ok(/sends|anywhere/i.test(await pg.textContent('.gu-plate')), 'ultimate: the plate says where it sends your partner');
+      await pg.mouse.move(5, 5);
+      const free2 = e.state.cells.slice(forced * 9, forced * 9 + 9).map((x, i) => (x ? -1 : i)).filter((i) => i >= 0);
+      await pg.tap(SEL.ultimate([forced, free2[0]]));
+      await pg.tap(SEL.ultimate([forced, free2[1]]));
+      ok(moveCount(await h.engine(pg, id)) === 1 && await pg.$eval(SEL.ultimate([forced, free2[1]]), (x) => x.classList.contains('is-sel')), 'ultimate: tapping another square moves the aim without placing');
+      await pg.tap(SEL.ultimate([forced, free2[1]]));
+      e = await h.engine(pg, id);
+      ok(moveCount(e) === 2 && e.state.cells[forced * 9 + free2[1]], 'ultimate: a second tap on the same square places it');
       // play on with clicks: first legal square each turn, until the game ends
       for (let n = 0; n < 81 && !e.over; n++) {
         e = await h.engine(pg, id);
@@ -456,7 +486,27 @@ async function uiTests(scheme, port) {
       await h.closeGame(pg);
     });
 
+    await section('reduced motion', async () => {
+      await leave(h, h.a);
+      const pg = h.a;
+      await pg.emulateMedia({ reducedMotion: 'reduce' });
+      await h.newLocalGame(pg, 'four');
+      await pg.click(SEL.four(3));
+      ok(await pg.$$eval('.g4-fall.is-falling', (xs) => xs.length) === 0 && (await h.engine(pg, await localId(pg))).state.cols[3].length === 1, 'four: with reduced motion the disc lands without the fall animation');
+      await leave(h, pg);
+      await h.newLocalGame(pg, 'dots');
+      await pg.click(SEL.dots('h-0-0'));
+      ok(await pg.$$eval('.gd-ln.is-new', (xs) => xs.length) === 0, 'dots: with reduced motion lines appear without the draw-in');
+      await leave(h, pg);
+      await h.newLocalGame(pg, 'ultimate');
+      await pg.click(SEL.ultimate([4, 4]));
+      ok(await pg.$$eval('.gu-m.is-new', (xs) => xs.length) === 0 && await pg.$$eval('.gu-sb.is-open', (xs) => xs.length) === 1, 'ultimate: with reduced motion marks appear without the pop, highlight still shows');
+      await leave(h, pg);
+      await pg.emulateMedia({ reducedMotion: 'no-preference' });
+    });
+
     await section('laptop size', async () => {
+      await leave(h, h.a); await leave(h, h.b);
       const pg = h.a;
       await pg.setViewportSize({ width: 1280, height: 800 });
       for (const g of GAMES) {
@@ -475,6 +525,7 @@ async function uiTests(scheme, port) {
     });
 
     await section('no horizontal overflow at 360', async () => {
+      await leave(h, h.a); await leave(h, h.b);
       const pg = h.b;
       for (const g of GAMES) {
         await h.newLocalGame(pg, g);

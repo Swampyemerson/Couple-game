@@ -276,10 +276,14 @@ section { display: flex; flex-direction: column; gap: 8px; }
   backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
   border-top: 1px solid var(--line);
 }
-.tab { flex: 1; max-width: 130px; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 0.72rem; font-weight: 800; color: var(--muted); padding: 4px 0; border-radius: 12px; }
-.tab span { font-size: 1.35rem; filter: grayscale(1); opacity: 0.6; transition: all 0.15s; }
+.tab { flex: 1; max-width: 130px; display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 0.72rem; font-weight: 800; color: var(--muted); padding: 4px 0; border-radius: 12px; }
+.tab-ico { width: 26px; height: 26px; display: block; overflow: visible; transition: transform 0.2s cubic-bezier(0.3, 1.6, 0.5, 1); }
+.tab-ico * { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: fill 0.15s; }
+.tab-ico .d { fill: currentColor; stroke: none; }
 .tab.on { color: var(--accent); }
-.tab.on span { filter: none; opacity: 1; transform: translateY(-1px) scale(1.1); }
+.tab.on .tab-ico { transform: translateY(-1px) scale(1.06); }
+.tab.on .tab-ico .f { fill: var(--accent-soft); }
+.tab:active .tab-ico { transform: scale(0.9); }
 
 .toast {
   position: fixed; left: 50%; bottom: calc(var(--tabbar-h) + 24px + env(safe-area-inset-bottom)); z-index: 50;

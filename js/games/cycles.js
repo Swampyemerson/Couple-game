@@ -113,6 +113,7 @@ registerGame({
 .g-cycles .cy-ready { margin: auto; font-weight: 800; color: var(--g-muted); }
 .g-cycles .cy-row { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; gap: 22px; }
 .g-cycles .cy-board { position: relative; flex: 1 1 auto; align-self: stretch; min-width: 0; min-height: 150px; touch-action: none; }
+.g-cycles .cy-board.is-fit { flex: none; }
 .g-cycles .cy-board canvas { position: absolute; left: 50%; top: 50%; display: block; background: var(--g-card); border: 2.5px solid var(--g-ink); border-radius: 8px; box-shadow: var(--g-shadow-lg, 6px 6px 0 var(--g-ink)); transform: translate(calc(-50% - 3px), calc(-50% - 3px)); touch-action: none; }
 .g-cycles .cy-msg { position: absolute; left: 50%; top: 50%; z-index: 2; transform: translate(-50%, -50%); pointer-events: none; text-align: center; }
 .g-cycles .cy-msg > span { display: inline-block; background: var(--g-card); color: var(--g-ink); border: 2.5px solid var(--g-ink); border-radius: 12px; box-shadow: var(--g-shadow, 3px 3px 0 var(--g-ink)); padding: 10px 16px; font-weight: 800; font-size: 1.02rem; line-height: 1.25; white-space: nowrap; animation: cy-pop 0.32s cubic-bezier(0.2, 1.5, 0.4, 1) both; }
@@ -157,7 +158,8 @@ registerGame({
 .g-cycles .cy-caps { display: grid; grid-template-columns: repeat(3, 40px); grid-template-rows: repeat(2, 40px); gap: 5px; }
 .g-cycles .cy-caps kbd { display: grid; place-items: center; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-bg); color: var(--g-ink); box-shadow: 0 3px 0 var(--g-edge, var(--g-ink)); font: 800 1rem/1 var(--g-font-body); transition: transform 0.06s, box-shadow 0.06s, background-color 0.15s; }
 .g-cycles .cy-caps kbd svg { width: 15px; height: 15px; fill: currentColor; }
-.g-cycles .cy-caps kbd:nth-child(1) { grid-column: 2; grid-row: 1; }
+.g-cycles .cy-caps kbd:nth-child(1) { grid-column: 2; grid-row: 1; } .g-cycles .cy-caps kbd:nth-child(2) { grid-column: 1; grid-row: 2; }
+.g-cycles .cy-caps kbd:nth-child(3) { grid-column: 2; grid-row: 2; } .g-cycles .cy-caps kbd:nth-child(4) { grid-column: 3; grid-row: 2; }
 .g-cycles .cy-caps kbd.is-down { transform: translateY(3px); box-shadow: 0 0 0 var(--g-edge, var(--g-ink)); }
 .g-cycles .cy-legend.p-a kbd.is-down { background: var(--p-a); color: var(--g-on-ink); } .g-cycles .cy-legend.p-b kbd.is-down { background: var(--p-b); color: var(--g-on-ink); }
 .g-cycles .cy-legends { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; }
@@ -294,7 +296,7 @@ registerGame({
       board = root.querySelector('.cy-board');
       msgEl = root.querySelector('.cy-msg');
       msgKey = '';
-      if (window.ResizeObserver) { ro = new ResizeObserver(fit); ro.observe(board); }
+      if (window.ResizeObserver) { ro = new ResizeObserver(fit); ro.observe(board.parentElement); }
       fit();
       wireInputs();
       renderInfo();
@@ -302,8 +304,11 @@ registerGame({
     function fit() {
       if (!board || !layout) return;
       const g = LAYOUTS[layout];
-      const bw = board.clientWidth - 14;
-      const bh = board.clientHeight - 14;
+      const row = board.parentElement;
+      const sides = [...row.children].filter((x) => x !== board);
+      const gap = parseFloat(getComputedStyle(row).columnGap) || 0;
+      const bw = row.clientWidth - sides.reduce((n, x) => n + x.offsetWidth + gap, 0) - 14;
+      const bh = row.clientHeight - 14;
       const c = Math.max(3, Math.floor(Math.min(bw / g.W, bh / g.H) * 4) / 4);
       cell = c;
       cssW = Math.round(c * g.W);
@@ -313,12 +318,14 @@ registerGame({
       canvas.style.height = cssH + 'px';
       canvas.width = Math.round(cssW * dpr);
       canvas.height = Math.round(cssH * dpr);
+      board.classList.add('is-fit');
+      board.style.width = cssW + 14 + 'px';
       dirty = true;
     }
     function renderInfo() {
       const r = root.querySelector('.cy-round');
       if (!r) return;
-      r.textContent = round ? `Round ${round}` : 'Get ready';
+      r.textContent = `Best of ${WIN_AT * 2 - 1}`;
       for (const p of ['a', 'b']) {
         const pips = root.querySelector(`.cy-pips.p-${p}`);
         pips.innerHTML = Array.from({ length: WIN_AT }, (_, i) => `<i class="${i < score[p] ? 'on' : ''}"></i>`).join('');
@@ -654,8 +661,8 @@ registerGame({
           const key = s.crash.join(',');
           if (seen.has(key)) continue;
           seen.add(key);
-          const bx = (Math.max(-0.2, Math.min(g.W - 0.8, s.crash[0])) + 0.5) * c;
-          const by = (Math.max(-0.2, Math.min(g.H - 0.8, s.crash[1])) + 0.5) * c;
+          const bx = (Math.max(0, Math.min(g.W - 1, s.crash[0])) + 0.5) * c;
+          const by = (Math.max(0, Math.min(g.H - 1, s.crash[1])) + 0.5) * c;
           const R = Math.max(10, c * 2.3) * Math.max(0.2, k);
           ctx.lineWidth = ow * 1.2;
           ctx.strokeStyle = C.ink;

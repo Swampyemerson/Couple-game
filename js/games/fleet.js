@@ -97,7 +97,7 @@ const rules = {
     const left = afloat(s, w);
     return {
       winner: w,
-      sub: `All five sunk in ${mine.length} shots, ${Math.round((hits / Math.max(1, mine.length)) * 100)}% on target. ${left === SIZES.length ? 'The winning fleet didn’t take a single loss.' : `${left} of the winning fleet’s ships still afloat.`}`,
+      sub: `Sank all five in ${mine.length} shots (${Math.round((hits / Math.max(1, mine.length)) * 100)}% on target)${left === SIZES.length ? ' without losing a ship.' : `, with ${left} ${left === 1 ? 'ship' : 'ships'} still afloat.`}`,
     };
   },
   score(s) {
@@ -137,7 +137,6 @@ const WRECK = '<svg viewBox="0 0 100 100" aria-hidden="true" focusable="false"><
 
 const at = (r, c, w = 1, h = 1) => `--r:${r};--c:${c};--w:${w};--h:${h}`;
 const shipAt = (s) => at(s.r, s.c, s.dir === 'h' ? s.len : 1, s.dir === 'v' ? s.len : 1);
-const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
 function chartHTML({ cls = '', cells, layer = '', extra = '' }) {
   return `<div class="fl-chart ${cls}">
@@ -180,16 +179,16 @@ function randomFleet() {
 
 // ── styles ───────────────────────────────────────────────────────────────
 const CSS = `
-.g-fleet { --gut: 14px; position: relative; container-type: inline-size; width: 100%; margin: 0 auto; padding: 2px 0 14px; color: var(--g-ink); font-family: var(--g-font-body); -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+.g-fleet { --gut: 14px; --fl-edge: var(--g-edge, var(--g-ink)); position: relative; container-type: inline-size; width: 100%; margin: 0 auto; padding: 0 0 4px; color: var(--g-ink); font-family: var(--g-font-body); -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 .g-fleet.is-hidden { min-height: 240px; }
-.g-fleet .fl-place, .g-fleet .fl-battle, .g-fleet .fl-wait { --cell: min(52px, calc((100cqw - var(--gut)) / 8)); --mini: clamp(17px, calc(100cqw / 16.5), 26px); }
+.g-fleet .fl-place, .g-fleet .fl-battle, .g-fleet .fl-wait { --cell: min(52px, calc((100cqw - var(--gut)) / 8)); --mini: clamp(17px, calc(100cqw / 19), 26px); }
 .g-fleet h2, .g-fleet h3, .g-fleet p { margin: 0; }
 
 /* ── chart ── */
-.g-fleet .fl-chart { --cs: var(--cell); position: relative; display: grid; grid-template-columns: var(--gut) auto; grid-template-rows: var(--gut) auto; width: max-content; }
+.g-fleet .fl-chart { --cs: var(--cell); position: relative; display: grid; grid-template-columns: var(--gut) auto; grid-template-rows: calc(var(--gut) - 1px) auto; width: max-content; }
 .g-fleet .fl-chart.is-mini { --cs: var(--mini); --gut: 12px; }
-.g-fleet .fl-lab { display: grid; font: 800 10px/1 var(--g-font-display); color: var(--g-muted); }
-.g-fleet .is-mini .fl-lab { font-size: 8px; }
+.g-fleet .fl-lab { display: grid; font: 400 9px/1 var(--g-font-display); color: var(--g-muted); }
+.g-fleet .is-mini .fl-lab { font-size: 7px; }
 .g-fleet .fl-lab span { display: grid; place-items: center; transition: color .12s; }
 .g-fleet .fl-lab span.is-on { color: var(--g-ink); }
 .g-fleet .fl-lab-c { grid-column: 2; grid-row: 1; grid-template-columns: repeat(8, var(--cs)); padding-bottom: 3px; }
@@ -209,16 +208,16 @@ const CSS = `
 /* ── ships ── */
 .g-fleet .fl-ship, .g-fleet .fl-dock-ship, .g-fleet .fl-ghost, .g-fleet .fl-ro { --ship: var(--g-muted); }
 .g-fleet .p-a { --ship: var(--p-a); } .g-fleet .p-b { --ship: var(--p-b); }
-.g-fleet .fl-ship { display: block; margin: 0; padding: 0; border: 0; background: none; color: inherit; filter: drop-shadow(2px 2px 0 var(--g-ink)); }
-.g-fleet .is-mini .fl-ship { filter: drop-shadow(1px 1px 0 var(--g-ink)); }
+.g-fleet .fl-ship { display: block; margin: 0; padding: 0; border: 0; background: none; color: inherit; filter: drop-shadow(2px 2px 0 var(--fl-edge)); }
+.g-fleet .is-mini .fl-ship { filter: drop-shadow(1px 1px 0 var(--fl-edge)); }
 .g-fleet .fl-ship svg, .g-fleet .fl-mark svg, .g-fleet .fl-dock-ship svg, .g-fleet .fl-ghost svg, .g-fleet .fl-ro svg { display: block; width: 100%; height: 100%; overflow: visible; }
 .g-fleet .fl-hull { fill: var(--ship); stroke: var(--g-ink); stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .g-fleet .fl-deck > * { fill: var(--g-card); stroke: var(--g-ink); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .g-fleet .fl-deck > .fl-gun { fill: none; stroke-width: 2.5; stroke-linecap: round; }
 .g-fleet .is-mini .fl-hull { stroke-width: 1.5; }
 .g-fleet .is-mini .fl-deck > * { stroke-width: 1; }
-.g-fleet .fl-ship.is-wreck .fl-hull { fill: color-mix(in srgb, var(--ship) 50%, var(--g-ink)); }
-.g-fleet .fl-ship.is-wreck .fl-deck > * { fill: color-mix(in srgb, var(--g-card) 55%, var(--g-ink)); }
+.g-fleet .fl-ship.is-wreck .fl-hull { fill: color-mix(in srgb, var(--ship) 52%, var(--fl-edge)); }
+.g-fleet .fl-ship.is-wreck .fl-deck > * { fill: color-mix(in srgb, var(--g-card) 50%, var(--fl-edge)); }
 .g-fleet .fl-ship.is-ghost { filter: none; }
 .g-fleet .fl-ship.is-ghost .fl-hull { fill: color-mix(in srgb, var(--ship) 28%, transparent); stroke-dasharray: 5 3; }
 .g-fleet .fl-ship.is-ghost .fl-deck { display: none; }
@@ -253,41 +252,43 @@ const CSS = `
 }
 
 /* ── headers, pills, log ── */
-.g-fleet .fl-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-left: var(--gut); margin-bottom: 6px; min-height: 30px; }
-.g-fleet .fl-h { display: flex; align-items: center; gap: 7px; font: 900 .82rem/1.1 var(--g-font-display); text-transform: uppercase; letter-spacing: .08em; }
+.g-fleet .fl-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-left: var(--gut); margin-bottom: 3px; min-height: 22px; }
+.g-fleet .fl-h { display: flex; align-items: center; gap: 7px; font: 400 .74rem/1.1 var(--g-font-display); text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; }
 .g-fleet .fl-sw { width: 12px; height: 12px; flex: none; background: var(--ship); border: 2px solid var(--g-ink); border-radius: 3px; }
-.g-fleet .fl-pill { flex: none; font: 900 .78rem/1 var(--g-font-display); padding: 7px 11px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); white-space: nowrap; }
-.g-fleet .is-live .fl-pill { background: var(--g-hl); box-shadow: 2px 2px 0 var(--g-ink); }
+.g-fleet .fl-pill { flex: none; font: 800 .8rem/1 var(--g-font-body); padding: 7px 11px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); white-space: nowrap; }
+.g-fleet .fl-target.is-live .fl-grid::before { box-shadow: 5px 5px 0 0 var(--g-hl), 5px 5px 0 2px var(--fl-edge); }
+.g-fleet .fl-target { margin-bottom: 4px; }
+.g-fleet .fl-target:not(.is-live) .fl-cell { cursor: default; }
 .g-fleet .fl-pill.is-quiet { border-color: var(--g-line); color: var(--g-muted); }
-.g-fleet .fl-log { padding: 9px 12px; border: 2px solid var(--g-ink); border-radius: var(--g-radius); background: var(--g-card); font-size: .86rem; line-height: 1.5; display: flex; flex-direction: column; gap: 3px; min-height: 48px; justify-content: center; }
+.g-fleet .fl-log { padding: 6px 10px; border: 2px solid var(--g-ink); border-radius: var(--g-radius); background: var(--g-card); font-size: .82rem; line-height: 1.45; display: flex; flex-direction: column; gap: 2px; min-height: 38px; justify-content: center; }
 .g-fleet .fl-log b { font-weight: 900; }
-.g-fleet .fl-tok { display: inline-block; padding: 0 7px; margin: 1px 2px 1px 0; border: 1.5px solid var(--g-ink); border-radius: 999px; font: 800 .74rem/1.55 var(--g-font-display); background: var(--g-card); color: var(--g-ink); white-space: nowrap; }
-.g-fleet .fl-tok.is-hit { background: var(--g-bad); color: var(--g-on-ink); }
+.g-fleet .fl-tok { display: inline-block; padding: 0 7px; margin: 1px 2px 1px 0; border: 1.5px solid var(--g-ink); border-radius: 999px; font: 800 .76rem/1.55 var(--g-font-body); background: var(--g-card); color: var(--g-ink); white-space: nowrap; }
+.g-fleet .fl-tok.is-hit { background: var(--g-bad); color: var(--g-card); }
 .g-fleet .fl-tok.is-sunk { background: var(--g-ink); color: var(--g-card); }
-.g-fleet .fl-who-a { color: var(--p-a); } .g-fleet .fl-who-b { color: var(--p-b); }
+.g-fleet .fl-who-a { color: var(--p-a-text, var(--p-a)); } .g-fleet .fl-who-b { color: var(--p-b-text, var(--p-b)); }
 
 /* ── roster ── */
-.g-fleet .fl-side { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.g-fleet .fl-side { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .g-fleet .fl-side .fl-head { padding-left: 0; min-height: 0; margin: 0; }
 .g-fleet .fl-roster { display: flex; flex-wrap: wrap; gap: 9px 12px; align-items: center; }
-.g-fleet .fl-ro { position: relative; width: calc(var(--len) * 16px); height: 16px; filter: drop-shadow(1px 1px 0 var(--g-ink)); }
+.g-fleet .fl-ro { position: relative; width: calc(var(--len) * 16px); height: 16px; filter: drop-shadow(1px 1px 0 var(--fl-edge)); }
 .g-fleet .fl-ro .fl-hull { stroke-width: 1.5; }
 .g-fleet .fl-ro .fl-deck > * { stroke-width: 1; }
 .g-fleet .fl-ro.is-sunk svg { opacity: .35; }
-.g-fleet .fl-ro.is-sunk::after { content: ''; position: absolute; left: -4px; right: -4px; top: 50%; height: 3px; margin-top: -1.5px; background: var(--g-ink); border-radius: 2px; transform: rotate(-12deg); transform-origin: left center; }
-.g-fleet .fl-count { font: 800 .78rem/1.2 var(--g-font-display); color: var(--g-muted); }
+.g-fleet .fl-ro.is-sunk::after { content: ''; position: absolute; left: -2px; right: -2px; top: 50%; height: 2.5px; margin-top: -1.25px; background: var(--g-ink); border-radius: 2px; transform: rotate(-12deg); transform-origin: left center; }
+.g-fleet .fl-count { font: 700 .8rem/1.25 var(--g-font-body); color: var(--g-muted); }
 
 /* ── stamps ── */
-.g-fleet .fl-stamp { position: absolute; left: calc(50% + var(--gut) / 2); top: calc(50% + var(--gut) / 2); z-index: 6; pointer-events: none; padding: 7px 16px 9px; border: 3px solid var(--g-ink); border-radius: 6px; background: var(--g-hl); color: var(--g-ink); box-shadow: 4px 4px 0 var(--g-ink); text-align: center; white-space: nowrap; font: 900 clamp(1.5rem, 8cqw, 2.3rem)/1 var(--g-font-display); text-transform: uppercase; letter-spacing: .05em; transform: translate(-50%, -50%) rotate(-8deg); animation: fl-stamp 1.9s cubic-bezier(.2, .9, .3, 1.2) both; }
-.g-fleet .fl-stamp small { display: block; margin-top: 4px; font-size: .42em; letter-spacing: .04em; }
+.g-fleet .fl-stamp { position: absolute; left: calc(50% + var(--gut) / 2); top: calc(50% + var(--gut) / 2); z-index: 6; pointer-events: none; padding: 7px 16px 9px; border: 3px solid var(--g-ink); border-radius: 6px; background: var(--g-hl); color: var(--g-on-ink); box-shadow: 4px 4px 0 var(--fl-edge); text-align: center; white-space: nowrap; font: 400 clamp(1.25rem, 6.4cqw, 1.9rem)/1.05 var(--g-font-display); text-transform: uppercase; letter-spacing: .03em; transform: translate(-50%, -50%) rotate(-8deg); animation: gfleet-stamp 1.9s cubic-bezier(.2, .9, .3, 1.2) both; }
+.g-fleet .fl-stamp small { display: block; margin-top: 5px; font: 800 max(.72rem, .4em)/1 var(--g-font-body); letter-spacing: .06em; }
 .g-fleet .fl-stamp.is-bad { background: var(--g-bad); color: var(--g-on-ink); }
-.g-fleet .is-mini .fl-stamp { font-size: 1.05rem; padding: 4px 9px 5px; border-width: 2px; box-shadow: 2px 2px 0 var(--g-ink); }
+.g-fleet .is-mini .fl-stamp { font-size: .9rem; padding: 4px 8px 5px; border-width: 2px; box-shadow: 2px 2px 0 var(--fl-edge); }
 
 /* ── placement ── */
 .g-fleet .fl-place { display: grid; gap: 12px; justify-items: center; }
 .g-fleet .fl-main, .g-fleet .fl-aside { width: calc(var(--cell) * 8 + var(--gut)); max-width: 100%; }
 .g-fleet .fl-aside { padding-left: var(--gut); display: flex; flex-direction: column; gap: 12px; }
-.g-fleet .fl-hint { font-size: .84rem; color: var(--g-muted); padding-left: var(--gut); margin: -2px 0 8px; line-height: 1.35; }
+.g-fleet .fl-hint { font-size: .84rem; color: var(--g-muted); padding-left: var(--gut); margin: -1px 0 10px; line-height: 1.35; }
 .g-fleet .fl-hint b { color: var(--g-ink); }
 .g-fleet .is-edit .fl-ship { pointer-events: auto; cursor: grab; touch-action: none; -webkit-appearance: none; appearance: none; }
 .g-fleet .is-edit .fl-ship:focus-visible { outline: 3px solid var(--g-hl); outline-offset: 2px; }
@@ -297,62 +298,63 @@ const CSS = `
 .g-fleet .fl-preview.is-bad { border-color: var(--g-bad); background: color-mix(in srgb, var(--g-bad) 28%, transparent); }
 .g-fleet .fl-dock { display: flex; flex-wrap: wrap; gap: 10px 10px; min-height: var(--cell); }
 .g-fleet .fl-dock-ship, .g-fleet .fl-slot { position: relative; width: calc(var(--len) * var(--cell)); height: var(--cell); flex: none; }
-.g-fleet .fl-dock-ship { display: block; margin: 0; padding: 0; border: 0; background: none; color: inherit; touch-action: none; cursor: grab; filter: drop-shadow(2px 2px 0 var(--g-ink)); transition: transform .15s; -webkit-appearance: none; appearance: none; }
-.g-fleet .fl-dock-ship.is-sel { transform: translateY(-4px); filter: drop-shadow(3px 5px 0 var(--g-ink)); }
+.g-fleet .fl-dock-ship { display: block; margin: 0; padding: 0; border: 0; background: none; color: inherit; touch-action: none; cursor: grab; filter: drop-shadow(2px 2px 0 var(--fl-edge)); transition: transform .15s; -webkit-appearance: none; appearance: none; }
+.g-fleet .fl-dock-ship.is-sel { transform: translateY(-4px); filter: drop-shadow(3px 5px 0 var(--fl-edge)); }
 .g-fleet .fl-dock-ship.is-sel::after { content: ''; position: absolute; left: 12%; right: 12%; bottom: -9px; height: 4px; border-radius: 2px; background: var(--g-hl); box-shadow: 0 0 0 1.5px var(--g-ink); }
 .g-fleet .fl-dock-ship:focus-visible { outline: 3px solid var(--g-hl); outline-offset: 3px; }
 .g-fleet .fl-slot { border: 2px dashed var(--g-line); border-radius: 10px; }
-.g-fleet .fl-dock-done { width: 100%; min-height: var(--cell); display: grid; place-items: center; text-align: center; font: 800 .9rem/1.3 var(--g-font-display); color: var(--g-muted); border: 2px dashed var(--g-line); border-radius: var(--g-radius); padding: 8px; }
+.g-fleet .fl-dock-done { width: 100%; min-height: var(--cell); display: grid; place-items: center; text-align: center; font: 700 .9rem/1.3 var(--g-font-body); color: var(--g-muted); border: 2px dashed var(--g-line); border-radius: var(--g-radius); padding: 8px; }
 .g-fleet .fl-note { font-size: .84rem; font-weight: 800; color: var(--g-muted); }
 .g-fleet .fl-actions { display: flex; gap: 10px; }
 .g-fleet .fl-actions .gm-btn { flex: 1; min-height: 48px; }
 .g-fleet .fl-actions .gm-btn:disabled { opacity: .4; cursor: default; }
-.g-fleet .fl-ghost { position: absolute; z-index: 30; pointer-events: none; filter: drop-shadow(4px 5px 0 var(--g-ink)); transform: rotate(-2deg) scale(1.05); }
-.g-fleet .fl-wait .fl-note-card { padding: 12px 14px; border: 2px solid var(--g-ink); border-radius: var(--g-radius); background: var(--g-card); box-shadow: var(--g-shadow); text-align: center; display: flex; flex-direction: column; gap: 4px; }
-.g-fleet .fl-wait .fl-note-card b { font: 900 1.05rem/1.2 var(--g-font-display); }
+.g-fleet .fl-ghost { position: absolute; z-index: 30; pointer-events: none; filter: drop-shadow(4px 5px 0 var(--fl-edge)); transform: rotate(-2deg) scale(1.05); }
+.g-fleet .fl-wait .fl-note-card { padding: 12px 14px; border: 2px solid var(--g-ink); border-radius: var(--g-radius); background: var(--g-card); box-shadow: var(--g-shadow); text-align: center; display: flex; flex-direction: column; gap: 6px; }
+.g-fleet .fl-wait .fl-note-card b { font: 400 1rem/1.2 var(--g-font-display); }
 .g-fleet .fl-wait .fl-note-card span { color: var(--g-muted); font-size: .88rem; }
 
 /* ── battle layout: stacked on phones, side by side on wide screens ── */
-.g-fleet .fl-battle { display: grid; grid-template-columns: max-content minmax(0, 1fr); grid-template-areas: "target target" "log log" "home side"; gap: 12px 14px; width: calc(var(--cell) * 8 + var(--gut)); max-width: 100%; margin: 0 auto; align-items: start; }
-.g-fleet .fl-target { grid-area: target; position: relative; }
-.g-fleet .fl-log { grid-area: log; }
-.g-fleet .fl-home { grid-area: home; }
-.g-fleet .fl-side { grid-area: side; padding-top: 4px; }
-.g-fleet .fl-home .fl-head { padding-left: 12px; min-height: 0; margin-bottom: 5px; }
+.g-fleet .fl-battle { display: grid; grid-template-columns: max-content minmax(0, 1fr); grid-template-areas: "log log" "target target" "home side"; gap: 8px 14px; width: calc(var(--cell) * 8 + var(--gut)); max-width: 100%; margin: 0 auto; align-items: start; }
+.g-fleet .fl-battle .fl-target { grid-area: target; position: relative; }
+.g-fleet .fl-battle .fl-log { grid-area: log; }
+.g-fleet .fl-battle .fl-home { grid-area: home; }
+.g-fleet .fl-battle .fl-side { grid-area: side; }
+.g-fleet .fl-home .fl-head { padding-left: 12px; min-height: 0; margin-bottom: 2px; }
 .g-fleet .fl-wait { display: grid; gap: 14px; justify-items: center; }
 .g-fleet .fl-wait > * { width: calc(var(--cell) * 8 + var(--gut)); max-width: 100%; }
 @container (min-width: 600px) {
-  .g-fleet .fl-battle { --cell: min(54px, calc((58cqw - var(--gut)) / 8)); --mini: min(30px, calc((42cqw - 44px) / 8)); width: auto; grid-template-areas: "target home" "target side" "target log"; grid-template-rows: auto auto 1fr; gap: 14px 22px; justify-content: center; }
+  .g-fleet .fl-battle { --cell: min(54px, calc((58cqw - var(--gut)) / 8)); --mini: min(30px, calc((42cqw - 44px) / 8)); width: auto; grid-template-areas: "target log" "target home" "target side"; grid-template-rows: auto auto 1fr; gap: 14px 22px; justify-content: center; }
   .g-fleet .fl-log { align-self: start; }
+  .g-fleet .fl-target .fl-head { min-height: 30px; }
   .g-fleet .fl-place { --cell: min(54px, calc((60cqw - var(--gut)) / 8)); grid-template-columns: max-content minmax(0, 1fr); gap: 22px; align-items: center; justify-content: center; }
   .g-fleet .fl-place .fl-aside { width: auto; max-width: calc(var(--cell) * 5); padding-left: 0; }
 }
 
 /* ── motion ── */
-@keyframes fl-pop { 0% { transform: scale(2.2); opacity: 0; } 55% { transform: scale(.85); opacity: 1; } 100% { transform: none; } }
-@keyframes fl-bloom { 0% { transform: scale(0) rotate(-50deg); } 55% { transform: scale(1.4) rotate(10deg); } 80% { transform: scale(.92) rotate(-3deg); } 100% { transform: none; } }
-@keyframes fl-ripple { 0% { transform: scale(.3); opacity: .9; } 100% { transform: scale(1.7); opacity: 0; } }
-@keyframes fl-sink { 0% { transform: scale(1.3) rotate(-4deg); opacity: 0; } 25% { transform: scale(.94) rotate(1deg); opacity: 1; } 50% { transform: translateY(5%) rotate(-2.5deg); } 75% { transform: translateY(2%) rotate(1deg); } 100% { transform: none; } }
-@keyframes fl-founder { 0% { transform: none; } 35% { transform: translateY(6%) rotate(3deg); } 70% { transform: translateY(3%) rotate(-1.5deg); } 100% { transform: none; } }
-@keyframes fl-shake { 0%, 100% { transform: none; } 20% { transform: translate(-3px, 1px); } 40% { transform: translate(3px, -1px); } 60% { transform: translate(-2px, 0); } 80% { transform: translate(2px, 1px); } }
-@keyframes fl-stamp { 0% { transform: translate(-50%, -50%) scale(2.3) rotate(-16deg); opacity: 0; } 18% { transform: translate(-50%, -50%) scale(.94) rotate(-8deg); opacity: 1; } 26% { transform: translate(-50%, -50%) scale(1) rotate(-8deg); } 82% { opacity: 1; } 100% { transform: translate(-50%, -50%) scale(1) rotate(-8deg); opacity: 0; } }
-@keyframes fl-strike { 0% { transform: rotate(-12deg) scaleX(0); } 100% { transform: rotate(-12deg) scaleX(1); } }
-@keyframes fl-drop { 0% { transform: translateY(-14%) scale(1.08); } 60% { transform: translateY(2%) scale(.98); } 100% { transform: none; } }
-@keyframes fl-pulse { 0%, 100% { transform: none; } 50% { transform: scale(1.18); } }
-@keyframes fl-reveal { 0% { opacity: 0; transform: scale(.9); } 100% { opacity: 1; transform: none; } }
-.g-fleet .fl-mark.is-new { animation: fl-pop .38s cubic-bezier(.3, 1.4, .5, 1) both; animation-delay: var(--d, 0ms); }
+@keyframes gfleet-pop { 0% { transform: scale(2.2); opacity: 0; } 55% { transform: scale(.85); opacity: 1; } 100% { transform: none; } }
+@keyframes gfleet-bloom { 0% { transform: scale(0) rotate(-50deg); } 55% { transform: scale(1.4) rotate(10deg); } 80% { transform: scale(.92) rotate(-3deg); } 100% { transform: none; } }
+@keyframes gfleet-ripple { 0% { transform: scale(.3); opacity: .9; } 100% { transform: scale(1.7); opacity: 0; } }
+@keyframes gfleet-sink { 0% { transform: scale(1.3) rotate(-4deg); opacity: 0; } 25% { transform: scale(.94) rotate(1deg); opacity: 1; } 50% { transform: translateY(5%) rotate(-2.5deg); } 75% { transform: translateY(2%) rotate(1deg); } 100% { transform: none; } }
+@keyframes gfleet-founder { 0% { transform: none; } 35% { transform: translateY(6%) rotate(3deg); } 70% { transform: translateY(3%) rotate(-1.5deg); } 100% { transform: none; } }
+@keyframes gfleet-shake { 0%, 100% { transform: none; } 20% { transform: translate(-3px, 1px); } 40% { transform: translate(3px, -1px); } 60% { transform: translate(-2px, 0); } 80% { transform: translate(2px, 1px); } }
+@keyframes gfleet-stamp { 0% { transform: translate(-50%, -50%) scale(2.3) rotate(-16deg); opacity: 0; } 18% { transform: translate(-50%, -50%) scale(.94) rotate(-8deg); opacity: 1; } 26% { transform: translate(-50%, -50%) scale(1) rotate(-8deg); } 82% { opacity: 1; } 100% { transform: translate(-50%, -50%) scale(1) rotate(-8deg); opacity: 0; } }
+@keyframes gfleet-strike { 0% { transform: rotate(-12deg) scaleX(0); } 100% { transform: rotate(-12deg) scaleX(1); } }
+@keyframes gfleet-drop { 0% { transform: translateY(-14%) scale(1.08); } 60% { transform: translateY(2%) scale(.98); } 100% { transform: none; } }
+@keyframes gfleet-pulse { 0%, 100% { transform: none; } 50% { transform: scale(1.18); } }
+@keyframes gfleet-reveal { 0% { opacity: 0; transform: scale(.9); } 100% { opacity: 1; transform: none; } }
+.g-fleet .fl-mark.is-new { animation: gfleet-pop .38s cubic-bezier(.3, 1.4, .5, 1) both; animation-delay: var(--d, 0ms); }
 .g-fleet .fl-mark.is-new.is-hit { animation: none; }
-.g-fleet .fl-mark.is-new.is-hit svg { animation: fl-bloom .55s cubic-bezier(.3, 1.5, .5, 1) both; animation-delay: var(--d, 0ms); }
-.g-fleet .fl-mark.is-new .fl-ripple { transform-box: fill-box; transform-origin: center; animation: fl-ripple .75s ease-out both; animation-delay: calc(var(--d, 0ms) + 120ms); }
+.g-fleet .fl-mark.is-new.is-hit svg { animation: gfleet-bloom .55s cubic-bezier(.3, 1.5, .5, 1) both; animation-delay: var(--d, 0ms); }
+.g-fleet .fl-mark.is-new .fl-ripple { transform-box: fill-box; transform-origin: center; animation: gfleet-ripple .75s ease-out both; animation-delay: calc(var(--d, 0ms) + 120ms); }
 .g-fleet .fl-mark.is-new.is-x { animation-duration: .3s; }
-.g-fleet .fl-ship.is-sinking { animation: fl-sink 1.1s ease-out both; animation-delay: var(--d, 0ms); }
-.g-fleet .fl-ship.is-foundering { animation: fl-founder .9s ease-in-out both; animation-delay: var(--d, 0ms); }
-.g-fleet .fl-ship.is-ghost { animation: fl-reveal .5s ease-out both; animation-delay: calc(400ms + var(--k, 0) * 140ms); }
-.g-fleet .fl-chart.is-shake .fl-grid { animation: fl-shake .38s ease-out; animation-delay: var(--d, 0ms); }
-.g-fleet .fl-ro.is-new::after { animation: fl-strike .45s ease-out both; animation-delay: var(--d, 0ms); }
-.g-fleet .fl-ship.is-drop { animation: fl-drop .34s cubic-bezier(.3, 1.5, .5, 1) both; animation-delay: calc(var(--k, 0) * 45ms); }
-.g-fleet .fl-hl.is-last { animation: fl-pulse .9s ease-in-out 3; animation-delay: var(--d, 0ms); }
-.g-fleet .is-shake-x { animation: fl-shake .38s ease-out; }
+.g-fleet .fl-ship.is-sinking { animation: gfleet-sink 1.1s ease-out both; animation-delay: var(--d, 0ms); }
+.g-fleet .fl-ship.is-foundering { animation: gfleet-founder .9s ease-in-out both; animation-delay: var(--d, 0ms); }
+.g-fleet .fl-ship.is-ghost { animation: gfleet-reveal .5s ease-out both; animation-delay: calc(400ms + var(--k, 0) * 140ms); }
+.g-fleet .fl-chart.is-shake .fl-grid { animation: gfleet-shake .38s ease-out; animation-delay: var(--d, 0ms); }
+.g-fleet .fl-ro.is-new::after { animation: gfleet-strike .45s ease-out both; animation-delay: var(--d, 0ms); }
+.g-fleet .fl-ship.is-drop { animation: gfleet-drop .34s cubic-bezier(.3, 1.5, .5, 1) both; animation-delay: calc(var(--k, 0) * 45ms); }
+.g-fleet .fl-hl.is-last { animation: gfleet-pulse .9s ease-in-out 3; animation-delay: var(--d, 0ms); }
+.g-fleet .is-shake-x { animation: gfleet-shake .38s ease-out; }
 @media (prefers-reduced-motion: reduce) {
   .g-fleet *, .g-fleet *::before, .g-fleet *::after { animation: none !important; transition: none !important; }
   .g-fleet .fl-ghost { transform: none; }
@@ -587,37 +589,34 @@ registerGame({
       const left = SIZES.length - sunkLens.length;
 
       // the log: what happened since you last looked
-      const tok = (x) => `<span class="fl-tok ${x.sunk >= 0 ? 'is-sunk' : x.hit ? 'is-hit' : 'is-miss'}">${coord(x.r, x.c)} ${x.sunk >= 0 ? 'sunk' : x.hit ? 'hit' : 'miss'}</span>`;
-      const volleyLine = (run, by) => {
-        if (!run.length) return '';
-        const list = run.map((i) => shots[i]);
-        const sank = list.filter((x) => x.sunk >= 0).map((x) => s.fleets[foeOf(by)][x.sunk].len);
-        const who = by === v ? 'You' : esc(nm(by));
-        const after = sank.length ? ` <b>${by === v ? 'Sank their' : 'Sank your'} ${sank.map((l) => `${l}-ship`).join(' and ')}.</b>` : '';
-        return `<p><b class="fl-who-${by}">${who}</b> fired ${list.map(tok).join(' ')}${after}</p>`;
+      const tok = (x) => {
+        const what = x.sunk >= 0 ? `sank ${x.by === v ? 'their' : 'your'} ${s.fleets[foeOf(x.by)][x.sunk].len}-ship` : x.hit ? 'hit' : 'miss';
+        return `<span class="fl-tok ${x.sunk >= 0 ? 'is-sunk' : x.hit ? 'is-hit' : 'is-miss'}">${coord(x.r, x.c)} ${what}</span>`;
       };
-      const myRun = lastRunBy(shots, v);
+      const volleyLine = (run, by) => {
+        const list = run.map((i) => shots[i]);
+        const tail = by === v && !over && myTurn && list[list.length - 1].hit ? ' <b>Fire again.</b>' : '';
+        return `<p><b class="fl-who-${by}">${by === v ? 'You' : esc(nm(by))}</b> fired ${list.map(tok).join(' ')}${tail}</p>`;
+      };
+      // one line: the latest volley (theirs when you come back to it; yours while you keep firing)
       const lines = [];
       if (!shots.length) lines.push(`<p><b>Battle stations.</b> ${s.first === v ? `You fire first: pick a square in ${esc(nm(foe))}’s waters.` : `${esc(nm(foe))} fires first.`}</p>`);
       else {
-        // each side's latest volley, in the order they happened (newest last)
-        const runs = [[foeRun, foe], [myRun, v]].filter(([r]) => r.length).sort((x, y) => x[0][0] - y[0][0]);
-        for (const [r, by] of runs) lines.push(volleyLine(r, by));
+        const run = lastRun(shots);
+        lines.push(volleyLine(run, shots[run[0]].by));
       }
 
       // turn label
       const lastShot = shots[shots.length - 1];
       const again = myTurn && lastShot && lastShot.by === v && lastShot.hit;
-      let pill;
+      let pill = '';
       let status;
       if (over) {
         pill = s.winner === v ? 'All sunk' : 'Fleet lost';
         status = `${nm(s.winner)} sank the whole fleet`;
       } else if (myTurn) {
-        pill = again ? 'Fire again' : 'Your shot';
-        status = c.mode === 'local' ? `${nm(v)}: ${again ? 'hit! Fire again' : 'your shot'}` : again ? 'Hit! Fire again' : 'Your shot';
+        status = c.mode === 'local' ? (again ? `Hit! ${nm(v)} fires again` : `${nm(v)}’s shot`) : again ? 'Hit! Fire again' : 'Your shot';
       } else {
-        pill = `${nm(foe)}’s turn`;
         status = `${nm(foe)} is taking aim…`;
       }
       api.setStatus(status);
@@ -625,7 +624,7 @@ registerGame({
       root.className = 'g-fleet';
       root.innerHTML = `<div class="fl-battle">
         <section class="fl-target${myTurn ? ' is-live' : ''}" aria-label="${esc(nm(foe))}’s waters">
-          <header class="fl-head"><h2 class="fl-h p-${foe}"><span class="fl-sw"></span>${esc(nm(foe))}’s waters</h2><span class="fl-pill${myTurn || over ? '' : ' is-quiet'}">${esc(pill)}</span></header>
+          <header class="fl-head"><h2 class="fl-h p-${foe}"><span class="fl-sw"></span>${esc(nm(foe))}’s waters</h2>${pill ? `<span class="fl-pill">${esc(pill)}</span>` : ''}</header>
           ${chartHTML({ cls: 'fl-target-chart', cells: tCells, layer: tLayer })}
         </section>
         <div class="fl-log" aria-live="polite">${lines.join('')}</div>
@@ -636,7 +635,7 @@ registerGame({
         <section class="fl-side" aria-label="${esc(nm(foe))}’s fleet">
           <header class="fl-head"><h2 class="fl-h p-${foe}"><span class="fl-sw"></span>Their fleet</h2></header>
           <div class="fl-roster">${roster}</div>
-          <p class="fl-count">${over && left === 0 ? 'All five sunk' : `${plural(left, 'ship', 'ships')} afloat`} · ${plural(afloat(s, v), 'ship', 'ships')} of yours</p>
+          <p class="fl-count">${left === 0 ? 'All five sunk' : `${left} of 5 still afloat`}</p>
         </section>
       </div>`;
 

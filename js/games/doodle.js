@@ -174,8 +174,8 @@ function drawingError(str) {
 // ── rules ────────────────────────────────────────────────────────────
 const other = (w) => (w === 'a' ? 'b' : 'a');
 const RATINGS = [
-  [18, 'Mind readers'], [15, 'Gallery-worthy'], [11, 'Fridge-door material'],
-  [6, 'Abstract expressionists'], [1, 'Modern art, probably'], [0, 'Nobody knows what that was'],
+  [18, 'Mind readers'], [15, 'Gallery-worthy'], [11, 'Fridge-door art'],
+  [6, 'Abstract art'], [1, 'Modern art, probably'], [0, 'Pure mystery'],
 ];
 const ratingOf = (n) => RATINGS.find(([min]) => n >= min)[1];
 
@@ -436,7 +436,7 @@ registerGame({
     .g-doodle .gm-btn:disabled { opacity: 0.4; }
 
     /* guessing */
-    .g-doodle .dd-by { font-weight: 800; font-size: 0.95rem; flex: 1; min-width: 0; }
+    .g-doodle .dd-by { font-weight: 800; font-size: 0.95rem; flex: 1; min-width: 0; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .g-doodle .dd-blanks { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 12px; }
     .g-doodle .dd-blanks span { display: inline-flex; gap: 3px; }
     .g-doodle .dd-blanks i { width: 13px; height: 3px; border-radius: 2px; background: var(--g-ink); margin-top: 12px; }
@@ -460,7 +460,7 @@ registerGame({
     .g-doodle .dd-giveup.armed { color: var(--g-bad); }
 
     /* stamps + results */
-    .g-doodle .dd-stamp { position: absolute; left: 50%; top: 50%; padding: 6px 14px; border: 4px solid currentColor; border-radius: 8px; background: color-mix(in srgb, var(--g-card) 82%, transparent); font-family: var(--g-font-display); font-weight: 900; font-size: 1.7rem; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; transform: translate(-50%, -50%) rotate(-9deg); pointer-events: none; }
+    .g-doodle .dd-stamp { position: absolute; left: 50%; top: 50%; padding: 6px 14px; border: 4px solid currentColor; border-radius: 8px; background: color-mix(in srgb, var(--g-card) 82%, transparent); font-family: var(--g-font-display); font-weight: 900; font-size: 2.3rem; line-height: 1.05; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; transform: translate(-50%, -50%) rotate(-9deg); pointer-events: none; }
     .g-doodle .dd-stamp.good { color: var(--g-good); } .g-doodle .dd-stamp.bad { color: var(--g-bad); }
     .g-doodle .dd-stamp.anim { animation: dd-stamp 0.42s cubic-bezier(.2,1.6,.4,1) both; }
     .g-doodle .dd-answer { text-align: center; display: flex; flex-direction: column; gap: 2px; }
@@ -547,8 +547,9 @@ registerGame({
     let ctx = null;
     let scr = null;
     let lbClose = null;
+    let lbRedraw = null;
 
-    const top = (s, right = '') => `<div class="dd-top"><span class="dd-round">Round ${Math.min(s.r + 1, ROUNDS)} <i>of ${ROUNDS}</i></span>${right}<span class="dd-team">Team <b>${s.score}</b></span></div>`;
+    const top = (s, right = '') => `<div class="dd-top"><span class="dd-round">Round ${Math.min(s.r + 1, ROUNDS)}<i>/${ROUNDS}</i></span>${right}<span class="dd-team">Team <b>${s.score}</b></span></div>`;
     const blanks = (text) => `<div class="dd-blanks" aria-label="${text.replace(/[^a-z0-9 ]/gi, '').split(' ').filter(Boolean).map((w) => w.length).join(', ')} letters">${text.split(/\s+/).map((w) => `<span>${'<i></i>'.repeat(w.replace(/[^a-z0-9]/gi, '').length)}</span>`).join('')}</div>`;
     const promptOf = (R) => PROMPTS[R.choices[R.pick]];
 
@@ -775,7 +776,7 @@ registerGame({
       const prev = s.rounds[r - 1];
       const recap = prev && prev.drawer === ctx.viewer && ctx.mode === 'local'
         ? `<p class="dd-note">Last round ${esc(api.name(other(ctx.viewer)))} ${prev.points ? `got your ${esc(PROMPTS[prev.choices[prev.pick]].show)} (+${prev.points})` : `missed your ${esc(PROMPTS[prev.choices[prev.pick]].show)}`}.</p>` : '';
-      node.innerHTML = `${top(s, `<span class="dd-by">${nm(R.drawer)} drew this</span>`)}
+      node.innerHTML = `${top(s, `<span class="dd-by">by ${nm(R.drawer)}</span>`)}
         <div class="dd-ph"></div>
         ${blanks(prompt.show)}
         <div class="dd-tries"><span class="dd-pips" aria-label="Guesses used"></span><span class="dd-chips"></span></div>
@@ -890,8 +891,9 @@ registerGame({
       const s = ctx.state; const r = s.r; const R = s.rounds[r];
       const strokes = decode(R.strokes) || [];
       const guesser = other(R.drawer);
-      node.innerHTML = `${top(s, `<span class="dd-by">You drew <b>${esc(cap(promptOf(R).show))}</b></span>`)}
+      node.innerHTML = `${top(s)}
         <div class="dd-ph"></div>
+        <div class="dd-answer"><small>You drew</small><b>${esc(cap(promptOf(R).show))}</b></div>
         <div class="dd-live" aria-live="polite"></div>`;
       const p = makePaper(node.querySelector('.dd-ph'));
       let seen = R.guesses.length;
@@ -933,10 +935,12 @@ registerGame({
       if (reduced()) { p.paper.all(strokes); setBtn(); } else play();
       lb.querySelector('[data-a="close"]').addEventListener('click', closeLightbox);
       lbClose = () => { if (pl) pl.stop(); };
+      lbRedraw = () => { if (pl && !pl.done) pl.redraw(); else p.paper.all(strokes); };
       api.sfx('pop');
     }
     function closeLightbox() {
       if (lbClose) { lbClose(); lbClose = null; }
+      lbRedraw = null;
       lb.hidden = true; lb.innerHTML = '';
     }
     lb.addEventListener('click', (e) => { if (e.target === lb) closeLightbox(); });
@@ -1002,7 +1006,11 @@ registerGame({
         const f = e.target.closest('.dd-frame');
         if (f) openLightbox(Number(f.dataset.i));
       });
-      return { layout, destroy() { timers.forEach(clearTimeout); if (mo) mo.disconnect(); players.forEach((pl) => pl && pl.stop()); } };
+      const redraw = () => papers.forEach((pp, i) => {
+        if (waiting[i]) return;
+        if (players[i] && !players[i].done) players[i].redraw(); else pp.all(drawings[i]);
+      });
+      return { layout, redraw, destroy() { timers.forEach(clearTimeout); if (mo) mo.disconnect(); players.forEach((pl) => pl && pl.stop()); } };
     }
 
     // ── routing ──
@@ -1049,7 +1057,7 @@ registerGame({
       requestAnimationFrame(() => {
         toks = api.tokens();
         if (scr && scr.redraw) scr.redraw();
-        if (scr && scr.key === 'gallery') { const k = scr.key; scr.key = ''; setScreen(k, galleryScreen); }
+        if (lbRedraw) lbRedraw();
       });
     };
     if (mq && mq.addEventListener) mq.addEventListener('change', onTheme);

@@ -473,8 +473,8 @@ registerGame({
 
   css: `
     .g-tower { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 2px 0 6px; }
-    .g-tower .gt-view { position: relative; flex: 1; min-height: 340px; max-height: 980px; border: 2px solid var(--g-ink); border-radius: var(--g-radius, 14px); box-shadow: 4px 4px 0 var(--g-ink); background: var(--g-bg); overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; cursor: pointer; outline: none; }
-    .g-tower .gt-view:focus-visible { box-shadow: 4px 4px 0 var(--g-ink), 0 0 0 4px var(--g-hl); }
+    .g-tower .gt-view { position: relative; flex: 1; min-height: 340px; max-height: 980px; border: 2px solid var(--g-ink); border-radius: var(--g-radius, 14px); box-shadow: var(--g-shadow-lg, 4px 4px 0 var(--g-ink)); background: var(--g-bg); overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; cursor: pointer; outline: none; }
+    .g-tower .gt-view:focus-visible { outline: 3px solid var(--g-hl); outline-offset: -5px; }
     .g-tower .gt-view[data-phase="wait"], .g-tower .gt-view[data-phase="over"], .g-tower .gt-view[data-phase="load"] { cursor: default; }
     .gm.is-immersive .g-tower { padding: 0; }
     .gm.is-immersive .g-tower .gt-view { border: 0; border-radius: 0; box-shadow: none; max-height: none; }
@@ -491,7 +491,7 @@ registerGame({
     .g-tower .gt-streak { display: inline-flex; align-items: center; gap: 4px; font-size: 0.68rem; font-weight: 900; letter-spacing: 0.1em; text-transform: uppercase; color: var(--g-muted); }
     .g-tower .gt-streak i { width: 9px; height: 9px; border: 2px solid var(--g-ink); background: var(--g-bg); transform: rotate(45deg); margin: 0 1px; }
     .g-tower .gt-streak i.on { background: var(--g-hl); }
-    .g-tower .gt-stamp { position: absolute; top: 27%; left: 50%; padding: 7px 16px; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-hl); color: var(--g-ink); box-shadow: 3px 3px 0 var(--g-ink); font: 900 1.3rem/1.1 var(--g-font-display); letter-spacing: 0.05em; text-transform: uppercase; white-space: nowrap; pointer-events: none; opacity: 0; transform: translate(-50%, 0) rotate(-5deg); }
+    .g-tower .gt-stamp { position: absolute; top: 27%; left: 50%; padding: 7px 16px; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-hl); color: var(--g-ink); box-shadow: var(--g-shadow); font: 900 1.3rem/1.1 var(--g-font-display); letter-spacing: 0.05em; text-transform: uppercase; white-space: nowrap; pointer-events: none; opacity: 0; transform: translate(-50%, 0) rotate(-5deg); }
     .g-tower .gt-stamp.show { animation: gt-stamp 1150ms cubic-bezier(.2, .9, .3, 1.25) both; }
     @keyframes gt-stamp {
       0% { opacity: 0; transform: translate(-50%, 10px) rotate(-5deg) scale(.55); }
@@ -499,7 +499,7 @@ registerGame({
       24%, 78% { opacity: 1; transform: translate(-50%, 0) rotate(-5deg) scale(1); }
       100% { opacity: 0; transform: translate(-50%, -12px) rotate(-5deg) scale(.96); }
     }
-    .g-tower .gt-turn { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); padding: 11px 18px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); box-shadow: 3px 3px 0 var(--g-ink); font-weight: 900; font-size: 0.95rem; white-space: nowrap; pointer-events: none; }
+    .g-tower .gt-turn { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); padding: 11px 18px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); box-shadow: var(--g-shadow); font-weight: 900; font-size: 0.95rem; white-space: nowrap; pointer-events: none; }
     .g-tower .gt-turn.p-a { background: var(--p-a); color: var(--g-on-ink); }
     .g-tower .gt-turn.p-b { background: var(--p-b); color: var(--g-on-ink); }
     .g-tower .gt-turn.is-go { animation: gt-bob 1.5s ease-in-out infinite; }
@@ -540,6 +540,7 @@ registerGame({
     $('.gt-t-a .gt-n').textContent = api.name('a');
     $('.gt-t-b .gt-n').textContent = api.name('b');
     const T = () => (typeof window !== 'undefined' && window.__towerTest) || null; // test hook only
+    const log = (ev) => { const t = T(); if (t) (t.log || (t.log = [])).push(ev); };
     const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
     const coarse = () => matchMedia('(pointer: coarse)').matches;
 
@@ -721,10 +722,12 @@ registerGame({
       const y0 = camYFor(0);
       model.cam.y = goal.y = y0;
       phase('intro');
+      log('intro');
       await tween(Math.min(1800, 550 + top * 55), (k) => { model.cam.y = goal.y = y0 + (y1 - y0) * k; }, easeIO);
     }
     async function slideIn(drop) {
       phase('replay');
+      log('replay');
       const lv = drop.level;
       const prev = model.blocks[lv - 1];
       const A = ampOf(drop.axis === 'x' ? prev.w : prev.d);
@@ -748,6 +751,7 @@ registerGame({
       model.slider = null;
       slider = null;
       placeAt(e, prev, drop.axis, drop.o);
+      log(drop.miss ? 'miss' : drop.perfect ? 'perfect' : 'drop');
       if (drop.miss) {
         api.sfx('bad');
         api.haptic(40);
@@ -790,6 +794,7 @@ registerGame({
     }
     async function finale() {
       stopSlider();
+      log('finale');
       phase('over');
       const n = model.blocks.length - 1;
       const top = n * BH;
@@ -986,6 +991,7 @@ registerGame({
         glLost = false;
         model.staticDirty = true;
         wrap.dataset.gl = 'ok';
+        log('restored');
         lastT = 0;
         if (!paused) view.render(model);
         kick();

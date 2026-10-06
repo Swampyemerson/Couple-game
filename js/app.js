@@ -173,9 +173,16 @@ function topbar(title, { backBtn = true, right = '' } = {}) {
   </header>`;
 }
 
+const TAB_ICONS = {
+  home: '<path class="f" d="M4.5 10.4 12 4.2l7.5 6.2v8.4a1.2 1.2 0 0 1-1.2 1.2H14.2v-5.2h-4.4V20H5.7a1.2 1.2 0 0 1-1.2-1.2z"/>',
+  play: '<path d="M13.5 15.6h2.2l3.3 2.9v-2.9h.2a1.8 1.8 0 0 0 1.8-1.8V9.6a1.8 1.8 0 0 0-1.8-1.8h-1.4"/><path class="f" d="M3 5.8A1.8 1.8 0 0 1 4.8 4h9.6a1.8 1.8 0 0 1 1.8 1.8v6.4a1.8 1.8 0 0 1-1.8 1.8H9.2L5.5 17v-3h-.7A1.8 1.8 0 0 1 3 12.2z"/>',
+  games: '<rect class="f" x="4.6" y="4.6" width="14.8" height="14.8" rx="3.4" transform="rotate(-9 12 12)"/><circle class="d" cx="8.6" cy="9" r="1.35"/><circle class="d" cx="12" cy="12" r="1.35"/><circle class="d" cx="15.4" cy="15" r="1.35"/>',
+  spicy: '<path class="f" d="M12.4 2.8c.5 3.4 5.1 5.3 5.1 10.6a5.5 5.5 0 0 1-11 0c0-2.6 1.2-4.2 2.7-5.3.2 1.7 1 2.7 2.1 3.1-.5-3.1-.2-6.2 1.1-8.4z"/>',
+  us: '<path class="f" d="M12 7.4a5.5 5.5 0 0 1 0 9.2 5.5 5.5 0 0 1 0-9.2z"/><circle cx="9" cy="12" r="5.5"/><circle cx="15" cy="12" r="5.5"/>',
+};
 function tabbar() {
-  const t = (id, icon, label, badge = 0) => `<button class="tab ${ui.tab === id ? 'on' : ''}" data-act="tab" data-tab="${id}"><span>${icon}</span>${label}${badge ? `<i class="tab-badge">${badge}</i>` : ''}</button>`;
-  return `<nav class="tabbar">${t('home', '🏠', 'Home')}${t('play', '💬', 'Questions')}${t('games', '🎲', 'Games', gamesWaitingCount())}${t('spicy', '🔥', 'Spicy')}${t('us', '💞', 'Us')}</nav>`;
+  const t = (id, label, badge = 0) => `<button class="tab ${ui.tab === id ? 'on' : ''}" data-act="tab" data-tab="${id}"><svg class="tab-ico" viewBox="0 0 24 24" aria-hidden="true">${TAB_ICONS[id]}</svg>${label}${badge ? `<i class="tab-badge">${badge}</i>` : ''}</button>`;
+  return `<nav class="tabbar">${t('home', 'Home')}${t('play', 'Questions')}${t('games', 'Games', gamesWaitingCount())}${t('spicy', 'Spicy')}${t('us', 'Us')}</nav>`;
 }
 
 // Games run in their own overlay (#game-root); this just starts the engine once we know who's here.

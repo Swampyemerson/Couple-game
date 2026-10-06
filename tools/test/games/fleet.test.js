@@ -21,6 +21,26 @@ const posStyle = (s) => `--r:${s.r};--c:${s.c};--w:${s.dir === 'h' ? s.len : 1};
 const sameFleet = (x, y) => JSON.stringify(x) === JSON.stringify(y);
 const LETTERS = 'ABCDEFGH';
 
+// The harness blocks Google Fonts. If local copies of the app's fonts are around (npm
+// @fontsource/rammetto-one + @fontsource/schibsted-grotesk unpacked into FONTS/r and FONTS/s),
+// load them so the screenshots show real text widths. Optional: the test passes without them.
+const FONTS = process.env.FONTS || path.join(SHOTS, '..', 'fonts');
+async function realFonts(h) {
+  const r = path.join(FONTS, 'r/package/files');
+  const s = path.join(FONTS, 's/package/files');
+  if (!fs.existsSync(r) || !fs.existsSync(s)) return false;
+  const files = { rammetto: path.join(r, 'rammetto-one-latin-400-normal.woff2') };
+  for (const w of [400, 700, 800, 900]) files[`schibsted-${w}`] = path.join(s, `schibsted-grotesk-latin-${w}-normal.woff2`);
+  const faces = `@font-face{font-family:'Rammetto One';src:url(https://fonts.gstatic.com/local/rammetto) format('woff2');font-weight:400}`
+    + [400, 700, 800, 900].map((w) => `@font-face{font-family:'Schibsted Grotesk';src:url(https://fonts.gstatic.com/local/schibsted-${w}) format('woff2');font-weight:${w}}`).join('');
+  for (const pg of [h.a, h.b]) {
+    await pg.route(/fonts\.gstatic\.com\/local\//, (rt) => rt.fulfill({ path: files[rt.request().url().split('/local/')[1]], contentType: 'font/woff2' }));
+    await pg.addStyleTag({ content: faces });
+  }
+  await h.a.evaluate(() => document.fonts.ready);
+  return true;
+}
+
 // ── (c) rules, straight from the module (same code both phones replay) ──
 async function rulesTests() {
   const core = await import(pathToFileURL(path.join(ROOT, 'js/games/core.js')).href);
@@ -185,11 +205,14 @@ async function fire(pg, r, c, how = 'click') {
   if (how === 'tap') await pg.tap(sel); else await pg.click(sel);
 }
 
+/** Screenshots at CSS scale. Default 390×844; opts.width for other sizes (then back to `base`). */
 async function shotsAt(h, pages, name, opts = {}) {
   for (const [w, pg] of Object.entries(pages)) {
-    if (opts.width) await pg.setViewportSize({ width: opts.width, height: opts.height || 780 });
-    await h.shot(pg, path.join(SHOTS, `${name}-${w}${opts.width ? '-' + opts.width : ''}.png`), opts.full ? { fullPage: true } : {});
-    if (opts.width) await pg.setViewportSize({ width: 390, height: 844 });
+    const base = pg.viewportSize();
+    await pg.setViewportSize({ width: opts.width || 390, height: opts.height || 844 });
+    await pg.waitForTimeout(60);
+    await h.shot(pg, path.join(SHOTS, `${name}-${w}${opts.width ? '-' + opts.width : ''}.png`), { scale: 'css', ...(opts.full ? { fullPage: true } : {}) });
+    await pg.setViewportSize(base);
   }
 }
 
@@ -210,6 +233,9 @@ async function onlineGame(h, { scheme = 'light', drag = true } = {}) {
   await waitSynced(h, id, 1);
   await b.waitForSelector('.g-fleet .fl-wait');
   assert(/Waiting for Emerson/.test(await b.textContent('.g-fleet')), `[${scheme}] Sydney waits for Emerson`);
+  const waitShips = await b.$$eval('.g-fleet .fl-wait .fl-ship', (xs) => xs.filter((x) => x.getBoundingClientRect().width > 10).length);
+  assert(waitShips === 5, `[${scheme}] Sydney's waiting screen shows her own fleet`);
+  if (scheme === 'light') await shotsAt(h, { b }, `${scheme}-waiting`);
   // Emerson: place by hand
   await a.waitForSelector('.g-fleet .fl-note');
   assert(/Sydney is ready/.test(await a.textContent('.g-fleet .fl-note')), `[${scheme}] Emerson sees Sydney is ready`);
@@ -241,7 +267,7 @@ async function onlineGame(h, { scheme = 'light', drag = true } = {}) {
     await dragMouse(a, 3, 0, 1);
     assert((await dockShips(a)).includes(3) && (await placedShips(a)).length === 3, `[${scheme}] dropping onto another ship is refused`);
     await shotsAt(h, { a }, `${scheme}-placement`);
-    await shotsAt(h, { a }, `${scheme}-placement`, { width: 360, height: 780 });
+    await shotsAt(h, { a }, `${scheme}-placement`, { width: 360, height: 740 });
     // tap the remaining two into place
     await a.tap('.g-fleet .is-edit .fl-cell[data-r="7"][data-c="6"]');
     await a.tap('.g-fleet .is-edit .fl-cell[data-r="5"][data-c="6"]');
@@ -306,7 +332,7 @@ async function onlineGame(h, { scheme = 'light', drag = true } = {}) {
       midShot = true;
       await h.wait(700);
       await shotsAt(h, pages, `${scheme}-battle`);
-      await shotsAt(h, pages, `${scheme}-battle`, { width: 360, height: 780 });
+      await shotsAt(h, pages, `${scheme}-battle`, { width: 360, height: 740 });
     }
   }
   const [ea, eb] = await waitSynced(h, id, total);
@@ -325,7 +351,7 @@ async function onlineGame(h, { scheme = 'light', drag = true } = {}) {
   await b.click('#game-root [data-g="end-look"]');
   await h.wait(1200);
   await shotsAt(h, pages, `${scheme}-final-board`);
-  await shotsAt(h, pages, `${scheme}-final-board`, { width: 360, height: 780 });
+  await shotsAt(h, pages, `${scheme}-final-board`, { width: 360, height: 740 });
   return { id, winner: ea.result.winner };
 }
 
@@ -346,6 +372,7 @@ async function localGame(h) {
   };
   let e = await h.engine(pg, id);
   const first = e.first;
+  await shotsAt(h, { a: pg }, 'local-curtain');
   await atCurtain('before the first player places');
   assert(await pg.$eval('.g-fleet', (x) => x.dataset.viewer) === first, 'first player places first');
   await pg.click('.g-fleet [data-fl="shuffle"]');
@@ -360,6 +387,9 @@ async function localGame(h) {
   e = await h.engine(pg, id);
   assert(e.state.phase === 'battle', 'battle begins after both fleets are in');
   const pattern = { a: 2, b: 2 };
+  await pg.emulateMedia({ reducedMotion: 'reduce' });
+  let motionChecked = false;
+  let localShot = false;
   for (let n = 0; n < 200; n++) {
     e = await h.engine(pg, id);
     if (e.over) break;
@@ -369,6 +399,13 @@ async function localGame(h) {
     const [r, c] = nextShot(e.state, w, pattern);
     await fire(pg, r, c, 'tap');
     await h.wait(40);
+    if (!motionChecked && !(await curtainUp())) {
+      motionChecked = true;
+      const anim = await pg.$eval('.g-fleet .fl-mark.is-new', (m) => getComputedStyle(m.querySelector('svg')).animationName + '|' + getComputedStyle(m).animationName);
+      assert(anim === 'none|none', 'reduced motion: new shots appear without animation');
+      await pg.emulateMedia({ reducedMotion: 'no-preference' });
+    }
+    if (n >= 14 && !localShot && !(await curtainUp())) { localShot = true; await h.wait(400); await shotsAt(h, { a: pg }, 'local-battle'); }
   }
   e = await h.engine(pg, id);
   assert(e.over && (e.result.winner === 'a' || e.result.winner === 'b'), `same-phone game ends (${e.result.winner} wins)`);
@@ -385,6 +422,7 @@ async function laptop() {
   const h = await launch({ port: 8822, only: ['fleet'], device: 'Desktop Chrome' });
   const { a, b } = h;
   try {
+    await realFonts(h);
     await a.setViewportSize({ width: 1280, height: 860 });
     await b.setViewportSize({ width: 1280, height: 860 });
     const id = await h.newOnlineGame(a, 'fleet');
@@ -407,7 +445,7 @@ async function laptop() {
     ps = await placedShips(a);
     assert(ps[0].style === posStyle({ r: 1, c: 2, len: 4, dir: 'h' }), '[laptop] R turns the last placed ship');
     await a.click('.g-fleet [data-fl="shuffle"]');
-    await shotsAt(h, { a }, 'laptop-placement');
+    await shotsAt(h, { a }, 'laptop-placement', { width: 1280, height: 860 });
     await a.click('.g-fleet [data-fl="ready"]');
     await waitSynced(h, id, 2);
     await h.wait(200);
@@ -420,26 +458,35 @@ async function laptop() {
       await waitSynced(h, id, 3);
       shooter = a;
     }
-    const before = (await h.engine(a, id)).state.shots.length;
+    const st0 = (await h.engine(a, id)).state;
+    const before = st0.shots.length;
+    const [tr, tc] = nextShot(st0, 'a', { a: 99, b: 0 }); // one of Sydney's ship squares
     await a.mouse.move(5, 5);
-    await a.keyboard.press('ArrowRight'); // shows the aim at D4
-    await a.keyboard.press('ArrowRight'); // E4
-    await a.keyboard.press('ArrowDown'); // E5
-    assert(await a.$eval('.g-fleet .fl-target .fl-cell.is-aim', (x) => `${x.dataset.r},${x.dataset.c}`) === '4,4', '[laptop] arrow keys move the aim');
+    await a.keyboard.press('ArrowRight'); // first press just shows the aim, at D4
+    assert(await a.$eval('.g-fleet .fl-target .fl-cell.is-aim', (x) => `${x.dataset.r},${x.dataset.c}`) === '3,3', '[laptop] the first arrow key shows the aim');
+    for (let k = 0; k < Math.abs(tr - 3); k++) await a.keyboard.press(tr > 3 ? 'ArrowDown' : 'ArrowUp');
+    for (let k = 0; k < Math.abs(tc - 3); k++) await a.keyboard.press(tc > 3 ? 'ArrowRight' : 'ArrowLeft');
+    assert(await a.$eval('.g-fleet .fl-target .fl-cell.is-aim', (x) => `${x.dataset.r},${x.dataset.c}`) === `${tr},${tc}`, '[laptop] arrow keys move the aim');
     await a.keyboard.press('Enter');
-    await h.wait(100);
+    await waitSynced(h, id, (await h.engine(b, id)).lists.a.length + (await h.engine(b, id)).lists.b.length + 1);
     const st = (await h.engine(a, id)).state;
-    assert(st.shots.length === before + 1 && st.shots[st.shots.length - 1].r === 4 && st.shots[st.shots.length - 1].c === 4, '[laptop] Enter fires at the aimed square');
-    // hover highlights the column + row labels
+    const last = st.shots[st.shots.length - 1];
+    assert(st.shots.length === before + 1 && last.r === tr && last.c === tc && last.hit, '[laptop] Enter fires at the aimed square (a hit)');
+    // still Emerson's turn: hovering a square lights up its row and column labels
     const tg = await gridBox(a, '.g-fleet .fl-target .fl-grid');
-    const free = st.shots.length && st.shots[st.shots.length - 1].hit ? [0, 7] : null;
-    if (free) {
-      await a.mouse.move(tg.x + 7.5 * tg.cs, tg.y + 0.5 * tg.cs);
-      await a.waitForTimeout(50);
-      assert(await a.$eval('.g-fleet .fl-target .fl-lab-c span:nth-child(8)', (x) => x.classList.contains('is-on')), '[laptop] hover lights up the column label');
-    }
+    const free = [[0, 7], [7, 0], [7, 7]].find(([r, c]) => !st.shots.some((x) => x.by === 'a' && x.r === r && x.c === c));
+    await a.mouse.move(tg.x + (free[1] + 0.5) * tg.cs, tg.y + (free[0] + 0.5) * tg.cs);
+    await a.waitForTimeout(60);
+    const lit = await a.$$eval('.g-fleet .fl-target .fl-lab span.is-on', (xs) => xs.map((x) => x.textContent).join(''));
+    assert(lit === `${LETTERS[free[1]]}${free[0] + 1}`, `[laptop] hovering ${LETTERS[free[1]]}${free[0] + 1} lights up its column and row labels`);
+    // the keyboard cursor followed the mouse, so Enter fires there
+    await a.keyboard.press('Enter');
+    await h.wait(150);
+    const st2 = (await h.engine(a, id)).state;
+    const l2 = st2.shots[st2.shots.length - 1];
+    assert(l2.r === free[0] && l2.c === free[1], '[laptop] Enter fires where the mouse is aiming');
     await h.wait(900);
-    await shotsAt(h, { a, b }, 'laptop-battle');
+    await shotsAt(h, { a, b }, 'laptop-battle', { width: 1280, height: 860 });
     h.assertNoErrors();
   } finally {
     await h.close();
@@ -453,6 +500,7 @@ async function laptop() {
 
     // light: online + same phone
     h = await launch({ port: 8820, only: ['fleet'] });
+    if (await realFonts(h)) console.log('(using local copies of the app fonts for screenshots)');
     const r1 = await onlineGame(h, { scheme: 'light' });
     assert(h.results().length === 1 && h.results()[0].game === 'fleet' && h.results()[0].winner === r1.winner, 'the online result is recorded once');
     await h.closeGame(h.a); await h.closeGame(h.b);
@@ -464,6 +512,7 @@ async function laptop() {
 
     // dark: online again (screenshots), placement by Shuffle on both
     h = await launch({ port: 8821, only: ['fleet'], colorScheme: 'dark' });
+    await realFonts(h);
     await onlineGame(h, { scheme: 'dark', drag: true });
     h.assertNoErrors();
     await h.close();

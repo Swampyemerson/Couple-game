@@ -72,7 +72,7 @@ registerGame({
   tags: ['brainy'],
   platforms: ['phone', 'computer'],
   minutes: 12,
-  endDelay: 1700,
+  endDelay: 2000,
   howTo: [
     'Tap a square, tap again to place. Its spot sends your partner to the matching small board.',
     'If that board is already won or full, they may play in any open board.',
@@ -118,7 +118,8 @@ registerGame({
 .g-ult .gu-m.is-new { animation: gu-pop 300ms cubic-bezier(0.3, 1.7, 0.5, 1) both; }
 @keyframes gu-pop { from { transform: scale(0.2) rotate(-25deg); opacity: 0; } to { transform: none; opacity: 1; } }
 
-.g-ult .gu-sb.is-open { background: color-mix(in srgb, var(--g-hl) 34%, var(--g-card)); }
+.g-ult .gu-sb.is-open.gu-a { background: color-mix(in srgb, var(--p-a) 16%, var(--g-card)); }
+.g-ult .gu-sb.is-open.gu-b { background: color-mix(in srgb, var(--p-b) 16%, var(--g-card)); }
 .g-ult .gu-sb.is-open::before, .g-ult .gu-sb.is-theirs::before { content: ''; position: absolute; inset: 2px; border-radius: 6px; pointer-events: none; z-index: 1; }
 .g-ult .gu-sb.is-target::after { content: ''; position: absolute; inset: 6px; border-radius: 6px; pointer-events: none; z-index: 1; border: 3px dashed var(--g-ink); animation: gu-breathe 1.2s ease-in-out infinite; }
 .g-ult .gu-sb.gu-ta::after { border-color: var(--p-a); } .g-ult .gu-sb.gu-tb::after { border-color: var(--p-b); }
@@ -263,8 +264,8 @@ registerGame({
         const winners = s.end.why === 'line' ? s.end.line : s.big.map((x, b) => (x === s.end.who ? b : -1)).filter((b) => b >= 0);
         winners.forEach((b, n) => {
           const bm = regions[b].querySelector('.gu-bm');
-          const cheer = () => { bm.classList.remove('is-new'); bm.style.setProperty('--c', `${n * 120}ms`); bm.classList.add('is-cheer'); };
-          if (fresh.finale > 0) later(cheer, fresh.finale + 380); else cheer();
+          const cheer = () => { bm.classList.remove('is-new'); bm.style.setProperty('--c', `${n * 100}ms`); bm.classList.add('is-cheer'); };
+          if (fresh.finale > 0) later(cheer, fresh.finale + 300); else cheer();
         });
       }
       renderPlate(pv, target);
@@ -289,11 +290,11 @@ registerGame({
         wait = true;
         text = `${api.name(who)}’s turn`;
       } else if (sel && pv) {
-        const act = sel.by === 'tap' ? 'Tap again' : sel.by === 'hover' ? 'Click' : 'Enter';
+        const act = sel.by === 'tap' ? 'Tap again' : sel.by === 'hover' ? 'Click' : 'Press Enter';
         const opp = api.name(other(who));
         if (pv.end) text = `${act} to place`;
-        else if (target === null) text = `${act} to place · ${opp} may then play anywhere`;
-        else text = `${act} to place · sends ${opp} to the ${NAMES[target]} board`;
+        else if (target === null) text = `${act} · ${opp} can then go anywhere`;
+        else text = `${act} · sends ${opp} to the ${NAMES[target]} board`;
       } else {
         const where = s.force !== null ? `play in the ${NAMES[s.force]} board` : 'play in any open board';
         text = online ? `Your turn · ${where}` : `${api.name(who)}: ${where}`;
@@ -403,7 +404,7 @@ registerGame({
         ctx = c;
         seen = c.moves;
         const moved = prev !== c.moves;
-        const animate = !reduced() && !!c.last && (prev == null ? c.mode === 'online' && c.last.who !== c.me && !c.over : c.moves === prev + 1);
+        const animate = !reduced() && !!c.last && (prev == null ? c.mode === 'online' && c.last.who !== c.me : c.moves === prev + 1);
         if (prev == null) bigShown = animate ? c.state.big.map((x, b) => (c.last && Math.floor(c.state.last / 9) === b ? null : x)) : c.state.big.slice();
         if (moved || !c.canMove) sel = sel && sel.by === 'key' && c.canMove ? sel : null;
         if (sel && sel.by === 'key' && c.canMove) {
