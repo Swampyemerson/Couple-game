@@ -300,7 +300,12 @@ function view3D(THREE, canvas, pal0) {
     get ratio() { return ratio; },
     setRatio(r) { ratio = r; renderer.setPixelRatio(r); renderer.setSize(W, Hh, false); },
     setPalette,
-    compile() { stat.commit(0); dyn.commit(0); renderer.compile(scene, cam); },
+    compile() { // warm the shaders up before the first animation
+      scene.traverse((o) => { o.visible = true; });
+      renderer.compile(scene, cam);
+      ring.visible = false;
+      statN = -1;
+    },
     restore() { setPalette(pal); renderer.setPixelRatio(ratio); renderer.setSize(W, Hh, false); statN = -1; api.compile(); },
     render(m) {
       const vh = m.cam.viewH; const vw = vh * (W / Hh);
