@@ -110,3 +110,52 @@ export function listeners() {
     get count() { return list.length; },
   };
 }
+
+// ── compact orientation (presence) ──
+// "Smallest three" quaternion packing into one unsigned 32-bit integer: 2 bits for the index of
+// the largest component (dropped, made positive), then 3 × 10 bits for the others in
+// [-1/√2, 1/√2]. ~0.1° precision, one small number in the presence JSON.
+const QS = Math.SQRT1_2;
+const QA = [0, 0, 0, 0];
+export function packQuat(x, y, z, w) {
+  const a = QA; a[0] = x; a[1] = y; a[2] = z; a[3] = w;
+  let big = 0; let m = -1;
+  for (let i = 0; i < 4; i++) { const v = Math.abs(a[i]); if (v > m) { m = v; big = i; } }
+  const sgn = a[big] < 0 ? -1 : 1;
+  let out = big;
+  for (let i = 0; i < 4; i++) {
+    if (i === big) continue;
+    let v = (a[i] * sgn) / QS; v = v < -1 ? -1 : v > 1 ? 1 : v;
+    out = out * 1024 + Math.round((v * 0.5 + 0.5) * 1023);
+  }
+  return out;
+}
+const QV = [0, 0, 0];
+/** Unpack into out[0..3] = x, y, z, w (unit). */
+export function unpackQuat(p, out) {
+  p = Math.round(p) || 0;
+  const c = p % 1024; const b = Math.floor(p / 1024) % 1024; const a = Math.floor(p / 1048576) % 1024; const big = Math.floor(p / 1073741824) & 3;
+  const v = QV; v[0] = ((a / 1023) * 2 - 1) * QS; v[1] = ((b / 1023) * 2 - 1) * QS; v[2] = ((c / 1023) * 2 - 1) * QS;
+  const s = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+  const L = Math.sqrt(Math.max(0, 1 - s));
+  let k = 0;
+  for (let i = 0; i < 4; i++) out[i] = i === big ? L : v[k++];
+  const n = Math.hypot(out[0], out[1], out[2], out[3]) || 1;
+  for (let i = 0; i < 4; i++) out[i] /= n;
+  return out;
+}
+/** Spherical interpolation of two unit quaternions (arrays) into out. */
+export function slerpQuat(a, b, t, out) {
+  let bx = b[0]; let by = b[1]; let bz = b[2]; let bw = b[3];
+  let cos = a[0] * bx + a[1] * by + a[2] * bz + a[3] * bw;
+  if (cos < 0) { cos = -cos; bx = -bx; by = -by; bz = -bz; bw = -bw; }
+  let k0; let k1;
+  if (cos > 0.9995) { k0 = 1 - t; k1 = t; } else {
+    const th = Math.acos(cos); const s = Math.sin(th);
+    k0 = Math.sin((1 - t) * th) / s; k1 = Math.sin(t * th) / s;
+  }
+  out[0] = a[0] * k0 + bx * k1; out[1] = a[1] * k0 + by * k1; out[2] = a[2] * k0 + bz * k1; out[3] = a[3] * k0 + bw * k1;
+  const n = Math.hypot(out[0], out[1], out[2], out[3]) || 1;
+  for (let i = 0; i < 4; i++) out[i] /= n;
+  return out;
+}

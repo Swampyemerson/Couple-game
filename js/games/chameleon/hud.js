@@ -19,6 +19,10 @@ const I = {
   done: '<path d="M4 12.5l5 5L20 6.5"/>',
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
   eye: '<path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/>',
+  stick: '<path d="M4 20h16"/><path d="M7 20c0-4 2-6 5-6s5 2 5 6"/><path d="M12 14V5"/><circle cx="12" cy="4" r="1.6" fill="currentColor"/>',
+  unstick: '<path d="M4 21h16"/><path d="M7 21c0-3 2-4.5 5-4.5s5 1.5 5 4.5"/><path d="M12 12.5V4M8.5 7.5L12 4l3.5 3.5"/>',
+  zip: '<circle cx="5.5" cy="17.5" r="2.5"/><path d="M8 15.5C11 12 13 8 19 5"/><circle cx="19.5" cy="4.5" r="2" fill="currentColor"/>',
+  sprint: '<circle cx="14.5" cy="4.5" r="2"/><path d="M8 21l3-6 3 2v5M6 11l4-3h4l2 4 3 1M11 8l-1 5"/>',
 };
 export const icon = (k, cls = '') => `<svg class="chm-ic ${cls}" viewBox="0 0 24 24" aria-hidden="true">${I[k] || ''}</svg>`;
 
@@ -29,6 +33,11 @@ const POSE_SVG = {
   wall: '<path d="M4 2v20" stroke-width="2.6"/><ellipse cx="9" cy="12" rx="3.4" ry="7"/><circle cx="9.5" cy="4.5" r="2.4"/>',
   ball: '<circle cx="12" cy="13" r="6.5"/><circle cx="15" cy="11" r="1.4" fill="currentColor"/>',
   flat: '<ellipse cx="12" cy="16.5" rx="9" ry="2.6"/><path d="M2 20h20"/>',
+  hang: '<path d="M2 3h20" stroke-width="2.6"/><path d="M12 3c0 2-2 2-2 4"/><ellipse cx="11" cy="12" rx="3.6" ry="5"/><circle cx="11" cy="19" r="2.5"/>',
+  perch: '<path d="M2 15h20" stroke-width="2.6"/><ellipse cx="11" cy="11" rx="6.5" ry="3.4"/><circle cx="17.5" cy="9" r="2.4"/><path d="M5 12c-2 1-1.5 5 1 5s2-2 .5-2.5"/>',
+  squeeze: '<path d="M3 8h18M3 16h18" stroke-width="2.4"/><ellipse cx="12" cy="12" rx="8" ry="1.8"/><circle cx="19.5" cy="12" r="1.4"/>',
+  corner: '<path d="M4 3v17h17" stroke-width="2.6"/><path d="M7.5 17C7.5 11 11 7.5 17 7.5" /><ellipse cx="10" cy="14" rx="2.2" ry="5.2" transform="rotate(45 10 14)"/>',
+  crawl: '<path d="M2 20h20" stroke-width="2.4"/><ellipse cx="11" cy="15" rx="7" ry="3"/><circle cx="18.5" cy="13.5" r="2.4"/><path d="M6 18l-2 2M9 18l1 2M14 18l-1 2M17 18l2 2"/>',
 };
 
 export const CSS = `
@@ -236,9 +245,113 @@ export const CSS = `
   .chm-over.chm-lobby { align-items: center; padding-left: calc(62px + var(--chm-sl)); padding-right: calc(62px + var(--chm-sr)); }
   .chm-lobby .chm-card { flex-direction: row; align-items: stretch; gap: 18px; width: min(100%, 700px); padding: 14px 16px; }
   .chm-col { display: flex; flex-direction: column; justify-content: center; gap: 9px; flex: 1 1 0; min-width: 0; }
-  .chm-lobby .chm-title { font-size: 1.9rem; }
+  .chm-lobby .chm-title { font-size: 1.6rem; }
+  .chm-lobby .chm-tag { display: none; }
+  .chm-lobby .chm-card { gap: 14px; padding: 12px 14px; }
+  .chm-lobby .chm-col { gap: 7px; }
+  .chm-lobby .chm-mode { padding: 7px 9px; }
+  .chm-lobby .chm-mode small { font-size: .68rem; }
+  .chm-lobby .chm-plan { width: 52px; height: 40px; }
+  .chm-lobby .chm-mapcard { padding: 5px; }
+  .chm-lobby .chm-mapinfo small { display: none; }
+  .chm-lobby .chm-sizes button { min-height: 38px; }
+  .chm-lobby .chm-firstrow { flex-direction: row; align-items: center; justify-content: space-between; }
+  .chm-lobby .chm-firstrow .chm-chip { padding: 7px 10px; }
+  .chm-lobby .chm-go { padding: 12px 14px; }
+  .chm-lobby .chm-more { min-height: 42px; }
+  .chm-mini { top: calc(84px + var(--chm-st)); width: 96px; height: 96px; }
+  .chm-tips { top: calc(70px + var(--chm-st)); width: min(calc(100% - 24px), 520px); }
+  .chm-tips ul { display: grid; grid-template-columns: 1fr 1fr; }
   .chm-recap .chm-card { width: min(100%, 520px); }
 }
+
+/* v2: lobby, presets, map card, sizes */
+.chm-tag { font-size: .85rem; }
+.chm-presets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+.chm-presets button { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 7px 2px 6px; border: 2px solid var(--g-line); border-radius: 12px; background: transparent; color: var(--g-ink); font: inherit; cursor: pointer; touch-action: manipulation; min-height: 44px; }
+.chm-presets b { font-size: .82rem; font-weight: 900; }
+.chm-presets small { font-size: .58rem; font-weight: 700; color: var(--g-muted); line-height: 1.15; }
+.chm-presets button.on { border-color: var(--g-ink); background: var(--g-hl); color: var(--g-on-ink); box-shadow: var(--g-shadow-sm, 2px 2px 0 var(--g-edge)); }
+.chm-presets button.on small { color: var(--g-on-ink); opacity: .75; }
+.chm-presets button.custom { pointer-events: none; border-style: dashed; }
+.chm-presets button.custom:not(.on) { opacity: .5; }
+.chm-mapcard { display: flex; align-items: center; gap: 8px; padding: 7px 6px; border: 2px solid var(--g-ink); border-radius: 14px; background: var(--g-bg); text-align: left; }
+.chm-plan { flex: none; width: 66px; height: 50px; fill: var(--g-card); stroke: var(--g-ink); stroke-width: var(--sw, .15); stroke-linejoin: round; }
+.chm-mapinfo { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.chm-mapinfo b { font-size: .98rem; font-weight: 900; line-height: 1.1; }
+.chm-mapinfo small { font-size: .72rem; font-weight: 700; color: var(--g-muted); line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chm-facts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+.chm-facts em { font-style: normal; font-size: .62rem; font-weight: 900; letter-spacing: .04em; text-transform: uppercase; padding: 2px 6px; border-radius: 999px; background: var(--g-card); box-shadow: 0 0 0 1.5px var(--g-ink); display: inline-flex; align-items: center; gap: 4px; }
+.chm-climbs span { display: inline-flex; gap: 2px; }
+.chm-climbs i { width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--g-ink); }
+.chm-climbs i.on { background: var(--p-b); }
+.chm-arrow { flex: none; width: 36px; height: 44px; border: 2px solid var(--g-ink); border-radius: 10px; background: var(--g-card); color: var(--g-ink); font: 900 1.4rem/1 var(--g-font-body); cursor: pointer; touch-action: manipulation; box-shadow: var(--g-shadow-sm, 2px 2px 0 var(--g-edge)); }
+.chm-arrow:active { transform: translate(2px, 2px); box-shadow: none; }
+.chm-arrow[disabled] { opacity: .35; box-shadow: none; }
+.chm-lrow { display: flex; flex-direction: column; gap: 5px; }
+.chm-sizes { display: grid; grid-template-columns: repeat(5, 1fr); border: 2px solid var(--g-ink); border-radius: 12px; overflow: hidden; }
+.chm-sizes button { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 3px; min-height: 46px; padding: 4px 1px 5px; border: 0; background: var(--g-card); color: var(--g-ink); font: 900 .64rem/1 var(--g-font-body); text-transform: uppercase; letter-spacing: .03em; cursor: pointer; touch-action: manipulation; }
+.chm-sizes button + button { border-left: 2px solid var(--g-ink); }
+.chm-sizes i { display: block; border-radius: 50% 50% 45% 45%; background: currentColor; }
+.chm-sizes button.on { background: var(--chm-me); color: var(--g-on-ink); }
+.chm-sizes button[disabled] { cursor: default; }
+.chm-lbtns { display: flex; gap: 8px; align-items: stretch; }
+.chm-lbtns .chm-go { flex: 1; }
+.chm-lbtns .chm-wait { flex: 1; align-self: center; }
+.chm-more { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 12px; min-height: 48px; border: 2.5px solid var(--g-ink); border-radius: 14px; background: var(--g-card); color: var(--g-ink); font: 900 .88rem/1 var(--g-font-body); cursor: pointer; touch-action: manipulation; box-shadow: var(--g-shadow, 3px 3px 0 var(--g-edge)); }
+.chm-more:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge); }
+.chm-more .chm-ic, .chm-done .chm-ic { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
+.chm-lobby .chm-card[aria-disabled="true"] .chm-presets button, .chm-lobby .chm-card[aria-disabled="true"] .chm-sizes button { pointer-events: none; }
+.chm-lobby .chm-card[aria-disabled="true"] .chm-arrow { pointer-events: none; }
+
+/* settings sheet */
+.chm-sheetwrap { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; padding: 12px; padding-top: calc(12px + var(--chm-st)); padding-bottom: calc(12px + var(--chm-sb)); background: var(--g-dim, color-mix(in srgb, var(--g-bg) 70%, transparent)); pointer-events: auto; }
+.chm-sheet { width: min(100%, 460px); max-height: 100%; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; touch-action: pan-y; padding: 14px 14px 16px; display: flex; flex-direction: column; gap: 9px; text-align: left; }
+.chm-sheethead { display: flex; align-items: center; justify-content: space-between; gap: 8px; position: sticky; top: -14px; background: var(--g-card); padding: 4px 0 6px; margin-top: -4px; z-index: 1; border-bottom: 2px solid var(--g-line); }
+.chm-sheet h2 { margin: 0; font-family: var(--g-font-display); font-weight: 900; font-size: 1.3rem; }
+.chm-sheet h3 { margin: 6px 0 0; font-size: .7rem; font-weight: 900; letter-spacing: .14em; text-transform: uppercase; color: var(--g-muted); }
+.chm-sheet .chm-wait { font-size: .82rem; margin: 0; }
+.chm-mapchips { justify-content: flex-start; }
+.chm-set { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 0; border-bottom: 1.5px dashed var(--g-line); }
+.chm-set > span { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.chm-set b { font-size: .9rem; font-weight: 900; }
+.chm-set small { font-size: .7rem; font-weight: 700; color: var(--g-muted); line-height: 1.2; }
+.chm-set .chm-sizes { width: 220px; flex: none; }
+.chm-set .chm-sizes button { min-height: 40px; font-size: .56rem; }
+.chm-step { display: flex; align-items: center; border: 2px solid var(--g-ink); border-radius: 12px; overflow: hidden; flex: none; background: var(--g-card); }
+.chm-step button { width: 40px; height: 40px; border: 0; background: var(--g-card); color: var(--g-ink); font: 900 1.25rem/1 var(--g-font-body); cursor: pointer; touch-action: manipulation; }
+.chm-step button:active { background: var(--g-hl); }
+.chm-step button[disabled] { opacity: .3; cursor: default; }
+.chm-step output { min-width: 78px; text-align: center; font-weight: 900; font-size: .88rem; font-variant-numeric: tabular-nums; border-left: 2px solid var(--g-ink); border-right: 2px solid var(--g-ink); padding: 0 4px; line-height: 40px; }
+.chm-seg2 { display: flex; border: 2px solid var(--g-ink); border-radius: 12px; overflow: hidden; flex: none; }
+.chm-seg2 button { min-width: 50px; height: 40px; padding: 0 9px; border: 0; background: var(--g-card); color: var(--g-ink); font: 900 .76rem/1 var(--g-font-body); cursor: pointer; touch-action: manipulation; }
+.chm-seg2 button + button { border-left: 2px solid var(--g-ink); }
+.chm-seg2 button.on { background: var(--g-ink); color: var(--g-bg); }
+.chm-sheet button[disabled] { cursor: default; }
+.chm-sheet .chm-seg2 button[disabled]:not(.on), .chm-sheet .chm-sizes button[disabled]:not(.on), .chm-sheet .chm-chip[disabled]:not(.on) { opacity: .55; }
+.chm-sheet .chm-go { margin-top: 6px; }
+@media (max-width: 380px) { .chm-set .chm-sizes { width: 190px; } .chm-step output { min-width: 66px; font-size: .8rem; } .chm-step button { width: 36px; } .chm-seg2 button { min-width: 44px; padding: 0 6px; } }
+
+/* dynamic pose bar */
+.chm-poses { flex-wrap: nowrap; max-width: calc(100% - 16px); }
+
+/* minimap (seeker, big maps) */
+.chm-mini { position: absolute; left: calc(10px + var(--chm-sl)); top: calc(100px + var(--chm-st)); width: 112px; height: 112px; border-radius: 12px; padding: 4px; background: var(--g-card); }
+.chm-mini canvas { position: static !important; width: 100% !important; height: 100% !important; border-radius: 8px; }
+@media (min-width: 900px) and (min-height: 600px) { .chm-mini { width: 150px; height: 150px; top: calc(116px + var(--chm-st)); } }
+
+/* first-time tips */
+.chm-tips { position: absolute; left: 50%; top: calc(100px + var(--chm-st)); transform: translateX(-50%); width: min(calc(100% - 24px), 360px); padding: 12px 14px 12px; display: flex; flex-direction: column; gap: 8px; z-index: 3; pointer-events: auto; animation: chm-tipin .35s cubic-bezier(.2,1.4,.4,1); }
+.chm-tips ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.chm-tips li { display: flex; gap: 9px; align-items: center; }
+.chm-tips p { margin: 0; font-size: .8rem; font-weight: 700; line-height: 1.3; color: var(--g-ink); }
+.chm-tips kbd { font: 800 .7rem/1 var(--g-font-body); padding: 2px 5px; border-radius: 4px; border: 1.5px solid var(--g-ink); background: var(--g-bg); }
+.chm-tips .chm-go { padding: 10px 14px; font-size: .9rem; align-self: flex-end; }
+.chm-ti { flex: none; width: 30px; height: 30px; border-radius: 50%; border: 2px solid var(--g-ink); }
+.chm-ti.t1 { background: var(--p-a); } .chm-ti.t2 { background: var(--g-hl); } .chm-ti.t3 { background: var(--p-b); } .chm-ti.t4 { background: var(--g-card); background-image: var(--g-halftone); background-size: 5px 5px; }
+@keyframes chm-tipin { from { transform: translate(-50%, -12px) scale(.94); opacity: 0; } }
+.chm-b.stuck > span:first-child { background: var(--g-hl); color: var(--g-on-ink); }
+.chm-b.on > span:first-child { background: var(--g-ink); color: var(--g-bg); }
 @media (prefers-reduced-motion: reduce) { .chm *, .chm *::before, .chm *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; } }
 @media (min-width: 900px) and (min-height: 600px) { .chm-sc { font-size: 1.1rem; padding: 6px 12px 6px 9px; } .chm-sc span { font-size: 0.82rem; } .chm-clock { min-width: 104px; } .chm-time { font-size: 1.8rem; } .chm-phase { font-size: 0.7rem; } .chm-sub { top: calc(78px + var(--chm-st)); font-size: 0.9rem; } .chm-gear { top: calc(116px + var(--chm-st)); } }
 @media (min-width: 700px) { .chm-b > span:first-child { width: 60px; height: 60px; } .chm-b.big > span:first-child { width: 78px; height: 78px; } .chm-title { font-size: 2.5rem; } }
@@ -258,7 +371,9 @@ export function createHud(root, api) {
       <div class="chm-cross" hidden><b></b></div>
       <div class="chm-joyhint" hidden>Move</div>
       <div class="chm-joy"><i></i></div>
-      <div class="chm-poses chm-sticker" hidden>${Object.keys(POSE_SVG).map((p) => `<button class="chm-pose" data-pose="${p}" aria-label="${p}"><svg viewBox="0 0 24 24" aria-hidden="true">${POSE_SVG[p]}</svg>${p}</button>`).join('')}</div>
+      <div class="chm-poses chm-sticker" hidden></div>
+      <div class="chm-mini chm-sticker" hidden><canvas width="208" height="208" aria-label="Map"></canvas></div>
+      <div class="chm-tips chm-sticker" hidden role="note"></div>
       <div class="chm-tools" hidden>
         <div class="chm-opts chm-sticker">
           <span class="chm-swatch" aria-label="Current colour"></span>
@@ -287,7 +402,7 @@ export function createHud(root, api) {
     top: $('.chm-top'), sub: $('.chm-sub'), phase: $('.chm-phase'), time: $('.chm-time'), clock: $('.chm-clock'),
     sa: $('[data-s="a"]'), sb: $('[data-s="b"]'), role: $('.chm-role'), pips: $('.chm-pips'),
     gear: $('.chm-gear'), pellets: $('.chm-pellets'), cross: $('.chm-cross'),
-    joy: $('.chm-joy'), knob: $('.chm-joy i'), joyhint: $('.chm-joyhint'),
+    joy: $('.chm-joy'), knob: $('.chm-joy i'), joyhint: $('.chm-joyhint'), mini: $('.chm-mini'), miniCv: $('.chm-mini canvas'), tips: $('.chm-tips'),
     poses: $('.chm-poses'), tools: $('.chm-tools'), swatch: $('.chm-swatch'), acts: $('.chm-acts'),
     hint: $('.chm-hint'), legend: $('.chm-legend'), ripple: $('.chm-ripple'), vig: $('.chm-vig'), flash: $('.chm-flash'),
     layer: $('.chm-layer'),
@@ -297,12 +412,13 @@ export function createHud(root, api) {
   // per-frame caches (numbers / identities only, so nothing is allocated when nothing changed)
   const N = { secs: -1, timed: null, hot: null, phase: null, sa: -1, sb: -1, role: null, roleMine: null, pipT: -1, pipD: -1, pelL: -1, pelM: -1, pelT: null, list: null, tool: null, size: -1, hard: null, r: -1, g: -1, bl: -1, legend: null, undo: null, parts: {} };
   const actBtn = new Map(); // act -> { btn, em, cd, label, disabled, cdOff, hl }
+  const mini = { bg: null, k: 1, ox: 0, oz: 0, px: -1, pz: -1, ya: 0, col: '', ink: '#000' };
   const pellets = [];
 
   const hud = {
     el,
     show(parts) {
-      for (const k of ['top', 'sub', 'gear', 'cross', 'poses', 'tools', 'acts', 'joyhint', 'legend']) {
+      for (const k of ['top', 'sub', 'gear', 'cross', 'poses', 'tools', 'acts', 'joyhint', 'legend', 'mini']) {
         const on = !!parts[k];
         if (N.parts[k] === on) continue;
         N.parts[k] = on; el[k].hidden = !on;
@@ -352,7 +468,7 @@ export function createHud(root, api) {
         actBtn.clear();
         for (const b of list) {
           const btn = el.acts.querySelector(`[data-act="${b.act}"]`);
-          actBtn.set(b.act, { btn, em: btn.querySelector('em'), cd: btn.querySelector('.chm-cd circle'), label: b.label, disabled: false, cdOff: -1, hl: !!b.hl });
+          actBtn.set(b.act, { btn, em: btn.querySelector('em'), cd: btn.querySelector('.chm-cd circle'), label: b.label, disabled: false, cdOff: -1, hl: !!b.hl, on: false, icon: b.icon, ic: btn.querySelector('span') });
         }
       }
       for (let i = 0; i < list.length; i++) {
@@ -362,10 +478,58 @@ export function createHud(root, api) {
         if (r.disabled !== dis) { r.disabled = dis; r.btn.disabled = dis; }
         if (r.label !== b.label) { r.label = b.label; r.em.textContent = b.label; r.btn.setAttribute('aria-label', b.label); }
         const hl = !!b.hl; if (r.hl !== hl) { r.hl = hl; r.btn.classList.toggle('hl', hl); }
+        const on = !!b.on; if (r.on !== on) { r.on = on; r.btn.classList.toggle('on', on); r.btn.setAttribute('aria-pressed', String(on)); }
+        if (b.icon !== r.icon) { r.icon = b.icon; const svg = r.ic.querySelector('svg.chm-ic'); if (svg) svg.outerHTML = icon(b.icon); }
         if (r.cd) { const off = Math.round(160 * (b.cd || 0)); if (off !== r.cdOff) { r.cdOff = off; r.cd.setAttribute('stroke-dashoffset', String(off)); } }
       }
     },
+    /** list: a stable array of { p, label, icon } (identity-compared; rebuilt only on change). */
+    poseList(list) {
+      if (N.poseList === list) return;
+      N.poseList = list; cache.delete('pose');
+      el.poses.innerHTML = list.map((x) => `<button class="chm-pose" data-pose="${x.p}" aria-label="${esc(x.label)}"><svg viewBox="0 0 24 24" aria-hidden="true">${POSE_SVG[x.icon] || ''}</svg>${esc(x.label)}</button>`).join('');
+    },
     poseOn(p) { if (cache.get('pose') === p) return; cache.set('pose', p); el.poses.querySelectorAll('.chm-pose').forEach((b) => b.classList.toggle('on', b.dataset.pose === p)); },
+    /** Tips sticker (html or null). */
+    tips(html) {
+      const on = !!html; if (cache.get('tips') === html) return; cache.set('tips', html);
+      el.tips.hidden = !on; el.tips.innerHTML = html || '';
+    },
+    /** Minimap: draw the static plan once per map. plan = { minX, maxX, minZ, maxZ, rooms, boxes, floors }. */
+    miniSetup(plan) {
+      N.mini = null;
+      const cv = el.miniCv; const g = cv.getContext('2d'); const W = cv.width; const H = cv.height;
+      if (!plan) { mini.bg = null; return; }
+      const w = plan.maxX - plan.minX; const d = plan.maxZ - plan.minZ;
+      const k = Math.min((W - 16) / w, (H - 16) / d);
+      mini.k = k; mini.ox = (W - w * k) / 2 - plan.minX * k; mini.oz = (H - d * k) / 2 - plan.minZ * k;
+      const bg = document.createElement('canvas'); bg.width = W; bg.height = H;
+      const b = bg.getContext('2d');
+      const css = getComputedStyle(root);
+      const ink = css.getPropertyValue('--g-ink').trim() || '#1d1b22'; const paper = css.getPropertyValue('--g-bg').trim() || '#f4f2ee'; const line = css.getPropertyValue('--g-line').trim() || '#ccc';
+      b.fillStyle = paper; b.fillRect(0, 0, W, H);
+      b.lineJoin = 'round';
+      b.fillStyle = css.getPropertyValue('--g-card').trim() || '#fff'; b.strokeStyle = ink; b.lineWidth = 3;
+      for (const r of plan.rooms) { b.fillRect(mini.ox + r.x0 * k, mini.oz + r.z0 * k, (r.x1 - r.x0) * k, (r.z1 - r.z0) * k); }
+      b.fillStyle = line;
+      for (const c of plan.boxes) b.fillRect(mini.ox + c.minX * k, mini.oz + c.minZ * k, Math.max(1.5, (c.maxX - c.minX) * k), Math.max(1.5, (c.maxZ - c.minZ) * k));
+      for (const r of plan.rooms) b.strokeRect(mini.ox + r.x0 * k, mini.oz + r.z0 * k, (r.x1 - r.x0) * k, (r.z1 - r.z0) * k);
+      mini.bg = bg; mini.ink = ink;
+      g.drawImage(bg, 0, 0);
+    },
+    /** Per frame (cheap): redraws only when the dot moved. */
+    miniDraw(x, z, yaw, color) {
+      if (!mini.bg) return;
+      const px = Math.round((mini.ox + x * mini.k) * 2) / 2; const pz = Math.round((mini.oz + z * mini.k) * 2) / 2; const ya = Math.round(yaw * 20) / 20;
+      if (mini.px === px && mini.pz === pz && mini.ya === ya && mini.col === color) return;
+      mini.px = px; mini.pz = pz; mini.ya = ya; mini.col = color;
+      const g = el.miniCv.getContext('2d');
+      g.drawImage(mini.bg, 0, 0);
+      g.save(); g.translate(px, pz); g.rotate(-ya + Math.PI);
+      g.fillStyle = color; g.strokeStyle = mini.ink; g.lineWidth = 2.5;
+      g.beginPath(); g.moveTo(0, -11); g.lineTo(8, 8); g.lineTo(0, 4); g.lineTo(-8, 8); g.closePath(); g.fill(); g.stroke();
+      g.restore();
+    },
     tool(t, size, hard, rgb) {
       if (N.tool !== t || N.size !== size || N.hard !== hard) {
         N.tool = t; N.size = size; N.hard = hard;

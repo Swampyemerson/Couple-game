@@ -126,7 +126,62 @@ export function createFx(THREE, scene, { gradientMap }) {
   const glintTex = own(makeGlintTexture(THREE));
   const glintMat = own(new THREE.SpriteMaterial({ map: glintTex, color: 0xffd23f, transparent: true, depthWrite: false }));
   const glints = [];
-  for (let i = 0; i < 4; i++) { const s = new THREE.Sprite(glintMat); s.visible = false; s.scale.setScalar(0.22); s.renderOrder = 3; scene.add(s); glints.push(s); }
+  for (let i = 0; i < 10; i++) { const s = new THREE.Sprite(glintMat); s.visible = false; s.scale.setScalar(0.22); s.renderOrder = 3; scene.add(s); glints.push(s); }
+
+  // ── tongue (tongue-zip): one stretched cylinder from the mouth to the target ──
+  const tongueGeo = own(new THREE.CylinderGeometry(0.018, 0.012, 1, 8, 1));
+  tongueGeo.translate(0, 0.5, 0); tongueGeo.rotateX(Math.PI / 2); // unit length along +z
+  const tongueTip = own(new THREE.SphereGeometry(0.035, 10, 8));
+  const tongueMat = own(new THREE.MeshToonMaterial({ color: 0xe8607e, gradientMap }));
+  const tongue = new THREE.Mesh(tongueGeo, tongueMat);
+  const tip = new THREE.Mesh(tongueTip, tongueMat);
+  tongue.visible = false; tip.visible = false; tongue.frustumCulled = false;
+  scene.add(tongue, tip);
+  const tg = { on: false, t0: 0, dur: 0.5, ox: 0, oy: 0, oz: 0, tx: 0, ty: 0, tz: 0, follow: null };
+  /** Shoot the tongue from (o) to (t); `follow(out)` (optional) keeps the root on the mouth. */
+  function shootTongue(o, t, now, dur = 0.5, follow = null) {
+    tg.on = true; tg.t0 = now; tg.dur = dur; tg.follow = follow;
+    tg.ox = o.x; tg.oy = o.y; tg.oz = o.z; tg.tx = t.x; tg.ty = t.y; tg.tz = t.z;
+  }
+  const tv = new THREE.Vector3();
+  function updateTongue(now) {
+    if (!tg.on) { tongue.visible = false; tip.visible = false; return; }
+    const k = (now - tg.t0) / tg.dur;
+    if (k >= 1) { tg.on = false; tongue.visible = false; tip.visible = false; return; }
+    if (tg.follow) { tg.follow(tv); tg.ox = tv.x; tg.oy = tv.y; tg.oz = tv.z; }
+    // out fast (first 35 %), stays latched, reels in with the body
+    const ext = k < 0.35 ? k / 0.35 : 1;
+    const dx = tg.tx - tg.ox; const dy = tg.ty - tg.oy; const dz = tg.tz - tg.oz;
+    const L = Math.hypot(dx, dy, dz) * ext;
+    tongue.visible = L > 0.02; tip.visible = true;
+    tongue.position.set(tg.ox, tg.oy, tg.oz);
+    tv.set(tg.ox + dx, tg.oy + dy, tg.oz + dz);
+    tongue.lookAt(tv);
+    tongue.scale.set(1, 1, Math.max(0.01, L));
+    tip.position.set(tg.ox + dx * ext, tg.oy + dy * ext, tg.oz + dz * ext);
+  }
+
+  // ── suction ring (stick / unstick pop) ──
+  const popMat = own(new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
+  const popRing = new THREE.Mesh(new THREE.RingGeometry(0.7, 1, 24), popMat);
+  disposables.push(popRing.geometry);
+  popRing.visible = false; popRing.renderOrder = 3;
+  scene.add(popRing);
+  const pr = { on: false, t0: 0, s: 0.3 };
+  function pop(x, y, z, nx, ny, nz, color, size, now) {
+    pr.on = true; pr.t0 = now; pr.s = size;
+    popRing.position.set(x + nx * 0.012, y + ny * 0.012, z + nz * 0.012);
+    v1.set(nx, ny, nz).normalize(); q1.setFromUnitVectors(zAxis, v1); popRing.quaternion.copy(q1);
+    popMat.color.set(color);
+  }
+  function updatePop(now) {
+    if (!pr.on) return;
+    const k = (now - pr.t0) / 0.35;
+    if (k >= 1) { pr.on = false; popRing.visible = false; return; }
+    popRing.visible = true;
+    popRing.scale.setScalar(pr.s * (0.4 + k * 0.9));
+    popMat.opacity = 0.85 * (1 - k);
+  }
 
   // ── brush cursor + recap ring ──
   const ringGeo = own(new THREE.RingGeometry(0.9, 1, 32));
@@ -200,6 +255,8 @@ export function createFx(THREE, scene, { gradientMap }) {
       dummy.updateMatrix(); trail.setMatrixAt(i, dummy.matrix);
     }
     if (anyT) trail.instanceMatrix.needsUpdate = true;
+    updateTongue(now);
+    updatePop(now);
     // recap ring pulse
     if (ring.visible) { const s = 0.45 + Math.sin(now * 4) * 0.04; ring.scale.setScalar(s); hlMat.opacity = 0.65 + Math.sin(now * 4) * 0.25; }
   }
@@ -214,16 +271,18 @@ export function createFx(THREE, scene, { gradientMap }) {
     path.count = 0;
     ring.visible = false;
     for (const g of glints) g.visible = false;
+    tg.on = false; tongue.visible = false; tip.visible = false; pr.on = false; popRing.visible = false;
   }
 
   return {
-    splat, pellet, burst, trailDot, setPath, setCursor, update, clearRound,
+    splat, pellet, burst, trailDot, setPath, setCursor, update, clearRound, shootTongue, pop,
     glints, ring, hlMat, trailMat, pathMat,
+    get tongueOn() { return tg.on; },
     get splatCount() { return sp.filter((s) => s.on).length; },
     get trailCount() { return tr.filter((t) => t.on).length; },
-    objects: [splats, pellets, confetti, trail, path, cursor, ring, ...glints],
+    objects: [splats, pellets, confetti, trail, path, cursor, ring, tongue, tip, popRing, ...glints],
     dispose() {
-      for (const o of [splats, pellets, confetti, trail, path, cursor, ring, ...glints]) scene.remove(o);
+      for (const o of [splats, pellets, confetti, trail, path, cursor, ring, tongue, tip, popRing, ...glints]) scene.remove(o);
       splats.dispose(); pellets.dispose(); confetti.dispose(); trail.dispose(); path.dispose();
       disposables.forEach((d) => d.dispose());
     },

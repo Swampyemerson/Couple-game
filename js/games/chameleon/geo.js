@@ -222,15 +222,19 @@ const apply3 = (R, x, y, z) => [R[0] * x + R[1] * y + R[2] * z, R[3] * x + R[4] 
 
 /**
  * The diorama builder.
- *   const b = createBuilder({ tiles, ink });
+ *   const b = createBuilder({ tiles, ink, chunker });
  *   b.add(boxGeo(1, 0.5, 1, { round: 0.04 }), { at: [x, y, z], yaw, color: '#c94', tile: 'tweed', rep: 0.4, collide: true });
  *   const out = b.finish(THREE);
+ * chunker(x, y, z) → small int: every primitive lands in the chunk of its centroid, and each
+ * chunk becomes its own geometry (own bounding sphere → frustum culled per chunk). Without a
+ * chunker the whole map is one geometry (the v1 behaviour).
  */
-export function createBuilder({ tiles, ink = [0.11, 0.1, 0.13] }) {
-  const P = []; const N = []; const U = []; const C = []; const T = []; const O = [];
-  const IDX = []; const HULL = [];
-  const colliders = []; const blobs = []; const probes = []; const spots = {};
+export function createBuilder({ tiles, ink = [0.11, 0.1, 0.13], chunker = null }) {
+  const chunks = new Map(); // key -> { P, N, U, C, T, O, IDX, HULL }
+  const chunkOf = (k) => { let c = chunks.get(k); if (!c) { c = { key: k, P: [], N: [], U: [], C: [], T: [], O: [], IDX: [], HULL: [] }; chunks.set(k, c); } return c; };
+  const colliders = []; const blobs = []; const probes = []; const spots = {}; const rooms = [];
   const white = tiles.white;
+  const tp = []; const tn = [];
 
   function colorOf(c) {
     if (Array.isArray(c)) return c;
@@ -242,7 +246,8 @@ export function createBuilder({ tiles, ink = [0.11, 0.1, 0.13] }) {
 
   /**
    * Add a primitive. opts: at [x,y,z], rot [rx,ry,rz] or yaw, color, tile (atlas key), rep (metres per
-   * pattern repeat; number or [u,v]), uvOff [u,v], outline (default true), collide (true | box opts).
+   * pattern repeat; number or [u,v]), uvOff [u,v], outline (default true), collide (true | box flags),
+   * chunk (force a chunk key).
    */
   function add(g, opts = {}) {
     const at = opts.at || [0, 0, 0];
@@ -252,20 +257,28 @@ export function createBuilder({ tiles, ink = [0.11, 0.1, 0.13] }) {
     const rep = opts.rep == null ? 1 : opts.rep;
     const ru = Array.isArray(rep) ? rep[0] : rep; const rv = Array.isArray(rep) ? rep[1] : rep;
     const off = opts.uvOff || [0, 0];
-    const base = P.length / 3;
     const n = g.pos.length / 3;
-    const outline = opts.outline !== false;
+    tp.length = 0; tn.length = 0;
+    let sx = 0; let sy = 0; let sz = 0;
     for (let i = 0; i < n; i++) {
       const p = apply3(R, g.pos[i * 3], g.pos[i * 3 + 1], g.pos[i * 3 + 2]);
       const q = apply3(R, g.nrm[i * 3], g.nrm[i * 3 + 1], g.nrm[i * 3 + 2]);
-      P.push(p[0] + at[0], p[1] + at[1], p[2] + at[2]); N.push(q[0], q[1], q[2]);
+      tp.push(p[0] + at[0], p[1] + at[1], p[2] + at[2]); tn.push(q[0], q[1], q[2]);
+      sx += p[0] + at[0]; sy += p[1] + at[1]; sz += p[2] + at[2];
+    }
+    const ck = opts.chunk != null ? opts.chunk : chunker && n ? chunker(sx / n, sy / n, sz / n) : 0;
+    const K = chunkOf(ck);
+    const { P, N, U, C, T, O, IDX, HULL } = K;
+    const base = P.length / 3;
+    for (let i = 0; i < n; i++) {
+      P.push(tp[i * 3], tp[i * 3 + 1], tp[i * 3 + 2]); N.push(tn[i * 3], tn[i * 3 + 1], tn[i * 3 + 2]);
       U.push(g.uv[i * 2] / ru + off[0], g.uv[i * 2 + 1] / rv + off[1]);
       C.push(col[0], col[1], col[2]);
       T.push(tile[0], tile[1], tile[2], tile[3]);
       O.push(0, 0, 0);
     }
     for (let k = 0; k < g.idx.length; k++) IDX.push(base + g.idx[k]);
-    if (outline) {
+    if (opts.outline !== false) {
       // Smoothed push directions: average normals of vertices sharing a position.
       const key = (i) => `${Math.round(P[(base + i) * 3] * 2000)},${Math.round(P[(base + i) * 3 + 1] * 2000)},${Math.round(P[(base + i) * 3 + 2] * 2000)}`;
       const acc = new Map();
@@ -286,7 +299,7 @@ export function createBuilder({ tiles, ink = [0.11, 0.1, 0.13] }) {
     if (opts.collide) {
       let minX = Infinity; let minY = Infinity; let minZ = Infinity; let maxX = -Infinity; let maxY = -Infinity; let maxZ = -Infinity;
       for (let i = 0; i < n; i++) {
-        const x = P[(base + i) * 3]; const y = P[(base + i) * 3 + 1]; const z = P[(base + i) * 3 + 2];
+        const x = tp[i * 3]; const y = tp[i * 3 + 1]; const z = tp[i * 3 + 2];
         if (x < minX) minX = x; if (y < minY) minY = y; if (z < minZ) minZ = z;
         if (x > maxX) maxX = x; if (y > maxY) maxY = y; if (z > maxZ) maxZ = z;
       }
@@ -296,9 +309,19 @@ export function createBuilder({ tiles, ink = [0.11, 0.1, 0.13] }) {
     return base;
   }
 
-  /** Axis-aligned collider. flags: { wall: bool (can flatten against), name } */
+  /**
+   * Axis-aligned collider. flags: { wall: bool (can flatten against), name, ceil (an overhead
+   * surface), perch (thin: rails, poles, stems), climb: false (sticky feet slide off) }.
+   * Names prefixed 'ceil:' / 'perch:' set those flags too.
+   */
   function collide(minX, minY, minZ, maxX, maxY, maxZ, flags = {}) {
-    colliders.push({ minX, minY, minZ, maxX, maxY, maxZ, wall: flags.wall !== false, name: flags.name || '' });
+    const name = flags.name || '';
+    colliders.push({
+      minX, minY, minZ, maxX, maxY, maxZ, wall: flags.wall !== false, name,
+      ceil: flags.ceil != null ? !!flags.ceil : name.startsWith('ceil:') ? true : undefined,
+      perch: flags.perch != null ? !!flags.perch : name.startsWith('perch:') ? true : undefined,
+      climb: flags.climb === false ? false : undefined,
+    });
   }
 
   /** Soft contact shadow on a horizontal surface at height y. */
@@ -307,8 +330,11 @@ export function createBuilder({ tiles, ink = [0.11, 0.1, 0.13] }) {
   }
   function probe(name, point, normal, hex) { probes.push({ name, point, normal, hex }); }
   function spot(name, v) { spots[name] = v; }
+  /** Label a room (culling, minimap, preview). floor: index into info.floors (default 0). */
+  function room(name, x0, z0, x1, z1, o = {}) { rooms.push({ name, x0: Math.min(x0, x1), z0: Math.min(z0, z1), x1: Math.max(x0, x1), z1: Math.max(z0, z1), floor: o.floor || 0, landmark: o.landmark || '' }); }
 
-  function finish(THREE) {
+  function finishChunk(THREE, K) {
+    const { P, N, U, C, T, O, IDX, HULL } = K;
     const vcount = P.length / 3;
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
@@ -322,6 +348,12 @@ export function createBuilder({ tiles, ink = [0.11, 0.1, 0.13] }) {
     geo.setIndex(new THREE.BufferAttribute(new Arr(all), 1));
     geo.computeBoundingSphere();
     geo.computeBoundingBox();
+    return { key: K.key, geometry: geo, mainIndexCount: IDX.length, hullIndexCount: HULL.length, vertexCount: vcount };
+  }
+
+  function finish(THREE) {
+    if (!chunks.size) chunkOf(0);
+    const parts = [...chunks.values()].sort((a, b) => a.key - b.key).filter((k) => k.IDX.length || chunks.size === 1).map((K) => finishChunk(THREE, K));
     // Blob shadows: one merged quad mesh.
     const bp = []; const bu = []; const bi = []; const ba = [];
     for (const b of blobs) {
@@ -341,8 +373,13 @@ export function createBuilder({ tiles, ink = [0.11, 0.1, 0.13] }) {
       blobGeo.setIndex(bi);
       blobGeo.computeBoundingSphere();
     }
-    return { geometry: geo, mainIndexCount: IDX.length, hullIndexCount: HULL.length, vertexCount: vcount, colliders, blobs, blobGeo, probes, spots };
+    const vertexCount = parts.reduce((s2, c) => s2 + c.vertexCount, 0);
+    const triCount = parts.reduce((s2, c) => s2 + (c.mainIndexCount + c.hullIndexCount) / 3, 0);
+    return {
+      chunks: parts, geometry: parts[0].geometry, mainIndexCount: parts[0].mainIndexCount, hullIndexCount: parts[0].hullIndexCount,
+      vertexCount, triCount, colliders, blobs, blobGeo, probes, spots, rooms,
+    };
   }
 
-  return { add, collide, blob, probe, spot, finish, colorOf };
+  return { add, collide, blob, probe, spot, room, finish, colorOf };
 }

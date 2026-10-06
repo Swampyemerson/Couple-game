@@ -10,14 +10,21 @@
 // Also: chunked reliable blobs (paint textures, snapshots) and an allocation-free interpolation
 // buffer for the partner's avatar (net.remote() allocates; we use it only for lag compensation).
 import { createNet } from '../net.js';
+import { unpackQuat, packQuat, slerpQuat } from './util.js';
 
 const CHUNK = 3200;
-export const FIELDS = ['x', 'y', 'z', 'yaw', 'po', 'ly', 'lp', 'v', 'wa', 'sp'];
+// q: the body orientation (surface-attached: up = surface normal), packed smallest-three into
+// one 32-bit number and slerped; at: 1 while stuck to a surface (sticky feet).
+export const FIELDS = ['x', 'y', 'z', 'yaw', 'po', 'ly', 'lp', 'v', 'wa', 'sp', 'q', 'at'];
 const ANG = new Set(['yaw', 'ly', 'wa']);
+const QA = [0, 0, 0, 1]; const QB = [0, 0, 0, 1]; const QO = [0, 0, 0, 1];
+/** Identity orientation, packed (what an upright chameleon facing +z publishes at yaw 0). */
+export const Q_ID = packQuat(0, 0, 0, 1);
 
 function wrap(a) { a = (a + Math.PI) % (Math.PI * 2); if (a < 0) a += Math.PI * 2; return a - Math.PI; }
 
-/** Ring buffer of partner states; sample(at, out) interpolates without allocating. */
+function quatOut(out) { unpackQuat(out.q, QO); out.qx = QO[0]; out.qy = QO[1]; out.qz = QO[2]; out.qw = QO[3]; }
+/** Ring buffer of partner states; sample(at, out) interpolates without allocating (q by slerp). */
 export function createRemoteBuffer(size = 40) {
   const F = FIELDS.length;
   const t = new Float64Array(size);
@@ -42,10 +49,10 @@ export function createRemoteBuffer(size = 40) {
         if (t[i] <= at) { a = i; break; }
         b = i;
       }
-      if (a < 0) { for (let f = 0; f < F; f++) out[FIELDS[f]] = v[b * F + f]; return true; }
+      if (a < 0) { for (let f = 0; f < F; f++) out[FIELDS[f]] = v[b * F + f]; quatOut(out); return true; }
       let k;
       if (a === newest) {
-        if (count < 2) { for (let f = 0; f < F; f++) out[FIELDS[f]] = v[a * F + f]; return true; }
+        if (count < 2) { for (let f = 0; f < F; f++) out[FIELDS[f]] = v[a * F + f]; quatOut(out); return true; }
         const p = (a - 1 + size) % size;
         const over = Math.min(at - t[a], maxExtra);
         k = 1 + over / Math.max(1, t[a] - t[p]);
@@ -53,7 +60,12 @@ export function createRemoteBuffer(size = 40) {
       } else k = (at - t[a]) / Math.max(1, t[b] - t[a]);
       for (let f = 0; f < F; f++) {
         const name = FIELDS[f]; const x0 = v[a * F + f]; const x1 = v[b * F + f];
-        if (name === 'po' || name === 'v') out[name] = k < 0.5 && a !== b ? x0 : x1;
+        if (name === 'po' || name === 'v' || name === 'at') out[name] = k < 0.5 && a !== b ? x0 : x1;
+        else if (name === 'q') {
+          unpackQuat(x0, QA); unpackQuat(x1, QB);
+          slerpQuat(QA, QB, k < 0 ? 0 : k > 1.6 ? 1.6 : k, QO);
+          out.qx = QO[0]; out.qy = QO[1]; out.qz = QO[2]; out.qw = QO[3]; out.q = x1;
+        }
         else if (ANG.has(name)) out[name] = x0 + wrap(x1 - x0) * k;
         else out[name] = x0 + (x1 - x0) * k;
       }
@@ -257,7 +269,7 @@ export function createLink(api, { delay = 100, onLink = () => {}, onUnlink = () 
     remoteAt(shotTime, out) {
       if (!net) return false;
       const s = net.remote(shotTime);
-      if (s && s.k === partner && s.p === sess) { for (const f of FIELDS) out[f] = typeof s[f] === 'number' ? s[f] : 0; return true; }
+      if (s && s.k === partner && s.p === sess) { for (const f of FIELDS) out[f] = typeof s[f] === 'number' ? s[f] : 0; quatOut(out); return true; }
       return rb.sample(shotTime - net.delay, out);
     },
     pending() { return net ? net.pendingReliable() : 0; },

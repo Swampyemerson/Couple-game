@@ -15,6 +15,7 @@ export function createControls({ surface, root, joyBase, joyKnob, onAction, pain
     moveX: 0, moveY: 0, // joystick or keys, forward = +y
     lookDX: 0, lookDY: 0, // pixels accumulated since the last frame
     jumpHeld: false,
+    sprintHeld: false,
     locked: false,
     lockFailed: false,
     usingMouse: matchMedia('(pointer: fine)').matches,
@@ -166,10 +167,12 @@ export function createControls({ surface, root, joyBase, joyKnob, onAction, pain
   L.on(document, 'pointerlockerror', () => { st.lockFailed = true; st.locked = false; });
 
   // ── keyboard ──
+  // E sticks / lets go (picks a colour while painting); Z tongue-zips (undoes while painting)
   const KEYMAP = {
-    Space: 'jump', KeyC: 'crouch', KeyP: 'paint', KeyB: 'brush', KeyG: 'fill', KeyE: 'pick', KeyT: 'stamp', KeyZ: 'undo',
-    KeyQ: 'scan', KeyF: 'scurry', KeyR: 'ready', Enter: 'confirm', KeyH: 'hardness', KeyX: 'size',
+    Space: 'jump', KeyC: 'crouch', KeyP: 'paint', KeyB: 'brush', KeyG: 'fill', KeyE: 'stickOrPick', KeyT: 'stamp', KeyZ: 'zipOrUndo',
+    KeyQ: 'scan', KeyF: 'scurry', KeyR: 'ready', Enter: 'confirm', KeyH: 'hardness', KeyX: 'size', KeyV: 'stick',
     Digit1: 'pose:stand', Digit2: 'pose:crouch', Digit3: 'pose:wall', Digit4: 'pose:ball', Digit5: 'pose:flat',
+    Digit6: 'pose:hang', Digit7: 'pose:perch', Digit8: 'pose:squeeze', Digit9: 'pose:corner',
   };
   L.on(window, 'keydown', (e) => {
     if (!isActive()) return;
@@ -179,6 +182,7 @@ export function createControls({ surface, root, joyBase, joyKnob, onAction, pain
     st.lastInput = 'keys'; st.usingMouse = true;
     if (/^(Key[WASD]|Arrow)/.test(e.code)) { keys.add(e.code); e.preventDefault(); return; }
     if (e.code === 'Space') { st.jumpHeld = true; e.preventDefault(); }
+    if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') st.sprintHeld = true;
     if (e.repeat) return;
     const a = KEYMAP[e.code];
     if (a) { onAction(a); if (e.code === 'Space') e.preventDefault(); }
@@ -186,8 +190,9 @@ export function createControls({ surface, root, joyBase, joyKnob, onAction, pain
   L.on(window, 'keyup', (e) => {
     keys.delete(e.code);
     if (e.code === 'Space') st.jumpHeld = false;
+    if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') st.sprintHeld = false;
   });
-  L.on(window, 'blur', () => { keys.clear(); st.jumpHeld = false; });
+  L.on(window, 'blur', () => { keys.clear(); st.jumpHeld = false; st.sprintHeld = false; });
 
   return {
     st,

@@ -1,15 +1,47 @@
-// The three dioramas, as deterministic data + builder calls. Each map paints its own pattern
-// atlas, merges every prop into one mesh (with baked outlines), and lists colliders, blob
+// The dioramas, as deterministic data + builder calls. Each map paints its own pattern atlas,
+// merges every prop into chunked meshes (with baked outlines), and lists colliders, blob
 // shadows, spawns, good hiding spots and eyedropper probe points (used by the tests).
+//
+// ── MAP FORMAT (v2, backward compatible) ─────────────────────────────────────────────────
+// MAPS = BASE_MAPS + EXTRA_MAPS (js/games/chameleon/maps/index.js, owned by the level designer).
+// Entry: {
+//   id, name, blurb,
+//   build(atlas, kit) → (b) => void   register atlas tiles with atlas.add(key, kit.P.<pattern>(…),
+//                                     { size: 'S'|'M'|'L'|'XL', repeat }), then return a fill
+//                                     function that adds geometry to the builder b (geo.js).
+//                                     kit = { frame, room, plant, books, yarn, P, boxGeo, cylGeo,
+//                                     sphereGeo, latheGeo, seeded } (don't import ../maps.js).
+//   size: 'S'|'M'|'L'|'XL', rooms: n, climbs: 1..3     lobby preview card
+//   info?: { w, d,                                       footprint (m), centred on the origin
+//            floors: [{ y, name }],                      floor heights (chunking, minimap)
+//            rooms: [{ name, floor, x0, z0, x1, z1, landmark }],   culling chunks, minimap, plan
+//            overview: { y, radius },                    title-orbit camera
+//            atlasPages: 1|2 }                           2 → one 1024×2048 atlas texture
+// }
+// Builder: b.add(geo, { at, yaw|rot, color, tile, rep, uvOff, outline, collide: true | flags })
+//          b.collide(minX, minY, minZ, maxX, maxY, maxZ, flags)
+//            flags: { wall, name, ceil: true (overhead surface), perch: true (thin rail/pole/stem),
+//                     climb: false (sticky feet slide off) }; names 'ceil:…' / 'perch:…' work too;
+//                     boxes < 0.16 m across are perches automatically. Every other face is crawlable.
+//          b.blob(x, z, rx, rz, { y, a, yaw }) · b.probe(name, point, normal, hex) · b.room(name, x0, z0, x1, z1, { floor })
+//          b.spot(name, value): 'lobby' {x,z}; 'hiderSpawns' / 'seekerSpawns' [{x, y?, z, yaw}] (random,
+//            fair: the seeker spawn is picked at seek time away from the hider); legacy 'hiderSpawn',
+//            'seekerSpawn', 'spawnA', 'spawnB' {x,z,yaw}; 'camo' {x, z, y, wallNormal}.
+// Ceilings: draw only the downward face (boxGeo(..., { faces: ['ny'] }), outline: false) so the
+// third-person camera above sees in, plus a { ceil: true } collider ≥ 0.08 m thick. The ground
+// (y = 0) needs no collider; upper floors are collider slabs. Outer walls are named
+// 'back' / 'front' / 'left' / 'right' (map bounds), else info.w/d is used.
+// Sizes: radius 0.24 × size (0.14–0.43 m), head 0.34 × size, step max(0.2, 0.24 × size); the
+// squeeze pose is 0.08 m × 0.15 m at every size (fits 0.18 m gaps).
 import { boxGeo, cylGeo, sphereGeo, latheGeo, createBuilder } from './geo.js';
 import { createAtlas, P } from './atlas.js';
 import { seeded } from './util.js';
 import { EXTRA_MAPS } from './maps/index.js';
 
 const BASE_MAPS = [
-  { id: 'living', name: 'Living Room', blurb: 'Rugs, stripes and a very full bookshelf.', build: (a) => living(a), size: 'S', rooms: 1, climbs: 2 },
-  { id: 'garden', name: 'Garden', blurb: 'Hedges, flower beds and a striped deck chair.', build: (a) => garden(a), size: 'S', rooms: 1, climbs: 1 },
-  { id: 'studio', name: 'Art Studio', blurb: 'Splatters, swatches and wet canvases.', build: (a) => studio(a), size: 'S', rooms: 1, climbs: 2 },
+  { id: 'living', name: 'Living Room', blurb: 'Rugs, stripes and a very full bookshelf.', build: (a) => living(a), size: 'S', rooms: 1, climbs: 2, info: { w: 10, d: 8, rooms: [{ name: 'Living room', x0: -5, z0: -4, x1: 5, z1: 4 }] } },
+  { id: 'garden', name: 'Garden', blurb: 'Hedges, flower beds and a striped deck chair.', build: (a) => garden(a), size: 'S', rooms: 1, climbs: 1, info: { w: 12, d: 10, rooms: [{ name: 'Garden', x0: -6, z0: -5, x1: 6, z1: 5 }], overview: { y: 5.4, radius: 10.5 } } },
+  { id: 'studio', name: 'Art Studio', blurb: 'Splatters, swatches and wet canvases.', build: (a) => studio(a), size: 'S', rooms: 1, climbs: 2, info: { w: 10, d: 8, rooms: [{ name: 'Studio', x0: -5, z0: -4, x1: 5, z1: 4 }] } },
 ];
 const seen = new Set();
 /** Every selectable map: the three originals, then the level designer's EXTRA_MAPS (bad entries skipped). */
@@ -616,13 +648,40 @@ function studio(atlas) {
 /** Helpers handed to EXTRA_MAPS builders as the 2nd argument (no circular import needed). */
 export const KIT = { frame, room, plant, books, yarn, P, boxGeo, cylGeo, sphereGeo, latheGeo, seeded };
 
-/** Build a map: returns geometry + atlas + gameplay data. Dispose with result.dispose(). */
+/** Map footprint area in m² (from info, else the first room). */
+export function mapArea(m) {
+  const inf = (m && m.info) || {};
+  if (inf.w && inf.d) return inf.w * inf.d * Math.max(1, (inf.floors || []).length);
+  return 80;
+}
+
+/** Chunk key for a centroid: by room (and floor) when the map lists rooms, else a 6 m grid; small maps stay one chunk. */
+function makeChunker(entry) {
+  const inf = entry.info || {};
+  const rooms = Array.isArray(inf.rooms) ? inf.rooms : [];
+  const floors = Array.isArray(inf.floors) ? inf.floors.map((f) => +f.y || 0).sort((a, b) => a - b) : [];
+  const floorOf = (y) => { let k = 0; for (let i = 0; i < floors.length; i++) if (y >= floors[i] - 0.05) k = i; return k; };
+  if (mapArea(entry) <= 160) return null;
+  const G = 6;
+  return (x, y, z) => {
+    const f = floorOf(y);
+    for (let i = 0; i < rooms.length; i++) {
+      const r = rooms[i];
+      if ((r.floor || 0) === f && x >= Math.min(r.x0, r.x1) && x <= Math.max(r.x0, r.x1) && z >= Math.min(r.z0, r.z1) && z <= Math.max(r.z0, r.z1)) return 1 + f * 100 + i;
+    }
+    // outside every room (walls between rooms, outdoors): a coarse grid per floor
+    return 1000 + f * 400 + (Math.floor(x / G) + 10) * 20 + (Math.floor(z / G) + 10);
+  };
+}
+
+/** Build a map: returns geometry chunks + atlas + gameplay data. */
 export function buildMap(THREE, id, { ink = [0.11, 0.1, 0.13] } = {}) {
   const entry = MAPS.find((m) => m.id === id) || MAPS[0];
-  const atlasB = createAtlas(1024);
+  const inf = entry.info || {};
+  const atlasB = createAtlas(1024, inf.atlasPages === 2 ? 2048 : 1024);
   const fill = entry.build(atlasB, KIT);
   const atlas = atlasB.finish();
-  const b = createBuilder({ tiles: atlas.tiles, ink });
+  const b = createBuilder({ tiles: atlas.tiles, ink, chunker: makeChunker(entry) });
   fill(b);
   const out = b.finish(THREE);
   const probes = out.probes.filter((p) => p.point && p.hex);
@@ -632,5 +691,20 @@ export function buildMap(THREE, id, { ink = [0.11, 0.1, 0.13] } = {}) {
     if (c.name === 'left') bounds.minX = c.maxX; if (c.name === 'right') bounds.maxX = c.minX;
     if (c.name === 'fence-back') bounds.minZ = c.maxZ; if (c.name === 'fence-left') bounds.minX = c.maxX; if (c.name === 'fence-right') bounds.maxX = c.minX;
   }
-  return { id, atlas, ...out, probes, bounds };
+  if (inf.w && inf.d) {
+    if (!Number.isFinite(bounds.minX)) bounds.minX = -inf.w / 2; if (!Number.isFinite(bounds.maxX)) bounds.maxX = inf.w / 2;
+    if (!Number.isFinite(bounds.minZ)) bounds.minZ = -inf.d / 2; if (!Number.isFinite(bounds.maxZ)) bounds.maxZ = inf.d / 2;
+  }
+  const rooms = out.rooms.length ? out.rooms : (inf.rooms || []).map((r) => ({ name: r.name, floor: r.floor || 0, landmark: r.landmark || '', x0: Math.min(r.x0, r.x1), z0: Math.min(r.z0, r.z1), x1: Math.max(r.x0, r.x1), z1: Math.max(r.z0, r.z1) }));
+  const spots = out.spots;
+  // spawn lists (fall back to the legacy single spots)
+  const asList = (v) => (Array.isArray(v) ? v.filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.z)) : []);
+  spots.hiderSpawns = asList(spots.hiderSpawns); spots.seekerSpawns = asList(spots.seekerSpawns);
+  if (!spots.hiderSpawns.length) spots.hiderSpawns = [spots.hiderSpawn || spots.lobby || { x: 0, z: 0, yaw: 0 }];
+  if (!spots.seekerSpawns.length) spots.seekerSpawns = [spots.seekerSpawn || spots.lobby || { x: 0, z: 1, yaw: 0 }];
+  if (!spots.lobby) spots.lobby = spots.hiderSpawns[0];
+  if (!spots.spawnA) spots.spawnA = spots.hiderSpawns[0];
+  if (!spots.spawnB) spots.spawnB = spots.seekerSpawns[spots.seekerSpawns.length - 1];
+  const overview = inf.overview && Number.isFinite(inf.overview.radius) ? inf.overview : { y: 5.4, radius: Math.max(9.2, Math.hypot(inf.w || 10, inf.d || 8) * 0.72) };
+  return { id, entry, info: inf, atlas, ...out, probes, bounds, rooms, overview, area: mapArea(entry), big: mapArea(entry) > 160 };
 }

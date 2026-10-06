@@ -7,8 +7,9 @@ import { sphereGeo, tubeGeo } from './geo.js';
 import { clamp, lerp, damp } from './util.js';
 
 export const TEX = 128;
-export const POSES = ['stand', 'crouch', 'wall', 'ball', 'flat'];
-export const POSE_LABEL = { stand: 'Stand', crouch: 'Crouch', wall: 'Wall', ball: 'Ball', flat: 'Flat' };
+// Indices are published (po): only ever append.
+export const POSES = ['stand', 'crouch', 'wall', 'ball', 'flat', 'hang', 'perch', 'squeeze', 'corner'];
+export const POSE_LABEL = { stand: 'Stand', crouch: 'Crouch', wall: 'Flat', ball: 'Ball', flat: 'Low', hang: 'Hang', perch: 'Perch', squeeze: 'Squeeze', corner: 'Corner' };
 // Fill regions (part groups)
 export const REGIONS = { body: [0], head: [1, 2, 3, 4], tail: [5], legs: [6, 7, 8, 9] };
 export const REGION_OF_PART = [0, 1, 1, 1, 1, 2, 3, 3, 3, 3]; // index into ['body','head','tail','legs']
@@ -264,6 +265,7 @@ export function createKit(THREE) {
 
 // Pose targets: per part [px,py,pz, rx,ry,rz, sx,sy,sz] (position relative to the stand pivot).
 const Z = [0, 0, 0, 0, 0, 0, 1, 1, 1];
+const M0 = [0, 0, 0, 0, 0, 0, 1, 1, 1]; // model offset (root space): position, rotation, unused scale
 const POSE_DEF = {
   stand: { body: Z, head: [0, 0, 0, -0.08, 0, 0, 1, 1, 1], tail: Z, legs: [0, 0, 0, 0, 0, 0, 1, 1, 1] },
   crouch: { body: [0, -0.06, 0, 0.05, 0, 0, 1.08, 0.9, 1.0], head: [0, -0.07, -0.02, 0.18, 0, 0, 1, 1, 1], tail: [0, -0.06, 0.02, 0.12, 0, 0, 1, 1, 1], legs: [0, -0.05, 0, 0, 0, 0.45, 1, 0.65, 1] },
@@ -271,6 +273,16 @@ const POSE_DEF = {
   flat: { body: [0, -0.145, 0, 0, 0, 0, 1.3, 0.52, 1.1], head: [0, -0.19, 0.03, -0.05, 0, 0, 1.08, 0.72, 1.02], tail: [0, -0.15, 0.03, 0, 0, Math.PI / 2, 1, 1, 1.0], legs: [0, -0.13, 0, 0, 0, 0.9, 1, 0.85, 1] },
 };
 POSE_DEF.wall = POSE_DEF.flat;
+// pressed into a corner: flat, a little narrower and longer
+POSE_DEF.corner = { body: [0, -0.15, 0, 0, 0, 0, 1.12, 0.5, 1.16], head: [0, -0.19, 0.03, -0.05, 0, 0, 1.0, 0.72, 1.02], tail: [0, -0.15, 0.03, 0, 0, Math.PI / 2, 1, 1, 1.0], legs: [0, -0.13, 0, 0, 0, 0.9, 1, 0.85, 1] };
+// squeeze: long, low and narrow (the collider shrinks to 0.08 m at every size; the body squashes to fit)
+POSE_DEF.squeeze = { body: [0, -0.15, 0.02, 0, 0, 0, 0.62, 0.42, 1.3], head: [0, -0.2, 0.06, -0.02, 0, 0, 0.7, 0.62, 1.1], tail: [0, -0.16, 0.04, 0.35, 0, 0, 0.6, 0.6, 1.0], legs: [0, -0.14, 0, 0, 0, 1.25, 0.8, 0.6, 1] };
+// perch: feet gripping inward under a rail, tail curled down around it
+POSE_DEF.perch = { body: [0, 0.02, 0, 0, 0, 0, 0.94, 1.02, 1], head: [0, 0.02, 0, -0.14, 0, 0, 1, 1, 1], tail: [0, -0.02, 0.02, 0.85, 0, 0, 1, 1, 1], legs: [0, 0.01, 0, 0, 0, -0.55, 1, 1.05, 1] };
+// hang: dangling head-down from an overhead surface by the tail (model turned along the normal)
+POSE_DEF.hang = { body: [0, 0, 0, 0, 0, 0, 0.96, 0.98, 1.06], head: [0, 0, 0, 0.32, 0, 0, 1, 1, 1], tail: [0, 0, 0, -0.9, 0, 0, 1, 1, 1], legs: [0, 0, 0, 0, 0, -0.35, 1, 1, 1] };
+for (const k of Object.keys(POSE_DEF)) POSE_DEF[k].model = M0;
+POSE_DEF.hang.model = [0, 0.5, -0.06, -Math.PI / 2, 0, 0, 1, 1, 1];
 const LEG_SIDE = { legFL: 1, legFR: -1, legBL: 1, legBR: -1 };
 
 /**
@@ -321,7 +333,8 @@ export function createAvatar(THREE, kit, { gradientMap, texture }) {
   blob.renderOrder = 1;
 
   // pose blending state
-  const cur = { body: Z.slice(), head: POSE_DEF.stand.head.slice(), tail: Z.slice(), legs: Z.slice() };
+  const cur = { body: Z.slice(), head: POSE_DEF.stand.head.slice(), tail: Z.slice(), legs: Z.slice(), model: M0.slice() };
+  const PARTS = ['body', 'head', 'tail', 'legs', 'model'];
   let poseName = 'stand';
   const st = {
     pose: 'stand',
@@ -329,14 +342,16 @@ export function createAvatar(THREE, kit, { gradientMap, texture }) {
     lookYaw: 0, lookPitch: 0,
     blinkT: 2 + Math.random() * 3, blink: 0,
     glintUntil: 0,
-    wallN: null, // [x, y, z] wall normal for the wall pose
+    wallN: null, // legacy (orientation now lives on root.quaternion)
     breathe: true,
+    squash: 0, // suction squash impulse (stick / unstick), decays
+    size: 1,
   };
 
   function setPose(name, instant = false) {
     if (!POSE_DEF[name]) name = 'stand';
     poseName = name; st.pose = name;
-    if (instant) for (const k of ['body', 'head', 'tail', 'legs']) for (let i = 0; i < 9; i++) cur[k][i] = POSE_DEF[name][k][i];
+    if (instant) for (const k of PARTS) for (let i = 0; i < 9; i++) cur[k][i] = POSE_DEF[name][k][i];
   }
 
   function applyPart(obj, base, v, extra = 0, side = 1) {
@@ -345,15 +360,12 @@ export function createAvatar(THREE, kit, { gradientMap, texture }) {
     obj.scale.set(v[6], v[7], v[8]);
   }
 
-  const tmpQ = new THREE.Quaternion();
-  const tmpM = new THREE.Matrix4();
-  const vx = new THREE.Vector3(); const vy = new THREE.Vector3(); const vz = new THREE.Vector3();
 
   /** Per-frame: blend pose, walk cycle, eyes, blink, glint. now = seconds (local). */
   function update(dt, now) {
     const tgt = POSE_DEF[poseName];
     const k = 1 - Math.exp(-14 * dt);
-    for (const p of ['body', 'head', 'tail', 'legs']) for (let i = 0; i < 9; i++) cur[p][i] += (tgt[p][i] - cur[p][i]) * k;
+    for (let pi = 0; pi < PARTS.length; pi++) { const p = PARTS[pi]; for (let i = 0; i < 9; i++) cur[p][i] += (tgt[p][i] - cur[p][i]) * k; }
     // walk cycle
     st.walk = damp(st.walk, clamp(st.speed / 2.6, 0, 1), 10, dt);
     st.walkPhase += dt * (4 + st.speed * 4.2);
@@ -361,7 +373,9 @@ export function createAvatar(THREE, kit, { gradientMap, texture }) {
     const bob = Math.abs(Math.sin(st.walkPhase)) * 0.025 * st.walk;
     const br = st.breathe ? Math.sin(now * 2.4) * 0.012 : 0;
     applyPart(piv.body, PIV.body, cur.body);
-    piv.body.scale.y *= 1 + br; piv.body.scale.x *= 1 + br * 0.6;
+    st.squash *= Math.exp(-7 * dt);
+    const sq = Math.sin(Math.min(1, st.squash) * Math.PI * 0.5) * st.squash;
+    piv.body.scale.y *= (1 + br) * (1 - sq * 0.45); piv.body.scale.x *= (1 + br * 0.6) * (1 + sq * 0.32); piv.body.scale.z *= 1 + sq * 0.18;
     piv.body.position.y += bob;
     applyPart(piv.head, PIV.head, cur.head, Math.sin(st.walkPhase * 2) * 0.04 * st.walk);
     piv.head.position.y += bob;
@@ -388,31 +402,23 @@ export function createAvatar(THREE, kit, { gradientMap, texture }) {
     // glint (emissive flash)
     const g = st.glintUntil > now ? 1 : 0;
     eyeMat.emissive.setScalar(g ? 0.9 : 0);
-    // wall pose: tilt the model so the belly faces the wall, head up
-    if ((poseName === 'wall') && st.wallN) {
-      const n = st.wallN;
-      // model basis in root space: up(+y) -> wall normal (in root frame), forward(+z) -> world up
-      const cy = Math.cos(root.rotation.y); const sy = Math.sin(root.rotation.y);
-      const lnx = n[0] * cy - n[2] * sy; const lnz = n[0] * sy + n[2] * cy;
-      vy.set(lnx, n[1], lnz).normalize();
-      vz.set(0, 1, 0);
-      vx.crossVectors(vy, vz).normalize();
-      vz.crossVectors(vx, vy).normalize();
-      tmpM.makeBasis(vx, vy, vz);
-      tmpQ.setFromRotationMatrix(tmpM);
-      model.quaternion.slerp(tmpQ, k);
-      model.position.set(0, 0, 0);
-    } else {
-      tmpQ.identity();
-      model.quaternion.slerp(tmpQ, k);
-    }
+    // per-pose model offset (hang turns the body along the surface normal); the surface
+    // orientation itself is root.quaternion, set by the game
+    const mo = cur.model;
+    model.position.set(mo[0], mo[1], mo[2]);
+    model.rotation.set(mo[3], mo[4], mo[5]);
   }
-
   return {
     root, model, meshes, eyes, blob, mat, eyeMat, st,
     setPose,
     get pose() { return poseName; },
     update,
+    /** Body scale (size setting): everything hangs off root, so meshes, eyes and picking scale too. */
+    setSize(sz) { st.size = sz; root.scale.setScalar(sz); },
+    /** Suction squash (0..1). */
+    squash(k = 1) { st.squash = Math.max(st.squash, k); },
+    /** World position of the mouth (tongue origin). */
+    mouthWorld(out) { out.set(0, 0.02, 0.27); return piv.head.localToWorld(out); },
     setTexture(t) { mat.map = t; mat.needsUpdate = true; },
     /** Visible or not (also hides the blob). */
     setVisible(v) { root.visible = v; blob.visible = v; },

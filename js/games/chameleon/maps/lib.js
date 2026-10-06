@@ -117,10 +117,13 @@ export function floor(b, x0, z0, x1, z1, y, o = {}) {
 export function slab(b, x0, z0, x1, z1, yTop, o = {}) {
   const th = o.thick || 0.2;
   const under = o.under || {};
-  aabb(b, x0, yTop - th, z0, x1, yTop - 0.002, z1, { faces: ['ny', 'px', 'nx', 'pz', 'nz'], color: under.color || '#f4efe6', tile: under.tile, rep: under.rep || 1, outline: false });
+  // lids (no floor above) draw only their underside so the third-person camera sees in from above
+  aabb(b, x0, yTop - th, z0, x1, yTop - 0.002, z1, { faces: o.lid ? ['ny'] : ['ny', 'px', 'nx', 'pz', 'nz'], color: under.color || '#f4efe6', tile: under.tile, rep: under.rep || 1, outline: false });
   if (o.top) floor(b, x0, z0, x1, z1, yTop - 0.006, o.top);
-  if (o.edge) aabb(b, x0 - 0.004, yTop - th, z0 - 0.004, x1 + 0.004, yTop - th + 0.025, z1 + 0.004, { faces: ['ny', 'px', 'nx', 'pz', 'nz'], color: o.edge, outline: false });
+  if (o.edge && !o.lid) aabb(b, x0 - 0.004, yTop - th, z0 - 0.004, x1 + 0.004, yTop - th + 0.025, z1 + 0.004, { faces: ['ny', 'px', 'nx', 'pz', 'nz'], color: o.edge, outline: false });
   b.collide(x0, yTop - th, z0, x1, yTop, z1, { wall: false, ceil: true, name: o.name || 'ceil:slab' });
+  // a lid's top is out of the seeker's sight: keep chameleons off it (invisible, not climbable)
+  if (o.lid) b.collide(x0 - 0.2, yTop, z0 - 0.2, x1 + 0.2, yTop + 2.5, z1 + 0.2, { wall: false, climb: false, name: 'roof-guard' });
 }
 
 /**

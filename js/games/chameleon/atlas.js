@@ -7,11 +7,12 @@ import { seeded, mixHex, shade } from './util.js';
 const PAD = 8;
 const SIZES = { S: 48, M: 112, L: 240, XL: 496 };
 
-export function createAtlas(size = 1024) {
+/** size: width in px; height: 1024 or 2048 (two 1024² pages stacked in one texture for big maps). */
+export function createAtlas(size = 1024, height = size) {
   const canvas = document.createElement('canvas');
-  canvas.width = size; canvas.height = size;
+  canvas.width = size; canvas.height = height;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, size, size);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, size, height);
   const reqs = [];
   const tiles = {}; // key -> [u0, v0, du, dv]
   const rects = {}; // key -> { x, y, w, h, repeat }
@@ -30,7 +31,7 @@ export function createAtlas(size = 1024) {
     for (const r of order) {
       const W = r.iw + PAD * 2; const H = r.ih + PAD * 2;
       if (x + W > size) { x = 0; y += shelf; shelf = 0; }
-      if (y + H > size) { console.warn('atlas full, dropping', r.key); continue; }
+      if (y + H > height) { console.warn('atlas full, dropping', r.key); continue; }
       tmp.width = r.iw; tmp.height = r.ih;
       const g = tmp.getContext('2d');
       g.clearRect(0, 0, r.iw, r.ih);
@@ -51,23 +52,23 @@ export function createAtlas(size = 1024) {
         ctx.drawImage(canvas, ix + r.iw - 1, y, 1, H, ix + r.iw, y, PAD, H);
       }
       rects[r.key] = { x: ix, y: iy, w: r.iw, h: r.ih, repeat: r.repeat };
-      tiles[r.key] = [ix / size, 1 - (iy + r.ih) / size, r.iw / size, r.ih / size];
+      tiles[r.key] = [ix / size, 1 - (iy + r.ih) / height, r.iw / size, r.ih / height];
       x += W; shelf = Math.max(shelf, H);
     }
     tmp.width = tmp.height = 1;
-    const data = ctx.getImageData(0, 0, size, size).data;
-    return { canvas, data, size, tiles, rects };
+    const data = ctx.getImageData(0, 0, size, height).data;
+    return { canvas, data, size, width: size, height, tiles, rects, used: y + shelf };
   }
   return { add, finish };
 }
 
 /** CPU texel lookup matching the shader: tile + fract(uv). Writes [r,g,b] (0-255) into out. */
 export function sampleAtlas(atlas, tile, u, v, out) {
-  const S = atlas.size;
+  const S = atlas.size; const SH = atlas.height || S;
   let fu = u - Math.floor(u); let fv = v - Math.floor(v);
   if (fu >= 1) fu = 0; if (fv >= 1) fv = 0;
   const px = Math.min(S - 1, Math.max(0, Math.floor((tile[0] + fu * tile[2]) * S)));
-  const py = Math.min(S - 1, Math.max(0, Math.floor((1 - (tile[1] + fv * tile[3])) * S)));
+  const py = Math.min(SH - 1, Math.max(0, Math.floor((1 - (tile[1] + fv * tile[3])) * SH)));
   const i = (py * S + px) * 4;
   out[0] = atlas.data[i]; out[1] = atlas.data[i + 1]; out[2] = atlas.data[i + 2];
   return out;

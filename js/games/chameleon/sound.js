@@ -84,6 +84,13 @@ export function createSound() {
     sad: () => [392, 330, 262].forEach((f, i) => tone(f, f * 0.97, 0.22, { type: 'triangle', vol: 0.13, at: i * 0.13 })),
     confetti: () => { for (let i = 0; i < 8; i++) tone(1800 + Math.random() * 1600, 2400 + Math.random() * 900, 0.05, { vol: 0.035, at: i * 0.04 }); },
     beat: () => { tone(70, 52, 0.12, { vol: 0.32 }); tone(64, 48, 0.1, { vol: 0.22, at: 0.16 }); },
+    // suction cup: a wet low "thup" with a quick upward pop
+    stick: () => { noise(0.07, { vol: 0.22, freq: 260, q: 1.2, type: 'lowpass' }); tone(180, 90, 0.08, { vol: 0.2 }); tone(420, 900, 0.05, { type: 'triangle', vol: 0.1, at: 0.05 }); },
+    // pulling off: a bright "pok" falling away
+    unstick: () => { tone(900, 380, 0.07, { type: 'triangle', vol: 0.16 }); noise(0.05, { vol: 0.14, freq: 1800, q: 2 }); },
+    // tongue-zip: a rubbery "thwip" up then a sticky landing
+    zip: () => { tone(300, 1800, 0.12, { type: 'sawtooth', vol: 0.07 }); noise(0.1, { vol: 0.12, freq: 2400, q: 1.5, sweep: 0.4 }); tone(200, 80, 0.08, { vol: 0.16, at: 0.3 }); },
+    sprint: () => tone(520, 760, 0.07, { type: 'triangle', vol: 0.1 }),
     warn: () => { tone(500, 500, 0.08, { type: 'square', vol: 0.07 }); tone(500, 500, 0.08, { type: 'square', vol: 0.07, at: 0.14 }); },
   };
 

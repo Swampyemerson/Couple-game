@@ -62,7 +62,9 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
   camera.add(vm);
 
   let map = null; let mapMesh = null; let blobMesh = null; let atlasTex = null; let worldMat = null; let blobMat = null; let world = null;
+  const mapMeshes = []; // one per chunk (frustum culled individually); mapMesh = mapMeshes[0]
   const inkCol = theme.outline;
+  const isMap = (o) => !!o && o.userData.isMap === true;
 
   function loadMap(id) {
     if (map && map.id === id) return map;
@@ -73,10 +75,17 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
     atlasTex.anisotropy = Math.min(2, renderer.capabilities.getMaxAnisotropy());
     atlasTex.minFilter = THREE.LinearMipmapLinearFilter;
     worldMat = makeWorldMaterial(THREE, { map: atlasTex, gradientMap, ink: inkCol, atlasSize: map.atlas.size });
-    mapMesh = new THREE.Mesh(map.geometry, worldMat);
-    mapMesh.matrixAutoUpdate = false; mapMesh.updateMatrix();
-    mapMesh.userData.isMap = true;
-    scene.add(mapMesh);
+    for (const ch of map.chunks) {
+      const m = new THREE.Mesh(ch.geometry, worldMat);
+      m.matrixAutoUpdate = false; m.updateMatrix();
+      m.userData.isMap = true; m.userData.chunk = ch;
+      scene.add(m); mapMeshes.push(m);
+    }
+    mapMesh = mapMeshes[0];
+    // draw distance: big maps fog out (and cull) beyond a room or two
+    const far = map.big ? 26 : 30;
+    scene.fog.near = map.big ? 11 : 13; scene.fog.far = far;
+    camera.far = far + 6; camera.updateProjectionMatrix();
     if (map.blobGeo) {
       blobMat = makeBlobMaterial(THREE, '#3a2a1c');
       blobMesh = new THREE.Mesh(map.blobGeo, blobMat);
@@ -89,8 +98,11 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
   }
   function unloadMap() {
     if (!map) return;
-    scene.remove(mapMesh); if (blobMesh) scene.remove(blobMesh);
-    map.geometry.dispose(); if (map.blobGeo) map.blobGeo.dispose();
+    for (const m of mapMeshes) scene.remove(m);
+    mapMeshes.length = 0;
+    if (blobMesh) scene.remove(blobMesh);
+    for (const ch of map.chunks) ch.geometry.dispose();
+    if (map.blobGeo) map.blobGeo.dispose();
     atlasTex.dispose(); worldMat.dispose(); if (blobMat) blobMat.dispose();
     map = null; mapMesh = null; blobMesh = null; atlasTex = null; worldMat = null; blobMat = null; world = null;
   }
@@ -106,11 +118,13 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
     ray.far = far;
     hits.length = 0;
     pickList.length = 0;
-    for (const o of objects) pickList.push(o);
-    const g = map ? map.geometry : null;
-    if (g) g.setDrawRange(0, map.mainIndexCount);
+    for (const o of objects) {
+      if (o === mapMesh) { for (const m of mapMeshes) pickList.push(m); continue; } // "the map" = every chunk
+      pickList.push(o);
+    }
+    if (map) for (const ch of map.chunks) ch.geometry.setDrawRange(0, ch.mainIndexCount); // outline hulls excluded
     ray.intersectObjects(pickList, false, hits);
-    if (g) g.setDrawRange(0, Infinity);
+    if (map) for (const ch of map.chunks) ch.geometry.setDrawRange(0, Infinity);
     return hits.length ? hits[0] : null;
   }
   function pickMap(far = 60) { return mapMesh ? pick([mapMesh], far) : null; }
@@ -138,7 +152,7 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
   /** Albedo of the map at a ray hit: vertex colour × atlas texel, mixed with blob shadow. */
   function albedoAtHit(hit, out) {
     const g = hit.object.geometry;
-    if (hit.object === mapMesh) {
+    if (isMap(hit.object)) {
       const a = hit.face.a;
       const tile = g.attributes.tile; const col = g.attributes.color;
       const t = [tile.getX(a), tile.getY(a), tile.getZ(a), tile.getW(a)];
@@ -165,7 +179,7 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
 
   /** Describe the surface plane of a map hit for the stamp tool. */
   function surfaceOf(hit) {
-    if (!hit || hit.object !== mapMesh) return null;
+    if (!hit || !isMap(hit.object)) return null;
     const g = hit.object.geometry;
     const P = g.attributes.position; const U = g.attributes.uv; const T = g.attributes.tile; const C = g.attributes.color;
     const ia = hit.face.a; const ib = hit.face.b; const ic = hit.face.c;
@@ -228,7 +242,7 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
 
   return {
     THREE, renderer, scene, camera, canvas, hemi, sun, kit, paints, av, fx, vm, gradientMap,
-    get map() { return map; }, get world() { return world; }, get mapMesh() { return mapMesh; },
+    get map() { return map; }, get world() { return world; }, get mapMesh() { return mapMesh; }, mapMeshes, isMap,
     get size() { return [W, H]; }, get dpr() { return baseDpr * dynScale; }, get scale() { return dynScale; },
     loadMap, resize, setScale, setTheme, compile,
     ray, setRayFromScreen, pick, pickMap, albedoAtHit, surfaceOf, blobAt,
