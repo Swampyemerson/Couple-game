@@ -1522,6 +1522,8 @@ export function createGame(el, api) {
         return { yaw: b.yaw, pitch: b.lookPitch };
       },
       partnerPos(w) { const r = stage.av[w].root.position; return [r.x, r.y, r.z]; },
+      /** World centre of a player's body mesh (what to aim at). */
+      bodyCenter(w) { const m = stage.av[w].meshes[0]; m.updateWorldMatrix(true, false); const c = new THREE.Vector3(); m.geometry.computeBoundingBox(); m.geometry.boundingBox.getCenter(c); m.localToWorld(c); return [c.x, c.y, c.z]; },
       /** Screen position (CSS px, page coords) of a world point with the current camera. */
       screenOf(x, y, z) {
         const v3 = new THREE.Vector3(x, y, z).project(stage.camera);
