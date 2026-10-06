@@ -276,7 +276,8 @@ export function createGame(el, api) {
     renderer.setPixelRatio(baseDpr * scale);
     renderer.setSize(W, H, false);
     const vw = split ? W / 2 : W;
-    for (const w of viewers) { players[w].rig.resize(vw, H); if (players[w].view) players[w].view.resized(); }
+    const short = H < 560 && W > H;
+    for (const w of viewers) { players[w].rig.resize(vw, H, short); if (players[w].view) players[w].view.resized(); }
     if (overlay) overlay.resize(vw, H);
     root.classList.toggle('rr-short', H < 560 && W > H);
     root.classList.toggle('rr-narrow', vw < 370);
@@ -1105,8 +1106,8 @@ export function createGame(el, api) {
       if (M.phase === 'lobby' || M.phase === 'loading') mode = 'lobby';
       else if (M.phase === 'finale' || M.phase === 'over') { mode = 'finale'; const w = M.result && M.result.winner; tg = w ? players[w].rs : p.rs; }
       else if (M.mode === 'tandem' && p.rs.down && p.r && p.r.hold && p.rs.downT > 0.9) { mode = 'spectate'; tg = players[other(p.w)].rs; }
-      if (lobbyish && split) rg.resize(W, H);
-      else if (split && rg.cam.aspect !== vw / H) rg.resize(vw, H);
+      if (lobbyish && split) rg.resize(W, H, H < 560 && W > H);
+      else if (split && rg.cam.aspect !== vw / H) rg.resize(vw, H, H < 560 && vw > H);
       rg.update(dt, mode, tg, K.tAnim);
       viewArg.track = tr; viewArg.z = p.rs.z; viewArg.r = p.r; viewArg.time = K.tAnim; viewArg.boxes = M.mode === 'race' && M.phase !== 'lobby'; viewArg.fly = p.fly; viewArg.front = mode === 'lobby' || mode === 'finale';
       world.syncView(viewArg);

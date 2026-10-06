@@ -227,6 +227,10 @@ export const CSS = `
 .g-rush.rr-short .rr-logo { font-size: 34px; }
 .g-rush.rr-short .rr-ov-lobby { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; align-content: center; align-items: center; }
 .g-rush.rr-short .rr-dist { font-size: 26px; }
+/* landscape phone: race bar between the corner columns, gap pill tucked under it, so the HUD ends
+   around a quarter of the way down instead of sitting on the vanishing point */
+.g-rush.rr-short .rr-bar { position: absolute; top: calc(max(var(--rr-pad), env(safe-area-inset-top, 0px)) + 52px); left: 30%; right: 30%; margin: 0; }
+.g-rush.rr-short .rr-gap { position: absolute; top: calc(max(var(--rr-pad), env(safe-area-inset-top, 0px)) + 8px); left: 62%; margin: 0; font-size: 13px; text-align: left; }
 .g-rush.rr-short .rr-pops { top: 20%; }
 .g-rush.rr-narrow .rr-dist { font-size: 28px; }
 .g-rush.rr-narrow .rr-chip { font-size: 13px; height: 26px; }

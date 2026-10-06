@@ -145,10 +145,11 @@ export function createFx(THREE, world) {
 export function createRig(THREE) {
   const cam = new THREE.PerspectiveCamera(70, 1, 0.1, 460);
   const look = new THREE.Vector3();
-  const st = { x: 0, y: 4, z: 8, lx: 0, ly: 1, lz: -10, shake: 0, kick: 0, fov: 70, aspect: 1, ready: false, roll: 0, back: 0, orbit: 0 };
+  const st = { x: 0, y: 4, z: 8, lx: 0, ly: 1, lz: -10, shake: 0, kick: 0, fov: 70, aspect: 1, ready: false, roll: 0, back: 0, orbit: 0, short: false };
   return {
     cam,
-    resize(w, h) { st.aspect = w / Math.max(1, h); cam.aspect = st.aspect; cam.updateProjectionMatrix(); },
+    /** short: a landscape phone, where the lobby sheet covers the left half */
+    resize(w, h, short = false) { st.aspect = w / Math.max(1, h); st.short = !!short; cam.aspect = st.aspect; cam.updateProjectionMatrix(); },
     shake(a) { st.shake = Math.max(st.shake, a); },
     kick(a) { st.kick = Math.max(st.kick, a); },
     snap() { st.ready = false; },
@@ -163,8 +164,11 @@ export function createRig(THREE) {
         // in front of the two runners, looking back at their faces, swaying slowly
         const a = Math.sin(t * 0.25) * 0.3;
         const R = portrait ? 11.5 : 7.6;
-        px = Math.sin(a) * R; py = portrait ? 2.3 : 2.1; pz = -tg.z - Math.cos(a) * R;
-        lx = 0; ly = portrait ? 0.35 : 1.0; lz = -tg.z;
+        // landscape phone: both runners in the right half, clear of the sheet (this camera looks back
+        // along the track, so its right is world -x: aim at +x)
+        const sx = st.short ? 5.4 : 0;
+        px = sx + Math.sin(a) * R; py = portrait ? 2.3 : 2.1; pz = -tg.z - Math.cos(a) * R;
+        lx = sx; ly = portrait ? 0.35 : 1.0; lz = -tg.z;
         k = 1 - Math.exp(-dt * 3);
       } else if (mode === 'finale') {
         st.orbit += dt * 0.5;

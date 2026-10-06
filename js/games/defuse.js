@@ -990,13 +990,12 @@ registerGame({
       const sv = memo.saved;
       if (!sv || !s || s.ph !== 'reading' || s.n !== sv.n || ENDED.has(sv.n) || Date.now() - sv.at > 30 * 60000) return false;
       memo.saved = null;
-      B = { ...sv.B, btn: null, lit: null, seqLast: performance.now(), flashT0: 0, shownSecs: -1, pz: true, lastBad: null };
+      B = { ...sv.B, btn: null, lit: null, seqLast: performance.now(), flashT0: 0, shownSecs: -1, pz: wantPause(), lastBad: null };
       L.role = 'bomb'; memo.role = 'bomb';
       phase = 'bomb';
       renderBomb();
       api.setStatus('You have the bomb');
-      B.pz = !wantPause(); // force a change so syncBombPause publishes
-      syncBombPause();
+      pub();
       return true;
     }
 
