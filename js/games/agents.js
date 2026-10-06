@@ -246,9 +246,9 @@ const css = `
 .g-ag-main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .g-ag-wrap { container-type: inline-size; width: 100%; }
 .g-ag-grid { --gap: clamp(4px, 1.4cqw, 10px); --fs: 12px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--gap); }
-.g-ag-card { --cw: calc((100cqw - 4 * var(--gap)) / 5); --face: var(--g-card); --ink: var(--g-ink); position: relative; height: clamp(52px, min(calc(var(--cw) * 0.8), calc((100dvh - 330px) / 5)), 96px); min-width: 0; padding: 0 3px 7px; box-sizing: border-box; display: grid; place-items: center; overflow: hidden; border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); background-color: var(--face); color: var(--ink); box-shadow: var(--g-shadow); font-family: var(--g-font-body); font-weight: 900; text-transform: uppercase; cursor: default; transition: transform 0.12s ease; }
+.g-ag-card { --cw: calc((100cqw - 4 * var(--gap)) / 5); --face: var(--g-card); --ink: var(--g-ink); position: relative; height: clamp(52px, min(calc(var(--cw) * 0.8), calc((100dvh - 330px) / 5)), 96px); min-width: 0; padding: 0 2px 7px; box-sizing: border-box; display: grid; place-items: center; overflow: hidden; border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); background-color: var(--face); color: var(--ink); box-shadow: var(--g-shadow); font-family: var(--g-font-body); font-weight: 900; text-transform: uppercase; cursor: default; transition: transform 0.12s ease; }
 .g-ag-card::before { content: ''; position: absolute; left: 34%; right: 34%; bottom: 6px; height: 2px; border-radius: 1px; background: var(--g-line); }
-.g-ag-word { position: relative; z-index: 1; max-width: 100%; display: block; text-align: center; font-size: var(--fs); line-height: 1.02; letter-spacing: 0.02em; white-space: nowrap; }
+.g-ag-word { position: relative; z-index: 1; max-width: 100%; display: block; text-align: center; font-size: var(--fs); line-height: 1.02; letter-spacing: 0; white-space: nowrap; }
 .g-ag-word .hy { display: none; }
 .g-ag-word.two .p { display: block; }
 .g-ag-word.two .hy { display: inline; }
@@ -480,13 +480,13 @@ registerGame({
       const spans = [...grid.querySelectorAll('.g-ag-word')];
       if (!spans.length) return;
       const card = spans[0].parentElement;
-      const avail = card.clientWidth - 8;
+      const avail = card.clientWidth - 6;
       const availH = card.clientHeight - 16;
       if (avail < 20 || availH < 16) return;
       meter = meter || document.createElement('canvas').getContext('2d');
       const cs = getComputedStyle(spans[0]);
       meter.font = `${cs.fontWeight} 100px ${cs.fontFamily}`;
-      const em = (t) => meter.measureText(t).width / 100 + 0.02 * t.length; // + the CSS letter-spacing
+      const em = (t) => meter.measureText(t).width / 100;
       let fs = Math.min(22, card.clientHeight * 0.3);
       const plan = spans.map((sp) => {
         const w = up(sp.dataset.w);

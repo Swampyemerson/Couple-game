@@ -17,6 +17,7 @@ import { registerGame } from './core.js';
 const MAX = 6;
 const other = (w) => (w === 'a' ? 'b' : 'a');
 const norm = (x) => (typeof x === 'string' ? x.trim().toLowerCase() : '');
+const esc = (x) => String(x ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 
 let COMMON = null;
 let VALID = null;
@@ -104,31 +105,31 @@ function result(s) {
 const KB_ROWS = ['qwertyuiop', 'asdfghjkl', '>zxcvbnm<'];
 const RANK = { x: 1, y: 2, g: 3 };
 const WORDS_FOR = { g: 'right spot', y: 'in the word', x: 'not in it' };
+const KEY_CLASS = { g: 'm-g', y: 'is-hl', x: 'is-out' }; // kit .g-key states
 const BACK_ICON = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M8.5 5H20a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H8.5L3 12z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/><path d="M11 9l6 6M17 9l-6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>';
 
 const css = `
-.g-wd { --gap: 6px; --wd-on-hl: var(--g-ink); flex: 1; min-height: 0; width: 100%; max-width: 520px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; color: var(--g-ink); font-family: var(--g-font-body); touch-action: manipulation; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .g-wd { --wd-on-hl: var(--g-bg); } }
-:root[data-theme="dark"] .g-wd { --wd-on-hl: var(--g-bg); }
+.g-wd { --gap: 6px; --wd-on-good: var(--g-white); flex: 1; min-height: 0; width: 100%; max-width: 520px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; color: var(--g-ink); font-family: var(--g-font-body); touch-action: manipulation; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .g-wd { --wd-on-good: var(--g-on-ink); } }
+:root[data-theme="dark"] .g-wd { --wd-on-good: var(--g-on-ink); }
 .g-wd-head { display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .g-wd-say { margin: 0; min-height: 1.35em; text-align: center; font-weight: 800; font-size: 0.98rem; line-height: 1.35; text-wrap: balance; }
 .g-wd-say b { font-family: var(--g-font-display); letter-spacing: 0.04em; }
 .g-wd-strip { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 18px; font-size: 0.8rem; font-weight: 800; color: var(--g-muted); }
 .g-wd-strip:empty { display: none; }
 .g-wd-who { font-weight: 900; }
-.g-wd-who.p-a { color: var(--p-a); } .g-wd-who.p-b { color: var(--p-b); }
+.g-wd-who.p-a { color: var(--p-a-text); } .g-wd-who.p-b { color: var(--p-b-text); }
 .g-wd-area { flex: 1 1 0; min-height: 170px; container-type: size; display: flex; align-items: center; justify-content: center; }
-.g-wd[data-mode="done"] .g-wd-area, .g-wd[data-mode="end"] .g-wd-area { align-items: flex-start; padding-top: min(4vh, 28px); }
 
 /* tiles: printed letter tiles */
 .g-wd-board { --t: min(62px, calc((100cqw - 4 * var(--gap)) / 5), calc((100cqh - 5 * var(--gap)) / 6)); display: grid; gap: var(--gap); justify-content: center; }
 .g-wd-row { display: grid; grid-template-columns: repeat(5, var(--t)); gap: var(--gap); }
 .g-wd-tile { position: relative; width: var(--t); height: var(--t); box-sizing: border-box; display: grid; place-items: center; border: 2px solid var(--g-line); border-radius: max(4px, calc(var(--g-radius) * 0.4)); background-color: var(--bg, var(--g-card)); background-image: var(--pat, none); color: var(--fg, var(--g-ink)); font-family: var(--g-font-display); font-weight: 900; font-size: calc(var(--t) * 0.52); line-height: 1; text-transform: uppercase; }
 .g-wd-tile.has, .g-wd-tile.m-g, .g-wd-tile.m-y, .g-wd-tile.m-x { border-color: var(--g-ink); box-shadow: var(--g-shadow); }
-.g-wd .m-g { --bg: var(--g-good); --fg: var(--g-on-ink); }
-.g-wd .m-y { --bg: var(--g-hl); --fg: var(--wd-on-hl); --pat: repeating-linear-gradient(135deg, transparent 0 5px, color-mix(in srgb, var(--wd-on-hl) 24%, transparent) 5px 7px); }
+.g-wd .m-g { --bg: var(--g-good); --fg: var(--wd-on-good); }
+.g-wd .m-y { --bg: var(--g-hl); --fg: var(--g-on-ink); --pat: repeating-linear-gradient(135deg, transparent 0 5px, color-mix(in srgb, var(--g-on-ink) 24%, transparent) 5px 7px); }
 .g-wd .m-x { --bg: var(--g-muted); --fg: var(--g-card); }
-.g-wd-tile.m-g::after, .g-wd-key.m-g::after { content: ''; position: absolute; left: 28%; right: 28%; bottom: 11%; height: max(2px, calc(var(--t, 40px) * 0.07)); border-radius: 2px; background: currentColor; }
+.g-wd-tile.m-g::after { content: ''; position: absolute; left: 28%; right: 28%; bottom: 11%; height: max(2px, calc(var(--t, 40px) * 0.07)); border-radius: 2px; background: currentColor; }
 .g-wd-row.is-target .g-wd-tile { border-style: dashed; box-shadow: none; }
 
 /* pick a secret */
@@ -136,7 +137,7 @@ const css = `
 .g-wd-pick .g-wd-board { --t: min(64px, calc((100cqw - 4 * var(--gap)) / 5)); }
 .g-wd-cap { margin: 0; font-size: 0.82rem; font-weight: 800; color: var(--g-muted); text-transform: uppercase; letter-spacing: 0.08em; }
 .g-wd-stamp { display: inline-block; padding: 3px 10px; border: 2px solid currentColor; border-radius: 6px; font-family: var(--g-font-display); font-weight: 900; font-size: 0.85rem; letter-spacing: 0.14em; text-transform: uppercase; transform: rotate(-4deg); }
-.g-wd-stamp.p-a { color: var(--p-a); } .g-wd-stamp.p-b { color: var(--p-b); }
+.g-wd-stamp.p-a { color: var(--p-a-text); } .g-wd-stamp.p-b { color: var(--p-b-text); }
 
 /* two boards side by side */
 .g-wd-duo { width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
@@ -163,13 +164,16 @@ const css = `
 .g-wd-kb { display: flex; flex-direction: column; gap: 6px; padding-bottom: 2px; }
 .g-wd-kb:empty { display: none; }
 .g-wd-kr { display: flex; justify-content: center; gap: 5px; }
-.g-wd-key { --t: 46px; position: relative; flex: 1 1 0; min-width: 0; max-width: 46px; height: 50px; padding: 0; display: grid; place-items: center; border: 2px solid var(--g-ink); border-radius: 8px; background-color: var(--bg, var(--g-card)); background-image: var(--pat, none); color: var(--fg, var(--g-ink)); font-family: var(--g-font-body); font-weight: 900; font-size: 1.05rem; text-transform: uppercase; box-shadow: 0 2px 0 var(--g-ink); touch-action: manipulation; cursor: pointer; }
-.g-wd-key.wide { flex-grow: 1.55; max-width: 70px; font-size: 0.74rem; letter-spacing: 0.04em; }
-.g-wd-key:active:not(:disabled) { transform: translateY(2px); box-shadow: none; }
-.g-wd-key:disabled { opacity: 0.45; cursor: default; }
-.g-wd-key.m-x { opacity: 0.8; }
-@media (max-height: 640px) { .g-wd-key { height: 44px; } .g-wd { gap: 6px; } }
-@media (min-width: 700px) { .g-wd-key { max-width: 50px; height: 54px; } .g-wd-key.wide { max-width: 78px; } }
+/* keys are the shared kit .g-key; these add Word Duel's three marks */
+.g-wd .g-wd-key.g-key { position: relative; max-width: 50px; padding: 0; }
+.g-wd .g-wd-key.g-key.is-wide { max-width: 76px; text-transform: none; font-size: 0.86rem; letter-spacing: 0.01em; }
+.g-wd .g-wd-key.g-key.is-wide svg { display: block; }
+.g-wd .g-wd-key.g-key.m-g { background: var(--g-good); color: var(--wd-on-good); }
+.g-wd .g-wd-key.g-key.m-g::after { content: ''; position: absolute; left: 30%; right: 30%; bottom: 7px; height: 3px; border-radius: 2px; background: currentColor; }
+.g-wd .g-wd-key.g-key.is-hl { background-image: repeating-linear-gradient(135deg, transparent 0 5px, color-mix(in srgb, var(--g-on-ink) 22%, transparent) 5px 7px); }
+.g-wd .g-wd-key.g-key:disabled { opacity: 0.45; cursor: default; transform: none; }
+@media (max-height: 700px) { .g-wd .g-wd-key.g-key { height: 46px; } }
+@media (max-height: 620px) { .g-wd .g-wd-key.g-key { height: 42px; } .g-wd { gap: 6px; } }
 
 /* motion */
 @keyframes g-wd-flip { 0% { transform: rotateX(0); } 50% { transform: rotateX(-90deg); } 100% { transform: rotateX(0); } }
@@ -210,6 +214,7 @@ registerGame({
   ],
   css,
   endDelay: 1900,
+  endLookLabel: 'See both boards',
   ...RULES,
   // exposed for tests
   _test: { scoreGuess, lists, MAX },
@@ -241,7 +246,14 @@ registerGame({
     const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); fn(); }, ms); timers.add(t); };
     const reduced = () => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; } };
     const flipMs = () => (reduced() ? 60 : 4 * 160 + 520);
-    const nm = (w) => api.name(w);
+    const nm = (w) => esc(api.name(w));
+    let lastSent = 0; // when the last word went in (a second Enter right after it is ignored)
+
+    // A half-typed word survives a reload (this device only).
+    const DRAFT = 'ju.wordduel.draft.';
+    const draftSlot = (c) => `${c.viewer}|${c.state.secret[c.viewer] ? `g${c.state.guesses[c.viewer].length}` : 'pick'}`;
+    const draftLoad = (c) => { try { const v = JSON.parse(localStorage.getItem(DRAFT + c.matchId) || 'null'); return v && v.k === draftSlot(c) && /^[a-z]{1,5}$/.test(v.d) ? v.d : ''; } catch { return ''; } };
+    const draftSave = () => { const c = ctx; if (!c || !c.viewer || !c.matchId) return; try { if (draft) localStorage.setItem(DRAFT + c.matchId, JSON.stringify({ k: draftSlot(c), d: draft })); else localStorage.removeItem(DRAFT + c.matchId); } catch { /* storage off */ } };
     const pcls = (w) => `p-${w}`;
     const up = (w) => String(w || '').toUpperCase();
 
@@ -320,10 +332,10 @@ registerGame({
       }
       const dis = !c.canMove || !!pending ? ' disabled' : '';
       return KB_ROWS.map((row) => `<div class="g-wd-kr">${[...row].map((k) => {
-        if (k === '>') return `<button class="g-wd-key wide" data-k="enter" aria-label="Enter"${dis}>Enter</button>`;
-        if (k === '<') return `<button class="g-wd-key wide" data-k="back" aria-label="Delete"${dis}>${BACK_ICON}</button>`;
+        if (k === '>') return `<button class="g-key is-wide g-wd-key" data-k="enter" aria-label="Enter"${dis}>Enter</button>`;
+        if (k === '<') return `<button class="g-key is-wide g-wd-key" data-k="back" aria-label="Delete"${dis}>${BACK_ICON}</button>`;
         const mk = best[k];
-        return `<button class="g-wd-key${mk ? ` m-${mk}` : ''}" data-k="${k}" aria-label="${up(k)}${mk ? `, ${WORDS_FOR[mk]}` : ''}"${dis}>${k}</button>`;
+        return `<button class="g-key g-wd-key${mk ? ` ${KEY_CLASS[mk]}` : ''}" data-k="${k}" aria-label="${up(k)}${mk ? `, ${WORDS_FOR[mk]}` : ''}"${dis}>${k}</button>`;
       }).join('')}</div>`).join('');
     }
 
@@ -398,6 +410,8 @@ registerGame({
           actions.innerHTML = `<button class="gm-btn gm-btn-ghost" data-act="surprise"${dis}>Surprise me</button><button class="gm-btn" data-act="lock"${dis}>Lock it in</button>`;
         } else if (m === 'solve' && pending) {
           actions.innerHTML = `<div class="g-wd-banner"><button class="gm-btn" data-act="commit">Done, pass to ${nm(other(v))}</button></div>`;
+        } else if (m === 'end') {
+          actions.innerHTML = '<button class="gm-btn" data-g="rematch">Play again</button><button class="gm-btn gm-btn-ghost" data-g="close">Back to games</button>';
         } else actions.innerHTML = '';
       }
 
@@ -456,12 +470,15 @@ registerGame({
       const m = modeOf(c);
       const v = c.viewer;
       if (m !== 'pick' && m !== 'solve') return;
+      if (!draft && (myFlip() || Date.now() - lastSent < 900)) return; // a double Enter, not a mistake
       if (draft.length < 5) { bad(draft.length ? 'Five letters, please.' : 'Type a five-letter word.'); return; }
       if (m === 'pick') {
         const word = draft;
         draft = ''; // the move re-renders synchronously
         const r = api.move({ secret: word });
         if (!r.ok) { draft = word; bad(r.error); return; }
+        lastSent = Date.now();
+        draftSave();
         api.sfx('place');
         api.haptic(15);
         return;
@@ -475,6 +492,8 @@ registerGame({
         if (finishing) {
           pending = { word: draft, row: s.guesses[v].length };
           draft = '';
+          lastSent = Date.now();
+          draftSave();
           startFlip(v, pending.row, pending.word === target(s, v), true);
           render();
           return;
@@ -483,7 +502,9 @@ registerGame({
       const word = draft;
       draft = '';
       const r = api.move({ guess: word });
-      if (!r.ok) { draft = word; bad(r.error); }
+      if (!r.ok) { draft = word; bad(r.error); return; }
+      lastSent = Date.now();
+      draftSave();
     }
 
     function commit() {
@@ -508,12 +529,14 @@ registerGame({
         draft = draft.slice(0, -1);
         api.sfx('tick');
         paintDraft();
+        draftSave();
         return;
       }
       if (!/^[a-z]$/.test(k) || draft.length >= 5) return;
       draft += k;
       api.sfx('tap');
       paintDraft();
+      draftSave();
     }
 
     // on-screen keyboard and buttons (keep focus off the keys so Enter never re-presses one)
@@ -534,18 +557,22 @@ registerGame({
         draft = w;
         api.sfx('pop');
         paintDraft(true);
+        draftSave();
       } else if (act === 'lock') submit();
       else if (act === 'commit') commit();
       b.blur();
     });
     // physical keyboard on laptops
+    const typingHere = (e) => {
+      const t = e.target;
+      if (t && t.closest && t.closest('input, textarea, select, [contenteditable="true"]')) return false;
+      if (!root.isConnected) return false;
+      const gm = root.closest('.gm');
+      return !(gm && gm.querySelector(':scope > .gm-sheet:not([hidden]), :scope > .gm-end:not([hidden]), :scope > .gm-curtain:not([hidden])'));
+    };
     const onKey = (e) => {
       if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
-      const t = e.target;
-      if (t && t.closest && t.closest('input, textarea, select, [contenteditable="true"]')) return;
-      if (!root.isConnected) return;
-      const gm = root.closest('.gm');
-      if (gm && gm.querySelector(':scope > .gm-sheet:not([hidden]), :scope > .gm-end:not([hidden]), :scope > .gm-curtain:not([hidden])')) return;
+      if (!typingHere(e)) return;
       let k = null;
       if (e.key === 'Enter') k = 'enter';
       else if (e.key === 'Backspace' || e.key === 'Delete') k = 'back';
@@ -555,6 +582,20 @@ registerGame({
       press(k);
     };
     document.addEventListener('keydown', onKey);
+    // pasting a word (laptop): its letters fill the row
+    const onPaste = (e) => {
+      if (!ctx || !ctx.canMove || pending || !typingHere(e)) return;
+      const m = modeOf(ctx);
+      if (m !== 'pick' && m !== 'solve') return;
+      const letters = String((e.clipboardData && e.clipboardData.getData('text')) || '').toLowerCase().normalize('NFD').replace(/[^a-z]/g, '');
+      if (!letters) return;
+      e.preventDefault();
+      draft = (draft + letters).slice(0, 5);
+      api.sfx('pop');
+      paintDraft(true);
+      draftSave();
+    };
+    document.addEventListener('paste', onPaste);
 
     return {
       update(c) {
@@ -576,10 +617,15 @@ registerGame({
           } else if (move.secret !== undefined && c.viewer && who !== c.viewer) api.sfx('pop');
         }
         prevMoves = c.moves;
+        let restored = false;
+        if (c.over) { draft = ''; draftSave(); }
+        else if (!draft && !pending && c.canMove) { const m = modeOf(c); if (m === 'pick' || m === 'solve') { draft = draftLoad(c); restored = !!draft; } }
         render();
+        if (restored) paintDraft();
       },
       destroy() {
         document.removeEventListener('keydown', onKey);
+        document.removeEventListener('paste', onPaste);
         for (const t of timers) clearTimeout(t);
         timers.clear();
       },
