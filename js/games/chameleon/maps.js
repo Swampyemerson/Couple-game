@@ -4,12 +4,22 @@
 import { boxGeo, cylGeo, sphereGeo, latheGeo, createBuilder } from './geo.js';
 import { createAtlas, P } from './atlas.js';
 import { seeded } from './util.js';
+import { EXTRA_MAPS } from './maps/index.js';
 
-export const MAPS = [
-  { id: 'living', name: 'Living Room', blurb: 'Rugs, stripes and a very full bookshelf.' },
-  { id: 'garden', name: 'Garden', blurb: 'Hedges, flower beds and a striped deck chair.' },
-  { id: 'studio', name: 'Art Studio', blurb: 'Splatters, swatches and wet canvases.' },
+const BASE_MAPS = [
+  { id: 'living', name: 'Living Room', blurb: 'Rugs, stripes and a very full bookshelf.', build: (a) => living(a), size: 'S', rooms: 1, climbs: 2 },
+  { id: 'garden', name: 'Garden', blurb: 'Hedges, flower beds and a striped deck chair.', build: (a) => garden(a), size: 'S', rooms: 1, climbs: 1 },
+  { id: 'studio', name: 'Art Studio', blurb: 'Splatters, swatches and wet canvases.', build: (a) => studio(a), size: 'S', rooms: 1, climbs: 2 },
 ];
+const seen = new Set();
+/** Every selectable map: the three originals, then the level designer's EXTRA_MAPS (bad entries skipped). */
+export const MAPS = [...BASE_MAPS, ...(Array.isArray(EXTRA_MAPS) ? EXTRA_MAPS : [])].filter((m) => {
+  if (!m || typeof m.id !== 'string' || typeof m.build !== 'function' || seen.has(m.id)) {
+    if (m && typeof console !== 'undefined') console.warn('chameleon: skipping bad map entry', m && m.id);
+    return false;
+  }
+  seen.add(m.id); return true;
+});
 
 // Local frame helper: place parts relative to (x, z, yaw).
 function frame(b, x, z, yaw = 0) {
@@ -602,13 +612,15 @@ function studio(atlas) {
   };
 }
 
-const DEFS = { living, garden, studio };
+
+/** Helpers handed to EXTRA_MAPS builders as the 2nd argument (no circular import needed). */
+export const KIT = { frame, room, plant, books, yarn, P, boxGeo, cylGeo, sphereGeo, latheGeo, seeded };
 
 /** Build a map: returns geometry + atlas + gameplay data. Dispose with result.dispose(). */
 export function buildMap(THREE, id, { ink = [0.11, 0.1, 0.13] } = {}) {
-  const def = DEFS[id] || DEFS.living;
+  const entry = MAPS.find((m) => m.id === id) || MAPS[0];
   const atlasB = createAtlas(1024);
-  const fill = def(atlasB);
+  const fill = entry.build(atlasB, KIT);
   const atlas = atlasB.finish();
   const b = createBuilder({ tiles: atlas.tiles, ink });
   fill(b);
