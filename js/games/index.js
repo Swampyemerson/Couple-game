@@ -14,3 +14,5 @@ import './hockey.js';
 import './quickdraw.js';
 import './tower.js';
 import './bones.js';
+import './cycles.js';
+import './defuse.js';
