@@ -930,7 +930,7 @@ const actions = {
     if (!room) return toast('That doesn’t look like a pairing link.');
     store.room = room; session.drafts.pair = '';
     if (store.mode === 'cloud') { location.reload(); return; }
-    await store.connect(); toast('Paired! 💞'); go({ view: 'tab', tab: 'home' });
+    await store.connect(); toast('Paired!'); go({ view: 'tab', tab: 'home' });
   },
   sharePair: () => share(`Join me on ${CONFIG.appName} 💞`, `${appUrl()}#pair=${store.room}`),
   nudge: (d) => nudge(d.text),
@@ -942,11 +942,11 @@ const actions = {
   },
   saveDaily: (d) => {
     const v = (session.drafts['daily-' + d.key] || '').trim();
-    if (!v) return toast('Write something first 🙂');
+    if (!v) return toast('Write something first.');
     store.setMine(['daily', d.key], v.slice(0, 2000));
     delete session.drafts['daily-' + d.key];
     const theirs = store.person(them()).daily?.[d.key];
-    toast(theirs ? 'Unlocked! 🔓' : `Locked in. Waiting on ${store.name(them())}.`);
+    toast(theirs ? 'Unlocked!' : `Locked in. Waiting on ${store.name(them())}.`);
   },
   openPack: (d) => go({ view: 'pack', packId: d.id }),
   startPack: () => {
@@ -989,7 +989,7 @@ const actions = {
   },
   surprise: () => {
     const pool = PACKS.filter((p) => !p.spicy && !doneOf(me(), p));
-    if (!pool.length) return toast('You’ve done them all! Try the spicy tab 😏');
+    if (!pool.length) return toast('You’ve done them all! Try the spicy tab.');
     go({ view: 'pack', packId: pool[Math.floor(Math.random() * pool.length)].id });
   },
   openSpicy: () => { session.spicyOpen = true; render(true); },
@@ -1001,7 +1001,7 @@ const actions = {
   todDone: () => { const t = session.tod; t.turn = t.turn === 'a' ? 'b' : 'a'; t.card = null; t.kind = null; render(); },
   dateCat: (d) => { session.date.cat = d.cat; session.date.pick = null; render(); },
   spin,
-  dateToBucket: () => { if (addBucket(session.date.pick)) toast('Added to the bucket list 🪣'); },
+  dateToBucket: () => { if (addBucket(session.date.pick)) toast('Added to the bucket list'); },
   addBucket: () => {
     const el = $app.querySelector('[data-draft="bucket"]');
     if (addBucket(el ? el.value : '')) { session.drafts.bucket = ''; if (el) { el.value = ''; el.blur(); } render(); }
@@ -1012,7 +1012,7 @@ const actions = {
 
 async function doImport(code) {
   const r = await store.importCode(code);
-  if (r.ok) toast(`Loaded ${store.name(r.who)}’s answers ✨`);
+  if (r.ok) toast(`Loaded ${store.name(r.who)}’s answers`);
   else toast(r.msg);
   render(true);
 }
@@ -1056,7 +1056,7 @@ async function handleHash() {
   }
   if (store.cloudAvailable && store.room && store.mode !== 'cloud') {
     await store.connect();
-    if (pair) toast('Paired! 💞');
+    if (pair) toast('Paired!');
     render();
   }
 }

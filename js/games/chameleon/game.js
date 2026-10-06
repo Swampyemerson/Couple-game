@@ -1552,6 +1552,19 @@ export function createGame(el, api) {
         const hit = stage.pickMap(1); if (!hit) return null; const out = [0, 0, 0]; stage.albedoAtHit(hit, out); return out;
       },
       camera() { const c = stage.camera; return { p: c.position.toArray(), fov: c.fov }; },
+      bench(n = 10) {
+        const out = {};
+        const time = (k, fn) => { const t0 = performance.now(); for (let i = 0; i < n; i++) fn(); out[k] = (performance.now() - t0) / n; };
+        const t = now();
+        time('simulate', () => simulate(0.016, t));
+        time('animate', () => animate(0.016, t));
+        time('cameras', () => cameras(0.016, t));
+        time('fx', () => stage.fx.update(0.016, tSec));
+        time('ui', () => ui(t));
+        time('render', () => stage.render());
+        time('renderFinish', () => { stage.render(); stage.renderer.getContext().finish(); });
+        return out;
+      },
       gl() { return stage.renderer.getContext(); },
       ctxLost() { return S.ctxLost; },
       listenerCount() { return L.count + (controls ? controls.listenerCount : 0); },
