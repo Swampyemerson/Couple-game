@@ -207,7 +207,7 @@ export function createGeo(map) {
       i: solids.length, kind: s.kind || 'building', x: s.x, z: s.z, hw: w / 2, hd: d / 2, rot, c: Math.cos(rot), s: Math.sin(rot),
       h: Number.isFinite(s.h) ? s.h : (BREAKABLE[s.kind] ? 6 : 8), y: Number.isFinite(s.y) ? s.y : null,
       breakable: !!BREAKABLE[s.kind], broken: false, drawn: !!s.drawn, style: s.style || null, color: s.color || null,
-      rad: Math.hypot(w, d) / 2, stamp: 0,
+      rad: Math.hypot(w, d) / 2, stamp: 0, hRaw: Number.isFinite(s.h) ? s.h : NaN,
     });
   }
   const SC = 16;

@@ -892,7 +892,7 @@ async function settingsSection(port) {
     await b.waitForFunction(() => window.__cham.state().setup.rules.hide === 60, null, { timeout: 5000 });
     assert((await b.textContent('.chm-sheet [data-rule="hide"]')).trim() === '1 min', "the guest's open sheet shows the new hide time live");
     rb = (await st(b)).setup.rules;
-    assert(rb.preset === 'custom' && await a.isVisible('.chm-presets button.on.custom'), 'changing one value turns the preset into Custom');
+    assert(rb.preset === 'custom' && await a.isVisible('.chm-sheet .chm-presets button.on.custom'), 'changing one value turns the preset into Custom');
     // scroll the sheet, change something further down, the guest's sheet keeps its scroll
     await a.click('.chm-sheet [data-k="stamp"][data-v="false"]');
     await a.click('.chm-sheet [data-k="climb"][data-v="false"]');
