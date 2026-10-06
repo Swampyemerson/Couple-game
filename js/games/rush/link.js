@@ -59,8 +59,9 @@ export function createLink(api, { delay = 100 } = {}) {
     const last = ring.n ? ring.t[(ring.head + ring.n - 1) % RING] : -Infinity;
     let slot;
     if (ring.n && t <= last) {
-      if (t !== last) return;
-      slot = (ring.head + ring.n - 1) % RING;
+      if (t === last) slot = (ring.head + ring.n - 1) % RING;
+      else if (last - t > 1000) { ring.n = 1; ring.head = 0; slot = 0; } // their clock restarted: start over
+      else return; // late or duplicate
     } else if (ring.n < RING) { slot = (ring.head + ring.n) % RING; ring.n++; }
     else { slot = ring.head; ring.head = (ring.head + 1) % RING; }
     ring.t[slot] = t;
@@ -121,6 +122,10 @@ export function createLink(api, { delay = 100 } = {}) {
     const was = partnerIid;
     partnerIid = pid;
     if (was) { outbox.clear(); outSeq = 0; }
+    // A new partner instance stamps its stream on a new timeline. Drop the old instance's samples,
+    // or a stale presence left over from before a rematch (stamped later on the old timeline) would
+    // make every fresh sample look "late" and freeze the partner for minutes.
+    ring.n = 0; ring.head = 0;
     newFns.forEach((fn) => { try { fn(pid, was); } catch (e) { console.error(e); } });
   }
   function deliver(type, data, at) {
@@ -203,7 +208,10 @@ export function createLink(api, { delay = 100 } = {}) {
     /** ms since the partner's last state arrived. */
     age: () => (lastRaw ? performance.now() - lastRaw : Infinity),
     /** Partner state at shared time T via net.remote (lag compensation; allocates, use rarely). */
-    remoteAtTime(T) { return net.remote(T + net.delay); },
+    remoteAtTime(T) {
+      const s = net.remote(T + net.delay);
+      return s && s.i === partnerIid ? s : null; // net.js's buffer may still hold a previous instance's state
+    },
     onPartnerNew(fn) { newFns.add(fn); return () => newFns.delete(fn); },
     pending: () => outbox.size,
     /** Fresh clock + buffers (when the host reloaded and its clock restarted). */

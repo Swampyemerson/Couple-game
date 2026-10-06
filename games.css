@@ -118,6 +118,8 @@
   background: var(--g-bg); color: var(--g-ink); font-family: var(--g-font-body);
 }
 body.gm-open { overflow: hidden; }
+/* the page behind is pinned while the game room is open (core.js sets top to keep its place) */
+body.gm-pinned { position: fixed; left: 0; right: 0; width: 100%; }
 /* Rammetto One has one weight. Display text asks for 900 so fallbacks come out heavy; this stops a faux-bold Rammetto. */
 #game-root, .gh, .gh-home, .gm-invite { font-synthesis: none; }
 #game-root h1, #game-root h2, #game-root p { margin: 0; }
@@ -156,6 +158,9 @@ body.gm-open { overflow: hidden; }
 .gm-vs { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--g-ink); color: var(--g-bg); font: 900 0.68rem/1 var(--g-font-display); transform: rotate(-12deg); }
 .gm.is-team .gm-vs { background: var(--g-hl); color: var(--g-on-ink); box-shadow: inset 0 0 0 var(--g-stroke) var(--g-ink); font-size: 0.85rem; }
 .gm-status { text-align: center; min-height: 1.35em; margin: 14px 0 6px; font-weight: 800; font-size: 0.95rem; line-height: 1.35; color: var(--g-ink); }
+.gm-status-btn { display: inline-flex; align-items: center; min-height: 32px; margin-left: 6px; padding: 2px 11px; vertical-align: middle; font: 800 0.82rem/1 var(--g-font-body); color: var(--g-on-ink); background: var(--g-hl); border: var(--g-stroke) solid var(--g-ink); border-radius: 999px; box-shadow: var(--g-shadow-sm); touch-action: manipulation; }
+.gm-status-btn:active { transform: translate(2px, 2px); box-shadow: none; }
+.gm-status-btn:focus-visible { outline: 3px solid var(--p-a); outline-offset: 3px; }
 .gm-stage { flex: 1; position: relative; isolation: isolate; display: flex; flex-direction: column; min-height: 0; }
 .gm-stage.is-covered { visibility: hidden; }
 .gm-error { margin: 32px auto; padding: 14px 16px; max-width: 320px; text-align: center; font-weight: 700; color: var(--g-bad); border: var(--g-stroke) dashed currentColor; border-radius: var(--g-radius); }

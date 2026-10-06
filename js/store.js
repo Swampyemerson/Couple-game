@@ -93,6 +93,16 @@ export class Store {
     let parsed = null;
     try { parsed = JSON.parse(read(LS.state, 'null')); } catch { /* ignore */ }
     this.state = normalize(parsed || blank());
+    // artifact mode
+    this._docs = {}; // doc path -> last body the server sent
+    this._exists = {}; // doc path -> true / false, once a definitive snapshot said so
+    this._busy = {}; // doc path -> a drain is running
+    this._dq = {}; // shared doc path -> { busy, has, body, cur }: one whole-doc write at a time
+    this._bucket = null; // bucket items as the server last listed them
+    this._seen = {}; // people/<w> -> a definitive snapshot arrived
+    let out = null;
+    try { out = JSON.parse(read(LS.outbox, 'null')); } catch { /* ignore */ }
+    this._out = out && typeof out === 'object' && !Array.isArray(out) ? out : {}; // doc path -> [{ p, v }] unconfirmed field writes
   }
 
   get me() { return read(LS.me); }
@@ -115,16 +125,58 @@ export class Store {
     const me = this.me;
     const ts = Math.max(Date.now(), (this.person(me).updated || 0) + 1);
     if (this.mode === 'artifact') {
-      // one whole-doc write carries both changes
-      setIn(this.state, ['people', me, 'updated'], ts);
-      this._set(['people', me, ...path], value);
+      setIn(this.state, ['people', me, ...path], value);
+      if (path[0] === 'daily' && path.length === 2) {
+        this._queue(`people/${me}/daily/${monthOf(path[1])}`, ['d', path[1]], value);
+      } else {
+        setIn(this.state, ['people', me, 'updated'], ts);
+        this._queue(`people/${me}`, path, value);
+        this._queue(`people/${me}`, ['updated'], ts);
+      }
+      this.persist();
+      this.emit();
       return;
     }
     this._set(['people', me, ...path], value);
     this._set(['people', me, 'updated'], ts);
   }
 
-  setShared(path, value) { this._set(['shared', ...path], value); }
+  setShared(path, value) {
+    if (this.mode === 'artifact') {
+      setIn(this.state, ['shared', ...path], value);
+      this.persist();
+      this.emit();
+      if (path[0] === 'bucket' && path.length === 2) this._writeDoc(`bucket/${path[1]}`, value == null ? null : clone(value));
+      else if (path[0] === 'since') this._writeDoc('shared/meta', { since: value || null });
+      return;
+    }
+    this._set(['shared', ...path], value);
+  }
+
+  /** Claude user ids that have picked person `w` (on any device). */
+  uidsOf(w) {
+    const p = this.person(w);
+    const ids = new Set(Object.keys(p.uids || {}).filter((k) => p.uids[k]));
+    if (p.uid) ids.add(p.uid); // older docs kept a single id
+    return ids;
+  }
+
+  /** Mark person `w` as picked by this Claude account (so its other devices recognize it). */
+  claim(w) {
+    if (this.mode !== 'artifact' || !this.uid || w !== this.me || this.uidsOf(w).has(this.uid)) return;
+    this.setMine(['uids', this.uid], true);
+  }
+
+  /** Undo claim(w): this account picked the wrong person. */
+  release(w) {
+    if (this.mode !== 'artifact' || !this.uid || !this.uidsOf(w).has(this.uid)) return;
+    const doc = `people/${w}`;
+    const p = this.person(w);
+    if (p.uids && p.uids[this.uid]) { delete p.uids[this.uid]; this._queue(doc, ['uids', this.uid], null); }
+    if (p.uid === this.uid) { delete p.uid; this._queue(doc, ['uid'], null); }
+    this.persist();
+    this.emit();
+  }
 
   _set(path, value) {
     setIn(this.state, path, value);
@@ -189,8 +241,6 @@ export class Store {
   }
 
   // ── Claude artifact (built-in shared database) ─────────────────────
-  // Docs: people/a, people/b (each person's whole PersonData, written only by
-  // that person), shared/meta ({since}), bucket/<id> (one per item).
   async connectArtifact() {
     const c = globalThis.claude;
     if (!c || typeof c.use !== 'function') return false;
@@ -200,79 +250,253 @@ export class Store {
     this.mode = 'artifact';
     this.online = true;
     this.uid = user ? await user.id() : null;
-    this._w = {};
-    const onErr = (e) => { console.warn('sync error', e); this.online = false; this.emit(true); };
-    let waiting = 2;
     let markReady;
     this.ready = new Promise((res) => { markReady = res; });
-    setTimeout(() => markReady(), 6000);
+    setTimeout(() => markReady(), 6000); // offline: go with what this device has
+    const isCache = (snap) => !!(snap && snap.metadata && snap.metadata.fromCache);
     for (const w of ['a', 'b']) {
-      let first = true;
-      db.doc(`people/${w}`).onSnapshot((snap) => {
-        const remote = snap.exists ? snap.data() : null;
-        const local = this.state.people[w] || {};
-        const ru = (remote && remote.updated) || 0;
-        const lu = local.updated || 0;
-        if (remote && ru > lu) {
-          this.state.people[w] = JSON.parse(JSON.stringify(remote));
-          this.persist();
-          this.emit(true);
-        } else if (w === this.me && lu > ru && !snap.metadata.hasPendingWrites) {
-          this._push(w); // played offline / before syncing: upload
-        } else if (remote && remote.uid && !local.uid) {
-          this.state.people[w] = { ...local, uid: remote.uid };
-          this.emit(true);
+      const path = `people/${w}`;
+      this.watch(() => db.doc(path), (snap) => {
+        const def = !isCache(snap);
+        if (snap.exists) {
+          const data = snap.data() || {};
+          const known = this._docs[path] || (this._seen[path] ? null : this.state.people[w]);
+          // a cached view older than what we already have is not news
+          if (!def && known && (data.updated || 0) < (known.updated || 0)) return;
+          this._docs[path] = data;
+          if (def) this._exists[path] = true;
+        } else {
+          if (!def) return; // a cold cache knows nothing about the server yet
+          this._exists[path] = false;
+          delete this._docs[path];
+          // Nothing on the server yet: upload what this device has (played before syncing).
+          if (w === this.me && hasAnswers(this.state.people[w]) && !(this._out[path] || []).length) {
+            this._queue(path, ['updated'], this.state.people[w].updated || Date.now());
+          }
         }
-        if (first) { first = false; if (--waiting === 0) markReady(); }
-      }, onErr);
+        this._rebuild(w);
+        if (def && !this._seen[path]) {
+          this._seen[path] = true;
+          if (this._seen['people/a'] && this._seen['people/b']) markReady();
+        }
+      });
+      const shards = `people/${w}/daily`;
+      this.watch(() => db.collection(shards), (qs) => {
+        const def = !isCache(qs);
+        if (!def && qs.empty) return;
+        const present = new Set();
+        for (const d of qs.docs) {
+          const k = `${shards}/${d.id}`;
+          present.add(k);
+          this._docs[k] = d.data() || {};
+          if (def) this._exists[k] = true;
+        }
+        if (def) {
+          for (const k of Object.keys(this._docs)) {
+            if (k.startsWith(shards + '/') && !present.has(k)) { delete this._docs[k]; this._exists[k] = false; }
+          }
+        }
+        this._rebuild(w);
+      });
     }
-    db.doc('shared/meta').onSnapshot((snap) => {
-      const since = snap.exists ? snap.data().since || null : null;
-      if (since && since !== this.state.shared.since) { this.state.shared.since = since; this.persist(); this.emit(true); }
-    }, onErr);
-    db.collection('bucket').onSnapshot((qs) => {
+    this.watch(() => db.doc('shared/meta'), (snap) => {
+      if (!snap.exists && isCache(snap)) return;
+      if (this._dq['shared/meta'] && this._dq['shared/meta'].busy) return; // our own change is on its way
+      const since = snap.exists ? (snap.data() || {}).since || null : null;
+      if ((since || null) !== (this.state.shared.since || null)) {
+        if (since) this.state.shared.since = since; else delete this.state.shared.since;
+        this.persist();
+        this.emit(true);
+      }
+    });
+    this.watch(() => db.collection('bucket'), (qs) => {
+      if (isCache(qs) && qs.empty) return;
       const bucket = {};
       qs.docs.forEach((d) => { bucket[d.id] = d.data(); });
-      this.state.shared.bucket = bucket;
-      this.persist();
-      this.emit(true);
-    }, onErr);
+      this._bucket = bucket;
+      this._applyBucket();
+    });
+    // writes a previous visit couldn't finish
+    for (const doc of Object.keys(this._out)) this._flush(doc);
     return true;
   }
 
-  // Write my whole person doc; one write in flight per doc, coalescing bursts.
-  _push(who) {
-    const st = this._w[who] || (this._w[who] = { busy: false, dirty: false });
-    if (st.busy) { st.dirty = true; return; }
-    st.busy = true;
-    (async () => {
-      do {
-        st.dirty = false;
-        const body = JSON.parse(JSON.stringify(this.state.people[who] || {}));
-        if (this.uid && who === this.me) body.uid = this.uid;
-        try { await this.adb.doc(`people/${who}`).set(body); } catch (e) { this._writeErr(e); break; }
-      } while (st.dirty);
-      st.busy = false;
-    })();
+  /** onSnapshot that survives the platform dropping it: a terminal error other than
+   *  revoked / not-granted resubscribes with backoff (per the db contract, a fresh
+   *  onSnapshot is the only recovery for a dead listener). */
+  watch(make, next) {
+    let tries = 0;
+    let off = null;
+    let stopped = false;
+    const start = () => {
+      if (stopped) return;
+      try {
+        off = make().onSnapshot((snap) => {
+          tries = 0;
+          if (!this.online) { this.online = true; this.emit(true); this._flushAll(); }
+          try { next(snap); } catch (e) { console.error('sync handler failed', e); }
+        }, (e) => {
+          const code = e && e.code;
+          console.warn('sync listener stopped', code, e && e.message);
+          this.online = false;
+          this.emit(true);
+          if (FATAL.has(code) || code === 'invalid_argument') return;
+          setTimeout(start, Math.min(30000, 1000 * 2 ** tries++) * (0.75 + Math.random() * 0.5));
+        });
+      } catch (e) { console.warn('sync subscribe failed', e); }
+    };
+    start();
+    return () => { stopped = true; if (off) off(); };
   }
 
-  _artifactWrite(path, value) {
-    const db = this.adb;
-    let p;
-    if (path[0] === 'people') { this._push(path[1]); return; }
-    if (path[0] === 'shared' && path[1] === 'bucket') {
-      const ref = db.doc(`bucket/${path[2]}`);
-      p = value == null ? ref.delete() : ref.set(value);
-    } else if (path[0] === 'shared' && path[1] === 'since') {
-      p = db.doc('shared/meta').set({ since: value || null });
+  // Rebuild people[w] from the server's docs plus this device's unconfirmed writes.
+  _rebuild(w) {
+    const path = `people/${w}`;
+    const cur = this.state.people[w] || {};
+    const server = this._docs[path];
+    let next;
+    if (server) next = clone(server);
+    else if (this._exists[path] === false && w !== this.me) next = {};
+    else next = clone(cur); // nothing from the server yet: keep what this device has
+    const daily = { ...(next.daily || {}) };
+    const pre = path + '/daily/';
+    for (const [k, d] of Object.entries(this._docs)) if (k.startsWith(pre) && d && d.d) Object.assign(daily, d.d);
+    for (const [doc, q] of Object.entries(this._out)) {
+      if (doc === path) q.forEach((x) => (x.p[0] === 'daily' ? setIn(daily, x.p.slice(1), x.v) : setIn(next, x.p, x.v)));
+      else if (doc.startsWith(pre)) q.forEach((x) => { if (x.p[0] === 'd' && x.p.length === 2) setIn(daily, [x.p[1]], x.v); });
     }
-    if (p) p.catch((e) => this._writeErr(e));
+    next.daily = daily;
+    prune(next);
+    if (!Object.keys(next.daily || {}).length) delete next.daily;
+    if (JSON.stringify(next) === JSON.stringify(cur)) return;
+    this.state.people[w] = next;
+    this.persist();
+    this.emit(true);
+  }
+
+  _applyBucket() {
+    if (!this._bucket) return;
+    const bucket = { ...this._bucket };
+    for (const [path, q] of Object.entries(this._dq)) {
+      if (!q.busy || !path.startsWith('bucket/')) continue;
+      const body = q.has ? q.body : q.cur;
+      if (body == null) delete bucket[path.slice(7)]; else bucket[path.slice(7)] = body;
+    }
+    if (JSON.stringify(bucket) === JSON.stringify(this.state.shared.bucket || {})) return;
+    this.state.shared.bucket = bucket;
+    this.persist();
+    this.emit(true);
+  }
+
+  // ── the outbox: field-level writes to a person's docs ──
+  _queue(doc, p, v) {
+    (this._out[doc] = this._out[doc] || []).push({ p, v: v === undefined ? null : v });
+    this._saveOut();
+    this._flush(doc);
+  }
+  _saveOut() { write(LS.outbox, Object.keys(this._out).length ? JSON.stringify(this._out) : null); }
+  _flushAll() { for (const doc of Object.keys(this._out)) this._flush(doc); }
+  _flush(doc) {
+    if (this._busy[doc] || !this.adb) return;
+    this._busy[doc] = true;
+    // after this tick, so a burst of setMine calls goes out as one write
+    Promise.resolve().then(() => this._drain(doc)).catch((e) => console.warn('sync write failed', e)).finally(() => {
+      this._busy[doc] = false;
+      if ((this._out[doc] || []).length && !this.readOnly && !this.full && this.online && !this._halt) this._flush(doc);
+    });
+  }
+
+  // The whole doc as it should be: the server's copy (or, for my person doc, this device's),
+  // with every queued write applied.
+  _fullBody(doc) {
+    const m = doc.match(/^people\/([ab])$/);
+    const body = clone(this._docs[doc] || (m ? this.state.people[m[1]] : {}) || {});
+    for (const x of this._out[doc] || []) putIn(body, x.p, x.v);
+    return prune(body);
+  }
+
+  async _drain(doc) {
+    const ref = this.adb.doc(doc);
+    let tries = 0;
+    for (;;) {
+      const q = this._out[doc];
+      if (!q || !q.length || this.readOnly || this.full || this._halt) return;
+      let n;
+      let call;
+      if (this._exists[doc] === false) {
+        // update() needs the doc to exist: create it whole
+        n = q.length;
+        const body = this._fullBody(doc);
+        call = () => ref.set(body);
+      } else {
+        // A null clears a whole field. Anything queued after it must land after it, or the
+        // merge would bring back what the null cleared: so a batch ends at a null.
+        const iNull = q.findIndex((x) => x.v === null);
+        n = iNull < 0 ? q.length : iNull + 1;
+        const body = {};
+        for (const x of q.slice(0, n)) putIn(body, x.p, x.v);
+        call = () => ref.update(body);
+      }
+      try {
+        await call();
+      } catch (e) {
+        const code = e && e.code;
+        if (code === 'invalid_argument' && this._exists[doc] !== false) {
+          // Either the doc doesn't exist yet (update needs one), or this viewer can't write.
+          let snap = null;
+          try { snap = await ref.get(); } catch { /* treat as unknown */ }
+          if (snap && !snap.exists) { this._exists[doc] = false; continue; }
+        }
+        if (code === 'invalid_argument' || code === 'quota_exceeded' || FATAL.has(code)) { this._writeErr(e); return; }
+        // unavailable, resource_exhausted or unknown: transient. Back off and retry.
+        if (++tries > 5) { this._writeErr(e); setTimeout(() => this._flush(doc), 20000); return; }
+        await sleep((code === 'resource_exhausted' ? 2500 : 500) * tries * (0.6 + Math.random() * 0.8));
+        continue;
+      }
+      tries = 0;
+      q.splice(0, n);
+      if (!q.length) delete this._out[doc];
+      this._exists[doc] = true;
+      this._saveOut();
+    }
+  }
+
+  // ── shared docs: one whole-doc write in flight per doc, the latest value wins ──
+  _writeDoc(path, body) {
+    const q = this._dq[path] || (this._dq[path] = { busy: false, has: false, body: null, cur: null });
+    q.has = true;
+    q.body = body;
+    if (q.busy || !this.adb) return;
+    q.busy = true;
+    (async () => {
+      const ref = this.adb.doc(path);
+      let tries = 0;
+      while (q.has) {
+        const b = q.body;
+        q.has = false;
+        q.cur = b;
+        try {
+          if (b == null) await ref.delete(); else await ref.set(b);
+          tries = 0;
+        } catch (e) {
+          const code = e && e.code;
+          if (code === 'invalid_argument' || code === 'quota_exceeded' || FATAL.has(code) || ++tries > 5) { this._writeErr(e); continue; }
+          if (!q.has) { q.has = true; q.body = b; }
+          await sleep((code === 'resource_exhausted' ? 2500 : 500) * tries * (0.6 + Math.random() * 0.8));
+        }
+      }
+      q.busy = false;
+      q.cur = null;
+      if (path.startsWith('bucket/')) this._applyBucket();
+    })();
   }
 
   _writeErr(e) {
     console.warn('sync write failed', e);
-    if (e && e.code === 'invalid_argument') this.readOnly = true;
-    if (e && e.code === 'quota_exceeded') this.full = true;
+    const code = e && e.code;
+    if (code === 'invalid_argument') this.readOnly = true;
+    if (code === 'quota_exceeded') this.full = true;
+    if (FATAL.has(code)) { this._halt = true; this.online = false; }
     this.emit(true);
   }
 

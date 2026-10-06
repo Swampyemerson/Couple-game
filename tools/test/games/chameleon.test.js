@@ -12,6 +12,7 @@ const os = require('os');
 const { launch } = require('../harness');
 
 const SHOTS = process.env.SHOTS || path.join(os.tmpdir(), 'chameleon-shots');
+const PORT = Number(process.env.PORT) || 8910; // PORT=8950 node … uses PORT..PORT+9
 fs.mkdirSync(SHOTS, { recursive: true });
 const ONLY = (process.env.ONLY || '').split(',').filter(Boolean);
 const want = (k) => !ONLY.length || ONLY.includes(k);
@@ -668,33 +669,33 @@ async function mapsSection(port) {
   if (want('hotseat')) {
     sections.push(async () => {
       console.log('\n# one-device hotseat round (phone, light) + screenshots');
-      const h = await hotseat(8910, { prefix: 'phone-light' });
+      const h = await hotseat(PORT + 0, { prefix: 'phone-light' });
       await h.close();
     });
   }
   if (want('desktop')) {
     sections.push(async () => {
       console.log('\n# Desktop Chrome: keyboard + mouse (light) + screenshots at 1280×800');
-      const h = await hotseat(8911, { device: 'Desktop Chrome', viewport: { width: 1280, height: 800 }, keyboard: true, prefix: 'desktop-light' });
+      const h = await hotseat(PORT + 1, { device: 'Desktop Chrome', viewport: { width: 1280, height: 800 }, keyboard: true, prefix: 'desktop-light' });
       await h.close();
     });
   }
   if (want('dark')) {
     sections.push(async () => {
       console.log('\n# dark mode screenshots (phone + desktop)');
-      let h = await hotseat(8912, { colorScheme: 'dark', prefix: 'phone-dark' });
+      let h = await hotseat(PORT + 2, { colorScheme: 'dark', prefix: 'phone-dark' });
       await h.close();
-      h = await hotseat(8913, { colorScheme: 'dark', device: 'Desktop Chrome', viewport: { width: 1280, height: 800 }, keyboard: true, prefix: 'desktop-dark' });
+      h = await hotseat(PORT + 3, { colorScheme: 'dark', device: 'Desktop Chrome', viewport: { width: 1280, height: 800 }, keyboard: true, prefix: 'desktop-dark' });
       await h.close();
     });
   }
-  if (want('match')) sections.push(() => matchSection(8914));
-  if (want('lossy')) sections.push(() => lossySection(8915));
-  if (want('db')) sections.push(() => doubleBlindSection(8916));
-  if (want('disconnect')) sections.push(() => disconnectSection(8917));
-  if (want('robust')) sections.push(() => robustSection(8918));
-  if (want('leaks')) sections.push(() => leakSection(8919));
-  if (want('maps')) sections.push(() => mapsSection(8910));
+  if (want('match')) sections.push(() => matchSection(PORT + 4));
+  if (want('lossy')) sections.push(() => lossySection(PORT + 5));
+  if (want('db')) sections.push(() => doubleBlindSection(PORT + 6));
+  if (want('disconnect')) sections.push(() => disconnectSection(PORT + 7));
+  if (want('robust')) sections.push(() => robustSection(PORT + 8));
+  if (want('leaks')) sections.push(() => leakSection(PORT + 9));
+  if (want('maps')) sections.push(() => mapsSection(PORT + 0));
   for (const run of sections) {
     try { await run(); } catch (e) { console.error(e); failures++; }
   }

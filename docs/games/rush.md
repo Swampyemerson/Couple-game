@@ -85,6 +85,11 @@ respawn in the clearest lane with 2 s of ghost invulnerability. Shield absorbs o
 - Reliable events: own small channel (same retry/ack/in-order scheme as `net.send`) that also
   **re-addresses per partner instance**, so a partner who re-mounts mid-match isn't stuck behind
   sequence numbers its new instance never saw. Budget: 20 presence/s + a few events/s + pings.
+- Partner instances: every stream carries the sender's instance id. When it changes (a reload, or
+  the re-mount on a rematch, which also restarts the host clock) the interpolation buffer is
+  dropped — otherwise the previous instance's last presence, stamped on the old timeline, would
+  make every new sample look late and freeze the partner. A clock jump back of more than 1 s also
+  restarts the buffer, and lag-compensation lookups ignore `net.remote()` states from an old instance.
 
 | Decision | Authority | How |
 |---|---|---|

@@ -3,7 +3,7 @@ import {
   PACKS, CATEGORIES, SPICY_CATEGORIES, DAILY, TRUTHS, DARES, TOD_LEVELS, DATES, DATE_CATS, LOVE_LANGS,
 } from './content.js';
 import { Store, randomId } from './store.js';
-import { initGames, gamesHubHTML, gamesHomeHTML, gamesWaitingCount } from './games/core.js';
+import { initGames, gamesHubHTML, gamesHomeHTML, gamesWaitingCount, gamesIdentityChanged } from './games/core.js';
 import './games/index.js';
 
 const store = new Store(CONFIG);
@@ -16,7 +16,16 @@ const hist = (fn, ...args) => { try { history[fn](...args); return true; } catch
 const CAT = Object.fromEntries([...CATEGORIES, ...SPICY_CATEGORIES].map((c) => [c.id, c]));
 const SKIPPED = '—';
 
-let ui = { view: 'tab', tab: 'home' };
+// A reload puts you back where you were (not into a spicy pack, though: that stays behind the gate).
+const VIEWS = new Set(['tab', 'pack', 'tod', 'dates', 'history', 'sync', 'connect']);
+let ui = (() => {
+  let st = null;
+  try { st = history.state; } catch { /* sandboxed */ }
+  if (!st || typeof st !== 'object' || !VIEWS.has(st.view)) return { view: 'tab', tab: 'home' };
+  if (st.view === 'pack' && (!PACK[st.packId] || PACK[st.packId].spicy)) return { view: 'tab', tab: 'home' };
+  if (st.view === 'tab' && st.tab === 'spicy') return { view: 'tab', tab: 'spicy' };
+  return { ...st };
+})();
 const session = {
   spicyOpen: false,
   temp: null,
@@ -51,6 +60,13 @@ const doneOf = (who, p) => !!pdata(who, p).done;
 const has = (ans, i) => ans['i' + i] !== undefined && ans['i' + i] !== null;
 const countOf = (who, p) => { const a = ansOf(who, p); return p.items.filter((_, i) => has(a, i)).length; };
 const packTitle = (p) => (p.spicy && !session.spicyOpen ? 'Something spicy' : esc(p.title));
+// "Seen" results are remembered per round of answers, so a redo by either of you makes them new again.
+const seenKey = (p) => `${p.id}@${pdata('a', p).done || 0}.${pdata('b', p).done || 0}`;
+const isSeen = (p, set) => set.has(seenKey(p)) || set.has(p.id); // a bare id: seen before this was tracked per round
+// Question screens ignore taps for a moment after moving on, so a double tap can't answer
+// the next question before it has been read.
+const tapLocked = () => performance.now() < (session.lockUntil || 0);
+const onQuestion = (p, idx) => ui.view === 'pack' && ui.packId === p.id && ui.step === 'play' && (ui.idx ?? 0) === idx;
 
 // ── printed icon set ──────────────────────────────────────────────────
 // 24px grid, 2px key-plate stroke. `.f` parts take a flat ink fill, `.d` parts are solid.
@@ -99,9 +115,18 @@ const packNo = (p) => PACKS.filter((x) => x.cat === p.cat).indexOf(p) + 1;
 const logoMark = (cls = '') => `<svg class="logo-mark${cls ? ' ' + cls : ''}" viewBox="0 0 132 84" aria-hidden="true"><circle class="lw" cx="80" cy="42" r="34"/><circle class="la" cx="52" cy="42" r="34"/><circle class="lb" cx="80" cy="42" r="34"/><circle class="lk" cx="52" cy="42" r="34"/><circle class="lk" cx="80" cy="42" r="34"/></svg>`;
 
 function toast(msg) {
+  document.querySelectorAll('.toast').forEach((x) => x.remove()); // one at a time
   const t = document.createElement('div');
   t.className = 'toast';
+  t.setAttribute('role', 'status');
   t.textContent = msg;
+  // In a game, the message sits on the status line under the player chips, never over the board.
+  if (document.body.classList.contains('gm-open')) {
+    t.classList.add('in-game');
+    const st = document.querySelector('#game-root .gm:not(.is-immersive) .gm-status');
+    const r = st && st.getBoundingClientRect();
+    if (r && r.height) t.style.top = `${Math.max(8, Math.round(r.top - 6))}px`;
+  }
   document.body.appendChild(t);
   requestAnimationFrame(() => t.classList.add('show'));
   setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, 2600);
@@ -114,13 +139,16 @@ function ask(msg, okLabel = 'Yes') {
     wrap.className = 'sheet-wrap';
     wrap.innerHTML = `<div class="sheet" role="dialog" aria-modal="true"><p class="sheet-kicker">Just checking</p><p>${esc(msg)}</p>
       <div class="sheet-btns"><button class="btn alt small" data-r="0">Cancel</button><button class="btn small" data-r="1">${esc(okLabel)}</button></div></div>`;
+    const done = (yes) => { document.removeEventListener('keydown', onKey, true); wrap.remove(); resolve(yes); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); } };
     wrap.addEventListener('click', (e) => {
       const b = e.target.closest('[data-r]');
       if (!b && e.target !== wrap) return;
-      wrap.remove();
-      resolve(!!(b && b.dataset.r === '1'));
+      done(!!(b && b.dataset.r === '1'));
     });
+    document.addEventListener('keydown', onKey, true);
     document.body.appendChild(wrap);
+    wrap.querySelector('[data-r="0"]').focus({ preventScroll: true });
   });
 }
 
@@ -241,14 +269,14 @@ function ensureGames() {
 }
 
 // ── onboarding ────────────────────────────────────────────────────────
+// Someone else's Claude account has already picked this person.
+const takenBy = (w) => ARTIFACT && !!store.uid && store.uidsOf(w).size > 0 && !store.uidsOf(w).has(store.uid);
+
 function viewWho() {
   if (ARTIFACT && !session.ready) {
     return `<div class="screen center onboard">${logoMark('is-loading')}<p class="muted">Loading your stuff…</p></div>`;
   }
-  const taken = (w) => store.uid && store.person(w).uid && store.person(w).uid !== store.uid;
-  const btn = (w, cls) => (taken(w)
-    ? `<button class="btn big-btn ${cls}" disabled>${N(w)} (already set up)</button>`
-    : `<button class="btn big-btn ${cls}" data-act="pickMe" data-who="${w}">I’m ${N(w)}</button>`);
+  const btn = (w, cls) => `<button class="btn big-btn ${cls}" data-act="pickMe" data-who="${w}"${takenBy(w) ? ' data-taken="1"' : ''}>I’m ${N(w)}${takenBy(w) ? '<small>set up on another account</small>' : ''}</button>`;
   return `<div class="screen center onboard">
     ${logoMark()}
     <h1 class="big mast-title">${esc(CONFIG.appName)}</h1>
@@ -257,6 +285,7 @@ function viewWho() {
       ${btn('a', 'who-btn p-a')}
       ${btn('b', 'who-btn p-b')}
     </div>
+    <p class="tiny muted onboard-note">You only pick once. Your other devices on this Claude account will know it’s you.</p>
   </div>`;
 }
 
@@ -355,7 +384,7 @@ function tabHome() {
   const days = daysTogether();
   const seen = readSet('jt.seen');
   const yourMove = PACKS.filter((p) => !doneOf(me(), p) && (doneOf(them(), p) || countOf(them(), p) > 0));
-  const fresh = PACKS.filter((p) => doneOf(me(), p) && doneOf(them(), p) && !seen.has(p.id));
+  const fresh = PACKS.filter((p) => doneOf(me(), p) && doneOf(them(), p) && !isSeen(p, seen));
   const inProgress = PACKS.filter((p) => !doneOf(me(), p) && countOf(me(), p) > 0 && !yourMove.includes(p));
   const waiting = PACKS.filter((p) => doneOf(me(), p) && !doneOf(them(), p));
 
@@ -634,6 +663,7 @@ function viewPlay(p) {
 function saveAnswer(p, idx, value) {
   store.setMine(['packs', p.id, 'ans', 'i' + idx], value);
   session.temp = null;
+  session.lockUntil = performance.now() + 350;
   const ans = ansOf(me(), p);
   let next = p.items.findIndex((_, i) => i > idx && !has(ans, i));
   if (next < 0) next = p.items.findIndex((_, i) => !has(ans, i));
@@ -656,7 +686,7 @@ function loveScores(who) {
 
 function viewResults(p) {
   const both = doneOf(me(), p) && doneOf(them(), p);
-  if (both) { const s = readSet('jt.seen'); if (!s.has(p.id)) { s.add(p.id); saveSet('jt.seen', s); } }
+  if (both) { const s = readSet('jt.seen'); if (!s.has(seenKey(p))) { s.add(seenKey(p)); s.delete(p.id); saveSet('jt.seen', s); } }
   const a = ansOf(me(), p); const b = ansOf(them(), p);
   const head = topbar(esc(p.title));
   const footer = `<div class="footer-actions">
@@ -917,13 +947,25 @@ const actions = {
   go: (d) => go({ view: d.view }),
   tab: (d) => { ui = { view: 'tab', tab: d.tab }; hist('replaceState', ui, ''); render(true); },
   pickMe: async (d) => {
+    if (d.taken && !(await ask(`${store.name(d.who)} already plays from another Claude account. Is this ${store.name(d.who)} on a second account?`, `Yes, I’m ${store.name(d.who)}`))) return;
     store.me = d.who;
     ensureGames();
-    if (store.mode === 'artifact' && store.uid && store.person(d.who).uid !== store.uid) store.setMine(['uid'], store.uid);
+    store.claim(d.who);
     if (session.pendingSync) { await doImport(session.pendingSync); session.pendingSync = null; }
     if (store.cloudAvailable && !store.room) go({ view: 'connect' }); else render(true);
   },
-  switchMe: async () => { if (await ask(`Switch this device to ${store.name(them())}?`, 'Switch')) { store.me = them(); render(true); } },
+  switchMe: async () => {
+    const to = them();
+    const msg = takenBy(to)
+      ? `${store.name(to)} plays from another Claude account. Switch this device to ${store.name(to)} anyway?`
+      : `Switch this device to ${store.name(to)}?`;
+    if (!(await ask(msg, 'Switch'))) return;
+    store.release(me());
+    store.me = to;
+    store.claim(to);
+    gamesIdentityChanged();
+    render(true);
+  },
   createRoom: async () => { store.room = randomId(20); await store.connect(); render(); },
   joinRoom: async () => {
     const room = parseRoom(session.drafts.pair || '');
@@ -940,8 +982,10 @@ const actions = {
     session.drafts.synclink = '';
     await doImport(m[1]);
   },
-  saveDaily: (d) => {
-    const v = (session.drafts['daily-' + d.key] || '').trim();
+  saveDaily: (d, el) => {
+    // Read the field itself: on iOS the last autocorrected word can land after the input event.
+    const box = el.closest('.daily')?.querySelector(`[data-draft="daily-${d.key}"]`);
+    const v = ((box ? box.value : session.drafts['daily-' + d.key]) || '').trim();
     if (!v) return toast('Write something first.');
     store.setMine(['daily', d.key], v.slice(0, 2000));
     delete session.drafts['daily-' + d.key];
@@ -959,19 +1003,29 @@ const actions = {
   nextQ: () => { session.temp = null; update({ idx: Math.min(PACK[ui.packId].items.length - 1, ui.idx + 1) }); },
   answer: (d, el) => {
     const p = PACK[ui.packId];
+    if (!p || tapLocked()) return;
+    const idx = ui.idx ?? 0;
     const v = p.type === 'who' ? d.v : Number(d.v);
     el.parentElement.querySelectorAll('.choice').forEach((b) => b.classList.remove('sel'));
     el.classList.add('sel');
-    setTimeout(() => saveAnswer(p, ui.idx, v), 160);
+    // One save per question: a second tap in this beat changes the pick instead of answering the next one.
+    clearTimeout(session.answerT);
+    session.answerT = setTimeout(() => { if (onQuestion(p, idx)) saveAnswer(p, idx, v); }, 160);
   },
   quizPick: (d) => {
     const p = PACK[ui.packId];
-    session.temp[d.k] = Number(d.v);
-    render();
+    if (!p || tapLocked() || !session.temp) return;
+    const idx = ui.idx ?? 0;
     const t = session.temp;
-    if (t.m !== undefined && t.g !== undefined) setTimeout(() => saveAnswer(p, ui.idx, { m: t.m, g: t.g }), 260);
+    t[d.k] = Number(d.v);
+    render();
+    clearTimeout(session.answerT);
+    if (t.m !== undefined && t.g !== undefined) {
+      session.answerT = setTimeout(() => { if (onQuestion(p, idx) && session.temp === t) saveAnswer(p, idx, { m: t.m, g: t.g }); }, 260);
+    }
   },
   saveOpen: () => {
+    if (tapLocked()) return;
     const p = PACK[ui.packId]; const k = `open-${p.id}-${ui.idx}`;
     const el = $app.querySelector(`[data-draft="${k}"]`);
     const v = (el ? el.value : session.drafts[k] || '').trim();
@@ -980,7 +1034,7 @@ const actions = {
     if (el) el.blur();
     saveAnswer(p, ui.idx, v.slice(0, 4000));
   },
-  skipOpen: () => { const p = PACK[ui.packId]; delete session.drafts[`open-${p.id}-${ui.idx}`]; saveAnswer(p, ui.idx, SKIPPED); },
+  skipOpen: () => { if (tapLocked()) return; const p = PACK[ui.packId]; delete session.drafts[`open-${p.id}-${ui.idx}`]; saveAnswer(p, ui.idx, SKIPPED); },
   redoPack: async () => {
     if (!(await ask('Clear your answers for this one and redo it?', 'Redo'))) return;
     store.setMine(['packs', ui.packId], null);
@@ -1032,7 +1086,11 @@ document.addEventListener('input', (e) => {
   if (k) session.drafts[k] = e.target.value;
 });
 document.addEventListener('change', (e) => {
-  if (e.target.dataset && e.target.dataset.actChange === 'since') store.setShared(['since'], e.target.value || null);
+  if (e.target.dataset && e.target.dataset.actChange === 'since') {
+    const v = e.target.value || null;
+    if (v && v > dkey()) { toast('That’s in the future. Pick the day you started.'); e.target.value = store.state.shared.since || ''; return; }
+    store.setShared(['since'], v);
+  }
 });
 document.addEventListener('focusout', () => { setTimeout(() => { if (session.pendingRender) render(); }, 0); });
 document.addEventListener('keydown', (e) => {
@@ -1068,11 +1126,12 @@ async function bootArtifact() {
   const ok = await store.connectArtifact();
   if (ok) await store.ready;
   session.ready = true;
-  // Recognize this person on a new device.
+  // Recognize this person on a new device (unless one account has picked both).
   if (!me() && store.uid) {
-    const w = ['a', 'b'].find((x) => store.person(x).uid === store.uid);
-    if (w) store.me = w;
+    const ws = ['a', 'b'].filter((x) => store.uidsOf(x).has(store.uid));
+    if (ws.length === 1) store.me = ws[0];
   }
+  if (me()) store.claim(me());
   if (!ok) toast('Sync isn’t available here. Answers stay on this device.');
   ensureGames();
   render(true);

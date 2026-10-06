@@ -222,6 +222,26 @@ async function launch(opts = {}) {
   };
   const browser = await chromium.launch({ headless });
 
+  // Room send budget: the platform shares ~40 sends a second (burst 80) between emits and
+  // presence per page; past it emits drop and presence waits. Tests get a warning, not an error.
+  const PRESENCE_MS = 1000 / 30;
+  const presenceQ = new Map(); // room|peer -> { patch, timer, last }
+  const warnings = [];
+  const sends = new Map(); // page -> recent send times
+  function spend(pg) {
+    const now = Date.now();
+    const arr = sends.get(pg) || [];
+    arr.push(now);
+    while (arr.length && arr[0] < now - 1000) arr.shift();
+    sends.set(pg, arr);
+    if (arr.length > 40 && !(pg.__budgetWarned > now - 5000)) {
+      pg.__budgetWarned = now;
+      const msg = `[${pg.__who}] room budget: ${arr.length} emits + presence sends in one second (the platform allows ~40/s; past it emits drop and presence waits)`;
+      warnings.push(msg);
+      console.warn('warning:', msg);
+    }
+  }
+
   async function player(w, { identified = true, uid = 'u_' + w, viewport = null } = {}) {
     const ctx = await browser.newContext({ ...devices[device], hasTouch: !fine, colorScheme, reducedMotion, ...(viewport ? { viewport } : {}) });
     await ctx.addInitScript(RUNTIME({ who: w, uid, coarse, identified, coldCache }));
@@ -255,16 +275,32 @@ async function launch(opts = {}) {
       if (op === 'join') { m.set(pg.__peer, { peer: pg.__peer, by: uid, presence: {}, updatedAt: Date.now() }); pushPeers(name); return ''; }
       if (op === 'leave') { m.delete(pg.__peer); pushPeers(name); return ''; }
       if (op === 'presence') {
-        const cur = m.get(pg.__peer);
-        if (!cur) return '';
-        const patch = JSON.parse(data);
-        const next = { ...cur.presence };
-        for (const [k, v] of Object.entries(patch)) { if (v === null) delete next[k]; else next[k] = v; }
-        m.set(pg.__peer, { ...cur, presence: next, updatedAt: Date.now() });
-        pushPeers(name);
+        // Like the platform: patches merge (latest value per field wins) and go out coalesced,
+        // at most ~30 times a second per sender.
+        if (!m.get(pg.__peer)) return '';
+        const key = name + '|' + pg.__peer;
+        const q = presenceQ.get(key) || { patch: {}, timer: null, last: 0 };
+        presenceQ.set(key, q);
+        Object.assign(q.patch, JSON.parse(data));
+        if (!q.timer) {
+          q.timer = setTimeout(() => {
+            q.timer = null;
+            q.last = Date.now();
+            const patch = q.patch;
+            q.patch = {};
+            const cur = m.get(pg.__peer);
+            if (!cur) return;
+            const next = { ...cur.presence };
+            for (const [k, v] of Object.entries(patch)) { if (v === null) delete next[k]; else next[k] = v; }
+            m.set(pg.__peer, { ...cur, presence: next, updatedAt: Date.now() });
+            spend(pg);
+            pushPeers(name);
+          }, Math.max(0, q.last + PRESENCE_MS - Date.now()));
+        }
         return '';
       }
       if (op === 'emit') {
+        spend(pg);
         const ev = { kind: 'msg', name, topic, data: JSON.parse(data), peer: pg.__peer, by: uid };
         for (const p of pages) if ((roomState[name] || new Map()).has(p.__peer) && !(p !== pg && Math.random() < dropRate)) later(() => p.evaluate((e) => window.__roomDeliver && window.__roomDeliver(e), ev).catch(() => {}));
         return '';
@@ -280,7 +316,7 @@ async function launch(opts = {}) {
     return pg;
   }
 
-  const h = { docs, errors, browser, roomState };
+  const h = { docs, errors, warnings, browser, roomState };
   for (const w of who) h[w] = await player(w);
 
   async function openSheet(pg, gameId) {

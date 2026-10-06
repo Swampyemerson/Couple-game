@@ -9,6 +9,7 @@ const path = require('path');
 const { launch } = require('../harness');
 
 const SHOTS = process.env.SHOTS || path.join(os.tmpdir(), 'just-us-shots', 'computer');
+const PORT = Number(process.env.PORT) || 8880; // PORT=8950 node … uses PORT..PORT+4
 fs.mkdirSync(SHOTS, { recursive: true });
 const assert = (c, m) => { if (!c) throw new Error('FAIL: ' + m); console.log('ok -', m); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -602,7 +603,7 @@ async function withHarness(opts, fn) {
   const only = process.argv[2] || 'all';
   try {
     if (only === 'all' || only === 'phone') {
-      await withHarness({ port: 8880, coarse: true }, async (h) => {
+      await withHarness({ port: PORT, coarse: true }, async (h) => {
         await asPhones(h);
         await cyclesLivePhones(h);
         await cyclesLocalPhone(h, 'light');
@@ -610,7 +611,7 @@ async function withHarness(opts, fn) {
       });
     }
     if (only === 'all' || only === 'laptop') {
-      await withHarness({ port: 8881, device: 'Desktop Chrome' }, async (h) => {
+      await withHarness({ port: PORT + 1, device: 'Desktop Chrome' }, async (h) => {
         await asLaptops(h);
         await cyclesLocalLaptop(h, 'light');
         await cyclesLiveLaptops(h, 'light');
@@ -618,20 +619,20 @@ async function withHarness(opts, fn) {
       });
     }
     if (only === 'all' || only === 'dark') {
-      await withHarness({ port: 8882, device: 'Desktop Chrome', colorScheme: 'dark' }, async (h) => {
+      await withHarness({ port: PORT + 2, device: 'Desktop Chrome', colorScheme: 'dark' }, async (h) => {
         await asLaptops(h);
         await cyclesLocalLaptop(h, 'dark');
         await cyclesLiveLaptops(h, 'dark');
         await defuseShots(h, 'laptop-dark', { hold: true });
       });
-      await withHarness({ port: 8883, colorScheme: 'dark', coarse: true }, async (h) => {
+      await withHarness({ port: PORT + 3, colorScheme: 'dark', coarse: true }, async (h) => {
         await asPhones(h);
         await cyclesLocalPhone(h, 'dark');
         await defuseShots(h, 'phone-dark', { lobby: true, narrow: true });
       });
     }
     if (only === 'all' || only === 'drops') {
-      await withHarness({ port: 8884, coarse: true, dropRate: 0.33 }, async (h) => {
+      await withHarness({ port: PORT + 4, coarse: true, dropRate: 0.33 }, async (h) => {
         await asPhones(h);
         await droppedEvents(h);
       });

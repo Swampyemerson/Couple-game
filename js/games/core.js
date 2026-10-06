@@ -54,8 +54,12 @@ const G = {
   pending: {}, // id -> my move list not yet confirmed by the db
   inflight: {},
   dirty: {},
+  retries: {},
   results: {}, // id -> { game, winner, score, at, mode }
   recording: {},
+  creating: {}, // id -> match we just created, until a snapshot includes it
+  deleted: {}, // id -> time we deleted it (a late snapshot mustn't bring it back)
+  loaded: { matches: false, results: false }, // a definitive snapshot of each has arrived
   partner: { here: false, at: null },
   invite: null,
   screen: null,
@@ -227,11 +231,20 @@ function writeMoves(id) {
       if (!list) break;
       try {
         await G.db.doc(`matches/${id}`).update({ [w]: JSON.stringify(list), ['u' + w]: Date.now() });
+        G.retries[id] = 0;
       } catch (e) {
         console.warn('move write failed', e);
-        if (e && e.code === 'unavailable') { await new Promise((r) => setTimeout(r, 600 + Math.random() * 600)); G.dirty[id] = true; continue; }
-        toast(e && e.code === 'invalid_argument' ? 'That game no longer exists.' : 'Couldn’t save your move. Check your connection.');
-        break;
+        const code = e && e.code;
+        if (code === 'invalid_argument') { toast('That game no longer exists.'); break; }
+        if (code === 'revoked' || code === 'not_granted' || code === 'quota_exceeded' || (G.retries[id] = (G.retries[id] || 0) + 1) > 8) {
+          G.retries[id] = 0;
+          toast('Couldn’t save your move. Check your connection.');
+          break;
+        }
+        // unavailable, resource_exhausted or unknown: transient, so try again shortly
+        await new Promise((r) => setTimeout(r, (code === 'resource_exhausted' ? 2500 : 600) * (0.7 + Math.random() * 0.6)));
+        G.dirty[id] = true;
+        continue;
       }
     } while (G.dirty[id]);
     G.inflight[id] = false;
@@ -266,25 +279,42 @@ function lastFirst(gameId) {
   return ms.length ? ms[0].first : null;
 }
 
-async function createMatch(gameId, mode, { first } = {}) {
+// A rematch of an online match has a fixed id and seed, derived from the old match, so if
+// both players press Rematch at the same moment they land in the same new match.
+function rematchIdOf(id) {
+  const abc = 'abcdefghijkmnopqrstuvwxyz23456789';
+  const r = rng(`rematch:${id}`);
+  return Array.from({ length: 12 }, () => abc[Math.floor(r() * abc.length)]).join('');
+}
+
+async function createMatch(gameId, mode, { first, rematchOf = null } = {}) {
   const def = BY_ID[gameId];
   if (!def) return null;
   const prev = lastFirst(gameId);
   const f = first || (prev ? other(prev) : Math.random() < 0.5 ? 'a' : 'b');
-  const base = { game: gameId, first: f, seed: Math.floor(Math.random() * 2147483647), by: me(), created: Date.now(), opts: {} };
+  const seed = rematchOf && mode !== 'local' ? hash('seed', rematchOf) % 2147483647 : Math.floor(Math.random() * 2147483647);
+  const base = { game: gameId, first: f, seed, by: me(), created: Date.now(), opts: {} };
   if (mode === 'local' || !G.db) {
     const id = 'l' + newId(11);
     G.local[id] = { id, online: false, ...base, lists: { a: [], b: [] }, ua: 0, ub: 0 };
     persistLocal();
     return id;
   }
-  const id = newId(12);
+  const id = rematchOf ? rematchIdOf(rematchOf) : newId(12);
+  if (rematchOf) {
+    // Already made by the partner? Join it instead of overwriting it.
+    if (G.online[id]) return id;
+    try { const snap = await G.db.doc(`matches/${id}`).get(); if (snap.exists) { G.online[id] = normalize(id, snap.data()); return id; } } catch { /* make it */ }
+    if (G.online[id]) return id;
+  }
   const doc = { ...base, a: '[]', b: '[]', ua: 0, ub: 0 };
   G.online[id] = normalize(id, doc);
+  G.creating[id] = G.online[id];
   try {
     await G.db.doc(`matches/${id}`).set(doc);
   } catch (e) {
     delete G.online[id];
+    delete G.creating[id];
     toast(e && e.code === 'invalid_argument' ? 'You can’t start games yet. Ask for Editor access.' : 'Couldn’t start the game. Try again.');
     return null;
   }
@@ -297,10 +327,13 @@ async function endMatch(id, { resign = false } = {}) {
   if (!m) return;
   const def = BY_ID[m.game];
   const d = derived(m);
-  if (resign && d && !d.over && !def.team) recordResult(id, m.game, { winner: other(G.screen?.actor || me()) }, m.online ? 'online' : 'local');
+  // Resigning an online versus game is a loss. Ending a same-device or co-op game just deletes it.
+  if (resign && m.online && d && !d.over && !def.team) recordResult(id, m.game, { winner: other(me()) }, 'online');
   if (m.online) {
+    G.deleted[id] = Date.now();
     delete G.online[id];
     delete G.pending[id];
+    delete G.creating[id];
     try { await G.db.doc(`matches/${id}`).delete(); } catch { /* ignore */ }
     ping(id, { gone: true });
   } else {
@@ -336,18 +369,28 @@ export function gameRecord(gameId) {
 }
 
 function recordFinished() {
+  // Online, wait until both lists are in: otherwise every finished match looks unrecorded
+  // and gets its result written again on every load.
+  if (G.db && !(G.loaded.matches && G.loaded.results)) return;
   for (const m of allMatches()) {
     const d = derived(m);
     if (d && d.over && !d.broken && !G.results[m.id]) recordResult(m.id, m.game, d.result, m.online ? 'online' : 'local');
   }
 }
 
+// Finished online matches are kept (newest 25) so they can be looked at again; older ones go.
+// Their results stay in results/. Runs once per visit, after both lists have loaded.
 async function cleanup() {
-  if (!G.db || G.cleaned) return;
+  if (!G.db || G.cleaned || !(G.loaded.matches && G.loaded.results)) return;
   G.cleaned = true;
   const done = Object.values(G.online).filter((m) => { const d = derived(m); return d && d.over && G.results[m.id]; })
     .sort((x, y) => y.created - x.created);
-  for (const m of done.slice(25)) { try { await G.db.doc(`matches/${m.id}`).delete(); } catch { /* ignore */ } }
+  for (const m of done.slice(25)) {
+    G.deleted[m.id] = Date.now();
+    delete G.online[m.id];
+    try { await G.db.doc(`matches/${m.id}`).delete(); } catch { delete G.deleted[m.id]; }
+    await new Promise((r) => setTimeout(r, 150)); // one write at a time, gently
+  }
 }
 
 // ── sound + haptics + 3D ──────────────────────────────────────────────
@@ -444,22 +487,36 @@ export async function initGames(store, hooks = {}) {
   for (const [id, m] of Object.entries(G.local)) if (!m || !m.lists || !BY_ID[m.game]) delete G.local[id];
   if (store.mode === 'artifact' && store.adb) {
     G.db = store.adb;
-    G.db.collection('matches').onSnapshot((qs) => {
+    const watch = (make, fn) => (store.watch ? store.watch(make, fn) : make().onSnapshot(fn, (e) => console.warn('games sync', e)));
+    const isCache = (qs) => !!(qs.metadata && qs.metadata.fromCache);
+    watch(() => G.db.collection('matches'), (qs) => {
+      if (isCache(qs) && qs.empty) return; // a cold cache knows nothing yet
       const next = {};
-      qs.docs.forEach((d) => { if (d.exists) next[d.id] = normalize(d.id, d.data()); });
+      qs.docs.forEach((d) => { if (d.exists && !G.deleted[d.id]) next[d.id] = normalize(d.id, d.data()); });
+      // A match we just created can be missing from a snapshot taken before our write landed.
+      for (const [id, m] of Object.entries(G.creating)) {
+        if (next[id] || Date.now() - m.created > 20000) delete G.creating[id];
+        else next[id] = m;
+      }
+      for (const [id, t] of Object.entries(G.deleted)) if (!next[id] && Date.now() - t > 60000) delete G.deleted[id];
       G.online = next;
+      if (!isCache(qs)) G.loaded.matches = true;
       for (const id of Object.keys(G.pending)) healPending(id);
       recordFinished();
       cleanup();
       changed();
-    }, (e) => console.warn('matches sync', e));
-    G.db.collection('results').onSnapshot((qs) => {
+    });
+    watch(() => G.db.collection('results'), (qs) => {
+      if (isCache(qs) && qs.empty) return;
       const next = {};
       qs.docs.forEach((d) => { if (d.exists) next[d.id] = d.data(); });
       for (const [id, r] of Object.entries(G.results)) if (!next[id] && G.recording[id]) next[id] = r;
       G.results = next;
+      if (!isCache(qs)) G.loaded.results = true;
+      recordFinished();
+      cleanup();
       changed();
-    }, (e) => console.warn('results sync', e));
+    });
     try { G.room = await globalThis.claude.use('room'); } catch { G.room = null; }
     if (G.room) wireRoom();
   } else {
@@ -492,8 +549,9 @@ function wireRoom() {
     refetch(d.m);
     const viewing = G.screen && G.screen.id === d.m;
     if (d.new && G.screen && G.screen.offerRematch && G.screen.game === d.new && G.screen.id !== d.m) {
-      G.screen.offerRematch(d.m);
-      return;
+      const cur = getMatch(G.screen.id);
+      const cd = cur && derived(cur);
+      if (cd && cd.over) { G.screen.offerRematch(d.m); return; }
     }
     if (!viewing) {
       const def = BY_ID[d.new || G.online[d.m]?.game];
@@ -506,6 +564,16 @@ function wireRoom() {
     if (d.to !== me() || !BY_ID[d.game]) return;
     seeInvite({ game: d.game, t: d.t || Date.now() });
   }, () => {});
+}
+
+/** The app switched who's on this device: re-announce, and redraw with the new perspective. */
+export function gamesIdentityChanged() {
+  if (G.screen) closeScreen();
+  setPresence(null);
+  G.partner = { here: false, at: null };
+  G.invite = null;
+  document.getElementById('gm-invite')?.remove();
+  changed();
 }
 
 function setPresence(at = null, inv = null) {
@@ -531,10 +599,26 @@ function gameRoot() {
   if (!el) { el = document.createElement('div'); el.id = 'game-root'; el.hidden = true; document.body.appendChild(el); }
   return el;
 }
+// iOS scrolls the page behind a fixed overlay whenever the overlay itself has nothing to
+// scroll, and overflow: hidden on <body> doesn't stop it. So the page is pinned in place
+// (position: fixed at its current offset) while the game room is open, and put back after.
+let pinnedY = null;
 function showRoot(on) {
   const r = gameRoot();
   r.hidden = !on;
-  document.body.classList.toggle('gm-open', on);
+  const b = document.body;
+  b.classList.toggle('gm-open', on);
+  if (on && pinnedY === null) {
+    pinnedY = window.scrollY || 0;
+    b.style.top = `-${pinnedY}px`;
+    b.classList.add('gm-pinned');
+  } else if (!on && pinnedY !== null) {
+    const y = pinnedY;
+    pinnedY = null;
+    b.classList.remove('gm-pinned');
+    b.style.top = '';
+    window.scrollTo(0, y);
+  }
 }
 
 function closeScreen() {
@@ -590,7 +674,7 @@ function chromeHTML(def, { live = false } = {}) {
     <div class="gm-layer gm-curtain" hidden></div>
     <div class="gm-layer gm-wait" hidden></div>
     <div class="gm-layer gm-end" hidden></div>
-    <div class="gm-sheet" hidden></div>
+    <div class="gm-sheet" data-g="menu-backdrop" hidden></div>
   </div>`;
 }
 
@@ -609,20 +693,21 @@ function menuHTML(def, { live, online, over, team }) {
   </div>`;
 }
 
+function resultHead(def, res) {
+  if (def.team || res.team) return { head: res.text || (Number.isFinite(res.score) ? `Team score: ${res.score}` : 'Nice teamwork'), cls: 'team' };
+  if (res.winner === 'a' || res.winner === 'b') return { head: res.text || `${nameOf(res.winner)} wins`, cls: `win-${res.winner}` };
+  return { head: res.text || 'It’s a draw', cls: 'draw' };
+}
+
+// After "See the board" the status line keeps the result and a way back to the end card.
+function resultStatus(el, def, res) {
+  el.textContent = resultHead(def, res || { winner: null }).head + ' ';
+  el.insertAdjacentHTML('beforeend', '<button class="gm-status-btn" data-g="end-show">Rematch or leave</button>');
+}
+
 function endHTML(def, res, { rematch = true } = {}) {
   const lookLabel = def.endLookLabel || 'See the board';
-  let head;
-  let cls = '';
-  if (def.team || res.team) {
-    head = res.text || (Number.isFinite(res.score) ? `Team score: ${res.score}` : 'Nice teamwork');
-    cls = 'team';
-  } else if (res.winner === 'a' || res.winner === 'b') {
-    head = res.text || `${nameOf(res.winner)} wins`;
-    cls = `win-${res.winner}`;
-  } else {
-    head = res.text || 'It’s a draw';
-    cls = 'draw';
-  }
+  const { head, cls } = resultHead(def, res);
   const rec = gameRecord(def.id);
   const recLine = def.team
     ? (rec.best != null ? `<span class="gm-end-rec-l">Best team score</span><b>${rec.best}</b>` : '')
@@ -694,6 +779,7 @@ function openMatch(id) {
   let endShown = false;
   let endDismissed = false;
   let ctxNow = null;
+  let openedOver = null; // was the match already over when this screen opened?
 
   const screen = {
     id, game: def.id, live: false, actor: null,
@@ -713,7 +799,9 @@ function openMatch(id) {
       lastKey = '';
       paint();
     },
-    look() { endDismissed = true; $('.gm-end').hidden = true; try { inst && inst.onEndClosed && inst.onEndClosed(); } catch (e) { console.error(e); } },
+    look() { endDismissed = true; $('.gm-end').hidden = true; paintStatus(); try { inst && inst.onEndClosed && inst.onEndClosed(); } catch (e) { console.error(e); } },
+    reshowEnd() { if (!endShown) return; endDismissed = false; $('.gm-end').hidden = false; paintStatus(); },
+    get endOpen() { return !$('.gm-end').hidden; },
     showEnd: null,
     rematchId: null,
     offerRematch(newMatchId) {
@@ -760,6 +848,7 @@ function openMatch(id) {
 
   function paintStatus() {
     const c = ctxNow; if (!c) return;
+    if (c.over && endDismissed) { resultStatus($('.gm-status'), def, c.result); return; }
     let text = customStatus;
     if (text == null) {
       if (c.over) text = '';
@@ -777,6 +866,7 @@ function openMatch(id) {
     const d = derived(m);
     const c = ctxFor(m, d);
     ctxNow = c;
+    if (openedOver === null) openedOver = d.over;
     screen.actor = c.actor || (c.mode === 'online' ? me() : null);
     // chips
     for (const w of ['a', 'b']) {
@@ -798,30 +888,31 @@ function openMatch(id) {
       cur.hidden = false;
     } else cur.hidden = true;
     stage.classList.toggle('is-covered', !!c.curtain);
+    // The end card is set up before the game's update(), so update() may call api.showEnd().
+    const end = $('.gm-end');
+    if (d.over && !endShown) {
+      endShown = true;
+      if (!G.results[id]) recordResult(id, m.game, d.result, m.online ? 'online' : 'local');
+      end.innerHTML = endHTML(def, d.result);
+      const reveal = () => {
+        if (endDismissed || G.screen !== screen || !end.hidden) return;
+        end.hidden = false;
+        const r = d.result;
+        sfx(def.team || r.team ? 'win' : r.winner && (c.mode === 'local' || r.winner === me()) ? 'win' : r.winner ? 'lose' : 'good');
+      };
+      screen.showEnd = reveal;
+      // endDelay: 'manual' lets the game finish its finale and call api.showEnd() (8 s safety net).
+      // A match that was already over when opened has had its finale: show the card promptly.
+      let delay = def.endDelay === 'manual' ? 8000 : Number.isFinite(def.endDelay) ? def.endDelay : 900;
+      if (openedOver) delay = Math.min(delay, 400);
+      setTimeout(reveal, delay);
+    } else if (!d.over) { endShown = false; endDismissed = false; screen.showEnd = null; end.hidden = true; }
     // game body
     const key = `${m.lists.a.length}|${m.lists.b.length}|${c.viewer}|${c.actor}|${c.curtain}`;
     if (key !== lastKey) {
       lastKey = key;
       try { inst.update && inst.update(c); } catch (e) { console.error(def.id, 'update failed', e); }
     }
-    // end
-    const end = $('.gm-end');
-    if (d.over && !endDismissed) {
-      if (!endShown) {
-        endShown = true;
-        if (!G.results[id]) recordResult(id, m.game, d.result, m.online ? 'online' : 'local');
-        end.innerHTML = endHTML(def, d.result);
-        const reveal = () => {
-          if (endDismissed || G.screen !== screen || !end.hidden) return;
-          end.hidden = false;
-          const r = d.result;
-          sfx(def.team || r.team ? 'win' : r.winner && (c.mode === 'local' || r.winner === me()) ? 'win' : r.winner ? 'lose' : 'good');
-        };
-        screen.showEnd = reveal;
-        // endDelay: 'manual' lets the game finish its finale and call api.showEnd() (8 s safety net).
-        setTimeout(reveal, def.endDelay === 'manual' ? 8000 : def.endDelay ?? 900);
-      }
-    } else if (!d.over) { endShown = false; end.hidden = true; }
   }
 
   G.screen = screen;
@@ -879,6 +970,12 @@ async function openLive(gameId, mode) {
   let gen = 0;
   let recordedGen = -1;
   let invT = 0;
+  let lastPresence = null; // the partner presence object we last handed to onPartnerState
+  let lastRes = null;
+  let endDismissed = false;
+  // The partner's game state, if it belongs to this round. setPresence stamps `sg` (state
+  // generation), so a previous round's state left in presence never leaks into a rematch.
+  const stateOf = (pr) => (pr && (Number.isInteger(pr.sg) ? pr.sg : 0) === gen ? pr.s ?? null : null);
 
   const screen = {
     id: null, game: gameId, live: true, mode,
@@ -898,12 +995,14 @@ async function openLive(gameId, mode) {
       if (mode === 'live') {
         const pg = partnerPeer && Number.isInteger(partnerPeer.presence.gen) ? partnerPeer.presence.gen : 0;
         gen = Math.max(gen, pg) + 1;
-        nr.presence({ gen, fin: null }).catch(() => {});
+        nr.presence({ gen, fin: null, s: null, sg: gen }).catch(() => {});
         api.send('__rematch', { g: gen });
       }
       restart();
     },
-    look() { $('.gm-end').hidden = true; try { inst && inst.onEndClosed && inst.onEndClosed(); } catch (e) { console.error(e); } },
+    look() { endDismissed = true; $('.gm-end').hidden = true; paintStatus(); try { inst && inst.onEndClosed && inst.onEndClosed(); } catch (e) { console.error(e); } },
+    reshowEnd() { if (!finished) return; endDismissed = false; $('.gm-end').hidden = false; paintStatus(); },
+    get endOpen() { return !$('.gm-end').hidden; },
   };
 
   const api = {
@@ -917,8 +1016,10 @@ async function openLive(gameId, mode) {
     three: loadThree,
     el: stage,
     get partnerHere() { return mode === 'local' || !!partnerPeer; },
-    setPresence(obj) { if (nr) nr.presence({ s: obj }).catch(() => {}); },
-    partnerState() { return partnerPeer && partnerPeer.presence ? partnerPeer.presence.s ?? null : null; },
+    /** This round's number: 0, then +1 on every rematch. */
+    get gen() { return gen; },
+    setPresence(obj) { if (nr) nr.presence({ s: obj, sg: gen }).catch(() => {}); },
+    partnerState() { return partnerPeer ? stateOf(partnerPeer.presence) : null; },
     onPartnerState(fn) { partnerFns.add(fn); return () => partnerFns.delete(fn); },
     onPartnerHere(fn) { hereFns.add(fn); return () => hereFns.delete(fn); },
     send(type, data) { if (nr) nr.emit('ev', { t: String(type), d: data ?? null, s: sessionId }).catch(() => {}); },
@@ -941,8 +1042,9 @@ async function openLive(gameId, mode) {
   };
 
   function paintStatus() {
+    if (finished && endDismissed && lastRes) { resultStatus($('.gm-status'), def, lastRes); return; }
     let text = customStatus;
-    if (text == null) text = mode === 'local' ? 'One phone, two players' : partnerPeer ? '' : `Waiting for ${nameOf(other(me()))}…`;
+    if (text == null) text = mode === 'local' ? `One ${thisDevice()}, two players` : partnerPeer ? '' : `Waiting for ${nameOf(other(me()))}…`;
     $('.gm-status').textContent = text;
   }
 
@@ -963,21 +1065,28 @@ async function openLive(gameId, mode) {
   function partnerRematch(g) {
     if (!Number.isInteger(g) || g <= gen) return;
     gen = g;
-    nr.presence({ gen, fin: null }).catch(() => {});
+    nr.presence({ gen, fin: null, s: null, sg: gen }).catch(() => {});
     restart();
   }
 
   function showEnd(res) {
     const end = $('.gm-end');
+    lastRes = res;
+    endDismissed = false;
     end.innerHTML = endHTML(def, res);
     end.hidden = false;
+    paintStatus();
     const won = def.team || res.team || (mode === 'local' ? !!res.winner : res.winner === me());
     sfx(won ? 'win' : res.winner ? 'lose' : 'good');
   }
 
   function mountGame() {
     finished = false;
+    endDismissed = false;
+    lastRes = null;
+    lastPresence = null;
     $('.gm-end').hidden = true;
+    paintStatus();
     stage.innerHTML = '';
     try { inst = def.mount(stage, api) || {}; } catch (e) { console.error(e); stage.innerHTML = '<p class="gm-error">This game failed to load.</p>'; inst = {}; }
   }
@@ -1013,7 +1122,7 @@ async function openLive(gameId, mode) {
     return;
   }
   if (G.screen !== screen) { nr.leave().catch(() => {}); return; }
-  nr.presence({ who: me(), on: true, s: null, gen, fin: null }).catch(() => {});
+  nr.presence({ who: me(), on: true, s: null, sg: gen, gen, fin: null }).catch(() => {});
   const invite = () => {
     invT = Date.now();
     setPresence(def.id, { game: gameId, t: invT });
@@ -1042,8 +1151,15 @@ async function openLive(gameId, mode) {
       const pr = p.presence;
       if (Number.isInteger(pr.gen) && pr.gen > gen && inst) partnerRematch(pr.gen);
       if (pr.fin && typeof pr.fin === 'object' && pr.fin.g === gen && pr.fin.by === other(me())) partnerFinished(pr.fin.g, pr.fin.res, other(me()) !== 'a');
-      partnerFns.forEach((fn) => { try { fn(pr.s ?? null); } catch (e) { console.error(e); } });
-    }
+      // Only when the partner's presence really changed (peers are frozen, and an unchanged
+      // one is the same object), and only state from this round.
+      if (pr !== lastPresence) {
+        const prevState = stateOf(lastPresence);
+        lastPresence = pr;
+        const st = stateOf(pr);
+        if (st !== null && st !== prevState) partnerFns.forEach((fn) => { try { fn(st); } catch (e) { console.error(e); } });
+      }
+    } else lastPresence = null;
   }, () => {}));
   offs.push(nr.on('ev', (msg) => {
     if (msg.isMe) return;
@@ -1271,6 +1387,8 @@ const ACTIONS = {
   live: (d) => openLive(d.game, d.mode),
   close: () => closeScreen(),
   menu: () => G.screen && G.screen.toggleMenu && G.screen.toggleMenu(),
+  'menu-backdrop': (d, el, e) => { if (e.target === el && G.screen && G.screen.toggleMenu) G.screen.toggleMenu(); },
+  'end-show': () => G.screen && G.screen.reshowEnd && G.screen.reshowEnd(),
   mute: (d, el) => { lsSet(LS_MUTE, !muted()); el.textContent = muted() ? 'Sound: off' : 'Sound: on'; if (!muted()) sfx('tap'); },
   reveal: () => G.screen && G.screen.reveal && G.screen.reveal(),
   'end-look': () => G.screen && G.screen.look && G.screen.look(),
@@ -1291,9 +1409,11 @@ const ACTIONS = {
     if (s.live) { s.rematch(); return; }
     if (s.rematchId && getMatch(s.rematchId)) { openMatch(s.rematchId); return; }
     const m = getMatch(s.id);
-    if (!m) return;
-    const id = await createMatch(m.game, m.online ? 'online' : 'local', { first: other(m.first) });
-    if (id) openMatch(id);
+    if (!m || s.rematching) return;
+    s.rematching = true; // a double tap shouldn't make two
+    const id = await createMatch(m.game, m.online ? 'online' : 'local', { first: other(m.first), rematchOf: m.online ? m.id : null });
+    s.rematching = false;
+    if (id && G.screen === s) openMatch(id);
   },
   filter: (d) => { G.filter = d.f; G.hooks.onChange(); },
   'invite-yes': () => {
@@ -1312,14 +1432,19 @@ if (typeof document !== 'undefined') {
     if (!el) return;
     const fn = ACTIONS[el.dataset.g];
     if (!fn) return;
-    if (el.dataset.g !== 'sheet-close') e.preventDefault();
+    if (el.dataset.g !== 'sheet-close' && el.dataset.g !== 'menu-backdrop') e.preventDefault();
     fn(el.dataset, el, e);
   });
+  // Escape peels one layer: a confirm dialog (the app closes those), the menu, the end card,
+  // then the screen. In a live round it opens the menu instead of walking out on the partner.
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && G.screen) {
-      const sh = document.querySelector('#game-root .gm-sheet:not([hidden])');
-      if (sh) sh.hidden = true; else closeScreen();
-    }
+    if (e.key !== 'Escape' || !G.screen || e.defaultPrevented) return;
+    if (document.querySelector('.sheet-wrap')) return;
+    const sh = document.querySelector('#game-root .gm-sheet:not([hidden])');
+    if (sh) { sh.hidden = true; return; }
+    const s = G.screen;
+    if (s.live && s.mode === 'live' && !s.endOpen) { s.toggleMenu(); return; }
+    closeScreen();
   });
 }
 

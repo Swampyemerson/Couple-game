@@ -7,6 +7,7 @@ const path = require('path');
 const { launch } = require('../harness');
 
 const SHOTS = process.env.SHOTS || path.join(os.tmpdir(), 'live-shots');
+const PORT = Number(process.env.PORT) || 8850; // PORT=8950 node … uses PORT..PORT+2
 fs.mkdirSync(SHOTS, { recursive: true });
 let fails = 0;
 const assert = (c, m) => { if (!c) throw new Error('FAIL: ' + m); console.log('ok -', m); };
@@ -428,20 +429,20 @@ async function run(port, colorScheme, body, opts = {}) {
 }
 
 (async () => {
-  await run(8850, 'light', async (h) => {
+  await run(PORT, 'light', async (h) => {
     await hockeyLive(h, 'light');
     await hockeyRematchAndLeave(h);
     await hockeyLocalTouch(h);
     await quickdrawLive(h, 'light');
     await quickdrawLocal(h, 'light');
   }, { coarse: true });
-  await run(8851, 'dark', async (h) => {
+  await run(PORT + 1, 'dark', async (h) => {
     await hockeyLive(h, 'dark', true);
     await h.closeGame(h.a); await h.closeGame(h.b);
     await quickdrawLiveFast(h, 'dark');
     await quickdrawLocal(h, 'dark');
   }, { coarse: true });
-  await run(8852, 'dark', async (h) => {
+  await run(PORT + 2, 'dark', async (h) => {
     await laptop(h, h.a);
     await hockeyKeys(h, h.a, 'dark');
     await quickdrawKeys(h, h.a, 'dark');

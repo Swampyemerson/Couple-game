@@ -9,6 +9,7 @@ const { pathToFileURL } = require('url');
 const { launch, ROOT } = require('../harness');
 
 const SHOTS = process.env.SHOTS || path.join(os.tmpdir(), 'just-us-shots', 'threed');
+const PORT = Number(process.env.PORT) || 8860; // PORT=8950 node … uses PORT and PORT+1
 fs.mkdirSync(SHOTS, { recursive: true });
 const ok = (c, m) => { if (!c) throw new Error('FAIL: ' + m); console.log('ok -', m); };
 const other = (w) => (w === 'a' ? 'b' : 'a');
@@ -525,7 +526,7 @@ async function fallback2D(h, pg) {
     process.exitCode = 1;
     return;
   }
-  const h = await launch({ port: 8860, only: ['tower', 'bones'] });
+  const h = await launch({ port: PORT, only: ['tower', 'bones'] });
   try {
     await towerOnline(h);
     await bonesOnline(h);
@@ -549,7 +550,7 @@ async function fallback2D(h, pg) {
     await h.close();
   }
   if (!failed) {
-    const d = await launch({ port: 8861, only: ['tower', 'bones'], colorScheme: 'dark' });
+    const d = await launch({ port: PORT + 1, only: ['tower', 'bones'], colorScheme: 'dark' });
     try {
       await d.a.setViewportSize({ width: 390, height: 844 });
       await d.b.setViewportSize({ width: 360, height: 740 });
