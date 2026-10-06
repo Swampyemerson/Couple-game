@@ -2,7 +2,7 @@
 // the fixed-step loop, pause / resume protocol, partner re-mounts, finale, HUD, test hook.
 import {
   DT, LANE_W, SLIDE_TIME, STUMBLE_T, START_DELAY, RESUME_DELAY, RACE_LEN, BRAWL_CAP, MT_LEAD, CHUNK,
-  HEARTS, TEAM_HEARTS_MAX,
+  HEARTS, TEAM_HEARTS_MAX, baseSpeed,
 } from './tune.js';
 import { createTrack, trackHash, difficulty, O_MTRAIN, TUT_JUMP, TUT_ROLL } from './track.js';
 import {
@@ -163,11 +163,14 @@ export function createGame(el, api) {
 
   // ── 3D ──
   let THREE = null; let renderer = null; let world = null; let fx = null; let P = null; let input = null; let overlay = null;
-  let ready3D = false; let glLost = false; let raf = 0; let lastTs = 0;
+  let ready3D = false; let glLost = false; let raf = 0;
   // Dynamic resolution: start a notch under full (min(dpr, 2) × 0.85), step down quickly when
   // frames run long, recover slowly. Scale range 0.55–1.
   let W = 0; let H = 0; const baseDpr = Math.min(window.devicePixelRatio || 1, 2); let scale = 0.85;
-  let ewma = 16.7; let lowFor = 0; let checkT = 0; let coolT = 0;
+  // Doubles written every frame live on one object: V8 boxes a fresh HeapNumber for every double
+  // stored in a closure variable, while object fields are updated in place (JSC boxes neither).
+  const K = { tAnim: 0.5, lastTs: 0.5, ewma: 16.7, lowFor: 0.5, checkT: 0.5, coolT: 0.5, hudT: 0.5, scoreT: 0.5, lastPub: -1e9 };
+  K.tAnim = 0; K.lastTs = 0; K.lowFor = 0; K.checkT = 0; K.coolT = 0; K.hudT = 0; K.scoreT = 0;
   const perf = { dts: new Float32Array(600), work: new Float32Array(600), n: 0, calls: 0, tris: 0, maxCalls: 0, maxTris: 0, programs0: 0, scaleDowns: 0, scaleUps: 0 };
   let rules = null;
   const pal = { a: null, b: null, hl: null };
@@ -175,7 +178,7 @@ export function createGame(el, api) {
   const tmpV = { x: 0, y: 0, z: 0 };
   let vec3 = null;
   const shadowList = [[0, 0, 0, 1, 1], [0, 0, 0, 1, 1]];
-  const zsBuf = [];
+  const zsBuf = new Float64Array(3); // view positions handed to world.ensure (no array regrowth per frame)
   const viewArg = { track: null, z: 0, r: null, time: 0, boxes: false, fly: null, front: false };
 
   async function load() {
@@ -204,7 +207,7 @@ export function createGame(el, api) {
     toLobby();
     if (pendingRejoin) { const d = pendingRejoin; pendingRejoin = null; applyRejoin(d); }
     setTimeout(() => { if (!dead) hud.hideLoading(); }, 120);
-    lastTs = 0;
+    K.lastTs = 0;
     raf = requestAnimationFrame(frame);
   }
 
@@ -249,7 +252,7 @@ export function createGame(el, api) {
     // Build the start chunks and compile + draw every material variant behind the loading screen,
     // so nothing compiles mid-run: world, instanced (plain / coloured), skinned runners with the
     // fade, the shield bubble, particles, blob shadows, gate banners, sky dome and the overlay.
-    world.ensure(lobbyTrack, [0], 9);
+    world.ensure(lobbyTrack, [0], 1, 9);
     const list = world.warmList().concat(fx.warm, players.a.av.warmList(), players.b.av.warmList());
     const saved = list.map((m) => (m && m.isInstancedMesh ? m.count : -1));
     const vis = list.map((m) => (m ? m.visible : false));
@@ -388,6 +391,8 @@ export function createGame(el, api) {
       r.z = r.zPrev = y.z; r.lane = r.laneFrom = Math.max(-1, Math.min(1, y.l | 0)); r.x = r.xFrom = r.lane * LANE_W;
       r.hearts = y.h; r.coins = y.c; r.t = y.rt; r.fin = y.fn; if (y.fn >= 0) { r.done = 1; r.invulnT = 1e9; }
       r.invulnT = Math.max(r.invulnT, 2);
+      r.zPrev = r.z; r.speed = baseSpeed(r.t);
+      const pp = players[meW].prev; pp.z = r.z; pp.x = r.x; pp.y = r.y; // draw it there from the first frame
       M.runMs = y.rt * 1000; M.steps = Math.floor(y.rt / DT);
     }
     M.phase = 'run';
@@ -555,7 +560,7 @@ export function createGame(el, api) {
       else if (!this.did0) step = 0;
       if (step < 0) { hud.tutorial(-1); return; }
       const caps = !coarse ? TUT_KEYS : settings.scheme === 'buttons' ? TUT_BTNS : TUT_SWIPE;
-      const dir = !coarse || settings.scheme === 'buttons' ? '' : step === 0 ? (Math.floor(tAnim / 1.2) % 2 ? 'r' : 'l') : step === 1 ? 'u' : 'd';
+      const dir = !coarse || settings.scheme === 'buttons' ? '' : step === 0 ? (Math.floor(K.tAnim / 1.2) % 2 ? 'r' : 'l') : step === 1 ? 'u' : 'd';
       hud.tutorial(step, 3, dir, caps[step], hot);
     },
   };
@@ -625,7 +630,7 @@ export function createGame(el, api) {
     } else {
       M.reasons.delete('hidden');
       audio.resume();
-      lastTs = 0;
+      K.lastTs = 0;
     }
   }
   document.addEventListener('visibilitychange', onVis);
@@ -811,20 +816,16 @@ export function createGame(el, api) {
   }
 
   // ── frame ──
-  let hudT = 0;
-  let scoreT = 0;
   let trimN = 0;
-  let lastPub = -1e9;
-  let tAnim = 0;
   function frame(ts) {
     if (dead) return;
     raf = requestAnimationFrame(frame);
-    const dtMs = lastTs ? Math.min(250, ts - lastTs) : 16.7;
-    lastTs = ts;
+    const dtMs = K.lastTs ? Math.min(250, ts - K.lastTs) : 16.7;
+    K.lastTs = ts;
     const dt = dtMs / 1000;
     const w0 = performance.now();
     const now = clock();
-    tAnim += dt;
+    K.tAnim += dt;
     if (M.phase === 'over' && (perf.n % 6) !== 0) { perf.n++; return; } // idle behind the end card
     logic(now, dt);
     if (!glLost) { render(dt, now); updateTag(); }
@@ -879,14 +880,14 @@ export function createGame(el, api) {
     }
     updateShots(dt);
     tutorial.update();
-    hudT += dt;
+    K.hudT += dt;
     updateHud(now, dt);
     // presence: 20/s in a match (net.js throttles), 10/s in the lobby where nothing moves
-    if (live && ready3D && (M.phase !== 'lobby' || now - lastPub >= 95)) { lastPub = now; publish(); }
+    if (live && ready3D && (M.phase !== 'lobby' || now - K.lastPub >= 95)) { K.lastPub = now; publish(); }
     if (M.phase === 'run') {
-      scoreT += dt;
-      if (scoreT > 0.5) {
-        scoreT = 0;
+      K.scoreT += dt;
+      if (K.scoreT > 0.5) {
+        K.scoreT = 0;
         const z = (w) => Math.round(players[w].rs.z);
         api.setScore({ a: z('a') + ' m', b: z('b') + ' m' });
       }
@@ -965,7 +966,7 @@ export function createGame(el, api) {
       if (M.mode === 'race') {
         v.bar(true, clamp(p.rs.z / M.len, 0, 1), clamp(qs.z / M.len, 0, 1), p.css, q.css, p.name[0], q.name[0]);
         if (hk.gap !== gapM) { hk.gap = gapM; v.gap(Math.abs(gapM) < 1 ? `${q.name} level with you` : `${q.name} ${gapM > 0 ? '+' : '−'}${Math.abs(gapM)} m`); }
-        v.weapon(p.weaponRoll > 0 ? WEAPON_IDX[1 + (Math.floor(tAnim * 12) % 5)] : p.weapon, true);
+        v.weapon(p.weaponRoll > 0 ? WEAPON_IDX[1 + (Math.floor(K.tAnim * 12) % 5)] : p.weapon, true);
       } else if (M.mode === 'brawl') {
         v.bar(false);
         const k = (Math.abs(gapM) <= 2 ? 99999 : gapM) * 10 + qh;
@@ -1065,15 +1066,15 @@ export function createGame(el, api) {
   function render(dt, now, draw = true) {
     for (let i = 0; i < 2; i++) {
       const p = players[AB[i]];
-      p.rs.t = tAnim;
+      p.rs.t = K.tAnim;
       p.av.update(dt, p.rs);
     }
-    fx.update(dt, tAnim);
+    fx.update(dt, K.tAnim);
     const tr = M.track || lobbyTrack;
-    zsBuf.length = 0;
-    for (let i = 0; i < viewers.length; i++) zsBuf.push(players[viewers[i]].rs.z);
-    if (M.phase === 'lobby') zsBuf.push(-90);
-    world.ensure(tr, zsBuf, M.phase === 'run' ? 1 : 9);
+    let nz = 0;
+    for (let i = 0; i < viewers.length; i++) zsBuf[nz++] = players[viewers[i]].rs.z;
+    if (M.phase === 'lobby') zsBuf[nz++] = -90;
+    world.ensure(tr, zsBuf, nz, M.phase === 'run' ? 1 : 9);
     // blob shadows
     let ns = 0;
     for (let i = 0; i < 2; i++) {
@@ -1091,7 +1092,7 @@ export function createGame(el, api) {
     // colour script: the sky warms with the fastest viewer's speed (a rocket pushes it further)
     let mood = 0;
     if (M.phase === 'run' || M.phase === 'finale' || M.phase === 'over') {
-      for (let i = 0; i < viewers.length; i++) { const rs = players[viewers[i]].rs; const k = clamp((rs.speed - 13) / 15, 0, 1) + (rs.boost ? 0.3 : 0); if (k > mood) mood = k; }
+      for (let i = 0; i < viewers.length; i++) { const rs = players[viewers[i]].rs; const k = Math.min(1, Math.max(0, (rs.speed - 13) / 15)) + (rs.boost ? 0.3 : 0); if (k > mood) mood = k; }
     }
     world.setMood(mood);
     overlay.resize(vw, H);
@@ -1106,8 +1107,8 @@ export function createGame(el, api) {
       else if (M.mode === 'tandem' && p.rs.down && p.r && p.r.hold && p.rs.downT > 0.9) { mode = 'spectate'; tg = players[other(p.w)].rs; }
       if (lobbyish && split) rg.resize(W, H);
       else if (split && rg.cam.aspect !== vw / H) rg.resize(vw, H);
-      rg.update(dt, mode, tg, tAnim);
-      viewArg.track = tr; viewArg.z = p.rs.z; viewArg.r = p.r; viewArg.time = tAnim; viewArg.boxes = M.mode === 'race' && M.phase !== 'lobby'; viewArg.fly = p.fly; viewArg.front = mode === 'lobby' || mode === 'finale';
+      rg.update(dt, mode, tg, K.tAnim);
+      viewArg.track = tr; viewArg.z = p.rs.z; viewArg.r = p.r; viewArg.time = K.tAnim; viewArg.boxes = M.mode === 'race' && M.phase !== 'lobby'; viewArg.fly = p.fly; viewArg.front = mode === 'lobby' || mode === 'finale';
       world.syncView(viewArg);
       world.follow(rg.cam);
       // A runner between this camera and its own runner dissolves through a halftone screen
@@ -1119,14 +1120,14 @@ export function createGame(el, api) {
           const cp = rg.cam.position;
           const dx = s.x - cp.x; const dy = s.y + 1 - cp.y; const dz = -s.z - cp.z;
           const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-          f = clamp((7.6 - d) / 3.2, 0, 1.25);
+          f = Math.min(1.25, Math.max(0, (7.6 - d) / 3.2));
         }
         world.fade[w].value = f;
       }
       if (split) { renderer.setViewport(i * vw, 0, vw, H); renderer.setScissor(i * vw, 0, vw, H); }
       else renderer.setViewport(0, 0, W, H);
       if (draw) renderer.render(world.scene, rg.cam);
-      const sk = mode === 'run' && !isPaused(now) ? clamp((p.rs.speed - 18) / 12, 0, 1) * 0.8 + (p.rs.boost ? 0.5 : 0) : 0;
+      const sk = mode === 'run' && !isPaused(now) ? Math.min(1, Math.max(0, (p.rs.speed - 18) / 12)) * 0.8 + (p.rs.boost ? 0.5 : 0) : 0;
       overlay.update(sk);
       if (draw) overlay.render(renderer);
     }
@@ -1139,21 +1140,21 @@ export function createGame(el, api) {
   function track(dtMs, workMs) {
     const i = perf.n % 600;
     perf.dts[i] = dtMs; perf.work[i] = workMs; perf.n++;
-    ewma = ewma * 0.9 + dtMs * 0.1;
-    checkT += dtMs;
-    if (checkT < 250 || !renderer) return;
-    checkT = 0;
+    K.ewma = K.ewma * 0.9 + dtMs * 0.1;
+    K.checkT += dtMs;
+    if (K.checkT < 250 || !renderer) return;
+    K.checkT = 0;
     if (dbg && dbg.fixedScale) return;
     // Quick down (every 250 ms while frames run long; bigger steps when far off), slow up (after
     // 4 s of comfortable frames, then a 2 s cool-down), so it settles instead of oscillating.
-    if (coolT > 0) coolT -= 250;
-    if (ewma > 18.4 && scale > 0.55) {
-      scale = Math.max(0.55, Math.round((scale - (ewma > 26 ? 0.15 : 0.08)) * 100) / 100);
-      lowFor = 0; coolT = 4000; perf.scaleDowns++; resize();
-    } else if (ewma < 15.4) {
-      lowFor += 250;
-      if (lowFor >= 4000 && coolT <= 0 && scale < 1) { scale = Math.min(1, Math.round((scale + 0.05) * 100) / 100); lowFor = 0; coolT = 2000; perf.scaleUps++; resize(); }
-    } else lowFor = 0;
+    if (K.coolT > 0) K.coolT -= 250;
+    if (K.ewma > 18.4 && scale > 0.55) {
+      scale = Math.max(0.55, Math.round((scale - (K.ewma > 26 ? 0.15 : 0.08)) * 100) / 100);
+      K.lowFor = 0; K.coolT = 4000; perf.scaleDowns++; resize();
+    } else if (K.ewma < 15.4) {
+      K.lowFor += 250;
+      if (K.lowFor >= 4000 && K.coolT <= 0 && scale < 1) { scale = Math.min(1, Math.round((scale + 0.05) * 100) / 100); K.lowFor = 0; K.coolT = 2000; perf.scaleUps++; resize(); }
+    } else K.lowFor = 0;
   }
   function pct(arr, n, q) {
     const m = Math.min(n, arr.length);
@@ -1203,7 +1204,7 @@ export function createGame(el, api) {
         const t0 = performance.now();
         for (let i = 0; i < n; i++) {
           now += 1000 / 60;
-          tAnim += 1 / 60;
+          K.tAnim += 1 / 60;
           logic(now, 1 / 60);
           render(1 / 60, now, false);
           updateTag();

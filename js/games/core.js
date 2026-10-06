@@ -1263,6 +1263,14 @@ function markEndSeen(id) {
   lsSet(LS_SEEN_END, s);
 }
 function unseenResults() {
+  if (!G.seenEnd && lsGet(LS_SEEN_END, null) === null) {
+    // First run of this version: what already finished counts as seen, or every recent game
+    // would suddenly show up as news.
+    if (G.db && !G.loaded.matches) return [];
+    G.seenEnd = {};
+    for (const m of allMatches()) { const d = m.online && derived(m); if (d && d.over) G.seenEnd[m.id] = 1; }
+    lsSet(LS_SEEN_END, G.seenEnd);
+  }
   const s = seenEnds();
   return allMatches().filter((m) => {
     if (!m.online || s[m.id] || Date.now() - Math.max(m.ua || 0, m.ub || 0, m.created || 0) > 14 * 864e5) return false;

@@ -389,10 +389,11 @@ body:has(.gh) { background: var(--g-bg); }
 .gh-card:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge); }
 .gh-card-cover { position: relative; display: block; aspect-ratio: 16 / 10; border-bottom: var(--g-stroke) solid var(--g-ink); background: var(--g-bg); }
 .gh-card-body { flex: 1; display: flex; flex-direction: column; gap: 4px; padding: 9px 10px 10px; min-width: 0; }
-.gh-card-title { font-family: var(--g-font-display); font-weight: 900; font-size: 0.98rem; line-height: 1.12; }
+.gh-card-title { font-family: var(--g-font-display); font-weight: 900; font-size: 0.98rem; line-height: 1.12; overflow-wrap: break-word; -webkit-hyphens: auto; hyphens: auto; }
 .gh-card-blurb { font-size: 0.82rem; line-height: 1.32; color: var(--g-muted); font-weight: 500; }
-.gh-card-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: auto; padding-top: 7px; }
-.gh-tags { display: flex; min-width: 0; overflow: hidden; white-space: nowrap; font: 800 0.62rem/1.2 var(--g-font-body); letter-spacing: 0.08em; text-transform: uppercase; }
+.gh-card-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 6px; margin-top: auto; padding-top: 7px; }
+.gh-tags { display: flex; flex-wrap: wrap; min-width: 0; font: 800 0.62rem/1.2 var(--g-font-body); letter-spacing: 0.08em; text-transform: uppercase; }
+.gh-tag { white-space: nowrap; }
 .gh-tag + .gh-tag::before { content: '·'; margin: 0 4px; }
 .gh-card .g-device:not(.is-best) { color: var(--g-muted); }
 .gh-sticker { position: absolute; top: 7px; right: 7px; padding: 4px 7px 3px; font: 900 0.62rem/1 var(--g-font-display); letter-spacing: 0.04em; text-transform: uppercase; background: var(--g-hl); color: var(--g-on-ink); border: var(--g-stroke) solid var(--g-ink); border-radius: 5px; transform: rotate(4deg); box-shadow: var(--g-shadow-sm); }
@@ -411,6 +412,7 @@ body:has(.gh) { background: var(--g-bg); }
 .gh-shelf-featured .gh-card-blurb { font-size: 0.95rem; }
 .gh-shelf-featured .gh-sticker { top: 12px; right: 12px; font-size: 0.75rem; padding: 5px 9px 4px; }
 .gh-shelf-featured .gh-card:active { transform: translate(4px, 4px); box-shadow: 2px 2px 0 var(--g-edge); }
+@media (max-width: 374px) { .gh-card-title { font-size: 0.86rem; } .gh-card-body { padding-left: 8px; padding-right: 8px; } } /* "Knucklebones" fits a half-width box at 360 */
 .gh-empty { color: var(--g-muted); font-weight: 600; grid-column: 1 / -1; }
 
 /* the "your move" block on the Home tab borrows the rows */

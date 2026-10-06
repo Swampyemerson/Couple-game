@@ -121,6 +121,27 @@ export function createAvatar(THREE, world, P, who) {
   mesh.bind(new THREE.Skeleton(bones));
   mesh.frustumCulled = false;
   world.scene.add(mesh);
+  // Every frame the pose is written straight into the local matrices (Matrix4.elements, a plain
+  // double array) instead of through Object3D position / rotation / scale: three keeps Euler,
+  // Quaternion and Vector3 in sync through setters, and V8 boxes the doubles stored in Euler's
+  // fields (a fresh allocation per bone per frame). Same XYZ Euler order as three's.
+  mesh.matrixAutoUpdate = false;
+  for (const bn of bones) bn.matrixAutoUpdate = false;
+  const BP = new Float64Array(bones.length * 3); // each bone's rest position
+  bones.forEach((bn, i) => { BP[i * 3] = bn.position.x; BP[i * 3 + 1] = bn.position.y; BP[i * 3 + 2] = bn.position.z; });
+  const BA = new Float64Array(4); // setBone's angles + y, passed through memory, not as arguments
+  function setBone(i) {
+    const bn = bones[i]; const te = bn.matrix.elements;
+    const x = BA[0]; const y = BA[1]; const z = BA[2]; const py = BA[3];
+    const a = Math.cos(x); const b = Math.sin(x); const c = Math.cos(y); const d = Math.sin(y); const e = Math.cos(z); const f = Math.sin(z);
+    const ae = a * e; const af = a * f; const be = b * e; const bf = b * f;
+    te[0] = c * e; te[4] = -c * f; te[8] = d;
+    te[1] = af + be * d; te[5] = ae - bf * d; te[9] = -b * c;
+    te[2] = bf - ae * d; te[6] = be + af * d; te[10] = a * c;
+    te[3] = 0; te[7] = 0; te[11] = 0;
+    te[12] = BP[i * 3]; te[13] = py; te[14] = BP[i * 3 + 2]; te[15] = 1;
+    bn.matrixWorldNeedsUpdate = true;
+  }
 
   const bubbleGeo = new THREE.SphereGeometry(1.25, 22, 16);
   const bubbleMat = bubbleMaterial(THREE, P);
@@ -129,23 +150,19 @@ export function createAvatar(THREE, world, P, who) {
   bubble.renderOrder = 3;
   world.scene.add(bubble);
 
-  const [root, hips, spine, , head, shL, elL, shR, elR, hipL, knL, hipR, knR, tail] = bones;
   const W = new Float32Array(POSES);
   W[P_IDLE] = 1;
   const target = new Float32Array(POSES);
   const J = new Float32Array(NJ);
   const Q = new Float32Array(NJ * POSES);
-  let sq = 0; let sqv = 0;      // squash spring
+  // per-frame doubles live on an object, not in closure variables: V8 boxes every double written
+  // to a closure slot (a fresh HeapNumber per frame); object fields are updated in place
+  const A = { sq: 0.5, sqv: 0.5, blinkT: 0.5, lean: 0.5, lastX: 0.5, rollP: 0.5, downPose: 0.5, lungeT: 0.5, lungeDir: 0.5, wobble: 0.5, px: 0.5, py: 0.5, pz: 0.5, sy: 0.5 };
+  for (const k in A) A[k] = 0;
   let wasAir = false;
-  let blinkT = 0;
-  let lean = 0;
-  let lastX = 0;
-  let rollP = 0;
-  let downPose = 0;
-  let lungeT = 0; let lungeDir = 0;
-  let wobble = 0;
 
-  function pose(p, i, v) { Q[p * NJ + i] = v; }
+  // (poses are written straight into Q: Q[pose * NJ + joint] = angle; no call per joint, so V8
+  // never has to box a double argument)
   function clearPose(p) { Q.fill(0, p * NJ, p * NJ + NJ); }
 
   /**
@@ -159,91 +176,91 @@ export function createAvatar(THREE, world, P, who) {
     const sp = Math.min(1, s.speed / 30);
     // run
     clearPose(P_RUN);
-    pose(P_RUN, 0, 0.07 * Math.abs(cs));
-    pose(P_RUN, 5, -0.26 - 0.12 * sp);
-    pose(P_RUN, 7, 0.12 * sn);
-    pose(P_RUN, 8, 0.2 + 0.08 * sp);
-    pose(P_RUN, 16, 0.85 * sn);
-    pose(P_RUN, 18, -0.85 * sn);
-    pose(P_RUN, 17, -(0.25 + 1.3 * Math.max(0, cs)));
-    pose(P_RUN, 19, -(0.25 + 1.3 * Math.max(0, -cs)));
-    pose(P_RUN, 10, -0.8 * sn);
-    pose(P_RUN, 13, 0.8 * sn);
-    pose(P_RUN, 11, -0.14); pose(P_RUN, 14, 0.14);
-    pose(P_RUN, 12, 1.35); pose(P_RUN, 15, 1.35);
-    pose(P_RUN, 20, 0.35 + 0.3 * Math.cos(phi * 2)); pose(P_RUN, 21, 0.2 * sn);
+    Q[0 * NJ + 0] = 0.07 * Math.abs(cs);
+    Q[0 * NJ + 5] = -0.26 - 0.12 * sp;
+    Q[0 * NJ + 7] = 0.12 * sn;
+    Q[0 * NJ + 8] = 0.2 + 0.08 * sp;
+    Q[0 * NJ + 16] = 0.85 * sn;
+    Q[0 * NJ + 18] = -0.85 * sn;
+    Q[0 * NJ + 17] = -(0.25 + 1.3 * Math.max(0, cs));
+    Q[0 * NJ + 19] = -(0.25 + 1.3 * Math.max(0, -cs));
+    Q[0 * NJ + 10] = -0.8 * sn;
+    Q[0 * NJ + 13] = 0.8 * sn;
+    Q[0 * NJ + 11] = -0.14; Q[0 * NJ + 14] = 0.14;
+    Q[0 * NJ + 12] = 1.35; Q[0 * NJ + 15] = 1.35;
+    Q[0 * NJ + 20] = 0.35 + 0.3 * Math.cos(phi * 2); Q[0 * NJ + 21] = 0.2 * sn;
     // air
     const u = Math.max(-1, Math.min(1, s.vy / JUMP_V));
     const tuck = 1 - Math.abs(u);
     clearPose(P_AIR);
-    pose(P_AIR, 5, -0.12 - 0.25 * tuck);
-    pose(P_AIR, 8, 0.12);
-    pose(P_AIR, 16, u < 0 ? 0.35 + 0.4 * tuck : 0.7 + 0.6 * tuck);
-    pose(P_AIR, 18, u < 0 ? 0.1 + 0.6 * tuck : 0.2 + 0.9 * tuck);
-    pose(P_AIR, 17, -(0.35 + 1.3 * tuck));
-    pose(P_AIR, 19, -(0.25 + 1.6 * tuck));
-    pose(P_AIR, 10, 0.5 + 1.9 * Math.max(0, u) + 0.3 * tuck);
-    pose(P_AIR, 13, 0.3 + 1.6 * Math.max(0, u) + 0.2 * tuck);
-    pose(P_AIR, 11, -0.55); pose(P_AIR, 14, 0.55);
-    pose(P_AIR, 12, 0.6); pose(P_AIR, 15, 0.6);
-    pose(P_AIR, 20, 0.9 - u * 0.6);
+    Q[1 * NJ + 5] = -0.12 - 0.25 * tuck;
+    Q[1 * NJ + 8] = 0.12;
+    Q[1 * NJ + 16] = u < 0 ? 0.35 + 0.4 * tuck : 0.7 + 0.6 * tuck;
+    Q[1 * NJ + 18] = u < 0 ? 0.1 + 0.6 * tuck : 0.2 + 0.9 * tuck;
+    Q[1 * NJ + 17] = -(0.35 + 1.3 * tuck);
+    Q[1 * NJ + 19] = -(0.25 + 1.6 * tuck);
+    Q[1 * NJ + 10] = 0.5 + 1.9 * Math.max(0, u) + 0.3 * tuck;
+    Q[1 * NJ + 13] = 0.3 + 1.6 * Math.max(0, u) + 0.2 * tuck;
+    Q[1 * NJ + 11] = -0.55; Q[1 * NJ + 14] = 0.55;
+    Q[1 * NJ + 12] = 0.6; Q[1 * NJ + 15] = 0.6;
+    Q[1 * NJ + 20] = 0.9 - u * 0.6;
     // roll
     clearPose(P_ROLL);
-    pose(P_ROLL, 3, -0.42);
-    pose(P_ROLL, 5, -0.95); pose(P_ROLL, 8, -0.5);
-    pose(P_ROLL, 16, 2.0); pose(P_ROLL, 18, 2.0);
-    pose(P_ROLL, 17, -2.4); pose(P_ROLL, 19, -2.4);
-    pose(P_ROLL, 10, 1.3); pose(P_ROLL, 13, 1.3);
-    pose(P_ROLL, 11, -0.25); pose(P_ROLL, 14, 0.25);
-    pose(P_ROLL, 12, 1.7); pose(P_ROLL, 15, 1.7);
-    pose(P_ROLL, 20, 1.2);
+    Q[2 * NJ + 3] = -0.42;
+    Q[2 * NJ + 5] = -0.95; Q[2 * NJ + 8] = -0.5;
+    Q[2 * NJ + 16] = 2.0; Q[2 * NJ + 18] = 2.0;
+    Q[2 * NJ + 17] = -2.4; Q[2 * NJ + 19] = -2.4;
+    Q[2 * NJ + 10] = 1.3; Q[2 * NJ + 13] = 1.3;
+    Q[2 * NJ + 11] = -0.25; Q[2 * NJ + 14] = 0.25;
+    Q[2 * NJ + 12] = 1.7; Q[2 * NJ + 15] = 1.7;
+    Q[2 * NJ + 20] = 1.2;
     // stumble
     clearPose(P_STUMBLE);
-    pose(P_STUMBLE, 5, -0.6 + 0.25 * Math.sin(t * 21));
-    pose(P_STUMBLE, 6, 0.28 * Math.sin(t * 13));
-    pose(P_STUMBLE, 8, 0.3 * Math.sin(t * 15));
-    pose(P_STUMBLE, 10, 1.6 + 0.8 * Math.sin(t * 25)); pose(P_STUMBLE, 11, -1.0 - 0.4 * Math.sin(t * 17));
-    pose(P_STUMBLE, 13, 1.3 + 0.8 * Math.sin(t * 23 + 1)); pose(P_STUMBLE, 14, 1.0 + 0.4 * Math.sin(t * 19));
-    pose(P_STUMBLE, 12, 0.4); pose(P_STUMBLE, 15, 0.4);
-    pose(P_STUMBLE, 16, 0.6 * sn); pose(P_STUMBLE, 18, -0.6 * sn);
-    pose(P_STUMBLE, 17, -0.7); pose(P_STUMBLE, 19, -0.7);
-    pose(P_STUMBLE, 20, 1.0);
+    Q[3 * NJ + 5] = -0.6 + 0.25 * Math.sin(t * 21);
+    Q[3 * NJ + 6] = 0.28 * Math.sin(t * 13);
+    Q[3 * NJ + 8] = 0.3 * Math.sin(t * 15);
+    Q[3 * NJ + 10] = 1.6 + 0.8 * Math.sin(t * 25); Q[3 * NJ + 11] = -1.0 - 0.4 * Math.sin(t * 17);
+    Q[3 * NJ + 13] = 1.3 + 0.8 * Math.sin(t * 23 + 1); Q[3 * NJ + 14] = 1.0 + 0.4 * Math.sin(t * 19);
+    Q[3 * NJ + 12] = 0.4; Q[3 * NJ + 15] = 0.4;
+    Q[3 * NJ + 16] = 0.6 * sn; Q[3 * NJ + 18] = -0.6 * sn;
+    Q[3 * NJ + 17] = -0.7; Q[3 * NJ + 19] = -0.7;
+    Q[3 * NJ + 20] = 1.0;
     // crash / down
     clearPose(P_CRASH);
     const fall = Math.min(1, s.downT * 4.5);
-    downPose = fall;
-    pose(P_CRASH, 1, 1.42 * (1 - (1 - fall) * (1 - fall)));
-    pose(P_CRASH, 5, 0.25);
-    pose(P_CRASH, 8, 0.35 + 0.1 * Math.sin(t * 3));
-    pose(P_CRASH, 10, 2.5); pose(P_CRASH, 11, -1.3 - 0.15 * Math.sin(t * 6));
-    pose(P_CRASH, 13, 2.3); pose(P_CRASH, 14, 1.3 + 0.15 * Math.sin(t * 6 + 1));
-    pose(P_CRASH, 12, 0.3); pose(P_CRASH, 15, 0.3);
-    pose(P_CRASH, 16, 1.25); pose(P_CRASH, 18, 0.55);
-    pose(P_CRASH, 17, -0.45); pose(P_CRASH, 19, -0.9);
-    pose(P_CRASH, 20, 1.4);
+    A.downPose = fall;
+    Q[4 * NJ + 1] = 1.42 * (1 - (1 - fall) * (1 - fall));
+    Q[4 * NJ + 5] = 0.25;
+    Q[4 * NJ + 8] = 0.35 + 0.1 * Math.sin(t * 3);
+    Q[4 * NJ + 10] = 2.5; Q[4 * NJ + 11] = -1.3 - 0.15 * Math.sin(t * 6);
+    Q[4 * NJ + 13] = 2.3; Q[4 * NJ + 14] = 1.3 + 0.15 * Math.sin(t * 6 + 1);
+    Q[4 * NJ + 12] = 0.3; Q[4 * NJ + 15] = 0.3;
+    Q[4 * NJ + 16] = 1.25; Q[4 * NJ + 18] = 0.55;
+    Q[4 * NJ + 17] = -0.45; Q[4 * NJ + 19] = -0.9;
+    Q[4 * NJ + 20] = 1.4;
     // idle
     clearPose(P_IDLE);
     const br = Math.sin(t * 2.1);
-    pose(P_IDLE, 0, 0.012 * br);
-    pose(P_IDLE, 5, -0.04 + 0.025 * br);
-    pose(P_IDLE, 9, 0.35 * Math.sin(t * 0.6));
-    pose(P_IDLE, 8, 0.05);
-    pose(P_IDLE, 10, 0.05); pose(P_IDLE, 13, 0.05);
-    pose(P_IDLE, 11, -0.16 - 0.03 * br); pose(P_IDLE, 14, 0.16 + 0.03 * br);
-    pose(P_IDLE, 12, 0.3); pose(P_IDLE, 15, 0.3);
-    pose(P_IDLE, 17, -0.06); pose(P_IDLE, 19, -0.06);
-    pose(P_IDLE, 20, 0.1 + 0.05 * br); pose(P_IDLE, 21, 0.1 * Math.sin(t * 1.3));
+    Q[5 * NJ + 0] = 0.012 * br;
+    Q[5 * NJ + 5] = -0.04 + 0.025 * br;
+    Q[5 * NJ + 9] = 0.35 * Math.sin(t * 0.6);
+    Q[5 * NJ + 8] = 0.05;
+    Q[5 * NJ + 10] = 0.05; Q[5 * NJ + 13] = 0.05;
+    Q[5 * NJ + 11] = -0.16 - 0.03 * br; Q[5 * NJ + 14] = 0.16 + 0.03 * br;
+    Q[5 * NJ + 12] = 0.3; Q[5 * NJ + 15] = 0.3;
+    Q[5 * NJ + 17] = -0.06; Q[5 * NJ + 19] = -0.06;
+    Q[5 * NJ + 20] = 0.1 + 0.05 * br; Q[5 * NJ + 21] = 0.1 * Math.sin(t * 1.3);
     // win
     clearPose(P_WIN);
     const hop = Math.abs(Math.sin(t * 6.5));
-    pose(P_WIN, 0, 0.32 * hop);
-    pose(P_WIN, 10, 2.8); pose(P_WIN, 13, 2.8);
-    pose(P_WIN, 11, -0.55 - 0.25 * Math.sin(t * 9)); pose(P_WIN, 14, 0.55 + 0.25 * Math.sin(t * 9));
-    pose(P_WIN, 12, 0.25); pose(P_WIN, 15, 0.25);
-    pose(P_WIN, 17, -0.6 * (1 - hop)); pose(P_WIN, 19, -0.6 * (1 - hop));
-    pose(P_WIN, 16, 0.3 * (1 - hop)); pose(P_WIN, 18, 0.3 * (1 - hop));
-    pose(P_WIN, 8, 0.2);
-    pose(P_WIN, 20, 0.6 + 0.4 * hop);
+    Q[6 * NJ + 0] = 0.32 * hop;
+    Q[6 * NJ + 10] = 2.8; Q[6 * NJ + 13] = 2.8;
+    Q[6 * NJ + 11] = -0.55 - 0.25 * Math.sin(t * 9); Q[6 * NJ + 14] = 0.55 + 0.25 * Math.sin(t * 9);
+    Q[6 * NJ + 12] = 0.25; Q[6 * NJ + 15] = 0.25;
+    Q[6 * NJ + 17] = -0.6 * (1 - hop); Q[6 * NJ + 19] = -0.6 * (1 - hop);
+    Q[6 * NJ + 16] = 0.3 * (1 - hop); Q[6 * NJ + 18] = 0.3 * (1 - hop);
+    Q[6 * NJ + 8] = 0.2;
+    Q[6 * NJ + 20] = 0.6 + 0.4 * hop;
 
     // targets
     target.fill(0);
@@ -267,49 +284,51 @@ export function createAvatar(THREE, world, P, who) {
     }
 
     // roll spin (not blended: a full turn ends where it started)
-    if (s.roll) rollP = Math.min(1, s.rollT); else rollP = 0;
-    const e = rollP < 0.5 ? 2 * rollP * rollP : 1 - 2 * (1 - rollP) * (1 - rollP);
+    if (s.roll) A.rollP = Math.min(1, s.rollT); else A.rollP = 0;
+    const e = A.rollP < 0.5 ? 2 * A.rollP * A.rollP : 1 - 2 * (1 - A.rollP) * (1 - A.rollP);
     const spin = -Math.PI * 2 * e;
 
     // lean into lane changes (and a little lead)
-    const vx = dt > 0 ? (s.x - lastX) / dt : 0;
-    lastX = s.x;
-    lean += (Math.max(-0.4, Math.min(0.4, -vx * 0.035)) - lean) * (1 - Math.exp(-dt * 16));
+    const vx = dt > 0 ? (s.x - A.lastX) / dt : 0;
+    A.lastX = s.x;
+    A.lean += (Math.max(-0.4, Math.min(0.4, -vx * 0.035)) - A.lean) * (1 - Math.exp(-dt * 16));
 
     // squash & stretch
     const air = !!s.air;
-    if (air && !wasAir && !s.down) { sq = 0.2; sqv = 0; }
-    if (!air && wasAir && !s.down) { sq = -0.24; sqv = 0; }
+    if (air && !wasAir && !s.down) { A.sq = 0.2; A.sqv = 0; }
+    if (!air && wasAir && !s.down) { A.sq = -0.24; A.sqv = 0; }
     wasAir = air;
     // stiff spring: substep at 120 Hz so a long frame can't blow it up
     let rem = Math.min(dt, 0.1);
-    while (rem > 1e-6) { const hh = rem > 1 / 120 ? 1 / 120 : rem; sqv += (-170 * sq - 13 * sqv) * hh; sq += sqv * hh; rem -= hh; }
-    if (sq > 0.35) sq = 0.35; else if (sq < -0.35) sq = -0.35;
-    if (lungeT > 0) lungeT -= dt;
-    wobble += ((s.bump || 0) - wobble) * (1 - Math.exp(-dt * 20));
+    while (rem > 1e-6) { const hh = rem > 1 / 120 ? 1 / 120 : rem; A.sqv += (-170 * A.sq - 13 * A.sqv) * hh; A.sq += A.sqv * hh; rem -= hh; }
+    if (A.sq > 0.35) A.sq = 0.35; else if (A.sq < -0.35) A.sq = -0.35;
+    if (A.lungeT > 0) A.lungeT -= dt;
+    A.wobble += ((s.bump || 0) - A.wobble) * (1 - Math.exp(-dt * 20));
 
-    // apply
-    mesh.position.set(s.x + wobble * 1.4, s.y + J[0], -s.z);
-    root.rotation.set(J[1], 0, J[2] + lean);
-    const sy = 1 + sq; const sxz = 1 - sq * 0.55;
-    mesh.scale.set(sxz, sy, sxz);
-    hips.position.y = 0.95 + J[3];
-    hips.rotation.set(J[4] + spin, 0, 0);
+    // apply (mesh: translate + squash scale; bones: rotations, see setBone)
+    const sy = 1 + A.sq; const sxz = 1 - A.sq * 0.55;
+    A.px = s.x + A.wobble * 1.4; A.py = s.y + J[0]; A.pz = -s.z; A.sy = sy;
+    const me = mesh.matrix.elements;
+    me[0] = sxz; me[1] = 0; me[2] = 0; me[3] = 0; me[4] = 0; me[5] = sy; me[6] = 0; me[7] = 0;
+    me[8] = 0; me[9] = 0; me[10] = sxz; me[11] = 0; me[12] = A.px; me[13] = A.py; me[14] = A.pz; me[15] = 1;
+    mesh.matrixWorldNeedsUpdate = true;
+    BA[0] = J[1]; BA[1] = 0; BA[2] = J[2] + A.lean; BA[3] = BP[0 * 3 + 1]; setBone(0);
+    BA[0] = J[4] + spin; BA[1] = 0; BA[2] = 0; BA[3] = 0.95 + J[3]; setBone(1);
     let lunge = 0;
-    if (lungeT > 0) lunge = Math.sin((1 - lungeT / 0.35) * Math.PI) * lungeDir;
-    spine.rotation.set(J[5], J[7], J[6] - lunge * 0.45);
-    head.rotation.set(J[8], J[9], 0);
-    shL.rotation.set(J[10], 0, J[11] - (lunge < 0 ? -lunge * 1.3 : 0));
-    elL.rotation.set(J[12], 0, 0);
-    shR.rotation.set(J[13], 0, J[14] + (lunge > 0 ? lunge * 1.3 : 0));
-    elR.rotation.set(J[15], 0, 0);
-    hipL.rotation.set(J[16], 0, 0);
-    knL.rotation.set(J[17], 0, 0);
-    hipR.rotation.set(J[18], 0, 0);
-    knR.rotation.set(J[19], 0, 0);
-    tail.rotation.set(J[20], 0, J[21]);
-    blinkT += dt;
-    mesh.visible = s.visible !== false && !(s.invuln && !s.down && Math.floor(blinkT * 14) % 2 === 0);
+    if (A.lungeT > 0) lunge = Math.sin((1 - A.lungeT / 0.35) * Math.PI) * A.lungeDir;
+    BA[0] = J[5]; BA[1] = J[7]; BA[2] = J[6] - lunge * 0.45; BA[3] = BP[2 * 3 + 1]; setBone(2);
+    BA[0] = J[8]; BA[1] = J[9]; BA[2] = 0; BA[3] = BP[4 * 3 + 1]; setBone(4);
+    BA[0] = J[10]; BA[1] = 0; BA[2] = J[11] - (lunge < 0 ? -lunge * 1.3 : 0); BA[3] = BP[5 * 3 + 1]; setBone(5);
+    BA[0] = J[12]; BA[1] = 0; BA[2] = 0; BA[3] = BP[6 * 3 + 1]; setBone(6);
+    BA[0] = J[13]; BA[1] = 0; BA[2] = J[14] + (lunge > 0 ? lunge * 1.3 : 0); BA[3] = BP[7 * 3 + 1]; setBone(7);
+    BA[0] = J[15]; BA[1] = 0; BA[2] = 0; BA[3] = BP[8 * 3 + 1]; setBone(8);
+    BA[0] = J[16]; BA[1] = 0; BA[2] = 0; BA[3] = BP[9 * 3 + 1]; setBone(9);
+    BA[0] = J[17]; BA[1] = 0; BA[2] = 0; BA[3] = BP[10 * 3 + 1]; setBone(10);
+    BA[0] = J[18]; BA[1] = 0; BA[2] = 0; BA[3] = BP[11 * 3 + 1]; setBone(11);
+    BA[0] = J[19]; BA[1] = 0; BA[2] = 0; BA[3] = BP[12 * 3 + 1]; setBone(12);
+    BA[0] = J[20]; BA[1] = 0; BA[2] = J[21]; BA[3] = BP[13 * 3 + 1]; setBone(13);
+    A.blinkT += dt;
+    mesh.visible = s.visible !== false && !(s.invuln && !s.down && Math.floor(A.blinkT * 14) % 2 === 0);
     bubble.visible = mesh.visible && !!s.shield;
     if (bubble.visible) {
       bubble.position.set(s.x, s.y + (s.roll ? 0.6 : 1.05), -s.z);
@@ -323,9 +342,9 @@ export function createAvatar(THREE, world, P, who) {
     update,
     /** Things to draw once behind the loading screen so their shaders are compiled. */
     warmList: () => [mesh, bubble],
-    lunge(dir) { lungeT = 0.35; lungeDir = dir; },
-    get downPose() { return downPose; },
-    headPos(out) { out.set(mesh.position.x, mesh.position.y + 2.1 * mesh.scale.y, mesh.position.z); return out; },
+    lunge(dir) { A.lungeT = 0.35; A.lungeDir = dir; },
+    get downPose() { return A.downPose; },
+    headPos(out) { out.set(A.px, A.py + 2.1 * A.sy, A.pz); return out; },
     dispose() {
       world.scene.remove(mesh); world.scene.remove(bubble);
       bubbleGeo.dispose(); bubbleMat.dispose();

@@ -39,12 +39,15 @@ export function createWorld(THREE, P) {
   const mat = makeToon(THREE, null, U);
   const matInst = makeToon(THREE, null, U);
   const matInstC = makeToon(THREE, null, U);
+  // barriers: instanced, plus a halftone dissolve once they're behind your runner, near the camera
+  // (the discard lives in this program only, so the world keeps its early depth rejection)
+  const matBar = makeToon(THREE, null, U, { extra: { near: true } });
   // One skinned material per runner (same program): each has its own fade, so the partner can
   // dissolve through a halftone screen when they run between your camera and you.
   const fade = { a: { value: 0 }, b: { value: 0 } };
   const avatarMats = { a: makeToon(THREE, null, U, { skinning: true, extra: { uFade: fade.a } }), b: makeToon(THREE, null, U, { skinning: true, extra: { uFade: fade.b } }) };
   const avatarMat = avatarMats.a;
-  const disposables = [mat, matInst, matInstC, avatarMats.a, avatarMats.b];
+  const disposables = [mat, matInst, matInstC, matBar, avatarMats.a, avatarMats.b];
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color().fromArray(P.bg);
@@ -145,8 +148,8 @@ export function createWorld(THREE, P) {
     b.boxMM(-1.2, 1.1, -0.4, 1.2, 1.25, 0.4, P.white, FX_PLAIN, 0.05, ink, T);
     b.boxMM(-0.25, 1.25, -0.1, 0.25, 1.6, 0.1, P.hl, FX_GLOW, 0.04, ink, T);
   });
-  const lows = inst(lowGeo, BAR_MAX);
-  const highs = inst(highGeo, BAR_MAX);
+  const lows = inst(lowGeo, BAR_MAX, matBar);
+  const highs = inst(highGeo, BAR_MAX, matBar);
   const blocks = inst(blockGeo, 8, matInstC);
   blocks.setColorAt(0, new THREE.Color(1, 1, 1));
 
@@ -190,7 +193,7 @@ export function createWorld(THREE, P) {
   // oncoming trains (pooled, 2 cars, front at local z = 0 facing +z)
   const mtGeo = freezeWith((b) => trainCars(b, 0, 0, 2, P.trains[4], true, T, P));
   const mtrains = [];
-  for (let i = 0; i < 4; i++) { const m = new THREE.Mesh(mtGeo, mat); m.visible = false; m.frustumCulled = false; scene.add(m); mtrains.push(m); }
+  for (let i = 0; i < 4; i++) { const m = new THREE.Mesh(mtGeo, mat); m.visible = false; m.frustumCulled = false; m.matrixAutoUpdate = false; scene.add(m); mtrains.push(m); }
 
   // blob shadows
   const blobTex = blobTexture(THREE);
@@ -232,6 +235,7 @@ export function createWorld(THREE, P) {
   const calm0 = new THREE.Color().fromArray(P.skyCalm[0]); const calm1 = new THREE.Color().fromArray(P.skyCalm[1]);
   const fast0 = new THREE.Color().fromArray(P.skyFast[0]); const fast1 = new THREE.Color().fromArray(P.skyFast[1]);
   let moodK = -1;
+  let sunFront = null;
   /** Colour script: 0 = strolling, 1 = flat out (sky and fog warm up together). */
   function setMood(k) {
     const q = Math.round(Math.max(0, Math.min(1, k)) * 64) / 64;
@@ -269,10 +273,10 @@ export function createWorld(THREE, P) {
   }
 
   /** Make sure the chunks around these track positions have meshes. Returns how many were built. */
-  function ensure(track, zs, budget = 9) {
+  function ensure(track, zs, nz, budget = 9) {
     frame++;
     let built = 0;
-    for (let zi = 0; zi < zs.length; zi++) {
+    for (let zi = 0; zi < nz; zi++) {
       const z = zs[zi];
       const c0 = Math.floor((z - VIEW_BEHIND) / CHUNK);
       const c1 = Math.floor((z + VIEW_AHEAD) / CHUNK);
@@ -288,9 +292,11 @@ export function createWorld(THREE, P) {
   // ── per-view layout ──
   const itemCount = new Int16Array(8);
   const tmpColor = new THREE.Color();
-  let spin = 0;
-  function writeM(arr, i, x, y, z, s, ry, rx = 0) {
-    // R = Ry * Rx, uniform scale s
+  // writeM's doubles travel through WM (x, y, z, scale, ry, rx), not as call arguments, so V8
+  // never boxes them when the call isn't inlined. Instance matrix i = T(x,y,z) · Ry · Rx · s.
+  const WM = new Float64Array(6);
+  function writeM(arr, i) {
+    const x = WM[0]; const y = WM[1]; const z = WM[2]; const s = WM[3]; const ry = WM[4]; const rx = WM[5];
     const cy = Math.cos(ry); const sy = Math.sin(ry);
     const cx = Math.cos(rx); const sx = Math.sin(rx);
     const o = i * 16;
@@ -307,12 +313,11 @@ export function createWorld(THREE, P) {
   function syncView(v) {
     const { track, z } = v;
     const r = v.r;
-    spin = v.time * 3.2;
+    const spin = v.time * 3.2;
     const c0 = Math.max(0, Math.floor((z - VIEW_BEHIND) / CHUNK));
     const c1 = Math.floor((z + VIEW_AHEAD) / CHUNK);
     const ca = coins.instanceMatrix.array;
-    U.uSun.value.z = v.front ? -0.43 : 0.43;
-    U.uSun.value.normalize();
+    if (sunFront !== !!v.front) { sunFront = !!v.front; U.uSun.value.set(-0.42, 0.8, sunFront ? -0.43 : 0.43).normalize(); }
     let nc = 0;
     const ic = itemCount;
     ic.fill(0);
@@ -327,7 +332,7 @@ export function createWorld(THREE, P) {
         if (cn.z < z - VIEW_BEHIND) continue;
         if (cn.z > z + COIN_AHEAD) break; // sorted by z
         if (r && r.taken.has(base + i)) continue;
-        writeM(ca, nc++, cn.x, cn.y, -cn.z, 1, spin + cn.z * 0.05, Math.PI / 2);
+        WM[0] = cn.x; WM[1] = cn.y; WM[2] = -cn.z; WM[3] = 1; WM[4] = spin + cn.z * 0.05; WM[5] = Math.PI / 2; writeM(ca, nc++);
       }
       const its = c.items;
       for (let i = 0; i < its.length; i++) {
@@ -338,7 +343,7 @@ export function createWorld(THREE, P) {
         const m = items[it.k];
         if (ic[it.k] >= ITEM_MAX) continue;
         const bob = Math.sin(v.time * 3 + it.z) * 0.12;
-        writeM(m.instanceMatrix.array, ic[it.k]++, it.x, it.y + bob, -it.z, it.k === I_BOX ? 1 : 1.05, spin * 0.7 + it.z, it.k === I_BOX ? 0.6 : 0);
+        WM[0] = it.x; WM[1] = it.y + bob; WM[2] = -it.z; WM[3] = it.k === I_BOX ? 1 : 1.05; WM[4] = spin * 0.7 + it.z; WM[5] = it.k === I_BOX ? 0.6 : 0; writeM(m.instanceMatrix.array, ic[it.k]++);
       }
       const obs = c.obs;
       for (let oi = 0; oi < obs.length; oi++) {
@@ -346,23 +351,24 @@ export function createWorld(THREE, P) {
         if (o.z1 < z - VIEW_BEHIND || o.z0 > z + VIEW_AHEAD) continue;
         if (o.t === O_LOW || o.t === O_HIGH) {
           if (r && r.smashN && r.smashed.has(o.id)) continue;
-          if (o.t === O_LOW) { if (nl < BAR_MAX) writeM(la, nl++, o.lane * LANE_W, 0, -(o.z0 + 0.25), 1, 0); }
-          else if (nh < BAR_MAX) writeM(ha, nh++, o.lane * LANE_W, 0, -(o.z0 + 0.2), 1, 0);
+          if (o.t === O_LOW) { if (nl < BAR_MAX) { WM[0] = o.lane * LANE_W; WM[1] = 0; WM[2] = -(o.z0 + 0.25); WM[3] = 1; WM[4] = 0; WM[5] = 0; writeM(la, nl++); } }
+          else if (nh < BAR_MAX) { WM[0] = o.lane * LANE_W; WM[1] = 0; WM[2] = -(o.z0 + 0.2); WM[3] = 1; WM[4] = 0; WM[5] = 0; writeM(ha, nh++); }
         } else if (o.t === O_MTRAIN && nm < mtrains.length) {
           const f = mtrainFront(o, z);
           const m = mtrains[nm++];
           m.visible = true;
-          m.position.set(o.lane * LANE_W, 0, -f);
+          const me = m.matrix.elements; me[12] = o.lane * LANE_W; me[13] = 0; me[14] = -f; // (no Vector3 setters per frame)
+          m.matrixWorldNeedsUpdate = true;
         }
       }
     }
-    if (v.fly) for (let fi = 0; fi < v.fly.length; fi++) { const f = v.fly[fi]; if (nc < COIN_MAX && f.on) writeM(ca, nc++, f.x, f.y, -f.z, f.s, spin * 2, Math.PI / 2); }
+    if (v.fly) for (let fi = 0; fi < v.fly.length; fi++) { const f = v.fly[fi]; if (nc < COIN_MAX && f.on) { WM[0] = f.x; WM[1] = f.y; WM[2] = -f.z; WM[3] = f.s; WM[4] = spin * 2; WM[5] = Math.PI / 2; writeM(ca, nc++); } }
     if (r) {
       for (let ti = 0; ti < r.tokens.length; ti++) {
         const tk = r.tokens[ti];
         if (!tk.alive || ic[I_REVIVE] >= ITEM_MAX) continue;
         const bob = Math.sin(v.time * 5) * 0.15;
-        writeM(items[I_REVIVE].instanceMatrix.array, ic[I_REVIVE]++, tk.x, tk.y + bob, -tk.z, 1 + Math.sin(v.time * 9) * 0.08, spin * 1.4);
+        WM[0] = tk.x; WM[1] = tk.y + bob; WM[2] = -tk.z; WM[3] = 1 + Math.sin(v.time * 9) * 0.08; WM[4] = spin * 1.4; WM[5] = 0; writeM(items[I_REVIVE].instanceMatrix.array, ic[I_REVIVE]++);
       }
       let nb = 0;
       for (let ei = 0; ei < r.extra.length; ei++) {
@@ -370,7 +376,7 @@ export function createWorld(THREE, P) {
         if (o.t !== O_BLOCK || nb >= 8) continue;
         if (o.z1 < z - VIEW_BEHIND || o.z0 > z + VIEW_AHEAD) continue;
         if (o.hit) continue;
-        writeM(blocks.instanceMatrix.array, nb, o.lane * LANE_W, 0, -(o.z0 + 0.35), 1, 0);
+        WM[0] = o.lane * LANE_W; WM[1] = 0; WM[2] = -(o.z0 + 0.35); WM[3] = 1; WM[4] = 0; WM[5] = 0; writeM(blocks.instanceMatrix.array, nb);
         tmpColor.fromArray(o.rgb || P.hl);
         blocks.setColorAt(nb, tmpColor);
         nb++;
@@ -400,18 +406,27 @@ export function createWorld(THREE, P) {
     shadows.instanceMatrix.needsUpdate = true;
   }
 
+  const followers = [street, skyline, dome];
+  for (let i = 0; i < 3; i++) followers[i].matrixAutoUpdate = false;
+  /** The far layers sit around the camera (translation only, written straight into the matrices). */
   function follow(cam) {
-    street.position.set(cam.position.x, 0, cam.position.z);
-    skyline.position.set(cam.position.x, 0, cam.position.z);
-    dome.position.set(cam.position.x, 0, cam.position.z);
-    street.updateMatrixWorld(); skyline.updateMatrixWorld(); dome.updateMatrixWorld();
+    const x = cam.position.x; const z = cam.position.z;
+    for (let i = 0; i < 3; i++) {
+      const o = followers[i]; const me = o.matrix.elements;
+      me[12] = x; me[14] = z;
+      o.matrixWorld.elements[12] = x; o.matrixWorld.elements[14] = z;
+    }
   }
 
   /** Track positions (metres) of the start / finish gates. */
   function setGates(list) {
     const a = gates.instanceMatrix.array;
     let n = 0;
-    for (const d of list) { if (n < 2) { writeM(a, n, 0, 0, -d, 1, 0); banners[n].position.set(0, 6.9, -d + 0.4); banners[n].visible = true; n++; } }
+    for (const d of list) {
+      if (n >= 2) continue;
+      WM[0] = 0; WM[1] = 0; WM[2] = -d; WM[3] = 1; WM[4] = 0; WM[5] = 0; writeM(a, n);
+      banners[n].position.set(0, 6.9, -d + 0.4); banners[n].visible = true; n++;
+    }
     for (let i = n; i < 2; i++) banners[i].visible = false;
     gates.count = n;
     gates.instanceMatrix.needsUpdate = true;

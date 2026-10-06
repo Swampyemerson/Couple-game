@@ -205,6 +205,16 @@ async function cyclesLocalPhone(h, scheme) {
   await sleep(300);
   assert(await noSideScroll(pg), 'fits a 360 px phone');
   await shot(pg, 'cycles-phone360-local-' + scheme);
+  // turned on its side mid-match: the pads move beside the board and nothing scrolls
+  await pg.setViewportSize({ width: 844, height: 390 });
+  await sleep(400);
+  const land = await pg.evaluate(() => {
+    const r = document.getElementById('game-root');
+    const inView = (el) => { const b = el.getBoundingClientRect(); return b.top >= 0 && b.bottom <= innerHeight + 1 && b.left >= 0 && b.right <= innerWidth + 1; };
+    return { over: r.scrollHeight - r.clientHeight, pads: [...document.querySelectorAll('.cy-pad .cy-key')].every(inView), board: inView(document.querySelector('.cy-board canvas')) };
+  });
+  assert(land.over <= 1 && land.pads && land.board, `phone on its side: board and both D-pads on screen (overflow ${land.over}px)`);
+  await shot(pg, 'cycles-phone-landscape-local-' + scheme);
   await pg.setViewportSize({ width: 390, height: 844 });
   await h.closeGame(pg);
   await h.settle();
@@ -524,7 +534,8 @@ async function defuseShots(h, tag, opts = {}) {
     const bad = g.answers.keypad.find((k, j) => j > keyAt);
     if (!x.bomb.solved[2] && bad) await h.a.click(`.dx-gkey[data-glyph="${bad}"]`);
     else await h.a.click('.dx-pad[data-color="red"]').catch(() => {});
-    await sleep(80);
+    await sleep(420); // separate presses: the same wrong key tapped twice within 400 ms is one mistake
+
   }
   await until(async () => (await dx(h.a)).bomb.over && (await dx(h.b)).manual.over, 'the boom on both');
   await sleep(600);
@@ -534,6 +545,93 @@ async function defuseShots(h, tag, opts = {}) {
   await shot(h.a, `defuse-${tag}-end-bomb`);
   await shot(h.b, `defuse-${tag}-end-manual`);
   assert(true, `${tag}: boom and end card on both`);
+  await closeBoth(h);
+}
+
+
+// ══════════════════════════ resilience ══════════════════════════
+const hide = (pg, on) => pg.evaluate((on) => {
+  Object.defineProperty(document, 'hidden', { value: on, configurable: true });
+  Object.defineProperty(document, 'visibilityState', { value: on ? 'hidden' : 'visible', configurable: true });
+  document.dispatchEvent(new Event('visibilitychange'));
+}, on);
+/** `pg` closed the game; the partner re-sends the invite and `pg` takes it. */
+async function comeBack(h, pg, partner) {
+  await partner.click('#game-root [data-g="invite-again"]');
+  await h.settle();
+  await until(() => visible(pg, '#gm-invite'), 'the re-sent invite');
+  await pg.click('#gm-invite [data-g="invite-yes"]');
+  await h.settle(); await h.settle();
+}
+
+async function cyclesResilience(h) {
+  console.log('\n# Light Cycles: a tab in the background, the host leaving mid-match');
+  await goLive(h, 'cycles');
+  await until(async () => { const x = await cy(h.a); return x && x.phase === 'run' && x.round === 1 && x.sim.t < 8 ? x : null; }, 'round 1 riding', 15000, 25);
+  for (const [who, pg, other] of [['Sydney', h.b, h.a], ['Emerson', h.a, h.b]]) {
+    await hide(pg, true);
+    await sleep(350);
+    const t1 = (await cy(h.a)).sim.t;
+    await sleep(600);
+    const x = await cy(h.a);
+    assert(x.paused && x.sim.t === t1, `${who}'s tab in the background: the ride stops (tick ${t1} → ${x.sim.t})`);
+    await until(async () => (await cy(other)).paused, `${who}: the other device to show Paused`, 4000);
+    await hide(pg, false);
+    await until(async () => { const y = await cy(h.a); return !y.paused && y.phase === 'count'; }, `${who} back: a countdown`, 4000);
+    assert(true, `${who} back: a fresh countdown before riding again`);
+  }
+  // Sydney rides into the wall: Emerson takes round 1
+  await until(async () => (await cy(h.a)).phase === 'run', 'riding again', 6000);
+  await h.b.keyboard.press('ArrowLeft');
+  await until(async () => (await cy(h.a)).score.a === 1, 'round 1 to Emerson', 12000);
+  await until(async () => { const x = await cy(h.a); return x.round === 2 && x.phase === 'run'; }, 'round 2', 12000);
+  // Emerson (the host) leaves mid-round and comes back: same score, round 2 ridden again
+  await h.closeGame(h.a);
+  await h.settle(); await h.settle();
+  await comeBack(h, h.a, h.b);
+  const [p, q] = [await until(() => cy(h.a), 'the host back'), await cy(h.b)];
+  assert(p.score.a === 1 && p.score.b === 0 && q.score.a === 1 && q.score.b === 0 && p.round === 2, `host left and came back: 1–0 on both, round ${p.round} again`);
+  await closeBoth(h);
+}
+
+async function defuseResilience(h) {
+  console.log('\n# Defuse: double taps, a tab in the background, the bomb leaving and coming back');
+  await goLive(h, 'defuse');
+  await until(async () => (await dx(h.a)) && (await dx(h.b)), 'both lobbies');
+  await pickRoles(h, h.b, h.a);
+  await startRound(h, h.b);
+  const g = (await dx(h.b)).bomb.gen;
+  const wrong = g.keypad.find((k) => k !== g.answers.keypad[0]);
+  await h.b.evaluate((k) => { const el = document.querySelector(`.dx-gkey[data-glyph="${k}"]`); el.click(); el.click(); }, wrong);
+  await sleep(150);
+  assert((await dx(h.b)).bomb.strikes === 1, 'a double tap on a wrong key is one strike, not two');
+  await hide(h.a, true);
+  await until(async () => (await dx(h.b)).bomb.pz, "the manual's tab in the background pauses the bomb", 4000);
+  const l0 = (await dx(h.b)).bomb.left;
+  await sleep(700);
+  assert(Math.abs((await dx(h.b)).bomb.left - l0) < 50, 'the clock holds while the manual is away');
+  await hide(h.a, false);
+  await until(async () => !(await dx(h.b)).bomb.pz, 'the clock to run again', 4000);
+  await h.b.click(`.dx-wire[data-wire="${g.answers.wire}"]`);
+  await h.settle();
+  const n = (await dx(h.b)).bomb.n;
+  // the bomb closes the game and opens it again: the same round, wires still cut
+  await h.closeGame(h.b);
+  await h.settle(); await h.settle();
+  await comeBack(h, h.b, h.a);
+  const back = await until(async () => { const x = await dx(h.b); return x && x.phase === 'bomb' ? x : null; }, 'the bomb back', 6000);
+  assert(back.bomb.n === n && back.bomb.solved[0] === 1 && back.bomb.strikes === 1 && (await dx(h.a)).manual.n === n, 'the bomb reopened: the same round carries on (wires done, one strike)');
+  // the bomb's page reloads: that round is gone, the manual goes back to the lobby and follows the next one
+  await h.b.reload(); await h.b.waitForSelector('.tabbar');
+  await h.settle(); await h.settle();
+  await comeBack(h, h.b, h.a);
+  await until(async () => (await dx(h.a)).phase === 'lobby' && (await dx(h.b)) && (await dx(h.b)).phase === 'lobby', 'both back in the lobby', 6000);
+  assert(true, 'bomb reloaded: the manual is back in the lobby, not stuck on a dead round');
+  await h.b.click('.dx-role[data-role="bomb"]');
+  await h.settle();
+  await startRound(h, h.b);
+  const [m, bb] = [await dx(h.a), await dx(h.b)];
+  assert(m.phase === 'manual' && bb.phase === 'bomb' && m.manual.n === bb.bomb.n, 'the new round reaches the manual');
   await closeBoth(h);
 }
 
@@ -608,6 +706,8 @@ async function withHarness(opts, fn) {
         await cyclesLivePhones(h);
         await cyclesLocalPhone(h, 'light');
         await defusePhones(h);
+        await cyclesResilience(h);
+        await defuseResilience(h);
       });
     }
     if (only === 'all' || only === 'laptop') {

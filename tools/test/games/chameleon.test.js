@@ -397,6 +397,14 @@ async function buzzerSection(port) {
   const { a, b } = h;
   try {
     await startPair(h, { ...FAST, seek: 14000, maxDpr: 0.4 });
+    // a phone held sideways: the whole lobby card fits, Start included (no scrolling inside it)
+    await a.setViewportSize({ width: 844, height: 390 });
+    await wait(600);
+    const fit = await a.evaluate(() => { const c = document.querySelector('.chm-lobby .chm-card'); const s = document.querySelector('[data-act="start"]').getBoundingClientRect(); return { over: c.scrollHeight - c.clientHeight, startIn: s.bottom <= innerHeight }; });
+    assert(fit.over <= 1 && fit.startIn, `landscape lobby fits the screen (overflow ${fit.over}px)`);
+    await shot(a, 'lobby-landscape-844');
+    await a.setViewportSize({ width: 390, height: 844 });
+    await wait(300);
     await a.click('[data-lobby="first"][data-v="b"]');
     await b.waitForFunction(() => window.__cham.state().setup.first === 'b', null, { timeout: 5000 });
     await a.click('[data-act="start"]');

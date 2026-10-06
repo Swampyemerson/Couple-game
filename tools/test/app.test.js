@@ -6,6 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const { launch } = require('./harness');
+const { prepare } = require('./design-preview');
 
 const BASE = Number(process.env.PORT) || 8940;
 const SHOTS = process.env.SHOTS || path.join(__dirname, '.cache/app-test');
@@ -101,11 +102,15 @@ const SECTIONS = {
     const h = await launch({ port: BASE, only: ['example-ttt'], who: ['a'] });
     const a = h.a;
     try {
+      await prepare(h, a); // the real hub: all 16 games as stand-ins, with the real fonts
       await a.setViewportSize({ width: 360, height: 760 });
       const check = async (name) => {
         await a.waitForTimeout(250);
         const r = await a.evaluate(() => ({ sw: document.documentElement.scrollWidth, w: window.innerWidth }));
         assert(r.sw <= r.w + 1, `${name}: no sideways scroll at 360 (${r.sw}px)`);
+        const clipped = await a.evaluate(() => [...document.querySelectorAll('.gh-card-title, .gh-tags, .gh-card-blurb, .pt, .tile span, .row-title, .shelf-title, .gh-shelf-title, .q, .gm-howto li')]
+          .filter((e) => e.offsetParent && e.scrollWidth > e.clientWidth + 1).map((e) => e.textContent.trim().slice(0, 30)));
+        assert(!clipped.length, `${name}: no clipped text` + (clipped.length ? ' ' + JSON.stringify(clipped) : ''));
         const small = await a.evaluate(TARGETS);
         assert(!small.length, `${name}: every tap target is at least 44 px` + (small.length ? ' ' + JSON.stringify(small.slice(0, 4)) : ''));
       };

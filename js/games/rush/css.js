@@ -73,8 +73,9 @@ export const CSS = `
 .g-rush .rr-goal { margin-top: 6px; font-size: 12px; font-weight: 900; text-align: center; }
 
 /* center pops, combo, warnings */
-.g-rush .rr-pops { position: absolute; left: 0; right: 0; top: 30%; display: grid; place-items: center; pointer-events: none; }
-.g-rush .rr-pop { grid-area: 1 / 1; font-weight: 900; font-size: 30px; line-height: 1; text-align: center; color: var(--g-white); padding: 0 8px; opacity: 0;
+/* pops sit between the HUD and the horizon: never over the vanishing point, where obstacles appear */
+.g-rush .rr-pops { position: absolute; left: 0; right: 0; top: 22.5%; display: grid; place-items: center; pointer-events: none; }
+.g-rush .rr-pop { grid-area: 1 / 1; font-weight: 900; font-size: 27px; line-height: 1; text-align: center; color: var(--g-white); padding: 0 8px; opacity: 0;
   text-shadow: 2px 0 0 var(--g-edge), -2px 0 0 var(--g-edge), 0 2px 0 var(--g-edge), 0 -2px 0 var(--g-edge), 2px 2px 0 var(--g-edge), -2px -2px 0 var(--g-edge), 2px -2px 0 var(--g-edge), -2px 2px 0 var(--g-edge), 3px 4px 0 var(--g-edge); }
 .g-rush .rr-pop.go { animation: rr-pop 1.1s cubic-bezier(.2,1.4,.4,1) forwards; }
 .g-rush .rr-pop.hl { color: var(--g-hl); } .g-rush .rr-pop.bad { color: var(--g-bad); } .g-rush .rr-pop.good { color: var(--g-good); }
@@ -87,7 +88,7 @@ export const CSS = `
 .g-rush .rr-combo.go { animation: rr-combo 1.4s ease-out forwards; } .g-rush .rr-combo.go2 { animation: rr-combo2 1.4s ease-out forwards; }
 @keyframes rr-combo { 0% { opacity: 0; transform: scale(1.6); } 12% { opacity: 1; transform: scale(1); } 75% { opacity: 1; } 100% { opacity: 0; transform: translateY(-10px); } }
 @keyframes rr-combo2 { 0% { opacity: 0; transform: scale(1.6); } 12% { opacity: 1; transform: scale(1); } 75% { opacity: 1; } 100% { opacity: 0; transform: translateY(-10px); } }
-.g-rush .rr-warn { position: absolute; top: 38%; left: 50%; width: 46px; height: 46px; margin-left: -23px; display: none; place-items: center; border-radius: 50%; background: var(--g-bad); border: 3px solid var(--g-ink); color: #fff; font-weight: 900; font-size: 26px; animation: rr-blink .35s steps(2) infinite; will-change: transform; }
+.g-rush .rr-warn { position: absolute; top: 29.5%; left: 50%; width: 46px; height: 46px; margin-left: -23px; display: none; place-items: center; border-radius: 50%; background: var(--g-bad); border: 3px solid var(--g-ink); color: #fff; font-weight: 900; font-size: 26px; animation: rr-blink .35s steps(2) infinite; will-change: transform; }
 .g-rush .rr-warn.on { display: grid; }
 @keyframes rr-blink { 50% { background: var(--g-hl); color: var(--g-ink); } }
 
@@ -195,7 +196,8 @@ export const CSS = `
 .g-rush .rr-ov-fin .rr-stamp { font-weight: 900; font-size: 48px; line-height: .95; text-align: center; color: var(--g-white); transform: rotate(-6deg); animation: rr-num 2.4s cubic-bezier(.2,1.5,.4,1) both;
   text-shadow: 3px 0 0 var(--g-edge), -3px 0 0 var(--g-edge), 0 3px 0 var(--g-edge), 0 -3px 0 var(--g-edge), 3px 3px 0 var(--g-edge), -3px -3px 0 var(--g-edge), 3px -3px 0 var(--g-edge), -3px 3px 0 var(--g-edge), 6px 7px 0 var(--g-edge); }
 .g-rush .rr-ov-fin .rr-stamp.pa { color: var(--p-a); } .g-rush .rr-ov-fin .rr-stamp.pb { color: var(--p-b); } .g-rush .rr-ov-fin .rr-stamp.team { color: var(--g-hl); }
-.g-rush .rr-ov-fin .rr-stamp small { display: block; font-size: 18px; margin-top: 8px; color: var(--g-white); }
+.g-rush .rr-ov-fin .rr-stamp small { display: block; font-size: 18px; margin-top: 8px; color: var(--g-white);
+  text-shadow: 2px 0 0 var(--g-edge), -2px 0 0 var(--g-edge), 0 2px 0 var(--g-edge), 0 -2px 0 var(--g-edge), 2px 3px 0 var(--g-edge); }
 
 /* tutorial ghost hand */
 .g-rush .rr-tut { position: absolute; left: 0; right: 0; bottom: 18%; z-index: 6; display: none; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; }
@@ -225,7 +227,7 @@ export const CSS = `
 .g-rush.rr-short .rr-logo { font-size: 34px; }
 .g-rush.rr-short .rr-ov-lobby { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; align-content: center; align-items: center; }
 .g-rush.rr-short .rr-dist { font-size: 26px; }
-.g-rush.rr-short .rr-pops { top: 22%; }
+.g-rush.rr-short .rr-pops { top: 20%; }
 .g-rush.rr-narrow .rr-dist { font-size: 28px; }
 .g-rush.rr-narrow .rr-chip { font-size: 13px; height: 26px; }
 .g-rush.rr-narrow .rr-hearts { height: 26px; }

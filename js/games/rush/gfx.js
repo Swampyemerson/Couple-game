@@ -65,7 +65,7 @@ export function makePalette(tok) {
     lit: mix(hl, [1, 1, 1], 0.25),
     shadeInk,
     tunnel: dark ? mix(bg, [0, 0, 0], 0.3) : mix(bg, ink, 0.55),
-    portal: dark ? mix(card, bad, 0.35) : mix(card, bad, 0.38),
+    portal: dark ? mix(card, ink, 0.22) : mix(card, ink, 0.34), // concrete, banded in hazard yellow
     skin: [0.97, 0.87, 0.78],
     white: [0.98, 0.98, 0.97],
     pants: dark ? mix(ink, bg, 0.75) : mix(ink, bg, 0.12),
@@ -92,7 +92,7 @@ export function makePalette(tok) {
   // Colour script: the sky (and the fog that matches its horizon) warms up as the run gets fast.
   // [horizon, zenith] at a stroll and at top speed; every colour is a mix of the theme inks.
   P.skyCalm = dark ? [mix(bg, a, 0.16), mix(bg, [0, 0, 0], 0.35)] : [mix(bg, card, 0.5), mix(bg, a, 0.3)];
-  P.skyFast = dark ? [mix(bg, b, 0.2), mix(mix(bg, a, 0.14), [0, 0, 0], 0.3)] : [mix(bg, hl, 0.2), mix(bg, b, 0.3)];
+  P.skyFast = dark ? [mix(bg, b, 0.2), mix(mix(bg, a, 0.14), [0, 0, 0], 0.3)] : [mix(bg, hl, 0.2), mix(mix(bg, b, 0.22), a, 0.06)];
   return P;
 }
 
@@ -138,8 +138,14 @@ uniform vec3 uSun;
 uniform vec4 uLk;
 uniform float uNight;
 varying float vFx;
-varying float vShade;`;
+varying float vShade;
+#ifdef RR_NEAR
+varying float vViewZ;
+#endif`;
 const VERT_POST = `#include <fog_vertex>
+#ifdef RR_NEAR
+vViewZ = - mvPosition.z;
+#endif
 vFx = fx;
 if ( fx > 0.5 && fx < 1.5 || fx > 3.5 && fx < 4.5 ) vShade = 1.0;
 else if ( fx > 2.5 && fx < 3.5 ) vShade = 1.06 + 0.14 * uNight;
@@ -163,6 +169,9 @@ uniform float uDot;
 #ifdef RR_FADE
 uniform float uFade;
 #endif
+#ifdef RR_NEAR
+varying float vViewZ;
+#endif
 varying float vFx;
 varying float vShade;`;
 // Shadow-band halftone: one fract + one dot product per shaded fragment (squared radius, no sqrt).
@@ -173,6 +182,13 @@ const FRAG_COLOR = `#include <color_fragment>
 if ( uFade > 0.0 ) {
   vec2 q = fract( gl_FragCoord.xy * 0.25 ) - 0.5;
   if ( dot( q, q ) * 4.0 < uFade ) discard;
+}
+#endif
+#ifdef RR_NEAR
+// barriers you've already passed dissolve as they swing past the camera
+if ( vViewZ < 6.2 ) {
+  vec2 q = fract( gl_FragCoord.xy * 0.25 ) - 0.5;
+  if ( dot( q, q ) * 4.0 < ( 6.2 - vViewZ ) * 0.55 ) discard;
 }
 #endif
 diffuseColor.rgb *= vShade;
@@ -191,9 +207,10 @@ export function makeToon(THREE, grad, U, { skinning = false, extra = null } = {}
   const m = new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true, skinning });
   // (three r128 only defines USE_SKINNING for vertex shaders, so the fade gets its own define)
   if (extra && extra.uFade) m.defines = { RR_FADE: '' };
+  if (extra && extra.near) m.defines = { RR_NEAR: '' };
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, U);
-    if (extra) Object.assign(sh.uniforms, extra);
+    if (extra && extra.uFade) sh.uniforms.uFade = extra.uFade;
     sh.vertexShader = sh.vertexShader.replace('#include <common>', VERT_PRE).replace('#include <fog_vertex>', VERT_POST);
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', FRAG_PRE)

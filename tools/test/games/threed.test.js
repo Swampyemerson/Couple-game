@@ -406,6 +406,25 @@ async function towerLocal(h, pg, { shots = null } = {}) {
   return id;
 }
 
+/** Full-screen HUD: clear of the notch and home bar; on a phone held sideways the turn pill moves off the tower. */
+async function towerLayout(h, pg) {
+  await h.newLocalGame(pg, 'tower');
+  await pg.waitForSelector('.gt-view[data-phase="slide"]', { timeout: 12000 });
+  const css = await pg.evaluate(() => {
+    const rules = []; for (const sh of document.styleSheets) { try { for (const r of sh.cssRules) rules.push(r.cssText); } catch { /* cross-origin */ } }
+    const txt = rules.join('\n');
+    return { hud: /\.gt-hud \{[^}]*safe-area-inset-top/.test(txt), turn: /\.gt-turn \{[^}]*safe-area-inset-bottom/.test(txt) };
+  });
+  ok(css.hud && css.turn, 'tower: the HUD and turn pill keep clear of the safe-area insets');
+  await pg.setViewportSize({ width: 844, height: 390 });
+  await h.wait(400);
+  const r = await pg.evaluate(() => { const v = document.querySelector('.gt-view').getBoundingClientRect(); const t = document.querySelector('.gt-turn').getBoundingClientRect(); return { right: v.right - t.right, mid: (t.left + t.right) / 2 - (v.left + v.right) / 2 }; });
+  ok(r.right < 40 && r.mid > 150, `tower: on a phone held sideways the turn pill sits bottom-right, off the tower (${Math.round(r.right)} px from the edge)`);
+  await shot(pg, 'tower-landscape-844.png');
+  await pg.setViewportSize({ width: 390, height: 844 });
+  await h.closeGame(pg);
+}
+
 async function bonesLocal(h, pg, { shots = null } = {}) {
   await pg.evaluate(() => { window.__bonesTest = { log: [] }; });
   await h.newLocalGame(pg, 'bones');
@@ -589,6 +608,7 @@ async function bonesSlow3D() {
     await h.a.setViewportSize({ width: 390, height: 844 });
     const before = h.results().length;
     await towerLocal(h, h.a);
+    await towerLayout(h, h.a);
     await bonesLocal(h, h.a);
     await h.settle();
     ok(h.results().length === before + 2, 'same-phone results recorded');

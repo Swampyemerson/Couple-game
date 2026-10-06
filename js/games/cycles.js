@@ -171,6 +171,24 @@ registerGame({
 .g-cycles .cy-legends .cy-caps { grid-template-columns: repeat(3, 34px); grid-template-rows: repeat(2, 34px); }
 .g-cycles .cy-or { font-weight: 800; color: var(--g-muted); }
 @media (max-height: 760px) { .g-cycles .cy-pad-keys { grid-template-rows: repeat(2, 46px); } .g-cycles .cy-pad.is-row .cy-pad-keys { grid-template-rows: 44px; } }
+/* a phone on its side: the pads move beside the board instead of above and below it */
+@media (orientation: landscape) and (max-height: 520px) {
+  .g-cycles[data-ui="live-touch"], .g-cycles[data-ui="local-touch-p"] { display: grid; grid-template-rows: minmax(0, 1fr) auto; column-gap: 16px; row-gap: 6px; padding: 2px 0; }
+  .g-cycles[data-ui="live-touch"] { grid-template-columns: minmax(0, 1fr) auto; }
+  .g-cycles[data-ui="live-touch"] > .cy-row { grid-area: 1 / 1; }
+  .g-cycles[data-ui="live-touch"] > .cy-info { grid-area: 2 / 1; }
+  .g-cycles[data-ui="live-touch"] > .cy-pad { grid-area: 1 / 2 / 3 / 3; align-self: center; }
+  .g-cycles[data-ui="local-touch-p"] { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .g-cycles[data-ui="local-touch-p"] > .cy-pad.p-b { grid-area: 1 / 1 / 3 / 2; align-self: center; }
+  .g-cycles[data-ui="local-touch-p"] > .cy-row { grid-area: 1 / 2; }
+  .g-cycles[data-ui="local-touch-p"] > .cy-info { grid-area: 2 / 2; }
+  .g-cycles[data-ui="local-touch-p"] > .cy-pad.p-a { grid-area: 1 / 3 / 3 / 4; align-self: center; }
+  .g-cycles[data-ui="live-touch"] .cy-pad .cy-pad-keys, .g-cycles[data-ui="local-touch-p"] .cy-pad .cy-pad-keys { grid-template-columns: repeat(3, 56px); grid-template-rows: repeat(2, 54px); gap: 6px; }
+  .g-cycles[data-ui="live-touch"] .cy-pad .cy-d0, .g-cycles[data-ui="local-touch-p"] .cy-pad .cy-d0 { grid-column: 2; grid-row: 1; }
+  .g-cycles[data-ui="live-touch"] .cy-pad .cy-d3, .g-cycles[data-ui="local-touch-p"] .cy-pad .cy-d3 { grid-column: 1; grid-row: 2; }
+  .g-cycles[data-ui="live-touch"] .cy-pad .cy-d2, .g-cycles[data-ui="local-touch-p"] .cy-pad .cy-d2 { grid-column: 2; grid-row: 2; }
+  .g-cycles[data-ui="live-touch"] .cy-pad .cy-d1, .g-cycles[data-ui="local-touch-p"] .cy-pad .cy-d1 { grid-column: 3; grid-row: 2; }
+}
 @media (prefers-reduced-motion: reduce) { .g-cycles *, .g-cycles *::before { animation: none !important; transition: none !important; } }
 `,
   mount(el, api) {
@@ -284,6 +302,7 @@ registerGame({
       const boardHTML = '<div class="cy-board"><canvas aria-label="Light Cycles grid" role="img"></canvas><div class="cy-msg" aria-live="polite"></div></div>';
       const info = '<div class="cy-info"><span class="cy-pips p-a"></span><span class="cy-round"></span><span class="cy-pips p-b"></span></div>';
       let html;
+      root.dataset.ui = local ? `local-${touch ? 'touch' : 'keys'}-${layout}` : touch ? 'live-touch' : 'live-keys';
       if (local && touch && layout === 'p') {
         html = `${padHTML('b', { rot: true, row: true })}<div class="cy-row">${boardHTML}</div>${info}${padHTML('a', { row: true })}`;
       } else if (local && touch) {

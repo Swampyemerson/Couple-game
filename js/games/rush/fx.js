@@ -229,6 +229,7 @@ export function createOverlay(THREE, P) {
   const mkMat = (col, transparent) => new THREE.ShaderMaterial({
     uniforms: { uCol: { value: new THREE.Color().fromArray(col) }, uK: { value: 1 } },
     vertexShader: OV_VERT, fragmentShader: OV_FRAG, depthTest: false, depthWrite: false, transparent, fog: false,
+    side: THREE.DoubleSide, // the line triangles wind either way
   });
   // speed lines (opaque paper streaks)
   const lp = new Float32Array(LINES * 9);
@@ -268,29 +269,32 @@ export function createOverlay(THREE, P) {
   scene.add(vig);
 
   const ang = new Float32Array(LINES); const inn = new Float32Array(LINES); const wid = new Float32Array(LINES);
-  const reroll = (i) => { ang[i] = Math.random() * Math.PI * 2; inn[i] = Math.random(); wid[i] = 0.5 + Math.random(); };
+  // xorshift32 in an Int32Array: Math.random's result gets boxed when V8 doesn't inline the call
+  const seed = new Int32Array([0x2f6b5a1d]);
+  const rnd = () => { let x = seed[0]; x ^= x << 13; x ^= x >>> 17; x ^= x << 5; seed[0] = x; return (x >>> 0) / 4294967296; };
+  const reroll = (i) => { ang[i] = rnd() * Math.PI * 2; inn[i] = rnd(); wid[i] = 0.5 + rnd(); };
   for (let i = 0; i < LINES; i++) reroll(i);
-  let aspect = 1; let tick = 0;
+  const O = { aspect: 0.5, tick: 0 }; O.aspect = 1; // object fields: no per-frame boxing (see avatar.js)
   const VY = 0.16; // the vanishing point sits a little above the middle of the view
 
   function writeLines(k) {
     const n = k > 0 ? Math.min(LINES, 6 + Math.round((LINES - 6) * Math.min(1, k))) : 0;
-    tick++;
+    O.tick++;
     for (let i = 0; i < n; i++) {
-      if ((i + tick) % 3 === 0) reroll(i); // flicker: a third of the lines jump every frame
+      if ((i + O.tick) % 3 === 0) reroll(i); // flicker: a third of the lines jump every frame
       const c = Math.cos(ang[i]); const s = Math.sin(ang[i]);
-      // in "y units" (x stretched by aspect), the frame is |x| <= aspect, |y| <= 1
+      // in "y units" (x stretched by the aspect), the frame is |x| <= aspect, |y| <= 1
       const dx = c; const dy = s;
-      const tx = Math.abs(dx) > 1e-6 ? aspect / Math.abs(dx) : 1e9;
+      const tx = Math.abs(dx) > 1e-6 ? O.aspect / Math.abs(dx) : 1e9;
       const ty = Math.abs(dy) > 1e-6 ? (dy > 0 ? 1 - VY : 1 + VY) / Math.abs(dy) : 1e9;
       const edge = Math.min(tx, ty);
       const kk = Math.min(1, k);
       const r0 = edge * (1 - (0.2 + 0.28 * inn[i]) * (0.55 + 0.45 * kk)); const r1 = edge * 1.06;
       const w = (0.012 + 0.016 * wid[i]) * (0.7 + 0.5 * kk);
       const o = i * 9;
-      lp[o] = (dx * r0) / aspect; lp[o + 1] = VY + dy * r0;
-      lp[o + 3] = (dx * r1 - dy * w) / aspect; lp[o + 4] = VY + dy * r1 + dx * w;
-      lp[o + 6] = (dx * r1 + dy * w) / aspect; lp[o + 7] = VY + dy * r1 - dx * w;
+      lp[o] = (dx * r0) / O.aspect; lp[o + 1] = VY + dy * r0;
+      lp[o + 3] = (dx * r1 - dy * w) / O.aspect; lp[o + 4] = VY + dy * r1 + dx * w;
+      lp[o + 6] = (dx * r1 + dy * w) / O.aspect; lp[o + 7] = VY + dy * r1 - dx * w;
     }
     lg.setDrawRange(0, n * 3);
     const at = lg.getAttribute('position');
@@ -300,7 +304,7 @@ export function createOverlay(THREE, P) {
 
   return {
     scene, cam,
-    resize(w, h) { aspect = w / Math.max(1, h); },
+    resize(w, h) { const a = w / Math.max(1, h); if (a !== O.aspect) O.aspect = a; },
     /** Lay out the speed lines for one view. k: 0..1 speed (0 = none). */
     update(k) { writeLines(k > 0.02 ? k : 0); },
     /** Draw the overlay into the current viewport (right after the scene). */

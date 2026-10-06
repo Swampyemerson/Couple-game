@@ -1159,6 +1159,7 @@ async function bootArtifact() {
 
 async function boot() {
   document.title = CONFIG.appName;
+  if (!document.documentElement.lang) document.documentElement.lang = 'en'; // screen readers, and hyphens: auto
   if (ARTIFACT) return bootArtifact();
   history.replaceState(ui, '');
   store.onChange(() => render());

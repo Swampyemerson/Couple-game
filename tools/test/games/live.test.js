@@ -170,6 +170,32 @@ async function hockeyRematchAndLeave(h) {
   await a.waitForFunction(() => window.__hockeyTest.state().phase === 'count', null, { timeout: 5000 });
   await a.waitForFunction(() => window.__hockeyTest.state().phase === 'play', null, { timeout: 5000 });
   assert(true, 'partner back: countdown, then play resumes');
+  // The host (Emerson) leaves mid-match and comes back: the match carries on from the same score.
+  for (let i = 0; i < 2; i++) { await a.evaluate(() => window.__hockeyTest.score('a')); await h.wait(40); }
+  await b.waitForFunction(() => window.__hockeyTest.state().score.a === 2, null, { timeout: 4000 });
+  await h.closeGame(a);
+  await h.settle(); await h.settle();
+  await b.click('#game-root [data-g="invite-again"]');
+  await h.settle();
+  await a.click('#gm-invite [data-g="invite-yes"]');
+  await a.waitForFunction(() => window.__hockeyTest && ['count', 'play'].includes(window.__hockeyTest.state().phase), null, { timeout: 6000 });
+  await h.settle();
+  const [ka, kb] = [await hk(a), await hk(b)];
+  assert(ka.score.a === 2 && ka.score.b === 0 && kb.score.a === 2 && kb.score.b === 0, `host left and came back: the match goes on at 2-0 on both (${ka.score.a}-${ka.score.b} / ${kb.score.a}-${kb.score.b})`);
+  // Phones turned on their side: each sees a sideways table, own goal on the left, and a finger still lands the mallet under it.
+  for (const pg of [a, b]) await pg.setViewportSize({ width: 844, height: 390 });
+  await h.wait(300);
+  const [la, lb] = [await hk(a), await hk(b)];
+  assert(la.view === 'side' && lb.view === 'sideb', `landscape: sideways tables (${la.view} / ${lb.view})`);
+  for (const [pg, w, tx, ty] of [[a, 'a', 30, 150], [b, 'b', 70, 25]]) {
+    await touch(pg, [[5, 'down', tx + 1, ty + 1], [5, 'move', tx, ty]], 30);
+    await h.wait(250);
+    const m = (await hk(pg)).mallets[w];
+    await touch(pg, [[5, 'up', tx, ty]], 0);
+    assert(near(m.x, tx, 2) && near(m.y, ty, 2), `landscape ${w}: the mallet follows the finger (${m.x.toFixed(1)},${m.y.toFixed(1)})`);
+  }
+  await h.shot(b, `${SHOTS}/hockey-light-live-landscape-844-b.png`);
+  await sizes(h);
   await h.closeGame(a); await h.closeGame(b);
   assert(await a.evaluate(() => !window.__hockeyTest) && await b.evaluate(() => !window.__hockeyTest), 'destroy() removed the test hooks');
   await quietAfterClose(h, a, 'hockey host');
@@ -292,7 +318,18 @@ async function quickdrawLiveFast(h, tag) {
   await verdictFor(a, 1);
   await h.wait(400);
   await h.shot(a, `${SHOTS}/qd-${tag}-live-result-390-a.png`);
-  for (const r of [2, 3]) { await qdFireAt(b, 'steady', 100); await verdictFor(a, r); }
+  // The host (Emerson) leaves mid-duel and comes back: the duel carries on from the same tally.
+  const t1 = (await qd(b)).tally;
+  await h.closeGame(a);
+  await b.waitForFunction(() => window.__qdTest.state().phase === 'paused', null, { timeout: 4000 });
+  await b.click('#game-root [data-g="invite-again"]');
+  await h.settle();
+  await a.click('#gm-invite [data-g="invite-yes"]');
+  await a.waitForFunction(() => window.__qdTest, null, { timeout: 6000 });
+  await h.settle(); await h.settle();
+  const [ta, tb] = [(await qd(a)).tally, (await qd(b)).tally];
+  assert(ta.a === t1.a && ta.b === t1.b && tb.a === t1.a && tb.b === t1.b, `host left and came back: the tally is still ${t1.a}-${t1.b} on both`);
+  for (const r of [1, 2]) { await qdFireAt(b, 'steady', 100); await verdictFor(a, r); }
   await a.waitForFunction(() => document.querySelector('#game-root .gm-end:not([hidden])'), null, { timeout: 5000 });
   await b.waitForFunction(() => document.querySelector('#game-root .gm-end:not([hidden])'), null, { timeout: 5000 });
   assert(/Emerson/.test(await endHead(b)), `${tag}: duel over, end card on both`);
@@ -307,6 +344,12 @@ async function quickdrawLocal(h, tag) {
   await h.startLive(a, 'quickdraw', 'local');
   await a.waitForFunction(() => window.__qdTest, null, { timeout: 4000 });
   assert((await qd(a)).layout === 'phone', 'one phone: a button at each end');
+  await a.setViewportSize({ width: 844, height: 390 });
+  await h.wait(300);
+  const fit = await a.evaluate(() => { const r = document.getElementById('game-root'); const pa = document.querySelector('.qd-pad[data-w="a"]').getBoundingClientRect(); const pb = document.querySelector('.qd-pad[data-w="b"]').getBoundingClientRect(); return { over: r.scrollHeight - r.clientHeight, side: pa.right < pb.left }; });
+  assert(fit.over <= 1 && fit.side, `phone on its side: everything fits (overflow ${fit.over}px), one pad at each end`);
+  await h.shot(a, `${SHOTS}/qd-${tag}-local-landscape-844.png`);
+  await a.setViewportSize({ width: 390, height: 844 });
   const n0 = results(h, 'quickdraw').length;
   // Both thumbs land in the same instant: a dead heat, replayed.
   await qdFireAt(a, 'draw', 120, { w: ['a', 'b'] });

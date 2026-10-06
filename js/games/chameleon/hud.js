@@ -236,7 +236,7 @@ export const CSS = `
   .chm-over.chm-lobby { align-items: center; padding-left: calc(62px + var(--chm-sl)); padding-right: calc(62px + var(--chm-sr)); }
   .chm-lobby .chm-card { flex-direction: row; align-items: stretch; gap: 18px; width: min(100%, 700px); padding: 14px 16px; }
   .chm-col { display: flex; flex-direction: column; justify-content: center; gap: 9px; flex: 1 1 0; min-width: 0; }
-  .chm-title { font-size: 1.8rem; }
+  .chm-lobby .chm-title { font-size: 1.9rem; }
   .chm-recap .chm-card { width: min(100%, 520px); }
 }
 @media (prefers-reduced-motion: reduce) { .chm *, .chm *::before, .chm *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; } }

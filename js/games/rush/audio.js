@@ -16,7 +16,8 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
   let master = null; let musicBus = null; let sfxBus = null; let noise = null;
   let mutedCache = false; let mutedAt = 0;
   let musicTimer = null;
-  let step = 0; let nextT = 0; let intensity = 0; let playing = false;
+  let step = 0; let nextT = 0; let playing = false;
+  const mx = { intensity: 0.5 }; mx.intensity = 0; // set every frame: an object field, not a boxed closure slot
   let coinStreak = 0; let lastCoin = 0;
   let dead = false;
   let pausedDuck = false;
@@ -125,7 +126,7 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
     const bar = Math.floor(step / 16) % 4;
     const s = step % 16;
     const [root, ch] = PROG[bar];
-    const I = intensity;
+    const I = mx.intensity;
     const vol = 1;
     // kick
     if (s % 4 === 0) {
@@ -174,7 +175,7 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
   }
   function pump() {
     if (!ctx || !playing || ctx.state !== 'running') return;
-    const bpm = 116 + intensity * 34;
+    const bpm = 116 + mx.intensity * 34;
     const dur = 60 / bpm / 4;
     // Never catch up: after a stall (pause, background tab, slow frame) resync to "now" instead
     // of firing a burst of overdue notes, so the loop can't stack or drift.
@@ -194,7 +195,7 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
     unlock,
     get ready() { return !!ctx && ctx.state === 'running'; },
     play(name, arg) { if (!ok()) return; const f = S[name]; if (f) { try { f(arg); } catch { /* ignore */ } } },
-    setIntensity(x) { intensity = Math.max(0, Math.min(1, x)); },
+    setIntensity(x) { mx.intensity = Math.max(0, Math.min(1, x)); },
     /** Duck the music under a pause card. */
     setPaused(on) { pausedDuck = !!on; },
     stats,
