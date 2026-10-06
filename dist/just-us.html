@@ -32857,7 +32857,7 @@ const CSS = `
 .gtw-mode.on { border-color: var(--g-ink); background: var(--g-card); box-shadow: var(--g-shadow, 3px 3px 0 var(--g-edge)); }
 .gtw-mode[disabled] { opacity: .45; }
 /* settings sheet */
-.gtw-sheet { position: absolute; inset: 0; z-index: 7; background: var(--g-dim, rgba(0,0,0,.35)); display: grid; place-items: end center; padding: calc(10px + var(--st)) 10px 0; }
+.gtw-sheet { position: absolute; inset: 0; z-index: 7; background: var(--g-dim, rgba(0,0,0,.35)); display: grid; place-items: end center; padding: calc(var(--gm-corner-safe, 64px) + 4px) 10px 0; }
 .gtw-sheet .in { width: min(100%, 480px); max-height: 100%; overflow-y: auto; border-radius: 18px 18px 0 0; padding: 14px 14px calc(14px + var(--sb)); display: flex; flex-direction: column; gap: 8px; }
 .gtw-sheet h2 { margin: 0; font-family: var(--g-font-display); font-weight: 900; font-size: 1.35rem; }
 .gtw-srow { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; padding: 6px 0; border-bottom: 1.5px dashed var(--g-line); }

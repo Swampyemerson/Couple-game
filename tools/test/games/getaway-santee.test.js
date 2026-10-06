@@ -328,6 +328,9 @@ async function gameSection() {
     ok(mc <= BUDGET.calls, `in-game, ${views.length} views (spawns, roads, home): ≤ ${mc} draw calls`);
     ok(mt <= BUDGET.viewTris, `in-game, ${views.length} views: ≤ ${mt} triangles`);
 
+    const live = async () => { await a.waitForFunction(() => { const q = window.__getaway.state(); return q.phase === 'chase' && q.R && !q.R.over; }, null, { timeout: 30000 }); await hook('shortenRound', 60000); };
+    // traffic off, so the drivability checks below aren't decided by civilian cars
+    await hook('setRules', { traffic: 'off' });
     // a practice round: intro shows where we are, then the chase
     await a.click('.g-gtw [data-l="start"]');
     await a.waitForFunction(() => [...document.querySelectorAll('.gtw-card')].some((c) => /Round/i.test(c.textContent)), null, { timeout: 20000, polling: 50 }).catch(() => {});
@@ -347,38 +350,51 @@ async function gameSection() {
     await a.evaluate(([m, o]) => { const g = window.__getaway; const q = g.state(); g.teleport(o, q[m].x - Math.sin(q[m].yaw) * 9, q[m].z + Math.cos(q[m].yaw) * 9, q[m].yaw, q[m].speed); }, [me, other]);
     await wait(700); await shot('pursuit');
 
-    // the main routes, driven by the AI from a point on each
+    // the main routes: start ON the centre line facing along the road, other car parked 60 m
+    // behind (no PIT, no escape), and a simple pure-pursuit driver following the road. This
+    // checks the road is drivable end to end, without AI or traffic noise. Retries if the round
+    // changes under us.
     const roads = await hook('roads');
+    await a.evaluate(() => {
+      window.__follow = (w, ri, s0, len) => {
+        const g = window.__getaway; let s = s0;
+        const id = setInterval(() => {
+          const q = g.state()[w]; let best = s, bd = 1e9;
+          for (let ds = -4; ds <= 30; ds += 1) { const p = g.roadPoint(ri, Math.min(len, s + ds)); const d = Math.hypot(p.x - q.x, p.z - q.z); if (d < bd) { bd = d; best = Math.min(len, s + ds); } }
+          s = best;
+          const t = g.roadPoint(ri, Math.min(len, s + 16));
+          let e = Math.atan2(t.x - q.x, -(t.z - q.z)) - q.yaw; e = Math.atan2(Math.sin(e), Math.cos(e));
+          g.hold(w, { steer: Math.max(-1, Math.min(1, e * 2.4)), gas: 0.75 });
+        }, 50);
+        return id;
+      };
+    });
     for (const name of ['Mission Gorge Rd', 'Mast Blvd', 'SR-52', 'Magnolia Ave', 'Cuyamaca St', 'Carlton Hills Blvd', 'Fanita Pkwy', 'Weston Rd', 'Town Center Pkwy', 'Prospect Ave']) {
       const ri = roads.findIndex((r) => r.name === name && !r.bridge && r.len > 200);
       if (ri < 0) { ok(false, `route ${name} found`); continue; }
-      const p = await hook('roadPoint', ri, roads[ri].len * 0.35);
-      // the AI runner flees along the road; the AI cop chases a runner placed 80 m ahead of it.
-      // Rounds may end (bust/escape) and restart at a spawn: wait for a live chase, retry once.
-      let tries = 0;
-      for (;;) {
-      await a.waitForFunction(() => { const q = window.__getaway.state(); return q.phase === 'chase' && q.R && !q.R.over; }, null, { timeout: 30000 });
-      await hook('shortenRound', 60000);
-      const idx0 = (await st()).R.idx;
-      const amRunner = (await st()).R.runner === me;
-      await hook('teleport', me, p.x, p.z, p.yaw, 18);
-      // keep the other car ~400 m away along the road, so this measures driving, not a PIT fight
-      const L0 = roads[ri].len * 0.35, far = Math.min(roads[ri].len - 1, Math.max(1, amRunner ? L0 - 400 : L0 + 400));
-      const q2 = await hook('roadPoint', ri, Math.abs(far - L0) > 150 ? far : (amRunner ? roads[ri].len - 1 : 1));
-      await hook('teleport', other, q2.x, q2.z, q2.yaw, 0);
-      await hook('auto', me, true);
-      await wait(3500);
-      s = await st();
-      if (s.R && s.R.idx !== idx0 && tries++ < 2) continue;
-      break;
+      const len = roads[ri].len, s0 = Math.max(70, Math.min(len - 120, len * 0.35));
+      let p, moved = 0, surf = '', water = false, offRoad = 0;
+      for (let tries = 0; tries < 3; tries++) {
+        await live();
+        const idx0 = (await st()).R.idx;
+        p = await hook('roadPoint', ri, s0);
+        const back = await hook('roadPoint', ri, s0 - 60);
+        await hook('hold', other, { brake: 1 });
+        await hook('teleport', other, back.x, back.z, back.yaw, 0);
+        await hook('teleport', me, p.x, p.z, p.yaw, 12);
+        const id = await a.evaluate(([w, r, ss, l]) => window.__follow(w, r, ss, l), [me, ri, s0, len]);
+        offRoad = 0;
+        for (let k = 0; k < 7; k++) { await wait(500); const q = (await st())[me]; if (q.surf !== 'road') offRoad++; }
+        await a.evaluate((x) => clearInterval(x), id);
+        s = await st();
+        await hook('hold', me, null); await hook('hold', other, null);
+        moved = Math.hypot(s[me].x - p.x, s[me].z - p.z); surf = s[me].surf; water = s[me].water;
+        if (s.R && s.R.idx === idx0 && s.phase === 'chase') break;
       }
-      const moved = Math.hypot(s[me].x - p.x, s[me].z - p.z);
-      ok(moved > 15 && !s[me].water, `${name}: the AI drives ${moved.toFixed(0)} m from (${p.x.toFixed(0)}, ${p.z.toFixed(0)}), on ${s[me].surf}`);
-      warn(moved > 30, `${name}: ${moved.toFixed(0)} m in 3.5 s (traffic and the AI make this noisy)`);
+      ok(moved > 40 && !water && offRoad <= 1, `${name}: follows the road ${moved.toFixed(0)} m from (${p.x.toFixed(0)}, ${p.z.toFixed(0)}), on ${surf} (${offRoad}/7 samples off the asphalt)`);
       await shot('route-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
     }
     // the riverbed: sand, slow, dry
-    const live = async () => { await a.waitForFunction(() => { const q = window.__getaway.state(); return q.phase === 'chase' && q.R && !q.R.over; }, null, { timeout: 30000 }); await hook('shortenRound', 60000); };
     for (let tries = 0; tries < 3; tries++) {
       await live();
       const idx0 = (await st()).R.idx;
