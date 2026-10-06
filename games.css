@@ -356,6 +356,7 @@ body:has(.gh) { background: var(--g-bg); }
 /* filters */
 .gh-filters { display: flex; gap: 8px; margin: 0 -16px; padding: 2px 16px 8px; overflow-x: auto; scrollbar-width: none; scroll-padding: 0 16px; }
 .gh-filters::-webkit-scrollbar { display: none; }
+@media (hover: hover) and (pointer: fine) { .gh-filters { flex-wrap: wrap; overflow: visible; margin: 0; padding: 2px 0 8px; } }
 .gh-filter { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 38px; padding: 0 14px; border: var(--g-stroke) solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); font: 800 0.86rem/1 var(--g-font-body); white-space: nowrap; touch-action: manipulation; transition: transform 0.1s, box-shadow 0.1s; }
 .gh-filter svg { width: 15px; height: 15px; }
 .gh-filter.on { background: var(--g-ink); color: var(--g-bg); box-shadow: 3px 3px 0 var(--g-hl); transform: translate(-1px, -1px); }

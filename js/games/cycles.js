@@ -116,6 +116,7 @@ registerGame({
 .g-cycles .cy-board.is-fit { flex: none; }
 .g-cycles .cy-board canvas { position: absolute; left: 50%; top: 50%; display: block; background: var(--g-card); border: 2.5px solid var(--g-ink); border-radius: 8px; box-shadow: var(--g-shadow-lg, 6px 6px 0 var(--g-ink)); transform: translate(calc(-50% - 3px), calc(-50% - 3px)); touch-action: none; }
 .g-cycles .cy-msg { position: absolute; left: 50%; top: 50%; z-index: 2; transform: translate(-50%, -50%); pointer-events: none; text-align: center; }
+.g-cycles .cy-msg.is-up { top: 24%; }
 .g-cycles .cy-msg > span { display: inline-block; background: var(--g-card); color: var(--g-ink); border: 2.5px solid var(--g-ink); border-radius: 12px; box-shadow: var(--g-shadow, 3px 3px 0 var(--g-ink)); padding: 10px 16px; font-weight: 800; font-size: 1.02rem; line-height: 1.25; white-space: nowrap; animation: cy-pop 0.32s cubic-bezier(0.2, 1.5, 0.4, 1) both; }
 .g-cycles .cy-msg b { font-family: var(--g-font-display); font-weight: 400; }
 .g-cycles .cy-msg .w-a b { color: var(--p-a-text, var(--p-a)); } .g-cycles .cy-msg .w-b b { color: var(--p-b-text, var(--p-b)); }
@@ -162,11 +163,13 @@ registerGame({
 .g-cycles .cy-caps kbd:nth-child(3) { grid-column: 2; grid-row: 2; } .g-cycles .cy-caps kbd:nth-child(4) { grid-column: 3; grid-row: 2; }
 .g-cycles .cy-caps kbd.is-down { transform: translateY(3px); box-shadow: 0 0 0 var(--g-edge, var(--g-ink)); }
 .g-cycles .cy-legend.p-a kbd.is-down { background: var(--p-a); color: var(--g-on-ink); } .g-cycles .cy-legend.p-b kbd.is-down { background: var(--p-b); color: var(--g-on-ink); }
+.g-cycles .cy-legend.is-them { align-self: center; min-width: 132px; }
+.g-cycles .cy-bike { width: 22px; height: 34px; border: 2.5px solid var(--g-ink); border-radius: 7px; background: linear-gradient(var(--g-hl) 0 58%, var(--g-ink) 58% 64%, transparent 64%); position: relative; }
+.g-cycles .cy-legend.p-a .cy-bike { background-color: var(--p-a); } .g-cycles .cy-legend.p-b .cy-bike { background-color: var(--p-b); }
 .g-cycles .cy-legends { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; }
 .g-cycles .cy-legends .cy-legend { flex-direction: row; padding: 10px 14px; gap: 14px; }
 .g-cycles .cy-legends .cy-caps { grid-template-columns: repeat(3, 34px); grid-template-rows: repeat(2, 34px); }
 .g-cycles .cy-or { font-weight: 800; color: var(--g-muted); }
-.g-cycles .cy-legend.is-live { flex-direction: row; gap: 14px; padding: 10px 16px; align-self: center; }
 @media (max-height: 760px) { .g-cycles .cy-pad-keys { grid-template-rows: repeat(2, 46px); } .g-cycles .cy-pad.is-row .cy-pad-keys { grid-template-rows: 44px; } }
 @media (prefers-reduced-motion: reduce) { .g-cycles *, .g-cycles *::before { animation: none !important; transition: none !important; } }
 `,
@@ -208,10 +211,12 @@ registerGame({
     let rxB = 0;
     let dnB = 0;
     let gapSince = 0;
+    let curG = null; // the guest's session: a re-joined guest starts its sequence numbers again
     const bufB = new Map();
     // guest
     let hostMid = null;
     let staleMid = null;
+    const gid = host ? null : Math.random().toString(36).slice(2, 9);
     let seq = 0;
     let pending = [];
     let gRx = 0;
@@ -265,10 +270,11 @@ registerGame({
         <div class="cy-pad-keys">${row ? [3, 0, 2, 1].map(key).join('') : [0, 3, 1, 2].map(key).join('')}</div>
       </div>`;
     }
-    const capsWASD = (p) => `<div class="cy-caps">${['W', 'A', 'S', 'D'].map((k) => `<kbd data-k="${p}${'WDSA'.indexOf(k)}">${k}</kbd>`).join('')}</div>`;
-    const capsArrows = (p) => `<div class="cy-caps">${[0, 3, 2, 1].map((d) => `<kbd data-k="${p}${d}">${ARROW(d)}</kbd>`).join('')}</div>`;
+    // keycaps: data-k = key set (w: W A S D, r: arrows) + direction, so a press can light its cap
+    const capsWASD = () => `<div class="cy-caps">${['W', 'A', 'S', 'D'].map((k) => `<kbd data-k="w${'WDSA'.indexOf(k)}">${k}</kbd>`).join('')}</div>`;
+    const capsArrows = () => `<div class="cy-caps">${[0, 3, 2, 1].map((d) => `<kbd data-k="r${d}" aria-label="${DIR[d]} arrow">${ARROW(d)}</kbd>`).join('')}</div>`;
     function legendHTML(p, tag) {
-      return `<div class="cy-legend p-${p}"><span class="cy-legend-name">${esc(api.name(p))}</span>${p === 'a' ? capsWASD(p) : capsArrows(p)}${tag ? `<span class="cy-legend-tag">${tag}</span>` : ''}</div>`;
+      return `<div class="cy-legend p-${p}"><span class="cy-legend-name">${esc(api.name(p))}</span>${p === 'a' ? capsWASD() : capsArrows()}${tag ? `<span class="cy-legend-tag">${tag}</span>` : ''}</div>`;
     }
     function build() {
       const g = LAYOUTS[layout];
@@ -287,7 +293,10 @@ registerGame({
       } else if (touch) {
         html = `<div class="cy-row">${boardHTML}</div>${info}${padHTML(me, { row: layout === 'p' && window.innerHeight < 720 })}`;
       } else {
-        html = `<div class="cy-row">${boardHTML}</div>${info}<div class="cy-legend is-live p-${me}"><span class="cy-legend-tag">Steer</span>${capsWASD(me)}<span class="cy-or">or</span>${capsArrows(me)}</div>`;
+        // live on a computer: from your own side you always start on the left (or at the bottom)
+        const them = api.other(me);
+        const [mine, theirs] = layout === 's' ? ['you start left', 'starts right'] : ['you start at the bottom', 'starts at the top'];
+        html = `<div class="cy-row"><div class="cy-legend p-${me}"><span class="cy-legend-name">${esc(api.name(me))}</span>${capsWASD()}<span class="cy-or">or</span>${capsArrows()}<span class="cy-legend-tag">${mine}</span></div>${boardHTML}<div class="cy-legend is-them p-${them}"><span class="cy-legend-name">${esc(api.name(them))}</span><i class="cy-bike" aria-hidden="true"></i><span class="cy-legend-tag">${theirs}</span></div></div>${info}`;
       }
       root.innerHTML = html;
       root.dataset.layout = layout;
@@ -296,7 +305,7 @@ registerGame({
       board = root.querySelector('.cy-board');
       msgEl = root.querySelector('.cy-msg');
       msgKey = '';
-      if (window.ResizeObserver) { ro = new ResizeObserver(fit); ro.observe(board.parentElement); }
+      if (window.ResizeObserver) { ro = new window.ResizeObserver(fit); ro.observe(board.parentElement); }
       fit();
       wireInputs();
       renderInfo();
@@ -352,17 +361,19 @@ registerGame({
       const e = { seq: ++seq, r: round, d };
       pending.push(e);
       if (pending.length > 12) pending.shift();
-      api.send('turn', { m: hostMid, s: e.seq, r: e.r, d });
+      api.send('turn', { m: hostMid, g: gid, s: e.seq, r: e.r, d });
       publishGuest();
       dirty = true;
     }
     // screen direction -> world direction for a player (rot: that player's pad/half is upside down)
     const world = (d, rot) => (d + (rot ? 2 : 0) + (flip ? 2 : 0)) & 3;
+    const timers = new Set();
     function flash(sel) {
       const k = root.querySelector(sel);
       if (!k) return;
       k.classList.add('is-down');
-      setTimeout(() => k.classList.remove('is-down'), 120);
+      const t = setTimeout(() => { timers.delete(t); k.classList.remove('is-down'); }, 120);
+      timers.add(t);
     }
     function onKey(e) {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -371,7 +382,8 @@ registerGame({
       if (phase !== 'over') e.preventDefault();
       if (e.repeat) return;
       const [p, d] = KEYS[code];
-      if (local) { input(p, d); flash(`kbd[data-k="${p}${d}"]`); } else { input(me, world(d, false)); flash(`kbd[data-k="${p}${d}"]`); }
+      flash(`kbd[data-k="${p === 'a' ? 'w' : 'r'}${d}"]`);
+      if (local) input(p, d); else input(me, world(d, false));
     }
     window.addEventListener('keydown', onKey);
     offs.push(() => window.removeEventListener('keydown', onKey));
@@ -416,7 +428,7 @@ registerGame({
       let lo = 0;
       let lg = encs.join(',');
       if (lg.length > 2600) { lo = Math.max(0, encs.length - 360); lg = encs.slice(lo).join(','); }
-      api.setPresence({ v: 1, mid, L: layout, r: round, ph: phase, cd, t: sim ? sim.t : 0, lg, lo, sc: [score.a, score.b], rw, rx: rxB, dn: dnB, pz: paused ? 1 : 0 });
+      api.setPresence({ v: 1, mid, L: layout, r: round, ph: phase, cd, t: sim ? sim.t : 0, lg, lo, sc: [score.a, score.b], rw, g: curG, rx: rxB, dn: dnB, pz: paused ? 1 : 0 });
     }
     function startRound(now) {
       round++;
@@ -467,8 +479,10 @@ registerGame({
         ? { winner: w, text: `${api.name(w)} wins ${hi}–${lo}`, sub: lo === 0 ? 'A clean sweep. Not a scratch on that bike.' : 'Last one riding, three times over.' }
         : { winner: null, text: `Dead heat ${hi}–${lo}`, sub: 'Nine rounds and nobody blinked.' });
     }
-    function recvB(m, s, r, d) {
-      if (m !== mid || !Number.isInteger(s) || s <= rxB || bufB.has(s) || !(d >= 0 && d <= 3)) return;
+    function recvB(m, g, s, r, d) {
+      if (m !== mid || !g) return;
+      if (g !== curG) { curG = g; rxB = 0; dnB = 0; bufB.clear(); gapSince = 0; queues.b = []; }
+      if (!Number.isInteger(s) || s <= rxB || bufB.has(s) || !(d >= 0 && d <= 3)) return;
       bufB.set(s, { r, d });
       if (!gapSince) gapSince = performance.now();
       drainB();
@@ -513,7 +527,7 @@ registerGame({
 
     // ── guest ──
     function publishGuest() {
-      api.setPresence({ v: 1, pref, mid: hostMid, q: pending.filter((p) => p.seq > gRx).slice(-12).map((p) => [p.seq, p.r, p.d]) });
+      api.setPresence({ v: 1, pref, mid: hostMid, g: gid, q: pending.filter((p) => p.seq > gRx).slice(-12).map((p) => [p.seq, p.r, p.d]) });
     }
     function onHost(s) {
       if (!alive || !s || s.v !== 1 || !s.mid || !s.L || s.mid === staleMid) return;
@@ -532,8 +546,9 @@ registerGame({
       score = { a: sc[0] | 0, b: sc[1] | 0 };
       sim = rebuild(layout, gEntries.filter(Boolean), s.t | 0);
       if (sim.done && !crashAt) { crashAt = now; api.sfx('hit'); api.haptic(40); }
-      pending = pending.filter((p) => p.seq > (s.dn | 0) && p.r === round);
-      if ((s.rx | 0) !== gRx) { gRx = s.rx | 0; publishGuest(); }
+      const mine = s.g === gid; // acks are for this guest session only
+      pending = pending.filter((p) => p.r === round && !(mine && p.seq <= (s.dn | 0)));
+      if (mine && (s.rx | 0) !== gRx) { gRx = s.rx | 0; publishGuest(); }
       if (infoKey !== lastInfo) { lastInfo = infoKey; renderInfo(); }
       dirty = true;
     }
@@ -697,6 +712,7 @@ registerGame({
       if (key === msgKey) return;
       msgKey = key;
       msgEl.innerHTML = html;
+      msgEl.classList.toggle('is-up', key[0] === 'e');
     }
     function frame(now) {
       if (!alive) return;
@@ -711,8 +727,8 @@ registerGame({
     // ── wiring ──
     if (!local) {
       if (host) {
-        offs.push(api.on('turn', (d) => { if (d) recvB(d.m, d.s, d.r, d.d); }));
-        offs.push(api.onPartnerState((s) => { if (s && s.mid === mid && Array.isArray(s.q)) for (const x of s.q) if (Array.isArray(x)) recvB(mid, x[0], x[1], x[2]); }));
+        offs.push(api.on('turn', (d) => { if (d) recvB(d.m, d.g, d.s, d.r, d.d); }));
+        offs.push(api.onPartnerState((s) => { if (s && s.mid === mid && s.g && Array.isArray(s.q)) { if (s.g !== curG) recvB(mid, s.g, 0, 0, -1); for (const x of s.q) if (Array.isArray(x)) recvB(mid, s.g, x[0], x[1], x[2]); } }));
         offs.push(api.onPartnerHere((here) => {
           if (!here) { if (phase !== 'over' && phase !== 'wait') { paused = true; publish(); } return; }
           if (!paused) return;
@@ -747,6 +763,7 @@ registerGame({
       destroy() {
         alive = false;
         cancelAnimationFrame(raf);
+        timers.forEach((t) => clearTimeout(t));
         if (ro) ro.disconnect();
         offs.forEach((f) => { try { f(); } catch { /* ignore */ } });
         if (window.__cycles === hook) delete window.__cycles;

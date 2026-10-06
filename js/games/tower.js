@@ -109,9 +109,9 @@ function score(s) {
 const BH = 0.6;            // block height
 const PED = 2.6;           // the base is a tall pedestal; its top is y = 0
 const K = 1.05;            // camera looks along -(1, K, 1): a printed, isometric-ish view
-const VIEW_W = 9.8;        // world units that must fit across the canvas
-const MIN_VIEW_H = 10.5;   // wide screens still show this much height
-const CAM_LEAD = 1.0;      // the camera looks this far above the tower top
+const VIEW_W = 8.8;        // world units across a narrow canvas (the slide's far ends may clip a little)
+const MIN_VIEW_H = 13;     // wide screens still show this much height
+const CAM_LEAD = -0.5;     // the camera looks this far above the tower top (negative: below)
 const OUTLINE_PX = 2.2;    // ink outline width (CSS px)
 const speedOf = (level) => Math.min(2.6 + 0.08 * (level - 1), 5.6); // units per second
 const ampOf = (size) => size + 0.45;                                 // slide half-range
@@ -159,10 +159,9 @@ function readPalette(api) {
   };
 }
 const TMP = [0, 0, 0];
-function colorOf(pal, e) {
-  const c = e.who === 'a' ? pal.a : e.who === 'b' ? pal.b : pal.base;
-  const f = e.flash || 0;
-  TMP[0] = c[0] + (pal.hl[0] - c[0]) * f; TMP[1] = c[1] + (pal.hl[1] - c[1]) * f; TMP[2] = c[2] + (pal.hl[2] - c[2]) * f;
+function colorOf(pal, e) { // a flash is a hard highlighter blink, like a second ink pass
+  const c = (e.flash || 0) >= 0.5 ? pal.hl : e.who === 'a' ? pal.a : e.who === 'b' ? pal.b : pal.base;
+  TMP[0] = c[0]; TMP[1] = c[1]; TMP[2] = c[2];
   return TMP;
 }
 
@@ -266,7 +265,7 @@ function view3D(THREE, canvas, pal0) {
   };
   const ringMat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, side: THREE.DoubleSide });
   const shadowMat = new THREE.MeshBasicMaterial();
-  const ringGeo = new THREE.RingGeometry(Math.SQRT1_2, Math.SQRT1_2 * 1.16, 4, 1, Math.PI / 4);
+  const ringGeo = new THREE.RingGeometry(Math.SQRT1_2, Math.SQRT1_2 * 1.2, 4, 1, Math.PI / 4);
   ringGeo.rotateX(-Math.PI / 2);
   const planeGeo = new THREE.PlaneGeometry(1, 1);
   planeGeo.rotateX(-Math.PI / 2);
@@ -341,9 +340,10 @@ function view3D(THREE, canvas, pal0) {
         const s = 1 + r.k * 0.55;
         ring.position.set(r.x, r.y + 0.004, r.z);
         ring.scale.set(r.w * s, 1, r.d * s);
-        ringMat.opacity = 1 - r.k;
+        ringMat.opacity = 1 - r.k * r.k;
       }
       renderer.render(scene, cam);
+      return renderer.info.render.calls;
     },
     dispose() {
       try { renderer.forceContextLoss(); } catch { /* ignore */ }
@@ -433,7 +433,7 @@ function view2D(canvas, pal0) {
           if (k) g.lineTo(px(X, Z), py(X, r.y, Z)); else g.moveTo(px(X, Z), py(X, r.y, Z));
         });
         g.closePath();
-        g.globalAlpha = 1 - r.k;
+        g.globalAlpha = 1 - r.k * r.k;
         g.lineWidth = 4;
         g.strokeStyle = css(pal.hl);
         g.stroke();
@@ -491,7 +491,7 @@ registerGame({
     .g-tower .gt-streak { display: inline-flex; align-items: center; gap: 4px; font-size: 0.68rem; font-weight: 900; letter-spacing: 0.1em; text-transform: uppercase; color: var(--g-muted); }
     .g-tower .gt-streak i { width: 9px; height: 9px; border: 2px solid var(--g-ink); background: var(--g-bg); transform: rotate(45deg); margin: 0 1px; }
     .g-tower .gt-streak i.on { background: var(--g-hl); }
-    .g-tower .gt-stamp { position: absolute; top: 27%; left: 50%; padding: 7px 16px; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-hl); color: var(--g-ink); box-shadow: var(--g-shadow); font: 900 1.3rem/1.1 var(--g-font-display); letter-spacing: 0.05em; text-transform: uppercase; white-space: nowrap; pointer-events: none; opacity: 0; transform: translate(-50%, 0) rotate(-5deg); }
+    .g-tower .gt-stamp { position: absolute; top: 27%; left: 50%; padding: 7px 16px; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-hl); color: var(--g-on-ink); box-shadow: var(--g-shadow); font: 900 1.3rem/1.1 var(--g-font-display); letter-spacing: 0.05em; text-transform: uppercase; white-space: nowrap; pointer-events: none; opacity: 0; transform: translate(-50%, 0) rotate(-5deg); }
     .g-tower .gt-stamp.show { animation: gt-stamp 1150ms cubic-bezier(.2, .9, .3, 1.25) both; }
     @keyframes gt-stamp {
       0% { opacity: 0; transform: translate(-50%, 10px) rotate(-5deg) scale(.55); }
@@ -591,12 +591,13 @@ registerGame({
       const camBusy = Math.abs(goal.y - c.y) > 0.002 || Math.abs(goal.zoom - c.zoom) > 0.0005;
       if (!camBusy) { c.y = goal.y; c.zoom = goal.zoom; }
       c.viewH = baseViewH() * c.zoom;
+      let calls = 0;
       if (view) {
-        view.render(model);
+        calls = view.render(model);
         tunePerf(dt);
       }
       const t = T();
-      if (t) t.frames = (t.frames || 0) + 1;
+      if (t) { t.frames = (t.frames || 0) + 1; t.calls = calls; t.ratio = view && view.ratio; }
       if (anims.size || slider || model.pieces.length || model.ring || camBusy) raf = requestAnimationFrame(frame);
       else lastT = 0;
     }
@@ -659,10 +660,15 @@ registerGame({
       });
       kick();
     }
-    function flash(e, amount, ms) {
+    function blink(e, ms) {
       hold(e);
-      e.flash = amount;
-      tween(reduced() ? Math.min(ms, 200) : ms, (k) => { e.flash = amount * (1 - k); }, lin).then(() => { e.flash = 0; release(e); });
+      e.flash = 1;
+      tween(ms, (k) => { e.flash = k < 1 ? 1 : 0; }, lin).then(() => { e.flash = 0; release(e); });
+    }
+    function settle(e) { // the kept block lands with a tiny bump
+      if (reduced()) return;
+      hold(e);
+      tween(150, (k) => { e.lift = 0.07 * (1 - k); }, easeOut).then(() => { e.lift = 0; release(e); });
     }
     function ringAt(e) {
       const r = { x: e.x, y: e.y + e.h / 2, z: e.z, w: e.w, d: e.d, k: 0 };
@@ -769,7 +775,7 @@ registerGame({
         await tween(rm ? 0 : 90, (k) => { e.x = fx + (nb.x - fx) * k; e.z = fz + (nb.z - fz) * k; }, easeOut);
         api.sfx('good');
         api.haptic(15);
-        flash(e, 0.9, 520);
+        blink(e, 260);
         ringAt(e);
         stamp(drop);
         setStreak(drop.streak, drop.grew);
@@ -783,7 +789,7 @@ registerGame({
         addPiece({ x: c.x, y: e.y, z: c.z, w: c.w, h: BH, d: c.d, who: drop.who }, drop.axis, Math.sign(drop.o));
         api.sfx('place');
         api.haptic(10);
-        flash(e, 0.35, 260);
+        settle(e);
         setStreak(0, false);
       }
       e.x = nb.x; e.z = nb.z; e.w = nb.w; e.d = nb.d;
@@ -815,7 +821,7 @@ registerGame({
           const u = (t - i * gap) / 320;
           const b = u > 0 && u < 1 ? Math.sin(u * Math.PI) : 0;
           bl[i].lift = b * 0.28;
-          bl[i].flash = b * 0.55;
+          bl[i].flash = b > 0.7 ? 1 : 0;
         }
       }, lin);
       bl.forEach((e) => { e.lift = 0; e.flash = 0; release(e); });

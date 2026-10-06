@@ -379,17 +379,17 @@ registerGame({
     .g-doodle .dd-team b { font-family: var(--g-font-display); font-size: 1.05rem; }
     .g-doodle .dd-h { font-family: var(--g-font-display); font-weight: 900; font-size: 1.45rem; line-height: 1.15; margin: 4px 0 0; text-align: center; }
     .g-doodle .dd-sub { margin: 0; color: var(--g-muted); font-weight: 700; text-align: center; font-size: 0.95rem; }
-    .g-doodle .p-a { color: var(--p-a); } .g-doodle .p-b { color: var(--p-b); }
+    .g-doodle .p-a { color: var(--p-a-text, var(--p-a)); } .g-doodle .p-b { color: var(--p-b-text, var(--p-b)); }
     .g-doodle b.p-a, .g-doodle b.p-b { font-weight: 900; }
 
     /* prompt cards */
     .g-doodle .dd-picks { width: 100%; display: flex; flex-direction: column; gap: 14px; margin-top: 6px; }
     .g-doodle .dd-pick { position: relative; display: flex; align-items: center; gap: 14px; width: 100%; min-height: 76px; padding: 14px 16px; text-align: left; background: var(--g-card); color: var(--g-ink); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow); touch-action: manipulation; transition: transform 0.12s ease; }
     .g-doodle .dd-pick:nth-child(1) { transform: rotate(-1.2deg); } .g-doodle .dd-pick:nth-child(2) { transform: rotate(0.8deg); } .g-doodle .dd-pick:nth-child(3) { transform: rotate(-0.5deg); }
-    .g-doodle .dd-pick:active { transform: translate(2px, 2px); box-shadow: none; }
+    .g-doodle .dd-pick:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge, var(--g-ink)); }
     .g-doodle .dd-pick-word { font-family: var(--g-font-display); font-weight: 900; font-size: 1.35rem; line-height: 1.1; flex: 1; }
     .g-doodle .dd-tier { flex: none; width: 64px; padding: 5px 0; text-align: center; font-weight: 900; font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; border: 2px solid var(--g-ink); border-radius: 6px; }
-    .g-doodle .dd-tier.t0 { background: var(--g-card); } .g-doodle .dd-tier.t1 { background: var(--g-hl); color: var(--g-ink); } .g-doodle .dd-tier.t2 { background: var(--g-ink); color: var(--g-card); }
+    .g-doodle .dd-tier.t0 { background: var(--g-card); } .g-doodle .dd-tier.t1 { background: var(--g-hl); color: var(--g-on-ink); } .g-doodle .dd-tier.t2 { background: var(--g-ink); color: var(--g-card); }
     .g-doodle .dd-pts { flex: none; font-weight: 800; color: var(--g-muted); font-size: 0.8rem; }
 
     /* paper */
@@ -402,7 +402,7 @@ registerGame({
     .g-doodle .dd-ink.low i { background: var(--g-bad); }
     .g-doodle .dd-over-btn { position: absolute; right: 8px; bottom: 8px; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 6px 12px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); font-weight: 800; font-size: 0.85rem; box-shadow: var(--g-shadow); touch-action: manipulation; }
     .g-doodle .dd-over-btn svg { width: 16px; height: 16px; }
-    .g-doodle .dd-over-btn:active { transform: translate(2px, 2px); box-shadow: none; }
+    .g-doodle .dd-over-btn:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge, var(--g-ink)); }
 
     /* top bar of the draw screen */
     .g-doodle .dd-word { font-family: var(--g-font-display); font-weight: 900; font-size: 1.15rem; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -425,12 +425,13 @@ registerGame({
     .g-doodle .dd-size[data-s="0"] i { width: 7px; height: 7px; } .g-doodle .dd-size[data-s="1"] i { width: 17px; height: 17px; }
     .g-doodle .dd-size::before { content: ''; position: absolute; inset: 3px; border-radius: 50%; border: 2px solid transparent; }
     .g-doodle .dd-size[aria-checked="true"]::before { border-color: var(--g-ink); background: var(--g-hl); }
+    .g-doodle .dd-size[aria-checked="true"] i { background: var(--g-on-ink); }
     .g-doodle .dd-size i { position: relative; }
     .g-doodle .dd-sep { width: 2px; height: 26px; background: var(--g-line); margin: 0 4px; border-radius: 1px; }
     .g-doodle .dd-tool { border-radius: 12px; border: 2px solid var(--g-ink); background: var(--g-card); box-shadow: var(--g-shadow); }
     .g-doodle .dd-tool svg { width: 22px; height: 22px; }
     .g-doodle .dd-tool:disabled { opacity: 0.35; box-shadow: none; }
-    .g-doodle .dd-tool:not(:disabled):active { transform: translate(2px, 2px); box-shadow: none; }
+    .g-doodle .dd-tool:not(:disabled):active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge, var(--g-ink)); }
     .g-doodle .dd-send { flex: 1; min-height: 48px; }
     .g-doodle .dd-actions { width: 100%; display: flex; gap: 8px; align-items: center; }
     .g-doodle .gm-btn:disabled { opacity: 0.4; }
@@ -448,7 +449,7 @@ registerGame({
     .g-doodle .dd-chip svg { width: 15px; height: 15px; flex: none; }
     .g-doodle .dd-chip.no { color: var(--g-muted); text-decoration: line-through; text-decoration-thickness: 2px; }
     .g-doodle .dd-chip.no svg { color: var(--g-bad); }
-    .g-doodle .dd-chip.yes { background: var(--g-good); color: var(--g-on-ink); }
+    .g-doodle .dd-chip.yes { background: var(--g-hl); color: var(--g-on-ink); }
     .g-doodle .dd-chip.new { animation: dd-pop 0.35s ease; }
     .g-doodle .dd-form { width: 100%; display: flex; gap: 8px; }
     .g-doodle .dd-input { flex: 1; min-width: 0; height: 52px; padding: 0 14px; font: inherit; font-size: 17px; font-weight: 800; color: var(--g-ink); background: var(--g-card); border: 2px solid var(--g-ink); border-radius: 12px; outline: none; -webkit-user-select: text; user-select: text; }
@@ -473,7 +474,7 @@ registerGame({
     .g-doodle .dd-card canvas { flex: none; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-card); }
     .g-doodle .dd-card-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-weight: 700; }
     .g-doodle .dd-card-txt b { font-family: var(--g-font-display); font-weight: 900; font-size: 1.1rem; }
-    .g-doodle .dd-badge { flex: none; margin-left: auto; padding: 4px 10px; border: 2px solid var(--g-ink); border-radius: 8px; font-family: var(--g-font-display); font-weight: 900; background: var(--g-hl); color: var(--g-ink); }
+    .g-doodle .dd-badge { flex: none; margin-left: auto; padding: 4px 10px; border: 2px solid var(--g-ink); border-radius: 8px; font-family: var(--g-font-display); font-weight: 900; background: var(--g-hl); color: var(--g-on-ink); }
     .g-doodle .dd-badge.zero { background: var(--g-card); color: var(--g-muted); }
     .g-doodle .dd-waiting { display: flex; flex-direction: column; align-items: center; gap: 6px; margin: auto 0; padding: 18px 0; }
     .g-doodle .dd-pencil { width: 220px; height: 90px; overflow: visible; }
@@ -486,28 +487,29 @@ registerGame({
     .g-doodle .dd-live { width: 100%; display: flex; flex-direction: column; gap: 6px; }
     .g-doodle .dd-live-row { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 2px solid var(--g-ink); border-radius: 12px; background: var(--g-card); font-weight: 800; }
     .g-doodle .dd-live-row svg { width: 18px; height: 18px; flex: none; }
-    .g-doodle .dd-live-row.no svg { color: var(--g-bad); } .g-doodle .dd-live-row.yes { background: var(--g-good); color: var(--g-on-ink); }
+    .g-doodle .dd-live-row.no svg { color: var(--g-bad); }
     .g-doodle .dd-live-row.new { animation: dd-pop 0.35s ease; }
     .g-doodle .dd-live-row small { margin-left: auto; color: var(--g-muted); font-weight: 800; }
-    .g-doodle .dd-live-row.yes small { color: inherit; }
-    .g-doodle .dd-dots { display: inline-flex; gap: 4px; }
+        .g-doodle .dd-dots { display: inline-flex; gap: 4px; }
     .g-doodle .dd-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--g-muted); animation: dd-blink 1.2s infinite; }
     .g-doodle .dd-dots i:nth-child(2) { animation-delay: 0.2s; } .g-doodle .dd-dots i:nth-child(3) { animation-delay: 0.4s; }
 
     /* gallery */
     .g-doodle .dd-gal-head { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 4px; padding-top: 4px; }
     .g-doodle .dd-gal-kicker { font-weight: 900; font-size: 0.75rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--g-muted); }
-    .g-doodle .dd-plaque { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border: 2px solid var(--g-ink); border-radius: 10px; background: var(--g-hl); color: var(--g-ink); box-shadow: var(--g-shadow); }
+    .g-doodle .dd-plaque { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border: 2px solid var(--g-ink); border-radius: 10px; background: var(--g-hl); color: var(--g-on-ink); box-shadow: var(--g-shadow); }
     .g-doodle .dd-plaque b { font-family: var(--g-font-display); font-size: 2rem; font-weight: 900; line-height: 1; }
     .g-doodle .dd-plaque b small { font-size: 1rem; }
     .g-doodle .dd-plaque span { font-family: var(--g-font-display); font-weight: 900; font-size: 1.05rem; line-height: 1.1; max-width: 12em; }
     .g-doodle .dd-wall { width: 100%; display: grid; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); gap: 18px 14px; padding: 8px 4px 4px; }
     .g-doodle .dd-frame { display: flex; flex-direction: column; align-items: stretch; gap: 0; padding: 8px 8px 10px; text-align: left; background: var(--g-card); color: var(--g-ink); border: 2px solid var(--g-ink); border-radius: 6px; box-shadow: var(--g-shadow); touch-action: manipulation; transform: rotate(var(--tilt, 0deg)); transition: transform 0.15s ease; }
-    .g-doodle .dd-frame:active { transform: rotate(0deg) translate(2px, 2px); box-shadow: none; }
+    .g-doodle .dd-frame:active { transform: rotate(0deg) translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge, var(--g-ink)); }
     .g-doodle .dd-frame canvas { display: block; border: 2px solid var(--g-line); border-radius: 3px; background: var(--g-card); }
     .g-doodle .dd-frame-title { margin-top: 8px; font-family: var(--g-font-display); font-weight: 900; font-size: 1rem; line-height: 1.15; overflow-wrap: anywhere; }
     .g-doodle .dd-frame-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 4px; font-size: 0.78rem; font-weight: 800; color: var(--g-muted); }
-    .g-doodle .dd-frame-pts { padding: 1px 7px; border: 2px solid var(--g-ink); border-radius: 6px; color: var(--g-ink); background: var(--g-hl); font-family: var(--g-font-display); font-weight: 900; }
+    .g-doodle .dd-frame-meta > span:first-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .g-doodle .dd-frame-pts { flex: none; }
+    .g-doodle .dd-frame-pts { padding: 1px 7px; border: 2px solid var(--g-ink); border-radius: 6px; color: var(--g-on-ink); background: var(--g-hl); font-family: var(--g-font-display); font-weight: 900; }
     .g-doodle .dd-frame-pts.zero { background: transparent; color: var(--g-muted); border-color: var(--g-line); }
     .g-doodle .dd-gal-actions { width: 100%; display: flex; gap: 8px; margin-top: 6px; }
     .g-doodle .dd-gal-actions .gm-btn { flex: 1; min-height: 50px; }

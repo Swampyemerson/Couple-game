@@ -152,7 +152,7 @@ const waitMoves = (pg, id, n, timeout = 12000) => pg.waitForFunction(([mid, k]) 
   const d = window.__gamesDebug(mid);
   return d && d.lists.a.length + d.lists.b.length >= k;
 }, [id, n], { timeout });
-const endCard = (pg, timeout = 8000) => pg.waitForSelector('#game-root .gm-end:not([hidden]) .gm-end-card', { timeout });
+const endCard = (pg, timeout = 8000) => pg.waitForSelector('#game-root .gm-end:not([hidden]) .gm-end-card', { timeout }).then(() => pg.waitForTimeout(1000)); // let it settle
 async function withRandom(pg, r, fn) {
   await pg.evaluate((v) => { window.__realRandom = Math.random; Math.random = () => v; }, r);
   try { return await fn(); } finally { await pg.evaluate(() => { Math.random = window.__realRandom; }); }
@@ -363,7 +363,7 @@ async function towerLocal(h, pg, { shots = null } = {}) {
     const mine = after.lists[e.acts[0]];
     if (mine[mine.length - 1].o !== tapped) throw new Error('FAIL: tower local: the recorded drop differs from where the block was');
   }
-  ok(n >= 1, `tower local: ${n} drops, each recorded exactly where the block stopped (one by Space)`);
+  ok(n >= 1, `tower local: ${n} drops, each recorded exactly where the block stopped${shots ? '' : ' (one by Space)'}`);
   await endCard(pg);
   const e = await h.engine(pg, id);
   ok(e.over && e.result.score === e.state.blocks.length - 1, `tower local: the game ended at ${e.result.score} high`);
@@ -456,6 +456,8 @@ async function glHygiene(h, pg) {
   await waitMoves(pg, ids.tower, m0 + 1);
   await h.wait(900);
   ok(await pg.evaluate(() => window.__towerTest.frames || 0) > f0 + 10, 'tower: after the context comes back it renders and plays on');
+  const tc = await pg.evaluate(() => window.__towerTest.calls);
+  ok(tc > 0 && tc <= 12, `tower: ${tc} draw calls per frame (iPhone budget < 80)`);
   await shot(pg, 'tower-after-context-restore.png');
   await h.closeGame(pg);
 
@@ -471,6 +473,8 @@ async function glHygiene(h, pg) {
   await pg.click(`.gb-tray[data-who="${who}"] .gb-col[data-col="${bonesPick(e.state, who)}"]`);
   await pg.waitForSelector('.g-bones[data-phase="pick"]', { timeout: 12000 });
   ok(await pg.evaluate(() => window.__bonesTest.frames || 0) > f1 + 10, 'bones: after the context comes back the next die still tumbles');
+  const bc = await pg.evaluate(() => window.__bonesTest.calls);
+  ok(bc > 0 && bc <= 12, `bones: ${bc} draw calls per frame (iPhone budget < 80)`);
   await shot(pg, 'bones-after-context-restore.png');
   await h.closeGame(pg);
   ok(await pg.evaluate(() => window.__glLive()) === 0, 'no WebGL contexts left after all of that');

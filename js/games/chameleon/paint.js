@@ -8,6 +8,7 @@ import { sampleAtlas } from './atlas.js';
 
 const N = TEX * TEX;
 const UNDO_MAX = 24;
+const BLACK = [0, 0, 0];
 
 export function createPaint(THREE, kit) {
   const data = new Uint8Array(N * 4).fill(255);
@@ -117,10 +118,11 @@ export function createPaint(THREE, kit) {
       const sx = px - nx * dist; const sy = py - ny * dist; const sz = pz - nz * dist;
       surf.uvAt(sx, sy, sz, uv);
       sampleAtlas(surf.atlas, surf.tile, uv[0], uv[1], tmp);
-      const sh = surf.shadeAt ? surf.shadeAt(sx, sy, sz) : 1;
+      const sh = surf.shadeAt ? surf.shadeAt(sx, sy, sz) : 0;
+      const br = surf.blobRgb || BLACK;
       const a = facing < 0 ? 1 + facing / 0.25 : 1;
       const o = i * 4;
-      const r = tmp[0] * surf.vc[0] * sh; const g = tmp[1] * surf.vc[1] * sh; const b = tmp[2] * surf.vc[2] * sh;
+      const r = tmp[0] * surf.vc[0] * (1 - sh) + br[0] * sh; const g = tmp[1] * surf.vc[1] * (1 - sh) + br[1] * sh; const b = tmp[2] * surf.vc[2] * (1 - sh) + br[2] * sh;
       data[o] = Math.round(data[o] + (r - data[o]) * a);
       data[o + 1] = Math.round(data[o + 1] + (g - data[o + 1]) * a);
       data[o + 2] = Math.round(data[o + 2] + (b - data[o + 2]) * a);

@@ -145,6 +145,23 @@ async function snapAll(pg, name, { laptop = false } = {}) {
   await pg.emulateMedia({ colorScheme: 'light' });
   await pg.waitForTimeout(150);
 }
+// The harness blocks Google Fonts. Serve them from the design preview's cache when it has them
+// (read-only, no network), so screenshots show the real Rammetto One / Schibsted Grotesk.
+const FONT_CACHE = path.join(ROOT, 'tools/test/.cache/fonts');
+async function useCachedFonts(pg) {
+  if (!fs.existsSync(FONT_CACHE)) return false;
+  const crypto = require('crypto');
+  await pg.route(/fonts\.(googleapis|gstatic)\.com/, (r) => {
+    const u = r.request().url();
+    const f = path.join(FONT_CACHE, crypto.createHash('md5').update(u).digest('hex'));
+    if (!fs.existsSync(f)) return r.abort();
+    return r.fulfill({ body: fs.readFileSync(f), contentType: /googleapis/.test(u) ? 'text/css' : 'font/woff2', headers: { 'access-control-allow-origin': '*' } });
+  });
+  await pg.reload();
+  await pg.waitForFunction(() => !!document.querySelector('.tabbar'), null, { timeout: 15000 });
+  await pg.evaluate(() => document.fonts.ready);
+  return true;
+}
 const visible = (pg, sel) => pg.isVisible(sel).catch(() => false);
 const rootHTML = (pg) => pg.evaluate(() => (document.querySelector('#game-root') || document.body).innerHTML.toLowerCase());
 async function waitFor(fn, ms = 6000, what = 'condition') {
@@ -280,6 +297,8 @@ const dialValue = (pg) => pg.$eval('.wv-dial.live', (d) => Number(d.getAttribute
   const h = await launch({ port: 8840, only: ['doodle', 'wave'] });
   const { a, b } = h;
   const pages = { a, b };
+  if (!QUICK) for (const pg of [a, b]) await useCachedFonts(pg);
+  await h.settle();
   const cdps = { a: await a.context().newCDPSession(a), b: await b.context().newCDPSession(b) };
   try {
     // ════════════════ DOODLE, online ════════════════
@@ -306,7 +325,6 @@ const dialValue = (pg) => pg.$eval('.wv-dial.live', (d) => Number(d.getAttribute
         await snapAll(D, 'doodle-01-pick', { laptop: true });
         await snapAll(G, 'doodle-02-wait-for-drawing');
       }
-      const choices = e.state.rounds[r].choices;
       // the guesser can't see the prompt cards
       const gHtml = await rootHTML(G);
       const shown = await D.$$eval('.dd-pick-word', (xs) => xs.map((x) => x.textContent.trim()));
@@ -523,7 +541,9 @@ const dialValue = (pg) => pg.$eval('.wv-dial.live', (d) => Number(d.getAttribute
     await h.closeGame(a); await h.closeGame(b);
 
     // ════════════════ same phone ════════════════
-    console.log('# doodle same phone');
+    console.log('# doodle same phone (reduced motion)');
+    await a.emulateMedia({ reducedMotion: 'reduce' });
+    await b.emulateMedia({ reducedMotion: 'reduce' });
     const resBefore = h.results().length;
     await h.newLocalGame(a, 'doodle');
     const lid = await a.evaluate(() => window.__lastMatchId);
@@ -531,7 +551,6 @@ const dialValue = (pg) => pg.$eval('.wv-dial.live', (d) => Number(d.getAttribute
     for (let guard = 0; guard < 80; guard++) {
       const e = await h.engine(a, lid);
       if (e.over) break;
-      const R = e.state.rounds[e.state.r];
       if (await visible(a, '#game-root .gm-curtain')) {
         curtains++;
         if (e.state.phase === 'guess') {
@@ -561,7 +580,6 @@ const dialValue = (pg) => pg.$eval('.wv-dial.live', (d) => Number(d.getAttribute
         continue;
       }
       await a.waitForTimeout(150);
-      void R;
     }
     const le = await h.engine(a, lid);
     assert(le.over && le.result.score === 18 && local === 6, `same-phone doodle finished: 18 of 18 (got ${le.result.score})`);
@@ -605,6 +623,38 @@ const dialValue = (pg) => pg.$eval('.wv-dial.live', (d) => Number(d.getAttribute
     await h.wait(3300);
     assert(await visible(b, '#game-root .gm-end'), 'same-phone wave: end card');
     await h.closeGame(b);
+
+    // ── the 75-second draw timer (UI only) auto-submits at zero ──
+    console.log('# doodle draw timer');
+    await h.newLocalGame(a, 'doodle');
+    const tid = await a.evaluate(() => window.__lastMatchId);
+    await a.click('#game-root [data-g="reveal"]');
+    await a.waitForSelector('.dd-pick');
+    await a.clock.install();
+    await a.click('.dd-pick[data-i="0"]');
+    await a.waitForSelector('.dd-paper.can-draw canvas');
+    await a.clock.fastForward(76000);
+    await a.waitForSelector('.toast:has-text("Time’s up")');
+    assert((await h.engine(a, tid)).state.phase === 'draw', 'timer at zero with an empty canvas: nothing sent, a nudge instead');
+    assert(await a.$eval('.dd-secs', (x) => x.textContent) === '0:00', 'timer shows 0:00');
+    await drawPicture(a, 2, 'mouse');
+    await a.click('.dd-send');
+    await a.waitForSelector('#game-root .gm-curtain:not([hidden])');
+    await a.click('#game-root [data-g="reveal"]');
+    await a.waitForSelector('.dd-giveup');
+    await a.click('.dd-giveup'); await a.click('.dd-giveup');
+    await a.waitForSelector('.dd-next');
+    await a.click('.dd-next');
+    await a.click('.dd-pick[data-i="2"]');
+    await a.waitForSelector('.dd-paper.can-draw canvas');
+    await drawPicture(a, 1, 'mouse');
+    await a.clock.fastForward(40000);
+    assert((await h.engine(a, tid)).state.phase === 'draw', 'still drawing at 0:35');
+    await a.clock.fastForward(36000);
+    await a.waitForSelector('#game-root .gm-curtain:not([hidden])');
+    const te = await h.engine(a, tid);
+    assert(te.state.r === 1 && te.state.phase === 'guess' && te.state.rounds[1].pick === 2, 'timer at zero auto-submits the drawing');
+    await h.closeGame(a);
 
     h.assertNoErrors();
     console.log(`\nALL GOOD (${passed} checks). Screenshots: ${QUICK ? 'skipped' : SHOTS}`);

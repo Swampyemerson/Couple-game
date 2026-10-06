@@ -23,7 +23,7 @@ export const V0 = 12.5;               // start speed (m/s)
 export const VMAX = 30;               // top speed
 export const TAU = 110;               // speed ramp time constant (s)
 
-export const CHUNK = 80;              // track chunk length (m)
+export const CHUNK = 100;             // track chunk length (m)
 export const ROOF = 2.8;              // train roof height
 export const TRAIN_HW = 1.15;         // train half width
 export const LOW_H = 1.0;             // low barrier top
@@ -33,7 +33,7 @@ export const BAR_HW = 1.1;            // barrier half width
 export const CAR = 12.5;              // train car length
 export const RAMP_L = 10;             // ramp length
 export const MT_K = 0.55;             // oncoming train speed as a fraction of yours
-export const MT_LEAD = 45;            // oncoming train starts moving when you're this far from the meeting point
+export const MT_LEAD = 40;            // oncoming train starts moving when you're this far from the meeting point
 export const GAP_L = 4;               // broken-bridge gap length
 
 export const STUMBLE_T = 0.9;

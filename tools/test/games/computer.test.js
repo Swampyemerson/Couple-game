@@ -114,6 +114,8 @@ async function cyclesLivePhones(h) {
   await h.settle();
   const res = h.results().filter((r) => r.game === 'cycles');
   assert(res.length === 1 && res[0].winner === 'a', 'one result recorded (Emerson wins 3–1)');
+  const sizes = [...(h.roomState['ju-cycles'] || new Map()).values()].map((p) => JSON.stringify(p.presence || {}).length);
+  assert(sizes.length === 2 && Math.max(...sizes) < 3500, `presence stays small (${sizes.join(' / ')} bytes)`);
   const sc = await h.b.evaluate(() => [...document.querySelectorAll('#game-root [data-score]')].map((x) => x.textContent).join('-'));
   assert(sc === '3-1', 'guest chips show 3–1');
   await sleep(400);
@@ -219,6 +221,20 @@ async function cyclesLiveLaptops(h, scheme) {
   await shot(h.b, `cycles-laptop-live-guest-${scheme}`);
   const x = await cy(h.a);
   assert(turnsOf(x.log, 'a').length === 1 && turnsOf(x.log, 'b').length === 1, 'both laptops steer (arrows on one, W A S D on the other)');
+  if (scheme === 'light') {
+    // Sydney drops out mid-round and comes back: the host pauses, then her new turns still count
+    await h.closeGame(h.b);
+    await until(async () => (await cy(h.a)).paused, 'the host to pause');
+    assert(true, 'host pauses when the guest drops');
+    await h.startLive(h.b, 'cycles', 'live');
+    const back = await until(async () => { const p = await cy(h.a); return !p.paused && p.phase === 'run' ? p : null; }, 'play to resume', 12000, 25);
+    const before = turnsOf(back.log, 'b').length;
+    const target = (back.sim.b.d + 1) & 3; // a quarter turn from wherever she is heading
+    await h.b.keyboard.press(['ArrowUp', 'ArrowRight', 'ArrowDown', 'ArrowLeft'][(target + 2) & 3]); // her board is turned round
+    await sleep(400);
+    const after = await cy(h.a);
+    assert(after.round === back.round && turnsOf(after.log, 'b').length === before + 1, 're-joined guest steers again in the same round');
+  }
   await closeBoth(h);
 }
 

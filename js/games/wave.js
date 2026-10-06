@@ -162,7 +162,7 @@ registerGame({
     .g-wave .wv-team b { font-family: var(--g-font-display); font-size: 1.05rem; }
     .g-wave .wv-h { font-family: var(--g-font-display); font-weight: 900; font-size: 1.4rem; line-height: 1.15; margin: 0; text-align: center; }
     .g-wave .wv-sub { margin: -4px 0 0; color: var(--g-muted); font-weight: 700; text-align: center; font-size: 0.93rem; }
-    .g-wave .p-a { color: var(--p-a); } .g-wave .p-b { color: var(--p-b); }
+    .g-wave .p-a { color: var(--p-a-text, var(--p-a)); } .g-wave .p-b { color: var(--p-b-text, var(--p-b)); }
     .g-wave b.p-a, .g-wave b.p-b { font-weight: 900; }
 
     /* the dial */
@@ -173,19 +173,20 @@ registerGame({
     .g-wave .wv-dial.live.drag { cursor: grabbing; }
     .g-wave .wv-dial:focus-visible { box-shadow: 0 0 0 3px var(--g-hl); }
     .g-wave .wv-svg { display: block; width: 100%; height: auto; overflow: visible; }
-    .g-wave .wv-shadow, .g-wave .wv-plinth-shadow { fill: var(--g-ink); }
+    .g-wave .wv-shadow, .g-wave .wv-plinth-shadow { fill: var(--g-edge, var(--g-ink)); }
     .g-wave .wv-face { fill: var(--g-card); }
     .g-wave .wv-rim { fill: none; stroke: var(--g-ink); stroke-width: 2.5; stroke-linejoin: round; }
     .g-wave .wv-tick { stroke: var(--g-ink); stroke-width: 1.6; stroke-linecap: round; }
     .g-wave .wv-tick.major { stroke-width: 2.6; }
     .g-wave .wv-b4, .g-wave .wv-hlfill { fill: var(--g-hl); }
+    .g-wave .wv-hlsoft { fill: var(--g-hl-soft, var(--g-card)); }
     .g-wave .wv-zone path { stroke: var(--g-ink); stroke-width: 1.5; stroke-linejoin: round; }
-    .g-wave .wv-zone text { font-family: var(--g-font-display); font-weight: 900; font-size: 13px; fill: var(--g-ink); stroke: var(--g-card); stroke-width: 3.5px; paint-order: stroke; stroke-linejoin: round; text-anchor: middle; dominant-baseline: central; }
+    .g-wave .wv-zone text { font-family: var(--g-font-display); font-weight: 900; font-size: 13px; fill: var(--g-on-ink); stroke: var(--g-white, var(--g-card)); stroke-width: 3.5px; paint-order: stroke; stroke-linejoin: round; text-anchor: middle; dominant-baseline: central; }
     .g-wave .wv-lid-face { fill: var(--g-card); }
     .g-wave .wv-hatch { stroke: var(--g-line); stroke-width: 2.4; }
     .g-wave .wv-needle { stroke: var(--g-ink); stroke-width: 2.4; stroke-linejoin: round; }
     .g-wave .wv-needle.a { fill: var(--p-a); } .g-wave .wv-needle.b { fill: var(--p-b); }
-    .g-wave .wv-needle-shadow { fill: var(--g-ink); }
+    .g-wave .wv-needle-shadow { fill: var(--g-edge, var(--g-ink)); }
     .g-wave .wv-hub { fill: var(--g-ink); }
     .g-wave .wv-hub-dot { fill: var(--g-card); }
     .g-wave .wv-plinth { fill: var(--g-ink); }
@@ -216,7 +217,7 @@ registerGame({
 
     /* reveal */
     .g-wave .wv-result { display: flex; align-items: center; gap: 12px; }
-    .g-wave .wv-pts { display: grid; place-items: center; min-width: 64px; height: 56px; padding: 0 10px; border: 2px solid var(--g-ink); border-radius: 10px; background: var(--g-hl); color: var(--g-ink); box-shadow: var(--g-shadow); font-family: var(--g-font-display); font-weight: 900; font-size: 1.8rem; transform: rotate(-4deg); }
+    .g-wave .wv-pts { display: grid; place-items: center; min-width: 64px; height: 56px; padding: 0 10px; border: 2px solid var(--g-ink); border-radius: 10px; background: var(--g-hl); color: var(--g-on-ink); box-shadow: var(--g-shadow); font-family: var(--g-font-display); font-weight: 900; font-size: 1.8rem; transform: rotate(-4deg); }
     .g-wave .wv-pts.zero { background: var(--g-card); color: var(--g-bad); }
     .g-wave .wv-result-txt { display: flex; flex-direction: column; font-weight: 800; }
     .g-wave .wv-result-txt > b { font-family: var(--g-font-display); font-size: 1.3rem; font-weight: 900; }
@@ -233,7 +234,7 @@ registerGame({
     /* recap */
     .g-wave .wv-rhead { display: flex; flex-direction: column; align-items: center; gap: 6px; }
     .g-wave .wv-kicker { font-weight: 900; font-size: 0.75rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--g-muted); }
-    .g-wave .wv-plaque { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border: 2px solid var(--g-ink); border-radius: 10px; background: var(--g-hl); color: var(--g-ink); box-shadow: var(--g-shadow); }
+    .g-wave .wv-plaque { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border: 2px solid var(--g-ink); border-radius: 10px; background: var(--g-hl); color: var(--g-on-ink); box-shadow: var(--g-shadow); }
     .g-wave .wv-plaque b { font-family: var(--g-font-display); font-size: 2rem; font-weight: 900; line-height: 1; }
     .g-wave .wv-plaque b small { font-size: 1rem; }
     .g-wave .wv-plaque span { font-family: var(--g-font-display); font-weight: 900; font-size: 1.1rem; line-height: 1.1; max-width: 11em; }
@@ -247,12 +248,12 @@ registerGame({
     .g-wave .wv-row-clue { font-family: var(--g-font-display); font-weight: 900; font-size: 1.1rem; line-height: 1.15; overflow-wrap: anywhere; }
     .g-wave .wv-row-clue small { font-family: var(--g-font-body); font-weight: 800; font-size: 0.78rem; }
     .g-wave .wv-row .wv-mini { grid-column: 1 / -1; }
-    .g-wave .wv-row-pts { grid-row: 1 / span 2; grid-column: 2; display: grid; place-items: center; min-width: 46px; height: 40px; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-hl); color: var(--g-ink); font-family: var(--g-font-display); font-weight: 900; font-size: 1.2rem; }
+    .g-wave .wv-row-pts { grid-row: 1 / span 2; grid-column: 2; display: grid; place-items: center; min-width: 46px; height: 40px; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-hl); color: var(--g-on-ink); font-family: var(--g-font-display); font-weight: 900; font-size: 1.2rem; }
     .g-wave .wv-row-pts.zero { background: var(--g-card); color: var(--g-muted); border-color: var(--g-line); }
     .g-wave .wv-mini { position: relative; height: 16px; margin: 4px 0 6px; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-bg); }
     .g-wave .wv-mini > span { position: absolute; top: 0; bottom: 0; }
-    .g-wave .wv-mini .z2 { background: repeating-linear-gradient(-55deg, var(--g-hl) 0 2.5px, var(--g-card) 2.5px 7px); }
-    .g-wave .wv-mini .z3 { background: repeating-linear-gradient(-55deg, var(--g-hl) 0 5px, var(--g-card) 5px 7px); }
+    .g-wave .wv-mini .z2 { background: repeating-linear-gradient(-55deg, var(--g-hl) 0 2.5px, var(--g-hl-soft, var(--g-card)) 2.5px 7px); }
+    .g-wave .wv-mini .z3 { background: repeating-linear-gradient(-55deg, var(--g-hl) 0 5px, var(--g-hl-soft, var(--g-card)) 5px 7px); }
     .g-wave .wv-mini .z4 { box-shadow: inset 2px 0 0 var(--g-ink), inset -2px 0 0 var(--g-ink); }
     .g-wave .wv-mini .z4 { background: var(--g-hl); }
     .g-wave .wv-mini .pin { top: -6px; bottom: -6px; width: 6px; margin-left: -3px; border: 2px solid var(--g-ink); border-radius: 3px; }
@@ -302,7 +303,7 @@ registerGame({
     // needle: { at, who } or null.
     function dial(host, { card, zone = null, lid = false, needle = null, ghost = false }) {
       const id = `wv${++uid}`;
-      const zoneSvg = zone == null ? '' : `<defs>${[[2, 3], [3, 6]].map(([p, w]) => `<pattern id="${id}s${p}" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(-35)"><rect width="8" height="8" class="wv-face"/><rect width="${w}" height="8" class="wv-hlfill"/></pattern>`).join('')}</defs>
+      const zoneSvg = zone == null ? '' : `<defs>${[[2, 3], [3, 6]].map(([p, w]) => `<pattern id="${id}s${p}" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(-35)"><rect width="8" height="8" class="wv-hlsoft"/><rect width="${w}" height="8" class="wv-hlfill"/></pattern>`).join('')}</defs>
         <g class="wv-zone" clip-path="url(#${id}c)">${BANDS.map(([, p]) => `<path class="wv-b${p}" d=""${p < 4 ? ` fill="url(#${id}s${p})"` : ''}/>`).join('')}${[2, 3, 4, 3, 2].map(() => '<text></text>').join('')}</g>`;
       const needleSvg = needle ? `<g transform="translate(3 3)"><g class="wv-rot"><path class="wv-needle-shadow" d="${NEEDLE}"/></g></g>
         <g class="wv-rot"><path class="wv-needle ${needle.who}" d="${NEEDLE}"/></g>` : '';

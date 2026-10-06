@@ -273,6 +273,15 @@ async function run(scheme, port) {
       await shot(pg, 'laptop-hub');
       await pg.click('[data-g="sheet"][data-game="cycles"]').catch(() => {});
       await shot(pg, 'laptop-sheet');
+      await pg.click('#game-root .gs-close');
+      await pg.click('[data-g="sheet"][data-game="four"]');
+      await pg.click('#game-root [data-g="new"][data-mode="local"]');
+      await pg.waitForSelector('#game-root .gm');
+      for (const sq of [4, 0]) { await pg.click(`#game-root .fk button[data-i="${sq}"]`); await pg.waitForTimeout(80); }
+      await shot(pg, 'laptop-game');
+      for (const sq of [1, 2, 7]) { await pg.click(`#game-root .fk button[data-i="${sq}"]`); await pg.waitForTimeout(80); }
+      await pg.waitForSelector('#game-root .gm-end:not([hidden])', { timeout: 4000 });
+      await shot(pg, 'laptop-end', { wait: 1000 });
       await ctx.close();
     });
   } finally {

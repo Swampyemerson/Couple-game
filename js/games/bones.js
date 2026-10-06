@@ -149,7 +149,7 @@ function dieView3D(THREE, canvas, pal0, onTick) {
   const UP = new THREE.Vector3(0, 1, 0);
   const st = { mode: 'idle', t: 0, dur: 1, sx: 0, sz: 0, axis: new THREE.Vector3(1, 0, 0), total: 0, yaw: 0, bounce: 0, scale: 1, res: null, calm: false };
   const BT = [0, 0.3, 0.56, 0.74, 0.86, 1];
-  const BH = [1.5, 0.5, 0.18, 0.06, 0];
+  const BH = [1.1, 0.42, 0.15, 0.05, 0];
 
   function drawFace(f) {
     const g = f.c.getContext('2d');
@@ -277,7 +277,7 @@ function dieView3D(THREE, canvas, pal0, onTick) {
       }
       return false;
     },
-    render() { renderer.render(scene, cam); },
+    render() { renderer.render(scene, cam); return renderer.info.render.calls; },
     dispose() {
       if (st.res) { st.res(); st.res = null; }
       try { renderer.forceContextLoss(); } catch { /* ignore */ }
@@ -360,19 +360,20 @@ registerGame({
     .g-bones .gb-top .gb-tray, .g-bones .gb-top .gb-name, .g-bones .gb-top .gb-total { grid-row: 2; }
     .g-bones .gb-bot .gb-tray, .g-bones .gb-bot .gb-name, .g-bones .gb-bot .gb-total { grid-row: 1; }
     .g-bones .gb-bot .gb-scores { grid-row: 2; }
-    .g-bones .gb-name { grid-column: 1; justify-self: end; min-width: 0; max-width: 100%; display: flex; flex-direction: column; align-items: flex-end; gap: 5px; text-align: right; font-weight: 900; font-size: 0.85rem; line-height: 1.1; overflow-wrap: anywhere; }
+    .g-bones .gb-name { grid-column: 1; justify-self: end; min-width: 0; max-width: 100%; display: flex; flex-direction: column; align-items: flex-end; gap: 5px; text-align: right; font-weight: 900; font-size: 0.85rem; line-height: 1.1; }
     .g-bones .gb-chip { width: 16px; height: 16px; border: 2px solid var(--g-ink); border-radius: 5px; }
     .g-bones .gb-a .gb-chip { background: var(--p-a); } .g-bones .gb-b .gb-chip { background: var(--p-b); }
-    .g-bones .gb-mark { visibility: hidden; padding: 1px 5px; border: 2px solid var(--g-ink); border-radius: 5px; background: var(--g-hl); color: var(--g-ink); font-size: 0.6rem; letter-spacing: 0.1em; text-transform: uppercase; white-space: nowrap; }
+    .g-bones .gb-nm { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .g-bones .gb-mark { visibility: hidden; padding: 1px 5px; border: 2px solid var(--g-ink); border-radius: 5px; background: var(--g-hl); color: var(--g-on-ink); font-size: 0.6rem; letter-spacing: 0.1em; text-transform: uppercase; white-space: nowrap; }
     .g-bones .gb-half.is-turn .gb-mark { visibility: visible; }
     .g-bones .gb-total { grid-column: 3; justify-self: start; font-family: var(--g-font-display); font-weight: 900; font-size: 1.85rem; line-height: 1; font-variant-numeric: tabular-nums; }
-    .g-bones .gb-half.is-win .gb-total { animation: gb-win 0.7s cubic-bezier(.3, 1.6, .5, 1) both; background: var(--g-hl); border: 2px solid var(--g-ink); border-radius: 8px; padding: 4px 6px; box-shadow: var(--g-shadow); }
+    .g-bones .gb-half.is-win .gb-total { animation: gb-win 0.7s cubic-bezier(.3, 1.6, .5, 1) both; background: var(--g-hl); color: var(--g-on-ink); border: 2px solid var(--g-ink); border-radius: 8px; padding: 4px 6px; box-shadow: var(--g-shadow); }
     .g-bones .gb-half.is-lose { opacity: 0.55; }
     .g-bones .gb-tray { display: grid; grid-template-columns: repeat(3, var(--gb-die)); column-gap: var(--gb-gap); padding: var(--gb-pad); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow); }
     .g-bones .gb-a .gb-tray { background: var(--p-a-soft); } .g-bones .gb-b .gb-tray { background: var(--p-b-soft); }
     .g-bones .gb-scores { display: grid; grid-template-columns: repeat(3, var(--gb-die)); column-gap: var(--gb-gap); padding: 0 calc(var(--gb-pad) + 2px); }
     .g-bones .gb-cs { justify-self: center; min-width: 34px; padding: 2px 8px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); font-weight: 900; font-size: 0.85rem; line-height: 1.3; text-align: center; font-variant-numeric: tabular-nums; }
-    .g-bones .gb-cs.combo { background: var(--g-hl); }
+    .g-bones .gb-cs.combo { background: var(--g-hl); color: var(--g-on-ink); }
     .g-bones .gb-cs.bump { animation: gb-bump 0.45s cubic-bezier(.3, 1.6, .5, 1); }
     .g-bones .gb-col { position: relative; z-index: 0; display: flex; flex-direction: column; gap: var(--gb-gap); margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; opacity: 1; touch-action: manipulation; -webkit-tap-highlight-color: transparent; cursor: default; border-radius: calc(var(--gb-die) * 0.26); }
     .g-bones .gb-top .gb-col { flex-direction: column-reverse; }
@@ -386,8 +387,10 @@ registerGame({
     .g-bones .gb-die { position: absolute; inset: 0; box-sizing: border-box; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); padding: 13%; background: var(--g-card); border: 2px solid var(--g-ink); border-radius: 22%; box-shadow: var(--g-shadow-sm, 2px 2px 0 var(--g-ink)); }
     .g-bones .gb-die i { border-radius: 50%; background: var(--g-ink); margin: 13%; }
     .g-bones .gb-die.c2, .g-bones .gb-die.c3 { background: var(--g-hl); }
+    .g-bones .gb-die.c2 i, .g-bones .gb-die.c3 i { background: var(--g-on-ink); }
     .g-bones .gb-die.c3 { border-width: 3px; box-shadow: var(--g-shadow); }
-    .g-bones .gb-die.ghost { opacity: 0.5; border-style: dashed; box-shadow: none; background: var(--g-card); }
+    .g-bones .gb-die.ghost { opacity: 0.6; border-style: dashed; border-color: var(--g-on-ink); box-shadow: none; background: transparent; }
+    .g-bones .gb-die.ghost i { background: var(--g-on-ink); }
     .g-bones .gb-die.pulse { animation: gb-pulse 0.5s cubic-bezier(.3, 1.6, .5, 1); }
     .g-bones .gb-bot .gb-die.is-new { animation: gb-drop-b 0.34s cubic-bezier(.2, .8, .3, 1.2) both; }
     .g-bones .gb-top .gb-die.is-new { animation: gb-drop-t 0.34s cubic-bezier(.2, .8, .3, 1.2) both; }
@@ -503,7 +506,7 @@ registerGame({
     function layout() {
       const W = Math.min(el.clientWidth || 360, 480);
       const H = el.clientHeight || 600;
-      const side = Math.round(Math.max(54, Math.min(92, W * 0.17)));
+      const side = Math.round(Math.max(64, Math.min(96, W * 0.19)));
       const gap = 7; const pad = 8;
       const bandH = Math.round(Math.max(92, Math.min(156, H * 0.2)));
       const dieW = (W - 2 * side - 16 - 2 * pad - 2 * gap - 8) / 3;
@@ -605,13 +608,13 @@ registerGame({
       const dt = lastT ? Math.min(0.05, Math.max(0, (now - lastT) / 1000)) : 1 / 60;
       lastT = now;
       const busy = dv.step(dt);
-      dv.render();
+      const calls = dv.render();
       if (dv.kind === '3d') {
         ema = ema * 0.92 + dt * 1000 * 0.08;
         if (++perfN > 50 && ema > 24 && dv.ratio > 1) { dv.setRatio(Math.max(1, dv.ratio - 0.25)); perfN = 0; ema = 16; }
       }
       const t = T();
-      if (t) t.frames = (t.frames || 0) + 1;
+      if (t) { t.frames = (t.frames || 0) + 1; t.calls = calls; }
       if (busy) raf = requestAnimationFrame(frame);
       else lastT = 0;
     }

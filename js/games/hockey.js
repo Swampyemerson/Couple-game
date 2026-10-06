@@ -277,7 +277,7 @@ registerGame({
       c.strokeRect(0, 0, W, H);
       // goal slots cut through the rail
       for (const [w, y0, y1] of [['b', -RAIL - 0.5, 0], ['a', H, H + RAIL + 0.5]]) {
-        c.fillStyle = T.ink; c.fillRect(W / 2 - GH, y0, GH * 2, y1 - y0);
+        c.fillStyle = T.edge; c.fillRect(W / 2 - GH, y0, GH * 2, y1 - y0);
         c.fillStyle = T[w]; c.fillRect(W / 2 - GH, w === 'b' ? -px(4) : H, GH * 2, px(4));
       }
       // posts
@@ -661,9 +661,9 @@ registerGame({
       disc(c, px, py, r * 0.62, null, T.card, Math.max(1, lw * 0.6));
       disc(c, px, py, r * 0.16, T.card);
     }
-    function text(c, str, x, y, size, fill, rot = 0, stroke = null, weight = 900) {
+    function text(c, str, x, y, size, fill, rot = 0, stroke = null, weight = 900, font = T.fontDisplay) {
       c.save(); c.translate(x, y); c.rotate(rot);
-      c.font = `${weight} ${size}px ${T.fontDisplay || 'system-ui'}`;
+      c.font = `${weight} ${size}px ${font || 'system-ui'}`;
       c.textAlign = 'center'; c.textBaseline = 'middle';
       if (stroke) { c.lineJoin = 'round'; c.lineWidth = Math.max(2, size * 0.09); c.strokeStyle = stroke; c.strokeText(str, 0, 0); }
       c.fillStyle = fill; c.fillText(str, 0, 0);
@@ -671,7 +671,7 @@ registerGame({
     }
     function keycap(c, x, y, sz, glyph) {
       const r = sz * 0.2;
-      c.fillStyle = T.ink; roundRect(c, x - sz / 2 + 2, y - sz / 2 + 2, sz, sz, r); c.fill();
+      c.fillStyle = T.edge; roundRect(c, x - sz / 2 + 2, y - sz / 2 + 2, sz, sz, r); c.fill();
       c.fillStyle = T.card; c.strokeStyle = T.ink; c.lineWidth = 1.5;
       roundRect(c, x - sz / 2, y - sz / 2, sz, sz, r); c.fill(); c.stroke();
       c.fillStyle = T.ink;
@@ -684,7 +684,7 @@ registerGame({
       const sz = 24; const g = 4;
       const keys = w === 'a' ? ['W', 'A', 'S', 'D'] : ['up', 'left', 'down', 'right'];
       c.globalAlpha = alpha;
-      text(c, api.name(w), x, y - sz * 1.55, 12, T[w], 0, null, 900);
+      text(c, api.name(w), x, y - sz * 1.55, 13, T[w + 'Text'], 0, null, 800, T.fontBody);
       keycap(c, x, y - (sz + g) / 2, sz, keys[0]);
       for (let i = 0; i < 3; i++) keycap(c, x + (i - 1) * (sz + g), y + (sz + g) / 2, sz, keys[i + 1]);
       c.globalAlpha = 1;
@@ -732,8 +732,8 @@ registerGame({
         c.globalAlpha = 1;
       }
       // puck + trail
-      const showPuck = phase !== 'goal' || since < 120;
       const pp = host ? P : { x: DP.x + off.x, y: DP.y + off.y };
+      const showPuck = (phase !== 'goal' || since < 120) && (phase === 'play' || (pp.y > 0 && pp.y < H));
       if (phase === 'play') { trail.push([pp.x, pp.y]); if (trail.length > 5) trail.shift(); } else if (phase !== 'paused') trail.length = 0;
       if (showPuck && trail.length > 3) speedLines(c, pp);
       // mallets under the puck's shadow side, puck on top
@@ -785,7 +785,7 @@ registerGame({
             if (ctl[w].used) continue;
             const [x, y] = toPx(W / 2, w === 'a' ? H - 42 : 42);
             c.globalAlpha = hintA;
-            text(c, coarse ? 'Drag your mallet' : 'Move your mouse', x, y, Math.max(12, 4.2 * s), T.ink, readRot(w), T.card, 800);
+            text(c, coarse ? 'Drag your mallet' : 'Move your mouse', x, y, Math.max(13, 4.4 * s), T.ink, readRot(w), T.card, 800, T.fontBody);
             c.globalAlpha = 1;
           }
         }

@@ -118,7 +118,7 @@ registerGame({
     .g-qd .qd-fig.is-hatless .qd-hat { transform: translate(-16px, -34px) rotate(-75deg); opacity: 0; }
 
     .g-qd .qd-sig { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 4px; min-height: 5.6rem; justify-content: center; }
-    .g-qd .qd-word { font-family: var(--g-font-display); font-size: clamp(1.9rem, 9.5vw, 3rem); line-height: 1.05; letter-spacing: 0.01em; padding: 2px 12px; border: 3px solid transparent; border-radius: 10px; }
+    .g-qd .qd-word { font-family: var(--g-font-display); font-weight: 900; font-size: clamp(1.9rem, 9.5vw, 3rem); line-height: 1.05; letter-spacing: 0.01em; padding: 2px 12px; border: 3px solid transparent; border-radius: 10px; }
     .g-qd .qd-sig.is-steady .qd-word { color: var(--g-muted); animation: qd-breathe 1.2s ease-in-out infinite; }
     .g-qd .qd-sig.is-draw .qd-word { background: var(--g-hl); color: var(--g-on-ink); border-color: var(--g-ink); box-shadow: var(--g-shadow-lg, var(--g-shadow)); transform: rotate(-3deg); font-size: clamp(2.4rem, 13vw, 3.8rem); animation: qd-pop 0.16s cubic-bezier(0.2, 1.6, 0.4, 1) both; }
     .g-qd .qd-sig.is-foul .qd-word { color: var(--g-bad); }
@@ -145,7 +145,7 @@ registerGame({
     .g-qd .qd-pad.is-press { transform: translate(4px, 4px); box-shadow: 0 0 0 var(--g-edge, var(--g-ink)); }
     .g-qd .qd-pad.is-idle { background: var(--g-card); color: var(--g-muted); }
     .g-qd .qd-pad.is-idle .qd-pad-name { color: var(--g-ink); }
-    .g-qd .qd-pad-cta { font-family: var(--g-font-display); font-size: clamp(1.5rem, 7vw, 2.1rem); line-height: 1; letter-spacing: 0.04em; }
+    .g-qd .qd-pad-cta { font-family: var(--g-font-display); font-weight: 900; font-size: clamp(1.5rem, 7vw, 2.1rem); line-height: 1; letter-spacing: 0.04em; }
     .g-qd .qd-pad-name { font-weight: 900; font-size: 1rem; }
     .g-qd .qd-pad-hint { font-weight: 800; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 6px; }
     .g-qd .qd-pad .qd-notches i { border-color: var(--g-ink); }
@@ -202,9 +202,9 @@ registerGame({
     } else if (layout === 'desk') {
       el.innerHTML = `<div class="g-qd is-desk" data-phase="intro"><div class="qd-mid">${scene}${sig(false)}</div><div class="qd-pads">${pad('a')}${pad('b')}</div></div>`;
     } else {
-      el.innerHTML = `<div class="g-qd is-live" data-phase="intro">
+      el.innerHTML = `<div class="g-qd is-live" data-phase="intro"><div class="qd-mid">
         <div class="qd-tally"><span class="qd-who t-${left}">${N(left)} ${notches(left)}</span><span class="qd-to">first to ${WIN}</span><span class="qd-who t-${right}">${notches(right)} ${N(right)}</span></div>
-        <div class="qd-mid">${scene}${sig(false)}</div><div class="qd-pads">${pad(me)}</div></div>`;
+        ${scene}${sig(false)}</div><div class="qd-pads">${pad(me)}</div></div>`;
     }
     const root = el.querySelector('.g-qd');
     const $$ = (s) => [...root.querySelectorAll(s)];

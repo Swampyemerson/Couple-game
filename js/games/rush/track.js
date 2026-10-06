@@ -70,12 +70,12 @@ export function genChunk(seed, i) {
   const sIn = safeLane(seed, i);
   const sOut = safeLane(seed, i + 1);
   const sec = (t) => t * c.vd;
-  const X = { c, r, s: sIn, z: z0 + sec(0.45), lim: z1 - sec(0.5), diff: c.diff, sec, block: [-1e9, -1e9, -1e9], tunnel: false };
+  const X = { c, r, s: sIn, z: z0 + sec(0.3), lim: z1 - sec(0.35), diff: c.diff, sec, block: [-1e9, -1e9, -1e9], tunnel: false };
   c.path.push([z0, sIn]);
 
   if (i === 0) {
     // Warm-up straight: coins only (the tutorial plays here).
-    coinLine(c, 0, 26, 74, 1.0, 3);
+    coinLine(c, 0, 26, 92, 1.0, 3);
     c.path.push([z1, sOut]);
     return c;
   }
@@ -86,10 +86,10 @@ export function genChunk(seed, i) {
     [pRow, () => 3],
     [pCorridor, () => 2],
     [pZigzag, (d) => (d > 0.1 ? 2 : 0.6)],
-    [pRamp, (d) => (d > 0.05 ? 1.3 : 0.4)],
+    [pRamp, (d) => (d > 0.05 ? 1.8 : 0.5)],
     [pGap, (d) => (d >= 0.12 ? 0.9 : 0)],
     [pBridge, (d) => (d >= 0.25 ? 0.7 : 0)],
-    [pOncoming, (d) => (d >= 0.18 ? 2.2 : 0)],
+    [pOncoming, (d) => (d >= 0.18 ? (X.z < z0 + 30 ? 5 : 0.5) : 0)],
     [pSlalom, (d) => (d >= 0.4 ? 1.1 : 0)],
   ];
   for (let tries = 0; tries < 14 && X.z < X.lim - 1; tries++) {
@@ -104,12 +104,10 @@ export function genChunk(seed, i) {
     }
   }
   // Exit: steer the safe path into the next chunk's entry lane through clear space.
-  const zx = Math.max(X.z, z1 - sec(0.45));
   if (X.s !== sOut) {
     coinDiag(c, X.s, sOut, Math.min(X.z, z1 - 6), z1 - 1);
     c.path.push([Math.min(X.z, z1 - 6), sOut]);
   } else if (X.z < z1 - 8) coinLine(c, X.s * LANE_W, X.z, z1 - 2, 1.0, 3);
-  void zx;
   c.path.push([z1, sOut]);
 
   placeItems(c, r, X);
@@ -379,9 +377,9 @@ function pSlalom(X) {
 // ── items ──
 function laneClear(c, l, za, zb) {
   for (const o of c.obs) {
-    if (o.z1 < za || o.z0 > zb) continue;
-    if (o.lane === l || (o.t === O_MTRAIN && o.lane === l)) return false;
-    if (o.t === O_MTRAIN && o.lane === l) return false;
+    if (o.lane !== l) continue;
+    const e = o.t === O_MTRAIN ? o.zm + MT_K * MT_LEAD + o.len : o.z1;
+    if (e >= za && o.z0 <= zb) return false;
   }
   for (const g of c.gaps) if (g.z1 >= za && g.z0 <= zb && (g.mask & (1 << (l + 1)))) return false;
   return true;

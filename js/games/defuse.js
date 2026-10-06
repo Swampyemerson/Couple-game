@@ -212,7 +212,7 @@ registerGame({
 .g-defuse { --dx-red: #e0393e; --dx-blue: #2369d6; --dx-yellow: #ffd21f; --dx-green: #1e9a55; --dx-white: #f8f5ec; --dx-black: #23212a; --dx-dark: #18171d;
   position: relative; flex: 1; display: flex; flex-direction: column; gap: 14px; padding: 4px 0 12px; color: var(--g-ink); font-family: var(--g-font-body); }
 @media (min-width: 760px) { .g-defuse { width: calc(100vw - 48px); max-width: 1120px; align-self: center; } }
-.g-defuse button:not(.gm-btn) { font: inherit; color: inherit; } .g-defuse button { cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+.g-defuse :where(button:not(.gm-btn)) { font: inherit; color: inherit; } .g-defuse button { cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 .g-defuse .dx-tag { display: block; font: 800 0.66rem/1.15 var(--g-font-body); letter-spacing: 0.14em; text-transform: uppercase; color: var(--g-muted); }
 .g-defuse .dx-h { font: 400 clamp(1.45rem, 5.4vw, 2.1rem)/1.05 var(--g-font-display); margin: 0; }
 .g-defuse .f-card { fill: var(--g-card); stroke: var(--g-ink); stroke-width: 3; } .g-defuse .f-lcd { fill: var(--dx-dark); stroke: var(--g-ink); stroke-width: 2.5; }
@@ -384,7 +384,7 @@ registerGame({
 .g-defuse .dx-rules li::before { content: counter(rule); display: grid; place-items: center; width: 28px; height: 28px; margin-top: 1px; border: 2px solid var(--g-ink); border-radius: 6px; background: var(--g-bg); font: 400 0.82rem/1 var(--g-font-display); }
 .g-defuse .dx-note { padding: 10px 12px; margin-top: 12px !important; border: 2px dashed var(--g-ink); border-radius: 8px; font-size: 0.98rem; }
 .g-defuse .dx-sw { display: inline-block; width: 0.95em; height: 0.95em; margin-right: 6px; vertical-align: -0.12em; border: 2px solid var(--g-ink); border-radius: 3px; background: var(--sw); }
-.g-defuse table { width: 100%; border-collapse: collapse; font-size: 1rem; margin: 6px 0 4px; }
+.g-defuse table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 1rem; margin: 6px 0 4px; }
 .g-defuse th, .g-defuse td { border: 2px solid var(--g-ink); padding: 7px 8px; text-align: left; }
 .g-defuse th { font: 800 0.72rem/1.2 var(--g-font-body); letter-spacing: 0.1em; text-transform: uppercase; background: var(--g-bg); }
 .g-defuse td.is-now, .g-defuse th.is-now { background: var(--g-hl-soft, var(--g-bg)); }
@@ -413,6 +413,11 @@ registerGame({
   .g-defuse .dx-cols { gap: 6px; } .g-defuse .dx-col { padding: 4px; gap: 4px; } .g-defuse .dx-col span { padding: 4px; }
   .g-defuse th, .g-defuse td { padding: 6px 5px; font-size: 0.92rem; }
 }
+@media (max-width: 440px) {
+  .g-defuse th, .g-defuse td { padding: 6px 4px; font-size: 0.88rem; overflow-wrap: anywhere; }
+  .g-defuse th { font-size: 0.62rem; letter-spacing: 0.05em; }
+  .g-defuse td .dx-sw, .g-defuse tbody th .dx-sw { display: block; margin: 0 0 4px; }
+}
 @media (max-width: 380px) { .g-defuse .dx-roles { gap: 10px; } .g-defuse .dx-role { padding: 12px 10px; } .g-defuse .dx-role-name { font-size: 1.15rem; } }
 @media (prefers-reduced-motion: reduce) { .g-defuse *, .g-defuse *::before, .g-defuse *::after { animation: none !important; transition: none !important; } }
 `,
@@ -434,7 +439,6 @@ registerGame({
     const offs = [];
     const timers = new Set();
     const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); fn(); }, ms); timers.add(t); return t; };
-    const reduce = (() => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; } })();
     const token = () => Math.random().toString(36).slice(2, 10);
     let alive = true;
     let raf = 0;
