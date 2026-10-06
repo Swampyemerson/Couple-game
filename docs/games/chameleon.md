@@ -120,7 +120,16 @@ tongue) go through a uniform 1.5 m XZ grid (CSR arrays, stamp de-dup, no allocat
 1024² atlas per map (`info.atlasPages: 2` → 1024×2048). Spawns come from `hiderSpawns` /
 `seekerSpawns` lists, picked by the host with a seed (match id + round), the same on both devices;
 the seeker's spawn is picked at seek time ≥ 6 m from where the hider ended up. The title orbit
-uses `info.overview`. A seeker-only minimap (rooms + furniture footprint + your arrow) shows on
+uses `info.overview`, and while it orbits the fog pulls back to the map's footprint (near ≈
+0.9 × radius, far ≈ radius + 0.75 × diagonal), snapping back to 11–26 m for play. Chunks entirely
+inside the fog are skipped each frame (one sphere test per chunk), so the far plane can reach
+`backdrop: true` scenery (distant mountains, skylines: one fog-free chunk, never culled or
+picked). Clocks scale with the map's `size` in every preset (S 1×, M 1.2×, L 1.35×, XL 1.5×,
+rounded to 5 s; the settings sheet shows the effective times) and the seeker's sprint grows to
+1.7× on XL. Invisible `climb: false` guards (over roofs, above low outer walls) are solid to
+crawlers but never a surface: feelers stop at them, Stick / zip / wall pose refuse them, and a
+contact whose body would poke into one is rejected; the third-person camera ignores them. A
+seeker-only minimap (rooms + furniture footprint + your arrow) shows on
 big maps unless Hard / off. Measured on the largest map (CU Boulder, 1768 m², 929 colliders,
 46 chunks, iPhone 13 profile): ≤ 55 draw calls, ≤ 70k triangles in view, ~0.05 ms game JS per
 frame, no per-frame allocations in game code.

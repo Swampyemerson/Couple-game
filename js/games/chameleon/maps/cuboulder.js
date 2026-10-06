@@ -1357,6 +1357,7 @@ export const CUBOULDER = {
       { name: 'lab-east-window', p: [-11.6, 1.6, 6.0], t: [-11.6, 1.9, 20] },
       { name: 'arcade-east', p: [6.5, 1.5, -0.3], t: [7.5, 1.7, 14] },
       { name: 'top-down', p: [0.01, 27, 1.5], t: [0, 0, 0] },
+      { name: 'debug-first-iron', p: [0, 1.5, 0], t: [-53.2, 20, -51.4] },
       { name: 'overview', p: [2, 13, 18], t: [0, 0.5, 0] },
     ],
   },
