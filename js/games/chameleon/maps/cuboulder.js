@@ -15,7 +15,7 @@
 // joined by the hall's aisle stairs and the gallery stair, so G1B30 → Norlin → arcade → corridor
 // → G1B30 is a loop. Interiors have downward-only ceilings (the camera sees in from above); roof
 // tops are fenced off with climb:false guards so nobody hides on top of a building.
-import { boxGeo, cylGeo, sphereGeo, latheGeo } from '../geo.js';
+import { boxGeo, cylGeo, sphereGeo, latheGeo, fixWinding } from '../geo.js';
 import { aabb, wall, floor, slab, stairs, railing } from './lib.js';
 import { Q } from './patterns.js';
 
@@ -214,53 +214,32 @@ const PAT = {
     }
   },
 
-  /** Flatirons backdrop (repeats sideways): banded sky, Green Mountain behind, three big tilted
-   *  sandstone slabs with bedding lines, smaller irons, pine forest and a meadow at their feet. */
-  flatirons: ({ sky, rock, rockLt, rockDk, mtn, forest, meadow, pine }) => (g, w, h, r) => {
-    sky.forEach((c, i) => { g.fillStyle = c; g.fillRect(0, (i / sky.length) * h * 0.7, w, h); });
-    g.fillStyle = 'rgba(255,255,255,0.9)';
-    for (const [x, y, s] of [[0.1, 0.1, 1], [0.48, 0.07, 0.8], [0.78, 0.15, 0.7]]) wrapDo(w, 0, (ox) => { g.beginPath(); g.ellipse(w * x + ox, h * y, 30 * s, 8 * s, 0, 0, Math.PI * 2); g.ellipse(w * x + 16 * s + ox, h * y - 5 * s, 18 * s, 8 * s, 0, 0, Math.PI * 2); g.fill(); });
-    // Green Mountain: a broad dark ridge behind everything
-    g.fillStyle = mtn; g.beginPath(); g.moveTo(0, h);
-    for (let x = 0; x <= w; x += w / 24) g.lineTo(x, h * (0.3 + 0.08 * Math.cos((x / w) * Math.PI * 2) + 0.025 * Math.sin((x / w) * Math.PI * 10)));
-    g.lineTo(w, h); g.fill();
-    // irons: [left base, width, apex height] — steep left face, long back slope, blunt tip
-    const iron = (x0, wd, top, base = 0.8) => {
-      const xa = x0 * w; const xb = (x0 + wd) * w; const yb = h * base; const yt = h * top;
-      const tx = xa + (xb - xa) * 0.42; const tx2 = xa + (xb - xa) * 0.55;
-      wrapDo(w, 0, (ox) => {
-        g.fillStyle = rock; g.beginPath(); g.moveTo(xa + ox, yb); g.lineTo(tx + ox, yt); g.lineTo(tx2 + ox, yt + h * 0.02); g.lineTo(xb + ox, yb); g.closePath(); g.fill();
-        g.fillStyle = rockDk; g.beginPath(); g.moveTo(tx2 + ox, yt + h * 0.02); g.lineTo(xb + ox, yb); g.lineTo(tx2 + (xb - tx2) * 0.45 + ox, yb); g.closePath(); g.fill();
-        g.fillStyle = rockLt; g.beginPath(); g.moveTo(xa + ox, yb); g.lineTo(tx + ox, yt); g.lineTo(tx + ox + (xb - xa) * 0.06, yt + h * 0.06); g.lineTo(xa + ox + (xb - xa) * 0.12, yb); g.closePath(); g.fill();
-        // bedding planes: lines parallel to the steep face
-        g.strokeStyle = 'rgba(110,50,40,0.35)'; g.lineWidth = 2;
-        for (let k = 1; k < 5; k++) { const f = k / 5; g.beginPath(); g.moveTo(xa + (xb - xa) * f * 0.7 + ox, yb); g.lineTo(tx + (tx2 - tx) * f + ox, yt + h * 0.02 * f + (yb - yt) * f * 0.25); g.stroke(); }
-      });
-    };
-    iron(0.06, 0.2, 0.2); iron(0.24, 0.17, 0.27); iron(0.39, 0.15, 0.36);
-    iron(0.62, 0.09, 0.5, 0.78); iron(0.74, 0.07, 0.56, 0.78); iron(0.9, 0.08, 0.48, 0.79);
-    // forest at the feet + meadow
-    g.fillStyle = forest; g.beginPath(); g.moveTo(0, h);
-    for (let x = 0; x <= w; x += w / 40) g.lineTo(x, h * (0.74 + 0.03 * Math.sin((x / w) * Math.PI * 14) + 0.02 * Math.cos((x / w) * Math.PI * 6)));
-    g.lineTo(w, h); g.fill();
-    g.fillStyle = pine;
-    for (let i = 0; i < 70; i++) {
-      const x = r() * w; const y = h * (0.72 + r() * 0.12); const s = 3 + r() * 4;
-      wrapDo(w, 0, (ox) => { g.beginPath(); g.moveTo(x + ox, y - s * 2.6); g.lineTo(x + ox + s, y); g.lineTo(x + ox - s, y); g.fill(); });
-    }
-    g.fillStyle = meadow; g.beginPath(); g.moveTo(0, h);
-    for (let x = 0; x <= w; x += w / 12) g.lineTo(x, h * (0.86 + 0.02 * Math.sin((x / w) * Math.PI * 4 + 1)));
-    g.lineTo(w, h); g.fill();
+  /** Flatiron rock face: pink-tan sandstone with bedding lines running up the slab and a few cracks. */
+  rockface: () => (g, w, h, r) => {
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, w, h);
+    g.strokeStyle = 'rgb(214,200,196)'; g.lineWidth = 3;
+    for (let i = -4; i < 10; i++) { const x = i * w / 6; wrapDo(w, h, (ox, oy) => { g.beginPath(); g.moveTo(x + ox, h + oy); g.lineTo(x + w * 0.35 + ox, oy); g.stroke(); }); }
+    g.strokeStyle = 'rgb(190,172,168)'; g.lineWidth = 1.5;
+    for (let i = 0; i < 6; i++) { const x = r() * w; const y = r() * h; wrapDo(w, h, (ox, oy) => { g.beginPath(); g.moveTo(x + ox, y + oy); g.lineTo(x + ox + 10, y + oy - 6); g.lineTo(x + ox + 22, y + oy - 4); g.stroke(); }); }
+    g.fillStyle = 'rgba(255,255,255,0.5)'; for (let i = 0; i < 30; i++) dot(g, r() * w, r() * h, 1.2);
   },
 
-  /** Painted arched window (not repeating): sky behind round-headed mullions. */
-  archwin: ({ wall, sky, frame, glow }) => (g, w, h) => {
-    g.fillStyle = wall; g.fillRect(0, 0, w, h);
-    const m = w * 0.08; const rr = (w - 2 * m) / 2;
-    g.fillStyle = frame; g.beginPath(); g.moveTo(m - 4, h - 4); g.lineTo(m - 4, rr + m); g.arc(w / 2, rr + m, rr + 4, Math.PI, 0); g.lineTo(w - m + 4, h - 4); g.fill();
-    const grd = g.createLinearGradient(0, m, 0, h); grd.addColorStop(0, sky); grd.addColorStop(1, glow);
-    g.fillStyle = grd; g.beginPath(); g.moveTo(m + 4, h - 10); g.lineTo(m + 4, rr + m); g.arc(w / 2, rr + m, rr - 4, Math.PI, 0); g.lineTo(w - m - 4, h - 10); g.fill();
-    g.fillStyle = frame; g.fillRect(w / 2 - 3, m, 6, h - m); for (let k = 1; k < 4; k++) g.fillRect(m, rr + m + k * (h - rr - m) / 4, w - 2 * m, 5);
+  /** Distant forest / ridge texture (tintable greys): little pine silhouettes over a mottled ground. */
+  forest: () => (g, w, h, r) => {
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, w, h);
+    g.fillStyle = 'rgb(222,222,222)'; for (let i = 0; i < 26; i++) wrapDo(w, h, (ox, oy) => dot(g, r() * w + ox, r() * h + oy, 6 + r() * 8));
+    for (let i = 0; i < 40; i++) {
+      const x = r() * w; const y = r() * h; const s2 = 4 + r() * 4;
+      g.fillStyle = r() < 0.5 ? 'rgb(170,170,170)' : 'rgb(196,196,196)';
+      wrapDo(w, h, (ox, oy) => { g.beginPath(); g.moveTo(x + ox, y + oy - s2 * 2.4); g.lineTo(x + ox + s2, y + oy); g.lineTo(x + ox - s2, y + oy); g.fill(); });
+    }
+  },
+
+  /** Plains: patchwork fields in tans and greens with hedgerow lines. */
+  fields: ({ cols, line }) => (g, w, h, r) => {
+    const n = 4; const s2 = w / n;
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) { g.fillStyle = cols[Math.floor(r() * cols.length)]; g.fillRect(i * s2, j * s2, s2, s2); }
+    g.fillStyle = line; for (let i = 0; i < n; i++) { g.fillRect(i * s2, 0, 2, h); g.fillRect(0, i * s2, w, 2); }
   },
 
   /** Locker bank (two lockers per tile, tintable greys): louvres, handle, number plate. */
@@ -543,7 +522,9 @@ function build(atlas, kit) {
   atlas.add('flag', PAT.flagstone({ cols: ['#c9a389', '#b88d73', '#d4b08f', '#a98a78', '#c19a7c', '#b5a08a'], joint: '#8a7466' }), { size: 'L' });
   atlas.add('shelfbooks', PAT.shelfbooks({ cols: [C.red, C.teal, C.mustard, C.navy, C.plum, '#3f6b45', C.coral, '#f3e7cf', C.black, '#8c5a3c', C.gold], back: '#4a3122', board: '#7a4e35' }), { size: 'L' });
   atlas.add('chalk', PAT.chalk({ bg: C.chalk, line: C.chalkLine, accent: '#f2d27a' }), { w: 480, h: 240 });
-  atlas.add('flatirons', PAT.flatirons({ sky: ['#8fc8e6', '#a6d4ec', '#bfe0f1', '#d6ebf4'], rock: '#d3917a', rockLt: '#e6ae94', rockDk: '#a9685c', mtn: '#4f6f52', forest: '#3d5f3f', meadow: '#a7b86a', pine: '#2a4a30' }), { w: 480, h: 240 });
+  atlas.add('rockface', PAT.rockface(), { size: 'M' });
+  atlas.add('forest', PAT.forest(), { size: 'M' });
+  atlas.add('fields', PAT.fields({ cols: ['#c9c08a', '#b7c27a', '#d8c89a', '#a9b870', '#c4b27c'], line: '#8f9a5e' }), { size: 'M' });
   atlas.add('rooftile', PAT.rooftile({ a: C.tile, b: C.tileLt, dark: C.tileDk }), { size: 'M' });
   atlas.add('acoustic', PAT.acoustic({ bg: '#f2efe8', line: '#d8d2c6', speck: '#bdb6a8' }), { size: 'M' });
   atlas.add('coffer', PAT.coffer({ frame: '#efe3c8', well: '#5a7a8c', edge: '#c9a24a', rose: '#e9cf86' }), { size: 'M' });
@@ -568,7 +549,6 @@ function build(atlas, kit) {
   atlas.add('poster4', PAT.poster({ kind: 'sun', bg: C.black, cols: [C.gold, '#3a3639', C.gold] }), { size: 'S', repeat: false });
   atlas.add('banner', PAT.banner({ a: C.black, b: C.gold }), { size: 'S' });
   atlas.add('drawers', PAT.drawers({ n: 4 }), { size: 'M' });
-  atlas.add('archwin', PAT.archwin({ wall: C.plaster, sky: '#9fd0ea', frame: '#5a3a26', glow: '#f6e7b8' }), { size: 'M', repeat: false });
   atlas.add('vinyl', P.stripes({ cols: ['#ffffff', '#d4d4d4'], widths: [5, 1], n: 4 }), { size: 'S' });
   atlas.add('slats', P.stripes({ cols: ['#ffffff', '#cdcdcd'], widths: [4, 1], n: 4 }), { size: 'M' });
   atlas.add('blockwall', P.bricks({ brick: '#ffffff', alt: '#f2f2f2', mortar: '#d0d0d0', rows: 6, cols: 2 }), { size: 'M' });
@@ -600,21 +580,21 @@ function build(atlas, kit) {
     const SS = { tile: 'sandstone', rep: 2.4, color: '#ffffff' };
     const g1In = { color: '#ece4d0', tile: 'blockwall', rep: 1.4 };
     wall(b, { x0: -17, z0: -13, x1: -3, z1: -13, h: 6.8, t: 0.2, n: SS, p: g1In, name: 'back', cap: C.tileDk });
-    wall(b, { x0: -3, z0: -13, x1: 8, z1: -13, h: 5.0, t: 0.2, n: SS, p: { color: C.plaster }, name: 'back', cap: C.tileDk });
+    wall(b, { x0: -3, z0: -13, x1: 8, z1: -13, h: 5.0, t: 0.2, n: SS, p: { color: C.plaster }, open: [0.6, 3.85, 6.6].map((c) => ({ c, w: 1.4, bottom: 2.95, top: 3.85 })), trim: C.walnut, name: 'back', cap: C.tileDk });
     wall(b, { x0: 8, z0: -13, x1: 17, z1: -13, h: 4.4, t: 0.2, n: SS, p: { color: '#e9d9bd' }, name: 'back', cap: C.tileDk });
     wall(b, { x0: -17, z0: -13, x1: -17, z1: -1, h: 6.8, t: 0.2, n: SS, p: g1In, name: 'left', cap: C.tileDk });
     wall(b, { x0: -17, z0: -1, x1: -17, z1: 1.4, h: 2.9, t: 0.2, n: SS, p: { color: C.block, tile: 'blockwall', rep: 1.2 }, name: 'left', cap: C.tileDk });
     wall(b, { x0: -17, z0: 1.4, x1: -17, z1: 9, h: 3.2, t: 0.2, n: SS, p: { color: C.blueGrey }, name: 'left', cap: C.tileDk });
     wall(b, { x0: -17, z0: 9, x1: -17, z1: 13, h: 0.7, t: 0.3, both: SS, name: 'left', cap: C.tileDk, outline: true });
-    wall(b, { x0: 17, z0: -13, x1: 17, z1: -1, h: 4.4, t: 0.2, n: { color: '#e9d9bd' }, p: SS, name: 'right', cap: C.tileDk });
+    wall(b, { x0: 17, z0: -13, x1: 17, z1: -1, h: 4.4, t: 0.2, n: { color: '#e9d9bd' }, p: SS, open: [-8.4, -5.8, -3.2].map((c) => ({ c, w: 1.2, bottom: 1.3, top: 2.6 })), trim: C.ink, name: 'right', cap: C.tileDk });
+    for (const c of [-8.4, -5.8, -3.2]) glazing(b, 'z', 17, c - 0.6, c + 0.6, 1.3, 2.6);
     wall(b, { x0: 17, z0: -1, x1: 17, z1: 13, h: 0.7, t: 0.3, both: SS, name: 'right', cap: C.tileDk, outline: true });
     wall(b, { x0: -17, z0: 13, x1: 17, z1: 13, h: 0.7, t: 0.3, both: SS, name: 'front', cap: C.tileDk, outline: true });
     // red tile copings on the low walls (perchable ledge)
     for (const [x0, z0, x1, z1] of [[-17.2, 12.8, 17.2, 13.2], [-17.2, 9, -16.8, 13.2], [16.8, -1, 17.2, 13.2]]) deco(b, x0, 0.7, z0, x1, 0.78, z1, { color: '#ffffff', tile: 'rooftile', rep: 0.6 });
     guard(b, -17.2, 0.7, 12.85, 17.2, 9, 13.3, 'front'); guard(b, -17.3, 0.7, 9, -16.85, 9, 13.3, 'left'); guard(b, 16.85, 0.7, -1, 17.3, 9, 13.3, 'right');
-    // Flatirons backdrop: single-sided murals beyond the low walls (seen from the quad only)
-    b.add(boxGeo(34.8, 7.2, 0.01, { faces: ['nz'] }), { at: [0, 3.5, 13.6], tile: 'flatirons', rep: [17.4, 7.2], color: '#ffffff', outline: false });
-    b.add(boxGeo(0.01, 7.2, 14.8, { faces: ['nx'] }), { at: [17.6, 3.5, 6.0], tile: 'flatirons', rep: [17.4, 7.2], uvOff: [0.5, 0], color: '#ffffff', outline: false });
+    // the Front Range and the plains, placed by real compass bearings (see landscape())
+    landscape(b);
 
     g1b30(b, R);
     corridor(b);
@@ -637,6 +617,91 @@ function build(atlas, kit) {
     b.probe('demo-bench-top', [-12.2, 0.96, -2.8], [0, 1, 0], BENCH_TOP);
     b.probe('pool-felt', [11.0, 0.8, -6.5], [0, 1, 0], C.felt);
   };
+}
+
+// ── THE FRONT RANGE (distant backdrop) ─────────────────────────────────────────
+// Compass: north = +x, east = +z (Norlin's façade faces east onto its quad, as on campus), so a
+// compass bearing θ (clockwise from north) points along (cos θ, sin θ) in (x, z).
+// Bearings and elevation angles are computed from the Norlin quad (≈ 40.0085 N, 105.2715 W,
+// 1650 m) to published summit coordinates; vertical angles are exaggerated ×2.8 (uniformly) so the range reads
+// above the roofs. All of it is backdrop: one fog-free chunk, no collision, never picked.
+//   Third Flatiron 216.6° 7.9° · Second 218.7° 9.5° · First 224.1° 11.4° · Green Mountain 221.5° 12.1°
+//   Royal Arch 209.5° 7.8° · Bear Peak 200.6° 9.2° · Flagstaff Mountain 256.1° 8.6°
+const NORTH = '+x';
+const EXAG = 2.8;
+const DEG = Math.PI / 180;
+const dirOf = (brg) => [Math.cos(brg * DEG), Math.sin(brg * DEG)];
+const BD = { backdrop: true, outline: false };
+
+/** A curved cut-out card along a profile [[bearing, elevation°], …] at radius R (faces the centre). */
+function ridge(b, R, profile, o = {}) {
+  const pos = []; const nrm = []; const uv = []; const idx = [];
+  const y0 = o.y0 == null ? -0.6 : o.y0;
+  // resample every ≤ 1.5° so the arc stays round
+  const pts = [];
+  for (let i = 0; i < profile.length - 1; i++) {
+    const [b0, e0] = profile[i]; const [b1, e1] = profile[i + 1];
+    const n = Math.max(1, Math.ceil(Math.abs(b1 - b0) / 1.5));
+    for (let k = 0; k < n; k++) { const t = k / n; pts.push([b0 + (b1 - b0) * t, e0 + (e1 - e0) * t]); }
+  }
+  pts.push(profile[profile.length - 1]);
+  let u = 0;
+  pts.forEach(([brg, el], i) => {
+    const [dx, dz] = dirOf(brg); const hgt = Math.max(0.2, R * Math.tan(Math.min(60, el * EXAG) * DEG));
+    if (i) { const [px, pz] = dirOf(pts[i - 1][0]); u += Math.hypot(dx - px, dz - pz) * R; }
+    pos.push(dx * R, y0, dz * R, dx * R, y0 + hgt, dz * R);
+    nrm.push(-dx, 0, -dz, -dx, 0, -dz); uv.push(u, 0, u, hgt);
+    if (i) { const k = i * 2; idx.push(k - 2, k, k + 1, k - 2, k + 1, k - 1); }
+  });
+  b.add(fixWinding({ pos, nrm, uv, idx }), { ...BD, color: o.color || '#ffffff', tile: o.tile, rep: o.rep || 6 });
+}
+
+/** One Flatiron: a tilted slab face (apex leaning back, i.e. dipping east toward campus). */
+function slabIron(b, R, brgL, brgR, brgTop, elev, { color = '#d99a82', lean = 0.32 } = {}) {
+  const H = R * Math.tan(elev * EXAG * DEG);
+  const [lx, lz] = dirOf(brgL); const [rx, rz] = dirOf(brgR); const [tx, tz] = dirOf(brgTop);
+  const back = 1 + (H * lean) / R;
+  const P0 = [lx * R, -0.6, lz * R]; const P1 = [rx * R, -0.6, rz * R]; const P2 = [tx * R * back, H, tz * R * back];
+  const [cx, cz] = dirOf((brgL + brgR) / 2);
+  const span = Math.hypot(P1[0] - P0[0], P1[2] - P0[2]);
+  // face (lit pink) + a narrow shadowed north edge for depth
+  const g = { pos: [...P0, ...P1, ...P2], nrm: [-cx, 0.3, -cz, -cx, 0.3, -cz, -cx, 0.3, -cz], uv: [0, 0, span, 0, span * 0.45, H], idx: [0, 1, 2] };
+  b.add(fixWinding(g), { ...BD, color, tile: 'rockface', rep: 9 });
+  const [ex, ez] = dirOf(brgR + 0.6);
+  const Q = [ex * R * 1.02, -0.6, ez * R * 1.02];
+  b.add(fixWinding({ pos: [...P1, ...Q, ...P2], nrm: [-ex, 0.2, -ez, -ex, 0.2, -ez, -ex, 0.2, -ez], uv: [0, 0, 1, 0, 0.5, 1], idx: [0, 1, 2] }), { ...BD, color: '#9c5f55' });
+}
+
+function landscape(b) {
+  // ground all around the diorama (below the plinth): fields to the east, foothill meadow to the west
+  const ring = (r0, r1, a0, a1, o) => {
+    const pos = []; const nrm = []; const uv = []; const idx = []; const n = Math.max(4, Math.ceil((a1 - a0) / 6));
+    for (let i = 0; i <= n; i++) {
+      const [dx, dz] = dirOf(a0 + (a1 - a0) * i / n);
+      pos.push(dx * r0, -0.62, dz * r0, dx * r1, -0.62, dz * r1); nrm.push(0, 1, 0, 0, 1, 0); uv.push(dx * r0, dz * r0, dx * r1, dz * r1);
+      if (i) { const k = i * 2; idx.push(k - 2, k + 1, k, k - 2, k - 1, k + 1); }
+    }
+    b.add(fixWinding({ pos, nrm, uv, idx }), { ...BD, ...o });
+  };
+  ring(16, 110, -10, 170, { tile: 'fields', rep: 14, color: '#ffffff' }); // north → east → south: plains
+  ring(16, 110, 170, 350, { tile: 'lawn', rep: 6, color: '#b9c98f' }); // south-west → north-west: meadow under the hills
+  // plains to the east: a whisper of low rises on the horizon
+  ridge(b, 108, [[300, 0.2], [330, 0.5], [350, 0.9], [10, 0.6], [40, 0.9], [70, 0.5], [100, 0.8], [130, 0.4], [160, 0.9], [185, 1.6]], { tile: 'forest', rep: 10, color: '#b3b98a' });
+  // far ridge: South Boulder Peak / Bear Peak, Green Mountain, the ridge north to Sanitas
+  ridge(b, 100, [[180, 1.2], [188, 3.5], [195, 6.8], [200.6, 9.2], [203.5, 7.4], [207, 8.2], [213, 10.4], [218, 11.6], [221.5, 12.1], [226, 11.2], [232, 9.6], [240, 8.0], [248, 7.2], [262, 6.4], [275, 5.4], [288, 5.0], [296, 5.6], [303, 4.4], [315, 2.6], [330, 1.0], [345, 0.3]], { tile: 'forest', rep: 9, color: '#4f6e55' });
+  // Flagstaff Mountain (closer, lighter) with Gregory Canyon between it and Green Mountain
+  ridge(b, 86, [[236, 2.2], [242, 3.6], [248, 6.6], [253, 8.2], [256.1, 8.6], [260, 7.8], [266, 6.2], [274, 4.4], [282, 3.0], [292, 2.2], [300, 1.0]], { tile: 'forest', rep: 8, color: '#6c8a5e' });
+  // the Flatirons: tilted pink slabs on Green Mountain's east face (south → north: Fifth/Fourth,
+  // Third, Second, First), small irons by Royal Arch, a pine skirt along their feet
+  slabIron(b, 74, 205.5, 209.5, 207.6, 5.6, { color: '#cf927c' });
+  slabIron(b, 74, 209.0, 212.6, 210.6, 6.6, { color: '#d69a84' });
+  slabIron(b, 74, 212.4, 218.2, 215.6, 7.9, { color: '#dba08a' });
+  slabIron(b, 74, 216.6, 222.4, 219.4, 9.5, { color: '#d99883' });
+  slabIron(b, 74, 220.6, 228.4, 224.4, 11.4, { color: '#dea48c' });
+  ridge(b, 70, [[190, 1.0], [196, 2.2], [202, 2.8], [207, 3.4], [212, 2.9], [218, 3.6], [224, 3.2], [230, 3.8], [236, 2.8], [244, 2.2], [252, 1.6], [262, 1.0]], { tile: 'forest', rep: 6, color: '#3d5f45' });
+  // the afternoon sun, west-south-west, with a soft halo
+  const sun = (r, col, R) => { const [dx, dz] = dirOf(258); const y = R * Math.tan(30 * DEG); b.add(cylGeo(r, r, 0.2, { radial: 20 }), { ...BD, at: [dx * R, y, dz * R], rot: [Math.PI / 2, Math.atan2(dx, dz), 0], color: col }); };
+  sun(9, '#fff1c4', 116); sun(6, '#ffd36b', 112);
 }
 
 // ── 1. DUANE G1B30 ──────────────────────────────────────────────────────────
@@ -859,7 +924,11 @@ function norlin(b, R, kit) {
   for (const z of [-11.0, -8.1, -5.2, -2.3]) solid(b, -2.9, H.nor - 0.22, z - 0.1, 7.9, H.nor, z + 0.1, { color: '#e8d8b6', faces: ['ny', 'pz', 'nz'] }, { name: 'ceil:beam', ceil: true, wall: false });
   for (const x of [0.6, 3.85, 6.6]) solid(b, x - 0.1, H.nor - 0.22, -12.9, x + 0.1, H.nor, -1.1, { color: '#e8d8b6', faces: ['ny', 'px', 'nx'] }, { name: 'ceil:beam', ceil: true, wall: false });
   // tall arched windows painted high on the north wall
-  for (const x of [0.6, 3.85, 6.6]) poster(b, x, 3.65, -12.9, 1.5, 1.7, 'z+', 'archwin');
+  for (const x of [0.6, 3.85, 6.6]) {
+    glazing(b, 'x', -13, x - 0.7, x + 0.7, 2.95, 3.85, C.walnut);
+    arch(b, x, 3.85, -12.86, 1.4, { depth: 0.1, thick: 0.14, n: 5, color: '#e8d8b6', key: '#c9a24a' });
+    arch(b, x, 3.85, -13.14, 1.4, { depth: 0.1, thick: 0.16, n: 5 });
+  }
   // ── back bookcases (painted rows + real books at eye level), rolling ladder
   const caseRow = (x0, x1, z, h, nrm) => {
     const s = nrm === 'z+' ? 1 : -1; const d = 0.42;
@@ -1262,6 +1331,7 @@ export const CUBOULDER = {
       { name: 'The quad', floor: 0, x0: -8, z0: 2.2, x1: 17, z1: 13, landmark: 'Buffalo statue' },
       { name: 'Bike racks', floor: 0, x0: -17, z0: 9, x1: -8, z1: 13, landmark: 'Bike racks' },
     ],
+    north: NORTH, // compass: north = +x, east = +z (bearing θ → (cos θ, sin θ) in x, z)
     overview: { y: 12, radius: 18 },
     // screenshot / tour cameras: p = eye, t = target
     cams: [
@@ -1275,7 +1345,18 @@ export const CUBOULDER = {
       { name: 'lab', p: [-8.5, 2.75, 8.6], t: [-14.5, 0.8, 3.0] },
       { name: 'arcade', p: [16.2, 2.4, 3.6], t: [3, 1.2, 0.0] },
       { name: 'quad', p: [5, 6.5, 16], t: [5, 0.6, 4.5] },
-      { name: 'flatirons', p: [3, 1.6, 2.0], t: [9, 2.4, 13] },
+      // compass views (north = +x, east = +z) and views out of windows
+      { name: 'quad-looking-N', p: [1.5, 1.5, 7.2], t: [16, 2.2, 7.2] },
+      { name: 'quad-looking-E', p: [5, 1.5, 3.2], t: [5, 2.0, 16] },
+      { name: 'quad-looking-S', p: [15, 1.6, 9], t: [-4, 2.6, 9] },
+      { name: 'quad-looking-SW', p: [15, 2.0, 12], t: [-10, 6.5, -10] },
+      { name: 'quad-looking-W', p: [8, 1.8, 12.4], t: [6, 4.5, -10] },
+      { name: 'norlin-west-window', p: [3.85, 3.0, -8.0], t: [3.0, 4.3, -20] },
+      { name: 'norlin-window-looking-SW', p: [4.6, 2.9, -9.2], t: [-1.5, 4.6, -18] },
+      { name: 'umc-north-window', p: [13.6, 1.95, -5.8], t: [25, 2.4, -5.0] },
+      { name: 'lab-east-window', p: [-11.6, 1.6, 6.0], t: [-11.6, 1.9, 20] },
+      { name: 'arcade-east', p: [6.5, 1.5, -0.3], t: [7.5, 1.7, 14] },
+      { name: 'top-down', p: [0.01, 27, 1.5], t: [0, 0, 0] },
       { name: 'overview', p: [2, 13, 18], t: [0, 0.5, 0] },
     ],
   },
