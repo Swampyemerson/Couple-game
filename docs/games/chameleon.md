@@ -149,6 +149,30 @@ game across open/close (what grows is the hub's match list). Geometry building g
 the QA pass: the outline-hull smoothing groups vertices with a numeric key on the primitive's
 local positions instead of string keys on world positions (identical output, ~25 % faster).
 
+### QA pass (two-phone play-tests, fuzzing, design review)
+
+- **Sticky floor needs feet on something.** Stick in mid-jump used to glue the body to thin air
+  (a floating hiding spot); now it refuses unless a wall/overhead face is in reach.
+- **Hang needs room.** Hang is offered only with ≥ 0.9 × size of drop under the face; under a low
+  underside (a plinth lip) the dangling body used to sink through the floor, out of pellet reach.
+- **Camera in front of the surface.** Stuck to a wall or ceiling, the third-person orbit is kept in
+  the half-space in front of that face; orbiting "behind the wall" used to jam the camera into
+  the body, which vanished.
+- **Round 1 title.** The round-title card and the map's overview orbit now show for round 1 too
+  (both devices used to sit on a dead lobby, Start still showing, for the title lead). The title
+  card uses a light veil so the orbit reads instead of a 70 % paper wash.
+- **Settings sheet.** On laptops (≥ 900 × 600) it's a 940 px dialog with two columns of settings
+  and desktop-sized type; the lobby card hides behind it; it is a flex column so a long sheet
+  can't overflow above the corner buttons; a guest's open sheet closes when the match starts.
+- **Map card plan.** A riso print of `info.rooms` (floors side by side, rooms overprinted in the
+  three inks with a mis-registered pass, ink outlines in screen pixels; one-room dioramas get a
+  halftone floor and a dashed open front).
+- **Data fixes.** Wall skins with a `[u, v]` repeat produced NaN UV offsets (Market stockroom
+  wall, Museum gift-shop and Ancient Worlds skins rendered untextured); `wall()` and the museum
+  skins now use the u/v components.
+- **Pose bar** on a phone on its side stays a bottom-left row with six action buttons (the
+  portrait column ran up under the back sticker).
+
 ### First-time tips
 
 The first time a device hides with climbing on, a sticker lists the four new moves (Stick,

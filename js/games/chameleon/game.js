@@ -1172,11 +1172,17 @@ export function createGame(el, api) {
       case 'stand': case 'ball': return true;
       case 'crouch': case 'flat': case 'squeeze': return !b.at;
       case 'wall': return b.at ? Math.abs(b.ny) < 0.7 || climb : !!stage.world.nearestWall(b.x, b.y, b.z, 0.5 + b.r);
-      case 'hang': return climb && b.at && b.ny < -0.7;
+      case 'hang': return climb && b.at && b.ny < -0.7 && hangRoom(b);
       case 'perch': return b.at ? !!(b.box && b.box.perch) : !!(stage.world.groundAt(b.x, b.z, b.r * 0.6, b.y + 0.05) >= 0 && stage.world.groundRes.box && stage.world.groundRes.box.perch);
       case 'corner': return b.at && Math.abs(b.ny) < 0.7 && !!stage.world.cornerAt(b.x, b.y, b.z, b.nx, b.nz, 0.45 + b.r);
       default: return false;
     }
+  }
+  /** Room to dangle under an overhead face: the hanging body reaches ~0.9 × size below it (a
+   *  low underside used to let it sink through the floor, out of reach of every pellet). */
+  function hangRoom(b) {
+    const g = stage.world.groundAt(b.x, b.z, b.r * 0.4, b.y - 0.02, 0);
+    return b.y - g >= 0.9 * b.s;
   }
   function setPose(name) {
     const v = viewer();
@@ -1203,6 +1209,7 @@ export function createGame(el, api) {
       }
     } else if (name === 'hang') {
       if (!b.at || b.ny > -0.7) { hint(rules().climb ? 'Hang from a ceiling or the underside of something — Stick to it first' : 'Climbing is off in these rules', 2200); snd.play('warn'); return; }
+      if (!hangRoom(b)) { hint('Too low to hang here — try Flat', 1600); snd.play('warn'); return; }
     } else if (name === 'corner') {
       const c = b.at && Math.abs(b.ny) < 0.7 ? stage.world.cornerAt(b.x, b.y, b.z, b.nx, b.nz, 0.45 + b.r) : null;
       if (!c) { hint('Flatten against a wall next to a corner first', 2000); snd.play('warn'); return; }
