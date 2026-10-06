@@ -419,7 +419,7 @@ async function localGame(h) {
 
 // ── laptop: hover, R to rotate, arrow keys + Enter ──
 async function laptop() {
-  const h = await launch({ port: 8822, only: ['fleet'], device: 'Desktop Chrome' });
+  const h = await launch({ port: 8924, only: ['fleet'], device: 'Desktop Chrome' });
   const { a, b } = h;
   try {
     await realFonts(h);
@@ -499,7 +499,7 @@ async function laptop() {
     await rulesTests();
 
     // light: online + same phone
-    h = await launch({ port: 8820, only: ['fleet'] });
+    h = await launch({ port: 8922, only: ['fleet'] });
     if (await realFonts(h)) console.log('(using local copies of the app fonts for screenshots)');
     const r1 = await onlineGame(h, { scheme: 'light' });
     assert(h.results().length === 1 && h.results()[0].game === 'fleet' && h.results()[0].winner === r1.winner, 'the online result is recorded once');
@@ -511,7 +511,7 @@ async function laptop() {
     h = null;
 
     // dark: online again (screenshots), placement by Shuffle on both
-    h = await launch({ port: 8821, only: ['fleet'], colorScheme: 'dark' });
+    h = await launch({ port: 8923, only: ['fleet'], colorScheme: 'dark' });
     await realFonts(h);
     await onlineGame(h, { scheme: 'dark', drag: true });
     h.assertNoErrors();

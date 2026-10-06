@@ -443,7 +443,7 @@ async function agentsLocal(h, scheme) {
   try { await unitTests(); } catch (e) { console.error(e.message); fails++; }
   for (const scheme of ['light', 'dark']) {
     const full = scheme === 'light';
-    const h = await launch({ port: scheme === 'light' ? 8830 : 8831, only: ['wordduel', 'agents'], colorScheme: scheme });
+    const h = await launch({ port: scheme === 'light' ? 8930 : 8931, only: ['wordduel', 'agents'], colorScheme: scheme });
     try {
       await wordDuelOnline(h, scheme, full);
       await wordDuelLocal(h, scheme);

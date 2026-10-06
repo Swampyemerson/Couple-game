@@ -294,7 +294,7 @@ const dialValue = (pg) => pg.$eval('.wv-dial.live', (d) => Number(d.getAttribute
   console.log('# rules');
   rulesTests(await loadRules());
 
-  const h = await launch({ port: 8840, only: ['doodle', 'wave'] });
+  const h = await launch({ port: 8932, only: ['doodle', 'wave'] });
   const { a, b } = h;
   const pages = { a, b };
   if (!QUICK) for (const pg of [a, b]) await useCachedFonts(pg);
@@ -328,7 +328,8 @@ const dialValue = (pg) => pg.$eval('.wv-dial.live', (d) => Number(d.getAttribute
       // the guesser can't see the prompt cards
       const gHtml = await rootHTML(G);
       const shown = await D.$$eval('.dd-pick-word', (xs) => xs.map((x) => x.textContent.trim()));
-      assert(shown.length === 3 && shown.every((wd) => !wordRe(wd).test(gHtml.replace(/<[^>]+>/g, ' '))), `round ${r + 1}: guesser's page has none of the 3 prompts`);
+      const leaked = shown.filter((wd) => wordRe(wd).test(gHtml.replace(/<[^>]+>/g, ' ')));
+      assert(shown.length === 3 && !leaked.length, `round ${r + 1}: guesser's page has none of the 3 prompts${leaked.length ? ` (leaked: ${leaked.join(', ')}; page: ${gHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 400)})` : ''}`);
       assert(!(await G.$('.dd-input')), `round ${r + 1}: guesser has no guess box while the drawing is being made (no guessing out of turn)`);
       await D.click(`.dd-pick[data-i="${r % 3}"]`);
       await D.waitForSelector('.dd-paper.can-draw canvas');

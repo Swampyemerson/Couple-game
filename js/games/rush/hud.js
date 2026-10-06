@@ -205,7 +205,7 @@ export function createHud(root, o) {
   tut.innerHTML = '<div class="rr-hand"></div><div class="rr-cap"></div><div class="rr-steps"><i></i><i></i><i></i></div>';
   L.appendChild(tut);
   const tag = mk('rr-tag');
-  let tagX = -1; let tagY = -1;
+  let tagX = -1; let tagY = -1; let tagE = 0;
   L.appendChild(tag);
   let lastCount = ''; let lastSub = '';
 
@@ -319,13 +319,18 @@ export function createHud(root, o) {
       tut.querySelector('.rr-cap').textContent = caption;
       tut.querySelectorAll('.rr-steps i').forEach((i, n) => i.classList.toggle('on', n <= step));
     },
-    tag(on, x, y, name, color) {
+    /** Partner name tag above their head; edge ±1 pins it to that screen edge (partner beside you, off screen). */
+    tag(on, x, y, name, color, edge = 0) {
       if (!on) { if (tag.style.display !== 'none') tag.style.display = 'none'; return; }
       if (tag.style.display !== 'block') tag.style.display = 'block';
       if (tag.textContent !== name) tag.textContent = name;
       if (tag.style.background !== color) tag.style.background = color;
       const qx = Math.round(x / 2) * 2; const qy = Math.round(y / 2) * 2;
-      if (qx !== tagX || qy !== tagY) { tagX = qx; tagY = qy; tag.style.transform = `translate(${qx}px, ${qy}px) translate(-50%, -100%)`; }
+      if (qx !== tagX || qy !== tagY || edge !== tagE) {
+        if (edge !== tagE) { tag.classList.toggle('rr-edge-l', edge < 0); tag.classList.toggle('rr-edge-r', edge > 0); }
+        tagX = qx; tagY = qy; tagE = edge;
+        tag.style.transform = `translate(${qx}px, ${qy}px) ${edge > 0 ? 'translate(-100%, -50%)' : edge < 0 ? 'translate(0, -50%)' : 'translate(-50%, -100%)'}`;
+      }
     },
     get countText() { return lastCount; },
     A_USE,

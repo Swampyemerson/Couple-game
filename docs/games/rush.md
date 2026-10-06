@@ -32,7 +32,7 @@ respawn in the clearest lane with 2 s of ghost invulnerability. Shield absorbs o
 
 ## Track generator (js/games/rush/track.js)
 
-- 80 m chunks, each a pure function of `(seed, index)`: the same chunk on every device, built in any
+- 100 m chunks, each a pure function of `(seed, index)`: the same chunk on every device, built in any
   order. Only `+ − × ÷ sqrt floor` are used (no `exp`/`sin`), so every JS engine agrees bit for bit.
 - Every chunk carves a **safe path**: it enters in `safeLane(seed, i)` and leaves in
   `safeLane(seed, i+1)`, and every obstacle is placed around that path. On the path an obstacle is

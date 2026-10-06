@@ -1,10 +1,10 @@
 // Netcode kit test: clock sync, reliable delivery under packet loss, interpolation.
-//   node tools/test/net.test.js
+//   node tools/test/net.test.js            (PORT=8942 node … to pick the port)
 const { launch } = require('./harness');
 const assert = (c, m) => { if (!c) throw new Error('FAIL: ' + m); console.log('ok -', m); };
 
 (async () => {
-  const h = await launch({ port: 8798, only: ['example-net'], latency: 60, dropRate: 0.3 });
+  const h = await launch({ port: Number(process.env.PORT) || 8798, only: ['example-net'], latency: 60, dropRate: 0.3 });
   const { a, b } = h;
   try {
     await h.startLive(a, 'example-net', 'live');

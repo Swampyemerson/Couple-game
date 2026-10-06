@@ -768,7 +768,7 @@ export function createGame(el, api) {
     tAnim += dt;
     if (M.phase === 'over' && (perf.n % 6) !== 0) { perf.n++; return; } // idle behind the end card
     logic(now, dt);
-    if (!glLost) render(dt, now);
+    if (!glLost) { render(dt, now); updateTag(); }
     track(dtMs, performance.now() - w0);
   }
 
@@ -932,19 +932,29 @@ export function createGame(el, api) {
         } else if (hk.ban) { hk.ban = 0; v.banner(null); }
       } else if (M.mode !== 'tandem') v.banner(null);
     }
-    // partner name tag (live)
+    void dt;
+  }
+  // partner name tag (live): after render, so the camera matrices are this frame's
+  function updateTag() {
     if (live && players[meW].rig && vec3 && M.phase !== 'lobby') {
       const q = players[other(meW)];
       const me = players[meW].rs;
       const dz = q.rs.z - me.z;
       if (dz > -6 && dz < 150 && q.rs.visible && !(Math.abs(dz) < 3 && Math.abs(q.rs.x - me.x) < 1)) {
+        const cam = players[meW].rig.cam;
         vec3.set(q.rs.x, q.rs.y + 2.75, -q.rs.z);
-        vec3.project(players[meW].rig.cam);
-        const on = vec3.z < 1 && Math.abs(vec3.x) < 1.25 && vec3.y < 1 && vec3.y > -1;
-        hud.tag(on, clamp((vec3.x * 0.5 + 0.5) * W, 44, W - 44), clamp((-vec3.y * 0.5 + 0.5) * H, 120, H - 40), q.name, q.css);
+        vec3.project(cam);
+        if (vec3.z < 1 && Math.abs(vec3.x) < 1.1 && vec3.y < 1 && vec3.y > -1) {
+          hud.tag(true, clamp((vec3.x * 0.5 + 0.5) * W, 44, W - 44), clamp((-vec3.y * 0.5 + 0.5) * H, 120, H - 40), q.name, q.css, 0);
+        } else if (vec3.z < 1 && Math.abs(dz) < 12) {
+          // right beside me but outside a narrow portrait view: pin the tag to that edge, pointing at them
+          const side = vec3.x > 0 ? 1 : -1;
+          vec3.set(q.rs.x, q.rs.y + 1.1, -q.rs.z);
+          vec3.project(cam);
+          hud.tag(true, side > 0 ? W - 10 : 10, clamp((-vec3.y * 0.5 + 0.5) * H, 150, H - 170), q.name, q.css, side);
+        } else hud.tag(false);
       } else hud.tag(false);
     } else hud.tag(false);
-    void dt;
   }
   let hudBeep = '';
   let speedV = -1; let speedI = 0;
@@ -1077,6 +1087,7 @@ export function createGame(el, api) {
       give(w, kind) { const p = players[w || meW]; if (!p || !p.r) return false; if (kind === 'shield') { p.r.shield = 1; return true; } if (kind === 'magnet') { p.r.magnetT = 10; return true; } p.weapon = kind; p.weaponRoll = 0; return true; },
       crash(w) { const p = players[w || meW]; if (p && p.r && !p.r.down) { p.r.invulnT = 0; p.r.shield = 0; crash(p.r, C_FORCED, false); drain(p); } },
       setHearts(w, n) { const p = players[w || meW]; if (p && p.r) p.r.hearts = n; },
+      ghost(w, sec) { const p = players[w || meW]; if (p && p.r && !p.r.done) p.r.invulnT = sec; },
       teamHearts(n) { M.th = n; },
       mode(m) { if (isHost && M.phase === 'lobby') { M.lobbyMode = m; } },
       start() { hostStart(); },

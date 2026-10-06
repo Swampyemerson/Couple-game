@@ -37,7 +37,7 @@ async function swipe(pg, x0, y0, dx, dy) {
 /** Tap the weapon slot once the HUD shows it loaded (an empty slot lets taps through). */
 async function fireWeapon(pg) {
   await until(pg, () => !!document.querySelector('.g-rush .rr-weapon.full'), null, 5000, 'weapon slot loaded');
-  await fireWeapon(pg);
+  await pg.click('.g-rush .rr-weapon', { force: true }); // it wobbles while loaded, so skip the stability wait
 }
 
 async function openLivePair(h, extra = {}) {
@@ -95,8 +95,10 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         const skew = Math.abs(sa.startedWall - sb.startedWall);
         assert(skew < 50, `both phones start within 50 ms on the shared clock (skew ${skew.toFixed(1)} ms, rtt ${sb.rtt} ms)`);
         console.log(`   first frame after GO differs by ${Math.abs(sa.firstRunWall - sb.firstRunWall)} ms (frame granularity in the harness)`);
-        // UI inputs: real touch swipes on both phones
-        await a.evaluate(() => window.__rush.resetPerf());
+        // UI inputs: real touch swipes on both phones (runners ghosted meanwhile, so a slow harness
+        // can't run them into a barrier and swallow the gesture while they're down)
+        await a.evaluate(() => { window.__rush.resetPerf(); window.__rush.ghost('a', 30); });
+        await b.evaluate(() => window.__rush.ghost('b', 30));
         const la = (await S(a)).a.lane; const lb = (await S(b)).b.lane;
         await swipe(a, 195, 560, 90, 0);   // Emerson: right
         await swipe(b, 195, 560, -90, 0);  // Sydney: left
@@ -115,11 +117,12 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         await swipe(b, 195, 500, 0, 80);   // roll
         await until(b, (n) => window.__rush.state().b.rolls > n, r0, 4000, 'roll from a down-swipe');
         console.log('ok - down-swipe rolls');
-        await h.wait(700);
+        // hand over to the autopilot; the ghosting runs out like a respawn's, so it can steer clear first
+        await a.evaluate(() => { window.__rush.ghost('a', 1.5); window.__rush.auto('a', true); });
+        await b.evaluate(() => { window.__rush.ghost('b', 1.5); window.__rush.auto('b', true); });
+        await h.wait(1800);
         await shot(a, 'phone-light-run');
-        await a.evaluate(() => window.__rush.auto('a', true));
-        await b.evaluate(() => window.__rush.auto('b', true));
-        await h.wait(2500);
+        await h.wait(700);
 
         // weapons: whoever trails throws ink at the leader through the UI button
         const s1 = await S(a);
@@ -145,12 +148,14 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
 
         // hearts + respawn
         await b.evaluate(() => window.__rush.auto('b', false));
+        await until(b, () => !window.__rush.state().b.down, null, 4000, 'guest up and running');
+        const hb0 = (await S(b)).b.hearts;
         await b.evaluate(() => window.__rush.crash('b'));
         const sb2 = await S(b);
-        assert(sb2.b.down && sb2.b.hearts === 2, 'a crash costs a heart');
+        assert(sb2.b.down && sb2.b.hearts === hb0 - 1, `a crash costs a heart (${hb0}→${sb2.b.hearts})`);
         await until(b, () => !window.__rush.state().b.down && window.__rush.state().b.invuln, null, 4000, 'respawn with invulnerability');
         console.log('ok - respawns after a moment, blinking');
-        await until(a, () => window.__rush.state().b.hearts === 2, null, 3000, 'host sees the guest hearts');
+        await until(a, (n) => window.__rush.state().b.hearts === n, hb0 - 1, 3000, 'host sees the guest hearts');
         await b.evaluate(() => window.__rush.auto('b', true));
         await h.wait(600);
         const pa = await a.evaluate(() => window.__rush.perf());

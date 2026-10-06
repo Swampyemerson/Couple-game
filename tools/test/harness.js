@@ -11,7 +11,8 @@
 // Serves dist/just-us.html inside the artifact skeleton and injects a mock
 // Claude runtime (db + room + user) that both browser contexts share through
 // the Node process, with a configurable network delay. three.js from the CDN is
-// served from a local copy. Each player is pre-identified (no name picker).
+// served from a local copy. Each player is pre-identified (no name picker); h.device(w, { identified: false })
+// opens another device for the same person that still has to pick.
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
@@ -45,7 +46,8 @@ const RUNTIME = (cfg) => `
       return mm(q);
     };
   }
-  try { localStorage.setItem('jt.me', ME); } catch {}
+  if (${JSON.stringify(cfg.identified !== false)}) { try { localStorage.setItem('jt.me', ME); } catch {} }
+  const COLD = ${JSON.stringify(!!cfg.coldCache)}; // first delivery of every subscription is an empty, not-yet-definitive cache view
   window.confirm = () => false; window.alert = () => {}; window.prompt = () => null;
   const clone = (x) => x === undefined ? undefined : JSON.parse(JSON.stringify(x));
   const freeze = (o) => { if (o && typeof o === 'object') { Object.freeze(o); Object.values(o).forEach(freeze); } return o; };
@@ -54,7 +56,8 @@ const RUNTIME = (cfg) => `
   const docL = []; // { path, fn }
   const colL = []; // { path, fn }
   let all = {};
-  const snapDoc = (p, d) => ({ id: p.split('/').pop(), exists: d !== undefined && d !== null, data: () => (d == null ? undefined : freeze(clone(d))), metadata: { fromCache: false, hasPendingWrites: false } });
+  const snapDoc = (p, d, fromCache = false) => ({ id: p.split('/').pop(), exists: d !== undefined && d !== null, data: () => (d == null ? undefined : freeze(clone(d))), metadata: { fromCache, hasPendingWrites: false } });
+  let dbReady = false; // true once the first real snapshot from the "server" has arrived
   const deliverAll = () => {
     for (const l of docL) l.fn(snapDoc(l.path, all[l.path]));
     for (const l of colL) {
@@ -64,7 +67,8 @@ const RUNTIME = (cfg) => `
     }
   };
   let dbSeq = 0;
-  window.__dbPush = (snapshot, seq) => { if (seq <= dbSeq) return; dbSeq = seq; all = snapshot; deliverAll(); };
+  window.__dbPush = (snapshot, seq) => { if (seq <= dbSeq) return; dbSeq = seq; all = snapshot; dbReady = true; deliverAll(); };
+  window.__dbStats = { subs: () => docL.length + colL.length };
   const err = (code, message) => Object.assign(new Error(message), { code });
   const call = async (op, p, v) => {
     const r = JSON.parse(await window.__db(op, p, v === undefined ? null : JSON.stringify(v)));
@@ -79,7 +83,12 @@ const RUNTIME = (cfg) => `
       set: async (d) => { if (!d || typeof d !== 'object' || Array.isArray(d)) throw err('invalid_argument', 'body must be an object'); await call('set', p, d); },
       update: async (d) => { await call('update', p, d); },
       delete: async () => { await call('delete', p); },
-      onSnapshot: (fn) => { const l = { path: p, fn }; docL.push(l); Promise.resolve().then(() => fn(snapDoc(p, all[p]))); return () => { const i = docL.indexOf(l); if (i >= 0) docL.splice(i, 1); }; },
+      onSnapshot: (fn) => {
+        const l = { path: p, fn }; docL.push(l);
+        if (COLD && !dbReady) Promise.resolve().then(() => fn(snapDoc(p, undefined, true)));
+        else Promise.resolve().then(() => fn(snapDoc(p, all[p])));
+        return () => { const i = docL.indexOf(l); if (i >= 0) docL.splice(i, 1); };
+      },
       collection: (c) => colRef(p + '/' + c),
     };
   };
@@ -90,7 +99,12 @@ const RUNTIME = (cfg) => `
       add: async (d) => { const r = q.doc(); await r.set(d); return r; },
       where: () => q, orderBy: () => q, limit: () => q,
       get: async () => { const pre = c + '/'; const ds = Object.keys(all).filter((k) => k.startsWith(pre) && k.slice(pre.length).indexOf('/') < 0).map((k) => snapDoc(k, all[k])); return { docs: ds, size: ds.length, empty: !ds.length, docChanges: () => [] }; },
-      onSnapshot: (fn) => { const l = { path: c, fn }; colL.push(l); Promise.resolve().then(deliverAll); return () => { const i = colL.indexOf(l); if (i >= 0) colL.splice(i, 1); }; },
+      onSnapshot: (fn) => {
+        const l = { path: c, fn }; colL.push(l);
+        if (COLD && !dbReady) Promise.resolve().then(() => fn({ docs: [], size: 0, empty: true, docChanges: () => [], metadata: { fromCache: true, hasPendingWrites: false } }));
+        else Promise.resolve().then(deliverAll);
+        return () => { const i = colL.indexOf(l); if (i >= 0) colL.splice(i, 1); };
+      },
     };
     return q;
   };
@@ -142,7 +156,21 @@ const RUNTIME = (cfg) => `
   const user = { id: async () => UID, isOwner: async () => ME === 'a', canEdit: async () => true, can: async () => true, me: async () => ({ id: UID, name: '', email: null }) };
   let ready = null;
   const hello = () => (ready = ready || (async () => { PEER = await window.__room('hello', '', '', ''); })());
-  window.claude = { use: async (n) => { await hello(); await new Promise((r) => setTimeout(r, 30)); return n === 'db' ? db : n === 'room' ? room : n === 'user' ? user : null; } };
+  // The first snapshot a view gets is the server's current state (seeded docs included). With
+  // coldCache, subscriptions first see an empty cache view (fromCache: true) and the server's
+  // state lands a moment later, like a cold start on a phone.
+  let synced = null;
+  const initialSync = () => (synced = synced || (async () => {
+    if (COLD) await new Promise((r) => setTimeout(r, 300));
+    const r = JSON.parse(await window.__db('snapshot', '', null));
+    window.__dbPush(r.docs, r.seq);
+  })());
+  window.claude = { use: async (n) => {
+    await hello();
+    if (n === 'db') { if (COLD) initialSync(); else await initialSync(); }
+    await new Promise((r) => setTimeout(r, 30));
+    return n === 'db' ? db : n === 'room' ? room : n === 'user' ? user : null;
+  } };
 })();`;
 
 function deepMerge(a, b) {
@@ -162,13 +190,14 @@ async function launch(opts = {}) {
     coarse = false, // true = report (pointer: coarse) like a real phone
     fine = false, // true = a laptop: no touch, (pointer: fine)
     reducedMotion = 'no-preference', // or 'reduce'
+    coldCache = false, // true = every db subscription first sees an empty cache view (fromCache), then the server
   } = opts;
   // `only`: game file names to bundle (e.g. ['four', 'dots']). Builds to a private file so
   // parallel test runs, and other people's half-finished games, can't break yours.
   const out = path.join(CACHE, `build-${port}.html`);
   fs.mkdirSync(CACHE, { recursive: true });
   if (build) {
-    const onlyArg = only ? ` --only ${only.join(',')}` : '';
+    const onlyArg = only ? ` --only=${only.join(',')}` : ''; // '--only=' (empty) = no games
     try { execSync(`python3 tools/build_artifact.py --out ${out}${onlyArg}`, { cwd: ROOT, stdio: 'pipe' }); } catch (e) { throw new Error('build failed: ' + (e.stderr || e.stdout || e).toString()); }
   }
   const three = ensureThree();
@@ -193,10 +222,9 @@ async function launch(opts = {}) {
   };
   const browser = await chromium.launch({ headless });
 
-  async function player(w) {
-    const ctx = await browser.newContext({ ...devices[device], hasTouch: !fine, colorScheme, reducedMotion });
-    const uid = 'u_' + w;
-    await ctx.addInitScript(RUNTIME({ who: w, uid, coarse }));
+  async function player(w, { identified = true, uid = 'u_' + w, viewport = null } = {}) {
+    const ctx = await browser.newContext({ ...devices[device], hasTouch: !fine, colorScheme, reducedMotion, ...(viewport ? { viewport } : {}) });
+    await ctx.addInitScript(RUNTIME({ who: w, uid, coarse, identified, coldCache }));
     await ctx.route(/three\.js\/r128\/three\.min\.js/, (r) => r.fulfill({ path: three, contentType: 'text/javascript' }));
     await ctx.route(/fonts\.(googleapis|gstatic)\.com/, (r) => r.abort());
     const pg = await ctx.newPage();
@@ -206,6 +234,7 @@ async function launch(opts = {}) {
       await new Promise((r) => later(r));
       const val = v == null ? null : JSON.parse(v);
       if (op === 'get') return JSON.stringify({ data: docs[p] ?? null });
+      if (op === 'snapshot') return JSON.stringify({ docs, seq: ++seq });
       if (op === 'set') { docs[p] = val; pushDocs(); return '{}'; }
       if (op === 'update') {
         if (!docs[p]) return JSON.stringify({ error: 'invalid_argument', message: 'update needs an existing document' });
@@ -246,7 +275,7 @@ async function launch(opts = {}) {
     pg.on('console', (m) => { if (m.type() === 'error' && !/ERR_FAILED|net::|favicon/.test(m.text())) errors.push(`[${w}] console: ${m.text()}`); });
     pages.push(pg);
     await pg.goto(`http://localhost:${port}/`);
-    await pg.waitForFunction(() => !!document.querySelector('.tabbar'), null, { timeout: 15000 });
+    await pg.waitForFunction((id) => !!document.querySelector(id ? '.tabbar' : '.tabbar, .onboard [data-act="pickMe"], .onboard .who-btn'), identified, { timeout: 15000 });
     await pg.waitForTimeout(250);
     return pg;
   }
@@ -265,6 +294,9 @@ async function launch(opts = {}) {
 
   Object.assign(h, {
     openSheet,
+    /** Open another device for person `w` (same Claude account, so the same user id).
+     *  identified: false = a fresh device that still has to pick who it is. */
+    device: (w, o = {}) => player(w, o),
     /** Go to the Games tab. */
     async openGames(pg) { await pg.click('[data-act="tab"][data-tab="games"]'); await pg.waitForSelector('.gh'); },
     /** Open a game's sheet and start an online match; returns the match id. */

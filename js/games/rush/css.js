@@ -121,6 +121,8 @@ export const CSS = `
 .g-rush .rr-banner b { display: block; font-size: 30px; font-variant-numeric: tabular-nums; }
 .g-rush .rr-tag { position: absolute; left: 0; top: 0; z-index: 3; pointer-events: none; padding: 2px 8px; border-radius: 8px; font-size: 12px; font-weight: 900; color: var(--g-on-ink); border: 2px solid var(--g-ink); white-space: nowrap; display: none; will-change: transform; }
 .g-rush .rr-tag::after { content: ''; position: absolute; left: 50%; bottom: -7px; margin-left: -5px; border: 5px solid transparent; border-top-color: var(--g-ink); border-bottom: 0; }
+.g-rush .rr-tag.rr-edge-r::after { left: auto; right: -7px; bottom: auto; top: 50%; margin: -5px 0 0; border: 5px solid transparent; border-left-color: var(--g-ink); border-right: 0; }
+.g-rush .rr-tag.rr-edge-l::after { left: -7px; bottom: auto; top: 50%; margin: -5px 0 0; border: 5px solid transparent; border-right-color: var(--g-ink); border-left: 0; }
 
 /* overlays */
 .g-rush .rr-ov { position: absolute; inset: 0; z-index: 8; display: none; place-items: center; padding: max(14px, env(safe-area-inset-top, 0px)) 14px max(14px, env(safe-area-inset-bottom, 0px)); }

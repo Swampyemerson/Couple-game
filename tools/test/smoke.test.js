@@ -1,10 +1,10 @@
 // Framework smoke test: online turn game, same-phone turn game, live game.
-//   node tools/test/smoke.test.js
+//   node tools/test/smoke.test.js          (PORT=8940 node … to pick the ports: PORT and PORT+1)
 const { launch } = require('./harness');
 const assert = (c, m) => { if (!c) throw new Error('FAIL: ' + m); console.log('ok -', m); };
 
 (async () => {
-  const h = await launch({ port: 8790, only: ['example-ttt', 'example-tap'] });
+  const h = await launch({ port: Number(process.env.PORT) || 8790, only: ['example-ttt', 'example-tap'] });
   const { a, b } = h;
   try {
     // ── online turn game ──
@@ -94,7 +94,7 @@ const assert = (c, m) => { if (!c) throw new Error('FAIL: ' + m); console.log('o
 (async () => {
   await new Promise((r) => setTimeout(r, 200));
   if (process.exitCode) return;
-  const h = await launch({ port: 8791, only: ['example-tap'], dropRate: 1 });
+  const h = await launch({ port: (Number(process.env.PORT) || 8790) + 1, only: ['example-tap'], dropRate: 1 });
   const { a, b } = h;
   try {
     await h.startLive(a, 'example-tap', 'live');
