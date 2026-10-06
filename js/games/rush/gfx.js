@@ -205,7 +205,10 @@ if ( rrUnlit < 0.5 ) {
     rrShade = mix( rrShade, 1.2, rrLit );
   }
   diffuseColor.rgb *= rrShade;
-
+  if ( rrShade < uLk.w ) {
+    vec2 g = fract( gl_FragCoord.xy / uDot ) - 0.5;
+    diffuseColor.rgb *= 1.0 - ( 1.0 - smoothstep( 0.18, 0.3, length( g ) ) ) * 0.17;
+  }
 }`;
 const FRAG_END = `if ( vFx > 3.5 && vFx < 4.5 ) {
   gl_FragColor.rgb = mix( vColor, fogColor, 0.3 );

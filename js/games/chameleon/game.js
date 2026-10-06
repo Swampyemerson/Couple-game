@@ -92,7 +92,7 @@ export function createGame(el, api) {
   const hist = { t: new Float64Array(96), x: new Float32Array(96), y: new Float32Array(96), z: new Float32Array(96), n: 0, i: 0 };
 
   // view/camera state
-  const C = { yaw: Math.PI, pitch: 0.32, dist: 2.3, paintYaw: 0, paintPitch: 0.3, paintDist: 1.25, fpYaw: 0, fpPitch: 0, orbit: 0, whip: 0, freezeUntil: 0, shake: 0 };
+  const C = { cardCheck: 0, frameY: 0, frameCard: false, oy: 0, orbitBase: 0, orbitT: 0, yaw: Math.PI, pitch: 0.32, dist: 2.3, paintYaw: 0, paintPitch: 0.3, paintDist: 1.25, fpYaw: 0, fpPitch: 0, orbit: 0, whip: 0, freezeUntil: 0, shake: 0 };
   const P = { on: false, tool: 'brush', size: 1, hard: true, rgb: [74, 132, 116], last: null, lastHit: [0, 0, 0], strokes: 0, texelDirtyAt: 0 };
   let posesOpen = false;
   const shownHints = new Set();
