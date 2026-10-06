@@ -253,6 +253,20 @@ export function createWorld(map) {
     }
     return py < -0.001;
   }
+  /** Would a body stuck at this contact poke into a non-climbable guard (e.g. one hovering over a roof)? */
+  function guarded(x, y, z, nx, ny, nz, clear) {
+    for (let k = 1; k <= 2; k++) {
+      const c = (clear * k) / 2;
+      const px = x + nx * c; const py = y + ny * c; const pz = z + nz * c;
+      const n = gather(px, pz, px, pz);
+      for (let q = 0; q < n; q++) {
+        const b = boxes[qbuf[q]];
+        if (b.climb === false && px > b.minX && px < b.maxX && py > b.minY && py < b.maxY && pz > b.minZ && pz < b.maxZ) return true;
+      }
+    }
+    return false;
+  }
+  const okContact = (H, clear) => inside(H.x, H.z) && !buried(H.x, H.y, H.z, H.nx, H.ny, H.nz) && !guarded(H.x, H.y, H.z, H.nx, H.ny, H.nz, clear);
   function setContact(body, x, y, z, nx, ny, nz, box) {
     body.x = x; body.y = y; body.z = z; body.nx = nx; body.ny = ny; body.nz = nz; body.box = box;
   }
@@ -282,6 +296,7 @@ export function createWorld(map) {
     mx -= nx * dn; my -= ny * dn; mz -= nz * dn;
     const sp = Math.hypot(mx, my, mz);
     const r = rOf(body);
+    const clear = Math.min(0.35, headOf(body) * 0.8);
     if (sp < 1e-4) return 0;
     const dx = mx / sp; const dy = my / sp; const dz = mz / sp;
     const dist = sp * dt;
@@ -292,8 +307,10 @@ export function createWorld(map) {
     for (let k = 0; k < 2; k++) {
       const h = k === 0 ? 0.035 : Math.min(0.6 * r, 0.16);
       const ox = body.x + nx * h; const oy = body.y + ny * h; const oz = body.z + nz * h;
-      const G = raycast(ox, oy, oz, dx, dy, dz, k === 0 ? Math.min(look, dist + 0.06) : look, climbable, true);
-      if (G && G.nx * dx + G.ny * dy + G.nz * dz < -0.5 && inside(G.x, G.z) && !buried(G.x, G.y, G.z, G.nx, G.ny, G.nz)) { H = G; break; }
+      const G = raycast(ox, oy, oz, dx, dy, dz, k === 0 ? Math.min(look, dist + 0.06) : look, null, true);
+      // a non-climbable face (invisible guards, glass) is a solid stop, never a new surface
+      if (G && G.box && G.box.climb === false && G.t < dist + r * 0.85) return 3;
+      if (G && G.nx * dx + G.ny * dy + G.nz * dz < -0.5 && okContact(G, clear)) { H = G; break; }
     }
     if (H) {
       setContact(body, H.x, H.y, H.z, H.nx, H.ny, H.nz, H.box);
@@ -305,13 +322,13 @@ export function createWorld(map) {
     body.x += dx * dist; body.y += dy * dist; body.z += dz * dist;
     // 3. snap to the surface under the feet (same plane, maybe the next coplanar box)
     H = raycast(body.x + nx * 0.06, body.y + ny * 0.06, body.z + nz * 0.06, -nx, -ny, -nz, 0.06 + 0.1, climbable, true);
-    if (H && H.nx * nx + H.ny * ny + H.nz * nz > 0.9 && inside(H.x, H.z)) {
+    if (H && H.nx * nx + H.ny * ny + H.nz * nz > 0.9 && inside(H.x, H.z) && !guarded(H.x, H.y, H.z, nx, ny, nz, clear)) {
       body.x = H.x; body.y = H.y; body.z = H.z; body.box = H.box;
       return 0;
     }
     // 4. convex edge: wrap round onto the side face we just walked off
     H = raycast(body.x - nx * 0.05, body.y - ny * 0.05, body.z - nz * 0.05, -dx, -dy, -dz, dist + 0.3, climbable, false);
-    if (H && H.nx * dx + H.ny * dy + H.nz * dz > 0.7 && inside(H.x, H.z) && !buried(H.x, H.y, H.z, H.nx, H.ny, H.nz)) {
+    if (H && H.nx * dx + H.ny * dy + H.nz * dz > 0.7 && okContact(H, clear)) {
       setContact(body, H.x, H.y, H.z, H.nx, H.ny, H.nz, H.box);
       reHead(body, -nx, -ny, -nz);
       return 2;
@@ -333,10 +350,10 @@ export function createWorld(map) {
     for (const [dx, dy, dz] of DIRS) {
       const oy = body.y + (dy ? head * 0.5 : Math.min(head * 0.5, 0.2));
       const lim = dy ? head * 0.5 + reach : r + reach;
-      const H = raycast(body.x, oy, body.z, dx, dy, dz, lim, climbable, false);
-      if (!H) continue;
+      const H = raycast(body.x, oy, body.z, dx, dy, dz, lim, null, false);
+      if (!H || (H.box && H.box.climb === false)) continue;
       if (H.nx * dx + H.ny * dy + H.nz * dz > -0.5) continue;
-      if (!inside(H.x, H.z) || buried(H.x, H.y, H.z, H.nx, H.ny, H.nz)) continue;
+      if (!okContact(H, Math.min(0.35, head * 0.8))) continue;
       const d = H.t - (dy ? head * 0.5 : r);
       if (d < best) { best = d; found = true; stickRes.x = H.x; stickRes.y = H.y; stickRes.z = H.z; stickRes.nx = H.nx; stickRes.ny = H.ny; stickRes.nz = H.nz; stickRes.box = H.box; stickRes.d = d; }
     }
@@ -356,7 +373,7 @@ export function createWorld(map) {
   }
 
   return {
-    boxes, bounds, stats, step, pushOut, groundAt, groundRes, ceilingAt, raycast, nearestWall, crawl, reHead, nearestSurface, cornerAt, roomFor, inside, buried,
+    boxes, bounds, stats, guarded, step, pushOut, groundAt, groundRes, ceilingAt, raycast, nearestWall, crawl, reHead, nearestSurface, cornerAt, roomFor, inside, buried,
     blocks(b, feet, body) { return b.maxY > feet + stepOf(body || {}) && b.minY < feet + headOf(body || {}); },
     /** For tests: how many boxes a query would touch (grid effectiveness). */
     gather,

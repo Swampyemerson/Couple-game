@@ -276,11 +276,12 @@ async function staticSection() {
     report.push(res);
     const area = entry.info.w * entry.info.d;
     console.log(`  ${tag}: ${entry.info.w}×${entry.info.d} m (${area} m² footprint, ${(entry.info.floors || [1]).length} floor(s)), ${res.tris.toLocaleString()} tris, ${res.verts.toLocaleString()} verts, ${res.chunks} chunks, ${res.colliders} colliders, ${res.blobs} blobs, ${res.tiles} atlas tiles (${res.atlasUsed}px of 1024 used), geometry built in ${res.buildMsNode.toFixed(0)} ms`);
-    if (MINE.includes(tag)) assert(area >= 160 && area <= 420, `${tag}: footprint ${area} m² is 2–4× the 80–120 m² originals (${(area / 100).toFixed(1)}×)`);
-    else console.log(`  note ${tag}: footprint ${area} m² (${(area / 100).toFixed(1)}× the originals)`);
+    const maxArea = entry.size === 'XL' ? 950 : 420;
+    assert(area >= 160 && area <= maxArea, `${tag}: footprint ${area} m² (${(area / 100).toFixed(1)}× the 80–120 m² originals; ≤ ${maxArea} m² for size ${entry.size})`);
     assert(res.tris < BUDGET.tris, `${tag}: ${res.tris.toLocaleString()} triangles < ${BUDGET.tris.toLocaleString()}`);
     assert(!res.atlasDropped.length, `${tag}: every atlas tile fits in one 1024² page${res.atlasDropped.length ? ' (dropped ' + res.atlasDropped.join(', ') + ')' : ''}`);
-    assert(res.buildMsNode < 250, `${tag}: geometry + colliders build in ${res.buildMsNode.toFixed(0)} ms (Node, without painting the atlas)`);
+    const nodeMs = entry.size === 'XL' ? 500 : 250;
+    assert(res.buildMsNode < nodeMs, `${tag}: geometry + colliders build in ${res.buildMsNode.toFixed(0)} ms (Node, median of 3, without painting the atlas; < ${nodeMs})`);
     for (const s of res.spawnClear) {
       const floorOk = (entry.info.floors || [{ y: 0 }]).some((f) => Math.abs(f.y - s.ground) < 0.03) || Math.abs(s.ground - s.y) < 0.03;
       assert(s.clear >= 0.45 && Math.abs(s.ground - s.y) < 0.03 && floorOk, `${tag}: spawn ${s.k} (${s.x}, ${s.y}, ${s.z}) stands on its floor and is ${s.clear.toFixed(2)} m clear of props (≥ 0.45)`);
@@ -353,7 +354,7 @@ async function browserSection(port, { device, viewport, label }) {
       const ms = await a.evaluate((id) => { const h = window.__cham; h.setRules({ map: 'living' }); const t0 = performance.now(); h.setRules({ map: id }); return performance.now() - t0; }, e.id);
       const ws = await hook(a, 'worldStats');
       console.log(`  ${e.id}: ${ws.tris} tris, ${ws.chunks} chunks, ${ws.boxes} colliders, atlas ${ws.atlasUsed}/${ws.atlasH}px, map switch ${ms.toFixed(0)} ms`);
-      if (MINE.includes(e.id)) assert(ms < BUDGET.buildMs, `[${label}] ${e.id}: map built and loaded in ${ms.toFixed(0)} ms (< ${BUDGET.buildMs})`);
+      assert(ms < BUDGET.buildMs, `[${label}] ${e.id}: map built and loaded in ${ms.toFixed(0)} ms (< ${BUDGET.buildMs})`);
     }
     // a quick round on each map: hide (walk + pose), seek (fire), recap
     for (const e of entries) {
@@ -376,7 +377,7 @@ async function roundOn(h, a, e, label) {
   await wait(400);
   let s = await st(a);
   const hider = s.viewer;
-  // walk a little with the keyboard / joystick, then hide on the camo wall
+  // hide on the map's suggested camo wall
   const spots = await hook(a, 'spots');
   const c = spots.camo;
   await hook(a, 'teleport', c.x, c.z + (c.wallNormal ? c.wallNormal[2] * 0.1 : 0), 0, c.y);
@@ -406,7 +407,6 @@ async function roundOn(h, a, e, label) {
   console.log(`  ${e.id}: tris/frame hide ${perfH.tris}, seek ${perfS.tris}`);
   await shotTo(a, `${e.id}-round-${label}`);
   // back to the lobby for the next map
-  await h.reloadToLobby ? h.reloadToLobby(a) : null;
   await a.evaluate(() => window.__cham.action('next')).catch(() => {});
   await a.reload();
   await arm(a, { ...FAST, hide: 60000, seek: 9000 });

@@ -523,7 +523,7 @@ function build(atlas) {
     b.spot('seekerSpawns', [{ x: -1.0, z: 5.0, y: 0, yaw: Math.PI }, { x: -0.6, z: 4.6, y: 0, yaw: Math.PI }]);
     b.spot('camo', { x: -8.85, z: 1.7, wallNormal: [1, 0, 0], y: 0.45, note: 'damask on the dining-room wall' });
     b.spot('rug', { x: 5.2, z: -2.6, yaw: 0 });
-    b.spot('overview', { y: 11, radius: 17 });
+    
     b.probe('hall-console-teal', [0.25, 0.801, -0.8], [0, 1, 0], C.teal);
   };
 }
@@ -564,7 +564,7 @@ export const HOUSE = {
       { name: 'Landing', floor: 1, y: FH, x0: -2.5, z0: -6, x1: 0.5, z1: 6, landmark: 'gallery railing over the stairwell' },
       { name: 'Attic', floor: 1, y: FH, x0: 0.5, z0: 0, x1: 9, z1: 6, landmark: 'sloping beams and the rocking horse' },
     ],
-    overview: { y: 11, radius: 17 },
+    overview: { y: 9, radius: 13 },
     // screenshot / preview cameras per room: p = eye, t = target
     cams: [
       { name: 'overview', p: [0, 13, 17], t: [0, 1.5, 0] },

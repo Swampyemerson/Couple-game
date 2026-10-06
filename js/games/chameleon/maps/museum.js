@@ -56,6 +56,8 @@ function build(atlas) {
   atlas.add('signAncient', Q.sign({ bg: '#e8dcc0', fg: '#1f2a44', text: 'ANCIENT WORLDS', sub: 'upstairs', border: C.gold }), { w: 240, h: 80, repeat: false });
   atlas.add('signModern', Q.sign({ bg: '#ffffff', fg: C.red, text: 'MODERN', sub: 'please do not touch' }), { w: 240, h: 80, repeat: false });
   atlas.add('signTix', Q.sign({ bg: C.teal, fg: '#ffffff', text: 'TICKETS', border: '#1f5f5f' }), { w: 240, h: 80, repeat: false });
+  atlas.add('bannerA', Q.diag({ cols: ['#b3213a', '#d9a63a', '#f3e7cf'], n: 2 }), { size: 'M', repeat: false });
+  atlas.add('bannerB', Q.argyle({ a: '#1f2a44', b: '#2f8f8f', c: '#d9a63a', line: '#f3e7cf' }), { size: 'M', repeat: false });
   atlas.add('rings', P.rings({ n: 3 }), { size: 'S' });
   atlas.add('stripeS', P.stripes({ cols: [C.red, '#ffffff'], n: 3 }), { size: 'S' });
 
@@ -177,6 +179,24 @@ function build(atlas) {
       for (const sx of [-0.7, 0.7]) bn.box(0.1, 0.36, 0.42, [sx, 0.18, 0], { color: C.gold, collide: { wall: true, name: 'bench-leg' } });
       bn.blob(0, 0, 0.9, 0.35);
     }
+    // hanging banners in the hall (huge patterns to cling to, landmarks from the balcony)
+    for (const [x, tile, col] of [[-4.7, 'bannerA', C.velvet], [4.7, 'bannerB', C.navy]]) {
+      b.add(boxGeo(0.03, 2.8, 1.5, { fit: true }), { at: [x, HALL - 1.75, -1.0], color: '#ffffff', tile, rep: 1, outline: true, collide: { wall: true, name: 'banner' } });
+      aabb(b, x - 0.04, HALL - 0.38, -1.85, x + 0.04, HALL - 0.32, -0.15, { color: C.gold, outline: true, collide: { wall: false, perch: true, name: 'perch:banner-rod' } });
+      for (const z of [-1.7, -0.3]) b.add(cylGeo(0.006, 0.006, 0.32, { radial: 3, caps: false }), { at: [x, HALL - 0.18, z], color: C.ink, outline: false });
+      void col;
+    }
+    // paintings on the hall walls: under the balcony and high on the side walls
+    picture(b, -2.6, 1.7, Z0 + 0.01, 1.4, 1.0, 'z+', 'art10', { frame: C.gold, depth: 0.06 });
+    picture(b, 2.6, 1.7, Z0 + 0.01, 1.4, 1.0, 'z+', 'art5', { frame: C.gold, depth: 0.06 });
+    picture(b, -5.89, 5.0, -1.0, 2.0, 1.4, 'x+', 'art2', { frame: C.gold, depth: 0.06 });
+    picture(b, 5.89, 5.0, -1.0, 2.0, 1.4, 'x-', 'art6', { frame: C.gold, depth: 0.06 });
+    // a display case of fossils under the balcony
+    const fc = F(b, 0, -7.3);
+    fc.box(2.4, 0.9, 0.8, [0, 0.45, 0], { color: C.navy, collide: { wall: true, name: 'fossil-case' } });
+    fc.box(2.3, 0.45, 0.7, [0, 1.13, 0], { color: '#cfe8e4', collide: { wall: true, climb: false, name: 'glass-case' } });
+    for (let i = 0; i < 5; i++) fc.sph(0.12, 0.06, 0.1, [-0.9 + i * 0.45, 0.96, 0], { color: [C.bone, C.boneD, '#c9b48a', C.bone, '#b8a070'][i], w: 8, h: 5 });
+    fc.blob(0, 0, 1.4, 0.5);
     // track lights on the coffer beams
     for (const x of [-2, 2]) for (const z of [-4, 0]) b.add(cylGeo(0.07, 0.1, 0.22, { radial: 8 }), { at: [x, HALL - 0.42, z], color: C.ink, rot: [0.4, 0, 0] });
 
@@ -411,7 +431,7 @@ export const MUSEUM = {
       { name: 'Gift shop', floor: 0, y: 0, x0: 6, z0: 2, x1: X1, z1: Z1, landmark: 'the inflatable T-rex' },
       { name: 'Foyer', floor: 0, y: 0, x0: -6, z0: HZ1, x1: 6, z1: Z1, landmark: 'TICKETS desk and the turnstiles' },
     ],
-    overview: { y: 13, radius: 20 },
+    overview: { y: 10, radius: 14 },
     cams: [
       { name: 'overview', p: [0, 15, 19], t: [0, 1.5, -1] },
       { name: 'hall', p: [0, 1.6, 2.6], t: [0, 2.4, -5] },
@@ -420,7 +440,7 @@ export const MUSEUM = {
       { name: 'paintings', p: [-6.8, 1.6, 1.4], t: [-10.5, 1.2, -6] },
       { name: 'sculpture', p: [-6.6, 1.6, 2.6], t: [-10, 0.8, 6.5] },
       { name: 'ancient', p: [-6.6, 5.0, -7.4], t: [-10, 3.8, 0] },
-      { name: 'modern', p: [7.0, 1.7, 1.5], t: [10.0, 1.0, -6] },
+      { name: 'modern', p: [11.3, 1.8, 1.4], t: [7.4, 1.0, -6] },
       { name: 'giftshop', p: [6.6, 1.7, 2.6], t: [10.5, 0.9, 6.8] },
       { name: 'foyer', p: [5.4, 1.8, 3.4], t: [-4, 0.8, 6.5] },
     ],

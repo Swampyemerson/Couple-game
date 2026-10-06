@@ -82,10 +82,10 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
       scene.add(m); mapMeshes.push(m);
     }
     mapMesh = mapMeshes[0];
-    // draw distance: big maps fog out (and cull) beyond a room or two
-    const far = map.big ? 26 : 30;
-    scene.fog.near = map.big ? 11 : 13; scene.fog.far = far;
-    camera.far = far + 6; camera.updateProjectionMatrix();
+    // draw distance: big maps fog out (and cull) beyond a room or two while playing; the
+    // overview orbit pulls the fog back so the whole map reads from up high (see setView)
+    viewKind = '';
+    setView('play');
     if (map.blobGeo) {
       blobMat = makeBlobMaterial(THREE, '#3a2a1c');
       blobMesh = new THREE.Mesh(map.blobGeo, blobMat);
@@ -95,6 +95,20 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
     world = createWorld(map);
     // map atlas CPU copy is kept for the eyedropper; the canvas itself can go once uploaded
     return map;
+  }
+  let viewKind = '';
+  /** 'play' (fog 11–26 m on big maps) or 'overview' (fog scaled to the map's footprint). */
+  function setView(kind) {
+    if (!map || kind === viewKind) return;
+    viewKind = kind;
+    let near; let far;
+    if (kind === 'overview') {
+      const inf = map.info || {}; const ov = map.overview;
+      const diag = Math.hypot(inf.w || 12, inf.d || 10);
+      near = Math.max(13, ov.radius * 0.9); far = Math.max(30, ov.radius + diag * 0.75 + ov.y * 0.5);
+    } else { near = map.big ? 11 : 13; far = map.big ? 26 : 30; }
+    scene.fog.near = near; scene.fog.far = far;
+    camera.far = far + 6; camera.updateProjectionMatrix();
   }
   function unloadMap() {
     if (!map) return;
@@ -244,7 +258,7 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
     THREE, renderer, scene, camera, canvas, hemi, sun, kit, paints, av, fx, vm, gradientMap,
     get map() { return map; }, get world() { return world; }, get mapMesh() { return mapMesh; }, mapMeshes, isMap,
     get size() { return [W, H]; }, get dpr() { return baseDpr * dynScale; }, get scale() { return dynScale; },
-    loadMap, resize, setScale, setTheme, compile,
+    loadMap, resize, setScale, setTheme, compile, setView,
     ray, setRayFromScreen, pick, pickMap, albedoAtHit, surfaceOf, blobAt,
     render() { renderer.render(scene, camera); },
     dispose() {

@@ -31,6 +31,13 @@ export const OPTIONS = {
 };
 export const SPEED_MUL = { slow: 0.85, normal: 1, fast: 1.2 };
 
+/** Bigger maps get proportionally longer hide/seek clocks and a faster seeker sprint (every preset). */
+export const MAP_TIME = { S: 1, M: 1.2, L: 1.35, XL: 1.5 };
+export const timeScale = (mapEntry) => MAP_TIME[(mapEntry && mapEntry.size) || 'S'] || 1;
+/** Effective seconds on a map: base × scale, rounded to 5 s. */
+export const effSeconds = (base, scale) => Math.round((base * scale) / 5) * 5;
+export const sprintMul = (scale) => 1.55 + 0.3 * (scale - 1);
+
 // "Hard" is hard for the SEEKER (masters of disguise); "Easy" makes the hunt friendlier.
 export const PRESETS = {
   easy: { size: 'huge', rounds: 4, hide: 45, seek: 120, pellets: 8, scans: 0, scanCd: 15, escapes: 0, seekSpeed: 'fast', heartbeat: false, blink: 'strong', stamp: true, climb: true, minimap: true },

@@ -325,7 +325,8 @@ async function hsRound(h, { hider, round, style }) {
     if (style === 'found') {
       // the hider panics and scurries once: a faint trail shows on both screens
       const p0 = (await st(H)).bodies[hider];
-      await hook(H, 'setLook', 0.6, 0);
+      // (v2: a hider stuck to a wall scurries ALONG the wall; dash away from the sofa)
+      await hook(H, 'setLook', -0.6, 0);
       await H.click('.chm-acts [data-act="scurry"]');
       await Sk.waitForFunction(() => window.__cham.state().trails > 0, null, { timeout: 5000 });
       await wait(900);
@@ -334,6 +335,8 @@ async function hsRound(h, { hider, round, style }) {
       assert(dash > 1 && (await st(H)).round.scurried[hider] && (await st(Sk)).round.scurried[hider], `round ${round}: one scurry dashed ${dash.toFixed(1)} m and left a trail the seeker saw`);
       assert(await H.$eval('.chm-acts [data-act="scurry"]', (b) => b.disabled), `round ${round}: the scurry is used up`);
       await wait(400);
+      const c2 = await hook(Sk, 'bodyCenter', hider);
+      await hook(Sk, 'teleport', c2[0] + 0.9, c2[2] + 1.9, Math.PI);
     }
     await hook(Sk, 'aimAt', ...(await hook(Sk, 'bodyCenter', hider)));
     await wait(250);
@@ -1176,7 +1179,7 @@ async function squeezeSection(port) {
       if (size !== 'tiny') assert(!under, `${size}: upright, the bed stops you (z ${r.z.toFixed(2)})`);
       await hook(a, 'teleport', bx, footZ + 0.75, Math.PI, FH);
       assert(await hook(a, 'setPose', 'squeeze') === 'squeeze', `${size}: squeezed flat`);
-      r = await hook(a, 'walk', 0, -1.2, 60);
+      r = await hook(a, 'walk', 0, -1.2, 120);
       assert(r.z < footZ - 0.6 && Math.abs(r.y - FH) < 0.01, `${size}: squeeze-crawled under the bed (z ${r.z.toFixed(2)}, still on the floor)`);
       if (size !== 'tiny') assert(await hook(a, 'setPose', 'stand') === 'squeeze', `${size}: no room to stand up under the bed`);
       if (size === 'huge') { await hook(a, 'setCam', 0.4, 0.2, 2.2); await wait(900); await shot(a, 'v2-squeeze-under-bed'); }
@@ -1185,6 +1188,66 @@ async function squeezeSection(port) {
   } catch (e) {
     console.error(e.message, h.errors); failures++;
     await shot(a, 'squeeze-FAIL').catch(() => {});
+  } finally { await h.close(); }
+}
+
+async function guardsSection(port) {
+  console.log('\n# invisible guards (climb:false): solid for crawlers, never stuck to, ignored by cameras; big-map clocks and overview fog');
+  const h = await launch({ port, only: ['chameleon'], who: ['a'] });
+  const a = h.a;
+  try {
+    await arm(a, { ...SLOW, hide: undefined, seek: undefined });
+    await h.startLive(a, 'chameleon', 'local');
+    await waitReady(a);
+    const ids = await hook(a, 'mapIds');
+    if (!ids.includes('house')) { console.log('  (no house map: skipped)'); return; }
+    await hook(a, 'setRules', { map: 'house', first: 'b', rules: { hide: 60, seek: 90 } });
+    const eff = await hook(a, 'effTimes');
+    const info = (await hook(a, 'mapsInfo')).find((m) => m.id === 'house');
+    console.log(`  house (${info.size}): hide ${eff.hide / 1000} s, seek ${eff.seek / 1000} s, sprint ×${eff.sprint.toFixed(2)}`);
+    assert(eff.scale > 1 && eff.hide === Math.round(60 * eff.scale / 5) * 5 * 1000 && eff.seek === Math.round(90 * eff.scale / 5) * 5 * 1000, `big map: clocks scaled ×${eff.scale} (hide ${eff.hide / 1000} s, seek ${eff.seek / 1000} s)`);
+    await a.click('.chm-lobby [data-act="settings"]');
+    const hint = (await a.textContent('.chm-sheet [data-eff="seek"]')).trim();
+    assert(/on /.test(hint), `the settings sheet shows the effective seek time ("${hint}")`);
+    await shot(a, 'v2-settings-house-times');
+    await a.click('.chm-sheet .chm-go[data-act="settings"]');
+    await a.click('[data-act="start"]');
+    await wait(500);
+    const fo = await hook(a, 'fog');
+    assert(fo.far > 30, `title orbit pulls the fog back to ${fo.far.toFixed(0)} m`);
+    await shot(a, 'v2-house-title-orbit');
+    await a.click('[data-act="curtain"]');
+    await waitPhase(a, 'hide');
+    await wait(400);
+    const fp = await hook(a, 'fog');
+    assert(fp.far <= 26.01, `playing: fog back at ${fp.far} m`);
+    const g = (await hook(a, 'guards')).find((x) => /front/.test(x.name)) || (await hook(a, 'guards'))[0];
+    assert(!!g, `the map has invisible guards (${g && g.name})`);
+    // the inner face of the wall under the guard
+    const cx = (g.minX + g.maxX) / 2 + 0.7;
+    const wall = await hook(a, 'surfaceAt', cx, 0.3, g.minZ - 1.2, 0, 0, 1, 3);
+    assert(wall && wall.n[2] < -0.9, `found the low front wall under it (top ${wall && wall.box.maxY.toFixed(2)} m)`);
+    await hook(a, 'attachAt', wall.p[0], 0.3, wall.p[2], 0, 0, -1, 0, 1, 0);
+    const r = await hook(a, 'crawl', 0, 1.2, 0, 60);
+    const bb = await hook(a, 'body');
+    assert(bb.at && bb.nz < -0.9 && bb.y <= wall.box.maxY + 0.01, `crawling up stops at the top of the wall (y ${bb.y.toFixed(2)}), never over it (results ${[...new Set(r.res)].join(',')})`);
+    // the tongue can't stick to a guard
+    await hook(a, 'teleport', cx, g.minZ - 1.5, 0, 0);
+    await hook(a, 'setCam', Math.PI, -0.05, 2.3);
+    await wait(500);
+    const zipped = await hook(a, 'zip');
+    const after = await hook(a, 'body');
+    assert(!(zipped && after.at && after.box === null && after.y > 0.75), `a tongue-zip at the guard doesn't stick to it (zip ${zipped})`);
+    // the third-person camera looks out through the guard without being pushed in
+    await hook(a, 'teleport', cx, g.minZ - 0.6, 0, 0);
+    await hook(a, 'setCam', 0, 0.35, 2.3);
+    await wait(900);
+    const d = await hook(a, 'camDist');
+    assert(d > 2.0, `the camera passes through the invisible guard (distance ${d.toFixed(2)} m)`);
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'guards-FAIL').catch(() => {});
   } finally { await h.close(); }
 }
 
@@ -1342,6 +1405,7 @@ async function minimapShot(port, { colorScheme, prefix }) {
   if (want('bigmatch')) sections.push(() => bigMatchSection(PORT + 5));
   if (want('bigperf')) sections.push(() => bigPerfSection(PORT + 6));
   if (want('squeeze')) sections.push(() => squeezeSection(PORT + 8));
+  if (want('guards')) sections.push(() => guardsSection(PORT + 9));
   if (want('shots2')) {
     sections.push(async () => {
       console.log('\n# v2 screenshots: settings panel (phone, landscape, laptop; light + dark) and the new mechanics');

@@ -1,7 +1,7 @@
 // Overlay cards for Blend & Seek: pure HTML builders (state in, markup out).
 import { esc, fmtTime } from './util.js';
 import { MAPS } from './maps.js';
-import { SIZES, OPTIONS, PRESET_LABEL, PRESET_SUB, fmtRule } from './rules.js';
+import { SIZES, OPTIONS, PRESET_LABEL, PRESET_SUB, fmtRule, timeScale, effSeconds } from './rules.js';
 
 const nameSpan = (api, w) => `<b class="chm-name-${w}">${esc(api.name(w))}</b>`;
 
@@ -110,6 +110,12 @@ function seg(rules, k, items, canEdit) {
   const dis = canEdit ? '' : 'disabled';
   return `<div class="chm-seg2" role="radiogroup">${items.map(([v, label]) => `<button class="${String(rules[k]) === String(v) ? 'on' : ''}" data-lobby="rule" data-k="${k}" data-v="${v}" role="radio" aria-checked="${String(rules[k]) === String(v)}" ${dis}>${label}</button>`).join('')}</div>`;
 }
+/** "1:30 on CU Boulder" when the map stretches the clock. */
+function effHint(setup, k) {
+  const m = MAPS.find((x) => x.id === setup.map); const sc = timeScale(m);
+  if (sc === 1) return '';
+  return `<span data-eff="${k}">${esc(fmtRule(k, effSeconds(setup.rules[k], sc)))} on ${esc(m.name)} (big map ×${sc})</span>`;
+}
 const row = (label, hint, control) => `<div class="chm-set"><span><b>${label}</b>${hint ? `<small>${hint}</small>` : ''}</span>${control}</div>`;
 
 /** The full settings sheet: host edits, the guest watches it change live. */
@@ -125,8 +131,8 @@ export function settingsSheet(api, { canEdit, local, setup, waitingFor }) {
     <h3>Round</h3>
     ${row('Chameleon size', 'Bigger is easier to spot', sizeSeg(r, canEdit))}
     ${hs ? row('Rounds', 'Each of you hides half of them', stepper(r, 'rounds', canEdit)) : ''}
-    ${row('Hide time', '', stepper(r, 'hide', canEdit))}
-    ${row('Seek time', '', stepper(r, 'seek', canEdit))}
+    ${row('Hide time', effHint(setup, 'hide'), stepper(r, 'hide', canEdit))}
+    ${row('Seek time', effHint(setup, 'seek'), stepper(r, 'seek', canEdit))}
     ${row('Paint pellets', hs ? 'Per hunt' : 'Each (one fewer in Double Blind)', stepper(r, 'pellets', canEdit))}
     ${row('Chirp scans', 'Per hunt', stepper(r, 'scans', canEdit))}
     ${row('Scan cooldown', '', stepper(r, 'scanCd', canEdit))}

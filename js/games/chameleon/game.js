@@ -9,7 +9,7 @@ import { POSES, REGION_OF_PART, REGION_NAMES } from './avatar.js';
 import { loadingCard, errorCard, lobbyCard, titleCard, blindCard, curtainCard, recapCard, pauseCard, ctxCard, tipsHtml } from './cards.js';
 import { clamp, dampAngle, wrapAngle, hexToRgb, cssColor, luminance, listeners, fmtTime, mixHex, esc, seeded, packQuat, unpackQuat } from './util.js';
 import { MAPS, mapArea } from './maps.js';
-import { sanitizeSetup, sanitizeRules, applyPreset, stepRule, setRule, loadSaved, saveSetup, sizeScale, SPEED_MUL, tipsSeen, markTipsSeen, PRESETS } from './rules.js';
+import { sanitizeSetup, sanitizeRules, applyPreset, stepRule, setRule, loadSaved, saveSetup, sizeScale, SPEED_MUL, tipsSeen, markTipsSeen, PRESETS, timeScale, effSeconds, sprintMul } from './rules.js';
 import { mkBody, sizeBody, resetBody, headingYaw, attachBody, detachBody, freeStep, crawlStep, inputOnSurface, bodyQuat, quatUpY, spotKind, surfaceKind } from './move.js';
 import { SQUEEZE_R } from './world.js';
 
@@ -122,8 +122,10 @@ export function createGame(el, api) {
   /** The rules in force: the match's (both devices agree via the phase protocol), else the lobby's. */
   const rules = () => (S.match && S.match.rules ? S.match.rules : S.setup.rules);
   const sizeS = () => sizeScale(rules().size);
-  const hideMs = () => TUNE.hide || rules().hide * 1000;
-  const seekMs = () => TUNE.seek || rules().seek * 1000;
+  const curMapEntry = () => MAPS.find((m) => m.id === (S.match ? S.match.map : S.setup.map)) || MAPS[0];
+  const mapTime = () => timeScale(curMapEntry());
+  const hideMs = () => TUNE.hide || effSeconds(rules().hide, mapTime()) * 1000;
+  const seekMs = () => TUNE.seek || effSeconds(rules().seek, mapTime()) * 1000;
   const scanCdMs = () => rules().scanCd * 1000;
   const pelletsFor = (md) => (md === 'db' ? Math.max(2, rules().pellets - 1) : rules().pellets);
   let appliedSize = -1;
@@ -966,8 +968,10 @@ export function createGame(el, api) {
     const cx = b.x + b.nx * 0.2 * b.s; const cy = b.y + b.ny * 0.2 * b.s + (b.at ? 0 : 0.15 * b.s); const cz = b.z + b.nz * 0.2 * b.s;
     // skip the part of the ray between the camera and the chameleon
     const along = Math.max(0, (cx - ox) * dx + (cy - oy) * dy + (cz - oz) * dz);
-    const H = stage.world.raycast(ox + dx * along, oy + dy * along, oz + dz * along, dx, dy, dz, range + 1, (bx) => bx.climb !== false, true);
+    const H = stage.world.raycast(ox + dx * along, oy + dy * along, oz + dz * along, dx, dy, dz, range + 1, null, true);
+    if (H && H.box && H.box.climb === false) { hint('Too slippery to stick there', 1300); snd.play('warn'); return false; }
     if (!H || Math.hypot(H.x - cx, H.y - cy, H.z - cz) > range || !stage.world.inside(H.x, H.z)) { hint('Nothing in tongue range there — aim at a nearby surface', 1500); snd.play('warn'); return false; }
+    if (stage.world.guarded(H.x, H.y, H.z, H.nx, H.ny, H.nz, Math.min(0.35, b.head * 0.8))) { hint('No hiding up there', 1300); snd.play('warn'); return false; }
     if (Math.hypot(H.x - cx, H.y - cy, H.z - cz) < 0.35 * b.s) { hint('Too close — just crawl there', 1000); return false; }
     b.zip = { t0: tSec, dur: ZIP.dur, sx: b.x, sy: b.y, sz: b.z, tx: H.x, ty: H.y, tz: H.z, nx: H.nx, ny: H.ny, nz: H.nz, box: H.box, hx: dx, hy: dy, hz: dz, from: b.at ? 1 : 0 };
     if (!b.at) { b.zip.sy = b.y + b.r; }
@@ -1181,7 +1185,7 @@ export function createGame(el, api) {
     }
     if (name === 'wall') {
       if (!b.at) {
-        const wall = stage.world.nearestWall(b.x, b.y, b.z, 0.5 + b.r);
+        const wall = stage.world.nearestWall(b.x, b.y, b.z, 0.5 + b.r, (bx) => bx.climb !== false);
         if (!wall) { hint('Get right up against a wall or the side of something first', 2200); snd.play('warn'); return; }
         // press flat against it: stick to the face, head up
         const cy = b.y + 0.25 * b.s;
@@ -1464,7 +1468,7 @@ export function createGame(el, api) {
         }
         if (mode2 === 'move') {
           const sizeMul = 0.85 + 0.15 * b.s;
-          let sp = ph === 'seek' ? (mode() === 'db' ? SPEED.db : SPEED.seek * SPEED_MUL[ru.seekSpeed] * ((R.sprint || controls.st.sprintHeld) && role === 'seeker' ? SPEED.sprint : 1)) : SPEED.hide * sizeMul;
+          let sp = ph === 'seek' ? (mode() === 'db' ? SPEED.db : SPEED.seek * SPEED_MUL[ru.seekSpeed] * ((R.sprint || controls.st.sprintHeld) && role === 'seeker' ? sprintMul(mapTime()) : 1)) : SPEED.hide * sizeMul;
           if (b.sq) sp *= SPEED.squeeze;
           if (b.at && !fp) {
             // sticky feet: screen-relative input mapped onto the surface
@@ -1533,8 +1537,8 @@ export function createGame(el, api) {
         const want = Math.hypot(vx, vz) * dt; const got = Math.hypot(b.x - px, b.z - pz);
         if (got < want * 0.35) {
           const sp = Math.hypot(vx, vz) || 1; const dx = vx / sp; const dz = vz / sp;
-          const H = world.raycast(b.x, b.y + Math.min(b.head * 0.5, 0.2), b.z, dx, 0, dz, b.r + 0.12, (bx) => bx.climb !== false && bx.maxY - bx.minY > 0.25, false);
-          if (H && H.nx * dx + H.nz * dz < -0.7 && world.inside(H.x, H.z)) {
+          const H = world.raycast(b.x, b.y + Math.min(b.head * 0.5, 0.2), b.z, dx, 0, dz, b.r + 0.12, (bx) => bx.maxY - bx.minY > 0.25, false);
+          if (H && H.box && H.box.climb !== false && H.nx * dx + H.nz * dz < -0.7 && world.inside(H.x, H.z)) {
             b.pushT += dt;
             if (b.pushT > 0.22) { b.pushT = 0; attachTo(w, H.x, H.y, H.z, H.nx, 0, H.nz, H.box, 0, 1, 0); }
           } else b.pushT = 0;
@@ -1750,7 +1754,7 @@ export function createGame(el, api) {
     const cam = stage.camera;
     const ph = S.phase.name; const v = viewer();
     const role = v ? roleOf(v) : null;
-    let snap = false;
+    let snap = false; let overview = false;
     let rate = 10;
     C.frameCard = false;
     stage.vm.visible = false;
@@ -1767,7 +1771,7 @@ export function createGame(el, api) {
       aimFramed(revC, true);
       rate = 3;
     } else if ((S.pendingTitle && ph !== 'hide') || (ph === 'final' && !R.rec)) {
-      C.orbit += dt * 0.12;
+      C.orbit += dt * 0.12; overview = true;
       const ov = stage.map.overview; const rad = ov.radius;
       camWant.set(Math.sin(C.orbit) * rad, ov.y, Math.cos(C.orbit) * rad);
       lookWant.set(0, 0.2, 0);
@@ -1832,11 +1836,13 @@ export function createGame(el, api) {
       rate = 12;
     } else {
       // seeker waiting in local mode, or anything else: gentle overview
-      C.orbit += dt * 0.1;
-      camWant.set(Math.sin(C.orbit) * 8.5, 5.2, Math.cos(C.orbit) * 8.5);
+      C.orbit += dt * 0.1; overview = true;
+      const ov = stage.map.overview;
+      camWant.set(Math.sin(C.orbit) * ov.radius * 0.92, ov.y * 0.96, Math.cos(C.orbit) * ov.radius * 0.92);
       lookWant.set(0, 0.2, 0);
       rate = 3;
     }
+    stage.setView(overview ? 'overview' : 'play');
     C.shake = Math.max(0, C.shake - dt);
     if (C.override) { camWant.fromArray(C.override, 0); lookWant.fromArray(C.override, 3); snap = true; C.frameCard = false; }
     if (snap) { camPos.copy(camWant); camLook.copy(lookWant); }
@@ -1898,7 +1904,7 @@ export function createGame(el, api) {
   function clampCam(target, want) {
     const dx = want.x - target.x; const dy = want.y - target.y; const dz = want.z - target.z;
     const d = Math.hypot(dx, dy, dz) || 1;
-    const h = stage.world.raycast(target.x, target.y, target.z, dx / d, dy / d, dz / d, d, (b) => b.maxY - b.minY > 0.5 || b.minY > 0.6);
+    const h = stage.world.raycast(target.x, target.y, target.z, dx / d, dy / d, dz / d, d, (b) => b.climb !== false && (b.maxY - b.minY > 0.5 || b.minY > 0.6)); // invisible guards (climb:false) never push the camera
     if (h && h.t < d) { const k = Math.max(0.25, h.t - 0.18) / d; want.x = target.x + dx * k; want.y = target.y + dy * k; want.z = target.z + dz * k; }
   }
 
@@ -2166,6 +2172,10 @@ export function createGame(el, api) {
       worldStats() { return { ...stage.world.stats, boxes: stage.world.boxes.length, chunks: stage.map.chunks.length, tris: stage.map.triCount, verts: stage.map.vertexCount, big: !!stage.map.big, area: stage.map.area, atlasUsed: stage.map.atlas.used, atlasH: stage.map.atlas.height }; },
       lookAtPitch(p) { const b = body[viewer()]; b.lookPitch = p; },
       mapIds() { return MAP_IDS.slice(); },
+      guards() { return stage.world.boxes.filter((bx) => bx.climb === false).map((bx) => ({ name: bx.name, minX: bx.minX, maxX: bx.maxX, minY: bx.minY, maxY: bx.maxY, minZ: bx.minZ, maxZ: bx.maxZ })); },
+      camDist() { return camPos && camLook ? camPos.distanceTo(camLook) : 0; },
+      effTimes() { return { hide: hideMs(), seek: seekMs(), scale: mapTime(), sprint: sprintMul(mapTime()) }; },
+      fog() { return { near: stage.scene.fog.near, far: stage.scene.fog.far, camFar: stage.camera.far }; },
       /** Tests: change the size mid-round on this device only. */
       forceSize(id) { const tgt = S.match ? S.match : S.setup; tgt.rules = sanitizeRules({ ...tgt.rules, size: id }); applySize(); return sizeS(); },
       /** Free-walk with a world velocity for n steps (deterministic; same physics as the stick). */
