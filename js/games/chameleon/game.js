@@ -140,7 +140,7 @@ export function createGame(el, api) {
 
   function boot() {
     try {
-      stage = createStage(THREE, view, { theme });
+      stage = createStage(THREE, view, { theme, maxDpr: DUR.maxDpr || 2 });
       stage.resize();
       stage.loadMap(S.setup.map);
       setLivery('a', 'lobby'); setLivery('b', 'lobby');
@@ -497,8 +497,7 @@ export function createGame(el, api) {
     if (local || S.destroyed) return;
     if (S.boot !== 'ready') return; // boot() calls us again
     link.send('hello', { started: !!S.match, mid: S.match ? S.match.id : null, seq: S.phase.seq, host: isHost });
-    if (isHost && !S.match) { link.send('setup', S.setup); setPhase({ seq: 0.5, name: 'lobby', round: 0, at: now(), dur: 0 }); S.phase.seq = 0; }
-    if (!isHost && !S.match && S.phase.name !== 'lobby') setPhase({ seq: 0.5, name: 'lobby', round: 0, at: now(), dur: 0 });
+    if (isHost && !S.match) link.send('setup', S.setup);
   }
   function onHello(d) {
     if (!d) return;
@@ -974,7 +973,7 @@ export function createGame(el, api) {
     if (!camPos) initVecs();
     const frameMs = tms - lastT;
     let dt = frameMs / 1000; lastT = tms;
-    if (!(dt > 0)) dt = 0.016; if (dt > 0.05) dt = 0.05;
+    if (!(dt > 0)) dt = 0.016; if (dt > 0.1) dt = 0.1;
     const realDt = dt;
     if (tSec < C.freezeUntil) dt = 0; // freeze-frame
     tSec += realDt;
@@ -1049,6 +1048,7 @@ export function createGame(el, api) {
       else if (ph === 'seek' && role === 'hider') mode2 = 'look';
     }
     controls.setMode(mode2);
+    controls.st.fp = ph === 'seek';
     for (const w of ['a', 'b']) {
       if (!controlsOf(w)) continue;
       const b = body[w];
@@ -1100,7 +1100,9 @@ export function createGame(el, api) {
       }
       if (moving && b.pose !== 'stand' && b.pose !== 'crouch') { setPoseFor(w, 'stand'); }
       const sp2 = b.pose === 'crouch' ? 0.55 : 1;
-      const landed = world.step(b, vx * sp2, vz * sp2, dt, jump);
+      let landed = false;
+      const nSub = Math.max(1, Math.ceil(dt / 0.025));
+      for (let k = 0; k < nSub; k++) landed = world.step(b, vx * sp2, vz * sp2, dt / nSub, jump && k === 0) || landed;
       if (jump && b.vy > 3) snd.play('jump');
       if (landed) snd.play('land');
       if (moving) {
@@ -1552,6 +1554,13 @@ export function createGame(el, api) {
         const hit = stage.pickMap(1); if (!hit) return null; const out = [0, 0, 0]; stage.albedoAtHit(hit, out); return out;
       },
       camera() { const c = stage.camera; return { p: c.position.toArray(), fov: c.fov }; },
+      tweak(o) {
+        if (o.aniso != null) { stage.mapMesh.material.map.anisotropy = o.aniso; stage.mapMesh.material.map.needsUpdate = true; }
+        if (o.hideMap != null) stage.mapMesh.visible = !o.hideMap;
+        if (o.fog != null) stage.scene.fog.far = o.fog ? 30 : 1e6;
+        if (o.hull != null) stage.mapMesh.geometry.setDrawRange(0, o.hull ? Infinity : stage.map.mainIndexCount);
+        return true;
+      },
       bench(n = 10) {
         const out = {};
         const time = (k, fn) => { const t0 = performance.now(); for (let i = 0; i < n; i++) fn(); out[k] = (performance.now() - t0) / n; };

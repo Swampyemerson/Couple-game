@@ -19,6 +19,7 @@ export function createControls({ surface, root, joyBase, joyKnob, onAction, pain
     lockFailed: false,
     usingMouse: matchMedia('(pointer: fine)').matches,
     lastInput: 'touch',
+    fp: false,
   };
   const keys = new Set();
   const ptrs = new Map(); // id -> { role, x0, y0, x, y, moved, button, t0 }
@@ -85,7 +86,7 @@ export function createControls({ surface, root, joyBase, joyKnob, onAction, pain
     }
     if (e.pointerType === 'mouse' && (st.mode === 'move' || st.mode === 'look')) {
       if (st.locked) { if (e.button === 0) onAction('fire'); p.role = 'none'; return; }
-      requestLock();
+      if (st.fp) requestLock();
       p.role = 'mouse-look';
       return;
     }
@@ -142,7 +143,7 @@ export function createControls({ surface, root, joyBase, joyKnob, onAction, pain
     if (p.role === 'joy') { joyId = null; st.moveX = 0; st.moveY = 0; showJoy(false); }
     if (p.role === 'stroke') { paint.end(); strokeId = null; }
     if (p.role === 'orbit-or-tap' && !p.moved && e.type === 'pointerup') paint.tap(p.x, p.y);
-    if (p.role === 'mouse-look' && !p.moved && e.type === 'pointerup' && st.lockFailed && p.button === 0) onAction('fire');
+    if (p.role === 'mouse-look' && !p.moved && e.type === 'pointerup' && st.fp && (st.lockFailed || !st.locked) && p.button === 0) onAction('fire');
     if (p.role === 'look' && !p.moved && e.type === 'pointerup' && p.type === 'mouse' && p.button === 0) onAction('fire');
     if (p.role === 'pinch' && [...ptrs.values()].filter((q) => q.role === 'pinch').length < 2) { pinch = null; for (const q of ptrs.values()) q.role = 'none'; }
   };
@@ -193,7 +194,7 @@ export function createControls({ surface, root, joyBase, joyKnob, onAction, pain
       joyId = null; showJoy(false); pinch = null;
       if (strokeId != null) { paint.end(); strokeId = null; }
       ptrs.clear();
-      if (m !== 'move' && m !== 'look' && st.locked) { try { document.exitPointerLock(); } catch { /* ignore */ } }
+      if (((m !== 'move' && m !== 'look') || !st.fp) && st.locked) { try { document.exitPointerLock(); } catch { /* ignore */ } }
     },
     /** Movement for this frame (keys win over the stick when held). */
     move(out) {

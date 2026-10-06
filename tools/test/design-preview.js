@@ -16,7 +16,7 @@ const { launch } = require('./harness');
 const MODE = process.argv[2] || 'both';
 const OUT = path.resolve(process.argv[3] || process.env.SHOTS || path.join(__dirname, '.cache/design'));
 const FONT_CACHE = path.join(__dirname, '.cache/fonts');
-fs.mkdirSync(OUT, { recursive: true });
+if (require.main === module) fs.mkdirSync(OUT, { recursive: true });
 fs.mkdirSync(FONT_CACHE, { recursive: true });
 
 // ── fonts (the harness blocks Google Fonts; serve them from a local cache instead) ──
@@ -102,7 +102,7 @@ return {};
 })();
 `;
 
-async function prepare(h, pg, { phone = true } = {}) {
+async function prepare(h, pg, { phone = true, waitFor = '.tabbar' } = {}) {
   // headless Chromium doesn't report (pointer: coarse) for emulated phones; real phones do
   if (phone) await pg.addInitScript(() => { const mm = window.matchMedia.bind(window); window.matchMedia = (q) => (/pointer:\s*coarse/.test(q) ? { matches: true, media: q, onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; } } : mm(q)); });
   await pg.route(/fonts\.(googleapis|gstatic)\.com/, (r) => {
@@ -116,7 +116,7 @@ async function prepare(h, pg, { phone = true } = {}) {
     r.fulfill({ response: res, body });
   });
   await pg.reload();
-  await pg.waitForFunction(() => !!document.querySelector('.tabbar'), null, { timeout: 15000 });
+  await pg.waitForSelector(waitFor, { timeout: 15000 });
   await pg.evaluate(() => document.fonts.ready);
   await pg.waitForTimeout(400);
 }
@@ -290,9 +290,13 @@ async function run(scheme, port) {
   if (h.errors.length) console.log('page errors:\n  ' + h.errors.join('\n  '));
 }
 
-(async () => {
-  const schemes = MODE === 'both' ? ['light', 'dark'] : [MODE];
-  let port = 8870;
-  for (const s of schemes) await run(s, port++);
-  console.log('shots in', OUT);
-})();
+module.exports = { prepare, cached, INJECT };
+
+if (require.main === module) {
+  (async () => {
+    const schemes = MODE === 'both' ? ['light', 'dark'] : [MODE];
+    let port = 8870;
+    for (const s of schemes) await run(s, port++);
+    console.log('shots in', OUT);
+  })();
+}

@@ -402,7 +402,7 @@ body:has(.gh) { background: var(--g-bg); }
 
 /* tab badge (Games tab) */
 .tab { position: relative; }
-.tab-badge { position: absolute; top: 0; right: calc(50% - 25px); min-width: 19px; height: 19px; padding: 0 5px; border-radius: 10px; display: grid; place-items: center; background: var(--accent); color: #fff; font-style: normal; font-size: 0.7rem; font-weight: 900; line-height: 1; box-shadow: 0 0 0 2px var(--card); }
+.tab-badge { position: absolute; top: -1px; right: calc(50% - 26px); min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px; display: grid; place-items: center; background: var(--g-hl); color: var(--g-on-ink); border: 2px solid var(--g-ink); font-style: normal; font-size: 0.68rem; font-weight: 900; line-height: 1; font-variant-numeric: tabular-nums; }
 
 /* ════════ motion ════════ */
 @keyframes gm-fade { from { opacity: 0; } }

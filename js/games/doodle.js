@@ -91,10 +91,10 @@ const tierOf = (i) => (i >= OFFS[2] ? 2 : i >= OFFS[1] ? 1 : 0);
 
 // ── guess matching ───────────────────────────────────────────────────
 const ARTICLES = new Set(['a', 'an', 'the']);
-function squash(s) {
+function squash(s, keepArticles = false) {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
     .replace(/&/g, ' and ').replace(/['’`]/g, '').replace(/[^a-z0-9]+/g, ' ').trim()
-    .split(' ').filter((w) => w && !ARTICLES.has(w)).join('');
+    .split(' ').filter((w) => w && (keepArticles || !ARTICLES.has(w))).join('');
 }
 function forms(x) {
   const f = new Set([x, x + 's', x + 'es']);
@@ -121,14 +121,18 @@ function oneEdit(a, b) {
   return s.slice(i) === l.slice(i + 1);
 }
 export function guessMatches(guess, prompt) {
-  const g = squash(guess);
-  if (!g) return false;
-  for (const alt of prompt.all) {
-    const a = squash(alt);
-    if (!a) continue;
-    const fs = forms(a);
-    if (fs.has(g)) return true;
-    if (a.length >= 5 && g[0] === a[0]) for (const f of fs) if (oneEdit(f, g)) return true;
+  // Compare with articles dropped ("dog ate my homework") and kept ("thedogatemyhomework"),
+  // so a typo that glues "the" onto the next word still counts.
+  for (const keep of [false, true]) {
+    const g = squash(guess, keep);
+    if (!g) continue;
+    for (const alt of prompt.all) {
+      const a = squash(alt, keep);
+      if (!a) continue;
+      const fs = forms(a);
+      if (fs.has(g)) return true;
+      if (a.length >= 5 && g[0] === a[0]) for (const f of fs) if (oneEdit(f, g)) return true;
+    }
   }
   return false;
 }

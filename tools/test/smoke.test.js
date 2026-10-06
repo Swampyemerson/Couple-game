@@ -88,3 +88,31 @@ const assert = (c, m) => { if (!c) throw new Error('FAIL: ' + m); console.log('o
     await h.close();
   }
 })();
+
+// Reliability: with EVERY room event dropped, finish and rematch still reach both phones
+// through presence.
+(async () => {
+  await new Promise((r) => setTimeout(r, 200));
+  if (process.exitCode) return;
+  const h = await launch({ port: 8791, only: ['example-tap'], dropRate: 1 });
+  const { a, b } = h;
+  try {
+    await h.startLive(a, 'example-tap', 'live');
+    await h.settle();
+    assert(await b.isVisible('#gm-invite'), 'invite arrives through presence when the event is dropped');
+    await b.click('#gm-invite [data-g="invite-yes"]');
+    await h.settle(); await h.settle();
+    for (let i = 0; i < 20; i++) { await a.click('.tap button'); await h.wait(15); }
+    await h.settle(); await h.settle();
+    assert(await b.isVisible('#game-root .gm-end'), 'guest sees the end card although __finish was dropped');
+    assert(h.results().length === 1, 'result recorded once');
+    await b.click('#game-root [data-g="rematch"]');
+    await h.settle(); await h.settle();
+    assert(!(await a.isVisible('#game-root .gm-end')), 'host restarts on rematch although __rematch was dropped');
+    h.assertNoErrors();
+    console.log('\nALL GOOD (lossy)');
+  } catch (e) {
+    console.error(e.message, h.errors);
+    process.exitCode = 1;
+  } finally { await h.close(); }
+})();

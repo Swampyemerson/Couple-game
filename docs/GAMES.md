@@ -109,9 +109,10 @@ Online, player `'a'` is the host (`api.isHost`) and runs the simulation. Then:
 - `api.send(type, data)` / `api.on(type, fn)` — rare discrete events (a few per second at
   most): 'goal', 'start', 'tap'. Not delivered to yourself.
 - `api.partnerHere` / `api.onPartnerHere(fn)` — pause when they drop.
-- `api.finish({ winner: 'a'|'b'|null, text?, score? })` — host (or local) calls this once. The
-  engine records it, shows the end card on both phones, and handles rematch by destroying and
-  re-mounting your game.
+- `api.finish({ winner: 'a'|'b'|null, text?, score? })` — whichever side decides the outcome
+  calls it once (host, guest, or local). The engine records it exactly once, shows the end card
+  on both phones (mirrored through presence, so it survives dropped messages), and handles
+  rematch by destroying and re-mounting your game on both.
 - `api.setScore({ a, b })` updates the player chips.
 Messages can drop: design so the latest presence is always enough to recover.
 

@@ -9,9 +9,9 @@ import { createWorld } from './world.js';
 import { sampleAtlas } from './atlas.js';
 import { hexToRgb, luminance, clamp } from './util.js';
 
-export function createStage(THREE, host, { theme }) {
+export function createStage(THREE, host, { theme, maxDpr = 2 }) {
   const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', alpha: false, stencil: false, depth: true, preserveDrawingBuffer: false });
-  const baseDpr = Math.min(window.devicePixelRatio || 1, 2);
+  const baseDpr = Math.min(window.devicePixelRatio || 1, maxDpr);
   let dynScale = 1;
   renderer.setPixelRatio(baseDpr);
   renderer.outputEncoding = THREE.LinearEncoding;
@@ -66,7 +66,7 @@ export function createStage(THREE, host, { theme }) {
     const ink = hexToRgb(inkCol).map((x) => x / 255);
     map = buildMap(THREE, id, { ink });
     atlasTex = new THREE.CanvasTexture(map.atlas.canvas);
-    atlasTex.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
+    atlasTex.anisotropy = Math.min(2, renderer.capabilities.getMaxAnisotropy());
     atlasTex.minFilter = THREE.LinearMipmapLinearFilter;
     worldMat = makeWorldMaterial(THREE, { map: atlasTex, gradientMap, ink: inkCol, atlasSize: map.atlas.size });
     mapMesh = new THREE.Mesh(map.geometry, worldMat);

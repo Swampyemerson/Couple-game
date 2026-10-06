@@ -477,6 +477,11 @@ function wireRoom() {
     const here = !!p;
     const at = p ? p.presence.at || null : null;
     if (here !== G.partner.here || at !== G.partner.at) { G.partner = { here, at }; changed(); }
+    const inv = p && p.presence.inv;
+    if (inv && typeof inv === 'object') seeInvite(inv);
+    else if (G.invite && G.invite.t) { // they stopped waiting
+      G.invite = null; document.getElementById('gm-invite')?.remove(); changed();
+    }
   }, () => {});
   r.on('ping', (msg) => {
     if (msg.isMe) return;
@@ -499,16 +504,25 @@ function wireRoom() {
     if (msg.isMe) return;
     const d = msg.data || {};
     if (d.to !== me() || !BY_ID[d.game]) return;
-    if (G.screen && G.screen.live && G.screen.game === d.game) return;
-    G.invite = { game: d.game, at: Date.now() };
-    showInvite();
-    changed();
+    seeInvite({ game: d.game, t: d.t || Date.now() });
   }, () => {});
 }
 
-function setPresence(at = null) {
+function setPresence(at = null, inv = null) {
   if (!G.room || !me()) return;
-  G.room.presence({ who: me(), at }).catch(() => {});
+  // `inv` mirrors an open live invite in presence, which the platform always re-delivers,
+  // so a dropped 'invite' event can't leave the partner unaware.
+  G.room.presence({ who: me(), at, inv }).catch(() => {});
+}
+
+function seeInvite(inv) {
+  if (!inv || !BY_ID[inv.game]) return;
+  if (G.screen && G.screen.live && G.screen.game === inv.game) return;
+  if (G.invite && G.invite.game === inv.game && G.invite.t === inv.t) return;
+  if (G.dismissedInvite === inv.t) return;
+  G.invite = { game: inv.game, at: Date.now(), t: inv.t };
+  showInvite();
+  changed();
 }
 
 // ── DOM roots ─────────────────────────────────────────────────────────
@@ -860,6 +874,11 @@ async function openLive(gameId, mode) {
   let customStatus = null;
   const sessionId = newId(8);
   const offs = [];
+  // Round generation: bumps on every rematch. finish/rematch are mirrored in presence
+  // ({ gen, fin }) so they survive dropped events; events stay as the fast path.
+  let gen = 0;
+  let recordedGen = -1;
+  let invT = 0;
 
   const screen = {
     id: null, game: gameId, live: true, mode,
@@ -876,7 +895,12 @@ async function openLive(gameId, mode) {
       sh.hidden = false;
     },
     rematch() {
-      if (mode === 'live') api.send('__rematch', {});
+      if (mode === 'live') {
+        const pg = partnerPeer && Number.isInteger(partnerPeer.presence.gen) ? partnerPeer.presence.gen : 0;
+        gen = Math.max(gen, pg) + 1;
+        nr.presence({ gen, fin: null }).catch(() => {});
+        api.send('__rematch', { g: gen });
+      }
       restart();
     },
     look() { $('.gm-end').hidden = true; try { inst && inst.onEndClosed && inst.onEndClosed(); } catch (e) { console.error(e); } },
@@ -904,9 +928,14 @@ async function openLive(gameId, mode) {
     finish(result) {
       if (finished) return;
       finished = true;
-      const res = result || { winner: null };
-      if (mode === 'local' || api.isHost) recordResult('v' + newId(11), gameId, res, mode);
-      if (mode === 'live' && api.isHost) api.send('__finish', res);
+      const res = clone(result || { winner: null });
+      if (mode === 'local') recordResult('v' + newId(11), gameId, res, mode);
+      else {
+        // Either side may finish: the host records; the guest's finish is forwarded to it.
+        if (api.isHost) recordLive(res);
+        nr.presence({ fin: { g: gen, res, by: me() } }).catch(() => {});
+        api.send(api.isHost ? '__finish' : '__gfin', { g: gen, res });
+      }
       showEnd(res);
     },
   };
@@ -915,6 +944,27 @@ async function openLive(gameId, mode) {
     let text = customStatus;
     if (text == null) text = mode === 'local' ? 'One phone, two players' : partnerPeer ? '' : `Waiting for ${nameOf(other(me()))}…`;
     $('.gm-status').textContent = text;
+  }
+
+  function recordLive(res) {
+    if (recordedGen === gen) return;
+    recordedGen = gen;
+    recordResult('v' + newId(11), gameId, res, mode);
+  }
+  // A finish from the partner (event or presence) for the current round.
+  function partnerFinished(g, res, fromGuest) {
+    if (g !== gen) return;
+    if (fromGuest && api.isHost) recordLive(res);
+    if (finished) return;
+    finished = true;
+    if (fromGuest && api.isHost) nr.presence({ fin: { g: gen, res, by: me() } }).catch(() => {});
+    showEnd(res || { winner: null });
+  }
+  function partnerRematch(g) {
+    if (!Number.isInteger(g) || g <= gen) return;
+    gen = g;
+    nr.presence({ gen, fin: null }).catch(() => {});
+    restart();
   }
 
   function showEnd(res) {
@@ -963,8 +1013,12 @@ async function openLive(gameId, mode) {
     return;
   }
   if (G.screen !== screen) { nr.leave().catch(() => {}); return; }
-  nr.presence({ who: me(), on: true, s: null }).catch(() => {});
-  const invite = () => G.room.emit('invite', { to: other(me()), game: gameId }).catch(() => {});
+  nr.presence({ who: me(), on: true, s: null, gen, fin: null }).catch(() => {});
+  const invite = () => {
+    invT = Date.now();
+    setPresence(def.id, { game: gameId, t: invT });
+    G.room.emit('invite', { to: other(me()), game: gameId, t: invT }).catch(() => {});
+  };
   screen.inviteAgain = () => { invite(); toast('Invite sent'); };
   invite();
   setWaiting(true);
@@ -977,19 +1031,26 @@ async function openLive(gameId, mode) {
     partnerPeer = p;
     if (!!p !== was) {
       hereFns.forEach((fn) => { try { fn(!!p); } catch (e) { console.error(e); } });
+      if (p) setPresence(def.id, null); // they're here: withdraw the invite
       if (p && !inst) { setWaiting(false); mountGame(); }
       else if (!p && inst && !finished) { setWaiting(true); }
       else if (p) setWaiting(false);
       for (const w of ['a', 'b']) $(`.gm-p-${w}`).classList.toggle('is-away', w === other(me()) && !p);
       paintStatus();
     }
-    if (p) partnerFns.forEach((fn) => { try { fn(p.presence.s ?? null); } catch (e) { console.error(e); } });
+    if (p) {
+      const pr = p.presence;
+      if (Number.isInteger(pr.gen) && pr.gen > gen && inst) partnerRematch(pr.gen);
+      if (pr.fin && typeof pr.fin === 'object' && pr.fin.g === gen && pr.fin.by === other(me())) partnerFinished(pr.fin.g, pr.fin.res, other(me()) !== 'a');
+      partnerFns.forEach((fn) => { try { fn(pr.s ?? null); } catch (e) { console.error(e); } });
+    }
   }, () => {}));
   offs.push(nr.on('ev', (msg) => {
     if (msg.isMe) return;
     const d = msg.data || {};
-    if (d.t === '__rematch') { restart(); return; }
-    if (d.t === '__finish') { if (!finished) { finished = true; showEnd(d.d || { winner: null }); } return; }
+    if (d.t === '__rematch') { partnerRematch(d.d && d.d.g); return; }
+    if (d.t === '__finish') { partnerFinished(d.d && d.d.g, d.d && d.d.res, false); return; }
+    if (d.t === '__gfin') { partnerFinished(d.d && d.d.g, d.d && d.d.res, true); return; }
     (evs[d.t] || []).forEach((fn) => { try { fn(d.d, msg); } catch (e) { console.error(e); } });
   }, () => {}));
 }
@@ -1134,10 +1195,10 @@ export function gamesHomeHTML() {
   const mine = activeMatches().filter((m) => m.online && derived(m).acts.includes(me()));
   const inv = G.invite && BY_ID[G.invite.game];
   if (!mine.length && !inv) return '';
-  return `<div class="gh-home">
+  return `<section class="gh-home front-sec">
     ${inv ? `<div class="gh-invite p-${other(me())}"><span class="gh-invite-cover" aria-hidden="true">${inv.cover || ''}</span><span class="gh-invite-txt"><span class="gh-invite-kicker">Live invite</span><span><b>${esc(nameOf(other(me())))}</b> wants to play <b>${esc(inv.title)}</b></span></span><button class="gm-btn" data-g="invite-yes">Join</button></div>` : ''}
-    ${mine.length ? `<h3 class="section">Your move in games</h3><div class="gh-rows">${mine.slice(0, 4).map(matchRow).join('')}</div>` : ''}
-  </div>`;
+    ${mine.length ? `<h3 class="section"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect class="f" x="4.6" y="4.6" width="14.8" height="14.8" rx="3.4" transform="rotate(-9 12 12)"/><circle class="d" cx="8.6" cy="9" r="1.35"/><circle class="d" cx="12" cy="12" r="1.35"/><circle class="d" cx="15.4" cy="15" r="1.35"/></svg><span>Games: your move</span></h3><div class="gh-rows">${mine.slice(0, 4).map(matchRow).join('')}</div>` : ''}
+  </section>`;
 }
 
 /** Number of online games waiting on me (for a tab badge). */
@@ -1241,7 +1302,7 @@ const ACTIONS = {
     document.getElementById('gm-invite')?.remove();
     if (inv) openLive(inv.game, 'live');
   },
-  'invite-no': () => { G.invite = null; document.getElementById('gm-invite')?.remove(); G.hooks.onChange(); },
+  'invite-no': () => { G.dismissedInvite = G.invite && G.invite.t; G.invite = null; document.getElementById('gm-invite')?.remove(); G.hooks.onChange(); },
   'invite-again': () => G.screen && G.screen.inviteAgain && G.screen.inviteAgain(),
 };
 
