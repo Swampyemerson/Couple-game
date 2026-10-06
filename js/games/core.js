@@ -667,7 +667,13 @@ function openMatch(id) {
       sh.innerHTML = menuHTML(def, { live: false, online: !!m?.online, over: !!d?.over, team: !!def.team });
       sh.hidden = false;
     },
-    reveal() { revealedFor = ctxNow && ctxNow.actor; lastKey = ''; paint(); },
+    reveal() {
+      // ctx.actor is hidden while the curtain is up, so read the real next player.
+      const m = getMatch(id); const d = m && derived(m);
+      revealedFor = d && !d.over ? d.acts[0] || null : null;
+      lastKey = '';
+      paint();
+    },
     look() { endDismissed = true; $('.gm-end').hidden = true; },
     rematchId: null,
     offerRematch(newMatchId) {
@@ -986,7 +992,7 @@ function matchRow(m) {
   if (m.online) {
     if (d.acts.includes(me())) note = m.by !== me() && d.count === 0 && !(m.lists[me()].length) ? 'New' : 'Your move';
     else note = `${esc(nameOf(other(me())))}’s move`;
-  } else note = 'On this phone';
+  } else note = `On this ${thisDevice()}`;
   const mine = m.online && d.acts.includes(me());
   const who = m.online ? (mine ? me() : other(me())) : (d.acts[0] || m.first);
   return `<button class="gh-row t-${who}${mine ? ' is-mine' : ''}${m.online ? '' : ' is-local'}" data-g="open" data-id="${esc(m.id)}">
@@ -1007,7 +1013,7 @@ function cardHTML(def) {
   const rec = gameRecord(def.id);
   const recLine = def.team ? (rec.best != null ? `Best ${rec.best}` : '') : rec.plays ? `${rec.a}–${rec.b}` : '';
   const live = def.kind === 'live';
-  const meta = [live ? 'Live' : 'Turns', def.team ? 'Co-op' : 'Versus', def.minutes ? `${def.minutes} min` : ''].filter(Boolean);
+  const meta = [def.team ? 'Co-op' : 'Versus', def.minutes ? `${def.minutes} min` : ''].filter(Boolean);
   const away = !platformsOf(def).includes(thisDevice());
   return `<button class="gh-card${live ? ' is-live' : ''}${def.team ? ' is-team' : ''}${away ? ' is-away' : ''}" data-g="sheet" data-game="${esc(def.id)}" style="--card-hue:${def.hue ?? 0}">
     <span class="gh-card-cover" aria-hidden="true">${def.cover || ''}${live ? '<span class="gh-sticker">Live</span>' : ''}</span>
@@ -1056,25 +1062,32 @@ export function gamesHubHTML() {
   const local = act.filter((m) => !m.online);
   const p = G.partner;
   const pName = esc(nameOf(other(me())));
-  const pAt = p.at && BY_ID[p.at] ? `playing ${esc(BY_ID[p.at].title)}` : 'online now';
+  const pAt = p.at && BY_ID[p.at] ? `playing ${esc(BY_ID[p.at].title)}` : 'here now';
   const games = filterGames(G.filter);
+  const sec = (k, title, list) => `<section class="gh-sec gh-sec-${k}"><h2 class="gh-h"><span>${title}</span><span class="gh-h-n">${list.length}</span></h2><div class="gh-rows">${list.map(matchRow).join('')}</div></section>`;
+  const inv = G.invite && BY_ID[G.invite.game];
   return `<div class="gh">
     <header class="gh-head">
-      <h1 class="gh-title">Games</h1>
-      <div class="gh-score" aria-label="Head to head">
-        <span class="gh-score-p p-a"><b>${rec.a}</b>${esc(nameOf('a'))}</span>
-        <span class="gh-score-sep" aria-hidden="true">:</span>
-        <span class="gh-score-p p-b"><b>${rec.b}</b>${esc(nameOf('b'))}</span>
+      <div class="gh-head-row">
+        <h1 class="gh-title">Games</h1>
+        ${G.room ? `<p class="gh-presence ${p.here ? 'is-here' : ''}"><span class="gh-presence-dot" aria-hidden="true"></span>${p.here ? `${pName} is ${pAt}` : `${pName} is away`}</p>` : ''}
       </div>
-      ${G.room ? `<p class="gh-presence ${p.here ? 'is-here' : ''}"><span class="gh-presence-dot" aria-hidden="true"></span>${p.here ? `${pName} is ${pAt}` : `${pName} isn’t here right now`}</p>` : ''}
+      <div class="gh-score" role="img" aria-label="All-time wins: ${esc(nameOf('a'))} ${rec.a}, ${esc(nameOf('b'))} ${rec.b}">
+        <span class="gh-score-p p-a"><span class="gh-score-name">${esc(nameOf('a'))}</span><b>${rec.a}</b></span>
+        <span class="gh-score-sep" aria-hidden="true">:</span>
+        <span class="gh-score-p p-b"><span class="gh-score-name">${esc(nameOf('b'))}</span><b>${rec.b}</b></span>
+      </div>
+      <p class="gh-score-cap">All-time wins${rec.draw ? ` · ${rec.draw} draw${rec.draw > 1 ? 's' : ''}` : ''}</p>
     </header>
-    ${G.invite ? `<div class="gh-invite"><span><b>${pName}</b> wants to play <b>${esc(BY_ID[G.invite.game].title)}</b> live</span><button class="gm-btn" data-g="invite-yes">Join</button></div>` : ''}
-    ${mine.length ? `<section class="gh-sec"><h2 class="gh-h">Your move</h2><div class="gh-rows">${mine.map(matchRow).join('')}</div></section>` : ''}
-    ${theirs.length ? `<section class="gh-sec"><h2 class="gh-h">Waiting on ${pName}</h2><div class="gh-rows">${theirs.map(matchRow).join('')}</div></section>` : ''}
-    ${local.length ? `<section class="gh-sec"><h2 class="gh-h">On this phone</h2><div class="gh-rows">${local.map(matchRow).join('')}</div></section>` : ''}
-    <section class="gh-sec">
-      <div class="gh-filters" role="tablist">${FILTERS.map(([k, l]) => `<button class="gh-filter ${G.filter === k ? 'on' : ''}" role="tab" aria-selected="${G.filter === k}" data-g="filter" data-f="${k}">${l}</button>`).join('')}</div>
-      <div class="gh-grid">${games.map(cardHTML).join('') || '<p class="gh-empty">No games here yet.</p>'}</div>
+    ${inv ? `<div class="gh-invite p-${other(me())}"><span class="gh-invite-cover" aria-hidden="true">${inv.cover || ''}</span><span class="gh-invite-txt"><span class="gh-invite-kicker">Live invite</span><span><b>${pName}</b> wants to play <b>${esc(inv.title)}</b></span></span><button class="gm-btn" data-g="invite-yes">Join</button></div>` : ''}
+    ${mine.length ? sec('mine', 'Your move', mine) : ''}
+    ${theirs.length ? sec('theirs', `Waiting on ${pName}`, theirs) : ''}
+    ${local.length ? sec('local', `On this ${thisDevice()}`, local) : ''}
+    <section class="gh-sec gh-library">
+      <div class="gh-filters" role="tablist" aria-label="Filter games">${FILTERS.map(([k, l]) => `<button class="gh-filter ${G.filter === k ? 'on' : ''}" role="tab" aria-selected="${G.filter === k}" data-g="filter" data-f="${k}">${k === 'phone' || k === 'computer' ? ICON[k] : ''}${l}</button>`).join('')}</div>
+      ${G.filter === 'all' && games.length
+        ? shelvesHTML(games)
+        : `<div class="gh-grid${games.length % 2 ? ' is-odd' : ''}">${games.map(cardHTML).join('') || '<p class="gh-empty">No games here yet.</p>'}</div>`}
     </section>
   </div>`;
 }
@@ -1086,7 +1099,7 @@ export function gamesHomeHTML() {
   const inv = G.invite && BY_ID[G.invite.game];
   if (!mine.length && !inv) return '';
   return `<div class="gh-home">
-    ${inv ? `<div class="gh-invite"><span><b>${esc(nameOf(other(me())))}</b> wants to play <b>${esc(inv.title)}</b> live</span><button class="gm-btn" data-g="invite-yes">Join</button></div>` : ''}
+    ${inv ? `<div class="gh-invite p-${other(me())}"><span class="gh-invite-cover" aria-hidden="true">${inv.cover || ''}</span><span class="gh-invite-txt"><span class="gh-invite-kicker">Live invite</span><span><b>${esc(nameOf(other(me())))}</b> wants to play <b>${esc(inv.title)}</b></span></span><button class="gm-btn" data-g="invite-yes">Join</button></div>` : ''}
     ${mine.length ? `<h3 class="section">Your move in games</h3><div class="gh-rows">${mine.slice(0, 4).map(matchRow).join('')}</div>` : ''}
   </div>`;
 }
@@ -1108,20 +1121,42 @@ function openSheet(gameId) {
   const online = !!G.db;
   const live = def.kind === 'live';
   const pName = esc(nameOf(other(me())));
-  const actions = live
-    ? `${G.room ? `<button class="gm-btn gm-btn-big" data-g="live" data-game="${def.id}" data-mode="live">Play live with ${pName}${G.partner.here ? ' <span class="gs-here">online</span>' : ''}</button>` : ''}
-       <button class="gm-btn gm-btn-big ${G.room ? 'gm-btn-ghost' : ''}" data-g="live" data-game="${def.id}" data-mode="local">Play on one phone</button>`
-    : `${online ? `<button class="gm-btn gm-btn-big" data-g="new" data-game="${def.id}" data-mode="online">New game with ${pName}</button>` : ''}
-       <button class="gm-btn gm-btn-big ${online ? 'gm-btn-ghost' : ''}" data-g="new" data-game="${def.id}" data-mode="local">Play on one phone</button>`;
-  root.innerHTML = `<div class="gs-wrap" data-g="sheet-close"><div class="gs" role="dialog" aria-label="${esc(def.title)}" data-game="${esc(def.id)}">
+  const dev = thisDevice();
+  const pl = platformsOf(def);
+  const modes = modesOf(def);
+  const oneDevice = `Both on this ${dev}`;
+  const btns = [];
+  if (live) {
+    if (modes.includes('live') && G.room) btns.push(['live', 'live', `Play live with ${pName}${G.partner.here ? ' <span class="gs-here">here now</span>' : ''}`]);
+    if (modes.includes('local')) btns.push(['live', 'local', oneDevice]);
+  } else {
+    if (modes.includes('online') && online) btns.push(['new', 'online', `New game with ${pName}`]);
+    if (modes.includes('local')) btns.push(['new', 'local', oneDevice]);
+  }
+  const actions = btns.map(([g, mode, label], i) => `<button class="gm-btn gm-btn-big ${i ? 'gm-btn-ghost' : ''}" data-g="${g}" data-game="${def.id}" data-mode="${mode}">${label}</button>`).join('')
+    || `<p class="gs-note">${live ? 'Live play needs the Claude version of the app.' : 'This game can’t start here.'}</p>`;
+  let devNote = '';
+  if (!pl.includes(dev)) {
+    devNote = `<p class="gs-device is-blocked">${ICON[pl[0]]}<span>${dev === 'phone'
+      ? 'Needs a computer with a keyboard. Open Just Us on your laptop to play.'
+      : 'Made for touch screens. Open Just Us on your phone to play.'}</span></p>`;
+  } else if (pl.length > 1 && pl.includes(def.best) && def.best !== dev) {
+    devNote = `<p class="gs-device">${ICON[def.best]}<span>Best on a ${def.best}.</span></p>`;
+  }
+  const meta = [live ? 'Live' : 'Take turns', def.team ? 'Co-op' : 'Versus', def.minutes ? `About ${def.minutes} min` : ''].filter(Boolean);
+  root.innerHTML = `<div class="gs-wrap" data-g="sheet-close"><div class="gs${def.team ? ' is-team' : ''}${live ? ' is-live' : ''}" role="dialog" aria-label="${esc(def.title)}" data-game="${esc(def.id)}">
     <div class="gs-cover" aria-hidden="true">${def.cover || ''}</div>
-    <h2 class="gs-title">${esc(def.title)}</h2>
-    <p class="gs-blurb">${esc(def.blurb || '')}</p>
-    <ol class="gm-howto">${def.howTo.map((h) => `<li>${esc(h)}</li>`).join('')}</ol>
-    ${rec.plays ? `<p class="gs-rec">${def.team ? (rec.best != null ? `Best team score: ${rec.best}` : `Played ${rec.plays}×`) : `${esc(nameOf('a'))} ${rec.a} – ${rec.b} ${esc(nameOf('b'))}${rec.draw ? ` · ${rec.draw} draw${rec.draw > 1 ? 's' : ''}` : ''}`}</p>` : ''}
-    ${ms.length ? `<div class="gh-rows gs-matches">${ms.map(matchRow).join('')}</div>` : ''}
-    <div class="gs-actions">${actions}</div>
-    <button class="gm-btn gm-btn-ghost gs-close" data-g="sheet-close">Close</button>
+    <div class="gs-body">
+      <div class="gs-meta"><span class="gs-tags">${meta.map((t) => `<span>${esc(t)}</span>`).join('')}</span>${devicesHTML(def)}</div>
+      <h2 class="gs-title">${esc(def.title)}</h2>
+      <p class="gs-blurb">${esc(def.blurb || '')}</p>
+      ${devNote}
+      <ol class="gm-howto">${def.howTo.map((h) => `<li>${esc(h)}</li>`).join('')}</ol>
+      ${rec.plays ? `<p class="gs-rec">${def.team ? (rec.best != null ? `Best team score <b>${rec.best}</b>` : `Played <b>${rec.plays}</b>×`) : `<span class="p-a">${esc(nameOf('a'))} <b>${rec.a}</b></span><span class="gs-rec-sep">:</span><span class="p-b"><b>${rec.b}</b> ${esc(nameOf('b'))}</span>${rec.draw ? `<span class="gs-rec-draw">${rec.draw} draw${rec.draw > 1 ? 's' : ''}</span>` : ''}`}</p>` : ''}
+      ${ms.length ? `<div class="gs-matches"><p class="g-label">Still going</p><div class="gh-rows">${ms.map(matchRow).join('')}</div></div>` : ''}
+      <div class="gs-actions">${actions}</div>
+      <button class="gm-btn gm-btn-ghost gs-close" data-g="sheet-close">Close</button>
+    </div>
   </div></div>`;
   showRoot(true);
   G.screen = { id: null, game: gameId, sheet: true, refresh() {}, close() {} };
