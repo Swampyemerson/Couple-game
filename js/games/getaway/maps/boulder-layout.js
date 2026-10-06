@@ -504,7 +504,7 @@ export function* layoutGen() {
             if (obbCells(lx, lz, lw, ld, rot, 0, (q) => (ras[q] === BLD || ras[q] === WATERC ? false : undefined))) { lots.push({ kind: 'lot', poly, paint: 'asphalt', rot }); stamp(lx, lz, lw, ld, rot, 0, LOT); }
           }
           // a front-yard street tree and a backyard tree for houses
-          if (Z0.trees && rnd() < 0.62) {
+          if (Z0.trees && rnd() < 0.42) {
             const tOff = r.hw + walk + 1.8; const tt = s - R(0, 4);
             const q2 = pt(r, Math.min(r.len - 1, tt));
             const tStyle = Z0.trees === 'cottonwood' ? pick(['cottonwood', 'cottonwood', 'aspen', 'pine']) : Z0.trees;
@@ -533,12 +533,12 @@ export function* layoutGen() {
   for (const r of sm.list) {
     yield;
     if (r.bridge || r.kind === 'alley') continue;
-    const every = r.kind === 'highway' ? 70 : r.kind === 'arterial' ? 42 : 55;
+    const every = r.kind === 'highway' ? 90 : r.kind === 'arterial' ? 58 : 50;
     let flip = 1;
     for (let s = 14; s < r.len - 10; s += every) {
       const p = pt(r, s); flip = -flip;
       const zone = zoneAt(p.x, p.z);
-      if (r.kind === 'street' && !lampy.has(zone)) continue;
+      if (r.kind === 'street' && zone !== 'downtown' && zone !== 'westpearl' && zone !== 'civic') continue;
       if (zone === 'mtn' && r.name !== 'Flagstaff Rd') continue;
       const off = r.hw + (r.kind === 'highway' ? 2.2 : 0.9);
       const x = p.x - p.tz * flip * off; const z = p.z + p.tx * flip * off;
@@ -619,7 +619,7 @@ export function* layoutGen() {
   // ── 6. trees: the creek's cottonwoods, parks, the quad, Chautauqua, the foothill forest ──
   for (let k = 0; k < CREEK.length - 1; k++) {
     const [ax, az] = CREEK[k]; const [bx, bz] = CREEK[k + 1]; const L = Math.hypot(bx - ax, bz - az);
-    for (let s = rnd() * 10; s < L; s += 11 + rnd() * 9) {
+    for (let s = rnd() * 10; s < L; s += 16 + rnd() * 12) {
       const side = rnd() < 0.5 ? -1 : 1; const off = 8 + rnd() * 7;
       const x = ax + (bx - ax) * s / L + (-(bz - az) / L) * side * off * (side < 0 ? 1.3 : 1); const z = az + (bz - az) * s / L + ((bx - ax) / L) * side * off;
       if (x < footX(z) - 30) { decorTree(x, z, 'pine', R(0.9, 1.3)); continue; }

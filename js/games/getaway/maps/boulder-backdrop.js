@@ -64,7 +64,7 @@ export function buildBackdrop(THREE, kit = {}) {
   const colAt = (x, z, h) => {
     if (h < 6) { const n = hash(Math.floor(x / 420), Math.floor(z / 420)); return n < 0.33 ? plainG : n < 0.66 ? plain : C('#b7b47a'); }
     const n = hash(Math.floor(x / 90), Math.floor(z / 90));
-    if (h > 260 && n < 0.5) return rock;
+    if (h > 300 && n < 0.3) return rock;
     return h < 30 ? meadow : n < 0.6 ? forest : forestL;
   };
   const xs = []; for (let x = -4200; x <= 7800; x += x < -900 || x > 2100 ? 240 : 60) xs.push(x);
@@ -92,19 +92,35 @@ export function buildBackdrop(THREE, kit = {}) {
   }
   // the Flatirons: tilted slabs of pink Fountain sandstone, steep faces to the east
   const face = C('#d9937a'); const faceD = C('#c27c66'); const edge = C('#8c5446');
+  const lichen = C('#9c8d6a'); const faceL = C('#e3a487');
+  let fseed = 7;
+  const fr = () => { fseed = (fseed * 16807) % 2147483647; return fseed / 2147483647; };
   for (const f of FLATIRONS) {
-    const hgt = f.top - f.base; const lean = hgt * 0.62; // ~58° dip
-    const bx = f.x + lean; // the toe sits east of the summit
-    const half = f.w / 2;
-    const toeN = [bx, f.base, f.z - half]; const toeS = [bx + half * 0.05, f.base, f.z + half];
-    const top = [f.x, f.top, f.z + half * 0.12]; const shoulder = [f.x + lean * 0.45, f.base + hgt * 0.55, f.z - half * 0.62];
-    const nE = [0.85, 0.5, 0];
-    triRaw(toeN, toeS, shoulder, face, nE); triRaw(shoulder, toeS, top, faceD, nE);
-    const back = [f.x - lean * 0.35, f.base + hgt * 0.4, f.z];
-    triRaw(toeN, shoulder, back, edge, [0, 0.2, -1]); triRaw(shoulder, top, back, edge, [0, 0.4, -1]); triRaw(top, toeS, back, edge, [0, 0.2, 1]);
-    // the base of the slab sits in forest (talus skirt)
-    triRaw([bx - 20, f.base + 6, f.z - half - 25], [bx + 26, f.base - 4, f.z - half - 10], [bx + 26, f.base - 4, f.z + half + 10], forest, [0.3, 1, 0]);
-    triRaw([bx - 20, f.base + 6, f.z - half - 25], [bx + 26, f.base - 4, f.z + half + 10], [bx - 20, f.base + 6, f.z + half + 25], forestL, [0.3, 1, 0]);
+    // a rounded, slightly bulging tablet dipping ~58° east: rows up the face, columns across it
+    const hgt = f.top - f.base; const half = f.w / 2;
+    const up = [-0.62 * hgt, hgt, 0]; // toe → summit
+    const toe = [f.x + 0.62 * hgt, f.base - 6, f.z];
+    const nrmF = (() => { const l = Math.hypot(1, 0.62); return [1 / l, 0.62 / l, 0]; })();
+    const ROWS = 7; const COLS = 6;
+    const P = (t, u) => {
+      const w = half * Math.pow(1 - t, 0.5) * (1 + 0.08 * Math.sin(t * 7 + f.z));
+      const shift = -half * 0.18 * t;
+      const bulge = hgt * 0.07 * (1 - u * u) * Math.sin(Math.PI * Math.min(1, t * 1.1));
+      return [toe[0] + up[0] * t + nrmF[0] * bulge, toe[1] + up[1] * t + nrmF[1] * bulge, toe[2] + u * w + shift];
+    };
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+      const t0 = r / ROWS; const t1 = (r + 1) / ROWS; const u0 = -1 + 2 * c / COLS; const u1 = -1 + 2 * (c + 1) / COLS;
+      const band = (r + (c > 2 ? 1 : 0)) % 2 ? face : faceL; const col = fr() < 0.16 ? lichen : fr() < 0.3 ? faceD : band;
+      tri(P(t0, u0), P(t0, u1), P(t1, u1), col); tri(P(t0, u0), P(t1, u1), P(t1, u0), col);
+    }
+    // the slab's edges, falling back into the mountain
+    const rim = []; for (let r = 0; r <= ROWS; r++) rim.push(P(r / ROWS, -1)); const rimS = []; for (let r = 0; r <= ROWS; r++) rimS.push(P(r / ROWS, 1));
+    const into = (p) => [p[0] - nrmF[0] * 16, p[1] - 10, p[2]];
+    for (const side of [rim, rimS]) for (let r = 0; r < ROWS; r++) { const a = side[r]; const b = side[r + 1]; triRaw(a, b, into(b), edge, [0, 0.3, side === rim ? -1 : 1]); triRaw(a, into(b), into(a), edge, [0, 0.3, side === rim ? -1 : 1]); }
+    // forest skirt at the toe
+    const bx = toe[0];
+    tri([bx - 30, f.base + 8, f.z - half - 30], [bx + 30, f.base - 6, f.z - half - 12], [bx + 30, f.base - 6, f.z + half + 12], forest);
+    tri([bx - 30, f.base + 8, f.z - half - 30], [bx + 30, f.base - 6, f.z + half + 12], [bx - 30, f.base + 8, f.z + half + 30], forestL);
   }
   // the Indian Peaks: a snowy far ridge to the west-north-west (true bearing ~275–315°, ~30 km)
   {

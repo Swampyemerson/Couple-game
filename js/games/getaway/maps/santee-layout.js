@@ -601,7 +601,7 @@ export function* layoutSteps() {
   // ── 11. Santee Lakes ───────────────────────────────────────────────────────────────────────────
   for (const p of lakePolys) water.push({ poly: p.map(([x, z]) => [Math.round(x * 10) / 10, Math.round(z * 10) / 10]) });
   deco.lakePark = [[-905, -520], [-1072, -525], [-1078, -1150], [-905, -1150]];
-  open.push({ kind: 'grass', poly: deco.lakePark });
+  // no open poly here: default ground is grass, and an open poly would hide the lakes' water
   deco.lakes = lakePolys;
   for (let k = 0; k < 80; k++) {
     const x = -1072 + rnd() * 165, z = -1145 + rnd() * 620;

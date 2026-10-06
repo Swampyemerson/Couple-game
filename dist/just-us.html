@@ -8426,7 +8426,7 @@ function creekNS(name, kind, width, x, z0, z1, o = {}) {
 
 // Downtown, Whittier, Mapleton Hill: E–W
 add('Balsam Ave', 'street', 10, EW(Z.balsam, X.st4, X.folsom));
-add('Mapleton Ave', 'street', 10, EW(Z.mapleton, X.st4, X.folsom));
+add('Mapleton Ave', 'street', 10, EW(Z.mapleton, X.st4, X.st28));
 add('Pine St', 'street', 10, EW(Z.pine, X.st4, X.st28));
 add('Spruce St', 'street', 10, EW(Z.spruce, X.st4, X.folsom));
 add('Pearl St alley', 'alley', 5.5, EW(Z.alleyN, X.st9, X.st19));
@@ -8504,6 +8504,12 @@ add('NCAR mesa loop', 'street', 8, (() => { const c = [252, 1600]; const pts = [
 add('', 'street', 9, [...NS(420, Z.baseline, 1500), [430, 1560], [452, 1640], [470, 1700], [480, 1730]]);
 add('', 'street', 9, [...EW(1200, 420, 790)]);
 add('', 'street', 9, EW(1050, 420, 708));
+add('26th St', 'street', 9, NS(690, Z.balsam - 14, Z.spruce));
+add('33rd St', 'street', 9, NS(1145, Z.arapahoe, Z.baseline));
+add('', 'street', 9, EW(330, X.st30, X.foothills));
+add('', 'street', 9, EW(450, X.st30, X.foothills));
+add('', 'street', 9, EW(700, X.st30, X.foothills));
+add('', 'street', 9, EW(810, X.st30, X.foothills));
 add('', 'street', 9, EW(1360, 420, 868));
 add('', 'street', 9, EW(1560, 431, 976));
 add('', 'street', 9, NS(610, Z.baseline, 1721));
@@ -9149,7 +9155,7 @@ function* layoutGen() {
             if (obbCells(lx, lz, lw, ld, rot, 0, (q) => (ras[q] === BLD || ras[q] === WATERC ? false : undefined))) { lots.push({ kind: 'lot', poly, paint: 'asphalt', rot }); stamp(lx, lz, lw, ld, rot, 0, LOT); }
           }
           // a front-yard street tree and a backyard tree for houses
-          if (Z0.trees && rnd() < 0.62) {
+          if (Z0.trees && rnd() < 0.42) {
             const tOff = r.hw + walk + 1.8; const tt = s - R(0, 4);
             const q2 = pt(r, Math.min(r.len - 1, tt));
             const tStyle = Z0.trees === 'cottonwood' ? pick(['cottonwood', 'cottonwood', 'aspen', 'pine']) : Z0.trees;
@@ -9178,12 +9184,12 @@ function* layoutGen() {
   for (const r of sm.list) {
     yield;
     if (r.bridge || r.kind === 'alley') continue;
-    const every = r.kind === 'highway' ? 70 : r.kind === 'arterial' ? 42 : 55;
+    const every = r.kind === 'highway' ? 90 : r.kind === 'arterial' ? 58 : 50;
     let flip = 1;
     for (let s = 14; s < r.len - 10; s += every) {
       const p = pt(r, s); flip = -flip;
       const zone = zoneAt(p.x, p.z);
-      if (r.kind === 'street' && !lampy.has(zone)) continue;
+      if (r.kind === 'street' && zone !== 'downtown' && zone !== 'westpearl' && zone !== 'civic') continue;
       if (zone === 'mtn' && r.name !== 'Flagstaff Rd') continue;
       const off = r.hw + (r.kind === 'highway' ? 2.2 : 0.9);
       const x = p.x - p.tz * flip * off; const z = p.z + p.tx * flip * off;
@@ -9264,7 +9270,7 @@ function* layoutGen() {
   // ── 6. trees: the creek's cottonwoods, parks, the quad, Chautauqua, the foothill forest ──
   for (let k = 0; k < CREEK.length - 1; k++) {
     const [ax, az] = CREEK[k]; const [bx, bz] = CREEK[k + 1]; const L = Math.hypot(bx - ax, bz - az);
-    for (let s = rnd() * 10; s < L; s += 11 + rnd() * 9) {
+    for (let s = rnd() * 10; s < L; s += 16 + rnd() * 12) {
       const side = rnd() < 0.5 ? -1 : 1; const off = 8 + rnd() * 7;
       const x = ax + (bx - ax) * s / L + (-(bz - az) / L) * side * off * (side < 0 ? 1.3 : 1); const z = az + (bz - az) * s / L + ((bx - ax) / L) * side * off;
       if (x < footX(z) - 30) { decorTree(x, z, 'pine', R(0.9, 1.3)); continue; }
@@ -9577,7 +9583,7 @@ function vnoise(x, z) { // cheap value noise in [0, 1]
 // ground colours by district
 const GROUND = {
   mtn: '#86985a', chautauqua: '#b5b862', mesa: '#bdb276', downtown: '#cdc5b6', eastpearl: '#c7c1b3', westpearl: '#a9bd78',
-  twentyninth: '#c9c3b5', junction: '#bdb9aa', civic: '#86bd5c', campus: '#8cc062', commercial: '#bcb7a5', east: '#b3b69a',
+  twentyninth: '#c9c3b5', junction: '#bdb9aa', civic: '#86bd5c', campus: '#8cc062', commercial: '#bcb7a5', east: '#a8bf7c',
   whittier: '#8fbf5f', westres: '#8fbf5f', hill: '#93bf62', southres: '#9cc066', martin: '#98bf63', eastres: '#9cc066',
   willvill: '#98bf63', valmont: '#b1b36a', none: '#a3bd6a',
 };
@@ -9657,7 +9663,7 @@ async function buildBoulder(THREE, kit = {}) {
       for (let j = bj; j <= je; j++) for (let i = bi; i <= ie; i++) { const h = g[j * HG.HW + i]; lo = Math.min(lo, h); hi = Math.max(hi, h); }
       const cxm = HG.HX0 + (bi + ie) / 2 * HG.HC; const czm = HG.HZ0 + (bj + je) / 2 * HG.HC;
       if (Math.abs(czm - 155) < 130) nearCreek = true;
-      const step = (hi - lo < 0.25 && !nearCreek && !low) || low ? 2 : 1;
+      const step = (hi - lo < 1.5 && !nearCreek) || low ? 2 : 1;
       const buf = B(cxm, czm);
       const pos = []; const nrm = []; const col = []; const idx = [];
       const cols = Math.ceil((ie - bi) / step) + 1; const rows = Math.ceil((je - bj) / step) + 1;
@@ -9792,7 +9798,7 @@ async function buildBoulder(THREE, kit = {}) {
   for (const b of L.buildings) {
     const buf = B(b.x, b.z); const v0 = buf.v; const i0 = buf.ni;
     drawBuilding(buf, b);
-    if (OL && b.style !== 'stands') buf.hull(v0, i0, OL * (b.w > 30 || b.h > 14 ? 1.6 : 1), INK);
+    if (OL && b.style !== 'stands' && (b.landmark || b.home || !/house|victorian|ranch|cottage/.test(b.style))) buf.hull(v0, i0, OL * (b.w > 30 || b.h > 14 ? 1.6 : 1), INK);
     if (++bc % 250 === 0) await slice();
   }
   mark('buildings');
@@ -11310,7 +11316,7 @@ function* layoutSteps() {
   // ── 11. Santee Lakes ───────────────────────────────────────────────────────────────────────────
   for (const p of lakePolys) water.push({ poly: p.map(([x, z]) => [Math.round(x * 10) / 10, Math.round(z * 10) / 10]) });
   deco.lakePark = [[-905, -520], [-1072, -525], [-1078, -1150], [-905, -1150]];
-  open.push({ kind: 'grass', poly: deco.lakePark });
+  // no open poly here: default ground is grass, and an open poly would hide the lakes' water
   deco.lakes = lakePolys;
   for (let k = 0; k < 80; k++) {
     const x = -1072 + rnd() * 165, z = -1145 + rnd() * 620;
@@ -12862,12 +12868,12 @@ function createGame(el, api) {
     // swap worlds: the cars, wheels and traffic meshes are rebuilt against the new world's
     // materials; take them out of the old scene first so its dispose() doesn't free them
     if (carViews) {
-      for (const v of Object.values(carViews)) { v.group.removeFromParent(); v.dispose(); }
-      wheels.mesh.removeFromParent(); wheels.dispose();
-      for (const m of [trafficMeshes.paint, trafficMeshes.trim]) { m.removeFromParent(); m.geometry.dispose(); }
+      for (const v of Object.values(carViews)) { detach(v.group); v.dispose(); }
+      detach(wheels.mesh); wheels.dispose();
+      for (const m of [trafficMeshes.paint, trafficMeshes.trim]) { detach(m); m.geometry.dispose(); }
       carViews = null;
     }
-    if (fx) { for (const m of [fx.puffs, fx.sparks, fx.skids, fx.strips, fx.oils, fx.lines]) m.removeFromParent(); fx.dispose(); fx = null; }
+    if (fx) { for (const m of [fx.puffs, fx.sparks, fx.skids, fx.strips, fx.oils, fx.lines]) detach(m); fx.dispose(); fx = null; }
     if (world) world.dispose();
     world = w; geo = g; S.mapId = entry.id; S.mapIdx = MAPS.indexOf(entry); S.mapEntry = entry;
     U.uSiren.value.w = 0;
@@ -13048,6 +13054,7 @@ function createGame(el, api) {
     traffic = createTraffic(geo, S.mapId, S.match.rules.traffic);
     applyRound(R);
   }
+  const detach = (o) => { if (o && o.parent) o.parent.remove(o); };
   const clone = (o) => JSON.parse(JSON.stringify(o)); // room payloads arrive frozen
   link.on('match', (d) => { if (!isHost && d && d.match) applyMatch(clone(d.match), clone(d.R)); });
   link.on('round', (d) => { if (!isHost && d && S.match && d.R) { const c = clone(d); S.match.scores = c.scores || S.match.scores; S.match.hist = c.hist || S.match.hist; applyRound(c.R); } });
@@ -13966,6 +13973,8 @@ function createGame(el, api) {
       },
       resetPerf() { perf.n = 0; perf.maxCalls = 0; perf.maxTris = 0; },
       start() { hostStart(); },
+      /** Rebuild the world (even for the same map): map-switch regression tests. */
+      async reloadMap(id) { S.mapId = null; await loadMap(id || S.setup.map); return S.mapId; },
       setRules(r) { if (!isHost) return null; setSetup({ ...S.setup, rules: { ...S.setup.rules, ...r } }); return S.setup; },
       setSetup(s) { if (!isHost) return null; setSetup({ ...S.setup, ...s }); return S.setup; },
       setLocalMode(m, role) { S.localMode = m; if (role) S.practiceRole = role; renderLobby(true); },

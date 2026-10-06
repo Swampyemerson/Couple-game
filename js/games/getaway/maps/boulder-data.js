@@ -110,7 +110,7 @@ function creekNS(name, kind, width, x, z0, z1, o = {}) {
 
 // Downtown, Whittier, Mapleton Hill: E–W
 add('Balsam Ave', 'street', 10, EW(Z.balsam, X.st4, X.folsom));
-add('Mapleton Ave', 'street', 10, EW(Z.mapleton, X.st4, X.folsom));
+add('Mapleton Ave', 'street', 10, EW(Z.mapleton, X.st4, X.st28));
 add('Pine St', 'street', 10, EW(Z.pine, X.st4, X.st28));
 add('Spruce St', 'street', 10, EW(Z.spruce, X.st4, X.folsom));
 add('Pearl St alley', 'alley', 5.5, EW(Z.alleyN, X.st9, X.st19));
@@ -188,6 +188,12 @@ add('NCAR mesa loop', 'street', 8, (() => { const c = [252, 1600]; const pts = [
 add('', 'street', 9, [...NS(420, Z.baseline, 1500), [430, 1560], [452, 1640], [470, 1700], [480, 1730]]);
 add('', 'street', 9, [...EW(1200, 420, 790)]);
 add('', 'street', 9, EW(1050, 420, 708));
+add('26th St', 'street', 9, NS(690, Z.balsam - 14, Z.spruce));
+add('33rd St', 'street', 9, NS(1145, Z.arapahoe, Z.baseline));
+add('', 'street', 9, EW(330, X.st30, X.foothills));
+add('', 'street', 9, EW(450, X.st30, X.foothills));
+add('', 'street', 9, EW(700, X.st30, X.foothills));
+add('', 'street', 9, EW(810, X.st30, X.foothills));
 add('', 'street', 9, EW(1360, 420, 868));
 add('', 'street', 9, EW(1560, 431, 976));
 add('', 'street', 9, NS(610, Z.baseline, 1721));

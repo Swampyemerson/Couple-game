@@ -100,7 +100,7 @@ function vnoise(x, z) { // cheap value noise in [0, 1]
 // ground colours by district
 const GROUND = {
   mtn: '#86985a', chautauqua: '#b5b862', mesa: '#bdb276', downtown: '#cdc5b6', eastpearl: '#c7c1b3', westpearl: '#a9bd78',
-  twentyninth: '#c9c3b5', junction: '#bdb9aa', civic: '#86bd5c', campus: '#8cc062', commercial: '#bcb7a5', east: '#b3b69a',
+  twentyninth: '#c9c3b5', junction: '#bdb9aa', civic: '#86bd5c', campus: '#8cc062', commercial: '#bcb7a5', east: '#a8bf7c',
   whittier: '#8fbf5f', westres: '#8fbf5f', hill: '#93bf62', southres: '#9cc066', martin: '#98bf63', eastres: '#9cc066',
   willvill: '#98bf63', valmont: '#b1b36a', none: '#a3bd6a',
 };
@@ -180,7 +180,7 @@ export async function buildBoulder(THREE, kit = {}) {
       for (let j = bj; j <= je; j++) for (let i = bi; i <= ie; i++) { const h = g[j * HG.HW + i]; lo = Math.min(lo, h); hi = Math.max(hi, h); }
       const cxm = HG.HX0 + (bi + ie) / 2 * HG.HC; const czm = HG.HZ0 + (bj + je) / 2 * HG.HC;
       if (Math.abs(czm - 155) < 130) nearCreek = true;
-      const step = (hi - lo < 0.25 && !nearCreek && !low) || low ? 2 : 1;
+      const step = (hi - lo < 1.5 && !nearCreek) || low ? 2 : 1;
       const buf = B(cxm, czm);
       const pos = []; const nrm = []; const col = []; const idx = [];
       const cols = Math.ceil((ie - bi) / step) + 1; const rows = Math.ceil((je - bj) / step) + 1;
@@ -315,7 +315,7 @@ export async function buildBoulder(THREE, kit = {}) {
   for (const b of L.buildings) {
     const buf = B(b.x, b.z); const v0 = buf.v; const i0 = buf.ni;
     drawBuilding(buf, b);
-    if (OL && b.style !== 'stands') buf.hull(v0, i0, OL * (b.w > 30 || b.h > 14 ? 1.6 : 1), INK);
+    if (OL && b.style !== 'stands' && (b.landmark || b.home || !/house|victorian|ranch|cottage/.test(b.style))) buf.hull(v0, i0, OL * (b.w > 30 || b.h > 14 ? 1.6 : 1), INK);
     if (++bc % 250 === 0) await slice();
   }
   mark('buildings');

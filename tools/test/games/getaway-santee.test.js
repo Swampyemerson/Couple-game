@@ -130,6 +130,9 @@ async function staticSection() {
   let wet = 0;
   for (const r of geo.roads) { if (r.bridge) continue; for (let i = 0; i < r.n; i += 2) if (geo.surfaceAt(r.x[i], r.z[i]) === 'water') wet++; }
   ok(wet === 0, `no road runs into water (${wet} samples)`);
+  const lakeIn = [[-985, -585], [-1000, -705], [-990, -830], [-1005, -960], [-995, -1075]].filter(([x, z]) => geo.surfaceAt(x, z) !== 'water');
+  ok(!lakeIn.length, `the engine reads all five Santee Lakes as water${lakeIn.length ? ': not ' + JSON.stringify(lakeIn) : ''}`);
+  warn([[-170, -186], [880, -232]].every(([x, z]) => geo.surfaceAt(x, z) === 'water'), 'the river pools read as water (needs the engine to check water before open polys)');
   ok(M.water.length >= 5, `${M.water.length} water polygons (Santee Lakes + river pools)`);
   ok(M.open.some((o) => o.kind === 'sand') && M.open.some((o) => o.kind === 'lot') && M.open.some((o) => o.kind === 'grass') && M.open.some((o) => o.kind === 'dirt'), 'open ground has sand, lots, grass and dirt');
 
@@ -330,7 +333,8 @@ async function gameSection() {
     await a.waitForFunction(() => window.__getaway.state().phase === 'intro', null, { timeout: 20000 });
     await wait(700); await shot('intro');
     const introText = await a.evaluate(() => (document.querySelector('.g-gtw') || document.body).innerText);
-    ok(/Santee/.test(introText), 'the round intro names Santee');
+    ok(/santee/i.test(introText), 'the round intro names Santee');
+    ok(/Starting near/i.test(introText), `the intro says where: ${(introText.match(/Starting near[^\n]*/) || [''])[0]}`);
     await a.waitForFunction(() => window.__getaway.state().phase === 'chase', null, { timeout: 20000 });
     await a.waitForFunction(() => window.__getaway.navReady(), null, { timeout: 60000 });
     s = await st();
@@ -349,8 +353,11 @@ async function gameSection() {
       const ri = roads.findIndex((r) => r.name === name && !r.bridge && r.len > 200);
       if (ri < 0) { ok(false, `route ${name} found`); continue; }
       const p = await hook('roadPoint', ri, roads[ri].len * 0.35);
+      // the AI runner flees along the road; the AI cop chases a runner placed 80 m ahead of it
+      const amRunner = (await st()).R.runner === me;
       await hook('teleport', me, p.x, p.z, p.yaw, 18);
-      await hook('teleport', other, p.x - Math.sin(p.yaw) * 80, p.z + Math.cos(p.yaw) * 80, p.yaw, 10);
+      const k = amRunner ? -80 : 80;
+      await hook('teleport', other, p.x + Math.sin(p.yaw) * k, p.z - Math.cos(p.yaw) * k, p.yaw, 18);
       await hook('auto', me, true);
       await wait(3500);
       s = await st();
