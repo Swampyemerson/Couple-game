@@ -148,12 +148,16 @@ async function snap(pg, scheme, name, sizes = [[390, 844], [360, 780]]) {
 }
 const tapKeys = async (pg, word) => { for (const ch of word) await pg.click(`.g-wd-key[data-k="${ch}"]`); };
 const tapEnter = (pg) => pg.click('.g-wd-key[data-k="enter"]');
+// The hub re-renders when results sync, which can detach the card the harness just found: retry.
+async function retry(fn) { for (let n = 0; ; n++) { try { return await fn(); } catch (e) { if (n >= 2 || !/not attached|detached/i.test(e.message)) throw e; await new Promise((r) => setTimeout(r, 300)); } } }
+const newLocal = (h, pg, game) => retry(() => h.newLocalGame(pg, game));
+const newOnline = (h, pg, game) => retry(() => h.newOnlineGame(pg, game));
 const reveal = async (pg) => { await pg.waitForSelector('#game-root .gm-curtain:not([hidden])'); await pg.click('#game-root [data-g="reveal"]'); await pg.waitForTimeout(80); };
 
 // ── Word Duel, online ────────────────────────────────────────────────────
 async function wordDuelOnline(h, scheme, full) {
   const { a, b } = h;
-  const id = await h.newOnlineGame(a, 'wordduel');
+  const id = await newOnline(h, a, 'wordduel');
   await h.openMatch(b, id);
   await h.settle();
   assert(await a.isVisible('.g-wd-key[data-k="q"]'), 'word duel: keyboard shows for picking');
@@ -247,7 +251,8 @@ async function wordDuelOnline(h, scheme, full) {
 async function wordDuelLocal(h, scheme) {
   const { a } = h;
   const before = h.results().length;
-  await h.newLocalGame(a, 'wordduel');
+  await h.settle();
+  await newLocal(h, a, 'wordduel');
   assert(await a.isVisible('#game-root .gm-curtain'), 'same phone: curtain before the first secret');
   await snap(a, scheme, 'wd-7-curtain', [[390, 844]]);
   await reveal(a);
@@ -295,7 +300,7 @@ async function pickCard(pg, i, viaButton) {
 async function agentsOnline(h, scheme, full) {
   const { a, b } = h;
   const P = { a, b };
-  const id = await h.newOnlineGame(a, 'agents');
+  const id = await newOnline(h, a, 'agents');
   await h.openMatch(b, id);
   await h.settle();
   let e = await h.engine(a, id);
@@ -323,8 +328,9 @@ async function agentsOnline(h, scheme, full) {
     await giveClue(P[G1], 'big cat');
     await P[G1].waitForTimeout(60);
     assert(/One word/.test(await toastText(P[G1])), 'a two-word clue is rejected');
-    await P[R1].click('.g-ag-card[data-i="0"]');
-    await P[R1].click('.g-ag-card[data-i="0"]');
+    assert(await P[R1].getAttribute('.g-ag-card[data-i="0"]', 'aria-disabled') === 'true', 'cards are locked for the guesser before the clue');
+    await P[R1].click('.g-ag-card[data-i="0"]', { force: true });
+    await P[R1].click('.g-ag-card[data-i="0"]', { force: true });
     await P[R1].waitForTimeout(100);
     assert((await h.engine(a, id)).lists.a.length + (await h.engine(a, id)).lists.b.length === 0, 'picking before the clue (out of turn) does nothing');
     await P[G1].fill('.g-ag-input', '');
@@ -338,7 +344,7 @@ async function agentsOnline(h, scheme, full) {
   assert(e.acts[0] === R1 && s.log.length === 1, 'clue sent, partner guesses');
   assert((await P[R1].textContent('.g-ag-slip')).toUpperCase().includes(s.log[0].clue.toUpperCase()), 'the guesser sees the clue');
   if (full) {
-    await P[G1].click(`.g-ag-card[data-i="${[...s.key[G1]].indexOf('G')}"]`);
+    await P[G1].click(`.g-ag-card[data-i="${[...s.key[G1]].indexOf('G')}"]`, { force: true });
     await P[G1].waitForTimeout(80);
     assert((await h.engine(a, id)).state.found.every((x) => !x), 'the giver cannot pick (out of turn)');
     assert(await P[R1].isDisabled('.g-ag-dock [data-act="stop"]'), 'End turn is locked until the first pick');
@@ -402,7 +408,8 @@ async function agentsOnline(h, scheme, full) {
 async function agentsLocal(h, scheme) {
   const { a } = h;
   const before = h.results().length;
-  await h.newLocalGame(a, 'agents');
+  await h.settle();
+  await newLocal(h, a, 'agents');
   const id = await a.evaluate(() => window.__lastMatchId);
   assert(await a.isVisible('#game-root .gm-curtain'), 'same phone: curtain before the first clue');
   await reveal(a);

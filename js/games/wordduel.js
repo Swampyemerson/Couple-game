@@ -100,16 +100,6 @@ function result(s) {
   const m = Math.max(na, nb);
   return { winner: w, sub: m > MAX ? `Cracked it in ${gs(n)}. The other word held out.` : `Cracked it in ${gs(n)}, against ${m}.` };
 }
-function score(s) {
-  const lab = (w) => {
-    if (!s.secret.a || !s.secret.b) return s.secret[w] ? 'ready' : '';
-    if (solvedBy(s, w)) return `in ${s.guesses[w].length}`;
-    if (s.guesses[w].length >= MAX) return 'missed';
-    return `${s.guesses[w].length}/${MAX}`;
-  };
-  return { a: lab('a'), b: lab('b') };
-}
-
 // ── view helpers ──
 const KB_ROWS = ['qwertyuiop', 'asdfghjkl', '>zxcvbnm<'];
 const RANK = { x: 1, y: 2, g: 3 };
@@ -128,6 +118,7 @@ const css = `
 .g-wd-who { font-weight: 900; }
 .g-wd-who.p-a { color: var(--p-a); } .g-wd-who.p-b { color: var(--p-b); }
 .g-wd-area { flex: 1 1 0; min-height: 170px; container-type: size; display: flex; align-items: center; justify-content: center; }
+.g-wd[data-mode="done"] .g-wd-area, .g-wd[data-mode="end"] .g-wd-area { align-items: flex-start; padding-top: min(4vh, 28px); }
 
 /* tiles: printed letter tiles */
 .g-wd-board { --t: min(62px, calc((100cqw - 4 * var(--gap)) / 5), calc((100cqh - 5 * var(--gap)) / 6)); display: grid; gap: var(--gap); justify-content: center; }
@@ -156,9 +147,9 @@ const css = `
 .g-wd-colhead small { color: var(--g-muted); font-weight: 800; font-size: 0.8rem; }
 
 /* partner progress, colour only */
-.g-wd-minis { display: flex; gap: 5px; }
-.g-wd-mrow { display: flex; gap: 2px; }
-.g-wd-m { width: 7px; height: 7px; box-sizing: border-box; border: 1.5px solid var(--g-line); border-radius: 1px; }
+.g-wd-minis { display: flex; gap: 4px; }
+.g-wd-mrow { display: flex; gap: 1px; }
+.g-wd-m { width: 6px; height: 6px; box-sizing: border-box; border: 1.5px solid var(--g-line); border-radius: 1px; }
 .g-wd-m.m-g { background: var(--g-good); border-color: var(--g-ink); }
 .g-wd-m.m-y { background: var(--g-hl); border-color: var(--g-ink); border-radius: 50%; }
 .g-wd-m.m-x { background: transparent; border-color: var(--g-muted); }
@@ -199,7 +190,7 @@ const css = `
 }
 `;
 
-const RULES = { init, next, apply, result, score };
+const RULES = { init, next, apply, result };
 
 registerGame({
   id: 'wordduel',
@@ -353,7 +344,7 @@ registerGame({
         say(`Pick a secret word for <span class="g-wd-who ${pcls(p)}">${nm(p)}</span> to crack.`);
         stripEl.innerHTML = c.mode === 'online' ? (s.secret[p] ? `<span><span class="g-wd-who ${pcls(p)}">${nm(p)}</span> has picked</span>` : `<span><span class="g-wd-who ${pcls(p)}">${nm(p)}</span> is picking…</span>`) : '';
       } else if (m === 'picked') {
-        say(`Locked in. Waiting for <span class="g-wd-who ${pcls(p)}">${nm(p)}</span> to pick a word…`);
+        say(`Your word is locked in. The race starts when <span class="g-wd-who ${pcls(p)}">${nm(p)}</span> picks theirs.`);
         stripEl.innerHTML = '';
       } else if (m === 'solve') {
         const n = s.guesses[v].length + (pending ? 1 : 0);
@@ -361,7 +352,7 @@ registerGame({
           const got = pending.word === target(s, v);
           say(got ? `Cracked it in ${n}!` : `Out of guesses. It was <b>${up(target(s, v))}</b>.`);
         } else say(`Crack <span class="g-wd-who ${pcls(p)}">${nm(p)}</span>’s word. Guess ${n + 1} of ${MAX}.`);
-        stripEl.innerHTML = `<span class="g-wd-who ${pcls(p)}">${nm(p)}</span>${minisHTML(p, s)}<span>${solvedBy(s, p) ? `in ${s.guesses[p].length}` : `${s.guesses[p].length}/${MAX}`}</span>`;
+        stripEl.innerHTML = `<span class="g-wd-who ${pcls(p)}">${nm(p)}</span>${minisHTML(p, s)}`;
       } else if (m === 'done') {
         say(solvedBy(s, v)
           ? `Cracked it in ${s.guesses[v].length}! Now <span class="g-wd-who ${pcls(p)}">${nm(p)}</span> is on your word…`
@@ -467,11 +458,12 @@ registerGame({
       if (m !== 'pick' && m !== 'solve') return;
       if (draft.length < 5) { bad(draft.length ? 'Five letters, please.' : 'Type a five-letter word.'); return; }
       if (m === 'pick') {
-        const r = api.move({ secret: draft });
-        if (!r.ok) { bad(r.error); return; }
+        const word = draft;
+        draft = ''; // the move re-renders synchronously
+        const r = api.move({ secret: word });
+        if (!r.ok) { draft = word; bad(r.error); return; }
         api.sfx('place');
         api.haptic(15);
-        draft = '';
         return;
       }
       const s = c.state;
@@ -488,9 +480,10 @@ registerGame({
           return;
         }
       }
-      const r = api.move({ guess: draft });
-      if (!r.ok) { bad(r.error); return; }
+      const word = draft;
       draft = '';
+      const r = api.move({ guess: word });
+      if (!r.ok) { draft = word; bad(r.error); }
     }
 
     function commit() {

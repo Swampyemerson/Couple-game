@@ -206,8 +206,8 @@ const css = `
 .g-ag-input::placeholder { text-transform: none; letter-spacing: 0; font-weight: 700; color: var(--g-muted); }
 .g-ag-input:focus { outline: 3px solid var(--g-hl); outline-offset: 1px; }
 .g-ag-input.shake { animation: g-ag-shake 0.4s ease; }
-.g-ag-step { display: flex; align-items: stretch; border: 2px solid var(--g-ink); border-radius: calc(var(--g-radius) * 0.5); background: var(--g-card); box-shadow: var(--g-shadow); overflow: hidden; }
-.g-ag-step button { width: 34px; color: var(--g-ink); font-weight: 900; font-size: 1.2rem; background: transparent; }
+.g-ag-step { flex-shrink: 0; display: flex; align-items: stretch; border: 2px solid var(--g-ink); border-radius: calc(var(--g-radius) * 0.5); background: var(--g-card); box-shadow: var(--g-shadow); overflow: hidden; }
+.g-ag-step button { width: 36px; min-height: 42px; color: var(--g-ink); font-weight: 900; font-size: 1.2rem; background: transparent; }
 .g-ag-step output { min-width: 22px; display: grid; place-items: center; font-weight: 900; font-size: 1.1rem; }
 .g-ag-form .gm-btn { min-height: 46px; padding: 0 14px; }
 
@@ -218,7 +218,7 @@ const css = `
 .g-ag-grid { --gap: clamp(4px, 1.5cqw, 10px); display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--gap); }
 .g-ag-card { --cw: calc((100cqw - 4 * var(--gap)) / 5); --face: var(--g-card); --ink: var(--g-ink); position: relative; height: clamp(46px, min(calc(var(--cw) * 0.66), calc((100dvh - 360px) / 5)), 96px); min-width: 0; padding: 0 2px; box-sizing: border-box; display: grid; place-items: center; overflow: hidden; border: 2px solid var(--g-ink); border-radius: calc(var(--g-radius) * 0.45); background-color: var(--face); color: var(--ink); box-shadow: var(--g-shadow); font-family: var(--g-font-display); font-weight: 900; text-transform: uppercase; letter-spacing: 0.02em; cursor: default; transition: transform 0.12s ease; }
 .g-ag-card::before { content: ''; position: absolute; left: 14%; right: 14%; bottom: 18%; height: 1.5px; background: var(--g-line); opacity: 0.9; }
-.g-ag-word { position: relative; z-index: 1; max-width: 100%; overflow: hidden; white-space: nowrap; font-size: clamp(9px, calc(var(--cw) / (var(--len) * 0.7 + 1.1)), 20px); line-height: 1; }
+.g-ag-word { position: relative; z-index: 1; max-width: 100%; letter-spacing: calc(0.06em - var(--len) * 0.008em); overflow: hidden; white-space: nowrap; font-size: clamp(9px, calc(var(--cw) / (var(--len) * 0.7 + 1.1)), 20px); line-height: 1; }
 .g-ag-card .g-ag-ico { position: absolute; z-index: 0; pointer-events: none; }
 .g-ag-card.can { cursor: pointer; }
 .g-ag-card.can:active { transform: translateY(1px); }
@@ -227,15 +227,15 @@ const css = `
 
 /* the key overlay (yours, or the clue-giver's own) */
 .g-ag-card.k-G { box-shadow: inset 0 0 0 3px var(--g-good), var(--g-shadow); }
-.g-ag-card.k-G::after { content: ''; position: absolute; top: 0; left: 0; border-top: 16px solid var(--g-good); border-right: 16px solid transparent; }
-.g-ag-card.k-K { --face: color-mix(in srgb, var(--g-ink) 14%, var(--g-card)); box-shadow: inset 0 0 0 3px var(--g-ink), var(--g-shadow); }
+.g-ag-card.k-G::after { content: ''; position: absolute; top: 0; left: 0; border-top: 12px solid var(--g-good); border-right: 12px solid transparent; }
+.g-ag-card.k-K { background-image: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--g-ink) 16%, transparent) 6px 8px); box-shadow: inset 0 0 0 3px var(--g-ink), var(--g-shadow); }
 .g-ag-card.k-K .g-ag-ico { top: 3px; right: 3px; width: 14px; height: 14px; }
 
 /* revealed */
-.g-ag-card.is-found { --face: var(--g-good); --ink: var(--g-on-ink); }
+.g-ag-card.is-found { --face: var(--g-good); --ink: var(--g-on-ink); background-image: none; }
 .g-ag-card.is-found::before, .g-ag-card.is-hit::before { display: none; }
 .g-ag-card.is-found .g-ag-ico { inset: 12% 18%; width: 64%; height: 76%; opacity: 0.28; }
-.g-ag-card.is-hit { --face: var(--g-ink); --ink: var(--g-bg); }
+.g-ag-card.is-hit { --face: var(--g-ink); --ink: var(--g-bg); background-image: none; }
 .g-ag-card.is-hit .g-ag-ico { inset: 10% 30%; width: 40%; height: 80%; opacity: 0.4; }
 .g-ag-card.is-void { --face: color-mix(in srgb, var(--g-muted) 22%, var(--g-card)); --ink: var(--g-muted); box-shadow: none; }
 .g-ag-tag { position: absolute; z-index: 2; bottom: 2px; width: 14px; height: 14px; display: grid; place-items: center; border-radius: 3px; font: 900 9px/1 var(--g-font-body); font-style: normal; color: var(--g-on-ink); }
@@ -249,7 +249,7 @@ const css = `
 .g-ag-legend { display: flex; gap: 12px; font-size: 0.78rem; font-weight: 800; color: var(--g-muted); align-items: center; }
 .g-ag-legend i { display: inline-block; width: 14px; height: 14px; margin-right: 4px; vertical-align: -2px; box-sizing: border-box; border-radius: 3px; border: 2px solid var(--g-ink); }
 .g-ag-legend .lg-g { border-color: var(--g-good); background: linear-gradient(135deg, var(--g-good) 50%, transparent 50%); }
-.g-ag-legend .lg-k { background: color-mix(in srgb, var(--g-ink) 14%, var(--g-card)); }
+.g-ag-legend .lg-k { background: var(--g-card) repeating-linear-gradient(135deg, transparent 0 2px, color-mix(in srgb, var(--g-ink) 30%, transparent) 2px 3px); }
 .g-ag-legend .lg-k::after { content: ''; display: block; width: 4px; height: 4px; margin: 3px auto; border-radius: 50%; background: var(--g-ink); }
 .g-ag-toggle { display: inline-flex; border: 2px solid var(--g-ink); border-radius: 999px; overflow: hidden; background: var(--g-card); }
 .g-ag-toggle button { min-height: 40px; padding: 0 14px; font-weight: 800; color: var(--g-ink); background: transparent; }
@@ -285,7 +285,7 @@ const css = `
 
 /* motion */
 @keyframes g-ag-flip { 0% { transform: rotateY(0); } 50% { transform: rotateY(90deg); } 100% { transform: rotateY(0); } }
-@keyframes g-ag-face { 0%, 49% { background-color: var(--g-card); color: var(--g-ink); } 50%, 100% { background-color: var(--face); color: var(--ink); } }
+@keyframes g-ag-face { 0%, 49% { background-color: var(--g-card); background-image: none; color: var(--g-ink); } 50%, 100% { background-color: var(--face); color: var(--ink); } }
 @keyframes g-ag-thunk { 0% { transform: scale(1); } 35% { transform: scale(0.9); } 100% { transform: scale(1); } }
 @keyframes g-ag-shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-7px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(3px); } }
 @keyframes g-ag-pop { 0% { transform: scale(1); } 45% { transform: scale(1.08) rotate(-2deg); } 100% { transform: scale(1); } }
@@ -417,7 +417,24 @@ registerGame({
       if (!c.viewer && !c.over) { grid.innerHTML = ''; return; }
       const k = shownKey(c);
       grid.innerHTML = c.state.words.map((_, i) => cardHTML(c, i, k)).join('');
+      fit();
     }
+    // Shrink each word until it fits its card (measured, so any display font works).
+    function fit() {
+      const spans = grid.querySelectorAll('.g-ag-word');
+      if (!spans.length) return;
+      const card = spans[0].parentElement;
+      const avail = card.clientWidth - 10;
+      if (avail < 20) return;
+      const max = Math.max(12, Math.min(24, card.clientHeight * 0.36));
+      spans.forEach((sp) => { sp.style.fontSize = `${max}px`; });
+      const widths = Array.from(spans, (sp) => sp.scrollWidth);
+      spans.forEach((sp, i) => { sp.style.fontSize = `${Math.max(8, Math.min(max, (max * avail) / Math.max(1, widths[i]))).toFixed(1)}px`; });
+    }
+    let fitW = 0;
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { const w = grid.clientWidth; if (w !== fitW) { fitW = w; fit(); } }) : null;
+    if (ro) ro.observe(grid);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { if (grid.isConnected) fit(); });
 
     function renderTop() {
       const c = ctx;
@@ -450,7 +467,7 @@ registerGame({
       if (role === 'give' && c.canMove) {
         num = Math.max(1, Math.min(num, agentsLeft(s, s.giver)));
         slip.innerHTML = `<form class="g-ag-form" autocomplete="off">
-          <input class="g-ag-input" name="clue" maxlength="20" placeholder="One-word clue" aria-label="Your clue, one word" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send">
+          <input class="g-ag-input" name="clue" maxlength="20" placeholder="Your clue" aria-label="Your clue, one word" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send">
           <div class="g-ag-step" role="group" aria-label="How many cards"><button type="button" data-act="minus" aria-label="Fewer">−</button><output aria-live="polite">${num}</output><button type="button" data-act="plus" aria-label="More">+</button></div>
           <button class="gm-btn" type="submit">Send</button>
         </form>`;
@@ -592,7 +609,7 @@ registerGame({
         grid.classList.toggle('boom', s.over === 'burned' && !!anim);
         grid.classList.toggle('party', s.over === 'win' && !!anim);
       },
-      destroy() { for (const t of timers) clearTimeout(t); timers.clear(); },
+      destroy() { for (const t of timers) clearTimeout(t); timers.clear(); if (ro) ro.disconnect(); },
     };
   },
 });

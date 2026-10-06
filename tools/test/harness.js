@@ -244,9 +244,10 @@ async function launch(opts = {}) {
 
   async function openSheet(pg, gameId) {
     await h.openGames(pg);
-    const card = await pg.$(`[data-g="sheet"][data-game="${gameId}"]`);
-    if (card) await card.click();
-    else await pg.evaluate((g) => window.__gamesOpenSheet(g), gameId); // hidden games
+    // Locators re-resolve if the hub re-renders mid-click (e.g. when results sync).
+    const card = pg.locator(`[data-g="sheet"][data-game="${gameId}"]`).first();
+    if (await card.count()) await card.click();
+    else await pg.evaluate((g) => window.__gamesOpenSheet(g), gameId); // unlisted games
     await pg.waitForSelector('#game-root .gs');
   }
 
@@ -275,8 +276,7 @@ async function launch(opts = {}) {
     /** Partner opens a match from the hub. */
     async openMatch(pg, id) {
       await h.openGames(pg);
-      await pg.waitForSelector(`[data-g="open"][data-id="${id}"]`, { timeout: 5000 });
-      await pg.click(`[data-g="open"][data-id="${id}"]`);
+      await pg.locator(`[data-g="open"][data-id="${id}"]`).first().click({ timeout: 8000 });
       await pg.waitForSelector('#game-root .gm');
     },
     async closeGame(pg) { await pg.click('#game-root [data-g="close"]'); },
