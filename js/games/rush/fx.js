@@ -156,9 +156,11 @@ export function createRig(THREE) {
       const portrait = st.aspect < 0.9;
       let px; let py; let pz; let lx; let ly; let lz; let k;
       if (mode === 'lobby') {
-        const a = Math.sin(t * 0.22) * 0.55 + 0.2;
-        px = Math.sin(a) * 7.5; py = 2.7; pz = -tg.z + Math.cos(a) * 7.5 - 0.5;
-        lx = 0; ly = 1.25; lz = -tg.z - 0.5;
+        // in front of the two runners, looking back at their faces, swaying slowly
+        const a = Math.sin(t * 0.25) * 0.42;
+        const R = portrait ? 9.6 : 7.4;
+        px = Math.sin(a) * R; py = portrait ? 2.5 : 2.2; pz = -tg.z - Math.cos(a) * R;
+        lx = 0; ly = portrait ? 1.55 : 1.25; lz = -tg.z;
         k = 1 - Math.exp(-dt * 3);
       } else if (mode === 'finale') {
         st.orbit += dt * 0.5;

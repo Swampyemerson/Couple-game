@@ -132,6 +132,21 @@ export function createPaint(THREE, kit) {
     return hit;
   }
 
+  /** Paint texels of one part whose local position passes fn(x, y, z) → 0..1 coverage. */
+  function paintLocal(partIdx, fn, rgb) {
+    for (let k = 0; k < list.length; k++) {
+      const i = list[k];
+      if (part[i] !== partIdx) continue;
+      const a = fn(lpos[i * 3], lpos[i * 3 + 1], lpos[i * 3 + 2]);
+      if (a <= 0) continue;
+      const o = i * 4;
+      data[o] = Math.round(data[o] + (rgb[0] - data[o]) * a);
+      data[o + 1] = Math.round(data[o + 1] + (rgb[1] - data[o + 1]) * a);
+      data[o + 2] = Math.round(data[o + 2] + (rgb[2] - data[o + 2]) * a);
+    }
+    touch();
+  }
+
   /** Colour of the body at a texel uv (for picking colours off yourself). */
   function colorAtUV(u, v, out) {
     const x = Math.min(TEX - 1, Math.max(0, Math.floor(u * TEX))); const y = Math.min(TEX - 1, Math.max(0, Math.floor(v * TEX)));
@@ -150,7 +165,7 @@ export function createPaint(THREE, kit) {
     data, texture, wpos, wnrm,
     get version() { return version; },
     get canUndo() { return undo.length > 0; },
-    updateWorld, snapshot, dab, fill, stamp, tintFacing, colorAtUV, flush,
+    updateWorld, snapshot, dab, fill, stamp, tintFacing, paintLocal, colorAtUV, flush,
     undo() { const s = undo.pop(); if (!s) return false; data.set(s); touch(); return true; },
     clearUndo() { undo.length = 0; },
     reset(rgb = [255, 255, 255]) { for (let i = 0; i < N; i++) { data[i * 4] = rgb[0]; data[i * 4 + 1] = rgb[1]; data[i * 4 + 2] = rgb[2]; data[i * 4 + 3] = 255; } undo.length = 0; touch(); },

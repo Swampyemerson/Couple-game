@@ -94,6 +94,19 @@ function unsqueeze(p, m) {
   m.x = p.x + nx * R; m.y = p.y + ny * R;
   clampMallet(m);
 }
+/** Track how fast the player's hand (the mallet's target) is moving, with a short peak hold. */
+function trackHand(m, dt) {
+  if (m.ptx === undefined) { m.ptx = m.tx; m.pty = m.ty; m.hand = 0; }
+  const sp = dt > 0 ? Math.hypot(m.tx - m.ptx, m.ty - m.pty) / dt : 0;
+  m.hand = Math.max(sp, m.hand * Math.exp(-dt / 0.1));
+  m.ptx = m.tx; m.pty = m.ty;
+}
+/** A mallet hits only as hard as the hand behind it moves: when it snaps back after being
+ *  pushed off the puck (pinned on a rail, or released at the serve) it nudges, not slams. */
+function capToHand(m) {
+  const sp = Math.hypot(m.vx, m.vy); const cap = Math.max(25, m.hand * 1.25);
+  if (sp > cap) { m.vx *= cap / sp; m.vy *= cap / sp; }
+}
 /** One fixed step. Returns { wall, goal } where goal is the scorer ('a' scores in the top goal). */
 function stepPuck(p, mallets, onHit, hold) {
   const f = Math.exp(-FRICTION * DT);
@@ -183,7 +196,7 @@ registerGame({
     let winner = null;
     let result = null;
     let acc = 0;
-    let pausedFor = null;       // why the host paused: 'away' (partner gone) | 'hidden'
+    let pausedFor = null;       // { phase, left }: what to resume after a pause
     const lastHitAt = { a: 0, b: 0 };
 
     // ── input ──
@@ -337,8 +350,10 @@ registerGame({
       if (serve) { P.x = W / 2; P.y = H / 2; P.vx = 0; P.vy = 0; trail.length = 0; }
       publishSoon();
     }
-    function scoreGoal(w) {
+    const goalLog = []; // for tests: how each goal happened
+    function scoreGoal(w, how = 'puck') {
       if (phase === 'over' || winner) return;
+      goalLog.push({ w, how, phase, at: Math.round(performance.now()), x: r1(P.x), y: r1(P.y), vx: r1(P.vx), vy: r1(P.vy) });
       score[w]++; goals++; lastScorer = w;
       phase = 'goal'; phaseEnd = performance.now() + GOAL_MS;
       if (score[w] >= TO_WIN) winner = w;
@@ -372,6 +387,16 @@ registerGame({
       const ms = [M.a, M.b];
       const frozen = phase === 'paused' || phase === 'over';
       for (const m of ms) {
+        trackHand(m, n * DT);
+        // While the puck is parked, it's an obstacle: aim beside it, never into it. (Pushing
+        // the mallet out every step would give it a fake speed that slams the puck at the serve.)
+        if (phase !== 'play') {
+          const dx = m.tx - P.x; const dy = m.ty - P.y; const d = Math.hypot(dx, dy); const R = RM + RP + 0.05;
+          if (d < R) {
+            const nx = d > 1e-6 ? dx / d : 0; const ny = d > 1e-6 ? dy / d : m.who === 'a' ? 1 : -1;
+            [m.tx, m.ty] = clampTarget(m.who, P.x + nx * R, P.y + ny * R);
+          }
+        }
         m.sx = m.x; m.sy = m.y;
         let dx = frozen ? 0 : m.tx - m.x; let dy = frozen ? 0 : m.ty - m.y;
         const maxd = MALLET_MAX * n * DT; const d = Math.hypot(dx, dy);
@@ -382,6 +407,7 @@ registerGame({
         for (const m of ms) {
           const nx = m.sx + (m.dx * i) / n; const ny = m.sy + (m.dy * i) / n;
           m.vx = (nx - m.x) / DT; m.vy = (ny - m.y) / DT; m.x = nx; m.y = ny;
+          capToHand(m);
           if (phase !== 'play') unsqueeze(P, m); // keep mallets off the parked puck
         }
         if (phase === 'play') {
@@ -466,6 +492,7 @@ registerGame({
       const m = M[me];
       const live = S && S.ph === 'play' && !hostAway;
       if (n) {
+        trackHand(m, n * DT);
         m.sx = m.x; m.sy = m.y;
         let dx = m.tx - m.x; let dy = m.ty - m.y;
         const maxd = MALLET_MAX * n * DT; const d = Math.hypot(dx, dy);
@@ -473,6 +500,7 @@ registerGame({
         for (let i = 1; i <= n; i++) {
           const nx = m.sx + (dx * i) / n; const ny = m.sy + (dy * i) / n;
           m.vx = (nx - m.x) / DT; m.vy = (ny - m.y) / DT; m.x = nx; m.y = ny;
+          capToHand(m);
           if (live) stepPuck(DP, [m, hostM], guestHit, true);
         }
       }
@@ -494,7 +522,7 @@ registerGame({
     function publishSoon() { pubSoon = true; }
     function hostState() {
       return {
-        k: key, n: ++myN, __t: Math.round(net.now()), ph: phase,
+        k: key, ph: phase,
         cd: phase === 'count' || phase === 'goal' ? Math.max(0, Math.round(phaseEnd - performance.now())) : 0,
         p: [r1(P.x), r1(P.y), r1(P.vx), r1(P.vy)],
         m: [r1(M.a.x), r1(M.a.y), r1(M.a.vx), r1(M.a.vy)],
@@ -508,7 +536,11 @@ registerGame({
       const due = now - lastPub >= 1000 / RATE - 2;
       if (!due && !(pubSoon && now - lastPub > 15)) return;
       if (host) {
-        api.setPresence(hostState());
+        const st = hostState();
+        const body = JSON.stringify(st);
+        if (body === lastSent && now - lastPub < 500 && !pubSoon) return; // nothing moved: don't spend the message budget
+        lastSent = body;
+        api.setPresence({ ...st, n: ++myN, __t: Math.round(net.now()) });
       } else {
         const m = M[me];
         const body = `${r1(m.x)},${r1(m.y)}`;
@@ -840,7 +872,7 @@ registerGame({
       updatePause();
       if (document.hidden) {
         cancelAnimationFrame(raf); raf = 0;
-        if (!local) api.setPresence(host ? hostState() : { k: key, n: ++myN, __t: Math.round(net.now()), away: 1, m: [r1(M[me].x), r1(M[me].y)] });
+        if (!local) api.setPresence(host ? { ...hostState(), n: ++myN, __t: Math.round(net.now()) } : { k: key, n: ++myN, __t: Math.round(net.now()), away: 1, m: [r1(M[me].x), r1(M[me].y)] });
       } else if (!raf && !dead) { raf = requestAnimationFrame(frame); publishSoon(); }
     });
     const retheme = () => { T = readTokens(); drawTable(); };
@@ -883,7 +915,8 @@ registerGame({
           mallets: { a: { x: M.a.x, y: M.a.y }, b: { x: M.b.x, y: M.b.y } },
           rtt: net ? net.rtt : 0, lag: Math.round(glag), override: !!override,
         }),
-        score: (w) => { if (host && phase !== 'over') scoreGoal(w); },
+        score: (w) => { if (host && phase !== 'over') scoreGoal(w, 'test'); },
+        goals: () => goalLog.slice(),
         place: (x, y, vx = 0, vy = 0) => { if (!host) return; Object.assign(P, { x, y, vx, vy }); phase = 'play'; publishSoon(); },
         toClient: (x, y) => { const r = cv.getBoundingClientRect(); const [px, py] = toPx(x, y); return [r.left + px, r.top + py]; },
       };

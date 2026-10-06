@@ -58,7 +58,7 @@ export function newRunner(lane = 0) {
     magnetT: 0, sneakersT: 0, shield: 0, boostT: 0,
     bufA: 0, bufT: 0,
     fin: -1, finLen: 0, done: 0,
-    crashes: 0, stumbles: 0, combo: 0, comboT: 0, closeCalls: 0, jumps: 0, shields: 0,
+    crashes: 0, stumbles: 0, combo: 0, comboT: 0, closeCalls: 0, jumps: 0, rolls: 0, shields: 0,
     ignoreId: -1, ignoreT: 0,
     tandem: 0, zapT: 0, zapDir: 0, smashN: 0,
   };
@@ -113,7 +113,7 @@ function tryAct(r, a, dry) {
   }
   if (a === A_DOWN) {
     if (r.grounded) {
-      r.slideT = SLIDE_TIME; r.slideAge = 0;
+      r.slideT = SLIDE_TIME; r.slideAge = 0; r.rolls++;
       if (!dry) ev(r, E_ROLL, 0);
       return true;
     }
@@ -412,7 +412,7 @@ export function step(r, track, dry) {
       const impact = -r.vy;
       r.y = sup; r.vy = 0; r.grounded = 1; r.fastFall = 0; r.airT = 0;
       if (!dry) ev(r, E_LAND, impact);
-      if (r.rollOnLand) { r.rollOnLand = 0; r.slideT = SLIDE_TIME; r.slideAge = 0; if (!dry) ev(r, E_ROLL, 1); }
+      if (r.rollOnLand) { r.rollOnLand = 0; r.slideT = SLIDE_TIME; r.slideAge = 0; r.rolls++; if (!dry) ev(r, E_ROLL, 1); }
     } else if (r.y < -2.2) {
       crash(r, C_FALL, dry);
       return;

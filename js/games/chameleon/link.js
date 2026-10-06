@@ -102,15 +102,20 @@ export function createLink(api, { delay = 100, onLink = () => {}, onUnlink = () 
     }
   }
 
+  let rawOff = null;
+  let ns = '';
   function makeNet() {
     if (net) { try { net.destroy(); } catch { /* ignore */ } }
+    if (rawOff) { try { rawOff(); } catch { /* ignore */ } rawOff = null; }
     rb.clear();
     ready = false;
     const myEpoch = ++epoch;
     let n;
     if (local) n = createNet(api, { delay });
     else {
-      const ns = `c.${[sess, partner].sort().join('.')}.`;
+      ns = `c.${[sess, partner].sort().join('.')}.`;
+      // unreliable fast path (redundant copies of time-critical messages; handlers dedupe)
+      rawOff = api.on(ns + 'g!', (m) => { lastHeard = performance.now(); dispatch(m, null); });
       const proxy = {
         mode: api.mode, isHost: api.isHost,
         send: (t, d) => api.send(ns + t, d),
@@ -173,6 +178,15 @@ export function createLink(api, { delay = 100, onLink = () => {}, onUnlink = () 
     get silence() { return local ? 0 : performance.now() - lastHeard; },
     now() { return net ? net.now() : performance.now(); },
     send(type, data) { if (!net) return false; sent++; net.send('g', { t: type, d: data ?? null }); return true; },
+    /** Two unreliable copies right now (not held back by in-order delivery). Use for idempotent messages. */
+    blast(type, data) {
+      if (!net || local) return;
+      const m = { t: type, d: data ?? null }; const space = ns;
+      api.send(space + 'g!', m);
+      const t = setTimeout(() => { if (!dead && ns === space) api.send(space + 'g!', m); }, 70);
+      timers.push(t);
+      if (timers.length > 64) timers.splice(1, 20);
+    },
     on(type, fn) { (handlers[type] = handlers[type] || new Set()).add(fn); return () => handlers[type].delete(fn); },
     onBlob(kind, fn) { blobH[kind] = fn; },
     /** Reliable chunked string (≤ 3.2 KB per message). */
@@ -203,7 +217,8 @@ export function createLink(api, { delay = 100, onLink = () => {}, onUnlink = () 
     destroy() {
       dead = true;
       offs.forEach((f) => { try { f(); } catch { /* ignore */ } });
-      timers.forEach((t) => clearInterval(t));
+      timers.forEach((t) => { clearInterval(t); clearTimeout(t); });
+      if (rawOff) { try { rawOff(); } catch { /* ignore */ } }
       if (net) { try { net.destroy(); } catch { /* ignore */ } }
       net = null;
       inBlobs.clear();

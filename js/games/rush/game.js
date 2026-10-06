@@ -61,7 +61,11 @@ export function createGame(el, api) {
   const speedEl = root.querySelector('.rr-speed');
 
   const settings = Object.assign({ scheme: 'swipe', music: 'on' }, lsGet(SKEY, {}));
-  const audio = createAudio({ musicOn: () => settings.music === 'on' });
+  const audio = createAudio({
+    musicOn: () => settings.music === 'on',
+    getCtx: typeof api.audio === 'function' ? () => api.audio() : null,
+    mutedFn: typeof api.muted === 'function' ? () => api.muted() : null,
+  });
   const timers = [];
   const offs = [];
 
@@ -152,6 +156,8 @@ export function createGame(el, api) {
   const tmpV = { x: 0, y: 0, z: 0 };
   let vec3 = null;
   const shadowList = [[0, 0, 0, 1, 1], [0, 0, 0, 1, 1]];
+  const zsBuf = [];
+  const viewArg = { track: null, z: 0, r: null, time: 0, boxes: false, fly: null, front: false };
 
   async function load() {
     hud.loading(0.12, 'Loading the 3D engine…');
@@ -202,7 +208,7 @@ export function createGame(el, api) {
     for (const w of viewers) players[w].rig = createRig(THREE);
     if (split) { players.a.view = hud.makeView('l', 'a'); players.b.view = hud.makeView('r', 'b'); }
     else players[meW].view = hud.makeView('full', meW);
-    world.setGates([2]);
+    world.setGates([7]);
     resize();
     const ro = new ResizeObserver(() => resize());
     ro.observe(root);
@@ -228,7 +234,7 @@ export function createGame(el, api) {
     renderer.setViewport(0, 0, W, H);
     try { renderer.render(world.scene, cam); } catch (e) { console.warn(e); }
     list.forEach((m, i) => { if (m && m.isInstancedMesh) m.count = saved[i]; });
-    world.syncView({ track: lobbyTrack, z: 0, r: null, time: 0 });
+    world.syncView({ track: lobbyTrack, z: 0, r: null, time: 0, front: true });
   }
 
   function resize() {
@@ -257,6 +263,7 @@ export function createGame(el, api) {
   // ── lobby / match lifecycle ──
   function toLobby() {
     M.phase = 'lobby';
+    root.classList.add('rr-in-lobby');
     M.track = null; M.result = null; M.ready = false; M.reasons.clear(); M.paused = false; M.resumeAt = 0;
     for (const w of ['a', 'b']) {
       const p = players[w];
@@ -264,7 +271,7 @@ export function createGame(el, api) {
       p.rs.z = 0; p.rs.x = p.rs.laneX = (w === 'a' ? -1 : 1) * LANE_W; p.rs.y = 0; p.rs.idle = true; p.rs.down = false; p.rs.win = false; p.rs.visible = true;
       if (p.rig) p.rig.snap();
     }
-    if (world) { world.reset(); world.setGates([2]); }
+    if (world) { world.reset(); world.setGates([7]); }
     hud.finale(null); hud.count(''); hud.pause(null);
     for (const w of viewers) players[w].view && players[w].view.banner(null);
     audio.stopMusic();
@@ -310,9 +317,10 @@ export function createGame(el, api) {
     rules = createRules(G);
     rules.init();
     world.reset();
-    world.setGates(M.mode === 'race' ? [2, M.len] : [2]);
+    world.setGates(M.mode === 'race' ? [7, M.len] : [7]);
     fx.clear();
     hud.hideLobby(); hud.settings(null);
+    root.classList.remove('rr-in-lobby');
     for (const w of viewers) {
       const v = players[w].view;
       v.weapon(null, M.mode === 'race');
@@ -755,7 +763,7 @@ export function createGame(el, api) {
   }
 
   function logic(now, dt) {
-    if (live) netLogic(now);
+    if (live) { netLogic(now); link.setFastSync(M.phase !== 'run' || M.paused || now < M.resumeAt); }
     pauseLogic(now);
     if (M.phase === 'lobby') lobbyUI();
     else if (M.phase === 'countdown') {
@@ -879,7 +887,7 @@ export function createGame(el, api) {
         v.bar(false);
         v.gap(Math.abs(gapM) <= 2 ? `Side by side with ${q.name}!` : `${q.name} ${gapM > 0 ? '+' : '−'}${Math.abs(gapM)} m`);
       }
-      v.partner(M.mode === 'brawl' ? `${q.name} · ${'♥'.repeat(Math.max(0, qh))}` : `${q.name} · ${Math.max(0, Math.floor(qs.z)).toLocaleString('en-US')} m`, `var(--p-${q.w})`);
+      v.partner(M.mode === 'brawl' ? `${q.name} ${'♥'.repeat(Math.max(0, qh))}${'♡'.repeat(Math.max(0, HEARTS - qh))}` : '', `var(--p-${q.w})`);
       v.powers(r.magnetT / 10, r.sneakersT / 10, r.shield, r.boostT / 2.2);
       // oncoming train warning + horn
       let warn = false; let warnLane = 0;
@@ -913,8 +921,8 @@ export function createGame(el, api) {
       if (dz > -6 && dz < 150 && q.rs.visible && !(Math.abs(dz) < 3 && Math.abs(q.rs.x - me.x) < 1)) {
         vec3.set(q.rs.x, q.rs.y + 2.75, -q.rs.z);
         vec3.project(players[meW].rig.cam);
-        const on = vec3.z < 1 && Math.abs(vec3.x) < 1.1 && Math.abs(vec3.y) < 1.1;
-        hud.tag(on, (vec3.x * 0.5 + 0.5) * W, (-vec3.y * 0.5 + 0.5) * H, q.name, `var(--p-${q.w})`);
+        const on = vec3.z < 1 && Math.abs(vec3.x) < 1.25 && vec3.y < 1 && vec3.y > -1;
+        hud.tag(on, clamp((vec3.x * 0.5 + 0.5) * W, 44, W - 44), clamp((-vec3.y * 0.5 + 0.5) * H, 120, H - 40), q.name, `var(--p-${q.w})`);
       } else hud.tag(false);
     } else hud.tag(false);
     void dt;
@@ -951,8 +959,10 @@ export function createGame(el, api) {
     }
     fx.update(dt, tAnim);
     const tr = M.track || lobbyTrack;
-    const zs = viewers.map((w) => players[w].rs.z);
-    world.ensure(tr, zs, M.phase === 'run' ? 1 : 9);
+    zsBuf.length = 0;
+    for (const w of viewers) zsBuf.push(players[w].rs.z);
+    if (M.phase === 'lobby') zsBuf.push(-90);
+    world.ensure(tr, zsBuf, M.phase === 'run' ? 1 : 9);
     // blob shadows
     let ns = 0;
     for (const w of ['a', 'b']) {
@@ -964,9 +974,11 @@ export function createGame(el, api) {
     }
     world.setShadows(shadowList, ns);
     renderer.info.reset();
-    const vw = split ? W / 2 : W;
+    const lobbyish = M.phase === 'lobby' || M.phase === 'loading';
+    const nv = lobbyish ? 1 : viewers.length;
+    const vw = split && !lobbyish ? W / 2 : W;
     if (split) renderer.setScissorTest(true);
-    for (let i = 0; i < viewers.length; i++) {
+    for (let i = 0; i < nv; i++) {
       const p = players[viewers[i]];
       const rg = p.rig;
       let mode = 'run';
@@ -974,8 +986,11 @@ export function createGame(el, api) {
       if (M.phase === 'lobby' || M.phase === 'loading') mode = 'lobby';
       else if (M.phase === 'finale' || M.phase === 'over') { mode = 'finale'; const w = M.result && M.result.winner; tg = w ? players[w].rs : p.rs; }
       else if (M.mode === 'tandem' && p.rs.down && p.r && p.r.hold && p.rs.downT > 0.9) { mode = 'spectate'; tg = players[other(p.w)].rs; }
+      if (lobbyish && split) rg.resize(W, H);
+      else if (split && rg.cam.aspect !== vw / H) rg.resize(vw, H);
       rg.update(dt, mode, tg, tAnim);
-      world.syncView({ track: tr, z: p.rs.z, r: p.r, time: tAnim, boxes: M.mode === 'race' && M.phase !== 'lobby', fly: p.fly });
+      viewArg.track = tr; viewArg.z = p.rs.z; viewArg.r = p.r; viewArg.time = tAnim; viewArg.boxes = M.mode === 'race' && M.phase !== 'lobby'; viewArg.fly = p.fly; viewArg.front = mode === 'lobby' || mode === 'finale';
+      world.syncView(viewArg);
       world.follow(rg.cam);
       if (split) { renderer.setViewport(i * vw, 0, vw, H); renderer.setScissor(i * vw, 0, vw, H); }
       else renderer.setViewport(0, 0, W, H);
@@ -1017,7 +1032,7 @@ export function createGame(el, api) {
           return {
             local: p.local, z: s.z, x: s.x, y: s.y, lane: r ? r.lane : Math.round(s.laneX / LANE_W), down: s.down, air: s.air, roll: s.roll, invuln: s.invuln,
             hearts: r ? r.hearts : p.net.h, coins: r ? r.coins : p.net.c, t: r ? r.t : p.net.rt, fin: r ? r.fin : p.net.fn, out: r ? !!r.out : !!(p.net.f & F_OUT),
-            crashes: r ? r.crashes : 0, stumbles: r ? r.stumbles : 0, shield: s.shield, weapon: p.weapon, stats: p.stats, auto: p.auto, tokens: r ? r.tokens.filter((t) => t.alive).length : 0,
+            crashes: r ? r.crashes : 0, stumbles: r ? r.stumbles : 0, jumps: r ? r.jumps : 0, rolls: r ? r.rolls : 0, shield: s.shield, weapon: p.weapon, stats: p.stats, auto: p.auto, tokens: r ? r.tokens.filter((t) => t.alive).length : 0,
             splat: p.view ? p.view.splatted : false, extra: r ? r.extra.length : 0, revive: !!p.revive, zap: r ? r.zapT : 0, stumbleT: r ? r.stumbleT : 0,
           };
         };

@@ -7,7 +7,10 @@
 //  - a reliable channel that is addressed per partner *instance*: if the partner re-mounts mid
 //    match, its fresh instance gets a fresh sequence instead of waiting forever for numbers it
 //    never saw (net.send can't recover from a receiver reload);
-//  - partner-instance detection, staleness (no state for N ms) and a clock reset for host reloads.
+//  - partner-instance detection, staleness (no state for N ms) and a clock reset for host reloads;
+//  - a precision clock on top of net.now(): the guest pings in bursts before a start (net.js pings
+//    every 2 s and keeps 10 samples, which under a busy main thread can leave a 100 ms+ error),
+//    keeps the lowest-RTT samples, and both sides stamp their stream with this clock.
 import { createNet } from '../net.js';
 
 /** Fields streamed at 20/s. [name, lerp?] — everything is a number. */
@@ -51,7 +54,7 @@ export function createLink(api, { delay = 100 } = {}) {
     lastRaw = performance.now();
     rawLatest = s;
     if (typeof s.i === 'string') learn(s.i);
-    const t = s.__t;
+    const t = typeof s.ts === 'number' ? s.ts : s.__t;
     if (typeof t !== 'number') return;
     const last = ring.n ? ring.t[(ring.head + ring.n - 1) % RING] : -Infinity;
     let slot;
@@ -69,6 +72,43 @@ export function createLink(api, { delay = 100 } = {}) {
     offRemote = net.onRemote(onRaw);
   }
   initNet();
+
+  // ── precision clock ──
+  const host = !!api.isHost;
+  const base = performance.now();
+  const local = () => performance.now() - base;
+  let off = null;           // guest: host clock − local clock
+  let pingId = 0;
+  const pend = new Map();
+  const csamp = [];         // { rtt, off }
+  let fast = true;          // burst while waiting to start
+  let pingTick = 0;
+  const now = () => (host ? net.now() : off == null ? net.now() : local() + off);
+  function cping() {
+    if (dead || host) return;
+    pingTick++;
+    if (!fast && pingTick % 8) return; // ~1/s while running, ~8/s otherwise
+    const id = ++pingId;
+    pend.set(id, local());
+    if (pend.size > 30) pend.delete(pend.keys().next().value);
+    api.send('cq', { id, f: iid });
+  }
+  if (host) offs.push(api.on('cq', (d) => { if (d && typeof d.f === 'string') api.send('cp', { id: d.id, f: d.f, th: net.now() }); }));
+  else {
+    offs.push(api.on('cp', (d) => {
+      if (!d || d.f !== iid || !pend.has(d.id)) return;
+      const t0 = pend.get(d.id); pend.delete(d.id);
+      const t1 = local();
+      csamp.push({ rtt: t1 - t0, off: d.th - (t0 + t1) / 2 });
+      if (csamp.length > 60) csamp.shift();
+      if (csamp.length < 4) return;
+      const best = csamp.slice().sort((x, y) => x.rtt - y.rtt).slice(0, 5).map((x) => x.off).sort((x, y) => x - y);
+      const est = best[Math.floor(best.length / 2)];
+      if (off == null || fast || Math.abs(est - off) > 40) off = est;
+      else off += (est - off) * 0.3; // slew gently while running
+    }));
+    timers.push(setInterval(cping, 120));
+  }
 
   // ── reliable channel, addressed per instance ──
   let outSeq = 0;
@@ -114,20 +154,22 @@ export function createLink(api, { delay = 100 } = {}) {
     iid,
     get partner() { return partnerIid; },
     get net() { return net; },
-    get rtt() { return net.rtt; },
-    get synced() { return net.synced; },
+    get rtt() { if (host || !csamp.length) return net.rtt; let m = Infinity; for (const x of csamp) if (x.rtt < m) m = x.rtt; return Math.round(m); },
+    get synced() { return host ? net.synced : csamp.length >= 8 && off != null; },
+    /** Burst clock pings (lobby / countdown) or trickle them (running). */
+    setFastSync(on) { fast = !!on; },
     get ready() { return net.ready; },
     get delay() { return net.delay; },
-    now: () => net.now(),
+    now,
     /** Reliable, ordered, exactly once to the current partner instance. */
     send(type, data) {
       const s = ++outSeq;
-      outbox.set(s, { type: String(type), data: data ?? null, at: net.now(), tries: 0, next: 0 });
+      outbox.set(s, { type: String(type), data: data ?? null, at: now(), tries: 0, next: 0 });
       flush();
     },
     on(type, fn) { (handlers[type] = handlers[type] || new Set()).add(fn); return () => handlers[type].delete(fn); },
     /** Stream my state (an object you reuse; numbers only, plus i = my instance id). */
-    publish(state) { state.i = iid; net.publish(state); },
+    publish(state) { state.i = iid; state.ts = Math.round(now()); net.publish(state); },
     /** Interpolate the partner at shared time `at` into `out` (no allocation). False if no data. */
     sample(out, at) {
       if (!ring.n) return false;
@@ -168,6 +210,7 @@ export function createLink(api, { delay = 100 } = {}) {
     resetNet() {
       try { offRemote && offRemote(); net.destroy(); } catch { /* ignore */ }
       ring.n = 0; ring.head = 0; rawLatest = null;
+      csamp.length = 0; off = null; pend.clear();
       initNet();
     },
     clearRemote() { ring.n = 0; ring.head = 0; },

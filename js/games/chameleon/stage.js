@@ -27,7 +27,7 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
   const camera = new THREE.PerspectiveCamera(60, 1, 0.03, 70);
   camera.rotation.order = 'YXZ';
   scene.add(camera);
-  const hemi = new THREE.HemisphereLight(0xfffaf0, 0xc9b9a6, 0.62);
+  const hemi = new THREE.HemisphereLight(0xfffaf0, 0xd9ccbb, 0.64);
   const sun = new THREE.DirectionalLight(0xfff1dc, 0.6);
   sun.position.set(-3.2, 8, 4.6);
   scene.add(hemi, sun, sun.target);
@@ -53,8 +53,8 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
   const vmNozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.026, 0.06, 10), vmInk);
   vmNozzle.rotation.x = Math.PI / 2; vmNozzle.position.z = -0.14;
   vm.add(vmBody, vmTank, vmNozzle);
-  vm.position.set(0.085, -0.115, -0.3);
-  vm.scale.setScalar(0.62);
+  vm.position.set(0.2, -0.16, -0.42);
+  vm.scale.setScalar(0.5);
   vm.rotation.y = 0.12;
   vm.visible = false;
   camera.add(vm);

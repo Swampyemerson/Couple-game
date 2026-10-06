@@ -5,10 +5,10 @@
 import { rng } from '../core.js';
 import { CHUNK, LANE_W, CAR, ROOF, LOW_H, HIGH_B, HIGH_T } from './tune.js';
 import { O_LOW, O_HIGH, O_TRAIN, O_RAMP, O_MTRAIN, O_BLOCK, I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX, I_REVIVE, mtrainFront } from './track.js';
-import { GeoBuf, makeToon, makeUniforms, makeTemplates, blobTexture, mix, FX_PLAIN, FX_FACADE, FX_GLOW, FX_SKY, FX_BED, FX_STRIPE, FX_TRAINWIN, FX_PAPER } from './gfx.js';
+import { GeoBuf, makeToon, makeUniforms, makeTemplates, blobTexture, mix, FX_PLAIN, FX_GLOW, FX_SKY } from './gfx.js';
 
 const OL = 0.05;
-const CHUNK_V = 30000;
+const CHUNK_V = 40000;
 const POOL = 9;
 const COIN_MAX = 300;
 const ITEM_MAX = 16;
@@ -99,18 +99,21 @@ export function createWorld(THREE, P) {
   const lowGeo = freezeWith((b) => {
     b.boxMM(-1.02, 0, -0.1, -0.84, LOW_H, 0.1, P.pole, FX_PLAIN, 0.035, ink, T);
     b.boxMM(0.84, 0, -0.1, 1.02, LOW_H, 0.1, P.pole, FX_PLAIN, 0.035, ink, T);
-    b.boxMM(-1.1, 0.46, -0.16, 1.1, 0.98, 0.16, P.hl, FX_STRIPE, 0.045, ink, T);
+    b.boxMM(-1.1, 0.46, -0.16, 1.1, 0.98, 0.16, P.hl, FX_PLAIN, 0.045, ink, T);
+    stripes(b, T, -1.1, 0.46, 1.1, 0.98, 0.17, P.ink, 5);
     b.boxMM(-1.12, 0, -0.3, -0.74, 0.08, 0.3, P.pole, FX_PLAIN, 0, ink, T);
     b.boxMM(0.74, 0, -0.3, 1.12, 0.08, 0.3, P.pole, FX_PLAIN, 0, ink, T);
   });
   const highGeo = freezeWith((b) => {
     b.boxMM(-1.12, 0, -0.1, -0.94, HIGH_T, 0.1, P.pole, FX_PLAIN, 0.035, ink, T);
     b.boxMM(0.94, 0, -0.1, 1.12, HIGH_T, 0.1, P.pole, FX_PLAIN, 0.035, ink, T);
-    b.boxMM(-1.16, HIGH_B + 0.04, -0.12, 1.16, HIGH_T - 0.05, 0.12, P.bad, FX_PAPER, 0.045, ink, T);
+    b.boxMM(-1.16, HIGH_B + 0.04, -0.12, 1.16, HIGH_T - 0.05, 0.12, P.white, FX_PLAIN, 0.045, ink, T);
+    stripes(b, T, -1.16, HIGH_B + 0.04, 1.16, HIGH_T - 0.05, 0.13, P.bad, 5);
     b.boxMM(-0.18, HIGH_T - 0.05, -0.08, 0.18, HIGH_T + 0.12, 0.08, P.hl, FX_GLOW, 0.03, ink, T);
   });
   const blockGeo = freezeWith((b) => {
-    b.boxMM(-1.15, 0, -0.35, 1.15, 1.1, 0.35, P.white, FX_STRIPE, 0.06, ink, T);
+    b.boxMM(-1.15, 0, -0.35, 1.15, 1.1, 0.35, P.white, FX_PLAIN, 0.06, ink, T);
+    stripes(b, T, -1.15, 0, 1.15, 1.1, 0.36, mix(P.white, P.ink, 0.75), 5);
     b.boxMM(-1.2, 1.1, -0.4, 1.2, 1.25, 0.4, P.white, FX_PLAIN, 0.05, ink, T);
     b.boxMM(-0.25, 1.25, -0.1, 0.25, 1.6, 0.1, P.hl, FX_GLOW, 0.04, ink, T);
   });
@@ -122,9 +125,11 @@ export function createWorld(THREE, P) {
   // start / finish gates
   const gateGeo = freezeWith((b) => {
     for (const sx of [-1, 1]) b.boxMM(sx * 4.62 - 0.26, -0.12, -0.26, sx * 4.62 + 0.26, 7.4, 0.26, P.pole, FX_PLAIN, 0.05, ink, T);
-    b.boxMM(-4.95, 6.3, -0.28, 4.95, 7.5, 0.28, P.white, FX_STRIPE, 0.06, ink, T);
+    b.boxMM(-4.95, 6.3, -0.28, 4.95, 7.5, 0.28, P.white, FX_PLAIN, 0.06, ink, T);
+    for (let i = 0; i < 16; i++) for (let j = 0; j < 2; j++) if ((i + j) % 2) b.add(T.quad, -4.95 + (i + 0.5) * (9.9 / 16), 6.3 + (j + 0.5) * 0.6, 0.29, 9.9 / 16, 0.6, 1, 0, P.ink, FX_PLAIN, 0, ink);
     b.boxMM(-2.3, 5.95, -0.38, 2.3, 7.85, 0.38, P.hl, FX_GLOW, 0.06, ink, T);
-    b.boxMM(-4.2, -0.025, -0.45, 4.2, 0.015, 0.45, P.white, FX_STRIPE, 0, ink, T);
+    for (let i = 0; i < 14; i++) for (let j = 0; j < 2; j++) if ((i + j) % 2) b.add(T.quadUp, -4.2 + (i + 0.5) * 0.6, 0.02, (j - 0.5) * 0.45, 0.6, 1, 0.45, 0, P.ink, FX_PLAIN, 0, ink);
+    b.boxMM(-4.2, -0.025, -0.45, 4.2, 0.015, 0.45, P.white, FX_PLAIN, 0, ink, T);
   });
   const gates = inst(gateGeo, 2);
 
@@ -170,7 +175,7 @@ export function createWorld(THREE, P) {
     if (!e) { for (const p of pool) if (p.used < frame - 1 && (!e || p.used < e.used)) e = p; }
     if (!e) return null;
     if (e.ci >= 0) byChunk.delete(e.ci);
-    const c = track.chunk(ci);
+    const c = ci < 0 ? behindChunk(ci) : track.chunk(ci);
     e.buf.reset();
     buildChunk(e.buf, c, T, P);
     e.buf.commit(140, 0, 4, -(c.z0 + CHUNK / 2));
@@ -187,7 +192,7 @@ export function createWorld(THREE, P) {
     for (const z of zs) {
       const c0 = Math.floor((z - VIEW_BEHIND) / CHUNK);
       const c1 = Math.floor((z + VIEW_AHEAD) / CHUNK);
-      for (let ci = Math.max(0, c0); ci <= c1; ci++) {
+      for (let ci = Math.max(-1, c0); ci <= c1; ci++) {
         if (byChunk.has(ci)) { byChunk.get(ci).used = frame; continue; }
         if (built >= budget) continue;
         chunkMesh(track, ci); built++;
@@ -221,6 +226,8 @@ export function createWorld(THREE, P) {
     const c0 = Math.max(0, Math.floor((z - VIEW_BEHIND) / CHUNK));
     const c1 = Math.floor((z + VIEW_AHEAD) / CHUNK);
     const ca = coins.instanceMatrix.array;
+    U.uSun.value.z = v.front ? -0.43 : 0.43;
+    U.uSun.value.normalize();
     let nc = 0;
     const ic = { [I_MAGNET]: 0, [I_SNEAKERS]: 0, [I_SHIELD]: 0, [I_BOX]: 0, [I_REVIVE]: 0 };
     let nl = 0; let nh = 0; let nm = 0;
@@ -345,9 +352,27 @@ export function createWorld(THREE, P) {
   };
 }
 
+/** Scenery-only chunk behind the start line (seen in the lobby). */
+function behindChunk(ci) {
+  return { i: ci, z0: ci * CHUNK, z1: (ci + 1) * CHUNK, obs: [], gaps: [], coins: [], items: [], tunnel: null, path: [], scen: 777 + ci };
+}
+
 // ── builders (all coordinates: x, y, track distance d; world z = -d) ──
 function bx(b, T, x0, y0, d0, x1, y1, d1, rgb, fx, ol, ink) {
   b.add(T.box, (x0 + x1) / 2, (y0 + y1) / 2, -(d0 + d1) / 2, Math.abs(x1 - x0), Math.abs(y1 - y0), Math.abs(d1 - d0), 0, rgb, fx, ol, ink);
+}
+/** Quad facing the runner (+z) centred at (x, y, d). */
+function qz(b, T, x, y, d, w, h, rgb, fx) { b.add(T.quad, x, y, -d, w, h, 1, 0, rgb, fx, 0, rgb); }
+/** Quad facing ±x (side = +1 faces +x) centred at (x, y, d), `len` along the track. */
+function qx(b, T, side, x, y, d, len, h, rgb, fx) { b.add(T.quad, x, y, -d, len, h, 1, side * Math.PI / 2, rgb, fx, 0, rgb); }
+/** Quad facing up centred at (x, y, d). */
+function qu(b, T, x, y, d, w, len, rgb) { b.add(T.quadUp, x, y, -d, w, 1, len, 0, rgb, FX_PLAIN, 0, rgb); }
+
+/** Diagonal stripes across a front face (local coords, z = face plane). */
+function stripes(b, T, x0, y0, x1, y1, z, rgb, n) {
+  const w = (x1 - x0) / n;
+  const h = y1 - y0;
+  for (let i = 0; i < n; i++) b.add(T.stripe, x0 + (i + 0.5) * w, (y0 + y1) / 2, z, w * 0.95, h, 1, 0, rgb, FX_PLAIN, 0, rgb);
 }
 
 /** Intervals of [d0, d1] not covered by gaps that include lane l. */
@@ -369,28 +394,60 @@ function trainCars(b, x, d, n, liv, oncoming, T, P) {
   const ink = P.outline;
   const under = mix(liv.body, [0.08, 0.08, 0.1], 0.6);
   const roof = mix(liv.body, P.white, 0.35);
-  const door = mix(liv.body, P.ink, 0.22);
+  const door = mix(liv.body, P.ink, 0.25);
+  const win = P.dark ? P.lit : P.glass;
+  const wfx = P.dark ? FX_GLOW : FX_PLAIN;
   for (let k = 0; k < n; k++) {
     const a = d + k * CAR + (k ? 0.2 : 0);
     const e = d + (k + 1) * CAR - 0.25;
-    bx(b, T, x - 1.15, 0.38, a, x + 1.15, ROOF - 0.06, e, liv.body, FX_TRAINWIN, OL, ink);
+    bx(b, T, x - 1.15, 0.38, a, x + 1.15, ROOF - 0.06, e, liv.body, FX_PLAIN, OL, ink);
     bx(b, T, x - 1.02, ROOF - 0.08, a + 0.3, x + 1.02, ROOF, e - 0.3, roof, FX_PLAIN, 0.035, ink);
     bx(b, T, x - 0.95, 0.02, a + 0.6, x + 0.95, 0.42, e - 0.6, under, FX_PLAIN, 0, ink);
-    bx(b, T, x - 1.18, 0.82, a + 0.1, x + 1.18, 1.08, e - 0.1, liv.stripe, FX_PLAIN, 0, ink);
-    for (const u of [0.3, 0.7]) {
-      const dm = a + (e - a) * u;
-      bx(b, T, x - 1.17, 0.42, dm - 0.6, x + 1.17, 2.3, dm + 0.6, door, FX_PLAIN, 0, ink);
+    for (const sd of [-1, 1]) {
+      qx(b, T, sd, x + sd * 1.165, 0.95, (a + e) / 2, e - a - 0.2, 0.24, liv.stripe, FX_PLAIN);
+      for (const u of [0.3, 0.7]) qx(b, T, sd, x + sd * 1.17, 1.35, a + (e - a) * u, 1.2, 1.9, door, FX_PLAIN);
+      for (let wd = a + 1.3; wd < e - 1.0; wd += 2.1) {
+        const u = (wd - a) / (e - a);
+        if (Math.abs(u - 0.3) < 0.09 || Math.abs(u - 0.7) < 0.09) continue;
+        qx(b, T, sd, x + sd * 1.172, 1.85, wd, 1.35, 0.72, win, wfx);
+      }
     }
     if (k > 0) bx(b, T, x - 0.35, 0.7, a - 0.5, x + 0.35, 1.3, a + 0.1, under, FX_PLAIN, 0, ink);
-    // contact shadow strip
-    bx(b, T, x - 1.3, -0.015, a - 0.2, x + 1.3, 0.0, e + 0.2, [0.1, 0.09, 0.12], FX_PLAIN, 0, ink);
+    qu(b, T, x, 0.004, (a + e) / 2, 2.7, e - a + 0.5, [0.1, 0.09, 0.12]);
   }
   // cab face (toward the runner, at the low-d end)
-  bx(b, T, x - 0.86, 1.45, d - 0.04, x + 0.86, 2.3, d + 0.2, P.glass, FX_PLAIN, 0.03, ink);
+  qz(b, T, x, 1.88, d - 0.01, 1.7, 0.85, P.dark ? mix(P.glass, P.lit, 0.3) : P.glass, FX_PLAIN);
   bx(b, T, x - 0.9, 0.62, d - 0.06, x - 0.55, 0.88, d + 0.1, oncoming ? P.lit : P.white, FX_GLOW, 0.025, ink);
   bx(b, T, x + 0.55, 0.62, d - 0.06, x + 0.9, 0.88, d + 0.1, oncoming ? P.lit : P.white, FX_GLOW, 0.025, ink);
-  bx(b, T, x - 1.0, 0.3, d - 0.1, x + 1.0, 0.5, d + 0.2, mix(liv.stripe, P.ink, 0.2), FX_STRIPE, 0.03, ink);
+  bx(b, T, x - 1.0, 0.3, d - 0.1, x + 1.0, 0.5, d + 0.2, mix(liv.stripe, P.ink, 0.2), FX_PLAIN, 0.03, ink);
+  stripes(b, T, x - 1.0, 0.3, x + 1.0, 0.5, -(d - 0.11), P.ink, 6);
   if (oncoming) bx(b, T, x - 0.3, ROOF, d + 0.6, x + 0.3, ROOF + 0.25, d + 1.2, P.bad, FX_GLOW, 0.03, ink);
+}
+
+/** Windows on a facade. Facing ±x (side) along d, or facing +z across x. */
+function windows(b, T, r, P, facing, fixed, a0, a1, y0, y1, pat) {
+  const night = P.dark;
+  const lit = P.lit; const glass = P.glass;
+  const put = (u, v, w, h) => {
+    const on = night && r() < 0.42;
+    const col = on ? lit : glass;
+    const fx = on ? FX_GLOW : FX_PLAIN;
+    if (facing === 0) qz(b, T, u, v, fixed, w, h, col, fx);
+    else qx(b, T, facing, fixed, v, u, w, h, col, fx);
+  };
+  const span = a1 - a0;
+  if (span < 2.5 || y1 - y0 < 2) return;
+  if (pat === 0) {
+    for (let y = y0 + 1.1; y < y1 - 0.7; y += 3.2) put((a0 + a1) / 2, y, span - 1.2, 1.25);
+  } else if (pat === 1) {
+    const n = Math.max(1, Math.floor((span - 0.8) / 2.4));
+    const st = (span - 0.8) / n;
+    for (let i = 0; i < n; i++) put(a0 + 0.4 + (i + 0.5) * st, (y0 + 0.6 + y1 - 0.9) / 2, 0.95, y1 - y0 - 1.5);
+  } else {
+    const n = Math.max(1, Math.floor((span - 0.8) / 2.4));
+    const st = (span - 0.8) / n;
+    for (let y = y0 + 1.2; y < y1 - 0.8; y += 3.2) for (let i = 0; i < n; i++) put(a0 + 0.4 + (i + 0.5) * st, y, 1.15, 1.45);
+  }
 }
 
 function buildChunk(b, c, T, P) {
@@ -400,21 +457,22 @@ function buildChunk(b, c, T, P) {
   const r = rng(c.scen);
   const tun = c.tunnel;
 
-  // deck, bed, rails per lane
+  // deck, bed, sleepers, rails per lane
   for (let l = -1; l <= 1; l++) {
     openSpans(c, l, d0, d1, spans);
     const xl = l === -1 ? -SIDE_X : l * LANE_W - LANE_W / 2;
     const xr = l === 1 ? SIDE_X : l * LANE_W + LANE_W / 2;
     for (const [a, e] of spans) {
       bx(b, T, xl, -1.5, a, xr, -0.12, e, P.deck, FX_PLAIN, 0, ink);
-      bx(b, T, l * LANE_W - 1.18, -0.12, a, l * LANE_W + 1.18, -0.03, e, P.bed, FX_BED, 0, ink);
+      bx(b, T, l * LANE_W - 1.18, -0.12, a, l * LANE_W + 1.18, -0.03, e, P.bed, FX_PLAIN, 0, ink);
+      for (let d = Math.ceil(a / 0.9) * 0.9 + 0.2; d < e - 0.2; d += 0.9) qu(b, T, l * LANE_W, -0.02, d, 2.05, 0.34, P.sleeper);
       for (const sx of [-0.72, 0.72]) bx(b, T, l * LANE_W + sx - 0.06, -0.03, a, l * LANE_W + sx + 0.06, 0.1, e, P.rail, FX_PLAIN, 0, ink);
     }
     // broken-bridge edges and hazard stripes
     for (const g of c.gaps) {
       if (!(g.mask & (1 << (l + 1)))) continue;
       if (g.z0 > d0 + 1) {
-        bx(b, T, l * LANE_W - 1.15, -0.03, g.z0 - 1.4, l * LANE_W + 1.15, 0.0, g.z0 - 0.3, P.hl, FX_STRIPE, 0, ink);
+        for (let k = 0; k < 4; k++) qu(b, T, l * LANE_W - 0.86 + k * 0.57, 0.0, g.z0 - 0.75, 0.29, 0.9, P.hl);
         bx(b, T, xl + 0.2, -1.9, g.z0 - 0.5, xr - 0.2, -1.5, g.z0, P.deck, FX_PLAIN, 0.04, ink);
       }
     }
@@ -436,9 +494,7 @@ function buildChunk(b, c, T, P) {
   // parapets
   for (const side of [-1, 1]) {
     openSpans(c, side, d0, d1, spans);
-    for (const [a, e] of spans) {
-      bx(b, T, side * SIDE_X - 0.16, -0.12, a, side * SIDE_X + 0.16, 0.8, e, P.parapet, FX_PLAIN, 0.04, ink);
-    }
+    for (const [a, e] of spans) bx(b, T, side * SIDE_X - 0.16, -0.12, a, side * SIDE_X + 0.16, 0.8, e, P.parapet, FX_PLAIN, 0.04, ink);
   }
   // viaduct piers (seen through gaps and past the edge)
   for (let d = Math.ceil(d0 / 25) * 25; d < d1; d += 25) {
@@ -450,16 +506,16 @@ function buildChunk(b, c, T, P) {
     const wall = P.tunnel;
     for (const side of [-1, 1]) {
       bx(b, T, side * 4.7 - 0.25, -0.12, t0, side * 4.7 + 0.25, 6.2, t1, wall, FX_PLAIN, 0, ink);
-      for (let d = t0 + 4; d < t1; d += 9) bx(b, T, side * 4.42 - 0.06, 4.7, d - 0.7, side * 4.42 + 0.06, 5.0, d + 0.7, P.lit, FX_GLOW, 0, ink);
+      for (let d = t0 + 4; d < t1; d += 9) qx(b, T, -side, side * 4.44, 4.85, d, 1.4, 0.3, P.lit, FX_GLOW);
     }
     bx(b, T, -4.95, 6.2, t0, 4.95, 6.8, t1, mix(wall, P.ink, 0.15), FX_PLAIN, 0, ink);
-    // embankment on top and portals at both ends
     bx(b, T, -16, 6.8, t0 + 1, 16, 8.4, t1 - 1, mix(P.card, P.good, 0.42), FX_PLAIN, 0.08, ink);
     for (const pd of [t0, t1]) {
       const f = pd === t0 ? -1 : 1;
       bx(b, T, -12, 6.0, pd - 0.5 * f - 0.5, 12, 11.5, pd - 0.5 * f + 0.5, P.portal, FX_PLAIN, 0.08, ink);
-      for (const side of [-1, 1]) bx(b, T, side * 5.0 - side * 0.0, -0.12, pd - 0.6, side * 7.5, 6.0, pd + 0.6, P.portal, FX_PLAIN, 0.07, ink);
+      for (const side of [-1, 1]) bx(b, T, side * 5.0, -0.12, pd - 0.6, side * 7.5, 6.0, pd + 0.6, P.portal, FX_PLAIN, 0.07, ink);
       bx(b, T, -5.1, 6.0, pd - 0.65, 5.1, 6.6, pd + 0.65, mix(P.portal, P.ink, 0.25), FX_PLAIN, 0.05, ink);
+      if (pd === t0) for (let i = 0; i < 8; i++) qz(b, T, -4.2 + i * 1.2, 6.3, pd - 0.66, 0.6, 0.3, i % 2 ? P.hl : P.ink, FX_PLAIN);
     }
   } else {
     // catenary gantries every 25 m
@@ -471,15 +527,16 @@ function buildChunk(b, c, T, P) {
       }
       bx(b, T, -4.85, 6.3, d - 0.11, 4.85, 6.55, d + 0.11, P.pole, FX_PLAIN, 0.035, ink);
     }
-    for (let l = -1; l <= 1; l++) bx(b, T, l * LANE_W - 0.025, 5.6, d0, l * LANE_W + 0.025, 5.65, d1, P.pole, FX_PLAIN, 0, ink);
   }
 
   // parked trains and ramps
   for (const o of c.obs) {
     if (o.t === O_TRAIN) trainCars(b, o.lane * LANE_W, o.z0, o.cars, P.trains[o.liv % 4], false, T, P);
     else if (o.t === O_RAMP) {
-      b.add(T.wedge, o.lane * LANE_W, ROOF / 2, -(o.z0 + o.z1) / 2, 2.2, ROOF, o.z1 - o.z0, 0, mix(P.card, P.hl, 0.5), FX_PLAIN, OL, ink);
+      b.add(T.wedge, o.lane * LANE_W, ROOF / 2, -(o.z0 + o.z1) / 2, 2.2, ROOF, o.z1 - o.z0, 0, mix(P.card, P.hl, 0.55), FX_PLAIN, OL, ink);
       for (const sx of [-1.12, 1.12]) bx(b, T, o.lane * LANE_W + sx - 0.05, 0, o.z0, o.lane * LANE_W + sx + 0.05, 0.12, o.z1, P.pole, FX_PLAIN, 0, ink);
+      // chevrons on the slope
+      for (let k = 1; k < 5; k++) qz(b, T, o.lane * LANE_W, ROOF * (k / 5) - 0.02, o.z0 + (o.z1 - o.z0) * (k / 5) - 0.02, 1.6, 0.12, P.ink, FX_PLAIN);
     }
   }
 
@@ -495,30 +552,35 @@ function buildChunk(b, c, T, P) {
         const h = tun && d < tun[1] && de > tun[0] ? 2 + r() * 6 : 4 + Math.floor(r() * 7) * 3.2;
         const col = P.buildings[Math.floor(r() * P.buildings.length)];
         const x0 = side * inner; const x1 = side * (inner + depth);
-        bx(b, T, Math.min(x0, x1), -8, d + 0.4, Math.max(x0, x1), h, de - 0.4, col, FX_FACADE, 0.09, ink);
+        const xa = Math.min(x0, x1); const xb = Math.max(x0, x1);
+        bx(b, T, xa, -8, d + 0.4, xb, h, de - 0.4, col, FX_PLAIN, 0.09, ink);
         const cap = mix(col, P.ink, 0.18);
-        bx(b, T, Math.min(x0, x1) - 0.2, h, d + 0.2, Math.max(x0, x1) + 0.2, h + 0.45, de - 0.2, cap, FX_PLAIN, 0.06, ink);
+        bx(b, T, xa - 0.2, h, d + 0.2, xb + 0.2, h + 0.45, de - 0.2, cap, FX_PLAIN, 0.06, ink);
+        const pat = h > 20 ? (r() < 0.5 ? 0 : 1) : Math.floor(r() * 3);
+        windows(b, T, r, P, -side, x0 - side * 0.02, d + 1.0, de - 1.0, -4.2, h, pat);
+        windows(b, T, r, P, 0, d + 0.38, xa + 0.4, xb - 0.4, -4.2, h, pat);
         // shop band + awning facing the track
-        const sb = mix(col, P.ink, 0.28);
+        const sb = mix(col, P.ink, 0.3);
         bx(b, T, x0 - side * 0.15, -8, d + 0.6, x0 + side * 0.4, -4.6, de - 0.6, sb, FX_PLAIN, 0, ink);
         if (r() < 0.6) {
           const aw = [P.a, P.b, P.hl, P.good][Math.floor(r() * 4)];
-          bx(b, T, x0 - side * 1.3, -4.7, d + 1, x0, -4.3, de - 1, aw, FX_PAPER, 0.05, ink);
+          bx(b, T, x0 - side * 1.3, -4.7, d + 1, x0, -4.3, de - 1, aw, FX_PLAIN, 0.05, ink);
+          for (let k = d + 1.5; k < de - 1.2; k += 1.6) qx(b, T, -side, x0 - side * 1.31, -4.5, k, 0.8, 0.4, P.white, FX_PLAIN);
         }
         const q = r();
         const xm = (x0 + x1) / 2;
         if (q < 0.28) {
-          // water tank
           b.add(T.cyl6, xm, h + 2.2, -(d + de) / 2, 2.4, 2.2, 2.4, 0, mix(P.card, P.ink, 0.3), FX_PLAIN, 0.06, ink);
           for (const ox of [-0.8, 0.8]) bx(b, T, xm + ox - 0.08, h + 0.45, (d + de) / 2 - 0.08, xm + ox + 0.08, h + 1.1, (d + de) / 2 + 0.08, P.pole, FX_PLAIN, 0, ink);
         } else if (q < 0.5) {
           bx(b, T, xm - 1.2, h + 0.45, d + 1.5, xm + 1.2, h + 1.6, d + 3.5, mix(P.card, P.ink, 0.15), FX_PLAIN, 0.05, ink);
-        } else if (q < 0.62 && h < 22) {
+        } else if (q < 0.64 && h < 22) {
           // billboard facing the track
           const bc = r() < 0.5 ? P.a : P.b;
           const zz = (d + de) / 2;
           bx(b, T, x0 + side * 0.5 - 0.3, h + 0.45, zz - 3.2, x0 + side * 0.5 + 0.3, h + 4.6, zz + 3.2, bc, FX_PLAIN, 0.07, ink);
-          bx(b, T, x0 + side * 0.2 - 0.32, h + 1.6, zz - 1.0, x0 + side * 0.2 + 0.32, h + 3.5, zz + 1.0, P.white, FX_GLOW, 0.04, ink);
+          qx(b, T, -side, x0 + side * 0.18, h + 2.6, zz, 3.6, 1.6, P.white, FX_GLOW);
+          qx(b, T, -side, x0 + side * 0.17, h + 2.6, zz, 2.2, 0.35, bc, FX_PLAIN);
         }
       }
       d = de + 1 + r() * 4;
@@ -532,7 +594,9 @@ function buildChunk(b, c, T, P) {
         const inner = 22 + r() * 6;
         const h = 16 + Math.floor(r() * 10) * 3.2;
         const col = mix(P.buildings[Math.floor(r() * P.buildings.length)], P.bg, 0.25);
-        bx(b, T, side > 0 ? inner : -inner - 14, -8, e, side > 0 ? inner + 14 : -inner, h, ee, col, FX_FACADE, 0.12, ink);
+        const xa = side > 0 ? inner : -inner - 14; const xb = side > 0 ? inner + 14 : -inner;
+        bx(b, T, xa, -8, e, xb, h, ee, col, FX_PLAIN, 0.12, ink);
+        windows(b, T, r, P, -side, side > 0 ? xa - 0.02 : xb + 0.02, e + 1, ee - 1, -2, h, 0);
       }
       e = ee + 2 + r() * 6;
     }
@@ -550,6 +614,5 @@ function buildSkyline(b, T, P) {
     const col = P.skyline[Math.floor(r() * P.skyline.length)];
     b.add(T.box, Math.sin(a) * rad, h / 2 - 8, -Math.cos(a) * rad, w, h, w, a, col, FX_SKY, 0, ink);
   }
-  // sun / moon
   b.add(T.discZ, -70, 92, -300, 46, 46, 2, 0, P.dark ? mix(P.card, P.white, 0.7) : mix(P.hl, P.white, 0.25), FX_SKY, 0, ink);
 }

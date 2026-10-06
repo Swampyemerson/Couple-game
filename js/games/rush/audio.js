@@ -10,8 +10,9 @@ const ARP = [0, 2, 1, 3, 2, 1, 3, 2, 0, 2, 1, 3, 2, 3, 1, 2];
 const LEAD = [12, -1, 15, -1, 19, -1, 17, 15, 12, -1, 10, -1, 12, 15, -1, 19];
 const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
 
-export function createAudio({ musicOn = () => true } = {}) {
+export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = null } = {}) {
   let ctx = null;
+  let owned = false;
   let master = null; let musicBus = null; let sfxBus = null; let noise = null;
   let mutedCache = false; let mutedAt = 0;
   let musicTimer = null;
@@ -20,15 +21,20 @@ export function createAudio({ musicOn = () => true } = {}) {
   let dead = false;
 
   const isMuted = () => {
+    if (mutedFn) { try { return !!mutedFn(); } catch { /* fall through */ } }
     const t = performance.now();
     if (t - mutedAt > 800) { mutedAt = t; try { mutedCache = !!JSON.parse(localStorage.getItem(LS_MUTE) || 'false'); } catch { mutedCache = false; } }
     return mutedCache;
   };
 
   function init() {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return false;
-    try { ctx = new AC(); } catch { ctx = null; return false; }
+    // Prefer the app's shared, gesture-unlocked context (iOS limits how many a page may open).
+    try { ctx = getCtx ? getCtx() : null; } catch { ctx = null; }
+    if (!ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return false;
+      try { ctx = new AC(); owned = true; } catch { ctx = null; return false; }
+    }
     const comp = ctx.createDynamicsCompressor();
     comp.threshold.value = -16; comp.ratio.value = 5; comp.attack.value = 0.004; comp.release.value = 0.2;
     master = ctx.createGain(); master.gain.value = 0.85;
@@ -196,13 +202,22 @@ export function createAudio({ musicOn = () => true } = {}) {
       musicBus.gain.cancelScheduledValues(ctx.currentTime);
       musicBus.gain.setTargetAtTime(0.12, ctx.currentTime, 0.04);
     },
-    suspend() { if (ctx && ctx.state === 'running') ctx.suspend().catch(() => {}); },
-    resume() { if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {}); },
+    suspend() {
+      if (!ctx) return;
+      if (owned) { if (ctx.state === 'running') ctx.suspend().catch(() => {}); }
+      else if (master) master.gain.setTargetAtTime(0, ctx.currentTime, 0.02);
+    },
+    resume() {
+      if (!ctx) return;
+      if (owned) { if (ctx.state === 'suspended') ctx.resume().catch(() => {}); }
+      else { if (ctx.state === 'suspended') ctx.resume().catch(() => {}); if (master) master.gain.setTargetAtTime(0.85, ctx.currentTime, 0.05); }
+    },
     destroy() {
       dead = true;
       if (musicTimer) clearInterval(musicTimer);
       musicTimer = null;
-      if (ctx) { try { ctx.close(); } catch { /* ignore */ } }
+      try { if (master) master.disconnect(); } catch { /* ignore */ }
+      if (ctx && owned) { try { ctx.close(); } catch { /* ignore */ } }
       ctx = null;
     },
   };

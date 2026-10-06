@@ -54,14 +54,14 @@ export function makePalette(tok) {
     outline: dark ? mix(ink, bg, 0.12) : ink,
     fog: bg,
     sky: bg,
-    street: dark ? mix(bg, [0, 0, 0], 0.2) : mix(bg, ink, 0.1),
-    bed: dark ? mix(bg, ink, 0.12) : mix(bg, ink, 0.2),
-    sleeper: dark ? mix(bg, ink, 0.3) : mix(bg, ink, 0.42),
-    rail: dark ? mix(ink, bg, 0.25) : mix(ink, card, 0.3),
-    deck: dark ? mix(bg, card, 0.9) : mix(card, ink, 0.1),
+    street: dark ? mix(bg, [0, 0, 0], 0.2) : mix(bg, ink, 0.14),
+    bed: dark ? mix(bg, [0.42, 0.38, 0.36], 0.32) : mix(mix(bg, ink, 0.38), [0.55, 0.47, 0.4], 0.35),
+    sleeper: dark ? mix(bg, [0.55, 0.45, 0.36], 0.5) : mix(mix(ink, bg, 0.42), [0.42, 0.3, 0.22], 0.45),
+    rail: dark ? mix(ink, bg, 0.35) : mix(ink, card, 0.22),
+    deck: dark ? mix(bg, card, 0.9) : mix(card, ink, 0.12),
     parapet: dark ? mix(card, ink, 0.12) : mix(card, bg, 0.4),
     pole: dark ? mix(card, ink, 0.25) : mix(ink, card, 0.55),
-    glass: dark ? mix(bg, [0, 0, 0], 0.35) : mix(ink, a, 0.18),
+    glass: dark ? mix(bg, [0, 0, 0], 0.35) : mix(mix(a, ink, 0.55), card, 0.12),
     lit: mix(hl, [1, 1, 1], 0.25),
     shadeInk,
     tunnel: dark ? mix(bg, [0, 0, 0], 0.3) : mix(bg, ink, 0.55),
@@ -122,93 +122,46 @@ export function applyPaletteUniforms(U, P) {
   U.uPaper.value.fromArray(P.white); U.uSleeper.value.fromArray(P.sleeper);
 }
 
-// The world material is MeshBasicMaterial (cheap: no per-light loops) with a tiny shader hook:
-// one N·L varying stepped into 3 toon bands in the fragment shader, a sky term, a screen-space
-// halftone in the shadow band, unlit ink hulls, and patterns from world position per `fx` code.
+// The world material is MeshBasicMaterial (no per-light loops) with a tiny hook: the toon band is
+// computed per vertex from one sun direction + sky term (exact on flat faces, soft on round ones),
+// ink hulls / glow / sky are unlit, the shadow band gets a screen-space halftone, and the skyline
+// is only partly fogged. All patterns (windows, sleepers, stripes) are geometry, so the fragment
+// shader stays about as cheap as plain MeshBasicMaterial.
 const VERT_PRE = `#include <common>
 attribute float fx;
 uniform vec3 uSun;
+uniform vec4 uLk;
+uniform float uNight;
 varying float vFx;
-varying vec3 vW;
-varying vec3 vON;
-varying float vNdl;
-varying float vUp;`;
+varying float vShade;`;
 const VERT_POST = `#include <fog_vertex>
 vFx = fx;
-vec3 rrN = normal;
-#ifdef USE_SKINNING
-  mat4 rrSk = skinWeight.x * boneMatX + skinWeight.y * boneMatY + skinWeight.z * boneMatZ + skinWeight.w * boneMatW;
-  rrN = ( bindMatrixInverse * rrSk * bindMatrix * vec4( rrN, 0.0 ) ).xyz;
-#endif
-vON = rrN;
-#ifdef USE_INSTANCING
-  rrN = mat3( instanceMatrix ) * rrN;
-#endif
-rrN = normalize( mat3( modelMatrix ) * rrN );
-vNdl = dot( rrN, uSun );
-vUp = rrN.y;
-vec4 rrW = vec4( transformed, 1.0 );
-#ifdef USE_INSTANCING
-  rrW = instanceMatrix * rrW;
-#endif
-vW = ( modelMatrix * rrW ).xyz;`;
+if ( fx > 0.5 && fx < 1.5 || fx > 3.5 && fx < 4.5 ) vShade = 1.0;
+else if ( fx > 2.5 && fx < 3.5 ) vShade = 1.06 + 0.14 * uNight;
+else {
+  vec3 rrN = normal;
+  #ifdef USE_SKINNING
+    mat4 rrSk = skinWeight.x * boneMatX + skinWeight.y * boneMatY + skinWeight.z * boneMatZ + skinWeight.w * boneMatW;
+    rrN = ( bindMatrixInverse * rrSk * bindMatrix * vec4( rrN, 0.0 ) ).xyz;
+  #endif
+  #ifdef USE_INSTANCING
+    rrN = mat3( instanceMatrix ) * rrN;
+  #endif
+  rrN = normalize( mat3( modelMatrix ) * rrN );
+  float ndl = dot( rrN, uSun );
+  float band = ndl > 0.28 ? 1.0 : ( ndl > -0.22 ? 0.58 : 0.22 );
+  vShade = uLk.x + uLk.y * ( 0.5 + 0.5 * rrN.y ) + uLk.z * band;
+}`;
 const FRAG_PRE = `#include <common>
-uniform float uNight;
-uniform vec3 uGlass;
-uniform vec3 uLit;
-uniform vec3 uInk;
-uniform vec3 uPaper;
-uniform vec3 uSleeper;
 uniform vec4 uLk;
 uniform float uDot;
 varying float vFx;
-varying vec3 vW;
-varying vec3 vON;
-varying float vNdl;
-varying float vUp;
-float rrHash( vec2 p ) { return fract( sin( dot( p, vec2( 127.1, 311.7 ) ) ) * 43758.5453 ); }`;
+varying float vShade;`;
 const FRAG_COLOR = `#include <color_fragment>
-float rrLit = 0.0;
-float rrUnlit = 0.0;
-if ( vFx > 0.5 && vFx < 1.5 ) rrUnlit = 1.0;
-else if ( vFx > 3.5 && vFx < 4.5 ) rrUnlit = 1.0;
-else if ( vFx > 1.5 && vFx < 2.5 ) {
-  if ( abs( vON.y ) < 0.5 ) {
-    vec2 q = abs( vON.x ) > 0.5 ? vec2( vW.z, vW.y ) : vec2( vW.x, vW.y );
-    vec2 cell = q / vec2( 2.3, 2.9 );
-    vec2 f = fract( cell );
-    float w = step( 0.24, f.x ) * step( f.x, 0.76 ) * step( 0.3, f.y ) * step( f.y, 0.8 ) * step( -3.6, vW.y );
-    float on = step( 0.58, rrHash( floor( cell ) + vec2( floor( vW.x * 0.07 ), floor( vW.z * 0.03 ) ) ) );
-    diffuseColor.rgb = mix( diffuseColor.rgb, mix( uGlass, uLit, on * uNight ), w );
-    rrLit = w * on * uNight;
-  }
-} else if ( vFx > 4.5 && vFx < 5.5 ) {
-  if ( vON.y > 0.5 ) diffuseColor.rgb = mix( diffuseColor.rgb, uSleeper, step( fract( vW.z / 0.85 ), 0.34 ) );
-} else if ( vFx > 5.5 && vFx < 6.5 ) {
-  diffuseColor.rgb = mix( diffuseColor.rgb, uInk, step( 0.5, fract( ( vW.x + vW.y ) * 1.6 ) ) * 0.92 );
-} else if ( vFx > 7.5 && vFx < 8.5 ) {
-  diffuseColor.rgb = mix( diffuseColor.rgb, uPaper, step( 0.5, fract( ( vW.x - vW.y ) * 1.4 ) ) );
-} else if ( vFx > 6.5 && vFx < 7.5 ) {
-  if ( abs( vON.x ) > 0.5 ) {
-    float wz = fract( vW.z / 2.1 );
-    float w = step( 0.16, wz ) * step( wz, 0.84 ) * step( 1.45, vW.y ) * step( vW.y, 2.25 );
-    diffuseColor.rgb = mix( diffuseColor.rgb, mix( uGlass, uLit, uNight * 0.85 ), w );
-    rrLit = w * uNight * 0.7;
-  }
-}
-float rrShade = 1.0;
-if ( rrUnlit < 0.5 ) {
-  if ( vFx > 2.5 && vFx < 3.5 ) rrShade = 1.08 + 0.12 * uNight;
-  else {
-    float band = vNdl > 0.28 ? 1.0 : ( vNdl > -0.22 ? 0.58 : 0.22 );
-    rrShade = uLk.x + uLk.y * ( 0.5 + 0.5 * vUp ) + uLk.z * band;
-    rrShade = mix( rrShade, 1.2, rrLit );
-  }
-  diffuseColor.rgb *= rrShade;
-  if ( rrShade < uLk.w ) {
-    vec2 g = fract( gl_FragCoord.xy / uDot ) - 0.5;
-    diffuseColor.rgb *= 1.0 - ( 1.0 - smoothstep( 0.18, 0.3, length( g ) ) ) * 0.17;
-  }
+diffuseColor.rgb *= vShade;
+if ( vShade < uLk.w && vFx < 0.5 ) {
+  vec2 g = fract( gl_FragCoord.xy / uDot ) - 0.5;
+  diffuseColor.rgb *= 1.0 - ( 1.0 - smoothstep( 0.18, 0.3, length( g ) ) ) * 0.17;
 }`;
 const FRAG_END = `if ( vFx > 3.5 && vFx < 4.5 ) {
   gl_FragColor.rgb = mix( vColor, fogColor, 0.3 );
@@ -227,7 +180,7 @@ export function makeToon(THREE, grad, U, { skinning = false } = {}) {
       .replace('#include <color_fragment>', FRAG_COLOR)
       .replace('#include <fog_fragment>', FRAG_END);
   };
-  m.customProgramCacheKey = () => 'rush-toon-v2';
+  m.customProgramCacheKey = () => 'rush-toon-v3';
   return m;
 }
 
@@ -265,6 +218,15 @@ export function tpl(geo, hullMode = 'smooth') {
   return { n, pos, nrm, idx, hull, box: hullMode === 'box' };
 }
 
+/** Unit parallelogram in the xy plane facing +z: a diagonal stripe. */
+function parallelogram(THREE) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute([-0.5, -0.5, 0, 0.0, -0.5, 0, 0.5, 0.5, 0, 0.0, 0.5, 0], 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1], 3));
+  g.setIndex([0, 1, 2, 0, 2, 3]);
+  return g;
+}
+
 /** Build every template once. */
 export function makeTemplates(THREE) {
   const capsule = (r, len, seg = 10, rings = 5) => {
@@ -291,6 +253,9 @@ export function makeTemplates(THREE) {
     cyl: tpl(new THREE.CylinderGeometry(0.5, 0.5, 1, 12, 1), 'smooth'),
     cyl6: tpl(new THREE.CylinderGeometry(0.5, 0.5, 1, 6, 1), 'smooth'),
     disc: tpl(new THREE.CylinderGeometry(0.5, 0.5, 1, 18, 1), 'smooth'),
+    quad: tpl(new THREE.PlaneGeometry(1, 1), 'box'),
+    quadUp: tpl(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), 'box'),
+    stripe: tpl(parallelogram(THREE), 'box'),
     discZ: tpl(new THREE.CylinderGeometry(0.5, 0.5, 1, 28, 1).rotateX(Math.PI / 2), 'smooth'),
     sphere: tpl(new THREE.SphereGeometry(0.5, 14, 10), 'smooth'),
     lowSphere: tpl(new THREE.SphereGeometry(0.5, 8, 6), 'smooth'),

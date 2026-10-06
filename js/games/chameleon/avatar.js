@@ -36,7 +36,7 @@ const PIV = {
   legFL: [0.125, 0.17, 0.13], legFR: [-0.125, 0.17, 0.13],
   legBL: [0.125, 0.17, -0.16], legBR: [-0.125, 0.17, -0.16],
 };
-const EYE = { L: [0.1, 0.08, 0.11], R: [-0.1, 0.08, 0.11] }; // relative to the head pivot
+const EYE = { L: [0.108, 0.075, 0.125], R: [-0.108, 0.075, 0.125] }; // relative to the head pivot
 
 function remapUV(g, rect, swap) {
   const [x, y, w, h] = rect;
@@ -54,7 +54,7 @@ function legGeo(side) {
   // hip (origin) → knee → ankle, then a mitten foot
   const s = side;
   const pts = [[0, 0, 0], [s * 0.045, -0.015, 0.005], [s * 0.085, -0.03, 0.01], [s * 0.1, -0.08, 0.015], [s * 0.1, -0.145, 0.02]];
-  const leg = tubeGeo(pts, (t) => 0.05 - t * 0.012, { radial: 8, capEnd: false, capStart: true });
+  const leg = tubeGeo(pts, (t) => 0.05 - t * 0.012, { radial: 10, capEnd: false, capStart: true });
   const foot = sphereGeo(0.045, 0.026, 0.058, { w: 10, h: 6, metres: false });
   // squash leg uv into the top 70% of the rect, foot into the bottom 30%
   for (let i = 1; i < leg.uv.length; i += 2) leg.uv[i] = 0.3 + leg.uv[i] * 0.7;
@@ -104,13 +104,14 @@ function bodyGeo() {
 }
 
 function headGeo() {
-  const g = sphereGeo(0.128, 0.118, 0.15, { w: 20, h: 12, metres: false });
+  const g = sphereGeo(0.138, 0.128, 0.16, { w: 22, h: 14, metres: false });
   for (let i = 0; i < g.pos.length; i += 3) {
     const y = g.pos[i + 1]; const z = g.pos[i + 2];
-    const fz = Math.max(0, z / 0.15);
-    g.pos[i + 2] = z * (1 + 0.28 * fz * fz); // snout
-    g.pos[i + 1] = y * (1 - 0.18 * fz) - 0.02 * fz; // tapered, slightly downturned
-    g.pos[i] *= 1 - 0.22 * fz * fz;
+    const fz = Math.max(0, z / 0.16);
+    const bz = Math.max(0, -z / 0.16);
+    g.pos[i + 2] = z * (1 + 0.34 * fz * fz); // long snout
+    g.pos[i + 1] = y * (1 - 0.22 * fz) - 0.022 * fz + (y > 0 ? 0.03 * bz : 0); // tapered snout, raised back of the skull
+    g.pos[i] *= 1 - 0.26 * fz * fz;
   }
   recomputeNormals(g);
   // pivot at the neck: head centre sits forward + up from it
@@ -119,9 +120,9 @@ function headGeo() {
 }
 
 function casqueGeo() {
-  const g = cylGeo(0.0, 0.075, 0.1, { radial: 12, caps: true, fit: true });
-  // flatten sideways into a helmet crest
-  for (let i = 0; i < g.pos.length; i += 3) g.pos[i] *= 0.55;
+  // a smooth helmet crest: a thin, swept-back half-ellipsoid
+  const g = sphereGeo(0.03, 0.085, 0.1, { w: 14, h: 8, metres: false, thetaMax: Math.PI * 0.62 });
+  for (let i = 0; i < g.pos.length; i += 3) { const y = g.pos[i + 1]; g.pos[i + 2] -= y * 0.55; }
   recomputeNormals(g);
   return g;
 }
@@ -220,8 +221,8 @@ export function createKit(THREE) {
     remapUV(bodyGeo(), RECTS[0].r),
     remapUV(headGeo(), RECTS[1].r),
     remapUV(casqueGeo(), RECTS[2].r),
-    remapUV(sphereGeo(0.07, 0.07, 0.07, { w: 12, h: 8, metres: false }), RECTS[3].r),
-    remapUV(sphereGeo(0.07, 0.07, 0.07, { w: 12, h: 8, metres: false }), RECTS[4].r),
+    remapUV(sphereGeo(0.074, 0.074, 0.074, { w: 14, h: 10, metres: false }), RECTS[3].r),
+    remapUV(sphereGeo(0.074, 0.074, 0.074, { w: 14, h: 10, metres: false }), RECTS[4].r),
     remapUV(tailGeo(), RECTS[5].r, true),
     remapUV(legGeo(1), RECTS[6].r),
     remapUV(legGeo(-1), RECTS[7].r),
@@ -239,8 +240,8 @@ export function createKit(THREE) {
     for (let i = 0; i < g.pos.length; i += 3) { ep.push(g.pos[i], g.pos[i + 1], g.pos[i + 2] + z); en.push(g.nrm[i], g.nrm[i + 1], g.nrm[i + 2]); ec.push(...col); }
     for (const k of g.idx) ei.push(k + o);
   };
-  put(ring, 0.062, [1, 0.98, 0.94]);
-  put(pupil, 0.07, [0.08, 0.07, 0.09]);
+  put(ring, 0.066, [1, 0.98, 0.94]);
+  put(pupil, 0.074, [0.08, 0.07, 0.09]);
   const eyeGeo = new THREE.BufferGeometry();
   eyeGeo.setAttribute('position', new THREE.Float32BufferAttribute(ep, 3));
   eyeGeo.setAttribute('normal', new THREE.Float32BufferAttribute(en, 3));
@@ -249,9 +250,15 @@ export function createKit(THREE) {
   eyeGeo.computeBoundingSphere();
   const blobGeo = new THREE.PlaneGeometry(1, 1);
   blobGeo.rotateX(-Math.PI / 2);
+  const bc = document.createElement('canvas'); bc.width = bc.height = 64;
+  const bg = bc.getContext('2d');
+  const gr = bg.createRadialGradient(32, 32, 2, 32, 32, 31);
+  gr.addColorStop(0, '#fff'); gr.addColorStop(0.5, '#bbb'); gr.addColorStop(1, '#000');
+  bg.fillStyle = gr; bg.fillRect(0, 0, 64, 64);
+  const blobTex = new THREE.CanvasTexture(bc);
   return {
-    geos, texels, eyeGeo, blobGeo,
-    dispose() { geos.forEach((g) => g.dispose()); eyeGeo.dispose(); blobGeo.dispose(); },
+    geos, texels, eyeGeo, blobGeo, blobTex,
+    dispose() { geos.forEach((g) => g.dispose()); eyeGeo.dispose(); blobGeo.dispose(); blobTex.dispose(); },
   };
 }
 
@@ -282,7 +289,7 @@ export function createAvatar(THREE, kit, { gradientMap, texture }) {
   const meshes = [];
   const body = mk(0); piv.body.add(body); meshes.push(body);
   const head = mk(1); piv.head.add(head); meshes.push(head);
-  const casque = mk(2); casque.position.set(0, 0.125, 0.0); casque.rotation.x = -1.15; piv.head.add(casque); meshes.push(casque);
+  const casque = mk(2); casque.position.set(0, 0.105, 0.0); casque.rotation.x = 0; piv.head.add(casque); meshes.push(casque);
   const eyes = [];
   for (const [side, pi] of [['L', 3], ['R', 4]]) {
     const turret = new THREE.Group();
@@ -308,7 +315,7 @@ export function createAvatar(THREE, kit, { gradientMap, texture }) {
   const hulls = meshes.map((m) => { const h = new THREE.Mesh(m.geometry, hullMat); h.visible = false; h.raycast = () => {}; m.add(h); return h; });
 
   // blob shadow
-  const blobMat = new THREE.MeshBasicMaterial({ color: 0x3a2a1c, transparent: true, opacity: 0.32, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+  const blobMat = new THREE.MeshBasicMaterial({ color: 0x3a2a1c, alphaMap: kit.blobTex, transparent: true, opacity: 0.32, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
   const blob = new THREE.Mesh(kit.blobGeo, blobMat);
   blob.scale.set(0.62, 1, 0.72);
   blob.renderOrder = 1;

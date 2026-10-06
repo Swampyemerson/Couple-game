@@ -83,6 +83,7 @@ export function createSound() {
     survive: () => [392, 523, 659, 784, 1047].forEach((f, i) => tone(f, f * 1.01, 0.2, { type: 'triangle', vol: 0.14, at: i * 0.08 })),
     sad: () => [392, 330, 262].forEach((f, i) => tone(f, f * 0.97, 0.22, { type: 'triangle', vol: 0.13, at: i * 0.13 })),
     confetti: () => { for (let i = 0; i < 8; i++) tone(1800 + Math.random() * 1600, 2400 + Math.random() * 900, 0.05, { vol: 0.035, at: i * 0.04 }); },
+    beat: () => { tone(70, 52, 0.12, { vol: 0.32 }); tone(64, 48, 0.1, { vol: 0.22, at: 0.16 }); },
     warn: () => { tone(500, 500, 0.08, { type: 'square', vol: 0.07 }); tone(500, 500, 0.08, { type: 'square', vol: 0.07, at: 0.14 }); },
   };
 

@@ -19,6 +19,7 @@ export const ICONS = {
   tandem: '<svg viewBox="0 0 40 40" aria-hidden="true"><path d="M14 30 5 21a5 5 0 0 1 9-6 5 5 0 0 1 9 6Z" fill="var(--p-a)" stroke="var(--g-ink)" stroke-width="2.5" stroke-linejoin="round"/><path d="M26 35l-9-9a5 5 0 0 1 9-6 5 5 0 0 1 9 6Z" fill="var(--p-b)" stroke="var(--g-ink)" stroke-width="2.5" stroke-linejoin="round"/></svg>',
   hand: '<svg viewBox="0 0 44 56" aria-hidden="true"><path d="M15 30V8a4 4 0 0 1 8 0v15l10 2c4 1 6 4 5 8l-3 14c-1 4-4 6-8 6h-7c-3 0-5-1-7-4L5 37c-2-3 2-7 5-5Z" fill="var(--g-card)" stroke="var(--g-ink)" stroke-width="3" stroke-linejoin="round"/></svg>',
   runner: '<svg viewBox="0 0 64 64" aria-hidden="true"><circle cx="38" cy="11" r="7" fill="var(--g-card)" stroke="var(--g-ink)" stroke-width="3"/><path d="M33 20 22 30l9 4-6 14M33 20l3 14 12 2M33 20l12 3 5-8M31 34 18 38l-6 8" fill="none" stroke="var(--p-a)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  box: '<svg viewBox="0 0 40 40" aria-hidden="true"><rect x="7" y="7" width="26" height="26" rx="4" fill="none" stroke="currentColor" stroke-width="3" stroke-dasharray="5 4"/><path d="M16 16a4 4 0 1 1 5 4c-1 .5-1 1.5-1 3M20 27v.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>',
   gear: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm8.3 2-1.9-.4-.6-1.5 1.1-1.6-1.9-1.9-1.6 1.1-1.5-.6-.4-1.9h-2.7l-.4 1.9-1.5.6-1.6-1.1-1.9 1.9 1.1 1.6-.6 1.5-1.9.4v2.7l1.9.4.6 1.5-1.1 1.6 1.9 1.9 1.6-1.1 1.5.6.4 1.9h2.7l.4-1.9 1.5-.6 1.6 1.1 1.9-1.9-1.1-1.6.6-1.5 1.9-.4Z" fill="currentColor"/></svg>',
 };
 export const WEAPONS = {
@@ -45,8 +46,9 @@ export function createHud(root, o) {
       <div class="rr-top">
         <div class="rr-left"><div class="rr-hearts" data-r="hearts"></div><div class="rr-chip" data-r="coins"><i class="rr-coin-ico"></i><span>0</span></div><div class="rr-powers" data-r="powers"></div></div>
         <div class="rr-dist" data-r="dist">0<small>m</small></div>
-        <div class="rr-right">${side !== 'r' ? `<button class="rr-icon-btn" data-r="pause" aria-label="Pause">${ICONS.pause}</button>` : '<span></span>'}<div class="rr-chip rr-partner" data-r="partner" hidden><i class="rr-dot"></i><span></span></div></div>
+        <div class="rr-right"><div class="rr-chip rr-partner" data-r="partner" hidden><i class="rr-dot"></i><span></span></div></div>
       </div>
+      ${side !== 'r' ? `<button class="rr-icon-btn rr-pause" data-r="pause" aria-label="Pause">${ICONS.pause}</button>` : ''}
       <div class="rr-bar" data-r="bar" hidden><i class="rr-fill"></i><span class="rr-flag">${ICONS.flag}</span><span class="rr-mk" data-r="mko"></span><span class="rr-mk me" data-r="mkm"></span></div>
       <div class="rr-gap" data-r="gap" hidden><span></span></div>
       <div class="rr-pops" data-r="pops"></div>
@@ -55,7 +57,7 @@ export function createHud(root, o) {
       <div class="rr-banner" data-r="banner"></div>
       <div class="rr-splat" data-r="splat"></div>
       <div class="rr-flash" data-r="flash"></div>
-      <button class="rr-weapon empty" data-r="weapon" hidden aria-label="Use weapon"><span class="rr-wname"></span><span class="rr-wic"></span>${o.keyHint ? `<span class="rr-key">${esc(o.keyHint(who))}</span>` : ''}</button>
+      <button class="rr-weapon empty" data-r="weapon" hidden aria-label="Use weapon"><span class="rr-wname"></span><span class="rr-wic">${ICONS.box}</span>${o.keyHint ? `<span class="rr-key">${esc(o.keyHint(who))}</span>` : ''}</button>
       <div class="rr-btns" data-r="btns"><button data-a="${A_DOWN}">ROLL</button><button data-a="${A_UP}">JUMP</button></div>`;
     L.appendChild(el);
     const $ = (r) => el.querySelector(`[data-r="${r}"]`);
@@ -121,7 +123,7 @@ export function createHud(root, o) {
         set('ws', show, (val) => { R.weapon.hidden = !val; });
         set('w', kind, (val) => {
           R.weapon.classList.toggle('empty', !val); R.weapon.classList.toggle('full', !!val);
-          R.weapon.querySelector('.rr-wic').innerHTML = val ? WEAPONS[val].icon : '';
+          R.weapon.querySelector('.rr-wic').innerHTML = val ? WEAPONS[val].icon : ICONS.box;
           R.weapon.querySelector('.rr-wname').textContent = val ? WEAPONS[val].name : '';
         });
       },
@@ -159,7 +161,7 @@ export function createHud(root, o) {
 
   // shared overlays
   const ov = {};
-  for (const k of ['load', 'lobby', 'count', 'pause', 'msg', 'fin', 'set']) { ov[k] = mk('rr-ov rr-' + k); L.appendChild(ov[k]); }
+  for (const k of ['load', 'lobby', 'count', 'pause', 'msg', 'fin', 'set']) { ov[k] = mk('rr-ov rr-ov-' + k); L.appendChild(ov[k]); }
   ov.load.classList.add('on');
   ov.load.innerHTML = `<div style="text-align:center"><div class="rr-logo"><span>RAIL</span><span>RUSH</span></div><div class="rr-runner-ico">${ICONS.runner}</div><div class="rr-progress"><i></i></div><p>Laying track…</p></div>`;
   const tut = mk('rr-tut');

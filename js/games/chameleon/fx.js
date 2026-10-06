@@ -220,6 +220,7 @@ export function createFx(THREE, scene, { gradientMap }) {
     splat, pellet, burst, trailDot, setPath, setCursor, update, clearRound,
     glints, ring, hlMat, trailMat, pathMat,
     get splatCount() { return sp.filter((s) => s.on).length; },
+    get trailCount() { return tr.filter((t) => t.on).length; },
     objects: [splats, pellets, confetti, trail, path, cursor, ring, ...glints],
     dispose() {
       for (const o of [splats, pellets, confetti, trail, path, cursor, ring, ...glints]) scene.remove(o);

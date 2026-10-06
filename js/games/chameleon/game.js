@@ -7,7 +7,7 @@ import { createHud } from './hud.js';
 import { createControls } from './controls.js';
 import { POSES, REGION_OF_PART, REGION_NAMES } from './avatar.js';
 import { loadingCard, errorCard, lobbyCard, titleCard, blindCard, curtainCard, recapCard, pauseCard, ctxCard } from './cards.js';
-import { clamp, damp, dampAngle, wrapAngle, hexToRgb, cssColor, luminance, listeners, fmtTime, mixHex } from './util.js';
+import { clamp, damp, dampAngle, wrapAngle, hexToRgb, cssColor, luminance, listeners, fmtTime, mixHex, esc } from './util.js';
 
 const DUR0 = { title: 1800, hide: 60000, lockMax: 7000, seekLead: 1600, seek: 90000, found: 3400, recap: 9000, resume: 3000, lead: 380, foundLead: 260 };
 const ROUNDS = { hs: 4, db: 3 };
@@ -66,6 +66,8 @@ export function createGame(el, api) {
     resumeAt: 0,
     pauseReasons: new Set(),
     partnerHidden: false,
+    helloEpoch: -1,
+    partnerKeep: null,
     actor: null, // local mode: who is holding the device
     curtainUp: false,
     ctxLost: false,
@@ -80,7 +82,7 @@ export function createGame(el, api) {
       paintSum: { a: 0, b: 0 }, paintOk: { a: false, b: false }, glintAt: { a: -1e9, b: -1e9 }, trailUntil: { a: 0, b: 0 }, trailNext: 0,
       pendingTag: 0, foundSent: false, out: { a: false, b: false }, outSent: false, tagWindow: null,
       path: [], pathNext: 0, closest: Infinity, passes: 0, near: false, seekStart: 0, used: { a: 0, b: 0 }, lockSent: false, rec: null,
-      scurry: null,
+      scurry: null, endingHide: false, lockDone: false, toRecap: false, nexting: false, jumpReq: false, lastTick: 0, lastTrailT: 0,
     };
   }
 
@@ -141,6 +143,7 @@ export function createGame(el, api) {
   function boot() {
     try {
       stage = createStage(THREE, view, { theme, maxDpr: DUR.maxDpr || 2 });
+      if (testing) window.__chamGL = (window.__chamGL || 0) + 1;
       stage.resize();
       stage.loadMap(S.setup.map);
       setLivery('a', 'lobby'); setLivery('b', 'lobby');
@@ -174,20 +177,39 @@ export function createGame(el, api) {
   function fullCheck() { const r = root.getBoundingClientRect(); root.classList.toggle('is-full', r.top < 4); }
 
   // ── liveries ──
+  // A face for every chameleon: a long smile and cheek blush, painted into the skin texture
+  // (so a hider can paint over it — only the eyes can't be hidden).
+  const smile = (x, y, z) => {
+    if (z < 0.12) return 0;
+    const yM = -0.006 + (0.29 - z) * 0.2;
+    const d = Math.abs(y - yM);
+    return d < 0.0075 ? 1 : d < 0.011 ? 0.4 : 0;
+  };
+  const blush = (x, y, z) => {
+    const d = Math.hypot(Math.abs(x) - 0.092, y - 0.018, z - 0.19);
+    return d < 0.022 ? 0.7 : d < 0.03 ? 0.3 : 0;
+  };
+  function face(p, base) {
+    const mouth = hexToRgb(mixHex(base, '#1d1b22', 0.62));
+    const cheek = hexToRgb(mixHex(base, '#ff6b8f', 0.38));
+    p.paintLocal(1, blush, cheek);
+    p.paintLocal(1, smile, mouth);
+  }
   function setLivery(w, kind) {
     const p = stage.paints[w];
-    if (kind === 'white') { p.reset([250, 250, 246]); return; }
-    const ink = hexToRgb(w === 'a' ? theme.a : theme.b);
-    p.reset(ink);
-    p.tintFacing(0, -1, 0, 0.45, hexToRgb(mixHex(w === 'a' ? theme.a : theme.b, '#ffffff', 0.72)), 'body');
-    p.tintFacing(0, 1, 0, 0.75, hexToRgb(mixHex(w === 'a' ? theme.a : theme.b, '#000000', 0.18)), 'body');
+    if (kind === 'white') { p.reset([250, 250, 246]); face(p, '#faf9f5'); p.clearUndo(); return; }
+    const inkHex = w === 'a' ? theme.a : theme.b;
+    p.reset(hexToRgb(inkHex));
+    p.tintFacing(0, -1, 0, 0.45, hexToRgb(mixHex(inkHex, '#ffffff', 0.72)), 'body');
+    p.tintFacing(0, 1, 0, 0.75, hexToRgb(mixHex(inkHex, '#000000', 0.18)), 'body');
+    face(p, inkHex);
     p.clearUndo();
   }
 
   function placeLobby() {
     const s = stage.map.spots.lobby || { x: 0, z: 0.9 };
     for (const w of ['a', 'b']) {
-      const b = body[w]; b.x = s.x + (w === 'a' ? -0.42 : 0.42); b.z = s.z; b.yaw = w === 'a' ? 0.45 : -0.45; b.pose = 'stand'; b.wallN = null; b.vis = 1; b.vy = 0;
+      const b = body[w]; b.x = s.x + (w === 'a' ? -0.55 : 0.55); b.z = s.z; b.yaw = w === 'a' ? 1.2 : -1.2; b.pose = 'stand'; b.wallN = null; b.vis = 1; b.vy = 0;
       b.y = stage.world.groundAt(b.x, b.z, 0.2, 2);
       stage.av[w].setPose('stand', true);
     }
@@ -197,8 +219,9 @@ export function createGame(el, api) {
   function matchInfo() { const m = S.match; return m ? { id: m.id, mode: m.mode, map: m.map, first: m.first, rounds: m.rounds, hist: m.hist } : null; }
   function enter(name, { round, dur = 0, data = null, at = null } = {}, lead = DUR.lead) {
     if (!isHost) return;
+    if (!local && lead > 0) lead = Math.max(lead, leadFor());
     const p = { seq: ++S.hostSeq, name, round: round ?? S.phase.round, at: at != null ? Math.max(at, now() + 40) : now() + lead, dur, data, sc: S.match ? { ...S.match.scores } : { a: 0, b: 0 }, m: matchInfo() };
-    if (!local) link.send('ph', p);
+    if (!local) { link.send('ph', p); link.blast('ph', p); }
     queuePhase(p);
   }
   function hostStart() {
@@ -208,6 +231,8 @@ export function createGame(el, api) {
     S.match = { id: Math.random().toString(36).slice(2, 9), mode: st.mode, map: st.map, first: st.first, rounds: ROUNDS[st.mode], scores: { a: 0, b: 0 }, hist: [] };
     startRound(1);
   }
+  /** How far ahead to schedule a shared moment so the message is there in time. */
+  function leadFor() { return Math.max(DUR.lead, Math.min(1200, link.rtt * 1.3 + 160)); }
   function startRound(r, at = null) {
     if (local) enter('curtain', { round: r, data: { kind: 'hide', who: hiderOfRound(r) }, at }, 0);
     else enter('hide', { round: r, dur: DUR.hide, at: at != null ? at + DUR.title : null }, DUR.title);
@@ -277,7 +302,7 @@ export function createGame(el, api) {
     const t = now();
     const ph = S.phase;
     if (t < S.resumeAt) return;
-    const pre = t >= ph.end - DUR.lead; // announce ahead so both devices flip at ph.end
+    const pre = t >= ph.end - (local ? DUR.lead : leadFor()); // announce ahead so both devices flip at ph.end
     if (S.queue.length) return;
     if (ph.name === 'hide' && ph.dur && pre) endHide(ph.end);
     else if (ph.name === 'lock' && t >= ph.end) lockDone();
@@ -484,14 +509,14 @@ export function createGame(el, api) {
   link.on('start', () => { /* guests can't start; ignored */ });
   link.on('out', (d) => { if (isHost && d) hostOut(d.w); });
   link.on('vis', (d) => { if (!isHost || !d) return; S.partnerHidden = !!d.hidden; if (d.hidden) addPause('hidden'); else removePause('hidden'); });
-  link.on('pause', (d) => { if (isHost || !d) return; S.paused = { reason: d.reason, remaining: d.remaining }; S.phase.end = now() + d.remaining; });
+  link.on('pause', (d) => { if (isHost || !d) return; S.paused = { reason: d.reason, remaining: d.remaining }; S.resumeAt = 0; S.phase.end = now() + d.remaining; });
   link.on('resume', (d) => { if (isHost || !d) return; S.paused = null; S.resumeAt = d.at; S.phase.end = d.at + d.remaining; });
 
   // shots, scans, scurries
   link.on('shot', (d) => onShot(d));
   link.on('tagres', (d) => onTagRes(d));
   link.on('scan', (d) => { if (d) glint(other(d.by), d.at, d.by); });
-  link.on('scurry', (d) => { if (d) { R.trailUntil[d.w] = d.at + 650; R.scurried[d.w] = true; } });
+  link.on('scurry', (d) => { if (d) { R.trailUntil[d.w] = d.at + 650; R.scurried[d.w] = true; if (stage) stage.fx.trailMat.color.set(d.w === 'a' ? theme.a : theme.b); } });
 
   // snapshot / resync
   link.on('hello', (d) => onHello(d));
@@ -506,6 +531,7 @@ export function createGame(el, api) {
   }
   function onHello(d) {
     if (!d) return;
+    S.helloEpoch = link.epoch;
     if (isHost) {
       if (S.match) { sendSnap(); removePause('away'); }
       else if (d.started) link.send('snapreq', {});
@@ -519,7 +545,12 @@ export function createGame(el, api) {
     const tex = {};
     for (const w of ['a', 'b']) if (R.paintOk[w]) { const e = stage.paints[w].encode(); tex[w] = e.b64; }
     const pos = {};
-    for (const w of ['a', 'b']) { const b = controlsOf(w) ? body[w] : null; if (b) pos[w] = [b.x, b.y, b.z, b.yaw, POSES.indexOf(b.pose), b.wa]; }
+    for (const w of ['a', 'b']) {
+      const b = controlsOf(w) ? body[w] : null;
+      if (b) pos[w] = [b.x, b.y, b.z, b.yaw, POSES.indexOf(b.pose), b.wa];
+      else if (S.partnerKeep) pos[w] = S.partnerKeep;
+      else if (rem.v > 0.5) pos[w] = [rem.x, rem.y, rem.z, rem.yaw, Math.round(rem.po), rem.wa];
+    }
     const remaining = S.paused ? S.paused.remaining : Math.max(0, S.phase.end - t);
     return {
       v: 1, setup: S.setup, match: S.match, hostSeq: Math.max(S.hostSeq, S.phase.seq),
@@ -527,7 +558,7 @@ export function createGame(el, api) {
       tex, pos, pellets: R.pellets, scurried: R.scurried, scanIn: { a: Math.max(0, R.scanReady.a - t), b: Math.max(0, R.scanReady.b - t) }, seekElapsed: S.phase.name === 'seek' ? t - R.seekStart : 0,
     };
   }
-  function sendSnap() { link.sendBlob('snap', JSON.stringify(snapshot())); }
+  function sendSnap() { link.sendBlob('snap', JSON.stringify(snapshot())); S.partnerKeep = null; }
   function adoptSnap(s) {
     if (!s || s.v !== 1 || !stage) return;
     S.setup = s.setup || S.setup;
@@ -553,9 +584,13 @@ export function createGame(el, api) {
   // ── pause / resume ────────────────────────────────────────────────
   function addPause(reason) {
     S.pauseReasons.add(reason);
+    if (reason === 'away' && !local && S.match && !S.partnerKeep && rem.v > 0.5) {
+      S.partnerKeep = [rem.x, rem.y, rem.z, rem.yaw, Math.round(rem.po), rem.wa];
+    }
     if (!isHost) { if (reason === 'hidden' && !local) link.send('vis', { hidden: true }); return; }
     if (S.paused) return;
-    const rem2 = Math.max(0, S.phase.end - now());
+    const rem2 = Math.max(0, S.phase.end - Math.max(now(), S.resumeAt));
+    S.resumeAt = 0;
     S.paused = { reason, remaining: rem2 };
     if (!local) link.send('pause', { reason, remaining: rem2 });
   }
@@ -566,14 +601,17 @@ export function createGame(el, api) {
   }
   function maybeResume() {
     if (!isHost || !S.paused || S.pauseReasons.size) return;
-    if (!local && (!api.partnerHere || !link.ready)) return;
+    if (!local && (!api.partnerHere || !link.ready || S.helloEpoch !== link.epoch)) return;
     const at = now() + DUR.resume;
     const remaining = S.paused.remaining;
     S.paused = null; S.resumeAt = at; S.phase.end = at + remaining;
     if (S.phase.name === 'seek') R.seekStart += 0; // seekStart shifts with the pause
     if (!local) link.send('resume', { at, remaining });
   }
-  const offHere = api.onPartnerHere ? api.onPartnerHere((here) => { if (here) { removePause('away'); } else addPause('away'); }) : null;
+  const offHere = api.onPartnerHere ? api.onPartnerHere((here) => {
+    if (here) { if (link.ready && S.boot === 'ready') link.send('hello', { started: !!S.match, mid: S.match ? S.match.id : null, seq: S.phase.seq, host: isHost }); removePause('away'); }
+    else addPause('away');
+  }) : null;
 
   // ── shots ─────────────────────────────────────────────────────────
   const tmpA = new Float64Array(3);
@@ -706,6 +744,7 @@ export function createGame(el, api) {
     R.scurry = { until: tSec + 0.5, vx: Math.sin(yaw) * SPEED.scurry, vz: Math.cos(yaw) * SPEED.scurry };
     b.pose = 'stand'; b.wallN = null; stage.av[w].setPose('stand');
     R.trailUntil[w] = now() + 650;
+    stage.fx.trailMat.color.set(w === 'a' ? theme.a : theme.b);
     link.send('scurry', { w, at: now() });
     snd.play('scurry');
   }
@@ -953,6 +992,7 @@ export function createGame(el, api) {
 
   // ── helpers ───────────────────────────────────────────────────────
   function frozen() { return !!S.paused || now() < S.resumeAt || tSec < C.freezeUntil; }
+  function frozenView() { return false; }
   const posTmp = { x: 0, y: 0, z: 0 };
   function posOf(w) {
     const r = stage.av[w].root.position;
@@ -1013,7 +1053,7 @@ export function createGame(el, api) {
   function perf(ms, tms) {
     stats.ewma = stats.ewma * 0.92 + ms * 0.08;
     const f = stats.frames; f.push(ms); if (f.length > 240) f.shift();
-    if (tms - lastScaleCheck > 1000) {
+    if (!DUR.fixedScale && tms - lastScaleCheck > 1000) {
       lastScaleCheck = tms;
       if (stats.ewma > 21) stage.setScale(stage.scale - 0.1);
       else if (stats.ewma < 13.5 && stage.scale < 1) stage.setScale(stage.scale + 0.05);
@@ -1160,7 +1200,7 @@ export function createGame(el, api) {
         a.st.wallN = b.wallN;
         a.st.speed = b.speed;
         a.st.lookYaw = b.lookYaw; a.st.lookPitch = b.lookPitch;
-        if (ph === 'seek' && w === v && roleOf(w) === 'seeker') vis = false; // my own body in first person
+        if (ph === 'seek' && w === v && (roleOf(w) === 'seeker' || roleOf(w) === 'both') && !frozenView()) vis = false; // my own body in first person
       } else {
         let ok = link.sample(rem, t);
         if (!ok && remHint.set) { rem.x = remHint.x; rem.y = remHint.y; rem.z = remHint.z; rem.yaw = remHint.yaw; rem.po = remHint.po; rem.wa = remHint.wa; rem.v = 1; rem.ly = 0; rem.lp = 0; rem.sp = 0; ok = true; }
@@ -1230,7 +1270,14 @@ export function createGame(el, api) {
         if (stage.av[w].root.visible || w === me) stage.fx.trailDot(p.x, p.y, p.z, tSec, 2);
       }
     }
-    stage.fx.trailMat.color.set(0x000000);
+    // the hider peeks through their own eyes; a heartbeat when the seeker gets close
+    const peeking = ph === 'seek' && v && roleOf(v) === 'hider' && !local;
+    if (peeking !== !!C.peek) { C.peek = peeking; root.classList.toggle('peek', peeking); }
+    if (peeking && !frozen()) {
+      const sk = other(v); const ps = stage.av[sk].root.position; const pm = stage.av[v].root.position;
+      const d = Math.hypot(ps.x - pm.x, ps.z - pm.z);
+      if (d < 3 && tSec > (C.beatAt || 0)) { C.beatAt = tSec + 0.45 + d * 0.28; snd.play('beat'); root.classList.remove('beat'); void root.offsetWidth; root.classList.add('beat'); }
+    }
     // seek stats: closest call, walk-pasts, seeker path
     if (ph === 'seek' && S.match) {
       const pairs = mode() === 'hs' ? [[other(hiderOf(S.phase.round)), hiderOf(S.phase.round)]] : [[v || 'a', other(v || 'a')]];
@@ -1261,8 +1308,8 @@ export function createGame(el, api) {
       C.orbit += dt;
       const sw = Math.sin(C.orbit * 0.16) * 0.55;
       const cx = (body.a.x + body.b.x) / 2; const cz = (body.a.z + body.b.z) / 2; const cy = (body.a.y + body.b.y) / 2 + 0.25;
-      const dist = stage.size[0] < stage.size[1] ? 3.3 : 2.6;
-      camWant.set(cx + Math.sin(sw) * dist, cy + 1.05, cz + Math.cos(sw) * dist);
+      const dist = stage.size[0] < stage.size[1] ? 2.25 : 2.0;
+      camWant.set(cx + Math.sin(sw) * dist, cy + 0.75, cz + Math.cos(sw) * dist);
       revC.x = cx; revC.y = cy; revC.z = cz;
       aimFramed(revC, true);
       rate = 3;
@@ -1308,8 +1355,9 @@ export function createGame(el, api) {
         const yaw = b.yaw + b.lookYaw;
         camWant.set(b.x + Math.sin(yaw) * 0.12, b.y + eh, b.z + Math.cos(yaw) * 0.12);
         lookWant.set(camWant.x + Math.sin(yaw) * Math.cos(b.lookPitch), camWant.y + Math.sin(b.lookPitch), camWant.z + Math.cos(yaw) * Math.cos(b.lookPitch));
-        stage.vm.visible = true;
-        stage.vm.position.set(0.085, -0.115 + Math.sin(tSec * 8) * 0.003 * Math.min(1, b.speed), -0.3 + C.shake * 0.35);
+        // the paint popper only fits on landscape screens (portrait has the Fire button there)
+        stage.vm.visible = stage.size[0] > stage.size[1] * 1.1;
+        stage.vm.position.set(0.2, -0.16 + Math.sin(tSec * 8) * 0.004 * Math.min(1, b.speed), -0.42 + C.shake * 0.3);
       }
       snap = true;
     } else if (v && (ph === 'hide' || ph === 'lock')) {
@@ -1327,6 +1375,7 @@ export function createGame(el, api) {
       rate = 3;
     }
     C.shake = Math.max(0, C.shake - dt);
+    if (C.override) { camWant.fromArray(C.override, 0); lookWant.fromArray(C.override, 3); snap = true; C.frameCard = false; }
     if (snap) { camPos.copy(camWant); camLook.copy(lookWant); }
     else if (rate > 0) {
       const k = 1 - Math.exp(-rate * dt);
@@ -1451,6 +1500,12 @@ export function createGame(el, api) {
     // live numbers inside cards
     const lt = root.querySelector('[data-live="blind-time"]');
     if (lt) { const txt = fmtTime(S.paused ? S.paused.remaining : Math.max(0, S.phase.end - t)); if (lt.textContent !== txt) lt.textContent = txt; }
+    const sc = root.querySelector('[data-live="seek-count"]');
+    if (sc) {
+      const left = seekCountdown(t);
+      const n = left == null ? '…' : String(Math.max(1, Math.ceil(left / 1000)));
+      if (sc.textContent !== n) { sc.textContent = n; if (left != null) snd.play('beep'); }
+    }
     const rc = root.querySelector('[data-live="resume-count"]');
     if (rc) { const n = String(Math.max(1, Math.ceil((S.resumeAt - t) / 1000))); if (rc.textContent !== n) rc.textContent = n; }
     // seek countdown
@@ -1484,6 +1539,7 @@ export function createGame(el, api) {
     }
     if (ph === 'curtain') {
       const d = S.phase.data || {};
+      if (seekCountdown(t) != null) { h.layer(`count-${S.phase.seq}`, `<div class="chm-over solid"><div class="chm-card chm-sticker"><div class="chm-kicker">${esc(api.name(d.who))}, get ready</div><div class="chm-big" data-live="seek-count">3</div><p>Find them before the timer runs out.</p></div></div>`); return; }
       h.layer(`curtain-${S.phase.seq}`, curtainCard(api, { kind: d.kind, who: d.who }));
       return;
     }
@@ -1517,7 +1573,12 @@ export function createGame(el, api) {
     h.layer('', '');
   }
   function blindLock() {
-    return `<div class="chm-over chm-blind solid"><div class="chm-card chm-sticker"><div class="chm-kicker">Get ready</div><div class="chm-big">Eyes open soon</div><div class="chm-drops" aria-hidden="true"><i></i><i></i><i></i></div><p>They’ve picked their spot.</p></div></div>`;
+    return `<div class="chm-over chm-blind solid"><div class="chm-card chm-sticker"><div class="chm-kicker">Get ready</div><div class="chm-big" data-live="seek-count">…</div><div class="chm-drops" aria-hidden="true"><i></i><i></i><i></i></div><p>They’ve picked their spot. Eyes open in a moment.</p></div></div>`;
+  }
+  /** Seconds until a queued 'seek' starts (or null). */
+  function seekCountdown(t) {
+    const q = S.queue.find((x) => x.name === 'seek');
+    return q ? Math.max(0, q.at - t) : null;
   }
 
   // ── test hook ─────────────────────────────────────────────────────
@@ -1535,7 +1596,7 @@ export function createGame(el, api) {
           paint: P.on ? { tool: P.tool, size: P.size, hard: P.hard, rgb: P.rgb } : null,
           splats: stage ? stage.fx.splatCount : 0,
           violations: stats.violations, linkReady: link.ready, epoch: link.epoch, rtt: link.rtt, sent: link.sent,
-          blind: isBlind(), layer: hud.layerKey, mapId: stage && stage.map ? stage.map.id : null,
+          blind: isBlind(), layer: hud.layerKey, trails: stage ? stage.fx.trailCount : 0, mapId: stage && stage.map ? stage.map.id : null,
           glint: { a: R.glintAt.a, b: R.glintAt.b }, lastPick: stats.lastPick || null, lastPaint: stats.lastPaint || null, lastShot: stats.lastShot || null, lastTagCheck: stats.lastTagCheck || null,
         };
       },
@@ -1624,6 +1685,7 @@ export function createGame(el, api) {
       setPaint(o) { Object.assign(P, o); },
       stampNow() { doStamp(); },
       lockPaintNow(w) { lockPaint(w); return stage.paints[w].hash(); },
+      lookFrom(arr) { C.override = arr; },
       setLook(yaw, pitch) { const b = body[viewer()]; b.lookYaw = yaw; b.lookPitch = pitch; },
       openPoses() { posesOpen = true; },
       dur: DUR,
@@ -1646,7 +1708,7 @@ export function createGame(el, api) {
       hud.destroy();
       link.destroy();
       snd.destroy();
-      if (stage) stage.dispose();
+      if (stage) { stage.dispose(); if (testing) window.__chamGL = (window.__chamGL || 1) - 1; }
       stage = null;
       el.innerHTML = '';
       if (testing) { window.__chamCount = (window.__chamCount || 1) - 1; if (window.__cham) delete window.__cham; }

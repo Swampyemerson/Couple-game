@@ -135,6 +135,9 @@ export const CSS = `
 .chm-flash.go { animation: chm-flash .45s ease-out; }
 .chm-vig { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 0 var(--g-hl); transition: box-shadow .2s; z-index: 2; }
 .chm-vig.on { box-shadow: inset 0 0 60px 14px color-mix(in srgb, var(--g-hl) 70%, transparent); }
+.chm.peek .chm-vig { box-shadow: inset 0 0 90px 30px rgba(20, 16, 24, 0.42); }
+.chm.peek.beat .chm-vig { animation: chm-beat .5s ease-out; }
+@keyframes chm-beat { 0% { box-shadow: inset 0 0 120px 46px rgba(214, 69, 93, 0.42); } 100% { box-shadow: inset 0 0 90px 30px rgba(20, 16, 24, 0.42); } }
 .chm-ripple { position: absolute; left: 50%; top: 50%; width: 40px; height: 40px; margin: -20px; border-radius: 50%; border: 3px solid var(--g-hl); opacity: 0; pointer-events: none; }
 .chm-ripple.go { animation: chm-ripple .9s ease-out; }
 .chm-blob { position: absolute; width: 22px; height: 22px; margin: -11px; border-radius: 50%; border: 2px solid var(--g-ink); pointer-events: none; z-index: 4; transition: transform .42s cubic-bezier(.5,-0.3,.6,1), opacity .42s; }

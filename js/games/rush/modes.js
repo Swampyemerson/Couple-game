@@ -47,6 +47,8 @@ export function createRules(G) {
   let seq = 1;
   const pending = new Map(); // my attacks waiting for a result
   const missedIds = new Set();
+  const revivedIds = new Set();
+  const countRevive = (id) => { if (G.isJudge()) { revivedIds.add(id); M.revives = revivedIds.size; } };
 
   const other = (w) => (w === 'a' ? 'b' : 'a');
   const P = (w) => G.players[w];
@@ -55,6 +57,7 @@ export function createRules(G) {
     seq = 1 + Math.floor(Math.random() * 1000) * 10;
     pending.clear();
     missedIds.clear();
+    revivedIds.clear();
     M.th = TEAM_HEARTS; M.goalIdx = 0; M.goal = GOALS[0]; M.revives = 0;
     M.partnerFin = -1; M.partnerOut = -1;
     for (const w of ['a', 'b']) {
@@ -94,7 +97,7 @@ export function createRules(G) {
     if (kind === 'rocket') { r.boostT = BOOST_T; v && v.pop('ROCKET!', 'hl'); G.kick(p.w, 1); G.audio.play('power'); return true; }
     if (kind === 'shield') { r.shield = 1; v && v.pop('Shield up', 'hl'); G.audio.play('shield'); return true; }
     if (kind === 'ink') {
-      if (qs.z > r.z + 1.5 && !qs.down) {
+      if (qs.z > r.z - 3 && !qs.down) {
         G.send(q.w, 'atk', { id, k: 'ink', z: r.z, l: r.lane });
         pending.set(id, { k: 'ink', t: G.now() });
         G.projectile(p.w, q.w, 'ink');
@@ -243,7 +246,7 @@ export function createRules(G) {
       const lane = freeLaneNear(d.l, d.z);
       respawn(r, G.track, d.z, lane);
       p.downId = 0;
-      M.revives++;
+      countRevive(d.id);
       v && v.pop('Back in it!', 'good', `${G.name(from)} saved you`);
       G.audio.play('revive');
       G.fx.burst(r.x, 1.2, r.z, G.pal.hl, 16, 5);
@@ -298,6 +301,7 @@ export function createRules(G) {
       for (const tk of r.tokens) tk.alive = 0;
       r.tokens.length = 0;
       p.stats.revives++;
+      countRevive(rv.id);
       G.send(rv.from, 'revive', { id: rv.id, z: r.z, l: r.lane });
       v && v.pop(`Revived ${G.name(rv.from)}!`, 'good');
       G.audio.play('revive');
