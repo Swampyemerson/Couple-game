@@ -4,7 +4,7 @@ import {
   DT, LANE_W, SLIDE_TIME, STUMBLE_T, START_DELAY, RESUME_DELAY, RACE_LEN, BRAWL_CAP, MT_LEAD, CHUNK,
   HEARTS, TEAM_HEARTS_MAX,
 } from './tune.js';
-import { createTrack, trackHash, O_MTRAIN, TUT_JUMP, TUT_ROLL } from './track.js';
+import { createTrack, trackHash, difficulty, O_MTRAIN, TUT_JUMP, TUT_ROLL } from './track.js';
 import {
   newRunner, step, act, createBot, botRun, crash, C_FORCED, A_LEFT, A_RIGHT, A_UP, A_DOWN,
   E_JUMP, E_LAND, E_ROLL, E_LANE, E_COIN, E_PICK, E_STUMBLE, E_CRASH, E_RESPAWN, E_SHIELD,
@@ -366,10 +366,11 @@ export function createGame(el, api) {
   }
 
   function sendRejoin() {
-    const s = link.latest();
+    // (link.latest() is already the re-mounted partner's lobby state here: use the last in-match snapshot)
+    const s = players[other(meW)].snap;
     link.send('rejoin', {
       mode: M.mode, seed: M.seed, startAt: M.startAt, len: M.len, cap: M.cap, th: M.th, goal: M.goal, goalIdx: M.goalIdx,
-      you: s && s.ep === M.epoch ? { z: s.z, l: s.l, h: s.h, c: s.c, rt: s.rt, fn: s.fn } : null,
+      you: s.ok && s.ep === M.epoch ? { z: s.z, l: s.l, h: s.h, c: s.c, rt: s.rt, fn: s.fn } : null,
     });
   }
   let pendingRejoin = null;
@@ -390,7 +391,7 @@ export function createGame(el, api) {
       M.runMs = y.rt * 1000; M.steps = Math.floor(y.rt / DT);
     }
     M.phase = 'run';
-    M.resumeAt = clock() + RESUME_DELAY;
+    M.resumeAt = resumeSlot(clock());
     link.send('resume', { at: M.resumeAt });
   }
 
@@ -561,6 +562,10 @@ export function createGame(el, api) {
 
   // ── pause / resume ──
   function isPaused(now) { return M.paused || now < M.resumeAt; }
+  // Resume moments snap to a 400 ms grid on the shared clock: two phones whose pauses clear a
+  // moment apart pick the very same instant without waiting for each other's message (which
+  // still settles the rare case of straddling a grid line: both take the later one).
+  const resumeSlot = (now) => Math.ceil((now + RESUME_DELAY) / 400) * 400;
   function pauseCode() {
     for (let i = 0; i < PZ_ORDER.length; i++) if (M.reasons.has(PZ_ORDER[i])) return PZ[PZ_ORDER[i]];
     return 0;
@@ -599,7 +604,11 @@ export function createGame(el, api) {
     M.paused = M.reasons.size > 0 || (live && M.partnerPz > 0);
     if (M.paused) M.resumeAt = 0;
     else if (was) {
-      M.resumeAt = Math.max(M.resumeAt, now + RESUME_DELAY);
+      // If the partner already scheduled the resume (their pause ended first, which is usually
+      // why mine just did), join their countdown rather than proposing a later one.
+      const ps = live ? link.latest() : null;
+      const theirs = ps && ps.ep === M.epoch && ps.pz === 0 && ps.ra > now + 1200 && ps.ra < now + RESUME_DELAY + 1500 ? ps.ra : 0;
+      M.resumeAt = Math.max(M.resumeAt, theirs || resumeSlot(now));
       if (live) link.send('resume', { at: M.resumeAt });
     }
     if (live && !M.paused) {
@@ -805,6 +814,7 @@ export function createGame(el, api) {
   let hudT = 0;
   let scoreT = 0;
   let trimN = 0;
+  let lastPub = -1e9;
   let tAnim = 0;
   function frame(ts) {
     if (dead) return;
@@ -822,7 +832,7 @@ export function createGame(el, api) {
   }
 
   function logic(now, dt) {
-    if (live) { netLogic(now); link.setFastSync(M.phase !== 'run' || M.paused || now < M.resumeAt); }
+    if (live) { netLogic(now); link.setFastSync(M.phase === 'countdown' || ((M.phase === 'run') && (M.paused || now < M.resumeAt + 500)) || M.rejoin ? 2 : M.phase === 'run' ? 0 : 1); }
     pauseLogic(now);
     if (M.phase === 'lobby') lobbyUI();
     else if (M.phase === 'countdown') {
@@ -871,7 +881,8 @@ export function createGame(el, api) {
     tutorial.update();
     hudT += dt;
     updateHud(now, dt);
-    if (live && ready3D) publish();
+    // presence: 20/s in a match (net.js throttles), 10/s in the lobby where nothing moves
+    if (live && ready3D && (M.phase !== 'lobby' || now - lastPub >= 95)) { lastPub = now; publish(); }
     if (M.phase === 'run') {
       scoreT += dt;
       if (scoreT > 0.5) {
@@ -1051,7 +1062,7 @@ export function createGame(el, api) {
   function hudToast(m) { try { api.toast(m); } catch { /* ignore */ } }
 
   // ── render ──
-  function render(dt, now) {
+  function render(dt, now, draw = true) {
     for (let i = 0; i < 2; i++) {
       const p = players[AB[i]];
       p.rs.t = tAnim;
@@ -1114,9 +1125,10 @@ export function createGame(el, api) {
       }
       if (split) { renderer.setViewport(i * vw, 0, vw, H); renderer.setScissor(i * vw, 0, vw, H); }
       else renderer.setViewport(0, 0, W, H);
-      renderer.render(world.scene, rg.cam);
+      if (draw) renderer.render(world.scene, rg.cam);
       const sk = mode === 'run' && !isPaused(now) ? clamp((p.rs.speed - 18) / 12, 0, 1) * 0.8 + (p.rs.boost ? 0.5 : 0) : 0;
-      overlay.draw(renderer, sk);
+      overlay.update(sk);
+      if (draw) overlay.render(renderer);
     }
     if (split) renderer.setScissorTest(false);
     perf.calls = renderer.info.render.calls; perf.tris = renderer.info.render.triangles;
@@ -1175,11 +1187,45 @@ export function createGame(el, api) {
       perf() {
         return {
           frames: perf.n, p50: pct(perf.dts, perf.n, 0.5), p95: pct(perf.dts, perf.n, 0.95), work50: pct(perf.work, perf.n, 0.5), work95: pct(perf.work, perf.n, 0.95),
-          calls: perf.calls, maxCalls: perf.maxCalls, tris: perf.tris, scale, chunkVerts: world ? world.stats.maxV : 0, chunkIdx: world ? world.stats.maxI : 0, chunkOver: world ? world.stats.over : 0, chunksBuilt: world ? world.stats.built : 0, dpr: renderer ? renderer.getPixelRatio() : 0,
+          calls: perf.calls, maxCalls: perf.maxCalls, tris: perf.tris, maxTris: perf.maxTris, scale, scaleDowns: perf.scaleDowns, scaleUps: perf.scaleUps, programs0: perf.programs0, chunkVerts: world ? world.stats.maxV : 0, chunkIdx: world ? world.stats.maxI : 0, chunkOver: world ? world.stats.over : 0, chunksBuilt: world ? world.stats.built : 0, dpr: renderer ? renderer.getPixelRatio() : 0,
           geometries: renderer ? renderer.info.memory.geometries : 0, textures: renderer ? renderer.info.memory.textures : 0, programs: renderer && renderer.info.programs ? renderer.info.programs.length : 0,
         };
       },
-      resetPerf() { perf.n = 0; perf.maxCalls = 0; },
+      resetPerf() { perf.n = 0; perf.maxCalls = 0; perf.maxTris = 0; },
+      /**
+       * Run n frames of the per-frame JS path (sim, logic, avatars, particles, world sync, rig,
+       * HUD, overlay) on the live state with a fake 60 Hz clock, skipping only the GL draw.
+       * For steady-state timing / allocation tests (SwiftShader frame times say nothing).
+       */
+      bench(n = 600) {
+        if (!ready3D) return null;
+        let now = clock();
+        const t0 = performance.now();
+        for (let i = 0; i < n; i++) {
+          now += 1000 / 60;
+          tAnim += 1 / 60;
+          logic(now, 1 / 60);
+          render(1 / 60, now, false);
+          updateTag();
+        }
+        const ms = performance.now() - t0;
+        M.lastNow = clock();
+        return { frames: n, msPerFrame: ms / n };
+      },
+      /** Feel numbers measured on a fresh runner with the real sim. */
+      probe() {
+        // the first 20 m of chunk 0 are empty on every seed
+        const r = newRunner(0); const tr = createTrack(5);
+        r.z = r.zPrev = 2; r.t = 0; r.invulnT = 1e9;
+        act(r, A_RIGHT); let n = 0; while (r.laneT < 1 && n < 200) { step(r, tr, true); n++; }
+        const laneMs = n * DT * 1000;
+        const r2 = newRunner(0); r2.z = r2.zPrev = 2; r2.invulnT = 1e9;
+        act(r2, A_UP); let apex = 0; let air = 0; for (let k = 0; k < 240; k++) { step(r2, tr, true); if (r2.y > apex) apex = r2.y; if (!r2.grounded) air++; }
+        // a soft warm-up barrier trips you instead of knocking you down
+        const r3 = newRunner(0); const tr0 = createTrack(9); r3.z = r3.zPrev = TUT_JUMP - 3; r3.speed = 13;
+        for (let k = 0; k < 120; k++) step(r3, tr0, false);
+        return { laneMs, jumpApex: apex, airMs: air * DT * 1000, softCrashes: r3.crashes, softStumbles: r3.stumbles, diff30s: difficulty(430), diff200: difficulty(200), diff2k: difficulty(2000) };
+      },
       input(w, a) { onAction(w || meW || 'a', { left: A_LEFT, right: A_RIGHT, up: A_UP, down: A_DOWN, use: A_USE }[a] || a); },
       auto(w, on) { const p = players[w || meW]; if (p) p.auto = on !== false; },
       give(w, kind) { const p = players[w || meW]; if (!p || !p.r) return false; if (kind === 'shield') { p.r.shield = 1; return true; } if (kind === 'magnet') { p.r.magnetT = 10; return true; } p.weapon = kind; p.weaponRoll = 0; return true; },

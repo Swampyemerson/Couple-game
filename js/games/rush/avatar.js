@@ -52,13 +52,13 @@ function buildGeo(THREE, T, P, who) {
     buf.add(T.lowSphere, s * 0.17, 1.84, -0.235, 0.09, 0.06, 0.04, 0, mix(P.skin, P.b, 0.35), FX_PLAIN, 0, ink);
   }
   if (who === 'a') {
-    buf.add(T.sphere, 0, 1.98, 0.03, 0.64, 0.5, 0.64, 0, P.hairA, FX_PLAIN, 0.022, ink);
+    buf.add(T.sphere12, 0, 1.98, 0.03, 0.64, 0.5, 0.64, 0, P.hairA, FX_PLAIN, 0.022, ink);
     // backwards cap
-    buf.add(T.sphere, 0, 2.06, 0.02, 0.62, 0.36, 0.62, 0, dk, FX_PLAIN, 0.022, ink);
+    buf.add(T.sphere12, 0, 2.06, 0.02, 0.62, 0.36, 0.62, 0, dk, FX_PLAIN, 0.022, ink);
     buf.add(T.box, 0, 2.02, 0.32, 0.42, 0.05, 0.26, 0, dk, FX_PLAIN, 0.02, ink);
     buf.add(T.lowSphere, 0, 2.24, 0.02, 0.08, 0.06, 0.08, 0, P.hl, FX_PLAIN, 0, ink);
   } else {
-    buf.add(T.sphere, 0, 1.99, 0.04, 0.66, 0.52, 0.66, 0, P.hairB, FX_PLAIN, 0.022, ink);
+    buf.add(T.sphere12, 0, 1.99, 0.04, 0.66, 0.52, 0.66, 0, P.hairB, FX_PLAIN, 0.022, ink);
     buf.add(T.lowSphere, -0.2, 1.92, -0.18, 0.18, 0.24, 0.14, 0.4, P.hairB, FX_PLAIN, 0, ink);
     buf.add(T.lowSphere, 0, 2.08, 0.26, 0.16, 0.16, 0.16, 0, P.hl, FX_PLAIN, 0.018, ink);
     B('tail');
@@ -71,7 +71,7 @@ function buildGeo(THREE, T, P, who) {
     B(el);
     buf.add(cap(0.078, 0.13), s * 0.33, 1.06, 0, 1, 1, 1, 0, col, FX_PLAIN, ol, ink);
     buf.add(T.lowSphere, s * 0.33, 0.93, 0, 0.17, 0.17, 0.17, 0, dk, FX_PLAIN, 0, ink);
-    buf.add(T.sphere, s * 0.33, 0.84, -0.01, 0.17, 0.18, 0.17, 0, P.skin, FX_PLAIN, 0.02, ink);
+    buf.add(T.lowSphere, s * 0.33, 0.84, -0.01, 0.17, 0.18, 0.17, 0, P.skin, FX_PLAIN, 0.02, ink);
   }
   // legs
   for (const [hp, kn, s] of [['hipL', 'knL', -1], ['hipR', 'knR', 1]]) {

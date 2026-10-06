@@ -507,6 +507,17 @@ registerGame({
     .g-tower .gt-load { position: absolute; inset: 0; display: grid; place-items: center; background: var(--g-bg); color: var(--g-muted); font-weight: 800; letter-spacing: 0.02em; }
     .g-tower .gt-view:not([data-phase="load"]) .gt-load { display: none; }
     .g-tower .gt-note { position: absolute; left: 12px; right: 12px; bottom: 70px; margin: 0; text-align: center; font-size: 0.8rem; font-weight: 700; color: var(--g-muted); pointer-events: none; }
+    /* full screen: keep the HUD clear of the notch and the home bar */
+    .gm.is-immersive .g-tower .gt-hud { top: calc(10px + env(safe-area-inset-top, 0px)); }
+    .gm.is-immersive .g-tower .gt-turn { bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+    .gm.is-immersive .g-tower .gt-note { bottom: calc(70px + env(safe-area-inset-bottom, 0px)); }
+    /* a phone on its side: the turn pill moves to the bottom-right corner, off the tower */
+    @media (orientation: landscape) and (max-height: 520px) {
+      .g-tower .gt-turn { left: auto; right: calc(14px + env(safe-area-inset-right, 0px)); transform: none; }
+      .g-tower .gt-turn.is-go { animation-name: gt-bob-r; }
+      .g-tower .gt-note { left: auto; right: calc(14px + env(safe-area-inset-right, 0px)); max-width: 40%; text-align: right; }
+    }
+    @keyframes gt-bob-r { 0%, 100% { transform: translate(0, 0); } 50% { transform: translate(0, -3px); } }
     @media (prefers-reduced-motion: reduce) {
       .g-tower .gt-stamp.show { animation: gt-fade 1100ms linear both; }
       .g-tower .gt-turn.is-go { animation: none; }

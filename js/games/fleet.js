@@ -187,8 +187,8 @@ const CSS = `
 /* ── chart ── */
 .g-fleet .fl-chart { --cs: var(--cell); position: relative; display: grid; grid-template-columns: var(--gut) auto; grid-template-rows: calc(var(--gut) - 1px) auto; width: max-content; }
 .g-fleet .fl-chart.is-mini { --cs: var(--mini); --gut: 12px; }
-.g-fleet .fl-lab { display: grid; font: 400 9px/1 var(--g-font-display); color: var(--g-muted); }
-.g-fleet .is-mini .fl-lab { font-size: 7px; }
+.g-fleet .fl-lab { display: grid; font: 900 9px/1 var(--g-font-display); color: var(--g-muted); }
+.g-fleet .is-mini .fl-lab { font-size: 8px; }
 .g-fleet .fl-lab span { display: grid; place-items: center; transition: color .12s; }
 .g-fleet .fl-lab span.is-on { color: var(--g-ink); }
 .g-fleet .fl-lab-c { grid-column: 2; grid-row: 1; grid-template-columns: repeat(8, var(--cs)); padding-bottom: 3px; }
@@ -253,7 +253,7 @@ const CSS = `
 
 /* ── headers, pills, log ── */
 .g-fleet .fl-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-left: var(--gut); margin-bottom: 3px; min-height: 22px; }
-.g-fleet .fl-h { display: flex; align-items: center; gap: 7px; font: 400 .74rem/1.1 var(--g-font-display); text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; }
+.g-fleet .fl-h { display: flex; align-items: center; gap: 7px; font: 900 .74rem/1.1 var(--g-font-display); text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; }
 .g-fleet .fl-sw { width: 12px; height: 12px; flex: none; background: var(--ship); border: 2px solid var(--g-ink); border-radius: 3px; }
 .g-fleet .fl-pill { flex: none; font: 800 .8rem/1 var(--g-font-body); padding: 7px 11px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); white-space: nowrap; }
 .g-fleet .fl-target.is-live .fl-grid::before { box-shadow: 5px 5px 0 0 var(--g-hl), 5px 5px 0 2px var(--fl-edge); }
@@ -279,7 +279,7 @@ const CSS = `
 .g-fleet .fl-count { font: 700 .8rem/1.25 var(--g-font-body); color: var(--g-muted); }
 
 /* ── stamps ── */
-.g-fleet .fl-stamp { position: absolute; left: calc(50% + var(--gut) / 2); top: calc(50% + var(--gut) / 2); z-index: 6; pointer-events: none; padding: 7px 16px 9px; border: 3px solid var(--g-ink); border-radius: 6px; background: var(--g-hl); color: var(--g-on-ink); box-shadow: 4px 4px 0 var(--fl-edge); text-align: center; white-space: nowrap; font: 400 clamp(1.25rem, 6.4cqw, 1.9rem)/1.05 var(--g-font-display); text-transform: uppercase; letter-spacing: .03em; transform: translate(-50%, -50%) rotate(-8deg); animation: gfleet-stamp 1.9s cubic-bezier(.2, .9, .3, 1.2) both; }
+.g-fleet .fl-stamp { position: absolute; left: calc(50% + var(--gut) / 2); top: calc(50% + var(--gut) / 2); z-index: 6; pointer-events: none; padding: 7px 16px 9px; border: 3px solid var(--g-ink); border-radius: 6px; background: var(--g-hl); color: var(--g-on-ink); box-shadow: 4px 4px 0 var(--fl-edge); text-align: center; white-space: nowrap; font: 900 clamp(1.25rem, 6.4cqw, 1.9rem)/1.05 var(--g-font-display); text-transform: uppercase; letter-spacing: .03em; transform: translate(-50%, -50%) rotate(-8deg); animation: gfleet-stamp 1.9s cubic-bezier(.2, .9, .3, 1.2) both; }
 .g-fleet .fl-stamp small { display: block; margin-top: 5px; font: 800 max(.72rem, .4em)/1 var(--g-font-body); letter-spacing: .06em; }
 .g-fleet .fl-stamp.is-bad { background: var(--g-bad); color: var(--g-on-ink); }
 .g-fleet .is-mini .fl-stamp { font-size: .9rem; padding: 4px 8px 5px; border-width: 2px; box-shadow: 2px 2px 0 var(--fl-edge); }
@@ -310,7 +310,7 @@ const CSS = `
 .g-fleet .fl-actions .gm-btn:disabled { opacity: .4; cursor: default; }
 .g-fleet .fl-ghost { position: absolute; z-index: 30; pointer-events: none; filter: drop-shadow(4px 5px 0 var(--fl-edge)); transform: rotate(-2deg) scale(1.05); }
 .g-fleet .fl-wait .fl-note-card { padding: 12px 14px; border: 2px solid var(--g-ink); border-radius: var(--g-radius); background: var(--g-card); box-shadow: var(--g-shadow); text-align: center; display: flex; flex-direction: column; gap: 6px; }
-.g-fleet .fl-wait .fl-note-card b { font: 400 1rem/1.2 var(--g-font-display); }
+.g-fleet .fl-wait .fl-note-card b { font: 900 1rem/1.2 var(--g-font-display); }
 .g-fleet .fl-wait .fl-note-card span { color: var(--g-muted); font-size: .88rem; }
 
 /* ── battle layout: stacked on phones, side by side on wide screens ── */
@@ -1013,7 +1013,9 @@ registerGame({
         let fresh = [];
         let battleStart = false;
         if (v) {
-          if (seenViewer === v && shots.length > seenShots) fresh = Array.from({ length: shots.length - seenShots }, (_, k) => seenShots + k);
+          // new shots since the last paint, but at most the latest volley (after a reconnect a pile
+          // of shots can land at once, and replaying them all one by one would take ages)
+          if (seenViewer === v && shots.length > seenShots) { const run0 = lastRun(shots)[0]; fresh = Array.from({ length: shots.length - seenShots }, (_, k) => seenShots + k).filter((i) => i >= run0); }
           else if (seenViewer !== v && shots.length && shots[shots.length - 1].by !== v) fresh = lastRun(shots); // catch up on their volley
           battleStart = seenPhase === 'place' && s.phase === 'battle' && !shots.length;
           seenViewer = v;

@@ -20,6 +20,7 @@
   --g-good: #11794a;
   --g-bad: #cc2e44;
   --g-on-ink: #18171d;       /* text on --p-a, --p-b, --g-hl (black overprint, ≥ 4.7:1 on all three) */
+  --g-on-signal: #ffffff;    /* text on --g-good / --g-bad (white on paper, black on black stock) */
   --g-white: #fffdf8;        /* paper white in both themes (knockouts, stickers) */
   --g-edge: #18171d;         /* colour of hard shadows */
   --g-dim: rgb(24 23 29 / 0.46);
@@ -41,6 +42,7 @@
     --g-hl: #ffe14d; --g-hl-soft: #3a2c10; --g-good: #3ccb7f; --g-bad: #ff6b78;
     --g-on-ink: #141317; --g-white: #f1ece2; --g-edge: #000000; --g-dim: rgb(0 0 0 / 0.62);
     --g-halftone: radial-gradient(circle, rgb(241 236 226 / 0.12) 0.9px, transparent 1.3px);
+    --g-on-signal: #141317;
   }
 }
 :root[data-theme="dark"] {
@@ -50,6 +52,7 @@
   --g-hl: #ffe14d; --g-hl-soft: #3a2c10; --g-good: #3ccb7f; --g-bad: #ff6b78;
   --g-on-ink: #141317; --g-white: #f1ece2; --g-edge: #000000; --g-dim: rgb(0 0 0 / 0.62);
   --g-halftone: radial-gradient(circle, rgb(241 236 226 / 0.12) 0.9px, transparent 1.3px);
+  --g-on-signal: #141317;
 }
 
 [hidden] { display: none !important; }
@@ -71,7 +74,7 @@
 .gm-btn:disabled, .gm-btn[aria-disabled="true"] { opacity: 0.45; box-shadow: none; transform: none; cursor: default; }
 .gm-btn-ghost { color: var(--g-ink); background: var(--g-card); box-shadow: var(--g-shadow); }
 .gm-btn-ghost:active { box-shadow: 0 0 0 var(--g-edge); }
-.gm-btn-danger { color: #fff; background: var(--g-bad); border-color: var(--g-ink); box-shadow: var(--g-shadow); }
+.gm-btn-danger { color: var(--g-on-signal); background: var(--g-bad); border-color: var(--g-ink); box-shadow: var(--g-shadow); }
 .gm-btn-danger:active { box-shadow: 0 0 0 var(--g-edge); }
 .gm-btn-big { width: 100%; min-height: 54px; padding: 14px 18px; font-size: 1.08rem; }
 
@@ -159,6 +162,8 @@ body.gm-pinned { position: fixed; left: 0; right: 0; width: 100%; }
 .gm.is-team .gm-vs { background: var(--g-hl); color: var(--g-on-ink); box-shadow: inset 0 0 0 var(--g-stroke) var(--g-ink); font-size: 0.85rem; }
 .gm-status { text-align: center; min-height: 1.35em; margin: 14px 0 6px; font-weight: 800; font-size: 0.95rem; line-height: 1.35; color: var(--g-ink); }
 .gm-status-btn { display: inline-flex; align-items: center; min-height: 32px; margin-left: 6px; padding: 2px 11px; vertical-align: middle; font: 800 0.82rem/1 var(--g-font-body); color: var(--g-on-ink); background: var(--g-hl); border: var(--g-stroke) solid var(--g-ink); border-radius: 999px; box-shadow: var(--g-shadow-sm); touch-action: manipulation; }
+.gm-status-btn { position: relative; }
+.gm-status-btn::after { content: ''; position: absolute; inset: -6px -4px; } /* 44 px to the thumb */
 .gm-status-btn:active { transform: translate(2px, 2px); box-shadow: none; }
 .gm-status-btn:focus-visible { outline: 3px solid var(--p-a); outline-offset: 3px; }
 .gm-stage { flex: 1; position: relative; isolation: isolate; display: flex; flex-direction: column; min-height: 0; }
@@ -288,7 +293,7 @@ body.gm-pinned { position: fixed; left: 0; right: 0; width: 100%; }
 .gs-rec-draw { margin-left: auto; font-size: 0.8rem; color: var(--g-muted); }
 .gs-matches { display: flex; flex-direction: column; gap: 8px; }
 .gs-actions { display: flex; flex-direction: column; gap: 12px; margin-top: 2px; }
-.gs-here { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px; border-radius: 99px; background: var(--g-good); color: #fff; font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; }
+.gs-here { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px; border-radius: 99px; background: var(--g-good); color: var(--g-on-signal); font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; }
 .gs-note { padding: 10px 12px; border: var(--g-stroke) dashed var(--g-ink); border-radius: var(--g-radius); font-weight: 600; }
 .gm-btn.gs-close { min-height: 44px; background: transparent; border-color: transparent; box-shadow: none; color: var(--g-muted); text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; }
 
@@ -327,6 +332,8 @@ body:has(.gh) { background: var(--g-bg); }
 .gh-score-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 800 0.72rem/1.1 var(--g-font-body); letter-spacing: 0.14em; text-transform: uppercase; }
 .gh-score-p b { font-family: var(--g-font-display); font-weight: 900; font-size: 3.1rem; line-height: 0.8; font-variant-numeric: tabular-nums; }
 .gh-score-sep { position: absolute; left: 50%; top: 50%; z-index: 2; width: 34px; height: 34px; margin: -17px 0 0 -17px; display: grid; place-items: center; border-radius: 50%; background: var(--g-hl); color: var(--g-on-ink); border: 2.5px solid var(--g-ink); font: 900 1rem/1 var(--g-font-display); transform: rotate(-10deg); }
+.gh-intro { padding: 12px 14px; font-size: 0.92rem; line-height: 1.4; font-weight: 600; background: var(--g-hl-soft); color: var(--g-ink); border: var(--g-stroke) solid var(--g-ink); border-radius: var(--g-radius); }
+.gh-intro b { font-weight: 800; }
 .gh-score-cap { margin: -4px 0 0; font: 800 0.66rem/1.2 var(--g-font-body); letter-spacing: 0.14em; text-transform: uppercase; color: var(--g-muted); }
 
 /* live invite inside the hub / home: a ticket with notches */
@@ -366,7 +373,7 @@ body:has(.gh) { background: var(--g-bg); }
 .gh-filters { display: flex; gap: 8px; margin: 0 -16px; padding: 2px 16px 8px; overflow-x: auto; scrollbar-width: none; scroll-padding: 0 16px; }
 .gh-filters::-webkit-scrollbar { display: none; }
 @media (hover: hover) and (pointer: fine) { .gh-filters { flex-wrap: wrap; overflow: visible; margin: 0; padding: 2px 0 8px; } }
-.gh-filter { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 38px; padding: 0 14px; border: var(--g-stroke) solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); font: 800 0.86rem/1 var(--g-font-body); white-space: nowrap; touch-action: manipulation; transition: transform 0.1s, box-shadow 0.1s; }
+.gh-filter { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 14px; border: var(--g-stroke) solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); font: 800 0.86rem/1 var(--g-font-body); white-space: nowrap; touch-action: manipulation; transition: transform 0.1s, box-shadow 0.1s; }
 .gh-filter svg { width: 15px; height: 15px; }
 .gh-filter.on { background: var(--g-ink); color: var(--g-bg); box-shadow: 3px 3px 0 var(--g-hl); transform: translate(-1px, -1px); }
 

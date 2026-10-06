@@ -27,6 +27,7 @@ const COIN_MAX = 300;
 const ITEM_MAX = 16;
 const BAR_MAX = 40;
 const VIEW_AHEAD = 175;
+const COIN_AHEAD = 132;   // coins further out are lost in the fog anyway
 const VIEW_BEHIND = 14;
 const SIDE_X = 4.35;      // parapet line
 
@@ -77,9 +78,10 @@ export function createWorld(THREE, P) {
     return im;
   };
   const ink = P.outline;
+  // 12-sided: ~156 triangles a coin with its outline (up to ~50 on screen)
   const coinGeo = freezeWith((b) => {
-    b.add(T.disc, 0, 0, 0, 0.84, 0.13, 0.84, 0, P.coinRim, FX_PLAIN, 0.045, ink);
-    b.add(T.disc, 0, 0, 0, 0.62, 0.16, 0.62, 0, P.coin, FX_GLOW, 0, ink);
+    b.add(T.disc12, 0, 0, 0, 0.84, 0.13, 0.84, 0, P.coinRim, FX_PLAIN, 0.045, ink);
+    b.add(T.disc12, 0, 0, 0, 0.62, 0.16, 0.62, 0, P.coin, FX_GLOW, 0, ink);
     b.add(T.box, 0, 0, 0, 0.12, 0.19, 0.34, 0, P.coinRim, FX_PLAIN, 0, ink);
   });
   // disc template is a Y-axis cylinder: rotate its axis to Z by swapping in the instance matrix (see writeCoin)
@@ -322,7 +324,8 @@ export function createWorld(THREE, P) {
       const cs = c.coins;
       for (let i = 0; i < cs.length && nc < COIN_MAX; i++) {
         const cn = cs[i];
-        if (cn.z < z - VIEW_BEHIND || cn.z > z + VIEW_AHEAD) continue;
+        if (cn.z < z - VIEW_BEHIND) continue;
+        if (cn.z > z + COIN_AHEAD) break; // sorted by z
         if (r && r.taken.has(base + i)) continue;
         writeM(ca, nc++, cn.x, cn.y, -cn.z, 1, spin + cn.z * 0.05, Math.PI / 2);
       }

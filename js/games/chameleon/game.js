@@ -237,6 +237,9 @@ export function createGame(el, api) {
   }
   /** How far ahead to schedule a shared moment so the message is there in time. */
   function leadFor() { return Math.max(DUR.lead, Math.min(1200, link.rtt * 1.3 + 160)); }
+  /** Two devices: after the seek clock hits zero, how long a shot fired just before it may take
+   *  to be confirmed by the victim (shooter → victim → host) before time is called. */
+  function tagGrace() { return local ? 0 : Math.min(1600, link.rtt * 1.2 + 250); }
   function startRound(r, at = null) {
     if (local) enter('curtain', { round: r, data: { kind: 'hide', who: hiderOfRound(r) }, at }, 0);
     else enter('hide', { round: r, dur: DUR.hide, at: at != null ? at + DUR.title : null }, DUR.title);
@@ -284,6 +287,7 @@ export function createGame(el, api) {
   }
   function hostFound(by, victim, T, p) {
     if (!isHost || S.phase.name !== 'seek' || R.foundSent) return;
+    if (!local && T > S.phase.end + 80) return; // fired after the buzzer (clocks agree to a few ms)
     if (mode() === 'hs') { roundOver({ found: true, by, victim, T, p }); return; }
     // Double Blind: earliest confirmed tag within a short window wins
     if (!R.tagWindow) { R.tagWindow = { by, victim, T, p }; later(() => { const t = R.tagWindow; if (t) roundOver({ found: true, ...t }); }, TAG_WINDOW); }
@@ -311,7 +315,9 @@ export function createGame(el, api) {
     if (S.queue.length) return;
     if (ph.name === 'hide' && ph.dur && pre) endHide(ph.end);
     else if (ph.name === 'lock' && t >= ph.end) lockDone();
-    else if (ph.name === 'seek' && pre) roundOver({ found: false, at: ph.end });
+    else if (ph.name === 'seek' && local && pre) roundOver({ found: false, at: ph.end });
+    // live: a tag fired before the buzzer is still being confirmed for a moment after it
+    else if (ph.name === 'seek' && !local && t >= ph.end + tagGrace()) roundOver({ found: false });
     else if ((ph.name === 'found' || ph.name === 'time') && pre && !R.toRecap) { R.toRecap = true; enter('recap', { dur: DUR.recap, data: ph.data, at: ph.end }); }
     else if (ph.name === 'recap' && pre) hostNext(ph.end);
   }
@@ -623,6 +629,7 @@ export function createGame(el, api) {
   function fire() {
     const w = viewer();
     if (!w || !stage || S.phase.name !== 'seek' || frozen()) return;
+    if (now() >= S.phase.end) { hint('Time!', 900); return; } // the buzzer went; shots already flying still count
     const role = roleOf(w);
     if (role !== 'seeker' && role !== 'both') return;
     if (R.pellets[w] <= 0) { hint('Out of pellets!'); snd.play('warn'); return; }

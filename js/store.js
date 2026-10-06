@@ -256,6 +256,11 @@ export class Store {
     this.mode = 'artifact';
     this.online = true;
     this.uid = user ? await user.id() : null;
+    this.owner = user ? await user.isOwner().catch(() => null) : null;
+    // The platform can say up front that this viewer can't write shared data (null = it isn't
+    // saying: then a refused write decides).
+    const canWrite = user && typeof user.can === 'function' ? await user.can('data.write').catch(() => null) : null;
+    if (canWrite === false) this.readOnly = true;
     let markReady;
     this.ready = new Promise((res) => { markReady = res; });
     setTimeout(() => markReady(), 6000); // offline: go with what this device has

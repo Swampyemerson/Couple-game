@@ -82,19 +82,33 @@ export function createLink(api, { delay = 100 } = {}) {
   let pingId = 0;
   const pend = new Map();
   const csamp = [];         // { rtt, off }
-  let fast = true;          // burst while waiting to start
+  // Ping level: 2 = burst (~8/s: not yet synced, countdown, pauses), 1 = lobby (~2.7/s), 0 = running (~1/s).
+  // Keeps each device well inside the ~40 messages/s room budget next to 20 presence/s.
+  let fast = 2;
   let pingTick = 0;
+  let lastReply = 0;
   const now = () => (host ? net.now() : off == null ? net.now() : local() + off);
   function cping() {
     if (dead || host) return;
     pingTick++;
-    if (!fast && pingTick % 8) return; // ~1/s while running, ~8/s otherwise
+    const lvl = csamp.length < 8 ? 2 : fast;
+    if (lvl === 1 && pingTick % 3) return;
+    if (lvl === 0 && pingTick % 8) return;
     const id = ++pingId;
     pend.set(id, local());
     if (pend.size > 30) pend.delete(pend.keys().next().value);
     api.send('cq', { id, f: iid });
   }
-  if (host) offs.push(api.on('cq', (d) => { if (d && typeof d.f === 'string') api.send('cp', { id: d.id, f: d.f, th: net.now() }); }));
+  // Host: answer at most ~11 pings a second. After a stall (a busy main thread, the app in the
+  // background) the queued ones would otherwise all be answered in one burst, over budget, and
+  // their timings are useless anyway.
+  if (host) offs.push(api.on('cq', (d) => {
+    if (!d || typeof d.f !== 'string') return;
+    const t = performance.now();
+    if (t - lastReply < 90) return;
+    lastReply = t;
+    api.send('cp', { id: d.id, f: d.f, th: net.now() });
+  }));
   else {
     offs.push(api.on('cp', (d) => {
       if (!d || d.f !== iid || !pend.has(d.id)) return;
@@ -105,7 +119,7 @@ export function createLink(api, { delay = 100 } = {}) {
       if (csamp.length < 4) return;
       const best = csamp.slice().sort((x, y) => x.rtt - y.rtt).slice(0, 5).map((x) => x.off).sort((x, y) => x - y);
       const est = best[Math.floor(best.length / 2)];
-      if (off == null || fast || Math.abs(est - off) > 40) off = est;
+      if (off == null || fast === 2 || Math.abs(est - off) > 40) off = est;
       else off += (est - off) * 0.3; // slew gently while running
     }));
     timers.push(setInterval(cping, 120));
@@ -161,8 +175,8 @@ export function createLink(api, { delay = 100 } = {}) {
     get net() { return net; },
     get rtt() { if (host || !csamp.length) return net.rtt; let m = Infinity; for (const x of csamp) if (x.rtt < m) m = x.rtt; return Math.round(m); },
     get synced() { return host ? net.synced : csamp.length >= 8 && off != null; },
-    /** Burst clock pings (lobby / countdown) or trickle them (running). */
-    setFastSync(on) { fast = !!on; },
+    /** Clock ping level: 2 burst (countdown, pauses), 1 lobby, 0 running. */
+    setFastSync(level) { fast = level === true ? 2 : level === false ? 0 : level | 0; },
     get ready() { return net.ready; },
     get delay() { return net.delay; },
     now,

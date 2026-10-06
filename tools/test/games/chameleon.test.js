@@ -391,6 +391,44 @@ async function matchSection(port) {
   } finally { await h.close(); }
 }
 
+async function buzzerSection(port) {
+  console.log('\n# two phones: a tag fired just before the seek clock runs out still counts');
+  const h = await launch({ port, only: ['chameleon'], latency: 80 });
+  const { a, b } = h;
+  try {
+    await startPair(h, { ...FAST, seek: 14000, maxDpr: 0.4 });
+    await a.click('[data-lobby="first"][data-v="b"]');
+    await b.waitForFunction(() => window.__cham.state().setup.first === 'b', null, { timeout: 5000 });
+    await a.click('[data-act="start"]');
+    await waitPhase(b, 'hide', 20000);
+    await camoHide(b);
+    await b.click('.chm-acts [data-act="ready"]');
+    await waitPhase(a, 'seek', 20000); await waitPhase(b, 'seek', 5000);
+    await wait(400);
+    const bc = await hook(a, 'bodyCenter', 'b');
+    await hook(a, 'teleport', bc[0] + 0.3, bc[2] + 2.6, Math.PI);
+    await hook(a, 'aimAt', ...(await hook(a, 'bodyCenter', 'b')));
+    // the seeker (the host here) fires 150 ms before the buzzer: the hider's device confirms
+    // after it, and the host must still count it instead of having already called time
+    const left = await a.evaluate(() => new Promise((res) => {
+      const tick = () => { const s = window.__cham.state(); const l = s.phase.end - s.now; if (l <= 150) { window.__cham.action('fire'); res(l); } else setTimeout(tick, 5); };
+      tick();
+    }));
+    await waitPhase(a, 'found', 6000).catch(() => {});
+    const sa = await st(a); const sb = await st(b);
+    assert(sa.phase.name === 'found' && sa.round.rec && sa.round.rec.found, `a tag fired ${Math.round(left)} ms before the buzzer counts (phase ${sa.phase.name})`);
+    await waitPhase(b, 'found', 3000);
+    assert(sb.lastTagCheck && sb.lastTagCheck.ok, "the hider's device confirmed it");
+    const fired = (await st(a)).round.used.a;
+    await a.evaluate(() => window.__cham.action('fire'));
+    assert((await st(a)).round.used.a === fired, 'no more shots once the round is over');
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'buzzer-FAIL-a').catch(() => {}); await shot(b, 'buzzer-FAIL-b').catch(() => {});
+  } finally { await h.close(); }
+}
+
 async function lossySection(port) {
   console.log('\n# lossy network (20% drops, 90 ms latency): paint round trip + phase sync');
   const h = await launch({ port, only: ['chameleon'], dropRate: 0.2, latency: 90 });
@@ -691,6 +729,7 @@ async function mapsSection(port) {
   }
   if (want('match')) sections.push(() => matchSection(PORT + 4));
   if (want('lossy')) sections.push(() => lossySection(PORT + 5));
+  if (want('buzzer')) sections.push(() => buzzerSection(PORT + 5));
   if (want('db')) sections.push(() => doubleBlindSection(PORT + 6));
   if (want('disconnect')) sections.push(() => disconnectSection(PORT + 7));
   if (want('robust')) sections.push(() => robustSection(PORT + 8));

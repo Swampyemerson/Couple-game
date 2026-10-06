@@ -88,8 +88,10 @@ ctx = {
 
 `ctx.prev` is the state before the newest move (handy for replaying it). Optional hooks on the
 object you return from mount: `onEndClosed()` runs when the player taps the end card's look
-button (label it with `endLookLabel: 'See the gallery'` on the def). Set `endDelay: 'manual'`
-to hold the end card until your finale calls `api.showEnd()` (8 s safety net). Inside your own
+button (label it with `endLookLabel: 'See the gallery'` on the def); after that the status line
+offers the result again. Set `endDelay: 'manual'` to hold the end card until your finale calls
+`api.showEnd()` (8 s safety net); calling it straight from `update()` is fine. A match that was
+already over when opened shows its card after at most 400 ms (its finale has been and gone). Inside your own
 end-of-game UI, buttons with `data-g="rematch"` and `data-g="close"` trigger the engine's
 rematch and back-to-games actions.
 
@@ -108,7 +110,11 @@ Online, player `'a'` is the host (`api.isHost`) and runs the simulation. Then:
 - `api.partnerState()` / `api.onPartnerState(fn)` — the other phone's latest presence object.
 - `api.send(type, data)` / `api.on(type, fn)` — rare discrete events (a few per second at
   most): 'goal', 'start', 'tap'. Not delivered to yourself.
-- `api.partnerHere` / `api.onPartnerHere(fn)` — pause when they drop.
+- `api.partnerHere` / `api.onPartnerHere(fn)` — pause when they drop. The engine shows a
+  "they stepped away" card meanwhile; set `ownsPauseUI: true` on the def to draw your own.
+- `api.gen` — the round: 0, then +1 on every rematch. `setPresence` stamps it, and
+  `partnerState()` / `onPartnerState` only ever hand you the partner's state from this round,
+  and only when it actually changed (never for your own presence updates).
 - `api.finish({ winner: 'a'|'b'|null, text?, score? })` — whichever side decides the outcome
   calls it once (host, guest, or local). The engine records it exactly once, shows the end card
   on both phones (mirrored through presence, so it survives dropped messages), and handles
@@ -184,8 +190,9 @@ player chips stay a compact centred row.
 
 Immersive games (`immersive: true`): the stage is the whole viewport, `.gm-versus` and
 `.gm-status` are hidden (draw your own HUD), and back/menu become two 44 px yellow stickers in
-the top corners, inside `env(safe-area-inset-top)`. Keep your HUD clear of the top ~64 px
-corners, and handle the other safe-area insets yourself.
+the top corners, inside `env(safe-area-inset-top)`. Keep your HUD clear of the top corners:
+`var(--gm-corner-safe)` is how far down to start (64 px plus the top inset) and
+`var(--gm-corner-w)` how wide a corner is. Handle the other safe-area insets yourself.
 
 Phone first: it must work and look right at 360–430 px wide, portrait, with thumbs. Touch
 targets ≥ 44 px. Use `touch-action: manipulation` (or `none` for drag/draw surfaces). No
@@ -206,7 +213,9 @@ node tools/test/games/<id>.test.js
 See `tools/test/smoke.test.js`. `launch({ port, only: ['<id>'], colorScheme, coarse, device, latency, dropRate })` opens two
 phones (Emerson = `h.a`, Sydney = `h.b`) sharing a fake database and live room. Helpers:
 `newOnlineGame`, `openMatch`, `newLocalGame`, `startLive`, `engine(page, id)`,
-`matches()`, `results()`, `settle()`, `shot()`, `assertNoErrors()`. three.js is served locally.
+`matches()`, `results()`, `settle()`, `shot()`, `assertNoErrors()`, and `device(w, { identified })`
+for a second device of the same person. `only: []` builds the app with no games; `coldCache: true`
+makes every db subscription start from an empty cache view. three.js is served locally.
 
 ## Netcode kit (for real-time games)
 
@@ -222,8 +231,15 @@ net.send('hit', {...});     // reliable: exactly once, in order, retried through
 net.on('hit', (data, sentAt) => {});
 net.publish(myState);       // call every frame; streamed at `rate`/s with a shared timestamp
 net.remote();               // partner state interpolated at now - delay (extrapolates briefly)
+net.remoteInto(out);        // the same, written into `out`: allocation-free, for every frame
+net.syncNow();              // Promise: a quick burst of clock pings (e.g. before a scheduled start)
+net.reset();                // fresh session after the partner re-mounted: new stream, empty buffer
 net.destroy();              // in your destroy()
 ```
+Reliable messages due together travel in one room event and acks are cumulative, so bursts are
+cheap. If the partner re-mounts or reloads mid-match, their new instance picks up your stream
+where it stands, and their old states are dropped from your buffer (published states carry the
+session id `__s`), so nothing stalls or replays stale positions.
 
 Budget: each device gets ~40 room messages/s in total (presence + events), so stream at
 ≤ 20/s and keep reliable events to a few per second. One event ≤ 4 KB — chunk bigger payloads
@@ -235,7 +251,9 @@ across several `net.send` calls (they arrive in order). Patterns that work well:
 - Hit checks: the victim's device decides (it has the true position), or the shooter decides
   using `net.remote(shotTime)` for lag compensation — pick one per game and stick to it.
 See `tools/test/net.test.js` (clock sync, delivery under 30% loss, interpolation).
-`launch({ dropRate: 0.2, latency: 80 })` makes the harness network worse for testing.
+`launch({ dropRate: 0.2, latency: 80 })` makes the harness network worse for testing. The harness
+coalesces presence to 30/s per sender like the platform, and puts a warning in `h.warnings`
+(printed, not an error) when a page sends more than ~40 room messages in a second.
 
 ## Big games: several files
 

@@ -619,6 +619,7 @@ function showRoot(on) {
   r.hidden = !on;
   const b = document.body;
   b.classList.toggle('gm-open', on);
+  if (on) document.querySelectorAll('.toast').forEach((t) => t.remove()); // the hub's news is old now
   if (on && pinnedY === null) {
     pinnedY = window.scrollY || 0;
     b.style.top = `-${pinnedY}px`;
@@ -965,7 +966,7 @@ function doMove(id, mv, actor) {
 async function openLive(gameId, mode) {
   const def = BY_ID[gameId];
   if (!def) return;
-  if (mode === 'live' && !G.room) { toast('Live play needs the Claude version of the app. Try one phone.'); return; }
+  if (mode === 'live' && !G.room) { toast('Live play only works in the Claude app. You can still play on one device.'); return; }
   if (G.screen) closeScreen();
   const root = gameRoot();
   root.innerHTML = chromeHTML(def, { live: true });
@@ -1341,6 +1342,7 @@ export function gamesHubHTML() {
       </div>
       <p class="gh-score-cap">All-time wins${rec.draw ? ` · ${rec.draw} draw${rec.draw > 1 ? 's' : ''}` : ''}</p>
     </header>
+    ${!act.length && !done.length && !rec.plays && !inv ? `<p class="gh-intro">Pick any game below. Turn games wait for <b>${pName}</b>’s move, so you can play across the day. Live ones ask ${pName} to join right now.</p>` : ''}
     ${inv ? `<div class="gh-invite p-${other(me())}"><span class="gh-invite-cover" aria-hidden="true">${inv.cover || ''}</span><span class="gh-invite-txt"><span class="gh-invite-kicker">Live invite</span><span><b>${pName}</b> wants to play <b>${esc(inv.title)}</b></span></span><button class="gm-btn" data-g="invite-yes">Join</button></div>` : ''}
     ${mine.length ? sec('mine', 'Your move', mine) : ''}
     ${done.length ? sec('done', 'Results in', done) : ''}
@@ -1492,6 +1494,9 @@ if (typeof document !== 'undefined') {
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || !G.screen || e.defaultPrevented) return;
     if (document.querySelector('.sheet-wrap')) return;
+    // In a text field (a clue, a guess) Escape just leaves the field.
+    const t = e.target;
+    if (t && t.nodeType === 1 && (t.matches('input, textarea, select') || t.isContentEditable)) { t.blur(); return; }
     const sh = document.querySelector('#game-root .gm-sheet:not([hidden])');
     if (sh) { sh.hidden = true; return; }
     const s = G.screen;

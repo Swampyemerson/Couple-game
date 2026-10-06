@@ -3,7 +3,7 @@ import {
   PACKS, CATEGORIES, SPICY_CATEGORIES, DAILY, TRUTHS, DARES, TOD_LEVELS, DATES, DATE_CATS, LOVE_LANGS,
 } from './content.js';
 import { Store, randomId } from './store.js';
-import { initGames, gamesHubHTML, gamesHomeHTML, gamesWaitingCount, gamesIdentityChanged } from './games/core.js';
+import { initGames, gamesHubHTML, gamesHomeHTML, gamesWaitingCount, gamesIdentityChanged, GAMES } from './games/core.js';
 import './games/index.js';
 
 const store = new Store(CONFIG);
@@ -274,7 +274,7 @@ const takenBy = (w) => ARTIFACT && !!store.uid && store.uidsOf(w).size > 0 && !s
 
 function viewWho() {
   if (ARTIFACT && !session.ready) {
-    return `<div class="screen center onboard">${logoMark('is-loading')}<p class="muted">Loading your stuff…</p></div>`;
+    return `<div class="screen center onboard">${logoMark('is-loading')}<p class="muted">Getting your answers…</p></div>`;
   }
   const btn = (w, cls) => `<button class="btn big-btn ${cls}" data-act="pickMe" data-who="${w}"${takenBy(w) ? ' data-taken="1"' : ''}>I’m ${N(w)}${takenBy(w) ? '<small>set up on another account</small>' : ''}</button>`;
   return `<div class="screen center onboard">
@@ -355,7 +355,7 @@ function dailyCard(key, { compact = false } = {}) {
     inner = bubble(me(), mine) + bubble(them(), theirs);
   }
   return `<div class="card daily ${compact ? 'compact' : ''}">
-    <div class="eyebrow">${key === dkey() ? 'Question of the day' : prettyDate(key)}</div>
+    <div class="eyebrow">${key === dkey() ? (compact ? 'Today' : 'Question of the day') : key === addDays(dkey(), -1) ? 'Yesterday' : prettyDate(key)}</div>
     <h2 class="q">${esc(q)}</h2>
     ${inner}
   </div>`;
@@ -412,6 +412,8 @@ function tabHome() {
 
     ${gamesHomeHTML()}
 
+    ${startHere()}
+
     ${fresh.length ? sec('star', 'New results', fresh.map((p) => packRow(p, '<span class="chip hot">see results</span>')).join('')) : ''}
     ${yourMove.length ? sec('pen', 'Your move', yourMove.map((p) => packRow(p, `<span class="chip">${N(them())} ${doneOf(them(), p) ? 'finished' : 'started'}</span>`)).join('')) : ''}
     ${inProgress.length ? sec('book', 'Keep going', inProgress.map((p) => packRow(p, `${countOf(me(), p)}/${p.items.length}`)).join('')) : ''}
@@ -427,6 +429,21 @@ function tabHome() {
       </div>
     </section>
   </div>`;
+}
+
+// A brand-new couple gets a first stop: three easy packs and the game room.
+function startHere() {
+  if (PACKS.some((p) => countOf('a', p) || countOf('b', p))) return '';
+  const games = GAMES.filter((g) => !g.unlisted).length;
+  const pick = [['quiz-basics', 'Guess each other'], ['tot-everyday', 'Quick picks'], ['lovelang', 'Takes 3 min']].filter(([id]) => PACK[id]);
+  return `<section class="front-sec start-here">
+    <h3 class="section">${icon('target')}<span>Start here</span></h3>
+    <p class="tiny muted">Pick one and answer on your own phone. Results show up once you’ve both finished.</p>
+    <div class="list">
+      ${pick.map(([id, note]) => packRow(PACK[id], note)).join('')}
+      ${games ? `<button class="row c-quiz" data-act="tab" data-tab="games"><span class="row-ico">${icon('die')}</span><span class="row-title">Play a game together</span><span class="row-note">${games} games</span><span class="chev">${icon('chev')}</span></button>` : ''}
+    </div>
+  </section>`;
 }
 
 function packTile(p) {
@@ -587,7 +604,7 @@ function viewPlay(p) {
     session.temp = { idx, pack: p.id, ...(p.type === 'quiz' && existing ? existing : {}) };
   }
   const progress = `<div class="progress"><i style="width:${(idx / total) * 100}%"></i></div>`;
-  const head = `<header class="topbar">
+  const head = `<header class="topbar is-play">
     <button class="icon-btn" data-act="exitPlay" aria-label="Close">${icon('close')}</button>
     <h1>${esc(p.title)}</h1>
     <div class="topbar-right"><span class="count">${idx + 1}/${total}</span></div>
@@ -896,10 +913,13 @@ function viewSync() {
     : `<p class="muted">Everything saves automatically and shows up for both of you right away, on any device where you’re signed in to Claude.</p>`}
         ${store.full ? '<p class="muted">The shared storage is full. Remove some bucket list items to free space.</p>' : ''}
       </div>
-      <div class="card">
-        <h2>Adding ${N('b')}</h2>
-        <p class="muted tiny">In Claude, open this artifact → Share → invite ${N('b')}’s email with <b>Editor</b> access. Don’t turn on a public link, because that blocks guests from saving.</p>
-      </div>
+      ${store.owner === false ? `<div class="card">
+        <h2>Shared with you</h2>
+        <p class="muted tiny">${N(them())} shared Just Us with you. As an <b>Editor</b>, everything you play saves for both of you. If saving ever stops, ask ${N(them())} to check you’re still an Editor.</p>
+      </div>` : `<div class="card">
+        <h2>Adding ${N(them())}</h2>
+        <p class="muted tiny">In Claude, open this artifact, tap Share, and invite ${N(them())}’s email with <b>Editor</b> access. Leave the public link off: with it on, guests can’t save.</p>
+      </div>`}
     </div>`;
   }
   if (store.cloudAvailable) {

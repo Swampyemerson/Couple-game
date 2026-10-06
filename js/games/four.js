@@ -160,11 +160,11 @@ registerGame({
 .g-four .g4-colhl.g4-b { fill: color-mix(in srgb, var(--p-b) 30%, var(--g-bg)); }
 .g-four .g4-colhl.on { opacity: 1; }
 .g-four .g4-nums { display: none; width: 100%; padding: 0 ${pct(VW - BW + P, VW)} 0 ${pct(P, VW)}; margin-top: -2px; }
-.g-four .g4-nums span { flex: 1; text-align: center; font: 800 0.78rem/1 var(--g-font-display); color: var(--g-muted); }
+.g-four .g4-nums span { flex: 1; text-align: center; font: 900 0.78rem/1 var(--g-font-display); color: var(--g-muted); }
 .g-four .g4-nums span.on { color: var(--g-ink); }
 @media (hover: hover) and (pointer: fine) { .g-four .g4-nums { display: flex; } }
 
-.g-four .g4-plate { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 16px 8px 10px; border-radius: 999px; background: var(--g-card); border: 2px solid var(--g-ink); box-shadow: var(--g-shadow); font: 800 0.98rem/1.2 var(--g-font-display); color: var(--g-ink); max-width: 100%; text-wrap: balance; }
+.g-four .g4-plate { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 16px 8px 10px; border-radius: 999px; background: var(--g-card); border: 2px solid var(--g-ink); box-shadow: var(--g-shadow); font: 900 0.98rem/1.2 var(--g-font-display); color: var(--g-ink); max-width: 100%; text-wrap: balance; }
 .g-four .g4-plate.wait { color: var(--g-muted); border-color: var(--g-line); }
 .g-four .g4-plate.pop { animation: g4-plate 260ms cubic-bezier(0.3, 1.5, 0.5, 1); }
 @keyframes g4-plate { from { transform: scale(0.92); } to { transform: none; } }

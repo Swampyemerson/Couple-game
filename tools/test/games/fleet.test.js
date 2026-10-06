@@ -430,6 +430,30 @@ async function localGame(h) {
   await h.settle();
 }
 
+// After a reconnect a pile of moves can land at once: only the latest volley replays.
+async function pileOfShots(h) {
+  const { a, b } = h;
+  const id = await h.newOnlineGame(a, 'fleet');
+  await h.openMatch(b, id);
+  await h.settle();
+  const fleets = {
+    a: [{ r: 0, c: 0, len: 4, dir: 'h' }, { r: 2, c: 0, len: 3, dir: 'h' }, { r: 4, c: 0, len: 3, dir: 'v' }, { r: 7, c: 6, len: 2, dir: 'h' }, { r: 5, c: 7, len: 2, dir: 'v' }],
+    b: [{ r: 0, c: 7, len: 4, dir: 'v' }, { r: 7, c: 0, len: 3, dir: 'h' }, { r: 3, c: 3, len: 3, dir: 'h' }, { r: 0, c: 0, len: 2, dir: 'v' }, { r: 5, c: 5, len: 2, dir: 'h' }],
+  };
+  const water = (w) => { const occ = new Set(fleets[other(w)].flatMap(cellsOf).map(([r, c]) => r * N + c)); const out = []; for (let i = 0; i < N * N; i++) if (!occ.has(i)) out.push({ r: Math.floor(i / N), c: i % N }); return out; };
+  const first = h.matches().find((m) => m.id === id).first;
+  const lists = { a: [{ fleet: fleets.a }], b: [{ fleet: fleets.b }] };
+  for (let k = 0; k < 10; k++) { const w = k % 2 ? other(first) : first; lists[w].push(water(w)[k]); } // ten misses, alternating
+  await a.evaluate(([mid, L]) => globalThis.claude.use('db').then((db) => db.doc('matches/' + mid).update({ a: JSON.stringify(L.a), b: JSON.stringify(L.b) })), [id, lists]);
+  await waitSynced(h, id, 12);
+  await h.wait(100);
+  for (const pg of [a, b]) {
+    const fresh = await pg.$$eval('.g-fleet .fl-mark.is-new', (xs) => xs.length);
+    assert(fresh === 1, `ten shots landing at once replay only the latest one (${fresh} new on ${pg === a ? 'Emerson' : 'Sydney'}’s phone)`);
+  }
+  await h.closeGame(a); await h.closeGame(b);
+}
+
 // Same phone: closing the game during a miss's splash still plays that shot.
 async function missThenClose(h) {
   const pg = h.a;
@@ -546,6 +570,7 @@ async function laptop() {
     await localGame(h);
     assert(h.results().length === 2, 'the same-phone result is recorded');
     await missThenClose(h);
+    await pileOfShots(h);
     h.assertNoErrors();
     await h.close();
     h = null;

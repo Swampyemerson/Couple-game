@@ -597,8 +597,8 @@ async function uiTests(scheme, port) {
 
 (async () => {
   await rulesTests();
-  await uiTests('light', 8920);
-  await uiTests('dark', 8921);
+  await uiTests('light', 8946);
+  await uiTests('dark', 8947);
   console.log(`\n${passed} passed, ${failures.length} failed${failures.length ? '\n' + failures.join('\n') : ''}`);
   console.log(`screenshots: ${SHOTS}`);
   if (failures.length) process.exitCode = 1;

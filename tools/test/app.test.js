@@ -2,7 +2,7 @@
 // identity picker, and the game room's shell (rematch, results, end card, Escape, toast,
 // overlay, live presence). Every section is a bug that once shipped.
 //   node tools/test/app.test.js            (ports 8940-8947; PORT=… moves the block)
-//   node tools/test/app.test.js packs      (one section: packs, devices, cold, identity, room, live, cleanup, lossy)
+//   node tools/test/app.test.js packs      (one section: layout, packs, devices, cold, identity, room, live, cleanup, lossy)
 const fs = require('fs');
 const path = require('path');
 const { launch } = require('./harness');
@@ -43,7 +43,7 @@ registerGame({
   apply(s, w) { s.n++; s.t = w === 'a' ? 'b' : 'a'; return s; },
   result: () => ({ winner: 'a', text: 'Manual finale' }),
   mount(el, api) {
-    el.innerHTML = '<button class="zz-go" style="min-height:60px">go</button>';
+    el.innerHTML = '<button class="zz-go" style="min-height:60px">go</button><input class="zz-text" aria-label="clue">';
     let ctx = null;
     el.querySelector('.zz-go').addEventListener('click', () => { if (ctx && ctx.canMove) api.move({}); });
     // no finale: ask for the end card straight from update()
@@ -85,7 +85,55 @@ async function playPack(pg, id, pick = 0) {
   }
 }
 
+// Every visible control in the page: its tap size, counting a ::after hit area (negative inset).
+const TARGETS = () => [...document.querySelectorAll('#app button, #app [role="button"], #app input, #app textarea, #game-root button, .sheet button')]
+  .filter((el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden' && !el.closest('[hidden]'); })
+  .map((el) => {
+    const r = el.getBoundingClientRect(); const a = getComputedStyle(el, '::after');
+    const slop = (k) => (a.content !== 'none' && a.position === 'absolute' ? Math.max(0, -parseFloat(a[k]) || 0) : 0);
+    return { w: r.width + slop('left') + slop('right'), h: r.height + slop('top') + slop('bottom'), what: (el.className || el.tagName) + ' ' + (el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 24) };
+  })
+  .filter((t) => t.w < 43.5 || t.h < 43.5);
+
 const SECTIONS = {
+  // ── every main screen at 360 px: no sideways scroll, every tap target ≥ 44 px ──
+  async layout() {
+    const h = await launch({ port: BASE, only: ['example-ttt'], who: ['a'] });
+    const a = h.a;
+    try {
+      await a.setViewportSize({ width: 360, height: 760 });
+      const check = async (name) => {
+        await a.waitForTimeout(250);
+        const r = await a.evaluate(() => ({ sw: document.documentElement.scrollWidth, w: window.innerWidth }));
+        assert(r.sw <= r.w + 1, `${name}: no sideways scroll at 360 (${r.sw}px)`);
+        const small = await a.evaluate(TARGETS);
+        assert(!small.length, `${name}: every tap target is at least 44 px` + (small.length ? ' ' + JSON.stringify(small.slice(0, 4)) : ''));
+      };
+      await check('home');
+      await tab(a, 'play'); await check('questions');
+      await tab(a, 'us'); await check('us');
+      await a.fill('[data-draft="bucket"]', 'Something long enough to wrap onto a second line in the list'); await a.click('[data-act="addBucket"]'); await h.settle(); await check('us with a bucket item');
+      await tab(a, 'spicy'); await check('spicy gate');
+      await a.click('[data-act="openSpicy"]'); await check('spicy');
+      await tab(a, 'games'); await check('games');
+      await a.evaluate(() => window.__gamesOpenSheet('example-ttt')); await check('game sheet');
+      await a.click('[data-g="new"][data-mode="local"]'); await a.waitForSelector('#game-root .gm'); await check('game');
+      await a.click('#game-root [data-g="menu"]'); await check('game menu');
+      await a.click('#game-root .gm-sheet [data-g="menu"]');
+      await h.closeGame(a);
+      for (const id of ['quiz-basics', 'tot-everyday', 'who-fun', 'nhie-classic', 'talk-closer', 'lovelang', 'desire-1']) {
+        await press(a, 'openPack', { id }); await check(`${id} intro`);
+        await a.click('[data-act="startPack"]'); await check(`${id} play`);
+      }
+      await press(a, 'go', { view: 'tod' }); await check('truth or dare');
+      await a.click('[data-act="todDraw"][data-kind="dare"]'); await check('a dare');
+      await press(a, 'go', { view: 'dates' }); await check('date spinner');
+      await press(a, 'go', { view: 'history' }); await check('past questions');
+      await press(a, 'go', { view: 'sync' }); await check('sync');
+      h.assertNoErrors();
+    } finally { await h.close(); }
+  },
+
   // ── question packs, the daily question, the bucket list, the date ──
   async packs() {
     const h = await launch({ port: BASE, only: [] });
@@ -326,6 +374,9 @@ const SECTIONS = {
       // endDelay 'manual' + api.showEnd() from update(): the card shows right away, not after 8 s
       const mid = await h.newOnlineGame(a, 'zz-manual');
       await h.openMatch(b, mid);
+      // Escape while typing in a game's text box leaves the box, not the game
+      await a.click('.zz-text'); await a.keyboard.type('hint'); await a.keyboard.press('Escape');
+      assert(await a.isVisible('#game-root .gm') && !(await a.evaluate(() => document.activeElement.matches('.zz-text'))), 'Escape in a game’s text box blurs it and keeps the game open');
       for (let i = 0; i < 2; i++) { const e = await h.engine(a, mid); await pageOf[e.acts[0]].click('.zz-go'); await h.settle(); }
       await a.waitForSelector('#game-root .gm-end:not([hidden])', { timeout: 2500 });
       await b.waitForSelector('#game-root .gm-end:not([hidden])', { timeout: 2500 });

@@ -301,11 +301,10 @@ export function createOverlay(THREE, P) {
   return {
     scene, cam,
     resize(w, h) { aspect = w / Math.max(1, h); },
-    /** Draw the overlay for one view (call right after rendering the scene into it). k: 0..1 speed. */
-    draw(renderer, k) {
-      writeLines(k > 0.02 ? k : 0);
-      renderer.render(scene, cam);
-    },
+    /** Lay out the speed lines for one view. k: 0..1 speed (0 = none). */
+    update(k) { writeLines(k > 0.02 ? k : 0); },
+    /** Draw the overlay into the current viewport (right after the scene). */
+    render(renderer) { renderer.render(scene, cam); },
     /** Make every overlay program compile (shader warm-up). */
     warm(renderer) { writeLines(1); renderer.render(scene, cam); writeLines(0); },
     dispose() { lg.dispose(); vg.dispose(); lineMat.dispose(); vigMat.dispose(); },

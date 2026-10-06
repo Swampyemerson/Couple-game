@@ -1,11 +1,14 @@
-// Rail Rush: generator determinism + passability, synchronized live start, a full live Race with
-// UI inputs and weapons, Brawl shove, Tandem revive, disconnect / visibility / GL-context pauses,
-// one-computer split screen, leaks, packet loss, and screenshots in light and dark.
+// Rail Rush: generator determinism + passability, feel numbers, synchronized live start, a full
+// live Race with UI inputs and weapons, Brawl shove, Tandem revive, disconnect / visibility /
+// GL-context pauses, one-computer split screen, leaks, packet loss, steady-state allocations and
+// heap growth, seamlessness (late lobby, partner / host re-mounts mid-race, 30 s in the
+// background, a much slower partner), and screenshots in light and dark.
 //   node tools/test/games/rush.test.js            (ONLY=gen,race,... to run some sections)
+// Sections: gen race brawl tandem pause | split leak | drop | dark | heap | seam. Ports 8960-8969.
 const fs = require('fs');
 const { launch } = require('../harness');
 
-const SHOTS = process.env.SHOTS || '/tmp/claude-0/-home-user-Couple-game/0bac2931-fb3f-54c3-8279-c15850ed70e8/scratchpad/rush';
+const SHOTS = process.env.SHOTS || '/tmp/claude-0/-home-user-Couple-game/0bac2931-fb3f-54c3-8279-c15850ed70e8/scratchpad/rush-polish/test';
 fs.mkdirSync(SHOTS, { recursive: true });
 const ONLY = (process.env.ONLY || '').split(',').filter(Boolean);
 const want = (k) => !ONLY.length || ONLY.includes(k);
@@ -67,11 +70,17 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
 (async () => {
   // ═══ two phones, live ═══
   if (['gen', 'race', 'brawl', 'tandem', 'pause'].some(want)) {
-    const h = await launch({ port: 8900, only: ['rush'], latency: 80 });
+    const h = await launch({ port: 8960, only: ['rush'], latency: 80, coarse: true });
     const { a, b } = h;
     try {
       await openLivePair(h);
       if (want('gen')) {
+        // feel numbers, measured on the real sim
+        const pr = await a.evaluate(() => window.__rush.probe());
+        assert(pr.laneMs >= 100 && pr.laneMs <= 150, `lane change completes in ${pr.laneMs.toFixed(0)} ms (snappy: 100–150 ms)`);
+        assert(pr.jumpApex > 1.5 && pr.jumpApex < 1.9 && pr.airMs > 550 && pr.airMs < 900, `jump: apex ${pr.jumpApex.toFixed(2)} m, ${pr.airMs.toFixed(0)} ms in the air`);
+        assert(pr.softCrashes === 0 && pr.softStumbles === 1, 'a missed warm-up row trips you up instead of knocking you down');
+        assert(pr.diff200 <= 0.15 && pr.diff30s <= 0.32 && pr.diff2k >= 0.8, `difficulty is gentle for the first 30 s (${pr.diff200} at 200 m, ${pr.diff30s} at 430 m) and ramps to ${pr.diff2k} at 2 km`);
         const seeds = [1, 42, 1337, 98765, 2024];
         const ha = await a.evaluate((ss) => ss.map((s) => window.__rush.trackHash(s, 40)), seeds);
         const hb = await b.evaluate((ss) => ss.map((s) => window.__rush.trackHash(s, 40)), seeds);
@@ -163,9 +172,18 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         await until(a, (n) => window.__rush.state().b.hearts === n, hb0 - 1, 3000, 'host sees the guest hearts');
         await b.evaluate(() => window.__rush.auto('b', true));
         await h.wait(600);
+        // a rocket (speed lines + FOV kick), and the shield bubble on screen, before the shader check
+        await a.evaluate(() => { window.__rush.give('a', 'rocket'); window.__rush.input('a', 'use'); window.__rush.give('a', 'shield'); });
+        await h.wait(900);
         const pa = await a.evaluate(() => window.__rush.perf());
-        console.log(`   perf (iPhone 13 profile, SwiftShader, two pages): frame p50 ${pa.p50.toFixed(1)} ms, p95 ${pa.p95.toFixed(1)} ms, js p50 ${pa.work50.toFixed(2)} ms, p95 ${pa.work95.toFixed(2)} ms, draw calls ${pa.calls} (max ${pa.maxCalls}), triangles ${pa.tris}, render scale ${pa.scale}, dpr ${pa.dpr}`);
-        assert(pa.maxCalls < 80, `draw calls under 80 in a busy scene (max ${pa.maxCalls})`);
+        console.log(`   perf (iPhone 13 profile, SwiftShader, two pages): frame p50 ${pa.p50.toFixed(1)} ms, p95 ${pa.p95.toFixed(1)} ms, js p50 ${pa.work50.toFixed(2)} ms, p95 ${pa.work95.toFixed(2)} ms, draw calls ${pa.calls} (max ${pa.maxCalls}), triangles ${pa.tris} (max ${pa.maxTris}), render scale ${pa.scale}, dpr ${pa.dpr}`);
+        assert(pa.maxCalls <= 30, `draw calls within the phone budget of 30 in a busy race (max ${pa.maxCalls})`);
+        assert(pa.maxTris <= 60000, `triangles within the phone budget of 60k (max ${pa.maxTris})`);
+        assert(pa.scale >= 0.55 && pa.scale <= 1, `dynamic resolution stays in range (scale ${pa.scale} after ${pa.scaleDowns} step${pa.scaleDowns === 1 ? '' : 's'} down, ${pa.scaleUps} up)`);
+        for (const [pg, w] of [[a, 'host'], [b, 'guest']]) {
+          const pgm = await pg.evaluate(() => ({ now: window.__rush.internals.renderer.info.programs.length, warm: window.__rush.perf().programs0 }));
+          assert(pgm.warm >= 8 && pgm.now === pgm.warm, `${w}: every shader compiled behind the loading screen (${pgm.warm} programs; still ${pgm.now} after ink, zap, roadblock, rocket, shield, crash)`);
+        }
 
         // finish
         await until(a, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 90000, 'end card on the host');
@@ -276,6 +294,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
       }
       h.assertNoErrors();
       console.log('ok - no page errors (phones)');
+      assert(!h.warnings.length, `stays inside the ~40 msg/s room budget (${h.warnings.length} warnings)`);
     } catch (e) {
       console.error(e.message); fails++;
       await shot(h.a, 'fail-a').catch(() => {}); await shot(h.b, 'fail-b').catch(() => {});
@@ -285,7 +304,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
 
   // ═══ one computer: split screen, keys, leaks ═══
   if (want('split') || want('leak')) {
-    const h = await launch({ port: 8901, only: ['rush'], device: 'Desktop Chrome', who: ['a'] });
+    const h = await launch({ port: 8961, only: ['rush'], device: 'Desktop Chrome', who: ['a'] });
     const { a } = h;
     try {
       await a.setViewportSize({ width: 1280, height: 800 });
@@ -366,7 +385,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
 
   // ═══ packet loss ═══
   if (want('drop')) {
-    const h = await launch({ port: 8902, only: ['rush'], latency: 80, dropRate: 0.2 });
+    const h = await launch({ port: 8962, only: ['rush'], latency: 80, dropRate: 0.2, coarse: true });
     const { a, b } = h;
     try {
       await openLivePair(h, { raceLen: 500 });
@@ -397,7 +416,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
 
   // ═══ screenshots: dark, phone one-device card ═══
   if (want('dark')) {
-    const h = await launch({ port: 8903, only: ['rush'], latency: 60, colorScheme: 'dark' });
+    const h = await launch({ port: 8963, only: ['rush'], latency: 60, colorScheme: 'dark', coarse: true });
     const { a, b } = h;
     try {
       await openLivePair(h);
@@ -427,7 +446,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
       assert(await a.isVisible('.g-rush [data-g="live"][data-mode="live"]'), 'phone in one-device mode suggests live play');
       h.assertNoErrors();
     } catch (e) { console.error(e.message); fails++; console.error('errors:', h.errors.slice(0, 8)); } finally { await h.close(); }
-    const d = await launch({ port: 8904, only: ['rush'], device: 'Desktop Chrome', who: ['a'], colorScheme: 'dark' });
+    const d = await launch({ port: 8964, only: ['rush'], device: 'Desktop Chrome', who: ['a'], colorScheme: 'dark' });
     try {
       await d.a.setViewportSize({ width: 1280, height: 800 });
       await d.a.evaluate((x) => { window.__RUSH_DEBUG = x; }, { ...DEBUG, raceLen: 400 });
@@ -448,6 +467,143 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
       await shot(d.a, 'desk-dark-end');
       d.assertNoErrors();
     } catch (e) { console.error(e.message); fails++; console.error('errors:', d.errors.slice(0, 8)); } finally { await d.close(); }
+  }
+
+  // ═══ steady-state allocations + heap growth (one computer, so the numbers are this page's own) ═══
+  if (want('heap')) {
+    const h = await launch({ port: 8965, only: ['rush'], device: 'Desktop Chrome', who: ['a'] });
+    const { a } = h;
+    try {
+      await a.setViewportSize({ width: 1280, height: 800 });
+      await a.evaluate((d) => { window.__RUSH_DEBUG = d; }, { ...DEBUG, raceLen: 60000 });
+      await h.startLive(a, 'rush', 'local');
+      await until(a, () => window.__rush && window.__rush.state().ready3D && window.__rush.state().phase === 'lobby', null, 30000, 'heap lobby');
+      await a.click('.g-rush .rr-ov-lobby [data-r="go"]');
+      await waitRun(a);
+      await a.evaluate(() => { window.__rush.ghost('a', 1e6); window.__rush.ghost('b', 1e6); });
+      const cdp = await a.context().newCDPSession(a);
+      // let the per-frame path reach the optimizing tier first (SwiftShader frames are slow, so
+      // this drives the JS side directly: sim, logic, avatars, particles, world sync, rig, HUD, overlay)
+      await a.evaluate(() => window.__rush.bench(2000));
+      await cdp.send('HeapProfiler.enable');
+      await cdp.send('HeapProfiler.collectGarbage');
+      await cdp.send('HeapProfiler.startSampling', { samplingInterval: 64, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true });
+      const bm = await a.evaluate(() => window.__rush.bench(1500));
+      const prof = (await cdp.send('HeapProfiler.stopSampling')).profile;
+      let hot = 0; let build = 0; const sites = new Map();
+      const walk = (n, stack) => {
+        const cf = n.callFrame; const name = cf.functionName || '(anon)';
+        const st = stack.concat(name);
+        if (n.selfSize && st.includes('bench')) {
+          // chunk building / generation happens once per 100 m, not per frame; setScore is the engine's
+          if (st.some((f) => /^(buildChunk|chunkMesh|genChunk|keepFrom|setScore)$/.test(f))) build += n.selfSize;
+          else { hot += n.selfSize; const k = st.slice(-3).join(' < '); sites.set(k, (sites.get(k) || 0) + n.selfSize); }
+        }
+        for (const c of n.children) walk(c, st);
+      };
+      walk(prof.head, []);
+      const perFrame = hot / bm.frames;
+      console.log(`   JS per frame (both runners, no GL draw): ${bm.msPerFrame.toFixed(2)} ms; hot-path allocations ${perFrame.toFixed(1)} B/frame; chunk building ${(build / 1024).toFixed(0)} KB over ${bm.frames} frames`);
+      for (const [k, v] of [...sites.entries()].sort((x, y) => y[1] - x[1]).slice(0, 5)) console.log(`     ${(v / bm.frames).toFixed(1)} B/frame  ${k}`);
+      assert(perFrame < 96, `per-frame hot path is (nearly) allocation-free: ${perFrame.toFixed(1)} B/frame`);
+      // retained heap over 30 s of real running
+      await cdp.send('HeapProfiler.collectGarbage');
+      const h0 = (await cdp.send('Runtime.getHeapUsage')).usedSize;
+      const f0 = (await a.evaluate(() => window.__rush.perf())).frames;
+      await h.wait(30000);
+      await cdp.send('HeapProfiler.collectGarbage');
+      const h1 = (await cdp.send('Runtime.getHeapUsage')).usedSize;
+      const f1 = (await a.evaluate(() => window.__rush.perf())).frames;
+      assert(h1 - h0 < 1.5e6, `heap after 30 s of running (${f1 - f0} frames, after GC): ${(h0 / 1e6).toFixed(2)} → ${(h1 / 1e6).toFixed(2)} MB (${((h1 - h0) / 1024).toFixed(0)} KB growth)`);
+      const au = await a.evaluate(() => window.__rush.internals.audio.stats);
+      console.log(`   music scheduler: ${au.steps} steps, ${au.resets} resyncs, never more than ${(au.maxAhead * 1000).toFixed(0)} ms ahead`);
+      h.assertNoErrors();
+    } catch (e) { console.error(e.message); fails++; console.error('errors:', h.errors.slice(0, 8)); } finally { await h.close(); }
+  }
+
+  // ═══ seamlessness: late lobby, partner + host re-mounts mid-race, 30 s in the background, a slow partner ═══
+  if (want('seam')) {
+    const h = await launch({ port: 8966, only: ['rush'], latency: 80, coarse: true });
+    const { a, b } = h;
+    const running = async (pg, w, what) => {
+      await until(pg, () => { const s = window.__rush && window.__rush.state(); return s && s.phase === 'run' && !s.paused && s.now > s.resumeAt + 200; }, null, 20000, what);
+      const z0 = (await S(pg))[w].z; await h.wait(700);
+      assert((await S(pg))[w].z > z0 + 2, `${what}: running again`);
+    };
+    try {
+      for (const pg of [a, b]) await pg.evaluate((d) => { window.__RUSH_DEBUG = d; }, { ...DEBUG, raceLen: 20000 });
+      // the host opens it and waits alone a while before the partner shows up
+      await h.startLive(a, 'rush', 'live');
+      await h.wait(4000);
+      const invited = await b.isVisible('#gm-invite').catch(() => false);
+      if (invited) await b.click('#gm-invite [data-g="invite-yes"]'); else await h.startLive(b, 'rush', 'live');
+      await until(a, () => window.__rush && window.__rush.state().ready3D, null, 30000, 'host 3D ready');
+      await until(b, () => window.__rush && window.__rush.state().ready3D && window.__rush.state().synced, null, 30000, 'late guest ready');
+      await pickAndStart(h, 'race');
+      console.log('ok - lobby works when the partner arrives late');
+      await waitRun(a); await waitRun(b);
+      await a.evaluate(() => window.__rush.auto('a', true)); await b.evaluate(() => window.__rush.auto('b', true));
+      await h.wait(3000);
+
+      // the guest leaves mid-race and comes back
+      const zb0 = (await S(b)).b.z;
+      await b.click('#game-root [data-g="close"]');
+      await until(a, () => window.__rush.state().paused && window.__rush.state().reasons.includes('gone'), null, 8000, 'host pauses when the guest leaves');
+      assert(await a.isVisible('.g-rush .rr-ov-pause [data-g="invite-again"]'), 'the pause card offers to invite them back');
+      await shot(a, 'seam-guest-left');
+      await h.wait(1500);
+      await h.startLive(b, 'rush', 'live');
+      await until(b, () => window.__rush && window.__rush.state().phase === 'run', null, 30000, 'guest is put back into the run');
+      const zb1 = (await S(b)).b.z;
+      assert(Math.abs(zb1 - zb0) < 40, `guest picks up where it left off (${zb0.toFixed(0)} m → ${zb1.toFixed(0)} m)`);
+      await b.evaluate(() => window.__rush.auto('b', true));
+      await running(a, 'a', 'host after the guest came back'); await running(b, 'b', 'guest after coming back');
+
+      // the host leaves mid-race (a reload or app restart looks the same) and comes back
+      const za0 = (await S(a)).a.z;
+      await a.click('#game-root [data-g="close"]');
+      await until(b, () => window.__rush.state().paused, null, 8000, 'guest pauses when the host leaves');
+      await shot(b, 'seam-host-left');
+      await h.wait(1500);
+      await h.startLive(a, 'rush', 'live');
+      await until(a, () => window.__rush && window.__rush.state().phase === 'run', null, 30000, 'host gets its run back from the guest');
+      const za1 = (await S(a)).a.z;
+      assert(Math.abs(za1 - za0) < 40, `host picks up where it left off (${za0.toFixed(0)} m → ${za1.toFixed(0)} m)`);
+      await a.evaluate(() => window.__rush.auto('a', true));
+      await running(a, 'a', 'host after its re-mount'); await running(b, 'b', 'guest after the host re-mount');
+      const ra = (await S(a)).resumeAt; const rb = (await S(b)).resumeAt;
+      assert(Math.abs(ra - rb) < 60, `both counted down to the same moment after the re-mount (Δ ${Math.abs(ra - rb).toFixed(0)} ms)`);
+
+      // 30 s in the background (app switcher), then back with a 3-2-1
+      await b.evaluate(() => { Object.defineProperty(document, 'hidden', { value: true, configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
+      await until(a, () => window.__rush.state().paused, null, 5000, 'host pauses while the guest is in the background');
+      const zh = (await S(a)).a.z;
+      await h.wait(30000);
+      assert(Math.abs((await S(a)).a.z - zh) < 0.01, 'nothing moves while the partner is away');
+      await b.evaluate(() => { Object.defineProperty(document, 'hidden', { value: false, configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
+      await running(a, 'a', 'host after 30 s in the background'); await running(b, 'b', 'guest after 30 s in the background');
+
+      // a much slower partner phone (4x CPU throttle): no pause flapping, the race still resolves
+      const cdpB = await b.context().newCDPSession(b);
+      await cdpB.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+      let pausedSamples = 0;
+      for (let i = 0; i < 16; i++) { await h.wait(500); if ((await S(a)).paused) pausedSamples++; }
+      const sa = await S(a); const sb = await S(b);
+      console.log(`   slow partner: host ran to ${sa.a.z.toFixed(0)} m, slow guest to ${sb.b.z.toFixed(0)} m (${sb.b.t.toFixed(1)} s vs ${sa.a.t.toFixed(1)} s of run time); host paused in ${pausedSamples}/16 samples`);
+      assert(pausedSamples <= 2, 'a slow partner doesn’t make the fast phone stutter between pauses');
+      await b.evaluate(() => { window.__rush.auto('b', false); window.__rush.setHearts('b', 1); window.__rush.crash('b'); });
+      await until(a, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 30000, 'race resolves with a slow partner');
+      await until(b, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 30000, 'slow guest sees the end card');
+      await cdpB.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+      const ea = await S(a); const eb = await S(b);
+      assert(ea.result && eb.result && ea.result.winner === 'a' && eb.result.winner === 'a', 'both agree on the result');
+      h.assertNoErrors();
+      assert(!h.warnings.length, `stays inside the room message budget (${h.warnings.length} warnings)`);
+    } catch (e) {
+      console.error(e.message); fails++;
+      await shot(h.a, 'fail-seam-a').catch(() => {}); await shot(h.b, 'fail-seam-b').catch(() => {});
+      console.error('errors:', h.errors.slice(0, 8));
+    } finally { await h.close(); }
   }
 
   if (fails) { console.log(`\n${fails} FAILED`); process.exitCode = 1; } else console.log('\nALL GOOD');

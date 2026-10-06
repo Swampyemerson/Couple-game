@@ -249,7 +249,7 @@ function parallelogram(THREE, mirror = false) {
 
 /** Build every template once. */
 export function makeTemplates(THREE) {
-  const capsule = (r, len, seg = 10, rings = 5) => {
+  const capsule = (r, len, seg = 8, rings = 3) => {
     const pts = [];
     for (let i = 0; i <= rings; i++) { const a = -Math.PI / 2 + (i / rings) * (Math.PI / 2); pts.push(new THREE.Vector2(Math.cos(a) * r, -len / 2 + Math.sin(a) * r)); }
     for (let i = 0; i <= rings; i++) { const a = (i / rings) * (Math.PI / 2); pts.push(new THREE.Vector2(Math.cos(a) * r, len / 2 + Math.sin(a) * r)); }
@@ -274,12 +274,14 @@ export function makeTemplates(THREE) {
     cyl6: tpl(new THREE.CylinderGeometry(0.5, 0.5, 1, 6, 1), 'smooth'),
     cone: tpl(new THREE.CylinderGeometry(0.02, 0.5, 1, 6, 1), 'smooth'),
     disc: tpl(new THREE.CylinderGeometry(0.5, 0.5, 1, 18, 1), 'smooth'),
+    disc12: tpl(new THREE.CylinderGeometry(0.5, 0.5, 1, 12, 1), 'smooth'),
     quad: tpl(new THREE.PlaneGeometry(1, 1), 'box'),
     quadUp: tpl(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), 'box'),
     stripe: tpl(parallelogram(THREE), 'box'),
     stripeL: tpl(parallelogram(THREE, true), 'box'),
     discZ: tpl(new THREE.CylinderGeometry(0.5, 0.5, 1, 28, 1).rotateX(Math.PI / 2), 'smooth'),
     sphere: tpl(new THREE.SphereGeometry(0.5, 14, 10), 'smooth'),
+    sphere12: tpl(new THREE.SphereGeometry(0.5, 12, 8), 'smooth'),
     lowSphere: tpl(new THREE.SphereGeometry(0.5, 8, 6), 'smooth'),
     ico: tpl(new THREE.IcosahedronGeometry(0.5, 0), 'smooth'),
     octa: tpl(new THREE.OctahedronGeometry(0.5, 0), 'smooth'),

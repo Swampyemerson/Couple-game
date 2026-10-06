@@ -185,7 +185,8 @@ function solveBomb(b) {
 }
 
 // remembered between rematches on this device
-const memo = { role: null, diff: 'normal', page: 'basics' };
+// saved: a bomb round in progress when this device closed the game, so reopening it resumes
+const memo = { role: null, diff: 'normal', page: 'basics', saved: null };
 const ENDED = new Set();
 
 const ICON_BOMB = '<svg viewBox="0 0 64 64" aria-hidden="true"><rect x="8" y="18" width="48" height="36" rx="8" class="f-card"/><rect x="15" y="25" width="22" height="11" rx="2" class="f-lcd"/><path d="M19 30.5h3M25 30.5h3M31 30.5h2" class="s-hl"/><circle cx="46" cy="30.5" r="5" class="f-bad"/><path d="M15 43c6 5 12-5 18 0s12-5 16 0" class="s-wire"/><path d="M32 18c0-6 4-9 9-9s7 3 8 0" class="s-ink"/><path d="M50 4l1.5 4M54 6l-3 3M55 11l-4-1" class="s-ink"/></svg>';
@@ -459,7 +460,7 @@ registerGame({
     const $$ = (s) => [...root.querySelectorAll(s)];
 
     function pub() {
-      const o = { v: 1, role: L.role, diff: L.diff, dv: L.dv, dw: L.dw, go: L.go, sw: L.sw, ph: phase === 'bomb' ? (B.over ? 'over' : 'play') : phase === 'manual' ? 'reading' : 'lobby' };
+      const o = { v: 1, role: L.role, diff: L.diff, dv: L.dv, dw: L.dw, go: L.go, sw: L.sw, ph: phase === 'bomb' ? (B.over ? 'over' : 'play') : phase === 'manual' ? 'reading' : 'lobby', hid: document.hidden ? 1 : 0 };
       if (phase === 'bomb') Object.assign(o, { n: B.n, rd: B.diff, left: Math.round(B.left), rate: rate(), st: B.strikes, sv: B.solved.join(''), pz: B.pz ? 1 : 0, res: B.res, win: B.win ? 1 : 0 });
       if (phase === 'manual') o.n = M.n;
       api.setPresence(o);
@@ -556,8 +557,9 @@ registerGame({
       B = {
         n: token(), seed, diff: L.diff, gen, left: DIFFS[L.diff].secs * 1000, strikes: 0, solved: [0, 0, 0, 0],
         cut: gen.wires.map(() => false), keyAt: 0, seqStage: 0, seqIn: 0, seqLast: 0, flashT0: 0, lit: null,
-        btn: null, pz: !api.partnerHere, over: false, win: false, res: null, shownSecs: -1,
+        btn: null, pz: wantPause(), over: false, win: false, res: null, shownSecs: -1, lastBad: null,
       };
+      memo.saved = null;
       phase = 'bomb';
       renderBomb();
       api.sfx('place');
@@ -661,6 +663,8 @@ registerGame({
       const want = B.gen.answers.keypad[B.keyAt];
       const b = $(`.dx-gkey[data-glyph="${gl}"]`);
       if (B.gen.answers.keypad.indexOf(gl) < B.keyAt) return; // already lit
+      const now = performance.now();
+      if (gl !== want && B.lastBad && B.lastBad.k === 'k:' + gl && now - B.lastBad.at < 400) return; // one tap, not a double tap
       if (gl === want) {
         B.keyAt++;
         api.sfx('place');
@@ -668,6 +672,7 @@ registerGame({
         if (B.keyAt >= 4) solve('keypad');
       } else {
         if (b) { b.classList.add('is-no'); later(() => b.classList.remove('is-no'), 600); }
+        B.lastBad = { k: 'k:' + gl, at: now };
         strike('keypad');
       }
     }
@@ -679,7 +684,10 @@ registerGame({
       lightPad(c, 260);
       const K = ctxOf(B.gen);
       const want = SEQ_MAP[K.vowel ? 'v' : 'n'][Math.min(2, B.strikes)][B.gen.seq[B.seqIn]];
-      if (c !== want) { B.seqIn = 0; strike('sequence'); return; }
+      if (c !== want) {
+        if (B.lastBad && B.lastBad.k === 'p:' + c && now - B.lastBad.at < 400) return; // a double tap on the same wrong pad is one mistake
+        B.seqIn = 0; B.lastBad = { k: 'p:' + c, at: now }; strike('sequence'); return;
+      }
       api.sfx('tap');
       B.seqIn++;
       if (B.seqIn > B.seqStage) {
@@ -726,6 +734,7 @@ registerGame({
       }
     }
     function endRound(win, res) {
+      memo.saved = null;
       B.over = true; B.win = win; B.res = res; B.btn = null;
       ENDED.add(B.n);
       api.sfx(win ? 'win' : 'hit'); api.haptic(win ? 30 : 220);
@@ -932,7 +941,13 @@ registerGame({
         if (s.sw) takeSwap(s.sw);
         if (s.go) maybeGo(s.go);
         updateLobby();
-      } else if (phase === 'manual') manualState(s);
+      } else if (phase === 'manual') {
+        // the bomb device came back without our round (a reload) and started a new one, or is back in the lobby
+        if (s.ph === 'play' && s.role === 'bomb' && s.n && s.n !== M.n && !ENDED.has(s.n)) { enterManual(s); return; }
+        if (s.ph === 'lobby' && !M.over) { backToLobby(); return; }
+        manualState(s);
+      }
+      if (!!s.hid !== partnerHid) { partnerHid = !!s.hid; syncBombPause(); }
     }));
     offs.push(api.on('go', (d) => { if (d && d.g) maybeGo(d.g); }));
     function takeSwap(d) {
@@ -943,10 +958,47 @@ registerGame({
     offs.push(api.on('swap', takeSwap));
     offs.push(api.on('result', (d) => { if (phase === 'manual' && d && d.n === M.n) manualOver(d.res, !!d.win); }));
     offs.push(api.onPartnerHere((here) => {
-      if (phase === 'bomb' && B && !B.over) { B.pz = !here; if (!here) bombCancel(); pub(); }
+      if (!here) partnerHid = false;
+      syncBombPause();
       if (phase === 'manual' && M) { if (!here) { M.left = M.left - (performance.now() - M.at) * M.rate; M.at = performance.now(); } M.frozen = !here; }
       if (phase === 'lobby') updateLobby();
     }));
+
+    // ── pausing: the bomb's clock stops while either player is gone or has the game in the background ──
+    let partnerHid = false;
+    function wantPause() { return !api.partnerHere || partnerHid || document.hidden; }
+    function syncBombPause() {
+      if (phase !== 'bomb' || !B || B.over) return;
+      const want = wantPause();
+      if (want === B.pz) return;
+      B.pz = want;
+      if (want) bombCancel();
+      last = 0;
+      pub();
+    }
+    const onVis = () => { last = 0; if (phase === 'bomb') syncBombPause(); pub(); };
+    document.addEventListener('visibilitychange', onVis);
+    offs.push(() => document.removeEventListener('visibilitychange', onVis));
+    function backToLobby() {
+      phase = 'lobby'; M = null; L.go = null;
+      renderLobby();
+      pub();
+      api.toast(`${api.name(them)}’s bomb restarted. Start a new round.`);
+    }
+    /** This device closed the game mid-round with the bomb, and the manual is still reading it: carry on. */
+    function resumeBomb(s) {
+      const sv = memo.saved;
+      if (!sv || !s || s.ph !== 'reading' || s.n !== sv.n || ENDED.has(sv.n) || Date.now() - sv.at > 30 * 60000) return false;
+      memo.saved = null;
+      B = { ...sv.B, btn: null, lit: null, seqLast: performance.now(), flashT0: 0, shownSecs: -1, pz: true, lastBad: null };
+      L.role = 'bomb'; memo.role = 'bomb';
+      phase = 'bomb';
+      renderBomb();
+      api.setStatus('You have the bomb');
+      B.pz = !wantPause(); // force a change so syncBombPause publishes
+      syncBombPause();
+      return true;
+    }
 
     let last = 0;
     function frame(now) {
@@ -958,9 +1010,15 @@ registerGame({
       else if (phase === 'manual' && M) manualFrame(now);
     }
 
-    renderLobby();
-    pub();
-    { const s = P(); if (s) { adoptDiff(s); if (s.ph === 'play' && s.role === 'bomb' && L.role === 'manual' && s.n && !ENDED.has(s.n)) enterManual(s); else updateLobby(); } }
+    {
+      const s = P();
+      if (s) adoptDiff(s);
+      if (!resumeBomb(s)) {
+        renderLobby();
+        pub();
+        if (s) { if (s.ph === 'play' && s.role === 'bomb' && L.role === 'manual' && s.n && !ENDED.has(s.n)) enterManual(s); else updateLobby(); }
+      }
+    }
     raf = requestAnimationFrame(frame);
 
     // test hook (automation only)
@@ -977,6 +1035,7 @@ registerGame({
     return {
       destroy() {
         alive = false;
+        if (phase === 'bomb' && B && !B.over) memo.saved = { n: B.n, at: Date.now(), B: { ...B, cut: [...B.cut], solved: [...B.solved], btn: null } };
         cancelAnimationFrame(raf);
         timers.forEach((t) => clearTimeout(t));
         timers.clear();

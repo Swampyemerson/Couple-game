@@ -355,7 +355,7 @@ registerGame({
     .g-bones { --gb-die: 52px; --gb-gap: 7px; --gb-pad: 8px; --gb-band: 112px; --gb-side: 62px;
       flex: 1; display: flex; flex-direction: column; justify-content: center; min-height: 0; padding: 4px 0 10px; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
     .g-bones .gb-board { width: 100%; max-width: 480px; margin: 0 auto; display: flex; flex-direction: column; gap: 10px; }
-    .g-bones .gb-half { display: grid; grid-template-columns: var(--gb-side) auto var(--gb-side); justify-content: center; align-items: center; column-gap: 8px; row-gap: 6px; transition: opacity 0.4s; }
+    .g-bones .gb-half { display: grid; grid-template-columns: var(--gb-side) auto var(--gb-side); justify-content: center; align-items: center; column-gap: 8px; row-gap: 6px; transition: opacity 0.4s, filter 0.4s; }
     .g-bones .gb-tray, .g-bones .gb-scores { grid-column: 2; }
     .g-bones .gb-top .gb-scores { grid-row: 1; }
     .g-bones .gb-top .gb-tray, .g-bones .gb-top .gb-name, .g-bones .gb-top .gb-total { grid-row: 2; }
@@ -369,7 +369,7 @@ registerGame({
     .g-bones .gb-half.is-turn .gb-mark { visibility: visible; }
     .g-bones .gb-total { grid-column: 3; justify-self: start; font-family: var(--g-font-display); font-weight: 900; font-size: 1.85rem; line-height: 1; font-variant-numeric: tabular-nums; }
     .g-bones .gb-half.is-win .gb-total { animation: gb-win 0.7s cubic-bezier(.3, 1.6, .5, 1) both; background: var(--g-hl); color: var(--g-on-ink); border: 2px solid var(--g-ink); border-radius: 8px; padding: 4px 6px; box-shadow: var(--g-shadow); }
-    .g-bones .gb-half.is-lose { opacity: 0.55; }
+    .g-bones .gb-half.is-lose { opacity: 0.6; filter: grayscale(1); } /* the loser's half drops its inks: black plate only */
     .g-bones .gb-tray { display: grid; grid-template-columns: repeat(3, var(--gb-die)); column-gap: var(--gb-gap); padding: var(--gb-pad); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow); }
     .g-bones .gb-a .gb-tray { background: var(--p-a-soft); } .g-bones .gb-b .gb-tray { background: var(--p-b-soft); }
     .g-bones .gb-scores { display: grid; grid-template-columns: repeat(3, var(--gb-die)); column-gap: var(--gb-gap); padding: 0 calc(var(--gb-pad) + 2px); }
@@ -415,6 +415,10 @@ registerGame({
     .g-bones .gb-arrow.down { border-top: 9px solid var(--g-ink); }
     .g-bones .gb-arrow.up { border-bottom: 9px solid var(--g-ink); }
     .g-bones .gb-lab-r b { color: var(--g-ink); }
+    .g-bones .gb-big { font-family: var(--g-font-display); font-weight: 900; font-size: 1.3rem; line-height: 1.05; color: var(--g-ink); }
+    .g-bones .gb-lab-r .gb-big { font-size: 1.9rem; }
+    .g-bones .gb-band.is-final .gb-lab { max-width: 60%; }
+    .g-bones .gb-band.is-final .gb-lab-r { max-width: 34%; }
     .g-bones .gb-die2d { position: absolute; left: 50%; top: 50%; width: calc(var(--gb-band) * 0.52); height: calc(var(--gb-band) * 0.52); transform: translate(-50%, -50%); }
     .g-bones .gb-die2d .gb-die { box-shadow: var(--g-shadow); }
     .g-bones .gb-die2d.rolling .gb-die { animation: gb-tumble 0.8s cubic-bezier(.2, .7, .3, 1) both; }
@@ -751,9 +755,12 @@ registerGame({
         halves[k].classList.toggle('is-win', r.winner === w);
         halves[k].classList.toggle('is-lose', !!r.winner && r.winner !== w);
       }
-      labL.innerHTML = `<span class="gb-kick">Final</span><span class="gb-wn"></span>`;
-      labL.querySelector('.gb-wn').textContent = r.winner ? `${whoLabel(r.winner) === 'You' ? 'You win' : `${api.name(r.winner)} wins`}` : 'A draw';
-      labR.innerHTML = `<b>${gridScore(s.grids[bottom])} – ${gridScore(s.grids[topW])}</b>`;
+      const ta = gridScore(s.grids.a);
+      const tb = gridScore(s.grids.b);
+      band.classList.add('is-final');
+      labL.innerHTML = `<span class="gb-kick">Final</span><span class="gb-wn gb-big"></span>`;
+      labL.querySelector('.gb-wn').textContent = r.winner ? `${whoLabel(r.winner) === 'You' ? 'You win' : `${api.name(r.winner)} wins`}` : 'Dead even';
+      labR.innerHTML = r.winner ? `<span class="gb-kick">by</span><b class="gb-big">${Math.abs(ta - tb)}</b>` : `<b>${ta} apiece</b>`;
     }
 
     // ── input ──

@@ -40,7 +40,7 @@ body.spicy-mode {
   --p-a: #3fa7f5; --p-b: #ff5cb8; --p-a-soft: #11304a; --p-b-soft: #431a33; --p-a-text: #6dbbf7; --p-b-text: #ff7cc6;
   --g-bg: #141317; --g-card: #1f1e24; --g-ink: #f1ece2; --g-muted: #aca5b2; --g-line: #3a3841;
   --g-hl: #ffe14d; --g-hl-soft: #3a2c10; --g-good: #3ccb7f; --g-bad: #ff6b78;
-  --g-on-ink: #141317; --g-white: #f1ece2; --g-edge: #8e1a5a; --g-dim: rgb(0 0 0 / 0.66);
+  --g-on-ink: #141317; --g-white: #f1ece2; --g-edge: #8e1a5a; --g-dim: rgb(0 0 0 / 0.66); --g-on-signal: #141317;
   --g-halftone: radial-gradient(circle, rgb(255 92 184 / 0.28) 0.9px, transparent 1.3px);
   --bg: var(--g-bg); --bg2: var(--g-bg); --card: var(--g-card); --text: var(--g-ink); --muted: var(--g-muted); --line: var(--g-line);
   --accent: var(--p-b); --accent2: var(--p-b); --accent-soft: var(--p-b-soft); --ok: var(--g-good); --no: var(--g-bad);
@@ -85,8 +85,10 @@ p { margin: 0; }
 .icon-btn .ico * { stroke-width: 2.6; }
 .icon-btn:active { transform: translate(2px, 2px); box-shadow: 0 0 0 var(--g-edge); }
 .icon-btn.ghost { display: none; }
+.topbar.is-play h1 { font-size: 1.12rem; }
 .count { font-weight: 900; font-size: 0.95rem; font-variant-numeric: tabular-nums; padding: 7px 11px; border: 2px solid var(--text); border-radius: 999px; background: var(--card); }
-.pill { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 4px 11px; color: var(--text); background: var(--card); border: 2px solid var(--text); border-radius: 999px; font-size: 0.78rem; font-weight: 800; letter-spacing: 0.02em; white-space: nowrap; }
+.pill { position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 4px 11px; color: var(--text); background: var(--card); border: 2px solid var(--text); border-radius: 999px; font-size: 0.78rem; font-weight: 800; letter-spacing: 0.02em; white-space: nowrap; }
+.pill::after { content: ''; position: absolute; inset: -5px -2px; } /* 44 px to the thumb */
 .pill .ico { width: 15px; height: 15px; }
 .pill .ico * { stroke-width: 2.4; }
 .pill-dot { display: inline-block; flex: none; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--muted); vertical-align: middle; }
@@ -106,6 +108,7 @@ p { margin: 0; }
 .card h2 { display: flex; align-items: center; gap: 10px; font-size: 1.15rem; }
 .card h2 .ico { width: 34px; height: 34px; padding: 5px; color: var(--text); background: var(--g-hl-soft); border: 2px solid var(--text); border-radius: 8px; --ico-fill: var(--g-hl); }
 .card h2 .pill-dot { width: 14px; height: 14px; }
+.card > .btn.small { align-self: flex-start; }
 .card.notice { flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; background: var(--g-hl); color: var(--g-on-ink); }
 .card.notice .btn { flex: none; }
 .eyebrow { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
@@ -133,7 +136,9 @@ p { margin: 0; }
 .spicy-mode .btn:not(.alt):not(.ghost) { color: var(--g-on-ink); background: var(--p-b); --plate: var(--g-white); }
 .spicy-mode .chip-btn.on { box-shadow: 3px 3px 0 var(--p-b); }
 .btn[disabled] { opacity: 0.5; box-shadow: none; transform: none; cursor: default; }
-.btn:focus-visible, .tile:focus-visible, .ptile:focus-visible, .row:focus-visible, .choice:focus-visible, .opt:focus-visible, .icon-btn:focus-visible, .tab:focus-visible { outline: 3px solid var(--p-a); outline-offset: 3px; }
+/* every control shows where the keyboard is: a blue ink ring, off-register */
+:where(#app, .sheet, .toast) button:focus-visible, .tick.link:focus-visible { outline: 3px solid var(--p-a); outline-offset: 3px; }
+.spicy-mode :where(#app, .sheet) button:focus-visible { outline-color: var(--p-b); }
 
 .input {
   width: 100%; padding: 13px 14px; color: var(--text); background: var(--bg); border: 2px solid var(--text); border-radius: 10px;
@@ -304,7 +309,7 @@ p { margin: 0; }
 .ynm .choice.m.sel { background: var(--g-hl); }
 .ynm .choice.n.sel { color: var(--bg); background: var(--text); }
 .nav-row { display: flex; justify-content: space-between; }
-.play .nav-row .btn { min-height: 40px; }
+.play .nav-row .btn { min-height: 44px; }
 
 /* ── results ── */
 .results .rcard { display: flex; flex-direction: column; gap: 8px; padding: 14px; background: var(--card); border: 2px solid var(--text); border-radius: 12px; }
@@ -344,7 +349,7 @@ p { margin: 0; }
 
 /* ── truth or dare + date spinner ── */
 .chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
-.chip-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 15px; font-size: 0.9rem; font-weight: 800; color: var(--text); background: var(--card); border: 2px solid var(--text); border-radius: 999px; transition: transform 0.1s, box-shadow 0.1s; }
+.chip-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 15px; font-size: 0.9rem; font-weight: 800; color: var(--text); background: var(--card); border: 2px solid var(--text); border-radius: 999px; transition: transform 0.1s, box-shadow 0.1s; }
 .chip-btn .ico { width: 16px; height: 16px; --ico-fill: var(--p-b); }
 .chip-btn.on { color: var(--bg); background: var(--text); box-shadow: 3px 3px 0 var(--g-hl); transform: translate(-1px, -1px); }
 .turn { display: inline-flex; align-items: center; gap: 9px; margin: 8px 0 0; font-family: var(--g-font-display); font-weight: 900; font-size: 1.4rem; }
@@ -379,6 +384,8 @@ p { margin: 0; }
 .bucket { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .bucket li { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1.5px dashed var(--rule); }
 .bucket li:last-child { border-bottom: 0; }
+.bucket .check, .bucket .x { position: relative; }
+.bucket .check::after, .bucket .x::after { content: ''; position: absolute; inset: -7px; } /* 44 px to the thumb */
 .bucket .check { flex: none; width: 30px; height: 30px; display: grid; place-items: center; color: var(--g-on-ink); background: var(--card); border: 2px solid var(--text); border-radius: 7px; }
 .bucket .check .ico { width: 20px; height: 20px; }
 .bucket .check .ico * { stroke-width: 3; }
@@ -386,7 +393,7 @@ p { margin: 0; }
 .bucket li.done .bt { text-decoration: line-through; text-decoration-thickness: 2px; color: var(--muted); }
 .bt { flex: 1; display: flex; flex-direction: column; gap: 2px; font-weight: 600; }
 .bt small { font-size: 0.66rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: var(--pt, var(--muted)); text-decoration: none; }
-.bucket .x { flex: none; width: 36px; height: 36px; display: grid; place-items: center; color: var(--muted); }
+.bucket .x { flex: none; width: 32px; height: 32px; margin-right: 2px; display: grid; place-items: center; color: var(--muted); }
 .bucket .x .ico { width: 18px; height: 18px; }
 .ll-line { display: flex; align-items: center; gap: 10px; font-weight: 700; }
 .ll-line b { padding: 3px 8px 2px; font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--g-on-ink); background: var(--pi); border: 2px solid var(--text); border-radius: 5px; }

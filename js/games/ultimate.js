@@ -109,7 +109,7 @@ registerGame({
 .g-ult .gu-c::before { content: ''; position: absolute; inset: 3px; border-radius: 6px; background: transparent; }
 .g-ult .gu-c.is-last::before { background: color-mix(in srgb, var(--g-hl) 75%, transparent); }
 .g-ult .gu-c.is-sel::before { background: color-mix(in srgb, var(--g-hl) 60%, transparent); box-shadow: inset 0 0 0 2px var(--g-ink); }
-.g-ult .gu-c.is-cur::after { content: ''; position: absolute; inset: 1px; border-radius: 7px; border: 2px dashed var(--g-ink); }
+.g-ult .gu-c.is-cur::after, .g-ult .gu-c:focus-visible::after { content: ''; position: absolute; inset: 1px; border-radius: 7px; border: 2px dashed var(--g-ink); }
 .g-ult .gu-m { position: absolute; inset: 6%; width: 88%; height: 88%; overflow: visible; }
 .g-ult .gu-ink { fill: none; stroke: var(--g-ink); stroke-width: 9; stroke-linecap: round; }
 .g-ult .gu-col { fill: none; stroke-width: 5; stroke-linecap: round; }
@@ -130,7 +130,7 @@ registerGame({
 @keyframes gu-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 .g-ult .gu-sb.is-theirs.gu-a::before { border: 3px dashed var(--p-a); }
 .g-ult .gu-sb.is-theirs.gu-b::before { border: 3px dashed var(--p-b); }
-.g-ult .gu-sb.is-off .gu-cells { opacity: 0.4; }
+.g-ult .gu-sb.is-off .gu-cells { opacity: 0.6; }
 .g-ult .gu-sb.is-won .gu-cells { opacity: 0.16; }
 .g-ult .gu-sb.is-dead .gu-cells { opacity: 0.35; }
 .g-ult .gu-sb.is-dead::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(-45deg, transparent 0 7px, color-mix(in srgb, var(--g-ink) 16%, transparent) 7px 9px); }
@@ -152,7 +152,7 @@ registerGame({
   .g-ult .gu-sb.is-open .gu-c:not(:disabled):hover::before { background: color-mix(in srgb, var(--g-hl) 60%, transparent); }
 }
 
-.g-ult .gu-plate { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 16px 8px 10px; border-radius: 999px; background: var(--g-card); border: 2px solid var(--g-ink); box-shadow: var(--g-shadow); font: 800 0.95rem/1.2 var(--g-font-display); color: var(--g-ink); max-width: 100%; text-wrap: balance; }
+.g-ult .gu-plate { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 16px 8px 10px; border-radius: 999px; background: var(--g-card); border: 2px solid var(--g-ink); box-shadow: var(--g-shadow); font: 900 0.95rem/1.2 var(--g-font-display); color: var(--g-ink); max-width: 100%; text-wrap: balance; }
 .g-ult .gu-plate.wait { color: var(--g-muted); border-color: var(--g-line); }
 .g-ult .gu-plate.pop { animation: gu-plate 260ms cubic-bezier(0.3, 1.5, 0.5, 1); }
 @keyframes gu-plate { from { transform: scale(0.92); } to { transform: none; } }
