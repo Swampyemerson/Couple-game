@@ -1,4 +1,4 @@
-# Just Us 💞
+# Just Us
 
 A private couples game app for Emerson & Sydney. It's a free, better version of Couple Joy.
 It runs in the phone browser, can be added to the home screen like a real app, and needs no accounts.
@@ -20,9 +20,54 @@ It runs in the phone browser, can be added to the home screen like a real app, a
 
 All questions live in `js/content.js`. Add your own, or inside jokes, by editing the lists.
 
+## The game room (Games tab)
+
+16 two-player games. "Take turns" games work whether you're both online or not (your move
+shows up on the other phone right away, or whenever they next open the app). "Live" games
+need you both in the game at once. Most also work on one phone (or one computer) passed
+between you.
+
+| Game | Kind | Best on |
+|---|---|---|
+| **Rail Rush**: 3D runner on the same track; Race, Brawl (shove each other) or Together | Live, versus/co-op | Phone |
+| **Blend & Seek**: paint yourself to vanish into a 3D room, then hunt each other | Live, versus | Either |
+| Four in a Row · Dots & Boxes · Ultimate Tic-Tac-Toe | Take turns, versus | Either |
+| Battleships | Take turns, hidden fleets | Either |
+| Knucklebones: dice duel with 3D dice | Take turns, versus | Either |
+| Word Duel: set each other's Wordle | Take turns, versus | Either |
+| Double Agents: co-op clue-giving spy game | Take turns, co-op | Either |
+| Doodle: draw and guess | Take turns, co-op | Phone |
+| Same Wave: one clue, one dial, how in sync are you? | Take turns, co-op | Either |
+| Tower Together: stack 3D blocks together | Take turns, co-op | Either |
+| Air Hockey · Quick Draw | Live, versus | Phone (one-phone mode too) |
+| Light Cycles | Live, versus | Computer (WASD vs arrows on one keyboard) |
+| Defuse: one has the bomb, the other the manual | Live, co-op, two devices | Bomb on a computer, manual on a phone |
+
+Head-to-head records, co-op best scores, rematches, and "your move" reminders on Home are
+built in. Starting a live game sends the other person an invite banner.
+
+How it's built: `docs/GAMES.md` (the game contract, the netcode kit, the design tokens and the
+iPhone checklist), `js/games/core.js` (engine: deterministic move-log replay for turn games,
+room presence/events for live games), `js/games/net.js` (shared clock, reliable events,
+interpolation), one file (or folder) per game in `js/games/`, and the two big 3D games'
+design docs in `docs/games/`.
+
+## Tests
+
+```
+tools/test/run-all.sh                 # every suite, one at a time, with a pass/fail table
+node tools/test/games/<group>.test.js # one group
+```
+
+The harness (`tools/test/harness.js`) opens two simulated phones (Emerson and Sydney) in
+headless Chromium sharing a fake artifact database and live room, with configurable network
+delay and packet loss. Suites cover each game end to end on two phones and on one device,
+the netcode under 30% loss, app flows, migration of existing saved data, and a full-bundle
+check that every game opens cleanly.
+
 ## Claude artifact version (what we use)
 
-`python3 tools/build_artifact.py` bundles everything into `dist/just-us.html`, which is published as a Claude artifact with the `db` and `user` capabilities. Answers sync through the artifact's built-in shared database, so there's no Firebase and no sync links.
+`python3 tools/build_artifact.py` bundles everything into `dist/just-us.html`, which is published as a Claude artifact with the `db`, `user` and `room` capabilities (room topics `ping`, `invite` and `ev` open to `interact`). Answers sync through the artifact's built-in shared database and live games run through its room, so there's no Firebase and no sync links.
 
 - Share it from the artifact's Share menu by inviting the other person's email as an **Editor**. A public link stops guests from saving.
 - Each person picks their name once. Other devices signed in to the same Claude account recognize them automatically.
