@@ -53,7 +53,7 @@ export function smoothedRoads() {
   const list = ROADS.map((r, i) => {
     const s = smooth(r.pts, !!r.closed); const n = s.x.length;
     const cum = [0]; for (let k = 1; k < n; k++) cum.push(cum[k - 1] + Math.hypot(s.x[k] - s.x[k - 1], s.z[k] - s.z[k - 1]));
-    return { i, src: r, name: r.name, kind: r.kind, hw: r.width / 2, bridge: !!r.bridge, x: s.x, z: s.z, n, cum, len: cum[n - 1] };
+    return { i, src: r, name: r.name, kind: r.kind, hw: r.width / 2, bridge: !!r.bridge, closed: !!r.closed, x: s.x, z: s.z, n, cum, len: cum[n - 1] };
   });
   const CELL = 24; const gx0 = BOUNDS.x0 - 60; const gz0 = BOUNDS.z0 - 60;
   const GW = Math.ceil((BOUNDS.x1 - BOUNDS.x0 + 120) / CELL); const GH = Math.ceil((BOUNDS.z1 - BOUNDS.z0 + 120) / CELL);
@@ -109,23 +109,58 @@ const HC = 8;
 const HX0 = BOUNDS.x0 - 40; const HZ0 = BOUNDS.z0 - 40;
 const HW = Math.ceil((BOUNDS.x1 - BOUNDS.x0 + 80) / HC) + 1; const HH = Math.ceil((BOUNDS.z1 - BOUNDS.z0 + 80) / HC) + 1;
 let HG = null;
-function buildHeightGrid() {
+function buildHeightGrid() { const it = heightGridGen(); while (!it.next().done); return HG; }
+function* heightGridGen() {
+  if (HG) return;
   const g = new Float32Array(HW * HH);
-  for (let j = 0; j < HH; j++) for (let i = 0; i < HW; i++) g[j * HW + i] = rawHeight(HX0 + i * HC, HZ0 + j * HC);
+  for (let j = 0; j < HH; j++) { for (let i = 0; i < HW; i++) g[j * HW + i] = rawHeight(HX0 + i * HC, HZ0 + j * HC); if (j % 16 === 0) yield; }
   const { list } = smoothedRoads();
   // road profiles: raw height along the centreline, smoothed (±30 m) and grade-limited
   const best = new Float32Array(HW * HH).fill(1e9); const target = new Float32Array(HW * HH);
-  for (const r of list) {
-    if (r.bridge) continue;
+  const live = list.filter((r) => !r.bridge);
+  const gmaxOf = (r) => (r.kind === 'highway' ? 0.05 : 0.072);
+  const limit = (r, sm) => {
+    const n = r.n; const gmax = gmaxOf(r);
+    for (let k = 1; k < n; k++) { const ds = r.cum[k] - r.cum[k - 1]; sm[k] = Math.min(sm[k], sm[k - 1] + gmax * ds); }
+    for (let k = n - 2; k >= 0; k--) { const ds = r.cum[k + 1] - r.cum[k]; sm[k] = Math.min(sm[k], sm[k + 1] + gmax * ds); }
+  };
+  for (const r of live) {
     const n = r.n; const h = new Float32Array(n);
     for (let k = 0; k < n; k++) h[k] = rawHeight(r.x[k], r.z[k]);
     const sm = new Float32Array(n);
-    for (let k = 0; k < n; k++) { let a = 0; let w = 0; for (let q = Math.max(0, k - 6); q <= Math.min(n - 1, k + 6); q++) { a += h[q]; w++; } sm[k] = a / w; }
-    const gmax = r.kind === 'highway' ? 0.05 : 0.10;
-    for (let k = 1; k < n; k++) { const ds = r.cum[k] - r.cum[k - 1]; sm[k] = Math.min(sm[k], sm[k - 1] + gmax * ds); }
-    for (let k = n - 2; k >= 0; k--) { const ds = r.cum[k + 1] - r.cum[k]; sm[k] = Math.min(sm[k], sm[k + 1] + gmax * ds); }
-    r.prof = sm;
-    const R = r.hw + 16;
+    for (let k = 0; k < n; k++) { const W = r.closed ? 6 : Math.min(6, k, n - 1 - k); let a = 0; let w = 0; for (let q = k - W; q <= k + W; q++) { a += h[(q + n) % n]; w++; } sm[k] = a / w; }
+    limit(r, sm); r.prof = sm;
+    if (r.closed) { let m = 0; for (let k = 0; k < n; k++) m += sm[k]; sm.fill(m / n); } // loops are level plateaus
+  }
+  // a loop's plateau sits at the level of the road that climbs to it
+  for (const r of live) {
+    if (!r.closed) continue;
+    for (const o of live) {
+      if (o === r || o.closed) continue;
+      for (const end of [0, o.n - 1]) {
+        let bd = Infinity; for (let k = 0; k < r.n; k++) bd = Math.min(bd, Math.hypot(r.x[k] - o.x[end], r.z[k] - o.z[end]));
+        if (bd < r.hw + o.hw) r.prof.fill(o.prof[end]);
+      }
+    }
+  }
+  yield;
+  // where a road ends on another, bend its last ~60 m onto the other road's level (no steps)
+  const profAt = (o, x, z) => { let bi = 0; let bd = Infinity; for (let k = 0; k < o.n; k++) { const d = (o.x[k] - x) ** 2 + (o.z[k] - z) ** 2; if (d < bd) { bd = d; bi = k; } } return [o.prof[bi], Math.sqrt(bd), !o.closed && (bi < 2 || bi > o.n - 3)]; };
+  for (let pass = 0; pass < 2; pass++) for (const r of live) {
+    if (r.closed) continue;
+    for (const end of [0, r.n - 1]) {
+      let tgt = null; let bestD = Infinity; let both = false;
+      for (const o of live) { if (o === r) continue; const [hv, d, atEnd] = profAt(o, r.x[end], r.z[end]); if (d < o.hw + r.hw && d < bestD) { bestD = d; tgt = hv; both = atEnd; } }
+      if (tgt == null) continue;
+      const delta = (tgt - r.prof[end]) * (both ? 0.5 : 1); if (Math.abs(delta) < 0.05) continue;
+      const span = Math.max(40, Math.abs(delta) / 0.045);
+      for (let k = 0; k < r.n; k++) { const s2 = Math.abs(r.cum[k] - r.cum[end]); if (s2 < span) r.prof[k] += delta * (1 - s2 / span); }
+    }
+  }
+  yield;
+  for (const r of live) {
+    const n = r.n; const sm = r.prof;
+    const R = r.hw + 20;
     for (let k = 0; k < n; k++) {
       const x = r.x[k]; const z = r.z[k];
       const i0 = Math.max(0, Math.floor((x - R - HX0) / HC)); const i1 = Math.min(HW - 1, Math.ceil((x + R - HX0) / HC));
@@ -135,15 +170,15 @@ function buildHeightGrid() {
         if (d < best[q]) { best[q] = d; target[q] = sm[k]; }
       }
     }
+    yield;
   }
   for (let q = 0; q < g.length; q++) {
     if (best[q] > 1e8) continue;
-    const w = best[q] <= 3 ? 1 : 1 - clamp01((best[q] - 3) / 13);
+    const w = best[q] <= 6 ? 1 : 1 - clamp01((best[q] - 6) / 14);
     const ww = w * w * (3 - 2 * w);
     g[q] = g[q] * (1 - ww) + target[q] * ww;
   }
   HG = g;
-  return g;
 }
 /** Terrain height (the contract's height(x, z)): bilinear on the levelled grid. */
 export function height(x, z) {
@@ -180,10 +215,11 @@ export function zoneAt(x, z) {
   if (z > 205) {
     if (x < broadwayX(z) - 8) return z < 250 ? 'westres' : 'hill';
     if (x < 820) return 'campus';
-    if (x < X.foothills) return 'commercial';
+    if (x < X.st30 + 70) return 'commercial';
+    if (x < X.foothills - 10) return 'eastres';
     return 'east';
   }
-  if (z > 125) return x < X.folsom ? 'civic' : x < X.st30 ? 'commercial' : 'east';
+  if (z > 125) return x < X.folsom ? 'civic' : x < X.st30 + 30 ? 'commercial' : 'east';
   if (z > -76) {
     if (x < X.st9 - 4) return 'westpearl';
     if (x < X.st21 + 30) return 'downtown';
@@ -192,13 +228,16 @@ export function zoneAt(x, z) {
     return x < 1450 ? 'junction' : 'east';
   }
   if (x < X.folsom - 6) return 'whittier';
-  if (x < X.st30 + 8) return 'commercial';
-  return x < 1450 ? 'junction' : 'east';
+  if (x < X.st28 - 90) return 'eastres';
+  if (x < X.st30 + 60) return 'commercial';
+  return z > -300 && x < 1450 ? 'junction' : 'east';
 }
+/** Mountain flank far from any road: drawn by the (fog-free) backdrop, not the town terrain. */
+export function isFarMtn(x, z) { return x < footX(z) - 30 && smoothedRoads().clearance(x, z) > 42; }
 
 // district frontage styles: type, width, depth, floors, setback, gap
 const ZS = {
-  downtown: { types: ['brick', 'brick', 'sandstone', 'brickB'], w: [8, 18], d: [17, 23], f: [2, 4], set: 0, gap: [0, 0.4], walk: 3.2 },
+  downtown: { types: ['brick', 'brick', 'sandstone', 'brickB'], w: [8, 18], d: [17, 23], f: [2, 3.4], set: 0, gap: [0, 0.4], walk: 3.2 },
   westpearl: { types: ['brick', 'house', 'brickB'], w: [8, 14], d: [12, 17], f: [1, 2], set: 1.5, gap: [1, 4], walk: 2.6 },
   eastpearl: { types: ['brick', 'office', 'shop'], w: [14, 30], d: [16, 24], f: [2, 3], set: 3, gap: [3, 8], walk: 2.6 },
   twentyninth: { types: ['shop', 'shopB'], w: [18, 34], d: [15, 19], f: [1, 2], set: 1, gap: [3, 7], walk: 3.2 },
@@ -225,9 +264,14 @@ const FREE = 0; const ROAD = 1; const WATERC = 2; const LOT = 3; const BLD = 4; 
 
 let LAYOUT = null;
 export function layout() {
-  if (LAYOUT) return LAYOUT;
+  if (!LAYOUT) { const it = layoutGen(); while (!it.next().done); }
+  return LAYOUT;
+}
+/** The layout as a generator: yields often so prepare() can slice it (see boulder.js). */
+export function* layoutGen() {
+  if (LAYOUT) return;
   const t0 = (typeof performance !== 'undefined' ? performance : Date).now();
-  height(0, 0); // build the height grid
+  yield* heightGridGen();
   const sm = smoothedRoads();
   const ras = new Uint8Array(RW * RH);
   const rIdx = (x, z) => { const i = Math.floor((x - RX0) / RC); const j = Math.floor((z - RZ0) / RC); return i < 0 || j < 0 || i >= RW || j >= RH ? -1 : j * RW + i; };
@@ -245,6 +289,7 @@ export function layout() {
       const L = Math.hypot(r.x[k + 1] - r.x[k], r.z[k + 1] - r.z[k]); const m = Math.max(1, Math.ceil(L / 1.5));
       for (let q = 0; q < m; q++) disk(r.x[k] + (r.x[k + 1] - r.x[k]) * q / m, r.z[k] + (r.z[k + 1] - r.z[k]) * q / m, rad, ROAD);
     }
+    yield;
   }
   const fillPoly = (poly, v) => {
     let x0 = Infinity; let z0 = Infinity; let x1 = -Infinity; let z1 = -Infinity;
@@ -261,7 +306,7 @@ export function layout() {
   }
   for (const o of OPEN) fillPoly(o.poly, LOT);
 
-  const solids = []; const buildings = []; const decor = []; const props = [];
+  const solids = []; const buildings = []; const decor = []; const props = []; const lots = [];
   const rnd = mulberry(0xB0B1DE5);
   const R = (a, b) => a + (b - a) * rnd();
   const pick = (arr) => arr[Math.floor(rnd() * arr.length) % arr.length];
@@ -307,7 +352,7 @@ export function layout() {
     disk(x, z, 2.2, SMALL);
     return solid({ kind: 'tree', x: r2(x), z: r2(z), w: 0.9, d: 0.9, rot: 0, h: r2(h), y: r2(height(x, z)), style, ...(color ? { color } : {}) });
   };
-  const decorTree = (x, z, type, s) => { const q = rIdx(x, z); if (q < 0 || ras[q] !== FREE) return false; disk(x, z, 1.6, SMALL); decor.push({ type, x: r2(x), z: r2(z), y: r2(height(x, z)), s: r2(s), c: rnd() }); return true; };
+  const decorTree = (x, z, type, s) => { const q = rIdx(x, z); if (q < 0 || ras[q] !== FREE) return false; disk(x, z, 1.6, SMALL); decor.push({ type, x: r2(x), z: r2(z), y: r2(height(x, z)), s: r2(s), c: rnd(), far: isFarMtn(x, z) }); return true; };
 
   // ── 1. landmarks (hand-placed, real positions) ──────────────────────────────
   const B = (o) => building({ rot: 0, pad: 0.4, ...o }, true);
@@ -369,6 +414,7 @@ export function layout() {
     const [bx, bz] = moorPt(HOME_T + 4, 31); decorTree(bx, bz, 'broad', 1.15);
   }
 
+  yield;
   // ── 2. Pearl Street Mall: bollards at every entrance, planters, kiosks, performers ──────
   {
     const ends = [MALL.x0 + 1.2, -9.5, 9.5, MALL.x1 - 1.2];
@@ -408,7 +454,7 @@ export function layout() {
     brick: ['#b4573f', '#a44b37', '#c0684a', '#9b4a3a', '#b86b4f', '#c97b56'],
     brickB: ['#7f8c6a', '#c99a5b', '#8f5a45', '#d4b07a', '#6f7f8f'],
     sandstone: ['#d9a68c', '#cf9878', '#e0b493', '#c78a6d'],
-    cu: ['#d9a07c', '#d4996f', '#dfae88', '#cf9474'],
+    cu: ['#e8c0a4', '#e2b496', '#ecc9ae', '#deae92', '#e4b89c'],
     house: ['#e9d9b8', '#9fb7a0', '#c9b48a', '#e4c58f', '#b8c6d4', '#d7a98d', '#f0e6d2', '#a9b59a'],
     victorian: ['#d9805f', '#6f9a8d', '#e8c25e', '#8e7cb0', '#5f86a8', '#c95f62', '#e6dcc0', '#7aa36a'],
     ranch: ['#e6d3ae', '#b9c9b4', '#d8b892', '#c6d0d9', '#e9e1cf', '#c4a585', '#a7b7a2', '#dcc39a'],
@@ -450,6 +496,13 @@ export function layout() {
         const b = building({ x: cx, z: cz, w, d, rot, h, floors, style: type, color: pick(pal), roof, roofH, roofColor: roof === 'flat' ? '#7d766b' : pick(ROOF[type] || ROOF.house), zone, seed: rnd(), porch: isHouse && rnd() < 0.45, chimney: isHouse && rnd() < 0.35 }, false, r.kind === 'mall');
         if (b) {
           s += w + R(Z0.gap[0], Z0.gap[1]);
+          if ((zone === 'commercial' || zone === 'east') && Z0.set > 8) { // a parking lot out front
+            const ld = Z0.set - 1.5; const lo = r.hw + walk + 0.8 + ld / 2;
+            const lx = p.x + nx * lo + p.tx * w / 2; const lz = p.z + nz * lo + p.tz * w / 2; const lw = w + 4;
+            const c2 = Math.cos(rot); const s2 = Math.sin(rot); const P2 = (a, bb) => [lx + a * c2 + bb * s2, lz - a * s2 + bb * c2];
+            const poly = [P2(-lw / 2, -ld / 2), P2(lw / 2, -ld / 2), P2(lw / 2, ld / 2), P2(-lw / 2, ld / 2)].map(([u, v]) => [r2(u), r2(v)]);
+            if (obbCells(lx, lz, lw, ld, rot, 0, (q) => (ras[q] === BLD || ras[q] === WATERC ? false : undefined))) { lots.push({ kind: 'lot', poly, paint: 'asphalt', rot }); stamp(lx, lz, lw, ld, rot, 0, LOT); }
+          }
           // a front-yard street tree and a backyard tree for houses
           if (Z0.trees && rnd() < 0.62) {
             const tOff = r.hw + walk + 1.8; const tt = s - R(0, 4);
@@ -461,11 +514,24 @@ export function layout() {
         } else s += 4;
       }
     }
+    yield;
+  }
+
+  // ── 3b. campus infill: sandstone halls between the campus roads; office parks out east ────
+  for (const [zn, x0, x1, z0, z1, step, style] of [['campus', 200, 830, 205, 905, 36, 'cu'], ['east', 1260, 1900, -470, 905, 64, 'office']]) {
+    for (let z = z0; z < z1; z += step) for (let x = x0; x < x1; x += step) {
+      const cx = x + R(-6, 6); const cz = z + R(-6, 6); if (zoneAt(cx, cz) !== zn) continue;
+      const w = zn === 'campus' ? R(22, 38) : R(30, 50); const d = zn === 'campus' ? R(13, 19) : R(20, 28); const rot = rnd() < 0.5 ? 0 : Math.PI / 2;
+      const floors = zn === 'campus' ? (rnd() < 0.5 ? 3 : 4) : 2 + (rnd() < 0.4 ? 1 : 0);
+      if (((x / step) | 0) % 4 === 0) yield;
+      building({ x: cx, z: cz, w, d, rot, h: floors * 3.7 + 0.8, floors, style, color: pick(PALETTE[style]), roof: zn === 'campus' ? (rnd() < 0.6 ? 'hip' : 'gable') : 'flat', roofH: zn === 'campus' ? 4 + rnd() : 0, roofColor: zn === 'campus' ? pick(ROOF.cu) : '#7d766b', zone: zn, seed: rnd(), pad: zn === 'campus' ? 5 : 8 });
+    }
   }
 
   // ── 4. street furniture: lamps on arterials/downtown, signals at big crossings ─────────
   const lampy = new Set(['downtown', 'eastpearl', 'twentyninth', 'junction', 'commercial', 'campus', 'civic', 'westpearl', 'east']);
   for (const r of sm.list) {
+    yield;
     if (r.bridge || r.kind === 'alley') continue;
     const every = r.kind === 'highway' ? 70 : r.kind === 'arterial' ? 42 : 55;
     let flip = 1;
@@ -486,6 +552,7 @@ export function layout() {
   const seen = new Set();
   const crossOk = (a) => (o) => o !== a && !o.bridge && o.name !== a.name && o.kind !== 'alley' && o.kind !== 'highway' && o.kind !== 'ramp';
   for (const a of sm.list.filter((r) => r.kind === 'arterial' && !r.bridge)) {
+    yield;
     for (let k = 0; k < a.n - 1; k++) {
       const ax = a.x[k]; const az = a.z[k]; const n1 = sm.nearest(ax, az, 4, crossOk(a));
       if (!n1.r || n1.d > 2.6) continue;
@@ -502,6 +569,7 @@ export function layout() {
     }
   }
 
+  yield;
   // ── 5. barriers: US-36 median + sound walls, Flagstaff guard rails, mountain rocks ───────
   const segWall = (ax, az, bx, bz, kind, h, styleName, thick = 0.5) => {
     const L = Math.hypot(bx - ax, bz - az); const rot = Math.atan2(-(bz - az), bx - ax);
@@ -510,7 +578,7 @@ export function layout() {
     return o;
   };
   // median barrier (gaps none; the turnpike is divided) and sound walls on the Martin Acres side
-  for (let u = 40; u < 1250; u += 14) { const [ax, az] = usPt(u); const [bx, bz] = usPt(Math.min(u + 14, 1252)); segWall(ax, az, bx, bz, 'barrier', 0.9, 'jersey', 0.7); }
+  for (let u = 40; u < 1250; u += 14) { if (u > 690 && u < 830) continue; const [ax, az] = usPt(u); const [bx, bz] = usPt(Math.min(u + 14, 1252)); segWall(ax, az, bx, bz, 'barrier', 0.9, 'jersey', 0.7); }
   for (let u = 60; u < 1050; u += 20) {
     const [ax, az] = usPt(u, -15); const [bx, bz] = usPt(u + 20, -15);
     if (sm.clearance((ax + bx) / 2, (az + bz) / 2, (o) => o.kind !== 'highway') < 1.5) continue;
@@ -547,6 +615,7 @@ export function layout() {
     stamp(x, z, s * 1.6, s * 1.3, 0, 1);
   }
 
+  yield;
   // ── 6. trees: the creek's cottonwoods, parks, the quad, Chautauqua, the foothill forest ──
   for (let k = 0; k < CREEK.length - 1; k++) {
     const [ax, az] = CREEK[k]; const [bx, bz] = CREEK[k + 1]; const L = Math.hypot(bx - ax, bz - az);
@@ -577,10 +646,12 @@ export function layout() {
   scatter([[-460, 700], [-400, 700], [-400, 900], [-460, 900]], 10, 'pine', [10, 14]);
   scatter(rect(-660, 640, -600, 780), 8, 'pine', [10, 14]);
   scatter(rect(1580, -260, 1840, -150), 14, 'cottonwood', [10, 15]); // Valmont park edge
+  yield;
   // foothill forest (decor only: behind the boulder line or between switchbacks)
   {
     let placed = 0;
     for (let i = 0; i < 9000 && placed < 1500; i++) {
+      if (i % 600 === 0) yield;
       const z = R(BOUNDS.z0 + 4, BOUNDS.z1 - 4); const x = R(BOUNDS.x0 + 4, footX(z) + 10);
       if (x > footX(z) - 18 && rnd() < 0.7) continue;
       if (sm.clearance(x, z) < 4) continue;
@@ -596,8 +667,7 @@ export function layout() {
   // east-side shelterbelts and Martin Acres backyards are handled by the frontage pass
 
   const ms = (typeof performance !== 'undefined' ? performance : Date).now() - t0;
-  LAYOUT = { solids, buildings, decor, props, ms, ras, RC, RX0, RZ0, RW, RH };
-  return LAYOUT;
+  LAYOUT = { solids, buildings, decor, props, lots, ms, ras, RC, RX0, RZ0, RW, RH };
 }
 
 export function pickSpawn(name, frac, gap = 80, dir = 1, nth = 0) {
@@ -609,7 +679,7 @@ export function pickSpawn(name, frac, gap = 80, dir = 1, nth = 0) {
     const L = r.cum[k + 1] - r.cum[k] || 1; const t = (s - r.cum[k]) / L;
     const tx = (r.x[k + 1] - r.x[k]) / L * dir; const tz = (r.z[k + 1] - r.z[k]) / L * dir;
     // keep right: offset half a lane to the right of travel (right = (−tz, tx))
-    const off = r.kind === 'highway' ? 6.5 : Math.min(2.6, r.hw * 0.4);
+    const off = r.kind === 'highway' ? 6.5 : r.hw < 5 ? 0 : Math.min(2.6, r.hw * 0.4);
     return { x: Math.round((r.x[k] + (r.x[k + 1] - r.x[k]) * t - tz * off) * 10) / 10, z: Math.round((r.z[k] + (r.z[k + 1] - r.z[k]) * t + tx * off) * 10) / 10, yaw: Math.round(Math.atan2(tx, -tz) * 10000) / 10000 };
   };
   const s = r.len * frac;

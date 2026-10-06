@@ -57,7 +57,7 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
     assert(ctop >= top - 1 && ctop < top + 10, `cop top speed ${ctop.toFixed(0)} km/h (a touch faster in a straight line)`);
     const nit = run('runner', { gas: 1, nitro: true }, 3).out.at(-1).v; const non = acc[Math.round(3 / DT) - 1].v;
     assert(nit > non + 3, `nitro: ${(non * 3.6).toFixed(0)} → ${(nit * 3.6).toFixed(0)} km/h after 3 s`);
-    const br = run('runner', { brake: 1 }, 5, (c) => { c.vx = 40; }).out; const stop = br.find((o) => o.v < 0.2);
+    const br = run('runner', { hand: true }, 5, (c) => { c.vx = 40; }).out; const stop = br.find((o) => o.v < 0.2);
     assert(stop && stop.x < 60, `brakes: 144 km/h to a stop in ${stop.t.toFixed(2)} s / ${stop.x.toFixed(0)} m`);
     const turn = (v) => { const o = run('runner', (c) => ({ gas: c.vf < v ? 1 : 0, steer: 1 }), 8, (c) => { c.vx = v; }).out.slice(-240); const sp = o.reduce((a, q) => a + q.v, 0) / o.length; const r = o.reduce((a, q) => a + Math.abs(q.r), 0) / o.length; return { sp, radius: sp / r, g: (sp * r) / 9.81, slip: o.at(-1).slip }; };
     const t12 = turn(12); const t25 = turn(25);
@@ -139,10 +139,12 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       // the AI cop drives (path planning on the nav grid)
       await until(a, () => window.__getaway.navReady(), null, 20000, 'nav grid');
       const d0 = Math.hypot(s.a.x - s.b.x, s.a.z - s.b.z);
-      await hook(a, 'hold', 'a', { brake: 1 });
-      await wait(4000);
+      await hook(a, 'hold', 'a', { hand: true });
+      await wait(2600);
       s = await st(a);
       const d1 = Math.hypot(s.a.x - s.b.x, s.a.z - s.b.z);
+      await hook(a, 'hold', 'b', { hand: true });
+      await a.evaluate(() => window.__getaway.teleport('b', -330, 40, Math.PI / 2, 0)); // parked within the heat range
       assert(s.b.top > 8 && d1 < d0 - 15, `the AI cop drives at you (${d0.toFixed(0)} → ${d1.toFixed(0)} m, top ${(s.b.top * 3.6).toFixed(0)} km/h)`);
       // touch: steering slider + gas pedal (real pointer events)
       await hook(a, 'hold', 'a', null);
@@ -166,6 +168,7 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       const ign = (await hook(a, 'inputStats')).ignored;
       await a.evaluate(() => { const sf = document.querySelector('.g-gtw .gtw-surface'); const r = sf.getBoundingClientRect(); sf.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 33, pointerType: 'touch', clientX: r.left + 8, clientY: r.top + r.height * 0.7, bubbles: true, cancelable: true })); window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 33, pointerType: 'touch', bubbles: true })); });
       assert((await hook(a, 'inputStats')).ignored === ign + 1, 'a touch on the left edge (iOS back gesture) is ignored');
+      { const s0 = await st(a); if (s0.R.idx !== 0) console.log('   DEBUG round 0 ended early:', JSON.stringify(s0.match.hist)); }
       // scripted PIT: the cop hits the runner's rear quarter from the side at speed
       await hook(a, 'hold', 'b', { gas: 0.4 }); await hook(a, 'hold', 'a', { gas: 0.35 });
       await a.evaluate(() => { const g = window.__getaway; g.teleport('a', -300, 40, Math.PI / 2, 20); g.teleport('b', -303.2, 38.1, Math.PI / 2 + 0.15, 23); });
@@ -174,7 +177,7 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       assert(s.a.hp <= 80, `PIT! runner spun, ${(100 - s.a.hp).toFixed(0)} damage`);
       await shot(a, 'practice-pit');
       // box them in: runner stopped, cop alongside → busted after 3 s
-      await hook(a, 'hold', 'a', { brake: 1 }); await hook(a, 'hold', 'b', { brake: 1 });
+      await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
       await a.evaluate(() => { const g = window.__getaway; const s = g.state(); g.teleport('b', s.a.x - 7, s.a.z, s.a.yaw, 0); g.setCar('a', { vx: 0, vz: 0, r: 0 }); });
       await until(a, () => { const R = window.__getaway.state().R; return R && R.over; }, null, 8000, 'busted');
       s = await st(a);
@@ -186,12 +189,12 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       s = await st(a);
       assert(s.a.role === 'cop' && s.b.role === 'runner' && s.a.spikesLeft === 3, 'round 2: roles swapped; you are the cop with 3 spike strips');
       // spikes: placement rules
-      await hook(a, 'hold', 'a', { brake: 1 }); await hook(a, 'hold', 'b', { brake: 1 });
+      await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
       await a.evaluate(() => { const g = window.__getaway; g.teleport('a', -360, 40, Math.PI / 2, 0); g.teleport('b', -200, 40, Math.PI / 2, 0); });
       await wait(200);
       assert(/far/i.test(await hook(a, 'mapTap', 300, 40)), 'a strip more than 400 m away is refused');
       assert(/close/i.test(await hook(a, 'mapTap', -195, 40)), 'a strip on top of the runner is refused');
-      assert(/road/i.test(await hook(a, 'mapTap', -150, 70)), 'a strip away from any road is refused');
+      assert(/road/i.test(await hook(a, 'mapTap', -400, 520)), 'a strip away from any road is refused');
       assert((await hook(a, 'mapTap', -120, 41)) === true && (await st(a)).a.spikesLeft === 2, 'a strip ahead of the runner snaps to the road (2 left)');
       await hook(a, 'openMap'); await wait(400); await shot(a, 'practice-map'); await hook(a, 'closeMap');
       await wait(1400); // deploys after 1.2 s
@@ -216,7 +219,7 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       // round 3: escape by losing the heat (far away, out of sight)
       await until(a, () => window.__getaway.state().R.idx === 2, null, 12000, 'round 3');
       await phase(a, 'chase', 12000);
-      await hook(a, 'hold', 'a', { brake: 1 }); await hook(a, 'hold', 'b', { brake: 1 });
+      await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
       await a.evaluate(() => { const g = window.__getaway; g.teleport('a', -420, -240, Math.PI / 2, 0); g.teleport('b', 380, 320, Math.PI / 2, 0); });
       await until(a, () => window.__getaway.state().a.esc > 0.3, null, 6000, 'escape meter fills');
       await shot(a, 'practice-heat');
@@ -289,11 +292,11 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       const nearA = await hook(a, 'trafficNear', -100, 40, 300, 88.8); const nearB = await hook(b, 'trafficNear', -100, 40, 300, 88.8);
       assert(JSON.stringify(nearA) === JSON.stringify(nearB), `the same cars in the same places at the same moment (${nearA.length} near spawn)`);
       // the partner car shows up where it really is
-      await hook(a, 'hold', 'a', { brake: 1 }); await hook(b, 'hold', 'b', { brake: 1 });
+      await hook(a, 'hold', 'a', { hand: true }); await hook(b, 'hold', 'b', { hand: true });
       await a.evaluate(() => window.__getaway.teleport('a', -100, 40, Math.PI / 2, 0));
       await wait(1200);
       sb = await st(b);
-      assert(Math.hypot(sb.partnerSeen.shown.x + 100, sb.partnerSeen.shown.z - 40) < 1.5, 'the cop’s phone draws the runner where it is');
+      assert(Math.hypot(sb.partnerSeen.shown.x + 100, sb.partnerSeen.shown.z - 40) < 1.5, `the cop’s phone draws the runner where it is (${JSON.stringify(sb.partnerSeen.shown)})`);
       // both drive (bots) for a bit
       await hook(a, 'auto', 'a', true); await hook(b, 'auto', 'b', true);
       await wait(5000);
@@ -302,13 +305,14 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       assert(Math.hypot(sa.a.x - sb.partnerSeen.shown.x, sa.a.z - sb.partnerSeen.shown.z) < 8, `dead reckoning keeps the remote car close (${Math.hypot(sa.a.x - sb.partnerSeen.shown.x, sa.a.z - sb.partnerSeen.shown.z).toFixed(1)} m behind the truth)`);
       await hook(a, 'auto', 'a', false); await hook(b, 'auto', 'b', false);
       // boxed in: the runner's phone decides, using the predicted cop
-      await hook(a, 'hold', 'a', { brake: 1 }); await hook(b, 'hold', 'b', { brake: 1 });
+      await hook(a, 'hold', 'a', { hand: true }); await hook(b, 'hold', 'b', { hand: true });
       await a.evaluate(() => window.__getaway.teleport('a', -100, 40, Math.PI / 2, 0));
       await b.evaluate(() => window.__getaway.teleport('b', -109, 40, Math.PI / 2, 0));
       await waitOver(h, 0);
       sa = await st(a); sb = await st(b);
-      assert(sa.R.result.outcome === 'busted' && sb.R.result.outcome === 'busted' && sa.R.result.reason === 'boxed', 'BUSTED (boxed) on both phones');
-      assert(sa.match.scores.b === 1 && sb.match.scores.b === 1, 'Sydney scores the bust on both phones');
+      if (!sa.match.hist[0] || !sb.match.hist[0]) console.log('DEBUG', JSON.stringify([sa.phase, sa.R, sa.match, sb.phase, sb.R, sb.match]));
+      assert(sa.match.hist[0].outcome === 'busted' && sb.match.hist[0].outcome === 'busted' && sa.match.hist[0].reason === 'boxed', 'BUSTED (boxed) on both phones');
+      assert(sa.match.scores.b === 1 && sb.match.scores.b === 1, `Sydney scores the bust on both phones (${JSON.stringify([sa.match.scores, sb.match.scores, sa.match.hist, sb.match.hist])})`);
       await wait(1300); await shot(a, 'live-busted-runner'); await shot(b, 'live-busted-cop');
       // round 2: swap
       await until(a, () => window.__getaway.state().R.idx === 1, null, 15000, 'round 2 (host)');
@@ -317,7 +321,7 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       sa = await st(a);
       assert(sa.R.runner === 'b' && sa.a.role === 'cop' && sa.a.spikesLeft === 4, 'round 2: roles swapped');
       // spikes over the network
-      await hook(a, 'hold', 'a', { brake: 1 }); await hook(b, 'hold', 'b', { brake: 1 });
+      await hook(a, 'hold', 'a', { hand: true }); await hook(b, 'hold', 'b', { hand: true });
       await b.evaluate(() => window.__getaway.teleport('b', -300, 40, Math.PI / 2, 0));
       await a.evaluate(() => window.__getaway.teleport('a', -380, 40, Math.PI / 2, 0));
       await wait(900);
@@ -335,17 +339,17 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       await hook(a, 'shortenRound', 1500);
       await waitOver(h, 1);
       sa = await st(a); sb = await st(b);
-      assert(sa.R.result.reason === 'time' && sb.R.result.reason === 'time' && sa.match.scores.b === 2, 'ESCAPED by the clock, on both phones');
+      assert(sa.match.hist[1].reason === 'time' && sb.match.hist[1].reason === 'time' && sa.match.scores.b === 2, 'ESCAPED by the clock, on both phones');
       // round 3: Emerson runs and loses the heat
       await until(a, () => window.__getaway.state().R.idx === 2, null, 15000, 'round 3');
       await phase(a, 'chase', 15000); await phase(b, 'chase', 15000);
-      await hook(a, 'hold', 'a', { brake: 1 }); await hook(b, 'hold', 'b', { brake: 1 });
+      await hook(a, 'hold', 'a', { hand: true }); await hook(b, 'hold', 'b', { hand: true });
       await a.evaluate(() => window.__getaway.teleport('a', -420, -240, Math.PI / 2, 0));
       await b.evaluate(() => window.__getaway.teleport('b', 380, 320, Math.PI / 2, 0));
       await until(b, () => window.__getaway.state().a.esc > 0.2, null, 8000, 'the cop sees the escape meter');
       await waitOver(h, 2);
       sa = await st(a);
-      assert(sa.R.result.reason === 'heat' && sa.match.scores.a === 1, 'ESCAPED by losing the heat');
+      assert(sa.match.hist[2].reason === 'heat' && sa.match.scores.a === 1, 'ESCAPED by losing the heat');
       // round 4: Sydney runs into the canal → 2–2, decided on the tiebreak
       await until(a, () => window.__getaway.state().R.idx === 3, null, 15000, 'round 4');
       await phase(b, 'chase', 15000);
@@ -379,15 +383,15 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       await hook(a, 'auto', 'a', true); await hook(b, 'auto', 'b', true);
       await wait(4000);
       await hook(a, 'auto', 'a', false); await hook(b, 'auto', 'b', false);
-      await hook(a, 'hold', 'a', { brake: 1 }); await hook(b, 'hold', 'b', { brake: 1 });
+      await hook(a, 'hold', 'a', { hand: true }); await hook(b, 'hold', 'b', { hand: true });
       await a.evaluate(() => window.__getaway.teleport('a', -100, 40, Math.PI / 2, 0));
       await b.evaluate(() => window.__getaway.teleport('b', -108, 40, Math.PI / 2, 0));
       await waitOver(h, 0, 25000);
       const sa = await st(a); const sb = await st(b);
-      assert(sa.R.result && sb.R.result && sa.R.result.outcome === sb.R.result.outcome, `both agree under loss: ${sa.R.result.outcome}`);
+      assert(sa.match.hist[0] && sb.match.hist[0] && sa.match.hist[0].outcome === sb.match.hist[0].outcome, `both agree under loss: ${sa.match.hist[0].outcome} (${sa.match.hist[0].reason})`);
       await until(b, () => window.__getaway.state().R.idx === 1, null, 20000, 'round 2 under loss');
       await phase(a, 'chase', 20000);
-      await hook(a, 'hold', 'a', { brake: 1 }); await hook(b, 'hold', 'b', { brake: 1 });
+      await hook(a, 'hold', 'a', { hand: true }); await hook(b, 'hold', 'b', { hand: true });
       await b.evaluate(() => window.__getaway.teleport('b', -300, 40, Math.PI / 2, 0));
       await a.evaluate(() => window.__getaway.teleport('a', -380, 40, Math.PI / 2, 0));
       await wait(1200);

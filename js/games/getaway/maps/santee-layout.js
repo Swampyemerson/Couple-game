@@ -1,7 +1,7 @@
 // Santee map: turns the authored data (santee-data.js) into the contract fields: roads (with ramps,
 // bridges, cul-de-sacs, footpaths), open ground, solids, water, spawns, landmarks and the height
 // field, plus a `deco` record that santee-build.js draws. Deterministic: only prng(seed) is used.
-import { prng, clamp, smooth, smoothLine, segD2, polyLen, along, resample, pip, polyBox, ellipse, rectPoly, ribbon, obbHit, Grid, yawOf } from './santee-util.js';
+import { prng, clamp, smooth, smoothLine, segD2, polyLen, along, resample, pip, polyBox, ellipse, rectPoly, ribbon, obbHit, Grid } from './santee-util.js';
 import { BOUNDS, MAJOR, RIVER, RIVER_HALF, ZONES, COLLECTORS, WESTON, CENTERS, PARKS, SCHOOLS, AIRPORT, LAKES, LAKES_LOOP, POOLS, HILLS } from './santee-data.js';
 
 const PI = Math.PI;
@@ -933,8 +933,9 @@ export function* layoutSteps() {
     const tx = a.tx * dirSign, tz = a.tz * dirSign;
     // drive on the right: offset to the right-hand lane
     const rx = -tz * lane, rz = tx * lane;
-    const yaw = Math.round(yawOf(tx, tz) * 1000) / 1000;
-    spawns.push({ runner: { x: Math.round((a.x + rx) * 10) / 10, z: Math.round((a.z + rz) * 10) / 10, yaw }, cop: { x: Math.round((b.x + b.tx * 0 + rx) * 10) / 10, z: Math.round((b.z + rz) * 10) / 10, yaw: Math.round(yawOf(b.tx * dirSign, b.tz * dirSign) * 1000) / 1000 }, road: name, where: which || name });
+    // spawn yaw is a compass bearing in radians: 0 = north (-z), PI/2 = east (+x)
+    const yaw = Math.round(Math.atan2(tx, -tz) * 1000) / 1000;
+    spawns.push({ runner: { x: Math.round((a.x + rx) * 10) / 10, z: Math.round((a.z + rz) * 10) / 10, yaw }, cop: { x: Math.round((b.x + b.tx * 0 + rx) * 10) / 10, z: Math.round((b.z + rz) * 10) / 10, yaw: Math.round(Math.atan2(b.tx * dirSign, -b.tz * dirSign) * 1000) / 1000 }, road: name, where: which || name });
   }
   function nearestOnR(r, x, z) {
     let bd = Infinity, bs = 0, acc = 0;

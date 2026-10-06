@@ -464,8 +464,9 @@ export function createGame(el, api) {
     S.phase = 'final';
     const sc = `${fin.scores.a}–${fin.scores.b}`;
     let res;
-    if (ai()) res = { winner: null, text: fin.winner === human() ? `You beat the AI ${fin.scores.a}–${fin.scores.b}` : fin.winner ? `The AI won ${fin.scores.b}–${fin.scores.a}` : `Practice: ${sc}`, sub: 'Practice vs AI' };
-    else res = { winner: fin.winner, text: fin.winner ? `${api.name(fin.winner)} wins ${Math.max(fin.scores.a, fin.scores.b)}–${Math.min(fin.scores.a, fin.scores.b)}` : `All square, ${sc}`, sub: fin.tie && fin.winner ? 'Tiebreak: longest time on the run' : 'Getaway', score: { a: fin.scores.a, b: fin.scores.b } };
+    const tb = fin.tie && fin.winner ? ' on the tiebreak' : '';
+    if (ai()) res = { winner: null, text: fin.winner === human() ? `You beat the AI${tb}, ${sc}` : fin.winner ? `The AI won${tb}, ${fin.scores.a}–${fin.scores.b}` : `Practice: ${sc}`, sub: tb ? 'Tiebreak: longest time on the run' : 'Practice vs AI' };
+    else res = { winner: fin.winner, text: fin.winner ? (tb ? `${api.name(fin.winner)} wins on the tiebreak, ${sc}` : `${api.name(fin.winner)} wins ${Math.max(fin.scores.a, fin.scores.b)}–${Math.min(fin.scores.a, fin.scores.b)}`) : `All square, ${sc}`, sub: tb ? 'Tiebreak: longest time on the run' : 'Getaway', score: { a: fin.scores.a, b: fin.scores.b } };
     S.result = res;
     hud.card(null);
     for (const w of viewers()) H0().view(w).stamp(fin.winner ? `${nameOf(fin.winner).toUpperCase()} WINS` : 'DRAW', fin.winner || '');
@@ -924,7 +925,7 @@ export function createGame(el, api) {
     const f = carViews.cop.flash(dt, on);
     if (f >= 0) {
       const sy = Math.sin(cc.yaw); const cy = Math.cos(cc.yaw);
-      U.uSiren.value.set(cc.x + sy * 0.4, cc.y + 1.8, cc.z - cy * 0.4, P.dark ? 1 : 0.5);
+      U.uSiren.value.set(cc.x + sy * 0.4, cc.y + 1.8, cc.z - cy * 0.4, P.dark ? 1 : 0.3);
       U.uSirenCol.value.setRGB(f === 0 ? 1 : 0.15, f === 0 ? 0.12 : 0.35, f === 0 ? 0.15 : 1);
     } else U.uSiren.value.w = 0;
     // my headlights at night

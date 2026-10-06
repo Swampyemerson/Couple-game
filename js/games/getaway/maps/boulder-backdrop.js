@@ -8,6 +8,7 @@
 // 40.00165, −105.30749. Others: South Boulder Peak 39.9542, −105.2990, 2556 m; Mt Sanitas
 // 40.0300, −105.3060, 2069 m; Second / Third Flatiron 39.9876, −105.2930 / 39.9848, −105.2916.
 import { P, S, BOUNDS, rawHeight } from './boulder-data.js';
+import { layout, height, isFarMtn } from './boulder-layout.js';
 
 const CITY = 1655; // metres: downtown's elevation (map y = 0)
 const up = (m) => (m - CITY) * S;
@@ -68,16 +69,27 @@ export function buildBackdrop(THREE, kit = {}) {
   };
   const xs = []; for (let x = -4200; x <= 7800; x += x < -900 || x > 2100 ? 240 : 60) xs.push(x);
   const zs = []; for (let z = -5600; z <= 6600; z += z < -700 || z > 2000 ? 240 : 60) zs.push(z);
-  const Hh = (x, z) => (x > inner.x0 && x < inner.x1 && z > inner.z0 && z < inner.z1 ? rawHeight(x, z) - 1.5 : rangeHeight(x, z) - (x > 0 && z < 0 ? 0.6 : 0.6));
+  const inIn = (x, z) => x > inner.x0 && x < inner.x1 && z > inner.z0 && z < inner.z1;
+  const Hh = (x, z) => (inIn(x, z) ? height(x, z) - 0.4 : rangeHeight(x, z) - 0.6);
   const hs = zs.map((z) => xs.map((x) => Hh(x, z)));
   for (let j = 0; j < zs.length - 1; j++) for (let i = 0; i < xs.length - 1; i++) {
     const xa = xs[i]; const xb = xs[i + 1]; const za = zs[j]; const zb = zs[j + 1];
-    if (xa >= inner.x0 && xb <= inner.x1 && za >= inner.z0 && zb <= inner.z1) continue; // the in-town terrain covers this
+    if (xa >= inner.x0 && xb <= inner.x1 && za >= inner.z0 && zb <= inner.z1 && !isFarMtn((xa + xb) / 2 + 30, (za + zb) / 2)) continue; // the town terrain covers this
     const p00 = [xa, hs[j][i], za]; const p10 = [xb, hs[j][i + 1], za]; const p01 = [xa, hs[j + 1][i], zb]; const p11 = [xb, hs[j + 1][i + 1], zb];
     const cA = colAt((xa + xb) / 2, (za + zb) / 2, (p00[1] + p10[1] + p11[1]) / 3); const cB = colAt((xa + xb) / 2 + 1, (za + zb) / 2 + 1, (p00[1] + p11[1] + p01[1]) / 3);
     tri(p00, p11, p10, cA); tri(p00, p01, p11, cB);
   }
 
+  // the foothill forest on the far flank (one cone each; fog-free so the hills read crisp)
+  for (const d of layout().decor) {
+    if (!d.far) continue;
+    const s = d.s; const g = d.c < 0.5 ? forest : C('#3f5f42'); const h = 7.5 * s; const r = 2.6 * s; const y = d.y - 0.5;
+    for (let i = 0; i < 5; i++) {
+      const a0 = i / 5 * Math.PI * 2 + d.c * 6; const a1 = (i + 1) / 5 * Math.PI * 2 + d.c * 6;
+      const p0 = [d.x + Math.cos(a0) * r, y, d.z + Math.sin(a0) * r]; const p1 = [d.x + Math.cos(a1) * r, y, d.z + Math.sin(a1) * r];
+      const am = (a0 + a1) / 2; triRaw(p1, p0, [d.x, y + h, d.z], i % 2 ? g : [g[0] * 0.85, g[1] * 0.85, g[2] * 0.85], [Math.cos(am), 0.5, Math.sin(am)]);
+    }
+  }
   // the Flatirons: tilted slabs of pink Fountain sandstone, steep faces to the east
   const face = C('#d9937a'); const faceD = C('#c27c66'); const edge = C('#8c5446');
   for (const f of FLATIRONS) {

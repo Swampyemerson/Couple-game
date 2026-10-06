@@ -6,7 +6,7 @@
 // Flagstaff Rd's switchbacks under the Flatirons. Data: boulder-data.js; layout:
 // boulder-layout.js; meshes: boulder-build.js; skyline: boulder-backdrop.js.
 import { BOUNDS, ROADS, OPEN, WATER, LANDMARKS, P } from './boulder-data.js';
-import { layout, height, pickSpawn } from './boulder-layout.js';
+import { layout, layoutGen, height, pickSpawn } from './boulder-layout.js';
 import { buildBoulder } from './boulder-build.js';
 import { buildBackdrop, PEAKS } from './boulder-backdrop.js';
 
@@ -15,7 +15,7 @@ const SPAWN_DEFS = [
   ['Pearl St', 1, 0.3, 1, 'Downtown, east on Pearl St'],
   ['Broadway', 0, 0.62, 1, 'Broadway, south through downtown'],
   ['28th St', 1, 0.45, -1, '28th St, northbound'],
-  ['US-36 Boulder Turnpike', 0, 0.62, -1, 'US-36, the Turnpike into town'],
+  ['US-36 Boulder Turnpike', 0, 0.42, -1, 'US-36, the Turnpike into town'],
   ['Moorhead Ave', 0, 0.33, 1, 'Martin Acres, down Moorhead Ave'],
   ['Baseline Rd', 0, 0.36, -1, 'Baseline Rd, west to Chautauqua'],
   ['Arapahoe Ave', 0, 0.62, 1, 'Arapahoe Ave, east Boulder'],
@@ -24,7 +24,7 @@ const SPAWN_DEFS = [
   ['Canyon Blvd', 0, 0.45, -1, 'Canyon Blvd, west toward the canyon'],
   ['Valmont Rd', 0, 0.45, 1, 'Valmont Rd, eastbound'],
   ['Table Mesa Dr', 0, 0.62, -1, 'Table Mesa Dr, westbound'],
-  ['Flagstaff Rd', 0, 0.82, -1, 'Flagstaff Rd, down the switchbacks'],
+  ['Flagstaff Rd', 0, 0.86, -1, 'Flagstaff Rd, down the switchbacks'],
 ];
 const SPAWNS = SPAWN_DEFS.map(([road, nth, f, dir, where]) => {
   const s = pickSpawn(road, f, 80, dir, nth);
@@ -43,15 +43,17 @@ export const BOULDER = {
   bounds: { ...BOUNDS },
   height,
   roads: ROADS,
-  open: OPEN.map(({ kind, poly }) => ({ kind, poly })),
+  get open() { return [...OPEN, ...layout().lots].map(({ kind, poly }) => ({ kind, poly })); },
   get solids() { return layout().solids; },
   water: WATER.map(({ poly }) => ({ poly })),
   spawns: SPAWNS,
   landmarks: [...LANDMARKS, ...FAR],
   sky: { top: '#5d9bd3', horizon: '#f3dcb0', fog: '#ead8b9', fogNear: 170, fogFar: 640, sun: { bearing: 255, elev: 24 } },
   /** Optional: generate the layout ahead of build(), in slices. */
-  async prepare(kit = {}) { layout(); if (kit.slice) await kit.slice(); },
+  async prepare(kit = {}) {
+    const it = layoutGen();
+    while (!it.next().done) if (kit.slice) await kit.slice();
+  },
   build(THREE, kit) { return buildBoulder(THREE, kit || {}); },
   backdrop(THREE, kit) { return buildBackdrop(THREE, kit || {}); },
 };
-export default BOULDER;

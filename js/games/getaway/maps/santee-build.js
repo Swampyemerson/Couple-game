@@ -536,6 +536,15 @@ function* buildSteps(THREE, kit, L) {
   if (!mat.vertexColors) { mat.vertexColors = true; mat.needsUpdate = true; }
   const atlas = makeAtlas(THREE);
   const signMat = atlas ? new THREE.MeshBasicMaterial({ map: atlas, toneMapped: false }) : null;
+  if (dark) { // dark mode is night: sink everything toward a cool dusk, keep the glows
+    for (const c of chunks.values()) {
+      const col = c.B.c, f = c.B.f;
+      for (let v = 0, i = 0; i < col.length; i += 3, v++) {
+        if (f[v] === 3) continue;
+        col[i] = col[i] * 0.5 + 0.03; col[i + 1] = col[i + 1] * 0.52 + 0.04; col[i + 2] = col[i + 2] * 0.6 + 0.09;
+      }
+    }
+  }
   let tris = 0, meshes = 0;
   for (const c of chunks.values()) {
     const cx = c.i * CH + CH / 2, cz = c.j * CH + CH / 2;
@@ -693,4 +702,3 @@ export function backdropSantee(THREE, kit, L) {
   return g;
 }
 
-export { SIGN_KEYS };

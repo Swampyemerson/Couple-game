@@ -110,7 +110,7 @@ function creekNS(name, kind, width, x, z0, z1, o = {}) {
 
 // Downtown, Whittier, Mapleton Hill: E–W
 add('Balsam Ave', 'street', 10, EW(Z.balsam, X.st4, X.folsom));
-add('Mapleton Ave', 'street', 10, EW(Z.mapleton, X.st4 - 40, X.folsom));
+add('Mapleton Ave', 'street', 10, EW(Z.mapleton, X.st4, X.folsom));
 add('Pine St', 'street', 10, EW(Z.pine, X.st4, X.st28));
 add('Spruce St', 'street', 10, EW(Z.spruce, X.st4, X.folsom));
 add('Pearl St alley', 'alley', 5.5, EW(Z.alleyN, X.st9, X.st19));
@@ -120,7 +120,7 @@ add('Pearl St alley', 'alley', 5.5, EW(Z.alleyS, X.st9, X.st19));
 add('Walnut St', 'street', 11, EW(Z.walnut, X.st9, X.st28));
 add('Canyon Blvd', 'arterial', 18, [...EW(Z.canyon, X.st30, -300).slice(0, -1), [-300, 120], [-345, 124], [-378, 133], [-404, 142]]);
 add('Arapahoe Ave', 'arterial', 14, EW(Z.arapahoe, -330, X.st55));
-add('Arapahoe Ave', 'arterial', 14, [[-330, 200], [-352, 192], [-372, 178], [-388, 160], [-398, 147], [-404, 142]], { bridge: true, clear: 3 });
+add('Arapahoe Ave', 'arterial', 14, [[-330, 200], [-352, 192], [-372, 178], [-388, 160], [-404, 142]], { bridge: true, clear: 3 });
 add('Pearl Pkwy', 'arterial', 16, [[X.st30, 0], [1090, -22], [1160, -55], [1253, -100], [1340, -140], [1450, -180], [1560, -210], [1680, -235], [1790, -250], [X.st55, -258]]);
 add('Valmont Rd', 'arterial', 14, [[X.folsom, Z.balsam], [620, -392], [700, -402], [832, -412], [940, -420], [1035, -426], [1150, -431], [1253, -435], [1400, -440], [1550, -442], [1700, -443], [X.st55, -443]]);
 // N–S
@@ -143,7 +143,7 @@ creekNS('28th St', 'arterial', 20, X.st28, -412, Z.baseline);
 add('29th St', 'street', 10, NS(X.st29, Z.pearl, Z.canyon));
 creekNS('30th St', 'arterial', 14, X.st30, -426, Z.baseline);
 creekNS('Foothills Pkwy', 'arterial', 16, X.foothills, -435, Z.baseline);
-add('Foothills Pkwy', 'arterial', 16, [[X.foothills, Z.baseline], [1255, 980], [1262, 1050], [1280, 1120], [1310, 1185], [1350, 1250], [1395, 1305], usPt(745, 9), usPt(790, 0)]);
+add('Foothills Pkwy', 'arterial', 16, [[X.foothills, Z.baseline], [1255, 980], [1262, 1050], [1280, 1120], [1310, 1185], [1350, 1250], [1395, 1305], usPt(745, 11), usPt(800, 5)]);
 creekNS('55th St', 'arterial', 12, X.st55, -443, 1655);
 // University Hill + CU
 add('College Ave', 'street', 9, EW(Z.college, X.st9, 50));
@@ -162,7 +162,7 @@ add('Baseline Rd', 'arterial', 16, [[-418, Z.baseline], ...EW(Z.baseline, -380, 
 add('Kinnikinic Rd', 'street', 7, [[-52, 909], [-50, 950], [-62, 990], [-100, 1012], [-150, 1006], [-185, 978], [-196, 940], [-200, 909]]);
 export const FLAGSTAFF = [[-418, 909], [-436, 872], [-450, 830], [-460, 790], [-466, 758], [-478, 734], [-498, 726], [-514, 740], [-519, 772], [-524, 812], [-532, 848], [-548, 866], [-570, 864], [-584, 844], [-590, 806], [-596, 766], [-604, 726], [-614, 700], [-630, 690], [-646, 700], [-654, 726], [-656, 760], [-654, 800]];
 add('Flagstaff Rd', 'street', 8, FLAGSTAFF);
-add('Flagstaff Summit Rd', 'street', 7, (() => { const c = [-628, 836]; const pts = []; for (let i = 0; i < 12; i++) { const a = (i / 12) * Math.PI * 2 + Math.PI * 0.5; pts.push([c[0] + Math.cos(a) * 40, c[1] - Math.sin(a) * 34]); } return pts; })(), { closed: true });
+add('Flagstaff Summit Rd', 'street', 7, (() => { const c = [-650, 838]; const pts = []; for (let i = 0; i < 12; i++) { const a = (i / 12) * Math.PI * 2 + Math.PI * 0.5; pts.push([c[0] + Math.cos(a) * 40, c[1] - Math.sin(a) * 34]); } return pts; })(), { closed: true });
 // Boulder Creek Path: a bike path (alley) on the south bank, under every bridge
 export const CREEK = [[-690, 152], [-600, 150], [-520, 151], [-450, 153], [-380, 156], [-300, 157], [-200, 158], [-100, 159], [0, 160], [100, 161], [200, 162], [300, 162], [400, 163], [500, 164], [600, 164], [700, 164], [832, 164], [935, 162], [1035, 160], [1150, 158], [1253, 156], [1400, 152], [1550, 150], [1700, 148], [1905, 146]];
 add('Boulder Creek Path', 'alley', 5, [[-424, 168], [-380, 170], ...CREEK.filter(([x]) => x > -350 && x < 990).map(([x, z]) => [x, z + 10]), [990, 175], [1008, 186], [1014, 196]], { traffic: false });
@@ -187,11 +187,19 @@ add('NCAR Rd', 'street', 9, [[480, 1730], [440, 1712], [400, 1684], [362, 1652],
 add('NCAR mesa loop', 'street', 8, (() => { const c = [252, 1600]; const pts = []; for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2; pts.push([c[0] + Math.cos(a) * 40, c[1] + Math.sin(a) * 32]); } return pts; })(), { closed: true });
 add('', 'street', 9, [...NS(420, Z.baseline, 1500), [430, 1560], [452, 1640], [470, 1700], [480, 1730]]);
 add('', 'street', 9, [...EW(1200, 420, 790)]);
+add('', 'street', 9, EW(1050, 420, 708));
+add('', 'street', 9, EW(1360, 420, 868));
+add('', 'street', 9, EW(1560, 431, 976));
+add('', 'street', 9, NS(610, Z.baseline, 1721));
+add('', 'street', 9, EW(1060, 1262, X.st55));
+add('', 'street', 9, NS(1400, Z.baseline, 1215));
+add('', 'street', 9, NS(1720, Z.baseline, 1380));
+add('', 'street', 9, EW(1380, 1560, X.st55));
 // east Boulder
 add('', 'street', 9, EW(1215, 1320, X.st55));
-add('', 'street', 9, NS(1560, Z.baseline, 1215));
+add('', 'street', 9, NS(1560, Z.baseline, 1380));
 add('Discovery Dr', 'street', 10, [[X.foothills, 420], [1400, 420], [1560, 420], [1700, 420], [X.st55, 420]]);
-add('Pearl Pkwy frontage', 'street', 9, NS(1450, -180, Z.arapahoe));
+creekNS('Pearl Pkwy frontage', 'street', 9, 1450, -180, 194);
 add('Junction Pl', 'street', 9, NS(1140, -431, -48));
 
 // Martin Acres: derived from the Moorhead frame (clipped to Broadway / Table Mesa / Baseline)

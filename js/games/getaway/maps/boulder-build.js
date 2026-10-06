@@ -3,29 +3,29 @@
 // rails, rocks, street furniture and the decor forest. One merged mesh per 200 m chunk (one
 // material: vertex colours over the facade atlas), so a chunk costs one draw call.
 import { BOUNDS, OPEN, WATER, CREEK, CREEK_HW, MALL, footX } from './boulder-data.js';
-import { layout, smoothedRoads, height, HEIGHT_GRID, zoneAt, SIDEWALK, mulberry } from './boulder-layout.js';
+import { layout, smoothedRoads, height, HEIGHT_GRID, zoneAt, SIDEWALK, mulberry, isFarMtn } from './boulder-layout.js';
 import { makeAtlas, tileUV, T } from './boulder-atlas.js';
 
 // ── merged-geometry buffer ───────────────────────────────────────────────────
 const WHITE_UV = (() => { const [u0, v0, u1, v1] = tileUV(T.white); return [(u0 + u1) / 2, (v0 + v1) / 2]; })();
 class Buf {
-  constructor() { this.p = []; this.n = []; this.u = []; this.c = []; this.i = []; this.f = []; this.v = 0; this.fxv = 0; }
-  _fx(k) { for (let q = 0; q < k; q++) this.f.push(this.fxv); }
-  /** Ink outline (inverted hull) for the vertices/triangles added since (v0, i0): positions
-   *  pushed out along their averaged normals by `ol`, winding reversed, unlit ink colour. */
-  hull(v0, i0, ol, ink) {
-    const v1 = this.v; const i1 = this.i.length; const acc = new Map(); const key = (q) => `${Math.round(this.p[q * 3] * 50)},${Math.round(this.p[q * 3 + 1] * 50)},${Math.round(this.p[q * 3 + 2] * 50)}`;
-    for (let q = v0; q < v1; q++) { const k = key(q); let e = acc.get(k); if (!e) { e = [0, 0, 0]; acc.set(k, e); } e[0] += this.n[q * 3]; e[1] += this.n[q * 3 + 1]; e[2] += this.n[q * 3 + 2]; }
-    const base = this.v;
-    for (let q = v0; q < v1; q++) {
-      const e = acc.get(key(q)); const l = Math.hypot(e[0], e[1], e[2]) || 1;
-      this.p.push(this.p[q * 3] + e[0] / l * ol, this.p[q * 3 + 1] + e[1] / l * ol, this.p[q * 3 + 2] + e[2] / l * ol);
-      this.n.push(-this.n[q * 3], -this.n[q * 3 + 1], -this.n[q * 3 + 2]); this.c.push(ink[0], ink[1], ink[2]); this.u.push(WHITE_UV[0], WHITE_UV[1]); this.f.push(1);
+  constructor() { this.cap = 2048; this.icap = 4096; this.v = 0; this.ni = 0; this.fxv = 0; this._alloc(); }
+  _alloc() { this.P = new Float32Array(this.cap * 3); this.N = new Float32Array(this.cap * 3); this.C = new Float32Array(this.cap * 3); this.U = new Float32Array(this.cap * 2); this.F = new Float32Array(this.cap); this.I = new Uint32Array(this.icap); }
+  grow(nv, ni) {
+    if (this.v + nv > this.cap) {
+      let c = this.cap; while (this.v + nv > c) c *= 2;
+      const o = { P: this.P, N: this.N, C: this.C, U: this.U, F: this.F }; this.cap = c;
+      this.P = new Float32Array(c * 3); this.P.set(o.P); this.N = new Float32Array(c * 3); this.N.set(o.N); this.C = new Float32Array(c * 3); this.C.set(o.C);
+      this.U = new Float32Array(c * 2); this.U.set(o.U); this.F = new Float32Array(c); this.F.set(o.F);
     }
-    for (let k = i0; k < i1; k += 3) this.i.push(base + this.i[k] - v0, base + this.i[k + 2] - v0, base + this.i[k + 1] - v0);
-    this.v += v1 - v0;
+    if (this.ni + ni > this.icap) { let c = this.icap; while (this.ni + ni > c) c *= 2; const a = new Uint32Array(c); a.set(this.I); this.I = a; this.icap = c; }
   }
-  /** Quad a→b→c→d (counter-clockwise seen from `hint`'s side), colour [r,g,b], uv rect or null. */
+  vert(x, y, z, nx, ny, nz, c, u, w, f) {
+    const k = this.v++; const k3 = k * 3;
+    this.P[k3] = x; this.P[k3 + 1] = y; this.P[k3 + 2] = z; this.N[k3] = nx; this.N[k3 + 1] = ny; this.N[k3 + 2] = nz;
+    this.C[k3] = c[0]; this.C[k3 + 1] = c[1]; this.C[k3 + 2] = c[2]; this.U[k * 2] = u; this.U[k * 2 + 1] = w; this.F[k] = f;
+  }
+  /** Quad a→b→c→d, colour [r,g,b], uv rect or null; `hint` = which side is the front. */
   quad(a, b, c, d, col, uv, hint) {
     const ux = b[0] - a[0]; const uy = b[1] - a[1]; const uz = b[2] - a[2];
     const vx = d[0] - a[0]; const vy = d[1] - a[1]; const vz = d[2] - a[2];
@@ -33,13 +33,13 @@ class Buf {
     let flip = false;
     if (hint && nx * hint[0] + ny * hint[1] + nz * hint[2] < 0) { flip = true; nx = -nx; ny = -ny; nz = -nz; }
     const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l;
-    const v = this.v;
-    for (const p of [a, b, c, d]) { this.p.push(p[0], p[1], p[2]); this.n.push(nx, ny, nz); this.c.push(col[0], col[1], col[2]); }
-    this._fx(4);
-    if (uv) this.u.push(uv[0], uv[1], uv[2], uv[1], uv[2], uv[3], uv[0], uv[3]);
-    else for (let k = 0; k < 4; k++) this.u.push(WHITE_UV[0], WHITE_UV[1]);
-    if (flip) this.i.push(v, v + 2, v + 1, v, v + 3, v + 2); else this.i.push(v, v + 1, v + 2, v, v + 2, v + 3);
-    this.v += 4;
+    this.grow(4, 6); const v = this.v; const f = this.fxv;
+    const u0 = uv ? uv[0] : WHITE_UV[0]; const v0 = uv ? uv[1] : WHITE_UV[1]; const u1 = uv ? uv[2] : WHITE_UV[0]; const v1 = uv ? uv[3] : WHITE_UV[1];
+    this.vert(a[0], a[1], a[2], nx, ny, nz, col, u0, v0, f); this.vert(b[0], b[1], b[2], nx, ny, nz, col, u1, v0, f);
+    this.vert(c[0], c[1], c[2], nx, ny, nz, col, u1, v1, f); this.vert(d[0], d[1], d[2], nx, ny, nz, col, u0, v1, f);
+    const I = this.I; let n = this.ni;
+    if (flip) { I[n++] = v; I[n++] = v + 2; I[n++] = v + 1; I[n++] = v; I[n++] = v + 3; I[n++] = v + 2; } else { I[n++] = v; I[n++] = v + 1; I[n++] = v + 2; I[n++] = v; I[n++] = v + 2; I[n++] = v + 3; }
+    this.ni = n;
   }
   tri(a, b, c, col, hint, uvs) {
     const ux = b[0] - a[0]; const uy = b[1] - a[1]; const uz = b[2] - a[2];
@@ -48,21 +48,37 @@ class Buf {
     let flip = false;
     if (hint && nx * hint[0] + ny * hint[1] + nz * hint[2] < 0) { flip = true; nx = -nx; ny = -ny; nz = -nz; }
     const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l;
-    const v = this.v;
-    for (const p of [a, b, c]) { this.p.push(p[0], p[1], p[2]); this.n.push(nx, ny, nz); this.c.push(col[0], col[1], col[2]); }
-    this._fx(3);
-    if (uvs) this.u.push(...uvs); else for (let k = 0; k < 3; k++) this.u.push(WHITE_UV[0], WHITE_UV[1]);
-    if (flip) this.i.push(v, v + 2, v + 1); else this.i.push(v, v + 1, v + 2);
-    this.v += 3;
+    this.grow(3, 3); const v = this.v; const f = this.fxv;
+    const U = uvs || [WHITE_UV[0], WHITE_UV[1], WHITE_UV[0], WHITE_UV[1], WHITE_UV[0], WHITE_UV[1]];
+    this.vert(a[0], a[1], a[2], nx, ny, nz, col, U[0], U[1], f); this.vert(b[0], b[1], b[2], nx, ny, nz, col, U[2], U[3], f); this.vert(c[0], c[1], c[2], nx, ny, nz, col, U[4], U[5], f);
+    const I = this.I; let n = this.ni;
+    if (flip) { I[n++] = v; I[n++] = v + 2; I[n++] = v + 1; } else { I[n++] = v; I[n++] = v + 1; I[n++] = v + 2; }
+    this.ni = n;
   }
-  /** Indexed mesh with per-vertex normals (smooth), e.g. terrain or tree blobs. */
+  /** Indexed mesh with per-vertex normals (smooth), e.g. terrain. */
   mesh(pos, nrm, cols, idx) {
-    const v = this.v;
-    for (let k = 0; k < pos.length; k += 3) { this.p.push(pos[k], pos[k + 1], pos[k + 2]); this.n.push(nrm[k], nrm[k + 1], nrm[k + 2]); this.c.push(cols[k], cols[k + 1], cols[k + 2]); this.u.push(WHITE_UV[0], WHITE_UV[1]); this.f.push(this.fxv); }
-    for (const q of idx) this.i.push(v + q);
-    this.v += pos.length / 3;
+    const nv = pos.length / 3; this.grow(nv, idx.length); const v = this.v;
+    for (let k = 0; k < nv; k++) { const c = [cols[k * 3], cols[k * 3 + 1], cols[k * 3 + 2]]; this.vert(pos[k * 3], pos[k * 3 + 1], pos[k * 3 + 2], nrm[k * 3], nrm[k * 3 + 1], nrm[k * 3 + 2], c, WHITE_UV[0], WHITE_UV[1], this.fxv); }
+    for (let k = 0; k < idx.length; k++) this.I[this.ni++] = v + idx[k];
   }
-  get tris() { return this.i.length / 3; }
+  /** Ink outline (inverted hull) for what was added since (v0, i0): vertices pushed out along
+   *  their averaged normals by `ol`, winding reversed, unlit ink colour (fx 1). */
+  hull(v0, i0, ol, ink) {
+    const v1 = this.v; const i1 = this.ni; const nv = v1 - v0; const acc = new Map(); const P = this.P; const N = this.N;
+    const keys = new Float64Array(nv);
+    for (let q = 0; q < nv; q++) {
+      const k3 = (v0 + q) * 3; const key = Math.round(P[k3] * 40) * 73856093 + Math.round(P[k3 + 1] * 40) * 19349663 + Math.round(P[k3 + 2] * 40) * 83492791;
+      keys[q] = key; let e = acc.get(key); if (!e) { e = [0, 0, 0]; acc.set(key, e); } e[0] += N[k3]; e[1] += N[k3 + 1]; e[2] += N[k3 + 2];
+    }
+    this.grow(nv, i1 - i0); const base = this.v;
+    for (let q = 0; q < nv; q++) {
+      const k3 = (v0 + q) * 3; const e = acc.get(keys[q]); const l = Math.hypot(e[0], e[1], e[2]) || 1;
+      this.vert(P[k3] + e[0] / l * ol, P[k3 + 1] + e[1] / l * ol, P[k3 + 2] + e[2] / l * ol, -N[k3], -N[k3 + 1], -N[k3 + 2], ink, WHITE_UV[0], WHITE_UV[1], 1);
+    }
+    const I = this.I;
+    for (let k = i0; k < i1; k += 3) { I[this.ni++] = base + I[k] - v0; I[this.ni++] = base + I[k + 2] - v0; I[this.ni++] = base + I[k + 1] - v0; }
+  }
+  get tris() { return this.ni / 3; }
 }
 
 // ── colour helpers ─────────────────────────────────────────────────────────────
@@ -100,7 +116,7 @@ function ico() {
 }
 
 export async function buildBoulder(THREE, kit = {}) {
-  const t0 = performance.now();
+  const t0 = performance.now(); const TT = {}; let tl = t0; const mark = (k) => { const n = performance.now(); TT[k] = Math.round(n - tl); tl = n; };
   const slice = typeof kit.slice === 'function' ? () => kit.slice() : () => null;
   const quality = kit.quality || 'high';
   const low = quality === 'low';
@@ -179,7 +195,9 @@ export async function buildBoulder(THREE, kit = {}) {
       }
       for (let r = 0; r < rows - 1; r++) for (let c = 0; c < cols - 1; c++) {
         const a = r * cols + c;
-        if (nearCreek) { const xm = pos[a * 3] + step * HG.HC / 2; const zm = pos[a * 3 + 2] + step * HG.HC / 2; if (creekD(xm, zm) < 8.5) continue; }
+        const xm = pos[a * 3] + step * HG.HC / 2; const zm = pos[a * 3 + 2] + step * HG.HC / 2;
+        if (nearCreek && creekD(xm, zm) < 8.5) continue;
+        if (xm < footX(zm) - 40 && isFarMtn(xm - step * 4, zm) && isFarMtn(xm + step * 4, zm)) continue; // the backdrop draws the far flank
         idx.push(a, a + cols, a + 1, a + 1, a + cols, a + cols + 1);
       }
       buf.mesh(pos, nrm, col, idx); terrTris += idx.length / 3;
@@ -187,6 +205,7 @@ export async function buildBoulder(THREE, kit = {}) {
     await slice();
   }
 
+  mark('terrain');
   // ── Boulder Creek: water, rocky banks, grass shoulders ──────────────────────────────
   {
     const pts = CREEK; const W = rgb('#4b8fb5'); const Wd = rgb('#3d7ea3'); const bank = rgb('#a08c6c'); const grass = rgb('#86bd5c');
@@ -215,8 +234,9 @@ export async function buildBoulder(THREE, kit = {}) {
     for (const [a, b2, c2] of tr) buf.tri([w.poly[a][0], y, w.poly[a][1]], [w.poly[b2][0], y, w.poly[b2][1]], [w.poly[c2][0], y, w.poly[c2][1]], rgb('#4b8fb5'), [0, 1, 0]);
   }
 
+  mark('creek');
   // ── lots, plazas, the mall's bricks, the driveway ──────────────────────────────────
-  for (const o of OPEN) {
+  for (const o of [...OPEN, ...L.lots]) {
     const poly = o.poly; const c = poly.reduce((a, p) => [a[0] + p[0] / poly.length, a[1] + p[1] / poly.length], [0, 0]);
     const isRect = poly.length === 4;
     const paint = o.paint || 'asphalt';
@@ -254,14 +274,16 @@ export async function buildBoulder(THREE, kit = {}) {
   }
   await slice();
 
+  mark('lots');
   // ── sidewalks + curbs ───────────────────────────────────────────────────────────────
   {
     const top = rgb('#d3cdc1'); const curb = rgb('#b9b2a5'); const brk = rgb('#c79a80');
     for (const r of sm.list) {
       if (r.bridge || r.kind === 'highway' || r.kind === 'ramp' || r.kind === 'alley') continue;
+      const notR = (o) => o !== r && !o.bridge;
       for (const side of [-1, 1]) {
         let prev = null;
-        for (let k = 0; k < r.n; k++) {
+        for (let k = 0; k < r.n; k += (k + 2 < r.n ? 2 : 1)) {
           const x = r.x[k]; const z = r.z[k];
           const kk = Math.min(r.n - 1, k + 1); const kp = Math.max(0, k - 1);
           let tx = r.x[kk] - r.x[kp]; let tz = r.z[kk] - r.z[kp]; const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
@@ -270,7 +292,7 @@ export async function buildBoulder(THREE, kit = {}) {
           const w = SIDEWALK(zn);
           const ix = x + nx * (r.hw + 0.3); const iz = z + nz * (r.hw + 0.3); const ox = x + nx * (r.hw + w); const oz = z + nz * (r.hw + w);
           const inMall = ox > MALL.x0 - 1 && ox < MALL.x1 + 1 && oz > MALL.z0 - 1 && oz < MALL.z1 + 1;
-          const ok = w > 0 && !inMall && sm.clearance(ix + nx * 0.4, iz + nz * 0.4, (o) => o !== r && !o.bridge) > 0.2 && sm.clearance(ox, oz, (o) => o !== r && !o.bridge) > 0.2 && sm.clearance(ox, oz, (o) => o === r) > w - 0.6;
+          const ok = w > 0 && !inMall && sm.clearance(ix + nx * 0.4, iz + nz * 0.4, notR) > 0.2 && sm.clearance(ox, oz, notR) > 0.2;
           if (!ok) { prev = null; continue; }
           const hy = height(x, z); const cur = { i: [ix, hy + 0.15, iz], o: [ox, height(ox, oz) + 0.15, oz], ib: [ix, hy - 0.05, iz] };
           const ex = x + nx * (r.hw + 0.02); const ez = z + nz * (r.hw + 0.02); cur.e = [ex, hy + 0.155, ez]; cur.eb = [ex, hy - 0.05, ez];
@@ -286,20 +308,23 @@ export async function buildBoulder(THREE, kit = {}) {
   }
   await slice();
 
+  mark('sidewalks');
   // ── buildings ────────────────────────────────────────────────────────────────────
   const AWN = ['#2f6f5e', '#9b2f2f', '#2f4f7f', '#c08a2e', '#5b4a6b', '#3d6b3a'].map(rgb);
   let bc = 0;
   for (const b of L.buildings) {
-    const buf = B(b.x, b.z); const v0 = buf.v; const i0 = buf.i.length;
+    const buf = B(b.x, b.z); const v0 = buf.v; const i0 = buf.ni;
     drawBuilding(buf, b);
     if (OL && b.style !== 'stands') buf.hull(v0, i0, OL * (b.w > 30 || b.h > 14 ? 1.6 : 1), INK);
     if (++bc % 250 === 0) await slice();
   }
+  mark('buildings');
   // ── props: walls, rails, rocks, planters, buskers, the stadium turf, the home's details ──
   for (const p of L.props) drawProp(p);
   await slice();
+  mark('props');
   // ── decor trees (backyards, the foothill forest) ──────────────────────────────────
-  const decor = low ? L.decor.filter((_, i) => i % 3 === 0) : L.decor;
+  const decor = L.decor.filter((d, i) => !d.far && (!low || i % 3 === 0));
   for (const d of decor) drawTree(B(d.x, d.z), d);
   await slice();
   // Flagstaff summit: the stone amphitheatre inside the loop; Valmont's dirt jumps
@@ -308,24 +333,27 @@ export async function buildBoulder(THREE, kit = {}) {
     for (let a = 0; a < 7; a++) { const ang = Math.PI * (0.15 + a * 0.12); boxW(B(c[0], c[1]), c[0] + Math.cos(ang) * 14, y, c[1] - Math.sin(ang) * 11, 5, 0.7, 1.2, -ang + Math.PI / 2, rgb('#b48a6e')); }
   }
 
+  mark('decor');
   // flush: one mesh per chunk
   let tris = 0; let meshes = 0;
   for (const [grp, buf] of bufs) {
     if (!buf.v) continue;
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(buf.p, 3));
-    geo.setAttribute('normal', new THREE.Float32BufferAttribute(buf.n, 3));
-    geo.setAttribute('uv', new THREE.Float32BufferAttribute(buf.u, 2));
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(buf.c, 3));
-    geo.setAttribute('fx', new THREE.Float32BufferAttribute(buf.f, 1));
-    geo.setIndex(buf.v > 65535 ? new THREE.Uint32BufferAttribute(buf.i, 1) : new THREE.Uint16BufferAttribute(buf.i, 1));
+    const nv = buf.v;
+    geo.setAttribute('position', new THREE.BufferAttribute(buf.P.slice(0, nv * 3), 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(buf.N.slice(0, nv * 3), 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(buf.U.slice(0, nv * 2), 2));
+    geo.setAttribute('color', new THREE.BufferAttribute(buf.C.slice(0, nv * 3), 3));
+    geo.setAttribute('fx', new THREE.BufferAttribute(buf.F.slice(0, nv), 1));
+    geo.setIndex(new THREE.BufferAttribute(nv > 65535 ? buf.I.slice(0, buf.ni) : Uint16Array.from(buf.I.subarray(0, buf.ni)), 1));
     geo.computeBoundingSphere();
     const m = new THREE.Mesh(geo, mat); m.name = 'boulder-chunk'; m.userData.noMerge = true;
     if (grp.position && (grp.position.x || grp.position.y || grp.position.z)) m.position.set(-grp.position.x, -grp.position.y, -grp.position.z);
     m.matrixAutoUpdate = false; m.updateMatrix();
     grp.add(m); tris += buf.tris; meshes++;
   }
-  root.userData.stats = { tris, meshes, terrTris, buildMs: Math.round(performance.now() - t0), layoutMs: Math.round(L.ms), solids: L.solids.length, buildings: L.buildings.length };
+  mark('flush');
+  root.userData.stats = { TT, tris, meshes, terrTris, buildMs: Math.round(performance.now() - t0), layoutMs: Math.round(L.ms), solids: L.solids.length, buildings: L.buildings.length };
   return root;
 
   // ── helpers (hoisted) ─────────────────────────────────────────────────────────────
@@ -630,4 +658,3 @@ export async function buildBoulder(THREE, kit = {}) {
     }
   }
 }
-void footX;

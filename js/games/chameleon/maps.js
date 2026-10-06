@@ -170,7 +170,7 @@ function living(atlas) {
   atlas.add('gingham', P.check({ a: '#f7f3ea', b: C.sage, n: 4 }), { size: 'M' });
   atlas.add('curtain', P.stripes({ cols: [C.rose, '#f7f3ea', C.terracotta, '#f7f3ea'], widths: [3, 1, 1, 1], n: 2 }), { size: 'M' });
   atlas.add('wains', P.stripes({ cols: ['#6f8f7a', '#5f7f6a'], widths: [5, 1], n: 4 }), { size: 'M' });
-  atlas.add('ceilboards', P.stripes({ cols: ['#f3ead9', '#e2d6c0', '#efe5d2', '#d9ccb4'], widths: [7, 0.5, 7, 0.5], n: 3 }), { size: 'M' });
+  atlas.add('ceilboards', P.stripes({ cols: ['#fffaf0', '#e9dcc4', '#fbf4e6', '#e3d5bb'], widths: [7, 0.5, 7, 0.5], n: 3 }), { size: 'M' });
 
   return (b) => {
     const w = 10; const d = 8;
