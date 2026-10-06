@@ -86,7 +86,7 @@ const TRICKY = [
 const TIERS = [EASY, MEDIUM, TRICKY];
 const TIER_NAMES = ['Easy', 'Medium', 'Tricky'];
 const OFFS = [0, EASY.length, EASY.length + MEDIUM.length];
-const PROMPTS = [...EASY, ...MEDIUM, ...TRICKY].map((p) => { const all = p.split('|'); return { show: all[0], all }; });
+export const PROMPTS = [...EASY, ...MEDIUM, ...TRICKY].map((p) => { const all = p.split('|'); return { show: all[0], all }; });
 const tierOf = (i) => (i >= OFFS[2] ? 2 : i >= OFFS[1] ? 1 : 0);
 
 // ── guess matching ───────────────────────────────────────────────────
