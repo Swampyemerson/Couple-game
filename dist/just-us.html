@@ -14123,13 +14123,12 @@ registerGame({
       const sv = memo.saved;
       if (!sv || !s || s.ph !== 'reading' || s.n !== sv.n || ENDED.has(sv.n) || Date.now() - sv.at > 30 * 60000) return false;
       memo.saved = null;
-      B = { ...sv.B, btn: null, lit: null, seqLast: performance.now(), flashT0: 0, shownSecs: -1, pz: true, lastBad: null };
+      B = { ...sv.B, btn: null, lit: null, seqLast: performance.now(), flashT0: 0, shownSecs: -1, pz: wantPause(), lastBad: null };
       L.role = 'bomb'; memo.role = 'bomb';
       phase = 'bomb';
       renderBomb();
       api.setStatus('You have the bomb');
-      B.pz = !wantPause(); // force a change so syncBombPause publishes
-      syncBombPause();
+      pub();
       return true;
     }
 
@@ -21923,10 +21922,11 @@ function createFx(THREE, world) {
 function createRig(THREE) {
   const cam = new THREE.PerspectiveCamera(70, 1, 0.1, 460);
   const look = new THREE.Vector3();
-  const st = { x: 0, y: 4, z: 8, lx: 0, ly: 1, lz: -10, shake: 0, kick: 0, fov: 70, aspect: 1, ready: false, roll: 0, back: 0, orbit: 0 };
+  const st = { x: 0, y: 4, z: 8, lx: 0, ly: 1, lz: -10, shake: 0, kick: 0, fov: 70, aspect: 1, ready: false, roll: 0, back: 0, orbit: 0, short: false };
   return {
     cam,
-    resize(w, h) { st.aspect = w / Math.max(1, h); cam.aspect = st.aspect; cam.updateProjectionMatrix(); },
+    /** short: a landscape phone, where the lobby sheet covers the left half */
+    resize(w, h, short = false) { st.aspect = w / Math.max(1, h); st.short = !!short; cam.aspect = st.aspect; cam.updateProjectionMatrix(); },
     shake(a) { st.shake = Math.max(st.shake, a); },
     kick(a) { st.kick = Math.max(st.kick, a); },
     snap() { st.ready = false; },
@@ -21941,8 +21941,11 @@ function createRig(THREE) {
         // in front of the two runners, looking back at their faces, swaying slowly
         const a = Math.sin(t * 0.25) * 0.3;
         const R = portrait ? 11.5 : 7.6;
-        px = Math.sin(a) * R; py = portrait ? 2.3 : 2.1; pz = -tg.z - Math.cos(a) * R;
-        lx = 0; ly = portrait ? 0.35 : 1.0; lz = -tg.z;
+        // landscape phone: both runners in the right half, clear of the sheet (this camera looks back
+        // along the track, so its right is world -x: aim at +x)
+        const sx = st.short ? 5.4 : 0;
+        px = sx + Math.sin(a) * R; py = portrait ? 2.3 : 2.1; pz = -tg.z - Math.cos(a) * R;
+        lx = sx; ly = portrait ? 0.35 : 1.0; lz = -tg.z;
         k = 1 - Math.exp(-dt * 3);
       } else if (mode === 'finale') {
         st.orbit += dt * 0.5;
@@ -22283,7 +22286,7 @@ function createAudio({ musicOn = () => true, getCtx = null, mutedFn = null } = {
     // of firing a burst of overdue notes, so the loop can't stack or drift.
     if (nextT < ctx.currentTime) { if (nextT > 0) stats.resets++; nextT = ctx.currentTime + 0.05; }
     const silent = isMuted() || !musicOn();
-    while (nextT < ctx.currentTime + 0.14) { if (!silent) schedStep(nextT); nextT += dur; step++; stats.steps++; }
+    while (nextT < ctx.currentTime + 0.2) { if (!silent) schedStep(nextT); nextT += dur; step++; stats.steps++; } // 200 ms look-ahead rides out main-thread stalls
     if (nextT - ctx.currentTime > stats.maxAhead) stats.maxAhead = nextT - ctx.currentTime;
     const want = silent ? 0 : pausedDuck ? 0.16 : 0.55;
     // one automation event per change of target (not one every 45 ms while it glides)
@@ -23546,6 +23549,7 @@ function createGame(el, api) {
   const dbg = (typeof window !== 'undefined' && window.__RUSH_DEBUG) || null;
   const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
   const phoneish = coarse && Math.min(screen.width, screen.height) < 600;
+  const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
   const split = !live;
   const other = (w) => (w === 'a' ? 'b' : 'a');
   let dead = false;
@@ -23770,7 +23774,8 @@ function createGame(el, api) {
     renderer.setPixelRatio(baseDpr * scale);
     renderer.setSize(W, H, false);
     const vw = split ? W / 2 : W;
-    for (const w of viewers) { players[w].rig.resize(vw, H); if (players[w].view) players[w].view.resized(); }
+    const short = H < 560 && W > H;
+    for (const w of viewers) { players[w].rig.resize(vw, H, short); if (players[w].view) players[w].view.resized(); }
     if (overlay) overlay.resize(vw, H);
     root.classList.toggle('rr-short', H < 560 && W > H);
     root.classList.toggle('rr-narrow', vw < 370);
@@ -23998,7 +24003,7 @@ function createGame(el, api) {
     },
   };
 
-  function shake(w, a) { const rg = players[w] && players[w].rig; if (rg) rg.shake(a); }
+  function shake(w, a) { const rg = players[w] && players[w].rig; if (rg) rg.shake(reducedMotion ? a * 0.25 : a); }
 
   // projectiles (ink / zap visuals)
   const shots = [];
@@ -24599,8 +24604,8 @@ function createGame(el, api) {
       if (M.phase === 'lobby' || M.phase === 'loading') mode = 'lobby';
       else if (M.phase === 'finale' || M.phase === 'over') { mode = 'finale'; const w = M.result && M.result.winner; tg = w ? players[w].rs : p.rs; }
       else if (M.mode === 'tandem' && p.rs.down && p.r && p.r.hold && p.rs.downT > 0.9) { mode = 'spectate'; tg = players[other(p.w)].rs; }
-      if (lobbyish && split) rg.resize(W, H);
-      else if (split && rg.cam.aspect !== vw / H) rg.resize(vw, H);
+      if (lobbyish && split) rg.resize(W, H, H < 560 && W > H);
+      else if (split && rg.cam.aspect !== vw / H) rg.resize(vw, H, H < 560 && vw > H);
       rg.update(dt, mode, tg, K.tAnim);
       viewArg.track = tr; viewArg.z = p.rs.z; viewArg.r = p.r; viewArg.time = K.tAnim; viewArg.boxes = M.mode === 'race' && M.phase !== 'lobby'; viewArg.fly = p.fly; viewArg.front = mode === 'lobby' || mode === 'finale';
       world.syncView(viewArg);
@@ -24622,7 +24627,7 @@ function createGame(el, api) {
       else renderer.setViewport(0, 0, W, H);
       if (draw) renderer.render(world.scene, rg.cam);
       const sk = mode === 'run' && !isPaused(now) ? Math.min(1, Math.max(0, (p.rs.speed - 18) / 12)) * 0.8 + (p.rs.boost ? 0.5 : 0) : 0;
-      overlay.update(sk);
+      overlay.update(reducedMotion ? 0 : sk); // no speed lines with reduced motion (vignette stays)
       if (draw) overlay.render(renderer);
     }
     if (split) renderer.setScissorTest(false);
@@ -25009,6 +25014,10 @@ const CSS = `
 .g-rush.rr-short .rr-logo { font-size: 34px; }
 .g-rush.rr-short .rr-ov-lobby { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; align-content: center; align-items: center; }
 .g-rush.rr-short .rr-dist { font-size: 26px; }
+/* landscape phone: race bar between the corner columns, gap pill tucked under it, so the HUD ends
+   around a quarter of the way down instead of sitting on the vanishing point */
+.g-rush.rr-short .rr-bar { position: absolute; top: calc(max(var(--rr-pad), env(safe-area-inset-top, 0px)) + 52px); left: 30%; right: 30%; margin: 0; }
+.g-rush.rr-short .rr-gap { position: absolute; top: calc(max(var(--rr-pad), env(safe-area-inset-top, 0px)) + 8px); left: 62%; margin: 0; font-size: 13px; text-align: left; }
 .g-rush.rr-short .rr-pops { top: 20%; }
 .g-rush.rr-narrow .rr-dist { font-size: 28px; }
 .g-rush.rr-narrow .rr-chip { font-size: 13px; height: 26px; }
