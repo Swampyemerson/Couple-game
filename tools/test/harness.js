@@ -36,6 +36,15 @@ function ensureThree() {
 const RUNTIME = (cfg) => `
 (() => {
   const ME = ${JSON.stringify(cfg.who)}, UID = ${JSON.stringify(cfg.uid)};
+  if (${JSON.stringify(!!cfg.coarse)}) {
+    // Headless Chromium doesn't report a phone's touch pointer, so emulate it.
+    const mm = window.matchMedia.bind(window);
+    window.matchMedia = (q) => {
+      if (/pointer:\s*coarse/.test(q) || /hover:\s*none/.test(q)) return { matches: true, media: q, onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; } };
+      if (/pointer:\s*fine/.test(q) || /hover:\s*hover/.test(q)) return { matches: false, media: q, onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; } };
+      return mm(q);
+    };
+  }
   try { localStorage.setItem('jt.me', ME); } catch {}
   window.confirm = () => false; window.alert = () => {}; window.prompt = () => null;
   const clone = (x) => x === undefined ? undefined : JSON.parse(JSON.stringify(x));
@@ -150,6 +159,7 @@ async function launch(opts = {}) {
     port = 8770 + Math.floor(Math.random() * 500), latency = 40, build = true, headless = true,
     device = 'iPhone 13', who = ['a', 'b'], seedDocs = {}, only = null, colorScheme = 'light',
     dropRate = 0, // fraction of room events (emit) silently dropped, to test resilience
+    coarse = false, // true = report (pointer: coarse) like a real phone
   } = opts;
   // `only`: game file names to bundle (e.g. ['four', 'dots']). Builds to a private file so
   // parallel test runs, and other people's half-finished games, can't break yours.
@@ -184,7 +194,7 @@ async function launch(opts = {}) {
   async function player(w) {
     const ctx = await browser.newContext({ ...devices[device], hasTouch: true, colorScheme });
     const uid = 'u_' + w;
-    await ctx.addInitScript(RUNTIME({ who: w, uid }));
+    await ctx.addInitScript(RUNTIME({ who: w, uid, coarse }));
     await ctx.route(/three\.js\/r128\/three\.min\.js/, (r) => r.fulfill({ path: three, contentType: 'text/javascript' }));
     await ctx.route(/fonts\.(googleapis|gstatic)\.com/, (r) => r.abort());
     const pg = await ctx.newPage();

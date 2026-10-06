@@ -29,6 +29,12 @@ registerGame({
   css: `...`,                 // your styles, injected once. Scope EVERY selector under a class
                               //   unique to your game, e.g. .g-four ...
   endDelay: 900,              // ms between the final move and the end card (time for your finale)
+  platforms: ['phone', 'computer'],  // devices it works on (default both); the hub shows badges
+  best: 'phone',              // optional: the device it's best on
+  modes: ['online', 'local'], // start options. turns default ['online','local'];
+                              //   live default ['live','local']. ['live'] = two devices only
+  immersive: false,           // true = full-screen stage, floating back/menu; draw your own HUD
+  hue: 0,                     // optional card tint tweak
   // turn games: init / next / apply / result / score   (below)
   mount(el, api) { ...; return { update(ctx) {}, destroy() {} }; },
 });
@@ -188,7 +194,7 @@ Preview the chrome around your game with `node tools/test/design-preview.js ligh
 ```
 node tools/test/games/<id>.test.js
 ```
-See `tools/test/smoke.test.js`. `launch({ port, only: ['<id>'], colorScheme })` opens two
+See `tools/test/smoke.test.js`. `launch({ port, only: ['<id>'], colorScheme, coarse, device, latency, dropRate })` opens two
 phones (Emerson = `h.a`, Sydney = `h.b`) sharing a fake database and live room. Helpers:
 `newOnlineGame`, `openMatch`, `newLocalGame`, `startLive`, `engine(page, id)`,
 `matches()`, `results()`, `settle()`, `shot()`, `assertNoErrors()`. three.js is served locally.
