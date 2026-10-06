@@ -78,7 +78,7 @@ export function curtainCard(api, { kind, who }) {
 }
 
 export function recapCard(api, { rec, mode, scores, round, rounds, isLast, canNext, stats }) {
-  const hider = rec.hider; const seeker = rec.seeker;
+  const hider = rec.hider;
   let head; let sub;
   if (mode === 'db') {
     if (rec.winner) { head = `${esc(api.name(rec.winner))} wins the round`; sub = `${esc(api.name(api.other(rec.winner)))} was RIGHT there.`; }
@@ -98,7 +98,6 @@ export function recapCard(api, { rec, mode, scores, round, rounds, isLast, canNe
     ${canNext ? `<button class="chm-go me" data-act="next">${isLast ? 'See who won' : 'Next round'}</button>` : '<p class="chm-wait">Next round starts in a moment…</p>'}
     <p style="font-size:.75rem" data-live="recap-time"></p>
   </div></div>`;
-  void seeker;
 }
 
 export function pauseCard(api, { reason, countdown }) {

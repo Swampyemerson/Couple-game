@@ -27,14 +27,17 @@ export function createControls({ surface, root, joyBase, joyKnob, onAction, pain
   let pinch = null;
   let strokeId = null;
 
-  function keyMove() {
+  /** Keyboard direction into out[0..1]; returns false when no key is held. */
+  function keyMove(out) {
     let x = 0; let y = 0;
     if (keys.has('KeyA') || keys.has('ArrowLeft')) x -= 1;
     if (keys.has('KeyD') || keys.has('ArrowRight')) x += 1;
     if (keys.has('KeyW') || keys.has('ArrowUp')) y += 1;
     if (keys.has('KeyS') || keys.has('ArrowDown')) y -= 1;
     const l = Math.hypot(x, y);
-    return l > 0 ? [x / l, y / l] : [0, 0];
+    if (!l) return false;
+    out[0] = x / l; out[1] = y / l;
+    return true;
   }
 
   function showJoy(on, x = 0, y = 0) {
@@ -95,6 +98,7 @@ export function createControls({ surface, root, joyBase, joyKnob, onAction, pain
 
   L.on(surface, 'pointermove', (e) => {
     const p = ptrs.get(e.pointerId);
+    if (!p && st.mode === 'paint' && e.pointerType === 'mouse' && paint.hover) { const [hx, hy] = local(e); paint.hover(hx, hy); return; }
     if (st.locked && e.pointerType === 'mouse') {
       if (st.mode === 'move' || st.mode === 'look') { st.lookDX += e.movementX || 0; st.lookDY += e.movementY || 0; }
       return;
@@ -198,8 +202,7 @@ export function createControls({ surface, root, joyBase, joyKnob, onAction, pain
     },
     /** Movement for this frame (keys win over the stick when held). */
     move(out) {
-      const [kx, ky] = keyMove();
-      if (kx || ky) { out[0] = kx; out[1] = ky; } else { out[0] = st.moveX; out[1] = st.moveY; }
+      if (!keyMove(out)) { out[0] = st.moveX; out[1] = st.moveY; }
       return out;
     },
     takeLook(out) { out[0] = st.lookDX; out[1] = st.lookDY; st.lookDX = 0; st.lookDY = 0; return out; },

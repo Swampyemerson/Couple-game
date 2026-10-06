@@ -60,11 +60,11 @@ const SCENE = (left, right, tall) => `
   <svg class="qd-svg" viewBox="${tall ? '0 -44 320 168' : '0 0 320 124'}" role="img" aria-label="Two gunslingers face each other at high noon">
     ${tall ? '<path class="qd-bird" d="M120 -18 q5 -5 10 0 q5 -5 10 0 M196 -30 q4 -4 8 0 q4 -4 8 0"/>' : ''}
     <circle class="qd-sun" cx="160" cy="98" r="34"/>
-    <path class="qd-ground" d="M0 104 H320 V124 H0 Z"/>
+    <path class="qd-ground" d="M-400 104 H720 V180 H-400 Z"/>
     <path class="qd-tufts" d="M28 112 l4 -4 M118 116 l3 -3 l3 3 M196 113 l4 -4 M292 117 l3 -3 l3 3 M74 119 h8 M236 120 h8"/>
     <g class="qd-cactus" transform="translate(30 104) scale(0.8)"><path d="M-3.5 0 V-30 Q0 -34 3.5 -30 V0 Z M-3.5 -14 H-8.5 Q-11 -14 -11 -17 V-23 Q-8.8 -25.6 -6.8 -23 V-19 H-3.5 Z M3.5 -18 H8 Q10.5 -18 10.5 -21 V-26 Q8.4 -28.4 6.4 -26 V-22.4 H3.5 Z"/></g>
     <g class="qd-cactus" transform="translate(292 104) scale(0.62)"><path d="M-3.5 0 V-30 Q0 -34 3.5 -30 V0 Z M-3.5 -14 H-8.5 Q-11 -14 -11 -17 V-23 Q-8.8 -25.6 -6.8 -23 V-19 H-3.5 Z M3.5 -18 H8 Q10.5 -18 10.5 -21 V-26 Q8.4 -28.4 6.4 -26 V-22.4 H3.5 Z"/></g>
-    <path class="qd-horizon" d="M0 104 H320"/>
+    <path class="qd-horizon" d="M-400 104 H720"/>
     <g class="qd-fig" data-w="${left}" transform="translate(86 104)">${FIGURE}</g>
     <g class="qd-fig" data-w="${right}" transform="translate(234 104) scale(-1 1)">${FIGURE}</g>
   </svg>`;
@@ -229,7 +229,6 @@ registerGame({
     let hostKey = ref ? key : null;
     let staleKey = null;
     let paused = false;
-    let finishT = 0;
 
     // ── one round, on this device ──
     function endRound() {
@@ -345,7 +344,7 @@ registerGame({
       if (!local) net.send('verdict', v);
       applyVerdict(v);
       publish();
-      if (v.res) finishT = later(() => api.finish(v.res), FINALE_MS);
+      if (v.res) later(() => api.finish(v.res), FINALE_MS); // the engine mirrors it to the guest
       else nextT = later(refStart, RESULT_MS);
     }
     const bests = { a: null, b: null };
@@ -379,7 +378,6 @@ registerGame({
       paint(prev);
       if (!v.res) api.sfx(v.w ? (local || v.w === me ? 'win' : 'lose') : 'flip');
       else api.sfx('pop');
-      if (!ref && v.res && !finishT) finishT = later(() => api.finish(v.res), FINALE_MS + 400); // if the engine's own finish message is lost
     }
     function pose(P) {
       for (const x of ['a', 'b']) {
@@ -575,6 +573,7 @@ registerGame({
     }
 
     api.setScore(tally);
+    if (layout === 'desk') api.setStatus('One keyboard: A against L');
     paint();
     if (ref) nextT = later(refStart, INTRO_MS);
     publish();

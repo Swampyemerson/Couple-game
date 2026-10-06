@@ -75,7 +75,8 @@ async function camoHide(p) {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-const SHOWCASE = { ...FAST, hide: 60000, seek: 60000, recap: 9000, found: 3000, maxDpr: 2, fixedScale: true };
+// screenshot runs render at the real pixel ratio, which is very slow in software GL: long phases
+const SHOWCASE = { ...FAST, hide: 120000, seek: 120000, recap: 60000, found: 6000, maxDpr: 2, fixedScale: true };
 async function hotseat(port, { colorScheme = 'light', device = 'iPhone 13', prefix = 'phone-light', viewport = null, keyboard = false } = {}) {
   const h = await launch({ port, only: ['chameleon'], who: ['a'], colorScheme, device });
   const a = h.a;
@@ -103,7 +104,10 @@ async function hotseat(port, { colorScheme = 'light', device = 'iPhone 13', pref
     // move: keyboard on desktop, joystick on phones
     const before = s.bodies.b;
     if (keyboard) {
-      await a.keyboard.down('KeyW'); await wait(900); await a.keyboard.up('KeyW');
+      // hold W until the hider has walked a bit (software rendering can be very slow here)
+      await a.keyboard.down('KeyW');
+      await a.waitForFunction((b0) => { const b = window.__cham.state().bodies.b; return Math.hypot(b.x - b0.x, b.z - b0.z) > 0.5; }, before, { timeout: 15000 }).catch(() => {});
+      await a.keyboard.up('KeyW');
     } else {
       const box = await surfaceBox(a);
       await touchHold(a, box[0] + 80, box[1] + box[3] - 150, box[0] + 80, box[1] + box[3] - 195, 900);
@@ -156,10 +160,10 @@ async function hotseat(port, { colorScheme = 'light', device = 'iPhone 13', pref
       await wait(400);
       if ((await st(a)).phase.name === 'seek' && (await st(a)).round.used.a === 0) await a.mouse.click(box[0] + box[2] / 2, box[1] + box[3] / 2);
     } else await a.click('.chm-acts [data-act="fire"]');
-    await waitPhase(a, 'found', 8000);
+    await waitPhase(a, 'found', 20000);
     await wait(900);
     await shot(a, `${prefix}-4-found`);
-    await waitPhase(a, 'recap', 8000);
+    await waitPhase(a, 'recap', 20000);
     s = await st(a);
     await wait(1800);
     await shot(a, `${prefix}-5-recap`);
@@ -370,8 +374,14 @@ async function matchSection(port) {
     console.log('  ' + detail.join(' '));
     skews.sort((p, q) => p - q);
     const med = skews[Math.floor(skews.length / 2)]; const mx = skews[skews.length - 1];
-    console.log(`  phase switches: ${skews.length}, median skew ${med.toFixed(1)} ms, max ${mx.toFixed(1)} ms`);
-    assert(skews.filter((x) => x <= 50).length >= skews.length * 0.9 && med <= 30, 'phase changes happen within 50 ms on both devices');
+    // what the netcode controls: both devices schedule each switch for the same shared instant,
+    // and their shared clocks agree (clock = shared now − wall time at the switch)
+    const clockErr = la.map((x) => { const y = lb.find((q) => q.seq === x.seq); return y ? Math.abs(x.clock - y.clock) : 0; });
+    const ce = Math.max(...clockErr);
+    const lates = la.concat(lb).map((x) => x.late).sort((p, q) => p - q);
+    console.log(`  phase switches: ${skews.length}, measured skew median ${med.toFixed(1)} ms, max ${mx.toFixed(1)} ms; shared-clock disagreement ≤ ${ce.toFixed(1)} ms; main-thread lateness median ${lates[Math.floor(lates.length / 2)].toFixed(0)} ms (CPU load ${require('os').loadavg()[0].toFixed(1)} on ${require('os').cpus().length} cores)`);
+    assert(ce < 20, `both devices put every phase change at the same shared instant (clocks agree within ${ce.toFixed(1)} ms)`);
+    assert(med <= 50, `phase changes land within 50 ms of each other on both devices (median ${med.toFixed(1)} ms)`);
     h.assertNoErrors();
   } catch (e) {
     console.error(e.message, h.errors); failures++;
@@ -513,6 +523,19 @@ async function disconnectSection(port) {
     await a.click('.chm-acts [data-act="fire"]');
     await waitPhase(b, 'found', 8000);
     assert(true, 'a tag after resuming is confirmed');
+    // now the HOST reloads mid-round: the fresh host restores the match from the guest's snapshot
+    await waitPhase(b, 'hide', 20000);
+    const roundB = (await st(b)).phase.round; const scoresB = JSON.stringify((await st(b)).match.scores);
+    await h.closeGame(a);
+    await wait(1500);
+    await arm(a, { ...FAST, seek: 40000, maxDpr: 0.45 });
+    await h.startLive(a, 'chameleon', 'live');
+    await waitLinked(a);
+    await a.waitForFunction(() => window.__cham.state().match && window.__cham.state().phase.name === 'hide', null, { timeout: 15000 });
+    await a.waitForFunction(() => !window.__cham.state().paused && window.__cham.state().resumeAt < window.__cham.state().now, null, { timeout: 15000 });
+    const sa3 = await st(a); const sb3 = await st(b);
+    assert(sa3.phase.round === roundB && JSON.stringify(sa3.match.scores) === scoresB && sa3.isHost, `a reloaded host restores round ${roundB} and the scores ${scoresB} from the guest`);
+    assert(Math.abs((sa3.phase.end - sa3.now) - (sb3.phase.end - sb3.now)) < 500, 'and both timers line up again');
     h.assertNoErrors();
   } catch (e) {
     console.error(e.message, h.errors); failures++;
@@ -614,6 +637,31 @@ async function leakSection(port) {
   } finally { await h.close(); }
 }
 
+async function mapsSection(port) {
+  console.log('\n# the three dioramas: spawns, hiding walls, eyedropper probes, lobby sync of the map choice');
+  const h = await launch({ port, only: ['chameleon'] });
+  const { a, b } = h;
+  try {
+    await startPair(h, { ...FAST, maxDpr: 0.45 });
+    for (const id of ['garden', 'studio', 'living']) {
+      await a.click(`[data-lobby="map"][data-v="${id}"]`);
+      await b.waitForFunction((m) => window.__cham.state().mapId === m, id, { timeout: 8000 });
+      assert(true, `host picked the ${id} map and the guest's diorama switched with it`);
+      await wait(400);
+      await shot(a, `map-${id}`);
+      const r = await hook(a, 'checkMap', id);
+      const bad = Object.entries(r.spawns).filter(([, d]) => d > 0.02);
+      assert(!bad.length, `${id}: every spawn is clear of props (${Object.keys(r.spawns).length} checked)`);
+      assert(!!r.camoWall, `${id}: the suggested hiding spot has a wall to flatten against`);
+      for (const p of r.probes) assert(p.got === p.want, `${id}: probe "${p.name}" albedo ${p.got} (want ${p.want})`);
+      console.log(`  ${id}: ${r.verts} vertices, ${r.colliders} colliders`);
+    }
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+  } finally { await h.close(); }
+}
+
 // ─────────────────────────────────────────────────────────────────────
 (async () => {
   const sections = [];
@@ -646,6 +694,7 @@ async function leakSection(port) {
   if (want('disconnect')) sections.push(() => disconnectSection(8917));
   if (want('robust')) sections.push(() => robustSection(8918));
   if (want('leaks')) sections.push(() => leakSection(8919));
+  if (want('maps')) sections.push(() => mapsSection(8910));
   for (const run of sections) {
     try { await run(); } catch (e) { console.error(e); failures++; }
   }

@@ -281,8 +281,10 @@ export function createAvatar(THREE, world, P, who) {
     if (air && !wasAir && !s.down) { sq = 0.2; sqv = 0; }
     if (!air && wasAir && !s.down) { sq = -0.24; sqv = 0; }
     wasAir = air;
-    sqv += (-170 * sq - 13 * sqv) * dt;
-    sq += sqv * dt;
+    // stiff spring: substep at 120 Hz so a long frame can't blow it up
+    let rem = Math.min(dt, 0.1);
+    while (rem > 1e-6) { const hh = rem > 1 / 120 ? 1 / 120 : rem; sqv += (-170 * sq - 13 * sqv) * hh; sq += sqv * hh; rem -= hh; }
+    if (sq > 0.35) sq = 0.35; else if (sq < -0.35) sq = -0.35;
     if (lungeT > 0) lungeT -= dt;
     wobble += ((s.bump || 0) - wobble) * (1 - Math.exp(-dt * 20));
 

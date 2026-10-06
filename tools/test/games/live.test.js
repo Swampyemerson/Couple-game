@@ -332,13 +332,8 @@ async function quickdrawLocal(h, tag) {
 
 // ── 5. One laptop, keyboard ───────────────────────────────────────────
 async function laptop(h, pg) {
-  const cdp = await pg.context().newCDPSession(pg);
-  await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: false });
   await pg.setViewportSize({ width: 1280, height: 800 });
-  await pg.reload();
-  await pg.waitForFunction(() => !!document.querySelector('.tabbar'), null, { timeout: 15000 });
-  await pg.waitForTimeout(300);
-  assert(!(await pg.evaluate(() => matchMedia('(pointer: coarse)').matches)), 'laptop: fine pointer');
+  assert(!(await pg.evaluate(() => matchMedia('(pointer: coarse)').matches)), 'laptop: fine pointer, no touch');
 }
 async function hockeyKeys(h, pg, tag) {
   await h.startLive(pg, 'hockey', 'local');
@@ -367,13 +362,12 @@ async function hockeyKeys(h, pg, tag) {
     };
     tick();
   }));
-  const vel = prof.slice(1).map(([t, y], i) => [t, (prof[i][1] - y) / ((t - prof[i][0]) / 1000)]);
-  const vmax = Math.max(...vel.map((v) => v[1]));
-  const early = vel.filter(([t]) => t > 0 && t < 45).map((v) => v[1]);
-  const after = vel.filter(([t]) => t > 260 && t < 420).map((v) => v[1]);
-  assert(vmax > 80 && early.length && Math.max(...early) < vmax * 0.7, `keyboard mallet accelerates smoothly (first 45 ms ≤ ${Math.round(Math.max(...early))} u/s, top ${Math.round(vmax)} u/s)`);
-  const end = vel[vel.length - 1][1];
-  assert(after.some((v) => v > 1 && v < vmax * 0.6) && end < vmax * 0.15, `and eases to a stop after the key is released (${Math.round(end)} u/s 300 ms later)`);
+  // Average speeds over fixed windows (single frames are too jittery in a headless browser).
+  const yAt = (t) => { const i = prof.findIndex(([tt]) => tt >= t); if (i <= 0) return prof[Math.max(0, i)][1]; const [t0, y0] = prof[i - 1]; const [t1, y1] = prof[i]; return y0 + ((y1 - y0) * (t - t0)) / Math.max(1, t1 - t0); };
+  const speed = (t0, t1) => (yAt(t0) - yAt(t1)) / ((t1 - t0) / 1000);
+  const start = speed(0, 50); const top = speed(140, 220); const coastV = speed(260, 340); const end = speed(440, 520);
+  assert(top > 90 && start < top * 0.7, `keyboard mallet accelerates smoothly (first 50 ms ${Math.round(start)} u/s, then ${Math.round(top)} u/s)`);
+  assert(coastV > 1 && coastV < top * 0.7 && end < top * 0.15, `and eases to a stop after the key is released (${Math.round(coastV)} then ${Math.round(end)} u/s)`);
   // W moves Emerson's mallet up the screen (toward the near rail of a sideways table).
   const x0 = (await hk(pg)).mallets.a.x;
   await pg.keyboard.down('KeyW'); await h.wait(300); await pg.keyboard.up('KeyW');
@@ -415,10 +409,10 @@ async function quickdrawKeys(h, pg, tag) {
 }
 
 // ── run ───────────────────────────────────────────────────────────────
-async function run(port, colorScheme, body) {
-  const h = await launch({ port, only: ['hockey', 'quickdraw'], colorScheme });
+async function run(port, colorScheme, body, opts = {}) {
+  const h = await launch({ port, only: ['hockey', 'quickdraw'], colorScheme, ...opts });
   try {
-    await sizes(h);
+    if (!opts.fine) await sizes(h);
     await body(h);
     h.assertNoErrors();
     console.log(`ok - no page errors (${colorScheme})`);
@@ -440,16 +434,18 @@ async function run(port, colorScheme, body) {
     await hockeyLocalTouch(h);
     await quickdrawLive(h, 'light');
     await quickdrawLocal(h, 'light');
-  });
+  }, { coarse: true });
   await run(8851, 'dark', async (h) => {
     await hockeyLive(h, 'dark', true);
     await h.closeGame(h.a); await h.closeGame(h.b);
     await quickdrawLiveFast(h, 'dark');
     await quickdrawLocal(h, 'dark');
-    await laptop(h, h.b);
-    await hockeyKeys(h, h.b, 'dark');
-    await quickdrawKeys(h, h.b, 'dark');
-  });
+  }, { coarse: true });
+  await run(8852, 'dark', async (h) => {
+    await laptop(h, h.a);
+    await hockeyKeys(h, h.a, 'dark');
+    await quickdrawKeys(h, h.a, 'dark');
+  }, { fine: true, device: 'Desktop Chrome', who: ['a'] });
   console.log(fails ? `\n${fails} SUITE(S) FAILED` : '\nALL GOOD');
   process.exitCode = fails ? 1 : 0;
 })();

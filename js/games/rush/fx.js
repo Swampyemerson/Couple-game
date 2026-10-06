@@ -9,14 +9,14 @@ const BITS = 220;
 export function createFx(THREE, world) {
   const T = world.T; const P = world.P;
   const b = new GeoBuf(THREE, 600, { dynamic: false });
-  b.add(T.ico, 0, 0, 0, 1, 1, 1, 0, [1, 1, 1], FX_PLAIN, 0.07, P.outline);
+  b.add(T.lowSphere, 0, 0, 0, 1, 1, 1, 0, [1, 1, 1], FX_PLAIN, 0.11, P.outline);
   const puffGeo = b.freeze(THREE);
   b.reset();
   b.add(T.octa, 0, 0, 0, 1, 1, 1, 0, [1, 1, 1], FX_GLOW, 0, P.outline);
   const bitGeo = b.freeze(THREE);
   b.dispose();
   const mk = (geo, n) => {
-    const m = new THREE.InstancedMesh(geo, world.mat, n);
+    const m = new THREE.InstancedMesh(geo, world.matInstC, n);
     m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     m.setColorAt(0, new THREE.Color(1, 1, 1));
     m.instanceColor.setUsage(THREE.DynamicDrawUsage);
@@ -37,6 +37,7 @@ export function createFx(THREE, world) {
     ox: new Float32Array(n), oz: new Float32Array(n),
   });
   const PP = mkPool(PUFFS);
+  const dustCol = P.dark ? [0.42, 0.4, 0.44] : [0.86, 0.83, 0.78];
   const BP = mkPool(BITS);
 
   function spawn(pool, x, y, z, vx, vy, vz, life, size, col, grav, drag, kind) {
@@ -55,7 +56,10 @@ export function createFx(THREE, world) {
   const api = {
     /** Landing / slide dust at track position (x, y, d). */
     dust(x, y, d, n = 6, k = 1) {
-      for (let i = 0; i < n; i++) spawn(PP, x + R() * 0.4, y + 0.1, d + R() * 0.3, R() * 2.2 * k, 0.6 + Math.random() * 1.4 * k, -2 - Math.random() * 3, 0.35 + Math.random() * 0.25, 0.22 + Math.random() * 0.2 * k, P.paper, -1.2, 3.5, 2);
+      for (let i = 0; i < n; i++) {
+        const side = i % 2 ? 1 : -1;
+        spawn(PP, x + side * (0.25 + Math.random() * 0.3), y + 0.12, d + R() * 0.3, side * (1 + Math.random() * 1.6) * k, 0.5 + Math.random() * 1.2 * k, -1.5 - Math.random() * 2, 0.38 + Math.random() * 0.25, 0.34 + Math.random() * 0.24 * k, dustCol, -1.4, 3.2, 2);
+      }
     },
     coin(x, y, d) {
       for (let i = 0; i < 5; i++) spawn(BP, x, y, d, R() * 3, 2 + Math.random() * 3, R() * 2 + 4, 0.35, 0.16, P.hl, 9, 1.5, 0);
@@ -157,10 +161,10 @@ export function createRig(THREE) {
       let px; let py; let pz; let lx; let ly; let lz; let k;
       if (mode === 'lobby') {
         // in front of the two runners, looking back at their faces, swaying slowly
-        const a = Math.sin(t * 0.25) * 0.42;
-        const R = portrait ? 9.6 : 7.4;
-        px = Math.sin(a) * R; py = portrait ? 2.5 : 2.2; pz = -tg.z - Math.cos(a) * R;
-        lx = 0; ly = portrait ? 1.55 : 1.25; lz = -tg.z;
+        const a = Math.sin(t * 0.25) * 0.3;
+        const R = portrait ? 11.5 : 7.6;
+        px = Math.sin(a) * R; py = portrait ? 2.3 : 2.1; pz = -tg.z - Math.cos(a) * R;
+        lx = 0; ly = portrait ? 0.35 : 1.0; lz = -tg.z;
         k = 1 - Math.exp(-dt * 3);
       } else if (mode === 'finale') {
         st.orbit += dt * 0.5;
@@ -173,9 +177,9 @@ export function createRig(THREE) {
         px = tg.x * 0.6 + lead;
         const back = tg.down ? 2.4 : 0;
         st.back += (back - st.back) * (1 - Math.exp(-dt * 3));
-        py = tg.ground * 0.92 + (portrait ? 4.1 : 3.3) + Math.max(0, tg.y - tg.ground) * 0.28 + st.back * 0.5;
-        pz = -tg.z + (portrait ? 6.6 : 6.0) + st.back;
-        lx = tg.x * 0.72 + lead * 1.4; ly = tg.ground * 0.95 + 1.0 + Math.max(0, tg.y - tg.ground) * 0.2; lz = -tg.z - 14;
+        py = tg.ground * 0.92 + (portrait ? 4.1 : 4.0) + Math.max(0, tg.y - tg.ground) * 0.28 + st.back * 0.5;
+        pz = -tg.z + (portrait ? 6.6 : 7.4) + st.back;
+        lx = tg.x * 0.72 + lead * 1.4; ly = tg.ground * 0.95 + (portrait ? 1.0 : 0.5) + Math.max(0, tg.y - tg.ground) * 0.2; lz = -tg.z - (portrait ? 14 : 9);
         k = 1 - Math.exp(-dt * (mode === 'spectate' ? 5 : 12));
       }
       if (!st.ready) { st.x = px; st.y = py; st.z = pz; st.lx = lx; st.ly = ly; st.lz = lz; st.ready = true; }
@@ -195,7 +199,7 @@ export function createRig(THREE) {
       const rollT = mode === 'run' ? -(tg.laneX - tg.x) * 0.012 : 0;
       st.roll += (rollT - st.roll) * (1 - Math.exp(-dt * 8));
       cam.rotateZ(st.roll);
-      const base = portrait ? 72 : 56;
+      const base = portrait ? 72 : 60;
       const spd = mode === 'run' ? Math.min(1, Math.max(0, (tg.speed - 12) / 18)) * 7 : 0;
       const fov = base + spd + st.kick * 10;
       if (Math.abs(fov - st.fov) > 0.01) { st.fov = fov; cam.fov = fov; cam.updateProjectionMatrix(); }

@@ -121,24 +121,26 @@ export function createWorld(map) {
     return hit;
   }
 
-  /** Nearest vertical wall face within `maxD` of (x,z) at height y (for the wall pose). */
+  /** Nearest vertical wall face within `maxD` of (x,z) at height y (for the wall pose). Shared result object. */
+  const wallRes = { nx: 0, nz: 0, px: 0, pz: 0, box: null, d: 0 };
+  function putWall(nx, nz, px, pz, b, d) { wallRes.nx = nx; wallRes.nz = nz; wallRes.px = px; wallRes.pz = pz; wallRes.box = b; wallRes.d = d; return d; }
   function nearestWall(x, y, z, maxD) {
-    let best = maxD; let res = null;
+    let best = maxD; let found = false;
     for (let k = 0; k < boxes.length; k++) {
       const b = boxes[k];
       if (!b.wall || b.maxY < y + 0.35 || b.minY > y + 0.1 || b.maxY - b.minY < 0.4) continue;
       if (z >= b.minZ && z <= b.maxZ) {
         const dL = b.minX - x; const dR = x - b.maxX;
-        if (dL >= -0.05 && dL < best) { best = dL; res = { nx: -1, nz: 0, px: b.minX, pz: z, box: b, d: dL }; }
-        if (dR >= -0.05 && dR < best) { best = dR; res = { nx: 1, nz: 0, px: b.maxX, pz: z, box: b, d: dR }; }
+        if (dL >= -0.05 && dL < best) { best = putWall(-1, 0, b.minX, z, b, dL); found = true; }
+        if (dR >= -0.05 && dR < best) { best = putWall(1, 0, b.maxX, z, b, dR); found = true; }
       }
       if (x >= b.minX && x <= b.maxX) {
         const dN = b.minZ - z; const dF = z - b.maxZ;
-        if (dN >= -0.05 && dN < best) { best = dN; res = { nx: 0, nz: -1, px: x, pz: b.minZ, box: b, d: dN }; }
-        if (dF >= -0.05 && dF < best) { best = dF; res = { nx: 0, nz: 1, px: x, pz: b.maxZ, box: b, d: dF }; }
+        if (dN >= -0.05 && dN < best) { best = putWall(0, -1, x, b.minZ, b, dN); found = true; }
+        if (dF >= -0.05 && dF < best) { best = putWall(0, 1, x, b.maxZ, b, dF); found = true; }
       }
     }
-    return res;
+    return found ? wallRes : null;
   }
 
   return { boxes, step, pushOut, groundAt, raycast, nearestWall, blocks };

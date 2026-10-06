@@ -70,9 +70,14 @@ respawn in the clearest lane with 2 s of ghost invulnerability. Shield absorbs o
 
 ## Netcode (js/games/rush/link.js over js/games/net.js)
 
-- Clock: `net.now()` (host time, NTP-style). Start: host sends `start {mode, seed, at: now+3500}`.
-  Both count down to `at` and accumulate *run time* only while running; the sim steps to
-  `floor(runTime / dt)`. The effective start is `at` on both (skew = clock error).
+- Clock: host time. net.js syncs with a ping every 2 s and keeps 10 samples, which under a busy
+  main thread left a 100 ms+ error in the harness, so the wrapper adds a precision layer: the guest
+  bursts pings (~8/s) while in the lobby / countdown / a pause and trickles them (~1/s) while
+  running, keeps the 5 lowest-RTT of the last 60 samples, and both sides stamp their stream with
+  that clock. Measured start skew in the harness: 0.5–10 ms at 80 ms ± jitter latency.
+- Start: host sends `start {mode, seed, at: now+3500}`. Both count down to `at` and accumulate
+  *run time* only while running; the sim steps to `floor(runTime / dt)`. The effective start is `at`
+  on both (skew = clock error).
 - Each device publishes its runner at 20/s: `z x y lane speed pose flags hearts coins runTime fin`
   plus lobby/pause fields. The partner is drawn from an allocation-free interpolation buffer fed by
   `net.onRemote` (same algorithm as `net.remote`, `delay = 100 ms`), with `z` dead-reckoned to *now*
@@ -100,13 +105,26 @@ respawn in the clearest lane with 2 s of ghost invulnerability. Shield absorbs o
   guest's last published runner; the guest restores and resumes with a countdown. If the *host*
   re-mounts, the guest resets to the lobby.
 
+## HUD
+
+Immersive: the engine shows two 44 px stickers (back, menu) in the top corners; the HUD keeps clear
+of them. Top: hearts, coins, distance; under the menu sticker: my pause button (pauses both phones
+in live play). Race: a bar with both runners and the finish, plus a gap pill ("Sydney +23 m").
+Brawl: the partner's hearts in the pill. Together: team hearts, team coins and the coin goal.
+Bottom-right: the weapon slot (Race). Buttons scheme: ROLL / JUMP in the bottom corners.
+
 ## Art
 
-Printed-diorama toon look from `api.tokens()`: one shared `MeshToonMaterial` (3-step gradient map,
-vertex colours) with a small shader hook: a per-vertex `fx` code gives unlit ink outlines (inverted
-hulls baked into the same geometry, so outlines cost no draw calls), facade window grids from world
-position (lit at night in dark mode), procedural sleepers on the track bed, emissive lamps, and a
-screen-space halftone in the shadow band. Players in `--p-a`/`--p-b`, coins and pickups `--g-hl`,
+Printed-diorama toon look from `api.tokens()`: one toon shader (MeshBasicMaterial + a small hook,
+cheaper than MeshToonMaterial's per-light loops) with vertex colours and a per-vertex `fx` code:
+3 toon bands from one sun direction plus a sky term, computed per vertex (exact on the flat boxes
+the world is made of), unlit ink outlines (inverted hulls baked into the same merged geometry, so
+outlines cost no draw calls), glow for lamps / tokens / lit windows, a half-fogged skyline, and a
+screen-space halftone in the shadow band. Every pattern is geometry, not shader math: window
+ribbons / columns / grids (lit at random in dark mode, which is a night city with light linework),
+sleepers, hazard stripes, train windows. The same shader runs as three material instances (plain,
+instanced, instanced with colour) because three r128 recomputes program parameters whenever one
+material alternates between plain and instanced draws. Players in `--p-a`/`--p-b`, coins and pickups `--g-hl`,
 outlines `--g-ink`, paper `--g-bg`/`--g-card` (fog = paper). Runners are one skinned mesh each
 (rigid-skinned primitives, procedural run cycle, lean, tuck, roll, stumble, crash, squash and stretch).
 Juice: speed lines, FOV kick, landing puffs, coin pops and magnet trails, crash stars, close-call and
@@ -114,9 +132,10 @@ combo text, ink splats, synthesized sfx and a procedural music loop that intensi
 
 ## Performance
 
-- Draw calls: each 80 m chunk is ONE merged mesh (track, scenery, parked trains, barriers, outlines)
+- Draw calls: each 100 m chunk is ONE merged mesh (track, scenery, parked trains, barriers, outlines)
   in pooled preallocated buffers; coins/pickups/roadblocks/particles/shadows are `InstancedMesh`;
-  runners are skinned (1 call each). Busy scene ≈ 20–30 calls (split screen ≈ 2×).
+  runners are skinned (1 call each). Measured: 12–17 calls on a phone in a busy race, ≤ 36 in split
+  screen; ~45–90k triangles; chunk buffers hold ≤ 18k vertices (peak use ~9.6k).
 - `antialias:false`, `alpha:false`, `stencil:false`, `powerPreference:'high-performance'`.
   Dynamic resolution: pixel ratio `min(dpr,2) × scale`, scale 0.6–1.0 from an EWMA of frame time.
 - No per-frame allocations in the loop (scratch vectors, typed arrays, pools). Shader warm-up with

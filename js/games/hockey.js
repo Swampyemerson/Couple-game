@@ -23,8 +23,8 @@ const RP = 4.6;         // puck radius
 const GH = 16;          // goal half-width
 const RAIL = 5;         // rail thickness (drawn outside the play field)
 const DT = 1 / 120;     // fixed physics step
-const PUCK_MAX = 240;   // units/s
-const MALLET_MAX = 900; // units/s
+const PUCK_MAX = 300;   // units/s (2.5 units per step: no tunnelling through a 12-unit contact)
+const MALLET_MAX = 300; // ≤ PUCK_MAX, so a struck puck always outruns the mallet (no double hits)
 const WALL_E = 0.86;    // wall restitution
 const MALLET_E = 0.8;   // mallet restitution
 const FRICTION = 0.28;  // 1/s, exponential
@@ -425,7 +425,6 @@ registerGame({
     const off = { x: 0, y: 0 };                      // display correction, decays to 0
     let override = null;        // { hb, until }: our predicted hit, awaiting the host's confirmation
     const hostM = { who: 'a', x: W / 2, y: H - 22, vx: 0, vy: 0 };
-    let finAt = 0;
     let hostAway = false;
 
     function hostAge(S, now) {
@@ -471,7 +470,6 @@ registerGame({
       } else {
         Object.assign(DP, { x: S.p[0], y: S.p[1], vx: 0, vy: 0 });
         off.x = 0; off.y = 0; override = null;
-        if (S.ph === 'over' && S.res && !finAt) finAt = now + 700; // in case the engine's finish message drops
       }
     }
     function guestUpdate(dt, now) {
@@ -506,7 +504,6 @@ registerGame({
       }
       const k = Math.exp(-dt / 0.08);
       off.x *= k; off.y *= k;
-      if (finAt && now >= finAt) { finAt = 0; if (HS && HS.res) api.finish(HS.res); }
     }
 
     // ── network ──

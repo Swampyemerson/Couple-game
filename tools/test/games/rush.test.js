@@ -34,6 +34,12 @@ async function swipe(pg, x0, y0, dx, dy) {
   await cdp.detach();
 }
 
+/** Tap the weapon slot once the HUD shows it loaded (an empty slot lets taps through). */
+async function fireWeapon(pg) {
+  await until(pg, () => !!document.querySelector('.g-rush .rr-weapon.full'), null, 5000, 'weapon slot loaded');
+  await fireWeapon(pg);
+}
+
 async function openLivePair(h, extra = {}) {
   const { a, b } = h;
   for (const pg of [a, b]) await pg.evaluate((d) => { window.__RUSH_DEBUG = d; }, { ...DEBUG, ...extra });
@@ -120,8 +126,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         const [lead, trail] = s1.a.z >= s1.b.z ? [a, b] : [b, a];
         const tw = trail === a ? 'a' : 'b'; const lw = tw === 'a' ? 'b' : 'a';
         await trail.evaluate((w) => window.__rush.give(w, 'ink'), tw);
-        await h.wait(150);
-        await trail.click('.g-rush .rr-weapon', { force: true });
+        await fireWeapon(trail);
         await until(lead, (w) => window.__rush.state()[w].splat, lw, 5000, 'ink splat on the leader');
         await shot(lead, 'phone-light-hit');
         await until(trail, (w) => window.__rush.state()[w].stats.hits >= 1, tw, 5000, 'attacker hears it hit');
@@ -129,14 +134,12 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         // a shield blocks the next one
         await lead.evaluate((w) => window.__rush.give(w, 'shield'), lw);
         await trail.evaluate((w) => window.__rush.give(w, 'zap'), tw);
-        await h.wait(150);
-        await trail.click('.g-rush .rr-weapon', { force: true });
+        await fireWeapon(trail);
         await until(lead, (w) => !window.__rush.state()[w].shield, lw, 5000, 'shield used up by the zap');
         console.log('ok - shield blocks a zap (victim decides)');
         // roadblock from the leader lands in the trailer's lane
         await lead.evaluate((w) => window.__rush.give(w, 'block'), lw);
-        await h.wait(150);
-        await lead.click('.g-rush .rr-weapon', { force: true });
+        await fireWeapon(lead);
         await until(trail, (w) => window.__rush.state()[w].extra >= 1, tw, 5000, 'roadblock placed on the trailer');
         console.log('ok - roadblock placed by the victim device');
 
@@ -170,6 +173,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         await a.click('#game-root [data-g="rematch"]').catch(() => {});
         await until(a, () => window.__rush && window.__rush.state().phase === 'lobby', null, 15000, 'host back in the lobby');
         await until(b, () => window.__rush && window.__rush.state().phase === 'lobby' && window.__rush.state().synced, null, 15000, 'guest back in the lobby');
+        console.log(`   rematch: re-mounted and ready in ${(await S(a)).loadMs} ms (host), ${(await S(b)).loadMs} ms (guest) — three.js already loaded`);
         await pickAndStart(h, 'brawl');
         await waitRun(a); await waitRun(b);
         // Emerson (lane -1) steps to the middle, then into Sydney's lane (1) while level: a shove
@@ -289,6 +293,8 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         await h.wait(300);
         let s = await S(a);
         assert(s.a.lane === 0 && s.b.lane === 0, `both key sets move their own runner (a ${s.a.lane}, b ${s.b.lane})`);
+        await a.keyboard.press('ArrowRight');  // Sydney back out, so the shot shows both
+        await h.wait(200);
         const jr = await S(a);
         await a.keyboard.press('KeyW');
         await a.keyboard.press('ArrowDown');
@@ -362,7 +368,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
       const tw = s.a.z >= s.b.z ? 'b' : 'a';
       const tp = tw === 'a' ? a : b;
       await tp.evaluate((w) => window.__rush.give(w, 'ink'), tw);
-      await tp.click('.g-rush .rr-weapon', { force: true });
+      await fireWeapon(tp);
       await until(tw === 'a' ? b : a, (w) => window.__rush.state()[w].splat, tw === 'a' ? 'b' : 'a', 10000, 'ink lands through 20% loss');
       console.log('ok - reliable weapon event through 20% loss');
       await until(a, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 90000, 'end card (host) with loss');
@@ -397,7 +403,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
       const tw = s.a.z >= s.b.z ? 'b' : 'a';
       const tp = tw === 'a' ? a : b; const vp = tw === 'a' ? b : a;
       await tp.evaluate((w) => window.__rush.give(w, 'ink'), tw);
-      await tp.click('.g-rush .rr-weapon', { force: true });
+      await fireWeapon(tp);
       await until(vp, (w) => window.__rush.state()[w].splat, tw === 'a' ? 'b' : 'a', 6000, 'dark ink');
       await shot(vp, 'phone-dark-hit');
       await until(a, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 90000, 'dark end');

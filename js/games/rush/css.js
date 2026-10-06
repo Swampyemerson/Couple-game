@@ -92,25 +92,26 @@ export const CSS = `
 .g-rush .rr-weapon { position: absolute; right: max(12px, env(safe-area-inset-right, 0px)); bottom: max(14px, env(safe-area-inset-bottom, 0px)); width: 70px; height: 70px; border-radius: 50%; pointer-events: auto;
   display: grid; place-items: center; background: var(--g-card); border: 3px solid var(--g-ink); box-shadow: 3px 3px 0 var(--g-edge); transition: transform .12s; }
 .g-rush .rr-weapon svg { width: 36px; height: 36px; }
-.g-rush .rr-weapon.empty { opacity: .7; border-style: dashed; box-shadow: none; background: color-mix(in srgb, var(--g-card) 70%, transparent); color: var(--g-muted); }
-.g-rush .rr-weapon.full { animation: rr-ready 1s ease-in-out infinite; background: var(--g-hl); }
+.g-rush .rr-weapon.empty { pointer-events: none; opacity: .7; border-style: dashed; box-shadow: none; background: color-mix(in srgb, var(--g-card) 70%, transparent); color: var(--g-muted); }
+.g-rush .rr-weapon.full { animation: rr-ready 1s ease-in-out infinite; background: var(--g-hl); color: var(--g-on-ink); }
 .g-rush .rr-weapon:active { transform: translate(2px, 2px) scale(.96); box-shadow: 0 0 0 var(--g-edge); }
 .g-rush .rr-weapon .rr-key { position: absolute; bottom: -8px; left: 50%; transform: translateX(-50%); font-size: 11px; padding: 1px 6px; border-radius: 6px; background: var(--g-ink); color: var(--g-card); }
 .g-rush .rr-weapon .rr-wname { position: absolute; top: -20px; left: 50%; transform: translateX(-50%); font-size: 11px; white-space: nowrap; padding: 1px 7px; border-radius: 6px; background: var(--g-ink); color: var(--g-card); }
 .g-rush .rr-weapon.empty .rr-wname { display: none; }
 @keyframes rr-ready { 50% { transform: scale(1.07) rotate(-4deg); } }
-.g-rush .rr-btns { position: absolute; left: 0; right: 0; bottom: max(14px, env(safe-area-inset-bottom, 0px)); display: none; justify-content: center; gap: 18px; pointer-events: none; }
+.g-rush .rr-btns { position: absolute; left: max(14px, env(safe-area-inset-left, 0px)); right: max(14px, env(safe-area-inset-right, 0px)); bottom: max(14px, env(safe-area-inset-bottom, 0px)); display: none; justify-content: space-between; pointer-events: none; }
 .g-rush.rr-buttons .rr-btns { display: flex; }
-.g-rush .rr-btns button { pointer-events: auto; width: 74px; height: 74px; border-radius: 50%; background: var(--g-card); border: 3px solid var(--g-ink); box-shadow: 3px 3px 0 var(--g-edge); font-weight: 900; font-size: 13px; display: grid; place-items: center; }
+.g-rush .rr-btns button { pointer-events: auto; width: 78px; height: 78px; flex-direction: column; gap: 0; line-height: 1; border-radius: 50%; background: var(--g-card); border: 3px solid var(--g-ink); box-shadow: 3px 3px 0 var(--g-edge); font-weight: 900; font-size: 13px; display: grid; place-items: center; }
 .g-rush .rr-btns button:active { transform: translate(2px,2px); box-shadow: none; background: var(--g-hl); }
 .g-rush.rr-buttons .rr-weapon { bottom: calc(max(14px, env(safe-area-inset-bottom, 0px)) + 88px); }
 
 /* splat, zap, down banner, name tag */
 .g-rush .rr-splat { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .5s; }
 .g-rush .rr-splat.on { opacity: 1; transition: opacity .06s; }
-.g-rush .rr-splat svg { position: absolute; inset: -6%; width: 112%; height: 112%; }
-.g-rush .rr-splat.on svg { animation: rr-splat .3s cubic-bezier(.2,1.5,.4,1); }
-@keyframes rr-splat { 0% { transform: scale(.4); } 100% { transform: scale(1); } }
+.g-rush .rr-splat svg { position: absolute; inset: 0; width: 100%; height: 100%; transform-origin: 50% 45%; }
+.g-rush .rr-splat.on svg { animation: rr-splat .32s cubic-bezier(.2,1.6,.4,1); }
+.g-rush .rr-splat.drip svg { transform: translateY(9%) scaleY(1.06); opacity: 0; transition: transform .65s ease-in, opacity .65s ease-in; }
+@keyframes rr-splat { 0% { transform: scale(.25) rotate(-8deg); } 100% { transform: scale(1); } }
 .g-rush .rr-flash { position: absolute; inset: 0; pointer-events: none; opacity: 0; background: var(--g-card); }
 .g-rush .rr-flash.go { animation: rr-flash .35s ease-out; }
 @keyframes rr-flash { 0% { opacity: .85; } 100% { opacity: 0; } }
@@ -132,7 +133,7 @@ export const CSS = `
   background: var(--g-ink); color: var(--g-card); border: 2.5px solid var(--g-ink); box-shadow: 3px 3px 0 color-mix(in srgb, var(--g-edge) 45%, transparent); }
 .g-rush .rr-btn:active { transform: translate(2px, 2px); box-shadow: none; }
 .g-rush .rr-btn.ghost { background: var(--g-card); color: var(--g-ink); box-shadow: 3px 3px 0 var(--g-edge); }
-.g-rush .rr-btn.hot { background: var(--g-hl); color: var(--g-ink); box-shadow: 3px 3px 0 var(--g-edge); }
+.g-rush .rr-btn.hot { background: var(--g-hl); color: var(--g-on-ink); box-shadow: 3px 3px 0 var(--g-edge); }
 .g-rush .rr-btn[disabled] { opacity: .5; }
 
 /* loading */
@@ -160,8 +161,8 @@ export const CSS = `
 .g-rush .rr-mode svg { width: 34px; height: 34px; }
 .g-rush .rr-mode b { font-size: 15px; font-weight: 900; }
 .g-rush .rr-mode span { font-size: 11px; line-height: 1.2; color: var(--g-muted); font-weight: 800; font-family: var(--g-font-body); }
-.g-rush .rr-mode.on { background: var(--g-hl); transform: translateY(-3px) rotate(-1.5deg); box-shadow: 3px 3px 0 var(--g-edge); }
-.g-rush .rr-mode.on span { color: var(--g-ink); }
+.g-rush .rr-mode.on { color: var(--g-on-ink); background: var(--g-hl); transform: translateY(-3px) rotate(-1.5deg); box-shadow: 3px 3px 0 var(--g-edge); }
+.g-rush .rr-mode.on span { color: var(--g-on-ink); }
 .g-rush .rr-mode[disabled] { cursor: default; }
 .g-rush .rr-status { font-family: var(--g-font-body); font-weight: 800; font-size: 13px; color: var(--g-muted); min-height: 18px; display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
 .g-rush .rr-status .rr-ok { color: var(--g-good); }

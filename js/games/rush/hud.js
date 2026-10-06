@@ -29,10 +29,46 @@ export const WEAPONS = {
   rocket: { name: 'Rocket', icon: ICONS.rocket },
   shield: { name: 'Shield', icon: ICONS.shield },
 };
-const SPLAT = (col) => `<svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><g fill="${col}" stroke="var(--g-ink)" stroke-width="1.2">
-<path d="M48 10c9 0 10 9 18 8s16 6 12 14 7 12 3 20-12 4-11 13 9 15 0 18-11-6-18-3-14 12-21 6 0-13-7-17-16-2-15-11 11-7 8-15-6-15 3-19 13 2 17-5 9-9 11-9Z"/>
-<circle cx="15" cy="20" r="6"/><circle cx="85" cy="78" r="5"/><circle cx="80" cy="14" r="3.5"/><circle cx="18" cy="84" r="4"/>
-<path d="M60 80c2 6 1 13-1 16-2-4-3-10 1-16ZM34 78c1 5 0 9-2 12-1-4-1-8 2-12Z"/></g></svg>`;
+// A comic ink splat: one big wobbly blob, satellites, drips, gloss and a halftone layer.
+function splatSVG(col, w, h) {
+  const R = Math.random;
+  const H = Math.round((100 * h) / Math.max(1, w));
+  const blob = (cx, cy, r, n, wob) => {
+    const pts = [];
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      const rr = r * (1 + wob * (R() - 0.5));
+      pts.push([cx + Math.cos(a) * rr, cy + Math.sin(a) * rr]);
+    }
+    let d = '';
+    for (let i = 0; i < n; i++) {
+      const p0 = pts[(i + n - 1) % n]; const p1 = pts[i]; const p2 = pts[(i + 1) % n]; const p3 = pts[(i + 2) % n];
+      if (!i) d += `M${p1[0].toFixed(1)} ${p1[1].toFixed(1)}`;
+      const c1 = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6];
+      const c2 = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6];
+      d += `C${c1[0].toFixed(1)} ${c1[1].toFixed(1)} ${c2[0].toFixed(1)} ${c2[1].toFixed(1)} ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`;
+    }
+    return d + 'Z';
+  };
+  const cx = 42 + R() * 16; const cy = H * (0.42 + R() * 0.12);
+  const main = blob(cx, cy, 31, 14, 0.55);
+  let sat = '';
+  for (let i = 0; i < 7; i++) {
+    const a = R() * Math.PI * 2; const dist = 34 + R() * 22;
+    sat += `<path d="${blob(cx + Math.cos(a) * dist, cy + Math.sin(a) * dist * 1.1, 2.5 + R() * 6, 8, 0.5)}"/>`;
+  }
+  let drips = '';
+  for (let i = 0; i < 4; i++) {
+    const x = cx - 22 + R() * 44; const len = 14 + R() * 26; const wd = 2.4 + R() * 2.6; const top = cy + 12;
+    drips += `<rect x="${(x - wd / 2).toFixed(1)}" y="${top.toFixed(1)}" width="${wd.toFixed(1)}" height="${len.toFixed(1)}" rx="${(wd / 2).toFixed(1)}"/><circle cx="${x.toFixed(1)}" cy="${(top + len).toFixed(1)}" r="${(wd * 0.85).toFixed(1)}"/>`;
+  }
+  return `<svg viewBox="0 0 100 ${H}" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+<defs><pattern id="rr-dots" width="2.4" height="2.4" patternUnits="userSpaceOnUse"><circle cx="1.2" cy="1.2" r="0.42" fill="rgba(0,0,0,.2)"/></pattern></defs>
+<g class="rr-ink" style="fill:${col}" stroke="var(--g-edge)" stroke-width="0.7" stroke-linejoin="round">${drips}<path d="${main}"/>${sat}</g>
+<path d="${main}" fill="url(#rr-dots)" opacity=".7"/>
+<g fill="#fff" opacity=".55"><ellipse cx="${(cx - 12).toFixed(1)}" cy="${(cy - 14).toFixed(1)}" rx="7" ry="3.2" transform="rotate(-24 ${(cx - 12).toFixed(1)} ${(cy - 14).toFixed(1)})"/><circle cx="${(cx - 2).toFixed(1)}" cy="${(cy - 19).toFixed(1)}" r="1.6"/></g>
+</svg>`;
+}
 
 export function createHud(root, o) {
   const views = {};
@@ -58,7 +94,7 @@ export function createHud(root, o) {
       <div class="rr-splat" data-r="splat"></div>
       <div class="rr-flash" data-r="flash"></div>
       <button class="rr-weapon empty" data-r="weapon" hidden aria-label="Use weapon"><span class="rr-wname"></span><span class="rr-wic">${ICONS.box}</span>${o.keyHint ? `<span class="rr-key">${esc(o.keyHint(who))}</span>` : ''}</button>
-      <div class="rr-btns" data-r="btns"><button data-a="${A_DOWN}">ROLL</button><button data-a="${A_UP}">JUMP</button></div>`;
+      <div class="rr-btns" data-r="btns"><button data-a="${A_DOWN}" aria-label="Roll"><svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M12 4v14M5 12l7 7 7-7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>ROLL</button><button data-a="${A_UP}" aria-label="Jump"><svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M12 20V6M5 12l7-7 7 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>JUMP</button></div>`;
     L.appendChild(el);
     const $ = (r) => el.querySelector(`[data-r="${r}"]`);
     const R = {
@@ -72,60 +108,60 @@ export function createHud(root, o) {
     R.weapon.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); o.onUse(who); });
     R.btns.querySelectorAll('button').forEach((b) => b.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); o.onBtn(who, +b.dataset.a); }));
     if (R.pause) R.pause.addEventListener('click', () => o.onPause());
-    const last = {};
-    const set = (k, v, fn) => { if (last[k] !== v) { last[k] = v; fn(v); } };
+    const last = { h: -1, hm: '', c: -1, d: -1, pt: null, pc: '', bo: null, bc: '', bm: -1, bt: -1, g: null, ws: null, w: undefined, wo: null, wx: -999, bn: null, btn: null };
     let popN = 0;
+    function pwUpd(k, frac) {
+      const p = pw[k];
+      const q = frac <= 0 ? -1 : Math.round(frac * 50) / 50;
+      if (q === p.last) return;
+      p.last = q;
+      p.el.hidden = q < 0;
+      if (q >= 0) p.ring.style.strokeDashoffset = String(100 - q * 100);
+    }
     const v = {
       el, who,
       hearts(n, max, color) {
-        set('hm', `${max}|${color}`, () => { R.hearts.innerHTML = Array.from({ length: max }, () => HEART).join(''); R.hearts.style.color = color; last.h = -1; });
-        set('h', n, (val) => {
-          const hs = R.hearts.children;
-          for (let i = 0; i < hs.length; i++) {
-            const was = !hs[i].classList.contains('off');
-            const on = i < val;
-            hs[i].classList.toggle('off', !on);
-            if (on && !was) { hs[i].classList.remove('pop'); void hs[i].offsetWidth; hs[i].classList.add('pop'); }
-          }
-        });
+        const hm = max + color;
+        if (last.hm !== hm) { last.hm = hm; R.hearts.innerHTML = Array.from({ length: max }, () => HEART).join(''); R.hearts.style.color = color; last.h = -1; }
+        if (last.h === n) return;
+        last.h = n;
+        const hs = R.hearts.children;
+        for (let i = 0; i < hs.length; i++) {
+          const was = !hs[i].classList.contains('off');
+          const on = i < n;
+          hs[i].classList.toggle('off', !on);
+          if (on && !was) { hs[i].classList.remove('pop'); void hs[i].offsetWidth; hs[i].classList.add('pop'); }
+        }
       },
-      coins(n) { set('c', n, (val) => { R.coins.textContent = val; }); },
-      dist(m) { set('d', m, (val) => { R.dist.firstChild.nodeValue = val.toLocaleString('en-US'); }); },
+      coins(n) { if (last.c !== n) { last.c = n; R.coins.textContent = n; } },
+      dist(m) { if (last.d !== m) { last.d = m; R.dist.firstChild.nodeValue = m.toLocaleString('en-US'); } },
       partner(text, color) {
-        set('pt', text, (val) => { R.partner.hidden = !val; if (val) R.partner.querySelector('span').textContent = val; });
-        set('pc', color, (val) => { R.partner.querySelector('.rr-dot').style.background = val; });
+        if (last.pt !== text) { last.pt = text; R.partner.hidden = !text; if (text) R.partner.querySelector('span').textContent = text; }
+        if (last.pc !== color) { last.pc = color; R.partner.querySelector('.rr-dot').style.background = color; }
       },
       bar(on, me, other, meCol, otherCol, meInit, otherInit) {
-        set('bo', on, (val) => { R.bar.hidden = !val; });
+        if (last.bo !== on) { last.bo = on; R.bar.hidden = !on; }
         if (!on) return;
-        set('bc', meCol + otherCol, () => {
+        if (last.bc !== meCol + otherCol) {
+          last.bc = meCol + otherCol;
           R.mkm.style.background = meCol; R.mko.style.background = otherCol;
           R.mkm.textContent = meInit; R.mko.textContent = otherInit;
           R.mko.style.display = otherCol ? '' : 'none';
-        });
+        }
         const w = R.bar.clientWidth || 200;
-        set('bm', Math.round(me * w), (px) => { R.mkm.style.transform = `translateX(${px}px)`; R.fill.style.width = px + 'px'; });
-        set('bt', Math.round(other * w), (px) => { R.mko.style.transform = `translateX(${px}px)`; });
+        const pm = Math.round(me * w); const po = Math.round(other * w);
+        if (last.bm !== pm) { last.bm = pm; R.mkm.style.transform = `translateX(${pm}px)`; R.fill.style.width = pm + 'px'; }
+        if (last.bt !== po) { last.bt = po; R.mko.style.transform = `translateX(${po}px)`; }
       },
-      gap(text) { set('g', text, (val) => { R.gap.hidden = !val; if (val) R.gap.firstChild.textContent = val; }); },
-      powers(m, s, sh, rk) {
-        const upd = (k, frac) => {
-          const p = pw[k];
-          const q = frac <= 0 ? -1 : Math.round(frac * 50) / 50;
-          if (q === p.last) return;
-          p.last = q;
-          p.el.hidden = q < 0;
-          if (q >= 0) p.ring.style.strokeDashoffset = String(100 - q * 100);
-        };
-        upd('magnet', m); upd('sneakers', s); upd('shield', sh ? 1 : 0); upd('rocket', rk);
-      },
+      gap(text) { if (last.g !== text) { last.g = text; R.gap.hidden = !text; if (text) R.gap.firstChild.textContent = text; } },
+      powers(m, s, sh, rk) { pwUpd('magnet', m); pwUpd('sneakers', s); pwUpd('shield', sh ? 1 : 0); pwUpd('rocket', rk); },
       weapon(kind, show) {
-        set('ws', show, (val) => { R.weapon.hidden = !val; });
-        set('w', kind, (val) => {
-          R.weapon.classList.toggle('empty', !val); R.weapon.classList.toggle('full', !!val);
-          R.weapon.querySelector('.rr-wic').innerHTML = val ? WEAPONS[val].icon : ICONS.box;
-          R.weapon.querySelector('.rr-wname').textContent = val ? WEAPONS[val].name : '';
-        });
+        if (last.ws !== show) { last.ws = show; R.weapon.hidden = !show; }
+        if (last.w === kind) return;
+        last.w = kind;
+        R.weapon.classList.toggle('empty', !kind); R.weapon.classList.toggle('full', !!kind);
+        R.weapon.querySelector('.rr-wic').innerHTML = kind ? WEAPONS[kind].icon : ICONS.box;
+        R.weapon.querySelector('.rr-wname').textContent = kind ? WEAPONS[kind].name : '';
       },
       pop(text, cls = '', sub = '') {
         const p = mk('rr-pop ' + cls, esc(text) + (sub ? `<small>${esc(sub)}</small>` : ''));
@@ -139,21 +175,22 @@ export function createHud(root, o) {
         R.combo.innerHTML = `x${n}<small>${esc(label)}</small>`;
         R.combo.classList.remove('go'); void R.combo.offsetWidth; R.combo.classList.add('go');
       },
-      warn(on, xFrac) {
-        set('wo', on, (val) => { R.warn.classList.toggle('on', val); });
-        if (on) set('wx', Math.round(xFrac * 100), (val) => { R.warn.style.transform = `translateX(${val}%)`; });
+      warn(on, xPct) {
+        if (last.wo !== on) { last.wo = on; R.warn.classList.toggle('on', on); }
+        if (on && last.wx !== xPct) { last.wx = xPct; R.warn.style.transform = `translateX(${xPct}%)`; }
       },
       splat(color, ms = 2000) {
-        R.splat.innerHTML = SPLAT(color);
+        R.splat.innerHTML = splatSVG(color, el.clientWidth || 390, el.clientHeight || 700);
+        R.splat.classList.remove('drip');
         R.splat.classList.add('on');
-        clearTimeout(v._st);
-        v._st = setTimeout(() => R.splat.classList.remove('on'), ms);
+        clearTimeout(v._st); clearTimeout(v._sd);
+        v._sd = setTimeout(() => R.splat.classList.add('drip'), ms - 650);
+        v._st = setTimeout(() => R.splat.classList.remove('on', 'drip'), ms);
       },
       get splatted() { return R.splat.classList.contains('on'); },
       flash() { R.flash.classList.remove('go'); void R.flash.offsetWidth; R.flash.classList.add('go'); },
-      banner(html) { set('bn', html || '', (val) => { R.banner.classList.toggle('on', !!val); if (val) R.banner.innerHTML = val; }); },
+      banner(html) { const t = html || ''; if (last.bn !== t) { last.bn = t; R.banner.classList.toggle('on', !!t); if (t) R.banner.innerHTML = t; } },
       bannerNum(n) { const b = R.banner.querySelector('b'); if (b && b.textContent !== String(n)) b.textContent = String(n); },
-      buttons(on) { set('btn', on, () => {}); },
     };
     views[who] = v;
     return v;
@@ -168,8 +205,9 @@ export function createHud(root, o) {
   tut.innerHTML = '<div class="rr-hand"></div><div class="rr-cap"></div><div class="rr-steps"><i></i><i></i><i></i></div>';
   L.appendChild(tut);
   const tag = mk('rr-tag');
+  let tagX = -1; let tagY = -1;
   L.appendChild(tag);
-  let lastCount = '';
+  let lastCount = ''; let lastSub = '';
 
   const show = (k, on) => { ov[k].classList.toggle('on', !!on); };
   const api = {
@@ -229,9 +267,8 @@ export function createHud(root, o) {
     },
     hideLobby() { show('lobby', false); },
     count(text, sub = '') {
-      const key = text + '|' + sub;
-      if (key === lastCount) return;
-      lastCount = key;
+      if (text === lastCount && sub === lastSub) return;
+      lastCount = text; lastSub = sub;
       if (!text) { show('count', false); ov.count.innerHTML = ''; return; }
       show('count', true);
       ov.count.innerHTML = `<div><div class="rr-num go ${/^\d$/.test(text) ? '' : 'run'}">${esc(text)}</div>${sub ? `<p><span>${esc(sub)}</span></p>` : ''}</div>`;
@@ -287,7 +324,8 @@ export function createHud(root, o) {
       if (tag.style.display !== 'block') tag.style.display = 'block';
       if (tag.textContent !== name) tag.textContent = name;
       if (tag.style.background !== color) tag.style.background = color;
-      tag.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px) translate(-50%, -100%)`;
+      const qx = Math.round(x / 2) * 2; const qy = Math.round(y / 2) * 2;
+      if (qx !== tagX || qy !== tagY) { tagX = qx; tagY = qy; tag.style.transform = `translate(${qx}px, ${qy}px) translate(-50%, -100%)`; }
     },
     get countText() { return lastCount; },
     A_USE,

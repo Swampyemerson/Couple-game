@@ -8,7 +8,7 @@ import { O_LOW, O_HIGH, O_TRAIN, O_RAMP, O_MTRAIN, O_BLOCK, I_MAGNET, I_SNEAKERS
 import { GeoBuf, makeToon, makeUniforms, makeTemplates, blobTexture, mix, FX_PLAIN, FX_GLOW, FX_SKY } from './gfx.js';
 
 const OL = 0.05;
-const CHUNK_V = 40000;
+const CHUNK_V = 18000;
 const POOL = 9;
 const COIN_MAX = 300;
 const ITEM_MAX = 16;
@@ -20,9 +20,13 @@ const SIDE_X = 4.35;      // parapet line
 export function createWorld(THREE, P) {
   const T = makeTemplates(THREE);
   const U = makeUniforms(THREE, P);
+  // Same shader, separate instances per object kind: three r128 recomputes program parameters
+  // (and allocates) whenever one material alternates between plain and instanced draws.
   const mat = makeToon(THREE, null, U);
+  const matInst = makeToon(THREE, null, U);
+  const matInstC = makeToon(THREE, null, U);
   const avatarMat = makeToon(THREE, null, U, { skinning: true });
-  const disposables = [mat, avatarMat];
+  const disposables = [mat, matInst, matInstC, avatarMat];
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color().fromArray(P.bg);
@@ -36,16 +40,17 @@ export function createWorld(THREE, P) {
     mesh.visible = false;
     mesh.matrixAutoUpdate = false;
     scene.add(mesh);
-    pool.push({ buf, mesh, ci: -1, used: 0 });
+    pool.push({ buf, mesh, ci: null, used: 0 });
     disposables.push(buf);
   }
   const byChunk = new Map();
+  const stats = { maxV: 0, maxI: 0, over: 0, built: 0 };
   let frame = 0;
 
   // ── instanced things ──
   const tmpBuf = new GeoBuf(THREE, 6000, { dynamic: false });
   const freezeWith = (fn) => { tmpBuf.reset(); fn(tmpBuf); const g = tmpBuf.freeze(THREE); disposables.push(g); return g; };
-  const inst = (geo, max, m = mat) => {
+  const inst = (geo, max, m = matInst) => {
     const im = new THREE.InstancedMesh(geo, m, max);
     im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     im.count = 0; im.frustumCulled = false;
@@ -87,10 +92,12 @@ export function createWorld(THREE, P) {
     b.add(T.box, 0, 0, 0, 0.22, 0.82, 0.83, 0, P.b, FX_PLAIN, 0, ink);
   });
   itemGeo[I_REVIVE] = freezeWith((b) => {
-    b.add(T.sphere, -0.2, 0.12, 0, 0.5, 0.5, 0.36, 0, P.b, FX_GLOW, 0.05, ink);
-    b.add(T.sphere, 0.2, 0.12, 0, 0.5, 0.5, 0.36, 0, P.b, FX_GLOW, 0.05, ink);
-    b.add(T.box, 0, -0.1, 0, 0.5, 0.5, 0.35, Math.PI / 4, P.b, FX_GLOW, 0, ink);
-    b.add(T.ico, 0, 0.05, 0, 1.25, 1.25, 1.25, 0, mix(P.hl, P.white, 0.4), FX_GLOW, 0, ink);
+    // a fat heart with a halo ring and a light beam you can spot from far away
+    b.add(T.sphere, -0.3, 0.18, 0, 0.75, 0.75, 0.5, 0, P.b, FX_GLOW, 0.06, ink);
+    b.add(T.sphere, 0.3, 0.18, 0, 0.75, 0.75, 0.5, 0, P.b, FX_GLOW, 0.06, ink);
+    b.add(T.box, 0, -0.16, 0, 0.74, 0.74, 0.48, Math.PI / 4, P.b, FX_GLOW, 0.05, ink);
+    b.add(T.disc, 0, -1.05, 0, 2.2, 0.06, 2.2, 0, mix(P.hl, P.white, 0.3), FX_GLOW, 0.04, ink);
+    b.add(T.cyl, 0, 2.6, 0, 0.32, 6.5, 0.32, 0, mix(P.b, P.white, 0.55), FX_GLOW, 0, ink);
   });
   // The revive halo should be drawn first-ish; it's opaque but smaller parts poke through. Fine for a glowing token.
   const items = {};
@@ -119,7 +126,7 @@ export function createWorld(THREE, P) {
   });
   const lows = inst(lowGeo, BAR_MAX);
   const highs = inst(highGeo, BAR_MAX);
-  const blocks = inst(blockGeo, 8);
+  const blocks = inst(blockGeo, 8, matInstC);
   blocks.setColorAt(0, new THREE.Color(1, 1, 1));
 
   // start / finish gates
@@ -132,6 +139,32 @@ export function createWorld(THREE, P) {
     b.boxMM(-4.2, -0.025, -0.45, 4.2, 0.015, 0.45, P.white, FX_PLAIN, 0, ink, T);
   });
   const gates = inst(gateGeo, 2);
+  // printed banners on the gates (two tiny canvas textures)
+  const bannerTex = (text) => {
+    const cv = document.createElement('canvas'); cv.width = 512; cv.height = 192;
+    const draw = () => {
+      const g = cv.getContext('2d');
+      g.fillStyle = hexOf(P.hl); g.fillRect(0, 0, 512, 192);
+      g.fillStyle = hexOf(P.dark ? P.bg : P.ink); g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.font = `900 120px ${P.font || 'Arial Black, sans-serif'}`;
+      g.fillText(text, 256, 102, 470);
+    };
+    draw();
+    const t = new THREE.CanvasTexture(cv);
+    try { document.fonts && document.fonts.ready.then(() => { draw(); t.needsUpdate = true; }); } catch { /* ignore */ }
+    disposables.push(t);
+    return t;
+  };
+  const bannerGeo = new THREE.PlaneGeometry(4.5, 1.7);
+  disposables.push(bannerGeo);
+  const banners = ['RUN!', 'FINISH'].map((txt) => {
+    const m = new THREE.MeshBasicMaterial({ map: bannerTex(txt), fog: true });
+    disposables.push(m);
+    const mesh = new THREE.Mesh(bannerGeo, m);
+    mesh.visible = false;
+    scene.add(mesh);
+    return mesh;
+  });
 
   // oncoming trains (pooled, 2 cars, front at local z = 0 facing +z)
   const mtGeo = freezeWith((b) => trainCars(b, 0, 0, 2, P.trains[4], true, T, P));
@@ -171,14 +204,18 @@ export function createWorld(THREE, P) {
     if (e) { e.used = frame; return e; }
     // take the least recently used slot
     e = null;
-    for (const p of pool) if (p.ci < 0) { e = p; break; }
+    for (const p of pool) if (p.ci === null) { e = p; break; }
     if (!e) { for (const p of pool) if (p.used < frame - 1 && (!e || p.used < e.used)) e = p; }
     if (!e) return null;
-    if (e.ci >= 0) byChunk.delete(e.ci);
+    if (e.ci !== null) byChunk.delete(e.ci);
     const c = ci < 0 ? behindChunk(ci) : track.chunk(ci);
     e.buf.reset();
     buildChunk(e.buf, c, T, P);
     e.buf.commit(140, 0, 4, -(c.z0 + CHUNK / 2));
+    if (e.buf.nv > stats.maxV) stats.maxV = e.buf.nv;
+    if (e.buf.ni > stats.maxI) stats.maxI = e.buf.ni;
+    if (e.buf.over) stats.over++;
+    stats.built++;
     e.mesh.visible = true;
     e.ci = ci; e.used = frame;
     byChunk.set(ci, e);
@@ -202,6 +239,7 @@ export function createWorld(THREE, P) {
   }
 
   // ── per-view layout ──
+  const itemCount = new Int16Array(8);
   const tmpColor = new THREE.Color();
   let spin = 0;
   function writeM(arr, i, x, y, z, s, ry, rx = 0) {
@@ -229,7 +267,8 @@ export function createWorld(THREE, P) {
     U.uSun.value.z = v.front ? -0.43 : 0.43;
     U.uSun.value.normalize();
     let nc = 0;
-    const ic = { [I_MAGNET]: 0, [I_SNEAKERS]: 0, [I_SHIELD]: 0, [I_BOX]: 0, [I_REVIVE]: 0 };
+    const ic = itemCount;
+    ic.fill(0);
     let nl = 0; let nh = 0; let nm = 0;
     const la = lows.instanceMatrix.array; const ha = highs.instanceMatrix.array;
     for (let ci = c0; ci <= c1; ci++) {
@@ -290,7 +329,7 @@ export function createWorld(THREE, P) {
     } else blocks.count = 0;
     for (let i = nm; i < mtrains.length; i++) mtrains[i].visible = false;
     coins.count = nc; coins.instanceMatrix.needsUpdate = true;
-    for (const k in items) { items[k].count = ic[k]; items[k].instanceMatrix.needsUpdate = true; }
+    for (let k = 1; k <= 5; k++) { items[k].count = ic[k]; items[k].instanceMatrix.needsUpdate = true; }
     lows.count = nl; lows.instanceMatrix.needsUpdate = true;
     highs.count = nh; highs.instanceMatrix.needsUpdate = true;
   }
@@ -319,13 +358,14 @@ export function createWorld(THREE, P) {
   function setGates(list) {
     const a = gates.instanceMatrix.array;
     let n = 0;
-    for (const d of list) { if (n < 2) writeM(a, n++, 0, 0, -d, 1, 0); }
+    for (const d of list) { if (n < 2) { writeM(a, n, 0, 0, -d, 1, 0); banners[n].position.set(0, 6.9, -d + 0.4); banners[n].visible = true; n++; } }
+    for (let i = n; i < 2; i++) banners[i].visible = false;
     gates.count = n;
     gates.instanceMatrix.needsUpdate = true;
   }
   /** Forget built chunks (the track changed). */
   function reset() {
-    for (const p of pool) { p.ci = -1; p.mesh.visible = false; p.used = 0; }
+    for (const p of pool) { p.ci = null; p.mesh.visible = false; p.used = 0; }
     byChunk.clear();
   }
 
@@ -333,16 +373,17 @@ export function createWorld(THREE, P) {
     // Rebuilding everything is simplest; palette changes are rare (theme switch).
     scene.background.fromArray(P2.bg);
     scene.fog.color.fromArray(P2.fog);
-    for (const p of pool) { p.ci = -1; p.mesh.visible = false; }
+    for (const p of pool) { p.ci = null; p.mesh.visible = false; }
     byChunk.clear();
   }
 
   return {
-    scene, mat, avatarMat, U, T, P,
+    scene, mat, matInst, matInstC, avatarMat, U, T, P,
     ensure, syncView, setShadows, follow, setPalette, setGates, reset,
     chunkCount: () => byChunk.size,
+    stats,
     /** Everything that can be drawn, for shader warm-up. */
-    warmList: () => [coins, lows, highs, blocks, gates, shadows, street, skyline, ...Object.values(items), mtrains[0], pool[0].mesh],
+    warmList: () => [coins, lows, highs, blocks, gates, shadows, street, skyline, ...Object.values(items), mtrains[0], pool[0].mesh, ...banners],
     dispose() {
       for (const d of disposables) { try { d.dispose(); } catch { /* ignore */ } }
       for (const m of [coins, lows, highs, blocks, gates, ...Object.values(items)]) { try { m.dispose(); } catch { /* ignore */ } }
@@ -356,6 +397,8 @@ export function createWorld(THREE, P) {
 function behindChunk(ci) {
   return { i: ci, z0: ci * CHUNK, z1: (ci + 1) * CHUNK, obs: [], gaps: [], coins: [], items: [], tunnel: null, path: [], scen: 777 + ci };
 }
+
+const hexOf = (c) => '#' + c.map((v) => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0')).join('');
 
 // ── builders (all coordinates: x, y, track distance d; world z = -d) ──
 function bx(b, T, x0, y0, d0, x1, y1, d1, rgb, fx, ol, ink) {

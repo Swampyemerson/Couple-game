@@ -50,7 +50,7 @@ export function makePalette(tok) {
   const paper = dark ? mix(bg, card, 0.6) : card;
   const shadeInk = dark ? mix(bg, [0, 0, 0], 0.55) : ink;
   const P = {
-    dark, bg, card, ink, a, b, hl, good, bad, muted, paper,
+    dark, bg, card, ink, a, b, hl, good, bad, muted, paper, font: tok.fontDisplay || '',
     outline: dark ? mix(ink, bg, 0.12) : ink,
     fog: bg,
     sky: bg,

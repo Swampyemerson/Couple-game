@@ -33,6 +33,8 @@ const MUTE = 'ju.games.mute';
 const HN = 150; // lag-compensation history (frames)
 const COMBO_WORDS = ['', '', 'Nice', 'Great', 'Slick', 'Wild', 'Unreal', 'Legend'];
 
+const AB = ['a', 'b'];
+const SPEED_T = Array.from({ length: 12 }, (_, i) => `rotate(${(i * 0.55).toFixed(2)}deg) scale(${(1 + (i % 4) * 0.012).toFixed(3)})`);
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* private mode */ } };
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -49,6 +51,8 @@ export function createGame(el, api) {
   const split = !live;
   const other = (w) => (w === 'a' ? 'b' : 'a');
   let dead = false;
+  const mountT = performance.now();
+  let loadMs = 0;
   liveGames++;
 
   // ── DOM ──
@@ -117,7 +121,7 @@ export function createGame(el, api) {
       rs: { x: (w === 'a' ? -1 : 1) * LANE_W, y: 0, z: 0, ground: 0, speed: 0, air: false, vy: 0, roll: false, rollT: 0, stumble: 0, down: false, downT: 0, win: false, idle: true, invuln: false, shield: false, t: 0, visible: true, laneX: (w === 'a' ? -1 : 1) * LANE_W, bump: 0, boost: false },
       prev: { z: 0, x: 0, y: 0 }, net: emptyState(), weapon: null, weaponRoll: 0, shoveCD: 0, revive: null, downId: 0, downAt: 0, pushOff: 0,
       stats: { shoves: 0, slams: 0, inks: 0, hits: 0, revives: 0, dodges: 0 }, fly, hist: new Float64Array(HN * 7), histN: 0, histHead: 0,
-      lastHorn: -1, outT: -1, lastGround: false, tut: 0,
+      lastHorn: -1, outT: -1, lastGround: false, tut: 0, css: `var(--p-${w})`, hk: { gap: null, ban: 0 },
     };
   }
   const players = { a: mkPlayer('a'), b: mkPlayer('b') };
@@ -152,6 +156,7 @@ export function createGame(el, api) {
   let ewma = 16.7; let lowFor = 0; let checkT = 0;
   const perf = { dts: new Float32Array(600), work: new Float32Array(600), n: 0, calls: 0, tris: 0, maxCalls: 0 };
   let rules = null;
+  const pal = { a: null, b: null, hl: null };
   const lobbyTrack = createTrack(1);
   const tmpV = { x: 0, y: 0, z: 0 };
   let vec3 = null;
@@ -181,7 +186,9 @@ export function createGame(el, api) {
     warmUp();
     hud.loading(1, 'Ready');
     ready3D = true;
+    loadMs = Math.round(performance.now() - mountT);
     toLobby();
+    if (pendingRejoin) { const d = pendingRejoin; pendingRejoin = null; applyRejoin(d); }
     setTimeout(() => { if (!dead) hud.hideLoading(); }, 120);
     lastTs = 0;
     raf = requestAnimationFrame(frame);
@@ -189,7 +196,7 @@ export function createGame(el, api) {
 
   function init3D() {
     P = makePalette(api.tokens());
-    P.a2 = P.a; P.b2 = P.b;
+    pal.a = P.a; pal.b = P.b; pal.hl = P.hl;
     renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', alpha: false, stencil: false, depth: true });
     renderer.info.autoReset = false;
     renderer.setPixelRatio(baseDpr * scale);
@@ -201,7 +208,7 @@ export function createGame(el, api) {
     world = createWorld(THREE, P);
     fx = createFx(THREE, world);
     vec3 = new THREE.Vector3();
-    for (const w of ['a', 'b']) {
+    for (const w of AB) {
       const p = players[w];
       p.av = createAvatar(THREE, world, P, w);
     }
@@ -265,7 +272,7 @@ export function createGame(el, api) {
     M.phase = 'lobby';
     root.classList.add('rr-in-lobby');
     M.track = null; M.result = null; M.ready = false; M.reasons.clear(); M.paused = false; M.resumeAt = 0;
-    for (const w of ['a', 'b']) {
+    for (const w of AB) {
       const p = players[w];
       p.r = null; p.bot = null; p.weapon = null; p.revive = null;
       p.rs.z = 0; p.rs.x = p.rs.laneX = (w === 'a' ? -1 : 1) * LANE_W; p.rs.y = 0; p.rs.idle = true; p.rs.down = false; p.rs.win = false; p.rs.visible = true;
@@ -303,12 +310,13 @@ export function createGame(el, api) {
     M.runMs = 0; M.steps = 0; M.lastNow = clock(); M.alpha = 0;
     M.paused = false; M.reasons.clear(); M.resumeAt = 0; M.result = null; M.endAt = 0;
     M.startedWall = 0; M.firstRunWall = 0; M.partnerFin = -1; M.partnerOut = -1;
-    for (const w of ['a', 'b']) {
+    for (const w of AB) {
       const p = players[w];
-      p.outT = -1; p.lastHorn = -1; p.histN = 0; p.weapon = null; p.tut = 0;
+      p.outT = -1; p.lastHorn = -1; p.histN = 0; p.weapon = null; p.tut = 0; p.hk.gap = null; p.hk.ban = 0;
       for (const f of p.fly) f.on = false;
       if (p.local) {
         p.r = newRunner(w === 'a' ? -1 : 1);
+        if (dbg && dbg.startZ) { p.r.z = p.r.zPrev = dbg.startZ; p.r.t = dbg.startT || 60; p.r.speed = 24; }
         p.bot = createBot(M.track);
         if (dbg && dbg.auto) p.auto = true;
       } else p.r = null;
@@ -339,8 +347,10 @@ export function createGame(el, api) {
       you: s && s.ep === M.epoch ? { z: s.z, l: s.l, h: s.h, c: s.c, rt: s.rt, fn: s.fn } : null,
     });
   }
+  let pendingRejoin = null;
   function applyRejoin(d) {
-    if (!d || !ready3D) return;
+    if (!d) return;
+    if (!ready3D) { pendingRejoin = d; return; }
     beginMatch(d.mode, d.seed, d.startAt, d.len, d.cap);
     M.th = d.th; M.goal = d.goal; M.goalIdx = d.goalIdx || 0;
     const y = d.you;
@@ -407,7 +417,7 @@ export function createGame(el, api) {
     rs: (p) => p.rs,
     view: (w) => players[w].view,
     name: (w) => api.name(w),
-    get pal() { return { a: P.a, b: P.b, hl: P.hl }; },
+    get pal() { return pal; },
     get fx() { return fx; },
     audio,
     send(to, type, data) {
@@ -630,9 +640,9 @@ export function createGame(el, api) {
           if (mine && k !== 4) { audio.play('pickup'); v.pop(k === 1 ? 'MAGNET' : k === 2 ? 'SUPER SNEAKERS' : 'SHIELD', 'hl'); }
           break;
         }
-        case E_STUMBLE: if (mine) { audio.play('stumble'); if (Math.random() < 0.4) v.pop('Oof', 'bad'); } shake(p.w, 0.28); fx.dust(r.x, r.y, r.z, 5, 1); break;
+        case E_STUMBLE: if (mine) { api.haptic(15); audio.play('stumble'); if (Math.random() < 0.4) v.pop('Oof', 'bad'); } shake(p.w, 0.28); fx.dust(r.x, r.y, r.z, 5, 1); break;
         case E_CRASH:
-          if (mine) { audio.play('crash'); audio.duck(1400); v.flash(); v.pop(val === 2 ? 'FELL!' : val === 3 ? 'SLAMMED!' : 'CRASH!', 'bad'); }
+          if (mine) { api.haptic(45); audio.play('crash'); audio.duck(1400); v.flash(); v.pop(val === 2 ? 'FELL!' : val === 3 ? 'SLAMMED!' : 'CRASH!', 'bad'); }
           shake(p.w, 0.7);
           fx.crash(r.x, r.y, r.z);
           fx.stars(r.x, r.y + 2.0, r.z, 3, 1.5);
@@ -782,7 +792,7 @@ export function createGame(el, api) {
     } else if (M.phase === 'countdown') M.lastNow = now;
     else if (M.phase === 'finale') { if (rules) rules.tick(now, dt); if (now >= M.endAt) toOver(); }
     // render states
-    for (const w of ['a', 'b']) {
+    for (const w of AB) {
       const p = players[w];
       if (p.local && p.r) updateLocalRS(p, now, dt);
       else if (!p.local && live && M.phase !== 'lobby') updateRemoteRS(p, now);
@@ -851,18 +861,20 @@ export function createGame(el, api) {
     if (M.phase === 'lobby' || M.phase === 'loading') return;
 
     // per view
-    const sp = viewers.reduce((m, w) => Math.max(m, players[w].rs.speed), 0);
-    const boost = viewers.some((w) => players[w].rs.boost);
-    const sl = M.phase === 'run' && !paused ? clamp((sp - 17) / 13, 0, 1) * 0.55 + (boost ? 0.35 : 0) : 0;
-    if (Math.abs(sl - (speedEl._v || 0)) > 0.01) { speedEl._v = sl; speedEl.style.opacity = sl.toFixed(2); }
-    if (sl > 0.02) speedEl.style.transform = `rotate(${(Math.random() * 6).toFixed(1)}deg) scale(${(1 + Math.random() * 0.04).toFixed(3)})`;
+    let sp = 0; let boost = false;
+    for (let i = 0; i < viewers.length; i++) { const rs = players[viewers[i]].rs; if (rs.speed > sp) sp = rs.speed; if (rs.boost) boost = true; }
+    const sl = M.phase === 'run' && !paused ? Math.round((clamp((sp - 17) / 13, 0, 1) * 0.55 + (boost ? 0.35 : 0)) * 20) / 20 : 0;
+    if (sl !== speedV) { speedV = sl; speedEl.style.opacity = String(sl); }
+    if (sl > 0.02) { speedI = (speedI + 5) % SPEED_T.length; speedEl.style.transform = SPEED_T[speedI]; }
     audio.setIntensity(clamp((sp - 12) / 16, 0, 1));
     for (const w of viewers) {
       const p = players[w]; const v = p.view; const r = p.r;
       if (!v || !r) continue;
       const q = players[other(w)];
       const qs = q.rs;
+      const hk = p.hk;
       const qh = q.local ? (q.r ? q.r.hearts : 0) : q.net.h;
+      const gapM = Math.round(qs.z - p.rs.z);
       if (M.mode === 'tandem') {
         const th = live && !isHost ? (q.net.th || M.th) : M.th;
         v.hearts(Math.max(0, th), TEAM_HEARTS_MAX, 'var(--g-bad)');
@@ -870,24 +882,29 @@ export function createGame(el, api) {
         v.coins(tc);
         const goal = live && !isHost ? (q.net.tg || M.goal) : M.goal;
         v.bar(true, Math.min(1, tc / goal), 0, 'var(--g-hl)', '', '', '');
-        v.gap(`${tc} / ${goal} coins together`);
+        const k = tc * 100000 + goal;
+        if (hk.gap !== k) { hk.gap = k; v.gap(`${tc} / ${goal} coins together`); }
         if (!isHost && live && q.net.th > (p._th || 0) && p._th) { v.pop('+1 heart', 'good', 'coin goal reached'); audio.play('heart'); }
         if (live) p._th = q.net.th;
       } else {
-        v.hearts(r.hearts, HEARTS, `var(--p-${w})`);
+        v.hearts(r.hearts, HEARTS, p.css);
         v.coins(r.coins);
       }
       v.dist(Math.max(0, Math.floor(p.rs.z)));
-      const gapM = Math.round(qs.z - p.rs.z);
       if (M.mode === 'race') {
-        v.bar(true, clamp(p.rs.z / M.len, 0, 1), clamp(qs.z / M.len, 0, 1), `var(--p-${w})`, `var(--p-${q.w})`, p.name[0], q.name[0]);
-        v.gap(Math.abs(gapM) < 1 ? `${q.name} level with you` : `${q.name} ${gapM > 0 ? '+' : '−'}${Math.abs(gapM)} m`);
+        v.bar(true, clamp(p.rs.z / M.len, 0, 1), clamp(qs.z / M.len, 0, 1), p.css, q.css, p.name[0], q.name[0]);
+        if (hk.gap !== gapM) { hk.gap = gapM; v.gap(Math.abs(gapM) < 1 ? `${q.name} level with you` : `${q.name} ${gapM > 0 ? '+' : '−'}${Math.abs(gapM)} m`); }
         v.weapon(p.weaponRoll > 0 ? WEAPON_IDX[1 + (Math.floor(tAnim * 12) % 5)] : p.weapon, true);
       } else if (M.mode === 'brawl') {
         v.bar(false);
-        v.gap(Math.abs(gapM) <= 2 ? `Side by side with ${q.name}!` : `${q.name} ${gapM > 0 ? '+' : '−'}${Math.abs(gapM)} m`);
+        const k = (Math.abs(gapM) <= 2 ? 99999 : gapM) * 10 + qh;
+        if (hk.gap !== k) {
+          hk.gap = k;
+          const hs = `${'♥'.repeat(Math.max(0, qh))}${'♡'.repeat(Math.max(0, HEARTS - qh))}`;
+          v.gap(Math.abs(gapM) <= 2 ? `${q.name} ${hs} · side by side!` : `${q.name} ${hs} · ${gapM > 0 ? '+' : '−'}${Math.abs(gapM)} m`);
+        }
       }
-      v.partner(M.mode === 'brawl' ? `${q.name} ${'♥'.repeat(Math.max(0, qh))}${'♡'.repeat(Math.max(0, HEARTS - qh))}` : '', `var(--p-${q.w})`);
+      v.partner('', q.css);
       v.powers(r.magnetT / 10, r.sneakersT / 10, r.shield, r.boostT / 2.2);
       // oncoming train warning + horn
       let warn = false; let warnLane = 0;
@@ -901,16 +918,18 @@ export function createGame(el, api) {
           }
         }
       }
-      v.warn(warn && M.phase === 'run', warnLane * 2.3);
+      v.warn(warn && M.phase === 'run', warnLane * 230);
       // tandem banners
       if (M.mode === 'tandem' && M.phase === 'run') {
         if (r.down && p.downId) {
           const left = Math.max(0, Math.ceil((p.downAt + 10000 - now) / 1000));
-          v.banner(`You’re down! ${q.name} can revive you<b>${left}</b>`); v.bannerNum(left);
+          if (hk.ban !== 1) { hk.ban = 1; v.banner(`You’re down! ${esc(q.name)} can revive you<b>${left}</b>`); }
+          v.bannerNum(left);
         } else if (p.revive) {
           const left = Math.max(0, Math.ceil((p.revive.until - now) / 1000));
-          v.banner(`${q.name} is down! Grab the glowing heart<b>${left}</b>`); v.bannerNum(left);
-        } else v.banner(null);
+          if (hk.ban !== 2) { hk.ban = 2; v.banner(`${esc(q.name)} is down! Grab the glowing heart<b>${left}</b>`); }
+          v.bannerNum(left);
+        } else if (hk.ban) { hk.ban = 0; v.banner(null); }
       } else if (M.mode !== 'tandem') v.banner(null);
     }
     // partner name tag (live)
@@ -922,12 +941,13 @@ export function createGame(el, api) {
         vec3.set(q.rs.x, q.rs.y + 2.75, -q.rs.z);
         vec3.project(players[meW].rig.cam);
         const on = vec3.z < 1 && Math.abs(vec3.x) < 1.25 && vec3.y < 1 && vec3.y > -1;
-        hud.tag(on, clamp((vec3.x * 0.5 + 0.5) * W, 44, W - 44), clamp((-vec3.y * 0.5 + 0.5) * H, 120, H - 40), q.name, `var(--p-${q.w})`);
+        hud.tag(on, clamp((vec3.x * 0.5 + 0.5) * W, 44, W - 44), clamp((-vec3.y * 0.5 + 0.5) * H, 120, H - 40), q.name, q.css);
       } else hud.tag(false);
     } else hud.tag(false);
     void dt;
   }
   let hudBeep = '';
+  let speedV = -1; let speedI = 0;
 
   function lobbyUI() {
     if (!ready3D) return;
@@ -952,7 +972,7 @@ export function createGame(el, api) {
 
   // ── render ──
   function render(dt, now) {
-    for (const w of ['a', 'b']) {
+    for (const w of AB) {
       const p = players[w];
       p.rs.t = tAnim;
       p.av.update(dt, p.rs);
@@ -965,7 +985,7 @@ export function createGame(el, api) {
     world.ensure(tr, zsBuf, M.phase === 'run' ? 1 : 9);
     // blob shadows
     let ns = 0;
-    for (const w of ['a', 'b']) {
+    for (const w of AB) {
       const s = players[w].rs;
       if (!s.visible || s.y < -1) continue;
       const hgt = Math.max(0, s.y - s.ground);
@@ -1040,14 +1060,14 @@ export function createGame(el, api) {
           phase: M.phase, mode: M.mode, lobbyMode: M.lobbyMode, live, me: meW, host: isHost, seed: M.seed, len: M.len, now: clock(), startAt: M.startAt,
           startedWall: M.startedWall, firstRunWall: M.firstRunWall, runMs: M.runMs, steps: M.steps, paused: M.paused, resumeAt: M.resumeAt, reasons: [...M.reasons], partnerPz: M.partnerPz,
           th: M.th, goal: M.goal, result: M.result, synced: live ? link.synced : true, rtt: live ? link.rtt : 0, partnerHere,
-          scale, dpr: renderer ? renderer.getPixelRatio() : 0, glLost, chunks: world ? world.chunkCount() : 0, ready3D,
+          scale, dpr: renderer ? renderer.getPixelRatio() : 0, glLost, chunks: world ? world.chunkCount() : 0, ready3D, loadMs,
           a: one('a'), b: one('b'), pending: live ? link.pending() : 0, tutorial: tutorial.on,
         };
       },
       perf() {
         return {
           frames: perf.n, p50: pct(perf.dts, perf.n, 0.5), p95: pct(perf.dts, perf.n, 0.95), work50: pct(perf.work, perf.n, 0.5), work95: pct(perf.work, perf.n, 0.95),
-          calls: perf.calls, maxCalls: perf.maxCalls, tris: perf.tris, scale, dpr: renderer ? renderer.getPixelRatio() : 0,
+          calls: perf.calls, maxCalls: perf.maxCalls, tris: perf.tris, scale, chunkVerts: world ? world.stats.maxV : 0, chunkIdx: world ? world.stats.maxI : 0, chunkOver: world ? world.stats.over : 0, chunksBuilt: world ? world.stats.built : 0, dpr: renderer ? renderer.getPixelRatio() : 0,
           geometries: renderer ? renderer.info.memory.geometries : 0, textures: renderer ? renderer.info.memory.textures : 0, programs: renderer && renderer.info.programs ? renderer.info.programs.length : 0,
         };
       },

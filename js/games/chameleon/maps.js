@@ -1,7 +1,7 @@
 // The three dioramas, as deterministic data + builder calls. Each map paints its own pattern
 // atlas, merges every prop into one mesh (with baked outlines), and lists colliders, blob
 // shadows, spawns, good hiding spots and eyedropper probe points (used by the tests).
-import { boxGeo, cylGeo, sphereGeo, latheGeo, tubeGeo, createBuilder } from './geo.js';
+import { boxGeo, cylGeo, sphereGeo, latheGeo, createBuilder } from './geo.js';
 import { createAtlas, P } from './atlas.js';
 import { seeded } from './util.js';
 

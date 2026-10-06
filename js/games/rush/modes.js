@@ -7,6 +7,8 @@ import { crash, respawn, C_SLAM, E_PICK, E_CRASH, E_FINISH, E_TOKEN, E_BLOCK } f
 import { I_BOX } from './track.js';
 
 export const MODES = ['race', 'brawl', 'tandem'];
+const AB = ['a', 'b'];
+const fmtT = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 export const MODE_LABEL = { race: 'Race', brawl: 'Brawl', tandem: 'Together' };
 const GOALS = [100, 250, 450, 700, 1000, 1400, 1900, 2500];
 
@@ -60,7 +62,7 @@ export function createRules(G) {
     revivedIds.clear();
     M.th = TEAM_HEARTS; M.goalIdx = 0; M.goal = GOALS[0]; M.revives = 0;
     M.partnerFin = -1; M.partnerOut = -1;
-    for (const w of ['a', 'b']) {
+    for (const w of AB) {
       const p = P(w);
       p.weapon = null; p.weaponRoll = 0; p.shoveCD = 0; p.revive = null; p.downId = 0; p.downAt = 0; p.pushOff = 0;
       p.stats = { shoves: 0, slams: 0, inks: 0, hits: 0, revives: 0, dodges: 0 };
@@ -317,7 +319,7 @@ export function createRules(G) {
 
   // ── per frame ──
   function tick(now, dt) {
-    for (const w of ['a', 'b']) {
+    for (const w of AB) {
       const p = P(w);
       if (p.shoveCD > 0) p.shoveCD -= dt;
       if (p.weaponRoll > 0) p.weaponRoll -= dt;
@@ -389,17 +391,16 @@ export function createRules(G) {
     if (!G.isJudge() || M.phase !== 'run') return null;
     const A = G.judgeView('a'); const B = G.judgeView('b');
     if (!A || !B) return null;
-    const nm = { a: G.name('a'), b: G.name('b') };
-    const fmtT = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
     if (M.mode === 'race') {
       let w = null; let why = '';
-      if (A.out >= 0 && B.out < 0) { w = 'b'; why = `${nm.a} ran out of hearts`; }
-      else if (B.out >= 0 && A.out < 0) { w = 'a'; why = `${nm.b} ran out of hearts`; }
+      if (A.out >= 0 && B.out < 0) { w = 'b'; why = `${G.name('a')} ran out of hearts`; }
+      else if (B.out >= 0 && A.out < 0) { w = 'a'; why = `${G.name('b')} ran out of hearts`; }
       else if (A.out >= 0 && B.out >= 0) { w = A.out > B.out ? 'a' : 'b'; why = 'both ran out of hearts'; }
       else if (A.fin >= 0 && B.fin >= 0) { w = A.fin <= B.fin ? 'a' : 'b'; }
       else if (A.fin >= 0 && B.rt > A.fin + 0.03) w = 'a';
       else if (B.fin >= 0 && A.rt > B.fin + 0.03) w = 'b';
       if (!w) return null;
+      const nm = { a: G.name('a'), b: G.name('b') };
       const W = w === 'a' ? A : B; const Lp = w === 'a' ? B : A;
       const sub = why || `${(M.len / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })} km in ${fmtT(W.fin)} · ${Lp.fin >= 0 ? `${fmtT(Lp.fin)} for ${nm[w === 'a' ? 'b' : 'a']}` : `${Math.max(0, Math.round(M.len - Lp.z))} m short`}`;
       return { winner: w, text: `${nm[w]} wins the race`, sub };
@@ -409,7 +410,7 @@ export function createRules(G) {
       if (A.out >= 0 && B.out < 0) w = 'b';
       else if (B.out >= 0 && A.out < 0) w = 'a';
       else if (A.out >= 0 && B.out >= 0) w = A.out > B.out ? 'a' : 'b';
-      if (w) sub = `${nm[w === 'a' ? 'b' : 'a']} ran out of hearts · ${G.players[w].stats.shoves || A.shoves || 0} shoves`;
+      if (w) sub = `${G.name(w === 'a' ? 'b' : 'a')} ran out of hearts · ${(w === 'a' ? A : B).shoves} shove${(w === 'a' ? A : B).shoves === 1 ? '' : 's'} landed`;
       else if (A.z >= M.cap || B.z >= M.cap) {
         if (A.h !== B.h) w = A.h > B.h ? 'a' : 'b';
         else if (A.shoves !== B.shoves) w = A.shoves > B.shoves ? 'a' : 'b';
@@ -417,7 +418,7 @@ export function createRules(G) {
         sub = `${(M.cap / 1000).toFixed(0)} km tiebreak · ${A.h}–${B.h} hearts`;
       }
       if (!w) return null;
-      return { winner: w, text: `${nm[w]} wins the brawl`, sub };
+      return { winner: w, text: `${G.name(w)} wins the brawl`, sub };
     }
     if (M.mode === 'tandem') {
       if (M.th > 0) return null;

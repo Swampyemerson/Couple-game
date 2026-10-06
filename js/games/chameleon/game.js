@@ -7,7 +7,7 @@ import { createHud } from './hud.js';
 import { createControls } from './controls.js';
 import { POSES, REGION_OF_PART, REGION_NAMES } from './avatar.js';
 import { loadingCard, errorCard, lobbyCard, titleCard, blindCard, curtainCard, recapCard, pauseCard, ctxCard } from './cards.js';
-import { clamp, damp, dampAngle, wrapAngle, hexToRgb, cssColor, luminance, listeners, fmtTime, mixHex, esc } from './util.js';
+import { clamp, dampAngle, wrapAngle, hexToRgb, cssColor, luminance, listeners, fmtTime, mixHex, esc } from './util.js';
 
 const DUR0 = { title: 1800, hide: 60000, lockMax: 7000, seekLead: 1600, seek: 90000, found: 3400, recap: 9000, resume: 3000, lead: 380, foundLead: 260 };
 const ROUNDS = { hs: 4, db: 3 };
@@ -67,6 +67,7 @@ export function createGame(el, api) {
     pauseReasons: new Set(),
     partnerHidden: false,
     helloEpoch: -1,
+    setupVer: 0,
     partnerKeep: null,
     actor: null, // local mode: who is holding the device
     curtainUp: false,
@@ -98,7 +99,7 @@ export function createGame(el, api) {
   const P = { on: false, tool: 'brush', size: 1, hard: true, rgb: [74, 132, 116], last: null, lastHit: [0, 0, 0], strokes: 0, texelDirtyAt: 0 };
   let posesOpen = false;
   const shownHints = new Set();
-  const stats = { frames: [], calls: 0, tris: 0, ewma: 16, lastScale: 0, phaseLog: [], violations: 0, renders: 0 };
+  const stats = { frames: new Float32Array(240), fi: 0, fn: 0, calls: 0, tris: 0, ewma: 16, lastScale: 0, phaseLog: [], violations: 0, renders: 0 };
   let stage = null; let THREE = null; let controls = null;
   let raf = 0; let lastT = 0; let tSec = 0;
   const timers = new Set();
@@ -166,6 +167,9 @@ export function createGame(el, api) {
     if (typeof ResizeObserver !== 'undefined') { const ro = new ResizeObserver(() => { if (stage) stage.resize(); fullCheck(); }); ro.observe(root); cleanup.push(() => ro.disconnect()); }
     else L.on(window, 'resize', () => stage && stage.resize());
     fullCheck();
+    const retheme = () => { if (!stage) return; theme = readTheme(); stage.setTheme(theme); };
+    try { L.on(matchMedia('(prefers-color-scheme: dark)'), 'change', retheme); } catch { /* old Safari */ }
+    if (typeof MutationObserver !== 'undefined') { const mo = new MutationObserver(retheme); mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style'] }); cleanup.push(() => mo.disconnect()); }
     if (local) setPhase({ seq: 0, name: 'lobby', round: 0, at: now(), dur: 0, data: null });
     lastT = performance.now();
     raf = requestAnimationFrame(frame);
@@ -259,20 +263,21 @@ export function createGame(el, api) {
   }
   function roundOver(res) {
     if (!isHost || R.foundSent || S.phase.name !== 'seek') return;
-    if (res.at == null && !res.found) res.at = null;
     R.foundSent = true;
     const m = S.match; const r = S.phase.round;
+    // time into the hunt, excluding pauses (phase.end moves when the game pauses)
+    const elapsed = res.found ? clamp(S.phase.dur - (S.phase.end - res.T), 0, S.phase.dur) : S.phase.dur;
     let rec;
     if (m.mode === 'hs') {
       const h = hiderOf(r);
-      const ms = res.found ? clamp(res.T - R.seekStart, 0, S.phase.dur) : S.phase.dur;
+      const ms = elapsed;
       const points = Math.floor(ms / 1000) + (res.found ? 0 : BONUS);
       m.scores[h] += points;
       rec = { round: r, hider: h, seeker: other(h), found: !!res.found, ms: Math.round(ms), points, outOfPellets: !!res.out, p: res.p || null };
     } else {
       const wnr = res.found ? res.by : null;
       if (wnr) m.scores[wnr] += 1;
-      rec = { round: r, winner: wnr, victim: res.found ? res.victim : null, found: !!res.found, ms: res.found ? Math.round(res.T - R.seekStart) : S.phase.dur, p: res.p || null, hider: res.found ? res.victim : null, seeker: wnr };
+      rec = { round: r, winner: wnr, victim: res.found ? res.victim : null, found: !!res.found, ms: Math.round(elapsed), p: res.p || null, hider: res.found ? res.victim : null, seeker: wnr };
     }
     m.hist = [...m.hist, rec];
     enter(res.found ? 'found' : 'time', { dur: DUR.found, data: rec, at: res.at ?? null }, local ? 0 : DUR.foundLead);
@@ -503,7 +508,7 @@ export function createGame(el, api) {
   link.on('gotpaint', (d) => { if (isHost && d && S.phase.name === 'lock') hostAck(d.w); });
   link.on('paintreq', (d) => { if (d && d.w === me) { R.lockSent = false; lockPaint(me); } });
   link.on('ph', (p) => { if (!isHost) queuePhase(p); });
-  link.on('setup', (d) => { if (!isHost && d) { S.setup = { ...S.setup, ...d }; if (stage && !S.match) { stage.loadMap(S.setup.map); placeLobby(); stage.compile(); } } });
+  link.on('setup', (d) => { if (!isHost && d) { S.setup = { ...S.setup, ...d }; S.setupVer++; if (stage && !S.match) { stage.loadMap(S.setup.map); placeLobby(); stage.compile(); } } });
   link.on('ready', (d) => { if (isHost && d) { R.ready.add(d.w); if (S.phase.name === 'hide' && (mode() === 'hs' ? R.ready.has(hiderOf(S.phase.round)) : R.ready.size >= 2)) endHide(); } });
   link.on('next', () => { if (isHost) hostNext(); });
   link.on('start', () => { /* guests can't start; ignored */ });
@@ -561,7 +566,7 @@ export function createGame(el, api) {
   function sendSnap() { link.sendBlob('snap', JSON.stringify(snapshot())); S.partnerKeep = null; }
   function adoptSnap(s) {
     if (!s || s.v !== 1 || !stage) return;
-    S.setup = s.setup || S.setup;
+    S.setup = s.setup || S.setup; S.setupVer++;
     S.match = s.match;
     if (S.match && stage.map.id !== S.match.map) { stage.loadMap(S.match.map); stage.compile(); }
     const ph = s.phase;
@@ -587,7 +592,7 @@ export function createGame(el, api) {
     if (reason === 'away' && !local && S.match && !S.partnerKeep && rem.v > 0.5) {
       S.partnerKeep = [rem.x, rem.y, rem.z, rem.yaw, Math.round(rem.po), rem.wa];
     }
-    if (!isHost) { if (reason === 'hidden' && !local) link.send('vis', { hidden: true }); return; }
+    if (!isHost) { if ((reason === 'hidden' || reason === 'ctx') && !local) link.send('vis', { hidden: true }); return; }
     if (S.paused) return;
     const rem2 = Math.max(0, S.phase.end - Math.max(now(), S.resumeAt));
     S.resumeAt = 0;
@@ -596,7 +601,7 @@ export function createGame(el, api) {
   }
   function removePause(reason) {
     S.pauseReasons.delete(reason);
-    if (!isHost) { if (reason === 'hidden' && !local) link.send('vis', { hidden: false }); return; }
+    if (!isHost) { if ((reason === 'hidden' || reason === 'ctx') && !local && !S.pauseReasons.has('hidden') && !S.pauseReasons.has('ctx')) link.send('vis', { hidden: false }); return; }
     maybeResume();
   }
   function maybeResume() {
@@ -605,7 +610,6 @@ export function createGame(el, api) {
     const at = now() + DUR.resume;
     const remaining = S.paused.remaining;
     S.paused = null; S.resumeAt = at; S.phase.end = at + remaining;
-    if (S.phase.name === 'seek') R.seekStart += 0; // seekStart shifts with the pause
     if (!local) link.send('resume', { at, remaining });
   }
   const offHere = api.onPartnerHere ? api.onPartnerHere((here) => {
@@ -614,7 +618,6 @@ export function createGame(el, api) {
   }) : null;
 
   // ── shots ─────────────────────────────────────────────────────────
-  const tmpA = new Float64Array(3);
   let shotSeq = 0;
   function targetOf(w) { return mode() === 'hs' ? hiderOf(S.phase.round) : other(w); }
   function fire() {
@@ -787,7 +790,13 @@ export function createGame(el, api) {
       stage.paints[v].snapshot();
       P.last = [hit.point.x, hit.point.y, hit.point.z];
       dabAt(hit);
+      showCursor(hit);
       return true;
+    },
+    hover(x, y) {
+      if (!P.on) return;
+      const hit = P.tool === 'brush' || P.tool === 'fill' ? pickOwn(x, y) : null;
+      if (hit) showCursor(hit); else stage.fx.setCursor(false);
     },
     move(x, y) {
       if (!P.on || !P.last) return;
@@ -804,9 +813,10 @@ export function createGame(el, api) {
         dab3(P.last[0] + dx * k, P.last[1] + dy * k, P.last[2] + dz * k);
       }
       P.last[0] = hit.point.x; P.last[1] = hit.point.y; P.last[2] = hit.point.z;
+      showCursor(hit);
       snd.play('tick');
     },
-    end() { if (P.last) { P.strokes++; P.last = null; } },
+    end() { if (P.last) { P.strokes++; P.last = null; } if (!controls.st.usingMouse) stage.fx.setCursor(false); },
     cancel() { if (P.last) { stage.paints[viewer()].undo(); P.last = null; } },
     tap(x, y) {
       if (!P.on) return;
@@ -835,6 +845,12 @@ export function createGame(el, api) {
     return hitsTmp.length ? hitsTmp[0] : null;
   }
   const hitsTmp = [];
+  const curN = { x: 0, y: 1, z: 0 };
+  function showCursor(hit) {
+    if (hit.face) { tv3.copy(hit.face.normal).transformDirection(hit.object.matrixWorld); curN.x = tv3.x; curN.y = tv3.y; curN.z = tv3.z; }
+    const r = P.tool === 'fill' ? 0.03 : BRUSH[P.size];
+    stage.fx.setCursor(true, hit.point.x, hit.point.y, hit.point.z, curN.x, curN.y, curN.z, r, P.hard ? theme.outline : '#ffffff');
+  }
   function dabAt(hit) { dab3(hit.point.x, hit.point.y, hit.point.z); }
   function dab3(x, y, z) {
     const v = viewer();
@@ -960,10 +976,10 @@ export function createGame(el, api) {
       const k = t.dataset.lobby; const val = t.dataset.v;
       if (k === 'mode' && local && val === 'db') return;
       S.setup = { ...S.setup, [k]: val };
+      S.setupVer++;
       snd.play('ui');
       if (k === 'map') { stage.loadMap(val); placeLobby(); stage.compile(); }
       if (!local) link.send('setup', S.setup);
-      hud.layer('', '');
       return;
     }
     if (t.dataset.tool) { const tool = t.dataset.tool; if (tool === 'stamp') action('stamp'); else if (tool === 'brush') action('brush'); else action(tool); return; }
@@ -1036,7 +1052,7 @@ export function createGame(el, api) {
       stage.fx.update(dt, tSec);
       ui(t);
       const blind = isBlind();
-      stage.canvas.style.visibility = blind ? 'hidden' : 'visible';
+      if (blind !== U.blind) { U.blind = blind; stage.canvas.style.visibility = blind ? 'hidden' : 'visible'; }
       if (!blind && !S.ctxLost) {
         checkVisibility();
         stage.render();
@@ -1052,7 +1068,7 @@ export function createGame(el, api) {
 
   function perf(ms, tms) {
     stats.ewma = stats.ewma * 0.92 + ms * 0.08;
-    const f = stats.frames; f.push(ms); if (f.length > 240) f.shift();
+    stats.frames[stats.fi] = ms; stats.fi = (stats.fi + 1) % stats.frames.length; if (stats.fn < stats.frames.length) stats.fn++;
     if (!DUR.fixedScale && tms - lastScaleCheck > 1000) {
       lastScaleCheck = tms;
       if (stats.ewma > 21) stage.setScale(stage.scale - 0.1);
@@ -1280,8 +1296,8 @@ export function createGame(el, api) {
     }
     // seek stats: closest call, walk-pasts, seeker path
     if (ph === 'seek' && S.match) {
-      const pairs = mode() === 'hs' ? [[other(hiderOf(S.phase.round)), hiderOf(S.phase.round)]] : [[v || 'a', other(v || 'a')]];
-      const [sk, hd] = pairs[0];
+      const hd = mode() === 'hs' ? hiderOf(S.phase.round) : other(v || 'a');
+      const sk = other(hd);
       const ps = stage.av[sk].root.position; const phd = stage.av[hd].root.position;
       const d = Math.hypot(ps.x - phd.x, ps.z - phd.z);
       if (d < R.closest) R.closest = d;
@@ -1427,62 +1443,82 @@ export function createGame(el, api) {
     if (h && h.t < d) { const k = Math.max(0.25, h.t - 0.18) / d; want.x = target.x + dx * k; want.y = target.y + dy * k; want.z = target.z + dz * k; }
   }
 
-  // ── HUD per frame ─────────────────────────────────────────────────
+  // ── HUD per frame (allocation-free: stable descriptors, precomputed labels) ──
   const showParts = { top: false, sub: false, gear: false, cross: false, poses: false, tools: false, acts: false, joyhint: false, legend: false };
+  const FIRE_L = Array.from({ length: 10 }, (_, i) => `Fire ${i}`);
+  const SCAN_L = Array.from({ length: 31 }, (_, i) => (i ? `${i}s` : 'Scan'));
+  const PHASE_L = { hide: 'Hide', lock: 'Get ready', seek: 'Seek', found: 'Found', time: 'Time', recap: 'Recap', curtain: 'Pass', final: '', lobby: '' };
+  const ROLE_L = { youHide: 'You hide', youSeek: 'You seek', hunt: 'Hunt!', hideBoth: 'Hide!', hides: { a: `${api.name('a')} hides`, b: `${api.name('b')} hides` }, seeks: { a: `${api.name('a')} seeks`, b: `${api.name('b')} seeks` } };
+  const LEGEND = {
+    hide: ['<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Mouse</kbd> look', '<kbd>Space</kbd> jump · <kbd>1</kbd>–<kbd>5</kbd> pose', '<kbd>P</kbd> paint · <kbd>R</kbd> hidden'],
+    seek: ['<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Mouse</kbd> look', '<kbd>Click</kbd> fire · <kbd>Q</kbd> scan', '<kbd>Esc</kbd> free the mouse'],
+    peek: ['<kbd>Mouse</kbd> look around', '<kbd>F</kbd> scurry · <kbd>1</kbd>–<kbd>5</kbd> pose'],
+    paint: ['<kbd>B</kbd> brush · <kbd>G</kbd> fill · <kbd>E</kbd> pick', '<kbd>T</kbd> stamp · <kbd>Z</kbd> undo · <kbd>P</kbd> done'],
+  };
+  function mkActs(mouse) {
+    const k = (x) => (mouse ? x : '');
+    const poses = { act: 'poses', icon: 'pose', label: 'Pose', key: k('1-5') };
+    const ready2 = { act: 'ready', icon: 'ready', label: 'Hidden', hl: true, key: k('R') };
+    const jump = { act: 'jump', icon: 'jump', label: 'Jump', key: k('␣') };
+    const paint = { act: 'paint', icon: 'paint', label: 'Paint', big: true, prime: true, key: k('P') };
+    const scan2 = { act: 'scan', icon: 'scan', label: 'Scan', cdRing: true, cd: 0, disabled: false, key: k('Q') };
+    const fire2 = { act: 'fire', icon: 'fire', label: 'Fire', big: true, prime: true, disabled: false, key: k('Click') };
+    const scurry2 = { act: 'scurry', icon: 'scurry', label: 'Scurry', hl: true, big: true, disabled: false, key: k('F') };
+    return { scan: scan2, fire: fire2, scurry: scurry2, hide: [poses, ready2, jump, paint], seek: [scan2, jump, fire2], both: [poses, scan2, fire2], peek: [poses, scurry2], none: [] };
+  }
+  const ACTS = { m: mkActs(true), t: mkActs(false) };
+  const U = { meB: null, mouse: null, tick: -1, blind: null };
+  const live = { blind: null, resume: null, seek: null, recap: null, blindS: -1, resumeS: -1, seekS: -1 };
   function ui(t) {
     const ph = S.phase.name; const v = viewer();
     const role = v ? roleOf(v) : null;
     const m = S.match;
-    root.classList.toggle('me-b', v === 'b');
-    const mouse = controls.st.usingMouse;
-    if (root.classList.contains('mouse') !== mouse) { root.classList.toggle('mouse', mouse); root.classList.toggle('touch', !mouse); }
-    // overlay card
+    const meB = v === 'b';
+    if (U.meB !== meB) { U.meB = meB; root.classList.toggle('me-b', meB); }
+    const mouse = !!controls.st.usingMouse;
+    if (U.mouse !== mouse) { U.mouse = mouse; root.classList.toggle('mouse', mouse); root.classList.toggle('touch', !mouse); }
     layer(t, ph, v, role);
+    const fz = frozen();
     const inGame = !!m && S.boot === 'ready' && ph !== 'lobby' && ph !== 'curtain' && !isBlind();
     showParts.top = !!m && ph !== 'lobby' && ph !== 'final';
     showParts.sub = showParts.top && ph !== 'curtain';
-    showParts.cross = inGame && ph === 'seek' && (role === 'seeker' || role === 'both') && !frozen();
+    showParts.cross = inGame && ph === 'seek' && (role === 'seeker' || role === 'both') && !fz;
     showParts.gear = inGame && ph === 'seek';
     showParts.tools = inGame && P.on;
     showParts.poses = inGame && (P.on || posesOpen) && (ph === 'hide' || ph === 'seek') && (role === 'hider' || role === 'both');
-    showParts.joyhint = inGame && !P.on && ((ph === 'hide' && (role === 'hider' || role === 'both')) || (ph === 'seek' && role !== 'hider')) && !frozen();
-    showParts.legend = inGame && mouse && !P.on;
+    showParts.joyhint = inGame && !P.on && ((ph === 'hide' && (role === 'hider' || role === 'both')) || (ph === 'seek' && role !== 'hider')) && !fz;
+    showParts.legend = inGame && mouse && (ph === 'hide' || ph === 'seek');
     // action buttons
-    const acts = [];
-    if (inGame && !frozen() && !P.on) {
-      const keys = mouse;
-      if (ph === 'hide' && (role === 'hider' || role === 'both')) {
-        acts.push({ act: 'poses', icon: 'pose', label: 'Pose', key: keys ? '1-5' : '' });
-        acts.push({ act: 'ready', icon: 'ready', label: 'Hidden', hl: true, key: keys ? 'R' : '' });
-        acts.push({ act: 'jump', icon: 'jump', label: 'Jump', key: keys ? '␣' : '' });
-        acts.push({ act: 'paint', icon: 'paint', label: 'Paint', big: true, prime: true, key: keys ? 'P' : '' });
-      } else if (ph === 'seek' && (role === 'seeker' || role === 'both')) {
-        const cd = clamp((R.scanReady[v] - t) / SCAN_CD, 0, 1);
-        if (role === 'both') acts.push({ act: 'poses', icon: 'pose', label: 'Pose', key: keys ? '1-5' : '' });
-        acts.push({ act: 'scan', icon: 'scan', label: cd > 0 ? `${Math.ceil(cd * SCAN_CD / 1000)}s` : 'Scan', cdRing: true, cd, disabled: cd > 0, key: keys ? 'Q' : '' });
-        if (role === 'seeker') acts.push({ act: 'jump', icon: 'jump', label: 'Jump', key: keys ? '␣' : '' });
-        acts.push({ act: 'fire', icon: 'fire', label: `Fire ${R.pellets[v]}`, big: true, prime: true, disabled: R.pellets[v] <= 0, key: keys ? 'Click' : '' });
+    const AS = mouse ? ACTS.m : ACTS.t;
+    let list = AS.none;
+    if (inGame && !fz && !P.on) {
+      if (ph === 'hide' && (role === 'hider' || role === 'both')) list = AS.hide;
+      else if (ph === 'seek' && (role === 'seeker' || role === 'both')) {
+        list = role === 'both' ? AS.both : AS.seek;
+        const left = Math.max(0, R.scanReady[v] - t);
+        AS.scan.cd = clamp(left / SCAN_CD, 0, 1); AS.scan.disabled = left > 0; AS.scan.label = SCAN_L[Math.min(30, Math.ceil(left / 1000))];
+        AS.fire.label = FIRE_L[Math.min(9, R.pellets[v])]; AS.fire.disabled = R.pellets[v] <= 0;
       } else if (ph === 'seek' && role === 'hider' && !local) {
-        acts.push({ act: 'poses', icon: 'pose', label: 'Pose', key: keys ? '1-5' : '' });
-        acts.push({ act: 'scurry', icon: 'scurry', label: R.scurried[v] ? 'Used' : 'Scurry', hl: !R.scurried[v], big: true, disabled: R.scurried[v], key: keys ? 'F' : '' });
+        list = AS.peek;
+        AS.scurry.label = R.scurried[v] ? 'Used' : 'Scurry'; AS.scurry.hl = !R.scurried[v]; AS.scurry.disabled = R.scurried[v];
       }
     }
-    showParts.acts = acts.length > 0;
+    showParts.acts = list.length > 0;
     hud.show(showParts);
-    if (acts.length) hud.actions(acts);
+    if (list.length) hud.actions(list);
     if (showParts.top) {
-      const rem2 = S.paused ? S.paused.remaining : Math.max(0, S.phase.end - Math.max(t, S.resumeAt));
-      const label = ph === 'hide' ? 'Hide' : ph === 'lock' ? 'Get ready' : ph === 'seek' ? 'Seek' : ph === 'found' ? 'Found' : ph === 'time' ? 'Time' : ph === 'recap' ? 'Recap' : ph === 'curtain' ? 'Pass' : '';
       const timed = ph === 'hide' || ph === 'seek';
-      hud.clock(label, timed ? rem2 : null, timed && rem2 < 10500 && !S.paused);
-      if (timed && rem2 < 10500 && rem2 > 0 && !S.paused) { const s = Math.ceil(rem2 / 1000); if (s !== R.lastTick) { R.lastTick = s; snd.play('beep'); } }
+      const rem2 = S.paused ? S.paused.remaining : Math.max(0, S.phase.end - Math.max(t, S.resumeAt));
+      const hot = timed && rem2 < 10500 && !S.paused;
+      hud.clock(PHASE_L[ph] || '', timed ? rem2 : null, hot);
+      if (hot && rem2 > 0) { const sN = Math.ceil(rem2 / 1000); if (sN !== U.tick) { U.tick = sN; snd.play('beep'); } }
       hud.scores(m.scores.a, m.scores.b);
       hud.pips(m.rounds, Math.max(0, S.phase.round - 1));
       let rtext = '';
-      if (role === 'hider') rtext = local ? `${api.name(v)} hides` : 'You hide';
-      else if (role === 'seeker') rtext = local ? `${api.name(v)} seeks` : 'You seek';
-      else if (role === 'both') rtext = ph === 'seek' ? 'Hunt!' : 'Hide!';
-      else if (m.mode === 'hs') rtext = `${api.name(hiderOf(S.phase.round))} hides`;
+      if (role === 'hider') rtext = local ? ROLE_L.hides[v] : ROLE_L.youHide;
+      else if (role === 'seeker') rtext = local ? ROLE_L.seeks[v] : ROLE_L.youSeek;
+      else if (role === 'both') rtext = ph === 'seek' ? ROLE_L.hunt : ROLE_L.hideBoth;
+      else if (m.mode === 'hs' && S.phase.round) rtext = ROLE_L.hides[hiderOf(S.phase.round)];
       hud.role(rtext, !!role);
     }
     if (showParts.gear && v) {
@@ -1491,94 +1527,77 @@ export function createGame(el, api) {
     }
     if (showParts.poses && v) hud.poseOn(body[v].pose);
     if (showParts.tools && v) { hud.tool(P.tool, P.size, P.hard, P.rgb); hud.undoEnabled(stage.paints[v].canUndo); }
-    if (showParts.legend) {
-      if (ph === 'hide') hud.legend(['<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Mouse</kbd> look', '<kbd>Space</kbd> jump · <kbd>1</kbd>–<kbd>5</kbd> pose', '<kbd>P</kbd> paint · <kbd>R</kbd> hidden']);
-      else if (ph === 'seek' && role !== 'hider') hud.legend(['<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Mouse</kbd> look', '<kbd>Click</kbd> fire · <kbd>Q</kbd> scan', '<kbd>Esc</kbd> free the mouse']);
-      else hud.legend(['<kbd>Mouse</kbd> look around', '<kbd>F</kbd> scurry · <kbd>1</kbd>–<kbd>5</kbd> pose']);
-    }
-    if (P.on && mouse) hud.legend(['<kbd>B</kbd> brush · <kbd>G</kbd> fill · <kbd>E</kbd> pick', '<kbd>T</kbd> stamp · <kbd>Z</kbd> undo · <kbd>P</kbd> done']);
+    if (showParts.legend) hud.legend(P.on ? LEGEND.paint : ph === 'hide' ? LEGEND.hide : ph === 'seek' && role !== 'hider' ? LEGEND.seek : LEGEND.peek);
     // live numbers inside cards
-    const lt = root.querySelector('[data-live="blind-time"]');
-    if (lt) { const txt = fmtTime(S.paused ? S.paused.remaining : Math.max(0, S.phase.end - t)); if (lt.textContent !== txt) lt.textContent = txt; }
-    const sc = root.querySelector('[data-live="seek-count"]');
-    if (sc) {
+    if (live.blind) { const n = Math.ceil((S.paused ? S.paused.remaining : Math.max(0, S.phase.end - t)) / 1000); if (n !== live.blindS) { live.blindS = n; live.blind.textContent = fmtTime(n * 1000); } }
+    if (live.resume) { const n = Math.max(1, Math.ceil((S.resumeAt - t) / 1000)); if (n !== live.resumeS) { live.resumeS = n; live.resume.textContent = String(n); } }
+    if (live.seek) {
       const left = seekCountdown(t);
-      const n = left == null ? '…' : String(Math.max(1, Math.ceil(left / 1000)));
-      if (sc.textContent !== n) { sc.textContent = n; if (left != null) snd.play('beep'); }
+      const n = left < 0 ? 0 : Math.max(1, Math.ceil(left / 1000));
+      if (n !== live.seekS) { live.seekS = n; live.seek.textContent = n ? String(n) : '…'; if (n) snd.play('beep'); }
     }
-    const rc = root.querySelector('[data-live="resume-count"]');
-    if (rc) { const n = String(Math.max(1, Math.ceil((S.resumeAt - t) / 1000))); if (rc.textContent !== n) rc.textContent = n; }
-    // seek countdown
-    if (ph === 'seek' && t < S.phase.at + 50 && false) void 0;
-    if (S.boot === 'ready' && v) {
-      if (ph === 'seek' && role === 'seeker') hintOnce('look-' + (mouse ? 'm' : 't'), mouse ? 'Click to grab the mouse, then click to fire.' : 'Left thumb moves · drag on the right to look', 3000);
-    }
+    if (S.boot === 'ready' && v && ph === 'seek' && role === 'seeker') hintOnce(mouse ? 'look-m' : 'look-t', mouse ? 'Click to grab the mouse, then click to fire.' : 'Left thumb moves · drag on the right to look', 3000);
   }
 
+  const LY = { kind: null, a: null, b: null, n: 0 };
   function layer(t, ph, v, role) {
-    const h = hud;
-    if (S.boot === 'error') return;
     if (S.boot !== 'ready') return;
-    if (S.ctxLost || S.ctxShown) { h.layer('ctx', ctxCard()); return; }
-    if (S.paused || t < S.resumeAt) {
-      const counting = !S.paused && t < S.resumeAt;
-      const reason = S.paused ? S.paused.reason : 'resume';
-      h.layer(`pause-${reason}-${counting}`, pauseCard(api, { reason, countdown: counting }));
-      return;
+    let kind = ''; let a = 0; let b = 0;
+    if (S.ctxLost || S.ctxShown) kind = 'ctx';
+    else if (S.paused || t < S.resumeAt) { kind = 'pause'; a = S.paused ? S.paused.reason : 'resume'; b = !S.paused; }
+    else if (ph === 'lobby') { kind = 'lobby'; a = S.setupVer; b = isHost; }
+    else if (S.pendingTitle && t < S.pendingTitle.at) { kind = 'title'; a = S.pendingTitle.seq; }
+    else if (ph === 'curtain') { kind = seekCountdown(t) >= 0 ? 'count' : 'curtain'; a = S.phase.seq; }
+    else if (!local && isBlind()) { kind = ph === 'lock' ? 'lock' : 'blind'; a = S.phase.seq; }
+    else if (ph === 'seek' && t < S.phase.at + 900 && t >= S.phase.at - 50) { kind = 'go'; a = S.phase.seq; }
+    else if (ph === 'found' || ph === 'time') { kind = 'stamp'; a = S.phase.seq; }
+    else if (ph === 'recap' && R.rec) { kind = 'recap'; a = S.phase.seq; }
+    else if (ph === 'lock' && v && roleOf(v) !== 'seeker') { kind = 'locking'; a = S.phase.seq; }
+    if (kind === LY.kind && a === LY.a && b === LY.b) return;
+    LY.kind = kind; LY.a = a; LY.b = b;
+    hud.layer(`${kind}-${++LY.n}`, buildLayer(kind, t, v, role));
+    live.blind = root.querySelector('[data-live="blind-time"]'); live.blindS = -1;
+    live.resume = root.querySelector('[data-live="resume-count"]'); live.resumeS = -1;
+    live.seek = root.querySelector('[data-live="seek-count"]'); live.seekS = -1;
+  }
+  function buildLayer(kind, t, v, role) {
+    const m = S.match;
+    switch (kind) {
+      case 'ctx': return ctxCard();
+      case 'pause': return pauseCard(api, { reason: S.paused ? S.paused.reason : 'resume', countdown: !S.paused });
+      case 'lobby': return lobbyCard(api, { canEdit: isHost, local, setup: S.setup, waitingFor: 'a' });
+      case 'title': {
+        const p = S.pendingTitle; const hd = m && m.mode === 'hs' ? hiderOfRound(p.round) : null;
+        return titleCard(api, { round: p.round, rounds: m ? m.rounds : 4, mode: m ? m.mode : 'hs', hider: hd, youHide: !local && hd === me, youSeek: !local && hd && hd !== me, map: m ? m.map : S.setup.map });
+      }
+      case 'count': { const d = S.phase.data || {}; return `<div class="chm-over solid"><div class="chm-card chm-sticker"><div class="chm-kicker">${esc(api.name(d.who))}, get ready</div><div class="chm-big" data-live="seek-count">3</div><p>Find them before the timer runs out.</p></div></div>`; }
+      case 'curtain': { const d = S.phase.data || {}; return curtainCard(api, { kind: d.kind, who: d.who }); }
+      case 'lock': return blindLock();
+      case 'blind': return blindCard(api, { hider: hiderOf(S.phase.round), ms: Math.max(0, S.phase.end - t), pellets: R.maxPellets, mode: mode() });
+      case 'go': return `<div class="chm-stamp ${role === 'seeker' || role === 'both' ? '' : 'ink'}">${role === 'hider' ? 'Freeze!' : 'Seek!'}</div>`;
+      case 'stamp': {
+        const ph = S.phase.name; const rec = R.rec || {}; const victim = rec.hider || rec.victim;
+        const cls = ph === 'found' ? (rec.seeker || rec.winner || 'ink') : (victim || 'ink');
+        const title = ph === 'found' ? 'FOUND!' : mode() === 'db' ? 'TIME!' : 'SURVIVED!';
+        const small = ph === 'found' ? `${api.name(rec.seeker || rec.winner)} tagged ${api.name(victim)}${rec.ms != null && mode() === 'hs' ? ' in ' + fmtTime(rec.ms) : ''}` : mode() === 'db' ? 'Nobody got tagged' : `${api.name(victim)} stayed hidden`;
+        return `<div class="chm-stamp ${cls}">${title}<small>${esc(small)}</small></div>`;
+      }
+      case 'recap': {
+        const shooter = R.rec.seeker || (mode() === 'hs' ? other(R.rec.hider) : (v || 'a'));
+        const st = { closest: Number.isFinite(R.closest) ? R.closest : null, passes: R.passes, used: R.used[shooter] || 0, max: R.maxPellets };
+        return recapCard(api, { rec: R.rec, mode: m.mode, scores: m.scores, round: S.phase.round, rounds: m.rounds, isLast: S.phase.round >= m.rounds || (m.mode === 'db' && (m.scores.a >= 2 || m.scores.b >= 2)), canNext: true, stats: st });
+      }
+      case 'locking': return '<div class="chm-stamp ink">Locked in<small>Sealing your paint…</small></div>';
+      default: return '';
     }
-    if (ph === 'lobby') {
-      const canEdit = isHost;
-      h.layer(`lobby-${S.setup.mode}-${S.setup.map}-${S.setup.first}-${canEdit}`, lobbyCard(api, { canEdit, local, setup: S.setup, waitingFor: 'a' }));
-      return;
-    }
-    if (S.pendingTitle && t < S.pendingTitle.at) {
-      const p = S.pendingTitle; const m = S.match;
-      const hd = m && m.mode === 'hs' ? hiderOfRound(p.round) : null;
-      h.layer(`title-${p.seq}`, titleCard(api, { round: p.round, rounds: m ? m.rounds : 4, mode: m ? m.mode : 'hs', hider: hd, youHide: !local && hd === me, youSeek: !local && hd && hd !== me, map: m ? m.map : S.setup.map }));
-      return;
-    }
-    if (ph === 'curtain') {
-      const d = S.phase.data || {};
-      if (seekCountdown(t) != null) { h.layer(`count-${S.phase.seq}`, `<div class="chm-over solid"><div class="chm-card chm-sticker"><div class="chm-kicker">${esc(api.name(d.who))}, get ready</div><div class="chm-big" data-live="seek-count">3</div><p>Find them before the timer runs out.</p></div></div>`); return; }
-      h.layer(`curtain-${S.phase.seq}`, curtainCard(api, { kind: d.kind, who: d.who }));
-      return;
-    }
-    if (!local && isBlind()) {
-      const hd = hiderOf(S.phase.round);
-      if (ph === 'lock') { h.layer(`lock-${S.phase.seq}`, blindLock()); return; }
-      h.layer(`blind-${S.phase.seq}`, blindCard(api, { hider: hd, ms: Math.max(0, S.phase.end - t), pellets: R.maxPellets, mode: mode() }));
-      return;
-    }
-    if (ph === 'seek' && t < S.phase.at + 900 && t >= S.phase.at - 50) {
-      h.layer(`go-${S.phase.seq}`, `<div class="chm-stamp ${role === 'seeker' || role === 'both' ? '' : 'ink'}">${role === 'hider' ? 'Freeze!' : 'Seek!'}</div>`);
-      return;
-    }
-    if (ph === 'found' || ph === 'time') {
-      const rec = R.rec || {};
-      const victim = rec.hider || rec.victim;
-      const cls = ph === 'found' ? (rec.seeker || rec.winner || 'ink') : (victim || 'ink');
-      const title = ph === 'found' ? 'FOUND!' : mode() === 'db' ? 'TIME!' : 'SURVIVED!';
-      const small = ph === 'found' ? `${api.name(rec.seeker || rec.winner)} tagged ${api.name(victim)}${rec.ms != null && mode() === 'hs' ? ' in ' + fmtTime(rec.ms) : ''}` : mode() === 'db' ? 'Nobody got tagged' : `${api.name(victim)} stayed hidden`;
-      h.layer(`stamp-${S.phase.seq}`, `<div class="chm-stamp ${cls}">${title}<small>${small}</small></div>`);
-      return;
-    }
-    if (ph === 'recap' && R.rec) {
-      const m = S.match;
-      const shooter = R.rec.seeker || (mode() === 'hs' ? other(R.rec.hider) : (v || 'a'));
-      const st = { closest: Number.isFinite(R.closest) ? R.closest : null, passes: R.passes, used: R.used[shooter] || 0, max: R.maxPellets };
-      h.layer(`recap-${S.phase.seq}`, recapCard(api, { rec: R.rec, mode: m.mode, scores: m.scores, round: S.phase.round, rounds: m.rounds, isLast: S.phase.round >= m.rounds || (m.mode === 'db' && (m.scores.a >= 2 || m.scores.b >= 2)), canNext: true, stats: st }));
-      return;
-    }
-    if (ph === 'lock' && v && roleOf(v) !== 'seeker') { h.layer('locking', '<div class="chm-stamp ink">Locked in<small>Sealing your paint…</small></div>'); return; }
-    h.layer('', '');
   }
   function blindLock() {
     return `<div class="chm-over chm-blind solid"><div class="chm-card chm-sticker"><div class="chm-kicker">Get ready</div><div class="chm-big" data-live="seek-count">…</div><div class="chm-drops" aria-hidden="true"><i></i><i></i><i></i></div><p>They’ve picked their spot. Eyes open in a moment.</p></div></div>`;
   }
-  /** Seconds until a queued 'seek' starts (or null). */
+  /** Milliseconds until a queued 'seek' starts, or -1. */
   function seekCountdown(t) {
-    const q = S.queue.find((x) => x.name === 'seek');
-    return q ? Math.max(0, q.at - t) : null;
+    for (let i = 0; i < S.queue.length; i++) if (S.queue[i].name === 'seek') return Math.max(0, S.queue[i].at - t);
+    return -1;
   }
 
   // ── test hook ─────────────────────────────────────────────────────
@@ -1603,11 +1622,11 @@ export function createGame(el, api) {
       paintHash(w) { return stage.paints[w].hash(); },
       phaseLog() { return stats.phaseLog.slice(); },
       perf() {
-        const f = stats.frames.slice().sort((x, y) => x - y);
+        const f = Array.from(stats.frames.subarray(0, stats.fn)).sort((x, y) => x - y);
         const q = (p) => f.length ? f[Math.min(f.length - 1, Math.floor(f.length * p))] : 0;
         return { p50: q(0.5), p95: q(0.95), n: f.length, calls: stats.calls, tris: stats.tris, scale: stage.scale, dpr: stage.dpr, renders: stats.renders, geometries: stage.renderer.info.memory.geometries, textures: stage.renderer.info.memory.textures, programs: (stage.renderer.info.programs || []).length };
       },
-      resetPerf() { stats.frames.length = 0; },
+      resetPerf() { stats.fn = 0; stats.fi = 0; },
       teleport(x, z, yaw, y) { const v = viewer(); const b = body[v]; b.x = x; b.z = z; if (yaw != null) b.yaw = yaw; b.y = y != null ? y : stage.world.groundAt(x, z, 0.2, 3); b.vy = 0; if (b.pose === 'wall') setPoseFor(v, 'stand'); return { ...b }; },
       setPose(p) { setPose(p); return body[viewer()].pose; },
       /** Point the first-person view at a world point (seeker aim). */
@@ -1652,6 +1671,26 @@ export function createGame(el, api) {
         return [C.paintYaw, C.paintPitch, C.paintDist];
       },
       probes() { return stage.map.probes; },
+      /** Map sanity: spawns clear of props, a wall at the camo spot, probe albedos. */
+      checkMap(id) {
+        stage.loadMap(id);
+        const w = stage.world; const out = { id, spawns: {}, camoWall: null, probes: [] };
+        for (const k of ['hiderSpawn', 'seekerSpawn', 'spawnA', 'spawnB', 'lobby']) {
+          const sp = stage.map.spots[k]; const b = { x: sp.x, y: 0, z: sp.z, r: 0.24 };
+          b.y = w.groundAt(b.x, b.z, 0.2, 3); w.pushOut(b);
+          out.spawns[k] = Math.hypot(b.x - sp.x, b.z - sp.z);
+        }
+        const c = stage.map.spots.camo; const wall = w.nearestWall(c.x, c.y, c.z - 0.1, 0.75);
+        out.camoWall = wall ? [wall.nx, wall.nz] : null;
+        for (const p of stage.map.probes) {
+          const [x, y, z] = p.point; const [nx, ny, nz] = p.normal;
+          stage.ray.set(new THREE.Vector3(x + nx * 0.3, y + ny * 0.3, z + nz * 0.3), new THREE.Vector3(-nx, -ny, -nz));
+          const hit = stage.pickMap(1); const rgb = [0, 0, 0]; if (hit) stage.albedoAtHit(hit, rgb);
+          out.probes.push({ name: p.name, want: p.hex.toLowerCase(), got: '#' + rgb.map((v) => v.toString(16).padStart(2, '0')).join('') });
+        }
+        out.drawCalls = stage.renderer.info.render.calls; out.verts = stage.map.vertexCount; out.colliders = stage.map.colliders.length;
+        return out;
+      },
       spots() { return stage.map.spots; },
       surfaceAlbedo(x, y, z, nx, ny, nz) {
         stage.ray.set(new THREE.Vector3(x + nx * 0.3, y + ny * 0.3, z + nz * 0.3), new THREE.Vector3(-nx, -ny, -nz));

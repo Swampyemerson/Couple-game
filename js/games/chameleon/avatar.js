@@ -3,7 +3,7 @@
 // whole body. At load we rasterise the parts into that atlas to get, per texel, which part it
 // belongs to and its local position + normal: painting then happens in 3D (see paint.js).
 // Eyes (pupil + white ring) are not paintable: they are the only giveaway.
-import { sphereGeo, tubeGeo, cylGeo } from './geo.js';
+import { sphereGeo, tubeGeo } from './geo.js';
 import { clamp, lerp, damp } from './util.js';
 
 export const TEX = 128;

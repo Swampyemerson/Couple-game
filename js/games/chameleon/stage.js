@@ -27,8 +27,10 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
   const camera = new THREE.PerspectiveCamera(60, 1, 0.03, 70);
   camera.rotation.order = 'YXZ';
   scene.add(camera);
-  const hemi = new THREE.HemisphereLight(0xfffaf0, 0xd9ccbb, 0.64);
-  const sun = new THREE.DirectionalLight(0xfff1dc, 0.6);
+  // kept just under 1.0 total on lit faces so colours never clip (clipping would make painted
+  // skin read brighter than the surface it copies)
+  const hemi = new THREE.HemisphereLight(0xfffaf0, 0xd9ccbb, 0.56);
+  const sun = new THREE.DirectionalLight(0xfff1dc, 0.52);
   sun.position.set(-3.2, 8, 4.6);
   scene.add(hemi, sun, sun.target);
 

@@ -104,6 +104,44 @@ export function createLink(api, { delay = 100, onLink = () => {}, onUnlink = () 
 
   let rawOff = null;
   let ns = '';
+  const retired = new Set();
+  // Fast clock refinement (guest): net.js converges slowly when the first few pings are noisy,
+  // so we keep our own min-RTT NTP estimate of the host clock, independent of net.js's offset.
+  const clk = { off: 0, n: 0, samples: [], id: 0, sent: new Map(), timer: 0, offs: [] };
+  const hostNow = () => (net ? net.now() : performance.now());
+  function clockReset() {
+    clk.off = 0; clk.n = 0; clk.samples.length = 0; clk.sent.clear();
+    clearTimeout(clk.timer); clk.timer = 0;
+    clk.offs.forEach((f) => { try { f(); } catch { /* ignore */ } }); clk.offs.length = 0;
+  }
+  function clockStart() {
+    clockReset();
+    if (local) return;
+    if (api.isHost) {
+      clk.offs.push(api.on(ns + 'tq', (d) => { if (d && typeof d.id === 'number') api.send(ns + 'ta', { id: d.id, h: hostNow() }); }));
+      return;
+    }
+    clk.offs.push(api.on(ns + 'ta', (d) => {
+      if (!d || !clk.sent.has(d.id)) return;
+      const t0 = clk.sent.get(d.id); clk.sent.delete(d.id);
+      const t1 = performance.now(); const rtt = t1 - t0;
+      clk.samples.push({ rtt, off: d.h + rtt / 2 - t1 });
+      if (clk.samples.length > 12) clk.samples.shift();
+      const best = clk.samples.slice().sort((x, y) => x.rtt - y.rtt).slice(0, 3);
+      clk.off = best.reduce((s, x) => s + x.off, 0) / best.length;
+      clk.n++;
+    }));
+    let k = 0;
+    const tick = () => {
+      if (dead) return;
+      const id = ++clk.id; clk.sent.set(id, performance.now());
+      if (clk.sent.size > 16) clk.sent.delete(clk.sent.keys().next().value);
+      api.send(ns + 'tq', { id });
+      k++;
+      clk.timer = setTimeout(tick, k < 8 ? 160 : k < 20 ? 1200 : 4000);
+    };
+    tick();
+  }
   function makeNet() {
     if (net) { try { net.destroy(); } catch { /* ignore */ } }
     if (rawOff) { try { rawOff(); } catch { /* ignore */ } rawOff = null; }
@@ -132,6 +170,7 @@ export function createLink(api, { delay = 100, onLink = () => {}, onUnlink = () 
     }
     n.on('g', (m, at) => { if (!local) lastHeard = performance.now(); dispatch(m, at); });
     net = n;
+    clockStart();
     n.ready.then(() => {
       if (dead || net !== n || epoch !== myEpoch) return;
       ready = true;
@@ -151,8 +190,10 @@ export function createLink(api, { delay = 100, onLink = () => {}, onUnlink = () 
     offs.push(api.on('chi', (d) => {
       if (dead || !d || typeof d.s !== 'string') return;
       lastHeard = performance.now();
+      if (retired.has(d.s)) return; // a late hello from a session that has since been replaced
       if (d.s !== partner) {
         const had = partner != null;
+        if (had) retired.add(partner);
         partner = d.s;
         pubState.p = partner;
         if (had) onUnlink('remount');
@@ -176,7 +217,13 @@ export function createLink(api, { delay = 100, onLink = () => {}, onUnlink = () 
     get sent() { return sent; },
     /** Milliseconds since anything arrived from the partner. */
     get silence() { return local ? 0 : performance.now() - lastHeard; },
-    now() { return net ? net.now() : performance.now(); },
+    /** Shared game clock: the host's net.js clock; guests use the refined estimate once it has 3 samples. */
+    now() {
+      if (!net) return performance.now();
+      if (local || api.isHost || clk.n < 3) return net.now();
+      return performance.now() + clk.off;
+    },
+    get clockSamples() { return clk.n; },
     send(type, data) { if (!net) return false; sent++; net.send('g', { t: type, d: data ?? null }); return true; },
     /** Two unreliable copies right now (not held back by in-order delivery). Use for idempotent messages. */
     blast(type, data) {
@@ -219,6 +266,7 @@ export function createLink(api, { delay = 100, onLink = () => {}, onUnlink = () 
       offs.forEach((f) => { try { f(); } catch { /* ignore */ } });
       timers.forEach((t) => { clearInterval(t); clearTimeout(t); });
       if (rawOff) { try { rawOff(); } catch { /* ignore */ } }
+      clockReset();
       if (net) { try { net.destroy(); } catch { /* ignore */ } }
       net = null;
       inBlobs.clear();

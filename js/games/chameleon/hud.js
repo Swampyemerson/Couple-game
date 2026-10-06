@@ -106,19 +106,21 @@ export const CSS = `
 .chm-tool.on { background: var(--g-hl); color: #1d1b22; transform: translateY(-3px); box-shadow: 0 6px 0 var(--g-ink); }
 .chm-tool:active { transform: translateY(1px); box-shadow: 0 1px 0 var(--g-ink); }
 .chm-tool[disabled] { opacity: .4; }
-.chm-opts { display: flex; align-items: center; gap: 8px; padding: 5px 8px; }
-.chm-swatch { width: 40px; height: 40px; border-radius: 50%; border: 2.5px solid var(--g-ink); box-shadow: inset 0 0 0 3px var(--g-card); flex: none; transition: transform .2s; }
+.chm-opts { display: flex; flex-wrap: nowrap; justify-content: center; align-items: center; gap: 6px; padding: 5px 7px; max-width: 100%; }
+@media (max-width: 380px) { .chm-opts { gap: 4px; padding: 4px 5px; } .chm-seg button { min-width: 29px !important; padding: 0 4px !important; } .chm-done { padding: 0 8px !important; } .chm-swatch { width: 32px !important; height: 32px !important; } .chm-pose { width: 46px; } }
+.chm-swatch { width: 36px; height: 36px; border-radius: 50%; border: 2.5px solid var(--g-ink); box-shadow: inset 0 0 0 3px var(--g-card); flex: none; transition: transform .2s; }
 .chm-swatch.gulp { animation: chm-gulp .45s; }
 .chm-seg { display: flex; border: 2px solid var(--g-ink); border-radius: 10px; overflow: hidden; }
-.chm-seg button { min-width: 38px; height: 34px; padding: 0 8px; border: 0; background: var(--g-card); color: var(--g-ink); font: 900 0.72rem/1 var(--g-font-body); cursor: pointer; display: grid; place-items: center; }
+.chm-seg button { min-width: 33px; height: 34px; padding: 0 7px; border: 0; background: var(--g-card); color: var(--g-ink); font: 900 0.72rem/1 var(--g-font-body); cursor: pointer; display: grid; place-items: center; }
 .chm-seg button + button { border-left: 2px solid var(--g-ink); }
 .chm-seg button.on { background: var(--g-ink); color: var(--g-bg); }
 .chm-seg i { display: block; border-radius: 50%; background: currentColor; }
-.chm-done { padding: 0 14px; height: 40px; border-radius: 12px; border: 2.5px solid var(--g-ink); background: var(--chm-me); color: var(--g-on-ink); font: 900 0.85rem/1 var(--g-font-body); box-shadow: 0 3px 0 var(--g-ink); cursor: pointer; display: flex; align-items: center; gap: 4px; }
+.chm-done { padding: 0 11px; height: 38px; white-space: nowrap; border-radius: 12px; border: 2.5px solid var(--g-ink); background: var(--chm-me); color: var(--g-on-ink); font: 900 0.85rem/1 var(--g-font-body); box-shadow: 0 3px 0 var(--g-ink); cursor: pointer; display: flex; align-items: center; gap: 4px; }
 .chm-done .chm-ic { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
 
 /* poses */
 .chm-poses { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(118px + var(--chm-sb)); display: flex; gap: 6px; padding: 6px; }
+.chm.painting .chm-poses { bottom: calc(146px + var(--chm-sb)); }
 .chm-pose { width: 52px; height: 58px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; border: 2px solid var(--g-ink); border-radius: 12px; background: var(--g-card); color: var(--g-ink); font: 900 0.58rem/1 var(--g-font-body); text-transform: uppercase; cursor: pointer; touch-action: manipulation; }
 .chm-pose svg { width: 30px; height: 30px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .chm-pose.on { background: var(--chm-me); color: var(--g-on-ink); }
@@ -268,79 +270,99 @@ export function createHud(root, api) {
     layer: $('.chm-layer'),
   };
   const cache = new Map();
-  const set = (key, node, prop, val) => { if (cache.get(key) === val) return; cache.set(key, val); if (prop === 'text') node.textContent = val; else if (prop === 'html') node.innerHTML = val; else if (prop === 'hidden') node.hidden = val; else node.style.setProperty(prop, val); };
   let hintTimer = 0;
-  let actsKey = '';
+  // per-frame caches (numbers / identities only, so nothing is allocated when nothing changed)
+  const N = { secs: -1, timed: null, hot: null, phase: null, sa: -1, sb: -1, role: null, roleMine: null, pipT: -1, pipD: -1, pelL: -1, pelM: -1, pelT: null, list: null, tool: null, size: -1, hard: null, r: -1, g: -1, bl: -1, legend: null, undo: null, parts: {} };
+  const actBtn = new Map(); // act -> { btn, em, cd, label, disabled, cdOff, hl }
+  const pellets = [];
 
   const hud = {
     el,
     show(parts) {
-      for (const k of ['top', 'sub', 'gear', 'cross', 'poses', 'tools', 'acts', 'joyhint']) set('vis-' + k, el[k], 'hidden', !parts[k]);
-      set('vis-legend', el.legend, 'hidden', !parts.legend);
+      for (const k of ['top', 'sub', 'gear', 'cross', 'poses', 'tools', 'acts', 'joyhint', 'legend']) {
+        const on = !!parts[k];
+        if (N.parts[k] === on) continue;
+        N.parts[k] = on; el[k].hidden = !on;
+      }
     },
-    clock(phase, ms, hot) {
-      set('phase', el.phase, 'text', phase);
-      set('time', el.time, 'text', ms == null ? '—' : fmtTime(ms));
-      const h = !!hot; if (cache.get('hot') !== h) { cache.set('hot', h); el.clock.classList.toggle('hot', h); }
+    /** label: constant string; ms: remaining or null for "—". */
+    clock(label, ms, hot) {
+      if (N.phase !== label) { N.phase = label; el.phase.textContent = label; }
+      const secs = ms == null ? -2 : Math.max(0, Math.ceil(ms / 1000));
+      if (secs !== N.secs) { N.secs = secs; el.time.textContent = secs === -2 ? '—' : fmtTime(secs * 1000); }
+      const h = !!hot; if (N.hot !== h) { N.hot = h; el.clock.classList.toggle('hot', h); }
     },
-    scores(a, b) { set('sa', el.sa, 'text', String(a)); set('sb', el.sb, 'text', String(b)); },
-    role(text, mine) { set('role', el.role, 'text', text); if (cache.get('rm') !== mine) { cache.set('rm', mine); el.role.classList.toggle('me', !!mine); } },
+    scores(a, b) {
+      if (a !== N.sa) { N.sa = a; el.sa.textContent = String(a); }
+      if (b !== N.sb) { N.sb = b; el.sb.textContent = String(b); }
+    },
+    /** text must be a cached / constant string for zero allocations. */
+    role(text, mine) {
+      if (N.role !== text) { N.role = text; el.role.textContent = text; }
+      if (N.roleMine !== mine) { N.roleMine = mine; el.role.classList.toggle('me', !!mine); }
+    },
     pips(total, done) {
-      const k = `${total}|${done}`;
-      if (cache.get('pips') === k) return; cache.set('pips', k);
+      if (N.pipT === total && N.pipD === done) return;
+      N.pipT = total; N.pipD = done;
       el.pips.innerHTML = Array.from({ length: total }, (_, i) => `<i class="${i < done ? 'done' : i === done ? 'now' : ''}"></i>`).join('');
     },
     pellets(left, max, theirs = false) {
-      const k = `${left}|${max}|${theirs}`;
-      if (cache.get('pel') === k) return; cache.set('pel', k);
-      el.pellets.classList.toggle('theirs', theirs);
-      el.pellets.innerHTML = Array.from({ length: max }, (_, i) => `<i class="${i < left ? '' : 'gone'}"></i>`).join('');
+      if (N.pelL === left && N.pelM === max && N.pelT === theirs) return;
+      if (N.pelM !== max) {
+        el.pellets.innerHTML = Array.from({ length: max }, () => '<i></i>').join('');
+        pellets.length = 0; el.pellets.querySelectorAll('i').forEach((i) => pellets.push(i));
+      }
+      N.pelL = left; N.pelM = max;
+      if (N.pelT !== theirs) { N.pelT = theirs; el.pellets.classList.toggle('theirs', theirs); }
+      for (let i = 0; i < pellets.length; i++) pellets[i].classList.toggle('gone', i >= left);
     },
-    /** buttons: [{ act, icon, label, big, prime, key, disabled, cd (0..1) }] */
+    /**
+     * Action buttons. `list` should be a stable array of stable descriptor objects
+     * ({ act, icon, label, big, prime, hl, key, disabled, cdRing, cd }); only their
+     * label / disabled / cd / hl fields may change between frames.
+     */
     actions(list) {
-      const key = list.map((b) => `${b.act}${b.big ? 'B' : ''}${b.prime ? 'P' : ''}${b.hl ? 'H' : ''}${b.cdRing ? 'C' : ''}${b.key || ''}`).join(',');
-      if (key !== actsKey) {
-        actsKey = key;
+      if (list !== N.list) {
+        N.list = list;
         el.acts.style.gridTemplateColumns = list.length > 2 ? 'auto auto' : `repeat(${list.length}, auto)`;
         el.acts.innerHTML = list.map((b) => `<button class="chm-b ${b.big ? 'big' : ''} ${b.prime ? 'prime' : ''} ${b.hl ? 'hl' : ''}" data-act="${b.act}" aria-label="${esc(b.label)}"><span>${icon(b.icon)}${b.cdRing ? '<svg class="chm-cd" viewBox="0 0 56 56"><circle cx="28" cy="28" r="25.5"/></svg>' : ''}</span><em>${esc(b.label)}</em>${b.key ? `<kbd>${esc(b.key)}</kbd>` : ''}</button>`).join('');
-      }
-      for (const b of list) {
-        const btn = el.acts.querySelector(`[data-act="${b.act}"]`);
-        if (!btn) continue;
-        const dis = !!b.disabled;
-        if (btn.disabled !== dis) btn.disabled = dis;
-        const em = btn.querySelector('em');
-        if (em && em.textContent !== b.label) { em.textContent = b.label; btn.setAttribute('aria-label', b.label); }
-        const hl = !!b.hl;
-        if (btn.classList.contains('hl') !== hl) btn.classList.toggle('hl', hl);
-        if (b.cdRing) {
-          const c = btn.querySelector('.chm-cd circle');
-          const off = String(Math.round(160 * (b.cd || 0)));
-          if (c && c.getAttribute('stroke-dashoffset') !== off) c.setAttribute('stroke-dashoffset', off);
+        actBtn.clear();
+        for (const b of list) {
+          const btn = el.acts.querySelector(`[data-act="${b.act}"]`);
+          actBtn.set(b.act, { btn, em: btn.querySelector('em'), cd: btn.querySelector('.chm-cd circle'), label: b.label, disabled: false, cdOff: -1, hl: !!b.hl });
         }
+      }
+      for (let i = 0; i < list.length; i++) {
+        const b = list[i]; const r = actBtn.get(b.act);
+        if (!r) continue;
+        const dis = !!b.disabled;
+        if (r.disabled !== dis) { r.disabled = dis; r.btn.disabled = dis; }
+        if (r.label !== b.label) { r.label = b.label; r.em.textContent = b.label; r.btn.setAttribute('aria-label', b.label); }
+        const hl = !!b.hl; if (r.hl !== hl) { r.hl = hl; r.btn.classList.toggle('hl', hl); }
+        if (r.cd) { const off = Math.round(160 * (b.cd || 0)); if (off !== r.cdOff) { r.cdOff = off; r.cd.setAttribute('stroke-dashoffset', String(off)); } }
       }
     },
     poseOn(p) { if (cache.get('pose') === p) return; cache.set('pose', p); el.poses.querySelectorAll('.chm-pose').forEach((b) => b.classList.toggle('on', b.dataset.pose === p)); },
     tool(t, size, hard, rgb) {
-      const k = `${t}|${size}|${hard}`;
-      if (cache.get('tool') !== k) {
-        cache.set('tool', k);
+      if (N.tool !== t || N.size !== size || N.hard !== hard) {
+        N.tool = t; N.size = size; N.hard = hard;
         el.tools.querySelectorAll('[data-tool]').forEach((b) => b.classList.toggle('on', b.dataset.tool === t));
         el.tools.querySelectorAll('[data-size]').forEach((b) => b.classList.toggle('on', +b.dataset.size === size));
         el.tools.querySelectorAll('[data-hard]').forEach((b) => b.classList.toggle('on', +b.dataset.hard === (hard ? 1 : 0)));
       }
-      set('swatch', el.swatch, 'background', `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`);
+      if (N.r !== rgb[0] || N.g !== rgb[1] || N.bl !== rgb[2]) { N.r = rgb[0]; N.g = rgb[1]; N.bl = rgb[2]; el.swatch.style.background = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`; }
     },
-    undoEnabled(on) { const b = el.tools.querySelector('[data-act="undo"]'); if (b && b.disabled === on) b.disabled = !on; },
+    undoEnabled(on) { if (N.undo === on) return; N.undo = on; const b = el.tools.querySelector('[data-act="undo"]'); if (b) b.disabled = !on; },
     hint(text, ms = 2600) {
       clearTimeout(hintTimer);
       if (!text) { el.hint.classList.remove('on'); return; }
       el.hint.textContent = text; el.hint.classList.add('on');
       if (ms > 0) hintTimer = setTimeout(() => el.hint.classList.remove('on'), ms);
     },
+    /** rows: a constant array (identity-compared). */
     legend(rows) {
-      const k = rows.join('|');
-      if (cache.get('leg') === k) return; cache.set('leg', k);
+      if (N.legend === rows) return;
+      N.legend = rows;
       el.legend.innerHTML = rows.join('<br>');
     },
     gulp() { el.swatch.classList.remove('gulp'); void el.swatch.offsetWidth; el.swatch.classList.add('gulp'); },
