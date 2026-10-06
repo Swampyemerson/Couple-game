@@ -22,7 +22,7 @@ All questions live in `js/content.js`. Add your own, or inside jokes, by editing
 
 ## The game room (Games tab)
 
-16 two-player games. "Take turns" games work whether you're both online or not (your move
+17 two-player games. "Take turns" games work whether you're both online or not (your move
 shows up on the other phone right away, or whenever they next open the app). "Live" games
 need you both in the game at once. Most also work on one phone (or one computer) passed
 between you.
@@ -41,6 +41,7 @@ between you.
 | Tower Together: stack 3D blocks together | Take turns, co-op | Either |
 | Air Hockey · Quick Draw | Live, versus | Phone (one-phone mode too) |
 | Light Cycles | Live, versus | Computer (WASD vs arrows on one keyboard) |
+| **Getaway**: 3D car chase; one runs, one's the cop (PIT, spike strips, lose the heat), roles swap | Live, versus | Either |
 | Defuse: one has the bomb, the other the manual | Live, co-op, two devices | Bomb on a computer, manual on a phone |
 
 Head-to-head records, co-op best scores, rematches, and "your move" reminders on Home are

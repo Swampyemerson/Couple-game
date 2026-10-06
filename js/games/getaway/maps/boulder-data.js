@@ -128,7 +128,7 @@ add('4th St', 'street', 9, NS(X.st4, Z.balsam, Z.canyon));
 add('6th St', 'street', 9, NS(X.st6, Z.mapleton, Z.canyon));
 creekNS('9th St', 'street', 10, X.st9, Z.balsam, Z.baseline);
 add('11th St', 'street', 9, NS(X.st11, Z.mapleton, Z.canyon));
-creekNS('Broadway', 'arterial', 16, X.bwy, Z.balsam, 200);
+creekNS('Broadway', 'arterial', 16, X.bwy, Z.balsam, 194);
 add('Broadway', 'arterial', 16, [[0, 194], [0, 240], [6, 285], [24, 340], [52, 382], [80, 420], [112, 462], [148, 520], [184, 570], [222, 622], [268, 680], [320, 735], [380, 785], [450, 828], [530, 868], [629, 909], [664, 965], [700, 1030], [742, 1110], [790, 1200], [840, 1300], [890, 1400], [940, 1500], [990, 1590], [1047, 1683]]);
 add('13th St', 'street', 9, NS(X.st13, Z.mapleton, Z.alleyN));
 add('13th St', 'street', 9, NS(X.st13, Z.alleyS, Z.canyon));
@@ -169,7 +169,8 @@ add('Boulder Creek Path', 'alley', 5, [[-424, 168], [-380, 170], ...CREEK.filter
 // South Boulder: US-36 (the Boulder Turnpike), Moorhead + Martin Acres, Table Mesa, NCAR
 export const US36_PTS = [[X.st28, Z.baseline], ...[60, 160, 260, 360, 460, 560, 660, 760, 860, 960, 1060, 1160, 1260].map((u) => usPt(u)), [X.st55, usPt(1272)[1]]];
 add('US-36 Boulder Turnpike', 'highway', 24, US36_PTS, { lanes: 2 });
-export const MOOR_T0 = -66; export const MOOR_T1 = 954;
+export const MOOR_T0 = -66;
+export const MOOR_T1 = 954;
 const moorPts = []; for (let t = MOOR_T0; t <= MOOR_T1; t += 60) moorPts.push(moorPt(Math.min(t, MOOR_T1)));
 if (moorPts[moorPts.length - 1][0] !== moorPt(MOOR_T1)[0]) moorPts.push(moorPt(MOOR_T1));
 moorPts[0] = [moorPt(MOOR_T0)[0], Z.baseline];
@@ -259,7 +260,8 @@ const rect = (x0, z0, x1, z1) => [[x0, z0], [x1, z0], [x1, z1], [x0, z1]];
 const circ = (cx, cz, r, n = 12) => { const o = []; for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2; o.push([cx + Math.cos(a) * r, cz + Math.sin(a) * r]); } return o; };
 export const MALL = { x0: -41, x1: 125, z0: -10, z1: 10 };
 export const OPEN = [
-  { kind: 'lot', poly: rect(MALL.x0, MALL.z0, MALL.x1, MALL.z1), name: 'Pearl St Mall', paint: 'brick' },
+  { kind: 'lot', poly: rect(MALL.x0, MALL.z0, -8.6, MALL.z1), name: 'Pearl St Mall', paint: 'brick' },
+  { kind: 'lot', poly: rect(8.6, MALL.z0, MALL.x1, MALL.z1), name: 'Pearl St Mall', paint: 'brick' },
   { kind: 'lot', poly: rect(36, -27, 94, -10), name: 'Courthouse plaza', paint: 'brick' },
   { kind: 'lot', poly: circ(-440, 146, 26), name: 'Eben G. Fine Park', paint: 'asphalt' },
   { kind: 'lot', poly: rect(846, 12, 924, 108), name: 'Twenty Ninth St lot W', paint: 'asphalt' },
@@ -273,7 +275,6 @@ export const OPEN = [
   { kind: 'lot', poly: rect(1150, -40, 1230, 40), name: 'Boulder Junction lot', paint: 'asphalt' },
   { kind: 'lot', poly: rect(1265, 430, 1440, 520), name: 'Research Park lot', paint: 'asphalt' },
   { kind: 'dirt', poly: [[1560, -425], [1845, -425], [1845, -275], [1740, -270], [1560, -280]], name: 'Valmont Bike Park', paint: 'dirt' },
-  { kind: 'dirt', poly: [[-30, 1100], [80, 1080], [140, 1180], [60, 1300], [-60, 1260]], name: 'Mesa Trail', paint: 'dirt' },
 ];
 // the home's driveway (from Moorhead's NE curb to the garage)
 OPEN.push({ kind: 'lot', name: '3865 Moorhead driveway', paint: 'concrete', poly: (() => {

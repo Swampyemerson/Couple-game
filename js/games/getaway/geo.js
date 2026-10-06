@@ -159,7 +159,8 @@ export function createGeo(map) {
   for (const r of roads) {
     if (!r.bridge) continue;
     let crosses = false;
-    for (let i = 0; i < r.n && !crosses; i += 2) {
+    for (let i = 0; i < r.n && !crosses; i++) {
+      if (r.cum[i] < 14 || r.cum[i] > r.len - 14) continue; // the roads it joins at its ends
       nearestRoad(r.x[i], r.z[i], tmpN, 24, (o) => !o.bridge && o !== r);
       if (tmpN.road >= 0 && tmpN.d < roads[tmpN.road].hw + 1) crosses = true;
     }

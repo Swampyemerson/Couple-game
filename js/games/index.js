@@ -18,3 +18,4 @@ import './cycles.js';
 import './defuse.js';
 import './rush.js';
 import './chameleon.js';
+import './getaway.js';

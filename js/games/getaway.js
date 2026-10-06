@@ -1,0 +1,34 @@
+// Getaway: a two-player 3D car chase. One drives the runner, one the cop; roles swap every
+// round. PIT them, spike them or box them in, or lose the heat and survive the clock. Live on two
+// devices, or practice against an AI cop (split screen on a laptop). The game lives in
+// js/games/getaway/; design notes in docs/games/getaway.md, the map contract in
+// docs/games/getaway-maps.md.
+import { registerGame } from './core.js';
+import { createGame } from './getaway/game.js';
+import { CSS } from './getaway/css.js';
+
+registerGame({
+  id: 'getaway',
+  title: 'Getaway',
+  blurb: 'One runs, one chases. PIT them, spike them, or lose the heat.',
+  kind: 'live',
+  modes: ['live', 'local'],
+  platforms: ['phone', 'computer'],
+  immersive: true,
+  ownsPauseUI: true,
+  team: false,
+  tags: ['silly', '3d'],
+  minutes: 12,
+  howTo: [
+    'One of you is the runner, one the cop. Roles swap every round.',
+    'Runner: survive the clock, or get far away and out of sight to lose the heat.',
+    'Cop: hit their back corner to PIT them, drop spike strips from the map, box them in.',
+    'Steer with your left thumb; gas, brake, drift and nitro on the right. Laptop: WASD.',
+  ],
+  css: CSS,
+  endDelay: 0,
+  mount(el, api) {
+    const game = createGame(el, api);
+    return { destroy() { game.destroy(); } };
+  },
+});

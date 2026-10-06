@@ -284,9 +284,9 @@ export function layout() {
   const stamp = (x, z, w, d, rot, pad, v = BLD) => obbCells(x, z, w, d, rot, pad, (q) => { if (ras[q] < v) ras[q] = v; });
   const solid = (o) => { solids.push(o); return o; };
   /** A building: collision + decor record. `forced` skips the free test (hand-placed). */
-  function building(b, forced = false) {
+  function building(b, forced = false, allowLot = false) {
     const pad = b.pad == null ? 0.6 : b.pad;
-    if (!forced && !isFree(b.x, b.z, b.w, b.d, b.rot, pad)) return null;
+    if (!forced && !isFree(b.x, b.z, b.w, b.d, b.rot, pad, allowLot)) return null;
     stamp(b.x, b.z, b.w, b.d, b.rot, pad);
     b.y = b.y == null ? groundUnder(b.x, b.z, b.w, b.d, b.rot) : b.y;
     buildings.push(b);
@@ -447,7 +447,7 @@ export function layout() {
         const roof = isHouse ? (type === 'ranch' ? (rnd() < 0.55 ? 'hip' : 'gable') : 'gable') : type === 'cu' ? (rnd() < 0.6 ? 'hip' : 'gable') : 'flat';
         const roofH = roof === 'flat' ? 0 : type === 'ranch' ? 1.6 + rnd() * 0.6 : type === 'cu' ? 4 + rnd() : type === 'cottage' ? 3.6 : 2.6 + rnd() * 1.6;
         const pal = PALETTE[type] || PALETTE.box;
-        const b = building({ x: cx, z: cz, w, d, rot, h, floors, style: type, color: pick(pal), roof, roofH, roofColor: roof === 'flat' ? '#7d766b' : pick(ROOF[type] || ROOF.house), zone, seed: rnd(), porch: isHouse && rnd() < 0.45, chimney: isHouse && rnd() < 0.35 });
+        const b = building({ x: cx, z: cz, w, d, rot, h, floors, style: type, color: pick(pal), roof, roofH, roofColor: roof === 'flat' ? '#7d766b' : pick(ROOF[type] || ROOF.house), zone, seed: rnd(), porch: isHouse && rnd() < 0.45, chimney: isHouse && rnd() < 0.35 }, false, r.kind === 'mall');
         if (b) {
           s += w + R(Z0.gap[0], Z0.gap[1]);
           // a front-yard street tree and a backyard tree for houses

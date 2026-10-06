@@ -52,7 +52,10 @@ export const CSS = `
 
 /* speed + nitro */
 .gtw-speed { position: absolute; right: calc(14px + var(--sr)); bottom: calc(14px + var(--sb)); display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
-.g-gtw.touch .gtw-view.full .gtw-speed { bottom: auto; top: calc(var(--cs) + 140px); right: calc(14px + var(--sr)); }
+.g-gtw.touch .gtw-view.full .gtw-speed { bottom: auto; top: calc(var(--cs) + 136px); right: calc(14px + var(--sr)); }
+.g-gtw.touch.short .gtw-view.full .gtw-speed { top: auto; bottom: calc(10px + var(--sb)); right: auto; left: 50%; transform: translateX(-50%); align-items: center; }
+.g-gtw.short .gtw-mini { width: 100px; height: 100px; }
+.g-gtw.touch.short .gtw-ctl [data-tap="cam"] { top: calc(var(--cs) + 110px); }
 .gtw-speed b { font-family: var(--g-font-display); font-weight: 900; font-size: 2rem; line-height: .9; font-variant-numeric: tabular-nums; -webkit-text-stroke: 1.5px var(--g-ink); color: var(--g-card); text-shadow: 2px 2px 0 var(--g-edge); }
 .gtw-speed small { font: 900 0.6rem/1 var(--g-font-body); letter-spacing: .14em; color: var(--g-ink); background: var(--g-card); border-radius: 4px; padding: 2px 4px; }
 .gtw-nitro { width: 92px; height: 10px; border-radius: 6px; border: 2px solid var(--g-ink); background: var(--g-card); overflow: hidden; }
@@ -97,7 +100,7 @@ export const CSS = `
 .gtw-ctl [data-tap="act"].cop { background: var(--g-bad); color: #fff; }
 .gtw-ctl [data-tap="act"][disabled] { opacity: .4; }
 .gtw-ctl [data-tap="look"] { right: calc(194px + var(--sr)); bottom: calc(92px + var(--sb)); width: 50px; height: 40px; border-radius: 12px; }
-.gtw-ctl [data-tap="cam"] { right: calc(10px + var(--sr)); top: calc(var(--cs) + 132px); width: 46px; height: 32px; border-radius: 10px; font-size: .58rem; }
+.gtw-ctl [data-tap="cam"] { left: calc(10px + var(--sl)); top: calc(var(--cs) + 128px); width: 50px; height: 34px; border-radius: 10px; font-size: .58rem; }
 .gtw-ctl svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
 .gtw-ctl span.l { display: block; margin-top: 2px; }
 .gtw-steer { position: absolute; width: 168px; height: 54px; margin: -27px 0 0 -84px; border-radius: 27px; border: 2.5px dashed color-mix(in srgb, var(--g-ink) 55%, transparent); opacity: 0; pointer-events: none; transition: opacity .12s; }

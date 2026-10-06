@@ -32,7 +32,7 @@ function catGeometry(THREE, coat, pose) {
     quad([x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0], top || side);
   };
   // The cat faces +z. Scale: a real cat, a bit chunky so it reads from a car (~0.5 m long).
-  const s = 1.25;
+  const s = 1.6;
   if (pose === 'loaf') {
     box(0, 0, 0, 0.26 * s, 0.2 * s, 0.42 * s, base, coat === 'calico' ? patch : base);
     box(0, 0.12 * s, 0.22 * s, 0.2 * s, 0.17 * s, 0.17 * s, base, base, coat === 'calico' ? patch : base);
@@ -82,7 +82,7 @@ function tailGeometry(THREE) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
   g.computeVertexNormals();
-  g.scale(1.25, 1.25, 1.25);
+  g.scale(1.6, 1.6, 1.6);
   return g;
 }
 
@@ -92,6 +92,7 @@ export function makeCats(THREE, mat, cats, home, L) {
   const tailMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
   const tails = new THREE.InstancedMesh(tailGeometry(THREE), tailMat, cats.length);
   tails.name = 'cat-tails';
+  tails.userData.noMerge = true;
   tails.frustumCulled = false;
   const list = [];
   const c = Math.cos(home.rot), s = Math.sin(home.rot);
@@ -100,6 +101,7 @@ export function makeCats(THREE, mat, cats, home, L) {
     const { g } = catGeometry(THREE, k.coat, k.pose);
     const m = new THREE.Mesh(g, mat);
     m.name = `cat-${k.coat}`;
+    m.userData.noMerge = true; // animated: keep out of the chunk merge
     const y = k.y + Math.max(0, H(k.x, k.z));
     m.position.set(k.x, y, k.z);
     m.rotation.y = k.yaw;
@@ -150,7 +152,7 @@ export function animateCats(t, cars) {
     const p = k.m.position;
     const back = k.pose === 'loaf' ? -0.24 : -0.2;
     const cy = Math.cos(k.m.rotation.y), sy = Math.sin(k.m.rotation.y);
-    S.v.set(p.x + sy * back * 1.25, p.y + 0.02, p.z + cy * back * 1.25);
+    S.v.set(p.x + sy * back * 1.6, p.y + 0.03, p.z + cy * back * 1.6);
     S.e.set(0, k.m.rotation.y + sway, k.pose === 'loaf' ? 0.0 : 0);
     S.q.setFromEuler(S.e);
     S.m4.compose(S.v, S.q, S.sc);

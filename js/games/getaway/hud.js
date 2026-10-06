@@ -164,7 +164,10 @@ export function createHud(root, api, { split, touch }) {
         els.edge.hidden = false;
         els.edge.style.left = `${Math.round(x)}px`; els.edge.style.top = `${Math.round(y)}px`; els.edge.style.setProperty('--a', `${Math.round((ang * 180) / Math.PI)}deg`);
       },
-      showPlay(on) { setCls('play', el, 'gtw-off', !on); for (const k of ['mini']) els[k].hidden = !on; el.querySelector('.gtw-left').hidden = !on; el.querySelector('.gtw-speed').hidden = !on; },
+      showPlay(on, top = on) {
+        if (last.play === on && last.top === top) return; last.play = on; last.top = top;
+        els.mini.hidden = !on; el.querySelector('.gtw-left').hidden = !on; el.querySelector('.gtw-speed').hidden = !on; el.querySelector('.gtw-top').hidden = !top;
+      },
       /** Minimap: north-up, 420 m across, around (cx, cz). marks: function(g, toPx) */
       mini(img, cx, cz, draw) {
         const cv = els.miniCv; const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -303,7 +306,7 @@ export function introCard(api, { map, round, rounds, runner, me, landmark, round
   const cop = runner === 'a' ? 'b' : 'a';
   const youRun = !local && me === runner; const youCop = !local && me === cop;
   return `<div class="gtw-card gtw-st"><h3>${esc(map.name)} · Round ${round + 1} of ${rounds}</h3>
-    <h2>${local ? `${esc(api.name(runner))} runs` : youRun ? 'You’re running' : 'You’re the cop'}</h2>
+    <h2>${local ? (api.name(runner) === 'You' ? 'You’re running' : api.name(runner) === 'AI' ? 'You’re the cop' : `${esc(api.name(runner))} runs`) : youRun ? 'You’re running' : 'You’re the cop'}</h2>
     ${landmark ? `<p>Starting near <b>${esc(landmark)}</b></p>` : ''}
     <div class="gtw-roles"><div class="${youRun ? 'me' : ''}"><small>Runner</small>${nameB(api, runner)}<p>Survive ${fmt('roundTime', roundTime)} or lose the heat</p></div>
       <div class="${youCop ? 'me' : ''}"><small>Cop</small>${nameB(api, cop)}<p>PIT, spike or box them in</p></div></div></div>`;

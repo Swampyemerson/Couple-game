@@ -12,10 +12,10 @@ export const CAR = {
   len: 4.6, wid: 2.0, base: 2.75,     // body length, width, wheelbase
   circR: 1.0, circZ: 1.55,            // collision: three circles at local z = +circZ, 0, −circZ
   mass: 1, inertia: 2.1,              // per unit mass: I/m (m²) for a 4.6 × 2 m box
-  runner: { vTop: 45, accel: 11.5, grip: 15.5, steer: 0.62, brake: 15, nitroA: 7, nitroTop: 1.2, yawK: 11 },
-  cop: { vTop: 46, accel: 11.8, grip: 15, steer: 0.58, brake: 15.5, nitroA: 6, nitroTop: 1.14, yawK: 10 },
+  runner: { vTop: 47, accel: 9.5, grip: 20, steer: 0.62, brake: 15, nitroA: 4.5, nitroTop: 1.15, yawK: 11 },
+  cop: { vTop: 48, accel: 9.6, grip: 19, steer: 0.58, brake: 15.5, nitroA: 4, nitroTop: 1.1, yawK: 10 },
   revTop: 12, revAccel: 6.5,
-  drag: 0.00045, roll: 0.35,          // aero (× v²) and rolling (× v) decel
+  drag: 0.00042, roll: 0.012,          // aero (× v²) and rolling (× v) decel
   coast: 0.6,                         // engine braking (m/s²) with no pedal
   handGrip: 0.34,                     // rear lateral grip multiplier with the handbrake
   handDecel: 5.5,

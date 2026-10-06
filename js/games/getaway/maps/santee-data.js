@@ -61,7 +61,7 @@ export const ZONES = [
   { id: 'T8', style: 'ranch', poly: [[-885, -490], [-505, -565], [-490, -720], [-430, -880], [-400, -1010], [-860, -1010]] },
   { id: 'T9', style: 'ranch', poly: [[-1132, -440], [-1068, -450], [-1068, -800], [-1132, -800]] },
   { id: 'W', style: 'prism', poly: [[-1535, -412], [-1150, -412], [-1150, -705], [-1535, -705]] },
-  { id: 'MH', style: 'mobile', poly: [[705, 292], [930, 292], [930, 452], [705, 452]] },
+  { id: 'MH', style: 'mobile', poly: [[705, 280], [915, 280], [905, 410], [705, 425]] },
 ];
 
 // ── residential collector streets (map m). Ends are snapped onto the named road. ────────────────
@@ -83,7 +83,7 @@ export const COLLECTORS = [
   ['Atlas View Dr', 10, [[-890, -640], [-780, -652], [-660, -702], [-560, -692], [-495, -700]], 'Fanita Pkwy', 'Carlton Hills Blvd'],
   ['Lake Canyon Dr', 10, [[-876, -935], [-700, -950], [-560, -925], [-415, -935]], 'Fanita Pkwy', 'Carlton Hills Blvd'],
   ['Mesa Rd', 10, [[-506, -420], [-380, -432], [-250, -412], [-120, -432], [0, -422]], 'Carlton Hills Blvd', 'Cuyamaca St'],
-  ['Mobile Home Way', 8, [[705, 300], [820, 302], [925, 300]], null, null],
+  ['Mobile Home Way', 8, [[722, 248], [722, 300], [820, 302], [905, 300]], 'Prospect Ave', null],
 ];
 
 // ── Weston (map m): hand-placed from the real driving directions ────────────────────────────────
@@ -116,7 +116,7 @@ export const CENTERS = [
   { x: 180, z: 70, w: 300, d: 100, face: 'N', shops: ['DONUT', 'LAUNDRY', 'NAILS', 'TACO SHOP', 'GAS'] },
   { x: 462, z: 70, w: 176, d: 100, face: 'N', shops: ['MARKET', 'PIZZA'] },
   { x: 770, z: -64, w: 300, d: 92, face: 'S', shops: ['AUTO PARTS', 'FEED STORE', 'MOTEL'] },
-  { x: 770, z: 78, w: 300, d: 96, face: 'N', shops: ['GAS', 'TACO SHOP', 'DONUT'] },
+  { x: 700, z: 112, w: 150, d: 70, face: 'N', shops: ['GAS', 'TACO SHOP', 'DONUT'], rotTo: 'Mission Gorge Rd' },
   // Mast Blvd corners
   { x: 82, z: -682, w: 128, d: 76, face: 'S', shops: ['DONUT', 'GAS', 'MARKET'], rotTo: 'Mast Blvd' },
   { x: 650, z: -826, w: 120, d: 80, face: 'S', shops: ['TACO SHOP', 'MARKET'], rotTo: 'Mast Blvd' },
@@ -156,7 +156,7 @@ export const POOLS = [
 
 // hills: smooth bumps (map m) rising away from roads; [cx, cz, rx, rz, h]
 export const HILLS = [
-  [-1580, 120, 170, 260, 55], [-1450, 380, 220, 160, 70], [-1150, 480, 220, 140, 45], [-1000, 600, 160, 80, 30],
+  [-1580, 120, 170, 260, 55], [-1450, 380, 220, 160, 50], [-1150, 480, 220, 140, 26], [-1000, 600, 160, 80, 18],
   [-1560, -980, 260, 260, 70], [-1250, -900, 240, 190, 45], [-1180, -1150, 200, 120, 50],
   [-650, -1170, 260, 120, 55], [-150, -1180, 260, 110, 60], [350, -1170, 260, 120, 55], [820, -1150, 250, 130, 60],
   [1100, -700, 140, 300, 70], [1100, 0, 120, 260, 55], [1100, 500, 140, 200, 50],

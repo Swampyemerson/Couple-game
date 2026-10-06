@@ -105,9 +105,9 @@ export function stepCar(c, inp, dt, geo, T, nit) {
   else if (brake > 0 && gas <= 0) { a = vf > -CAR.revTop ? -CAR.revAccel * brake : 0; if (vf > 0) a = -T.brake; }
   else if (gas > 0) {
     if (vf < -0.5) { a = T.brake * gas; c.braking = true; }
-    else a = gas * T.accel * Math.max(0, 1 - Math.max(0, vf) / vTop) + (wantBoost ? T.nitroA : 0);
+    else { const u = Math.max(0, vf) / vTop; a = gas * T.accel * Math.max(0, 1 - u * u * u) + (wantBoost ? T.nitroA : 0); }
   } else a = vf > 0.2 ? -CAR.coast : vf < -0.2 ? CAR.coast : -vf * 4;
-  a -= CAR.drag * vf * Math.abs(vf) + CAR.roll * vf * 0.1 + sf.drag * Math.sign(vf) * Math.min(1, Math.abs(vf) * 0.2);
+  a -= CAR.drag * vf * Math.abs(vf) + CAR.roll * vf + sf.drag * Math.sign(vf) * Math.min(1, Math.abs(vf) * 0.2);
   if (vf > vTop) a -= (vf - vTop) * 0.9;
   if (hand && Math.abs(vf) > 0.5) a -= Math.sign(vf) * CAR.handDecel;
   if (geo.hasHeight && c.level < 0) {
@@ -125,7 +125,7 @@ export function stepCar(c, inp, dt, geo, T, nit) {
   const delta = c.steer * lock;
   let rT = (vf * Math.tan(delta)) / CAR.base;
   if (c.braking && vf > 6) rT *= 1.12; else if (gas > 0.5 && vf > 15) rT *= 0.96; // weight shift
-  const maxR = (grip * 1.1) / Math.max(Math.abs(vf), 4) * (hand ? 2.1 : 1);
+  const maxR = (grip * 0.97) / Math.max(Math.abs(vf), 4) * (hand ? 2.3 : 1);
   if (rT > maxR) rT = maxR; else if (rT < -maxR) rT = -maxR;
   let k = T.yawK;
   if (hand) k = 4.5; else if (Math.abs(vl) > CAR.slipSkid * 1.5) k = 5.5;

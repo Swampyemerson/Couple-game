@@ -1,7 +1,7 @@
 // Santee map: turns the authored data (santee-data.js) into the contract fields: roads (with ramps,
 // bridges, cul-de-sacs, footpaths), open ground, solids, water, spawns, landmarks and the height
 // field, plus a `deco` record that santee-build.js draws. Deterministic: only prng(seed) is used.
-import { prng, clamp, smooth, segD2, polyLen, along, resample, pip, polyBox, ellipse, rectPoly, ribbon, obbHit, Grid, yawOf } from './santee-util.js';
+import { prng, clamp, smooth, smoothLine, segD2, polyLen, along, resample, pip, polyBox, ellipse, rectPoly, ribbon, obbHit, Grid, yawOf } from './santee-util.js';
 import { BOUNDS, MAJOR, RIVER, RIVER_HALF, ZONES, COLLECTORS, WESTON, CENTERS, PARKS, SCHOOLS, AIRPORT, LAKES, LAKES_LOOP, POOLS, HILLS } from './santee-data.js';
 
 const PI = Math.PI;
@@ -43,12 +43,16 @@ export function* layoutSteps() {
     r.pts = p;
     roads.push(r);
     if (!byName.has(r.name)) byName.set(r.name, r);
-    for (let i = 1; i < r.pts.length; i++) {
-      const [ax, az] = r.pts[i - 1], [bx, bz] = r.pts[i];
-      const seg = { r, ax, az, bx, bz, hw: r.width / 2 };
-      segGrid.add(seg, Math.min(ax, bx), Math.min(az, bz), Math.max(ax, bx), Math.max(az, bz));
-    }
+    indexRoad(r);
     return r;
+  }
+  /** Clearance queries use the smoothed centre line, as the engine renders it. */
+  function indexRoad(r) {
+    const sm = smoothLine(r.pts, 8, !!r.closed);
+    for (let i = 1; i < sm.length; i++) {
+      const [ax, az] = sm[i - 1], [bx, bz] = sm[i];
+      segGrid.add({ r, ax, az, bx, bz, hw: r.width / 2 }, Math.min(ax, bx), Math.min(az, bz), Math.max(ax, bx), Math.max(az, bz));
+    }
   }
   /** Distance from (x,z) to the nearest road edge (centre distance - half width). */
   function roadGap(x, z, reach = 60, skip = null) {
@@ -214,10 +218,7 @@ export function* layoutSteps() {
   }
   // re-index segments with the split pieces (bridge flags now visible to queries)
   segGrid.m.clear();
-  for (const r of roads) for (let i = 1; i < r.pts.length; i++) {
-    const [ax, az] = r.pts[i - 1], [bx, bz] = r.pts[i];
-    segGrid.add({ r, ax, az, bx, bz, hw: r.width / 2 }, Math.min(ax, bx), Math.min(az, bz), Math.max(ax, bx), Math.max(az, bz));
-  }
+  for (const r of roads) indexRoad(r);
 
   T('4. height fiel'); yield;
   // ── 4. height field ────────────────────────────────────────────────────────────────────────────
@@ -432,7 +433,8 @@ export function* layoutSteps() {
     }
     return true;
   }
-  const prop = (kind, style, x, z, h, color, sz = 0.8) => addSolid({ kind, style, x: Math.round(x * 10) / 10, z: Math.round(z * 10) / 10, w: sz, d: sz, rot: 0, h, color });
+  // engine-drawn props never stand inside a (smoothed) road ribbon
+  const prop = (kind, style, x, z, h, color, sz = 0.8) => (roadGap(x, z, 30, (r) => r.bridge) < 0.4 ? null : addSolid({ kind, style, x: Math.round(x * 10) / 10, z: Math.round(z * 10) / 10, w: sz, d: sz, rot: 0, h, color }));
   const TREES = [
     ['palm', '#5f8a3a', 14, 0.7], ['palm', '#6a9440', 17, 0.7], ['jacaranda', '#9a7fd6', 7.5, 0.9], ['jacaranda', '#a58ae0', 6.5, 0.9],
     ['cottonwood', '#7a9a4a', 9, 1.0], ['pine', '#4f7a4a', 11, 1.0], ['shrub', '#7f9654', 2.2, 1.4],
@@ -442,7 +444,7 @@ export function* layoutSteps() {
     if (r < bias.palm) return TREES[rnd() < 0.6 ? 0 : 1];
     if (r < bias.palm + bias.jac) return TREES[rnd() < 0.5 ? 2 : 3];
     if (r < bias.palm + bias.jac + 0.15) return TREES[5];
-    if (r < bias.palm + bias.jac + 0.3) return TREES[6];
+    if (r < bias.palm + bias.jac + 0.23) return TREES[6];
     return TREES[4];
   };
   const addTree = (x, z, bias = { palm: 0.3, jac: 0.25 }, scale = 1) => {
@@ -496,6 +498,7 @@ export function* layoutSteps() {
       const lx = x0 + sw * (k + 0.5);
       const [bx, bz] = F(lx, back + depth / 2 + 3);
       const h = 6 + (k % 3 === 1 ? 1.5 : 0);
+      if (!clearOfRoads({ x: bx, z: bz, w: sw - 1, d: depth, rot }, 1.5)) return;
       const b = addSolid({ kind: 'building', x: bx, z: bz, w: sw - 1, d: depth, rot, h, drawn: true });
       const pal = [['#ecdcc0', '#b5472f'], ['#f1e6d2', '#2f7f7a'], ['#e7cfa8', '#7a4b9a'], ['#f3ead8', '#c46a2a']][k % 4];
       deco.shops.push({ ...b, color: pal[0], trim: pal[1], sign: name, tile: k % 2 === 0 });
@@ -548,7 +551,7 @@ export function* layoutSteps() {
       prop('pole', 'pole', TRACK_X + 4.5, z, 7.5, '#5d6066', 0.4);
     }
     // viaduct piers either side of the freeway (drawn)
-    for (const pz of [452, 548]) addSolid({ kind: 'building', x: TRACK_X, z: pz, w: 4, d: 3, rot: 0, h: 7, drawn: true });
+    for (const pz of [454, 508]) addSolid({ kind: 'building', x: TRACK_X, z: pz, w: 4, d: 3, rot: 0, h: 7, drawn: true });
     deco.trolley.viaduct = { z0: 430, z1: 570, y: 7.2 };
   }
 
@@ -577,7 +580,7 @@ export function* layoutSteps() {
       for (let x = b.x0 + 20; x < b.x1; x += 60) { prop('pole', 'lamp', x, b.z0 + 6, 14, '#7a7d82', 0.5); prop('pole', 'lamp', x, b.z1 - 6, 14, '#7a7d82', 0.5); }
     }
     const b = polyBox(p.poly);
-    const n = Math.floor(((b.x1 - b.x0) * (b.z1 - b.z0)) / (p.golf ? 900 : 1600));
+    const n = Math.floor(((b.x1 - b.x0) * (b.z1 - b.z0)) / (p.golf ? 2000 : 2800));
     for (let k = 0; k < n; k++) {
       const x = b.x0 + rnd() * (b.x1 - b.x0), z = b.z0 + rnd() * (b.z1 - b.z0);
       if (!pip(p.poly, x, z) || roadGap(x, z) < 4 || inWater(x, z)) continue;
@@ -588,7 +591,7 @@ export function* layoutSteps() {
   open.push({ kind: 'lot', poly: AIRPORT.poly });
   deco.airport = AIRPORT;
   for (let k = 0; k < 5; k++) {
-    const hx = 40 + k * 120, hz = 626;
+    const hx = 100 + k * 115, hz = 626;
     const b = addSolid({ kind: 'building', x: hx, z: hz, w: 70, d: 24, rot: PI, h: 9, drawn: true });
     deco.bigs.push({ ...b, hangar: true, color: '#dfe2e2', trim: '#3e6f97', sign: k === 2 ? 'GILLESPIE FIELD' : null });
   }
@@ -597,9 +600,10 @@ export function* layoutSteps() {
 
   // ── 11. Santee Lakes ───────────────────────────────────────────────────────────────────────────
   for (const p of lakePolys) water.push({ poly: p.map(([x, z]) => [Math.round(x * 10) / 10, Math.round(z * 10) / 10]) });
-  open.push({ kind: 'grass', poly: [[-905, -520], [-1072, -525], [-1078, -1150], [-905, -1150]] });
+  deco.lakePark = [[-905, -520], [-1072, -525], [-1078, -1150], [-905, -1150]];
+  open.push({ kind: 'grass', poly: deco.lakePark });
   deco.lakes = lakePolys;
-  for (let k = 0; k < 160; k++) {
+  for (let k = 0; k < 80; k++) {
     const x = -1072 + rnd() * 165, z = -1145 + rnd() * 620;
     if (inWater(x, z) || roadGap(x, z) < 3) continue;
     let nearLake = false;
@@ -626,14 +630,14 @@ export function* layoutSteps() {
     for (const p of poolPolys) water.push({ poly: p.map(([x, z]) => [Math.round(x * 10) / 10, Math.round(z * 10) / 10]) });
     deco.pools = poolPolys;
     const L = polyLen(RIVER);
-    for (let s = 10; s < L; s += 9) {
+    for (let s = 10; s < L; s += 6) {
       const a = along(RIVER, s);
       for (const side of [-1, 1]) {
         const off = side * (RIVER_HALF - 2 - rnd() * 8);
         const x = a.x - a.tz * off, z = a.z + a.tx * off;
         if (roadGap(x, z) < 6 || inWater(x, z)) continue;
-        if (rnd() < 0.55) deco.reeds.push([x, z, 1.4 + rnd() * 1.6]);
-        else if (rnd() < 0.18) addTree(x + side * 4, z, { palm: 0.05, jac: 0 }, 1.1);
+        if (rnd() < 0.8) deco.reeds.push([x, z, 1.4 + rnd() * 1.8]);
+        else if (rnd() < 0.08) { const o = { x: x + side * 4, z, w: 1.1, d: 1.1, rot: 0 }; if (!blocked(o, 0.6)) prop('tree', rnd() < 0.8 ? 'cottonwood' : 'palm', o.x, z, rnd() < 0.8 ? 9 + rnd() * 3 : 13, rnd() < 0.5 ? '#86a24e' : '#7a9a4a', 1.1); }
       }
       // a few islands of willow in the channel: obstacles to weave through
       if (rnd() < 0.05) { const x = a.x + (rnd() - 0.5) * 14, z = a.z + (rnd() - 0.5) * 14; if (roadGap(x, z) > 8 && !inWater(x, z)) prop('tree', 'cottonwood', x, z, 8 + rnd() * 3, '#86a24e', 1.2); }
@@ -693,11 +697,11 @@ export function* layoutSteps() {
             if (isBoulder) homeList.push(rec);
             // front yard tree / back yard palm
             if (!mobile) {
-              if (rnd() < 0.55) {
+              if (rnd() < 0.4) {
                 const tx = x - nx * (d / 2 + setback * 0.55) + a.tx * (w / 2 - 1.2) * rec.garage * -1, tz = z - nz * (d / 2 + setback * 0.55) + a.tz * (w / 2 - 1.2) * rec.garage * -1;
                 if (roadGap(tx, tz) > 1.5) addTree(tx, tz, prism ? { palm: 0.1, jac: 0.35 } : { palm: 0.3, jac: 0.25 }, prism ? 0.7 : 0.9);
               }
-              if (!prism && rnd() < 0.35) addTree(x + nx * (d / 2 + 4), z + nz * (d / 2 + 4), { palm: 0.7, jac: 0.1 }, 1.15);
+              if (!prism && rnd() < 0.15) addTree(x + nx * (d / 2 + 4), z + nz * (d / 2 + 4), { palm: 0.7, jac: 0.1 }, 1.15);
               // mailbox at the kerb
               if (rnd() < 0.5) prop('mailbox', 'mailbox', a.x + nx * (r.width / 2 + 0.8) + a.tx * (w / 2 - 1), a.z + nz * (r.width / 2 + 0.8) + a.tz * (w / 2 - 1), 1.2, '#3a3f45', 0.4);
             }
@@ -724,7 +728,23 @@ export function* layoutSteps() {
   // the hero home: 8524 Boulder Way
   let home = homeList.find((h) => h.num === WESTON.home);
   if (!home && homeList.length) home = homeList[Math.min(homeList.length - 1, 12)];
-  if (home) { home.hero = true; home.wall = '#f6f4ef'; home.roof = '#33373c'; home.gable = true; deco.home = home; }
+  if (home) {
+    home.hero = true; home.wall = '#f6f4ef'; home.roof = '#33373c'; home.gable = true; deco.home = home;
+    // clear the front yard so the porch, the number and the cats are in view; then one jacaranda
+    // at the far front corner (away from the driveway) and a mailbox at the kerb
+    const c = Math.cos(home.rot), sn = Math.sin(home.rot);
+    const L = (lx, lz) => [home.x + c * lx + sn * lz, home.z - sn * lx + c * lz];
+    for (let i = solids.length - 1; i >= 0; i--) {
+      const so = solids[i]; if (so.drawn) continue;
+      const dx = so.x - home.x, dz = so.z - home.z;
+      const lx = dx * c - dz * sn, lz = dx * sn + dz * c; // world -> local
+      if (Math.abs(lx) < home.w / 2 + 6 && lz < -home.d / 2 + 1 && lz > -home.d / 2 - 12) solids.splice(i, 1);
+    }
+    const [jx, jz] = L(-home.garage * (home.w / 2 + 1.6), -home.d / 2 - 4.5);
+    prop('tree', 'jacaranda', jx, jz, 7.2, '#9a7fd6', 0.9);
+    const [mx, mz] = L(home.garage * (home.w / 2 - 0.8), -home.d / 2 - 5.6);
+    prop('mailbox', 'mailbox', mx, mz, 1.2, '#2b2b2b', 0.4);
+  }
 
   T('14. street pro'); yield;
   // ── 14. street props: lights, palms, signals, hydrants, power poles ─────────────────────────────
@@ -746,7 +766,7 @@ export function* layoutSteps() {
         prop('pole', art ? 'lamp' : 'pole', x, z, art ? 9.5 : 8.5, art ? '#6d6f73' : '#7b5a3c', 0.45);
       }
       // palms between the lights on Mission Gorge, Town Center Pkwy and Mast
-      if (art && /Mission Gorge|Town Center|Mast|Magnolia/.test(r.name)) {
+      if (art && /Mission Gorge|Town Center/.test(r.name) && Math.round(s / stepL) % 2 === 0) {
         const b = along(r.pts, s + stepL / 2);
         for (const side of [1, -1]) {
           const off = r.width / 2 + 3.2;
@@ -756,7 +776,7 @@ export function* layoutSteps() {
         }
       }
       // hydrants on residential streets
-      if (r.res && rnd() < 0.5) {
+      if (r.res && rnd() < 0.3) {
         const x = a.x + a.tz * (r.width / 2 + 0.9), z = a.z - a.tx * (r.width / 2 + 0.9);
         if (roadGap(x, z, 40, (q) => q === r) > 2 && !blocked({ x, z, w: 0.4, d: 0.4, rot: 0 }, 0.3)) prop('bollard', 'hydrant', x, z, 0.9, '#e2c23a', 0.4);
       }
@@ -852,6 +872,48 @@ export function* layoutSteps() {
     addSolid(wl); deco.walls.push({ ...wl, color: '#d8c3a0' });
   }
 
+  // ── 16b. signs: strip-mall pylons, freeway gantries, Welcome to Santee, Santee Lakes ───────────
+  deco.pylons = [];
+  for (const c of CENTERS) {
+    if (c.storage || c.big) continue;
+    const rot = centerRot(c), F = frame(c.x, c.z, rot);
+    const [px, pz] = F(c.x > 0 ? c.w / 2 - 8 : -c.w / 2 + 8, c.d / 2 - 3);
+    if (roadGap(px, pz) < 2 || blocked({ x: px, z: pz, w: 1, d: 1, rot }, 0.5)) continue;
+    addSolid({ kind: 'building', x: px, z: pz, w: 0.8, d: 0.8, rot, h: 8, drawn: true });
+    deco.pylons.push({ x: px, z: pz, rot, names: c.shops.filter((n) => n !== 'GAS').slice(0, 3) });
+  }
+  deco.gantries = [];
+  const gantry = (fw, sx, sz, label, dir) => {
+    const cands = roads.filter((r) => r.name === fw && !r.bridge);
+    let best = null; for (const r of cands) { const n = nearestOnR(r, sx, sz); if (!best || n.d < best.d) best = n; }
+    const a = along(best.r.pts, best.s);
+    const tx = a.tx * dir, tz = a.tz * dir;
+    const rot = Math.atan2(-tz, tx) + Math.PI / 2; // face oncoming traffic (local -z toward drivers)
+    const half = best.r.width / 2 + 3;
+    for (const sd of [-1, 1]) addSolid({ kind: 'building', x: a.x - tz * half * sd, z: a.z + tx * half * sd, w: 0.7, d: 0.7, rot: 0, h: 7.5, drawn: true });
+    deco.gantries.push({ x: a.x, z: a.z, rot, span: half * 2, label });
+  };
+  gantry('SR-52', -1000, 340, 'SR-125 SOUTH  La Mesa', 1);
+  gantry('SR-52', 845, 490, 'SR-67  Lakeside  Ramona', 1);
+  gantry('SR-52', -300, 455, 'SR-52 WEST  Mission Gorge', -1);
+  gantry('SR-52', -1420, -190, 'Mast Blvd  NEXT EXIT', -1);
+  gantry('SR-52', 300, 500, 'SR-52 EAST  El Cajon', 1);
+  // monuments (drawn, low)
+  deco.monuments = [];
+  const monument = (road, x, z, side, label, color) => {
+    const n = nearestOn(road, x, z), a = along(n.r.pts, n.s);
+    const off = n.r.width / 2 + 9;
+    const mx = a.x - a.tz * off * side, mz = a.z + a.tx * off * side;
+    const rot = Math.atan2(-a.tz, a.tx) + (side > 0 ? Math.PI : 0);
+    if (blocked({ x: mx, z: mz, w: 8, d: 1.2, rot }, 0.5)) return;
+    addSolid({ kind: 'building', x: mx, z: mz, w: 8, d: 1.2, rot, h: 2.4, drawn: true });
+    deco.monuments.push({ x: mx, z: mz, rot, label, color });
+  };
+  monument('Mission Gorge Rd', -1000, 30, 1, 'WELCOME TO SANTEE', '#d8c3a0');
+  monument('Fanita Pkwy', -900, -560, -1, 'SANTEE LAKES', '#cdb592');
+  monument('Mast Blvd', -1240, -400, 1, 'WEST HILLS HIGH', '#d8c3a0');
+  monument('Magnolia Ave', 568, -660, 1, 'SANTANA HIGH', '#d8c3a0');
+
   T('17. spawns'); yield;
   // ── 17. spawns ─────────────────────────────────────────────────────────────────────────────────
   const spawns = [];
@@ -930,6 +992,7 @@ export function* layoutSteps() {
   const zoneAt = (x, z) => {
     for (const zz of ZONES) if (pip(zz.poly, x, z)) return zz.style;
     for (const p of parkPolys) if (pip(p, x, z)) return 'park';
+    if (pip(deco.lakePark, x, z)) return 'park';
     for (const p of comPolys) if (pip(p, x, z)) return 'com';
     return null;
   };

@@ -15,10 +15,11 @@ const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[
 
 /** Growable flat-shaded triangle soup with vertex colours (and optional uvs). */
 class Buf {
-  constructor(uv = false) { this.p = []; this.c = []; this.uv = uv ? [] : null; this.n = 0; }
+  constructor(uv = false) { this.p = []; this.c = []; this.f = []; this.fx = 0; this.anyFx = false; this.uv = uv ? [] : null; this.n = 0; }
   tri(a, b, c, col, ta, tb, tc) {
     this.p.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
     for (let i = 0; i < 3; i++) this.c.push(col[0], col[1], col[2]);
+    this.f.push(this.fx, this.fx, this.fx); if (this.fx) this.anyFx = true;
     if (this.uv) this.uv.push(ta[0], ta[1], tb[0], tb[1], tc[0], tc[1]);
     this.n++;
   }
@@ -31,6 +32,8 @@ class Buf {
     g.setAttribute('position', new THREE.Float32BufferAttribute(this.p, 3));
     g.setAttribute('color', new THREE.Float32BufferAttribute(this.c, 3));
     if (this.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(this.uv, 2));
+    // engine toon: fx 3 = glow (lit windows and lamps at night)
+    if (this.anyFx) g.setAttribute('fx', new THREE.Float32BufferAttribute(this.f, 1));
     g.computeVertexNormals(); // non-indexed: flat per face
     g.computeBoundingSphere();
     return g;
@@ -185,7 +188,7 @@ function* buildSteps(THREE, kit, L) {
 
   // ── terrain ────────────────────────────────────────────────────────────────────────────────────
   const step = low ? 20 : 10;
-  const DRY = C('#bba776'), DRY2 = C('#ad9b68'), LAWN = C('#9aa466'), LAWN2 = C('#8e9a5c'), SAGE = C('#7c8750'), OLIVE = C('#687244'), SAND = C('#e4d2a2'), SAND2 = C('#d6bf8c'), BED = C('#6f9fb5'), RIM = C('#a8995f');
+  const DRY = C('#bba776'), DRY2 = C('#ad9b68'), LAWN = C('#9aa466'), LAWN2 = C('#8e9a5c'), SAGE = C('#7c8750'), OLIVE = C('#687244'), SAND = C('#d9c48f'), SAND2 = C('#c9b07a'), BED = C('#6f9fb5'), RIM = C('#a8995f');
   const surf = (x, z, h) => {
     const rd = L.riverDist(x, z);
     if (L.inWater(x, z)) return BED;
@@ -214,14 +217,14 @@ function* buildSteps(THREE, kit, L) {
         const col = mix(mix(a[1], b[1], 0.5), mix(c[1], d[1], 0.5), 0.5);
         B.tri(a[0], c[0], b[0], col); B.tri(b[0], c[0], d[0], col);
       }
+      yield;
     }
   }
-  yield;
 
   // ── overlays: lots, grass, dirt lots, bulbs, water ──────────────────────────────────────────────
   const ASPH = C('#64666a'), ASPH2 = C('#5a5c60'), GRASS = C('#9fc26a'), GOLF = C('#8cc063'), STRIPE = C('#eeeeea');
   for (const o of L.open) {
-    if (o.kind === 'sand' || o.kind === 'dirt') continue;
+    if (o.kind === 'sand' || o.kind === 'dirt' || o.poly === deco.lakePark) continue;
     let cx = 0, cz = 0; for (const [x, z] of o.poly) { cx += x; cz += z; } cx /= o.poly.length; cz /= o.poly.length;
     const B = get(cx, cz).B;
     if (o.kind === 'lot') flatPoly(THREE, B, o.poly, 0.05, o.poly.length > 10 ? ASPH2 : ASPH);
@@ -275,6 +278,8 @@ function* buildSteps(THREE, kit, L) {
   yield;
 
   // ── houses ─────────────────────────────────────────────────────────────────────────────────────
+  const dark = !!kit.dark;
+  const LITW = C('#ffd98a');
   const WIN = C('#3e4a5a'), WIN2 = C('#56677d'), GAR = C('#f2efe8'), GAR2 = C('#dcd6ca'), DOOR = C('#7a4b2e'), DRIVE = C('#d2ccc0'), TRIM = C('#ffffff'), BLACK = C('#25272b');
   let hn = 0;
   for (const h of deco.houses) {
@@ -297,9 +302,12 @@ function* buildSteps(THREE, kit, L) {
     if (!low) for (let k = 1; k < 4; k++) facePatch(B, F, gx - gw / 2, gx + gw / 2, k * 0.58 - 0.04, k * 0.58, fz - 0.02, GAR2);
     const ox = -gs * (h.w / 2 - (h.w - gw - 1.2) / 2 - 0.3);
     facePatch(B, F, ox - 0.55, ox + 0.55, 0, 2.2, fz - 0.01, prism ? BLACK : DOOR);
-    facePatch(B, F, ox - gs * 2.2 - 0.9, ox - gs * 2.2 + 0.9, 1.0, 2.2, fz - 0.01, WIN);
+    const litH = dark && rnd() < 0.55;
+    if (litH) B.fx = 3;
+    facePatch(B, F, ox - gs * 2.2 - 0.9, ox - gs * 2.2 + 0.9, 1.0, 2.2, fz - 0.01, litH ? LITW : WIN);
+    B.fx = 0;
     if (h.stories === 2) {
-      facePatch(B, F, -h.w / 4 - 0.9, -h.w / 4 + 0.9, 4.1, 5.5, fz - 0.01, WIN2);
+      if (dark && rnd() < 0.4) { B.fx = 3; facePatch(B, F, -h.w / 4 - 0.9, -h.w / 4 + 0.9, 4.1, 5.5, fz - 0.01, LITW); B.fx = 0; } else facePatch(B, F, -h.w / 4 - 0.9, -h.w / 4 + 0.9, 4.1, 5.5, fz - 0.01, WIN2);
       facePatch(B, F, h.w / 4 - 0.9, h.w / 4 + 0.9, 4.1, 5.5, fz - 0.01, WIN2);
       if (prism) { facePatch(B, F, -h.w / 4 - 1, -h.w / 4 + 1, 4.0, 4.1, fz - 0.02, BLACK); facePatch(B, F, h.w / 4 - 1, h.w / 4 + 1, 4.0, 4.1, fz - 0.02, BLACK); }
     }
@@ -332,8 +340,8 @@ function* buildSteps(THREE, kit, L) {
       const [lx0, , lz0] = F(-gs * h.w / 2, 0, -h.d / 2), [lx1, , lz1] = F(gx - gs * (gw / 2 + 0.6), 0, -h.d / 2);
       B.quad([lx0, 0.04, lz0], [lx0 + fx * reach, 0.04, lz0 + fzz * reach], [lx1 + fx * reach, 0.04, lz1 + fzz * reach], [lx1, 0.04, lz1], prism ? C('#9cc46c') : rnd() < 0.6 ? C('#a8c271') : C('#c9bf86'));
     }
-    if (h.hero) heroHouse(THREE, B, get(h.x, h.z).S, F, h);
-    if (++hn % 250 === 0) yield;
+    if (h.hero) { B.night = dark; heroHouse(THREE, B, get(h.x, h.z).S, F, h); B.night = false; }
+    if (++hn % 120 === 0) yield;
   }
   yield;
 
@@ -347,7 +355,9 @@ function* buildSteps(THREE, kit, L) {
     box(B, G, s.w, s.h, s.d, wall, C('#cfcbc4'));
     if (s.storage) { for (let x = -s.w / 2 + 2; x < s.w / 2 - 2; x += 4) facePatch(B, G, x, x + 3, 0, 2.6, -s.d / 2 - 0.02, C('#e7e1d6')); facePatch(B, G, -s.w / 2, s.w / 2, 2.6, s.h, -s.d / 2 - 0.02, trim); }
     else {
-      facePatch(B, G, -s.w / 2 + 1, s.w / 2 - 1, 0, 3.0, -s.d / 2 - 0.02, C('#3b4a5c')); // storefront glass
+      if (dark) B.fx = 3;
+      facePatch(B, G, -s.w / 2 + 1, s.w / 2 - 1, 0, 3.0, -s.d / 2 - 0.02, dark ? C('#ffe3a6') : C('#3b4a5c')); // storefront glass
+      B.fx = 0;
       // parapet + awning band
       box(B, frame(...G(0, s.h, -s.d / 2 + 0.6), s.rot + Math.PI), s.w + 0.2, 1.4, 1.4, trim, trim);
       const aw = (lx0, lx1) => B.quad(G(lx0, 3.4, -s.d / 2), G(lx0, 3.0, -s.d / 2 - 2.2), G(lx1, 3.0, -s.d / 2 - 2.2), G(lx1, 3.4, -s.d / 2), s.tile ? C('#c8623e') : trim);
@@ -413,7 +423,32 @@ function* buildSteps(THREE, kit, L) {
     const SC = [C('#7d8a52'), C('#6a7646'), C('#93975c'), C('#a39a63')];
     for (const [x, z, s, t] of deco.scrub) { const y = H(x, z); blob(get(x, z).B, x, y - 0.2, z, s, s * 0.9, s * 0.9, SC[Math.floor(t * 4)], rnd, high ? 5 : 4); }
     const RE = [C('#a7a35a'), C('#8b9a4c'), C('#b9a868')];
-    for (const [x, z, h] of deco.reeds) { const y = H(x, z); blob(get(x, z).B, x, y - 0.1, z, 0.9, h, 0.9, RE[Math.floor(rnd() * 3)], rnd, 4); }
+    for (const [x, z, h] of deco.reeds) {
+      const y = H(x, z) - 0.05, B = get(x, z).B, col = RE[Math.floor(rnd() * 3)];
+      for (let k = 0; k < 3; k++) { // a tuft of three leaning blades (two-sided)
+        const a = rnd() * Math.PI, c = Math.cos(a) * 0.5, s2 = Math.sin(a) * 0.5, lx = (rnd() - 0.5) * 0.8, lz = (rnd() - 0.5) * 0.8;
+        const p0 = [x - c, y, z - s2], p1 = [x + c, y, z + s2], tip = [x + lx, y + h * (0.7 + rnd() * 0.5), z + lz];
+        B.tri(p0, tip, p1, col); B.tri(p1, tip, p0, mul(col, 0.85));
+      }
+    }
+  }
+  yield;
+
+  // riparian willow scrub along the river banks (visual only, not solid)
+  if (!low) {
+    const RIP = [C('#6f8f45'), C('#5f7f3c'), C('#7d9a50')];
+    const Lr = polyLen(RIVER);
+    for (let sd = 8; sd < Lr; sd += high ? 7 : 11) {
+      const a = along(RIVER, sd);
+      for (const side of [-1, 1]) {
+        if (rnd() < 0.35) continue;
+        const off = side * (RIVER_HALF + 1 + rnd() * 6);
+        const x = a.x - a.tz * off, z = a.z + a.tx * off;
+        if (L.roadGap(x, z, 20) < 3 || L.inWater(x, z)) continue;
+        const sz = 1.4 + rnd() * 1.8;
+        blob(get(x, z).B, x, H(x, z) - 0.2, z, sz, sz * (1.6 + rnd() * 0.8), sz, RIP[Math.floor(rnd() * 3)], rnd, 5);
+      }
+    }
   }
   yield;
 
@@ -440,7 +475,7 @@ function* buildSteps(THREE, kit, L) {
       B.quad([rail.x - 3, 0, zA], [rail.x - 3, 0, zB], [rail.x - 3, yB, zB], [rail.x - 3, yA, zA], C('#bdb5a7'));
       B.quad([rail.x + 3, yA, zA], [rail.x + 3, yB, zB], [rail.x + 3, 0, zB], [rail.x + 3, 0, zA], C('#bdb5a7'));
     }
-    for (const pz of [452, 548]) box(get(rail.x, pz).B, frame(rail.x, 0, pz, 0), 4, tr.viaduct.y - 1.2, 3, C('#bdb5a7'), null);
+    for (const pz of [454, 508]) box(get(rail.x, pz).B, frame(rail.x, 0, pz, 0), 4, tr.viaduct.y - 1.2, 3, C('#bdb5a7'), null);
     // platform with canopy
     const p = tr.platform;
     const { B, S } = get(p.x, p.z);
@@ -465,6 +500,33 @@ function* buildSteps(THREE, kit, L) {
       const y = (z > tr.viaduct.z0 - 30 && z < tr.viaduct.z1 + 30) ? tr.viaduct.y + 6 : 6.8;
       if (!low) box(get(rail.x, z).B, frame(rail.x, y, z + 20, 0), 0.05, 0.05, 40, C('#2b2b2b'), null);
     }
+  }
+
+  // ── signs: pylons, gantries, monuments ──────────────────────────────────────────────────────────
+  for (const p of deco.pylons || []) {
+    const { B, S } = get(p.x, p.z);
+    const F = frame(p.x, 0, p.z, p.rot + Math.PI);
+    box(B, F, 0.8, 8.2, 0.8, C('#d8c3a0'), null);
+    box(B, frame(p.x, 4.4, p.z, p.rot + Math.PI), 6.6, 3.6, 0.7, C('#e9dcc4'), C('#c8623e'));
+    p.names.forEach((n, k) => { sign(S, F, 0, 7.3 - k * 1.05, -0.37, 6.2, n); sign(S, frame(p.x, 0, p.z, p.rot), 0, 7.3 - k * 1.05, -0.37, 6.2, n); });
+    gableRoof(B, frame(p.x, 0, p.z, p.rot), 7.0, 1.2, 8.0, 0.8, 0.1, C('#c8623e'), C('#e9dcc4'));
+  }
+  for (const g of deco.gantries || []) {
+    const { B, S } = get(g.x, g.z);
+    const F = frame(g.x, 0, g.z, g.rot);
+    for (const sd of [-1, 1]) box(B, frame(...F(sd * g.span / 2, 0, 0), g.rot), 0.6, 7.6, 0.6, C('#8d9094'), C('#8d9094'));
+    box(B, frame(...F(0, 6.4, 0), g.rot), g.span + 0.6, 0.5, 0.5, C('#8d9094'), C('#8d9094'));
+    box(B, frame(...F(g.span / 4, 5.6, 0.3), g.rot), 9.4, 2.2, 0.2, C('#1b6e3a'), C('#1b6e3a'));
+    sign(S, F, g.span / 4, 6.7, -0.02, 9, g.label);
+  }
+  for (const m of deco.monuments || []) {
+    const { B, S } = get(m.x, m.z);
+    const F = frame(m.x, 0, m.z, m.rot);
+    box(B, F, 8, 2.0, 1.2, C(m.color), mul(C(m.color), 1.08));
+    box(B, frame(m.x, 2.0, m.z, m.rot), 8.4, 0.4, 1.4, C('#c8623e'), C('#c8623e'));
+    sign(S, F, 0, 1.15, -0.62, 7.2, m.label);
+    sign(S, frame(m.x, 0, m.z, m.rot + Math.PI), 0, 1.15, -0.62, 7.2, m.label);
+    if (!low) for (const sx of [-4.6, 4.6]) blob(B, ...F(sx, 0, -0.4), 0.9, 1.1, 0.7, C('#6f8a48'), rnd, 5);
   }
 
   // ── chunk meshes ───────────────────────────────────────────────────────────────────────────────
@@ -517,11 +579,15 @@ function heroHouse(THREE, B, S, F, h) {
   facePatch(B, F, ox - 0.5, ox + 0.5, 0.25, 2.3, fz - 0.04, wood);
   for (const [cx, y0, y1] of [[ox - gs * 2.0, 1.0, 2.3], [-h.w / 4, 4.0, 5.6], [h.w / 4, 4.0, 5.6]]) {
     facePatch(B, F, cx - 0.95, cx + 0.95, y0 - 0.1, y1 + 0.1, fz - 0.03, black);
-    facePatch(B, F, cx - 0.8, cx + 0.8, y0, y1, fz - 0.04, C('#7fa6c9'));
+    if (B.night) B.fx = 3;
+    facePatch(B, F, cx - 0.8, cx + 0.8, y0, y1, fz - 0.04, B.night ? C('#ffd98a') : C('#7fa6c9'));
+    B.fx = 0;
     facePatch(B, F, cx - 0.04, cx + 0.04, y0, y1, fz - 0.05, white);
   }
   // porch lamp (warm), house number plaque, planters with lavender, welcome mat
+  B.fx = 3;
   box(B, frame(...F(ox + 0.95, 1.9, fz - 0.12), h.rot), 0.22, 0.32, 0.18, C('#ffd27a'), C('#ffd27a'));
+  B.fx = 0;
   sign(S, frame(...F(0, 0, 0), h.rot), ox + 1.6, 1.75, fz - 0.06, 1.6, '8524');
   for (const x of [px0 + 0.6, px1 - 0.6]) { box(B, frame(...F(x, 0.25, fz - 2.15), h.rot), 0.6, 0.6, 0.6, C('#c26a3e'), null); box(B, frame(...F(x, 0.85, fz - 2.15), h.rot), 0.5, 0.35, 0.5, C('#8a6fc2'), C('#9c82d2')); }
   box(B, frame(...F(ox, 0.26, fz - 0.6), h.rot), 1.1, 0.02, 0.6, C('#6b4a3a'), C('#6b4a3a'));
@@ -534,7 +600,7 @@ function heroHouse(THREE, B, S, F, h) {
 // Peaks by real bearing from the Mission Gorge / Cuyamaca corner. dist = backdrop radius (m),
 // h = height above the valley (exaggerated a little for readability), w = half-width (deg).
 const PEAKS = [
-  { name: 'Cowles Mtn', brg: 235, dist: 2300, h: 205, w: 8, rock: true },
+  { name: 'Cowles Mtn', brg: 235, dist: 2300, h: 270, w: 9, rock: true },
   { name: 'Pyles Peak', brg: 245, dist: 2250, h: 150, w: 5 },
   { name: 'Kwaay Paay', brg: 254, dist: 2150, h: 120, w: 5 },
   { name: 'South Fortuna', brg: 266, dist: 2150, h: 150, w: 6 },
@@ -583,33 +649,41 @@ export function backdropSantee(THREE, kit, L) {
     shade(a[0], a[1], b[1], col, 0.42); shade(a[0], b[1], b[0], col, 0.42);
     shade(a[1], a[2], b[2], col, 0.48); shade(a[1], b[2], b[1], col, 0.48);
   }
-  // the named peaks as mounds with ridges, in front of the ring
+  // the named peaks as domed mounds (rings at falling radius), in front of the ring
+  const RINGS = [[1.0, -8], [0.74, 0.34], [0.46, 0.7], [0.2, 0.93]];
   for (const p of PEAKS) {
     const [px, pz] = toXZ(p.brg, p.dist);
     const rad = (p.dist * p.w * Math.PI) / 180;
-    const n = 12;
-    const top = [px + (rnd() - 0.5) * rad * 0.2, p.h, pz + (rnd() - 0.5) * rad * 0.2];
-    const mid = [], rim = [];
-    for (let k = 0; k < n; k++) {
-      const a = (k / n) * Math.PI * 2;
-      const rr = rad * (0.85 + rnd() * 0.3);
-      rim.push([px + Math.cos(a) * rr * 1.6, -8, pz + Math.sin(a) * rr]);
-      const m = 0.42 + rnd() * 0.2;
-      mid.push([px + Math.cos(a) * rr * 0.8 * m * 1.6 + (rnd() - 0.5) * 20, p.h * (0.5 + rnd() * 0.18), pz + Math.sin(a) * rr * 0.8 * m + (rnd() - 0.5) * 20]);
-    }
-    // orient the long axis across the line of sight
-    const ang = (p.brg * Math.PI) / 180;
-    const rot = ([x, y, z]) => { const dx = x - px, dz = z - pz; const c = Math.cos(ang), s = Math.sin(ang); return [px + dx * c - dz * s, y, pz + dx * s + dz * c]; };
-    const R = rim.map(rot), Mi = mid.map(rot), T = top;
+    const n = 14;
+    const ang = (p.brg * Math.PI) / 180, ca = Math.cos(ang), sa = Math.sin(ang);
+    // local u runs across the line of sight (wide), v along it (shallower)
+    const P = (u, v, y) => [px + u * ca - v * sa, y, pz + u * sa + v * ca];
+    const jit = [];
+    for (let k = 0; k < n; k++) jit.push(0.88 + rnd() * 0.24);
+    const ring = RINGS.map(([f, hy]) => {
+      const out = [];
+      for (let k = 0; k < n; k++) {
+        const a = (k / n) * Math.PI * 2, j2 = jit[k] * (0.95 + rnd() * 0.1);
+        out.push(P(Math.cos(a) * rad * 1.5 * f * j2, Math.sin(a) * rad * 0.8 * f * j2, hy < 0 ? hy : p.h * hy * (0.94 + rnd() * 0.1)));
+      }
+      return out;
+    });
+    const top = P((rnd() - 0.5) * rad * 0.15, 0, p.h);
     const haze = clamp((p.dist - 1800) / 2400, 0.2, 0.5);
-    for (let k = 0; k < n; k++) {
-      const k2 = (k + 1) % n, col = CHAP[(k + p.brg) % 4];
-      shade(R[k], Mi[k], Mi[k2], col, haze); shade(R[k], Mi[k2], R[k2], col, haze);
-      const upper = p.rock && rnd() < 0.5 ? ROCK : mul(col, 1.05);
-      shade(Mi[k], T, Mi[k2], upper, haze);
+    for (let r = 0; r < ring.length - 1; r++) for (let k = 0; k < n; k++) {
+      const k2 = (k + 1) % n, col = r === ring.length - 2 && p.rock && rnd() < 0.45 ? ROCK : CHAP[(k + r + p.brg) % 4];
+      shade(ring[r][k], ring[r + 1][k], ring[r + 1][k2], col, haze); shade(ring[r][k], ring[r + 1][k2], ring[r][k2], col, haze);
     }
+    const last = ring[ring.length - 1];
+    for (let k = 0; k < n; k++) shade(last[k], top, last[(k + 1) % n], p.rock && k % 3 === 0 ? ROCK : mul(CHAP[k % 4], 1.05), haze);
   }
-  const mat = new THREE.MeshBasicMaterial({ vertexColors: true, fog: false });
+  if (kit.dark) { // night: sink the hills towards a dark blue silhouette
+    const NIGHT = [0.09, 0.1, 0.18];
+    for (let i = 0; i < B.c.length; i += 3) { B.c[i] = B.c[i] * 0.28 + NIGHT[0]; B.c[i + 1] = B.c[i + 1] * 0.28 + NIGHT[1]; B.c[i + 2] = B.c[i + 2] * 0.3 + NIGHT[2]; }
+  }
+  let mat = null;
+  if (kit.toon) { try { mat = kit.toon(null, { vertexColors: true, fog: false, fx: 4 }); } catch (e) { mat = null; } }
+  if (!mat) mat = new THREE.MeshBasicMaterial({ vertexColors: true, fog: false });
   const m = new THREE.Mesh(B.geometry(THREE), mat);
   m.frustumCulled = false; m.name = 'santee-hills';
   m.renderOrder = -1;
