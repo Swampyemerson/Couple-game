@@ -218,7 +218,6 @@ function rotMatrix(rx, ry, rz) {
   ];
   return mul(mul(Ry, Rx), Rz);
 }
-const apply3 = (R, x, y, z) => [R[0] * x + R[1] * y + R[2] * z, R[3] * x + R[4] * y + R[5] * z, R[6] * x + R[7] * y + R[8] * z];
 
 /**
  * The diorama builder.
@@ -259,13 +258,15 @@ export function createBuilder({ tiles, ink = [0.11, 0.1, 0.13], chunker = null }
     const ru = Array.isArray(rep) ? rep[0] : rep; const rv = Array.isArray(rep) ? rep[1] : rep;
     const off = opts.uvOff || [0, 0];
     const n = g.pos.length / 3;
-    tp.length = 0; tn.length = 0;
     let sx = 0; let sy = 0; let sz = 0;
+    const gp = g.pos; const gn = g.nrm;
     for (let i = 0; i < n; i++) {
-      const p = apply3(R, g.pos[i * 3], g.pos[i * 3 + 1], g.pos[i * 3 + 2]);
-      const q = apply3(R, g.nrm[i * 3], g.nrm[i * 3 + 1], g.nrm[i * 3 + 2]);
-      tp.push(p[0] + at[0], p[1] + at[1], p[2] + at[2]); tn.push(q[0], q[1], q[2]);
-      sx += p[0] + at[0]; sy += p[1] + at[1]; sz += p[2] + at[2];
+      const x = gp[i * 3]; const y = gp[i * 3 + 1]; const z = gp[i * 3 + 2];
+      const px = R[0] * x + R[1] * y + R[2] * z + at[0]; const py = R[3] * x + R[4] * y + R[5] * z + at[1]; const pz = R[6] * x + R[7] * y + R[8] * z + at[2];
+      const a = gn[i * 3]; const bb = gn[i * 3 + 1]; const c = gn[i * 3 + 2];
+      tp[i * 3] = px; tp[i * 3 + 1] = py; tp[i * 3 + 2] = pz;
+      tn[i * 3] = R[0] * a + R[1] * bb + R[2] * c; tn[i * 3 + 1] = R[3] * a + R[4] * bb + R[5] * c; tn[i * 3 + 2] = R[6] * a + R[7] * bb + R[8] * c;
+      sx += px; sy += py; sz += pz;
     }
     // backdrop: far scenery (skylines, mountains) in its own chunk: no fog, never culled
     const ck = opts.backdrop ? BACKDROP : opts.chunk != null ? opts.chunk : chunker && n ? chunker(sx / n, sy / n, sz / n) : 0;

@@ -11,6 +11,10 @@
 //   ├── flagstone strip + bike racks ───────┘        aspens, pines, Flatirons mural    │  z = +13
 //   x = −17                                                                     x = +17
 //
+// Compass (info.north = '+x'): north is +x (right in the plan above), east is +z (down), so
+// Norlin faces east onto its quad, the Engineering lab sits to the south-east, the plains lie
+// east, and the Front Range (Flatirons, Green Mountain, Flagstaff, Bear Peak) is placed by real
+// bearings in a fog-free backdrop ring to the south-west and west (see landscape()).
 // Two floors: the ground (y 0) and the top of the lecture-hall rake / Norlin gallery (y 2.72),
 // joined by the hall's aisle stairs and the gallery stair, so G1B30 → Norlin → arcade → corridor
 // → G1B30 is a loop. Interiors have downward-only ceilings (the camera sees in from above); roof
@@ -431,7 +435,9 @@ const PAT = {
 // ── geometry helpers ─────────────────────────────────────────────────────
 /** Solid AABB with collider (default: a crawlable wall). */
 function solid(b, x0, y0, z0, x1, y1, z1, o = {}, flags = {}) {
-  return aabb(b, x0, y0, z0, x1, y1, z1, { ...o, collide: { wall: true, ...flags } });
+  const r = aabb(b, x0, y0, z0, x1, y1, z1, o);
+  b.collide(x0, y0, z0, x1, y1, z1, { wall: true, ...flags }); // explicit: single-face boxes stay solid
+  return r;
 }
 /** Visual-only AABB. */
 function deco(b, x0, y0, z0, x1, y1, z1, o = {}) { return aabb(b, x0, y0, z0, x1, y1, z1, o); }
@@ -807,19 +813,28 @@ function g1b30(b, R) {
 
   // ── catwalk: bulkhead, black steel deck on brackets, vertical-bar railing (walk, crawl, hang under)
   deco(b, -16.9, 4.45, -2.0, -3.1, 4.75, FZ, { color: '#e3dac4' });
-  aabb(b, -16.9, 4.75, -2.45, -3.1, 4.82, -1.1, { color: '#2e2f33', tile: 'grid', rep: 0.3, collide: { wall: false, ceil: true, name: 'ceil:catwalk' } });
+  aabb(b, -16.9, 4.75, -2.45, -3.1, 4.82, FZ, { color: '#2e2f33', tile: 'grid', rep: 0.3, collide: { wall: false, ceil: true, name: 'ceil:catwalk' } });
+  // behind the deck the upper wall comes forward to the board plane (solid, not climbable)
+  deco(b, -16.9, 4.45, FZ, -3.1, H.g1, -1.1, { color: CREAM, faces: ['nz'], outline: false });
+  b.collide(-16.9, 4.45, FZ, -3.1, H.g1, -1.1, { wall: true, climb: false, name: 'guard:upper-wall' });
   for (let x = -16.0; x < -3.5; x += 2.1) b.add(boxGeo(0.06, 0.06, 0.95), { at: [x, 4.42, -2.05], rot: [-0.62, 0, 0], color: C.black });
-  railing(b, -16.9, -2.42, -3.1, -2.42, 4.82, { h: 1.0, gap: 0.16, color: '#26262a', top: '#26262a', name: 'catwalk-rail' });
+  // see-through railing: thin bars (visual), a top rail you can perch on, a kick plate
+  for (let x = -16.05; x <= -3.15; x += 0.16) deco(b, x - 0.012, 4.82, -2.432, x + 0.012, 5.8, -2.408, { color: '#26262a', faces: ['px', 'nx', 'pz', 'nz'], outline: false });
+  aabb(b, -16.1, 5.8, -2.46, -3.1, 5.86, -2.38, { color: '#26262a', collide: { wall: false, perch: true, name: 'perch:catwalk-rail' } });
+  deco(b, -16.1, 4.86, -2.45, -3.1, 4.92, -2.4, { color: '#26262a' });
   solid(b, -8.7, 5.82, -2.5, -8.45, 6.05, -2.3, { color: '#f4f2ee' }, { name: 'camera' });
   // ladder up to the catwalk at the far (right) end
-  for (const x of [-16.75, -16.35]) deco(b, x - 0.025, 0, -1.72, x + 0.025, 4.85, -1.67, { color: C.black });
-  for (let i = 1; i <= 15; i++) aabb(b, -16.75, i * 0.3, -1.74, -16.35, i * 0.3 + 0.03, -1.66, { color: C.black, collide: { wall: false, perch: true, name: 'perch:ladder' } });
+  for (const x of [-15.95, -15.55]) deco(b, x - 0.025, 0, -1.72, x + 0.025, 4.85, -1.67, { color: C.black });
+  for (let i = 1; i <= 15; i++) aabb(b, -15.95, i * 0.3, -1.74, -15.55, i * 0.3 + 0.03, -1.66, { color: C.black, collide: { wall: false, perch: true, name: 'perch:ladder' } });
+  // the catwalk's far end: a service door into the upper level (solid, not climbable)
+  aabb(b, -16.9, 4.82, -2.45, -16.1, H.g1, -1.1, { color: CREAM, collide: { wall: false, climb: false, name: 'guard:catwalk-end' } });
+  deco(b, -16.1, 4.82, -2.0, -16.08, 6.3, -1.4, { color: '#4a3022' });
   // ropes + pulleys hanging from the catwalk (hang points); a coil of rope on the floor
   for (const [x, top] of [[-10.6, 4.75], [-10.42, 4.75]]) {
     deco(b, x - 0.012, 0.02, -2.37, x + 0.012, top, -2.34, { color: '#7a6a58', outline: false });
-    b.collide(x - 0.02, 0, -2.38, x + 0.02, top, -2.33, { wall: false, perch: true, name: 'perch:rope' });
+    b.collide(x - 0.02, 0, -2.38, x + 0.02, top - 0.4, -2.33, { wall: false, perch: true, name: 'perch:rope' });
   }
-  for (const y of [4.55, 3.5]) {
+  for (const y of [4.2, 3.3]) {
     b.add(cylGeo(0.09, 0.09, 0.05, { radial: 12 }), { at: [-10.51, y, -2.355], rot: [Math.PI / 2, 0, 0], color: '#8c9096', collide: { wall: false, perch: true, name: 'perch:pulley' } });
     deco(b, -10.53, y + 0.09, -2.37, -10.49, y + 0.2, -2.34, { color: C.black, outline: false });
   }
@@ -1035,11 +1050,11 @@ function umc(b, R, kit) {
   aabb(b, 9.0, 1.75, -12.9, 15.0, 1.79, -12.62, { color: C.walnut, collide: { wall: false, perch: true, name: 'perch:cup-shelf' } });
   for (let i = 0; i < 14; i++) b.add(cylGeo(0.045, 0.035, 0.11, { radial: 8 }), { at: [9.3 + i * 0.4, 1.845, -12.76], color: [C.coral, C.teal, C.gold, '#f8f5ee'][i % 4], outline: false });
   poster(b, 12.0, 2.45, -12.9, 3.2, 1.0, 'z+', 'menu', C.walnut);
-  solid(b, 9.0, 0, -10.9, 13.8, 1.0, -10.25, { color: '#ffffff', tile: 'banner', rep: [1.3, 1.0] }, { name: 'front-counter' });
-  aabb(b, 8.95, 1.0, -10.95, 13.85, 1.06, -10.2, { color: '#c9b79a', collide: { wall: false, name: 'counter-top' } });
-  solid(b, 12.4, 1.06, -10.85, 13.7, 1.5, -10.35, { color: '#cfe8f0' }, { name: 'pastry-case', climb: false });
-  for (let i = 0; i < 6; i++) b.add(sphereGeo(0.08, 0.05, 0.08, { w: 8, h: 6 }), { at: [12.6 + i * 0.2, 1.22 + (i % 2) * 0.13, -10.6], color: ['#d99b5a', '#f08aa8', '#c47a3f'][i % 3], outline: false });
-  solid(b, 10.0, 1.06, -10.8, 10.4, 1.3, -10.45, { color: '#3a3d44' }, { name: 'register' });
+  solid(b, 9.0, 0, -10.9, 13.8, 0.94, -10.25, { color: '#ffffff', tile: 'banner', rep: [1.3, 1.0] }, { name: 'front-counter' });
+  aabb(b, 8.95, 0.94, -10.95, 13.85, 0.99, -10.2, { color: '#c9b79a', collide: { wall: false, name: 'counter-top' } });
+  solid(b, 12.4, 0.99, -10.85, 13.7, 1.43, -10.35, { color: '#cfe8f0' }, { name: 'pastry-case', climb: false });
+  for (let i = 0; i < 6; i++) b.add(sphereGeo(0.08, 0.05, 0.08, { w: 8, h: 6 }), { at: [12.6 + i * 0.2, 1.15 + (i % 2) * 0.13, -10.6], color: ['#d99b5a', '#f08aa8', '#c47a3f'][i % 3], outline: false });
+  solid(b, 10.0, 0.99, -10.8, 10.4, 1.23, -10.45, { color: '#3a3d44' }, { name: 'register' });
   // stools at the counter
   for (const x of [9.7, 10.9, 12.1, 13.3]) {
     b.add(cylGeo(0.2, 0.2, 0.06, { radial: 12 }), { at: [x, 0.72, -9.75], color: C.gold, collide: { wall: false, name: 'stool' } });
