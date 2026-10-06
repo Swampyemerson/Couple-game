@@ -5,7 +5,7 @@
 import { rng } from '../core.js';
 import { CHUNK, LANE_W, CAR, ROOF, LOW_H, HIGH_B, HIGH_T } from './tune.js';
 import { O_LOW, O_HIGH, O_TRAIN, O_RAMP, O_MTRAIN, O_BLOCK, I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX, I_REVIVE, mtrainFront } from './track.js';
-import { GeoBuf, makeToon, makeGradient, makeUniforms, makeTemplates, blobTexture, mix, FX_PLAIN, FX_FACADE, FX_GLOW, FX_SKY, FX_BED, FX_STRIPE, FX_TRAINWIN, FX_PAPER } from './gfx.js';
+import { GeoBuf, makeToon, makeUniforms, makeTemplates, blobTexture, mix, FX_PLAIN, FX_FACADE, FX_GLOW, FX_SKY, FX_BED, FX_STRIPE, FX_TRAINWIN, FX_PAPER } from './gfx.js';
 
 const OL = 0.05;
 const CHUNK_V = 30000;
@@ -19,19 +19,14 @@ const SIDE_X = 4.35;      // parapet line
 
 export function createWorld(THREE, P) {
   const T = makeTemplates(THREE);
-  const grad = makeGradient(THREE);
   const U = makeUniforms(THREE, P);
-  const mat = makeToon(THREE, grad, U);
-  const avatarMat = makeToon(THREE, grad, U, { skinning: true });
-  const disposables = [grad, mat, avatarMat];
+  const mat = makeToon(THREE, null, U);
+  const avatarMat = makeToon(THREE, null, U, { skinning: true });
+  const disposables = [mat, avatarMat];
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color().fromArray(P.bg);
   scene.fog = new THREE.Fog(new THREE.Color().fromArray(P.fog), 55, 165);
-  const hemi = new THREE.HemisphereLight(0xffffff, 0x9a948c, P.dark ? 0.62 : 0.66);
-  const sun = new THREE.DirectionalLight(0xffffff, P.dark ? 0.42 : 0.52);
-  sun.position.set(-0.55, 1, 0.45);
-  scene.add(hemi, sun, sun.target);
 
   // ── chunk meshes ──
   const pool = [];

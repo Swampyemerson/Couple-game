@@ -53,7 +53,9 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
   const vmNozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.026, 0.06, 10), vmInk);
   vmNozzle.rotation.x = Math.PI / 2; vmNozzle.position.z = -0.14;
   vm.add(vmBody, vmTank, vmNozzle);
-  vm.position.set(0.16, -0.15, -0.34);
+  vm.position.set(0.085, -0.115, -0.3);
+  vm.scale.setScalar(0.62);
+  vm.rotation.y = 0.12;
   vm.visible = false;
   camera.add(vm);
 

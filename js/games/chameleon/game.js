@@ -9,7 +9,7 @@ import { POSES, REGION_OF_PART, REGION_NAMES } from './avatar.js';
 import { loadingCard, errorCard, lobbyCard, titleCard, blindCard, curtainCard, recapCard, pauseCard, ctxCard } from './cards.js';
 import { clamp, damp, dampAngle, wrapAngle, hexToRgb, cssColor, luminance, listeners, fmtTime, mixHex } from './util.js';
 
-const DUR0 = { title: 1800, hide: 60000, lockMax: 7000, seekLead: 1600, seek: 90000, found: 3400, recap: 9000, resume: 3000, lead: 320 };
+const DUR0 = { title: 1800, hide: 60000, lockMax: 7000, seekLead: 1600, seek: 90000, found: 3400, recap: 9000, resume: 3000, lead: 380, foundLead: 260 };
 const ROUNDS = { hs: 4, db: 3 };
 const PELLETS = { hs: 6, db: 5 };
 const SCAN_CD = 30000;
@@ -195,9 +195,9 @@ export function createGame(el, api) {
 
   // ── host director ─────────────────────────────────────────────────
   function matchInfo() { const m = S.match; return m ? { id: m.id, mode: m.mode, map: m.map, first: m.first, rounds: m.rounds, hist: m.hist } : null; }
-  function enter(name, { round, dur = 0, data = null } = {}, lead = DUR.lead) {
+  function enter(name, { round, dur = 0, data = null, at = null } = {}, lead = DUR.lead) {
     if (!isHost) return;
-    const p = { seq: ++S.hostSeq, name, round: round ?? S.phase.round, at: now() + lead, dur, data, sc: S.match ? { ...S.match.scores } : { a: 0, b: 0 }, m: matchInfo() };
+    const p = { seq: ++S.hostSeq, name, round: round ?? S.phase.round, at: at != null ? Math.max(at, now() + 40) : now() + lead, dur, data, sc: S.match ? { ...S.match.scores } : { a: 0, b: 0 }, m: matchInfo() };
     if (!local) link.send('ph', p);
     queuePhase(p);
   }
@@ -208,19 +208,19 @@ export function createGame(el, api) {
     S.match = { id: Math.random().toString(36).slice(2, 9), mode: st.mode, map: st.map, first: st.first, rounds: ROUNDS[st.mode], scores: { a: 0, b: 0 }, hist: [] };
     startRound(1);
   }
-  function startRound(r) {
-    if (local) enter('curtain', { round: r, data: { kind: 'hide', who: hiderOfRound(r) } }, 0);
-    else enter('hide', { round: r, dur: DUR.hide }, DUR.title);
+  function startRound(r, at = null) {
+    if (local) enter('curtain', { round: r, data: { kind: 'hide', who: hiderOfRound(r) }, at }, 0);
+    else enter('hide', { round: r, dur: DUR.hide, at: at != null ? at + DUR.title : null }, DUR.title);
   }
   function hiderOfRound(r) { const m = S.match; return r % 2 === 1 ? m.first : other(m.first); }
-  function endHide() {
+  function endHide(at = null) {
     if (!isHost || S.phase.name !== 'hide' || R.endingHide) return;
     R.endingHide = true;
     if (local) {
       const h = hiderOf(S.phase.round);
-      lockPaint(h);
-      enter('curtain', { data: { kind: 'seek', who: other(h) } }, 0);
-    } else enter('lock', { dur: DUR.lockMax });
+      later(() => lockPaint(h), Math.max(0, (at ?? now()) - now()));
+      enter('curtain', { data: { kind: 'seek', who: other(h) }, at }, 0);
+    } else enter('lock', { dur: DUR.lockMax, at });
   }
   function lockDone() {
     if (!isHost || S.phase.name !== 'lock' || R.lockDone) return;
@@ -234,6 +234,7 @@ export function createGame(el, api) {
   }
   function roundOver(res) {
     if (!isHost || R.foundSent || S.phase.name !== 'seek') return;
+    if (res.at == null && !res.found) res.at = null;
     R.foundSent = true;
     const m = S.match; const r = S.phase.round;
     let rec;
@@ -249,7 +250,7 @@ export function createGame(el, api) {
       rec = { round: r, winner: wnr, victim: res.found ? res.victim : null, found: !!res.found, ms: res.found ? Math.round(res.T - R.seekStart) : S.phase.dur, p: res.p || null, hider: res.found ? res.victim : null, seeker: wnr };
     }
     m.hist = [...m.hist, rec];
-    enter(res.found ? 'found' : 'time', { dur: DUR.found, data: rec }, 60);
+    enter(res.found ? 'found' : 'time', { dur: DUR.found, data: rec, at: res.at ?? null }, local ? 0 : DUR.foundLead);
   }
   function hostFound(by, victim, T, p) {
     if (!isHost || S.phase.name !== 'seek' || R.foundSent) return;
@@ -258,16 +259,16 @@ export function createGame(el, api) {
     if (!R.tagWindow) { R.tagWindow = { by, victim, T, p }; later(() => { const t = R.tagWindow; if (t) roundOver({ found: true, ...t }); }, TAG_WINDOW); }
     else if (T < R.tagWindow.T) R.tagWindow = { by, victim, T, p };
   }
-  function hostNext() {
+  function hostNext(at = null) {
     if (!isHost || S.phase.name !== 'recap' || R.nexting) return;
     R.nexting = true;
     const m = S.match; const r = S.phase.round;
     const decided = m.mode === 'db' && (m.scores.a >= 2 || m.scores.b >= 2);
-    if (r < m.rounds && !decided) startRound(r + 1);
+    if (r < m.rounds && !decided) startRound(r + 1, at);
     else {
       const a = m.scores.a; const b = m.scores.b;
       const winner = a > b ? 'a' : b > a ? 'b' : null;
-      enter('final', { data: { winner, a, b } }, 200);
+      enter('final', { data: { winner, a, b }, at });
     }
   }
   /** Called every frame and on a 200 ms timer: advances timed phases. */
@@ -276,11 +277,13 @@ export function createGame(el, api) {
     const t = now();
     const ph = S.phase;
     if (t < S.resumeAt) return;
-    if (ph.name === 'hide' && ph.dur && t >= ph.end) endHide();
+    const pre = t >= ph.end - DUR.lead; // announce ahead so both devices flip at ph.end
+    if (S.queue.length) return;
+    if (ph.name === 'hide' && ph.dur && pre) endHide(ph.end);
     else if (ph.name === 'lock' && t >= ph.end) lockDone();
-    else if (ph.name === 'seek' && t >= ph.end) roundOver({ found: false });
-    else if ((ph.name === 'found' || ph.name === 'time') && t >= ph.end && !R.toRecap) { R.toRecap = true; enter('recap', { dur: DUR.recap, data: ph.data }, 0); }
-    else if (ph.name === 'recap' && t >= ph.end) hostNext();
+    else if (ph.name === 'seek' && pre) roundOver({ found: false, at: ph.end });
+    else if ((ph.name === 'found' || ph.name === 'time') && pre && !R.toRecap) { R.toRecap = true; enter('recap', { dur: DUR.recap, data: ph.data, at: ph.end }); }
+    else if (ph.name === 'recap' && pre) hostNext(ph.end);
   }
 
   // ── phases (both devices) ─────────────────────────────────────────
@@ -318,7 +321,8 @@ export function createGame(el, api) {
     S.phase = { name: p.name, seq: p.seq, round: p.round, at: p.at, end: p.at + (p.dur || 0), dur: p.dur || 0, data: p.data };
     if (isHost) S.hostSeq = Math.max(S.hostSeq, p.seq);
     S.pendingTitle = null;
-    stats.phaseLog.push({ name: p.name, seq: p.seq, wall: performance.timeOrigin + performance.now(), at: p.at, now: now() });
+    const nw = now();
+    stats.phaseLog.push({ name: p.name, seq: p.seq, wall: performance.timeOrigin + performance.now(), at: p.at, now: nw, late: nw - p.at, clock: nw - (performance.timeOrigin + performance.now()) });
     if (stats.phaseLog.length > 80) stats.phaseLog.shift();
     try { onEnter(p, prev); } catch (e) { console.error('chameleon phase', p.name, e); }
   }
@@ -387,6 +391,7 @@ export function createGame(el, api) {
         S.curtainUp = false;
         R.seekStart = p.at;
         const vv = viewer();
+        if (vv && stage) stage.vm.children[0].material.color.set(vv === 'a' ? theme.a : theme.b);
         if (vv) { C.fpYaw = 0; C.fpPitch = 0; body[vv].lookYaw = 0; body[vv].lookPitch = 0; }
         snd.play('go');
         hud.flash();
@@ -419,7 +424,7 @@ export function createGame(el, api) {
       }
       case 'recap': {
         R.rec = p.data || R.rec;
-        C.orbit = Math.atan2(camPos.x - posOf(recapTarget()).x, camPos.z - posOf(recapTarget()).z);
+        C.orbitT = 0;
         const seekerW = R.rec && (R.rec.seeker || (R.rec.winner || null));
         if (stage && R.path.length && seekerW) stage.fx.setPath(R.path, seekerW === 'a' ? theme.a : theme.b);
         if (stage) { const tp = posOf(recapTarget()); stage.fx.ring.position.set(tp.x, tp.y + 0.02, tp.z); stage.fx.ring.visible = true; stage.fx.hlMat.color.set(theme.hl); }
@@ -606,6 +611,7 @@ export function createGame(el, api) {
       if (!isTag) stage.fx.splat(pp.x, pp.y, pp.z, n[0], n[1], n[2], ink, 0.22 + Math.random() * 0.1, tSec);
     });
     const msg = { id, T, by: w, o: [muzzle.x, muzzle.y, muzzle.z], p: [p.x, p.y, p.z], n, hit: !!hit, tag: isTag, seen, left: R.pellets[w] };
+    stats.lastShot = { tag: isTag, hit: !!hit, obj: hit ? (hit.object === stage.mapMesh ? 'map' : 'other') : null, p: msg.p, o: [o.x, o.y, o.z], d: [dir.x, dir.y, dir.z], tgtVisible: stage.av[tgt].root.visible, seen };
     if (isTag) {
       R.pendingTag = id;
       if (local) { hostFound(w, tgt, T, msg.p); return; }
@@ -640,6 +646,7 @@ export function createGame(el, api) {
     stage.fx.pellet(from, to, ink, tSec, null);
     // I am the victim: confirm with my true position history (shooter-favoured, 250 ms)
     const ok = confirmTag(d.T, d.seen);
+    stats.lastTagCheck = { ok, T: d.T, seen: d.seen, me: [body[me].x, body[me].y, body[me].z], n: hist.n };
     if (ok) {
       if (isHost) hostFound(d.by, me, d.T, d.p);
       else link.send('tagres', { id: d.id, ok: true, T: d.T, by: d.by, victim: me, p: d.p });
@@ -979,6 +986,7 @@ export function createGame(el, api) {
     tSec += realDt;
     const t = now();
     try {
+      if (S.queue.length && t >= S.queue[0].at) setPhase(S.queue.shift());
       hostTick();
       if (R.tagWindow && S.phase.name !== 'seek') R.tagWindow = null;
       simulate(dt, t);
@@ -1180,6 +1188,9 @@ export function createGame(el, api) {
       a.setVisible(vis);
       // first-person hider: hide my own head
       a.setHeadVisible(!(ph === 'seek' && w === v && roleOf(w) !== 'seeker'));
+      // the reveal: outline the hider during found / time / recap
+      const revealed = (ph === 'found' || ph === 'time' || ph === 'recap' || ph === 'final') && R.rec && w === recapTarget() && tSec >= C.freezeUntil;
+      if (revealed !== !!a.revealOn) { a.revealOn = revealed; a.setReveal(revealed ? theme.hl : null, 0.016); }
       // glint
       a.st.glintUntil = (t >= R.glintAt[w] && t < R.glintAt[w] + GLINT_MS) ? tSec + 0.05 : 0;
       a.update(dt, tSec);
@@ -1242,6 +1253,7 @@ export function createGame(el, api) {
     const role = v ? roleOf(v) : null;
     let snap = false;
     let rate = 10;
+    C.frameCard = false;
     stage.vm.visible = false;
     if (S.boot !== 'ready') return;
     if (!S.match || ph === 'lobby') {
@@ -1251,12 +1263,8 @@ export function createGame(el, api) {
       const cx = (body.a.x + body.b.x) / 2; const cz = (body.a.z + body.b.z) / 2; const cy = (body.a.y + body.b.y) / 2 + 0.25;
       const dist = stage.size[0] < stage.size[1] ? 3.3 : 2.6;
       camWant.set(cx + Math.sin(sw) * dist, cy + 1.05, cz + Math.cos(sw) * dist);
-      if (tSec > C.cardCheck) { C.cardCheck = tSec + 0.5; const card = hud.el.layer.querySelector('.chm-card'); const r = card ? card.getBoundingClientRect() : null; const rr = root.getBoundingClientRect(); C.freeFrac = r && r.top > rr.top + 20 && r.width < rr.width * 0.8 ? 1 : r ? clamp((r.top - rr.top) / rr.height, 0.2, 1) : 1; }
-      const yT = 1 - (C.freeFrac || 1); // NDC y where the pair should sit
-      const ang = Math.atan(yT * Math.tan((stage.camera.fov * Math.PI) / 360));
-      const dx = cx - camWant.x; const dy = cy - camWant.y; const dz = cz - camWant.z; const hd = Math.hypot(dx, dz);
-      const pitch = Math.atan2(dy, hd) - ang;
-      lookWant.set(camWant.x + (dx / hd) * 2, camWant.y + Math.tan(pitch) * 2, camWant.z + (dz / hd) * 2);
+      revC.x = cx; revC.y = cy; revC.z = cz;
+      aimFramed(revC, true);
       rate = 3;
     } else if ((S.pendingTitle && ph !== 'hide') || (ph === 'final' && !R.rec)) {
       C.orbit += dt * 0.12;
@@ -1264,21 +1272,21 @@ export function createGame(el, api) {
       camWant.set(Math.sin(C.orbit) * rad, 5.4, Math.cos(C.orbit) * rad);
       lookWant.set(0, 0.2, 0);
       rate = 3;
-    } else if (ph === 'found' || ph === 'time') {
-      const tw = recapTarget(); const p = posOf(tw);
-      const sk = other(tw); const ps = stage.av[sk].root.position;
-      let dx = ps.x - p.x; let dz = ps.z - p.z; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
-      camWant.set(p.x + dx * 1.7, p.y + 0.85, p.z + dz * 1.7);
-      lookWant.set(p.x, p.y + 0.25, p.z);
-      rate = tSec < C.freezeUntil ? 0 : 7;
-      clampCam(lookWant, camWant);
-    } else if (ph === 'recap' || ph === 'final') {
-      C.orbit += dt * 0.22;
-      const p = posOf(recapTarget());
-      camWant.set(p.x + Math.sin(C.orbit) * 2.5, p.y + 1.35, p.z + Math.cos(C.orbit) * 2.5);
-      lookWant.set(p.x, p.y + 0.2, p.z);
-      clampCam(lookWant, camWant);
-      rate = 4;
+    } else if (ph === 'found' || ph === 'time' || ph === 'recap' || ph === 'final') {
+      // whip to the hider, then a slow half-orbit in front of the spot; keep them above the card
+      const tw = recapTarget(); const cen = revealCenter(tw);
+      if (ph === 'found' || ph === 'time') {
+        const sk = other(tw); const ps = stage.av[sk].root.position;
+        let dx = ps.x - cen.x; let dz = ps.z - cen.z; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
+        C.orbitBase = Math.atan2(dx, dz); C.orbitT = 0;
+      }
+      C.orbitT = (C.orbitT || 0) + dt;
+      const ang = (C.orbitBase || 0) + (ph === 'recap' || ph === 'final' ? Math.sin(C.orbitT * 0.35) * 0.75 : 0);
+      const dist = ph === 'recap' || ph === 'final' ? 2.2 : 1.55;
+      camWant.set(cen.x + Math.sin(ang) * dist, cen.y + (ph === 'recap' ? 0.95 : 0.55), cen.z + Math.cos(ang) * dist);
+      clampCam(cen, camWant);
+      aimFramed(cen, ph === 'recap' || ph === 'final');
+      rate = tSec < C.freezeUntil ? 0 : (ph === 'found' || ph === 'time') ? 8 : 3;
     } else if (P.on && v) {
       const b = body[v]; const a = stage.av[v];
       const cy = b.pose === 'wall' ? 0.25 : b.pose === 'flat' ? 0.12 : 0.28;
@@ -1301,7 +1309,7 @@ export function createGame(el, api) {
         camWant.set(b.x + Math.sin(yaw) * 0.12, b.y + eh, b.z + Math.cos(yaw) * 0.12);
         lookWant.set(camWant.x + Math.sin(yaw) * Math.cos(b.lookPitch), camWant.y + Math.sin(b.lookPitch), camWant.z + Math.cos(yaw) * Math.cos(b.lookPitch));
         stage.vm.visible = true;
-        stage.vm.position.set(0.16, -0.15 + Math.sin(tSec * 8) * 0.004 * Math.min(1, b.speed), -0.34 + C.shake * 0.4);
+        stage.vm.position.set(0.085, -0.115 + Math.sin(tSec * 8) * 0.003 * Math.min(1, b.speed), -0.3 + C.shake * 0.35);
       }
       snap = true;
     } else if (v && (ph === 'hide' || ph === 'lock')) {
@@ -1326,8 +1334,41 @@ export function createGame(el, api) {
     }
     cam.position.copy(camPos);
     cam.lookAt(camLook);
+    applyFraming();
     if (C.shake > 0) { cam.rotation.x += (Math.random() - 0.5) * C.shake * 0.05; }
     void t;
+  }
+  const revC = { x: 0, y: 0, z: 0 };
+  function revealCenter(w) {
+    const m = stage.av[w].meshes[0];
+    m.updateWorldMatrix(true, false);
+    const e = m.matrixWorld.elements;
+    revC.x = e[12]; revC.y = e[13]; revC.z = e[14];
+    return revC;
+  }
+  /** Look at `cen`; with a card on screen, shift the projection so `cen` sits mid-way in the free area. */
+  function aimFramed(cen, withCard) {
+    lookWant.set(cen.x, cen.y, cen.z);
+    C.frameCard = withCard;
+  }
+  function applyFraming() {
+    const cam = stage.camera;
+    let oy = 0;
+    if (C.frameCard) {
+      if (tSec > C.cardCheck) {
+        C.cardCheck = tSec + 0.4;
+        const card = hud.el.layer.querySelector('.chm-card'); const rr = root.getBoundingClientRect();
+        const r = card ? card.getBoundingClientRect() : null;
+        const topUi = 96;
+        const bottom = r && r.top > rr.top + 120 ? r.top - rr.top : rr.height;
+        C.frameY = (topUi + bottom) / 2;
+      }
+      const H = stage.size[1];
+      oy = Math.round(H / 2 - (C.frameY || H / 2));
+    }
+    C.oy = C.oy == null ? oy : C.oy + (oy - C.oy) * 0.2;
+    if (Math.abs(C.oy) < 0.5) { if (cam.view && cam.view.enabled) cam.clearViewOffset(); }
+    else { const [W, H] = stage.size; cam.setViewOffset(W, H, 0, C.oy, W, H); }
   }
   /** Pull the camera in front of walls between the target and it. */
   function clampCam(target, want) {
@@ -1495,7 +1536,7 @@ export function createGame(el, api) {
           splats: stage ? stage.fx.splatCount : 0,
           violations: stats.violations, linkReady: link.ready, epoch: link.epoch, rtt: link.rtt, sent: link.sent,
           blind: isBlind(), layer: hud.layerKey, mapId: stage && stage.map ? stage.map.id : null,
-          glint: { a: R.glintAt.a, b: R.glintAt.b }, lastPick: stats.lastPick || null, lastPaint: stats.lastPaint || null,
+          glint: { a: R.glintAt.a, b: R.glintAt.b }, lastPick: stats.lastPick || null, lastPaint: stats.lastPaint || null, lastShot: stats.lastShot || null, lastTagCheck: stats.lastTagCheck || null,
         };
       },
       paintHash(w) { return stage.paints[w].hash(); },

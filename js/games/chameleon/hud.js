@@ -63,7 +63,7 @@ export const CSS = `
 .chm-pips i.done { background: var(--g-ink); } .chm-pips i.now { background: var(--g-hl); }
 
 /* seeker gear */
-.chm-gear { position: absolute; right: calc(10px + var(--chm-sr)); top: calc(96px + var(--chm-st)); display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.chm-gear { position: absolute; right: calc(10px + var(--chm-sr)); top: calc(100px + var(--chm-st)); display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .chm-pellets { display: flex; gap: 3px; padding: 5px 7px; }
 .chm-pellets i { width: 11px; height: 14px; border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%; background: var(--chm-me); border: 1.5px solid var(--g-ink); transition: transform .2s, opacity .2s; }
 .chm-pellets i.gone { transform: scale(.55); opacity: .25; background: var(--g-line); }
@@ -124,7 +124,7 @@ export const CSS = `
 .chm-pose.on { background: var(--chm-me); color: var(--g-on-ink); }
 
 /* hint + legend */
-.chm-hint { position: absolute; left: 50%; transform: translateX(-50%); top: calc(100px + var(--chm-st)); max-width: calc(100% - 32px); padding: 6px 12px; font-weight: 800; font-size: 0.82rem; text-align: center; border-radius: 999px; background: color-mix(in srgb, var(--g-ink) 86%, transparent); color: var(--g-bg); opacity: 0; transition: opacity .25s, transform .25s; }
+.chm-hint { position: absolute; left: 50%; transform: translateX(-50%); top: calc(140px + var(--chm-st)); width: max-content; max-width: min(calc(100% - 40px), 340px); padding: 6px 12px; font-weight: 800; font-size: 0.82rem; text-align: center; border-radius: 999px; background: color-mix(in srgb, var(--g-ink) 86%, transparent); color: var(--g-bg); opacity: 0; transition: opacity .25s, transform .25s; }
 .chm-hint.on { opacity: 1; }
 .chm-legend { position: absolute; left: calc(12px + var(--chm-sl)); bottom: calc(12px + var(--chm-sb)); padding: 8px 10px; font-size: 0.72rem; font-weight: 700; line-height: 1.6; display: none; }
 .chm.mouse .chm-legend { display: block; }

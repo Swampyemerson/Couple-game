@@ -83,14 +83,20 @@ async function run(scheme, port, seedDocs) {
   };
   const step = async (name, fn) => { try { await fn(); } catch (e) { console.log(`   !! ${name}: ${e.message.split('\n')[0]}`); } };
   const tab = (pg, t) => pg.click(`.tabbar [data-act="tab"][data-tab="${t}"]`);
-  const openPack = async (pg, id) => { await tab(pg, 'home'); await pg.evaluate((x) => { const el = document.createElement('button'); el.dataset.act = 'openPack'; el.dataset.id = x; el.hidden = true; document.getElementById('app').appendChild(el); el.click(); }, id); };
+  const openPack = async (pg, id) => { await pg.evaluate((x) => { const el = document.createElement('button'); el.dataset.act = 'openPack'; el.dataset.id = x; el.hidden = true; document.getElementById('app').appendChild(el); el.click(); }, id); };
   const backToTabs = (pg) => pg.evaluate(() => { const el = document.createElement('button'); el.dataset.act = 'tab'; el.dataset.tab = 'home'; el.hidden = true; document.getElementById('app').appendChild(el); el.click(); });
   try {
     await prepare(h, a); await prepare(h, b);
     console.log(scheme);
     await h.settle(); await h.settle();
     // a game waiting on Emerson, so the front page has its games strip
-    await step('game', async () => { await h.newOnlineGame(b, 'four'); await h.closeGame(b); await h.settle(); await tab(b, 'home'); await tab(a, 'home'); });
+    await step('game', async () => {
+      const id = await h.newOnlineGame(b, 'four');
+      const e = await h.engine(b, id);
+      if (e.acts[0] === 'b') { await b.click('#game-root .fk button[data-i="4"]'); await h.settle(); }
+      await h.closeGame(b); await h.settle(); await tab(b, 'home'); await tab(a, 'home');
+      await a.waitForTimeout(2900); // let the "Sydney started…" toast clear
+    });
 
     await step('home', async () => {
       await both(a, 'home');

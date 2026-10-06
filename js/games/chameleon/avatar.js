@@ -298,6 +298,14 @@ export function createAvatar(THREE, kit, { gradientMap, texture }) {
   for (const [k, i] of [['legFL', 6], ['legFR', 7], ['legBL', 8], ['legBR', 9]]) { const m = mk(i); piv[k].add(m); meshes.push(m); }
   // order meshes by part index for the paint system
   meshes.sort((a, b) => a.userData.part - b.userData.part);
+  // reveal outline (found / recap only): inverted hulls pushed along the normals
+  const hullMat = new THREE.ShaderMaterial({
+    uniforms: { uColor: { value: new THREE.Color(0xffd23f) }, uW: { value: 0.014 } },
+    vertexShader: 'uniform float uW; void main() { vec3 p = position + normal * uW; gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0); }',
+    fragmentShader: 'uniform vec3 uColor; void main() { gl_FragColor = vec4(uColor, 1.0); }',
+    side: THREE.BackSide,
+  });
+  const hulls = meshes.map((m) => { const h = new THREE.Mesh(m.geometry, hullMat); h.visible = false; h.raycast = () => {}; m.add(h); return h; });
 
   // blob shadow
   const blobMat = new THREE.MeshBasicMaterial({ color: 0x3a2a1c, transparent: true, opacity: 0.32, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
@@ -401,10 +409,16 @@ export function createAvatar(THREE, kit, { gradientMap, texture }) {
     setTexture(t) { mat.map = t; mat.needsUpdate = true; },
     /** Visible or not (also hides the blob). */
     setVisible(v) { root.visible = v; blob.visible = v; },
+    /** Highlight outline for the reveal (null to hide). */
+    setReveal(color, width = 0.014) {
+      const on = !!color;
+      if (on) { hullMat.uniforms.uColor.value.set(color); hullMat.uniforms.uW.value = width; }
+      for (const h of hulls) h.visible = on;
+    },
     /** Hide head parts (first-person view from inside the head). */
     setHeadVisible(v) { piv.head.visible = v; },
     eyeWorld(i, out) { return eyes[i].turret.getWorldPosition(out); },
-    dispose() { mat.dispose(); eyeMat.dispose(); blobMat.dispose(); },
+    dispose() { mat.dispose(); eyeMat.dispose(); blobMat.dispose(); hullMat.dispose(); },
     lerpPose: lerp,
   };
 }

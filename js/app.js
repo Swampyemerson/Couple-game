@@ -667,7 +667,7 @@ function viewResults(p) {
   if (!both && p.type !== 'lovelang') {
     const preview = p.type === 'ynm' ? '<p class="muted">Your answers are locked in and private.</p>' : '';
     return `${head}<div class="screen center pack-intro c-${p.cat}">
-      <div class="pack-cover is-wait">${icon('hourglass')}<span class="pack-no">Locked in</span><span class="pack-cat">${esc(p.title)}</span></div>
+      <div class="pack-cover is-wait">${icon('hourglass')}<span class="pack-no">No. ${packNo(p)}</span><span class="pack-cat">${esc(CAT[p.cat]?.title || '')}</span></div>
       <h2 class="big">Locked in!</h2>
       <p class="muted">Results unlock as soon as ${N(them())} finishes${countOf(them(), p) ? ` (they’re ${countOf(them(), p)}/${p.items.length} in)` : ''}.</p>
       ${preview}

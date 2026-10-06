@@ -116,12 +116,12 @@ p { margin: 0; }
   display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 50px; padding: 12px 18px;
   font-family: var(--g-font-body); font-weight: 800; font-size: 1rem; line-height: 1.15; text-align: center;
   color: var(--bg); background: var(--text); border: 2px solid var(--text); border-radius: 10px;
-  box-shadow: 4px 4px 0 0 var(--g-hl), 4px 4px 0 2px var(--text);
+  box-shadow: 4px 4px 0 0 var(--plate, var(--g-hl)), 4px 4px 0 2px var(--text);
   transition: transform 0.08s ease-out, box-shadow 0.08s ease-out;
 }
 .btn .ico { width: 20px; height: 20px; }
 .btn .ico * { stroke-width: 2.5; }
-.btn:active { transform: translate(3px, 3px); box-shadow: 1px 1px 0 0 var(--g-hl), 1px 1px 0 2px var(--text); }
+.btn:active { transform: translate(3px, 3px); box-shadow: 1px 1px 0 0 var(--plate, var(--g-hl)), 1px 1px 0 2px var(--text); }
 .btn.alt { color: var(--text); background: var(--card); box-shadow: var(--shadow); }
 .btn.alt:active { box-shadow: 0 0 0 var(--g-edge); }
 .btn.ghost { color: var(--text); background: transparent; box-shadow: none; }
@@ -129,6 +129,9 @@ p { margin: 0; }
 .btn.small { width: auto; min-height: 44px; padding: 9px 15px; font-size: 0.92rem; align-self: center; }
 .btn.big-btn { min-height: 58px; font-size: 1.08rem; }
 .btn.hot { color: var(--g-on-ink); background: var(--p-b); }
+/* after dark the pink leads: primary buttons print pink on a cream underprint */
+.spicy-mode .btn:not(.alt):not(.ghost) { color: var(--g-on-ink); background: var(--p-b); --plate: var(--g-white); }
+.spicy-mode .chip-btn.on { box-shadow: 3px 3px 0 var(--p-b); }
 .btn[disabled] { opacity: 0.5; box-shadow: none; transform: none; cursor: default; }
 .btn:focus-visible, .tile:focus-visible, .ptile:focus-visible, .row:focus-visible, .choice:focus-visible, .opt:focus-visible, .icon-btn:focus-visible, .tab:focus-visible { outline: 3px solid var(--p-a); outline-offset: 3px; }
 
@@ -168,6 +171,7 @@ p { margin: 0; }
 .daily-act { display: flex; align-items: center; gap: 14px; }
 .daily-act .btn { width: auto; flex: none; }
 .daily-act p { margin: 0; line-height: 1.35; }
+.daily .btn.small { align-self: flex-start; }
 .locked { display: flex; align-items: center; gap: 8px; font-weight: 800; color: var(--muted); }
 .locked .ico { --ico-fill: var(--g-hl-soft); }
 .bubble { position: relative; padding: 11px 14px 12px; color: var(--text); background: var(--card); border: 2px solid var(--text); border-radius: 10px; }
@@ -247,6 +251,7 @@ p { margin: 0; }
 }
 .ptile .pe { width: 44px; height: 44px; display: grid; place-items: center; background: var(--cs); border: 2px solid var(--text); border-radius: 9px; --ico-fill: var(--ci); }
 .ptile .pe .ico { width: 28px; height: 28px; }
+.ptile.both .pno { visibility: hidden; }
 .pno { position: absolute; top: 12px; right: 12px; font-size: 0.66rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
 .pt { font-family: var(--g-font-display); font-weight: 900; font-size: 1rem; line-height: 1.15; }
 .ps { display: flex; align-items: center; gap: 4px; width: 100%; margin-top: auto; }

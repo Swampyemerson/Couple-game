@@ -278,7 +278,7 @@ function living(atlas) {
     b.spot('seekerSpawn', { x: 0.2, z: 3.3, yaw: Math.PI });
     b.spot('spawnA', { x: -3.6, z: 0.6, yaw: Math.PI / 2 });
     b.spot('spawnB', { x: 3.4, z: 0.6, yaw: -Math.PI / 2 });
-    b.spot('camo', { x: -1.35, z: -3.64, wallNormal: [0, 0, 1], y: 0.75, note: 'back wallpaper, above the sofa' });
+    b.spot('camo', { x: -3.15, z: -3.7, wallNormal: [0, 0, 1], y: 0.42, note: 'open stretch of the back wallpaper' });
     b.spot('rug', { x: -1.5, z: -0.45, yaw: 0 });
     // Probes for the eyedropper test: a wallpaper stripe centre, a plain wall, the teal side table top.
     b.probe('wallpaper-sage-stripe', [-5.16 + 8.095 * 0.8, 2.0, -d / 2 + 0.001], [0, 0, 1], C.sage);

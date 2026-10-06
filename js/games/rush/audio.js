@@ -108,6 +108,8 @@ export function createAudio({ musicOn = () => true } = {}) {
     revive() { [0, 4, 7, 12, 16].forEach((n, i) => tone(mtof(72 + n), 0.18, { type: 'triangle', vol: 0.1, at: i * 0.06 })); },
     heart() { tone(mtof(79), 0.1, { type: 'sine', vol: 0.12 }); tone(mtof(86), 0.2, { type: 'sine', vol: 0.12, at: 0.09 }); },
     smash() { hiss(0.25, { vol: 0.2, f: 2000, to: 400 }); tone(200, 0.1, { type: 'square', vol: 0.08, to: 80, filter: 1200 }); },
+    good() { [0, 7, 12].forEach((n, i) => tone(mtof(79 + n), 0.1, { type: 'triangle', vol: 0.09, at: i * 0.05 })); },
+    power() { tone(220, 0.5, { type: 'sawtooth', vol: 0.06, to: 880, filter: 2400 }); hiss(0.5, { vol: 0.08, f: 1500, to: 5000 }); },
     finish() { [0, 4, 7, 12, 7, 12, 16].forEach((n, i) => tone(mtof(76 + n), 0.14, { type: 'square', vol: 0.05, at: i * 0.07, filter: 5000 })); },
   };
 
