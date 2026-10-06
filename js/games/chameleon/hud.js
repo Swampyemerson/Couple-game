@@ -167,6 +167,7 @@ export const CSS = `
 
 /* lobby */
 .chm-lobby .chm-card { gap: 10px; }
+.chm-col { display: contents; }
 .chm-title { font-family: var(--g-font-display); font-size: 2.1rem; font-weight: 900; line-height: .95; margin: 2px 0 0; letter-spacing: -0.01em; }
 .chm-title span { display: inline-block; }
 .chm-title .c1 { color: var(--p-a); transform: rotate(-3deg); } .chm-title .c2 { color: var(--g-ink); margin: 0 .12em; } .chm-title .c3 { color: var(--p-b); transform: rotate(2deg); }
@@ -231,6 +232,12 @@ export const CSS = `
   .chm-pose { width: 46px; height: 50px; }
   .chm-pose svg { width: 26px; height: 26px; }
   .chm-hint { top: calc(104px + var(--chm-st)); }
+  /* the lobby card goes wide: title and modes on the left, map, order and Start on the right */
+  .chm-over.chm-lobby { align-items: center; padding-left: calc(62px + var(--chm-sl)); padding-right: calc(62px + var(--chm-sr)); }
+  .chm-lobby .chm-card { flex-direction: row; align-items: stretch; gap: 18px; width: min(100%, 700px); padding: 14px 16px; }
+  .chm-col { display: flex; flex-direction: column; justify-content: center; gap: 9px; flex: 1 1 0; min-width: 0; }
+  .chm-title { font-size: 1.8rem; }
+  .chm-recap .chm-card { width: min(100%, 520px); }
 }
 @media (prefers-reduced-motion: reduce) { .chm *, .chm *::before, .chm *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; } }
 @media (min-width: 900px) and (min-height: 600px) { .chm-sc { font-size: 1.1rem; padding: 6px 12px 6px 9px; } .chm-sc span { font-size: 0.82rem; } .chm-clock { min-width: 104px; } .chm-time { font-size: 1.8rem; } .chm-phase { font-size: 0.7rem; } .chm-sub { top: calc(78px + var(--chm-st)); font-size: 0.9rem; } .chm-gear { top: calc(116px + var(--chm-st)); } }

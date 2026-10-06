@@ -25,17 +25,19 @@ export function lobbyCard(api, { canEdit, local, setup, waitingFor }) {
   const mode = setup.mode; const map = setup.map; const first = setup.first;
   const dis = canEdit ? '' : 'aria-disabled="true"';
   return `<div class="chm-over chm-lobby bottom"><div class="chm-card chm-sticker" ${dis}>
+    <div class="chm-col">
     <div class="chm-title"><span class="c1">Blend</span><span class="c2">&amp;</span><span class="c3">Seek</span></div>
     <p>Paint yourself to vanish into the room. Then hunt.</p>
     <div class="chm-modes" role="radiogroup" aria-label="Mode">
       <button class="chm-mode ${mode === 'hs' ? 'on' : ''}" data-lobby="mode" data-v="hs" role="radio" aria-checked="${mode === 'hs'}"><b>Hide &amp; Seek</b><small>One hides, one hunts. 4 rounds, swap roles.</small></button>
       <button class="chm-mode ${mode === 'db' ? 'on' : ''}" data-lobby="mode" data-v="db" role="radio" aria-checked="${mode === 'db'}" ${local ? 'disabled' : ''}><b>Double Blind</b><small>${local ? 'Needs two phones.' : 'Both hide, then both hunt. Best of 3.'}</small></button>
     </div>
+    </div><div class="chm-col">
     <h3>Diorama</h3>
     <div class="chm-chips">${MAPS.map((m) => `<button class="chm-chip ${map === m.id ? 'on' : ''}" data-lobby="map" data-v="${m.id}">${esc(m.name)}</button>`).join('')}</div>
     ${mode === 'hs' ? `<h3>Hides first</h3><div class="chm-chips">${['a', 'b'].map((w) => `<button class="chm-chip p${w} ${first === w ? 'on' : ''}" data-lobby="first" data-v="${w}"><i></i>${esc(api.name(w))}</button>`).join('')}</div>` : ''}
     ${canEdit ? '<button class="chm-go me" data-act="start">Start</button>' : `<p class="chm-wait">${nameSpan(api, waitingFor)} is setting up…</p>`}
-  </div></div>`;
+  </div></div></div>`;
 }
 
 export function titleCard(api, { round, rounds, mode, hider, youHide, youSeek, map }) {
