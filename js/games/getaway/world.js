@@ -43,8 +43,9 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
   const mats = {
     vc: makeToon(THREE, U, null, { vertexColors: true }),
     double: makeToon(THREE, U, null, { vertexColors: true, side: THREE.DoubleSide }),
+    vcColor: makeToon(THREE, U, null, { vertexColors: true }), // for instanced meshes with instanceColor
   };
-  const allMats = new Set([mats.vc, mats.double]);
+  const allMats = new Set([mats.vc, mats.double, mats.vcColor]);
   function toon(color, opts = {}) {
     const o = opts || {};
     const fx = o.glow || o.emissive ? 3 : o.windows ? 2 : (o.fx | 0);

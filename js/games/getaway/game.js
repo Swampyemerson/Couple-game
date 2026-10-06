@@ -187,21 +187,28 @@ export function createGame(el, api) {
     const g = createGeo(entry);
     const w = await buildWorld(THREE, entry, g, P, U, { quality: phoneish ? 'mid' : 'high', onProgress: (p, t) => showLoad(0.1 + p * 0.8, t), dead: () => dead || seq !== loadSeq, budget: TUNE.sliceMs || 12 });
     if (dead || seq !== loadSeq || !w) { if (w) w.dispose(); return; }
-    // swap worlds
-    if (world) { world.dispose(); if (fx) fx.dispose(); }
+    // swap worlds: the cars, wheels and traffic meshes are rebuilt against the new world's
+    // materials; take them out of the old scene first so its dispose() doesn't free them
+    if (carViews) {
+      for (const v of Object.values(carViews)) { detach(v.group); v.dispose(); }
+      detach(wheels.mesh); wheels.dispose();
+      for (const m of [trafficMeshes.paint, trafficMeshes.trim]) { detach(m); m.geometry.dispose(); }
+      carViews = null;
+    }
+    if (fx) { for (const m of [fx.puffs, fx.sparks, fx.skids, fx.strips, fx.oils, fx.lines]) detach(m); fx.dispose(); fx = null; }
+    if (world) world.dispose();
     world = w; geo = g; S.mapId = entry.id; S.mapIdx = MAPS.indexOf(entry); S.mapEntry = entry;
     U.uSiren.value.w = 0;
     renderer.setClearColor(new THREE.Color().fromArray(world.fogC), 1);
     for (const k of AB) { cams[k].cam.far = world.fogFar + 80; cams[k].cam.updateProjectionMatrix(); }
     mapImg = makeMapImage(geo, entry, P, phoneish ? 1100 : 1400);
-    if (!carViews) {
-      carViews = { runA: createCarView(THREE, P, U, 'runner', P.a, world.mats), runB: createCarView(THREE, P, U, 'runner', P.b, world.mats), cop: createCarView(THREE, P, U, 'cop', null, world.mats), cop2: createCarView(THREE, P, U, 'cop', null, world.mats) };
-      wheels = createWheels(THREE, P, world.mats, 8);
-      const tg = buildTrafficGeos(THREE, P);
-      trafficMeshes = { paint: new THREE.InstancedMesh(tg.paint, world.mats.vc, TRAFFIC.max), trim: new THREE.InstancedMesh(tg.trim, world.mats.vc, TRAFFIC.max) };
-      trafficMeshes.paint.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(TRAFFIC.max * 3).fill(1), 3);
-      for (const m of [trafficMeshes.paint, trafficMeshes.trim]) { m.frustumCulled = false; m.count = 0; }
-    }
+    carViews = { runA: createCarView(THREE, P, U, 'runner', P.a, world.mats), runB: createCarView(THREE, P, U, 'runner', P.b, world.mats), cop: createCarView(THREE, P, U, 'cop', null, world.mats), cop2: createCarView(THREE, P, U, 'cop', null, world.mats) };
+    wheels = createWheels(THREE, P, world.mats, 8);
+    const tg = buildTrafficGeos(THREE, P);
+    // colour-instanced meshes get their own material (its programs differ from the plain ones)
+    trafficMeshes = { paint: new THREE.InstancedMesh(tg.paint, world.mats.vcColor, TRAFFIC.max), trim: new THREE.InstancedMesh(tg.trim, world.mats.vc, TRAFFIC.max) };
+    trafficMeshes.paint.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(TRAFFIC.max * 3).fill(1), 3);
+    for (const m of [trafficMeshes.paint, trafficMeshes.trim]) { m.frustumCulled = false; m.count = 0; }
     for (const v of Object.values(carViews)) world.scene.add(v.group);
     world.scene.add(wheels.mesh); world.scene.add(trafficMeshes.paint); world.scene.add(trafficMeshes.trim);
     fx = createFx(THREE, world.scene, P, U, world.mats);
@@ -302,7 +309,7 @@ export function createGame(el, api) {
     if (traffic && geo) traffic = createTraffic(geo, S.mapId, S.setup.rules.traffic);
     renderLobby(true);
   }
-  link.on('setup', (d) => { if (!isHost && d && S.phase === 'lobby') setSetup(d, false); });
+  link.on('setup', (d) => { if (!isHost && d && S.phase === 'lobby') setSetup(clone(d), false); });
   link.on('ready', (d) => { if (isHost) { S.partnerReady = !!(d && d.on); renderLobby(true); } });
 
   function onClick(e) {
@@ -369,8 +376,10 @@ export function createGame(el, api) {
     traffic = createTraffic(geo, S.mapId, S.match.rules.traffic);
     applyRound(R);
   }
-  link.on('match', (d) => { if (!isHost && d && d.match) applyMatch(d.match, d.R); });
-  link.on('round', (d) => { if (!isHost && d && S.match && d.R) { S.match.scores = d.scores || S.match.scores; S.match.hist = d.hist || S.match.hist; applyRound(d.R); } });
+  const detach = (o) => { if (o && o.parent) o.parent.remove(o); };
+  const clone = (o) => JSON.parse(JSON.stringify(o)); // room payloads arrive frozen
+  link.on('match', (d) => { if (!isHost && d && d.match) applyMatch(clone(d.match), clone(d.R)); });
+  link.on('round', (d) => { if (!isHost && d && S.match && d.R) { const c = clone(d); S.match.scores = c.scores || S.match.scores; S.match.hist = c.hist || S.match.hist; applyRound(c.R); } });
 
   function applyRound(R) {
     if (S.R && S.R.idx === R.idx && !S.R.over) return;
@@ -416,7 +425,7 @@ export function createGame(el, api) {
     if (live) link.urgent('end', res);
     applyEnd(res);
   }
-  link.on('end', (d) => { if (d && S.R && d.idx === S.R.idx) applyEnd(d); });
+  link.on('end', (d) => { if (d && S.R && d.idx === S.R.idx) applyEnd(clone(d)); });
   function applyEnd(res) {
     const R = S.R; if (!R || R.over || res.idx !== R.idx) return;
     R.over = true; R.result = res; S.phase = 'result';
@@ -458,7 +467,7 @@ export function createGame(el, api) {
     if (live) link.urgent('final', fin);
     applyFinal(fin);
   }
-  link.on('final', (d) => { if (d) applyFinal(d); });
+  link.on('final', (d) => { if (d) applyFinal(clone(d)); });
   function applyFinal(fin) {
     if (S.finalShown) return; S.finalShown = true;
     S.phase = 'final';
@@ -556,7 +565,7 @@ export function createGame(el, api) {
     return true;
   }
   function addSpike(s) { if (!S.R || S.R.spikes.find((x) => x.id === s.id)) return; S.R.spikes.push({ ...s, gone: !!s.gone }); }
-  link.on('spike', (d) => { if (d && S.R) addSpike(d); });
+  link.on('spike', (d) => { if (d && S.R) addSpike(clone(d)); });
   link.on('spikehit', (d) => { if (!d || !S.R) return; const s = S.R.spikes.find((x) => x.id === d.id); if (s) s.gone = true; const cw = copW(); P2[cw].stats.spikes++; for (const v of viewers()) if (v === cw) H0().view(v).stamp('SPIKED!', 'bad'); });
   function dropOil(w) {
     const p = P2[w]; const R = S.R;
@@ -568,7 +577,7 @@ export function createGame(el, api) {
     if (live) link.urgent('oil', o);
     audio.oil();
   }
-  link.on('oil', (d) => { if (d && S.R && !S.R.oils.find((x) => x.id === d.id)) S.R.oils.push(d); });
+  link.on('oil', (d) => { if (d && S.R && !S.R.oils.find((x) => x.id === d.id)) S.R.oils.push(clone(d)); });
   // hits reported by the victim (the runner's device judges PITs and rams on the runner)
   link.on('hit', (d) => {
     if (!d || !S.R) return;
@@ -1286,6 +1295,8 @@ export function createGame(el, api) {
       },
       resetPerf() { perf.n = 0; perf.maxCalls = 0; perf.maxTris = 0; },
       start() { hostStart(); },
+      /** Rebuild the world (even for the same map): map-switch regression tests. */
+      async reloadMap(id) { S.mapId = null; await loadMap(id || S.setup.map); return S.mapId; },
       setRules(r) { if (!isHost) return null; setSetup({ ...S.setup, rules: { ...S.setup.rules, ...r } }); return S.setup; },
       setSetup(s) { if (!isHost) return null; setSetup({ ...S.setup, ...s }); return S.setup; },
       setLocalMode(m, role) { S.localMode = m; if (role) S.practiceRole = role; renderLobby(true); },

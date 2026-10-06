@@ -10,6 +10,11 @@
 // engine  Chromium: the engine's own buildWorld() on the map (feature-detected), budgets (total
 //         tris, build time, longest block, draw calls + tris at chase-cam views), canvas textures,
 //         no page errors, screenshots of the key spots.
+// game    The real game (dist build via the harness, phone 844x390): Santee as the saved map,
+//         budgets from every spawn + sampled roads + the home, a practice round with the intro,
+//         the AI driving the main routes (Mission Gorge, Mast, SR-52, Magnolia, Cuyamaca, Carlton
+//         Hills, Fanita Pkwy, Weston Rd), the sandy riverbed (slow, dry), a lake (busts), the
+//         cats at 8524 Boulder Way, the minimap. Uses PORT+1.
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -73,7 +78,7 @@ async function staticSection() {
     const d = Math.hypot(sp.runner.x - sp.cop.x, sp.runner.z - sp.cop.z);
     geo.nearestRoad(sp.runner.x, sp.runner.z, nq, 30); const rr = nq.road >= 0 ? geo.roads[nq.road] : null; const rd = nq.d;
     geo.nearestRoad(sp.cop.x, sp.cop.z, nq, 30); const cr = nq.road >= 0 ? geo.roads[nq.road] : null; const cd = nq.d;
-    const fx = Math.sin(sp.runner.yaw), fz = Math.cos(sp.runner.yaw);
+    const fx = Math.sin(sp.runner.yaw), fz = -Math.cos(sp.runner.yaw); // compass yaw: 0 = north (-z)
     const behind = ((sp.runner.x - sp.cop.x) * fx + (sp.runner.z - sp.cop.z) * fz) / d;
     ok(rr && cr && rr.name === cr.name && rd < rr.hw && cd < cr.hw && d >= 60 && d <= 100 && behind > 0.8
       && !solidsHit(sp.runner.x, sp.runner.z, 1.5) && !solidsHit(sp.cop.x, sp.cop.z, 1.5) && geo.surfaceAt(sp.runner.x, sp.runner.z) !== 'water',
@@ -194,7 +199,7 @@ const car = (b, t2) => { const g = new THREE.Group(); const m1 = new THREE.Mesh(
 const runner = car(0xd23a2a, 0x2a2a30), cop = car(0x15161a, 0xf2f2f2); world.scene.add(runner, cop);
 const place = (c, p) => { c.position.set(p.x, Math.max(0, M.height(p.x, p.z)), p.z); c.rotation.y = p.yaw; };
 window.view = (v) => {
-  if (v.spawn != null) { const s = M.spawns[v.spawn]; place(runner, s.runner); place(cop, s.cop); v = { x: s.runner.x, z: s.runner.z, yaw: s.runner.yaw, ...v }; }
+  if (v.spawn != null) { const s = M.spawns[v.spawn]; const cv = (p) => ({ ...p, yaw: Math.PI - p.yaw }); place(runner, cv(s.runner)); place(cop, cv(s.cop)); v = { x: s.runner.x, z: s.runner.z, yaw: Math.PI - s.runner.yaw, ...v }; }
   else if (v.x != null) { place(runner, v); place(cop, { x: v.x - Math.sin(v.yaw) * 30, z: v.z - Math.cos(v.yaw) * 30, yaw: v.yaw }); }
   if (v.home) {
     const lm = M.landmarks.find((l) => l.home); let best = null;
@@ -278,10 +283,111 @@ async function engineSection() {
   console.log(`  screenshots: ${SHOTS}`);
 }
 
+// ─────────────────────────────────────────────────────────────────────
+async function gameSection() {
+  console.log('\n# game');
+  if (!fs.existsSync(path.join(ROOT, 'js/games/getaway.js'))) { console.log('skip - js/games/getaway.js is not there yet'); return; }
+  const { launch } = require('../harness');
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const h = await launch({ port: PORT + 1, only: ['getaway'], who: ['a'], coarse: true });
+  const { a } = h;
+  const hook = (fn, ...args) => a.evaluate(([f, x]) => window.__getaway[f](...x), [fn, args]);
+  const st = () => a.evaluate(() => window.__getaway.state());
+  const shot = (n) => a.screenshot({ path: path.join(SHOTS, 'game-' + n + '.png') });
+  try {
+    await a.setViewportSize({ width: 844, height: 390 });
+    await a.evaluate(() => {
+      window.__gtwTest = true; window.__gtwTune = { intro: 2500, count: 1200, result: 1800, final: 900, resume: 1500, maxDpr: 1 };
+      localStorage.removeItem('getaway.device.v1');
+      localStorage.setItem('getaway.setup.v1', JSON.stringify({ map: 'santee' }));
+    });
+    await h.startLive(a, 'getaway', 'local');
+    await a.waitForFunction(() => window.__getaway && window.__getaway.ready, null, { timeout: 180000 });
+    let s = await st();
+    ok(s.mapId === 'santee', `the game loads Santee (${s.mapId})`);
+    const maps = await hook('maps');
+    ok(maps.some((m) => m.id === 'santee' && !m.stub), 'Santee is playable in the map list');
+    const lms = await hook('landmarks');
+    ok(lms.some((l) => l.home && l.name === '8524 Boulder Way'), 'the game sees the home landmark');
+    const pf = await hook('perf');
+    console.log('   build', JSON.stringify(pf.build), 'load', pf.load);
+    ok(pf.build && pf.build.tris <= BUDGET.totalTris, `in-game map triangles ${pf.build && pf.build.tris} ≤ ${BUDGET.totalTris}`);
+    warn(pf.build && pf.build.maxBlockMs <= 250, `in-game build: longest block ${pf.build && pf.build.maxBlockMs} ms`);
+    const views = await a.evaluate(() => {
+      const g = window.__getaway; const out = [];
+      const pts = g.internals.S.mapEntry.spawns.map((x) => x.runner);
+      const roads = g.roads(); for (let i = 0; i < 14; i++) { const r = Math.floor((i * 7919) % roads.length); const p = g.roadPoint(r, (roads[r].len * ((i % 6) + 1)) / 7); pts.push({ x: p.x, z: p.z, yaw: p.yaw }); }
+      const home = g.landmarks().find((l) => l.home); pts.push({ x: home.x + 14, z: home.z, yaw: -Math.PI / 2 });
+      for (const p of pts) for (let k = 0; k < 4; k++) out.push(g.measureView(p.x, p.z, (p.yaw || 0) + (k * Math.PI) / 2, k === 3 ? 'far' : 'near'));
+      return out;
+    });
+    const mc = Math.max(...views.map((v) => v.calls)), mt = Math.max(...views.map((v) => v.tris));
+    ok(mc <= BUDGET.calls, `in-game, ${views.length} views (spawns, roads, home): ≤ ${mc} draw calls`);
+    ok(mt <= BUDGET.viewTris, `in-game, ${views.length} views: ≤ ${mt} triangles`);
+
+    // a practice round: intro shows where we are, then the chase
+    await a.click('.g-gtw [data-l="start"]');
+    await a.waitForFunction(() => window.__getaway.state().phase === 'intro', null, { timeout: 20000 });
+    await wait(700); await shot('intro');
+    const introText = await a.evaluate(() => (document.querySelector('.g-gtw') || document.body).innerText);
+    ok(/Santee/.test(introText), 'the round intro names Santee');
+    await a.waitForFunction(() => window.__getaway.state().phase === 'chase', null, { timeout: 20000 });
+    await a.waitForFunction(() => window.__getaway.navReady(), null, { timeout: 60000 });
+    s = await st();
+    const me = s.me;
+    const x0 = s[me].x, z0 = s[me].z;
+    await hook('auto', me, true); await wait(4000); await shot('chase');
+    s = await st();
+    ok(Math.hypot(s[me].x - x0, s[me].z - z0) > 25, `the AI drives away from the spawn (${Math.hypot(s[me].x - x0, s[me].z - z0).toFixed(0)} m)`);
+    const other = me === 'a' ? 'b' : 'a';
+    await a.evaluate(([m, o]) => { const g = window.__getaway; const q = g.state(); g.teleport(o, q[m].x - Math.sin(q[m].yaw) * 9, q[m].z + Math.cos(q[m].yaw) * 9, q[m].yaw, q[m].speed); }, [me, other]);
+    await wait(700); await shot('pursuit');
+
+    // the main routes, driven by the AI from a point on each
+    const roads = await hook('roads');
+    for (const name of ['Mission Gorge Rd', 'Mast Blvd', 'SR-52', 'Magnolia Ave', 'Cuyamaca St', 'Carlton Hills Blvd', 'Fanita Pkwy', 'Weston Rd', 'Town Center Pkwy', 'Prospect Ave']) {
+      const ri = roads.findIndex((r) => r.name === name && !r.bridge && r.len > 200);
+      if (ri < 0) { ok(false, `route ${name} found`); continue; }
+      const p = await hook('roadPoint', ri, roads[ri].len * 0.35);
+      await hook('teleport', me, p.x, p.z, p.yaw, 18);
+      await hook('teleport', other, p.x - Math.sin(p.yaw) * 80, p.z + Math.cos(p.yaw) * 80, p.yaw, 10);
+      await hook('auto', me, true);
+      await wait(3500);
+      s = await st();
+      const moved = Math.hypot(s[me].x - p.x, s[me].z - p.z);
+      ok(moved > 30 && !s[me].water && s[me].hp > 0, `${name}: drives ${moved.toFixed(0)} m from (${p.x.toFixed(0)}, ${p.z.toFixed(0)}), on ${s[me].surf}`);
+      await shot('route-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
+    }
+    // the riverbed: sand, slow, dry
+    await hook('hold', me, { gas: 1 });
+    await hook('teleport', me, 420, -196, -Math.PI / 2, 12);
+    await wait(2500);
+    s = await st();
+    ok(s[me].surf === 'sand' && !s[me].water, `the riverbed is sand (${s[me].surf}), dry`);
+    ok(s[me].speed < 30, `sand is slow: ${(s[me].speed * 3.6).toFixed(0)} km/h after 2.5 s flat out`);
+    await shot('riverbed');
+    // a lake: the runner is busted (or the car is in water)
+    await hook('teleport', me, -990, -830, 0, 4);
+    await wait(900);
+    s = await st();
+    ok(s[me].water || (s.R && s.R.over), 'driving into Santee Lakes is water');
+    await shot('lake');
+    await hook('hold', me, null);
+    // the home and its cats
+    const home = lms.find((l) => l.home);
+    await a.evaluate(([hx, hz]) => { const g = window.__getaway; g.setCam(null, hx + 16, 3.2, hz - 4, hx, 1.2, hz); }, [home.x, home.z]);
+    await wait(400); await shot('home');
+    await hook('openMap'); await wait(500); await shot('minimap'); await hook('closeMap');
+    h.assertNoErrors();
+    ok(true, 'no page errors in the game');
+  } catch (e) { failures++; console.log('FAIL -', e.message); await shot('fail').catch(() => {}); } finally { await h.close(); }
+}
+
 (async () => {
   try {
     if (want('static')) await staticSection();
     if (want('engine')) await engineSection();
+    if (want('game')) await gameSection();
   } catch (e) { failures++; console.log('FAIL -', e.stack || e); }
   console.log(failures ? `\n${failures} failure(s)` : '\nall ok');
   process.exit(failures ? 1 : 0);

@@ -5872,8 +5872,9 @@ async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onProgress 
   const mats = {
     vc: makeToon(THREE, U, null, { vertexColors: true }),
     double: makeToon(THREE, U, null, { vertexColors: true, side: THREE.DoubleSide }),
+    vcColor: makeToon(THREE, U, null, { vertexColors: true }), // for instanced meshes with instanceColor
   };
-  const allMats = new Set([mats.vc, mats.double]);
+  const allMats = new Set([mats.vc, mats.double, mats.vcColor]);
   function toon(color, opts = {}) {
     const o = opts || {};
     const fx = o.glow || o.emissive ? 3 : o.windows ? 2 : (o.fx | 0);
@@ -6485,7 +6486,7 @@ function createFx(THREE, scene, P, U, mats) {
   const pb = new Builder(THREE, P.outline);
   pb.add(pb.T.ico, 0, 0, 0, 1, 1, 1, 0, [1, 1, 1], 0);
   const puffGeo = pb.geometryOut();
-  const puffs = new THREE.InstancedMesh(puffGeo, mats.vc, NP);
+  const puffs = new THREE.InstancedMesh(puffGeo, mats.vcColor || mats.vc, NP);
   puffs.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(NP * 3).fill(1), 3);
   puffs.frustumCulled = false; puffs.count = 0;
   scene.add(puffs);
@@ -8425,7 +8426,7 @@ function creekNS(name, kind, width, x, z0, z1, o = {}) {
 
 // Downtown, Whittier, Mapleton Hill: E–W
 add('Balsam Ave', 'street', 10, EW(Z.balsam, X.st4, X.folsom));
-add('Mapleton Ave', 'street', 10, EW(Z.mapleton, X.st4 - 40, X.folsom));
+add('Mapleton Ave', 'street', 10, EW(Z.mapleton, X.st4, X.folsom));
 add('Pine St', 'street', 10, EW(Z.pine, X.st4, X.st28));
 add('Spruce St', 'street', 10, EW(Z.spruce, X.st4, X.folsom));
 add('Pearl St alley', 'alley', 5.5, EW(Z.alleyN, X.st9, X.st19));
@@ -8435,7 +8436,7 @@ add('Pearl St alley', 'alley', 5.5, EW(Z.alleyS, X.st9, X.st19));
 add('Walnut St', 'street', 11, EW(Z.walnut, X.st9, X.st28));
 add('Canyon Blvd', 'arterial', 18, [...EW(Z.canyon, X.st30, -300).slice(0, -1), [-300, 120], [-345, 124], [-378, 133], [-404, 142]]);
 add('Arapahoe Ave', 'arterial', 14, EW(Z.arapahoe, -330, X.st55));
-add('Arapahoe Ave', 'arterial', 14, [[-330, 200], [-352, 192], [-372, 178], [-388, 160], [-398, 147], [-404, 142]], { bridge: true, clear: 3 });
+add('Arapahoe Ave', 'arterial', 14, [[-330, 200], [-352, 192], [-372, 178], [-388, 160], [-404, 142]], { bridge: true, clear: 3 });
 add('Pearl Pkwy', 'arterial', 16, [[X.st30, 0], [1090, -22], [1160, -55], [1253, -100], [1340, -140], [1450, -180], [1560, -210], [1680, -235], [1790, -250], [X.st55, -258]]);
 add('Valmont Rd', 'arterial', 14, [[X.folsom, Z.balsam], [620, -392], [700, -402], [832, -412], [940, -420], [1035, -426], [1150, -431], [1253, -435], [1400, -440], [1550, -442], [1700, -443], [X.st55, -443]]);
 // N–S
@@ -8458,7 +8459,7 @@ creekNS('28th St', 'arterial', 20, X.st28, -412, Z.baseline);
 add('29th St', 'street', 10, NS(X.st29, Z.pearl, Z.canyon));
 creekNS('30th St', 'arterial', 14, X.st30, -426, Z.baseline);
 creekNS('Foothills Pkwy', 'arterial', 16, X.foothills, -435, Z.baseline);
-add('Foothills Pkwy', 'arterial', 16, [[X.foothills, Z.baseline], [1255, 980], [1262, 1050], [1280, 1120], [1310, 1185], [1350, 1250], [1395, 1305], usPt(745, 9), usPt(790, 0)]);
+add('Foothills Pkwy', 'arterial', 16, [[X.foothills, Z.baseline], [1255, 980], [1262, 1050], [1280, 1120], [1310, 1185], [1350, 1250], [1395, 1305], usPt(745, 11), usPt(800, 5)]);
 creekNS('55th St', 'arterial', 12, X.st55, -443, 1655);
 // University Hill + CU
 add('College Ave', 'street', 9, EW(Z.college, X.st9, 50));
@@ -8477,7 +8478,7 @@ add('Baseline Rd', 'arterial', 16, [[-418, Z.baseline], ...EW(Z.baseline, -380, 
 add('Kinnikinic Rd', 'street', 7, [[-52, 909], [-50, 950], [-62, 990], [-100, 1012], [-150, 1006], [-185, 978], [-196, 940], [-200, 909]]);
 const FLAGSTAFF = [[-418, 909], [-436, 872], [-450, 830], [-460, 790], [-466, 758], [-478, 734], [-498, 726], [-514, 740], [-519, 772], [-524, 812], [-532, 848], [-548, 866], [-570, 864], [-584, 844], [-590, 806], [-596, 766], [-604, 726], [-614, 700], [-630, 690], [-646, 700], [-654, 726], [-656, 760], [-654, 800]];
 add('Flagstaff Rd', 'street', 8, FLAGSTAFF);
-add('Flagstaff Summit Rd', 'street', 7, (() => { const c = [-628, 836]; const pts = []; for (let i = 0; i < 12; i++) { const a = (i / 12) * Math.PI * 2 + Math.PI * 0.5; pts.push([c[0] + Math.cos(a) * 40, c[1] - Math.sin(a) * 34]); } return pts; })(), { closed: true });
+add('Flagstaff Summit Rd', 'street', 7, (() => { const c = [-650, 838]; const pts = []; for (let i = 0; i < 12; i++) { const a = (i / 12) * Math.PI * 2 + Math.PI * 0.5; pts.push([c[0] + Math.cos(a) * 40, c[1] - Math.sin(a) * 34]); } return pts; })(), { closed: true });
 // Boulder Creek Path: a bike path (alley) on the south bank, under every bridge
 const CREEK = [[-690, 152], [-600, 150], [-520, 151], [-450, 153], [-380, 156], [-300, 157], [-200, 158], [-100, 159], [0, 160], [100, 161], [200, 162], [300, 162], [400, 163], [500, 164], [600, 164], [700, 164], [832, 164], [935, 162], [1035, 160], [1150, 158], [1253, 156], [1400, 152], [1550, 150], [1700, 148], [1905, 146]];
 add('Boulder Creek Path', 'alley', 5, [[-424, 168], [-380, 170], ...CREEK.filter(([x]) => x > -350 && x < 990).map(([x, z]) => [x, z + 10]), [990, 175], [1008, 186], [1014, 196]], { traffic: false });
@@ -8504,17 +8505,17 @@ add('', 'street', 9, [...NS(420, Z.baseline, 1500), [430, 1560], [452, 1640], [4
 add('', 'street', 9, [...EW(1200, 420, 790)]);
 add('', 'street', 9, EW(1050, 420, 708));
 add('', 'street', 9, EW(1360, 420, 868));
-add('', 'street', 9, EW(1560, 452, 976));
+add('', 'street', 9, EW(1560, 431, 976));
 add('', 'street', 9, NS(610, Z.baseline, 1721));
 add('', 'street', 9, EW(1060, 1262, X.st55));
 add('', 'street', 9, NS(1400, Z.baseline, 1215));
 add('', 'street', 9, NS(1720, Z.baseline, 1380));
-add('', 'street', 9, EW(1380, 1525, X.st55));
+add('', 'street', 9, EW(1380, 1560, X.st55));
 // east Boulder
 add('', 'street', 9, EW(1215, 1320, X.st55));
-add('', 'street', 9, NS(1560, Z.baseline, 1215));
+add('', 'street', 9, NS(1560, Z.baseline, 1380));
 add('Discovery Dr', 'street', 10, [[X.foothills, 420], [1400, 420], [1560, 420], [1700, 420], [X.st55, 420]]);
-add('Pearl Pkwy frontage', 'street', 9, NS(1450, -180, Z.arapahoe));
+creekNS('Pearl Pkwy frontage', 'street', 9, 1450, -180, 194);
 add('Junction Pl', 'street', 9, NS(1140, -431, -48));
 
 // Martin Acres: derived from the Moorhead frame (clipped to Broadway / Table Mesa / Baseline)
@@ -8697,7 +8698,7 @@ function smoothedRoads() {
   const list = ROADS.map((r, i) => {
     const s = smooth(r.pts, !!r.closed); const n = s.x.length;
     const cum = [0]; for (let k = 1; k < n; k++) cum.push(cum[k - 1] + Math.hypot(s.x[k] - s.x[k - 1], s.z[k] - s.z[k - 1]));
-    return { i, src: r, name: r.name, kind: r.kind, hw: r.width / 2, bridge: !!r.bridge, x: s.x, z: s.z, n, cum, len: cum[n - 1] };
+    return { i, src: r, name: r.name, kind: r.kind, hw: r.width / 2, bridge: !!r.bridge, closed: !!r.closed, x: s.x, z: s.z, n, cum, len: cum[n - 1] };
   });
   const CELL = 24; const gx0 = BOUNDS.x0 - 60; const gz0 = BOUNDS.z0 - 60;
   const GW = Math.ceil((BOUNDS.x1 - BOUNDS.x0 + 120) / CELL); const GH = Math.ceil((BOUNDS.z1 - BOUNDS.z0 + 120) / CELL);
@@ -8753,23 +8754,58 @@ const HC = 8;
 const HX0 = BOUNDS.x0 - 40; const HZ0 = BOUNDS.z0 - 40;
 const HW = Math.ceil((BOUNDS.x1 - BOUNDS.x0 + 80) / HC) + 1; const HH = Math.ceil((BOUNDS.z1 - BOUNDS.z0 + 80) / HC) + 1;
 let HG = null;
-function buildHeightGrid() {
+function buildHeightGrid() { const it = heightGridGen(); while (!it.next().done); return HG; }
+function* heightGridGen() {
+  if (HG) return;
   const g = new Float32Array(HW * HH);
-  for (let j = 0; j < HH; j++) for (let i = 0; i < HW; i++) g[j * HW + i] = rawHeight(HX0 + i * HC, HZ0 + j * HC);
+  for (let j = 0; j < HH; j++) { for (let i = 0; i < HW; i++) g[j * HW + i] = rawHeight(HX0 + i * HC, HZ0 + j * HC); if (j % 16 === 0) yield; }
   const { list } = smoothedRoads();
   // road profiles: raw height along the centreline, smoothed (±30 m) and grade-limited
   const best = new Float32Array(HW * HH).fill(1e9); const target = new Float32Array(HW * HH);
-  for (const r of list) {
-    if (r.bridge) continue;
+  const live = list.filter((r) => !r.bridge);
+  const gmaxOf = (r) => (r.kind === 'highway' ? 0.05 : 0.072);
+  const limit = (r, sm) => {
+    const n = r.n; const gmax = gmaxOf(r);
+    for (let k = 1; k < n; k++) { const ds = r.cum[k] - r.cum[k - 1]; sm[k] = Math.min(sm[k], sm[k - 1] + gmax * ds); }
+    for (let k = n - 2; k >= 0; k--) { const ds = r.cum[k + 1] - r.cum[k]; sm[k] = Math.min(sm[k], sm[k + 1] + gmax * ds); }
+  };
+  for (const r of live) {
     const n = r.n; const h = new Float32Array(n);
     for (let k = 0; k < n; k++) h[k] = rawHeight(r.x[k], r.z[k]);
     const sm = new Float32Array(n);
-    for (let k = 0; k < n; k++) { let a = 0; let w = 0; for (let q = Math.max(0, k - 6); q <= Math.min(n - 1, k + 6); q++) { a += h[q]; w++; } sm[k] = a / w; }
-    const gmax = r.kind === 'highway' ? 0.05 : 0.10;
-    for (let k = 1; k < n; k++) { const ds = r.cum[k] - r.cum[k - 1]; sm[k] = Math.min(sm[k], sm[k - 1] + gmax * ds); }
-    for (let k = n - 2; k >= 0; k--) { const ds = r.cum[k + 1] - r.cum[k]; sm[k] = Math.min(sm[k], sm[k + 1] + gmax * ds); }
-    r.prof = sm;
-    const R = r.hw + 16;
+    for (let k = 0; k < n; k++) { const W = r.closed ? 6 : Math.min(6, k, n - 1 - k); let a = 0; let w = 0; for (let q = k - W; q <= k + W; q++) { a += h[(q + n) % n]; w++; } sm[k] = a / w; }
+    limit(r, sm); r.prof = sm;
+    if (r.closed) { let m = 0; for (let k = 0; k < n; k++) m += sm[k]; sm.fill(m / n); } // loops are level plateaus
+  }
+  // a loop's plateau sits at the level of the road that climbs to it
+  for (const r of live) {
+    if (!r.closed) continue;
+    for (const o of live) {
+      if (o === r || o.closed) continue;
+      for (const end of [0, o.n - 1]) {
+        let bd = Infinity; for (let k = 0; k < r.n; k++) bd = Math.min(bd, Math.hypot(r.x[k] - o.x[end], r.z[k] - o.z[end]));
+        if (bd < r.hw + o.hw) r.prof.fill(o.prof[end]);
+      }
+    }
+  }
+  yield;
+  // where a road ends on another, bend its last ~60 m onto the other road's level (no steps)
+  const profAt = (o, x, z) => { let bi = 0; let bd = Infinity; for (let k = 0; k < o.n; k++) { const d = (o.x[k] - x) ** 2 + (o.z[k] - z) ** 2; if (d < bd) { bd = d; bi = k; } } return [o.prof[bi], Math.sqrt(bd), !o.closed && (bi < 2 || bi > o.n - 3)]; };
+  for (let pass = 0; pass < 2; pass++) for (const r of live) {
+    if (r.closed) continue;
+    for (const end of [0, r.n - 1]) {
+      let tgt = null; let bestD = Infinity; let both = false;
+      for (const o of live) { if (o === r) continue; const [hv, d, atEnd] = profAt(o, r.x[end], r.z[end]); if (d < o.hw + r.hw && d < bestD) { bestD = d; tgt = hv; both = atEnd; } }
+      if (tgt == null) continue;
+      const delta = (tgt - r.prof[end]) * (both ? 0.5 : 1); if (Math.abs(delta) < 0.05) continue;
+      const span = Math.max(40, Math.abs(delta) / 0.045);
+      for (let k = 0; k < r.n; k++) { const s2 = Math.abs(r.cum[k] - r.cum[end]); if (s2 < span) r.prof[k] += delta * (1 - s2 / span); }
+    }
+  }
+  yield;
+  for (const r of live) {
+    const n = r.n; const sm = r.prof;
+    const R = r.hw + 20;
     for (let k = 0; k < n; k++) {
       const x = r.x[k]; const z = r.z[k];
       const i0 = Math.max(0, Math.floor((x - R - HX0) / HC)); const i1 = Math.min(HW - 1, Math.ceil((x + R - HX0) / HC));
@@ -8779,15 +8815,15 @@ function buildHeightGrid() {
         if (d < best[q]) { best[q] = d; target[q] = sm[k]; }
       }
     }
+    yield;
   }
   for (let q = 0; q < g.length; q++) {
     if (best[q] > 1e8) continue;
-    const w = best[q] <= 3 ? 1 : 1 - clamp01((best[q] - 3) / 13);
+    const w = best[q] <= 6 ? 1 : 1 - clamp01((best[q] - 6) / 14);
     const ww = w * w * (3 - 2 * w);
     g[q] = g[q] * (1 - ww) + target[q] * ww;
   }
   HG = g;
-  return g;
 }
 /** Terrain height (the contract's height(x, z)): bilinear on the levelled grid. */
 function height(x, z) {
@@ -8873,9 +8909,14 @@ const FREE = 0; const ROAD = 1; const WATERC = 2; const LOT = 3; const BLD = 4; 
 
 let LAYOUT = null;
 function layout() {
-  if (LAYOUT) return LAYOUT;
+  if (!LAYOUT) { const it = layoutGen(); while (!it.next().done); }
+  return LAYOUT;
+}
+/** The layout as a generator: yields often so prepare() can slice it (see boulder.js). */
+function* layoutGen() {
+  if (LAYOUT) return;
   const t0 = (typeof performance !== 'undefined' ? performance : Date).now();
-  height(0, 0); // build the height grid
+  yield* heightGridGen();
   const sm = smoothedRoads();
   const ras = new Uint8Array(RW * RH);
   const rIdx = (x, z) => { const i = Math.floor((x - RX0) / RC); const j = Math.floor((z - RZ0) / RC); return i < 0 || j < 0 || i >= RW || j >= RH ? -1 : j * RW + i; };
@@ -8893,6 +8934,7 @@ function layout() {
       const L = Math.hypot(r.x[k + 1] - r.x[k], r.z[k + 1] - r.z[k]); const m = Math.max(1, Math.ceil(L / 1.5));
       for (let q = 0; q < m; q++) disk(r.x[k] + (r.x[k + 1] - r.x[k]) * q / m, r.z[k] + (r.z[k + 1] - r.z[k]) * q / m, rad, ROAD);
     }
+    yield;
   }
   const fillPoly = (poly, v) => {
     let x0 = Infinity; let z0 = Infinity; let x1 = -Infinity; let z1 = -Infinity;
@@ -9017,6 +9059,7 @@ function layout() {
     const [bx, bz] = moorPt(HOME_T + 4, 31); decorTree(bx, bz, 'broad', 1.15);
   }
 
+  yield;
   // ── 2. Pearl Street Mall: bollards at every entrance, planters, kiosks, performers ──────
   {
     const ends = [MALL.x0 + 1.2, -9.5, 9.5, MALL.x1 - 1.2];
@@ -9116,6 +9159,7 @@ function layout() {
         } else s += 4;
       }
     }
+    yield;
   }
 
   // ── 3b. campus infill: sandstone halls between the campus roads; office parks out east ────
@@ -9124,6 +9168,7 @@ function layout() {
       const cx = x + R(-6, 6); const cz = z + R(-6, 6); if (zoneAt(cx, cz) !== zn) continue;
       const w = zn === 'campus' ? R(22, 38) : R(30, 50); const d = zn === 'campus' ? R(13, 19) : R(20, 28); const rot = rnd() < 0.5 ? 0 : Math.PI / 2;
       const floors = zn === 'campus' ? (rnd() < 0.5 ? 3 : 4) : 2 + (rnd() < 0.4 ? 1 : 0);
+      if (((x / step) | 0) % 4 === 0) yield;
       building({ x: cx, z: cz, w, d, rot, h: floors * 3.7 + 0.8, floors, style, color: pick(PALETTE[style]), roof: zn === 'campus' ? (rnd() < 0.6 ? 'hip' : 'gable') : 'flat', roofH: zn === 'campus' ? 4 + rnd() : 0, roofColor: zn === 'campus' ? pick(ROOF.cu) : '#7d766b', zone: zn, seed: rnd(), pad: zn === 'campus' ? 5 : 8 });
     }
   }
@@ -9131,6 +9176,7 @@ function layout() {
   // ── 4. street furniture: lamps on arterials/downtown, signals at big crossings ─────────
   const lampy = new Set(['downtown', 'eastpearl', 'twentyninth', 'junction', 'commercial', 'campus', 'civic', 'westpearl', 'east']);
   for (const r of sm.list) {
+    yield;
     if (r.bridge || r.kind === 'alley') continue;
     const every = r.kind === 'highway' ? 70 : r.kind === 'arterial' ? 42 : 55;
     let flip = 1;
@@ -9151,6 +9197,7 @@ function layout() {
   const seen = new Set();
   const crossOk = (a) => (o) => o !== a && !o.bridge && o.name !== a.name && o.kind !== 'alley' && o.kind !== 'highway' && o.kind !== 'ramp';
   for (const a of sm.list.filter((r) => r.kind === 'arterial' && !r.bridge)) {
+    yield;
     for (let k = 0; k < a.n - 1; k++) {
       const ax = a.x[k]; const az = a.z[k]; const n1 = sm.nearest(ax, az, 4, crossOk(a));
       if (!n1.r || n1.d > 2.6) continue;
@@ -9167,6 +9214,7 @@ function layout() {
     }
   }
 
+  yield;
   // ── 5. barriers: US-36 median + sound walls, Flagstaff guard rails, mountain rocks ───────
   const segWall = (ax, az, bx, bz, kind, h, styleName, thick = 0.5) => {
     const L = Math.hypot(bx - ax, bz - az); const rot = Math.atan2(-(bz - az), bx - ax);
@@ -9175,7 +9223,7 @@ function layout() {
     return o;
   };
   // median barrier (gaps none; the turnpike is divided) and sound walls on the Martin Acres side
-  for (let u = 40; u < 1250; u += 14) { const [ax, az] = usPt(u); const [bx, bz] = usPt(Math.min(u + 14, 1252)); segWall(ax, az, bx, bz, 'barrier', 0.9, 'jersey', 0.7); }
+  for (let u = 40; u < 1250; u += 14) { if (u > 690 && u < 830) continue; const [ax, az] = usPt(u); const [bx, bz] = usPt(Math.min(u + 14, 1252)); segWall(ax, az, bx, bz, 'barrier', 0.9, 'jersey', 0.7); }
   for (let u = 60; u < 1050; u += 20) {
     const [ax, az] = usPt(u, -15); const [bx, bz] = usPt(u + 20, -15);
     if (sm.clearance((ax + bx) / 2, (az + bz) / 2, (o) => o.kind !== 'highway') < 1.5) continue;
@@ -9212,6 +9260,7 @@ function layout() {
     stamp(x, z, s * 1.6, s * 1.3, 0, 1);
   }
 
+  yield;
   // ── 6. trees: the creek's cottonwoods, parks, the quad, Chautauqua, the foothill forest ──
   for (let k = 0; k < CREEK.length - 1; k++) {
     const [ax, az] = CREEK[k]; const [bx, bz] = CREEK[k + 1]; const L = Math.hypot(bx - ax, bz - az);
@@ -9242,10 +9291,12 @@ function layout() {
   scatter([[-460, 700], [-400, 700], [-400, 900], [-460, 900]], 10, 'pine', [10, 14]);
   scatter(rect(-660, 640, -600, 780), 8, 'pine', [10, 14]);
   scatter(rect(1580, -260, 1840, -150), 14, 'cottonwood', [10, 15]); // Valmont park edge
+  yield;
   // foothill forest (decor only: behind the boulder line or between switchbacks)
   {
     let placed = 0;
     for (let i = 0; i < 9000 && placed < 1500; i++) {
+      if (i % 600 === 0) yield;
       const z = R(BOUNDS.z0 + 4, BOUNDS.z1 - 4); const x = R(BOUNDS.x0 + 4, footX(z) + 10);
       if (x > footX(z) - 18 && rnd() < 0.7) continue;
       if (sm.clearance(x, z) < 4) continue;
@@ -9262,7 +9313,6 @@ function layout() {
 
   const ms = (typeof performance !== 'undefined' ? performance : Date).now() - t0;
   LAYOUT = { solids, buildings, decor, props, lots, ms, ras, RC, RX0, RZ0, RW, RH };
-  return LAYOUT;
 }
 
 function pickSpawn(name, frac, gap = 80, dir = 1, nth = 0) {
@@ -9274,7 +9324,7 @@ function pickSpawn(name, frac, gap = 80, dir = 1, nth = 0) {
     const L = r.cum[k + 1] - r.cum[k] || 1; const t = (s - r.cum[k]) / L;
     const tx = (r.x[k + 1] - r.x[k]) / L * dir; const tz = (r.z[k + 1] - r.z[k]) / L * dir;
     // keep right: offset half a lane to the right of travel (right = (−tz, tx))
-    const off = r.kind === 'highway' ? 6.5 : Math.min(2.6, r.hw * 0.4);
+    const off = r.kind === 'highway' ? 6.5 : r.hw < 5 ? 0 : Math.min(2.6, r.hw * 0.4);
     return { x: Math.round((r.x[k] + (r.x[k + 1] - r.x[k]) * t - tz * off) * 10) / 10, z: Math.round((r.z[k] + (r.z[k + 1] - r.z[k]) * t + tx * off) * 10) / 10, yaw: Math.round(Math.atan2(tx, -tz) * 10000) / 10000 };
   };
   const s = r.len * frac;
@@ -9282,7 +9332,7 @@ function pickSpawn(name, frac, gap = 80, dir = 1, nth = 0) {
 }
 void FLAGSTAFF; void HOME; void X;
 
-return { mulberry, smooth, smoothedRoads, height, HEIGHT_GRID, broadwayX, usV, usU, zoneAt, isFarMtn, SIDEWALK, layout, pickSpawn };
+return { mulberry, smooth, smoothedRoads, height, HEIGHT_GRID, broadwayX, usV, usU, zoneAt, isFarMtn, SIDEWALK, layout, layoutGen, pickSpawn };
 })();
 
 // ── js/games/getaway/maps/boulder-atlas.js ──
@@ -9430,29 +9480,29 @@ __M['js/games/getaway/maps/boulder-build.js'] = (() => {
 // rails, rocks, street furniture and the decor forest. One merged mesh per 200 m chunk (one
 // material: vertex colours over the facade atlas), so a chunk costs one draw call.
 const { BOUNDS, OPEN, WATER, CREEK, CREEK_HW, MALL, footX } = __M['js/games/getaway/maps/boulder-data.js'];
-const { layout, smoothedRoads, height, HEIGHT_GRID, zoneAt, SIDEWALK, mulberry } = __M['js/games/getaway/maps/boulder-layout.js'];
+const { layout, smoothedRoads, height, HEIGHT_GRID, zoneAt, SIDEWALK, mulberry, isFarMtn } = __M['js/games/getaway/maps/boulder-layout.js'];
 const { makeAtlas, tileUV, T } = __M['js/games/getaway/maps/boulder-atlas.js'];
 
 // ── merged-geometry buffer ───────────────────────────────────────────────────
 const WHITE_UV = (() => { const [u0, v0, u1, v1] = tileUV(T.white); return [(u0 + u1) / 2, (v0 + v1) / 2]; })();
 class Buf {
-  constructor() { this.p = []; this.n = []; this.u = []; this.c = []; this.i = []; this.f = []; this.v = 0; this.fxv = 0; }
-  _fx(k) { for (let q = 0; q < k; q++) this.f.push(this.fxv); }
-  /** Ink outline (inverted hull) for the vertices/triangles added since (v0, i0): positions
-   *  pushed out along their averaged normals by `ol`, winding reversed, unlit ink colour. */
-  hull(v0, i0, ol, ink) {
-    const v1 = this.v; const i1 = this.i.length; const acc = new Map(); const key = (q) => `${Math.round(this.p[q * 3] * 50)},${Math.round(this.p[q * 3 + 1] * 50)},${Math.round(this.p[q * 3 + 2] * 50)}`;
-    for (let q = v0; q < v1; q++) { const k = key(q); let e = acc.get(k); if (!e) { e = [0, 0, 0]; acc.set(k, e); } e[0] += this.n[q * 3]; e[1] += this.n[q * 3 + 1]; e[2] += this.n[q * 3 + 2]; }
-    const base = this.v;
-    for (let q = v0; q < v1; q++) {
-      const e = acc.get(key(q)); const l = Math.hypot(e[0], e[1], e[2]) || 1;
-      this.p.push(this.p[q * 3] + e[0] / l * ol, this.p[q * 3 + 1] + e[1] / l * ol, this.p[q * 3 + 2] + e[2] / l * ol);
-      this.n.push(-this.n[q * 3], -this.n[q * 3 + 1], -this.n[q * 3 + 2]); this.c.push(ink[0], ink[1], ink[2]); this.u.push(WHITE_UV[0], WHITE_UV[1]); this.f.push(1);
+  constructor() { this.cap = 2048; this.icap = 4096; this.v = 0; this.ni = 0; this.fxv = 0; this._alloc(); }
+  _alloc() { this.P = new Float32Array(this.cap * 3); this.N = new Float32Array(this.cap * 3); this.C = new Float32Array(this.cap * 3); this.U = new Float32Array(this.cap * 2); this.F = new Float32Array(this.cap); this.I = new Uint32Array(this.icap); }
+  grow(nv, ni) {
+    if (this.v + nv > this.cap) {
+      let c = this.cap; while (this.v + nv > c) c *= 2;
+      const o = { P: this.P, N: this.N, C: this.C, U: this.U, F: this.F }; this.cap = c;
+      this.P = new Float32Array(c * 3); this.P.set(o.P); this.N = new Float32Array(c * 3); this.N.set(o.N); this.C = new Float32Array(c * 3); this.C.set(o.C);
+      this.U = new Float32Array(c * 2); this.U.set(o.U); this.F = new Float32Array(c); this.F.set(o.F);
     }
-    for (let k = i0; k < i1; k += 3) this.i.push(base + this.i[k] - v0, base + this.i[k + 2] - v0, base + this.i[k + 1] - v0);
-    this.v += v1 - v0;
+    if (this.ni + ni > this.icap) { let c = this.icap; while (this.ni + ni > c) c *= 2; const a = new Uint32Array(c); a.set(this.I); this.I = a; this.icap = c; }
   }
-  /** Quad a→b→c→d (counter-clockwise seen from `hint`'s side), colour [r,g,b], uv rect or null. */
+  vert(x, y, z, nx, ny, nz, c, u, w, f) {
+    const k = this.v++; const k3 = k * 3;
+    this.P[k3] = x; this.P[k3 + 1] = y; this.P[k3 + 2] = z; this.N[k3] = nx; this.N[k3 + 1] = ny; this.N[k3 + 2] = nz;
+    this.C[k3] = c[0]; this.C[k3 + 1] = c[1]; this.C[k3 + 2] = c[2]; this.U[k * 2] = u; this.U[k * 2 + 1] = w; this.F[k] = f;
+  }
+  /** Quad a→b→c→d, colour [r,g,b], uv rect or null; `hint` = which side is the front. */
   quad(a, b, c, d, col, uv, hint) {
     const ux = b[0] - a[0]; const uy = b[1] - a[1]; const uz = b[2] - a[2];
     const vx = d[0] - a[0]; const vy = d[1] - a[1]; const vz = d[2] - a[2];
@@ -9460,13 +9510,13 @@ class Buf {
     let flip = false;
     if (hint && nx * hint[0] + ny * hint[1] + nz * hint[2] < 0) { flip = true; nx = -nx; ny = -ny; nz = -nz; }
     const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l;
-    const v = this.v;
-    for (const p of [a, b, c, d]) { this.p.push(p[0], p[1], p[2]); this.n.push(nx, ny, nz); this.c.push(col[0], col[1], col[2]); }
-    this._fx(4);
-    if (uv) this.u.push(uv[0], uv[1], uv[2], uv[1], uv[2], uv[3], uv[0], uv[3]);
-    else for (let k = 0; k < 4; k++) this.u.push(WHITE_UV[0], WHITE_UV[1]);
-    if (flip) this.i.push(v, v + 2, v + 1, v, v + 3, v + 2); else this.i.push(v, v + 1, v + 2, v, v + 2, v + 3);
-    this.v += 4;
+    this.grow(4, 6); const v = this.v; const f = this.fxv;
+    const u0 = uv ? uv[0] : WHITE_UV[0]; const v0 = uv ? uv[1] : WHITE_UV[1]; const u1 = uv ? uv[2] : WHITE_UV[0]; const v1 = uv ? uv[3] : WHITE_UV[1];
+    this.vert(a[0], a[1], a[2], nx, ny, nz, col, u0, v0, f); this.vert(b[0], b[1], b[2], nx, ny, nz, col, u1, v0, f);
+    this.vert(c[0], c[1], c[2], nx, ny, nz, col, u1, v1, f); this.vert(d[0], d[1], d[2], nx, ny, nz, col, u0, v1, f);
+    const I = this.I; let n = this.ni;
+    if (flip) { I[n++] = v; I[n++] = v + 2; I[n++] = v + 1; I[n++] = v; I[n++] = v + 3; I[n++] = v + 2; } else { I[n++] = v; I[n++] = v + 1; I[n++] = v + 2; I[n++] = v; I[n++] = v + 2; I[n++] = v + 3; }
+    this.ni = n;
   }
   tri(a, b, c, col, hint, uvs) {
     const ux = b[0] - a[0]; const uy = b[1] - a[1]; const uz = b[2] - a[2];
@@ -9475,21 +9525,37 @@ class Buf {
     let flip = false;
     if (hint && nx * hint[0] + ny * hint[1] + nz * hint[2] < 0) { flip = true; nx = -nx; ny = -ny; nz = -nz; }
     const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l;
-    const v = this.v;
-    for (const p of [a, b, c]) { this.p.push(p[0], p[1], p[2]); this.n.push(nx, ny, nz); this.c.push(col[0], col[1], col[2]); }
-    this._fx(3);
-    if (uvs) this.u.push(...uvs); else for (let k = 0; k < 3; k++) this.u.push(WHITE_UV[0], WHITE_UV[1]);
-    if (flip) this.i.push(v, v + 2, v + 1); else this.i.push(v, v + 1, v + 2);
-    this.v += 3;
+    this.grow(3, 3); const v = this.v; const f = this.fxv;
+    const U = uvs || [WHITE_UV[0], WHITE_UV[1], WHITE_UV[0], WHITE_UV[1], WHITE_UV[0], WHITE_UV[1]];
+    this.vert(a[0], a[1], a[2], nx, ny, nz, col, U[0], U[1], f); this.vert(b[0], b[1], b[2], nx, ny, nz, col, U[2], U[3], f); this.vert(c[0], c[1], c[2], nx, ny, nz, col, U[4], U[5], f);
+    const I = this.I; let n = this.ni;
+    if (flip) { I[n++] = v; I[n++] = v + 2; I[n++] = v + 1; } else { I[n++] = v; I[n++] = v + 1; I[n++] = v + 2; }
+    this.ni = n;
   }
-  /** Indexed mesh with per-vertex normals (smooth), e.g. terrain or tree blobs. */
+  /** Indexed mesh with per-vertex normals (smooth), e.g. terrain. */
   mesh(pos, nrm, cols, idx) {
-    const v = this.v;
-    for (let k = 0; k < pos.length; k += 3) { this.p.push(pos[k], pos[k + 1], pos[k + 2]); this.n.push(nrm[k], nrm[k + 1], nrm[k + 2]); this.c.push(cols[k], cols[k + 1], cols[k + 2]); this.u.push(WHITE_UV[0], WHITE_UV[1]); this.f.push(this.fxv); }
-    for (const q of idx) this.i.push(v + q);
-    this.v += pos.length / 3;
+    const nv = pos.length / 3; this.grow(nv, idx.length); const v = this.v;
+    for (let k = 0; k < nv; k++) { const c = [cols[k * 3], cols[k * 3 + 1], cols[k * 3 + 2]]; this.vert(pos[k * 3], pos[k * 3 + 1], pos[k * 3 + 2], nrm[k * 3], nrm[k * 3 + 1], nrm[k * 3 + 2], c, WHITE_UV[0], WHITE_UV[1], this.fxv); }
+    for (let k = 0; k < idx.length; k++) this.I[this.ni++] = v + idx[k];
   }
-  get tris() { return this.i.length / 3; }
+  /** Ink outline (inverted hull) for what was added since (v0, i0): vertices pushed out along
+   *  their averaged normals by `ol`, winding reversed, unlit ink colour (fx 1). */
+  hull(v0, i0, ol, ink) {
+    const v1 = this.v; const i1 = this.ni; const nv = v1 - v0; const acc = new Map(); const P = this.P; const N = this.N;
+    const keys = new Float64Array(nv);
+    for (let q = 0; q < nv; q++) {
+      const k3 = (v0 + q) * 3; const key = Math.round(P[k3] * 40) * 73856093 + Math.round(P[k3 + 1] * 40) * 19349663 + Math.round(P[k3 + 2] * 40) * 83492791;
+      keys[q] = key; let e = acc.get(key); if (!e) { e = [0, 0, 0]; acc.set(key, e); } e[0] += N[k3]; e[1] += N[k3 + 1]; e[2] += N[k3 + 2];
+    }
+    this.grow(nv, i1 - i0); const base = this.v;
+    for (let q = 0; q < nv; q++) {
+      const k3 = (v0 + q) * 3; const e = acc.get(keys[q]); const l = Math.hypot(e[0], e[1], e[2]) || 1;
+      this.vert(P[k3] + e[0] / l * ol, P[k3 + 1] + e[1] / l * ol, P[k3 + 2] + e[2] / l * ol, -N[k3], -N[k3 + 1], -N[k3 + 2], ink, WHITE_UV[0], WHITE_UV[1], 1);
+    }
+    const I = this.I;
+    for (let k = i0; k < i1; k += 3) { I[this.ni++] = base + I[k] - v0; I[this.ni++] = base + I[k + 2] - v0; I[this.ni++] = base + I[k + 1] - v0; }
+  }
+  get tris() { return this.ni / 3; }
 }
 
 // ── colour helpers ─────────────────────────────────────────────────────────────
@@ -9527,7 +9593,7 @@ function ico() {
 }
 
 async function buildBoulder(THREE, kit = {}) {
-  const t0 = performance.now();
+  const t0 = performance.now(); const TT = {}; let tl = t0; const mark = (k) => { const n = performance.now(); TT[k] = Math.round(n - tl); tl = n; };
   const slice = typeof kit.slice === 'function' ? () => kit.slice() : () => null;
   const quality = kit.quality || 'high';
   const low = quality === 'low';
@@ -9606,7 +9672,9 @@ async function buildBoulder(THREE, kit = {}) {
       }
       for (let r = 0; r < rows - 1; r++) for (let c = 0; c < cols - 1; c++) {
         const a = r * cols + c;
-        if (nearCreek) { const xm = pos[a * 3] + step * HG.HC / 2; const zm = pos[a * 3 + 2] + step * HG.HC / 2; if (creekD(xm, zm) < 8.5) continue; }
+        const xm = pos[a * 3] + step * HG.HC / 2; const zm = pos[a * 3 + 2] + step * HG.HC / 2;
+        if (nearCreek && creekD(xm, zm) < 8.5) continue;
+        if (xm < footX(zm) - 40 && isFarMtn(xm - step * 4, zm) && isFarMtn(xm + step * 4, zm)) continue; // the backdrop draws the far flank
         idx.push(a, a + cols, a + 1, a + 1, a + cols, a + cols + 1);
       }
       buf.mesh(pos, nrm, col, idx); terrTris += idx.length / 3;
@@ -9614,6 +9682,7 @@ async function buildBoulder(THREE, kit = {}) {
     await slice();
   }
 
+  mark('terrain');
   // ── Boulder Creek: water, rocky banks, grass shoulders ──────────────────────────────
   {
     const pts = CREEK; const W = rgb('#4b8fb5'); const Wd = rgb('#3d7ea3'); const bank = rgb('#a08c6c'); const grass = rgb('#86bd5c');
@@ -9642,8 +9711,9 @@ async function buildBoulder(THREE, kit = {}) {
     for (const [a, b2, c2] of tr) buf.tri([w.poly[a][0], y, w.poly[a][1]], [w.poly[b2][0], y, w.poly[b2][1]], [w.poly[c2][0], y, w.poly[c2][1]], rgb('#4b8fb5'), [0, 1, 0]);
   }
 
+  mark('creek');
   // ── lots, plazas, the mall's bricks, the driveway ──────────────────────────────────
-  for (const o of OPEN) {
+  for (const o of [...OPEN, ...L.lots]) {
     const poly = o.poly; const c = poly.reduce((a, p) => [a[0] + p[0] / poly.length, a[1] + p[1] / poly.length], [0, 0]);
     const isRect = poly.length === 4;
     const paint = o.paint || 'asphalt';
@@ -9681,14 +9751,16 @@ async function buildBoulder(THREE, kit = {}) {
   }
   await slice();
 
+  mark('lots');
   // ── sidewalks + curbs ───────────────────────────────────────────────────────────────
   {
     const top = rgb('#d3cdc1'); const curb = rgb('#b9b2a5'); const brk = rgb('#c79a80');
     for (const r of sm.list) {
       if (r.bridge || r.kind === 'highway' || r.kind === 'ramp' || r.kind === 'alley') continue;
+      const notR = (o) => o !== r && !o.bridge;
       for (const side of [-1, 1]) {
         let prev = null;
-        for (let k = 0; k < r.n; k++) {
+        for (let k = 0; k < r.n; k += (k + 2 < r.n ? 2 : 1)) {
           const x = r.x[k]; const z = r.z[k];
           const kk = Math.min(r.n - 1, k + 1); const kp = Math.max(0, k - 1);
           let tx = r.x[kk] - r.x[kp]; let tz = r.z[kk] - r.z[kp]; const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
@@ -9697,7 +9769,7 @@ async function buildBoulder(THREE, kit = {}) {
           const w = SIDEWALK(zn);
           const ix = x + nx * (r.hw + 0.3); const iz = z + nz * (r.hw + 0.3); const ox = x + nx * (r.hw + w); const oz = z + nz * (r.hw + w);
           const inMall = ox > MALL.x0 - 1 && ox < MALL.x1 + 1 && oz > MALL.z0 - 1 && oz < MALL.z1 + 1;
-          const ok = w > 0 && !inMall && sm.clearance(ix + nx * 0.4, iz + nz * 0.4, (o) => o !== r && !o.bridge) > 0.2 && sm.clearance(ox, oz, (o) => o !== r && !o.bridge) > 0.2 && sm.clearance(ox, oz, (o) => o === r) > w - 0.6;
+          const ok = w > 0 && !inMall && sm.clearance(ix + nx * 0.4, iz + nz * 0.4, notR) > 0.2 && sm.clearance(ox, oz, notR) > 0.2;
           if (!ok) { prev = null; continue; }
           const hy = height(x, z); const cur = { i: [ix, hy + 0.15, iz], o: [ox, height(ox, oz) + 0.15, oz], ib: [ix, hy - 0.05, iz] };
           const ex = x + nx * (r.hw + 0.02); const ez = z + nz * (r.hw + 0.02); cur.e = [ex, hy + 0.155, ez]; cur.eb = [ex, hy - 0.05, ez];
@@ -9713,20 +9785,23 @@ async function buildBoulder(THREE, kit = {}) {
   }
   await slice();
 
+  mark('sidewalks');
   // ── buildings ────────────────────────────────────────────────────────────────────
   const AWN = ['#2f6f5e', '#9b2f2f', '#2f4f7f', '#c08a2e', '#5b4a6b', '#3d6b3a'].map(rgb);
   let bc = 0;
   for (const b of L.buildings) {
-    const buf = B(b.x, b.z); const v0 = buf.v; const i0 = buf.i.length;
+    const buf = B(b.x, b.z); const v0 = buf.v; const i0 = buf.ni;
     drawBuilding(buf, b);
     if (OL && b.style !== 'stands') buf.hull(v0, i0, OL * (b.w > 30 || b.h > 14 ? 1.6 : 1), INK);
     if (++bc % 250 === 0) await slice();
   }
+  mark('buildings');
   // ── props: walls, rails, rocks, planters, buskers, the stadium turf, the home's details ──
   for (const p of L.props) drawProp(p);
   await slice();
+  mark('props');
   // ── decor trees (backyards, the foothill forest) ──────────────────────────────────
-  const decor = low ? L.decor.filter((_, i) => i % 3 === 0) : L.decor;
+  const decor = L.decor.filter((d, i) => !d.far && (!low || i % 3 === 0));
   for (const d of decor) drawTree(B(d.x, d.z), d);
   await slice();
   // Flagstaff summit: the stone amphitheatre inside the loop; Valmont's dirt jumps
@@ -9735,24 +9810,27 @@ async function buildBoulder(THREE, kit = {}) {
     for (let a = 0; a < 7; a++) { const ang = Math.PI * (0.15 + a * 0.12); boxW(B(c[0], c[1]), c[0] + Math.cos(ang) * 14, y, c[1] - Math.sin(ang) * 11, 5, 0.7, 1.2, -ang + Math.PI / 2, rgb('#b48a6e')); }
   }
 
+  mark('decor');
   // flush: one mesh per chunk
   let tris = 0; let meshes = 0;
   for (const [grp, buf] of bufs) {
     if (!buf.v) continue;
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(buf.p, 3));
-    geo.setAttribute('normal', new THREE.Float32BufferAttribute(buf.n, 3));
-    geo.setAttribute('uv', new THREE.Float32BufferAttribute(buf.u, 2));
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(buf.c, 3));
-    geo.setAttribute('fx', new THREE.Float32BufferAttribute(buf.f, 1));
-    geo.setIndex(buf.v > 65535 ? new THREE.Uint32BufferAttribute(buf.i, 1) : new THREE.Uint16BufferAttribute(buf.i, 1));
+    const nv = buf.v;
+    geo.setAttribute('position', new THREE.BufferAttribute(buf.P.slice(0, nv * 3), 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(buf.N.slice(0, nv * 3), 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(buf.U.slice(0, nv * 2), 2));
+    geo.setAttribute('color', new THREE.BufferAttribute(buf.C.slice(0, nv * 3), 3));
+    geo.setAttribute('fx', new THREE.BufferAttribute(buf.F.slice(0, nv), 1));
+    geo.setIndex(new THREE.BufferAttribute(nv > 65535 ? buf.I.slice(0, buf.ni) : Uint16Array.from(buf.I.subarray(0, buf.ni)), 1));
     geo.computeBoundingSphere();
     const m = new THREE.Mesh(geo, mat); m.name = 'boulder-chunk'; m.userData.noMerge = true;
     if (grp.position && (grp.position.x || grp.position.y || grp.position.z)) m.position.set(-grp.position.x, -grp.position.y, -grp.position.z);
     m.matrixAutoUpdate = false; m.updateMatrix();
     grp.add(m); tris += buf.tris; meshes++;
   }
-  root.userData.stats = { tris, meshes, terrTris, buildMs: Math.round(performance.now() - t0), layoutMs: Math.round(L.ms), solids: L.solids.length, buildings: L.buildings.length };
+  mark('flush');
+  root.userData.stats = { TT, tris, meshes, terrTris, buildMs: Math.round(performance.now() - t0), layoutMs: Math.round(L.ms), solids: L.solids.length, buildings: L.buildings.length };
   return root;
 
   // ── helpers (hoisted) ─────────────────────────────────────────────────────────────
@@ -10057,7 +10135,6 @@ async function buildBoulder(THREE, kit = {}) {
     }
   }
 }
-void footX;
 
 return { buildBoulder };
 })();
@@ -10075,6 +10152,7 @@ __M['js/games/getaway/maps/boulder-backdrop.js'] = (() => {
 // 40.00165, −105.30749. Others: South Boulder Peak 39.9542, −105.2990, 2556 m; Mt Sanitas
 // 40.0300, −105.3060, 2069 m; Second / Third Flatiron 39.9876, −105.2930 / 39.9848, −105.2916.
 const { P, S, BOUNDS, rawHeight } = __M['js/games/getaway/maps/boulder-data.js'];
+const { layout, height, isFarMtn } = __M['js/games/getaway/maps/boulder-layout.js'];
 
 const CITY = 1655; // metres: downtown's elevation (map y = 0)
 const up = (m) => (m - CITY) * S;
@@ -10135,16 +10213,27 @@ function buildBackdrop(THREE, kit = {}) {
   };
   const xs = []; for (let x = -4200; x <= 7800; x += x < -900 || x > 2100 ? 240 : 60) xs.push(x);
   const zs = []; for (let z = -5600; z <= 6600; z += z < -700 || z > 2000 ? 240 : 60) zs.push(z);
-  const Hh = (x, z) => (x > inner.x0 && x < inner.x1 && z > inner.z0 && z < inner.z1 ? rawHeight(x, z) - 1.5 : rangeHeight(x, z) - (x > 0 && z < 0 ? 0.6 : 0.6));
+  const inIn = (x, z) => x > inner.x0 && x < inner.x1 && z > inner.z0 && z < inner.z1;
+  const Hh = (x, z) => (inIn(x, z) ? height(x, z) - 0.4 : rangeHeight(x, z) - 0.6);
   const hs = zs.map((z) => xs.map((x) => Hh(x, z)));
   for (let j = 0; j < zs.length - 1; j++) for (let i = 0; i < xs.length - 1; i++) {
     const xa = xs[i]; const xb = xs[i + 1]; const za = zs[j]; const zb = zs[j + 1];
-    if (xa >= inner.x0 && xb <= inner.x1 && za >= inner.z0 && zb <= inner.z1) continue; // the in-town terrain covers this
+    if (xa >= inner.x0 && xb <= inner.x1 && za >= inner.z0 && zb <= inner.z1 && !isFarMtn((xa + xb) / 2 + 30, (za + zb) / 2)) continue; // the town terrain covers this
     const p00 = [xa, hs[j][i], za]; const p10 = [xb, hs[j][i + 1], za]; const p01 = [xa, hs[j + 1][i], zb]; const p11 = [xb, hs[j + 1][i + 1], zb];
     const cA = colAt((xa + xb) / 2, (za + zb) / 2, (p00[1] + p10[1] + p11[1]) / 3); const cB = colAt((xa + xb) / 2 + 1, (za + zb) / 2 + 1, (p00[1] + p11[1] + p01[1]) / 3);
     tri(p00, p11, p10, cA); tri(p00, p01, p11, cB);
   }
 
+  // the foothill forest on the far flank (one cone each; fog-free so the hills read crisp)
+  for (const d of layout().decor) {
+    if (!d.far) continue;
+    const s = d.s; const g = d.c < 0.5 ? forest : C('#3f5f42'); const h = 7.5 * s; const r = 2.6 * s; const y = d.y - 0.5;
+    for (let i = 0; i < 5; i++) {
+      const a0 = i / 5 * Math.PI * 2 + d.c * 6; const a1 = (i + 1) / 5 * Math.PI * 2 + d.c * 6;
+      const p0 = [d.x + Math.cos(a0) * r, y, d.z + Math.sin(a0) * r]; const p1 = [d.x + Math.cos(a1) * r, y, d.z + Math.sin(a1) * r];
+      const am = (a0 + a1) / 2; triRaw(p1, p0, [d.x, y + h, d.z], i % 2 ? g : [g[0] * 0.85, g[1] * 0.85, g[2] * 0.85], [Math.cos(am), 0.5, Math.sin(am)]);
+    }
+  }
   // the Flatirons: tilted slabs of pink Fountain sandstone, steep faces to the east
   const face = C('#d9937a'); const faceD = C('#c27c66'); const edge = C('#8c5446');
   for (const f of FLATIRONS) {
@@ -10202,7 +10291,7 @@ __M['js/games/getaway/maps/boulder.js'] = (() => {
 // Flagstaff Rd's switchbacks under the Flatirons. Data: boulder-data.js; layout:
 // boulder-layout.js; meshes: boulder-build.js; skyline: boulder-backdrop.js.
 const { BOUNDS, ROADS, OPEN, WATER, LANDMARKS, P } = __M['js/games/getaway/maps/boulder-data.js'];
-const { layout, height, pickSpawn } = __M['js/games/getaway/maps/boulder-layout.js'];
+const { layout, layoutGen, height, pickSpawn } = __M['js/games/getaway/maps/boulder-layout.js'];
 const { buildBoulder } = __M['js/games/getaway/maps/boulder-build.js'];
 const { buildBackdrop, PEAKS } = __M['js/games/getaway/maps/boulder-backdrop.js'];
 
@@ -10211,7 +10300,7 @@ const SPAWN_DEFS = [
   ['Pearl St', 1, 0.3, 1, 'Downtown, east on Pearl St'],
   ['Broadway', 0, 0.62, 1, 'Broadway, south through downtown'],
   ['28th St', 1, 0.45, -1, '28th St, northbound'],
-  ['US-36 Boulder Turnpike', 0, 0.62, -1, 'US-36, the Turnpike into town'],
+  ['US-36 Boulder Turnpike', 0, 0.42, -1, 'US-36, the Turnpike into town'],
   ['Moorhead Ave', 0, 0.33, 1, 'Martin Acres, down Moorhead Ave'],
   ['Baseline Rd', 0, 0.36, -1, 'Baseline Rd, west to Chautauqua'],
   ['Arapahoe Ave', 0, 0.62, 1, 'Arapahoe Ave, east Boulder'],
@@ -10220,7 +10309,7 @@ const SPAWN_DEFS = [
   ['Canyon Blvd', 0, 0.45, -1, 'Canyon Blvd, west toward the canyon'],
   ['Valmont Rd', 0, 0.45, 1, 'Valmont Rd, eastbound'],
   ['Table Mesa Dr', 0, 0.62, -1, 'Table Mesa Dr, westbound'],
-  ['Flagstaff Rd', 0, 0.82, -1, 'Flagstaff Rd, down the switchbacks'],
+  ['Flagstaff Rd', 0, 0.86, -1, 'Flagstaff Rd, down the switchbacks'],
 ];
 const SPAWNS = SPAWN_DEFS.map(([road, nth, f, dir, where]) => {
   const s = pickSpawn(road, f, 80, dir, nth);
@@ -10239,14 +10328,17 @@ const BOULDER = {
   bounds: { ...BOUNDS },
   height,
   roads: ROADS,
-  open: OPEN.map(({ kind, poly }) => ({ kind, poly })),
+  get open() { return [...OPEN, ...layout().lots].map(({ kind, poly }) => ({ kind, poly })); },
   get solids() { return layout().solids; },
   water: WATER.map(({ poly }) => ({ poly })),
   spawns: SPAWNS,
   landmarks: [...LANDMARKS, ...FAR],
   sky: { top: '#5d9bd3', horizon: '#f3dcb0', fog: '#ead8b9', fogNear: 170, fogFar: 640, sun: { bearing: 255, elev: 24 } },
   /** Optional: generate the layout ahead of build(), in slices. */
-  async prepare(kit = {}) { layout(); if (kit.slice) await kit.slice(); },
+  async prepare(kit = {}) {
+    const it = layoutGen();
+    while (!it.next().done) if (kit.slice) await kit.slice();
+  },
   build(THREE, kit) { return buildBoulder(THREE, kit || {}); },
   backdrop(THREE, kit) { return buildBackdrop(THREE, kit || {}); },
 };
@@ -12767,21 +12859,28 @@ function createGame(el, api) {
     const g = createGeo(entry);
     const w = await buildWorld(THREE, entry, g, P, U, { quality: phoneish ? 'mid' : 'high', onProgress: (p, t) => showLoad(0.1 + p * 0.8, t), dead: () => dead || seq !== loadSeq, budget: TUNE.sliceMs || 12 });
     if (dead || seq !== loadSeq || !w) { if (w) w.dispose(); return; }
-    // swap worlds
-    if (world) { world.dispose(); if (fx) fx.dispose(); }
+    // swap worlds: the cars, wheels and traffic meshes are rebuilt against the new world's
+    // materials; take them out of the old scene first so its dispose() doesn't free them
+    if (carViews) {
+      for (const v of Object.values(carViews)) { v.group.removeFromParent(); v.dispose(); }
+      wheels.mesh.removeFromParent(); wheels.dispose();
+      for (const m of [trafficMeshes.paint, trafficMeshes.trim]) { m.removeFromParent(); m.geometry.dispose(); }
+      carViews = null;
+    }
+    if (fx) { for (const m of [fx.puffs, fx.sparks, fx.skids, fx.strips, fx.oils, fx.lines]) m.removeFromParent(); fx.dispose(); fx = null; }
+    if (world) world.dispose();
     world = w; geo = g; S.mapId = entry.id; S.mapIdx = MAPS.indexOf(entry); S.mapEntry = entry;
     U.uSiren.value.w = 0;
     renderer.setClearColor(new THREE.Color().fromArray(world.fogC), 1);
     for (const k of AB) { cams[k].cam.far = world.fogFar + 80; cams[k].cam.updateProjectionMatrix(); }
     mapImg = makeMapImage(geo, entry, P, phoneish ? 1100 : 1400);
-    if (!carViews) {
-      carViews = { runA: createCarView(THREE, P, U, 'runner', P.a, world.mats), runB: createCarView(THREE, P, U, 'runner', P.b, world.mats), cop: createCarView(THREE, P, U, 'cop', null, world.mats), cop2: createCarView(THREE, P, U, 'cop', null, world.mats) };
-      wheels = createWheels(THREE, P, world.mats, 8);
-      const tg = buildTrafficGeos(THREE, P);
-      trafficMeshes = { paint: new THREE.InstancedMesh(tg.paint, world.mats.vc, TRAFFIC.max), trim: new THREE.InstancedMesh(tg.trim, world.mats.vc, TRAFFIC.max) };
-      trafficMeshes.paint.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(TRAFFIC.max * 3).fill(1), 3);
-      for (const m of [trafficMeshes.paint, trafficMeshes.trim]) { m.frustumCulled = false; m.count = 0; }
-    }
+    carViews = { runA: createCarView(THREE, P, U, 'runner', P.a, world.mats), runB: createCarView(THREE, P, U, 'runner', P.b, world.mats), cop: createCarView(THREE, P, U, 'cop', null, world.mats), cop2: createCarView(THREE, P, U, 'cop', null, world.mats) };
+    wheels = createWheels(THREE, P, world.mats, 8);
+    const tg = buildTrafficGeos(THREE, P);
+    // colour-instanced meshes get their own material (its programs differ from the plain ones)
+    trafficMeshes = { paint: new THREE.InstancedMesh(tg.paint, world.mats.vcColor, TRAFFIC.max), trim: new THREE.InstancedMesh(tg.trim, world.mats.vc, TRAFFIC.max) };
+    trafficMeshes.paint.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(TRAFFIC.max * 3).fill(1), 3);
+    for (const m of [trafficMeshes.paint, trafficMeshes.trim]) { m.frustumCulled = false; m.count = 0; }
     for (const v of Object.values(carViews)) world.scene.add(v.group);
     world.scene.add(wheels.mesh); world.scene.add(trafficMeshes.paint); world.scene.add(trafficMeshes.trim);
     fx = createFx(THREE, world.scene, P, U, world.mats);
@@ -12882,7 +12981,7 @@ function createGame(el, api) {
     if (traffic && geo) traffic = createTraffic(geo, S.mapId, S.setup.rules.traffic);
     renderLobby(true);
   }
-  link.on('setup', (d) => { if (!isHost && d && S.phase === 'lobby') setSetup(d, false); });
+  link.on('setup', (d) => { if (!isHost && d && S.phase === 'lobby') setSetup(clone(d), false); });
   link.on('ready', (d) => { if (isHost) { S.partnerReady = !!(d && d.on); renderLobby(true); } });
 
   function onClick(e) {
@@ -12949,8 +13048,9 @@ function createGame(el, api) {
     traffic = createTraffic(geo, S.mapId, S.match.rules.traffic);
     applyRound(R);
   }
-  link.on('match', (d) => { if (!isHost && d && d.match) applyMatch(d.match, d.R); });
-  link.on('round', (d) => { if (!isHost && d && S.match && d.R) { S.match.scores = d.scores || S.match.scores; S.match.hist = d.hist || S.match.hist; applyRound(d.R); } });
+  const clone = (o) => JSON.parse(JSON.stringify(o)); // room payloads arrive frozen
+  link.on('match', (d) => { if (!isHost && d && d.match) applyMatch(clone(d.match), clone(d.R)); });
+  link.on('round', (d) => { if (!isHost && d && S.match && d.R) { const c = clone(d); S.match.scores = c.scores || S.match.scores; S.match.hist = c.hist || S.match.hist; applyRound(c.R); } });
 
   function applyRound(R) {
     if (S.R && S.R.idx === R.idx && !S.R.over) return;
@@ -12996,7 +13096,7 @@ function createGame(el, api) {
     if (live) link.urgent('end', res);
     applyEnd(res);
   }
-  link.on('end', (d) => { if (d && S.R && d.idx === S.R.idx) applyEnd(d); });
+  link.on('end', (d) => { if (d && S.R && d.idx === S.R.idx) applyEnd(clone(d)); });
   function applyEnd(res) {
     const R = S.R; if (!R || R.over || res.idx !== R.idx) return;
     R.over = true; R.result = res; S.phase = 'result';
@@ -13038,14 +13138,15 @@ function createGame(el, api) {
     if (live) link.urgent('final', fin);
     applyFinal(fin);
   }
-  link.on('final', (d) => { if (d) applyFinal(d); });
+  link.on('final', (d) => { if (d) applyFinal(clone(d)); });
   function applyFinal(fin) {
     if (S.finalShown) return; S.finalShown = true;
     S.phase = 'final';
     const sc = `${fin.scores.a}–${fin.scores.b}`;
     let res;
-    if (ai()) res = { winner: null, text: fin.winner === human() ? `You beat the AI ${fin.scores.a}–${fin.scores.b}` : fin.winner ? `The AI won ${fin.scores.b}–${fin.scores.a}` : `Practice: ${sc}`, sub: 'Practice vs AI' };
-    else res = { winner: fin.winner, text: fin.winner ? `${api.name(fin.winner)} wins ${Math.max(fin.scores.a, fin.scores.b)}–${Math.min(fin.scores.a, fin.scores.b)}` : `All square, ${sc}`, sub: fin.tie && fin.winner ? 'Tiebreak: longest time on the run' : 'Getaway', score: { a: fin.scores.a, b: fin.scores.b } };
+    const tb = fin.tie && fin.winner ? ' on the tiebreak' : '';
+    if (ai()) res = { winner: null, text: fin.winner === human() ? `You beat the AI${tb}, ${sc}` : fin.winner ? `The AI won${tb}, ${fin.scores.a}–${fin.scores.b}` : `Practice: ${sc}`, sub: tb ? 'Tiebreak: longest time on the run' : 'Practice vs AI' };
+    else res = { winner: fin.winner, text: fin.winner ? (tb ? `${api.name(fin.winner)} wins on the tiebreak, ${sc}` : `${api.name(fin.winner)} wins ${Math.max(fin.scores.a, fin.scores.b)}–${Math.min(fin.scores.a, fin.scores.b)}`) : `All square, ${sc}`, sub: tb ? 'Tiebreak: longest time on the run' : 'Getaway', score: { a: fin.scores.a, b: fin.scores.b } };
     S.result = res;
     hud.card(null);
     for (const w of viewers()) H0().view(w).stamp(fin.winner ? `${nameOf(fin.winner).toUpperCase()} WINS` : 'DRAW', fin.winner || '');
@@ -13135,7 +13236,7 @@ function createGame(el, api) {
     return true;
   }
   function addSpike(s) { if (!S.R || S.R.spikes.find((x) => x.id === s.id)) return; S.R.spikes.push({ ...s, gone: !!s.gone }); }
-  link.on('spike', (d) => { if (d && S.R) addSpike(d); });
+  link.on('spike', (d) => { if (d && S.R) addSpike(clone(d)); });
   link.on('spikehit', (d) => { if (!d || !S.R) return; const s = S.R.spikes.find((x) => x.id === d.id); if (s) s.gone = true; const cw = copW(); P2[cw].stats.spikes++; for (const v of viewers()) if (v === cw) H0().view(v).stamp('SPIKED!', 'bad'); });
   function dropOil(w) {
     const p = P2[w]; const R = S.R;
@@ -13147,7 +13248,7 @@ function createGame(el, api) {
     if (live) link.urgent('oil', o);
     audio.oil();
   }
-  link.on('oil', (d) => { if (d && S.R && !S.R.oils.find((x) => x.id === d.id)) S.R.oils.push(d); });
+  link.on('oil', (d) => { if (d && S.R && !S.R.oils.find((x) => x.id === d.id)) S.R.oils.push(clone(d)); });
   // hits reported by the victim (the runner's device judges PITs and rams on the runner)
   link.on('hit', (d) => {
     if (!d || !S.R) return;
@@ -13504,7 +13605,7 @@ function createGame(el, api) {
     const f = carViews.cop.flash(dt, on);
     if (f >= 0) {
       const sy = Math.sin(cc.yaw); const cy = Math.cos(cc.yaw);
-      U.uSiren.value.set(cc.x + sy * 0.4, cc.y + 1.8, cc.z - cy * 0.4, P.dark ? 1 : 0.5);
+      U.uSiren.value.set(cc.x + sy * 0.4, cc.y + 1.8, cc.z - cy * 0.4, P.dark ? 1 : 0.3);
       U.uSirenCol.value.setRGB(f === 0 ? 1 : 0.15, f === 0 ? 0.12 : 0.35, f === 0 ? 0.15 : 1);
     } else U.uSiren.value.w = 0;
     // my headlights at night

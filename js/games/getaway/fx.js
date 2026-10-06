@@ -11,7 +11,7 @@ export function createFx(THREE, scene, P, U, mats) {
   const pb = new Builder(THREE, P.outline);
   pb.add(pb.T.ico, 0, 0, 0, 1, 1, 1, 0, [1, 1, 1], 0);
   const puffGeo = pb.geometryOut();
-  const puffs = new THREE.InstancedMesh(puffGeo, mats.vc, NP);
+  const puffs = new THREE.InstancedMesh(puffGeo, mats.vcColor || mats.vc, NP);
   puffs.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(NP * 3).fill(1), 3);
   puffs.frustumCulled = false; puffs.count = 0;
   scene.add(puffs);

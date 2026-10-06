@@ -462,6 +462,34 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
     } catch (e) { fails++; console.error(e.message); await shot(h.a, 'robust-fail').catch(() => {}); } finally { await h.close(); }
   }
 
+  // map switches rebuild the world; everything that outlives a world (cars, wheels, traffic,
+  // effects) must be rebuilt against the new one (regression: renders threw after a switch)
+  if (want('mapswitch')) {
+    const h = await launch({ port: PORT + 8, only: ['getaway'], who: ['a'], coarse: true });
+    const { a } = h;
+    try {
+      await arm(a, { ...FAST, rounds: 2 });
+      await h.startLive(a, 'getaway', 'local');
+      await ready(a);
+      const maps = (await hook(a, 'maps')).filter((m) => !m.stub).map((m) => m.id);
+      const seq = maps.length > 1 ? [...maps, ...maps, maps[0]] : ['dockside', 'dockside', 'dockside'];
+      for (const id of seq) {
+        await a.evaluate((m) => window.__getaway.reloadMap(m), id);
+        const v = await hook(a, 'measureView', -100, 40, Math.PI / 2, 'near');
+        await wait(400);
+        assert(v.calls > 5 && !h.errors.length, `switched to ${id}: renders (${v.calls} draw calls), no errors`);
+      }
+      await hook(a, 'setSetup', { map: maps[0] });
+      await a.click('.g-gtw [data-l="start"]');
+      await phase(a, 'chase', 15000);
+      await hook(a, 'hold', 'a', { gas: 1 });
+      await wait(2000);
+      const s = await st(a);
+      assert(s.a.speed > 5 && !h.errors.length, 'a chase after several switches drives and renders cleanly');
+      h.assertNoErrors();
+    } catch (e) { fails++; console.error(e.message, h.errors.slice(0, 3)); await shot(h.a, 'mapswitch-fail').catch(() => {}); } finally { await h.close(); }
+  }
+
   if (want('perf')) {
     for (const [kind, opts] of [['phone', { coarse: true }], ['laptop', { fine: true, device: 'Desktop Chrome' }]]) {
       const h = await launch({ port: PORT + 5 + (kind === 'laptop' ? 1 : 0), only: ['getaway'], who: ['a'], ...opts });
