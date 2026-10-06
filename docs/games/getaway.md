@@ -248,11 +248,18 @@ nitro, oil, near-miss, countdown beeps, stamps and win/lose stings.
 Measured (tests, software GL, so frame times say nothing about phones; draw calls, triangles and
 JS cost are what count):
 
-| Map | build (longest block) | in view (phone 844×390) | chase |
+| Map | world build, busy time (longest block) | triangles in the map | in view, phone 844×390 (laptop 1280×800) |
 |---|---|---|---|
-| Dockside | 362 ms (63 ms) | ≤ 26 draw calls, ≤ 123k triangles | ≤ 30 calls, game JS p50 2.8 ms |
-| Boulder | see the perf test (designer's map) | | |
-| Santee | see the perf test (designer's map) | | |
+| Dockside | 122 ms (23 ms) | 107k | ≤ 26 draw calls, ≤ 114k triangles (25, 113k) |
+| Boulder | 529 ms (50 ms) + prepare ~400 ms | 590k | ≤ 50 draw calls, ≤ 188k triangles (47, 180k) |
+| Santee | 485 ms (18 ms) + prepare ~370 ms | 568k | ≤ 41 draw calls, ≤ 194k triangles (38, 186k) |
+
+These are maxima over every spawn plus sampled road points, in four directions each (near and far
+cameras). A busy chase (AI driving, traffic, effects) on Dockside: ≤ 30 draw calls, ≤ 116k
+triangles, game JS p50 1.7 ms / p95 4–5 ms per frame (that includes three's render submission).
+Stage timings are recorded in `world.stats.stages` (roads, ground, props, build, backdrop, merge).
+While a map builds, the game stops rendering behind the solid loading card, so the main thread is
+the build's.
 
 ## Practice vs AI (js/games/getaway/ai.js)
 

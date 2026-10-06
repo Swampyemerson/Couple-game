@@ -1105,7 +1105,7 @@ export function createGame(el, api) {
         v.role(role, w);
         v.health(c.hp, role);
       }
-      const left = S.phase === 'chase' ? R.endAt - now : R.endAt - R.t0;
+      const left = R.over && R.result ? Math.max(0, R.endAt - R.result.at) : S.phase === 'chase' ? R.endAt - now : R.endAt - R.t0;
       v.clock(S.paused && S.pausedAt > R.t0 ? R.endAt - S.pausedAt : left, `Round ${R.idx + 1}/${S.match.rounds}`, S.phase === 'chase' && left < 15000);
       // heat meter
       const rp = P2[R.runner];

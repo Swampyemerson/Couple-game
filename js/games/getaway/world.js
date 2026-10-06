@@ -230,8 +230,7 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
   const globalG = new THREE.Group(); globalG.name = 'map-global';
   if (built && built.isObject3D) globalG.add(built);
   scene.add(globalG);
-  maxBlock = Math.max(maxBlock, performance.now() - sliceT);
-  sliceT = performance.now();
+  maxBlock = Math.max(maxBlock, performance.now() - sliceT); // a synchronous build is one block
 
   mark('build');
   // ── backdrop ──
