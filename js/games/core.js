@@ -517,10 +517,13 @@ function showInvite() {
   const def = BY_ID[inv.game];
   const el = document.createElement('div');
   el.id = 'gm-invite';
-  el.className = 'gm-invite';
+  el.className = `gm-invite p-${other(me())}`;
   el.setAttribute('role', 'status');
-  el.innerHTML = `<div class="gm-invite-txt"><b>${esc(nameOf(other(me())))}</b> wants to play <b>${esc(def.title)}</b> live</div>
-    <div class="gm-invite-btns"><button class="gm-btn gm-btn-ghost" data-g="invite-no">Not now</button><button class="gm-btn" data-g="invite-yes">Join</button></div>`;
+  el.innerHTML = `<div class="gm-invite-ticket">
+      <span class="gm-invite-cover" aria-hidden="true">${def.cover || ''}</span>
+      <div class="gm-invite-txt"><span class="gm-invite-kicker">Live invite</span><span><b>${esc(nameOf(other(me())))}</b> wants to play <b>${esc(def.title)}</b></span></div>
+      <div class="gm-invite-btns"><button class="gm-btn gm-btn-ghost" data-g="invite-no">Not now</button><button class="gm-btn" data-g="invite-yes">Join</button></div>
+    </div>`;
   document.body.appendChild(el);
   clearTimeout(showInvite.t);
   showInvite.t = setTimeout(() => { if (G.invite === inv) { G.invite = null; el.remove(); G.hooks.onChange(); } }, 90000);
@@ -528,21 +531,22 @@ function showInvite() {
 
 // ── chrome ────────────────────────────────────────────────────────────
 function chipHTML(w) {
+  const n = String(nameOf(w) || '');
   return `<div class="gm-p gm-p-${w}" data-p="${w}">
-    <span class="gm-p-dot" aria-hidden="true"></span>
-    <span class="gm-p-name">${esc(nameOf(w))}</span>
+    <span class="gm-p-dot" aria-hidden="true">${esc(n.slice(0, 1).toUpperCase())}</span>
+    <span class="gm-p-name">${esc(n)}</span>
     <span class="gm-p-score" data-score="${w}"></span>
   </div>`;
 }
 
 function chromeHTML(def, { live = false } = {}) {
-  return `<div class="gm" data-game="${esc(def.id)}" data-kind="${def.kind}">
+  return `<div class="gm ${def.team ? 'is-team' : ''}" data-game="${esc(def.id)}" data-kind="${def.kind}">
     <header class="gm-top">
       <button class="gm-icon" data-g="close" aria-label="Back to games">${ICON.back}</button>
       <h1 class="gm-title">${esc(def.title)}</h1>
       <button class="gm-icon" data-g="menu" aria-label="Game menu">${ICON.menu}</button>
     </header>
-    <div class="gm-versus">${chipHTML('a')}<span class="gm-vs">${def.team ? '&amp;' : 'vs'}</span>${chipHTML('b')}</div>
+    <div class="gm-versus">${chipHTML('a')}<span class="gm-vs" aria-label="${def.team ? 'and' : 'versus'}">${def.team ? '&amp;' : 'vs'}</span>${chipHTML('b')}</div>
     <div class="gm-status" aria-live="polite"></div>
     <div class="gm-stage"></div>
     <div class="gm-layer gm-curtain" hidden></div>
@@ -554,12 +558,15 @@ function chromeHTML(def, { live = false } = {}) {
 
 function menuHTML(def, { live, online, over, team }) {
   return `<div class="gm-sheet-card" role="dialog" aria-label="Game menu">
-    <h2>How to play</h2>
+    <p class="g-label gm-sheet-kicker">${esc(def.title)}</p>
+    <h2 class="gm-sheet-h">How to play</h2>
     <ol class="gm-howto">${def.howTo.map((h) => `<li>${esc(h)}</li>`).join('')}</ol>
     <div class="gm-sheet-actions">
-      <button class="gm-btn gm-btn-ghost" data-g="mute">${muted() ? 'Sound: off' : 'Sound: on'}</button>
-      ${!live && !over ? `<button class="gm-btn gm-btn-danger" data-g="resign">${team || !online ? 'End this game' : 'Resign'}</button>` : ''}
-      <button class="gm-btn" data-g="menu">Back to the game</button>
+      <div class="gm-sheet-row">
+        <button class="gm-btn gm-btn-ghost" data-g="mute">${muted() ? 'Sound: off' : 'Sound: on'}</button>
+        ${!live && !over ? `<button class="gm-btn gm-btn-danger" data-g="resign">${team || !online ? 'End this game' : 'Resign'}</button>` : ''}
+      </div>
+      <button class="gm-btn gm-btn-big" data-g="menu">Back to the game</button>
     </div>
   </div>`;
 }
@@ -579,24 +586,55 @@ function endHTML(def, res, { rematch = true } = {}) {
   }
   const rec = gameRecord(def.id);
   const recLine = def.team
-    ? (rec.best != null ? `Best team score: ${rec.best}` : '')
-    : `${esc(nameOf('a'))} ${rec.a} – ${rec.b} ${esc(nameOf('b'))}`;
+    ? (rec.best != null ? `<span class="gm-end-rec-l">Best team score</span><b>${rec.best}</b>` : '')
+    : `<span class="gm-end-rec-l">All time</span><span class="p-a">${esc(nameOf('a'))} <b>${rec.a}</b></span><span class="gm-end-rec-sep" aria-hidden="true">:</span><span class="p-b"><b>${rec.b}</b> ${esc(nameOf('b'))}</span>`;
   return `<div class="gm-end-card ${cls}">
-    <div class="gm-end-head">${esc(head)}</div>
-    ${res.sub ? `<p class="gm-end-sub">${esc(res.sub)}</p>` : ''}
-    ${recLine ? `<p class="gm-end-rec">${recLine}</p>` : ''}
-    <div class="gm-end-actions">
-      <button class="gm-btn gm-btn-ghost" data-g="end-look">See the board</button>
-      ${rematch ? '<button class="gm-btn" data-g="rematch">Rematch</button>' : ''}
-      <button class="gm-btn gm-btn-ghost" data-g="close">Back to games</button>
+    <div class="gm-end-burst" aria-hidden="true">${'<i></i>'.repeat(10)}</div>
+    <div class="gm-end-band">
+      <p class="gm-end-kicker">${esc(def.title)}</p>
+      <div class="gm-end-head">${esc(head)}</div>
+    </div>
+    <div class="gm-end-body">
+      ${res.sub ? `<p class="gm-end-sub">${esc(res.sub)}</p>` : ''}
+      ${recLine ? `<p class="gm-end-rec">${recLine}</p>` : ''}
+      <div class="gm-end-actions">
+        ${rematch ? '<button class="gm-btn gm-btn-big" data-g="rematch">Rematch</button>' : ''}
+        <div class="gm-end-row">
+          <button class="gm-btn gm-btn-ghost" data-g="end-look">See the board</button>
+          <button class="gm-btn gm-btn-ghost" data-g="close">Back to games</button>
+        </div>
+      </div>
     </div>
   </div>`;
 }
 
 const ICON = {
-  back: '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  menu: '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="5" cy="12" r="2" fill="currentColor"/><circle cx="12" cy="12" r="2" fill="currentColor"/><circle cx="19" cy="12" r="2" fill="currentColor"/></svg>',
+  back: '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  menu: '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 7h16M4 12h11M4 17h7" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>',
+  go: '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  phone: '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect x="4.25" y="1.5" width="7.5" height="13" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M7 11.9h2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
+  computer: '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect x="2.75" y="2.75" width="10.5" height="7.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M1 13.25h14" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>',
 };
+
+// ── devices ───────────────────────────────────────────────────────────
+// def.platforms: where a game can be played (default both); def.best: where it shines;
+// def.modes: which start buttons to offer.
+const DEVICE_NAME = { phone: 'Phone', computer: 'Computer' };
+const thisDevice = () => (typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches ? 'phone' : 'computer');
+const platformsOf = (def) => {
+  const p = (Array.isArray(def.platforms) ? def.platforms : []).filter((x) => x === 'phone' || x === 'computer');
+  return p.length ? p : ['phone', 'computer'];
+};
+const modesOf = (def) => {
+  const ok = def.kind === 'live' ? ['live', 'local'] : ['online', 'local'];
+  const m = (Array.isArray(def.modes) ? def.modes : []).filter((x) => ok.includes(x));
+  return m.length ? m : ok;
+};
+function devicesHTML(def, { labels = false } = {}) {
+  const pl = platformsOf(def);
+  const best = pl.length > 1 && pl.includes(def.best) ? def.best : null;
+  return `<span class="g-devices" aria-label="Plays on ${pl.map((p) => DEVICE_NAME[p].toLowerCase()).join(' and ')}${best ? `, best on ${best === 'phone' ? 'a phone' : 'a computer'}` : ''}">${pl.map((p) => `<span class="g-device${p === best ? ' is-best' : ''}">${ICON[p]}${labels ? `<span>${DEVICE_NAME[p]}</span>` : ''}</span>`).join('')}</span>`;
+}
 
 // ── turn-game screen ──────────────────────────────────────────────────
 function openMatch(id) {
@@ -917,7 +955,29 @@ async function openLive(gameId, mode) {
 // ── hub ───────────────────────────────────────────────────────────────
 const FILTERS = [
   ['all', 'All'], ['versus', 'Versus'], ['coop', 'Together'], ['brainy', 'Brainy'], ['silly', 'Silly'], ['live', 'Live'],
+  ['phone', 'Phone'], ['computer', 'Computer'],
 ];
+
+// The hub's shelves, top to bottom. With no filter on, every listed game sits on exactly one
+// shelf; SHELF_OF (keyed by game id) also sets the order inside a shelf. Unknown ids → "More".
+const SHELVES = [
+  ['featured', 'Featured', 'The big ones. Both of you, right now.'],
+  ['quick', 'Quick ones', 'Five minutes, start to finish.'],
+  ['brainy', 'Big brain', 'Slow, sneaky, satisfying.'],
+  ['together', 'Together', 'Same side. Win or lose as two.'],
+  ['live', 'Live: grab your partner', 'Real time. Phones out.'],
+  ['computer', 'On a computer', 'Keyboards and big screens.'],
+  ['more', 'More', ''],
+];
+const SHELF_OF = {
+  rush: 'featured', chameleon: 'featured',
+  four: 'quick', bones: 'quick', dots: 'quick', doodle: 'quick',
+  ultimate: 'brainy', fleet: 'brainy', wordduel: 'brainy',
+  agents: 'together', wave: 'together', tower: 'together',
+  hockey: 'live', quickdraw: 'live',
+  cycles: 'computer', defuse: 'computer',
+};
+const SHELF_RANK = Object.fromEntries(Object.keys(SHELF_OF).map((id, i) => [id, i]));
 
 function matchRow(m) {
   const def = BY_ID[m.game];
@@ -927,10 +987,12 @@ function matchRow(m) {
     if (d.acts.includes(me())) note = m.by !== me() && d.count === 0 && !(m.lists[me()].length) ? 'New' : 'Your move';
     else note = `${esc(nameOf(other(me())))}’s move`;
   } else note = 'On this phone';
-  return `<button class="gh-row" data-g="open" data-id="${esc(m.id)}">
+  const mine = m.online && d.acts.includes(me());
+  const who = m.online ? (mine ? me() : other(me())) : (d.acts[0] || m.first);
+  return `<button class="gh-row t-${who}${mine ? ' is-mine' : ''}${m.online ? '' : ' is-local'}" data-g="open" data-id="${esc(m.id)}">
     <span class="gh-row-cover" aria-hidden="true">${def.cover || ''}</span>
-    <span class="gh-row-main"><span class="gh-row-title">${esc(def.title)}</span><span class="gh-row-sub">${note} · ${ago(Math.max(m.ua || 0, m.ub || 0, m.created || 0))}</span></span>
-    <span class="gh-row-go" aria-hidden="true">${ICON.back}</span>
+    <span class="gh-row-main"><span class="gh-row-title">${esc(def.title)}</span><span class="gh-row-sub"><span class="gh-row-note">${note}</span><span class="gh-row-ago">${ago(Math.max(m.ua || 0, m.ub || 0, m.created || 0))}</span></span></span>
+    <span class="gh-row-go" aria-hidden="true">${ICON.go}</span>
   </button>`;
 }
 

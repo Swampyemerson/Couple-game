@@ -181,3 +181,22 @@ See `tools/test/net.test.js` (clock sync, delivery under 30% loss, interpolation
 A game may split into helper modules, e.g. `js/games/rush/world.js`, imported from
 `js/games/rush.js` with `import { buildWorld } from './rush/world.js'`. The build follows
 imports, so only the entry file sits directly in `js/games/`. Named imports only.
+
+## iPhone checklist (the app runs in the Claude iOS app's WKWebView, in an iframe)
+
+- WebGL2 via three.js r128 (`api.three()`); don't depend on WebGPU (not reliable in WKWebView).
+  `WebGLRenderer({ antialias: false, powerPreference: 'high-performance', alpha: false })`,
+  pixel ratio `min(devicePixelRatio, 2)` with dynamic resolution when frame time climbs.
+- Few draw calls (< 80): merge static geometry, one vertex-coloured toon material, instancing,
+  outlines baked in as inverted hulls. No shadow maps (blob shadows). Warm shaders up with
+  `renderer.compile()` behind a loading screen. No allocations per frame.
+- Handle `webglcontextlost` / `webglcontextrestored` and `visibilitychange` (pause + resume
+  countdown). Keep GPU memory small; iOS kills pages around 300 MB.
+- Touch: `touch-action: none` and non-passive touchstart/touchmove `preventDefault()` on play
+  surfaces so the iframe/app sheet never scrolls or dismisses; ignore touches that start within
+  ~20 px of the left edge (iOS back gesture). Recognise swipes in pointermove once past a
+  threshold, not on pointerup.
+- `navigator.vibrate` doesn't exist on iOS: feedback must be visual + audio. Unlock WebAudio
+  on the first touch.
+- `immersive: true` on a def gives a full-screen stage with floating back/menu buttons; the
+  game draws its own HUD (including scores).
