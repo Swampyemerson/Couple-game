@@ -628,6 +628,8 @@ function build(atlas, kit) {
 //   Third Flatiron 216.6° 7.9° · Second 218.7° 9.5° · First 224.1° 11.4° · Green Mountain 221.5° 12.1°
 //   Royal Arch 209.5° 7.8° · Bear Peak 200.6° 9.2° · Flagstaff Mountain 256.1° 8.6°
 const NORTH = '+x';
+/** Peaks as seen from the Norlin quad: [name, bearing°, true elevation angle°]. */
+export const PEAKS = [['Bear Peak', 200.6, 9.2], ['Royal Arch', 209.5, 7.8], ['Third Flatiron', 216.6, 7.9], ['Second Flatiron', 218.7, 9.5], ['Green Mountain', 221.5, 12.1], ['First Flatiron', 224.1, 11.4], ['Flagstaff Mountain', 256.1, 8.6]];
 const EXAG = 2.8;
 const DEG = Math.PI / 180;
 const dirOf = (brg) => [Math.cos(brg * DEG), Math.sin(brg * DEG)];
@@ -1349,15 +1351,14 @@ export const CUBOULDER = {
       { name: 'quad-looking-N', p: [1.5, 1.5, 7.2], t: [16, 2.2, 7.2] },
       { name: 'quad-looking-E', p: [5, 1.5, 3.2], t: [5, 2.0, 16] },
       { name: 'quad-looking-S', p: [15, 1.6, 9], t: [-4, 2.6, 9] },
-      { name: 'quad-looking-SW', p: [15, 2.0, 12], t: [-10, 6.5, -10] },
+      { name: 'quad-looking-SW', p: [13, 1.8, 4.6], t: [-9.6, 8, -15.2] },
       { name: 'quad-looking-W', p: [8, 1.8, 12.4], t: [6, 4.5, -10] },
       { name: 'norlin-west-window', p: [3.85, 3.0, -8.0], t: [3.0, 4.3, -20] },
       { name: 'norlin-window-looking-SW', p: [4.6, 2.9, -9.2], t: [-1.5, 4.6, -18] },
       { name: 'umc-north-window', p: [13.6, 1.95, -5.8], t: [25, 2.4, -5.0] },
       { name: 'lab-east-window', p: [-11.6, 1.6, 6.0], t: [-11.6, 1.9, 20] },
       { name: 'arcade-east', p: [6.5, 1.5, -0.3], t: [7.5, 1.7, 14] },
-      { name: 'top-down', p: [0.01, 27, 1.5], t: [0, 0, 0] },
-      { name: 'debug-first-iron', p: [0, 1.5, 0], t: [-53.2, 20, -51.4] },
+      { name: 'top-down', p: [6, 21, 9], t: [-1, 0, -1] },
       { name: 'overview', p: [2, 13, 18], t: [0, 0.5, 0] },
     ],
   },

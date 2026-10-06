@@ -260,8 +260,37 @@ async function compareSection(port) {
   }
 }
 
+async function geoSection(port) {
+  console.log('\n# geo: compass views from the quad, views out of windows, a plan with a north arrow');
+  const imp = await import(pathToFileURL(path.join(__dirname, '../../../js/games/chameleon/maps/cuboulder.js')).href);
+  const E = imp.CUBOULDER; const cams = E.info.cams;
+  assert(E.info.north === '+x', `compass recorded: info.north = ${E.info.north} (east = +z)`);
+  const pick = (n) => cams.find((c) => c.name === n);
+  const names = ['quad-looking-N', 'quad-looking-E', 'quad-looking-S', 'quad-looking-SW', 'quad-looking-W', 'norlin-window-looking-SW', 'norlin-west-window', 'umc-north-window', 'lab-east-window', 'arcade-east', 'top-down'];
+  const v = await views(port, names.map((n) => ['dir-' + n, pick(n), { width: 640, height: 400 }]));
+  const label = { 'quad-looking-N': 'Quad looking N (+x): foothills, plains', 'quad-looking-E': 'Quad looking E (+z): the plains', 'quad-looking-S': 'Quad looking S (−x): Bear Peak side', 'quad-looking-SW': 'Quad looking SW (221°): Flatirons + Green Mtn', 'quad-looking-W': 'Quad looking W (−z): Flagstaff, sun', 'norlin-window-looking-SW': 'Norlin west window, looking SW', 'norlin-west-window': 'Norlin west windows (face W)', 'umc-north-window': 'UMC booth window (faces N)', 'lab-east-window': 'Lab window (faces E)', 'arcade-east': 'Arcade looking E', 'top-down': 'Overview from the NE (fog-limited)' };
+  await compose(port, names.filter((n) => v['dir-' + n]).map((n) => [label[n], v['dir-' + n]]), path.join(SHOTS, 'compass-views.png'), { cols: 3, w: 420, title: 'CU Boulder: compass views (north = +x, east = +z)' });
+  // plan: zones from info.rooms, bearing rays to the peaks, north arrow
+  const S = 14; const W = E.info.w * S; const D = E.info.d * S; const pad = 230;
+  // screen: map +x (north) → up, map +z (east) → right
+  const px = (x, z) => [pad + (z + E.info.d / 2) * S, pad + (E.info.w / 2 - x) * S];
+  const rooms = E.info.rooms.filter((r) => !r.floor).map((r) => { const [a1, b1] = px(r.x1, r.z0); const [a2, b2] = px(r.x0, r.z1); return `<rect x="${a1}" y="${b1}" width="${a2 - a1}" height="${b2 - b1}" fill="#f1e2cc" stroke="#2a2730"/><text x="${(a1 + a2) / 2}" y="${(b1 + b2) / 2}" text-anchor="middle" font-size="12">${r.name}</text>`; }).join('');
+  const [ox, oy] = px(0, -6); // Norlin quad-ish reference (map origin side)
+  const rays = imp.PEAKS.map(([n, brg, el]) => { const a = brg * Math.PI / 180; const L = 200; const x2 = ox + Math.sin(a) * L; const y2 = oy - Math.cos(a) * L; return `<line x1="${ox}" y1="${oy}" x2="${x2}" y2="${y2}" stroke="#b5482f" stroke-dasharray="4 3"/><text x="${x2}" y="${y2 + (y2 > oy ? 14 : -4)}" font-size="11" text-anchor="middle" fill="#7a2a1a">${n} ${brg}° (${el}°)</text>`; }).join('');
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${D + pad * 2}" height="${W + pad * 2}" font-family="system-ui" ><rect width="100%" height="100%" fill="#f6f2ea"/>${rooms}${rays}<circle cx="${ox}" cy="${oy}" r="4" fill="#b5482f"/>
+    <g transform="translate(60,70)"><polygon points="0,-40 12,0 0,-8 -12,0" fill="#2a2730"/><text y="-46" text-anchor="middle" font-size="20" font-weight="700">N</text><text y="22" text-anchor="middle" font-size="11">map +x</text></g>
+    <text x="${D + pad * 2 - 20}" y="${pad + W / 2}" text-anchor="end" font-size="13">E (+z): plains →</text>
+    <text x="20" y="${pad + W / 2}" font-size="13">← W (−z): Flagstaff</text></svg>`;
+  const svgFile = path.join(SHOTS, 'plan.svg'); fs.writeFileSync(svgFile, svg);
+  const { chromium } = require(process.env.PW || path.join(require('child_process').execSync('npm root -g').toString().trim(), 'playwright'));
+  const br = await chromium.launch(); const pg = await br.newPage({ viewport: { width: D + pad * 2, height: W + pad * 2 } });
+  await pg.setContent(svg); await pg.screenshot({ path: path.join(SHOTS, 'plan-north-arrow.png') }); await br.close();
+  assert(true, 'compass-views.png and plan-north-arrow.png written');
+}
+
 (async () => {
   try {
+    if (want('geo')) await geoSection(PORT + 1);
     if (want('compare')) await compareSection(PORT);
     if (want('static')) await staticSection();
     if (want('load')) {
