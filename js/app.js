@@ -3,6 +3,8 @@ import {
   PACKS, CATEGORIES, SPICY_CATEGORIES, DAILY, TRUTHS, DARES, TOD_LEVELS, DATES, DATE_CATS, LOVE_LANGS,
 } from './content.js';
 import { Store, randomId } from './store.js';
+import { initGames, gamesHubHTML, gamesHomeHTML, gamesWaitingCount } from './games/core.js';
+import './games/index.js';
 
 const store = new Store(CONFIG);
 const $app = document.getElementById('app');
@@ -172,8 +174,16 @@ function topbar(title, { backBtn = true, right = '' } = {}) {
 }
 
 function tabbar() {
-  const t = (id, icon, label) => `<button class="tab ${ui.tab === id ? 'on' : ''}" data-act="tab" data-tab="${id}"><span>${icon}</span>${label}</button>`;
-  return `<nav class="tabbar">${t('home', '🏠', 'Home')}${t('play', '🎮', 'Play')}${t('spicy', '🔥', 'Spicy')}${t('us', '💞', 'Us')}</nav>`;
+  const t = (id, icon, label, badge = 0) => `<button class="tab ${ui.tab === id ? 'on' : ''}" data-act="tab" data-tab="${id}"><span>${icon}</span>${label}${badge ? `<i class="tab-badge">${badge}</i>` : ''}</button>`;
+  return `<nav class="tabbar">${t('home', '🏠', 'Home')}${t('play', '💬', 'Questions')}${t('games', '🎲', 'Games', gamesWaitingCount())}${t('spicy', '🔥', 'Spicy')}${t('us', '💞', 'Us')}</nav>`;
+}
+
+// Games run in their own overlay (#game-root); this just starts the engine once we know who's here.
+let gamesStarted = false;
+function ensureGames() {
+  if (gamesStarted || !me()) return;
+  gamesStarted = true;
+  initGames(store, { onChange: () => render(), toast, ask });
 }
 
 // ── onboarding ────────────────────────────────────────────────────────
@@ -226,7 +236,7 @@ function viewConnect() {
 
 // ── tabs ──────────────────────────────────────────────────────────────
 function viewTab() {
-  const body = { home: tabHome, play: tabPlay, spicy: tabSpicy, us: tabUs }[ui.tab] || tabHome;
+  const body = { home: tabHome, play: tabPlay, games: tabGames, spicy: tabSpicy, us: tabUs }[ui.tab] || tabHome;
   return body() + tabbar();
 }
 
@@ -310,6 +320,8 @@ function tabHome() {
 
     ${dailyCard(dkey())}
 
+    ${gamesHomeHTML()}
+
     ${fresh.length ? `<h3 class="section">✨ New results</h3><div class="list">${fresh.map((p) => packRow(p, '<span class="chip hot">see results</span>')).join('')}</div>` : ''}
     ${yourMove.length ? `<h3 class="section">👉 Your move</h3><div class="list">${yourMove.map((p) => packRow(p, `<span class="chip">${N(them())} ${doneOf(them(), p) ? 'finished' : 'started'}</span>`)).join('')}</div>` : ''}
     ${inProgress.length ? `<h3 class="section">Keep going</h3><div class="list">${inProgress.map((p) => packRow(p, `${countOf(me(), p)}/${p.items.length}`)).join('')}</div>` : ''}
@@ -350,8 +362,12 @@ function catSection(c) {
   </section>`;
 }
 
+function tabGames() {
+  return `<div class="games-tab">${gamesHubHTML()}</div>`;
+}
+
 function tabPlay() {
-  return `${topbar('Play', { backBtn: false, right: syncPill() })}
+  return `${topbar('Questions', { backBtn: false, right: syncPill() })}
   <div class="screen">
     <div class="grid2">
       <button class="tile" data-act="go" data-view="tod"><span>🎭</span>Truth or Dare</button>
@@ -837,6 +853,7 @@ const actions = {
   tab: (d) => { ui = { view: 'tab', tab: d.tab }; hist('replaceState', ui, ''); render(true); },
   pickMe: async (d) => {
     store.me = d.who;
+    ensureGames();
     if (store.mode === 'artifact' && store.uid && store.person(d.who).uid !== store.uid) store.setMine(['uid'], store.uid);
     if (session.pendingSync) { await doImport(session.pendingSync); session.pendingSync = null; }
     if (store.cloudAvailable && !store.room) go({ view: 'connect' }); else render(true);
@@ -992,6 +1009,7 @@ async function bootArtifact() {
     if (w) store.me = w;
   }
   if (!ok) toast('Sync isn’t available here. Answers stay on this device.');
+  ensureGames();
   render(true);
 }
 
@@ -1000,6 +1018,7 @@ async function boot() {
   if (ARTIFACT) return bootArtifact();
   history.replaceState(ui, '');
   store.onChange(() => render());
+  ensureGames();
   render(true);
   await handleHash();
   window.addEventListener('hashchange', handleHash);
