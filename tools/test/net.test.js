@@ -65,16 +65,34 @@ const assert = (c, m) => { if (!c) throw new Error('FAIL: ' + m); console.log('o
     assert(JSON.stringify(rb) === '[300,301,302,303,304]' && JSON.stringify(ra) === '[400,401,402,403,404]', `after net.reset() both directions deliver in order (${JSON.stringify(rb)} / ${JSON.stringify(ra)})`);
     await b.waitForFunction(() => window.__netTest.net.synced && window.__netTest.net.remote(), null, { timeout: 8000 });
 
+    // syncNow(): a fresh burst of clock samples, quickly, and the clocks still agree after it
+    const sn = await b.evaluate(async () => { const t = performance.now(); await window.__netTest.net.syncNow(); return performance.now() - t; });
+    assert(sn < 1500, `syncNow() resolves after a quick burst (${Math.round(sn)} ms)`);
+    {
+      const ta2 = await a.evaluate(() => ({ n: window.__netTest.net.now(), d: Date.now() }));
+      const tb2 = await b.evaluate(() => ({ n: window.__netTest.net.now(), d: Date.now() }));
+      const skew2 = Math.abs((ta2.n - ta2.d) - (tb2.n - tb2.d));
+      assert(skew2 < 25, `clocks agree after syncNow (${skew2.toFixed(1)} ms)`);
+    }
+
+    // A partner session change must not leave stale samples behind: after the host resets
+    // (new session, as on a re-mount), the guest's buffer holds only the new session's states.
+    await a.evaluate(() => window.__netTest.net.reset());
+    await h.wait(600);
+    const fresh = await b.evaluate(() => { const n = window.__netTest.net; const s = n.remoteLatest(); return { s: s && s.__s, ok: !!s }; });
+    const sids = await b.evaluate(() => { const n = window.__netTest.net; const seen = new Set(); for (let t = n.now() - 400; t < n.now(); t += 20) { const s = n.remote(t + n.delay); if (s) seen.add(s.__s); } return [...seen]; });
+    assert(fresh.ok && sids.length === 1 && sids[0] === fresh.s, `after the host's session changes the guest samples only the new one (${JSON.stringify(sids)})`);
+
     // remoteInto: same values as remote(), into a reused object
     const into = await b.evaluate(() => {
       const n = window.__netTest.net; const out = {};
       const t = n.now();
       const r1 = n.remote(t); const r2 = n.remoteInto(out, t);
+      const same = Math.abs(r1.x - r2.x) < 1e-9 && Math.abs(r1.yaw - r2.yaw) < 1e-9;
       const again = n.remoteInto(out, t + 5);
-      const r2c = { ...r2 };
-      return { same: Math.abs(r1.x - r2c.x) < 1e-9 && Math.abs(r1.yaw - r2c.yaw) < 1e-9, reused: r2 === out && again === out, r1, r2: r2c };
+      return { same, reused: r2 === out && again === out };
     });
-    assert(into.same && into.reused, 'remoteInto matches remote() and reuses the object ' + JSON.stringify(into));
+    assert(into.same && into.reused, 'remoteInto matches remote() and reuses the object');
 
     // interpolation is smooth and monotonic
     const xs = [];

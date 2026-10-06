@@ -425,6 +425,9 @@ registerGame({
     const off = { x: 0, y: 0 };                      // display correction, decays to 0
     let override = null;        // { hb, until }: our predicted hit, awaiting the host's confirmation
     const hostM = { who: 'a', x: W / 2, y: H - 22, vx: 0, vy: 0 };
+    // The host's match as last seen in progress. Mirrored in our presence, so a host that
+    // reloads or closes and reopens the game picks the score back up instead of restarting 0–0.
+    let keep = null;            // { k, s: [a, b], g, ph }
     let hostAway = false;
 
     function hostAge(S, now) {
@@ -453,6 +456,8 @@ registerGame({
       const prev = HS && HS.k === S.k ? HS : null;
       lastN = S.n;
       HS = { ...S, recv: now };
+      // A fresh host mount (new key, fewer goals) hasn't picked our score up yet: keep reporting it.
+      if (!keep || S.k === keep.k || (S.g || 0) >= keep.g || S.res) keep = { k: S.k, s: [S.s[0], S.s[1]], g: S.g || 0, ph: S.res ? 'over' : S.ph };
       if (prev) {
         if (S.g > prev.g && S.sc) goalFx(S.sc);
         if (S.h[0] > prev.h[0] && (S.hv || 0) >= HIT_FX) api.sfx('hit');
@@ -543,12 +548,30 @@ registerGame({
         const body = `${r1(m.x)},${r1(m.y)}`;
         if (body === lastSent && now - lastPub < 400 && !pubSoon) return;
         lastSent = body;
-        api.setPresence({ k: key, n: ++myN, __t: Math.round(net.now()), sy: net.synced ? 1 : 0, m: [r1(m.x), r1(m.y)], away: document.hidden ? 1 : 0 });
+        api.setPresence({ k: key, n: ++myN, __t: Math.round(net.now()), sy: net.synced ? 1 : 0, m: [r1(m.x), r1(m.y)], away: document.hidden ? 1 : 0, ...keepState() });
       }
       lastPub = now; pubSoon = false;
     }
+    const keepState = () => (keep ? { hk: keep.k, hs: keep.s, hg: keep.g, hph: keep.ph } : {});
+    // Host: we were reloaded or reopened mid-match. The guest still remembers our old game's
+    // score; carry on from it (only right after mounting, and only if nothing has happened here yet).
+    let adopted = false;
+    function adoptMatch(st) {
+      if (adopted || !st || typeof st.hk !== 'string' || st.hk === key || st.hph === 'over' || !Array.isArray(st.hs)) return;
+      adopted = true;
+      if (goals > 0 || winner || phase === 'over' || performance.now() - t0 > 6000) return;
+      const a0 = clamp(st.hs[0] | 0, 0, TO_WIN); const b0 = clamp(st.hs[1] | 0, 0, TO_WIN);
+      if (!a0 && !b0) return;
+      score.a = a0; score.b = b0;
+      goals = Math.max(st.hg | 0, a0 + b0);
+      const w = a0 >= TO_WIN ? 'a' : b0 >= TO_WIN ? 'b' : null;
+      if (w) { winner = w; lastScorer = w; phase = 'goal'; phaseEnd = performance.now() + 400; }
+      api.setScore(score);
+      publishSoon();
+    }
     function onGuestState(st) {
       if (!st) return;
+      adoptMatch(st);
       if (st.k === gk && st.n <= gn) return;
       const fresh = st.k !== gk;
       gk = st.k; gn = st.n;
@@ -869,7 +892,7 @@ registerGame({
       updatePause();
       if (document.hidden) {
         cancelAnimationFrame(raf); raf = 0;
-        if (!local) api.setPresence(host ? { ...hostState(), n: ++myN, __t: Math.round(net.now()) } : { k: key, n: ++myN, __t: Math.round(net.now()), away: 1, m: [r1(M[me].x), r1(M[me].y)] });
+        if (!local) api.setPresence(host ? { ...hostState(), n: ++myN, __t: Math.round(net.now()) } : { k: key, n: ++myN, __t: Math.round(net.now()), away: 1, m: [r1(M[me].x), r1(M[me].y)], ...keepState() });
       } else if (!raf && !dead) { raf = requestAnimationFrame(frame); publishSoon(); }
     });
     const retheme = () => { T = readTokens(); drawTable(); };
@@ -890,7 +913,7 @@ registerGame({
         if (host) updatePause();
         else hostAway = !here;
       }));
-      if (host) offs.push(api.onPartnerState(onGuestState));
+      if (host) { adoptMatch(api.partnerState()); offs.push(api.onPartnerState(onGuestState)); }
       else {
         const s0 = api.partnerState();
         if (s0 && s0.res) staleKey = s0.k; // the last game's final state, still in presence

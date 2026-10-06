@@ -9,6 +9,8 @@
 //                  the offset with NTP-style pings, keeping the lowest-latency samples: a quick
 //                  burst at start (ready in ~3 round trips), then one every 2 s. If the host's
 //                  clock jumps (it re-mounted), the guest notices and re-syncs.
+//   net.syncNow()  another quick burst (e.g. just before a scheduled start); resolves when it's
+//                  in. Instant on the host and on one device.
 //   net.rtt        smoothed round-trip time in ms (0 on one device).
 //
 // Reliable events (room events can drop; these can't)
@@ -19,13 +21,16 @@
 //                          oldest message still unacknowledged instead of waiting forever.
 //   net.on(type, fn)       fn(data, sentAt) — sentAt is the sender's net.now() when sent.
 //   net.reset()            start a fresh session after the partner re-mounted (or you want a clean
-//                          slate): new outgoing stream, inbound state, partner buffer and (guest)
-//                          a quick clock re-sync. Unsent reliable messages are dropped.
+//                          slate): a new outgoing stream (unsent reliable messages are dropped), an
+//                          empty partner buffer and, on the guest, a quick clock re-sync. What you
+//                          have already received is kept, so nothing is delivered twice.
 //
 // State streaming with interpolation
-//   net.publish(state)     your continuous state (stamped with net.now()), sent at most `rate`
-//                          times/s (default 20). Call it every frame; extra calls are dropped.
-//                          Absolute values only, ≤ 3.5 KB.
+//   net.publish(state)     your continuous state (stamped with net.now() as __t and this net's
+//                          session as __s), sent at most `rate` times/s (default 20). Call it every
+//                          frame; extra calls are dropped. Absolute values only, ≤ 3.5 KB.
+//                          The partner buffer starts over when their session changes (re-mount,
+//                          reset) or their timestamps jump back more than a second.
 //   net.remote(at?)        partner's state interpolated at net.now() - net.delay (smooth even
 //                          at 20-30 updates/s with jitter); extrapolates briefly when data is late.
 //                          Allocates a fresh object: fine for rare lag-compensation lookups.
@@ -152,6 +157,8 @@ export function createNet(api, { delay = 100, angles = [], rate = 20 } = {}) {
   let synced = local || api.isHost;
   let rttAvg = 0;
   const samples = []; // { rtt, offset }
+  let burstFns = []; // syncNow() promises waiting for the current burst
+  let burstLeft = 0; // fresh samples still wanted by syncNow()
   let markReady;
   const ready = new Promise((r) => { markReady = r; });
   if (synced) markReady();
@@ -174,12 +181,13 @@ export function createNet(api, { delay = 100, angles = [], rate = 20 } = {}) {
     api.send('__ping', { id });
     if (pending.size > 20) pending.delete(pending.keys().next().value);
   }
+  const fast = () => samples.length < 6 || burstLeft > 0;
   function pingLoop(ms) {
     clearTimeout(pingT);
     pingT = setTimeout(() => {
       if (dead) return;
       ping();
-      pingLoop(samples.length < 6 ? 90 : PING_EVERY);
+      pingLoop(fast() ? 90 : PING_EVERY);
     }, ms);
   }
   function onSample(rtt, so) {
@@ -191,15 +199,16 @@ export function createNet(api, { delay = 100, angles = [], rate = 20 } = {}) {
       pingLoop(90);
     }
     samples.push({ rtt, offset: so });
-    if (samples.length > 10) samples.shift();
+    if (samples.length > 16) samples.shift();
+    if (burstLeft > 0 && --burstLeft === 0) { const fns = burstFns; burstFns = []; fns.forEach((f) => f()); }
     let best = samples[0];
     for (const x of samples) if (x.rtt < best.rtt) best = x;
     // the mean of the three quickest round trips (fewest queueing delays)
     const top = samples.length <= 3 ? samples : [...samples].sort((x, y) => x.rtt - y.rtt).slice(0, 3);
     const target = top.reduce((sum, x) => sum + x.offset, 0) / top.length;
     // While the first burst is still coming in, take the estimate as is; after that, slew
-    // gently so the shared clock never jumps backwards much.
-    offset = samples.length <= 6 ? target : offset + (target - offset) * 0.25;
+    // (faster during a syncNow burst) so the shared clock never jumps backwards much.
+    offset = samples.length <= 6 ? target : offset + (target - offset) * (burstLeft ? 0.5 : 0.25);
     rttAvg = rttAvg ? rttAvg * 0.8 + rtt * 0.2 : rtt;
     if (!synced && samples.length >= 3) { synced = true; markReady(); }
   }
@@ -313,14 +322,19 @@ export function createNet(api, { delay = 100, angles = [], rate = 20 } = {}) {
     // (default 20/s) and leave room for reliable events, acks and clock pings.
     if (t - lastPub < 1000 / rate - 2) return;
     lastPub = t;
-    api.setPresence({ ...state, __t: Math.round(now()) });
+    api.setPresence({ ...state, __t: Math.round(now()), __s: sid });
   }
+  let remoteSid = null;
   if (!local) {
     offs.push(api.onPartnerState((s) => {
       if (!s || !isNum(s.__t)) return;
-      // Their timeline went backwards a long way: they re-mounted. Forget the old one.
+      // A new partner session (they re-mounted or reset), or a timeline that went back more
+      // than a second: the old samples describe another world. Start over.
       const last = remoteBuf.latestTime();
-      if (last != null && s.__t < last - 1500) remoteBuf.clear();
+      if ((s.__s !== undefined && s.__s !== remoteSid) || (last != null && s.__t < last - 1000)) {
+        remoteSid = s.__s;
+        remoteBuf.clear();
+      }
       remoteBuf.push(s.__t, s);
       remoteFns.forEach((fn) => { try { fn(s); } catch (e) { console.error(e); } });
     }));
@@ -351,12 +365,19 @@ export function createNet(api, { delay = 100, angles = [], rate = 20 } = {}) {
       sid = newSid();
       outSeq = 0;
       outbox.clear();
-      inSid = null;
-      inNext = 1;
-      inHold.clear();
       remoteBuf.clear();
       lastPub = 0;
       if (!local && !api.isHost) { samples.length = 0; pending.clear(); pingLoop(30); }
+    },
+    /** A quick burst of clock pings (guest); resolves when ~5 fresh samples are in (or after 2 s). */
+    syncNow() {
+      if (local || api.isHost || dead) return Promise.resolve();
+      return new Promise((res) => {
+        burstLeft = 5;
+        burstFns.push(res);
+        timers.push(setTimeout(() => { burstFns = burstFns.filter((f) => f !== res); if (!burstFns.length) burstLeft = 0; res(); }, 2000));
+        pingLoop(0);
+      });
     },
     destroy() {
       dead = true;

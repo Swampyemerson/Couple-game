@@ -320,6 +320,7 @@ registerGame({
   best: 'phone',
   minutes: 12,
   endDelay: 2400,
+  endLookLabel: 'See the gallery',
   howTo: [
     'Take turns drawing. Pick one of three prompts and sketch it in 75 seconds.',
     'Your partner watches it replay, then gets three guesses.',
@@ -361,7 +362,9 @@ registerGame({
     const g = String(mv.guess || '').trim().replace(/\s+/g, ' ');
     if (!g) throw new Error('Type a guess first.');
     if (g.length > 40) throw new Error('Keep guesses under 40 letters.');
-    if (R.guesses.some((x) => squash(x) === squash(g))) throw new Error('You already tried that one.');
+    if (!squash(g, true)) throw new Error('Guess with letters or numbers.');
+    const same = (x) => squash(x) || squash(x, true);
+    if (R.guesses.some((x) => same(x) === same(g))) throw new Error('You already tried that one.');
     R.guesses.push(g);
     if (guessMatches(g, PROMPTS[R.choices[R.pick]])) finishRound(s, POINTS[R.guesses.length - 1]);
     else if (R.guesses.length >= 3) finishRound(s, 0);
@@ -376,7 +379,7 @@ registerGame({
   css: `
     .g-doodle { position: absolute; inset: 0; color: var(--g-ink); -webkit-user-select: none; user-select: none; }
     .g-doodle .dd-scroll { position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
-    .g-doodle .dd-scr { width: 100%; max-width: 560px; min-height: 100%; margin: 0 auto; padding: 2px 2px 14px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+    .g-doodle .dd-scr { width: 100%; max-width: 560px; min-height: 100%; margin: 0 auto; padding: 2px 2px calc(14px + var(--kb, 0px)); display: flex; flex-direction: column; align-items: center; gap: 10px; }
     .g-doodle .dd-top { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 36px; }
     .g-doodle .dd-round { font-family: var(--g-font-display); font-weight: 900; font-size: 0.95rem; letter-spacing: 0.02em; text-transform: uppercase; }
     .g-doodle .dd-round i { font-style: normal; color: var(--g-muted); }
@@ -451,7 +454,7 @@ registerGame({
     .g-doodle .dd-pips { display: inline-flex; gap: 5px; margin-right: 2px; }
     .g-doodle .dd-pips i { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--g-ink); background: var(--g-card); }
     .g-doodle .dd-pips i.used { background: var(--g-ink); }
-    .g-doodle .dd-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px 3px 6px; border: 2px solid var(--g-ink); border-radius: 999px; font-weight: 800; font-size: 0.85rem; background: var(--g-card); max-width: 100%; overflow: hidden; }
+    .g-doodle .dd-chip { display: inline-flex; align-items: center; gap: 4px; min-width: 0; padding: 3px 10px 3px 6px; border: 2px solid var(--g-ink); border-radius: 999px; font-weight: 800; font-size: 0.85rem; background: var(--g-card); max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
     .g-doodle .dd-chip svg { width: 15px; height: 15px; flex: none; }
     .g-doodle .dd-chip.no { color: var(--g-muted); text-decoration: line-through; text-decoration-thickness: 2px; }
     .g-doodle .dd-chip.no svg { color: var(--g-bad); }
@@ -508,25 +511,24 @@ registerGame({
     .g-doodle .dd-plaque b small { font-size: 1rem; }
     .g-doodle .dd-plaque span { font-family: var(--g-font-display); font-weight: 900; font-size: 1.05rem; line-height: 1.1; max-width: 12em; }
     .g-doodle .dd-wall { width: 100%; display: grid; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); gap: 18px 14px; padding: 8px 4px 4px; }
-    .g-doodle .dd-frame { display: flex; flex-direction: column; align-items: stretch; gap: 0; padding: 8px 8px 10px; text-align: left; background: var(--g-card); color: var(--g-ink); border: 2px solid var(--g-ink); border-radius: 6px; box-shadow: var(--g-shadow); touch-action: manipulation; transform: rotate(var(--tilt, 0deg)); transition: transform 0.15s ease; }
+    .g-doodle .dd-frame { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 0; padding: 8px 8px 10px; text-align: left; background: var(--g-card); color: var(--g-ink); border: 2px solid var(--g-ink); border-radius: 6px; box-shadow: var(--g-shadow); touch-action: manipulation; transform: rotate(var(--tilt, 0deg)); transition: transform 0.15s ease; }
     .g-doodle .dd-frame:active { transform: rotate(0deg) translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge, var(--g-ink)); }
     .g-doodle .dd-frame canvas { display: block; border: 2px solid var(--g-line); border-radius: 3px; background: var(--g-card); }
     .g-doodle .dd-frame-title { margin-top: 8px; font-family: var(--g-font-display); font-weight: 900; font-size: 1rem; line-height: 1.15; overflow-wrap: anywhere; }
-    .g-doodle .dd-frame-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 4px; font-size: 0.78rem; font-weight: 800; color: var(--g-muted); }
-    .g-doodle .dd-frame-meta > span:first-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .g-doodle .dd-frame-pts { flex: none; }
-    .g-doodle .dd-frame-pts { padding: 1px 7px; border: 2px solid var(--g-ink); border-radius: 6px; color: var(--g-on-ink); background: var(--g-hl); font-family: var(--g-font-display); font-weight: 900; }
-    .g-doodle .dd-frame-pts.zero { background: transparent; color: var(--g-muted); border-color: var(--g-line); }
+    .g-doodle .dd-frame-meta { margin-top: 3px; font-size: 0.8rem; font-weight: 800; color: var(--g-muted); overflow-wrap: anywhere; }
+    /* the score is a sticker slapped on the frame's corner */
+    .g-doodle .dd-frame-pts { position: absolute; z-index: 1; top: -9px; right: -8px; padding: 2px 8px; border: 2px solid var(--g-ink); border-radius: 6px; color: var(--g-on-ink); background: var(--g-hl); font-family: var(--g-font-display); font-weight: 900; font-size: 0.9rem; box-shadow: var(--g-shadow-sm); transform: rotate(7deg); }
+    .g-doodle .dd-frame-pts.zero { background: var(--g-card); color: var(--g-muted); font-family: var(--g-font-body); font-size: 0.78rem; letter-spacing: 0.04em; text-transform: uppercase; }
     .g-doodle .dd-gal-actions { width: 100%; display: flex; gap: 8px; margin-top: 6px; }
     .g-doodle .dd-gal-actions .gm-btn { flex: 1; min-height: 50px; }
     .g-doodle .dd-gal-hint { margin: 0; color: var(--g-muted); font-weight: 700; font-size: 0.85rem; }
 
     /* lightbox */
-    .g-doodle .dd-lb { position: absolute; inset: 0; z-index: 3; display: grid; place-items: center; padding: 10px; background: color-mix(in srgb, var(--g-bg) 92%, transparent); overflow-y: auto; }
+    .g-doodle .dd-lb { position: absolute; inset: 0; z-index: 3; display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; padding: 10px; background: color-mix(in srgb, var(--g-bg) 92%, transparent); overflow-y: auto; }
     .g-doodle .dd-lb-card { width: 100%; max-width: 460px; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 14px; background: var(--g-card); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow); }
     .g-doodle .dd-lb-card.anim { animation: dd-rise 0.25s ease both; }
     .g-doodle .dd-lb-top { width: 100%; display: flex; align-items: flex-start; gap: 8px; }
-    .g-doodle .dd-lb-top .dd-answer { flex: 1; text-align: left; }
+    .g-doodle .dd-lb-top .dd-answer { flex: 1; min-width: 0; text-align: left; }
     .g-doodle .dd-lb .dd-paper { box-shadow: none; }
 
     @keyframes dd-shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(3px); } }
@@ -556,6 +558,50 @@ registerGame({
     let scr = null;
     let lbClose = null;
     let lbRedraw = null;
+
+    // Drafts survive a reload on this device: the drawing in progress (with its clock) and a
+    // half-typed guess. One slot per match.
+    const DRAFT = 'ju.doodle.draft.';
+    const draftGet = (k) => { try { const v = JSON.parse(localStorage.getItem(DRAFT + ctx.matchId) || 'null'); return v && v.k === k ? v : null; } catch { return null; } };
+    const draftPut = (k, data) => { try { if (data == null) localStorage.removeItem(DRAFT + ctx.matchId); else localStorage.setItem(DRAFT + ctx.matchId, JSON.stringify({ k, ...data })); } catch { /* storage off */ } };
+    const drawSlot = () => `${ctx.viewer}|draw|${ctx.state.r}`;
+    const saveDrawing = () => {
+      const D = vs.draft;
+      if (!D || D.sent || !ctx) return;
+      draftPut(drawSlot(), { pick: D.pick, s: encode(D.strokes), left: Math.round(D.deadline - performance.now()), at: Date.now() });
+    };
+    function restoreDrawing() {
+      const d = draftGet(drawSlot());
+      if (!d || !Number.isInteger(d.pick) || d.pick < 0 || d.pick > 2) return false;
+      const strokes = (d.s && decode(d.s)) || [];
+      const now = performance.now();
+      const left = Math.max(0, Number(d.left) - Math.max(0, Date.now() - Number(d.at)));
+      vs.draft = { r: ctx.state.r, pick: d.pick, strokes, hist: strokes.map(() => ({ k: 'stroke' })), started: now, deadline: now + (Number.isFinite(left) ? left : 0), lastEnd: now, sent: false };
+      if (ctx.state.r > 0) vs.ack[ctx.state.r - 1] = true; // they were past the reveal already
+      return true;
+    }
+
+    // Keep a focused text box above the on-screen keyboard by scrolling our own scroller,
+    // padding it by the keyboard's height when the visual viewport shrinks (iOS).
+    const kbFix = () => {
+      const a = document.activeElement;
+      if (!a || !a.matches || !a.matches('.dd-input') || !root.contains(a)) return;
+      const vv = window.visualViewport;
+      const vb = vv ? vv.offsetTop + vv.height : window.innerHeight;
+      scroller.style.setProperty('--kb', `${Math.max(0, Math.round(window.innerHeight - vb))}px`);
+      const box = (a.form || a).getBoundingClientRect();
+      const sb = scroller.getBoundingClientRect();
+      const limit = Math.min(vb, sb.bottom) - 12;
+      if (box.bottom > limit) scroller.scrollTop += box.bottom - limit;
+      else if (box.top < sb.top + 8) scroller.scrollTop -= sb.top + 8 - box.top;
+    };
+    const kbSoon = () => { requestAnimationFrame(kbFix); clearTimeout(vs.kbT); vs.kbT = setTimeout(kbFix, 350); };
+    const kbOff = () => { clearTimeout(vs.kbOffT); vs.kbOffT = setTimeout(() => { if (!root.contains(document.activeElement) || !document.activeElement.matches('.dd-input')) scroller.style.removeProperty('--kb'); }, 250); };
+    root.addEventListener('focusin', kbSoon);
+    root.addEventListener('focusout', kbOff);
+    const vvp = typeof window !== 'undefined' ? window.visualViewport : null;
+    if (vvp) { vvp.addEventListener('resize', kbSoon); vvp.addEventListener('scroll', kbSoon); }
+    window.addEventListener('resize', kbSoon);
 
     const top = (s, right = '') => `<div class="dd-top"><span class="dd-round">Round ${Math.min(s.r + 1, ROUNDS)}<i>/${ROUNDS}</i></span>${right}<span class="dd-team">Team <b>${s.score}</b></span></div>`;
     const blanks = (text) => `<div class="dd-blanks" aria-label="${text.replace(/[^a-z0-9 ]/gi, '').split(' ').filter(Boolean).map((w) => w.length).join(', ')} letters">${text.split(/\s+/).map((w) => `<span>${'<i></i>'.repeat(w.replace(/[^a-z0-9]/gi, '').length)}</span>`).join('')}</div>`;
@@ -617,6 +663,7 @@ registerGame({
         if (!b || !ctx.canMove) return;
         api.sfx('flip'); api.haptic(8);
         vs.draft = { r: s.r, pick: Number(b.dataset.i), strokes: [], hist: [], started: performance.now(), deadline: performance.now() + DRAW_SECONDS * 1000, lastEnd: performance.now(), sent: false };
+        saveDrawing();
         render();
       });
       return {};
@@ -673,7 +720,7 @@ registerGame({
         if (active) endStroke();
         if (!D.strokes.length) { if (auto) api.toast('Time’s up! Draw anything and send it.'); return; }
         const res = api.move({ prompt: D.pick, strokes: encode(D.strokes) });
-        if (res.ok) { D.sent = true; vs.draft = null; api.sfx('pop'); api.haptic(15); } else api.toast(res.error);
+        if (res.ok) { D.sent = true; vs.draft = null; draftPut('', null); api.sfx('pop'); api.haptic(15); } else api.toast(res.error);
       };
       const tick = () => {
         const left = Math.max(0, D.deadline - performance.now());
@@ -683,7 +730,7 @@ registerGame({
           secsEl.textContent = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
           timerEl.classList.toggle('low', sec <= 10);
           if (sec <= 5 && sec > 0) api.sfx('tick');
-          if (sec === 0) { timerEl.classList.add('zero'); if (!autoTried) { autoTried = true; send(true); } }
+          if (sec === 0) { timerEl.classList.add('zero'); if (!autoTried) { autoTried = true; queueMicrotask(() => { if (vs.draft === D) send(true); }); } }
         }
         ring.setAttribute('stroke-dashoffset', String(59.7 * (1 - left / (DRAW_SECONDS * 1000))));
       };
@@ -719,6 +766,7 @@ registerGame({
           D.strokes.push(a.st);
           D.hist.push({ k: 'stroke' });
           D.lastEnd = performance.now();
+          saveDrawing();
         }
         paintTools();
       };
@@ -758,12 +806,12 @@ registerGame({
         const h = D.hist.pop();
         if (!h) return;
         if (h.k === 'stroke') D.strokes.pop(); else D.strokes = h.prev;
-        p.paper.all(D.strokes); api.sfx('flip'); paintTools();
+        p.paper.all(D.strokes); api.sfx('flip'); paintTools(); saveDrawing();
       });
       node.querySelector('[data-a="clear"]').addEventListener('click', () => {
         if (!D.strokes.length) return;
         D.hist.push({ k: 'clear', prev: D.strokes }); D.strokes = [];
-        p.paper.all(D.strokes); api.sfx('hit'); api.haptic(20); paintTools();
+        p.paper.all(D.strokes); api.sfx('hit'); api.haptic(20); paintTools(); saveDrawing();
       });
       node.querySelector('.dd-send').addEventListener('click', () => send(false));
       paintTools();
@@ -798,6 +846,10 @@ registerGame({
       const input = node.querySelector('.dd-input');
       const form = node.querySelector('.dd-form');
       const give = node.querySelector('.dd-giveup');
+      const gSlot = `${ctx.viewer}|guess|${r}`;
+      const saved = draftGet(gSlot);
+      if (saved && typeof saved.t === 'string') input.value = saved.t.slice(0, 40);
+      input.addEventListener('input', () => draftPut(gSlot, input.value ? { t: input.value } : null));
       let pl = null;
       let seen = R.guesses.length;
       let armT = 0;
@@ -812,10 +864,11 @@ registerGame({
         e.preventDefault();
         if (!ctx.canMove) return;
         const g = input.value.trim();
-        if (!g) { input.focus(); return; }
+        if (!g) { input.focus({ preventScroll: true }); return; }
         const res = api.move({ guess: g });
         if (!res.ok) { api.toast(res.error); api.sfx('bad'); return; }
         input.value = '';
+        draftPut(gSlot, null);
       });
       give.addEventListener('click', () => {
         if (!ctx.canMove) return;
@@ -964,7 +1017,8 @@ registerGame({
         <div class="dd-wall">${s.rounds.map((R, i) => `<button class="dd-frame" data-i="${i}" style="--tilt:${[-1.6, 1.2, 0.9, -1.1, -0.7, 1.5][i]}deg" aria-label="Round ${i + 1}: ${esc(PROMPTS[R.choices[R.pick]].show)} by ${esc(api.name(R.drawer))}">
           <canvas></canvas>
           <span class="dd-frame-title">${esc(cap(PROMPTS[R.choices[R.pick]].show))}</span>
-          <span class="dd-frame-meta"><span>by ${nm(R.drawer)}</span><span class="dd-frame-pts ${R.points ? '' : 'zero'}">${R.points ? `+${R.points}` : R.gaveUp ? 'pass' : 'missed'}</span></span>
+          <span class="dd-frame-meta">by ${nm(R.drawer)}</span>
+          <span class="dd-frame-pts ${R.points ? '' : 'zero'}">${R.points ? `+${R.points}` : R.gaveUp ? 'pass' : 'missed'}</span>
         </button>`).join('')}</div>
         <div class="dd-gal-actions"><button class="gm-btn" data-g="rematch">Play again</button><button class="gm-btn gm-btn-ghost" data-g="close">Back to games</button></div>`;
       const frames = [...node.querySelectorAll('.dd-frame')];
@@ -1042,6 +1096,7 @@ registerGame({
       const prev = s.rounds[s.r - 1];
       if (s.phase === 'draw') {
         if (v === R.drawer) {
+          if ((!vs.draft || vs.draft.r !== s.r) && c.canMove) restoreDrawing();
           if (prev && !vs.ack[s.r - 1]) { setScreen(`reveal:${s.r - 1}`, (n) => revealScreen(n, s.r - 1, { next: true })); return; }
           if (vs.draft && vs.draft.r === s.r && !vs.draft.sent) { setScreen(`draw:${s.r}`, drawScreen); return; }
           setScreen(`pick:${s.r}`, pickScreen);
@@ -1069,6 +1124,8 @@ registerGame({
       });
     };
     if (mq && mq.addEventListener) mq.addEventListener('change', onTheme);
+    const themeMo = typeof MutationObserver === 'function' ? new MutationObserver(onTheme) : null;
+    if (themeMo) themeMo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class'] });
     const noGesture = (e) => e.preventDefault();
     root.addEventListener('gesturestart', noGesture);
 
@@ -1078,6 +1135,7 @@ registerGame({
         toks = api.tokens();
         render();
         if (vs.wasOver === null || !c.over) vs.wasOver = c.over;
+        if (c.over) draftPut('', null);
         if (c.over && scr && scr.key === `reveal:${ROUNDS - 1}`) {
           clearTimeout(vs.toGallery);
           vs.toGallery = setTimeout(() => { vs.ack[ROUNDS - 1] = true; render(); }, 2300);
@@ -1089,6 +1147,12 @@ registerGame({
         closeLightbox();
         if (ro) ro.disconnect();
         if (mq && mq.removeEventListener) mq.removeEventListener('change', onTheme);
+        if (themeMo) themeMo.disconnect();
+        clearTimeout(vs.kbT); clearTimeout(vs.kbOffT);
+        root.removeEventListener('focusin', kbSoon);
+        root.removeEventListener('focusout', kbOff);
+        if (vvp) { vvp.removeEventListener('resize', kbSoon); vvp.removeEventListener('scroll', kbSoon); }
+        window.removeEventListener('resize', kbSoon);
         root.removeEventListener('gesturestart', noGesture);
       },
     };
