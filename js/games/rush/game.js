@@ -52,6 +52,7 @@ export function createGame(el, api) {
   const dbg = (typeof window !== 'undefined' && window.__RUSH_DEBUG) || null;
   const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
   const phoneish = coarse && Math.min(screen.width, screen.height) < 600;
+  const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
   const split = !live;
   const other = (w) => (w === 'a' ? 'b' : 'a');
   let dead = false;
@@ -505,7 +506,7 @@ export function createGame(el, api) {
     },
   };
 
-  function shake(w, a) { const rg = players[w] && players[w].rig; if (rg) rg.shake(a); }
+  function shake(w, a) { const rg = players[w] && players[w].rig; if (rg) rg.shake(reducedMotion ? a * 0.25 : a); }
 
   // projectiles (ink / zap visuals)
   const shots = [];
@@ -1129,7 +1130,7 @@ export function createGame(el, api) {
       else renderer.setViewport(0, 0, W, H);
       if (draw) renderer.render(world.scene, rg.cam);
       const sk = mode === 'run' && !isPaused(now) ? Math.min(1, Math.max(0, (p.rs.speed - 18) / 12)) * 0.8 + (p.rs.boost ? 0.5 : 0) : 0;
-      overlay.update(sk);
+      overlay.update(reducedMotion ? 0 : sk); // no speed lines with reduced motion (vignette stays)
       if (draw) overlay.render(renderer);
     }
     if (split) renderer.setScissorTest(false);

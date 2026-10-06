@@ -189,6 +189,7 @@ Sky and city (all from the theme inks):
 - **Overlay** (fx.js `createOverlay`): manga speed lines as ~30 thin tapered triangles radiating
   from the vanishing point, plus a corner-only vignette: two draw calls in clip space, no
   full-screen layer (the old DOM speed-line layer was 160 % × 160 % of the screen, ~7.6 Mpx at 3×).
+  With `prefers-reduced-motion` there are no speed lines and camera shake is quartered.
 
 ## Performance
 

@@ -181,7 +181,7 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
     // of firing a burst of overdue notes, so the loop can't stack or drift.
     if (nextT < ctx.currentTime) { if (nextT > 0) stats.resets++; nextT = ctx.currentTime + 0.05; }
     const silent = isMuted() || !musicOn();
-    while (nextT < ctx.currentTime + 0.14) { if (!silent) schedStep(nextT); nextT += dur; step++; stats.steps++; }
+    while (nextT < ctx.currentTime + 0.2) { if (!silent) schedStep(nextT); nextT += dur; step++; stats.steps++; } // 200 ms look-ahead rides out main-thread stalls
     if (nextT - ctx.currentTime > stats.maxAhead) stats.maxAhead = nextT - ctx.currentTime;
     const want = silent ? 0 : pausedDuck ? 0.16 : 0.55;
     // one automation event per change of target (not one every 45 ms while it glides)
