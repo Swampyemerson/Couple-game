@@ -186,6 +186,7 @@ async function cyclesLocalPhone(h, scheme) {
   assert(i.layout === 'p' && i.touch && await visible(pg, '.cy-pad.p-a') && await visible(pg, '.cy-pad.p-b.is-rot'), 'one phone: a D-pad at each end, the far one turned round');
   // Sydney sits at the top: her pad's left is the screen's right, her pad's up is the screen's down
   await pg.click('.cy-pad.p-b .cy-key[data-d="3"]'); await sleep(170); await pg.click('.cy-pad.p-b .cy-key[data-d="0"]');
+  await pg.click('.cy-pad.p-a .cy-key[data-d="3"]'); // Emerson heads for the left wall
   await sleep(250);
   i = await cy(pg);
   const bDirs = turnsOf(i.log, 'b').map((e) => +e.slice(-1) & 3);
@@ -193,7 +194,6 @@ async function cyclesLocalPhone(h, scheme) {
   await sleep(300);
   await shot(pg, 'cycles-phone-local-' + scheme);
   assert(await noSideScroll(pg), 'no sideways scroll on a phone');
-  await pg.click('.cy-pad.p-a .cy-key[data-d="1"]'); await sleep(150); await pg.click('.cy-pad.p-a .cy-key[data-d="2"]');
   const e = await localEnd(pg, 1);
   assert(e.rw === 'b', 'one phone: Emerson\'s pad steered him into the wall');
   await sleep(300);

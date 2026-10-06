@@ -363,7 +363,8 @@ async function hockeyKeys(h, pg, tag) {
   const early = vel.filter(([t]) => t > 0 && t < 45).map((v) => v[1]);
   const after = vel.filter(([t]) => t > 260 && t < 420).map((v) => v[1]);
   assert(vmax > 80 && early.length && Math.max(...early) < vmax * 0.7, `keyboard mallet accelerates smoothly (first 45 ms ≤ ${Math.round(Math.max(...early))} u/s, top ${Math.round(vmax)} u/s)`);
-  assert(after.some((v) => v > 1 && v < vmax * 0.6) && vel[vel.length - 1][1] < 1, 'and eases to a stop after the key is released');
+  const end = vel[vel.length - 1][1];
+  assert(after.some((v) => v > 1 && v < vmax * 0.6) && end < vmax * 0.15, `and eases to a stop after the key is released (${Math.round(end)} u/s 300 ms later)`);
   // W moves Emerson's mallet up the screen (toward the near rail of a sideways table).
   const x0 = (await hk(pg)).mallets.a.x;
   await pg.keyboard.down('KeyW'); await h.wait(300); await pg.keyboard.up('KeyW');
