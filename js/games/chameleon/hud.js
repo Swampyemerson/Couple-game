@@ -295,7 +295,7 @@ export function createHud(root, api) {
     },
     /** buttons: [{ act, icon, label, big, prime, key, disabled, cd (0..1) }] */
     actions(list) {
-      const key = list.map((b) => `${b.act}${b.big ? 'B' : ''}${b.prime ? 'P' : ''}${b.hl ? 'H' : ''}${b.label}`).join(',');
+      const key = list.map((b) => `${b.act}${b.big ? 'B' : ''}${b.prime ? 'P' : ''}${b.hl ? 'H' : ''}${b.cdRing ? 'C' : ''}${b.key || ''}`).join(',');
       if (key !== actsKey) {
         actsKey = key;
         el.acts.style.gridTemplateColumns = list.length > 2 ? 'auto auto' : `repeat(${list.length}, auto)`;
@@ -306,6 +306,10 @@ export function createHud(root, api) {
         if (!btn) continue;
         const dis = !!b.disabled;
         if (btn.disabled !== dis) btn.disabled = dis;
+        const em = btn.querySelector('em');
+        if (em && em.textContent !== b.label) { em.textContent = b.label; btn.setAttribute('aria-label', b.label); }
+        const hl = !!b.hl;
+        if (btn.classList.contains('hl') !== hl) btn.classList.toggle('hl', hl);
         if (b.cdRing) {
           const c = btn.querySelector('.chm-cd circle');
           const off = String(Math.round(160 * (b.cd || 0)));

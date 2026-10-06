@@ -124,6 +124,15 @@ export function createWorld(THREE, P) {
   const blocks = inst(blockGeo, 8);
   blocks.setColorAt(0, new THREE.Color(1, 1, 1));
 
+  // start / finish gates
+  const gateGeo = freezeWith((b) => {
+    for (const sx of [-1, 1]) b.boxMM(sx * 4.62 - 0.26, -0.12, -0.26, sx * 4.62 + 0.26, 7.4, 0.26, P.pole, FX_PLAIN, 0.05, ink, T);
+    b.boxMM(-4.95, 6.3, -0.28, 4.95, 7.5, 0.28, P.white, FX_STRIPE, 0.06, ink, T);
+    b.boxMM(-2.3, 5.95, -0.38, 2.3, 7.85, 0.38, P.hl, FX_GLOW, 0.06, ink, T);
+    b.boxMM(-4.2, -0.025, -0.45, 4.2, 0.015, 0.45, P.white, FX_STRIPE, 0, ink, T);
+  });
+  const gates = inst(gateGeo, 2);
+
   // oncoming trains (pooled, 2 cars, front at local z = 0 facing +z)
   const mtGeo = freezeWith((b) => trainCars(b, 0, 0, 2, P.trains[4], true, T, P));
   const mtrains = [];
@@ -304,6 +313,20 @@ export function createWorld(THREE, P) {
     street.updateMatrixWorld(); skyline.updateMatrixWorld();
   }
 
+  /** Track positions (metres) of the start / finish gates. */
+  function setGates(list) {
+    const a = gates.instanceMatrix.array;
+    let n = 0;
+    for (const d of list) { if (n < 2) writeM(a, n++, 0, 0, -d, 1, 0); }
+    gates.count = n;
+    gates.instanceMatrix.needsUpdate = true;
+  }
+  /** Forget built chunks (the track changed). */
+  function reset() {
+    for (const p of pool) { p.ci = -1; p.mesh.visible = false; p.used = 0; }
+    byChunk.clear();
+  }
+
   function setPalette(P2) {
     // Rebuilding everything is simplest; palette changes are rare (theme switch).
     scene.background.fromArray(P2.bg);
@@ -314,13 +337,13 @@ export function createWorld(THREE, P) {
 
   return {
     scene, mat, avatarMat, U, T, P,
-    ensure, syncView, setShadows, follow, setPalette,
+    ensure, syncView, setShadows, follow, setPalette, setGates, reset,
     chunkCount: () => byChunk.size,
     /** Everything that can be drawn, for shader warm-up. */
-    warmList: () => [coins, lows, highs, blocks, shadows, street, skyline, ...Object.values(items), mtrains[0], pool[0].mesh],
+    warmList: () => [coins, lows, highs, blocks, gates, shadows, street, skyline, ...Object.values(items), mtrains[0], pool[0].mesh],
     dispose() {
       for (const d of disposables) { try { d.dispose(); } catch { /* ignore */ } }
-      for (const m of [coins, lows, highs, blocks, ...Object.values(items)]) { try { m.dispose(); } catch { /* ignore */ } }
+      for (const m of [coins, lows, highs, blocks, gates, ...Object.values(items)]) { try { m.dispose(); } catch { /* ignore */ } }
       try { shadows.dispose(); } catch { /* ignore */ }
       scene.clear();
     },

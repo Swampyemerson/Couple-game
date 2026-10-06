@@ -131,23 +131,23 @@ export function createLink(api, { delay = 100 } = {}) {
     /** Interpolate the partner at shared time `at` into `out` (no allocation). False if no data. */
     sample(out, at) {
       if (!ring.n) return false;
-      const n = ring.n; const h = ring.head;
-      const ti = (i) => ring.t[(h + i) % RING];
+      const n = ring.n; const h = ring.head; const T = ring.t;
       let a = -1;
-      if (at <= ti(0)) a = -2;
-      else for (let i = n - 2; i >= 0; i--) { if (at >= ti(i)) { a = i; break; } }
+      if (at <= T[h % RING]) a = -2;
+      else for (let i = n - 2; i >= 0; i--) { if (at >= T[(h + i) % RING]) { a = i; break; } }
       if (a === -2 || n === 1) {
         const o = ((h + (a === -2 ? 0 : n - 1)) % RING) * K;
         for (let k = 0; k < K; k++) out[NAMES[k]] = ring.v[o + k];
         return true;
       }
       let i0; let i1; let u;
-      if (a >= 0 && a < n - 1 && at <= ti(a + 1)) { i0 = a; i1 = a + 1; u = (at - ti(a)) / Math.max(1, ti(a + 1) - ti(a)); }
+      if (a >= 0 && a < n - 1 && at <= T[(h + a + 1) % RING]) { i0 = a; i1 = a + 1; u = (at - T[(h + a) % RING]) / Math.max(1, T[(h + a + 1) % RING] - T[(h + a) % RING]); }
       else {
         // newer than everything: extrapolate a little from the last two
         i0 = n - 2; i1 = n - 1;
-        const over = Math.min(at - ti(i1), 160);
-        u = 1 + over / Math.max(1, ti(i1) - ti(i0));
+        const t1 = T[(h + i1) % RING]; const t0 = T[(h + i0) % RING];
+        const over = Math.min(at - t1, 160);
+        u = 1 + over / Math.max(1, t1 - t0);
       }
       const o0 = ((h + i0) % RING) * K; const o1 = ((h + i1) % RING) * K;
       for (let k = 0; k < K; k++) {

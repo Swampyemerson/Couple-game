@@ -303,8 +303,9 @@ function hit(r, o, frontal, ov, dry) {
   if (r.invulnT > 0) return;
   if (o.t === O_BLOCK) {
     r.ignoreId = o.id; r.ignoreT = 0.5;
-    if (!dry) { o.hit = 1; ev(r, E_BLOCK, o.id); }
-    if (r.shield) { r.shield = 0; r.shields++; if (!dry) ev(r, E_SHIELD, 0); } else stumble(r, 1.3, dry);
+    const sh = r.shield;
+    if (!dry) { o.hit = 1; ev(r, E_BLOCK, o.id * 10 + (sh ? 1 : 0)); }
+    if (sh) { r.shield = 0; r.shields++; if (!dry) ev(r, E_SHIELD, 0); } else stumble(r, 1.3, dry);
     return;
   }
   if (r.boostT > 0 && (o.t === O_LOW || o.t === O_HIGH)) {

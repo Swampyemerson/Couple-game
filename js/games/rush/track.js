@@ -64,7 +64,7 @@ export function genChunk(seed, i) {
   const z1 = z0 + CHUNK;
   const c = {
     i, z0, z1, diff: difficulty(z0), vd: designSpeed(z0 + CHUNK / 2),
-    obs: [], gaps: [], coins: [], items: [], tunnel: null, path: [], scen: hash(seed, 'scen', i),
+    obs: [], gaps: [], coins: [], items: [], tunnel: null, path: [], scen: i === 0 ? hash('rush-start-line') : hash(seed, 'scen', i),
   };
   const r = rng(hash(seed, 'chunk', i));
   const sIn = safeLane(seed, i);
