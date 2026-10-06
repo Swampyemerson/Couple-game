@@ -126,10 +126,10 @@ registerGame({
   immersive: true,
   minutes: 4,
   howTo: [
-    'Drag your mallet on your half of the table. On a computer: W A S D or the arrow keys.',
-    'Hit the puck into the slot at the far end.',
-    'After a goal the puck is served to whoever let it in.',
-    'First to 7 wins.',
+    'Drag your mallet around your half of the table.',
+    'One computer: W A S D against the arrow keys. Live on a computer: your mouse.',
+    'Knock the puck into the slot at the far end. First to 7 wins.',
+    'After a goal, the puck is served to whoever let it in.',
   ],
   css: `
     .g-hockey { position: absolute; inset: 0; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
@@ -432,8 +432,7 @@ registerGame({
         if (S.g > prev.g && S.sc) goalFx(S.sc);
         if (S.h[0] > prev.h[0] && (S.hv || 0) >= HIT_FX) api.sfx('hit');
       }
-      score.a = S.s[0]; score.b = S.s[1];
-      api.setScore(score);
+      if (score.a !== S.s[0] || score.b !== S.s[1] || !prev) { score.a = S.s[0]; score.b = S.s[1]; api.setScore(score); }
       phase = S.ph;
       if (S.ph === 'play') {
         if (override && S.h[1] <= override.hb && now < override.until) return; // keep our predicted hit

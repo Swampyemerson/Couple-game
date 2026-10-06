@@ -190,6 +190,7 @@ function finishRound(s, pts) {
 // ── view helpers ─────────────────────────────────────────────────────
 const esc = (x) => String(x ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+const fitWord = (t) => { const n = Math.max(...t.split(/\s+/).map((w) => w.length)); return n >= 13 ? 'fs' : n >= 10 ? 'fm' : ''; };
 const reduced = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 const ICON = {
   undo: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7H4V2M4.5 6.5A8.5 8.5 0 1 1 3.6 14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -387,7 +388,8 @@ registerGame({
     .g-doodle .dd-pick { position: relative; display: flex; align-items: center; gap: 14px; width: 100%; min-height: 76px; padding: 14px 16px; text-align: left; background: var(--g-card); color: var(--g-ink); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow); touch-action: manipulation; transition: transform 0.12s ease; }
     .g-doodle .dd-pick:nth-child(1) { transform: rotate(-1.2deg); } .g-doodle .dd-pick:nth-child(2) { transform: rotate(0.8deg); } .g-doodle .dd-pick:nth-child(3) { transform: rotate(-0.5deg); }
     .g-doodle .dd-pick:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge, var(--g-ink)); }
-    .g-doodle .dd-pick-word { font-family: var(--g-font-display); font-weight: 900; font-size: 1.35rem; line-height: 1.1; flex: 1; }
+    .g-doodle .dd-pick-word { font-family: var(--g-font-display); font-weight: 900; font-size: 1.35rem; line-height: 1.1; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .g-doodle .dd-pick-word.fm { font-size: 1.18rem; } .g-doodle .dd-pick-word.fs { font-size: 1.04rem; }
     .g-doodle .dd-tier { flex: none; width: 64px; padding: 5px 0; text-align: center; font-weight: 900; font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; border: 2px solid var(--g-ink); border-radius: 6px; }
     .g-doodle .dd-tier.t0 { background: var(--g-card); } .g-doodle .dd-tier.t1 { background: var(--g-hl); color: var(--g-on-ink); } .g-doodle .dd-tier.t2 { background: var(--g-ink); color: var(--g-card); }
     .g-doodle .dd-pts { flex: none; font-weight: 800; color: var(--g-muted); font-size: 0.8rem; }
@@ -405,7 +407,7 @@ registerGame({
     .g-doodle .dd-over-btn:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge, var(--g-ink)); }
 
     /* top bar of the draw screen */
-    .g-doodle .dd-word { font-family: var(--g-font-display); font-weight: 900; font-size: 1.15rem; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .g-doodle .dd-word { font-family: var(--g-font-display); font-weight: 900; font-size: 1.15rem; line-height: 1.15; flex: 1; min-width: 0; overflow-wrap: anywhere; }
     .g-doodle .dd-word small { display: block; font-family: var(--g-font-body); font-size: 0.72rem; font-weight: 800; color: var(--g-muted); text-transform: uppercase; letter-spacing: 0.06em; }
     .g-doodle .dd-timer { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px 4px 6px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); font-family: var(--g-font-display); font-weight: 900; font-variant-numeric: tabular-nums; font-size: 1.05rem; box-shadow: var(--g-shadow); }
     .g-doodle .dd-timer svg { width: 26px; height: 26px; transform: rotate(-90deg); }
@@ -466,7 +468,7 @@ registerGame({
     .g-doodle .dd-stamp.anim { animation: dd-stamp 0.42s cubic-bezier(.2,1.6,.4,1) both; }
     .g-doodle .dd-answer { text-align: center; display: flex; flex-direction: column; gap: 2px; }
     .g-doodle .dd-answer small { color: var(--g-muted); font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem; }
-    .g-doodle .dd-answer b { font-family: var(--g-font-display); font-size: 1.6rem; font-weight: 900; line-height: 1.1; }
+    .g-doodle .dd-answer b { font-family: var(--g-font-display); font-size: 1.6rem; font-weight: 900; line-height: 1.1; overflow-wrap: anywhere; }
     .g-doodle .dd-glist { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
     .g-doodle .dd-next { width: 100%; min-height: 52px; font-size: 1.05rem; }
     .g-doodle .dd-note { margin: 0; color: var(--g-muted); font-weight: 700; text-align: center; font-size: 0.9rem; }
@@ -604,7 +606,7 @@ registerGame({
         <p class="dd-sub">${nm(guesser)} has to guess it. You get ${DRAW_SECONDS} seconds.</p>
         <div class="dd-picks">${R.choices.map((pi, i) => `<button class="dd-pick" data-i="${i}">
           <span class="dd-tier t${tierOf(pi)}">${TIER_NAMES[tierOf(pi)]}</span>
-          <span class="dd-pick-word">${esc(cap(PROMPTS[pi].show))}</span></button>`).join('')}</div>
+          <span class="dd-pick-word ${fitWord(PROMPTS[pi].show)}">${esc(cap(PROMPTS[pi].show))}</span></button>`).join('')}</div>
         ${ctx.mode === 'local' ? `<p class="dd-note">${esc(api.name(guesser))}, no peeking.</p>` : ''}`;
       node.querySelector('.dd-picks').addEventListener('click', (e) => {
         const b = e.target.closest('.dd-pick');

@@ -271,6 +271,7 @@ function living(atlas) {
     tc.blob(0, 0, 0.6, 0.32);
 
     // Spawns + spots
+    b.spot('lobby', { x: -0.4, z: 2.3 });
     b.spot('hiderSpawn', { x: 0, z: 0.3, yaw: Math.PI });
     b.spot('seekerSpawn', { x: 0.2, z: 3.3, yaw: Math.PI });
     b.spot('spawnA', { x: -3.6, z: 0.6, yaw: Math.PI / 2 });
@@ -450,6 +451,7 @@ function garden(atlas) {
     bb.cyl(0.28, 0.28, 0.01, [0, 0.8, 0], { color: '#8cc7d9', outline: false });
     bb.blob(0, 0, 0.32, 0.32);
 
+    b.spot('lobby', { x: 0, z: 1.6 });
     b.spot('hiderSpawn', { x: 0, z: 1.8, yaw: Math.PI });
     b.spot('seekerSpawn', { x: 0, z: 4.3, yaw: Math.PI });
     b.spot('spawnA', { x: -3.8, z: 4.0, yaw: Math.PI });
@@ -587,6 +589,7 @@ function studio(atlas) {
     b.add(sphereGeo(0.7, 0.32, 0.55, { w: 14, h: 8, thetaMax: Math.PI / 2 }), { at: [3.6, 0, 0.3], tile: 'dropcloth', rep: 0.5, color: '#ffffff', collide: true });
     b.blob(3.6, 0.3, 0.75, 0.6);
 
+    b.spot('lobby', { x: -1.6, z: 1.8 });
     b.spot('hiderSpawn', { x: 0.3, z: 0.8, yaw: Math.PI });
     b.spot('seekerSpawn', { x: 0, z: 3.4, yaw: Math.PI });
     b.spot('spawnA', { x: -3.5, z: 2.2, yaw: Math.PI / 2 });

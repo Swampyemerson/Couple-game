@@ -193,11 +193,13 @@ registerGame({
     .g-wave .wv-ghost { fill: none; stroke: var(--g-muted); stroke-width: 2; stroke-dasharray: 4 4; }
 
     /* spectrum card */
-    .g-wave .wv-card { position: relative; z-index: 1; display: grid; grid-template-columns: 1fr 1fr; margin: -6px 6px 0; border: 2px solid var(--g-ink); border-radius: 10px; overflow: hidden; box-shadow: var(--g-shadow); }
-    .g-wave .wv-end { display: flex; align-items: center; gap: 6px; min-height: 52px; padding: 8px 10px; font-family: var(--g-font-display); font-weight: 900; font-size: 1.02rem; line-height: 1.12; }
+    .g-wave .wv-card { position: relative; z-index: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); margin: -6px 6px 0; border: 2px solid var(--g-ink); border-radius: 10px; overflow: hidden; box-shadow: var(--g-shadow); }
+    .g-wave .wv-end { display: flex; align-items: center; gap: 4px; min-height: 52px; padding: 8px 8px; font-family: var(--g-font-display); font-weight: 900; font-size: 1.02rem; line-height: 1.12; }
     .g-wave .wv-end.l { background: var(--g-card); color: var(--g-ink); }
     .g-wave .wv-end.r { background: var(--g-ink); color: var(--g-card); justify-content: flex-end; text-align: right; }
-    .g-wave .wv-end svg { width: 16px; height: 16px; flex: none; }
+    .g-wave .wv-end svg { width: 14px; height: 14px; flex: none; }
+    .g-wave .wv-end span { min-width: 0; overflow-wrap: anywhere; }
+    .g-wave .wv-end.fm { font-size: 0.92rem; } .g-wave .wv-end.fs { font-size: 0.82rem; } .g-wave .wv-end.fxs { font-size: 0.74rem; }
 
     /* clue */
     .g-wave .wv-clue { position: relative; max-width: 100%; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 18px 10px; border: 2px solid var(--g-ink); border-radius: 14px; background: var(--g-card); box-shadow: var(--g-shadow); text-align: center; }
@@ -297,7 +299,8 @@ registerGame({
     const top = (s, ri = s.r) => `<div class="wv-top"><span class="wv-round">Round ${Math.min(ri + 1, ROUNDS)}<i>/${ROUNDS}</i></span><span class="wv-team">Team <b>${s.score}</b></span></div>`;
     const ARROW_L = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3L5 8l5 5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     const ARROW_R = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-    const cardHTML = (c) => `<div class="wv-card"><div class="wv-end l">${ARROW_L}<span>${label(CARDS[c][0])}</span></div><div class="wv-end r"><span>${label(CARDS[c][1])}</span>${ARROW_R}</div></div>`;
+    const fit = (t) => { const n = Math.max(...t.split(/[\s-]+/).map((w) => w.length)); return n >= 13 ? 'fxs' : n >= 11 ? 'fs' : n >= 9 ? 'fm' : ''; };
+    const cardHTML = (c) => { const [l, r] = CARDS[c].map(label); return `<div class="wv-card"><div class="wv-end l ${fit(l)}">${ARROW_L}<span>${l}</span></div><div class="wv-end r ${fit(r)}"><span>${r}</span>${ARROW_R}</div></div>`; };
 
     // Build a dial. zone: target (only when the viewer may see it). lid: the hiding screen.
     // needle: { at, who } or null.

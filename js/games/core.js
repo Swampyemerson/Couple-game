@@ -149,6 +149,7 @@ export function derive(def, match) {
   const used = { a: 0, b: 0 };
   const rejected = [];
   let last = null;
+  let prev = null; // state before the last applied move (for replays)
   let count = 0;
   for (let guard = 0; guard < 20000; guard++) {
     const acts = normActs(def.next(state));
@@ -158,6 +159,7 @@ export function derive(def, match) {
     try {
       const ns = def.apply(clone(state), w, clone(mv));
       if (ns === undefined) throw new Error('apply() returned nothing');
+      prev = state;
       state = ns;
       count++;
       last = { who: w, move: mv, n: count };
@@ -172,7 +174,7 @@ export function derive(def, match) {
     result = def.result ? def.result(state) : { winner: null };
     result = result || { winner: null };
   }
-  return { state, acts, over, result, last, count, rejected, used };
+  return { state, prev, acts, over, result, last, count, rejected, used };
 }
 
 const deriveCache = new Map();
@@ -363,14 +365,35 @@ const NOTES = {
   hit: [[140, 0.06, 'square', 0.25], [90, 0.05, 'sine', 0.3]],
   pop: [[700, 0.05, 'sine', 0.25], [1100, 0.04, 'sine', 0.15]],
 };
+/** The shared WebAudio context (created on demand, unlocked on the first touch).
+ *  Games that synthesize their own sound should use this instead of making their own.
+ *  Returns null if audio isn't available. Check muted() before making noise. */
+export function audio() {
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === 'suspended') actx.resume().catch(() => {});
+    return actx;
+  } catch { return null; }
+}
+if (typeof document !== 'undefined') {
+  // iOS only lets audio start inside a user gesture: unlock once on the first touch/click.
+  const unlock = () => {
+    const ctx = audio();
+    if (ctx) {
+      try { const b = ctx.createBuffer(1, 1, 22050); const s = ctx.createBufferSource(); s.buffer = b; s.connect(ctx.destination); s.start(0); } catch { /* ignore */ }
+    }
+    if (ctx && ctx.state === 'running') ['touchend', 'pointerup', 'keydown'].forEach((t) => document.removeEventListener(t, unlock, true));
+  };
+  ['touchend', 'pointerup', 'keydown'].forEach((t) => document.addEventListener(t, unlock, true));
+}
+
 /** Play a short synth sound: tap, place, flip, good, bad, win, lose, tick, hit, pop. */
 export function sfx(name) {
   if (muted()) return;
   const seq = NOTES[name];
   if (!seq) return;
   try {
-    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
-    if (actx.state === 'suspended') actx.resume();
+    if (!audio()) return;
     let t = actx.currentTime + 0.005;
     for (const [f, d, type = 'triangle', vol = 0.18] of seq) {
       const o = actx.createOscillator(); const g = actx.createGain();
@@ -391,6 +414,7 @@ export function tokens(el = document.documentElement) {
     a: v('--p-a'), b: v('--p-b'), aSoft: v('--p-a-soft'), bSoft: v('--p-b-soft'),
     bg: v('--g-bg'), card: v('--g-card'), ink: v('--g-ink'), muted: v('--g-muted'), line: v('--g-line'),
     hl: v('--g-hl'), good: v('--g-good'), bad: v('--g-bad'), onInk: v('--g-on-ink') || '#fff',
+    hlSoft: v('--g-hl-soft'), edge: v('--g-edge'), white: v('--g-white'), aText: v('--p-a-text'), bText: v('--p-b-text'),
     fontDisplay: v('--g-font-display'), fontBody: v('--g-font-body'),
     dark: matchMedia('(prefers-color-scheme: dark)').matches && document.documentElement.dataset.theme !== 'light' || document.documentElement.dataset.theme === 'dark',
   };
@@ -572,6 +596,7 @@ function menuHTML(def, { live, online, over, team }) {
 }
 
 function endHTML(def, res, { rematch = true } = {}) {
+  const lookLabel = def.endLookLabel || 'See the board';
   let head;
   let cls = '';
   if (def.team || res.team) {
@@ -600,7 +625,7 @@ function endHTML(def, res, { rematch = true } = {}) {
       <div class="gm-end-actions">
         ${rematch ? '<button class="gm-btn gm-btn-big" data-g="rematch">Rematch</button>' : ''}
         <div class="gm-end-row">
-          <button class="gm-btn gm-btn-ghost" data-g="end-look">See the board</button>
+          <button class="gm-btn gm-btn-ghost" data-g="end-look">${esc(lookLabel)}</button>
           <button class="gm-btn gm-btn-ghost" data-g="close">Back to games</button>
         </div>
       </div>
@@ -674,7 +699,8 @@ function openMatch(id) {
       lastKey = '';
       paint();
     },
-    look() { endDismissed = true; $('.gm-end').hidden = true; },
+    look() { endDismissed = true; $('.gm-end').hidden = true; try { inst && inst.onEndClosed && inst.onEndClosed(); } catch (e) { console.error(e); } },
+    showEnd: null,
     rematchId: null,
     offerRematch(newMatchId) {
       screen.rematchId = newMatchId;
@@ -693,7 +719,7 @@ function openMatch(id) {
     const curtain = local && def.secret && !d.over && actor && revealedFor !== actor;
     const viewer = local ? (def.secret ? (curtain ? null : actor) : (actor || m.first)) : me();
     return {
-      state: d.state, acts: d.acts, over: d.over, result: d.result, last: d.last, moves: d.count,
+      state: d.state, prev: d.prev, acts: d.acts, over: d.over, result: d.result, last: d.last, moves: d.count,
       mode: local ? 'local' : 'online', me: local ? null : me(), actor: curtain ? null : actor, viewer,
       canMove: !!actor && !curtain && !d.over, first: m.first, curtain, matchId: id,
     };
@@ -708,9 +734,11 @@ function openMatch(id) {
     color: (w) => `var(--p-${w})`,
     move(mv) { return doMove(id, mv, ctxNow && ctxNow.actor); },
     setStatus(t) { customStatus = t == null ? null : String(t); paintStatus(); },
-    toast, sfx, haptic, rand, randInt, rng, shuffled, tokens,
+    toast, sfx, haptic, rand, randInt, rng, shuffled, tokens, audio, muted,
     three: loadThree,
     el: stage,
+    /** With endDelay: 'manual', show the end card once your finale is done. */
+    showEnd() { if (screen.showEnd) screen.showEnd(); },
   };
 
   let inst = {};
@@ -769,7 +797,15 @@ function openMatch(id) {
         endShown = true;
         if (!G.results[id]) recordResult(id, m.game, d.result, m.online ? 'online' : 'local');
         end.innerHTML = endHTML(def, d.result);
-        setTimeout(() => { if (!endDismissed && G.screen === screen) { end.hidden = false; const r = d.result; sfx(def.team || r.team ? 'win' : r.winner && (c.mode === 'local' || r.winner === me()) ? 'win' : r.winner ? 'lose' : 'good'); } }, def.endDelay ?? 900);
+        const reveal = () => {
+          if (endDismissed || G.screen !== screen || !end.hidden) return;
+          end.hidden = false;
+          const r = d.result;
+          sfx(def.team || r.team ? 'win' : r.winner && (c.mode === 'local' || r.winner === me()) ? 'win' : r.winner ? 'lose' : 'good');
+        };
+        screen.showEnd = reveal;
+        // endDelay: 'manual' lets the game finish its finale and call api.showEnd() (8 s safety net).
+        setTimeout(reveal, def.endDelay === 'manual' ? 8000 : def.endDelay ?? 900);
       }
     } else if (!d.over) { endShown = false; end.hidden = true; }
   }
@@ -843,7 +879,7 @@ async function openLive(gameId, mode) {
       if (mode === 'live') api.send('__rematch', {});
       restart();
     },
-    look() { $('.gm-end').hidden = true; },
+    look() { $('.gm-end').hidden = true; try { inst && inst.onEndClosed && inst.onEndClosed(); } catch (e) { console.error(e); } },
   };
 
   const api = {
@@ -853,7 +889,7 @@ async function openLive(gameId, mode) {
     names: { a: nameOf('a'), b: nameOf('b') },
     name: nameOf, other,
     color: (w) => `var(--p-${w})`,
-    toast, sfx, haptic, rand, randInt, rng, shuffled, tokens,
+    toast, sfx, haptic, rand, randInt, rng, shuffled, tokens, audio, muted,
     three: loadThree,
     el: stage,
     get partnerHere() { return mode === 'local' || !!partnerPeer; },

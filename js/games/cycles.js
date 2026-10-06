@@ -183,6 +183,7 @@ registerGame({
     const reduce = mq('(prefers-reduced-motion: reduce)');
     const pref = window.innerWidth >= 700 && window.innerWidth >= window.innerHeight * 1.05 ? 's' : 'p';
     const offs = [];
+    const timers = new Set();
     let alive = true;
     let raf = 0;
 
@@ -194,6 +195,8 @@ registerGame({
     let cd = 0;
     let rw = null;
     let paused = false;
+    let overRes = null; // the match result, also in presence so a guest never misses its end card
+    let finT = 0;
     let score = { a: 0, b: 0 };
     let sim = null;
     let entries = [];
@@ -367,7 +370,6 @@ registerGame({
     }
     // screen direction -> world direction for a player (rot: that player's pad/half is upside down)
     const world = (d, rot) => (d + (rot ? 2 : 0) + (flip ? 2 : 0)) & 3;
-    const timers = new Set();
     function flash(sel) {
       const k = root.querySelector(sel);
       if (!k) return;
@@ -428,7 +430,7 @@ registerGame({
       let lo = 0;
       let lg = encs.join(',');
       if (lg.length > 2600) { lo = Math.max(0, encs.length - 360); lg = encs.slice(lo).join(','); }
-      api.setPresence({ v: 1, mid, L: layout, r: round, ph: phase, cd, t: sim ? sim.t : 0, lg, lo, sc: [score.a, score.b], rw, g: curG, rx: rxB, dn: dnB, pz: paused ? 1 : 0 });
+      api.setPresence({ v: 1, mid, L: layout, r: round, ph: phase, cd, t: sim ? sim.t : 0, lg, lo, sc: [score.a, score.b], rw, g: curG, rx: rxB, dn: dnB, pz: paused ? 1 : 0, res: overRes });
     }
     function startRound(now) {
       round++;
@@ -471,13 +473,14 @@ registerGame({
       const done = score.a >= WIN_AT || score.b >= WIN_AT || round >= MAX_ROUNDS;
       if (!done) { startRound(now); return; }
       phase = 'over';
-      publish();
       const w = score.a > score.b ? 'a' : score.b > score.a ? 'b' : null;
       const hi = Math.max(score.a, score.b);
       const lo = Math.min(score.a, score.b);
-      api.finish(w
+      overRes = w
         ? { winner: w, text: `${api.name(w)} wins ${hi}–${lo}`, sub: lo === 0 ? 'A clean sweep. Not a scratch on that bike.' : 'Last one riding, three times over.' }
-        : { winner: null, text: `Dead heat ${hi}–${lo}`, sub: 'Nine rounds and nobody blinked.' });
+        : { winner: null, text: `Dead heat ${hi}–${lo}`, sub: 'Nine rounds and nobody blinked.' };
+      publish();
+      api.finish(overRes);
     }
     function recvB(m, g, s, r, d) {
       if (m !== mid || !g) return;
@@ -550,6 +553,8 @@ registerGame({
       pending = pending.filter((p) => p.r === round && !(mine && p.seq <= (s.dn | 0)));
       if (mine && (s.rx | 0) !== gRx) { gRx = s.rx | 0; publishGuest(); }
       if (infoKey !== lastInfo) { lastInfo = infoKey; renderInfo(); }
+      // the engine's end-card event can drop: the host's presence carries the result as well
+      if (s.ph === 'over' && s.res && !finT) { finT = setTimeout(() => { timers.delete(finT); api.finish(s.res); }, 1500); timers.add(finT); }
       dirty = true;
     }
 

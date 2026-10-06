@@ -276,6 +276,15 @@ async function quickdrawLive(h, tag) {
 async function quickdrawLiveFast(h, tag) {
   const { a, b } = h;
   await joinLive(h, 'quickdraw');
+  // Sydney drops out mid-round: the round is voided and the host waits. She rejoins: a fresh round.
+  await a.waitForFunction(() => document.querySelector('.g-qd')?.dataset.phase === 'steady', null, { timeout: 6000 });
+  await h.closeGame(b);
+  await a.waitForFunction(() => window.__qdTest.state().phase === 'paused', null, { timeout: 4000 });
+  await h.wait(5000);
+  assert((await qd(a)).phase === 'paused' && !(await qd(a)).verdict, 'partner gone: the round is voided and the duel waits (no verdict, no stray DRAW)');
+  await a.click('#game-root [data-g="invite-again"]');
+  await h.settle();
+  await b.click('#gm-invite [data-g="invite-yes"]');
   await b.waitForFunction(() => document.querySelector('.g-qd')?.dataset.phase === 'draw' || document.querySelector('.g-qd')?.dataset.phase === 'steady', null, { timeout: 6000 });
   const shot = b.waitForFunction(() => document.querySelector('.g-qd').dataset.phase === 'draw', null, { timeout: 9000 }).then(() => h.shot(b, `${SHOTS}/qd-${tag}-live-draw-360-b.png`));
   await Promise.all([qdFireAt(a, 'draw', 120), qdFireAt(b, 'draw', 260), shot]);

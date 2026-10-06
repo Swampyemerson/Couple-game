@@ -30,13 +30,13 @@ const RECTS = [
 
 // Pivot (part origin) positions in avatar space for the standing pose.
 const PIV = {
-  body: [0, 0.29, -0.03],
-  head: [0, 0.34, 0.17],
-  tail: [0, 0.27, -0.27],
-  legFL: [0.115, 0.24, 0.12], legFR: [-0.115, 0.24, 0.12],
-  legBL: [0.115, 0.24, -0.15], legBR: [-0.115, 0.24, -0.15],
+  body: [0, 0.225, -0.03],
+  head: [0, 0.275, 0.18],
+  tail: [0, 0.215, -0.28],
+  legFL: [0.125, 0.17, 0.13], legFR: [-0.125, 0.17, 0.13],
+  legBL: [0.125, 0.17, -0.16], legBR: [-0.125, 0.17, -0.16],
 };
-const EYE = { L: [0.098, 0.075, 0.1], R: [-0.098, 0.075, 0.1] }; // relative to the head pivot
+const EYE = { L: [0.1, 0.08, 0.11], R: [-0.1, 0.08, 0.11] }; // relative to the head pivot
 
 function remapUV(g, rect, swap) {
   const [x, y, w, h] = rect;
@@ -53,14 +53,14 @@ function remapUV(g, rect, swap) {
 function legGeo(side) {
   // hip (origin) → knee → ankle, then a mitten foot
   const s = side;
-  const pts = [[0, 0, 0], [s * 0.035, -0.06, 0.01], [s * 0.06, -0.11, 0.025], [s * 0.055, -0.17, 0.03], [s * 0.05, -0.215, 0.035]];
-  const leg = tubeGeo(pts, (t) => 0.047 - t * 0.012, { radial: 8, capEnd: false, capStart: true });
-  const foot = sphereGeo(0.042, 0.026, 0.055, { w: 10, h: 6, metres: false });
+  const pts = [[0, 0, 0], [s * 0.045, -0.015, 0.005], [s * 0.085, -0.03, 0.01], [s * 0.1, -0.08, 0.015], [s * 0.1, -0.145, 0.02]];
+  const leg = tubeGeo(pts, (t) => 0.05 - t * 0.012, { radial: 8, capEnd: false, capStart: true });
+  const foot = sphereGeo(0.045, 0.026, 0.058, { w: 10, h: 6, metres: false });
   // squash leg uv into the top 70% of the rect, foot into the bottom 30%
   for (let i = 1; i < leg.uv.length; i += 2) leg.uv[i] = 0.3 + leg.uv[i] * 0.7;
   for (let i = 0; i < foot.uv.length; i += 2) { foot.uv[i + 1] *= 0.3; }
   const off = leg.pos.length / 3;
-  for (let i = 0; i < foot.pos.length; i += 3) { leg.pos.push(foot.pos[i] + s * 0.05, foot.pos[i + 1] - 0.22, foot.pos[i + 2] + 0.05); }
+  for (let i = 0; i < foot.pos.length; i += 3) { leg.pos.push(foot.pos[i] + s * 0.1, foot.pos[i + 1] - 0.15, foot.pos[i + 2] + 0.04); }
   leg.nrm.push(...foot.nrm); leg.uv.push(...foot.uv);
   for (const k of foot.idx) leg.idx.push(k + off);
   return leg;
@@ -70,16 +70,16 @@ function tailGeo() {
   const pts = [];
   const N = 40;
   // back, then curling down into a spiral under itself
-  const c = [0, -0.11, -0.2]; // spiral centre relative to the tail pivot
+  const c = [0, -0.085, -0.17]; // spiral centre relative to the tail pivot
   for (let k = 0; k <= N; k++) {
     const s = k / N;
     if (s < 0.18) {
       const t = s / 0.18;
-      pts.push([0, -0.0 * t + 0.01 * Math.sin(t * 3), -0.02 - t * 0.17]);
+      pts.push([0, 0.01 * Math.sin(t * 3), -0.02 - t * 0.15]);
     } else {
       const t = (s - 0.18) / 0.82;
       const ang = Math.PI / 2 + 0.35 - t * Math.PI * 2 * 1.3;
-      const rad = 0.13 * (1 - 0.72 * t);
+      const rad = 0.105 * (1 - 0.72 * t);
       pts.push([0, c[1] + Math.sin(ang) * rad, c[2] - Math.cos(ang) * rad * 1.0 - 0.02]);
     }
   }
@@ -89,12 +89,12 @@ function tailGeo() {
 }
 
 function bodyGeo() {
-  const g = sphereGeo(0.165, 0.152, 0.265, { w: 22, h: 14, metres: false });
+  const g = sphereGeo(0.175, 0.158, 0.27, { w: 22, h: 14, metres: false });
   // dorsal ridge + flatter belly + slightly fuller rump
   for (let i = 0; i < g.pos.length; i += 3) {
     const x = g.pos[i]; let y = g.pos[i + 1]; let z = g.pos[i + 2];
-    const ny = y / 0.152;
-    if (ny > 0) y += 0.035 * Math.pow(ny, 6) * (1 - Math.abs(x) / 0.165);
+    const ny = y / 0.158;
+    if (ny > 0) y += 0.035 * Math.pow(ny, 6) * (1 - Math.abs(x) / 0.175);
     else y *= 0.86;
     z *= 1 + 0.06 * (z < 0 ? 1 : 0);
     g.pos[i + 1] = y; g.pos[i + 2] = z;
@@ -119,7 +119,7 @@ function headGeo() {
 }
 
 function casqueGeo() {
-  const g = cylGeo(0.0, 0.085, 0.16, { radial: 12, caps: true, fit: true });
+  const g = cylGeo(0.0, 0.075, 0.1, { radial: 12, caps: true, fit: true });
   // flatten sideways into a helmet crest
   for (let i = 0; i < g.pos.length; i += 3) g.pos[i] *= 0.55;
   recomputeNormals(g);
@@ -220,8 +220,8 @@ export function createKit(THREE) {
     remapUV(bodyGeo(), RECTS[0].r),
     remapUV(headGeo(), RECTS[1].r),
     remapUV(casqueGeo(), RECTS[2].r),
-    remapUV(sphereGeo(0.066, 0.066, 0.066, { w: 12, h: 8, metres: false }), RECTS[3].r),
-    remapUV(sphereGeo(0.066, 0.066, 0.066, { w: 12, h: 8, metres: false }), RECTS[4].r),
+    remapUV(sphereGeo(0.07, 0.07, 0.07, { w: 12, h: 8, metres: false }), RECTS[3].r),
+    remapUV(sphereGeo(0.07, 0.07, 0.07, { w: 12, h: 8, metres: false }), RECTS[4].r),
     remapUV(tailGeo(), RECTS[5].r, true),
     remapUV(legGeo(1), RECTS[6].r),
     remapUV(legGeo(-1), RECTS[7].r),
@@ -239,8 +239,8 @@ export function createKit(THREE) {
     for (let i = 0; i < g.pos.length; i += 3) { ep.push(g.pos[i], g.pos[i + 1], g.pos[i + 2] + z); en.push(g.nrm[i], g.nrm[i + 1], g.nrm[i + 2]); ec.push(...col); }
     for (const k of g.idx) ei.push(k + o);
   };
-  put(ring, 0.058, [1, 0.98, 0.94]);
-  put(pupil, 0.066, [0.08, 0.07, 0.09]);
+  put(ring, 0.062, [1, 0.98, 0.94]);
+  put(pupil, 0.07, [0.08, 0.07, 0.09]);
   const eyeGeo = new THREE.BufferGeometry();
   eyeGeo.setAttribute('position', new THREE.Float32BufferAttribute(ep, 3));
   eyeGeo.setAttribute('normal', new THREE.Float32BufferAttribute(en, 3));
@@ -258,10 +258,10 @@ export function createKit(THREE) {
 // Pose targets: per part [px,py,pz, rx,ry,rz, sx,sy,sz] (position relative to the stand pivot).
 const Z = [0, 0, 0, 0, 0, 0, 1, 1, 1];
 const POSE_DEF = {
-  stand: { body: Z, head: [0, 0, 0, -0.08, 0, 0, 1, 1, 1], tail: Z, legs: [0, 0, 0, 0, 0, 0, 1, 1, 1], lift: 0 },
-  crouch: { body: [0, -0.07, 0, 0.05, 0, 0, 1.08, 0.9, 1.0], head: [0, -0.09, -0.02, 0.18, 0, 0, 1, 1, 1], tail: [0, -0.07, 0.02, 0.15, 0, 0, 1, 1, 1], legs: [0, -0.06, 0, 0, 0, 0.55, 1, 0.62, 1], lift: 0 },
-  ball: { body: [0, -0.06, 0.02, 0, 0, 0, 1.22, 1.24, 0.84], head: [0, -0.13, -0.12, 0.95, 0, 0, 0.92, 0.92, 0.92], tail: [0, -0.1, 0.13, -0.5, 0, 0, 0.9, 0.9, 0.9], legs: [0, -0.04, 0, 0, 0, 0, 0.01, 0.01, 0.01], lift: 0 },
-  flat: { body: [0, -0.17, 0, 0, 0, 0, 1.32, 0.52, 1.1], head: [0, -0.21, 0.04, -0.05, 0, 0, 1.08, 0.72, 1.02], tail: [0, -0.19, 0.03, 0, 0, Math.PI / 2, 1, 1, 1.0], legs: [0, -0.17, 0, 0, 0, 1.35, 1, 0.9, 1], lift: 0 },
+  stand: { body: Z, head: [0, 0, 0, -0.08, 0, 0, 1, 1, 1], tail: Z, legs: [0, 0, 0, 0, 0, 0, 1, 1, 1] },
+  crouch: { body: [0, -0.06, 0, 0.05, 0, 0, 1.08, 0.9, 1.0], head: [0, -0.07, -0.02, 0.18, 0, 0, 1, 1, 1], tail: [0, -0.06, 0.02, 0.12, 0, 0, 1, 1, 1], legs: [0, -0.05, 0, 0, 0, 0.45, 1, 0.65, 1] },
+  ball: { body: [0, -0.02, 0.02, 0, 0, 0, 1.22, 1.24, 0.86], head: [0, -0.09, -0.12, 0.95, 0, 0, 0.92, 0.92, 0.92], tail: [0, -0.06, 0.12, -0.45, 0, 0, 0.9, 0.9, 0.9], legs: [0, -0.03, 0, 0, 0, 0, 0.01, 0.01, 0.01] },
+  flat: { body: [0, -0.145, 0, 0, 0, 0, 1.3, 0.52, 1.1], head: [0, -0.19, 0.03, -0.05, 0, 0, 1.08, 0.72, 1.02], tail: [0, -0.15, 0.03, 0, 0, Math.PI / 2, 1, 1, 1.0], legs: [0, -0.13, 0, 0, 0, 0.9, 1, 0.85, 1] },
 };
 POSE_DEF.wall = POSE_DEF.flat;
 const LEG_SIDE = { legFL: 1, legFR: -1, legBL: 1, legBR: -1 };
@@ -282,7 +282,7 @@ export function createAvatar(THREE, kit, { gradientMap, texture }) {
   const meshes = [];
   const body = mk(0); piv.body.add(body); meshes.push(body);
   const head = mk(1); piv.head.add(head); meshes.push(head);
-  const casque = mk(2); casque.position.set(0, 0.14, -0.03); casque.rotation.x = -0.75; piv.head.add(casque); meshes.push(casque);
+  const casque = mk(2); casque.position.set(0, 0.125, 0.0); casque.rotation.x = -1.15; piv.head.add(casque); meshes.push(casque);
   const eyes = [];
   for (const [side, pi] of [['L', 3], ['R', 4]]) {
     const turret = new THREE.Group();

@@ -56,8 +56,9 @@ const FIGURE = `
     </g></g>
   </g>`;
 
-const SCENE = (left, right) => `
-  <svg class="qd-svg" viewBox="0 0 320 124" role="img" aria-label="Two gunslingers face each other at high noon">
+const SCENE = (left, right, tall) => `
+  <svg class="qd-svg" viewBox="${tall ? '0 -44 320 168' : '0 0 320 124'}" role="img" aria-label="Two gunslingers face each other at high noon">
+    ${tall ? '<path class="qd-bird" d="M120 -18 q5 -5 10 0 q5 -5 10 0 M196 -30 q4 -4 8 0 q4 -4 8 0"/>' : ''}
     <circle class="qd-sun" cx="160" cy="98" r="34"/>
     <path class="qd-ground" d="M0 104 H320 V124 H0 Z"/>
     <path class="qd-tufts" d="M28 112 l4 -4 M118 116 l3 -3 l3 3 M196 113 l4 -4 M292 117 l3 -3 l3 3 M74 119 h8 M236 120 h8"/>
@@ -91,7 +92,8 @@ registerGame({
     .g-qd .qd-mid { display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
     .g-qd .qd-scene { position: relative; background: var(--g-card); border: 2.5px solid var(--g-ink); border-radius: 12px; box-shadow: var(--g-shadow); overflow: hidden; transition: background-color 0.06s; }
     .g-qd[data-phase="draw"] .qd-scene { background: var(--g-hl); }
-    .g-qd .qd-svg { display: block; width: 100%; height: auto; max-height: 30vh; margin: 0 auto; overflow: visible; }
+    .g-qd .qd-svg { display: block; width: 100%; height: auto; max-height: 34vh; margin: 0 auto; overflow: visible; }
+    .g-qd .qd-bird { fill: none; stroke: var(--g-ink); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
     .g-qd .qd-sun { fill: var(--g-hl); stroke: var(--g-ink); stroke-width: 2.5; }
     .g-qd[data-phase="draw"] .qd-sun { fill: var(--g-card); }
     .g-qd .qd-ground { fill: var(--g-hl-soft, var(--g-bg)); }
@@ -196,7 +198,7 @@ registerGame({
         ${layout === 'live' && !coarse ? '<span class="qd-pad-hint"><kbd>Space</kbd> or click</span>' : ''}
       </button>`;
     const sig = (flip) => `<div class="qd-sig${flip ? ' qd-top' : ''}" aria-live="${flip ? 'off' : 'assertive'}"><div class="qd-word"></div><div class="qd-line"></div><div class="qd-times"></div></div>`;
-    const scene = `<div class="qd-scene">${SCENE(left, right)}</div>`;
+    const scene = `<div class="qd-scene">${SCENE(left, right, layout !== 'phone')}</div>`;
     if (layout === 'phone') {
       el.innerHTML = `<div class="g-qd is-phone" data-phase="intro">${pad('b', true)}<div class="qd-mid">${sig(true)}${scene}${sig(false)}</div>${pad('a', false)}</div>`;
     } else if (layout === 'desk') {

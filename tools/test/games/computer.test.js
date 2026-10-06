@@ -536,6 +536,51 @@ async function defuseShots(h, tag, opts = {}) {
   await closeBoth(h);
 }
 
+// ══════════════════════════ dropped events ══════════════════════════
+// A third of all room events vanish. Presence still gets through, and both games lean on it.
+async function bothLive(h, game) {
+  await h.startLive(h.a, game, 'live');
+  await h.settle(); await h.settle();
+  // the invite is a room event too: take it if it arrived, otherwise open the game directly
+  if (await visible(h.b, '#gm-invite')) await h.b.click('#gm-invite [data-g="invite-yes"]');
+  else await h.startLive(h.b, game, 'live');
+  await h.settle(); await h.settle();
+}
+async function droppedEvents(h) {
+  console.log('\n# Dropped events (a third of room events lost)');
+  await bothLive(h, 'cycles');
+  for (let n = 1; n <= 3; n++) {
+    const r = await liveRound(h, n, async () => {
+      await h.b.keyboard.press('ArrowLeft'); await sleep(90); await h.b.keyboard.press('ArrowDown'); await sleep(90); await h.b.keyboard.press('ArrowRight');
+      await h.a.keyboard.press('a'); await sleep(170); await h.a.keyboard.press('w');
+    });
+    assert(turnsOf(r.log, 'b').length === 3 && r.rw === 'a', `round ${n}: every one of Sydney's three turns arrived`);
+  }
+  await until(async () => await visible(h.a, '#game-root .gm-end') && await visible(h.b, '#game-root .gm-end'), 'Light Cycles end card on both', 9000);
+  assert(true, 'Light Cycles: end card on both even if the finish event is lost');
+  await closeBoth(h);
+
+  await bothLive(h, 'defuse');
+  await until(async () => (await dx(h.a)) && (await dx(h.b)), 'both lobbies');
+  await pickRoles(h, h.a, h.b);
+  await until(async () => (await dx(h.a)).partnerRole === 'manual', 'roles to show');
+  await h.b.click('[data-act="swap"]');
+  await until(async () => (await dx(h.a)).role === 'manual' && (await dx(h.b)).role === 'bomb', 'the swap to land', 6000);
+  assert(true, 'Defuse: swap lands even when its event is lost');
+  await startRound(h, h.a);
+  assert((await dx(h.b)).phase === 'bomb', 'Defuse: the start request lands');
+  const ans = (await dx(h.b)).bomb.gen.answers;
+  await h.b.click(`.dx-wire[data-wire="${ans.wire === 0 ? 1 : 0}"]`);
+  await h.b.click(`.dx-gkey[data-glyph="${ans.keypad[3]}"]`);
+  await h.b.click(`.dx-gkey[data-glyph="${ans.keypad[2]}"]`);
+  await until(async () => (await dx(h.a)).manual && (await dx(h.a)).manual.over, 'the manual to see the boom');
+  await until(async () => await visible(h.a, '#game-root .gm-end') && await visible(h.b, '#game-root .gm-end'), 'Defuse end card on both', 9000);
+  await until(() => h.results().some((r) => r.game === 'defuse'), 'the result', 4000);
+  await h.settle();
+  assert(h.results().filter((r) => r.game === 'defuse').length === 1, 'Defuse: boom recorded once (the bomb was on the guest)');
+  await closeBoth(h);
+}
+
 // ══════════════════════════ run ══════════════════════════
 async function withHarness(opts, fn) {
   const h = await launch({ only: ['cycles', 'defuse'], ...opts });
@@ -557,7 +602,7 @@ async function withHarness(opts, fn) {
   const only = process.argv[2] || 'all';
   try {
     if (only === 'all' || only === 'phone') {
-      await withHarness({ port: 8880 }, async (h) => {
+      await withHarness({ port: 8880, coarse: true }, async (h) => {
         await asPhones(h);
         await cyclesLivePhones(h);
         await cyclesLocalPhone(h, 'light');
@@ -579,10 +624,16 @@ async function withHarness(opts, fn) {
         await cyclesLiveLaptops(h, 'dark');
         await defuseShots(h, 'laptop-dark', { hold: true });
       });
-      await withHarness({ port: 8883, colorScheme: 'dark' }, async (h) => {
+      await withHarness({ port: 8883, colorScheme: 'dark', coarse: true }, async (h) => {
         await asPhones(h);
         await cyclesLocalPhone(h, 'dark');
         await defuseShots(h, 'phone-dark', { lobby: true, narrow: true });
+      });
+    }
+    if (only === 'all' || only === 'drops') {
+      await withHarness({ port: 8884, coarse: true, dropRate: 0.33 }, async (h) => {
+        await asPhones(h);
+        await droppedEvents(h);
       });
     }
     console.log('\nALL GOOD. Screenshots in', SHOTS);

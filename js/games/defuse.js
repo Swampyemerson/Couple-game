@@ -444,10 +444,11 @@ registerGame({
     let raf = 0;
 
     // lobby state (mine), the partner's comes from presence
-    const L = { role: memo.role, diff: DIFFS[memo.diff] ? memo.diff : 'normal', dv: 0, dw: me, go: null };
+    const L = { role: memo.role, diff: DIFFS[memo.diff] ? memo.diff : 'normal', dv: 0, dw: me, go: null, sw: null };
     const P = () => { const s = api.partnerState(); return s && s.v === 1 ? s : null; };
     const seenGo = new Set();
-    { const s = P(); if (s && s.go) seenGo.add(s.go); }
+    const seenSwap = new Set();
+    { const s = P(); if (s && s.go) seenGo.add(s.go); if (s && s.sw && s.sw.t) seenSwap.add(s.sw.t); }
     let phase = 'lobby'; // lobby | bomb | manual
     let B = null; // the bomb round (bomb side)
     let M = null; // the mirrored round (manual side)
@@ -458,7 +459,7 @@ registerGame({
     const $$ = (s) => [...root.querySelectorAll(s)];
 
     function pub() {
-      const o = { v: 1, role: L.role, diff: L.diff, dv: L.dv, dw: L.dw, go: L.go, ph: phase === 'bomb' ? (B.over ? 'over' : 'play') : phase === 'manual' ? 'reading' : 'lobby' };
+      const o = { v: 1, role: L.role, diff: L.diff, dv: L.dv, dw: L.dw, go: L.go, sw: L.sw, ph: phase === 'bomb' ? (B.over ? 'over' : 'play') : phase === 'manual' ? 'reading' : 'lobby' };
       if (phase === 'bomb') Object.assign(o, { n: B.n, rd: B.diff, left: Math.round(B.left), rate: rate(), st: B.strikes, sv: B.solved.join(''), pz: B.pz ? 1 : 0, res: B.res, win: B.win ? 1 : 0 });
       if (phase === 'manual') o.n = M.n;
       api.setPresence(o);
@@ -531,7 +532,9 @@ registerGame({
       const s = P();
       const theirs = s && s.role;
       if (act.dataset.act === 'swap' && L.role && theirs && L.role !== theirs) {
-        const next = { [me]: theirs, [them]: L.role };
+        // the swap rides in the event and in presence, so a dropped event still lands
+        const next = { t: token(), [me]: theirs, [them]: L.role };
+        L.sw = next;
         api.send('swap', next);
         L.role = theirs; memo.role = L.role; L.go = null;
         api.sfx('flip'); pub(); updateLobby();
@@ -897,7 +900,8 @@ registerGame({
       ENDED.add(M.n);
       finale(win ? 'win' : 'boom', res);
       api.sfx(win ? 'win' : 'hit');
-      if (api.isHost && res) later(() => api.finish(res), FINALE_MS);
+      // the host records it; the guest's end card normally arrives from the host, with a fallback
+      if (res) later(() => api.finish(res), api.isHost ? FINALE_MS : FINALE_MS + 1500);
     }
     function manualFrame(now) {
       const left = M.over || M.pz || M.frozen ? M.left : M.left - (now - M.at) * M.rate;
@@ -925,15 +929,18 @@ registerGame({
       if (adoptDiff(s) && phase === 'lobby') pub();
       if (phase === 'lobby') {
         if (s.ph === 'play' && s.role === 'bomb' && L.role === 'manual' && s.n && !ENDED.has(s.n)) { enterManual(s); return; }
+        if (s.sw) takeSwap(s.sw);
         if (s.go) maybeGo(s.go);
         updateLobby();
       } else if (phase === 'manual') manualState(s);
     }));
     offs.push(api.on('go', (d) => { if (d && d.g) maybeGo(d.g); }));
-    offs.push(api.on('swap', (d) => {
-      if (phase !== 'lobby' || !d || (d[me] !== 'bomb' && d[me] !== 'manual')) return;
+    function takeSwap(d) {
+      if (phase !== 'lobby' || !d || !d.t || seenSwap.has(d.t) || (d[me] !== 'bomb' && d[me] !== 'manual')) return;
+      seenSwap.add(d.t);
       L.role = d[me]; memo.role = L.role; L.go = null; api.sfx('flip'); pub(); updateLobby();
-    }));
+    }
+    offs.push(api.on('swap', takeSwap));
     offs.push(api.on('result', (d) => { if (phase === 'manual' && d && d.n === M.n) manualOver(d.res, !!d.win); }));
     offs.push(api.onPartnerHere((here) => {
       if (phase === 'bomb' && B && !B.over) { B.pz = !here; if (!here) bombCancel(); pub(); }

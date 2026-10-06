@@ -50,7 +50,53 @@ const ansOf = (who, p) => pdata(who, p).ans || {};
 const doneOf = (who, p) => !!pdata(who, p).done;
 const has = (ans, i) => ans['i' + i] !== undefined && ans['i' + i] !== null;
 const countOf = (who, p) => { const a = ansOf(who, p); return p.items.filter((_, i) => has(a, i)).length; };
-const packTitle = (p) => (p.spicy && !session.spicyOpen ? '🔒 Something spicy' : `${p.emoji} ${esc(p.title)}`);
+const packTitle = (p) => (p.spicy && !session.spicyOpen ? 'Something spicy' : esc(p.title));
+
+// ── printed icon set ──────────────────────────────────────────────────
+// 24px grid, 2px key-plate stroke. `.f` parts take a flat ink fill, `.d` parts are solid.
+const ICO = {
+  back: '<path d="M15 5l-7 7 7 7"/>',
+  close: '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>',
+  next: '<path d="M5 12h13M13 6l6 6-6 6"/>',
+  prev: '<path d="M19 12H6M11 6l-6 6 6 6"/>',
+  chev: '<path d="M9.5 5.5 16 12l-6.5 6.5"/>',
+  check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  lock: '<rect class="f" x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8.2 10.5V8a3.8 3.8 0 0 1 7.6 0v2.5M12 14.3v2.6"/>',
+  flame: '<path class="f" d="M12.4 2.8c.5 3.4 5.1 5.3 5.1 10.6a5.5 5.5 0 0 1-11 0c0-2.6 1.2-4.2 2.7-5.3.2 1.7 1 2.7 2.1 3.1-.5-3.1-.2-6.2 1.1-8.4z"/>',
+  calendar: '<rect class="f" x="4" y="5.5" width="16" height="14.5" rx="2"/><path d="M4 10.2h16M8.5 3.5v4M15.5 3.5v4"/><circle class="d" cx="12" cy="15" r="1.6"/>',
+  list: '<rect class="f" x="4" y="3.5" width="16" height="17" rx="2"/><path d="M7.8 9.2l1.5 1.5 2.6-3M7.8 15.2l1.5 1.5 2.6-3M14.4 9.8h2.4M14.4 15.8h2.4"/>',
+  ribbon: '<circle class="f" cx="12" cy="9.5" r="5.5"/><path d="M8.7 14l-1.7 6.5 5-2.5 5 2.5-1.7-6.5"/>',
+  book: '<path class="f" d="M3.5 5.5c3.2-1.2 5.9-.9 8.5 1 2.6-1.9 5.3-2.2 8.5-1v13.6c-3.2-1.2-5.9-.9-8.5 1-2.6-1.9-5.3-2.2-8.5-1z"/><path d="M12 6.5v13.6"/>',
+  sync: '<path d="M5.2 9.5A7 7 0 0 1 18 7.2M18.8 14.5A7 7 0 0 1 6 16.8"/><path d="M18.5 3.5v4h-4M5.5 20.5v-4h4"/>',
+  swap: '<path d="M7.5 4 4 7.5 7.5 11M4 7.5h12.5M16.5 13l3.5 3.5-3.5 3.5M20 16.5H7.5"/>',
+  die: '<rect class="f" x="4.6" y="4.6" width="14.8" height="14.8" rx="3.4" transform="rotate(-9 12 12)"/><circle class="d" cx="8.6" cy="9" r="1.35"/><circle class="d" cx="12" cy="12" r="1.35"/><circle class="d" cx="15.4" cy="15" r="1.35"/>',
+  cards: '<rect x="3.8" y="6" width="10" height="14" rx="1.8" transform="rotate(-10 8.8 13)"/><rect class="f" x="10" y="3.8" width="10" height="14" rx="1.8" transform="rotate(9 15 10.8)"/>',
+  wheel: '<circle class="f" cx="12" cy="10.5" r="7.5"/><path d="M12 3v15M4.5 10.5h15M6.7 5.2l10.6 10.6M17.3 5.2 6.7 15.8"/><path d="M9 21.5h6"/><circle class="d" cx="12" cy="10.5" r="1.8"/>',
+  candle: '<rect class="f" x="9" y="10" width="6" height="10" rx="1"/><path d="M12 10V8.2M5.5 20.5h13"/><path class="d" d="M12 2.6c1.6 1.7 2.1 2.8 2.1 3.7a2.1 2.1 0 0 1-4.2 0c0-.9.5-2 2.1-3.7z"/>',
+  eyeOff: '<path d="M3 12s3.3-6 9-6 9 6 9 6-3.3 6-9 6-9-6-9-6z"/><circle class="f" cx="12" cy="12" r="2.8"/><path d="M4.5 4.5l15 15"/>',
+  keyhole: '<circle class="f" cx="12" cy="9.3" r="3.6"/><path class="f" d="M10.4 12.2 9.2 19h5.6l-1.2-6.8"/>',
+  hourglass: '<path d="M6.5 3.5h11M6.5 20.5h11"/><path class="f" d="M8 3.5c0 4.6 8 4.4 8 8.5s-8 3.9-8 8.5h8c0-4.6-8-4.4-8-8.5s8-3.9 8-8.5z"/>',
+  star: '<path class="f" d="M12 3.2l2.3 5.4 5.8.5-4.4 3.8 1.3 5.7L12 15.6l-5 3 1.3-5.7-4.4-3.8 5.8-.5z"/>',
+  pen: '<path class="f" d="M15.6 4.4l4 4L9.2 18.8 4.5 19.5l.7-4.7z"/><path d="M13.2 6.8l4 4"/>',
+  share: '<path d="M12 15V3.8M7.8 8 12 3.8 16.2 8"/><path class="f" d="M5 11.5v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8"/>',
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+  target: '<circle cx="12" cy="12" r="8.5"/><circle class="f" cx="12" cy="12" r="5"/><circle class="d" cx="12" cy="12" r="1.6"/>',
+  scale: '<path d="M12 4v15.5M8 20h8M4.5 7.5h15"/><path class="f" d="M4.5 7.5 2.2 13.2a2.4 2.4 0 0 0 4.6 0zM19.5 7.5l-2.3 5.7a2.4 2.4 0 0 0 4.6 0z"/>',
+  sign: '<path d="M12 3v18M8.5 21h7"/><path class="f" d="M12 5h6.2l2.3 2.4-2.3 2.4H12zM12 12H5.8l-2.3 2.4 2.3 2.4H12z"/>',
+  who: '<circle class="f" cx="7.5" cy="8.5" r="3.2"/><circle cx="16.5" cy="8.5" r="3.2"/><path d="M2.8 19.5c.5-3.4 2.3-5.2 4.7-5.2s4.2 1.8 4.7 5.2M11.8 19.5c.5-3.4 2.3-5.2 4.7-5.2s4.2 1.8 4.7 5.2"/>',
+  hand: '<path class="f" d="M7.4 12.2V6.8a1.4 1.4 0 0 1 2.8 0v4.4-6a1.4 1.4 0 0 1 2.8 0v6-4.6a1.4 1.4 0 0 1 2.8 0v5.2-2.4a1.4 1.4 0 0 1 2.8 0v5.4c0 3.6-2.6 6.7-6.3 6.7-2.3 0-3.7-.9-5-2.7l-2.5-3.6a1.5 1.5 0 0 1 2.3-1.9z"/>',
+  talk: '<path d="M13.5 15.6h2.2l3.3 2.9v-2.9h.2a1.8 1.8 0 0 0 1.8-1.8V9.6a1.8 1.8 0 0 0-1.8-1.8h-1.4"/><path class="f" d="M3 5.8A1.8 1.8 0 0 1 4.8 4h9.6a1.8 1.8 0 0 1 1.8 1.8v6.4a1.8 1.8 0 0 1-1.8 1.8H9.2L5.5 17v-3h-.7A1.8 1.8 0 0 1 3 12.2z"/>',
+  us: '<path class="f" d="M12 7.4a5.5 5.5 0 0 1 0 9.2 5.5 5.5 0 0 1 0-9.2z"/><circle cx="9" cy="12" r="5.5"/><circle cx="15" cy="12" r="5.5"/>',
+  moon: '<path class="f" d="M19 14.6A7.6 7.6 0 0 1 9.4 5a7.6 7.6 0 1 0 9.6 9.6z"/><path d="M16.5 4.5v3M15 6h3"/>',
+};
+const icon = (n, cls = '') => `<svg class="ico${cls ? ' ' + cls : ''}" viewBox="0 0 24 24" aria-hidden="true">${ICO[n] || ''}</svg>`;
+// Packs are drawn as an issue of their category: the category's icon and ink, plus a number.
+const CAT_ICON = { quiz: 'target', thisorthat: 'scale', wyr: 'sign', who: 'who', nhie: 'hand', talk: 'talk', about: 'us', desire: 'flame', spicyquiz: 'target', spicyplay: 'die', spicytalk: 'moon' };
+const packIcon = (p) => icon(CAT_ICON[p.cat] || 'talk');
+const packNo = (p) => PACKS.filter((x) => x.cat === p.cat).indexOf(p) + 1;
+// Their two-ring mark: Emerson's blue and Sydney's pink, overprinting where they meet.
+const logoMark = (cls = '') => `<svg class="logo-mark${cls ? ' ' + cls : ''}" viewBox="0 0 132 84" aria-hidden="true"><circle class="lw" cx="80" cy="42" r="34"/><circle class="la" cx="52" cy="42" r="34"/><circle class="lb" cx="80" cy="42" r="34"/><circle class="lk" cx="52" cy="42" r="34"/><circle class="lk" cx="80" cy="42" r="34"/></svg>`;
 
 function toast(msg) {
   const t = document.createElement('div');
@@ -66,8 +112,8 @@ function ask(msg, okLabel = 'Yes') {
   return new Promise((resolve) => {
     const wrap = document.createElement('div');
     wrap.className = 'sheet-wrap';
-    wrap.innerHTML = `<div class="sheet" role="dialog" aria-modal="true"><p>${esc(msg)}</p>
-      <div class="sheet-btns"><button class="btn ghost small" data-r="0">Cancel</button><button class="btn small" data-r="1">${esc(okLabel)}</button></div></div>`;
+    wrap.innerHTML = `<div class="sheet" role="dialog" aria-modal="true"><p class="sheet-kicker">Just checking</p><p>${esc(msg)}</p>
+      <div class="sheet-btns"><button class="btn alt small" data-r="0">Cancel</button><button class="btn small" data-r="1">${esc(okLabel)}</button></div></div>`;
     wrap.addEventListener('click', (e) => {
       const b = e.target.closest('[data-r]');
       if (!b && e.target !== wrap) return;
@@ -155,19 +201,20 @@ function restoreDrafts() {
 }
 
 function syncPill() {
+  const dot = '<i class="pill-dot" aria-hidden="true"></i>';
   if (store.mode === 'artifact') {
     const bad = store.readOnly || store.full || !store.online;
-    return `<button class="pill ${bad ? 'warn' : 'ok'}" data-act="go" data-view="sync">${store.readOnly ? 'Can’t save' : store.full ? 'Storage full' : store.online ? '● Synced' : '○ Reconnecting'}</button>`;
+    return `<button class="pill ${bad ? 'warn' : 'ok'}" data-act="go" data-view="sync">${dot}${store.readOnly ? 'Can’t save' : store.full ? 'Storage full' : store.online ? 'Synced' : 'Reconnecting'}</button>`;
   }
   if (store.mode === 'cloud') {
-    return `<button class="pill ${store.online ? 'ok' : ''}" data-act="go" data-view="sync">${store.online ? '● Synced' : '○ Offline'}</button>`;
+    return `<button class="pill ${store.online ? 'ok' : ''}" data-act="go" data-view="sync">${dot}${store.online ? 'Synced' : 'Offline'}</button>`;
   }
-  return `<button class="pill ${needsExport() ? 'warn' : ''}" data-act="go" data-view="sync">⇄ Sync</button>`;
+  return `<button class="pill ${needsExport() ? 'warn' : ''}" data-act="go" data-view="sync">${icon('sync')}Sync</button>`;
 }
 
 function topbar(title, { backBtn = true, right = '' } = {}) {
   return `<header class="topbar">
-    ${backBtn ? '<button class="icon-btn" data-act="back" aria-label="Back">‹</button>' : '<span class="icon-btn ghost"></span>'}
+    ${backBtn ? `<button class="icon-btn" data-act="back" aria-label="Back">${icon('back')}</button>` : '<span class="icon-btn ghost"></span>'}
     <h1>${title}</h1>
     <div class="topbar-right">${right}</div>
   </header>`;
@@ -196,19 +243,19 @@ function ensureGames() {
 // ── onboarding ────────────────────────────────────────────────────────
 function viewWho() {
   if (ARTIFACT && !session.ready) {
-    return `<div class="screen center"><div class="hero-emoji">💞</div><p class="muted">Loading your stuff…</p></div>`;
+    return `<div class="screen center onboard">${logoMark('is-loading')}<p class="muted">Loading your stuff…</p></div>`;
   }
   const taken = (w) => store.uid && store.person(w).uid && store.person(w).uid !== store.uid;
   const btn = (w, cls) => (taken(w)
     ? `<button class="btn big-btn ${cls}" disabled>${N(w)} (already set up)</button>`
     : `<button class="btn big-btn ${cls}" data-act="pickMe" data-who="${w}">I’m ${N(w)}</button>`);
-  return `<div class="screen center">
-    <div class="hero-emoji">💞</div>
-    <h1 class="big">${esc(CONFIG.appName)}</h1>
-    <p class="muted">Our own little game app. Who’s playing on this device?</p>
+  return `<div class="screen center onboard">
+    ${logoMark()}
+    <h1 class="big mast-title">${esc(CONFIG.appName)}</h1>
+    <p class="onboard-lede">Our own little game app. Who’s playing on this device?</p>
     <div class="stack">
-      ${btn('a', '')}
-      ${btn('b', 'alt')}
+      ${btn('a', 'who-btn p-a')}
+      ${btn('b', 'who-btn p-b')}
     </div>
   </div>`;
 }
@@ -219,14 +266,14 @@ function viewConnect() {
   <div class="screen">
     ${room ? `
       <div class="card">
-        <h2>Send this to ${N(them())} 💌</h2>
+        <h2>${icon('link')}Send this to ${N(them())}</h2>
         <p class="muted">When ${N(them())} opens it, your phones are linked for good. Everything syncs live.</p>
         <button class="btn" data-act="sharePair">Share pairing link</button>
       </div>
-      <button class="btn ghost" data-act="tab" data-tab="home">Done → let’s play</button>
+      <button class="btn alt" data-act="tab" data-tab="home">Done, let’s play ${icon('next')}</button>
     ` : `
       <div class="card">
-        <h2>Link your phones</h2>
+        <h2>${icon('link')}Link your phones</h2>
         <p class="muted">One of you creates your private space and sends the link to the other.</p>
         <button class="btn" data-act="createRoom">Create our space</button>
       </div>
@@ -269,11 +316,11 @@ function dailyCard(key, { compact = false } = {}) {
   let inner;
   if (!mine) {
     inner = `<textarea class="input" rows="3" data-draft="daily-${key}" placeholder="Your answer…"></textarea>
-      <button class="btn" data-act="saveDaily" data-key="${key}">Lock it in</button>
-      <p class="tiny muted">${theirs ? `${N(them())} already answered 👀 Answer to unlock it.` : `Answers stay hidden until you’ve both answered.`}</p>`;
+      <div class="daily-act"><button class="btn" data-act="saveDaily" data-key="${key}">Lock it in</button>
+      <p class="tiny muted">${theirs ? `${N(them())} already answered. Answer to unlock it.` : `Answers stay hidden until you’ve both answered.`}</p></div>`;
   } else if (!theirs) {
     inner = `${bubble(me(), mine)}
-      <div class="locked">🔒 Waiting on ${N(them())}…</div>
+      <div class="locked">${icon('lock')}Waiting on ${N(them())}…</div>
       <button class="btn ghost small" data-act="nudge" data-text="${esc(`Answer today's question on ${CONFIG.appName} 👀`)}">Nudge ${N(them())}</button>`;
   } else {
     inner = bubble(me(), mine) + bubble(them(), theirs);
@@ -287,17 +334,19 @@ function dailyCard(key, { compact = false } = {}) {
 
 function bubble(who, text) {
   const skipped = text === SKIPPED;
-  return `<div class="bubble ${who === me() ? 'mine' : 'theirs'}">
+  return `<div class="bubble p-${who} ${who === me() ? 'mine' : 'theirs'}">
     <div class="who">${N(who)}</div>
     <div class="txt ${skipped ? 'muted' : ''}">${skipped ? 'skipped' : esc(text)}</div>
   </div>`;
 }
 
 function packRow(p, note = '') {
-  return `<button class="row" data-act="openPack" data-id="${p.id}">
+  const locked = p.spicy && !session.spicyOpen;
+  return `<button class="row c-${p.cat}" data-act="openPack" data-id="${p.id}">
+    <span class="row-ico">${locked ? icon('lock') : packIcon(p)}</span>
     <span class="row-title">${packTitle(p)}</span>
     <span class="row-note">${note}</span>
-    <span class="chev">›</span>
+    <span class="chev">${icon('chev')}</span>
   </button>`;
 }
 
@@ -310,14 +359,19 @@ function tabHome() {
   const inProgress = PACKS.filter((p) => !doneOf(me(), p) && countOf(me(), p) > 0 && !yourMove.includes(p));
   const waiting = PACKS.filter((p) => doneOf(me(), p) && !doneOf(them(), p));
 
-  return `${topbar(esc(CONFIG.appName), { backBtn: false, right: syncPill() })}
-  <div class="screen">
-    <div class="couple">
-      <div class="names">${N('a')} <span class="heart">♥</span> ${N('b')}</div>
-      <div class="stats">
-        ${days != null ? `<div class="stat"><b>${days.toLocaleString()}</b><span>days together</span></div>` : `<button class="stat link" data-act="tab" data-tab="us"><b>📅</b><span>set your date</span></button>`}
-        <div class="stat"><b>${s}${s ? ' 🔥' : ''}</b><span>day streak</span></div>
-      </div>
+  const since = store.state.shared.since;
+  const today = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+  const sec = (ico, title, rows) => `<section class="front-sec"><h3 class="section">${icon(ico)}<span>${title}</span></h3><div class="list">${rows}</div></section>`;
+  return `<div class="front">
+    <header class="masthead">
+      <div class="mast-line"><span>${esc(today)}</span>${syncPill()}</div>
+      <h1 class="mast-title">${esc(CONFIG.appName)}</h1>
+      <div class="mast-line mast-names"><span><b class="ink-a">${N('a')}</b> &amp; <b class="ink-b">${N('b')}</b></span><span>${since ? `Est. ${esc(since.slice(0, 4))}` : 'The paper for two'}</span></div>
+    </header>
+
+    <div class="ticker">
+      ${days != null ? `<div class="tick"><b>${days.toLocaleString()}</b><span>days together</span></div>` : `<button class="tick link" data-act="tab" data-tab="us"><b>${icon('calendar')}</b><span>set your date</span></button>`}
+      <div class="tick ${s ? 'hot' : ''}"><b>${s}${s ? icon('flame') : ''}</b><span>day streak</span></div>
     </div>
 
     ${needsExport() ? `<div class="card notice">
@@ -329,18 +383,20 @@ function tabHome() {
 
     ${gamesHomeHTML()}
 
-    ${fresh.length ? `<h3 class="section">✨ New results</h3><div class="list">${fresh.map((p) => packRow(p, '<span class="chip hot">see results</span>')).join('')}</div>` : ''}
-    ${yourMove.length ? `<h3 class="section">👉 Your move</h3><div class="list">${yourMove.map((p) => packRow(p, `<span class="chip">${N(them())} ${doneOf(them(), p) ? 'finished' : 'started'}</span>`)).join('')}</div>` : ''}
-    ${inProgress.length ? `<h3 class="section">Keep going</h3><div class="list">${inProgress.map((p) => packRow(p, `${countOf(me(), p)}/${p.items.length}`)).join('')}</div>` : ''}
-    ${waiting.length ? `<h3 class="section">⏳ Waiting on ${N(them())}</h3><div class="list">${waiting.map((p) => packRow(p, '')).join('')}</div>` : ''}
+    ${fresh.length ? sec('star', 'New results', fresh.map((p) => packRow(p, '<span class="chip hot">see results</span>')).join('')) : ''}
+    ${yourMove.length ? sec('pen', 'Your move', yourMove.map((p) => packRow(p, `<span class="chip">${N(them())} ${doneOf(them(), p) ? 'finished' : 'started'}</span>`)).join('')) : ''}
+    ${inProgress.length ? sec('book', 'Keep going', inProgress.map((p) => packRow(p, `${countOf(me(), p)}/${p.items.length}`)).join('')) : ''}
+    ${waiting.length ? sec('hourglass', `Waiting on ${N(them())}`, waiting.map((p) => packRow(p, '')).join('')) : ''}
 
-    <h3 class="section">Quick play</h3>
-    <div class="grid2">
-      <button class="tile" data-act="surprise"><span>🎲</span>Surprise me</button>
-      <button class="tile" data-act="go" data-view="tod"><span>🎭</span>Truth or Dare</button>
-      <button class="tile" data-act="go" data-view="dates"><span>🎡</span>Date spinner</button>
-      <button class="tile" data-act="go" data-view="history"><span>📖</span>Past questions</button>
-    </div>
+    <section class="front-sec">
+      <h3 class="section">${icon('die')}<span>Quick play</span></h3>
+      <div class="grid2">
+        <button class="tile tone-y" data-act="surprise">${icon('die')}<span>Surprise me</span></button>
+        <button class="tile tone-b" data-act="go" data-view="tod">${icon('cards')}<span>Truth or Dare</span></button>
+        <button class="tile tone-a" data-act="go" data-view="dates">${icon('wheel')}<span>Date spinner</span></button>
+        <button class="tile tone-w" data-act="go" data-view="history">${icon('book')}<span>Past questions</span></button>
+      </div>
+    </section>
   </div>`;
 }
 
@@ -348,23 +404,24 @@ function packTile(p) {
   const mine = doneOf(me(), p) ? '✓' : countOf(me(), p) ? `${countOf(me(), p)}/${p.items.length}` : '';
   const theirs = doneOf(them(), p) ? '✓' : countOf(them(), p) ? '…' : '';
   const both = doneOf(me(), p) && doneOf(them(), p);
-  return `<button class="ptile ${both ? 'both' : ''}" data-act="openPack" data-id="${p.id}">
-    <span class="pe">${p.emoji}</span>
+  return `<button class="ptile c-${p.cat} ${both ? 'both' : ''}" data-act="openPack" data-id="${p.id}">
+    <span class="pe">${packIcon(p)}</span>
+    <span class="pno">No. ${packNo(p)}</span>
     <span class="pt">${esc(p.title)}</span>
     <span class="ps">
-      <span class="dot ${mine === '✓' ? 'on' : mine ? 'half' : ''}">${N(me())[0]}</span>
-      <span class="dot ${theirs === '✓' ? 'on' : theirs ? 'half' : ''}">${N(them())[0]}</span>
+      <span class="dot p-${me()} ${mine === '✓' ? 'on' : mine ? 'half' : ''}">${N(me())[0]}</span>
+      <span class="dot p-${them()} ${theirs === '✓' ? 'on' : theirs ? 'half' : ''}">${N(them())[0]}</span>
       <span class="pc">${p.items.length} Qs</span>
     </span>
+    ${both ? '<span class="pstamp">Results</span>' : ''}
   </button>`;
 }
 
-function catSection(c) {
+function catSection(c, i = 0) {
   const packs = PACKS.filter((p) => p.cat === c.id);
   if (!packs.length) return '';
-  return `<section>
-    <h3 class="section">${esc(c.title)}</h3>
-    <p class="tiny muted sub">${esc(c.blurb)}</p>
+  return `<section class="shelf c-${c.id}">
+    <div class="shelf-head"><h3 class="shelf-title"><i>${pad(i + 1)}</i>${esc(c.title)}</h3><p class="shelf-note">${esc(c.blurb)}</p></div>
     <div class="pgrid">${packs.map(packTile).join('')}</div>
   </section>`;
 }
@@ -376,9 +433,9 @@ function tabGames() {
 function tabPlay() {
   return `${topbar('Questions', { backBtn: false, right: syncPill() })}
   <div class="screen">
-    <div class="grid2">
-      <button class="tile" data-act="go" data-view="tod"><span>🎭</span>Truth or Dare</button>
-      <button class="tile" data-act="go" data-view="dates"><span>🎡</span>Date spinner</button>
+    <div class="grid2 feature">
+      <button class="tile tone-b" data-act="go" data-view="tod">${icon('cards')}<span>Truth or Dare</span></button>
+      <button class="tile tone-a" data-act="go" data-view="dates">${icon('wheel')}<span>Date spinner</span></button>
     </div>
     ${CATEGORIES.map(catSection).join('')}
   </div>`;
@@ -388,17 +445,17 @@ function tabSpicy() {
   if (!session.spicyOpen) {
     return `${topbar('After Dark', { backBtn: false, right: syncPill() })}
     <div class="screen center gate">
-      <div class="hero-emoji">🔥</div>
+      <div class="gate-mark">${icon('keyhole')}</div>
       <h2>For your eyes only</h2>
       <p class="muted">The spicy stuff is hidden so nobody sees it over your shoulder.</p>
-      <button class="btn hot" data-act="openSpicy">Open it up 😏</button>
+      <button class="btn hot big-btn" data-act="openSpicy">Open it up</button>
     </div>`;
   }
-  return `${topbar('After Dark', { backBtn: false, right: `<button class="pill" data-act="closeSpicy">Hide 🙈</button>` })}
+  return `${topbar('After Dark', { backBtn: false, right: `<button class="pill" data-act="closeSpicy">${icon('eyeOff')}Hide</button>` })}
   <div class="screen">
-    <div class="grid2">
-      <button class="tile hot" data-act="spicyTod"><span>🎭</span>Spicy Truth or Dare</button>
-      <button class="tile hot" data-act="spicyDate"><span>🕯️</span>Spicy date night</button>
+    <div class="grid2 feature">
+      <button class="tile hot" data-act="spicyTod">${icon('cards')}<span>Spicy Truth or Dare</span></button>
+      <button class="tile hot" data-act="spicyDate">${icon('candle')}<span>Spicy date night</span></button>
     </div>
     ${SPICY_CATEGORIES.map(catSection).join('')}
   </div>`;
@@ -426,45 +483,45 @@ function tabUs() {
   return `${topbar('Us', { backBtn: false, right: syncPill() })}
   <div class="screen">
     <div class="card">
-      <h2>📅 Our date</h2>
+      <h2>${icon('calendar')}Our date</h2>
       <p class="muted tiny">When did you two start? Powers the days-together counter.</p>
       <input class="input" type="date" data-act-change="since" value="${esc(store.state.shared.since || '')}" max="${dkey()}" />
     </div>
 
     <div class="card">
-      <h2>🪣 Bucket list</h2>
+      <h2>${icon('list')}Bucket list</h2>
       <div class="add-row">
         <input class="input" data-draft="bucket" placeholder="Something to do together…" maxlength="140" />
         <button class="btn small" data-act="addBucket">Add</button>
       </div>
       ${bucket.length ? `<ul class="bucket">${bucket.map(([id, v]) => `<li class="${v.done ? 'done' : ''}">
-          <button class="check" data-act="toggleBucket" data-id="${id}">${v.done ? '✓' : ''}</button>
-          <span class="bt">${esc(v.t)}<small>${N(v.by)}</small></span>
-          <button class="x" data-act="delBucket" data-id="${id}" aria-label="Remove">×</button>
+          <button class="check" data-act="toggleBucket" data-id="${id}" aria-label="${v.done ? 'Done' : 'Not done yet'}">${v.done ? icon('check') : ''}</button>
+          <span class="bt">${esc(v.t)}<small class="p-${v.by}">${N(v.by)}</small></span>
+          <button class="x" data-act="delBucket" data-id="${id}" aria-label="Remove">${icon('close')}</button>
         </li>`).join('')}</ul>` : '<p class="muted tiny">Empty for now. The date spinner can add ideas here too.</p>'}
     </div>
 
     <div class="card">
-      <h2>💝 Love languages</h2>
-      ${llBoth ? ['a', 'b'].map((w) => { const top = loveScores(w)[0]; return `<p><b>${N(w)}:</b> ${LOVE_LANGS[top[0]].emoji} ${LOVE_LANGS[top[0]].name}</p>`; }).join('') + `<button class="btn ghost small" data-act="openPack" data-id="lovelang">Full results</button>`
+      <h2>${icon('us')}Love languages</h2>
+      ${llBoth ? ['a', 'b'].map((w) => { const top = loveScores(w)[0]; return `<p class="ll-line p-${w}"><b>${N(w)}</b><span>${LOVE_LANGS[top[0]].name}</span></p>`; }).join('') + `<button class="btn ghost small" data-act="openPack" data-id="lovelang">Full results</button>`
         : `<p class="muted tiny">${doneOf(me(), ll) ? `Waiting on ${N(them())} to take it.` : 'Take the quiz to find out how you each feel most loved.'}</p><button class="btn small" data-act="openPack" data-id="lovelang">${doneOf(me(), ll) ? 'See mine' : 'Take the quiz'}</button>`}
     </div>
 
     ${total ? `<div class="card">
-      <h2>🏆 Who knows who better</h2>
+      <h2>${icon('ribbon')}Who knows who better</h2>
       <div class="score-duo">
-        <div><b>${Math.round((mineRight / total) * 100)}%</b><span>${N(me())} knows ${N(them())}</span></div>
-        <div><b>${Math.round((theirsRight / total) * 100)}%</b><span>${N(them())} knows ${N(me())}</span></div>
+        <div class="p-${me()}"><b>${Math.round((mineRight / total) * 100)}%</b><span>${N(me())} knows ${N(them())}</span></div>
+        <div class="p-${them()}"><b>${Math.round((theirsRight / total) * 100)}%</b><span>${N(them())} knows ${N(me())}</span></div>
       </div>
       <p class="tiny muted">Across ${total} quiz questions you’ve both answered.</p>
     </div>` : ''}
 
     <div class="list">
-      <button class="row" data-act="go" data-view="history"><span class="row-title">📖 Past daily questions</span><span class="chev">›</span></button>
-      <button class="row" data-act="go" data-view="sync"><span class="row-title">⇄ Sync & pairing</span><span class="chev">›</span></button>
-      <button class="row" data-act="switchMe"><span class="row-title">🔁 I’m actually ${N(them())}</span><span class="chev">›</span></button>
+      <button class="row" data-act="go" data-view="history"><span class="row-ico">${icon('book')}</span><span class="row-title">Past daily questions</span><span class="chev">${icon('chev')}</span></button>
+      <button class="row" data-act="go" data-view="sync"><span class="row-ico">${icon('sync')}</span><span class="row-title">Sync & pairing</span><span class="chev">${icon('chev')}</span></button>
+      <button class="row" data-act="switchMe"><span class="row-ico">${icon('swap')}</span><span class="row-title">I’m actually ${N(them())}</span><span class="chev">${icon('chev')}</span></button>
     </div>
-    <p class="tiny muted center-text">Made just for ${N('a')} & ${N('b')} ♥</p>
+    <p class="colophon">${logoMark('small')}<span>Made just for ${N('a')} &amp; ${N('b')}</span></p>
   </div>`;
 }
 
@@ -478,15 +535,15 @@ function viewPack() {
   if (step === 'play') return viewPlay(p);
   if (step === 'results') return viewResults(p);
   const mineN = countOf(me(), p); const theirsN = countOf(them(), p);
-  const status = (who, n) => (doneOf(who, p) ? '<span class="chip ok">done ✓</span>' : n ? `<span class="chip">${n}/${p.items.length}</span>` : '<span class="chip dim">not started</span>');
+  const status = (who, n) => (doneOf(who, p) ? `<span class="chip ok">${icon('check')}done</span>` : n ? `<span class="chip">${n}/${p.items.length}</span>` : '<span class="chip dim">not started</span>');
   return `${topbar('')}
-  <div class="screen center">
-    <div class="hero-emoji">${p.emoji}</div>
+  <div class="screen center pack-intro c-${p.cat}">
+    <div class="pack-cover">${packIcon(p)}<span class="pack-no">No. ${packNo(p)}</span><span class="pack-cat">${esc(CAT[p.cat]?.title || '')}</span></div>
     <h1 class="big">${esc(p.title)}</h1>
     <p class="muted">${esc(packBlurb(p))}</p>
     <div class="status-row">
-      <div>${N(me())} ${status(me(), mineN)}</div>
-      <div>${N(them())} ${status(them(), theirsN)}</div>
+      <div class="p-${me()}"><i class="who-dot"></i>${N(me())} ${status(me(), mineN)}</div>
+      <div class="p-${them()}"><i class="who-dot"></i>${N(them())} ${status(them(), theirsN)}</div>
     </div>
     <button class="btn big-btn ${p.spicy ? 'hot' : ''}" data-act="startPack">${mineN ? 'Keep going' : 'Start'} · ${p.items.length} questions</button>
   </div>`;
@@ -502,7 +559,7 @@ function viewPlay(p) {
   }
   const progress = `<div class="progress"><i style="width:${(idx / total) * 100}%"></i></div>`;
   const head = `<header class="topbar">
-    <button class="icon-btn" data-act="exitPlay" aria-label="Close">✕</button>
+    <button class="icon-btn" data-act="exitPlay" aria-label="Close">${icon('close')}</button>
     <h1>${esc(p.title)}</h1>
     <div class="topbar-right"><span class="count">${idx + 1}/${total}</span></div>
   </header>${progress}`;
@@ -514,12 +571,12 @@ function viewPlay(p) {
       const t = session.temp;
       const opts = (k) => item.o.map((o, i) => `<button class="opt ${t[k] === i ? 'sel' : ''}" data-act="quizPick" data-k="${k}" data-v="${i}">${esc(o)}</button>`).join('');
       body = `<h2 class="q">${esc(item.q)}</h2>
-        <div class="label">Your answer</div><div class="opts">${opts('m')}</div>
-        <div class="label">What will ${N(them())} say?</div><div class="opts guess">${opts('g')}</div>`;
+        <div class="label">Your answer</div><div class="opts p-${me()}">${opts('m')}</div>
+        <div class="label">What will ${N(them())} say?</div><div class="opts guess p-${them()}">${opts('g')}</div>`;
       break;
     }
     case 'pick':
-      body = `<div class="vs">
+      body = `<div class="vs p-${me()}">
         <button class="choice ${sel(0)}" data-act="answer" data-v="0">${esc(item[0])}</button>
         <div class="or">or</div>
         <button class="choice ${sel(1)}" data-act="answer" data-v="1">${esc(item[1])}</button>
@@ -528,15 +585,15 @@ function viewPlay(p) {
     case 'who':
       body = `<div class="eyebrow center-text">Who’s more likely to…</div><h2 class="q center-text">${esc(item)}</h2>
       <div class="vs two">
-        <button class="choice ${sel(me())}" data-act="answer" data-v="${me()}">${N(me())}<small>(me)</small></button>
-        <button class="choice ${sel(them())}" data-act="answer" data-v="${them()}">${N(them())}</button>
+        <button class="choice p-${me()} ${sel(me())}" data-act="answer" data-v="${me()}">${N(me())}<small>(me)</small></button>
+        <button class="choice p-${them()} ${sel(them())}" data-act="answer" data-v="${them()}">${N(them())}</button>
       </div>`;
       break;
     case 'nhie':
       body = `<div class="eyebrow center-text">Never have I ever…</div><h2 class="q center-text">${esc(item)}</h2>
-      <div class="vs two">
-        <button class="choice ${sel(1)}" data-act="answer" data-v="1">🙋 I have</button>
-        <button class="choice ${sel(0)}" data-act="answer" data-v="0">🙅 Never</button>
+      <div class="vs two p-${me()}">
+        <button class="choice ${sel(1)}" data-act="answer" data-v="1">${icon('hand')}I have</button>
+        <button class="choice ${sel(0)}" data-act="answer" data-v="0">${icon('close')}Never</button>
       </div>`;
       break;
     case 'open':
@@ -548,15 +605,15 @@ function viewPlay(p) {
     case 'ynm':
       body = `<div class="eyebrow center-text">Would you be into…</div><h2 class="q center-text">${esc(item)}</h2>
       <div class="ynm">
-        <button class="choice y ${sel(2)}" data-act="answer" data-v="2">Yes 🔥</button>
-        <button class="choice m ${sel(1)}" data-act="answer" data-v="1">Maybe 🤔</button>
+        <button class="choice y ${sel(2)}" data-act="answer" data-v="2">Yes</button>
+        <button class="choice m ${sel(1)}" data-act="answer" data-v="1">Maybe</button>
         <button class="choice n ${sel(0)}" data-act="answer" data-v="0">No</button>
       </div>
       <p class="tiny muted center-text">${N(them())} only sees this if you both say yes or maybe.</p>`;
       break;
     case 'lovelang':
       body = `<div class="eyebrow center-text">Which would mean more to you?</div>
-      <div class="vs">
+      <div class="vs p-${me()}">
         <button class="choice ${sel(0)}" data-act="answer" data-v="0">${esc(item[0][0])}</button>
         <div class="or">or</div>
         <button class="choice ${sel(1)}" data-act="answer" data-v="1">${esc(item[1][0])}</button>
@@ -568,8 +625,8 @@ function viewPlay(p) {
   return `${head}<div class="screen play">
     <div class="card qcard">${body}</div>
     <div class="nav-row">
-      ${idx > 0 ? '<button class="btn ghost small" data-act="prevQ">‹ Back</button>' : '<span></span>'}
-      ${existing !== undefined && idx < total - 1 ? '<button class="btn ghost small" data-act="nextQ">Next ›</button>' : ''}
+      ${idx > 0 ? `<button class="btn ghost small" data-act="prevQ">${icon('prev')}Back</button>` : '<span></span>'}
+      ${existing !== undefined && idx < total - 1 ? `<button class="btn ghost small" data-act="nextQ">Next${icon('next')}</button>` : ''}
     </div>
   </div>`;
 }
@@ -601,7 +658,7 @@ function viewResults(p) {
   const both = doneOf(me(), p) && doneOf(them(), p);
   if (both) { const s = readSet('jt.seen'); if (!s.has(p.id)) { s.add(p.id); saveSet('jt.seen', s); } }
   const a = ansOf(me(), p); const b = ansOf(them(), p);
-  const head = topbar(`${p.emoji} ${esc(p.title)}`);
+  const head = topbar(esc(p.title));
   const footer = `<div class="footer-actions">
       ${!both ? `<button class="btn" data-act="nudge" data-text="${esc(`I finished "${p.title}" on ${CONFIG.appName}. Your turn 😘`)}">Nudge ${N(them())}</button>` : ''}
       <button class="btn ghost small" data-act="redoPack">Redo my answers</button>
@@ -609,9 +666,9 @@ function viewResults(p) {
 
   if (!both && p.type !== 'lovelang') {
     const preview = p.type === 'ynm' ? '<p class="muted">Your answers are locked in and private.</p>' : '';
-    return `${head}<div class="screen center">
-      <div class="hero-emoji">⏳</div>
-      <h2>Locked in!</h2>
+    return `${head}<div class="screen center pack-intro c-${p.cat}">
+      <div class="pack-cover is-wait">${icon('hourglass')}<span class="pack-no">Locked in</span><span class="pack-cat">${esc(p.title)}</span></div>
+      <h2 class="big">Locked in!</h2>
       <p class="muted">Results unlock as soon as ${N(them())} finishes${countOf(them(), p) ? ` (they’re ${countOf(them(), p)}/${p.items.length} in)` : ''}.</p>
       ${preview}
       ${footer}
@@ -635,8 +692,8 @@ function viewResults(p) {
       const n = p.items.length;
       const verdict = (x) => (x === n ? 'Perfect. Mind reader.' : x >= n * 0.7 ? 'You really know them.' : x >= n * 0.4 ? 'Not bad, keep studying.' : 'Uh oh. Date night needed.');
       body = `<div class="score-duo large">
-          <div><b>${mine}/${n}</b><span>${N(me())} knows ${N(them())}</span><small>${verdict(mine)}</small></div>
-          <div><b>${theirs}/${n}</b><span>${N(them())} knows ${N(me())}</span><small>${verdict(theirs)}</small></div>
+          <div class="p-${me()}"><b>${mine}/${n}</b><span>${N(me())} knows ${N(them())}</span><small>${verdict(mine)}</small></div>
+          <div class="p-${them()}"><b>${theirs}/${n}</b><span>${N(them())} knows ${N(me())}</span><small>${verdict(theirs)}</small></div>
         </div>${rows}`;
       break;
     }
@@ -645,11 +702,11 @@ function viewResults(p) {
       const rows = p.items.map((it, i) => {
         const x = a['i' + i]; const y = b['i' + i]; const same = x === y; if (same) m++;
         const side = (k) => `<div class="side ${x === k || y === k ? 'picked' : ''}">${esc(it[k])}
-          <span class="avs">${x === k ? `<i class="av me">${N(me())[0]}</i>` : ''}${y === k ? `<i class="av them">${N(them())[0]}</i>` : ''}</span></div>`;
+          <span class="avs">${x === k ? `<i class="av me p-${me()}">${N(me())[0]}</i>` : ''}${y === k ? `<i class="av them p-${them()}">${N(them())[0]}</i>` : ''}</span></div>`;
         return `<div class="rcard pickrow ${same ? 'match' : ''}">${side(0)}${side(1)}</div>`;
       }).join('');
       const pct = Math.round((m / p.items.length) * 100);
-      body = `<div class="score-big"><b>${pct}%</b><span>in sync · ${m}/${p.items.length} matches</span><small>${pct >= 80 ? 'Basically the same person 💞' : pct >= 55 ? 'Pretty in sync!' : pct >= 35 ? 'Opposites attract?' : 'Chaos couple 😂'}</small></div>${rows}`;
+      body = `<div class="score-big"><b>${pct}%</b><span>in sync · ${m}/${p.items.length} matches</span><small>${pct >= 80 ? 'Basically the same person.' : pct >= 55 ? 'Pretty in sync!' : pct >= 35 ? 'Opposites attract?' : 'Chaos couple.'}</small></div>${rows}`;
       break;
     }
     case 'who': {
@@ -658,22 +715,22 @@ function viewResults(p) {
         const x = a['i' + i]; const y = b['i' + i]; if (x === y) agree++;
         votes[x]++; votes[y]++;
         return `<div class="rcard ${x === y ? 'match' : ''}"><div class="rq">${esc(it)}</div>
-          <div class="rline">${x === y ? `Both said <b>${N(x)}</b> ${x === y ? '🤝' : ''}` : `${N(me())} said <b>${N(x)}</b> · ${N(them())} said <b>${N(y)}</b>`}</div></div>`;
+          <div class="rline">${x === y ? `Both said <b class="ink-${x}">${N(x)}</b>` : `${N(me())} said <b class="ink-${x}">${N(x)}</b> · ${N(them())} said <b class="ink-${y}">${N(y)}</b>`}</div></div>`;
       }).join('');
-      body = `<div class="score-duo"><div><b>${votes[me()]}</b><span>votes for ${N(me())}</span></div><div><b>${votes[them()]}</b><span>votes for ${N(them())}</span></div></div>
+      body = `<div class="score-duo"><div class="p-${me()}"><b>${votes[me()]}</b><span>votes for ${N(me())}</span></div><div class="p-${them()}"><b>${votes[them()]}</b><span>votes for ${N(them())}</span></div></div>
         <p class="center-text muted">You agreed on ${agree}/${p.items.length}.</p>${rows}`;
       break;
     }
     case 'nhie': {
-      const lbl = (v) => (v ? '🙋 have' : '🙅 never');
+      const lbl = (v) => (v ? '<b class="nh-have">have</b>' : '<b class="nh-never">never</b>');
       const rows = p.items.map((it, i) => {
         const x = a['i' + i]; const y = b['i' + i];
-        const tag = x && y ? '<span class="chip hot">both!</span>' : x || y ? '<span class="chip">👀</span>' : '';
+        const tag = x && y ? '<span class="chip hot">both!</span>' : x || y ? '<span class="chip">one of you</span>' : '';
         return `<div class="rcard"><div class="rq">${esc(it)} ${tag}</div>
           <div class="rline">${N(me())}: ${lbl(x)} · ${N(them())}: ${lbl(y)}</div></div>`;
       }).join('');
       const both2 = p.items.filter((_, i) => a['i' + i] && b['i' + i]).length;
-      body = `<p class="center-text muted">You’ve both done ${both2} of these. Story time for the 👀 ones.</p>${rows}`;
+      body = `<p class="center-text muted">You’ve both done ${both2} of these. Story time for the “one of you” ones.</p>${rows}`;
       break;
     }
     case 'open': {
@@ -685,8 +742,8 @@ function viewResults(p) {
       const bothYes = mutual.filter((r) => r.x === 2 && r.y === 2);
       const someMaybe = mutual.filter((r) => !(r.x === 2 && r.y === 2));
       body = `<div class="score-big"><b>${mutual.length}</b><span>things you’re both into</span><small>Everything else stays private. Forever.</small></div>
-        ${bothYes.length ? `<h3 class="section">🔥 Both said YES</h3><div class="tags">${bothYes.map((r) => `<span class="tag hot">${esc(r.it)}</span>`).join('')}</div>` : ''}
-        ${someMaybe.length ? `<h3 class="section">🤔 Worth talking about</h3><p class="tiny muted">At least one maybe, nobody said no.</p><div class="tags">${someMaybe.map((r) => `<span class="tag">${esc(r.it)}</span>`).join('')}</div>` : ''}
+        ${bothYes.length ? `<h3 class="section">${icon('flame')}<span>Both said yes</span></h3><div class="tags">${bothYes.map((r) => `<span class="tag hot">${esc(r.it)}</span>`).join('')}</div>` : ''}
+        ${someMaybe.length ? `<h3 class="section">${icon('talk')}<span>Worth talking about</span></h3><p class="tiny muted">At least one maybe, nobody said no.</p><div class="tags">${someMaybe.map((r) => `<span class="tag">${esc(r.it)}</span>`).join('')}</div>` : ''}
         ${!mutual.length ? '<p class="muted center-text">No overlap on this one — and that’s fine. Try the other list?</p>' : ''}`;
       break;
     }
@@ -694,9 +751,9 @@ function viewResults(p) {
       const prof = (who) => {
         if (!doneOf(who, p)) return `<div class="card"><h2>${N(who)}</h2><p class="muted">Hasn’t taken it yet.</p></div>`;
         const sc = loveScores(who); const top = LOVE_LANGS[sc[0][0]];
-        return `<div class="card"><h2>${N(who)}: ${top.emoji} ${top.name}</h2>
-          ${sc.map(([k, v]) => `<div class="bar"><span>${LOVE_LANGS[k].emoji} ${LOVE_LANGS[k].name}</span><i style="width:${(v / 6) * 100}%"></i><b>${v}</b></div>`).join('')}
-          ${who === them() ? `<p class="tip">💡 To love ${N(them())} well: ${esc(top.tip)}</p>` : ''}
+        return `<div class="card ll p-${who}"><p class="ll-who">${N(who)}</p><h2>${top.name}</h2>
+          ${sc.map(([k, v]) => `<div class="bar"><span>${LOVE_LANGS[k].name}</span><i style="width:${(v / 6) * 100}%"></i><b>${v}</b></div>`).join('')}
+          ${who === them() ? `<p class="tip"><b>Tip</b>To love ${N(them())} well: ${esc(top.tip)}</p>` : ''}
         </div>`;
       };
       body = prof(me()) + prof(them());
@@ -711,22 +768,22 @@ function viewResults(p) {
 function viewTod() {
   const t = session.tod;
   if (!t.turn) t.turn = me();
-  const levels = TOD_LEVELS.map((l) => `<button class="chip-btn ${t.level === l.id ? 'on' : ''}" data-act="todLevel" data-level="${l.id}">${l.emoji} ${l.label}</button>`).join('');
+  const levels = TOD_LEVELS.map((l) => `<button class="chip-btn ${t.level === l.id ? 'on' : ''}" data-act="todLevel" data-level="${l.id}">${l.spicy ? icon('flame') : ''}${l.label}</button>`).join('');
   return `${topbar('Truth or Dare')}
   <div class="screen center">
     <div class="chips">${levels}</div>
-    <p class="turn">${N(t.turn)}’s turn</p>
+    <p class="turn p-${t.turn}"><i class="who-dot"></i>${N(t.turn)}’s turn</p>
     ${t.card ? `<div class="card todcard ${t.kind}">
         <div class="eyebrow">${t.kind === 'truth' ? 'Truth' : 'Dare'}</div>
         <h2>${esc(t.card)}</h2>
       </div>
       <div class="stack">
-        <button class="btn ${t.level === 'spicy' ? 'hot' : ''}" data-act="todDone">Done → ${N(t.turn === 'a' ? 'b' : 'a')}’s turn</button>
+        <button class="btn ${t.level === 'spicy' ? 'hot' : ''}" data-act="todDone">Done ${icon('next')} ${N(t.turn === 'a' ? 'b' : 'a')}’s turn</button>
         <button class="btn ghost small" data-act="todDraw" data-kind="${t.kind}">Draw another ${t.kind}</button>
       </div>`
     : `<div class="vs two">
-        <button class="choice big" data-act="todDraw" data-kind="truth">Truth</button>
-        <button class="choice big" data-act="todDraw" data-kind="dare">Dare</button>
+        <button class="choice big tcard truth" data-act="todDraw" data-kind="truth"><span>Truth</span></button>
+        <button class="choice big tcard dare" data-act="todDraw" data-kind="dare"><span>Dare</span></button>
       </div>`}
     <p class="tiny muted">Play this one together, in person. Pass the phone or just read it out.</p>
   </div>`;
@@ -745,16 +802,17 @@ function todDraw(kind) {
 function viewDates() {
   const d = session.date;
   const cats = DATE_CATS.filter((c) => !c.spicy || session.spicyOpen)
-    .map((c) => `<button class="chip-btn ${d.cat === c.id ? 'on' : ''}" data-act="dateCat" data-cat="${c.id}">${c.emoji} ${c.label}</button>`).join('');
+    .map((c) => `<button class="chip-btn ${d.cat === c.id ? 'on' : ''}" data-act="dateCat" data-cat="${c.id}">${c.spicy ? icon('flame') : ''}${c.label}</button>`).join('');
   return `${topbar('Date spinner')}
   <div class="screen center">
     <div class="chips">${cats}</div>
-    <div class="card spin ${d.spinning ? 'spinning' : ''}">
+    <div class="card spin ${d.spinning ? 'spinning' : ''} ${d.pick ? 'has-pick' : ''}">
+      <p class="spin-label">${icon('wheel')}Date idea</p>
       <h2>${d.pick ? esc(d.pick) : 'Tap spin for a date idea'}</h2>
     </div>
     <div class="stack">
-      <button class="btn big-btn ${d.cat === 'spicy' ? 'hot' : ''}" data-act="spin" ${d.spinning ? 'disabled' : ''}>🎡 ${d.pick ? 'Spin again' : 'Spin'}</button>
-      ${d.pick && !d.spinning ? '<button class="btn ghost small" data-act="dateToBucket">+ Add to our bucket list</button>' : ''}
+      <button class="btn big-btn ${d.cat === 'spicy' ? 'hot' : ''}" data-act="spin" ${d.spinning ? 'disabled' : ''}>${icon('wheel')}${d.pick ? 'Spin again' : 'Spin'}</button>
+      ${d.pick && !d.spinning ? `<button class="btn ghost small" data-act="dateToBucket">${icon('plus')}Add to our bucket list</button>` : ''}
     </div>
   </div>`;
 }
@@ -802,7 +860,7 @@ function viewSync() {
     return `${topbar('Sync')}
     <div class="screen">
       <div class="card">
-        <h2>${store.readOnly ? 'This device can’t save yet' : store.online ? '● Sync is on' : '○ Reconnecting…'}</h2>
+        <h2>${store.readOnly ? `<i class="pill-dot warn"></i>This device can’t save yet` : store.online ? '<i class="pill-dot ok"></i>Sync is on' : '<i class="pill-dot"></i>Reconnecting…'}</h2>
         ${store.readOnly
     ? `<p class="muted">Your answers aren’t saving. ${N('a')} needs to share this artifact with you as an <b>Editor</b> (Share → invite by email → Editor). A public link won’t work.</p>`
     : `<p class="muted">Everything saves automatically and shows up for both of you right away, on any device where you’re signed in to Claude.</p>`}
@@ -818,7 +876,7 @@ function viewSync() {
     return `${topbar('Sync')}
     <div class="screen">
       <div class="card">
-        <h2>${store.mode === 'cloud' ? (store.online ? '● Live sync is on' : '○ Offline right now') : 'Live sync available'}</h2>
+        <h2>${store.mode === 'cloud' ? (store.online ? '<i class="pill-dot ok"></i>Live sync is on' : '<i class="pill-dot"></i>Offline right now') : 'Live sync available'}</h2>
         <p class="muted">${store.room ? `Your phones share a private space. Answers show up on both phones instantly.` : 'Not paired yet.'}</p>
         ${store.room ? `<button class="btn" data-act="sharePair">Share pairing link with ${N(them())}</button>` : '<button class="btn" data-act="go" data-view="connect">Pair phones</button>'}
       </div>

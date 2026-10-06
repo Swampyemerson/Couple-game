@@ -49,7 +49,8 @@ export const CSS = `
 .chm-sc i { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--g-ink); flex: none; }
 .chm-sc.a i { background: var(--p-a); } .chm-sc.b i { background: var(--p-b); }
 .chm-sc b { font-variant-numeric: tabular-nums; }
-.chm-sc span { font-size: 0.72rem; font-weight: 800; color: var(--g-muted); max-width: 4.5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chm-sc span { font-size: 0.72rem; font-weight: 800; color: var(--g-muted); max-width: 5.5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 520px) { .chm-sc span { display: none; } .chm-sc { padding: 4px 9px; } }
 .chm-clock { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 3px 12px 4px; min-width: 84px; }
 .chm-phase { font-size: 0.64rem; font-weight: 900; letter-spacing: 0.14em; text-transform: uppercase; color: var(--g-muted); line-height: 1.1; }
 .chm-time { font-family: var(--g-font-display); font-size: 1.45rem; font-weight: 900; line-height: 1; font-variant-numeric: tabular-nums; }
@@ -123,9 +124,8 @@ export const CSS = `
 .chm-pose.on { background: var(--chm-me); color: var(--g-on-ink); }
 
 /* hint + legend */
-.chm-hint { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(150px + var(--chm-sb)); max-width: calc(100% - 32px); padding: 6px 12px; font-weight: 800; font-size: 0.82rem; text-align: center; border-radius: 999px; background: color-mix(in srgb, var(--g-ink) 86%, transparent); color: var(--g-bg); opacity: 0; transition: opacity .25s, transform .25s; }
+.chm-hint { position: absolute; left: 50%; transform: translateX(-50%); top: calc(100px + var(--chm-st)); max-width: calc(100% - 32px); padding: 6px 12px; font-weight: 800; font-size: 0.82rem; text-align: center; border-radius: 999px; background: color-mix(in srgb, var(--g-ink) 86%, transparent); color: var(--g-bg); opacity: 0; transition: opacity .25s, transform .25s; }
 .chm-hint.on { opacity: 1; }
-.chm.painting .chm-hint { bottom: calc(150px + var(--chm-sb)); }
 .chm-legend { position: absolute; left: calc(12px + var(--chm-sl)); bottom: calc(12px + var(--chm-sb)); padding: 8px 10px; font-size: 0.72rem; font-weight: 700; line-height: 1.6; display: none; }
 .chm.mouse .chm-legend { display: block; }
 .chm-legend kbd { font: 800 0.66rem/1 var(--g-font-body); padding: 2px 5px; border-radius: 4px; border: 1.5px solid var(--g-ink); background: var(--g-bg); margin-right: 2px; }

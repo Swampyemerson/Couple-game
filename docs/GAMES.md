@@ -86,6 +86,13 @@ ctx = {
 }
 ```
 
+`ctx.prev` is the state before the newest move (handy for replaying it). Optional hooks on the
+object you return from mount: `onEndClosed()` runs when the player taps the end card's look
+button (label it with `endLookLabel: 'See the gallery'` on the def). Set `endDelay: 'manual'`
+to hold the end card until your finale calls `api.showEnd()` (8 s safety net). Inside your own
+end-of-game UI, buttons with `data-g="rematch"` and `data-g="close"` trigger the engine's
+rematch and back-to-games actions.
+
 Call `api.move(move)` to play. It returns `{ ok: true }` or `{ ok: false, error }` — show
 `error` with `api.toast(error)`. The engine re-runs `update` after every move. Don't keep your
 own copy of the rules state; keep only view state (animation, selection, drafts).
@@ -118,6 +125,7 @@ Messages can drop: design so the latest presence is always enough to recover.
 | `api.toast(msg)` | short message |
 | `api.sfx(name)` | `tap place flip good bad win lose tick hit pop` |
 | `api.haptic(ms)` | vibrate (may do nothing) |
+| `api.audio()` | the shared WebAudio context (unlocked on first touch); use it for your own synths and check `muted()` |
 | `api.three()` | Promise → `THREE` (three.js r128). Handle rejection with a 2D fallback or a clear message |
 | `api.setStatus(text \| null)` | override the status line under the player chips |
 | `api.rand / randInt / rng / shuffled` | seeded randomness |

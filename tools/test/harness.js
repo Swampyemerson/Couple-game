@@ -160,6 +160,7 @@ async function launch(opts = {}) {
     device = 'iPhone 13', who = ['a', 'b'], seedDocs = {}, only = null, colorScheme = 'light',
     dropRate = 0, // fraction of room events (emit) silently dropped, to test resilience
     coarse = false, // true = report (pointer: coarse) like a real phone
+    reducedMotion = 'no-preference', // or 'reduce'
   } = opts;
   // `only`: game file names to bundle (e.g. ['four', 'dots']). Builds to a private file so
   // parallel test runs, and other people's half-finished games, can't break yours.
@@ -192,7 +193,7 @@ async function launch(opts = {}) {
   const browser = await chromium.launch({ headless });
 
   async function player(w) {
-    const ctx = await browser.newContext({ ...devices[device], hasTouch: true, colorScheme });
+    const ctx = await browser.newContext({ ...devices[device], hasTouch: true, colorScheme, reducedMotion });
     const uid = 'u_' + w;
     await ctx.addInitScript(RUNTIME({ who: w, uid, coarse }));
     await ctx.route(/three\.js\/r128\/three\.min\.js/, (r) => r.fulfill({ path: three, contentType: 'text/javascript' }));
