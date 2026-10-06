@@ -238,7 +238,12 @@ export function createGame(el, api) {
     const m = stage.loadMap(id);
     if (m !== before) {
       const big = m.big;
-      hud.miniSetup(big ? { minX: m.bounds.minX, maxX: m.bounds.maxX, minZ: m.bounds.minZ, maxZ: m.bounds.maxZ, rooms: m.rooms.filter((r) => !r.floor), boxes: m.colliders.filter((c) => c.maxY - c.minY > 0.5 && c.minY < 1.2 && c.name !== 'back' && c.name !== 'front' && c.name !== 'left' && c.name !== 'right') } : null);
+      const outer = (c) => c.name === 'back' || c.name === 'front' || c.name === 'left' || c.name === 'right';
+      const fls = (m.info && Array.isArray(m.info.floors) && m.info.floors.length ? m.info.floors : [{ y: 0 }]).map((fl, i, all) => {
+        const y0 = (fl.y || 0) - 0.1; const y1 = i + 1 < all.length ? all[i + 1].y - 0.1 : Infinity;
+        return { y: fl.y || 0, name: fl.name, rooms: m.rooms.filter((r) => (r.floor || 0) === i), boxes: m.colliders.filter((c) => c.maxY - c.minY > 0.5 && c.minY >= y0 && c.minY < Math.min(y1, y0 + 1.3) && !outer(c) && c.climb !== false) };
+      });
+      hud.miniSetup(big ? { minX: m.bounds.minX, maxX: m.bounds.maxX, minZ: m.bounds.minZ, maxZ: m.bounds.maxZ, rooms: fls[0].rooms, boxes: fls[0].boxes, floors: fls } : null);
     }
     return m;
   }
@@ -911,7 +916,9 @@ export function createGame(el, api) {
     if (b.sq) { hint('Squeeze out first', 1200); return; }
     const s = stage.world.nearestSurface(b, 0.35 * b.s + 0.1);
     if (s) attachTo(w, s.x, s.y, s.z, s.nx, s.ny, s.nz, s.box);
-    else attachTo(w, b.x, b.y, b.z, 0, 1, 0, stage.world.groundRes.box);
+    // sticky floor only with feet on something (mid-jump it used to glue the body to thin air)
+    else if (b.onGround && stage.world.inside(b.x, b.z)) { const gy = stage.world.groundAt(b.x, b.z, 0.05, b.y + 0.03, 0); attachTo(w, b.x, Math.abs(gy - b.y) < 0.06 ? gy : b.y, b.z, 0, 1, 0, stage.world.groundRes.box); }
+    else { hint('Nothing in reach to stick to', 1100); snd.play('warn'); }
     return b.at;
   }
   function attachTo(w, x, y, z, nx, ny, nz, box, hx, hy, hz) {
@@ -1831,6 +1838,17 @@ export function createGame(el, api) {
       const dist = C.dist * (0.55 + 0.45 * b.s);
       const cp = Math.cos(C.pitch);
       camWant.set(lookWant.x + Math.sin(C.yaw) * cp * dist, lookWant.y + Math.sin(C.pitch) * dist, lookWant.z + Math.cos(C.yaw) * cp * dist);
+      // stuck to a wall or ceiling: keep the camera in front of that surface (orbiting "behind
+      // the wall" used to jam it into the body, which then vanished from view)
+      if (b.at) {
+        let ux = camWant.x - lookWant.x; let uy = camWant.y - lookWant.y; let uz = camWant.z - lookWant.z;
+        const k = ux * b.nx + uy * b.ny + uz * b.nz; const lim = 0.3 * dist;
+        if (k < lim) {
+          ux += b.nx * (lim - k); uy += b.ny * (lim - k); uz += b.nz * (lim - k);
+          const l = Math.hypot(ux, uy, uz) || 1;
+          camWant.set(lookWant.x + ux / l * dist, lookWant.y + uy / l * dist, lookWant.z + uz / l * dist);
+        }
+      }
       clampCam(lookWant, camWant);
       floorCam(camWant);
       rate = 12;
@@ -2043,7 +2061,7 @@ export function createGame(el, api) {
       hud.pellets(R.pellets[shooter], R.maxPellets, shooter !== v);
     }
     if (showParts.poses && v) { hud.poseList(poseBar(v)); hud.poseOn(body[v].pose); }
-    if (showParts.mini && v) { const b = body[v]; hud.miniDraw(b.x, b.z, b.yaw + b.lookYaw, v === 'a' ? theme.a : theme.b); }
+    if (showParts.mini && v) { const b = body[v]; hud.miniDraw(b.x, b.z, b.yaw + b.lookYaw, v === 'a' ? theme.a : theme.b, b.y); }
     hud.tips(U.tips && inGame && ph === 'hide' && !P.on ? (U.tipsHtml || (U.tipsHtml = tipsHtml(mouse))) : null);
     if (showParts.tools && v) { hud.tool(P.tool, P.size, P.hard, P.rgb); hud.undoEnabled(stage.paints[v].canUndo); hud.stampEnabled(rules().stamp); }
     if (showParts.legend) hud.legend(P.on ? LEGEND.paint : ph === 'hide' ? (rules().climb ? LEGEND.hide : LEGEND.hideFloor) : ph === 'seek' && role !== 'hider' ? LEGEND.seek : LEGEND.peek);

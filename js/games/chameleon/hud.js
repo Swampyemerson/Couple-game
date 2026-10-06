@@ -254,6 +254,7 @@ export const CSS = `
   .chm-lobby .chm-mode { padding: 7px 9px; }
   .chm-lobby .chm-mode small { font-size: .68rem; }
   .chm-lobby .chm-plan { width: 52px; height: 40px; }
+  .chm-lobby .chm-plan.wide { width: 70px; }
   .chm-lobby .chm-mapcard { padding: 5px; }
   .chm-lobby .chm-mapinfo small { display: none; }
   .chm-lobby .chm-sizes button { min-height: 38px; }
@@ -278,7 +279,14 @@ export const CSS = `
 .chm-presets button.custom { pointer-events: none; border-style: dashed; }
 .chm-presets button.custom:not(.on) { opacity: .5; }
 .chm-mapcard { display: flex; align-items: center; gap: 8px; padding: 7px 6px; border: 2px solid var(--g-ink); border-radius: 14px; background: var(--g-bg); text-align: left; }
-.chm-plan { flex: none; width: 66px; height: 50px; fill: var(--g-card); stroke: var(--g-ink); stroke-width: var(--sw, .15); stroke-linejoin: round; }
+.chm-plan { flex: none; width: 66px; height: 50px; overflow: visible; }
+.chm-plan.wide { width: 88px; }
+.chm-plan .pp { fill: var(--g-card); stroke: var(--g-line); stroke-width: 1.5px; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.chm-plan .pf { stroke: none; }
+.chm-plan .pf.a { fill: var(--p-a); opacity: .55; } .chm-plan .pf.b { fill: var(--p-b); opacity: .5; } .chm-plan .pf.hl { fill: var(--g-hl); opacity: .85; }
+.chm-plan .pht { fill: none; stroke: var(--g-ink); stroke-linecap: round; opacity: .32; }
+.chm-plan .pk { fill: none; stroke: var(--g-ink); stroke-width: 1.6px; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.chm-plan .pfr { fill: none; stroke: var(--g-card); stroke-width: 2.4px; vector-effect: non-scaling-stroke; stroke-dasharray: 3 3; }
 .chm-mapinfo { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .chm-mapinfo b { font-size: .98rem; font-weight: 900; line-height: 1.1; }
 .chm-mapinfo small { font-size: .72rem; font-weight: 700; color: var(--g-muted); line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -308,13 +316,14 @@ export const CSS = `
 .chm-lobby .chm-card[data-ro] .chm-arrow { pointer-events: none; }
 
 /* settings sheet */
-.chm-sheetwrap { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; padding: 12px; padding-top: calc(var(--gm-corner-safe, 64px) + 4px); padding-bottom: calc(12px + var(--chm-sb)); background: var(--g-dim, color-mix(in srgb, var(--g-bg) 70%, transparent)); pointer-events: auto; }
-.chm-sheet { width: min(100%, 460px); max-height: 100%; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; touch-action: pan-y; padding: 14px 14px 16px; display: flex; flex-direction: column; gap: 9px; text-align: left; }
+.chm-sheetwrap { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; padding: 12px; padding-top: calc(var(--gm-corner-safe, 64px) + 4px); padding-bottom: calc(12px + var(--chm-sb)); background: var(--g-dim, color-mix(in srgb, var(--g-bg) 70%, transparent)); pointer-events: auto; }
+.chm-sheet { width: min(100%, 460px); max-height: 100%; min-height: 0; flex: none; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; touch-action: pan-y; padding: 14px 14px 16px; display: flex; flex-direction: column; gap: 9px; text-align: left; }
 .chm-sheethead { display: flex; align-items: center; justify-content: space-between; gap: 8px; position: sticky; top: -14px; background: var(--g-card); padding: 4px 0 6px; margin-top: -4px; z-index: 1; border-bottom: 2px solid var(--g-line); }
 .chm-sheet h2 { margin: 0; font-family: var(--g-font-display); font-weight: 900; font-size: 1.3rem; }
 .chm-sheet h3 { margin: 6px 0 0; font-size: .7rem; font-weight: 900; letter-spacing: .14em; text-transform: uppercase; color: var(--g-muted); }
 .chm-sheet .chm-wait { font-size: .82rem; margin: 0; }
 .chm-mapchips { justify-content: flex-start; }
+.chm-sets { display: flex; flex-direction: column; }
 .chm-set { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 0; border-bottom: 1.5px dashed var(--g-line); }
 .chm-set > span { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .chm-set b { font-size: .9rem; font-weight: 900; }
@@ -364,7 +373,33 @@ export const CSS = `
   .chm-lobby .chm-card { flex-direction: row; align-items: stretch; gap: 22px; width: min(100%, 780px); padding: 16px 18px; }
   .chm-lobby .chm-col { display: flex; flex-direction: column; justify-content: center; gap: 10px; flex: 1 1 0; min-width: 0; }
   .chm-lobby .chm-firstrow { flex-direction: row; align-items: center; justify-content: space-between; }
-  .chm-sheet { width: min(100%, 560px); }
+  /* laptops: a proper dialog, two columns of settings, desktop-sized type */
+  .chm-sheetwrap { padding: calc(var(--gm-corner-safe, 64px) + 8px) 88px 28px; }
+  .chm-sheet { width: min(100%, 940px); padding: 20px 26px 22px; gap: 12px; border-width: 3px; border-radius: 18px; box-shadow: var(--g-shadow-lg, 6px 6px 0 var(--g-edge)); }
+  .chm-sheethead { top: -20px; padding: 6px 0 10px; }
+  .chm-sheet h2 { font-size: 1.75rem; }
+  .chm-sheet h3 { font-size: .8rem; margin-top: 10px; }
+  .chm-sheet .chm-wait { font-size: .95rem; }
+  .chm-sheet .chm-done { height: 44px; padding: 0 18px; font-size: 1rem; }
+  .chm-sheet .chm-presets { gap: 10px; }
+  .chm-sheet .chm-presets button { min-height: 58px; padding: 9px 6px 8px; }
+  .chm-sheet .chm-presets b { font-size: 1.02rem; }
+  .chm-sheet .chm-presets small { font-size: .74rem; }
+  .chm-sheet .chm-mapcard { padding: 10px 10px; gap: 14px; }
+  .chm-sheet .chm-plan { width: 96px; height: 70px; } .chm-sheet .chm-plan.wide { width: 132px; }
+  .chm-sheet .chm-mapinfo b { font-size: 1.15rem; } .chm-sheet .chm-mapinfo small { font-size: .85rem; }
+  .chm-sheet .chm-facts em { font-size: .7rem; }
+  .chm-sheet .chm-chip { font-size: .92rem; }
+  .chm-sets { display: grid; grid-template-columns: 1fr 1fr; column-gap: 36px; }
+  .chm-set { padding: 10px 0; }
+  .chm-set b { font-size: 1.02rem; }
+  .chm-set small { font-size: .8rem; }
+  .chm-set .chm-sizes { width: 250px; }
+  .chm-set .chm-sizes button { min-height: 46px; font-size: .62rem; }
+  .chm-step button { width: 44px; height: 44px; font-size: 1.35rem; }
+  .chm-step output { min-width: 84px; font-size: 1rem; line-height: 44px; }
+  .chm-seg2 button { height: 44px; min-width: 58px; font-size: .86rem; padding: 0 12px; }
+  .chm-sheet .chm-go { align-self: flex-end; min-width: 220px; }
 }
 @media (prefers-reduced-motion: reduce) { .chm *, .chm *::before, .chm *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; } }
 @media (min-width: 900px) and (min-height: 600px) { .chm-sc { font-size: 1.1rem; padding: 6px 12px 6px 9px; } .chm-sc span { font-size: 0.82rem; } .chm-clock { min-width: 104px; } .chm-time { font-size: 1.8rem; } .chm-phase { font-size: 0.7rem; } .chm-sub { top: calc(78px + var(--chm-st)); font-size: 0.9rem; } .chm-gear { top: calc(116px + var(--chm-st)); } }
@@ -513,32 +548,41 @@ export function createHud(root, api) {
     miniSetup(plan) {
       N.mini = null;
       const cv = el.miniCv; const g = cv.getContext('2d'); const W = cv.width; const H = cv.height;
-      if (!plan) { mini.bg = null; return; }
+      if (!plan) { mini.bg = null; mini.bgs = null; return; }
       const w = plan.maxX - plan.minX; const d = plan.maxZ - plan.minZ;
       const k = Math.min((W - 16) / w, (H - 16) / d);
       mini.k = k; mini.ox = (W - w * k) / 2 - plan.minX * k; mini.oz = (H - d * k) / 2 - plan.minZ * k;
-      const bg = document.createElement('canvas'); bg.width = W; bg.height = H;
-      const b = bg.getContext('2d');
       const css = getComputedStyle(root);
       const ink = css.getPropertyValue('--g-ink').trim() || '#1d1b22'; const paper = css.getPropertyValue('--g-bg').trim() || '#f4f2ee'; const line = css.getPropertyValue('--g-line').trim() || '#ccc';
-      b.fillStyle = paper; b.fillRect(0, 0, W, H);
-      b.lineJoin = 'round';
-      b.fillStyle = css.getPropertyValue('--g-card').trim() || '#fff'; b.strokeStyle = ink; b.lineWidth = 3;
-      for (const r of plan.rooms) { b.fillRect(mini.ox + r.x0 * k, mini.oz + r.z0 * k, (r.x1 - r.x0) * k, (r.z1 - r.z0) * k); }
-      b.fillStyle = line;
-      for (const c of plan.boxes) b.fillRect(mini.ox + c.minX * k, mini.oz + c.minZ * k, Math.max(1.5, (c.maxX - c.minX) * k), Math.max(1.5, (c.maxZ - c.minZ) * k));
-      for (const r of plan.rooms) b.strokeRect(mini.ox + r.x0 * k, mini.oz + r.z0 * k, (r.x1 - r.x0) * k, (r.z1 - r.z0) * k);
-      mini.bg = bg; mini.ink = ink;
-      g.drawImage(bg, 0, 0);
-    },
-    /** Per frame (cheap): redraws only when the dot moved. */
-    miniDraw(x, z, yaw, color) {
-      if (!mini.bg) return;
-      const px = Math.round((mini.ox + x * mini.k) * 2) / 2; const pz = Math.round((mini.oz + z * mini.k) * 2) / 2; const ya = Math.round(yaw * 20) / 20;
-      if (mini.px === px && mini.pz === pz && mini.ya === ya && mini.col === color) return;
-      mini.px = px; mini.pz = pz; mini.ya = ya; mini.col = color;
-      const g = el.miniCv.getContext('2d');
+      const card = css.getPropertyValue('--g-card').trim() || '#fff'; const muted = css.getPropertyValue('--g-muted').trim() || '#666';
+      const font = css.getPropertyValue('--g-font-body').trim() || 'sans-serif';
+      // one background per floor (two-storey maps show the floor the seeker is on)
+      const floors = plan.floors && plan.floors.length ? plan.floors : [{ y: 0, rooms: plan.rooms, boxes: plan.boxes }];
+      mini.bgs = floors.map((fl) => {
+        const bg = document.createElement('canvas'); bg.width = W; bg.height = H;
+        const b = bg.getContext('2d');
+        b.fillStyle = paper; b.fillRect(0, 0, W, H);
+        b.lineJoin = 'round';
+        b.fillStyle = card; b.strokeStyle = ink; b.lineWidth = 3;
+        for (const r of fl.rooms) { b.fillRect(mini.ox + r.x0 * k, mini.oz + r.z0 * k, (r.x1 - r.x0) * k, (r.z1 - r.z0) * k); }
+        b.fillStyle = line;
+        for (const c of fl.boxes) b.fillRect(mini.ox + c.minX * k, mini.oz + c.minZ * k, Math.max(1.5, (c.maxX - c.minX) * k), Math.max(1.5, (c.maxZ - c.minZ) * k));
+        for (const r of fl.rooms) b.strokeRect(mini.ox + r.x0 * k, mini.oz + r.z0 * k, (r.x1 - r.x0) * k, (r.z1 - r.z0) * k);
+        if (floors.length > 1 && fl.name) { b.fillStyle = muted; b.font = `800 ${Math.round(H / 11)}px ${font}`; b.textAlign = 'center'; b.fillText(String(fl.name).toUpperCase(), W / 2, H - 3); }
+        return { y: fl.y || 0, bg };
+      });
+      mini.bg = mini.bgs[0].bg; mini.ink = ink; mini.fi = -1;
       g.drawImage(mini.bg, 0, 0);
+    },
+    /** Per frame (cheap): redraws only when the dot moved or the floor changed. y: feet height. */
+    miniDraw(x, z, yaw, color, y = 0) {
+      if (!mini.bg) return;
+      let fi = 0; for (let i = 1; i < mini.bgs.length; i++) if (y >= mini.bgs[i].y - 0.6) fi = i;
+      const px = Math.round((mini.ox + x * mini.k) * 2) / 2; const pz = Math.round((mini.oz + z * mini.k) * 2) / 2; const ya = Math.round(yaw * 20) / 20;
+      if (mini.px === px && mini.pz === pz && mini.ya === ya && mini.col === color && mini.fi === fi) return;
+      mini.px = px; mini.pz = pz; mini.ya = ya; mini.col = color; mini.fi = fi;
+      const g = el.miniCv.getContext('2d');
+      g.drawImage(mini.bgs[fi].bg, 0, 0);
       g.save(); g.translate(px, pz); g.rotate(-ya + Math.PI);
       g.fillStyle = color; g.strokeStyle = mini.ink; g.lineWidth = 2.5;
       g.beginPath(); g.moveTo(0, -11); g.lineTo(8, 8); g.lineTo(0, 4); g.lineTo(-8, 8); g.closePath(); g.fill(); g.stroke();

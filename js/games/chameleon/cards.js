@@ -25,18 +25,40 @@ export function errorCard(msg) {
 // ── lobby ──────────────────────────────────────────────────────────────
 const SIZE_DOT = { tiny: 9, small: 12, medium: 15, large: 19, huge: 24 };
 
-/** A tiny floor plan of a map from its rooms (SVG, ink on paper). */
+/** A tiny floor plan of a map from its rooms (SVG, riso print): each floor is a panel, rooms are
+ *  overprinted in the three ink tints (slightly mis-registered, like a riso pass), with a key-plate
+ *  ink outline in screen pixels. One-room dioramas get a halftone floor and a dashed open front. */
+const PLAN_INKS = ['a', 'hl', 'b'];
 export function mapPlan(m) {
   const inf = (m && m.info) || {};
   const rooms = Array.isArray(inf.rooms) && inf.rooms.length ? inf.rooms : [{ x0: -(inf.w || 10) / 2, z0: -(inf.d || 8) / 2, x1: (inf.w || 10) / 2, z1: (inf.d || 8) / 2, floor: 0 }];
   let x0 = Infinity; let z0 = Infinity; let x1 = -Infinity; let z1 = -Infinity;
   for (const r of rooms) { x0 = Math.min(x0, r.x0, r.x1); x1 = Math.max(x1, r.x0, r.x1); z0 = Math.min(z0, r.z0, r.z1); z1 = Math.max(z1, r.z0, r.z1); }
   const floors = Math.max(1, ...rooms.map((r) => (r.floor || 0) + 1));
-  const W = x1 - x0; const D = z1 - z0; const pad = Math.max(W, D) * 0.06;
-  const gap = W * 0.12;
+  const W = x1 - x0; const D = z1 - z0; const pad = Math.max(W, D) * 0.07;
+  const gap = W * 0.14;
   const vbW = W * floors + gap * (floors - 1) + pad * 2; const vbH = D + pad * 2;
-  const rect = (r) => { const f = r.floor || 0; const ox = pad + f * (W + gap) - x0; return `<rect x="${(Math.min(r.x0, r.x1) + ox).toFixed(2)}" y="${(Math.min(r.z0, r.z1) + pad - z0).toFixed(2)}" width="${Math.abs(r.x1 - r.x0).toFixed(2)}" height="${Math.abs(r.z1 - r.z0).toFixed(2)}"/>`; };
-  return `<svg class="chm-plan" viewBox="0 0 ${vbW.toFixed(2)} ${vbH.toFixed(2)}" aria-hidden="true" style="--sw:${(Math.max(vbW, vbH) / 60).toFixed(3)}">${rooms.map(rect).join('')}</svg>`;
+  const reg = Math.max(vbW, vbH) * 0.022; // mis-registration of the colour pass
+  const n = (v) => v.toFixed(2);
+  const box = (r, dx = 0, dy = 0) => { const f = r.floor || 0; const ox = pad + f * (W + gap) - x0; return `x="${n(Math.min(r.x0, r.x1) + ox + dx)}" y="${n(Math.min(r.z0, r.z1) + pad - z0 + dy)}" width="${n(Math.abs(r.x1 - r.x0))}" height="${n(Math.abs(r.z1 - r.z0))}"`; };
+  const one = rooms.length === 1;
+  // halftone screen (dot rows; round-capped zero-length dashes, no <pattern> ids to collide)
+  const halftone = (x, y, w, h) => {
+    const sp = Math.min(w, h) / 6.5; let d = '';
+    for (let k = 0, yy = y + sp * 0.6; yy < y + h - sp * 0.3; k++, yy += sp * 0.87) d += `M${n(x + sp * (k % 2 ? 1.1 : 0.6))} ${n(yy)}H${n(x + w - sp * 0.3)}`;
+    return `<path class="pht" d="${d}" style="stroke-width:${n(sp * 0.42)};stroke-dasharray:0 ${n(sp)}"/>`;
+  };
+  // colour pass: big rooms first so small ones print on top
+  const order = rooms.map((r, i) => ({ r, i, a: Math.abs((r.x1 - r.x0) * (r.z1 - r.z0)) })).sort((p, q) => q.a - p.a);
+  const fills = one
+    ? `<rect class="pf ${PLAN_INKS[(MAPS.indexOf(m) + 1) % 3]}" ${box(rooms[0], reg, reg)}/>${halftone(pad + reg, pad + reg, W, D)}`
+    : order.map(({ r, i }) => `<rect class="pf ${PLAN_INKS[i % 3]}" ${box(r, reg, reg)}/>`).join('');
+  const panels = [];
+  for (let f = 0; f < floors; f++) panels.push(`<rect class="pp" x="${n(pad + f * (W + gap))}" y="${n(pad)}" width="${n(W)}" height="${n(D)}"/>`);
+  const ink = rooms.map((r) => `<rect class="pk" ${box(r)}/>`).join('');
+  // a one-room diorama is open at the front (low wall): print that edge dashed
+  const front = one ? `<path class="pfr" d="M${n(pad)} ${n(pad + D)}h${n(W)}"/>` : '';
+  return `<svg class="chm-plan${one ? ' one' : ''}${floors > 1 ? ' wide' : ''}" viewBox="0 0 ${n(vbW)} ${n(vbH)}" aria-hidden="true">${panels.join('')}${fills}${ink}${front}</svg>`;
 }
 
 export function mapFacts(m) {
@@ -129,6 +151,7 @@ export function settingsSheet(api, { canEdit, local, setup, waitingFor }) {
     ${mapCard(api, setup, canEdit)}
     <div class="chm-chips chm-mapchips">${MAPS.map((m) => `<button class="chm-chip ${setup.map === m.id ? 'on' : ''}" data-lobby="map" data-v="${m.id}" ${canEdit ? '' : 'disabled'}>${esc(m.name)}</button>`).join('')}</div>
     <h3>Round</h3>
+    <div class="chm-sets">
     ${row('Chameleon size', 'Bigger is easier to spot', sizeSeg(r, canEdit))}
     ${hs ? row('Rounds', 'Each of you hides half of them', stepper(r, 'rounds', canEdit)) : ''}
     ${row('Hide time', effHint(setup, 'hide'), stepper(r, 'hide', canEdit))}
@@ -138,13 +161,16 @@ export function settingsSheet(api, { canEdit, local, setup, waitingFor }) {
     ${row('Scan cooldown', '', stepper(r, 'scanCd', canEdit))}
     ${row('Escapes', 'Scurries or tongue-zips while hunted', stepper(r, 'escapes', canEdit))}
     ${row('Seeker speed', '', seg(r, 'seekSpeed', [['slow', 'Slow'], ['normal', 'Normal'], ['fast', 'Fast']], canEdit))}
+    </div>
     <h3>Rules</h3>
+    <div class="chm-sets">
     ${row('Walls &amp; ceilings', 'Sticky feet, hanging, tongue-zip', seg(r, 'climb', [[true, 'Climb'], [false, 'Floor only']], canEdit))}
     ${row('Stamp tool', 'Copy the surface onto your skin', seg(r, 'stamp', [[true, 'Allowed'], [false, 'Off']], canEdit))}
     ${row('Eye-blink glints', 'Blinks sparkle for the seeker', seg(r, 'blink', [['off', 'Off'], ['on', 'On'], ['strong', 'Strong']], canEdit))}
     ${row('Heartbeat hint', 'Hider feels the seeker close by', seg(r, 'heartbeat', [[true, 'On'], [false, 'Off']], canEdit))}
     ${row('Seeker minimap', 'On the bigger maps', seg(r, 'minimap', [[true, 'On'], [false, 'Off']], canEdit))}
     ${hs ? row('Hides first', '', `<div class="chm-chips">${['a', 'b'].map((w) => `<button class="chm-chip p${w} ${setup.first === w ? 'on' : ''}" data-lobby="first" data-v="${w}" ${canEdit ? '' : 'disabled'}><i></i>${esc(api.name(w))}</button>`).join('')}</div>`) : ''}
+    </div>
     <button class="chm-go" data-act="settings">Done</button>
   </div></div>`;
 }
