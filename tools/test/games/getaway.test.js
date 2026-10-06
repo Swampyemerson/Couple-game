@@ -80,17 +80,49 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
     // breakables: a fast hit knocks a pole over
     const pole = run('runner', { gas: 1 }, 1.5, (c) => { c.x = 0; c.z = 270; c.yaw = Math.PI; c.vz = 25; }).out;
     assert(pole.some((q) => q.ev.some((e) => e.t === 'break')) && pole.at(-1).z > 300, 'a fast hit knocks a pole over and drives through');
-    // PIT judging
+    // PIT judging (tiers: 0 none, 1 nudge, 2 PIT)
     const runner = newCar('runner'); placeCar(runner, 0, 0, Math.PI / 2, geo); runner.vx = 20;
     const ct = {};
-    const cop = newCar('cop'); placeCar(cop, -3.2, -1.9, Math.PI / 2 + 0.15, geo); cop.vx = 22; cop.vz = 3.3;
-    assert(carContact(runner, cop, ct) > 0 && judgePit(runner, cop, ct) !== 0, `a push on the rear quarter from the side at speed is a PIT (side ${judgePit(runner, cop, ct)})`);
+    const cop = newCar('cop'); placeCar(cop, -3.2, -1.9, Math.PI / 2 + 0.3, geo); cop.vx = 22; cop.vz = 6.5;
+    assert(carContact(runner, cop, ct) > 0 && judgePit(runner, cop, ct) !== 0 && ct.pitTier === 2, `a hard push on the rear quarter from the side at speed is a PIT (push ${ct.pitPush.toFixed(1)} m/s)`);
+    const tap = newCar('cop'); placeCar(tap, -3.2, -1.9, Math.PI / 2 + 0.3, geo); tap.vx = 21; tap.vz = 1.2;
+    carContact(runner, tap, ct); judgePit(runner, tap, ct);
+    assert(ct.pitTier < 2, `a light tap on the rear quarter is at most a nudge (tier ${ct.pitTier}, push ${ct.pitPush.toFixed(1)} m/s)`);
     const ram = newCar('cop'); placeCar(ram, -4.4, 0, Math.PI / 2, geo); ram.vx = 26;
-    assert(carContact(runner, ram, ct) > 0 && judgePit(runner, ram, ct) === 0, 'a straight rear-end shunt is a ram, not a PIT');
+    assert(carContact(runner, ram, ct) > 0 && judgePit(runner, ram, ct) === 0 && ct.pitTier === 0, 'a straight rear-end shunt is a ram, not a PIT');
+    const off = newCar('cop'); placeCar(off, -4.4, -0.4, Math.PI / 2 + 0.05, geo); off.vx = 26; off.vz = 1.3;
+    assert(carContact(runner, off, ct) > 0 && judgePit(runner, off, ct) === 0, 'a rear-end shunt slightly off-centre is still a ram (no knife edge at 0.35 m)');
     const tb = newCar('cop'); placeCar(tb, 0, -3.0, Math.PI, geo); tb.vz = 15;
     assert(carContact(runner, tb, ct) > 0 && judgePit(runner, tb, ct) === 0, 'a T-bone is not a PIT');
     const slow = newCar('runner'); placeCar(slow, 0, 0, Math.PI / 2, geo); slow.vx = 3;
     assert(carContact(slow, cop, ct) > 0 && judgePit(slow, cop, ct) === 0, 'no PIT on a crawling car');
+    // the collision box is the body: cars touch bumper to bumper, not half a metre early
+    const b1 = newCar('runner'); placeCar(b1, 0, 0, Math.PI / 2, geo); const b2 = newCar('cop'); placeCar(b2, 4.7, 0, Math.PI / 2, geo);
+    const b3 = newCar('cop'); placeCar(b3, 4.5, 0, Math.PI / 2, geo); const b4 = newCar('cop'); placeCar(b4, 0, 2.05, Math.PI / 2, geo);
+    const b5 = newCar('cop'); placeCar(b5, 2.0, 1.9, Math.PI / 2, geo); // corner to corner
+    assert(carContact(b1, b2, ct) === 0 && carContact(b1, b3, ct) > 0 && carContact(b1, b4, ct) === 0 && carContact(b1, b5, ct) > 0,
+      'car collider = 4.6 × 2 m body: apart at 4.7 m nose-to-tail and 2.05 m side by side, touching at 4.5 m and corner to corner');
+    // a tree collides as its trunk, a shrub not at all; a mailbox gives way at a walking pace
+    { const g2 = createGeo({ id: 't2', bounds: flat.bounds, roads: flat.roads, solids: [{ kind: 'tree', x: 0, z: 0, w: 2, d: 2 }, { kind: 'shrub', x: 50, z: 0, w: 1.4, d: 1.4 }, { kind: 'mailbox', x: 100, z: 0, w: 0.5, d: 0.5 }] });
+      const near = newCar('runner'); placeCar(near, 0, 2.3 + 0.45, 0, g2); // nose 0.45 m from the trunk centre: just clear of a 0.32 m trunk
+      stepCar(near, {}, DT, g2, CAR.runner, NITRO.normal);
+      assert(Math.abs(near.z - 2.75) < 0.01, `a tree is solid only where its trunk is (car ${(near.z - 2.3).toFixed(2)} m from the trunk centre, untouched)`);
+      const sh = newCar('runner'); placeCar(sh, 50, 6, 0, g2); sh.vz = -6; let evs = [];
+      for (let i = 0; i < 180; i++) { stepCar(sh, { gas: 0.3 }, DT, g2, CAR.runner, NITRO.normal); evs = evs.concat(sh.ev.splice(0)); }
+      assert(sh.z < -3 && evs.some((e) => e.t === 'break' && e.soft), 'a shrub is driven over (flattened), not a wall');
+      const mb = newCar('runner'); placeCar(mb, 100, 6, 0, g2); mb.vz = -4; evs = [];
+      for (let i = 0; i < 240; i++) { stepCar(mb, { gas: 0.25 }, DT, g2, CAR.runner, NITRO.normal); evs = evs.concat(mb.ev.splice(0)); }
+      assert(mb.z < -3 && evs.some((e) => e.t === 'break'), 'a mailbox is knocked over at 14 km/h'); }
+    // walls made of several boxes: sliding along the seams doesn't catch the car
+    { const seg = []; for (let k = 0; k < 12; k++) seg.push({ kind: 'wall', x: -60 + k * 10, z: -3, w: 10, d: 1, rot: 0, h: 2 });
+      const g3 = createGeo({ id: 't3', bounds: flat.bounds, roads: flat.roads, solids: seg });
+      const c = newCar('runner'); placeCar(c, -55, -1.3, Math.PI / 2 - 0.05, g3); c.vx = 25; c.vz = -1.2;
+      let minV = 99; let walls = 0;
+      for (let i = 0; i < 300; i++) { stepCar(c, { gas: 1, steer: -0.08 }, DT, g3, CAR.runner, NITRO.normal); if (i > 30) minV = Math.min(minV, c.speed); walls += c.ev.filter((e) => e.t === 'wall').length; c.ev.length = 0; }
+      assert(minV > 20 && walls <= 1 && c.x > 10, `scraping along a wall of 12 boxes: no snag on the seams (min ${minV.toFixed(1)} m/s, ${walls} hard hits)`); }
+    // body motion for the renderer: braking dives the nose, a kerb bounces the suspension
+    { const c = newCar('runner'); placeCar(c, 0, 0, Math.PI / 2, geo); c.vx = 30; let maxP = 0; for (let i = 0; i < 60; i++) { stepCar(c, { brake: 1 }, DT, geo, CAR.runner, NITRO.normal); maxP = Math.max(maxP, c.pitch); }
+      assert(maxP > 0.04 && c.susp[0] > 0 && c.susp[2] < c.susp[0], `braking pitches the nose down (${maxP.toFixed(3)} rad, front wheels compressed)`); }
     // Dockside geometry + determinism of traffic
     const dg = createGeo(DOCKSIDE);
     for (const [i, s] of DOCKSIDE.spawns.entries()) {
@@ -112,8 +144,9 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
     const c3 = newCar('runner'); placeCar(c3, 206, 120, Math.PI, dg); c3.vz = 10;
     stepCar(c3, { gas: 0 }, DT, dg, CAR.runner, NITRO.normal);
     assert(c3.water && c3.level < 0, 'driving in the canal under a bridge is water (busts a runner)');
-    const path1 = (() => { while (dg.buildNav(1e9) < 1); return dg.findPath(-100, 40, 340, -100); })();
-    assert(path1 && path1.length > 20, `AI nav: a path across Dockside (${path1.length / 2} cells)`);
+    const path1 = (() => { dg.buildNav(); return dg.findPath(-100, 40, 340, -100); })();
+    assert(path1 && path1.length > 20, `AI nav: a road route across Dockside (${path1.length / 2} points)`);
+    await engineUnits();
   }
 
   // ═══ one phone vs the AI ═══
@@ -171,7 +204,7 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       { const s0 = await st(a); if (s0.R.idx !== 0) console.log('   DEBUG round 0 ended early:', JSON.stringify(s0.match.hist)); }
       // scripted PIT: the cop hits the runner's rear quarter from the side at speed
       await hook(a, 'hold', 'b', { gas: 0.4 }); await hook(a, 'hold', 'a', { gas: 0.35 });
-      await a.evaluate(() => { const g = window.__getaway; g.teleport('a', -300, 40, Math.PI / 2, 20); g.teleport('b', -303.2, 38.1, Math.PI / 2 + 0.15, 23); });
+      await a.evaluate(() => { const g = window.__getaway; g.teleport('a', -300, 40, Math.PI / 2, 20); g.teleport('b', -303.4, 38.0, Math.PI / 2 + 0.32, 24); });
       await until(a, () => window.__getaway.state().a.stats.pits >= 1, null, 5000, 'PIT');
       s = await st(a);
       assert(s.a.hp <= 80, `PIT! runner spun, ${(100 - s.a.hp).toFixed(0)} damage`);

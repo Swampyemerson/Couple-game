@@ -1,10 +1,15 @@
 // Getaway world queries (no THREE): smoothed road polylines, nearest-road lookups, surfaces,
 // bridges (raised decks with their own level), solids (oriented boxes) in a grid, water and open
-// polygons, line of sight, and a coarse nav grid with A* for the AI. Everything is a pure
-// function of the map data, so both devices agree.
+// polygons, line of sight, and the road graph (roadgraph.js) the AI plans on and traffic takes its
+// junctions from. Everything is a pure function of the map data, so both devices agree.
+//
+// Small breakables (trees, poles, lamps…) collide as a circle the size of the drawn trunk
+// (`o.cr`, see TRUNK_R), not as their map box; shrubs are soft (no collision, they flatten).
 //
 // Solids: { x, z, w, d, rot, h } — rot is THREE's rotation.y (mesh.rotation.y = rot draws the
 // same box). Local→world: x' = x cos + z sin, z' = −x sin + z cos.
+
+import { buildRoadGraph, routePolyline } from './roadgraph.js';
 
 export function mulberry(seed) {
   let a = seed >>> 0;
@@ -25,6 +30,13 @@ export function hashStr(s) {
 const KIND_RANK = { highway: 5, arterial: 4, ramp: 4, street: 3, alley: 2, dirt: 1 };
 export const BREAKABLE = { pole: 1, tree: 1, bollard: 1, hydrant: 1, lamp: 1, signal: 1, sign: 1, mailbox: 1, cactus: 1, shrub: 1 };
 const BLOCKS_VIEW = { building: 1, wall: 1, rock: 1 };
+/** Collision radius of engine-drawn breakables by style (the drawn trunk + 0.08 m). Matches the
+ *  radii props.js draws with; a style not listed keeps its map box. */
+export const TRUNK_R = { cottonwood: 0.4, tree: 0.32, jacaranda: 0.32, pine: 0.3, aspen: 0.23, palm: 0.28, lamp: 0.2, signal: 0.22, pole: 0.23, bollard: 0.24, hydrant: 0.3, sign: 0.16, mailbox: 0.3, cactus: 0.35 };
+/** Breakables that give way at a walking pace (m/s), not at DAMAGE.breakable. */
+export const FLIMSY = { mailbox: 1, hydrant: 1, bollard: 1, sign: 1, cactus: 1, shrub: 1 };
+const STYLE_OF = { tree: 'tree', bollard: 'bollard', hydrant: 'hydrant', lamp: 'lamp', signal: 'signal', sign: 'sign', mailbox: 'mailbox', cactus: 'cactus', shrub: 'shrub' };
+const STYLES = { cottonwood: 1, pine: 1, aspen: 1, palm: 1, jacaranda: 1, tree: 1, lamp: 1, signal: 1, bollard: 1, hydrant: 1, pole: 1, sign: 1, mailbox: 1, cactus: 1, shrub: 1 };
 export const OPEN_KINDS = ['lot', 'grass', 'dirt', 'sand'];
 
 /** Centripetal-ish Catmull-Rom through pts, sampled every ~step metres. */
@@ -85,7 +97,8 @@ export function createGeo(map) {
     const width = Math.max(4, Math.min(40, +r.width || 10));
     roads.push({
       idx: roads.length, src: ri, name: r.name || '', kind, rank: KIND_RANK[kind], width, hw: width / 2, closed, bridge: !!r.bridge,
-      n, x, z, cum, len: cum[n - 1], traffic: r.traffic !== false && kind !== 'ramp',
+      n, x, z, cum, len: cum[n - 1], traffic: r.traffic !== false && kind !== 'ramp', oneway: !!r.oneway,
+      sidewalk: Number.isFinite(r.sidewalk) ? Math.max(0, Math.min(8, r.sidewalk)) : (Number.isFinite(map.sidewalk) ? Math.max(0, Math.min(8, map.sidewalk)) : 0),
       lanes: r.lanes > 0 ? Math.min(3, r.lanes | 0) : (kind === 'highway' ? 2 : kind === 'arterial' && width >= 14 ? 2 : 1),
       deck: null, // bridges: { h0, h1, clear }
     });
@@ -191,7 +204,11 @@ export function createGeo(map) {
    *  Bridge decks are not ground (the at-grade road below passes under). */
   function surfaceAt(x, z) {
     nearestRoad(x, z, nq, 22, (r) => !r.bridge);
-    if (nq.road >= 0 && nq.d <= roads[nq.road].hw + 0.3) return roads[nq.road].kind === 'dirt' ? 'dirt' : 'road';
+    if (nq.road >= 0) {
+      const r = roads[nq.road];
+      if (nq.d <= r.hw + 0.3) return r.kind === 'dirt' ? 'dirt' : 'road';
+      if (r.sidewalk > 0 && nq.d <= r.hw + 0.3 + r.sidewalk) return 'lot'; // a drawn sidewalk drives like concrete
+    }
     if (inWater(x, z)) return 'water'; // water wins over open polygons (river pools inside sand beds)
     const k = openKind(x, z);
     if (k) return k;
@@ -204,11 +221,16 @@ export function createGeo(map) {
     if (!s || !Number.isFinite(s.x) || !Number.isFinite(s.z)) continue;
     const rot = +s.rot || 0;
     const w = Math.max(0.2, +s.w || 1); const d = Math.max(0.2, +s.d || 1);
+    const kind = s.kind || 'building'; const br = !!BREAKABLE[kind];
+    const st = br ? (STYLES[s.style] ? s.style : (STYLE_OF[kind] || 'pole')) : null;
+    // engine-drawn breakables collide as their trunk; a map-drawn one keeps its box (≤ its size)
+    const cr = br && !s.drawn && TRUNK_R[st] ? Math.min(TRUNK_R[st], Math.max(w, d) / 2 + 0.08) : 0;
     solids.push({
-      i: solids.length, kind: s.kind || 'building', x: s.x, z: s.z, hw: w / 2, hd: d / 2, rot, c: Math.cos(rot), s: Math.sin(rot),
-      h: Number.isFinite(s.h) ? s.h : (BREAKABLE[s.kind] ? 6 : 8), y: Number.isFinite(s.y) ? s.y : null,
-      breakable: !!BREAKABLE[s.kind], broken: false, drawn: !!s.drawn, style: s.style || null, color: s.color || null,
+      i: solids.length, kind, x: s.x, z: s.z, hw: w / 2, hd: d / 2, rot, c: Math.cos(rot), s: Math.sin(rot),
+      h: Number.isFinite(s.h) ? s.h : (br ? 6 : 8), y: Number.isFinite(s.y) ? s.y : null,
+      breakable: br, broken: false, drawn: !!s.drawn, style: s.style || null, color: s.color || null,
       rad: Math.hypot(w, d) / 2, stamp: 0, hRaw: Number.isFinite(s.h) ? s.h : NaN,
+      cr, soft: kind === 'shrub', flimsy: !!FLIMSY[kind],
     });
   }
   const SC = 16;
@@ -287,94 +309,30 @@ export function createGeo(map) {
     return true;
   }
 
-  // ── nav grid (AI) ──
-  const NC = 8;
-  const NW = Math.ceil((B.x1 - B.x0) / NC); const NH = Math.ceil((B.z1 - B.z0) / NC);
-  const nav = new Uint8Array(NW * NH); // 0 = unknown, 1 road, 2 lot, 3 dirt, 4 grass, 6 sand, 255 blocked
-  let navDone = 0;
-  const COST = { road: 1, lot: 1.4, dirt: 3, grass: 4, sand: 7 };
-  /** Fill the nav grid a slice at a time; returns progress 0..1. */
-  function buildNav(budgetMs = 8) {
-    const t0 = performance.now();
-    while (navDone < nav.length) {
-      const cz = Math.floor(navDone / NW); const cx = navDone % NW;
-      const x = B.x0 + (cx + 0.5) * NC; const z = B.z0 + (cz + 0.5) * NC;
-      let v;
-      const sf = surfaceAt(x, z);
-      nearestRoad(x, z, nq, 22);
-      const onBridge = nq.road >= 0 && roads[nq.road].bridge && nq.d <= roads[nq.road].hw;
-      if (sf === 'water' && !onBridge) v = 255;
-      else v = onBridge ? 1 : sf === 'road' ? 1 : sf === 'lot' ? 2 : sf === 'dirt' ? 3 : sf === 'sand' ? 6 : 4;
-      if (v !== 255 && v !== 1) {
-        let blocked = false;
-        eachSolid(x, z, 4, (o) => {
-          if (blocked || o.breakable) return;
-          const ax = x - o.x; const az = z - o.z;
-          const lx = ax * o.c - az * o.s; const lz = ax * o.s + az * o.c;
-          if (Math.abs(lx) < o.hw + 2.2 && Math.abs(lz) < o.hd + 2.2) blocked = true;
-        });
-        if (blocked) v = 255;
-      }
-      nav[navDone++] = v;
-      if ((navDone & 255) === 0 && performance.now() - t0 > budgetMs) break;
-    }
-    return navDone / nav.length;
-  }
-  const navCost = (v) => (v === 1 ? 1 : v === 2 ? 1.4 : v === 3 ? 3 : v === 4 ? 4 : v === 6 ? 7 : 1e9);
-  // A* (binary heap over typed arrays, reused between calls)
-  const gScore = new Float32Array(NW * NH); const came = new Int32Array(NW * NH); const seen = new Uint32Array(NW * NH);
-  let gen = 0;
-  const heap = []; const heapF = [];
-  function hpush(i, f) { heap.push(i); heapF.push(f); let k = heap.length - 1; while (k > 0) { const p = (k - 1) >> 1; if (heapF[p] <= heapF[k]) break; [heap[p], heap[k]] = [heap[k], heap[p]]; [heapF[p], heapF[k]] = [heapF[k], heapF[p]]; k = p; } }
-  function hpop() {
-    const top = heap[0]; const lastI = heap.pop(); const lastF = heapF.pop();
-    if (heap.length) {
-      heap[0] = lastI; heapF[0] = lastF; let k = 0;
-      for (;;) { const l = 2 * k + 1; const r = l + 1; let m = k; if (l < heap.length && heapF[l] < heapF[m]) m = l; if (r < heap.length && heapF[r] < heapF[m]) m = r; if (m === k) break; [heap[m], heap[k]] = [heap[k], heap[m]]; [heapF[m], heapF[k]] = [heapF[k], heapF[m]]; k = m; }
-    }
-    return top;
-  }
-  const navIdx = (x, z) => { const cx = Math.floor((x - B.x0) / NC); const cz = Math.floor((z - B.z0) / NC); return cx < 0 || cz < 0 || cx >= NW || cz >= NH ? -1 : cz * NW + cx; };
-  function nearestOpen(i) {
-    if (i < 0) return -1;
-    if (nav[i] && nav[i] !== 255) return i;
-    const cx = i % NW; const cz = (i / NW) | 0;
-    for (let r = 1; r < 8; r++) for (let dz = -r; dz <= r; dz++) for (let dx = -r; dx <= r; dx++) {
-      const x = cx + dx; const z = cz + dz; if (x < 0 || z < 0 || x >= NW || z >= NH) continue;
-      const j = z * NW + x; if (nav[j] && nav[j] !== 255) return j;
-    }
-    return -1;
-  }
-  /** Path from (x0,z0) to (x1,z1) as a flat [x, z, x, z…] array of cell centres (or null). */
-  function findPath(x0, z0, x1, z1, maxExpand = 15000) {
-    if (navDone < nav.length) return null;
-    const s = nearestOpen(navIdx(x0, z0)); const t = nearestOpen(navIdx(x1, z1));
-    if (s < 0 || t < 0) return null;
-    gen++; heap.length = 0; heapF.length = 0;
-    const tx = t % NW; const tz = (t / NW) | 0;
-    const hfn = (i) => { const dx = Math.abs((i % NW) - tx); const dz = Math.abs(((i / NW) | 0) - tz); return (Math.max(dx, dz) + 0.414 * Math.min(dx, dz)) * 1.0; };
-    seen[s] = gen; gScore[s] = 0; came[s] = -1; hpush(s, hfn(s));
-    let exp = 0; let found = false;
-    while (heap.length && exp < maxExpand) {
-      const c = hpop(); exp++;
-      if (c === t) { found = true; break; }
-      const cx = c % NW; const cz = (c / NW) | 0; const gc = gScore[c];
-      for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
-        if (!dx && !dz) continue;
-        const x = cx + dx; const z = cz + dz; if (x < 0 || z < 0 || x >= NW || z >= NH) continue;
-        const j = z * NW + x; const v = nav[j]; if (v === 255 || !v) continue;
-        if (dx && dz && (nav[cz * NW + x] === 255 || nav[z * NW + cx] === 255)) continue; // no corner cutting
-        const g = gc + navCost(v) * (dx && dz ? 1.414 : 1);
-        if (seen[j] !== gen || g < gScore[j]) { seen[j] = gen; gScore[j] = g; came[j] = c; hpush(j, g + hfn(j)); }
-      }
-    }
-    if (!found) return null;
-    const out = [];
-    for (let c = t; c >= 0; c = came[c]) out.push(B.x0 + ((c % NW) + 0.5) * NC, B.z0 + (((c / NW) | 0) + 0.5) * NC);
-    // reverse pairs
-    const res = new Float64Array(out.length);
-    for (let i = 0, j = out.length - 2; j >= 0; i += 2, j -= 2) { res[i] = out[j]; res[i + 1] = out[j + 1]; }
-    return res;
+  // ── road graph (AI routing, traffic junctions) ──
+  let graph = null;
+  /** The road graph, built on first use (≈10–60 ms on the big maps). */
+  function roadGraph() { if (!graph) graph = buildRoadGraph(api); return graph; }
+  /** Build the graph (kept as a 'nav build' step so the loader can schedule it); progress 0..1. */
+  function buildNav() { roadGraph(); return 1; }
+  const fpLoc = {}; const fpLoc2 = {}; const fpRes = {}; const fpSrc = [];
+  /** A route from (x0, z0) to (x1, z1) along the roads as a flat [x, z, x, z…] polyline (or null). */
+  function findPath(x0, z0, x1, z1) {
+    const g = roadGraph();
+    if (g.locate(x0, z0, null, fpLoc, 200).road < 0 || g.locate(x1, z1, null, fpLoc2, 200).road < 0) return null;
+    const dist = g.newDist(); const prev = g.newPrev();
+    fpSrc.length = 0; const v = g.speedOf(fpLoc.road);
+    fpSrc.push(fpLoc.a, (fpLoc.s - fpLoc.sa) / v, fpLoc.b, (fpLoc.sb - fpLoc.s) / v);
+    g.dijkstra(fpSrc, dist, prev);
+    g.costTo(fpLoc2, dist, fpRes);
+    if (!Number.isFinite(fpRes.cost)) return null;
+    const { start, spans } = g.spansTo(fpRes.via, prev, []);
+    spans.unshift({ road: fpLoc.road, s0: fpLoc.s, s1: start === fpLoc.a ? fpLoc.sa : fpLoc.sb });
+    spans.push({ road: fpLoc2.road, s0: fpRes.viaS, s1: fpLoc2.s });
+    const pl = routePolyline(api, spans, 0, 6);
+    const out = new Float64Array(pl.n * 2);
+    for (let i = 0; i < pl.n; i++) { out[i * 2] = pl.x[i]; out[i * 2 + 1] = pl.z[i]; }
+    return out;
   }
 
   /** A random point on a road (deterministic given rnd), away from bridges. */
@@ -385,10 +343,10 @@ export function createGeo(map) {
     const r = roads[0]; sampleRoad(r, 0, out); out.road = 0; return out;
   }
 
-  return {
+  const api = {
     map, bounds: B, roads, solids, opens, waters, ground, hasHeight: !!H,
     nearestRoad, sampleRoad, deckY, surfaceAt, inWater, openKind, eachSolid, segBlocked, lineOfSight,
-    buildNav, findPath, navReady: () => navDone >= nav.length, randomRoadPoint,
-    navInfo: { NC, NW, NH, nav },
+    buildNav, findPath, navReady: () => !!graph, randomRoadPoint, roadGraph,
   };
+  return api;
 }

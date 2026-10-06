@@ -1,14 +1,41 @@
-// Getaway graphics core: theme palette, the ONE toon shader family (per-vertex 3-band light,
-// a halftone screen in the shadow band, shader-drawn facade windows, glow, a red/blue siren
-// tint on nearby surfaces), a geometry Builder that merges primitives with ink outlines baked in
-// as inverted hulls, the chunk auto-merger (every toon mesh in a chunk → one draw call per
-// material family, material colours baked into vertex colours) and the sky dome.
+// Getaway graphics core: theme palette, the ONE shader family every opaque surface uses (a
+// MeshBasicMaterial patched in onBeforeCompile), a geometry Builder that merges primitives with
+// ink outlines baked in as inverted hulls, the chunk auto-merger (every toon mesh in a chunk →
+// one draw call per material family, material colours baked into vertex colours) and the sky.
+//
+// The shader ("toon" for historical reasons; v2 is stylised-realistic): sun + hemisphere light per
+// vertex (soft bands), and per pixel: the car shadow map (mid/high tier), the cop's siren, two
+// headlight spots, eight street-lamp pools at night, a sky reflection for paint / glass / chrome
+// / water, procedural surface detail picked by a per-vertex `fx` code (windows by building type,
+// asphalt with lane wear, brick, stucco, roof tiles, shingles, concrete, grass, dirt, metal, wood,
+// rock, foliage), car dirt and scratches, emissive lenses, and height + sun-tinted fog.
+// No textures are needed for any of it. Codes are listed in FX below and in docs/games/getaway-maps.md.
 
 export const FX_PLAIN = 0;
 export const FX_INK = 1;
 export const FX_WINDOWS = 2;
 export const FX_GLOW = 3;
 export const FX_FAR = 4; // unlit, slightly fogged (backdrop)
+export const FX_ROAD = 5;
+export const FX_PAINT = 6;
+export const FX_GLASS = 7;
+export const FX_CHROME = 8;
+export const FX_TRIM = 9;
+export const FX_SIREN_R = 20;
+export const FX_SIREN_B = 21;
+export const FX_TAIL = 22;
+export const FX_REVERSE = 23;
+/** Every fx code by name (kit.FX). Codes ≥ 5 are new in v2; older maps only use 0–4. */
+export const FX = {
+  plain: 0, ink: 1, windows: 2, office: 2, glow: 3, far: 4, road: 5, paint: 6, glass: 7, chrome: 8, trim: 9,
+  house: 10, shop: 11, tower: 12, brick: 13, stucco: 14, tile: 15, shingle: 16, concrete: 17, grass: 18, dirt: 19, sand: 19,
+  sirenR: 20, sirenB: 21, tail: 22, reverse: 23, water: 24, metal: 25, wood: 26, rock: 27, foliage: 28, lot: 29,
+};
+
+// quality tier ('low' | 'mid' | 'high'): set by render.js before any material is made
+let TIER = 'high';
+export function setGfxTier(t) { TIER = t === 'low' || t === 'mid' ? t : 'high'; }
+export function gfxTier() { return TIER; }
 
 // ── colours ──
 let cctx = null;
@@ -38,59 +65,85 @@ export function makePalette(tok) {
   const dark = !!tok.dark || lum(bg) < 0.35;
   return {
     dark, bg, card, ink, a, b, hl, good, bad,
-    outline: dark ? [0.06, 0.05, 0.08] : ink,
-    asphalt: dark ? [0.2, 0.2, 0.24] : [0.36, 0.36, 0.4],
-    asphaltHi: dark ? [0.24, 0.24, 0.28] : [0.42, 0.41, 0.45],
-    dirtRoad: dark ? [0.36, 0.3, 0.24] : [0.66, 0.56, 0.42],
-    curb: dark ? [0.5, 0.5, 0.52] : [0.86, 0.84, 0.8],
-    lineW: dark ? [0.86, 0.84, 0.8] : [0.97, 0.96, 0.93],
-    lineY: mix(hl, [1, 0.7, 0.1], 0.25),
-    glass: dark ? [0.1, 0.12, 0.2] : mix(mix(a, ink, 0.5), card, 0.2),
+    outline: dark ? [0.05, 0.05, 0.07] : mix(ink, [0.2, 0.2, 0.24], 0.35),
+    asphalt: dark ? [0.19, 0.19, 0.22] : [0.33, 0.33, 0.35],
+    asphaltHi: dark ? [0.23, 0.23, 0.26] : [0.4, 0.4, 0.42],
+    gutter: dark ? [0.16, 0.16, 0.18] : [0.28, 0.28, 0.3],
+    dirtRoad: dark ? [0.34, 0.29, 0.23] : [0.64, 0.55, 0.42],
+    curb: dark ? [0.46, 0.46, 0.48] : [0.8, 0.79, 0.76],
+    sidewalk: dark ? [0.4, 0.4, 0.42] : [0.76, 0.75, 0.72],
+    lineW: dark ? [0.82, 0.8, 0.76] : [0.94, 0.93, 0.9],
+    lineY: dark ? [0.8, 0.62, 0.2] : [0.96, 0.76, 0.22],
+    glass: dark ? [0.08, 0.1, 0.16] : [0.2, 0.26, 0.36],
     lit: mix(hl, [1, 1, 1], 0.2),
-    grass: dark ? [0.22, 0.33, 0.24] : [0.55, 0.72, 0.42],
+    grass: dark ? [0.2, 0.3, 0.22] : [0.5, 0.66, 0.38],
     white: [0.97, 0.97, 0.95],
-    copBody: dark ? [0.12, 0.12, 0.16] : [0.14, 0.14, 0.18],
-    copDoor: [0.96, 0.96, 0.94],
+    copBody: dark ? [0.08, 0.08, 0.1] : [0.09, 0.09, 0.11],
+    copDoor: [0.95, 0.95, 0.94],
     red: [0.95, 0.15, 0.2], blue: [0.15, 0.4, 1.0],
-    traffic: [[0.86, 0.3, 0.26], [0.95, 0.78, 0.3], [0.32, 0.6, 0.48], [0.88, 0.88, 0.86], [0.36, 0.42, 0.66], [0.62, 0.36, 0.56], [0.94, 0.56, 0.3], [0.5, 0.52, 0.56], [0.3, 0.7, 0.78], [0.78, 0.66, 0.5]],
+    traffic: [[0.72, 0.16, 0.14], [0.93, 0.93, 0.92], [0.12, 0.13, 0.15], [0.55, 0.57, 0.6], [0.18, 0.28, 0.5], [0.78, 0.76, 0.72], [0.3, 0.42, 0.34], [0.86, 0.62, 0.24], [0.4, 0.42, 0.46], [0.62, 0.12, 0.2], [0.24, 0.5, 0.66], [0.9, 0.88, 0.82]],
   };
 }
 
 // ── shader ──
 export function makeUniforms(THREE, P) {
+  const v4 = () => new THREE.Vector4(0, -999, 0, 0);
   return {
     uNight: { value: P.dark ? 1 : 0 },
     uGlass: { value: new THREE.Color().fromArray(P.glass) },
     uLit: { value: new THREE.Color().fromArray(P.lit) },
     uSun: { value: new THREE.Vector3(-0.42, 0.8, 0.43).normalize() },
-    uLk: { value: new THREE.Vector4(P.dark ? 0.42 : 0.58, P.dark ? 0.18 : 0.22, P.dark ? 0.22 : 0.32, P.dark ? 0.62 : 0.86) },
+    uSunCol: { value: new THREE.Color(P.dark ? 0.55 : 1.0, P.dark ? 0.62 : 0.93, P.dark ? 0.8 : 0.8) },
+    uLk: { value: new THREE.Vector4(P.dark ? 0.36 : 0.5, P.dark ? 0.2 : 0.22, P.dark ? 0.24 : 0.4, P.dark ? 0.62 : 0.86) },
     uDot: { value: 4 },
     uSiren: { value: new THREE.Vector4(0, -999, 0, 0) },   // xyz = lightbar, w = strength
     uSirenCol: { value: new THREE.Color(1, 0.1, 0.1) },
-    uHead: { value: new THREE.Vector4(0, -999, 0, 0) },    // my headlights (night): xyz, w
+    uHead: { value: new THREE.Vector4(0, -999, 0, 0) },    // legacy (game.js sets it; the spots below light the scene)
     uHeadDir: { value: new THREE.Vector3(0, 0, -1) },
+    uSpotP: { value: [v4(), v4()] },                        // headlight spots: xyz, strength
+    uSpotD: { value: [new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0, -1)] },
+    uLamp: { value: [v4(), v4(), v4(), v4(), v4(), v4(), v4(), v4()] }, // street-lamp pools (night): xyz, strength
+    uLampCol: { value: new THREE.Color(1, 0.72, 0.4) },
+    uSkyTop: { value: new THREE.Color(0.45, 0.65, 0.9) },
+    uSkyHor: { value: new THREE.Color(0.85, 0.85, 0.85) },
+    uGroundC: { value: new THREE.Color(P.dark ? 0.04 : 0.24, P.dark ? 0.04 : 0.23, P.dark ? 0.05 : 0.22) },
+    uFogSun: { value: new THREE.Color(1, 0.9, 0.75) },
+    uTime: { value: 0 },
+    uCam: { value: new THREE.Vector3() },                   // camera position (MeshBasic doesn't get cameraPosition)
+    uShadowMap: { value: null },
+    uShadowM: { value: new THREE.Matrix4() },
+    uShadowP: { value: new THREE.Vector4(0, 1 / 1024, 0.8, 0) }, // on, texel, strength, -
   };
 }
 
 const VERT_PRE = `#include <common>
 attribute float fx;
+attribute float aux;
 uniform vec3 uSun;
 uniform vec4 uLk;
 uniform float uNight;
 uniform float uFxm;
-uniform vec4 uSiren;
-uniform vec3 uSirenCol;
-uniform vec4 uHead;
-uniform vec3 uHeadDir;
 varying float vFx;
 varying float vShade;
-varying vec3 vTint;
-#ifdef GTW_WIN
+varying float vSunK;
+varying float vAux;
 varying vec3 vWPos;
 varying vec3 vWN;
+varying vec3 vLPos;`;
+// instance colours tint paint and plain parts only (glass, chrome, trim, lights keep their colour)
+const VERT_COLOR = `#if defined( USE_COLOR ) || defined( USE_INSTANCING_COLOR )
+	vColor = vec3( 1.0 );
+#endif
+#ifdef USE_COLOR
+	vColor *= color;
+#endif
+#ifdef USE_INSTANCING_COLOR
+	{ float fq = fx + uFxm; if ( !( ( fq > 2.5 && fq < 3.5 ) || ( fq > 6.5 && fq < 9.5 ) || ( fq > 19.5 && fq < 23.5 ) ) ) vColor.xyz *= instanceColor.xyz; }
 #endif`;
 const VERT_POST = `#include <fog_vertex>
 vFx = fx + uFxm;
+vAux = aux;
+vLPos = transformed;
 vec3 gN = normal;
 #ifdef USE_INSTANCING
   gN = mat3( instanceMatrix ) * gN;
@@ -101,25 +154,15 @@ vec4 gW = vec4( transformed, 1.0 );
   gW = instanceMatrix * gW;
 #endif
 gW = modelMatrix * gW;
-#ifdef GTW_WIN
 vWPos = gW.xyz; vWN = gN;
-#endif
-vTint = vec3( 0.0 );
-if ( vFx > 0.5 && vFx < 1.5 || vFx > 3.5 ) vShade = 1.0;
-else if ( vFx > 2.5 && vFx < 3.5 ) vShade = 1.05 + 0.15 * uNight;
+vSunK = 0.0;
+float gCode = floor( vFx + 0.5 );
+if ( gCode == 1.0 || gCode == 4.0 || ( gCode > 19.5 && gCode < 23.5 ) ) vShade = 1.0;
+else if ( gCode == 3.0 ) vShade = 1.05 + 0.15 * uNight;
 else {
   float ndl = dot( gN, uSun );
-  float band = ndl > 0.28 ? 1.0 : ( ndl > -0.22 ? 0.56 : 0.2 );
-  vShade = uLk.x + uLk.y * ( 0.5 + 0.5 * gN.y ) + uLk.z * band;
-  if ( uSiren.w > 0.0 ) {
-    vec3 d = gW.xyz - uSiren.xyz; float q = dot( d, d );
-    vTint = uSirenCol * uSiren.w * max( 0.0, 1.0 - q / 380.0 ) * ( 0.35 + 0.65 * max( 0.0, -dot( normalize( d + vec3( 0.0, 0.001, 0.0 ) ), gN ) ) );
-  }
-  if ( uHead.w > 0.0 ) {
-    vec3 d = gW.xyz - uHead.xyz; float l = length( d );
-    float cone = smoothstep( 0.55, 0.9, dot( d / max( l, 0.001 ), uHeadDir ) );
-    vTint += vec3( 1.0, 0.92, 0.7 ) * uHead.w * cone * max( 0.0, 1.0 - l / 46.0 ) * 0.55;
-  }
+  vSunK = uLk.z * ( 0.22 + 0.78 * smoothstep( -0.25, 0.6, ndl ) );
+  vShade = uLk.x + uLk.y * ( 0.5 + 0.5 * gN.y ) + vSunK;
 }`;
 const FRAG_PRE = `#include <common>
 uniform vec4 uLk;
@@ -127,46 +170,260 @@ uniform float uDot;
 uniform float uNight;
 uniform vec3 uGlass;
 uniform vec3 uLit;
+uniform vec3 uSun;
+uniform vec3 uSunCol;
+uniform vec4 uSiren;
+uniform vec3 uSirenCol;
+uniform vec4 uSpotP[ 2 ];
+uniform vec3 uSpotD[ 2 ];
+uniform vec4 uLamp[ 8 ];
+uniform vec3 uLampCol;
+uniform vec3 uSkyTop;
+uniform vec3 uSkyHor;
+uniform vec3 uGroundC;
+uniform vec3 uFogSun;
+uniform float uTime;
+uniform vec3 uCam;
+uniform vec4 uCar;
+uniform vec2 uFlash;
 varying float vFx;
 varying float vShade;
-varying vec3 vTint;
-#ifdef GTW_WIN
+varying float vSunK;
+varying float vAux;
 varying vec3 vWPos;
 varying vec3 vWN;
-#endif`;
-const FRAG_COLOR = `#include <color_fragment>
-float gShade = vShade;
-#ifdef GTW_WIN
-if ( vFx > 1.5 && vFx < 2.5 && abs( vWN.y ) < 0.5 ) {
-  vec2 hz = normalize( vec2( -vWN.z, vWN.x ) );
-  float u = dot( vWPos.xz, hz );
-  vec2 cell = vec2( u / 3.1, ( vWPos.y - 0.9 ) / 3.3 );
-  vec2 g = fract( cell );
-  float win = step( 0.2, g.x ) * step( g.x, 0.8 ) * step( 0.3, g.y ) * step( g.y, 0.82 ) * step( 0.0, cell.y );
-  vec2 id = floor( cell );
-  float hsh = fract( sin( dot( id, vec2( 12.9898, 78.233 ) ) + floor( vWPos.x * 0.01 ) * 3.1 + floor( vWPos.z * 0.01 ) * 7.7 ) * 43758.5453 );
-  bool lit = uNight > 0.5 && hsh > 0.42;
-  vec3 wc = lit ? uLit : uGlass * ( 0.85 + 0.3 * hsh );
-  diffuseColor.rgb = mix( diffuseColor.rgb, wc, win );
-  if ( lit && win > 0.5 ) gShade = 1.12;
+varying vec3 vLPos;
+#ifdef GTW_SHADOW
+uniform sampler2D uShadowMap;
+uniform mat4 uShadowM;
+uniform vec4 uShadowP;
+float gUnpack( vec4 v ) { return dot( v, vec4( 255.0 / 256.0 / 16777216.0, 255.0 / 256.0 / 65536.0, 255.0 / 256.0 / 256.0, 255.0 / 256.0 ) ); }
+float gShadow( vec3 wp, vec3 n ) {
+  vec4 sc = uShadowM * vec4( wp + n * 0.07, 1.0 );
+  vec3 p = sc.xyz / sc.w * 0.5 + 0.5;
+  if ( p.x <= 0.0 || p.x >= 1.0 || p.y <= 0.0 || p.y >= 1.0 || p.z >= 1.0 ) return 1.0;
+  float z = p.z - 0.001;
+  // 4 taps on a per-pixel rotated square (rotated-grid PCF: soft edges without stair steps)
+  float r = fract( sin( dot( gl_FragCoord.xy, vec2( 12.9898, 78.233 ) ) ) * 43758.5453 ) * 6.2831;
+  vec2 o1 = vec2( cos( r ), sin( r ) ) * uShadowP.y * 1.6; vec2 o2 = vec2( -o1.y, o1.x );
+  float s = step( z, gUnpack( texture2D( uShadowMap, p.xy + o1 ) ) );
+  s += step( z, gUnpack( texture2D( uShadowMap, p.xy - o1 ) ) );
+  s += step( z, gUnpack( texture2D( uShadowMap, p.xy + o2 * 0.5 ) ) );
+  s += step( z, gUnpack( texture2D( uShadowMap, p.xy - o2 * 0.5 ) ) );
+  vec2 e = abs( p.xy - 0.5 ) * 2.0;
+  return mix( s * 0.25, 1.0, smoothstep( 0.75, 0.98, max( e.x, e.y ) ) );
 }
 #endif
-diffuseColor.rgb *= gShade;
-diffuseColor.rgb += vTint * diffuseColor.rgb * 2.2 + vTint * 0.25;
-if ( gShade < uLk.w && vFx < 0.5 ) {
-  vec2 hg = fract( gl_FragCoord.xy / uDot ) - 0.5;
-  diffuseColor.rgb *= 1.0 - ( 1.0 - smoothstep( 0.0324, 0.09, dot( hg, hg ) ) ) * 0.16;
+float gHash( vec2 p ) { vec3 p3 = fract( vec3( p.xyx ) * 0.1031 ); p3 += dot( p3, p3.yzx + 33.33 ); return fract( ( p3.x + p3.y ) * p3.z ); }
+float gNoise( vec2 p ) {
+  vec2 i = floor( p ); vec2 f = fract( p ); f = f * f * ( 3.0 - 2.0 * f );
+  return mix( mix( gHash( i ), gHash( i + vec2( 1.0, 0.0 ) ), f.x ), mix( gHash( i + vec2( 0.0, 1.0 ) ), gHash( i + vec2( 1.0, 1.0 ) ), f.x ), f.y );
+}
+vec3 gEnv( vec3 R ) {
+  if ( R.y >= 0.0 ) return mix( uSkyHor, uSkyTop, smoothstep( 0.0, 0.6, R.y ) ) * ( 1.0 + 0.6 * pow( max( dot( R, uSun ), 0.0 ), 6.0 ) * ( 1.0 - uNight ) );
+  return mix( uSkyHor * 0.6, uGroundC, smoothstep( 0.0, -0.22, R.y ) );
+}
+vec3 gWindows( vec3 c, float kind, vec3 N, vec3 V, float dist, inout float emis ) {
+  if ( abs( N.y ) > 0.5 ) return c;
+  vec2 hz = normalize( vec2( -N.z, N.x ) );
+  float u = dot( vWPos.xz, hz );
+  vec2 cs = vec2( 3.1, 3.3 ); vec4 fr = vec4( 0.2, 0.8, 0.3, 0.82 ); float y0 = 0.9;
+  if ( kind == 10.0 ) { cs = vec2( 4.4, 3.0 ); fr = vec4( 0.3, 0.7, 0.3, 0.76 ); y0 = 0.25; }
+  else if ( kind == 11.0 ) { cs = vec2( 2.8, 3.9 ); fr = vec4( 0.07, 0.93, 0.08, 0.88 ); y0 = 0.15; }
+  else if ( kind == 12.0 ) { cs = vec2( 1.55, 3.6 ); fr = vec4( 0.05, 0.95, 0.08, 0.95 ); y0 = 0.4; }
+  vec2 cell = vec2( u / cs.x, ( vWPos.y - y0 ) / cs.y );
+  vec2 g = fract( cell ); vec2 id = floor( cell );
+  float above = step( 0.0, cell.y );
+  float win = step( fr.x, g.x ) * step( g.x, fr.y ) * step( fr.z, g.y ) * step( g.y, fr.w ) * above;
+  float frame = step( fr.x - 0.045, g.x ) * step( g.x, fr.y + 0.045 ) * step( fr.z - 0.07, g.y ) * step( g.y, fr.w + 0.035 ) * above * ( 1.0 - win );
+  float h = gHash( id + floor( vWPos.xz * 0.013 ) * 7.31 );
+  float far = smoothstep( 110.0, 300.0, dist );
+  vec3 glass = uGlass * ( 0.78 + 0.4 * h );
+#ifndef GTW_LOW
+  vec3 R = reflect( V, vec3( N.x, 0.0, N.z ) );
+  glass = mix( glass, gEnv( R ), ( 0.3 + 0.25 * h ) * ( 1.0 - 0.7 * uNight ) );
+  glass *= 0.9 + 0.2 * smoothstep( 0.2, 1.0, g.y );
+#endif
+  bool lit = uNight > 0.5 && h > 0.5;
+  vec3 wc = glass;
+  if ( lit ) {
+    vec3 lc = h > 0.86 ? vec3( 0.72, 0.84, 1.0 ) : ( h > 0.66 ? vec3( 1.0, 0.84, 0.56 ) : vec3( 1.0, 0.72, 0.4 ) );
+    float curtain = fract( h * 13.7 ) > 0.55 ? 0.62 + 0.38 * step( 0.5, fract( g.x * 5.0 + 0.25 ) ) : 1.0;
+    wc = uLit * 0.25 + lc * curtain * ( 0.8 + 0.3 * g.y );
+    emis = win * ( 1.0 - far * 0.4 );
+  }
+  vec3 o = mix( c, c * 0.62, frame * 0.7 );
+  o = mix( o, wc, win );
+  float area = ( fr.y - fr.x ) * ( fr.w - fr.z );
+  return mix( o, mix( c, uNight > 0.5 ? mix( glass, uLit, 0.35 ) : glass, area * 0.55 ), far * ( 1.0 - emis ) );
+}
+vec3 gRoad( vec3 c, float lane, float dist ) {
+  float far = smoothstep( 40.0, 180.0, dist );
+  float n1 = gNoise( vWPos.xz * 0.31 ); float n3 = gNoise( vWPos.xz * 0.043 );
+  float n2 = far < 0.99 ? gNoise( vWPos.xz * 2.1 ) : 0.5;
+  c *= 0.95 + 0.07 * n1 + 0.09 * ( n2 - 0.5 ) * ( 1.0 - far ) + 0.09 * ( n3 - 0.5 );
+  if ( lane != 0.0 ) {
+    float lf = fract( abs( lane ) );
+    float a = ( lf - 0.27 ) * 8.0; float b = ( lf - 0.73 ) * 8.0; float o = ( lf - 0.5 ) * 6.0;
+    float tr = 1.0 / ( 1.0 + a * a * a * a ) + 1.0 / ( 1.0 + b * b * b * b );
+    c *= 1.0 + 0.05 * tr - 0.09 * ( 0.5 + 0.5 * n1 ) / ( 1.0 + o * o * o * o );
+  }
+  vec2 pq = vWPos.xz / 7.0; float ph = gHash( floor( pq ) );
+  if ( ph > 0.93 ) { vec2 f = fract( pq ); c *= 1.0 - 0.07 * step( 0.12, f.x ) * step( f.x, 0.8 ) * step( 0.1, f.y ) * step( f.y, 0.7 ); }
+  return c;
+}
+vec3 gMaterial( vec3 c, float k, vec3 N, vec3 V, float dist, inout vec3 add ) {
+  float far = smoothstep( 30.0, 150.0, dist );
+  bool wall = abs( N.y ) < 0.6;
+  vec2 e = normalize( vec2( -N.z, N.x ) + vec2( 1e-4, 0.0 ) );
+  float u = wall ? dot( vWPos.xz, e ) : vWPos.x;
+  float v = wall ? vWPos.y : vWPos.z;
+  if ( k == 13.0 ) {
+    vec2 q = vec2( u / 0.62, v / 0.26 ); q.x += 0.5 * mod( floor( q.y ), 2.0 );
+    vec2 f = fract( q ); float m = max( step( f.x, 0.06 ), step( f.y, 0.11 ) );
+    vec3 b = c * ( 0.86 + 0.24 * gHash( floor( q ) ) );
+    b = mix( b, mix( c, vec3( 0.84, 0.82, 0.77 ), 0.5 ), m * 0.7 );
+    return mix( b, c, far );
+  }
+  if ( k == 14.0 ) {
+    float n = gNoise( vec2( u, v ) * 1.1 ) * 0.6 + gNoise( vec2( u, v ) * 4.7 ) * 0.4 * ( 1.0 - far );
+    return c * ( 0.95 + 0.1 * n );
+  }
+  if ( k == 15.0 || k == 16.0 ) {
+    float ue = dot( vWPos.xz, e );
+    if ( k == 15.0 ) {
+      float row = fract( vWPos.y / 0.3 ); float barrel = 0.5 + 0.5 * cos( ue * 19.6 );
+      vec3 t = c * ( 0.8 + 0.22 * barrel + 0.1 * gHash( floor( vec2( ue / 0.32, vWPos.y / 0.3 ) ) ) ) * ( 1.0 - 0.2 * smoothstep( 0.78, 1.0, row ) );
+      return mix( t, c * 0.95, far );
+    }
+    float ry = vWPos.y / 0.22; float row = floor( ry ); float tab = floor( ue / 0.45 + 0.5 * mod( row, 2.0 ) );
+    vec3 t = c * ( 0.82 + 0.26 * gHash( vec2( tab, row ) ) ) * ( 1.0 - 0.22 * smoothstep( 0.8, 1.0, fract( ry ) ) );
+    return mix( t, c * 0.96, far );
+  }
+  if ( k == 17.0 ) {
+    vec2 f = abs( fract( vec2( u, v ) / 1.6 ) - 0.5 ); float j = smoothstep( 0.46, 0.5, max( f.x, f.y ) );
+    return c * ( 0.95 + 0.08 * gNoise( vWPos.xz * 0.7 + vWPos.y ) ) * ( 1.0 - 0.13 * j * ( 1.0 - far ) );
+  }
+  if ( k == 18.0 ) {
+    float n1 = gNoise( vWPos.xz * 0.055 ); float n2 = gNoise( vWPos.xz * 0.29 );
+    float n3 = far < 0.99 ? gNoise( vWPos.xz * 1.6 ) : 0.5;
+    vec3 g = c * ( 0.86 + 0.2 * n2 + 0.12 * ( n3 - 0.5 ) * ( 1.0 - far ) );
+    return mix( g, g * vec3( 1.2, 1.1, 0.72 ), smoothstep( 0.58, 0.85, n1 ) * 0.55 );
+  }
+  if ( k == 19.0 ) {
+    float n1 = gNoise( vWPos.xz * 0.11 ); float n2 = far < 0.99 ? gNoise( vWPos.xz * 2.2 ) : 0.5;
+    vec3 d = c * ( 0.9 + 0.14 * n1 + 0.1 * ( n2 - 0.5 ) * ( 1.0 - far ) );
+    return mix( d, d * 0.76, step( 0.93, gHash( floor( vWPos.xz * 2.6 ) ) ) * ( 1.0 - far ) );
+  }
+  if ( k == 24.0 ) {
+    vec2 w = vWPos.xz * 0.3 + vec2( uTime * 0.11, uTime * 0.06 );
+    float a = gNoise( w ); float b = gNoise( w * 2.3 + 5.0 - uTime * 0.08 );
+    vec3 n = normalize( vec3( ( a - 0.5 ) * 0.3, 1.0, ( b - 0.5 ) * 0.3 ) );
+    vec3 R = reflect( V, n ); float fr = pow( 1.0 - clamp( dot( -V, n ), 0.0, 1.0 ), 3.0 );
+    add += uSunCol * pow( max( dot( R, uSun ), 0.0 ), 140.0 ) * 1.6 * ( 1.0 - uNight );
+    return mix( c, gEnv( R ), 0.22 + 0.6 * fr );
+  }
+  if ( k == 25.0 ) { return c * ( 0.86 + 0.14 * ( 0.5 + 0.5 * sin( u * 52.0 ) ) * ( 1.0 - far ) ) + gEnv( reflect( V, N ) ) * 0.08; }
+  if ( k == 26.0 ) { float p = u / 0.16; return c * ( 0.84 + 0.22 * gHash( vec2( floor( p ), 3.0 ) ) ) * ( 1.0 - 0.28 * step( fract( p ), 0.08 ) * ( 1.0 - far ) ); }
+  if ( k == 27.0 ) { return c * ( 0.8 + 0.22 * gNoise( vec2( u * 0.4, v * 1.6 ) ) + 0.12 * gNoise( vWPos.xz * 1.3 + v ) * ( 1.0 - far ) ); }
+  if ( k == 28.0 ) { float n = gNoise( vWPos.xz * 1.2 + vWPos.y * 1.4 ); return c * ( 0.78 + 0.34 * n * ( 1.0 - far * 0.6 ) ) * ( 0.85 + 0.15 * clamp( N.y + 0.5, 0.0, 1.0 ) ); }
+  if ( k == 29.0 ) { return gRoad( c, 0.0, dist ); }
+  return c;
 }`;
-const FRAG_END = `if ( vFx > 3.5 ) {
+const FRAG_COLOR = `#include <color_fragment>
+float gc = floor( vFx + 0.5 );
+vec3 gN = normalize( vWN );
+vec3 gVd = vWPos - uCam; float gDist = length( gVd ); vec3 gV = gVd / max( gDist, 0.001 );
+float gSh = vShade;
+float gSunVis = 1.0;
+float gEmis = 0.0;
+vec3 gAdd = vec3( 0.0 );
+bool gLit = !( gc == 1.0 || gc == 3.0 || gc == 4.0 || ( gc > 19.5 && gc < 23.5 ) );
+#ifdef GTW_SHADOW
+if ( gLit && uShadowP.x > 0.5 ) { gSunVis = gShadow( vWPos, gN ); gSh -= vSunK * ( 1.0 - gSunVis ) * uShadowP.z; }
+#endif
+vec3 gC = diffuseColor.rgb;
+if ( gc < 0.5 ) {
+#ifndef GTW_LOW
+  if ( gN.y > 0.7 && gDist < 220.0 ) gC *= 0.955 + ( gNoise( vWPos.xz * 0.09 ) * 0.6 + gNoise( vWPos.xz * 0.41 ) * 0.4 ) * 0.09;
+#endif
+} else if ( gc == 2.0 || ( gc > 9.5 && gc < 12.5 ) ) {
+  gC = gWindows( gC, gc, gN, gV, gDist, gEmis );
+} else if ( gc == 5.0 ) {
+#ifndef GTW_LOW
+  gC = gRoad( gC, vAux, gDist );
+#endif
+} else if ( gc > 5.5 && gc < 8.5 ) {
+  vec3 gR = reflect( gV, gN );
+  float gFr = pow( 1.0 - clamp( dot( -gV, gN ), 0.0, 1.0 ), 4.0 );
+  vec3 gEv = gEnv( gR );
+  float gSp = 0.0;
+#ifndef GTW_LOW
+  gSh = uLk.x + uLk.y * ( 0.5 + 0.5 * gN.y ) + uLk.z * ( 0.22 + 0.78 * smoothstep( -0.25, 0.6, dot( gN, uSun ) ) ) * ( 1.0 - ( 1.0 - gSunVis ) * 0.85 );
+  gSp = pow( max( dot( gR, uSun ), 0.0 ), gc == 6.0 ? 90.0 : 160.0 ) * gSunVis * ( 1.0 - 0.85 * uNight );
+#endif
+  if ( gc == 6.0 ) {
+    float gDirt = uCar.x * ( 0.3 + 0.7 * smoothstep( 1.0, 0.3, vLPos.y ) ) * smoothstep( 0.3, 0.8, gNoise( vLPos.xz * 3.1 + vLPos.y * 2.3 ) + 0.2 );
+    gC = mix( gC, vec3( 0.44, 0.38, 0.3 ), clamp( gDirt, 0.0, 0.75 ) );
+    float gScr = uCar.y * step( 0.84, gHash( floor( vec2( vLPos.z * 9.0 + vLPos.y * 4.0, vLPos.y * 26.0 + vLPos.x ) ) ) ) * step( 0.45, gNoise( vLPos.zy * 1.7 + uCar.y * 3.0 ) );
+    gC = mix( gC, vec3( 0.72, 0.72, 0.7 ), gScr * 0.75 );
+    gC *= 1.0 - uCar.y * 0.3 * gNoise( vLPos.xz * 1.6 + 4.0 );
+    float gGloss = 1.0 - clamp( gDirt * 1.3, 0.0, 0.8 );
+    gAdd += gEv * ( 0.05 + 0.5 * gFr ) * gGloss + uSunCol * gSp * gGloss;
+  } else if ( gc == 7.0 ) {
+    gC = mix( gC * 0.75, gEv, 0.22 + 0.62 * gFr ); gSh = mix( gSh, 1.0, 0.55 ); gAdd += uSunCol * gSp * 1.3;
+  } else { gC = mix( gC, gEv, 0.5 ); gAdd += uSunCol * gSp; }
+} else if ( gc > 19.5 && gc < 23.5 ) {
+  float gk = gc == 20.0 ? uFlash.x : ( gc == 21.0 ? uFlash.y : ( gc == 22.0 ? 0.5 + 0.3 * uNight + 0.9 * uCar.z : 0.22 + 1.1 * uCar.w ) );
+  gC *= gk; gEmis = 1.0;
+} else if ( gc > 12.5 ) {
+#ifndef GTW_LOW
+  gC = gMaterial( gC, gc, gN, gV, gDist, gAdd );
+#endif
+}
+vec3 gL = vec3( 0.0 );
+if ( gLit ) {
+  if ( uSiren.w > 0.0 ) {
+    vec3 d = vWPos - uSiren.xyz; float q = dot( d, d );
+    float a = max( 0.0, 1.0 - q / ( uNight > 0.5 ? 260.0 : 120.0 ) ); a *= a;
+    gL += uSirenCol * uSiren.w * ( uNight > 0.5 ? 0.42 : 0.35 ) * a * ( 0.3 + 0.7 * max( 0.0, -dot( d * inversesqrt( q + 0.01 ), gN ) ) );
+  }
+  for ( int i = 0; i < 2; i++ ) {
+    if ( uSpotP[ i ].w > 0.0 ) {
+      vec3 d = vWPos - uSpotP[ i ].xyz; float l = length( d ); vec3 dn = d / max( l, 0.01 );
+      float a = smoothstep( 0.8, 0.95, dot( dn, uSpotD[ i ] ) ) * max( 0.0, 1.0 - l / 46.0 ) * smoothstep( 0.6, 2.5, l );
+      gL += vec3( 1.0, 0.93, 0.8 ) * uSpotP[ i ].w * a * ( 0.15 + 0.85 * max( 0.0, -dot( dn, gN ) ) ) * ( gc > 5.5 && gc < 9.5 ? 0.35 : 0.9 );
+    }
+  }
+  if ( uNight > 0.5 ) {
+    for ( int i = 0; i < 8; i++ ) {
+      if ( uLamp[ i ].w > 0.0 ) {
+        vec3 d = vWPos - uLamp[ i ].xyz; float q = dot( d, d );
+        float a = max( 0.0, 1.0 - q / 160.0 ); a *= a;
+        gL += uLampCol * uLamp[ i ].w * a * ( 0.3 + 0.7 * max( 0.0, -dot( d * inversesqrt( q + 0.01 ), gN ) ) );
+      }
+    }
+  }
+}
+diffuseColor.rgb = gC * mix( gSh, 1.12 + 0.08 * uNight, gEmis ) + gC * gL * 2.2 + gL * 0.07 + gAdd;`;
+const FRAG_END = `if ( gc == 4.0 ) {
   #ifdef USE_FOG
   gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, 0.18 );
   #endif
 } else {
-  #include <fog_fragment>
+  #ifdef USE_FOG
+  float gF = clamp( ( gDist - fogNear ) / ( fogFar - fogNear ), 0.0, 1.0 );
+  gF = gF * gF * ( 3.0 - 2.0 * gF ) * 0.85 + gF * 0.15;
+  gF *= 1.0 - 0.45 * smoothstep( 6.0, 90.0, vWPos.y - uCam.y );
+  gF *= 1.0 - 0.35 * gEmis;
+  vec3 gFc = mix( fogColor, uFogSun, pow( max( dot( gV, uSun ), 0.0 ), 6.0 ) * 0.5 * ( 1.0 - uNight ) );
+  gl_FragColor.rgb = mix( gl_FragColor.rgb, gFc, gF );
+  #endif
 }`;
 
-/** A toon material. opts: { vertexColors, fx (0 plain, 2 windows, 3 glow, 4 far), side, fog,
- *  transparent, opacity, depthWrite, polygonOffset }. */
+/** A toon material. opts: { vertexColors, fx (an FX code), side, fog, transparent, opacity,
+ *  depthWrite, polygonOffset, outline }. Each material has its own uCar (dirt, scratches,
+ *  brake, reverse) and uFlash (siren lenses) uniforms: m.userData.gtw.uCar / .uFlash. */
 export function makeToon(THREE, U, color, opts = {}) {
   const m = new THREE.MeshBasicMaterial({
     color: color == null ? 0xffffff : new THREE.Color().fromArray(cssRGB(color)),
@@ -179,15 +436,20 @@ export function makeToon(THREE, U, color, opts = {}) {
   });
   if (opts.polygonOffset) { m.polygonOffset = true; m.polygonOffsetFactor = -1; m.polygonOffsetUnits = opts.polygonOffset; }
   const uFxm = { value: opts.fx || 0 };
+  const uCar = { value: new THREE.Vector4(0, 0, 0, 0) };
+  const uFlash = { value: new THREE.Vector2(0.3, 0.3) };
+  const tier = TIER;
   m.defines = { GTW_WIN: '' };
-  m.userData.gtw = { fx: opts.fx || 0, outline: opts.outline || 0, uFxm };
+  if (tier === 'low') m.defines.GTW_LOW = '';
+  else m.defines.GTW_SHADOW = '';
+  m.userData.gtw = { fx: opts.fx || 0, outline: opts.outline || 0, uFxm, uCar, uFlash };
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, U);
-    sh.uniforms.uFxm = uFxm;
-    sh.vertexShader = sh.vertexShader.replace('#include <common>', VERT_PRE).replace('#include <fog_vertex>', VERT_POST);
+    sh.uniforms.uFxm = uFxm; sh.uniforms.uCar = uCar; sh.uniforms.uFlash = uFlash;
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', VERT_PRE).replace('#include <color_vertex>', VERT_COLOR).replace('#include <fog_vertex>', VERT_POST);
     sh.fragmentShader = sh.fragmentShader.replace('#include <common>', FRAG_PRE).replace('#include <color_fragment>', FRAG_COLOR).replace('#include <fog_fragment>', FRAG_END);
   };
-  m.customProgramCacheKey = () => 'gtw-toon-v1';
+  m.customProgramCacheKey = () => 'gtw-toon-v2-' + tier;
   return m;
 }
 
@@ -246,6 +508,11 @@ export function templates(THREE) {
     sphere: t(new THREE.IcosahedronGeometry(0.5, 1), false),
     ico: t(new THREE.IcosahedronGeometry(0.5, 0), false),
     wheel: t(new THREE.CylinderGeometry(0.5, 0.5, 1, 12, 1).rotateZ(Math.PI / 2), false),
+    wheel16: t(new THREE.CylinderGeometry(0.5, 0.5, 1, 16, 1).rotateZ(Math.PI / 2), false),
+    cyl16: t(new THREE.CylinderGeometry(0.5, 0.5, 1, 16, 1), false),
+    cone12: t(new THREE.CylinderGeometry(0.0, 0.5, 1, 12, 1), false),
+    sphereLo: t(new THREE.IcosahedronGeometry(0.5, 1), false),
+    dome: t(new THREE.SphereGeometry(0.5, 10, 5, 0, Math.PI * 2, 0, Math.PI / 2), false),
   };
   return TPL;
 }
@@ -257,13 +524,15 @@ export class Builder {
     this.THREE = THREE; this.T = templates(THREE); this.ink = inkRGB || [0.1, 0.1, 0.12];
     this.cap = 4096; this.nv = 0; this.ni = 0;
     this.pos = new Float32Array(this.cap * 3); this.nrm = new Float32Array(this.cap * 3); this.col = new Float32Array(this.cap * 3); this.fx = new Float32Array(this.cap);
+    this.aux = new Float32Array(this.cap); this.hasAux = false; this.auxV = 0; // per-vertex aux (road lane coordinate); auxV applies to add()/poly()
     this.icap = 8192; this.idx = new Uint32Array(this.icap);
   }
   grow(nv, ni) {
     if (this.nv + nv > this.cap) {
       let c = this.cap; while (this.nv + nv > c) c *= 2;
       for (const k of ['pos', 'nrm', 'col']) { const a = new Float32Array(c * 3); a.set(this[k]); this[k] = a; }
-      const f = new Float32Array(c); f.set(this.fx); this.fx = f; this.cap = c;
+      const f = new Float32Array(c); f.set(this.fx); this.fx = f;
+      const ax = new Float32Array(c); ax.set(this.aux); this.aux = ax; this.cap = c;
     }
     if (this.ni + ni > this.icap) { let c = this.icap; while (this.ni + ni > c) c *= 2; const a = new Uint32Array(c); a.set(this.idx); this.idx = a; this.icap = c; }
   }
@@ -291,13 +560,29 @@ export class Builder {
         this.pos[o] = x + px * c + pz * s; this.pos[o + 1] = y + py; this.pos[o + 2] = z - px * s + pz * c;
         this.nrm[o] = nx * c + nz * s; this.nrm[o + 1] = ny; this.nrm[o + 2] = -nx * s + nz * c;
         this.col[o] = col[0]; this.col[o + 1] = col[1]; this.col[o + 2] = col[2];
-        this.fx[base + i] = f;
+        this.fx[base + i] = f; this.aux[base + i] = this.auxV;
       }
       const ti = t.idx; let ni = this.ni;
       if (!h) for (let k = 0; k < ti.length; k++) this.idx[ni++] = base + ti[k];
       else for (let k = 0; k < ti.length; k += 3) { this.idx[ni++] = base + ti[k]; this.idx[ni++] = base + ti[k + 2]; this.idx[ni++] = base + ti[k + 1]; }
       this.ni = ni; this.nv = base + t.n;
     }
+    return this;
+  }
+  /** Only the ink hull of template t (outline ol metres), for shapes added piecewise in several colours. */
+  hull(t, ol, inkCol = null) {
+    const ink = inkCol || this.ink;
+    this.grow(t.n, t.idx.length);
+    const base = this.nv;
+    for (let i = 0; i < t.n; i++) {
+      const o = (base + i) * 3; const hx = t.hull[i * 3]; const hy = t.hull[i * 3 + 1]; const hz = t.hull[i * 3 + 2];
+      this.pos[o] = t.pos[i * 3] + hx * ol; this.pos[o + 1] = t.pos[i * 3 + 1] + hy * ol; this.pos[o + 2] = t.pos[i * 3 + 2] + hz * ol;
+      this.nrm[o] = t.nrm[i * 3]; this.nrm[o + 1] = t.nrm[i * 3 + 1]; this.nrm[o + 2] = t.nrm[i * 3 + 2];
+      this.col[o] = ink[0]; this.col[o + 1] = ink[1]; this.col[o + 2] = ink[2]; this.fx[base + i] = FX_INK; this.aux[base + i] = 0;
+    }
+    const ti = t.idx; let ni = this.ni;
+    for (let k = 0; k < ti.length; k += 3) { this.idx[ni++] = base + ti[k]; this.idx[ni++] = base + ti[k + 2]; this.idx[ni++] = base + ti[k + 1]; }
+    this.ni = ni; this.nv = base + t.n;
     return this;
   }
   /** Box centred at (x, y, z) — y is the CENTRE; use boxOn() to stand one on the ground. */
@@ -338,10 +623,18 @@ export class Builder {
       const o = (base + i) * 3; const v = verts[i];
       this.pos[o] = v[0]; this.pos[o + 1] = v[1]; this.pos[o + 2] = v[2];
       this.nrm[o] = nx; this.nrm[o + 1] = ny; this.nrm[o + 2] = nz;
-      this.col[o] = rgb[0]; this.col[o + 1] = rgb[1]; this.col[o + 2] = rgb[2]; this.fx[base + i] = fx;
+      this.col[o] = rgb[0]; this.col[o + 1] = rgb[1]; this.col[o + 2] = rgb[2]; this.fx[base + i] = fx; this.aux[base + i] = this.auxV;
     }
     for (let i = 1; i < n - 1; i++) { this.idx[this.ni++] = base; this.idx[this.ni++] = base + i; this.idx[this.ni++] = base + i + 1; }
     this.nv += n;
+    return this;
+  }
+  /** Like quadUp, with a per-vertex aux value (a0..a3 for a..d): road ribbons carry the lane coordinate. */
+  quadUpA(ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, rgb, fx, a0, a1, a2, a3) {
+    const b = this.nv;
+    this.quadUp(ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, rgb, fx);
+    const A = this.aux; A[b] = a0; A[b + 1] = a1; A[b + 2] = a2; A[b + 3] = a3;
+    if (a0 || a1 || a2 || a3) this.hasAux = true;
     return this;
   }
   /** Fast quad strip writer used by road ribbons: 4 verts, upward normal. */
@@ -350,7 +643,8 @@ export class Builder {
     const b = this.nv; const P = this.pos; const N = this.nrm; const C = this.col; const F = this.fx; const o = b * 3;
     P[o] = ax; P[o + 1] = ay; P[o + 2] = az; P[o + 3] = bx; P[o + 4] = by; P[o + 5] = bz;
     P[o + 6] = cx; P[o + 7] = cy; P[o + 8] = cz; P[o + 9] = dx; P[o + 10] = dy; P[o + 11] = dz;
-    for (let i = 0; i < 4; i++) { const q = o + i * 3; N[q] = 0; N[q + 1] = 1; N[q + 2] = 0; C[q] = rgb[0]; C[q + 1] = rgb[1]; C[q + 2] = rgb[2]; F[b + i] = fx; }
+    const AX = this.aux; const av = this.auxV;
+    for (let i = 0; i < 4; i++) { const q = o + i * 3; N[q] = 0; N[q + 1] = 1; N[q + 2] = 0; C[q] = rgb[0]; C[q + 1] = rgb[1]; C[q + 2] = rgb[2]; F[b + i] = fx; AX[b + i] = av; }
     const I = this.idx; let n = this.ni;
     I[n++] = b; I[n++] = b + 2; I[n++] = b + 1; I[n++] = b; I[n++] = b + 3; I[n++] = b + 2;
     this.ni = n; this.nv += 4;
@@ -362,6 +656,7 @@ export class Builder {
     g.setAttribute('normal', new THREE.BufferAttribute(this.nrm.slice(0, this.nv * 3), 3));
     g.setAttribute('color', new THREE.BufferAttribute(this.col.slice(0, this.nv * 3), 3));
     g.setAttribute('fx', new THREE.BufferAttribute(this.fx.slice(0, this.nv), 1));
+    if (this.hasAux || this.auxV) g.setAttribute('aux', new THREE.BufferAttribute(this.aux.slice(0, this.nv), 1));
     const ix = this.nv > 65535 ? this.idx.slice(0, this.ni) : Uint16Array.from(this.idx.subarray(0, this.ni));
     g.setIndex(new THREE.BufferAttribute(ix, 1));
     g.computeBoundingSphere(); g.computeBoundingBox();
@@ -378,6 +673,11 @@ export class Builder {
  * are. Returns the number of meshes removed.
  */
 export function mergeGroup(THREE, group, mats, inkRGB, disposeSet, pre = null) {
+  const it = mergeSteps(THREE, group, mats, inkRGB, disposeSet, pre);
+  for (;;) { const r = it.next(); if (r.done) return r.value; }
+}
+/** mergeGroup as a generator that yields after every source mesh (the world slices on it). */
+export function* mergeSteps(THREE, group, mats, inkRGB, disposeSet, pre = null) {
   group.updateMatrixWorld(true);
   const fam = new Map();
   const victims = [];
@@ -402,7 +702,7 @@ export function mergeGroup(THREE, group, mats, inkRGB, disposeSet, pre = null) {
       const m = o.material; const geo = o.geometry; const g = m.userData.gtw;
       const pa = geo.getAttribute('position'); let na = geo.getAttribute('normal');
       if (!na) { geo.computeVertexNormals(); na = geo.getAttribute('normal'); }
-      const ca = m.vertexColors ? geo.getAttribute('color') : null; const fa = geo.getAttribute('fx');
+      const ca = m.vertexColors ? geo.getAttribute('color') : null; const fa = geo.getAttribute('fx'); const xa = geo.getAttribute('aux');
       const mc = m.color; const n = pa.count;
       const reps = o.isInstancedMesh ? o.count : 1;
       for (let r = 0; r < reps; r++) {
@@ -437,8 +737,10 @@ export function mergeGroup(THREE, group, mats, inkRGB, disposeSet, pre = null) {
           if (ic) { cr *= ic.r; cg *= ic.g; cb *= ic.b; }
           const o3 = (base + i) * 3; b.col[o3] = cr; b.col[o3 + 1] = cg; b.col[o3 + 2] = cb;
           if (fa) b.fx[base + i] = Math.max(g.fx, fa.getX(i));
+          if (xa) { const av = xa.getX(i); b.aux[base + i] = av; if (av) b.hasAux = true; }
         }
       }
+      yield 0;
     }
     if (b.empty) continue;
     const mesh = b.mesh(key === 'double' ? mats.double : mats.vc);
@@ -454,29 +756,72 @@ export function mergeGroup(THREE, group, mats, inkRGB, disposeSet, pre = null) {
 }
 
 // ── sky ──
-export function makeSky(THREE, top, horizon, sunDir, dark) {
-  const g = new THREE.SphereGeometry(1, 24, 12);
+/**
+ * Sky dome: a three-stop gradient (zenith, mid, horizon haze), a Mie-like glow and a soft sun disc
+ * (no ring), drifting procedural clouds, and at night a moon with a halo and twinkling stars fixed
+ * to the sky (not the screen). opts: { sunCol, clouds (0..1), tier }. mesh.userData.tick(t).
+ */
+export function makeSky(THREE, top, horizon, sunDir, dark, opts = {}) {
+  const g = new THREE.SphereGeometry(1, 32, 16);
+  const mid = [horizon[0] * 0.45 + top[0] * 0.55, horizon[1] * 0.45 + top[1] * 0.55, horizon[2] * 0.45 + top[2] * 0.55];
+  const sunCol = opts.sunCol || (dark ? [0.85, 0.88, 0.95] : [1.0, 0.9, 0.7]);
+  const low = opts.tier === 'low';
   const m = new THREE.ShaderMaterial({
-    uniforms: { uTop: { value: new THREE.Color().fromArray(top) }, uHor: { value: new THREE.Color().fromArray(horizon) }, uSun: { value: sunDir.clone() }, uNight: { value: dark ? 1 : 0 } },
+    uniforms: {
+      uTop: { value: new THREE.Color().fromArray(top) }, uMid: { value: new THREE.Color().fromArray(mid) }, uHor: { value: new THREE.Color().fromArray(horizon) },
+      uSun: { value: sunDir.clone().normalize() }, uNight: { value: dark ? 1 : 0 }, uSunCol: { value: new THREE.Color().fromArray(sunCol) },
+      uCloud: { value: opts.clouds == null ? 0.55 : opts.clouds }, uTime: { value: 0 },
+    },
+    defines: low ? { SKY_LOW: '' } : {},
     vertexShader: 'varying vec3 vD; void main(){ vD = normalize(position); vec4 p = modelViewMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * p; gl_Position.z = gl_Position.w * 0.9999; }',
-    fragmentShader: `uniform vec3 uTop; uniform vec3 uHor; uniform vec3 uSun; uniform float uNight; varying vec3 vD;
+    fragmentShader: `uniform vec3 uTop; uniform vec3 uMid; uniform vec3 uHor; uniform vec3 uSun; uniform float uNight; uniform vec3 uSunCol; uniform float uCloud; uniform float uTime; varying vec3 vD;
+      float h2(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+      float n2(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(h2(i), h2(i + vec2(1.0, 0.0)), f.x), mix(h2(i + vec2(0.0, 1.0)), h2(i + vec2(1.0, 1.0)), f.x), f.y); }
       void main(){
-        float h = clamp(vD.y, 0.0, 1.0);
-        vec3 c = mix(uHor, uTop, smoothstep(0.0, 0.55, h));
-        // riso halftone dots that thin out going up
-        vec2 g = fract(gl_FragCoord.xy / 5.0) - 0.5;
-        float dotR = mix(0.2, 0.02, smoothstep(0.0, 0.35, h));
-        c = mix(c, uTop, (1.0 - smoothstep(dotR * dotR * 0.7, dotR * dotR, dot(g, g))) * 0.35 * (1.0 - h));
-        float s = dot(normalize(vD), normalize(uSun));
-        vec3 sunC = uNight > 0.5 ? vec3(0.95, 0.93, 0.85) : vec3(1.0, 0.86, 0.35);
-        if (s > 0.9985) c = sunC; else if (s > 0.998) c = mix(c, vec3(0.1), 0.85);
-        else c += sunC * smoothstep(0.985, 0.998, s) * 0.12;
-        if (uNight > 0.5) { vec2 st = floor(gl_FragCoord.xy / 3.0); float r = fract(sin(dot(st, vec2(12.9898, 78.233))) * 43758.5453); if (r > 0.9975 && h > 0.15) c = vec3(0.95); }
+        vec3 d = normalize(vD);
+        float h = d.y;
+        float s = dot(d, normalize(uSun));
+        vec3 c = mix(uHor, uMid, smoothstep(0.0, 0.16, h));
+        c = mix(c, uTop, smoothstep(0.12, 0.75, h));
+        if (h < 0.0) c = mix(uHor, uHor * 0.88, smoothstep(0.0, -0.25, h));
+        float sp = max(s, 0.0);
+        float day = 1.0 - uNight;
+        // haze glow + a warmer horizon towards the sun
+        c += uSunCol * (pow(sp, 6.0) * 0.16 + pow(sp, 48.0) * 0.32) * day;
+        c = mix(c, c * vec3(1.06, 0.98, 0.9), pow(sp, 3.0) * (1.0 - smoothstep(0.0, 0.35, h)) * day);
+        #ifndef SKY_LOW
+        // clouds: two octaves projected on a high plane, drifting
+        if (h > 0.0 && uCloud > 0.0) {
+          vec2 uv = d.xz / (h + 0.09) * 0.9 + vec2(uTime * 0.006, uTime * 0.002);
+          float n = n2(uv * 1.3) * 0.62 + n2(uv * 3.1 + 7.0) * 0.28 + n2(uv * 7.0 + 3.0) * 0.1;
+          float cov = smoothstep(0.62 - uCloud * 0.2, 0.86 - uCloud * 0.12, n) * smoothstep(0.015, 0.2, h);
+          vec3 cc = mix(vec3(1.0, 0.99, 0.97), uHor * 0.92, 0.35 + 0.35 * (1.0 - n));
+          cc += uSunCol * pow(sp, 5.0) * 0.25;
+          if (uNight > 0.5) cc = mix(uTop * 1.6, uHor * 0.9, 0.5) + uSunCol * pow(sp, 12.0) * 0.25;
+          c = mix(c, cc, cov * (0.82 - 0.4 * uNight));
+        }
+        #endif
+        // sun / moon: a soft disc with a halo, no ring
+        float disc = smoothstep(0.99935, 0.99965, s);
+        if (uNight > 0.5) {
+          c += uSunCol * pow(sp, 160.0) * 0.18;
+          c = mix(c, vec3(0.93, 0.93, 0.88), disc);
+          #ifndef SKY_LOW
+          vec3 cell = floor(d * 260.0);
+          float r = h2(cell.xy * 1.37 + cell.z * 0.71);
+          vec3 cp = (cell + 0.5) / 260.0;
+          float st = smoothstep(0.9985, 1.0, r) * smoothstep(0.08, 0.3, h) * (1.0 - smoothstep(0.0011, 0.0024, length(d - normalize(cp))));
+          c += vec3(0.9, 0.92, 1.0) * st * (0.6 + 0.4 * sin(uTime * 2.0 + r * 300.0));
+          #endif
+        } else {
+          c = mix(c, uSunCol * 1.12 + 0.08, disc);
+        }
         gl_FragColor = vec4(c, 1.0);
       }`,
     side: THREE.BackSide, depthWrite: false, depthTest: false, fog: false,
   });
   const mesh = new THREE.Mesh(g, m);
   mesh.frustumCulled = false; mesh.renderOrder = -10;
+  mesh.userData.tick = (t) => { m.uniforms.uTime.value = t; };
   return mesh;
 }

@@ -5,10 +5,11 @@
 import { DT, MAX_STEPS, CAR, DAMAGE, RULES, NITRO, CAM, TRAFFIC } from './tune.js';
 import { sanitizeSetup, stepRule, loadSaved, saveSetup, fmt } from './rules.js';
 import { createGeo } from './geo.js';
-import { newCar, placeCar, stepCar, carContact, resolveCar, judgePit } from './car.js';
+import { newCar, placeCar, stepCar, carContact, resolveCar, resolvePair, contactImpulse, applyImpulse, judgePit, pitEffect } from './car.js';
 import { makePalette, makeUniforms } from './gfx.js';
 import { buildWorld } from './world.js';
-import { createCarView, createWheels, buildTrafficGeos } from './cars.js';
+import { createCarView, createWheels, createTrafficView } from './cars.js';
+import { createRenderer } from './render.js';
 import { createTraffic } from './traffic.js';
 import { createFx } from './fx.js';
 import { createAudio } from './audio.js';
@@ -92,7 +93,7 @@ export function createGame(el, api) {
   // ── 3D ──
   let THREE = null; let renderer = null; let P = null; let U = null; let world = null; let geo = null; let fx = null; let traffic = null; let mapImg = null;
   let carViews = null; let wheels = null; let trafficMeshes = null; let cams = {}; let farCam = null; let ready3D = false; let glLost = false; let raf = 0;
-  let W = 1; let H = 1; const baseDpr = Math.min(window.devicePixelRatio || 1, 2); let scale = TUNE.maxDpr ? 1 : 0.85;
+  let W = 1; let H = 1; let baseDpr = Math.min(window.devicePixelRatio || 1, 2); let scale = TUNE.maxDpr ? 1 : 0.85; let minScale = 0.55; let gfx = null;
   const perf = { dts: new Float32Array(600), work: new Float32Array(600), n: 0, calls: 0, tris: 0, maxCalls: 0, maxTris: 0, scaleDowns: 0, scaleUps: 0, programs0: 0, ewma: 16.7, lowFor: 0, checkT: 0, frames: 0 };
   const hud = createHud(root, { name: (w) => nameOf(w) }, { split: false, touch: coarse });
   let hud2 = null; // split-screen HUD (two views)
@@ -125,7 +126,9 @@ export function createGame(el, api) {
     P = makePalette(api.tokens());
     hud.setPalette(P);
     U = makeUniforms(THREE, P);
-    renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', alpha: false, stencil: false, depth: true });
+    // graphics tier (low / mid / high), MSAA and the pixel-ratio cap come from render.js
+    gfx = createRenderer(THREE, { phoneish, coarse, tune: TUNE });
+    renderer = gfx.renderer; baseDpr = gfx.dpr; minScale = gfx.cfg.minScale; if (!TUNE.maxDpr) scale = 1;
     renderer.info.autoReset = false;
     renderer.autoClear = false;
     renderer.setPixelRatio(Math.min(baseDpr * scale, TUNE.maxDpr || 9));
@@ -195,7 +198,8 @@ export function createGame(el, api) {
     if (carViews) {
       for (const v of Object.values(carViews)) { detach(v.group); v.dispose(); }
       detach(wheels.mesh); wheels.dispose();
-      for (const m of [trafficMeshes.paint, trafficMeshes.trim]) { detach(m); m.geometry.dispose(); }
+      for (const m of trafficMeshes.meshes) detach(m);
+      trafficMeshes.dispose();
       carViews = null;
     }
     if (fx) { for (const m of [fx.puffs, fx.sparks, fx.skids, fx.strips, fx.oils, fx.lines]) detach(m); fx.dispose(); fx = null; }
@@ -209,13 +213,10 @@ export function createGame(el, api) {
     L.mapImage = Math.round(performance.now() - lt); lt = performance.now();
     carViews = { runA: createCarView(THREE, P, U, 'runner', P.a, world.mats), runB: createCarView(THREE, P, U, 'runner', P.b, world.mats), cop: createCarView(THREE, P, U, 'cop', null, world.mats), cop2: createCarView(THREE, P, U, 'cop', null, world.mats) };
     wheels = createWheels(THREE, P, world.mats, 8);
-    const tg = buildTrafficGeos(THREE, P);
-    // colour-instanced meshes get their own material (its programs differ from the plain ones)
-    trafficMeshes = { paint: new THREE.InstancedMesh(tg.paint, world.mats.vcColor, TRAFFIC.max), trim: new THREE.InstancedMesh(tg.trim, world.mats.vc, TRAFFIC.max) };
-    trafficMeshes.paint.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(TRAFFIC.max * 3).fill(1), 3);
-    for (const m of [trafficMeshes.paint, trafficMeshes.trim]) { m.frustumCulled = false; m.count = 0; }
+    // traffic: four silhouettes × near / mid detail + far boxes, tinted per instance (cars.js)
+    trafficMeshes = createTrafficView(THREE, P, world.mats, TRAFFIC.max);
     for (const v of Object.values(carViews)) world.scene.add(v.group);
-    world.scene.add(wheels.mesh); world.scene.add(trafficMeshes.paint); world.scene.add(trafficMeshes.trim);
+    world.scene.add(wheels.mesh); for (const m of trafficMeshes.meshes) world.scene.add(m);
     fx = createFx(THREE, world.scene, P, U, world.mats);
     traffic = createTraffic(geo, entry.id, rules().traffic);
     S.loadMs = Math.round(performance.now() - t0);
@@ -246,13 +247,15 @@ export function createGame(el, api) {
     cam.position.set(p.x, 30, p.z + 40); cam.lookAt(p.x, 0, p.z);
     fx.setSpeedLines(0.5, 1); fx.puff(p.x, 1, p.z, 0, 0, 0, 1, 0, 0.1, 1, 1, 1); fx.spark(p.x, 1, p.z, 1, 1, 1, 0.1);
     fx.setStrips([{ x: p.x, y: 0, z: p.z, yaw: 0, len: 6, k: 1 }]); fx.setOils([{ x: p.x, y: 0, z: p.z, r: 2, k: 1 }]);
-    trafficMeshes.paint.count = 1; trafficMeshes.trim.count = 1;
+    for (const m of trafficMeshes.meshes) { m.count = 1; m.visible = true; }
+    if (fx.crash) fx.crash(p.x, 1, p.z, 0, 0, 0, 1);
     fx.update(0.016, cam);
+    if (world.warm) world.warm(renderer, cam);
     try { renderer.compile(world.scene, cam); renderer.compile(world.farScene, cam); } catch (e) { console.warn(e); }
     renderer.setViewport(0, 0, W, H);
     try { renderer.clear(); renderer.render(world.farScene, cam); renderer.render(world.scene, cam); } catch (e) { console.warn(e); }
     fx.setSpeedLines(0, 1); fx.setStrips([]); fx.setOils([]); fx.clear();
-    trafficMeshes.paint.count = 0; trafficMeshes.trim.count = 0;
+    for (const m of trafficMeshes.meshes) { m.count = 0; m.visible = false; }
     perf.programs0 = renderer.info.programs ? renderer.info.programs.length : 0;
     perf.programNames0 = renderer.info.programs.map((p) => p.name + ':' + p.cacheKey.length + ':' + p.id);
   }
@@ -412,8 +415,8 @@ export function createGame(el, api) {
       if (p.rig) p.rig = null;
       cams[w].init = false; cams[w].mode = cams[w].mode || rules0.camera;
       p.driver = null;
-      if (ai() && w === aiW) { p.driver = createDriver(geo, role, { seed: S.match.seed + R.idx }); p.pad.auto = p.driver.out; }
-      else if (p.auto) { p.driver = createDriver(geo, role, { seed: 7 + R.idx }); p.pad.auto = p.driver.out; }
+      if (ai() && w === aiW) { p.driver = createDriver(geo, role, { seed: S.match.seed + R.idx, level: device.aiLevel || 'normal' }); p.pad.auto = p.driver.out; }
+      else if (p.auto) { p.driver = createDriver(geo, role, { seed: 7 + R.idx, level: 'hard' }); p.pad.auto = p.driver.out; }
       else p.pad.auto = null;
     }
     if (traffic) traffic.clearWrecks();
@@ -593,7 +596,26 @@ export function createGame(el, api) {
   link.on('hit', (d) => {
     if (!d || !S.R) return;
     const w = human();
-    if (d.kind === 'pit') { P2[w].stats.pits++; H0().view(w).stamp('PIT!', w); audio.pit(); slowMo(); }
+    if (d.kind === 'pit') { P2[w].stats.pits++; H0().view(w).stamp('PIT!', w); audio.pit(); if (!(d.push < DAMAGE.pitSlowMo)) slowMo(); }
+  });
+  // car vs car over the network: the runner's device sees the contact and works out one impulse
+  // for both cars; the cop's device applies its half when this arrives (deduped, 150 ms apart)
+  let lastBump = 0;
+  link.on('bump', (d) => {
+    if (!d || !S.R || S.phase !== 'chase' || typeof d.j !== 'number') return;
+    const t = performance.now(); if (t - lastBump < 150) return; lastBump = t;
+    const c = P2[me].car; const j = Math.min(30, Math.max(0, d.j));
+    applyImpulse(c, -j, d.nx, d.nz, c.x + (d.px - (d.ox ?? c.x)), c.z + (d.pz - (d.oz ?? c.z)), 1);
+    P2[other(me)].bumpAt = t; P2[other(me)].bumpT0 = link.latestTime(); // hold the partner's extrapolation until its next sample
+    const v = d.v || 0;
+    if (v > 2) { if (d.dmg > 0 && roleOf(me) === 'cop') damage(me, d.dmg, 'ram'); crashFx(d.px, c.y + 0.7, d.pz, v, me); }
+  });
+  // traffic knocked and props broken on the other device
+  link.on('knock', (d) => { if (d && traffic && typeof d.id === 'number') traffic.setWreck(d.id, d); });
+  link.on('brk', (d) => {
+    if (!d || !geo || typeof d.i !== 'number') return;
+    const o = geo.solids[d.i]; if (!o || o.broken) return;
+    o.broken = true; world.breakSolid(d.i, +d.vx || 0, +d.vz || 0);
   });
   function slowMo() { if (reduced) return; S.slowT = RULES.pitSlowMo; }
 
@@ -606,8 +628,23 @@ export function createGame(el, api) {
   const ct2 = { pen: 0, nx: 0, nz: 0, px: 0, pz: 0, ia: 0, ib: 0 };
   const snapA = { x: 0, z: 0, y: 0, yaw: 0, vx: 0, vz: 0, r: 0 }; const snapB = { x: 0, z: 0, y: 0, yaw: 0, vx: 0, vz: 0, r: 0 };
   const copy = (o, c) => { o.x = c.x; o.z = c.z; o.y = c.y; o.yaw = c.yaw; o.vx = c.vx; o.vz = c.vz; o.r = c.r; return o; };
-  function simStep(dt, now) {
+  let aiAcc = 0;
+  function simStep(dt, now, tT) {
     const rules0 = rules();
+    // the AI drivers think at a fixed 30 Hz of simulated time (slow motion slows them too)
+    aiAcc += dt;
+    if (aiAcc >= 1 / 30) {
+      aiAcc -= 1 / 30;
+      for (const w of AB) {
+        const p = P2[w]; if (!p.driver || !local(w)) continue;
+        const o = posOf(other(w)); const role = roleOf(w);
+        const out = p.driver.update(1 / 30, p.car, o, { los: p.los, traffic, tT, spikes: role === 'runner' ? visibleStrips(w, now) : null, spikesLeft: p.spikesLeft, oilLeft: p.oilLeft, hit: p.aiHit, viewer: ai() ? P2[human()].car : null });
+        p.aiHit = false;
+        if (out.spike && role === 'cop') aiSpike(w, out.spike);
+        if (out.oil && role === 'runner') dropOil(w);
+        if (out.warp) placeCar(p.car, out.warp.x, out.warp.z, out.warp.yaw, geo);
+      }
+    }
     for (const w of AB) {
       if (!local(w)) continue;
       const p = P2[w]; const c = p.car; const role = roleOf(w);
@@ -617,10 +654,16 @@ export function createGame(el, api) {
       if (c.speed > p.stats.top) p.stats.top = c.speed;
       // world collision events
       for (const ev of c.ev) {
-        if (ev.t === 'wall') { if (ev.dmg > 0) damage(w, ev.dmg * rules0.damage, 'wall'); if (ev.v > 4) { crashFx(ev.x, c.y + 0.6, ev.z, ev.v, w); } }
-        else if (ev.t === 'break') { world.breakSolid(ev.solid, ev.vx, ev.vz); if (viewers().includes(w) || !live) audio.knock(); breakFx(ev.x, c.y, ev.z); damage(w, 2 * rules0.damage, 'break'); }
+        if (ev.t === 'wall') { if (ev.dmg > 0) damage(w, ev.dmg * rules0.damage, 'wall'); crashFx(ev.x, c.y + 0.6, ev.z, ev.v, w); }
+        else if (ev.t === 'scrape') { if (viewers().includes(w) && audio.scrape) audio.scrape(ev.v); for (let k = 0; k < 2; k++) fx.spark(ev.x, c.y + 0.5, ev.z, (Math.random() - 0.5) * 4, 1 + Math.random() * 2, (Math.random() - 0.5) * 4, 0.25); }
+        else if (ev.t === 'break') {
+          world.breakSolid(ev.solid, ev.vx, ev.vz); if (viewers().includes(w) || !live) audio.knock(); breakFx(ev.x, c.y, ev.z);
+          if (!ev.soft && !ev.flimsy) damage(w, 2 * rules0.damage, 'break');
+          if (live) link.urgent('brk', { i: ev.solid, vx: Math.round(ev.vx * 10) / 10, vz: Math.round(ev.vz * 10) / 10 });
+        }
       }
       c.ev.length = 0;
+      if (tT != null) trafficContact(w, c, tT);
       // spikes (the runner's device decides; the cop is immune to its own strips)
       if (role === 'runner' && S.R) {
         for (const s of S.R.spikes) {
@@ -642,56 +685,102 @@ export function createGame(el, api) {
       if (role === 'cop' && S.R) {
         for (const o of S.R.oils) {
           if (p.oilHit.has(o.id) || now - o.at > RULES.oilT * 1000) continue;
-          if (Math.hypot(o.x - c.x, o.z - c.z) < o.r) { p.oilHit.add(o.id); c.oilT = 1.5; c.r += (Math.random() < 0.5 ? -1 : 1) * 0.9; if (viewers().includes(w)) { H0().view(w).stamp('OIL!', 'bad'); audio.oil(); } }
+          // the slick is drawn as an ellipse r × 0.8 r along the dropping car's heading (+ ~half a car)
+          const rot = o.rot || 0; const dx = c.x - o.x; const dz = c.z - o.z;
+          const la = dx * Math.sin(rot) - dz * Math.cos(rot); const lb = dx * Math.cos(rot) + dz * Math.sin(rot);
+          const ra = o.r + 0.6; const rb = o.r * 0.8 + 0.6;
+          if ((la * la) / (ra * ra) + (lb * lb) / (rb * rb) < 1) { p.oilHit.add(o.id); c.oilT = 1.5; c.r += ((o.id.length + Math.round(o.x)) & 1 ? -1 : 1) * 0.9; if (viewers().includes(w)) { H0().view(w).stamp('OIL!', 'bad'); audio.oil(); } }
         }
       }
     }
     // car vs car
     if (live) {
-      const w = me; const o = other(me); const c = P2[w].car; const rp = P2[o].shown;
-      if (rp.init) {
-        copy(remoteSnap, P2[o].remote); remoteSnap.x = rp.x; remoteSnap.z = rp.z; remoteSnap.yaw = rp.yaw; remoteSnap.y = rp.y;
-        if (carContact(c, remoteSnap, ct) > 0) {
+      const w = me; const o = other(me); const c = P2[w].car; const po = P2[o];
+      if (po.shown.init && po.predOk) {
+        // against the partner's best estimate *now*: the raw prediction advanced along its arc
+        // to this substep (the drawn car is only a smoothed copy of it)
+        const rs = remoteSnap; const sub = (performance.now() - po.predAt) / 1000;
+        const held = !!po.bumpAt;
+        const k = held ? 0 : Math.min(0.12, Math.max(0, sub));
+        rs.vx = po.remote.vx; rs.vz = po.remote.vz; rs.r = po.remote.r; rs.y = po.remote.y;
+        rs.yaw = po.remote.yaw + rs.r * k; rs.x = po.remote.x + rs.vx * k; rs.z = po.remote.z + rs.vz * k;
+        if (carContact(c, rs, ct) > 0) {
           const pre = copy(snapA, c);
-          const vrel = resolveCar(c, remoteSnap, ct, 1, 1);
-          if (vrel > 0) carHit(w, o, pre, remoteSnap, ct, vrel);
+          if (roleOf(w) === 'runner') {
+            // authority: one impulse for both cars; mine now, the cop's by message
+            const vrel = resolveCar(c, rs, ct, 1, 1, 0.5);
+            p2Hit(o);
+            if (vrel > 0.3) {
+              const res = carHit(w, o, pre, rs, ct, vrel);
+              po.bumpAt = performance.now(); po.bumpT0 = link.latestTime();
+              if (res) link.urgent('bump', { j: Math.round(ct.j * 100) / 100, nx: Math.round(ct.nx * 1000) / 1000, nz: Math.round(ct.nz * 1000) / 1000, px: Math.round(ct.px * 100) / 100, pz: Math.round(ct.pz * 100) / 100, ox: Math.round(rs.x * 100) / 100, oz: Math.round(rs.z * 100) / 100, v: Math.round(vrel * 10) / 10, dmg: res.copDmg });
+            }
+          } else {
+            // the cop's device: no impulse of its own, just don't sit inside the runner
+            const corr = Math.min(ct.pen * 0.5, 0.2); c.x += ct.nx * corr; c.z += ct.nz * corr;
+            const vn = (c.vx - rs.vx) * ct.nx + (c.vz - rs.vz) * ct.nz;
+            if (vn < 0) { c.vx -= vn * ct.nx * 0.5; c.vz -= vn * ct.nz * 0.5; }
+            p2Hit(o);
+          }
+          // the drawn partner car gets pushed out of mine too (decays back to the prediction)
+          po.pushX = (po.pushX || 0) - ct.nx * Math.min(ct.pen, 0.3) * 0.5; po.pushZ = (po.pushZ || 0) - ct.nz * Math.min(ct.pen, 0.3) * 0.5;
         }
       }
     } else {
       const a = P2.a.car; const b = P2.b.car;
       if (carContact(a, b, ct) > 0) {
         copy(snapA, a); copy(snapB, b);
-        ct2.pen = ct.pen; ct2.nx = -ct.nx; ct2.nz = -ct.nz; ct2.px = ct.px; ct2.pz = ct.pz; ct2.ia = ct.ib; ct2.ib = ct.ia;
-        const va = resolveCar(a, snapB, ct, 1, 1);
-        const vb = resolveCar(b, snapA, ct2, 1, 1);
-        if (va > 0) carHit('a', 'b', snapA, snapB, ct, va);
-        if (vb > 0) carHit('b', 'a', snapB, snapA, ct2, vb);
+        const vrel = resolvePair(a, b, ct, 1, 1);
+        P2.a.aiHit = true; P2.b.aiHit = true;
+        if (vrel > 0.3) {
+          ct2.pen = ct.pen; ct2.nx = -ct.nx; ct2.nz = -ct.nz; ct2.px = ct.px; ct2.pz = ct.pz; ct2.ia = ct.ib; ct2.ib = ct.ia;
+          const rw = runnerW();
+          if (rw === 'a') carHit('a', 'b', snapA, snapB, ct, vrel, true); else carHit('b', 'a', snapB, snapA, ct2, vrel, true);
+        }
       }
     }
   }
-  /** My car `w` (pre = its pose before the impulse) was hit by `o` (pose op). The victim decides
-   *  damage; the runner's device also judges PITs. */
-  function carHit(w, o, pre, op, c0, vrel) {
+  function p2Hit(o) { P2[me].aiHit = true; void o; }
+  /** Strips the runner w can see right now (for the AI runner). */
+  function visibleStrips(w, now) { if (!S.R) return null; const l = []; for (const st of S.R.spikes) if (!st.gone && stripVisible(st, now, w)) l.push(st); return l; }
+  /** A car-car contact on the runner's side (live: the runner's device; local: once per contact).
+   *  w = the car whose device judges (the runner when it's involved), pre = its pose before the
+   *  impulse, op = the other car. The runner decides PITs (tiered: nudge / PIT / hard PIT with
+   *  slow motion) and ram damage; the cop's ram damage goes along in the bump. Effects by closing
+   *  speed: under 2 m/s nothing, 2–6 a scrape, above a crash. Returns { copDmg } or null. */
+  function carHit(w, o, pre, op, c0, vrel, local2) {
     const p = P2[w]; const c = p.car; const role = roleOf(w);
     const rules0 = rules();
-    if (p.lastHit > performance.now() - 220) return;
-    p.lastHit = performance.now();
-    let pit = 0;
+    const pairKey = performance.now();
+    if (p.lastHit > pairKey - 400 && vrel < 6) return null; // still in the same scrape
+    p.lastHit = pairKey;
+    let pit = 0; let copDmg = 0;
     if (role === 'runner' && S.phase === 'chase') pit = judgePit(pre, op, c0);
-    if (pit) {
-      c.spinT = 1.15; c.cutT = 0.75;
-      c.r += pit * (2.6 + Math.min(2.2, pre.vf ? Math.abs(pre.vf) * 0.05 : Math.hypot(pre.vx, pre.vz) * 0.05));
-      damage(w, DAMAGE.pit * rules0.damage, 'pit');
-      p.stats.pits++;
-      if (live) link.urgent('hit', { kind: 'pit', at: clock() });
-      else P2[o].stats.pits++;
-      for (const v of viewers()) H0().view(v).stamp('PIT!', o);
-      audio.pit(); slowMo();
-    } else {
-      const dmg = Math.max(0, vrel - DAMAGE.ramMin) * DAMAGE.ramK * rules0.damage;
-      if (dmg > 0) damage(w, role === 'cop' ? dmg * 0.6 : dmg, 'ram');
+    const tier = role === 'runner' && S.phase === 'chase' ? c0.pitTier : 0;
+    const copW0 = role === 'runner' ? o : w;
+    if (tier >= 1) {
+      const ef = pitEffect(c0.pitPush, tier, Math.hypot(pre.vx, pre.vz));
+      const side = pit || (((c0.px - pre.x) * Math.cos(pre.yaw) + (c0.pz - pre.z) * Math.sin(pre.yaw)) >= 0 ? 1 : -1);
+      c.r += side * ef.kick;
+      if (ef.spin) c.spinT = Math.max(c.spinT, ef.spin);
+      if (ef.cut) c.cutT = Math.max(c.cutT, ef.cut);
+      damage(w, DAMAGE.pit * ef.dmgK * rules0.damage, tier === 2 ? 'pit' : 'nudge');
+      if (tier === 2) {
+        p.stats.pits++;
+        if (live) link.urgent('hit', { kind: 'pit', at: clock(), push: Math.round(c0.pitPush * 10) / 10 });
+        else P2[o].stats.pits++;
+        for (const v of viewers()) H0().view(v).stamp('PIT!', o);
+        audio.pit();
+        if (c0.pitPush >= DAMAGE.pitSlowMo) slowMo();
+      }
+    } else if (vrel > DAMAGE.ramMin) {
+      const dmg = (vrel - DAMAGE.ramMin) * DAMAGE.ramK * rules0.damage;
+      damage(w, role === 'cop' ? dmg * 0.6 : dmg, 'ram');
+      copDmg = Math.round(dmg * 0.6 * 10) / 10;
+      if (local2 || !live) damage(copW0 === w ? o : copW0, copDmg, 'ram');
     }
     crashFx(c0.px, c.y + 0.7, c0.pz, vrel, w);
+    return { copDmg: live ? copDmg : 0 };
   }
   function damage(w, d, why) {
     const p = P2[w]; const c = p.car;
@@ -702,9 +791,16 @@ export function createGame(el, api) {
     void why;
   }
   function crashFx(x, y, z, v, w) {
+    if (v < 2) return; // a lean or a rub: nothing
+    if (v < 6) { // a scrape: a few sparks and a scrape, no crash
+      for (let k = 0; k < 3; k++) fx.spark(x, y, z, (Math.random() - 0.5) * 6, 1 + Math.random() * 3, (Math.random() - 0.5) * 6, 0.3);
+      if ((viewers().includes(w) || dist2(x, z) < 900) && audio.scrape) audio.scrape(v);
+      return;
+    }
     const n = Math.min(18, 4 + v * 0.6);
     for (let k = 0; k < n; k++) fx.spark(x, y, z, (Math.random() - 0.5) * 12, 2 + Math.random() * 5, (Math.random() - 0.5) * 12, 0.35 + Math.random() * 0.3);
     if (v > 9) fx.puff(x, y, z, 0, 1, 0, 0.8, 2.4, 0.7, 0.85, 0.83, 0.8);
+    if (v > 7 && fx.crash) { const c = P2[w].car; fx.crash(x, y, z, c.vx || 0, c.vz || 0, c.y || 0, Math.min(14, Math.round(v * 0.5)), roleOf(w) === 'cop' ? P.copBody : P[w]); }
     if (viewers().includes(w) || dist2(x, z) < 3600) audio.crash(v);
   }
   function breakFx(x, y, z) { for (let k = 0; k < 5; k++) fx.puff(x + (Math.random() - 0.5) * 2, y + 1 + Math.random() * 2, z + (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 3, 1.5, (Math.random() - 0.5) * 3, 0.6, 1.4, 0.6, 0.55, 0.62, 0.42); }
@@ -713,7 +809,7 @@ export function createGame(el, api) {
   function sweptStrip(s, x0, z0, x1, z1) {
     const c = Math.cos(Math.PI - s.yaw); const sn = Math.sin(Math.PI - s.yaw);
     // strip local: x across (half len/2), z along the road (half 0.45); world→local: lx = dx c − dz s, lz = dx s + dz c
-    const hx = s.len / 2; const hz = 0.45 + 1.4; // the car's axles are ±1.4 m from its centre
+    const hx = s.len / 2 + CAR.wid / 2 - 0.3; const hz = 0.45 + 1.4; // the axles are ±1.4 m from the centre; a wheel (not the centre) over the end counts
     const ax = x0 - s.x; const az = z0 - s.z; const bx = x1 - s.x; const bz = z1 - s.z;
     const l0x = ax * c - az * sn; const l0z = ax * sn + az * c; const l1x = bx * c - bz * sn; const l1z = bx * sn + bz * c;
     let t0 = 0; let t1 = 1; const dx = l1x - l0x; const dz = l1z - l0z;
@@ -726,35 +822,53 @@ export function createGame(el, api) {
   }
 
   // ── traffic ──
-  const tPose = { x: 0, z: 0, y: 0, yaw: 0, vx: 0, vz: 0, r: 0, vf: 0 };
+  // Contacts are checked in every 120 Hz step at that step's traffic time (no deep overlaps), a
+  // car only leaves its lane as a wreck at a closing speed over 2 m/s (below: just a nudge), and
+  // a knock is sent to the partner so both phones see the same wreck. Cars growing in or
+  // shrinking out at road ends (sc < 0.95) never collide.
+  const tPose = { x: 0, z: 0, y: 0, yaw: 0, vx: 0, vz: 0, r: 0, vf: 0, hl: 2.3, hw: 0.95 };
+  function trafficContact(w, c, tT) {
+    if (!traffic || !traffic.total) return;
+    traffic.each(c.x, c.z, 8, tT, (id, pose, wreck) => {
+      if (pose.sc < 0.95) return;
+      tPose.x = pose.x; tPose.z = pose.z; tPose.y = pose.y; tPose.yaw = pose.yaw; tPose.vx = pose.vx; tPose.vz = pose.vz; tPose.r = 0; tPose.hl = pose.hl; tPose.hw = pose.hw;
+      if (carContact(c, tPose, ct) <= 0) return;
+      const v = resolveCar(c, tPose, ct, 1, 0.8, 1);
+      if (v > 2) {
+        const k = traffic.knock(id, pose, -ct.nx * ct.j * 0.85, -ct.nz * ct.j * 0.85, ((id & 7) - 3.5) * 0.04 * v);
+        if (live) link.urgent('knock', { id, x: Math.round(k.x * 100) / 100, z: Math.round(k.z * 100) / 100, yaw: Math.round(k.yaw * 1000) / 1000, vx: Math.round(k.vx * 100) / 100, vz: Math.round(k.vz * 100) / 100, r: Math.round(k.r * 100) / 100 });
+        if (v > 9) damage(w, (v - 9) * 0.8 * rules().damage, 'traffic');
+        if (P2[w].tHit !== id || v > 6) crashFx(ct.px, c.y + 0.7, ct.pz, v, w);
+        P2[w].tHit = id;
+      }
+    });
+  }
+  /** Near misses (per frame): passing close at speed tops up the runner's nitro. */
   function trafficStep(dt, tT) {
     if (!traffic || !traffic.total) return;
     for (const w of AB) {
-      if (!local(w)) continue;
+      if (!local(w) || roleOf(w) !== 'runner') continue;
       const p = P2[w]; const c = p.car;
+      if (c.speed <= 14) continue;
       traffic.each(c.x, c.z, 9, tT, (id, pose, wreck) => {
-        tPose.x = pose.x; tPose.z = pose.z; tPose.y = pose.y; tPose.yaw = pose.yaw; tPose.vx = pose.vx; tPose.vz = pose.vz; tPose.r = 0;
-        if (carContact(c, tPose, ct) > 0) {
-          const v = resolveCar(c, tPose, ct, 1, 0.8);
-          if (v > 0) {
-            const push = 1.15;
-            traffic.knock(id, pose, -ct.nx * v * push, -ct.nz * v * push, (Math.random() - 0.5) * v * 0.15);
-            if (v > 5) { damage(w, Math.max(0, v - 7) * 0.8 * rules().damage, 'traffic'); crashFx(ct.px, c.y + 0.7, ct.pz, v, w); }
-          }
-        } else if (!wreck && c.speed > 14 && roleOf(w) === 'runner') {
-          const d = Math.hypot(pose.x - c.x, pose.z - c.z);
-          const rel = Math.hypot(c.vx - pose.vx, c.vz - pose.vz);
-          const last = p.nearIds.get(id) || 0;
-          if (d < 3.6 && d > 2.25 && rel > 12 && performance.now() - last > 2500) {
-            p.nearIds.set(id, performance.now());
-            p.stats.near++;
-            c.nitro = Math.min(1, c.nitro + NITRO.nearMiss);
-            if (viewers().includes(w)) { H0().view(w).hint('Near miss! +nitro', 900); audio.nearMiss(); }
-          }
+        if (wreck || pose.sc < 0.95) return;
+        const d = Math.hypot(pose.x - c.x, pose.z - c.z);
+        const rel = Math.hypot(c.vx - pose.vx, c.vz - pose.vz);
+        const last = p.nearIds.get(id) || 0;
+        if (d < 3.8 && d > 2.4 && rel > 12 && performance.now() - last > 2500) {
+          p.nearIds.set(id, performance.now());
+          p.stats.near++;
+          c.nitro = Math.min(1, c.nitro + NITRO.nearMiss);
+          if (viewers().includes(w)) { H0().view(w).hint('Near miss! +nitro', 900); audio.nearMiss(); }
         }
       });
     }
+    // civilians wait behind the players' cars and wrecks and pull over for the siren
+    const obs = trafficObs; obs.length = 0;
+    for (const w of AB) { const c = posOf(w); obs.push({ x: c.x, z: c.z, yaw: c.yaw, siren: roleOf(w) === 'cop' && S.phase === 'chase' }); }
+    traffic.yieldTo(dt, tT, obs);
   }
+  const trafficObs = [];
 
   // ── runner authority: bust / escape ──
   function runnerChecks(dt, now) {
@@ -797,15 +911,23 @@ export function createGame(el, api) {
   function updateRemote(dt) {
     if (!live) return;
     const o = other(me); const p = P2[o];
-    if (!link.predict(pred)) return;
+    if (!link.predict(pred)) { p.predOk = false; return; }
+    // right after a bump the partner's old velocity is wrong: hold position until a new sample
+    if (p.bumpAt) { if (performance.now() - p.bumpAt < 300 && link.latestTime() <= p.bumpT0) { pred.x = p.remote.x; pred.z = p.remote.z; } else p.bumpAt = 0; }
     for (const k in pred) p.remote[k] = pred[k];
+    p.predOk = true; p.predAt = performance.now();
     const sh = p.shown;
-    if (!sh.init || Math.hypot(pred.x - sh.x, pred.z - sh.z) > 12) { sh.x = pred.x; sh.z = pred.z; sh.y = pred.y; sh.yaw = pred.yaw; sh.init = true; }
+    // drawn = prediction + an error offset that decays to zero (no steady lag behind the truth)
+    if (!sh.init || Math.hypot(pred.x - sh.x, pred.z - sh.z) > 12) { sh.x = pred.x; sh.z = pred.z; sh.y = pred.y; sh.yaw = pred.yaw; sh.ox = 0; sh.oz = 0; sh.oy = 0; sh.oyaw = 0; sh.init = true; p.pushX = 0; p.pushZ = 0; }
     else {
-      // converge on the prediction (hides 20 Hz steps and correction jumps)
-      const k = Math.min(1, dt * 14);
-      sh.x += (pred.x - sh.x) * k; sh.z += (pred.z - sh.z) * k; sh.y += (pred.y - sh.y) * k; sh.yaw += wrapA(pred.yaw - sh.yaw) * k;
+      sh.ox = sh.x - (sh.px ?? pred.x); sh.oz = sh.z - (sh.pz ?? pred.z); sh.oyaw = wrapA(sh.yaw - (sh.pyaw ?? pred.yaw));
+      const k = Math.exp(-dt * 10);
+      sh.ox *= k; sh.oz *= k; sh.oyaw *= k;
+      sh.x = pred.x + sh.ox; sh.z = pred.z + sh.oz; sh.y += (pred.y - sh.y) * Math.min(1, dt * 14); sh.yaw = pred.yaw + sh.oyaw;
     }
+    // pushed out of my car on contact (decays)
+    if (p.pushX || p.pushZ) { sh.x += p.pushX; sh.z += p.pushZ; const k = Math.exp(-dt * 8); p.pushX *= k; p.pushZ *= k; if (Math.abs(p.pushX) + Math.abs(p.pushZ) < 0.01) { p.pushX = 0; p.pushZ = 0; } }
+    sh.px = pred.x; sh.pz = pred.z; sh.pyaw = pred.yaw;
     sh.vx = pred.vx; sh.vz = pred.vz; sh.r = pred.r;
     // mirror what we need for visuals
     const c = p.car;
@@ -937,6 +1059,7 @@ export function createGame(el, api) {
       v.group.visible = inGame;
       if (!inGame) { for (let k = 0; k < 4; k++) wheels.set(slot, k, 0, -100, 0, 0, 0, 0, 0, false); slot++; continue; }
       v.pose(c.x, c.y, c.z, c.yaw, local(w) ? c.pitch : 0, local(w) ? c.roll : 0, c.flat);
+      if (v.update) v.update(c, dt); // lights, lean, dirt, damage (cars.js)
       const steerA = c.steer * 0.45;
       for (let k = 0; k < 4; k++) wheels.set(slot, k, c.x, c.y, c.z, c.yaw, steerA, c.wheel, c.flat, true);
       slot++;
@@ -994,26 +1117,19 @@ export function createGame(el, api) {
   }
   function drawTraffic(tT) {
     if (!traffic || !trafficMeshes) return;
-    let n = 0;
-    const mats = trafficMeshes;
+    const tv = trafficMeshes;
+    const vs = viewers();
+    const c0 = cams[vs[0]].cam.position;
+    tv.begin(c0);
+    // the nearest cars to any viewer first, so every car that can be hit is drawn
     if (traffic.total && S.mapEntry) {
-      const vs = viewers();
-      const c0 = cams[vs[0]].cam.position;
-      traffic.each(c0.x, c0.z, TRAFFIC.near, tT, (id, pose) => {
-        if (n >= TRAFFIC.max) return;
-        dm.position.set(pose.x, pose.y, pose.z); dm.rotation.set(0, Math.PI - pose.yaw, 0);
-        const v = (id * 2654435761) >>> 0;
-        const sl = 0.92 + ((v >>> 8) % 100) / 400;
-        dm.scale.set(pose.sc, pose.sc * (0.95 + ((v >>> 16) % 20) / 100), pose.sc * sl); dm.updateMatrix();
-        mats.paint.setMatrixAt(n, dm.matrix); mats.trim.setMatrixAt(n, dm.matrix);
-        const col = P.traffic[v % P.traffic.length]; tc.setRGB(col[0], col[1], col[2]); mats.paint.setColorAt(n, tc);
-        n++;
-      });
+      selV.length = 0; for (const w of vs) { const cp = cams[w].cam.position; const cc = P2[w].car; selV.push({ x: (cp.x + cc.x) / 2, z: (cp.z + cc.z) / 2 }); }
+      const n = traffic.select(selV, tT, TRAFFIC.max, TRAFFIC.near, selOut);
+      for (let i = 0; i < n; i++) tv.add(selOut[i].id, selOut[i]);
     }
-    mats.paint.count = n; mats.trim.count = n;
-    mats.paint.instanceMatrix.needsUpdate = true; mats.trim.instanceMatrix.needsUpdate = true; if (mats.paint.instanceColor) mats.paint.instanceColor.needsUpdate = true;
+    tv.end();
   }
-  let dm = null; let tc = null;
+  let dm = null; let tc = null; const selV = []; const selOut = [];
   function drawStrips(now) {
     const R = S.R; const list = stripList; list.length = 0;
     if (R) {
@@ -1178,12 +1294,12 @@ export function createGame(el, api) {
     if (chase) {
       acc += dtReal * tsK;
       let n = 0;
-      while (acc >= DT && n < MAX_STEPS) { simStep(DT, now); acc -= DT; n++; }
-      if (n >= MAX_STEPS) acc = 0;
-      // AI + bots
-      for (const w of AB) { const p = P2[w]; if (p.driver && local(w)) { const o = posOf(other(w)); p.driver.update(dtReal, p.car, o, { los: p.los }); if (p.driver.out.spike && roleOf(w) === 'cop') aiSpike(w); } }
+      // traffic time of each step: the steps cover the frame up to now (slow motion slows traffic too)
       const tT = (now - S.R.t0) / 1000 + 600;
-      trafficStep(dtReal, tT);
+      const nSteps = Math.min(MAX_STEPS, Math.floor(acc / DT));
+      while (acc >= DT && n < MAX_STEPS) { simStep(DT, now, tT - (nSteps - 1 - n) * DT * tsK); acc -= DT; n++; }
+      if (n >= MAX_STEPS) acc = 0;
+      trafficStep(dtReal * tsK, tT);
       traffic.stepWrecks(dtReal, viewers().map((v) => P2[v].car));
       updateLos(dtReal);
       runnerChecks(dtReal * tsK, now);
@@ -1231,6 +1347,7 @@ export function createGame(el, api) {
       const c = P2[w].car;
       const sl = S.phase === 'chase' && !reduced ? clamp((c.speed - 24) / 20, 0, 1) * 0.85 + (c.boost ? 0.35 : 0) : 0;
       fx.setSpeedLines(sl, cr.aspect);
+      if (world.preRender) world.preRender(renderer, cr.cam); // car shadow map (render.js)
       renderer.clear();
       renderer.render(world.farScene, farCam);
       renderer.clearDepth();
@@ -1255,16 +1372,12 @@ export function createGame(el, api) {
     perf.ewma = perf.ewma * 0.94 + dt * 1000 * 0.06;
     perf.checkT += dt;
     if (perf.checkT < 0.25) return; perf.checkT = 0;
-    if (perf.ewma > 18.4 && scale > 0.55) { scale = Math.max(0.55, scale - (perf.ewma > 26 ? 0.15 : 0.08)); perf.scaleDowns++; perf.lowFor = 0; resize(); }
+    if (perf.ewma > 18.4 && scale > minScale) { scale = Math.max(minScale, scale - (perf.ewma > 26 ? 0.15 : 0.08)); perf.scaleDowns++; perf.lowFor = 0; resize(); }
     else if (perf.ewma < 15.4) { perf.lowFor += 0.25; if (perf.lowFor > 4 && scale < 1) { scale = Math.min(1, scale + 0.05); perf.scaleUps++; perf.lowFor = 0; resize(); } }
     else perf.lowFor = 0;
   }
-  function aiSpike(w) {
-    const rc = posOf(runnerW()); const sp = Math.hypot(rc.vx || 0, rc.vz || 0) || 1;
-    const ahead = 90 + Math.random() * 40;
-    const x = rc.x + ((rc.vx || 0) / sp) * ahead; const z = rc.z + ((rc.vz || 0) / sp) * ahead;
-    placeSpike(w, x, z);
-  }
+  /** The AI cop drops a strip where its driver predicted the runner's route (ai.js). */
+  function aiSpike(w, at) { if (at) placeSpike(w, at.x, at.z); }
 
   // ── partner presence: lobby info ──
   if (live) {
@@ -1318,7 +1431,7 @@ export function createGame(el, api) {
       setSetup(s) { if (!isHost) return null; setSetup({ ...S.setup, ...s }); return S.setup; },
       setLocalMode(m, role) { S.localMode = m; if (role) S.practiceRole = role; renderLobby(true); },
       /** Drive my car with the AI (bots for tests). */
-      auto(w, on) { const p = P2[w || human()]; p.auto = !!on; if (on && S.R) { p.driver = createDriver(geo, roleOf(w || human()), { seed: 99 }); p.pad.auto = p.driver.out; } else if (!on && !(ai() && (w || human()) === aiW)) { p.driver = null; p.pad.auto = null; } },
+      auto(w, on) { const p = P2[w || human()]; p.auto = !!on; if (on && S.R) { p.driver = createDriver(geo, roleOf(w || human()), { seed: 99, level: 'hard' }); p.pad.auto = p.driver.out; } else if (!on && !(ai() && (w || human()) === aiW)) { p.driver = null; p.pad.auto = null; } },
       /** Fixed inputs for car w: { steer, gas, brake, hand, nitro } (null = release). */
       hold(w, inp) { const p = P2[w || human()]; p.driver = null; p.pad.auto = inp ? { steer: 0, gas: 0, brake: 0, hand: false, nitro: false, ...inp } : null; },
       teleport(w, x, z, yaw, v = 0) { const c = P2[w].car; placeCar(c, x, z, yaw, geo); c.vx = Math.sin(yaw) * v; c.vz = -Math.cos(yaw) * v; c.speed = v; },
@@ -1328,7 +1441,7 @@ export function createGame(el, api) {
       shortenRound(ms) { if (isHost && S.R) { S.R.endAt = clock() + ms; if (live) link.urgent('endat', { idx: S.R.idx, endAt: S.R.endAt }); } },
       trafficHash(t) { return traffic ? traffic.hash(t) : 0; },
       trafficCount() { return traffic ? traffic.total : 0; },
-      trafficNear(x, z, r, t) { const out = []; if (traffic) traffic.each(x, z, r, t, (id, p) => out.push({ id, x: p.x, z: p.z, yaw: p.yaw, vx: p.vx, vz: p.vz })); return out; },
+      trafficNear(x, z, r, t) { const out = []; if (traffic) traffic.each(x, z, r, t, (id, p) => out.push({ id, x: p.x, z: p.z, yaw: p.yaw, vx: p.vx, vz: p.vz }), true); return out; },
       roadPoint(i, s) { const r = geo.roads[i]; const o = {}; geo.sampleRoad(r, s, o); return { x: o.x, z: o.z, yaw: Math.atan2(o.tx, -o.tz), len: r.len, name: r.name, width: r.width }; },
       roads() { return geo.roads.map((r) => ({ name: r.name, kind: r.kind, len: r.len, width: r.width, bridge: r.bridge })); },
       solids() { return geo.solids.map((s) => ({ i: s.i, kind: s.kind, x: s.x, z: s.z, hw: s.hw, hd: s.hd, rot: s.rot, h: s.h, broken: s.broken })); },
@@ -1374,7 +1487,7 @@ export function createGame(el, api) {
       if (fx) fx.dispose();
       if (carViews) for (const v of Object.values(carViews)) v.dispose();
       if (wheels) wheels.dispose();
-      if (trafficMeshes) { trafficMeshes.paint.geometry.dispose(); trafficMeshes.trim.geometry.dispose(); }
+      if (trafficMeshes) trafficMeshes.dispose();
       if (renderer) { renderer.dispose(); try { renderer.forceContextLoss(); } catch { /* ignore */ } }
       hud.destroy(); if (hud2) hud2.destroy();
       root.remove();

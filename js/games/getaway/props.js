@@ -2,7 +2,11 @@
 // breakables (trees, lamps, signals, hydrants…) are written into the chunk's merged geometry with
 // their vertex range recorded, so a knock-over collapses them there and spawns a falling copy.
 // drawProp(b, s, y0, P) writes one solid at its world position into Builder b.
-import { FX_GLOW, FX_WINDOWS, cssRGB, mix } from './gfx.js';
+import { FX_GLOW, FX_WINDOWS, FX, cssRGB, mix, gfxTier } from './gfx.js';
+
+const LEAF = FX.foliage; const BARK = FX.wood; const METAL = FX.metal;
+/** Deterministic 0..1 values per solid (index-based, so a falling copy matches the standing one). */
+function jit(s, k) { const v = Math.sin(((s.i | 0) + 1) * 12.9898 + k * 78.233) * 43758.5453; return v - Math.floor(v); }
 
 const C = {
   bark: [0.45, 0.32, 0.22], darkBark: [0.33, 0.24, 0.17], leaf: [0.36, 0.6, 0.3], leafLight: [0.52, 0.72, 0.34],
@@ -43,28 +47,37 @@ export function drawProp(b, s, y0, P, ox = s.x, oz = s.z, rot = s.rot) {
   const x = ox; const z = oz;
   switch (st) {
     case 'cottonwood': case 'tree': case 'jacaranda': {
-      const leaf = tint || (st === 'jacaranda' ? C.jacaranda : st === 'cottonwood' ? C.leafLight : C.leaf);
-      const tr = st === 'cottonwood' ? 0.32 : 0.24;
-      b.cyl(x, y0, z, tr, h * 0.5, C.bark, ol, 0, true);
-      const r = h * (st === 'cottonwood' ? 0.3 : 0.28);
-      b.sphere(x, y0 + h * 0.62, z, r, leaf, ol, 0, 0.85);
-      // side blobs: low-poly, no hull (the main canopy carries the outline): ~240 triangles a tree
-      b.add(b.T.ico, x + r * 0.55, y0 + h * 0.5, z + r * 0.2, r * 1.36, r * 1.16, r * 1.36, 0.4, mix(leaf, [0, 0, 0], 0.08), 0);
-      b.add(b.T.ico, x - r * 0.45, y0 + h * 0.52, z - r * 0.35, r * 1.24, r * 1.05, r * 1.24, 1.1, mix(leaf, [1, 1, 1], 0.08), 0);
+      const sc = 0.86 + jit(s, 1) * 0.3; const hh = h * sc; const a0 = jit(s, 2) * 6.28;
+      let leaf = tint || (st === 'jacaranda' ? C.jacaranda : st === 'cottonwood' ? C.leafLight : C.leaf);
+      if (!tint && jit(s, 3) > 0.55) leaf = mix(leaf, st === 'jacaranda' ? [0.5, 0.36, 0.78] : [0.3, 0.5, 0.26], 0.45);
+      const tr = (st === 'cottonwood' ? 0.32 : 0.24) * sc;
+      b.cyl(x, y0, z, tr, hh * 0.52, C.bark, ol, BARK, true);
+      // two limbs leaning out of the trunk
+      if (gfxTier() === 'high') for (let k = 0; k < 2; k++) { const a = a0 + k * 2.6; b.add(b.T.box, x + Math.sin(a) * hh * 0.08, y0 + hh * 0.5, z + Math.cos(a) * hh * 0.08, tr * 0.8, hh * 0.24, tr * 0.8, a, C.bark, 0, BARK, null, 0.5); }
+      const r = hh * (st === 'cottonwood' ? 0.3 : 0.28);
+      b.sphere(x, y0 + hh * 0.64, z, r, leaf, ol, LEAF, 0.82);
+      // clusters around the crown: low-poly, no hull (the main canopy carries the outline)
+      const nCl = gfxTier() === 'low' ? 2 : 3;
+      for (let k = 0; k < nCl; k++) {
+        const a = a0 + k * 2.1 + jit(s, 4 + k); const rr = r * (0.5 + 0.18 * jit(s, 8 + k)); const yy = y0 + hh * (0.5 + 0.22 * jit(s, 12 + k));
+        b.add(b.T.ico, x + Math.sin(a) * r * 0.62, yy, z + Math.cos(a) * r * 0.62, rr * 1.8, rr * 1.5, rr * 1.8, a, mix(leaf, k & 1 ? [1, 1, 0.8] : [0, 0.05, 0], 0.1), 0, LEAF);
+      }
+      b.add(b.T.ico, x, y0 + hh * 0.5, z, r * 1.5, r * 0.7, r * 1.5, a0, mix(leaf, [0, 0, 0], 0.22), 0, LEAF); // shaded underside
       break;
     }
     case 'pine': {
-      const leaf = tint || C.pineLeaf;
-      b.cyl(x, y0, z, 0.22, h * 0.3, C.darkBark, ol, 0, true);
-      b.cone(x, y0 + h * 0.18, z, h * 0.23, h * 0.42, leaf, ol);
-      b.cone(x, y0 + h * 0.42, z, h * 0.18, h * 0.36, mix(leaf, [1, 1, 1], 0.06), ol);
-      b.cone(x, y0 + h * 0.64, z, h * 0.12, h * 0.36, mix(leaf, [1, 1, 1], 0.12), ol);
+      const sc = 0.8 + jit(s, 1) * 0.4; const hh = h * sc; const sw = 0.85 + jit(s, 2) * 0.3;
+      const leaf = tint || mix(C.pineLeaf, [0.12, 0.3, 0.26], jit(s, 3) * 0.6);
+      b.cyl(x, y0, z, 0.22 * sc, hh * 0.34, C.darkBark, ol, BARK, true);
+      b.add(b.T.cone, x, y0 + hh * 0.16 + hh * 0.21, z, hh * 0.48 * sw, hh * 0.42, hh * 0.48 * sw, jit(s, 4) * 6, leaf, ol, LEAF);
+      b.add(b.T.cone, x, y0 + hh * 0.38 + hh * 0.19, z, hh * 0.37 * sw, hh * 0.38, hh * 0.37 * sw, jit(s, 5) * 6, mix(leaf, [1, 1, 1], 0.06), ol, LEAF);
+      b.add(b.T.cone, x, y0 + hh * 0.6 + hh * 0.2, z, hh * 0.25 * sw, hh * 0.4, hh * 0.25 * sw, jit(s, 6) * 6, mix(leaf, [1, 1, 1], 0.12), ol, LEAF);
       break;
     }
     case 'aspen': {
       const leaf = tint || C.aspenLeaf;
       b.cyl(x, y0, z, 0.15, h * 0.62, C.aspenBark, ol, 0, true);
-      b.sphere(x, y0 + h * 0.66, z, h * 0.17, leaf, ol, 0, 1.7);
+      b.sphere(x, y0 + h * 0.66, z, h * 0.17, leaf, ol, LEAF, 1.7);
       break;
     }
     case 'palm': {
@@ -74,18 +87,20 @@ export function drawProp(b, s, y0, P, ox = s.x, oz = s.z, rot = s.rot) {
       const tx = x + 0.36; const ty = y0 + h;
       for (let k = 0; k < 7; k++) {
         const a = (k / 7) * Math.PI * 2 + 0.3;
-        b.add(b.T.wedge, tx + Math.sin(a) * 1.5, ty - 0.35, z + Math.cos(a) * 1.5, 0.7, 0.5, 3.2, a, mix(leaf, [0, 0, 0], (k % 2) * 0.1), ol);
+        b.add(b.T.wedge, tx + Math.sin(a) * 1.5, ty - 0.35, z + Math.cos(a) * 1.5, 0.7, 0.5, 3.2, a, mix(leaf, [0, 0, 0], (k % 2) * 0.1), ol, LEAF);
       }
       b.sphere(tx, ty, z, 0.45, mix(leaf, [0, 0, 0], 0.25), 0);
       break;
     }
     case 'lamp': {
       const c = tint || C.metal;
-      b.cyl(x, y0, z, 0.12, h, c, ol, 0, true);
-      // arm towards the street (local −x after rot)
+      if (gfxTier() === 'high') b.cyl(x, y0, z, 0.16, 0.6, mix(c, [0, 0, 0], 0.2), 0, METAL, true); // base
+      b.cyl(x, y0, z, 0.1, h, c, ol, METAL, true);
+      // arm towards the street (local −x after rot), a cobra head with a lit lens underneath
       const ax = -Math.cos(rot); const az = Math.sin(rot);
-      b.add(b.T.box, x + ax * 0.9, y0 + h - 0.1, z + az * 0.9, 1.9, 0.14, 0.14, rot, c, ol);
-      b.add(b.T.box, x + ax * 1.7, y0 + h - 0.25, z + az * 1.7, 0.7, 0.18, 0.36, rot, lit(C.lampGlow), 0.04, FX_GLOW);
+      b.add(b.T.box, x + ax * 0.9, y0 + h - 0.1, z + az * 0.9, 1.9, 0.11, 0.11, rot, c, ol, METAL);
+      b.add(b.T.box, x + ax * 1.75, y0 + h - 0.12, z + az * 1.75, 0.8, 0.16, 0.38, rot, c, 0.04, METAL);
+      b.add(b.T.box, x + ax * 1.75, y0 + h - 0.22, z + az * 1.75, 0.66, 0.05, 0.3, rot, lit(C.lampGlow), 0, FX_GLOW);
       break;
     }
     case 'signal': {
@@ -138,9 +153,9 @@ export function drawProp(b, s, y0, P, ox = s.x, oz = s.z, rot = s.rot) {
       break;
     }
     case 'shrub': {
-      const c = tint || C.shrub; const r = Math.max(0.6, Math.min(2.2, (s.hw + s.hd) * 0.6));
-      b.sphere(x, y0 + r * 0.55, z, r, c, ol, 0, 0.7);
-      b.add(b.T.ico, x + r * 0.6, y0 + r * 0.4, z + r * 0.2, r * 1.3, r * 0.9, r * 1.3, 0.5, mix(c, [1, 1, 1], 0.1), 0);
+      const c = tint || mix(C.shrub, [0.42, 0.5, 0.28], jit(s, 1) * 0.5); const r = Math.max(0.6, Math.min(2.2, (s.hw + s.hd) * 0.6)) * (0.85 + jit(s, 2) * 0.3);
+      b.sphere(x, y0 + r * 0.55, z, r, c, ol, LEAF, 0.7);
+      b.add(b.T.ico, x + r * 0.6, y0 + r * 0.4, z + r * 0.2, r * 1.3, r * 0.9, r * 1.3, 0.5, mix(c, [1, 1, 1], 0.1), 0, LEAF);
       break;
     }
     default:
@@ -154,15 +169,16 @@ function drawBlock(b, s, y0, P, tint) {
   switch (s.kind) {
     case 'building': {
       const c = tint || mix(P.card, [0.75, 0.6, 0.5], 0.4);
-      b.add(b.T.box, s.x, yb + h / 2 - 0.5, s.z, w, h + 1, d, s.rot, c, 0.12, FX_WINDOWS);
-      b.add(b.T.box, s.x, yb + h + 0.15, s.z, w + 0.4, 0.3, d + 0.4, s.rot, mix(c, [0, 0, 0], 0.25), 0.08);
+      b.add(b.T.box, s.x, yb + h / 2 - 0.5, s.z, w, h + 1, d, s.rot, c, 0.12, h > 14 ? FX.tower : FX_WINDOWS);
+      b.add(b.T.box, s.x, yb + h + 0.15, s.z, w + 0.4, 0.3, d + 0.4, s.rot, mix(c, [0, 0, 0], 0.25), 0.08, FX.concrete);
+      b.add(b.T.box, s.x, yb + h + 0.32, s.z, w - 0.6, 0.06, d - 0.6, s.rot, [0.42, 0.42, 0.44], 0, FX.dirt);
       break;
     }
     case 'rock':
-      b.add(b.T.ico, s.x, yb + h * 0.4, s.z, w * 1.1, h * 1.1, d * 1.1, s.rot, tint || C.rock, 0.08);
+      b.add(b.T.ico, s.x, yb + h * 0.4, s.z, w * 1.1, h * 1.1, d * 1.1, s.rot, tint || C.rock, 0.08, FX.rock);
       break;
     case 'barrier':
-      b.add(b.T.box, s.x, yb + Math.min(h, 1.1) / 2, s.z, w, Math.min(h, 1.1), d, s.rot, tint || C.concrete, 0.05);
+      b.add(b.T.box, s.x, yb + Math.min(h, 1.1) / 2, s.z, w, Math.min(h, 1.1), d, s.rot, tint || C.concrete, 0.05, FX.concrete);
       break;
     default: // wall and anything else
       b.add(b.T.box, s.x, yb + h / 2 - 0.3, s.z, w, h + 0.3, d, s.rot, tint || mix(P.card, P.ink, 0.15), 0.06);

@@ -149,6 +149,76 @@ arm along the solid's local −x, so set `rot` to point it over the street. Othe
 | `kit.height`, `kit.roads`, `kit.nearestRoad(x, z, out, maxD)` | The engine's height function, smoothed roads and nearest-road lookup. |
 | `kit.ink` | The outline colour. |
 
+### Graphics v2 kit (from the graphics engineer — feature-detect everything: `kit.mat ? … : …`)
+
+The renderer is now stylised-realistic: per-pixel siren / headlight / street-lamp light, a car
+shadow map (mid/high tiers), baked soft shadows + AO under every solid, MSAA, a cloud sky and
+height fog. Maps opt into the rest through **surface codes** and a few helpers.
+
+**Surface codes (`kit.FX`).** Every vertex carries an `fx` code; the shader adds procedural detail
+for it (no textures). Use them as the `fx` argument of builder calls, in your own `fx` attribute,
+or through `kit.mat(name, color, opts)` (a toon material with that code; merges like `kit.toon`).
+
+| Name (`kit.FX.name`) | Code | Look |
+|---|---|---|
+| `plain` / `ink` / `windows` (`office`) / `glow` / `far` | 0–4 | as before (plain ground now gets a faint noise) |
+| `road` | 5 | asphalt grain, patches; lane wear when the vertex `aux` attribute holds the lane coordinate |
+| `paint` / `glass` / `chrome` / `trim` | 6–9 | car paint (sky reflection, sun glint), reflective glass, chrome, untinted plastic |
+| `house` | 10 | residential windows: 1–2 per 4.4 m, 3 m storeys, lit at night |
+| `shop` | 11 | big storefront panes (2.8 × 3.9 m cells) |
+| `tower` | 12 | glass curtain wall (1.55 × 3.6 m) |
+| `brick` | 13 | brick courses with mortar (fades to flat colour with distance — no moiré) |
+| `stucco` | 14 | soft trowel noise |
+| `tile` | 15 | clay barrel-tile rows on sloped roofs (rows follow height, ridges follow the eave) |
+| `shingle` | 16 | staggered asphalt shingles |
+| `concrete` | 17 | 1.6 m slab joints (sidewalks, plazas, walls) |
+| `grass` | 18 | multi-scale green variation with dry patches |
+| `dirt` / `sand` | 19 | grain and pebbles |
+| `water` | 24 | animated ripples reflecting the sky, sun glitter |
+| `metal` | 25 | corrugated sheet (roofs, sheds) |
+| `wood` | 26 | vertical planks (fences, decks) |
+| `rock` | 27 | strata + noise (outcrops, cliffs) |
+| `foliage` | 28 | leafy clumps (tree canopies, hedges) |
+| `lot` | 29 | asphalt grain without lanes (parking lots) |
+
+Window codes (2, 10–12) only draw on vertical faces; they measure storeys from world y, so put
+them on walls standing near the ground they sit on. Colours still come from vertex colours: a
+`brick` wall is your brick colour plus mortar lines.
+
+**Helpers.**
+
+| Field | What it is |
+|---|---|
+| `kit.mat(name, color, opts)` | `kit.toon` with a surface code: `kit.mat('tile', '#b5583a')`. |
+| `kit.FX` | The table above (name → code). |
+| `kit.tier` | `'low' \| 'mid' \| 'high'` graphics tier of this device (separate from `kit.quality`). |
+| `kit.lamp(x, y, z)` | Registers a light at a lamp head / porch light: at night the 8 nearest light an amber pool (~12 m) and the nearest ~20 get a halo. Engine-drawn `lamp` solids register themselves. |
+| `kit.parkedCars([{ x, z, yaw, y?, color?, shape? }])` | Parked cars, instanced per chunk (one draw call per silhouette per chunk). `shape`: `sedan`, `suv`, `pickup`, `van`. Drawing only — add solids for collision, or use solids of kind `car` (below). |
+| `kit.shadow(x, z, w, d, rot, h)` | A baked soft shadow + AO for a box you draw that isn't a solid (awnings, kiosks). Solids get theirs automatically. |
+| `kit.blobShadow(x, z, r, h)` | A round soft shadow (canopies, umbrellas) for things you draw. |
+| `kit.prop(b, { kind: 'tree', style: 'pine', x, z, h, color }, y0)` | Draw an engine prop (the v2 trees with scale / colour jitter, cobra-head lamps…) into your builder, e.g. for decorative vegetation that isn't a solid. |
+| `kit.sun` | Unit vector towards the sun (the moon at night). |
+
+**Engine-drawn extras.**
+
+- `solids[i].kind: 'car'` (without `drawn`): drawn as a parked car (instanced), collides like a
+  barrier box. `style` = shape, `color` = paint, `rot` as for any solid (the car's length runs
+  along local z, ~4.5 × 2 m).
+- `roads[i].sidewalk` / `map.sidewalk` (metres): for `street` / `arterial` roads the engine
+  draws a concrete sidewalk of that width behind the curb (and the engine already drives it as a
+  lot). Leave it 0 where you draw your own.
+- Crosswalks + stop bars are drawn where a street or arterial meets another street-or-bigger road;
+  curbs now have a face and a darker gutter strip; manholes and bridge expansion joints appear.
+- `sky.clouds` (0..1, default 0.5) sets cloud cover; `sky.sunColor` tints sunlight, glints and the
+  haze towards the sun. Fog is now height-aware (high ground stays crisper) and warms towards the
+  sun, so `sky.fog` can be a little bluer/cleaner than before.
+- Night (dark mode) is a lighting rig: keep darkening your colours, but let lit windows, lamps
+  (`kit.lamp`) and glows do the work; per-pixel siren light no longer washes whole roads.
+
+**Budgets with v2.** The engine's extras cost: per visible chunk +1 call (decals) and +1 per
+parked-car silhouette; cars/traffic/lights/fx ~15–20 calls in a chase; the shadow pass ~6–10
+calls of car geometry. Keep a map's own content at ≤ ~45 calls and ≤ ~150k triangles in view.
+
 ### Bundling
 
 The artifact bundler recognises `export` only at the **start of a line**: one export per line,

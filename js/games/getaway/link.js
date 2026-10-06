@@ -3,8 +3,8 @@
 // namespaced by BOTH session ids, so a partner that re-mounts gets a fresh net.js (fresh clock
 // sync, fresh reliable sequence) instead of waiting forever for old sequence numbers.
 // Adds: an allocation-free ring buffer of the partner's car and a dead-reckoned prediction
-// (interpolate at now − delay, then project forward by the delay with velocity and yaw rate),
-// which is what collisions are resolved against and what is drawn.
+// (interpolate at now − delay, then project forward by the delay along the arc it is turning on).
+// Collisions use this prediction; the drawn car is the prediction plus a decaying error offset.
 import { createNet } from '../net.js';
 
 /** Streamed at 20/s. Every field is a number. */
@@ -164,7 +164,15 @@ export function createLink(api, { delay = 100, onLink = () => {}, onUnlink = () 
       const ex = rb.sample(now - net.delay, out);
       if (ex < 0) return false;
       const ahead = Math.min(0.32, (net.delay + ex) / 1000);
-      out.x += out.vx * ahead; out.z += out.vz * ahead; out.yaw += out.r * ahead;
+      // dead-reckon along the arc it is turning on (velocity turns with the yaw rate)
+      const r = Math.max(-2.5, Math.min(2.5, out.r || 0));
+      let vx = out.vx; let vz = out.vz; const h = ahead / 4;
+      for (let k = 0; k < 4; k++) {
+        const a = r * h * 0.5; const mx = vx - vz * a; const mz = vz + vx * a; // midpoint velocity
+        out.x += mx * h; out.z += mz * h;
+        const c = Math.cos(r * h); const sn = Math.sin(r * h); const nx = vx * c - vz * sn; vz = vz * c + vx * sn; vx = nx;
+      }
+      out.vx = vx; out.vz = vz; out.yaw += r * ahead;
       return true;
     },
     pending() { return net ? net.pendingReliable() : 0; },

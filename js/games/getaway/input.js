@@ -121,7 +121,13 @@ export function createTouch({ surface, root, pad, onAct, enabled, steerEl, stats
       if (!still) { pad.touchOn = 0; pad.touchSteer = 0; if (steerEl) steerEl.classList.remove('on'); }
     } else { counts[p.key] = Math.max(0, counts[p.key] - 1); if (!counts[p.key]) p.el.classList.remove('press'); apply(); }
   }
-  const tPrevent = (e) => { if (e.cancelable) e.preventDefault(); };
+  // Only cancel touches on the driving surface and the pedals: cancelling a touchstart on iOS
+  // suppresses the click, which would make every lobby/menu button dead on a phone.
+  const tPrevent = (e) => {
+    const t = e.target;
+    const drive = t === surface || surface.contains(t) || (t.closest && t.closest('[data-pad],[data-tap]'));
+    if (drive && e.cancelable) e.preventDefault();
+  };
   root.addEventListener('pointerdown', down, { passive: false });
   window.addEventListener('pointermove', move, { passive: false });
   window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);

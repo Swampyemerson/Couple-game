@@ -3,14 +3,14 @@
 // so a car's heading is (sin yaw, −cos yaw) and its right is (cos yaw, sin yaw).
 
 export const DT = 1 / 120;            // fixed simulation step
-export const MAX_STEPS = 24;          // per frame (a 200 ms hitch catches up, a longer one is dropped)
+export const MAX_STEPS = 14;          // per frame (a ~120 ms hitch catches up, a longer one is dropped)
 export const G = 9.81;
 
 /** Car handling. The runner and the cop share the model; the cop is a touch faster in a straight
  *  line but heavier on its feet, the runner turns in sharper. */
 export const CAR = {
   len: 4.6, wid: 2.0, base: 2.75,     // body length, width, wheelbase
-  circR: 1.0, circZ: 1.55,            // collision: three circles at local z = +circZ, 0, −circZ
+  hl: 2.3, hw: 0.98,                  // collision box half length / half width (the body: bumpers ±2.3 m)
   mass: 1, inertia: 2.1,              // per unit mass: I/m (m²) for a 4.6 × 2 m box
   runner: { vTop: 47, accel: 9.5, grip: 20, steer: 0.62, brake: 15, nitroA: 4.5, nitroTop: 1.15, yawK: 11 },
   cop: { vTop: 48, accel: 9.6, grip: 19, steer: 0.58, brake: 15.5, nitroA: 4, nitroTop: 1.1, yawK: 10 },
@@ -18,6 +18,10 @@ export const CAR = {
   drag: 0.00042, roll: 0.012,          // aero (× v²) and rolling (× v) decel
   coast: 0.6,                         // engine braking (m/s²) with no pedal
   handGrip: 0.34,                     // rear lateral grip multiplier with the handbrake
+  handYaw: 2.3,                       // the handbrake lets yaw rate exceed the grip cap this much
+  driftGrip: 0.72,                    // lateral grip while power-sliding (slip > 3.4 m/s, gas held)
+  weightTurn: 0.12,                   // weight transfer: full braking adds 12% turn-in, power takes some away
+  suspK: 100, suspD: 9,               // body spring (1/s²) and damper (1/s): pitch, roll, heave
   handDecel: 5.5,
   steerSpeed: 18,                     // steering lock falls off as 1 / (1 + v / steerSpeed)
   steerRate: 5.5,                     // keyboard steering slew (full lock per s)
@@ -39,10 +43,17 @@ export const SURF_IDS = ['road', 'lot', 'grass', 'dirt', 'sand'];
 
 export const DAMAGE = {
   wallMin: 6, wallK: 1.15,            // wall: (|vn| − wallMin) × wallK
+  wallFx: 3,                          // closing speed for a wall 'hit' event (below: a 'scrape')
   ramMin: 4, ramK: 1.5,               // car-car ram, victim side
-  pit: 24,                            // a proper PIT
-  pitMinSpeed: 7, pitMinRel: 1.4,     // runner speed, lateral push speed
+  pit: 24,                            // a full PIT (scaled 0.55–1.25 by how hard the push was)
+  pitMinSpeed: 7,                     // the runner must be moving at least this fast
+  pitCopSpeed: 12,                    // the cop's speed along the runner's heading
+  pitRearZ: -0.5,                     // contact behind this (m from the centre: the rear ~40%)
+  pitAngle0: 0.35, pitAngle1: 0.7,    // contact normal angle from the car's axis: below a ram, above a PIT (blend)
+  pitPush: 3.2, nudgePush: 1.8,       // sideways push (m/s) for a PIT / a nudge (small twitch, no slow-mo)
+  pitSlowMo: 6,                       // only a PIT pushed at least this hard gets the slow-motion replay
   pitMaxAngle: 1.0,                   // rad between headings (≈ 57°)
+  flimsy: 3,                          // mailboxes, hydrants, bollards, signs give way above this (m/s)
   copMinHp: 15,                       // the cop can't be disabled; low hp = slower
   smoke: 55, fire: 25,                // runner hp thresholds for smoke / fire
   breakable: 9,                       // speed that knocks a pole / tree / bollard over
@@ -78,7 +89,7 @@ export const CAM = {
 export const TRAFFIC = {
   speed: { highway: 25, arterial: 15.5, street: 11, alley: 7, dirt: 9, ramp: 18 },
   gap: { light: 150, normal: 78 },     // metres of lane per car
-  max: 64,                             // instances drawn
+  max: 112,                            // instances drawn (nearest first: every car within ~150 m)
   near: 340,                           // only cars within this of a viewer are placed
   knockT: 12,
 };
