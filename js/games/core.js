@@ -1096,13 +1096,15 @@ async function openLive(gameId, mode) {
     mountGame();
   }
 
-  function setWaiting(on) {
+  function setWaiting(on, dropped = false) {
     const w = $('.gm-wait');
     if (on) {
+      const pn = esc(nameOf(other(me())));
       w.innerHTML = `<div class="gm-wait-card"><div class="gm-wait-pulse" aria-hidden="true"></div>
-        <p><b>Waiting for ${esc(nameOf(other(me())))}</b></p>
-        <p class="gm-wait-sub">We sent an invite. This starts as soon as they open it.</p>
-        <button class="gm-btn gm-btn-ghost" data-g="invite-again">Send the invite again</button></div>`;
+        <p><b>${dropped ? `${pn} dropped out` : `Waiting for ${pn}`}</b></p>
+        <p class="gm-wait-sub">${dropped ? 'The game picks up when they’re back. Their connection may have blinked.' : 'We sent an invite. This starts as soon as they open it.'}</p>
+        <button class="gm-btn gm-btn-ghost" data-g="invite-again">${dropped ? 'Invite them back' : 'Send the invite again'}</button>
+        <button class="gm-btn gm-btn-ghost gs-close" data-g="close">Leave</button></div>`;
       w.hidden = false;
     } else w.hidden = true;
   }
@@ -1142,7 +1144,7 @@ async function openLive(gameId, mode) {
       hereFns.forEach((fn) => { try { fn(!!p); } catch (e) { console.error(e); } });
       if (p) setPresence(def.id, null); // they're here: withdraw the invite
       if (p && !inst) { setWaiting(false); mountGame(); }
-      else if (!p && inst && !finished) { setWaiting(true); }
+      else if (!p && inst && !finished) { if (!def.ownsPauseUI) setWaiting(true, true); } // the game may show its own pause card
       else if (p) setWaiting(false);
       for (const w of ['a', 'b']) $(`.gm-p-${w}`).classList.toggle('is-away', w === other(me()) && !p);
       paintStatus();

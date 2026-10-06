@@ -166,7 +166,9 @@ body.gm-pinned { position: fixed; left: 0; right: 0; width: 100%; }
 .gm-error { margin: 32px auto; padding: 14px 16px; max-width: 320px; text-align: center; font-weight: 700; color: var(--g-bad); border: var(--g-stroke) dashed currentColor; border-radius: var(--g-radius); }
 
 /* immersive (big 3D games): the stage is the whole screen, the chrome turns into two stickers */
-.gm.is-immersive { position: absolute; inset: 0; max-width: none; min-height: 0; margin: 0; padding: 0; }
+/* --gm-corner-safe: how far down a game's HUD must start to clear the back / menu stickers (the
+   stickers sit in the top corners, --gm-corner-w wide). */
+.gm.is-immersive { --gm-corner-safe: calc(64px + env(safe-area-inset-top, 0px)); --gm-corner-w: calc(64px + env(safe-area-inset-left, 0px)); position: absolute; inset: 0; max-width: none; min-height: 0; margin: 0; padding: 0; }
 .gm.is-immersive .gm-versus, .gm.is-immersive .gm-status { display: none; }
 .gm.is-immersive .gm-top {
   position: absolute; z-index: 10; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: flex-start;
