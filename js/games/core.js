@@ -540,7 +540,7 @@ function chipHTML(w) {
 }
 
 function chromeHTML(def, { live = false } = {}) {
-  return `<div class="gm ${def.team ? 'is-team' : ''}" data-game="${esc(def.id)}" data-kind="${def.kind}">
+  return `<div class="gm${def.team ? ' is-team' : ''}${def.immersive ? ' is-immersive' : ''}" data-game="${esc(def.id)}" data-kind="${def.kind}">
     <header class="gm-top">
       <button class="gm-icon" data-g="close" aria-label="Back to games">${ICON.back}</button>
       <h1 class="gm-title">${esc(def.title)}</h1>
@@ -1007,16 +1007,17 @@ function cardHTML(def) {
   const rec = gameRecord(def.id);
   const recLine = def.team ? (rec.best != null ? `Best ${rec.best}` : '') : rec.plays ? `${rec.a}–${rec.b}` : '';
   const live = def.kind === 'live';
-  return `<button class="gh-card" data-g="sheet" data-game="${esc(def.id)}" style="--card-hue:${def.hue ?? 0}">
-    <span class="gh-card-cover" aria-hidden="true">${def.cover || ''}</span>
+  const meta = [live ? 'Live' : 'Turns', def.team ? 'Co-op' : 'Versus', def.minutes ? `${def.minutes} min` : ''].filter(Boolean);
+  const away = !platformsOf(def).includes(thisDevice());
+  return `<button class="gh-card${live ? ' is-live' : ''}${def.team ? ' is-team' : ''}${away ? ' is-away' : ''}" data-g="sheet" data-game="${esc(def.id)}" style="--card-hue:${def.hue ?? 0}">
+    <span class="gh-card-cover" aria-hidden="true">${def.cover || ''}${live ? '<span class="gh-sticker">Live</span>' : ''}</span>
     <span class="gh-card-body">
       <span class="gh-card-title">${esc(def.title)}</span>
       <span class="gh-card-blurb">${esc(def.blurb || '')}</span>
       <span class="gh-card-meta">
-        <span class="gh-tag">${live ? 'Live' : 'Take turns'}</span>
-        <span class="gh-tag">${def.team ? 'Together' : 'Versus'}</span>
-        ${def.minutes ? `<span class="gh-tag">${def.minutes} min</span>` : ''}
-        ${recLine ? `<span class="gh-rec">${recLine}</span>` : ''}
+        <span class="gh-tags">${meta.map((t) => `<span class="gh-tag">${esc(t)}</span>`).join('')}</span>
+        ${devicesHTML(def)}
+        ${recLine ? `<span class="gh-rec" title="${def.team ? 'Best team score' : `${esc(nameOf('a'))}–${esc(nameOf('b'))}`}">${recLine}</span>` : ''}
       </span>
     </span>
   </button>`;
@@ -1028,8 +1029,21 @@ function filterGames(f) {
     if (f === 'versus') return !g.team;
     if (f === 'coop') return !!g.team;
     if (f === 'live') return g.kind === 'live';
+    if (f === 'phone' || f === 'computer') return platformsOf(g).includes(f);
     return g.tags.includes(f);
   });
+}
+
+function shelvesHTML(games) {
+  const by = {};
+  for (const g of games) (by[SHELF_OF[g.id] || 'more'] = by[SHELF_OF[g.id] || 'more'] || []).push(g);
+  return SHELVES.filter(([k]) => by[k]).map(([k, title, note]) => {
+    const list = by[k].sort((x, y) => (SHELF_RANK[x.id] ?? 1e9) - (SHELF_RANK[y.id] ?? 1e9));
+    return `<section class="gh-shelf gh-shelf-${k}">
+      <div class="gh-shelf-head"><h2 class="gh-shelf-title">${esc(title)}</h2>${note ? `<p class="gh-shelf-note">${esc(note)}</p>` : ''}</div>
+      <div class="gh-grid${list.length % 2 ? ' is-odd' : ''}">${list.map(cardHTML).join('')}</div>
+    </section>`;
+  }).join('');
 }
 
 /** The Games tab body (rendered inside the app's #app). */
