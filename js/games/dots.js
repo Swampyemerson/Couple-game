@@ -134,7 +134,7 @@ registerGame({
 .g-dots .gd-hit { fill: transparent; pointer-events: all; cursor: pointer; outline: none; }
 .g-dots .gd-hit.is-drawn { cursor: default; }
 .g-dots.is-locked .gd-hit { pointer-events: none; cursor: default; }
-.g-dots .gd-plate { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 16px 8px 10px; border-radius: 999px; background: var(--g-card); border: 2px solid var(--g-ink); box-shadow: var(--g-shadow); font: 800 0.98rem/1.2 var(--g-font-display); color: var(--g-ink); max-width: 100%; }
+.g-dots .gd-plate { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 16px 8px 10px; border-radius: 999px; background: var(--g-card); border: 2px solid var(--g-ink); box-shadow: var(--g-shadow); font: 800 0.98rem/1.2 var(--g-font-display); color: var(--g-ink); max-width: 100%; text-wrap: balance; }
 .g-dots .gd-plate.wait { color: var(--g-muted); border-color: var(--g-line); }
 .g-dots .gd-plate.pop { animation: gd-plate 280ms cubic-bezier(0.3, 1.6, 0.5, 1); }
 .g-dots .gd-plate.extra { background: color-mix(in srgb, var(--g-hl) 45%, var(--g-card)); }
@@ -185,6 +185,7 @@ registerGame({
     const timers = new Set();
     const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); fn(); }, ms); timers.add(t); };
     const reduced = () => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; } };
+    const fine = () => { try { return matchMedia('(hover: hover) and (pointer: fine)').matches; } catch { return false; } };
 
     function renderBoard(c, fresh) {
       const s = c.state;
@@ -266,7 +267,8 @@ registerGame({
         const n = c.state.got;
         text = online ? `${n > 1 ? 'Two boxes' : 'Box'}! Go again` : `${n > 1 ? 'Two boxes' : 'Box'} for ${api.name(who)}! Go again`;
       } else {
-        text = online ? 'Your turn · tap between dots' : `${api.name(who)}, tap between dots`;
+        const verb = fine() ? 'click' : 'tap';
+        text = online ? `Your turn · ${verb} between dots` : `${api.name(who)}, ${verb} between dots`;
       }
       $('.gd-chip').className = `gd-chip ${who ? 'gd-' + who : 'none'}`;
       plate.classList.toggle('wait', wait);

@@ -357,7 +357,9 @@ body:has(.gh) { background: var(--g-bg); }
 .gh-row-go { display: grid; place-items: center; border-left: var(--g-stroke) solid var(--g-ink); background: var(--g-bg); color: var(--g-ink); }
 .gh-row.t-a .gh-row-go { background: var(--p-a); color: var(--g-on-ink); }
 .gh-row.t-b .gh-row-go { background: var(--p-b); color: var(--g-on-ink); }
-.gh-row:not(.is-mine):not(.is-local) .gh-row-go { background: var(--g-card); color: var(--g-muted); background-image: linear-gradient(var(--c, var(--p-b)) 0 0); background-size: 100% 6px; background-repeat: no-repeat; background-position: bottom; }
+.gh-row.is-done .gh-row-note { padding: 2px 6px; margin-left: -2px; background: var(--g-ink); color: var(--g-bg); border-radius: 3px; }
+.gh-sec-done .gh-h-n { background: var(--p-b); color: var(--g-on-ink); box-shadow: inset 0 0 0 var(--g-stroke) var(--g-ink); }
+.gh-row:not(.is-mine):not(.is-local):not(.is-done) .gh-row-go { background: var(--g-card); color: var(--g-muted); background-image: linear-gradient(var(--c, var(--p-b)) 0 0); background-size: 100% 6px; background-repeat: no-repeat; background-position: bottom; }
 .gh-row.t-a:not(.is-mine):not(.is-local) .gh-row-go { --c: var(--p-a); }
 
 /* filters */

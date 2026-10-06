@@ -103,7 +103,7 @@ export function createAvatar(THREE, world, P, who) {
   if (sharedGeo.key !== key) { sharedGeo = { a: null, b: null, key }; }
   if (!sharedGeo[who]) sharedGeo[who] = buildGeo(THREE, world.T, P, who);
   const geo = sharedGeo[who];
-  const mesh = new THREE.SkinnedMesh(geo, world.avatarMat);
+  const mesh = new THREE.SkinnedMesh(geo, world.avatarMats ? world.avatarMats[who] : world.avatarMat);
   const bones = [];
   for (const name of ORDER) {
     const j = JOINTS[name];
@@ -321,6 +321,8 @@ export function createAvatar(THREE, world, P, who) {
   return {
     mesh, who,
     update,
+    /** Things to draw once behind the loading screen so their shaders are compiled. */
+    warmList: () => [mesh, bubble],
     lunge(dir) { lungeT = 0.35; lungeDir = dir; },
     get downPose() { return downPose; },
     headPos(out) { out.set(mesh.position.x, mesh.position.y + 2.1 * mesh.scale.y, mesh.position.z); return out; },

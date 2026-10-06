@@ -7,6 +7,19 @@ import { CHUNK, LANE_W, CAR, ROOF, LOW_H, HIGH_B, HIGH_T } from './tune.js';
 import { O_LOW, O_HIGH, O_TRAIN, O_RAMP, O_MTRAIN, O_BLOCK, I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX, I_REVIVE, mtrainFront } from './track.js';
 import { GeoBuf, makeToon, makeUniforms, makeTemplates, blobTexture, mix, FX_PLAIN, FX_GLOW, FX_SKY } from './gfx.js';
 
+// Sky dome: two theme inks printed as a halftone gradient (dots grow from the horizon up), so the
+// sky reads as Riso print rather than a CSS gradient. Its uniforms carry the colour script.
+const SKY_VERT = `varying float vE;
+void main() { vE = normalize( position ).y; gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 ); }`;
+const SKY_FRAG = `uniform vec3 uHor; uniform vec3 uTop; uniform float uDot;
+varying float vE;
+void main() {
+  float t = clamp( ( vE - 0.03 ) * 2.6, 0.0, 1.0 );
+  vec2 g = fract( gl_FragCoord.xy / ( uDot * 1.5 ) ) - 0.5;
+  float ink = step( dot( g, g ), t * t * 0.52 );
+  gl_FragColor = vec4( mix( uHor, uTop, ink ), 1.0 );
+}`;
+
 const OL = 0.05;
 const CHUNK_V = 18000;
 const POOL = 9;
@@ -25,12 +38,18 @@ export function createWorld(THREE, P) {
   const mat = makeToon(THREE, null, U);
   const matInst = makeToon(THREE, null, U);
   const matInstC = makeToon(THREE, null, U);
-  const avatarMat = makeToon(THREE, null, U, { skinning: true });
-  const disposables = [mat, matInst, matInstC, avatarMat];
+  // One skinned material per runner (same program): each has its own fade, so the partner can
+  // dissolve through a halftone screen when they run between your camera and you.
+  const fade = { a: { value: 0 }, b: { value: 0 } };
+  const avatarMats = { a: makeToon(THREE, null, U, { skinning: true, extra: { uFade: fade.a } }), b: makeToon(THREE, null, U, { skinning: true, extra: { uFade: fade.b } }) };
+  const avatarMat = avatarMats.a;
+  const disposables = [mat, matInst, matInstC, avatarMats.a, avatarMats.b];
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color().fromArray(P.bg);
-  scene.fog = new THREE.Fog(new THREE.Color().fromArray(P.fog), 55, 165);
+  // Fog starts far enough out that obstacles are crisp ~2.5 s ahead at top speed, and swallows
+  // chunk pop-in (chunks are built 175 m ahead) completely.
+  scene.fog = new THREE.Fog(new THREE.Color().fromArray(P.skyCalm[0]), 62, 170);
 
   // ── chunk meshes ──
   const pool = [];
@@ -183,20 +202,45 @@ export function createWorld(THREE, P) {
   disposables.push(blobTex, shadowMat, shadowGeo);
 
   // street far below and the skyline ring (both follow the camera)
+  // The far layers draw after the near world (renderOrder), so early depth testing skips every
+  // pixel a building or train already covers: no overdraw from the street, skyline or sky.
   const streetGeo = freezeWith((b) => { b.boxMM(-450, -8.6, -450, 450, -8, 450, P.street, FX_PLAIN, 0, ink, T); });
   const street = new THREE.Mesh(streetGeo, mat);
   street.frustumCulled = false;
+  street.renderOrder = 3;
   scene.add(street);
-  const skyBuf = new GeoBuf(THREE, 9000, { dynamic: false });
+  const skyBuf = new GeoBuf(THREE, 26000, { dynamic: false });
   buildSkyline(skyBuf, T, P);
   const skyGeo = skyBuf.freeze(THREE);
   disposables.push(skyGeo);
   skyBuf.dispose();
   const skyline = new THREE.Mesh(skyGeo, mat);
   skyline.frustumCulled = false;
-  skyline.renderOrder = -1;
+  skyline.renderOrder = 4;
   scene.add(skyline);
+  const skyU = { uHor: { value: new THREE.Color().fromArray(P.skyCalm[0]) }, uTop: { value: new THREE.Color().fromArray(P.skyCalm[1]) }, uDot: U.uDot };
+  const domeGeo = new THREE.SphereGeometry(400, 24, 10, 0, Math.PI * 2, 0, Math.PI * 0.56);
+  const domeMat = new THREE.ShaderMaterial({ uniforms: skyU, vertexShader: SKY_VERT, fragmentShader: SKY_FRAG, side: THREE.BackSide, depthWrite: false, fog: false });
+  const dome = new THREE.Mesh(domeGeo, domeMat);
+  dome.frustumCulled = false;
+  dome.renderOrder = 5;
+  scene.add(dome);
+  disposables.push(domeGeo, domeMat);
   tmpBuf.dispose();
+  const calm0 = new THREE.Color().fromArray(P.skyCalm[0]); const calm1 = new THREE.Color().fromArray(P.skyCalm[1]);
+  const fast0 = new THREE.Color().fromArray(P.skyFast[0]); const fast1 = new THREE.Color().fromArray(P.skyFast[1]);
+  let moodK = -1;
+  /** Colour script: 0 = strolling, 1 = flat out (sky and fog warm up together). */
+  function setMood(k) {
+    const q = Math.round(Math.max(0, Math.min(1, k)) * 64) / 64;
+    if (q === moodK) return;
+    moodK = q;
+    const e = q * q * (3 - 2 * q);
+    skyU.uHor.value.copy(calm0).lerp(fast0, e);
+    skyU.uTop.value.copy(calm1).lerp(fast1, e);
+    scene.fog.color.copy(skyU.uHor.value);
+  }
+  setMood(0);
 
   // ── chunks ──
   function chunkMesh(track, ci) {
@@ -226,7 +270,8 @@ export function createWorld(THREE, P) {
   function ensure(track, zs, budget = 9) {
     frame++;
     let built = 0;
-    for (const z of zs) {
+    for (let zi = 0; zi < zs.length; zi++) {
+      const z = zs[zi];
       const c0 = Math.floor((z - VIEW_BEHIND) / CHUNK);
       const c1 = Math.floor((z + VIEW_AHEAD) / CHUNK);
       for (let ci = Math.max(-1, c0); ci <= c1; ci++) {
@@ -292,7 +337,9 @@ export function createWorld(THREE, P) {
         const bob = Math.sin(v.time * 3 + it.z) * 0.12;
         writeM(m.instanceMatrix.array, ic[it.k]++, it.x, it.y + bob, -it.z, it.k === I_BOX ? 1 : 1.05, spin * 0.7 + it.z, it.k === I_BOX ? 0.6 : 0);
       }
-      for (const o of c.obs) {
+      const obs = c.obs;
+      for (let oi = 0; oi < obs.length; oi++) {
+        const o = obs[oi];
         if (o.z1 < z - VIEW_BEHIND || o.z0 > z + VIEW_AHEAD) continue;
         if (o.t === O_LOW || o.t === O_HIGH) {
           if (r && r.smashN && r.smashed.has(o.id)) continue;
@@ -306,15 +353,17 @@ export function createWorld(THREE, P) {
         }
       }
     }
-    if (v.fly) for (const f of v.fly) { if (nc < COIN_MAX && f.on) writeM(ca, nc++, f.x, f.y, -f.z, f.s, spin * 2, Math.PI / 2); }
+    if (v.fly) for (let fi = 0; fi < v.fly.length; fi++) { const f = v.fly[fi]; if (nc < COIN_MAX && f.on) writeM(ca, nc++, f.x, f.y, -f.z, f.s, spin * 2, Math.PI / 2); }
     if (r) {
-      for (const tk of r.tokens) {
+      for (let ti = 0; ti < r.tokens.length; ti++) {
+        const tk = r.tokens[ti];
         if (!tk.alive || ic[I_REVIVE] >= ITEM_MAX) continue;
         const bob = Math.sin(v.time * 5) * 0.15;
         writeM(items[I_REVIVE].instanceMatrix.array, ic[I_REVIVE]++, tk.x, tk.y + bob, -tk.z, 1 + Math.sin(v.time * 9) * 0.08, spin * 1.4);
       }
       let nb = 0;
-      for (const o of r.extra) {
+      for (let ei = 0; ei < r.extra.length; ei++) {
+        const o = r.extra[ei];
         if (o.t !== O_BLOCK || nb >= 8) continue;
         if (o.z1 < z - VIEW_BEHIND || o.z0 > z + VIEW_AHEAD) continue;
         if (o.hit) continue;
@@ -351,7 +400,8 @@ export function createWorld(THREE, P) {
   function follow(cam) {
     street.position.set(cam.position.x, 0, cam.position.z);
     skyline.position.set(cam.position.x, 0, cam.position.z);
-    street.updateMatrixWorld(); skyline.updateMatrixWorld();
+    dome.position.set(cam.position.x, 0, cam.position.z);
+    street.updateMatrixWorld(); skyline.updateMatrixWorld(); dome.updateMatrixWorld();
   }
 
   /** Track positions (metres) of the start / finish gates. */
@@ -378,12 +428,12 @@ export function createWorld(THREE, P) {
   }
 
   return {
-    scene, mat, matInst, matInstC, avatarMat, U, T, P,
-    ensure, syncView, setShadows, follow, setPalette, setGates, reset,
+    scene, mat, matInst, matInstC, avatarMat, avatarMats, fade, U, T, P,
+    ensure, syncView, setShadows, follow, setPalette, setGates, reset, setMood,
     chunkCount: () => byChunk.size,
     stats,
     /** Everything that can be drawn, for shader warm-up. */
-    warmList: () => [coins, lows, highs, blocks, gates, shadows, street, skyline, ...Object.values(items), mtrains[0], pool[0].mesh, ...banners],
+    warmList: () => [coins, lows, highs, blocks, gates, shadows, street, skyline, dome, ...Object.values(items), mtrains[0], pool[0].mesh, ...banners],
     dispose() {
       for (const d of disposables) { try { d.dispose(); } catch { /* ignore */ } }
       for (const m of [coins, lows, highs, blocks, gates, ...Object.values(items)]) { try { m.dispose(); } catch { /* ignore */ } }
@@ -456,10 +506,24 @@ function trainCars(b, x, d, n, liv, oncoming, T, P) {
       }
     }
     if (k > 0) bx(b, T, x - 0.35, 0.7, a - 0.5, x + 0.35, 1.3, a + 0.1, under, FX_PLAIN, 0, ink);
+    bx(b, T, x - 0.52, ROOF - 0.02, a + 2.4, x + 0.52, ROOF + 0.24, a + 4.8, mix(roof, P.ink, 0.14), FX_PLAIN, 0.025, ink); // roof unit
     qu(b, T, x, 0.004, (a + e) / 2, 2.7, e - a + 0.5, [0.1, 0.09, 0.12]);
   }
-  // cab face (toward the runner, at the low-d end)
-  qz(b, T, x, 1.88, d - 0.01, 1.7, 0.85, P.dark ? mix(P.glass, P.lit, 0.3) : P.glass, FX_PLAIN);
+  // cab face (toward the runner, at the low-d end): two windscreen "eyes" with glints and a
+  // destination board. Parked trains doze (half-lidded); the oncoming one glares (ink brows).
+  const glass = P.dark ? mix(P.glass, P.lit, 0.3) : P.glass;
+  for (let sxi = -1; sxi <= 1; sxi += 2) {
+    const ex = x + sxi * 0.44;
+    qz(b, T, ex, 1.8, d - 0.01, 0.72, 0.78, glass, FX_PLAIN);
+    qz(b, T, ex - 0.17, oncoming ? 1.98 : 1.86, d - 0.025, 0.15, 0.12, P.white, FX_GLOW);
+    if (oncoming) b.add(sxi < 0 ? T.stripeL : T.stripe, ex + sxi * 0.02, 2.3, -(d - 0.03), 0.86, 0.2, 1, 0, ink, FX_PLAIN, 0, ink);
+    else {
+      qz(b, T, ex, 2.07, d - 0.02, 0.74, 0.26, door, FX_PLAIN);
+      qz(b, T, ex, 1.93, d - 0.03, 0.74, 0.05, ink, FX_PLAIN);
+    }
+  }
+  bx(b, T, x - 0.62, 2.43, d - 0.05, x + 0.62, 2.66, d + 0.05, oncoming ? P.bad : P.hl, FX_GLOW, 0.02, ink);
+  for (let i = 0; i < 4; i++) qz(b, T, x - 0.39 + i * 0.26, 2.545, d - 0.06, 0.16, 0.08, P.ink, FX_PLAIN);
   bx(b, T, x - 0.9, 0.62, d - 0.06, x - 0.55, 0.88, d + 0.1, oncoming ? P.lit : P.white, FX_GLOW, 0.025, ink);
   bx(b, T, x + 0.55, 0.62, d - 0.06, x + 0.9, 0.88, d + 0.1, oncoming ? P.lit : P.white, FX_GLOW, 0.025, ink);
   bx(b, T, x - 1.0, 0.3, d - 0.1, x + 1.0, 0.5, d + 0.2, mix(liv.stripe, P.ink, 0.2), FX_PLAIN, 0.03, ink);
@@ -538,6 +602,24 @@ function buildChunk(b, c, T, P) {
   for (const side of [-1, 1]) {
     openSpans(c, side, d0, d1, spans);
     for (const [a, e] of spans) bx(b, T, side * SIDE_X - 0.16, -0.12, a, side * SIDE_X + 0.16, 0.8, e, P.parapet, FX_PLAIN, 0.04, ink);
+  }
+  // signal masts every 50 m, alternating sides, one lamp lit (red / yellow / green)
+  for (let d = Math.ceil((d0 - 20) / 50) * 50 + 20; d < d1; d += 50) {
+    if (d < d0 + 1) continue;
+    const side = Math.floor(d / 50) % 2 ? 1 : -1;
+    let onGap = false;
+    for (let gi = 0; gi < c.gaps.length; gi++) { const g = c.gaps[gi]; if ((g.mask & (1 << (side + 1))) && d > g.z0 - 1 && d < g.z1 + 1) onGap = true; }
+    if (onGap) continue;
+    const sx = side * 3.98;
+    const head = P.shadeInk;
+    bx(b, T, sx - 0.06, -0.12, d - 0.06, sx + 0.06, 2.3, d + 0.06, P.pole, FX_PLAIN, 0.025, ink);
+    bx(b, T, sx - 0.21, 2.2, d - 0.15, sx + 0.21, 3.18, d + 0.15, head, FX_PLAIN, 0.035, ink);
+    const on = Math.floor(r() * 3);
+    const lamps = [P.bad, P.hl, P.good];
+    for (let k = 0; k < 3; k++) {
+      qz(b, T, sx, 2.94 - k * 0.27, d - 0.16, 0.2, 0.2, k === on ? mix(lamps[k], P.white, 0.2) : mix(lamps[k], head, 0.7), k === on ? FX_GLOW : FX_PLAIN);
+      qz(b, T, sx, 3.06 - k * 0.27, d - 0.2, 0.3, 0.05, head, FX_PLAIN); // hood
+    }
   }
   // viaduct piers (seen through gaps and past the edge)
   for (let d = Math.ceil(d0 / 25) * 25; d < d1; d += 25) {
@@ -647,15 +729,99 @@ function buildChunk(b, c, T, P) {
 }
 
 function buildSkyline(b, T, P) {
+  // Two rings of flat, unlit silhouettes around the camera (they follow it, so they sit at
+  // infinity): a pale far ring and a darker, more detailed near ring. Shapes vary: setback towers,
+  // spires, domes, water towers, antennas and one needle tower; day has misregistered Riso clouds,
+  // night has stars, a moon and lit windows.
   const r = rng(424242);
   const ink = P.outline;
-  for (let i = 0; i < 70; i++) {
-    const a = (i / 70) * Math.PI * 2 + r() * 0.05;
-    const rad = 240 + r() * 40;
-    const w = 16 + r() * 26;
-    const h = 22 + r() * 70;
-    const col = P.skyline[Math.floor(r() * P.skyline.length)];
-    b.add(T.box, Math.sin(a) * rad, h / 2 - 8, -Math.cos(a) * rad, w, h, w, a, col, FX_SKY, 0, ink);
+  const ring = (n, rad0, rad1, h0, h1, cols, detail) => {
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + r() * 0.06;
+      const rad = rad0 + r() * (rad1 - rad0);
+      const w = 14 + r() * 22;
+      const h = h0 + r() * (h1 - h0);
+      const col = cols[Math.floor(r() * cols.length)];
+      const cx = Math.sin(a) * rad; const cz = -Math.cos(a) * rad;
+      const kind = r();
+      const y0 = -8;
+      const ry = -a; // local x along the ring, local z toward the camera
+      if (kind < 0.42) {
+        // setback tower: two or three tiers, maybe an antenna
+        b.add(T.box, cx, y0 + h / 2, cz, w, h, w * 0.8, ry, col, FX_SKY, 0, ink);
+        const h2 = h * (0.18 + r() * 0.2);
+        b.add(T.box, cx, y0 + h + h2 / 2, cz, w * 0.66, h2, w * 0.55, ry, col, FX_SKY, 0, ink);
+        if (r() < 0.5) { const h3 = h2 * 0.8; b.add(T.box, cx, y0 + h + h2 + h3 / 2, cz, w * 0.36, h3, w * 0.32, ry, col, FX_SKY, 0, ink); }
+        if (detail && r() < 0.6) b.add(T.box, cx, y0 + h + h2 + 9, cz, 0.7, 18, 0.7, ry, col, FX_SKY, 0, ink);
+      } else if (kind < 0.6) {
+        // spire
+        b.add(T.box, cx, y0 + h / 2, cz, w * 0.7, h, w * 0.7, ry, col, FX_SKY, 0, ink);
+        b.add(T.cone, cx, y0 + h + w * 0.5, cz, w * 0.7, w, w * 0.7, ry + 0.4, col, FX_SKY, 0, ink);
+      } else if (kind < 0.74) {
+        // domed hall
+        const hh = h * 0.45;
+        b.add(T.box, cx, y0 + hh / 2, cz, w * 1.3, hh, w, ry, col, FX_SKY, 0, ink);
+        b.add(T.ico, cx, y0 + hh, cz, w * 0.8, w * 0.62, w * 0.8, ry, col, FX_SKY, 0, ink);
+      } else {
+        // plain block with a water tower or a billboard frame on the roof
+        b.add(T.box, cx, y0 + h / 2, cz, w, h, w, ry, col, FX_SKY, 0, ink);
+        if (detail && r() < 0.6) {
+          b.add(T.cyl6, cx + w * 0.2, y0 + h + 4.2, cz, 4, 4, 4, 0, col, FX_SKY, 0, ink);
+          b.add(T.cone, cx + w * 0.2, y0 + h + 7.2, cz, 4.6, 2.2, 4.6, 0, col, FX_SKY, 0, ink);
+          b.add(T.box, cx + w * 0.2, y0 + h + 1.1, cz, 3, 2.2, 3, 0, col, FX_SKY, 0, ink);
+        }
+      }
+      if (P.dark && detail) {
+        // a few lit windows: tiny glowing squares on the side facing the track
+        const nx = Math.sin(a); const nz = -Math.cos(a);
+        const lit = mix(P.lit, P.bg, 0.25);
+        for (let k = 0; k < 5; k++) {
+          if (r() < 0.45) continue;
+          const u = (r() - 0.5) * w * 0.7; const v = y0 + 4 + r() * (h - 6);
+          b.add(T.box, cx - nx * (w * 0.42) + Math.cos(a) * u, v, cz - nz * (w * 0.42) + Math.sin(a) * u, 1.6, 1.3, 1.6, ry, lit, FX_SKY, 0, ink);
+        }
+      }
+    }
+  };
+  ring(64, 262, 296, 22, 70, P.skyline, false);
+  ring(40, 188, 222, 18, 52, P.skyNear, true);
+  // one needle tower, ahead and to the right of the start
+  {
+    const cx = 74; const cz = -228; const col = P.skyNear[1];
+    b.add(T.cyl6, cx, 30, cz, 3.2, 76, 3.2, 0, col, FX_SKY, 0, ink);
+    b.add(T.cone, cx, 2, cz, 16, 22, 16, 0, col, FX_SKY, 0, ink);
+    b.add(T.disc, cx, 70, cz, 14, 5, 14, 0, col, FX_SKY, 0, ink);
+    b.add(T.disc, cx, 74, cz, 9, 3, 9, 0, mix(col, P.hl, 0.35), FX_SKY, 0, ink);
+    b.add(T.box, cx, 88, cz, 0.8, 24, 0.8, 0, col, FX_SKY, 0, ink);
   }
-  b.add(T.discZ, -70, 92, -300, 46, 46, 2, 0, P.dark ? mix(P.card, P.white, 0.7) : mix(P.hl, P.white, 0.25), FX_SKY, 0, ink);
+  if (!P.dark) {
+    // sun: ink rim, yellow disc, a paler halo ring
+    b.add(T.discZ, -46, 68, -302, 58, 58, 1, 0, mix(P.hl, P.bg, 0.55), FX_SKY, 0, ink);
+    b.add(T.discZ, -46, 68, -301, 44, 44, 1, 0, mix(P.hl, P.ink, 0.25), FX_SKY, 0, ink);
+    b.add(T.discZ, -46, 68, -300, 41, 41, 1, 0, P.hl, FX_SKY, 0, ink);
+    // clouds: flat white puffs printed slightly off-register over a pink copy
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 9) * Math.PI * 2 + 0.3 + r() * 0.4;
+      const rad = 205 + r() * 30;
+      const cx = Math.sin(a) * rad; const cz = -Math.cos(a) * rad; const cy = 48 + r() * 34;
+      const s = 7 + r() * 6;
+      const puffs = [[0, 0, 1.6], [-1.3, -0.2, 1.1], [1.3, -0.25, 1.2], [0.6, 0.55, 1.0], [-0.6, 0.45, 0.9]];
+      for (const [layer, col, ox, oy] of [[0, mix(P.bg, P.b, 0.42), 1.1, -0.9], [1, P.white, 0, 0]]) {
+        for (const [px, py, ps] of puffs) {
+          const lx = (px * s + ox) * Math.cos(a); const lz = (px * s + ox) * Math.sin(a);
+          b.add(T.ico, cx + lx - Math.sin(a) * layer * 0.8, cy + py * s + oy, cz + lz + Math.cos(a) * layer * 0.8, ps * s, ps * s * 0.62, ps * s * 0.3, -a, col, FX_SKY, 0, ink);
+        }
+      }
+    }
+  } else {
+    // moon with craters, and stars
+    b.add(T.discZ, -52, 74, -302, 40, 40, 1, 0, mix(P.card, P.white, 0.75), FX_SKY, 0, ink);
+    for (const [ox, oy, rr] of [[-7, 5, 8], [8, -6, 6], [4, 10, 4], [-4, -10, 5]]) b.add(T.discZ, -52 + ox, 74 + oy, -301, rr, rr, 1, 0, mix(P.card, P.white, 0.45), FX_SKY, 0, ink);
+    for (let i = 0; i < 70; i++) {
+      const a = r() * Math.PI * 2; const el = 0.2 + r() * 0.75;
+      const rad = 330;
+      const s = 0.9 + r() * 1.6;
+      b.add(T.octa, Math.sin(a) * Math.cos(el) * rad, Math.sin(el) * rad * 0.8, -Math.cos(a) * Math.cos(el) * rad, s, s * 1.6, s, a, mix(P.white, P.hl, r() * 0.5), FX_SKY, 0, ink);
+    }
+  }
 }

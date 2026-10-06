@@ -13,12 +13,7 @@ export const CSS = `
 .g-rush .rr-gl canvas { display: block; width: 100% !important; height: 100% !important; outline: none; }
 .g-rush .rr-touch { position: absolute; inset: 0; z-index: 1; touch-action: none; }
 
-/* print finish: vignette + grain, and manga speed lines */
-.g-rush .rr-grain { position: absolute; inset: 0; z-index: 2; pointer-events: none;
-  background: radial-gradient(ellipse 120% 90% at 50% 45%, transparent 55%, color-mix(in srgb, var(--g-ink) 16%, transparent) 100%); }
-.g-rush .rr-speed { position: absolute; inset: -30%; z-index: 2; pointer-events: none; opacity: 0; will-change: opacity, transform;
-  background: repeating-conic-gradient(from 0deg at 50% 50%, transparent 0deg 5deg, color-mix(in srgb, var(--g-card) 75%, transparent) 5deg 5.5deg, transparent 5.5deg 11deg);
-  -webkit-mask-image: radial-gradient(ellipse 34% 30% at 50% 50%, transparent 55%, #000 100%); mask-image: radial-gradient(ellipse 34% 30% at 50% 50%, transparent 55%, #000 100%); }
+/* (the vignette and the manga speed lines are drawn in WebGL as thin geometry: no full-screen layers) */
 
 /* per-player HUD */
 .g-rush .rr-hud { position: absolute; top: 0; bottom: 0; z-index: 4; pointer-events: none; padding: max(var(--rr-pad), env(safe-area-inset-top, 0px)) max(var(--rr-pad), env(safe-area-inset-right, 0px)) max(var(--rr-pad), env(safe-area-inset-bottom, 0px)) max(var(--rr-pad), env(safe-area-inset-left, 0px)); }
@@ -32,6 +27,11 @@ export const CSS = `
 .g-rush.rr-split .rr-divider { position: absolute; z-index: 3; top: 0; bottom: 0; left: calc(50% - 2px); width: 4px; background: var(--g-ink); pointer-events: none; }
 .g-rush .rr-top { display: grid; grid-template-columns: 1fr auto 1fr; align-items: start; gap: 6px; }
 .g-rush .rr-left { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+/* coins + power-up rings share one fixed-height row, so nothing below jumps when a power-up starts */
+.g-rush .rr-row2 { display: flex; align-items: center; gap: 6px; height: 34px; }
+.g-rush .rr-coins.bump { animation: rr-bump .2s ease-out; } .g-rush .rr-coins.bump2 { animation: rr-bump2 .2s ease-out; }
+@keyframes rr-bump { 0% { transform: scale(1.16) rotate(-3deg); } 100% { transform: none; } }
+@keyframes rr-bump2 { 0% { transform: scale(1.16) rotate(-3deg); } 100% { transform: none; } }
 .g-rush .rr-right { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
 .g-rush .rr-chip { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 10px 0 7px; border-radius: 999px;
   background: var(--g-card); border: 2px solid var(--g-ink); box-shadow: 2px 2px 0 var(--g-edge); font-weight: 900; font-size: 15px; font-variant-numeric: tabular-nums; line-height: 1; white-space: nowrap; }
@@ -40,13 +40,15 @@ export const CSS = `
 .g-rush .rr-heart path { stroke: var(--g-ink); stroke-width: 2.2; }
 .g-rush .rr-heart.off { opacity: .28; transform: scale(.78); }
 .g-rush .rr-heart.off path { fill: transparent; }
-.g-rush .rr-heart.pop { animation: rr-heartpop .45s ease-out; }
+.g-rush .rr-heart.pop { animation: rr-heartpop .45s ease-out; } .g-rush .rr-heart.pop2 { animation: rr-heartpop2 .45s ease-out; }
 @keyframes rr-heartpop { 0% { transform: scale(1.6) rotate(-12deg); } 100% { transform: scale(1); } }
+@keyframes rr-heartpop2 { 0% { transform: scale(1.6) rotate(-12deg); } 100% { transform: scale(1); } }
 .g-rush .rr-coin-ico { width: 18px; height: 18px; border-radius: 50%; background: var(--g-hl); border: 2px solid var(--g-ink); box-shadow: inset -2px -2px 0 color-mix(in srgb, var(--g-edge) 25%, transparent); flex: none; }
 .g-rush .rr-dist { text-align: center; font-weight: 900; font-size: 34px; line-height: .95; color: var(--g-white); font-variant-numeric: tabular-nums; min-width: 4.2ch;
   text-shadow: 2px 0 0 var(--g-edge), -2px 0 0 var(--g-edge), 0 2px 0 var(--g-edge), 0 -2px 0 var(--g-edge), 2px 2px 0 var(--g-edge), -2px -2px 0 var(--g-edge), 2px -2px 0 var(--g-edge), -2px 2px 0 var(--g-edge), 3px 4px 0 var(--g-edge); }
 .g-rush .rr-dist small { font-size: 16px; margin-left: 2px; }
-.g-rush .rr-pause { position: absolute; top: calc(max(var(--rr-pad), env(safe-area-inset-top, 0px)) + 52px); right: max(14px, env(safe-area-inset-right, 0px)); }
+/* under the menu sticker: --gm-corner-safe already includes the top safe area (notch / Dynamic Island) */
+.g-rush .rr-pause { position: absolute; top: calc(var(--gm-corner-safe, calc(64px + env(safe-area-inset-top, 0px))) + 4px); right: max(14px, calc(env(safe-area-inset-right, 0px) + 12px)); }
 .g-rush .rr-hud[data-side="l"] .rr-pause { right: 14px; }
 .g-rush .rr-icon-btn { pointer-events: auto; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--g-card); border: 2px solid var(--g-ink); box-shadow: 2px 2px 0 var(--g-edge); }
 .g-rush .rr-icon-btn:active { transform: translate(2px, 2px); box-shadow: 0 0 0 var(--g-edge); }
@@ -82,8 +84,9 @@ export const CSS = `
 .g-rush .rr-combo { position: absolute; right: 10px; top: 42%; text-align: right; font-weight: 900; font-size: 26px; color: var(--g-hl); opacity: 0; transform-origin: right center;
   text-shadow: 2px 0 0 var(--g-edge), -2px 0 0 var(--g-edge), 0 2px 0 var(--g-edge), 0 -2px 0 var(--g-edge), 2px 2px 0 var(--g-edge), -2px -2px 0 var(--g-edge), 3px 3px 0 var(--g-edge); }
 .g-rush .rr-combo small { display: block; font-size: 13px; color: var(--g-white); }
-.g-rush .rr-combo.go { animation: rr-combo 1.4s ease-out forwards; }
+.g-rush .rr-combo.go { animation: rr-combo 1.4s ease-out forwards; } .g-rush .rr-combo.go2 { animation: rr-combo2 1.4s ease-out forwards; }
 @keyframes rr-combo { 0% { opacity: 0; transform: scale(1.6); } 12% { opacity: 1; transform: scale(1); } 75% { opacity: 1; } 100% { opacity: 0; transform: translateY(-10px); } }
+@keyframes rr-combo2 { 0% { opacity: 0; transform: scale(1.6); } 12% { opacity: 1; transform: scale(1); } 75% { opacity: 1; } 100% { opacity: 0; transform: translateY(-10px); } }
 .g-rush .rr-warn { position: absolute; top: 38%; left: 50%; width: 46px; height: 46px; margin-left: -23px; display: none; place-items: center; border-radius: 50%; background: var(--g-bad); border: 3px solid var(--g-ink); color: #fff; font-weight: 900; font-size: 26px; animation: rr-blink .35s steps(2) infinite; will-change: transform; }
 .g-rush .rr-warn.on { display: grid; }
 @keyframes rr-blink { 50% { background: var(--g-hl); color: var(--g-ink); } }
@@ -113,8 +116,9 @@ export const CSS = `
 .g-rush .rr-splat.drip svg { transform: translateY(9%) scaleY(1.06); opacity: 0; transition: transform .65s ease-in, opacity .65s ease-in; }
 @keyframes rr-splat { 0% { transform: scale(.25) rotate(-8deg); } 100% { transform: scale(1); } }
 .g-rush .rr-flash { position: absolute; inset: 0; pointer-events: none; opacity: 0; background: var(--g-card); }
-.g-rush .rr-flash.go { animation: rr-flash .35s ease-out; }
+.g-rush .rr-flash.go { animation: rr-flash .35s ease-out; } .g-rush .rr-flash.go2 { animation: rr-flash2 .35s ease-out; }
 @keyframes rr-flash { 0% { opacity: .85; } 100% { opacity: 0; } }
+@keyframes rr-flash2 { 0% { opacity: .85; } 100% { opacity: 0; } }
 .g-rush .rr-banner { position: absolute; left: 50%; top: 58%; transform: translateX(-50%); min-width: 230px; max-width: 92%; padding: 10px 14px; border-radius: 14px; text-align: center; font-weight: 900; font-size: 15px;
   background: var(--g-card); border: 2.5px solid var(--g-ink); box-shadow: 3px 3px 0 var(--g-edge); display: none; }
 .g-rush .rr-banner.on { display: block; }
@@ -197,6 +201,8 @@ export const CSS = `
 .g-rush .rr-tut { position: absolute; left: 0; right: 0; bottom: 18%; z-index: 6; display: none; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; }
 .g-rush .rr-tut.on { display: flex; }
 .g-rush .rr-tut .rr-cap { font-weight: 900; font-size: 17px; padding: 6px 14px; border-radius: 999px; background: var(--g-card); border: 2.5px solid var(--g-ink); box-shadow: 3px 3px 0 var(--g-edge); }
+.g-rush .rr-tut .rr-cap { transition: transform .15s cubic-bezier(.3,1.6,.5,1), background .15s; }
+.g-rush .rr-tut.hot .rr-cap { background: var(--g-hl); color: var(--g-on-ink); transform: scale(1.1) rotate(-2deg); }
 .g-rush .rr-tut .rr-steps { display: flex; gap: 6px; }
 .g-rush .rr-tut .rr-steps i { width: 9px; height: 9px; border-radius: 50%; border: 2px solid var(--g-ink); background: var(--g-card); }
 .g-rush .rr-tut .rr-steps i.on { background: var(--g-hl); }
@@ -225,7 +231,6 @@ export const CSS = `
 .g-rush.rr-narrow .rr-hearts { height: 26px; }
 .g-rush.rr-narrow .rr-heart { width: 15px; height: 14px; }
 @media (prefers-reduced-motion: reduce) {
-  .g-rush .rr-weapon.full, .g-rush .rr-runner-ico, .g-rush .rr-warn { animation: none; }
-  .g-rush .rr-speed { display: none; }
+  .g-rush .rr-weapon.full, .g-rush .rr-runner-ico, .g-rush .rr-warn, .g-rush .rr-coins.bump, .g-rush .rr-coins.bump2 { animation: none; }
 }
 `;

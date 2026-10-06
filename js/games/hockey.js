@@ -148,6 +148,10 @@ registerGame({
     .g-hockey { position: absolute; inset: 0; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
     .g-hockey .hk-rig { position: absolute; inset: 0; will-change: transform; }
     .gm.is-immersive .g-hockey .hk-rig { top: calc(60px + env(safe-area-inset-top, 0px)); bottom: calc(4px + env(safe-area-inset-bottom, 0px)); left: env(safe-area-inset-left, 0px); right: env(safe-area-inset-right, 0px); }
+    /* a phone on its side: the table turns sideways between the two corner stickers, full height */
+    @media (orientation: landscape) and (max-height: 520px) {
+      .gm.is-immersive .g-hockey .hk-rig { top: calc(6px + env(safe-area-inset-top, 0px)); left: calc(62px + env(safe-area-inset-left, 0px)); right: calc(62px + env(safe-area-inset-right, 0px)); }
+    }
     .g-hockey .hk-slab { position: absolute; background: var(--g-card); box-shadow: var(--g-shadow-lg, var(--g-shadow)); }
     .g-hockey canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: none; }
     .g-hockey.is-local canvas { cursor: grab; }
@@ -213,13 +217,16 @@ registerGame({
 
     // ── layout ──
     let cssW = 0; let cssH = 0; let dpr = 1; let s = 1; let ox = 0; let oy = 0; let view = 'up';
-    const toPx = (x, y) => (view === 'up' ? [ox + x * s, oy + y * s] : view === 'down' ? [ox + (W - x) * s, oy + (H - y) * s] : [ox + (H - y) * s, oy + x * s]);
+    // up: 'a' defends the bottom. down: turned round for 'b'. side: sideways, 'a' defends the left.
+    // sideb: sideways for 'b' (their goal on the left). Wide screens use the sideways tables.
+    const sideways = () => view === 'side' || view === 'sideb';
+    const toPx = (x, y) => (view === 'up' ? [ox + x * s, oy + y * s] : view === 'down' ? [ox + (W - x) * s, oy + (H - y) * s] : view === 'sideb' ? [ox + y * s, oy + (W - x) * s] : [ox + (H - y) * s, oy + x * s]);
     const fromPx = (px, py) => {
       const u = (px - ox) / s; const v = (py - oy) / s;
-      return view === 'up' ? [u, v] : view === 'down' ? [W - u, H - v] : [v, H - u];
+      return view === 'up' ? [u, v] : view === 'down' ? [W - u, H - v] : view === 'sideb' ? [W - v, u] : [v, H - u];
     };
     // Screen direction -> table direction (for the keyboard).
-    const screenToTable = (su, sv) => (view === 'up' ? [su, sv] : view === 'down' ? [-su, -sv] : [sv, -su]);
+    const screenToTable = (su, sv) => (view === 'up' ? [su, sv] : view === 'down' ? [-su, -sv] : view === 'sideb' ? [-sv, su] : [sv, -su]);
     // Text near player w is read by w on a shared phone (top player reads upside down).
     const readRot = (w) => (local && view === 'up' && w === 'b' ? Math.PI : 0);
 
@@ -227,11 +234,13 @@ registerGame({
       const r = rig.getBoundingClientRect();
       cssW = Math.max(1, r.width); cssH = Math.max(1, r.height);
       dpr = Math.min(3, window.devicePixelRatio || 1);
-      if (local) view = !coarse && cssW >= cssH * 0.9 ? 'side' : 'up';
-      else view = api.me === 'b' ? 'down' : 'up';
-      const VW = view === 'side' ? H : W; const VH = view === 'side' ? W : H;
+      // A phone held sideways (or any wide screen) gets the table sideways too, so it fills the screen.
+      const wide = cssW >= cssH * 1.15;
+      if (local) view = (!coarse && cssW >= cssH * 0.9) || wide ? 'side' : 'up';
+      else view = wide ? (api.me === 'b' ? 'sideb' : 'side') : api.me === 'b' ? 'down' : 'up';
+      const VW = sideways() ? H : W; const VH = sideways() ? W : H;
       const m = RAIL + 2;
-      s = Math.min((cssW - 6) / (VW + m * 2), (cssH - 6) / (VH + m * 2), view === 'side' ? 5 : 4.6);
+      s = Math.min((cssW - 6) / (VW + m * 2), (cssH - 6) / (VH + m * 2), sideways() ? 5 : 4.6);
       s = Math.max(s, 0.5);
       ox = Math.round((cssW - VW * s) / 2); oy = Math.round((cssH - VH * s) / 2);
       cv.width = Math.round(cssW * dpr); cv.height = Math.round(cssH * dpr);
@@ -249,6 +258,7 @@ registerGame({
       const k = dpr * s;
       if (view === 'up') c.setTransform(k, 0, 0, k, dpr * ox, dpr * oy);
       else if (view === 'down') c.setTransform(-k, 0, 0, -k, dpr * (ox + W * s), dpr * (oy + H * s));
+      else if (view === 'sideb') c.setTransform(0, -k, k, 0, dpr * ox, dpr * (oy + W * s));
       else c.setTransform(0, k, -k, 0, dpr * (ox + H * s), dpr * oy);
       const px = (n) => n / s; // css px -> table units
       const inkW = px(2.5);
@@ -305,7 +315,7 @@ registerGame({
       const fs = Math.max(8, Math.min(13, RAIL * s * 0.62));
       for (const w of ['a', 'b']) {
         const [x, y] = toPx(w === 'a' ? W / 2 + GH + 17 : W / 2 - GH - 17, w === 'a' ? H + RAIL / 2 : -RAIL / 2);
-        const rot = view === 'side' ? (w === 'a' ? -Math.PI / 2 : Math.PI / 2) : readRot(w);
+        const rot = sideways() ? ((w === 'a') === (view === 'side') ? -Math.PI / 2 : Math.PI / 2) : readRot(w);
         label(c, api.name(w).toUpperCase(), x, y, fs, T[w + 'Text'], rot);
       }
     }
@@ -800,7 +810,7 @@ registerGame({
         if (left > 0 && left <= COUNT_MS) {
           for (const w of readers) {
             const rot = readRot(w);
-            const y = ccy + (view === 'side' ? -26 : 26) * s * (rot ? -1 : 1);
+            const y = ccy + (sideways() ? -26 : 26) * s * (rot ? -1 : 1);
             text(c, String(Math.min(3, n)), ccx, y, 22 * s * pop, T.hl, rot, T.ink);
           }
         }
@@ -813,7 +823,7 @@ registerGame({
         for (const w of readers) {
           const rot = readRot(w);
           const d = 26 * s * (rot ? -1 : 1);
-          const y = view === 'side' ? ccy : ccy + d;
+          const y = sideways() ? ccy : ccy + d;
           text(c, 'GOAL', ccx, y, 17 * s * sc, T[fx.stampWho], rot - 0.08, T.ink);
           text(c, api.name(fx.stampWho), ccx, y + (rot ? -1 : 1) * 12 * s, 5 * s, T.ink, rot - 0.08, T.card, 900);
         }

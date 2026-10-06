@@ -482,6 +482,15 @@ registerGame({
       publish();
       api.finish(overRes);
     }
+    /** Host, fresh mount: the guest remembers the match we were in the middle of. */
+    function adoptMatch(ps) {
+      if (!ps || ps.v !== 1 || typeof ps.hm !== 'string' || ps.hm === mid || ps.hph === 'over' || !Array.isArray(ps.hsc)) return;
+      const a0 = Math.max(0, ps.hsc[0] | 0); const b0 = Math.max(0, ps.hsc[1] | 0);
+      if (!(a0 + b0) || a0 >= WIN_AT || b0 >= WIN_AT) return;
+      score = { a: a0, b: b0 };
+      // a round that was still being ridden is ridden again; a decided one counts
+      round = Math.max(0, Math.min(MAX_ROUNDS - 1, (ps.hr | 0) - (ps.hph === 'end' ? 0 : 1)));
+    }
     function recvB(m, g, s, r, d) {
       if (m !== mid || !g) return;
       if (g !== curG) { curG = g; rxB = 0; dnB = 0; bufB.clear(); gapSince = 0; queues.b = []; }
@@ -512,6 +521,7 @@ registerGame({
           layout = pref === 'p' || gp === 'p' ? 'p' : 's';
         }
         if (!canvas) build();
+        if (!local) adoptMatch(api.partnerState());
         startRound(now);
         return;
       }
@@ -529,8 +539,14 @@ registerGame({
     }
 
     // ── guest ──
+    // keep: the host's match as last seen, mirrored in our presence so a host that reloads or
+    // reopens the game mid-match carries on from the same score instead of restarting.
+    let keep = null; // { mid, sc: [a, b], r, ph }
     function publishGuest() {
-      api.setPresence({ v: 1, pref, mid: hostMid, g: gid, q: pending.filter((p) => p.seq > gRx).slice(-12).map((p) => [p.seq, p.r, p.d]) });
+      api.setPresence({
+        v: 1, pref, mid: hostMid, g: gid, q: pending.filter((p) => p.seq > gRx).slice(-12).map((p) => [p.seq, p.r, p.d]),
+        hid: document.hidden ? 1 : 0, ...(keep ? { hm: keep.mid, hsc: keep.sc, hr: keep.r, hph: keep.ph } : {}),
+      });
     }
     function onHost(s) {
       if (!alive || !s || s.v !== 1 || !s.mid || !s.L || s.mid === staleMid) return;
@@ -552,7 +568,11 @@ registerGame({
       const mine = s.g === gid; // acks are for this guest session only
       pending = pending.filter((p) => p.r === round && !(mine && p.seq <= (s.dn | 0)));
       if (mine && (s.rx | 0) !== gRx) { gRx = s.rx | 0; publishGuest(); }
-      if (infoKey !== lastInfo) { lastInfo = infoKey; renderInfo(); }
+      if (infoKey !== lastInfo) {
+        lastInfo = infoKey; renderInfo();
+        // a fresh host mount (new id, earlier round) hasn't picked our score up yet: keep reporting it
+        if (!keep || s.mid === keep.mid || round >= keep.r || s.ph === 'over') { keep = { mid: s.mid, sc: [score.a, score.b], r: round, ph: s.res ? 'over' : phase }; publishGuest(); }
+      }
       // the engine's end-card event can drop: the host's presence carries the result as well
       if (s.ph === 'over' && s.res && !finT) { finT = setTimeout(() => { timers.delete(finT); api.finish(s.res); }, 1500); timers.add(finT); }
       dirty = true;
@@ -729,19 +749,29 @@ registerGame({
       if (dirty || (crashAt && now - crashAt < 450)) { draw(now); dirty = false; }
     }
 
+    // ── pausing (host): the partner gone, or either tab in the background. Back: a fresh countdown ──
+    let partnerAway = false;
+    function syncPause() {
+      if (!host || phase === 'over' || phase === 'wait') return;
+      const want = document.hidden || (!local && (!api.partnerHere || partnerAway));
+      if (want && !paused) { paused = true; publish(); dirty = true; } else if (!want && paused) {
+        paused = false;
+        const now = performance.now();
+        if (phase === 'run' || phase === 'count') { phase = 'count'; cdStart = now; cd = 3; api.sfx('tick'); } else if (phase === 'end') endAt = now;
+        publish(); dirty = true;
+      }
+    }
+    const onVis = () => { if (host) syncPause(); else publishGuest(); if (!document.hidden) { lastNow = 0; dirty = true; } };
+    document.addEventListener('visibilitychange', onVis);
+    offs.push(() => document.removeEventListener('visibilitychange', onVis));
+
     // ── wiring ──
     if (!local) {
       if (host) {
         offs.push(api.on('turn', (d) => { if (d) recvB(d.m, d.g, d.s, d.r, d.d); }));
+        offs.push(api.onPartnerState((s) => { if (s && s.v === 1 && !!s.hid !== partnerAway) { partnerAway = !!s.hid; syncPause(); } }));
         offs.push(api.onPartnerState((s) => { if (s && s.mid === mid && s.g && Array.isArray(s.q)) { if (s.g !== curG) recvB(mid, s.g, 0, 0, -1); for (const x of s.q) if (Array.isArray(x)) recvB(mid, s.g, x[0], x[1], x[2]); } }));
-        offs.push(api.onPartnerHere((here) => {
-          if (!here) { if (phase !== 'over' && phase !== 'wait') { paused = true; publish(); } return; }
-          if (!paused) return;
-          paused = false;
-          const now = performance.now();
-          if (phase === 'run' || phase === 'count') { phase = 'count'; cdStart = now; cd = 3; } else if (phase === 'end') endAt = now;
-          publish();
-        }));
+        offs.push(api.onPartnerHere(() => syncPause()));
       } else {
         offs.push(api.onPartnerState(onHost));
         publishGuest();

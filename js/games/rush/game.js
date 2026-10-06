@@ -4,7 +4,7 @@ import {
   DT, LANE_W, SLIDE_TIME, STUMBLE_T, START_DELAY, RESUME_DELAY, RACE_LEN, BRAWL_CAP, MT_LEAD, CHUNK,
   HEARTS, TEAM_HEARTS_MAX,
 } from './tune.js';
-import { createTrack, trackHash, O_MTRAIN } from './track.js';
+import { createTrack, trackHash, O_MTRAIN, TUT_JUMP, TUT_ROLL } from './track.js';
 import {
   newRunner, step, act, createBot, botRun, crash, C_FORCED, A_LEFT, A_RIGHT, A_UP, A_DOWN,
   E_JUMP, E_LAND, E_ROLL, E_LANE, E_COIN, E_PICK, E_STUMBLE, E_CRASH, E_RESPAWN, E_SHIELD,
@@ -13,7 +13,7 @@ import {
 import { makePalette } from './gfx.js';
 import { createWorld } from './world.js';
 import { createAvatar, disposeAvatarGeometry } from './avatar.js';
-import { createFx, createRig } from './fx.js';
+import { createFx, createRig, createOverlay } from './fx.js';
 import { createAudio } from './audio.js';
 import { createInput, A_USE } from './input.js';
 import { createHud } from './hud.js';
@@ -25,6 +25,7 @@ const F_AIR = 1; const F_ROLL = 2; const F_DOWN = 4; const F_INV = 8; const F_SH
 const F_RUN = 64; const F_OUT = 128; const F_BOOST = 256; const F_MAGNET = 512; const F_SNEAK = 1024;
 const WEAPON_IDX = [null, 'ink', 'block', 'zap', 'rocket', 'shield'];
 const PZ = { menu: 1, hidden: 2, gl: 3, gone: 4, stale: 5, sync: 6, tap: 7 };
+const PZ_ORDER = ['gl', 'tap', 'menu', 'hidden', 'sync', 'gone', 'stale'];
 const RULE_MSGS = ['atk', 'res', 'shove', 'fin', 'out', 'down', 'revive', 'missed'];
 const SKEY = 'rush.settings.v1';
 const TKEY = 'rush.tutorial.v1';
@@ -32,9 +33,12 @@ const MKEY = 'rush.mode.v1';
 const MUTE = 'ju.games.mute';
 const HN = 150; // lag-compensation history (frames)
 const COMBO_WORDS = ['', '', 'Nice', 'Great', 'Slick', 'Wild', 'Unreal', 'Legend'];
+const DIGITS = ['', '1', '2', '3'];
+const TUT_KEYS = ['← → or A D to switch lanes', '↑ W or Space to jump', '↓ or S to roll under'];
+const TUT_BTNS = ['Tap left or right to switch lanes', 'Tap JUMP to jump', 'Tap ROLL to roll under'];
+const TUT_SWIPE = ['Swipe left or right to switch lanes', 'Swipe up to jump', 'Swipe down to roll under'];
 
 const AB = ['a', 'b'];
-const SPEED_T = Array.from({ length: 12 }, (_, i) => `rotate(${(i * 0.55).toFixed(2)}deg) scale(${(1 + (i % 4) * 0.012).toFixed(3)})`);
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* private mode */ } };
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -58,11 +62,10 @@ export function createGame(el, api) {
   // ── DOM ──
   const root = document.createElement('div');
   root.className = 'g-rush' + (split ? ' rr-split' : '');
-  root.innerHTML = `<div class="rr-gl"></div><div class="rr-touch"></div><div class="rr-speed"></div><div class="rr-grain"></div>${split ? '<div class="rr-divider"></div>' : ''}`;
+  root.innerHTML = `<div class="rr-gl"></div><div class="rr-touch"></div>${split ? '<div class="rr-divider"></div>' : ''}`;
   el.appendChild(root);
   const glWrap = root.querySelector('.rr-gl');
   const touch = root.querySelector('.rr-touch');
-  const speedEl = root.querySelector('.rr-speed');
 
   const settings = Object.assign({ scheme: 'swipe', music: 'on' }, lsGet(SKEY, {}));
   const audio = createAudio({
@@ -122,6 +125,8 @@ export function createGame(el, api) {
       prev: { z: 0, x: 0, y: 0 }, net: emptyState(), weapon: null, weaponRoll: 0, shoveCD: 0, revive: null, downId: 0, downAt: 0, pushOff: 0,
       stats: { shoves: 0, slams: 0, inks: 0, hits: 0, revives: 0, dodges: 0 }, fly, hist: new Float64Array(HN * 7), histN: 0, histHead: 0,
       lastHorn: -1, outT: -1, lastGround: false, tut: 0, css: `var(--p-${w})`, hk: { gap: null, ban: 0 },
+      // the partner's last in-match state, kept so a reloaded host can be handed its run back
+      snap: { ok: 0, ep: 0, z: 0, l: 0, h: 0, c: 0, rt: 0, fn: -1, th: 0, tg: 0 },
     };
   }
   const players = { a: mkPlayer('a'), b: mkPlayer('b') };
@@ -138,23 +143,32 @@ export function createGame(el, api) {
     offs.push(api.onPartnerHere((h) => { partnerHere = !!h; }));
     offs.push(link.onPartnerNew((pid, was) => {
       if (!was) return;
-      if (isHost) { if (M.phase === 'countdown' || M.phase === 'run' || M.phase === 'finale') sendRejoin(); }
-      else if (M.phase !== 'lobby' && M.phase !== 'loading') { link.resetNet(); toLobby(); hudToast('Restarted: ' + api.name(other(meW)) + ' reloaded'); }
-      else link.resetNet();
+      if (isHost) { if (M.phase === 'countdown' || M.phase === 'run' || M.phase === 'finale') sendRejoin(); return; }
+      // The host re-mounted (reload, app restart): its clock starts over, so re-sync to it, but
+      // keep this run. Once the new host is in its lobby, hand it the match and its own last
+      // state (M.rejoin); both then resume with a 3-2-1. Run time is accumulated, not wall
+      // clock, so only the timeline anchors need re-basing.
+      link.resetNet();
+      if (M.phase === 'countdown' || M.phase === 'run') {
+        M.startAt = -Infinity; M.resumeAt = 0; M.lastNow = clock();
+        if (!M.rejoin) M.rejoin = { sentAt: -1e9 };
+      } else if (M.phase === 'finale') M.endAt = clock() + 600;
     }));
     offs.push(link.on('start', (d) => { if (!isHost) beginMatch(d.mode, d.seed, d.at, d.len, d.cap); }));
     offs.push(link.on('end', (d) => { if (!isHost && M.phase !== 'over') startFinale(d.res, d.at); }));
     offs.push(link.on('resume', (d) => { if (d && d.at > M.resumeAt && (M.phase === 'run' || M.phase === 'countdown')) M.resumeAt = d.at; }));
-    offs.push(link.on('rejoin', (d) => { if (!isHost) applyRejoin(d); }));
+    offs.push(link.on('rejoin', (d) => { if (!d) return; if (!isHost && !d.fromGuest) applyRejoin(d); else if (isHost && d.fromGuest && (M.phase === 'lobby' || M.phase === 'loading')) applyRejoin(d); }));
     for (const t of RULE_MSGS) offs.push(link.on(t, (d, at) => { if (rules) rules.msg(t, d || {}, at, other(meW)); }));
   }
 
   // ── 3D ──
-  let THREE = null; let renderer = null; let world = null; let fx = null; let P = null; let input = null;
+  let THREE = null; let renderer = null; let world = null; let fx = null; let P = null; let input = null; let overlay = null;
   let ready3D = false; let glLost = false; let raf = 0; let lastTs = 0;
-  let W = 0; let H = 0; const baseDpr = Math.min(window.devicePixelRatio || 1, 2); let scale = 1;
-  let ewma = 16.7; let lowFor = 0; let checkT = 0;
-  const perf = { dts: new Float32Array(600), work: new Float32Array(600), n: 0, calls: 0, tris: 0, maxCalls: 0 };
+  // Dynamic resolution: start a notch under full (min(dpr, 2) × 0.85), step down quickly when
+  // frames run long, recover slowly. Scale range 0.55–1.
+  let W = 0; let H = 0; const baseDpr = Math.min(window.devicePixelRatio || 1, 2); let scale = 0.85;
+  let ewma = 16.7; let lowFor = 0; let checkT = 0; let coolT = 0;
+  const perf = { dts: new Float32Array(600), work: new Float32Array(600), n: 0, calls: 0, tris: 0, maxCalls: 0, maxTris: 0, programs0: 0, scaleDowns: 0, scaleUps: 0 };
   let rules = null;
   const pal = { a: null, b: null, hl: null };
   const lobbyTrack = createTrack(1);
@@ -199,6 +213,7 @@ export function createGame(el, api) {
     pal.a = P.a; pal.b = P.b; pal.hl = P.hl;
     renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', alpha: false, stencil: false, depth: true });
     renderer.info.autoReset = false;
+    renderer.autoClear = false; // the scene clears itself (it has a background); the overlay draws on top
     renderer.setPixelRatio(baseDpr * scale);
     renderer.setClearColor(new THREE.Color().fromArray(P.bg), 1);
     glWrap.appendChild(renderer.domElement);
@@ -207,6 +222,7 @@ export function createGame(el, api) {
     cv.addEventListener('webglcontextrestored', onRestored, false);
     world = createWorld(THREE, P);
     fx = createFx(THREE, world);
+    overlay = createOverlay(THREE, P);
     vec3 = new THREE.Vector3();
     for (const w of AB) {
       const p = players[w];
@@ -230,18 +246,24 @@ export function createGame(el, api) {
   }
 
   function warmUp() {
-    // Build the start chunks and compile every material variant behind the loading screen.
+    // Build the start chunks and compile + draw every material variant behind the loading screen,
+    // so nothing compiles mid-run: world, instanced (plain / coloured), skinned runners with the
+    // fade, the shield bubble, particles, blob shadows, gate banners, sky dome and the overlay.
     world.ensure(lobbyTrack, [0], 9);
-    const list = world.warmList();
+    const list = world.warmList().concat(fx.warm, players.a.av.warmList(), players.b.av.warmList());
     const saved = list.map((m) => (m && m.isInstancedMesh ? m.count : -1));
+    const vis = list.map((m) => (m ? m.visible : false));
     list.forEach((m) => { if (m && m.isInstancedMesh) m.count = 1; if (m) m.visible = true; });
+    world.fade.a.value = 0.5; world.fade.b.value = 0.5;
     for (const w of viewers) { const rg = players[w].rig; rg.update(0.016, 'lobby', players[w].rs, 0); }
     const cam = players[viewers[0]].rig.cam;
     try { renderer.compile(world.scene, cam); } catch (e) { console.warn(e); }
     renderer.setViewport(0, 0, W, H);
-    try { renderer.render(world.scene, cam); } catch (e) { console.warn(e); }
-    list.forEach((m, i) => { if (m && m.isInstancedMesh) m.count = saved[i]; });
+    try { renderer.render(world.scene, cam); overlay.warm(renderer); } catch (e) { console.warn(e); }
+    list.forEach((m, i) => { if (m && m.isInstancedMesh) m.count = saved[i]; if (m) m.visible = vis[i]; });
+    world.fade.a.value = 0; world.fade.b.value = 0;
     world.syncView({ track: lobbyTrack, z: 0, r: null, time: 0, front: true });
+    perf.programs0 = renderer.info.programs ? renderer.info.programs.length : 0;
   }
 
   function resize() {
@@ -251,7 +273,8 @@ export function createGame(el, api) {
     renderer.setPixelRatio(baseDpr * scale);
     renderer.setSize(W, H, false);
     const vw = split ? W / 2 : W;
-    for (const w of viewers) players[w].rig.resize(vw, H);
+    for (const w of viewers) { players[w].rig.resize(vw, H); if (players[w].view) players[w].view.resized(); }
+    if (overlay) overlay.resize(vw, H);
     root.classList.toggle('rr-short', H < 560 && W > H);
     root.classList.toggle('rr-narrow', vw < 370);
   }
@@ -271,7 +294,8 @@ export function createGame(el, api) {
   function toLobby() {
     M.phase = 'lobby';
     root.classList.add('rr-in-lobby');
-    M.track = null; M.result = null; M.ready = false; M.reasons.clear(); M.paused = false; M.resumeAt = 0;
+    M.track = null; M.result = null; M.ready = false; M.reasons.clear(); M.paused = false; M.resumeAt = 0; M.rejoin = null;
+    players.a.snap.ok = 0; players.b.snap.ok = 0;
     for (const w of AB) {
       const p = players[w];
       p.r = null; p.bot = null; p.weapon = null; p.revive = null;
@@ -279,7 +303,7 @@ export function createGame(el, api) {
       if (p.rig) p.rig.snap();
     }
     if (world) { world.reset(); world.setGates([7]); }
-    hud.finale(null); hud.count(''); hud.pause(null);
+    hud.finale(null); hud.count(''); hud.pause(null); countK = -1; pauseK = -1;
     for (const w of viewers) players[w].view && players[w].view.banner(null);
     audio.stopMusic();
     api.setStatus(null);
@@ -309,7 +333,7 @@ export function createGame(el, api) {
     M.phase = 'countdown';
     M.runMs = 0; M.steps = 0; M.lastNow = clock(); M.alpha = 0;
     M.paused = false; M.reasons.clear(); M.resumeAt = 0; M.result = null; M.endAt = 0;
-    M.startedWall = 0; M.firstRunWall = 0; M.partnerFin = -1; M.partnerOut = -1;
+    M.startedWall = 0; M.firstRunWall = 0; M.partnerFin = -1; M.partnerOut = -1; M.rejoin = null;
     for (const w of AB) {
       const p = players[w];
       p.outT = -1; p.lastHorn = -1; p.histN = 0; p.weapon = null; p.tut = 0; p.hk.gap = null; p.hk.ban = 0;
@@ -324,6 +348,7 @@ export function createGame(el, api) {
     }
     rules = createRules(G);
     rules.init();
+    countK = -1; pauseK = -1;
     world.reset();
     world.setGates(M.mode === 'race' ? [7, M.len] : [7]);
     fx.clear();
@@ -351,8 +376,11 @@ export function createGame(el, api) {
   function applyRejoin(d) {
     if (!d) return;
     if (!ready3D) { pendingRejoin = d; return; }
-    beginMatch(d.mode, d.seed, d.startAt, d.len, d.cap);
-    M.th = d.th; M.goal = d.goal; M.goalIdx = d.goalIdx || 0;
+    // fromGuest: I'm a reloaded host; my old timeline is gone, so the match has no start anchor
+    beginMatch(d.mode, d.seed, d.fromGuest ? -Infinity : d.startAt, d.len, d.cap);
+    if (d.th > 0) M.th = d.th;
+    if (d.goal > 0) M.goal = d.goal;
+    M.goalIdx = d.goalIdx || 0;
     const y = d.you;
     const r = players[meW].r;
     if (y && r) {
@@ -482,7 +510,8 @@ export function createGame(el, api) {
     s.x = fr.x; s.y = fr.y + 1.6; s.z = fr.z;
   }
   function updateShots(dt) {
-    for (const s of shots) {
+    for (let i = 0; i < shots.length; i++) {
+      const s = shots[i];
       if (!s.on) continue;
       s.t += dt;
       const dur = s.kind === 'zap' ? 0.25 : 0.55;
@@ -497,44 +526,63 @@ export function createGame(el, api) {
   }
 
   // ── tutorial (first run, once) ──
+  // Contextual: "switch lanes" from the countdown until you do (the coins pull you to the middle),
+  // then "jump" as the warm-up barrier row comes up and "roll" before the bar row, each turning
+  // hot when it's time to act. The warm-up rows are soft, so a miss is a stumble, not a crash.
   const tutorial = {
-    on: false, step: 0, t: 0,
+    on: false, did0: false,
     start() {
       this.on = !split && !lsGet(TKEY, false) && !(dbg && dbg.noTutorial);
-      this.step = 0; this.t = 0;
+      this.did0 = false;
+      hud.tutorial(-1);
     },
     did(p, a) {
       if (!this.on || p.w !== (meW || 'a')) return;
-      if ((this.step === 0 && (a === A_LEFT || a === A_RIGHT)) || (this.step === 1 && a === A_UP) || (this.step === 2 && a === A_DOWN)) this.next();
+      if (a === A_LEFT || a === A_RIGHT) this.did0 = true;
     },
-    next() { this.step++; this.t = 0; if (this.step > 2) { this.on = false; lsSet(TKEY, true); hud.tutorial(-1); } },
-    update(dt) {
+    update() {
       if (!this.on) return;
       if (M.phase !== 'run' && M.phase !== 'countdown') { hud.tutorial(-1); return; }
-      this.t += dt;
-      if (M.phase === 'run' && this.t > 2.8) this.next();
-      if (!this.on) return;
-      const btn = settings.scheme === 'buttons';
-      const keys = !coarse;
-      const caps = keys
-        ? ['← → or A D to switch lanes', '↑ W or Space to jump', '↓ or S to roll']
-        : btn ? ['Tap left or right to switch lanes', 'Tap JUMP to jump', 'Tap ROLL to roll under bars']
-          : ['Swipe left or right to switch lanes', 'Swipe up to jump', 'Swipe down to roll'];
-      const dirs = keys || btn ? ['', '', ''] : [Math.floor(this.t / 1.2) % 2 ? 'r' : 'l', 'u', 'd'];
-      hud.tutorial(this.step, 3, dirs[this.step], caps[this.step]);
+      const r = players[meW || 'a'].r;
+      if (!r) return;
+      const z = r.z;
+      if (z >= TUT_ROLL + 1) { this.on = false; lsSet(TKEY, true); hud.tutorial(-1); return; }
+      let step = -1; let hot = false;
+      if (z >= TUT_ROLL - 24) { step = 2; hot = z >= TUT_ROLL - 9; }
+      else if (z >= TUT_JUMP + 1) step = -1;
+      else if (z >= TUT_JUMP - 24) { step = 1; hot = z >= TUT_JUMP - 12; }
+      else if (!this.did0) step = 0;
+      if (step < 0) { hud.tutorial(-1); return; }
+      const caps = !coarse ? TUT_KEYS : settings.scheme === 'buttons' ? TUT_BTNS : TUT_SWIPE;
+      const dir = !coarse || settings.scheme === 'buttons' ? '' : step === 0 ? (Math.floor(tAnim / 1.2) % 2 ? 'r' : 'l') : step === 1 ? 'u' : 'd';
+      hud.tutorial(step, 3, dir, caps[step], hot);
     },
   };
 
   // ── pause / resume ──
   function isPaused(now) { return M.paused || now < M.resumeAt; }
   function pauseCode() {
-    for (const k of ['gl', 'tap', 'menu', 'hidden', 'sync', 'gone', 'stale']) if (M.reasons.has(k)) return PZ[k];
+    for (let i = 0; i < PZ_ORDER.length; i++) if (M.reasons.has(PZ_ORDER[i])) return PZ[PZ_ORDER[i]];
     return 0;
   }
   function netLogic(now) {
     if (!live) return;
     const inMatch = M.phase === 'countdown' || M.phase === 'run';
     const ps = link.latest();
+    if (ps && inMatch && ps.ep === M.epoch && ps.ph === PH.run) {
+      // remember the partner's last in-match state (used if they re-mount as host)
+      const sn = players[other(meW)].snap;
+      sn.ok = 1; sn.ep = ps.ep; sn.z = ps.z; sn.l = ps.l; sn.h = ps.h; sn.c = ps.c; sn.rt = ps.rt; sn.fn = ps.fn; sn.th = ps.th; sn.tg = ps.tg;
+      if (M.rejoin) M.rejoin = null; // the host has the match back
+    }
+    if (M.rejoin && inMatch && link.synced && ps && link.age() < 1600 && ps.ph === PH.lobby && ps.sy && now - M.rejoin.sentAt > 2500) {
+      M.rejoin.sentAt = now;
+      const sn = players[other(meW)].snap;
+      link.send('rejoin', {
+        fromGuest: 1, mode: M.mode, seed: M.seed, len: M.len, cap: M.cap, th: sn.th, goal: sn.tg, goalIdx: M.goalIdx,
+        you: sn.ok && sn.ep === M.epoch ? { z: sn.z, l: sn.l, h: sn.h, c: sn.c, rt: sn.rt, fn: sn.fn } : null,
+      });
+    }
     // observed reasons
     if (inMatch) {
       if (!partnerHere) M.reasons.add('gone'); else M.reasons.delete('gone');
@@ -589,8 +637,8 @@ export function createGame(el, api) {
     M.alpha = clamp((M.runMs - M.steps * DT * 1000) / (DT * 1000), 0, 1);
   }
   function stepAll() {
-    for (const w of locals) {
-      const p = players[w];
+    for (let li = 0; li < locals.length; li++) {
+      const p = players[locals[li]];
       const r = p.r;
       if (!r) continue;
       p.prev.z = r.z; p.prev.x = r.x; p.prev.y = r.y;
@@ -756,6 +804,7 @@ export function createGame(el, api) {
   // ── frame ──
   let hudT = 0;
   let scoreT = 0;
+  let trimN = 0;
   let tAnim = 0;
   function frame(ts) {
     if (dead) return;
@@ -785,6 +834,11 @@ export function createGame(el, api) {
     }
     if (M.phase === 'run') {
       advance(now);
+      if (++trimN % 90 === 0 && M.track) { // keep the chunk cache small on long runs
+        let zmin = Infinity;
+        for (let i = 0; i < AB.length; i++) { const z = players[AB[i]].rs.z; if (z < zmin) zmin = z; }
+        if (zmin < Infinity) M.track.keepFrom(Math.floor((zmin - 40) / CHUNK) - 1);
+      }
       rules.tick(now, dt);
       deliver();
       const res = rules.verdict();
@@ -792,16 +846,17 @@ export function createGame(el, api) {
     } else if (M.phase === 'countdown') M.lastNow = now;
     else if (M.phase === 'finale') { if (rules) rules.tick(now, dt); if (now >= M.endAt) toOver(); }
     // render states
-    for (const w of AB) {
-      const p = players[w];
+    for (let i = 0; i < 2; i++) {
+      const p = players[AB[i]];
       if (p.local && p.r) updateLocalRS(p, now, dt);
       else if (!p.local && live && M.phase !== 'lobby') updateRemoteRS(p, now);
       else updateIdleRS(p);
     }
     // magnet flyers
-    for (const w of locals) {
-      const p = players[w];
-      for (const f of p.fly) {
+    for (let li = 0; li < locals.length; li++) {
+      const p = players[locals[li]];
+      for (let fi = 0; fi < p.fly.length; fi++) {
+        const f = p.fly[fi];
         if (!f.on) continue;
         f.t += dt / 0.22;
         const u = Math.min(1, f.t);
@@ -813,7 +868,7 @@ export function createGame(el, api) {
       }
     }
     updateShots(dt);
-    tutorial.update(dt);
+    tutorial.update();
     hudT += dt;
     updateHud(now, dt);
     if (live && ready3D) publish();
@@ -830,44 +885,49 @@ export function createGame(el, api) {
   // ── HUD ──
   function updateHud(now, dt) {
     const paused = isPaused(now);
-    // countdowns
+    // countdowns: a numeric code per state, so the DOM (and the beep) only changes on a change
+    let ck = 0;
     if (M.phase === 'countdown' && !M.paused) {
-      const s = Math.ceil((Math.max(M.startAt, M.resumeAt) - now) / 1000);
-      hud.count(s > 0 ? String(Math.min(3, s)) : '', M.mode ? MODE_LABEL[M.mode] : '');
-      const k = `c${s}`;
-      if (hudBeep !== k && s > 0 && s <= 3) { hudBeep = k; audio.play('tick'); }
-    } else if (M.phase === 'run' && !M.paused && now < M.resumeAt) {
-      const s = Math.ceil((M.resumeAt - now) / 1000);
-      hud.count(String(Math.min(3, Math.max(1, s))), 'Get ready');
-      const k = `r${s}`;
-      if (hudBeep !== k) { hudBeep = k; audio.play('tick'); }
-    } else if (M.phase === 'run' && !paused && M.steps < 70 && M.runMs < 700) {
-      hud.count('RUN!');
-      if (hudBeep !== 'go') { hudBeep = 'go'; audio.play('go'); }
-    } else hud.count('');
-    // pause card
+      const sec = Math.ceil((Math.max(M.startAt, M.resumeAt) - now) / 1000);
+      ck = sec > 0 ? 10 + Math.min(4, sec) : 19;
+    } else if (M.phase === 'run' && !M.paused && now < M.resumeAt) ck = 20 + clamp(Math.ceil((M.resumeAt - now) / 1000), 1, 3);
+    else if (M.phase === 'run' && !paused && M.steps < 70 && M.runMs < 700) ck = 30;
+    if (ck !== countK) {
+      countK = ck;
+      if (ck >= 11 && ck <= 14) { hud.count(DIGITS[Math.min(3, ck - 10)], M.mode ? MODE_LABEL[M.mode] : ''); if (ck <= 13) audio.play('tick'); }
+      else if (ck >= 21 && ck <= 23) { hud.count(DIGITS[ck - 20], 'Get ready'); audio.play('tick'); }
+      else if (ck === 30) { hud.count('RUN!'); audio.play('go'); }
+      else hud.count('');
+    }
+    // pause card (built only when what it says changes)
+    let pk = 0;
     if ((M.phase === 'run' || M.phase === 'countdown') && M.paused) {
+      const R = M.reasons;
+      pk = R.has('gl') ? 1 : R.has('tap') ? 2 : R.has('menu') ? 3 : R.has('gone') ? 4 : R.has('stale') ? 5 : R.has('sync') ? 6 : M.partnerPz ? 10 + M.partnerPz : 9;
+    }
+    audio.setPaused(pk > 0);
+    if (pk !== pauseK) {
+      pauseK = pk;
       const pn = live ? api.name(other(meW)) : '';
-      let info;
-      if (M.reasons.has('gl')) info = { title: 'Graphics hiccup', text: 'Your phone reset the 3D view. One moment…' };
-      else if (M.reasons.has('tap')) info = { title: 'Back in a sec', text: 'Tap to pick up where you left off.', resume: true, resumeLabel: 'Tap to resume' };
-      else if (M.reasons.has('menu')) info = { title: 'Paused', text: live ? `${pn} is paused too.` : '', resume: true };
-      else if (M.reasons.has('gone') || M.reasons.has('stale')) info = { title: `Waiting for ${pn}`, text: 'Their connection dropped. The run picks up where you left off when they’re back.' };
-      else if (M.reasons.has('sync')) info = { title: `Getting ${pn} back in`, text: 'Syncing the run…' };
-      else if (M.partnerPz) info = { title: `${pn} paused`, text: M.partnerPz === PZ.hidden ? `${pn} switched apps. Hang tight.` : M.partnerPz === PZ.menu ? 'They’ll be right back.' : M.partnerPz >= PZ.gone ? 'Reconnecting…' : 'One moment…' };
-      else info = { title: 'Paused', text: '' };
+      let info = null;
+      if (pk === 1) info = { title: 'Graphics hiccup', text: 'Your phone reset the 3D view. One moment…' };
+      else if (pk === 2) info = { title: 'Back in a sec', text: 'Tap to pick up where you left off.', resume: true, resumeLabel: 'Tap to resume' };
+      else if (pk === 3) info = { title: 'Paused', text: live ? `${pn} is paused too.` : '', resume: true };
+      else if (pk === 4) info = { title: `Waiting for ${pn}`, text: `${pn} left the game. The run picks up where you left off when they’re back.`, invite: true };
+      else if (pk === 5) info = { title: `Waiting for ${pn}`, text: 'Their connection dropped. The run picks up where you left off when they’re back.' };
+      else if (pk === 6) info = { title: `Getting ${pn} back in`, text: 'Syncing the run…' };
+      else if (pk > 10) { const z = pk - 10; info = { title: `${pn} paused`, text: z === PZ.hidden ? `${pn} switched apps. Hang tight.` : z === PZ.menu ? 'They’ll be right back.' : z >= PZ.gone ? 'Reconnecting…' : 'One moment…' }; }
+      else if (pk === 9) info = { title: 'Paused', text: '' };
       hud.pause(info);
-    } else hud.pause(null);
+    }
     if (M.phase === 'lobby' || M.phase === 'loading') return;
 
     // per view
-    let sp = 0; let boost = false;
-    for (let i = 0; i < viewers.length; i++) { const rs = players[viewers[i]].rs; if (rs.speed > sp) sp = rs.speed; if (rs.boost) boost = true; }
-    const sl = M.phase === 'run' && !paused ? Math.round((clamp((sp - 17) / 13, 0, 1) * 0.55 + (boost ? 0.35 : 0)) * 20) / 20 : 0;
-    if (sl !== speedV) { speedV = sl; speedEl.style.opacity = String(sl); }
-    if (sl > 0.02) { speedI = (speedI + 5) % SPEED_T.length; speedEl.style.transform = SPEED_T[speedI]; }
+    let sp = 0;
+    for (let i = 0; i < viewers.length; i++) { const rs = players[viewers[i]].rs; if (rs.speed > sp) sp = rs.speed; }
     audio.setIntensity(clamp((sp - 12) / 16, 0, 1));
-    for (const w of viewers) {
+    for (let vi = 0; vi < viewers.length; vi++) {
+      const w = viewers[vi];
       const p = players[w]; const v = p.view; const r = p.r;
       if (!v || !r) continue;
       const q = players[other(w)];
@@ -910,7 +970,9 @@ export function createGame(el, api) {
       let warn = false; let warnLane = 0;
       const ci = Math.floor(r.z / CHUNK);
       for (let c = ci; c <= ci + 1; c++) {
-        for (const o of M.track.chunk(c).obs) {
+        const obs = M.track.chunk(c).obs;
+        for (let oi = 0; oi < obs.length; oi++) {
+          const o = obs[oi];
           if (o.t !== O_MTRAIN) continue;
           if (r.z >= o.zm - MT_LEAD && r.z < o.zm + 1) {
             warn = true; warnLane = o.lane;
@@ -956,47 +1018,55 @@ export function createGame(el, api) {
       } else hud.tag(false);
     } else hud.tag(false);
   }
-  let hudBeep = '';
-  let speedV = -1; let speedI = 0;
+  let countK = -1; let pauseK = -1;
 
+  // The lobby re-renders only when one of its inputs changes (a numeric key), not every frame.
+  let lobbyK = -1;
   function lobbyUI() {
     if (!ready3D) return;
+    let k = MODES.indexOf(M.lobbyMode) + 1;
+    let ps = null; let fresh = false;
+    if (live) {
+      ps = link.latest();
+      fresh = !!ps && link.age() < 2000;
+      if (!isHost) { const hm = fresh && ps.ph === PH.lobby ? MODES[ps.md] : null; if (hm) M.lobbyMode = hm; k = MODES.indexOf(M.lobbyMode) + 1; }
+      k |= (partnerHere ? 4 : 0) | (fresh && ps.ph === PH.lobby ? 8 : 0) | (fresh && ps.sy ? 16 : 0) | (fresh && ps.rd ? 32 : 0) | (link.synced ? 64 : 0) | (M.ready ? 128 : 0);
+    }
+    if (k === lobbyK && ov_lobbyOn()) return;
+    lobbyK = k;
     const keys = split ? `<div><b>${esc(api.name('a'))}</b><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> · weapon <kbd>E</kbd></div><div><b>${esc(api.name('b'))}</b><kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> · weapon <kbd>Enter</kbd></div>` : '';
     if (!live) { hud.lobby({ mode: M.lobbyMode, canPick: true, canStart: true, startLabel: 'Start', status: '', keys }); return; }
     const pn = api.name(other(meW));
-    const ps = link.latest();
-    const fresh = ps && link.age() < 2000;
     if (isHost) {
       const pin = partnerHere && fresh && ps.ph === PH.lobby && ps.sy;
       const status = !partnerHere ? `Waiting for ${esc(pn)}…` : !pin ? `${esc(pn)} is getting ready…` : ps.rd ? `<span class="rr-ok">${esc(pn)} is ready</span>` : `${esc(pn)} is here · you pick the mode`;
       hud.lobby({ mode: M.lobbyMode, canPick: true, canStart: !!pin, startLabel: 'Start', status, keys });
     } else {
-      const hm = fresh && ps.ph === PH.lobby ? MODES[ps.md] : null;
-      if (hm) M.lobbyMode = hm;
       const status = `${esc(pn)} picks the mode${link.synced ? '' : ' · syncing clocks…'}`;
       hud.lobby({ mode: M.lobbyMode, canPick: false, canStart: link.synced, startLabel: M.ready ? 'Ready!' : 'I’m ready', status, keys });
     }
   }
+  const ov_lobbyOn = () => hud.ov.lobby.classList.contains('on');
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   function hudToast(m) { try { api.toast(m); } catch { /* ignore */ } }
 
   // ── render ──
   function render(dt, now) {
-    for (const w of AB) {
-      const p = players[w];
+    for (let i = 0; i < 2; i++) {
+      const p = players[AB[i]];
       p.rs.t = tAnim;
       p.av.update(dt, p.rs);
     }
     fx.update(dt, tAnim);
     const tr = M.track || lobbyTrack;
     zsBuf.length = 0;
-    for (const w of viewers) zsBuf.push(players[w].rs.z);
+    for (let i = 0; i < viewers.length; i++) zsBuf.push(players[viewers[i]].rs.z);
     if (M.phase === 'lobby') zsBuf.push(-90);
     world.ensure(tr, zsBuf, M.phase === 'run' ? 1 : 9);
     // blob shadows
     let ns = 0;
-    for (const w of AB) {
-      const s = players[w].rs;
+    for (let i = 0; i < 2; i++) {
+      const s = players[AB[i]].rs;
       if (!s.visible || s.y < -1) continue;
       const hgt = Math.max(0, s.y - s.ground);
       const L = shadowList[ns++];
@@ -1007,6 +1077,13 @@ export function createGame(el, api) {
     const lobbyish = M.phase === 'lobby' || M.phase === 'loading';
     const nv = lobbyish ? 1 : viewers.length;
     const vw = split && !lobbyish ? W / 2 : W;
+    // colour script: the sky warms with the fastest viewer's speed (a rocket pushes it further)
+    let mood = 0;
+    if (M.phase === 'run' || M.phase === 'finale' || M.phase === 'over') {
+      for (let i = 0; i < viewers.length; i++) { const rs = players[viewers[i]].rs; const k = clamp((rs.speed - 13) / 15, 0, 1) + (rs.boost ? 0.3 : 0); if (k > mood) mood = k; }
+    }
+    world.setMood(mood);
+    overlay.resize(vw, H);
     if (split) renderer.setScissorTest(true);
     for (let i = 0; i < nv; i++) {
       const p = players[viewers[i]];
@@ -1022,14 +1099,28 @@ export function createGame(el, api) {
       viewArg.track = tr; viewArg.z = p.rs.z; viewArg.r = p.r; viewArg.time = tAnim; viewArg.boxes = M.mode === 'race' && M.phase !== 'lobby'; viewArg.fly = p.fly; viewArg.front = mode === 'lobby' || mode === 'finale';
       world.syncView(viewArg);
       world.follow(rg.cam);
+      // A runner between this camera and its own runner dissolves through a halftone screen
+      // (the partner close behind you would otherwise fill a third of a phone screen).
+      for (let k = 0; k < 2; k++) {
+        const w = AB[k]; const s = players[w].rs;
+        let f = 0;
+        if (w !== p.w && mode !== 'lobby' && mode !== 'finale' && s.visible) {
+          const cp = rg.cam.position;
+          const dx = s.x - cp.x; const dy = s.y + 1 - cp.y; const dz = -s.z - cp.z;
+          const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          f = clamp((7.6 - d) / 3.2, 0, 1.25);
+        }
+        world.fade[w].value = f;
+      }
       if (split) { renderer.setViewport(i * vw, 0, vw, H); renderer.setScissor(i * vw, 0, vw, H); }
       else renderer.setViewport(0, 0, W, H);
       renderer.render(world.scene, rg.cam);
+      const sk = mode === 'run' && !isPaused(now) ? clamp((p.rs.speed - 18) / 12, 0, 1) * 0.8 + (p.rs.boost ? 0.5 : 0) : 0;
+      overlay.draw(renderer, sk);
     }
     if (split) renderer.setScissorTest(false);
     perf.calls = renderer.info.render.calls; perf.tris = renderer.info.render.triangles;
-    if (M.phase === 'run') perf.maxCalls = Math.max(perf.maxCalls, perf.calls);
-    void now;
+    if (M.phase === 'run') { if (perf.calls > perf.maxCalls) perf.maxCalls = perf.calls; if (perf.tris > perf.maxTris) perf.maxTris = perf.tris; }
   }
 
   // ── perf + dynamic resolution ──
@@ -1038,12 +1129,19 @@ export function createGame(el, api) {
     perf.dts[i] = dtMs; perf.work[i] = workMs; perf.n++;
     ewma = ewma * 0.9 + dtMs * 0.1;
     checkT += dtMs;
-    if (checkT < 500 || !renderer) return;
+    if (checkT < 250 || !renderer) return;
     checkT = 0;
     if (dbg && dbg.fixedScale) return;
-    if (ewma > 18.8 && scale > 0.6) { scale = Math.max(0.6, +(scale - 0.1).toFixed(2)); lowFor = 0; resize(); }
-    else if (ewma < 15.6) { lowFor += 500; if (lowFor >= 3000 && scale < 1) { scale = Math.min(1, +(scale + 0.05).toFixed(2)); lowFor = 0; resize(); } }
-    else lowFor = 0;
+    // Quick down (every 250 ms while frames run long; bigger steps when far off), slow up (after
+    // 4 s of comfortable frames, then a 2 s cool-down), so it settles instead of oscillating.
+    if (coolT > 0) coolT -= 250;
+    if (ewma > 18.4 && scale > 0.55) {
+      scale = Math.max(0.55, Math.round((scale - (ewma > 26 ? 0.15 : 0.08)) * 100) / 100);
+      lowFor = 0; coolT = 4000; perf.scaleDowns++; resize();
+    } else if (ewma < 15.4) {
+      lowFor += 250;
+      if (lowFor >= 4000 && coolT <= 0 && scale < 1) { scale = Math.min(1, Math.round((scale + 0.05) * 100) / 100); lowFor = 0; coolT = 2000; perf.scaleUps++; resize(); }
+    } else lowFor = 0;
   }
   function pct(arr, n, q) {
     const m = Math.min(n, arr.length);
@@ -1096,7 +1194,7 @@ export function createGame(el, api) {
       inputStats: () => (input ? input.stats : null),
       get canvas() { return renderer ? renderer.domElement : null; },
       instances: () => liveGames,
-      get internals() { return { renderer, world, fx, players, THREE, M }; },
+      get internals() { return { renderer, world, fx, overlay, players, THREE, M, audio }; },
     };
   }
 

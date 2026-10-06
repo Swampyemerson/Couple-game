@@ -155,7 +155,8 @@ function overGap(track, x, z) {
   if (!c.gaps.length) return null;
   const lane = Math.round(x / LANE_W);
   const bit = 1 << (lane + 1);
-  for (const g of c.gaps) if (z >= g.z0 && z <= g.z1 && (g.mask & bit)) return g;
+  const gs = c.gaps;
+  for (let i = 0; i < gs.length; i++) { const g = gs[i]; if (z >= g.z0 && z <= g.z1 && (g.mask & bit)) return g; }
   return null;
 }
 
@@ -220,7 +221,9 @@ function collectAll(r, track, h) {
   const ci = Math.floor(r.z / CHUNK);
   collectIn(r, track.chunk(ci), h);
   if (r.magnetT > 0 || (ci + 1) * CHUNK - r.z < 16) collectIn(r, track.chunk(ci + 1), h);
-  for (const tk of r.tokens) {
+  const tks = r.tokens;
+  for (let i = 0; i < tks.length; i++) {
+    const tk = tks[i];
     if (!tk.alive) continue;
     const dz = tk.z - r.z;
     if (dz < 1.1 && dz > -1.1 && Math.abs(tk.x - r.x) < 1.2 && tk.y > r.y - 0.5 && tk.y < r.y + h + 0.6) {
@@ -301,6 +304,12 @@ function collideIn(r, obs, h, dry) {
 
 function hit(r, o, frontal, ov, dry) {
   if (r.invulnT > 0) return;
+  if (o.soft) { // warm-up rows: a miss trips you up, it doesn't knock you down
+    r.ignoreId = o.id; r.ignoreT = 0.5;
+    stumble(r, 0.8, dry);
+    if (!dry) ev(r, E_TRIP, 0);
+    return;
+  }
   if (o.t === O_BLOCK) {
     r.ignoreId = o.id; r.ignoreT = 0.5;
     const sh = r.shield;

@@ -87,8 +87,9 @@ registerGame({
   },
   result(s) {
     if (s.win) {
-      const dirs = [...new Set(s.win.runs.map((x) => x.dir))];
-      const sub = dirs.length > 1 ? 'Two lines with one disc!' : dirs[0] === 'across' ? 'Four across' : dirs[0] === 'down' ? 'Four stacked up' : 'Four on the diagonal';
+      // two runs can share a direction (both diagonals through one disc), so count runs, not directions
+      const dir = s.win.runs[0].dir;
+      const sub = s.win.runs.length > 1 ? 'Two lines with one disc!' : dir === 'across' ? 'Four across' : dir === 'down' ? 'Four stacked up' : 'Four on the diagonal';
       return { winner: s.win.who, sub };
     }
     return { winner: null, text: 'Board full', sub: 'Nobody lined up four. It’s a draw.' };
@@ -163,7 +164,7 @@ registerGame({
 .g-four .g4-nums span.on { color: var(--g-ink); }
 @media (hover: hover) and (pointer: fine) { .g-four .g4-nums { display: flex; } }
 
-.g-four .g4-plate { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 16px 8px 10px; border-radius: 999px; background: var(--g-card); border: 2px solid var(--g-ink); box-shadow: var(--g-shadow); font: 800 0.98rem/1.2 var(--g-font-display); color: var(--g-ink); max-width: 100%; }
+.g-four .g4-plate { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 16px 8px 10px; border-radius: 999px; background: var(--g-card); border: 2px solid var(--g-ink); box-shadow: var(--g-shadow); font: 800 0.98rem/1.2 var(--g-font-display); color: var(--g-ink); max-width: 100%; text-wrap: balance; }
 .g-four .g4-plate.wait { color: var(--g-muted); border-color: var(--g-line); }
 .g-four .g4-plate.pop { animation: g4-plate 260ms cubic-bezier(0.3, 1.5, 0.5, 1); }
 @keyframes g4-plate { from { transform: scale(0.92); } to { transform: none; } }
@@ -225,6 +226,7 @@ registerGame({
     const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); fn(); }, ms); timers.add(t); };
     const reduced = () => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; } };
     const full = (col) => !ctx || ctx.state.cols[col].length >= ROWS;
+    const fine = () => { try { return matchMedia('(hover: hover) and (pointer: fine)').matches; } catch { return false; } };
 
     function renderDiscs(c, animKey, fallMs) {
       const want = new Set();
@@ -321,7 +323,8 @@ registerGame({
         wait = true;
         text = `${api.name(who)}’s turn`;
       } else if (lifted == null) {
-        text = online ? 'Your turn · tap a column' : `${api.name(who)}, tap a column`;
+        const verb = fine() ? 'click' : 'tap';
+        text = online ? `Your turn · ${verb} a column` : `${api.name(who)}, ${verb} a column`;
       } else if (full(lifted)) {
         text = 'That column is full. Pick another.';
       } else {

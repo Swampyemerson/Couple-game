@@ -26,10 +26,13 @@ export function designSpeed(d) {
   const v = Math.sqrt(V0 * V0 + 0.3 * (d > 0 ? d : 0));
   return v > VMAX ? VMAX : v;
 }
-/** 0 → 1 difficulty by distance, quantized so tiny float differences can't matter. */
+/**
+ * 0 → 1 difficulty by distance, quantized so tiny float differences can't matter. Gentle for the
+ * first ~30 s (0.12 at 200 m, 0.30 at 430 m), then ramping (0.65 at 1 km, 0.87 at 2 km).
+ */
 export function difficulty(d) {
-  const x = (d > 0 ? d : 0) / 700;
-  return Math.floor((1 - 1 / (1 + x + x * x * 0.5)) * 64) / 64;
+  const x = (d > 0 ? d : 0) / 850;
+  return Math.floor((1 - 1 / (1 + 0.3 * x + 1.1 * x * x)) * 64) / 64;
 }
 /** The safe lane at the start of chunk i. */
 export function safeLane(seed, i) {
@@ -47,9 +50,12 @@ export function rampTop(o, z) {
 }
 
 const ceil4 = (z) => Math.ceil(z / 4) * 4;
+/** Warm-up rows in chunk 0 (track metres): jump, then roll. */
+export const TUT_JUMP = 52;
+export const TUT_ROLL = 84;
 
 function makeObs(c, t, lane, z0, z1, extra) {
-  const o = { id: c.i * 100 + c.obs.length, t, lane, z0, z1, b: 0, h: 0, hw: BAR_HW, walk: false, cars: 0, liv: 0, zm: 0, len: 0, side: 0 };
+  const o = { id: c.i * 100 + c.obs.length, t, lane, z0, z1, b: 0, h: 0, hw: BAR_HW, walk: false, cars: 0, liv: 0, zm: 0, len: 0, side: 0, soft: 0 };
   if (t === O_LOW) { o.h = LOW_H; }
   else if (t === O_HIGH) { o.b = HIGH_B; o.h = HIGH_T; }
   else if (t === O_TRAIN || t === O_RAMP || t === O_MTRAIN) { o.h = ROOF; o.hw = TRAIN_HW; o.walk = true; }
@@ -74,8 +80,17 @@ export function genChunk(seed, i) {
   c.path.push([z0, sIn]);
 
   if (i === 0) {
-    // Warm-up straight: coins only (the tutorial plays here).
-    coinLine(c, 0, 26, 92, 1.0, 3);
+    // Warm-up straight (the tutorial plays here): coins pull you to the middle, then one row to
+    // jump and one to roll under, across every lane. They're soft: a miss is a stumble, not a crash.
+    coinLine(c, 0, 20, 40, 1.0, 3);
+    for (let l = -1; l <= 1; l++) makeObs(c, O_LOW, l, TUT_JUMP, TUT_JUMP + 0.5, { soft: 1 });
+    coinArc(c, 0, TUT_JUMP + 0.25, 9, 1.0, 1.25);
+    coinLine(c, 0, TUT_JUMP + 8, TUT_ROLL - 8, 1.0, 3);
+    for (let l = -1; l <= 1; l++) makeObs(c, O_HIGH, l, TUT_ROLL, TUT_ROLL + 0.4, { soft: 1 });
+    coinLine(c, 0, TUT_ROLL - 5.2, TUT_ROLL + 5.2, 0.55, 2.6);
+    coinLine(c, 0, TUT_ROLL + 9, 96, 1.0, 3);
+    c.obs.sort((a, b) => a.z0 - b.z0);
+    c.coins.sort((a, b) => a.z - b.z);
     c.path.push([z1, sOut]);
     return c;
   }
@@ -235,7 +250,7 @@ function pZigzag(X) {
   const n2 = 1 + (r() < X.diff ? 1 : 0);
   const L1 = n1 * CAR;
   const L2 = n2 * CAR;
-  const W = X.sec(LANE_TIME * d + 0.34);
+  const W = X.sec((LANE_TIME > 0.15 ? LANE_TIME : 0.15) * d + 0.34); // generous: as if lane changes took 0.15 s
   const z = X.z;
   const zc = z + L1;
   const zw = zc + W;

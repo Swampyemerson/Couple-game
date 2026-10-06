@@ -24,9 +24,10 @@ function whyNot(s, who, b, i) {
   if (s.end) return 'The game is over';
   if (!Number.isInteger(b) || b < 0 || b > 8 || !Number.isInteger(i) || i < 0 || i > 8) return 'Pick a square';
   if (who !== s.turn) return 'Not your turn';
+  // the send rule first: when you're sent somewhere, that's the useful thing to hear
+  if (s.force !== null && s.force !== b) return `You have to play in the ${NAMES[s.force]} board`;
   if (s.big[b] === 'd') return 'That board is full';
   if (s.big[b]) return 'That board is already won';
-  if (s.force !== null && s.force !== b) return `You have to play in the ${NAMES[s.force]} board`;
   if (s.cells[b * 9 + i]) return 'That square is taken';
   return null;
 }
@@ -151,7 +152,7 @@ registerGame({
   .g-ult .gu-sb.is-open .gu-c:not(:disabled):hover::before { background: color-mix(in srgb, var(--g-hl) 60%, transparent); }
 }
 
-.g-ult .gu-plate { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 16px 8px 10px; border-radius: 999px; background: var(--g-card); border: 2px solid var(--g-ink); box-shadow: var(--g-shadow); font: 800 0.95rem/1.2 var(--g-font-display); color: var(--g-ink); max-width: 100%; }
+.g-ult .gu-plate { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 16px 8px 10px; border-radius: 999px; background: var(--g-card); border: 2px solid var(--g-ink); box-shadow: var(--g-shadow); font: 800 0.95rem/1.2 var(--g-font-display); color: var(--g-ink); max-width: 100%; text-wrap: balance; }
 .g-ult .gu-plate.wait { color: var(--g-muted); border-color: var(--g-line); }
 .g-ult .gu-plate.pop { animation: gu-plate 260ms cubic-bezier(0.3, 1.5, 0.5, 1); }
 @keyframes gu-plate { from { transform: scale(0.92); } to { transform: none; } }
@@ -282,9 +283,9 @@ registerGame({
         const e = s.end || {};
         const { a, b } = boardsWon(s);
         who = e.who || null;
-        if (e.why === 'line') text = `${api.name(e.who)} took three boards in a row`;
-        else if (e.who) text = `No line left: ${api.name(e.who)} wins on boards, ${Math.max(a, b)}–${Math.min(a, b)}`;
-        else text = `No line left and boards tied ${a}–${b}. A draw.`;
+        if (e.why === 'line') text = `${api.name(e.who)} wins, three in a row`;
+        else if (e.who) text = `${api.name(e.who)} wins on boards, ${Math.max(a, b)}–${Math.min(a, b)}`;
+        else text = `Boards tied ${a}–${b}. A draw.`;
       } else if (!c.canMove) {
         who = c.acts[0] || null;
         wait = true;
@@ -384,7 +385,10 @@ registerGame({
         if (!sel || sel.by === 'hover') { const d = defaultCursor(); aim(d.b, d.i, 'key'); return; }
         const [R, C] = toRC(sel.b, sel.i);
         const [dr, dc] = arrows[e.key];
-        const n = fromRC(Math.max(0, Math.min(8, R + dr)), Math.max(0, Math.min(8, C + dc)));
+        // when you're sent to one board, the cursor stays inside it
+        const f = ctx.state.force;
+        const [r0, c0, span] = f !== null ? [Math.floor(f / 3) * 3, (f % 3) * 3, 2] : [0, 0, 8];
+        const n = fromRC(Math.max(r0, Math.min(r0 + span, R + dr)), Math.max(c0, Math.min(c0 + span, C + dc)));
         aim(n.b, n.i, 'key');
         return;
       }

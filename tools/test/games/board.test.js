@@ -97,6 +97,13 @@ async function rulesTests() {
     ok(!s.win && s.n === 42 && four.next(s).length === 0, 'a full board with no four ends the game');
     const r = four.result(s);
     ok(r.winner === null && /draw/i.test(r.sub), 'full board is a draw');
+    // one disc finishing both diagonals at once: two runs in the same direction class
+    const x = four.init({ first: 'a' });
+    x.cols = [['a'], ['b', 'a'], ['b', 'b', 'a'], ['b', 'b', 'b'], ['a', 'b', 'a'], ['b', 'a'], ['a']];
+    x.n = 14;
+    s = four.apply(clone(x), 'a', { col: 3 });
+    ok(s.win && s.win.runs.length === 2 && s.win.runs.every((r) => r.dir === 'diag'), 'a disc can finish both diagonals at once');
+    ok(/two lines/i.test(four.result(s).sub), 'the result says two lines, not just "on the diagonal"');
     const d = core.derive(four, { first: 'a', seed: 1, lists: { a: cols([0, 0, 0, 0, 1]), b: cols([0, 0, 0]) } });
     ok(d.rejected.length === 1 && d.rejected[0].error === 'That column is full' && d.count === 7 && d.state.cols[1].length === 1, 'engine replay drops a move into a full column and plays on');
   });
@@ -158,6 +165,8 @@ async function rulesTests() {
     s = run(ult, 'a', mv([[2, 0]]), s);
     ok(s.force === null, 'being sent to a won board means a free move');
     ok(/won/.test(errOf(() => ult.apply(clone(s), 'a', { b: 0, i: 5 })) || ''), 'a won board takes no more moves');
+    const sent = run(ult, 'a', mv([[1, 1]]), s); // b now has to play in board 1
+    ok(sent.force === 1 && /have to play in the top board/.test(errOf(() => ult.apply(clone(sent), 'b', { b: 0, i: 5 })) || ''), 'tapping a won board while sent elsewhere names the board you have to play in');
     ok([1, 2, 3, 5, 6, 7, 8].every((b) => errOf(() => ult.apply(clone(s), 'a', { b, i: 3 })) === null), 'a free move can go in any open board');
     // win a board by playing its own matching square → free move
     let c = ult.init({ first: 'a' });
@@ -183,6 +192,28 @@ async function rulesTests() {
     ok(s.end && s.end.why === 'line' && ult.result(s).winner === 'b', 'three small boards in a row wins the game');
     ok(errOf(() => ult.apply(clone(s), 'a', { b: 8, i: 8 })) !== null, 'no moves after the game is won');
     ok(ult.score(s).b >= 3, 'score counts boards won');
+    // hundreds of random games: the send rule holds on every move, and every game ends
+    const rnd = lcg(7);
+    let ends = { line: 0, count: 0 };
+    for (let g = 0; g < 300; g++) {
+      let st = ult.init({ first: g % 2 ? 'a' : 'b' });
+      let moves = 0;
+      while (ult.next(st).length) {
+        const legal = [];
+        for (let b = 0; b < 9; b++) { if (st.big[b] || (st.force !== null && st.force !== b)) continue; for (let i = 0; i < 9; i++) if (!st.cells[b * 9 + i]) legal.push([b, i]); }
+        if (!legal.length) throw new Error(`FAIL: ultimate: game ${g} has no legal move but is not over`);
+        const [b, i] = legal[Math.floor(rnd() * legal.length)];
+        st = ult.apply(clone(st), st.turn, { b, i });
+        moves++;
+        if (!st.end && st.force !== (st.big[i] ? null : i)) throw new Error(`FAIL: ultimate: send rule broken in game ${g}`);
+        if (st.force !== null && st.big[st.force]) throw new Error(`FAIL: ultimate: sent to a closed board in game ${g}`);
+        if (moves > 81) throw new Error('FAIL: ultimate: more than 81 moves');
+      }
+      ends[st.end.why]++;
+      const r = ult.result(st);
+      if (st.end.why === 'line' && r.winner !== st.end.who) throw new Error('FAIL: ultimate: line winner wrong');
+    }
+    ok(ends.line > 0 && ends.count > 0, `300 random games all end cleanly (${ends.line} on a line, ${ends.count} on boards)`);
     const d = core.derive(ult, { first: 'a', seed: 1, lists: { a: [{ b: 4, i: 0 }], b: [{ b: 5, i: 5 }, { b: 0, i: 4 }] } });
     ok(d.rejected.length === 1 && /top-left/.test(d.rejected[0].error), 'engine replay drops a move in the wrong board');
   });
@@ -448,6 +479,8 @@ async function uiTests(scheme, port) {
       ok(forced !== null && await pg.$eval(`.gu-sb[data-b="${forced}"]`, (x) => x.classList.contains('is-open')), 'ultimate: the board you are sent to is highlighted');
       const openCount = await pg.$$eval('.gu-sb.is-open', (xs) => xs.length);
       ok(openCount === 1, 'ultimate: only that board is highlighted');
+      for (const k of ['ArrowRight', 'ArrowRight', 'ArrowRight', 'ArrowDown', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowLeft', 'ArrowLeft', 'ArrowLeft']) await pg.keyboard.press(k);
+      ok(await pg.$eval('.gu-c.is-cur', (x) => Number(x.dataset.b)) === forced, 'ultimate: the keyboard cursor stays inside the board you are sent to');
       const wrong = forced === 0 ? 8 : 0;
       await pg.click(SEL.ultimate([wrong, 4]));
       ok(await toastSays(pg, /have to play in the/i), 'ultimate: a click in the wrong board is refused with a reason');

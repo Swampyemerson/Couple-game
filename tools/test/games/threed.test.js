@@ -113,6 +113,34 @@ async function unit() {
   const bm = { first: 'a', seed: 777, lists: { a: sim.moves.filter((x) => x.who === 'a').map((x) => ({ col: x.col })), b: sim.moves.filter((x) => x.who === 'b').map((x) => ({ col: x.col })) } };
   const bd = core.derive(B, bm);
   ok(bd.over && JSON.stringify(bd.state) === JSON.stringify(sim.state) && !bd.rejected.length, 'bones: a replayed match is deterministic');
+  // long random games: smashing keeps games going, so play hundreds and check the invariants on every move
+  let longest = 0;
+  let r = 4242;
+  const rnd = () => ((r = (r * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  for (let g = 0; g < 400; g++) {
+    let st = B.init({ first: g % 2 ? 'a' : 'b', seed: 1000 + g, opts: {} });
+    let moves = 0;
+    while (B.next(st).length) {
+      const who = st.turn;
+      const free = [0, 1, 2].filter((c) => st.grids[who][c].length < 3);
+      const before = clone(st);
+      st = B.apply(clone(st), who, { col: free[Math.floor(rnd() * free.length)] });
+      moves++;
+      const L = st.last;
+      const bad = ['a', 'b'].some((w) => st.grids[w].some((col) => col.length > 3 || col.some((v) => !(v >= 1 && v <= 6))))
+        || st.grids[who][L.col].length !== before.grids[who][L.col].length + 1
+        || st.grids[other(who)][L.col].includes(L.value)
+        || L.destroyed !== before.grids[other(who)][L.col].filter((v) => v === L.value).length
+        || (!st.over && (st.turn !== other(who) || st.roll !== core.randInt(6, st.seed, 'roll', st.n) + 1));
+      if (bad || moves > 5000) throw new Error(`FAIL: bones: invariant broken in random game ${g} at move ${moves}`);
+    }
+    const t = B.score(st);
+    const res = B.result(st);
+    if (res.winner !== (t.a === t.b ? null : t.a > t.b ? 'a' : 'b')) throw new Error(`FAIL: bones: wrong winner in random game ${g}`);
+    if (!st.grids.a.every((c) => c.length === 3) && !st.grids.b.every((c) => c.length === 3)) throw new Error(`FAIL: bones: game ${g} ended with neither grid full`);
+    longest = Math.max(longest, moves);
+  }
+  ok(longest > 18, `bones: 400 random games keep every invariant and end with a full grid (longest ${longest} dice)`);
 }
 
 // A deterministic strategy: smash when you can, otherwise fill the emptiest column.
@@ -516,6 +544,34 @@ async function fallback2D(h, pg) {
   for (let i = h.errors.length - 1; i >= 0; i--) if (/Error creating WebGL context/.test(h.errors[i])) h.errors.splice(i, 1);
 }
 
+// ── knucklebones: a three.js download that never finishes ─────────────
+// The CDN can hang without erroring (no onerror ever fires). The game must not wait forever.
+async function bonesSlow3D() {
+  const h = await launch({ port: PORT + 2, only: ['bones'] });
+  try {
+    const pg = h.a;
+    await pg.route(/three\.js\/r128\/three\.min\.js/, () => {}); // never answered
+    await pg.addInitScript(() => { window.__bonesTest = { log: [], slowMs: 1500 }; });
+    await pg.reload();
+    await pg.waitForSelector('.tabbar');
+    await h.newLocalGame(pg, 'bones');
+    ok(/shaking the dice/i.test(await pg.textContent('.gb-band')), 'bones: while three.js loads, the dice tray says so');
+    await pg.waitForSelector('.gb-band[data-gl="2d"]', { timeout: 6000 });
+    await pg.waitForSelector('.g-bones[data-phase="pick"]', { timeout: 6000 });
+    const id = await pg.evaluate(() => window.__lastMatchId);
+    const e = await h.engine(pg, id);
+    ok(await pg.$eval('.gb-die2d .gb-die', (d) => Number(d.dataset.v)) === e.state.roll, 'bones: if three.js never arrives, flat dice take over and land on the roll');
+    await pg.click(`.gb-tray[data-who="${e.acts[0]}"] .gb-col[data-col="1"]`);
+    await waitMoves(pg, id, 1);
+    await pg.waitForSelector('.g-bones[data-phase="pick"]', { timeout: 8000 });
+    ok(true, 'bones: and the game plays on');
+    await h.closeGame(pg);
+    h.assertNoErrors();
+  } finally {
+    await h.close();
+  }
+}
+
 // ── run ───────────────────────────────────────────────────────────────
 (async () => {
   let failed = false;
@@ -558,6 +614,7 @@ async function fallback2D(h, pg) {
       await Promise.all([bonesLocal(d, d.a, { shots: 'bones-dark-390' }), bonesLocal(d, d.b, { shots: 'bones-dark-360' })]);
       d.assertNoErrors();
       ok(true, 'no page errors (dark run)');
+      await bonesSlow3D();
     } catch (e) {
       failed = true;
       console.error(e.message);

@@ -67,6 +67,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const monthOf = (dateKey) => String(dateKey).slice(0, 7);
 // db error codes that no retry can fix for the rest of this page load
 const FATAL = new Set(['revoked', 'not_granted', 'capability_disabled', 'capability_removed']);
+const SETTLE_MS = 5000;
+const getIn = (o, path) => path.reduce((x, k) => (x && typeof x === 'object' ? x[k] : undefined), o);
+const sameVal = (a, b) => (a == null && b == null) || JSON.stringify(a) === JSON.stringify(b);
 const hasAnswers = (p) => !!(p && ((p.packs && Object.keys(p.packs).length) || (p.daily && Object.keys(p.daily).length)));
 
 function normalize(s) {
@@ -100,6 +103,9 @@ export class Store {
     this._dq = {}; // shared doc path -> { busy, has, body, cur }: one whole-doc write at a time
     this._bucket = null; // bucket items as the server last listed them
     this._seen = {}; // people/<w> -> a definitive snapshot arrived
+    // Writes the server has confirmed but no snapshot has shown yet (a snapshot taken just before
+    // the write can still be on its way): kept on top for a few seconds so nothing flickers back.
+    this._settle = {}; // doc path -> [{ p, v, t }]
     let out = null;
     try { out = JSON.parse(read(LS.outbox, 'null')); } catch { /* ignore */ }
     this._out = out && typeof out === 'object' && !Array.isArray(out) ? out : {}; // doc path -> [{ p, v }] unconfirmed field writes
@@ -301,8 +307,9 @@ export class Store {
     }
     this.watch(() => db.doc('shared/meta'), (snap) => {
       if (!snap.exists && isCache(snap)) return;
-      if (this._dq['shared/meta'] && this._dq['shared/meta'].busy) return; // our own change is on its way
-      const since = snap.exists ? (snap.data() || {}).since || null : null;
+      const body = snap.exists ? snap.data() || {} : null;
+      if (this._sharedOverlay('shared/meta', body ? { since: body.since || null } : null)) return; // our own change is on its way
+      const since = body ? body.since || null : null;
       if ((since || null) !== (this.state.shared.since || null)) {
         if (since) this.state.shared.since = since; else delete this.state.shared.since;
         this.persist();
@@ -361,6 +368,15 @@ export class Store {
     const daily = { ...(next.daily || {}) };
     const pre = path + '/daily/';
     for (const [k, d] of Object.entries(this._docs)) if (k.startsWith(pre) && d && d.d) Object.assign(daily, d.d);
+    const now = Date.now();
+    for (const [doc, list] of Object.entries(this._settle)) {
+      if (doc !== path && !doc.startsWith(pre)) continue;
+      const kept = list.filter((x) => now - x.t < SETTLE_MS && !sameVal(getIn(this._docs[doc], x.p), x.v));
+      if (kept.length) this._settle[doc] = kept; else delete this._settle[doc];
+      for (const x of kept) {
+        if (doc === path) { if (x.p[0] !== 'daily') setIn(next, x.p, x.v); } else if (x.p[0] === 'd' && x.p.length === 2) setIn(daily, [x.p[1]], x.v);
+      }
+    }
     for (const [doc, q] of Object.entries(this._out)) {
       if (doc === path) q.forEach((x) => (x.p[0] === 'daily' ? setIn(daily, x.p.slice(1), x.v) : setIn(next, x.p, x.v)));
       else if (doc.startsWith(pre)) q.forEach((x) => { if (x.p[0] === 'd' && x.p.length === 2) setIn(daily, [x.p[1]], x.v); });
@@ -374,13 +390,25 @@ export class Store {
     this.emit(true);
   }
 
+  // The body this device last wrote to a shared doc, while the server may not show it yet.
+  _sharedOverlay(path, serverBody) {
+    const q = this._dq[path];
+    if (!q) return undefined;
+    if (q.busy) return { body: q.has ? q.body : q.cur };
+    if (q.done && Date.now() - q.done.t < SETTLE_MS && !sameVal(serverBody, q.done.body)) return { body: q.done.body };
+    q.done = null;
+    return undefined;
+  }
+
   _applyBucket() {
     if (!this._bucket) return;
     const bucket = { ...this._bucket };
-    for (const [path, q] of Object.entries(this._dq)) {
-      if (!q.busy || !path.startsWith('bucket/')) continue;
-      const body = q.has ? q.body : q.cur;
-      if (body == null) delete bucket[path.slice(7)]; else bucket[path.slice(7)] = body;
+    for (const path of Object.keys(this._dq)) {
+      if (!path.startsWith('bucket/')) continue;
+      const id = path.slice(7);
+      const o = this._sharedOverlay(path, this._bucket[id]);
+      if (!o) continue;
+      if (o.body == null) delete bucket[id]; else bucket[id] = o.body;
     }
     if (JSON.stringify(bucket) === JSON.stringify(this.state.shared.bucket || {})) return;
     this.state.shared.bucket = bucket;
@@ -454,7 +482,8 @@ export class Store {
         continue;
       }
       tries = 0;
-      q.splice(0, n);
+      const t = Date.now();
+      (this._settle[doc] = this._settle[doc] || []).push(...q.splice(0, n).map((x) => ({ ...x, t })));
       if (!q.length) delete this._out[doc];
       this._exists[doc] = true;
       this._saveOut();
@@ -486,6 +515,7 @@ export class Store {
         }
       }
       q.busy = false;
+      q.done = { body: q.cur, t: Date.now() };
       q.cur = null;
       if (path.startsWith('bucket/')) this._applyBucket();
     })();

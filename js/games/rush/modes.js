@@ -319,7 +319,8 @@ export function createRules(G) {
 
   // ── per frame ──
   function tick(now, dt) {
-    for (const w of AB) {
+    for (let wi = 0; wi < 2; wi++) {
+      const w = AB[wi];
       const p = P(w);
       if (p.shoveCD > 0) p.shoveCD -= dt;
       if (p.weaponRoll > 0) p.weaponRoll -= dt;
@@ -338,7 +339,8 @@ export function createRules(G) {
         r.draft = drafting ? 0.05 : 0;
       }
       // roadblocks passed without a hit
-      for (const o of r.extra) {
+      for (let ei = 0; ei < r.extra.length; ei++) {
+        const o = r.extra[ei];
         if (o.t === O_BLOCK && o.atk && !o.hit && o.z1 < r.z - 3) { G.send(o.from, 'res', { id: o.atk, k: 'block', r: 'dodged' }); o.atk = 0; o.gone = 1; }
       }
       if (r.extra.length > 6) r.extra = r.extra.filter((o) => o.z1 > r.z - 20);

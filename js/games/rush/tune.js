@@ -2,7 +2,7 @@
 
 export const DT = 1 / 120;            // fixed sim step (s)
 export const LANE_W = 2.6;            // lane spacing (m)
-export const LANE_TIME = 0.15;        // lane change duration (s)
+export const LANE_TIME = 0.13;        // lane change duration (s): snappy, ease-out
 export const GRAV = 34;               // m/s²
 export const JUMP_V = 10.6;           // jump apex ≈ 1.65 m (+ hang)
 export const SUPER_JUMP_V = 16.2;     // sneakers: apex ≈ 3.9 m

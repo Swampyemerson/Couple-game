@@ -65,6 +65,7 @@ const PIPS = {
 const pipHTML = (v) => (PIPS[v] || []).map(([r, c]) => `<i style="grid-area:${r + 1}/${c + 1}"></i>`).join('');
 const dieHTML = (v, cls = '', extra = '') => `<span class="gb-die ${cls}" data-v="${v}"${extra}>${pipHTML(v)}</span>`;
 const noop = () => {};
+const SLOW_3D_MS = 8000; // how long to wait for three.js before switching to flat dice
 const DEAD = { dead: true };
 
 let probe = null;
@@ -378,8 +379,9 @@ registerGame({
     .g-bones .gb-col { position: relative; z-index: 0; display: flex; flex-direction: column; gap: var(--gb-gap); margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; opacity: 1; touch-action: manipulation; -webkit-tap-highlight-color: transparent; cursor: default; border-radius: calc(var(--gb-die) * 0.26); }
     .g-bones .gb-top .gb-col { flex-direction: column-reverse; }
     .g-bones .gb-col.can { cursor: pointer; }
-    .g-bones .gb-col.can::before { content: ''; position: absolute; inset: -5px; z-index: -1; border: 2.5px solid var(--g-ink); border-radius: calc(var(--gb-die) * 0.3); background: var(--g-hl); animation: gb-lit 0.9s ease-in-out infinite alternate; }
-    .g-bones .gb-col.can:active::before { transform: translate(1px, 1px); }
+    .g-bones .gb-col.can::before { content: ''; position: absolute; inset: -4px -2px; z-index: -1; border: 2px solid var(--g-ink); border-radius: calc(var(--gb-die) * 0.3); background: var(--g-hl); box-shadow: var(--g-shadow-sm); transition: transform 0.08s, box-shadow 0.08s; }
+    .g-bones .gb-col.can:active::before { transform: translate(2px, 2px); box-shadow: 0 0 0 var(--g-edge); }
+    .g-bones .gb-col.can .gb-die.ghost { animation: gb-hint 0.9s ease-in-out infinite alternate; }
     .g-bones .gb-col:focus-visible { outline: 3px solid var(--g-ink); outline-offset: 7px; }
     .g-bones .gb-slot { position: relative; display: block; width: var(--gb-die); height: var(--gb-die); border-radius: 24%; border: 2px dashed var(--g-line); }
     .g-bones .gb-slot.full { border-color: transparent; }
@@ -417,7 +419,7 @@ registerGame({
     .g-bones .gb-die2d .gb-die { box-shadow: var(--g-shadow); }
     .g-bones .gb-die2d.rolling .gb-die { animation: gb-tumble 0.8s cubic-bezier(.2, .7, .3, 1) both; }
     .g-bones .gb-die2d.from-top.rolling .gb-die { animation-name: gb-tumble-r; }
-    @keyframes gb-lit { from { opacity: 0.5; } to { opacity: 1; } }
+    @keyframes gb-hint { from { transform: scale(0.9); } to { transform: none; } }
     @keyframes gb-bump { 0% { transform: scale(1); } 40% { transform: scale(1.3); } 100% { transform: scale(1); } }
     @keyframes gb-win { 0% { transform: scale(0.6) rotate(-8deg); } 100% { transform: scale(1) rotate(-3deg); } }
     @keyframes gb-pulse { 0% { transform: scale(1); } 40% { transform: scale(1.14) rotate(-4deg); } 100% { transform: scale(1); } }
@@ -432,7 +434,7 @@ registerGame({
     @keyframes gb-tumble { 0% { transform: translate(-150px, -6px) rotate(-460deg); } 45% { transform: translate(-36px, -16px) rotate(-130deg); } 70% { transform: translate(-6px, 0) rotate(-22deg); } 86% { transform: translate(0, -4px) rotate(4deg); } 100% { transform: none; } }
     @keyframes gb-tumble-r { 0% { transform: translate(150px, -6px) rotate(460deg); } 45% { transform: translate(36px, -16px) rotate(130deg); } 70% { transform: translate(6px, 0) rotate(22deg); } 86% { transform: translate(0, -4px) rotate(-4deg); } 100% { transform: none; } }
     @media (prefers-reduced-motion: reduce) {
-      .g-bones .gb-col.can::before, .g-bones .gb-die.threat::after { animation: none; }
+      .g-bones .gb-col.can .gb-die.ghost, .g-bones .gb-die.threat::after { animation: none; }
       .g-bones .gb-die.is-new, .g-bones .gb-die.shift, .g-bones .gb-die.pulse, .g-bones .gb-cs.bump, .g-bones .gb-die2d.rolling .gb-die, .g-bones .gb-die.crack { animation: none; }
       .g-bones .gb-die.pop { animation: gb-fade 0.15s linear both; }
       .g-bones .gb-shard { display: none; }
@@ -501,6 +503,7 @@ registerGame({
       if (dv) dv.setInks(inks(topW), inks(bottom));
     }
     setSides();
+    labL.innerHTML = '<span class="gb-kick">Shaking the dice…</span>'; // until the first roll
 
     // ── layout: size dice to fit the stage ──
     function layout() {
@@ -827,6 +830,7 @@ registerGame({
       }, 0);
     }
     function useView(v) {
+      clearTimeout(slowT);
       dv = v;
       setSides();
       dv.resize(band.clientWidth, band.clientHeight);
@@ -840,8 +844,11 @@ registerGame({
       useView(dieView2D($('.gb-die2d')));
       if (note) api.toast(note);
     }
+    // A CDN that never answers would leave the game waiting for its dice forever: after a while,
+    // play on with flat dice (and ignore three.js if it turns up later).
+    const slowT = setTimeout(() => { if (!dead && !dv) fallback('The 3D dice are slow to load, so these are flat ones.'); }, (T() && T().slowMs) || SLOW_3D_MS);
     threeP.then((THREE) => {
-      if (dead) return;
+      if (dead || dv) return;
       let v;
       try { v = dieView3D(THREE, canvas, pal, () => api.sfx('tick')); } catch (err) {
         console.warn('[bones] WebGL unavailable', err);
@@ -853,7 +860,7 @@ registerGame({
       band.dataset.gl = 'ok';
       useView(v);
     }, () => {
-      if (dead) return;
+      if (dead || dv) return;
       fallback('Couldn’t load the 3D dice, so these are flat ones.');
     });
 
@@ -866,6 +873,7 @@ registerGame({
       },
       destroy() {
         dead = true;
+        clearTimeout(slowT);
         if (raf) cancelAnimationFrame(raf);
         raf = 0;
         ro.disconnect();

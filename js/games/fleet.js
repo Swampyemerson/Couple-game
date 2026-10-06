@@ -405,7 +405,11 @@ registerGame({
     let aim = { r: 3, c: 3 };
     let kbd = false;
     const timers = new Set();
-    const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); fn(); }, ms); timers.add(t); };
+    const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); fn(); }, ms); timers.add(t); return t; };
+    // Same phone: a miss passes the turn, and the engine drops the pass-the-phone curtain at once.
+    // So a miss is shown here first (splash, sound, "pass the phone"), then played.
+    let hold = null; // { r, c, t }
+    const reducedMotion = () => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; } };
     const nm = (w) => api.name(w);
 
     const draft = () => (V ? (drafts[V] = drafts[V] || SIZES.map(() => null)) : SIZES.map(() => null));
@@ -526,7 +530,8 @@ registerGame({
       const sunkTheirs = new Map(mine.filter((x) => x.sunk >= 0).map((x) => [x.sunk, x.i]));
       const sunkMine = new Map(theirs.filter((x) => x.sunk >= 0).map((x) => [x.sunk, x.i]));
       const onSunk = (fleet, sunkMap, r, c2) => { for (const [idx, at2] of sunkMap) if (covers(fleet[idx], r, c2)) return at2; return -1; };
-      const myTurn = c.canMove;
+      const pending = hold && !over ? hold : null; // a same-phone miss about to be played
+      const myTurn = c.canMove && !pending;
       const lastMine = mine.length ? mine[mine.length - 1].i : -1;
       const foeRun = lastRunBy(shots, foe);
       const foeRunSet = new Set(foeRun);
@@ -537,7 +542,7 @@ registerGame({
       let tCells = '';
       for (let r = 0; r < N; r++) {
         for (let col = 0; col < N; col++) {
-          const x = shotAt.get(r * N + col);
+          const x = shotAt.get(r * N + col) || (pending && pending.r === r && pending.c === col ? { hit: 0 } : null);
           const aimed = kbd && aim.r === r && aim.c === col;
           tCells += `<button type="button" class="fl-cell${x ? ' is-shot' : ''}${aimed ? ' is-aim' : ''}" data-r="${r}" data-c="${col}" aria-label="${coord(r, col)}${x ? (x.hit ? ', hit' : ', miss') : ''}"${x || !myTurn ? ' disabled' : ''}></button>`;
         }
@@ -557,8 +562,9 @@ registerGame({
         const kind = !x.hit ? 'is-miss' : sunkBy >= 0 ? 'is-x' : 'is-hit';
         const isNew = freshAt.has(x.i) || (sunkBy >= 0 && freshAt.has(sunkBy));
         const d = freshAt.has(x.i) ? delay(x.i) : sunkBy >= 0 ? delay(sunkBy) + 520 : 0;
-        tLayer += `<span class="fl-mark ${kind}${isNew ? ' is-new' : ''}${x.i === lastMine && !over ? ' is-last' : ''}" style="${at(x.r, x.c)};--d:${d}ms">${!x.hit ? SPLASH : sunkBy >= 0 ? WRECK : BURST}</span>`;
+        tLayer += `<span class="fl-mark ${kind}${isNew ? ' is-new' : ''}${x.i === lastMine && !over && !pending ? ' is-last' : ''}" style="${at(x.r, x.c)};--d:${d}ms">${!x.hit ? SPLASH : sunkBy >= 0 ? WRECK : BURST}</span>`;
       }
+      if (pending) tLayer += `<span class="fl-mark is-miss is-new is-last" style="${at(pending.r, pending.c)};--d:0ms">${SPLASH}</span>`;
 
       // my fleet (their shots on it; their latest volley highlighted)
       let hLayer = myFleet.map((o, idx) => {
@@ -600,7 +606,8 @@ registerGame({
       };
       // one line: the latest volley (theirs when you come back to it; yours while you keep firing)
       const lines = [];
-      if (!shots.length) lines.push(`<p><b>Battle stations.</b> ${s.first === v ? `You fire first: pick a square in ${esc(nm(foe))}’s waters.` : `${esc(nm(foe))} fires first.`}</p>`);
+      if (pending) lines.push(`<p><b class="fl-who-${v}">${esc(nm(v))}</b> fired <span class="fl-tok is-miss">${coord(pending.r, pending.c)} miss</span> Pass the phone to <b class="fl-who-${foe}">${esc(nm(foe))}</b>.</p>`);
+      else if (!shots.length) lines.push(`<p><b>Battle stations.</b> ${s.first === v ? `You fire first: pick a square in ${esc(nm(foe))}’s waters.` : `${esc(nm(foe))} fires first.`}</p>`);
       else {
         const run = lastRun(shots);
         lines.push(volleyLine(run, shots[run[0]].by));
@@ -614,6 +621,8 @@ registerGame({
       if (over) {
         pill = s.winner === v ? 'All sunk' : 'Fleet lost';
         status = `${nm(s.winner)} sank the whole fleet`;
+      } else if (pending) {
+        status = `Miss. Over to ${nm(foe)}`;
       } else if (myTurn) {
         status = c.mode === 'local' ? (again ? `Hit! ${nm(v)} fires again` : `${nm(v)}’s shot`) : again ? 'Hit! Fire again' : 'Your shot';
       } else {
@@ -707,9 +716,28 @@ registerGame({
     }
 
     function fire(r, c) {
-      if (!ctx || !ctx.canMove || view !== 'battle') return;
+      if (!ctx || !ctx.canMove || view !== 'battle' || hold) return;
+      if (ctx.mode === 'local') {
+        let ns;
+        try { ns = rules.apply(JSON.parse(JSON.stringify(ctx.state)), ctx.actor, { r, c }); } catch (err) { bad(err.message); return; }
+        if (ns.phase === 'battle' && ns.turn !== ctx.actor) {
+          hold = { r, c };
+          api.sfx('pop');
+          render();
+          hold.t = later(playHeld, reducedMotion() ? 500 : 1150);
+          return;
+        }
+      }
       const res = api.move({ r, c });
       if (!res.ok) bad(res.error);
+    }
+    function playHeld() {
+      const hd = hold;
+      if (!hd) return;
+      clearTimeout(hd.t);
+      hold = null;
+      const res = api.move({ r: hd.r, c: hd.c });
+      if (!res.ok) { bad(res.error); render(); }
     }
 
     // ── placement actions ──
@@ -997,6 +1025,7 @@ registerGame({
         render(fresh, battleStart);
       },
       destroy() {
+        playHeld(); // closing mid-splash still plays the shot that was taken
         document.removeEventListener('keydown', onKey);
         for (const t of timers) clearTimeout(t);
         timers.clear();

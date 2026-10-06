@@ -19,6 +19,8 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
   let step = 0; let nextT = 0; let intensity = 0; let playing = false;
   let coinStreak = 0; let lastCoin = 0;
   let dead = false;
+  let pausedDuck = false;
+  const stats = { steps: 0, resets: 0, maxAhead: 0 };
 
   const isMuted = () => {
     if (mutedFn) { try { return !!mutedFn(); } catch { /* fall through */ } }
@@ -174,26 +176,35 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
     if (!ctx || !playing || ctx.state !== 'running') return;
     const bpm = 116 + intensity * 34;
     const dur = 60 / bpm / 4;
-    if (nextT < ctx.currentTime) nextT = ctx.currentTime + 0.05;
-    while (nextT < ctx.currentTime + 0.14) { schedStep(nextT); nextT += dur; step++; }
-    const want = isMuted() || !musicOn() ? 0 : 0.55;
-    if (Math.abs(musicBus.gain.value - want) > 0.01 && !duckUntil) musicBus.gain.setTargetAtTime(want, ctx.currentTime, 0.3);
-    if (duckUntil && performance.now() > duckUntil) { duckUntil = 0; musicBus.gain.setTargetAtTime(want, ctx.currentTime, 0.4); }
+    // Never catch up: after a stall (pause, background tab, slow frame) resync to "now" instead
+    // of firing a burst of overdue notes, so the loop can't stack or drift.
+    if (nextT < ctx.currentTime) { if (nextT > 0) stats.resets++; nextT = ctx.currentTime + 0.05; }
+    const silent = isMuted() || !musicOn();
+    while (nextT < ctx.currentTime + 0.14) { if (!silent) schedStep(nextT); nextT += dur; step++; stats.steps++; }
+    if (nextT - ctx.currentTime > stats.maxAhead) stats.maxAhead = nextT - ctx.currentTime;
+    const want = silent ? 0 : pausedDuck ? 0.16 : 0.55;
+    // one automation event per change of target (not one every 45 ms while it glides)
+    if (want !== lastWant && !duckUntil) { lastWant = want; musicBus.gain.setTargetAtTime(want, ctx.currentTime, 0.3); }
+    if (duckUntil && performance.now() > duckUntil) { duckUntil = 0; lastWant = want; musicBus.gain.setTargetAtTime(want, ctx.currentTime, 0.4); }
   }
   let duckUntil = 0;
+  let lastWant = -1;
 
   return {
     unlock,
     get ready() { return !!ctx && ctx.state === 'running'; },
     play(name, arg) { if (!ok()) return; const f = S[name]; if (f) { try { f(arg); } catch { /* ignore */ } } },
     setIntensity(x) { intensity = Math.max(0, Math.min(1, x)); },
+    /** Duck the music under a pause card. */
+    setPaused(on) { pausedDuck = !!on; },
+    stats,
     startMusic() {
       if (playing) return;
-      playing = true; step = 0; nextT = 0;
+      playing = true; step = 0; nextT = 0; lastWant = -1;
       if (!musicTimer) musicTimer = setInterval(pump, 45);
     },
     stopMusic() {
-      playing = false;
+      playing = false; lastWant = 0;
       if (ctx && musicBus) musicBus.gain.setTargetAtTime(0, ctx.currentTime, 0.15);
     },
     duck(ms = 900) {

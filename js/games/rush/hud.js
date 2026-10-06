@@ -80,7 +80,7 @@ export function createHud(root, o) {
     el.dataset.side = side;
     el.innerHTML = `
       <div class="rr-top">
-        <div class="rr-left"><div class="rr-hearts" data-r="hearts"></div><div class="rr-chip" data-r="coins"><i class="rr-coin-ico"></i><span>0</span></div><div class="rr-powers" data-r="powers"></div></div>
+        <div class="rr-left"><div class="rr-hearts" data-r="hearts"></div><div class="rr-row2"><div class="rr-chip rr-coins" data-r="coins"><i class="rr-coin-ico"></i><span>0</span></div><div class="rr-powers" data-r="powers"></div></div></div>
         <div class="rr-dist" data-r="dist">0<small>m</small></div>
         <div class="rr-right"><div class="rr-chip rr-partner" data-r="partner" hidden><i class="rr-dot"></i><span></span></div></div>
       </div>
@@ -98,7 +98,7 @@ export function createHud(root, o) {
     L.appendChild(el);
     const $ = (r) => el.querySelector(`[data-r="${r}"]`);
     const R = {
-      hearts: $('hearts'), coins: $('coins').querySelector('span'), dist: $('dist'), powers: $('powers'), partner: $('partner'),
+      hearts: $('hearts'), coins: $('coins').querySelector('span'), coinChip: $('coins'), dist: $('dist'), powers: $('powers'), partner: $('partner'),
       bar: $('bar'), fill: el.querySelector('.rr-fill'), mkm: $('mkm'), mko: $('mko'), gap: $('gap'), pops: $('pops'), combo: $('combo'),
       warn: $('warn'), banner: $('banner'), splat: $('splat'), flash: $('flash'), weapon: $('weapon'), pause: $('pause'), btns: $('btns'),
     };
@@ -108,8 +108,11 @@ export function createHud(root, o) {
     R.weapon.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); o.onUse(who); });
     R.btns.querySelectorAll('button').forEach((b) => b.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); o.onBtn(who, +b.dataset.a); }));
     if (R.pause) R.pause.addEventListener('click', () => o.onPause());
-    const last = { h: -1, hm: '', c: -1, d: -1, pt: null, pc: '', bo: null, bc: '', bm: -1, bt: -1, g: null, ws: null, w: undefined, wo: null, wx: -999, bn: null, btn: null };
+    const last = { h: -1, hmax: -1, hcol: '', c: -1, d: -1, pt: null, pc: '', bo: null, bca: null, bcb: null, bia: null, bib: null, bm: -1, bt: -1, g: null, ws: null, w: undefined, wo: null, wx: -999, bn: null, bnum: -1, btn: null };
     let popN = 0;
+    let barW = 0;          // cached race-bar width (read on resize, never per frame)
+    let bannerB = null;    // the countdown number inside the banner
+    let flip = 0;          // alternate animation names to restart them without a reflow
     function pwUpd(k, frac) {
       const p = pw[k];
       const q = frac <= 0 ? -1 : Math.round(frac * 50) / 50;
@@ -121,34 +124,40 @@ export function createHud(root, o) {
     const v = {
       el, who,
       hearts(n, max, color) {
-        const hm = max + color;
-        if (last.hm !== hm) { last.hm = hm; R.hearts.innerHTML = Array.from({ length: max }, () => HEART).join(''); R.hearts.style.color = color; last.h = -1; }
+        if (last.hmax !== max || last.hcol !== color) { last.hmax = max; last.hcol = color; R.hearts.innerHTML = Array.from({ length: max }, () => HEART).join(''); R.hearts.style.color = color; last.h = -1; }
         if (last.h === n) return;
+        const grew = last.h >= 0 && n > last.h;
         last.h = n;
         const hs = R.hearts.children;
         for (let i = 0; i < hs.length; i++) {
           const was = !hs[i].classList.contains('off');
           const on = i < n;
           hs[i].classList.toggle('off', !on);
-          if (on && !was) { hs[i].classList.remove('pop'); void hs[i].offsetWidth; hs[i].classList.add('pop'); }
+          if (on && !was && grew) { flip ^= 1; hs[i].classList.toggle('pop', !!flip); hs[i].classList.toggle('pop2', !flip); }
         }
       },
-      coins(n) { if (last.c !== n) { last.c = n; R.coins.textContent = n; } },
+      coins(n) {
+        if (last.c === n) return;
+        const up = last.c >= 0 && n > last.c;
+        last.c = n; R.coins.textContent = n;
+        if (up) { flip ^= 1; R.coinChip.classList.toggle('bump', !!flip); R.coinChip.classList.toggle('bump2', !flip); }
+      },
       dist(m) { if (last.d !== m) { last.d = m; R.dist.firstChild.nodeValue = m.toLocaleString('en-US'); } },
       partner(text, color) {
         if (last.pt !== text) { last.pt = text; R.partner.hidden = !text; if (text) R.partner.querySelector('span').textContent = text; }
         if (last.pc !== color) { last.pc = color; R.partner.querySelector('.rr-dot').style.background = color; }
       },
       bar(on, me, other, meCol, otherCol, meInit, otherInit) {
-        if (last.bo !== on) { last.bo = on; R.bar.hidden = !on; }
+        if (last.bo !== on) { last.bo = on; R.bar.hidden = !on; barW = 0; }
         if (!on) return;
-        if (last.bc !== meCol + otherCol) {
-          last.bc = meCol + otherCol;
+        if (last.bca !== meCol || last.bcb !== otherCol || last.bia !== meInit || last.bib !== otherInit) {
+          last.bca = meCol; last.bcb = otherCol; last.bia = meInit; last.bib = otherInit;
           R.mkm.style.background = meCol; R.mko.style.background = otherCol;
           R.mkm.textContent = meInit; R.mko.textContent = otherInit;
           R.mko.style.display = otherCol ? '' : 'none';
         }
-        const w = R.bar.clientWidth || 200;
+        if (!barW) barW = R.bar.clientWidth || 200;
+        const w = barW;
         const pm = Math.round(me * w); const po = Math.round(other * w);
         if (last.bm !== pm) { last.bm = pm; R.mkm.style.transform = `translateX(${pm}px)`; R.fill.style.width = pm + 'px'; }
         if (last.bt !== po) { last.bt = po; R.mko.style.transform = `translateX(${po}px)`; }
@@ -164,16 +173,15 @@ export function createHud(root, o) {
         R.weapon.querySelector('.rr-wname').textContent = kind ? WEAPONS[kind].name : '';
       },
       pop(text, cls = '', sub = '') {
-        const p = mk('rr-pop ' + cls, esc(text) + (sub ? `<small>${esc(sub)}</small>` : ''));
-        R.pops.appendChild(p);
-        void p.offsetWidth; p.classList.add('go');
+        const p = mk('rr-pop go ' + cls, esc(text) + (sub ? `<small>${esc(sub)}</small>` : ''));
+        R.pops.appendChild(p); // a fresh element starts its animation on insertion: no reflow needed
         popN++;
         while (R.pops.children.length > 2) R.pops.firstChild.remove();
         setTimeout(() => p.remove(), 1200);
       },
       combo(n, label) {
         R.combo.innerHTML = `x${n}<small>${esc(label)}</small>`;
-        R.combo.classList.remove('go'); void R.combo.offsetWidth; R.combo.classList.add('go');
+        flip ^= 1; R.combo.classList.toggle('go', !!flip); R.combo.classList.toggle('go2', !flip);
       },
       warn(on, xPct) {
         if (last.wo !== on) { last.wo = on; R.warn.classList.toggle('on', on); }
@@ -188,9 +196,11 @@ export function createHud(root, o) {
         v._st = setTimeout(() => R.splat.classList.remove('on', 'drip'), ms);
       },
       get splatted() { return R.splat.classList.contains('on'); },
-      flash() { R.flash.classList.remove('go'); void R.flash.offsetWidth; R.flash.classList.add('go'); },
-      banner(html) { const t = html || ''; if (last.bn !== t) { last.bn = t; R.banner.classList.toggle('on', !!t); if (t) R.banner.innerHTML = t; } },
-      bannerNum(n) { const b = R.banner.querySelector('b'); if (b && b.textContent !== String(n)) b.textContent = String(n); },
+      flash() { flip ^= 1; R.flash.classList.toggle('go', !!flip); R.flash.classList.toggle('go2', !flip); },
+      banner(html) { const t = html || ''; if (last.bn !== t) { last.bn = t; R.banner.classList.toggle('on', !!t); if (t) { R.banner.innerHTML = t; bannerB = R.banner.querySelector('b'); last.bnum = -1; } else bannerB = null; } },
+      bannerNum(n) { if (bannerB && last.bnum !== n) { last.bnum = n; bannerB.textContent = n; } },
+      /** The view's size changed: re-measure on the next update. */
+      resized() { barW = 0; last.bm = -1; last.bt = -1; },
     };
     views[who] = v;
     return v;
@@ -204,7 +214,11 @@ export function createHud(root, o) {
   const tut = mk('rr-tut');
   tut.innerHTML = '<div class="rr-hand"></div><div class="rr-cap"></div><div class="rr-steps"><i></i><i></i><i></i></div>';
   L.appendChild(tut);
+  const tutHand = tut.querySelector('.rr-hand');
+  const tutDots = tut.querySelectorAll('.rr-steps i');
+  const tutLast = { step: -1, dir: null, cap: null, hot: null };
   const tag = mk('rr-tag');
+  const tagLast = { on: null, name: null, color: null };
   let tagX = -1; let tagY = -1; let tagE = 0;
   L.appendChild(tag);
   let lastCount = ''; let lastSub = '';
@@ -282,6 +296,7 @@ export function createHud(root, o) {
       ov.pause.classList.add('dim');
       ov.pause.innerHTML = `<div class="rr-card"><h2>${esc(info.title)}</h2>${info.text ? `<p>${esc(info.text)}</p>` : ''}
         ${info.resume ? `<button class="rr-btn hot" data-x="resume">${esc(info.resumeLabel || 'Resume')}</button>` : ''}
+        ${info.invite ? '<button class="rr-btn hot" data-g="invite-again">Invite them back</button>' : ''}
         <div class="rr-row"><button class="rr-btn ghost" data-x="set">Settings</button><button class="rr-btn ghost" data-g="close">Quit</button></div></div>`;
       const r = ov.pause.querySelector('[data-x="resume"]');
       if (r) r.addEventListener('click', () => o.onResume());
@@ -307,24 +322,25 @@ export function createHud(root, o) {
       ov.fin.innerHTML = `<div class="rr-stamp ${cls}">${esc(text)}${sub ? `<small>${esc(sub)}</small>` : ''}</div>`;
       show('fin', true);
     },
-    tutorial(step, total, dir, caption) {
-      if (step < 0) { tut.classList.remove('on'); return; }
-      tut.classList.add('on');
-      const h = tut.querySelector('.rr-hand');
-      const k = `${step}|${dir}|${caption}`;
-      if (tut.dataset.k === k) return;
-      tut.dataset.k = k;
+    tutorial(step, total, dir, caption, hot = false) {
+      if (step < 0) { if (tutLast.step !== -1) { tutLast.step = -1; tut.classList.remove('on'); } return; }
+      if (tutLast.step === -1) tut.classList.add('on');
+      if (tutLast.hot !== hot) { tutLast.hot = hot; tut.classList.toggle('hot', hot); }
+      const h = tutHand;
+      if (tutLast.step === step && tutLast.dir === dir && tutLast.cap === caption) return;
+      tutLast.step = step; tutLast.dir = dir; tutLast.cap = caption;
       h.className = 'rr-hand ' + dir;
       h.innerHTML = dir ? ICONS.hand : '';
       tut.querySelector('.rr-cap').textContent = caption;
-      tut.querySelectorAll('.rr-steps i').forEach((i, n) => i.classList.toggle('on', n <= step));
+      tutDots.forEach((i, n) => i.classList.toggle('on', n <= step));
     },
     /** Partner name tag above their head; edge ±1 pins it to that screen edge (partner beside you, off screen). */
     tag(on, x, y, name, color, edge = 0) {
-      if (!on) { if (tag.style.display !== 'none') tag.style.display = 'none'; return; }
-      if (tag.style.display !== 'block') tag.style.display = 'block';
-      if (tag.textContent !== name) tag.textContent = name;
-      if (tag.style.background !== color) tag.style.background = color;
+      // cached: reading tag.style / textContent back every frame would allocate (and serialize)
+      if (!on) { if (tagLast.on !== false) { tagLast.on = false; tag.style.display = 'none'; } return; }
+      if (tagLast.on !== true) { tagLast.on = true; tag.style.display = 'block'; }
+      if (tagLast.name !== name) { tagLast.name = name; tag.textContent = name; }
+      if (tagLast.color !== color) { tagLast.color = color; tag.style.background = color; }
       const qx = Math.round(x / 2) * 2; const qy = Math.round(y / 2) * 2;
       if (qx !== tagX || qy !== tagY || edge !== tagE) {
         if (edge !== tagE) { tag.classList.toggle('rr-edge-l', edge < 0); tag.classList.toggle('rr-edge-r', edge > 0); }

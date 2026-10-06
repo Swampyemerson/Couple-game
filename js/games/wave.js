@@ -398,7 +398,7 @@ registerGame({
       const guesser = other(Rd.giver);
       node.innerHTML = `${top(s)}
         <h2 class="wv-h">Give a clue</h2>
-        <p class="wv-sub">Where the bright band sits, your clue should land.</p>
+        <p class="wv-sub">Write a clue that lands on the yellow 4.</p>
         <div class="wv-host"></div>
         <form class="wv-form" autocomplete="off"><input class="wv-input" maxlength="40" placeholder="Your clue" aria-label="Your clue" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="send"><button class="gm-btn" type="submit" disabled>Send</button></form>
         <span class="wv-count">0 / 40</span>

@@ -133,6 +133,16 @@ async function unitTests() {
     u = ag.apply(clone(u), ag.next(u)[0], { pick: i });
   }
   assert(u.over === 'time' && ag.result(u).text === 'Out of time' && ag.result(u).score === 0, 'nine turns without finishing is a loss');
+
+  // QA regressions: plurals that don't contain the board word, irregular plurals, accents
+  const { cleanClue, BREAKS } = ag._test;
+  const st = run(ag, [], { first: 'a', seed: 3 });
+  st.words = ['cherry', 'wolf', 'knife', 'mouse', 'goose', 'dice', ...st.words.slice(6)];
+  for (const c of ['cherries', 'Wolves', 'knives', 'MICE', 'geese', 'die', 'Cherry', 'wolfs']) throws(() => cleanClue(clone(st), c), /on the board|Too close/, `clue "${c}" is refused as a board word or its plural`);
+  assert(cleanClue(clone(st), ' Café ') === 'cafe', 'accents fold away: "Café" is the clue CAFE');
+  // card layout: every long noun has a syllable break that reads well on two lines
+  assert(NOUNS.filter((w) => w.length >= 7).every((w) => BREAKS.has(w) && BREAKS.get(w).join('') === w), 'agents: every noun of 7+ letters has a break');
+  assert([...BREAKS.values()].every(([x, y]) => x.length >= 2 && y.length >= 3), 'agents: no break leaves a one- or two-letter line');
 }
 
 // ── browser helpers ──────────────────────────────────────────────────────
@@ -439,6 +449,107 @@ async function agentsLocal(h, scheme) {
   assert(r.length === before + 1 && r[r.length - 1].score === 1, 'same-phone agents result recorded (1 agent found)');
 }
 
+// ── QA regressions (light run) ───────────────────────────────────────────
+async function reloadInto(h, pg, id) {
+  await pg.reload();
+  await pg.waitForFunction(() => !!document.querySelector('.tabbar'), null, { timeout: 15000 });
+  await pg.waitForTimeout(300);
+  await h.openMatch(pg, id);
+  await pg.waitForTimeout(300);
+}
+const draftOf = (pg) => pg.$$eval('.g-wd-row.is-draft .g-wd-tile', (ts) => ts.map((t) => t.textContent).join(''));
+const pasteText = (pg, text) => pg.evaluate((t) => { const dt = new DataTransfer(); dt.setData('text/plain', t); document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); }, text);
+// the computed colour of `el` vs a probe painted with a CSS variable
+const inkIs = (pg, sel, v) => pg.$eval(sel, (x, vv) => { const p = document.createElement('i'); p.style.color = `var(${vv})`; document.body.appendChild(p); const want = getComputedStyle(p).color; p.remove(); return getComputedStyle(x).color === want; }, v);
+
+async function wordDuelRegressions(h) {
+  const { a, b } = h;
+  const id = await newOnline(h, a, 'wordduel');
+  await h.openMatch(b, id);
+  await h.settle();
+  await a.keyboard.type('cra');
+  await reloadInto(h, a, id);
+  assert(await draftOf(a) === 'CRA', 'word duel: reload keeps a half-typed secret word');
+  await a.keyboard.type('ne'); await a.keyboard.press('Enter');
+  await b.keyboard.type('abbey'); await b.keyboard.press('Enter');
+  await h.settle();
+  assert(await inkIs(a, '.g-wd-say .g-wd-who', '--p-b-text'), 'word duel: names print in the text-safe ink, not the raw pink');
+  await a.keyboard.type('slate'); await a.keyboard.press('Enter'); await a.keyboard.press('Enter');
+  await a.waitForTimeout(120);
+  assert(!/five-letter/i.test(await toastText(a)) && !(await a.$('.g-wd-row.shake')), 'word duel: a second Enter right after a guess is ignored, not scolded');
+  await a.waitForTimeout(1300);
+  await pasteText(a, ' Br-ine! ');
+  assert(await draftOf(a) === 'BRINE', 'word duel: pasting a word fills the row with its letters');
+  await a.keyboard.press('Backspace'); await a.keyboard.press('Backspace');
+  await reloadInto(h, a, id);
+  assert(await draftOf(a) === 'BRI' && (await h.engine(a, id)).state.guesses.a.length === 1, 'word duel: reload keeps the played guess and the half-typed one');
+  await a.click('#game-root [data-g="menu"]');
+  await a.click('#game-root [data-g="resign"]');
+  await a.waitForSelector('.sheet-wrap');
+  await a.keyboard.type('zz');
+  await a.click('.sheet-wrap [data-r="0"]');
+  await a.click('#game-root .gm-sheet [data-g="menu"]');
+  assert(await draftOf(a) === 'BRI', 'word duel: typing behind a confirm dialog does not reach the board');
+  // finish: both crack it in two, then the board view offers a way on
+  await a.keyboard.press('Backspace'); await a.keyboard.press('Backspace'); await a.keyboard.press('Backspace');
+  await a.keyboard.type('abbey'); await a.keyboard.press('Enter');
+  await b.keyboard.type('slate'); await b.keyboard.press('Enter'); await b.waitForTimeout(300);
+  await b.keyboard.type('crane'); await b.keyboard.press('Enter');
+  await h.settle();
+  await a.waitForSelector('#game-root .gm-end:not([hidden])', { timeout: 6000 });
+  assert(/See both boards/.test(await a.textContent('#game-root [data-g="end-look"]')), 'word duel: the end card offers "See both boards"');
+  await a.click('#game-root [data-g="end-look"]');
+  assert(await a.isVisible('.g-wd-actions [data-g="rematch"]') && await a.isVisible('.g-wd-actions [data-g="close"]'), 'word duel: the end boards offer Play again and Back to games');
+  await a.click('.g-wd-actions [data-g="close"]');
+  assert(!(await a.isVisible('#game-root .gm')), 'word duel: Back to games from the boards closes the game');
+  await h.closeGame(b);
+}
+
+async function agentsRegressions(h) {
+  const { a, b } = h;
+  const P = { a, b };
+  const id = await newOnline(h, a, 'agents');
+  await h.openMatch(b, id);
+  await h.settle();
+  let s = (await h.engine(a, id)).state;
+  const G = P[s.giver];
+  const R = P[s.giver === 'a' ? 'b' : 'a'];
+  for (const [w, hh] of [[360, 740], [390, 844]]) {
+    await G.setViewportSize({ width: w, height: hh });
+    await G.waitForTimeout(250);
+    const cards = await G.$$eval('.g-ag-card', (cs) => cs.map((c) => { const x = c.querySelector('.g-ag-word'); return { fs: parseFloat(getComputedStyle(x).fontSize), fits: x.scrollWidth <= c.clientWidth && x.scrollHeight <= c.clientHeight }; }));
+    assert(cards.length === 25 && new Set(cards.map((c) => c.fs)).size === 1 && cards[0].fs >= 11, `agents ${w}: every card word is set at one size, ${cards[0].fs}px (≥ 11)`);
+    assert(cards.every((c) => c.fits), `agents ${w}: every word fits inside its card (long ones break onto two lines)`);
+  }
+  await G.fill('.g-ag-input', 'zigza');
+  const n0 = Number(await G.textContent('.g-ag-step output'));
+  await G.click('.g-ag-step [data-act="plus"]');
+  await reloadInto(h, G, id);
+  assert(await G.$eval('.g-ag-input', (x) => x.value) === 'zigza' && Number(await G.textContent('.g-ag-step output')) === n0 + 1, 'agents: reload keeps a half-typed clue and its number');
+  const long = ['quizzicalnessxyzwvut', 'zyxwvutsrqponmlkjihg'].find((c) => s.words.every((w) => !w.includes(c) && !c.includes(w) && !c.includes(w.slice(0, -1))));
+  await G.fill('.g-ag-input', long);
+  await G.click('.g-ag-form button[type="submit"]');
+  await h.settle();
+  assert((await h.engine(a, id)).state.log.length === 1, 'agents: a 20-letter clue is accepted');
+  for (const pg of [G, R]) {
+    await pg.setViewportSize({ width: 360, height: 740 });
+    await pg.waitForTimeout(200);
+    const o = await pg.evaluate(() => { const r = document.querySelector('#game-root'); const p = document.querySelector('.g-ag-paper, .g-ag-form'); return { page: document.documentElement.scrollWidth <= innerWidth && r.scrollWidth <= r.clientWidth, slip: p ? p.getBoundingClientRect().right <= innerWidth : true }; });
+    assert(o.page && o.slip, `agents 360: a 20-letter clue fits the slip, no sideways scroll (${pg.__who})`);
+    await pg.setViewportSize({ width: 390, height: 664 });
+  }
+  assert(await inkIs(R, '.g-ag-say .g-ag-who', s.giver === 'a' ? '--p-a-text' : '--p-b-text'), 'agents: names print in the text-safe ink');
+  s = (await h.engine(a, id)).state;
+  const k = [...s.key[s.giver]].indexOf('K');
+  await R.click(`.g-ag-card[data-i="${k}"]`); await R.click(`.g-ag-card[data-i="${k}"]`);
+  await h.settle();
+  await R.waitForSelector('#game-root .gm-end:not([hidden])', { timeout: 6000 });
+  await R.click('#game-root [data-g="end-look"]');
+  assert(await R.isVisible('.g-ag-dock [data-g="rematch"]') && await R.isVisible('.g-ag-dock [data-g="close"]'), 'agents: the end board offers Play again and Back to games');
+  await h.closeGame(R);
+  await h.closeGame(G);
+}
+
 (async () => {
   try { await unitTests(); } catch (e) { console.error(e.message); fails++; }
   for (const scheme of ['light', 'dark']) {
@@ -449,6 +560,7 @@ async function agentsLocal(h, scheme) {
       await wordDuelLocal(h, scheme);
       await agentsOnline(h, scheme, full);
       await agentsLocal(h, scheme);
+      if (full) { await wordDuelRegressions(h); await agentsRegressions(h); }
       h.assertNoErrors();
       console.log(`ok - no page errors (${scheme})`);
     } catch (e) {

@@ -295,7 +295,7 @@ module.exports = { prepare, cached, INJECT };
 if (require.main === module) {
   (async () => {
     const schemes = MODE === 'both' ? ['light', 'dark'] : [MODE];
-    let port = 8870;
+    let port = Number(process.env.PORT) || 8870;
     for (const s of schemes) await run(s, port++);
     console.log('shots in', OUT);
   })();

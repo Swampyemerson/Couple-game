@@ -88,6 +88,11 @@ export function makePalette(tok) {
     { body: mix(bad, card, 0.1), stripe: hl }, // oncoming
   ];
   P.skyline = [mix(bg, ink, dark ? 0.06 : 0.1), mix(bg, ink, dark ? 0.1 : 0.16), mix(bg, a, 0.12)];
+  P.skyNear = [mix(bg, ink, dark ? 0.16 : 0.22), mix(mix(bg, a, 0.2), ink, dark ? 0.1 : 0.16), mix(mix(bg, b, 0.16), ink, dark ? 0.12 : 0.14)];
+  // Colour script: the sky (and the fog that matches its horizon) warms up as the run gets fast.
+  // [horizon, zenith] at a stroll and at top speed; every colour is a mix of the theme inks.
+  P.skyCalm = dark ? [mix(bg, a, 0.16), mix(bg, [0, 0, 0], 0.35)] : [mix(bg, card, 0.5), mix(bg, a, 0.3)];
+  P.skyFast = dark ? [mix(bg, b, 0.2), mix(mix(bg, a, 0.14), [0, 0, 0], 0.3)] : [mix(bg, hl, 0.2), mix(bg, b, 0.3)];
   return P;
 }
 
@@ -155,13 +160,25 @@ else {
 const FRAG_PRE = `#include <common>
 uniform vec4 uLk;
 uniform float uDot;
+#ifdef RR_FADE
+uniform float uFade;
+#endif
 varying float vFx;
 varying float vShade;`;
+// Shadow-band halftone: one fract + one dot product per shaded fragment (squared radius, no sqrt).
+// Runners (the only skinned program) can also fade out through a halftone screen when the partner
+// runs between the camera and you; the discard lives only in that program.
 const FRAG_COLOR = `#include <color_fragment>
+#ifdef RR_FADE
+if ( uFade > 0.0 ) {
+  vec2 q = fract( gl_FragCoord.xy * 0.25 ) - 0.5;
+  if ( dot( q, q ) * 4.0 < uFade ) discard;
+}
+#endif
 diffuseColor.rgb *= vShade;
 if ( vShade < uLk.w && vFx < 0.5 ) {
   vec2 g = fract( gl_FragCoord.xy / uDot ) - 0.5;
-  diffuseColor.rgb *= 1.0 - ( 1.0 - smoothstep( 0.18, 0.3, length( g ) ) ) * 0.17;
+  diffuseColor.rgb *= 1.0 - ( 1.0 - smoothstep( 0.0324, 0.09, dot( g, g ) ) ) * 0.17;
 }`;
 const FRAG_END = `if ( vFx > 3.5 && vFx < 4.5 ) {
   gl_FragColor.rgb = mix( vColor, fogColor, 0.3 );
@@ -169,18 +186,21 @@ const FRAG_END = `if ( vFx > 3.5 && vFx < 4.5 ) {
   #include <fog_fragment>
 }`;
 
-/** The shared world material. One instance for the world (+ instanced variants), one skinned. */
-export function makeToon(THREE, grad, U, { skinning = false } = {}) {
+/** The shared world material. One instance for the world (+ instanced variants), one skinned per runner. */
+export function makeToon(THREE, grad, U, { skinning = false, extra = null } = {}) {
   const m = new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true, skinning });
+  // (three r128 only defines USE_SKINNING for vertex shaders, so the fade gets its own define)
+  if (extra && extra.uFade) m.defines = { RR_FADE: '' };
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, U);
+    if (extra) Object.assign(sh.uniforms, extra);
     sh.vertexShader = sh.vertexShader.replace('#include <common>', VERT_PRE).replace('#include <fog_vertex>', VERT_POST);
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', FRAG_PRE)
       .replace('#include <color_fragment>', FRAG_COLOR)
       .replace('#include <fog_fragment>', FRAG_END);
   };
-  m.customProgramCacheKey = () => 'rush-toon-v3';
+  m.customProgramCacheKey = () => 'rush-toon-v4';
   return m;
 }
 
@@ -218,10 +238,10 @@ export function tpl(geo, hullMode = 'smooth') {
   return { n, pos, nrm, idx, hull, box: hullMode === 'box' };
 }
 
-/** Unit parallelogram in the xy plane facing +z: a diagonal stripe. */
-function parallelogram(THREE) {
+/** Unit parallelogram in the xy plane facing +z: a diagonal stripe (rising to the right, or to the left if `mirror`). */
+function parallelogram(THREE, mirror = false) {
   const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute([-0.5, -0.5, 0, 0.0, -0.5, 0, 0.5, 0.5, 0, 0.0, 0.5, 0], 3));
+  g.setAttribute('position', new THREE.Float32BufferAttribute(mirror ? [0.0, -0.5, 0, 0.5, -0.5, 0, 0.0, 0.5, 0, -0.5, 0.5, 0] : [-0.5, -0.5, 0, 0.0, -0.5, 0, 0.5, 0.5, 0, 0.0, 0.5, 0], 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1], 3));
   g.setIndex([0, 1, 2, 0, 2, 3]);
   return g;
@@ -252,10 +272,12 @@ export function makeTemplates(THREE) {
     wedge: tpl(wedge(), 'box'),
     cyl: tpl(new THREE.CylinderGeometry(0.5, 0.5, 1, 12, 1), 'smooth'),
     cyl6: tpl(new THREE.CylinderGeometry(0.5, 0.5, 1, 6, 1), 'smooth'),
+    cone: tpl(new THREE.CylinderGeometry(0.02, 0.5, 1, 6, 1), 'smooth'),
     disc: tpl(new THREE.CylinderGeometry(0.5, 0.5, 1, 18, 1), 'smooth'),
     quad: tpl(new THREE.PlaneGeometry(1, 1), 'box'),
     quadUp: tpl(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), 'box'),
     stripe: tpl(parallelogram(THREE), 'box'),
+    stripeL: tpl(parallelogram(THREE, true), 'box'),
     discZ: tpl(new THREE.CylinderGeometry(0.5, 0.5, 1, 28, 1).rotateX(Math.PI / 2), 'smooth'),
     sphere: tpl(new THREE.SphereGeometry(0.5, 14, 10), 'smooth'),
     lowSphere: tpl(new THREE.SphereGeometry(0.5, 8, 6), 'smooth'),

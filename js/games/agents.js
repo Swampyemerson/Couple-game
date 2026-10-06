@@ -58,17 +58,17 @@ fan seal mint organ bow chip web mole crane jam trunk nail horn bolt palm pen ru
 `.trim().split(/\s+/);
 // Where a long word breaks when its card is too narrow for one line (every noun of 7+ letters).
 const BREAKS = new Map(`
-blan-ket pan-cake pass-port suit-case pop-corn bal-cony play-list kara-oke bath-tub slip-per toast-er cup-cake
-dump-ling avo-cado pump-kin wed-ding bou-quet post-card ham-mock camp-fire sweat-er paja-mas lip-stick per-fume
-mix-tape pola-roid cock-tail kit-chen dough-nut vol-cano gla-cier lib-rary air-port sta-tion carni-val sta-dium
+blan-ket pan-cake pass-port suit-case pop-corn bal-cony play-list kara-oke bath-tub slip-per toas-ter cup-cake
+dump-ling avo-cado pump-kin wed-ding bou-quet post-card ham-mock camp-fire swea-ter paja-mas lip-stick per-fume
+mix-tape pola-roid cock-tail kit-chen dough-nut vol-cano gla-cier li-brary air-port sta-tion carni-val sta-dium
 roof-top or-chard vine-yard com-pass lan-tern um-brella dia-mond dis-guise octo-pus pen-guin gi-raffe uni-corn
 dol-phin fla-mingo pea-cock kanga-roo hedge-hog squir-rel lady-bug lob-ster sea-horse dino-saur mam-moth phoe-nix
 mer-maid vam-pire prin-cess magi-cian rain-bow thun-der tor-nado bliz-zard snow-man moun-tain pine-cone mush-room
-feath-er crys-tal bon-fire spark-ler bal-loon bi-cycle scoot-er trac-tor jet-pack cur-tain trum-pet car-toon
-con-fetti glit-ter stick-er foun-tain chim-ney mail-box door-bell back-pack va-nilla cara-mel cinna-mon coco-nut
-pret-zel brown-ie lolli-pop smooth-ie es-presso la-sagna pass-word mus-tache freck-le rein-deer stock-ing orna-ment
-cos-tume snow-ball neck-lace brace-let ear-ring mon-ocle mara-thon ja-cuzzi lulla-by som-brero bag-pipe whis-tle
-speak-er juke-box pin-ball joy-stick con-sole treas-ure pyra-mid ink-well tele-gram hand-cuff
+fea-ther crys-tal bon-fire spark-ler bal-loon bi-cycle scoo-ter trac-tor jet-pack cur-tain trum-pet car-toon
+con-fetti glit-ter stic-ker foun-tain chim-ney mail-box door-bell back-pack va-nilla cara-mel cinna-mon coco-nut
+pret-zel brow-nie bur-rito lolli-pop smoo-thie es-presso la-sagna pass-word mus-tache frec-kle rein-deer stock-ing orna-ment
+cos-tume snow-ball neck-lace brace-let ear-ring mon-ocle mara-thon ja-cuzzi lul-laby som-brero bag-pipe whis-tle
+spea-ker juke-box pin-ball joy-stick con-sole treas-ure pyra-mid ink-well tele-gram hand-cuff
 `.trim().split(/\s+/).map((x) => [x.replace('-', ''), x.split('-')]));
 
 const TOKENS = 9;
@@ -245,14 +245,16 @@ const css = `
 .g-ag-body { display: flex; flex-direction: column; gap: 12px; }
 .g-ag-main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .g-ag-wrap { container-type: inline-size; width: 100%; }
-.g-ag-grid { --gap: clamp(4px, 1.4cqw, 10px); --fs: 12px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--gap); }
-.g-ag-card { --cw: calc((100cqw - 4 * var(--gap)) / 5); --face: var(--g-card); --ink: var(--g-ink); position: relative; height: clamp(52px, min(calc(var(--cw) * 0.8), calc((100dvh - 330px) / 5)), 96px); min-width: 0; padding: 0 2px 7px; box-sizing: border-box; display: grid; place-items: center; overflow: hidden; border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); background-color: var(--face); color: var(--ink); box-shadow: var(--g-shadow); font-family: var(--g-font-body); font-weight: 900; text-transform: uppercase; cursor: default; transition: transform 0.12s ease; }
+.g-ag-grid { --gap: clamp(4px, 1.2cqw, 10px); --fs: 12px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--gap); }
+.g-ag-card { --cw: calc((100cqw - 4 * var(--gap)) / 5); --face: var(--g-card); --ink: var(--g-ink); position: relative; height: clamp(52px, min(calc(var(--cw) * 0.8), calc((100dvh - 330px) / 5)), 96px); min-width: 0; padding: 0 1px 9px; box-sizing: border-box; display: grid; place-items: center; overflow: hidden; border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); background-color: var(--face); color: var(--ink); box-shadow: var(--g-shadow); font-family: var(--g-font-body); font-weight: 900; text-transform: uppercase; cursor: default; transition: transform 0.12s ease; }
 .g-ag-card::before { content: ''; position: absolute; left: 34%; right: 34%; bottom: 6px; height: 2px; border-radius: 1px; background: var(--g-line); }
 .g-ag-word { position: relative; z-index: 1; max-width: 100%; display: block; text-align: center; font-size: var(--fs); line-height: 1.02; letter-spacing: 0; white-space: nowrap; }
 .g-ag-word .hy { display: none; }
 .g-ag-word.two .p { display: block; }
 .g-ag-word.two .hy { display: inline; }
-.g-ag-card .g-ag-ico { position: absolute; z-index: 0; pointer-events: none; }
+.g-ag-card .g-ag-ico { position: absolute; z-index: 0; left: 50%; bottom: 3px; width: 12px; height: 12px; transform: translateX(-50%); pointer-events: none; }
+/* a card with an icon prints it where the rule would be */
+.g-ag-card.k-K::before, .g-ag-card.is-found::before, .g-ag-card.is-hit::before { display: none; }
 .g-ag-card.can { cursor: pointer; }
 .g-ag-card.can:active { transform: translate(2px, 2px); box-shadow: var(--g-shadow-sm); }
 .g-ag-card.is-sel { transform: translateY(-3px); box-shadow: 3px 5px 0 var(--g-edge); outline: 3px solid var(--g-hl); outline-offset: 1px; z-index: 2; }
@@ -260,17 +262,13 @@ const css = `
 
 /* the key overlay (yours, or the clue-giver's own) */
 .g-ag-card.k-G { box-shadow: inset 0 0 0 3px var(--g-good), var(--g-shadow); }
-.g-ag-card.k-G::after { content: ''; position: absolute; top: 0; left: 0; border-top: 12px solid var(--g-good); border-right: 12px solid transparent; }
+.g-ag-card.k-G::after { content: ''; position: absolute; top: 0; left: 0; border-top: 10px solid var(--g-good); border-right: 10px solid transparent; }
 .g-ag-card.k-K { background-image: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--g-ink) 16%, transparent) 6px 8px); box-shadow: inset 0 0 0 3px var(--g-ink), var(--g-shadow); }
-.g-ag-card.k-K .g-ag-ico { top: 3px; right: 3px; width: 13px; height: 13px; }
 
 /* revealed */
 .g-ag-card.is-found { --face: var(--g-good); --ink: var(--ag-on-good); background-image: none; }
-.g-ag-card.is-found::before { background: currentColor; opacity: 0.45; }
-.g-ag-card.is-found .g-ag-ico { top: 4px; left: 50%; width: 22px; height: 11px; margin-left: -11px; opacity: 0.8; }
+.g-ag-card.is-found .g-ag-ico { width: 20px; height: 10px; bottom: 3px; opacity: 0.85; }
 .g-ag-card.is-hit { --face: var(--g-ink); --ink: var(--g-bg); background-image: none; }
-.g-ag-card.is-hit::before { display: none; }
-.g-ag-card.is-hit .g-ag-ico { top: 3px; right: 3px; width: 14px; height: 14px; }
 .g-ag-card.is-void { --face: color-mix(in srgb, var(--g-muted) 22%, var(--g-card)); --ink: var(--g-muted); box-shadow: none; }
 .g-ag-tag { position: absolute; z-index: 2; bottom: 2px; width: 16px; height: 16px; box-sizing: border-box; display: grid; place-items: center; border: 1.5px solid var(--g-ink); border-radius: 4px; font: 900 11px/1 var(--g-font-body); font-style: normal; color: var(--g-on-ink); }
 .g-ag-tag.t-a { left: 2px; background: var(--p-a); } .g-ag-tag.t-b { right: 2px; background: var(--p-b); }
@@ -320,8 +318,8 @@ const css = `
   .g-ag-tag { width: 20px; height: 20px; font-size: 12px; bottom: 4px; }
   .g-ag-tag.t-a { left: 4px; } .g-ag-tag.t-b { right: 4px; }
   .g-ag-card.k-G::after { border-top-width: 22px; border-right-width: 22px; }
-  .g-ag-card.k-K .g-ag-ico, .g-ag-card.is-hit .g-ag-ico { width: 20px; height: 20px; top: 5px; right: 5px; }
-  .g-ag-card.is-found .g-ag-ico { top: 7px; width: 30px; height: 15px; margin-left: -15px; }
+  .g-ag-card .g-ag-ico { width: 17px; height: 17px; bottom: 5px; }
+  .g-ag-card.is-found .g-ag-ico { width: 28px; height: 14px; bottom: 6px; }
   .g-ag-acts, .g-ag-end { max-width: 460px; }
 }
 
@@ -480,7 +478,7 @@ registerGame({
       const spans = [...grid.querySelectorAll('.g-ag-word')];
       if (!spans.length) return;
       const card = spans[0].parentElement;
-      const avail = card.clientWidth - 6;
+      const avail = card.clientWidth - 3;
       const availH = card.clientHeight - 16;
       if (avail < 20 || availH < 16) return;
       meter = meter || document.createElement('canvas').getContext('2d');
@@ -496,7 +494,7 @@ registerGame({
         fs = Math.min(fs, Math.max(avail / one, Math.min(avail / two, availH / 2.06)));
         return { sp, one };
       });
-      fs = Math.max(10, fs);
+      fs = Math.max(11, fs);
       grid.style.setProperty('--fs', `${fs.toFixed(1)}px`);
       for (const p of plan) p.sp.classList.toggle('two', p.one * fs > avail + 0.5);
     }

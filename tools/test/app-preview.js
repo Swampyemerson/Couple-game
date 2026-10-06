@@ -4,7 +4,8 @@
 //
 //   node tools/test/app-preview.js [light|dark|both] [outDir]
 //
-// Uses the design-preview stand-in games and font cache. Ports 8872-8873.
+// Also a brand-new couple's empty screens. Uses the design-preview stand-in games and font
+// cache. Ports 8872-8875 (PORT=… moves them).
 const fs = require('fs');
 const path = require('path');
 const { launch, ROOT } = require('./harness');
@@ -164,10 +165,41 @@ async function run(scheme, port, seedDocs) {
   if (errs.length) console.log('page errors:\n  ' + errs.join('\n  '));
 }
 
+// A brand-new couple: no answers, no date, no games. Every tab should still look intentional
+// and say what to do first.
+async function runEmpty(scheme, port) {
+  const h = await launch({ port, only: ['example-ttt', 'example-tap'], colorScheme: scheme });
+  const { a } = h;
+  const shot = async (name, opts = {}) => {
+    await a.waitForTimeout(opts.wait ?? 450);
+    await a.screenshot({ path: path.join(OUT, `${scheme}-empty-${name}.png`), fullPage: !!opts.full });
+    await a.setViewportSize({ width: 360, height: 760 });
+    await a.waitForTimeout(250);
+    await a.screenshot({ path: path.join(OUT, `${scheme}-empty-${name}-360.png`), fullPage: !!opts.full });
+    await a.setViewportSize({ width: 390, height: 844 });
+    console.log('  ', `${scheme}-empty-${name}`);
+  };
+  const tab = (t) => a.click(`.tabbar [data-act="tab"][data-tab="${t}"]`);
+  try {
+    await prepare(h, a);
+    await h.settle();
+    await shot('home', { full: true });
+    await tab('play'); await shot('questions');
+    await tab('games'); await shot('games', { full: true });
+    await tab('us'); await shot('us', { full: true });
+    await tab('spicy'); await shot('spicy');
+    await a.evaluate(() => { const el = document.createElement('button'); el.dataset.act = 'go'; el.dataset.view = 'history'; el.hidden = true; document.getElementById('app').appendChild(el); el.click(); });
+    await shot('history');
+    await a.evaluate(() => { const el = document.createElement('button'); el.dataset.act = 'openPack'; el.dataset.id = 'quiz-basics'; el.hidden = true; document.getElementById('app').appendChild(el); el.click(); });
+    await shot('pack-intro');
+  } finally { await h.close(); }
+}
+
 (async () => {
   const seedDocs = await seed();
   const schemes = MODE === 'both' ? ['light', 'dark'] : [MODE];
-  let port = 8872;
+  let port = Number(process.env.PORT) || 8872;
   for (const s of schemes) await run(s, port++, seedDocs);
+  for (const s of schemes) await runEmpty(s, port++);
   console.log('shots in', OUT);
 })();

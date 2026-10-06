@@ -288,11 +288,125 @@ async function dragDial(pg, v, via, cdp) {
   await pg.waitForTimeout(80);
 }
 const dialValue = (pg) => pg.$eval('.wv-dial.live', (d) => Number(d.getAttribute('aria-valuenow')));
+async function reloadInto(h, pg, id) {
+  await pg.reload();
+  await pg.waitForFunction(() => !!document.querySelector('.tabbar'), null, { timeout: 15000 });
+  await pg.waitForTimeout(300);
+  await h.openMatch(pg, id);
+  await pg.waitForTimeout(300);
+}
+const toastText = (pg) => pg.evaluate(() => { const t = [...document.querySelectorAll('.toast')]; return t.length ? t[t.length - 1].textContent : ''; });
+// the colour of the first inked pixel on a canvas (top-left scan)
+const firstInk = (pg, sel) => pg.$eval(sel, (c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 220) return `${d[i]},${d[i + 1]},${d[i + 2]}`; return null; });
+const inkedPixels = (pg, sel) => pg.$eval(sel, (c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++; return n; });
+// with the on-screen keyboard up (a shorter viewport) the form stays in view
+async function keyboardUp(pg, input, form) {
+  await pg.setViewportSize({ width: 390, height: 844 });
+  await pg.focus(input);
+  await pg.setViewportSize({ width: 390, height: 470 });
+  await pg.waitForTimeout(500);
+  const box = await pg.$eval(form, (f) => { const r = f.getBoundingClientRect(); return [r.top, r.bottom]; });
+  await pg.setViewportSize({ width: 390, height: 844 });
+  await pg.waitForTimeout(200);
+  return box;
+}
+async function dragPastEnd(pg, side) {
+  await pg.$eval('.wv-dial.live', (d) => d.scrollIntoView({ block: 'center' }));
+  const from = await dialPoint(pg, 50, 0.55);
+  const to = await dialPoint(pg, side ? 100 : 0, 0.72);
+  await pg.mouse.move(from.x, from.y);
+  await pg.mouse.down();
+  await pg.mouse.move(to.x + (side ? 40 : -40), to.y + 50, { steps: 12 });
+  await pg.mouse.up();
+  await pg.waitForTimeout(120);
+}
+
+// QA regressions: reloads mid-draw / mid-guess / mid-clue / mid-dial, theme switch by attribute,
+// symbol-only guesses, the keyboard covering inputs, the dial's exact ends.
+async function regressions(h, pages) {
+  const { a, b } = h;
+  console.log('# regressions');
+  const id = await h.newOnlineGame(a, 'doodle');
+  await h.settle();
+  await h.openMatch(b, id);
+  await h.settle();
+  let e = await h.engine(a, id);
+  const D = pages[e.state.rounds[0].drawer]; const G = pages[other(e.state.rounds[0].drawer)];
+  await D.waitForSelector('.dd-pick');
+  await D.click('.dd-pick[data-i="2"]');
+  await D.waitForSelector('.dd-paper.can-draw canvas');
+  const word = (await D.$eval('.dd-word', (x) => x.lastChild.textContent)).trim();
+  await drawPicture(D, 0, 'mouse');
+  await D.waitForTimeout(2200);
+  await reloadInto(h, D, id);
+  await D.waitForSelector('.dd-paper.can-draw canvas', { timeout: 5000 });
+  assert((await D.$eval('.dd-word', (x) => x.lastChild.textContent)).trim() === word, 'doodle: reload mid-draw comes back to the same prompt, still drawing');
+  const secs = await D.$eval('.dd-secs', (x) => { const [m, ss] = x.textContent.split(':').map(Number); return m * 60 + ss; });
+  assert(secs <= 73 && secs >= 50, `doodle: the clock kept running through the reload (${secs}s left, not 75)`);
+  assert(await inkedPixels(D, '.dd-paper canvas') > 300 && !(await D.isDisabled('[data-a="undo"]')), 'doodle: the strokes are back on the paper, and undo still works');
+  await D.click('.dd-send');
+  await h.settle();
+  await G.waitForSelector('.dd-input:not([disabled])');
+  await G.fill('.dd-input', '🐱 !!');
+  await G.press('.dd-input', 'Enter');
+  await h.settle();
+  assert((await h.engine(a, id)).state.rounds[0].guesses.length === 0 && /letters/i.test(await toastText(G)), 'doodle: an emoji-only guess is refused and costs no try');
+  await G.fill('.dd-input', 'hou');
+  await reloadInto(h, G, id);
+  await G.waitForSelector('.dd-input:not([disabled])');
+  assert(await G.$eval('.dd-input', (x) => x.value) === 'hou', 'doodle: reload keeps a half-typed guess');
+  if (await G.$eval('.dd-over-btn', (x) => /skip/i.test(x.textContent)).catch(() => false)) await G.click('.dd-over-btn');
+  await G.waitForTimeout(150);
+  const inkLight = await firstInk(G, '.dd-paper canvas');
+  await G.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+  await G.waitForTimeout(200);
+  const inkDark = await firstInk(G, '.dd-paper canvas');
+  await G.evaluate(() => { delete document.documentElement.dataset.theme; });
+  await G.waitForTimeout(200);
+  assert(inkLight && inkDark && inkLight !== inkDark && await firstInk(G, '.dd-paper canvas') === inkLight, `doodle: switching the theme attribute repaints the drawing's inks (${inkLight} -> ${inkDark} -> back)`);
+  let box = await keyboardUp(G, '.dd-input', '.dd-form');
+  assert(box[0] >= 0 && box[1] <= 470, `doodle: with the keyboard up the guess box stays in view (${box.map(Math.round)} of 470)`);
+  await G.fill('.dd-input', word);
+  await G.press('.dd-input', 'Enter');
+  await h.settle();
+  assert((await h.engine(a, id)).state.rounds[0].points === 3, 'doodle: the restored drawing was guessed for 3');
+  await h.closeGame(a); await h.closeGame(b);
+
+  const wid = await h.newOnlineGame(b, 'wave');
+  await h.settle();
+  await h.openMatch(a, wid);
+  await h.settle();
+  e = await h.engine(a, wid);
+  const GV = pages[e.state.rounds[0].giver]; const GS = pages[other(e.state.rounds[0].giver)];
+  await GV.waitForSelector('.wv-input');
+  await GV.fill('.wv-input', 'half a clue');
+  await reloadInto(h, GV, wid);
+  await GV.waitForSelector('.wv-input');
+  const restored = await GV.$eval('.wv-form', (f) => [f.querySelector('.wv-input').value, f.querySelector('.gm-btn').disabled]);
+  assert(restored[0] === 'half a clue' && !restored[1] && await GV.textContent('.wv-count') === '11 / 40', 'wave: reload keeps a half-typed clue, ready to send');
+  box = await keyboardUp(GV, '.wv-input', '.wv-form');
+  assert(box[0] >= 0 && box[1] <= 470, `wave: with the keyboard up the clue box stays in view (${box.map(Math.round)} of 470)`);
+  await GV.press('.wv-input', 'Enter');
+  await h.settle();
+  await GS.waitForSelector('.wv-dial.live');
+  await dragPastEnd(GS, 0);
+  assert(await dialValue(GS) === 0, 'wave: dragging past the left end gives exactly 0');
+  await dragPastEnd(GS, 1);
+  assert(await dialValue(GS) === 100, 'wave: dragging past the right end gives exactly 100');
+  await reloadInto(h, GS, wid);
+  await GS.waitForSelector('.wv-dial.live');
+  assert(await dialValue(GS) === 100, 'wave: reload keeps where the dial was left');
+  await GS.click('.wv-go');
+  await h.settle();
+  assert((await h.engine(a, wid)).state.rounds[0].at === 100, 'wave: the dial locks in at exactly 100');
+  await h.closeGame(a); await h.closeGame(b);
+}
 
 // ── main ────────────────────────────────────────────────────────────────
 (async () => {
   console.log('# rules');
-  rulesTests(await loadRules());
+  const rules = await loadRules();
+  rulesTests(rules);
 
   const h = await launch({ port: 8932, only: ['doodle', 'wave'] });
   const { a, b } = h;
@@ -328,7 +442,11 @@ const dialValue = (pg) => pg.$eval('.wv-dial.live', (d) => Number(d.getAttribute
       // the guesser can't see the prompt cards
       const gHtml = await rootHTML(G);
       const shown = await D.$$eval('.dd-pick-word', (xs) => xs.map((x) => x.textContent.trim()));
-      const leaked = shown.filter((wd) => wordRe(wd).test(gHtml.replace(/<[^>]+>/g, ' ')));
+      // Earlier rounds' answers and guesses are public on the reveal ("breakfast in bed" holds
+      // the word "bed"): take them out, then none of this round's prompts may appear.
+      let gText = gHtml.replace(/<[^>]+>/g, ' ');
+      for (const R of e.state.rounds.slice(0, r)) for (const t of [rules.doodle.PROMPTS[R.choices[R.pick]].show, ...R.guesses]) gText = gText.split(t.toLowerCase()).join(' ');
+      const leaked = shown.filter((wd) => wordRe(wd).test(gText));
       assert(shown.length === 3 && !leaked.length, `round ${r + 1}: guesser's page has none of the 3 prompts${leaked.length ? ` (leaked: ${leaked.join(', ')}; page: ${gHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 400)})` : ''}`);
       assert(!(await G.$('.dd-input')), `round ${r + 1}: guesser has no guess box while the drawing is being made (no guessing out of turn)`);
       await D.click(`.dd-pick[data-i="${r % 3}"]`);
@@ -396,6 +514,7 @@ const dialValue = (pg) => pg.$eval('.wv-dial.live', (d) => Number(d.getAttribute
     await snapAll(a, 'doodle-10-end-card');
     const rec = h.results().find((x) => x.game === 'doodle' && x.mode === 'online');
     assert(rec && rec.winner === 'team' && rec.score === 9, 'doodle: online result recorded (team, 9)');
+    assert(/See the gallery/.test(await a.textContent('#game-root [data-g="end-look"]')), 'doodle: the end card offers "See the gallery"');
     for (const pg of [a, b]) await pg.click('#game-root [data-g="end-look"]');
     await a.waitForSelector('.dd-wall .dd-frame:nth-child(6)');
     await b.waitForSelector('.dd-wall .dd-frame:nth-child(6)');
@@ -408,6 +527,15 @@ const dialValue = (pg) => pg.$eval('.wv-dial.live', (d) => Number(d.getAttribute
     await snapAll(a, 'doodle-12-gallery', { laptop: true });
     await a.click('.dd-frame[data-i="1"]');
     await a.waitForSelector('.dd-lb:not([hidden]) canvas');
+    // QA regression: the replay card and the gallery captions fit a 360 px phone
+    await a.setViewportSize({ width: 360, height: 740 });
+    await a.waitForTimeout(250);
+    const lbFit = await a.evaluate(() => { const r = document.querySelector('.dd-lb-card').getBoundingClientRect(); const x = document.querySelector('.dd-lb [data-a="close"]').getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && x.right <= r.right; });
+    assert(lbFit, 'doodle 360: the replay card and its close button fit on screen');
+    const capsFit = await a.$$eval('.dd-frame-meta, .dd-frame-title', (xs) => xs.every((x) => x.scrollWidth <= x.clientWidth + 1));
+    assert(capsFit, 'doodle 360: gallery captions ("by Emerson") are not cut off');
+    await a.setViewportSize({ width: 390, height: 844 });
+    await a.waitForTimeout(150);
     await a.waitForTimeout(500);
     await snapAll(a, 'doodle-13-gallery-replay');
     await a.click('.dd-lb [data-a="close"]');
@@ -535,6 +663,7 @@ const dialValue = (pg) => pg.$eval('.wv-dial.live', (d) => Number(d.getAttribute
     await snapAll(b, 'wave-08-end-card');
     const wrec = h.results().find((x) => x.game === 'wave' && x.mode === 'online');
     assert(wrec && wrec.winner === 'team' && wrec.score === 18, 'wave: online result recorded (team, 18)');
+    assert(/See every round/.test(await b.textContent('#game-root [data-g="end-look"]')), 'wave: the end card offers "See every round"');
     await b.click('#game-root [data-g="end-look"]');
     await b.waitForSelector('.wv-rows .wv-row:nth-child(8)');
     await b.waitForTimeout(700);
@@ -624,6 +753,8 @@ const dialValue = (pg) => pg.$eval('.wv-dial.live', (d) => Number(d.getAttribute
     await h.wait(3300);
     assert(await visible(b, '#game-root .gm-end'), 'same-phone wave: end card');
     await h.closeGame(b);
+
+    await regressions(h, pages);
 
     // ── the 75-second draw timer (UI only) auto-submits at zero ──
     console.log('# doodle draw timer');

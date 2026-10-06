@@ -177,9 +177,10 @@ export function createRig(THREE) {
         px = tg.x * 0.6 + lead;
         const back = tg.down ? 2.4 : 0;
         st.back += (back - st.back) * (1 - Math.exp(-dt * 3));
-        py = tg.ground * 0.92 + (portrait ? 4.1 : 4.0) + Math.max(0, tg.y - tg.ground) * 0.28 + st.back * 0.5;
-        pz = -tg.z + (portrait ? 6.6 : 7.4) + st.back;
-        lx = tg.x * 0.72 + lead * 1.4; ly = tg.ground * 0.95 + (portrait ? 1.0 : 0.5) + Math.max(0, tg.y - tg.ground) * 0.2; lz = -tg.z - (portrait ? 14 : 9);
+        // a little higher and steeper than eye level: more track ahead, less empty sky
+        py = tg.ground * 0.92 + (portrait ? 4.5 : 4.2) + Math.max(0, tg.y - tg.ground) * 0.28 + st.back * 0.5;
+        pz = -tg.z + (portrait ? 6.5 : 7.2) + st.back;
+        lx = tg.x * 0.72 + lead * 1.4; ly = tg.ground * 0.95 + (portrait ? 0.75 : 0.45) + Math.max(0, tg.y - tg.ground) * 0.2; lz = -tg.z - (portrait ? 15 : 10);
         k = 1 - Math.exp(-dt * (mode === 'spectate' ? 5 : 12));
       }
       if (!st.ready) { st.x = px; st.y = py; st.z = pz; st.lx = lx; st.ly = ly; st.lz = lz; st.ready = true; }
@@ -199,8 +200,9 @@ export function createRig(THREE) {
       const rollT = mode === 'run' ? -(tg.laneX - tg.x) * 0.012 : 0;
       st.roll += (rollT - st.roll) * (1 - Math.exp(-dt * 8));
       cam.rotateZ(st.roll);
-      const base = portrait ? 72 : 60;
-      const spd = mode === 'run' ? Math.min(1, Math.max(0, (tg.speed - 12) / 18)) * 7 : 0;
+      // narrower than before so obstacles 50 m out are ~10 % larger; speed still widens it
+      const base = portrait ? 69 : 58;
+      const spd = mode === 'run' ? Math.min(1, Math.max(0, (tg.speed - 12) / 18)) * 8 : 0;
       const fov = base + spd + st.kick * 10;
       if (Math.abs(fov - st.fov) > 0.01) { st.fov = fov; cam.fov = fov; cam.updateProjectionMatrix(); }
     },
@@ -208,3 +210,105 @@ export function createRig(THREE) {
     laneW: LANE_W,
   };
 }
+
+// ── screen overlay: manga speed lines + a corner vignette, drawn in WebGL after the scene ──
+// Both are thin geometry in clip space (no full-screen layer, so no full-screen overdraw): ~30
+// opaque tapered triangles that radiate from the vanishing point, and four translucent corner
+// wedges. Two draw calls per view; the line positions are rewritten in place each frame.
+const OV_VERT = `attribute float va; varying float vA;
+void main() { vA = va; gl_Position = vec4( position.xy, 0.0, 1.0 ); }`;
+const OV_FRAG = `uniform vec3 uCol; uniform float uK; varying float vA;
+void main() { gl_FragColor = vec4( uCol, vA * uK ); }`;
+const LINES = 30;
+const VIG_SEG = 40;
+
+export function createOverlay(THREE, P) {
+  const scene = new THREE.Scene();
+  scene.autoUpdate = false;
+  const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  const mkMat = (col, transparent) => new THREE.ShaderMaterial({
+    uniforms: { uCol: { value: new THREE.Color().fromArray(col) }, uK: { value: 1 } },
+    vertexShader: OV_VERT, fragmentShader: OV_FRAG, depthTest: false, depthWrite: false, transparent, fog: false,
+  });
+  // speed lines (opaque paper streaks)
+  const lp = new Float32Array(LINES * 9);
+  const la = new Float32Array(LINES * 3).fill(1);
+  const lg = new THREE.BufferGeometry();
+  lg.setAttribute('position', new THREE.BufferAttribute(lp, 3).setUsage(THREE.DynamicDrawUsage));
+  lg.setAttribute('va', new THREE.BufferAttribute(la, 1));
+  lg.setDrawRange(0, 0);
+  const lineMat = mkMat(P.dark ? mix3(P.white, P.hl, 0.2) : P.white, false);
+  const lines = new THREE.Mesh(lg, lineMat);
+  lines.frustumCulled = false; lines.matrixAutoUpdate = false; lines.renderOrder = 2;
+  scene.add(lines);
+  // vignette: wedges between the inscribed ellipse and the frame (alpha 0 inside, ink in corners)
+  const vp = new Float32Array(VIG_SEG * 2 * 3);
+  const vaa = new Float32Array(VIG_SEG * 2);
+  const vi = [];
+  for (let i = 0; i < VIG_SEG; i++) {
+    const j = (i + 1) % VIG_SEG;
+    vi.push(i * 2, i * 2 + 1, j * 2, j * 2, i * 2 + 1, j * 2 + 1);
+  }
+  for (let i = 0; i < VIG_SEG; i++) {
+    const t = (i / VIG_SEG) * Math.PI * 2;
+    const cx = Math.cos(t); const sy = Math.sin(t);
+    const edge = Math.min(1 / Math.max(1e-6, Math.abs(cx)), 1 / Math.max(1e-6, Math.abs(sy)));
+    vp[i * 6] = cx; vp[i * 6 + 1] = sy;                 // on the ellipse (touches the edge midpoints)
+    vp[i * 6 + 3] = cx * edge; vp[i * 6 + 4] = sy * edge; // on the frame
+    vaa[i * 2] = 0; vaa[i * 2 + 1] = Math.min(1, Math.max(0, (edge - 1.04) / 0.38));
+  }
+  const vg = new THREE.BufferGeometry();
+  vg.setAttribute('position', new THREE.BufferAttribute(vp, 3));
+  vg.setAttribute('va', new THREE.BufferAttribute(vaa, 1));
+  vg.setIndex(vi);
+  const vigMat = mkMat(P.outline, true);
+  vigMat.uniforms.uK.value = P.dark ? 0.32 : 0.15;
+  const vig = new THREE.Mesh(vg, vigMat);
+  vig.frustumCulled = false; vig.matrixAutoUpdate = false; vig.renderOrder = 1;
+  scene.add(vig);
+
+  const ang = new Float32Array(LINES); const inn = new Float32Array(LINES); const wid = new Float32Array(LINES);
+  const reroll = (i) => { ang[i] = Math.random() * Math.PI * 2; inn[i] = Math.random(); wid[i] = 0.5 + Math.random(); };
+  for (let i = 0; i < LINES; i++) reroll(i);
+  let aspect = 1; let tick = 0;
+  const VY = 0.16; // the vanishing point sits a little above the middle of the view
+
+  function writeLines(k) {
+    const n = k > 0 ? Math.min(LINES, 6 + Math.round((LINES - 6) * Math.min(1, k))) : 0;
+    tick++;
+    for (let i = 0; i < n; i++) {
+      if ((i + tick) % 3 === 0) reroll(i); // flicker: a third of the lines jump every frame
+      const c = Math.cos(ang[i]); const s = Math.sin(ang[i]);
+      // in "y units" (x stretched by aspect), the frame is |x| <= aspect, |y| <= 1
+      const dx = c; const dy = s;
+      const tx = Math.abs(dx) > 1e-6 ? aspect / Math.abs(dx) : 1e9;
+      const ty = Math.abs(dy) > 1e-6 ? (dy > 0 ? 1 - VY : 1 + VY) / Math.abs(dy) : 1e9;
+      const edge = Math.min(tx, ty);
+      const kk = Math.min(1, k);
+      const r0 = edge * (1 - (0.2 + 0.28 * inn[i]) * (0.55 + 0.45 * kk)); const r1 = edge * 1.06;
+      const w = (0.012 + 0.016 * wid[i]) * (0.7 + 0.5 * kk);
+      const o = i * 9;
+      lp[o] = (dx * r0) / aspect; lp[o + 1] = VY + dy * r0;
+      lp[o + 3] = (dx * r1 - dy * w) / aspect; lp[o + 4] = VY + dy * r1 + dx * w;
+      lp[o + 6] = (dx * r1 + dy * w) / aspect; lp[o + 7] = VY + dy * r1 - dx * w;
+    }
+    lg.setDrawRange(0, n * 3);
+    const at = lg.getAttribute('position');
+    at.updateRange.offset = 0; at.updateRange.count = n * 9; at.needsUpdate = true;
+    lines.visible = n > 0;
+  }
+
+  return {
+    scene, cam,
+    resize(w, h) { aspect = w / Math.max(1, h); },
+    /** Draw the overlay for one view (call right after rendering the scene into it). k: 0..1 speed. */
+    draw(renderer, k) {
+      writeLines(k > 0.02 ? k : 0);
+      renderer.render(scene, cam);
+    },
+    /** Make every overlay program compile (shader warm-up). */
+    warm(renderer) { writeLines(1); renderer.render(scene, cam); writeLines(0); },
+    dispose() { lg.dispose(); vg.dispose(); lineMat.dispose(); vigMat.dispose(); },
+  };
+}
+function mix3(a, b, k) { return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k]; }

@@ -14,6 +14,7 @@ registerGame({
   platforms: ['phone', 'computer'],
   best: 'phone',
   immersive: true,
+  ownsPauseUI: true, // Rail Rush shows its own "waiting for …" card (with an invite button) and keeps the run
   team: false,
   tags: ['silly', '3d'],
   minutes: 3,

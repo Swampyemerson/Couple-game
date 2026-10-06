@@ -42,6 +42,7 @@ const BY_ID = Object.create(null);
 const LS_LOCAL = 'ju.games.local.v1';
 const LS_RESULTS = 'ju.games.results.v1';
 const LS_MUTE = 'ju.games.mute';
+const LS_SEEN_END = 'ju.games.seenEnd.v1'; // online matches whose end card this device has shown
 const THREE_URL = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
 
 const G = {
@@ -60,6 +61,7 @@ const G = {
   creating: {}, // id -> match we just created, until a snapshot includes it
   deleted: {}, // id -> time we deleted it (a late snapshot mustn't bring it back)
   loaded: { matches: false, results: false }, // a definitive snapshot of each has arrived
+  seenEnd: null, // id -> true (lazy-loaded from LS_SEEN_END)
   partner: { here: false, at: null },
   invite: null,
   screen: null,
@@ -335,7 +337,7 @@ async function endMatch(id, { resign = false } = {}) {
     delete G.pending[id];
     delete G.creating[id];
     try { await G.db.doc(`matches/${id}`).delete(); } catch { /* ignore */ }
-    ping(id, { gone: true });
+    ping(id, { gone: true, r: resign && d && !d.over && !def.team ? 1 : 0 });
   } else {
     delete G.local[id];
     persistLocal();
@@ -545,7 +547,16 @@ function wireRoom() {
     const d = msg.data || {};
     if (d.to && d.to !== me()) return;
     if (typeof d.m !== 'string' || !/^[a-z0-9]{6,20}$/.test(d.m)) return;
-    if (d.gone) { delete G.online[d.m]; changed(); return; }
+    if (d.gone) {
+      const gm = G.online[d.m];
+      const viewing = G.screen && G.screen.id === d.m;
+      delete G.online[d.m];
+      G.deleted[d.m] = Date.now();
+      if (gm && !viewing && BY_ID[gm.game]) toast(d.r ? `${nameOf(other(me()))} resigned ${BY_ID[gm.game].title}. You win.` : `${nameOf(other(me()))} ended your game of ${BY_ID[gm.game].title}.`);
+      if (viewing && d.r) G.goneNote = 'resigned';
+      changed();
+      return;
+    }
     refetch(d.m);
     const viewing = G.screen && G.screen.id === d.m;
     if (d.new && G.screen && G.screen.offerRematch && G.screen.game === d.new && G.screen.id !== d.m) {
@@ -862,7 +873,13 @@ function openMatch(id) {
 
   function paint() {
     const m = getMatch(id);
-    if (!m) { closeScreen(); toast('That game was ended.'); return; }
+    if (!m) {
+      closeScreen();
+      const won = G.goneNote === 'resigned' || (G.results[id] && G.results[id].winner === me() && m0.online);
+      toast(won ? `${nameOf(other(me()))} resigned. You win.` : 'That game was ended.');
+      G.goneNote = null;
+      return;
+    }
     const d = derived(m);
     const c = ctxFor(m, d);
     ctxNow = c;
@@ -897,6 +914,7 @@ function openMatch(id) {
       const reveal = () => {
         if (endDismissed || G.screen !== screen || !end.hidden) return;
         end.hidden = false;
+        if (m.online) { markEndSeen(id); G.hooks.onChange(); }
         const r = d.result;
         sfx(def.team || r.team ? 'win' : r.winner && (c.mode === 'local' || r.winner === me()) ? 'win' : r.winner ? 'lose' : 'good');
       };
@@ -1101,8 +1119,8 @@ async function openLive(gameId, mode) {
     if (on) {
       const pn = esc(nameOf(other(me())));
       w.innerHTML = `<div class="gm-wait-card"><div class="gm-wait-pulse" aria-hidden="true"></div>
-        <p><b>${dropped ? `${pn} dropped out` : `Waiting for ${pn}`}</b></p>
-        <p class="gm-wait-sub">${dropped ? 'The game picks up when they’re back. Their connection may have blinked.' : 'We sent an invite. This starts as soon as they open it.'}</p>
+        <p><b>${dropped ? `${pn} stepped away` : `Waiting for ${pn}`}</b></p>
+        <p class="gm-wait-sub">${dropped ? 'The game carries on when they’re back.' : 'We sent an invite. This starts as soon as they open it.'}</p>
         <button class="gm-btn gm-btn-ghost" data-g="invite-again">${dropped ? 'Invite them back' : 'Send the invite again'}</button>
         <button class="gm-btn gm-btn-ghost gs-close" data-g="close">Leave</button></div>`;
       w.hidden = false;
@@ -1204,6 +1222,15 @@ function matchRow(m) {
   const def = BY_ID[m.game];
   const d = derived(m);
   let note = '';
+  if (d.over) {
+    const r = d.result || {};
+    const note2 = def.team || r.team ? 'Finished together' : r.winner === me() ? 'You won' : r.winner ? `${esc(nameOf(r.winner))} won` : 'A draw';
+    return `<button class="gh-row is-done${r.winner === 'a' || r.winner === 'b' ? ` t-${r.winner}` : ''}" data-g="open" data-id="${esc(m.id)}">
+    <span class="gh-row-cover" aria-hidden="true">${def.cover || ''}</span>
+    <span class="gh-row-main"><span class="gh-row-title">${esc(def.title)}</span><span class="gh-row-sub"><span class="gh-row-note">${note2}</span><span class="gh-row-ago">${ago(Math.max(m.ua || 0, m.ub || 0, m.created || 0))}</span></span></span>
+    <span class="gh-row-go" aria-hidden="true">${ICON.go}</span>
+  </button>`;
+  }
   if (m.online) {
     if (d.acts.includes(me())) note = m.by !== me() && d.count === 0 && !(m.lists[me()].length) ? 'New' : 'Your move';
     else note = `${esc(nameOf(other(me())))}’s move`;
@@ -1223,6 +1250,25 @@ function activeMatches() {
 }
 
 function gameMatches(gameId) { return activeMatches().filter((m) => m.game === gameId); }
+
+// Online matches that ended while you weren't looking: they stay in the hub until you've seen
+// how it went.
+function seenEnds() { return (G.seenEnd = G.seenEnd || lsGet(LS_SEEN_END, {}) || {}); }
+function markEndSeen(id) {
+  const s = seenEnds();
+  if (s[id]) return;
+  s[id] = 1;
+  for (const k of Object.keys(s)) if (!G.online[k] && k !== id) delete s[k]; // forget deleted matches
+  lsSet(LS_SEEN_END, s);
+}
+function unseenResults() {
+  const s = seenEnds();
+  return allMatches().filter((m) => {
+    if (!m.online || s[m.id] || Date.now() - Math.max(m.ua || 0, m.ub || 0, m.created || 0) > 14 * 864e5) return false;
+    const d = derived(m);
+    return d && d.over && !d.broken;
+  }).sort((x, y) => Math.max(y.ua, y.ub) - Math.max(x.ua, x.ub));
+}
 
 function cardHTML(def) {
   const rec = gameRecord(def.id);
@@ -1275,6 +1321,7 @@ export function gamesHubHTML() {
   const mine = act.filter((m) => m.online && derived(m).acts.includes(me()));
   const theirs = act.filter((m) => m.online && !derived(m).acts.includes(me()));
   const local = act.filter((m) => !m.online);
+  const done = unseenResults();
   const p = G.partner;
   const pName = esc(nameOf(other(me())));
   const pAt = p.at && BY_ID[p.at] ? `playing ${esc(BY_ID[p.at].title)}` : 'here now';
@@ -1296,6 +1343,7 @@ export function gamesHubHTML() {
     </header>
     ${inv ? `<div class="gh-invite p-${other(me())}"><span class="gh-invite-cover" aria-hidden="true">${inv.cover || ''}</span><span class="gh-invite-txt"><span class="gh-invite-kicker">Live invite</span><span><b>${pName}</b> wants to play <b>${esc(inv.title)}</b></span></span><button class="gm-btn" data-g="invite-yes">Join</button></div>` : ''}
     ${mine.length ? sec('mine', 'Your move', mine) : ''}
+    ${done.length ? sec('done', 'Results in', done) : ''}
     ${theirs.length ? sec('theirs', `Waiting on ${pName}`, theirs) : ''}
     ${local.length ? sec('local', `On this ${thisDevice()}`, local) : ''}
     <section class="gh-sec gh-library">
@@ -1311,18 +1359,20 @@ export function gamesHubHTML() {
 export function gamesHomeHTML() {
   if (!G.store || !me()) return '';
   const mine = activeMatches().filter((m) => m.online && derived(m).acts.includes(me()));
+  const done = unseenResults();
+  const rows = [...mine, ...done].slice(0, 4);
   const inv = G.invite && BY_ID[G.invite.game];
-  if (!mine.length && !inv) return '';
+  if (!rows.length && !inv) return '';
   return `<section class="gh-home front-sec">
     ${inv ? `<div class="gh-invite p-${other(me())}"><span class="gh-invite-cover" aria-hidden="true">${inv.cover || ''}</span><span class="gh-invite-txt"><span class="gh-invite-kicker">Live invite</span><span><b>${esc(nameOf(other(me())))}</b> wants to play <b>${esc(inv.title)}</b></span></span><button class="gm-btn" data-g="invite-yes">Join</button></div>` : ''}
-    ${mine.length ? `<h3 class="section"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect class="f" x="4.6" y="4.6" width="14.8" height="14.8" rx="3.4" transform="rotate(-9 12 12)"/><circle class="d" cx="8.6" cy="9" r="1.35"/><circle class="d" cx="12" cy="12" r="1.35"/><circle class="d" cx="15.4" cy="15" r="1.35"/></svg><span>Games: your move</span></h3><div class="gh-rows">${mine.slice(0, 4).map(matchRow).join('')}</div>` : ''}
+    ${rows.length ? `<h3 class="section"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect class="f" x="4.6" y="4.6" width="14.8" height="14.8" rx="3.4" transform="rotate(-9 12 12)"/><circle class="d" cx="8.6" cy="9" r="1.35"/><circle class="d" cx="12" cy="12" r="1.35"/><circle class="d" cx="15.4" cy="15" r="1.35"/></svg><span>${mine.length ? 'Games: your move' : 'Games: results in'}</span></h3><div class="gh-rows">${rows.map(matchRow).join('')}</div>` : ''}
   </section>`;
 }
 
 /** Number of online games waiting on me (for a tab badge). */
 export function gamesWaitingCount() {
   if (!G.store || !me()) return 0;
-  return activeMatches().filter((m) => m.online && derived(m).acts.includes(me())).length + (G.invite ? 1 : 0);
+  return activeMatches().filter((m) => m.online && derived(m).acts.includes(me())).length + unseenResults().length + (G.invite ? 1 : 0);
 }
 
 // ── game sheet (pick a mode) ──────────────────────────────────────────

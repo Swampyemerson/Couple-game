@@ -150,7 +150,7 @@ const css = `
 /* partner progress, colour only */
 .g-wd-minis { display: flex; gap: 4px; }
 .g-wd-mrow { display: flex; gap: 1px; }
-.g-wd-m { width: 6px; height: 6px; box-sizing: border-box; border: 1.5px solid var(--g-line); border-radius: 1px; }
+.g-wd-m { width: 7px; height: 7px; box-sizing: border-box; border: 1.5px solid var(--g-line); border-radius: 1px; }
 .g-wd-m.m-g { background: var(--g-good); border-color: var(--g-ink); }
 .g-wd-m.m-y { background: var(--g-hl); border-color: var(--g-ink); border-radius: 50%; }
 .g-wd-m.m-x { background: transparent; border-color: var(--g-muted); }
@@ -566,7 +566,7 @@ registerGame({
     const typingHere = (e) => {
       const t = e.target;
       if (t && t.closest && t.closest('input, textarea, select, [contenteditable="true"]')) return false;
-      if (!root.isConnected) return false;
+      if (!root.isConnected || document.querySelector('[aria-modal="true"]')) return false; // e.g. a confirm dialog
       const gm = root.closest('.gm');
       return !(gm && gm.querySelector(':scope > .gm-sheet:not([hidden]), :scope > .gm-end:not([hidden]), :scope > .gm-curtain:not([hidden])'));
     };

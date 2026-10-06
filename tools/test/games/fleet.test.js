@@ -389,6 +389,7 @@ async function localGame(h) {
   const pattern = { a: 2, b: 2 };
   await pg.emulateMedia({ reducedMotion: 'reduce' });
   let motionChecked = false;
+  let missChecked = false;
   let localShot = false;
   for (let n = 0; n < 200; n++) {
     e = await h.engine(pg, id);
@@ -397,8 +398,20 @@ async function localGame(h) {
     if (await curtainUp()) await atCurtain(`before ${w} shoots (shot ${n})`);
     await checkNoLeak(h, pg, id, w, `same-phone shot ${n}`);
     const [r, c] = nextShot(e.state, w, pattern);
+    const before = e.lists.a.length + e.lists.b.length;
+    const isMiss = !e.state.fleets[other(w)].some((s) => cellsOf(s).some(([rr, cc]) => rr === r && cc === c));
     await fire(pg, r, c, 'tap');
-    await h.wait(40);
+    if (isMiss && !missChecked) {
+      // a miss hands the phone over, but the shooter sees the splash first
+      missChecked = true;
+      await h.wait(80);
+      assert(!(await curtainUp()), 'same phone: no curtain the instant you miss');
+      assert(await pg.$eval('.g-fleet .fl-target .fl-mark.is-miss.is-last', (m, at) => m.getAttribute('style').startsWith(at), `--r:${r};--c:${c};`).catch(() => false), 'same phone: the splash shows where you missed');
+      assert(/pass the phone/i.test(await pg.textContent('.g-fleet .fl-log')), 'same phone: the log says to pass the phone');
+      assert((await h.engine(pg, id)).lists[w].length === e.lists[w].length, 'same phone: the miss is played after the splash, not before');
+    }
+    for (let t = 0; t < 100; t++) { const x = await h.engine(pg, id); if (x.lists.a.length + x.lists.b.length > before) break; await h.wait(40); }
+    if (isMiss) { await h.wait(60); if (!(await curtainUp()) && !(await h.engine(pg, id)).over) throw new Error('FAIL: same phone: the curtain comes down after a miss'); }
     if (!motionChecked && !(await curtainUp())) {
       motionChecked = true;
       const anim = await pg.$eval('.g-fleet .fl-mark.is-new', (m) => getComputedStyle(m.querySelector('svg')).animationName + '|' + getComputedStyle(m).animationName);
@@ -415,6 +428,31 @@ async function localGame(h) {
   assert(await pg.isVisible('#game-root .gm-end'), 'same-phone end card');
   await h.closeGame(pg);
   await h.settle();
+}
+
+// Same phone: closing the game during a miss's splash still plays that shot.
+async function missThenClose(h) {
+  const pg = h.a;
+  await h.newLocalGame(pg, 'fleet');
+  const id = await pg.evaluate(() => window.__lastMatchId);
+  for (let i = 0; i < 2; i++) {
+    await pg.click('#game-root [data-g="reveal"]');
+    await pg.click('.g-fleet [data-fl="shuffle"]');
+    await pg.click('.g-fleet [data-fl="ready"]');
+  }
+  await pg.click('#game-root [data-g="reveal"]');
+  const e = await h.engine(pg, id);
+  const w = e.acts[0];
+  const [r, c] = nextShot(e.state, w, { a: 0, b: 0 }); // water
+  await fire(pg, r, c, 'tap');
+  await h.closeGame(pg);
+  await h.wait(100);
+  await h.openMatch(pg, id);
+  const e2 = await h.engine(pg, id);
+  const last = e2.state.shots[e2.state.shots.length - 1];
+  assert(e2.state.shots.length === 1 && last.by === w && last.r === r && last.c === c && !last.hit, 'same phone: closing mid-splash still plays the miss');
+  assert(await pg.isVisible('#game-root .gm-curtain'), 'same phone: reopening after that miss shows the curtain for the other player');
+  await h.closeGame(pg);
 }
 
 // ── laptop: hover, R to rotate, arrow keys + Enter ──
@@ -467,8 +505,9 @@ async function laptop() {
     for (let k = 0; k < Math.abs(tr - 3); k++) await a.keyboard.press(tr > 3 ? 'ArrowDown' : 'ArrowUp');
     for (let k = 0; k < Math.abs(tc - 3); k++) await a.keyboard.press(tc > 3 ? 'ArrowRight' : 'ArrowLeft');
     assert(await a.$eval('.g-fleet .fl-target .fl-cell.is-aim', (x) => `${x.dataset.r},${x.dataset.c}`) === `${tr},${tc}`, '[laptop] arrow keys move the aim');
+    const movesBefore = st0.shots.length + 2; // two fleets + the shots so far
     await a.keyboard.press('Enter');
-    await waitSynced(h, id, (await h.engine(b, id)).lists.a.length + (await h.engine(b, id)).lists.b.length + 1);
+    await waitSynced(h, id, movesBefore + 1);
     const st = (await h.engine(a, id)).state;
     const last = st.shots[st.shots.length - 1];
     assert(st.shots.length === before + 1 && last.r === tr && last.c === tc && last.hit, '[laptop] Enter fires at the aimed square (a hit)');
@@ -506,6 +545,7 @@ async function laptop() {
     await h.closeGame(h.a); await h.closeGame(h.b);
     await localGame(h);
     assert(h.results().length === 2, 'the same-phone result is recorded');
+    await missThenClose(h);
     h.assertNoErrors();
     await h.close();
     h = null;

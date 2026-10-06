@@ -171,6 +171,25 @@ registerGame({
     .g-qd.is-live .qd-mid, .g-qd.is-desk .qd-mid { flex: 1; justify-content: center; }
     .g-qd.is-live .qd-pads { flex: 0 0 auto; height: clamp(116px, 25vh, 210px); max-width: 520px; width: 100%; margin: 0 auto; }
 
+    /* a phone on its side: one pad at each end, the duel in between, everything read from the bottom edge */
+    @media (orientation: landscape) and (max-height: 520px) {
+      .g-qd { --qd-gap: 8px; }
+      .g-qd.is-phone { grid-template-rows: minmax(0, 1fr); grid-template-columns: minmax(96px, 1fr) minmax(0, 1.5fr) minmax(96px, 1fr); }
+      .g-qd.is-phone .qd-pad[data-w="a"] { grid-area: 1 / 1; } .g-qd.is-phone .qd-mid { grid-area: 1 / 2; justify-content: center; } .g-qd.is-phone .qd-pad[data-w="b"] { grid-area: 1 / 3; }
+      .g-qd.is-phone .qd-top { transform: none; }
+      .g-qd.is-phone .qd-pad.qd-top { box-shadow: var(--g-shadow-lg, var(--g-shadow)); }
+      .g-qd.is-phone .qd-pad.qd-top.is-press { transform: translate(4px, 4px); box-shadow: 0 0 0 var(--g-edge, var(--g-ink)); }
+      .g-qd.is-phone .qd-sig.qd-top { display: none; }
+      .g-qd.is-phone .qd-svg, .g-qd.is-live .qd-svg { max-height: 30vh; }
+      .g-qd.is-live { flex-direction: row; align-items: stretch; }
+      .g-qd.is-live .qd-mid { flex: 1.6; min-width: 0; }
+      .g-qd.is-live .qd-pads { flex: 1; height: auto; max-width: none; margin: 0; }
+      .g-qd.is-live .qd-mid { gap: 4px; } .g-qd.is-live .qd-svg { max-height: 24vh; } .g-qd.is-live .qd-tally { font-size: 0.9rem; }
+      .g-qd.is-live .qd-notches i { height: 18px; }
+      .g-qd .qd-sig { min-height: 3.6rem; }
+      .g-qd .qd-word { font-size: clamp(1.5rem, 6vh, 2.2rem); }
+      .g-qd .qd-sig.is-draw .qd-word { font-size: clamp(1.9rem, 9vh, 2.8rem); }
+    }
     @keyframes qd-pop { from { transform: scale(1.5) rotate(-3deg); opacity: 0; } to { opacity: 1; } }
     @keyframes qd-breathe { 50% { opacity: 0.55; } }
     @media (prefers-reduced-motion: reduce) {
@@ -298,7 +317,7 @@ registerGame({
       const delay = Math.round(MIN_DELAY + Math.random() * (MAX_DELAY - MIN_DELAY));
       R = { r, delay, res: { a: null, b: null }, decided: false, at: performance.now() };
       if (!local) {
-        net.send('round', { hk: key, r, delay });
+        net.send('round', { hk: key, r, delay, t: tally });
         // a guest that never reports (gone, or its shot lost) can't stall the duel
         R.safety = later(() => refDecide(r), delay + SLOW_MS + 4000);
       }
@@ -425,7 +444,8 @@ registerGame({
           delay: R ? R.delay : 0, el: R ? Math.round(performance.now() - R.at) : 0, tally, v: verdict, away: document.hidden ? 1 : 0,
         });
       } else {
-        api.setPresence({ k: key, n: ++n, hk: hostKey, r: myShot ? myShot.r : 0, res: myShot, away: document.hidden ? 1 : 0 });
+        // ht: the host's duel tally as we know it, so a host that reloads or reopens picks it back up
+        api.setPresence({ k: key, n: ++n, hk: hostKey, ht: hostKey ? tally : null, r: myShot ? myShot.r : 0, res: myShot, away: document.hidden ? 1 : 0 });
       }
     }
     function adoptHost(k) {
@@ -438,16 +458,34 @@ registerGame({
       api.setScore(tally); paint();
       return true;
     }
+    /** A host that came back mid-duel carries on from the tally we had (no verdict of its own yet). */
+    function takeTally(t) {
+      if (!t || (verdict && verdict.hk === hostKey)) return;
+      const a = t.a | 0; const b = t.b | 0;
+      if (a === tally.a && b === tally.b) return;
+      tally = { a, b }; api.setScore(tally); paint();
+    }
     function onHostState(S) {
       if (!S || !S.k || S.k === staleKey) return;
       if (!adoptHost(S.k)) return;
       const away = !!S.away;
       if (away !== partnerAway) { partnerAway = away; checkPause(); }
       if (S.v && S.v.hk === hostKey) applyVerdict(S.v);
+      else takeTally(S.tally);
       if (S.ph === 'steady' && S.r > lastR && !paused) beginRound(S.r, Math.max(400, S.delay - S.el - 40));
+    }
+    // Host: we were reloaded or reopened mid-duel; the guest remembers our old tally.
+    let adopted = false;
+    function adoptDuel(st) {
+      if (adopted || !st || typeof st.hk !== 'string' || st.hk === key || !st.ht) return;
+      adopted = true;
+      const a = st.ht.a | 0; const b = st.ht.b | 0;
+      if (verdict || a >= WIN || b >= WIN || !(a + b)) return;
+      tally = { a, b }; api.setScore(tally); paint(); publish();
     }
     function onGuestState(st) {
       if (!st) return;
+      adoptDuel(st);
       const away = !!st.away;
       if (away !== partnerAway) { partnerAway = away; checkPause(); }
       if (st.hk === key && st.res && R) refReceive('b', st.r, stripShot(st.res));
@@ -484,12 +522,12 @@ registerGame({
           const l = v.w && other(v.w);
           let line;
           if (v.why === 'tie') line = 'Dead heat. Go again.';
-          else if (v.why === 'none') line = 'Nobody fired. Again.';
+          else if (v.why === 'none') line = 'Nobody fired. Go again.';
           else if (v.why === 'fouls') line = v.w ? `Both jumped. ${N(l)} jumped first.` : 'Both jumped. Again.';
           else if (v.why === 'foul') line = `${N(l)} fired early. ${N(v.w)} takes it.`;
           else line = `${N(v.w)} takes the round.`;
           if (v.res) line = `${N(v.w)} wins the duel!`;
-          const word = v.w ? 'BANG!' : v.why === 'tie' ? 'Dead heat' : 'Again';
+          const word = v.w ? 'BANG!' : v.why === 'tie' ? 'Dead heat' : v.why === 'none' ? 'Too slow' : 'Again';
           return { word, line, cls: v.w ? `is-bang p-${v.w}` : '', times: v.why === 'none' ? '' : timesHTML(v) };
         }
       }
@@ -558,10 +596,12 @@ registerGame({
       offs.push(api.onPartnerHere((here) => { partnerHere = here; if (!here) partnerAway = false; checkPause(); }));
       if (ref) {
         offs.push(net.on('shot', (d) => { if (d && d.hk === key) refReceive('b', d.r, stripShot(d)); }));
+        adoptDuel(api.partnerState());
         offs.push(api.onPartnerState(onGuestState));
       } else {
         offs.push(net.on('round', (d) => {
           if (!d || !adoptHost(d.hk) || paused) return;
+          takeTally(d.t);
           if (d.r > lastR && !(verdict && verdict.hk === d.hk && verdict.r >= d.r)) beginRound(d.r, d.delay);
         }));
         offs.push(net.on('verdict', (v) => { if (v && adoptHost(v.hk)) applyVerdict(v); }));
