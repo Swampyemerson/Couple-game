@@ -18,7 +18,9 @@
 //            overview: { y, radius },                    title-orbit camera
 //            atlasPages: 1|2 }                           2 → one 1024×2048 atlas texture
 // }
-// Builder: b.add(geo, { at, yaw|rot, color, tile, rep, uvOff, outline, collide: true | flags })
+// Builder: b.add(geo, { at, yaw|rot, color, tile, rep, uvOff, outline, collide: true | flags, backdrop })
+//          backdrop: true → distant scenery (skyline, mountains) outside the walls: its own chunk,
+//            drawn without fog, never culled or picked; keep it low-poly (one draw call total)
 //          b.collide(minX, minY, minZ, maxX, maxY, maxZ, flags)
 //            flags: { wall, name, ceil: true (overhead surface), perch: true (thin rail/pole/stem),
 //                     climb: false (sticky feet slide off) }; names 'ceil:…' / 'perch:…' work too;

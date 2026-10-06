@@ -63,6 +63,8 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
 
   let map = null; let mapMesh = null; let blobMesh = null; let atlasTex = null; let worldMat = null; let blobMat = null; let world = null;
   const mapMeshes = []; // one per chunk (frustum culled individually); mapMesh = mapMeshes[0]
+  const backMeshes = []; let backMat = null; let backdropReach = 0; let fogCull = Infinity;
+  const cullV = new THREE.Vector3();
   const inkCol = theme.outline;
   const isMap = (o) => !!o && o.userData.isMap === true;
 
@@ -75,7 +77,18 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
     atlasTex.anisotropy = Math.min(2, renderer.capabilities.getMaxAnisotropy());
     atlasTex.minFilter = THREE.LinearMipmapLinearFilter;
     worldMat = makeWorldMaterial(THREE, { map: atlasTex, gradientMap, ink: inkCol, atlasSize: map.atlas.size });
+    backdropReach = 0;
     for (const ch of map.chunks) {
+      if (ch.backdrop) {
+        // far scenery: the same look without fog, always drawn, never picked
+        if (!backMat) { backMat = makeWorldMaterial(THREE, { map: atlasTex, gradientMap, ink: inkCol, atlasSize: map.atlas.size }); backMat.fog = false; }
+        const m = new THREE.Mesh(ch.geometry, backMat);
+        m.matrixAutoUpdate = false; m.updateMatrix(); m.frustumCulled = false;
+        m.userData.backdrop = true;
+        scene.add(m); backMeshes.push(m);
+        const bs = ch.geometry.boundingSphere; backdropReach = Math.max(backdropReach, bs.center.length() + bs.radius);
+        continue;
+      }
       const m = new THREE.Mesh(ch.geometry, worldMat);
       m.matrixAutoUpdate = false; m.updateMatrix();
       m.userData.isMap = true; m.userData.chunk = ch;
@@ -108,12 +121,24 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
       near = Math.max(13, ov.radius * 0.9); far = Math.max(30, ov.radius + diag * 0.75 + ov.y * 0.5);
     } else { near = map.big ? 11 : 13; far = map.big ? 26 : 30; }
     scene.fog.near = near; scene.fog.far = far;
-    camera.far = far + 6; camera.updateProjectionMatrix();
+    // chunks past the fog are skipped by cullChunks(); the far plane only has to reach the backdrop
+    fogCull = far + 2;
+    camera.far = Math.max(far + 6, backdropReach + 10); camera.updateProjectionMatrix();
+  }
+  /** Per frame: hide map chunks entirely inside the fog (cheap: one sphere test per chunk). */
+  function cullChunks() {
+    const cp = camera.position;
+    for (let i = 0; i < mapMeshes.length; i++) {
+      const m = mapMeshes[i]; const bs = m.geometry.boundingSphere;
+      m.visible = cullV.copy(bs.center).distanceTo(cp) - bs.radius < fogCull;
+    }
   }
   function unloadMap() {
     if (!map) return;
     for (const m of mapMeshes) scene.remove(m);
-    mapMeshes.length = 0;
+    for (const m of backMeshes) scene.remove(m);
+    mapMeshes.length = 0; backMeshes.length = 0;
+    if (backMat) { backMat.dispose(); backMat = null; }
     if (blobMesh) scene.remove(blobMesh);
     for (const ch of map.chunks) ch.geometry.dispose();
     if (map.blobGeo) map.blobGeo.dispose();
@@ -260,7 +285,8 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
     get size() { return [W, H]; }, get dpr() { return baseDpr * dynScale; }, get scale() { return dynScale; },
     loadMap, resize, setScale, setTheme, compile, setView,
     ray, setRayFromScreen, pick, pickMap, albedoAtHit, surfaceOf, blobAt,
-    render() { renderer.render(scene, camera); },
+    render() { cullChunks(); renderer.render(scene, camera); },
+    get backdrops() { return backMeshes.length; },
     dispose() {
       unloadMap();
       fx.dispose();

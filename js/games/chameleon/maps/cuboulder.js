@@ -674,8 +674,8 @@ function g1b30(b, R) {
     for (const [x0, x1] of BLOCKS) solid(b, x0, 0, z0 + TIER_D / 2, x1, y, zs, { ...carpet, faces: ['py', 'pz', 'px', 'nx'] }, { name: 'tier' });
     for (const [x0, x1] of AISLES) {
       solid(b, x0, 0, z0 + TIER_D / 2, x1, y - 0.17, zs, { ...carpet, color: '#3e4044', faces: ['py', 'pz'] }, { name: 'aisle' });
-      deco(b, x0, y - 0.19, zs - 0.035, x1, y - 0.165, zs + 0.004, { color: '#a7aaae', outline: false });
-      deco(b, x0, y - 0.02, z0 + TIER_D / 2 - 0.035, x1, y + 0.004, z0 + TIER_D / 2 + 0.004, { color: '#a7aaae', outline: false });
+      deco(b, x0, y - 0.19, zs - 0.035, x1, y - 0.165, zs + 0.004, { color: '#6f7277', outline: false });
+      deco(b, x0, y - 0.02, z0 + TIER_D / 2 - 0.035, x1, y + 0.004, z0 + TIER_D / 2 + 0.004, { color: '#6f7277', outline: false });
     }
     for (const [x0, x1] of BLOCKS) deco(b, x0, y - 0.025, zs - 0.03, x1, y + 0.004, zs + 0.004, { color: '#2c2d31', outline: false });
     // the side stair down to the EXIT: black steel railing along its inner edge

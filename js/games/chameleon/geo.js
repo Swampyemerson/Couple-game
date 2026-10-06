@@ -229,6 +229,7 @@ const apply3 = (R, x, y, z) => [R[0] * x + R[1] * y + R[2] * z, R[3] * x + R[4] 
  * chunk becomes its own geometry (own bounding sphere → frustum culled per chunk). Without a
  * chunker the whole map is one geometry (the v1 behaviour).
  */
+export const BACKDROP = -1;
 export function createBuilder({ tiles, ink = [0.11, 0.1, 0.13], chunker = null }) {
   const chunks = new Map(); // key -> { P, N, U, C, T, O, IDX, HULL }
   const chunkOf = (k) => { let c = chunks.get(k); if (!c) { c = { key: k, P: [], N: [], U: [], C: [], T: [], O: [], IDX: [], HULL: [] }; chunks.set(k, c); } return c; };
@@ -247,7 +248,7 @@ export function createBuilder({ tiles, ink = [0.11, 0.1, 0.13], chunker = null }
   /**
    * Add a primitive. opts: at [x,y,z], rot [rx,ry,rz] or yaw, color, tile (atlas key), rep (metres per
    * pattern repeat; number or [u,v]), uvOff [u,v], outline (default true), collide (true | box flags),
-   * chunk (force a chunk key).
+   * chunk (force a chunk key), backdrop (true: distant scenery, never fogged or culled, not pickable).
    */
   function add(g, opts = {}) {
     const at = opts.at || [0, 0, 0];
@@ -266,7 +267,8 @@ export function createBuilder({ tiles, ink = [0.11, 0.1, 0.13], chunker = null }
       tp.push(p[0] + at[0], p[1] + at[1], p[2] + at[2]); tn.push(q[0], q[1], q[2]);
       sx += p[0] + at[0]; sy += p[1] + at[1]; sz += p[2] + at[2];
     }
-    const ck = opts.chunk != null ? opts.chunk : chunker && n ? chunker(sx / n, sy / n, sz / n) : 0;
+    // backdrop: far scenery (skylines, mountains) in its own chunk: no fog, never culled
+    const ck = opts.backdrop ? BACKDROP : opts.chunk != null ? opts.chunk : chunker && n ? chunker(sx / n, sy / n, sz / n) : 0;
     const K = chunkOf(ck);
     const { P, N, U, C, T, O, IDX, HULL } = K;
     const base = P.length / 3;
@@ -348,7 +350,7 @@ export function createBuilder({ tiles, ink = [0.11, 0.1, 0.13], chunker = null }
     geo.setIndex(new THREE.BufferAttribute(new Arr(all), 1));
     geo.computeBoundingSphere();
     geo.computeBoundingBox();
-    return { key: K.key, geometry: geo, mainIndexCount: IDX.length, hullIndexCount: HULL.length, vertexCount: vcount };
+    return { key: K.key, backdrop: K.key === BACKDROP, geometry: geo, mainIndexCount: IDX.length, hullIndexCount: HULL.length, vertexCount: vcount };
   }
 
   function finish(THREE) {
