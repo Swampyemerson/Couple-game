@@ -1283,7 +1283,7 @@ async function shotsRun(port, { colorScheme, device, viewport, prefix, mechanics
     await shot(a, `${prefix}-tips`);
     await a.click('[data-act="tips-ok"]');
     // crawling up the left wall, seen from the side
-    await hook(a, 'teleport', -4.55, 1.6, -Math.PI / 2, 0);
+    await hook(a, 'teleport', -4.55, 2.35, -Math.PI / 2, 0);
     await hook(a, 'stick');
     await hook(a, 'crawl', 0, 1.2, 0, 22);
     await hook(a, 'setCam', 0.9, 0.15, 2.4);
@@ -1293,7 +1293,7 @@ async function shotsRun(port, { colorScheme, device, viewport, prefix, mechanics
     // up onto the rafter and hang
     await hook(a, 'crawl', 0, 1.2, 0, 60);
     await hook(a, 'crawl', 1.2, 0, 0, 25);
-    await hook(a, 'setPose', 'hang');
+    assert(await hook(a, 'setPose', 'hang') === 'hang', `[${prefix}] hanging from the rafter`);
     await hook(a, 'setCam', 0.5, -0.1, 2.6);
     await wait(1400);
     await shot(a, `${prefix}-ceiling-hang`);

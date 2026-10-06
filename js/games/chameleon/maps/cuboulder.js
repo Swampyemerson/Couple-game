@@ -11,10 +11,12 @@
 //   ├── flagstone strip + bike racks ───────┘        aspens, pines, Flatirons mural    │  z = +13
 //   x = −17                                                                     x = +17
 //
-// Compass (info.north = '+x'): north is +x (right in the plan above), east is +z (down), so
-// Norlin faces east onto its quad, the Engineering lab sits to the south-east, the plains lie
-// east, and the Front Range (Flatirons, Green Mountain, Flagstaff, Bear Peak) is placed by real
-// bearings in a fog-free backdrop ring to the south-west and west (see landscape()).
+// Compass (info.north = '-x'): north is −x (left in the plan above), east is −z (up), west is +z.
+// So the quad lies west; Norlin stands at its east end, façade looking west over the quad to the
+// Front Range; Duane (G1B30) is to the north-east; the UMC (turned a quarter, moved onto the quad's
+// south side) is south; the Engineering lab (moved behind the arcade, south of Norlin, with a bike
+// yard) is east/south-east. The Flatirons, Green Mountain, Flagstaff and Bear Peak sit on their
+// real bearings in a fog-free backdrop ring; the plains are east (see landscape()).
 // Two floors: the ground (y 0) and the top of the lecture-hall rake / Norlin gallery (y 2.72),
 // joined by the hall's aisle stairs and the gallery stair, so G1B30 → Norlin → arcade → corridor
 // → G1B30 is a loop. Interiors have downward-only ceilings (the camera sees in from above); roof
@@ -474,6 +476,28 @@ function pendant(b, x, z, yc, y, { shade = C.gold, r = 0.24 } = {}) {
   b.add(sphereGeo(0.06, 0.05, 0.06, { w: 8, h: 6 }), { at: [x, y - 0.21, z], color: '#fff6cc', outline: false });
 }
 
+/**
+ * A builder proxy that rotates (by a multiple of 90° about (cx, cz)) then translates everything a
+ * zone adds: primitives, colliders, blobs and probes. Rotation only, never mirroring, so a zone keeps
+ * its handedness when it moves.
+ */
+function xform(b, { cx = 0, cz = 0, rot = 0, dx = 0, dz = 0 }) {
+  const c = Math.round(Math.cos(rot)); const s = Math.round(Math.sin(rot));
+  const P = (x, z) => { const lx = x - cx; const lz = z - cz; return [cx + lx * c + lz * s + dx, cz - lx * s + lz * c + dz]; };
+  return {
+    ...b,
+    add(g, o = {}) {
+      const at = o.at || [0, 0, 0]; const [x, z] = P(at[0], at[2]);
+      const o2 = { ...o, at: [x, at[1], z] };
+      if (o.rot) o2.rot = [o.rot[0], o.rot[1] + rot, o.rot[2]]; else o2.yaw = (o.yaw || 0) + rot;
+      return b.add(g, o2);
+    },
+    collide(x0, y0, z0, x1, y1, z1, f) { const [ax, az] = P(x0, z0); const [bx, bz] = P(x1, z1); return b.collide(Math.min(ax, bx), y0, Math.min(az, bz), Math.max(ax, bx), y1, Math.max(az, bz), f); },
+    blob(x, z, rx, rz, o = {}) { const [X, Z] = P(x, z); return b.blob(X, Z, rx, rz, { ...o, yaw: (o.yaw || 0) + rot }); },
+    probe(n, pt, nr, hex) { const [X, Z] = P(pt[0], pt[2]); return b.probe(n, [X, pt[1], Z], [nr[0] * c + nr[2] * s, nr[1], -nr[0] * s + nr[2] * c], hex); },
+  };
+}
+
 /** Invisible guard over a roof / above a low wall: blocks and can't be climbed. */
 function guard(b, x0, y0, z0, x1, y1, z1, name) { b.collide(x0, y0, z0, x1, y1, z1, { wall: false, climb: false, name: 'guard:' + name }); }
 
@@ -575,70 +599,75 @@ function build(atlas, kit) {
     floor(b, -17, -13, -3, -1, 0, { tile: 'planks', rep: 1.6 }); // G1B30 front floor: grey wood-look vinyl (tiers cover the rest)
     floor(b, -17, -1, -3, 1.4, 0, { tile: 'terrazzo', rep: 1.6 });
     floor(b, -3, -13, 8, -1, 0, { tile: 'herring', rep: 1.1 });
-    floor(b, 8, -13, 17, -1, 0, { tile: 'carpet90', rep: 1.4 });
-    floor(b, -17, 1.4, -8, 9, 0, { tile: 'labfloor', rep: 1.2 });
-    floor(b, -3, -1, 17, 2.6, 0, { tile: 'flag', rep: 2.4 });
-    floor(b, -8, 1.4, -3, 2.6, 0, { tile: 'flag', rep: 2.4 });
-    floor(b, -17, 9, -8, 13, 0, { tile: 'flag', rep: 2.4 });
-    floor(b, -8, 2.6, 17, 13, 0, { tile: 'lawn', rep: 2.0 });
+    floor(b, 8, -8.6, 17, -1, 0, { tile: 'labfloor', rep: 1.2 }); // Engineering lab (east of the quad)
+    floor(b, 8, -13, 17, -8.6, 0, { tile: 'flag', rep: 2.4 }); // engineering yard (bike racks)
+    floor(b, -3, -1, 17, 2.4, 0, { tile: 'flag', rep: 2.4 }); // arcade
+    floor(b, -17, 1.4, -3, 2.6, 0, { tile: 'flag', rep: 2.4 }); // walk along the corridor
+    floor(b, -17, 2.6, 5, 13, 0, { tile: 'lawn', rep: 2.0 }); // the quad
+    floor(b, 5, 11.4, 17, 13, 0, { tile: 'flag', rep: 2.4 }); // walk past the UMC
 
     // ── outer walls (bounds) ──
     const SS = { tile: 'sandstone', rep: 2.4, color: '#ffffff' };
     const g1In = { color: '#ece4d0', tile: 'blockwall', rep: 1.4 };
+    const low = (x0, z0, x1, z1, name) => wall(b, { x0, z0, x1, z1, h: 0.7, t: 0.3, both: SS, name, cap: C.tileDk, outline: true });
     wall(b, { x0: -17, z0: -13, x1: -3, z1: -13, h: 6.8, t: 0.2, n: SS, p: g1In, name: 'back', cap: C.tileDk });
     wall(b, { x0: -3, z0: -13, x1: 8, z1: -13, h: 5.0, t: 0.2, n: SS, p: { color: C.plaster }, open: [0.6, 3.85, 6.6].map((c) => ({ c, w: 1.4, bottom: 2.95, top: 3.85 })), trim: C.walnut, name: 'back', cap: C.tileDk });
-    wall(b, { x0: 8, z0: -13, x1: 17, z1: -13, h: 4.4, t: 0.2, n: SS, p: { color: '#e9d9bd' }, name: 'back', cap: C.tileDk });
+    low(8, -13, 17, -13, 'back');
     wall(b, { x0: -17, z0: -13, x1: -17, z1: -1, h: 6.8, t: 0.2, n: SS, p: g1In, name: 'left', cap: C.tileDk });
     wall(b, { x0: -17, z0: -1, x1: -17, z1: 1.4, h: 2.9, t: 0.2, n: SS, p: { color: C.block, tile: 'blockwall', rep: 1.2 }, name: 'left', cap: C.tileDk });
-    wall(b, { x0: -17, z0: 1.4, x1: -17, z1: 9, h: 3.2, t: 0.2, n: SS, p: { color: C.blueGrey }, name: 'left', cap: C.tileDk });
-    wall(b, { x0: -17, z0: 9, x1: -17, z1: 13, h: 0.7, t: 0.3, both: SS, name: 'left', cap: C.tileDk, outline: true });
-    wall(b, { x0: 17, z0: -13, x1: 17, z1: -1, h: 4.4, t: 0.2, n: { color: '#e9d9bd' }, p: SS, open: [-8.4, -5.8, -3.2].map((c) => ({ c, w: 1.2, bottom: 1.3, top: 2.6 })), trim: C.ink, name: 'right', cap: C.tileDk });
-    for (const c of [-8.4, -5.8, -3.2]) glazing(b, 'z', 17, c - 0.6, c + 0.6, 1.3, 2.6);
-    wall(b, { x0: 17, z0: -1, x1: 17, z1: 13, h: 0.7, t: 0.3, both: SS, name: 'right', cap: C.tileDk, outline: true });
-    wall(b, { x0: -17, z0: 13, x1: 17, z1: 13, h: 0.7, t: 0.3, both: SS, name: 'front', cap: C.tileDk, outline: true });
+    low(-17, 1.4, -17, 13, 'left');
+    low(17, -13, 17, -8.6, 'right'); low(17, -1, 17, 2.4, 'right'); low(17, 11.4, 17, 13, 'right');
+    low(-17, 13, 17, 13, 'front');
     // red tile copings on the low walls (perchable ledge)
-    for (const [x0, z0, x1, z1] of [[-17.2, 12.8, 17.2, 13.2], [-17.2, 9, -16.8, 13.2], [16.8, -1, 17.2, 13.2]]) deco(b, x0, 0.7, z0, x1, 0.78, z1, { color: '#ffffff', tile: 'rooftile', rep: 0.6 });
-    guard(b, -17.2, 0.7, 12.85, 17.2, 9, 13.3, 'front'); guard(b, -17.3, 0.7, 9, -16.85, 9, 13.3, 'left'); guard(b, 16.85, 0.7, -1, 17.3, 9, 13.3, 'right');
+    for (const [x0, z0, x1, z1] of [[-17.2, 12.8, 17.2, 13.2], [-17.2, 1.4, -16.8, 13.2], [8, -13.2, 17.2, -12.8], [16.8, -13.2, 17.2, -8.6], [16.8, -1, 17.2, 2.4], [16.8, 11.4, 17.2, 13.2]]) deco(b, x0, 0.7, z0, x1, 0.78, z1, { color: '#ffffff', tile: 'rooftile', rep: 0.6 });
+    guard(b, -17.2, 0.7, 12.85, 17.2, 9, 13.3, 'front'); guard(b, -17.3, 0.7, 1.5, -16.85, 9, 13.3, 'left');
+    guard(b, 8.1, 0.7, -13.3, 17.3, 9, -12.85, 'back-yard'); guard(b, 16.85, 0.7, -13.3, 17.3, 9, -8.7, 'right-yard');
+    guard(b, 16.85, 0.7, -1, 17.3, 9, 2.3, 'right-arcade'); guard(b, 16.85, 0.7, 11.5, 17.3, 9, 13.3, 'right-front');
     // the Front Range and the plains, placed by real compass bearings (see landscape())
     landscape(b);
 
     g1b30(b, R);
     corridor(b);
     norlin(b, R, kit);
-    umc(b, R, kit);
-    lab(b, R);
+    // the UMC turns a quarter (no mirroring) to stand on the quad's south side, door facing the quad;
+    // the Engineering lab moves east of the quad, south of Norlin (plain translation)
+    umc(xform(b, { cx: 12.5, cz: -7, rot: -Math.PI / 2, dx: -1.5, dz: 13.9 }), R, kit);
+    lab(xform(b, { dx: 25, dz: -10 }), R);
+    labShell(b);
+    yard(b);
     arcade(b);
     quad(b, R, kit);
 
     // ── spawns + spots (all ≥ 0.45 m clear of colliders; checked by the tests) ──
-    b.spot('lobby', { x: 2.2, z: 5.0 });
-    b.spot('hiderSpawn', { x: 1.0, z: 4.4, yaw: Math.PI });
-    b.spot('seekerSpawn', { x: 7.0, z: 11.4, yaw: Math.PI });
-    b.spot('spawnA', { x: -1.8, z: 4.6, yaw: Math.PI });
-    b.spot('spawnB', { x: 11.6, z: 4.6, yaw: Math.PI });
-    b.spot('hiderSpawns', [{ x: 1.0, z: 4.4, yaw: Math.PI }, { x: 10.4, z: 3.9, yaw: Math.PI }, { x: -5.0, z: 3.6, yaw: Math.PI }, { x: 5.0, z: 0.4, yaw: Math.PI }]);
-    b.spot('seekerSpawns', [{ x: 7.0, z: 11.4, yaw: Math.PI }, { x: -1.0, z: 11.6, yaw: Math.PI }, { x: -13.6, z: 10.0, yaw: Math.PI }, { x: 12.8, z: 5.0, yaw: -Math.PI / 2 }]);
-    b.spot('camo', { x: 7.3, z: -0.5, y: 0, wallNormal: [0, 0, 1], note: 'Norlin sandstone façade under the arcade' });
-    b.spot('rug', { x: 5.0, z: 9.8, yaw: Math.PI });
+    b.spot('lobby', { x: -8.8, z: 5.2 });
+    b.spot('hiderSpawn', { x: -3.0, z: 5.6, yaw: Math.PI });
+    b.spot('seekerSpawn', { x: -3.5, z: 12.0, yaw: Math.PI });
+    b.spot('spawnA', { x: -2.4, z: 5.8, yaw: Math.PI });
+    b.spot('spawnB', { x: -12.8, z: 6.6, yaw: Math.PI });
+    b.spot('hiderSpawns', [{ x: -3.0, z: 5.6, yaw: Math.PI }, { x: -12.8, z: 6.6, yaw: Math.PI }, { x: 0.4, z: 3.4, yaw: Math.PI }, { x: 5.0, z: 0.4, yaw: Math.PI }]);
+    b.spot('seekerSpawns', [{ x: -3.5, z: 12.0, yaw: Math.PI }, { x: -13.6, z: 9.0, yaw: Math.PI }, { x: 8.0, z: 12.3, yaw: -Math.PI / 2 }, { x: 1.8, z: 12.0, yaw: Math.PI }]);
+    b.spot('camo', { x: 7.65, z: -0.5, y: 0, wallNormal: [0, 0, 1], note: 'Norlin sandstone façade under the arcade' });
+    b.spot('rug', { x: -6.0, z: 9.8, yaw: Math.PI });
     b.probe('demo-bench-top', [-12.2, 0.96, -2.8], [0, 1, 0], BENCH_TOP);
-    b.probe('pool-felt', [11.0, 0.8, -6.5], [0, 1, 0], C.felt);
+    b.probe('pool-felt', [10.5, 0.8, 5.4], [0, 1, 0], C.felt); // the pool table, after the UMC's quarter turn
   };
 }
 
 // ── THE FRONT RANGE (distant backdrop) ─────────────────────────────────────────
-// Compass: north = +x, east = +z (Norlin's façade faces east onto its quad, as on campus), so a
-// compass bearing θ (clockwise from north) points along (cos θ, sin θ) in (x, z).
+// Compass: north = −x, east = −z (Norlin stands at the east end of its quad and its façade looks
+// west across the quad to the mountains, as on campus), so a compass bearing θ (clockwise from
+// north) points along (−cos θ, −sin θ) in (x, z).
 // Bearings and elevation angles are computed from the Norlin quad (≈ 40.0085 N, 105.2715 W,
 // 1650 m) to published summit coordinates; vertical angles are exaggerated ×2.8 (uniformly) so the range reads
 // above the roofs. All of it is backdrop: one fog-free chunk, no collision, never picked.
 //   Third Flatiron 216.6° 7.9° · Second 218.7° 9.5° · First 224.1° 11.4° · Green Mountain 221.5° 12.1°
 //   Royal Arch 209.5° 7.8° · Bear Peak 200.6° 9.2° · Flagstaff Mountain 256.1° 8.6°
-const NORTH = '+x';
+const NORTH = '-x';
 /** Peaks as seen from the Norlin quad: [name, bearing°, true elevation angle°]. */
 export const PEAKS = [['Bear Peak', 200.6, 9.2], ['Royal Arch', 209.5, 7.8], ['Third Flatiron', 216.6, 7.9], ['Second Flatiron', 218.7, 9.5], ['Green Mountain', 221.5, 12.1], ['First Flatiron', 224.1, 11.4], ['Flagstaff Mountain', 256.1, 8.6]];
 const EXAG = 2.8;
 const DEG = Math.PI / 180;
-const dirOf = (brg) => [Math.cos(brg * DEG), Math.sin(brg * DEG)];
+const dirOf = (brg) => [-Math.cos(brg * DEG), -Math.sin(brg * DEG)];
 const BD = { backdrop: true, outline: false };
 
 /** A curved cut-out card along a profile [[bearing, elevation°], …] at radius R (faces the centre). */
@@ -890,7 +919,8 @@ function g1b30(b, R) {
 
 // ── 2. BASEMENT CORRIDOR (Duane, below ground: lockers, pipes, cork board) ─────────────
 function corridor(b) {
-  wall(b, { x0: -17, z0: 1.4, x1: -8, z1: 1.4, h: 3.2, t: 0.2, n: { color: C.block, tile: 'blockwall', rep: 1.2 }, p: { color: C.blueGrey }, open: [{ c: -12.5, w: 1.3, top: 2.2 }], trim: '#3a3437', name: 'cor-lab' });
+  wall(b, { x0: -17, z0: 1.4, x1: -8, z1: 1.4, h: 2.9, t: 0.2, n: { color: C.block, tile: 'blockwall', rep: 1.2 }, p: { tile: 'sandstone', rep: 2.4 }, open: [{ c: -12.5, w: 1.3, top: 2.2 }], trim: C.walnut, name: 'cor-quad-w' });
+  eave(b, -17, 1.4, -8, 1.4, 3.0, 1, { width: 0.8 }); arch(b, -12.5, 2.2, 1.62, 1.3, { depth: 0.2, thick: 0.16 });
   wall(b, { x0: -8, z0: 1.4, x1: -3, z1: 1.4, h: 2.9, t: 0.2, n: { color: C.block, tile: 'blockwall', rep: 1.2 }, p: { tile: 'sandstone', rep: 2.4 }, open: [{ c: -5.5, w: 1.6, top: 2.3 }], trim: C.walnut, name: 'cor-quad' });
   wall(b, { x0: -3, z0: -1, x1: -3, z1: 1.4, h: 2.9, t: 0.2, n: { color: C.block, tile: 'blockwall', rep: 1.2 }, p: { tile: 'sandstone', rep: 2.4 }, open: [{ c: 0.2, w: 2.0, top: 2.45 }], trim: C.walnut, name: 'cor-east' });
   ceiling(b, -16.9, -0.9, -3.1, 1.3, H.cor, { tile: 'acoustic', rep: 1.2, name: 'corridor' });
@@ -932,10 +962,11 @@ function corridor(b) {
 // ── 3. NORLIN READING ROOM ─────────────────────────────────────────────────────────
 function norlin(b, R, kit) {
   const face = { tile: 'sandstone', rep: 2.4 };
-  wall(b, { x0: -3, z0: -1, x1: 8, z1: -1, h: 5.0, t: 0.2, n: { color: C.plaster }, p: face, open: [{ c: 0.6, w: 1.2, bottom: 0.95, top: 2.55 }, { c: 3.85, w: 1.5, top: 2.7 }, { c: 6.6, w: 1.2, bottom: 0.95, top: 2.55 }], trim: C.walnut, name: 'nor-south' });
-  wall(b, { x0: 8, z0: -13, x1: 8, z1: -1, h: 5.0, t: 0.2, n: { color: C.plaster }, p: { color: '#e9d9bd' }, open: [{ c: -5, w: 1.4, top: 2.4 }], trim: C.walnut, name: 'nor-umc' });
-  glazing(b, 'x', -1, 0.06, 1.14, 0.95, 2.55); glazing(b, 'x', -1, 6.06, 7.14, 0.95, 2.55);
-  for (const c of [0.6, 6.6]) arch(b, c, 2.55, -0.82, 1.2, { depth: 0.12, thick: 0.14, n: 5 });
+  wall(b, { x0: -3, z0: -1, x1: 8, z1: -1, h: 5.0, t: 0.2, n: { color: C.plaster }, p: face, open: [{ c: 0.6, w: 1.4, bottom: 0.85, top: 2.75 }, { c: 3.85, w: 1.5, top: 2.7 }, { c: 6.6, w: 1.4, bottom: 0.85, top: 2.75 }], trim: C.walnut, name: 'nor-south' });
+  wall(b, { x0: 8, z0: -13, x1: 8, z1: -8.6, h: 5.0, t: 0.2, n: { color: C.plaster }, p: { tile: 'sandstone', rep: 2.4 }, name: 'nor-yard', cap: C.tileDk });
+  wall(b, { x0: 8, z0: -8.6, x1: 8, z1: -1, h: 5.0, t: 0.2, n: { color: C.plaster }, p: { color: C.blueGrey }, open: [{ c: -3.6, w: 1.2, top: 2.3 }], trim: C.walnut, name: 'nor-lab' });
+  glazing(b, 'x', -1, -0.04, 1.24, 0.85, 2.75); glazing(b, 'x', -1, 5.96, 7.24, 0.85, 2.75);
+  for (const c of [0.6, 6.6]) arch(b, c, 2.75, -0.82, 1.4, { depth: 0.12, thick: 0.14, n: 5 });
   arch(b, 3.85, 2.7, -0.82, 1.5, { depth: 0.12, thick: 0.16 });
   ceiling(b, -2.9, -12.9, 7.9, -1.1, H.nor, { tile: 'coffer', rep: 1.45, name: 'norlin' });
   guard(b, -3, H.nor + 0.12, -13.2, 8, 9, -1, 'norroof');
@@ -1021,8 +1052,8 @@ function norlin(b, R, kit) {
   }
   for (const [x, z] of [[1.7, -10.4], [6.0, -10.4], [1.7, -4.4], [6.0, -4.4]]) pendant(b, x, z, H.nor - 0.22, 3.35, { shade: '#e9cf86', r: 0.28 });
   // card catalogue, globe, circulation desk
-  solid(b, 7.3, 0, -3.9, 7.85, 1.35, -2.1, { color: '#a8754d', tile: 'drawers', rep: 0.45 }, { name: 'catalogue' });
-  deco(b, 7.25, 1.35, -3.95, 7.9, 1.42, -2.05, { color: C.walnut });
+  solid(b, 7.3, 0, -2.05, 7.85, 1.35, -1.15, { color: '#a8754d', tile: 'drawers', rep: 0.45 }, { name: 'catalogue' });
+  deco(b, 7.25, 1.35, -2.1, 7.9, 1.42, -1.12, { color: C.walnut });
   b.add(sphereGeo(0.32, 0.32, 0.32, { w: 14, h: 10 }), { at: [-0.2, 1.05, -2.2], color: '#4f8fb0', collide: true });
   b.add(sphereGeo(0.325, 0.18, 0.325, { w: 12, h: 6 }), { at: [-0.2, 1.1, -2.2], rot: [0.4, 0, 0.2], color: '#9fd38c', outline: false });
   b.add(cylGeo(0.05, 0.22, 0.72, { radial: 10 }), { at: [-0.2, 0.36, -2.2], color: C.walnut, collide: true });
@@ -1035,6 +1066,14 @@ function norlin(b, R, kit) {
 
 // ── 4. UMC HANGOUT ─────────────────────────────────────────────────────────────────
 function umc(b, R, kit) {
+  // (local frame: built as if at x 8..17, z −13..−1, then turned onto the quad's south side by xform)
+  const SS = { tile: 'sandstone', rep: 2.4, color: '#ffffff' };
+  floor(b, 8, -13, 17, -1, 0.004, { tile: 'carpet90', rep: 1.4 });
+  wall(b, { x0: 8, z0: -13, x1: 17, z1: -13, h: 4.4, t: 0.2, n: SS, p: { color: '#e9d9bd' }, name: 'umc-back', cap: C.tileDk });
+  wall(b, { x0: 17, z0: -13, x1: 17, z1: -1, h: 4.4, t: 0.2, n: { color: '#e9d9bd' }, p: SS, open: [-8.4, -5.8, -3.2].map((c) => ({ c, w: 1.2, bottom: 1.3, top: 2.6 })), trim: C.ink, name: 'umc-booth-wall', cap: C.tileDk });
+  for (const c of [-8.4, -5.8, -3.2]) glazing(b, 'z', 17, c - 0.6, c + 0.6, 1.3, 2.6);
+  wall(b, { x0: 8, z0: -13, x1: 8, z1: -1, h: 4.4, t: 0.2, n: SS, p: { color: '#e9d9bd' }, open: [{ c: -5, w: 1.4, top: 2.4 }], trim: C.ink, name: 'umc-side', cap: C.tileDk });
+  eave(b, 8, -1, 17, -1, 4.5, 1, { width: 0.9 });
   wall(b, { x0: 8, z0: -1, x1: 17, z1: -1, h: 4.4, t: 0.2, n: { color: '#e9d9bd' }, p: { tile: 'sandstone', rep: 2.4 }, open: [{ c: 9.9, w: 1.2, bottom: 0.8, top: 2.4 }, { c: 12.4, w: 1.8, top: 2.5 }, { c: 15.3, w: 1.4, bottom: 0.8, top: 2.4 }], trim: C.ink, name: 'umc-south' });
   glazing(b, 'x', -1, 9.36, 10.44, 0.8, 2.4); glazing(b, 'x', -1, 14.66, 15.94, 0.8, 2.4);
   ceiling(b, 8.1, -12.9, 16.9, -1.1, H.umc, { color: '#f4efe6', tile: 'acoustic', rep: 1.6, name: 'umc' });
@@ -1109,12 +1148,12 @@ function umc(b, R, kit) {
 
 // ── 5. ENGINEERING LAB ───────────────────────────────────────────────────────────
 function lab(b, R) {
-  wall(b, { x0: -8, z0: 1.4, x1: -8, z1: 9, h: 3.2, t: 0.2, n: { color: C.blueGrey }, p: { tile: 'sandstone', rep: 2.4 }, open: [{ c: 3.2, w: 1.6, bottom: 0.9, top: 2.3 }, { c: 5.6, w: 1.3, top: 2.25 }], trim: C.ink, name: 'lab-east' });
+  wall(b, { x0: -8, z0: 1.4, x1: -8, z1: 9, h: 3.2, t: 0.2, n: { color: C.blueGrey }, p: { tile: 'sandstone', rep: 2.4 }, open: [{ c: 3.2, w: 1.6, bottom: 0.9, top: 2.3 }, { c: 5.6, w: 1.3, bottom: 0.9, top: 2.25 }], trim: C.ink, name: 'lab-east' });
   wall(b, { x0: -17, z0: 9, x1: -8, z1: 9, h: 3.2, t: 0.2, n: { color: C.blueGrey }, p: { tile: 'sandstone', rep: 2.4 }, open: [{ c: -14.6, w: 1.2, top: 2.25 }, { c: -11.6, w: 1.8, bottom: 0.9, top: 2.3 }, { c: -9.4, w: 1.2, bottom: 0.9, top: 2.3 }], trim: C.ink, name: 'lab-south' });
-  glazing(b, 'z', -8, 2.46, 3.94, 0.9, 2.3); glazing(b, 'x', 9, -12.44, -10.76, 0.9, 2.3); glazing(b, 'x', 9, -9.94, -8.86, 0.9, 2.3);
+  glazing(b, 'z', -8, 2.46, 3.94, 0.9, 2.3); glazing(b, 'z', -8, 4.98, 6.22, 0.9, 2.25); glazing(b, 'x', 9, -12.44, -10.76, 0.9, 2.3); glazing(b, 'x', 9, -9.94, -8.86, 0.9, 2.3);
   ceiling(b, -16.9, 1.5, -8.1, 8.9, H.lab, { tile: 'acoustic', rep: 1.2, name: 'lab' });
   guard(b, -17.2, H.lab + 0.12, 1.4, -8, 9, 9.2, 'labroof');
-  eave(b, -17.2, 9, -7.8, 9, 3.3, 1, { width: 0.9 }); eave(b, -8, 1.4, -8, 9.2, 3.3, 1, { width: 0.9 });
+  eave(b, -8, 1.4, -8, 9.2, 3.3, 1, { width: 0.9 });
   // whiteboard + pegboard + workbench
   poster(b, -10.0, 1.55, 1.5, 2.8, 1.2, 'z+', 'whiteboard', '#c9ced3');
   deco(b, -11.4, 0.9, 1.5, -8.6, 0.93, 1.62, { color: '#c9ced3', collide: { wall: false, perch: true, name: 'perch:marker-tray' } });
@@ -1186,6 +1225,41 @@ function lab(b, R) {
   void R;
 }
 
+/** The relocated lab's north wall (to the engineering yard), with its door. */
+function labShell(b) {
+  wall(b, { x0: 8, z0: -8.6, x1: 17, z1: -8.6, h: 3.2, t: 0.2, n: { tile: 'sandstone', rep: 2.4 }, p: { color: C.blueGrey }, open: [{ c: 12.5, w: 1.3, top: 2.2 }], trim: C.ink, name: 'lab-yard', cap: C.tileDk });
+  eave(b, 8, -8.6, 17.2, -8.6, 3.3, -1, { width: 0.9 });
+}
+
+/** The engineering yard behind the lab: bike racks (perches), two bikes, a drone pad, a lamp. */
+function yard(b) {
+  for (let i = 0; i < 5; i++) {
+    const x = 9.6 + i * 0.85; const z = -11.4;
+    for (const dz of [-0.28, 0.28]) deco(b, x - 0.025, 0, z + dz - 0.025, x + 0.025, 0.78, z + dz + 0.025, { color: '#9aa3ab' });
+    aabb(b, x - 0.03, 0.78, z - 0.31, x + 0.03, 0.84, z + 0.31, { color: '#9aa3ab', collide: { wall: false, perch: true, name: 'perch:bike-rack' } });
+    b.collide(x - 0.03, 0, z - 0.31, x + 0.03, 0.78, z + 0.31, { wall: false, perch: true, name: 'perch:bike-rack-leg' });
+  }
+  const bike = (x, z, col) => {
+    for (const dz of [-0.48, 0.48]) {
+      b.add(cylGeo(0.33, 0.33, 0.03, { radial: 16 }), { at: [x, 0.34, z + dz], rot: [0, 0, Math.PI / 2], color: C.ink });
+      b.add(cylGeo(0.27, 0.27, 0.034, { radial: 16 }), { at: [x, 0.34, z + dz], rot: [0, 0, Math.PI / 2], color: '#cfd4d8', outline: false });
+    }
+    b.add(boxGeo(0.04, 0.04, 0.95), { at: [x, 0.62, z], color: col });
+    b.add(boxGeo(0.04, 0.5, 0.04), { at: [x, 0.5, z - 0.12], rot: [0.35, 0, 0], color: col });
+    b.add(boxGeo(0.12, 0.04, 0.22), { at: [x, 0.84, z - 0.25], color: C.ink });
+    b.add(boxGeo(0.5, 0.03, 0.03), { at: [x, 0.9, z + 0.4], color: C.ink });
+    b.collide(x - 0.05, 0, z - 0.82, x + 0.05, 0.92, z + 0.82, { wall: false, perch: true, name: 'perch:bike' });
+  };
+  bike(10.03, -11.4, C.teal); bike(12.58, -11.4, C.gold);
+  b.add(cylGeo(1.1, 1.1, 0.012, { radial: 24 }), { at: [14.9, 0.012, -10.8], color: '#3a3d44', outline: false });
+  b.add(cylGeo(0.85, 0.85, 0.013, { radial: 24 }), { at: [14.9, 0.013, -10.8], color: C.gold, outline: false });
+  b.add(cylGeo(0.7, 0.7, 0.014, { radial: 24 }), { at: [14.9, 0.014, -10.8], color: '#3a3d44', outline: false });
+  deco(b, 14.6, 0.014, -10.85, 15.2, 0.016, -10.75, { color: C.gold, outline: false });
+  deco(b, 14.85, 0.014, -11.1, 14.95, 0.016, -10.5, { color: C.gold, outline: false });
+  b.add(cylGeo(0.05, 0.07, 3.0, { radial: 8 }), { at: [16.3, 1.5, -9.4], color: C.black, collide: { wall: true, name: 'lamp-post' } });
+  b.add(latheGeo([[0.06, 0], [0.18, 0.08], [0.16, 0.36], [0.22, 0.4], [0.02, 0.55]], { radial: 10 }), { at: [16.3, 3.0, -9.4], color: '#fff3c4', collide: { wall: false, perch: true, name: 'perch:lantern' } });
+}
+
 // ── 6. SANDSTONE ARCADE (loggia) ─────────────────────────────────────────────────────
 function arcade(b) {
   const n = 9; const xa = -2.7; const xb = 16.65; const step = (xb - xa) / (n - 1); const zc = 1.62;
@@ -1227,8 +1301,8 @@ function quad(b, R, kit) {
     const L = Math.hypot(x1 - x0, z1 - z0); const yaw = Math.atan2(x1 - x0, z1 - z0);
     b.add(boxGeo(w, 0.01, L, { faces: ['py'] }), { at: [(x0 + x1) / 2, 0.008, (z0 + z1) / 2], yaw, tile: 'flag', rep: 2.4, color: '#ffffff', outline: false });
   };
-  const pc = [5.0, 7.7];
-  path(-7.6, 2.8, pc[0], pc[1]); path(16.6, 2.8, pc[0], pc[1]); path(pc[0], pc[1], -7.6, 12.6); path(pc[0], pc[1], 16.6, 12.6); path(pc[0], 2.6, pc[0], 12.8, 1.6);
+  const pc = [-6.0, 7.7];
+  path(-16.6, 2.8, pc[0], pc[1]); path(4.4, 2.8, pc[0], pc[1]); path(pc[0], pc[1], -16.6, 12.6); path(pc[0], pc[1], 4.4, 12.6); path(pc[0], 2.6, pc[0], 12.8, 1.6); path(4.6, 12.2, 16.6, 12.2, 1.2);
   b.add(cylGeo(2.4, 2.4, 0.012, { radial: 28 }), { at: [pc[0], 0.012, pc[1]], tile: 'flag', rep: 2.4, color: '#ffffff', outline: true });
   // the buffalo: an original low-poly bronze on a sandstone plinth (quad landmark)
   solid(b, pc[0] - 1.15, 0, pc[1] - 0.6, pc[0] + 1.15, 0.85, pc[1] + 0.6, { color: '#ffffff', tile: 'sandstone', rep: 1.6 }, { name: 'plinth' });
@@ -1281,22 +1355,22 @@ function quad(b, R, kit) {
     [[1.15, 1.2, 1.3], [0.9, 2.0, 1.2], [0.6, 2.75, 1.0], [0.3, 3.35, 0.7]].forEach(([r, y, h]) => b.add(cylGeo(0.02, r * s, h * s, { radial: 9 }), { at: [x, y * s, z], tile: 'pineleaf', rep: 0.8, color: '#ffffff' }));
     b.blob(x, z, 1.1 * s, 1.1 * s, { a: 0.25 });
   };
-  aspen(13.6, 9.6, 1.1, 1); aspen(16.0, 10.4, 0.95, 2); aspen(15.4, 8.0, 1.0, 3); aspen(12.0, 12.2, 0.9, 4); aspen(0.4, 11.6, 1.0, 5); aspen(10.6, 7.4, 0.9, 6); aspen(-1.2, 7.4, 0.95, 7);
-  pine(-6.4, 9.6, 1.0); pine(15.6, 5.8, 0.9); pine(-3.2, 6.0, 0.85); pine(-10.6, 11.6, 0.8);
+  aspen(-14.5, 4.6, 1.0, 1); aspen(-15.8, 10.4, 0.95, 2); aspen(-12.6, 12.1, 0.9, 3); aspen(0.6, 11.7, 1.0, 4); aspen(2.6, 9.2, 0.9, 5); aspen(-1.0, 4.3, 0.95, 6); aspen(3.6, 4.4, 0.85, 7);
+  pine(-16.0, 7.4, 0.9); pine(-10.6, 3.7, 0.85); pine(-9.6, 12.1, 0.8); pine(3.4, 7.2, 0.8);
 
   // lamp posts (black with a gold band; the lantern top is a perch)
-  for (const [x, z] of [[2.4, 3.4], [7.6, 3.4], [-3.8, 9.6], [12.0, 8.6]]) {
+  for (const [x, z] of [[-8.6, 3.4], [-3.4, 3.4], [-14.6, 8.8], [1.0, 8.6]]) {
     b.add(cylGeo(0.05, 0.07, 3.0, { radial: 8 }), { at: [x, 1.5, z], color: C.black, collide: { wall: true, name: 'lamp-post' } });
     b.add(cylGeo(0.06, 0.06, 0.1, { radial: 8 }), { at: [x, 2.2, z], color: C.gold, outline: false });
     b.add(latheGeo([[0.06, 0], [0.18, 0.08], [0.16, 0.36], [0.22, 0.4], [0.02, 0.55]], { radial: 10 }), { at: [x, 3.0, z], color: '#fff3c4', collide: { wall: false, perch: true, name: 'perch:lantern' } });
     b.blob(x, z, 0.2, 0.2);
   }
   // sandstone planter with flowers (low wall perch) near the corridor door
-  solid(b, -6.6, 0, 6.0, -4.4, 0.45, 7.0, { color: '#ffffff', tile: 'sandstone', rep: 1.6, faces: ['px', 'nx', 'pz', 'nz'] }, { name: 'planter' });
-  deco(b, -6.65, 0.45, 5.95, -4.35, 0.5, 7.05, { color: C.stoneC });
-  b.add(boxGeo(2.1, 0.02, 0.9, { faces: ['py'] }), { at: [-5.5, 0.42, 6.5], color: '#6b4a32', outline: false });
+  solid(b, 1.4, 0, 5.6, 3.6, 0.45, 6.6, { color: '#ffffff', tile: 'sandstone', rep: 1.6, faces: ['px', 'nx', 'pz', 'nz'] }, { name: 'planter' });
+  deco(b, 1.35, 0.45, 5.55, 3.65, 0.5, 6.65, { color: C.stoneC });
+  b.add(boxGeo(2.1, 0.02, 0.9, { faces: ['py'] }), { at: [2.5, 0.42, 6.1], color: '#6b4a32', outline: false });
   for (let i = 0; i < 26; i++) {
-    const fx = -6.45 + R() * 1.9; const fz = 6.12 + R() * 0.76; const hh = 0.1 + R() * 0.2;
+    const fx = 1.55 + R() * 1.9; const fz = 5.72 + R() * 0.76; const hh = 0.1 + R() * 0.2;
     b.add(sphereGeo(0.05, 0.04, 0.05, { w: 6, h: 4 }), { at: [fx, 0.44 + hh, fz], color: [C.red, C.gold, '#f08aa8', '#8e6bbf', '#f8f5ee'][i % 5], outline: i % 3 === 0 });
   }
   // a flyer kiosk (colourful hiding spot)
@@ -1304,29 +1378,6 @@ function quad(b, R, kit) {
   b.add(cylGeo(0.0, 0.55, 0.35, { radial: 12 }), { at: [-1.6, 2.18, 3.6], color: C.tileDk });
   b.blob(-1.6, 3.6, 0.5, 0.5);
 
-  // bike racks in the strip in front of the lab (hoops are perches) + two parked bikes
-  for (let i = 0; i < 5; i++) {
-    const x = -15.4 + i * 0.85; const z = 11.3;
-    for (const dz of [-0.28, 0.28]) deco(b, x - 0.025, 0, z + dz - 0.025, x + 0.025, 0.78, z + dz + 0.025, { color: '#9aa3ab' });
-    aabb(b, x - 0.03, 0.78, z - 0.31, x + 0.03, 0.84, z + 0.31, { color: '#9aa3ab', collide: { wall: false, perch: true, name: 'perch:bike-rack' } });
-    b.collide(x - 0.03, 0, z - 0.31, x + 0.03, 0.78, z + 0.31, { wall: false, perch: true, name: 'perch:bike-rack-leg' });
-  }
-  const bike = (x, z, col) => {
-    for (const dz of [-0.48, 0.48]) {
-      b.add(cylGeo(0.33, 0.33, 0.03, { radial: 16, caps: true }), { at: [x, 0.34, z + dz], rot: [0, 0, Math.PI / 2], color: C.ink });
-      b.add(cylGeo(0.27, 0.27, 0.034, { radial: 16 }), { at: [x, 0.34, z + dz], rot: [0, 0, Math.PI / 2], color: '#cfd4d8', outline: false });
-    }
-    b.add(boxGeo(0.04, 0.04, 0.95), { at: [x, 0.62, z], color: col });
-    b.add(boxGeo(0.04, 0.5, 0.04), { at: [x, 0.5, z - 0.12], rot: [0.35, 0, 0], color: col });
-    b.add(boxGeo(0.12, 0.04, 0.22), { at: [x, 0.84, z - 0.25], color: C.ink });
-    b.add(boxGeo(0.5, 0.03, 0.03), { at: [x, 0.9, z + 0.4], color: C.ink });
-    b.collide(x - 0.05, 0, z - 0.82, x + 0.05, 0.92, z + 0.82, { wall: false, perch: true, name: 'perch:bike' });
-  };
-  bike(-14.97, 11.3, C.teal); bike(-12.42, 11.3, C.gold);
-  for (const [x, z] of [[-9.5, 10.6]]) {
-    b.add(cylGeo(0.05, 0.07, 3.0, { radial: 8 }), { at: [x, 1.5, z], color: C.black, collide: { wall: true, name: 'lamp-post' } });
-    b.add(latheGeo([[0.06, 0], [0.18, 0.08], [0.16, 0.36], [0.22, 0.4], [0.02, 0.55]], { radial: 10 }), { at: [x, 3.0, z], color: '#fff3c4', collide: { wall: false, perch: true, name: 'perch:lantern' } });
-  }
 }
 
 export const CUBOULDER = {
@@ -1345,14 +1396,15 @@ export const CUBOULDER = {
       { name: 'Duane G1B30 (top row)', floor: 1, x0: -17, z0: -13, x1: -3, z1: -1, landmark: 'Cross-aisle behind the back row' },
       { name: 'Norlin reading room', floor: 0, x0: -3, z0: -13, x1: 8, z1: -1, landmark: 'Green banker\'s lamps' },
       { name: 'Norlin gallery', floor: 1, x0: -3, z0: -13, x1: -1, z1: -5.6, landmark: 'Bookcase balcony' },
-      { name: 'UMC hangout', floor: 0, x0: 8, z0: -13, x1: 17, z1: -1, landmark: 'Pool table and coffee bar' },
+      { name: 'UMC hangout', floor: 0, x0: 5, z0: 2.4, x1: 17, z1: 11.4, landmark: 'Pool table and coffee bar' },
       { name: 'Basement corridor', floor: 0, x0: -17, z0: -1, x1: -3, z1: 1.4, landmark: 'Lockers and pipes' },
-      { name: 'Engineering lab', floor: 0, x0: -17, z0: 1.4, x1: -8, z1: 9, landmark: 'Model rocket' },
-      { name: 'Sandstone arcade', floor: 0, x0: -3, z0: -1, x1: 17, z1: 2.2, landmark: 'Round arches' },
-      { name: 'The quad', floor: 0, x0: -8, z0: 2.2, x1: 17, z1: 13, landmark: 'Buffalo statue' },
-      { name: 'Bike racks', floor: 0, x0: -17, z0: 9, x1: -8, z1: 13, landmark: 'Bike racks' },
+      { name: 'Engineering lab', floor: 0, x0: 8, z0: -8.6, x1: 17, z1: -1, landmark: 'Model rocket' },
+      { name: 'Engineering yard', floor: 0, x0: 8, z0: -13, x1: 17, z1: -8.6, landmark: 'Bike racks and drone pad' },
+      { name: 'Sandstone arcade', floor: 0, x0: -3, z0: -1, x1: 17, z1: 2.4, landmark: 'Round arches' },
+      { name: 'The quad', floor: 0, x0: -17, z0: 1.4, x1: 5, z1: 13, landmark: 'Buffalo statue' },
+      { name: 'UMC walk', floor: 0, x0: 5, z0: 11.4, x1: 17, z1: 13, landmark: 'UMC booth windows' },
     ],
-    north: NORTH, // compass: north = +x, east = +z (bearing θ → (cos θ, sin θ) in x, z)
+    north: NORTH, // compass: north = −x, east = −z (bearing θ → (−cos θ, −sin θ) in x, z)
     overview: { y: 12, radius: 18 },
     // screenshot / tour cameras: p = eye, t = target
     cams: [
@@ -1361,23 +1413,23 @@ export const CUBOULDER = {
       { name: 'g1b30-rows', p: [-5.4, 2.0, -1.7], t: [-11.5, 1.8, -10] },
       { name: 'norlin', p: [7.5, 4.3, -1.5], t: [1.5, 0.8, -8.5] },
       { name: 'norlin-gallery', p: [1.2, 4.2, -12.3], t: [-2.2, 2.6, -6.5] },
-      { name: 'umc', p: [8.7, 3.0, -1.5], t: [13.5, 0.6, -7.5] },
+      { name: 'umc', p: [5.5, 3.0, 3.1], t: [11.5, 0.6, 7.9] },
       { name: 'corridor', p: [-3.5, 2.3, 0.6], t: [-14, 0.8, 0.0] },
-      { name: 'lab', p: [-8.5, 2.75, 8.6], t: [-14.5, 0.8, 3.0] },
-      { name: 'arcade', p: [16.2, 2.4, 3.6], t: [3, 1.2, 0.0] },
-      { name: 'quad', p: [5, 6.5, 16], t: [5, 0.6, 4.5] },
-      // compass views (north = +x, east = +z) and views out of windows
-      { name: 'quad-looking-N', p: [1.5, 1.5, 7.2], t: [16, 2.2, 7.2] },
-      { name: 'quad-looking-E', p: [5, 1.5, 3.2], t: [5, 2.0, 16] },
-      { name: 'quad-looking-S', p: [15, 1.6, 9], t: [-4, 2.6, 9] },
-      { name: 'quad-looking-SW', p: [8, 1.6, 12.5], t: [-14.6, 9, -7.1] },
-      { name: 'quad-looking-W', p: [8, 1.8, 12.4], t: [6, 4.5, -10] },
-      { name: 'norlin-west-window', p: [3.85, 3.0, -8.0], t: [3.0, 4.3, -20] },
-      { name: 'norlin-window-looking-SW', p: [5.5, 3.25, -9.6], t: [-9, 5.0, -22] },
-      { name: 'umc-north-window', p: [13.6, 1.95, -5.8], t: [25, 2.4, -5.0] },
-      { name: 'lab-east-window', p: [-11.6, 1.6, 6.0], t: [-11.6, 1.9, 20] },
-      { name: 'arcade-east', p: [6.5, 1.5, -0.3], t: [7.5, 1.7, 14] },
-      { name: 'top-down', p: [6, 21, 9], t: [-1, 0, -1] },
+      { name: 'lab', p: [16.5, 2.75, -1.4], t: [10.5, 0.8, -7.0] },
+      { name: 'yard', p: [9.0, 2.6, -9.2], t: [15, 0.4, -12] },
+      { name: 'arcade', p: [16.0, 2.2, 1.0], t: [-2, 1.4, 0.2] },
+      { name: 'quad', p: [-6, 6.5, 16], t: [-6, 0.6, 4.5] },
+      // compass views (north = −x, east = −z, west = +z) and views out of windows
+      { name: 'quad-looking-N', p: [-1, 1.5, 7.5], t: [-17, 2.2, 7.5] },
+      { name: 'quad-looking-E', p: [-6, 1.6, 12.4], t: [-6, 3.5, -4] },
+      { name: 'quad-looking-S', p: [-12.8, 1.6, 9.4], t: [10, 2.6, 7.4] },
+      { name: 'quad-looking-SW', p: [-12.5, 1.6, 4.5], t: [10.5, 8, 23.8] },
+      { name: 'quad-looking-W', p: [-6, 1.8, 3.6], t: [-6, 4.0, 25] },
+      { name: 'norlin-facade-window-W', p: [6.6, 1.7, -5.0], t: [6.0, 2.4, 20] },
+      { name: 'norlin-back-window-E', p: [3.85, 3.0, -8.0], t: [3.0, 4.3, -20] },
+      { name: 'umc-booth-window-W', p: [9.8, 1.95, 7.6], t: [9.0, 2.4, 22] },
+      { name: 'lab-window-S', p: [12.5, 1.6, -6.8], t: [28, 1.9, -6.8] },
+      { name: 'top-down', p: [-4, 21, 12], t: [-1, 0, -1] },
       { name: 'overview', p: [2, 13, 18], t: [0, 0.5, 0] },
     ],
   },

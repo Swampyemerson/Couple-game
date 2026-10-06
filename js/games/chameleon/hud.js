@@ -237,7 +237,8 @@ export const CSS = `
   .chm-tool { padding: 6px 2px 5px; }
   .chm-tool .chm-ic { width: 22px; height: 22px; }
   .chm-opts { flex: none; }
-  .chm-poses, .chm.painting .chm-poses, .chm.acts3 .chm-poses, .chm.acts3.painting .chm-poses { left: calc(10px + var(--chm-sl)); transform: none; bottom: calc(84px + var(--chm-sb)); padding: 5px; gap: 5px; }
+  .chm-poses, .chm.painting .chm-poses, .chm.acts3 .chm-poses, .chm.acts3.painting .chm-poses { left: calc(10px + var(--chm-sl)); transform: none; bottom: calc(84px + var(--chm-sb)); padding: 5px; gap: 5px; flex-direction: row; }
+  .chm-sheetwrap { padding-left: calc(62px + var(--chm-sl)); padding-right: calc(62px + var(--chm-sr)); padding-top: calc(10px + var(--chm-st)); }
   .chm.acts3 .chm-acts { grid-template-columns: auto auto auto !important; gap: 8px 8px; }
   .chm-pose { width: 46px; height: 50px; }
   .chm-pose svg { width: 26px; height: 26px; }
@@ -307,7 +308,7 @@ export const CSS = `
 .chm-lobby .chm-card[data-ro] .chm-arrow { pointer-events: none; }
 
 /* settings sheet */
-.chm-sheetwrap { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; padding: 12px; padding-top: calc(12px + var(--chm-st)); padding-bottom: calc(12px + var(--chm-sb)); background: var(--g-dim, color-mix(in srgb, var(--g-bg) 70%, transparent)); pointer-events: auto; }
+.chm-sheetwrap { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; padding: 12px; padding-top: calc(var(--gm-corner-safe, 64px) + 4px); padding-bottom: calc(12px + var(--chm-sb)); background: var(--g-dim, color-mix(in srgb, var(--g-bg) 70%, transparent)); pointer-events: auto; }
 .chm-sheet { width: min(100%, 460px); max-height: 100%; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; touch-action: pan-y; padding: 14px 14px 16px; display: flex; flex-direction: column; gap: 9px; text-align: left; }
 .chm-sheethead { display: flex; align-items: center; justify-content: space-between; gap: 8px; position: sticky; top: -14px; background: var(--g-card); padding: 4px 0 6px; margin-top: -4px; z-index: 1; border-bottom: 2px solid var(--g-line); }
 .chm-sheet h2 { margin: 0; font-family: var(--g-font-display); font-weight: 900; font-size: 1.3rem; }
@@ -336,9 +337,10 @@ export const CSS = `
 
 /* dynamic pose bar; with six action buttons (sticky feet) the pose bar sits above them */
 .chm-poses { flex-wrap: nowrap; max-width: calc(100% - 16px); }
-.chm.acts3 .chm-poses { bottom: calc(318px + var(--chm-sb)); }
-.chm.acts3.painting .chm-poses { bottom: calc(146px + var(--chm-sb)); }
-@media (min-width: 700px) { .chm.acts3 .chm-poses { bottom: calc(334px + var(--chm-sb)); } }
+/* portrait with six action buttons: the pose bar becomes a column on the left, above the stick */
+.chm.acts3 .chm-poses { left: calc(10px + var(--chm-sl)); transform: none; bottom: calc(136px + var(--chm-sb)); flex-direction: column; padding: 5px; gap: 5px; }
+.chm.acts3 .chm-pose { width: 54px; height: 52px; }
+.chm.acts3.painting .chm-poses { left: 50%; transform: translateX(-50%); bottom: calc(146px + var(--chm-sb)); flex-direction: row; }
 
 /* minimap (seeker, big maps) */
 .chm-mini { position: absolute; left: calc(10px + var(--chm-sl)); top: calc(100px + var(--chm-st)); width: 112px; height: 112px; border-radius: 12px; padding: 4px; background: var(--g-card); }
