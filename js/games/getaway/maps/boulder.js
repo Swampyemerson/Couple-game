@@ -39,7 +39,7 @@ const FAR = [
 export const BOULDER = {
   id: 'boulder',
   name: 'Boulder',
-  blurb: 'Pearl St to the Turnpike, Flatirons on your right',
+  blurb: 'Pearl St to the Turnpike, under the Flatirons',
   bounds: { ...BOUNDS },
   height,
   roads: ROADS,
@@ -48,7 +48,7 @@ export const BOULDER = {
   water: WATER.map(({ poly }) => ({ poly })),
   spawns: SPAWNS,
   landmarks: [...LANDMARKS, ...FAR],
-  sky: { top: '#5d9bd3', horizon: '#f3dcb0', fog: '#ead8b9', fogNear: 170, fogFar: 640, sun: { bearing: 255, elev: 24 } },
+  sky: { top: '#5d9bd3', horizon: '#f3dcb0', fog: '#ead8b9', fogNear: 140, fogFar: 520, sun: { bearing: 255, elev: 24 } },
   /** Optional: generate the layout ahead of build(), in slices. */
   async prepare(kit = {}) {
     const it = layoutGen();

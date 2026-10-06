@@ -128,6 +128,7 @@ export function createFx(THREE, scene, P, U, mats) {
   scene.add(lines);
 
   function update(dt, cam) {
+    const cx = cam ? cam.position.x : 0; const cy = cam ? cam.position.y : 0; const cz = cam ? cam.position.z : 0;
     // puffs
     let w = 0;
     for (let i = 0; i < np; i++) {
@@ -139,7 +140,10 @@ export function createFx(THREE, scene, P, U, mats) {
       pp[q] += pp[q + 3] * dt; pp[q + 1] += pp[q + 4] * dt; pp[q + 2] += pp[q + 5] * dt;
       const dr = Math.max(0, 1 - 1.8 * dt); pp[q + 3] *= dr; pp[q + 5] *= dr; pp[q + 4] *= Math.max(0, 1 - 0.8 * dt);
       const u = pp[q + 6] / pp[q + 7];
-      const s = (pp[q + 8] + pp[q + 9] * pp[q + 6]) * (u > 0.7 ? (1 - u) / 0.3 : 1);
+      let s = (pp[q + 8] + pp[q + 9] * pp[q + 6]) * (u > 0.7 ? (1 - u) / 0.3 : 1);
+      // never let a puff fill the screen: shrink the ones right in front of the camera
+      const dc = Math.hypot(pp[q] - cx, pp[q + 1] - cy, pp[q + 2] - cz);
+      if (dc < 7) s *= Math.max(0, (dc - 2) / 5);
       dummy.position.set(pp[q], pp[q + 1], pp[q + 2]); dummy.rotation.set(u * 2, u * 3, 0); dummy.scale.setScalar(Math.max(0.001, s)); dummy.updateMatrix();
       puffs.setMatrixAt(w, dummy.matrix);
       col.setRGB(pp[q + 10], pp[q + 11], pbC[w]); puffs.setColorAt(w, col);

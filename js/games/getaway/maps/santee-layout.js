@@ -829,8 +829,9 @@ export function* layoutSteps() {
     const x = BOUNDS.x0 + rnd() * (BOUNDS.x1 - BOUNDS.x0), z = BOUNDS.z0 + rnd() * (BOUNDS.z1 - BOUNDS.z0);
     const h = height(x, z);
     if (h < 1.2) continue;
-    if (roadGap(x, z) < 4) continue;
-    if (rnd() < 0.09) {
+    const gap = roadGap(x, z, 30);
+    if (gap < 4) continue;
+    if (rnd() < 0.09 && gap > 12) {
       const s = 1.5 + rnd() * 3.5;
       const o = { kind: 'rock', x, z, w: s * 1.2, d: s, rot: rnd() * PI, h: s * 0.8, drawn: true };
       if (!blocked(o, 0.5)) { addSolid(o); deco.rocks.push({ ...o, y: h }); }
@@ -841,7 +842,7 @@ export function* layoutSteps() {
     for (let k = 0; k < 5; k++) {
       const x = cx + (rnd() - 0.5) * 30, z = cz + (rnd() - 0.5) * 30, s = 2 + rnd() * 3;
       const o = { kind: 'rock', x, z, w: s * 1.3, d: s, rot: rnd() * PI, h: s * 0.9, drawn: true };
-      if (roadGap(x, z) > 3 && !blocked(o, 0.5)) { addSolid(o); deco.rocks.push({ ...o, y: height(x, z) }); }
+      if (roadGap(x, z, 30) > 12 && !blocked(o, 0.5)) { addSolid(o); deco.rocks.push({ ...o, y: height(x, z) }); }
     }
   }
   // dirt where the hills are, so the ground slows you a bit

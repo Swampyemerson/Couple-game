@@ -48,8 +48,9 @@ export function drawProp(b, s, y0, P, ox = s.x, oz = s.z, rot = s.rot) {
       b.cyl(x, y0, z, tr, h * 0.5, C.bark, ol, 0, true);
       const r = h * (st === 'cottonwood' ? 0.3 : 0.28);
       b.sphere(x, y0 + h * 0.62, z, r, leaf, ol, 0, 0.85);
-      b.sphere(x + r * 0.55, y0 + h * 0.5, z + r * 0.2, r * 0.68, mix(leaf, [0, 0, 0], 0.08), ol, 0, 0.85);
-      b.sphere(x - r * 0.45, y0 + h * 0.52, z - r * 0.35, r * 0.62, mix(leaf, [1, 1, 1], 0.08), ol, 0, 0.85);
+      // side blobs: low-poly, no hull (the main canopy carries the outline): ~240 triangles a tree
+      b.add(b.T.ico, x + r * 0.55, y0 + h * 0.5, z + r * 0.2, r * 1.36, r * 1.16, r * 1.36, 0.4, mix(leaf, [0, 0, 0], 0.08), 0);
+      b.add(b.T.ico, x - r * 0.45, y0 + h * 0.52, z - r * 0.35, r * 1.24, r * 1.05, r * 1.24, 1.1, mix(leaf, [1, 1, 1], 0.08), 0);
       break;
     }
     case 'pine': {
@@ -139,7 +140,7 @@ export function drawProp(b, s, y0, P, ox = s.x, oz = s.z, rot = s.rot) {
     case 'shrub': {
       const c = tint || C.shrub; const r = Math.max(0.6, Math.min(2.2, (s.hw + s.hd) * 0.6));
       b.sphere(x, y0 + r * 0.55, z, r, c, ol, 0, 0.7);
-      b.sphere(x + r * 0.6, y0 + r * 0.4, z + r * 0.2, r * 0.65, mix(c, [1, 1, 1], 0.1), ol, 0, 0.7);
+      b.add(b.T.ico, x + r * 0.6, y0 + r * 0.4, z + r * 0.2, r * 1.3, r * 0.9, r * 1.3, 0.5, mix(c, [1, 1, 1], 0.1), 0);
       break;
     }
     default:

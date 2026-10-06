@@ -14,12 +14,16 @@ export function chunkKey(x, z) { return `${Math.floor(x / CH)},${Math.floor(z / 
 
 export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onProgress = () => {}, budget = 12, dead = () => false } = {}) {
   const t0 = performance.now();
+  // stage times count only our own busy time (not the frames the browser runs between slices)
+  const T = {}; let busy = 0; let busyMark = 0;
   let sliceT = performance.now();
+  const mark = (k) => { const b = busy + (performance.now() - sliceT); T[k] = Math.round((T[k] || 0) + b - busyMark); busyMark = b; };
   let maxBlock = 0;
   const slice = () => {
     const now = performance.now();
     if (now - sliceT < budget) return Promise.resolve();
     maxBlock = Math.max(maxBlock, now - sliceT);
+    busy += now - sliceT;
     return new Promise((r) => setTimeout(() => { sliceT = performance.now(); r(); }, 0));
   };
   const sky = map.sky || {};
@@ -88,46 +92,55 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
   const nq = { road: -1 };
   const asph = P.asphalt; const dirtC = P.dirtRoad; const curbC = P.curb;
   const lineW = P.lineW; const lineY = P.lineY;
+  const nqFilters = new Map();
   for (const r of geo.roads) {
     const n = r.n; const hw = r.hw; const lift = RANK_LIFT[r.kind] || 0.04;
-    const L = new Float64Array(n * 2); const R = new Float64Array(n * 2); const nx = new Float64Array(n); const nz = new Float64Array(n);
+    const nx = new Float64Array(n); const nz = new Float64Array(n);
     for (let i = 0; i < n; i++) {
       const i0 = i > 0 ? i - 1 : r.closed ? n - 2 : 0; const i1 = i < n - 1 ? i + 1 : r.closed ? 1 : n - 1;
       let tx = r.x[i1] - r.x[i0]; let tz = r.z[i1] - r.z[i0]; const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
       nx[i] = -tz; nz[i] = tx;
     }
-    const yAt = (i, x, z) => (r.bridge ? geo.deckY(r, r.cum[i]) : geo.ground(x, z)) + lift;
+    // heights at the two edges of every point (2 height calls per point, reused by the ribbon,
+    // markings and curbs), and a per-segment "another road joins here" flag (1 lookup per segment)
+    const hl = new Float64Array(n); const hr = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      if (r.bridge) { hl[i] = hr[i] = geo.deckY(r, r.cum[i]); continue; }
+      hl[i] = geo.ground(r.x[i] - nx[i] * hw, r.z[i] - nz[i] * hw); hr[i] = geo.ground(r.x[i] + nx[i] * hw, r.z[i] + nz[i] * hw);
+    }
+    let filt = nqFilters.get(r); if (!filt) { filt = (o) => o !== r && !o.bridge; nqFilters.set(r, filt); }
+    const join = new Uint8Array(n);
+    if (!r.bridge) for (let i = 0; i < n - 1; i++) {
+      geo.nearestRoad((r.x[i] + r.x[i + 1]) / 2, (r.z[i] + r.z[i + 1]) / 2, nq, hw + 22, filt);
+      if (nq.road >= 0 && nq.d < geo.roads[nq.road].hw + Math.max(2.5, hw * 0.5)) join[i] = 1;
+    }
     const col = r.kind === 'dirt' ? dirtC : asph;
+    // height across the road at offset o (−hw..hw) at point i
+    const yOff = (i, o) => hl[i] + (hr[i] - hl[i]) * ((o + hw) / (2 * hw));
     for (let i = 0; i < n - 1; i++) {
       const ax = r.x[i]; const az = r.z[i]; const bx = r.x[i + 1]; const bz = r.z[i + 1];
       const c = chunkAt((ax + bx) / 2, (az + bz) / 2).b;
       const l0x = ax - nx[i] * hw; const l0z = az - nz[i] * hw; const r0x = ax + nx[i] * hw; const r0z = az + nz[i] * hw;
       const l1x = bx - nx[i + 1] * hw; const l1z = bz - nz[i + 1] * hw; const r1x = bx + nx[i + 1] * hw; const r1z = bz + nz[i + 1] * hw;
-      c.quadUp(l0x, yAt(i, l0x, l0z), l0z, l1x, yAt(i + 1, l1x, l1z), l1z, r1x, yAt(i + 1, r1x, r1z), r1z, r0x, yAt(i, r0x, r0z), r0z, col);
+      c.quadUp(l0x, hl[i] + lift, l0z, l1x, hl[i + 1] + lift, l1z, r1x, hr[i + 1] + lift, r1z, r0x, hr[i] + lift, r0z, col);
       if (r.bridge) {
-        // deck slab, rails, pillars
-        const y0 = geo.deckY(r, r.cum[i]); const y1 = geo.deckY(r, r.cum[i + 1]);
+        // deck slab, rails, piers
+        const y0 = hl[i]; const y1 = hl[i + 1];
         const mx = (ax + bx) / 2; const mz = (az + bz) / 2; const my = (y0 + y1) / 2;
         const segL = Math.hypot(bx - ax, bz - az) + 0.05; const ry = Math.atan2(bx - ax, bz - az);
         const pitch = -Math.atan2(y1 - y0, segL);
         c.add(c.T.box, mx, my - 0.45 + lift, mz, r.width + 0.6, 0.9, segL, ry, mix(P.curb, P.ink, 0.15), 0.05, 0, null, pitch);
-        for (const sd of [-1, 1]) {
-          const ox = nx[i] * (hw + 0.1) * sd; const oz = nz[i] * (hw + 0.1) * sd;
-          c.add(c.T.box, mx + (nx[i] * 0 + ox), my + 0.45 + lift, mz + oz, 0.32, 0.9, segL, ry, P.curb, 0.04, 0, null, pitch);
+        for (const sd of [-1, 1]) c.add(c.T.box, mx + nx[i] * (hw + 0.1) * sd, my + 0.45 + lift, mz + nz[i] * (hw + 0.1) * sd, 0.32, 0.9, segL, ry, P.curb, 0.04, 0, null, pitch);
+        if (i % 5 === 2) {
+          const gy = geo.ground(mx, mz);
+          if (my - gy > 1.6) for (const sd of [-0.6, 0.6]) c.add(c.T.box, mx + nx[i] * hw * sd, (my - 0.9 + gy) / 2, mz + nz[i] * hw * sd, 0.9, my - 0.9 - gy, 0.9, ry, mix(P.curb, P.ink, 0.25), 0.05);
         }
-        const gy = geo.ground(mx, mz);
-        if (my - gy > 1.6 && i % 5 === 2) {
-          for (const sd of [-0.6, 0.6]) c.add(c.T.box, mx + nx[i] * hw * sd, (my - 0.9 + gy) / 2, mz + nz[i] * hw * sd, 0.9, my - 0.9 - gy, 0.9, ry, mix(P.curb, P.ink, 0.25), 0.05);
-        }
-      } else if (r.kind === 'street' || r.kind === 'arterial') {
+      } else if ((r.kind === 'street' || r.kind === 'arterial') && !join[i] && !(i > 0 && join[i - 1]) && !(i < n - 2 && join[i + 1])) {
         // curbs (skipped where another road joins)
         for (const sd of [-1, 1]) {
-          const px = (ax + bx) / 2 + ((nx[i] + nx[i + 1]) / 2) * (hw + 0.6) * sd; const pz = (az + bz) / 2 + ((nz[i] + nz[i + 1]) / 2) * (hw + 0.6) * sd;
-          geo.nearestRoad(px, pz, nq, 30, (o) => o !== r && !o.bridge);
-          if (nq.road >= 0 && nq.d < geo.roads[nq.road].hw + 1.5) continue;
           const e0x = ax + nx[i] * hw * sd; const e0z = az + nz[i] * hw * sd; const e1x = bx + nx[i + 1] * hw * sd; const e1z = bz + nz[i + 1] * hw * sd;
           const f0x = ax + nx[i] * (hw + 0.35) * sd; const f0z = az + nz[i] * (hw + 0.35) * sd; const f1x = bx + nx[i + 1] * (hw + 0.35) * sd; const f1z = bz + nz[i + 1] * (hw + 0.35) * sd;
-          const ya = geo.ground(e0x, e0z) + 0.16; const yb = geo.ground(e1x, e1z) + 0.16;
+          const ya = (sd > 0 ? hr[i] : hl[i]) + 0.16; const yb = (sd > 0 ? hr[i + 1] : hl[i + 1]) + 0.16;
           if (sd > 0) c.quadUp(e0x, ya, e0z, e1x, yb, e1z, f1x, yb, f1z, f0x, ya, f0z, curbC);
           else c.quadUp(f0x, ya, f0z, f1x, yb, f1z, e1x, yb, e1z, e0x, ya, e0z, curbC);
         }
@@ -141,35 +154,31 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
       for (let k = 1; k < lanes; k++) { const o = (hw / lanes) * k; lines.push([o, 0.14, lineW, 1]); lines.push([-o, 0.14, lineW, 1]); }
       lines.push([hw - 0.55, 0.14, lineW, 0]); lines.push([-(hw - 0.55), 0.14, lineW, 0]);
     } else if (r.kind === 'street' && r.width >= 8) lines.push([0, 0.13, lineY, 1]);
-    if (!lines.length) continue;
-    for (let i = 0; i < n - 1; i++) {
-      const ax = r.x[i]; const az = r.z[i]; const bx = r.x[i + 1]; const bz = r.z[i + 1];
-      // skip inside intersections
-      geo.nearestRoad((ax + bx) / 2, (az + bz) / 2, nq, 30, (o) => o !== r && !o.bridge);
-      if (!r.bridge && nq.road >= 0 && nq.d < geo.roads[nq.road].hw + 2.5) continue;
-      const c = chunkAt((ax + bx) / 2, (az + bz) / 2).b;
-      const s0 = r.cum[i]; const s1 = r.cum[i + 1]; const segL = s1 - s0 || 1;
-      for (const [o, w, colr, dashed] of lines) {
-        const pieces = [];
-        if (!dashed) pieces.push([0, 1]);
-        else {
-          const P0 = 12; let s = Math.floor(s0 / P0) * P0;
-          for (; s < s1; s += P0) { const a = Math.max(s0, s); const b2 = Math.min(s1, s + 4); if (b2 > a) pieces.push([(a - s0) / segL, (b2 - s0) / segL]); }
-        }
-        for (const [u0, u1] of pieces) {
-          const px0 = ax + (bx - ax) * u0; const pz0 = az + (bz - az) * u0; const px1 = ax + (bx - ax) * u1; const pz1 = az + (bz - az) * u1;
-          const n0x = nx[i] + (nx[i + 1] - nx[i]) * u0; const n0z = nz[i] + (nz[i + 1] - nz[i]) * u0; const n1x = nx[i] + (nx[i + 1] - nx[i]) * u1; const n1z = nz[i] + (nz[i + 1] - nz[i]) * u1;
-          const y0 = (r.bridge ? geo.deckY(r, s0 + segL * u0) : geo.ground(px0 + n0x * o, pz0 + n0z * o)) + lift + 0.03;
-          const y1 = (r.bridge ? geo.deckY(r, s0 + segL * u1) : geo.ground(px1 + n1x * o, pz1 + n1z * o)) + lift + 0.03;
+    if (lines.length) {
+      for (let i = 0; i < n - 1; i++) {
+        if (join[i]) continue; // inside an intersection
+        const ax = r.x[i]; const az = r.z[i]; const bx = r.x[i + 1]; const bz = r.z[i + 1];
+        const c = chunkAt((ax + bx) / 2, (az + bz) / 2).b;
+        const s0 = r.cum[i]; const s1 = r.cum[i + 1]; const segL = s1 - s0 || 1;
+        for (let li = 0; li < lines.length; li++) {
+          const o = lines[li][0]; const w = lines[li][1]; const colr = lines[li][2]; const dashed = lines[li][3];
+          const ya = yOff(i, o) + lift + 0.03; const yb = yOff(i + 1, o) + lift + 0.03;
           const a0 = o - w / 2; const a1 = o + w / 2;
-          c.quadUp(px0 + n0x * a0, y0, pz0 + n0z * a0, px1 + n1x * a0, y1, pz1 + n1z * a0, px1 + n1x * a1, y1, pz1 + n1z * a1, px0 + n0x * a1, y0, pz0 + n0z * a1, colr);
+          const piece = (u0, u1) => {
+            const px0 = ax + (bx - ax) * u0; const pz0 = az + (bz - az) * u0; const px1 = ax + (bx - ax) * u1; const pz1 = az + (bz - az) * u1;
+            const n0x = nx[i] + (nx[i + 1] - nx[i]) * u0; const n0z = nz[i] + (nz[i + 1] - nz[i]) * u0; const n1x = nx[i] + (nx[i + 1] - nx[i]) * u1; const n1z = nz[i] + (nz[i + 1] - nz[i]) * u1;
+            const y0 = ya + (yb - ya) * u0; const y1 = ya + (yb - ya) * u1;
+            c.quadUp(px0 + n0x * a0, y0, pz0 + n0z * a0, px1 + n1x * a0, y1, pz1 + n1z * a0, px1 + n1x * a1, y1, pz1 + n1z * a1, px0 + n0x * a1, y0, pz0 + n0z * a1, colr);
+          };
+          if (!dashed) piece(0, 1);
+          else { const P0 = 12; for (let sd = Math.floor(s0 / P0) * P0; sd < s1; sd += P0) { const a = Math.max(s0, sd); const b2 = Math.min(s1, sd + 4); if (b2 > a) piece((a - s0) / segL, (b2 - s0) / segL); } }
         }
       }
     }
     await slice();
     if (dead()) return null;
   }
-
+  mark('roads');
   // ── terrain (optional engine ground) ──
   if (map.ground) {
     onProgress(0.12, 'Laying the ground…');
@@ -191,6 +200,7 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
     }
   }
 
+  mark('ground');
   // ── engine-drawn solids ──
   onProgress(0.18, 'Planting trees…');
   const propRec = new Map(); // solid index → { chunk, v0, v1 }
@@ -205,6 +215,7 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
     if ((++k & 63) === 0) { await slice(); if (dead()) return null; }
   }
 
+  mark('props');
   // ── the map's own build ──
   onProgress(0.25, `Building ${map.name || 'the map'}…`);
   let built = null;
@@ -222,6 +233,7 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
   maxBlock = Math.max(maxBlock, performance.now() - sliceT);
   sliceT = performance.now();
 
+  mark('build');
   // ── backdrop ──
   onProgress(0.62, 'Painting the horizon…');
   try {
@@ -251,6 +263,7 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
   } catch (e) { console.error('getaway: backdrop failed', e); }
   await slice();
 
+  mark('backdrop');
   // ── merge chunks ──
   onProgress(0.7, 'Welding it together…');
   const disposeSet = new Set();
@@ -272,7 +285,10 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
     if (dead()) return null;
   }
   mergeGroup(THREE, globalG, mats, P.outline, disposeSet, null);
-  for (const g of disposeSet) { let used = false; scene.traverse((o) => { if (o.geometry === g) used = true; }); if (!used) g.dispose(); }
+  mark('merge');
+  const inUse = new Set(); scene.traverse((o) => { if (o.geometry) inUse.add(o.geometry); });
+  for (const g of disposeSet) if (!inUse.has(g)) g.dispose();
+  mark('dispose');
   // rebind prop records to the merged meshes
   for (const rec of propRec.values()) rec.mesh = rec.c.mesh;
 
@@ -336,7 +352,7 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
   return {
     scene, farScene, sky: skyMesh, mats, kit, chunks: chunkList, toon, breakSolid, update, fogC, skyTop, sunDir,
     fogNear: sky.fogNear || 120, fogFar: sky.fogFar || 520,
-    stats: { buildMs: Math.round(performance.now() - t0), maxBlockMs: Math.round(maxBlock), chunks: chunkList.length, tris: Math.round(totalTris) },
+    stats: { buildMs: Math.round(busy + performance.now() - sliceT), wallMs: Math.round(performance.now() - t0), maxBlockMs: Math.round(maxBlock), chunks: chunkList.length, tris: Math.round(totalTris), stages: T },
     warmList() { const l = []; scene.traverse((o) => { if (o.isMesh) l.push(o); }); return l; },
     resetProps() {
       // stand everything back up between rounds

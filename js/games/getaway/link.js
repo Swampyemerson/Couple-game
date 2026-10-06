@@ -23,7 +23,11 @@ export function createRemoteBuffer(size = 48) {
     clear() { head = 0; count = 0; },
     get count() { return count; },
     push(time, s) {
-      if (count && time <= t[(head - 1 + size) % size]) return;
+      const last = count ? t[(head - 1 + size) % size] : -Infinity;
+      // the sender's shared clock was corrected backwards (its early sync was off): start over
+      // instead of rejecting every sample until time catches up with the stale ones
+      if (count && time < last - 400) { head = 0; count = 0; }
+      else if (count && time <= last) return;
       t[head] = time;
       for (let f = 0; f < F; f++) { const x = s[FIELDS[f]]; v[head * F + f] = typeof x === 'number' && Number.isFinite(x) ? x : 0; }
       head = (head + 1) % size; if (count < size) count++;

@@ -192,9 +192,9 @@ export function createGeo(map) {
   function surfaceAt(x, z) {
     nearestRoad(x, z, nq, 22, (r) => !r.bridge);
     if (nq.road >= 0 && nq.d <= roads[nq.road].hw + 0.3) return roads[nq.road].kind === 'dirt' ? 'dirt' : 'road';
+    if (inWater(x, z)) return 'water'; // water wins over open polygons (river pools inside sand beds)
     const k = openKind(x, z);
     if (k) return k;
-    if (inWater(x, z)) return 'water';
     return 'grass';
   }
 
@@ -346,7 +346,7 @@ export function createGeo(map) {
     return -1;
   }
   /** Path from (x0,z0) to (x1,z1) as a flat [x, z, x, z…] array of cell centres (or null). */
-  function findPath(x0, z0, x1, z1, maxExpand = 30000) {
+  function findPath(x0, z0, x1, z1, maxExpand = 15000) {
     if (navDone < nav.length) return null;
     const s = nearestOpen(navIdx(x0, z0)); const t = nearestOpen(navIdx(x1, z1));
     if (s < 0 || t < 0) return null;

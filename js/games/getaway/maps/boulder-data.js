@@ -113,7 +113,8 @@ add('Balsam Ave', 'street', 10, EW(Z.balsam, X.st4, X.folsom));
 add('Mapleton Ave', 'street', 10, EW(Z.mapleton, X.st4, X.st28));
 add('Pine St', 'street', 10, EW(Z.pine, X.st4, X.st28));
 add('Spruce St', 'street', 10, EW(Z.spruce, X.st4, X.folsom));
-add('Pearl St alley', 'alley', 5.5, EW(Z.alleyN, X.st9, X.st19));
+add('Pearl St alley', 'alley', 5.5, EW(Z.alleyN, X.st9, X.st13));
+add('Pearl St alley', 'alley', 5.5, EW(Z.alleyN, X.st14, X.st19)); // the Courthouse block has no alley
 add('Pearl St', 'street', 12, EW(Z.pearl, X.st4, X.st11));
 add('Pearl St', 'arterial', 13, EW(Z.pearl, X.st15, X.st30));
 add('Pearl St alley', 'alley', 5.5, EW(Z.alleyS, X.st9, X.st19));
@@ -278,8 +279,8 @@ export const OPEN = [
   { kind: 'lot', poly: rect(8.6, MALL.z0, MALL.x1, MALL.z1), name: 'Pearl St Mall', paint: 'brick' },
   { kind: 'lot', poly: rect(36, -27, 94, -10), name: 'Courthouse plaza', paint: 'brick' },
   { kind: 'lot', poly: circ(-440, 146, 26), name: 'Eben G. Fine Park', paint: 'asphalt' },
-  { kind: 'lot', poly: rect(846, 12, 924, 108), name: 'Twenty Ninth St lot W', paint: 'asphalt' },
-  { kind: 'lot', poly: rect(946, 12, 1024, 108), name: 'Twenty Ninth St lot E', paint: 'asphalt' },
+  { kind: 'lot', poly: rect(846, 12, 893, 108), name: 'Twenty Ninth St lot W', paint: 'asphalt' },
+  { kind: 'lot', poly: rect(978, 12, 1024, 108), name: 'Twenty Ninth St lot E', paint: 'asphalt' },
   { kind: 'lot', poly: rect(930, 1694, 1032, 1762), name: 'Table Mesa shops lot', paint: 'asphalt' },
   { kind: 'lot', poly: rect(-125, 918, -66, 946), name: 'Chautauqua lot', paint: 'asphalt' },
   { kind: 'lot', poly: rect(560, 395, 610, 560), name: 'Stadium lot', paint: 'asphalt' },

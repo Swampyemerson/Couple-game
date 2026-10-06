@@ -289,7 +289,9 @@ export function createBuilder({ tiles, ink = [0.11, 0.1, 0.13], chunker = null }
       const grp = sm.grp; const acc = sm.acc; grp.clear();
       let ng = 0;
       for (let i = 0; i < n; i++) {
-        const k = (Math.round(gp[i * 3] * 2000) + 65536) * 17179869184 + (Math.round(gp[i * 3 + 1] * 2000) + 65536) * 131072 + (Math.round(gp[i * 3 + 2] * 2000) + 65536);
+        const qx = Math.round(gp[i * 3] * 2000); const qy = Math.round(gp[i * 3 + 1] * 2000); const qz = Math.round(gp[i * 3 + 2] * 2000);
+        // exact numeric key while |local coord| < 32 m (17 bits each); a string key beyond that
+        const k = qx > -65536 && qx < 65536 && qy > -65536 && qy < 65536 && qz > -65536 && qz < 65536 ? (qx + 65536) * 17179869184 + (qy + 65536) * 131072 + (qz + 65536) : `${qx},${qy},${qz}`;
         let gi = grp.get(k);
         if (gi === undefined) { gi = ng++; grp.set(k, gi); acc[gi * 3] = 0; acc[gi * 3 + 1] = 0; acc[gi * 3 + 2] = 0; }
         sm.of[i] = gi;

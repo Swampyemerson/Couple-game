@@ -64,7 +64,7 @@ export function buildBackdrop(THREE, kit = {}) {
   const colAt = (x, z, h) => {
     if (h < 6) { const n = hash(Math.floor(x / 420), Math.floor(z / 420)); return n < 0.33 ? plainG : n < 0.66 ? plain : C('#b7b47a'); }
     const n = hash(Math.floor(x / 90), Math.floor(z / 90));
-    if (h > 300 && n < 0.3) return rock;
+    if (h > 340 && n < 0.25) return rock;
     return h < 30 ? meadow : n < 0.6 ? forest : forestL;
   };
   const xs = []; for (let x = -4200; x <= 7800; x += x < -900 || x > 2100 ? 240 : 60) xs.push(x);
@@ -74,7 +74,7 @@ export function buildBackdrop(THREE, kit = {}) {
   const hs = zs.map((z) => xs.map((x) => Hh(x, z)));
   for (let j = 0; j < zs.length - 1; j++) for (let i = 0; i < xs.length - 1; i++) {
     const xa = xs[i]; const xb = xs[i + 1]; const za = zs[j]; const zb = zs[j + 1];
-    if (xa >= inner.x0 && xb <= inner.x1 && za >= inner.z0 && zb <= inner.z1 && !isFarMtn((xa + xb) / 2 + 30, (za + zb) / 2)) continue; // the town terrain covers this
+    if (xa >= inner.x0 && xb <= inner.x1 && za >= inner.z0 && zb <= inner.z1 && ![[xa, za], [xb, za], [xa, zb], [xb, zb], [(xa + xb) / 2, (za + zb) / 2]].some(([x, z]) => isFarMtn(x, z))) continue; // the town terrain covers this
     const p00 = [xa, hs[j][i], za]; const p10 = [xb, hs[j][i + 1], za]; const p01 = [xa, hs[j + 1][i], zb]; const p11 = [xb, hs[j + 1][i + 1], zb];
     const cA = colAt((xa + xb) / 2, (za + zb) / 2, (p00[1] + p10[1] + p11[1]) / 3); const cB = colAt((xa + xb) / 2 + 1, (za + zb) / 2 + 1, (p00[1] + p11[1] + p01[1]) / 3);
     tri(p00, p11, p10, cA); tri(p00, p01, p11, cB);
@@ -103,7 +103,7 @@ export function buildBackdrop(THREE, kit = {}) {
     const nrmF = (() => { const l = Math.hypot(1, 0.62); return [1 / l, 0.62 / l, 0]; })();
     const ROWS = 7; const COLS = 6;
     const P = (t, u) => {
-      const w = half * Math.pow(1 - t, 0.5) * (1 + 0.08 * Math.sin(t * 7 + f.z));
+      const w = half * 1.3 * Math.pow(1 - t, 0.62) * (1 + 0.06 * Math.sin(t * 7 + f.z));
       const shift = -half * 0.18 * t;
       const bulge = hgt * 0.07 * (1 - u * u) * Math.sin(Math.PI * Math.min(1, t * 1.1));
       return [toe[0] + up[0] * t + nrmF[0] * bulge, toe[1] + up[1] * t + nrmF[1] * bulge, toe[2] + u * w + shift];
@@ -138,6 +138,7 @@ export function buildBackdrop(THREE, kit = {}) {
       triRaw(sn0, sn1, c, snow, n); triRaw(sn0, c, dd, snow, n);
     }
   }
+  if (kit.dark) for (let k = 0; k < col.length; k += 3) { col[k] = col[k] * 0.42 + 0.04; col[k + 1] = col[k + 1] * 0.42 + 0.05; col[k + 2] = col[k + 2] * 0.45 + 0.1; }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   geo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));

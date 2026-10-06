@@ -180,27 +180,29 @@ export async function buildBoulder(THREE, kit = {}) {
       for (let j = bj; j <= je; j++) for (let i = bi; i <= ie; i++) { const h = g[j * HG.HW + i]; lo = Math.min(lo, h); hi = Math.max(hi, h); }
       const cxm = HG.HX0 + (bi + ie) / 2 * HG.HC; const czm = HG.HZ0 + (bj + je) / 2 * HG.HC;
       if (Math.abs(czm - 155) < 130) nearCreek = true;
-      const step = (hi - lo < 1.5 && !nearCreek) || low ? 2 : 1;
+      const step = hi - lo < 0.3 && !nearCreek ? (low ? 5 : 3) : (hi - lo < 1.5 && !nearCreek) || low ? 2 : 1;
       const buf = B(cxm, czm);
-      const pos = []; const nrm = []; const col = []; const idx = [];
       const cols = Math.ceil((ie - bi) / step) + 1; const rows = Math.ceil((je - bj) / step) + 1;
       const H = (i, j) => g[Math.min(HG.HH - 1, j) * HG.HW + Math.min(HG.HW - 1, i)];
+      buf.grow(cols * rows, (cols - 1) * (rows - 1) * 6);
+      const v0 = buf.v;
       for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
         const i = Math.min(ie, bi + c * step); const j = Math.min(je, bj + r * step);
         const x = HG.HX0 + i * HG.HC; const z = HG.HZ0 + j * HG.HC; const y = H(i, j);
         const dx = H(i + 1, j) - H(Math.max(0, i - 1), j); const dz = H(i, j + 1) - H(i, Math.max(0, j - 1));
         const nl = Math.hypot(dx, 2 * HG.HC, dz);
-        pos.push(x, y - 0.02, z); nrm.push(-dx / nl, 2 * HG.HC / nl, -dz / nl);
-        const cc = groundCol(x, z, y); col.push(cc[0], cc[1], cc[2]);
+        buf.vert(x, y - 0.02, z, -dx / nl, 2 * HG.HC / nl, -dz / nl, groundCol(x, z, y), WHITE_UV[0], WHITE_UV[1], 0);
       }
+      const P3 = buf.P; let added = 0;
       for (let r = 0; r < rows - 1; r++) for (let c = 0; c < cols - 1; c++) {
-        const a = r * cols + c;
-        const xm = pos[a * 3] + step * HG.HC / 2; const zm = pos[a * 3 + 2] + step * HG.HC / 2;
+        const a = v0 + r * cols + c;
+        const xm = P3[a * 3] + step * HG.HC / 2; const zm = P3[a * 3 + 2] + step * HG.HC / 2;
         if (nearCreek && creekD(xm, zm) < 8.5) continue;
         if (xm < footX(zm) - 40 && isFarMtn(xm - step * 4, zm) && isFarMtn(xm + step * 4, zm)) continue; // the backdrop draws the far flank
-        idx.push(a, a + cols, a + 1, a + 1, a + cols, a + cols + 1);
+        const I = buf.I; let n = buf.ni;
+        I[n++] = a; I[n++] = a + cols; I[n++] = a + 1; I[n++] = a + 1; I[n++] = a + cols; I[n++] = a + cols + 1; buf.ni = n; added += 2;
       }
-      buf.mesh(pos, nrm, col, idx); terrTris += idx.length / 3;
+      terrTris += added;
     }
     await slice();
   }
@@ -280,6 +282,7 @@ export async function buildBoulder(THREE, kit = {}) {
     const top = rgb('#d3cdc1'); const curb = rgb('#b9b2a5'); const brk = rgb('#c79a80');
     for (const r of sm.list) {
       if (r.bridge || r.kind === 'highway' || r.kind === 'ramp' || r.kind === 'alley') continue;
+      if (r.i % 6 === 0) await slice();
       const notR = (o) => o !== r && !o.bridge;
       for (const side of [-1, 1]) {
         let prev = null;
@@ -315,8 +318,8 @@ export async function buildBoulder(THREE, kit = {}) {
   for (const b of L.buildings) {
     const buf = B(b.x, b.z); const v0 = buf.v; const i0 = buf.ni;
     drawBuilding(buf, b);
-    if (OL && b.style !== 'stands' && (b.landmark || b.home || !/house|victorian|ranch|cottage/.test(b.style))) buf.hull(v0, i0, OL * (b.w > 30 || b.h > 14 ? 1.6 : 1), INK);
-    if (++bc % 250 === 0) await slice();
+    if (OL && b.style !== 'stands' && (b.landmark || b.home || (b.w * b.d > 520 && !/house|victorian|ranch|cottage/.test(b.style)))) buf.hull(v0, i0, OL * (b.w > 30 || b.h > 14 ? 1.6 : 1), INK);
+    if (++bc % 100 === 0) await slice();
   }
   mark('buildings');
   // ── props: walls, rails, rocks, planters, buskers, the stadium turf, the home's details ──
@@ -336,10 +339,14 @@ export async function buildBoulder(THREE, kit = {}) {
   mark('decor');
   // flush: one mesh per chunk
   let tris = 0; let meshes = 0;
-  for (const [grp, buf] of bufs) {
-    if (!buf.v) continue;
+  for (const [grp, buf] of [...bufs]) {
+    if (!buf || !buf.v) continue;
     const geo = new THREE.BufferGeometry();
     const nv = buf.v;
+    if (dark) { // night: pull every colour towards the night sky (the ink outlines stay ink)
+      const C = buf.C; const F = buf.F;
+      for (let k = 0; k < nv; k++) if (F[k] !== 1) { const k3 = k * 3; C[k3] = C[k3] * 0.5 + 0.035; C[k3 + 1] = C[k3 + 1] * 0.5 + 0.035; C[k3 + 2] = C[k3 + 2] * 0.52 + 0.07; }
+    }
     geo.setAttribute('position', new THREE.BufferAttribute(buf.P.slice(0, nv * 3), 3));
     geo.setAttribute('normal', new THREE.BufferAttribute(buf.N.slice(0, nv * 3), 3));
     geo.setAttribute('uv', new THREE.BufferAttribute(buf.U.slice(0, nv * 2), 2));
@@ -351,6 +358,8 @@ export async function buildBoulder(THREE, kit = {}) {
     if (grp.position && (grp.position.x || grp.position.y || grp.position.z)) m.position.set(-grp.position.x, -grp.position.y, -grp.position.z);
     m.matrixAutoUpdate = false; m.updateMatrix();
     grp.add(m); tris += buf.tris; meshes++;
+    bufs.set(grp, null);
+    if (meshes % 12 === 0) await slice();
   }
   mark('flush');
   root.userData.stats = { TT, tris, meshes, terrTris, buildMs: Math.round(performance.now() - t0), layoutMs: Math.round(L.ms), solids: L.solids.length, buildings: L.buildings.length };
@@ -446,7 +455,7 @@ export async function buildBoulder(THREE, kit = {}) {
       case 'cu': R = { fg: T.cuGround, fu: T.cuUpper, sg: T.cuUpper, su: T.cuUpper, seg: 11 }; break;
       case 'oldmain': case 'school': R = { fg: T.schoolUpper, fu: T.schoolUpper, sg: T.schoolUpper, su: T.schoolUpper, seg: 10 }; break;
       case 'hotel': R = { fg: T.brickShop, fu: T.hotelUpper, sg: T.hotelUpper, su: T.hotelUpper, seg: 9 }; break;
-      case 'courthouse': case 'courthouseTower': R = { fg: T.courtUpper, fu: T.courtUpper, sg: T.courtUpper, su: T.courtUpper, seg: 9 }; break;
+      case 'courthouse': case 'courthouseTower': R = single(T.courtUpper, T.courtUpper, 7.5); break;
       case 'shop': case 'shopB': R = { fg: T.shopFront, fu: T.officeUpper, sg: T.boxWall, su: T.officeUpper, seg: 12 }; break;
       case 'box': R = single(T.boxFront, T.boxWall, 40); break;
       case 'office': case 'arena': R = { fg: T.officeUpper, fu: T.officeUpper, sg: T.officeUpper, su: T.officeUpper, seg: 12 }; break;
@@ -466,14 +475,13 @@ export async function buildBoulder(THREE, kit = {}) {
       case 'bandshell': return drawShell(buf, b);
       default: R = single(T.blank, T.blank, 20);
     }
-    const found = rgb('#8d877c');
     for (let f = 0; f < 4; f++) {
       const [A, Bp] = faceEnds[f]; const front = f === 0;
-      const bands = [{ h: 1.6, tile: null, col: found }];
-      const yBase = y0 - 1.6;
-      if (R.whole) bands.push({ h: b.h, tile: front ? R.fg : R.sg });
-      else for (let k = 0; k < floors; k++) bands.push({ h: fh, tile: k === 0 ? (front ? R.fg : R.sg) : (front ? R.fu : R.su) });
-      const segW = front || !R.whole ? R.seg : R.seg * 0.8;
+      const bands = [];
+      const yBase = y0 - 1.6; // the bottom band runs 1.6 m into the ground (slopes, no gaps)
+      if (R.whole) bands.push({ h: b.h + 1.6, tile: front ? R.fg : R.sg });
+      else for (let k = 0; k < floors; k++) bands.push({ h: fh + (k ? 0 : 1.6), tile: k === 0 ? (front ? R.fg : R.sg) : (front ? R.fu : R.su) });
+      const segW = front ? R.seg : R.whole ? R.seg * 0.8 : R.seg * 1.5;
       wallBands(buf, A, Bp, yBase, bands, col, outN[f], R.whole && (st === 'home' || st === 'garage' || st === 'theater' || st === 'box') ? 999 : segW);
     }
     const top = y0 + b.h;
@@ -594,7 +602,7 @@ export async function buildBoulder(THREE, kit = {}) {
         if (p.type === 'rail') {
           boxW(buf, mx, y + 0.45, mz, L2 + 0.1, 0.32, 0.12, rot, rgb('#b8bcbf'), { topCol: rgb('#d9dcdf') });
           boxW(buf, p.ax, y - 0.2, p.az, 0.18, 0.9, 0.18, rot, rgb('#6f6a5e'), { top: false });
-        } else if (p.type === 'jersey') boxW(buf, mx, y - 0.1, mz, L2 + 0.05, p.h + 0.1, p.thick, rot, rgb('#cfcabe'));
+        } else if (p.type === 'jersey') boxW(buf, mx, y - 0.1, mz, L2 + 0.05, p.h + 0.1, p.thick, rot, rgb('#aaa59a'));
         else boxW(buf, mx, y - 0.5, mz, L2 + 0.05, p.h + 0.5, p.thick, rot, rgb('#c9bfae'), { front: tileUV(T.soundwall), side: tileUV(T.soundwall), back: tileUV(T.soundwall) });
         break;
       }
@@ -631,9 +639,16 @@ export async function buildBoulder(THREE, kit = {}) {
       case 'field': {
         const y = height(p.x, p.z) + 0.08; const uv = tileUV(T.turf);
         const x0 = p.x - p.w / 2; const z0 = p.z - p.d / 2;
+        if (p.plain) { buf.quad([x0, y, z0 + p.d], [x0 + p.w, y, z0 + p.d], [x0 + p.w, y, z0], [x0, y, z0], rgb('#5aa646'), null, [0, 1, 0]); for (const f of [0.02, 0.5, 0.98]) { const xx = x0 + p.w * f; buf.quad([xx - 0.15, y + 0.01, z0 + p.d], [xx + 0.15, y + 0.01, z0 + p.d], [xx + 0.15, y + 0.01, z0], [xx - 0.15, y + 0.01, z0], rgb('#ffffff'), null, [0, 1, 0]); } break; }
         for (let k = 0; k < 10; k++) { const za = z0 + p.d * k / 10; const zb = z0 + p.d * (k + 1) / 10; buf.quad([x0, y, zb], [x0 + p.w, y, zb], [x0 + p.w, y, za], [x0, y, za], k === 0 || k === 9 ? rgb('#2b2b2b') : rgb(k % 2 ? '#5aa646' : '#4f9a3e'), k === 0 || k === 9 ? null : uv, [0, 1, 0]); }
         for (let k = 1; k < 10; k++) { const zz = z0 + p.d * k / 10; buf.quad([x0 + 2, y + 0.01, zz + 0.2], [x0 + p.w - 2, y + 0.01, zz + 0.2], [x0 + p.w - 2, y + 0.01, zz - 0.2], [x0 + 2, y + 0.01, zz - 0.2], rgb('#ffffff'), null, [0, 1, 0]); }
         buf.quad([p.x - 6, y + 0.02, p.z + 6], [p.x + 6, y + 0.02, p.z + 6], [p.x + 6, y + 0.02, p.z - 6], [p.x - 6, y + 0.02, p.z - 6], rgb('#cfb87c'), null, [0, 1, 0]);
+        break;
+      }
+      case 'quadPaths': { // the quad's crossing flagstone paths
+        const y = height(p.x, p.z) + 0.08; const col = rgb('#d9c7a8'); const hw2 = p.w / 2; const hd2 = p.d / 2; const t = 1.6;
+        const strip = (ax, az, bx, bz) => { const l = Math.hypot(bx - ax, bz - az); const nx = -(bz - az) / l * t; const nz = (bx - ax) / l * t; buf.quad([ax + nx, y, az + nz], [bx + nx, y, bz + nz], [bx - nx, y, bz - nz], [ax - nx, y, az - nz], col, null, [0, 1, 0]); };
+        strip(p.x - hw2, p.z - hd2, p.x + hw2, p.z + hd2); strip(p.x - hw2, p.z + hd2, p.x + hw2, p.z - hd2); strip(p.x - hw2, p.z, p.x + hw2, p.z);
         break;
       }
       case 'homeDetail': {

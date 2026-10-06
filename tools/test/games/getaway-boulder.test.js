@@ -120,6 +120,16 @@ async function staticSection() {
     geo.nearestRoad(s.x, s.z, nq, 40, (r) => !r.bridge && r.kind !== 'alley');
     if (nq.road >= 0 && nq.d < geo.roads[nq.road].hw - 0.2) onRoad.push(`${s.kind}${s.style ? ':' + s.style : ''}@${s.x.toFixed(0)},${s.z.toFixed(0)}`);
   }
+  // big drawn solids: every corner and edge midpoint stays off the asphalt
+  for (const s of M.solids) {
+    if (!s.drawn || s.kind === 'barrier' || s.w < 3) continue;
+    const c = Math.cos(s.rot); const sn = Math.sin(s.rot);
+    for (const [a, b] of [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5], [0, -0.5], [0, 0.5], [-0.5, 0], [0.5, 0]]) {
+      const lx = a * s.w; const lz = b * s.d; const x = s.x + lx * c + lz * sn; const z = s.z - lx * sn + lz * c;
+      geo.nearestRoad(x, z, nq, 40, (r) => !r.bridge);
+      if (nq.road >= 0 && nq.d < geo.roads[nq.road].hw - 0.6) { onRoad.push(`${s.kind} edge@${s.x.toFixed(0)},${s.z.toFixed(0)} on ${geo.roads[nq.road].name}`); break; }
+    }
+  }
   ok(onRoad.length === 0, `solids clear of the road surfaces${onRoad.length ? ': ' + onRoad.slice(0, 8).join('; ') : ''}`);
   let wet = 0; for (const r of geo.roads) { if (r.bridge) continue; for (let i = 0; i < r.n; i += 2) if (geo.inWater(r.x[i], r.z[i])) wet++; }
   ok(wet === 0, `no road runs into the water outside bridges (${wet} samples)`);
@@ -216,7 +226,7 @@ window.plan = (labels) => {
   runner.visible = cop.visible = false;
   const fog = world.scene.fog; const fn = fog.near, ff = fog.far; fog.near = 1e8; fog.far = 1e9;
   for (const c of world.chunks) c.group.visible = true;
-  renderer.info.reset(); renderer.clear(); renderer.render(world.scene, oc);
+  renderer.info.reset(); renderer.clear(); world.sky.visible = false; renderer.render(world.farScene, oc); world.sky.visible = true; renderer.clearDepth(); renderer.render(world.scene, oc);
   fog.near = fn; fog.far = ff; runner.visible = cop.visible = true;
   const g = lab.getContext('2d'); g.clearRect(0, 0, W, Hh);
   const Pp = (x, z) => [(x - cx + hw) / (2 * hw) * W, (z - cz + hh) / (2 * hh) * Hh];
@@ -231,6 +241,19 @@ window.plan = (labels) => {
   g.save(); g.translate(W - 70, 80); g.fillStyle = '#fff'; g.strokeStyle = '#000'; g.lineWidth = 2; g.beginPath(); g.moveTo(0, -40); g.lineTo(16, 12); g.lineTo(0, 3); g.lineTo(-16, 12); g.closePath(); g.fill(); g.stroke(); g.font = 'bold 24px sans-serif'; g.textAlign = 'center'; g.strokeText('N', 0, 38); g.fillText('N', 0, 38); g.restore();
   const [s0, sy] = Pp(B.x0 + 40, B.z1 - 30); const [s1] = Pp(B.x0 + 540, 0); g.fillStyle = '#fff'; g.fillRect(s0, sy, s1 - s0, 7); g.font = 'bold 14px sans-serif'; g.textAlign = 'left'; g.lineWidth = 3; g.strokeStyle = '#000'; g.strokeText('500 m on the map = 1.1 km in Boulder (scale 0.45)', s0, sy - 12); g.fillText('500 m on the map = 1.1 km in Boulder (scale 0.45)', s0, sy - 12);
   return { calls: renderer.info.render.calls, tris: renderer.info.render.triangles };
+};
+window.split = (v) => { const r0 = window.view(v); const mine = []; world.scene.traverse((o) => { if (o.name === 'boulder-chunk') mine.push(o); }); mine.forEach((o) => { o.visible = false; }); const r1 = window.view(v); mine.forEach((o) => { o.visible = true; }); return { all: r0.tris, engine: r1.tris, map: r0.tris - r1.tris }; };
+window.setSize = (w, h) => { W = w; Hh = h; renderer.setSize(w, h); lab.width = w; lab.height = h; };
+// the lead's perf sampling: spawns + road points, 4 headings, near and far chase cams
+window.sample = () => {
+  const out = []; const pts = M.spawns.map((s) => s.runner);
+  const rs = geo.roads.filter((r) => !r.bridge);
+  for (let i = 0; i < 24; i++) { const r = rs[(i * 7919) % rs.length]; const o = {}; geo.sampleRoad(r, r.len * ((i % 5) + 1) / 6, o); pts.push({ x: o.x, z: o.z, yaw: Math.atan2(o.tx, -o.tz) }); }
+  for (const p of pts) for (let k = 0; k < 4; k++) {
+    const far2 = k === 3; const r = window.view({ x: p.x, z: p.z, yaw: (p.yaw || 0) + k * Math.PI / 2, back: far2 ? 12.5 : 7.4, up: far2 ? 5.6 : 2.9, fov: 60 });
+    out.push({ ...r, x: Math.round(p.x), z: Math.round(p.z), k });
+  }
+  return out;
 };
 window.__stats = { prepMs, maxPrep, world: world.stats, mapStats: (world.scene.getObjectByName('boulder') || { userData: {} }).userData.stats, textures: texs.length, texSizes: texs.map((x) => [x.image.width, x.image.height]) };
 document.title = 'ready';
@@ -259,7 +282,7 @@ async function views() {
   const sp = (road, f, dir = 1, nth = 0) => L.pickSpawn(road, f, 80, dir, nth).runner;
   const yawSE = Math.atan2(D.US36.dx, -D.US36.dz);
   const hs = D.moorPt(D.HOME_T - 24, -2);
-  const hf = D.moorPt(D.HOME_T - 1, -12);
+  const hf = D.moorPt(D.HOME_T - 1, -2.5);
   return [
     { name: '01-pearl-st-downtown', ...sp('Pearl St', 0.06, -1, 1), lookUp: 1 },
     { name: '02-pearl-st-mall', x: 112, z: 0.5, yaw: -Math.PI / 2 },
@@ -273,12 +296,12 @@ async function views() {
     { name: '10-us36-into-town', ...sp('US-36 Boulder Turnpike', 0.7, -1), lookUp: 2 },
     { name: '11-flagstaff-rd', ...sp('Flagstaff Rd', 0.45, 1) },
     { name: '12-flagstaff-view', ...sp('Flagstaff Rd', 0.92, -1), lookUp: -5, up: 4 },
-    { name: '13-chautauqua-flatirons', x: -60, z: 925, yaw: 3.75, lookUp: 9 },
+    { name: '13-chautauqua-flatirons', x: -215, z: 1010, yaw: 3.85, lookUp: 9 },
     { name: '14-baseline-to-flatirons', ...sp('Baseline Rd', 0.33, -1), lookUp: 5 },
     { name: '15-creek-path', x: -70, z: 170, yaw: Math.PI / 2 },
     { name: '16-creek-bridge-broadway', x: -40, z: 168, yaw: Math.PI / 2, side: -3, lookUp: 1 },
     { name: '17-moorhead-home', x: hs[0], z: hs[1], yaw: yawSE, side: -2.5 },
-    { name: '18-moorhead-home-front', x: hf[0], z: hf[1], yaw: Math.atan2(D.NE[0], -D.NE[1]), back: 9, up: 2.6, lookUp: 1 },
+    { name: '18-moorhead-home-front', x: hf[0], z: hf[1], yaw: Math.atan2(D.NE[0], -D.NE[1]), back: 5.5, up: 2.3, lookUp: 1.2 },
     { name: '19-martin-acres', ...sp('Martin Dr', 0.5, 1) },
     { name: '20-table-mesa', ...sp('Table Mesa Dr', 0.75, -1) },
     ...Array.from({ length: 13 }, (_, i) => ({ name: `spawn-${String(i).padStart(2, '0')}`, spawn: i, budgetOnly: true })),
@@ -321,6 +344,12 @@ async function engineSection() {
       await page.goto(`http://localhost:${PORT}/boulder.html?w=960&h=600&quality=${quality}&dark=${dark ? 1 : 0}`);
       await page.waitForFunction(() => document.title === 'ready', null, { timeout: 240000 });
       const s = await page.evaluate(() => window.__stats);
+      if (process.env.SPLIT) { // debugging: SPLIT=x,z,yaw → map vs engine triangles for a far chase cam at 844×390
+        await page.setViewportSize({ width: 844, height: 390 }); await page.evaluate(() => window.setSize(844, 390));
+        const [x, z, yaw] = process.env.SPLIT.split(',').map(Number);
+        for (let k = 0; k < 4; k++) console.log('  split', k, JSON.stringify(await page.evaluate((v) => window.split(v), { x, z, yaw: yaw + k * Math.PI / 2, back: 12.5, up: 5.6, fov: 60 })));
+        await page.close(); break;
+      }
       const tag = `${quality}${dark ? ', night' : ''}`;
       console.log(`  [${tag}] prepare ${Math.round(s.prepMs)} ms (longest slice ${Math.round(s.maxPrep)} ms); world`, JSON.stringify(s.world), 'map', JSON.stringify(s.mapStats));
       ok(s.world.tris <= BUDGET.totalTris, `[${tag}] total triangles ${s.world.tris} ≤ ${BUDGET.totalTris} (roads, props, map)`);
@@ -334,12 +363,18 @@ async function engineSection() {
         if (!v.budgetOnly && (quality === 'high' || v.name.startsWith('01'))) await page.screenshot({ path: path.join(SHOTS, `${v.name}${quality !== 'high' ? '-' + quality : ''}${dark ? '-night' : ''}.png`) });
         if (r.calls > BUDGET.calls || r.tris > BUDGET.viewTris) console.log(`   ${v.name}: ${r.calls} calls, ${r.tris} tris`);
       }
+      await page.setViewportSize({ width: 844, height: 390 }); await page.evaluate(() => window.setSize(844, 390));
+      const smp = await page.evaluate(() => window.sample());
+      for (const r of smp) if (r.calls > worst.calls || r.tris > worst.tris) worst = { calls: Math.max(worst.calls, r.calls), tris: Math.max(worst.tris, r.tris), at: `${r.x},${r.z} k${r.k}` };
+      const top = smp.sort((a, b) => b.tris - a.tris).slice(0, 3).map((r) => `${r.x},${r.z} k${r.k}: ${r.calls} calls ${Math.round(r.tris / 1000)}k`).join(' | ');
+      console.log(`   phone-landscape sampling (${smp.length} views): heaviest ${top}`);
+      await page.setViewportSize({ width: 960, height: 600 }); await page.evaluate(() => window.setSize(960, 600));
       ok(worst.calls <= BUDGET.calls, `[${tag}] worst view: ${worst.calls} draw calls ≤ ${BUDGET.calls}`);
       ok(worst.tris <= BUDGET.viewTris, `[${tag}] worst view: ${worst.tris} triangles ≤ ${BUDGET.viewTris}`);
       if (quality === 'high' && !dark) {
         await page.setViewportSize({ width: 2000, height: 1760 });
         await page.evaluate((labels) => window.plan(labels), await planLabels());
-        await page.screenshot({ path: path.join(SHOTS, 'plan.png') });
+        await page.screenshot({ path: path.join(SHOTS, 'plan.png'), timeout: 180000 });
         console.log('  plan.png written');
       }
       ok(!errors.length, `[${tag}] no page errors${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);

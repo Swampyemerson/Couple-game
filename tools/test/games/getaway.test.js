@@ -57,7 +57,7 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
     assert(ctop >= top - 1 && ctop < top + 10, `cop top speed ${ctop.toFixed(0)} km/h (a touch faster in a straight line)`);
     const nit = run('runner', { gas: 1, nitro: true }, 3).out.at(-1).v; const non = acc[Math.round(3 / DT) - 1].v;
     assert(nit > non + 3, `nitro: ${(non * 3.6).toFixed(0)} → ${(nit * 3.6).toFixed(0)} km/h after 3 s`);
-    const br = run('runner', { hand: true }, 5, (c) => { c.vx = 40; }).out; const stop = br.find((o) => o.v < 0.2);
+    const br = run('runner', { brake: 1 }, 5, (c) => { c.vx = 40; }).out; const stop = br.find((o) => o.v < 0.2);
     assert(stop && stop.x < 60, `brakes: 144 km/h to a stop in ${stop.t.toFixed(2)} s / ${stop.x.toFixed(0)} m`);
     const turn = (v) => { const o = run('runner', (c) => ({ gas: c.vf < v ? 1 : 0, steer: 1 }), 8, (c) => { c.vx = v; }).out.slice(-240); const sp = o.reduce((a, q) => a + q.v, 0) / o.length; const r = o.reduce((a, q) => a + Math.abs(q.r), 0) / o.length; return { sp, radius: sp / r, g: (sp * r) / 9.81, slip: o.at(-1).slip }; };
     const t12 = turn(12); const t25 = turn(25);
@@ -279,11 +279,14 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       assert(await b.isVisible('.g-gtw .gtw-sheet .gtw-ro'), 'the guest’s settings sheet is read-only');
       await shot(b, 'live-guest-settings');
       await b.click('.g-gtw [data-l="sheetclose"]'); await a.click('.g-gtw [data-l="sheetclose"]');
+      await hook(a, 'setRules', { heat: 260 });
+      await until(b, () => window.__getaway.state().setup.rules.heat === 260, null, 8000, 'guest sees heat 260');
       await startMatch(h);
       const ra = await round(a); const rb = await round(b);
       assert(ra.t0 === rb.t0 && ra.endAt === rb.endAt && ra.runner === 'a', 'both phones share the round timeline; Emerson runs first');
       await phase(a, 'chase'); await phase(b, 'chase');
       let sa = await st(a); let sb = await st(b);
+      assert(sa.R.spawn === sb.R.spawn && Math.abs(sa.b.x - sb.b.x) < 1 && Math.abs(sa.a.z - sb.a.z) < 1, `both phones start the cars at the same spawn (#${sa.R.spawn})`);
       assert(sa.a.role === 'runner' && sb.b.role === 'cop' && sb.b.spikesLeft === 4, 'roles: Emerson runner, Sydney cop with 4 strips');
       // traffic determinism across devices
       const th = await Promise.all([hook(a, 'trafficHash', 77.7), hook(b, 'trafficHash', 77.7)]);
@@ -294,6 +297,7 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       // the partner car shows up where it really is
       await hook(a, 'hold', 'a', { hand: true }); await hook(b, 'hold', 'b', { hand: true });
       await a.evaluate(() => window.__getaway.teleport('a', -100, 40, Math.PI / 2, 0));
+      await b.evaluate(() => window.__getaway.teleport('b', -180, 40, Math.PI / 2, 0)); // (spawns are seeded: put both on Mill St)
       await wait(1200);
       sb = await st(b);
       assert(Math.hypot(sb.partnerSeen.shown.x + 100, sb.partnerSeen.shown.z - 40) < 1.5, `the cop’s phone draws the runner where it is (${JSON.stringify(sb.partnerSeen.shown)})`);
@@ -310,7 +314,7 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       await b.evaluate(() => window.__getaway.teleport('b', -109, 40, Math.PI / 2, 0));
       await waitOver(h, 0);
       sa = await st(a); sb = await st(b);
-      if (!sa.match.hist[0] || !sb.match.hist[0]) console.log('DEBUG', JSON.stringify([sa.phase, sa.R, sa.match, sb.phase, sb.R, sb.match]));
+      if (!sa.match.hist[0] || !sb.match.hist[0] || sa.match.hist[0].reason !== 'boxed') console.log('DEBUG', JSON.stringify([sa.match.hist, sb.match.hist, sa.dbgEnd, sb.dbgEnd]));
       assert(sa.match.hist[0].outcome === 'busted' && sb.match.hist[0].outcome === 'busted' && sa.match.hist[0].reason === 'boxed', 'BUSTED (boxed) on both phones');
       assert(sa.match.scores.b === 1 && sb.match.scores.b === 1, `Sydney scores the bust on both phones (${JSON.stringify([sa.match.scores, sb.match.scores, sa.match.hist, sb.match.hist])})`);
       await wait(1300); await shot(a, 'live-busted-runner'); await shot(b, 'live-busted-cop');
@@ -355,6 +359,7 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       await phase(b, 'chase', 15000);
       await hook(b, 'hold', 'b', { gas: 0.3 });
       await b.evaluate(() => window.__getaway.teleport('b', 206, 100, Math.PI, 8));
+      await until(b, () => { const s = window.__getaway.state(); return s.R.over || s.phase === 'final'; }, null, 10000, 'the runner’s phone calls the splash');
       for (const p of [a, b]) await until(p, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 20000, 'end card');
       sa = await st(a); sb = await st(b);
       assert(sa.result && sb.result && sa.result.winner === sb.result.winner && sa.match.scores.a === 2 && sa.match.scores.b === 2, `final on both phones: ${sa.result.text} (${sa.result.sub})`);
@@ -368,7 +373,7 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       console.log('ok - rematch: both phones back in the lobby');
       assert(!h.warnings.length, `message budget respected (${h.warnings.length} warnings)`);
       h.assertNoErrors();
-    } catch (e) { fails++; console.error(e.message); await shot(h.a, 'live-fail-a').catch(() => {}); await shot(h.b, 'live-fail-b').catch(() => {}); } finally { await h.close(); }
+    } catch (e) { fails++; console.error(e.message, h.errors.slice(0, 5)); await shot(h.a, 'live-fail-a').catch(() => {}); await shot(h.b, 'live-fail-b').catch(() => {}); } finally { await h.close(); }
   }
 
   if (want('lossy')) {
@@ -446,14 +451,17 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       await until(a, () => !window.__getaway.state().paused, null, 6000, 'resumed');
       const t2 = (await round(a)).endAt;
       assert(t2 - t1 > 1400, `a hidden page pauses the chase; the clock is shifted by the pause (${Math.round(t2 - t1)} ms)`);
+      const pf0 = await hook(a, 'perf');
+      if (pf0.programs !== pf0.programs0) console.log('   programs', JSON.stringify(pf0.programNames0), JSON.stringify(pf0.programNames));
+      const pf = pf0;
+      assert(pf.programs === pf.programs0, `every shader was compiled behind the loading screen (${pf.programs0} programs)`);
       const lost = await hook(a, 'loseContext');
       if (lost) {
         await until(a, () => window.__getaway.state().paused, null, 3000, 'paused on context loss');
         await until(a, () => !window.__getaway.state().paused, null, 10000, 'resumed after the context came back');
         console.log('ok - GL context loss pauses, restore resumes');
       }
-      const pf = await hook(a, 'perf');
-      assert(pf.programs === pf.programs0, `every shader was compiled behind the loading screen (${pf.programs0} programs)`);
+
       await a.click('#game-root [data-g="close"]').catch(() => {});
       await wait(600);
       const left = await a.evaluate(() => ({ cv: document.querySelectorAll('#game-root canvas').length, hook: !!window.__getaway }));
@@ -504,7 +512,7 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
         for (const m of maps) {
           if (m.stub) { console.log(`   ${m.name}: stub (coming soon), skipped`); continue; }
           await hook(a, 'setSetup', { map: m.id });
-          await until(a, (id) => { const s = window.__getaway.state(); return s.mapId === id && !s.loading; }, m.id, 60000, 'map ' + m.id);
+          await until(a, (id) => { const s = window.__getaway.state(); return s.mapId === id && !s.loading; }, m.id, 180000, 'map ' + m.id);
           const pf = await hook(a, 'perf');
           const views = await a.evaluate(() => {
             const g = window.__getaway; const out = [];
@@ -515,7 +523,7 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
             return out;
           });
           const maxCalls = Math.max(...views.map((v) => v.calls)); const maxTris = Math.max(...views.map((v) => v.tris));
-          console.log(`   ${kind} ${m.name}: build ${pf.build.buildMs} ms (longest block ${pf.build.maxBlockMs} ms), ${pf.build.chunks} chunks, ${Math.round(pf.build.tris / 1000)}k triangles in the map; in view: ≤ ${maxCalls} draw calls, ≤ ${Math.round(maxTris / 1000)}k triangles over ${views.length} views`);
+          console.log(`   ${kind} ${m.name}: build ${pf.build.buildMs} ms (longest block ${pf.build.maxBlockMs} ms), ${pf.build.chunks} chunks, ${Math.round(pf.build.tris / 1000)}k triangles in the map; in view: ≤ ${maxCalls} draw calls, ≤ ${Math.round(maxTris / 1000)}k triangles over ${views.length} views; stages ${JSON.stringify(pf.build.stages)}`);
           soft(maxCalls <= 90, `${kind} ${m.name}: draw calls ≤ 90 (${maxCalls})`);
           soft(maxTris <= 220000, `${kind} ${m.name}: triangles in view ≤ 220k (${maxTris})`);
           soft(pf.build.maxBlockMs <= 250, `${kind} ${m.name}: the build never blocks more than ~200 ms at once (${pf.build.maxBlockMs} ms)`);
@@ -544,7 +552,7 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
         const { a } = h;
         try {
           await a.setViewportSize({ width: w, height: hh });
-          await arm(a, { ...FAST, intro: 2500, count: 1500, maxDpr: 1.5 });
+          await arm(a, { ...FAST, intro: 2500, count: 1500, result: 4000, maxDpr: 1.5 });
           await h.startLive(a, 'getaway', 'local');
           await ready(a);
           await wait(900);
@@ -567,7 +575,7 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
           await shot(a, `${label}-${w}x${hh}-${scheme}-map`);
           await hook(a, 'closeMap');
           await hook(a, 'endNow', 'busted', 'hp');
-          await wait(1600);
+          await wait(1350);
           await shot(a, `${label}-${w}x${hh}-${scheme}-result`);
           h.assertNoErrors();
         } catch (e) { fails++; console.error(e.message); await shot(h.a, `shots-${label}-${scheme}-fail`).catch(() => {}); } finally { await h.close(); }

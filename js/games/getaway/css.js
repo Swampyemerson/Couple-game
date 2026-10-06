@@ -107,7 +107,7 @@ export const CSS = `
 .gtw-steer.on { opacity: 1; }
 .gtw-steer i { position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px; border-radius: 50%; background: var(--g-card); border: 2.5px solid var(--g-ink); box-shadow: var(--g-shadow, 3px 3px 0 var(--g-edge)); transform: translateX(calc(var(--k, 0) * 60px)); }
 .gtw-steerhint { position: absolute; left: calc(28px + var(--sl)); bottom: calc(40px + var(--sb)); width: 150px; height: 50px; border-radius: 25px; border: 2.5px dashed color-mix(in srgb, var(--g-ink) 35%, transparent); display: grid; place-items: center; font: 900 0.6rem/1 var(--g-font-body); letter-spacing: .1em; color: color-mix(in srgb, var(--g-ink) 60%, transparent); text-transform: uppercase; pointer-events: none; }
-.g-gtw:not(.touch) .gtw-ctl { display: none; }
+.g-gtw:not(.touch) .gtw-ctl, .g-gtw:not(.playing) .gtw-ctl { display: none; }
 .g-gtw.portrait .gtw-ctl [data-pad="gas"] { height: 104px; width: 76px; }
 .g-gtw.portrait .gtw-ctl [data-pad="brake"] { right: calc(102px + var(--sr)); width: 66px; }
 .g-gtw.portrait .gtw-ctl [data-pad="hand"] { right: calc(102px + var(--sr)); width: 66px; bottom: calc(104px + var(--sb)); }
@@ -122,9 +122,10 @@ export const CSS = `
 .g-gtw.touch .gtw-legend { display: none; }
 
 /* map view */
-.gtw-map { position: absolute; inset: 0; z-index: 5; background: color-mix(in srgb, var(--g-bg) 82%, transparent); display: grid; place-items: center; padding: calc(10px + var(--st)) 12px calc(10px + var(--sb)); }
+.gtw-map { position: absolute; inset: 0; z-index: 5; background: color-mix(in srgb, var(--g-bg) 82%, transparent); display: flex; align-items: center; justify-content: center; padding: calc(var(--cs) + 4px) 12px calc(10px + var(--sb)); }
+.g-gtw.short .gtw-map { padding: calc(8px + var(--st)) calc(var(--gm-corner-w, 64px) + 8px) calc(8px + var(--sb)); }
 .gtw-map .box { position: relative; width: min(100%, 720px); height: 100%; max-height: 720px; display: flex; flex-direction: column; gap: 8px; padding: 10px; }
-.gtw-map canvas { flex: 1; min-height: 0; width: 100%; border-radius: 8px; border: 2px solid var(--g-ink); touch-action: none; cursor: crosshair; background: var(--g-bg); }
+.gtw-map canvas { flex: 1 1 0; min-height: 0; height: 0; width: 100%; border-radius: 8px; border: 2px solid var(--g-ink); touch-action: none; cursor: crosshair; background: var(--g-bg); }
 .gtw-map .row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
 .gtw-map h3 { margin: 0; font: 900 1rem/1.1 var(--g-font-body); } .gtw-map p { margin: 0; font-size: 0.8rem; font-weight: 700; color: var(--g-muted); }
 .gtw-map button { appearance: none; border: 2.5px solid var(--g-ink); border-radius: 12px; background: var(--g-ink); color: var(--g-bg); font: 900 0.9rem/1 var(--g-font-body); padding: 10px 14px; cursor: pointer; }

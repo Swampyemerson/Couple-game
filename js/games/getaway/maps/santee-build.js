@@ -346,7 +346,9 @@ function* buildSteps(THREE, kit, L) {
   yield;
 
   // ── shops, big boxes, hangars, canopies ────────────────────────────────────────────────────────
+  let shn = 0;
   for (const s of deco.shops) {
+    if (++shn % 40 === 0) yield;
     const { B, S } = get(s.x, s.z);
     const F = frame(s.x, 0, s.z, s.rot);
     const wall = C(s.color), trim = C(s.trim);
@@ -411,7 +413,9 @@ function* buildSteps(THREE, kit, L) {
   yield;
 
   // ── walls, rocks, scrub, reeds ─────────────────────────────────────────────────────────────────
+  let wn = 0;
   for (const w of deco.walls) {
+    if (++wn % 200 === 0) yield;
     const { B } = get(w.x, w.z);
     const col = C(w.color);
     const y0 = Math.min(H(w.x, w.z), 0);
@@ -421,9 +425,12 @@ function* buildSteps(THREE, kit, L) {
   for (const r of deco.rocks) blob(get(r.x, r.z).B, r.x, r.y - 0.3, r.z, r.w / 2, r.h, r.d / 2, mix(C('#b8a78e'), C('#8f8577'), rnd()), rnd, 6);
   if (!low) {
     const SC = [C('#7d8a52'), C('#6a7646'), C('#93975c'), C('#a39a63')];
-    for (const [x, z, s, t] of deco.scrub) { const y = H(x, z); blob(get(x, z).B, x, y - 0.2, z, s, s * 0.9, s * 0.9, SC[Math.floor(t * 4)], rnd, high ? 5 : 4); }
+    let sn = 0;
+    for (const [x, z, s, t] of deco.scrub) { if (++sn % 300 === 0) yield; const y = H(x, z); blob(get(x, z).B, x, y - 0.2, z, s, s * 0.9, s * 0.9, SC[Math.floor(t * 4)], rnd, high ? 5 : 4); }
     const RE = [C('#a7a35a'), C('#8b9a4c'), C('#b9a868')];
+    let rn = 0;
     for (const [x, z, h] of deco.reeds) {
+      if (++rn % 300 === 0) yield;
       const y = H(x, z) - 0.05, B = get(x, z).B, col = RE[Math.floor(rnd() * 3)];
       for (let k = 0; k < 3; k++) { // a tuft of three leaning blades (two-sided)
         const a = rnd() * Math.PI, c = Math.cos(a) * 0.5, s2 = Math.sin(a) * 0.5, lx = (rnd() - 0.5) * 0.8, lz = (rnd() - 0.5) * 0.8;
@@ -546,7 +553,9 @@ function* buildSteps(THREE, kit, L) {
     }
   }
   let tris = 0, meshes = 0;
+  let cn = 0;
   for (const c of chunks.values()) {
+    if (++cn % 12 === 0) yield;
     const cx = c.i * CH + CH / 2, cz = c.j * CH + CH / 2;
     const parent = kit.chunk ? kit.chunk(cx, cz) : root;
     if (c.B.n) {

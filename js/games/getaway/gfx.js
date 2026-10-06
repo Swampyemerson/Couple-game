@@ -347,15 +347,13 @@ export class Builder {
   /** Fast quad strip writer used by road ribbons: 4 verts, upward normal. */
   quadUp(ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, rgb, fx = 0) {
     this.grow(4, 6);
-    const base = this.nv; const P = this.pos; const N = this.nrm; const C = this.col;
-    const vs = [ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz];
-    for (let i = 0; i < 4; i++) {
-      const o = (base + i) * 3;
-      P[o] = vs[i * 3]; P[o + 1] = vs[i * 3 + 1]; P[o + 2] = vs[i * 3 + 2];
-      N[o] = 0; N[o + 1] = 1; N[o + 2] = 0; C[o] = rgb[0]; C[o + 1] = rgb[1]; C[o + 2] = rgb[2]; this.fx[base + i] = fx;
-    }
-    const I = this.idx; I[this.ni++] = base; I[this.ni++] = base + 2; I[this.ni++] = base + 1; I[this.ni++] = base; I[this.ni++] = base + 3; I[this.ni++] = base + 2;
-    this.nv += 4;
+    const b = this.nv; const P = this.pos; const N = this.nrm; const C = this.col; const F = this.fx; const o = b * 3;
+    P[o] = ax; P[o + 1] = ay; P[o + 2] = az; P[o + 3] = bx; P[o + 4] = by; P[o + 5] = bz;
+    P[o + 6] = cx; P[o + 7] = cy; P[o + 8] = cz; P[o + 9] = dx; P[o + 10] = dy; P[o + 11] = dz;
+    for (let i = 0; i < 4; i++) { const q = o + i * 3; N[q] = 0; N[q + 1] = 1; N[q + 2] = 0; C[q] = rgb[0]; C[q + 1] = rgb[1]; C[q + 2] = rgb[2]; F[b + i] = fx; }
+    const I = this.idx; let n = this.ni;
+    I[n++] = b; I[n++] = b + 2; I[n++] = b + 1; I[n++] = b; I[n++] = b + 3; I[n++] = b + 2;
+    this.ni = n; this.nv += 4;
     return this;
   }
   geometryOut() {
@@ -417,23 +415,25 @@ export function mergeGroup(THREE, group, mats, inkRGB, disposeSet, pre = null) {
         const ol = g.outline || 0;
         // write via a template so outlines work
         const t = { n, pos: new Float32Array(n * 3), nrm: new Float32Array(n * 3), idx: null, hull: null, box: false };
+        const PA = pa.isInterleavedBufferAttribute ? null : pa.array; const NA = na.isInterleavedBufferAttribute ? null : na.array;
         for (let i = 0; i < n; i++) {
-          const x = pa.getX(i); const y = pa.getY(i); const z = pa.getZ(i);
+          const x = PA ? PA[i * 3] : pa.getX(i); const y = PA ? PA[i * 3 + 1] : pa.getY(i); const z = PA ? PA[i * 3 + 2] : pa.getZ(i);
           t.pos[i * 3] = e[0] * x + e[4] * y + e[8] * z + e[12]; t.pos[i * 3 + 1] = e[1] * x + e[5] * y + e[9] * z + e[13]; t.pos[i * 3 + 2] = e[2] * x + e[6] * y + e[10] * z + e[14];
-          const a = na.getX(i); const bb = na.getY(i); const cc = na.getZ(i);
+          const a = NA ? NA[i * 3] : na.getX(i); const bb = NA ? NA[i * 3 + 1] : na.getY(i); const cc = NA ? NA[i * 3 + 2] : na.getZ(i);
           let nx = ne[0] * a + ne[3] * bb + ne[6] * cc; let ny = ne[1] * a + ne[4] * bb + ne[7] * cc; let nz = ne[2] * a + ne[5] * bb + ne[8] * cc;
-          const l = Math.hypot(nx, ny, nz) || 1; t.nrm[i * 3] = nx / l; t.nrm[i * 3 + 1] = ny / l; t.nrm[i * 3 + 2] = nz / l;
+          const l = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1; t.nrm[i * 3] = nx / l; t.nrm[i * 3 + 1] = ny / l; t.nrm[i * 3 + 2] = nz / l;
         }
-        if (geo.index) { t.idx = new Uint32Array(geo.index.count); for (let i = 0; i < t.idx.length; i++) t.idx[i] = geo.index.getX(i); }
+        if (geo.index) { t.idx = Uint32Array.from(geo.index.array.subarray(0, geo.index.count)); }
         else { t.idx = new Uint32Array(n); for (let i = 0; i < n; i++) t.idx[i] = i; }
         if (tmpM.determinant() < 0) for (let i = 0; i < t.idx.length; i += 3) { const q = t.idx[i + 1]; t.idx[i + 1] = t.idx[i + 2]; t.idx[i + 2] = q; }
         if (ol > 0) t.hull = hullDirs(t.pos, t.nrm, n, false);
         const base = b.nv;
         b.add(t, 0, 0, 0, 1, 1, 1, 0, [1, 1, 1], ol, g.fx);
         // colours + fx per vertex (the first pass; the hull pass stays ink)
+        const CA = ca && !ca.isInterleavedBufferAttribute && ca.itemSize >= 3 ? ca.array : null; const cs = ca ? ca.itemSize : 3;
         for (let i = 0; i < n; i++) {
           let cr = mc ? mc.r : 1; let cg = mc ? mc.g : 1; let cb = mc ? mc.b : 1;
-          if (ca) { cr *= ca.getX(i); cg *= ca.getY(i); cb *= ca.getZ(i); }
+          if (ca) { if (CA) { cr *= CA[i * cs]; cg *= CA[i * cs + 1]; cb *= CA[i * cs + 2]; } else { cr *= ca.getX(i); cg *= ca.getY(i); cb *= ca.getZ(i); } }
           if (ic) { cr *= ic.r; cg *= ic.g; cb *= ic.b; }
           const o3 = (base + i) * 3; b.col[o3] = cr; b.col[o3 + 1] = cg; b.col[o3 + 2] = cb;
           if (fa) b.fx[base + i] = Math.max(g.fx, fa.getX(i));

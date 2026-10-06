@@ -160,7 +160,7 @@ function* heightGridGen() {
   yield;
   for (const r of live) {
     const n = r.n; const sm = r.prof;
-    const R = r.hw + 20;
+    const R = r.hw + 15;
     for (let k = 0; k < n; k++) {
       const x = r.x[k]; const z = r.z[k];
       const i0 = Math.max(0, Math.floor((x - R - HX0) / HC)); const i1 = Math.min(HW - 1, Math.ceil((x + R - HX0) / HC));
@@ -174,7 +174,7 @@ function* heightGridGen() {
   }
   for (let q = 0; q < g.length; q++) {
     if (best[q] > 1e8) continue;
-    const w = best[q] <= 6 ? 1 : 1 - clamp01((best[q] - 6) / 14);
+    const w = best[q] <= 6 ? 1 : 1 - clamp01((best[q] - 6) / 9);
     const ww = w * w * (3 - 2 * w);
     g[q] = g[q] * (1 - ww) + target[q] * ww;
   }
@@ -286,7 +286,7 @@ export function* layoutGen() {
   for (const r of sm.list) {
     const rad = r.hw + walkOf(r);
     for (let k = 0; k < r.n - 1; k++) {
-      const L = Math.hypot(r.x[k + 1] - r.x[k], r.z[k + 1] - r.z[k]); const m = Math.max(1, Math.ceil(L / 1.5));
+      const L = Math.hypot(r.x[k + 1] - r.x[k], r.z[k + 1] - r.z[k]); const m = Math.max(1, Math.ceil(L / 3));
       for (let q = 0; q < m; q++) disk(r.x[k] + (r.x[k + 1] - r.x[k]) * q / m, r.z[k] + (r.z[k + 1] - r.z[k]) * q / m, rad, ROAD);
     }
     yield;
@@ -360,7 +360,7 @@ export function* layoutGen() {
   B({ x: 65, z: -43, w: 31, d: 22, h: 13, style: 'courthouse', color: '#efe3c8', roof: 'flat', roofColor: '#cfc3a6', landmark: 'Courthouse' });
   B({ x: 65, z: -45, w: 11, d: 11, h: 21, style: 'courthouseTower', color: '#f3e8cf', roof: 'flat', roofColor: '#cfc3a6', noSolid: true });
   B({ x: 64, z: -79, w: 28, d: 22, h: 18, style: 'hotel', color: '#b5523b', roof: 'flat', roofColor: '#6e3a2c', floors: 5 }); // the historic hotel at 13th & Spruce
-  B({ x: 105, z: -42, w: 22, d: 20, h: 11, style: 'theater', color: '#d9c8a0', roof: 'flat', roofColor: '#8e8467', rot: -Math.PI / 2 }); // the art-deco theatre, facing 14th
+  B({ x: 105, z: -44, w: 18, d: 18, h: 11, style: 'theater', color: '#d9c8a0', roof: 'flat', roofColor: '#8e8467', rot: -Math.PI / 2 }); // the art-deco theatre, facing 14th
   // Central Park / civic area: bandshell, teahouse, library, municipal building
   B({ x: 22, z: 146, w: 14, d: 7, h: 6, style: 'bandshell', color: '#e9e4d8', roof: 'none', rot: Math.PI }); // faces north into the park
   B({ x: 64, z: 140, w: 17, d: 13, h: 5.5, style: 'teahouse', color: '#c96a3a', roof: 'pagoda', roofColor: '#2f6f6a', roofH: 3 });
@@ -378,6 +378,10 @@ export function* layoutGen() {
   B({ x: 300, z: 548, w: 28, d: 18, h: 13, style: 'cu', color: '#d39c79', roof: 'hip', roofColor: '#b5482f', roofH: 4, floors: 3 });
   B({ x: 690, z: 300, w: 70, d: 30, h: 16, style: 'cu', color: '#d6a07c', roof: 'hip', roofColor: '#b5482f', roofH: 5, floors: 4 }); // engineering centre
   B({ x: 730, z: 700, w: 60, d: 60, h: 16, style: 'arena', color: '#cfa07e', roof: 'dome', roofColor: '#c9c3b3', roofH: 6 }); // the events centre
+  // open spaces kept clear of buildings: the Norlin Quad lawn, Boulder High's field
+  stamp(276, 494, 98, 84, 0, 0, LOT);
+  stamp(262, 282, 78, 40, 0, 0, LOT);
+  props.push({ type: 'field', x: 262, z: 283, w: 70, d: 34, plain: true });
   // Folsom Field: horseshoe bowl open to the north; the field inside is drivable
   {
     const cx = 470; const cz = 470; const W = 116; const D = 144; const t = 14; const h = 14;
@@ -392,7 +396,6 @@ export function* layoutGen() {
   B({ x: -18, z: 1042, w: 38, d: 44, h: 11, style: 'auditorium', color: '#7a4a2e', roof: 'hip', roofColor: '#4d6b3c', roofH: 7, landmark: 'Chautauqua Auditorium' });
   B({ x: -128, z: 1038, w: 32, d: 13, h: 6, style: 'cottage', color: '#6f5236', roof: 'gable', roofColor: '#3e5a35', roofH: 3.5, porch: true });
   // Twenty Ninth Street anchors, Williams Village towers, Boulder Junction, Table Mesa shops
-  B({ x: 905, z: 120 - 22, w: 60, d: 26, h: 9, style: 'shop', color: '#d7c4a4', roof: 'flat', roofColor: '#8f8778', floors: 2, noAuto: true, pad: 0 });
   B({ x: 1095, z: 965, w: 22, d: 22, h: 40, style: 'tower', color: '#d9cdb7', roof: 'flat', roofColor: '#8c8576', floors: 12 });
   B({ x: 1145, z: 1012, w: 22, d: 22, h: 40, style: 'tower', color: '#d9cdb7', roof: 'flat', roofColor: '#8c8576', floors: 12 });
   B({ x: 982, z: 1771, w: 86, d: 18, h: 9, style: 'box', color: '#cbb48d', roof: 'flat', roofColor: '#8f8778' });
@@ -493,7 +496,7 @@ export function* layoutGen() {
         const roof = isHouse ? (type === 'ranch' ? (rnd() < 0.55 ? 'hip' : 'gable') : 'gable') : type === 'cu' ? (rnd() < 0.6 ? 'hip' : 'gable') : 'flat';
         const roofH = roof === 'flat' ? 0 : type === 'ranch' ? 1.6 + rnd() * 0.6 : type === 'cu' ? 4 + rnd() : type === 'cottage' ? 3.6 : 2.6 + rnd() * 1.6;
         const pal = PALETTE[type] || PALETTE.box;
-        const b = building({ x: cx, z: cz, w, d, rot, h, floors, style: type, color: pick(pal), roof, roofH, roofColor: roof === 'flat' ? '#7d766b' : pick(ROOF[type] || ROOF.house), zone, seed: rnd(), porch: isHouse && rnd() < 0.45, chimney: isHouse && rnd() < 0.35 }, false, r.kind === 'mall');
+        const b = building({ x: cx, z: cz, w, d, rot, h, floors, style: type, color: pick(pal), roof, roofH, roofColor: roof === 'flat' ? '#7d766b' : pick(ROOF[type] || ROOF.house), zone, seed: rnd(), porch: isHouse && rnd() < 0.3, chimney: isHouse && rnd() < 0.35 }, false, r.kind === 'mall');
         if (b) {
           s += w + R(Z0.gap[0], Z0.gap[1]);
           if ((zone === 'commercial' || zone === 'east') && Z0.set > 8) { // a parking lot out front
@@ -504,10 +507,10 @@ export function* layoutGen() {
             if (obbCells(lx, lz, lw, ld, rot, 0, (q) => (ras[q] === BLD || ras[q] === WATERC ? false : undefined))) { lots.push({ kind: 'lot', poly, paint: 'asphalt', rot }); stamp(lx, lz, lw, ld, rot, 0, LOT); }
           }
           // a front-yard street tree and a backyard tree for houses
-          if (Z0.trees && rnd() < 0.42) {
+          if (Z0.trees && rnd() < 0.36) {
             const tOff = r.hw + walk + 1.8; const tt = s - R(0, 4);
             const q2 = pt(r, Math.min(r.len - 1, tt));
-            const tStyle = Z0.trees === 'cottonwood' ? pick(['cottonwood', 'cottonwood', 'aspen', 'pine']) : Z0.trees;
+            const tStyle = Z0.trees === 'cottonwood' ? pick(['aspen', 'aspen', 'pine', 'cottonwood']) : Z0.trees;
             tree(q2.x + nx * tOff, q2.z + nz * tOff, tStyle, tStyle === 'pine' ? R(9, 14) : R(9, 15), pick(['#5c8f3e', '#6b9a44', '#4f8a3c', '#7ea34a']));
           }
           if (isHouse && rnd() < 0.75) decorTree(cx + nx * (d / 2 + R(4, 9)) + p.tx * R(-3, 3), cz + nz * (d / 2 + R(4, 9)) + p.tz * R(-3, 3), zone === 'chautauqua' || zone === 'mesa' ? 'pine' : 'broad', R(0.8, 1.3));
@@ -518,7 +521,7 @@ export function* layoutGen() {
   }
 
   // ── 3b. campus infill: sandstone halls between the campus roads; office parks out east ────
-  for (const [zn, x0, x1, z0, z1, step, style] of [['campus', 200, 830, 205, 905, 36, 'cu'], ['east', 1260, 1900, -470, 905, 64, 'office']]) {
+  for (const [zn, x0, x1, z0, z1, step, style] of [['campus', 200, 830, 205, 905, 44, 'cu'], ['east', 1260, 1900, -470, 905, 64, 'office']]) {
     for (let z = z0; z < z1; z += step) for (let x = x0; x < x1; x += step) {
       const cx = x + R(-6, 6); const cz = z + R(-6, 6); if (zoneAt(cx, cz) !== zn) continue;
       const w = zn === 'campus' ? R(22, 38) : R(30, 50); const d = zn === 'campus' ? R(13, 19) : R(20, 28); const rot = rnd() < 0.5 ? 0 : Math.PI / 2;
@@ -529,11 +532,10 @@ export function* layoutGen() {
   }
 
   // ── 4. street furniture: lamps on arterials/downtown, signals at big crossings ─────────
-  const lampy = new Set(['downtown', 'eastpearl', 'twentyninth', 'junction', 'commercial', 'campus', 'civic', 'westpearl', 'east']);
   for (const r of sm.list) {
     yield;
     if (r.bridge || r.kind === 'alley') continue;
-    const every = r.kind === 'highway' ? 90 : r.kind === 'arterial' ? 58 : 50;
+    const every = r.kind === 'highway' ? 110 : r.kind === 'arterial' ? 75 : 60;
     let flip = 1;
     for (let s = 14; s < r.len - 10; s += every) {
       const p = pt(r, s); flip = -flip;
@@ -556,7 +558,7 @@ export function* layoutGen() {
     for (let k = 0; k < a.n - 1; k++) {
       const ax = a.x[k]; const az = a.z[k]; const n1 = sm.nearest(ax, az, 4, crossOk(a));
       if (!n1.r || n1.d > 2.6) continue;
-      const b = n1.r; if (b.kind !== 'arterial' && !/Broadway|28th|Baseline|Arapahoe|Canyon|Folsom|30th/.test(a.name)) continue;
+      const b = n1.r; if (b.kind !== 'arterial') continue;
       const key = `${Math.round(n1.px / 25)},${Math.round(n1.pz / 25)}`; if (seen.has(key)) continue; seen.add(key);
       const tx = a.x[k + 1] - ax; const tz = a.z[k + 1] - az; const tl = Math.hypot(tx, tz) || 1; const ux = tx / tl; const uz = tz / tl;
       for (const sg of [1, -1]) {
@@ -585,7 +587,7 @@ export function* layoutGen() {
     segWall(ax, az, bx, bz, 'wall', 3.6, 'soundwall', 0.5); stamp((ax + bx) / 2, (az + bz) / 2, 20, 2, Math.atan2(-(bz - az), bx - ax), 0.5);
   }
   for (let u = 60; u < 1250; u += 20) {
-    if ((u > 680 && u < 820) || (u > 880 && u < 1110) || u > 1170) continue;
+    if ((u > 590 && u < 830) || (u > 880 && u < 1110) || u > 1170) continue;
     const [ax, az] = usPt(u, 15); const [bx, bz] = usPt(u + 20, 15);
     if (sm.clearance((ax + bx) / 2, (az + bz) / 2, (o) => o.kind !== 'highway') < 1.5) continue;
     segWall(ax, az, bx, bz, 'wall', 3.2, 'soundwall', 0.5);
@@ -628,18 +630,19 @@ export function* layoutGen() {
       ras[q] = FREE; tree(x, z, 'cottonwood', R(13, 19), pick(['#6d9a3f', '#7aa64a', '#5f8f3a']));
     }
   }
-  const scatter = (poly, n, style, hr, col) => {
+  const scatter = (poly, n, style, hr, col, force = false) => {
     let x0 = Infinity; let z0 = Infinity; let x1 = -Infinity; let z1 = -Infinity;
     for (const [x, z] of poly) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
     for (let i = 0; i < n * 3 && n > 0; i++) {
       const x = R(x0, x1); const z = R(z0, z1); if (!pointInPoly(poly, x, z)) continue;
       if (sm.clearance(x, z) < 2) continue;
-      if (tree(x, z, style, R(hr[0], hr[1]), col ? pick(col) : null)) n--;
+      if (tree(x, z, style, R(hr[0], hr[1]), col ? pick(col) : null, force)) n--;
     }
   };
   const rect = (a, b, c, d) => [[a, b], [c, b], [c, d], [a, d]];
   scatter(rect(10, 128, 36, 154), 6, 'cottonwood', [11, 16]); // Central Park
-  scatter(rect(222, 448, 330, 540), 14, 'cottonwood', [10, 15], ['#6b9a44', '#5c8f3e']); // Norlin Quad elms
+  for (const [x0, x1] of [[232, 250], [302, 322]]) scatter(rect(x0, 456, x1, 532), 5, 'cottonwood', [10, 15], ['#6b9a44', '#5c8f3e'], true); // Norlin Quad elms
+  props.push({ type: 'quadPaths', x: 276, z: 494, w: 92, d: 78 });
   scatter(rect(230, 270, 300, 300), 4, 'aspen', [8, 11]); // Boulder High lawn
   scatter([[-185, 935], [-70, 935], [-70, 995], [-185, 995]], 8, 'pine', [10, 15]); // inside Kinnikinic loop
   scatter([[-200, 1000], [-30, 1060], [-90, 1180], [-260, 1100]], 10, 'pine', [10, 16]); // Chautauqua meadow edge

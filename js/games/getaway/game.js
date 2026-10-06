@@ -48,6 +48,7 @@ export function createGame(el, api) {
   root.innerHTML = '<div class="gtw-gl"></div><div class="gtw-surface"></div>';
   el.appendChild(root);
   const glWrap = root.querySelector('.gtw-gl'); const surface = root.querySelector('.gtw-surface');
+  root.style.setProperty('--me', `var(--p-${live ? api.me : 'a'})`);
   const device = Object.assign({ steer: 'slider', localMode: 'ai', practiceRole: 'runner', cam: null }, lsGet(DEV_KEY, {}));
   if (!coarse && device.localMode !== 'split' && device.localMode !== 'ai') device.localMode = 'ai';
   if (phoneish) device.localMode = 'ai';
@@ -65,7 +66,7 @@ export function createGame(el, api) {
   const ai = () => !live && S.localMode === 'ai';
   const human = () => (live ? me : 'a');
   const aiW = 'b';
-  const viewers = () => (split() ? ['a', 'b'] : [human()]);
+  const viewers = () => (split() && hud2 && S.R ? ['a', 'b'] : [human()]);
   const nameOf = (w) => (ai() ? (w === human() ? 'You' : 'AI') : api.name(w));
 
   // players
@@ -95,7 +96,7 @@ export function createGame(el, api) {
   const perf = { dts: new Float32Array(600), work: new Float32Array(600), n: 0, calls: 0, tris: 0, maxCalls: 0, maxTris: 0, scaleDowns: 0, scaleUps: 0, programs0: 0, ewma: 16.7, lowFor: 0, checkT: 0, frames: 0 };
   const hud = createHud(root, { name: (w) => nameOf(w) }, { split: false, touch: coarse });
   let hud2 = null; // split-screen HUD (two views)
-  const H0 = () => (split() ? hud2 : hud);
+  const H0 = () => (split() && hud2 ? hud2 : hud);
   let input = null; let touchIn = null; let tilt = null;
 
   if (!live && phoneish && device.localMode === 'split') device.localMode = 'ai';
@@ -170,7 +171,7 @@ export function createGame(el, api) {
     if (S.mapId === entry.id && world) return;
     S.loading = true;
     const showLoad = (pct, text) => { if (S.phase === 'loading' || S.loadingCard) hud.card(loadingCard(text, pct, human()), 'solid'); };
-    S.loadingCard = S.phase === 'loading' || !!S.match;
+    S.loadingCard = true; // every map load shows the loading card (and pauses rendering)
     showLoad(0.08, `Loading ${entry.name}…`);
     await new Promise((r) => setTimeout(r, 16));
     if (dead || seq !== loadSeq) return;
@@ -184,7 +185,9 @@ export function createGame(el, api) {
       entry.__prepared = true;
       if (dead || seq !== loadSeq) return;
     }
+    const L = { prepare: Math.round(performance.now() - t0) }; let lt = performance.now();
     const g = createGeo(entry);
+    L.geo = Math.round(performance.now() - lt);
     const w = await buildWorld(THREE, entry, g, P, U, { quality: phoneish ? 'mid' : 'high', onProgress: (p, t) => showLoad(0.1 + p * 0.8, t), dead: () => dead || seq !== loadSeq, budget: TUNE.sliceMs || 12 });
     if (dead || seq !== loadSeq || !w) { if (w) w.dispose(); return; }
     // swap worlds: the cars, wheels and traffic meshes are rebuilt against the new world's
@@ -201,7 +204,9 @@ export function createGame(el, api) {
     U.uSiren.value.w = 0;
     renderer.setClearColor(new THREE.Color().fromArray(world.fogC), 1);
     for (const k of AB) { cams[k].cam.far = world.fogFar + 80; cams[k].cam.updateProjectionMatrix(); }
+    lt = performance.now();
     mapImg = makeMapImage(geo, entry, P, phoneish ? 1100 : 1400);
+    L.mapImage = Math.round(performance.now() - lt); lt = performance.now();
     carViews = { runA: createCarView(THREE, P, U, 'runner', P.a, world.mats), runB: createCarView(THREE, P, U, 'runner', P.b, world.mats), cop: createCarView(THREE, P, U, 'cop', null, world.mats), cop2: createCarView(THREE, P, U, 'cop', null, world.mats) };
     wheels = createWheels(THREE, P, world.mats, 8);
     const tg = buildTrafficGeos(THREE, P);
@@ -215,7 +220,10 @@ export function createGame(el, api) {
     traffic = createTraffic(geo, entry.id, rules().traffic);
     S.loadMs = Math.round(performance.now() - t0);
     S.buildStats = world.stats;
+    L.cars = Math.round(performance.now() - lt); lt = performance.now();
     warmUp();
+    L.warmUp = Math.round(performance.now() - lt);
+    S.buildStats = { ...world.stats, load: L };
     S.loading = false; S.loadingCard = false;
     // nav grid for the AI, in the background
     navBuild();
@@ -246,6 +254,7 @@ export function createGame(el, api) {
     fx.setSpeedLines(0, 1); fx.setStrips([]); fx.setOils([]); fx.clear();
     trafficMeshes.paint.count = 0; trafficMeshes.trim.count = 0;
     perf.programs0 = renderer.info.programs ? renderer.info.programs.length : 0;
+    perf.programNames0 = renderer.info.programs.map((p) => p.name + ':' + p.cacheKey.length + ':' + p.id);
   }
 
   function resize() {
@@ -371,7 +380,7 @@ export function createGame(el, api) {
   function applyMatch(match, R) {
     S.match = { ...match, rules: sanitizeSetup({ rules: match.rules }, MAP_IDS).rules };
     S.sheet = false; hud.showSheet(null);
-    if (split()) setSplitKeys(true);
+    setSplitKeys(split());
     if (S.mapId !== match.map) { S.pendingRound = R; S.phase = 'wait'; S.loadingCard = true; loadMap(match.map); return; }
     traffic = createTraffic(geo, S.mapId, S.match.rules.traffic);
     applyRound(R);
@@ -386,6 +395,7 @@ export function createGame(el, api) {
     S.R = { ...R, over: false, result: null, spikes: [], oils: [], seq: 0 };
     S.phase = 'wait'; S.ending = false;
     S.slowT = 0; S.slowK = 1;
+    S.paused = false; S.resumeAt = 0; S.pausedAt = 0; // a pause never carries into a new round
     const entry = S.mapEntry;
     const sp = (entry.spawns && entry.spawns[R.spawn]) || { runner: { x: 0, z: 0, yaw: 0 }, cop: { x: 0, z: 80, yaw: 0 } };
     const rules0 = rules();
@@ -485,6 +495,7 @@ export function createGame(el, api) {
   // ── pause / resume ──
   link.on('pause', (d) => { if (!isHost && d && S.R) { S.paused = true; S.pausedAt = d.at; S.resumeAt = 0; } });
   link.on('resume', (d) => { if (!isHost && d && S.R && d.idx === S.R.idx) { S.R.t0 = d.t0; S.R.endAt = d.endAt; S.resumeAt = d.at; S.paused = true; } });
+  link.on('endat', (d) => { if (d && S.R && d.idx === S.R.idx) S.R.endAt = d.endAt; });
   function hostPauseCheck(now) {
     if (!S.R || S.R.over || (S.phase !== 'chase' && S.phase !== 'count' && S.phase !== 'intro')) return;
     const p = P2[other(human())];
@@ -758,7 +769,7 @@ export function createGame(el, api) {
     const heat = rules().heat;
     if (d > heat && !p.los) p.esc = Math.min(1, p.esc + dt / (TUNE.heatT || RULES.heatT));
     else p.esc = Math.max(0, p.esc - (dt * RULES.heatDecay) / RULES.heatT);
-    if (p.esc >= 1) return endRound('escaped', 'heat');
+    if (p.esc >= 1) { S.dbgEnd = { d, heat, los: p.los, cop: { x: cop.x, z: cop.z }, me: { x: c.x, z: c.z } }; return endRound('escaped', 'heat'); }
     if (now >= R.endAt) return endRound('escaped', 'time');
   }
   /** Cop-side fallback: the runner's device went quiet right at the buzzer. */
@@ -864,16 +875,19 @@ export function createGame(el, api) {
       // title orbit around the first landmark (or the map centre)
       const L = S.mapEntry && S.mapEntry.landmarks && (S.mapEntry.landmarks.find((l) => l.home) || S.mapEntry.landmarks.find((l) => !l.far));
       const B = geo.bounds; const cx = L ? L.x : (B.x0 + B.x1) / 2; const cz = L ? L.z : (B.z0 + B.z1) / 2;
-      const a = now / 1000 * 0.06; const r = 150;
-      cam.fov = 55; cam.position.set(cx + Math.sin(a) * r, geo.ground(cx, cz) + 75, cz + Math.cos(a) * r); cam.lookAt(cx, geo.ground(cx, cz) + 10, cz);
+      const a = now / 1000 * 0.06; const r = 210;
+      cam.fov = 55; cam.position.set(cx + Math.sin(a) * r, geo.ground(cx, cz) + 95, cz + Math.cos(a) * r); cam.lookAt(cx, geo.ground(cx, cz) + 10, cz);
       cam.updateProjectionMatrix(); cr.init = false;
       return;
     }
     const intro = S.phase === 'intro' || S.phase === 'wait';
     if (intro) {
       const R = S.R; const rc = P2[R.runner].car;
-      const a = ((now - R.at) / 1000) * 0.32 + 0.6; const r = 26;
-      cam.fov = 58; cam.position.set(rc.x + Math.sin(a) * r, rc.y + 9, rc.z + Math.cos(a) * r); cam.lookAt(rc.x, rc.y + 1.2, rc.z);
+      const a = ((now - R.at) / 1000) * 0.32 + 0.6; let r = 26;
+      // keep the orbit out of buildings: pull in to the first wall between the car and the camera
+      const tb = geo.segBlocked(rc.x, rc.z, rc.x + Math.sin(a) * r, rc.z + Math.cos(a) * r, 1.5, true);
+      if (tb < 1) r = Math.max(6, r * tb - 1.5);
+      cam.fov = 58; cam.position.set(rc.x + Math.sin(a) * r, rc.y + 3 + r * 0.24, rc.z + Math.cos(a) * r); cam.lookAt(rc.x, rc.y + 1.2, rc.z);
       cam.updateProjectionMatrix(); cr.init = false;
       return;
     }
@@ -952,13 +966,13 @@ export function createGame(el, api) {
       if (c.skid && c.surf !== 'grass' && c.surf !== 'dirt' && c.surf !== 'sand' && !Number.isNaN(p.prevRL[0])) {
         fx.skid(p.prevRL[0], c.y, p.prevRL[2], rlx, c.y, rlz, 0.3);
         fx.skid(p.prevRR[0], c.y, p.prevRR[2], rrx, c.y, rrz, 0.3);
-        if (Math.random() < dt * 14) fx.puff(rrx, c.y + 0.3, rrz, -c.vx * 0.1, 0.6, -c.vz * 0.1, 0.35, 1.6, 0.8, 0.92, 0.92, 0.92);
+        if (Math.random() < dt * 10) fx.puff(rrx, c.y + 0.3, rrz, -c.vx * 0.1, 0.6, -c.vz * 0.1, 0.3, 1.2, 0.7, 0.92, 0.92, 0.92);
       }
       p.prevRL[0] = rlx; p.prevRL[2] = rlz; p.prevRR[0] = rrx; p.prevRR[2] = rrz;
       // dust off-road
       if ((c.surf === 'grass' || c.surf === 'dirt' || c.surf === 'sand') && c.speed > 6) {
         p.dustT -= dt;
-        if (p.dustT <= 0) { p.dustT = 0.05; const col = c.surf === 'grass' ? [0.62, 0.6, 0.46] : c.surf === 'sand' ? [0.92, 0.84, 0.64] : [0.72, 0.6, 0.44]; fx.puff(rrx, c.y + 0.4, rrz, -c.vx * 0.15 + (Math.random() - 0.5) * 2, 1, -c.vz * 0.15, 0.6, 2.4, 1.1, col[0], col[1], col[2]); }
+        if (p.dustT <= 0) { p.dustT = 0.05; const col = c.surf === 'grass' ? [0.62, 0.6, 0.46] : c.surf === 'sand' ? [0.92, 0.84, 0.64] : [0.72, 0.6, 0.44]; fx.puff(rrx, c.y + 0.3, rrz, -c.vx * 0.12 + (Math.random() - 0.5) * 2, 0.8, -c.vz * 0.12, 0.35, 1.3, 0.8, col[0], col[1], col[2]); }
       }
       // damage smoke + fire
       const hpK = roleOf(w) === 'runner' ? c.hp : c.hp + 15;
@@ -1076,6 +1090,8 @@ export function createGame(el, api) {
   let miniT = 0; let hudT = 0;
   function updateHud(dt, now) {
     hudT -= dt; miniT -= dt;
+    const playing = !!S.R && !split() && (S.phase === 'count' || S.phase === 'chase');
+    if (S.playingCls !== playing) { S.playingCls = playing; root.classList.toggle('playing', playing); }
     const vs = viewers(); const R = S.R;
     for (const w of vs) {
       const v = H0().view(w); const p = P2[w]; const c = p.car; const role = roleOf(w);
@@ -1145,7 +1161,8 @@ export function createGame(el, api) {
     if (dead) return;
     raf = requestAnimationFrame(frame);
     const dtReal = lastTs ? Math.min(0.1, (ts - lastTs) / 1000) : 0.016; lastTs = ts;
-    if (!ready3D || !world || S.loading && !world) return;
+    if (!ready3D || !world) return;
+    if (S.loading && S.loadingCard) return; // a map is building behind the loading card: leave it the main thread
     const w0 = performance.now();
     const now = clock();
     if (!vec) { vec = new THREE.Vector3(); dm = new THREE.Object3D(); tc = new THREE.Color(); }
@@ -1283,8 +1300,8 @@ export function createGame(el, api) {
         return {
           phase: S.phase, paused: S.paused, resumeAt: S.resumeAt, reasons: S.reasons, setup: S.setup, setupVer: S.setupVer, mapId: S.mapId, loading: S.loading,
           match: S.match && { scores: { ...S.match.scores }, hist: S.match.hist.slice(), rounds: S.match.rounds, map: S.match.map, rules: S.match.rules },
-          R: R && { idx: R.idx, runner: R.runner, at: R.at, t0: R.t0, endAt: R.endAt, over: R.over, result: R.result, spikes: R.spikes.map((s) => ({ id: s.id, x: s.x, z: s.z, yaw: s.yaw, gone: s.gone, at: s.at })), oils: R.oils.length },
-          a: car('a'), b: car('b'), now: clock(), rtt: link.rtt, linked: link.ready, result: S.result || null, localMode: S.localMode, me: human(),
+          R: R && { idx: R.idx, spawn: R.spawn, runner: R.runner, at: R.at, t0: R.t0, endAt: R.endAt, over: R.over, result: R.result, spikes: R.spikes.map((s) => ({ id: s.id, x: s.x, z: s.z, yaw: s.yaw, gone: s.gone, at: s.at })), oils: R.oils.length },
+          a: car('a'), b: car('b'), now: clock(), dbgEnd: S.dbgEnd || null, rtt: link.rtt, linked: link.ready, result: S.result || null, localMode: S.localMode, me: human(),
           partnerSeen: live ? { ...P2[other(me)].remote, shown: { ...P2[other(me)].shown } } : null, sent: link.sent,
         };
       },
@@ -1308,7 +1325,7 @@ export function createGame(el, api) {
       setCar(w, o) { Object.assign(P2[w].car, o); },
       placeSpike(w, x, z) { return placeSpike(w, x, z); },
       endNow(outcome, reason) { endRound(outcome, reason); },
-      shortenRound(ms) { if (isHost && S.R) { S.R.endAt = clock() + ms; if (live) link.urgent('resume', { idx: S.R.idx, at: 0, t0: S.R.t0, endAt: S.R.endAt }); } },
+      shortenRound(ms) { if (isHost && S.R) { S.R.endAt = clock() + ms; if (live) link.urgent('endat', { idx: S.R.idx, endAt: S.R.endAt }); } },
       trafficHash(t) { return traffic ? traffic.hash(t) : 0; },
       trafficCount() { return traffic ? traffic.total : 0; },
       trafficNear(x, z, r, t) { const out = []; if (traffic) traffic.each(x, z, r, t, (id, p) => out.push({ id, x: p.x, z: p.z, yaw: p.yaw, vx: p.vx, vz: p.vz })); return out; },
