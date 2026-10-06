@@ -23,7 +23,7 @@ export function hashStr(s) {
 }
 
 const KIND_RANK = { highway: 5, arterial: 4, ramp: 4, street: 3, alley: 2, dirt: 1 };
-const BREAKABLE = { pole: 1, tree: 1, bollard: 1 };
+export const BREAKABLE = { pole: 1, tree: 1, bollard: 1, hydrant: 1, lamp: 1, signal: 1, sign: 1, mailbox: 1, cactus: 1, shrub: 1 };
 const BLOCKS_VIEW = { building: 1, wall: 1, rock: 1 };
 export const OPEN_KINDS = ['lot', 'grass', 'dirt', 'sand'];
 
