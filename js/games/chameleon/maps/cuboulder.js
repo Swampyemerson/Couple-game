@@ -33,7 +33,7 @@ const C = {
   grass: '#8cbf63', grassB: '#7bb156', aspen: '#f2c14e', aspenB: '#e6a93a', pine: '#3f6b45', pineB: '#2f5537',
   felt: '#2e7d52', steel: '#9aa3ab',
 };
-const BENCH_TOP = '#26262b';
+const BENCH_TOP = '#a4c9ae';
 
 // ── procedural patterns (same contract as atlas.js painters) ───────────────
 const wrapDo = (w, h, fn) => { for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) fn(ox * w, oy * h); };
@@ -384,6 +384,56 @@ const PAT = {
     g.fillRect(0, 0, w, h * 0.05); g.fillRect(0, h * 0.95, w, h * 0.05);
   },
 
+  /** The two lecture screens in one tile (top half: handwritten KEY IDEAS notes; bottom half: a
+   *  multiple-choice question). Invented, generic text. */
+  screens: () => (g, w, h) => {
+    const half = h / 2;
+    for (let k = 0; k < 2; k++) {
+      const y0 = k * half;
+      g.fillStyle = '#fdfdfb'; g.fillRect(0, y0, w, half);
+      g.fillStyle = '#e8eaee'; g.fillRect(0, y0, w, 13); // app toolbar
+      for (let i = 0; i < 7; i++) { g.fillStyle = ['#d9483b', '#3f6fd1', '#3fa66b', '#9aa3ab', '#9aa3ab', '#f2c14e', '#9aa3ab'][i]; g.fillRect(70 + i * 12, y0 + 4, 7, 5); }
+      g.fillStyle = '#2f5fbf'; g.beginPath(); g.arc(150, y0 + 7, 4, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#d6dae0'; g.fillRect(0, y0 + half - 10, w, 10); // taskbar
+      for (let i = 0; i < 9; i++) { g.fillStyle = ['#3f6fd1', '#f2c14e', '#d9483b', '#3fa66b', '#7b5ea7'][i % 5]; g.fillRect(80 + i * 10, y0 + half - 8, 6, 6); }
+    }
+    g.fillStyle = '#1f2a44'; g.textBaseline = 'alphabetic';
+    // KEY IDEAS (handwritten)
+    const hand = (t, x, y, sz) => { g.font = `${sz}px "Comic Sans MS", "Segoe Print", cursive, sans-serif`; g.fillText(t, x, y); };
+    g.fillStyle = '#c0392b'; g.font = 'bold 9px Arial, sans-serif'; g.fillText('Pulley problems', 10, 27); g.fillRect(10, 29, 72, 1);
+    g.fillStyle = '#1f2a44';
+    hand('KEY IDEAS:', 120, 34, 12);
+    hand('• one rope → same', 126, 52, 10); hand('   tension throughout', 126, 63, 10);
+    hand('• linked masses share', 126, 79, 10); hand('   one acceleration', 126, 90, 10);
+    hand('• separate FBDs!', 126, 106, 10);
+    g.strokeStyle = '#1f2a44'; g.lineWidth = 1.5;
+    g.beginPath(); g.arc(50, 52, 10, 0, Math.PI * 2); g.stroke();
+    g.beginPath(); g.moveTo(40, 52); g.lineTo(40, 92); g.moveTo(60, 52); g.lineTo(60, 80); g.stroke();
+    g.strokeRect(33, 92, 14, 12); g.strokeRect(54, 80, 12, 10);
+    g.beginPath(); g.moveTo(50, 42); g.lineTo(50, 34); g.stroke();
+    // multiple choice (typeset)
+    const y0 = half;
+    g.fillStyle = '#1f2a44'; g.font = '11px Georgia, "Times New Roman", serif';
+    ['A rope-and-pulley rig holds a crate', 'of mass m off the floor. What pull F', 'keeps it at rest?'].forEach((t, i) => g.fillText(t, 12, y0 + 30 + i * 13));
+    g.font = 'italic 11px Georgia, "Times New Roman", serif';
+    ['A)  F = mg', 'B)  F = 2mg', 'C)  F = mg / 2', 'D)  F = 3mg', 'E)  F = mg / 3'].forEach((t, i) => g.fillText(t, 20 + (i > 2 ? 110 : 0), y0 + 78 + (i % 3) * 13));
+  },
+
+  /** Periodic table poster (not repeating): blocky title + the familiar coloured cell grid. */
+  ptable: () => (g, w, h) => {
+    g.fillStyle = '#f4f1e8'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#1f2a44'; g.font = 'bold 7px Arial, sans-serif'; g.textAlign = 'center';
+    g.fillText('PERIODIC TABLE', w / 2, 8); g.fillText('OF THE ELEMENTS', w / 2, 15);
+    const cw = (w - 8) / 18; const ch = 5; const ox = 4; const oy = 19;
+    const col = (r, c) => (c === 0 ? '#f08a6a' : c === 1 ? '#f2c14e' : c >= 12 && c <= 16 && r >= 1 ? '#9fd38c' : c === 17 ? '#8fc3e0' : c >= 2 && c <= 11 ? '#c9b7e3' : '#e9d58f');
+    for (let r = 0; r < 7; r++) for (let c = 0; c < 18; c++) {
+      if (r === 0 && c > 0 && c < 17) continue;
+      if ((r === 1 || r === 2) && c > 1 && c < 12) continue;
+      g.fillStyle = col(r, c); g.fillRect(ox + c * cw + 0.5, oy + r * ch + 0.5, cw - 1, ch - 1);
+    }
+    for (let r = 0; r < 2; r++) for (let c = 3; c < 17; c++) { g.fillStyle = r ? '#f2b8c6' : '#f6d2a2'; g.fillRect(ox + c * cw + 0.5, oy + 7.6 * ch + r * ch + 0.5, cw - 1, ch - 1); }
+  },
+
   /** Aspen bark: white with black "eyes" (tintable-ish). */
   aspenbark: () => (g, w, h, r) => {
     g.fillStyle = '#f3efe6'; g.fillRect(0, 0, w, h);
@@ -485,7 +535,7 @@ function poster(b, x, y, z, w, h, normal, tile, frame = null) {
 // ── the map ──────────────────────────────────────────────────────────────
 const W = 34; const D = 26; // x −17..17, z −13..13
 const UP = 2.72; // gallery / top-of-rake floor (16 × 0.17 risers)
-const H = { g1: 5.4, cor: 2.7, nor: 4.8, umc: 3.3, lab: 3.0, arc: 3.45 };
+const H = { g1: 6.6, cor: 2.7, nor: 4.8, umc: 3.3, lab: 3.0, arc: 3.45 };
 
 function build(atlas, kit) {
   const P = kit.P;
@@ -522,7 +572,10 @@ function build(atlas, kit) {
   atlas.add('vinyl', P.stripes({ cols: ['#ffffff', '#d4d4d4'], widths: [5, 1], n: 4 }), { size: 'S' });
   atlas.add('slats', P.stripes({ cols: ['#ffffff', '#cdcdcd'], widths: [4, 1], n: 4 }), { size: 'M' });
   atlas.add('blockwall', P.bricks({ brick: '#ffffff', alt: '#f2f2f2', mortar: '#d0d0d0', rows: 6, cols: 2 }), { size: 'M' });
-  atlas.add('spectrum', P.stripes({ cols: ['#7b4fbf', '#3f6fd1', '#2f9fbf', '#3fa66b', '#f2c14e', '#f28c38', '#d9483b'], n: 1 }), { size: 'S' });
+  atlas.add('planks', P.planks({ base: '#9a9da0', alt: '#8a8d91', seam: '#6a6d72', rows: 6 }), { size: 'M' });
+  atlas.add('screens', PAT.screens(), { size: 'L', repeat: false });
+  atlas.add('ptable', PAT.ptable(), { w: 96, h: 64, repeat: false });
+  atlas.add('grid', Q.grid({ bg: '#ffffff', line: '#9a9a9a', n: 4, lw: 3 }), { size: 'S' });
   atlas.add('aspenbark', PAT.aspenbark(), { size: 'S' });
   atlas.add('spine', P.spine({ band: '#f6e7b8' }), { size: 'S', repeat: false });
   atlas.add('exit', Q.sign({ bg: '#fbf6ec', fg: '#d62f2f', text: 'EXIT' }), { w: 96, h: 40, repeat: false });
@@ -533,7 +586,7 @@ function build(atlas, kit) {
     // ── base plinth + floors ──
     deco(b, -W / 2 - 0.45, -0.55, -D / 2 - 0.45, W / 2 + 0.45, -0.02, D / 2 + 0.45, { color: '#8a5d45', tile: 'sandstone', rep: 2.2 });
     deco(b, -W / 2 - 0.5, -0.1, -D / 2 - 0.5, W / 2 + 0.5, -0.004, D / 2 + 0.5, { color: '#7bb156', faces: ['py', 'px', 'nx', 'pz', 'nz'], outline: false });
-    floor(b, -17, -13, -3, -1, 0, { tile: 'seatfab', rep: 0.9, color: '#5d6a7a' }); // G1B30 stage floor (tiers cover the rest)
+    floor(b, -17, -13, -3, -1, 0, { tile: 'planks', rep: 1.6 }); // G1B30 front floor: grey wood-look vinyl (tiers cover the rest)
     floor(b, -17, -1, -3, 1.4, 0, { tile: 'terrazzo', rep: 1.6 });
     floor(b, -3, -13, 8, -1, 0, { tile: 'herring', rep: 1.1 });
     floor(b, 8, -13, 17, -1, 0, { tile: 'carpet90', rep: 1.4 });
@@ -545,11 +598,11 @@ function build(atlas, kit) {
 
     // ── outer walls (bounds) ──
     const SS = { tile: 'sandstone', rep: 2.4, color: '#ffffff' };
-    const g1In = { color: '#7f6a5a', tile: 'slats', rep: 1.1 };
-    wall(b, { x0: -17, z0: -13, x1: -3, z1: -13, h: 5.6, t: 0.2, n: SS, p: g1In, name: 'back', cap: C.tileDk });
+    const g1In = { color: '#ece4d0', tile: 'blockwall', rep: 1.4 };
+    wall(b, { x0: -17, z0: -13, x1: -3, z1: -13, h: 6.8, t: 0.2, n: SS, p: g1In, name: 'back', cap: C.tileDk });
     wall(b, { x0: -3, z0: -13, x1: 8, z1: -13, h: 5.0, t: 0.2, n: SS, p: { color: C.plaster }, name: 'back', cap: C.tileDk });
     wall(b, { x0: 8, z0: -13, x1: 17, z1: -13, h: 4.4, t: 0.2, n: SS, p: { color: '#e9d9bd' }, name: 'back', cap: C.tileDk });
-    wall(b, { x0: -17, z0: -13, x1: -17, z1: -1, h: 5.6, t: 0.2, n: SS, p: g1In, name: 'left', cap: C.tileDk });
+    wall(b, { x0: -17, z0: -13, x1: -17, z1: -1, h: 6.8, t: 0.2, n: SS, p: g1In, name: 'left', cap: C.tileDk });
     wall(b, { x0: -17, z0: -1, x1: -17, z1: 1.4, h: 2.9, t: 0.2, n: SS, p: { color: C.block, tile: 'blockwall', rep: 1.2 }, name: 'left', cap: C.tileDk });
     wall(b, { x0: -17, z0: 1.4, x1: -17, z1: 9, h: 3.2, t: 0.2, n: SS, p: { color: C.blueGrey }, name: 'left', cap: C.tileDk });
     wall(b, { x0: -17, z0: 9, x1: -17, z1: 13, h: 0.7, t: 0.3, both: SS, name: 'left', cap: C.tileDk, outline: true });
@@ -581,7 +634,7 @@ function build(atlas, kit) {
     b.spot('seekerSpawns', [{ x: 7.0, z: 11.4, yaw: Math.PI }, { x: -1.0, z: 11.6, yaw: Math.PI }, { x: -13.6, z: 10.0, yaw: Math.PI }, { x: 12.8, z: 5.0, yaw: -Math.PI / 2 }]);
     b.spot('camo', { x: 7.3, z: -0.5, y: 0, wallNormal: [0, 0, 1], note: 'Norlin sandstone façade under the arcade' });
     b.spot('rug', { x: 5.0, z: 9.8, yaw: Math.PI });
-    b.probe('demo-bench-top', [-10.2, 0.95, -2.85], [0, 1, 0], BENCH_TOP);
+    b.probe('demo-bench-top', [-12.2, 0.96, -2.8], [0, 1, 0], BENCH_TOP);
     b.probe('pool-felt', [11.0, 0.8, -6.5], [0, 1, 0], C.felt);
   };
 }
@@ -594,136 +647,161 @@ const BLOCKS = [[-15.9, -12.78, 6], [-11.6, -7.44, 8], [-6.26, -4.18, 4]]; // se
 const AISLES = [[-16.9, -15.9], [-12.78, -11.6], [-7.44, -6.26], [-4.18, -3.1]];
 
 function g1b30(b, R) {
-  // south wall (chalkboards inside, corridor outside) with two stage-level exits
-  wall(b, { x0: -17, z0: -1, x1: -3, z1: -1, h: 5.6, t: 0.2, n: { color: '#8a7564', tile: 'slats', rep: 1.1 }, p: { color: C.block, tile: 'blockwall', rep: 1.2 }, open: [{ c: -15.6, w: 1.4, top: 2.3 }, { c: -4.4, w: 1.4, top: 2.3 }], trim: '#3a3437', name: 'g1-south' });
-  // east wall (to Norlin), with the top-row door onto the gallery
-  wall(b, { x0: -3, z0: -13, x1: -3, z1: -1, h: 5.6, t: 0.2, n: { color: '#8a7564', tile: 'slats', rep: 1.1 }, p: { color: C.plaster }, open: [{ c: -12.4, w: 1.0, bottom: UP, top: UP + 2.0 }], trim: C.walnut, name: 'g1-east' });
-  ceiling(b, -16.9, -12.9, -3.1, -1.1, H.g1, { tile: 'acoustic', rep: 1.2, name: 'g1b30' });
-  // the hall rises above the corridor roof: sandstone where the quad can see it
-  b.add(boxGeo(14.2, 2.75, 0.01, { faces: ['pz'] }), { at: [-10, 2.75 + 1.375 + 0.1, -0.893], tile: 'sandstone', rep: 2.4, color: '#ffffff', outline: false });
+  const FZ = -1.6; // lower front wall face (boards); the upper wall behind the catwalk sits at −1.1
+  const CREAM = '#ece4d0'; const DOORS = [{ c: -4.05, w: 1.1, top: 2.3 }, { c: -6.95, w: 1.0, top: 2.3 }];
+  // south wall (to the corridor) + the thick lower front wall the boards hang on
+  wall(b, { x0: -17, z0: -1, x1: -3, z1: -1, h: 6.8, t: 0.2, n: { color: CREAM }, p: { color: C.block, tile: 'blockwall', rep: 1.2 }, open: DOORS, trim: C.walnut, name: 'g1-south' });
+  wall(b, { x0: -16.9, z0: -1.35, x1: -3.1, z1: -1.35, h: 4.45, t: 0.5, n: { color: CREAM }, p: { color: CREAM }, open: DOORS, trim: '#4a3022', cap: null, name: 'g1-front' });
+  // east wall (to Norlin) with the top-row door onto the gallery
+  wall(b, { x0: -3, z0: -13, x1: -3, z1: -1, h: 6.8, t: 0.2, n: { color: CREAM, tile: 'blockwall', rep: 1.4 }, p: { color: C.plaster }, open: [{ c: -12.4, w: 1.0, bottom: UP, top: UP + 2.0 }], trim: C.walnut, name: 'g1-east' });
+  b.add(boxGeo(0.01, 1.8, 12.2, { faces: ['px'] }), { at: [-2.893, 5.9, -7.0], tile: 'sandstone', rep: 2.4, color: '#ffffff', outline: false });
+  ceiling(b, -16.9, -12.9, -3.1, -1.1, H.g1, { color: '#efe8d6', name: 'g1b30' });
+  // grid of square flush LED panels
+  for (let x = -15.4; x < -3.5; x += 2.2) for (let z = -11.8; z < -2.5; z += 2.2) deco(b, x - 0.3, H.g1 - 0.02, z - 0.3, x + 0.3, H.g1, z + 0.3, { color: '#fffef6', faces: ['ny', 'px', 'nx', 'pz', 'nz'], outline: false });
+  b.add(boxGeo(14.2, 4.05, 0.01, { faces: ['pz'] }), { at: [-10, 4.775, -0.893], tile: 'sandstone', rep: 2.4, color: '#ffffff', outline: false });
   guard(b, -17.2, H.g1 + 0.12, -13.2, -3, 9, -1, 'g1roof');
-  eave(b, -17.2, -1, -3, -1, 5.7, 1, { width: 1.0 });
+  eave(b, -17.2, -1, -3, -1, 6.9, 1, { width: 1.0 });
+  // grey fabric acoustic panels high on the side walls
+  for (const z of [-11.0, -8.0, -5.0]) deco(b, -16.9, 3.6, z - 1.2, -16.86, 5.6, z + 1.2, { color: '#8e8c8f', tile: 'seatfab', rep: 0.6 });
+  for (const z of [-9.0, -6.0]) deco(b, -3.14, 3.6, z - 1.2, -3.1, 5.6, z + 1.2, { color: '#8e8c8f', tile: 'seatfab', rep: 0.6 });
 
-  // ── tiers (solid, so no pockets): north half at full height, aisles step half-way on the south half
-  const carpet = { color: '#4f5b6e', tile: 'seatfab', rep: 0.8, outline: false };
+  // ── tiers: dark charcoal carpet, solid (no pockets); aisles step half-way on the south half
+  const carpet = { color: '#46484d', tile: 'seatfab', rep: 0.8, outline: false };
   for (let k = 1; k <= 8; k++) {
     const z0 = zN(k); const zs = z0 + TIER_D; const y = TIER_R * k;
     const zTop = k === 8 ? -12.9 : z0;
-    // north half (full height, whole width)
     solid(b, -16.9, 0, zTop, -3.1, y, z0 + TIER_D / 2, { ...carpet, faces: ['py', 'pz'] }, { name: 'tier' });
-    // south half: blocks full height, aisles one riser lower
     for (const [x0, x1] of BLOCKS) solid(b, x0, 0, z0 + TIER_D / 2, x1, y, zs, { ...carpet, faces: ['py', 'pz', 'px', 'nx'] }, { name: 'tier' });
     for (const [x0, x1] of AISLES) {
-      solid(b, x0, 0, z0 + TIER_D / 2, x1, y - 0.17, zs, { ...carpet, color: '#3f4a5a', faces: ['py', 'pz'] }, { name: 'aisle' });
-      // gold safety nosings on both aisle steps
-      deco(b, x0, y - 0.19, zs - 0.04, x1, y - 0.165, zs + 0.004, { color: C.gold, outline: false });
-      deco(b, x0, y - 0.02, z0 + TIER_D / 2 - 0.04, x1, y + 0.004, z0 + TIER_D / 2 + 0.004, { color: C.gold, outline: false });
+      solid(b, x0, 0, z0 + TIER_D / 2, x1, y - 0.17, zs, { ...carpet, color: '#3e4044', faces: ['py', 'pz'] }, { name: 'aisle' });
+      deco(b, x0, y - 0.19, zs - 0.035, x1, y - 0.165, zs + 0.004, { color: '#a7aaae', outline: false });
+      deco(b, x0, y - 0.02, z0 + TIER_D / 2 - 0.035, x1, y + 0.004, z0 + TIER_D / 2 + 0.004, { color: '#a7aaae', outline: false });
     }
-    // dark nosing on block risers
-    for (const [x0, x1] of BLOCKS) deco(b, x0, y - 0.03, zs - 0.03, x1, y + 0.004, zs + 0.004, { color: C.ink, outline: false });
+    for (const [x0, x1] of BLOCKS) deco(b, x0, y - 0.025, zs - 0.03, x1, y + 0.004, zs + 0.004, { color: '#2c2d31', outline: false });
+    // the side stair down to the EXIT: black steel railing along its inner edge
+    const rx = -4.2;
+    aabb(b, rx - 0.025, y + 0.92, z0, rx + 0.025, y + 0.97, zs, { color: C.black, collide: { wall: false, perch: true, name: 'perch:stair-rail' } });
+    b.collide(rx - 0.02, y, z0, rx + 0.02, y + 0.92, zs, { wall: false, perch: true, name: 'perch:stair-rail-bars' });
+    for (let q = 0; q < 4; q++) deco(b, rx - 0.012, y - (q >= 2 ? 0.17 : 0), z0 + 0.05 + q * 0.23, rx + 0.012, y + 0.92, z0 + 0.07 + q * 0.23, { color: C.black, outline: false });
   }
-  // cross-aisle railing at the top (north side of tier 7 drops 0.34 m: no rail needed) + back wall clock
-  // ── seats, standards and desk strips
+  // ── seats: grey plastic shells on black pedestals with light-wood tablet arms; office chairs at the front left
+  const officeChair = (x, y, z) => {
+    b.add(cylGeo(0.24, 0.24, 0.04, { radial: 5 }), { at: [x, y + 0.05, z], color: C.black, outline: false });
+    deco(b, x - 0.025, y + 0.05, z - 0.025, x + 0.025, y + 0.46, z + 0.025, { color: C.black, outline: false });
+    aabb(b, x - 0.25, y + 0.46, z - 0.24, x + 0.25, y + 0.54, z + 0.24, { color: '#2b2b2f', collide: { wall: false, ceil: true, name: 'chair' } });
+    aabb(b, x - 0.23, y + 0.58, z - 0.3, x + 0.23, y + 1.2, z - 0.25, { color: '#2b2b2f', tile: 'pegboard', rep: 0.12, collide: { wall: true, perch: true, name: 'perch:mesh-back' } });
+  };
   for (let k = 0; k <= 7; k++) {
-    const y = TIER_R * k; const n0 = zN(k); const zs = n0 + TIER_D;
+    const y = TIER_R * k; const n0 = zN(k);
     BLOCKS.forEach(([x0, x1, n], bi) => {
       const sw = (x1 - x0) / n;
-      const gold = (bi === 1 && k % 2 === 0) || (bi !== 1 && k === 3);
       for (let i = 0; i < n; i++) {
         const cx = x0 + sw * (i + 0.5);
-        // back (raised: walk under the seats along the row)
-        solid(b, cx - sw / 2 + 0.03, y + 0.4, n0 + 0.1, cx + sw / 2 - 0.03, y + 0.95, n0 + 0.17, { color: gold ? C.goldDk : '#2f2c31' }, { name: 'seat-back' });
-        // pan (folded down)
-        aabb(b, cx - sw / 2 + 0.04, y + 0.42, n0 + 0.17, cx + sw / 2 - 0.04, y + 0.47, n0 + 0.56, { color: gold ? C.gold : '#4a4650', tile: 'seatfab', rep: 0.4, collide: { wall: false, ceil: true, name: 'seat' } });
+        if (k === 0 && bi === 2) { if (i % 2 === 0) officeChair(cx + sw / 2, y, n0 + 0.5); continue; }
+        deco(b, cx - 0.025, y, n0 + 0.33, cx + 0.025, y + 0.42, n0 + 0.38, { color: C.black, outline: false }); // pedestal
+        deco(b, cx - 0.12, y, n0 + 0.24, cx + 0.12, y + 0.025, n0 + 0.48, { color: C.black, outline: false }); // foot
+        aabb(b, cx - 0.22, y + 0.42, n0 + 0.17, cx + 0.22, y + 0.47, n0 + 0.58, { color: '#767a80', collide: { wall: false, ceil: true, name: 'seat' } });
+        aabb(b, cx - 0.22, y + 0.5, n0 + 0.1, cx + 0.22, y + 0.9, n0 + 0.16, { color: '#7f8389', collide: { wall: true, name: 'seat-back' } });
+        // tablet arm on the right-hand side (−x): some folded down over the lap, some stowed up
+        deco(b, cx - 0.25, y + 0.42, n0 + 0.3, cx - 0.22, y + 0.66, n0 + 0.34, { color: C.black, outline: false });
+        if ((i + k) % 3) aabb(b, cx - 0.26, y + 0.66, n0 + 0.34, cx + 0.0, y + 0.68, n0 + 0.64, { color: '#d9b98c', collide: { wall: false, perch: true, name: 'perch:tablet' } });
+        else aabb(b, cx - 0.27, y + 0.66, n0 + 0.2, cx - 0.245, y + 0.98, n0 + 0.5, { color: '#d9b98c', collide: { wall: false, perch: true, name: 'perch:tablet' } });
       }
-      // standards every two seats: a slim leg + a perchable arm (squeeze under it)
-      for (let i = 0; i <= n; i += 2) {
-        const sx = x0 + sw * i;
-        deco(b, sx - 0.02, y, n0 + 0.3, sx + 0.02, y + 0.42, n0 + 0.34, { color: C.ink, outline: false });
-        aabb(b, sx - 0.03, y + 0.42, n0 + 0.12, sx + 0.03, y + 0.64, n0 + 0.5, { color: C.ink, collide: { wall: false, perch: true, name: 'perch:arm' } });
-      }
-      // desk strip + modesty panel along the front edge of the tier
-      aabb(b, x0, y + 0.71, zs - 0.34, x1, y + 0.75, zs - 0.02, { color: C.woodL, tile: 'wood', rep: 0.8, collide: { wall: false, ceil: true, name: 'desk' } });
-      solid(b, x0, y, zs - 0.06, x1, y + 0.71, zs - 0.02, { color: '#6d5a4a', tile: 'slats', rep: 0.5 }, { name: 'panel' });
     });
   }
 
-  // ── chalkboard wall: 4 × 2 sliding boards, aluminium frames, chalk tray (perch)
-  const zb = -1.1;
+  // ── front wall: sliding dark-green chalkboards with light wood trim + a wood ledge (perch)
+  const WOODL = '#cda477';
   for (let col = 0; col < 4; col++) for (let row = 0; row < 2; row++) {
-    const x0 = -14 + col * 2; const y0 = row ? 2.3 : 0.95;
-    b.add(boxGeo(1.96, 1.2, 0.02, { faces: ['nz'] }), { at: [x0 + 1, y0 + 0.6, zb - 0.03], color: '#ffffff', tile: 'chalk', rep: [4, 1.2], uvOff: [[0, 0.5, 0.25, 0.75][col] + (row ? 0.37 : 0), 0], outline: false });
-    deco(b, x0, y0 - 0.03, zb - 0.06, x0 + 2, y0, zb, { color: C.frameAl, outline: false });
-    deco(b, x0, y0 + 1.2, zb - 0.06, x0 + 2, y0 + 1.23, zb, { color: C.frameAl, outline: false });
-    deco(b, x0 - 0.015, y0, zb - 0.06, x0 + 0.015, y0 + 1.2, zb, { color: C.frameAl, outline: false });
+    const x0 = -16.2 + col * 2.05; const y0 = row ? 2.42 : 0.92;
+    b.add(boxGeo(2.05, 1.5, 0.02, { faces: ['nz'] }), { at: [x0 + 1.025, y0 + 0.75, FZ - 0.03], color: '#ffffff', tile: 'chalk', rep: [4.1, 1.5], uvOff: [[0, 0.5, 0.25, 0.75][col] + (row ? 0.37 : 0), 0], outline: false });
   }
-  deco(b, -6.015, 0.95, zb - 0.06, -5.985, 3.5, zb, { color: C.frameAl, outline: false });
-  deco(b, -14.1, 0.9, zb - 0.13, -5.9, 0.94, zb, { color: C.frameAl, collide: { wall: false, perch: true, name: 'perch:chalk-tray' } });
-  for (let i = 0; i < 6; i++) deco(b, -13.5 + i * 1.3, 0.94, zb - 0.1, -13.42 + i * 1.3, 0.96, zb - 0.07, { color: ['#f8f5ee', '#f2c14e', '#8fc3e0'][i % 3], outline: false });
-  // projector screen above the boards + roller case
-  deco(b, -11.6, 3.62, zb - 0.09, -8.4, 5.12, zb - 0.07, { color: '#f4f2ee' });
-  deco(b, -11.8, 5.12, zb - 0.16, -8.2, 5.26, zb - 0.02, { color: '#d8d4cc' });
-  // wall clock and the spectrum banner along the west wall (over the rake)
-  b.add(cylGeo(0.26, 0.26, 0.05, { radial: 18 }), { at: [-4.9, 4.1, zb - 0.03], rot: [Math.PI / 2, 0, 0], color: '#f8f5ee' });
-  deco(b, -4.92, 4.1, zb - 0.07, -4.88, 4.3, zb - 0.06, { color: C.ink, outline: false });
-  deco(b, -4.9, 4.08, zb - 0.07, -4.75, 4.12, zb - 0.06, { color: C.ink, outline: false });
-  b.add(boxGeo(0.01, 0.7, 10.5, { faces: ['px'] }), { at: [-16.895, 3.85, -6.8], tile: 'spectrum', rep: [10.5, 1], rot: [0, 0, 0], color: '#ffffff', outline: false });
-  // exit signs over both doors (both sides)
-  for (const x of [-15.6, -4.4]) { exitSign(b, x, 2.5, -1.1, 'z-'); exitSign(b, x, 2.5, -0.9, 'z+'); }
+  for (let col = 0; col <= 4; col++) { const x = -16.2 + col * 2.05; deco(b, x - 0.05, 0.9, FZ - 0.07, x + 0.05, 3.95, FZ, { color: WOODL }); }
+  deco(b, -16.25, 2.39, FZ - 0.07, -7.95, 2.45, FZ, { color: WOODL, outline: false });
+  deco(b, -16.25, 3.92, FZ - 0.07, -7.95, 3.98, FZ, { color: WOODL, outline: false });
+  aabb(b, -16.3, 0.84, FZ - 0.14, -7.9, 0.9, FZ, { color: WOODL, collide: { wall: false, perch: true, name: 'perch:chalk-ledge' } });
+  for (let i = 0; i < 5; i++) deco(b, -15.6 + i * 1.7, 0.9, FZ - 0.11, -15.52 + i * 1.7, 0.92, FZ - 0.08, { color: ['#f8f5ee', '#f2c14e'][i % 2], outline: false });
+  // two big projector screens over the boards: KEY IDEAS notes and a multiple-choice question
+  for (const [x0, half] of [[-11.85, 0.5], [-15.95, 0]]) {
+    b.add(boxGeo(3.8, 2.1, 0.02, { faces: ['nz'] }), { at: [x0 + 1.9, 3.3, FZ - 0.18], tile: 'screens', rep: [3.8, 4.2], uvOff: [0, half], color: '#ffffff', outline: false });
+    solid(b, x0 - 0.04, 2.23, FZ - 0.18, x0 + 3.84, 4.37, FZ - 0.16, { color: '#2b2b2f', faces: ['px', 'nx', 'py', 'ny', 'pz'] }, { name: 'screen' });
+    deco(b, x0 - 0.08, 4.37, FZ - 0.26, x0 + 3.88, 4.45, FZ, { color: '#2b2b2f' });
+  }
+  // speaker, clock, periodic table poster, EXIT sign
+  solid(b, -7.92, 2.5, FZ - 0.28, -7.55, 3.45, FZ, { color: '#1f1f23' }, { name: 'speaker' });
+  b.add(cylGeo(0.2, 0.2, 0.05, { radial: 16 }), { at: [-7.0, 3.25, FZ - 0.03], rot: [Math.PI / 2, 0, 0], color: '#f8f5ee' });
+  deco(b, -7.015, 3.25, FZ - 0.07, -6.985, 3.4, FZ - 0.06, { color: C.ink, outline: false });
+  deco(b, -7.0, 3.235, FZ - 0.07, -6.88, 3.265, FZ - 0.06, { color: C.ink, outline: false });
+  poster(b, -5.5, 2.55, FZ, 1.4, 1.0, 'z-', 'ptable', '#e9e5da');
+  exitSign(b, -4.05, 2.5, FZ, 'z-'); exitSign(b, -4.05, 2.5, -0.9, 'z+');
   exitSign(b, -3.1, UP + 2.2, -12.4, 'x-');
 
-  // ── demo bench: cabinets at the ends, an open kneehole in the middle (hide under it)
-  const bz0 = -3.55; const bz1 = -2.75;
-  solid(b, -12.25, 0, bz0, -11.0, 0.9, bz1, { color: C.walnut, tile: 'wood', rep: 0.6 }, { name: 'bench' });
-  solid(b, -9.0, 0, bz0, -7.75, 0.9, bz1, { color: C.walnut, tile: 'wood', rep: 0.6 }, { name: 'bench' });
-  deco(b, -11.0, 0.5, bz0, -9.0, 0.9, bz0 + 0.04, { color: C.walnut, tile: 'wood', rep: 0.6 }); // back apron (seekers peek from the stage side)
-  aabb(b, -12.35, 0.9, bz0 - 0.05, -7.65, 0.95, bz1 + 0.05, { color: BENCH_TOP, collide: { wall: false, ceil: true, name: 'bench-top' } });
-  b.blob(-10, -3.15, 2.5, 0.6, { a: 0.28 });
-  // Van de Graaff generator
-  b.add(cylGeo(0.07, 0.11, 0.6, { radial: 12 }), { at: [-11.6, 1.25, -3.15], color: '#c9ced3', collide: true });
-  b.add(sphereGeo(0.24, 0.24, 0.24, { w: 14, h: 10 }), { at: [-11.6, 1.72, -3.15], color: '#d8dde2', collide: true });
-  // Newton's cradle
-  for (const sx of [-0.18, 0.18]) for (const sz of [-0.08, 0.08]) deco(b, -10.6 + sx - 0.01, 0.95, -3.15 + sz - 0.01, -10.6 + sx + 0.01, 1.25, -3.15 + sz + 0.01, { color: C.steel, outline: false });
-  deco(b, -10.8, 1.24, -3.24, -10.4, 1.26, -3.06, { color: C.steel });
-  for (let i = 0; i < 5; i++) b.add(sphereGeo(0.035, 0.035, 0.035, { w: 8, h: 6 }), { at: [-10.74 + i * 0.07, 1.04, -3.15], color: '#d8dde2' });
-  // beakers + flask
-  [[-9.9, '#8fd3c0', 0.06, 0.16], [-9.72, '#f2c14e', 0.05, 0.12], [-9.55, '#f08aa8', 0.045, 0.2]].forEach(([x, c, r, h]) => {
-    b.add(cylGeo(r, r, h, { radial: 10 }), { at: [x, 0.95 + h / 2, -3.0], color: '#e8f2f4' });
-    b.add(cylGeo(r * 0.92, r * 0.92, h * 0.55, { radial: 10 }), { at: [x, 0.95 + h * 0.28, -3.0], color: c, outline: false });
-  });
-  b.add(latheGeo([[0.12, 0], [0.13, 0.08], [0.04, 0.22], [0.03, 0.34]], { radial: 12 }), { at: [-9.3, 0.95, -3.25], color: '#9fd38c' });
-  // pendulum stand (tall, perchable crossbar)
-  deco(b, -8.45, 0.95, -3.4, -8.41, 2.15, -3.36, { color: C.ink, outline: false });
-  deco(b, -8.45, 0.95, -2.94, -8.41, 2.15, -2.9, { color: C.ink, outline: false });
-  aabb(b, -8.47, 2.13, -3.42, -8.39, 2.19, -2.88, { color: C.ink, collide: { wall: false, perch: true, name: 'perch:pendulum' } });
-  deco(b, -8.435, 1.4, -3.158, -8.425, 2.15, -3.152, { color: '#555', outline: false });
-  b.add(sphereGeo(0.07, 0.07, 0.07, { w: 10, h: 7 }), { at: [-8.43, 1.36, -3.15], color: C.gold });
-  // lectern + laptop, oscilloscope cart, tesla-coil-ish toroid on a stand
-  solid(b, -6.3, 0, -3.3, -5.7, 1.1, -2.8, { color: C.walnut, tile: 'wood', rep: 0.5 }, { name: 'lectern' });
-  aabb(b, -6.35, 1.1, -3.35, -5.65, 1.14, -2.72, { color: '#4a3324' });
-  deco(b, -6.15, 1.14, -3.15, -5.85, 1.16, -2.95, { color: '#3a3d44' });
-  deco(b, -6.15, 1.15, -3.17, -5.85, 1.35, -3.15, { color: '#3a3d44' });
-  const cart = (x, z) => {
-    aabb(b, x - 0.45, 0.78, z - 0.3, x + 0.45, 0.82, z + 0.3, { color: C.steel, collide: { wall: false, ceil: true, name: 'cart' } });
-    aabb(b, x - 0.45, 0.2, z - 0.3, x + 0.45, 0.23, z + 0.3, { color: C.steel, collide: { wall: false, name: 'cart-shelf' } });
-    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) deco(b, x + sx * 0.42 - 0.015, 0.06, z + sz * 0.27 - 0.015, x + sx * 0.42 + 0.015, 0.8, z + sz * 0.27 + 0.015, { color: '#6c737a', outline: false });
-  };
-  cart(-13.7, -2.5);
-  solid(b, -14.0, 0.82, -2.7, -13.4, 1.18, -2.3, { color: '#5a6a7a' }, { name: 'scope' });
-  b.add(boxGeo(0.3, 0.2, 0.004, { faces: ['pz'], fit: true }), { at: [-13.75, 1.0, -2.297], tile: 'cad', color: '#ffffff', outline: false });
-  b.add(cylGeo(0.05, 0.08, 1.2, { radial: 10 }), { at: [-6.9, 0.6, -2.0], color: '#c26b3a', collide: true });
-  b.add(latheGeo([[0.0, 0], [0.2, 0.02], [0.3, 0.1], [0.2, 0.18], [0.0, 0.2]], { radial: 16 }), { at: [-6.9, 1.2, -2.0], color: '#d8dde2' });
-  b.blob(-6.9, -2.0, 0.3, 0.3);
-  // ── ceiling: flush light rows + three suspended light bars (perches) + a hanging projector
-  for (const x of [-14.5, -10, -5.5]) deco(b, x - 0.15, H.g1 - 0.06, -12.4, x + 0.15, H.g1, -1.6, { color: '#fff6d0', faces: ['ny', 'px', 'nx'], outline: false });
-  for (const z of [-4.2, -7.6, -10.6]) {
-    aabb(b, -15.5, 4.32, z - 0.08, -4.5, 4.38, z + 0.08, { color: '#fffbea', collide: { wall: false, perch: true, ceil: true, name: 'perch:lightbar' } });
-    deco(b, -15.5, 4.38, z - 0.09, -4.5, 4.41, z + 0.09, { color: C.ink });
-    for (const x of [-14.5, -10, -5.5]) deco(b, x - 0.01, 4.41, z - 0.01, x + 0.01, H.g1, z + 0.01, { color: C.ink, outline: false });
+  // ── catwalk: bulkhead, black steel deck on brackets, vertical-bar railing (walk, crawl, hang under)
+  deco(b, -16.9, 4.45, -2.0, -3.1, 4.75, FZ, { color: '#e3dac4' });
+  aabb(b, -16.9, 4.75, -2.45, -3.1, 4.82, -1.1, { color: '#2e2f33', tile: 'grid', rep: 0.3, collide: { wall: false, ceil: true, name: 'ceil:catwalk' } });
+  for (let x = -16.0; x < -3.5; x += 2.1) b.add(boxGeo(0.06, 0.06, 0.95), { at: [x, 4.42, -2.05], rot: [-0.62, 0, 0], color: C.black });
+  railing(b, -16.9, -2.42, -3.1, -2.42, 4.82, { h: 1.0, gap: 0.16, color: '#26262a', top: '#26262a', name: 'catwalk-rail' });
+  solid(b, -8.7, 5.82, -2.5, -8.45, 6.05, -2.3, { color: '#f4f2ee' }, { name: 'camera' });
+  // ladder up to the catwalk at the far (right) end
+  for (const x of [-16.75, -16.35]) deco(b, x - 0.025, 0, -1.72, x + 0.025, 4.85, -1.67, { color: C.black });
+  for (let i = 1; i <= 15; i++) aabb(b, -16.75, i * 0.3, -1.74, -16.35, i * 0.3 + 0.03, -1.66, { color: C.black, collide: { wall: false, perch: true, name: 'perch:ladder' } });
+  // ropes + pulleys hanging from the catwalk (hang points); a coil of rope on the floor
+  for (const [x, top] of [[-10.6, 4.75], [-10.42, 4.75]]) {
+    deco(b, x - 0.012, 0.02, -2.37, x + 0.012, top, -2.34, { color: '#7a6a58', outline: false });
+    b.collide(x - 0.02, 0, -2.38, x + 0.02, top, -2.33, { wall: false, perch: true, name: 'perch:rope' });
   }
-  solid(b, -10.3, 4.55, -6.4, -9.7, 4.8, -5.9, { color: '#e6e3dc' }, { name: 'projector' });
-  deco(b, -10.02, 4.8, -6.17, -9.98, H.g1, -6.13, { color: C.ink, outline: false });
-  b.add(cylGeo(0.07, 0.07, 0.04, { radial: 10 }), { at: [-10, 4.67, -5.88], rot: [Math.PI / 2, 0, 0], color: '#2a3a4a', outline: false });
+  for (const y of [4.55, 3.5]) {
+    b.add(cylGeo(0.09, 0.09, 0.05, { radial: 12 }), { at: [-10.51, y, -2.355], rot: [Math.PI / 2, 0, 0], color: '#8c9096', collide: { wall: false, perch: true, name: 'perch:pulley' } });
+    deco(b, -10.53, y + 0.09, -2.37, -10.49, y + 0.2, -2.34, { color: C.black, outline: false });
+  }
+  b.add(sphereGeo(0.09, 0.12, 0.07, { w: 8, h: 6 }), { at: [-9.6, 4.45, -2.4], color: '#2f5a3f' }); // a little green bag on a hook
+  b.add(cylGeo(0.34, 0.36, 0.08, { radial: 16 }), { at: [-9.7, 0.04, -3.95], color: '#8a7864', tile: 'rings', rep: 0.06 });
+  b.add(cylGeo(0.18, 0.18, 0.081, { radial: 12 }), { at: [-9.7, 0.045, -3.95], color: '#55606a', outline: false });
+  // Christmas lights and a red ornament on the near (left) end of the railing
+  for (let i = 0; i <= 10; i++) { const t = i / 10; b.add(sphereGeo(0.035, 0.035, 0.035, { w: 6, h: 4 }), { at: [-3.3 - t * 2.0, 4.72 - Math.sin(t * Math.PI) * 0.22, -2.47], color: '#fffbe6', outline: false }); }
+  b.add(sphereGeo(0.07, 0.07, 0.07, { w: 8, h: 6 }), { at: [-3.9, 4.45, -2.5], color: '#d8322e' });
+
+  // ── projector on a long white pole from the ceiling
+  b.add(cylGeo(0.05, 0.05, H.g1 - 4.55, { radial: 8 }), { at: [-8.0, (H.g1 + 4.55) / 2, -6.6], color: '#f4f2ee', collide: { wall: false, perch: true, name: 'perch:projector-pole' } });
+  solid(b, -8.28, 4.42, -6.85, -7.72, 4.57, -6.35, { color: '#25252a' }, { name: 'projector-mount' });
+  solid(b, -8.45, 4.1, -6.95, -7.55, 4.42, -6.25, { color: '#f6f5f1' }, { name: 'projector' });
+  for (let i = 0; i < 6; i++) deco(b, -8.3 + i * 0.1, 4.16, -6.252, -8.26 + i * 0.1, 4.36, -6.24, { color: '#9a9ea3', outline: false });
+  b.add(cylGeo(0.07, 0.07, 0.04, { radial: 10 }), { at: [-7.7, 4.26, -6.23], rot: [Math.PI / 2, 0, 0], color: '#2a3a4a', outline: false });
+
+  // ── front floor furniture
+  // the long demo bench: sage laminate top, cream panelled body, open behind (hide in the kneehole from the board side)
+  const bz0 = -3.35; const bz1 = -2.6; const BODY = '#efe7d2';
+  solid(b, -14.6, 0, bz0, -13.5, 0.92, bz1, { color: BODY }, { name: 'bench' });
+  solid(b, -10.5, 0, bz0, -9.4, 0.92, bz1, { color: BODY }, { name: 'bench' });
+  solid(b, -13.5, 0.06, bz0, -10.5, 0.92, bz0 + 0.05, { color: BODY }, { name: 'bench-front' });
+  for (let x = -14.05; x < -9.5; x += 1.05) deco(b, x - 0.01, 0.12, bz0 - 0.006, x + 0.01, 0.86, bz0, { color: '#cfc5ad', outline: false });
+  deco(b, -14.6, 0, bz0 - 0.005, -9.4, 0.06, bz1, { color: '#3a3a3e', outline: false });
+  aabb(b, -14.68, 0.92, bz0 - 0.06, -9.32, 0.96, bz1 + 0.04, { color: BENCH_TOP, collide: { wall: false, ceil: true, name: 'bench-top' } });
+  deco(b, -10.25, 0.42, bz0 - 0.02, -9.85, 0.72, bz0, { color: '#2a2b2f' }); // control panel
+  for (let i = 0; i < 4; i++) deco(b, -10.2 + (i % 2) * 0.17, 0.5 + (i >> 1) * 0.12, bz0 - 0.03, -10.12 + (i % 2) * 0.17, 0.56 + (i >> 1) * 0.12, bz0 - 0.02, { color: ['#f2f2ea', '#d9483b', '#f2f2ea', '#3fa66b'][i], outline: false });
+  deco(b, -13.4, 0.96, -3.1, -13.0, 1.02, -2.85, { color: '#2a2b2f' });
+  deco(b, -11.4, 0.96, -3.0, -11.1, 0.975, -2.8, { color: '#f8f5ee', outline: false });
+  b.add(sphereGeo(0.06, 0.025, 0.08, { w: 6, h: 4 }), { at: [-10.9, 0.97, -2.95], color: C.mustard, outline: false });
+  // the smaller cream table with a green top
+  solid(b, -8.9, 0, -2.75, -8.0, 0.86, -2.1, { color: BODY }, { name: 'side-table' });
+  aabb(b, -8.95, 0.86, -2.8, -7.95, 0.9, -2.05, { color: BENCH_TOP, collide: { wall: false, name: 'side-table-top' } });
+  deco(b, -8.7, 0.9, -2.6, -8.45, 0.905, -2.35, { color: '#f8f5ee', outline: false });
+  // lectern / AV station (cream body, wood top, tablet + mic) and a small AV cart
+  solid(b, -6.7, 0, -4.0, -5.8, 0.95, -3.4, { color: BODY }, { name: 'lectern' });
+  aabb(b, -6.78, 0.95, -4.06, -5.72, 1.0, -3.34, { color: '#b58a5c', tile: 'wood', rep: 0.5, collide: { wall: false, ceil: true, name: 'lectern-top' } });
+  deco(b, -6.35, 1.0, -3.8, -6.05, 1.02, -3.58, { color: '#1f1f23', outline: false });
+  deco(b, -6.33, 1.021, -3.78, -6.07, 1.024, -3.6, { color: '#6fb6e8', outline: false });
+  b.add(cylGeo(0.008, 0.008, 0.32, { radial: 5 }), { at: [-5.95, 1.15, -3.5], rot: [0.5, 0, 0], color: C.black, outline: false });
+  b.add(cylGeo(0.03, 0.03, 0.01, { radial: 8 }), { at: [-6.55, 1.005, -3.6], color: '#e07a1f', outline: false });
+  aabb(b, -5.6, 0.75, -3.95, -5.1, 0.79, -3.45, { color: '#c9ced3', collide: { wall: false, ceil: true, name: 'cart' } });
+  aabb(b, -5.6, 0.3, -3.95, -5.1, 0.33, -3.45, { color: '#c9ced3', collide: { wall: false, name: 'cart-shelf' } });
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) deco(b, -5.35 + sx * 0.23 - 0.012, 0.04, -3.7 + sz * 0.23 - 0.012, -5.35 + sx * 0.23 + 0.012, 0.77, -3.7 + sz * 0.23 + 0.012, { color: '#2a2b2f', outline: false });
+  solid(b, -5.5, 0.79, -3.85, -5.2, 0.95, -3.6, { color: '#2a2b2f' }, { name: 'doc-cam' });
+  // a black wheeled dolly
+  aabb(b, -8.5, 0.06, -3.95, -7.85, 0.1, -3.45, { color: '#1f1f23', collide: { wall: false, name: 'dolly' } });
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) b.add(sphereGeo(0.03, 0.03, 0.03, { w: 6, h: 4 }), { at: [-8.175 + sx * 0.28, 0.03, -3.7 + sz * 0.2], color: '#555', outline: false });
+  b.blob(-12, -2.97, 2.9, 0.5, { a: 0.24 }); b.blob(-6.25, -3.7, 0.55, 0.4); b.blob(-8.45, -2.42, 0.5, 0.4);
+  void R;
 }
 
 // ── 2. BASEMENT CORRIDOR (Duane, below ground: lockers, pipes, cork board) ─────────────
@@ -744,15 +822,15 @@ function corridor(b) {
   poster(b, -12.4, 1.45, -0.9, 2.4, 0.9, 'z+', 'cork', C.walnut);
   solid(b, -10.45, 0.72, -0.9, -9.95, 0.95, -0.55, { color: '#d8dde2' }, { name: 'fountain' });
   deco(b, -10.25, 0.95, -0.8, -10.15, 1.0, -0.7, { color: C.steel });
-  solid(b, -9.4, 0, -0.9, -7.0, 0.8, -0.5, { color: C.walnut, tile: 'wood', rep: 0.5 }, { name: 'case' });
-  deco(b, -9.4, 0.8, -0.9, -7.0, 1.9, -0.88, { color: '#3a4d6a' });
-  for (const [x, z] of [[-9.38, -0.52], [-7.02, -0.52]]) deco(b, x - 0.02, 0.8, z - 0.02, x + 0.02, 1.9, z + 0.02, { color: C.walnut });
-  solid(b, -9.42, 1.9, -0.92, -6.98, 1.96, -0.48, { color: C.walnut }, { name: 'case-top' });
-  b.collide(-9.4, 0.8, -0.53, -7.0, 1.9, -0.49, { wall: false, climb: false, name: 'glass' });
-  b.add(sphereGeo(0.13, 0.13, 0.13, { w: 12, h: 8 }), { at: [-8.2, 1.3, -0.7], color: C.mustard });
+  solid(b, -16.6, 0, -0.9, -14.2, 0.8, -0.5, { color: C.walnut, tile: 'wood', rep: 0.5 }, { name: 'case' });
+  deco(b, -16.6, 0.8, -0.9, -14.2, 1.9, -0.88, { color: '#3a4d6a' });
+  for (const [x, z] of [[-16.58, -0.52], [-14.22, -0.52]]) deco(b, x - 0.02, 0.8, z - 0.02, x + 0.02, 1.9, z + 0.02, { color: C.walnut });
+  solid(b, -16.62, 1.9, -0.92, -14.18, 1.96, -0.48, { color: C.walnut }, { name: 'case-top' });
+  b.collide(-16.6, 0.8, -0.53, -14.2, 1.9, -0.49, { wall: false, climb: false, name: 'glass' });
+  b.add(sphereGeo(0.13, 0.13, 0.13, { w: 12, h: 8 }), { at: [-15.4, 1.3, -0.7], color: C.mustard });
   [[0.25, 0.04, C.coral], [0.38, 0.05, C.teal], [0.52, 0.035, C.red], [0.66, 0.08, '#e9cf86']].forEach(([d, r, c], i) => {
     const a = i * 1.7;
-    b.add(sphereGeo(r, r, r, { w: 8, h: 6 }), { at: [-8.2 + Math.cos(a) * d * 1.3, 1.3 + Math.sin(a * 2) * 0.05, -0.7 + Math.sin(a) * 0.12], color: c });
+    b.add(sphereGeo(r, r, r, { w: 8, h: 6 }), { at: [-15.4 + Math.cos(a) * d * 1.3, 1.3 + Math.sin(a * 2) * 0.05, -0.7 + Math.sin(a) * 0.12], color: c });
   });
   // basement pipes along the ceiling (perches, hang underneath)
   for (const [z, y, c, r] of [[-0.62, 2.48, C.red, 0.055], [-0.36, 2.44, '#7d93a6', 0.07]]) {
@@ -1187,6 +1265,7 @@ export const CUBOULDER = {
     overview: { y: 12, radius: 18 },
     // screenshot / tour cameras: p = eye, t = target
     cams: [
+      { name: 'g1b30-photo', p: [-15.9, 6.3, -7.6], t: [-8.6, 0.9, -1.9] },
       { name: 'g1b30', p: [-3.7, 4.9, -12.5], t: [-10, 1.2, -1.6] },
       { name: 'g1b30-rows', p: [-5.4, 2.0, -1.7], t: [-11.5, 1.8, -10] },
       { name: 'norlin', p: [7.5, 4.3, -1.5], t: [1.5, 0.8, -8.5] },

@@ -62,8 +62,11 @@ async function staticSection() {
   for (const rm of r.rooms) assert(rm.floorCells > 20, `flood fill reaches "${rm.name}" on its floor (${rm.floorCells} cells)`);
   const ground = r.pockets.filter((p) => p.y < 0.3 && p.area >= 0.25);
   assert(!ground.length, `no enclosed walkable pocket at ground level${ground.length ? ': ' + JSON.stringify(ground) : ''}`);
-  const big = r.pockets.filter((p) => p.area >= 3);
-  assert(!big.length, `no large unreachable area (≥ 3 m²) anywhere${big.length ? ': ' + JSON.stringify(big) : ''}`);
+  // the G1B30 catwalk (deck at 4.82 m) is climb-only by design: ladder, ropes, pulleys or the walls
+  const catwalk = r.pockets.find((p) => Math.abs(p.y - 4.82) < 0.02 && p.x0 < -15 && p.x1 > -5);
+  assert(!!catwalk, `the G1B30 catwalk is a climb-only deck (${catwalk ? catwalk.area + ' m²' : 'missing'})`);
+  const big = r.pockets.filter((p) => p.area >= 3 && p !== catwalk);
+  assert(!big.length, `no other large unreachable area (≥ 3 m²)${big.length ? ': ' + JSON.stringify(big) : ''}`);
   console.log(`  reached ${r.reached} of ${r.standable} standable states; ${r.pocketCount} small raised perches are climb-only (largest ${r.pockets[0] ? r.pockets[0].area + ' m² at y ' + r.pockets[0].y : '—'})`);
 }
 
@@ -130,11 +133,11 @@ async function roundSection(port) {
     s = await st(a);
     const moved = Math.hypot(s.bodies[hider].x - start.x, s.bodies[hider].z - start.z);
     assert(moved > 0.3, `hider walked ${moved.toFixed(2)} m on the quad`);
-    // hide in the kneehole under the G1B30 demo bench
-    await hook(a, 'teleport', -10.0, -3.15, Math.PI, 0);
+    // hide in the kneehole under the G1B30 demo bench (open on the chalkboard side)
+    await hook(a, 'teleport', -12.0, -2.95, Math.PI, 0);
     await wait(300);
     s = await st(a);
-    assert(Math.abs(s.bodies[hider].x + 10) < 0.3 && s.bodies[hider].y < 0.05, `hider fits under the demo bench (${s.bodies[hider].x.toFixed(2)}, ${s.bodies[hider].z.toFixed(2)})`);
+    assert(Math.abs(s.bodies[hider].x + 12) < 0.3 && s.bodies[hider].y < 0.05, `hider fits under the demo bench (${s.bodies[hider].x.toFixed(2)}, ${s.bodies[hider].z.toFixed(2)})`);
     await hook(a, 'resetPerf'); await wait(1500);
     const perfH = await hook(a, 'perf');
     await a.click('[data-act="ready"]').catch(() => hook(a, 'action', 'ready'));
@@ -145,7 +148,7 @@ async function roundSection(port) {
     const seeker = s.viewer;
     assert(seeker !== hider, 'roles swap for the hunt');
     // seeker comes in by the stage door and looks under the bench from the chalkboard side
-    await hook(a, 'teleport', -10.4, -1.75, Math.PI, 0);
+    await hook(a, 'teleport', -12.4, -2.05, Math.PI, 0);
     await wait(400);
     await hook(a, 'resetPerf'); await wait(1500);
     const perfS = await hook(a, 'perf');
@@ -202,8 +205,64 @@ async function shotsSection(port) {
   console.log(`  screenshots in ${SHOTS}`);
 }
 
+// ─────────────────────────────────────────────────────────────────────
+/** Render a list of [name, cam, viewport, theme] views; returns { name: file }. */
+async function views(port, list, { device = 'iPhone 13' } = {}) {
+  const out = {};
+  const groups = {};
+  for (const v of list) { const k = v[2].width + 'x' + v[2].height + ':' + (v[3] || 'light'); (groups[k] = groups[k] || []).push(v); }
+  for (const g of Object.values(groups)) {
+    const [, , vp, theme = 'light'] = g[0];
+    const h = await launch({ port, only: ['chameleon'], who: ['a'], device: vp.width > 900 ? 'Desktop Chrome' : device, colorScheme: theme });
+    const a = h.a;
+    try {
+      await a.setViewportSize(vp);
+      await arm(a, { ...FAST, hide: 600000, seek: 600000, maxDpr: 1, fixedScale: true });
+      await h.startLive(a, 'chameleon', 'local');
+      await waitReady(a);
+      await selectMap(a, ID);
+      await wait(600);
+      await a.addStyleTag({ content: '.cushot .chm-over, .cushot .chm-top, .cushot .chm-sub, .cushot .chm-card, .cushot .chm-btn, .cushot button { visibility: hidden !important; }' });
+      await a.evaluate(() => document.body.classList.add('cushot'));
+      for (const [name, cam] of g) {
+        await hook(a, 'lookFrom', [...cam.p, ...cam.t]);
+        await wait(1000);
+        const f = path.join(SHOTS, name + '.png'); await a.screenshot({ path: f }); out[name] = f;
+      }
+      h.assertNoErrors();
+    } catch (e) { console.error(e.message, h.errors); failures++; } finally { await h.close(); }
+  }
+  return out;
+}
+
+/** Lay images side by side (or in a grid) with captions, into one PNG. */
+async function compose(port, items, file, { cols = items.length, w = 390, title = '' } = {}) {
+  const { chromium } = require(process.env.PW || path.join(require('child_process').execSync('npm root -g').toString().trim(), 'playwright'));
+  const b = await chromium.launch();
+  const pg = await b.newPage({ viewport: { width: cols * (w + 16) + 16, height: 400 } });
+  const imgs = items.map(([cap, f]) => `<figure><img src="data:image/${/\.jpe?g$/.test(f) ? 'jpeg' : 'png'};base64,${fs.readFileSync(f).toString('base64')}"><figcaption>${cap}</figcaption></figure>`).join('');
+  await pg.setContent(`<style>body{margin:0;padding:8px;background:#f3efe6;font:600 15px system-ui;color:#2a2730}h1{font-size:18px;margin:4px 8px 8px}.g{display:grid;grid-template-columns:repeat(${cols},${w}px);gap:16px;padding:0 8px}figure{margin:0}img{width:${w}px;display:block;border:3px solid #2a2730;border-radius:6px}figcaption{padding:4px 2px}</style>${title ? `<h1>${title}</h1>` : ''}<div class="g">${imgs}</div>`);
+  await pg.waitForTimeout(300);
+  const el = await pg.$('body'); await el.screenshot({ path: file });
+  await b.close();
+  void port;
+}
+
+async function compareSection(port) {
+  console.log('\n# compare: G1B30 against the reference photo');
+  const imp = await import(pathToFileURL(path.join(__dirname, '../../../js/games/chameleon/maps/cuboulder.js')).href);
+  const cam = imp.CUBOULDER.info.cams.find((c) => c.name === 'g1b30-photo');
+  const v = await views(port, [['g1b30-photo-view', cam, { width: 390, height: 693 }]]);
+  const ref = process.env.REF || path.join(SHOTS, '..', 'g1b30-ref.jpg');
+  if (fs.existsSync(ref)) {
+    await compose(port, [['Reference photo (upper back right)', ref], ['CU Boulder map, same viewpoint', v['g1b30-photo-view']]], path.join(SHOTS, 'g1b30-compare.png'), { title: 'Duane G1B30' });
+    assert(true, 'g1b30-compare.png written');
+  }
+}
+
 (async () => {
   try {
+    if (want('compare')) await compareSection(PORT);
     if (want('static')) await staticSection();
     if (want('load')) {
       await loadSection(PORT, { device: 'iPhone 13', viewport: null, label: 'phone' });
