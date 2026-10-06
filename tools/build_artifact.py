@@ -21,15 +21,41 @@ SIDE_IMPORT_RE = re.compile(r"^import\s*'([^']+)';[ \t]*\n", re.M)
 EXPORT_RE = re.compile(r"^export\s+(?:async\s+)?(?:function\*?|class|const|let|var)\s+([A-Za-z_$][\w$]*)", re.M)
 
 
-ENGINE = ('core.js', 'index.js', 'covers.js')
+ENGINE = ('core.js', 'index.js', 'covers.js', 'net.js')
+
+
+def deps_of(path: str):
+    """Modules a file imports by name (side-effect imports like './games/index.js' don't count)."""
+    src = (ROOT / path).read_text()
+    return [resolve(path, m.group(2)) for m in IMPORT_RE.finditer(src)]
 
 
 def module_order(only=None):
+    """Entry modules plus everything they import, dependencies first. Games may split
+    themselves into helper modules (e.g. js/games/runner/world.js); only imported ones ship."""
     games = sorted(p for p in (ROOT / 'js/games').glob('*.js') if p.name not in ENGINE)
     if only is not None:
         games = [p for p in games if p.stem in only]
-    return ['js/config.js', 'js/content.js', 'js/store.js', 'js/games/covers.js', 'js/games/core.js'] + \
+    entries = ['js/config.js', 'js/content.js', 'js/store.js', 'js/games/covers.js', 'js/games/core.js'] + \
         [str(p.relative_to(ROOT)) for p in games] + ['js/app.js']
+    order, state = [], {}
+
+    def visit(m, chain):
+        if state.get(m) == 'done':
+            return
+        if state.get(m) == 'active':
+            raise SystemExit('import cycle: ' + ' -> '.join(chain + [m]))
+        if not (ROOT / m).exists():
+            raise SystemExit(f'{chain[-1] if chain else "?"} imports missing module {m}')
+        state[m] = 'active'
+        for d in deps_of(m):
+            visit(d, chain + [m])
+        state[m] = 'done'
+        order.append(m)
+
+    for e in entries:
+        visit(e, [])
+    return order
 
 
 def resolve(frm: str, spec: str) -> str:

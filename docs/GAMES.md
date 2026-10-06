@@ -146,3 +146,38 @@ See `tools/test/smoke.test.js`. `launch({ port, only: ['<id>'], colorScheme })` 
 phones (Emerson = `h.a`, Sydney = `h.b`) sharing a fake database and live room. Helpers:
 `newOnlineGame`, `openMatch`, `newLocalGame`, `startLive`, `engine(page, id)`,
 `matches()`, `results()`, `settle()`, `shot()`, `assertNoErrors()`. three.js is served locally.
+
+## Netcode kit (for real-time games)
+
+`js/games/net.js` sits on top of the live api and is what serious live games should use:
+
+```js
+import { createNet } from './net.js';
+const net = createNet(api, { delay: 100, rate: 20, angles: ['yaw'] });
+await net.ready;            // first clock sync (instant on one device)
+net.now();                  // shared clock (ms) both devices agree on, within a few ms
+net.rtt;                    // round trip in ms
+net.send('hit', {...});     // reliable: exactly once, in order, retried through packet loss
+net.on('hit', (data, sentAt) => {});
+net.publish(myState);       // call every frame; streamed at `rate`/s with a shared timestamp
+net.remote();               // partner state interpolated at now - delay (extrapolates briefly)
+net.destroy();              // in your destroy()
+```
+
+Budget: each device gets ~40 room messages/s in total (presence + events), so stream at
+≤ 20/s and keep reliable events to a few per second. One event ≤ 4 KB — chunk bigger payloads
+across several `net.send` calls (they arrive in order). Patterns that work well:
+- Each player is the authority for their own avatar; render the partner with `net.remote()`.
+- The host (`api.isHost`) decides shared things (round start, scores) and announces them with
+  `net.send`. Schedule synchronized moments on the shared clock: `net.send('start', { at: net.now() + 3000 })`.
+- Deterministic worlds from a seed both devices know, so only inputs/outcomes travel.
+- Hit checks: the victim's device decides (it has the true position), or the shooter decides
+  using `net.remote(shotTime)` for lag compensation — pick one per game and stick to it.
+See `tools/test/net.test.js` (clock sync, delivery under 30% loss, interpolation).
+`launch({ dropRate: 0.2, latency: 80 })` makes the harness network worse for testing.
+
+## Big games: several files
+
+A game may split into helper modules, e.g. `js/games/rush/world.js`, imported from
+`js/games/rush.js` with `import { buildWorld } from './rush/world.js'`. The build follows
+imports, so only the entry file sits directly in `js/games/`. Named imports only.

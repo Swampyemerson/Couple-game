@@ -16,3 +16,5 @@ import './tower.js';
 import './bones.js';
 import './cycles.js';
 import './defuse.js';
+import './rush.js';
+import './chameleon.js';

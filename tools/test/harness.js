@@ -149,6 +149,7 @@ async function launch(opts = {}) {
   const {
     port = 8770 + Math.floor(Math.random() * 500), latency = 40, build = true, headless = true,
     device = 'iPhone 13', who = ['a', 'b'], seedDocs = {}, only = null, colorScheme = 'light',
+    dropRate = 0, // fraction of room events (emit) silently dropped, to test resilience
   } = opts;
   // `only`: game file names to bundle (e.g. ['four', 'dots']). Builds to a private file so
   // parallel test runs, and other people's half-finished games, can't break yours.
@@ -224,7 +225,7 @@ async function launch(opts = {}) {
       }
       if (op === 'emit') {
         const ev = { kind: 'msg', name, topic, data: JSON.parse(data), peer: pg.__peer, by: uid };
-        for (const p of pages) if ((roomState[name] || new Map()).has(p.__peer)) later(() => p.evaluate((e) => window.__roomDeliver && window.__roomDeliver(e), ev).catch(() => {}));
+        for (const p of pages) if ((roomState[name] || new Map()).has(p.__peer) && !(p !== pg && Math.random() < dropRate)) later(() => p.evaluate((e) => window.__roomDeliver && window.__roomDeliver(e), ev).catch(() => {}));
         return '';
       }
       return '';
