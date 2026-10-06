@@ -16,10 +16,10 @@ registerGame({
   tags: ['silly', '3d'],
   minutes: 12,
   howTo: [
-    'Hider: find a spot, strike a pose, then paint yourself to match it.',
+    'Hider: find a spot (walls and ceilings too: Stick, crawl, hang), then paint yourself to match it.',
     'Pick drinks a colour from anything; Stamp copies the surface under you.',
-    'Seeker: 6 paint pellets and a chirp scan that makes their eyes glint.',
-    'Every second you stay hidden scores. Roles swap each round.',
+    'Seeker: paint pellets, a chirp scan that makes their eyes glint, and look up!',
+    'Every second you stay hidden scores. Roles swap each round. Settings change it all.',
   ],
   endDelay: 600,
   css: `${CSS}

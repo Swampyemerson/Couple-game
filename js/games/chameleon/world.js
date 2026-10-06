@@ -285,12 +285,17 @@ export function createWorld(map) {
     if (sp < 1e-4) return 0;
     const dx = mx / sp; const dy = my / sp; const dz = mz / sp;
     const dist = sp * dt;
-    const h = Math.min(0.6 * r, 0.16);
-    // 1. concave: a face ahead, facing us → climb onto it
+    // 1. concave: a face ahead, facing us → climb onto it. Two feelers: one at belly height,
+    //    one just above the surface (catches skirting boards, sills, shelf lips)
     const look = dist + r * 0.85;
-    const ox = body.x + nx * h; const oy = body.y + ny * h; const oz = body.z + nz * h;
-    let H = raycast(ox, oy, oz, dx, dy, dz, look, climbable, true);
-    if (H && H.nx * dx + H.ny * dy + H.nz * dz < -0.5 && inside(H.x, H.z) && !buried(H.x, H.y, H.z, H.nx, H.ny, H.nz)) {
+    let H = null;
+    for (let k = 0; k < 2; k++) {
+      const h = k === 0 ? 0.035 : Math.min(0.6 * r, 0.16);
+      const ox = body.x + nx * h; const oy = body.y + ny * h; const oz = body.z + nz * h;
+      const G = raycast(ox, oy, oz, dx, dy, dz, k === 0 ? Math.min(look, dist + 0.06) : look, climbable, true);
+      if (G && G.nx * dx + G.ny * dy + G.nz * dz < -0.5 && inside(G.x, G.z) && !buried(G.x, G.y, G.z, G.nx, G.ny, G.nz)) { H = G; break; }
+    }
+    if (H) {
       setContact(body, H.x, H.y, H.z, H.nx, H.ny, H.nz, H.box);
       reHead(body, nx, ny, nz);
       return 1;

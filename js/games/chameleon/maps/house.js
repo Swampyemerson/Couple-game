@@ -49,7 +49,6 @@ function build(atlas) {
   atlas.add('weave', P.weave({ n: 8, lo: 0.82 }), { size: 'M' });
   atlas.add('panel', Q.grid({ bg: '#ffffff', line: 'rgb(200,200,200)', n: 1, lw: 5 }), { size: 'M' });
   atlas.add('coffer', Q.grid({ bg: '#f4efe6', line: '#c9b8a0', n: 2, lw: 7 }), { size: 'M' });
-  atlas.add('shingles', Q.shingles({ a: '#b84a3a', b: '#9c3d30', line: '#5a2a22' }), { size: 'M' });
   atlas.add('bricks', P.bricks({ brick: '#c8705a', alt: '#b5604b', mortar: '#ead9c4', rows: 8, cols: 4 }), { size: 'M' });
   atlas.add('terrazzo', Q.terrazzo({ bg: '#f1ece2', cols: [C.coral, C.teal, C.mustard, C.ink] }), { size: 'M' });
   atlas.add('chevron', P.chevron({ cols: [C.mustard, '#f3e7cf', C.teal], n: 2 }), { size: 'M' });
@@ -108,8 +107,8 @@ function build(atlas) {
     floor(b, 0.5, 0, 4.5, 6, 0, { tile: 'terrazzo', rep: 1.0 });
     floor(b, 4.5, 0, 9, 6, 0, { tile: 'bfloor', rep: 0.9 });
     // upper slabs (ceilings of the ground floor) + their floor skins
-    slab(b, -9, -6, 0.5, 6, FH, { under: { color: '#f7f1e6' }, edge: '#3a2f2a', name: 'ceil:ground-west' });
-    slab(b, 0.5, 0, 9, 6, FH, { under: { color: '#f7f1e6' }, edge: '#3a2f2a', name: 'ceil:ground-east' });
+    slab(b, -9, -6, 0.5, 6, FH, { under: { color: '#fdf8ee' }, edge: '#3a2f2a', name: 'ceil:ground-west' });
+    slab(b, 0.5, 0, 9, 6, FH, { under: { color: '#fdf8ee' }, edge: '#3a2f2a', name: 'ceil:ground-east' });
     floor(b, -9, -6, -2.5, 1, FH, { tile: 'planks', rep: 1.3 });
     floor(b, -9, 1, -2.5, 6, FH, { tile: 'planks', rep: 1.3, color: '#e7d2ea' });
     floor(b, -2.5, -6, 0.5, 6, FH, { tile: 'planks', rep: 1.4 });
@@ -522,7 +521,7 @@ function build(atlas) {
     b.spot('spawnB', { x: 3.0, z: -2.6, y: 0, yaw: -Math.PI / 2 });
     b.spot('hiderSpawns', [{ x: -1.0, z: 0.5, y: 0, yaw: Math.PI }, { x: 5.0, z: -1.5, y: 0, yaw: Math.PI }, { x: -1.0, z: -1.0, y: FH, yaw: Math.PI }]);
     b.spot('seekerSpawns', [{ x: -1.0, z: 5.0, y: 0, yaw: Math.PI }, { x: -0.6, z: 4.6, y: 0, yaw: Math.PI }]);
-    b.spot('camo', { x: -6.6, z: 5.85, wallNormal: [0, 0, -1], y: 0.45, note: 'damask strip on the dining-room wall' });
+    b.spot('camo', { x: -8.85, z: 1.7, wallNormal: [1, 0, 0], y: 0.45, note: 'damask on the dining-room wall' });
     b.spot('rug', { x: 5.2, z: -2.6, yaw: 0 });
     b.spot('overview', { y: 11, radius: 17 });
     b.probe('hall-console-teal', [0.25, 0.801, -0.8], [0, 1, 0], C.teal);
@@ -569,7 +568,7 @@ export const HOUSE = {
     // screenshot / preview cameras per room: p = eye, t = target
     cams: [
       { name: 'overview', p: [0, 13, 17], t: [0, 1.5, 0] },
-      { name: 'kitchen', p: [-3.2, 1.5, 0.0], t: [-6.5, 0.8, -3.6] },
+      { name: 'kitchen', p: [-2.9, 1.7, -2.4], t: [-7.0, 0.8, -3.4] },
       { name: 'dining', p: [-3.2, 1.6, 5.6], t: [-6.5, 0.6, 2.2] },
       { name: 'hall', p: [-1.0, 1.4, 5.7], t: [-1.0, 0.8, -3] },
       { name: 'stairwell', p: [8.2, 1.7, -0.5], t: [3.0, 2.2, -4.5] },
@@ -577,7 +576,7 @@ export const HOUSE = {
       { name: 'laundry', p: [4.0, 1.6, 0.6], t: [1.5, 0.6, 4.5] },
       { name: 'bathroom', p: [5.0, 1.7, 0.6], t: [7.8, 0.6, 4.4] },
       { name: 'bedroom', p: [-3.0, 4.6, 0.6], t: [-5.6, 3.2, -4.0] },
-      { name: 'closet', p: [-3.0, 4.5, 1.6], t: [-7.0, 3.4, 5.0] },
+      { name: 'closet', p: [-3.4, 4.6, 1.5], t: [-7.4, 3.4, 4.8] },
       { name: 'landing', p: [-1.0, 4.4, 5.6], t: [-1.0, 3.3, -3.5] },
       { name: 'attic', p: [1.2, 4.6, 0.6], t: [6.0, 3.2, 4.5] },
     ],

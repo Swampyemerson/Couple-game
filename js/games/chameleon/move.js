@@ -210,7 +210,7 @@ export function spotKind(pose, upY, y) {
   if (pose === 'squeeze') return 'squeeze';
   if (pose === 'corner') return 'corner';
   if (pose === 'perch') return 'perch';
-  if (pose === 'hang') return 'hang';
+  if (pose === 'hang') return y > 1.5 ? 'hangHigh' : 'hang';
   if (upY < -0.6) return y > 1.5 ? 'ceiling' : 'under';
   if (upY < 0.6) return pose === 'wall' && y < 1.1 ? 'flat' : 'wall';
   return null;

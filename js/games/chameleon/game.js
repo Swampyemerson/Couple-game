@@ -8,7 +8,7 @@ import { createControls } from './controls.js';
 import { POSES, REGION_OF_PART, REGION_NAMES } from './avatar.js';
 import { loadingCard, errorCard, lobbyCard, titleCard, blindCard, curtainCard, recapCard, pauseCard, ctxCard, tipsHtml } from './cards.js';
 import { clamp, dampAngle, wrapAngle, hexToRgb, cssColor, luminance, listeners, fmtTime, mixHex, esc, seeded, packQuat, unpackQuat } from './util.js';
-import { MAPS } from './maps.js';
+import { MAPS, mapArea } from './maps.js';
 import { sanitizeSetup, sanitizeRules, applyPreset, stepRule, setRule, loadSaved, saveSetup, sizeScale, SPEED_MUL, tipsSeen, markTipsSeen, PRESETS } from './rules.js';
 import { mkBody, sizeBody, resetBody, headingYaw, attachBody, detachBody, freeStep, crawlStep, inputOnSurface, bodyQuat, quatUpY, spotKind, surfaceKind } from './move.js';
 import { SQUEEZE_R } from './world.js';
@@ -544,7 +544,16 @@ export function createGame(el, api) {
         C.orbitT = 0;
         const seekerW = R.rec && (R.rec.seeker || (R.rec.winner || null));
         if (stage && R.path.length && seekerW) stage.fx.setPath(R.path, seekerW === 'a' ? theme.a : theme.b);
-        if (stage) { const tp = posOf(recapTarget()); stage.fx.ring.position.set(tp.x, tp.y + 0.02, tp.z); stage.fx.ring.visible = true; stage.fx.hlMat.color.set(theme.hl); }
+        if (stage) {
+          // the highlight ring lies on whatever surface the hider was on (floor, wall, ceiling)
+          const tw = recapTarget(); const rt = stage.av[tw].root; const q = rt.quaternion;
+          const ux = 2 * (q.x * q.y - q.w * q.z); const uy = 1 - 2 * (q.x * q.x + q.z * q.z); const uz = 2 * (q.y * q.z + q.w * q.x);
+          const ring = stage.fx.ring;
+          ring.position.set(rt.position.x + ux * 0.02, rt.position.y + uy * 0.02, rt.position.z + uz * 0.02);
+          tvA.set(ux, uy, uz); ring.quaternion.setFromUnitVectors(Z_AXIS, tvA);
+          ring.userData.size = stage.av[tw].st.size;
+          ring.visible = true; stage.fx.hlMat.color.set(theme.hl);
+        }
         break;
       }
       case 'final': {
@@ -912,7 +921,7 @@ export function createGame(el, api) {
     popFx(w, b, theme.hl);
     snd.play('stick'); api.haptic(12);
     P.texelDirtyAt = tSec + 0.3;
-    if (ny < -0.7) { C.autoPitch = -0.38; C.autoUntil = tSec + 0.9; hintOnce('ceil', 'Upside down! Pick Hang to dangle, or crawl along.', 2400); }
+    if (ny < -0.7) { C.autoPitch = -0.12; C.autoUntil = tSec + 0.9; hintOnce('ceil', 'Upside down! Pick Hang to dangle, or crawl along.', 2400); }
     else if (Math.abs(ny) < 0.7) hintOnce('wall', 'Sticky feet! Crawl anywhere — Jump leaps off, Stick lets go.', 2600);
     else hintOnce('floor-stick', 'Sticky feet on: walk off an edge to crawl down its side.', 2400);
   }
@@ -1044,7 +1053,7 @@ export function createGame(el, api) {
       if (!P.on || !P.last) return;
       const hit = pickOwn(x, y);
       if (!hit) return;
-      const r = BRUSH[P.size];
+      const r = BRUSH[P.size] * body[viewer()].s;
       const dx = hit.point.x - P.last[0]; const dy = hit.point.y - P.last[1]; const dz = hit.point.z - P.last[2];
       const d = Math.hypot(dx, dy, dz);
       const step = r * 0.35;
@@ -1090,7 +1099,7 @@ export function createGame(el, api) {
   const curN = { x: 0, y: 1, z: 0 };
   function showCursor(hit) {
     if (hit.face) { tv3.copy(hit.face.normal).transformDirection(hit.object.matrixWorld); curN.x = tv3.x; curN.y = tv3.y; curN.z = tv3.z; }
-    const r = P.tool === 'fill' ? 0.03 : BRUSH[P.size];
+    const r = (P.tool === 'fill' ? 0.03 : BRUSH[P.size]) * body[viewer()].s;
     stage.fx.setCursor(true, hit.point.x, hit.point.y, hit.point.z, curN.x, curN.y, curN.z, r, P.hard ? theme.outline : '#ffffff');
   }
   function dabAt(hit) { dab3(hit.point.x, hit.point.y, hit.point.z); }
@@ -1099,7 +1108,7 @@ export function createGame(el, api) {
     const cam = stage.camera.position;
     let vx = x - cam.x; let vy = y - cam.y; let vz = z - cam.z;
     const l = Math.hypot(vx, vy, vz) || 1; vx /= l; vy /= l; vz /= l;
-    stage.paints[v].dab(x, y, z, vx, vy, vz, BRUSH[P.size], P.rgb, P.hard, 0.45);
+    stage.paints[v].dab(x, y, z, vx, vy, vz, BRUSH[P.size] * body[v].s, P.rgb, P.hard, 0.45);
   }
   function pickColorAt(x, y) {
     const [W, H] = stage.size;
@@ -1339,7 +1348,7 @@ export function createGame(el, api) {
   const pubSt = {}; for (const f of FIELDS) pubSt[f] = 0;
   let lastScaleCheck = 0;
   function initVecs() {
-    camPos = new THREE.Vector3(0, 6, 9); camLook = new THREE.Vector3(0, 0.5, 0); camWant = new THREE.Vector3(); lookWant = new THREE.Vector3(); tvA = new THREE.Vector3(); tvZ = new THREE.Vector3(); Y_AXIS = new THREE.Vector3(0, 1, 0);
+    camPos = new THREE.Vector3(0, 6, 9); camLook = new THREE.Vector3(0, 0.5, 0); camWant = new THREE.Vector3(); lookWant = new THREE.Vector3(); tvA = new THREE.Vector3(); tvZ = new THREE.Vector3(); Y_AXIS = new THREE.Vector3(0, 1, 0); Z_AXIS = new THREE.Vector3(0, 0, 1);
     qOwn = new THREE.Quaternion(); prj = new THREE.Vector3(); camR = [0, 0, 0]; camF = [0, 0, 0];
     tv3 = new THREE.Vector3(); tv3b = new THREE.Vector3();
   }
@@ -1502,7 +1511,7 @@ export function createGame(el, api) {
             if (b.pose !== 'stand' && b.pose !== 'wall') { b.pose = b.pose === 'corner' ? 'wall' : 'stand'; stage.av[w].setPose(b.pose); }
             b.cnx = 0; b.cnz = 0;
             const res = crawlStep(world, b, vx, vy, vz, dt);
-            if (res === 1 || res === 2) { stage.av[w].squash(0.25); if (b.ny < -0.7 && w === v) { C.autoPitch = -0.38; C.autoUntil = tSec + 0.9; } }
+            if (res === 1 || res === 2) { stage.av[w].squash(0.25); if (b.ny < -0.7 && w === v) { C.autoPitch = -0.12; C.autoUntil = tSec + 0.9; } }
             if (res === 4) { stage.av[w].squash(0.4); snd.play('land'); }
             P.texelDirtyAt = tSec + 0.2;
           }
@@ -1732,7 +1741,7 @@ export function createGame(el, api) {
   function wallTmp(w, wa) { const a = wallArr[w]; a[0] = Math.sin(wa); a[1] = 0; a[2] = Math.cos(wa); return a; }
   const upTmp = [0, 1, 0];
   const snapOrient = { a: true, b: true };
-  let Y_AXIS = null;
+  let Y_AXIS = null; let Z_AXIS = null;
   function useHint() { rem.x = remHint.x; rem.y = remHint.y; rem.z = remHint.z; rem.yaw = remHint.yaw; rem.po = remHint.po; rem.wa = remHint.wa; rem.v = 1; rem.q = remHint.q; rem.at = remHint.at; unpackQuat(remHint.q, qTmp); rem.qx = qTmp[0]; rem.qy = qTmp[1]; rem.qz = qTmp[2]; rem.qw = qTmp[3]; }
   /** Yaw of a root's forward vector projected on the floor. */
   function headingTmpYaw(rt) { const q = rt.quaternion; const fx = 2 * (q.x * q.z + q.w * q.y); const fz = 1 - 2 * (q.x * q.x + q.y * q.y); return Math.hypot(fx, fz) > 0.2 ? Math.atan2(fx, fz) : 0; }
@@ -2004,6 +2013,8 @@ export function createGame(el, api) {
       }
     }
     showParts.acts = list.length > 0;
+    const a3 = list.length > 4;
+    if (U.acts3 !== a3) { U.acts3 = a3; root.classList.toggle('acts3', a3); }
     hud.show(showParts);
     if (list.length) hud.actions(list);
     if (showParts.top) {
@@ -2028,7 +2039,7 @@ export function createGame(el, api) {
     if (showParts.poses && v) { hud.poseList(poseBar(v)); hud.poseOn(body[v].pose); }
     if (showParts.mini && v) { const b = body[v]; hud.miniDraw(b.x, b.z, b.yaw + b.lookYaw, v === 'a' ? theme.a : theme.b); }
     hud.tips(U.tips && inGame && ph === 'hide' && !P.on ? (U.tipsHtml || (U.tipsHtml = tipsHtml(mouse))) : null);
-    if (showParts.tools && v) { hud.tool(P.tool, P.size, P.hard, P.rgb); hud.undoEnabled(stage.paints[v].canUndo); }
+    if (showParts.tools && v) { hud.tool(P.tool, P.size, P.hard, P.rgb); hud.undoEnabled(stage.paints[v].canUndo); hud.stampEnabled(rules().stamp); }
     if (showParts.legend) hud.legend(P.on ? LEGEND.paint : ph === 'hide' ? (rules().climb ? LEGEND.hide : LEGEND.hideFloor) : ph === 'seek' && role !== 'hider' ? LEGEND.seek : LEGEND.peek);
     // live numbers inside cards
     if (live.blind) { const n = Math.ceil((S.paused ? S.paused.remaining : Math.max(0, S.phase.end - t)) / 1000); if (n !== live.blindS) { live.blindS = n; live.blind.textContent = fmtTime(n * 1000); } }
@@ -2155,16 +2166,21 @@ export function createGame(el, api) {
       worldStats() { return { ...stage.world.stats, boxes: stage.world.boxes.length, chunks: stage.map.chunks.length, tris: stage.map.triCount, verts: stage.map.vertexCount, big: !!stage.map.big, area: stage.map.area, atlasUsed: stage.map.atlas.used, atlasH: stage.map.atlas.height }; },
       lookAtPitch(p) { const b = body[viewer()]; b.lookPitch = p; },
       mapIds() { return MAP_IDS.slice(); },
+      /** Tests: change the size mid-round on this device only. */
+      forceSize(id) { const tgt = S.match ? S.match : S.setup; tgt.rules = sanitizeRules({ ...tgt.rules, size: id }); applySize(); return sizeS(); },
+      /** Free-walk with a world velocity for n steps (deterministic; same physics as the stick). */
+      walk(vx, vz, n = 30, dt = 1 / 30) { const b = body[viewer()]; const sp = b.sq ? SPEED.squeeze : 1; for (let i = 0; i < n; i++) freeStep(stage.world, b, vx * sp, vz * sp, dt, false); return { x: b.x, y: b.y, z: b.z, sq: b.sq, r: b.r }; },
+      mapsInfo() { return MAPS.map((m) => ({ id: m.id, name: m.name, area: mapArea(m), size: m.size, rooms: m.rooms, climbs: m.climbs })); },
       setPose(p) { setPose(p); return body[viewer()].pose; },
       /** Point the first-person view at a world point (seeker aim). */
       aimAt(x, y, z) {
         const v = viewer(); const b = body[v];
-        const eh = EYE_H[b.pose] || 0.46;
+        const eh = (EYE_H[b.pose] || 0.46) * b.s;
         let ex = b.x; let ey = b.y + eh; let ez = b.z;
         for (let i = 0; i < 3; i++) {
           const yaw = Math.atan2(x - ex, z - ez);
           b.yaw = yaw; b.lookYaw = 0;
-          ex = b.x + Math.sin(yaw) * 0.12; ez = b.z + Math.cos(yaw) * 0.12;
+          ex = b.x + Math.sin(yaw) * 0.12 * b.s; ez = b.z + Math.cos(yaw) * 0.12 * b.s;
           b.lookPitch = Math.atan2(y - ey, Math.hypot(x - ex, z - ez));
         }
         return { yaw: b.yaw, pitch: b.lookPitch };

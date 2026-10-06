@@ -258,7 +258,7 @@ export function createFx(THREE, scene, { gradientMap }) {
     updateTongue(now);
     updatePop(now);
     // recap ring pulse
-    if (ring.visible) { const s = 0.45 + Math.sin(now * 4) * 0.04; ring.scale.setScalar(s); hlMat.opacity = 0.65 + Math.sin(now * 4) * 0.25; }
+    if (ring.visible) { const s = (0.45 + Math.sin(now * 4) * 0.04) * (ring.userData.size || 1); ring.scale.setScalar(s); hlMat.opacity = 0.65 + Math.sin(now * 4) * 0.25; }
   }
 
   function clearRound() {

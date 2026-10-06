@@ -193,7 +193,7 @@ export const CSS = `
 .chm-chip i { width: 10px; height: 10px; border-radius: 50%; }
 .chm-chip.pa i { background: var(--p-a); } .chm-chip.pb i { background: var(--p-b); }
 .chm-wait { font-weight: 800; color: var(--g-muted); font-size: 0.9rem; }
-.chm-lobby .chm-card[aria-disabled="true"] .chm-mode, .chm-lobby .chm-card[aria-disabled="true"] .chm-chip { pointer-events: none; }
+.chm-lobby .chm-card[data-ro] .chm-mode, .chm-lobby .chm-card[data-ro] .chm-chip { pointer-events: none; }
 
 /* blindfold */
 .chm-blind { background: var(--g-bg); }
@@ -237,7 +237,8 @@ export const CSS = `
   .chm-tool { padding: 6px 2px 5px; }
   .chm-tool .chm-ic { width: 22px; height: 22px; }
   .chm-opts { flex: none; }
-  .chm-poses, .chm.painting .chm-poses { left: calc(10px + var(--chm-sl)); transform: none; bottom: calc(84px + var(--chm-sb)); padding: 5px; gap: 5px; }
+  .chm-poses, .chm.painting .chm-poses, .chm.acts3 .chm-poses, .chm.acts3.painting .chm-poses { left: calc(10px + var(--chm-sl)); transform: none; bottom: calc(84px + var(--chm-sb)); padding: 5px; gap: 5px; }
+  .chm.acts3 .chm-acts { grid-template-columns: auto auto auto !important; gap: 8px 8px; }
   .chm-pose { width: 46px; height: 50px; }
   .chm-pose svg { width: 26px; height: 26px; }
   .chm-hint { top: calc(104px + var(--chm-st)); }
@@ -282,6 +283,7 @@ export const CSS = `
 .chm-mapinfo small { font-size: .72rem; font-weight: 700; color: var(--g-muted); line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chm-facts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
 .chm-facts em { font-style: normal; font-size: .62rem; font-weight: 900; letter-spacing: .04em; text-transform: uppercase; padding: 2px 6px; border-radius: 999px; background: var(--g-card); box-shadow: 0 0 0 1.5px var(--g-ink); display: inline-flex; align-items: center; gap: 4px; }
+.chm-facts em.ar { text-transform: none; letter-spacing: .02em; }
 .chm-climbs span { display: inline-flex; gap: 2px; }
 .chm-climbs i { width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--g-ink); }
 .chm-climbs i.on { background: var(--p-b); }
@@ -301,8 +303,8 @@ export const CSS = `
 .chm-more { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 12px; min-height: 48px; border: 2.5px solid var(--g-ink); border-radius: 14px; background: var(--g-card); color: var(--g-ink); font: 900 .88rem/1 var(--g-font-body); cursor: pointer; touch-action: manipulation; box-shadow: var(--g-shadow, 3px 3px 0 var(--g-edge)); }
 .chm-more:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge); }
 .chm-more .chm-ic, .chm-done .chm-ic { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
-.chm-lobby .chm-card[aria-disabled="true"] .chm-presets button, .chm-lobby .chm-card[aria-disabled="true"] .chm-sizes button { pointer-events: none; }
-.chm-lobby .chm-card[aria-disabled="true"] .chm-arrow { pointer-events: none; }
+.chm-lobby .chm-card[data-ro] .chm-presets button, .chm-lobby .chm-card[data-ro] .chm-sizes button { pointer-events: none; }
+.chm-lobby .chm-card[data-ro] .chm-arrow { pointer-events: none; }
 
 /* settings sheet */
 .chm-sheetwrap { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; padding: 12px; padding-top: calc(12px + var(--chm-st)); padding-bottom: calc(12px + var(--chm-sb)); background: var(--g-dim, color-mix(in srgb, var(--g-bg) 70%, transparent)); pointer-events: auto; }
@@ -332,8 +334,11 @@ export const CSS = `
 .chm-sheet .chm-go { margin-top: 6px; }
 @media (max-width: 380px) { .chm-set .chm-sizes { width: 190px; } .chm-step output { min-width: 66px; font-size: .8rem; } .chm-step button { width: 36px; } .chm-seg2 button { min-width: 44px; padding: 0 6px; } }
 
-/* dynamic pose bar */
+/* dynamic pose bar; with six action buttons (sticky feet) the pose bar sits above them */
 .chm-poses { flex-wrap: nowrap; max-width: calc(100% - 16px); }
+.chm.acts3 .chm-poses { bottom: calc(318px + var(--chm-sb)); }
+.chm.acts3.painting .chm-poses { bottom: calc(146px + var(--chm-sb)); }
+@media (min-width: 700px) { .chm.acts3 .chm-poses { bottom: calc(334px + var(--chm-sb)); } }
 
 /* minimap (seeker, big maps) */
 .chm-mini { position: absolute; left: calc(10px + var(--chm-sl)); top: calc(100px + var(--chm-st)); width: 112px; height: 112px; border-radius: 12px; padding: 4px; background: var(--g-card); }
@@ -352,6 +357,13 @@ export const CSS = `
 @keyframes chm-tipin { from { transform: translate(-50%, -12px) scale(.94); opacity: 0; } }
 .chm-b.stuck > span:first-child { background: var(--g-hl); color: var(--g-on-ink); }
 .chm-b.on > span:first-child { background: var(--g-ink); color: var(--g-bg); }
+/* laptops: the lobby goes wide (two columns) so the chameleons stay in view above it */
+@media (min-width: 900px) and (min-height: 600px) {
+  .chm-lobby .chm-card { flex-direction: row; align-items: stretch; gap: 22px; width: min(100%, 780px); padding: 16px 18px; }
+  .chm-lobby .chm-col { display: flex; flex-direction: column; justify-content: center; gap: 10px; flex: 1 1 0; min-width: 0; }
+  .chm-lobby .chm-firstrow { flex-direction: row; align-items: center; justify-content: space-between; }
+  .chm-sheet { width: min(100%, 560px); }
+}
 @media (prefers-reduced-motion: reduce) { .chm *, .chm *::before, .chm *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; } }
 @media (min-width: 900px) and (min-height: 600px) { .chm-sc { font-size: 1.1rem; padding: 6px 12px 6px 9px; } .chm-sc span { font-size: 0.82rem; } .chm-clock { min-width: 104px; } .chm-time { font-size: 1.8rem; } .chm-phase { font-size: 0.7rem; } .chm-sub { top: calc(78px + var(--chm-st)); font-size: 0.9rem; } .chm-gear { top: calc(116px + var(--chm-st)); } }
 @media (min-width: 700px) { .chm-b > span:first-child { width: 60px; height: 60px; } .chm-b.big > span:first-child { width: 78px; height: 78px; } .chm-title { font-size: 2.5rem; } }
@@ -539,6 +551,7 @@ export function createHud(root, api) {
       }
       if (N.r !== rgb[0] || N.g !== rgb[1] || N.bl !== rgb[2]) { N.r = rgb[0]; N.g = rgb[1]; N.bl = rgb[2]; el.swatch.style.background = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`; }
     },
+    stampEnabled(on) { if (N.stamp === on) return; N.stamp = on; const b = el.tools.querySelector('[data-tool="stamp"]'); if (b) { b.disabled = !on; b.hidden = !on; } },
     undoEnabled(on) { if (N.undo === on) return; N.undo = on; const b = el.tools.querySelector('[data-act="undo"]'); if (b) b.disabled = !on; },
     hint(text, ms = 2600) {
       clearTimeout(hintTimer);

@@ -73,6 +73,30 @@ export const Q = {
     }
   },
 
+  /** Bolder shelf goods: tall boxes, bottles and cans packed tight on a dark shelf shadow (repeats sideways). */
+  goods: ({ cols, bg = '#3a3540', ink = '#2a2730' }) => (g, w, h, r) => {
+    g.fillStyle = bg; g.fillRect(0, 0, w, h);
+    let x = 0; let k = 0;
+    while (x < w - 3) {
+      const kind = (k + r.int(2)) % 3; const c = cols[(k * 3 + r.int(cols.length)) % cols.length]; const c2 = cols[(k + 2) % cols.length];
+      const pw = Math.min(w - x, kind === 1 ? h * 0.34 : h * (0.42 + r() * 0.22)); const ph = h * (0.72 + r() * 0.26); const yb = h - 1;
+      g.fillStyle = c;
+      if (kind === 1) { // bottle
+        g.fillRect(x + 2, yb - ph * 0.78, pw - 4, ph * 0.78); g.fillRect(x + pw * 0.35, yb - ph, pw * 0.3, ph * 0.24);
+        g.fillStyle = c2; g.fillRect(x + 2, yb - ph * 0.5, pw - 4, ph * 0.2);
+      } else if (kind === 2) { // can stack
+        g.fillRect(x + 1, yb - ph, pw - 2, ph); g.fillStyle = c2; g.fillRect(x + 1, yb - ph * 0.62, pw - 2, ph * 0.24);
+        g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(x + 1, yb - ph * 0.5, pw - 2, 2);
+      } else { // box with a logo
+        g.fillRect(x + 1, yb - ph, pw - 2, ph); g.fillStyle = c2; g.fillRect(x + 1, yb - ph, pw - 2, ph * 0.18);
+        g.fillStyle = '#fbf6ea'; g.beginPath(); g.arc(x + pw / 2, yb - ph * 0.48, Math.min(pw, ph) * 0.17, 0, Math.PI * 2); g.fill();
+        g.fillStyle = c2; g.beginPath(); g.arc(x + pw / 2, yb - ph * 0.48, Math.min(pw, ph) * 0.08, 0, Math.PI * 2); g.fill();
+      }
+      g.fillStyle = ink; g.fillRect(x, yb - ph, 1.5, ph);
+      x += pw + 1; k++;
+    }
+  },
+
   /** Fruit crate top: piles of round fruit (repeat). */
   fruit: ({ bg, cols, n = 26, leaf = '#3fa66b' }) => (g, w, h, r) => {
     g.fillStyle = bg; g.fillRect(0, 0, w, h);

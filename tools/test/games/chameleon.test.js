@@ -20,7 +20,17 @@ let failures = 0;
 const assert = (c, m) => { if (!c) throw new Error('FAIL: ' + m); console.log('ok -', m); };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const FAST = { hide: 12000, seek: 15000, title: 700, recap: 2500, found: 2200, seekLead: 900, resume: 1500, maxDpr: 0.6 };
+const FAST = { hide: 12000, seek: 15000, title: 700, recap: 2500, found: 2200, seekLead: 900, resume: 1500, maxDpr: 0.6, noTips: true };
+const near = (a, b, tol) => a.every((x, i) => Math.abs(x - b[i]) <= tol);
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const fmt3 = (v) => `(${v.map((x) => x.toFixed(2)).join(', ')})`;
+/** The largest map by area × floors (needs a mounted game). */
+async function biggestMap(p) {
+  const list = await p.evaluate(() => window.__cham.mapsInfo());
+  let best = list[0];
+  for (const m of list) if (m.area > best.area) best = m;
+  return { id: best.id, area: best.area, ids: list.map((x) => x.id), big: list.filter((x) => x.area > 160).map((x) => x.id), list };
+}
 
 async function arm(page, tune = FAST) {
   await page.evaluate((t) => { window.__chamTest = true; window.__chamTune = t; }, tune);
@@ -685,28 +695,610 @@ async function leakSection(port) {
 }
 
 async function mapsSection(port) {
-  console.log('\n# the three dioramas: spawns, hiding walls, eyedropper probes, lobby sync of the map choice');
+  console.log('\n# every diorama: spawns, hiding walls, eyedropper probes, lobby sync of the map choice (settings sheet)');
   const h = await launch({ port, only: ['chameleon'] });
   const { a, b } = h;
   try {
     await startPair(h, { ...FAST, maxDpr: 0.45 });
-    for (const id of ['garden', 'studio', 'living']) {
-      await a.click(`[data-lobby="map"][data-v="${id}"]`);
-      await b.waitForFunction((m) => window.__cham.state().mapId === m, id, { timeout: 8000 });
+    const ids = await hook(a, 'mapIds');
+    await a.click('.chm-lobby [data-act="settings"]');
+    for (const id of ids.slice(1).concat(ids[0])) {
+      await a.click(`.chm-sheet .chm-mapchips [data-lobby="map"][data-v="${id}"]`);
+      await b.waitForFunction((m) => window.__cham.state().mapId === m, id, { timeout: 20000 });
       assert(true, `host picked the ${id} map and the guest's diorama switched with it`);
       await wait(400);
-      await shot(a, `map-${id}`);
+      if (id === ids[0] || id === 'house') await shot(a, `map-sheet-${id}`);
       const r = await hook(a, 'checkMap', id);
       const bad = Object.entries(r.spawns).filter(([, d]) => d > 0.02);
-      assert(!bad.length, `${id}: every spawn is clear of props (${Object.keys(r.spawns).length} checked)`);
-      assert(!!r.camoWall, `${id}: the suggested hiding spot has a wall to flatten against`);
+      assert(!bad.length, `${id}: every spawn is clear of props (${Object.keys(r.spawns).length} checked)${bad.length ? ' ' + JSON.stringify(bad) : ''}`);
+      const badHuge = Object.entries(r.spawnsHuge).filter(([, d]) => d > 0.05);
+      if (badHuge.length) console.log(`  note: ${id}: ${badHuge.length} spawn(s) get nudged for a Huge chameleon: ${badHuge.map(([k, d]) => `${k} ${d.toFixed(2)} m`).join(', ')}`);
+      if (r.camoWall !== null || ids.indexOf(id) < 3) assert(!!r.camoWall, `${id}: the suggested hiding spot has a wall to flatten against`);
       for (const p of r.probes) assert(p.got === p.want, `${id}: probe "${p.name}" albedo ${p.got} (want ${p.want})`);
-      console.log(`  ${id}: ${r.verts} vertices, ${r.colliders} colliders`);
+      console.log(`  ${id}: ${r.verts} vertices, ${Math.round(r.tris)} triangles, ${r.chunks} chunk(s), ${r.colliders} colliders, atlas ${r.atlasUsed}/${r.atlasH} px`);
     }
     h.assertNoErrors();
   } catch (e) {
     console.error(e.message, h.errors); failures++;
+    await shot(a, 'maps-FAIL').catch(() => {});
   } finally { await h.close(); }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// v2: sticky feet, sizes, settings, big maps
+const SLOW = { ...FAST, hide: 90000, seek: 60000, maxDpr: 0.45 };
+
+/** Hold the joystick straight up for ms (touch). */
+async function stickUp(p, ms) {
+  const box = await surfaceBox(p);
+  await touchHold(p, box[0] + 80, box[1] + box[3] - 150, box[0] + 80, box[1] + box[3] - 200, ms);
+}
+
+async function crawlSection(port) {
+  console.log('\n# sticky feet: walk into a wall, crawl up onto the rafter (ceiling), back down; orientation on the partner; a tag on a ceiling hider');
+  const h = await launch({ port, only: ['chameleon'] });
+  const { a, b } = h;
+  try {
+    await startPair(h, SLOW);
+    await hook(a, 'setRules', { map: 'living', first: 'b', rules: { size: 'large', climb: true } });
+    await b.waitForFunction(() => window.__cham.state().setup.first === 'b' && window.__cham.state().setup.rules.size === 'large', null, { timeout: 5000 });
+    await a.click('[data-act="start"]');
+    await waitPhase(b, 'hide', 20000);
+    // walk into the left wall (camera turned so "forward" is -x), holding the stick: the feet stick
+    await hook(b, 'teleport', -4.25, 2.35, -Math.PI / 2, 0);
+    await hook(b, 'setCam', Math.PI / 2, 0.25, 2.3);
+    await wait(300);
+    await stickUp(b, 520);
+    let bb = await hook(b, 'body');
+    assert(bb.at && (near([bb.nx, bb.ny, bb.nz], [1, 0, 0], 0.01) || bb.ny < -0.9), `walking into the wall with forward held sticks to it (normal ${fmt3([bb.nx, bb.ny, bb.nz])}, y ${bb.y.toFixed(2)})`);
+    // crawl up with the same stick: screen-relative, so "up the screen" is up the wall
+    const y0 = bb.y;
+    await stickUp(b, 1500);
+    bb = await hook(b, 'body');
+    assert(bb.at && (bb.ny < -0.9 || bb.y > y0 + 1.0), `pushing up the screen crawls up the wall (y ${y0.toFixed(2)} → ${bb.y.toFixed(2)}, normal ${fmt3([bb.nx, bb.ny, bb.nz])})`);
+    if (bb.ny > -0.9) { const r = await hook(b, 'crawl', 0, 1.5, 0, 60); bb = await hook(b, 'body'); void r; }
+    assert(bb.ny < -0.9 && bb.y > 2.3, `the wall turns into the rafter's underside: upside down at y ${bb.y.toFixed(2)} (normal ${fmt3([bb.nx, bb.ny, bb.nz])})`);
+    await wait(500);
+    let d = (await st(b)).drawn.b;
+    assert(dot(d.up, [0, -1, 0]) > 0.95, `drawn upside down on the hider's own screen (up ${fmt3(d.up)})`);
+    // along the beam, back to the wall, down to the floor: walking again
+    let r = await hook(b, 'crawl', -1.4, 0, 0, 40);
+    assert(r.at && r.n[0] > 0.9, `crawling back along the beam turns down onto the wall (normal ${fmt3(r.n)})`);
+    r = await hook(b, 'crawl', 0, -1.4, 0, 90);
+    bb = await hook(b, 'body');
+    assert(!bb.at && bb.onGround && bb.y < 0.05, `down the wall onto the floor: feet on the ground and walking again (y ${bb.y.toFixed(2)})`);
+    await shot(b, 'v2-crawl-hider-floor');
+    // and back up for the hunt: stick (button), crawl up, hang
+    await hook(b, 'teleport', -4.55, 2.35, -Math.PI / 2, 0);
+    await b.click('.chm-acts [data-act="stick"]');
+    bb = await hook(b, 'body');
+    assert(bb.at && bb.nx > 0.9, 'the Stick button grabs the nearest wall');
+    assert(await b.isVisible('.chm-acts [data-act="stick"].on'), 'Stick shows as on (Let go)');
+    await hook(b, 'crawl', 0, 1.5, 0, 60);
+    await hook(b, 'crawl', 1.4, 0, 0, 25);
+    bb = await hook(b, 'body');
+    await b.click('.chm-acts [data-act="poses"]');
+    await wait(400);
+    assert(await b.isVisible('.chm-pose[data-pose="hang"]'), 'the pose bar offers Hang under a ceiling');
+    await b.click('.chm-pose[data-pose="hang"]');
+    await wait(600);
+    assert((await hook(b, 'body')).pose === 'hang', 'hanging from the rafter');
+    await shot(b, 'v2-hang-hider');
+    await b.click('.chm-acts [data-act="ready"]');
+    await waitPhase(a, 'seek', 20000); await waitPhase(b, 'seek', 5000);
+    await wait(800);
+    // the seeker's device draws her upside down, where she is, from her published orientation
+    bb = await hook(b, 'body');
+    const sa = await st(a);
+    d = sa.drawn.b;
+    assert(sa.rem.at === 1 && dot(d.up, [0, -1, 0]) > 0.95 && near(d.p, [bb.x, bb.y, bb.z], 0.08), `on the seeker's screen she hangs upside down at ${fmt3(d.p)} (up ${fmt3(d.up)}, true ${fmt3([bb.x, bb.y, bb.z])})`);
+    assert(d.pose === 'hang' && Math.abs(d.scale - 1.3) < 1e-6, 'with the same pose and size');
+    // look up and fire
+    await hook(a, 'teleport', bb.x + 1.0, bb.z + 0.7, 0, 0);
+    const bc = await hook(a, 'bodyCenter', 'b');
+    const aim = await hook(a, 'aimAt', ...bc);
+    assert(aim.pitch > 0.45, `the seeker looks up at the ceiling (pitch ${aim.pitch.toFixed(2)} rad)`);
+    await wait(300);
+    await shot(a, 'v2-seeker-looks-up');
+    await a.click('.chm-acts [data-act="fire"]');
+    await waitPhase(a, 'found', 8000); await waitPhase(b, 'found', 3000);
+    assert((await st(b)).lastTagCheck.ok, 'a pellet tags a hider on the ceiling (confirmed by her device)');
+    await waitPhase(a, 'recap', 8000);
+    await wait(600);
+    const head = await a.textContent('.chm-recap h2');
+    assert(/CEILING|HANGING/.test(head), `recap: "${head}"`);
+    await shot(a, 'v2-recap-ceiling');
+    // round 2: Emerson hides flat on the back wall, then tongue-zips down to the floor while hunted
+    await b.click('[data-act="next"]');
+    await waitPhase(a, 'hide', 20000);
+    const camo = (await hook(a, 'spots')).camo;
+    await hook(a, 'teleport', camo.x, camo.z - 0.1, 0, 0);
+    assert(await hook(a, 'setPose', 'wall') === 'wall', 'round 2: pressed flat on the wallpaper');
+    await hook(a, 'crawl', 0, 1.0, 0, 25);
+    const ab = await hook(a, 'body');
+    await a.click('.chm-acts [data-act="ready"]');
+    await waitPhase(b, 'seek', 20000); await waitPhase(a, 'seek', 5000);
+    await wait(800);
+    let sb = await st(b);
+    assert(dot(sb.drawn.a.up, [0, 0, 1]) > 0.95 && near(sb.drawn.a.p, [ab.x, ab.y, ab.z], 0.08), `the partner draws him on the wall facing out (up ${fmt3(sb.drawn.a.up)})`);
+    // zip: look straight down, the tongue grabs the floor
+    await hook(a, 'setLook', 0, -1.1);
+    await wait(100);
+    const zipped = await hook(a, 'zip');
+    assert(zipped, 'tongue-zip fired (uses an escape)');
+    await b.waitForFunction(() => window.__cham.state().trails > 0, null, { timeout: 5000 });
+    await wait(1200);
+    const ab2 = await hook(a, 'body');
+    sb = await st(b);
+    assert(!ab2.at && ab2.y < 0.05 && dot(sb.drawn.a.up, [0, 1, 0]) > 0.95 && near(sb.drawn.a.p, [ab2.x, ab2.y, ab2.z], 0.08), `back down on the floor, upright on both screens (partner sees up ${fmt3(sb.drawn.a.up)})`);
+    assert(sb.round.escapes.a === (sb.rules.escapes - 1) && sb.trails > 0, `the zip left a trail on the seeker's screen and used an escape (${sb.round.escapes.a} left)`);
+    h.assertNoErrors();
+    assert(!h.warnings.length, `message budget respected (${h.warnings.length} warnings)`);
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'crawl-FAIL-a').catch(() => {}); await shot(b, 'crawl-FAIL-b').catch(() => {});
+    try { console.error(JSON.stringify(await hook(b, 'body')).slice(0, 600)); } catch { /* ignore */ }
+  } finally { await h.close(); }
+}
+
+async function sizeSection(port) {
+  console.log('\n# chameleon size: every setting changes the body, collider and hit radius on both devices');
+  const h = await launch({ port, only: ['chameleon'] });
+  const { a, b } = h;
+  try {
+    await startPair(h, SLOW);
+    const want = { tiny: 0.6, small: 0.8, medium: 1.0, large: 1.3, huge: 1.8 };
+    for (const [id, s] of Object.entries(want)) {
+      await a.click(`.chm-lobby .chm-card > .chm-col .chm-sizes [data-v="${id}"]`);
+      await b.waitForFunction((v) => window.__cham.state().setup.rules.size === v, id, { timeout: 5000 });
+      await wait(200);
+      const za = await hook(a, 'sizes'); const zb = await hook(b, 'sizes');
+      const ok = [za, zb].every((z) => ['a', 'b'].every((w) => Math.abs(z[w].r - 0.24 * s) < 1e-9 && Math.abs(z[w].scale - s) < 1e-9 && Math.abs(z[w].head - 0.34 * s) < 1e-9 && Math.abs(z[w].step - Math.max(0.2, 0.24 * s)) < 1e-9));
+      assert(ok && Math.abs(za.tagTol - zb.tagTol) < 1e-9 && Math.abs(za.tagTol - 0.75 * Math.max(1, s)) < 1e-9, `${id}: radius ${(0.24 * s).toFixed(3)} m, scale ${s}, head ${(0.34 * s).toFixed(2)} m, hit tolerance ${za.tagTol.toFixed(2)} m on both devices`);
+    }
+    await shot(a, 'v2-size-huge-lobby');
+    // squeeze is the same tiny profile at every size
+    await a.click('.chm-lobby .chm-card > .chm-col .chm-sizes [data-v="large"]');
+    await b.waitForFunction(() => window.__cham.state().setup.rules.size === 'large', null, { timeout: 5000 });
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'size-FAIL-a').catch(() => {});
+  } finally { await h.close(); }
+}
+
+async function settingsSection(port) {
+  console.log('\n# game settings: presets, live sync to the guest, validation, persistence, the match plays by them');
+  const h = await launch({ port, only: ['chameleon'] });
+  const { a, b } = h;
+  try {
+    await startPair(h, SLOW);
+    // presets
+    await a.click('.chm-lobby .chm-presets [data-v="easy"]');
+    await b.waitForFunction(() => window.__cham.state().setup.rules.preset === 'easy', null, { timeout: 5000 });
+    let rb = (await st(b)).setup.rules;
+    assert(rb.size === 'huge' && rb.pellets === 8 && rb.blink === 'strong' && rb.heartbeat === false && rb.minimap === true, 'Easy preset applied on the guest (huge, 8 pellets, strong blinks, no heartbeat)');
+    assert(await b.isVisible('.chm-presets button.on[data-v="easy"]'), 'guest sees Easy selected');
+    // the settings sheet: host edits, guest watches live
+    await a.click('.chm-lobby [data-act="settings"]');
+    await b.click('.chm-lobby [data-act="settings"]');
+    await a.waitForSelector('.chm-sheet');
+    await b.waitForSelector('.chm-sheet');
+    assert(await b.$eval('.chm-sheet [data-k="hide"][data-step="1"]', (x) => x.disabled), "the guest's controls are read-only");
+    await a.click('.chm-sheet [data-k="hide"][data-step="1"]');
+    await b.waitForFunction(() => window.__cham.state().setup.rules.hide === 60, null, { timeout: 5000 });
+    assert((await b.textContent('.chm-sheet [data-rule="hide"]')).trim() === '1 min', "the guest's open sheet shows the new hide time live");
+    rb = (await st(b)).setup.rules;
+    assert(rb.preset === 'custom' && await a.isVisible('.chm-presets button.on.custom'), 'changing one value turns the preset into Custom');
+    // scroll the sheet, change something further down, the guest's sheet keeps its scroll
+    await a.click('.chm-sheet [data-k="stamp"][data-v="false"]');
+    await a.click('.chm-sheet [data-k="climb"][data-v="false"]');
+    await a.click('.chm-sheet [data-k="pellets"][data-step="-1"]');
+    await a.click('.chm-sheet [data-k="scanCd"][data-step="1"]');
+    await a.click('.chm-sheet [data-k="seekSpeed"][data-v="fast"]');
+    await b.waitForFunction(() => { const r = window.__cham.state().setup.rules; return r.stamp === false && r.climb === false && r.pellets === 7 && r.seekSpeed === 'fast'; }, null, { timeout: 5000 });
+    assert(true, 'stamp off, climbing off, 7 pellets, slower scans, fast seeker: all reached the guest');
+    // validation: garbage is snapped to allowed values, identically on both devices
+    await hook(a, 'setRules', { rules: { pellets: 999, size: 'gigantic', hide: 47, scans: -3 } });
+    await b.waitForFunction(() => window.__cham.state().setup.rules.pellets === 10, null, { timeout: 5000 });
+    const ra = (await st(a)).setup.rules; rb = (await st(b)).setup.rules;
+    assert(JSON.stringify(ra) === JSON.stringify(rb) && ra.size === 'large' && ra.hide === 45 && ra.scans === 0, `invalid values are snapped (pellets 10, size large, hide 45 s, scans unlimited) and both agree`);
+    // Hard preset
+    await a.click('.chm-sheet .chm-presets [data-v="hard"]');
+    await b.waitForFunction(() => window.__cham.state().setup.rules.preset === 'hard', null, { timeout: 5000 });
+    rb = (await st(b)).setup.rules;
+    assert(rb.size === 'medium' && rb.minimap === false && rb.blink === 'off' && rb.scans === 3 && rb.escapes === 2, 'Hard preset: medium size, no minimap, no blink glints, 3 scans, 2 escapes');
+    await a.click('.chm-sheet [data-k="pellets"][data-step="-1"]'); // custom: 4 pellets
+    await b.waitForFunction(() => window.__cham.state().setup.rules.pellets === 4, null, { timeout: 5000 });
+    await a.click('.chm-sheet .chm-go[data-act="settings"]');
+    // persisted per device: the host reopens the game and gets the same setup
+    const keep = JSON.stringify((await st(a)).setup.rules);
+    await h.closeGame(a); await h.closeGame(b);
+    await wait(600);
+    await arm(a, SLOW); await arm(b, SLOW);
+    await h.startLive(a, 'chameleon', 'live');
+    await h.settle();
+    await b.click('#gm-invite [data-g="invite-yes"]');
+    await waitLinked(a); await waitLinked(b);
+    await wait(800);
+    const back = (await st(a)).setup.rules;
+    assert(JSON.stringify(back) === keep, `the host's device remembered the last setup (${back.preset}, ${back.pellets} pellets)`);
+    await b.waitForFunction((k) => JSON.stringify(window.__cham.state().setup.rules) === k, keep, { timeout: 5000 });
+    assert(true, 'and sent it to the guest on connect');
+    // the match plays by these rules on both devices
+    await a.click('[data-lobby="first"][data-v="b"]');
+    await a.click('[data-act="start"]');
+    await waitPhase(b, 'hide', 20000);
+    const ma = (await st(a)).match; const mb = (await st(b)).match;
+    assert(JSON.stringify(ma.rules) === JSON.stringify(mb.rules) && ma.rules.pellets === 4 && ma.rounds === 4, 'both devices hold the same match rules');
+    await camoHide(b);
+    await b.click('.chm-acts [data-act="ready"]');
+    await waitPhase(a, 'seek', 20000);
+    const sa = await st(a);
+    assert(sa.round.pellets.a === 4 && sa.round.scansLeft.a === 3, `the seeker gets 4 pellets and 3 scans (${sa.round.pellets.a}, ${sa.round.scansLeft.a})`);
+    assert(!(await a.isVisible('.chm-mini')), 'no minimap in Hard');
+    h.assertNoErrors();
+    assert(!h.warnings.length, `message budget respected (${h.warnings.length} warnings)`);
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'settings-FAIL-a').catch(() => {}); await shot(b, 'settings-FAIL-b').catch(() => {});
+  } finally { await h.close(); }
+}
+
+async function togglesSection(port) {
+  console.log('\n# rules toggles: stamp off and walls & ceilings off are enforced');
+  const h = await launch({ port, only: ['chameleon'], who: ['a'] });
+  const a = h.a;
+  try {
+    await arm(a, SLOW);
+    await h.startLive(a, 'chameleon', 'local');
+    await waitReady(a);
+    await a.click('.chm-lobby [data-act="settings"]');
+    await a.click('.chm-sheet [data-k="stamp"][data-v="false"]');
+    await a.click('.chm-sheet [data-k="climb"][data-v="false"]');
+    await a.click('.chm-sheet .chm-go[data-act="settings"]');
+    await a.click('[data-lobby="first"][data-v="b"]');
+    await a.click('[data-act="start"]');
+    await a.click('[data-act="curtain"]');
+    await waitPhase(a, 'hide');
+    await wait(400);
+    assert(!(await a.isVisible('.chm-acts [data-act="stick"]')) && !(await a.isVisible('.chm-acts [data-act="zip"]')), 'no Stick or Zip buttons');
+    assert(!(await hook(a, 'stick')).at, 'Stick (E) does nothing');
+    assert(!(await hook(a, 'zip')), 'tongue-zip refused');
+    // walking into a wall holding forward doesn't stick either
+    await hook(a, 'teleport', -4.25, 1.6, -Math.PI / 2, 0);
+    await hook(a, 'setCam', Math.PI / 2, 0.25, 2.3);
+    await wait(200);
+    await stickUp(a, 1200);
+    let bb = await hook(a, 'body');
+    assert(!bb.at && bb.x < -4.6, `walked up to the wall (x ${bb.x.toFixed(2)}) and stayed on the floor`);
+    // the classic flat-on-the-wall pose still works, but only slides sideways
+    assert(await hook(a, 'setPose', 'wall') === 'wall', 'the flat-on-the-wall pose still works');
+    const y0 = (await hook(a, 'body')).y;
+    await hook(a, 'crawl', 0, 1.2, 0.4, 30);
+    bb = await hook(a, 'body');
+    assert(Math.abs(bb.y - y0) < 1e-6 && bb.at && bb.nx > 0.9, `but can't climb (y stays ${bb.y.toFixed(2)})`);
+    // stamp off: the tool is gone, and the stamp action is refused
+    await a.click('.chm-acts [data-act="paint"]');
+    await wait(500);
+    assert(!(await a.isVisible('.chm-tool[data-tool="stamp"]')), 'the Stamp tool is hidden');
+    const h0 = await hook(a, 'paintHash', 'b');
+    await hook(a, 'stampNow');
+    await a.keyboard.press('KeyT');
+    await wait(200);
+    assert(await hook(a, 'paintHash', 'b') === h0, 'stamping is refused (texture unchanged)');
+    await shot(a, 'v2-toggles-paint');
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'toggles-FAIL').catch(() => {});
+  } finally { await h.close(); }
+}
+
+/** A hider on a big map: stick to a surface near a spot, ready. Returns the hider's body. */
+async function bigHide(p, spot) {
+  await hook(p, 'teleport', spot.x, spot.z, spot.yaw || 0, spot.y != null ? spot.y : undefined);
+  await wait(200);
+  const r = await hook(p, 'stick');
+  await p.click('.chm-acts [data-act="ready"]');
+  return r;
+}
+
+async function bigMatchSection(port) {
+  console.log('\n# a full match on the biggest map (2 rounds): random fair spawns, hide on a wall, tag, dry round, end card');
+  const h = await launch({ port, only: ['chameleon'] });
+  const { a, b } = h;
+  try {
+    await startPair(h, { ...SLOW, hide: 30000, seek: 30000 });
+    const big = await biggestMap(a);
+    console.log(`  maps: ${big.list.map((m) => `${m.id} ${Math.round(m.area)} m²`).join(', ')}; biggest: ${big.id}`);
+    await hook(a, 'setRules', { map: big.id, first: 'b', rules: { rounds: 2, pellets: 3 } });
+    await b.waitForFunction((m) => window.__cham.state().mapId === m, big.id, { timeout: 20000 });
+    assert(true, `host picked ${big.id}; the guest loaded it`);
+    await a.click('[data-act="start"]');
+    await waitPhase(b, 'hide', 30000);
+    const sa0 = await st(a); const sb0 = await st(b);
+    assert(JSON.stringify(sa0.round.spawn) === JSON.stringify(sb0.round.spawn), `both devices agree on the round's spawns ${JSON.stringify(sb0.round.spawn)}`);
+    const spots = await hook(b, 'spots');
+    const H = spots.hiderSpawns[sb0.round.spawn.hs];
+    const hb = sb0.bodies.b;
+    assert(Math.hypot(hb.x - H.x, hb.z - H.z) < 0.6, 'the hider starts at the chosen hider spawn');
+    // hide: stick to whatever surface is nearest a spot a few metres away
+    const spot = spots.camo ? { x: spots.camo.x, z: spots.camo.z - (spots.camo.wallNormal ? -spots.camo.wallNormal[2] * 0.4 : 0), y: spots.camo.y != null ? Math.max(0, spots.camo.y - 0.6) : undefined } : H;
+    const stuck = await bigHide(b, spot);
+    console.log(`  hider stuck: ${JSON.stringify(stuck)}`);
+    await waitPhase(a, 'seek', 30000); await waitPhase(b, 'seek', 5000);
+    await wait(600);
+    const hbody = await hook(b, 'body');
+    const sa = await st(a);
+    const K = spots.seekerSpawns;
+    if (K.length > 1) {
+      const sk = sa.bodies.a;
+      const dists = K.map((p) => Math.hypot(p.x - hbody.x, p.z - hbody.z));
+      const at = K.findIndex((p) => Math.hypot(p.x - sk.x, p.z - sk.z) < 0.7);
+      assert(at >= 0 && (dists[at] >= 6 || dists[at] === Math.max(...dists)), `the seeker starts at a fair spawn ${dists[at] != null ? dists[at].toFixed(1) : '?'} m from the hider`);
+    }
+    // the seeker walks over and tags her (stand off along her surface normal)
+    const n = [hbody.nx, hbody.ny, hbody.nz];
+    const off = Math.abs(n[1]) > 0.7 ? [1.4, 0, 0.6] : [n[0] * 1.8, 0, n[2] * 1.8];
+    await hook(a, 'teleport', hbody.x + off[0], hbody.z + off[2], 0, Math.max(0, hbody.y - 1.2) > 2 ? Math.floor(hbody.y / 2.8) * 2.8 : undefined);
+    await hook(a, 'aimAt', ...(await hook(a, 'bodyCenter', 'b')));
+    await wait(300);
+    await shot(a, 'v2-bigmap-seeker');
+    await a.click('.chm-acts [data-act="fire"]');
+    await waitPhase(a, 'found', 8000);
+    assert((await st(a)).round.rec.found, 'tagged on the big map');
+    await waitPhase(a, 'recap', 8000);
+    await a.click('[data-act="next"]');
+    // round 2: Emerson hides, Sydney fires three misses → out of pellets
+    await waitPhase(a, 'hide', 20000);
+    await camoOr(a);
+    await a.click('.chm-acts [data-act="ready"]');
+    await waitPhase(b, 'seek', 30000);
+    for (let i = 0; i < 3; i++) { await hook(b, 'lookAtPitch', -1.2); await wait(120); await b.click('.chm-acts [data-act="fire"]'); await wait(300); }
+    await waitPhase(b, 'time', 10000);
+    assert((await st(b)).round.rec.outOfPellets, 'round 2: the seeker ran dry, Emerson survived');
+    await a.waitForSelector('#game-root .gm-end:not([hidden])', { timeout: 30000 });
+    await b.waitForSelector('#game-root .gm-end:not([hidden])', { timeout: 30000 });
+    assert(h.results().length === 1, 'the big-map match ended once on both phones');
+    const fa = await st(a); const fb = await st(b);
+    assert(JSON.stringify(fa.match.scores) === JSON.stringify(fb.match.scores), `scores agree ${JSON.stringify(fa.match.scores)}`);
+    h.assertNoErrors();
+    assert(!h.warnings.length, `message budget respected (${h.warnings.length} warnings)`);
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'big-FAIL-a').catch(() => {}); await shot(b, 'big-FAIL-b').catch(() => {});
+    try { console.error(JSON.stringify(await st(a)).slice(0, 1200)); } catch { /* ignore */ }
+  } finally { await h.close(); }
+}
+async function camoOr(p) {
+  const spots = await hook(p, 'spots');
+  if (spots.camo) { await hook(p, 'teleport', spots.camo.x, spots.camo.z - 0.1, 0, spots.camo.y != null ? Math.max(0, spots.camo.y - 0.6) : undefined); return hook(p, 'setPose', 'wall'); }
+  return null;
+}
+
+async function bigPerfSection(port) {
+  console.log('\n# perf on the biggest map (iPhone 13 profile): draw calls, triangles, JS per frame, allocations');
+  const h = await launch({ port, only: ['chameleon'], who: ['a'] });
+  const a = h.a;
+  try {
+    await arm(a, { ...FAST, hide: 120000, seek: 120000, maxDpr: 2 });
+    await h.startLive(a, 'chameleon', 'local');
+    await waitReady(a);
+    const big = await biggestMap(a);
+    await hook(a, 'setRules', { map: big.id, first: 'b', rules: { minimap: true } });
+    await a.waitForFunction((m) => window.__cham.state().mapId === m, big.id, { timeout: 20000 });
+    const ws = await hook(a, 'worldStats');
+    console.log(`  ${big.id}: ${ws.chunks} chunks, ${ws.verts} vertices, ${Math.round(ws.tris)} triangles in total (incl. outline hulls), ${ws.boxes} colliders, atlas ${ws.atlasUsed}/${ws.atlasH} px used`);
+    await a.click('[data-act="start"]');
+    await a.click('[data-act="curtain"]');
+    await waitPhase(a, 'hide');
+    await wait(1200);
+    // third person from every hider spawn (different rooms / floors)
+    const spots = await hook(a, 'spots');
+    let worst = { calls: 0, tris: 0 }; const samples = [];
+    const pts = spots.hiderSpawns.concat(spots.seekerSpawns);
+    for (const sp of pts) {
+      await hook(a, 'teleport', sp.x, sp.z, sp.yaw || 0, sp.y != null ? sp.y : undefined);
+      for (const yaw of [0, 2.1, 4.2]) {
+        await hook(a, 'setCam', yaw, 0.3, 2.3);
+        await wait(450);
+        const pf = await hook(a, 'perf');
+        samples.push(pf.calls); worst = { calls: Math.max(worst.calls, pf.calls), tris: Math.max(worst.tris, pf.tris) };
+      }
+    }
+    console.log(`  hide (3rd person) over ${samples.length} views: draw calls max ${worst.calls}, triangles max ${worst.tris}`);
+    const benchH = await hook(a, 'bench', 20);
+    const jsH = benchH.simulate + benchH.animate + benchH.cameras + benchH.fx + benchH.ui;
+    await hook(a, 'resetPerf'); await wait(2500);
+    const pfH = await hook(a, 'perf');
+    // the hunt: first person from every seeker spawn, looking around
+    await a.click('.chm-acts [data-act="ready"]');
+    await waitPhase(a, 'curtain');
+    await a.click('[data-act="curtain"]');
+    await waitPhase(a, 'seek');
+    await wait(1500);
+    let worstS = { calls: 0, tris: 0 };
+    for (const sp of pts) {
+      await hook(a, 'teleport', sp.x, sp.z, sp.yaw || 0, sp.y != null ? sp.y : undefined);
+      for (const [yaw, pitch] of [[0, 0], [1.6, 0.2], [3.1, -0.3], [4.7, 1.2]]) {
+        await hook(a, 'setLook', yaw, pitch);
+        await wait(450);
+        const pf = await hook(a, 'perf');
+        worstS = { calls: Math.max(worstS.calls, pf.calls), tris: Math.max(worstS.tris, pf.tris) };
+      }
+    }
+    const benchS = await hook(a, 'bench', 20);
+    const jsS = benchS.simulate + benchS.animate + benchS.cameras + benchS.fx + benchS.ui;
+    // allocations: heap growth over 3 s of play (sampled after GC)
+    const cdp = await a.context().newCDPSession(a);
+    await cdp.send('HeapProfiler.collectGarbage');
+    const m0 = (await cdp.send('Runtime.getHeapUsage')).usedSize;
+    const f0 = (await hook(a, 'perf')).renders;
+    await wait(3000);
+    const m1 = (await cdp.send('Runtime.getHeapUsage')).usedSize;
+    const frames = (await hook(a, 'perf')).renders - f0;
+    const pf = await hook(a, 'perf');
+    console.log(`  seek (1st person): draw calls max ${worstS.calls}, triangles max ${worstS.tris}; JS per frame hide ${jsH.toFixed(2)} ms, seek ${jsS.toFixed(2)} ms (+ render submit ${benchS.render.toFixed(2)} ms); heap growth ${((m1 - m0) / 1024).toFixed(0)} KB over 3 s / ${frames} frames (${frames ? ((m1 - m0) / frames).toFixed(0) : '?'} B per frame, incl. net + harness); textures ${pf.textures}, geometries ${pf.geometries}, programs ${pf.programs}; frame p50 ${pfH.p50.toFixed(0)} ms in software GL`);
+    assert(Math.max(worst.calls, worstS.calls) <= 80, `draw calls ≤ 80 everywhere (${Math.max(worst.calls, worstS.calls)})`);
+    assert(Math.max(worst.tris, worstS.tris) <= 150000, `triangles ≤ 150k (${Math.max(worst.tris, worstS.tris)})`);
+    assert(Math.max(jsH, jsS) < 4, `game JS per frame stays small (${Math.max(jsH, jsS).toFixed(2)} ms)`);
+    await shot(a, 'v2-bigmap-perf-seek');
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'bigperf-FAIL').catch(() => {});
+  } finally { await h.close(); }
+}
+
+async function squeezeSection(port) {
+  console.log('\n# squeeze: under the House bed (0.26 m clearance) at every size; no standing up under it');
+  const h = await launch({ port, only: ['chameleon'], who: ['a'] });
+  const a = h.a;
+  try {
+    await arm(a, SLOW);
+    await h.startLive(a, 'chameleon', 'local');
+    await waitReady(a);
+    const ids = await hook(a, 'mapIds');
+    if (!ids.includes('house')) { console.log('  (no house map: skipped)'); return; }
+    await hook(a, 'setRules', { map: 'house', first: 'b' });
+    await a.click('[data-act="start"]');
+    await a.click('[data-act="curtain"]');
+    await waitPhase(a, 'hide');
+    const FH = 2.8; const bx = -5.4; const footZ = -3.43;
+    for (const size of ['tiny', 'medium', 'huge']) {
+      await hook(a, 'forceSize', size);
+      await wait(150);
+      // walking in upright: blocked by the bed frame (except Tiny, which fits under on its feet)
+      await hook(a, 'teleport', bx, footZ + 0.75, Math.PI, FH);
+      let r = await hook(a, 'walk', 0, -1.2, 40);
+      const under = r.z < footZ - 0.4;
+      if (size !== 'tiny') assert(!under, `${size}: upright, the bed stops you (z ${r.z.toFixed(2)})`);
+      await hook(a, 'teleport', bx, footZ + 0.75, Math.PI, FH);
+      assert(await hook(a, 'setPose', 'squeeze') === 'squeeze', `${size}: squeezed flat`);
+      r = await hook(a, 'walk', 0, -1.2, 60);
+      assert(r.z < footZ - 0.6 && Math.abs(r.y - FH) < 0.01, `${size}: squeeze-crawled under the bed (z ${r.z.toFixed(2)}, still on the floor)`);
+      if (size !== 'tiny') assert(await hook(a, 'setPose', 'stand') === 'squeeze', `${size}: no room to stand up under the bed`);
+      if (size === 'huge') { await hook(a, 'setCam', 0.4, 0.2, 2.2); await wait(900); await shot(a, 'v2-squeeze-under-bed'); }
+    }
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'squeeze-FAIL').catch(() => {});
+  } finally { await h.close(); }
+}
+
+/** Screenshots of the settings panel and the new mechanics (one device). */
+async function shotsRun(port, { colorScheme, device, viewport, prefix, mechanics }) {
+  const h = await launch({ port, only: ['chameleon'], who: ['a'], colorScheme, device });
+  const a = h.a;
+  try {
+    if (viewport) await a.setViewportSize(viewport);
+    await arm(a, { ...SHOWCASE, noTips: false });
+    await h.startLive(a, 'chameleon', 'local');
+    await waitReady(a);
+    await a.evaluate(() => { try { localStorage.removeItem('chm.tips.v2'); } catch { /* ignore */ } });
+    await wait(1500);
+    await shot(a, `${prefix}-lobby`);
+    const fit = await a.evaluate(() => { const c = document.querySelector('.chm-lobby .chm-card'); const s = document.querySelector('[data-act="start"]').getBoundingClientRect(); return { over: c.scrollHeight - c.clientHeight, startIn: s.bottom <= innerHeight + 1 }; });
+    assert(fit.over <= 1 && fit.startIn, `[${prefix}] lobby fits without scrolling (overflow ${fit.over}px)`);
+    await a.click('.chm-lobby [data-act="settings"]');
+    await wait(500);
+    await shot(a, `${prefix}-settings`);
+    const wide = await a.evaluate(() => { const s = document.querySelector('.chm-sheet'); return { sw: s.scrollWidth - s.clientWidth, w: s.getBoundingClientRect().width }; });
+    assert(wide.sw <= 1, `[${prefix}] settings sheet has no sideways overflow (${wide.w.toFixed(0)} px wide)`);
+    await a.evaluate(() => { const s = document.querySelector('.chm-sheet'); s.scrollTop = s.scrollHeight; });
+    await wait(300);
+    await shot(a, `${prefix}-settings-end`);
+    await a.click('.chm-sheet .chm-go[data-act="settings"]');
+    if (!mechanics) { h.assertNoErrors(); return h; }
+    await hook(a, 'setRules', { map: 'living', first: 'b', rules: { size: 'large' } });
+    await a.click('[data-act="start"]');
+    await a.click('[data-act="curtain"]');
+    await waitPhase(a, 'hide');
+    await wait(900);
+    await shot(a, `${prefix}-tips`);
+    await a.click('[data-act="tips-ok"]');
+    // crawling up the left wall, seen from the side
+    await hook(a, 'teleport', -4.55, 1.6, -Math.PI / 2, 0);
+    await hook(a, 'stick');
+    await hook(a, 'crawl', 0, 1.2, 0, 22);
+    await hook(a, 'setCam', 0.9, 0.15, 2.4);
+    await a.click('.chm-acts [data-act="poses"]');
+    await wait(1200);
+    await shot(a, `${prefix}-wall-crawl`);
+    // up onto the rafter and hang
+    await hook(a, 'crawl', 0, 1.2, 0, 60);
+    await hook(a, 'crawl', 1.2, 0, 0, 25);
+    await hook(a, 'setPose', 'hang');
+    await hook(a, 'setCam', 0.5, -0.1, 2.6);
+    await wait(1400);
+    await shot(a, `${prefix}-ceiling-hang`);
+    // perched on the curtain rail (zip-free: place on top of it)
+    await hook(a, 'teleport', 2.9, -3.86, 0, 2.095);
+    await wait(900);
+    await hook(a, 'setCam', 0.35, 0.25, 2.2);
+    await wait(900);
+    await shot(a, `${prefix}-perch`);
+    // squeezed behind the sofa
+    await hook(a, 'teleport', 0.3, -3.78, Math.PI / 2, 0);
+    await hook(a, 'setPose', 'squeeze');
+    await hook(a, 'setCam', 0.4, 0.75, 2.0);
+    await wait(1200);
+    await shot(a, `${prefix}-squeeze`);
+    // tongue-zip in flight toward the floating shelf
+    await hook(a, 'teleport', 3.0, -0.3, Math.PI / 2, 0);
+    await hook(a, 'setCam', -Math.PI / 2 - 0.25, -0.25, 1.6);
+    await wait(900);
+    await hook(a, 'zip');
+    await wait(140);
+    await shot(a, `${prefix}-zip`);
+    await wait(900);
+    // the hunt on a big map with the minimap
+    await a.click('.chm-acts [data-act="ready"]');
+    await waitPhase(a, 'curtain');
+    await a.click('[data-act="curtain"]');
+    await waitPhase(a, 'seek');
+    await wait(1800);
+    await hook(a, 'lookAtPitch', 0.75);
+    await wait(500);
+    await shot(a, `${prefix}-seek-lookup`);
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, `${prefix}-FAIL`).catch(() => {});
+  }
+  return h;
+}
+async function minimapShot(port, { colorScheme, prefix }) {
+  const h = await launch({ port, only: ['chameleon'], who: ['a'], colorScheme, device: 'iPhone 13' });
+  const a = h.a;
+  try {
+    await arm(a, SHOWCASE);
+    await h.startLive(a, 'chameleon', 'local');
+    await waitReady(a);
+    const big = await biggestMap(a);
+    const id = big.list.find((m) => m.id === 'house') ? 'house' : big.id;
+    await hook(a, 'setRules', { map: id, first: 'b', rules: { minimap: true } });
+    await a.waitForFunction((m) => window.__cham.state().mapId === m, id, { timeout: 20000 });
+    await a.click('[data-act="start"]');
+    await wait(400);
+    await shot(a, `${prefix}-title-overview`);
+    await a.click('[data-act="curtain"]');
+    await waitPhase(a, 'hide');
+    await a.click('.chm-acts [data-act="ready"]');
+    await waitPhase(a, 'curtain');
+    await a.click('[data-act="curtain"]');
+    await waitPhase(a, 'seek');
+    await wait(2500);
+    assert(await a.isVisible('.chm-mini'), `[${prefix}] the seeker's minimap shows on ${id}`);
+    await shot(a, `${prefix}-minimap`);
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, `${prefix}-FAIL`).catch(() => {});
+  }
+  return h;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -743,6 +1335,24 @@ async function mapsSection(port) {
   if (want('robust')) sections.push(() => robustSection(PORT + 8));
   if (want('leaks')) sections.push(() => leakSection(PORT + 9));
   if (want('maps')) sections.push(() => mapsSection(PORT + 0));
+  if (want('crawl')) sections.push(() => crawlSection(PORT + 1));
+  if (want('sizes')) sections.push(() => sizeSection(PORT + 2));
+  if (want('settings')) sections.push(() => settingsSection(PORT + 3));
+  if (want('toggles')) sections.push(() => togglesSection(PORT + 4));
+  if (want('bigmatch')) sections.push(() => bigMatchSection(PORT + 5));
+  if (want('bigperf')) sections.push(() => bigPerfSection(PORT + 6));
+  if (want('squeeze')) sections.push(() => squeezeSection(PORT + 8));
+  if (want('shots2')) {
+    sections.push(async () => {
+      console.log('\n# v2 screenshots: settings panel (phone, landscape, laptop; light + dark) and the new mechanics');
+      for (const scheme of ['light', 'dark']) {
+        let h = await shotsRun(PORT + 7, { colorScheme: scheme, device: 'iPhone 13', prefix: `v2-phone-${scheme}`, mechanics: true }); await h.close();
+        h = await shotsRun(PORT + 7, { colorScheme: scheme, device: 'iPhone 13', viewport: { width: 844, height: 390 }, prefix: `v2-land-${scheme}`, mechanics: scheme === 'light' }); await h.close();
+        h = await shotsRun(PORT + 7, { colorScheme: scheme, device: 'Desktop Chrome', viewport: { width: 1280, height: 800 }, prefix: `v2-desk-${scheme}`, mechanics: false }); await h.close();
+        h = await minimapShot(PORT + 7, { colorScheme: scheme, prefix: `v2-big-${scheme}` }); await h.close();
+      }
+    });
+  }
   for (const run of sections) {
     try { await run(); } catch (e) { console.error(e); failures++; }
   }

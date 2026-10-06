@@ -4,5 +4,7 @@
 import { HOUSE } from './house.js';
 import { MARKET } from './market.js';
 import { CUBOULDER } from './cuboulder.js';
+import { GREENHOUSE } from './greenhouse.js';
+import { MUSEUM } from './museum.js';
 
-export const EXTRA_MAPS = [HOUSE, MARKET, CUBOULDER];
+export const EXTRA_MAPS = [HOUSE, MARKET, CUBOULDER, GREENHOUSE, MUSEUM];

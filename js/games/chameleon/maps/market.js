@@ -29,8 +29,8 @@ const AISLES = [
 ];
 
 function build(atlas) {
-  for (const a of AISLES) atlas.add(a.key, Q.products({ cols: a.cols, rows: 1 }), { w: 240, h: 64 });
-  atlas.add('drinks', Q.products({ cols: [C.red, C.orange, C.lime, C.blue, C.pink, C.yellow, C.teal], rows: 1, bg: '#dff1f6' }), { w: 240, h: 64 });
+  for (const a of AISLES) atlas.add(a.key, Q.goods({ cols: a.cols }), { w: 480, h: 72 });
+  atlas.add('drinks', Q.goods({ cols: [C.red, C.orange, C.lime, C.blue, C.pink, C.yellow, C.teal], bg: '#cfe7ee' }), { w: 480, h: 72 });
   atlas.add('bread', Q.products({ cols: ['#d9a35f', '#c4813f', '#e8c07a', '#9c5a2c'], rows: 1, bg: '#f6efe2' }), { w: 240, h: 64 });
   atlas.add('candy', Q.products({ cols: [C.pink, C.yellow, C.purple, C.lime, C.red], rows: 2, bg: '#ffffff' }), { w: 112, h: 112 });
   AISLES.forEach((a, i) => atlas.add('sign' + i, Q.sign({ bg: '#ffffff', fg: [C.red, C.purple, C.green, C.blue][i], text: a.name, sub: 'AISLE ' + (i + 1) }), { w: 240, h: 80, repeat: false }));
@@ -131,7 +131,7 @@ function build(atlas) {
             if (!gap) {
               const hh = 0.32 + r() * 0.06; const dd = 0.3 + r() * 0.08;
               const x0 = side < 0 ? gx - 0.06 - dd : gx + 0.06; const x1 = side < 0 ? gx - 0.06 : gx + 0.06 + dd;
-              aabb(b, x0, y, z, x1, y + hh, z + len - 0.02, { tile, rep: [1.6, hh], uvOff: [seg * 0.31 + li * 0.17, 0], color: '#ffffff', outline: true, collide: { wall: true, name: 'products' } });
+              aabb(b, x0, y, z, x1, y + hh, z + len - 0.02, { tile, rep: [2.6, hh], uvOff: [seg * 0.31 + li * 0.17, 0], color: '#ffffff', outline: true, collide: { wall: true, name: 'products' } });
             }
             z += gap ? 0.55 : len; seg++;
           }
@@ -254,7 +254,7 @@ function build(atlas) {
 
     // ── office mezzanine (x 4…10, z −7…−2.5, y 2.4) + stairs up the right wall ──
     slab(b, 4.08, Z0, X1, -2.5, MZ, { under: { color: '#d7d2c8' }, edge: C.ink, name: 'ceil:mezzanine' });
-    floor(b, 4.08, Z0, X1, -2.5, MZ, { tile: 'carton', rep: 0.8, color: '#9fb4c7' });
+    floor(b, 4.08, Z0, X1, -2.5, MZ, { tile: 'concrete', rep: 1.2, color: '#c9d8e6' });
     for (const [x, z] of [[4.4, -2.7], [7.6, -2.7]]) aabb(b, x - 0.09, 0, z - 0.09, x + 0.09, MZ - 0.2, z + 0.09, { color: C.steel, outline: true, collide: { wall: true, perch: true, name: 'perch:column' } });
     // free-standing stairs in the middle of the stockroom (walk round and under them)
     stairs(b, { x: 5.9, z: -2.5 + 14 * 0.28, dir: 'z-', width: 1.0, n: 14, rise: MZ / 14, run: 0.28, tread: { color: '#8a969c', tile: 'wire', rep: 0.3 }, stringer: C.ink, railSide: 2, rail: C.yellow, name: 'mezz-stairs' });
@@ -298,7 +298,7 @@ function build(atlas) {
     b.spot('spawnB', { x: 2.9, z: -0.5, yaw: Math.PI });
     b.spot('hiderSpawns', [{ x: -3.0, z: 3.4, yaw: Math.PI }, { x: -0.1, z: -5.4, yaw: 0 }, { x: 6.8, z: 0.4, y: 0, yaw: -Math.PI / 2 }, { x: 5.6, z: -4.5, y: MZ, yaw: 0 }]);
     b.spot('seekerSpawns', [{ x: -1.0, z: 6.2, yaw: Math.PI }, { x: -2.6, z: 6.3, yaw: Math.PI }, { x: 6.1, z: 6.4, yaw: Math.PI }]);
-    b.spot('camo', { x: -6.1, z: -4.75, y: 0.25, wallNormal: [0, 0, 1], note: 'aisle-end bin' });
+    b.spot('camo', { x: -3.0, z: -6.0, y: 0.25, wallNormal: [0, 0, 1], note: 'fridge doors full of drinks' });
     b.spot('rug', { x: 0, z: 6.3, yaw: 0 });
     b.probe('pay-checkout-red', [-4.6 + 0.375, 0.4, 4.8], [1, 0, 0], C.red);
   };
@@ -328,7 +328,7 @@ export const MARKET = {
       { name: 'checkouts', p: [-2.0, 1.8, 6.6], t: [-7.5, 0.8, 4.2] },
       { name: 'produce', p: [-0.5, 1.6, 3.0], t: [2.5, 0.6, 5.6] },
       { name: 'stockroom', p: [4.6, 1.8, 6.4], t: [8.5, 1.0, -0.5] },
-      { name: 'under-office', p: [6.0, 1.4, 0.5], t: [7.0, 0.8, -6.5] },
+      { name: 'under-office', p: [8.6, 1.4, -1.6], t: [5.5, 0.8, -6.5] },
       { name: 'office', p: [4.6, 3.8, -2.8], t: [8.0, 2.8, -6.5] },
       { name: 'ceiling', p: [-3.0, 3.0, 5.5], t: [-3.0, 3.4, -3] },
     ],

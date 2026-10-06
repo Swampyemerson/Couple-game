@@ -59,7 +59,7 @@ function mapCard(api, setup, canEdit) {
     ${MAPS.length > 1 ? `<button class="chm-arrow" data-lobby="map" data-v="${prev.id}" aria-label="Previous map" ${dis}>‹</button>` : ''}
     ${mapPlan(m)}
     <div class="chm-mapinfo"><b>${esc(m.name)}</b><small>${esc(m.blurb || '')}</small>
-      <span class="chm-facts">${f.area ? `<em>${f.area}</em>` : ''}<em>${f.rooms} room${f.rooms === 1 ? '' : 's'}</em>${f.floors > 1 ? `<em>${f.floors} floors</em>` : ''}<em class="chm-climbs" title="Climbing spots">Climbs <span>${dots}</span></em></span></div>
+      <span class="chm-facts">${f.area ? `<em class="ar">${f.area}</em>` : ''}<em>${f.rooms} room${f.rooms === 1 ? '' : 's'}</em>${f.floors > 1 ? `<em>${f.floors} floors</em>` : ''}<em class="chm-climbs" title="Climbing spots">Climbs <span>${dots}</span></em></span></div>
     ${MAPS.length > 1 ? `<button class="chm-arrow" data-lobby="map" data-v="${next.id}" aria-label="Next map" ${dis}>›</button>` : ''}
   </div>`;
 }
@@ -77,7 +77,7 @@ function presetSeg(rules, canEdit) {
 
 export function lobbyCard(api, { canEdit, local, setup, waitingFor, sheet }) {
   const mode = setup.mode; const first = setup.first; const rules = setup.rules;
-  const dis = canEdit ? '' : 'aria-disabled="true"';
+  const dis = canEdit ? '' : 'data-ro="1"';
   const card = `<div class="chm-over chm-lobby bottom"><div class="chm-card chm-sticker" ${dis}>
     <div class="chm-col">
     <div class="chm-title"><span class="c1">Blend</span><span class="c2">&amp;</span><span class="c3">Seek</span></div>
@@ -159,14 +159,15 @@ export function tipsHtml(mouse) {
 const SURF_HEAD = {
   ceiling: (n) => `${n} was on the CEILING`,
   under: (n) => `${n} was UPSIDE DOWN under there`,
-  hang: (n) => `${n} was HANGING right there`,
+  hang: (n) => `${n} was HANGING right under there`,
+  hangHigh: (n) => `${n} was HANGING from the CEILING`,
   wall: (n) => `${n} was UP the WALL`,
   flat: (n) => `${n} was flat on the WALL`,
   perch: (n) => `${n} was PERCHED up there`,
   squeeze: (n) => `${n} SQUEEZED into a gap`,
   corner: (n) => `${n} was wedged in the CORNER`,
 };
-const SURF_SHORT = { ceiling: 'on the ceiling', under: 'upside down', hang: 'hanging', wall: 'up the wall', flat: 'on the wall', perch: 'perched', squeeze: 'squeezed in a gap', corner: 'in the corner' };
+const SURF_SHORT = { ceiling: 'on the ceiling', under: 'upside down', hang: 'hanging', hangHigh: 'hanging from the ceiling', wall: 'up the wall', flat: 'on the wall', perch: 'perched', squeeze: 'squeezed in a gap', corner: 'in the corner' };
 export { SURF_HEAD, SURF_SHORT };
 
 export function titleCard(api, { round, rounds, mode, hider, youHide, youSeek, map }) {

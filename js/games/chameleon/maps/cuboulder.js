@@ -16,7 +16,7 @@
 // → G1B30 is a loop. Interiors have downward-only ceilings (the camera sees in from above); roof
 // tops are fenced off with climb:false guards so nobody hides on top of a building.
 import { boxGeo, cylGeo, sphereGeo, latheGeo } from '../geo.js';
-import { aabb, wall, floor, slab, stairs, railing, pendant } from './lib.js';
+import { aabb, wall, floor, slab, stairs, railing } from './lib.js';
 import { Q } from './patterns.js';
 
 // ── palette ──────────────────────────────────────────────────────────────
@@ -40,30 +40,35 @@ const wrapDo = (w, h, fn) => { for (let oy = -1; oy <= 1; oy++) for (let ox = -1
 const dot = (g, x, y, r) => { g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill(); };
 
 const PAT = {
-  /** Rough-cut Lyons sandstone ashlar: courses of uneven blocks in pinks and tans. */
+  /** Rough-cut Lyons sandstone ashlar: courses of uneven height, long and short blocks in
+   *  pinks, tans and buffs, chisel-rough faces with a lit top edge. */
   sandstone: ({ cols, mortar, rows = 6 }) => (g, w, h, r) => {
     g.fillStyle = mortar; g.fillRect(0, 0, w, h);
-    const rh = h / rows;
+    const hs = []; let th = 0;
+    for (let j = 0; j < rows; j++) { const v = 0.6 + r() * 0.9; hs.push(v); th += v; }
+    let y = 0;
     for (let j = 0; j < rows; j++) {
-      // block widths that sum exactly to w (seamless)
+      const rh = (hs[j] / th) * h;
       const ws = []; let tot = 0;
-      while (tot < w) { const bw = w * (0.16 + r() * 0.2); ws.push(bw); tot += bw; }
+      while (tot < w) { const bw = w * (0.12 + r() * 0.3); ws.push(bw); tot += bw; }
       const k = w / tot; let x = r() * w;
       for (const bw0 of ws) {
-        const bw = bw0 * k; const c = cols[Math.floor(r() * cols.length)];
+        const bw = bw0 * k; const c = cols[Math.floor(r() * cols.length)]; const j1 = r() * 2; const j2 = r() * 2;
         wrapDo(w, 0, (ox) => {
-          g.fillStyle = c; g.fillRect(x + ox + 2, j * rh + 2, bw - 4, rh - 4);
-          g.fillStyle = 'rgba(255,255,255,0.13)'; g.fillRect(x + ox + 2, j * rh + 2, bw - 4, 3);
-          g.fillStyle = 'rgba(80,40,20,0.14)'; g.fillRect(x + ox + 2, j * rh + rh - 6, bw - 4, 4);
+          g.fillStyle = c; g.beginPath();
+          g.moveTo(x + ox + 1.5 + j1, y + 1.5); g.lineTo(x + ox + bw - 1.5, y + 1.5 + j2); g.lineTo(x + ox + bw - 1.5 - j2, y + rh - 1.5); g.lineTo(x + ox + 1.5, y + rh - 1.5 - j1); g.closePath(); g.fill();
+          g.fillStyle = 'rgba(255,245,230,0.18)'; g.fillRect(x + ox + 3, y + 2, bw - 6, 2.5);
+          g.fillStyle = 'rgba(90,40,20,0.13)'; g.fillRect(x + ox + 3, y + rh - 5, bw - 6, 3);
+          g.fillStyle = 'rgba(120,60,40,0.12)'; g.beginPath(); g.ellipse(x + ox + bw * (0.3 + j1 * 0.2), y + rh * 0.55, bw * 0.22, rh * 0.18, 0, 0, Math.PI * 2); g.fill();
         });
         x += bw;
       }
+      y += rh;
     }
-    // pitted, rough face
-    for (let i = 0; i < 220; i++) {
-      g.fillStyle = r() < 0.5 ? 'rgba(90,45,25,0.16)' : 'rgba(255,240,220,0.22)';
-      const x = r() * w; const y = r() * h; const s = 0.8 + r() * 2.2;
-      wrapDo(w, h, (ox, oy) => dot(g, x + ox, y + oy, s));
+    for (let i = 0; i < 260; i++) {
+      g.fillStyle = r() < 0.5 ? 'rgba(90,45,25,0.18)' : 'rgba(255,240,220,0.24)';
+      const x = r() * w; const yy = r() * h; const s2 = 0.7 + r() * 2;
+      wrapDo(w, h, (ox, oy) => dot(g, x + ox, yy + oy, s2));
     }
   },
 
@@ -209,36 +214,43 @@ const PAT = {
     }
   },
 
-  /** Flatirons backdrop: banded sky, slanted pink slabs, pine-dotted foothills (repeats sideways). */
-  flatirons: ({ sky, rock, rockDk, hill, pine }) => (g, w, h, r) => {
-    sky.forEach((c, i) => { g.fillStyle = c; g.fillRect(0, (i / sky.length) * h * 0.62, w, h); });
-    // clouds
-    g.fillStyle = 'rgba(255,255,255,0.85)';
-    for (const [x, y, s] of [[0.12, 0.14, 1], [0.55, 0.1, 0.8], [0.8, 0.2, 0.6]]) wrapDo(w, 0, (ox) => { g.beginPath(); g.ellipse(w * x + ox, h * y, 34 * s, 9 * s, 0, 0, Math.PI * 2); g.ellipse(w * x + 18 * s + ox, h * y - 6 * s, 20 * s, 9 * s, 0, 0, Math.PI * 2); g.fill(); });
-    // distant ridge
-    g.fillStyle = '#9a8fb3'; g.beginPath(); g.moveTo(0, h * 0.62);
-    for (let x = 0; x <= w; x += w / 12) g.lineTo(x, h * (0.5 + 0.06 * Math.sin(x / w * Math.PI * 6)));
-    g.lineTo(w, h); g.lineTo(0, h); g.fill();
-    // the irons: steep slabs leaning south (to the right)
-    const slabs = [[0.04, 0.55, 0.2], [0.16, 0.3, 0.24], [0.33, 0.18, 0.27], [0.55, 0.26, 0.22], [0.71, 0.42, 0.16], [0.86, 0.32, 0.2]];
-    for (const [x0, top, wd] of slabs) {
-      const xa = x0 * w; const xb = (x0 + wd) * w; const xt = xa + (xb - xa) * 0.32;
+  /** Flatirons backdrop (repeats sideways): banded sky, Green Mountain behind, three big tilted
+   *  sandstone slabs with bedding lines, smaller irons, pine forest and a meadow at their feet. */
+  flatirons: ({ sky, rock, rockLt, rockDk, mtn, forest, meadow, pine }) => (g, w, h, r) => {
+    sky.forEach((c, i) => { g.fillStyle = c; g.fillRect(0, (i / sky.length) * h * 0.7, w, h); });
+    g.fillStyle = 'rgba(255,255,255,0.9)';
+    for (const [x, y, s] of [[0.1, 0.1, 1], [0.48, 0.07, 0.8], [0.78, 0.15, 0.7]]) wrapDo(w, 0, (ox) => { g.beginPath(); g.ellipse(w * x + ox, h * y, 30 * s, 8 * s, 0, 0, Math.PI * 2); g.ellipse(w * x + 16 * s + ox, h * y - 5 * s, 18 * s, 8 * s, 0, 0, Math.PI * 2); g.fill(); });
+    // Green Mountain: a broad dark ridge behind everything
+    g.fillStyle = mtn; g.beginPath(); g.moveTo(0, h);
+    for (let x = 0; x <= w; x += w / 24) g.lineTo(x, h * (0.3 + 0.08 * Math.cos((x / w) * Math.PI * 2) + 0.025 * Math.sin((x / w) * Math.PI * 10)));
+    g.lineTo(w, h); g.fill();
+    // irons: [left base, width, apex height] — steep left face, long back slope, blunt tip
+    const iron = (x0, wd, top, base = 0.8) => {
+      const xa = x0 * w; const xb = (x0 + wd) * w; const yb = h * base; const yt = h * top;
+      const tx = xa + (xb - xa) * 0.42; const tx2 = xa + (xb - xa) * 0.55;
       wrapDo(w, 0, (ox) => {
-        g.fillStyle = rock; g.beginPath(); g.moveTo(xa + ox, h * 0.82); g.lineTo(xt + ox, h * top); g.lineTo(xb + ox, h * 0.82); g.fill();
-        g.fillStyle = rockDk; g.beginPath(); g.moveTo(xt + ox, h * top); g.lineTo(xb + ox, h * 0.82); g.lineTo(xt + (xb - xt) * 0.55 + ox, h * 0.82); g.fill();
-        g.strokeStyle = 'rgba(120,60,50,0.35)'; g.lineWidth = 2;
-        for (let k = 1; k < 4; k++) { const yy = h * top + (h * 0.82 - h * top) * k / 4; g.beginPath(); g.moveTo(xa + (xt - xa) * (1 - k / 4) + ox, yy); g.lineTo(xt + (xb - xt) * (k / 4) * 0.98 + ox, yy - 6); g.stroke(); }
+        g.fillStyle = rock; g.beginPath(); g.moveTo(xa + ox, yb); g.lineTo(tx + ox, yt); g.lineTo(tx2 + ox, yt + h * 0.02); g.lineTo(xb + ox, yb); g.closePath(); g.fill();
+        g.fillStyle = rockDk; g.beginPath(); g.moveTo(tx2 + ox, yt + h * 0.02); g.lineTo(xb + ox, yb); g.lineTo(tx2 + (xb - tx2) * 0.45 + ox, yb); g.closePath(); g.fill();
+        g.fillStyle = rockLt; g.beginPath(); g.moveTo(xa + ox, yb); g.lineTo(tx + ox, yt); g.lineTo(tx + ox + (xb - xa) * 0.06, yt + h * 0.06); g.lineTo(xa + ox + (xb - xa) * 0.12, yb); g.closePath(); g.fill();
+        // bedding planes: lines parallel to the steep face
+        g.strokeStyle = 'rgba(110,50,40,0.35)'; g.lineWidth = 2;
+        for (let k = 1; k < 5; k++) { const f = k / 5; g.beginPath(); g.moveTo(xa + (xb - xa) * f * 0.7 + ox, yb); g.lineTo(tx + (tx2 - tx) * f + ox, yt + h * 0.02 * f + (yb - yt) * f * 0.25); g.stroke(); }
       });
-    }
-    // foothills + pines
-    g.fillStyle = hill; g.beginPath(); g.moveTo(0, h);
-    for (let x = 0; x <= w; x += w / 16) g.lineTo(x, h * (0.78 + 0.04 * Math.sin(x / w * Math.PI * 4 + 1)));
+    };
+    iron(0.06, 0.2, 0.2); iron(0.24, 0.17, 0.27); iron(0.39, 0.15, 0.36);
+    iron(0.62, 0.09, 0.5, 0.78); iron(0.74, 0.07, 0.56, 0.78); iron(0.9, 0.08, 0.48, 0.79);
+    // forest at the feet + meadow
+    g.fillStyle = forest; g.beginPath(); g.moveTo(0, h);
+    for (let x = 0; x <= w; x += w / 40) g.lineTo(x, h * (0.74 + 0.03 * Math.sin((x / w) * Math.PI * 14) + 0.02 * Math.cos((x / w) * Math.PI * 6)));
     g.lineTo(w, h); g.fill();
     g.fillStyle = pine;
-    for (let i = 0; i < 46; i++) {
-      const x = r() * w; const y = h * (0.8 + r() * 0.16); const s = 4 + r() * 5;
-      wrapDo(w, 0, (ox) => { g.beginPath(); g.moveTo(x + ox, y - s * 2.4); g.lineTo(x + ox + s, y); g.lineTo(x + ox - s, y); g.fill(); });
+    for (let i = 0; i < 70; i++) {
+      const x = r() * w; const y = h * (0.72 + r() * 0.12); const s = 3 + r() * 4;
+      wrapDo(w, 0, (ox) => { g.beginPath(); g.moveTo(x + ox, y - s * 2.6); g.lineTo(x + ox + s, y); g.lineTo(x + ox - s, y); g.fill(); });
     }
+    g.fillStyle = meadow; g.beginPath(); g.moveTo(0, h);
+    for (let x = 0; x <= w; x += w / 12) g.lineTo(x, h * (0.86 + 0.02 * Math.sin((x / w) * Math.PI * 4 + 1)));
+    g.lineTo(w, h); g.fill();
   },
 
   /** Painted arched window (not repeating): sky behind round-headed mullions. */
@@ -420,6 +432,13 @@ function eave(b, x0, z0, x1, z1, y, side, { width = 0.9, drop = 0.3 } = {}) {
   else b.add(boxGeo(len, 0.07, L + 0.3, { faces: ['py', 'px', 'nx', 'pz', 'nz'] }), { at: [cx, y - drop / 2 + 0.06, cz], rot: [0, 0, -side * ang], color: '#ffffff', tile: 'rooftile', rep: [0.6, 0.9], outline: true });
 }
 
+/** Hanging lamp: cord, a closed cone shade, a bulb peeking out underneath. */
+function pendant(b, x, z, yc, y, { shade = C.gold, r = 0.24 } = {}) {
+  deco(b, x - 0.008, y, z - 0.008, x + 0.008, yc, z + 0.008, { color: C.ink, outline: false });
+  b.add(cylGeo(0.05, r, 0.2, { radial: 14 }), { at: [x, y - 0.1, z], color: shade });
+  b.add(sphereGeo(0.06, 0.05, 0.06, { w: 8, h: 6 }), { at: [x, y - 0.21, z], color: '#fff6cc', outline: false });
+}
+
 /** Invisible guard over a roof / above a low wall: blocks and can't be climbed. */
 function guard(b, x0, y0, z0, x1, y1, z1, name) { b.collide(x0, y0, z0, x1, y1, z1, { wall: false, climb: false, name: 'guard:' + name }); }
 
@@ -470,11 +489,11 @@ const H = { g1: 5.4, cor: 2.7, nor: 4.8, umc: 3.3, lab: 3.0, arc: 3.45 };
 
 function build(atlas, kit) {
   const P = kit.P;
-  atlas.add('sandstone', PAT.sandstone({ cols: [C.stoneA, C.stoneB, C.stoneC, C.stoneD, C.stoneE], mortar: C.mortar }), { size: 'L' });
+  atlas.add('sandstone', PAT.sandstone({ cols: [C.stoneA, C.stoneB, C.stoneC, C.stoneD, C.stoneE], mortar: '#e2cfb2' }), { size: 'L' });
   atlas.add('flag', PAT.flagstone({ cols: ['#c9a389', '#b88d73', '#d4b08f', '#a98a78', '#c19a7c', '#b5a08a'], joint: '#8a7466' }), { size: 'L' });
   atlas.add('shelfbooks', PAT.shelfbooks({ cols: [C.red, C.teal, C.mustard, C.navy, C.plum, '#3f6b45', C.coral, '#f3e7cf', C.black, '#8c5a3c', C.gold], back: '#4a3122', board: '#7a4e35' }), { size: 'L' });
   atlas.add('chalk', PAT.chalk({ bg: C.chalk, line: C.chalkLine, accent: '#f2d27a' }), { w: 480, h: 240 });
-  atlas.add('flatirons', PAT.flatirons({ sky: ['#9fd0ea', '#b4dbef', '#c9e5f3', '#dcedf5'], rock: '#d99c86', rockDk: '#b8786a', hill: '#6f9a5a', pine: '#2f5537' }), { w: 480, h: 240 });
+  atlas.add('flatirons', PAT.flatirons({ sky: ['#8fc8e6', '#a6d4ec', '#bfe0f1', '#d6ebf4'], rock: '#d3917a', rockLt: '#e6ae94', rockDk: '#a9685c', mtn: '#4f6f52', forest: '#3d5f3f', meadow: '#a7b86a', pine: '#2a4a30' }), { w: 480, h: 240 });
   atlas.add('rooftile', PAT.rooftile({ a: C.tile, b: C.tileLt, dark: C.tileDk }), { size: 'M' });
   atlas.add('acoustic', PAT.acoustic({ bg: '#f2efe8', line: '#d8d2c6', speck: '#bdb6a8' }), { size: 'M' });
   atlas.add('coffer', PAT.coffer({ frame: '#efe3c8', well: '#5a7a8c', edge: '#c9a24a', rose: '#e9cf86' }), { size: 'M' });
@@ -541,8 +560,8 @@ function build(atlas, kit) {
     for (const [x0, z0, x1, z1] of [[-17.2, 12.8, 17.2, 13.2], [-17.2, 9, -16.8, 13.2], [16.8, -1, 17.2, 13.2]]) deco(b, x0, 0.7, z0, x1, 0.78, z1, { color: '#ffffff', tile: 'rooftile', rep: 0.6 });
     guard(b, -17.2, 0.7, 12.85, 17.2, 9, 13.3, 'front'); guard(b, -17.3, 0.7, 9, -16.85, 9, 13.3, 'left'); guard(b, 16.85, 0.7, -1, 17.3, 9, 13.3, 'right');
     // Flatirons backdrop: single-sided murals beyond the low walls (seen from the quad only)
-    b.add(boxGeo(34.8, 5.4, 0.01, { faces: ['nz'] }), { at: [0, 2.6, 13.6], tile: 'flatirons', rep: [11.6, 5.4], color: '#ffffff', outline: false });
-    b.add(boxGeo(0.01, 5.4, 14.8, { faces: ['nx'] }), { at: [17.6, 2.6, 6.0], tile: 'flatirons', rep: [11.6, 5.4], uvOff: [0.37, 0], color: '#ffffff', outline: false });
+    b.add(boxGeo(34.8, 7.2, 0.01, { faces: ['nz'] }), { at: [0, 3.5, 13.6], tile: 'flatirons', rep: [17.4, 7.2], color: '#ffffff', outline: false });
+    b.add(boxGeo(0.01, 7.2, 14.8, { faces: ['nx'] }), { at: [17.6, 3.5, 6.0], tile: 'flatirons', rep: [17.4, 7.2], uvOff: [0.5, 0], color: '#ffffff', outline: false });
 
     g1b30(b, R);
     corridor(b);
@@ -580,6 +599,8 @@ function g1b30(b, R) {
   // east wall (to Norlin), with the top-row door onto the gallery
   wall(b, { x0: -3, z0: -13, x1: -3, z1: -1, h: 5.6, t: 0.2, n: { color: '#8a7564', tile: 'slats', rep: 1.1 }, p: { color: C.plaster }, open: [{ c: -12.4, w: 1.0, bottom: UP, top: UP + 2.0 }], trim: C.walnut, name: 'g1-east' });
   ceiling(b, -16.9, -12.9, -3.1, -1.1, H.g1, { tile: 'acoustic', rep: 1.2, name: 'g1b30' });
+  // the hall rises above the corridor roof: sandstone where the quad can see it
+  b.add(boxGeo(14.2, 2.75, 0.01, { faces: ['pz'] }), { at: [-10, 2.75 + 1.375 + 0.1, -0.893], tile: 'sandstone', rep: 2.4, color: '#ffffff', outline: false });
   guard(b, -17.2, H.g1 + 0.12, -13.2, -3, 9, -1, 'g1roof');
   eave(b, -17.2, -1, -3, -1, 5.7, 1, { width: 1.0 });
 
@@ -696,9 +717,9 @@ function g1b30(b, R) {
   // ── ceiling: flush light rows + three suspended light bars (perches) + a hanging projector
   for (const x of [-14.5, -10, -5.5]) deco(b, x - 0.15, H.g1 - 0.06, -12.4, x + 0.15, H.g1, -1.6, { color: '#fff6d0', faces: ['ny', 'px', 'nx'], outline: false });
   for (const z of [-4.2, -7.6, -10.6]) {
-    aabb(b, -15.5, 4.3, z - 0.11, -4.5, 4.38, z + 0.11, { color: '#fffbea', collide: { wall: false, perch: true, ceil: true, name: 'perch:lightbar' } });
-    deco(b, -15.5, 4.38, z - 0.12, -4.5, 4.42, z + 0.12, { color: C.ink });
-    for (const x of [-14.5, -10, -5.5]) deco(b, x - 0.01, 4.42, z - 0.01, x + 0.01, H.g1, z + 0.01, { color: C.ink, outline: false });
+    aabb(b, -15.5, 4.32, z - 0.08, -4.5, 4.38, z + 0.08, { color: '#fffbea', collide: { wall: false, perch: true, ceil: true, name: 'perch:lightbar' } });
+    deco(b, -15.5, 4.38, z - 0.09, -4.5, 4.41, z + 0.09, { color: C.ink });
+    for (const x of [-14.5, -10, -5.5]) deco(b, x - 0.01, 4.41, z - 0.01, x + 0.01, H.g1, z + 0.01, { color: C.ink, outline: false });
   }
   solid(b, -10.3, 4.55, -6.4, -9.7, 4.8, -5.9, { color: '#e6e3dc' }, { name: 'projector' });
   deco(b, -10.02, 4.8, -6.17, -9.98, H.g1, -6.13, { color: C.ink, outline: false });
@@ -1046,20 +1067,22 @@ function quad(b, R, kit) {
   deco(b, pc[0] - 1.22, 0.85, pc[1] - 0.67, pc[0] + 1.22, 0.93, pc[1] + 0.67, { color: C.stoneC, collide: { wall: false, name: 'plinth-cap' } });
   deco(b, pc[0] - 0.5, 0.35, pc[1] + 0.6, pc[0] + 0.5, 0.6, pc[1] + 0.62, { color: C.gold, outline: false });
   const bz = kit.frame(b, pc[0], pc[1], Math.PI / 2); // head toward +x
-  const bronze = '#4a3a30'; const fur = '#3a2c24';
+  const bronze = '#4a3a30'; const fur = '#6e4c34'; const furDk = '#3a2a22';
   const y0 = 0.93;
-  bz.sph(0.4, 0.38, 0.75, [0, y0 + 0.78, -0.1], { color: bronze, w: 10, h: 7, collide: { wall: true, name: 'buffalo' } });
-  bz.sph(0.48, 0.5, 0.45, [0, y0 + 0.95, 0.35], { color: fur, w: 10, h: 7 }); // hump + shaggy shoulders
-  bz.sph(0.26, 0.28, 0.3, [0, y0 + 0.72, 0.85], { color: fur, w: 9, h: 6, rot: [0.4, 0, 0] }); // head
-  bz.sph(0.15, 0.13, 0.16, [0, y0 + 0.56, 1.06], { color: bronze, w: 8, h: 6 }); // muzzle
-  bz.sph(0.12, 0.16, 0.1, [0, y0 + 0.42, 0.9], { color: fur, w: 8, h: 5 }); // beard
+  bz.sph(0.32, 0.34, 0.55, [0, y0 + 0.74, -0.38], { color: bronze, w: 10, h: 7, collide: { wall: true, name: 'buffalo' } }); // hindquarters
+  bz.sph(0.46, 0.56, 0.52, [0, y0 + 0.9, 0.28], { color: fur, w: 11, h: 8 }); // shaggy forequarters
+  bz.sph(0.3, 0.26, 0.32, [0, y0 + 1.3, 0.2], { color: fur, w: 9, h: 6 }); // the hump
+  bz.sph(0.25, 0.28, 0.28, [0, y0 + 0.62, 0.86], { color: furDk, w: 9, h: 6, rot: [0.5, 0, 0] }); // low head
+  bz.sph(0.15, 0.13, 0.15, [0, y0 + 0.44, 1.06], { color: bronze, w: 8, h: 6 }); // muzzle
+  bz.sph(0.12, 0.18, 0.1, [0, y0 + 0.32, 0.9], { color: furDk, w: 8, h: 5 }); // beard
   for (const s of [-1, 1]) {
-    bz.cyl(0.02, 0.05, 0.22, [s * 0.3, y0 + 0.92, 0.85], { color: C.gold, rot: [0, 0, -s * 1.1], radial: 8 }); // horns (gilded)
-    bz.sph(0.035, 0.035, 0.035, [s * 0.14, y0 + 0.8, 1.06], { color: C.gold, w: 6, h: 4, outline: false }); // eyes
+    bz.cyl(0.02, 0.045, 0.2, [s * 0.28, y0 + 0.82, 0.84], { color: '#e9dcc0', rot: [0, 0, -s * 0.9], radial: 8 }); // horns
+    bz.sph(0.03, 0.03, 0.03, [s * 0.15, y0 + 0.66, 1.05], { color: C.gold, w: 6, h: 4, outline: false }); // eyes
+    bz.sph(0.15, 0.2, 0.17, [s * 0.2, y0 + 0.52, 0.32], { color: fur, w: 8, h: 6 }); // shaggy "pantaloons"
   }
-  for (const [sx, sz] of [[-1, 0.3], [1, 0.3], [-1, -0.55], [1, -0.55]]) bz.cyl(0.07, 0.09, 0.62, [sx * 0.2, y0 + 0.31, sz], { color: bronze, radial: 8 });
-  bz.cyl(0.02, 0.03, 0.45, [0, y0 + 0.75, -0.88], { color: bronze, rot: [-0.5, 0, 0], radial: 6 });
-  bz.sph(0.05, 0.08, 0.05, [0, y0 + 0.55, -0.98], { color: fur, w: 6, h: 5 });
+  for (const [sx, sz] of [[-1, 0.32], [1, 0.32], [-1, -0.55], [1, -0.55]]) bz.cyl(0.06, 0.08, 0.6, [sx * 0.19, y0 + 0.3, sz], { color: bronze, radial: 8 });
+  bz.cyl(0.02, 0.03, 0.42, [0, y0 + 0.7, -0.92], { color: bronze, rot: [-0.5, 0, 0], radial: 6 });
+  bz.sph(0.05, 0.08, 0.05, [0, y0 + 0.5, -1.0], { color: furDk, w: 6, h: 5 });
   b.collide(pc[0] - 0.95, y0, pc[1] - 0.45, pc[0] + 0.95, y0 + 1.4, pc[1] + 0.45, { wall: true, name: 'buffalo-body' });
   b.blob(pc[0], pc[1], 1.4, 0.8, { a: 0.3 });
 
@@ -1161,6 +1184,20 @@ export const CUBOULDER = {
       { name: 'The quad', floor: 0, x0: -8, z0: 2.2, x1: 17, z1: 13, landmark: 'Buffalo statue' },
       { name: 'Bike racks', floor: 0, x0: -17, z0: 9, x1: -8, z1: 13, landmark: 'Bike racks' },
     ],
-    overview: { y: 22, radius: 30 },
+    overview: { y: 12, radius: 18 },
+    // screenshot / tour cameras: p = eye, t = target
+    cams: [
+      { name: 'g1b30', p: [-3.7, 4.9, -12.5], t: [-10, 1.2, -1.6] },
+      { name: 'g1b30-rows', p: [-5.4, 2.0, -1.7], t: [-11.5, 1.8, -10] },
+      { name: 'norlin', p: [7.5, 4.3, -1.5], t: [1.5, 0.8, -8.5] },
+      { name: 'norlin-gallery', p: [1.2, 4.2, -12.3], t: [-2.2, 2.6, -6.5] },
+      { name: 'umc', p: [8.7, 3.0, -1.5], t: [13.5, 0.6, -7.5] },
+      { name: 'corridor', p: [-3.5, 2.3, 0.6], t: [-14, 0.8, 0.0] },
+      { name: 'lab', p: [-8.5, 2.75, 8.6], t: [-14.5, 0.8, 3.0] },
+      { name: 'arcade', p: [16.2, 2.4, 3.6], t: [3, 1.2, 0.0] },
+      { name: 'quad', p: [5, 6.5, 16], t: [5, 0.6, 4.5] },
+      { name: 'flatirons', p: [3, 1.6, 2.0], t: [9, 2.4, 13] },
+      { name: 'overview', p: [2, 13, 18], t: [0, 0.5, 0] },
+    ],
   },
 };

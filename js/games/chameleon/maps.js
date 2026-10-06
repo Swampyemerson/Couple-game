@@ -39,7 +39,7 @@ import { seeded } from './util.js';
 import { EXTRA_MAPS } from './maps/index.js';
 
 const BASE_MAPS = [
-  { id: 'living', name: 'Living Room', blurb: 'Rugs, stripes and a very full bookshelf.', build: (a) => living(a), size: 'S', rooms: 1, climbs: 2, info: { w: 10, d: 8, rooms: [{ name: 'Living room', x0: -5, z0: -4, x1: 5, z1: 4 }] } },
+  { id: 'living', name: 'Living Room', blurb: 'Rugs, stripes and a very full bookshelf.', build: (a) => living(a), size: 'S', rooms: 1, climbs: 3, info: { w: 10, d: 8, rooms: [{ name: 'Living room', x0: -5, z0: -4, x1: 5, z1: 4 }] } },
   { id: 'garden', name: 'Garden', blurb: 'Hedges, flower beds and a striped deck chair.', build: (a) => garden(a), size: 'S', rooms: 1, climbs: 1, info: { w: 12, d: 10, rooms: [{ name: 'Garden', x0: -6, z0: -5, x1: 6, z1: 5 }], overview: { y: 5.4, radius: 10.5 } } },
   { id: 'studio', name: 'Art Studio', blurb: 'Splatters, swatches and wet canvases.', build: (a) => studio(a), size: 'S', rooms: 1, climbs: 2, info: { w: 10, d: 8, rooms: [{ name: 'Studio', x0: -5, z0: -4, x1: 5, z1: 4 }] } },
 ];
@@ -313,6 +313,25 @@ function living(atlas) {
     tc.box(1.0, 0.5, 0.5, [0, 0.25, 0], { color: '#ffffff', tile: 'gingham', rep: 0.25, round: 0.03, collide: { wall: true } });
     tc.box(1.04, 0.06, 0.54, [0, 0.52, 0], { color: C.brick, round: 0.02, collide: true });
     tc.blob(0, 0, 0.6, 0.32);
+
+    // v2 climbing: an exposed rafter across the room (crawl up a wall, then along under it),
+    // a pendant lamp hanging from it over the dining table (hang from the shade, perch on the
+    // cord), a floating shelf on the right wall (its underside) and a curtain rail (a perch).
+    const beamZ = 2.35;
+    b.add(boxGeo(w, 0.14, 0.16, { round: 0.01 }), { at: [0, 2.43, beamZ], color: '#7a4e35', tile: 'wood', rep: 0.8, collide: { wall: true, name: 'ceil:rafter', ceil: true } });
+    b.add(cylGeo(0.012, 0.012, 0.62, { radial: 6 }), { at: [-2.9, 2.05, beamZ], color: C.ink, outline: false });
+    b.collide(-2.915, 1.74, beamZ - 0.015, -2.885, 2.36, beamZ + 0.015, { wall: false, name: 'perch:cord', perch: true });
+    b.add(cylGeo(0.12, 0.26, 0.24, { radial: 18 }), { at: [-2.9, 1.62, beamZ], color: '#ffffff', tile: 'chevron', rep: 0.35 });
+    b.collide(-3.16, 1.5, beamZ - 0.26, -2.64, 1.74, beamZ + 0.26, { wall: false, name: 'lampshade' });
+    b.add(sphereGeo(0.06, 0.06, 0.06, { w: 10, h: 6 }), { at: [-2.9, 1.5, beamZ], color: '#fff3c4', outline: false });
+    const fs = frame(b, w / 2 - 0.16, -0.3, -Math.PI / 2);
+    fs.box(1.4, 0.05, 0.3, [0, 1.75, 0], { color: '#f4efe6', round: 0.01, collide: { wall: false, name: 'wallshelf' } });
+    for (const sx of [-0.55, 0.55]) fs.box(0.03, 0.14, 0.24, [sx, 1.66, -0.02], { color: '#7a4e35' });
+    fs.cyl(0.07, 0.06, 0.14, [-0.35, 1.845, 0], { color: C.terracotta, collide: true });
+    fs.sph(0.1, 0.08, 0.1, [-0.35, 1.97, 0], { color: C.leaf });
+    books(b, fs, 0.05, 0.5, 1.775, 0, 0.2, [C.teal, C.mustard, C.plum, C.coral, '#f3e7cf'], r, { minH: 0.16, maxH: 0.24 });
+    b.add(cylGeo(0.015, 0.015, 2.1, { radial: 8 }), { at: [2.75, 2.08, -d / 2 + 0.14], rot: [0, 0, Math.PI / 2], color: C.ink });
+    b.collide(1.7, 2.065, -d / 2 + 0.125, 3.8, 2.095, -d / 2 + 0.155, { wall: false, name: 'perch:rail', perch: true });
 
     // Spawns + spots
     b.spot('lobby', { x: -1.15, z: 1.25 });

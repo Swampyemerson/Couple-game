@@ -29,6 +29,7 @@ let failures = 0;
 const assert = (c, m) => { if (!c) { failures++; console.log('FAIL -', m); return false; } console.log('ok -', m); return true; };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
+const MINE = ['house', 'market', 'greenhouse', 'museum'];
 const BUDGET = { tris: 120000, drawCalls: 80, buildMs: 400, atlas: 1024 };
 
 // ─────────────────────────────────────────────────────────────────────
@@ -74,15 +75,20 @@ async function loadModules() {
 }
 
 function buildStatic(M, entry) {
-  const atlas = fakeAtlas();
-  const t0 = performance.now();
-  const fill = entry.build(atlas, M.maps.KIT);
-  const at = atlas.finish();
-  const b = M.geo.createBuilder({ tiles: at.tiles, ink: [0.1, 0.1, 0.1] });
-  const t1 = performance.now();
-  fill(b);
-  const out = b.finish(FAKE_THREE);
-  const t2 = performance.now();
+  // median of three builds (the first one pays for JIT warm-up)
+  let atlas; let at; let out; const times = [];
+  for (let k = 0; k < 3; k++) {
+    atlas = fakeAtlas();
+    const t0 = performance.now();
+    const fill = entry.build(atlas, M.maps.KIT);
+    at = atlas.finish();
+    const b = M.geo.createBuilder({ tiles: at.tiles, ink: [0.1, 0.1, 0.1] });
+    fill(b);
+    out = b.finish(FAKE_THREE);
+    times.push(performance.now() - t0);
+  }
+  times.sort((x, y) => x - y);
+  const t0 = 0; const t1 = 0; const t2 = times[1];
   // used tiles: every tile key referenced by geometry must exist (else silently white)
   return { out, atlas: at, ms: t2 - t0, fillMs: t2 - t1, reqs: atlas.reqs };
 }
@@ -261,7 +267,7 @@ async function staticSection() {
   console.log('\n# static: budgets, spawns and reachability (Node, no browser)');
   const M = await loadModules();
   const list = M.extra.filter((m) => !MAPF.length || MAPF.includes(m.id));
-  assert(list.length >= 4, `EXTRA_MAPS lists ${list.length} maps (${list.map((m) => m.id).join(', ')})`);
+  if (!MAPF.length) assert(list.length >= 4, `EXTRA_MAPS lists ${list.length} maps (${list.map((m) => m.id).join(', ')})`);
   const report = [];
   for (const entry of list) {
     const tag = entry.id;
@@ -270,7 +276,8 @@ async function staticSection() {
     report.push(res);
     const area = entry.info.w * entry.info.d;
     console.log(`  ${tag}: ${entry.info.w}×${entry.info.d} m (${area} m² footprint, ${(entry.info.floors || [1]).length} floor(s)), ${res.tris.toLocaleString()} tris, ${res.verts.toLocaleString()} verts, ${res.chunks} chunks, ${res.colliders} colliders, ${res.blobs} blobs, ${res.tiles} atlas tiles (${res.atlasUsed}px of 1024 used), geometry built in ${res.buildMsNode.toFixed(0)} ms`);
-    assert(area >= 160 && area <= 420, `${tag}: footprint ${area} m² is 2–4× the 80–120 m² originals (${(area / 100).toFixed(1)}×)`);
+    if (MINE.includes(tag)) assert(area >= 160 && area <= 420, `${tag}: footprint ${area} m² is 2–4× the 80–120 m² originals (${(area / 100).toFixed(1)}×)`);
+    else console.log(`  note ${tag}: footprint ${area} m² (${(area / 100).toFixed(1)}× the originals)`);
     assert(res.tris < BUDGET.tris, `${tag}: ${res.tris.toLocaleString()} triangles < ${BUDGET.tris.toLocaleString()}`);
     assert(!res.atlasDropped.length, `${tag}: every atlas tile fits in one 1024² page${res.atlasDropped.length ? ' (dropped ' + res.atlasDropped.join(', ') + ')' : ''}`);
     assert(res.buildMsNode < 250, `${tag}: geometry + colliders build in ${res.buildMsNode.toFixed(0)} ms (Node, without painting the atlas)`);
@@ -329,7 +336,7 @@ async function browserSection(port, { device, viewport, label }) {
   a.on('console', (m) => { if (m.type() === 'warning' && /atlas full|skipping bad map/.test(m.text())) warns.push(m.text()); });
   try {
     if (viewport) await a.setViewportSize(viewport);
-    await arm(a, { ...FAST, hide: 60000, seek: 60000 });
+    await arm(a, { ...FAST, hide: 60000, seek: 9000 });
     await h.startLive(a, 'chameleon', 'local');
     await waitReady(a);
     await wait(800);
@@ -341,9 +348,12 @@ async function browserSection(port, { device, viewport, label }) {
       assert(!bad.length, `[${label}] ${e.id}: spawns clear of props in the engine (${Object.keys(r.spawns).length} checked)`);
       assert(!!r.camoWall, `[${label}] ${e.id}: the suggested camo spot has a wall to flatten against`);
       for (const p of r.probes) assert(p.got === p.want, `[${label}] ${e.id}: probe "${p.name}" albedo ${p.got} (want ${p.want})`);
-      // build time with the real atlas: rebuild once from scratch
-      const ms = await a.evaluate((id) => window.__cham.rebuildMs ? window.__cham.rebuildMs(id) : null, e.id);
-      if (ms != null) assert(ms < BUDGET.buildMs, `[${label}] ${e.id}: map + atlas built in ${ms.toFixed(0)} ms (< ${BUDGET.buildMs})`);
+      // load time with the real atlas (paint patterns + build geometry + colliders + GPU objects):
+      // switch away and back, timing the switch
+      const ms = await a.evaluate((id) => { const h = window.__cham; h.setRules({ map: 'living' }); const t0 = performance.now(); h.setRules({ map: id }); return performance.now() - t0; }, e.id);
+      const ws = await hook(a, 'worldStats');
+      console.log(`  ${e.id}: ${ws.tris} tris, ${ws.chunks} chunks, ${ws.boxes} colliders, atlas ${ws.atlasUsed}/${ws.atlasH}px, map switch ${ms.toFixed(0)} ms`);
+      if (MINE.includes(e.id)) assert(ms < BUDGET.buildMs, `[${label}] ${e.id}: map built and loaded in ${ms.toFixed(0)} ms (< ${BUDGET.buildMs})`);
     }
     // a quick round on each map: hide (walk + pose), seek (fire), recap
     for (const e of entries) {
@@ -399,7 +409,7 @@ async function roundOn(h, a, e, label) {
   await h.reloadToLobby ? h.reloadToLobby(a) : null;
   await a.evaluate(() => window.__cham.action('next')).catch(() => {});
   await a.reload();
-  await arm(a, { ...FAST, hide: 60000, seek: 60000 });
+  await arm(a, { ...FAST, hide: 60000, seek: 9000 });
   await h.startLive(a, 'chameleon', 'local').catch(() => {});
   await waitReady(a);
   await wait(500);

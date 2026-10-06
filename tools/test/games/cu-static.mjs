@@ -103,8 +103,8 @@ export async function analyse({ cell = 0.25, r = 0.24 } = {}) {
       const x = cxw(ni); const z = czw(nj);
       for (const ty of tops(ni, nj)) {
         if (ty > y + apex + d.step) continue; // too high to jump onto
-        const g = standY(ni, nj, ty);
-        if (Math.abs(g - ty) > 0.002) continue; // not the surface actually under us
+        const g = standY(ni, nj, ty); // the engine snaps up to anything within a step
+        if (g < ty - 0.002 || g > y + apex + d.step) continue;
         if (!fits(x, g, z)) continue;
         if (g > y + d.step) {
           // jump: need headroom above the take-off point for the arc
@@ -121,7 +121,7 @@ export async function analyse({ cell = 0.25, r = 0.24 } = {}) {
   for (let i = 0; i < NX; i++) for (let j = 0; j < NZ; j++) {
     for (const ty of tops(i, j)) {
       if (ty > 5.2) continue;
-      const g = standY(i, j, ty); if (Math.abs(g - ty) > 0.002) continue;
+      const g = standY(i, j, ty); if (g < ty - 0.002) continue;
       if (!fits(cxw(i), g, czw(j))) continue;
       standable++;
       if (!seen.has(key(i, j, g))) unreached.add(key(i, j, g));
