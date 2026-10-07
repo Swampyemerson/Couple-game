@@ -23,6 +23,8 @@ const I = {
   unstick: '<path d="M4 21h16"/><path d="M7 21c0-3 2-4.5 5-4.5s5 1.5 5 4.5"/><path d="M12 12.5V4M8.5 7.5L12 4l3.5 3.5"/>',
   zip: '<circle cx="5.5" cy="17.5" r="2.5"/><path d="M8 15.5C11 12 13 8 19 5"/><circle cx="19.5" cy="4.5" r="2" fill="currentColor"/>',
   sprint: '<circle cx="14.5" cy="4.5" r="2"/><path d="M8 21l3-6 3 2v5M6 11l4-3h4l2 4 3 1M11 8l-1 5"/>',
+  watch: '<circle cx="8" cy="8" r="3"/><path d="M3 20c0-4 2.2-6.5 5-6.5s5 2.5 5 6.5"/><path d="M13.5 9.5l7-3v9l-7-3z"/>',
+  cam: '<path d="M4 8h11v9H4z"/><path d="M15 11l5-3v9l-5-3z"/><path d="M7 5.5l2 2.5M12 5.5l-2 2.5"/>',
 };
 export const icon = (k, cls = '') => `<svg class="chm-ic ${cls}" viewBox="0 0 24 24" aria-hidden="true">${I[k] || ''}</svg>`;
 
@@ -357,6 +359,32 @@ export const CSS = `
   .chm.acts3 .chm-poses, .chm.acts3.painting .chm-poses { left: calc(10px + var(--chm-sl)); transform: none; bottom: calc(84px + var(--chm-sb)); flex-direction: row; }
 }
 
+/* v3: the climbing seeker (seven buttons): three columns, Fire alone at the bottom right */
+.chm.acts7 .chm-acts { grid-template-columns: auto auto auto !important; gap: 8px 8px; }
+.chm.acts7 .chm-acts [data-act="fire"] { grid-column: 3; }
+@media (orientation: landscape) and (max-height: 520px) {
+  .chm.acts7 .chm-acts { grid-template-columns: repeat(4, auto) !important; }
+  .chm.acts7 .chm-acts [data-act="fire"] { grid-column: 4; }
+}
+/* v3: the hider's spectator views: a badge under the clock and a "you're here" sticker */
+.chm-badge { display: none; }
+.chm.spect .chm-role { background: var(--g-hl); color: var(--g-on-ink); box-shadow: 0 0 0 2px var(--g-ink); text-transform: uppercase; letter-spacing: .08em; font-size: .72rem; }
+.chm-here { position: absolute; left: 0; top: 0; pointer-events: none; will-change: transform; }
+.chm-here b { position: absolute; left: 0; bottom: 9px; transform: translateX(-50%); padding: 3px 8px; border-radius: 8px; background: var(--chm-me); color: var(--g-on-ink); border: 2px solid var(--g-ink); box-shadow: 2px 2px 0 var(--g-edge); font-size: .7rem; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
+.chm-here i { position: absolute; left: -7px; bottom: 0; width: 0; height: 0; border-left: 7px solid transparent; border-right: 7px solid transparent; border-top: 10px solid var(--g-ink); }
+.chm-here.edge b { opacity: .85; } .chm-here.edge i { display: none; }
+.chm.spect .chm-vig { box-shadow: inset 0 0 0 4px color-mix(in srgb, var(--g-hl) 70%, transparent); }
+/* v3: time sliders in the settings sheet */
+.chm-set-time { flex-wrap: wrap; row-gap: 6px; }
+.chm-set-time > span { flex: 1 1 0; }
+.chm-range { flex: 1 1 100%; width: 100%; margin: 2px 0 4px; height: 30px; background: transparent; accent-color: var(--g-ink); touch-action: pan-x; -webkit-appearance: none; appearance: none; }
+.chm-range::-webkit-slider-runnable-track { height: 8px; border-radius: 6px; background: var(--g-card); border: 2px solid var(--g-ink); }
+.chm-range::-webkit-slider-thumb { -webkit-appearance: none; width: 26px; height: 26px; margin-top: -11px; border-radius: 50%; background: var(--g-hl); border: 2.5px solid var(--g-ink); box-shadow: 2px 2px 0 var(--g-edge); }
+.chm-range::-moz-range-track { height: 6px; border-radius: 6px; background: var(--g-card); border: 2px solid var(--g-ink); }
+.chm-range::-moz-range-thumb { width: 22px; height: 22px; border-radius: 50%; background: var(--g-hl); border: 2.5px solid var(--g-ink); }
+.chm-range[disabled] { opacity: .5; }
+.chm-set-time.off .chm-step { opacity: .45; }
+
 /* minimap (seeker, big maps) */
 .chm-mini { position: absolute; left: calc(10px + var(--chm-sl)); top: calc(100px + var(--chm-st)); width: 112px; height: 112px; border-radius: 12px; padding: 4px; background: var(--g-card); }
 .chm-mini canvas { position: static !important; width: 100% !important; height: 100% !important; border-radius: 8px; }
@@ -445,6 +473,8 @@ export function createHud(root, api) {
         </div>
       </div>
       <div class="chm-acts" hidden></div>
+      <div class="chm-badge" hidden></div>
+      <div class="chm-here" hidden aria-hidden="true"><b>You</b><i></i></div>
       <div class="chm-hint"></div>
       <div class="chm-legend chm-sticker"></div>
       <div class="chm-ripple"></div>
@@ -459,7 +489,7 @@ export function createHud(root, api) {
     gear: $('.chm-gear'), pellets: $('.chm-pellets'), cross: $('.chm-cross'),
     joy: $('.chm-joy'), knob: $('.chm-joy i'), joyhint: $('.chm-joyhint'), mini: $('.chm-mini'), miniCv: $('.chm-mini canvas'), tips: $('.chm-tips'),
     poses: $('.chm-poses'), tools: $('.chm-tools'), swatch: $('.chm-swatch'), acts: $('.chm-acts'),
-    hint: $('.chm-hint'), legend: $('.chm-legend'), ripple: $('.chm-ripple'), vig: $('.chm-vig'), flash: $('.chm-flash'),
+    hint: $('.chm-hint'), legend: $('.chm-legend'), badge: $('.chm-badge'), here: $('.chm-here'), ripple: $('.chm-ripple'), vig: $('.chm-vig'), flash: $('.chm-flash'),
     layer: $('.chm-layer'),
   };
   const cache = new Map();
@@ -616,6 +646,20 @@ export function createHud(root, api) {
       if (N.legend === rows) return;
       N.legend = rows;
       el.legend.innerHTML = rows.join('<br>');
+    },
+    /** Spectator badge text (constant strings) or null. */
+    badge(text) {
+      if (N.badge === text) return; N.badge = text;
+      el.badge.textContent = text || ''; // shown in the role pill (see .chm.spect .chm-role)
+      root.classList.toggle('spect', !!text);
+    },
+    /** "You're here" marker at (x, y) px in the game (edge: pinned to the screen border). */
+    here(on, x = 0, y = 0, edge = false) {
+      if (N.hereOn !== on) { N.hereOn = on; el.here.hidden = !on; }
+      if (!on) return;
+      const px = Math.round(x); const py = Math.round(y);
+      if (px !== N.hx || py !== N.hy) { N.hx = px; N.hy = py; el.here.style.transform = `translate(${px}px, ${py}px)`; }
+      if (N.hereEdge !== edge) { N.hereEdge = edge; el.here.classList.toggle('edge', edge); }
     },
     gulp() { el.swatch.classList.remove('gulp'); void el.swatch.offsetWidth; el.swatch.classList.add('gulp'); },
     /** A colour blob flying from (x,y) to the swatch. */

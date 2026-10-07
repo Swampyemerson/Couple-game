@@ -147,12 +147,21 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
 
   // ── chunks ──
   const chunks = new Map();
+  // see-through thin things (poles, lamps, signals, signs, map wires) are pooled per 3×3 chunks:
+  // a few hundred triangles a chunk, so one draw call per 600 m cell instead of one per chunk
+  const seeCells = new Map();
+  function seeCell(x, z) {
+    const k = `${Math.floor(x / (CH * 3))},${Math.floor(z / (CH * 3))}`;
+    let s = seeCells.get(k);
+    if (!s) { s = { b: new Builder(THREE, P.outline), mesh: null, x: 0, z: 0, r: CH * 2.2, tris: 0 }; seeCells.set(k, s); }
+    return s;
+  }
   function chunkAt(x, z) {
     const cx = Math.floor(x / CH); const cz = Math.floor(z / CH); const k = `${cx},${cz}`;
     let c = chunks.get(k);
     if (!c) {
       const g = new THREE.Group(); g.name = 'chunk ' + k; g.matrixAutoUpdate = false;
-      c = { key: k, cx, cz, group: g, b: new Builder(THREE, P.outline), bt: new Builder(THREE, P.outline), dec: new Decals(), props: [], parked: [], mesh: null, seeMesh: null, x: (cx + 0.5) * CH, y: 0, z: (cz + 0.5) * CH, r: CH * 0.75, tris: 0 };
+      c = { key: k, cx, cz, group: g, b: new Builder(THREE, P.outline), bt: seeCell(x, z).b, sc: seeCell(x, z), dec: new Decals(), props: [], parked: [], mesh: null, x: (cx + 0.5) * CH, y: 0, z: (cz + 0.5) * CH, r: CH * 0.75, tris: 0 };
       chunks.set(k, c); scene.add(g);
     }
     return c;
@@ -472,10 +481,10 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
   if (decalMat) allMats.add(decalMat);
   let ci = 0;
   for (const c of chunks.values()) {
-    const it = mergeSteps(THREE, c.group, mats, P.outline, disposeSet, { front: c.b, see: c.bt });
+    const it = mergeSteps(THREE, c.group, mats, P.outline, disposeSet, { front: c.b, see: c.bt, seeOut: true });
     let res;
     for (;;) { const st = it.next(); if (st.done) { res = st.value; break; } if (performance.now() - sliceT > budget) { await slice(); if (dead()) return null; } }
-    c.mesh = res.front; c.seeMesh = res.see;
+    c.mesh = res.front;
     c.b = null; c.bt = null;
     if (c.dec.nv && decalMat) {
       const dm = new THREE.Mesh(c.dec.geometry(THREE), decalMat);
@@ -501,12 +510,23 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
     if (dead()) return null;
   }
   { const it = mergeSteps(THREE, globalG, mats, P.outline, disposeSet, null); for (;;) { const st = it.next(); if (st.done) break; if (performance.now() - sliceT > budget) { await slice(); if (dead()) return null; } } }
+  // the pooled see-through meshes (distance-culled like chunks in update(), frustum-culled by three)
+  const seeList = [];
+  for (const s of seeCells.values()) {
+    if (s.b.empty) continue;
+    const m = s.b.mesh(mats.see); m.name = 'merged-see';
+    m.geometry.computeBoundingSphere(); const bs = m.geometry.boundingSphere;
+    s.x = bs.center.x; s.z = bs.center.z; s.r = bs.radius; s.mesh = m; s.b = null;
+    const ix = m.geometry.index; s.tris = ix ? ix.count / 3 : m.geometry.getAttribute('position').count / 3;
+    scene.add(m); seeList.push(s);
+    if ((seeList.length & 7) === 0) { await slice(); if (dead()) return null; }
+  }
   mark('merge');
   stage = 'dispose';
   const inUse = new Set(); scene.traverse((o) => { if (o.geometry) inUse.add(o.geometry); });
   for (const g of disposeSet) if (!inUse.has(g)) g.dispose();
   mark('dispose');
-  for (const rec of propRec.values()) rec.mesh = rec.thin ? rec.c.seeMesh : rec.c.mesh;
+  for (const rec of propRec.values()) rec.mesh = rec.thin ? rec.c.sc.mesh : rec.c.mesh;
   lights.setLamps(lampList);
   // Memory: once the merged chunk geometry is on the GPU, drop the JS copies of everything the CPU
   // never touches again (normals, colours, fx codes, lane coords, indices) — roughly halves the
@@ -591,6 +611,7 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
       if (c.decal) { const dv = on && d < decalR; if (c.decal.visible !== dv) c.decal.visible = dv; }
       if (on) vis++;
     }
+    for (const s of seeList) { const on = Math.hypot(s.x - cx, s.z - cz) - s.r < viewR; if (s.mesh.visible !== on) s.mesh.visible = on; }
     skyMesh.position.copy(cam.position);
     if (skyMesh.userData.tick) skyMesh.userData.tick(tSec || 0);
     U.uTime.value = tSec || 0; U.uCam.value.copy(cam.position);
@@ -607,7 +628,7 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
     shadow.render(renderer, scene, lightDir, focus);
   }
 
-  const totalTris = chunkList.reduce((a, c) => a + c.tris, 0);
+  const totalTris = chunkList.reduce((a, c) => a + c.tris, 0) + seeList.reduce((a, s) => a + s.tris, 0);
   onProgress(1, 'Ready');
   return {
     scene, farScene, sky: skyMesh, mats, kit, chunks: chunkList, toon, breakSolid, update, preRender, fogC, skyTop, sunDir: lightDir, lights, shadow, tier,

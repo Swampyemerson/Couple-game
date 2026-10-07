@@ -6,10 +6,10 @@ import { createStage } from './stage.js';
 import { createHud } from './hud.js';
 import { createControls } from './controls.js';
 import { POSES, REGION_OF_PART, REGION_NAMES } from './avatar.js';
-import { loadingCard, errorCard, lobbyCard, titleCard, blindCard, curtainCard, recapCard, pauseCard, ctxCard, tipsHtml } from './cards.js';
+import { loadingCard, errorCard, lobbyCard, titleCard, blindCard, headCard, curtainCard, recapCard, pauseCard, ctxCard, tipsHtml } from './cards.js';
 import { clamp, dampAngle, wrapAngle, hexToRgb, cssColor, luminance, listeners, fmtTime, mixHex, esc, seeded, packQuat, unpackQuat } from './util.js';
 import { MAPS, mapArea } from './maps.js';
-import { sanitizeSetup, sanitizeRules, applyPreset, stepRule, setRule, loadSaved, saveSetup, sizeScale, SPEED_MUL, tipsSeen, markTipsSeen, PRESETS, timeScale, effSeconds, sprintMul } from './rules.js';
+import { sanitizeSetup, sanitizeRules, applyPreset, stepRule, setRule, loadSaved, saveSetup, sizeScale, SPEED_MUL, CLIMB_MUL, tipsSeen, markTipsSeen, PRESETS, timeScale, effSeconds, sprintMul, OPTIONS, fmtRule } from './rules.js';
 import { mkBody, sizeBody, resetBody, headingYaw, attachBody, detachBody, freeStep, crawlStep, inputOnSurface, bodyQuat, quatUpY, spotKind, surfaceKind } from './move.js';
 import { SQUEEZE_R } from './world.js';
 
@@ -20,7 +20,10 @@ const SPEED = { hide: 3.0, seek: 3.3, db: 1.1, scurry: 6.2, crawl: 0.78, squeeze
 const BRUSH = [0.035, 0.065, 0.11];
 const EYE_H = { stand: 0.46, crouch: 0.36, ball: 0.3, flat: 0.2, wall: 0.4, hang: 0.3, perch: 0.46, squeeze: 0.12, corner: 0.3 };
 const TAG_TOL = 0.75;
-const ZIP = { range: 4.6, dur: 0.42, cdHide: 1100, cdSeek: 4000 };
+const ZIP = { range: 4.6, dur: 0.42, cdHide: 1100, cdSeek: 4000, cdSeeker: 2500 };
+// fresh paint while hunted ('Shows'): glints for a seeker within this range (× size) with a clear line of sight
+const TELL = { range: 6, secs: 1.1, minGap: 1000 };
+const FREECAM = { speed: 4.2, fast: 2.2 };
 const MAP_IDS = MAPS.map((m) => m.id);
 const TAG_WINDOW = 250;
 const other = (w) => (w === 'a' ? 'b' : 'a');
@@ -89,6 +92,8 @@ export function createGame(el, api) {
       pendingTag: 0, foundSent: false, out: { a: false, b: false }, outSent: false, tagWindow: null,
       path: [], pathNext: 0, closest: Infinity, passes: 0, near: false, seekStart: 0, used: { a: 0, b: 0 }, lockSent: false, rec: null,
       scurry: null, endingHide: false, lockDone: false, toRecap: false, nexting: false, jumpReq: false, lastTick: 0, lastTrailT: 0, spawn: null, sprint: false,
+      // v3: hunt start seen, live paint while hunted (sender: version + time sent; receiver: tells)
+      huntSeen: false, lpVer: -1, lpAt: 0, lpSent: 0, lpIn: 0, tell: null, tells: 0, tellSkip: 0, tellAt: -1e9,
     };
   }
 
@@ -99,7 +104,9 @@ export function createGame(el, api) {
   const hist = { t: new Float64Array(96), x: new Float32Array(96), y: new Float32Array(96), z: new Float32Array(96), n: 0, i: 0 };
 
   // view/camera state
-  const C = { cardCheck: 0, frameY: 0, frameCard: false, oy: 0, orbitBase: 0, orbitT: 0, yaw: Math.PI, pitch: 0.32, dist: 2.3, paintYaw: 0, paintPitch: 0.3, paintDist: 1.25, fpYaw: 0, fpPitch: 0, orbit: 0, whip: 0, freezeUntil: 0, shake: 0 };
+  const C = { cardCheck: 0, frameY: 0, frameCard: false, oy: 0, orbitBase: 0, orbitT: 0, yaw: Math.PI, pitch: 0.32, dist: 2.3, paintYaw: 0, paintPitch: 0.3, paintDist: 1.25, fpYaw: 0, fpPitch: 0, orbit: 0, whip: 0, freezeUntil: 0, shake: 0,
+    // v3: the hider's view while hunted ('eyes' | 'watch' | 'free') + the free cam; the seeker's climb view (absolute view yaw)
+    spect: 'eyes', fcX: 0, fcY: 0, fcZ: 0, fcYaw: 0, fcPitch: 0, fcTop: 3, fcBottom: 0.12, climbV: false, climbNear: false, vYaw: 0 };
   const P = { on: false, tool: 'brush', size: 1, hard: true, rgb: [74, 132, 116], last: null, lastHit: [0, 0, 0], strokes: 0, texelDirtyAt: 0 };
   let posesOpen = false;
   const shownHints = new Set();
@@ -124,8 +131,22 @@ export function createGame(el, api) {
   const sizeS = () => sizeScale(rules().size);
   const curMapEntry = () => MAPS.find((m) => m.id === (S.match ? S.match.map : S.setup.map)) || MAPS[0];
   const mapTime = () => timeScale(curMapEntry());
-  const hideMs = () => TUNE.hide || effSeconds(rules().hide, mapTime()) * 1000;
+  /** Hide clock (0 = untimed: the hunt starts when the hider taps Ready). */
+  const hideMs = () => (rules().hideEnd === 'ready' ? 0 : TUNE.hide || effSeconds(rules().hide, mapTime()) * 1000);
   const seekMs = () => TUNE.seek || effSeconds(rules().seek, mapTime()) * 1000;
+  /** The hider's head start (seeker blindfolded, hider still free to move): Hide & Seek only, scales with the map. */
+  const headStartMs = () => (mode() === 'hs' ? effSeconds(rules().headStart, mapTime()) * 1000 : 0);
+  /** 3-2-1 before the hunt (tests shorten it with __chamTune.seekLead unless they ask for the real one). */
+  const countdownMs = () => (TUNE.seekLead != null && !TUNE.realCountdown ? TUNE.seekLead : rules().countdown * 1000);
+  const graceMs = () => rules().grace * 1000;
+  /** Seek phase data: the hunt itself is the last `hunt` ms of the phase; any head start comes first. */
+  const seekArgs = (ss) => { const blind = headStartMs(); const hunt = seekMs(); return { dur: blind + hunt, data: { ss, blind, hunt } }; };
+  /** The seeker climbs too (sticky feet, zip, poses): Hide & Seek with climbing on. */
+  const seekerClimbs = () => mode() === 'hs' && rules().climb && rules().seekClimb;
+  /** When the hunt proper starts (after the head start). Follows pauses because it hangs off phase.end. */
+  function huntAt() { const d = S.phase.data; return S.phase.name === 'seek' && d && d.hunt != null ? S.phase.end - d.hunt : S.phase.at; }
+  const hunting = (t = now()) => S.phase.name === 'seek' && t >= huntAt();
+  const headStartOn = (t = now()) => S.phase.name === 'seek' && t < huntAt();
   const scanCdMs = () => rules().scanCd * 1000;
   const pelletsFor = (md) => (md === 'db' ? Math.max(2, rules().pellets - 1) : rules().pellets);
   let appliedSize = -1;
@@ -243,6 +264,10 @@ export function createGame(el, api) {
         const y0 = (fl.y || 0) - 0.1; const y1 = i + 1 < all.length ? all[i + 1].y - 0.1 : Infinity;
         return { y: fl.y || 0, name: fl.name, rooms: m.rooms.filter((r) => (r.floor || 0) === i), boxes: m.colliders.filter((c) => c.maxY - c.minY > 0.5 && c.minY >= y0 && c.minY < Math.min(y1, y0 + 1.3) && !outer(c) && c.climb !== false) };
       });
+      // free cam limits: the map's footprint (world bounds) and from the floor to just over the top
+      let top = 2.4; let bottom = 0;
+      for (const c of m.colliders) { if (c.maxY < 30) top = Math.max(top, c.maxY); if (c.maxY - c.minY < 1 && c.maxY > -6) bottom = Math.min(bottom, c.maxY); }
+      C.fcTop = top + 0.5; C.fcBottom = bottom + 0.12;
       hud.miniSetup(big ? { minX: m.bounds.minX, maxX: m.bounds.maxX, minZ: m.bounds.minZ, maxZ: m.bounds.maxZ, rooms: fls[0].rooms, boxes: fls[0].boxes, floors: fls } : null);
     }
     return m;
@@ -324,7 +349,8 @@ export function createGame(el, api) {
   function lockDone() {
     if (!isHost || S.phase.name !== 'lock' || R.lockDone) return;
     R.lockDone = true;
-    enter('seek', { dur: seekMs(), data: { ss: pickSeekSpawn() } }, DUR.seekLead);
+    // the countdown (0/3/5/10 s, setting) runs on both screens while the seek is queued
+    enter('seek', seekArgs(pickSeekSpawn()), Math.max(countdownMs(), DUR.lead));
   }
   function needAcks() { return mode() === 'db' ? ['a', 'b'] : [hiderOf(S.phase.round)]; }
   function hostAck(w) {
@@ -336,7 +362,9 @@ export function createGame(el, api) {
     R.foundSent = true;
     const m = S.match; const r = S.phase.round;
     // time into the hunt, excluding pauses (phase.end moves when the game pauses)
-    const elapsed = res.found ? clamp(S.phase.dur - (S.phase.end - res.T), 0, S.phase.dur) : S.phase.dur;
+    // (only the hunt counts: a head start before it scores nothing)
+    const pd = S.phase.data || {}; const huntDur = pd.hunt != null ? pd.hunt : S.phase.dur;
+    const elapsed = res.found ? clamp(huntDur - (S.phase.end - res.T), 0, huntDur) : huntDur;
     let rec;
     if (m.mode === 'hs') {
       const h = hiderOf(r);
@@ -493,7 +521,7 @@ export function createGame(el, api) {
         snd.play('go');
         if (vv && (roleOf(vv) === 'hider' || roleOf(vv) === 'both')) {
           C.yaw = body[vv].yaw + Math.PI;
-          hint(mode() === 'db' ? 'Find a spot, pose, paint. Then hit “Hidden”.' : rules().climb ? 'Find a spot — walls and ceilings count — then paint yourself to match.' : 'Find a spot, pick a pose, then paint yourself to match.', 3600);
+          hint(mode() === 'db' ? 'Find a spot, pose, paint. Then hit “Ready”.' : rules().climb ? 'Find a spot — walls and ceilings count — then paint yourself to match.' : 'Find a spot, pick a pose, then paint yourself to match.', 3600);
           if (rules().climb && !tipsSeen() && !TUNE.noTips) U.tips = true;
         }
         break;
@@ -518,11 +546,13 @@ export function createGame(el, api) {
         R.sprint = false;
         if (vv && stage) stage.vm.children[0].material.color.set(vv === 'a' ? theme.a : theme.b);
         if (vv) { C.fpYaw = 0; C.fpPitch = 0; body[vv].lookYaw = 0; body[vv].lookPitch = 0; }
-        snd.play('go');
-        hud.flash();
-        if (vv && roleOf(vv) === 'seeker') hint('Find them. Tap Fire when the crosshair is on them.', 3200);
-        else if (vv && roleOf(vv) === 'hider') hint('Stay still. Drag to look. One scurry if they get close.', 3200);
-        else if (vv) hint('Hunt them — and don’t get spotted.', 3000);
+        C.spect = 'eyes'; C.climbV = false; R.huntSeen = false;
+        if (stage && mode() === 'hs') { const h = hiderOf(p.round); R.lpVer = stage.paints[h].version; }
+        // with a head start the hunt (go sound, hints, the Freeze/Seek stamp) starts later: onHuntStart()
+        if (vv && roleOf(vv) === 'hider' && p.data && p.data.blind > 0 && !local) {
+          snd.play('go');
+          hint(`Head start! ${Math.round(p.data.blind / 1000)} s to move while they’re blindfolded.`, 3200);
+        }
         break;
       }
       case 'found': case 'time': {
@@ -580,6 +610,24 @@ export function createGame(el, api) {
     void prev; void t;
   }
 
+  /** The hunt proper begins (at the seek phase start, or when the head start runs out). */
+  function onHuntStart() {
+    R.huntSeen = true;
+    const vv = viewer();
+    if (!vv) return;
+    const role = roleOf(vv);
+    if (role === 'hider' && !local) {
+      if (P.on && !canPaint()) exitPaint(true);
+      posesOpen = false;
+      const b = body[vv]; b.lookYaw = 0; b.lookPitch = 0;
+    }
+    snd.play('go');
+    hud.flash();
+    if (role === 'seeker') hint(graceMs() ? `Hold fire for ${rules().grace} s — then find them!` : seekerClimbs() ? 'Find them — Stick to climb walls and ceilings. Fire when the crosshair is on them.' : 'Find them. Tap Fire when the crosshair is on them.', 3400);
+    else if (role === 'hider') hint(local ? 'Stay still.' : 'Stay still. Drag to look — tap View to watch them.', 3200);
+    else hint('Hunt them — and don’t get spotted.', 3000);
+  }
+
   function confettiColors(w) { const c = w === 'a' ? theme.a : theme.b; return [c, mixHex(c, '#ffffff', 0.45), mixHex(c, '#000000', 0.25), theme.hl, '#ffffff']; }
 
   // ── paint lock + sync ─────────────────────────────────────────────
@@ -596,10 +644,58 @@ export function createGame(el, api) {
       link.sendBlob('paint', enc.b64, { w, sum: enc.sum, round: R.round, pos: posArr(b) });
     }
   }
+  /** Paint while hunted (or during the head start): the same quantised blob as the lock, at most
+   *  one a second, sent when a stroke / fill / stamp / undo has settled. */
+  function livePaint(t) {
+    if (local || S.phase.name !== 'seek' || mode() !== 'hs' || roleOf(me) !== 'hider' || !R.paintOk[me]) return;
+    const p = stage.paints[me];
+    if (p.version === R.lpVer || P.last || t - R.lpAt < 1000) return;
+    const enc = p.encode();
+    p.flush();
+    R.lpVer = p.version; R.lpAt = t; R.lpSent++;
+    R.paintSum[me] = enc.sum;
+    stats.lastPaint = { w: me, bytes: enc.bytes, b64: enc.b64.length, chunks: Math.ceil(enc.b64.length / 3200), live: true };
+    link.sendBlob('paint', enc.b64, { w: me, sum: enc.sum, round: R.round, live: 1 });
+  }
+  let prevPaint = null; const tellPts = [];
+  /** A live paint update arrived (seeker's device): apply it, then the "Shows" tell. */
+  function livePaintIn(w, b64, meta) {
+    if (meta.round !== R.round || S.phase.name !== 'seek') return;
+    const p = stage.paints[w];
+    if (!prevPaint) prevPaint = new Uint8Array(p.data.length);
+    prevPaint.set(p.data);
+    const sum = p.decode(b64);
+    p.flush();
+    if (sum !== meta.sum) { link.send('paintreq', { w, round: meta.round }); return; }
+    R.paintSum[w] = sum; R.paintOk[w] = true; R.lpIn++;
+    paintTell(w);
+  }
+  /** Fresh paint glints for the seeker: in range, in the line of sight, at most once a second. */
+  function paintTell(w) {
+    const v = viewer();
+    if (rules().huntPaint !== 'tell' || !hunting() || !v || roleOf(v) !== 'seeker') return;
+    const a = stage.av[w]; const p = stage.paints[w];
+    if (!a.root.visible || now() - R.tellAt < TELL.minGap) return;
+    p.updateWorld(a.meshes);
+    const n = p.changedPoints(prevPaint, tellPts, 3);
+    if (!n) return;
+    const c = stage.camera.position; const range = TELL.range * Math.max(1, a.st.size);
+    let seen = 0;
+    for (let i = 0; i < tellPts.length; i += 3) {
+      const dx = tellPts[i] - c.x; const dy = tellPts[i + 1] - c.y; const dz = tellPts[i + 2] - c.z; const d = Math.hypot(dx, dy, dz);
+      if (d > range || d < 1e-3) continue;
+      const H = stage.world.raycast(c.x, c.y, c.z, dx / d, dy / d, dz / d, Math.max(0, d - 0.14), null, true);
+      if (!H) seen++;
+    }
+    if (!seen) { R.tellSkip++; return; }
+    R.tellAt = now(); R.tells++;
+    R.tell = { until: tSec + TELL.secs, pts: tellPts.slice() };
+  }
   link.onBlob('paint', (b64, meta) => {
     if (!meta || !stage) return;
     const w = meta.w;
     if (w === me) return;
+    if (meta.live) { livePaintIn(w, b64, meta); return; }
     const sum = stage.paints[w].decode(b64);
     stage.paints[w].flush();
     if (sum === meta.sum) {
@@ -650,8 +746,10 @@ export function createGame(el, api) {
   // tongue-zip while being hunted: the partner sees the tongue lash out and a short trail (the tell)
   link.on('zip', (d) => {
     if (!d || !stage) return;
-    R.trailUntil[d.w] = d.at + 550; if (typeof d.left === 'number') R.escapes[d.w] = d.left;
-    stage.fx.trailMat.color.set(d.w === 'a' ? theme.a : theme.b);
+    if (!d.sk) {
+      R.trailUntil[d.w] = d.at + 550; if (typeof d.left === 'number') R.escapes[d.w] = d.left;
+      stage.fx.trailMat.color.set(d.w === 'a' ? theme.a : theme.b);
+    }
     const a = stage.av[d.w];
     if (a.root.visible && Array.isArray(d.to) && tvZ) { a.mouthWorld(tvZ); stage.fx.shootTongue(tvZ, { x: d.to[0], y: d.to[1], z: d.to[2] }, tSec, ZIP.dur + 0.1, (out) => a.mouthWorld(out)); snd.play('zip'); }
   });
@@ -763,6 +861,8 @@ export function createGame(el, api) {
     if (now() >= S.phase.end) { hint('Time!', 900); return; } // the buzzer went; shots already flying still count
     const role = roleOf(w);
     if (role !== 'seeker' && role !== 'both') return;
+    if (!hunting()) return; // blindfolded during the hider's head start
+    if (now() < huntAt() + graceMs()) { hint(`Grace period — fire in ${Math.ceil((huntAt() + graceMs() - now()) / 1000)} s`, 900); snd.play('warn'); return; }
     if (R.pellets[w] <= 0) { hint('Out of pellets!'); snd.play('warn'); return; }
     R.pellets[w]--; R.used[w]++;
     const T = now();
@@ -863,6 +963,7 @@ export function createGame(el, api) {
     if (!w || S.phase.name !== 'seek' || frozen()) return;
     const role = roleOf(w);
     if (role !== 'seeker' && role !== 'both') return;
+    if (!hunting()) return;
     const t = now();
     if (R.scansLeft[w] <= 0) { hint('No scans left this hunt', 1200); snd.play('warn'); return; }
     if (t < R.scanReady[w]) { hint(`Scan ready in ${Math.ceil((R.scanReady[w] - t) / 1000)} s`, 1200); return; }
@@ -881,7 +982,7 @@ export function createGame(el, api) {
   }
   function scurry() {
     const w = viewer();
-    if (!w || local || S.phase.name !== 'seek' || roleOf(w) !== 'hider' || frozen()) return;
+    if (!w || local || S.phase.name !== 'seek' || roleOf(w) !== 'hider' || frozen() || !hunting() || C.spect !== 'eyes') return;
     if (R.escapes[w] <= 0) { hint(rules().escapes ? 'No escapes left' : 'Escapes are off in these rules', 1400); snd.play('warn'); return; }
     const b = body[w];
     const yaw = fpBaseYaw(w) + b.lookYaw;
@@ -897,11 +998,54 @@ export function createGame(el, api) {
     snd.play('scurry');
   }
 
-  // ── sticky feet: stick / let go, tongue-zip ──────────────────────
-  function canMoveSelf(w) {
-    const ph = S.phase.name; const role = roleOf(w);
-    return !!w && !frozen() && ph === 'hide' && (role === 'hider' || role === 'both');
+  // ── the hider's views while hunted: own eyes · watch the seeker · free cam ──
+  // Purely local: nothing is sent, the body doesn't move and its published look stays as it was.
+  const VIEWS = ['eyes', 'watch', 'free'];
+  const VIEW_L = { eyes: 'View', watch: 'Watching', free: 'Free cam' };
+  function viewAllowed() { const v = viewer(); return !!v && !local && mode() === 'hs' && roleOf(v) === 'hider' && hunting() && !frozen(); }
+  function clampFree() {
+    const B = stage.world.bounds;
+    C.fcX = clamp(C.fcX, B.minX + 0.15, B.maxX - 0.15); C.fcZ = clamp(C.fcZ, B.minZ + 0.15, B.maxZ - 0.15);
+    C.fcY = clamp(C.fcY, C.fcBottom, C.fcTop);
   }
+  function setView(m, silent = false) {
+    if (m === C.spect) return;
+    if (m !== 'eyes' && !viewAllowed()) return;
+    if (m !== 'eyes' && P.on) exitPaint(true);
+    if (m === 'free' && stage) {
+      // start where the camera is now, looking the same way
+      const c = stage.camera; c.getWorldDirection(tvA);
+      C.fcX = c.position.x; C.fcY = c.position.y; C.fcZ = c.position.z;
+      C.fcYaw = Math.atan2(tvA.x, tvA.z); C.fcPitch = Math.asin(clamp(tvA.y, -1, 1));
+      clampFree();
+    }
+    C.spect = m; U.spect = m; posesOpen = false;
+    if (silent) return;
+    snd.play('ui');
+    const mouse = controls && controls.st.usingMouse;
+    if (m === 'watch') hint(`Watching ${api.name(other(viewer()))}. You stay right where you are.`, 2600);
+    else if (m === 'free') hint(mouse ? 'Free cam: W A S D fly · Space / E up · Q / C down · drag to look' : 'Free cam: left thumb flies where you look · drag to look', 3200);
+    else hint('Back in your own eyes.', 1400);
+  }
+  function cycleView() {
+    if (!viewAllowed()) { if (S.phase.name === 'seek' && roleOf(viewer()) === 'hider' && !local && !hunting()) hint('Views open when the hunt starts', 1400); return; }
+    setView(VIEWS[(VIEWS.indexOf(C.spect) + 1) % VIEWS.length]);
+  }
+
+  // ── sticky feet: stick / let go, tongue-zip ──────────────────────
+  /** May this player use the sticky-feet moves (stick, zip, poses, walk-into-a-wall) right now?
+   *  Hiders while hiding (and during a head start); the seeker while hunting, when it may climb. */
+  function canMoveSelf(w) {
+    if (!w || frozen()) return false;
+    const ph = S.phase.name; const role = roleOf(w);
+    if (ph === 'hide') return role === 'hider' || role === 'both';
+    if (ph !== 'seek') return false;
+    if (role === 'hider') return headStartOn();
+    if (role === 'seeker') return seekerClimbs() && hunting();
+    return false;
+  }
+  /** The hider is looking through a spectator camera (watch the seeker / free cam). */
+  const spectating = (w) => w === viewer() && C.spect !== 'eyes' && U.spect !== 'eyes';
   function popFx(w, b, color) {
     stage.av[w].squash(0.85);
     const s = b.s;
@@ -954,7 +1098,9 @@ export function createGame(el, api) {
   function zip(w = viewer()) {
     if (!w || !stage || frozen()) return false;
     const ph = S.phase.name; const role = roleOf(w); const b = body[w];
-    const seeking = ph === 'seek' && role === 'hider' && !local;
+    const seeking = ph === 'seek' && role === 'hider' && !local && hunting(); // costs an escape
+    const seekerZip = ph === 'seek' && role === 'seeker'; // free, 2.5 s cooldown, the hider sees the tongue
+    if (spectating(w)) return false;
     if (!(canMoveSelf(w) || seeking)) return false;
     if (!rules().climb) { hint('Climbing is off in these rules', 1400); snd.play('warn'); return false; }
     if (b.zip) return false;
@@ -983,7 +1129,7 @@ export function createGame(el, api) {
     if (Math.hypot(H.x - cx, H.y - cy, H.z - cz) < 0.35 * b.s) { hint('Too close — just crawl there', 1000); return false; }
     b.zip = { t0: tSec, dur: ZIP.dur, sx: b.x, sy: b.y, sz: b.z, tx: H.x, ty: H.y, tz: H.z, nx: H.nx, ny: H.ny, nz: H.nz, box: H.box, hx: dx, hy: dy, hz: dz, from: b.at ? 1 : 0 };
     if (!b.at) { b.zip.sy = b.y + b.r; }
-    R.zipReady[w] = t + (seeking ? ZIP.cdSeek : ZIP.cdHide);
+    R.zipReady[w] = t + (seeking ? ZIP.cdSeek : seekerZip ? ZIP.cdSeeker : ZIP.cdHide);
     stage.av[w].mouthWorld(tvZ);
     stage.fx.shootTongue(tvZ, { x: H.x, y: H.y, z: H.z }, tSec, ZIP.dur + 0.1, (out) => stage.av[w].mouthWorld(out));
     snd.play('zip'); api.haptic(14);
@@ -994,7 +1140,7 @@ export function createGame(el, api) {
       R.trailUntil[w] = t + 550;
       stage.fx.trailMat.color.set(w === 'a' ? theme.a : theme.b);
       link.send('zip', { w, at: t, to: [H.x, H.y, H.z], left: R.escapes[w] });
-    }
+    } else if (seekerZip && !local) link.send('zip', { w, at: t, to: [H.x, H.y, H.z], sk: 1 });
     return true;
   }
   /** Advance a zip in flight; lands stuck to the target surface (or on its feet on a floor). */
@@ -1016,13 +1162,23 @@ export function createGame(el, api) {
   }
 
   // ── paint mode ────────────────────────────────────────────────────
+  /** Hiding, or (two devices) hunted with "Paint while hunted" on, or during the head start. */
   function canPaint() {
     const v = viewer();
-    return !!v && S.phase.name === 'hide' && (roleOf(v) === 'hider' || roleOf(v) === 'both') && !frozen();
+    if (!v || frozen()) return false;
+    const role = roleOf(v); const ph = S.phase.name;
+    if (ph === 'hide') return role === 'hider' || role === 'both';
+    if (ph === 'seek' && role === 'hider' && !local) return headStartOn() || rules().huntPaint !== 'off';
+    return false;
   }
   function enterPaint() {
-    if (!canPaint() || P.on) return;
+    if (P.on) return;
+    if (!canPaint()) {
+      if (S.phase.name === 'seek' && roleOf(viewer()) === 'hider' && !local) { hint('Paint is locked while you’re hunted (settings)', 1600); snd.play('warn'); }
+      return;
+    }
     const v = viewer();
+    if (C.spect !== 'eyes') setView('eyes', true); // painting orbits your own body
     P.on = true; P.tool = 'brush';
     controls.setMode('paint');
     stage.av[v].st.breathe = false;
@@ -1030,7 +1186,8 @@ export function createGame(el, api) {
     P.texelDirtyAt = tSec + 0.35;
     snd.play('ui');
     root.classList.add('painting');
-    hint(controls.st.usingMouse ? 'Drag on your body to paint · drag elsewhere to turn · wheel to zoom' : 'Paint with one finger · two fingers turn and zoom', 3400);
+    if (hunting() && rules().huntPaint === 'tell' && !shownHints.has('tell')) { shownHints.add('tell'); hint('Careful: fresh paint glints if the seeker is close and can see you.', 3400); }
+    else hint(controls.st.usingMouse ? 'Drag on your body to paint · drag elsewhere to turn · wheel to zoom' : 'Paint with one finger · two fingers turn and zoom', 3400);
   }
   function exitPaint(silent = false) {
     if (!P.on) return;
@@ -1188,8 +1345,8 @@ export function createGame(el, api) {
     const v = viewer();
     if (!v || !POSES.includes(name) || frozen()) return;
     const ph = S.phase.name; const role = roleOf(v);
-    const allowed = (ph === 'hide' && (role === 'hider' || role === 'both')) || (ph === 'seek' && (role === 'hider' || role === 'both'));
-    if (!allowed) return;
+    const allowed = (ph === 'hide' && (role === 'hider' || role === 'both')) || (ph === 'seek' && (role === 'hider' || role === 'both')) || (ph === 'seek' && role === 'seeker' && seekerClimbs() && hunting());
+    if (!allowed || spectating(v)) return;
     const b = body[v];
     if (b.zip) return;
     // leaving the squeeze needs room to stand
@@ -1244,11 +1401,13 @@ export function createGame(el, api) {
     if (a.startsWith('pose:')) { setPose(a.slice(5)); return; }
     switch (a) {
       case 'fire': if (S.phase.name === 'seek') fire(); break;
-      case 'stick': if (v) { if (body[v].at || canMoveSelf(v)) stick(v); } break;
+      case 'stick': if (v && !spectating(v)) { if (body[v].at || canMoveSelf(v)) stick(v); } break;
+      case 'stickOrView': if (v && S.phase.name === 'seek' && roleOf(v) === 'hider' && hunting() && !local) action('view'); else action('stick'); break;
+      case 'view': cycleView(); break;
       case 'zip': if (v) zip(v); break;
       case 'stickOrPick': if (P.on) action('pick'); else action('stick'); break;
       case 'zipOrUndo': if (P.on) action('undo'); else action('zip'); break;
-      case 'sprint': if (v && S.phase.name === 'seek' && roleOf(v) !== 'hider') { R.sprint = !R.sprint; snd.play('sprint'); } break;
+      case 'sprint': if (v && S.phase.name === 'seek' && roleOf(v) !== 'hider' && hunting()) { R.sprint = !R.sprint; snd.play('sprint'); } break;
       case 'settings': S.sheet = !S.sheet; snd.play('ui'); break;
       case 'tips-ok': U.tips = false; markTipsSeen(); snd.play('ui'); break;
       case 'scan': scan(); break;
@@ -1268,7 +1427,8 @@ export function createGame(el, api) {
       case 'next': if (S.phase.name === 'recap') { if (isHost) hostNext(); else link.send('next', {}); snd.play('ui'); } break;
       case 'confirm': if (S.phase.name === 'recap') action('next'); else if (S.phase.name === 'curtain') action('curtain'); else if (S.phase.name === 'lobby') action('start'); break;
       case 'start': if (isHost && S.phase.name === 'lobby') { snd.play('go'); hostStart(); } break;
-      case 'curtain': if (local && S.phase.name === 'curtain') { snd.play('ui'); const d = S.phase.data || {}; if (d.kind === 'hide') enter('hide', { dur: DUR.hide }, 0); else enter('seek', { dur: DUR.seek }, DUR.seekLead); } break;
+      // hotseat: the same clocks as two devices (hide time / untimed, countdown, head start, seek time)
+      case 'curtain': if (local && S.phase.name === 'curtain') { snd.play('ui'); const d = S.phase.data || {}; if (d.kind === 'hide') enter('hide', { dur: hideMs() }, 0); else enter('seek', seekArgs(pickSeekSpawn()), countdownMs()); } break;
       case 'ctxresume': if (!S.ctxLost) { S.ctxShown = false; removePause('ctx'); } break;
       default: break;
     }
@@ -1298,16 +1458,7 @@ export function createGame(el, api) {
       if (k === 'preset') next = { ...S.setup, rules: applyPreset(val) };
       else if (k === 'rule') next = { ...S.setup, rules: t.dataset.step ? stepRule(S.setup.rules, t.dataset.k, +t.dataset.step) : setRule(S.setup.rules, t.dataset.k, val) };
       else next = { ...S.setup, [k]: val };
-      next = sanitizeSetup(next, MAP_IDS, S.setup.first);
-      const mapChanged = next.map !== S.setup.map;
-      S.setup = next;
-      S.setupVer++;
-      snd.play('ui');
-      saveSetup(S.setup);
-      if (mapChanged) { loadMap(S.setup.map); stage.compile(); }
-      applySize();
-      if (mapChanged || k === 'rule' || k === 'preset') placeLobby();
-      if (!local) link.send('setup', S.setup);
+      commitSetup(next, k);
       return;
     }
     if (t.dataset.tool) { const tool = t.dataset.tool; if (tool === 'stamp') action('stamp'); else if (tool === 'brush') action('brush'); else action(tool); return; }
@@ -1317,6 +1468,32 @@ export function createGame(el, api) {
     if (t.dataset.act) action(t.dataset.act);
   });
   L.on(root, 'pointerdown', () => snd.unlock(), { passive: true });
+  /** Host: validate, apply, remember and share a lobby change. */
+  function commitSetup(next, k) {
+    next = sanitizeSetup(next, MAP_IDS, S.setup.first);
+    const mapChanged = next.map !== S.setup.map;
+    S.setup = next;
+    S.setupVer++;
+    snd.play('ui');
+    saveSetup(S.setup);
+    if (mapChanged) { loadMap(S.setup.map); stage.compile(); }
+    applySize();
+    if (mapChanged || k === 'rule' || k === 'preset') placeLobby();
+    if (!local) link.send('setup', S.setup);
+  }
+  // time sliders (hide / seek): preview the value while dragging, commit on release
+  const rangeVal = (r) => { const k = r.dataset.range; const opts = OPTIONS[k]; return opts ? opts[clamp(Math.round(+r.value), 0, opts.length - 1)] : undefined; };
+  L.on(root, 'input', (e) => {
+    const r = e.target; if (!r || !r.dataset || !r.dataset.range) return;
+    const v = rangeVal(r); const out = r.parentElement && r.parentElement.querySelector(`[data-rule="${r.dataset.range}"]`);
+    if (out && v !== undefined) out.textContent = fmtRule(r.dataset.range, v);
+  });
+  L.on(root, 'change', (e) => {
+    const r = e.target; if (!r || !r.dataset || !r.dataset.range) return;
+    if (!isHost || S.match || r.disabled) return;
+    const v = rangeVal(r); if (v === undefined) return;
+    commitSetup({ ...S.setup, rules: setRule(S.setup.rules, r.dataset.range, v) }, 'rule');
+  });
 
   // ── visibility + context ──────────────────────────────────────────
   L.on(document, 'visibilitychange', () => {
@@ -1363,12 +1540,14 @@ export function createGame(el, api) {
 
   // ── per-frame ─────────────────────────────────────────────────────
   const mv = [0, 0]; const lk = [0, 0];
+  let lookDir = null; let climbPiv = null; let herePrj = null;
   let camPos = null; let camLook = null; let camWant = null; let lookWant = null; let tvA = null; let qOwn = null; let prj = null; let camR = null; let camF = null;
   const pubSt = {}; for (const f of FIELDS) pubSt[f] = 0;
   let lastScaleCheck = 0;
   function initVecs() {
     camPos = new THREE.Vector3(0, 6, 9); camLook = new THREE.Vector3(0, 0.5, 0); camWant = new THREE.Vector3(); lookWant = new THREE.Vector3(); tvA = new THREE.Vector3(); tvZ = new THREE.Vector3(); Y_AXIS = new THREE.Vector3(0, 1, 0); Z_AXIS = new THREE.Vector3(0, 0, 1);
     qOwn = new THREE.Quaternion(); prj = new THREE.Vector3(); camR = [0, 0, 0]; camF = [0, 0, 0];
+    lookDir = new THREE.Vector3(); climbPiv = new THREE.Vector3(); herePrj = new THREE.Vector3();
     tv3 = new THREE.Vector3(); tv3b = new THREE.Vector3();
   }
 
@@ -1385,6 +1564,10 @@ export function createGame(el, api) {
     const t = now();
     try {
       if (S.queue.length && t >= S.queue[0].at) setPhase(S.queue.shift());
+      if (S.phase.name === 'seek' && !R.huntSeen && !S.paused && hunting(t)) onHuntStart();
+      // the hider's view (falls back to their eyes as soon as it's not allowed: hunt over, painting)
+      if (C.spect !== 'eyes' && (P.on || S.phase.name !== 'seek' || !hunting(t) || local)) C.spect = 'eyes';
+      U.spect = C.spect;
       hostTick();
       if (R.tagWindow && S.phase.name !== 'seek') R.tagWindow = null;
       simulate(dt, t);
@@ -1422,6 +1605,8 @@ export function createGame(el, api) {
     if (S.boot !== 'ready') return true;
     const ph = S.phase.name;
     if (ph === 'curtain') return true;
+    // the seeker keeps the blindfold on through the hider's head start (one device too)
+    if (ph === 'seek' && mode() === 'hs' && headStartOn() && roleOf(viewer()) === 'seeker') return true;
     if (local) return false;
     const r = roleOf(me);
     return r === 'seeker' && (ph === 'hide' || ph === 'lock');
@@ -1454,26 +1639,45 @@ export function createGame(el, api) {
     controls.takeLook(lk);
     const sens = controls.st.locked ? 0.0026 : 0.0058;
     let mode2 = 'none';
+    const hunt = hunting(t);
+    const spect = U.spect;
     if (S.boot === 'ready' && v && !fz) {
       const role = roleOf(v);
       if (P.on) mode2 = 'paint';
       else if (ph === 'hide' && (role === 'hider' || role === 'both')) mode2 = 'move';
-      else if (ph === 'seek' && (role === 'seeker' || role === 'both')) mode2 = 'move';
-      else if (ph === 'seek' && role === 'hider') mode2 = 'look';
+      else if (ph === 'seek' && role === 'hider' && !hunt) mode2 = 'move'; // head start: still free to move
+      else if (ph === 'seek' && (role === 'seeker' || role === 'both')) mode2 = hunt ? 'move' : 'none'; // blindfolded until then
+      else if (ph === 'seek' && role === 'hider') mode2 = spect === 'free' ? 'move' : 'look';
     }
     controls.setMode(mode2);
-    controls.st.fp = ph === 'seek';
+    controls.st.fp = ph === 'seek' && (hunt || roleOf(v) !== 'hider') && spect === 'eyes';
     const ru = rules();
+    // the hider's free cam: flies where you look, collides with nothing, clamped to the map
+    if (spect === 'free' && v && !fz) {
+      controls.move(mv);
+      C.fcYaw -= lk[0] * sens; C.fcPitch = clamp(C.fcPitch - lk[1] * sens, -1.45, 1.45);
+      const cp = Math.cos(C.fcPitch); const sy = Math.sin(C.fcYaw); const cy = Math.cos(C.fcYaw);
+      const sp = FREECAM.speed * (controls.st.sprintHeld ? FREECAM.fast : 1) * dt;
+      const rise = controls.rise();
+      C.fcX += (sy * cp * mv[1] - cy * mv[0]) * sp; C.fcY += (Math.sin(C.fcPitch) * mv[1] + rise) * sp; C.fcZ += (cy * cp * mv[1] + sy * mv[0]) * sp;
+      clampFree();
+      lk[0] = 0; lk[1] = 0;
+    }
     for (const w of ['a', 'b']) {
       if (!controlsOf(w)) continue;
       const b = body[w];
       let vx = 0; let vy = 0; let vz = 0; let jump = false; let mvMag = 0;
       const role = roleOf(w);
-      const fp = ph === 'seek';
-      if (w === v && !fz && (mode2 === 'move' || mode2 === 'look')) {
+      const fp = ph === 'seek' && !(role === 'hider' && !hunt); // a hider's head start is third person
+      // the seeker crawling (or zipping): a close over-the-shoulder view with its own absolute yaw
+      const climbV = fp && role === 'seeker' && w === v && (b.at || !!b.zip);
+      if (w === v) syncClimbView(b, climbV);
+      if (w === v && !fz && spect === 'eyes' && (mode2 === 'move' || mode2 === 'look')) {
         controls.move(mv);
         mvMag = Math.min(1, Math.hypot(mv[0], mv[1]));
-        if (fp) {
+        if (climbV) {
+          C.vYaw = wrapAngle(C.vYaw - lk[0] * sens); b.lookPitch = clamp(b.lookPitch - lk[1] * sens, -1.45, 1.45);
+        } else if (fp) {
           // free look: the seeker can look almost straight up and down (ceiling hiders!)
           b.lookYaw -= lk[0] * sens; b.lookPitch = clamp(b.lookPitch - lk[1] * sens, -1.45, 1.45);
           if (role === 'hider') { b.lookYaw = clamp(wrapAngle(b.lookYaw), -1.9, 1.9); b.lookPitch = clamp(b.lookPitch, -1.2, 1.2); }
@@ -1483,13 +1687,14 @@ export function createGame(el, api) {
         }
         if (mode2 === 'move') {
           const sizeMul = 0.85 + 0.15 * b.s;
-          let sp = ph === 'seek' ? (mode() === 'db' ? SPEED.db : SPEED.seek * SPEED_MUL[ru.seekSpeed] * ((R.sprint || controls.st.sprintHeld) && role === 'seeker' ? sprintMul(mapTime()) : 1)) : SPEED.hide * sizeMul;
+          let sp = !fp ? SPEED.hide * sizeMul : mode() === 'db' ? SPEED.db : SPEED.seek * SPEED_MUL[ru.seekSpeed] * ((R.sprint || controls.st.sprintHeld) && role === 'seeker' && !b.at ? sprintMul(mapTime()) : 1);
+          if (b.at && fp) sp *= CLIMB_MUL[ru.climbSpeed]; // the seeker on a wall or ceiling
           if (b.sq) sp *= SPEED.squeeze;
-          if (b.at && !fp) {
+          if (b.at && (!fp || climbV)) {
             // sticky feet: screen-relative input mapped onto the surface
             stage.camera.updateMatrixWorld();
             stage.camera.getWorldDirection(tvA); camF[0] = tvA.x; camF[1] = tvA.y; camF[2] = tvA.z;
-            camR[0] = Math.cos(C.yaw); camR[1] = 0; camR[2] = -Math.sin(C.yaw);
+            if (climbV) { camR[0] = -Math.cos(C.vYaw); camR[1] = 0; camR[2] = Math.sin(C.vYaw); } else { camR[0] = Math.cos(C.yaw); camR[1] = 0; camR[2] = -Math.sin(C.yaw); }
             inputOnSurface(b, mv[0], mv[1], projOut, camF, camR, surfV);
             const csp = sp * SPEED.crawl;
             vx = surfV[0] * csp; vy = surfV[1] * csp; vz = surfV[2] * csp;
@@ -1500,7 +1705,7 @@ export function createGame(el, api) {
             vx = (fx * mv[1] + rx * mv[0]) * sp; vz = (fzv * mv[1] + rz * mv[0]) * sp;
           }
           jump = (R.jumpReq || controls.st.jumpHeld) && !(ph === 'seek' && mode() === 'db');
-          if (fp) {
+          if (fp && !climbV) {
             // first person: body yaw follows the view; keep lookYaw small
             b.yaw = wrapAngle(b.yaw + b.lookYaw); b.lookYaw = 0;
           }
@@ -1517,7 +1722,7 @@ export function createGame(el, api) {
       }
       const moving = vx * vx + vy * vy + vz * vz > 0.01;
       if (b.at) {
-        if (fp && moving && !R.scurry) {
+        if (fp && !climbV && role !== 'seeker' && moving && !R.scurry) {
           // hunting in first person (Double Blind) while stuck somewhere: drop off first
           unstick(w);
         } else {
@@ -1547,27 +1752,28 @@ export function createGame(el, api) {
       for (let k = 0; k < nSub; k++) landed = freeStep(world, b, vx * sp2, vz * sp2, dt / nSub, jump && !b.sq && k === 0) || landed;
       if (jump && b.vy > 3 && !b.at) snd.play('jump');
       if (landed) { snd.play('land'); stage.av[w].squash(0.3); }
-      // walk into a wall holding forward → the feet stick (hider, hide phase, climbing allowed)
-      if (moving && ru.climb && !b.sq && w === v && ph === 'hide' && (role === 'hider' || role === 'both') && mvMag > 0.6) {
+      // walk into a wall holding forward → the feet stick (hider hiding, or a climbing seeker, who
+      // has to lean on it a little longer so brushing past walls while hunting doesn't grab them)
+      if (moving && ru.climb && !b.sq && w === v && canMoveSelf(w) && mvMag > 0.6) {
         const want = Math.hypot(vx, vz) * dt; const got = Math.hypot(b.x - px, b.z - pz);
         if (got < want * 0.35) {
           const sp = Math.hypot(vx, vz) || 1; const dx = vx / sp; const dz = vz / sp;
           const H = world.raycast(b.x, b.y + Math.min(b.head * 0.5, 0.2), b.z, dx, 0, dz, b.r + 0.12, (bx) => bx.maxY - bx.minY > 0.25, false);
           if (H && H.box && H.box.climb !== false && H.nx * dx + H.nz * dz < -0.7 && world.inside(H.x, H.z)) {
             b.pushT += dt;
-            if (b.pushT > 0.22) { b.pushT = 0; attachTo(w, H.x, H.y, H.z, H.nx, 0, H.nz, H.box, 0, 1, 0); }
+            if (b.pushT > (role === 'seeker' ? 0.45 : 0.22)) { b.pushT = 0; attachTo(w, H.x, H.y, H.z, H.nx, 0, H.nz, H.box, 0, 1, 0); }
           } else b.pushT = 0;
         } else b.pushT = 0;
       } else b.pushT = 0;
       if (moving) {
         const want = Math.atan2(vx, vz);
-        if (!(ph === 'seek' && w === v)) b.yaw = dampAngle(b.yaw, want, 12, dt);
+        if (!(fp && w === v)) b.yaw = dampAngle(b.yaw, want, 12, dt);
         P.texelDirtyAt = tSec + 0.2;
         b.stillT = 0;
       } else if (b.onGround) {
         // standing still on something thin: perch on it, tail curled round
         b.stillT += dt;
-        if (b.stillT > 0.35 && b.pose === 'stand' && ru.climb && world.groundRes && stage.world.groundAt(b.x, b.z, b.r * 0.6, b.y + 0.02) === b.y && stage.world.groundRes.box && stage.world.groundRes.box.perch && w === v && ph === 'hide') {
+        if (b.stillT > 0.35 && b.pose === 'stand' && ru.climb && world.groundRes && stage.world.groundAt(b.x, b.z, b.r * 0.6, b.y + 0.02) === b.y && stage.world.groundRes.box && stage.world.groundRes.box.perch && w === v && canMoveSelf(w)) {
           setPoseFor(w, 'perch'); hintOnce('perch', 'Perched! Tail curled round the rail.', 2000);
         }
       }
@@ -1576,6 +1782,14 @@ export function createGame(el, api) {
       recordHist(w, b, t);
     }
     if (P.on && P.texelDirtyAt && tSec > P.texelDirtyAt) refreshTexels();
+  }
+  /** The seeker's view switches between first person (free) and a close over-the-shoulder view
+   *  (stuck to a surface or zipping): carry the view direction across so it never jumps. */
+  function syncClimbView(b, on) {
+    if (on === C.climbV) return;
+    if (on) { C.vYaw = wrapAngle(b.yaw + b.lookYaw); b.lookYaw = 0; }
+    else { b.yaw = C.vYaw; b.lookYaw = 0; b.fx = Math.sin(b.yaw); b.fy = 0; b.fz = Math.cos(b.yaw); }
+    C.climbV = on;
   }
   /** History for tag confirmation (the victim checks the shooter's view against its true path). */
   function recordHist(w, b, t) {
@@ -1589,10 +1803,13 @@ export function createGame(el, api) {
     if (local) return;
     const b = body[me];
     const ph = S.phase.name; const role = roleOf(me);
-    const hiding = (ph === 'hide') && (role === 'hider' || role === 'both');
+    // where a hider is stays private while hiding, and during a head start until just before the
+    // blindfold comes off (so the seeker's buffer holds real positions when the hunt starts)
+    const hiding = (ph === 'hide' && (role === 'hider' || role === 'both')) || (ph === 'seek' && role === 'hider' && t < huntAt() - 500);
     pubSt.x = hiding ? 0 : b.x; pubSt.y = hiding ? 0 : b.y; pubSt.z = hiding ? 0 : b.z;
     pubSt.yaw = hiding ? 0 : b.yaw; pubSt.po = hiding ? 0 : POSES.indexOf(b.pose);
-    pubSt.ly = b.lookYaw; pubSt.lp = b.lookPitch; pubSt.v = hiding ? 0 : 1; pubSt.wa = b.wa; pubSt.sp = b.speed;
+    // a climbing seeker looks with its own view yaw: publish it relative to the body (yaw + ly = view)
+    pubSt.ly = C.climbV && role === 'seeker' ? wrapAngle(C.vYaw - b.yaw) : b.lookYaw; pubSt.lp = b.lookPitch; pubSt.v = hiding ? 0 : 1; pubSt.wa = b.wa; pubSt.sp = b.speed;
     if (hiding) { pubSt.q = Q_ID; pubSt.at = 0; }
     else {
       bodyQuat(b, qTmp);
@@ -1601,6 +1818,7 @@ export function createGame(el, api) {
       pubSt.q = qq; pubSt.at = b.at ? 1 : 0;
     }
     if (S.boot === 'ready' && link.ready) link.publish(pubSt);
+    livePaint(t);
     // silence detection (host pauses on a stalled link)
     if (isHost && S.match && api.partnerHere) {
       if (link.silence > 4500) addPause('stall');
@@ -1625,7 +1843,7 @@ export function createGame(el, api) {
         a.st.wallN = null;
         a.st.speed = b.speed;
         a.st.lookYaw = b.lookYaw; a.st.lookPitch = b.lookPitch;
-        if (ph === 'seek' && w === v && (roleOf(w) === 'seeker' || roleOf(w) === 'both') && !frozenView()) vis = false; // my own body in first person
+        if (ph === 'seek' && w === v && (roleOf(w) === 'seeker' || roleOf(w) === 'both') && !frozenView() && (!C.climbV || C.climbNear)) vis = false; // my own body in first person (shown while climbing: over the shoulder, unless the camera is jammed against it)
       } else {
         let ok = link.sample(rem, t);
         if (!ok && remHint.set) { useHint(); rem.ly = 0; rem.lp = 0; rem.sp = 0; ok = true; }
@@ -1653,8 +1871,8 @@ export function createGame(el, api) {
       }
       if (P.on && w === v) vis = true;
       a.setVisible(vis);
-      // first-person hider: hide my own head
-      a.setHeadVisible(!(ph === 'seek' && w === v && roleOf(w) !== 'seeker'));
+      // first-person hider: hide my own head (not while painting, spectating or in a head start)
+      a.setHeadVisible(!(ph === 'seek' && w === v && roleOf(w) !== 'seeker' && !P.on && U.spect === 'eyes' && (roleOf(w) !== 'hider' || hunting(t))));
       // the reveal: outline the hider during found / time / recap
       const revealed = (ph === 'found' || ph === 'time' || ph === 'recap' || ph === 'final') && R.rec && w === recapTarget() && tSec >= C.freezeUntil;
       if (revealed !== !!a.revealOn) { a.revealOn = revealed; a.setReveal(revealed ? theme.hl : null, 0.016); }
@@ -1727,6 +1945,16 @@ export function createGame(el, api) {
         }
       }
     }
+    // "Paint while hunted: Shows": fresh paint twinkles for the seeker (range + line of sight checked on arrival)
+    if (R.tell && tSec < R.tell.until && ph === 'seek') {
+      const k = 1 - (R.tell.until - tSec) / TELL.secs; const pts = R.tell.pts; const sz = Math.max(1, stage.av[mode() === 'hs' ? hiderOf(S.phase.round) : 'a'].st.size) * 1.25;
+      for (let i = 0; i < pts.length && gi < G.length; i += 3) {
+        const sp = G[gi++];
+        sp.position.set(pts[i], pts[i + 1], pts[i + 2]); sp.visible = true;
+        const tw = Math.sin((k * 3 + i * 0.37) * Math.PI); sp.scale.setScalar((0.07 + 0.16 * tw * tw) * (1 - k * 0.5) * sz);
+        sp.material.rotation = k * 4;
+      }
+    } else if (R.tell) R.tell = null;
     // trails (scurry)
     for (const w of ['a', 'b']) {
       if (t < R.trailUntil[w] && tSec > R.trailNext) {
@@ -1736,15 +1964,16 @@ export function createGame(el, api) {
       }
     }
     // the hider peeks through their own eyes; a heartbeat when the seeker gets close
-    const peeking = ph === 'seek' && v && roleOf(v) === 'hider' && !local;
+    const hunted = ph === 'seek' && v && roleOf(v) === 'hider' && !local && hunting(t);
+    const peeking = hunted && U.spect === 'eyes' && !P.on;
     if (peeking !== !!C.peek) { C.peek = peeking; root.classList.toggle('peek', peeking); }
-    if (peeking && !frozen()) {
+    if (hunted && !frozen()) {
       const sk = other(v); const ps = stage.av[sk].root.position; const pm = stage.av[v].root.position;
       const d = Math.hypot(ps.x - pm.x, ps.z - pm.z);
       if (rules().heartbeat && d < 3 && tSec > (C.beatAt || 0)) { C.beatAt = tSec + 0.45 + d * 0.28; snd.play('beat'); root.classList.remove('beat'); void root.offsetWidth; root.classList.add('beat'); }
     }
-    // seek stats: closest call, walk-pasts, seeker path
-    if (ph === 'seek' && S.match) {
+    // seek stats: closest call, walk-pasts, seeker path (the hunt only, not a head start)
+    if (ph === 'seek' && S.match && hunting(t)) {
       const hd = mode() === 'hs' ? hiderOf(S.phase.round) : other(v || 'a');
       const sk = other(hd);
       const ps = stage.av[sk].root.position; const phd = stage.av[hd].root.position;
@@ -1769,7 +1998,7 @@ export function createGame(el, api) {
     const cam = stage.camera;
     const ph = S.phase.name; const v = viewer();
     const role = v ? roleOf(v) : null;
-    let snap = false; let overview = false;
+    let snap = false; let overview = false; let climbCam = false;
     let rate = 10;
     C.frameCard = false;
     stage.vm.visible = false;
@@ -1818,7 +2047,32 @@ export function createGame(el, api) {
       camWant.set(lookWant.x + Math.sin(C.paintYaw) * cp * pd, lookWant.y + Math.sin(C.paintPitch) * pd, lookWant.z + Math.cos(C.paintYaw) * cp * pd);
       floorCam(camWant);
       rate = 14;
-    } else if (ph === 'seek' && v && (role === 'seeker' || role === 'both' || (role === 'hider' && !local))) {
+    } else if (ph === 'seek' && v && U.spect === 'free') {
+      // the hider's free cam (simulate() flies it)
+      const cp = Math.cos(C.fcPitch);
+      camWant.set(C.fcX, C.fcY, C.fcZ);
+      lookWant.set(C.fcX + Math.sin(C.fcYaw) * cp, C.fcY + Math.sin(C.fcPitch), C.fcZ + Math.cos(C.fcYaw) * cp);
+      snap = true;
+    } else if (ph === 'seek' && v && U.spect === 'watch') {
+      // watch the seeker: over their shoulder, looking where they look (from their presence)
+      const sk = other(v); const ra = stage.av[sk].root; const q = ra.quaternion; const s2 = stage.av[sk].st.size;
+      const yaw = rem.yaw + rem.ly; const cp = Math.cos(rem.lp);
+      tvA.set(Math.sin(yaw) * cp, Math.sin(rem.lp), Math.cos(yaw) * cp);
+      const ux = 2 * (q.x * q.y - q.w * q.z); const uy = 1 - 2 * (q.x * q.x + q.z * q.z); const uz = 2 * (q.y * q.z + q.w * q.x);
+      revC.x = ra.position.x + ux * 0.4 * s2; revC.y = ra.position.y + uy * 0.4 * s2 + 0.12 * s2; revC.z = ra.position.z + uz * 0.4 * s2;
+      const tall = stage.size[0] < stage.size[1];
+      const dist = (tall ? 2.3 : 1.8) * (0.6 + 0.4 * s2); const side = (tall ? 0.1 : 0.3) * s2;
+      camWant.set(revC.x - tvA.x * dist - Math.cos(yaw) * side, revC.y - tvA.y * dist + 0.38 * s2, revC.z - tvA.z * dist + Math.sin(yaw) * side);
+      clampCam(revC, camWant);
+      floorCam(camWant);
+      lookWant.set(revC.x + tvA.x * 2.5, revC.y + tvA.y * 2.5, revC.z + tvA.z * 2.5);
+      rate = 9;
+    } else if (ph === 'seek' && v && role === 'seeker' && C.climbV) {
+      // the seeker on a wall / ceiling (or zipping): close over-the-shoulder, aim = screen centre
+      climbCamWant(body[v], C.vYaw, body[v].lookPitch, camWant, lookDir);
+      lookWant.copy(camWant).add(lookDir);
+      climbCam = true; rate = 14;
+    } else if (ph === 'seek' && v && (role === 'seeker' || role === 'both' || (role === 'hider' && !local && hunting(t)))) {
       const b = body[v];
       if (role === 'hider') {
         const a = stage.av[v];
@@ -1836,7 +2090,8 @@ export function createGame(el, api) {
         stage.vm.position.set(0.2, -0.16 + Math.sin(tSec * 8) * 0.004 * Math.min(1, b.speed), -0.42 + C.shake * 0.3);
       }
       snap = true;
-    } else if (v && (ph === 'hide' || ph === 'lock')) {
+    } else if (v && (ph === 'hide' || ph === 'lock' || (ph === 'seek' && role === 'hider'))) {
+      // hiding (and a hider's head start): third-person orbit
       const b = body[v];
       bodyCentre(v, lookWant);
       lookWant.y += (b.at ? 0.05 : 0.14) * b.s;
@@ -1876,6 +2131,8 @@ export function createGame(el, api) {
       const k = 1 - Math.exp(-rate * dt);
       camPos.lerp(camWant, k); camLook.lerp(lookWant, k);
     }
+    // the climb view eases its position but aims exactly where the stick says (no aim lag)
+    if (climbCam) camLook.copy(camPos).add(lookDir);
     cam.position.copy(camPos);
     cam.lookAt(camLook);
     applyFraming();
@@ -1883,6 +2140,34 @@ export function createGame(el, api) {
     void t;
   }
   const revC = { x: 0, y: 0, z: 0 };
+  /** Where the seeker's climb camera wants to be for view (yaw, pitch): behind and over the right
+   *  shoulder of the body, kept in front of the surface it's on and out of walls. dir = view dir. */
+  function climbCamWant(b, yaw, pitch, out, dir) {
+    const cp = Math.cos(pitch); const s2 = b.s;
+    dir.set(Math.sin(yaw) * cp, Math.sin(pitch), Math.cos(yaw) * cp);
+    bodyCentre(viewer(), climbPiv); climbPiv.y += 0.1 * s2;
+    // a phone held upright sees a narrow slice sideways: sit further back, less to the side, a little higher
+    const tall = stage.size[0] < stage.size[1];
+    const dist = (tall ? 2.0 : 1.55) * (0.55 + 0.45 * s2); const side = (tall ? 0.12 : 0.32) * s2; const lift = (tall ? 0.3 : 0.18) * s2;
+    let ux = -dir.x * dist - Math.cos(yaw) * side; let uy = -dir.y * dist + lift; let uz = -dir.z * dist + Math.sin(yaw) * side;
+    if (b.at) {
+      const k = ux * b.nx + uy * b.ny + uz * b.nz; const lim = 0.3 * dist;
+      if (k < lim) {
+        ux += b.nx * (lim - k); uy += b.ny * (lim - k); uz += b.nz * (lim - k);
+        const l = Math.hypot(ux, uy, uz) || 1; const L = Math.hypot(-dir.x * dist, -dir.y * dist + lift, -dir.z * dist) || dist;
+        ux = ux / l * L; uy = uy / l * L; uz = uz / l * L;
+      }
+    }
+    out.set(climbPiv.x + ux, climbPiv.y + uy, climbPiv.z + uz);
+    clampCam(climbPiv, out);
+    floorCam(out);
+    // squeezed in, or the body sits on the line of fire: hide it so the crosshair always sees past it
+    const cx = climbPiv.x - out.x; const cy = climbPiv.y - out.y; const cz = climbPiv.z - out.z;
+    const along = cx * dir.x + cy * dir.y + cz * dir.z;
+    const off = Math.sqrt(Math.max(0, cx * cx + cy * cy + cz * cz - along * along));
+    C.climbNear = Math.hypot(cx, cy, cz) < 0.8 * s2 || (along > 0 && off < 0.42 * s2);
+    return out;
+  }
   function revealCenter(w) {
     const m = stage.av[w].meshes[0];
     m.updateWorldMatrix(true, false);
@@ -1939,19 +2224,59 @@ export function createGame(el, api) {
   const FIRE_L = Array.from({ length: 11 }, (_, i) => `Fire ${i}`);
   const SCURRY_L = ['Scurry', 'Scurry', 'Scurry 2', 'Scurry 3'];
   const SCAN_L = Array.from({ length: 31 }, (_, i) => (i ? `${i}s` : 'Scan'));
-  const PHASE_L = { hide: 'Hide', lock: 'Get ready', seek: 'Seek', found: 'Found', time: 'Time', recap: 'Recap', curtain: 'Pass', final: '', lobby: '' };
+  const PHASE_L = { hide: 'Hide', lock: 'Get ready', seek: 'Seek', found: 'Found', time: 'Time', recap: 'Recap', curtain: 'Pass', final: '', lobby: '', head: 'Head start', untimed: 'No limit' };
+  const GRACE_L = Array.from({ length: 16 }, (_, i) => `Wait ${i}`);
+  const BADGE = { watch: `Watching ${api.name('a')}`, free: 'Free cam', watchB: `Watching ${api.name('b')}` };
   const ROLE_L = { youHide: 'You hide', youSeek: 'You seek', hunt: 'Hunt!', hideBoth: 'Hide!', hides: { a: `${api.name('a')} hides`, b: `${api.name('b')} hides` }, seeks: { a: `${api.name('a')} seeks`, b: `${api.name('b')} seeks` } };
   const LEGEND = {
-    hide: ['<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Mouse</kbd> look', '<kbd>E</kbd> stick · <kbd>Z</kbd> tongue-zip · <kbd>Space</kbd> jump', '<kbd>1</kbd>–<kbd>9</kbd> pose · <kbd>P</kbd> paint · <kbd>R</kbd> hidden'],
-    hideFloor: ['<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Mouse</kbd> look', '<kbd>Space</kbd> jump · <kbd>1</kbd>–<kbd>5</kbd> pose', '<kbd>P</kbd> paint · <kbd>R</kbd> hidden'],
+    hide: ['<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Mouse</kbd> look', '<kbd>E</kbd> stick · <kbd>Z</kbd> tongue-zip · <kbd>Space</kbd> jump', '<kbd>1</kbd>–<kbd>9</kbd> pose · <kbd>P</kbd> paint · <kbd>R</kbd> ready'],
+    hideFloor: ['<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Mouse</kbd> look', '<kbd>Space</kbd> jump · <kbd>1</kbd>–<kbd>5</kbd> pose', '<kbd>P</kbd> paint · <kbd>R</kbd> ready'],
     seek: ['<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Mouse</kbd> look', '<kbd>Click</kbd> fire · <kbd>Q</kbd> scan · <kbd>Shift</kbd> sprint', '<kbd>Esc</kbd> free the mouse · look up!'],
-    peek: ['<kbd>Mouse</kbd> look around', '<kbd>F</kbd> scurry · <kbd>Z</kbd> zip · <kbd>1</kbd>–<kbd>9</kbd> pose'],
+    peek: ['<kbd>Mouse</kbd> look around · <kbd>V</kbd> view', '<kbd>F</kbd> scurry · <kbd>Z</kbd> zip · <kbd>1</kbd>–<kbd>9</kbd> pose'],
+    peekP: ['<kbd>Mouse</kbd> look around · <kbd>V</kbd> view', '<kbd>F</kbd> scurry · <kbd>Z</kbd> zip · <kbd>1</kbd>–<kbd>9</kbd> pose', '<kbd>P</kbd> paint (they can see it change!)'],
+    head: ['<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Mouse</kbd> look', '<kbd>E</kbd> stick · <kbd>Z</kbd> zip · <kbd>Space</kbd> jump', '<kbd>1</kbd>–<kbd>9</kbd> pose · <kbd>P</kbd> paint · head start!'],
+    seekClimb: ['<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Mouse</kbd> look', '<kbd>Click</kbd> fire · <kbd>Q</kbd> scan · <kbd>Shift</kbd> sprint', '<kbd>E</kbd> stick · <kbd>Z</kbd> zip · <kbd>Space</kbd> jump · <kbd>1</kbd>–<kbd>9</kbd> pose'],
+    watch: ['Watching the seeker · you stay put', '<kbd>V</kbd> next view'],
+    free: ['<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly · <kbd>Mouse</kbd> look · <kbd>Shift</kbd> fast', '<kbd>Space</kbd>/<kbd>E</kbd> up · <kbd>Q</kbd>/<kbd>C</kbd> down · <kbd>V</kbd> next view'],
     paint: ['<kbd>B</kbd> brush · <kbd>G</kbd> fill · <kbd>E</kbd> pick', '<kbd>T</kbd> stamp · <kbd>Z</kbd> undo · <kbd>P</kbd> done'],
   };
+  function legendRows(ph, role, hunt, hiderHead, sp) {
+    if (P.on) return LEGEND.paint;
+    if (ph === 'hide') return rules().climb ? LEGEND.hide : LEGEND.hideFloor;
+    if (hiderHead) return rules().climb ? LEGEND.head : LEGEND.hideFloor;
+    if (ph === 'seek' && role !== 'hider') return seekerClimbs() && role === 'seeker' ? LEGEND.seekClimb : LEGEND.seek;
+    if (sp === 'watch') return LEGEND.watch;
+    if (sp === 'free') return LEGEND.free;
+    return rules().huntPaint !== 'off' ? LEGEND.peekP : LEGEND.peek;
+  }
+  /** Stick / Zip button state (shared descriptors) for whoever is moving. */
+  function stickZipState(v, t, cd) {
+    const b = body[v];
+    ACTS.m.stick.on = ACTS.t.stick.on = b.at;
+    const AS = controls.st.usingMouse ? ACTS.m : ACTS.t;
+    AS.stick.label = b.at ? 'Let go' : 'Stick'; AS.stick.icon = b.at ? 'unstick' : 'stick';
+    const zl = Math.max(0, R.zipReady[v] - t);
+    AS.zip.cd = clamp(zl / cd, 0, 1); AS.zip.disabled = zl > 0 || !!b.zip;
+  }
+  /** "You're here": a small sticker over my own body in the spectator views (edge-clamped). */
+  function hereMarker(v) {
+    const a = stage.av[v]; const q = a.root.quaternion; const s2 = a.st.size;
+    const uy = 1 - 2 * (q.x * q.x + q.z * q.z);
+    herePrj.copy(a.root.position); herePrj.y += (uy > -0.5 ? 0.62 : 0.15) * s2;
+    herePrj.project(stage.camera);
+    const [W, H] = stage.size;
+    let nx = herePrj.x; let ny = herePrj.y; let edge = false;
+    if (herePrj.z > 1) { nx = -nx; ny = -ny; edge = true; } // behind the camera: point the other way
+    const m = Math.max(Math.abs(nx), Math.abs(ny));
+    if (m > 0.86) { nx = (nx / m) * 0.86; ny = (ny / m) * 0.86; edge = true; }
+    let x = (nx + 1) / 2 * W; let y = (1 - ny) / 2 * H;
+    y = clamp(y, 96, H - 40); x = clamp(x, 34, W - 34);
+    hud.here(true, x, y, edge);
+  }
   function mkActs(mouse) {
     const k = (x) => (mouse ? x : '');
     const poses = { act: 'poses', icon: 'pose', label: 'Pose', key: k('1-9') };
-    const ready2 = { act: 'ready', icon: 'ready', label: 'Hidden', hl: true, key: k('R') };
+    const ready2 = { act: 'ready', icon: 'ready', label: 'Ready', hl: true, key: k('R') };
     const jump = { act: 'jump', icon: 'jump', label: 'Jump', key: k('␣') };
     const paint = { act: 'paint', icon: 'paint', label: 'Paint', big: true, prime: true, key: k('P') };
     const stick2 = { act: 'stick', icon: 'stick', label: 'Stick', on: false, key: k('E') };
@@ -1961,10 +2286,20 @@ export function createGame(el, api) {
     const sprint2 = { act: 'sprint', icon: 'sprint', label: 'Sprint', on: false, key: k('⇧') };
     const scurry2 = { act: 'scurry', icon: 'scurry', label: 'Scurry', hl: true, big: true, disabled: false, key: k('F') };
     const pzip = { act: 'zip', icon: 'zip', label: 'Zip', cdRing: true, cd: 0, disabled: false, key: k('Z') };
+    const view = { act: 'view', icon: 'eye', label: 'View', key: k('V') };
+    const ppaint = { act: 'paint', icon: 'paint', label: 'Paint', key: k('P') };
     return {
-      scan: scan2, fire: fire2, scurry: scurry2, stick: stick2, zip: zip2, pzip, sprint: sprint2,
+      scan: scan2, fire: fire2, scurry: scurry2, stick: stick2, zip: zip2, pzip, sprint: sprint2, view,
       hide: [stick2, zip2, poses, ready2, jump, paint], hideFloor: [poses, ready2, jump, paint],
-      seek: [scan2, sprint2, jump, fire2], both: [poses, scan2, fire2], peek: [poses, pzip, scurry2], peekFloor: [poses, scurry2], none: [],
+      // a hider's head start: hiding moves without Ready
+      head: [stick2, zip2, poses, jump, paint], headFloor: [poses, jump, paint],
+      seek: [scan2, sprint2, jump, fire2], both: [poses, scan2, fire2],
+      // the climbing seeker: sticky feet on the top rows, the hunt below (Fire bottom-right)
+      seekClimb: [stick2, zip2, poses, scan2, sprint2, jump, fire2],
+      // hunted: views + (paint) + poses + escapes; spectating: just the view switch
+      peek: [view, poses, pzip, scurry2], peekFloor: [view, poses, scurry2],
+      peekP: [view, ppaint, poses, pzip, scurry2], peekFloorP: [view, ppaint, poses, scurry2],
+      spect: [view], none: [],
     };
   }
   const ACTS = { m: mkActs(true), t: mkActs(false) };
@@ -1996,8 +2331,8 @@ export function createGame(el, api) {
     else pbCur = stage.world.nearestWall(b.x, b.y, b.z, 0.5 + b.r) ? PB.freeWall : PB.free;
     return pbCur;
   }
-  const U = { meB: null, mouse: null, tick: -1, blind: null, tips: false };
-  const live = { blind: null, resume: null, seek: null, recap: null, blindS: -1, resumeS: -1, seekS: -1 };
+  const U = { meB: null, mouse: null, tick: -1, blind: null, tips: false, spect: 'eyes' };
+  const live = { blind: null, resume: null, seek: null, recap: null, head: null, blindS: -1, resumeS: -1, seekS: -1, headS: -1 };
   function ui(t) {
     const ph = S.phase.name; const v = viewer();
     const role = v ? roleOf(v) : null;
@@ -2009,35 +2344,42 @@ export function createGame(el, api) {
     layer(t, ph, v, role);
     const fz = frozen();
     const inGame = !!m && S.boot === 'ready' && ph !== 'lobby' && ph !== 'curtain' && !isBlind();
+    const hunt = hunting(t);
+    const sp = U.spect;
+    const hiderHead = ph === 'seek' && role === 'hider' && !hunt && !local;
+    const seekerMoves = ph === 'seek' && role === 'seeker' && hunt && seekerClimbs();
     showParts.top = !!m && ph !== 'lobby' && ph !== 'final';
     showParts.sub = showParts.top && ph !== 'curtain';
-    showParts.cross = inGame && ph === 'seek' && (role === 'seeker' || role === 'both') && !fz;
+    showParts.cross = inGame && ph === 'seek' && (role === 'seeker' || role === 'both') && !fz && hunt;
     showParts.gear = inGame && ph === 'seek';
     showParts.tools = inGame && P.on;
-    showParts.poses = inGame && (P.on || posesOpen) && (ph === 'hide' || ph === 'seek') && (role === 'hider' || role === 'both');
-    showParts.joyhint = inGame && !P.on && ((ph === 'hide' && (role === 'hider' || role === 'both')) || (ph === 'seek' && role !== 'hider')) && !fz;
+    showParts.poses = inGame && (P.on || posesOpen) && sp === 'eyes' && ((ph === 'hide' || ph === 'seek') && (role === 'hider' || role === 'both') || seekerMoves);
+    const moving = (ph === 'hide' && (role === 'hider' || role === 'both')) || (ph === 'seek' && role !== 'hider' && hunt) || hiderHead || sp === 'free';
+    showParts.joyhint = inGame && !P.on && moving && !fz;
     showParts.legend = inGame && mouse && (ph === 'hide' || ph === 'seek');
-    showParts.mini = inGame && ph === 'seek' && (role === 'seeker' || role === 'both') && rules().minimap && !!stage.map.big;
+    showParts.mini = inGame && ph === 'seek' && hunt && (role === 'seeker' || role === 'both') && rules().minimap && !!stage.map.big;
     // action buttons
     const AS = mouse ? ACTS.m : ACTS.t;
     let list = AS.none;
     if (inGame && !fz && !P.on) {
       const climb = rules().climb;
-      if (ph === 'hide' && (role === 'hider' || role === 'both')) {
-        list = climb ? AS.hide : AS.hideFloor;
-        const b = body[v];
-        AS.stick.on = b.at; AS.stick.label = b.at ? 'Let go' : 'Stick'; AS.stick.icon = b.at ? 'unstick' : 'stick';
-        const zl = Math.max(0, R.zipReady[v] - t);
-        AS.zip.cd = clamp(zl / ZIP.cdHide, 0, 1); AS.zip.disabled = zl > 0 || !!b.zip;
+      if ((ph === 'hide' && (role === 'hider' || role === 'both')) || hiderHead) {
+        list = hiderHead ? (climb ? AS.head : AS.headFloor) : climb ? AS.hide : AS.hideFloor;
+        stickZipState(v, t, ZIP.cdHide);
       } else if (ph === 'seek' && (role === 'seeker' || role === 'both')) {
-        list = role === 'both' ? AS.both : AS.seek;
+        list = role === 'both' ? AS.both : seekerMoves ? AS.seekClimb : AS.seek;
         const left = Math.max(0, R.scanReady[v] - t);
         const none = R.scansLeft[v] <= 0;
         AS.scan.cd = none ? 1 : clamp(left / scanCdMs(), 0, 1); AS.scan.disabled = left > 0 || none; AS.scan.label = none ? 'No scans' : SCAN_L[Math.min(30, Math.ceil(left / 1000))];
-        AS.fire.label = FIRE_L[Math.min(10, R.pellets[v])]; AS.fire.disabled = R.pellets[v] <= 0;
+        const gl = huntAt() + graceMs() - t;
+        if (gl > 0) { AS.fire.label = GRACE_L[Math.min(15, Math.ceil(gl / 1000))]; AS.fire.disabled = true; }
+        else { AS.fire.label = FIRE_L[Math.min(10, R.pellets[v])]; AS.fire.disabled = R.pellets[v] <= 0; }
         AS.sprint.on = R.sprint || controls.st.sprintHeld;
+        if (seekerMoves) stickZipState(v, t, ZIP.cdSeeker);
       } else if (ph === 'seek' && role === 'hider' && !local) {
-        list = climb ? AS.peek : AS.peekFloor;
+        const pt = rules().huntPaint !== 'off';
+        list = sp !== 'eyes' ? AS.spect : climb ? (pt ? AS.peekP : AS.peek) : (pt ? AS.peekFloorP : AS.peekFloor);
+        AS.view.label = VIEW_L[sp]; AS.view.icon = sp === 'eyes' ? 'eye' : sp === 'watch' ? 'watch' : 'cam'; AS.view.on = sp !== 'eyes';
         const out = R.escapes[v] <= 0;
         AS.scurry.label = out ? (R.scurried[v] ? 'Used' : 'None') : (R.escapes[v] > 1 ? SCURRY_L[Math.min(3, R.escapes[v])] : 'Scurry'); AS.scurry.hl = !out; AS.scurry.disabled = out;
         const zl = Math.max(0, R.zipReady[v] - t);
@@ -2047,13 +2389,20 @@ export function createGame(el, api) {
     showParts.acts = list.length > 0;
     const a3 = list.length > 4;
     if (U.acts3 !== a3) { U.acts3 = a3; root.classList.toggle('acts3', a3); }
+    const a7 = list.length > 6;
+    if (U.acts7 !== a7) { U.acts7 = a7; root.classList.toggle('acts7', a7); }
     hud.show(showParts);
     if (list.length) hud.actions(list);
     if (showParts.top) {
-      const timed = ph === 'hide' || ph === 'seek';
-      const rem2 = S.paused ? S.paused.remaining : Math.max(0, S.phase.end - Math.max(t, S.resumeAt));
+      const untimed = ph === 'hide' && !S.phase.dur;
+      const timed = (ph === 'hide' && !untimed) || ph === 'seek';
+      let rem2 = S.paused ? S.paused.remaining : Math.max(0, S.phase.end - Math.max(t, S.resumeAt));
+      let label = PHASE_L[ph] || '';
+      // during a head start the clock counts the blindfold down, then the hunt
+      if (ph === 'seek' && !hunt) { rem2 = Math.max(0, rem2 - ((S.phase.data && S.phase.data.hunt) || 0)); label = PHASE_L.head; }
+      if (untimed) label = PHASE_L.untimed;
       const hot = timed && rem2 < 10500 && !S.paused;
-      hud.clock(PHASE_L[ph] || '', timed ? rem2 : null, hot);
+      hud.clock(label, timed ? rem2 : null, hot);
       if (hot && rem2 > 0) { const sN = Math.ceil(rem2 / 1000); if (sN !== U.tick) { U.tick = sN; snd.play('beep'); } }
       hud.scores(m.scores.a, m.scores.b);
       hud.pips(m.rounds, Math.max(0, S.phase.round - 1));
@@ -2062,6 +2411,8 @@ export function createGame(el, api) {
       else if (role === 'seeker') rtext = local ? ROLE_L.seeks[v] : ROLE_L.youSeek;
       else if (role === 'both') rtext = ph === 'seek' ? ROLE_L.hunt : ROLE_L.hideBoth;
       else if (m.mode === 'hs' && S.phase.round) rtext = ROLE_L.hides[hiderOf(S.phase.round)];
+      // spectating: the role pill says which view you're in (highlighted)
+      if (inGame && U.spect !== 'eyes' && v) rtext = U.spect === 'watch' ? (other(v) === 'a' ? BADGE.watch : BADGE.watchB) : BADGE.free;
       hud.role(rtext, !!role);
     }
     if (showParts.gear && v) {
@@ -2069,19 +2420,29 @@ export function createGame(el, api) {
       hud.pellets(R.pellets[shooter], R.maxPellets, shooter !== v);
     }
     if (showParts.poses && v) { hud.poseList(poseBar(v)); hud.poseOn(body[v].pose); }
-    if (showParts.mini && v) { const b = body[v]; hud.miniDraw(b.x, b.z, b.yaw + b.lookYaw, v === 'a' ? theme.a : theme.b, b.y); }
+    if (showParts.mini && v) { const b = body[v]; hud.miniDraw(b.x, b.z, C.climbV ? C.vYaw : b.yaw + b.lookYaw, v === 'a' ? theme.a : theme.b, b.y); }
     hud.tips(U.tips && inGame && ph === 'hide' && !P.on ? (U.tipsHtml || (U.tipsHtml = tipsHtml(mouse))) : null);
     if (showParts.tools && v) { hud.tool(P.tool, P.size, P.hard, P.rgb); hud.undoEnabled(stage.paints[v].canUndo); hud.stampEnabled(rules().stamp); }
-    if (showParts.legend) hud.legend(P.on ? LEGEND.paint : ph === 'hide' ? (rules().climb ? LEGEND.hide : LEGEND.hideFloor) : ph === 'seek' && role !== 'hider' ? LEGEND.seek : LEGEND.peek);
+    if (showParts.legend) hud.legend(legendRows(ph, role, hunt, hiderHead, sp));
+    // the hider's spectator views: a badge and a "you're here" marker over their own body
+    if (inGame && sp !== 'eyes' && v) {
+      hud.badge(sp === 'watch' ? (other(v) === 'a' ? BADGE.watch : BADGE.watchB) : BADGE.free);
+      hereMarker(v);
+    } else { hud.badge(null); hud.here(false); }
     // live numbers inside cards
-    if (live.blind) { const n = Math.ceil((S.paused ? S.paused.remaining : Math.max(0, S.phase.end - t)) / 1000); if (n !== live.blindS) { live.blindS = n; live.blind.textContent = fmtTime(n * 1000); } }
+    if (live.blind) {
+      // counts down the hide clock, or (untimed hide) up from the start
+      const ms = !S.phase.dur && S.phase.name === 'hide' ? Math.max(0, t - S.phase.at) : S.paused ? S.paused.remaining : Math.max(0, S.phase.end - t);
+      const n = Math.ceil(ms / 1000); if (n !== live.blindS) { live.blindS = n; live.blind.textContent = fmtTime(n * 1000); }
+    }
+    if (live.head) { const n = Math.max(1, Math.ceil((huntAt() - t) / 1000)); if (n !== live.headS) { live.headS = n; live.head.textContent = String(n); snd.play('beep'); } }
     if (live.resume) { const n = Math.max(1, Math.ceil((S.resumeAt - t) / 1000)); if (n !== live.resumeS) { live.resumeS = n; live.resume.textContent = String(n); } }
     if (live.seek) {
       const left = seekCountdown(t);
       const n = left < 0 ? 0 : Math.max(1, Math.ceil(left / 1000));
       if (n !== live.seekS) { live.seekS = n; live.seek.textContent = n ? String(n) : '…'; if (n) snd.play('beep'); }
     }
-    if (S.boot === 'ready' && v && ph === 'seek' && role === 'seeker') hintOnce(mouse ? 'look-m' : 'look-t', mouse ? 'Click to grab the mouse, then click to fire.' : 'Left thumb moves · drag on the right to look', 3000);
+    if (S.boot === 'ready' && v && ph === 'seek' && role === 'seeker' && hunting(t)) hintOnce(mouse ? 'look-m' : 'look-t', mouse ? 'Click to grab the mouse, then click to fire.' : 'Left thumb moves · drag on the right to look', 3000);
   }
 
   const LY = { kind: null, a: null, b: null, n: 0 };
@@ -2095,8 +2456,9 @@ export function createGame(el, api) {
     else if (S.pendingTitle && t < S.pendingTitle.at) { kind = 'title'; a = S.pendingTitle.seq; }
     else if (ph === 'lobby') { kind = 'lobby'; a = S.setupVer; b = `${isHost}${S.sheet}`; }
     else if (ph === 'curtain') { kind = seekCountdown(t) >= 0 ? 'count' : 'curtain'; a = S.phase.seq; }
-    else if (!local && isBlind()) { kind = ph === 'lock' ? 'lock' : 'blind'; a = S.phase.seq; }
-    else if (ph === 'seek' && t < S.phase.at + 900 && t >= S.phase.at - 50) { kind = 'go'; a = S.phase.seq; }
+    else if ((!local || ph === 'seek') && isBlind()) { kind = ph === 'seek' ? 'head' : ph === 'lock' ? 'lock' : 'blind'; a = S.phase.seq; }
+    else if (ph === 'seek' && t < huntAt() + 900 && t >= huntAt() - 50) { kind = 'go'; a = S.phase.seq; }
+    else if (ph === 'seek' && headStartOn(t) && t < S.phase.at + 1500 && v && roleOf(v) === 'hider') { kind = 'headgo'; a = S.phase.seq; }
     else if (ph === 'found' || ph === 'time') { kind = 'stamp'; a = S.phase.seq; }
     else if (ph === 'recap' && R.rec) { kind = 'recap'; a = S.phase.seq; }
     else if (ph === 'lock' && v && roleOf(v) !== 'seeker') { kind = 'locking'; a = S.phase.seq; }
@@ -2109,6 +2471,7 @@ export function createGame(el, api) {
     live.blind = root.querySelector('[data-live="blind-time"]'); live.blindS = -1;
     live.resume = root.querySelector('[data-live="resume-count"]'); live.resumeS = -1;
     live.seek = root.querySelector('[data-live="seek-count"]'); live.seekS = -1;
+    live.head = root.querySelector('[data-live="head-time"]'); live.headS = -1;
   }
   function buildLayer(kind, t, v, role) {
     const m = S.match;
@@ -2123,7 +2486,9 @@ export function createGame(el, api) {
       case 'count': { const d = S.phase.data || {}; return `<div class="chm-over solid"><div class="chm-card chm-sticker"><div class="chm-kicker">${esc(api.name(d.who))}, get ready</div><div class="chm-big" data-live="seek-count">3</div><p>Find them before the timer runs out.</p></div></div>`; }
       case 'curtain': { const d = S.phase.data || {}; return curtainCard(api, { kind: d.kind, who: d.who }); }
       case 'lock': return blindLock();
-      case 'blind': return blindCard(api, { hider: hiderOf(S.phase.round), ms: Math.max(0, S.phase.end - t), pellets: R.maxPellets, mode: mode(), scanCd: rules().scanCd, scans: rules().scans });
+      case 'blind': return blindCard(api, { hider: hiderOf(S.phase.round), ms: S.phase.dur ? Math.max(0, S.phase.end - t) : Math.max(0, t - S.phase.at), pellets: R.maxPellets, mode: mode(), scanCd: rules().scanCd, scans: rules().scans, untimed: !S.phase.dur, climb: seekerClimbs() });
+      case 'head': return headCard(api, { hider: hiderOf(S.phase.round), ms: Math.max(0, huntAt() - t) });
+      case 'headgo': return '<div class="chm-stamp ink">Head start!<small>They can’t see you yet — move!</small></div>';
       case 'go': return `<div class="chm-stamp ${role === 'seeker' || role === 'both' ? '' : 'ink'}">${role === 'hider' ? 'Freeze!' : 'Seek!'}</div>`;
       case 'stamp': {
         const ph = S.phase.name; const rec = R.rec || {}; const victim = rec.hider || rec.victim;
@@ -2137,7 +2502,7 @@ export function createGame(el, api) {
         const st = { closest: Number.isFinite(R.closest) ? R.closest : null, passes: R.passes, used: R.used[shooter] || 0, max: R.maxPellets };
         return recapCard(api, { rec: R.rec, mode: m.mode, scores: m.scores, round: S.phase.round, rounds: m.rounds, isLast: S.phase.round >= m.rounds || (m.mode === 'db' && (m.scores.a >= 2 || m.scores.b >= 2)), canNext: true, stats: st });
       }
-      case 'locking': return '<div class="chm-stamp ink">Locked in<small>Sealing your paint…</small></div>';
+      case 'locking': return '<div class="chm-stamp ink">Locked in<small>Sealing your paint… <b data-live="seek-count"></b></small></div>';
       default: return '';
     }
   }
@@ -2174,6 +2539,10 @@ export function createGame(el, api) {
           splats: stage ? stage.fx.splatCount : 0,
           violations: stats.violations, linkReady: link.ready, epoch: link.epoch, rtt: link.rtt, sent: link.sent,
           blind: isBlind(), layer: hud.layerKey, trails: stage ? stage.fx.trailCount : 0, mapId: stage && stage.map ? stage.map.id : null,
+          // v3
+          spect: U.spect, fc: [C.fcX, C.fcY, C.fcZ, C.fcYaw, C.fcPitch], climbV: C.climbV, vYaw: C.vYaw, hunting: hunting(), huntAt: huntAt(), graceUntil: huntAt() + graceMs(),
+          live: { sent: R.lpSent, got: R.lpIn, tells: R.tells, tellSkip: R.tellSkip, tellOn: !!R.tell }, cam: stage ? stage.camera.position.toArray() : null,
+          here: { on: !hud.el.here.hidden, x: hud.el.here.style.transform }, badge: hud.el.badge.textContent || null, role: hud.el.role.textContent,
           glint: { a: R.glintAt.a, b: R.glintAt.b }, lastPick: stats.lastPick || null, lastPaint: stats.lastPaint || null, lastShot: stats.lastShot || null, lastTagCheck: stats.lastTagCheck || null,
         };
       },
@@ -2205,6 +2574,8 @@ export function createGame(el, api) {
       effTimes() { return { hide: hideMs(), seek: seekMs(), scale: mapTime(), sprint: sprintMul(mapTime()) }; },
       fog() { return { near: stage.scene.fog.near, far: stage.scene.fog.far, camFar: stage.camera.far }; },
       /** Tests: change the size mid-round on this device only. */
+      /** Tests: change one match rule on this device only (both devices are told separately). */
+      forceRule(k, v) { const tgt = S.match ? S.match : S.setup; tgt.rules = sanitizeRules({ ...tgt.rules, [k]: v }); return tgt.rules[k]; },
       forceSize(id) { const tgt = S.match ? S.match : S.setup; tgt.rules = sanitizeRules({ ...tgt.rules, size: id }); applySize(); return sizeS(); },
       /** Free-walk with a world velocity for n steps (deterministic; same physics as the stick). */
       walk(vx, vz, n = 30, dt = 1 / 30) { const b = body[viewer()]; const sp = b.sq ? SPEED.squeeze : 1; for (let i = 0; i < n; i++) freeStep(stage.world, b, vx * sp, vz * sp, dt, false); return { x: b.x, y: b.y, z: b.z, sq: b.sq, r: b.r }; },
@@ -2213,6 +2584,14 @@ export function createGame(el, api) {
       /** Point the first-person view at a world point (seeker aim). */
       aimAt(x, y, z) {
         const v = viewer(); const b = body[v];
+        if (C.climbV) {
+          // the seeker's over-the-shoulder climb view: aim from where that camera will be
+          for (let i = 0; i < 6; i++) {
+            const c = climbCamWant(b, C.vYaw, b.lookPitch, new THREE.Vector3(), new THREE.Vector3());
+            C.vYaw = Math.atan2(x - c.x, z - c.z); b.lookPitch = Math.atan2(y - c.y, Math.hypot(x - c.x, z - c.z));
+          }
+          return { yaw: C.vYaw, pitch: b.lookPitch, climb: true };
+        }
         const eh = (EYE_H[b.pose] || 0.46) * b.s;
         let ex = b.x; let ey = b.y + eh; let ez = b.z;
         for (let i = 0; i < 3; i++) {
@@ -2314,6 +2693,12 @@ export function createGame(el, api) {
       lookFrom(arr) { C.override = arr; },
       setLook(yaw, pitch) { const b = body[viewer()]; b.lookYaw = yaw; b.lookPitch = pitch; },
       openPoses() { posesOpen = true; },
+      /** v3: the hider's view while hunted ('eyes' | 'watch' | 'free'); returns what's in force. */
+      view(m) { if (m) setView(m); else action('view'); return C.spect; },
+      /** Fly the free cam to a spot (tests; still clamped to the map). */
+      freeCamTo(x, y, z, yaw, pitch) { C.fcX = x; C.fcY = y; C.fcZ = z; if (yaw != null) C.fcYaw = yaw; if (pitch != null) C.fcPitch = pitch; clampFree(); return [C.fcX, C.fcY, C.fcZ]; },
+      freeBounds() { const B = stage.world.bounds; return { minX: B.minX, maxX: B.maxX, minZ: B.minZ, maxZ: B.maxZ, bottom: C.fcBottom, top: C.fcTop }; },
+      timing() { return { hide: hideMs(), seek: seekMs(), head: headStartMs(), countdown: countdownMs(), grace: graceMs(), scale: mapTime() }; },
       dur: DUR,
     };
     window.__cham = hook;

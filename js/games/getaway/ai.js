@@ -307,12 +307,22 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
         cur = 4; keepT = 2.2; D.dodgeOff = me + c; lanes[4] = D.dodgeOff; D.blockT = 0; break;
       }
     }
+    D.vergeT = cur === 2 || cur === 3 ? (D.vergeT || 0) + 0.1 : 0;
     if (cur === 4) { /* creeping round: handled above */ } else if (cur !== 0) {
-      // back to my own lane as soon as it's clear (and the move across is clear)
-      if (keepT <= 0 && own[0] >= Math.max(30, v * 1.6)) { cur = 0; keepT = 1.2; }
+      // back to my own lane as soon as it's clear (and the move across is clear) — or as soon as it
+      // flows again: the verge is for getting past a queue that is standing still, not for riding
+      // the grass beside a line of cars doing my speed (that held the runner off the road for
+      // 10+ s at a time). A verge is given up after a few seconds for any decent slot.
+      const verge = cur !== 1;
+      const slot = own[0] >= 8 + v * 0.55;
+      const flowing = slot && own[1] >= v - 2.5;
+      // (a lane that has cleared right out beats the hold on a verge: the queue I dodged moved off)
+      const wide = verge && own[0] >= Math.max(50, v * 2.4);
+      if ((keepT <= 0 || wide) && (own[0] >= Math.max(30, v * 1.6) || (verge && flowing) || (D.vergeT > 3.5 && slot))) { cur = 0; keepT = 1.2; }
       else {
         const f = freeAt(lanes[cur] - me, false);
-        if (f[0] < 12 && own[0] > f[0] + 6) { cur = 0; keepT = 1.2; } // the overtake is closing up: abort
+        // the overtake is closing up: abort; a blocked verge: back to the road unless that's worse
+        if (f[0] < 12 && (own[0] > f[0] + 6 || (verge && own[0] >= f[0] - 1))) { cur = 0; keepT = 1.2; }
       }
     } else if (here[0] < 45 && here[1] < Math.max(v, D.vWant || 0) - 4 && keepT <= 0 && Math.abs(D.alpha || 0) < 0.5) { // (not mid-turn: the corridors are along my nose)
       // something slow ahead: overtake on the oncoming side if it's clear for long enough

@@ -154,6 +154,29 @@ export function createPaint(THREE, kit) {
     return out;
   }
 
+  /**
+   * Fresh paint: texels whose colour differs from `prev` (a copy of the buffer from before an
+   * update). Writes up to `max` world points (from the last updateWorld) spread over the changed
+   * area into out (flat x,y,z) and returns how many texels changed.
+   */
+  function changedPoints(prev, out, max = 3) {
+    let n = 0;
+    for (let k = 0; k < list.length; k++) {
+      const o = list[k] * 4;
+      if (Math.abs(prev[o] - data[o]) + Math.abs(prev[o + 1] - data[o + 1]) + Math.abs(prev[o + 2] - data[o + 2]) > 24) n++;
+    }
+    if (!n) return 0;
+    const stride = Math.max(1, Math.floor(n / max)); let seen = 0; let w = 0;
+    for (let k = 0; k < list.length && w < max; k++) {
+      const i = list[k]; const o = i * 4;
+      if (Math.abs(prev[o] - data[o]) + Math.abs(prev[o + 1] - data[o + 1]) + Math.abs(prev[o + 2] - data[o + 2]) <= 24) continue;
+      if (seen++ % stride !== Math.floor(stride / 2)) continue;
+      out[w * 3] = wpos[i * 3]; out[w * 3 + 1] = wpos[i * 3 + 1]; out[w * 3 + 2] = wpos[i * 3 + 2]; w++;
+    }
+    out.length = w * 3;
+    return n;
+  }
+
   function flush() {
     if (!dirty) return false;
     dirty = false;
@@ -165,7 +188,7 @@ export function createPaint(THREE, kit) {
     data, texture, wpos, wnrm,
     get version() { return version; },
     get canUndo() { return undo.length > 0; },
-    updateWorld, snapshot, dab, fill, stamp, tintFacing, paintLocal, colorAtUV, flush,
+    updateWorld, snapshot, dab, fill, stamp, tintFacing, paintLocal, colorAtUV, flush, changedPoints,
     undo() { const s = undo.pop(); if (!s) return false; data.set(s); touch(); return true; },
     clearUndo() { undo.length = 0; },
     reset(rgb = [255, 255, 255]) { for (let i = 0; i < N; i++) { data[i * 4] = rgb[0]; data[i * 4 + 1] = rgb[1]; data[i * 4 + 2] = rgb[2]; data[i * 4 + 3] = 255; } undo.length = 0; touch(); },

@@ -23,6 +23,7 @@ export function createControls({ surface, root, joyBase, joyKnob, onAction, pain
     fp: false,
   };
   const keys = new Set();
+  const held = new Set(); // every key code held right now (free-cam up / down)
   const ptrs = new Map(); // id -> { role, x0, y0, x, y, moved, button, t0 }
   let joyId = null;
   let pinch = null;
@@ -170,7 +171,7 @@ export function createControls({ surface, root, joyBase, joyKnob, onAction, pain
   // E sticks / lets go (picks a colour while painting); Z tongue-zips (undoes while painting)
   const KEYMAP = {
     Space: 'jump', KeyC: 'crouch', KeyP: 'paint', KeyB: 'brush', KeyG: 'fill', KeyE: 'stickOrPick', KeyT: 'stamp', KeyZ: 'zipOrUndo',
-    KeyQ: 'scan', KeyF: 'scurry', KeyR: 'ready', Enter: 'confirm', KeyH: 'hardness', KeyX: 'size', KeyV: 'stick',
+    KeyQ: 'scan', KeyF: 'scurry', KeyR: 'ready', Enter: 'confirm', KeyH: 'hardness', KeyX: 'size', KeyV: 'stickOrView',
     Digit1: 'pose:stand', Digit2: 'pose:crouch', Digit3: 'pose:wall', Digit4: 'pose:ball', Digit5: 'pose:flat',
     Digit6: 'pose:hang', Digit7: 'pose:perch', Digit8: 'pose:squeeze', Digit9: 'pose:corner',
   };
@@ -180,6 +181,7 @@ export function createControls({ surface, root, joyBase, joyKnob, onAction, pain
     if (/INPUT|TEXTAREA|SELECT/.test(tag)) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     st.lastInput = 'keys'; st.usingMouse = true;
+    held.add(e.code);
     if (/^(Key[WASD]|Arrow)/.test(e.code)) { keys.add(e.code); e.preventDefault(); return; }
     if (e.code === 'Space') { st.jumpHeld = true; e.preventDefault(); }
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') st.sprintHeld = true;
@@ -188,11 +190,11 @@ export function createControls({ surface, root, joyBase, joyKnob, onAction, pain
     if (a) { onAction(a); if (e.code === 'Space') e.preventDefault(); }
   });
   L.on(window, 'keyup', (e) => {
-    keys.delete(e.code);
+    keys.delete(e.code); held.delete(e.code);
     if (e.code === 'Space') st.jumpHeld = false;
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') st.sprintHeld = false;
   });
-  L.on(window, 'blur', () => { keys.clear(); st.jumpHeld = false; st.sprintHeld = false; });
+  L.on(window, 'blur', () => { keys.clear(); held.clear(); st.jumpHeld = false; st.sprintHeld = false; });
 
   return {
     st,
@@ -210,9 +212,11 @@ export function createControls({ surface, root, joyBase, joyKnob, onAction, pain
       if (!keyMove(out)) { out[0] = st.moveX; out[1] = st.moveY; }
       return out;
     },
+    /** Free cam: +1 rising (Space / E), −1 sinking (Q / C), 0 neither. */
+    rise() { return (held.has('Space') || held.has('KeyE') ? 1 : 0) - (held.has('KeyQ') || held.has('KeyC') ? 1 : 0); },
     takeLook(out) { out[0] = st.lookDX; out[1] = st.lookDY; st.lookDX = 0; st.lookDY = 0; return out; },
     releaseLock() { if (st.locked) { try { document.exitPointerLock(); } catch { /* ignore */ } } },
-    destroy() { L.clear(); keys.clear(); ptrs.clear(); if (st.locked) { try { document.exitPointerLock(); } catch { /* ignore */ } } },
+    destroy() { L.clear(); keys.clear(); held.clear(); ptrs.clear(); if (st.locked) { try { document.exitPointerLock(); } catch { /* ignore */ } } },
     get listenerCount() { return L.count; },
   };
 }

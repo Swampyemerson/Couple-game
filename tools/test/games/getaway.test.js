@@ -978,21 +978,27 @@ async function engineUnits() {
     if (st0) assert(st0.left && st0.reach !== null, `${id}: started nose-in against a building, it backs out and gets there (${st0.stucks} stuck recoveries)`);
     soft(maxMs < 60, `${id}: AI think time per update in Node (max ${maxMs.toFixed(1)} ms; GC and a busy machine included)`);
     // practice: an Easy AI runner chased by a Hard AI cop from the first spawn drives away through
-    // traffic (spawns kept clear at the go) and never sits still for long
-    {
-      const tc = createTraffic(geo, id, 'normal'); const sp = e.spawns[0];
+    // traffic (spawns kept clear at the go) and never sits still for long; on Dockside a Hard
+    // runner from every spawn keeps to the road (a queue-bypass verge used to hold it on the grass
+    // beside moving traffic for 10+ s: 29% of a 40 s chase off the road)
+    const runs2 = id === 'dockside' ? [['easy', 20, 0], ...e.spawns.map((_, i) => ['hard', 40, i])] : [['easy', 20, 0]];
+    const offs = [];
+    for (const [rlv, secs, si] of runs2) {
+      const tc = createTraffic(geo, id, 'normal'); const sp = e.spawns[si];
       tc.setClear([sp.runner, sp.cop].map((q) => ({ x: q.x, z: q.z, r: 30, t1: 606 })));
       const rn = C.newCar('runner'); const cp = C.newCar('cop');
       C.placeCar(rn, sp.runner.x, sp.runner.z, sp.runner.yaw, geo); C.placeCar(cp, sp.cop.x, sp.cop.z, sp.cop.yaw, geo);
-      const dR = createDriver(geo, 'runner', { seed: 3, level: 'easy' }); const dC = createDriver(geo, 'cop', { seed: 5, level: 'hard' });
-      let acc = 0; let hitR = false; let hitC = false; let path = 0; let top = 0; let spell = 0; let maxSpell = 0; let px = rn.x; let pz = rn.z;
-      for (let t = 0; t < 20; t += DT) {
+      const dR = createDriver(geo, 'runner', { seed: 3 + si, level: rlv }); const dC = createDriver(geo, 'cop', { seed: 5 + si, level: 'hard' });
+      let acc = 0; let hitR = false; let hitC = false; let path = 0; let top = 0; let spell = 0; let maxSpell = 0; let px = rn.x; let pz = rn.z; let nOff = 0; let nAll = 0;
+      for (let t = 0; t < secs; t += DT) {
         acc += DT; const tT = 600 + t;
         if (acc >= 1 / 30) {
           acc -= 1 / 30; const los = geo.lineOfSight(cp.x, cp.z, cp.y, rn.x, rn.z, rn.y);
           dR.update(1 / 30, rn, cp, { los, traffic: tc, tT, oilLeft: 0, hit: hitR }); dC.update(1 / 30, cp, rn, { los, traffic: tc, tT, spikesLeft: 0, hit: hitC, viewer: { x: 1e6, z: 1e6 } }); hitR = hitC = false;
           for (const [d, c] of [[dR, rn], [dC, cp]]) if (d.out.warp) C.placeCar(c, d.out.warp.x, d.out.warp.z, d.out.warp.yaw, geo);
           path += Math.hypot(rn.x - px, rn.z - pz); px = rn.x; pz = rn.z; top = Math.max(top, rn.speed);
+          // off the road: not on asphalt / a lot, and not on a road's own surface (dirt roads)
+          nAll++; if (rn.surf !== 'road' && rn.surf !== 'lot') { geo.nearestRoad(rn.x, rn.z, nq, 40); if (!(nq.road >= 0 && nq.d <= geo.roads[nq.road].hw + 0.3)) nOff++; }
           // (pinned by the cop doesn't count: that's the cop's job)
           if (rn.speed < 1.2 && t > 1.5 && Math.hypot(rn.x - cp.x, rn.z - cp.z) > 14) { spell += 1 / 30; maxSpell = Math.max(maxSpell, spell); } else spell = 0;
         }
@@ -1001,8 +1007,10 @@ async function engineUnits() {
         for (const c of [rn, cp]) tc.each(c.x, c.z, 8, tT, (cid, q) => { if (q.sc < 0.95) return; Object.assign(tp, q); tp.r = 0; if (C.carContact(c, tp, ct) > 0) { if (c === rn) hitR = true; else hitC = true; const v = C.resolveCar(c, tp, ct, 1, 0.8, 1); if (v > TRAFFIC.knockMin) tc.knock(cid, q, -ct.nx * ct.j * 0.8, -ct.nz * ct.j * 0.8, 0); } });
         if (Math.round(t / DT) % 4 === 0) { tc.stepWrecks(DT * 4, [rn, cp]); tc.yieldTo(DT * 4, tT, [{ x: cp.x, z: cp.z, yaw: cp.yaw, siren: true, speed: cp.speed }, { x: rn.x, z: rn.z, yaw: rn.yaw }]); }
       }
-      assert(path > 150 && top * 3.6 > 60 && maxSpell < 3, `${id}: an Easy AI runner gets away from the spawn through traffic (${path.toFixed(0)} m in 20 s, top ${(top * 3.6).toFixed(0)} km/h, longest stop ${maxSpell.toFixed(1)} s)`);
+      if (rlv === 'easy') assert(path > 150 && top * 3.6 > 60 && maxSpell < 3, `${id}: an Easy AI runner gets away from the spawn through traffic (${path.toFixed(0)} m in 20 s, top ${(top * 3.6).toFixed(0)} km/h, longest stop ${maxSpell.toFixed(1)} s, ${Math.round((100 * nOff) / nAll)}% off road)`);
+      else offs.push(Math.round((100 * nOff) / nAll));
     }
+    if (offs.length) assert(Math.max(...offs) <= 15, `${id}: a Hard AI runner chased by a Hard cop for 40 s from every spawn keeps to the road (${offs.join(' / ')}% off road)`);
   }
   // wrecks: a knocked car slides into a building and stops at its wall (not through it)
   { const geo = createGeo({ id: 'w', bounds: { x0: -500, z0: -500, x1: 500, z1: 500 }, roads: [{ name: 'a', kind: 'street', width: 10, pts: [[-400, 0], [400, 0]] }], solids: [{ kind: 'building', x: 0, z: 20, w: 40, d: 10, h: 8 }] });

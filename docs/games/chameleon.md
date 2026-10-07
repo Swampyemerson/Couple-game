@@ -22,6 +22,125 @@ the start screen; the guest sees every change live (and their diorama backdrop s
 host's map choice).
 
 
+## v3: the seeker climbs, the hider watches, paint while hunted, start timing
+
+Asked for: "the finder needs the same modes as the hider so they can climb walls to find them. Also
+add a way for the hider to watch them in free cam or spectator mode. And then also allow painting
+even after it starts. And customizable start timing."
+
+### The seeker climbs
+
+With **Seeker can climb** on (every preset; it needs Walls & ceilings), the seeker gets the whole
+v2 movement kit during the hunt, through the same code paths as the hider (`stick`, `zip`,
+`crawlStep`, `setPose`, walk-into-a-wall, auto-perch): Stick / let go, crawl on walls, ceilings and
+undersides, tongue-zip, wall jump, Hang, Perch, Squeeze, Corner. The guards (`climb: false`) stop
+the seeker exactly as they stop the hider (same feelers, same refusals; tested on the House).
+
+- **Camera.** First person with world-up was tried on paper and rejected for walls: on a ceiling
+  your eyes are a few centimetres under the surface you're stuck to, half the view is that surface,
+  and the screen-relative stick has no visible surface to be relative to. So while the seeker is
+  stuck to something (or zipping) the view becomes a **close over-the-shoulder camera**: world-up
+  (nothing rolls), behind and to the right of the body, kept in front of the surface (the same
+  half-space rule as the hider's camera) and pulled in front of walls. A phone held upright sees a
+  narrow slice sideways, so portrait sits further back (2.0 × size factor vs 1.55), less to the side
+  and a little higher. The aim stays at the screen centre with no lag (position eases, direction
+  doesn't), and when the body would cover the crosshair (looking straight down a wall, or the camera
+  jammed into a corner) it is hidden. Let go / land → first person again, looking the same way (the
+  view yaw is carried across both switches).
+- **Hunting while climbing.** Fire and Scan work anywhere (pellets are raycast from the camera
+  through the crosshair, ignoring your own body). Crawl speed is the seeker's walking speed × 0.78 ×
+  the **Seeker climb speed** setting (Slow 0.65 · Normal 0.85 · Fast 1.0); no sprint on walls.
+  Walking into a wall sticks after 0.45 s of pushing (the hider's 0.22 s grabbed seekers brushing
+  past furniture). The seeker's tongue-zip is free with a 2.5 s cooldown; the hider sees the tongue
+  (`zip {sk: 1}`) but no trail.
+- **Partner's screen.** Presence already published the packed orientation `q` and `at` for whoever
+  wasn't hiding, so the seeker's climbing pose and orientation reach the hider unchanged; a climbing
+  seeker publishes its view as `yaw + ly` (body heading + look offset), which the hider's "Watch"
+  view uses.
+- **HUD.** Seven buttons (Stick, Zip, Pose / Scan, Sprint, Jump / Fire): three columns, Fire alone
+  at the bottom right where the thumb rests (landscape: four columns, two rows). The pose bar adapts
+  to the surface exactly as the hider's does. Keys: E stick, Z zip, Space jump (wall jump), 1–9 poses.
+
+### The hider watches (two devices)
+
+While hunted, the hider's **View** button (V) cycles **your eyes → watching the seeker → free cam**:
+
+- **Watching** rides over the seeker's shoulder (their presence: position, orientation, `yaw + ly`,
+  `lp`), clamped out of walls.
+- **Free cam** flies where you look (left thumb / W A S D, drag or mouse to look, Space / E up,
+  Q / C down, Shift fast), collides with nothing and is clamped to the map's footprint and from the
+  floor to just above its tallest collider.
+- A **"You" sticker** marks your own body (pinned to the screen edge when it's off screen), the role
+  pill turns yellow and names the view, and a thin highlight frames the screen.
+- Purely local: the body never moves, its published look (`ly`, `lp`) is untouched, nothing is sent
+  (tested: zero reliable messages, the seeker's copy unchanged). Escapes and poses are hidden while
+  spectating; Paint switches back to your eyes. The heartbeat keeps beating.
+- **One device: off.** In hotseat the hider has handed the phone to the seeker before the hunt, so
+  there's no hider screen to spectate on (the recap already orbits the spot and draws the path).
+  Double Blind has no spectating either (both are hunting).
+
+### Paint while hunted
+
+Setting **Paint while hunted**: **Off** (paint locks at the hunt, v2) · **On** (repaint any time,
+silently) · **Shows** (repaint, but fresh paint glints for the seeker). Brush, fill, pick and stamp
+all work; the camera orbits your body as in the hide phase (two devices only, as above).
+
+- **Sync.** The same quantised blob as the lock (≤ 32 colours, run/copy codec, FNV checksum),
+  marked `live`, sent when a stroke / fill / stamp / undo has settled and at most once a second. A
+  typical update is 0.3–2.5 KB of base64: one chunk. A checksum mismatch asks for a resend (the
+  lock's `paintreq`). Measured: a burst of four strokes costs 2–3 updates; the harness's 40 sends/s
+  budget is never approached (presence 20/s + ≤ 2 chunks/s).
+- **The tell ("Shows").** On the seeker's device the update is diffed against the old texture, up
+  to three changed texels are placed on the body as drawn, and if any is within 6 m × size and has a
+  clear line of sight from the seeker's camera (collider raycast), they twinkle for 1.1 s (the scan
+  glint sprites, so they're depth-tested). At most one tell a second.
+- **Defaults.** Easy **Off**: the friendliest hunt for the seeker, and the simplest rules for new
+  players. Classic **Shows**: fixing a bad stamp mid-hunt is the fun part, but it's a gamble: do
+  it while they're close and looking and you light up. Hard **On**: masters of disguise repaint
+  silently (Hard is hard for the seeker); the seeker's only cue is noticing the colours change.
+
+### Start timing
+
+| Setting | Options | Easy | Classic | Hard |
+|---|---|---|---|---|
+| Hide time | 10 s – 5 min (5 s steps to 2 min, then 10 s, 15 s) | 45 s | 60 s | 75 s |
+| Hide ends | **Timer** (Ready still starts early) · **On Ready** (no clock) | Timer | Timer | Timer |
+| Countdown | Off · 3 · 5 · 10 s | 3 s | 3 s | 3 s |
+| Head start (Hide & Seek) | Off · 5 · 10 · 15 · 20 · 30 s | Off | Off | Off |
+| Grace period | Off · 3 · 5 · 10 · 15 s | Off | Off | 5 s |
+| Seek time | 20 s – 10 min (5 s steps to 2 min, then 10, 15, 30 s) | 2 min | 90 s | 90 s |
+| Seeker can climb | On · Off | On | On | On |
+| Seeker climb speed | Slow · Normal · Fast | Fast | Normal | Slow |
+| Paint while hunted | Off · On · Shows | Off | Shows | On |
+
+```
+title → HIDE (clock, or none with On Ready) → LOCK → countdown → SEEK [head start | hunt (grace) ] → FOUND / SURVIVED → RECAP
+```
+
+- **Ready** (the old "Hidden" button) ends the hide phase early in Timer mode; with **On Ready** the
+  phase has no clock at all (the HUD says "No limit", the seeker's blindfold counts up).
+- **Countdown**: the seek phase is queued that far ahead after the paint lock (two devices: never
+  less than the network lead, ≥ 380 ms); both screens count it down ("Get ready 3-2-1" for the
+  seeker, "Locked in · 3" for the hider; one device: the "get ready" card after the curtain).
+- **Head start**: the first part of the seek phase. The seeker stays blindfolded (canvas hidden,
+  "Blindfold on · head start" card, no moving, firing or scanning) while the hider gets the hiding
+  moves back (walk, climb, zip without spending an escape, pose, paint: synced live). The hider's
+  position stays private until 0.5 s before the blindfold lifts (so the seeker's interpolation
+  buffer is warm). Only the hunt scores: points = seconds of hunt (+30 for surviving).
+- **Grace period**: the first seconds of the hunt; Fire is disabled and reads "Wait 3".
+- **One device**: the same clocks (the curtain used to start a fixed 60 s hide / 90 s seek whatever
+  the settings said); the head start is just a blindfold countdown there (the hider has already
+  handed over the phone).
+- The seek phase carries `{ blind, hunt }`; the hunt starts at `phase.end − hunt`, which moves with
+  pauses like every other deadline, so snapshots and resumes need nothing new.
+- **Map scaling**: hide, head start and seek scale with the map (S 1× … XL 1.5×, rounded to 5 s);
+  countdown and grace don't (they're about reacting, not distance). The sheet shows the effective
+  hide, seek and head-start times on big maps.
+- **Settings sheet**: a new **Timing** group; hide and seek time have a slider (previews while
+  dragging, commits on release, so a guest isn't spammed and the host's sheet isn't rebuilt mid-drag)
+  plus − / + for single steps. Everything goes through `sanitizeRules` on both devices, travels in
+  `setup` and every phase message, and is saved per device as before.
+
 ## v2: sticky feet, sizes, settings, big maps
 
 ### Why the default changed ("it's too easy")
@@ -186,7 +305,8 @@ title 1.8 s → HIDE 60 s → LOCK ≤ 7 s → 3-2-1 → SEEK 90 s → FOUND / S
 
 - **Hide** — the seeker gets an "Eyes shut" card with the timer and the rules. The hider
   explores in third person, jumps onto furniture (0.8 m jump), slides under tables, hops onto
-  bookshelf shelves, picks a pose and paints. "Hidden" ends the phase early.
+  bookshelf shelves, picks a pose and paints. "Ready" (v2: "Hidden") ends the phase early; v3
+  timing (On Ready, countdown, head start, grace) is described in the v3 section.
 - **Lock** — the hider's paint is quantised and sent; the seeker's device rebuilds it,
   checks the checksum and acknowledges, then a 3-2-1 lifts the blindfold. The hider is never
   drawn on the seeker's screen before its paint has arrived (tested invariant).
@@ -218,7 +338,8 @@ behind every curtain.
 | Sprint (seeker) | Sprint toggle | hold Shift |
 | Paint mode | Paint: orbit camera; one finger on the body paints, off the body it orbits; two fingers rotate + pinch zoom | P; drag on the body paints, elsewhere / right-drag orbits, wheel zooms, hover shows the brush ring |
 | Tools | Brush (S/M/L, Hard/Soft, scaled with the body) · Fill · Pick · Stamp · Undo, colour swatch, Done | B, G, E, T, Z, X (size), H (hardness) (E/Z pick/undo only while painting) |
-| Seek | Fire, Scan, Jump; hider: Scurry, Pose | click, Q, Space; F |
+| Seek | Fire, Scan, Jump; seeker can climb: Stick, Zip, Pose too; hider: View, Paint, Pose, Zip, Scurry | click, Q, Space, E, Z, 1–9; hider: V, P, F |
+| Hider's views (hunted) | View cycles eyes → watch → free cam; free cam: left thumb flies, drag looks | V; W A S D fly, Space / E up, Q / C down, Shift fast |
 
 Touches starting within 20 px of the left edge are ignored (iOS back gesture). Play surfaces
 use `touch-action: none` plus non-passive `touchstart`/`touchmove` `preventDefault()`; taps vs
@@ -272,7 +393,9 @@ net.js type (`g`) and big payloads (paint, snapshots) as chunked blobs.
 | shots, splats, pellets | shooter | reliable `shot` |
 | tag confirmation | victim | reliable `tagres` |
 | round result + scores | host | inside `ph` |
-| scan / scurry / zip | seeker / hider | reliable `scan {at, left}` / `scurry {at, left}` / `zip {at, to, left}` |
+| scan / scurry / zip | seeker / hider | reliable `scan {at, left}` / `scurry {at, left}` / `zip {at, to, left}` (v3: the seeker's `zip {at, to, sk: 1}`) |
+| paint while hunted / during a head start (v3) | hider | the lock's paint blob with `live: 1`, ≤ 1/s, 1 chunk typically |
+| hider's spectator views (v3) | hider | **not sent** (purely local) |
 | spawns | host | inside `ph` data (`hide`: indices, `seek`: the seeker's) |
 | pause / resume | host (guests report `vis`) | `pause {remaining}` / `resume {at, remaining}` |
 
@@ -365,8 +488,19 @@ on a ceiling hider; a tongue-zip down while hunted), `sizes` (every size on both
 `settings` (presets, live sync, validation, persistence, the match uses them), `toggles` (stamp
 off, walls & ceilings off), `bigmatch` (a 2-round match on the biggest map), `bigperf` (draw
 calls, triangles, JS ms and heap growth on the biggest map), `shots2` (screenshots of the new
-mechanics and the settings panel at 390×844, 844×390, 1280×800, light and dark). Screenshots go
-to `$SHOTS` (default `$TMPDIR/chameleon-shots`).
+mechanics and the settings panel at 390×844, 844×390, 1280×800, light and dark). v3: `seekclimb`
+(the seeker Sticks with a real tap, crawls up the wall with the joystick onto the rafter, hangs; the
+hider's screen draws the orientation and pose; a tag fired from the ceiling; the seeker's zip leaves
+no trail), `seekguards` (one device on the House: the climbing seeker stops at the guards, the toggle
+off), `spectate` (watch / free cam: badge, marker, joystick + keys, clamped, body unchanged, the
+seeker's copy unchanged, zero messages sent), `huntpaint` (brush and stamp while hunted reach the
+seeker with matching hashes, the glint in range, none out of range or with "On", "Off" refuses,
+coalescing), `timing` (one device: 10 s hide, 5 s countdown, 5 s head start, 3 s grace, 20 s seek,
+points; then On Ready and a 10 s countdown), `timinglive` (two phones: untimed hide, no countdown,
+the hider moving during the head start while the seeker is blind, grace refusing fire),
+`settings3` (every new control through the sheet with taps, the slider, presets, validation, map
+scaling, persistence), `v3house` / `v3cu` (full 2-round matches with the v3 settings), `shots3`
+(screenshots). Screenshots go to `$SHOTS` (default `$TMPDIR/chameleon-shots`).
 
 ## Known limits
 

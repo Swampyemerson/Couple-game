@@ -373,8 +373,7 @@ export function createGame(el, api) {
     // aim for ~70 ms a slice; grows on a fast GPU, shrinks on a slow one (or SwiftShader)
     let cap = 0.4e6; let sent = 0; const most = 12; const capMax = phoneish ? 4e6 : 8e6;
     const cut = async (k) => {
-      const t1 = performance.now(); const d = t1 - t0;
-      if (window.__gtwProbe) (window.__gtwWU = window.__gtwWU || []).push({ t0: Math.round(t0), d: Math.round(d), what, sent, cap: Math.round(cap) }); // PROBE stat.busy += d; stat.slices++; if (d > stat.maxMs) { stat.maxMs = Math.round(d); stat.maxWhat = what; }
+      const t1 = performance.now(); const d = t1 - t0; stat.busy += d; stat.slices++; if (d > stat.maxMs) { stat.maxMs = Math.round(d); stat.maxWhat = what; }
       if (onStep) onStep(k);
       await yieldFrame(); t0 = performance.now();
       const gap = t0 - t1; if (gap > stat.maxGap) { stat.maxGap = Math.round(gap); stat.gapWhat = what; }
@@ -1827,7 +1826,7 @@ export function createGame(el, api) {
       hold(w, inp) { const p = P2[w || human()]; p.driver = null; p.pad.auto = inp ? { steer: 0, gas: 0, brake: 0, hand: false, nitro: false, ...inp } : null; },
       teleport(w, x, z, yaw, v = 0) { const c = P2[w].car; placeCar(c, x, z, yaw, geo); c.vx = Math.sin(yaw) * v; c.vz = -Math.cos(yaw) * v; c.speed = v; },
       setCar(w, o) { Object.assign(P2[w].car, o); },
-      aiState(w) { const d = P2[w].driver; if (!d) return null; const D = d.state; return { level: d.level, mode: D.mode, vWant: D.vWant, vT: D.vT, vCurve: D.vCurve, tFree: D.tFree, tLeadV: D.tLeadV, creep: D.creep, revT: D.revT, turnT: D.turnT, kT: D.kT, stuckLvl: D.stuckLvl, jamT: D.jamT, pinT: D.pinT, offRoute: D.offRoute, routeLeft: D.routeLeft, alpha: D.alpha, fails: D.fails, stats: { ...D.stats }, inp: { ...d.out } }; },
+      aiState(w) { const d = P2[w].driver; if (!d) return null; const D = d.state; return { level: d.level, mode: D.mode, vWant: D.vWant, vT: D.vT, vCurve: D.vCurve, tFree: D.tFree, tLeadV: D.tLeadV, creep: D.creep, revT: D.revT, turnT: D.turnT, kT: D.kT, stuckLvl: D.stuckLvl, jamT: D.jamT, pinT: D.pinT, offRoute: D.offRoute, routeLeft: D.routeLeft, alpha: D.alpha, laneShift: D.laneShift, laneTarget: D.laneTarget, tFree: D.tFree, fails: D.fails, stats: { ...D.stats }, inp: { ...d.out } }; },
       placeSpike(w, x, z) { return placeSpike(w, x, z); },
       endNow(outcome, reason) { endRound(outcome, reason); },
       shortenRound(ms) { if (isHost && S.R) { S.R.endAt = clock() + ms; if (live) link.urgent('endat', { idx: S.R.idx, endAt: S.R.endAt }); } },
@@ -1850,7 +1849,7 @@ export function createGame(el, api) {
       /** The next n map loads throw (error-card tests). */
       failLoad(n = 1) { S.failLoads = n; },
       ui() { return { sheet: S.sheet, menu: !!S.menu, loadFail: S.loadFail, glStuck: !!S.glStuck, loading: S.loading, tier: gfx && gfx.tier, card: hud.over.hidden ? null : (hud.over.querySelector('h2') || {}).textContent || hud.over.className, device: { ...device } }; },
-      worldStats() { return world ? { ...world.stats, chunks: world.chunks.length, visible: world.chunks.filter((c) => c.group.visible).length, broken: world.brokenCount(), see: world.chunks.filter((c) => c.seeMesh).length } : null; },
+      worldStats() { return world ? { ...world.stats, chunks: world.chunks.length, visible: world.chunks.filter((c) => c.group.visible).length, broken: world.brokenCount() } : null; },
       inputStats: () => ({ ...inputStats }),
       internals: { P2, S, get geo() { return geo; }, get world() { return world; }, get renderer() { return renderer; }, link },
       /** Render a fixed view and count draw calls / triangles (perf budgets per map). */

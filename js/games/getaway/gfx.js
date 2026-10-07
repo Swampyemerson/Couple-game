@@ -719,11 +719,13 @@ export function* mergeSteps(THREE, group, mats, inkRGB, disposeSet, pre = null) 
     let f = fam.get(key); if (!f) { f = []; fam.set(key, f); }
     f.push(o); victims.push(o);
   });
-  // pre: a Builder that seeds the front family, or { front, see } Builders (the engine's own
-  // geometry for a chunk: everything / thin see-through props)
+  // pre: a Builder that seeds the front family, or { front, see, seeOut } Builders (the engine's
+  // own geometry for a chunk: everything / thin see-through props). seeOut: the see family goes
+  // into pre.see and no mesh is made here (the world pools it over several chunks)
   const preF = pre instanceof Builder ? pre : pre && pre.front; const preS = pre && !(pre instanceof Builder) ? pre.see : null;
+  const seeOut = !!(pre && !(pre instanceof Builder) && pre.seeOut);
   if (preF && !fam.has('front')) fam.set('front', []);
-  if (preS && !preS.empty && !fam.has('see')) fam.set('see', []);
+  if (preS && !preS.empty && !seeOut && !fam.has('see')) fam.set('see', []);
   if (!fam.size) return { removed: 0, front: null, see: null };
   const out = { removed: victims.length, front: null, see: null };
   const tmpM = new THREE.Matrix4(); const nm = new THREE.Matrix3();
@@ -773,7 +775,7 @@ export function* mergeSteps(THREE, group, mats, inkRGB, disposeSet, pre = null) 
       }
       yield 0;
     }
-    if (b.empty) continue;
+    if (b.empty || (key === 'see' && seeOut)) continue;
     const mesh = b.mesh(key === 'double' ? mats.double : key === 'see' ? (mats.see || mats.vc) : mats.vc);
     mesh.name = 'merged-' + key;
     group.add(mesh);

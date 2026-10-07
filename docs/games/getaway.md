@@ -144,6 +144,15 @@ nitro (74° base in portrait). Look-back (B / button) flips it for 1.6 s. C or t
 toggles near/far (remembered per device; the setting is the default). Shake on impacts (quartered
 when reduced motion is on). Speed lines over 86 km/h.
 
+**See-through occluders.** Traffic, parked cars, debris, and the thin props (engine-drawn poles,
+lamps, signals and signs, plus map geometry drawn with `see: true` such as Santee's and Boulder's
+power lines) use a variant of the toon shader (`GTW_SEE`) with a 4×4 Bayer screen-door dither:
+anything within ~2–6 m of the lens fades (up to 75%) instead of drawing a solid bar across the
+view, and anything inside the cone from the camera to my car, in front of the car, fades so the car
+is never hidden (`U.uSee`, set per view). No blending or sorting. The `discard` lives only in that
+variant, so the big merged world meshes keep early-Z / hidden-surface removal; the thin props are a
+second merged mesh per chunk (+1 draw call where a chunk has any).
+
 ## Traffic (js/games/getaway/traffic.js)
 
 Civilian cars drive every road's lanes (highway 2 per direction, wide arterials 2, else 1, on the
@@ -278,7 +287,9 @@ winner). Left, under the back sticker: the role chip (the cop's is red/blue), ca
 heat meter ("Spotted / Losing them / 240 m"; the cop sees "Slipping away"). Right, under the menu
 sticker: a north-up round minimap 420 m across, with landmarks (home = pink house), both cars
 (the cop flashes red/blue), strips, and for the cop a "last seen" ping when line of sight is lost.
-Under it: speed, the nitro bar and the tool count. The full map (M) shows every landmark name, the
+Under it: speed, the nitro bar and the tool count. On touch the tool count is a badge on the oil /
+spike button instead (one count on screen), and a short landscape phone puts speed and nitro in the
+sky left of the minimap, clear of the car and both thumbs. The full map (M) shows every landmark name, the
 400 m drop range and the runner's no-drop circle. Partner name tag with distance, and an edge
 arrow when they're close but off screen. Stamps: PIT!, SPIKED!, OIL!, BUSTED!, SPLASH!, ESCAPED!.
 Vignettes: red/blue when the cop is within 45 m of the runner, red when hurt. Cop radar setting:
@@ -340,8 +351,11 @@ so a long grind can't pile up voices.
   meshes). Chunks beyond fog + 40 m are hidden; three frustum-culls the rest. The far plane is
   fogFar + 80 m. Traffic (2), wheels (1), puffs, sparks, strips, oil and skids (1 each), speed lines
   (1), the sky and backdrop, and two cars (≈3 each) make up the rest.
-- Shader warm-up: every program is compiled and drawn once behind the loading card (8 programs).
-  The test asserts none is compiled during play.
+- Shader warm-up: every program is compiled and drawn once behind the loading card. The first draw
+  of each program gets a slice of its own (one object, 1×1 viewport, 3 vertices): drivers and
+  SwiftShader build a program's pipeline lazily at its first draw (50–250 ms each in software GL),
+  and several of them landing in one upload slice were the load's longest block (the perf test's
+  flaky 259–378 ms task). The test asserts no program is compiled during play.
 - Map builds are sliced (about 12 ms per slice; `prepare`/`build` may be async) behind a progress
   bar. The AI nav grid builds in 4 ms slices per frame in the background.
 - `webglcontextlost` pauses with "Tap to resume" and restore resumes. A hidden page pauses.
@@ -356,6 +370,11 @@ JS cost are what count):
 | Dockside | 122 ms (23 ms) | 107k | ≤ 26 draw calls, ≤ 114k triangles (25, 113k) |
 | Boulder (v2 map, engine v2) | 720–1020 ms (≤ 70 ms) + prepare ~500 ms | 878k (map's own 281k) | ≤ 58 draw calls, ≤ 215k triangles |
 | Santee | 485 ms (18 ms) + prepare ~370 ms | 568k | ≤ 41 draw calls, ≤ 194k triangles (38, 186k) |
+
+With the see-through thin-prop family (one more merged mesh per chunk that has poles, lamps,
+signals or wires) the perf test now reads: Dockside ≤ 34 draw calls (laptop 33), Boulder ≤ 55 (53),
+Santee ≤ 39 (35), triangles unchanged; the longest task from a map load to 600 ms after ready is an
+ordinary software-GL lobby frame (Santee 131 ms, Boulder 277 ms vs a 223 ms frame).
 
 These are maxima over every spawn plus sampled road points, in four directions each (near and far
 cameras). A busy chase (AI driving, traffic, effects) on Dockside: ≤ 30 draw calls, ≤ 116k
@@ -380,7 +399,9 @@ shortened before sharp turns) and a curvature speed profile (lateral 12.5 × gri
 m/s²). Re-planning is at most twice a second; a failed plan backs off and never falls back to a
 straight line across lawns. Every 0.1 s it reads the traffic ahead: follows, overtakes in the
 oncoming lane when it's clear long enough (the cop more readily: traffic pulls over for it), uses
-a verge when crawling in a queue, and creeps round a car that has stopped nose to nose with it. A
+a verge when crawling in a queue (and leaves it as soon as its lane flows again or after ~3.5 s,
+for any decent slot: it used to ride the grass beside a moving line of cars for 10+ s), and creeps
+round a car that has stopped nose to nose with it. A
 **watchdog** (less than 4 m of progress while wanting to move: in 2.4 s, or 2.9 s with traffic just
 ahead; a runner gives up sooner, 1.8 / 2.4 s; or pinned against a wall or a car, traffic included)
 escalates: reverse with the opposite lock, reverse plus a three-point turn, penalise the road it's

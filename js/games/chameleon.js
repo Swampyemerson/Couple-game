@@ -18,7 +18,8 @@ registerGame({
   howTo: [
     'Hider: find a spot (walls and ceilings too: Stick, crawl, hang), then paint yourself to match it.',
     'Pick drinks a colour from anything; Stamp copies the surface under you.',
-    'Seeker: paint pellets, a chirp scan that makes their eyes glint, and look up!',
+    'Seeker: paint pellets, a chirp scan that makes their eyes glint, and sticky feet too: climb and look up!',
+    'Hunted? Tap View to watch the seeker or fly a free cam. Your chameleon stays put.',
     'Every second you stay hidden scores. Roles swap each round. Settings change it all.',
   ],
   endDelay: 600,

@@ -12,12 +12,25 @@ export const SIZES = [
 ];
 export const sizeScale = (id) => (SIZES.find((x) => x.id === id) || SIZES[3]).s;
 
+/** n0..n1 in steps of k (inclusive). */
+const span = (n0, n1, k) => { const out = []; for (let v = n0; v <= n1; v += k) out.push(v); return out; };
+/** Hide time: 10 s – 5 min (5 s steps to 2 min, then 10 s, then 15 s). */
+export const HIDE_SECS = [...span(10, 120, 5), ...span(130, 180, 10), ...span(195, 300, 15)];
+/** Seek time: 20 s – 10 min (5 s steps to 2 min, then 10 s, 15 s, 30 s). */
+export const SEEK_SECS = [...span(20, 120, 5), ...span(130, 180, 10), ...span(195, 300, 15), ...span(330, 600, 30)];
+
 /** Allowed values per field (the first entry is never the default; see PRESETS.classic). */
 export const OPTIONS = {
   size: SIZES.map((x) => x.id),
   rounds: [2, 4, 6],
-  hide: [30, 45, 60, 75, 90, 120],
-  seek: [60, 90, 120, 150, 180],
+  hide: HIDE_SECS,
+  // 'timer': the hide clock runs (Ready still starts the hunt early); 'ready': no clock at all,
+  // the hunt starts when the hider taps Ready
+  hideEnd: ['timer', 'ready'],
+  countdown: [0, 3, 5, 10], // seconds of 3-2-1 before the hunt (after the paint lock)
+  headStart: [0, 5, 10, 15, 20, 30], // seeker blindfolded while the hider may still move (hide & seek)
+  grace: [0, 3, 5, 10, 15], // seconds into the hunt before the seeker may fire
+  seek: SEEK_SECS,
   pellets: [3, 4, 5, 6, 7, 8, 10],
   scans: [0, 1, 2, 3, 5], // 0 = unlimited
   scanCd: [10, 15, 20, 30, 45],
@@ -27,9 +40,14 @@ export const OPTIONS = {
   blink: ['off', 'on', 'strong'],
   stamp: [true, false],
   climb: [true, false],
+  seekClimb: [true, false], // the seeker gets sticky feet too (needs climb)
+  climbSpeed: ['slow', 'normal', 'fast'], // the seeker's crawl speed
+  huntPaint: ['off', 'on', 'tell'], // the hider may paint while hunted; 'tell': fresh paint glints for a nearby seeker
   minimap: [true, false],
 };
 export const SPEED_MUL = { slow: 0.85, normal: 1, fast: 1.2 };
+/** Seeker crawl speed relative to the hider's crawl (a hider crawls at 0.78 × walking). */
+export const CLIMB_MUL = { slow: 0.65, normal: 0.85, fast: 1 };
 
 /** Bigger maps get proportionally longer hide/seek clocks and a faster seeker sprint (every preset). */
 export const MAP_TIME = { S: 1, M: 1.2, L: 1.35, XL: 1.5 };
@@ -39,10 +57,13 @@ export const effSeconds = (base, scale) => Math.round((base * scale) / 5) * 5;
 export const sprintMul = (scale) => 1.55 + 0.3 * (scale - 1);
 
 // "Hard" is hard for the SEEKER (masters of disguise); "Easy" makes the hunt friendlier.
+// v3: the seeker climbs in every preset; Easy keeps the hider's paint locked once the hunt starts,
+// Classic lets them touch up but fresh paint glints for a nearby seeker, Hard lets them repaint
+// silently, slows the seeker on walls and holds the seeker's fire for the first 5 s.
 export const PRESETS = {
-  easy: { size: 'huge', rounds: 4, hide: 45, seek: 120, pellets: 8, scans: 0, scanCd: 15, escapes: 0, seekSpeed: 'fast', heartbeat: false, blink: 'strong', stamp: true, climb: true, minimap: true },
-  classic: { size: 'large', rounds: 4, hide: 60, seek: 90, pellets: 6, scans: 0, scanCd: 20, escapes: 1, seekSpeed: 'normal', heartbeat: true, blink: 'on', stamp: true, climb: true, minimap: true },
-  hard: { size: 'medium', rounds: 4, hide: 75, seek: 90, pellets: 5, scans: 3, scanCd: 30, escapes: 2, seekSpeed: 'normal', heartbeat: true, blink: 'off', stamp: true, climb: true, minimap: false },
+  easy: { size: 'huge', rounds: 4, hide: 45, hideEnd: 'timer', countdown: 3, headStart: 0, grace: 0, seek: 120, pellets: 8, scans: 0, scanCd: 15, escapes: 0, seekSpeed: 'fast', heartbeat: false, blink: 'strong', stamp: true, climb: true, seekClimb: true, climbSpeed: 'fast', huntPaint: 'off', minimap: true },
+  classic: { size: 'large', rounds: 4, hide: 60, hideEnd: 'timer', countdown: 3, headStart: 0, grace: 0, seek: 90, pellets: 6, scans: 0, scanCd: 20, escapes: 1, seekSpeed: 'normal', heartbeat: true, blink: 'on', stamp: true, climb: true, seekClimb: true, climbSpeed: 'normal', huntPaint: 'tell', minimap: true },
+  hard: { size: 'medium', rounds: 4, hide: 75, hideEnd: 'timer', countdown: 3, headStart: 0, grace: 5, seek: 90, pellets: 5, scans: 3, scanCd: 30, escapes: 2, seekSpeed: 'normal', heartbeat: true, blink: 'off', stamp: true, climb: true, seekClimb: true, climbSpeed: 'slow', huntPaint: 'on', minimap: false },
 };
 export const PRESET_IDS = ['easy', 'classic', 'hard'];
 export const PRESET_LABEL = { easy: 'Easy', classic: 'Classic', hard: 'Hard', custom: 'Custom' };
@@ -119,6 +140,10 @@ export function markTipsSeen() { try { localStorage.setItem(TIPS, '1'); } catch 
 /** Display helpers. */
 export function fmtRule(k, v) {
   switch (k) {
+    case 'countdown': case 'headStart': case 'grace': return v === 0 ? 'Off' : `${v} s`;
+    case 'hideEnd': return v === 'ready' ? 'On Ready' : 'Timer';
+    case 'huntPaint': return v === 'off' ? 'Off' : v === 'tell' ? 'Shows' : 'On';
+    case 'climbSpeed': return v === 'slow' ? 'Slow' : v === 'fast' ? 'Fast' : 'Normal';
     case 'hide': case 'seek': case 'scanCd': return v >= 60 && v % 60 === 0 ? `${v / 60} min` : v >= 60 ? `${Math.floor(v / 60)}:${String(v % 60).padStart(2, '0')}` : `${v} s`;
     case 'scans': return v === 0 ? 'Unlimited' : String(v);
     case 'rounds': return `${v}`;

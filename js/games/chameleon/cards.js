@@ -135,8 +135,15 @@ function seg(rules, k, items, canEdit) {
 /** "1:30 on CU Boulder" when the map stretches the clock. */
 function effHint(setup, k) {
   const m = MAPS.find((x) => x.id === setup.map); const sc = timeScale(m);
-  if (sc === 1) return '';
+  if (sc === 1 || !setup.rules[k]) return '';
   return `<span data-eff="${k}">${esc(fmtRule(k, effSeconds(setup.rules[k], sc)))} on ${esc(m.name)} (big map ×${sc})</span>`;
+}
+/** A long time range: a slider for big jumps plus the − / + stepper for fine steps. The slider
+ *  previews while dragging and commits on release (so the host's sheet isn't rebuilt mid-drag). */
+function timeRow(label, hint, rules, k, canEdit, off = false) {
+  const opts = OPTIONS[k]; const i = Math.max(0, opts.indexOf(rules[k]));
+  const ed = canEdit && !off;
+  return `<div class="chm-set chm-set-time${off ? ' off' : ''}"><span><b>${label}</b>${hint ? `<small>${hint}</small>` : ''}</span>${stepper(rules, k, ed)}<input type="range" class="chm-range" data-range="${k}" min="0" max="${opts.length - 1}" step="1" value="${i}" aria-label="${label}" ${ed ? '' : 'disabled'}></div>`;
 }
 const row = (label, hint, control) => `<div class="chm-set"><span><b>${label}</b>${hint ? `<small>${hint}</small>` : ''}</span>${control}</div>`;
 
@@ -154,18 +161,28 @@ export function settingsSheet(api, { canEdit, local, setup, waitingFor }) {
     <div class="chm-sets">
     ${row('Chameleon size', 'Bigger is easier to spot', sizeSeg(r, canEdit))}
     ${hs ? row('Rounds', 'Each of you hides half of them', stepper(r, 'rounds', canEdit)) : ''}
-    ${row('Hide time', effHint(setup, 'hide'), stepper(r, 'hide', canEdit))}
-    ${row('Seek time', effHint(setup, 'seek'), stepper(r, 'seek', canEdit))}
     ${row('Paint pellets', hs ? 'Per hunt' : 'Each (one fewer in Double Blind)', stepper(r, 'pellets', canEdit))}
     ${row('Chirp scans', 'Per hunt', stepper(r, 'scans', canEdit))}
     ${row('Scan cooldown', '', stepper(r, 'scanCd', canEdit))}
     ${row('Escapes', 'Scurries or tongue-zips while hunted', stepper(r, 'escapes', canEdit))}
     ${row('Seeker speed', '', seg(r, 'seekSpeed', [['slow', 'Slow'], ['normal', 'Normal'], ['fast', 'Fast']], canEdit))}
     </div>
+    <h3>Timing</h3>
+    <div class="chm-sets">
+    ${row('Hide ends', r.hideEnd === 'ready' ? 'No clock: the hunt starts when the hider taps Ready' : 'When the clock runs out, or early on Ready', seg(r, 'hideEnd', [['timer', 'Timer'], ['ready', 'On Ready']], canEdit))}
+    ${timeRow('Hide time', r.hideEnd === 'ready' ? 'No limit while “On Ready”' : effHint(setup, 'hide'), r, 'hide', canEdit, r.hideEnd === 'ready')}
+    ${row('Countdown', 'Before the hunt starts', seg(r, 'countdown', [[0, 'Off'], [3, '3 s'], [5, '5 s'], [10, '10 s']], canEdit))}
+    ${hs ? row('Head start', effHint(setup, 'headStart') || 'Seeker stays blindfolded, the hider can still move', stepper(r, 'headStart', canEdit)) : ''}
+    ${row('Grace period', 'The seeker can’t fire for the first seconds', stepper(r, 'grace', canEdit))}
+    ${timeRow('Seek time', effHint(setup, 'seek'), r, 'seek', canEdit)}
+    </div>
     <h3>Rules</h3>
     <div class="chm-sets">
     ${row('Walls &amp; ceilings', 'Sticky feet, hanging, tongue-zip', seg(r, 'climb', [[true, 'Climb'], [false, 'Floor only']], canEdit))}
+    ${hs ? row('Seeker can climb', r.climb ? 'Stick, crawl, zip, hang and squeeze too' : 'Needs walls &amp; ceilings', seg(r, 'seekClimb', [[true, 'On'], [false, 'Off']], canEdit && r.climb)) : ''}
+    ${hs && r.climb && r.seekClimb ? row('Seeker climb speed', 'On walls and ceilings', seg(r, 'climbSpeed', [['slow', 'Slow'], ['normal', 'Normal'], ['fast', 'Fast']], canEdit)) : ''}
     ${row('Stamp tool', 'Copy the surface onto your skin', seg(r, 'stamp', [[true, 'Allowed'], [false, 'Off']], canEdit))}
+    ${hs ? row('Paint while hunted', r.huntPaint === 'tell' ? 'Fresh paint glints for a seeker close by' : r.huntPaint === 'on' ? 'Repaint any time, silently' : 'Paint locks when the hunt starts', seg(r, 'huntPaint', [['off', 'Off'], ['on', 'On'], ['tell', 'Shows']], canEdit)) : ''}
     ${row('Eye-blink glints', 'Blinks sparkle for the seeker', seg(r, 'blink', [['off', 'Off'], ['on', 'On'], ['strong', 'Strong']], canEdit))}
     ${row('Heartbeat hint', 'Hider feels the seeker close by', seg(r, 'heartbeat', [[true, 'On'], [false, 'Off']], canEdit))}
     ${row('Seeker minimap', 'On the bigger maps', seg(r, 'minimap', [[true, 'On'], [false, 'Off']], canEdit))}
@@ -216,13 +233,23 @@ export function titleCard(api, { round, rounds, mode, hider, youHide, youSeek, m
   </div></div>`;
 }
 
-export function blindCard(api, { hider, ms, pellets, mode, scanCd = 30, scans = 0 }) {
+export function blindCard(api, { hider, ms, pellets, mode, scanCd = 30, scans = 0, untimed = false, climb = false }) {
   return `<div class="chm-over chm-blind solid"><div class="chm-card chm-sticker">
     <div class="chm-kicker">Eyes shut</div>
     <div class="chm-big" data-live="blind-time">${fmtTime(ms)}</div>
     <div class="chm-drops" aria-hidden="true"><i></i><i></i><i></i></div>
-    <p>${nameSpan(api, hider)} is painting themselves to match the room.</p>
-    <p>You get <b>${pellets} paint pellets</b> and ${scans ? `<b>${scans} chirp scan${scans === 1 ? '' : 's'}</b>` : 'a <b>chirp scan</b>'} (every ${scanCd} s) that makes their eyes glint — even on the ceiling. Look up!${mode === 'hs' ? ' Every second they survive scores for them.' : ''}</p>
+    <p>${nameSpan(api, hider)} is painting themselves to match the room.${untimed ? ' No clock this time: the hunt starts when they tap <b>Ready</b>.' : ''}</p>
+    <p>You get <b>${pellets} paint pellets</b> and ${scans ? `<b>${scans} chirp scan${scans === 1 ? '' : 's'}</b>` : 'a <b>chirp scan</b>'} (every ${scanCd} s) that makes their eyes glint — even on the ceiling. Look up!${climb ? ' You can climb too: <b>Stick</b> to walls, crawl onto ceilings, <b>Zip</b> up.' : ''}${mode === 'hs' ? ' Every second they survive scores for them.' : ''}</p>
+  </div></div>`;
+}
+
+/** The seeker's blindfold during the hider's head start (seek phase, before the hunt). */
+export function headCard(api, { hider, ms }) {
+  return `<div class="chm-over chm-blind solid" data-head="1"><div class="chm-card chm-sticker">
+    <div class="chm-kicker">Blindfold on · head start</div>
+    <div class="chm-big" data-live="head-time">${Math.max(1, Math.ceil(ms / 1000))}</div>
+    <div class="chm-drops" aria-hidden="true"><i></i><i></i><i></i></div>
+    <p>${nameSpan(api, hider)} can still move. Count down with them, then go!</p>
   </div></div>`;
 }
 
