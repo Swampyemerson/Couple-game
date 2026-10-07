@@ -267,7 +267,10 @@ export function createHud(root, api, { split, touch }) {
       const key = `${role}${enabled}${count}`;
       if (H._act === key) return; H._act = key;
       actBtn.className = role; actBtn.disabled = !enabled;
-      actBtn.innerHTML = `${role === 'cop' ? IC.spike : IC.oil}<span class="l">${role === 'cop' ? `Spike ${count}` : count ? 'Oil' : 'Oil 0'}</span>`;
+      // the count lives on the button as a badge (touch hides the HUD's tool chip, so it shows once)
+      const what = role === 'cop' ? 'Spike' : 'Oil';
+      actBtn.setAttribute('aria-label', `${what} (${count} left)`);
+      actBtn.innerHTML = `${role === 'cop' ? IC.spike : IC.oil}<span class="l">${what}</span><em class="n${count ? '' : ' zero'}">${count}</em>`;
     },
     setLegend(html) { legend.hidden = !html; if (html && legend.innerHTML !== html) legend.innerHTML = html; },
     /** Full map. opts: { img, title, sub, marks(g, toPx, dpr, k), onTap(x, z), onClose } */

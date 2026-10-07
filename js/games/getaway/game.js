@@ -360,9 +360,11 @@ export function createGame(el, api) {
    * Get the new map onto the GPU before it's shown: every shader program compiled, every geometry
    * and texture uploaded. Done in slices with a frame in between (the loading card stays up), so no
    * single task blocks for long: on iOS one big first render of a whole map is 1–2 s of frozen page.
-   * Slices: programs a few objects at a time (renderer.compile on a view of the scene), then the
-   * geometry a few MB at a time (a 1×1 render of just those meshes), then the light dressing and
-   * shadow pass, then one full render. Resolves null if the load was overtaken.
+   * Slices: programs a few objects at a time (renderer.compile on a view of the scene), then each
+   * program's first draw on its own (the driver builds the pipeline there: in SwiftShader 50–250 ms
+   * a program, and several in one slice were the load's longest block), then the geometry a few MB
+   * at a time (a 1×1 render of just those meshes), then the light dressing and shadow pass, then
+   * one full render. Resolves null if the load was overtaken.
    */
   async function warmUp(entry, alive, yieldFrame, onStep) {
     const budget = TUNE.warmMs || 24; const stat = { busy: 0, maxMs: 0, slices: 0, maxWhat: '', maxGap: 0, gapWhat: '' };
@@ -371,7 +373,8 @@ export function createGame(el, api) {
     // aim for ~70 ms a slice; grows on a fast GPU, shrinks on a slow one (or SwiftShader)
     let cap = 0.4e6; let sent = 0; const most = 12; const capMax = phoneish ? 4e6 : 8e6;
     const cut = async (k) => {
-      const t1 = performance.now(); const d = t1 - t0; stat.busy += d; stat.slices++; if (d > stat.maxMs) { stat.maxMs = Math.round(d); stat.maxWhat = what; }
+      const t1 = performance.now(); const d = t1 - t0;
+      if (window.__gtwProbe) (window.__gtwWU = window.__gtwWU || []).push({ t0: Math.round(t0), d: Math.round(d), what, sent, cap: Math.round(cap) }); // PROBE stat.busy += d; stat.slices++; if (d > stat.maxMs) { stat.maxMs = Math.round(d); stat.maxWhat = what; }
       if (onStep) onStep(k);
       await yieldFrame(); t0 = performance.now();
       const gap = t0 - t1; if (gap > stat.maxGap) { stat.maxGap = Math.round(gap); stat.gapWhat = what; }
@@ -411,6 +414,33 @@ export function createGame(el, api) {
     };
     if (!(await progs(world.scene, list)())) return null;
     if (!(await progs(world.farScene, far)())) return null;
+    // 1b) first draws, one program per slice: drivers (and SwiftShader) build a program's pipeline
+    //     lazily at its first draw — 50–250 ms each in software GL — and several in one slice were
+    //     the longest block of the whole load. One object per program, a 1×1 viewport, 3 vertices.
+    const firstDraw = async (sc, objs) => {
+      const seen = new Set(); const pick = [];
+      for (const o of objs) {
+        const ms = Array.isArray(o.material) ? o.material : [o.material];
+        let key = '';
+        for (const m of ms) { const pp = m && renderer.properties.get(m).programs; if (pp) key += [...pp.values()].map((q) => q.id).join(',') + ';'; }
+        if (!key || seen.has(key)) continue;
+        seen.add(key); pick.push(o);
+      }
+      const vis = objs.map((o) => o.visible);
+      for (const o of objs) o.visible = false;
+      for (const o of pick) {
+        what = 'firstdraw';
+        const fc = o.frustumCulled; const dr = o.geometry && o.geometry.drawRange ? o.geometry.drawRange.count : null;
+        o.visible = true; o.frustumCulled = false; if (dr != null) o.geometry.drawRange.count = 3;
+        try { renderer.setViewport(0, 0, 1, 1); renderer.render(sc, cam); } catch (e) { console.warn('getaway: warm-up first draw', e); }
+        o.visible = false; o.frustumCulled = fc; if (dr != null) o.geometry.drawRange.count = dr;
+        if (!(await cut(0.3))) { objs.forEach((q, k) => { q.visible = vis[k]; }); return false; }
+      }
+      objs.forEach((q, k) => { q.visible = vis[k]; });
+      return true;
+    };
+    if (!(await firstDraw(world.scene, list))) return null;
+    if (!(await firstDraw(world.farScene, far))) return null;
     // 2) geometry (and textures): render a slice of meshes at a time (see cap above) into a 1×1 viewport
     const bytes = (m) => { const g = m.geometry; if (!g || !g.attributes) return 0; let b = g.index && g.index.array ? g.index.array.byteLength : 0; for (const k in g.attributes) { const a = g.attributes[k]; if (a && a.array) b += a.array.byteLength; } return b; };
     const upload = async (sc, objs, base) => {
@@ -1332,7 +1362,7 @@ export function createGame(el, api) {
       const B = geo.bounds; const cx = L ? L.x : (B.x0 + B.x1) / 2; const cz = L ? L.z : (B.z0 + B.z1) / 2;
       const a = now / 1000 * 0.06; const r = 210;
       cam.fov = 55; cam.position.set(cx + Math.sin(a) * r, geo.ground(cx, cz) + 95, cz + Math.cos(a) * r); cam.lookAt(cx, geo.ground(cx, cz) + 10, cz);
-      cam.updateProjectionMatrix(); cr.init = false;
+      cam.updateProjectionMatrix(); cr.init = false; cr.see = false;
       return;
     }
     const intro = S.phase === 'intro' || S.phase === 'wait';
@@ -1343,10 +1373,11 @@ export function createGame(el, api) {
       const tb = geo.segBlocked(rc.x, rc.z, rc.x + Math.sin(a) * r, rc.z + Math.cos(a) * r, 1.5, true);
       if (tb < 1) r = Math.max(6, r * tb - 1.5);
       cam.fov = 58; cam.position.set(rc.x + Math.sin(a) * r, rc.y + 3 + r * 0.24, rc.z + Math.cos(a) * r); cam.lookAt(rc.x, rc.y + 1.2, rc.z);
-      cam.updateProjectionMatrix(); cr.init = false;
+      cam.updateProjectionMatrix(); cr.init = false; cr.see = false;
       return;
     }
     const mode = CAM[cr.mode || rules().camera] || CAM.near;
+    cr.see = true; // chase view: traffic / poles between the lens and my car dither away (gfx.js GTW_SEE)
     // follow the velocity a little when sliding, so drifts read from behind
     let hy = c.yaw;
     if (c.speed > 4) { const vy = Math.atan2(c.vx, -c.vz); const d = wrapA(vy - c.yaw); if (Math.abs(d) < 2) hy = c.yaw + d * 0.45; }
@@ -1695,6 +1726,9 @@ export function createGame(el, api) {
       if (Math.abs(cr.cam.aspect - cr.aspect) > 1e-3) { cr.cam.aspect = cr.aspect; cr.cam.updateProjectionMatrix(); }
       updateCam(w, dtReal, now);
       world.update(cr.cam, dtReal, S.tSec);
+      // the sight cone for see-through materials: from this view's camera to its car (radius 2.4 m
+      // at the car, about its silhouette from behind)
+      { const sc = P2[w].car; if (cr.see) U.uSee.value.set(sc.x, sc.y + 0.75, sc.z, 2.4); else U.uSee.value.w = 0; }
       renderer.setViewport(vx, 0, vw, H); renderer.setScissor(vx, 0, vw, H);
       farCam.position.copy(cr.cam.position); farCam.quaternion.copy(cr.cam.quaternion); farCam.fov = cr.cam.fov; farCam.aspect = cr.cam.aspect; farCam.updateProjectionMatrix();
       const c = P2[w].car;
@@ -1816,7 +1850,7 @@ export function createGame(el, api) {
       /** The next n map loads throw (error-card tests). */
       failLoad(n = 1) { S.failLoads = n; },
       ui() { return { sheet: S.sheet, menu: !!S.menu, loadFail: S.loadFail, glStuck: !!S.glStuck, loading: S.loading, tier: gfx && gfx.tier, card: hud.over.hidden ? null : (hud.over.querySelector('h2') || {}).textContent || hud.over.className, device: { ...device } }; },
-      worldStats() { return world ? { ...world.stats, chunks: world.chunks.length, visible: world.chunks.filter((c) => c.group.visible).length, broken: world.brokenCount() } : null; },
+      worldStats() { return world ? { ...world.stats, chunks: world.chunks.length, visible: world.chunks.filter((c) => c.group.visible).length, broken: world.brokenCount(), see: world.chunks.filter((c) => c.seeMesh).length } : null; },
       inputStats: () => ({ ...inputStats }),
       internals: { P2, S, get geo() { return geo; }, get world() { return world; }, get renderer() { return renderer; }, link },
       /** Render a fixed view and count draw calls / triangles (perf budgets per map). */

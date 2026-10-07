@@ -217,13 +217,13 @@ function* buildSteps(THREE, kit, L) {
     const i = Math.floor(x / CH), j = Math.floor(z / CH);
     const k = i + ',' + j;
     let c = chunks.get(k);
-    if (!c) chunks.set(k, (c = { i, j, B: new Buf(), S: new Buf(true) }));
+    if (!c) chunks.set(k, (c = { i, j, B: new Buf(), S: new Buf(true), W: new Buf() })); // W: wires (see-through near the camera)
     return c;
   };
   const deco = L.deco;
   // triangle counts per section (root.userData.stats.sections), for budgeting
   const SEC = {}; let secN = 0;
-  const sec = (name) => { let n = 0; for (const c of chunks.values()) n += c.B.n + c.S.n; SEC[name] = n - secN; secN = n; };
+  const sec = (name) => { let n = 0; for (const c of chunks.values()) n += c.B.n + c.S.n + c.W.n; SEC[name] = n - secN; secN = n; };
   // graphics-v2 surface codes (feature-detected: an older engine gets plain 0)
   const KF = kit.FX || {};
   const X = (n) => (KF[n] != null ? KF[n] : 0);
@@ -825,7 +825,7 @@ function* buildSteps(THREE, kit, L) {
   if (!low) {
     const WIRE = C('#2a2a2c');
     for (const [p, q2] of deco.wires || []) {
-      const B = get(p.x, p.z).B;
+      const B = get(p.x, p.z).W;
       const ya = Math.max(0, H(p.x, p.z)) + p.h - 0.72, yb = Math.max(0, H(q2.x, q2.z)) + q2.h - 0.72;
       const span = Math.hypot(q2.x - p.x, q2.z - p.z), sag = Math.min(1.1, span * 0.018);
       for (const o of [-1.0, 0, 1.0]) {
@@ -894,7 +894,7 @@ function* buildSteps(THREE, kit, L) {
     // overhead contact wire on its catenary
     for (let z = rail.z0 + 10; z < rail.z1 - 10; z += 40) {
       const y = (z > tr.viaduct.z0 - 30 && z < tr.viaduct.z1 + 30) ? tr.viaduct.y + 6 : 6.8;
-      if (!low) { const B = get(rail.x, z).B; ribbonV(B, [rail.x, y, z], [rail.x, y, z + 40], 0.05, C('#2b2b2b')); ribbonV(B, [rail.x, y + 0.9, z], [rail.x, y + 0.6, z + 20], 0.04, C('#2b2b2b')); ribbonV(B, [rail.x, y + 0.6, z + 20], [rail.x, y + 0.9, z + 40], 0.04, C('#2b2b2b')); }
+      if (!low) { const B = get(rail.x, z).W; ribbonV(B, [rail.x, y, z], [rail.x, y, z + 40], 0.05, C('#2b2b2b')); ribbonV(B, [rail.x, y + 0.9, z], [rail.x, y + 0.6, z + 20], 0.04, C('#2b2b2b')); ribbonV(B, [rail.x, y + 0.6, z + 20], [rail.x, y + 0.9, z + 40], 0.04, C('#2b2b2b')); }
     }
   }
 
@@ -935,14 +935,20 @@ function* buildSteps(THREE, kit, L) {
   if (kit.toon) { try { mat = kit.toon(null, { vertexColors: true }); } catch (e) { mat = null; } }
   if (!mat) mat = new THREE.MeshLambertMaterial({ vertexColors: true });
   if (!mat.vertexColors) { mat.vertexColors = true; mat.needsUpdate = true; }
+  // wires: the engine's see-through toon (they dither away when the chase camera is right by them
+  // instead of drawing a thick black bar); an engine without `see` gives the plain toon
+  let wireMat = mat;
+  if (kit.toon) { try { wireMat = kit.toon(null, { vertexColors: true, see: true }) || mat; } catch (e) { wireMat = mat; } }
   const atlas = makeAtlas(THREE);
   const signMat = atlas ? new THREE.MeshBasicMaterial({ map: atlas, toneMapped: false }) : null;
   if (dark) { // dark mode is night: sink everything toward a cool moonlit dusk, keep the glows
     for (const c of chunks.values()) {
-      const col = c.B.c, f = c.B.f;
-      for (let v = 0, i = 0; i < col.length; i += 3, v++) {
-        if (f[v] === 3) continue;
-        col[i] = col[i] * 0.5 + 0.03; col[i + 1] = col[i + 1] * 0.53 + 0.04; col[i + 2] = col[i + 2] * 0.6 + 0.08;
+      for (const Bf of [c.B, c.W]) {
+        const col = Bf.c, f = Bf.f;
+        for (let v = 0, i = 0; i < col.length; i += 3, v++) {
+          if (f[v] === 3) continue;
+          col[i] = col[i] * 0.5 + 0.03; col[i + 1] = col[i + 1] * 0.53 + 0.04; col[i + 2] = col[i + 2] * 0.6 + 0.08;
+        }
       }
     }
   }
@@ -958,6 +964,12 @@ function* buildSteps(THREE, kit, L) {
       m.receiveShadow = true;
       parent.add(m); tris += c.B.n; meshes++;
       c.B.p = c.B.c = c.B.f = null; // the arrays now live in the geometry
+    }
+    if (c.W.n) {
+      const m = new THREE.Mesh(c.W.geometry(THREE), wireMat);
+      m.name = `santee-wires-${c.i},${c.j}`; m.matrixAutoUpdate = false; m.updateMatrix();
+      parent.add(m); tris += c.W.n; meshes++;
+      c.W.p = c.W.c = c.W.f = null;
     }
     if (c.S.n && signMat) {
       const m = new THREE.Mesh(c.S.geometry(THREE), signMat);

@@ -280,7 +280,7 @@ window.plan = (labels) => {
   const [s0, sy] = Pp(B.x0 + 40, B.z1 - 30); const [s1] = Pp(B.x0 + 540, 0); g.fillStyle = '#fff'; g.fillRect(s0, sy, s1 - s0, 7); g.font = 'bold 14px sans-serif'; g.textAlign = 'left'; g.lineWidth = 3; g.strokeStyle = '#000'; g.strokeText('500 m on the map = 1.1 km in Boulder (scale 0.45)', s0, sy - 12); g.fillText('500 m on the map = 1.1 km in Boulder (scale 0.45)', s0, sy - 12);
   return { calls: renderer.info.render.calls, tris: renderer.info.render.triangles };
 };
-window.split = (v) => { const r0 = window.view(v); const mine = []; world.scene.traverse((o) => { if (o.name === 'boulder-chunk') mine.push(o); }); mine.forEach((o) => { o.visible = false; }); const r1 = window.view(v); mine.forEach((o) => { o.visible = true; }); return { all: r0.tris, engine: r1.tris, map: r0.tris - r1.tris }; };
+window.split = (v) => { const r0 = window.view(v); const mine = []; world.scene.traverse((o) => { if (o.name === 'boulder-chunk' || o.name === 'boulder-wires') mine.push(o); }); mine.forEach((o) => { o.visible = false; }); const r1 = window.view(v); mine.forEach((o) => { o.visible = true; }); return { all: r0.tris, engine: r1.tris, map: r0.tris - r1.tris }; };
 window.setSize = (w, h) => { W = w; Hh = h; renderer.setSize(w, h); lab.width = w; lab.height = h; };
 // the lead's perf sampling: spawns + road points, 4 headings, near and far chase cams
 window.sample = () => {

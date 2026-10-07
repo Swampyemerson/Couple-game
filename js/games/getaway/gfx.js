@@ -110,6 +110,7 @@ export function makeUniforms(THREE, P) {
     uFogSun: { value: new THREE.Color(1, 0.9, 0.75) },
     uTime: { value: 0 },
     uCam: { value: new THREE.Vector3() },                   // camera position (MeshBasic doesn't get cameraPosition)
+    uSee: { value: new THREE.Vector4(0, -999, 0, 0) },      // see-through materials: xyz = my car, w = sight-cone radius at the car (0 = off)
     uShadowMap: { value: null },
     uShadowM: { value: new THREE.Matrix4() },
     uShadowP: { value: new THREE.Vector4(0, 1 / 1024, 0.8, 0) }, // on, texel, strength, -
@@ -186,6 +187,10 @@ uniform float uTime;
 uniform vec3 uCam;
 uniform vec4 uCar;
 uniform vec2 uFlash;
+#ifdef GTW_SEE
+uniform vec4 uSee;
+float gBayer2( vec2 a ) { a = floor( a ); return fract( a.x / 2.0 + a.y * a.y * 0.75 ); }
+#endif
 varying float vFx;
 varying float vShade;
 varying float vSunK;
@@ -334,6 +339,24 @@ const FRAG_COLOR = `#include <color_fragment>
 float gc = floor( vFx + 0.5 );
 vec3 gN = normalize( vWN );
 vec3 gVd = vWPos - uCam; float gDist = length( gVd ); vec3 gV = gVd / max( gDist, 0.001 );
+#ifdef GTW_SEE
+{
+  // See-through (traffic, parked cars, debris, poles, lamps, wires): a screen-door dither, so no
+  // blending and no sorting. (1) Anything within a few metres of the lens fades instead of filling
+  // the view with a dark bar. (2) Anything inside the cone from the camera to my car, in front of
+  // the car, fades so the car is never hidden. Only this program variant has a discard; the world's
+  // big merged meshes keep early-Z / hidden-surface removal.
+  float gK = 1.0 - smoothstep( 2.0, 6.0, gDist );
+  if ( uSee.w > 0.0 ) {
+    vec3 gAB = uSee.xyz - uCam; float gL = length( gAB ); vec3 gU = gAB / max( gL, 0.001 );
+    float gT = dot( gVd, gU ) / max( gL, 0.001 );
+    float gTm = 1.0 - 2.6 / max( gL, 2.7 );
+    float gR = uSee.w * gT; float gD = length( gVd - gU * ( gT * gL ) );
+    gK = max( gK, ( 1.0 - smoothstep( gR * 0.7, gR * 1.15 + 0.1, gD ) ) * smoothstep( 0.0, 0.06, gT ) * ( 1.0 - smoothstep( gTm - 0.06, gTm, gT ) ) );
+  }
+  if ( gK > 0.0 && gK * 0.75 > gBayer2( 0.5 * gl_FragCoord.xy ) * 0.25 + gBayer2( gl_FragCoord.xy ) ) discard;
+}
+#endif
 float gSh = vShade;
 float gSunVis = 1.0;
 float gEmis = 0.0;
@@ -423,7 +446,7 @@ const FRAG_END = `if ( gc == 4.0 ) {
 }`;
 
 /** A toon material. opts: { vertexColors, fx (an FX code), side, fog, transparent, opacity,
- *  depthWrite, polygonOffset, outline }. Each material has its own uCar (dirt, scratches,
+ *  depthWrite, polygonOffset, outline, see (dither away near the lens and in front of my car) }. Each material has its own uCar (dirt, scratches,
  *  brake, reverse) and uFlash (siren lenses) uniforms: m.userData.gtw.uCar / .uFlash. */
 export function makeToon(THREE, U, color, opts = {}) {
   const m = new THREE.MeshBasicMaterial({
@@ -443,14 +466,17 @@ export function makeToon(THREE, U, color, opts = {}) {
   m.defines = { GTW_WIN: '' };
   if (tier === 'low') m.defines.GTW_LOW = '';
   else m.defines.GTW_SHADOW = '';
-  m.userData.gtw = { fx: opts.fx || 0, outline: opts.outline || 0, uFxm, uCar, uFlash };
+  // see: dithered away near the camera and in front of my car (its own program; see FRAG_COLOR)
+  const see = !!opts.see;
+  if (see) m.defines.GTW_SEE = '';
+  m.userData.gtw = { fx: opts.fx || 0, outline: opts.outline || 0, uFxm, uCar, uFlash, see };
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, U);
     sh.uniforms.uFxm = uFxm; sh.uniforms.uCar = uCar; sh.uniforms.uFlash = uFlash;
     sh.vertexShader = sh.vertexShader.replace('#include <common>', VERT_PRE).replace('#include <color_vertex>', VERT_COLOR).replace('#include <fog_vertex>', VERT_POST);
     sh.fragmentShader = sh.fragmentShader.replace('#include <common>', FRAG_PRE).replace('#include <color_fragment>', FRAG_COLOR).replace('#include <fog_fragment>', FRAG_END);
   };
-  m.customProgramCacheKey = () => 'gtw-toon-v2-' + tier;
+  m.customProgramCacheKey = () => 'gtw-toon-v2-' + tier + (see ? '-see' : '');
   return m;
 }
 
@@ -689,16 +715,20 @@ export function* mergeSteps(THREE, group, mats, inkRGB, disposeSet, pre = null) 
     const geo = o.geometry; if (!geo || !geo.getAttribute('position')) return;
     if (o.isInstancedMesh && o.count * geo.getAttribute('position').count > 40000) return;
     if (!o.visible) return;
-    const key = m.side === THREE.DoubleSide ? 'double' : 'front';
+    const key = m.userData.gtw.see ? 'see' : m.side === THREE.DoubleSide ? 'double' : 'front';
     let f = fam.get(key); if (!f) { f = []; fam.set(key, f); }
     f.push(o); victims.push(o);
   });
-  if (pre && !fam.has('front')) fam.set('front', []);
-  if (!fam.size) return { removed: 0, front: null };
-  const out = { removed: victims.length, front: null };
+  // pre: a Builder that seeds the front family, or { front, see } Builders (the engine's own
+  // geometry for a chunk: everything / thin see-through props)
+  const preF = pre instanceof Builder ? pre : pre && pre.front; const preS = pre && !(pre instanceof Builder) ? pre.see : null;
+  if (preF && !fam.has('front')) fam.set('front', []);
+  if (preS && !preS.empty && !fam.has('see')) fam.set('see', []);
+  if (!fam.size) return { removed: 0, front: null, see: null };
+  const out = { removed: victims.length, front: null, see: null };
   const tmpM = new THREE.Matrix4(); const nm = new THREE.Matrix3();
   for (const [key, list] of fam) {
-    const b = key === 'front' && pre ? pre : new Builder(THREE, inkRGB);
+    const b = key === 'front' && preF ? preF : key === 'see' && preS ? preS : new Builder(THREE, inkRGB);
     for (const o of list) {
       const m = o.material; const geo = o.geometry; const g = m.userData.gtw;
       const pa = geo.getAttribute('position'); let na = geo.getAttribute('normal');
@@ -744,10 +774,11 @@ export function* mergeSteps(THREE, group, mats, inkRGB, disposeSet, pre = null) 
       yield 0;
     }
     if (b.empty) continue;
-    const mesh = b.mesh(key === 'double' ? mats.double : mats.vc);
+    const mesh = b.mesh(key === 'double' ? mats.double : key === 'see' ? (mats.see || mats.vc) : mats.vc);
     mesh.name = 'merged-' + key;
     group.add(mesh);
     if (key === 'front') out.front = mesh;
+    if (key === 'see') out.see = mesh;
   }
   for (const o of victims) {
     if (o.parent) o.parent.remove(o);

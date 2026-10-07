@@ -53,7 +53,10 @@ export const CSS = `
 /* speed + nitro */
 .gtw-speed { position: absolute; right: calc(14px + var(--sr)); bottom: calc(14px + var(--sb)); display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .g-gtw.touch .gtw-view.full .gtw-speed { bottom: auto; top: calc(var(--cs) + 136px); right: calc(14px + var(--sr)); }
-.g-gtw.touch.short .gtw-view.full .gtw-speed { top: auto; bottom: calc(10px + var(--sb)); right: auto; left: 50%; transform: translateX(-50%); align-items: center; }
+/* short landscape phone: speed + nitro sit in the sky beside the minimap, clear of the car and both thumbs */
+.g-gtw.touch.short .gtw-view.full .gtw-speed { top: calc(var(--cs) + 2px); bottom: auto; right: calc(122px + var(--sr)); }
+/* touch: the tool count is a badge on the oil / spike button instead of a HUD chip */
+.g-gtw.touch .gtw-view.full .gtw-tools { display: none; }
 .g-gtw.short .gtw-mini { width: 100px; height: 100px; }
 .g-gtw.touch.short .gtw-ctl [data-tap="cam"] { top: calc(var(--cs) + 110px); }
 .gtw-speed b { font-family: var(--g-font-display); font-weight: 900; font-size: 2rem; line-height: .9; font-variant-numeric: tabular-nums; -webkit-text-stroke: 1.5px var(--g-ink); color: var(--g-card); text-shadow: 2px 2px 0 var(--g-edge); }
@@ -72,7 +75,7 @@ export const CSS = `
 @keyframes gtw-stamp { 0% { opacity: 0; transform: translate(-50%, -50%) rotate(-7deg) scale(2.2); } 14% { opacity: 1; transform: translate(-50%, -50%) rotate(-7deg) scale(1); } 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -50%) rotate(-7deg) scale(1.05); } }
 .gtw-hint { position: absolute; left: 50%; top: calc(var(--cs) + 30px); transform: translateX(-50%); max-width: min(calc(100% - 300px), 360px); padding: 6px 12px; font-weight: 800; font-size: 0.82rem; text-align: center; border-radius: 10px; background: var(--g-ink); color: var(--g-bg); box-shadow: 3px 3px 0 var(--g-hl); opacity: 0; transition: opacity .25s; }
 @media (max-width: 600px) { .gtw-hint { top: calc(var(--cs) + 168px); max-width: calc(100% - 40px); } }
-.g-gtw.short .gtw-hint { top: calc(var(--st) + 64px); max-width: min(calc(100% - 330px), 360px); }
+.g-gtw.short .gtw-hint { top: calc(var(--st) + 64px); max-width: min(calc(100% - 460px), 360px); }
 .gtw-hint.on { opacity: 1; }
 .gtw-count { position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); font-family: var(--g-font-display); font-weight: 900; font-size: clamp(4rem, 22vw, 9rem); line-height: 1; color: var(--g-card); -webkit-text-stroke: 4px var(--g-ink); text-shadow: 6px 6px 0 var(--g-edge); }
 .gtw-count.go { color: var(--g-hl); }
@@ -100,14 +103,16 @@ export const CSS = `
 .gtw-ctl [data-tap="act"] { right: calc(194px + var(--sr)); bottom: calc(18px + var(--sb)); width: 62px; height: 62px; border-radius: 50%; }
 .gtw-ctl [data-tap="act"].cop { background: var(--g-bad); color: #fff; }
 .gtw-ctl [data-tap="act"][disabled] { opacity: .4; }
+.gtw-ctl [data-tap="act"] .n { position: absolute; top: -7px; right: -7px; min-width: 24px; height: 24px; padding: 0 5px; box-sizing: border-box; border-radius: 12px; background: var(--g-ink); color: var(--g-bg); border: 2px solid var(--g-card); font: 900 0.78rem/20px var(--g-font-body); font-style: normal; letter-spacing: 0; text-align: center; }
+.gtw-ctl [data-tap="act"] .n.zero { background: var(--g-card); color: var(--g-muted); border-color: var(--g-ink); }
 .gtw-ctl [data-tap="look"] { right: calc(194px + var(--sr)); bottom: calc(92px + var(--sb)); width: 50px; height: 40px; border-radius: 12px; }
 .gtw-ctl [data-tap="cam"] { left: calc(10px + var(--sl)); top: calc(var(--cs) + 128px); width: 50px; height: 34px; border-radius: 10px; font-size: .58rem; }
 .gtw-ctl svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
 .gtw-ctl span.l { display: block; margin-top: 2px; }
-.gtw-steer { position: absolute; width: 168px; height: 54px; margin: -27px 0 0 -84px; border-radius: 27px; border: 2.5px dashed color-mix(in srgb, var(--g-ink) 55%, transparent); opacity: 0; pointer-events: none; transition: opacity .12s; }
+.gtw-steer { position: absolute; width: 168px; height: 54px; margin: -27px 0 0 -84px; border-radius: 27px; border: 2.5px dashed rgba(128,128,128,.75); border-color: color-mix(in srgb, var(--g-ink) 55%, transparent); opacity: 0; pointer-events: none; transition: opacity .12s; }
 .gtw-steer.on { opacity: 1; }
 .gtw-steer i { position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px; border-radius: 50%; background: var(--g-card); border: 2.5px solid var(--g-ink); box-shadow: var(--g-shadow, 3px 3px 0 var(--g-edge)); transform: translateX(calc(var(--k, 0) * 60px)); }
-.gtw-steerhint { position: absolute; left: calc(28px + var(--sl)); bottom: calc(40px + var(--sb)); width: 150px; height: 50px; border-radius: 25px; border: 2.5px dashed color-mix(in srgb, var(--g-ink) 35%, transparent); display: grid; place-items: center; font: 900 0.6rem/1 var(--g-font-body); letter-spacing: .1em; color: rgba(128,128,128,.9); color: color-mix(in srgb, var(--g-ink) 60%, transparent); text-transform: uppercase; pointer-events: none; }
+.gtw-steerhint { position: absolute; left: calc(28px + var(--sl)); bottom: calc(40px + var(--sb)); width: 150px; height: 50px; border-radius: 25px; border: 2.5px dashed rgba(128,128,128,.55); border-color: color-mix(in srgb, var(--g-ink) 35%, transparent); display: grid; place-items: center; font: 900 0.6rem/1 var(--g-font-body); letter-spacing: .1em; color: rgba(128,128,128,.9); color: color-mix(in srgb, var(--g-ink) 60%, transparent); text-transform: uppercase; pointer-events: none; }
 .g-gtw:not(.touch) .gtw-ctl, .g-gtw:not(.playing) .gtw-ctl { display: none; }
 .g-gtw.portrait .gtw-ctl [data-pad="gas"] { height: 104px; width: 76px; }
 .g-gtw.portrait .gtw-ctl [data-pad="brake"] { right: calc(102px + var(--sr)); width: 66px; }
@@ -123,7 +128,7 @@ export const CSS = `
 .g-gtw.touch .gtw-legend { display: none; }
 
 /* map view */
-.gtw-map { position: absolute; inset: 0; z-index: 5; background: rgba(128,128,128,.35); background: color-mix(in srgb, var(--g-bg) 82%, transparent); display: flex; align-items: center; justify-content: center; padding: calc(var(--cs) + 4px) 12px calc(10px + var(--sb)); }
+.gtw-map { position: absolute; inset: 0; z-index: 5; background: var(--g-bg); background: color-mix(in srgb, var(--g-bg) 82%, transparent); display: flex; align-items: center; justify-content: center; padding: calc(var(--cs) + 4px) 12px calc(10px + var(--sb)); }
 .g-gtw.short .gtw-map { padding: calc(8px + var(--st)) calc(var(--gm-corner-w, 64px) + 8px) calc(8px + var(--sb)); }
 .gtw-map .box { position: relative; width: min(100%, 720px); height: 100%; max-height: 720px; display: flex; flex-direction: column; gap: 8px; padding: 10px; }
 .gtw-map canvas { flex: 1 1 0; min-height: 0; height: 0; width: 100%; border-radius: 8px; border: 2px solid var(--g-ink); touch-action: none; cursor: crosshair; background: var(--g-bg); }
@@ -133,7 +138,7 @@ export const CSS = `
 
 /* overlay cards */
 .gtw-over { position: absolute; inset: 0; z-index: 6; display: grid; place-items: center; padding: calc(12px + var(--st)) 14px calc(12px + var(--sb)); pointer-events: auto; overflow-y: auto; }
-.gtw-over.dim { background: rgba(128,128,128,.35); background: color-mix(in srgb, var(--g-bg) 70%, transparent); }
+.gtw-over.dim { background: var(--g-dim); background: color-mix(in srgb, var(--g-bg) 70%, transparent); }
 .gtw-over.solid { background: var(--g-bg); }
 .gtw-over.clear { background: transparent; pointer-events: none; }
 .gtw-over.clear .gtw-card { pointer-events: auto; }
@@ -214,7 +219,7 @@ export const CSS = `
 .gtw-pausebtn { pointer-events: auto !important; width: 40px; padding: 0; display: grid; place-items: center; color: var(--g-ink); cursor: pointer; touch-action: manipulation; }
 .gtw-pausebtn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: round; }
 .gtw-view.r .gtw-pausebtn { display: none; }
-.gtw-road b { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(128,128,128,.35); background: color-mix(in srgb, var(--me) 45%, transparent); transition: width .25s; }
+.gtw-road b { position: absolute; left: 0; top: 0; bottom: 0; background: var(--me); background: color-mix(in srgb, var(--me) 45%, transparent); transition: width .25s; }
 .gtw-loadtxt { display: flex; justify-content: space-between; gap: 10px; text-align: left; }
 .gtw-loadtxt b { font-variant-numeric: tabular-nums; color: var(--g-ink); }
 .gtw-tip, .gtw-slow, .gtw-landtip { font-size: .8rem !important; }

@@ -366,8 +366,40 @@ function chameleon() {
     hider);
 }
 
+function getaway() {
+  // side-on muscle-car profile, (x, y) = the ground under the car's middle, facing right
+  const shell = 'M-27 -5L-27.5 -13Q-27 -16.5 -21 -16.5L-11 -17.5L-5 -26L11 -26L18.5 -17.5L26 -15.5Q29 -14.5 29 -10L29 -5Z';
+  const wheel = (x) => C(x, -5.5, 6, 'k') + C(x, -5.5, 2.6, 'w', 'k', 1.2);
+  const car = (x, y, s, body, extra) => G(`translate(${x} ${y}) scale(${s})`,
+    E(1, 0.4, 31, 2.6, 'k', 'n', 0, 'opacity:.3') +
+    P(shell, body, 'k', 2.4) + extra +
+    P('M-8.5 -18L-3.5 -24L3 -24L3 -18Z', 'sb', 'k', 1.8) + P('M6 -18L6 -24L10 -24L15 -18Z', 'sb', 'k', 1.8) +
+    R(25.5, -14, 3.4, 3, 'y', 'k', 1.2, 1) + R(-27.6, -14, 2.6, 3, 'b', 'k', 1.2, 1) + wheel(-16.5) + wheel(16.5));
+  // the runner: player ink with a racing stripe
+  const run = car(113, 77, 1, 'a', L('M-26 -11H28', 'y', 3.4) + L('M-26 -11H28', 'k', 0.8, 'opacity:.45'));
+  // the cop: black-and-white cruiser with a red/blue lightbar
+  const cop = car(42, 90, 1.1, 'w',
+    P('M-27 -5L-27.3 -11.5L28.6 -11.5L29 -5Z', 'k') + P('M-11 -17.5L-5 -26L11 -26L18.5 -17.5Z', 'k') +
+    R(-2.5, -30.5, 6.5, 4.4, 'b', 'k', 1.5, 1) + R(4, -30.5, 6.5, 4.4, 'a', 'k', 1.5, 1) + P(star(2.5, -14.5, 3.4, 1.6, 5), 'y', 'k', 1));
+  let skyline = '';
+  [[-2, 22, 18, 'w'], [14, 30, 14, 'sb'], [26, 12, 16, 'w'], [58, 26, 16, 'w'], [72, 34, 12, 'sb'], [92, 16, 16, 'w'], [122, 28, 14, 'sb'], [134, 10, 20, 'w'], [152, 24, 12, 'sb']].forEach(([x, top, w, ink]) => {
+    skyline += R(x, top, w, 52 - top, ink, 'k', 2);
+    for (let wy = top + 5; wy < 49; wy += 6) skyline += L(`M${x + 4} ${wy}H${x + w - 4}`, 'k', 2, 'stroke-dasharray:2 3;opacity:.45');
+  });
+  return svg('sa',
+    C(112, 16, 9, 'y', 'k', 2) + skyline +
+    R(-4, 50, 168, 6, 'w', 'k', 2) + R(-4, 56, 168, 48, 'l', 'k', 2) +
+    dots(-2, 60, 162, 100, 5, 'k', 0.7, 0.18) +
+    L('M-6 83H14M30 83H50M66 83H86M102 83H122M138 83H158', 'w', 3) +
+    L('M58 62H76M50 67H72M60 72H80', 'k', 2, 'opacity:.4') + L('M-4 74H6M-2 86H4', 'k', 2, 'opacity:.4') +
+    dots(30, 46, 58, 60, 4.6, 'b', 1.1, 0.7) + dots(38, 52, 66, 62, 4.6, 'a', 1.1, 0.6) +
+    L('M38 48l-3 -6M48 47l2 -7M56 50l6 -4M30 52l-6 -3', 'k', 4.4) + L('M38 48l-3 -6M30 52l-6 -3', 'b', 2.4) + L('M48 47l2 -7M56 50l6 -4', 'a', 2.4) +
+    run + cop +
+    L('M146 62l7 -1M146 68l9 0', 'k', 2, 'opacity:.6'));
+}
+
 export const COVERS = {
   four: four(), dots: dots_(), ultimate: ultimate(), fleet: fleet(), wordduel: wordduel(), agents: agents(),
   doodle: doodle(), wave: wave(), hockey: hockey(), quickdraw: quickdraw(), tower: tower(), bones: bones(),
-  cycles: cycles(), defuse: defuse(), rush: rush(), chameleon: chameleon(),
+  cycles: cycles(), defuse: defuse(), rush: rush(), chameleon: chameleon(), getaway: getaway(),
 };

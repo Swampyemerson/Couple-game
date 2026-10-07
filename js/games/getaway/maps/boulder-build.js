@@ -151,6 +151,20 @@ export async function buildBoulder(THREE, kit = {}) {
   }
   if (!mat) mat = new THREE.MeshLambertMaterial({ vertexColors: true });
   mat.vertexColors = true; if (tex) mat.map = tex; mat.needsUpdate = true;
+  // power poles and wires: the engine's see-through toon (they dither away when the chase camera is
+  // right by them instead of drawing a thick bar across the view); an older engine: the same as mat
+  let seeMat = mat;
+  if (typeof kit.toon === 'function') {
+    try {
+      const base = kit.toon(null, { vertexColors: true, see: true });
+      if (base && base.userData && base.userData.gtw && base.userData.gtw.see) {
+        seeMat = base.clone();
+        seeMat.onBeforeCompile = base.onBeforeCompile; seeMat.customProgramCacheKey = base.customProgramCacheKey;
+        seeMat.defines = { ...(base.defines || {}) }; seeMat.userData = { ...base.userData };
+        seeMat.vertexColors = true; if (tex) seeMat.map = tex; seeMat.needsUpdate = true;
+      }
+    } catch (e) { seeMat = mat; }
+  }
   const INK = kit.ink ? kit.ink.slice(0, 3) : [0.13, 0.11, 0.14];
   const OL = low ? 0 : 0.11;
   // night: build() darkens map colours (flush); engine palette colours are pre-compensated here
@@ -165,6 +179,8 @@ export async function buildBoulder(THREE, kit = {}) {
     return g;
   };
   const B = (x, z) => { const g = groupAt(x, z); let b = bufs.get(g); if (!b) { b = new Buf(); bufs.set(g, b); } return b; };
+  const wbufs = new Map(); // see-through (power poles + wires), one more mesh in the chunks that have them
+  const BW = (x, z) => { const g = groupAt(x, z); let b = wbufs.get(g); if (!b) { b = new Buf(); wbufs.set(g, b); } return b; };
   /** Run fn with buf's current surface code set to fx. */
   const withFx = (buf, fx, fn) => { const o = buf.fxv; buf.fxv = fx; fn(); buf.fxv = o; };
 
@@ -415,7 +431,7 @@ export async function buildBoulder(THREE, kit = {}) {
   // flush: one mesh per chunk
   let tris = 0; let meshes = 0;
   const free = function freeArray() { this.array = null; };
-  for (const [grp, buf] of [...bufs]) {
+  for (const [grp, buf, bm] of [...[...bufs].map((e) => [e[0], e[1], mat]), ...[...wbufs].map((e) => [e[0], e[1], seeMat])]) {
     if (!buf || !buf.v) continue;
     const geo = new THREE.BufferGeometry();
     const nv = buf.v;
@@ -433,11 +449,11 @@ export async function buildBoulder(THREE, kit = {}) {
     // memory: once on the GPU, the CPU copies of everything but positions can go (a context loss
     // rebuilds the whole map, see world.js `released`)
     if (kit.release !== false) { for (const k of ['normal', 'uv', 'color', 'fx']) geo.getAttribute(k).onUpload(free); geo.index.onUpload(free); }
-    const m = new THREE.Mesh(geo, mat); m.name = 'boulder-chunk'; m.userData.noMerge = true;
+    const m = new THREE.Mesh(geo, bm); m.name = bm === mat ? 'boulder-chunk' : 'boulder-wires'; m.userData.noMerge = true;
     if (grp.position && (grp.position.x || grp.position.y || grp.position.z)) m.position.set(-grp.position.x, -grp.position.y, -grp.position.z);
     m.matrixAutoUpdate = false; m.updateMatrix();
     grp.add(m); tris += buf.tris; meshes++;
-    bufs.set(grp, null);
+    if (bm === mat) bufs.set(grp, null); else wbufs.set(grp, null);
     if (meshes % 12 === 0) await slice();
   }
   mark('flush');
@@ -864,7 +880,7 @@ export async function buildBoulder(THREE, kit = {}) {
         const wood = rgb('#6b5440'); const wire = [0.12, 0.12, 0.13];
         const pts = p.pts;
         for (let k = 0; k < pts.length; k++) {
-          const [x, z, y] = pts[k]; const q = B(x, z);
+          const [x, z, y] = pts[k]; const q = BW(x, z);
           const nb = pts[k + 1] || pts[k - 1]; const dx = nb[0] - x; const dz = nb[1] - z; const l = Math.hypot(dx, dz) || 1;
           const arm = Math.atan2(dx, dz) + Math.PI / 2;
           withFx(q, F.wood, () => { prism(q, x, y - 0.3, z, 0.15, 9.3, 5, wood); boxW(q, x, y + 8.25, z, 0.14, 0.14, 2.3, arm, shade(wood, 0.9)); });

@@ -18,6 +18,10 @@ const CH = 200;
 const RANK_LIFT = { highway: 0.05, arterial: 0.045, ramp: 0.045, street: 0.04, alley: 0.035, dirt: 0.03 };
 const CURB_H = 0.16;
 
+// engine-drawn breakables that are thin and tall: drawn with the see-through material (poles a
+// metre from the chase camera are a black bar across the screen otherwise)
+const THIN = { pole: 1, lamp: 1, signal: 1, sign: 1 };
+
 export function chunkKey(x, z) { return `${Math.floor(x / CH)},${Math.floor(z / CH)}`; }
 
 /** Convex hull of 2D points [[x, z]…] (monotone chain), counter-clockwise seen from above (+y). */
@@ -115,16 +119,21 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
   const mats = {
     vc: makeToon(THREE, U, null, { vertexColors: true }),
     double: makeToon(THREE, U, null, { vertexColors: true, side: THREE.DoubleSide }),
-    vcColor: makeToon(THREE, U, null, { vertexColors: true }), // for instanced meshes with instanceColor
+    // instanced meshes with instanceColor (traffic, parked cars, debris): see-through near the lens
+    // and in front of my car, so a car between the chase camera and me never hides me
+    vcColor: makeToon(THREE, U, null, { vertexColors: true, see: true }),
+    // thin things merged per chunk (poles, lamps, signals, signs, map wires with `see: true`): same
+    // program, so they fade instead of drawing a thick bar across the view when the camera is close
+    see: makeToon(THREE, U, null, { vertexColors: true, see: true }),
   };
-  const allMats = new Set([mats.vc, mats.double, mats.vcColor]);
+  const allMats = new Set([mats.vc, mats.double, mats.vcColor, mats.see]);
   function toon(color, opts = {}) {
     const o = opts || {};
     const fx = o.glow || o.emissive ? 3 : o.windows ? 2 : (o.fx | 0);
-    const key = `${color == null ? 'null' : typeof color === 'object' ? JSON.stringify(cssRGB(color)) : String(color)}|${o.vertexColors ? 1 : 0}|${fx}|${o.side === THREE.DoubleSide || o.side === 'double' ? 2 : 0}|${o.transparent ? o.opacity : 1}|${o.fog === false ? 0 : 1}|${o.outline || 0}`;
+    const key = `${color == null ? 'null' : typeof color === 'object' ? JSON.stringify(cssRGB(color)) : String(color)}|${o.vertexColors ? 1 : 0}|${fx}|${o.side === THREE.DoubleSide || o.side === 'double' ? 2 : 0}|${o.transparent ? o.opacity : 1}|${o.fog === false ? 0 : 1}|${o.outline || 0}|${o.see ? 1 : 0}`;
     let m = toonCache.get(key);
     if (!m) {
-      m = makeToon(THREE, U, color == null ? 0xffffff : color, { vertexColors: !!o.vertexColors, fx, side: o.side === 'double' ? THREE.DoubleSide : o.side, transparent: !!o.transparent, opacity: o.opacity, fog: o.fog, outline: o.outline || 0 });
+      m = makeToon(THREE, U, color == null ? 0xffffff : color, { vertexColors: !!o.vertexColors, fx, side: o.side === 'double' ? THREE.DoubleSide : o.side, transparent: !!o.transparent, opacity: o.opacity, fog: o.fog, outline: o.outline || 0, see: !!o.see });
       toonCache.set(key, m); allMats.add(m);
     }
     return m;
@@ -143,7 +152,7 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
     let c = chunks.get(k);
     if (!c) {
       const g = new THREE.Group(); g.name = 'chunk ' + k; g.matrixAutoUpdate = false;
-      c = { key: k, cx, cz, group: g, b: new Builder(THREE, P.outline), dec: new Decals(), props: [], parked: [], mesh: null, x: (cx + 0.5) * CH, y: 0, z: (cz + 0.5) * CH, r: CH * 0.75, tris: 0 };
+      c = { key: k, cx, cz, group: g, b: new Builder(THREE, P.outline), bt: new Builder(THREE, P.outline), dec: new Decals(), props: [], parked: [], mesh: null, seeMesh: null, x: (cx + 0.5) * CH, y: 0, z: (cz + 0.5) * CH, r: CH * 0.75, tris: 0 };
       chunks.set(k, c); scene.add(g);
     }
     return c;
@@ -386,9 +395,11 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
     }
     if (!s.drawn && s.kind === 'car') c.parked.push({ x: s.x, z: s.z, y: y0, yaw: Math.PI - (s.rot || 0), color: s.color, shape: s.style });
     else if (!s.drawn) {
-      const v0 = c.b.nv;
-      drawProp(c.b, s, y0, P);
-      if (s.breakable) propRec.set(s.i, { c, v0, v1: c.b.nv });
+      const thin = THIN[st] === 1;
+      const b = thin ? c.bt : c.b;
+      const v0 = b.nv;
+      drawProp(b, s, y0, P);
+      if (s.breakable) propRec.set(s.i, { c, v0, v1: b.nv, thin });
     }
     if (decals && (s.y == null || s.y - geo.ground(s.x, s.z) < 0.6)) {
       const d0 = c.dec.nv;
@@ -461,11 +472,11 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
   if (decalMat) allMats.add(decalMat);
   let ci = 0;
   for (const c of chunks.values()) {
-    const it = mergeSteps(THREE, c.group, mats, P.outline, disposeSet, c.b);
+    const it = mergeSteps(THREE, c.group, mats, P.outline, disposeSet, { front: c.b, see: c.bt });
     let res;
     for (;;) { const st = it.next(); if (st.done) { res = st.value; break; } if (performance.now() - sliceT > budget) { await slice(); if (dead()) return null; } }
-    c.mesh = res.front;
-    c.b = null;
+    c.mesh = res.front; c.seeMesh = res.see;
+    c.b = null; c.bt = null;
     if (c.dec.nv && decalMat) {
       const dm = new THREE.Mesh(c.dec.geometry(THREE), decalMat);
       dm.name = 'decals'; dm.matrixAutoUpdate = false; dm.renderOrder = 1; dm.userData.noMerge = true; dm.frustumCulled = false;
@@ -495,7 +506,7 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
   const inUse = new Set(); scene.traverse((o) => { if (o.geometry) inUse.add(o.geometry); });
   for (const g of disposeSet) if (!inUse.has(g)) g.dispose();
   mark('dispose');
-  for (const rec of propRec.values()) rec.mesh = rec.c.mesh;
+  for (const rec of propRec.values()) rec.mesh = rec.thin ? rec.c.seeMesh : rec.c.mesh;
   lights.setLamps(lampList);
   // Memory: once the merged chunk geometry is on the GPU, drop the JS copies of everything the CPU
   // never touches again (normals, colours, fx codes, lane coords, indices) — roughly halves the
@@ -530,7 +541,7 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
     pa.needsUpdate = true;
     const b = new Builder(THREE, P.outline);
     drawProp(b, { ...s, x: 0, z: 0 }, 0, P, 0, 0, s.rot);
-    const m = b.mesh(mats.vc);
+    const m = b.mesh(rec.thin ? mats.see : mats.vc); // a fallen pole lying by the lens fades too
     m.matrixAutoUpdate = true;
     m.layers.enable(2);
     const gy = s.y != null ? s.y : geo.ground(s.x, s.z);
