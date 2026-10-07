@@ -236,45 +236,72 @@ function dress(b, S, shape, o) {
   b.box(0, rear.pts[1][1] + 0.3, rz - 0.035, 0.42, 0.12, 0.02, 0, [0.92, 0.92, 0.86], 0, FX_TRIM);
 }
 
-/** Player car geometry (no wheels: those are instanced). kind: 'runner' | 'cop'. */
-export function buildPlayerCar(THREE, P, kind, ink) {
-  const b = new Builder(THREE, P.outline);
+const GOLD = [0.95, 0.78, 0.3]; const ORANGE = [1, 0.5, 0.08]; const YELLOW = [1, 0.86, 0.25]; const HP_BLUE = [0.1, 0.24, 0.62];
+const RED_LENS = [1, 0.18, 0.2]; const BLUE_LENS = [0.2, 0.42, 1];
+/**
+ * Player car geometry (no wheels: those are instanced). kind: 'runner' | 'cop'. livery (liveries.js):
+ * runner 0 plain ink · 1 racing stripes · 2 rally (dark lower panels) · 3 flames · 4 gold roof;
+ * cop 0 black & white · 1 undercover (matte black, low lightbar) · 2 highway patrol (white, blue
+ * band) · 3 light-up (wide lightbar, grille and deck lenses). Only colours and decals change.
+ */
+export function buildPlayerCar(THREE, P, kind, ink, livery = 0) {
+  const b = new Builder(THREE, P.outline); const L = livery | 0;
   if (kind === 'runner') {
-    const body = ink; const stripe = [0.96, 0.95, 0.92];
+    const body = ink;
+    const stripe = L === 3 ? ORANGE : L === 4 ? GOLD : [0.96, 0.95, 0.92];
+    const dark = [0.1, 0.1, 0.11];
     buildCar(b, SHAPES.runner, body, {
       ol: 0.03,
       extra: (bb, S) => {
         dress(bb, S, 'runner', { chrome: true, mirrorZ: 0.62, mirrorY: 1.06 });
         // racing stripes over hood, roof and deck (follow the top surfaces)
-        const strip = (z0, z1, top) => { for (const sx of [-1, 1]) { const x0 = sx * 0.13; const x1 = sx * 0.37; const n = 6; for (let k = 0; k < n; k++) { const za = lerp(z0, z1, k / n); const zb = lerp(z0, z1, (k + 1) / n); const ya = top(za) + 0.012; const yb = top(zb) + 0.012; const q = sx > 0 ? [[x0, ya, za], [x1, ya, za], [x1, yb, zb], [x0, yb, zb]] : [[x1, ya, za], [x0, ya, za], [x0, yb, zb], [x1, yb, zb]]; bb.poly(q.map((p) => p), stripe, FX_PAINT); } } };
+        const strip = (z0, z1, top, col = stripe) => { for (const sx of [-1, 1]) { const x0 = sx * 0.13; const x1 = sx * 0.37; const n = 6; for (let k = 0; k < n; k++) { const za = lerp(z0, z1, k / n); const zb = lerp(z0, z1, (k + 1) / n); const ya = top(za) + 0.016; const yb = top(zb) + 0.016; const xa = sx > 0 ? x0 : x1; const xb = sx > 0 ? x1 : x0; bb.poly([[xa, ya, za], [xa, yb, zb], [xb, yb, zb], [xb, ya, za]], col, FX_PAINT); } } }; // (wound +z first so the quad faces up)
         const topBody = (z) => { const r = rowAt(SHAPES.runner.body, z); return r[3] + 0.025 - 0.01; };
         const topCab = (z) => { const r = rowAt(SHAPES.runner.cabin, z); return r[4] + 0.02; };
-        strip(0.9, 2.2, topBody); strip(-0.4, 0.0, topCab); strip(-2.2, -1.98, topBody);
-        bb.box(0, 1.03, 1.15, 0.5, 0.12, 0.8, 0, body, 0.02, FX_PAINT);                 // hood scoop
+        if (L >= 1) { strip(0.9, 2.2, topBody); strip(-0.4, 0.0, topCab); strip(-2.2, -1.98, topBody); }
+        if (L === 2) { S.overlay([1, 2, 3, 8, 9, 10], -2.3, 2.3, dark); S.overlay([3, 8], -0.6, 1.6, stripe, FX_PAINT, 0.012); } // rally: dark lower panels, a white side flash
+        if (L === 3) { S.overlay([2, 3, 8, 9], 0.2, 2.35, ORANGE); S.overlay([3, 8], 1.0, 2.35, YELLOW, FX_PAINT, 0.012); S.overlay([2, 9], 1.5, 2.35, YELLOW, FX_PAINT, 0.012); } // flames licking back from the nose
+        if (L === 4) { bb.box(0, topCab(-0.25) + 0.004, -0.25, 1.12, 0.02, 1.25, 0, GOLD, 0, FX_CHROME); S.overlay([3, 8], -2.3, 2.3, GOLD, FX_CHROME, 0.01); } // gold roof + a gold beltline
+        bb.box(0, 1.03, 1.15, 0.5, 0.12, 0.8, 0, L === 2 ? dark : body, 0.02, FX_PAINT);     // hood scoop
         bb.box(0, 1.02, 1.5, 0.42, 0.06, 0.04, 0, TRIM, 0, FX_TRIM);
-        bb.box(0, 1.2, -2.12, 1.86, 0.06, 0.32, 0, TRIM, 0.02, FX_TRIM);                // spoiler
+        bb.box(0, 1.2, -2.12, 1.86, 0.06, 0.32, 0, L === 4 ? GOLD : TRIM, 0.02, L === 4 ? FX_CHROME : FX_TRIM); // spoiler
         for (const sx of [-1, 1]) { bb.box(sx * 0.72, 1.08, -2.1, 0.06, 0.18, 0.12, 0, TRIM, 0, FX_TRIM); bb.add(bb.T.cyl, sx * 0.5, 0.3, -2.36, 0.12, 0.2, 0.12, 0, CHROME, 0, FX_CHROME, null, Math.PI / 2); }
       },
     });
   } else {
     const black = P.copBody; const white = P.copDoor;
-    buildCar(b, SHAPES.cop, black, {
+    const under = L === 1; const hp = L === 2; const lit = L === 3;
+    const paint = hp ? white : under ? [0.1, 0.1, 0.11] : black;
+    buildCar(b, SHAPES.cop, paint, {
       ol: 0.03,
       extra: (bb, S) => {
         dress(bb, S, 'cop', { mirrorZ: 0.85, mirrorY: 1.1 });
-        // white doors + roof (two-tone), gold star badges
-        S.overlay([2, 3, 8, 9], -1.25, 0.95, white);
-        bb.box(0, 1.515, -0.36, 1.22, 0.02, 1.4, 0, white, 0, FX_PAINT); // white roof panel
-        for (const sx of [-1, 1]) bb.box(sx * 1.005, 0.7, -0.2, 0.02, 0.2, 0.22, 0, [0.88, 0.7, 0.2], 0, FX_CHROME);
+        if (hp) { S.overlay([3, 8], -2.3, 1.7, HP_BLUE, FX_PAINT, 0.01); S.overlay([2, 9], -2.3, 1.7, GOLD, FX_PAINT, 0.012); bb.box(0, 1.515, -0.36, 1.22, 0.02, 1.4, 0, HP_BLUE, 0, FX_PAINT); } // highway patrol: a blue band with a gold pinstripe, blue roof
+        else if (!under) { S.overlay([2, 3, 8, 9], -1.25, 0.95, white); bb.box(0, 1.515, -0.36, 1.22, 0.02, 1.4, 0, white, 0, FX_PAINT); } // white doors + roof (two-tone)
+        if (!under) for (const sx of [-1, 1]) bb.box(sx * 1.005, 0.7, -0.2, 0.02, 0.2, 0.22, 0, [0.88, 0.7, 0.2], 0, FX_CHROME); // gold star badges
         // lightbar: housing, red (driver side) and blue lenses, takedown light
-        bb.box(0, 1.56, -0.3, 1.36, 0.08, 0.34, 0, TRIM, 0.02, FX_TRIM);
-        bb.box(-0.36, 1.66, -0.3, 0.6, 0.13, 0.28, 0, [1, 0.18, 0.2], 0.015, FX_SIREN_R);
-        bb.box(0.36, 1.66, -0.3, 0.6, 0.13, 0.28, 0, [0.2, 0.42, 1], 0.015, FX_SIREN_B);
-        bb.box(0, 1.65, -0.3, 0.1, 0.1, 0.26, 0, [0.95, 0.95, 0.9], 0, FX_GLOW);
+        if (under) { // a slim dash / grille set-up: low lenses behind the windscreen base and in the grille
+          bb.box(0, 1.5, 0.05, 0.9, 0.03, 0.12, 0, TRIM, 0, FX_TRIM);
+          bb.box(-0.25, 1.52, 0.05, 0.3, 0.05, 0.1, 0, RED_LENS, 0, FX_SIREN_R); bb.box(0.25, 1.52, 0.05, 0.3, 0.05, 0.1, 0, BLUE_LENS, 0, FX_SIREN_B);
+          bb.box(-0.5, 0.78, 2.42, 0.26, 0.06, 0.04, 0, RED_LENS, 0, FX_SIREN_R); bb.box(0.5, 0.78, 2.42, 0.26, 0.06, 0.04, 0, BLUE_LENS, 0, FX_SIREN_B);
+        } else {
+          const bw = lit ? 1.7 : 1.36;
+          bb.box(0, 1.56, -0.3, bw, 0.08, 0.34, 0, TRIM, 0.02, FX_TRIM);
+          if (lit) { // four lenses, alternating, plus end caps
+            bb.box(-0.6, 1.66, -0.3, 0.42, 0.13, 0.28, 0, RED_LENS, 0.015, FX_SIREN_R); bb.box(-0.18, 1.66, -0.3, 0.3, 0.13, 0.28, 0, BLUE_LENS, 0.015, FX_SIREN_B);
+            bb.box(0.18, 1.66, -0.3, 0.3, 0.13, 0.28, 0, RED_LENS, 0.015, FX_SIREN_R); bb.box(0.6, 1.66, -0.3, 0.42, 0.13, 0.28, 0, BLUE_LENS, 0.015, FX_SIREN_B);
+            bb.box(-0.5, 0.78, 2.42, 0.26, 0.06, 0.04, 0, RED_LENS, 0, FX_SIREN_R); bb.box(0.5, 0.78, 2.42, 0.26, 0.06, 0.04, 0, BLUE_LENS, 0, FX_SIREN_B); // grille
+            bb.box(-0.5, 1.12, -2.3, 0.3, 0.05, 0.04, 0, RED_LENS, 0, FX_SIREN_R); bb.box(0.5, 1.12, -2.3, 0.3, 0.05, 0.04, 0, BLUE_LENS, 0, FX_SIREN_B); // rear deck
+          } else {
+            bb.box(-0.36, 1.66, -0.3, 0.6, 0.13, 0.28, 0, RED_LENS, 0.015, FX_SIREN_R);
+            bb.box(0.36, 1.66, -0.3, 0.6, 0.13, 0.28, 0, BLUE_LENS, 0.015, FX_SIREN_B);
+          }
+          bb.box(0, 1.65, -0.3, 0.1, 0.1, 0.26, 0, [0.95, 0.95, 0.9], 0, FX_GLOW);
+        }
         // push bar + spotlight + antenna
         bb.box(0, 0.62, 2.44, 1.2, 0.1, 0.08, 0, TRIM, 0.02, FX_TRIM); bb.box(0, 0.42, 2.44, 1.2, 0.1, 0.08, 0, TRIM, 0, FX_TRIM);
         for (const sx of [-0.5, 0.5]) bb.box(sx, 0.55, 2.4, 0.08, 0.5, 0.12, 0, TRIM, 0, FX_TRIM);
-        bb.add(bb.T.cyl, -0.98, 1.12, 0.62, 0.12, 0.16, 0.12, 0, CHROME, 0, FX_CHROME, null, Math.PI / 2);
+        if (!under) bb.add(bb.T.cyl, -0.98, 1.12, 0.62, 0.12, 0.16, 0.12, 0, CHROME, 0, FX_CHROME, null, Math.PI / 2);
         bb.box(0.3, 1.75, -1.55, 0.02, 0.5, 0.02, 0, TRIM, 0, FX_TRIM);
       },
     });

@@ -13,21 +13,21 @@ const WHEEL_R = 0.37;
 const sstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
 /** The player car body geometry (model space: +z forward, y up, origin on the ground at the centre). */
-export function buildCarBody(THREE, P, kind, ink) { return buildPlayerCar(THREE, P, kind, ink); }
+export function buildCarBody(THREE, P, kind, ink, livery = 0) { return buildPlayerCar(THREE, P, kind, ink, livery); }
 export function buildWheel(THREE, P) { return buildPlayerWheel(THREE, P); }
 
 /** A player car. pose() places it; update(c, dt) drives lights, lean, dirt and damage. */
-export function createCarView(THREE, P, U, kind, ink, mats) {
+export function createCarView(THREE, P, U, kind, ink, mats, livery = 0) {
   const group = new THREE.Group();
   const tilt = new THREE.Group(); group.add(tilt);
   const mat = makeToon(THREE, U, null, { vertexColors: true }); // own uCar / uFlash, same program
-  const geo = buildCarBody(THREE, P, kind, ink);
+  let geo = buildCarBody(THREE, P, kind, ink, livery);
   const body = new THREE.Mesh(geo, mat);
   body.frustumCulled = false;
   tilt.add(body);
   castShadow(group);
   const uCar = mat.userData.gtw.uCar.value; const uFlash = mat.userData.gtw.uFlash.value;
-  const pa = geo.getAttribute('position'); const orig = pa.array.slice();
+  let pa = geo.getAttribute('position'); let orig = pa.array.slice(); let curLivery = livery | 0;
   const flash = { t: 0, on: false, ph: -1 };
   const st = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0, vp: 0, vr: 0, pvx: 0, pvz: 0, hp: 100, dirt: 0, dmg: 0, init: false, given: false };
   const L = () => mats && mats.lights;
@@ -145,6 +145,14 @@ export function createCarView(THREE, P, U, kind, ink, mats) {
     },
     /** Undo dents, dirt and scratches (new round). */
     reset() { pa.array.set(orig); pa.needsUpdate = true; st.dirt = 0; st.dmg = 0; st.hp = 100; uCar.set(0, 0, 0, 0); },
+    get livery() { return curLivery; },
+    /** Swap the paint job (liveries.js): a rebuilt body, same material and draw call. Dents reset. */
+    setLivery(k) {
+      k |= 0; if (k === curLivery) return;
+      const g = buildCarBody(THREE, P, kind, ink, k);
+      geo.dispose(); geo = g; body.geometry = g; pa = g.getAttribute('position'); orig = pa.array.slice(); curLivery = k;
+      st.dirt = 0; st.dmg = 0; uCar.set(0, 0, 0, 0);
+    },
     dispose() { geo.dispose(); mat.dispose(); },
   };
   return api;

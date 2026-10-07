@@ -1,7 +1,7 @@
 // Overlay cards for Blend & Seek: pure HTML builders (state in, markup out).
 import { esc, fmtTime } from './util.js';
 import { MAPS } from './maps.js';
-import { SIZES, OPTIONS, PRESET_LABEL, PRESET_SUB, fmtRule, timeScale, effSeconds } from './rules.js';
+import { SIZES, OPTIONS, PRESET_LABEL, PRESET_SUB, fmtRule, timeScale, hideScale, effSeconds } from './rules.js';
 
 const nameSpan = (api, w) => `<b class="chm-name-${w}">${esc(api.name(w))}</b>`;
 
@@ -97,7 +97,7 @@ function presetSeg(rules, canEdit) {
   return `<div class="chm-presets" role="radiogroup" aria-label="Preset">${['easy', 'classic', 'hard', 'custom'].map((id) => `<button class="${cur === id ? 'on' : ''} ${id === 'custom' ? 'custom' : ''}" ${id === 'custom' ? 'tabindex="-1" data-lobby="custom"' : `data-lobby="preset" data-v="${id}"`} role="radio" aria-checked="${cur === id}" ${dis}><b>${PRESET_LABEL[id]}</b><small>${PRESET_SUB[id]}</small></button>`).join('')}</div>`;
 }
 
-export function lobbyCard(api, { canEdit, local, setup, waitingFor, sheet }) {
+export function lobbyCard(api, { canEdit, local, setup, waitingFor, sheet, bests = '', wardrobe = '', music = 'on' }) {
   const mode = setup.mode; const first = setup.first; const rules = setup.rules;
   const dis = canEdit ? '' : 'data-ro="1"';
   const card = `<div class="chm-over chm-lobby bottom${sheet ? ' sheet-open' : ''}"><div class="chm-card chm-sticker" ${dis}>
@@ -111,16 +111,19 @@ export function lobbyCard(api, { canEdit, local, setup, waitingFor, sheet }) {
     ${presetSeg(rules, canEdit)}
     </div><div class="chm-col">
     ${mapCard(api, setup, canEdit)}
+    ${bests}
     <div class="chm-lrow"><h3>Chameleon size</h3>${sizeSeg(rules, canEdit)}</div>
     ${mode === 'hs' ? `<div class="chm-lrow chm-firstrow"><h3>Hides first</h3><div class="chm-chips">${['a', 'b'].map((w) => `<button class="chm-chip p${w} ${first === w ? 'on' : ''}" data-lobby="first" data-v="${w}"><i></i>${esc(api.name(w))}</button>`).join('')}</div></div>` : ''}
     <div class="chm-lbtns">
       <button class="chm-more" data-act="settings" aria-haspopup="dialog">${GEAR}<span>${canEdit ? 'Settings' : 'See settings'}</span></button>
+      <button class="chm-more chm-wardbtn" data-act="wardrobe" aria-haspopup="dialog" aria-label="Wardrobe">${HANGER}</button>
       ${canEdit ? '<button class="chm-go me" data-act="start">Start</button>' : `<p class="chm-wait">${nameSpan(api, waitingFor)} is setting up…</p>`}
     </div>
   </div></div></div>`;
-  return card + (sheet ? settingsSheet(api, { canEdit, local, setup, waitingFor }) : '');
+  return card + (sheet ? settingsSheet(api, { canEdit, local, setup, waitingFor, music }) : '') + (wardrobe || '');
 }
 
+const HANGER = '<svg class="chm-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4a2 2 0 00-2 2c0 1.2 1 1.6 2 2.4v1.6"/><path d="M12 10l8.5 6.2a1 1 0 01-.6 1.8H4.1a1 1 0 01-.6-1.8z"/></svg>';
 const GEAR = '<svg class="chm-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg>';
 
 function stepper(rules, k, canEdit) {
@@ -134,7 +137,7 @@ function seg(rules, k, items, canEdit) {
 }
 /** "1:30 on CU Boulder" when the map stretches the clock. */
 function effHint(setup, k) {
-  const m = MAPS.find((x) => x.id === setup.map); const sc = timeScale(m);
+  const m = MAPS.find((x) => x.id === setup.map); const sc = k === 'seek' ? timeScale(m) : hideScale(m);
   if (sc === 1 || !setup.rules[k]) return '';
   return `<span data-eff="${k}">${esc(fmtRule(k, effSeconds(setup.rules[k], sc)))} on ${esc(m.name)} (big map ×${sc})</span>`;
 }
@@ -148,8 +151,9 @@ function timeRow(label, hint, rules, k, canEdit, off = false) {
 const row = (label, hint, control) => `<div class="chm-set"><span><b>${label}</b>${hint ? `<small>${hint}</small>` : ''}</span>${control}</div>`;
 
 /** The full settings sheet: host edits, the guest watches it change live. */
-export function settingsSheet(api, { canEdit, local, setup, waitingFor }) {
+export function settingsSheet(api, { canEdit, local, setup, waitingFor, music = 'on' }) {
   const r = setup.rules; const hs = setup.mode === 'hs';
+  const musicSeg = `<div class="chm-seg2" role="radiogroup">${[['on', 'On'], ['hunt', 'Hunt only'], ['off', 'Off']].map(([v, label]) => `<button class="${music === v ? 'on' : ''}" data-music="${v}" role="radio" aria-checked="${music === v}">${label}</button>`).join('')}</div>`;
   return `<div class="chm-sheetwrap" role="dialog" aria-label="Game settings"><div class="chm-sheet chm-sticker" data-scroll>
     <div class="chm-sheethead"><h2>Game settings</h2><button class="chm-done" data-act="settings">Done</button></div>
     ${canEdit ? '' : `<p class="chm-wait">${nameSpan(api, waitingFor)} is choosing. You’ll see every change here.</p>`}
@@ -166,6 +170,7 @@ export function settingsSheet(api, { canEdit, local, setup, waitingFor }) {
     ${row('Scan cooldown', '', stepper(r, 'scanCd', canEdit))}
     ${row('Escapes', 'Scurries or tongue-zips while hunted', stepper(r, 'escapes', canEdit))}
     ${row('Seeker speed', '', seg(r, 'seekSpeed', [['slow', 'Slow'], ['normal', 'Normal'], ['fast', 'Fast']], canEdit))}
+    ${hs ? row('Seeker scores', r.seekScore === 'off' ? 'Only the hider scores (1 pt per second hidden)' : r.seekScore === 'time' ? '½ pt per second left on the clock when they tag' : '½ pt per second left, +10 per unused pellet', seg(r, 'seekScore', [['off', 'Off'], ['time', 'Time left'], ['full', 'Time + pellets']], canEdit)) : ''}
     </div>
     <h3>Timing</h3>
     <div class="chm-sets">
@@ -182,9 +187,12 @@ export function settingsSheet(api, { canEdit, local, setup, waitingFor }) {
     ${hs ? row('Seeker can climb', r.climb ? 'Stick, crawl, zip, hang and squeeze too' : 'Needs walls &amp; ceilings', seg(r, 'seekClimb', [[true, 'On'], [false, 'Off']], canEdit && r.climb)) : ''}
     ${hs && r.climb && r.seekClimb ? row('Seeker climb speed', 'On walls and ceilings', seg(r, 'climbSpeed', [['slow', 'Slow'], ['normal', 'Normal'], ['fast', 'Fast']], canEdit)) : ''}
     ${row('Stamp tool', 'Copy the surface onto your skin', seg(r, 'stamp', [[true, 'Allowed'], [false, 'Off']], canEdit))}
+    ${hs ? row('Blend bonus', 'Your paint job is scored against the surface behind you at the lock', seg(r, 'blendBonus', [[0, 'Off'], [10, '+10 at 80 %'], [20, '+20 at 90 %']], canEdit)) : ''}
     ${hs ? row('Paint while hunted', r.huntPaint === 'tell' ? 'Fresh paint glints for a seeker close by' : r.huntPaint === 'on' ? 'Repaint any time, silently' : 'Paint locks when the hunt starts', seg(r, 'huntPaint', [['off', 'Off'], ['on', 'On'], ['tell', 'Shows']], canEdit)) : ''}
     ${row('Eye-blink glints', 'Blinks sparkle for the seeker', seg(r, 'blink', [['off', 'Off'], ['on', 'On'], ['strong', 'Strong']], canEdit))}
     ${row('Heartbeat hint', 'Hider feels the seeker close by', seg(r, 'heartbeat', [[true, 'On'], [false, 'Off']], canEdit))}
+    ${row('In-their-sights cue', 'Hider feels the seeker staring right at them', seg(r, 'sights', [[true, 'On'], [false, 'Off']], canEdit))}
+    ${row('Music', 'This phone only: a soft pad while hiding, a pulse that quickens in the hunt', musicSeg)}
     ${row('Seeker minimap', 'On the bigger maps', seg(r, 'minimap', [[true, 'On'], [false, 'Off']], canEdit))}
     ${hs ? row('Hides first', '', `<div class="chm-chips">${['a', 'b'].map((w) => `<button class="chm-chip p${w} ${setup.first === w ? 'on' : ''}" data-lobby="first" data-v="${w}" ${canEdit ? '' : 'disabled'}><i></i>${esc(api.name(w))}</button>`).join('')}</div>`) : ''}
     </div>
@@ -205,7 +213,7 @@ export function tipsHtml(mouse) {
     <button class="chm-go" data-act="tips-ok">Got it</button>`;
 }
 
-const SURF_HEAD = {
+export const SURF_HEAD = {
   ceiling: (n) => `${n} was on the CEILING`,
   under: (n) => `${n} was UPSIDE DOWN under there`,
   hang: (n) => `${n} was HANGING right under there`,
@@ -216,8 +224,7 @@ const SURF_HEAD = {
   squeeze: (n) => `${n} SQUEEZED into a gap`,
   corner: (n) => `${n} was wedged in the CORNER`,
 };
-const SURF_SHORT = { ceiling: 'on the ceiling', under: 'upside down', hang: 'hanging', hangHigh: 'hanging from the ceiling', wall: 'up the wall', flat: 'on the wall', perch: 'perched', squeeze: 'squeezed in a gap', corner: 'in the corner' };
-export { SURF_HEAD, SURF_SHORT };
+export const SURF_SHORT = { ceiling: 'on the ceiling', under: 'upside down', hang: 'hanging', hangHigh: 'hanging from the ceiling', wall: 'up the wall', flat: 'on the wall', perch: 'perched', squeeze: 'squeezed in a gap', corner: 'in the corner' };
 
 export function titleCard(api, { round, rounds, mode, hider, youHide, youSeek, map }) {
   const m = MAPS.find((x) => x.id === map);
@@ -233,11 +240,20 @@ export function titleCard(api, { round, rounds, mode, hider, youHide, youSeek, m
   </div></div>`;
 }
 
-export function blindCard(api, { hider, ms, pellets, mode, scanCd = 30, scans = 0, untimed = false, climb = false }) {
+export const CALLS = [['floor', 'Floor'], ['furniture', 'Furniture'], ['wall', 'Wall'], ['ceiling', 'Ceiling'], ['hang', 'Hanging']];
+/** The seeker's wager chips: call where they're hiding before the hunt (+wager on a right call). */
+export function callChips({ wager, call, climbs = 1, locked = false }) {
+  if (!wager) return '';
+  const list = CALLS.filter(([k]) => k !== 'hang' || climbs >= 2);
+  return `<div class="chm-call"><h3>Call the hide · +${wager}</h3><div class="chm-chips">${list.map(([k, label]) => `<button class="chm-chip ${call === k ? 'on' : ''}" data-call="${k}" ${locked ? 'disabled' : ''}>${label}</button>`).join('')}</div></div>`;
+}
+export function blindCard(api, { hider, ms, pellets, mode, scanCd = 30, scans = 0, untimed = false, climb = false, wager = 0, call = null, climbs = 1, ticker = '' }) {
   return `<div class="chm-over chm-blind solid"><div class="chm-card chm-sticker">
     <div class="chm-kicker">Eyes shut</div>
     <div class="chm-big" data-live="blind-time">${fmtTime(ms)}</div>
     <div class="chm-drops" aria-hidden="true"><i></i><i></i><i></i></div>
+    <p class="chm-ticker" data-live="ticker">${ticker || `${esc(api.name(hider))} is looking for a spot…`}</p>
+    ${callChips({ wager, call, climbs })}
     <p>${nameSpan(api, hider)} is painting themselves to match the room.${untimed ? ' No clock this time: the hunt starts when they tap <b>Ready</b>.' : ''}</p>
     <p>You get <b>${pellets} paint pellets</b> and ${scans ? `<b>${scans} chirp scan${scans === 1 ? '' : 's'}</b>` : 'a <b>chirp scan</b>'} (every ${scanCd} s) that makes their eyes glint — even on the ceiling. Look up!${climb ? ' You can climb too: <b>Stick</b> to walls, crawl onto ceilings, <b>Zip</b> up.' : ''}${mode === 'hs' ? ' Every second they survive scores for them.' : ''}</p>
   </div></div>`;
@@ -253,7 +269,7 @@ export function headCard(api, { hider, ms }) {
   </div></div>`;
 }
 
-export function curtainCard(api, { kind, who }) {
+export function curtainCard(api, { kind, who, wager = 0, call = null, climbs = 1 }) {
   const other = api.other(who);
   const kicker = kind === 'hide' ? `${esc(api.name(other))}, look away` : 'Hider, hand it over';
   const body = kind === 'hide'
@@ -264,18 +280,26 @@ export function curtainCard(api, { kind, who }) {
     <div class="chm-kicker">${kicker}</div>
     <h2 class="chm-name-${who}">${esc(api.name(who))}</h2>
     <p>${body}</p>
+    ${kind === 'seek' ? callChips({ wager, call, climbs }) : ''}
     <button class="chm-go" data-act="curtain">${btn}</button>
   </div></div>`;
 }
 
-export function recapCard(api, { rec, mode, scores, round, rounds, isLast, canNext, stats }) {
+export const EMOTES = [['lol', '😂', 'LOL'], ['how', '😤', 'HOW'], ['sneaky', '👀', 'Sneaky'], ['love', '❤️', ''], ['again', '🔁', 'Again!'], ['paint', '🎨', 'Nice paint']];
+export function emoteRow() {
+  return `<div class="chm-emotes" role="group" aria-label="React">${EMOTES.map(([k, e, l]) => `<button class="chm-emote" data-emote="${k}" aria-label="${esc(l || k)}"><span>${e}</span>${l ? `<em>${esc(l)}</em>` : ''}</button>`).join('')}</div>`;
+}
+/** Grade word for a blend score (camo %). */
+export const blendWord = (b) => (b >= 90 ? 'Ghost' : b >= 75 ? 'Sneaky' : b >= 50 ? 'Spotted' : 'Sore thumb');
+export function recapCard(api, { rec, mode, scores, round, rounds, isLast, canNext, stats, lines = [], next = null, autoMs = 0, emotes = true }) {
   const hider = rec.hider;
   let head; let sub;
   if (mode === 'db') {
     if (rec.winner) { head = `${esc(api.name(rec.winner))} wins the round`; sub = `${esc(api.name(api.other(rec.winner)))} was RIGHT there.`; }
     else { head = 'Nobody found anybody'; sub = 'A void round. Sneaky.'; }
-  } else if (rec.found) { head = rec.surf && SURF_HEAD[rec.surf] ? SURF_HEAD[rec.surf](esc(api.name(hider))) : `${esc(api.name(hider))} was RIGHT there`; sub = `Found after ${fmtTime(rec.ms)} · +${rec.points} for ${esc(api.name(hider))}`; }
-  else { head = `${esc(api.name(hider))} survived!`; sub = `+${rec.points} points${rec.surf && SURF_SHORT[rec.surf] ? ` · ${SURF_SHORT[rec.surf]} the whole time` : ''}${rec.outOfPellets ? ' · the seeker ran dry' : ''}`; }
+  } else if (rec.found) { head = rec.surf && SURF_HEAD[rec.surf] ? SURF_HEAD[rec.surf](esc(api.name(hider))) : `${esc(api.name(hider))} was RIGHT there`; sub = `Found after ${fmtTime(rec.ms)} · +${rec.points} for ${esc(api.name(hider))}${rec.seekPoints ? ` · +${rec.seekPoints} for ${esc(api.name(rec.seeker))}${rec.spare ? ` (${rec.spare} pellet${rec.spare === 1 ? '' : 's'} spare)` : ''}` : ''}`; }
+  else { head = `${esc(api.name(hider))} survived!`; sub = `+${rec.points} points${rec.surf && SURF_SHORT[rec.surf] ? ` · ${SURF_SHORT[rec.surf]} the whole time` : ''}${rec.outOfPellets ? ` · the seeker ran dry at ${fmtTime(rec.ms)}` : ''}`; }
+  if (mode !== 'db' && rec.blend != null && rec.blend >= 0) sub += ` · <b data-blend="${rec.blend}">Blend ${rec.blend}%</b> ${blendWord(rec.blend)}${rec.blendPts ? ` (+${rec.blendPts})` : ''}`;
   return `<div class="chm-over chm-recap bottom"><div class="chm-card chm-sticker">
     <div class="chm-kicker">Round ${round} of ${rounds}</div>
     <h2>${head}</h2>
@@ -285,9 +309,11 @@ export function recapCard(api, { rec, mode, scores, round, rounds, isLast, canNe
       <div><b>${stats.passes}</b><span>Walk-pasts</span></div>
       <div><b>${stats.used}/${stats.max}</b><span>Pellets</span></div>
     </div>
+    ${lines.length ? `<p class="chm-lines">${lines.map((l) => `<span>${l}</span>`).join('')}</p>` : ''}
     <div class="chm-tally"><span><i style="background:var(--p-a)"></i>${esc(api.name('a'))} ${scores.a}</span><span><i style="background:var(--p-b)"></i>${esc(api.name('b'))} ${scores.b}</span></div>
-    ${canNext ? `<button class="chm-go me" data-act="next">${isLast ? 'See who won' : 'Next round'}</button>` : '<p class="chm-wait">Next round starts in a moment…</p>'}
-    <p style="font-size:.75rem" data-live="recap-time"></p>
+    ${emotes ? emoteRow() : ''}
+    ${next ? `<p class="chm-nextline">Next: ${nameSpan(api, next.hider)} hides · ${nameSpan(api, api.other(next.hider))} seeks · ${esc(next.map)}</p>` : ''}
+    ${canNext ? `<button class="chm-go me chm-ring" data-act="next" style="--k:1">${isLast ? 'See who won' : 'Next round'}<small data-live="recap-time">${autoMs ? Math.ceil(autoMs / 1000) : ''}</small></button>` : '<p class="chm-wait">Next round starts in a moment…</p>'}
   </div></div>`;
 }
 
@@ -309,5 +335,24 @@ export function ctxCard() {
     <h2>Tap to resume</h2>
     <p>The graphics needed a quick reset.</p>
     <button class="chm-go" data-act="ctxresume">Resume</button>
+  </div></div>`;
+}
+
+/** The match's final card (before the hub's end card): a round timeline, best hide / fastest find,
+ *  record stickers and a Continue button; either player's tap (or 12 s) hands over to the hub. */
+export function finalCard(api, { winner, a, b, mode, story, records = [], unlocks = [], firstNext = null }) {
+  const head = mode === 'db' ? (winner ? `${esc(api.name(winner))} wins ${a}–${b}` : 'Perfectly matched') : winner ? `${esc(api.name(winner))} blends best` : 'Perfectly matched';
+  const sub = mode === 'db' ? 'Rounds won' : `${esc(api.name('a'))} ${a} · ${b} ${esc(api.name('b'))}`;
+  const recs = records.map((r) => `<span>${esc(r.text)}</span>`).concat(unlocks.map((u) => `<span>Unlocked · ${esc(u)}</span>`));
+  return `<div class="chm-over chm-final bottom"><div class="chm-card chm-sticker">
+    <div class="chm-kicker">Final</div>
+    <h2 class="${winner ? `chm-name-${winner}` : ''}">${head}</h2>
+    <p>${sub}</p>
+    ${story.bars ? `<div class="chm-tl">${story.bars}</div>` : ''}
+    ${story.lines.length ? `<div class="chm-story">${story.lines.join('')}</div>` : ''}
+    ${recs.length ? `<div class="chm-recs">${recs.join('')}</div>` : ''}
+    ${emoteRow()}
+    ${firstNext ? `<p class="chm-nextline">Rematch: ${nameSpan(api, firstNext)} hides first</p>` : ''}
+    <button class="chm-go me" data-act="finish">See the board</button>
   </div></div>`;
 }

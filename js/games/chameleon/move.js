@@ -11,6 +11,8 @@ export function mkBody() {
     yaw: 0, pose: 'stand', wallN: null, wa: 0, lookYaw: 0, lookPitch: 0, speed: 0, vis: 1,
     at: false, nx: 0, ny: 1, nz: 0, fx: 0, fy: 0, fz: 1, box: null, sq: false, kx: 0, kz: 0, lockY: false,
     cnx: 0, cnz: 0, pushT: 0, zip: null, stillT: 0,
+    // walking feel: the smoothed (accelerated) velocity, last grounded / jumped times, held jump
+    svx: 0, svz: 0, wasMoving: false, groundT: -1e9, jumpT: -1e9, jumpHeld: false,
   };
 }
 
@@ -24,6 +26,7 @@ export function sizeBody(b, s) {
 export function resetBody(b) {
   b.at = false; b.nx = 0; b.ny = 1; b.nz = 0; b.box = null; b.sq = false; b.kx = 0; b.kz = 0; b.lockY = false; b.cnx = 0; b.cnz = 0; b.pushT = 0; b.zip = null; b.vy = 0;
   b.fx = Math.sin(b.yaw); b.fy = 0; b.fz = Math.cos(b.yaw); b.wallN = null; b.stillT = 0;
+  b.svx = 0; b.svz = 0; b.wasMoving = false; b.jumpHeld = false;
 }
 
 /** Heading yaw of a body (for first-person views and legacy fields). */
@@ -72,6 +75,47 @@ export function detachBody(world, b, push = 0.6, lift = 0) {
   b.nx = 0; b.ny = 1; b.nz = 0;
   b.yaw = yaw; b.fx = Math.sin(yaw); b.fy = 0; b.fz = Math.cos(yaw);
   world.pushOut(b);
+}
+
+/**
+ * Walking feel. The stick gives a target velocity (tx,tz); the body's smoothed velocity (svx,svz)
+ * accelerates toward it at ACCEL.ground (≈0.14 s to full speed), brakes at ACCEL.brake (≈0.1 s to
+ * a stop) and drifts at ACCEL.air mid-jump. Returns a code for the feel layer: 1 = just stopped
+ * (settle squash), 2 = hard reversal at speed (dust puff), else 0. A dash (scurry) is instant.
+ */
+export const ACCEL = { ground: 22, brake: 30, air: 8 };
+export function accelStep(b, tx, tz, moving, dt, dashing = false) {
+  let ev = 0;
+  if (dashing) { b.svx = tx; b.svz = tz; b.wasMoving = true; return 0; }
+  const acc = !b.onGround ? ACCEL.air : moving ? ACCEL.ground : ACCEL.brake;
+  const ddx = tx - b.svx; const ddz = tz - b.svz; const dd = Math.hypot(ddx, ddz);
+  const mx = acc * dt;
+  const cur = Math.hypot(b.svx, b.svz);
+  if (moving && b.onGround && cur > 1.8 && b.svx * tx + b.svz * tz < -0.5 * cur * Math.hypot(tx, tz)) ev = 2;
+  if (dd > mx) { b.svx += (ddx / dd) * mx; b.svz += (ddz / dd) * mx; } else { b.svx = tx; b.svz = tz; }
+  if (!moving && b.onGround && dd <= mx && b.wasMoving && cur > 0.4) ev = 1;
+  b.wasMoving = moving;
+  return ev;
+}
+
+/**
+ * Jump feel: tap buffer (a tap up to 120 ms before landing still jumps), coyote time (a tap up to
+ * 100 ms after walking off a ledge, never after a jump) and a short hop when a held key is let go
+ * early. jumpOnGround(): should world.step jump this frame? coyoteJump(): launch in mid-air now?
+ */
+export const JUMP = { buffer: 0.12, coyote: 0.1, shortV: 2.8 };
+export function coyoteJump(b, want, tSec) {
+  if (!want || b.onGround || b.sq || b.at || b.vy > 0.5) return false;
+  if (!(tSec - b.groundT < JUMP.coyote) || !(b.groundT > b.jumpT)) return false;
+  b.vy = b.jumpV; b.onGround = false; b.jumpT = tSec;
+  return true;
+}
+/** Release a held jump early → short hop. Returns true when it clipped the jump. */
+export function shortHop(b, held) {
+  if (!b.jumpHeld || held) return false;
+  b.jumpHeld = false;
+  if (b.vy > JUMP.shortV && !b.at) { b.vy = JUMP.shortV; return true; }
+  return false;
 }
 
 /** Free-mode step with momentum (kx,kz) that decays (fast on the ground, slowly in the air). */

@@ -98,6 +98,7 @@ export function createGeo(map) {
     roads.push({
       idx: roads.length, src: ri, name: r.name || '', kind, rank: KIND_RANK[kind], width, hw: width / 2, closed, bridge: !!r.bridge,
       n, x, z, cum, len: cum[n - 1], traffic: r.traffic !== false && kind !== 'ramp', oneway: !!r.oneway,
+      cover: !!r.cover, // a covered road (tunnel, underpass, a street under a deck): the runner on it counts as out of sight
       sidewalk: Number.isFinite(r.sidewalk) ? Math.max(0, Math.min(8, r.sidewalk)) : (Number.isFinite(map.sidewalk) ? Math.max(0, Math.min(8, map.sidewalk)) : 0),
       lanes: r.lanes > 0 ? Math.min(3, r.lanes | 0) : (kind === 'highway' ? 2 : kind === 'arterial' && width >= 14 ? 2 : 1),
       deck: null, // bridges: { h0, h1, clear }
@@ -130,6 +131,7 @@ export function createGeo(map) {
   function nearestRoad(x, z, out, maxD = 30, filter = null) {
     out.road = -1; out.d = Infinity;
     const rc = Math.ceil(maxD / CELL);
+    let bestD2 = Infinity;
     const cx0 = Math.floor((x - gx0) / CELL); const cz0 = Math.floor((z - gz0) / CELL);
     for (let cz = cz0 - rc; cz <= cz0 + rc; cz++) {
       if (cz < 0 || cz >= GH) continue;
@@ -143,8 +145,9 @@ export function createGeo(map) {
           const dx = bx - ax; const dz = bz - az; const L2 = dx * dx + dz * dz || 1;
           let t = ((x - ax) * dx + (z - az) * dz) / L2; t = t < 0 ? 0 : t > 1 ? 1 : t;
           const px = ax + dx * t; const pz = az + dz * t;
-          const d = Math.hypot(x - px, z - pz);
-          if (d < out.d) {
+          const ex = x - px; const ez = z - pz; const d2 = ex * ex + ez * ez; // (sqrt of squares: Math.hypot is 10× slower in V8)
+          if (d2 < bestD2) {
+            bestD2 = d2; const d = Math.sqrt(d2);
             const L = Math.sqrt(L2);
             out.d = d; out.road = r.idx; out.i = i; out.t = t; out.px = px; out.pz = pz;
             out.tx = dx / L; out.tz = dz / L; out.s = r.cum[i] + L * t;
@@ -154,6 +157,26 @@ export function createGeo(map) {
       }
     }
     return out.d;
+  }
+  /** Road hint: is (x, z) still within `margin` of road `ri` near segment `i` (that segment and its
+   *  two neighbours)? Fills out like nearestRoad and returns true, else false (the caller then runs
+   *  the grid search). Cars stay on one segment for 5–10 steps, so this answers most queries. */
+  function roadHint(x, z, out, ri, i, margin) {
+    const r = roads[ri]; if (!r) return false;
+    let bestD2 = Infinity; let bi = -1; let bt = 0; let bpx = 0; let bpz = 0;
+    for (let k = Math.max(0, i - 1); k <= Math.min(r.n - 2, i + 1); k++) {
+      const ax = r.x[k]; const az = r.z[k]; const dx = r.x[k + 1] - ax; const dz = r.z[k + 1] - az; const L2 = dx * dx + dz * dz || 1;
+      let t = ((x - ax) * dx + (z - az) * dz) / L2; t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const px = ax + dx * t; const pz = az + dz * t; const ex = x - px; const ez = z - pz; const d2 = ex * ex + ez * ez;
+      if (d2 < bestD2) { bestD2 = d2; bi = k; bt = t; bpx = px; bpz = pz; }
+    }
+    if (bi < 0 || bestD2 > margin * margin) return false;
+    // interior of the window only: at its ends the next segment may be nearer (fall back)
+    if ((bt <= 0 && bi > 0 && bi === Math.max(0, i - 1)) || (bt >= 1 && bi < r.n - 2 && bi === Math.min(r.n - 2, i + 1))) return false;
+    const ax = r.x[bi]; const az = r.z[bi]; const dx = r.x[bi + 1] - ax; const dz = r.z[bi + 1] - az; const L = Math.sqrt(dx * dx + dz * dz) || 1;
+    out.d = Math.sqrt(bestD2); out.road = ri; out.i = bi; out.t = bt; out.px = bpx; out.pz = bpz; out.tx = dx / L; out.tz = dz / L; out.s = r.cum[bi] + L * bt;
+    out.side = (x - bpx) * -out.tz + (z - bpz) * out.tx;
+    return true;
   }
 
   /** Position + tangent at arc length s on road r (wraps closed roads, clamps open ones). */
@@ -202,8 +225,14 @@ export function createGeo(map) {
   const nq = { road: -1 };
   /** Ground-level surface at (x, z): 'road' | 'lot' | 'grass' | 'dirt' | 'sand' | 'water'.
    *  Bridge decks are not ground (the at-grade road below passes under). */
-  function surfaceAt(x, z) {
-    nearestRoad(x, z, nq, 22, (r) => !r.bridge);
+  const notBridgeF = (r) => !r.bridge;
+  /** hint: an object { road, i } the caller keeps between calls (a car's last road segment): when
+   *  the point is still on that road's asphalt the grid search is skipped. */
+  function surfaceAt(x, z, hint) {
+    const hr = hint && hint.road >= 0 ? roads[hint.road] : null; // (a car moved to another map carries a stale hint)
+    if (hr && roadHint(x, z, nq, hr.idx, hint.i, hr.hw + 0.3)) { hint.i = nq.i; return hr.kind === 'dirt' ? 'dirt' : 'road'; }
+    nearestRoad(x, z, nq, 22, notBridgeF);
+    if (hint) { hint.road = nq.road >= 0 && nq.d <= roads[nq.road].hw + 0.3 ? nq.road : -1; hint.i = nq.i; }
     if (nq.road >= 0) {
       const r = roads[nq.road];
       if (nq.d <= r.hw + 0.3) return r.kind === 'dirt' ? 'dirt' : 'road';
@@ -263,7 +292,7 @@ export function createGeo(map) {
   /** Segment vs solid boxes: the smallest t in [0, 1] where (x0,z0)→(x1,z1) enters a solid that
    *  blocks the view (buildings, walls, rocks taller than minH), else 1. */
   function segBlocked(x0, z0, x1, z1, minH = 2.2, any = false) {
-    const dx = x1 - x0; const dz = z1 - z0; const L = Math.hypot(dx, dz);
+    const dx = x1 - x0; const dz = z1 - z0; const L = Math.sqrt(dx * dx + dz * dz);
     if (L < 1e-6) return 1;
     let best = 1;
     const steps = Math.ceil(L / (SC * 0.5));
@@ -354,7 +383,7 @@ export function createGeo(map) {
 
   const api = {
     map, bounds: B, roads, solids, opens, waters, ground, hasHeight: !!H,
-    nearestRoad, sampleRoad, deckY, surfaceAt, inWater, openKind, eachSolid, segBlocked, lineOfSight,
+    nearestRoad, roadHint, sampleRoad, deckY, surfaceAt, inWater, openKind, eachSolid, segBlocked, lineOfSight,
     buildNav, findPath, navReady: () => !!graph, randomRoadPoint, roadGraph,
   };
   return api;

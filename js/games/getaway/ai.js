@@ -56,16 +56,20 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
   const loc = {}; const loc2 = {}; const res = {}; const srcs = [];
   const hist = []; // other car history for the reaction delay
   const obsNow = {};
+  const knownS = { t: 0, x: 0, z: 0, y: 0, level: -1, vx: 0, vz: 0, yaw: 0, speed: 0, at: 0 }; const knownX = { ...knownS };
+  const setKnown = (o) => { const k = knownS; k.t = o.t; k.x = o.x; k.z = o.z; k.y = o.y; k.level = o.level; k.vx = o.vx; k.vz = o.vz; k.yaw = o.yaw; k.speed = o.speed; k.at = D.t; return k; };
   const pl = {}; // route polyline buffers (reused)
 
   // ── helpers ──
-  const notBridge = (o) => !o.bridge;
+  const notBridge = (o) => !o.bridge; const locKeep = {};
   /** locate() for a car: on a deck it's that deck; on the ground, ground roads first. */
   function locateCar(c, out, maxD = 120) {
     const lvl = c.level == null ? -1 : c.level;
     if (lvl >= 0) return G.locate(c.x, c.z, c.yaw, out, 40, (o) => o.idx === lvl);
-    G.locate(c.x, c.z, c.yaw, out, maxD, notBridge);
-    if (out.road < 0 || out.d > 25) { const d0 = out.road < 0 ? Infinity : out.d; const r0 = out.road; const keep = { ...out }; G.locate(c.x, c.z, c.yaw, out, maxD); if (out.road < 0 || out.d >= d0) { Object.assign(out, keep); out.road = r0; } }
+    // (40 m first: a 120 m search is 121 grid cells and was the chase's top JS self function)
+    G.locate(c.x, c.z, c.yaw, out, Math.min(40, maxD), notBridge);
+    if (out.road < 0 && maxD > 40) G.locate(c.x, c.z, c.yaw, out, maxD, notBridge);
+    if (out.road < 0 || out.d > 25) { const d0 = out.road < 0 ? Infinity : out.d; const r0 = out.road; Object.assign(locKeep, out); G.locate(c.x, c.z, c.yaw, out, maxD); if (out.road < 0 || out.d >= d0) { Object.assign(out, locKeep); out.road = r0; } }
     return out;
   }
   function observe(other) {
@@ -103,6 +107,7 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
   }
   /** Where a car on loc (heading loc.dir at speed v) will be over the next T seconds, along its
    *  road and the straightest continuation at each junction: [{x, z, t, road, s}]. */
+  const ptPool = [];
   function predictRoute(lc, v, T, outPts) {
     outPts.length = 0;
     if (lc.road < 0) return outPts;
@@ -120,7 +125,7 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
       for (let d = step; d <= L && t < T; d += step) {
         let ss = s + dir * d; if (r.closed) { ss %= r.len; if (ss < 0) ss += r.len; }
         geo.sampleRoad(r, ss, tmp); t += step / spd;
-        outPts.push({ x: tmp.x, z: tmp.z, t, road, s: ss });
+        { let o = ptPool[outPts.length]; if (!o) { o = { x: 0, z: 0, t: 0, road: 0, s: 0 }; ptPool[outPts.length] = o; } o.x = tmp.x; o.z = tmp.z; o.t = t; o.road = road; o.s = ss; outPts.push(o); } // (pooled: no objects per 30 Hz tick)
       }
       if (next < 0) { s = ((ns % r.len) + r.len) % r.len; continue; }
       t += (L % step) / spd;
@@ -526,14 +531,19 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
     const obs = observe(other);
     // knowledge: what the cop knows about the runner (it always hears the siren the other way)
     const los = !!opts.los;
+    // (the radar ping is a readable rule, not a cheat: once the runner's escape meter is half full
+    // the fix only extrapolates until the cop sees it again, and beyond the heat distance pings
+    // come 1.75× slower, so a well-hidden runner can actually lose the heat)
     if (role === 'cop' && obs) {
       D.pingT -= dt;
-      if (los || D.pingT <= 0 || !D.known) { D.known = { ...obs, at: D.t }; if (!los) D.pingT = lv.ping; }
-    } else if (obs) D.known = { ...obs, at: D.t };
+      const escaping = (opts.esc || 0) >= 0.5;
+      if (los || (D.pingT <= 0 && !escaping) || !D.known) { D.known = setKnown(obs); if (!los) D.pingT = lv.ping * (Math.hypot(obs.x - car.x, obs.z - car.z) > (opts.heat || 180) ? 1.75 : 1); }
+    } else if (obs) D.known = setKnown(obs);
     let k = D.known;
     if (k && role === 'cop' && !los) { // extrapolate a stale fix a little
-      const age = Math.min(2.5, D.t - k.at);
-      k = { ...k, x: k.x + k.vx * age * 0.6, z: k.z + k.vz * age * 0.6 };
+      const age = Math.min(4, D.t - k.at);
+      const kx = knownX; kx.x = k.x + k.vx * age * 0.6; kx.z = k.z + k.vz * age * 0.6; kx.y = k.y; kx.level = k.level; kx.vx = k.vx; kx.vz = k.vz; kx.yaw = k.yaw; kx.speed = k.speed; kx.at = k.at;
+      k = kx;
     }
     const dist = k ? Math.hypot(k.x - car.x, k.z - car.z) : 999;
     D.copNear = role === 'runner' ? dist : 999;
@@ -595,6 +605,8 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
         if (D.laneShift) { const hx = tx - car.x; const hz = tz - car.z; const hl = Math.hypot(hx, hz) || 1; tx += (-hz / hl) * D.laneShift; tz += (hx / hl) * D.laneShift; }
         if (D.offRoute > 6) vT = Math.min(vT, 9 + 30 / D.offRoute); // getting back to the road: gently
         if (D.routeLeft < 30 && role === 'cop') vT = Math.min(vT, Math.max(k ? k.speed + 6 : 10, D.routeLeft * 0.8));
+        // the runner right ahead on my line: close at +4 m/s at most (a PIT, not a 125 km/h rear-ender)
+        if (role === 'cop' && k && dist < 28 && lv.pit > 0) { const fx = Math.sin(car.yaw); const fz = -Math.cos(car.yaw); const lz = (k.x - car.x) * fx + (k.z - car.z) * fz; const lx = Math.abs((k.x - car.x) * Math.cos(car.yaw) + (k.z - car.z) * Math.sin(car.yaw)); if (lz > 3 && lx < 2.2) vT = Math.min(vT, k.speed + 4); }
       } else {
         // no route (yet): on a road, keep driving along it the way I'm facing, in my lane (a
         // runner that sat at a road point waiting for a plan was a sitting duck); off the road,

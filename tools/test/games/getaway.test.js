@@ -1,6 +1,6 @@
 // Getaway — end-to-end tests.
 //   node tools/test/games/getaway.test.js                 (every section)
-//   ONLY=unit,practice node tools/test/games/getaway.test.js
+//   ONLY=unit,practice node tools/test/games/getaway.test.js   (sections: unit, practice, touch, live, contacts, chasecontacts, lossy, split, robust, mapswitch, gfx, perf, shots)
 // Sections: unit (physics in Node) · practice (one phone vs the AI: intro, countdown, PIT bust,
 // spikes, timer + heat escapes, water bust, final) · live (two phones: join, settings sync,
 // roles, synced start, traffic determinism, boxed bust, spikes over the network, swaps, final,
@@ -148,6 +148,7 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
     const path1 = (() => { dg.buildNav(); return dg.findPath(-100, 40, 340, -100); })();
     assert(path1 && path1.length > 20, `AI nav: a road route across Dockside (${path1.length / 2} points)`);
     if (typeof engineUnits === 'function') await engineUnits();
+    if (typeof feelUnits === 'function') await feelUnits();
   }
 
   // ═══ one phone vs the AI ═══
@@ -763,6 +764,110 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
     } catch (e) { fails++; console.error(e.message, h.errors.slice(0, 3)); await shot(h.a, 'mapswitch-fail').catch(() => {}); } finally { await h.close(); }
   }
 
+  if (want('gfx')) {
+    // ═══ graphics: vertex packing, the caster scene + shadow map, the dynamic-quality ladder, the camera rig ═══
+    const h = await launch({ port: PORT + 9, only: ['getaway'], who: ['a'], coarse: true });
+    const { a } = h;
+    try {
+      await a.setViewportSize({ width: 390, height: 844 });
+      await arm(a, { ...FAST, maxDpr: 1, dynRes: true, dynK: 0.1, tier: 'mid' });
+      await h.startLive(a, 'getaway', 'local');
+      await ready(a);
+      const maps = (await hook(a, 'maps')).filter((m) => !m.stub).map((m) => m.id);
+      for (const id of maps) {
+        await a.evaluate((m) => window.__getaway.reloadMap(m), id);
+        await wait(300);
+        const g = await a.evaluate(() => {
+          const w = window.__getaway.internals.world; let verts = 0; let gpu = 0; let cpu = 0; let f32 = 0; const types = {}; let n = 0;
+          // GPU bytes: the arrays, or (released CPU copies) the size the world recorded before dropping them
+          const SZ = { position: 4, normal: 1, color: 1, fx: 1, aux: 2, uv: 2, a: 4 };
+          w.scene.traverse((o) => {
+            if (!o.isMesh || !o.name || !(o.name.startsWith('merged') || o.name.startsWith('boulder'))) return; n++;
+            const ge = o.geometry; const pa = ge.getAttribute('position'); verts += pa.count;
+            for (const k in ge.attributes) { const at = ge.attributes[k]; const sz = at.array ? at.array.byteLength : at.gpuBytes || at.count * at.itemSize * (SZ[k] || 4); gpu += sz; if (at.array) cpu += sz; const t = at.array ? at.array.constructor.name : 'released'; types[k] = types[k] || t; if (at.array instanceof Float32Array && k !== 'position' && k !== 'a') f32++; }
+            if (ge.index) { const sz = ge.index.array ? ge.index.array.byteLength : ge.index.gpuBytes || ge.index.count * 2; gpu += sz; if (ge.index.array) cpu += sz; }
+          });
+          return { n, verts, gpu, cpu, types, f32, released: w.released, bpv: gpu / verts };
+        });
+        console.log(`   ${id}: ${g.n} world meshes, ${Math.round(g.verts / 1000)}k vertices, ${(g.gpu / 1048576).toFixed(1)} MB on the GPU (${g.bpv.toFixed(1)} B/vertex with indices), ${(g.cpu / 1048576).toFixed(1)} MB still CPU-side (positions)${g.released ? '' : ' NOT RELEASED'}, attributes ${JSON.stringify(g.types)}`);
+        assert(g.f32 === 0, `${id}: no float32 static attributes left on the world meshes (${g.f32})`);
+        soft(g.bpv <= 26, `${id}: ≤ 26 B/vertex on the GPU including indices (${g.bpv.toFixed(1)}; 44–52 B before packing)`);
+      }
+      // a fresh (unreleased) Builder: 21 bytes per vertex
+      const bpv = await a.evaluate(() => {
+        const w = window.__getaway.internals.world; const b = w.kit.builder(); b.boxOn(0, 0, 0, 1, 1, 1, 0, '#ff8800', 0.02, 5); b.auxV = 1.5; b.boxOn(2, 0, 0, 1, 1, 1, 0, '#ff8800', 0, 0);
+        const g = b.geometryOut(); let bytes = 0; for (const k in g.attributes) bytes += g.attributes[k].array.byteLength; const n = g.getAttribute('position').count;
+        const nm = g.getAttribute('normal'); const co = g.getAttribute('color'); const ax = g.getAttribute('aux'); const fx = g.getAttribute('fx');
+        return { bpv: bytes / n, n, normal: nm.array.constructor.name + (nm.normalized ? '/n' : ''), color: co.array.constructor.name + (co.normalized ? '/n' : ''), fx: fx.array.constructor.name, aux: ax.array.constructor.name + (ax.normalized ? '/n' : ''), auxV: ax.array[n - 1] / 32767 * 8, col: co.array[0] / 255 };
+      });
+      console.log(`   Builder: ${bpv.bpv.toFixed(1)} B/vertex (${bpv.normal} normal, ${bpv.color} color, ${bpv.fx} fx, ${bpv.aux} aux)`);
+      assert(bpv.bpv <= 21.01, `Builder output is 21 B/vertex (${bpv.bpv.toFixed(1)}; was 44)`);
+      assert(Math.abs(bpv.auxV - 1.5) < 0.001 && Math.abs(bpv.col - 1) < 0.001, `quantised aux / colour round-trip (aux ${bpv.auxV.toFixed(4)}, r ${bpv.col.toFixed(3)})`);
+      // the caster scene + the phone shadow map
+      const sh = await a.evaluate(() => { const w = window.__getaway.internals.world; return { groups: w.casters.children.filter((o) => o.isGroup).length, kids: w.casters.children.length, size: w.shadow && w.shadow.size, full: w.shadow && w.shadow.full, taps: w.shadow ? window.__getaway.internals.world.mats.vc.userData.gtw && 1 : 0, parent: w.casters.parent === w.scene }; });
+      console.log(`   casters: ${sh.groups} car groups + ${sh.kids - sh.groups} meshes, shadow map ${sh.size}²`);
+      assert(sh.groups === 4 && sh.parent && sh.full === 512, `the cars live in the caster scene (a child of the world) and the mid tier uses a 512² shadow map (${sh.full}, now ${sh.size}² after software-GL frames)`);
+      // no shadow pass in the lobby (no car group visible): render call count equals the main passes only
+      let pf;
+      const lobbyPass = await a.evaluate(() => { const w = window.__getaway.internals.world; const r = window.__getaway.internals.renderer; const cam = new window.THREE.PerspectiveCamera(); cam.updateMatrixWorld(); r.info.autoReset = false; r.info.reset(); w.preRender(r, cam); const c = r.info.render.calls; r.info.autoReset = true; return c; });
+      assert(lobbyPass === 0, `the shadow pass is skipped while no car is in the game (${lobbyPass} draws)`);
+      // the dynamic-quality ladder, driven by a synthetic frame time (dynK 0.1: 1 s here = 10 s on a phone)
+      await hook(a, 'fakeFrame', 16, true); // (software GL frames had already walked it to the bottom rung)
+      await wait(400);
+      pf = await hook(a, 'perf');
+      assert(pf.level === 0 && pf.shadow.size === 512 && pf.scale === 1, `reset to the top rung (${JSON.stringify({ level: pf.level, shadow: pf.shadow, scale: pf.scale })})`);
+      await hook(a, 'fakeFrame', 22);
+      await until(a, () => window.__getaway.perf().level >= 1, null, 8000, 'first rung');
+      pf = await hook(a, 'perf');
+      assert(pf.level === 1 && pf.resizes === 0 && pf.shadow.size < 512 && pf.shadow.on, `the first rung down shrinks the shadow map (${pf.shadow.size}²), no drawable resize ${JSON.stringify(pf)}`);
+      await until(a, () => window.__getaway.perf().level >= 4, null, 8000, 'bottom rung');
+      pf = await hook(a, 'perf');
+      assert(pf.resizes === 2 && pf.scale <= 0.7 && !pf.shadow.on, `rungs 2–4: two resizes (0.85, then the floor ${pf.scale}), then the shadow goes (${pf.resizes} resizes)`);
+      await hook(a, 'fakeFrame', 14);
+      await wait(1200); // < hold (2 s here)
+      pf = await hook(a, 'perf');
+      assert(pf.level === 4, `no step up within the hold after a step down (level ${pf.level})`);
+      await until(a, () => window.__getaway.perf().level <= 3, null, 15000, 'step up');
+      const tUp = Date.now();
+      await until(a, () => window.__getaway.perf().level === 0, null, 20000, 'back to full');
+      pf = await hook(a, 'perf');
+      const climb = (Date.now() - tUp) / 1000;
+      assert(climb >= 1.8 && pf.resizes === 4, `climbing back takes ≥ 0.8 s a rung here (= 8 s on a phone; ${climb.toFixed(1)} s for three rungs), ${pf.resizes} resizes in all`);
+      // a phone at the edge: slow again right after stepping up → the hold doubles (back-off)
+      await hook(a, 'fakeFrame', 22);
+      await until(a, () => window.__getaway.perf().level >= 1, null, 10000, 'bounce');
+      pf = await hook(a, 'perf');
+      assert(pf.hold >= 40, `a step down right after a step up doubles the hold (${pf.hold} s)`);
+      await hook(a, 'fakeFrame', 0);
+      // the camera rig: a chase at speed, portrait phone
+      await hook(a, 'setSetup', { map: maps[0] });
+      await a.click('.g-gtw [data-l="start"]');
+      await phase(a, 'chase', 15000);
+      await until(a, () => window.__getaway.navReady(), null, 20000, 'nav');
+      await hook(a, 'auto', 'a', true);
+      const rig = []; const t0 = Date.now();
+      while (Date.now() - t0 < 6000) { const [r, s] = await a.evaluate(() => [window.__getaway.camRig(), window.__getaway.state().a]); rig.push({ ...r, speed: s.speed, dist: Math.hypot(r.x - s.x, r.z - s.z) }); await wait(100); }
+      const fast = rig.filter((r) => r.speed > 20);
+      const maxD = Math.max(...rig.map((r) => r.dist)); const fovHi = Math.max(...rig.map((r) => r.fov)); const fovLo = Math.min(...rig.map((r) => r.fov));
+      console.log(`   camera: ${rig.length} samples, top speed ${(Math.max(...rig.map((r) => r.speed)) * 3.6).toFixed(0)} km/h, follow distance ≤ ${maxD.toFixed(1)} m, fov ${fovLo.toFixed(0)}–${fovHi.toFixed(0)}`);
+      assert(maxD <= (7.4 + 2.2 + 1.0) * 1.3 + 0.3, `the follow distance never exceeds the rig's goal (no speed lag): ${maxD.toFixed(1)} m ≤ ${((7.4 + 2.2 + 1.0) * 1.3).toFixed(1)} m`);
+      assert(fast.length === 0 || Math.max(...fast.map((r) => r.d)) > 7.4 * 1.3 - 0.5, `the lens sits further back at speed (${fast.length} fast samples)`);
+      // liveries (liveries.js): every paint job builds, swaps in place and keeps the one draw call per car
+      const lv = await a.evaluate(() => {
+        const I = window.__getaway.internals; const out = [];
+        for (const [view, who, n] of [['runA', 'a', 5], ['cop', 'b', 4]]) for (let k = 0; k < n; k++) {
+          window.__getaway.testLivery(who, view === 'runA' ? k : 0, view === 'cop' ? k : 0); const v = I.carViews[view]; const t = performance.now(); v.setLivery(k);
+          out.push({ view, k, ms: Math.round(performance.now() - t), verts: v.body.geometry.getAttribute('position').count, got: v.livery, kids: v.tilt.children.length });
+        }
+        return out;
+      });
+      console.log(`   liveries: ${lv.map((x) => `${x.view}${x.k} ${x.verts}v/${x.ms}ms`).join(', ')}`);
+      assert(lv.every((x) => x.got === x.k && x.verts > 4000 && x.ms < 200 && x.kids === 1), 'every livery builds in place (< 200 ms, one body mesh, > 4k vertices)');
+      assert(new Set(lv.filter((x) => x.view === 'runA').map((x) => x.verts)).size === 5, 'the five runner liveries are different models');
+      h.assertNoErrors();
+    } catch (e) { fails++; console.error(e.message, h.errors.slice(0, 3)); await shot(h.a, 'gfx-fail').catch(() => {}); } finally { await h.close(); }
+  }
+
   if (want('perf')) {
     for (const [kind, opts] of [['phone', { coarse: true }], ['laptop', { fine: true, device: 'Desktop Chrome' }]]) {
       const h = await launch({ port: PORT + 5 + (kind === 'laptop' ? 1 : 0), only: ['getaway'], who: ['a'], ...opts });
@@ -878,6 +983,41 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       }
     }
     console.log('   screenshots in', SHOTS);
+  }
+
+  // ═══ stall: one phone's main thread hitches for 1.2 s mid-chase next to the partner (ENGINE):
+  // the partner car goes stale (a ghost: not solid, no bump, no damage) instead of a stale solid
+  // picture that snaps 20–40 m when the stream resumes ═══
+  if (want('stall')) {
+    const h = await launch({ port: PORT + 2, only: ['getaway'], latency: 80, coarse: true });
+    const { a, b } = h;
+    try {
+      await openPair(h, { ...FAST, rounds: 2 });
+      await startMatch(h);
+      await phase(a, 'chase'); await phase(b, 'chase');
+      await hook(a, 'hold', 'a', { hand: true }); await hook(b, 'hold', 'b', { hand: true });
+      await a.evaluate(() => window.__getaway.teleport('a', -100, 40, Math.PI / 2, 0));
+      await b.evaluate(() => window.__getaway.teleport('b', -108, 40, Math.PI / 2, 0));
+      await wait(1500);
+      const fresh = await a.evaluate(() => ({ stale: !!window.__getaway.internals.P2.b.stale, age: window.__getaway.internals.link.sampleAge }));
+      console.log(`   (the partner's stream before the hitch: ${Math.round(fresh.age)} ms old, stale ${fresh.stale}; a starved headless page publishes per frame)`);
+      // the cop now drives at the runner; a moment later its phone freezes for 1.2 s
+      await hook(b, 'hold', 'b', { gas: 1 });
+      await wait(250);
+      const hp0 = (await st(a)).a.hp;
+      // (the watcher runs inside page a at 50 ms: a starved Node round trip would miss the hitch)
+      await a.evaluate(() => { const W = window.__stall = { stale: 0, n: 0, hpMin: 100, jump: 0, px: null }; W.timer = setInterval(() => { const P = window.__getaway.internals.P2.b; const s = window.__getaway.state(); W.n++; if (P.stale) W.stale++; W.hpMin = Math.min(W.hpMin, s.a.hp); if (W.px != null) W.jump = Math.max(W.jump, Math.abs(P.shown.x - W.px)); W.px = P.shown.x; }, 50); });
+      await b.evaluate(() => { const t = performance.now(); while (performance.now() - t < 1200) { /* the main thread hitches: no frames, no samples sent */ } });
+      await wait(600);
+      const seen = await a.evaluate(() => { const W = window.__stall; clearInterval(W.timer); return { stale: W.stale, n: W.n, hpMin: W.hpMin, jump: W.jump }; });
+      assert(seen.stale > 0, `during a 1.2 s hitch the runner's phone marks the cop stale (${seen.stale} of ${seen.n} polls) and makes it a ghost`);
+      assert(seen.hpMin === hp0, `no bump or damage against the stale picture (hp ${hp0} → ${seen.hpMin})`);
+      assert(seen.jump < 12, `the drawn cop never snaps when the stream resumes (largest jump between polls ${seen.jump.toFixed(1)} m)`);
+      await wait(1500);
+      const after = await a.evaluate(() => !!window.__getaway.internals.P2.b.stale);
+      assert(!after, 'the cop is solid again once its samples flow');
+      h.assertNoErrors();
+    } finally { await h.close(); }
   }
 
   if (fails) { console.log(`\n${fails} FAILED`); process.exitCode = 1; } else console.log('\nALL GOOD');
@@ -1032,4 +1172,69 @@ async function engineUnits() {
     for (let i = 0; i < 120; i++) tr.stepWrecks(1 / 60, [{ x: 0, z: 0 }]);
     const k = tr.knocked.get(id0);
     assert(k && k.z < 15 - 1.0 && k.z > 5, `a knocked car stops at a building’s wall (${k && k.z.toFixed(2)} m, wall at 15)`); }
+}
+
+// ═══ feel pass units (ENGINE): steering resolution, the grip limit's feedback, PIT continuity and
+// fairness, lift-off and nitro run-out, oil, humps, the Dockside carriageway, traffic grow-in ═══
+async function feelUnits() {
+  const url = (f) => 'file://' + path.join(ROOT, 'js/games/getaway', f);
+  const { createGeo } = await import(url('geo.js'));
+  const { newCar, placeCar, stepCar, carContact, judgePit, pitEffect } = await import(url('car.js'));
+  const { CAR, NITRO, DT, DAMAGE } = await import(url('tune.js'));
+  const { createTraffic } = await import(url('traffic.js'));
+  const { DOCKSIDE } = await import(url('maps/dockside.js'));
+  const lot = createGeo({ id: 'lot', bounds: { x0: -3000, z0: -3000, x1: 3000, z1: 3000 }, roads: [{ name: 'r', kind: 'highway', width: 30, pts: [[-2900, 0], [2900, 0]] }], solids: [], open: [{ kind: 'lot', poly: [[-2900, -2900], [2900, -2900], [2900, 2900], [-2900, 2900]] }] });
+  const run = (role, inp, secs, setup, geo = lot) => { const c = newCar(role); placeCar(c, 0, 0, Math.PI / 2, geo); if (setup) setup(c); const out = []; for (let i = 0; i < secs / DT; i++) { stepCar(c, typeof inp === 'function' ? inp(c, i * DT) : inp, DT, geo, CAR[role], NITRO.normal); out.push({ t: i * DT, v: c.speed, x: c.x, z: c.z, r: c.r, slip: c.slip, skid: c.skid, drift: c.drift, heave: c.heave, pitch: c.pitch, yaw: c.yaw }); c.ev.length = 0; } return { c, out }; };
+  // the slider keeps its resolution at chase speeds: 25 / 50 / 75 / 100 % steer = a linear 0.57 / 1.16 / 1.74 / 2.05 g at 60, 100 and 140 km/h
+  for (const kmh of [60, 100, 140]) {
+    const v = kmh / 3.6; const gs = [];
+    for (const st of [0.25, 0.5, 0.75, 1]) { const o = run('runner', (c) => ({ gas: c.vf < v ? 1 : 0, steer: st }), 6, (c) => { c.vx = v; }).out.slice(-240); const sp = o.reduce((a, q) => a + q.v, 0) / o.length; const r = o.reduce((a, q) => a + Math.abs(q.r), 0) / o.length; gs.push((sp * r) / 9.81); }
+    const lin = gs.every((g, i) => Math.abs(g / gs[3] - (i + 1) / 4 * 1.0) < 0.1 || Math.abs(g - [0.57, 1.16, 1.74, 2.05][i]) < 0.12);
+    assert(lin && gs[3] > 1.9 && gs[3] < 2.2 && gs[0] < 0.7, `${kmh} km/h: 25/50/75/100% steer = ${gs.map((g) => g.toFixed(2)).join(' / ')} g (linear; was one response past 25% at 100+)`);
+  }
+  // the limit is audible: full lock at speed squeals (slip over CAR.slipSkid) and power at full lock steps the tail out without running away
+  { const o = run('runner', (c) => ({ gas: c.vf < 27.8 ? 1 : 0, steer: 1 }), 6, (c) => { c.vx = 27.8; }).out.slice(-240);
+    assert(o.some((q) => q.skid) && Math.max(...o.map((q) => q.slip)) < 3, `full lock at 100 km/h squeals (slip ${Math.max(...o.map((q) => q.slip)).toFixed(1)} m/s > ${CAR.slipSkid}) and still carves`);
+    const p = run('runner', { gas: 1, steer: 1 }, 5, (c) => { c.vx = 27.8; }).out;
+    const ms = Math.max(...p.map((q) => q.slip)); const md = Math.max(...p.map((q) => q.drift));
+    assert(ms > 1.6 && ms < 3.4 && md > 0.1 && md < 0.6, `full gas + full lock from 100 km/h: the tail steps out (slip ${ms.toFixed(1)} m/s, drift ${md.toFixed(2)}) but never runs away (< 3.4 m/s)`); }
+  // lift-off tightens the line (lift-off oversteer) and a lift is a decision: coasting from 100 km/h loses ≥ 1.8 m/s in the first second
+  { const on = run('runner', (c) => ({ gas: c.vf < 27.8 ? 1 : 0, steer: 1 }), 2, (c) => { c.vx = 27.8; }).out; const off = run('runner', { gas: 0, steer: 1 }, 2, (c) => { c.vx = 27.8; }).out;
+    const yawOn = on.slice(60, 120).reduce((a, q) => a + Math.abs(q.r), 0) / 60; const yawOff = off.slice(60, 120).reduce((a, q) => a + Math.abs(q.r), 0) / 60;
+    assert(yawOff > yawOn * 1.03, `lift-off at full lock turns tighter (${(yawOff * 57.3).toFixed(1)} vs ${(yawOn * 57.3).toFixed(1)} °/s)`);
+    const co = run('runner', { gas: 0 }, 1.01, (c) => { c.vx = 27.8; }).out.at(-1);
+    assert(27.8 - co.v > 1.8 && 27.8 - co.v < 3.5, `coast from 100 km/h: −${(27.8 - co.v).toFixed(1)} m/s in the first second (was 1.2)`); }
+  // nitro running out eases off instead of slamming the brakes
+  { const o = run('runner', (c, t) => ({ gas: 1, nitro: t < 4 }), 8).out; let worst = 0; for (let i = 1; i < o.length; i++) worst = Math.min(worst, (o[i].v - o[i - 1].v) / DT);
+    assert(worst > -3, `nitro run-out: worst decel ${worst.toFixed(2)} m/s² (was −6.7, 45% of full braking)`); }
+  // oil: the cop rotates and slides (and has to catch it), it doesn't just understeer
+  { const c = newCar('cop'); placeCar(c, 0, 0, Math.PI / 2, lot); c.vx = 27.8; let ms = 0; const y0 = c.yaw; c.oilT = 1.2; c.r += 1.6;
+    for (let i = 0; i < 1.2 / DT; i++) { stepCar(c, { gas: 1 }, DT, lot, CAR.cop, NITRO.cop); c.ev.length = 0; ms = Math.max(ms, c.slip); }
+    assert(Math.abs(c.yaw - y0) * 57.3 > 25 && ms > 6, `oil at 100 km/h: ${(Math.abs(c.yaw - y0) * 57.3).toFixed(0)}° of rotation and a ${ms.toFixed(0)} m/s slide (was 8° / 3 m/s)`); }
+  // roads have vertical texture: a 0.4 m hump at 100 km/h heaves the body; a flat tyre drags and thumps
+  { const hm = createGeo({ id: 'h', bounds: lot.bounds, roads: lot.map.roads, open: lot.map.open, solids: [], height: (x) => (Math.abs(x - 100) < 4 ? 0.4 * Math.cos((Math.PI * (x - 100)) / 8) ** 2 : 0) });
+    const o = run('runner', { gas: 0.5 }, 4, (c) => { c.vx = 27.8; }, hm).out;
+    assert(Math.max(...o.map((q) => Math.abs(q.heave))) > 0.03, `a 0.4 m hump at 100 km/h heaves the body ${(Math.max(...o.map((q) => Math.abs(q.heave))) * 1000).toFixed(0)} mm (was 0)`);
+    const f = run('runner', { gas: 1 }, 6, (c) => { c.vx = 33.3; c.flat = 1; }); const roll = Math.max(...f.out.map((q) => Math.abs(q.r)));
+    assert(f.c.speed * 3.6 < 113 && f.c.speed * 3.6 > 100, `a flat tyre at 120 km/h settles at ${(f.c.speed * 3.6).toFixed(0)} km/h (drag + 70% top)`); void roll; }
+  // PIT: the nudge → PIT step is continuous (35° → 170°, not 11° → 240°) and every PIT gets slow motion
+  { const a = pitEffect(3.19, 1, 22); const k1 = a.kick; const s1 = a.spin; const b = pitEffect(3.2, 2, 22);
+    assert(k1 * s1 > 0.5 && b.kick / k1 < 2.6 && DAMAGE.pitSlowMo <= DAMAGE.pitPush, `PIT tiers: push 3.19 → ${(k1 * s1 * 57.3 * 0.6).toFixed(0)}°, 3.2 → ${(b.kick * b.spin * 57.3 * 0.6).toFixed(0)}° (continuous), slow-mo from push ${DAMAGE.pitSlowMo}`); }
+  // PIT fairness: a runner drifting its own rear into a cop running straight beside it is not PITted; a cop steering into the quarter is
+  { const ct = {};
+    for (const sl of [3.5, 6]) { const rn = newCar('runner'); placeCar(rn, 0, 0, Math.PI / 2, lot); rn.vx = 22; rn.vz = sl; const cp = newCar('cop'); placeCar(cp, -3.2, 1.9, Math.PI / 2, lot); cp.vx = 22; assert(carContact(rn, cp, ct) > 0 && judgePit(rn, cp, ct) === 0 && ct.pitTier === 0, `runner sliding ${sl} m/s into a laterally still cop: no PIT (tier ${ct.pitTier}, was a tier-2 PIT with ${sl} m/s of 'push')`); }
+    const rn = newCar('runner'); placeCar(rn, 0, 0, Math.PI / 2, lot); rn.vx = 22; const cp = newCar('cop'); placeCar(cp, -3.2, 1.9, Math.PI / 2 - 0.1, lot); cp.vx = 22; cp.vz = -3.5;
+    assert(carContact(rn, cp, ct) > 0 && judgePit(rn, cp, ct) !== 0 && ct.pitTier === 2, `a cop steering 3.5 m/s into the quarter is still a PIT (push ${ct.pitPush.toFixed(1)})`); }
+  // Dockside: no carriageway inside an unbreakable solid (Pier Rd's sheds and Lookout Ln's houses sat across the road)
+  { const geo = createGeo(DOCKSIDE); const tmp = {}; let bad = 0; const where = new Set();
+    for (const r of geo.roads) for (let s = 0; s < r.len; s += 1) { geo.sampleRoad(r, s, tmp); for (let off = -(r.hw - 1); off <= r.hw - 1; off += 1) { const px = tmp.x - tmp.tz * off; const pz = tmp.z + tmp.tx * off; let inside = false; geo.eachSolid(px, pz, 1, (o) => { if (inside || o.breakable || o.soft || (r.bridge && o.y == null) || (!r.bridge && o.y != null && o.y > 2)) return; const ax = px - o.x; const az = pz - o.z; const lx = ax * o.c - az * o.s; const lz = ax * o.s + az * o.c; if (Math.abs(lx) < o.hw && Math.abs(lz) < o.hd) inside = true; }); if (inside) { bad++; where.add(r.name); } } }
+    assert(bad === 0, `Dockside: 0 m of carriageway inside unbreakable solids (${bad} m${where.size ? ': ' + [...where].join(', ') : ''}; was 62 m)`); }
+  // traffic: each() with the coarse reject finds exactly what a brute-force pass finds; a lane with a player parked on its grow-in point holds its cars
+  { const geo = createGeo(DOCKSIDE); const tr = createTraffic(geo, 'dockside', 'normal'); const rnd = (() => { let a = 7; return () => { a = (Math.imul(a, 1664525) + 1013904223) >>> 0; return a / 4294967296; }; })();
+    let diff = 0; let n = 0;
+    for (let k = 0; k < 30; k++) { const p = geo.randomRoadPoint(rnd, {}); const t = 600 + k * 2.3; const got = new Set(); tr.each(p.x, p.z, 20, t, (id, q) => { if (q.sc > 0.02) got.add(id); }); const want = new Set(); for (const L of tr.lanes) for (let j = 0; j < L.n; j++) { const q = {}; tr.poseOn(L, j, t, q); if (q.sc > 0.02 && Math.abs(q.x - p.x) <= 20 && Math.abs(q.z - p.z) <= 20) want.add(q.id); } n += want.size; for (const id of want) if (!got.has(id)) diff++; for (const id of got) if (!want.has(id)) diff++; }
+    assert(diff === 0, `traffic.each() with the per-lane coarse reject matches a brute-force pass (${n} cars at 30 spots)`);
+    const L = tr.lanes.find((l) => !l.r.closed && l.n >= 2); const obs = [{ x: L.gx, z: L.gz, yaw: 0, siren: false, speed: 0 }];
+    let near = 0; for (let t = 600; t < 640; t += 1 / 30) { tr.yieldTo(1 / 30, t, obs); tr.each(L.gx, L.gz, 8, t, (id, q) => { if (q.sc >= 0.95 && Math.hypot(q.x - L.gx, q.z - L.gz) < 6) near++; }); }
+    assert(near === 0, `a civilian never grows in on top of a car parked at a lane start (${near} solid cars within 6 m over 40 s on ${L.r.name}; was ~17 per 20 s)`); }
 }

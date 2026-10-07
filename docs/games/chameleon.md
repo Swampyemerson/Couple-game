@@ -14,7 +14,7 @@ modules in `js/games/chameleon/`; tests in `tools/test/games/chameleon.test.js`.
 
 | Mode | Players | Rounds | Scoring |
 |---|---|---|---|
-| **Hide & Seek** | one hides, one seeks, roles swap | 2 / 4 / 6 (setting; each hides half) | the hider earns 1 point per second survived in the seek phase, +30 for surviving outright (timer runs out, or the seeker spends all their pellets). Highest total wins. |
+| **Hide & Seek** | one hides, one seeks, roles swap | 2 / 4 / 6 (setting; each hides half) | the hider earns 1 point per second survived in the seek phase, +30 for surviving outright (timer runs out, or the seeker runs dry: paid for the seconds survived), + a blend bonus for a paint job that matched its surface; the seeker earns ½ point per second left when they tag (+10 per spare pellet in Classic). Highest total wins. |
 | **Double Blind** | both hide at once, then both hunt (1.1 m/s, no jumping) | best of 3 (ends early at 2) | first confirmed tag wins the round; a timeout or both players out of pellets is a void round. Two devices only. |
 
 The host picks mode, map, a preset (or any custom mix of settings, below) and who hides first on
@@ -106,7 +106,7 @@ all work; the camera orbits your body as in the hide phase (two devices only, as
 | Hide time | 10 s – 5 min (5 s steps to 2 min, then 10 s, 15 s) | 45 s | 60 s | 75 s |
 | Hide ends | **Timer** (Ready still starts early) · **On Ready** (no clock) | Timer | Timer | Timer |
 | Countdown | Off · 3 · 5 · 10 s | 3 s | 3 s | 3 s |
-| Head start (Hide & Seek) | Off · 5 · 10 · 15 · 20 · 30 s | Off | Off | Off |
+| Head start (Hide & Seek) | Off · 5 · 10 · 15 · 20 · 30 s | 10 s | Off | Off |
 | Grace period | Off · 3 · 5 · 10 · 15 s | Off | Off | 5 s |
 | Seek time | 20 s – 10 min (5 s steps to 2 min, then 10, 15, 30 s) | 2 min | 90 s | 90 s |
 | Seeker can climb | On · Off | On | On | On |
@@ -140,6 +140,252 @@ title → HIDE (clock, or none with On Ready) → LOCK → countdown → SEEK [h
   dragging, commits on release, so a guest isn't spammed and the host's sheet isn't rebuilt mid-drag)
   plus − / + for single steps. Everything goes through `sanitizeRules` on both devices, travels in
   `setup` and every phase message, and is saved per device as before.
+
+## Pro pass: mechanics (feel, scoring, clocks)
+
+Asked for: "polish the shit out of these games … immensely satisfying … addictive". Everything
+below was measured with scripted runs (`ONLY=feel,feel2`; numbers in this section come from
+those logs) and the pure physics was checked in Node (`move.js` + `world.js` run headless).
+
+### Movement feel
+
+- **Acceleration.** The stick is now a *target* velocity; the body's smoothed velocity
+  (`b.svx/svz`, `accelStep` in `move.js`) accelerates toward it at **22 m/s²** (95 % of walking
+  speed in 0.117 s), brakes at **30 m/s²** (3 → 0 m/s in 0.1 s) and drifts at **8 m/s²** in the
+  air. A scurry dash is instant. Measured through the joystick on the phone profile:
+  `0.87 → 1.37 → 2.01 → 2.51 → 3.01 m/s` over ~230 ms (sandbox frames are ~55 ms), stop in ~130 ms.
+  The walk cycle (`st.walk`, 10/s damping) now lands with the body instead of 0.1 s after it.
+  A tiny settle squash (0.22) on stopping; a hard reversal (> 120° at > 1.8 m/s) pops a small dust
+  ring at the feet (the existing ring-pop fx, 0.08 m × size, no new draw calls).
+- **Jump buffer + coyote time + short hop** (`JUMP = { buffer: 0.12, coyote: 0.1, shortV: 2.8 }`):
+  a Jump tap up to 120 ms before landing is kept (`R.jumpAt`) and fires on touchdown; a tap up to
+  100 ms after walking off a ledge still jumps (`coyoteJump`: never after a jump, never when
+  stuck or squeezed); a held key released early clips `vy` to 2.8 m/s (apex 0.3 m instead of
+  1.0 m at Large; touch taps always jump full height). A jump also refuses to double-fire from the
+  buffer (`R.jumpAt` is cleared when it launches).
+- **Jump was dead for player b in hotseat** (critical): `R.jumpReq` was consumed inside the
+  per-player loop, so in one-device play (both bodies simulated) player a's pass cleared the tap
+  before player b's pass read it. Keyboard Space worked because `jumpHeld` persists, which is why
+  no test caught it. Now read once per frame above the loop. Test: `feel` taps the real Jump
+  button with first = 'b': vy 4.2 m/s, rose 0.96 m.
+- **Footsteps.** `snd.step(vol, pitch, crawl)`: a 40 ms band-passed noise tap (900 Hz, Q 1.2) on
+  every walk-cycle zero crossing (`floor(walkPhase / π)` changes), or a wet low "tup" (lowpass
+  420 Hz + 170 Hz thump) for sticky-feet crawling. Volume 0.08 for your own body; the partner's is
+  `0.14 × (1 − d / 9)`, so a hider hears the seeker coming from 9 m, long before the 3 m heartbeat;
+  pitch ×0.8 when sprinting (> 4.2 m/s). Only while the avatar is visible (a hiding body stays
+  silent). Zero allocation: the sound reuses the shared noise buffer.
+- **Haptics off.** `api.haptic` is a no-op: iOS ignores `navigator.vibrate` and Android laptops /
+  tablets buzzed on every stick, fire and fill.
+
+### Scurry from a wall = drop and dash
+
+A hider flat on a wall who tapped Scurry used to spend the escape, paint 4 trail dots on the
+seeker's screen and not move: the dash went along the heading, which for a stuck body is the wall
+normal, and the crawl's tangent projection zeroed it. Now a stuck body lets go first (`unstick`,
+the usual pop + "pok"), then dashes 0.5 s along the look direction on the floor. If after 0.2 s
+the body has moved < 0.15 m (boxed in), the dash is cancelled, the escape refunded, the trail
+cleared and a "Boxed in — escape refunded" hint shown. Measured (`feel2`, two phones): from the
+Living Room camo wall, dropped and dashed 2.43 m, one escape spent, trail seen by the seeker.
+
+### Escape-aware tag window
+
+`confirmTag` keeps the shooter-favoured 250 ms window for stationary / crawling hiders. When the
+victim's own escape (scurry or zip, `R.escapeAt`) started before `T − delay − ½ RTT − 120 ms`,
+i.e. the shooter's screen could already have shown the dash, the window shrinks to
+`[T − delay − ½ RTT − 120 ms, T + 60 ms]` (`TAG_WINDOW_ESCAPE`). A 6.6 m/s Large scurry covers
+~3 m in the old window on a 120 ms link; now a tag has to land on where the hider actually was
+when the shooter saw them. `state().lastWindow` reports which window judged the last shot
+(`feel2` fires 450 ms into a scurry on a 60 ms link: window `escape`, still confirmed because the
+seen position matched within tolerance).
+
+### Scoring: the seeker scores too, the dry-out pays the time survived, the blend %
+
+| Setting | Options | Easy | Classic | Hard |
+|---|---|---|---|---|
+| Seeker scores | Off · Time left · Time + pellets | Off | Time + pellets | Time left |
+| Blend bonus | Off · +10 at 80 % · +20 at 90 % | Off | +10 at 80 % | +20 at 90 % |
+
+- **Seeker points** per hunt (when they tag): `round(½ × seconds left on the hunt clock)` plus,
+  with *Time + pellets*, `10 × unused pellets`. A 12 s find on a 90 s clock with 4 spare reads
+  **+39 + 40**; a perfect hide is still 120, so the totals stay comparable. The FOUND stamp
+  gets a second line in the seeker's ink ("+38 · 3 pellets spare"), the recap says
+  "+13 for Sydney · +38 for Emerson (3 pellets spare)". `rec.seekPoints`, `rec.spare`.
+- **Running dry** used to pay the hider the whole clock + 30 (six quick misses at 14 s = +120 on
+  Classic, +165 on CU). Now `roundOver` is called with the moment the seeker ran out and pays
+  `floor(seconds survived) + 30`; the SURVIVED stamp and recap say "ran dry at 0:05 · +35".
+- **Blend %** (`blendOf`, game.js): at the lock, every body texel facing away from the surface the
+  hider is on (the wall behind a stuck body, else the floor below, found exactly as the stamp
+  finds it) is projected onto that surface, the surface albedo there is sampled with the stamp's
+  sampler (vertex colour × atlas tile × blob shadow), and
+  `camo = 100 × (1 − 2.8 × mean |ΔRGB| / 255)` (clamped). Grade words: Ghost ≥ 90, Sneaky ≥ 75,
+  Spotted ≥ 50, Sore thumb < 50. Measured: plain white on the Living Room wallpaper 43 %, after
+  one stamp 97 %. The hider's device computes it (`R.blend[w]`), it travels in the paint blob's
+  meta (`blend`), the host adds the bonus (`blendPointsFor`) and records `rec.blend` /
+  `rec.blendPts`; the recap prints "Blend 96% Ghost (+10)". Cost: one pass over ≤ 16 k texels at
+  the lock, nothing per frame. (The before/after strip and the share card are the UX pass's.)
+- **Scan during grace** is refused like Fire ("Grace period — scan in N s"): Hard's 5 s grace was a
+  free glint before Fire unlocked.
+- **Pellet assist** (`fire`): a shot that misses the mesh but passes within `0.06 × size` of a body
+  part's bounding ellipsoid (0.72 × its bounding sphere), with nothing in the way, still tags
+  (`stats.assisted` counts them). A Medium body at 5 m is ~45 × 22 px on a phone.
+
+### Per-map clocks (`rules.js`)
+
+One "XL = 1.5×" for maps from 432 to 1768 m² made CU Boulder a hider walkover (greedy vantage
+sweep: 48 vantages, 262 m tour = 191 s sprinting vs a 135 s Classic hunt) and the Greenhouse a
+seeker walkover (59 s). `MAP_TIME_ID` now sets the **seek** scale per map (a map entry's own
+`time` field wins, then the table, then the size class):
+
+| Map | sweep | seek × | Classic hunt | hide × | Classic hide |
+|---|---|---|---|---|---|
+| Living Room / Garden / Art Studio | 12–27 s | 1 | 90 s | 1 | 60 s |
+| Greenhouse & Shed | 59 s | 1 | 90 s | 1 | 60 s |
+| Corner Market | 79 s | 1.25 | 115 s | 1.25 | 75 s |
+| The Whole House | 82 s | 1.5 | 135 s | 1.5 | 90 s |
+| Museum Night | 82 s | 1.5 | 135 s | 1.5 | 90 s |
+| CU Boulder | 191 s | 3 | 270 s | 2 (cap) | 120 s |
+
+`hideScale = min(2, timeScale)` also scales the head start; the sprint stays
+`1.55 + 0.3 × (min(1.5, scale) − 1)` so CU keeps 1.7× rather than 2.15×. Double Blind's hunting
+speed is `dbSpeed = min(1.6, 1.1 + 0.33 × (scale − 1))` (1.6 m/s on CU, 1.27 in the House). The
+settings sheet's effective-time hints use the right scale for each clock.
+
+### Easy preset
+
+Was a seeker walkover (Huge + strong blinks + fast seeker + no escapes: 96 % found in the Living
+Room, mean 4 s). Now: Huge, 8 pellets, blink **On**, scan cooldown 20 s, seeker speed **Normal**,
+**1 escape**, **10 s head start** (the camouflage matters), seeker scores off, blend bonus off.
+
+### Hygiene
+
+`PLAYERS = ['a', 'b']` index loops in `simulate` / `animate`; the camera clamp's box filter is a
+module constant (`CAM_FILTER`); `controls.js` reads the surface rect on pointerdown and at most once
+a second afterwards (every pointermove used to force a synchronous layout right after writing the
+knob transform).
+
+### Deferred (not in this pass)
+
+Double Blind climbing for both hunters and a closest-approach tie-break for void rounds (the HUD's
+`both` action list, climb camera and zip gates all key on `role === 'seeker'`); a second hider spawn
+on the small maps (maps owner); the blend before/after strip and share card (UX owner).
+
+### Tests
+
+`feel` (one device, phone profile: per-map clocks, player b's Jump tap, the joystick speed ramp,
+blend % before/after a stamp and at the lock, the scan held in grace, seeker points and the FOUND
+stamp / recap text, a dry-out paying the time survived) and `feel2` (two phones, 60 ms latency:
+scurry off a wall drops and dashes, the escape window judging a shot mid-scurry). The `match`
+section's dry-out assertion now expects the time survived + 30.
+
+## Pro pass: UX (records, wardrobe, the loop between rounds, sound, HUD)
+
+Asked for: "polish the shit out of these games … immensely satisfying … addictive". The UX pass
+adds the things the game had no memory of (who holds what), gives the seeker something to do
+while blindfolded, tightens the loop between rounds and raises the floor on the phone HUD. Verified
+with scripted two-phone runs (`ONLY=ux`: records, wardrobe, wager, ticker, emotes, final card;
+`ONLY=uxland`: landscape HUD overlap + tap targets) plus the existing suite.
+
+### Shared records (`records.js`, via `api.data()`)
+
+The host folds every round into the game's shared data doc when the recap starts (the recap phase
+message carries what was earned as `rx`, so both phones celebrate the same thing). Keys follow Rail
+Rush's shape, per person `w`: `${w}_surv_ms` (longest hunt survived, + `_surv_map`, `_surv_surf`),
+`${w}_find_ms` (fastest tag), `${w}_blend` (best blend %, from paint's lock score), `${w}_hides`,
+`${w}_hunts`, `${w}_finds`, `${w}_surv`, `${w}_streak` / `_streak_best` (consecutive rounds won in
+either role), `${w}_pass` (most walk-pasts suffered), `${w}_stared`, `${w}_strokes` (most brush
+strokes in one hide), `${w}_ghost` (survivals with zero walk-pasts), `${w}_surf_{ceiling,hang,
+perch,squeeze,corner,wall}` (where they survived), `${w}_called` (right wagers), `${w}_dbwins`,
+`${w}_rounds`, `${w}_matches`, `${w}_wins`. Shown in three places: the **lobby strip** under the
+map ("Best hide Sydney 1:28 on the ceiling · Fastest find Emerson 0:12 · Best blend 91 % · Streak
+Emerson ×3"), the **recap** (a NEW RECORD sticker 900 ms after the card with the `survive` chord,
+taunt lines such as "Found in 0:12: Emerson's fastest ever", "Sydney walked past you 3 times",
+"walked right under you", "Stared straight at Sydney 4×", "is on a 3-round streak") and the
+**final card**.
+
+### Wardrobe (`wardrobe.js`)
+
+Unlockables live where paint can't reach: **eyes** (Amber · Emerald "survive 3 hunts" · Ruby "tag
+in under 15 s" · Gold "blend 90 %+" · Galaxy "survive on a ceiling 3×"), **eye shape** (Round · Cat
+slit "win a Double Blind round" · Wide eyed "stared at 5× in one hunt"), **tail charm** (Bell "10
+rounds" · Bow "survive hanging" · Paintbrush "25 strokes in one hide") and **idle** (Still · Head
+bob "a 3-round streak" · Tail wag "win 3 matches"). Unlocks are `unlock_${w}_${slot}${k}` in the
+shared data (checked against the records after every round, `UNLOCKED` stickers 1.1 s apart); the
+pick is per device (`chm.wear.v1`, per person for hotseat) and resolved through `unlocked()` at
+mount, on every data change and on every pick, then sent to the partner as one packed int
+(reliable `wear`, on link and on change) and guarded the same way on arrival. The avatar
+(`setWardrobe`) recolours its own copy of the eye-ring vertices (the pupil stays dark, the ring
+stays bright so no stealth is gained), scales the pupil for the slit / the turrets for wide eyes,
+shows one small charm mesh on the tail (one draw call while worn) and adds a head bob or tail wag
+while still. The lobby's Wardrobe chip opens a riso sheet of sticker tiles; locked tiles print the
+condition in grey halftone and a tap says what's missing ("Survive 2 more hunts").
+
+### The seeker's hide phase
+
+- **Call the hide** (setting *Seeker wager*: Off · +5 · +10; Easy Off, Classic +5, Hard +5): riso
+  chips on the blind card (FLOOR · FURNITURE · WALL · CEILING, + HANGING on maps with ≥ 2 climb
+  dots) and, in hotseat, on the "hand it over" curtain. The pick travels as reliable `call` and is
+  judged at the round's end from the hider's spot (`hideZone`: surface kind, else a ray down to the
+  collider under them: wide thin boxes and floor-ish names are floor, anything else furniture). A
+  right call pays the stake, a CALLED IT sticker in the seeker's ink and "Emerson called it: Wall"
+  on the recap.
+- **Ticker**: the hider's device sends `act {k, n}` at most once per 2.5 s (paint + stroke count,
+  stamp, fill, pick, ready, still after 20 s, moving again): no coordinates. The blind card prints
+  "Sydney is painting… (7 strokes)" live.
+- **Palette drops**: when the lock's paint blob arrives, the card's three ink drops take the three
+  most used colours of the hider's skin (sampled from the quantised ≤ 32-colour texture).
+
+### Between rounds
+
+- FOUND 3.4 s → **recap 6.5 s** (was 9 s) with the auto-advance drawn as a conic ring in the Next
+  button's border plus a seconds label (DOM writes only when the value changes), "Next: Emerson
+  hides · Sydney seeks · Living Room" inside the recap, and the round 2+ title card cut to **0.9 s**
+  (round 1 keeps 1.8 s for the map orbit). FOUND → next hide: 14.3 s → ~10.8 s untouched, ~5 s on a
+  tap. Either tap still skips.
+- **Emotes**: six riso stickers under the stats (LOL · HOW · Sneaky · ❤️ · Again! · Nice paint),
+  reliable `emote {k}`, rate-limited 1 per 700 ms and 8 per recap; the partner's lands big at a
+  random tilt near the card with the `pose` sound and a squash, yours small and mirrored. DOM only.
+- **Final card** before the hub's end card: a round timeline (one bar per round in the hider's ink,
+  length = seconds survived, ✦ if found, ★ on the longest), "Best hide / Fastest find / Best blend",
+  record and unlock stickers, emotes, "Rematch: Sydney hides first". "See the board" on either
+  phone (or 12 s) hands over to the hub card with Rematch. Who hides first now defaults to the hub's
+  rematch counter (alternates every rematch).
+
+### The hunt's arc
+
+- **Ambience** (per-phone setting *Music*: On · Hunt only · Off, on the settings sheet): a soft
+  three-oscillator pad while hiding; in the hunt a low pulse whose tempo climbs **70 → 140 bpm** over
+  the hunt, **+20 bpm** while the seeker is within 6 m of the hider (3-D), cut for 0.4 s at a tag.
+  One pad per phase, one short oscillator per beat (≤ 2.3/s), numbers only per frame.
+- **In their sights** (rule *In-their-sights cue*: Easy / Classic On, Hard Off): when the seeker's
+  view ray passes within 0.45 × size of the hider's body centre with a clear line of sight (one
+  collider ray, rate-limited 1/s), the hider's peek vignette pulses in the seeker's ink with a
+  `warn`; the count lands in the recap ("Stared straight at Sydney 4×") and the records. Both phones
+  count it (both know both positions during the hunt).
+- **HALF TIME** (hunts ≥ 40 s) and **LAST PELLET** stickers for the seeker; a confirmed tag gets a
+  90 ms hit-stop, a 0.25 shake, a white flash and a pitched-up splat on the shooter's phone; FOUND
+  freezes 0.5 s (was 0.38) and a find under 20 s bursts 160 confetti instead of 110.
+- **3-D nearness**: closest call, walk-pasts and the heartbeat use the 3-D distance; a walk-past
+  also needs line of sight within 1.5 m (≤ 7 rays/s while that close); the recap says "walked
+  right under you" when the seeker passed > 1.2 m below.
+
+### HUD
+
+- Laptops: the click that grabs the mouse no longer fires a pellet (`p.grab`; a second click
+  while that grab is still pending, or after a refused lock, is the click-to-fire fallback), and a
+  locked click fires on pointerdown (~50–100 ms less latency). `ONLY=uxdesk` covers it.
+- **Ready** is a wide "I'm hidden" pill at the top of the hider's cluster (its own grid row, 8 px
+  gap), out of the thumb's path to Paint / Pose.
+- Landscape seek HUD: the minimap (84 px) sits bottom-left above the pose row, the pellet pill
+  moves under the top bar with the seven-button grid, the joystick hint hides while the pose bar is
+  up; `ONLY=uxland` asserts no two of mini / poses / gear / acts / joyhint intersect at 844×390.
+- Portrait: the hunt hint sits under the minimap (`.minion`), the minimap draws with a fixed
+  paper / ink pair in both themes.
+- Tap targets ≥ 44 px (paint options, Done, chips, map arrows, steppers, sheet segments, size
+  buttons); type floor raised to ~11 px (captions, pose names, preset subtitles, size labels, map
+  facts, "Move").
+
+Not done here (mechanics' camera): the free cam's wall clamp, the climb camera's tangent slide and
+the attach-time camera dip. Haptics are a no-op in `core.js` now (iPhone first).
 
 ## v2: sticky feet, sizes, settings, big maps
 
@@ -216,12 +462,12 @@ and is saved per device (`localStorage`, last used) for the next time that devic
 | Seek time | 1 – 3 min | 2 min | 90 s | 90 s |
 | Paint pellets (DB: one fewer) | 3 – 10 | 8 | 6 | 5 |
 | Chirp scans per hunt | 1 · 2 · 3 · 5 · unlimited | unlimited | unlimited | 3 |
-| Scan cooldown | 10 – 45 s | 15 s | 20 s | 30 s |
-| Escapes (scurry / tongue-zip) | 0 – 3 | 0 | 1 | 2 |
-| Seeker speed | Slow · Normal · Fast | Fast | Normal | Normal |
+| Scan cooldown | 10 – 45 s | 20 s | 20 s | 30 s |
+| Escapes (scurry / tongue-zip) | 0 – 3 | 1 | 1 | 2 |
+| Seeker speed | Slow · Normal · Fast | Normal | Normal | Normal |
 | Walls & ceilings | Climb · Floor only | Climb | Climb | Climb |
 | Stamp tool | Allowed · Off | on | on | on |
-| Eye-blink glints | Off · On · Strong | Strong | On | Off |
+| Eye-blink glints | Off · On · Strong | On | On | Off |
 | Heartbeat hint | On · Off | Off | On | On |
 | Seeker minimap (big maps) | On · Off | On | On | Off |
 

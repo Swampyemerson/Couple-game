@@ -237,6 +237,8 @@ export const CSS = `
 .gtw-landtip { opacity: .8; }
 .gtw-seg { gap: 4px; }
 .gtw-seg .gtw-chip { padding: 8px 10px; }
+.gtw-srow.gtw-livery { grid-template-columns: 1fr; } .gtw-livery .gtw-chips { flex-wrap: wrap; } .gtw-livery .gtw-chip { font-size: .74rem; padding: 7px 9px; }
+.gtw-unlock { border: 2px solid var(--g-ink); border-radius: 10px; padding: 6px 10px; font-weight: 800; font-size: .82rem; background: rgba(60,160,110,.18); background: color-mix(in srgb, var(--g-good, #2a9d6a) 18%, transparent); } .gtw-unlock b { font-family: var(--g-font-display); letter-spacing: .06em; margin-right: 6px; }
 .gtw-new { border-color: var(--g-ink); position: relative; }
 .gtw-new::after { content: ''; position: absolute; top: -4px; right: -4px; width: 10px; height: 10px; border-radius: 50%; background: var(--g-bad); border: 2px solid var(--g-card); }
 .gtw-go.on { box-shadow: 1px 1px 0 var(--g-edge); transform: translate(3px, 3px); }

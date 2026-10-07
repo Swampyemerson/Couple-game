@@ -446,6 +446,7 @@ export async function buildBoulder(THREE, kit = {}) {
     geo.setAttribute('fx', new THREE.BufferAttribute(buf.F.slice(0, nv), 1));
     geo.setIndex(new THREE.BufferAttribute(nv > 65535 ? buf.I.slice(0, buf.ni) : Uint16Array.from(buf.I.subarray(0, buf.ni)), 1));
     geo.computeBoundingSphere();
+    if (typeof kit.pack === 'function') kit.pack(geo); // engine ≥ v2.1: i8 normals, u8 colours / fx, u16 uvs (52 → 21 B/vertex on the GPU)
     // memory: once on the GPU, the CPU copies of everything but positions can go (a context loss
     // rebuilds the whole map, see world.js `released`)
     if (kit.release !== false) { for (const k of ['normal', 'uv', 'color', 'fx']) geo.getAttribute(k).onUpload(free); geo.index.onUpload(free); }

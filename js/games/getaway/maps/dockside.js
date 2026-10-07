@@ -114,6 +114,42 @@ for (const b of blocks) {
     buildings.push({ x, z, w: hilly ? Math.min(w, 16) : w, d: hilly ? Math.min(d, 14) : d, h, kind, c: Math.floor(R() * 8) });
   }
 }
+// carriageway clearance: no building box inside any road's asphalt (+0.5 m). Pier Rd's sheds and
+// Lookout Ln's houses sat across roads the minimap drew as drivable (six hits in one 90 s round);
+// a box that overlaps is pushed off the road sideways (≤ 8 m), else dropped.
+{
+  const pts = []; // [x, z, hw] every 3 m along every road
+  for (const r of roads) {
+    const hw = r.width / 2;
+    for (let i = 0; i < r.pts.length - 1; i++) {
+      const [ax, az] = r.pts[i]; const [bx, bz] = r.pts[i + 1]; const L = Math.hypot(bx - ax, bz - az); const n = Math.max(1, Math.ceil(L / 3));
+      for (let k = 0; k <= n; k++) pts.push(ax + ((bx - ax) * k) / n, az + ((bz - az) * k) / n, hw);
+    }
+  }
+  const clear = (bd) => { // returns the overlap [dx, dz] to move by, or null
+    let best = null;
+    for (let q = 0; q < pts.length; q += 3) {
+      const px = pts[q]; const pz = pts[q + 1]; const m = pts[q + 2] + 0.5;
+      const ex = Math.abs(px - bd.x) - bd.w / 2; const ez = Math.abs(pz - bd.z) - bd.d / 2; // distance from the box's faces (negative = inside)
+      const d = Math.max(ex, ez);
+      if (d >= m) continue;
+      const need = m - d; // how far the box must move away from this point along the easier axis
+      const mv = ex >= ez ? [Math.sign(bd.x - px) * need, 0] : [0, Math.sign(bd.z - pz) * need];
+      if (!best || Math.abs(mv[0]) + Math.abs(mv[1]) > Math.abs(best[0]) + Math.abs(best[1])) best = mv;
+    }
+    return best;
+  };
+  for (let i = buildings.length - 1; i >= 0; i--) {
+    const bd = buildings[i]; let ok = false;
+    for (let pass = 0; pass < 3 && !ok; pass++) {
+      const mv = clear(bd); if (!mv) { ok = true; break; }
+      if (Math.abs(mv[0]) + Math.abs(mv[1]) > 8) break;
+      bd.x += mv[0]; bd.z += mv[1];
+    }
+    if (!ok && !clear(bd)) ok = true;
+    if (!ok) buildings.splice(i, 1);
+  }
+}
 for (const bd of buildings) solids.push({ kind: 'building', x: bd.x, z: bd.z, w: bd.w, d: bd.d, rot: 0, h: bd.h, drawn: true });
 // clock tower + gasworks
 solids.push({ kind: 'building', x: TOWER.x, z: TOWER.z, w: 18, d: 18, rot: 0, h: 64, drawn: true });
@@ -135,8 +171,8 @@ if (PARK) {
 for (const bd of buildings) if (bd.kind === 'house' && R() < 0.7) solids.push({ kind: 'tree', style: R() < 0.5 ? 'pine' : 'aspen', x: bd.x + bd.w / 2 + 3, z: bd.z - bd.d / 2 - 2, w: 1, d: 1 });
 for (let x = -196; x <= -24; x += 12) solids.push({ kind: 'bollard', x, z: 517, w: 0.4, d: 0.4 });
 for (let z = 448; z <= 512; z += 12) { solids.push({ kind: 'bollard', x: -197, z, w: 0.4, d: 0.4 }); solids.push({ kind: 'bollard', x: -23, z, w: 0.4, d: 0.4 }); }
-// pier containers
-for (let k = 0; k < 6; k++) solids.push({ kind: 'building', x: -150 + (k % 3) * 34, z: 470 + Math.floor(k / 3) * 22, w: 13, d: 5.5, rot: 0, h: 5.2, drawn: true, color: ['#d4553f', '#3d7cc9', '#e3b23c', '#3f9b6e', '#d4553f', '#7a5ac4'][k] });
+// pier containers (z 452 / 474: clear of Pier Rd at z ≈ 490–500)
+for (let k = 0; k < 6; k++) solids.push({ kind: 'building', x: -150 + (k % 3) * 34, z: 452 + Math.floor(k / 3) * 22, w: 13, d: 5.5, rot: 0, h: 5.2, drawn: true, color: ['#d4553f', '#3d7cc9', '#e3b23c', '#3f9b6e', '#d4553f', '#7a5ac4'][k] });
 // cacti and shrubs on the beach, for flavour
 for (let x = -500; x < -230; x += 37) solids.push({ kind: 'shrub', x, z: 425, w: 1.6, d: 1.6 });
 
@@ -169,6 +205,7 @@ function slab(b, x0, z0, x1, z1, dy, col, step = 20) {
 export const DOCKSIDE = {
   id: 'dockside', name: 'Dockside', blurb: 'A harbour town: canal bridges, a clock tower and a hill to lose them on',
   bounds: B, height, roads, open, solids, water, spawns, landmarks, ground: '#a6c97a',
+  heat: 140, // lose-the-heat distance when the setting is at its default (a tight grid: 180 m was reached in 1 round of 8)
   sky: { top: '#7fb0e3', horizon: '#f2e6cf', fog: '#efe4cf', fogNear: 140, fogFar: 560, sun: { bearing: 220, elev: 34 } },
   build(THREE, kit) {
     const P = kit.palette; const dark = kit.dark;

@@ -315,7 +315,8 @@ async function hsRound(h, { hider, round, style }) {
     await waitPhase(Sk, 'time', 10000);
     await waitPhase(H, 'time', 3000);
     const rec = (await st(Sk)).round.rec;
-    assert(rec && !rec.found && rec.outOfPellets && rec.points === Math.floor(FAST.seek / 1000) + 30, `round ${round}: out of pellets → hider survives (+${rec && rec.points})`);
+    // (pro pass: the hider is paid for the seconds actually survived + the bonus, not the whole clock)
+    assert(rec && !rec.found && rec.outOfPellets && rec.ms < FAST.seek && Math.abs(rec.points - (rec.blendPts || 0) - 30 - rec.ms / 1000) <= 1, `round ${round}: out of pellets at ${rec && (rec.ms / 1000).toFixed(1)} s → hider survives (+${rec && rec.points}, the time survived + 30)`);
   } else if (style === 'timeout') {
     await waitPhase(Sk, 'time', FAST.seek + 6000);
     await waitPhase(H, 'time', 3000);
@@ -881,7 +882,7 @@ async function settingsSection(port) {
     await a.click('.chm-lobby .chm-presets [data-v="easy"]');
     await b.waitForFunction(() => window.__cham.state().setup.rules.preset === 'easy', null, { timeout: 5000 });
     let rb = (await st(b)).setup.rules;
-    assert(rb.size === 'huge' && rb.pellets === 8 && rb.blink === 'strong' && rb.heartbeat === false && rb.minimap === true, 'Easy preset applied on the guest (huge, 8 pellets, strong blinks, no heartbeat)');
+    assert(rb.size === 'huge' && rb.pellets === 8 && rb.blink === 'on' && rb.escapes === 1 && rb.headStart === 10 && rb.seekSpeed === 'normal' && rb.heartbeat === false && rb.minimap === true, 'Easy preset applied on the guest (huge, 8 pellets, blinks on, 1 escape, 10 s head start, normal seeker, no heartbeat)');
     assert(await b.isVisible('.chm-presets button.on[data-v="easy"]'), 'guest sees Easy selected');
     // the settings sheet: host edits, guest watches live
     await a.click('.chm-lobby [data-act="settings"]');
@@ -1994,6 +1995,199 @@ async function v3MatchSection(port, map) {
 }
 
 /** v3 screenshots: settings (timing), the climbing seeker's HUD, the hunted hider's HUD, watch + free cam. */
+
+// ─────────────────────────────────────────────────────────────────────
+// pro pass (mechanics): hotseat Jump for player b, blend score, grace holds the scan, seeker
+// points, the dry-out pays the time survived, per-map clocks
+const FEELTUNE = { ...FAST, hide: undefined, seek: undefined, seekLead: 900, maxDpr: 0.5 };
+async function feelSection(port) {
+  console.log('\n# pro pass: Jump for player b in hotseat, blend %, grace holds the scan, seeker points, dry-out pays the time survived, per-map clocks');
+  const h = await launch({ port, only: ['chameleon'], who: ['a'], device: 'iPhone 13' });
+  const a = h.a;
+  try {
+    await arm(a, FEELTUNE);
+    await h.startLive(a, 'chameleon', 'local');
+    await waitReady(a);
+    // per-map clocks: CU Boulder's hunt is 3× (the sweep is 190 s sprinting), hide capped at 2×, sprint stays 1.7×
+    const ids = await hook(a, 'mapIds');
+    if (ids.includes('cuboulder')) {
+      await hook(a, 'setRules', { map: 'cuboulder', rules: { hide: 60, seek: 90 } });
+      const e = await hook(a, 'effTimes');
+      assert(e.scale === 3 && e.hideScale === 2 && e.seek === 270000 && e.hide === 120000 && Math.abs(e.sprint - 1.7) < 1e-9, `CU Boulder: seek ×${e.scale} = ${e.seek / 1000} s, hide ×${e.hideScale} = ${e.hide / 1000} s, sprint ×${e.sprint}`);
+    }
+    for (const [id, sc] of [['greenhouse', 1], ['market', 1.25], ['house', 1.5], ['museum', 1.5]]) {
+      if (!ids.includes(id)) continue;
+      await hook(a, 'setRules', { map: id });
+      const e = await hook(a, 'effTimes');
+      assert(e.scale === sc, `${id}: seek clock ×${e.scale}`);
+    }
+    const rr = await hook(a, 'setRules', { map: 'living', first: 'b', rules: { hide: 30, seek: 20, pellets: 4, scans: 2, grace: 3, rounds: 2 } });
+    assert(rr.rules.seekScore === 'full' && rr.rules.blendBonus === 10, `Classic-derived rules: seeker scores "${rr.rules.seekScore}", blend bonus ${rr.rules.blendBonus}`);
+    await a.tap('[data-act="start"]');
+    await a.tap('[data-act="curtain"]');
+    await waitPhase(a, 'hide');
+    await wait(700);
+    let s = await st(a);
+    assert(s.viewer === 'b', 'Sydney (player b) hides first and holds the phone');
+    // the Jump button with a real tap: used to be dead for player b in hotseat (a's pass ate the tap)
+    const y0 = s.bodies.b.y;
+    await a.tap('.chm-acts [data-act="jump"]');
+    const jump = await a.evaluate(async (y0) => {
+      let peak = 0; let vy = 0;
+      for (let i = 0; i < 40; i++) { await new Promise((r) => requestAnimationFrame(r)); const b = window.__cham.state().bodies.b; peak = Math.max(peak, b.y - y0); vy = Math.max(vy, b.vy); if (i > 10 && b.onGround) break; }
+      return { peak, vy };
+    }, y0);
+    assert(jump.vy > 3 && jump.peak > 0.3, `player b's Jump tap works in hotseat: vy ${jump.vy.toFixed(1)} m/s, rose ${jump.peak.toFixed(2)} m`);
+    // acceleration: the joystick ramps the body up (no 0 → 3 m/s in one frame) and it brakes in ~0.1 s
+    const box = await surfaceBox(a);
+    const run = a.evaluate(async () => {
+      const out = []; const t0 = performance.now();
+      while (performance.now() - t0 < 1500) { await new Promise((r) => requestAnimationFrame(r)); const b = window.__cham.state().bodies.b; out.push([Math.round(performance.now() - t0), +b.speed.toFixed(2)]); }
+      return out;
+    });
+    await wait(120);
+    await touchHold(a, box[0] + 80, box[1] + box[3] - 150, box[0] + 80, box[1] + box[3] - 200, 700);
+    const trace = await run;
+    const max = Math.max(...trace.map((x) => x[1]));
+    const first = trace.find((x) => x[1] > 0.05); const full = trace.find((x) => x[1] >= max * 0.95);
+    const stopAt = trace.findIndex((x, i) => i > 0 && trace[i - 1][1] >= max * 0.9 && x[1] < 0.05);
+    console.log(`  speed trace (ms, m/s): ${trace.filter((x, i) => i % 3 === 0).map((x) => `${x[0]}:${x[1]}`).join(' ')}`);
+    assert(max > 2.5 && first && full && full[0] > first[0], `the walk ramps up: ${first[1]} m/s at ${first[0]} ms → ${max.toFixed(2)} m/s at ${full[0]} ms`);
+    // blend score: a plain white body against the wallpaper vs a stamped one
+    const pose = await camoHide(a);
+    assert(pose === 'wall', 'flat against the wallpaper');
+    const b0 = (await hook(a, 'blend', 'b')).now;
+    await a.tap('.chm-acts [data-act="paint"]');
+    await wait(500);
+    await hook(a, 'stampNow');
+    await wait(200);
+    const b1 = (await hook(a, 'blend', 'b')).now;
+    assert(b0 >= 0 && b0 < 60 && b1 > b0 + 20 && b1 >= 70, `blend score: plain white ${b0} % → stamped ${b1} %`);
+    await a.tap('.chm-done');
+    await wait(200);
+    await a.tap('.chm-acts [data-act="ready"]');
+    await waitPhase(a, 'curtain', 5000);
+    const locked = (await hook(a, 'blend', 'b')).locked;
+    assert(locked.b === b1 || Math.abs(locked.b - b1) <= 3, `the lock recorded the blend (${locked.b} %)`);
+    await a.tap('[data-act="curtain"]');
+    await waitPhase(a, 'seek', 15000);
+    await a.waitForFunction(() => window.__cham.state().hunting, null, { timeout: 8000 });
+    // grace: the scan is held too
+    s = await st(a);
+    assert(s.now < s.graceUntil, 'in the grace period');
+    await hook(a, 'action', 'scan');
+    await wait(200);
+    s = await st(a);
+    assert(s.round.scansLeft.a === 2 && s.glint.b < 0, 'Scan refused during the grace period (no glint, no scan spent)');
+    await a.waitForFunction(() => !document.querySelector('.chm-acts [data-act="fire"]').disabled, null, { timeout: 6000 });
+    await hook(a, 'action', 'scan');
+    await wait(200);
+    assert((await st(a)).round.scansLeft.a === 1, 'Scan works once the grace period ends');
+    // the seeker tags at ~5 s: seeker points = ½ × seconds left + 10 per spare pellet, hider gets the seconds + blend bonus
+    const bc = await hook(a, 'bodyCenter', 'b');
+    await hook(a, 'teleport', bc[0] + 0.4, bc[2] + 2.4, Math.PI);
+    await hook(a, 'aimAt', ...(await hook(a, 'bodyCenter', 'b')));
+    await wait(250);
+    await a.tap('.chm-acts [data-act="fire"]');
+    await waitPhase(a, 'found', 10000);
+    s = await st(a);
+    const rec = s.round.rec;
+    const wantSeek = Math.round(((20000 - rec.ms) / 1000) * 0.5) + 10 * 3;
+    assert(rec.found && rec.spare === 3 && rec.seekPoints === wantSeek && s.match.scores.a === wantSeek, `the seeker banked +${rec.seekPoints} (found at ${(rec.ms / 1000).toFixed(1)} s of 20, 3 pellets spare)`);
+    const wantBlend = rec.blend >= 80 ? 10 : 0;
+    assert(rec.blend === locked.b && rec.blendPts === wantBlend && rec.points === Math.floor(rec.ms / 1000) + wantBlend, `the hider got ${rec.points}: ${Math.floor(rec.ms / 1000)} s + blend ${rec.blend} % (+${rec.blendPts})`);
+    const stampText = (await a.textContent('.chm-stamp')).replace(/\s+/g, ' ');
+    assert(new RegExp(`\\+${rec.seekPoints}`).test(stampText) && /3 pellets spare/.test(stampText), `the FOUND stamp shows the seeker's points ("${stampText.trim()}")`);
+    await waitPhase(a, 'recap', 10000);
+    await wait(400);
+    const recapText = (await a.textContent('.chm-recap')).replace(/\s+/g, ' ');
+    assert(/Blend \d+%/.test(recapText) && new RegExp(`\\+${rec.seekPoints} for`).test(recapText), 'the recap shows the blend % and the seeker\'s points');
+    await shot(a, 'pro-recap-blend');
+    // round 2: Emerson hides, Sydney runs dry after 4 misses → the hider is paid for the time survived, not the clock
+    await a.tap('[data-act="next"]');
+    await waitPhase(a, 'curtain', 10000);
+    await a.tap('[data-act="curtain"]');
+    await waitPhase(a, 'hide');
+    await wait(500);
+    await camoHide(a);
+    await a.tap('.chm-acts [data-act="ready"]');
+    await waitPhase(a, 'curtain', 5000);
+    await a.tap('[data-act="curtain"]');
+    await waitPhase(a, 'seek', 15000);
+    await a.waitForFunction(() => !document.querySelector('.chm-acts [data-act="fire"]').disabled, null, { timeout: 12000 });
+    const ac = await hook(a, 'bodyCenter', 'a');
+    for (let i = 0; i < 4; i++) {
+      await hook(a, 'aimAt', ac[0] + 1.6 + i * 0.1, 0, ac[2] + 1.3);
+      await wait(100);
+      await a.tap('.chm-acts [data-act="fire"]');
+      await wait(200);
+    }
+    await waitPhase(a, 'time', 10000);
+    const r2 = (await st(a)).round.rec;
+    assert(r2 && !r2.found && r2.outOfPellets && r2.ms < 15000 && Math.abs(r2.points - r2.blendPts - 30 - r2.ms / 1000) <= 1, `ran dry at ${(r2.ms / 1000).toFixed(1)} s: the hider gets ${r2.points} (${Math.floor(r2.ms / 1000)} s + 30${r2.blendPts ? ` + blend ${r2.blendPts}` : ''}), not the whole clock`);
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'pro-feel-FAIL').catch(() => {});
+    try { console.error(JSON.stringify(await st(a)).slice(0, 1500)); } catch { /* ignore */ }
+  } finally { await h.close(); }
+}
+
+/** Two phones: a scurry from a wall drops and dashes (it used to spend the escape without moving); the tag window during an escape. */
+async function feel2Section(port) {
+  console.log('\n# pro pass (two phones): scurry off a wall = drop and dash, escape-aware tag window');
+  const h = await launch({ port, only: ['chameleon'], latency: 60 });
+  const { a, b } = h;
+  try {
+    await startPair(h, { ...FAST, hide: 40000, seek: 30000 });
+    await startMatch(h, { map: 'living', first: 'b', rules: { escapes: 2 } });
+    await waitPhase(b, 'hide', 20000); await waitPhase(a, 'hide', 5000);
+    await wait(500);
+    const spots = await hook(b, 'spots'); const c = spots.camo;
+    await hook(b, 'teleport', c.x, c.z - 0.1, 0, c.y);
+    await wait(200);
+    const stk = await hook(b, 'stick');
+    assert(stk.at && Math.abs(stk.n[1]) < 0.7, 'the hider is stuck flat on the camo wall');
+    await b.click('.chm-acts [data-act="ready"]');
+    await waitPhase(a, 'seek', 20000); await waitPhase(b, 'seek', 5000);
+    await b.waitForFunction(() => window.__cham.state().hunting, null, { timeout: 8000 });
+    await wait(300);
+    const p0 = (await st(b)).bodies.b;
+    assert(p0.at, 'still on the wall when the hunt starts');
+    // look along the wall and scurry
+    await hook(b, 'setLook', 1.2, 0);
+    await b.click('.chm-acts [data-act="scurry"]');
+    await a.waitForFunction(() => window.__cham.state().trails > 0, null, { timeout: 5000 }).catch(() => {});
+    await wait(900);
+    const sb = await st(b);
+    const p1 = sb.bodies.b;
+    const dash = Math.hypot(p1.x - p0.x, p1.z - p0.z);
+    assert(!p1.at && dash > 1.2 && sb.round.escapes.b === 1, `scurry from the wall: dropped and dashed ${dash.toFixed(2)} m (escape spent: ${2 - sb.round.escapes.b})`);
+    assert((await st(a)).trails > 0, 'the seeker saw the trail');
+    // a shot right after a second scurry is judged on the short (escape) window
+    await hook(b, 'setLook', -1.2, 0);
+    const bc = await hook(a, 'bodyCenter', 'b');
+    await hook(a, 'teleport', bc[0], bc[2] + 2.2, Math.PI);
+    await hook(a, 'aimAt', ...(await hook(a, 'bodyCenter', 'b')));
+    await wait(300);
+    await b.click('.chm-acts [data-act="scurry"]');
+    await wait(300);
+    await hook(a, 'aimAt', ...(await hook(a, 'bodyCenter', 'b')));
+    await a.click('.chm-acts [data-act="fire"]');
+    await b.waitForFunction(() => window.__cham.state().lastTagCheck, null, { timeout: 5000 });
+    const tc = (await st(b)).lastTagCheck; const win = (await st(b)).lastWindow;
+    const since = tc.T - tc.escAt; const expect = since > tc.delay + tc.rtt / 2 + 120 && since < 1500 ? 'escape' : 'full';
+    console.log(`  shot ${since.toFixed(0)} ms into the scurry (delay ${tc.delay} ms, rtt ${tc.rtt.toFixed(0)} ms): window ${win}, confirmed ${tc.ok}, seen-vs-me ${Math.hypot(tc.seen[0] - tc.me[0], tc.seen[2] - tc.me[2]).toFixed(2)} m`);
+    assert(win === expect && tc.escAt > 0, `the tag check used the ${expect} window for a shot ${since.toFixed(0)} ms into the scurry`);
+    if (expect !== 'escape') console.log('  (sandbox was too slow to fire inside the escape window; the full window was correctly used)');
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'pro-feel2-FAIL-a').catch(() => {}); await shot(b, 'pro-feel2-FAIL-b').catch(() => {});
+    try { console.error(JSON.stringify(await st(b)).slice(0, 1500)); } catch { /* ignore */ }
+  } finally { await h.close(); }
+}
+
 async function shots3Run(port, { colorScheme, device, viewport, prefix }) {
   const h = await launch({ port, only: ['chameleon'], colorScheme, device });
   const { a, b } = h;
@@ -2059,6 +2253,270 @@ async function shots3Run(port, { colorScheme, device, viewport, prefix }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// polish (UX): shared records + unlocks, the wardrobe, the seeker's wager + ticker, emotes, the recap's
+// auto-advance ring, the final card; a landscape HUD overlap check; the Ready pill
+async function uxSection(port) {
+  console.log('\n# polish: records, wardrobe, wager, ticker, emotes, final card (two phones, 2 rounds)');
+  const h = await launch({ port, only: ['chameleon'] });
+  const { a, b } = h;
+  try {
+    await startPair(h, { ...SLOW, recap: 12000 }); // a long recap: the stickers land 0.9 s + 1.1 s apart
+    // lobby: the wardrobe chip opens a sheet of sticker tiles; locked tiles say what's missing
+    assert(await a.isVisible('.chm-wardbtn'), 'lobby: a Wardrobe chip next to Settings');
+    await a.tap('.chm-wardbtn');
+    await a.waitForSelector('.chm-wardrobe', { timeout: 4000 });
+    const tiles = await a.$$eval('.chm-wt', (els) => els.map((e) => ({ locked: e.classList.contains('locked'), hint: e.dataset.hint || '', k: e.dataset.k, key: e.dataset.wear })));
+    assert(tiles.length === 15 && tiles.filter((t) => t.locked).length === 11, `wardrobe: ${tiles.length} tiles, ${tiles.filter((t) => t.locked).length} locked (the four defaults are free)`);
+    await shot(a, 'ux-wardrobe');
+    await a.tap('.chm-wt.locked[data-wear="eye"][data-k="1"]');
+    await a.waitForSelector('.chm-pop', { timeout: 3000 });
+    const popTxt = await a.$eval('.chm-pop', (e) => e.textContent);
+    assert(/LOCKED/.test(popTxt) && /3 more hunts/.test(popTxt), `a locked tile says what's missing: "${popTxt.trim().replace(/\s+/g, ' ')}"`);
+    const wear0 = await hook(a, 'polish');
+    assert(wear0.wear.a.eye === 0, 'nothing worn yet (amber eyes)');
+    await a.tap('.chm-wardrobe .chm-done');
+    await wait(300);
+    assert(!(await a.isVisible('.chm-wardrobe')), 'Done closes the wardrobe');
+    // music is a per-phone setting on the sheet
+    await a.tap('[data-act="settings"]');
+    await a.waitForSelector('[data-music="hunt"]', { timeout: 4000 });
+    await a.tap('[data-music="hunt"]');
+    await wait(200);
+    assert((await hook(a, 'polish')).music === 'hunt', 'Music · Hunt only sticks on this phone');
+    await a.tap('.chm-sheet .chm-done');
+    await wait(300);
+    await startMatch(h, { rules: { rounds: 2, wager: 5, sights: true, escapes: 0 } });
+    // ── round 1: b hides, a (blindfolded) calls the hide and reads the ticker ──
+    await waitPhase(b, 'hide', 20000); await waitPhase(a, 'hide', 5000);
+    await a.waitForSelector('.chm-call [data-call="wall"]', { timeout: 5000 });
+    assert(await a.isVisible('[data-call="ceiling"]'), 'blind card: wager chips (floor · furniture · wall · ceiling)');
+    await a.tap('[data-call="wall"]');
+    await wait(300);
+    assert((await hook(a, 'polish')).call.a === 'wall', 'seeker called WALL');
+    await b.waitForFunction(() => window.__cham.polish().call.a === 'wall', null, { timeout: 5000 });
+    // the hider paints: the seeker's ticker says so (count only, no coordinates)
+    await camoHide(b);
+    await b.tap('.chm-acts [data-act="paint"]');
+    await wait(600);
+    await strokeOnBody(b, true);
+    await strokeOnBody(b, true);
+    await a.waitForFunction(() => /painting/.test(window.__cham.polish().ticker), null, { timeout: 8000 });
+    const tick = (await hook(a, 'polish')).ticker;
+    assert(/Sydney is painting… \(\d+ strokes?\)/.test(tick), `ticker on the seeker's blind card: "${tick}"`);
+    assert(await a.$eval('[data-live="ticker"]', (e) => e.textContent) === tick, 'the ticker is live in the card');
+    await b.tap('.chm-tool[data-tool="stamp"]');
+    await wait(300);
+    await b.tap('.chm-done');
+    await wait(300);
+    const hideActs = await b.$$eval('.chm-acts .chm-b', (els) => els.map((e) => [e.dataset.act, e.classList.contains('wide'), e.getBoundingClientRect().width]));
+    const readyBtn = hideActs.find((x) => x[0] === 'ready');
+    assert(readyBtn && readyBtn[1] && readyBtn[2] > 120 && hideActs[0][0] === 'ready', `Ready is a wide pill at the top of the cluster (${Math.round(readyBtn[2])} px)`);
+    await shot(b, 'ux-hider-hud');
+    await shot(a, 'ux-blind-wager');
+    await b.tap('.chm-acts [data-act="ready"]');
+    await waitPhase(a, 'seek', 20000); await waitPhase(b, 'seek', 5000);
+    await a.waitForFunction(() => window.__cham.state().hunting, null, { timeout: 8000 });
+    // staring straight at the hider: 'in their sights' counts on both phones, the hider feels it
+    const bc = await hook(a, 'bodyCenter', 'b');
+    await hook(a, 'teleport', bc[0] + 0.3, bc[2] + 2.4, Math.PI, 0);
+    await hook(a, 'aimAt', ...bc);
+    await a.waitForFunction(() => window.__cham.polish().stared >= 1, null, { timeout: 6000 });
+    await b.waitForFunction(() => window.__cham.polish().stared >= 1, null, { timeout: 6000 });
+    assert(true, `in their sights: stared ${(await hook(a, 'polish')).stared}× (seeker) / ${(await hook(b, 'polish')).stared}× (hider)`);
+    const pa = await hook(a, 'polish');
+    assert(pa.nearD < 4 && pa.nearD > 1.5, `3-D nearness ${pa.nearD.toFixed(2)} m`);
+    // tag
+    await hook(a, 'aimAt', ...(await hook(a, 'bodyCenter', 'b')));
+    await wait(200);
+    await a.tap('.chm-acts [data-act="fire"]');
+    await waitPhase(a, 'found', 15000);
+    await waitPhase(a, 'recap', 15000); await waitPhase(b, 'recap', 5000);
+    let sa = await st(a);
+    const rec1 = sa.round.rec;
+    assert(rec1.called && rec1.zone === 'wall' && rec1.wagerPts === 5, `the call was right (${rec1.call} = ${rec1.zone}): +5 for the seeker`);
+    assert(rec1.rx && rec1.rx.records.length === 0, 'first round: no records yet (nothing to beat)');
+    await a.waitForSelector('.chm-recap .chm-ring', { timeout: 4000 });
+    const ring = await a.$eval('.chm-recap .chm-ring', (e) => ({ k: +getComputedStyle(e).getPropertyValue('--k'), secs: e.querySelector('small').textContent }));
+    assert(ring.k > 0 && ring.k <= 1 && /^\d+$/.test(ring.secs), `the Next button carries the auto-advance ring (${ring.k.toFixed(2)}, ${ring.secs} s)`);
+    assert(await a.isVisible('.chm-nextline') && /Next: Emerson hides/.test(await a.$eval('.chm-nextline', (e) => e.textContent)), 'the recap says who hides next');
+    await a.waitForFunction(() => [...document.querySelectorAll('.chm-pop')].some((e) => /CALLED IT/.test(e.textContent)), null, { timeout: 6000 });
+    assert(true, 'CALLED IT sticker pops on the recap (after the UNLOCKED stickers)');
+    const unl = rec1.rx.unlocks.map((u) => `${u.w}:${u.name}`).join(',');
+    assert(/a:Ruby/.test(unl), `unlocks on a fast tag: ${unl}`);
+    // emotes: b reacts, a sees the sticker
+    await b.tap('.chm-emote[data-emote="how"]');
+    await a.waitForSelector('.chm-emo:not(.mine)', { timeout: 5000, state: 'attached' });
+    assert(!!(await b.$('.chm-emo.mine')), 'emote: a small mirrored sticker on the sender, a big one on the partner');
+    await shot(a, 'ux-recap-emote');
+    // shared records after round 1 (host writes, both read)
+    await b.waitForFunction(() => window.__cham.data().a_finds === 1, null, { timeout: 8000 });
+    const d1 = await hook(a, 'data');
+    assert(d1.a_finds === 1 && d1.b_hides === 1 && d1.a_find_ms > 0 && d1.a_called === 1 && d1.a_streak === 1 && d1.a_rounds === 1 && d1.b_rounds === 1, `records after round 1: ${JSON.stringify({ a_finds: d1.a_finds, b_hides: d1.b_hides, a_find_ms: d1.a_find_ms, a_called: d1.a_called, a_streak: d1.a_streak })}`);
+    assert(d1.b_strokes >= 2, `b's best strokes-in-a-hide recorded (${d1.b_strokes})`);
+    await b.tap('[data-act="next"]');
+    // ── round 2: a hides, b runs dry → a survives; final card ──
+    await waitPhase(a, 'hide', 20000); await waitPhase(b, 'hide', 5000);
+    await camoHide(a);
+    await a.tap('.chm-acts [data-act="paint"]');
+    await wait(400);
+    await a.tap('.chm-tool[data-tool="stamp"]');
+    await wait(300);
+    await a.tap('.chm-done');
+    await a.tap('.chm-acts [data-act="ready"]');
+    await waitPhase(b, 'seek', 20000); await waitPhase(a, 'seek', 5000);
+    await b.waitForFunction(() => window.__cham.state().hunting, null, { timeout: 8000 });
+    const ac = await hook(b, 'bodyCenter', 'a');
+    await hook(b, 'teleport', ac[0] + 0.3, ac[2] + 2.6, Math.PI, 0);
+    for (let i = 0; i < 6; i++) {
+      await hook(b, 'aimAt', ac[0] + 1.6 + i * 0.1, 0, ac[2] + 1.2);
+      await wait(120);
+      await b.tap('.chm-acts [data-act="fire"]');
+      await wait(260);
+      if (i === 4) { await b.waitForSelector('.chm-pop', { timeout: 3000 }); assert(/LAST PELLET/.test(await b.$eval('.chm-pop', (e) => e.textContent)), 'LAST PELLET stamp on the fifth shot'); }
+    }
+    await waitPhase(b, 'time', 10000);
+    await waitPhase(a, 'recap', 15000); await waitPhase(b, 'recap', 5000);
+    sa = await st(a);
+    assert(!sa.round.rec.found && sa.round.rec.rx, 'round 2: a survived');
+    await a.waitForFunction(() => window.__cham.data().a_surv === 1, null, { timeout: 8000 });
+    const d2 = await hook(a, 'data');
+    assert(d2.a_surv === 1 && d2.a_streak === 2 && d2.b_streak === 0 && d2.a_surv_ms > 0 && d2.a_surv_surf === 'wall', `records after round 2: a_surv ${d2.a_surv}, a_streak ${d2.a_streak}, longest hide ${d2.a_surv_ms} ms on the ${d2.a_surv_surf}`);
+    await a.tap('[data-act="next"]');
+    await waitPhase(a, 'final', 15000); await waitPhase(b, 'final', 5000);
+    await a.waitForSelector('.chm-final', { timeout: 4000 }); await b.waitForSelector('.chm-final', { timeout: 4000 });
+    const rows = await a.$$eval('.chm-tl-row', (els) => els.length);
+    const story = await a.$eval('.chm-story', (e) => e.textContent);
+    assert(rows === 2 && /Best hide: Emerson/.test(story) && /Fastest find: Emerson/.test(story), `final card: ${rows} round bars, "${story.replace(/\s+/g, ' ').trim()}"`);
+    assert(!(await st(a)).finished && await a.evaluate(() => document.querySelector('#game-root .gm-end').hidden), 'the hub end card waits for the final card');
+    await shot(a, 'ux-final');
+    await b.tap('.chm-final [data-act="finish"]');
+    await a.waitForSelector('#game-root .gm-end:not([hidden])', { timeout: 10000 });
+    await b.waitForSelector('#game-root .gm-end:not([hidden])', { timeout: 10000 });
+    assert(true, 'either phone\'s "See the board" hands over to the hub end card on both');
+    await a.waitForFunction(() => window.__cham.data().a_matches === 1, null, { timeout: 8000 });
+    const d3 = await hook(a, 'data');
+    assert(d3.a_matches === 1 && d3.b_matches === 1 && d3.a_wins === 1, `match counters: a_wins ${d3.a_wins}, matches ${d3.a_matches}/${d3.b_matches}`);
+    // the lobby strip reads the records next time
+    const strip = bestsStripText(d3);
+    assert(strip, strip);
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'ux-FAIL-a').catch(() => {}); await shot(b, 'ux-FAIL-b').catch(() => {});
+    try { console.error(JSON.stringify(await st(a)).slice(0, 1200)); } catch { /* ignore */ }
+  } finally { await h.close(); }
+}
+const bestsStripText = (d) => `records: longest hide ${d.a_surv_ms || d.b_surv_ms} ms · fastest find ${d.a_find_ms || d.b_find_ms} ms · streak a ${d.a_streak | 0}`;
+
+/** Landscape seek HUD with a climbing seeker, pose bar open, minimap on: no two HUD pieces overlap. */
+async function uxLandscapeSection(port) {
+  console.log('\n# polish: landscape seek HUD (844×390, House, seeker stuck, poses open, minimap): no overlaps; tap targets ≥ 44 px');
+  const h = await launch({ port, only: ['chameleon'], who: ['a'], device: 'iPhone 13' });
+  const a = h.a;
+  try {
+    await a.setViewportSize({ width: 844, height: 390 });
+    await arm(a, { ...FAST, hide: 60000, seek: 60000 });
+    await h.startLive(a, 'chameleon', 'local');
+    await waitReady(a);
+    await wait(500);
+    // tap targets on the lobby + sheet
+    await a.tap('[data-act="settings"]');
+    await a.waitForSelector('.chm-sheet', { timeout: 4000 });
+    const small = await a.$$eval('.chm-sheet button, .chm-sheet .chm-chip', (els) => els.filter((e) => e.offsetParent).map((e) => { const r = e.getBoundingClientRect(); return [e.className.split(' ')[0] + (e.dataset.k ? ':' + e.dataset.k : ''), Math.round(r.width), Math.round(r.height)]; }).filter((x) => x[2] < 44 || x[1] < 40));
+    assert(small.length === 0, `settings sheet: every button ≥ 44 px tall (${small.length ? JSON.stringify(small.slice(0, 5)) : 'ok'})`);
+    await a.tap('.chm-sheet .chm-done');
+    await wait(200);
+    await hook(a, 'setRules', { map: 'house', first: 'b', rules: { minimap: true, seekClimb: true, climb: true } });
+    await wait(400);
+    await a.tap('[data-act="start"]');
+    await waitPhase(a, 'curtain');
+    await a.tap('[data-act="curtain"]');
+    await waitPhase(a, 'hide');
+    await wait(400);
+    const opts = await a.$$eval('.chm-acts .chm-b', (els) => els.map((e) => { const r = e.querySelector('span').getBoundingClientRect(); return [e.dataset.act, Math.round(r.width), Math.round(r.height)]; }));
+    assert(opts.every((x) => x[2] >= 40), `hide buttons: ${JSON.stringify(opts)}`);
+    await a.tap('.chm-acts [data-act="paint"]');
+    await wait(500);
+    const seg = await a.$$eval('.chm-seg button, .chm-done', (els) => els.map((e) => { const r = e.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; }));
+    assert(seg.every((x) => x[1] >= 44 && x[0] >= 40), `paint options ≥ 44 px: ${JSON.stringify(seg)}`);
+    await a.tap('.chm-done');
+    await a.tap('.chm-acts [data-act="ready"]');
+    await waitPhase(a, 'curtain');
+    await a.tap('[data-act="curtain"]');
+    await waitPhase(a, 'seek');
+    await a.waitForFunction(() => window.__cham.state().hunting, null, { timeout: 8000 });
+    await wait(300);
+    // walk the seeker into the nearest wall and stick
+    const b0 = await hook(a, 'body');
+    const wall = await hook(a, 'surfaceAt', b0.x, b0.y + 0.3, b0.z, Math.sin(b0.yaw), 0, Math.cos(b0.yaw), 6);
+    if (wall) { await hook(a, 'teleport', wall.p[0] - wall.n[0] * 0.3, wall.p[2] - wall.n[2] * 0.3, b0.yaw); await wait(100); }
+    await hook(a, 'stick');
+    await hook(a, 'openPoses');
+    await wait(600);
+    const rects = await a.evaluate(() => {
+      const out = {};
+      for (const k of ['.chm-mini', '.chm-poses', '.chm-gear', '.chm-acts', '.chm-joyhint']) { const e = document.querySelector(k); if (e && !e.hidden && e.offsetParent) { const r = e.getBoundingClientRect(); out[k] = [r.left, r.top, r.right, r.bottom]; } }
+      return out;
+    });
+    const keys = Object.keys(rects);
+    const hits = [];
+    for (let i = 0; i < keys.length; i++) for (let j = i + 1; j < keys.length; j++) {
+      const A = rects[keys[i]]; const B = rects[keys[j]];
+      if (A[0] < B[2] - 1 && B[0] < A[2] - 1 && A[1] < B[3] - 1 && B[1] < A[3] - 1) hits.push(`${keys[i]} × ${keys[j]}`);
+    }
+    assert(keys.includes('.chm-mini') && keys.includes('.chm-poses') && keys.includes('.chm-gear'), `landscape seek HUD shows ${keys.join(', ')}`);
+    assert(hits.length === 0, `no two of ${keys.join(' / ')} intersect${hits.length ? ': ' + hits.join(', ') : ''}`);
+    await shot(a, 'ux-land-seek');
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'ux-land-FAIL').catch(() => {});
+  } finally { await h.close(); }
+}
+
+/** Laptop: the click that grabs the mouse is a grab, not a shot. */
+async function uxDesktopSection(port) {
+  console.log('\n# polish: laptop, the first click grabs the mouse without spending a pellet');
+  const h = await launch({ port, only: ['chameleon'], who: ['a'], device: 'Desktop Chrome', fine: true });
+  const a = h.a;
+  try {
+    await a.setViewportSize({ width: 1280, height: 800 });
+    await arm(a, { ...FAST, hide: 60000, seek: 60000 });
+    await h.startLive(a, 'chameleon', 'local');
+    await waitReady(a);
+    await wait(400);
+    await a.click('[data-act="start"]');
+    await waitPhase(a, 'curtain');
+    await a.click('[data-act="curtain"]');
+    await waitPhase(a, 'hide');
+    await wait(300);
+    await a.keyboard.press('KeyR');
+    await waitPhase(a, 'curtain');
+    await a.click('[data-act="curtain"]');
+    await waitPhase(a, 'seek');
+    await a.waitForFunction(() => window.__cham.state().hunting, null, { timeout: 8000 });
+    await wait(300);
+    const box = await surfaceBox(a);
+    const cx = box[0] + box[2] / 2; const cy = box[1] + box[3] / 2;
+    const sk = (await st(a)).viewer;
+    const used0 = (await st(a)).round.used[sk];
+    await a.mouse.click(cx, cy);
+    await wait(500);
+    const lock = await a.evaluate(() => ({ locked: document.pointerLockElement === document.querySelector('.chm-surface') }));
+    const used1 = (await st(a)).round.used[sk];
+    if (lock.locked) assert(used1 === used0, `pointer lock granted: the grab click spent no pellet (${used1 - used0})`);
+    else assert(used1 - used0 <= 1, `pointer lock refused here: the fallback click-to-fire fired ${used1 - used0} pellet (hint says click to grab, then click to fire)`);
+    await a.mouse.click(cx, cy);
+    await wait(500);
+    const used2 = (await st(a)).round.used[sk];
+    assert(used2 >= used1 && used2 - used0 <= 2 && used2 - used0 >= 1, `the next click fires (${used2 - used0} pellet${used2 - used0 === 1 ? '' : 's'} after two clicks)`);
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+  } finally { await h.close(); }
+}
+
+// ─────────────────────────────────────────────────────────────────────
 (async () => {
   const sections = [];
   if (want('hotseat')) {
@@ -2110,6 +2568,13 @@ async function shots3Run(port, { colorScheme, device, viewport, prefix }) {
   if (want('settings3')) sections.push(() => settings3Section(PORT + 7));
   if (want('v3house')) sections.push(() => v3MatchSection(PORT + 8, 'house'));
   if (want('v3cu')) sections.push(() => v3MatchSection(PORT + 9, 'cuboulder'));
+  // pro pass (mechanics)
+  if (want('feel')) sections.push(() => feelSection(PORT + 2));
+  if (want('feel2')) sections.push(() => feel2Section(PORT + 3));
+  // polish (UX owner)
+  if (want('ux')) sections.push(() => uxSection(PORT + 5));
+  if (want('uxland')) sections.push(() => uxLandscapeSection(PORT + 6));
+  if (want('uxdesk')) sections.push(() => uxDesktopSection(PORT + 7));
   if (want('shots3')) {
     sections.push(async () => {
       console.log('\n# v3 screenshots: settings (timing, rules), seeker on a wall, hider HUD, watch, free cam — phone, landscape, laptop; light + dark');

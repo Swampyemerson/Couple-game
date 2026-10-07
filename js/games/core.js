@@ -486,7 +486,8 @@ export function sfx(name) {
     }
   } catch { /* no audio */ }
 }
-export function haptic(ms = 12) { try { navigator.vibrate && navigator.vibrate(ms); } catch { /* ignore */ } }
+/** Haptics are off: iOS ignores navigator.vibrate and Android tablets/laptops buzzed on every stick, fire and fill. Games layer sound instead. */
+export function haptic(ms = 12) { void ms; }
 
 /** Resolved theme colours for canvas / WebGL drawing. Call again after a theme change. */
 export function tokens(el = document.documentElement) {

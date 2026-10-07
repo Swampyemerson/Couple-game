@@ -18,6 +18,7 @@ export function createControls({ surface, root, joyBase, joyKnob, onAction, pain
     sprintHeld: false,
     locked: false,
     lockFailed: false,
+    lockReqAt: 0, // when the last pointer-lock request went out (the grab click never fires)
     usingMouse: matchMedia('(pointer: fine)').matches,
     lastInput: 'touch',
     fp: false,
@@ -49,13 +50,20 @@ export function createControls({ surface, root, joyBase, joyKnob, onAction, pain
     else { joyBase.style.transform = ''; joyKnob.style.transform = ''; }
   }
 
+  // the surface rect is read on pointerdown (and at most once a second after that), not on every
+  // pointermove: two fingers at 60–120 Hz each forced a synchronous layout right after the knob's
+  // transform was written
+  let rect = null; let rectAt = -1e9;
   function local(e) {
-    const r = surface.getBoundingClientRect();
+    const n = performance.now();
+    if (!rect || e.type === 'pointerdown' || n - rectAt > 1000) { rect = surface.getBoundingClientRect(); rectAt = n; }
+    const r = rect;
     return [e.clientX - r.left, e.clientY - r.top, r.width, r.height];
   }
 
   function requestLock() {
     if (st.locked || st.lockFailed || !surface.requestPointerLock) return;
+    st.lockReqAt = performance.now();
     try {
       const p = surface.requestPointerLock();
       if (p && p.catch) p.catch(() => { st.lockFailed = true; });
@@ -90,8 +98,13 @@ export function createControls({ surface, root, joyBase, joyKnob, onAction, pain
       return;
     }
     if (e.pointerType === 'mouse' && (st.mode === 'move' || st.mode === 'look')) {
+      // locked: fire on the press itself (no pointerup wait: ~50-100 ms less latency)
       if (st.locked) { if (e.button === 0) onAction('fire'); p.role = 'none'; return; }
-      if (st.fp) requestLock();
+      // the click that grabs the mouse is a grab, not a shot (pointer lock lands asynchronously,
+      // so at pointerup `locked` is still false and the grab used to spend a pellet)
+      // (a second click while that grab is still pending counts as the click-to-fire fallback)
+      const pending = st.lockReqAt > 0 && performance.now() - st.lockReqAt < 1500;
+      if (st.fp && !st.lockFailed && !pending) { p.grab = true; requestLock(); }
       p.role = 'mouse-look';
       return;
     }
@@ -149,7 +162,7 @@ export function createControls({ surface, root, joyBase, joyKnob, onAction, pain
     if (p.role === 'joy') { joyId = null; st.moveX = 0; st.moveY = 0; showJoy(false); }
     if (p.role === 'stroke') { paint.end(); strokeId = null; }
     if (p.role === 'orbit-or-tap' && !p.moved && e.type === 'pointerup') paint.tap(p.x, p.y);
-    if (p.role === 'mouse-look' && !p.moved && e.type === 'pointerup' && st.fp && (st.lockFailed || !st.locked) && p.button === 0) onAction('fire');
+    if (p.role === 'mouse-look' && !p.moved && e.type === 'pointerup' && st.fp && p.button === 0 && !st.locked && (st.lockFailed || !p.grab)) onAction('fire');
     if (p.role === 'look' && !p.moved && e.type === 'pointerup' && p.type === 'mouse' && p.button === 0) onAction('fire');
     if (p.role === 'pinch' && [...ptrs.values()].filter((q) => q.role === 'pinch').length < 2) { pinch = null; for (const q of ptrs.values()) q.role = 'none'; }
   };
@@ -164,8 +177,8 @@ export function createControls({ surface, root, joyBase, joyKnob, onAction, pain
   L.on(root, 'touchmove', stopTouch, { passive: false });
 
   // pointer lock state
-  L.on(document, 'pointerlockchange', () => { st.locked = document.pointerLockElement === surface; });
-  L.on(document, 'pointerlockerror', () => { st.lockFailed = true; st.locked = false; });
+  L.on(document, 'pointerlockchange', () => { st.locked = document.pointerLockElement === surface; st.lockReqAt = 0; });
+  L.on(document, 'pointerlockerror', () => { st.lockFailed = true; st.locked = false; st.lockReqAt = 0; });
 
   // ── keyboard ──
   // E sticks / lets go (picks a colour while painting); Z tongue-zips (undoes while painting)

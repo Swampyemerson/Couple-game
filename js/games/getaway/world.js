@@ -7,7 +7,7 @@
 // kit. Work is sliced so the main thread never blocks for long; afterwards every chunk is one or
 // two draw calls plus its decal mesh. Per frame: distance + frustum culling, the light dressing
 // (lights.js) and, on mid/high tiers, the car shadow map (render.js).
-import { Builder, makeToon, mergeSteps, makeSky, cssRGB, mix, FX, FX_FAR, FX_ROAD, gfxTier } from './gfx.js';
+import { Builder, makeToon, mergeSteps, makeSky, cssRGB, mix, FX, FX_FAR, FX_ROAD, gfxTier, packGeometry } from './gfx.js';
 import { drawProp, styleOf, STYLE_H } from './props.js';
 import { mulberry } from './geo.js';
 import { createLights, makeDecalMaterial } from './lights.js';
@@ -147,6 +147,9 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
   const lights = createLights(THREE, scene, U, P, cfg, { near: fogNear, far: fogFar });
   mats.lights = lights;
   const shadow = createShadow(THREE, U, cfg);
+  // shadow casters live in their own small scene (a child of the world scene, so the main pass
+  // still draws them): the cars, wheels and traffic (game.js), falling props (below)
+  const casters = new THREE.Scene(); casters.name = 'casters'; casters.autoUpdate = false; scene.add(casters);
   const lampList = [];
 
   // ── chunks ──
@@ -212,6 +215,8 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
     FX,
     seeded: (n) => mulberry((n >>> 0) || 1),
     builder: () => new Builder(THREE, P.outline),
+    /** Quantise a map-built float geometry to the engine's 21 B/vertex layout (gfx.js packGeometry). */
+    pack: (g) => packGeometry(THREE, g),
     slice,
     height: geo.ground,
     roads: geo.roads,
@@ -538,7 +543,7 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
   // WebGL context loss the world must be rebuilt (`released` tells the game).
   let released = false;
   if (release) {
-    const free = function freeArray() { this.array = null; };
+    const free = function freeArray() { this.gpuBytes = this.array ? this.array.byteLength : 0; this.array = null; };
     const keep = new Set(['position', 'a']);
     scene.traverse((o) => {
       if (!o.isMesh || o.isInstancedMesh || !o.name || !o.name.startsWith('merged')) return;
@@ -573,8 +578,8 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
     const sp = Math.hypot(vx, vz) || 1;
     const tall = (Number.isFinite(s.hRaw) ? s.hRaw : s.h || 6) > 3;
     falling.push({ m, t: 0, ax: vz / sp, az: -vx / sp, vx: vx * 0.3, vz: vz * 0.3, vy: tall ? 0 : Math.min(5, sp * 0.15), y: gy, gy, ang: 0, w: Math.min(4, 0.6 + sp * 0.08), bounce: 0, spin: (Math.random() - 0.5) * 2, yaw: 0 });
-    scene.add(m);
-    if (falling.length > 24) { const f = falling.shift(); scene.remove(f.m); f.m.geometry.dispose(); }
+    casters.add(m);
+    if (falling.length > 24) { const f = falling.shift(); casters.remove(f.m); f.m.geometry.dispose(); }
     rec.mesh = null;
   }
   const q = new THREE.Quaternion(); const q2 = new THREE.Quaternion(); const axis = new THREE.Vector3(); const yAx = new THREE.Vector3(0, 1, 0);
@@ -623,19 +628,24 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
     updateFalling(dt);
     return vis;
   }
-  /** Before rendering a view: the car shadow map around where the camera looks. */
+  /** Before rendering a view: the car shadow map around where the camera looks. Skipped when no
+   *  car group is visible (lobby, intro orbit): the pass costs a render-target store per frame. */
   function preRender(renderer, cam) {
     if (!shadow || !shadow.enabled) return;
+    let any = false;
+    for (const o of casters.children) if (o.visible && o.isGroup) { any = true; break; }
+    if (!any) return;
     const e = cam.matrixWorld.elements; fv.set(-e[8], 0, -e[10]); if (fv.lengthSq() < 1e-6) fv.set(0, 0, -1); fv.normalize();
     focus.set(cam.position.x + fv.x * shadow.R * 0.55, 0, cam.position.z + fv.z * shadow.R * 0.55);
     focus.y = geo.ground(focus.x, focus.z);
-    shadow.render(renderer, scene, lightDir, focus);
+    casters.updateMatrixWorld(true);
+    shadow.render(renderer, casters, lightDir, focus);
   }
 
   const totalTris = chunkList.reduce((a, c) => a + c.tris, 0) + seeList.reduce((a, s) => a + s.tris, 0);
   onProgress(1, 'Ready');
   return {
-    scene, farScene, sky: skyMesh, mats, kit, chunks: chunkList, toon, breakSolid, update, preRender, fogC, skyTop, sunDir: lightDir, lights, shadow, tier,
+    scene, farScene, casters, sky: skyMesh, mats, kit, chunks: chunkList, toon, breakSolid, update, preRender, fogC, skyTop, sunDir: lightDir, lights, shadow, tier,
     fogNear, fogFar, cfg,
     /** true when GPU-only geometry dropped its CPU copies: rebuild the world after a context loss */
     get released() { return released; },
@@ -646,7 +656,7 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
       lights.glow(cam.position.x, 0, cam.position.z - 5, 1, 0, 0, 0); lights.blob(cam.position.x, 0, cam.position.z - 5, 0, 1, 1, 0);
       lights.beam(cam.position.x, 0, cam.position.z - 5, 0, 0, -1, 1, 0); lights.spot(0, -999, 0, 0, 0, 1, 0);
       lights.commit(cam, -1);
-      try { preRender(renderer, cam); } catch (e) { console.warn('getaway: shadow warm-up', e); }
+      try { if (shadow && shadow.enabled) { casters.updateMatrixWorld(true); shadow.render(renderer, casters, lightDir, focus.set(cam.position.x, geo.ground(cam.position.x, cam.position.z), cam.position.z)); } } catch (e) { console.warn('getaway: shadow warm-up', e); }
     },
     resetProps() {
       for (const s of geo.solids) {
@@ -660,7 +670,7 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
         const dr = decalRec.get(s.i);
         if (dr && dr.save && dr.c.decal) { const a = dr.c.decal.geometry.getAttribute('a'); a.array.set(dr.save, dr.v0); a.needsUpdate = true; dr.save = null; }
       }
-      for (const f of falling) { scene.remove(f.m); f.m.geometry.dispose(); }
+      for (const f of falling) { casters.remove(f.m); f.m.geometry.dispose(); }
       falling.length = 0;
     },
     brokenCount: () => geo.solids.reduce((a, s) => a + (s.broken ? 1 : 0), 0),

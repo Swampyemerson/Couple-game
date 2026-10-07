@@ -392,6 +392,13 @@ export function settingsSheet(rules, { canEdit, device, live = false }) {
   }
   dev += `<div class="gtw-srow"><div><b>Graphics</b><small>${esc(d.gfxNote || 'Lower is smoother and uses less memory')}</small></div>${chipRow('gfx', d.gfx || 'auto', ['auto', 'low', 'mid', 'high'], { auto: 'Auto', low: 'Low', mid: 'Medium', high: 'High' })}</div>`;
   dev += `<div class="gtw-srow"><div><b>Camera</b><small>Chase camera distance (C switches)</small></div>${chipRow('cam', d.cam || 'near', ['near', 'far'], { near: 'Close', far: 'Far' })}</div>`;
+  if (d.liveries) { // unlockable paint jobs (liveries.js): locked chips show how to earn them
+    for (const [kind, label] of [['runner', 'Runner livery'], ['cop', 'Cruiser']]) {
+      const rows = d.liveries[kind] || []; const cur = rows.find((r) => r.cur) || rows[0];
+      const locked = rows.filter((r) => !r.on);
+      dev += `<div class="gtw-srow gtw-livery"><div><b>${label}</b><small>${esc(locked.length ? `Next: ${locked[0].name} — ${locked[0].how}` : 'Every paint job earned')}</small></div><div class="gtw-chips gtw-seg">${rows.map((r) => `<button class="gtw-chip ${cur && cur.k === r.k ? 'on' : ''}" data-l="dev" data-k="livery${kind}" data-v="${r.k}" ${r.on ? '' : 'disabled'} title="${esc(r.on ? r.name : `${r.name}: ${r.how}`)}">${r.on ? '' : '🔒 '}${esc(r.name)}</button>`).join('')}</div></div>`;
+    }
+  }
   const match = rules ? `<h3 class="gtw-sh">Match${canEdit ? '' : ` · ${live ? 'the host picks these' : ''}`}</h3>${canEdit ? '' : '<p class="note">The host picks these. You see changes live.</p>'}${KEYS.map(row).join('')}` : '';
   return `<div class="in gtw-st ${canEdit ? '' : 'gtw-ro'}"><div class="gtw-lrow gtw-shead"><h2>Settings</h2><button class="gtw-go" data-l="sheetclose" style="flex:none">Done</button></div>
     <h3 class="gtw-sh">This ${d.touch ? 'phone' : 'device'}</h3>${dev}${match}</div>`;
@@ -413,7 +420,7 @@ export function introCard(api, { map, round, rounds, runner, me, landmark, round
     ${myRole ? `<p class="gtw-tip">${esc(ROLE_TIP[myRole])}</p>` : ''}</div>`;
 }
 
-export function resultCard(api, { outcome, reason, runner, stats, scores, next, local, me, ran }) {
+export function resultCard(api, { outcome, reason, runner, stats, scores, next, local, me, ran, unlocks }) {
   const busted = outcome === 'busted';
   const head = busted ? (reason === 'water' ? 'SPLASH!' : 'BUSTED!') : 'ESCAPED!';
   const why = {
@@ -427,6 +434,7 @@ export function resultCard(api, { outcome, reason, runner, stats, scores, next, 
     <p>${why} ${nameB(api, winner)} takes the round${local ? '' : youWon ? ' — nice driving' : ''}.</p>
     <div class="gtw-stats">${t ? `<div><b>${t}</b><small>On the run</small></div>` : ''}<div><b>${Math.round((st.top || 0) * 3.6)}</b><small>Top km/h</small></div><div><b>${st.near || 0}</b><small>Near misses</small></div><div><b>${st.pits || 0}</b><small>PITs</small></div>${t ? '' : `<div><b>${st.spikes || 0}</b><small>Spikes hit</small></div>`}</div>
     <div class="gtw-score"><span><i style="background:var(--p-a)"></i>${esc(api.name('a'))} ${scores.a}</span><span><i style="background:var(--p-b)"></i>${esc(api.name('b'))} ${scores.b}</span></div>
+    ${unlocks && unlocks.length ? `<p class="gtw-unlock"><b>UNLOCKED</b> ${unlocks.map((u) => `${esc(u.name)} (${u.kind === 'cop' ? 'cruiser' : 'runner'})`).join(', ')} — pick it in Settings</p>` : ''}
     <p>${esc(next)}</p></div>`;
 }
 

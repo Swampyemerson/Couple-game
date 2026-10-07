@@ -3,7 +3,7 @@
 // whole body. At load we rasterise the parts into that atlas to get, per texel, which part it
 // belongs to and its local position + normal: painting then happens in 3D (see paint.js).
 // Eyes (pupil + white ring) are not paintable: they are the only giveaway.
-import { sphereGeo, tubeGeo } from './geo.js';
+import { sphereGeo, tubeGeo, cylGeo } from './geo.js';
 import { clamp, lerp, damp } from './util.js';
 
 export const TEX = 128;
@@ -249,6 +249,10 @@ export function createKit(THREE) {
   eyeGeo.setAttribute('color', new THREE.Float32BufferAttribute(ec, 3));
   eyeGeo.setIndex(ei);
   eyeGeo.computeBoundingSphere();
+  // tail charms (wardrobe): bell, bow, paintbrush: tiny solids, one draw call while worn
+  const bow = sphereGeo(0.05, 0.022, 0.018, { w: 10, h: 5, metres: false });
+  const brush = cylGeo(0.008, 0.012, 0.09, { radial: 8 });
+  const charmGeos = [null, toBuffer(THREE, sphereGeo(0.03, 0.028, 0.03, { w: 10, h: 6, metres: false })), toBuffer(THREE, bow), toBuffer(THREE, brush)];
   const blobGeo = new THREE.PlaneGeometry(1, 1);
   blobGeo.rotateX(-Math.PI / 2);
   const bc = document.createElement('canvas'); bc.width = bc.height = 64;
@@ -258,8 +262,8 @@ export function createKit(THREE) {
   bg.fillStyle = gr; bg.fillRect(0, 0, 64, 64);
   const blobTex = new THREE.CanvasTexture(bc);
   return {
-    geos, texels, eyeGeo, blobGeo, blobTex,
-    dispose() { geos.forEach((g) => g.dispose()); eyeGeo.dispose(); blobGeo.dispose(); blobTex.dispose(); },
+    geos, texels, eyeGeo, blobGeo, blobTex, charmGeos,
+    dispose() { geos.forEach((g) => g.dispose()); eyeGeo.dispose(); blobGeo.dispose(); blobTex.dispose(); charmGeos.forEach((g) => g && g.dispose()); },
   };
 }
 
@@ -295,6 +299,9 @@ export function createAvatar(THREE, kit, { gradientMap, texture }) {
   root.add(model);
   const mat = new THREE.MeshToonMaterial({ map: texture, gradientMap });
   const eyeMat = new THREE.MeshToonMaterial({ vertexColors: true, gradientMap, emissive: new THREE.Color(0x000000) });
+  // this chameleon's own copy of the eye geometry, so an eye colour (wardrobe) recolours only its ring
+  const eyeGeo = kit.eyeGeo.clone();
+  const eyeCol0 = kit.eyeGeo.getAttribute('color').array;
   const mk = (i) => { const m = new THREE.Mesh(kit.geos[i], mat); m.userData.part = i; return m; };
   const piv = {};
   for (const k of ['body', 'head', 'tail', 'legFL', 'legFR', 'legBL', 'legBR']) { piv[k] = new THREE.Group(); piv[k].position.fromArray(PIV[k]); model.add(piv[k]); }
@@ -309,11 +316,17 @@ export function createAvatar(THREE, kit, { gradientMap, texture }) {
     piv.head.add(turret);
     const skin = mk(pi); turret.add(skin); meshes.push(skin);
     const look = new THREE.Group(); turret.add(look);
-    const pup = new THREE.Mesh(kit.eyeGeo, eyeMat);
+    const pup = new THREE.Mesh(eyeGeo, eyeMat);
     look.add(pup);
     eyes.push({ side, turret, look, pup, skin, baseYaw: side === 'L' ? 0.55 : -0.55 });
   }
   const tail = mk(5); piv.tail.add(tail); meshes.push(tail);
+  // wardrobe (wardrobe.js): a tail charm (one small mesh at the tail tip, drawn only when worn)
+  const charmMat = new THREE.MeshToonMaterial({ color: 0xffd23f, gradientMap });
+  const charm = new THREE.Mesh(kit.charmGeos ? kit.charmGeos[1] : kit.blobGeo, charmMat);
+  charm.visible = false; charm.raycast = () => {};
+  charm.position.set(0, -0.09, -0.19); piv.tail.add(charm);
+  const wear = { eye: 0, shape: 0, charm: 0, twitch: 0 };
   for (const [k, i] of [['legFL', 6], ['legFR', 7], ['legBL', 8], ['legBR', 9]]) { const m = mk(i); piv[k].add(m); meshes.push(m); }
   // order meshes by part index for the paint system
   meshes.sort((a, b) => a.userData.part - b.userData.part);
@@ -398,7 +411,11 @@ export function createAvatar(THREE, kit, { gradientMap, texture }) {
     if (st.blinkT <= 0) { st.blink = 0.14; st.blinkT = 2.2 + Math.random() * 3.4; }
     if (st.blink > 0) st.blink -= dt;
     const open = st.blink > 0 ? 0.08 : 1;
-    for (const e of eyes) e.pup.scale.set(1, open, 1);
+    const slit = wear.shape === 1 ? 0.42 : 1;
+    for (const e of eyes) e.pup.scale.set(slit, open, 1);
+    // idle twitches (wardrobe): a head bob or a tail wag while standing still
+    if (wear.twitch === 1) piv.head.rotation.x += Math.sin(now * 2.6) * 0.07 * (1 - st.walk);
+    else if (wear.twitch === 2) piv.tail.rotation.y += Math.sin(now * 5.2) * 0.35 * (1 - st.walk);
     // glint (emissive flash)
     const g = st.glintUntil > now ? 1 : 0;
     eyeMat.emissive.setScalar(g ? 0.9 : 0);
@@ -431,7 +448,24 @@ export function createAvatar(THREE, kit, { gradientMap, texture }) {
     /** Hide head parts (first-person view from inside the head). */
     setHeadVisible(v) { piv.head.visible = v; },
     eyeWorld(i, out) { return eyes[i].turret.getWorldPosition(out); },
-    dispose() { mat.dispose(); eyeMat.dispose(); blobMat.dispose(); hullMat.dispose(); },
+    /** Wardrobe: { eye, shape, charm, twitch } small ints (wardrobe.js); eyeRgb = iris colour or null. */
+    setWardrobe(wr, eyeRgb) {
+      wear.eye = wr.eye | 0; wear.shape = wr.shape | 0; wear.charm = wr.charm | 0; wear.twitch = wr.twitch | 0;
+      const col = eyeGeo.getAttribute('color'); const arr = col.array;
+      for (let i = 0; i < arr.length; i += 3) {
+        const white = eyeCol0[i] > 0.9; // ring vertices (the pupil stays dark)
+        if (white && eyeRgb) { arr[i] = eyeRgb[0]; arr[i + 1] = eyeRgb[1]; arr[i + 2] = eyeRgb[2]; }
+        else { arr[i] = eyeCol0[i]; arr[i + 1] = eyeCol0[i + 1]; arr[i + 2] = eyeCol0[i + 2]; }
+      }
+      col.needsUpdate = true;
+      const wide = wear.shape === 2 ? 1.22 : 1;
+      for (const e of eyes) e.turret.scale.setScalar(wide);
+      charm.visible = wear.charm > 0;
+      if (kit.charmGeos && kit.charmGeos[wear.charm]) charm.geometry = kit.charmGeos[wear.charm];
+      charmMat.color.set(wear.charm === 1 ? 0xffd23f : wear.charm === 2 ? 0xf0428b : 0x2f5bea);
+    },
+    get wear() { return wear; },
+    dispose() { mat.dispose(); eyeMat.dispose(); blobMat.dispose(); hullMat.dispose(); eyeGeo.dispose(); charmMat.dispose(); },
     lerpPose: lerp,
   };
 }

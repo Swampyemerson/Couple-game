@@ -435,6 +435,115 @@ export const CSS = `
   .chm-seg2 button { height: 44px; min-width: 58px; font-size: .86rem; padding: 0 12px; }
   .chm-sheet .chm-go { align-self: flex-end; min-width: 220px; }
 }
+
+/* ── polish pass: records, wardrobe, emotes, pops, wager, final card, tap targets ── */
+.chm-bests { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 2px 6px; padding: 5px 8px; border: 2px dashed var(--g-line); border-radius: 10px; font-size: .72rem; font-weight: 800; color: var(--g-muted); line-height: 1.3; }
+.chm-bests span { white-space: nowrap; } .chm-bests i { font-style: normal; opacity: .5; } .chm-bests em { font-style: normal; text-transform: lowercase; }
+.chm-wardbtn { padding: 0 10px; min-width: 48px; flex: none; }
+.chm-wardrobe h3 { margin: 8px 0 0; }
+.chm-wrow { display: flex; gap: 8px; overflow-x: auto; padding: 4px 2px 8px; -webkit-overflow-scrolling: touch; scroll-snap-type: x proximity; }
+.chm-wt { flex: none; width: 92px; min-height: 96px; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 3px; padding: 8px 4px 6px; border: 2px solid var(--g-ink); border-radius: 14px; background: var(--g-card); color: var(--g-ink); font: 900 .72rem/1.1 var(--g-font-body); cursor: pointer; touch-action: manipulation; box-shadow: var(--g-shadow-sm, 2px 2px 0 var(--g-edge)); scroll-snap-align: start; text-align: center; }
+.chm-wt small { font-size: .58rem; font-weight: 700; color: var(--g-muted); line-height: 1.15; }
+.chm-wt.on { background: var(--g-hl); color: var(--g-on-ink); transform: translate(-2px, -2px); box-shadow: 4px 4px 0 var(--g-edge); }
+.chm-wt.on small { color: var(--g-on-ink); opacity: .8; }
+.chm-wt.locked { border-style: dashed; box-shadow: none; background-image: var(--g-halftone); background-size: 5px 5px; }
+.chm-wt.locked > i { filter: grayscale(1); opacity: .45; } .chm-wt.locked b { color: var(--g-muted); }
+.chm-wt-eye { position: relative; width: 36px; height: 36px; border-radius: 50%; border: 2px solid var(--g-ink); background: #fffaf0; display: block; }
+.chm-wt-eye b { position: absolute; left: 50%; top: 50%; width: 14px; height: 14px; margin: -7px; border-radius: 50%; background: #1d1b22; }
+.chm-wt-eye.e1 { background: #5cdb80; } .chm-wt-eye.e2 { background: #f54d61; } .chm-wt-eye.e3 { background: #ffcc38; } .chm-wt-eye.e4 { background: linear-gradient(135deg, #9e73fa, #ff7ad9 60%, #49c6ff); }
+.chm-wt-eye.s1 b { width: 6px; margin-left: -3px; border-radius: 40%; } .chm-wt-eye.s2 { width: 42px; height: 42px; } .chm-wt-eye.s2 b { width: 18px; height: 18px; margin: -9px; }
+.chm-wt-charm { display: block; width: 36px; height: 36px; border-radius: 50%; border: 2px dashed var(--g-line); }
+.chm-wt-charm.c1 { border: 2px solid var(--g-ink); background: radial-gradient(circle at 40% 35%, #fff2a8, #ffd23f 60%, #c99a00); }
+.chm-wt-charm.c2 { border: 2px solid var(--g-ink); background: var(--p-b); border-radius: 40% 40% 40% 40% / 60% 60% 60% 60%; transform: scaleX(1.3) rotate(-10deg); width: 30px; }
+.chm-wt-charm.c3 { border: 2px solid var(--g-ink); background: linear-gradient(to bottom, var(--p-a) 55%, #f7e3b0 55%); border-radius: 6px; width: 12px; height: 38px; }
+.chm-wt-tw { display: block; width: 36px; height: 36px; border-radius: 50%; border: 2px solid var(--g-ink); background: var(--g-card); }
+.chm-wt-tw.t1 { animation: chm-drop 1.1s infinite; } .chm-wt-tw.t2 { animation: chm-wag 0.7s infinite; border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%; }
+@keyframes chm-wag { 0%, 100% { transform: rotate(-14deg); } 50% { transform: rotate(14deg); } }
+.chm-lines { display: flex; flex-direction: column; gap: 2px; font-size: .8rem; }
+.chm-lines span { color: var(--g-ink); }
+.chm-nextline { font-size: .78rem; }
+.chm-ticker { font-size: .82rem; min-height: 1.2em; color: var(--g-ink); }
+.chm-call { display: flex; flex-direction: column; gap: 6px; padding: 8px 6px; border: 2px dashed var(--g-line); border-radius: 12px; }
+.chm-call h3 { margin: 0; }
+.chm-call .chm-chip.on { background: var(--chm-me); border-color: var(--g-ink); color: var(--g-on-ink); }
+.chm-emotes { display: flex; justify-content: center; gap: 4px; flex-wrap: nowrap; }
+.chm-emote { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; flex: 1 1 0; min-width: 44px; max-width: 64px; min-height: 44px; padding: 3px 2px; border: 2px solid var(--g-line); border-radius: 12px; background: var(--g-card); color: var(--g-ink); font: 900 .56rem/1 var(--g-font-body); text-transform: uppercase; letter-spacing: .04em; cursor: pointer; touch-action: manipulation; transition: transform .08s; }
+.chm-emote span { font-size: 1.2rem; line-height: 1; }
+.chm-emote em { font-style: normal; font-size: .5rem; white-space: nowrap; overflow: hidden; max-width: 100%; text-overflow: ellipsis; }
+.chm-recap .chm-lines { gap: 1px; font-size: .76rem; }
+.chm-emote:active { transform: scale(.9); }
+.chm-emote.sent { animation: chm-squash .3s; border-color: var(--g-ink); }
+@keyframes chm-squash { 30% { transform: scale(1.25, .8); } 60% { transform: scale(.9, 1.15); } }
+.chm-pops { position: absolute; inset: 0; pointer-events: none; z-index: 6; }
+.chm-pop { position: absolute; left: 50%; top: 30%; transform: translate(-50%, -50%) rotate(-5deg); padding: 8px 18px 10px; font-family: var(--g-font-display); font-size: 1.7rem; font-weight: 900; letter-spacing: .02em; color: var(--g-on-ink); background: var(--g-hl); border: 3px solid var(--g-ink); border-radius: 14px; box-shadow: 5px 5px 0 var(--g-edge); white-space: nowrap; animation: chm-stamp .45s cubic-bezier(.2,1.6,.4,1), chm-popout .4s ease-in 1.5s forwards; }
+.chm-pop small { display: block; font-family: var(--g-font-body); font-size: .8rem; font-weight: 800; letter-spacing: 0; text-align: center; margin-top: 2px; }
+.chm-pop.a { background: var(--p-a); } .chm-pop.b { background: var(--p-b); } .chm-pop.ink { background: var(--g-ink); color: var(--g-bg); }
+.chm-pop.low { top: 62%; } .chm-pop.mid { top: 46%; }
+@keyframes chm-popout { to { opacity: 0; transform: translate(-50%, -60%) rotate(-5deg) scale(.9); } }
+.chm-emo { position: absolute; width: 0; height: 0; pointer-events: none; z-index: 6; }
+.chm-emo i { position: absolute; left: 0; top: 0; transform: translate(-50%, -50%) rotate(var(--r, 0deg)); display: flex; flex-direction: column; align-items: center; padding: 6px 10px; border: 2.5px solid var(--g-ink); border-radius: 14px; background: var(--g-card); box-shadow: 4px 4px 0 var(--g-edge); font: 900 .7rem/1 var(--g-font-body); text-transform: uppercase; color: var(--g-ink); animation: chm-emoin .3s cubic-bezier(.2,1.6,.4,1), chm-popout .35s ease-in 1.6s forwards; }
+.chm-emo i span { font-size: 2rem; line-height: 1.1; } .chm-emo.mine i span { font-size: 1.3rem; } .chm-emo.mine i { padding: 4px 8px; box-shadow: 2px 2px 0 var(--g-edge); }
+.chm-emo i b { margin-top: 2px; }
+@keyframes chm-emoin { from { transform: translate(-50%, -50%) rotate(var(--r, 0deg)) scale(.3, 1.4); opacity: 0; } 50% { transform: translate(-50%, -50%) rotate(var(--r, 0deg)) scale(1.2, .85); } }
+/* the recap's Next button carries the auto-advance ring in its border */
+.chm-ring { position: relative; }
+.chm-ring small { display: inline-block; margin-left: 8px; font-size: .8rem; opacity: .8; font-variant-numeric: tabular-nums; min-width: 1.2em; }
+.chm-ring::after { content: ''; position: absolute; inset: -6px; border-radius: 18px; padding: 3px; background: conic-gradient(var(--g-ink) calc(var(--k, 1) * 100%), transparent 0); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; opacity: .55; pointer-events: none; }
+/* final card */
+.chm-final .chm-card { gap: 10px; }
+.chm-tl { display: flex; flex-direction: column; gap: 4px; }
+.chm-tl-row { display: flex; align-items: center; gap: 6px; font-size: .72rem; font-weight: 900; }
+.chm-tl-n { width: 24px; text-align: right; color: var(--g-muted); }
+.chm-tl-t { width: 34px; text-align: left; font-variant-numeric: tabular-nums; }
+.chm-tl-bar { flex: 1; height: 16px; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-bg); overflow: hidden; }
+.chm-tl-bar i { position: relative; display: block; height: 100%; min-width: 14px; border-radius: 6px; }
+.chm-tl-bar i.pa { background: var(--p-a); } .chm-tl-bar i.pb { background: var(--p-b); }
+.chm-tl-bar i b, .chm-tl-bar i em { position: absolute; right: 3px; top: -3px; font-size: .78rem; line-height: 1; color: var(--g-on-ink); font-style: normal; }
+.chm-tl-bar i b { right: auto; left: 4px; color: #fff; text-shadow: 0 0 2px var(--g-ink); }
+.chm-story { display: flex; flex-direction: column; gap: 3px; font-size: .8rem; font-weight: 800; }
+.chm-final .chm-recs { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+.chm-final .chm-recs span { padding: 4px 9px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-hl); color: var(--g-on-ink); font-size: .7rem; font-weight: 900; text-transform: uppercase; letter-spacing: .05em; transform: rotate(-2deg); }
+.chm-final .chm-recs span:nth-child(even) { transform: rotate(2deg); }
+/* the hider's Ready: a wide pill at the top of the cluster, out of the thumb's path to Paint/Pose */
+.chm-b.wide { grid-column: 1 / -1; justify-self: stretch; margin-bottom: 8px; }
+.chm-b.wide > span:first-child { width: auto; height: 46px; border-radius: 999px; padding: 0 16px; flex-direction: row; gap: 8px; display: inline-flex; align-items: center; justify-content: center; }
+.chm-b.wide > span:first-child::after { content: attr(data-label); font: 900 .82rem/1 var(--g-font-body); text-transform: uppercase; letter-spacing: .06em; }
+.chm-b.wide em { display: none; }
+.chm.acts7 .chm-b.wide, .chm.acts3 .chm-b.wide { grid-column: 1 / -1; }
+/* in-their-sights: the peek vignette pulses in the seeker's ink */
+.chm.peek.sights .chm-vig { animation: chm-sights .6s ease-out; }
+@keyframes chm-sights { 0% { box-shadow: inset 0 0 110px 44px color-mix(in srgb, var(--chm-them) 75%, transparent); } 100% { box-shadow: inset 0 0 90px 30px rgba(20, 16, 24, 0.42); } }
+/* tap targets: 44 px everywhere a thumb lands */
+.chm-seg button { min-width: 40px; height: 44px; }
+.chm-done { height: 44px; }
+.chm-chip { min-height: 44px; padding: 8px 14px; }
+.chm-arrow { width: 44px; height: 48px; }
+.chm-tips .chm-go { min-height: 44px; }
+.chm-step button { width: 44px; height: 44px; } .chm-step output { line-height: 44px; }
+.chm-seg2 button { height: 44px; }
+.chm-opts { padding: 4px 6px; gap: 5px; }
+@media (max-width: 380px) { .chm-opts { flex-wrap: wrap; } .chm-seg button { min-width: 40px !important; padding: 0 5px !important; } }
+/* type floor: 11 px on captions, pose labels, preset subtitles, size labels, map facts, the joystick hint */
+.chm-b em { font-size: .7rem; }
+.chm-pose { width: 56px; font-size: .68rem; }
+.chm-phase { font-size: .7rem; }
+.chm-joyhint { font-size: .7rem; }
+.chm-presets small { font-size: .68rem; }
+.chm-sizes button { font-size: .68rem; }
+.chm-facts em { font-size: .68rem; }
+.chm-set .chm-sizes button { font-size: .64rem; min-height: 44px; }
+/* the hunt hint sits under the minimap instead of across it */
+.chm.minion .chm-hint { top: calc(224px + var(--chm-st)); }
+@media (orientation: landscape) and (max-height: 520px) {
+  /* landscape seek HUD with a climbing seeker: the minimap goes bottom-left above the pose row,
+     the pellet pill sits above the action grid, the joystick hint hides while the pose bar is up */
+  .chm-mini { width: 84px; height: 84px; top: auto; bottom: calc(158px + var(--chm-sb)); left: calc(10px + var(--chm-sl)); }
+  .chm.minion .chm-hint { top: calc(104px + var(--chm-st)); }
+  .chm.acts7 .chm-gear { top: calc(64px + var(--chm-st)); right: calc(12px + var(--chm-sr)); }
+  .chm.posesup .chm-joyhint { display: none; }
+  .chm-pose { width: 50px; }
+  .chm-b.wide > span:first-child { height: 40px; }
+}
 @media (prefers-reduced-motion: reduce) { .chm *, .chm *::before, .chm *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; } }
 @media (min-width: 900px) and (min-height: 600px) { .chm-sc { font-size: 1.1rem; padding: 6px 12px 6px 9px; } .chm-sc span { font-size: 0.82rem; } .chm-clock { min-width: 104px; } .chm-time { font-size: 1.8rem; } .chm-phase { font-size: 0.7rem; } .chm-sub { top: calc(78px + var(--chm-st)); font-size: 0.9rem; } .chm-gear { top: calc(116px + var(--chm-st)); } }
 @media (min-width: 700px) { .chm-b > span:first-child { width: 60px; height: 60px; } .chm-b.big > span:first-child { width: 78px; height: 78px; } .chm-title { font-size: 2.5rem; } }
@@ -479,6 +588,7 @@ export function createHud(root, api) {
       <div class="chm-legend chm-sticker"></div>
       <div class="chm-ripple"></div>
     </div>
+    <div class="chm-pops"></div>
     <div class="chm-vig"></div>
     <div class="chm-flash"></div>
     <div class="chm-layer"></div>`);
@@ -490,7 +600,7 @@ export function createHud(root, api) {
     joy: $('.chm-joy'), knob: $('.chm-joy i'), joyhint: $('.chm-joyhint'), mini: $('.chm-mini'), miniCv: $('.chm-mini canvas'), tips: $('.chm-tips'),
     poses: $('.chm-poses'), tools: $('.chm-tools'), swatch: $('.chm-swatch'), acts: $('.chm-acts'),
     hint: $('.chm-hint'), legend: $('.chm-legend'), badge: $('.chm-badge'), here: $('.chm-here'), ripple: $('.chm-ripple'), vig: $('.chm-vig'), flash: $('.chm-flash'),
-    layer: $('.chm-layer'),
+    layer: $('.chm-layer'), pops: $('.chm-pops'),
   };
   const cache = new Map();
   let hintTimer = 0;
@@ -549,7 +659,7 @@ export function createHud(root, api) {
       if (list !== N.list) {
         N.list = list;
         el.acts.style.gridTemplateColumns = list.length > 2 ? 'auto auto' : `repeat(${list.length}, auto)`;
-        el.acts.innerHTML = list.map((b) => `<button class="chm-b ${b.big ? 'big' : ''} ${b.prime ? 'prime' : ''} ${b.hl ? 'hl' : ''}" data-act="${b.act}" aria-label="${esc(b.label)}"><span>${icon(b.icon)}${b.cdRing ? '<svg class="chm-cd" viewBox="0 0 56 56"><circle cx="28" cy="28" r="25.5"/></svg>' : ''}</span><em>${esc(b.label)}</em>${b.key ? `<kbd>${esc(b.key)}</kbd>` : ''}</button>`).join('');
+        el.acts.innerHTML = list.map((b) => `<button class="chm-b ${b.big ? 'big' : ''} ${b.prime ? 'prime' : ''} ${b.hl ? 'hl' : ''} ${b.wide ? 'wide' : ''}" data-act="${b.act}" aria-label="${esc(b.label)}"><span data-label="${esc(b.label)}">${icon(b.icon)}${b.cdRing ? '<svg class="chm-cd" viewBox="0 0 56 56"><circle cx="28" cy="28" r="25.5"/></svg>' : ''}</span><em>${esc(b.label)}</em>${b.key ? `<kbd>${esc(b.key)}</kbd>` : ''}</button>`).join('');
         actBtn.clear();
         for (const b of list) {
           const btn = el.acts.querySelector(`[data-act="${b.act}"]`);
@@ -589,8 +699,9 @@ export function createHud(root, api) {
       const k = Math.min((W - 16) / w, (H - 16) / d);
       mini.k = k; mini.ox = (W - w * k) / 2 - plan.minX * k; mini.oz = (H - d * k) / 2 - plan.minZ * k;
       const css = getComputedStyle(root);
-      const ink = css.getPropertyValue('--g-ink').trim() || '#1d1b22'; const paper = css.getPropertyValue('--g-bg').trim() || '#f4f2ee'; const line = css.getPropertyValue('--g-line').trim() || '#ccc';
-      const card = css.getPropertyValue('--g-card').trim() || '#fff'; const muted = css.getPropertyValue('--g-muted').trim() || '#666';
+      // a fixed paper / ink pair in both themes: the dark theme's grey-on-near-black plan was unreadable
+      const ink = '#1d1b22'; const paper = '#e9e5dc'; const line = 'rgba(29,27,34,0.35)';
+      const card = '#f7f4ee'; const muted = '#4a4650';
       const font = css.getPropertyValue('--g-font-body').trim() || 'sans-serif';
       // one background per floor (two-storey maps show the floor the seeker is on)
       const floors = plan.floors && plan.floors.length ? plan.floors : [{ y: 0, rooms: plan.rooms, boxes: plan.boxes }];
@@ -673,6 +784,37 @@ export function createHud(root, api) {
       setTimeout(() => b.remove(), 460);
     },
     flash() { el.flash.classList.remove('go'); void el.flash.offsetWidth; el.flash.classList.add('go'); },
+    /** A sticker pop ('NEW RECORD', 'UNLOCKED · Ruby eyes'): DOM only, removed after 2 s. */
+    pop(text, cls = 'hl', sub = '') {
+      const d = document.createElement('div');
+      d.className = `chm-pop ${cls} ${(N.popN = (N.popN | 0) + 1) % 2 ? '' : 'mid'}`; // alternate heights: two stickers 1.1 s apart never sit on each other
+      d.innerHTML = `${esc(text)}${sub ? `<small>${esc(sub)}</small>` : ''}`;
+      el.pops.appendChild(d);
+      setTimeout(() => d.remove(), 2000);
+    },
+    /** A reaction sticker: theirs lands big near the card at a random tilt, mine small and mirrored. */
+    emote(emoji, label, mine) {
+      const d = document.createElement('div');
+      d.className = `chm-emo ${mine ? 'mine' : ''}`;
+      const W = root.clientWidth || 390; const H = root.clientHeight || 800;
+      const x = mine ? W * 0.5 + (Math.random() - 0.5) * W * 0.5 : W * (0.3 + Math.random() * 0.4);
+      const y = mine ? H * 0.42 : H * (0.3 + Math.random() * 0.16);
+      d.style.left = `${Math.round(x)}px`; d.style.top = `${Math.round(y)}px`;
+      d.innerHTML = `<i style="--r:${Math.round((Math.random() - 0.5) * 24)}deg"><span>${emoji}</span>${label ? `<b>${esc(label)}</b>` : ''}</i>`;
+      el.pops.appendChild(d);
+      setTimeout(() => d.remove(), 2000);
+    },
+    /** The blind card's three ink drops take the hider's actual palette (a tease of what to look for). */
+    drops(colors) {
+      const ds = el.layer.querySelectorAll('.chm-drops i');
+      for (let i = 0; i < ds.length && i < colors.length; i++) ds[i].style.background = colors[i];
+    },
+    /** The recap's Next button ring (0..1 left) and its seconds label; DOM writes only on change. */
+    ring(btn, k, secs) {
+      const kk = Math.round(k * 50) / 50;
+      if (N.ringK !== kk) { N.ringK = kk; btn.style.setProperty('--k', String(kk)); }
+      if (N.ringS !== secs) { N.ringS = secs; const sm = btn.querySelector('small'); if (sm) sm.textContent = secs > 0 ? String(secs) : ''; }
+    },
     ripple() { el.ripple.classList.remove('go'); void el.ripple.offsetWidth; el.ripple.classList.add('go'); },
     vignette(on) { if (cache.get('vig') === on) return; cache.set('vig', on); el.vig.classList.toggle('on', on); },
     kick() { el.cross.classList.remove('kick'); void el.cross.offsetWidth; el.cross.classList.add('kick'); },

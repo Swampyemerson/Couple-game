@@ -60,7 +60,7 @@ export function createLink(api, { delay = 100, onLink = () => {}, onUnlink = () 
   const local = api.mode !== 'live';
   const sess = Math.random().toString(36).slice(2, 10);
   let partner = null; let net = null; let ready = local; let epoch = 0; let dead = false;
-  let lastHeard = performance.now(); let lastHi = 0; let sent = 0;
+  let lastHeard = performance.now(); let lastSample = 0; let sampleGap = 50; let lastHi = 0; let sent = 0;
   const handlers = Object.create(null);
   const offs = []; const timers = [];
   const rb = createRemoteBuffer();
@@ -112,7 +112,7 @@ export function createLink(api, { delay = 100, onLink = () => {}, onUnlink = () 
       rawOff = api.on(ns + 'g!', (m) => { lastHeard = performance.now(); dispatch(m, null); });
       const proxy = { mode: api.mode, isHost: api.isHost, send: (t, d) => api.send(ns + t, d), on: (t, fn) => api.on(ns + t, fn), setPresence: (o) => api.setPresence(o), onPartnerState: (fn) => api.onPartnerState(fn) };
       n = createNet(proxy, { delay, rate: 20, angles: ['yaw'] });
-      n.onRemote((s) => { if (!s || s.k !== partner || s.p !== sess) return; lastHeard = performance.now(); rb.push(s.__t, s); });
+      n.onRemote((s) => { if (!s || s.k !== partner || s.p !== sess) return; lastHeard = performance.now(); if (lastSample) sampleGap += (Math.min(1000, lastHeard - lastSample) - sampleGap) * 0.2; lastSample = lastHeard; rb.push(s.__t, s); });
     }
     n.on('g', (m, at) => { if (!local) lastHeard = performance.now(); dispatch(m, at); });
     net = n;
@@ -130,7 +130,8 @@ export function createLink(api, { delay = 100, onLink = () => {}, onUnlink = () 
       if (d.p !== sess && performance.now() - lastHi > 150) hi();
     }));
     hi();
-    timers.push(setInterval(() => { if (!ready || performance.now() - lastHi > 1900) hi(); }, 450));
+    // (once linked the hello backs off to 5 s: it was 0.45 msg/s of background noise per device)
+    timers.push(setInterval(() => { if (!ready || performance.now() - lastHi > (net && ready ? 5000 : 1900)) hi(); }, 450));
   }
   let uid = 0;
   return {
@@ -138,17 +139,23 @@ export function createLink(api, { delay = 100, onLink = () => {}, onUnlink = () 
     get sess() { return sess; }, get partner() { return partner; },
     get rtt() { return net ? net.rtt : 0; }, get delay() { return net ? net.delay : delay; }, get sent() { return sent; },
     get silence() { return local ? 0 : performance.now() - lastHeard; },
+    /** ms since the partner's last streamed sample arrived (local clock: no clock-sync error). */
+    get sampleAge() { return local || !lastSample ? 0 : performance.now() - lastSample; },
+    /** The partner's typical sample interval (ms, smoothed): a hitch is a gap well above it. */
+    get sampleGap() { return sampleGap; },
     now() { if (!net) return performance.now(); if (local || api.isHost || clk.n < 3) return net.now(); return performance.now() + clk.off; },
     get clockSamples() { return clk.n; },
     send(type, data) { if (!net) return false; sent++; net.send('g', { t: type, d: data ?? null }); return true; },
-    /** Reliable, plus two unreliable copies right now (deduped): for time-critical messages. */
-    urgent(type, data) {
+    /** Reliable, plus two unreliable copies right now (deduped): for time-critical messages.
+     *  `light` (knocks, broken props, oil: visual only) sends one raw copy instead of two. */
+    urgent(type, data, light = false) {
       if (!net) return;
       const u = sess + ':' + (++uid);
       const m = { t: type, d: data ?? null, u };
       if (local) { net.send('g', m); return; }
       sent++; net.send('g', m);
       const space = ns; api.send(space + 'g!', m);
+      if (light) return;
       const tm = setTimeout(() => { if (!dead && ns === space) api.send(space + 'g!', m); }, 60); timers.push(tm);
       if (timers.length > 80) timers.splice(1, 30);
     },

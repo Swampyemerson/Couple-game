@@ -1,8 +1,10 @@
 // Getaway renderer setup: picks the graphics quality tier for this device (low / mid / high),
 // creates the WebGL renderer for it (MSAA, pixel-ratio cap, dynamic-resolution floor), and owns
-// the real-time car shadow map (mid/high): an orthographic depth pass over a ~60 m square that
-// follows the camera, with only the cars, wheels, traffic and falling props as casters (they sit
-// on layer SHADOW_LAYER). The toon shader samples it with 4-tap PCF.
+// the real-time car shadow map (mid/high): an orthographic depth pass over a ~50 m square that
+// follows the camera, rendered from the world's small `casters` scene (cars, wheels, the near
+// traffic instances, falling props: layer SHADOW_LAYER) so the pass never walks the chunk groups.
+// The toon shader samples it with a 2-tap (phones) or 4-tap rotated PCF. The map can be shrunk
+// at run time (`setSize`): the dynamic-resolution controller's cheapest lever (game.js dynRes).
 import { setGfxTier } from './gfx.js';
 
 export const GFX_KEY = 'getaway.gfx.v1';
@@ -11,8 +13,9 @@ export const SHADOW_LAYER = 2;
 /** Per-tier settings. dpr = device-pixel-ratio cap; minScale = dynamic-resolution floor. */
 export const TIERS = {
   low: { dpr: 1.25, minScale: 0.75, msaa: true, shadow: 0, shadowR: 0, beams: false, glows: 64, lampGlows: 10, decals: true, smoke: 0.6, fogFar: 330, carNear: 26, carMid: 60 },
-  mid: { dpr: 1.5, minScale: 0.7, msaa: true, shadow: 1024, shadowR: 26, beams: true, glows: 128, lampGlows: 20, decals: true, smoke: 1 },
-  high: { dpr: 1.5, minScale: 0.7, msaa: true, shadow: 1536, shadowR: 34, beams: true, glows: 160, lampGlows: 28, decals: true, smoke: 1 },
+  // shadow: map size; shadowLow: the size dynRes drops to first; shadowTaps: PCF taps per lit pixel
+  mid: { dpr: 1.5, minScale: 0.7, msaa: true, shadow: 512, shadowLow: 384, shadowR: 24, shadowTaps: 2, beams: true, glows: 128, lampGlows: 20, decals: true, smoke: 1 },
+  high: { dpr: 1.5, minScale: 0.7, msaa: true, shadow: 1536, shadowLow: 768, shadowR: 34, shadowTaps: 4, beams: true, glows: 160, lampGlows: 28, decals: true, smoke: 1 },
 };
 
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } };
@@ -55,23 +58,30 @@ export function createRenderer(THREE, { phoneish = false, coarse = false, tune =
 /** The car shadow map. Returns null on tiers without one. */
 export function createShadow(THREE, U, cfg) {
   if (!cfg || !cfg.shadow) { U.uShadowP.value.x = 0; return null; }
-  const size = cfg.shadow; const R = cfg.shadowR || 28;
-  const rt = new THREE.WebGLRenderTarget(size, size, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, format: THREE.RGBAFormat, depthBuffer: true, stencilBuffer: false, generateMipmaps: false });
-  rt.texture.generateMipmaps = false;
+  const full = cfg.shadow; const R = cfg.shadowR || 28; const taps = cfg.shadowTaps === 2 ? 0 : 1;
+  const mkRT = (size) => { const rt = new THREE.WebGLRenderTarget(size, size, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, format: THREE.RGBAFormat, depthBuffer: true, stencilBuffer: false, generateMipmaps: false }); rt.texture.generateMipmaps = false; return rt; };
+  let size = full; let rt = mkRT(size);
   const depthMat = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
   const cam = new THREE.OrthographicCamera(-R, R, R, -R, 1, 260);
   cam.layers.set(SHADOW_LAYER);
   const right = new THREE.Vector3(); const up = new THREE.Vector3(); const f = new THREE.Vector3(); const tmp = new THREE.Vector3();
   const oldClear = new THREE.Color(); const white = new THREE.Color(1, 1, 1);
   const vp = new THREE.Matrix4();
-  U.uShadowMap.value = rt.texture; U.uShadowP.value.set(1, 1 / size, 0.82, 0);
+  U.uShadowMap.value = rt.texture; U.uShadowP.value.set(1, 1 / size, 0.82, taps);
   let enabled = true;
   return {
-    rt, cam, size, R,
+    rt, cam, R, full,
+    get size() { return size; },
     set enabled(v) { enabled = !!v; U.uShadowP.value.x = enabled ? 1 : 0; },
     get enabled() { return enabled; },
-    /** Render the casters around `focus` (THREE.Vector3 on the ground) as lit from sunDir. */
-    render(renderer, scene, sunDir, focus) {
+    /** Re-make the map at `n` pixels square (dynRes: 'shadowLow' before the resolution drops). */
+    setSize(n) {
+      n = Math.max(128, Math.min(full, n | 0)); if (n === size) return;
+      rt.dispose(); rt = mkRT(n); size = n; this.rt = rt;
+      U.uShadowMap.value = rt.texture; U.uShadowP.value.y = 1 / size;
+    },
+    /** Render the casters (a scene holding only shadow casters) around `focus` (THREE.Vector3 on the ground) as lit from sunDir. */
+    render(renderer, casters, sunDir, focus) {
       if (!enabled) return;
       // light-space basis; snap the focus to whole texels so the map doesn't shimmer as it slides
       f.copy(sunDir).normalize();
@@ -87,12 +97,12 @@ export function createShadow(THREE, U, cfg) {
       U.uShadowM.value.copy(vp);
       const prevRT = renderer.getRenderTarget();
       renderer.getClearColor(oldClear); const oldA = renderer.getClearAlpha();
-      const prevOverride = scene.overrideMaterial; const prevFog = scene.fog;
+      const prevOverride = casters.overrideMaterial; const prevFog = casters.fog;
       renderer.setRenderTarget(rt);
       renderer.setClearColor(white, 1); renderer.clear(true, true, false);
-      scene.overrideMaterial = depthMat; scene.fog = null;
-      try { renderer.render(scene, cam); } finally {
-        scene.overrideMaterial = prevOverride; scene.fog = prevFog;
+      casters.overrideMaterial = depthMat; casters.fog = null;
+      try { renderer.render(casters, cam); } finally {
+        casters.overrideMaterial = prevOverride; casters.fog = prevFog;
         renderer.setRenderTarget(prevRT); renderer.setClearColor(oldClear, oldA);
       }
     },

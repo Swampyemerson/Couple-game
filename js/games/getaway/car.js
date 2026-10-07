@@ -28,18 +28,22 @@ export function newCar(role) {
     vf: 0, vl: 0, speed: 0, slip: 0, skid: false, hand: false, braking: false, accel: 0,
     pitch: 0, roll: 0, heave: 0, pv: 0, rv: 0, hv: 0, susp: new Float32Array(4), drift: 0, grip: 1,
     sg: 1, st: 1, sd: 0, accF: 0, accL: 0, wheel: 0, rpm: 0, gear: 1, gas: 0,
-    stopT: 0, topSpeed: 0, ev: [], hitCD: 0, wallCD: 0, frozen: false, offT: 0,
+    stopT: 0, topSpeed: 0, ev: [], hitCD: 0, wallCD: 0, frozen: false, offT: 0, sfN: 0,
     wnx: 0, wnz: 0, wnT: 0, // the wall normal it is sliding along (seam memory)
+    vy: 0, // ground vertical speed (m/s) last step: humps and crests heave the body
+    sh: { road: -1, i: 0 }, // road hint for surfaceAt (the segment it was on last step)
+    bx: 1e9, bz: 1e9, bNear: false, // where the bridge-end search last ran and whether a deck end was near
     hl: CAR.hl, hw: CAR.hw,
   };
 }
 
 export function placeCar(c, x, z, yaw, geo) {
   c.x = x; c.z = z; c.yaw = yaw; c.vx = 0; c.vz = 0; c.r = 0; c.steer = 0; c.level = -1;
-  c.y = geo ? geo.ground(x, z) : 0; c.pitch = 0; c.roll = 0; c.heave = 0; c.pv = 0; c.rv = 0; c.hv = 0; c.susp.fill(0);
+  c.y = geo ? geo.ground(x, z) : 0; c.pitch = 0; c.roll = 0; c.heave = 0; c.pv = 0; c.rv = 0; c.hv = 0; c.susp.fill(0); c.vy = 0;
   c.spinT = 0; c.cutT = 0; c.oilT = 0; c.drift = 0; c.wnT = 0;
   c.stopT = 0; c.water = false; c.vf = 0; c.vl = 0; c.speed = 0;
-  if (geo) { const s = geo.surfaceAt(x, z); const sf = SF[s === 'water' ? 'sand' : s] || SF.road; c.sg = sf.grip; c.st = sf.top; c.sd = sf.drag; c.surf = s === 'water' ? 'sand' : s; }
+  c.sh.road = -1; c.bx = 1e9; c.bz = 1e9; c.bNear = false; c.sfN = 1; // (sfN 1: the first step after a placement reads the surface)
+  if (geo) { const s = geo.surfaceAt(x, z, c.sh); const sf = SF[s === 'water' ? 'sand' : s] || SF.road; c.sg = sf.grip; c.st = sf.top; c.sd = sf.drag; c.surf = s === 'water' ? 'sand' : s; }
 }
 
 const nq = { road: -1 };
@@ -63,21 +67,30 @@ function updateLevel(c, geo) {
       return;
     }
   }
-  // ground: step onto a bridge deck from one of its ends
-  geo.nearestRoad(c.x, c.z, nq, 24, (o) => o.bridge);
-  if (nq.road >= 0) {
-    const r = roads[nq.road];
-    if (nq.d <= r.hw && (nq.s < 14 || nq.s > r.len - 14)) {
-      const dy = geo.deckY(r, nq.s) - geo.ground(c.x, c.z);
-      if (dy < 2) { c.level = r.idx; c.deckS = nq.s; c.y = geo.deckY(r, nq.s); c.surf = 'road'; c.water = false; return; }
+  // ground: step onto a bridge deck from one of its ends (the 24 m bridge search runs again only
+  // once the car has moved 6 m from where it last found nothing: it was two grid searches a step)
+  const mdx = c.x - c.bx; const mdz = c.z - c.bz;
+  if (c.bNear || mdx * mdx + mdz * mdz > 36) {
+    geo.nearestRoad(c.x, c.z, nq, 24, isBridge);
+    c.bx = c.x; c.bz = c.z; c.bNear = nq.road >= 0;
+    if (nq.road >= 0) {
+      const r = roads[nq.road];
+      if (nq.d <= r.hw && (nq.s < 14 || nq.s > r.len - 14)) {
+        const dy = geo.deckY(r, nq.s) - geo.ground(c.x, c.z);
+        if (dy < 2) { c.level = r.idx; c.deckS = nq.s; c.y = geo.deckY(r, nq.s); c.surf = 'road'; c.water = false; return; }
+      }
     }
   }
   c.level = -1;
   c.y = geo.ground(c.x, c.z);
-  const s = geo.surfaceAt(c.x, c.z);
+  // the surface at 60 Hz (every other step; its blend takes 0.15 s anyway), with the road hint
+  c.sfN ^= 1;
+  if (c.sfN) return;
+  const s = geo.surfaceAt(c.x, c.z, c.sh);
   c.water = s === 'water';
   c.surf = s === 'water' ? 'sand' : s;
 }
+const isBridge = (o) => o.bridge;
 
 const ROUGH = { grass: 1, dirt: 1, sand: 1 };
 
@@ -104,12 +117,14 @@ export function stepCar(c, inp, dt, geo, T, nit) {
   const flatTop = 1 - 0.3 * c.flat; const flatGrip = 1 - 0.4 * c.flat;
   // nitro
   const wantBoost = !!inp.nitro && c.nitro > 0.02 && nit.regen > 0 && vf > 2 && c.cutT <= 0;
-  c.boost = wantBoost;
+  c.boost = wantBoost || (c.boostT > 0.2 && c.nitro <= 0.02); // (the flames and FOV hold 0.4 s after the tank empties: no visual cliff)
   if (wantBoost) { c.nitro = Math.max(0, c.nitro - nit.drain * dt); c.boostT = 0.6; }
   else { if (c.boostT > 0) c.boostT -= dt; else c.nitro = Math.min(1, c.nitro + nit.regen * dt); }
   const vTop = T.vTop * c.st * hpK * flatTop * (wantBoost ? T.nitroTop : 1);
   const spin = c.spinT > 0;
-  const grip = T.grip * c.sg * flatGrip * (spin ? 0.32 : 1) * (c.oilT > 0 ? 0.3 : 1);
+  // (oil cuts the tyres' sideways grip, not the steering's authority: the car rotates and slides)
+  const grip = T.grip * c.sg * flatGrip * (spin ? 0.32 : 1);
+  const oilK = c.oilT > 0 ? 0.3 : 1;
   const gas = c.cutT > 0 ? 0 : Math.max(0, Math.min(1, inp.gas || 0));
   const brake = Math.max(0, Math.min(1, inp.brake || 0));
   const hand = !!inp.hand;
@@ -124,7 +139,8 @@ export function stepCar(c, inp, dt, geo, T, nit) {
     else { const u = Math.max(0, vf) / vTop; a = gas * T.accel * Math.max(0, 1 - u * u * u) + (wantBoost ? T.nitroA : 0); }
   } else a = vf > 0.2 ? -CAR.coast : vf < -0.2 ? CAR.coast : -vf * 4;
   a -= CAR.drag * vf * Math.abs(vf) + CAR.roll * vf + c.sd * Math.sign(vf) * Math.min(1, Math.abs(vf) * 0.2);
-  if (vf > vTop) a -= (vf - vTop) * 0.9;
+  if (vf > vTop) a -= (vf - vTop) * CAR.overTopBleed; // (gentle: nitro running out eases off, no brake slam)
+  if (c.flat > 0 && Math.abs(vf) > 0.5) a -= Math.sign(vf) * CAR.flatDrag * c.flat; // a flat tyre drags
   if (hand && Math.abs(vf) > 0.5) a -= Math.sign(vf) * CAR.handDecel;
   if (geo.hasHeight && c.level < 0) {
     const s = (geo.ground(c.x + fx * 1.5, c.z + fz * 1.5) - geo.ground(c.x - fx * 1.5, c.z - fz * 1.5)) / 3;
@@ -139,22 +155,36 @@ export function stepCar(c, inp, dt, geo, T, nit) {
   // ── steering + yaw ──
   const st = Math.max(-1, Math.min(1, inp.steer || 0));
   c.steer += Math.max(-9 * dt, Math.min(9 * dt, st - c.steer));
-  const lock = T.steer / (1 + Math.abs(vf) / CAR.steerSpeed);
+  // grip-aware lock: full lock asks for lockGripK × the grip-limited yaw rate (not the kinematic
+  // rate, which is 4–5× the limit at 100+ km/h), so the slider maps 0..100% to 0..118% of what
+  // the tyres can do at any speed instead of flattening everything past 25% into one response
+  const av = Math.max(Math.abs(vf), 4);
+  const gripR = (grip * 0.97) / av;
+  const lock0 = T.steer / (1 + Math.abs(vf) / CAR.steerSpeed);
+  const lock = hand ? lock0 : Math.min(lock0, Math.atan((gripR * CAR.lockGripK * CAR.base) / av));
   const delta = c.steer * lock;
   let rT = (vf * Math.tan(delta)) / CAR.base;
   if (vf > 6) rT *= 1 + CAR.weightTurn * wt; // braking turns in, throttle pushes wide
-  // the grip cap on yaw rate: the handbrake frees the rear; power while sliding holds the angle
-  const capK = hand ? CAR.handYaw : 1;
-  const maxR = (grip * 0.97) / Math.max(Math.abs(vf), 4) * capK;
+  // the grip cap on yaw rate: the handbrake frees the rear; power (or a lift) at full lock may
+  // exceed it a little so the tail steps out instead of hitting a wall; the allowance fades with
+  // the slip already there, so a slide never runs away
+  let capK = hand ? CAR.handYaw : 1;
+  if (!hand && Math.abs(vf) > 12) {
+    const fade = Math.max(0, 1 - Math.abs(vl) / CAR.capFadeSlip);
+    if (gas > 0.5 && Math.abs(c.steer) > 0.6) capK = 1 + (CAR.powerCapK - 1) * fade;
+    else if (gas <= 0 && brake <= 0) capK = 1 + (CAR.liftCapK - 1) * fade;
+  }
+  const maxR = gripR * capK;
   if (rT > maxR) rT = maxR; else if (rT < -maxR) rT = -maxR;
   let k = T.yawK;
-  if (hand) k = 4.5; else if (Math.abs(vl) > CAR.slipSkid * 1.5) k = 5.5;
+  if (hand) k = 4.5; else if (Math.abs(vl) > CAR.driftSlip * 1.06) k = 5.5;
+  if (oilK < 1) k *= 0.25; // oil: the tyres don't recentre the body either (the OIL! kick rotates it)
   if (spin) { rT = c.r * 0.985; k = 2; }
   c.r += (rT - c.r) * Math.min(1, k * dt);
   // ── lateral grip ──
-  let latG = grip;
+  let latG = grip * oilK;
   if (hand) latG *= CAR.handGrip;
-  else if (Math.abs(vl) > CAR.slipSkid * 1.4 && gas > 0.5 && vf > 8) {
+  else if (Math.abs(vl) > CAR.driftSlip && gas > 0.5 && vf > 8) {
     // power slide: the rear stays loose; counter-steer (steering into the slide) holds the angle
     latG *= Math.sign(c.steer) === Math.sign(vl) && Math.abs(c.steer) > 0.15 ? CAR.driftGrip * 0.9 : CAR.driftGrip;
   }
@@ -165,7 +195,7 @@ export function stepCar(c, inp, dt, geo, T, nit) {
   // a sliding car scrubs speed
   if (Math.abs(vl) > 2) vf -= Math.sign(vf) * Math.min(Math.abs(vf), Math.abs(vl) * 0.25 * dt);
   c.vf = vf; c.vl = vl; c.slip = Math.abs(vl);
-  c.drift += ((Math.abs(vf) > 6 ? Math.min(1, Math.max(0, (c.slip - 1.5) / 6)) : 0) - c.drift) * Math.min(1, dt * 8);
+  c.drift += ((Math.abs(vf) > 6 ? Math.min(1, Math.max(0, (c.slip - CAR.driftSlip0) / (CAR.driftSlip1 - CAR.driftSlip0))) : 0) - c.drift) * Math.min(1, dt * 8);
   c.skid = (c.slip > CAR.slipSkid && Math.abs(vf) > 3) || (hand && Math.abs(vf) > 7) || (c.braking && brake > 0.7 && vf > 14 && c.surf === 'road');
   c.vx = fx * vf + rx * vl; c.vz = fz * vf + rz * vl;
   // ── body: spring-damped pitch / roll / heave (≈1.6 Hz, ζ ≈ 0.45) ──
@@ -177,8 +207,10 @@ export function stepCar(c, inp, dt, geo, T, nit) {
   c.pv += (K * (pT - c.pitch) - D * c.pv) * dt; c.pitch += c.pv * dt;
   c.rv += (K * (rTg - c.roll) - D * c.rv) * dt; c.roll += c.rv * dt;
   c.hv += (K * 1.3 * (0 - c.heave) - D * 1.1 * c.hv) * dt; c.heave += c.hv * dt;
-  // rough ground shakes the body
+  // rough ground shakes the body; tarmac has a light texture; a flat tyre thumps once a turn
   if (ROUGH[c.surf] && c.speed > 4) { const n = Math.min(1, c.speed / 25) * dt; c.hv += (Math.random() - 0.5) * 9 * n; c.rv += (Math.random() - 0.5) * 1.2 * n; }
+  else if (c.speed > 4) c.hv += (Math.random() - 0.5) * CAR.roadTexture * Math.min(1, c.speed / 30) * dt;
+  if (c.flat > 0 && c.speed > 3) { const n = Math.min(1, c.speed / 15) * c.flat; const ph = Math.sin(c.wheel * 0.15); c.rv += ph * CAR.flatWobble * n * dt; c.hv -= Math.max(0, ph) * CAR.flatWobble * 0.4 * n * dt; }
   if (c.pitch > 0.12) c.pitch = 0.12; else if (c.pitch < -0.12) c.pitch = -0.12;
   if (c.roll > 0.14) c.roll = 0.14; else if (c.roll < -0.14) c.roll = -0.14;
   if (c.heave > 0.15) c.heave = 0.15; else if (c.heave < -0.18) c.heave = -0.18;
@@ -187,7 +219,7 @@ export function stepCar(c, inp, dt, geo, T, nit) {
   // integrate
   c.x += c.vx * dt; c.z += c.vz * dt; c.yaw += c.r * dt;
   if (c.yaw > Math.PI) c.yaw -= Math.PI * 2; else if (c.yaw < -Math.PI) c.yaw += Math.PI * 2;
-  c.speed = Math.hypot(c.vx, c.vz);
+  c.speed = Math.sqrt(c.vx * c.vx + c.vz * c.vz);
   if (c.speed > c.topSpeed) c.topSpeed = c.speed;
   c.wheel += vf * dt / 0.36;
   // engine note: a fake 5-speed box
@@ -196,8 +228,15 @@ export function stepCar(c, inp, dt, geo, T, nit) {
   c.gear = g;
   const lo = gears[g - 1]; const hi = Math.min(gears[g], T.vTop * 1.25);
   c.rpm += ((0.2 + 0.8 * Math.min(1, (Math.abs(vf) - lo) / Math.max(1, hi - lo)) * (gas > 0 || brake > 0 ? 1 : 0.85)) - c.rpm) * Math.min(1, 10 * dt);
-  const surf0 = c.surf; const lv0 = c.level;
+  const surf0 = c.surf; const lv0 = c.level; const y0 = c.y;
   updateLevel(c, geo);
+  // the ground's vertical acceleration heaves the body (a hump, a crest, a bridge ramp)
+  if (lv0 === c.level && c.speed > 2) {
+    const vy = (c.y - y0) / dt;
+    const dvy = Math.max(-6, Math.min(6, vy - c.vy));
+    c.hv -= dvy * CAR.heaveK; c.pv += dvy * CAR.heaveK * 0.12;
+    c.vy = vy;
+  } else c.vy = 0;
   // a kerb: changing between road and the verge at speed bumps the suspension
   if (surf0 !== c.surf && lv0 === c.level && c.speed > 4 && (surf0 === 'road' || c.surf === 'road')) {
     const k2 = Math.min(1, c.speed / 22);
@@ -453,9 +492,12 @@ export function judgePit(v, cop, ct) {
   const nl = Math.abs(ct.nx * vrx + ct.nz * vrz); const nf = Math.abs(ct.nx * vfx + ct.nz * vfz);
   const ang = Math.atan2(nl, nf);
   const side = lx >= 0 ? 1 : -1;
-  const push = -((cop.vx - v.vx) * vrx + (cop.vz - v.vz) * vrz) * side; // cop moving into that side
+  const push = -((cop.vx - v.vx) * vrx + (cop.vz - v.vz) * vrz) * side; // closing into that side
+  // the cop's OWN sideways motion towards the runner: a runner drifting its rear into a cop
+  // running straight beside it isn't PITted by it (the cop has to steer into the quarter)
+  const pushCop = -(cop.vx * vrx + cop.vz * vrz) * side;
   const w = Math.max(0, Math.min(1, (ang - DAMAGE.pitAngle0) / (DAMAGE.pitAngle1 - DAMAGE.pitAngle0)));
-  const eff = push * w;
+  const eff = Math.min(push, Math.max(0, pushCop) * DAMAGE.pitCopK) * w;
   ct.pitPush = eff;
   if (eff >= DAMAGE.pitPush) ct.pitTier = 2; else if (eff >= DAMAGE.nudgePush) ct.pitTier = 1;
   // pushing the rear sideways swings the nose the other way: rear pushed left (contact on the
@@ -464,8 +506,12 @@ export function judgePit(v, cop, ct) {
 }
 
 /** Spin and damage scale for a PIT / nudge of strength push (m/s): { kick rad/s, spin s, dmg k }. */
-export function pitEffect(push, tier, speed) {
-  if (tier === 2) return { kick: Math.min(4.8, 1.6 + push * 0.32 + speed * 0.025), spin: 1.15, cut: 0.75, dmgK: Math.min(1.25, 0.55 + push / 14) };
-  if (tier === 1) return { kick: 0.35 + push * 0.12, spin: 0.3, cut: 0, dmgK: 0.25 };
-  return { kick: 0, spin: 0, cut: 0, dmgK: 0 };
+export function pitEffect(push, tier, speed, out = PIT_FX) {
+  // continuous across the nudge → PIT step: a 3.0 push twitches ~35°, a 3.2 push spins ~170°,
+  // a 6 push ~250° (was 11° → 240° either side of 3.2)
+  if (tier === 2) { out.kick = Math.min(4.8, 1.1 + push * 0.42 + speed * 0.025); out.spin = 1.15; out.cut = 0.75; out.dmgK = Math.min(1.25, 0.55 + push / 14); }
+  else if (tier === 1) { out.kick = 0.5 + push * 0.25; out.spin = 0.45; out.cut = 0; out.dmgK = 0.25; }
+  else { out.kick = 0; out.spin = 0; out.cut = 0; out.dmgK = 0; }
+  return out;
 }
+const PIT_FX = { kick: 0, spin: 0, cut: 0, dmgK: 0 };

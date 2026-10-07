@@ -136,6 +136,7 @@ export function createTraffic(geo, mapId, density) {
     }
   }
   const N = total;
+  const COARSE = 25; // m between coarse samples of each lane (each() rejects a car by its table cell before posing it)
   // ── simulation state (all lanes in two flat arrays) ──
   const pos = new Float64Array(N); const vel = new Float64Array(N);
   const pos0 = new Float64Array(N); const vel0 = new Float64Array(N); // the previous step (interpolation)
@@ -242,6 +243,15 @@ export function createTraffic(geo, mapId, density) {
   const knocked = new Map(); // car id → wreck state
   const tmp = { x: 0, z: 0, tx: 0, tz: 0, s: 0 };
   const dimT = { sl: 1, sh: 1, hl: 2.3, hw: 0.95, color: 0 };
+  // per lane: a coarse table of where lane coordinate u lies (NaN on the hidden stretch), the
+  // reject margin, and the point where its cars grow in (held while a player sits on it)
+  { const o = { x: 0, z: 0, y: 0, yaw: 0, vx: 0, vz: 0, sc: 0, speed: 0 };
+    for (const L of lanes) {
+      const n = Math.ceil(L.P / COARSE) + 1; L.cx = new Float64Array(n); L.cz = new Float64Array(n);
+      for (let k = 0; k < n; k++) { const u = Math.min(L.P - 1e-6, k * COARSE); place(L, u, 0, o, 0); if (L.r.closed || u < L.span) { L.cx[k] = o.x; L.cz[k] = o.z; } else { L.cx[k] = NaN; L.cz[k] = NaN; } }
+      L.cm = COARSE + L.r.hw + 4;
+      place(L, L.r.closed ? 0 : GROW * 0.5, 0, o, 0); L.gx = o.x; L.gz = o.z; L.held = 0;
+    } }
 
   /** World pose of lane L's car at lane coordinate u (speed v) into out. */
   function place(L, u, v, out, side) {
@@ -274,9 +284,10 @@ export function createTraffic(geo, mapId, density) {
   // per device (the players' cars aren't part of the shared schedule) and only ever near them.
   const lag = new Map(); // id → { m, v (effective speed) }
   /** Scheduled pose of car j on lane L at time t. */
-  function poseOn(L, j, t, out, sim, pure) {
+  const UV = { u: 0, v: 0, sched: 0, side: 0 };
+  /** Lane coordinate and speed of car j on lane L at time t (with its local yielding lag) into UV. */
+  function uOf(L, j, t, sim, pure) {
     const id = L.first + j;
-    trafficDims(id, dimT); out.hl = dimT.hl; out.hw = dimT.hw; out.id = id;
     let u; let v;
     if (!sim) { u = freeU(L, j, t); v = L.speed; } else {
       const f = Math.max(0, Math.min(1, (t - EPOCH) / SIM_DT - (simK - 1)));
@@ -284,10 +295,18 @@ export function createTraffic(geo, mapId, density) {
       u = a + (b - a) * f; if (u >= L.P) u -= L.P;
       v = vel0[id] + (vel[id] - vel0[id]) * f;
     }
-    out.sched = v;
+    UV.sched = v; UV.side = 0;
     const lg = lag.size && !pure ? lag.get(id) : null;
-    if (lg) { u -= lg.m; if (u < 0) u += L.P; v = lg.v; }
-    return place(L, u, v, out, lg ? lg.side : 0);
+    if (lg) { u -= lg.m; if (u < 0) u += L.P; v = lg.v; UV.side = lg.side; }
+    UV.u = u; UV.v = v;
+    return UV;
+  }
+  function poseOn(L, j, t, out, sim, pure) {
+    const id = L.first + j;
+    trafficDims(id, dimT); out.hl = dimT.hl; out.hw = dimT.hw; out.id = id;
+    const q = uOf(L, j, t, sim, pure);
+    out.sched = q.sched;
+    return place(L, q.u, q.v, out, q.side);
   }
   /** Once per frame: cars with a player car or wreck right ahead in their lane hold back, and
    *  cars near a siren pull over to the right and slow down until it has gone by.
@@ -300,6 +319,24 @@ export function createTraffic(geo, mapId, density) {
     for (const o of obstacles) obs.push(o.x, o.z, o.siren && !(o.speed < 4) ? 1 : 0, o.yaw || 0);
     for (const k of knocked.values()) obs.push(k.x, k.z, 0, 0);
     const touched = yTouched; touched.clear();
+    // a lane whose grow-in point has a player car on it holds its next cars on the hidden
+    // stretch (they used to materialise inside a car waiting just past a junction and shove it)
+    for (const L of lanes) {
+      if (L.r.closed) continue;
+      let near = false;
+      for (let q = 0; q < obstacles.length && !near; q++) { const o = obstacles[q]; const dx = o.x - L.gx; const dz = o.z - L.gz; if (dx * dx + dz * dz < HOLD_R * HOLD_R) near = true; }
+      if (!near) { L.held = 0; continue; }
+      L.held += dt;
+      const sim = ensure(t);
+      for (let j = 0; j < L.n; j++) {
+        const id = L.first + j; if (knocked.has(id)) continue;
+        const q = uOf(L, j, t, sim, false);
+        if (q.u < GROW + 1.5 || q.u > L.P - 2) { // about to grow in (or growing): hold it there
+          let lg = lag.get(id); if (!lg) { lg = { m: 0, v: 0, side: 0 }; lag.set(id, lg); }
+          lg.m += q.sched * dt; lg.v = 0; touched.add(id);
+        }
+      }
+    }
     for (let q = 0; q < obs.length; q += 4) {
       const ox = obs[q]; const oz = obs[q + 1];
       each(ox, oz, obs[q + 2] ? 60 : 45, t, (id, p, wreck) => {
@@ -338,7 +375,7 @@ export function createTraffic(geo, mapId, density) {
       if (lg.m <= 0.01 && lg.side <= 0.01) lag.delete(id); else if (lg.m < 0) lg.m = 0;
     }
   }
-  const yObs = []; const yTouched = new Set();
+  const yObs = []; const yTouched = new Set(); const HOLD_R = 14;
 
   const P1 = { x: 0, z: 0, y: 0, yaw: 0, vx: 0, vz: 0, sc: 1, hl: 2.3, hw: 0.95, speed: 0, id: 0, sched: 0 };
   /** Visit every car within `rad` of (x, z) at time t: fn(id, pose, wreck) — pose is reused. */
@@ -356,7 +393,12 @@ export function createTraffic(geo, mapId, density) {
           fn(id, P1, true);
           continue;
         }
-        poseOn(L, j, t, P1, sim, pure);
+        // cheap reject by the lane's coarse table (a long arterial no longer poses all its cars)
+        const q = uOf(L, j, t, sim, pure);
+        const ci = (q.u / COARSE) | 0; const cx = L.cx[ci];
+        if (cx !== cx || Math.abs(cx - x) > rad + L.cm || Math.abs(L.cz[ci] - z) > rad + L.cm) continue;
+        trafficDims(id, dimT); P1.hl = dimT.hl; P1.hw = dimT.hw; P1.id = id; P1.sched = q.sched;
+        place(L, q.u, q.v, P1, q.side);
         if (regrow.size && !pure) { const g = regrow.get(id); if (g !== undefined) P1.sc *= g; }
         if (clrZ.length && !pure) P1.sc *= clearK(P1.x, P1.z, t);
         if (P1.sc <= 0.02 || Math.abs(P1.x - x) > rad || Math.abs(P1.z - z) > rad) continue;
@@ -371,7 +413,10 @@ export function createTraffic(geo, mapId, density) {
     const k = knocked.get(id);
     if (k) { trafficDims(id, dimT); out.x = k.x; out.z = k.z; out.y = k.y; out.yaw = k.yaw; out.vx = k.vx; out.vz = k.vz; out.sc = 1; out.hl = dimT.hl; out.hw = dimT.hw; out.speed = Math.hypot(k.vx, k.vz); out.id = id; out.wreck = true; return out; }
     const L = laneOf(id); out.wreck = false;
-    return poseOn(L, id - L.first, t, out, ensure(t));
+    poseOn(L, id - L.first, t, out, ensure(t));
+    if (regrow.size) { const g = regrow.get(id); if (g !== undefined) out.sc *= g; }
+    if (clrZ.length) out.sc *= clearK(out.x, out.z, t);
+    return out;
   }
   /** The `max` cars nearest any viewer within rad, nearest first (for drawing). out: array of
    *  pose objects (grown as needed). Returns the count. */

@@ -44,6 +44,17 @@ export const OPTIONS = {
   climbSpeed: ['slow', 'normal', 'fast'], // the seeker's crawl speed
   huntPaint: ['off', 'on', 'tell'], // the hider may paint while hunted; 'tell': fresh paint glints for a nearby seeker
   minimap: [true, false],
+  // the seeker banks points too: 'time' = ½ pt per second left on the clock when they tag,
+  // 'full' = that plus 10 per unused pellet; 'off' = v1 (only the hider scores)
+  seekScore: ['off', 'time', 'full'],
+  // blend bonus: the paint job is scored at the lock (camo % = how close the body's texels are to
+  // the surface behind them); 10 = +10 points at ≥ 80 %, 20 = +20 at ≥ 90 %
+  blendBonus: [0, 10, 20],
+  // the seeker's wager while blindfolded: call FLOOR / FURNITURE / WALL / CEILING / HANGING; a
+  // right call pays this many points ('CALLED IT' stamp in the recap)
+  wager: [0, 5, 10],
+  // 'in their sights': the hider's vignette pulses when the seeker looks straight at them
+  sights: [true, false],
 };
 export const SPEED_MUL = { slow: 0.85, normal: 1, fast: 1.2 };
 /** Seeker crawl speed relative to the hider's crawl (a hider crawls at 0.78 × walking). */
@@ -51,19 +62,40 @@ export const CLIMB_MUL = { slow: 0.65, normal: 0.85, fast: 1 };
 
 /** Bigger maps get proportionally longer hide/seek clocks and a faster seeker sprint (every preset). */
 export const MAP_TIME = { S: 1, M: 1.2, L: 1.35, XL: 1.5 };
-export const timeScale = (mapEntry) => MAP_TIME[(mapEntry && mapEntry.size) || 'S'] || 1;
+/**
+ * Per-map seek-clock scale, from a geometry sweep (greedy vantage cover so every reachable spot
+ * is in line of sight within 7 m, BFS tour from the seeker spawn, 3 s look per vantage, sprint):
+ * one "XL = 1.5×" for maps from 432 to 1768 m² made CU Boulder a hider walkover (sweep 191 s
+ * sprinting vs a 135 s clock) and the Greenhouse a seeker walkover (59 s). A map entry's own
+ * `time` field wins; then this table; then the size class.
+ */
+export const MAP_TIME_ID = { living: 1, garden: 1, studio: 1, greenhouse: 1, market: 1.25, house: 1.5, museum: 1.5, cuboulder: 3 };
+export const timeScale = (mapEntry) => {
+  if (!mapEntry) return 1;
+  if (Number.isFinite(mapEntry.time)) return mapEntry.time;
+  if (Number.isFinite(MAP_TIME_ID[mapEntry.id])) return MAP_TIME_ID[mapEntry.id];
+  return MAP_TIME[mapEntry.size || 'S'] || 1;
+};
+/** The hide clock (and head start) scale too, but never past 2×: exploring a big map takes longer, hunting it takes much longer. */
+export const hideScale = (mapEntry) => Math.min(2, timeScale(mapEntry));
 /** Effective seconds on a map: base × scale, rounded to 5 s. */
 export const effSeconds = (base, scale) => Math.round((base * scale) / 5) * 5;
-export const sprintMul = (scale) => 1.55 + 0.3 * (scale - 1);
+/** Sprint grows with the map, up to the old XL figure (1.7×); CU's 3× clock doesn't make a 2.15× sprint. */
+export const sprintMul = (scale) => 1.55 + 0.3 * (Math.min(1.5, scale) - 1);
+/** Double Blind hunting speed: 1.1 m/s on the small dioramas, up to 1.6 m/s on the biggest map. */
+export const dbSpeed = (scale) => Math.min(1.6, 1.1 + 0.33 * Math.max(0, scale - 1));
 
 // "Hard" is hard for the SEEKER (masters of disguise); "Easy" makes the hunt friendlier.
 // v3: the seeker climbs in every preset; Easy keeps the hider's paint locked once the hunt starts,
 // Classic lets them touch up but fresh paint glints for a nearby seeker, Hard lets them repaint
 // silently, slows the seeker on walls and holds the seeker's fire for the first 5 s.
 export const PRESETS = {
-  easy: { size: 'huge', rounds: 4, hide: 45, hideEnd: 'timer', countdown: 3, headStart: 0, grace: 0, seek: 120, pellets: 8, scans: 0, scanCd: 15, escapes: 0, seekSpeed: 'fast', heartbeat: false, blink: 'strong', stamp: true, climb: true, seekClimb: true, climbSpeed: 'fast', huntPaint: 'off', minimap: true },
-  classic: { size: 'large', rounds: 4, hide: 60, hideEnd: 'timer', countdown: 3, headStart: 0, grace: 0, seek: 90, pellets: 6, scans: 0, scanCd: 20, escapes: 1, seekSpeed: 'normal', heartbeat: true, blink: 'on', stamp: true, climb: true, seekClimb: true, climbSpeed: 'normal', huntPaint: 'tell', minimap: true },
-  hard: { size: 'medium', rounds: 4, hide: 75, hideEnd: 'timer', countdown: 3, headStart: 0, grace: 5, seek: 90, pellets: 5, scans: 3, scanCd: 30, escapes: 2, seekSpeed: 'normal', heartbeat: true, blink: 'off', stamp: true, climb: true, seekClimb: true, climbSpeed: 'slow', huntPaint: 'on', minimap: false },
+  // Easy used to be a seeker walkover (Huge + strong blinks + fast seeker + no escapes: 96 % found in
+  // the Living Room, mean 4 s): now Huge and 8 pellets stay, but blinks are 'on', the seeker walks at
+  // normal speed, the hider gets one escape and a 10 s head start, so the camouflage matters.
+  easy: { size: 'huge', rounds: 4, hide: 45, hideEnd: 'timer', countdown: 3, headStart: 10, grace: 0, seek: 120, pellets: 8, scans: 0, scanCd: 20, escapes: 1, seekSpeed: 'normal', heartbeat: false, blink: 'on', stamp: true, climb: true, seekClimb: true, climbSpeed: 'fast', huntPaint: 'off', minimap: true, seekScore: 'off', wager: 0, sights: true, blendBonus: 0 },
+  classic: { size: 'large', rounds: 4, hide: 60, hideEnd: 'timer', countdown: 3, headStart: 0, grace: 0, seek: 90, pellets: 6, scans: 0, scanCd: 20, escapes: 1, seekSpeed: 'normal', heartbeat: true, blink: 'on', stamp: true, climb: true, seekClimb: true, climbSpeed: 'normal', huntPaint: 'tell', minimap: true, seekScore: 'full', wager: 5, sights: true, blendBonus: 10 },
+  hard: { size: 'medium', rounds: 4, hide: 75, hideEnd: 'timer', countdown: 3, headStart: 0, grace: 5, seek: 90, pellets: 5, scans: 3, scanCd: 30, escapes: 2, seekSpeed: 'normal', heartbeat: true, blink: 'off', stamp: true, climb: true, seekClimb: true, climbSpeed: 'slow', huntPaint: 'on', minimap: false, seekScore: 'time', wager: 5, sights: false, blendBonus: 20 },
 };
 export const PRESET_IDS = ['easy', 'classic', 'hard'];
 export const PRESET_LABEL = { easy: 'Easy', classic: 'Classic', hard: 'Hard', custom: 'Custom' };
@@ -143,6 +175,9 @@ export function fmtRule(k, v) {
     case 'countdown': case 'headStart': case 'grace': return v === 0 ? 'Off' : `${v} s`;
     case 'hideEnd': return v === 'ready' ? 'On Ready' : 'Timer';
     case 'huntPaint': return v === 'off' ? 'Off' : v === 'tell' ? 'Shows' : 'On';
+    case 'seekScore': return v === 'off' ? 'Off' : v === 'time' ? 'Time left' : 'Time + pellets';
+    case 'blendBonus': return v === 0 ? 'Off' : v === 10 ? '+10 at 80 %' : '+20 at 90 %';
+    case 'wager': return v === 0 ? 'Off' : `+${v}`;
     case 'climbSpeed': return v === 'slow' ? 'Slow' : v === 'fast' ? 'Fast' : 'Normal';
     case 'hide': case 'seek': case 'scanCd': return v >= 60 && v % 60 === 0 ? `${v / 60} min` : v >= 60 ? `${Math.floor(v / 60)}:${String(v % 60).padStart(2, '0')}` : `${v} s`;
     case 'scans': return v === 0 ? 'Unlimited' : String(v);

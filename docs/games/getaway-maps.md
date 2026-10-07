@@ -124,6 +124,8 @@ Everything below is optional and feature-detected. The fields above are unchange
 | `roads[i].lanes` | Traffic lanes per direction (default: highway 2, arterial 2 when ≥ 14 m wide, else 1). |
 | `roads[i].traffic: false` | No civilian traffic on this road. `oneway: true` gives traffic one direction only. |
 | `roads[i].clear` | Bridge deck clearance in metres. |
+| `roads[i].cover: true` | A covered road (tunnel, underpass, a street under a deck): a runner on its asphalt counts as out of the cop's sight for the escape meter. Roads under a bridge deck (> 2.5 m above) count automatically. |
+| `heat` | The lose-the-heat distance (m, 60–400) used when the setting is at its default (180): Dockside 140. Big open maps can leave it out. |
 | `solids[i].drawn: true` | The map drew this solid itself; the engine uses it only for collision. |
 
 ### Engine-drawn solids
@@ -226,14 +228,19 @@ them on walls standing near the ground they sit on. Colours still come from vert
 - Night (dark mode) is a lighting rig: keep darkening your colours, but let lit windows, lamps
   (`kit.lamp`) and glows do the work; per-pixel siren light no longer washes whole roads.
 
-**Memory.** Once a chunk's merged geometry is on the GPU the engine drops its CPU copies of
-normals, colours, fx codes and indices (positions stay, for knocked-over props). Don't read those
-attributes from merged meshes after the build (meshes marked `userData.noMerge` are untouched).
-After a WebGL context loss the game rebuilds the map behind the loading card.
+**Memory.** The engine's geometry is packed: position f32×3, normal i8×3 (normalised), colour
+u8×3 (normalised), fx u8, aux i16 (normalised, × 8 = the lane coordinate) — 21 B/vertex. Every
+`kit.builder()` mesh comes out packed; a map that builds its own float buffers (Boulder) calls
+`kit.pack(geometry)` once before handing the mesh over (uv → u16 too, when it is in 0..1). Once
+a chunk's merged geometry is on the GPU the engine drops its CPU copies of normals, colours, fx
+codes and indices (positions stay, for knocked-over props). Don't read those attributes from
+merged meshes after the build (meshes marked `userData.noMerge` are untouched). After a WebGL
+context loss the game rebuilds the map behind the loading card.
 
 **Budgets with v2.** The engine's extras cost: per visible chunk +1 call (decals) and +1 per
 parked-car silhouette; cars/traffic/lights/fx ~15–20 calls in a chase; the shadow pass ~6–10
-calls of car geometry. Keep a map's own content at ≤ ~45 calls and ≤ ~150k triangles in view.
+calls of car geometry from its own `casters` scene (never the chunks), only while a car is in
+the game. Keep a map's own content at ≤ ~45 calls and ≤ ~150k triangles in view.
 
 ### Bundling
 

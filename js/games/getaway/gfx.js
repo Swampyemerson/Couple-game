@@ -32,6 +32,21 @@ export const FX = {
   sirenR: 20, sirenB: 21, tail: 22, reverse: 23, water: 24, metal: 25, wood: 26, rock: 27, foliage: 28, lot: 29,
 };
 
+// Vertex layout (Builder.geometryOut / packGeometry): position f32×3, normal i8×3 normalised,
+// color u8×3 normalised, fx u8, aux i16 normalised × AUX_SCALE (lane coordinate, ±8 at 2.4e-4):
+// 21 B/vertex instead of 44 (f32 everything), i.e. roughly −40 MB of GPU memory on the big maps.
+export const AUX_SCALE = 8;
+/** Multiplier that turns a (possibly normalised integer) attribute's raw array value into its float value. */
+export function attrScale(a) {
+  if (!a || !a.normalized) return 1;
+  const A = a.array;
+  if (A instanceof Int8Array) return 1 / 127; if (A instanceof Uint8Array || A instanceof Uint8ClampedArray) return 1 / 255;
+  if (A instanceof Int16Array) return 1 / 32767; if (A instanceof Uint16Array) return 1 / 65535;
+  return 1;
+}
+/** aux attribute raw value → lane coordinate (see AUX_SCALE). */
+export function auxScale(a) { return a && a.normalized ? attrScale(a) * AUX_SCALE : 1; }
+
 // quality tier ('low' | 'mid' | 'high'): set by render.js before any material is made
 let TIER = 'high';
 export function setGfxTier(t) { TIER = t === 'low' || t === 'mid' ? t : 'high'; }
@@ -113,7 +128,7 @@ export function makeUniforms(THREE, P) {
     uSee: { value: new THREE.Vector4(0, -999, 0, 0) },      // see-through materials: xyz = my car, w = sight-cone radius at the car (0 = off)
     uShadowMap: { value: null },
     uShadowM: { value: new THREE.Matrix4() },
-    uShadowP: { value: new THREE.Vector4(0, 1 / 1024, 0.8, 0) }, // on, texel, strength, -
+    uShadowP: { value: new THREE.Vector4(0, 1 / 1024, 0.8, 0) }, // on, texel, strength, 4 taps (0 = 2 taps)
   };
 }
 
@@ -143,7 +158,7 @@ const VERT_COLOR = `#if defined( USE_COLOR ) || defined( USE_INSTANCING_COLOR )
 #endif`;
 const VERT_POST = `#include <fog_vertex>
 vFx = fx + uFxm;
-vAux = aux;
+vAux = aux * 8.0; // AUX_SCALE: aux is an i16 normalised lane coordinate
 vLPos = transformed;
 vec3 gN = normal;
 #ifdef USE_INSTANCING
@@ -208,15 +223,20 @@ float gShadow( vec3 wp, vec3 n ) {
   vec3 p = sc.xyz / sc.w * 0.5 + 0.5;
   if ( p.x <= 0.0 || p.x >= 1.0 || p.y <= 0.0 || p.y >= 1.0 || p.z >= 1.0 ) return 1.0;
   float z = p.z - 0.001;
-  // 4 taps on a per-pixel rotated square (rotated-grid PCF: soft edges without stair steps)
-  float r = fract( sin( dot( gl_FragCoord.xy, vec2( 12.9898, 78.233 ) ) ) * 43758.5453 ) * 6.2831;
-  vec2 o1 = vec2( cos( r ), sin( r ) ) * uShadowP.y * 1.6; vec2 o2 = vec2( -o1.y, o1.x );
+  // taps on a per-pixel rotated line / square (rotated PCF: soft edges without stair steps);
+  // the rotation comes from an interleaved-gradient hash (no sin), 2 taps on phones (uShadowP.w = 0)
+  float r = fract( 52.9829189 * fract( dot( gl_FragCoord.xy, vec2( 0.06711056, 0.00583715 ) ) ) ) * 6.2831;
+  vec2 o1 = vec2( cos( r ), sin( r ) ) * uShadowP.y * 1.4;
   float s = step( z, gUnpack( texture2D( uShadowMap, p.xy + o1 ) ) );
   s += step( z, gUnpack( texture2D( uShadowMap, p.xy - o1 ) ) );
-  s += step( z, gUnpack( texture2D( uShadowMap, p.xy + o2 * 0.5 ) ) );
-  s += step( z, gUnpack( texture2D( uShadowMap, p.xy - o2 * 0.5 ) ) );
+  if ( uShadowP.w > 0.5 ) {
+    vec2 o2 = vec2( -o1.y, o1.x ) * 0.5;
+    s += step( z, gUnpack( texture2D( uShadowMap, p.xy + o2 ) ) );
+    s += step( z, gUnpack( texture2D( uShadowMap, p.xy - o2 ) ) );
+    s *= 0.5;
+  }
   vec2 e = abs( p.xy - 0.5 ) * 2.0;
-  return mix( s * 0.25, 1.0, smoothstep( 0.75, 0.98, max( e.x, e.y ) ) );
+  return mix( s * 0.5, 1.0, smoothstep( 0.75, 0.98, max( e.x, e.y ) ) );
 }
 #endif
 float gHash( vec2 p ) { vec3 p3 = fract( vec3( p.xyx ) * 0.1031 ); p3 += dot( p3, p3.yzx + 33.33 ); return fract( ( p3.x + p3.y ) * p3.z ); }
@@ -485,9 +505,9 @@ export function tplFromGeo(geo, boxHull = false) {
   const g = geo.index ? geo : geo;
   const pa = g.getAttribute('position'); const n = pa.count;
   if (!g.getAttribute('normal')) g.computeVertexNormals();
-  const na = g.getAttribute('normal');
+  const na = g.getAttribute('normal'); const ns = attrScale(na);
   const pos = new Float32Array(n * 3); const nrm = new Float32Array(n * 3);
-  for (let i = 0; i < n; i++) { pos[i * 3] = pa.getX(i); pos[i * 3 + 1] = pa.getY(i); pos[i * 3 + 2] = pa.getZ(i); nrm[i * 3] = na.getX(i); nrm[i * 3 + 1] = na.getY(i); nrm[i * 3 + 2] = na.getZ(i); }
+  for (let i = 0; i < n; i++) { pos[i * 3] = pa.getX(i); pos[i * 3 + 1] = pa.getY(i); pos[i * 3 + 2] = pa.getZ(i); nrm[i * 3] = na.getX(i) * ns; nrm[i * 3 + 1] = na.getY(i) * ns; nrm[i * 3 + 2] = na.getZ(i) * ns; }
   let idx;
   if (g.index) { idx = new Uint32Array(g.index.count); for (let i = 0; i < idx.length; i++) idx[i] = g.index.getX(i); }
   else { idx = new Uint32Array(n); for (let i = 0; i < n; i++) idx[i] = i; }
@@ -677,19 +697,44 @@ export class Builder {
     this.ni = n; this.nv += 4;
     return this;
   }
+  /** The merged geometry, with the static attributes quantised (see AUX_SCALE above). */
   geometryOut() {
-    const THREE = this.THREE; const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(this.pos.slice(0, this.nv * 3), 3));
-    g.setAttribute('normal', new THREE.BufferAttribute(this.nrm.slice(0, this.nv * 3), 3));
-    g.setAttribute('color', new THREE.BufferAttribute(this.col.slice(0, this.nv * 3), 3));
-    g.setAttribute('fx', new THREE.BufferAttribute(this.fx.slice(0, this.nv), 1));
-    if (this.hasAux || this.auxV) g.setAttribute('aux', new THREE.BufferAttribute(this.aux.slice(0, this.nv), 1));
-    const ix = this.nv > 65535 ? this.idx.slice(0, this.ni) : Uint16Array.from(this.idx.subarray(0, this.ni));
+    const THREE = this.THREE; const g = new THREE.BufferGeometry(); const n = this.nv;
+    g.setAttribute('position', new THREE.BufferAttribute(this.pos.slice(0, n * 3), 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(packNormals(this.nrm, n), 3, true));
+    g.setAttribute('color', new THREE.BufferAttribute(packColors(this.col, n), 3, true));
+    g.setAttribute('fx', new THREE.BufferAttribute(packFx(this.fx, n), 1));
+    if (this.hasAux || this.auxV) g.setAttribute('aux', new THREE.BufferAttribute(packAux(this.aux, n), 1, true));
+    const ix = n > 65535 ? this.idx.slice(0, this.ni) : Uint16Array.from(this.idx.subarray(0, this.ni));
     g.setIndex(new THREE.BufferAttribute(ix, 1));
     g.computeBoundingSphere(); g.computeBoundingBox();
     return g;
   }
   mesh(material) { const m = new this.THREE.Mesh(this.geometryOut(), material); m.matrixAutoUpdate = false; m.updateMatrix(); return m; }
+}
+
+// ── attribute packing ──
+function packNormals(src, n) { const o = new Int8Array(n * 3); for (let i = 0; i < n * 3; i++) { const v = src[i]; o[i] = Math.round((v > 1 ? 1 : v < -1 ? -1 : v) * 127); } return o; }
+function packColors(src, n) { const o = new Uint8Array(n * 3); for (let i = 0; i < n * 3; i++) { const v = src[i]; o[i] = Math.round((v > 1 ? 1 : v < 0 ? 0 : v) * 255); } return o; }
+function packFx(src, n) { const o = new Uint8Array(n); for (let i = 0; i < n; i++) { const v = Math.round(src[i]); o[i] = v > 255 ? 255 : v < 0 ? 0 : v; } return o; }
+function packAux(src, n) { const o = new Int16Array(n); for (let i = 0; i < n; i++) { const v = src[i] / AUX_SCALE; o[i] = Math.round((v > 1 ? 1 : v < -1 ? -1 : v) * 32767); } return o; }
+/**
+ * Quantise a float geometry built outside the Builder (a map's own buffers) to the Builder's
+ * layout: normal → i8, color → u8, fx → u8, aux → i16, uv → u16 normalised (atlas coordinates in
+ * 0..1). Positions and indices stay. Returns the geometry. Safe to call twice.
+ */
+export function packGeometry(THREE, g) {
+  const n = g.getAttribute('position') ? g.getAttribute('position').count : 0; if (!n) return g;
+  const nr = g.getAttribute('normal'); if (nr && nr.array instanceof Float32Array) g.setAttribute('normal', new THREE.BufferAttribute(packNormals(nr.array, n), 3, true));
+  const co = g.getAttribute('color'); if (co && co.array instanceof Float32Array && co.itemSize === 3) g.setAttribute('color', new THREE.BufferAttribute(packColors(co.array, n), 3, true));
+  const fx = g.getAttribute('fx'); if (fx && fx.array instanceof Float32Array) g.setAttribute('fx', new THREE.BufferAttribute(packFx(fx.array, n), 1));
+  const ax = g.getAttribute('aux'); if (ax && ax.array instanceof Float32Array) g.setAttribute('aux', new THREE.BufferAttribute(packAux(ax.array, n), 1, true));
+  const uv = g.getAttribute('uv');
+  if (uv && uv.array instanceof Float32Array && uv.itemSize === 2) {
+    let ok = true; const U = uv.array; for (let i = 0; i < n * 2 && ok; i++) if (!(U[i] >= 0 && U[i] <= 1)) ok = false;
+    if (ok) { const o = new Uint16Array(n * 2); for (let i = 0; i < n * 2; i++) o[i] = Math.round(U[i] * 65535); g.setAttribute('uv', new THREE.BufferAttribute(o, 2, true)); }
+  }
+  return g;
 }
 
 // ── chunk auto-merge ──
@@ -735,6 +780,7 @@ export function* mergeSteps(THREE, group, mats, inkRGB, disposeSet, pre = null) 
       const m = o.material; const geo = o.geometry; const g = m.userData.gtw;
       const pa = geo.getAttribute('position'); let na = geo.getAttribute('normal');
       if (!na) { geo.computeVertexNormals(); na = geo.getAttribute('normal'); }
+      const nS = attrScale(na);
       const ca = m.vertexColors ? geo.getAttribute('color') : null; const fa = geo.getAttribute('fx'); const xa = geo.getAttribute('aux');
       const mc = m.color; const n = pa.count;
       const reps = o.isInstancedMesh ? o.count : 1;
@@ -752,7 +798,7 @@ export function* mergeSteps(THREE, group, mats, inkRGB, disposeSet, pre = null) 
         for (let i = 0; i < n; i++) {
           const x = PA ? PA[i * 3] : pa.getX(i); const y = PA ? PA[i * 3 + 1] : pa.getY(i); const z = PA ? PA[i * 3 + 2] : pa.getZ(i);
           t.pos[i * 3] = e[0] * x + e[4] * y + e[8] * z + e[12]; t.pos[i * 3 + 1] = e[1] * x + e[5] * y + e[9] * z + e[13]; t.pos[i * 3 + 2] = e[2] * x + e[6] * y + e[10] * z + e[14];
-          const a = NA ? NA[i * 3] : na.getX(i); const bb = NA ? NA[i * 3 + 1] : na.getY(i); const cc = NA ? NA[i * 3 + 2] : na.getZ(i);
+          const a = (NA ? NA[i * 3] : na.getX(i)) * nS; const bb = (NA ? NA[i * 3 + 1] : na.getY(i)) * nS; const cc = (NA ? NA[i * 3 + 2] : na.getZ(i)) * nS;
           let nx = ne[0] * a + ne[3] * bb + ne[6] * cc; let ny = ne[1] * a + ne[4] * bb + ne[7] * cc; let nz = ne[2] * a + ne[5] * bb + ne[8] * cc;
           const l = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1; t.nrm[i * 3] = nx / l; t.nrm[i * 3 + 1] = ny / l; t.nrm[i * 3 + 2] = nz / l;
         }
@@ -764,13 +810,14 @@ export function* mergeSteps(THREE, group, mats, inkRGB, disposeSet, pre = null) 
         b.add(t, 0, 0, 0, 1, 1, 1, 0, [1, 1, 1], ol, g.fx);
         // colours + fx per vertex (the first pass; the hull pass stays ink)
         const CA = ca && !ca.isInterleavedBufferAttribute && ca.itemSize >= 3 ? ca.array : null; const cs = ca ? ca.itemSize : 3;
+        const cS = attrScale(ca); const xS = auxScale(xa);
         for (let i = 0; i < n; i++) {
           let cr = mc ? mc.r : 1; let cg = mc ? mc.g : 1; let cb = mc ? mc.b : 1;
-          if (ca) { if (CA) { cr *= CA[i * cs]; cg *= CA[i * cs + 1]; cb *= CA[i * cs + 2]; } else { cr *= ca.getX(i); cg *= ca.getY(i); cb *= ca.getZ(i); } }
+          if (ca) { if (CA) { cr *= CA[i * cs] * cS; cg *= CA[i * cs + 1] * cS; cb *= CA[i * cs + 2] * cS; } else { cr *= ca.getX(i) * cS; cg *= ca.getY(i) * cS; cb *= ca.getZ(i) * cS; } }
           if (ic) { cr *= ic.r; cg *= ic.g; cb *= ic.b; }
           const o3 = (base + i) * 3; b.col[o3] = cr; b.col[o3 + 1] = cg; b.col[o3 + 2] = cb;
           if (fa) b.fx[base + i] = Math.max(g.fx, fa.getX(i));
-          if (xa) { const av = xa.getX(i); b.aux[base + i] = av; if (av) b.hasAux = true; }
+          if (xa) { const av = xa.getX(i) * xS; b.aux[base + i] = av; if (av) b.hasAux = true; }
         }
       }
       yield 0;

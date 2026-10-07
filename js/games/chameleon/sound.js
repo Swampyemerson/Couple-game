@@ -55,6 +55,35 @@ export function createSound() {
     src.start(t, Math.random() * 0.3); src.stop(t + dur + 0.03);
   }
 
+  let stepVol = 0.08; let stepPitch = 1;
+  // ── ambience: one oscillator pad (hide) + an LFO-gated pulse (hunt) whose tempo the game sets.
+  // Everything is created once per phase; per frame only numbers change (no allocations).
+  const amb = { mode: 'off', pad: null, padG: null, pulseG: null, bpm: 70, nextBeat: 0, beatOsc: null, beatG: null, duckUntil: 0 };
+  function ambStop() {
+    if (amb.pad) { try { amb.padG.gain.cancelScheduledValues(0); amb.padG.gain.setTargetAtTime(0.0001, ctx.currentTime, 0.25); amb.pad.forEach((o) => o.stop(ctx.currentTime + 1.2)); } catch { /* ignore */ } }
+    amb.pad = null; amb.padG = null; amb.mode = 'off';
+  }
+  function ambStart(mode) {
+    const c = ensure(); if (!c) return;
+    ambStop();
+    amb.mode = mode;
+    const g = c.createGain(); g.gain.setValueAtTime(0.0001, c.currentTime);
+    const f = c.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = mode === 'hide' ? 520 : 300; f.Q.value = 0.7;
+    const freqs = mode === 'hide' ? [110, 164.8, 220.5] : [55, 82.4, 110.3];
+    amb.pad = freqs.map((fr, i) => { const o = c.createOscillator(); o.type = i === 1 ? 'triangle' : 'sine'; o.frequency.value = fr; o.detune.value = (i - 1) * 6; o.connect(f); o.start(); return o; });
+    f.connect(g).connect(master);
+    g.gain.exponentialRampToValueAtTime(mode === 'hide' ? 0.07 : 0.045, c.currentTime + 1.6);
+    amb.padG = g; amb.nextBeat = c.currentTime + 0.4;
+  }
+  /** One pulse beat (hunt): a soft low thud, louder as the tempo climbs. */
+  function beat(vol) {
+    const c = ctx; const t = c.currentTime + 0.01;
+    const o = c.createOscillator(); const g = c.createGain();
+    o.type = 'sine'; o.frequency.setValueAtTime(92, t); o.frequency.exponentialRampToValueAtTime(48, t + 0.11);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+    o.connect(g).connect(master); o.start(t); o.stop(t + 0.2);
+  }
+
   const S = {
     ui: () => tone(660, 880, 0.06, { type: 'triangle', vol: 0.12 }),
     tick: () => {
@@ -70,6 +99,10 @@ export function createSound() {
     land: () => noise(0.06, { vol: 0.08, freq: 400, q: 0.6 }),
     fire: () => { tone(220, 90, 0.12, { type: 'square', vol: 0.14 }); noise(0.09, { vol: 0.16, freq: 1800, q: 0.9, sweep: 0.3 }); },
     splat: () => { noise(0.2, { vol: 0.26, freq: 500, q: 0.6, sweep: 0.4, type: 'lowpass' }); tone(140, 60, 0.12, { vol: 0.1 }); },
+    // a confirmed tag: the splat pitched up ×1.3 with a bright crack on top
+    tag: () => { noise(0.18, { vol: 0.3, freq: 650, q: 0.6, sweep: 0.4, type: 'lowpass' }); tone(182, 78, 0.12, { vol: 0.12 }); tone(1800, 900, 0.05, { type: 'triangle', vol: 0.1 }); },
+    good: () => { tone(660, 990, 0.09, { type: 'triangle', vol: 0.12 }); tone(990, 1320, 0.12, { type: 'triangle', vol: 0.1, at: 0.08 }); },
+    unlock: () => [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, f * 1.005, 0.14, { type: 'triangle', vol: 0.1, at: i * 0.06 })),
     chirp: () => { tone(1400, 2600, 0.09, { vol: 0.16 }); tone(1600, 3000, 0.09, { vol: 0.14, at: 0.12 }); },
     glint: () => { tone(2400, 2400, 0.25, { type: 'sine', vol: 0.06 }); tone(3600, 3600, 0.2, { vol: 0.04, at: 0.05 }); },
     scurry: () => { for (let i = 0; i < 6; i++) noise(0.03, { vol: 0.1, freq: 2500, q: 3, at: i * 0.06 }); },
@@ -91,18 +124,53 @@ export function createSound() {
     // tongue-zip: a rubbery "thwip" up then a sticky landing
     zip: () => { tone(300, 1800, 0.12, { type: 'sawtooth', vol: 0.07 }); noise(0.1, { vol: 0.12, freq: 2400, q: 1.5, sweep: 0.4 }); tone(200, 80, 0.08, { vol: 0.16, at: 0.3 }); },
     sprint: () => tone(520, 760, 0.07, { type: 'triangle', vol: 0.1 }),
+    // footsteps (walk-cycle zero crossings): a dry tap for free steps, a wetter "tup" for sticky
+    // crawl steps; S.step(vol, kind) is called with a distance-shaped volume (see game.js)
+    stepTap: () => noise(0.04, { vol: stepVol, freq: 900 * stepPitch, q: 1.2 }),
+    stepTup: () => { noise(0.045, { vol: stepVol * 1.1, freq: 420 * stepPitch, q: 0.9, type: 'lowpass' }); tone(170 * stepPitch, 110, 0.04, { vol: stepVol * 0.5 }); },
     warn: () => { tone(500, 500, 0.08, { type: 'square', vol: 0.07 }); tone(500, 500, 0.08, { type: 'square', vol: 0.07, at: 0.14 }); },
   };
 
   return {
     unlock() { if (!muted()) ensure(); },
+    /** Ambience mode: 'off' | 'hide' | 'hunt'. Idempotent; cheap to call every frame. */
+    ambience(mode) {
+      if (dead) return;
+      if (muted()) { if (amb.mode !== 'off') ambStop(); return; }
+      if (mode === amb.mode) return;
+      if (mode === 'off') ambStop(); else ambStart(mode);
+    },
+    /** Hunt pulse tempo (bpm); called per frame with a number, schedules at most one beat per call. */
+    tempo(bpm) {
+      amb.bpm = bpm;
+      if (dead || amb.mode !== 'hunt' || !ctx || muted()) return;
+      const now = ctx.currentTime;
+      if (now < amb.duckUntil) { amb.nextBeat = Math.max(amb.nextBeat, amb.duckUntil); return; }
+      if (now >= amb.nextBeat) {
+        const vol = 0.09 + 0.1 * Math.min(1, Math.max(0, (bpm - 70) / 90));
+        try { beat(vol); } catch { /* best-effort */ }
+        amb.nextBeat = Math.max(now, amb.nextBeat) + 60 / Math.max(40, bpm);
+      }
+    },
+    /** Cut the ambience for ms (the hit-stop at a tag). */
+    duck(ms) {
+      if (!ctx || !amb.padG) return;
+      try { const t = ctx.currentTime; amb.padG.gain.cancelScheduledValues(t); amb.padG.gain.setValueAtTime(0.0001, t); amb.padG.gain.exponentialRampToValueAtTime(amb.mode === 'hide' ? 0.07 : 0.045, t + ms / 1000 + 0.3); amb.duckUntil = t + ms / 1000; } catch { /* ignore */ }
+    },
     play(name) {
       if (dead || muted()) return;
       const fn = S[name];
       if (fn) { try { fn(); } catch { /* audio is best-effort */ } }
     },
+    /** A footstep at volume vol (0..~0.2), pitch ×pitch (0.8 = heavier / sprinting); crawl = sticky feet. */
+    step(vol, pitch = 1, crawl = false) {
+      if (dead || muted() || vol < 0.005) return;
+      stepVol = vol; stepPitch = pitch;
+      try { (crawl ? S.stepTup : S.stepTap)(); } catch { /* best-effort */ }
+    },
     destroy() {
       dead = true;
+      ambStop();
       if (ctx) { try { ctx.close(); } catch { /* ignore */ } }
       ctx = null; master = null; noiseBuf = null;
     },

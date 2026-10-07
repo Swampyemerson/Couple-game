@@ -6,17 +6,21 @@ import { createStage } from './stage.js';
 import { createHud } from './hud.js';
 import { createControls } from './controls.js';
 import { POSES, REGION_OF_PART, REGION_NAMES } from './avatar.js';
-import { loadingCard, errorCard, lobbyCard, titleCard, blindCard, headCard, curtainCard, recapCard, pauseCard, ctxCard, tipsHtml } from './cards.js';
+import { loadingCard, errorCard, lobbyCard, titleCard, blindCard, headCard, curtainCard, recapCard, pauseCard, ctxCard, tipsHtml, finalCard, EMOTES, CALLS } from './cards.js';
+import { recordRound, recordMatch, bestsStrip, recapLines, matchStory } from './records.js';
+import { loadWear, saveWear, resolveWear, newUnlocks, packWear, unpackWear, wardrobeSheet, EYE_RGB, SLOT_LABEL } from './wardrobe.js';
 import { clamp, dampAngle, wrapAngle, hexToRgb, cssColor, luminance, listeners, fmtTime, mixHex, esc, seeded, packQuat, unpackQuat } from './util.js';
 import { MAPS, mapArea } from './maps.js';
-import { sanitizeSetup, sanitizeRules, applyPreset, stepRule, setRule, loadSaved, saveSetup, sizeScale, SPEED_MUL, CLIMB_MUL, tipsSeen, markTipsSeen, PRESETS, timeScale, effSeconds, sprintMul, OPTIONS, fmtRule } from './rules.js';
-import { mkBody, sizeBody, resetBody, headingYaw, attachBody, detachBody, freeStep, crawlStep, inputOnSurface, bodyQuat, quatUpY, spotKind, surfaceKind } from './move.js';
+import { sanitizeSetup, sanitizeRules, applyPreset, stepRule, setRule, loadSaved, saveSetup, sizeScale, SPEED_MUL, CLIMB_MUL, tipsSeen, markTipsSeen, PRESETS, timeScale, hideScale, effSeconds, sprintMul, dbSpeed, OPTIONS, fmtRule } from './rules.js';
+import { sampleAtlas } from './atlas.js';
+import { mkBody, sizeBody, resetBody, headingYaw, attachBody, detachBody, freeStep, crawlStep, inputOnSurface, bodyQuat, quatUpY, spotKind, surfaceKind, accelStep, coyoteJump, shortHop, JUMP } from './move.js';
 import { SQUEEZE_R } from './world.js';
 
-const DUR0 = { title: 1800, hide: 60000, lockMax: 7000, seekLead: 1600, seek: 90000, found: 3400, recap: 9000, resume: 3000, lead: 380, foundLead: 260 };
+const DUR0 = { title: 1800, title2: 900, final: 12000, hide: 60000, lockMax: 7000, seekLead: 1600, seek: 90000, found: 3400, recap: 6500, resume: 3000, lead: 380, foundLead: 260 };
 const GLINT_MS = 400;
 const BONUS = 30;
-const SPEED = { hide: 3.0, seek: 3.3, db: 1.1, scurry: 6.2, crawl: 0.78, squeeze: 0.35, sprint: 1.55 };
+const SPEED = { hide: 3.0, seek: 3.3, scurry: 6.2, crawl: 0.78, squeeze: 0.35, sprint: 1.55 };
+const PLAYERS = ['a', 'b'];
 const BRUSH = [0.035, 0.065, 0.11];
 const EYE_H = { stand: 0.46, crouch: 0.36, ball: 0.3, flat: 0.2, wall: 0.4, hang: 0.3, perch: 0.46, squeeze: 0.12, corner: 0.3 };
 const TAG_TOL = 0.75;
@@ -26,6 +30,8 @@ const TELL = { range: 6, secs: 1.1, minGap: 1000 };
 const FREECAM = { speed: 4.2, fast: 2.2 };
 const MAP_IDS = MAPS.map((m) => m.id);
 const TAG_WINDOW = 250;
+// a hider mid-scurry / mid-zip is confirmed against a much shorter window (see confirmTag)
+const TAG_WINDOW_ESCAPE = 120;
 const other = (w) => (w === 'a' ? 'b' : 'a');
 
 export function createGame(el, api) {
@@ -64,8 +70,15 @@ export function createGame(el, api) {
   // ── state ──
   const S = {
     boot: 'loading', // loading | ready | error
-    setup: sanitizeSetup({ ...(loadSaved() || {}), first: Math.random() < 0.5 ? 'a' : 'b' }, MAP_IDS),
+    // who hides first alternates with the hub's rematch counter (the same person used to hide first match after match)
+    setup: sanitizeSetup({ ...(loadSaved() || {}), first: (api.gen | 0) % 2 ? 'b' : 'a' }, MAP_IDS),
     sheet: false, // settings sheet open (local view state)
+    wardrobe: false, // wardrobe sheet open (local view state)
+    wardW: null, // whose wardrobe (hotseat: a toggle)
+    dataVer: 0, // bumps when the shared data (records, unlocks), a wardrobe pick or the music setting changes
+    callVer: 0, // bumps when a wager chip is picked (the blind / curtain card re-renders)
+    matchRecords: [], matchUnlocks: [], // what this match earned, for the final card
+    finalRec: false,
     match: null, // { id, mode, map, first, rounds, scores, hist }
     phase: { name: 'lobby', seq: 0, round: 0, at: 0, end: 0, dur: 0, data: null },
     queue: [],
@@ -88,14 +101,41 @@ export function createGame(el, api) {
   function freshRound(round) {
     return {
       round, pellets: { a: 0, b: 0 }, maxPellets: 0, scanReady: { a: 0, b: 0 }, scansLeft: { a: 0, b: 0 }, scurried: { a: false, b: false }, escapes: { a: 0, b: 0 }, zipReady: { a: 0, b: 0 }, ready: new Set(), acks: new Set(),
-      paintSum: { a: 0, b: 0 }, paintOk: { a: false, b: false }, glintAt: { a: -1e9, b: -1e9 }, trailUntil: { a: 0, b: 0 }, trailNext: 0,
+      paintSum: { a: 0, b: 0 }, paintOk: { a: false, b: false }, blend: { a: -1, b: -1 }, glintAt: { a: -1e9, b: -1e9 }, trailUntil: { a: 0, b: 0 }, trailNext: 0,
       pendingTag: 0, foundSent: false, out: { a: false, b: false }, outSent: false, tagWindow: null,
       path: [], pathNext: 0, closest: Infinity, passes: 0, near: false, seekStart: 0, used: { a: 0, b: 0 }, lockSent: false, rec: null,
-      scurry: null, endingHide: false, lockDone: false, toRecap: false, nexting: false, jumpReq: false, lastTick: 0, lastTrailT: 0, spawn: null, sprint: false,
+      scurry: null, escapeAt: 0, endingHide: false, lockDone: false, toRecap: false, nexting: false, jumpReq: false, jumpAt: -1e9, lastTick: 0, lastTrailT: 0, spawn: null, sprint: false,
       // v3: hunt start seen, live paint while hunted (sender: version + time sent; receiver: tells)
       huntSeen: false, lpVer: -1, lpAt: 0, lpSent: 0, lpIn: 0, tell: null, tells: 0, tellSkip: 0, tellAt: -1e9,
+      // polish: brush strokes per hider, 'in their sights' stares, the seeker's wager, the hide-phase ticker, emotes, stamps, 3-D nearness
+      strokes: { a: 0, b: 0 }, stared: 0, stareAt: -1e9, call: { a: null, b: null }, under: false, losNext: 0, nearD: 99,
+      actQ: null, actAt: 0, actMoveAt: 0, actStill: false, ticker: '', emoteAt: 0, emoteN: 0, halfShown: false,
     };
   }
+
+  // ── shared records + wardrobe (records.js / wardrobe.js) + this phone's music setting ──
+  const data = () => (typeof api.data === 'function' ? api.data() : {});
+  const setData = (patch) => { if (patch && Object.keys(patch).length && typeof api.setData === 'function') api.setData(patch); };
+  const wearPicks = loadWear(); // this device's picks per person { a: {…}, b: {…} }
+  if (!wearPicks.a || !wearPicks.b) { const flat = { eye: wearPicks.eye | 0, shape: wearPicks.shape | 0, charm: wearPicks.charm | 0, twitch: wearPicks.twitch | 0 }; wearPicks.a = wearPicks.a || flat; wearPicks.b = wearPicks.b || { ...flat }; }
+  const wornRemote = { a: null, b: null }; // the partner's worn set as sent (packed int)
+  const MUSIC_KEY = 'chm.music.v1';
+  let music = 'on';
+  try { const mv = localStorage.getItem(MUSIC_KEY); if (mv === 'on' || mv === 'hunt' || mv === 'off') music = mv; } catch { /* ignore */ }
+  const offData = typeof api.onData === 'function' ? api.onData(() => { S.dataVer++; applyWear(); }) : null;
+  const wardrobeFor = () => S.wardW || me || 'a';
+  /** Dress both chameleons: my picks (kept only where earned), the partner's as sent (guarded the same way). */
+  function applyWear() {
+    if (!stage) return;
+    const d = data();
+    for (const w of ['a', 'b']) {
+      const picks = controlsOf(w) ? wearPicks[w] : (wornRemote[w] != null ? unpackWear(wornRemote[w]) : null);
+      if (!picks) continue;
+      const wr = resolveWear(d, w, picks);
+      stage.av[w].setWardrobe(wr, EYE_RGB[wr.eye] || null);
+    }
+  }
+  function sendWear() { if (local || !link.ready || !me) return; link.send('wear', { w: me, wr: packWear(resolveWear(data(), me, wearPicks[me])) }); }
 
   // physics bodies for locally controlled players (see move.js)
   const body = { a: mkBody(), b: mkBody() };
@@ -131,11 +171,12 @@ export function createGame(el, api) {
   const sizeS = () => sizeScale(rules().size);
   const curMapEntry = () => MAPS.find((m) => m.id === (S.match ? S.match.map : S.setup.map)) || MAPS[0];
   const mapTime = () => timeScale(curMapEntry());
+  const mapHideTime = () => hideScale(curMapEntry());
   /** Hide clock (0 = untimed: the hunt starts when the hider taps Ready). */
-  const hideMs = () => (rules().hideEnd === 'ready' ? 0 : TUNE.hide || effSeconds(rules().hide, mapTime()) * 1000);
+  const hideMs = () => (rules().hideEnd === 'ready' ? 0 : TUNE.hide || effSeconds(rules().hide, mapHideTime()) * 1000);
   const seekMs = () => TUNE.seek || effSeconds(rules().seek, mapTime()) * 1000;
   /** The hider's head start (seeker blindfolded, hider still free to move): Hide & Seek only, scales with the map. */
-  const headStartMs = () => (mode() === 'hs' ? effSeconds(rules().headStart, mapTime()) * 1000 : 0);
+  const headStartMs = () => (mode() === 'hs' ? effSeconds(rules().headStart, mapHideTime()) * 1000 : 0);
   /** 3-2-1 before the hunt (tests shorten it with __chamTune.seekLead unless they ask for the real one). */
   const countdownMs = () => (TUNE.seekLead != null && !TUNE.realCountdown ? TUNE.seekLead : rules().countdown * 1000);
   const graceMs = () => rules().grace * 1000;
@@ -192,6 +233,7 @@ export function createGame(el, api) {
       applySize();
       setLivery('a', 'lobby'); setLivery('b', 'lobby');
       placeLobby();
+      applyWear();
       controls = createControls({ surface, root, joyBase: hud.el.joy, joyKnob: hud.el.knob, onAction: action, paint: paintGestures, isActive: () => !S.destroyed && S.boot === 'ready' });
       hud.layer('loading3', loadingCard('Warming up the paint…', 0.8));
       stage.compile();
@@ -322,7 +364,11 @@ export function createGame(el, api) {
   function startRound(r, at = null) {
     const spawn = pickSpawns(r);
     if (local) enter('curtain', { round: r, data: { kind: 'hide', who: hiderOfRound(r), spawn }, at }, 0);
-    else enter('hide', { round: r, dur: hideMs(), at: at != null ? at + DUR.title : null, data: { spawn } }, DUR.title);
+    else {
+      // round 1 gets the full title + map orbit; later rounds a short one (the recap already said who hides next)
+      const lead = r > 1 ? Math.min(DUR.title, DUR.title2) : DUR.title;
+      enter('hide', { round: r, dur: hideMs(), at: at != null ? at + lead : null, data: { spawn } }, lead);
+    }
   }
   /** Seeker spawn for the hunt: random among the ones ≥ 6 m from where the hider ended up. */
   function pickSeekSpawn() {
@@ -364,14 +410,32 @@ export function createGame(el, api) {
     // time into the hunt, excluding pauses (phase.end moves when the game pauses)
     // (only the hunt counts: a head start before it scores nothing)
     const pd = S.phase.data || {}; const huntDur = pd.hunt != null ? pd.hunt : S.phase.dur;
-    const elapsed = res.found ? clamp(huntDur - (S.phase.end - res.T), 0, huntDur) : huntDur;
+    // found, or the seeker ran dry: the hider is paid for the time actually survived (+ the bonus
+    // when not found); six early misses used to pay the whole clock, the same as a full survival
+    const elapsed = res.T != null ? clamp(huntDur - (S.phase.end - res.T), 0, huntDur) : huntDur;
     let rec;
     if (m.mode === 'hs') {
-      const h = hiderOf(r);
-      const ms = elapsed;
-      const points = Math.floor(ms / 1000) + (res.found ? 0 : BONUS);
+      const h = hiderOf(r); const sk = other(h);
+      const ms = Math.round(elapsed);
+      // + the blend bonus (rules.blendBonus) for a paint job that matched its surface at the lock
+      const blend = Number.isFinite(R.blend[h]) ? R.blend[h] : -1;
+      const blendPts = blendPointsFor(blend, m.rules);
+      const points = Math.floor(ms / 1000) + (res.found ? 0 : BONUS) + blendPts;
       m.scores[h] += points;
-      rec = { round: r, hider: h, seeker: other(h), found: !!res.found, ms: Math.round(ms), points, outOfPellets: !!res.out, p: res.p || null, surf: spotOf(h) };
+      // the seeker banks points too (rules.seekScore): ½ pt per second left on the clock when
+      // they tag, plus 10 per unused pellet with 'full'. A 12 s find on a 90 s clock reads +39.
+      const ss = m.rules && m.rules.seekScore ? m.rules.seekScore : 'off';
+      let seekPoints = 0; let spare = 0;
+      if (res.found && ss !== 'off') {
+        seekPoints = Math.max(0, Math.round(((huntDur - ms) / 1000) * 0.5));
+        if (ss === 'full') { spare = clamp(R.pellets[sk], 0, R.maxPellets); seekPoints += 10 * spare; }
+        m.scores[sk] += seekPoints;
+      }
+      rec = { round: r, hider: h, seeker: sk, found: !!res.found, ms, points, seekPoints, spare, blend, blendPts, outOfPellets: !!res.out, p: res.p || null, surf: spotOf(h) };
+      // the seeker's wager (rules.wager): a right call on where they hid pays the stake ('CALLED IT')
+      const wg = (m.rules && m.rules.wager) | 0; const call = R.call[sk];
+      if (wg && call) { const zone = hideZone(h, rec.surf); rec.call = call; rec.zone = zone; if (call === zone) { rec.called = true; rec.wagerPts = wg; m.scores[sk] += wg; } }
+      rec.passes = R.passes; rec.closest = Number.isFinite(R.closest) ? Math.round(R.closest * 10) / 10 : null; rec.stared = R.stared; rec.under = R.under;
     } else {
       const wnr = res.found ? res.by : null;
       if (wnr) m.scores[wnr] += 1;
@@ -379,6 +443,31 @@ export function createGame(el, api) {
     }
     m.hist = [...m.hist, rec];
     enter(res.found ? 'found' : 'time', { dur: DUR.found, data: rec, at: res.at ?? null }, local ? 0 : DUR.foundLead);
+  }
+  /** Where a hider ended up, for the seeker's wager: floor | furniture | wall | ceiling | hang. */
+  function hideZone(w, surf) {
+    if (surf === 'hang' || surf === 'hangHigh') return 'hang';
+    if (surf === 'ceiling' || surf === 'under') return 'ceiling';
+    if (surf === 'wall' || surf === 'flat' || surf === 'corner') return 'wall';
+    if (surf === 'perch' || surf === 'squeeze') return 'furniture';
+    const pp = controlsOf(w) ? body[w] : (rem.v > 0.5 ? rem : remHint);
+    const H = stage.world.raycast(pp.x, pp.y + 0.05, pp.z, 0, -1, 0, 3, null, true);
+    if (H && H.box) {
+      const bx = H.box; const wide = bx.maxX - bx.minX > 2.5 && bx.maxZ - bx.minZ > 2.5; const thin = bx.maxY - bx.minY < 0.35;
+      if (!(wide && thin) && !/floor|ground|lawn|deck|stair|land|step|path|rug/i.test(bx.name || '')) return 'furniture';
+    }
+    return 'floor';
+  }
+  /** Host, once per round: fold the round into the shared records; returns what to celebrate. */
+  function recordNow(rec) {
+    const d = { ...data() }; const m = S.match;
+    const extra = { mode: m.mode, map: m.map, names: { a: api.name('a'), b: api.name('b') }, closest: R.closest, passes: R.passes, strokes: R.strokes, stared: R.stared, called: !!rec.called };
+    const r1 = recordRound(d, rec, extra);
+    Object.assign(d, r1.patch);
+    const patch = { ...r1.patch }; const unlocks = [];
+    for (const w of ['a', 'b']) { const u = newUnlocks(d, w); Object.assign(patch, u.patch); Object.assign(d, u.patch); for (const q of u.pops) unlocks.push({ w, key: q.st.key, k: q.st.k, name: q.st.name }); }
+    setData(patch);
+    return { records: r1.records, unlocks };
   }
   function hostFound(by, victim, T, p) {
     if (!isHost || S.phase.name !== 'seek' || R.foundSent) return;
@@ -413,7 +502,7 @@ export function createGame(el, api) {
     else if (ph.name === 'seek' && local && pre) roundOver({ found: false, at: ph.end });
     // live: a tag fired before the buzzer is still being confirmed for a moment after it
     else if (ph.name === 'seek' && !local && t >= ph.end + tagGrace()) roundOver({ found: false });
-    else if ((ph.name === 'found' || ph.name === 'time') && pre && !R.toRecap) { R.toRecap = true; enter('recap', { dur: DUR.recap, data: ph.data, at: ph.end }); }
+    else if ((ph.name === 'found' || ph.name === 'time') && pre && !R.toRecap) { R.toRecap = true; enter('recap', { dur: DUR.recap, data: { ...ph.data, rx: recordNow(ph.data || {}) }, at: ph.end }); }
     else if (ph.name === 'recap' && pre) hostNext(ph.end);
   }
 
@@ -558,14 +647,15 @@ export function createGame(el, api) {
       case 'found': case 'time': {
         const rec = p.data || {};
         R.rec = rec;
-        C.freezeUntil = tSec + 0.38;
+        C.freezeUntil = tSec + 0.5;
         C.whip = 0;
+        snd.ambience('off');
         exitPaint(true);
         const victim = rec.hider || rec.victim || hiderOf(p.round);
         const winInk = name === 'found' ? (rec.seeker || rec.winner || other(victim)) : victim;
         if (stage) {
           const vb = posOf(victim);
-          stage.fx.burst(vb.x, vb.y + 0.4, vb.z, confettiColors(winInk), 110, 1);
+          stage.fx.burst(vb.x, vb.y + 0.4, vb.z, confettiColors(winInk), name === 'found' && rec.ms < 20000 ? 160 : 110, name === 'found' && rec.ms < 20000 ? 1.2 : 1);
           if (name === 'found' && rec.p) stage.fx.splat(rec.p[0], rec.p[1], rec.p[2], 0, 1, 0, winInk === 'a' ? theme.a : theme.b, 0.32, tSec);
         }
         hud.flash();
@@ -592,22 +682,88 @@ export function createGame(el, api) {
           ring.userData.size = stage.av[tw].st.size;
           ring.visible = true; stage.fx.hlMat.color.set(theme.hl);
         }
+        // records, unlocks and a right wager call: stickers 900 ms after the card lands, 1.1 s apart
+        R.emoteN = 0;
+        const rx = (p.data && p.data.rx) || null;
+        if (rx) {
+          let i = 0;
+          for (const r of rx.records || []) { const k = i++; S.matchRecords.push(r); later(() => { hud.pop('NEW RECORD', 'hl', r.text); snd.play('survive'); }, 900 + k * 1100); }
+          for (const u of rx.unlocks || []) { const k = i++; S.matchUnlocks.push(`${api.name(u.w)}: ${u.name}`); later(() => { hud.pop('UNLOCKED', 'ink', `${api.name(u.w)}: ${u.name} ${(SLOT_LABEL[u.key] || '').toLowerCase()}`); snd.play('unlock'); }, 900 + k * 1100); }
+          const rc = R.rec; // captured: the round may have moved on by the time the sticker fires
+          if (rc && rc.called) { const k = i++; later(() => { hud.pop('CALLED IT', rc.seeker || 'hl', `+${rc.wagerPts} for ${api.name(rc.seeker)}`); snd.play('good'); }, 900 + k * 1100); }
+        }
         break;
       }
       case 'final': {
         const d = p.data || {};
-        if (isHost && !S.finished) {
-          S.finished = true;
-          const sc = `${d.a}–${d.b}`;
-          const text = d.winner ? `${api.name(d.winner)} blends best` : 'Perfectly matched';
-          const sub = mode() === 'db' ? `Rounds won ${sc}` : `Points ${sc} · ${api.name('a')} vs ${api.name('b')}`;
-          later(() => api.finish({ winner: d.winner, text, sub }), local ? 300 : 500);
-        }
+        snd.ambience('off');
+        // the match's own final card first (round timeline, best hide, fastest find, records); 'See the
+        // board' on either phone, or 12 s, hands over to the hub's end card (which carries Rematch)
+        if (isHost && !S.finalRec) { S.finalRec = true; setData(recordMatch(data(), d.winner)); }
+        later(() => finishMatch(), DUR.final);
         break;
       }
       default: break;
     }
     void prev; void t;
+  }
+
+  /** Hand the finished match to the hub (either phone may; the host records, a guest's is forwarded). */
+  function finishMatch() {
+    if (S.finished || S.phase.name !== 'final') return;
+    S.finished = true;
+    const d = S.phase.data || {};
+    const sc = `${d.a}–${d.b}`;
+    const text = d.winner ? `${api.name(d.winner)} blends best` : 'Perfectly matched';
+    const sub = mode() === 'db' ? `Rounds won ${sc}` : `Points ${sc} · ${api.name('a')} vs ${api.name('b')}`;
+    api.finish({ winner: d.winner, text, sub });
+  }
+  /** A confirmed tag on my screen: a 90 ms hit-stop, a hard shake, a white flash, the pitched-up splat; the ambience cuts for 0.4 s. */
+  function tagJuice() { C.freezeUntil = Math.max(C.freezeUntil, tSec + 0.09); C.shake = 0.25; hud.flash(); snd.play('tag'); snd.duck(400); }
+  /** The seeker's wager chip (blind card, or the hotseat's hand-over curtain). */
+  function setCall(k) {
+    if (!rules().wager || mode() !== 'hs' || !CALLS.some((c) => c[0] === k)) return;
+    const ph = S.phase.name;
+    let sk = null;
+    if (local) { if (ph === 'curtain' && S.phase.data && S.phase.data.kind === 'seek') sk = S.phase.data.who; }
+    else if ((ph === 'hide' || ph === 'lock') && roleOf(me) === 'seeker') sk = me;
+    if (!sk) return;
+    R.call[sk] = R.call[sk] === k ? null : k;
+    S.callVer++;
+    snd.play('ui');
+    if (!local) link.send('call', { w: sk, k: R.call[sk] });
+  }
+  /** The hider's activity for the seeker's ticker (no coordinates: kind + a count), ≤ 1 per 2.5 s. */
+  function act(k, n = 0) {
+    if (local || S.phase.name !== 'hide' || roleOf(me) !== 'hider') return;
+    R.actQ = { k, n };
+  }
+  const TICK_L = {
+    paint: (n, c) => `${n} is painting… (${c} stroke${c === 1 ? '' : 's'})`, stamp: (n) => `${n} used the stamp`, fill: (n) => `${n} filled a whole region`,
+    pick: (n) => `${n} drank a colour from the room`, ready: (n) => `${n} is locking in…`, still: (n) => `${n} went still…`, move: (n) => `${n} is on the move`,
+  };
+  function tickerIn(d) {
+    if (!d || !TICK_L[d.k]) return;
+    const h = hiderOf(S.phase.round); if (!h) return;
+    if (d.k === 'paint' && (d.n | 0) > R.strokes[h]) R.strokes[h] = d.n | 0; // the host keeps the hider's stroke count for the records
+    R.ticker = TICK_L[d.k](api.name(h), d.n | 0);
+    if (live.ticker) live.ticker.textContent = R.ticker;
+  }
+  /** React: a sticker on both screens (rate-limited 1 per 700 ms, 8 per recap). */
+  function sendEmote(k, btn) {
+    const e = EMOTES.find((x) => x[0] === k); if (!e) return;
+    const t = performance.now();
+    if (t - R.emoteAt < 700 || R.emoteN >= 8) return;
+    R.emoteAt = t; R.emoteN++;
+    if (btn) { btn.classList.remove('sent'); void btn.offsetWidth; btn.classList.add('sent'); }
+    hud.emote(e[1], e[2], true); snd.play('pose');
+    if (!local) link.send('emote', { k, w: me });
+  }
+  /** The hider's palette (≤ 32 colours after the lock's quantisation): the three most used, for the blind card's drops. */
+  function paletteOf(w) {
+    const d = stage.paints[w].data; const counts = new Map();
+    for (let i = 0; i < d.length; i += 28) { const key = (d[i] << 16) | (d[i + 1] << 8) | d[i + 2]; counts.set(key, (counts.get(key) || 0) + 1); }
+    return [...counts.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3).map(([k]) => `rgb(${(k >> 16) & 255},${(k >> 8) & 255},${k & 255})`);
   }
 
   /** The hunt proper begins (at the seek phase start, or when the head start runs out). */
@@ -631,17 +787,62 @@ export function createGame(el, api) {
   function confettiColors(w) { const c = w === 'a' ? theme.a : theme.b; return [c, mixHex(c, '#ffffff', 0.45), mixHex(c, '#000000', 0.25), theme.hl, '#ffffff']; }
 
   // ── paint lock + sync ─────────────────────────────────────────────
+  /**
+   * Blend score (camo %): at the lock, every body texel that faces away from the surface the
+   * hider is on (the wall behind a stuck body, else the floor below) is projected onto that surface,
+   * the surface's albedo there is sampled exactly as the stamp samples it (blob shadows included),
+   * and the mean per-channel difference is turned into a percentage: a perfect stamp seen from the
+   * front is ~100, a plain white chameleon on sage wallpaper ~30. No per-frame cost.
+   */
+  const blendUV = [0, 0]; const blendTmp = [0, 0, 0];
+  function blendOf(w) {
+    if (!stage) return -1;
+    const b = body[w]; const p = stage.paints[w];
+    p.updateWorld(stage.av[w].meshes);
+    let hit = null;
+    if (b.at) { stage.ray.set(tv3.set(b.x + b.nx * 0.5, b.y + b.ny * 0.5, b.z + b.nz * 0.5), tv3b.set(-b.nx, -b.ny, -b.nz)); hit = stage.pickMap(1.0); }
+    if (!hit) { stage.ray.set(tv3.set(b.x, b.y + 0.7, b.z), tv3b.set(0, -1, 0)); hit = stage.pickMap(2.5); }
+    const surf = hit ? stage.surfaceOf(hit) : null;
+    if (!surf) return -1;
+    const [qx, qy, qz] = surf.q; const [nx, ny, nz] = surf.n; const vc = surf.vc; const br = surf.blobRgb || blendTmp;
+    const wpos = p.wpos; const wnrm = p.wnrm; const data = p.data;
+    let n = 0; let sum = 0;
+    for (let i = 0; i < wpos.length / 3; i++) {
+      const ax = wnrm[i * 3]; const ay = wnrm[i * 3 + 1]; const az = wnrm[i * 3 + 2];
+      if (ax * ax + ay * ay + az * az < 0.5) continue; // not a mapped texel
+      const facing = ax * nx + ay * ny + az * nz;
+      if (facing < 0.1) continue; // the side pressed against the surface is never seen
+      const px = wpos[i * 3]; const py = wpos[i * 3 + 1]; const pz = wpos[i * 3 + 2];
+      const dist = (px - qx) * nx + (py - qy) * ny + (pz - qz) * nz;
+      const sx = px - nx * dist; const sy = py - ny * dist; const sz = pz - nz * dist;
+      surf.uvAt(sx, sy, sz, blendUV);
+      sampleAtlas(surf.atlas, surf.tile, blendUV[0], blendUV[1], blendTmp);
+      const sh = surf.shadeAt ? surf.shadeAt(sx, sy, sz) : 0;
+      const r = blendTmp[0] * vc[0] * (1 - sh) + br[0] * sh; const g = blendTmp[1] * vc[1] * (1 - sh) + br[1] * sh; const bb = blendTmp[2] * vc[2] * (1 - sh) + br[2] * sh;
+      const o = i * 4;
+      sum += (Math.abs(data[o] - r) + Math.abs(data[o + 1] - g) + Math.abs(data[o + 2] - bb)) / 765;
+      n++;
+    }
+    if (!n) return -1;
+    return Math.round(clamp(100 * (1 - 2.8 * (sum / n)), 0, 100));
+  }
+  function blendPointsFor(blend, rulesObj) {
+    const bb = rulesObj && rulesObj.blendBonus ? rulesObj.blendBonus : 0;
+    if (!bb || blend == null || blend < 0) return 0;
+    return blend >= (bb === 20 ? 90 : 80) ? bb : 0;
+  }
   function lockPaint(w) {
     if (R.lockSent && !local) return;
     const p = stage.paints[w];
     const enc = p.encode();
     p.flush();
     R.paintSum[w] = enc.sum; R.paintOk[w] = true;
+    if (controlsOf(w)) { try { R.blend[w] = blendOf(w); } catch (e) { R.blend[w] = -1; console.warn('blend', e); } }
     stats.lastPaint = { w, bytes: enc.bytes, b64: enc.b64.length, chunks: Math.ceil(enc.b64.length / 3200) };
     if (!local) {
       R.lockSent = true;
       const b = body[w];
-      link.sendBlob('paint', enc.b64, { w, sum: enc.sum, round: R.round, pos: posArr(b) });
+      link.sendBlob('paint', enc.b64, { w, sum: enc.sum, round: R.round, pos: posArr(b), blend: R.blend[w] });
     }
   }
   /** Paint while hunted (or during the head start): the same quantised blob as the lock, at most
@@ -700,7 +901,9 @@ export function createGame(el, api) {
     stage.paints[w].flush();
     if (sum === meta.sum) {
       R.paintOk[w] = true; R.paintSum[w] = sum;
+      if (Number.isFinite(meta.blend)) R.blend[w] = meta.blend;
       if (meta.pos) setRemHint(meta.pos);
+      hud.drops(paletteOf(w)); // the blind card's drops take their actual colours (a tease)
       if (isHost) hostAck(w); else link.send('gotpaint', { w, sum });
     } else link.send('paintreq', { w, round: meta.round });
   });
@@ -730,8 +933,12 @@ export function createGame(el, api) {
   link.on('paintreq', (d) => { if (d && d.w === me) { R.lockSent = false; lockPaint(me); } });
   link.on('ph', (p) => { if (!isHost) queuePhase(p); });
   link.on('setup', (d) => { if (!isHost && d) { S.setup = sanitizeSetup({ ...S.setup, ...d }, MAP_IDS, S.setup.first); S.setupVer++; if (stage && !S.match) { loadMap(S.setup.map); applySize(); placeLobby(); stage.compile(); } } });
-  link.on('ready', (d) => { if (isHost && d) { R.ready.add(d.w); if (S.phase.name === 'hide' && (mode() === 'hs' ? R.ready.has(hiderOf(S.phase.round)) : R.ready.size >= 2)) endHide(); } });
+  link.on('ready', (d) => { if (isHost && d) { if (d.strokes > (R.strokes[d.w] | 0)) R.strokes[d.w] = d.strokes | 0; R.ready.add(d.w); if (S.phase.name === 'hide' && (mode() === 'hs' ? R.ready.has(hiderOf(S.phase.round)) : R.ready.size >= 2)) endHide(); } });
   link.on('next', () => { if (isHost) hostNext(); });
+  link.on('wear', (d) => { if (d && (d.w === 'a' || d.w === 'b') && d.w !== me) { wornRemote[d.w] = d.wr | 0; applyWear(); } });
+  link.on('call', (d) => { if (d && (d.w === 'a' || d.w === 'b')) { R.call[d.w] = d.k || null; } });
+  link.on('act', (d) => tickerIn(d));
+  link.on('emote', (d) => { const e = d && EMOTES.find((x) => x[0] === d.k); if (e) { hud.emote(e[1], e[2], false); snd.play('pose'); } });
   link.on('start', () => { /* guests can't start; ignored */ });
   link.on('out', (d) => { if (isHost && d) hostOut(d.w); });
   link.on('vis', (d) => { if (!isHost || !d) return; S.partnerHidden = !!d.hidden; if (d.hidden) addPause('hidden'); else removePause('hidden'); });
@@ -764,10 +971,12 @@ export function createGame(el, api) {
     if (S.boot !== 'ready') return; // boot() calls us again
     link.send('hello', { started: !!S.match, mid: S.match ? S.match.id : null, seq: S.phase.seq, host: isHost });
     if (isHost && !S.match) link.send('setup', S.setup);
+    sendWear();
   }
   function onHello(d) {
     if (!d) return;
     S.helloEpoch = link.epoch;
+    sendWear();
     if (isHost) {
       if (S.match) { sendSnap(); removePause('away'); }
       else if (d.started) link.send('snapreq', {});
@@ -865,6 +1074,7 @@ export function createGame(el, api) {
     if (now() < huntAt() + graceMs()) { hint(`Grace period — fire in ${Math.ceil((huntAt() + graceMs() - now()) / 1000)} s`, 900); snd.play('warn'); return; }
     if (R.pellets[w] <= 0) { hint('Out of pellets!'); snd.play('warn'); return; }
     R.pellets[w]--; R.used[w]++;
+    if (R.pellets[w] === 1) later(() => { if (S.phase.name === 'seek' && R.pellets[w] === 1) { hud.pop('LAST PELLET', w, 'Make it count'); snd.play('warn'); } }, 450);
     const T = now();
     const tgt = targetOf(w);
     const ray = stage.setRayFromScreen(stage.size[0] / 2, stage.size[1] / 2, stage.size[0], stage.size[1]);
@@ -876,7 +1086,26 @@ export function createGame(el, api) {
     const p = hit ? hit.point : { x: o.x + dir.x * 30, y: o.y + dir.y * 30, z: o.z + dir.z * 30 };
     let n = [0, 1, 0];
     if (hit && hit.face) { const nn = hit.face.normal.clone().transformDirection(hit.object.matrixWorld); n = [nn.x, nn.y, nn.z]; }
-    const isTag = !!hit && stage.av[tgt].meshes.includes(hit.object);
+    let isTag = !!hit && stage.av[tgt].meshes.includes(hit.object);
+    // pellet assist: a near miss that passes within a sliver (0.06 × size) of the body's parts still
+    // tags, when nothing blocks it first (a Medium body at 5 m is ~45 × 22 px on a phone)
+    if (!isTag && stage.av[tgt].root.visible) {
+      const slack = 0.06 * sizeS(); let bestT = Infinity;
+      for (const m of stage.av[tgt].meshes) {
+        if (!m.visible) continue;
+        if (!m.geometry.boundingSphere) m.geometry.computeBoundingSphere();
+        tvA.copy(m.geometry.boundingSphere.center); m.localToWorld(tvA);
+        const sc = m.getWorldScale(tv3b).x; const rad = m.geometry.boundingSphere.radius * sc;
+        const along = (tvA.x - o.x) * dir.x + (tvA.y - o.y) * dir.y + (tvA.z - o.z) * dir.z;
+        if (along < 0.2 || along > 40) continue;
+        const dd = Math.hypot(tvA.x - (o.x + dir.x * along), tvA.y - (o.y + dir.y * along), tvA.z - (o.z + dir.z * along));
+        if (dd <= rad * 0.72 + slack && along < bestT) bestT = along; // the parts are fat ellipsoids: 0.72 of the sphere
+      }
+      if (bestT < Infinity && !(hit && hit.distance < bestT - 0.05)) {
+        isTag = true; stats.assisted = (stats.assisted || 0) + 1;
+        p.x = o.x + dir.x * bestT; p.y = o.y + dir.y * bestT; p.z = o.z + dir.z * bestT;
+      }
+    }
     const seen = [0, 0, 0];
     if (local) { const b = body[tgt]; seen[0] = b.x; seen[1] = b.y; seen[2] = b.z; }
     else if (link.remoteAt(T, remT)) { seen[0] = remT.x; seen[1] = remT.y; seen[2] = remT.z; }
@@ -893,7 +1122,7 @@ export function createGame(el, api) {
     stats.lastShot = { tag: isTag, hit: !!hit, obj: hit ? (stage.isMap(hit.object) ? 'map' : 'other') : null, p: msg.p, o: [o.x, o.y, o.z], d: [dir.x, dir.y, dir.z], tgtVisible: stage.av[tgt].root.visible, seen };
     if (isTag) {
       R.pendingTag = id;
-      if (local) { hostFound(w, tgt, T, msg.p); return; }
+      if (local) { tagJuice(); hostFound(w, tgt, T, msg.p); return; }
       link.send('shot', msg);
       hint('Hit! Checking…', 900);
     } else {
@@ -910,7 +1139,7 @@ export function createGame(el, api) {
   function hostOut(w) {
     if (!isHost || S.phase.name !== 'seek') return;
     R.out[w] = true;
-    if (mode() === 'hs') roundOver({ found: false, out: true });
+    if (mode() === 'hs') roundOver({ found: false, out: true, T: now() });
     else if (R.out.a && R.out.b) roundOver({ found: false, out: true });
   }
   function onShot(d) {
@@ -925,7 +1154,7 @@ export function createGame(el, api) {
     stage.fx.pellet(from, to, ink, tSec, null);
     // I am the victim: confirm with my true position history (shooter-favoured, 250 ms)
     const ok = confirmTag(d.T, d.seen);
-    stats.lastTagCheck = { ok, T: d.T, seen: d.seen, me: [body[me].x, body[me].y, body[me].z], n: hist.n };
+    stats.lastTagCheck = { ok, T: d.T, seen: d.seen, me: [body[me].x, body[me].y, body[me].z], n: hist.n, escAt: R.escapeAt, delay: link.delay, rtt: link.rtt };
     if (ok) {
       if (isHost) hostFound(d.by, me, d.T, d.p);
       else link.send('tagres', { id: d.id, ok: true, T: d.T, by: d.by, victim: me, p: d.p });
@@ -935,7 +1164,15 @@ export function createGame(el, api) {
     }
   }
   function confirmTag(T, seen) {
-    const t0 = T - link.delay - TAG_WINDOW; const t1 = T + 60;
+    // Shooter-favoured: any true position in the last 250 ms (+ one-way delay) within tolerance
+    // confirms. But a scurry (6.6 m/s) or zip covers ~3 m in that window, so when my escape
+    // started before the shooter's view could have shown it, the window shrinks to 120 ms: the
+    // one counterplay a hider has is not nullified by lag compensation.
+    const esc = R.escapeAt;
+    const oneWay = link.rtt * 0.5;
+    const escaping = esc > 0 && esc < T - link.delay - oneWay - TAG_WINDOW_ESCAPE && T - esc < 1500;
+    const t0 = T - link.delay - (escaping ? oneWay + TAG_WINDOW_ESCAPE : TAG_WINDOW); const t1 = T + 60;
+    stats.lastWindow = escaping ? 'escape' : 'full';
     const tol = TAG_TOL * Math.max(1, sizeS()); // hit radius grows with the body
     let any = false;
     for (let k = 0; k < hist.n; k++) {
@@ -949,7 +1186,7 @@ export function createGame(el, api) {
   }
   function onTagRes(d) {
     if (!d) return;
-    if (d.ok) { if (isHost) hostFound(d.by, d.victim, d.T, d.p); return; }
+    if (d.ok) { if (d.by === me) tagJuice(); if (isHost) hostFound(d.by, d.victim, d.T, d.p); return; }
     if (d.by === me) {
       R.pendingTag = 0;
       hint('They slipped away!', 1600); snd.play('warn');
@@ -965,6 +1202,8 @@ export function createGame(el, api) {
     if (role !== 'seeker' && role !== 'both') return;
     if (!hunting()) return;
     const t = now();
+    // the grace period holds the scan too (Hard's 5 s used to be a free glint before Fire unlocked)
+    if (t < huntAt() + graceMs()) { hint(`Grace period — scan in ${Math.ceil((huntAt() + graceMs() - t) / 1000)} s`, 900); snd.play('warn'); return; }
     if (R.scansLeft[w] <= 0) { hint('No scans left this hunt', 1200); snd.play('warn'); return; }
     if (t < R.scanReady[w]) { hint(`Scan ready in ${Math.ceil((R.scanReady[w] - t) / 1000)} s`, 1200); return; }
     R.scanReady[w] = t + scanCdMs();
@@ -988,9 +1227,13 @@ export function createGame(el, api) {
     const yaw = fpBaseYaw(w) + b.lookYaw;
     R.scurried[w] = true; R.escapes[w]--;
     const sp = SPEED.scurry * (0.8 + 0.2 * b.s);
-    // along the look direction, flattened onto whatever surface we're on
-    R.scurry = { until: tSec + 0.5, vx: Math.sin(yaw) * Math.cos(b.lookPitch) * sp, vy: Math.sin(b.lookPitch) * sp, vz: Math.cos(yaw) * Math.cos(b.lookPitch) * sp };
-    if (!b.at) R.scurry.vy = 0;
+    // Stuck to a wall or ceiling: "drop and dash". The old dash went along the heading, which for a
+    // stuck body points straight out of the wall; the crawl's tangent projection zeroed it, the
+    // escape was spent, the trail appeared, and the hider never moved.
+    if (b.at) unstick(w);
+    // along the look direction, flat on the floor
+    R.scurry = { until: tSec + 0.5, vx: Math.sin(yaw) * Math.cos(b.lookPitch) * sp, vy: 0, vz: Math.cos(yaw) * Math.cos(b.lookPitch) * sp, x0: b.x, z0: b.z, t0: tSec, w };
+    R.escapeAt = now();
     if (b.pose !== 'squeeze') { b.pose = 'stand'; stage.av[w].setPose('stand'); }
     R.trailUntil[w] = now() + 650;
     stage.fx.trailMat.color.set(w === 'a' ? theme.a : theme.b);
@@ -1136,7 +1379,7 @@ export function createGame(el, api) {
     if (b.pose !== 'stand' && b.pose !== 'wall') { b.pose = 'stand'; stage.av[w].setPose('stand'); }
     b.sq = false;
     if (seeking) {
-      R.escapes[w]--;
+      R.escapes[w]--; R.escapeAt = t;
       R.trailUntil[w] = t + 550;
       stage.fx.trailMat.color.set(w === 'a' ? theme.a : theme.b);
       link.send('zip', { w, at: t, to: [H.x, H.y, H.z], left: R.escapes[w] });
@@ -1236,7 +1479,7 @@ export function createGame(el, api) {
       showCursor(hit);
       snd.play('tick');
     },
-    end() { if (P.last) { P.strokes++; P.last = null; } if (!controls.st.usingMouse) stage.fx.setCursor(false); },
+    end() { if (P.last) { P.strokes++; P.last = null; const vv = viewer(); if (vv) { R.strokes[vv]++; act('paint', R.strokes[vv]); } } if (!controls.st.usingMouse) stage.fx.setCursor(false); },
     cancel() { if (P.last) { stage.paints[viewer()].undo(); P.last = null; } },
     tap(x, y) {
       if (!P.on) return;
@@ -1247,7 +1490,7 @@ export function createGame(el, api) {
         const region = REGION_NAMES[REGION_OF_PART[hit.object.userData.part]];
         const p = stage.paints[viewer()];
         p.snapshot(); p.fill(region, P.rgb);
-        snd.play('fill'); api.haptic(10);
+        snd.play('fill'); api.haptic(10); act('fill');
         hint(`Filled your ${region}`, 1000);
       } else if (P.tool === 'pick') {
         pickColorAt(x, y);
@@ -1288,7 +1531,7 @@ export function createGame(el, api) {
     if (!hit) { hint('Nothing there to sample'); return null; }
     stage.albedoAtHit(hit, rgbTmp);
     P.rgb = [rgbTmp[0], rgbTmp[1], rgbTmp[2]];
-    snd.play('gulp'); api.haptic(12);
+    snd.play('gulp'); api.haptic(12); act('pick');
     hud.gulp(); hud.fly(x, y, P.rgb);
     P.tool = 'brush';
     stats.lastPick = { rgb: P.rgb.slice(), point: [hit.point.x, hit.point.y, hit.point.z] };
@@ -1315,7 +1558,7 @@ export function createGame(el, api) {
     const p = stage.paints[v];
     p.snapshot();
     p.stamp(surf);
-    snd.play('stamp'); api.haptic(20); hud.flash();
+    snd.play('stamp'); api.haptic(20); hud.flash(); act('stamp');
     const kind = surfaceKind(b);
     hint(kind === 'wall' ? 'Stamped the wall onto your back' : kind === 'ceiling' ? 'Stamped the ceiling onto your back' : 'Stamped the surface under you onto your skin', 1600);
   }
@@ -1408,7 +1651,9 @@ export function createGame(el, api) {
       case 'stickOrPick': if (P.on) action('pick'); else action('stick'); break;
       case 'zipOrUndo': if (P.on) action('undo'); else action('zip'); break;
       case 'sprint': if (v && S.phase.name === 'seek' && roleOf(v) !== 'hider' && hunting()) { R.sprint = !R.sprint; snd.play('sprint'); } break;
-      case 'settings': S.sheet = !S.sheet; snd.play('ui'); break;
+      case 'settings': S.sheet = !S.sheet; S.wardrobe = false; snd.play('ui'); break;
+      case 'wardrobe': S.wardrobe = !S.wardrobe; S.sheet = false; snd.play('ui'); break;
+      case 'finish': if (S.phase.name === 'final') { snd.play('ui'); finishMatch(); } break;
       case 'tips-ok': U.tips = false; markTipsSeen(); snd.play('ui'); break;
       case 'scan': scan(); break;
       case 'scurry': scurry(); break;
@@ -1439,9 +1684,9 @@ export function createGame(el, api) {
     const role = roleOf(v);
     if (role !== 'hider' && role !== 'both') return;
     exitPaint(true);
-    snd.play('good');
+    snd.play('good'); act('ready');
     if (isHost) { R.ready.add(v); if (mode() === 'hs' || R.ready.size >= 2) endHide(); else hint('Waiting for the other hider…', 3000); }
-    else { R.ready.add(v); link.send('ready', { w: v }); hint(mode() === 'db' ? 'Waiting for the other hider…' : 'Locking in…', 3000); }
+    else { R.ready.add(v); link.send('ready', { w: v, strokes: R.strokes[v] }); hint(mode() === 'db' ? 'Waiting for the other hider…' : 'Locking in…', 3000); }
   }
 
   // lobby + HUD clicks (delegated)
@@ -1465,6 +1710,14 @@ export function createGame(el, api) {
     if (t.dataset.size) { P.size = +t.dataset.size; snd.play('ui'); return; }
     if (t.dataset.hard) { P.hard = t.dataset.hard === '1'; snd.play('ui'); return; }
     if (t.dataset.pose) { setPose(t.dataset.pose); return; }
+    if (t.dataset.wear) {
+      if (t.classList.contains('locked')) { hud.pop('LOCKED', 'ink', t.dataset.hint || ''); snd.play('warn'); return; }
+      const w = wardrobeFor(); wearPicks[w][t.dataset.wear] = +t.dataset.k; saveWear(wearPicks); S.dataVer++; applyWear(); sendWear(); snd.play('pose'); return;
+    }
+    if (t.dataset.wfor) { S.wardW = t.dataset.wfor; S.dataVer++; snd.play('ui'); return; }
+    if (t.dataset.music) { music = t.dataset.music; try { localStorage.setItem(MUSIC_KEY, music); } catch { /* ignore */ } S.dataVer++; snd.play('ui'); return; }
+    if (t.dataset.call) { setCall(t.dataset.call); return; }
+    if (t.dataset.emote) { sendEmote(t.dataset.emote, t); return; }
     if (t.dataset.act) action(t.dataset.act);
   });
   L.on(root, 'pointerdown', () => snd.unlock(), { passive: true });
@@ -1663,7 +1916,14 @@ export function createGame(el, api) {
       clampFree();
       lk[0] = 0; lk[1] = 0;
     }
-    for (const w of ['a', 'b']) {
+    // Jump is read ONCE per frame: it used to be consumed inside the loop, so in hotseat play
+    // (both bodies simulated) player a's pass cleared the tap before player b's pass read it and
+    // Sydney's Jump button was dead whenever she held the phone. A tap is also buffered for 120 ms.
+    const jumpPressed = R.jumpReq; R.jumpReq = false;
+    if (jumpPressed) R.jumpAt = tSec;
+    const jumpBuffered = tSec - R.jumpAt < JUMP.buffer;
+    for (let wi = 0; wi < 2; wi++) {
+      const w = PLAYERS[wi];
       if (!controlsOf(w)) continue;
       const b = body[w];
       let vx = 0; let vy = 0; let vz = 0; let jump = false; let mvMag = 0;
@@ -1687,7 +1947,7 @@ export function createGame(el, api) {
         }
         if (mode2 === 'move') {
           const sizeMul = 0.85 + 0.15 * b.s;
-          let sp = !fp ? SPEED.hide * sizeMul : mode() === 'db' ? SPEED.db : SPEED.seek * SPEED_MUL[ru.seekSpeed] * ((R.sprint || controls.st.sprintHeld) && role === 'seeker' && !b.at ? sprintMul(mapTime()) : 1);
+          let sp = !fp ? SPEED.hide * sizeMul : mode() === 'db' ? dbSpeed(mapTime()) : SPEED.seek * SPEED_MUL[ru.seekSpeed] * ((R.sprint || controls.st.sprintHeld) && role === 'seeker' && !b.at ? sprintMul(mapTime()) : 1);
           if (b.at && fp) sp *= CLIMB_MUL[ru.climbSpeed]; // the seeker on a wall or ceiling
           if (b.sq) sp *= SPEED.squeeze;
           if (b.at && (!fp || climbV)) {
@@ -1704,21 +1964,28 @@ export function createGame(el, api) {
             else { fx = -Math.sin(C.yaw); fzv = -Math.cos(C.yaw); rx = Math.cos(C.yaw); rz = -Math.sin(C.yaw); }
             vx = (fx * mv[1] + rx * mv[0]) * sp; vz = (fzv * mv[1] + rz * mv[0]) * sp;
           }
-          jump = (R.jumpReq || controls.st.jumpHeld) && !(ph === 'seek' && mode() === 'db');
+          jump = (jumpBuffered || controls.st.jumpHeld) && !(ph === 'seek' && mode() === 'db');
           if (fp && !climbV) {
             // first person: body yaw follows the view; keep lookYaw small
             b.yaw = wrapAngle(b.yaw + b.lookYaw); b.lookYaw = 0;
           }
         }
       }
-      const jumpPressed = R.jumpReq;
-      R.jumpReq = false;
       // tongue-zip in flight
-      if (b.zip) { zipStep(w, b); b.speed = 4; recordHist(w, b, t); continue; }
+      if (b.zip) { zipStep(w, b); b.speed = 4; b.svx = 0; b.svz = 0; recordHist(w, b, t); continue; }
       // scurry dash overrides
+      let dashing = false;
       if (R.scurry && w === v) {
-        if (tSec < R.scurry.until) { vx = R.scurry.vx; vy = R.scurry.vy; vz = R.scurry.vz; }
-        else R.scurry = null;
+        const sc = R.scurry;
+        if (tSec < sc.until) {
+          vx = sc.vx; vy = sc.vy; vz = sc.vz; dashing = true;
+          // jammed against something: refund the escape, no trail, no tell
+          if (tSec - sc.t0 > 0.2 && Math.hypot(b.x - sc.x0, b.z - sc.z0) < 0.15) {
+            R.scurry = null; dashing = false; vx = 0; vz = 0;
+            R.escapes[w]++; R.trailUntil[w] = 0; R.escapeAt = 0;
+            hint('Boxed in — escape refunded', 1400); snd.play('warn');
+          }
+        } else R.scurry = null;
       }
       const moving = vx * vx + vy * vy + vz * vz > 0.01;
       if (b.at) {
@@ -1726,9 +1993,10 @@ export function createGame(el, api) {
           // hunting in first person (Double Blind) while stuck somewhere: drop off first
           unstick(w);
         } else {
-          if (jump && (jumpPressed || controls.st.jumpHeld) && !b.lockY) {
+          if (jump && (jumpBuffered || controls.st.jumpHeld) && !b.lockY) {
+            R.jumpAt = -1e9;
             unstick(w, { jump: true });
-            b.speed = 0; recordHist(w, b, t);
+            b.speed = 0; b.svx = 0; b.svz = 0; recordHist(w, b, t);
             continue;
           }
           if (moving) {
@@ -1740,23 +2008,35 @@ export function createGame(el, api) {
             P.texelDirtyAt = tSec + 0.2;
           }
           b.speed = moving ? Math.hypot(vx, vy, vz) : 0;
+          b.svx = 0; b.svz = 0;
           recordHist(w, b, t);
           continue;
         }
       }
       if (moving && b.pose !== 'stand' && b.pose !== 'crouch' && b.pose !== 'squeeze') { setPoseFor(w, 'stand'); }
       const sp2 = b.pose === 'crouch' ? 0.55 : 1;
+      // acceleration: the stick is a target velocity; the body eases toward it (a dash is instant)
+      const ev = accelStep(b, vx * sp2, vz * sp2, moving, dt, dashing);
+      if (ev === 1) stage.av[w].squash(0.22); // a tiny settle on stop
+      else if (ev === 2) stage.fx.pop(b.x, b.y + 0.01, b.z, 0, 1, 0, '#ffffff', 0.08 * b.s + 0.06, tSec); // a puff of dust on a hard reversal
+      const tx = b.svx; const tz = b.svz;
+      // coyote time: a tap just after walking off a ledge still jumps (not after a jump)
+      if (b.onGround) b.groundT = tSec;
+      const coyote = coyoteJump(b, jump, tSec);
       let landed = false;
       const px = b.x; const pz = b.z;
       const nSub = Math.max(1, Math.ceil(dt / 0.025));
-      for (let k = 0; k < nSub; k++) landed = freeStep(world, b, vx * sp2, vz * sp2, dt / nSub, jump && !b.sq && k === 0) || landed;
-      if (jump && b.vy > 3 && !b.at) snd.play('jump');
+      const vy0 = b.vy;
+      for (let k = 0; k < nSub; k++) landed = freeStep(world, b, tx, tz, dt / nSub, jump && !b.sq && !coyote && k === 0) || landed;
+      if ((jump && b.vy > 3 && vy0 <= 0.5 && !b.at) || coyote) { snd.play('jump'); b.jumpT = tSec; b.jumpHeld = controls.st.jumpHeld; R.jumpAt = -1e9; }
+      // variable height: a held key released early makes a short hop (touch taps always jump full)
+      else shortHop(b, controls.st.jumpHeld);
       if (landed) { snd.play('land'); stage.av[w].squash(0.3); }
       // walk into a wall holding forward → the feet stick (hider hiding, or a climbing seeker, who
       // has to lean on it a little longer so brushing past walls while hunting doesn't grab them)
       if (moving && ru.climb && !b.sq && w === v && canMoveSelf(w) && mvMag > 0.6) {
-        const want = Math.hypot(vx, vz) * dt; const got = Math.hypot(b.x - px, b.z - pz);
-        if (got < want * 0.35) {
+        const want = Math.hypot(tx, tz) * dt; const got = Math.hypot(b.x - px, b.z - pz);
+        if (got < want * 0.35 && want > 0.001) {
           const sp = Math.hypot(vx, vz) || 1; const dx = vx / sp; const dz = vz / sp;
           const H = world.raycast(b.x, b.y + Math.min(b.head * 0.5, 0.2), b.z, dx, 0, dz, b.r + 0.12, (bx) => bx.maxY - bx.minY > 0.25, false);
           if (H && H.box && H.box.climb !== false && H.nx * dx + H.nz * dz < -0.7 && world.inside(H.x, H.z)) {
@@ -1778,7 +2058,8 @@ export function createGame(el, api) {
         }
       }
       b.fx = Math.sin(b.yaw); b.fy = 0; b.fz = Math.cos(b.yaw);
-      b.speed = Math.hypot(vx, vz) * sp2;
+      b.speed = Math.hypot(tx, tz);
+      if (b.speed > 0.05) P.texelDirtyAt = tSec + 0.2;
       recordHist(w, b, t);
     }
     if (P.on && P.texelDirtyAt && tSec > P.texelDirtyAt) refreshTexels();
@@ -1819,6 +2100,7 @@ export function createGame(el, api) {
     }
     if (S.boot === 'ready' && link.ready) link.publish(pubSt);
     livePaint(t);
+    if (R.actQ && t - R.actAt > 2500 && link.ready) { link.send('act', R.actQ); R.actAt = t; R.actQ = null; }
     // silence detection (host pauses on a stalled link)
     if (isHost && S.match && api.partnerHere) {
       if (link.silence > 4500) addPause('stall');
@@ -1829,7 +2111,8 @@ export function createGame(el, api) {
   function animate(dt, t) {
     const ph = S.phase.name;
     const v = viewer();
-    for (const w of ['a', 'b']) {
+    for (let wi = 0; wi < 2; wi++) {
+      const w = PLAYERS[wi];
       const a = stage.av[w];
       const rt = a.root;
       let vis = true;
@@ -1879,6 +2162,18 @@ export function createGame(el, api) {
       // glint
       a.st.glintUntil = (t >= R.glintAt[w] && t < R.glintAt[w] + GLINT_MS) ? tSec + 0.05 : 0;
       a.update(dt, tSec);
+      // footsteps on the walk cycle's zero crossings: my own are quiet, the partner's are shaped by
+      // distance (a hider hears the seeker coming from 9 m, not just the 3 m heartbeat)
+      if (S.match && (ph === 'hide' || ph === 'seek') && a.st.walk > 0.3 && (vis || w === v)) {
+        const k = Math.floor(a.st.walkPhase / Math.PI);
+        if (k !== a.stepK) {
+          a.stepK = k;
+          let vol = 0.08;
+          if (w !== v) { const o = stage.av[v || 'a'].root.position; const d = Math.hypot(rt.position.x - o.x, rt.position.y - o.y, rt.position.z - o.z); vol = 0.14 * clamp(1 - d / 9, 0, 1); }
+          const at = controlsOf(w) ? body[w].at : rem.at > 0.5;
+          snd.step(vol, a.st.speed > 4.2 ? 0.8 : 1, !!at);
+        }
+      } else a.stepK = Math.floor(a.st.walkPhase / Math.PI);
       stage.paints[w].flush();
       // blob shadow under the avatar. Stuck to a wall: none. Upside down: a faint soft blob on
       // the floor below — a fair tell for the seeker who remembers to look down AND up.
@@ -1905,7 +2200,8 @@ export function createGame(el, api) {
     const G = stage.fx.glints;
     for (let i = 0; i < G.length; i++) G[i].visible = false;
     let gi = 0;
-    for (const w of ['a', 'b']) {
+    for (let wi = 0; wi < 2; wi++) {
+      const w = PLAYERS[wi];
       const a = stage.av[w];
       if (!a.root.visible || !(t >= R.glintAt[w] && t < R.glintAt[w] + GLINT_MS)) continue;
       const k = (t - R.glintAt[w]) / GLINT_MS;
@@ -1930,7 +2226,8 @@ export function createGame(el, api) {
     // eye-blink glints (rules): a tiny sparkle when the hider blinks, seen by the seeker only
     const bm = rules().blink;
     if (bm !== 'off' && S.match && (ph === 'seek') && gi < G.length - 1) {
-      for (const w of ['a', 'b']) {
+      for (let wi = 0; wi < 2; wi++) {
+        const w = PLAYERS[wi];
         const a = stage.av[w];
         const hiderW = mode() === 'hs' ? hiderOf(S.phase.round) : (v ? other(v) : null);
         if (w !== hiderW || w === v || !a.root.visible) continue;
@@ -1956,7 +2253,8 @@ export function createGame(el, api) {
       }
     } else if (R.tell) R.tell = null;
     // trails (scurry)
-    for (const w of ['a', 'b']) {
+    for (let wi = 0; wi < 2; wi++) {
+      const w = PLAYERS[wi];
       if (t < R.trailUntil[w] && tSec > R.trailNext) {
         R.trailNext = tSec + 0.06;
         const p = stage.av[w].root.position;
@@ -1969,7 +2267,7 @@ export function createGame(el, api) {
     if (peeking !== !!C.peek) { C.peek = peeking; root.classList.toggle('peek', peeking); }
     if (hunted && !frozen()) {
       const sk = other(v); const ps = stage.av[sk].root.position; const pm = stage.av[v].root.position;
-      const d = Math.hypot(ps.x - pm.x, ps.z - pm.z);
+      const d = Math.hypot(ps.x - pm.x, ps.y - pm.y, ps.z - pm.z); // 3-D: a seeker in the hall below the landing is not 'close'
       if (rules().heartbeat && d < 3 && tSec > (C.beatAt || 0)) { C.beatAt = tSec + 0.45 + d * 0.28; snd.play('beat'); root.classList.remove('beat'); void root.offsetWidth; root.classList.add('beat'); }
     }
     // seek stats: closest call, walk-pasts, seeker path (the hunt only, not a head start)
@@ -1977,10 +2275,37 @@ export function createGame(el, api) {
       const hd = mode() === 'hs' ? hiderOf(S.phase.round) : other(v || 'a');
       const sk = other(hd);
       const ps = stage.av[sk].root.position; const phd = stage.av[hd].root.position;
-      const d = Math.hypot(ps.x - phd.x, ps.z - phd.z);
+      const sz = stage.av[hd].st.size;
+      const d = Math.hypot(ps.x - phd.x, ps.y - phd.y, ps.z - phd.z); // 3-D (a ceiling hider 2.2 m up is not a 0.1 m closest call)
+      R.nearD = d;
       if (d < R.closest) R.closest = d;
-      if (!R.near && d < 1.2) { R.near = true; R.passes++; }
-      if (R.near && d > 1.7) R.near = false;
+      // a walk-past needs line of sight within 1.5 m (one collider ray, ≤ 7/s while that close)
+      if (!R.near && d < 1.5 && tSec > R.losNext) {
+        R.losNext = tSec + 0.15;
+        const ex = ps.x; const ey = ps.y + 0.4; const ez = ps.z; const ddx = phd.x - ex; const ddy = phd.y + 0.2 * sz - ey; const ddz = phd.z - ez; const L = Math.hypot(ddx, ddy, ddz) || 1;
+        if (!stage.world.raycast(ex, ey, ez, ddx / L, ddy / L, ddz / L, Math.max(0, L - 0.15), null, true)) { R.near = true; R.passes++; if (phd.y - ps.y > 1.2) R.under = true; }
+      }
+      if (R.near && d > 2.0) R.near = false;
+      // "in their sights": the seeker's view ray passes within 0.45 × size of the hider's body centre with a
+      // clear line of sight (both phones know both positions; the cue plays only for the hunted hider)
+      if (rules().sights && mode() === 'hs' && tSec > R.stareAt + 1) {
+        const skB = controlsOf(sk) ? body[sk] : null;
+        const yaw = skB ? (C.climbV && v === sk ? C.vYaw : skB.yaw + skB.lookYaw) : rem.yaw + rem.ly; const pit = skB ? skB.lookPitch : rem.lp;
+        const cp = Math.cos(pit); const dx = Math.sin(yaw) * cp; const dy = Math.sin(pit); const dz = Math.cos(yaw) * cp;
+        const ex = ps.x; const ey = ps.y + 0.42 * stage.av[sk].st.size; const ez = ps.z;
+        const hx = phd.x - ex; const hy = phd.y + 0.25 * sz - ey; const hz = phd.z - ez;
+        const along = hx * dx + hy * dy + hz * dz;
+        if (along > 0.3 && along < 9) {
+          const off = Math.sqrt(Math.max(0, hx * hx + hy * hy + hz * hz - along * along));
+          if (off < 0.45 * sz) {
+            const L = Math.hypot(hx, hy, hz) || 1;
+            if (!stage.world.raycast(ex, ey, ez, hx / L, hy / L, hz / L, Math.max(0, L - 0.2), null, true)) {
+              R.stared++; R.stareAt = tSec;
+              if (v === hd && !local && U.spect === 'eyes' && !P.on) { root.classList.remove('sights'); void root.offsetWidth; root.classList.add('sights'); snd.play('warn'); }
+            }
+          }
+        }
+      }
       if (tSec > R.pathNext && R.path.length < 260) { R.pathNext = tSec + 0.3; R.path.push([ps.x, Math.max(0, ps.y), ps.z]); }
     }
     void wallTmp;
@@ -2212,10 +2537,12 @@ export function createGame(el, api) {
     if (want.y < g + 0.1) want.y = g + 0.1;
   }
   /** Pull the camera in front of walls between the target and it. */
+  // invisible guards (climb:false) never push the camera; thin low props are looked over
+  const CAM_FILTER = (b) => b.climb !== false && (b.maxY - b.minY > 0.5 || b.minY > 0.6);
   function clampCam(target, want) {
     const dx = want.x - target.x; const dy = want.y - target.y; const dz = want.z - target.z;
     const d = Math.hypot(dx, dy, dz) || 1;
-    const h = stage.world.raycast(target.x, target.y, target.z, dx / d, dy / d, dz / d, d, (b) => b.climb !== false && (b.maxY - b.minY > 0.5 || b.minY > 0.6)); // invisible guards (climb:false) never push the camera
+    const h = stage.world.raycast(target.x, target.y, target.z, dx / d, dy / d, dz / d, d, CAM_FILTER);
     if (h && h.t < d) { const k = Math.max(0.25, h.t - 0.18) / d; want.x = target.x + dx * k; want.y = target.y + dy * k; want.z = target.z + dz * k; }
   }
 
@@ -2276,7 +2603,7 @@ export function createGame(el, api) {
   function mkActs(mouse) {
     const k = (x) => (mouse ? x : '');
     const poses = { act: 'poses', icon: 'pose', label: 'Pose', key: k('1-9') };
-    const ready2 = { act: 'ready', icon: 'ready', label: 'Ready', hl: true, key: k('R') };
+    const ready2 = { act: 'ready', icon: 'ready', label: 'I’m hidden', hl: true, wide: true, key: k('R') };
     const jump = { act: 'jump', icon: 'jump', label: 'Jump', key: k('␣') };
     const paint = { act: 'paint', icon: 'paint', label: 'Paint', big: true, prime: true, key: k('P') };
     const stick2 = { act: 'stick', icon: 'stick', label: 'Stick', on: false, key: k('E') };
@@ -2290,7 +2617,8 @@ export function createGame(el, api) {
     const ppaint = { act: 'paint', icon: 'paint', label: 'Paint', key: k('P') };
     return {
       scan: scan2, fire: fire2, scurry: scurry2, stick: stick2, zip: zip2, pzip, sprint: sprint2, view,
-      hide: [stick2, zip2, poses, ready2, jump, paint], hideFloor: [poses, ready2, jump, paint],
+      // Ready is a wide pill at the top of the cluster (it ends the hide phase for good: out of the thumb's path to Paint / Pose)
+      hide: [ready2, stick2, zip2, poses, jump, paint], hideFloor: [ready2, poses, jump, paint],
       // a hider's head start: hiding moves without Ready
       head: [stick2, zip2, poses, jump, paint], headFloor: [poses, jump, paint],
       seek: [scan2, sprint2, jump, fire2], both: [poses, scan2, fire2],
@@ -2332,7 +2660,7 @@ export function createGame(el, api) {
     return pbCur;
   }
   const U = { meB: null, mouse: null, tick: -1, blind: null, tips: false, spect: 'eyes' };
-  const live = { blind: null, resume: null, seek: null, recap: null, head: null, blindS: -1, resumeS: -1, seekS: -1, headS: -1 };
+  const live = { blind: null, resume: null, seek: null, recap: null, head: null, ticker: null, blindS: -1, resumeS: -1, seekS: -1, headS: -1 };
   function ui(t) {
     const ph = S.phase.name; const v = viewer();
     const role = v ? roleOf(v) : null;
@@ -2391,6 +2719,8 @@ export function createGame(el, api) {
     if (U.acts3 !== a3) { U.acts3 = a3; root.classList.toggle('acts3', a3); }
     const a7 = list.length > 6;
     if (U.acts7 !== a7) { U.acts7 = a7; root.classList.toggle('acts7', a7); }
+    if (U.minion !== showParts.mini) { U.minion = showParts.mini; root.classList.toggle('minion', showParts.mini); }
+    if (U.posesup !== showParts.poses) { U.posesup = showParts.poses; root.classList.toggle('posesup', showParts.poses); }
     hud.show(showParts);
     if (list.length) hud.actions(list);
     if (showParts.top) {
@@ -2442,7 +2772,22 @@ export function createGame(el, api) {
       const n = left < 0 ? 0 : Math.max(1, Math.ceil(left / 1000));
       if (n !== live.seekS) { live.seekS = n; live.seek.textContent = n ? String(n) : '…'; if (n) snd.play('beep'); }
     }
-    if (S.boot === 'ready' && v && ph === 'seek' && role === 'seeker' && hunting(t)) hintOnce(mouse ? 'look-m' : 'look-t', mouse ? 'Click to grab the mouse, then click to fire.' : 'Left thumb moves · drag on the right to look', 3000);
+    if (live.recap && S.phase.dur) { const left = Math.max(0, S.phase.end - t); hud.ring(live.recap, left / S.phase.dur, Math.ceil(left / 1000)); }
+    if (S.boot === 'ready' && v && ph === 'seek' && role === 'seeker' && hunting(t)) hintOnce(mouse ? 'look-m' : 'look-t', mouse ? 'Click to grab the mouse · click to fire · Esc frees it' : 'Left thumb moves · drag on the right to look', 3000);
+    // ambience (this phone's Music setting): a paper-room pad while hiding, a pulse that quickens through
+    // the hunt, +20 bpm while the seeker is within 6 m of the hider (both phones hear the same thing)
+    if (music !== 'off' && m && !S.paused && !fz && (ph === 'hide' || ph === 'seek')) {
+      if (ph === 'hide') snd.ambience(music === 'on' ? 'hide' : 'off');
+      else if (hunt) {
+        snd.ambience('hunt');
+        const d0 = S.phase.data; const hm = d0 && d0.hunt ? d0.hunt : S.phase.dur || 1;
+        snd.tempo(70 + 70 * clamp(1 - Math.max(0, S.phase.end - t) / hm, 0, 1) + (R.nearD < 6 ? 20 : 0));
+        // the seeker's half-time stamp (hunts of 40 s and more)
+        if (role === 'seeker' && !R.halfShown && hm >= 40000 && t >= S.phase.end - hm / 2) { R.halfShown = true; hud.pop('HALF TIME', 'ink', `${Math.round((S.phase.end - t) / 1000)} s left`); snd.play('beep'); }
+      } else snd.ambience(music === 'on' ? 'hide' : 'off');
+    } else snd.ambience('off');
+    // the hide-phase ticker: went still after 20 s without moving
+    if (ph === 'hide' && v && roleOf(v) === 'hider' && !local) { const b = body[v]; if (b.speed > 0.3) { R.actMoveAt = t; if (R.actStill) { R.actStill = false; act('move'); } } else if (!R.actStill && R.actMoveAt && t - R.actMoveAt > 20000) { R.actStill = true; act('still'); } }
   }
 
   const LY = { kind: null, a: null, b: null, n: 0 };
@@ -2454,13 +2799,14 @@ export function createGame(el, api) {
     // the round's title card wins over the lobby: round 1 used to show a dead lobby (Start still
     // there) for the whole title lead instead of "Round 1 · … hides" over the map overview
     else if (S.pendingTitle && t < S.pendingTitle.at) { kind = 'title'; a = S.pendingTitle.seq; }
-    else if (ph === 'lobby') { kind = 'lobby'; a = S.setupVer; b = `${isHost}${S.sheet}`; }
-    else if (ph === 'curtain') { kind = seekCountdown(t) >= 0 ? 'count' : 'curtain'; a = S.phase.seq; }
-    else if ((!local || ph === 'seek') && isBlind()) { kind = ph === 'seek' ? 'head' : ph === 'lock' ? 'lock' : 'blind'; a = S.phase.seq; }
+    else if (ph === 'lobby') { kind = 'lobby'; a = S.setupVer; b = `${isHost}${S.sheet}${S.wardrobe}${S.wardW}${S.dataVer}${music}`; }
+    else if (ph === 'curtain') { kind = seekCountdown(t) >= 0 ? 'count' : 'curtain'; a = S.phase.seq; b = S.callVer; }
+    else if ((!local || ph === 'seek') && isBlind()) { kind = ph === 'seek' ? 'head' : ph === 'lock' ? 'lock' : 'blind'; a = S.phase.seq; b = S.callVer; }
     else if (ph === 'seek' && t < huntAt() + 900 && t >= huntAt() - 50) { kind = 'go'; a = S.phase.seq; }
     else if (ph === 'seek' && headStartOn(t) && t < S.phase.at + 1500 && v && roleOf(v) === 'hider') { kind = 'headgo'; a = S.phase.seq; }
     else if (ph === 'found' || ph === 'time') { kind = 'stamp'; a = S.phase.seq; }
     else if (ph === 'recap' && R.rec) { kind = 'recap'; a = S.phase.seq; }
+    else if (ph === 'final' && S.match) { kind = 'final'; a = S.phase.seq; b = S.finished; }
     else if (ph === 'lock' && v && roleOf(v) !== 'seeker') { kind = 'locking'; a = S.phase.seq; }
     if (kind === LY.kind && a === LY.a && b === LY.b) return;
     // keep the settings sheet's scroll position across live rebuilds
@@ -2472,21 +2818,24 @@ export function createGame(el, api) {
     live.resume = root.querySelector('[data-live="resume-count"]'); live.resumeS = -1;
     live.seek = root.querySelector('[data-live="seek-count"]'); live.seekS = -1;
     live.head = root.querySelector('[data-live="head-time"]'); live.headS = -1;
+    live.ticker = root.querySelector('[data-live="ticker"]');
+    live.recap = root.querySelector('.chm-ring');
+    if (kind === 'lock' && S.match) hud.drops(paletteOf(hiderOf(S.phase.round) || 'a'));
   }
   function buildLayer(kind, t, v, role) {
     const m = S.match;
     switch (kind) {
       case 'ctx': return ctxCard();
       case 'pause': return pauseCard(api, { reason: S.paused ? S.paused.reason : 'resume', countdown: !S.paused });
-      case 'lobby': return lobbyCard(api, { canEdit: isHost, local, setup: S.setup, waitingFor: 'a', sheet: S.sheet });
+      case 'lobby': return lobbyCard(api, { canEdit: isHost, local, setup: S.setup, waitingFor: 'a', sheet: S.sheet, music, bests: bestsStrip(api, data()), wardrobe: S.wardrobe ? wardrobeSheet(api, { w: wardrobeFor(), d: data(), picks: wearPicks[wardrobeFor()], local }) : '' });
       case 'title': {
         const p = S.pendingTitle; const hd = m && m.mode === 'hs' ? hiderOfRound(p.round) : null;
         return titleCard(api, { round: p.round, rounds: m ? m.rounds : 4, mode: m ? m.mode : 'hs', hider: hd, youHide: !local && hd === me, youSeek: !local && hd && hd !== me, map: m ? m.map : S.setup.map });
       }
       case 'count': { const d = S.phase.data || {}; return `<div class="chm-over solid"><div class="chm-card chm-sticker"><div class="chm-kicker">${esc(api.name(d.who))}, get ready</div><div class="chm-big" data-live="seek-count">3</div><p>Find them before the timer runs out.</p></div></div>`; }
-      case 'curtain': { const d = S.phase.data || {}; return curtainCard(api, { kind: d.kind, who: d.who }); }
+      case 'curtain': { const d = S.phase.data || {}; return curtainCard(api, { kind: d.kind, who: d.who, wager: mode() === 'hs' ? rules().wager : 0, call: d.who ? R.call[d.who] : null, climbs: curMapEntry().climbs || 1 }); }
       case 'lock': return blindLock();
-      case 'blind': return blindCard(api, { hider: hiderOf(S.phase.round), ms: S.phase.dur ? Math.max(0, S.phase.end - t) : Math.max(0, t - S.phase.at), pellets: R.maxPellets, mode: mode(), scanCd: rules().scanCd, scans: rules().scans, untimed: !S.phase.dur, climb: seekerClimbs() });
+      case 'blind': return blindCard(api, { hider: hiderOf(S.phase.round), ms: S.phase.dur ? Math.max(0, S.phase.end - t) : Math.max(0, t - S.phase.at), pellets: R.maxPellets, mode: mode(), scanCd: rules().scanCd, scans: rules().scans, untimed: !S.phase.dur, climb: seekerClimbs(), wager: mode() === 'hs' ? rules().wager : 0, call: v ? R.call[v] : null, climbs: curMapEntry().climbs || 1, ticker: R.ticker });
       case 'head': return headCard(api, { hider: hiderOf(S.phase.round), ms: Math.max(0, huntAt() - t) });
       case 'headgo': return '<div class="chm-stamp ink">Head start!<small>They can’t see you yet — move!</small></div>';
       case 'go': return `<div class="chm-stamp ${role === 'seeker' || role === 'both' ? '' : 'ink'}">${role === 'hider' ? 'Freeze!' : 'Seek!'}</div>`;
@@ -2495,12 +2844,22 @@ export function createGame(el, api) {
         const cls = ph === 'found' ? (rec.seeker || rec.winner || 'ink') : (victim || 'ink');
         const title = ph === 'found' ? 'FOUND!' : mode() === 'db' ? 'TIME!' : 'SURVIVED!';
         const small = ph === 'found' ? `${api.name(rec.seeker || rec.winner)} tagged ${api.name(victim)}${rec.ms != null && mode() === 'hs' ? ' in ' + fmtTime(rec.ms) : ''}` : mode() === 'db' ? 'Nobody got tagged' : `${api.name(victim)} stayed hidden`;
-        return `<div class="chm-stamp ${cls}">${title}<small>${esc(small)}</small></div>`;
+        const pts = ph === 'found' && rec.seekPoints ? `+${rec.seekPoints}${rec.spare ? ` · ${rec.spare} pellet${rec.spare === 1 ? '' : 's'} spare` : ''}` : ph !== 'found' && rec.outOfPellets && mode() === 'hs' ? `ran dry at ${fmtTime(rec.ms)} · +${rec.points}` : '';
+        return `<div class="chm-stamp ${cls}">${title}<small>${esc(small)}</small>${pts ? `<small class="chm-pts">${esc(pts)}</small>` : ''}</div>`;
       }
       case 'recap': {
         const shooter = R.rec.seeker || (mode() === 'hs' ? other(R.rec.hider) : (v || 'a'));
         const st = { closest: Number.isFinite(R.closest) ? R.closest : null, passes: R.passes, used: R.used[shooter] || 0, max: R.maxPellets };
-        return recapCard(api, { rec: R.rec, mode: m.mode, scores: m.scores, round: S.phase.round, rounds: m.rounds, isLast: S.phase.round >= m.rounds || (m.mode === 'db' && (m.scores.a >= 2 || m.scores.b >= 2)), canNext: true, stats: st });
+        const isLast = S.phase.round >= m.rounds || (m.mode === 'db' && (m.scores.a >= 2 || m.scores.b >= 2));
+        const rx = R.rec.rx || {};
+        const lines = recapLines(api, data(), R.rec, { mode: m.mode, passes: R.passes, under: R.under, stared: R.stared, called: !!R.rec.called, calledWhat: R.rec.called ? (CALLS.find((c) => c[0] === R.rec.call) || [])[1] : '' }, rx.records || []);
+        const next = !isLast && m.mode === 'hs' ? { hider: hiderOfRound(S.phase.round + 1), map: curMapEntry().name } : null;
+        return recapCard(api, { rec: R.rec, mode: m.mode, scores: m.scores, round: S.phase.round, rounds: m.rounds, isLast, canNext: true, stats: st, lines, next, autoMs: Math.max(0, S.phase.end - t) });
+      }
+      case 'final': {
+        const d = S.phase.data || {};
+        const story = matchStory(api, m.hist || [], curMapEntry().name);
+        return finalCard(api, { winner: d.winner, a: d.a, b: d.b, mode: m.mode, story, records: S.matchRecords, unlocks: S.matchUnlocks, firstNext: m.mode === 'hs' ? other(m.first) : null });
       }
       case 'locking': return '<div class="chm-stamp ink">Locked in<small>Sealing your paint… <b data-live="seek-count"></b></small></div>';
       default: return '';
@@ -2543,10 +2902,12 @@ export function createGame(el, api) {
           spect: U.spect, fc: [C.fcX, C.fcY, C.fcZ, C.fcYaw, C.fcPitch], climbV: C.climbV, vYaw: C.vYaw, hunting: hunting(), huntAt: huntAt(), graceUntil: huntAt() + graceMs(),
           live: { sent: R.lpSent, got: R.lpIn, tells: R.tells, tellSkip: R.tellSkip, tellOn: !!R.tell }, cam: stage ? stage.camera.position.toArray() : null,
           here: { on: !hud.el.here.hidden, x: hud.el.here.style.transform }, badge: hud.el.badge.textContent || null, role: hud.el.role.textContent,
-          glint: { a: R.glintAt.a, b: R.glintAt.b }, lastPick: stats.lastPick || null, lastPaint: stats.lastPaint || null, lastShot: stats.lastShot || null, lastTagCheck: stats.lastTagCheck || null,
+          glint: { a: R.glintAt.a, b: R.glintAt.b }, lastPick: stats.lastPick || null, lastPaint: stats.lastPaint || null, lastShot: stats.lastShot || null, lastTagCheck: stats.lastTagCheck || null, lastWindow: stats.lastWindow || null,
         };
       },
       paintHash(w) { return stage.paints[w].hash(); },
+      /** Blend score (camo %) of a body against the surface it's on, right now; and the round's locked scores. */
+      blend(w) { return { now: blendOf(w || viewer()), locked: { a: R.blend.a, b: R.blend.b }, assisted: stats.assisted || 0 }; },
       phaseLog() { return stats.phaseLog.slice(); },
       perf() {
         const f = Array.from(stats.frames.subarray(0, stats.fn)).sort((x, y) => x - y);
@@ -2571,7 +2932,7 @@ export function createGame(el, api) {
       mapIds() { return MAP_IDS.slice(); },
       guards() { return stage.world.boxes.filter((bx) => bx.climb === false).map((bx) => ({ name: bx.name, minX: bx.minX, maxX: bx.maxX, minY: bx.minY, maxY: bx.maxY, minZ: bx.minZ, maxZ: bx.maxZ })); },
       camDist() { return camPos && camLook ? camPos.distanceTo(camLook) : 0; },
-      effTimes() { return { hide: hideMs(), seek: seekMs(), scale: mapTime(), sprint: sprintMul(mapTime()) }; },
+      effTimes() { return { hide: hideMs(), seek: seekMs(), scale: mapTime(), hideScale: mapHideTime(), sprint: sprintMul(mapTime()) }; },
       fog() { return { near: stage.scene.fog.near, far: stage.scene.fog.far, camFar: stage.camera.far }; },
       /** Tests: change the size mid-round on this device only. */
       /** Tests: change one match rule on this device only (both devices are told separately). */
@@ -2698,7 +3059,13 @@ export function createGame(el, api) {
       /** Fly the free cam to a spot (tests; still clamped to the map). */
       freeCamTo(x, y, z, yaw, pitch) { C.fcX = x; C.fcY = y; C.fcZ = z; if (yaw != null) C.fcYaw = yaw; if (pitch != null) C.fcPitch = pitch; clampFree(); return [C.fcX, C.fcY, C.fcZ]; },
       freeBounds() { const B = stage.world.bounds; return { minX: B.minX, maxX: B.maxX, minZ: B.minZ, maxZ: B.maxZ, bottom: C.fcBottom, top: C.fcTop }; },
-      timing() { return { hide: hideMs(), seek: seekMs(), head: headStartMs(), countdown: countdownMs(), grace: graceMs(), scale: mapTime() }; },
+      timing() { return { hide: hideMs(), seek: seekMs(), head: headStartMs(), countdown: countdownMs(), grace: graceMs(), scale: mapTime(), hideScale: mapHideTime() }; },
+      // polish: records / wardrobe / wager / ticker / emotes
+      data() { return { ...data() }; },
+      polish() { return { stared: R.stared, call: { ...R.call }, ticker: R.ticker, strokes: { ...R.strokes }, passes: R.passes, under: R.under, closest: R.closest, nearD: R.nearD, music, wear: { a: { ...stage.av.a.wear }, b: { ...stage.av.b.wear } }, picks: wearPicks, records: S.matchRecords.slice(), unlocks: S.matchUnlocks.slice(), finished: S.finished }; },
+      setCall(k) { setCall(k); return { ...R.call }; },
+      emote(k) { sendEmote(k, null); },
+      finish() { finishMatch(); },
       dur: DUR,
     };
     window.__cham = hook;
@@ -2713,6 +3080,7 @@ export function createGame(el, api) {
       clearInterval(hostTimer);
       timers.forEach((t) => clearTimeout(t)); timers.clear();
       if (offHere) { try { offHere(); } catch { /* ignore */ } }
+      if (offData) { try { offData(); } catch { /* ignore */ } }
       L.clear();
       cleanup.forEach((f) => { try { f(); } catch { /* ignore */ } });
       if (controls) controls.destroy();
