@@ -8,6 +8,10 @@ import { sampleAtlas } from './atlas.js';
 
 const N = TEX * TEX;
 const UNDO_MAX = 24;
+/** Reveal waves: seconds, the width of the bright front (in units of the whole sweep), its
+ *  brightness toward white. A stamp wipes up the body like a print being pulled; a fill floods
+ *  out from the finger; an undo dissolves back in a speckle. */
+export const REVEAL = { stamp: { dur: 0.36, band: 0.22, glow: 0.65 }, fill: { dur: 0.28, band: 0.3, glow: 0.4 }, undo: { dur: 0.22, band: 0.45, glow: 0.3 } };
 const BLACK = [0, 0, 0];
 
 export function createPaint(THREE, kit) {
@@ -34,6 +38,56 @@ export function createPaint(THREE, kit) {
   for (let p = 0; p < NP; p++) psph[p * 4 + 3] = 1e9;
   let dabTexels = 0; let dabs = 0; // texels tested by dabs, dabs made (perf counters)
 
+  // ── reveals: a stamp wipes up the body, a fill floods out from the finger ──
+  // The new colours go into `tgt`; every affected texel gets a key 0..1 (when the wave reaches
+  // it) and the texels are bucket-sorted by key. flush() (once a frame) advances the wave: texels
+  // behind its band take their target, the band itself flashes toward white and settles. Anything
+  // that reads or edits the skin settles the wave first, so the codec, undo, hashes and the blend
+  // score only ever see finished paint. Scratch buffers are allocated once (no per-stamp garbage).
+  const tgt = new Uint8Array(N * 4);
+  const rkey = new Float32Array(N);
+  const rtmp = new Int32Array(N); const rord = new Int32Array(N);
+  const RBK = 64; const rcnt = new Int32Array(RBK + 1);
+  const rv = { on: false, n: 0, done: 0, head: 0, t0: 0, dur: 0.3, band: 0.25, glow: 0.6, kind: '', count: 0 };
+  /** Start a wave over the rn texels in rtmp whose raw keys are in rkey (normalised here). */
+  function beginReveal(rn, kind, dur, band, glow) {
+    let k0 = Infinity; let k1 = -Infinity;
+    for (let j = 0; j < rn; j++) { const k = rkey[rtmp[j]]; if (k < k0) k0 = k; if (k > k1) k1 = k; }
+    const span = k1 - k0 > 1e-6 ? k1 - k0 : 1;
+    rcnt.fill(0);
+    // (the bucket is taken from the stored float32 key in both passes, so they always agree)
+    for (let j = 0; j < rn; j++) { const i = rtmp[j]; rkey[i] = (rkey[i] - k0) / span; rcnt[Math.min(RBK - 1, (rkey[i] * RBK) | 0) + 1]++; }
+    for (let b = 1; b <= RBK; b++) rcnt[b] += rcnt[b - 1];
+    for (let j = 0; j < rn; j++) { const i = rtmp[j]; rord[rcnt[Math.min(RBK - 1, (rkey[i] * RBK) | 0)]++] = i; }
+    rv.on = rn > 0; rv.n = rn; rv.done = 0; rv.head = 0; rv.t0 = performance.now(); rv.dur = dur; rv.band = band; rv.glow = glow; rv.kind = kind; rv.count++;
+    touch();
+  }
+  /** Advance the wave to real time `t` (ms). */
+  function stepReveal(t) {
+    const band = rv.band; const p = ((t - rv.t0) / 1000 / rv.dur) * (1 + band);
+    if (p >= 1 + band) { settle(); return; }
+    const n = rv.n; let head = rv.head;
+    while (head < n && rkey[rord[head]] <= p) head++;
+    rv.head = head;
+    const glow = rv.glow;
+    for (let j = rv.done; j < head; j++) {
+      const i = rord[j]; const a = (p - rkey[i]) / band; const o = i * 4;
+      if (a >= 1) { data[o] = tgt[o]; data[o + 1] = tgt[o + 1]; data[o + 2] = tgt[o + 2]; if (j === rv.done) rv.done++; continue; }
+      if (a <= 0) continue;
+      const g = (1 - a) * (1 - a) * glow; // the front flashes toward white, then settles
+      data[o] = (tgt[o] + (255 - tgt[o]) * g) | 0; data[o + 1] = (tgt[o + 1] + (255 - tgt[o + 1]) * g) | 0; data[o + 2] = (tgt[o + 2] + (255 - tgt[o + 2]) * g) | 0;
+    }
+    dirty = true;
+  }
+  /** Finish any running wave now (every reader / editor of the skin calls this first). */
+  function settle() {
+    if (!rv.on) return;
+    rv.on = false;
+    for (let j = rv.done; j < rv.n; j++) { const o = rord[j] * 4; data[o] = tgt[o]; data[o + 1] = tgt[o + 1]; data[o + 2] = tgt[o + 2]; }
+    rv.done = rv.n;
+    touch();
+  }
+
   /** Recompute world-space texel positions from the avatar meshes (call when the pose settles). */
   function updateWorld(meshes) {
     const els = meshes.map((m) => { m.updateWorldMatrix(true, false); return m.matrixWorld.elements; });
@@ -45,7 +99,7 @@ export function createPaint(THREE, kit) {
       wpos[i * 3 + 2] = e[2] * x + e[6] * y + e[10] * z + e[14];
       const nx = lnrm[i * 3]; const ny = lnrm[i * 3 + 1]; const nz = lnrm[i * 3 + 2];
       let ax = e[0] * nx + e[4] * ny + e[8] * nz; let ay = e[1] * nx + e[5] * ny + e[9] * nz; let az = e[2] * nx + e[6] * ny + e[10] * nz;
-      const L = Math.hypot(ax, ay, az) || 1; ax /= L; ay /= L; az /= L;
+      const L = Math.sqrt(ax * ax + ay * ay + az * az) || 1; ax /= L; ay /= L; az /= L; // (Math.hypot is several times slower)
       wnrm[i * 3] = ax; wnrm[i * 3 + 1] = ay; wnrm[i * 3 + 2] = az;
     }
     for (let p = 0; p < NP; p++) {
@@ -60,6 +114,7 @@ export function createPaint(THREE, kit) {
   }
 
   function snapshot() {
+    settle();
     undo.push(data.slice());
     if (undo.length > UNDO_MAX) undo.shift();
   }
@@ -72,6 +127,7 @@ export function createPaint(THREE, kit) {
    */
   function dab(hx, hy, hz, vx, vy, vz, radius, rgb, hard, flow = 0.4) {
     const r2 = radius * radius;
+    settle();
     let hit = 0; dabs++;
     for (let p = 0; p < NP; p++) {
       const sx = psph[p * 4] - hx; const sy = psph[p * 4 + 1] - hy; const sz = psph[p * 4 + 2] - hz; const reach = psph[p * 4 + 3] + radius;
@@ -99,20 +155,31 @@ export function createPaint(THREE, kit) {
     return hit;
   }
 
-  /** Fill one region ('body' | 'head' | 'tail' | 'legs') or 'all'. */
-  function fill(region, rgb) {
+  /**
+   * Fill one region ('body' | 'head' | 'tail' | 'legs') or 'all'. from = [x,y,z] (world, the
+   * finger's hit): the colour floods out from there over 0.28 s instead of appearing at once.
+   */
+  function fill(region, rgb, from = null) {
+    settle();
     const parts = region === 'all' ? null : REGIONS[region];
+    let rn = 0;
     for (let k = 0; k < list.length; k++) {
       const i = list[k];
       if (parts && !parts.includes(part[i])) continue;
-      const o = i * 4; data[o] = rgb[0]; data[o + 1] = rgb[1]; data[o + 2] = rgb[2];
+      const o = i * 4;
+      if (from) {
+        tgt[o] = rgb[0]; tgt[o + 1] = rgb[1]; tgt[o + 2] = rgb[2]; rtmp[rn++] = i;
+        const dx = wpos[i * 3] - from[0]; const dy = wpos[i * 3 + 1] - from[1]; const dz = wpos[i * 3 + 2] - from[2];
+        rkey[i] = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      } else { data[o] = rgb[0]; data[o + 1] = rgb[1]; data[o + 2] = rgb[2]; }
     }
     if (!parts) for (let i = 0; i < N; i++) if (part[i] < 0) { const o = i * 4; data[o] = rgb[0]; data[o + 1] = rgb[1]; data[o + 2] = rgb[2]; }
-    touch();
+    if (rn) beginReveal(rn, 'fill', REVEAL.fill.dur, REVEAL.fill.band, REVEAL.fill.glow); else touch();
   }
 
   /** Paint texels whose (world) normal points along `dir` with rgb (used for seeker bellies). */
   function tintFacing(dirx, diry, dirz, minDot, rgb, region = 'body') {
+    settle();
     const parts = REGIONS[region];
     for (let k = 0; k < list.length; k++) {
       const i = list[k];
@@ -129,10 +196,12 @@ export function createPaint(THREE, kit) {
    * that surface. surf = { q:[x,y,z], n:[x,y,z] (unit, out of the surface), uvAt(x,y,z,out2),
    * tile, vc:[r,g,b] 0..1, atlas, shadeAt(x,y,z) -> factor }.
    */
-  function stamp(surf) {
+  function stamp(surf, wave = null) {
+    settle();
     const [qx, qy, qz] = surf.q; const [nx, ny, nz] = surf.n;
     const uv = [0, 0];
     let hit = 0;
+    const out = wave ? tgt : data;
     for (let k = 0; k < list.length; k++) {
       const i = list[k];
       const facing = wnrm[i * 3] * nx + wnrm[i * 3 + 1] * ny + wnrm[i * 3 + 2] * nz;
@@ -147,17 +216,20 @@ export function createPaint(THREE, kit) {
       const a = facing < 0 ? 1 + facing / 0.25 : 1;
       const o = i * 4;
       const r = tmp[0] * surf.vc[0] * (1 - sh) + br[0] * sh; const g = tmp[1] * surf.vc[1] * (1 - sh) + br[1] * sh; const b = tmp[2] * surf.vc[2] * (1 - sh) + br[2] * sh;
-      data[o] = Math.round(data[o] + (r - data[o]) * a);
-      data[o + 1] = Math.round(data[o + 1] + (g - data[o + 1]) * a);
-      data[o + 2] = Math.round(data[o + 2] + (b - data[o + 2]) * a);
+      out[o] = Math.round(data[o] + (r - data[o]) * a);
+      out[o + 1] = Math.round(data[o + 1] + (g - data[o + 1]) * a);
+      out[o + 2] = Math.round(data[o + 2] + (b - data[o + 2]) * a);
+      if (wave) { rtmp[hit] = i; rkey[i] = px * wave[0] + py * wave[1] + pz * wave[2]; }
       hit++;
     }
-    if (hit) touch();
+    if (hit && wave) beginReveal(hit, 'stamp', REVEAL.stamp.dur, REVEAL.stamp.band, REVEAL.stamp.glow);
+    else if (hit) touch();
     return hit;
   }
 
   /** Paint texels of one part whose local position passes fn(x, y, z) → 0..1 coverage. */
   function paintLocal(partIdx, fn, rgb) {
+    settle();
     for (let k = 0; k < list.length; k++) {
       const i = list[k];
       if (part[i] !== partIdx) continue;
@@ -173,6 +245,7 @@ export function createPaint(THREE, kit) {
 
   /** Colour of the body at a texel uv (for picking colours off yourself). */
   function colorAtUV(u, v, out) {
+    settle();
     const x = Math.min(TEX - 1, Math.max(0, Math.floor(u * TEX))); const y = Math.min(TEX - 1, Math.max(0, Math.floor(v * TEX)));
     const o = (y * TEX + x) * 4; out[0] = data[o]; out[1] = data[o + 1]; out[2] = data[o + 2];
     return out;
@@ -184,6 +257,7 @@ export function createPaint(THREE, kit) {
    * area into out (flat x,y,z) and returns how many texels changed.
    */
   function changedPoints(prev, out, max = 3) {
+    settle();
     let n = 0;
     for (let k = 0; k < list.length; k++) {
       const o = list[k] * 4;
@@ -201,7 +275,9 @@ export function createPaint(THREE, kit) {
     return n;
   }
 
+  /** Once a frame: advance a running reveal, upload the texture if anything changed. */
   function flush() {
+    if (rv.on) stepReveal(performance.now());
     if (!dirty) return false;
     dirty = false;
     texture.needsUpdate = true;
@@ -213,20 +289,38 @@ export function createPaint(THREE, kit) {
     get version() { return version; },
     get canUndo() { return undo.length > 0; },
     get dabTexels() { return dabTexels; }, get dabs() { return dabs; }, get texels() { return list.length; },
-    updateWorld, snapshot, dab, fill, stamp, tintFacing, paintLocal, colorAtUV, flush, changedPoints,
-    undo() { const s = undo.pop(); if (!s) return false; data.set(s); touch(); return true; },
+    /** A stamp wipe / fill flood is still running (live paint waits for it to settle). */
+    get revealing() { return rv.on; },
+    get reveal() { return { on: rv.on, kind: rv.kind, count: rv.count, n: rv.n, done: rv.done }; },
+    updateWorld, snapshot, dab, fill, stamp, tintFacing, paintLocal, colorAtUV, flush, changedPoints, settle,
+    /** Undo the last change. wave: the undone paint dissolves back over 0.2 s instead of snapping. */
+    undo(wave = false) {
+      settle();
+      const s = undo.pop(); if (!s) return false;
+      if (!wave) { data.set(s); touch(); return true; }
+      let rn = 0;
+      for (let i = 0; i < N; i++) {
+        const o = i * 4;
+        if (s[o] === data[o] && s[o + 1] === data[o + 1] && s[o + 2] === data[o + 2]) continue;
+        tgt[o] = s[o]; tgt[o + 1] = s[o + 1]; tgt[o + 2] = s[o + 2];
+        rtmp[rn++] = i; rkey[i] = ((Math.imul(i, 0x9e3779b1) >>> 0) & 1023) / 1023; // a speckled dissolve
+      }
+      if (rn) beginReveal(rn, 'undo', REVEAL.undo.dur, REVEAL.undo.band, REVEAL.undo.glow); else touch();
+      return true;
+    },
     clearUndo() { undo.length = 0; },
-    reset(rgb = [255, 255, 255]) { for (let i = 0; i < N; i++) { data[i * 4] = rgb[0]; data[i * 4 + 1] = rgb[1]; data[i * 4 + 2] = rgb[2]; data[i * 4 + 3] = 255; } undo.length = 0; touch(); },
-    hash() { return fnv(data); },
-    quantize(max = 32) { const q = quantize(data, max); dirty = true; return q; },
+    reset(rgb = [255, 255, 255]) { rv.on = false; for (let i = 0; i < N; i++) { data[i * 4] = rgb[0]; data[i * 4 + 1] = rgb[1]; data[i * 4 + 2] = rgb[2]; data[i * 4 + 3] = 255; } undo.length = 0; touch(); },
+    hash() { settle(); return fnv(data); },
+    quantize(max = 32) { settle(); const q = quantize(data, max); dirty = true; return q; },
     /** Quantise in place + encode, once per paint version (a lock right after a live update, or
      *  a re-request, reuses the blob). */
     encode() {
+      settle();
       if (encVer === version && encCache) return encCache;
       encCache = encode(data, quantize(data, 32)); encVer = version; dirty = true;
       return encCache;
     },
-    decode(b64) { const ok = decodeInto(b64, data); touch(); return ok; },
+    decode(b64) { rv.on = false; const ok = decodeInto(b64, data); touch(); return ok; },
     dispose() { texture.dispose(); },
   };
 }

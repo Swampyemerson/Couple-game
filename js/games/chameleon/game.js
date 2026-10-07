@@ -12,7 +12,8 @@ import { loadWear, saveWear, resolveWear, newUnlocks, packWear, unpackWear, ward
 import { clamp, dampAngle, wrapAngle, hexToRgb, cssColor, luminance, listeners, fmtTime, mixHex, esc, seeded, packQuat, unpackQuat } from './util.js';
 import { MAPS, mapArea } from './maps.js';
 import { sanitizeSetup, sanitizeRules, applyPreset, stepRule, setRule, loadSaved, saveSetup, sizeScale, SPEED_MUL, CLIMB_MUL, tipsSeen, markTipsSeen, PRESETS, timeScale, hideScale, effSeconds, sprintMul, dbSpeed, OPTIONS, fmtRule } from './rules.js';
-import { sampleAtlas } from './atlas.js';
+import { REVEAL } from './paint.js';
+import { createBlendJob, startBlend, stepBlend, scoreBlend, createMeter } from './camo.js';
 import { mkBody, sizeBody, resetBody, headingYaw, attachBody, detachBody, freeStep, crawlStep, inputOnSurface, bodyQuat, quatUpY, spotKind, surfaceKind, accelStep, coyoteJump, shortHop, JUMP } from './move.js';
 import { SQUEEZE_R } from './world.js';
 
@@ -829,38 +830,69 @@ export function createGame(el, api) {
    * and the mean per-channel difference is turned into a percentage: a perfect stamp seen from the
    * front is ~100, a plain white chameleon on sage wallpaper ~30. No per-frame cost.
    */
-  const blendUV = [0, 0]; const blendTmp = [0, 0, 0];
-  function blendOf(w) {
-    if (!stage) return -1;
-    const b = body[w]; const p = stage.paints[w];
-    p.updateWorld(stage.av[w].meshes);
+  /** The surface a hider is scored against: the face a stuck body is on, else the floor below. */
+  function blendSurf(w) {
+    const b = body[w];
     let hit = null;
     if (b.at) { stage.ray.set(tv3.set(b.x + b.nx * 0.5, b.y + b.ny * 0.5, b.z + b.nz * 0.5), tv3b.set(-b.nx, -b.ny, -b.nz)); hit = stage.pickMap(1.0); }
     if (!hit) { stage.ray.set(tv3.set(b.x, b.y + 0.7, b.z), tv3b.set(0, -1, 0)); hit = stage.pickMap(2.5); }
-    const surf = hit ? stage.surfaceOf(hit) : null;
-    if (!surf) return -1;
-    const [qx, qy, qz] = surf.q; const [nx, ny, nz] = surf.n; const vc = surf.vc; const br = surf.blobRgb || blendTmp;
-    const wpos = p.wpos; const wnrm = p.wnrm; const data = p.data; const list = p.list;
-    let n = 0; let sum = 0;
-    // every other mapped texel: the score is a mean over ~6k samples either way, at half the cost
-    for (let k = 0; k < list.length; k += 2) {
-      const i = list[k];
-      const ax = wnrm[i * 3]; const ay = wnrm[i * 3 + 1]; const az = wnrm[i * 3 + 2];
-      const facing = ax * nx + ay * ny + az * nz;
-      if (facing < 0.1) continue; // the side pressed against the surface is never seen
-      const px = wpos[i * 3]; const py = wpos[i * 3 + 1]; const pz = wpos[i * 3 + 2];
-      const dist = (px - qx) * nx + (py - qy) * ny + (pz - qz) * nz;
-      const sx = px - nx * dist; const sy = py - ny * dist; const sz = pz - nz * dist;
-      surf.uvAt(sx, sy, sz, blendUV);
-      sampleAtlas(surf.atlas, surf.tile, blendUV[0], blendUV[1], blendTmp);
-      const sh = surf.shadeAt ? surf.shadeAt(sx, sy, sz) : 0;
-      const r = blendTmp[0] * vc[0] * (1 - sh) + br[0] * sh; const g = blendTmp[1] * vc[1] * (1 - sh) + br[1] * sh; const bb = blendTmp[2] * vc[2] * (1 - sh) + br[2] * sh;
-      const o = i * 4;
-      sum += (Math.abs(data[o] - r) + Math.abs(data[o + 1] - g) + Math.abs(data[o + 2] - bb)) / 765;
-      n++;
+    return hit ? stage.surfaceOf(hit) : null;
+  }
+  /** The score, all at once (the math lives in camo.js, shared with the live meter). */
+  function blendOf(w) {
+    if (!stage) return -1;
+    const p = stage.paints[w];
+    p.updateWorld(stage.av[w].meshes);
+    const surf = blendSurf(w);
+    return surf ? scoreBlend(p, surf) : -1;
+  }
+
+  // ── live camo meter (paint mode) ──────────────────────────────────
+  // After every settled change (stroke end, wipe / flood finished, the body moved or posed) the
+  // score is recomputed a slice per frame (CAMO_SLICE samples ≈ 0.3–1 ms on a phone), so the meter
+  // never hitches the brush. The lock reuses the meter's score when nothing changed since: the
+  // number the hider saw is the number that scores (the lock's quantise to 32 colours moves it by
+  // ±1 at most, and it would be unfair to lose a bonus to that).
+  const CAMO_SLICE = 1800;
+  const CAMO = { job: createBlendJob(), meter: null, w: null, round: -1, ver: -1, score: -1, jobVer: -1, sig: new Float64Array(9).fill(NaN), jobSig: new Float64Array(9), cur: new Float64Array(9), surf: null, surfSig: new Float64Array(9).fill(NaN), runs: 0, slices: 0 };
+  function bodySig(w, out) { const b = body[w]; out[0] = b.x; out[1] = b.y; out[2] = b.z; out[3] = b.at ? 1 : 0; out[4] = b.nx || 0; out[5] = b.ny || 0; out[6] = b.nz || 0; out[7] = POSES.indexOf(b.pose); out[8] = b.wa || 0; return out; }
+  function sameSig(a, b) { for (let i = 0; i < 9; i++) if (!(Math.abs(a[i] - b[i]) < 1e-4)) return false; return true; }
+  function camoTick() {
+    if (!stage) return;
+    const v = viewer();
+    const on = P.on && !!v && (S.phase.name === 'hide' || S.phase.name === 'seek');
+    if (!CAMO.meter) { if (!on) return; CAMO.meter = createMeter(root.querySelector('.chm-hud') || root, { play: (n) => snd.play(n) }); }
+    const m = CAMO.meter;
+    m.show(on);
+    if (!on) { CAMO.job.on = false; return; } // a half-done score is dropped; reopening rescores if anything changed
+    const round = S.phase.round | 0;
+    if (CAMO.w !== v || CAMO.round !== round) { CAMO.w = v; CAMO.round = round; CAMO.ver = -1; CAMO.sig.fill(NaN); CAMO.surfSig.fill(NaN); CAMO.job.on = false; m.reset(); }
+    m.tick(tSec);
+    const p = stage.paints[v];
+    if (CAMO.job.on) {
+      CAMO.slices++;
+      if (!stepBlend(CAMO.job, m.value < 0 ? 1e9 : CAMO_SLICE)) return; // the first score of a round at once (a number on screen right away), then sliced
+      if (p.version !== CAMO.jobVer) return; // painted while scoring: rescore below next frame
+      CAMO.score = CAMO.job.score; CAMO.ver = CAMO.jobVer; CAMO.sig.set(CAMO.jobSig);
+      const bb = mode() === 'hs' ? rules().blendBonus | 0 : 0;
+      m.set(CAMO.score, bb ? (bb === 20 ? 90 : 80) : -1, bb);
+      return;
     }
-    if (!n) return -1;
-    return Math.round(clamp(100 * (1 - 2.8 * (sum / n)), 0, 100));
+    // wait for the change to settle: a stroke in progress, a wipe / flood, a fill swell, the pose easing in
+    if (P.last || p.revealing || PFX.fillParts || (P.texelDirtyAt && tSec < P.texelDirtyAt)) return;
+    bodySig(v, CAMO.cur);
+    if (p.version === CAMO.ver && sameSig(CAMO.cur, CAMO.sig)) return;
+    refreshTexels(); // the tail sways and the eye turrets wander: score (and brush) the body as it is now
+    if (!sameSig(CAMO.cur, CAMO.surfSig)) { CAMO.surf = blendSurf(v); CAMO.surfSig.set(CAMO.cur); }
+    CAMO.jobVer = p.version; CAMO.jobSig.set(CAMO.cur);
+    if (!CAMO.surf) { CAMO.ver = p.version; CAMO.sig.set(CAMO.cur); CAMO.score = -1; m.set(-1); return; }
+    startBlend(CAMO.job, p, CAMO.surf); CAMO.runs++;
+  }
+  /** The meter's score for w if neither the paint nor the spot changed since it was taken, else null. */
+  function camoCached(w) {
+    if (CAMO.w !== w || CAMO.ver < 0 || CAMO.job.on || CAMO.round !== (S.phase.round | 0)) return null;
+    if (stage.paints[w].version !== CAMO.ver || !sameSig(bodySig(w, CAMO.cur), CAMO.sig)) return null;
+    return CAMO.score;
   }
   function blendPointsFor(blend, rulesObj) {
     const bb = rulesObj && rulesObj.blendBonus ? rulesObj.blendBonus : 0;
@@ -875,7 +907,7 @@ export function createGame(el, api) {
     p.flush();
     const t1 = performance.now();
     R.paintSum[w] = enc.sum; R.paintOk[w] = true;
-    if (controlsOf(w)) { try { R.blend[w] = blendOf(w); } catch (e) { R.blend[w] = -1; console.warn('blend', e); } }
+    if (controlsOf(w)) { try { const c = camoCached(w); R.blend[w] = c != null ? c : blendOf(w); stats.blendCached = c != null; } catch (e) { R.blend[w] = -1; console.warn('blend', e); } }
     stats.lastPaint = { w, bytes: enc.bytes, b64: enc.b64.length, chunks: Math.ceil(enc.b64.length / 3200), encMs: t1 - t0, blendMs: performance.now() - t1 };
     if (!local) {
       R.lockSent = true;
@@ -888,7 +920,7 @@ export function createGame(el, api) {
   function livePaint(t) {
     if (local || S.phase.name !== 'seek' || mode() !== 'hs' || roleOf(me) !== 'hider' || !R.paintOk[me]) return;
     const p = stage.paints[me];
-    if (p.version === R.lpVer || P.last || t - R.lpAt < 1000) return;
+    if (p.version === R.lpVer || P.last || p.revealing || t - R.lpAt < 1000) return; // (a stamp wipe / fill flood sends once it has settled)
     const enc = p.encode();
     p.flush();
     R.lpVer = p.version;
@@ -1162,7 +1194,9 @@ export function createGame(el, api) {
       snd.play('splat');
       if (!isTag) stage.fx.splat(pp.x, pp.y, pp.z, n[0], n[1], n[2], ink, 0.22 + Math.random() * 0.1, tSec);
     });
-    const msg = { id, T, by: w, o: [muzzle.x, muzzle.y, muzzle.z], p: [p.x, p.y, p.z], n, hit: !!hit, tag: isTag, seen, left: R.pellets[w] };
+    // dl: the interpolation delay this screen drew the target with (adaptive, see link.js): the
+    // victim judges the shot against its own path around T − dl
+    const msg = { id, T, by: w, o: [muzzle.x, muzzle.y, muzzle.z], p: [p.x, p.y, p.z], n, hit: !!hit, tag: isTag, seen, left: R.pellets[w], dl: Math.round(link.delay) };
     stats.lastShot = { range, tag: isTag, hit: !!hit, obj: hit ? (stage.isMap(hit.object) ? 'map' : 'other') : null, p: msg.p, o: [o.x, o.y, o.z], d: [dir.x, dir.y, dir.z], tgtVisible: stage.av[tgt].root.visible, seen };
     if (isTag) {
       R.pendingTag = id;
@@ -1197,8 +1231,9 @@ export function createGame(el, api) {
     }
     stage.fx.pellet(from, to, ink, tSec, null);
     // I am the victim: confirm with my true position history (shooter-favoured, 250 ms)
-    const ok = confirmTag(d.T, d.seen);
-    stats.lastTagCheck = { ok, T: d.T, seen: d.seen, me: [body[me].x, body[me].y, body[me].z], n: hist.n, escAt: R.escapeAt, delay: link.delay, rtt: link.rtt };
+    const dl = Number.isFinite(d.dl) ? clamp(d.dl, 0, 400) : link.delay; // the shooter's interpolation delay
+    const ok = confirmTag(d.T, d.seen, dl);
+    stats.lastTagCheck = { ok, T: d.T, seen: d.seen, me: [body[me].x, body[me].y, body[me].z], n: hist.n, escAt: R.escapeAt, delay: dl, rtt: link.rtt };
     if (ok) {
       if (isHost) hostFound(d.by, me, d.T, d.p);
       else link.send('tagres', { id: d.id, ok: true, T: d.T, by: d.by, victim: me, p: d.p });
@@ -1207,15 +1242,15 @@ export function createGame(el, api) {
       stage.fx.splat(to.x, to.y, to.z, d.n[0], d.n[1], d.n[2], ink, 0.24, tSec);
     }
   }
-  function confirmTag(T, seen) {
+  function confirmTag(T, seen, delay = link.delay) {
     // Shooter-favoured: any true position in the last 250 ms (+ one-way delay) within tolerance
     // confirms. But a scurry (6.6 m/s) or zip covers ~3 m in that window, so when my escape
     // started before the shooter's view could have shown it, the window shrinks to 120 ms: the
     // one counterplay a hider has is not nullified by lag compensation.
     const esc = R.escapeAt;
     const oneWay = link.rtt * 0.5;
-    const escaping = esc > 0 && esc < T - link.delay - oneWay - TAG_WINDOW_ESCAPE && T - esc < 1500;
-    const t0 = T - link.delay - (escaping ? oneWay + TAG_WINDOW_ESCAPE : TAG_WINDOW); const t1 = T + 60;
+    const escaping = esc > 0 && esc < T - delay - oneWay - TAG_WINDOW_ESCAPE && T - esc < 1500;
+    const t0 = T - delay - (escaping ? oneWay + TAG_WINDOW_ESCAPE : TAG_WINDOW); const t1 = T + 60;
     stats.lastWindow = escaping ? 'escape' : 'full';
     const tol = TAG_TOL * Math.max(1, sizeS()); // hit radius grows with the body
     let any = false;
@@ -1564,7 +1599,7 @@ export function createGame(el, api) {
         if (!hit) { hint('Tap a part of your body to fill it'); return; }
         const region = REGION_NAMES[REGION_OF_PART[hit.object.userData.part]];
         const p = stage.paints[viewer()];
-        p.snapshot(); p.fill(region, P.rgb);
+        p.snapshot(); p.fill(region, P.rgb, [hit.point.x, hit.point.y, hit.point.z]); // floods out from the finger
         PFX.fillAt = now(); PFX.fillW = viewer(); PFX.fillParts = REGIONS[region]; PFX.fills++;
         snd.play('fill'); api.haptic(10); act('fill');
         hint(`Filled your ${region}`, 1000);
@@ -1622,7 +1657,7 @@ export function createGame(el, api) {
       if (k >= 1) PFX.fillParts = null;
     }
     if (PFX.stampW) {
-      const k = (t - PFX.stampAt) / 250; const av = stage.av[PFX.stampW];
+      const k = (t - PFX.stampAt) / (REVEAL.stamp.dur * 1000); const av = stage.av[PFX.stampW]; // the outline flash lasts as long as the wipe
       if (av.revealOn) PFX.stampW = null; // the real reveal owns the outline
       else if (k >= 1) { av.setReveal(null); PFX.stampW = null; } else av.setReveal('#ffffff', 0.004 + 0.016 * (1 - k));
     }
@@ -1671,9 +1706,11 @@ export function createGame(el, api) {
     if (!surf) { hint('Nothing to stamp here'); return; }
     const p = stage.paints[v];
     p.snapshot();
-    p.stamp(surf);
+    // the print wipes up the screen (camera up) like a sheet being pulled off the wall
+    const cu = stage.camera.matrixWorld.elements;
+    p.stamp(surf, [cu[4], cu[5], cu[6]]);
     PFX.stampAt = now(); PFX.stampW = v; PFX.stamps++;
-    snd.play('stamp'); api.haptic(20); hud.flash(); act('stamp');
+    snd.play('stamp'); snd.play('whoosh'); api.haptic(20); act('stamp'); // no full-screen flash: it hid the wipe
     const kind = surfaceKind(b);
     hint(kind === 'wall' ? 'Stamped the wall onto your back' : kind === 'ceiling' ? 'Stamped the ceiling onto your back' : 'Stamped the surface under you onto your skin', 1600);
   }
@@ -1782,7 +1819,7 @@ export function createGame(el, api) {
       case 'fill': if (P.on) { P.tool = 'fill'; snd.play('ui'); hint('Tap a body part to fill it', 1500); } break;
       case 'pick': if (P.on) { P.tool = 'pick'; snd.play('ui'); hint('Tap anything to drink its colour', 1500); } break;
       case 'stamp': doStamp(); break;
-      case 'undo': if (P.on && v && stage.paints[v].undo()) snd.play('undo'); break;
+      case 'undo': if (P.on && v && stage.paints[v].undo(true)) snd.play('undo'); break; // dissolves back (paint.js REVEAL.undo)
       case 'ready': ready(); break;
       case 'next': if (S.phase.name === 'recap') { if (isHost) hostNext(); else link.send('next', {}); snd.play('ui'); } break;
       case 'confirm': if (S.phase.name === 'recap') action('next'); else if (S.phase.name === 'curtain') action('curtain'); else if (S.phase.name === 'lobby') action('start'); break;
@@ -1912,10 +1949,16 @@ export function createGame(el, api) {
   let lookDir = null; let climbPiv = null; let herePrj = null; let ccAlt = null;
   let camPos = null; let camLook = null; let camWant = null; let lookWant = null; let tvA = null; let qOwn = null; let prj = null; let camR = null; let camF = null;
   const pubSt = {}; for (const f of FIELDS) pubSt[f] = 0;
-  /** Presence keepalive period while the hider's state is private (constant zeros). */
-  const HIDE_KEEPALIVE_MS = 400;
-  let pubHideAt = -1e9;
-  const NETST = { pubs: 0 }; // publish() calls from network() (the link / net.js still rate-limit to 20/s)
+  const sentSt = {}; for (const f of FIELDS) sentSt[f] = NaN; // what the last publish carried
+  /** Presence: full rate (one publish per ≥ 49 ms: net.js's 20/s) while anything changes and for
+   *  PUB_HOLD_MS after, so the partner's buffer ends on a still pair (no extrapolated overshoot);
+   *  then a keepalive every PUB_KEEPALIVE_MS (it still feeds the partner's 4.5 s stall detection). */
+  const PUB_KEEPALIVE_MS = 400; let PUB_HOLD_MS = 250; const PUB_MIN_MS = 49;
+  /** A hider's position goes public this long before a head start ends: the seeker's buffer then holds
+   *  real samples when the blindfold lifts (covers the adaptive delay's 250 ms cap + a slow trip). */
+  const PUB_HUNT_LEAD_MS = 750;
+  let pubAt = -1e9; let pubMoveAt = -1e9; let pubEpoch = -1;
+  const NETST = { pubs: 0, idle: 0 }; // presence publishes from network() (each one is sent), and keepalives among them
   let lastScaleCheck = 0;
   function initVecs() {
     camPos = new THREE.Vector3(0, 6, 9); camLook = new THREE.Vector3(0, 0.5, 0); camWant = new THREE.Vector3(); lookWant = new THREE.Vector3(); tvA = new THREE.Vector3(); tvZ = new THREE.Vector3(); Y_AXIS = new THREE.Vector3(0, 1, 0); Z_AXIS = new THREE.Vector3(0, 0, 1);
@@ -1951,6 +1994,7 @@ export function createGame(el, api) {
       cameras(realDt, t);
       stage.fx.update(dt, tSec);
       if (PFX.fillParts || PFX.stampW || PFX.previewUntil) paintFx();
+      camoTick();
       ui(t);
       const blind = isBlind();
       if (blind !== U.blind) { U.blind = blind; stage.canvas.style.visibility = blind ? 'hidden' : 'visible'; }
@@ -2204,13 +2248,20 @@ export function createGame(el, api) {
   }
   function setPoseFor(w, name) { const b = body[w]; b.pose = name; b.wallN = null; stage.av[w].setPose(name); stage.av[w].st.wallN = null; }
 
+  /** Has the presence state moved off what was last sent? (1 mm, ~0.2°, 0.02 m/s; q / pose / flags exact) */
+  function pubDiffers() {
+    const a = pubSt; const o = sentSt;
+    return !(Math.abs(a.x - o.x) < 0.001 && Math.abs(a.y - o.y) < 0.001 && Math.abs(a.z - o.z) < 0.001 &&
+      Math.abs(a.yaw - o.yaw) < 0.004 && Math.abs(a.ly - o.ly) < 0.004 && Math.abs(a.lp - o.lp) < 0.004 && Math.abs(a.wa - o.wa) < 0.004 &&
+      Math.abs(a.sp - o.sp) < 0.02 && a.q === o.q && a.po === o.po && a.v === o.v && a.at === o.at);
+  }
   function network(t) {
     if (local) return;
     const b = body[me];
     const ph = S.phase.name; const role = roleOf(me);
     // where a hider is stays private while hiding, and during a head start until just before the
     // blindfold comes off (so the seeker's buffer holds real positions when the hunt starts)
-    const hiding = (ph === 'hide' && (role === 'hider' || role === 'both')) || (ph === 'seek' && role === 'hider' && t < huntAt() - 500);
+    const hiding = (ph === 'hide' && (role === 'hider' || role === 'both')) || (ph === 'seek' && role === 'hider' && t < huntAt() - PUB_HUNT_LEAD_MS);
     pubSt.x = hiding ? 0 : b.x; pubSt.y = hiding ? 0 : b.y; pubSt.z = hiding ? 0 : b.z;
     pubSt.yaw = hiding ? 0 : b.yaw; pubSt.po = hiding ? 0 : POSES.indexOf(b.pose);
     // a climbing seeker looks with its own view yaw: publish it relative to the body (yaw + ly = view)
@@ -2222,13 +2273,21 @@ export function createGame(el, api) {
       const qq = packQuat(qTmp[0], qTmp[1], qTmp[2], qTmp[3]);
       pubSt.q = qq; pubSt.at = b.at ? 1 : 0;
     }
-    // while hiding the published state is a constant "nobody here" (v: 0, all zeros): send it as a
-    // ~2.5/s keepalive (it still feeds the host's stall detection) instead of 20/s; the full rate
-    // resumes 500 ms before the hunt so the seeker's buffer is primed
-    if (S.boot === 'ready' && link.ready && (!hiding || t - pubHideAt >= HIDE_KEEPALIVE_MS || t < pubHideAt)) {
-      link.publish(pubSt);
-      pubHideAt = hiding ? t : -1e9;
-      NETST.pubs++;
+    // a state that doesn't change goes out as a ~2.5/s keepalive instead of 20/s: the hider's
+    // private "nobody here" (v: 0, zeros) all through the hide phase, a still hider all hunt, a
+    // blindfolded seeker, both players in the lobby. Moving, looking round, a pose: full rate at once
+    // (the first changed sample leaves the same frame), plus PUB_HOLD_MS after the last change
+    if (S.boot === 'ready' && link.ready) {
+      const tp = performance.now();
+      if (tp - pubAt >= PUB_MIN_MS || tp < pubAt) {
+        if (pubEpoch !== link.epoch || pubDiffers()) { pubMoveAt = tp; pubEpoch = link.epoch; } // a fresh link starts at full rate
+        const idle = tp - pubMoveAt > PUB_HOLD_MS;
+        if (!idle || tp - pubAt >= PUB_KEEPALIVE_MS || tp < pubAt) {
+          link.publish(pubSt);
+          for (let i = 0; i < FIELDS.length; i++) sentSt[FIELDS[i]] = pubSt[FIELDS[i]];
+          pubAt = tp; NETST.pubs++; if (idle) NETST.idle++;
+        }
+      }
     }
     livePaint(t);
     if (R.actQ && t - R.actAt > 2500 && link.ready) { link.send('act', R.actQ); R.actAt = t; R.actQ = null; }
@@ -2593,18 +2652,27 @@ export function createGame(el, api) {
     C.shake = Math.max(0, C.shake - dt);
     if (C.override) { camWant.fromArray(C.override, 0); lookWant.fromArray(C.override, 3); snap = true; C.frameCard = false; }
     // a view switch (eyes / watch / free): start from wherever the camera was and ease the
-    // difference out over VIEW_WHIP_S (smoothstep), riding on the new view's own motion
+    // difference out over VIEW_WHIP_S (smoothstep), riding on the new view's own motion. The aim
+    // turns by angle (yaw / pitch from the old view direction), not by sliding the look point:
+    // eyes → watch often faces the opposite way, and a lerped look point passes right by the
+    // camera there (the view flipped in one frame near the end of the whip)
     if (C.vsPend) {
       C.vsPend = false;
       C.vsOx = camPos.x - camWant.x; C.vsOy = camPos.y - camWant.y; C.vsOz = camPos.z - camWant.z;
-      C.vsLx = camLook.x - lookWant.x; C.vsLy = camLook.y - lookWant.y; C.vsLz = camLook.z - lookWant.z;
       C.vsStep = Math.hypot(C.vsOx, C.vsOy, C.vsOz);
+      const dx = camLook.x - camPos.x; const dy = camLook.y - camPos.y; const dz = camLook.z - camPos.z;
+      C.vsLx = Math.atan2(dx, dz); C.vsLy = Math.atan2(dy, Math.hypot(dx, dz)); // the old aim: yaw, pitch
+      const nx = lookWant.x - camWant.x; const ny = lookWant.y - camWant.y; const nz = lookWant.z - camWant.z;
+      C.vsLz = Math.abs(wrapAngle(Math.atan2(nx, nz) - C.vsLx)) + Math.abs(Math.atan2(ny, Math.hypot(nx, nz)) - C.vsLy); // how far the aim turns
     }
     const vu = C.override ? 1 : (tSec - C.vsAt) / VIEW_WHIP_S;
-    if (vu < 1 && C.vsStep > 0.02 && C.vsStep < 12) {
+    if (vu < 1 && (C.vsStep > 0.02 || C.vsLz > 0.05) && C.vsStep < 12) {
       const e = 1 - vu * vu * (3 - 2 * vu);
       camPos.set(camWant.x + C.vsOx * e, camWant.y + C.vsOy * e, camWant.z + C.vsOz * e);
-      camLook.set(lookWant.x + C.vsLx * e, lookWant.y + C.vsLy * e, lookWant.z + C.vsLz * e);
+      const nx = lookWant.x - camWant.x; const ny = lookWant.y - camWant.y; const nz = lookWant.z - camWant.z;
+      const yaw1 = Math.atan2(nx, nz); const h1 = Math.hypot(nx, nz); const pit1 = Math.atan2(ny, h1);
+      const yaw = yaw1 + wrapAngle(C.vsLx - yaw1) * e; const pit = pit1 + (C.vsLy - pit1) * e; const cp = Math.cos(pit);
+      camLook.set(camPos.x + Math.sin(yaw) * cp, camPos.y + Math.sin(pit), camPos.z + Math.cos(yaw) * cp);
     } else if (snap) { camPos.copy(camWant); camLook.copy(lookWant); }
     else if (rate > 0) {
       const k = 1 - Math.exp(-rate * dt);
@@ -3137,6 +3205,11 @@ export function createGame(el, api) {
         return { yaw: b.yaw, pitch: b.lookPitch };
       },
       partnerPos(w) { const r = stage.av[w].root.position; return [r.x, r.y, r.z]; },
+      /** Net probe (cheap, per frame): shared clock, my body, the partner as drawn, the camera, presence calls. */
+      /** Net A/B: { maxDelay } caps the adaptive delay (100 = the old fixed delay); { keepalive: false } publishes every tick. */
+      netTune(o) { if (o.maxDelay != null) link.setDelayMax(o.maxDelay); if (o.keepalive != null) PUB_HOLD_MS = o.keepalive ? 250 : Infinity; return { maxDelay: o.maxDelay, hold: PUB_HOLD_MS }; },
+      netStats() { return { interp: { ...link.interpStats }, pubs: NETST.pubs, idle: NETST.idle, delay: link.delay, target: link.delayTarget, rtt: link.rtt }; },
+      netProbe() { const v = viewer() || me; const o = other(v); const b = body[v]; const r = stage.av[o].root.position; const c = stage.camera.position; return [now(), b.x, b.y, b.z, r.x, r.y, r.z, c.x, c.y, c.z, NETST.pubs, stage.av[o].root.visible ? 1 : 0, S.phase.name === 'seek' && hunting() ? 1 : 0, link.delay]; },
       /** World centre of a player's body mesh (what to aim at). */
       bodyCenter(w) { const m = stage.av[w].meshes[0]; m.updateWorldMatrix(true, false); const c = new THREE.Vector3(); m.geometry.computeBoundingBox(); m.geometry.boundingBox.getCenter(c); m.localToWorld(c); return [c.x, c.y, c.z]; },
       /** Screen position (CSS px, page coords) of a world point with the current camera. */
@@ -3196,7 +3269,7 @@ export function createGame(el, api) {
         stage.ray.set(new THREE.Vector3(x + nx * 0.3, y + ny * 0.3, z + nz * 0.3), new THREE.Vector3(-nx, -ny, -nz));
         const hit = stage.pickMap(1); if (!hit) return null; const out = [0, 0, 0]; stage.albedoAtHit(hit, out); return out;
       },
-      camera() { const c = stage.camera; return { p: c.position.toArray(), fov: c.fov }; },
+      camera() { const c = stage.camera; return { p: c.position.toArray(), fov: c.fov, dir: c.getWorldDirection(new THREE.Vector3()).toArray() }; },
       tweak(o) {
         if (o.aniso != null) { stage.mapMesh.material.map.anisotropy = o.aniso; stage.mapMesh.material.map.needsUpdate = true; }
         if (o.hideMap != null) for (const m of stage.mapMeshes) m.visible = !o.hideMap;
@@ -3231,6 +3304,10 @@ export function createGame(el, api) {
         return { dabTexels: p.dabTexels, dabs: p.dabs, texels: p.texels, version: p.version, lastPaint: stats.lastPaint, colours: dist.size, pfx: { fill: !!PFX.fillParts, stamp: !!PFX.stampW, preview: !!PFX.previewUntil, fills: PFX.fills, stamps: PFX.stamps }, size: P.size, hard: P.hard };
       },
       brushPreviewNow() { brushPreview(); return PFX.previewUntil > 0; },
+      /** The live camo meter: its score, the paint version it was taken at, whether it shows, jobs run. */
+      camo() { return { score: CAMO.score, ver: CAMO.ver, shown: !!(CAMO.meter && CAMO.meter.shown), busy: CAMO.job.on, runs: CAMO.runs, slices: CAMO.slices, meter: CAMO.meter ? CAMO.meter.stats : null, cached: !!stats.blendCached }; },
+      /** Slow the stamp wipe / fill flood down (screenshots) or read the current reveal. */
+      reveal(o, w) { if (o) { if (o.stamp) Object.assign(REVEAL.stamp, o.stamp); if (o.fill) Object.assign(REVEAL.fill, o.fill); } return stage.paints[w || viewer() || 'a'].reveal; },
       lookFrom(arr) { C.override = arr; },
       setLook(yaw, pitch) { const b = body[viewer()]; b.lookYaw = yaw; b.lookPitch = pitch; },
       openPoses() { posesOpen = true; },

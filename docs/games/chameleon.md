@@ -125,8 +125,8 @@ title → HIDE (clock, or none with On Ready) → LOCK → countdown → SEEK [h
 - **Head start**: the first part of the seek phase. The seeker stays blindfolded (canvas hidden,
   "Blindfold on · head start" card, no moving, firing or scanning) while the hider gets the hiding
   moves back (walk, climb, zip without spending an escape, pose, paint: synced live). The hider's
-  position stays private until 0.5 s before the blindfold lifts (so the seeker's interpolation
-  buffer is warm). Only the hunt scores: points = seconds of hunt (+30 for surviving).
+  position stays private until 0.75 s before the blindfold lifts (so the seeker's interpolation
+  buffer is warm even at the adaptive delay's 250 ms cap; it was 0.5 s with a fixed 100 ms delay). Only the hunt scores: points = seconds of hunt (+30 for surviving).
 - **Grace period**: the first seconds of the hunt; Fire is disabled and reads "Wait 3".
 - **One device**: the same clocks (the curtain used to start a fixed 60 s hide / 90 s seek whatever
   the settings said); the head start is just a blindfold countdown there (the hider has already
@@ -215,7 +215,7 @@ and miss the dashing body entirely, which made the section flaky).
 - **Running dry** used to pay the hider the whole clock + 30 (six quick misses at 14 s = +120 on
   Classic, +165 on CU). Now `roundOver` is called with the moment the seeker ran out and pays
   `floor(seconds survived) + 30`; the SURVIVED stamp and recap say "ran dry at 0:05 · +35".
-- **Blend %** (`blendOf`, game.js): at the lock, every body texel facing away from the surface the
+- **Blend %** (`blendOf` in game.js, the math in `camo.js`, shown live while painting): at the lock, every body texel facing away from the surface the
   hider is on (the wall behind a stuck body, else the floor below, found exactly as the stamp
   finds it) is projected onto that surface, the surface albedo there is sampled with the stamp's
   sampler (vertex colour × atlas tile × blob shadow), and
@@ -693,11 +693,70 @@ drags are decided in `pointermove` past a 9 px slop. A legend shows the keys on 
     (Q 1.1). It is throttled to one per 55 ms.
   - Fill swells the filled part 1.08 → 1 over 0.18 s (ease-out). Texels are refreshed from
     the rest pose if you stroke mid-swell.
-  - Stamp flashes the outline white and thins it to nothing over 0.25 s. The real reveal
-    outline always wins.
+  - Stamp flashes the outline white and thins it to nothing over the wipe (0.36 s). The real
+    reveal outline always wins.
 - Test: `ONLY=paintfeel` covers lock cost (cold and warm), blob reuse, part culling, the
   preview ring, and the fill and stamp juice. It writes `brush-*.png`, and `PAINT_MONT=<mont.js>`
   makes a montage.
+
+### Paint owner, second pass: the wipe, the flood and the camo meter
+
+Played through on the Living Room, Art Studio and CU walls (scripted phone runs, light and dark,
+slow-motion captures of the reveals). What was missing was a *goal* while painting and a
+moment of payoff for the two big tools.
+
+- **Stamp wipe** (`paint.js`, `REVEAL.stamp`: 0.36 s, front 0.22 of the sweep, glow 0.65): the
+  stamp no longer appears in one frame. The new colours go into a target buffer, each texel gets
+  a key (its height along the camera's up vector) and the texels are bucket-sorted by key
+  (64 buckets, scratch arrays allocated once per paint). `flush()`, which the frame loop already
+  calls once per paint, advances the wave on real time: texels behind the front take their
+  colour, the front itself flashes toward white and settles. It reads as a print being pulled up
+  the body. The full-screen white flash on Stamp was removed (it hid the wipe); the sound is the
+  stamp thunk plus the rising `whoosh`.
+- **Fill flood** (`REVEAL.fill`: 0.28 s, front 0.3, glow 0.4): the key is the distance from the
+  finger's hit, so the colour spreads out from where you tapped across the region.
+- **Undo dissolve** (`REVEAL.undo`: 0.22 s, front 0.45, glow 0.3): only the texels that differ
+  from the snapshot take part, keyed by a per-texel hash, so the undone paint speckles away
+  instead of snapping (a cancelled two-finger gesture still undoes instantly).
+- **Settle before read.** Everything that reads or edits the skin (`dab`, `fill`, `stamp`,
+  `snapshot`, `undo`, `hash`, `quantize`, `encode`, `colorAtUV`, `changedPoints`, the blend
+  scorer) finishes a running wave first, so the codec, undo, checksums and the score only ever
+  see finished paint. A live update (paint while hunted) waits until the wave has settled
+  (`p.revealing`). Cost: ≤ 0.5 ms per frame while a wave runs (Node, all 16 k texels), one
+  texture upload per frame for 0.3 s.
+- **Camo meter** (`camo.js`): while the paint tools are open, a riso sticker on the right edge
+  shows the blend score live: a tube filling to the score (red Sore thumb, yellow Spotted, your
+  ink Sneaky, green Ghost with a sheen), ticks at the grade lines 50 / 75 / 90, a dashed line and
+  a star at the blend-bonus line (80 or 90 when the rule is on; the star lights when you pass
+  it), the number counting toward the score (0.55 s ease-out, DOM writes only when the integer
+  changes) and the grade word. A better grade pops a sticker ("Sneaky!", "Ghost!") with
+  `pose` / `good` / the `unlock` chord; reaching the bonus line inside the same grade pops
+  "+10". Drops are silent. Placement: right edge at 184 px (portrait), 64 px with a shorter tube
+  on a phone on its side; tested clear of the tools, poses, top bar, role pill and hint at
+  390×844, 844×390 and 375×667.
+- **Scoring without hitches.** The score math moved from `blendOf` into `camo.js`
+  (`scoreBlend`, identical formula). The meter reruns it after every settled change (a stroke
+  ended, a wave finished, a fill swell ended, the body moved or changed pose): the texels are
+  refreshed from the body as it is now (the tail sways and the eye turrets wander), the surface
+  is looked up only when the spot changed, and the job runs 1 800 samples a frame (5 slices for
+  a whole body; 0.05 ms median per slice in Node, `updateWorld` 0.8 ms warm after replacing
+  `Math.hypot` with `Math.sqrt`). Only the round's first score is taken in one frame, so the
+  meter never opens on a blank "--".
+- **The lock reuses the meter.** When neither the paint version nor the spot changed since the
+  meter's last score, the lock records that score instead of scoring again: the number the hider
+  saw is the number that pays the bonus (the lock's quantise to 32 colours would otherwise move
+  it by a point or two right at the threshold). Measured: lock after painting 0.3 ms (encode
+  0.0, blend 0.1, 1.9 KB in one chunk); a stamp then an immediate lock with no meter (the cold
+  path) 15 ms (encode 6 + blend 7) on the loaded sandbox, warm medians encode 2.0 ms, blend
+  3.8 ms. Brush cost per pointer move (CU, 1x / 4x CPU): median 0.2–0.6 / 0.5–1.2 ms, max 2.4 /
+  3.7 ms.
+- Test: `ONLY=paintjuice` (one phone, Living Room wallpaper): the meter appears with the paint
+  tools and scores plain white (~45 %), scoring is sliced, the stamp starts a wipe that finishes
+  by itself and lifts the meter to Ghost with a pop, a sound and the +10 star, a 30 s wipe is
+  part-way after 1.5 s and reading the hash settles it, a fill floods and lowers the score, undo
+  restores it, the layout at three viewports, the meter leaves with the tools, and the lock
+  takes the meter's score without re-scoring. Writes `juice-*.png` (+ a montage with
+  `PAINT_MONT`).
 
 ## Netcode (net.js via `chameleon/link.js`)
 
@@ -711,8 +770,8 @@ net.js type (`g`) and big payloads (paint, snapshots) as chunked blobs.
 
 | State | Authority | Transport |
 |---|---|---|
-| own avatar: position, yaw, pose, wall angle, eye look, speed, orientation `q` (packed quaternion), stuck `at` | owning device | `net.publish` 20/s; the partner is drawn from an allocation-free ring-buffer interpolation at `now − 100 ms` (q by slerp) |
-| hider position during Hide | owning device | **not sent** — presence carries zeros (look, wall angle, speed too) and `v: 0`, as a **2.5/s keepalive** (one publish per 400 ms; it still feeds the host's 4.5 s stall detection); full 20/s resumes 500 ms before the hunt so the seeker's buffer is primed |
+| own avatar: position, yaw, pose, wall angle, eye look, speed, orientation `q` (packed quaternion), stuck `at` | owning device | `net.publish` 20/s while anything changes (and 250 ms after), a **2.5/s keepalive** while nothing does (pro pass); the partner is drawn from an allocation-free ring-buffer interpolation at `now − delay`, the delay **adaptive** (100–250 ms, q by slerp) |
+| hider position during Hide | owning device | **not sent** — presence carries zeros (look, wall angle, speed too) and `v: 0`: a constant state, so it goes out as the 2.5/s keepalive (it still feeds the host's 4.5 s stall detection); the real state resumes 750 ms before the hunt so the seeker's buffer is primed |
 | paint texture | owning device | reliable blob at lock (+ snapshot on resync) |
 | mode, map, first hider, rules (validated) | host | reliable `setup`; rules also inside every `ph` match info |
 | phases `hide lock seek found time recap final` (+ local `curtain`) | host | reliable `ph {seq, at, dur, scores, match}` **plus two unreliable copies** (deduped by `seq`, not held back by in-order delivery); both devices switch with `setTimeout(at − now)` and a per-frame check |
@@ -728,8 +787,9 @@ net.js type (`g`) and big payloads (paint, snapshots) as chunked blobs.
 
 **Fair-shot rule (shooter-favoured, 250 ms).** The shooter raycasts against the hider exactly
 as drawn (`net.remote(shotTime)`, i.e. `now − delay`, validated against the partner session)
-and sends the hit plus the position it saw. The hider's device keeps ~1.5 s of its own
-positions and confirms when any true position in `[shotTime − delay − 250 ms, shotTime]` is
+and sends the hit plus the position it saw **and the delay it drew with** (`dl`: the delay is
+adaptive, so the victim's own differs). The hider's device keeps ~1.5 s of its own
+positions and confirms when any true position in `[shotTime − dl − 250 ms, shotTime]` is
 within 0.75 m of what the shooter saw. What you see is what you hit, unless the hider had
 already scurried away more than a quarter second earlier. In Double Blind the host takes the
 earliest confirmed tag within a 250 ms window.
@@ -749,10 +809,58 @@ collider without a mesh: pellets pass through it (you can see through it), bodie
 after a switch records the offset between where the camera was and the new view's target, and
 `cameras()` eases it out with a smoothstep over `VIEW_WHIP_S = 0.35 s`, riding on the new view's
 own motion (eyes stay locked, watch keeps its rate-9 follow afterwards), with the `whoosh` sound.
-Measured: a 1.2-8 m switch now spreads over 4-6 frames at 65 ms (largest single step 40 % of the
-move, was 100 %).
+The aim turns **by angle** (yaw / pitch from the old view direction to the new one), not by
+sliding the look point: eyes → watch often faces the other way, and a lerped look point passes
+right by the camera, which flipped the view in one frame near the end of the whip. Offsets over
+12 m (across a big map) still cut. Measured (`netpolish`, 60 ms link, ~70 ms sandbox frames): an
+8.2 m, 73° switch spreads over 5 frames, largest step 34 % of the move and 25° of the turn, the
+aim never swinging back (was 100 % in one frame).
 
-Budget per device: presence 20/s (2.5/s while hiding), `chi` ~0.5/s, net.js pings/acks, reliable events a few per
+### Pro pass: net (presence keepalive, adaptive interpolation delay)
+
+**Presence only streams while something changes.** `network()` compares the presence state with
+what it last sent (1 mm, ~0.2°, 0.02 m/s; `q`, pose and flags exact). Anything different goes
+out at once (one publish per ≥ 49 ms, net.js's 20/s, so every counted publish is really sent)
+and keeps full rate for `PUB_HOLD_MS = 250` after the last change, so the partner's buffer ends
+on a still pair and never extrapolates a stop into an overshoot. Then a keepalive every
+`PUB_KEEPALIVE_MS = 400` (it still feeds the host's 4.5 s stall detection and its 800 ms
+un-stall). That covers the hider's private zeros all hide phase (the finding), a still hider all
+hunt, the blindfolded seeker, the lobby and the recap. A fresh link (new epoch) starts at full
+rate. Real room sends per device, counted at the platform binding:
+
+| | before | after |
+|---|---|---|
+| lobby, both idle | 9.5–12 /s | 2.0–2.3 /s |
+| hide: hider (zeros) / blindfolded seeker | 14–20 /s each | 2.5 /s each |
+| hunt: still hider | 13 /s (one per frame) | 2.2–2.4 /s |
+| hunt: walking seeker | 13 /s | full rate while moving |
+
+Over a Classic round (60 s hide, 90 s hunt, recap) that is about 2–3× fewer presence messages
+per device (each one also cost net.js an object and the platform a room event).
+
+**Adaptive interpolation delay** (`link.js`). The partner is drawn at `now − delay` on the shared
+clock, so the delay has to cover the one-way trip **plus** the gap to the next sample; the fixed
+100 ms didn't on any link slower than ~50 ms one way, and the buffer ran dry and extrapolated
+(an overshoot on every stop, a snap back on every turn). Each accepted sample now records what
+it needed (its age on arrival + the sender-side gap since the previous one, an idle keepalive
+gap counting as one 50 ms interval); the delay follows the 2nd-highest of the last 40 (≈ p95)
++ 10 ms, clamped to 100–250 ms, rising at 80 ms/s and falling at 25 ms/s (the partner's clock
+runs at 0.92–1.03× while it adapts). `net.delay` is kept equal, so lag compensation samples
+exactly what was drawn, and the shot carries the shooter's delay (`dl`) for the victim's window.
+A playtest script (two phones, the seeker walking, stopping and strafing for 11 s, the hider
+drawing them; truth = the seeker's own path at the same render time; old = fixed 100 ms):
+
+| link | frames extrapolated while the partner moves | drawn error p95 / max | overshoot at a stop | velocity hitches (> 0.8 m/s) |
+|---|---|---|---|---|
+| 60 ms ± 40 % | 33 % → **0 %** | 0.078 / 0.25 → **0.028 / 0.067 m** | 0.023 → 0.048 m | 17 / 167 → **4 / 180** |
+| 110 ms ± 40 %, 5 % loss | 85 % → **2 %** | 0.17 / 0.38 → **0.037 / 0.097 m** | 0.24 → **0.097 m** | 55 / 190 → **5 / 147** |
+
+(The sandbox's slow pages make its one-way trip 100–200 ms, so the delay settles at the 250 ms cap
+there; on phones it should sit near 130–180 ms.) The hider's head-start position goes public
+750 ms before the blindfold lifts (was 500) so the buffer is warm at the cap. `link.interpStats`
+counts frames interpolated / extrapolated / held at the 160 ms cap / past a still pair.
+
+Budget per device: presence ≤ 20/s while moving, 2.5/s otherwise, `chi` ~0.5/s, net.js pings/acks, reliable events a few per
 second; a phase change costs 3 messages; the paint burst is one or two chunks.
 
 ## Maps (deterministic data, no assets)
@@ -808,7 +916,8 @@ the first touch, respecting the app's mute switch).
   26 m, a 1.5 m collision grid (each query touches a handful of the 929 boxes on the biggest map).
 - Shaders are compiled with `renderer.compile()` behind the loading card.
 - Per frame: no allocations in game code (ring buffers, shared vectors, stable HUD
-  descriptors, DOM writes only on change); net.js allocates one object per publish (20/s).
+  descriptors, DOM writes only on change); net.js allocates one object per publish (≤ 20/s while
+  moving, 2.5/s keepalive otherwise).
 - Pauses rendering when hidden; handles `webglcontextlost` / `restored` (paint buffers
   re-uploaded, programs recompiled, "Tap to resume").
 - `destroy()` disposes every geometry, material, texture and the renderer (and forces context
@@ -841,7 +950,8 @@ the hider moving during the head start while the seeker is blind, grace refusing
 scaling, persistence), `v3house` / `v3cu` (full 2-round matches with the v3 settings), `shots3`
 (screenshots). Screenshots go to `$SHOTS` (default `$TMPDIR/chameleon-shots`).
 
-- `netpolish` (pro pass, net owner): the hiding keepalive (≤ 3.2 publishes/s while hiding, one per frame once hunted, host never stalls), the eased View → Watch switch (no single frame takes > 85 % of the move), pellet range = fog far. `NETSHOTS=1` also saves the whip frames.
+- `paintfeel` / `paintjuice` (pro pass, paint owner): codec and lock cost, dab culling, brush cursor and sound, fill / stamp juice; the stamp wipe and fill flood (settle-before-read), the live camo meter (sliced scoring, grade pops, layout at three viewports) and the lock reusing its score. `PAINT_SHOTS=<dir>` / `PAINT_MONT=<mont.js>` for screenshots and montages.
+- `netpolish` (pro pass, net owner; 60 ms link): presence keepalive (≤ 3.5 real sends/s in the lobby, for the hiding hider and the blindfolded seeker, ≤ 3.2 publishes/s for a still hunted hider, full rate the moment it looks round, host never stalls), the adaptive delay (above 100 ms, ≤ 250), the eased View → Watch switch (no single frame takes > 85 % of the move or the turn, the aim never swings back), pellet range = fog far, and a tag judged with the shooter's delay. `NETSHOTS=1` also saves the whip frames.
 
 ## Known limits
 

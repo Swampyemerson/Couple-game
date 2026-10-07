@@ -30,7 +30,11 @@ export function createRemoteBuffer(size = 40) {
   const t = new Float64Array(size);
   const v = new Float64Array(size * F);
   let head = 0; let count = 0;
+  // sampling stats (tests / tuning): interpolated, extrapolated past the newest sample (while the
+  // partner moves), held at the cap (moving), past the newest of a still pair (harmless)
+  const stats = { interp: 0, extra: 0, held: 0, still: 0 };
   return {
+    stats,
     clear() { head = 0; count = 0; },
     get count() { return count; },
     push(time, s) {
@@ -54,10 +58,12 @@ export function createRemoteBuffer(size = 40) {
       if (a === newest) {
         if (count < 2) { for (let f = 0; f < F; f++) out[FIELDS[f]] = v[a * F + f]; quatOut(out); return true; }
         const p = (a - 1 + size) % size;
+        if (v[a * F] === v[p * F] && v[a * F + 1] === v[p * F + 1] && v[a * F + 2] === v[p * F + 2]) stats.still++;
+        else if (at - t[a] > maxExtra) stats.held++; else stats.extra++;
         const over = Math.min(at - t[a], maxExtra);
         k = 1 + over / Math.max(1, t[a] - t[p]);
         b = a; a = p;
-      } else k = (at - t[a]) / Math.max(1, t[b] - t[a]);
+      } else { k = (at - t[a]) / Math.max(1, t[b] - t[a]); stats.interp++; }
       for (let f = 0; f < F; f++) {
         const name = FIELDS[f]; const x0 = v[a * F + f]; const x1 = v[b * F + f];
         if (name === 'po' || name === 'v' || name === 'at') out[name] = k < 0.5 && a !== b ? x0 : x1;
@@ -91,6 +97,34 @@ export function createLink(api, { delay = 100, onLink = () => {}, onUnlink = () 
   const offs = [];
   const timers = [];
   const rb = createRemoteBuffer();
+  // Adaptive interpolation delay. The partner is drawn at (now − delay) on the shared clock, so
+  // delay has to cover the one-way trip PLUS the gap to the next sample, or the buffer runs dry
+  // and extrapolates (overshoot on every stop, snap back on every turn). A fixed 100 ms did that
+  // on half the frames of a 60 ms link. Each accepted sample records what it needed
+  // (its age on arrival + the sender-side gap since the previous one; idle keepalive gaps count
+  // as one nominal interval); the delay follows the 2nd-highest of the last 40 (≈ p95) + 10 ms,
+  // between `delay` and DELAY_MAX, rising at 80 ms/s and falling at 25 ms/s (the drawn clock runs
+  // at 0.92–1.03× while it adapts: invisible). net.delay is kept equal, so lag compensation
+  // (net.remote) samples exactly what was drawn.
+  let DELAY_MAX = 250;
+  const need = new Float64Array(40);
+  const dly = { n: 0, i: 0, prevT: 0, has: false, target: delay, cur: delay, at: 0 };
+  function dlyReset() { dly.n = 0; dly.i = 0; dly.has = false; dly.target = delay; dly.cur = delay; dly.at = 0; }
+  function dlyNeed(T) {
+    const age = linkNow() - T;
+    const gap = dly.has ? T - dly.prevT : 50; dly.prevT = T; dly.has = true;
+    need[dly.i] = age + (gap > 0 && gap <= 130 ? gap : 50); dly.i = (dly.i + 1) % need.length; if (dly.n < need.length) dly.n++;
+    if (dly.n < 6) return;
+    let m1 = -Infinity; let m2 = -Infinity;
+    for (let i = 0; i < dly.n; i++) { const x = need[i]; if (x > m1) { m2 = m1; m1 = x; } else if (x > m2) m2 = x; }
+    dly.target = Math.min(DELAY_MAX, Math.max(delay, m2 + 10));
+  }
+  function dlySlew() {
+    const t = performance.now(); const dt = dly.at ? Math.min(0.1, (t - dly.at) / 1000) : 0; dly.at = t;
+    if (dly.cur < dly.target) dly.cur = Math.min(dly.target, dly.cur + 80 * dt);
+    else if (dly.cur > dly.target) dly.cur = Math.max(dly.target, dly.cur - 25 * dt);
+    if (net) net.delay = dly.cur;
+  }
   const pubState = { k: sess, p: '' };
   for (const f of FIELDS) pubState[f] = 0;
   let sent = 0; // reliable sends (for budget tests)
@@ -121,6 +155,12 @@ export function createLink(api, { delay = 100, onLink = () => {}, onUnlink = () 
   // so we keep our own min-RTT NTP estimate of the host clock, independent of net.js's offset.
   const clk = { off: 0, n: 0, samples: [], id: 0, sent: new Map(), timer: 0, offs: [] };
   const hostNow = () => (net ? net.now() : performance.now());
+  /** The shared clock as the game reads it (see now() below). */
+  function linkNow() {
+    if (!net) return performance.now();
+    if (local || api.isHost || clk.n < 3) return net.now();
+    return performance.now() + clk.off;
+  }
   function clockReset() {
     clk.off = 0; clk.n = 0; clk.samples.length = 0; clk.sent.clear();
     clearTimeout(clk.timer); clk.timer = 0;
@@ -157,7 +197,7 @@ export function createLink(api, { delay = 100, onLink = () => {}, onUnlink = () 
   function makeNet() {
     if (net) { try { net.destroy(); } catch { /* ignore */ } }
     if (rawOff) { try { rawOff(); } catch { /* ignore */ } rawOff = null; }
-    rb.clear();
+    rb.clear(); dlyReset();
     ready = false;
     const myEpoch = ++epoch;
     let n;
@@ -177,6 +217,7 @@ export function createLink(api, { delay = 100, onLink = () => {}, onUnlink = () 
       n.onRemote((s) => {
         if (!s || s.k !== partner || s.p !== sess) return;
         lastHeard = performance.now();
+        if (s.__t > rb.latestTime()) dlyNeed(s.__t);
         rb.push(s.__t, s);
       });
     }
@@ -230,11 +271,7 @@ export function createLink(api, { delay = 100, onLink = () => {}, onUnlink = () 
     /** Milliseconds since anything arrived from the partner. */
     get silence() { return local ? 0 : performance.now() - lastHeard; },
     /** Shared game clock: the host's net.js clock; guests use the refined estimate once it has 3 samples. */
-    now() {
-      if (!net) return performance.now();
-      if (local || api.isHost || clk.n < 3) return net.now();
-      return performance.now() + clk.off;
-    },
+    now: linkNow,
     get clockSamples() { return clk.n; },
     send(type, data) { if (!net) return false; sent++; net.send('g', { t: type, d: data ?? null }); return true; },
     /** Two unreliable copies right now (not held back by in-order delivery). Use for idempotent messages. */
@@ -262,9 +299,15 @@ export function createLink(api, { delay = 100, onLink = () => {}, onUnlink = () 
       for (let i = 0; i < FIELDS.length; i++) pubState[FIELDS[i]] = st[FIELDS[i]];
       net.publish(pubState);
     },
-    /** Interpolated partner state at (now - delay) into out; false if none yet. */
-    sample(out, at) { return rb.sample((at ?? (net ? net.now() : 0)) - (net ? net.delay : delay), out); },
+    /** Interpolated partner state at (now − delay) into out; false if none yet. Call once a frame: it also eases the adaptive delay. */
+    sample(out, at) { if (net && !local) dlySlew(); return rb.sample((at ?? (net ? net.now() : 0)) - (net ? net.delay : delay), out); },
+    /** The adaptive delay's target and current value (ms). */
+    get delayTarget() { return dly.target; },
+    /** Tests / tuning: cap the adaptive delay (cap = the base delay → the old fixed delay). */
+    setDelayMax(ms) { DELAY_MAX = Math.max(delay, ms); dly.target = Math.min(dly.target, DELAY_MAX); dly.cur = Math.min(dly.cur, DELAY_MAX); },
     remoteCount() { return rb.count; },
+    /** Interpolation stats (tests / tuning): frames interpolated, extrapolated, held at the cap. */
+    get interpStats() { return rb.stats; },
     /** Lag compensation: the partner as drawn at shotTime (net.remote), validated against our session. */
     remoteAt(shotTime, out) {
       if (!net) return false;
