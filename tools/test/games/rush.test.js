@@ -4,7 +4,8 @@
 // heap growth, seamlessness (late lobby, partner / host re-mounts mid-race, 30 s in the
 // background, a much slower partner), and screenshots in light and dark.
 //   node tools/test/games/rush.test.js            (ONLY=gen,race,... to run some sections)
-// Sections: gen race brawl tandem pause | split leak | drop | dark | heap | seam. Ports 8960-8969.
+// Sections: gen race brawl tandem pause daily | split leak | drop | dark | heap | seam. Ports 8960-8969.
+// (the author runs two halves: ONLY=gen,split,leak,drop,dark and ONLY=race,brawl,tandem,pause,daily)
 const fs = require('fs');
 const { launch } = require('../harness');
 
@@ -69,7 +70,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
 
 (async () => {
   // ═══ two phones, live ═══
-  if (['gen', 'race', 'brawl', 'tandem', 'pause'].some(want)) {
+  if (['gen', 'race', 'brawl', 'tandem', 'pause', 'daily'].some(want)) {
     const h = await launch({ port: 8960, only: ['rush'], latency: 80, coarse: true });
     const { a, b } = h;
     try {
@@ -85,6 +86,16 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         const ha = await a.evaluate((ss) => ss.map((s) => window.__rush.trackHash(s, 40)), seeds);
         const hb = await b.evaluate((ss) => ss.map((s) => window.__rush.trackHash(s, 40)), seeds);
         assert(ha.every((x, i) => x === hb[i]) && new Set(ha).size === seeds.length, `track layouts identical on both devices for ${seeds.length} seeds (40 chunks each)`);
+        // fairness: a lane change begun just before a head-on is a clip (stumble), a square hit a crash
+        const p2 = await a.evaluate(() => window.__rush.probe2());
+        assert(p2.late.crashes === 0 && p2.late.clips === 1 && p2.late.stumbles === 1, `a swipe a step before a barrier clips it (stumble, bounce back), no heart lost (${JSON.stringify(p2.late)})`);
+        assert(p2.none.crashes === 1 && p2.none.clips === 0, `the same barrier hit square on is a crash (${JSON.stringify(p2.none)})`);
+        assert(p2.early.crashes === 0 && p2.early.stumbles === 0, `a swipe in time passes clean (${JSON.stringify(p2.early)})`);
+        assert(p2.combo.max >= 3 && p2.combo.bonus >= 5, `near-miss combos pay bonus coins: x${p2.combo.max} max, +${p2.combo.bonus} bonus, ${p2.combo.closeCalls} close calls over 1.2 km of perfect running`);
+        // the Daily seed: one track for both, all day
+        const da = await a.evaluate(() => [window.__rush.dailySeed(), window.__rush.dailySeed('2026-01-02')]);
+        const db = await b.evaluate(() => [window.__rush.dailySeed(), window.__rush.dailySeed('2026-01-02')]);
+        assert(da[0] === db[0] && da[1] === db[1] && da[0] !== da[1] && da[0] > 0, `both phones agree on today's Daily seed (${da[0]}) and it changes by day`);
         const bots = await a.evaluate((ss) => ss.map((s) => window.__rush.botRun(s, 500)), [11, 22, 33, 44, 55]);
         for (const r of bots) console.log(`   bot seed ${r.seed}: ${r.chunks} chunks, ${(r.z / 1000).toFixed(1)} km, crashes ${r.crashes}, stumbles ${r.stumbles}, ${r.ms} ms`);
         assert(bots.every((r) => r.chunks >= 500 && r.crashes === 0 && r.fails.length === 0), 'perfect-information bot never gets caught in 500 chunks × 5 seeds');
@@ -126,6 +137,14 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         await swipe(b, 195, 500, 0, 80);   // roll
         await until(b, (n) => window.__rush.state().b.rolls > n, r0, 4000, 'roll from a down-swipe');
         console.log('ok - down-swipe rolls');
+        // ghost marker: when the partner is out of sight ahead, a chip with the live gap sits at the horizon in their lane
+        await b.evaluate(() => { const r = window.__rush.internals.players.b.r; r.z += 135; r.zPrev = r.z; });
+        await until(a, () => { const t = document.querySelector('.g-rush .rr-tag'); return t && t.classList.contains('rr-ghost') && t.style.display !== 'none' && /↑ \d+ m/.test(t.textContent); }, null, 6000, 'ghost marker for a partner far ahead');
+        const gt = await a.$eval('.g-rush .rr-tag', (t) => t.textContent);
+        assert(/Sydney ↑ \d+ m/.test(gt), `host sees the partner's ghost marker: "${gt}"`);
+        await shot(a, 'phone-light-ghost');
+        await b.evaluate(() => { const r = window.__rush.internals.players.b.r; r.z -= 135; r.zPrev = r.z; }); // back to the pack
+        await until(a, () => { const t = document.querySelector('.g-rush .rr-tag'); return !t || !t.classList.contains('rr-ghost') || t.style.display === 'none'; }, null, 6000, 'ghost marker gone once they are back in view');
         // hand over to the autopilot; the ghosting runs out like a respawn's, so it can steer clear first
         await a.evaluate(() => { window.__rush.ghost('a', 1.5); window.__rush.auto('a', true); });
         await b.evaluate(() => { window.__rush.ghost('b', 1.5); window.__rush.auto('b', true); });
@@ -177,6 +196,8 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         // a rocket (speed lines + FOV kick), and the shield bubble on screen, before the shader check
         await a.evaluate(() => { window.__rush.give('a', 'rocket'); window.__rush.input('a', 'use'); window.__rush.give('a', 'shield'); });
         await h.wait(900);
+        // milestone for an unlock: Emerson racks up 10 close calls this run
+        await a.evaluate(() => { window.__rush.internals.players.a.r.closeCalls = 10; });
         const pa = await a.evaluate(() => window.__rush.perf());
         console.log(`   perf (iPhone 13 profile, SwiftShader, two pages): frame p50 ${pa.p50.toFixed(1)} ms, p95 ${pa.p95.toFixed(1)} ms, js p50 ${pa.work50.toFixed(2)} ms, p95 ${pa.work95.toFixed(2)} ms, draw calls ${pa.calls} (max ${pa.maxCalls}), triangles ${pa.tris} (max ${pa.maxTris}), render scale ${pa.scale}, dpr ${pa.dpr}`);
         assert(pa.maxCalls <= 30, `draw calls within the phone budget of 30 in a busy race (max ${pa.maxCalls})`);
@@ -195,6 +216,12 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         await h.wait(500);
         const res = h.results().filter((r) => r.game === 'rush');
         assert(res.length === 1 && res[0].winner === ra.result.winner, 'race result recorded once');
+        // bests + unlocks land in the shared game data (and the end card shows this device's line)
+        const gd = h.docs['gamedata/rush'] || {};
+        assert(gd.a_race_m > 0 && gd.b_race_m > 0 && gd.a_runs === 1, `bests in the shared doc: Emerson ${gd.a_race_m} m, Sydney ${gd.b_race_m} m`);
+        assert(gd.unlock_a_trail2 === 1, 'the "10 close calls" milestone unlocked the Ink trail for Emerson (shared doc)');
+        const sub = await a.$eval('#game-root .gm-end', (e) => e.textContent);
+        assert(/\d+ m/.test(sub) && /Sydney/.test(sub), 'the death card shows distance and the partner');
         await shot(a, 'phone-light-end');
         await shot(b, 'phone-light-end-guest');
       }
@@ -204,6 +231,17 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         await until(a, () => window.__rush && window.__rush.state().phase === 'lobby', null, 15000, 'host back in the lobby');
         await until(b, () => window.__rush && window.__rush.state().phase === 'lobby' && window.__rush.state().synced, null, 15000, 'guest back in the lobby');
         console.log(`   rematch: re-mounted and ready in ${(await S(a)).loadMs} ms (host), ${(await S(b)).loadMs} ms (guest) — three.js already loaded`);
+        if (want('race')) {
+          await until(b, () => window.__rush.data().unlock_a_trail2 === 1, null, 8000, 'guest sees the unlock');
+          assert((await a.evaluate(() => window.__rush.data().unlock_a_trail2)) === 1, 'unlock persists across the re-mount on both phones');
+          await a.click('.g-rush .rr-ov-lobby [data-r="gear"]');
+          await until(a, () => !!document.querySelector('.g-rush .rr-chip-s[data-k="trail"][data-v="2"]:not(.locked)'), null, 4000, 'Ink trail chip unlocked in settings');
+          assert(await a.$eval('.g-rush .rr-chip-s[data-k="trail"][data-v="1"]', (e) => e.classList.contains('locked')), 'the 1 km trail is still locked');
+          await a.click('.g-rush .rr-chip-s[data-k="trail"][data-v="2"]');
+          await shot(a, 'phone-light-style');
+          await a.click('.g-rush .rr-ov-set [data-x="done"]');
+          assert((await a.evaluate(() => window.__rush.settings.trail)) === 2, 'Emerson wears the Ink trail');
+        }
         await pickAndStart(h, 'brawl');
         await waitRun(a); await waitRun(b);
         // Emerson (lane -1) steps to the middle, then into Sydney's lane (1) while level: a shove
@@ -293,6 +331,39 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
           const tr = h.results().filter((r) => r.game === 'rush' && r.winner === 'team');
           assert(tr.length === 1 && tr[0].score === st.result.score, 'team score recorded once');
         }
+      }
+      if (want('daily')) {
+        await a.click('#game-root [data-g="rematch"]').catch(() => {});
+        await until(a, () => window.__rush && window.__rush.state().phase === 'lobby', null, 15000, 'lobby for daily');
+        await until(b, () => window.__rush && window.__rush.state().phase === 'lobby' && window.__rush.state().synced, null, 15000, 'guest lobby for daily');
+        await pickAndStart(h, 'daily');
+        await waitRun(a); await waitRun(b);
+        const ds = await a.evaluate(() => window.__rush.dailySeed());
+        const sa = await S(a); const sb = await S(b);
+        assert(sa.seed === ds && sb.seed === ds, `the Daily run uses today's seed on both phones (${ds})`);
+        await a.evaluate(() => window.__rush.auto('a', true));
+        await b.evaluate(() => window.__rush.auto('b', true));
+        await h.wait(2500);
+        await shot(a, 'phone-light-daily');
+        // Sydney runs out of hearts first; Emerson keeps going, then is out too: furthest wins
+        await b.evaluate(() => { window.__rush.auto('b', false); window.__rush.setHearts('b', 1); window.__rush.crash('b'); });
+        await until(a, () => window.__rush.state().b.out, null, 8000, 'host sees Sydney out');
+        await h.wait(2500);
+        await shot(b, 'phone-light-daily-spectate');
+        await a.evaluate(() => { window.__rush.auto('a', false); window.__rush.setHearts('a', 1); window.__rush.crash('a'); });
+        await until(a, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 20000, 'daily ends');
+        await until(b, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 10000, 'daily ends for the guest');
+        const rd = await S(a);
+        assert(rd.result.daily && rd.result.winner === 'a' && rd.result.za > rd.result.zb, `furthest wins the Daily: ${rd.result.text} (${rd.result.sub})`);
+        await h.wait(500);
+        const gd = h.docs['gamedata/rush'] || {};
+        const dk = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
+        assert(gd[`a_daily_${dk}`] === rd.result.za && gd[`b_daily_${dk}`] === rd.result.zb, `today's board is in the shared doc (${gd[`a_daily_${dk}`]} / ${gd[`b_daily_${dk}`]} m)`);
+        await shot(a, 'phone-light-daily-end');
+        await a.click('#game-root [data-g="rematch"]').catch(() => {});
+        await until(a, () => window.__rush && window.__rush.state().phase === 'lobby', null, 15000, 'lobby after daily');
+        await until(a, () => /Today:/.test((document.querySelector('.g-rush [data-r="daily"]') || {}).textContent || ''), null, 8000, 'lobby shows today\'s board');
+        await shot(a, 'phone-light-lobby-board');
       }
       h.assertNoErrors();
       console.log('ok - no page errors (phones)');

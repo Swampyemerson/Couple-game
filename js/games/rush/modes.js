@@ -1,15 +1,16 @@
 // Rail Rush mode rules: Race (weapons + rubber-banding), Brawl (shoves), Tandem (revives, team
 // hearts, coin goals) and the host's verdicts. Works the same with one device (both runners
 // local, messages delivered directly) and two (messages over the reliable link).
-import { LANE_W, CHUNK, ROOF, BOOST_T, REVIVE_WINDOW, TEAM_HEARTS, TEAM_HEARTS_MAX, BRAWL_CAP, STEP_UP } from './tune.js';
+import { LANE_W, CHUNK, ROOF, BOOST_T, REVIVE_WINDOW, TEAM_HEARTS, TEAM_HEARTS_MAX, BRAWL_CAP, DAILY_CAP, STEP_UP } from './tune.js';
 import { O_BLOCK, O_TRAIN, O_MTRAIN, O_RAMP, pathLane } from './track.js';
 import { crash, respawn, C_SLAM, E_PICK, E_CRASH, E_FINISH, E_TOKEN, E_BLOCK } from './sim.js';
 import { I_BOX } from './track.js';
 
-export const MODES = ['race', 'brawl', 'tandem'];
+export const MODES = ['race', 'brawl', 'tandem', 'daily'];
 const AB = ['a', 'b'];
 const fmtT = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
-export const MODE_LABEL = { race: 'Race', brawl: 'Brawl', tandem: 'Together' };
+export const MODE_LABEL = { race: 'Race', brawl: 'Brawl', tandem: 'Together', daily: 'Daily' };
+export const fmtM = (m) => Math.max(0, Math.round(m)).toLocaleString('en-US');
 const GOALS = [100, 250, 450, 700, 1000, 1400, 1900, 2500];
 
 const pick = (table) => {
@@ -275,7 +276,7 @@ export function createRules(G) {
     const r = p.r;
     const v = G.view(p.w);
     if (t === E_PICK && Math.floor(val / 100000) === I_BOX) {
-      if (M.mode !== 'race') return;
+      if (M.mode !== 'race') { if (M.mode === 'daily') { r.coins += 5; v && v.pop('+5', 'hl'); } return; }
       if (!p.weapon && p.weaponRoll <= 0) { p.weapon = rollWeapon(p); p.weaponRoll = 0.6; G.audio.play('box'); }
       else { r.coins += 5; v && v.pop('+5', 'hl'); }
       return;
@@ -333,6 +334,7 @@ export function createRules(G) {
       // rubber bands
       if (M.mode === 'brawl') r.catchup = Math.max(-0.18, Math.min(0.32, gap * 0.012));
       else if (M.mode === 'tandem') r.catchup = qs.down ? 0 : Math.max(-0.12, Math.min(0.2, gap * 0.008));
+      else if (M.mode === 'daily') { r.catchup = 0; r.draft = 0; }
       else {
         r.catchup = 0;
         const drafting = gap > 2.5 && gap < 14 && Math.abs(qs.x - r.x) < 1.1 && !qs.down && r.grounded;
@@ -405,7 +407,7 @@ export function createRules(G) {
       const nm = { a: G.name('a'), b: G.name('b') };
       const W = w === 'a' ? A : B; const Lp = w === 'a' ? B : A;
       const sub = why || `${(M.len / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })} km in ${fmtT(W.fin)} · ${Lp.fin >= 0 ? `${fmtT(Lp.fin)} for ${nm[w === 'a' ? 'b' : 'a']}` : `${Math.max(0, Math.round(M.len - Lp.z))} m short`}`;
-      return { winner: w, text: `${nm[w]} wins the race`, sub };
+      return { winner: w, text: `${nm[w]} wins the race`, sub, za: Math.round(A.z), zb: Math.round(B.z), ta: A.fin, tb: B.fin };
     }
     if (M.mode === 'brawl') {
       let w = null; let sub = '';
@@ -421,6 +423,16 @@ export function createRules(G) {
       }
       if (!w) return null;
       return { winner: w, text: `${G.name(w)} wins the brawl`, sub };
+    }
+    if (M.mode === 'daily') {
+      // Same track for both all day: the run ends when both are out of hearts (or someone reaches
+      // the cap). Distance decides; a draw if it's within a metre.
+      const bothOut = A.out >= 0 && B.out >= 0;
+      const capped = A.z >= DAILY_CAP || B.z >= DAILY_CAP;
+      if (!bothOut && !capped) return null;
+      const w = Math.abs(A.z - B.z) < 1 ? null : A.z > B.z ? 'a' : 'b';
+      const sub = `${G.name('a')} ${fmtM(A.z)} m · ${G.name('b')} ${fmtM(B.z)} m`;
+      return { winner: w, text: w ? `${G.name(w)} wins today’s run` : 'Dead heat today', sub, daily: 1, za: Math.round(A.z), zb: Math.round(B.z) };
     }
     if (M.mode === 'tandem') {
       if (M.th > 0) return null;

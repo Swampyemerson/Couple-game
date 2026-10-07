@@ -2,13 +2,14 @@
 // the fixed-step loop, pause / resume protocol, partner re-mounts, finale, HUD, test hook.
 import {
   DT, LANE_W, SLIDE_TIME, STUMBLE_T, START_DELAY, RESUME_DELAY, RACE_LEN, BRAWL_CAP, MT_LEAD, CHUNK,
-  HEARTS, TEAM_HEARTS_MAX, baseSpeed,
+  HEARTS, TEAM_HEARTS_MAX, HIT_STOP, FINALE_MS, baseSpeed,
 } from './tune.js';
+import { hash } from '../core.js';
 import { createTrack, trackHash, difficulty, O_MTRAIN, TUT_JUMP, TUT_ROLL } from './track.js';
 import {
   newRunner, step, act, createBot, botRun, crash, C_FORCED, A_LEFT, A_RIGHT, A_UP, A_DOWN,
   E_JUMP, E_LAND, E_ROLL, E_LANE, E_COIN, E_PICK, E_STUMBLE, E_CRASH, E_RESPAWN, E_SHIELD,
-  E_CLOSE, E_COMBO, E_FINISH, E_SMASH, E_TOKEN, E_BLOCK, E_BUMP,
+  E_CLOSE, E_COMBO, E_FINISH, E_SMASH, E_TOKEN, E_BLOCK, E_BUMP, E_BONUS, E_CLIP,
 } from './sim.js';
 import { makePalette } from './gfx.js';
 import { createWorld } from './world.js';
@@ -18,7 +19,7 @@ import { createAudio } from './audio.js';
 import { createInput, A_USE } from './input.js';
 import { createHud } from './hud.js';
 import { createLink, emptyState } from './link.js';
-import { createRules, MODES, MODE_LABEL } from './modes.js';
+import { createRules, MODES, MODE_LABEL, fmtM } from './modes.js';
 
 const PH = { loading: 0, lobby: 1, countdown: 2, run: 3, finale: 4, over: 5 };
 const F_AIR = 1; const F_ROLL = 2; const F_DOWN = 4; const F_INV = 8; const F_SHIELD = 16; const F_DONE = 32;
@@ -37,6 +38,22 @@ const DIGITS = ['', '1', '2', '3'];
 const TUT_KEYS = ['← → or A D to switch lanes', '↑ W or Space to jump', '↓ or S to roll under'];
 const TUT_BTNS = ['Tap left or right to switch lanes', 'Tap JUMP to jump', 'Tap ROLL to roll under'];
 const TUT_SWIPE = ['Swipe left or right to switch lanes', 'Swipe up to jump', 'Swipe down to roll under'];
+// Unlockable style: earned by milestones, kept in the shared game data (per person), worn per device.
+const STYLES = [
+  { key: 'trail', k: 0, name: 'None' },
+  { key: 'trail', k: 1, name: 'Sparkle', how: 'Run 1 km in one go', test: (S) => S.dist >= 1000 },
+  { key: 'trail', k: 2, name: 'Ink puffs', how: '10 close calls in one run', test: (S) => S.closeCalls >= 10 },
+  { key: 'trail', k: 3, name: 'Confetti', how: 'Win 3 matches', test: (S) => S.wins >= 3 },
+  { key: 'trail', k: 4, name: 'Embers', how: 'A x10 combo', test: (S) => S.maxCombo >= 10 },
+  { key: 'hat', k: 0, name: 'None' },
+  { key: 'hat', k: 1, name: 'Crown', how: 'Beat your partner’s best Daily run', test: (S) => S.beatDaily },
+  { key: 'hat', k: 2, name: 'Halo', how: 'Revive your partner 3 times', test: (S) => S.revives >= 3 },
+  { key: 'hat', k: 3, name: 'Party cone', how: '150 coins in one run', test: (S) => S.coins >= 150 },
+];
+const fmtT = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+const dayKey = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+/** The Daily seed: one track for both of you, all day (local calendar day). */
+export function dailySeed(day = dayKey()) { return (hash('rush-daily', day) % 2147483646) + 1; }
 
 const AB = ['a', 'b'];
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } };
@@ -68,7 +85,21 @@ export function createGame(el, api) {
   const glWrap = root.querySelector('.rr-gl');
   const touch = root.querySelector('.rr-touch');
 
-  const settings = Object.assign({ scheme: 'swipe', music: 'on' }, lsGet(SKEY, {}));
+  const settings = Object.assign({ scheme: 'swipe', music: 'on', trail: 0, hat: 0 }, lsGet(SKEY, {}));
+  // shared bests + unlocks (the engine mirrors them locally and syncs the shared doc)
+  const data = () => (typeof api.data === 'function' ? api.data() : {});
+  const setData = (patch) => { if (typeof api.setData === 'function') api.setData(patch); };
+  const unlocked = (w, st) => st.k === 0 || !!data()[`unlock_${w}_${st.key}${st.k}`];
+  const wear = { a: { tr: 0, ht: 0 }, b: { tr: 0, ht: 0 } };
+  /** What each local runner wears: the device's pick, if that person has earned it. */
+  function resolveWear() {
+    for (const w of AB) {
+      const tr = STYLES.find((x) => x.key === 'trail' && x.k === (settings.trail | 0));
+      const ht = STYLES.find((x) => x.key === 'hat' && x.k === (settings.hat | 0));
+      wear[w].tr = tr && unlocked(w, tr) ? tr.k : 0;
+      wear[w].ht = ht && unlocked(w, ht) ? ht.k : 0;
+    }
+  }
   const audio = createAudio({
     musicOn: () => settings.music === 'on',
     getCtx: typeof api.audio === 'function' ? () => api.audio() : null,
@@ -97,6 +128,7 @@ export function createGame(el, api) {
     onSettings: () => openSettings(),
     onSet: (k, v) => {
       if (k === 'sound') lsSet(MUTE, v === 'off');
+      else if (k === 'trail' || k === 'hat') { settings[k] = v | 0; lsSet(SKEY, settings); resolveWear(); audio.play('tick'); }
       else { settings[k] = v; lsSet(SKEY, settings); }
       root.classList.toggle('rr-buttons', settings.scheme === 'buttons' && !split);
       openSettings();
@@ -108,7 +140,11 @@ export function createGame(el, api) {
   function openSettings() {
     let snd = 'on';
     try { snd = JSON.parse(localStorage.getItem(MUTE) || 'false') ? 'off' : 'on'; } catch { /* ignore */ }
-    hud.settings({ scheme: settings.scheme, music: settings.music, sound: snd });
+    const w = meW || 'a';
+    const styles = STYLES.map((st) => ({ key: st.key, k: st.k, name: st.name, how: st.how || '', locked: !unlocked(w, st) }));
+    if (!unlocked(w, STYLES.find((x) => x.key === 'trail' && x.k === settings.trail) || STYLES[0])) settings.trail = 0;
+    if (!unlocked(w, STYLES.find((x) => x.key === 'hat' && x.k === settings.hat) || STYLES[0])) settings.hat = 0;
+    hud.settings({ scheme: settings.scheme, music: settings.music, sound: snd, trail: settings.trail, hat: settings.hat, styles });
   }
 
   if (!live && phoneish) {
@@ -170,8 +206,9 @@ export function createGame(el, api) {
   let W = 0; let H = 0; const baseDpr = Math.min(window.devicePixelRatio || 1, 2); let scale = 0.85;
   // Doubles written every frame live on one object: V8 boxes a fresh HeapNumber for every double
   // stored in a closure variable, while object fields are updated in place (JSC boxes neither).
-  const K = { tAnim: 0.5, lastTs: 0.5, ewma: 16.7, lowFor: 0.5, checkT: 0.5, coolT: 0.5, hudT: 0.5, scoreT: 0.5, lastPub: -1e9 };
-  K.tAnim = 0; K.lastTs = 0; K.lowFor = 0; K.checkT = 0; K.coolT = 0; K.hudT = 0; K.scoreT = 0;
+  const K = { tAnim: 0.5, lastTs: 0.5, ewma: 16.7, lowFor: 0.5, checkT: 0.5, coolT: 0.5, hudT: 0.5, scoreT: 0.5, lastPub: -1e9, hitStop: 0.5, hitPend: 0.5, wind: 0.5, mile: 0.5 };
+  K.tAnim = 0; K.lastTs = 0; K.lowFor = 0; K.checkT = 0; K.coolT = 0; K.hudT = 0; K.scoreT = 0; K.hitStop = 0; K.hitPend = 0; K.wind = 0;
+  let frameN = 0;
   const perf = { dts: new Float32Array(600), work: new Float32Array(600), n: 0, calls: 0, tris: 0, maxCalls: 0, maxTris: 0, programs0: 0, scaleDowns: 0, scaleUps: 0 };
   let rules = null;
   const pal = { a: null, b: null, hl: null };
@@ -298,6 +335,7 @@ export function createGame(el, api) {
   // ── lobby / match lifecycle ──
   function toLobby() {
     M.phase = 'lobby';
+    resolveWear();
     root.classList.add('rr-in-lobby');
     M.track = null; M.result = null; M.ready = false; M.reasons.clear(); M.paused = false; M.resumeAt = 0; M.rejoin = null;
     players.a.snap.ok = 0; players.b.snap.ok = 0;
@@ -321,7 +359,7 @@ export function createGame(el, api) {
       if (!partnerHere || !ps || ps.ph !== PH.lobby || !ps.sy) { hudToast(`Waiting for ${api.name(other(meW))}…`); return; }
     }
     const mode = M.lobbyMode;
-    const seed = (dbg && dbg.seed) || ((Math.random() * 2147483646) | 0) + 1;
+    const seed = mode === 'daily' ? dailySeed() : (dbg && dbg.seed) || ((Math.random() * 2147483646) | 0) + 1;
     const len = (dbg && dbg.raceLen) || RACE_LEN;
     const cap = (dbg && dbg.brawlCap) || BRAWL_CAP;
     const at = clock() + (live ? START_DELAY : 3000);
@@ -356,7 +394,10 @@ export function createGame(el, api) {
     countK = -1; pauseK = -1;
     world.reset();
     world.setGates(M.mode === 'race' ? [7, M.len] : [7]);
+    world.setMarks(bestMarks());
     fx.clear();
+    for (const w of AB) { players[w].lastMile = 0; players[w].pb = { dist: 0, time: 0, theirs: 0 }; }
+    resolveWear();
     hud.hideLobby(); hud.settings(null);
     root.classList.remove('rr-in-lobby');
     for (const w of viewers) {
@@ -364,7 +405,7 @@ export function createGame(el, api) {
       v.weapon(null, M.mode === 'race');
       v.banner(null);
     }
-    api.setStatus(`${MODE_LABEL[M.mode]} · ${M.mode === 'race' ? `first to ${(M.len / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })} km` : M.mode === 'brawl' ? 'shove to win' : 'shared hearts'}`);
+    api.setStatus(`${MODE_LABEL[M.mode]} · ${M.mode === 'race' ? `first to ${(M.len / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })} km` : M.mode === 'brawl' ? 'shove to win' : M.mode === 'daily' ? 'one track all day' : 'shared hearts'}`);
     audio.startMusic();
     audio.setIntensity(0);
     tutorial.start();
@@ -404,7 +445,7 @@ export function createGame(el, api) {
 
   function endMatch(res) {
     if (M.phase !== 'run') return;
-    const at = clock() + 2300;
+    const at = clock() + FINALE_MS;
     if (live) link.send('end', { res, at });
     startFinale(res, at);
   }
@@ -413,7 +454,8 @@ export function createGame(el, api) {
     const w = res.winner;
     const v = viewers.map((x) => players[x].view);
     const cls = res.team ? 'team' : w ? 'p' + w : '';
-    hud.finale(res.team ? res.text : w ? `${api.name(w)} wins!` : 'Photo finish!', cls, res.team ? res.sub : (live ? (w === meW ? 'You did it' : 'So close') : ''));
+    const pbLine = recordBests(res);
+    hud.finale(res.team ? res.text : w ? `${api.name(w)} wins!` : (res.daily ? 'Dead heat!' : 'Photo finish!'), cls, pbLine || (res.team ? res.sub : (live ? (w === meW ? 'You did it' : 'So close') : '')));
     audio.play('finish');
     audio.stopMusic();
     const tz = w ? players[w].rs : players[viewers[0]].rs;
@@ -422,7 +464,84 @@ export function createGame(el, api) {
   }
   function toOver() {
     M.phase = 'over';
-    try { api.finish(M.result); } catch (e) { console.error(e); }
+    // the card gets this device's own bests line (the recorded result keeps the shared text)
+    const res = Object.assign({}, M.result);
+    if (M.pbText) res.sub = res.sub ? `${res.sub} · ${M.pbText}` : M.pbText;
+    try { api.finish(res); } catch (e) { console.error(e); }
+  }
+
+  // ── bests, daily board, unlocks ──
+  const day = () => dayKey();
+  /** Lines on the track worth chasing: my best and my partner's best for this mode. */
+  function bestMarks() {
+    const d = data(); const out = [];
+    if (M.mode !== 'race' && M.mode !== 'daily') return out;
+    const keyOf = (w) => (M.mode === 'daily' ? `${w}_daily_m` : `${w}_race_m`);
+    const me = meW || 'a'; const q = other(me);
+    const mine = d[keyOf(me)] | 0; const theirs = d[keyOf(q)] | 0;
+    if (theirs > 60) out.push({ z: theirs, text: `${api.name(q).toUpperCase()}’S BEST`, col: P[q] });
+    if (mine > 60 && Math.abs(mine - theirs) > 3) out.push({ z: mine, text: split ? 'BEST' : 'YOUR BEST', col: P.hl });
+    return out;
+  }
+  function recordBests(res) {
+    const lines = [];
+    const d = data(); const patch = {}; const pops = [];
+    for (const w of locals) {
+      const p = players[w]; const r = p.r;
+      if (!r) continue;
+      const dist = Math.round(r.z);
+      const anyM = `${w}_any_m`; const modeM = `${w}_${M.mode}_m`;
+      const newAny = dist > (d[anyM] | 0); const newMode = dist > (d[modeM] | 0);
+      if (newAny) patch[anyM] = dist;
+      if (newMode) patch[modeM] = dist;
+      if (M.mode === 'daily') { const k = `${w}_daily_${day()}`; if (dist > (d[k] | 0)) patch[k] = dist; }
+      if (M.mode === 'race' && r.fin >= 0) { const k = `${w}_race_t`; if (!d[k] || r.fin < d[k]) patch[k] = Math.round(r.fin * 100) / 100; }
+      if (r.closeCalls > (d[`${w}_cc`] | 0)) patch[`${w}_cc`] = r.closeCalls;
+      if (r.maxCombo > (d[`${w}_combo`] | 0)) patch[`${w}_combo`] = r.maxCombo;
+      const won = res.winner === w;
+      const wins = (d[`${w}_wins`] | 0) + (won ? 1 : 0);
+      if (won) patch[`${w}_wins`] = wins;
+      const revives = (d[`${w}_rev`] | 0) + (p.stats.revives | 0);
+      if (p.stats.revives) patch[`${w}_rev`] = revives;
+      patch[`${w}_runs`] = (d[`${w}_runs`] | 0) + 1;
+      // unlocks
+      const q = other(w);
+      const S = { dist, closeCalls: r.closeCalls, maxCombo: r.maxCombo, coins: r.coins, wins, revives, beatDaily: M.mode === 'daily' && dist > (d[`${q}_daily_m`] | 0) && (d[`${q}_daily_m`] | 0) > 0 };
+      for (const st of STYLES) {
+        if (!st.test || unlocked(w, st) || patch[`unlock_${w}_${st.key}${st.k}`]) continue;
+        if (st.test(S)) { patch[`unlock_${w}_${st.key}${st.k}`] = 1; pops.push([w, st]); }
+      }
+      if (p.view) {
+        const prevMode = d[modeM] | 0;
+        const theirs = d[`${q}_${M.mode}_m`] | 0;
+        const bits = [];
+        const who = split ? api.name(w) : 'You';
+        if (M.mode === 'race' && r.fin >= 0) {
+          const prevT = d[`${w}_race_t`];
+          if (prevT && r.fin < prevT) { bits.push(`${who}: fastest yet (was ${fmtT(prevT)})`); p.view.pop('NEW BEST!', 'hl', fmtT(r.fin)); audio.play('good'); }
+          else if (prevT) bits.push(`${who}: best ${fmtT(prevT)}`);
+        } else if (M.mode === 'race' || M.mode === 'daily') {
+          if (newMode && prevMode > 0) { bits.push(`${who}: new best ${fmtM(dist)} m`); p.view.pop('NEW BEST!', 'hl', `${fmtM(dist)} m`); audio.play('good'); }
+          else if (M.mode === 'race') bits.push(`${who}: ${fmtM(dist)} m${prevMode ? ` · best ${fmtM(prevMode)} m` : ''}`);
+          else if (prevMode) bits.push(`${who}: best ${fmtM(prevMode)} m`);
+          if (theirs && (M.mode !== 'daily' || theirs !== Math.round(res.winner === q ? (q === 'a' ? res.za : res.zb) : -1))) bits.push(`${api.name(q)}’s best ${fmtM(theirs)} m`);
+        }
+        if (bits.length) lines.push(bits.join(' · '));
+      }
+    }
+    if (Object.keys(patch).length) setData(patch);
+    const text = lines.join(' · ');
+    M.pbText = text;
+    pops.forEach(([w, st], i) => { const t = setTimeout(() => { if (dead) return; const v = players[w].view; if (v) v.pop('UNLOCKED', 'hl', `${st.name} ${st.key}`); audio.play('unlock'); }, 900 + i * 1100); timers.push(t); });
+    return text;
+  }
+  /** Today's Daily board for the lobby row. */
+  function dailyText() {
+    const d = data(); const k = day();
+    const za = d[`a_daily_${k}`] | 0; const zb = d[`b_daily_${k}`] | 0;
+    if (!za && !zb) return '';
+    const cell = (w, z) => `<span class="p-${w}">${esc(api.name(w))} ${z ? fmtM(z) + ' m' : '—'}</span>`;
+    return `Today: ${cell('a', za)} · ${cell('b', zb)}${za && zb ? (za === zb ? ' · tied' : ` · ${esc(api.name(za > zb ? 'a' : 'b'))} leads`) : ''}`;
   }
 
   // ── input ──
@@ -705,16 +824,19 @@ export function createGame(el, api) {
           break;
         }
         case E_STUMBLE: if (mine) { api.haptic(15); audio.play('stumble'); if (Math.random() < 0.4) v.pop('Oof', 'bad'); } shake(p.w, 0.28); fx.dust(r.x, r.y, r.z, 5, 1); break;
+        case E_CLIP: if (mine) { api.haptic(20); audio.play('clip'); v.pop('Clipped it!', 'bad', 'swipe a touch earlier'); } shake(p.w, 0.35); fx.dust(r.x, r.y, r.z, 6, 1.1); fx.burst(r.x, r.y + 1, r.z, P.hl, 5, 3); break;
+        case E_BONUS: if (mine) { audio.play('bonus', val); v.pop(`+${val}`, 'hl', 'combo bonus'); } fx.burst(r.x, r.y + 1.4, r.z, P.hl, 10, 4); break;
         case E_CRASH:
           if (mine) { api.haptic(45); audio.play('crash'); audio.duck(1400); v.flash(); v.pop(val === 2 ? 'FELL!' : val === 3 ? 'SLAMMED!' : 'CRASH!', 'bad'); }
           shake(p.w, 0.7);
+          if (mine && !reducedMotion) { K.hitPend = HIT_STOP; const rg = p.rig; if (rg) rg.punch(0.7); }
           fx.crash(r.x, r.y, r.z);
           fx.stars(r.x, r.y + 2.0, r.z, 3, 1.5);
           if (r.out && p.outT < 0) p.outT = r.t;
           break;
-        case E_RESPAWN: fx.dust(r.x, 0, r.z, 8, 1.2); if (mine) audio.play('pickup'); break;
+        case E_RESPAWN: fx.dust(r.x, 0, r.z, 8, 1.2); fx.burst(r.x, r.y + 1, r.z, P.hl, 8, 3); if (mine) { audio.play('respawn'); const rg = p.rig; if (rg) rg.kick(0.5); } break;
         case E_SHIELD: fx.burst(r.x, r.y + 1.1, r.z, P.hl, 16, 6); if (mine) { audio.play('shield'); v.pop('Shield saved you', 'hl'); } shake(p.w, 0.3); break;
-        case E_CLOSE: if (mine) { audio.play('close'); v.pop('Close call!', 'hl', '+2'); } break;
+        case E_CLOSE: fx.sparkle(r.x, r.y, r.z, val * LANE_W > r.x ? 1 : -1); if (mine) { audio.play('close'); v.pop('Close call!', 'hl', '+2'); api.haptic(8); const rg = p.rig; if (rg) rg.kick(0.25); } break;
         case E_COMBO: if (mine) { audio.play('combo', val); v.combo(val, COMBO_WORDS[Math.min(val, COMBO_WORDS.length - 1)]); } break;
         case E_SMASH: fx.burst(r.x, r.y + 0.6, r.z + 0.6, P.hl, 14, 7); if (mine) audio.play('smash'); shake(p.w, 0.15); break;
         default: break;
@@ -810,9 +932,11 @@ export function createGame(el, api) {
       pub.z = r.z; pub.x = r.x; pub.y = r.y; pub.g = r.sup > -50 ? r.sup : -3; pub.vy = r.vy; pub.sp = r.speed;
       pub.st = r.stumbleT / STUMBLE_T; pub.dt = r.down ? r.downT : 0; pub.rt = r.t; pub.rp = r.slideT > 0 ? 1 - r.slideT / SLIDE_TIME : 0;
       pub.l = r.lane; pub.f = flagsOf(r); pub.h = r.hearts; pub.c = r.coins; pub.fn = r.fin; pub.w = WEAPON_IDX.indexOf(p.weapon); pub.sv = p.stats.shoves; pub.cb = r.combo;
+      pub.tr = wear[meW].tr; pub.ht = wear[meW].ht;
     } else {
       pub.z = 0; pub.x = (meW === 'a' ? -1 : 1) * LANE_W; pub.y = 0; pub.g = 0; pub.vy = 0; pub.sp = 0; pub.st = 0; pub.dt = 0; pub.rt = 0; pub.rp = 0;
       pub.l = meW === 'a' ? -1 : 1; pub.f = 0; pub.h = HEARTS; pub.c = 0; pub.fn = -1; pub.w = 0; pub.sv = 0; pub.cb = 0;
+      pub.tr = wear[meW].tr; pub.ht = wear[meW].ht;
     }
     link.publish(pub);
   }
@@ -827,14 +951,19 @@ export function createGame(el, api) {
     const dt = dtMs / 1000;
     const w0 = performance.now();
     const now = clock();
-    K.tAnim += dt;
+    // hit-stop: the picture holds on the impact frame (the sim keeps its clock; only the drawing freezes)
+    const frozen = K.hitStop > 0;
+    if (frozen) K.hitStop -= dt;
+    if (!frozen) K.tAnim += dt;
+    frameN++;
     if (M.phase === 'over' && (perf.n % 6) !== 0) { perf.n++; return; } // idle behind the end card
-    logic(now, dt);
-    if (!glLost) { render(dt, now); updateTag(); }
+    logic(now, dt, frozen);
+    if (!glLost) { render(frozen ? 0 : dt, now); if (!frozen) updateTag(); }
+    if (K.hitPend > 0) { K.hitStop = K.hitPend; K.hitPend = 0; }
     track(dtMs, performance.now() - w0);
   }
 
-  function logic(now, dt) {
+  function logic(now, dt, frozen) {
     if (live) { netLogic(now); link.setFastSync(M.phase === 'countdown' || ((M.phase === 'run') && (M.paused || now < M.resumeAt + 500)) || M.rejoin ? 2 : M.phase === 'run' ? 0 : 1); }
     pauseLogic(now);
     if (M.phase === 'lobby') lobbyUI();
@@ -858,6 +987,7 @@ export function createGame(el, api) {
       if (res) endMatch(res);
     } else if (M.phase === 'countdown') M.lastNow = now;
     else if (M.phase === 'finale') { if (rules) rules.tick(now, dt); if (now >= M.endAt) toOver(); }
+    if (frozen) { if (live && ready3D) publish(); return; }
     // render states
     for (let i = 0; i < 2; i++) {
       const p = players[AB[i]];
@@ -881,6 +1011,19 @@ export function createGame(el, api) {
       }
     }
     updateShots(dt);
+    // worn style: trails behind running runners, hats on heads (the partner's come over the wire)
+    for (let i = 0; i < 2; i++) {
+      const p = players[AB[i]];
+      const tr = p.local ? wear[AB[i]].tr : p.net.tr;
+      const ht = p.local ? wear[AB[i]].ht : p.net.ht;
+      if (p.av) p.av.setHat(ht);
+      if (tr && M.phase === 'run' && p.rs.speed > 6 && !p.rs.down && p.rs.visible) fx.trailFx(tr, p.rs.x, p.rs.y, p.rs.z, P[AB[i]], frameN);
+      // distance milestones every 500 m
+      if (p.local && p.view && p.r && M.phase === 'run') {
+        const mile = Math.floor(p.r.z / 500);
+        if (mile > p.lastMile) { p.lastMile = mile; if (mile >= 1) { p.view.pop(`${fmtM(mile * 500)} m`, 'hl', mile * 500 === 1000 ? '1 km!' : ''); audio.play('good'); } }
+      }
+    }
     tutorial.update();
     K.hudT += dt;
     updateHud(now, dt);
@@ -940,6 +1083,7 @@ export function createGame(el, api) {
     let sp = 0;
     for (let i = 0; i < viewers.length; i++) { const rs = players[viewers[i]].rs; if (rs.speed > sp) sp = rs.speed; }
     audio.setIntensity(clamp((sp - 12) / 16, 0, 1));
+    audio.setWind(M.phase === 'run' && !paused ? clamp((sp - 8) / 22, 0, 1) : 0);
     for (let vi = 0; vi < viewers.length; vi++) {
       const w = viewers[vi];
       const p = players[w]; const v = p.view; const r = p.r;
@@ -969,6 +1113,10 @@ export function createGame(el, api) {
         v.bar(true, clamp(p.rs.z / M.len, 0, 1), clamp(qs.z / M.len, 0, 1), p.css, q.css, p.name[0], q.name[0]);
         if (hk.gap !== gapM) { hk.gap = gapM; v.gap(Math.abs(gapM) < 1 ? `${q.name} level with you` : `${q.name} ${gapM > 0 ? '+' : '−'}${Math.abs(gapM)} m`); }
         v.weapon(p.weaponRoll > 0 ? WEAPON_IDX[1 + (Math.floor(K.tAnim * 12) % 5)] : p.weapon, true);
+      } else if (M.mode === 'daily') {
+        v.bar(false);
+        const k = (Math.abs(gapM) <= 2 ? 99999 : gapM) * 10 + qh;
+        if (hk.gap !== k) { hk.gap = k; v.gap(Math.abs(gapM) <= 2 ? `${q.name} level with you` : `${q.name} ${gapM > 0 ? '+' : '−'}${Math.abs(gapM)} m`); }
       } else if (M.mode === 'brawl') {
         v.bar(false);
         const k = (Math.abs(gapM) <= 2 ? 99999 : gapM) * 10 + qh;
@@ -1006,7 +1154,11 @@ export function createGame(el, api) {
           if (hk.ban !== 2) { hk.ban = 2; v.banner(`${esc(q.name)} is down! Grab the glowing heart<b>${left}</b>`); }
           v.bannerNum(left);
         } else if (hk.ban) { hk.ban = 0; v.banner(null); }
-      } else if (M.mode !== 'tandem') v.banner(null);
+      } else if (M.mode === 'daily' && M.phase === 'run' && r.out) {
+        const qz = Math.round(qs.z / 5) * 5;
+        if (hk.ban !== 3) { hk.ban = 3; v.banner(`Out of hearts at ${fmtM(r.z)} m · ${esc(q.name)} is still running<b>${qz}</b><small>metres so far</small>`); }
+        v.bannerNum(qz);
+      } else if (M.mode !== 'tandem') { if (hk.ban) { hk.ban = 0; } v.banner(null); }
     }
     void dt;
   }
@@ -1016,7 +1168,7 @@ export function createGame(el, api) {
       const q = players[other(meW)];
       const me = players[meW].rs;
       const dz = q.rs.z - me.z;
-      if (dz > -6 && dz < 150 && q.rs.visible && !(Math.abs(dz) < 3 && Math.abs(q.rs.x - me.x) < 1)) {
+      if (dz > -6 && dz < 120 && q.rs.visible && !(Math.abs(dz) < 3 && Math.abs(q.rs.x - me.x) < 1)) {
         const cam = players[meW].rig.cam;
         vec3.set(q.rs.x, q.rs.y + 2.75, -q.rs.z);
         vec3.project(cam);
@@ -1029,35 +1181,50 @@ export function createGame(el, api) {
           vec3.project(cam);
           hud.tag(true, side > 0 ? W - 10 : 10, clamp((-vec3.y * 0.5 + 0.5) * H, 150, H - 170), q.name, q.css, side);
         } else hud.tag(false);
+      } else if (M.phase === 'run' && q.rs.visible && (dz >= 120 || dz <= -6) && Math.abs(dz) < 100000) {
+        // ghost marker: they're out of sight, so pin a chip where they'd be (their lane, up at the
+        // horizon when ahead, down by my feet when behind) with the live gap
+        const cam = players[meW].rig.cam;
+        const g = Math.round(Math.abs(dz) / 5) * 5;
+        if (ghostG !== g || ghostDir !== (dz > 0)) { ghostG = g; ghostDir = dz > 0; ghostText = `${q.name} ${dz > 0 ? '↑' : '↓'} ${g} m`; }
+        if (dz > 0) {
+          vec3.set(q.rs.x, 1.2, -(me.z + 140));
+          vec3.project(cam);
+          hud.tag(true, clamp((vec3.x * 0.5 + 0.5) * W, 60, W - 60), clamp((-vec3.y * 0.5 + 0.5) * H, H * 0.3, H * 0.5), ghostText, q.css, 0, true);
+        } else hud.tag(true, clamp(W / 2 + (q.rs.x - me.x) * 34, 70, W - 70), H - 120, ghostText, q.css, 0, true);
       } else hud.tag(false);
     } else hud.tag(false);
   }
+  let ghostG = -1; let ghostDir = false; let ghostText = '';
   let countK = -1; let pauseK = -1;
 
   // The lobby re-renders only when one of its inputs changes (a numeric key), not every frame.
   let lobbyK = -1;
   function lobbyUI() {
     if (!ready3D) return;
-    let k = MODES.indexOf(M.lobbyMode) + 1;
+    // mode in bits 8+, the live flags below it, today's Daily board (so a new best redraws the row) above
+    let k = (MODES.indexOf(M.lobbyMode) + 1) << 8;
+    { const d = data(); const dk = day(); k += (((d[`a_daily_${dk}`] | 0) * 31 + (d[`b_daily_${dk}`] | 0)) % 100003) * 4096; }
     let ps = null; let fresh = false;
     if (live) {
       ps = link.latest();
       fresh = !!ps && link.age() < 2000;
-      if (!isHost) { const hm = fresh && ps.ph === PH.lobby ? MODES[ps.md] : null; if (hm) M.lobbyMode = hm; k = MODES.indexOf(M.lobbyMode) + 1; }
+      if (!isHost) { const hm = fresh && ps.ph === PH.lobby ? MODES[ps.md] : null; if (hm) M.lobbyMode = hm; k = (k & ~0xff00) | ((MODES.indexOf(M.lobbyMode) + 1) << 8); }
       k |= (partnerHere ? 4 : 0) | (fresh && ps.ph === PH.lobby ? 8 : 0) | (fresh && ps.sy ? 16 : 0) | (fresh && ps.rd ? 32 : 0) | (link.synced ? 64 : 0) | (M.ready ? 128 : 0);
     }
     if (k === lobbyK && ov_lobbyOn()) return;
     lobbyK = k;
     const keys = split ? `<div><b>${esc(api.name('a'))}</b><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> · weapon <kbd>E</kbd></div><div><b>${esc(api.name('b'))}</b><kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> · weapon <kbd>Enter</kbd></div>` : '';
-    if (!live) { hud.lobby({ mode: M.lobbyMode, canPick: true, canStart: true, startLabel: 'Start', status: '', keys }); return; }
+    const daily = dailyText();
+    if (!live) { hud.lobby({ mode: M.lobbyMode, canPick: true, canStart: true, startLabel: 'Start', status: '', keys, daily }); return; }
     const pn = api.name(other(meW));
     if (isHost) {
       const pin = partnerHere && fresh && ps.ph === PH.lobby && ps.sy;
       const status = !partnerHere ? `Waiting for ${esc(pn)}…` : !pin ? `${esc(pn)} is getting ready…` : ps.rd ? `<span class="rr-ok">${esc(pn)} is ready</span>` : `${esc(pn)} is here · you pick the mode`;
-      hud.lobby({ mode: M.lobbyMode, canPick: true, canStart: !!pin, startLabel: 'Start', status, keys });
+      hud.lobby({ mode: M.lobbyMode, canPick: true, canStart: !!pin, startLabel: 'Start', status, keys, daily });
     } else {
       const status = `${esc(pn)} picks the mode${link.synced ? '' : ' · syncing clocks…'}`;
-      hud.lobby({ mode: M.lobbyMode, canPick: false, canStart: link.synced, startLabel: M.ready ? 'Ready!' : 'I’m ready', status, keys });
+      hud.lobby({ mode: M.lobbyMode, canPick: false, canStart: link.synced, startLabel: M.ready ? 'Ready!' : 'I’m ready', status, keys, daily });
     }
   }
   const ov_lobbyOn = () => hud.ov.lobby.classList.contains('on');
@@ -1107,6 +1274,7 @@ export function createGame(el, api) {
       if (M.phase === 'lobby' || M.phase === 'loading') mode = 'lobby';
       else if (M.phase === 'finale' || M.phase === 'over') { mode = 'finale'; const w = M.result && M.result.winner; tg = w ? players[w].rs : p.rs; }
       else if (M.mode === 'tandem' && p.rs.down && p.r && p.r.hold && p.rs.downT > 0.9) { mode = 'spectate'; tg = players[other(p.w)].rs; }
+      else if (M.mode === 'daily' && p.r && p.r.out && p.rs.downT > 1.2 && !players[other(p.w)].rs.idle) { mode = 'spectate'; tg = players[other(p.w)].rs; }
       if (lobbyish && split) rg.resize(W, H, H < 560 && W > H);
       else if (split && rg.cam.aspect !== vw / H) rg.resize(vw, H, H < 560 && vw > H);
       rg.update(dt, mode, tg, K.tAnim);
@@ -1239,6 +1407,43 @@ export function createGame(el, api) {
       mode(m) { if (isHost && M.phase === 'lobby') { M.lobbyMode = m; } },
       start() { hostStart(); },
       trackHash: (seed, n) => trackHash(seed, n),
+      dailySeed: (d) => dailySeed(d),
+      data: () => data(),
+      setData: (patch) => setData(patch),
+      settings,
+      /** Fairness probes: a late lane change before a barrier is a clip (stumble), a square hit is a crash; combo tiers pay. */
+      probe2() {
+        const tr = createTrack(5);
+        // find the first low barrier past the warm-up with a clear lane next to it
+        let o = null;
+        for (let ci = 1; ci < 20 && !o; ci++) {
+          const c = tr.chunk(ci);
+          for (const x of c.obs) {
+            if (x.t !== 1 || x.soft) continue;
+            const nl = x.lane === 1 ? 0 : x.lane + 1; // the lane the swipe goes to
+            const busy = c.obs.some((y) => y !== x && ((y.lane === nl && y.z1 > x.z0 - 12 && y.z0 < x.z1 + 12) || (y.lane === x.lane && y.z1 > x.z0 - 32 && y.z0 < x.z0)));
+            if (!busy && !c.gaps.length && x.z0 - 30 > c.z0) { o = x; break; }
+          }
+        }
+        const run = (swipeBefore) => {
+          const r = newRunner(o.lane); r.z = r.zPrev = o.z0 - 30; r.t = 20; r.speed = baseSpeed(20);
+          const dir = o.lane === 1 ? A_LEFT : A_RIGHT;
+          let swiped = false;
+          for (let k = 0; k < 400 && !r.down; k++) {
+            if (!swiped && o.z0 - (r.z + 0.35) < swipeBefore) { swiped = true; act(r, dir); }
+            step(r, tr, false);
+            if (r.z > o.z1 + 5) break;
+          }
+          return { crashes: r.crashes, stumbles: r.stumbles, clips: r.clips, z: r.z };
+        };
+        const late = run(0.06 + 1.5 * baseSpeed(20) * DT); // the swipe lands a step before the hull touches: a clip
+        const none = run(-1);    // never swipes: a crash
+        const early = run(3);    // ~0.1 s before: clean
+        // combo tiers: a perfect run through 1.2 km strings clean passes together and gets paid
+        const rc = newRunner(0); rc.hearts = 1e6; const bot = createBot(tr); let n = 0;
+        while (rc.z < 1200 && n < 120 * 90) { if (n % bot.every === 0) { const a = bot.decide(rc); if (a) act(rc, a); } step(rc, tr, false); rc.evN = 0; n++; if (rc.down) break; }
+        return { late, none, early, combo: { max: rc.maxCombo, bonus: rc.bonus, coins: rc.coins, closeCalls: rc.closeCalls } };
+      },
       botRun: (seed, n) => botRun(seed, n),
       inputStats: () => (input ? input.stats : null),
       get canvas() { return renderer ? renderer.domElement : null; },

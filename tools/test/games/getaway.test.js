@@ -285,7 +285,7 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
     const tap = async (sel) => { await a.locator(sel).first().tap(); await wait(250); };
     const ui = () => hook(a, 'ui');
     try {
-      await arm(a, { ...FAST, rounds: 2, intro: 1500, resume: 900, glStuck: 900 });
+      await arm(a, { ...FAST, rounds: 2, intro: 1500, resume: 900, glStuck: 900, heatT: 60 }); // (the AI runner can't shake the heat: the chase must outlast the taps)
       // a map that crashed the last open is not reopened: the lightest map instead
       await a.evaluate(() => { localStorage.setItem('getaway.loading.v1', JSON.stringify({ map: 'boulder', t: Date.now() })); localStorage.setItem('getaway.setup.v1', JSON.stringify({ map: 'boulder' })); });
       await h.openGames(a);
@@ -793,10 +793,22 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
           const lts = ltRaw && ltRaw.map((x) => x[1]);
           const steady = await a.evaluate((t) => window.__gtwLT && window.__gtwLT.filter((x) => x[0] >= t).map((x) => x[1]).sort((x, y) => x - y), lt1);
           if (lts) {
-            const worst = Math.max(0, ...lts); const frame = steady.length ? Math.round(steady[steady.length >> 1]) : 0;
-            const cap = Math.max(250, Math.round(frame * 1.3));
-            console.log(`   ${kind} ${m.name}: load → first frames: longest task ${worst} ms (an ordinary frame here: ${frame || '<50'} ms; GPU warm-up ${wl.warmUp} ms in ${wl.warmSlices} slices, longest JS ${wl.warmMaxMs} ms, longest frame gap ${wl.warmGap} ms at ${wl.warmGapAt}; tasks > 200 ms at +ms: ${JSON.stringify(ltRaw.filter((x) => x[1] > 200))}, ready at +${Math.round(wl.readyAt - Math.max(lt0, wl.startAt - 20))})`);
-            soft(worst <= cap, `${kind} ${m.name}: loading and the first frames never block much longer than an ordinary frame or ~200 ms (${worst} ms ≤ ${cap} ms, software GL)`);
+            // Each long task is either a game frame (the game's frame callback ran in it: a few ms of
+            // JS plus SwiftShader rasterising the whole frame) or load work (build slices, uploads,
+            // first draws). Load work must stay within ~an ordinary frame (or ~200 ms). The first
+            // frames after ready run up to ~1.3× a steady one in software GL (and more on a busy
+            // machine) — that's the software rasteriser, not the load — so frames get 2×, which
+            // still catches real work landing in a frame (a lazy compile or upload is 100s of ms).
+            const fr = await a.evaluate((t) => (window.__gtwFrames || []).filter((f) => f >= t[0] - 5 && f < t[1] + 5), [Math.max(lt0, (wl.startAt || 0) - 20), lt1]);
+            const t00 = Math.max(lt0, (wl.startAt || 0) - 20);
+            const isFrame = (x) => fr.some((f) => f >= t00 + x[0] - 1 && f <= t00 + x[0] + Math.min(x[1], 60));
+            const frame = steady.length ? Math.round(steady[steady.length >> 1]) : 0;
+            const work = ltRaw.filter((x) => !isFrame(x)).map((x) => x[1]); const frames = ltRaw.filter(isFrame).map((x) => x[1]);
+            const worst = Math.max(0, ...work); const worstF = Math.max(0, ...frames);
+            const cap = Math.max(250, Math.round(frame * 1.3)); const capF = Math.max(250, Math.round(frame * 2));
+            console.log(`   ${kind} ${m.name}: load → first frames: longest load task ${worst} ms, longest frame ${worstF} ms (an ordinary frame here: ${frame || '<50'} ms; GPU warm-up ${wl.warmUp} ms in ${wl.warmSlices} slices, longest JS ${wl.warmMaxMs} ms, longest frame gap ${wl.warmGap} ms at ${wl.warmGapAt}; tasks > 200 ms at +ms: ${JSON.stringify(ltRaw.filter((x) => x[1] > 200).map((x) => [...x, isFrame(x) ? 'frame' : 'load']))}, ready at +${Math.round(wl.readyAt - t00)})`);
+            soft(worst <= cap, `${kind} ${m.name}: loading never blocks much longer than an ordinary frame or ~200 ms (${worst} ms ≤ ${cap} ms, software GL)`);
+            soft(worstF <= capF, `${kind} ${m.name}: the first frames after a load are ordinary frames (${worstF} ms ≤ 2 × ${frame} ms, software GL)`);
           }
           const views = await a.evaluate(() => {
             const g = window.__getaway; const out = [];

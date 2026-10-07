@@ -3122,6 +3122,43 @@ function recordResult(id, gameId, res, mode) {
   else lsSet(LS_RESULTS, G.results);
 }
 
+// ── per-game shared data (personal bests, unlocks, daily boards) ─────
+// One small flat doc per game at gamedata/<id>, mirrored in localStorage so it reads instantly
+// and works offline. Writes are field patches (update, or set when the doc doesn't exist yet),
+// so two phones writing different keys never clobber each other; values are monotonic by
+// convention (bests only go up, unlocks only get added), so last-writer-wins per key is safe.
+const LS_DATA = 'ju.games.data.v1';
+G.data = lsGet(LS_DATA, {}) || {};
+G.dataFns = {}; // gameId -> Set(fn)
+G.dataKnown = {}; // gameId -> the server has a doc (so update() works)
+G.healing = {}; // gameId -> a self-heal patch is in flight
+function gameData(id) { return G.data[id] || {}; }
+function setGameData(id, patch) {
+  if (!patch || typeof patch !== 'object') return;
+  const cur = G.data[id] || (G.data[id] = {});
+  const body = {};
+  let n = 0;
+  for (const [k, v] of Object.entries(patch)) {
+    if (!/^[a-zA-Z0-9_.-]{1,60}$/.test(k) || (typeof v !== 'number' && typeof v !== 'string' && typeof v !== 'boolean')) continue;
+    if (cur[k] === v) continue;
+    cur[k] = v; body[k] = v; n++;
+  }
+  if (!n) return;
+  lsSet(LS_DATA, G.data);
+  for (const fn of G.dataFns[id] || []) { try { fn(cur); } catch (e) { console.error(e); } }
+  if (!G.db) return;
+  const ref = G.db.doc(`gamedata/${id}`);
+  (async () => {
+    try { await ref.update(body); G.dataKnown[id] = true; } catch (e) {
+      // update needs an existing doc: create it with everything this device knows (a snapshot
+      // then self-heals whatever the other phone created at the same moment)
+      try { await ref.set({ ...cur }); G.dataKnown[id] = true; } catch { /* offline: the local copy keeps it, and the next write retries */ }
+    }
+  })();
+}
+function onGameData(id, fn) { (G.dataFns[id] = G.dataFns[id] || new Set()).add(fn); return () => G.dataFns[id].delete(fn); }
+const gameDataApi = (id) => ({ data: () => gameData(id), setData: (patch) => setGameData(id, patch), onData: (fn) => onGameData(id, fn) });
+
 function gameRecord(gameId) {
   const r = { a: 0, b: 0, draw: 0, best: null, plays: 0 };
   for (const x of Object.values(G.results)) {
@@ -3283,6 +3320,30 @@ async function initGames(store, hooks = {}) {
       recordFinished();
       cleanup();
       changed();
+    });
+    watch(() => G.db.collection('gamedata'), (qs) => {
+      if (isCache(qs) && qs.empty) return;
+      qs.docs.forEach((d) => {
+        if (!d.exists) return;
+        const id = d.id; const inc = d.data() || {}; const cur = G.data[id] || (G.data[id] = {});
+        G.dataKnown[id] = true;
+        let changedKeys = 0;
+        for (const [k, v] of Object.entries(inc)) {
+          // bests only go up and unlocks only get added: keep the larger number, else take theirs
+          if (typeof v === 'number' && typeof cur[k] === 'number' && cur[k] > v && /(_m|_best|_pb|_n)$/.test(k)) continue;
+          if (cur[k] !== v) { cur[k] = v; changedKeys++; }
+        }
+        if (changedKeys) for (const fn of G.dataFns[id] || []) { try { fn(cur); } catch (e) { console.error(e); } }
+        // Self-heal: anything this device knows that the server copy lacks (two phones created the
+        // doc at once, or a write was lost offline) goes back up as a field patch.
+        if (!isCache(qs)) {
+          const missing = {};
+          let n = 0;
+          for (const [k, v] of Object.entries(cur)) if (inc[k] !== v && !(typeof v === 'number' && typeof inc[k] === 'number' && inc[k] > v)) { missing[k] = v; n++; }
+          if (n && !G.healing[id]) { G.healing[id] = true; G.db.doc(`gamedata/${id}`).update(missing).catch(() => {}).then(() => { G.healing[id] = false; }); }
+        }
+      });
+      lsSet(LS_DATA, G.data);
     });
     try { G.room = await globalThis.claude.use('room'); } catch { G.room = null; }
     if (G.room) wireRoom();
@@ -3799,6 +3860,7 @@ async function openLive(gameId, mode) {
     toast, sfx, haptic, rand, randInt, rng, shuffled, tokens, audio, muted,
     three: loadThree,
     el: stage,
+    ...gameDataApi(gameId), // data() / setData(patch) / onData(fn): the game's shared bests + unlocks
     get partnerHere() { return mode === 'local' || !!partnerPeer; },
     /** This round's number: 0, then +1 on every rematch. */
     get gen() { return gen; },
@@ -4291,7 +4353,7 @@ if (typeof window !== 'undefined') {
   window.__gamesOpenSheet = (g) => openSheet(g);
 }
 
-return { GAMES, registerGame, gameById, hash, rand, randInt, rng, shuffled, derive, gameRecord, muted, audio, sfx, haptic, tokens, loadThree, initGames, gamesIdentityChanged, gamesHubHTML, gamesHomeHTML, gamesWaitingCount, __games };
+return { GAMES, registerGame, gameById, hash, rand, randInt, rng, shuffled, derive, gameDataApi, gameRecord, muted, audio, sfx, haptic, tokens, loadThree, initGames, gamesIdentityChanged, gamesHubHTML, gamesHomeHTML, gamesWaitingCount, __games };
 })();
 
 // ── js/games/agents.js ──
@@ -27232,6 +27294,10 @@ const CURB_H = 0.16;
 // engine-drawn breakables that are thin and tall: drawn with the see-through material (poles a
 // metre from the chase camera are a black bar across the screen otherwise)
 const THIN = { pole: 1, lamp: 1, signal: 1, sign: 1 };
+// see-through meshes pool SEE_CELL × SEE_CELL chunks into one draw call. Bigger cells save calls
+// but a cell is drawn whole when any of it is in view: 2×2 cost Santee +18k triangles in its
+// heaviest view and 3×3 +38k (over the 220k budget), one chunk none (+~10–20 calls, within 90)
+const SEE_CELL = 1;
 
 function chunkKey(x, z) { return `${Math.floor(x / CH)},${Math.floor(z / CH)}`; }
 
@@ -27358,13 +27424,13 @@ async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onProgress 
 
   // ── chunks ──
   const chunks = new Map();
-  // see-through thin things (poles, lamps, signals, signs, map wires) are pooled per 3×3 chunks:
-  // a few hundred triangles a chunk, so one draw call per 600 m cell instead of one per chunk
+  // see-through thin things (poles, lamps, signals, signs, map wires): one mesh per cell of
+  // SEE_CELL × SEE_CELL chunks, distance-culled in update() and frustum-culled by three
   const seeCells = new Map();
   function seeCell(x, z) {
-    const k = `${Math.floor(x / (CH * 3))},${Math.floor(z / (CH * 3))}`;
+    const k = `${Math.floor(x / (CH * SEE_CELL))},${Math.floor(z / (CH * SEE_CELL))}`;
     let s = seeCells.get(k);
-    if (!s) { s = { b: new Builder(THREE, P.outline), mesh: null, x: 0, z: 0, r: CH * 2.2, tris: 0 }; seeCells.set(k, s); }
+    if (!s) { s = { b: new Builder(THREE, P.outline), mesh: null, x: 0, z: 0, r: CH * SEE_CELL * 0.75, tris: 0 }; seeCells.set(k, s); }
     return s;
   }
   function chunkAt(x, z) {
@@ -36796,12 +36862,16 @@ function createGame(el, api) {
       }
       const vis = objs.map((o) => o.visible);
       for (const o of objs) o.visible = false;
-      for (const o of pick) {
+      // one program per slice: grouping the cheap ones (doubling while the frame after a slice
+      // stayed short) put two heavy ones together again and brought the stall back
+      const per = 1;
+      for (let i = 0; i < pick.length;) {
         what = 'firstdraw';
-        const fc = o.frustumCulled; const dr = o.geometry && o.geometry.drawRange ? o.geometry.drawRange.count : null;
-        o.visible = true; o.frustumCulled = false; if (dr != null) o.geometry.drawRange.count = 3;
+        const on = pick.slice(i, i + per); i += on.length;
+        const fc = on.map((o) => o.frustumCulled); const dr = on.map((o) => (o.geometry && o.geometry.drawRange ? o.geometry.drawRange.count : null));
+        on.forEach((o, k) => { o.visible = true; o.frustumCulled = false; if (dr[k] != null) o.geometry.drawRange.count = 3; });
         try { renderer.setViewport(0, 0, 1, 1); renderer.render(sc, cam); } catch (e) { console.warn('getaway: warm-up first draw', e); }
-        o.visible = false; o.frustumCulled = fc; if (dr != null) o.geometry.drawRange.count = dr;
+        on.forEach((o, k) => { o.visible = false; o.frustumCulled = fc[k]; if (dr[k] != null) o.geometry.drawRange.count = dr[k]; });
         if (!(await cut(0.3))) { objs.forEach((q, k) => { q.visible = vis[k]; }); return false; }
       }
       objs.forEach((q, k) => { q.visible = vis[k]; });
@@ -38021,6 +38091,7 @@ function createGame(el, api) {
     const dtReal = lastTs ? Math.min(0.125, (ts - lastTs) / 1000) : 0.016; lastTs = ts;
     if (!ready3D || !world) return;
     if (S.loading && S.loadingCard) return; // a map is building behind the loading card: leave it the main thread
+    if (window.__gtwTest) { const fl = window.__gtwFrames || (window.__gtwFrames = []); fl.push(performance.now()); if (fl.length > 4000) fl.splice(0, 2000); } // tests: tell rendered frames from load work
     const w0 = performance.now();
     const now = clock();
     if (!vec) { vec = new THREE.Vector3(); dm = new THREE.Object3D(); tc = new THREE.Color(); }
@@ -40216,6 +40287,9 @@ const HALF_D = 0.35;           // runner half depth (z)
 const HALF_W = 0.42;           // runner half width (x)
 const STEP_UP = 0.5;           // max climb without a collision
 const TRIP_TOL = 0.32;         // feet this close to a low barrier's top = trip, not crash
+const LATE_DODGE_T = 0.1;      // a lane change begun this recently before a head-on = a clip (stumble), not a crash
+const COMBO_TIERS = [3, 6, 10, 15, 21];  // consecutive clean passes that pay a bonus…
+const COMBO_BONUS = [5, 10, 15, 25, 40]; // …of this many coins
 
 const V0 = 12.5;               // start speed (m/s)
 const VMAX = 30;               // top speed
@@ -40247,6 +40321,9 @@ const REVIVE_WINDOW = 10000;   // ms
 
 const RACE_LEN = 2000;         // m
 const BRAWL_CAP = 3000;        // m: tiebreak distance for Brawl
+const DAILY_CAP = 5000;        // m: a Daily run that gets this far is a win on distance
+const HIT_STOP = 0.09;         // s the picture freezes on a crash
+const FINALE_MS = 1700;        // ms of finale before the result card (was 2300)
 
 const START_DELAY = 3500;      // ms between "start" and GO
 const RESUME_DELAY = 3000;     // ms countdown after a pause
@@ -40256,7 +40333,7 @@ function baseSpeed(t) {
   return V0 + (VMAX - V0) * (1 - Math.exp(-t / TAU));
 }
 
-return { DT, LANE_W, LANE_TIME, GRAV, JUMP_V, SUPER_JUMP_V, HANG_V, HANG_G, FASTFALL_V, SLIDE_TIME, BUFFER_T, COYOTE_T, STAND_H, ROLL_H, HALF_D, HALF_W, STEP_UP, TRIP_TOL, V0, VMAX, TAU, CHUNK, ROOF, TRAIN_HW, LOW_H, HIGH_B, HIGH_T, BAR_HW, CAR, RAMP_L, MT_K, MT_LEAD, GAP_L, STUMBLE_T, CRASH_T, INVULN_T, HEARTS, TEAM_HEARTS, TEAM_HEARTS_MAX, MAGNET_T, SNEAKERS_T, BOOST_T, REVIVE_WINDOW, RACE_LEN, BRAWL_CAP, START_DELAY, RESUME_DELAY, baseSpeed };
+return { DT, LANE_W, LANE_TIME, GRAV, JUMP_V, SUPER_JUMP_V, HANG_V, HANG_G, FASTFALL_V, SLIDE_TIME, BUFFER_T, COYOTE_T, STAND_H, ROLL_H, HALF_D, HALF_W, STEP_UP, TRIP_TOL, LATE_DODGE_T, COMBO_TIERS, COMBO_BONUS, V0, VMAX, TAU, CHUNK, ROOF, TRAIN_HW, LOW_H, HIGH_B, HIGH_T, BAR_HW, CAR, RAMP_L, MT_K, MT_LEAD, GAP_L, STUMBLE_T, CRASH_T, INVULN_T, HEARTS, TEAM_HEARTS, TEAM_HEARTS_MAX, MAGNET_T, SNEAKERS_T, BOOST_T, REVIVE_WINDOW, RACE_LEN, BRAWL_CAP, DAILY_CAP, HIT_STOP, FINALE_MS, START_DELAY, RESUME_DELAY, baseSpeed };
 })();
 
 // ── js/games/rush/track.js ──
@@ -40727,7 +40804,7 @@ __M['js/games/rush/sim.js'] = (() => {
 'use strict';
 // Rail Rush runner simulation (pure, fixed step, no DOM) and a perfect-information bot.
 // Each device simulates only its own runner(s); the partner is drawn from the network.
-const { DT, LANE_W, LANE_TIME, GRAV, JUMP_V, SUPER_JUMP_V, HANG_V, HANG_G, FASTFALL_V, SLIDE_TIME, BUFFER_T, COYOTE_T, STAND_H, ROLL_H, HALF_D, HALF_W, STEP_UP, TRIP_TOL, CHUNK, LOW_H, STUMBLE_T, CRASH_T, INVULN_T, HEARTS, MAGNET_T, SNEAKERS_T, baseSpeed } = __M['js/games/rush/tune.js'];
+const { DT, LANE_W, LANE_TIME, GRAV, JUMP_V, SUPER_JUMP_V, HANG_V, HANG_G, FASTFALL_V, SLIDE_TIME, BUFFER_T, COYOTE_T, STAND_H, ROLL_H, HALF_D, HALF_W, STEP_UP, TRIP_TOL, CHUNK, LOW_H, STUMBLE_T, CRASH_T, INVULN_T, HEARTS, MAGNET_T, SNEAKERS_T, LATE_DODGE_T, COMBO_TIERS, COMBO_BONUS, baseSpeed } = __M['js/games/rush/tune.js'];
 const { O_LOW, O_HIGH, O_TRAIN, O_RAMP, O_MTRAIN, O_BLOCK, I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX, rampTop, createTrack } = __M['js/games/rush/track.js'];
 
 const A_LEFT = 1;
@@ -40755,6 +40832,8 @@ const E_BLOCK = 16;
 const E_BUMP = 17;
 const E_TRIP = 18;
 const E_SLAM = 19;
+const E_BONUS = 20;   // combo tier reached: val = coins awarded
+const E_CLIP = 21;    // a late dodge clipped the obstacle (stumble, not crash)
 
 // Crash causes
 const C_HIT = 1;
@@ -40778,7 +40857,8 @@ function newRunner(lane = 0) {
     magnetT: 0, sneakersT: 0, shield: 0, boostT: 0,
     bufA: 0, bufT: 0,
     fin: -1, finLen: 0, done: 0,
-    crashes: 0, stumbles: 0, combo: 0, comboT: 0, closeCalls: 0, jumps: 0, rolls: 0, shields: 0,
+    crashes: 0, stumbles: 0, combo: 0, comboT: 0, maxCombo: 0, closeCalls: 0, jumps: 0, rolls: 0, shields: 0, clips: 0, bonus: 0,
+    hitT: 0, hitOv: 0, hitY: 0, // what the last crash hit (telemetry)
     ignoreId: -1, ignoreT: 0,
     tandem: 0, zapT: 0, zapDir: 0, smashN: 0,
   };
@@ -40999,14 +41079,20 @@ function passed(r, o, ov, dry) {
   if (!clean) return;
   r.combo++;
   r.comboT = 2.6;
+  if (r.combo > r.maxCombo) r.maxCombo = r.combo;
   if (close) { r.closeCalls++; r.coins += 2; ev(r, E_CLOSE, o.lane); }
   if (r.combo >= 2) ev(r, E_COMBO, r.combo);
+  for (let i = 0; i < COMBO_TIERS.length; i++) {
+    if (r.combo === COMBO_TIERS[i]) { r.coins += COMBO_BONUS[i]; r.bonus += COMBO_BONUS[i]; ev(r, E_BONUS, COMBO_BONUS[i]); break; }
+  }
 }
 
 function collideIn(r, obs, h, dry) {
   for (let i = 0; i < obs.length; i++) {
     const o = obs[i];
-    if (o.z0 > r.z + HALF_D + 0.6) break;
+    // the hull's front is z + HALF_D; a hair of slack guards float noise (it used to be 0.6 m,
+    // which fired a hit ~25 ms before the runner visibly reached the obstacle)
+    if (o.z0 > r.z + HALF_D + 0.06) break;
     if (o.z1 < r.z - HALF_D) continue;
     const ox = o.lane * LANE_W;
     const ov = Math.min(r.x + HALF_W, ox + o.hw) - Math.max(r.x - HALF_W, ox - o.hw);
@@ -41061,6 +41147,17 @@ function hit(r, o, frontal, ov, dry) {
     if (!dry) ev(r, E_TRIP, 0);
     return;
   }
+  // Late dodge: the lane change began within LATE_DODGE_T of the impact, so the player was
+  // visibly on their way out. Count it as a clip: bounce back where they came from, stumble.
+  if (r.laneT < 1 && r.laneAge < LATE_DODGE_T && r.lane !== r.laneFrom) {
+    const back = r.laneFrom; r.laneFrom = r.lane; r.lane = back; r.xFrom = r.x; r.laneT = 0; r.bounceT = 0.32;
+    r.ignoreId = o.id; r.ignoreT = 0.45;
+    r.clips++;
+    stumble(r, 1.1, dry);
+    if (!dry) ev(r, E_CLIP, o.t);
+    return;
+  }
+  r.hitT = o.t; r.hitOv = ov; r.hitY = r.y;
   crash(r, C_HIT, dry);
 }
 
@@ -41289,7 +41386,7 @@ function botRun(seed, chunks, { maxMs = 60000 } = {}) {
   return { seed, chunks: Math.floor(r.z / CHUNK), z: Math.round(r.z), steps, crashes: r.crashes, stumbles: r.stumbles, fails, ms: Math.round(performance.now() - t0) };
 }
 
-return { A_LEFT, A_RIGHT, A_UP, A_DOWN, E_JUMP, E_LAND, E_ROLL, E_LANE, E_COIN, E_PICK, E_STUMBLE, E_CRASH, E_RESPAWN, E_SHIELD, E_CLOSE, E_COMBO, E_FINISH, E_SMASH, E_TOKEN, E_BLOCK, E_BUMP, E_TRIP, E_SLAM, C_HIT, C_FALL, C_SLAM, C_FORCED, newRunner, copyRunner, act, crash, clearLane, respawn, step, setHold, ITEM_KINDS, OBS_KINDS, createBot, botRun };
+return { A_LEFT, A_RIGHT, A_UP, A_DOWN, E_JUMP, E_LAND, E_ROLL, E_LANE, E_COIN, E_PICK, E_STUMBLE, E_CRASH, E_RESPAWN, E_SHIELD, E_CLOSE, E_COMBO, E_FINISH, E_SMASH, E_TOKEN, E_BLOCK, E_BUMP, E_TRIP, E_SLAM, E_BONUS, E_CLIP, C_HIT, C_FALL, C_SLAM, C_FORCED, newRunner, copyRunner, act, crash, clearLane, respawn, step, setHold, ITEM_KINDS, OBS_KINDS, createBot, botRun };
 })();
 
 // ── js/games/rush/gfx.js ──
@@ -41925,6 +42022,49 @@ function createWorld(THREE, P) {
     return mesh;
   });
 
+  // "best" lines: a glowing stripe across the track with a printed banner over it (your best,
+  // your partner's best), so a run has something to beat in sight
+  const markGeo = freezeWith((b) => {
+    b.boxMM(-4.2, 0.0, -0.5, 4.2, 0.07, 0.5, P.hl, FX_GLOW, 0.03, ink, T);
+    for (let i = 0; i < 12; i++) if (i % 2) b.add(T.quadUp, -4.2 + (i + 0.5) * 0.7, 0.075, 0, 0.7, 1, 1.0, 0, P.ink, FX_PLAIN, 0, ink);
+    for (const sx of [-1, 1]) { b.boxMM(sx * 4.5 - 0.1, 0, -0.1, sx * 4.5 + 0.1, 3.2, 0.1, P.pole, FX_PLAIN, 0.03, ink, T); b.boxMM(sx * 4.5 - 0.06, 3.1, -0.06, sx * 4.5 + 0.06, 3.5, 0.06, P.hl, FX_GLOW, 0, ink, T); }
+  });
+  const marks = inst(markGeo, 2);
+  const markCv = []; const markTex = []; const markMesh = []; const markText = ['', ''];
+  const markGeoB = new THREE.PlaneGeometry(5.2, 1.2);
+  disposables.push(markGeoB);
+  for (let i = 0; i < 2; i++) {
+    const cv = document.createElement('canvas'); cv.width = 512; cv.height = 118;
+    const t = new THREE.CanvasTexture(cv);
+    const m = new THREE.Mesh(markGeoB, new THREE.MeshBasicMaterial({ map: t, fog: true }));
+    m.visible = false; scene.add(m);
+    markCv.push(cv); markTex.push(t); markMesh.push(m); disposables.push(t, m.material);
+  }
+  function drawMark(i, text, col) {
+    const cv = markCv[i]; const g = cv.getContext('2d');
+    g.fillStyle = hexOf(col); g.fillRect(0, 0, 512, 118);
+    g.lineWidth = 10; g.strokeStyle = hexOf(P.outline); g.strokeRect(5, 5, 502, 108);
+    g.fillStyle = hexOf(P.dark ? P.bg : P.ink); g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = `900 64px ${P.font || 'Arial Black, sans-serif'}`;
+    g.fillText(text, 256, 62, 470);
+    markTex[i].needsUpdate = true;
+  }
+  /** Best lines: list of { z, text, col }. Up to two. */
+  function setMarks(list) {
+    const a = marks.instanceMatrix.array;
+    let n = 0;
+    for (let i = 0; i < list.length && n < 2; i++) {
+      const mk = list[i];
+      if (!mk || !(mk.z > 0)) continue;
+      WM[0] = 0; WM[1] = 0; WM[2] = -mk.z; WM[3] = 1; WM[4] = 0; WM[5] = 0; writeM(a, n);
+      if (markText[n] !== mk.text) { markText[n] = mk.text; drawMark(n, mk.text, mk.col || P.hl); }
+      markMesh[n].position.set(0, 3.9, -mk.z + 0.3); markMesh[n].visible = true; n++;
+    }
+    for (let i = n; i < 2; i++) markMesh[i].visible = false;
+    marks.count = n;
+    marks.instanceMatrix.needsUpdate = true;
+  }
+
   // oncoming trains (pooled, 2 cars, front at local z = 0 facing +z)
   const mtGeo = freezeWith((b) => trainCars(b, 0, 0, 2, P.trains[4], true, T, P));
   const mtrains = [];
@@ -42182,14 +42322,14 @@ function createWorld(THREE, P) {
 
   return {
     scene, mat, matInst, matInstC, avatarMat, avatarMats, fade, U, T, P,
-    ensure, syncView, setShadows, follow, setPalette, setGates, reset, setMood,
+    ensure, syncView, setShadows, follow, setPalette, setGates, setMarks, reset, setMood,
     chunkCount: () => byChunk.size,
     stats,
     /** Everything that can be drawn, for shader warm-up. */
-    warmList: () => [coins, lows, highs, blocks, gates, shadows, street, skyline, dome, ...Object.values(items), mtrains[0], pool[0].mesh, ...banners],
+    warmList: () => [coins, lows, highs, blocks, gates, marks, shadows, street, skyline, dome, ...Object.values(items), mtrains[0], pool[0].mesh, ...banners, markMesh[0]],
     dispose() {
       for (const d of disposables) { try { d.dispose(); } catch { /* ignore */ } }
-      for (const m of [coins, lows, highs, blocks, gates, ...Object.values(items)]) { try { m.dispose(); } catch { /* ignore */ } }
+      for (const m of [coins, lows, highs, blocks, gates, marks, ...Object.values(items)]) { try { m.dispose(); } catch { /* ignore */ } }
       try { shadows.dispose(); } catch { /* ignore */ }
       scene.clear();
     },
@@ -42730,6 +42870,25 @@ function createAvatar(THREE, world, P, who) {
     bn.matrixWorldNeedsUpdate = true;
   }
 
+  // unlockable hats: small meshes parented to the head bone (one draw call while worn)
+  const hats = [];
+  {
+    const hb = new GeoBuf(THREE, 1200, { dynamic: false });
+    const ink = P.outline; const T = world.T;
+    const mk = (fn) => { hb.reset(); fn(hb); const g = hb.freeze(THREE); const m = new THREE.Mesh(g, world.mat); m.visible = false; m.position.y = 0.6; bones[4].add(m); hats.push({ m, g }); };
+    // crown: a gold band with four points and a jewel
+    mk((b) => {
+      b.add(T.cyl6, 0, 0, 0, 0.56, 0.16, 0.56, 0, P.hl, FX_PLAIN, 0.02, ink);
+      for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2 + Math.PI / 4; b.add(T.cone, Math.cos(a) * 0.22, 0.2, Math.sin(a) * 0.22, 0.16, 0.26, 0.16, 0, P.hl, FX_PLAIN, 0.018, ink); }
+      b.add(T.sphere12, 0, 0.02, -0.27, 0.12, 0.12, 0.08, 0, P.b, FX_GLOW, 0, ink);
+    });
+    // halo: a glowing ring floating over the head
+    mk((b) => { b.add(T.disc, 0, 0.22, 0, 0.62, 0.05, 0.62, 0, mix(P.hl, P.white, 0.5), FX_GLOW, 0.02, ink); b.add(T.disc, 0, 0.22, 0, 0.4, 0.07, 0.4, 0, P.skin, FX_PLAIN, 0, ink); });
+    // party cone with a pompom
+    mk((b) => { b.add(T.cone, 0, 0.26, 0, 0.36, 0.56, 0.36, 0, who === 'a' ? P.b : P.a, FX_PLAIN, 0.02, ink); b.add(T.lowSphere, 0, 0.56, 0, 0.14, 0.14, 0.14, 0, P.hl, FX_GLOW, 0, ink); });
+    hb.dispose();
+  }
+  let hatK = 0;
   const bubbleGeo = new THREE.SphereGeometry(1.25, 22, 16);
   const bubbleMat = bubbleMaterial(THREE, P);
   const bubble = new THREE.Mesh(bubbleGeo, bubbleMat);
@@ -42916,6 +43075,7 @@ function createAvatar(THREE, world, P, who) {
     BA[0] = J[20]; BA[1] = 0; BA[2] = J[21]; BA[3] = BP[13 * 3 + 1]; setBone(13);
     A.blinkT += dt;
     mesh.visible = s.visible !== false && !(s.invuln && !s.down && Math.floor(A.blinkT * 14) % 2 === 0);
+    if (hatK) hats[hatK - 1].m.visible = mesh.visible;
     bubble.visible = mesh.visible && !!s.shield;
     if (bubble.visible) {
       bubble.position.set(s.x, s.y + (s.roll ? 0.6 : 1.05), -s.z);
@@ -42930,10 +43090,14 @@ function createAvatar(THREE, world, P, who) {
     /** Things to draw once behind the loading screen so their shaders are compiled. */
     warmList: () => [mesh, bubble],
     lunge(dir) { A.lungeT = 0.35; A.lungeDir = dir; },
+    /** Wear hat k (0 none, 1 crown, 2 halo, 3 party cone). */
+    setHat(k) { k = k | 0; if (k === hatK) return; hatK = k; for (let i = 0; i < hats.length; i++) hats[i].m.visible = i + 1 === k; },
+    get hat() { return hatK; },
     get downPose() { return A.downPose; },
     headPos(out) { out.set(A.px, A.py + 2.1 * A.sy, A.pz); return out; },
     dispose() {
       world.scene.remove(mesh); world.scene.remove(bubble);
+      for (const h of hats) { bones[4].remove(h.m); h.g.dispose(); }
       bubbleGeo.dispose(); bubbleMat.dispose();
       mesh.skeleton.dispose();
     },
@@ -43038,6 +43202,21 @@ function createFx(THREE, world) {
     confetti(x, y, d, cols, n = 40) {
       for (let i = 0; i < n; i++) spawn(BP, x + R() * 3, y + 3 + Math.random() * 3, d + R() * 3, R() * 4, 2 + Math.random() * 5, R() * 4, 1.6 + Math.random() * 1.2, 0.16 + Math.random() * 0.1, cols[i % cols.length], 5, 1.8, 0);
     },
+    /** Near-miss sparkle: a ring of glints beside the runner on the obstacle's side. */
+    sparkle(x, y, d, side) {
+      for (let i = 0; i < 7; i++) spawn(BP, x + side * 0.7 + R() * 0.2, y + 0.6 + Math.random() * 1.2, d + R() * 0.4, side * (1.5 + Math.random() * 2), 1 + Math.random() * 2.5, -2 - Math.random() * 3, 0.32 + Math.random() * 0.2, 0.14 + Math.random() * 0.1, P.white, 2, 2.5, 0);
+      for (let i = 0; i < 4; i++) spawn(BP, x + side * 0.6, y + 1 + Math.random() * 0.8, d, side * (0.5 + Math.random()), 0.5 + Math.random(), -1, 0.4, 0.2, P.hl, 1, 2, 1);
+    },
+    /**
+     * Unlockable trail behind a runner. kind 1 sparkle, 2 ink puffs (player colour), 3 confetti,
+     * 4 embers. Called every frame; it spawns on its own cadence.
+     */
+    trailFx(kind, x, y, d, col, k) {
+      if (kind === 1) { spawn(BP, x + R() * 0.35, y + 0.5 + Math.random() * 1.0, d - 0.5, R() * 0.8, 0.8 + Math.random() * 1.2, -0.5, 0.5, 0.13 + Math.random() * 0.1, Math.random() < 0.6 ? P.hl : P.white, 0, 1.5, 0); }
+      else if (kind === 2) { if (k % 3) return; spawn(PP, x + R() * 0.25, y + 0.35 + Math.random() * 0.3, d - 0.6, R() * 0.5, 0.4 + Math.random() * 0.6, -1.5, 0.5 + Math.random() * 0.2, 0.18 + Math.random() * 0.14, col, -0.4, 2.2, 2); }
+      else if (kind === 3) { spawn(BP, x + R() * 0.5, y + 0.8 + Math.random() * 1.2, d - 0.4, R() * 2.5, 1.5 + Math.random() * 2.5, -1 - Math.random() * 2, 0.8 + Math.random() * 0.5, 0.16 + Math.random() * 0.1, k % 6 < 2 ? P.a : k % 6 < 4 ? P.b : P.hl, 5, 1.6, 0); }
+      else if (kind === 4) { if (k % 2) return; spawn(BP, x + R() * 0.3, y + 0.2 + Math.random() * 0.4, d - 0.5, R() * 0.4, 1.2 + Math.random() * 2, -1 - Math.random() * 2, 0.35 + Math.random() * 0.25, 0.1 + Math.random() * 0.1, Math.random() < 0.5 ? P.bad : P.hl, -2, 1.2, 0); }
+    },
     ink(x, y, d, col, n = 8) {
       for (let i = 0; i < n; i++) spawn(PP, x + R() * 0.4, y + R() * 0.4, d + R() * 0.4, R() * 4, R() * 3 + 1, R() * 4, 0.5 + Math.random() * 0.3, 0.25 + Math.random() * 0.25, col, 6, 1.5, 2);
     },
@@ -43107,6 +43286,8 @@ function createRig(THREE) {
     resize(w, h, short = false) { st.aspect = w / Math.max(1, h); st.short = !!short; cam.aspect = st.aspect; cam.updateProjectionMatrix(); },
     shake(a) { st.shake = Math.max(st.shake, a); },
     kick(a) { st.kick = Math.max(st.kick, a); },
+    /** Crash punch: the view snaps a few degrees narrower and relaxes (a zoom-in hit). */
+    punch(a) { st.kick = Math.min(st.kick, -a); },
     snap() { st.ready = false; },
     /**
      * mode 'run' | 'lobby' | 'finale' | 'spectate'
@@ -43297,6 +43478,7 @@ function createAudio({ musicOn = () => true, getCtx = null, mutedFn = null } = {
   let ctx = null;
   let owned = false;
   let master = null; let musicBus = null; let sfxBus = null; let noise = null;
+  let wind = null; let windF = null; let windQ = -1; // speed-driven wind layer (one looping noise source)
   let mutedCache = false; let mutedAt = 0;
   let musicTimer = null;
   let step = 0; let nextT = 0; let playing = false;
@@ -43330,6 +43512,14 @@ function createAudio({ musicOn = () => true, getCtx = null, mutedFn = null } = {
     noise = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
     const d = noise.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    // wind: a looping noise bed through a lowpass whose cutoff and level follow running speed
+    try {
+      const src = ctx.createBufferSource(); src.buffer = noise; src.loop = true;
+      windF = ctx.createBiquadFilter(); windF.type = 'lowpass'; windF.frequency.value = 300; windF.Q.value = 0.7;
+      wind = ctx.createGain(); wind.gain.value = 0;
+      src.connect(windF).connect(wind).connect(master);
+      src.start();
+    } catch { wind = null; }
     return true;
   }
   function unlock() {
@@ -43379,11 +43569,19 @@ function createAudio({ musicOn = () => true, getCtx = null, mutedFn = null } = {
     bump() { tone(90, 0.1, { vol: 0.16, to: 60 }); },
     stumble() { tone(160, 0.14, { type: 'square', vol: 0.09, to: 70, filter: 900 }); hiss(0.18, { vol: 0.1, f: 600, type: 'lowpass' }); },
     crash() {
+      // thud + crunch + a short metallic ring, then a low tail: layered so it has weight on phone speakers
       tone(140, 0.45, { type: 'sawtooth', vol: 0.16, to: 35, filter: 700 });
-      tone(70, 0.35, { vol: 0.3, to: 30 });
+      tone(70, 0.4, { vol: 0.34, to: 28 });
+      hiss(0.06, { vol: 0.35, f: 2600, to: 900, q: 0.5, attack: 0.001 });
       hiss(0.5, { vol: 0.22, f: 1200, to: 200, q: 0.6 });
       tone(900, 0.08, { type: 'square', vol: 0.05, at: 0.05, to: 400 });
+      tone(1860, 0.3, { type: 'triangle', vol: 0.04, at: 0.03, to: 1500 });
+      tone(55, 0.6, { vol: 0.14, at: 0.12, to: 30 });
     },
+    clip() { tone(200, 0.12, { type: 'square', vol: 0.1, to: 90, filter: 1100 }); hiss(0.16, { vol: 0.14, f: 1800, to: 500, q: 0.9 }); },
+    respawn() { hiss(0.42, { vol: 0.12, f: 500, to: 5200, q: 1.1 }); tone(220, 0.35, { type: 'triangle', vol: 0.07, to: 660 }); [0, 7, 12].forEach((n, i) => tone(mtof(72 + n), 0.09, { type: 'triangle', vol: 0.07, at: 0.18 + i * 0.05 })); },
+    bonus(n) { [0, 4, 7, 12, 16, 19].slice(0, Math.min(6, 3 + Math.floor(n / 10))).forEach((k, i) => tone(mtof(81 + k), 0.11, { type: 'square', vol: 0.055, at: i * 0.045, filter: 5000 })); },
+    unlock() { [0, 4, 7, 12, 16, 12, 19, 24].forEach((n, i) => tone(mtof(72 + n), 0.16, { type: 'triangle', vol: 0.09, at: i * 0.07 })); hiss(0.6, { vol: 0.06, f: 3000, to: 8000 }); },
     shield() { tone(520, 0.12, { type: 'triangle', vol: 0.12, to: 1040 }); tone(780, 0.25, { type: 'sine', vol: 0.08, at: 0.06 }); hiss(0.2, { vol: 0.08, f: 5000 }); },
     pickup() { [0, 4, 7, 12].forEach((n, i) => tone(mtof(76 + n), 0.1, { type: 'triangle', vol: 0.1, at: i * 0.05 })); },
     box() { [0, 7, 12, 19].forEach((n, i) => tone(mtof(72 + n), 0.08, { type: 'square', vol: 0.05, at: i * 0.04, filter: 4000 })); },
@@ -43479,6 +43677,16 @@ function createAudio({ musicOn = () => true, getCtx = null, mutedFn = null } = {
     get ready() { return !!ctx && ctx.state === 'running'; },
     play(name, arg) { if (!ok()) return; const f = S[name]; if (f) { try { f(arg); } catch { /* ignore */ } } },
     setIntensity(x) { mx.intensity = Math.max(0, Math.min(1, x)); },
+    /** Wind bed: k = 0..1 running speed (0 = silent). Quantized so it sets automation only on change. */
+    setWind(k) {
+      if (!wind || !ctx) return;
+      const q = isMuted() ? 0 : Math.round(Math.max(0, Math.min(1, k)) * 20) / 20;
+      if (q === windQ) return;
+      windQ = q;
+      const t = ctx.currentTime;
+      wind.gain.setTargetAtTime(q * q * 0.11, t, 0.25);
+      windF.frequency.setTargetAtTime(240 + q * 1500, t, 0.25);
+    },
     /** Duck the music under a pause card. */
     setPaused(on) { pausedDuck = !!on; },
     stats,
@@ -43501,6 +43709,7 @@ function createAudio({ musicOn = () => true, getCtx = null, mutedFn = null } = {
       if (!ctx) return;
       if (owned) { if (ctx.state === 'running') ctx.suspend().catch(() => {}); }
       else if (master) master.gain.setTargetAtTime(0, ctx.currentTime, 0.02);
+      if (wind) { wind.gain.setTargetAtTime(0, ctx.currentTime, 0.02); windQ = -1; }
     },
     resume() {
       if (!ctx) return;
@@ -43642,6 +43851,7 @@ const ICONS = {
   hand: '<svg viewBox="0 0 44 56" aria-hidden="true"><path d="M15 30V8a4 4 0 0 1 8 0v15l10 2c4 1 6 4 5 8l-3 14c-1 4-4 6-8 6h-7c-3 0-5-1-7-4L5 37c-2-3 2-7 5-5Z" fill="var(--g-card)" stroke="var(--g-ink)" stroke-width="3" stroke-linejoin="round"/></svg>',
   runner: '<svg viewBox="0 0 64 64" aria-hidden="true"><circle cx="38" cy="11" r="7" fill="var(--g-card)" stroke="var(--g-ink)" stroke-width="3"/><path d="M33 20 22 30l9 4-6 14M33 20l3 14 12 2M33 20l12 3 5-8M31 34 18 38l-6 8" fill="none" stroke="var(--p-a)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   box: '<svg viewBox="0 0 40 40" aria-hidden="true"><rect x="7" y="7" width="26" height="26" rx="4" fill="none" stroke="currentColor" stroke-width="3" stroke-dasharray="5 4"/><path d="M16 16a4 4 0 1 1 5 4c-1 .5-1 1.5-1 3M20 27v.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>',
+  daily: '<svg viewBox="0 0 40 40" aria-hidden="true"><rect x="5" y="8" width="30" height="27" rx="4" fill="var(--g-card)" stroke="var(--g-ink)" stroke-width="3"/><path d="M5 16h30" stroke="var(--g-ink)" stroke-width="3"/><path d="M13 5v6M27 5v6" stroke="var(--g-ink)" stroke-width="3.5" stroke-linecap="round"/><path d="m20 20 2.2 4.6 5 .7-3.6 3.5.9 5-4.5-2.4-4.5 2.4.9-5-3.6-3.5 5-.7Z" fill="var(--g-hl)" stroke="var(--g-ink)" stroke-width="2.2" stroke-linejoin="round"/></svg>',
   gear: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm8.3 2-1.9-.4-.6-1.5 1.1-1.6-1.9-1.9-1.6 1.1-1.5-.6-.4-1.9h-2.7l-.4 1.9-1.5.6-1.6-1.1-1.9 1.9 1.1 1.6-.6 1.5-1.9.4v2.7l1.9.4.6 1.5-1.1 1.6 1.9 1.9 1.6-1.1 1.5.6.4 1.9h2.7l.4-1.9 1.5-.6 1.6 1.1 1.9-1.9-1.1-1.6.6-1.5 1.9-.4Z" fill="currentColor"/></svg>',
 };
 const WEAPONS = {
@@ -43840,7 +44050,7 @@ function createHud(root, o) {
   const tutDots = tut.querySelectorAll('.rr-steps i');
   const tutLast = { step: -1, dir: null, cap: null, hot: null };
   const tag = mk('rr-tag');
-  const tagLast = { on: null, name: null, color: null };
+  const tagLast = { on: null, name: null, color: null, ghost: null };
   let tagX = -1; let tagY = -1; let tagE = 0;
   L.appendChild(tag);
   let lastCount = ''; let lastSub = '';
@@ -43884,6 +44094,7 @@ function createHud(root, o) {
               <button class="rr-mode" data-mode="brawl">${ICONS.brawl}<b>Brawl</b><span>Side by side. Shove them into walls.</span></button>
               <button class="rr-mode" data-mode="tandem">${ICONS.tandem}<b>Together</b><span>Shared hearts. Revive each other.</span></button>
             </div>
+            <button class="rr-mode rr-daily" data-mode="daily">${ICONS.daily}<span class="rr-daily-t"><b>Daily run</b><span data-r="daily">One track for the whole day. Furthest wins.</span></span></button>
             <div class="rr-status" data-r="status"></div>
             <div class="rr-keys" data-r="keys"></div>
             <div class="rr-row"><button class="rr-btn hot" data-r="go">Start</button><button class="rr-btn ghost sq" data-r="gear" aria-label="Settings">${ICONS.gear}</button></div>
@@ -43900,6 +44111,9 @@ function createHud(root, o) {
       if (s.innerHTML !== st.status) s.innerHTML = st.status;
       const k = ov.lobby.querySelector('[data-r="keys"]');
       if (k.dataset.v !== st.keys) { k.dataset.v = st.keys; k.innerHTML = st.keys; k.hidden = !st.keys; }
+      const d = ov.lobby.querySelector('[data-r="daily"]');
+      const dt = st.daily || 'One track for the whole day. Furthest wins.';
+      if (d.innerHTML !== dt) d.innerHTML = dt;
     },
     hideLobby() { show('lobby', false); },
     count(text, sub = '') {
@@ -43926,13 +44140,17 @@ function createHud(root, o) {
       show('pause', true);
     },
     settings(cfg) {
+      // cfg: { scheme, music, sound, trail, hat, styles: [{ key, k, name, how, locked }] }
       if (!cfg) { show('set', false); return; }
       ov.set.classList.add('dim');
       const seg = (key, opts) => `<span class="rr-seg">${opts.map(([v, l]) => `<button data-k="${key}" data-v="${v}" class="${cfg[key] === v ? 'on' : ''}">${l}</button>`).join('')}</span>`;
+      const styles = cfg.styles || [];
+      const chips = (key) => styles.filter((x) => x.key === key).map((x) => `<button class="rr-chip-s ${x.locked ? 'locked' : ''} ${cfg[key] === x.k ? 'on' : ''}" data-k="${key}" data-v="${x.k}" ${x.locked ? 'disabled' : ''} title="${esc(x.how || '')}">${esc(x.name)}${x.locked ? `<small>${esc(x.how)}</small>` : ''}</button>`).join('');
       ov.set.innerHTML = `<div class="rr-card"><h2>Settings</h2>
         <div class="rr-set"><span>Controls</span>${seg('scheme', [['swipe', 'Swipe'], ['buttons', 'Buttons']])}</div>
         <div class="rr-set"><span>Music</span>${seg('music', [['on', 'On'], ['off', 'Off']])}</div>
         <div class="rr-set"><span>Sound</span>${seg('sound', [['on', 'On'], ['off', 'Off']])}</div>
+        ${styles.length ? `<div class="rr-style"><span>Trail</span><div class="rr-chips">${chips('trail')}</div></div><div class="rr-style"><span>Hat</span><div class="rr-chips">${chips('hat')}</div></div>` : ''}
         <p style="font-size:13px">Buttons: tap the left or right side to change lanes, and use the Jump and Roll buttons.</p>
         <button class="rr-btn" data-x="done">Done</button></div>`;
       ov.set.querySelectorAll('[data-k]').forEach((b) => b.addEventListener('click', () => { o.onSet(b.dataset.k, b.dataset.v); }));
@@ -43957,10 +44175,11 @@ function createHud(root, o) {
       tutDots.forEach((i, n) => i.classList.toggle('on', n <= step));
     },
     /** Partner name tag above their head; edge ±1 pins it to that screen edge (partner beside you, off screen). */
-    tag(on, x, y, name, color, edge = 0) {
+    tag(on, x, y, name, color, edge = 0, ghost = false) {
       // cached: reading tag.style / textContent back every frame would allocate (and serialize)
       if (!on) { if (tagLast.on !== false) { tagLast.on = false; tag.style.display = 'none'; } return; }
       if (tagLast.on !== true) { tagLast.on = true; tag.style.display = 'block'; }
+      if (tagLast.ghost !== ghost) { tagLast.ghost = ghost; tag.classList.toggle('rr-ghost', ghost); }
       if (tagLast.name !== name) { tagLast.name = name; tag.textContent = name; }
       if (tagLast.color !== color) { tagLast.color = color; tag.style.background = color; }
       const qx = Math.round(x / 2) * 2; const qy = Math.round(y / 2) * 2;
@@ -44002,6 +44221,7 @@ const FIELDS = [
   ['z', 1], ['x', 1], ['y', 1], ['g', 1], ['vy', 1], ['sp', 1], ['st', 1], ['dt', 1], ['rt', 1], ['rp', 1],
   ['l', 0], ['p', 0], ['f', 0], ['h', 0], ['c', 0], ['fn', 0], ['ph', 0], ['md', 0], ['sy', 0], ['pz', 0],
   ['ra', 0], ['th', 0], ['tg', 0], ['rd', 0], ['w', 0], ['sv', 0], ['cb', 0], ['tc', 0], ['ep', 0],
+  ['tr', 0], ['ht', 0], // worn trail / hat (unlockable style)
 ];
 const K = FIELDS.length;
 const LERP = Uint8Array.from(FIELDS.map((f) => f[1]));
@@ -44240,15 +44460,16 @@ __M['js/games/rush/modes.js'] = (() => {
 // Rail Rush mode rules: Race (weapons + rubber-banding), Brawl (shoves), Tandem (revives, team
 // hearts, coin goals) and the host's verdicts. Works the same with one device (both runners
 // local, messages delivered directly) and two (messages over the reliable link).
-const { LANE_W, CHUNK, ROOF, BOOST_T, REVIVE_WINDOW, TEAM_HEARTS, TEAM_HEARTS_MAX, BRAWL_CAP, STEP_UP } = __M['js/games/rush/tune.js'];
+const { LANE_W, CHUNK, ROOF, BOOST_T, REVIVE_WINDOW, TEAM_HEARTS, TEAM_HEARTS_MAX, BRAWL_CAP, DAILY_CAP, STEP_UP } = __M['js/games/rush/tune.js'];
 const { O_BLOCK, O_TRAIN, O_MTRAIN, O_RAMP, pathLane } = __M['js/games/rush/track.js'];
 const { crash, respawn, C_SLAM, E_PICK, E_CRASH, E_FINISH, E_TOKEN, E_BLOCK } = __M['js/games/rush/sim.js'];
 const { I_BOX } = __M['js/games/rush/track.js'];
 
-const MODES = ['race', 'brawl', 'tandem'];
+const MODES = ['race', 'brawl', 'tandem', 'daily'];
 const AB = ['a', 'b'];
 const fmtT = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
-const MODE_LABEL = { race: 'Race', brawl: 'Brawl', tandem: 'Together' };
+const MODE_LABEL = { race: 'Race', brawl: 'Brawl', tandem: 'Together', daily: 'Daily' };
+const fmtM = (m) => Math.max(0, Math.round(m)).toLocaleString('en-US');
 const GOALS = [100, 250, 450, 700, 1000, 1400, 1900, 2500];
 
 const pick = (table) => {
@@ -44514,7 +44735,7 @@ function createRules(G) {
     const r = p.r;
     const v = G.view(p.w);
     if (t === E_PICK && Math.floor(val / 100000) === I_BOX) {
-      if (M.mode !== 'race') return;
+      if (M.mode !== 'race') { if (M.mode === 'daily') { r.coins += 5; v && v.pop('+5', 'hl'); } return; }
       if (!p.weapon && p.weaponRoll <= 0) { p.weapon = rollWeapon(p); p.weaponRoll = 0.6; G.audio.play('box'); }
       else { r.coins += 5; v && v.pop('+5', 'hl'); }
       return;
@@ -44572,6 +44793,7 @@ function createRules(G) {
       // rubber bands
       if (M.mode === 'brawl') r.catchup = Math.max(-0.18, Math.min(0.32, gap * 0.012));
       else if (M.mode === 'tandem') r.catchup = qs.down ? 0 : Math.max(-0.12, Math.min(0.2, gap * 0.008));
+      else if (M.mode === 'daily') { r.catchup = 0; r.draft = 0; }
       else {
         r.catchup = 0;
         const drafting = gap > 2.5 && gap < 14 && Math.abs(qs.x - r.x) < 1.1 && !qs.down && r.grounded;
@@ -44644,7 +44866,7 @@ function createRules(G) {
       const nm = { a: G.name('a'), b: G.name('b') };
       const W = w === 'a' ? A : B; const Lp = w === 'a' ? B : A;
       const sub = why || `${(M.len / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })} km in ${fmtT(W.fin)} · ${Lp.fin >= 0 ? `${fmtT(Lp.fin)} for ${nm[w === 'a' ? 'b' : 'a']}` : `${Math.max(0, Math.round(M.len - Lp.z))} m short`}`;
-      return { winner: w, text: `${nm[w]} wins the race`, sub };
+      return { winner: w, text: `${nm[w]} wins the race`, sub, za: Math.round(A.z), zb: Math.round(B.z), ta: A.fin, tb: B.fin };
     }
     if (M.mode === 'brawl') {
       let w = null; let sub = '';
@@ -44661,6 +44883,16 @@ function createRules(G) {
       if (!w) return null;
       return { winner: w, text: `${G.name(w)} wins the brawl`, sub };
     }
+    if (M.mode === 'daily') {
+      // Same track for both all day: the run ends when both are out of hearts (or someone reaches
+      // the cap). Distance decides; a draw if it's within a metre.
+      const bothOut = A.out >= 0 && B.out >= 0;
+      const capped = A.z >= DAILY_CAP || B.z >= DAILY_CAP;
+      if (!bothOut && !capped) return null;
+      const w = Math.abs(A.z - B.z) < 1 ? null : A.z > B.z ? 'a' : 'b';
+      const sub = `${G.name('a')} ${fmtM(A.z)} m · ${G.name('b')} ${fmtM(B.z)} m`;
+      return { winner: w, text: w ? `${G.name(w)} wins today’s run` : 'Dead heat today', sub, daily: 1, za: Math.round(A.z), zb: Math.round(B.z) };
+    }
     if (M.mode === 'tandem') {
       if (M.th > 0) return null;
       const meters = Math.round((A.z + B.z) / 2);
@@ -44674,7 +44906,7 @@ function createRules(G) {
   return { init, use, onLane, msg, onEvent, tick, verdict, rollWeapon, cap: BRAWL_CAP };
 }
 
-return { MODES, MODE_LABEL, wallAt, createRules };
+return { MODES, MODE_LABEL, fmtM, wallAt, createRules };
 })();
 
 // ── js/games/rush/game.js ──
@@ -44682,9 +44914,10 @@ __M['js/games/rush/game.js'] = (() => {
 'use strict';
 // Rail Rush game orchestrator: loading, renderer + dynamic resolution, lobby, synchronized start,
 // the fixed-step loop, pause / resume protocol, partner re-mounts, finale, HUD, test hook.
-const { DT, LANE_W, SLIDE_TIME, STUMBLE_T, START_DELAY, RESUME_DELAY, RACE_LEN, BRAWL_CAP, MT_LEAD, CHUNK, HEARTS, TEAM_HEARTS_MAX, baseSpeed } = __M['js/games/rush/tune.js'];
+const { DT, LANE_W, SLIDE_TIME, STUMBLE_T, START_DELAY, RESUME_DELAY, RACE_LEN, BRAWL_CAP, MT_LEAD, CHUNK, HEARTS, TEAM_HEARTS_MAX, HIT_STOP, FINALE_MS, baseSpeed } = __M['js/games/rush/tune.js'];
+const { hash } = __M['js/games/core.js'];
 const { createTrack, trackHash, difficulty, O_MTRAIN, TUT_JUMP, TUT_ROLL } = __M['js/games/rush/track.js'];
-const { newRunner, step, act, createBot, botRun, crash, C_FORCED, A_LEFT, A_RIGHT, A_UP, A_DOWN, E_JUMP, E_LAND, E_ROLL, E_LANE, E_COIN, E_PICK, E_STUMBLE, E_CRASH, E_RESPAWN, E_SHIELD, E_CLOSE, E_COMBO, E_FINISH, E_SMASH, E_TOKEN, E_BLOCK, E_BUMP } = __M['js/games/rush/sim.js'];
+const { newRunner, step, act, createBot, botRun, crash, C_FORCED, A_LEFT, A_RIGHT, A_UP, A_DOWN, E_JUMP, E_LAND, E_ROLL, E_LANE, E_COIN, E_PICK, E_STUMBLE, E_CRASH, E_RESPAWN, E_SHIELD, E_CLOSE, E_COMBO, E_FINISH, E_SMASH, E_TOKEN, E_BLOCK, E_BUMP, E_BONUS, E_CLIP } = __M['js/games/rush/sim.js'];
 const { makePalette } = __M['js/games/rush/gfx.js'];
 const { createWorld } = __M['js/games/rush/world.js'];
 const { createAvatar, disposeAvatarGeometry } = __M['js/games/rush/avatar.js'];
@@ -44693,7 +44926,7 @@ const { createAudio } = __M['js/games/rush/audio.js'];
 const { createInput, A_USE } = __M['js/games/rush/input.js'];
 const { createHud } = __M['js/games/rush/hud.js'];
 const { createLink, emptyState } = __M['js/games/rush/link.js'];
-const { createRules, MODES, MODE_LABEL } = __M['js/games/rush/modes.js'];
+const { createRules, MODES, MODE_LABEL, fmtM } = __M['js/games/rush/modes.js'];
 
 const PH = { loading: 0, lobby: 1, countdown: 2, run: 3, finale: 4, over: 5 };
 const F_AIR = 1; const F_ROLL = 2; const F_DOWN = 4; const F_INV = 8; const F_SHIELD = 16; const F_DONE = 32;
@@ -44712,6 +44945,22 @@ const DIGITS = ['', '1', '2', '3'];
 const TUT_KEYS = ['← → or A D to switch lanes', '↑ W or Space to jump', '↓ or S to roll under'];
 const TUT_BTNS = ['Tap left or right to switch lanes', 'Tap JUMP to jump', 'Tap ROLL to roll under'];
 const TUT_SWIPE = ['Swipe left or right to switch lanes', 'Swipe up to jump', 'Swipe down to roll under'];
+// Unlockable style: earned by milestones, kept in the shared game data (per person), worn per device.
+const STYLES = [
+  { key: 'trail', k: 0, name: 'None' },
+  { key: 'trail', k: 1, name: 'Sparkle', how: 'Run 1 km in one go', test: (S) => S.dist >= 1000 },
+  { key: 'trail', k: 2, name: 'Ink puffs', how: '10 close calls in one run', test: (S) => S.closeCalls >= 10 },
+  { key: 'trail', k: 3, name: 'Confetti', how: 'Win 3 matches', test: (S) => S.wins >= 3 },
+  { key: 'trail', k: 4, name: 'Embers', how: 'A x10 combo', test: (S) => S.maxCombo >= 10 },
+  { key: 'hat', k: 0, name: 'None' },
+  { key: 'hat', k: 1, name: 'Crown', how: 'Beat your partner’s best Daily run', test: (S) => S.beatDaily },
+  { key: 'hat', k: 2, name: 'Halo', how: 'Revive your partner 3 times', test: (S) => S.revives >= 3 },
+  { key: 'hat', k: 3, name: 'Party cone', how: '150 coins in one run', test: (S) => S.coins >= 150 },
+];
+const fmtT = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+const dayKey = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+/** The Daily seed: one track for both of you, all day (local calendar day). */
+function dailySeed(day = dayKey()) { return (hash('rush-daily', day) % 2147483646) + 1; }
 
 const AB = ['a', 'b'];
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } };
@@ -44743,7 +44992,21 @@ function createGame(el, api) {
   const glWrap = root.querySelector('.rr-gl');
   const touch = root.querySelector('.rr-touch');
 
-  const settings = Object.assign({ scheme: 'swipe', music: 'on' }, lsGet(SKEY, {}));
+  const settings = Object.assign({ scheme: 'swipe', music: 'on', trail: 0, hat: 0 }, lsGet(SKEY, {}));
+  // shared bests + unlocks (the engine mirrors them locally and syncs the shared doc)
+  const data = () => (typeof api.data === 'function' ? api.data() : {});
+  const setData = (patch) => { if (typeof api.setData === 'function') api.setData(patch); };
+  const unlocked = (w, st) => st.k === 0 || !!data()[`unlock_${w}_${st.key}${st.k}`];
+  const wear = { a: { tr: 0, ht: 0 }, b: { tr: 0, ht: 0 } };
+  /** What each local runner wears: the device's pick, if that person has earned it. */
+  function resolveWear() {
+    for (const w of AB) {
+      const tr = STYLES.find((x) => x.key === 'trail' && x.k === (settings.trail | 0));
+      const ht = STYLES.find((x) => x.key === 'hat' && x.k === (settings.hat | 0));
+      wear[w].tr = tr && unlocked(w, tr) ? tr.k : 0;
+      wear[w].ht = ht && unlocked(w, ht) ? ht.k : 0;
+    }
+  }
   const audio = createAudio({
     musicOn: () => settings.music === 'on',
     getCtx: typeof api.audio === 'function' ? () => api.audio() : null,
@@ -44772,6 +45035,7 @@ function createGame(el, api) {
     onSettings: () => openSettings(),
     onSet: (k, v) => {
       if (k === 'sound') lsSet(MUTE, v === 'off');
+      else if (k === 'trail' || k === 'hat') { settings[k] = v | 0; lsSet(SKEY, settings); resolveWear(); audio.play('tick'); }
       else { settings[k] = v; lsSet(SKEY, settings); }
       root.classList.toggle('rr-buttons', settings.scheme === 'buttons' && !split);
       openSettings();
@@ -44783,7 +45047,11 @@ function createGame(el, api) {
   function openSettings() {
     let snd = 'on';
     try { snd = JSON.parse(localStorage.getItem(MUTE) || 'false') ? 'off' : 'on'; } catch { /* ignore */ }
-    hud.settings({ scheme: settings.scheme, music: settings.music, sound: snd });
+    const w = meW || 'a';
+    const styles = STYLES.map((st) => ({ key: st.key, k: st.k, name: st.name, how: st.how || '', locked: !unlocked(w, st) }));
+    if (!unlocked(w, STYLES.find((x) => x.key === 'trail' && x.k === settings.trail) || STYLES[0])) settings.trail = 0;
+    if (!unlocked(w, STYLES.find((x) => x.key === 'hat' && x.k === settings.hat) || STYLES[0])) settings.hat = 0;
+    hud.settings({ scheme: settings.scheme, music: settings.music, sound: snd, trail: settings.trail, hat: settings.hat, styles });
   }
 
   if (!live && phoneish) {
@@ -44845,8 +45113,9 @@ function createGame(el, api) {
   let W = 0; let H = 0; const baseDpr = Math.min(window.devicePixelRatio || 1, 2); let scale = 0.85;
   // Doubles written every frame live on one object: V8 boxes a fresh HeapNumber for every double
   // stored in a closure variable, while object fields are updated in place (JSC boxes neither).
-  const K = { tAnim: 0.5, lastTs: 0.5, ewma: 16.7, lowFor: 0.5, checkT: 0.5, coolT: 0.5, hudT: 0.5, scoreT: 0.5, lastPub: -1e9 };
-  K.tAnim = 0; K.lastTs = 0; K.lowFor = 0; K.checkT = 0; K.coolT = 0; K.hudT = 0; K.scoreT = 0;
+  const K = { tAnim: 0.5, lastTs: 0.5, ewma: 16.7, lowFor: 0.5, checkT: 0.5, coolT: 0.5, hudT: 0.5, scoreT: 0.5, lastPub: -1e9, hitStop: 0.5, hitPend: 0.5, wind: 0.5, mile: 0.5 };
+  K.tAnim = 0; K.lastTs = 0; K.lowFor = 0; K.checkT = 0; K.coolT = 0; K.hudT = 0; K.scoreT = 0; K.hitStop = 0; K.hitPend = 0; K.wind = 0;
+  let frameN = 0;
   const perf = { dts: new Float32Array(600), work: new Float32Array(600), n: 0, calls: 0, tris: 0, maxCalls: 0, maxTris: 0, programs0: 0, scaleDowns: 0, scaleUps: 0 };
   let rules = null;
   const pal = { a: null, b: null, hl: null };
@@ -44973,6 +45242,7 @@ function createGame(el, api) {
   // ── lobby / match lifecycle ──
   function toLobby() {
     M.phase = 'lobby';
+    resolveWear();
     root.classList.add('rr-in-lobby');
     M.track = null; M.result = null; M.ready = false; M.reasons.clear(); M.paused = false; M.resumeAt = 0; M.rejoin = null;
     players.a.snap.ok = 0; players.b.snap.ok = 0;
@@ -44996,7 +45266,7 @@ function createGame(el, api) {
       if (!partnerHere || !ps || ps.ph !== PH.lobby || !ps.sy) { hudToast(`Waiting for ${api.name(other(meW))}…`); return; }
     }
     const mode = M.lobbyMode;
-    const seed = (dbg && dbg.seed) || ((Math.random() * 2147483646) | 0) + 1;
+    const seed = mode === 'daily' ? dailySeed() : (dbg && dbg.seed) || ((Math.random() * 2147483646) | 0) + 1;
     const len = (dbg && dbg.raceLen) || RACE_LEN;
     const cap = (dbg && dbg.brawlCap) || BRAWL_CAP;
     const at = clock() + (live ? START_DELAY : 3000);
@@ -45031,7 +45301,10 @@ function createGame(el, api) {
     countK = -1; pauseK = -1;
     world.reset();
     world.setGates(M.mode === 'race' ? [7, M.len] : [7]);
+    world.setMarks(bestMarks());
     fx.clear();
+    for (const w of AB) { players[w].lastMile = 0; players[w].pb = { dist: 0, time: 0, theirs: 0 }; }
+    resolveWear();
     hud.hideLobby(); hud.settings(null);
     root.classList.remove('rr-in-lobby');
     for (const w of viewers) {
@@ -45039,7 +45312,7 @@ function createGame(el, api) {
       v.weapon(null, M.mode === 'race');
       v.banner(null);
     }
-    api.setStatus(`${MODE_LABEL[M.mode]} · ${M.mode === 'race' ? `first to ${(M.len / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })} km` : M.mode === 'brawl' ? 'shove to win' : 'shared hearts'}`);
+    api.setStatus(`${MODE_LABEL[M.mode]} · ${M.mode === 'race' ? `first to ${(M.len / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })} km` : M.mode === 'brawl' ? 'shove to win' : M.mode === 'daily' ? 'one track all day' : 'shared hearts'}`);
     audio.startMusic();
     audio.setIntensity(0);
     tutorial.start();
@@ -45079,7 +45352,7 @@ function createGame(el, api) {
 
   function endMatch(res) {
     if (M.phase !== 'run') return;
-    const at = clock() + 2300;
+    const at = clock() + FINALE_MS;
     if (live) link.send('end', { res, at });
     startFinale(res, at);
   }
@@ -45088,7 +45361,8 @@ function createGame(el, api) {
     const w = res.winner;
     const v = viewers.map((x) => players[x].view);
     const cls = res.team ? 'team' : w ? 'p' + w : '';
-    hud.finale(res.team ? res.text : w ? `${api.name(w)} wins!` : 'Photo finish!', cls, res.team ? res.sub : (live ? (w === meW ? 'You did it' : 'So close') : ''));
+    const pbLine = recordBests(res);
+    hud.finale(res.team ? res.text : w ? `${api.name(w)} wins!` : (res.daily ? 'Dead heat!' : 'Photo finish!'), cls, pbLine || (res.team ? res.sub : (live ? (w === meW ? 'You did it' : 'So close') : '')));
     audio.play('finish');
     audio.stopMusic();
     const tz = w ? players[w].rs : players[viewers[0]].rs;
@@ -45097,7 +45371,84 @@ function createGame(el, api) {
   }
   function toOver() {
     M.phase = 'over';
-    try { api.finish(M.result); } catch (e) { console.error(e); }
+    // the card gets this device's own bests line (the recorded result keeps the shared text)
+    const res = Object.assign({}, M.result);
+    if (M.pbText) res.sub = res.sub ? `${res.sub} · ${M.pbText}` : M.pbText;
+    try { api.finish(res); } catch (e) { console.error(e); }
+  }
+
+  // ── bests, daily board, unlocks ──
+  const day = () => dayKey();
+  /** Lines on the track worth chasing: my best and my partner's best for this mode. */
+  function bestMarks() {
+    const d = data(); const out = [];
+    if (M.mode !== 'race' && M.mode !== 'daily') return out;
+    const keyOf = (w) => (M.mode === 'daily' ? `${w}_daily_m` : `${w}_race_m`);
+    const me = meW || 'a'; const q = other(me);
+    const mine = d[keyOf(me)] | 0; const theirs = d[keyOf(q)] | 0;
+    if (theirs > 60) out.push({ z: theirs, text: `${api.name(q).toUpperCase()}’S BEST`, col: P[q] });
+    if (mine > 60 && Math.abs(mine - theirs) > 3) out.push({ z: mine, text: split ? 'BEST' : 'YOUR BEST', col: P.hl });
+    return out;
+  }
+  function recordBests(res) {
+    const lines = [];
+    const d = data(); const patch = {}; const pops = [];
+    for (const w of locals) {
+      const p = players[w]; const r = p.r;
+      if (!r) continue;
+      const dist = Math.round(r.z);
+      const anyM = `${w}_any_m`; const modeM = `${w}_${M.mode}_m`;
+      const newAny = dist > (d[anyM] | 0); const newMode = dist > (d[modeM] | 0);
+      if (newAny) patch[anyM] = dist;
+      if (newMode) patch[modeM] = dist;
+      if (M.mode === 'daily') { const k = `${w}_daily_${day()}`; if (dist > (d[k] | 0)) patch[k] = dist; }
+      if (M.mode === 'race' && r.fin >= 0) { const k = `${w}_race_t`; if (!d[k] || r.fin < d[k]) patch[k] = Math.round(r.fin * 100) / 100; }
+      if (r.closeCalls > (d[`${w}_cc`] | 0)) patch[`${w}_cc`] = r.closeCalls;
+      if (r.maxCombo > (d[`${w}_combo`] | 0)) patch[`${w}_combo`] = r.maxCombo;
+      const won = res.winner === w;
+      const wins = (d[`${w}_wins`] | 0) + (won ? 1 : 0);
+      if (won) patch[`${w}_wins`] = wins;
+      const revives = (d[`${w}_rev`] | 0) + (p.stats.revives | 0);
+      if (p.stats.revives) patch[`${w}_rev`] = revives;
+      patch[`${w}_runs`] = (d[`${w}_runs`] | 0) + 1;
+      // unlocks
+      const q = other(w);
+      const S = { dist, closeCalls: r.closeCalls, maxCombo: r.maxCombo, coins: r.coins, wins, revives, beatDaily: M.mode === 'daily' && dist > (d[`${q}_daily_m`] | 0) && (d[`${q}_daily_m`] | 0) > 0 };
+      for (const st of STYLES) {
+        if (!st.test || unlocked(w, st) || patch[`unlock_${w}_${st.key}${st.k}`]) continue;
+        if (st.test(S)) { patch[`unlock_${w}_${st.key}${st.k}`] = 1; pops.push([w, st]); }
+      }
+      if (p.view) {
+        const prevMode = d[modeM] | 0;
+        const theirs = d[`${q}_${M.mode}_m`] | 0;
+        const bits = [];
+        const who = split ? api.name(w) : 'You';
+        if (M.mode === 'race' && r.fin >= 0) {
+          const prevT = d[`${w}_race_t`];
+          if (prevT && r.fin < prevT) { bits.push(`${who}: fastest yet (was ${fmtT(prevT)})`); p.view.pop('NEW BEST!', 'hl', fmtT(r.fin)); audio.play('good'); }
+          else if (prevT) bits.push(`${who}: best ${fmtT(prevT)}`);
+        } else if (M.mode === 'race' || M.mode === 'daily') {
+          if (newMode && prevMode > 0) { bits.push(`${who}: new best ${fmtM(dist)} m`); p.view.pop('NEW BEST!', 'hl', `${fmtM(dist)} m`); audio.play('good'); }
+          else if (M.mode === 'race') bits.push(`${who}: ${fmtM(dist)} m${prevMode ? ` · best ${fmtM(prevMode)} m` : ''}`);
+          else if (prevMode) bits.push(`${who}: best ${fmtM(prevMode)} m`);
+          if (theirs && (M.mode !== 'daily' || theirs !== Math.round(res.winner === q ? (q === 'a' ? res.za : res.zb) : -1))) bits.push(`${api.name(q)}’s best ${fmtM(theirs)} m`);
+        }
+        if (bits.length) lines.push(bits.join(' · '));
+      }
+    }
+    if (Object.keys(patch).length) setData(patch);
+    const text = lines.join(' · ');
+    M.pbText = text;
+    pops.forEach(([w, st], i) => { const t = setTimeout(() => { if (dead) return; const v = players[w].view; if (v) v.pop('UNLOCKED', 'hl', `${st.name} ${st.key}`); audio.play('unlock'); }, 900 + i * 1100); timers.push(t); });
+    return text;
+  }
+  /** Today's Daily board for the lobby row. */
+  function dailyText() {
+    const d = data(); const k = day();
+    const za = d[`a_daily_${k}`] | 0; const zb = d[`b_daily_${k}`] | 0;
+    if (!za && !zb) return '';
+    const cell = (w, z) => `<span class="p-${w}">${esc(api.name(w))} ${z ? fmtM(z) + ' m' : '—'}</span>`;
+    return `Today: ${cell('a', za)} · ${cell('b', zb)}${za && zb ? (za === zb ? ' · tied' : ` · ${esc(api.name(za > zb ? 'a' : 'b'))} leads`) : ''}`;
   }
 
   // ── input ──
@@ -45380,16 +45731,19 @@ function createGame(el, api) {
           break;
         }
         case E_STUMBLE: if (mine) { api.haptic(15); audio.play('stumble'); if (Math.random() < 0.4) v.pop('Oof', 'bad'); } shake(p.w, 0.28); fx.dust(r.x, r.y, r.z, 5, 1); break;
+        case E_CLIP: if (mine) { api.haptic(20); audio.play('clip'); v.pop('Clipped it!', 'bad', 'swipe a touch earlier'); } shake(p.w, 0.35); fx.dust(r.x, r.y, r.z, 6, 1.1); fx.burst(r.x, r.y + 1, r.z, P.hl, 5, 3); break;
+        case E_BONUS: if (mine) { audio.play('bonus', val); v.pop(`+${val}`, 'hl', 'combo bonus'); } fx.burst(r.x, r.y + 1.4, r.z, P.hl, 10, 4); break;
         case E_CRASH:
           if (mine) { api.haptic(45); audio.play('crash'); audio.duck(1400); v.flash(); v.pop(val === 2 ? 'FELL!' : val === 3 ? 'SLAMMED!' : 'CRASH!', 'bad'); }
           shake(p.w, 0.7);
+          if (mine && !reducedMotion) { K.hitPend = HIT_STOP; const rg = p.rig; if (rg) rg.punch(0.7); }
           fx.crash(r.x, r.y, r.z);
           fx.stars(r.x, r.y + 2.0, r.z, 3, 1.5);
           if (r.out && p.outT < 0) p.outT = r.t;
           break;
-        case E_RESPAWN: fx.dust(r.x, 0, r.z, 8, 1.2); if (mine) audio.play('pickup'); break;
+        case E_RESPAWN: fx.dust(r.x, 0, r.z, 8, 1.2); fx.burst(r.x, r.y + 1, r.z, P.hl, 8, 3); if (mine) { audio.play('respawn'); const rg = p.rig; if (rg) rg.kick(0.5); } break;
         case E_SHIELD: fx.burst(r.x, r.y + 1.1, r.z, P.hl, 16, 6); if (mine) { audio.play('shield'); v.pop('Shield saved you', 'hl'); } shake(p.w, 0.3); break;
-        case E_CLOSE: if (mine) { audio.play('close'); v.pop('Close call!', 'hl', '+2'); } break;
+        case E_CLOSE: fx.sparkle(r.x, r.y, r.z, val * LANE_W > r.x ? 1 : -1); if (mine) { audio.play('close'); v.pop('Close call!', 'hl', '+2'); api.haptic(8); const rg = p.rig; if (rg) rg.kick(0.25); } break;
         case E_COMBO: if (mine) { audio.play('combo', val); v.combo(val, COMBO_WORDS[Math.min(val, COMBO_WORDS.length - 1)]); } break;
         case E_SMASH: fx.burst(r.x, r.y + 0.6, r.z + 0.6, P.hl, 14, 7); if (mine) audio.play('smash'); shake(p.w, 0.15); break;
         default: break;
@@ -45485,9 +45839,11 @@ function createGame(el, api) {
       pub.z = r.z; pub.x = r.x; pub.y = r.y; pub.g = r.sup > -50 ? r.sup : -3; pub.vy = r.vy; pub.sp = r.speed;
       pub.st = r.stumbleT / STUMBLE_T; pub.dt = r.down ? r.downT : 0; pub.rt = r.t; pub.rp = r.slideT > 0 ? 1 - r.slideT / SLIDE_TIME : 0;
       pub.l = r.lane; pub.f = flagsOf(r); pub.h = r.hearts; pub.c = r.coins; pub.fn = r.fin; pub.w = WEAPON_IDX.indexOf(p.weapon); pub.sv = p.stats.shoves; pub.cb = r.combo;
+      pub.tr = wear[meW].tr; pub.ht = wear[meW].ht;
     } else {
       pub.z = 0; pub.x = (meW === 'a' ? -1 : 1) * LANE_W; pub.y = 0; pub.g = 0; pub.vy = 0; pub.sp = 0; pub.st = 0; pub.dt = 0; pub.rt = 0; pub.rp = 0;
       pub.l = meW === 'a' ? -1 : 1; pub.f = 0; pub.h = HEARTS; pub.c = 0; pub.fn = -1; pub.w = 0; pub.sv = 0; pub.cb = 0;
+      pub.tr = wear[meW].tr; pub.ht = wear[meW].ht;
     }
     link.publish(pub);
   }
@@ -45502,14 +45858,19 @@ function createGame(el, api) {
     const dt = dtMs / 1000;
     const w0 = performance.now();
     const now = clock();
-    K.tAnim += dt;
+    // hit-stop: the picture holds on the impact frame (the sim keeps its clock; only the drawing freezes)
+    const frozen = K.hitStop > 0;
+    if (frozen) K.hitStop -= dt;
+    if (!frozen) K.tAnim += dt;
+    frameN++;
     if (M.phase === 'over' && (perf.n % 6) !== 0) { perf.n++; return; } // idle behind the end card
-    logic(now, dt);
-    if (!glLost) { render(dt, now); updateTag(); }
+    logic(now, dt, frozen);
+    if (!glLost) { render(frozen ? 0 : dt, now); if (!frozen) updateTag(); }
+    if (K.hitPend > 0) { K.hitStop = K.hitPend; K.hitPend = 0; }
     track(dtMs, performance.now() - w0);
   }
 
-  function logic(now, dt) {
+  function logic(now, dt, frozen) {
     if (live) { netLogic(now); link.setFastSync(M.phase === 'countdown' || ((M.phase === 'run') && (M.paused || now < M.resumeAt + 500)) || M.rejoin ? 2 : M.phase === 'run' ? 0 : 1); }
     pauseLogic(now);
     if (M.phase === 'lobby') lobbyUI();
@@ -45533,6 +45894,7 @@ function createGame(el, api) {
       if (res) endMatch(res);
     } else if (M.phase === 'countdown') M.lastNow = now;
     else if (M.phase === 'finale') { if (rules) rules.tick(now, dt); if (now >= M.endAt) toOver(); }
+    if (frozen) { if (live && ready3D) publish(); return; }
     // render states
     for (let i = 0; i < 2; i++) {
       const p = players[AB[i]];
@@ -45556,6 +45918,19 @@ function createGame(el, api) {
       }
     }
     updateShots(dt);
+    // worn style: trails behind running runners, hats on heads (the partner's come over the wire)
+    for (let i = 0; i < 2; i++) {
+      const p = players[AB[i]];
+      const tr = p.local ? wear[AB[i]].tr : p.net.tr;
+      const ht = p.local ? wear[AB[i]].ht : p.net.ht;
+      if (p.av) p.av.setHat(ht);
+      if (tr && M.phase === 'run' && p.rs.speed > 6 && !p.rs.down && p.rs.visible) fx.trailFx(tr, p.rs.x, p.rs.y, p.rs.z, P[AB[i]], frameN);
+      // distance milestones every 500 m
+      if (p.local && p.view && p.r && M.phase === 'run') {
+        const mile = Math.floor(p.r.z / 500);
+        if (mile > p.lastMile) { p.lastMile = mile; if (mile >= 1) { p.view.pop(`${fmtM(mile * 500)} m`, 'hl', mile * 500 === 1000 ? '1 km!' : ''); audio.play('good'); } }
+      }
+    }
     tutorial.update();
     K.hudT += dt;
     updateHud(now, dt);
@@ -45615,6 +45990,7 @@ function createGame(el, api) {
     let sp = 0;
     for (let i = 0; i < viewers.length; i++) { const rs = players[viewers[i]].rs; if (rs.speed > sp) sp = rs.speed; }
     audio.setIntensity(clamp((sp - 12) / 16, 0, 1));
+    audio.setWind(M.phase === 'run' && !paused ? clamp((sp - 8) / 22, 0, 1) : 0);
     for (let vi = 0; vi < viewers.length; vi++) {
       const w = viewers[vi];
       const p = players[w]; const v = p.view; const r = p.r;
@@ -45644,6 +46020,10 @@ function createGame(el, api) {
         v.bar(true, clamp(p.rs.z / M.len, 0, 1), clamp(qs.z / M.len, 0, 1), p.css, q.css, p.name[0], q.name[0]);
         if (hk.gap !== gapM) { hk.gap = gapM; v.gap(Math.abs(gapM) < 1 ? `${q.name} level with you` : `${q.name} ${gapM > 0 ? '+' : '−'}${Math.abs(gapM)} m`); }
         v.weapon(p.weaponRoll > 0 ? WEAPON_IDX[1 + (Math.floor(K.tAnim * 12) % 5)] : p.weapon, true);
+      } else if (M.mode === 'daily') {
+        v.bar(false);
+        const k = (Math.abs(gapM) <= 2 ? 99999 : gapM) * 10 + qh;
+        if (hk.gap !== k) { hk.gap = k; v.gap(Math.abs(gapM) <= 2 ? `${q.name} level with you` : `${q.name} ${gapM > 0 ? '+' : '−'}${Math.abs(gapM)} m`); }
       } else if (M.mode === 'brawl') {
         v.bar(false);
         const k = (Math.abs(gapM) <= 2 ? 99999 : gapM) * 10 + qh;
@@ -45681,7 +46061,11 @@ function createGame(el, api) {
           if (hk.ban !== 2) { hk.ban = 2; v.banner(`${esc(q.name)} is down! Grab the glowing heart<b>${left}</b>`); }
           v.bannerNum(left);
         } else if (hk.ban) { hk.ban = 0; v.banner(null); }
-      } else if (M.mode !== 'tandem') v.banner(null);
+      } else if (M.mode === 'daily' && M.phase === 'run' && r.out) {
+        const qz = Math.round(qs.z / 5) * 5;
+        if (hk.ban !== 3) { hk.ban = 3; v.banner(`Out of hearts at ${fmtM(r.z)} m · ${esc(q.name)} is still running<b>${qz}</b><small>metres so far</small>`); }
+        v.bannerNum(qz);
+      } else if (M.mode !== 'tandem') { if (hk.ban) { hk.ban = 0; } v.banner(null); }
     }
     void dt;
   }
@@ -45691,7 +46075,7 @@ function createGame(el, api) {
       const q = players[other(meW)];
       const me = players[meW].rs;
       const dz = q.rs.z - me.z;
-      if (dz > -6 && dz < 150 && q.rs.visible && !(Math.abs(dz) < 3 && Math.abs(q.rs.x - me.x) < 1)) {
+      if (dz > -6 && dz < 120 && q.rs.visible && !(Math.abs(dz) < 3 && Math.abs(q.rs.x - me.x) < 1)) {
         const cam = players[meW].rig.cam;
         vec3.set(q.rs.x, q.rs.y + 2.75, -q.rs.z);
         vec3.project(cam);
@@ -45704,35 +46088,50 @@ function createGame(el, api) {
           vec3.project(cam);
           hud.tag(true, side > 0 ? W - 10 : 10, clamp((-vec3.y * 0.5 + 0.5) * H, 150, H - 170), q.name, q.css, side);
         } else hud.tag(false);
+      } else if (M.phase === 'run' && q.rs.visible && (dz >= 120 || dz <= -6) && Math.abs(dz) < 100000) {
+        // ghost marker: they're out of sight, so pin a chip where they'd be (their lane, up at the
+        // horizon when ahead, down by my feet when behind) with the live gap
+        const cam = players[meW].rig.cam;
+        const g = Math.round(Math.abs(dz) / 5) * 5;
+        if (ghostG !== g || ghostDir !== (dz > 0)) { ghostG = g; ghostDir = dz > 0; ghostText = `${q.name} ${dz > 0 ? '↑' : '↓'} ${g} m`; }
+        if (dz > 0) {
+          vec3.set(q.rs.x, 1.2, -(me.z + 140));
+          vec3.project(cam);
+          hud.tag(true, clamp((vec3.x * 0.5 + 0.5) * W, 60, W - 60), clamp((-vec3.y * 0.5 + 0.5) * H, H * 0.3, H * 0.5), ghostText, q.css, 0, true);
+        } else hud.tag(true, clamp(W / 2 + (q.rs.x - me.x) * 34, 70, W - 70), H - 120, ghostText, q.css, 0, true);
       } else hud.tag(false);
     } else hud.tag(false);
   }
+  let ghostG = -1; let ghostDir = false; let ghostText = '';
   let countK = -1; let pauseK = -1;
 
   // The lobby re-renders only when one of its inputs changes (a numeric key), not every frame.
   let lobbyK = -1;
   function lobbyUI() {
     if (!ready3D) return;
-    let k = MODES.indexOf(M.lobbyMode) + 1;
+    // mode in bits 8+, the live flags below it, today's Daily board (so a new best redraws the row) above
+    let k = (MODES.indexOf(M.lobbyMode) + 1) << 8;
+    { const d = data(); const dk = day(); k += (((d[`a_daily_${dk}`] | 0) * 31 + (d[`b_daily_${dk}`] | 0)) % 100003) * 4096; }
     let ps = null; let fresh = false;
     if (live) {
       ps = link.latest();
       fresh = !!ps && link.age() < 2000;
-      if (!isHost) { const hm = fresh && ps.ph === PH.lobby ? MODES[ps.md] : null; if (hm) M.lobbyMode = hm; k = MODES.indexOf(M.lobbyMode) + 1; }
+      if (!isHost) { const hm = fresh && ps.ph === PH.lobby ? MODES[ps.md] : null; if (hm) M.lobbyMode = hm; k = (k & ~0xff00) | ((MODES.indexOf(M.lobbyMode) + 1) << 8); }
       k |= (partnerHere ? 4 : 0) | (fresh && ps.ph === PH.lobby ? 8 : 0) | (fresh && ps.sy ? 16 : 0) | (fresh && ps.rd ? 32 : 0) | (link.synced ? 64 : 0) | (M.ready ? 128 : 0);
     }
     if (k === lobbyK && ov_lobbyOn()) return;
     lobbyK = k;
     const keys = split ? `<div><b>${esc(api.name('a'))}</b><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> · weapon <kbd>E</kbd></div><div><b>${esc(api.name('b'))}</b><kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> · weapon <kbd>Enter</kbd></div>` : '';
-    if (!live) { hud.lobby({ mode: M.lobbyMode, canPick: true, canStart: true, startLabel: 'Start', status: '', keys }); return; }
+    const daily = dailyText();
+    if (!live) { hud.lobby({ mode: M.lobbyMode, canPick: true, canStart: true, startLabel: 'Start', status: '', keys, daily }); return; }
     const pn = api.name(other(meW));
     if (isHost) {
       const pin = partnerHere && fresh && ps.ph === PH.lobby && ps.sy;
       const status = !partnerHere ? `Waiting for ${esc(pn)}…` : !pin ? `${esc(pn)} is getting ready…` : ps.rd ? `<span class="rr-ok">${esc(pn)} is ready</span>` : `${esc(pn)} is here · you pick the mode`;
-      hud.lobby({ mode: M.lobbyMode, canPick: true, canStart: !!pin, startLabel: 'Start', status, keys });
+      hud.lobby({ mode: M.lobbyMode, canPick: true, canStart: !!pin, startLabel: 'Start', status, keys, daily });
     } else {
       const status = `${esc(pn)} picks the mode${link.synced ? '' : ' · syncing clocks…'}`;
-      hud.lobby({ mode: M.lobbyMode, canPick: false, canStart: link.synced, startLabel: M.ready ? 'Ready!' : 'I’m ready', status, keys });
+      hud.lobby({ mode: M.lobbyMode, canPick: false, canStart: link.synced, startLabel: M.ready ? 'Ready!' : 'I’m ready', status, keys, daily });
     }
   }
   const ov_lobbyOn = () => hud.ov.lobby.classList.contains('on');
@@ -45782,6 +46181,7 @@ function createGame(el, api) {
       if (M.phase === 'lobby' || M.phase === 'loading') mode = 'lobby';
       else if (M.phase === 'finale' || M.phase === 'over') { mode = 'finale'; const w = M.result && M.result.winner; tg = w ? players[w].rs : p.rs; }
       else if (M.mode === 'tandem' && p.rs.down && p.r && p.r.hold && p.rs.downT > 0.9) { mode = 'spectate'; tg = players[other(p.w)].rs; }
+      else if (M.mode === 'daily' && p.r && p.r.out && p.rs.downT > 1.2 && !players[other(p.w)].rs.idle) { mode = 'spectate'; tg = players[other(p.w)].rs; }
       if (lobbyish && split) rg.resize(W, H, H < 560 && W > H);
       else if (split && rg.cam.aspect !== vw / H) rg.resize(vw, H, H < 560 && vw > H);
       rg.update(dt, mode, tg, K.tAnim);
@@ -45914,6 +46314,43 @@ function createGame(el, api) {
       mode(m) { if (isHost && M.phase === 'lobby') { M.lobbyMode = m; } },
       start() { hostStart(); },
       trackHash: (seed, n) => trackHash(seed, n),
+      dailySeed: (d) => dailySeed(d),
+      data: () => data(),
+      setData: (patch) => setData(patch),
+      settings,
+      /** Fairness probes: a late lane change before a barrier is a clip (stumble), a square hit is a crash; combo tiers pay. */
+      probe2() {
+        const tr = createTrack(5);
+        // find the first low barrier past the warm-up with a clear lane next to it
+        let o = null;
+        for (let ci = 1; ci < 20 && !o; ci++) {
+          const c = tr.chunk(ci);
+          for (const x of c.obs) {
+            if (x.t !== 1 || x.soft) continue;
+            const nl = x.lane === 1 ? 0 : x.lane + 1; // the lane the swipe goes to
+            const busy = c.obs.some((y) => y !== x && ((y.lane === nl && y.z1 > x.z0 - 12 && y.z0 < x.z1 + 12) || (y.lane === x.lane && y.z1 > x.z0 - 32 && y.z0 < x.z0)));
+            if (!busy && !c.gaps.length && x.z0 - 30 > c.z0) { o = x; break; }
+          }
+        }
+        const run = (swipeBefore) => {
+          const r = newRunner(o.lane); r.z = r.zPrev = o.z0 - 30; r.t = 20; r.speed = baseSpeed(20);
+          const dir = o.lane === 1 ? A_LEFT : A_RIGHT;
+          let swiped = false;
+          for (let k = 0; k < 400 && !r.down; k++) {
+            if (!swiped && o.z0 - (r.z + 0.35) < swipeBefore) { swiped = true; act(r, dir); }
+            step(r, tr, false);
+            if (r.z > o.z1 + 5) break;
+          }
+          return { crashes: r.crashes, stumbles: r.stumbles, clips: r.clips, z: r.z };
+        };
+        const late = run(0.06 + 1.5 * baseSpeed(20) * DT); // the swipe lands a step before the hull touches: a clip
+        const none = run(-1);    // never swipes: a crash
+        const early = run(3);    // ~0.1 s before: clean
+        // combo tiers: a perfect run through 1.2 km strings clean passes together and gets paid
+        const rc = newRunner(0); rc.hearts = 1e6; const bot = createBot(tr); let n = 0;
+        while (rc.z < 1200 && n < 120 * 90) { if (n % bot.every === 0) { const a = bot.decide(rc); if (a) act(rc, a); } step(rc, tr, false); rc.evN = 0; n++; if (rc.down) break; }
+        return { late, none, early, combo: { max: rc.maxCombo, bonus: rc.bonus, coins: rc.coins, closeCalls: rc.closeCalls } };
+      },
       botRun: (seed, n) => botRun(seed, n),
       inputStats: () => (input ? input.stats : null),
       get canvas() { return renderer ? renderer.domElement : null; },
@@ -45957,7 +46394,7 @@ function createGame(el, api) {
 
 function rushInstances() { return liveGames; }
 
-return { createGame, rushInstances };
+return { dailySeed, createGame, rushInstances };
 })();
 
 // ── js/games/rush/css.js ──
@@ -46089,6 +46526,7 @@ const CSS = `
   background: var(--g-card); border: 2.5px solid var(--g-ink); box-shadow: 3px 3px 0 var(--g-edge); display: none; }
 .g-rush .rr-banner.on { display: block; }
 .g-rush .rr-banner b { display: block; font-size: 30px; font-variant-numeric: tabular-nums; }
+.g-rush .rr-banner small { display: block; font-size: 12px; color: var(--g-muted); }
 .g-rush .rr-tag { position: absolute; left: 0; top: 0; z-index: 3; pointer-events: none; padding: 2px 8px; border-radius: 8px; font-size: 12px; font-weight: 900; color: var(--g-on-ink); border: 2px solid var(--g-ink); white-space: nowrap; display: none; will-change: transform; }
 .g-rush .rr-tag::after { content: ''; position: absolute; left: 50%; bottom: -7px; margin-left: -5px; border: 5px solid transparent; border-top-color: var(--g-ink); border-bottom: 0; }
 .g-rush .rr-tag.rr-edge-r::after { left: auto; right: -7px; bottom: auto; top: 50%; margin: -5px 0 0; border: 5px solid transparent; border-left-color: var(--g-ink); border-right: 0; }
@@ -46145,6 +46583,25 @@ const CSS = `
 .g-rush .rr-keys div { padding: 7px; border-radius: 12px; border: 2px solid var(--g-ink); background: var(--g-bg); }
 .g-rush .rr-keys b { display: block; font-family: var(--g-font-display); font-size: 14px; }
 .g-rush .rr-keys kbd { display: inline-block; min-width: 20px; padding: 1px 4px; margin: 1px; border-radius: 5px; border: 1.5px solid var(--g-ink); background: var(--g-card); font: 800 11px var(--g-font-body); }
+
+/* daily row + style chips */
+.g-rush .rr-mode.rr-daily { flex-direction: row; gap: 10px; padding: 8px 12px; text-align: left; align-items: center; }
+.g-rush .rr-mode.rr-daily svg { width: 30px; height: 30px; flex: none; }
+.g-rush .rr-daily-t { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.g-rush .rr-daily-t b { font-size: 14px; }
+.g-rush .rr-daily-t span { font-size: 11px; }
+.g-rush .rr-daily-t .p-a { color: var(--p-a); } .g-rush .rr-daily-t .p-b { color: var(--p-b); }
+.g-rush .rr-mode.on .rr-daily-t .p-a, .g-rush .rr-mode.on .rr-daily-t .p-b { color: var(--g-on-ink); }
+.g-rush .rr-style { display: grid; grid-template-columns: 52px 1fr; align-items: start; gap: 8px; text-align: left; font-weight: 900; font-family: var(--g-font-display); }
+.g-rush .rr-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.g-rush .rr-chip-s { pointer-events: auto; padding: 5px 9px; border-radius: 999px; border: 2px solid var(--g-ink); font-weight: 900; font-size: 12px; background: var(--g-bg); display: flex; flex-direction: column; align-items: flex-start; line-height: 1.1; }
+.g-rush .rr-chip-s.on { background: var(--g-hl); color: var(--g-on-ink); }
+.g-rush .rr-chip-s.locked { opacity: .55; border-style: dashed; cursor: default; }
+.g-rush .rr-chip-s small { font-weight: 700; font-size: 10px; font-family: var(--g-font-body); color: var(--g-muted); }
+.g-rush .rr-chip-s.on small { color: var(--g-on-ink); }
+.g-rush .rr-tag.rr-ghost { font-size: 13px; padding: 3px 10px; }
+.g-rush .rr-tag.rr-ghost::after { display: none; }
+.g-rush .rr-tag.rr-ghost i { display: inline-block; margin-left: 5px; }
 
 /* countdown */
 .g-rush .rr-ov-count { pointer-events: none; }

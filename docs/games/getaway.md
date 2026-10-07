@@ -151,7 +151,10 @@ anything within ~2–6 m of the lens fades (up to 75%) instead of drawing a soli
 view, and anything inside the cone from the camera to my car, in front of the car, fades so the car
 is never hidden (`U.uSee`, set per view). No blending or sorting. The `discard` lives only in that
 variant, so the big merged world meshes keep early-Z / hidden-surface removal; the thin props are a
-second merged mesh per chunk (+1 draw call where a chunk has any).
+second merged mesh per chunk (+1 draw call where a chunk has any: Boulder's heaviest sampled view
+61 → 80 calls of 90, Santee 45 → 65; triangles unchanged. Pooling 2×2 chunks saved calls but a cell
+is drawn whole when any of it is in view, which put Santee over the 220k-triangle budget —
+`SEE_CELL` in world.js).
 
 ## Traffic (js/games/getaway/traffic.js)
 

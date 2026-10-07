@@ -83,6 +83,21 @@ export function createFx(THREE, world) {
     confetti(x, y, d, cols, n = 40) {
       for (let i = 0; i < n; i++) spawn(BP, x + R() * 3, y + 3 + Math.random() * 3, d + R() * 3, R() * 4, 2 + Math.random() * 5, R() * 4, 1.6 + Math.random() * 1.2, 0.16 + Math.random() * 0.1, cols[i % cols.length], 5, 1.8, 0);
     },
+    /** Near-miss sparkle: a ring of glints beside the runner on the obstacle's side. */
+    sparkle(x, y, d, side) {
+      for (let i = 0; i < 7; i++) spawn(BP, x + side * 0.7 + R() * 0.2, y + 0.6 + Math.random() * 1.2, d + R() * 0.4, side * (1.5 + Math.random() * 2), 1 + Math.random() * 2.5, -2 - Math.random() * 3, 0.32 + Math.random() * 0.2, 0.14 + Math.random() * 0.1, P.white, 2, 2.5, 0);
+      for (let i = 0; i < 4; i++) spawn(BP, x + side * 0.6, y + 1 + Math.random() * 0.8, d, side * (0.5 + Math.random()), 0.5 + Math.random(), -1, 0.4, 0.2, P.hl, 1, 2, 1);
+    },
+    /**
+     * Unlockable trail behind a runner. kind 1 sparkle, 2 ink puffs (player colour), 3 confetti,
+     * 4 embers. Called every frame; it spawns on its own cadence.
+     */
+    trailFx(kind, x, y, d, col, k) {
+      if (kind === 1) { spawn(BP, x + R() * 0.35, y + 0.5 + Math.random() * 1.0, d - 0.5, R() * 0.8, 0.8 + Math.random() * 1.2, -0.5, 0.5, 0.13 + Math.random() * 0.1, Math.random() < 0.6 ? P.hl : P.white, 0, 1.5, 0); }
+      else if (kind === 2) { if (k % 3) return; spawn(PP, x + R() * 0.25, y + 0.35 + Math.random() * 0.3, d - 0.6, R() * 0.5, 0.4 + Math.random() * 0.6, -1.5, 0.5 + Math.random() * 0.2, 0.18 + Math.random() * 0.14, col, -0.4, 2.2, 2); }
+      else if (kind === 3) { spawn(BP, x + R() * 0.5, y + 0.8 + Math.random() * 1.2, d - 0.4, R() * 2.5, 1.5 + Math.random() * 2.5, -1 - Math.random() * 2, 0.8 + Math.random() * 0.5, 0.16 + Math.random() * 0.1, k % 6 < 2 ? P.a : k % 6 < 4 ? P.b : P.hl, 5, 1.6, 0); }
+      else if (kind === 4) { if (k % 2) return; spawn(BP, x + R() * 0.3, y + 0.2 + Math.random() * 0.4, d - 0.5, R() * 0.4, 1.2 + Math.random() * 2, -1 - Math.random() * 2, 0.35 + Math.random() * 0.25, 0.1 + Math.random() * 0.1, Math.random() < 0.5 ? P.bad : P.hl, -2, 1.2, 0); }
+    },
     ink(x, y, d, col, n = 8) {
       for (let i = 0; i < n; i++) spawn(PP, x + R() * 0.4, y + R() * 0.4, d + R() * 0.4, R() * 4, R() * 3 + 1, R() * 4, 0.5 + Math.random() * 0.3, 0.25 + Math.random() * 0.25, col, 6, 1.5, 2);
     },
@@ -152,6 +167,8 @@ export function createRig(THREE) {
     resize(w, h, short = false) { st.aspect = w / Math.max(1, h); st.short = !!short; cam.aspect = st.aspect; cam.updateProjectionMatrix(); },
     shake(a) { st.shake = Math.max(st.shake, a); },
     kick(a) { st.kick = Math.max(st.kick, a); },
+    /** Crash punch: the view snaps a few degrees narrower and relaxes (a zoom-in hit). */
+    punch(a) { st.kick = Math.min(st.kick, -a); },
     snap() { st.ready = false; },
     /**
      * mode 'run' | 'lobby' | 'finale' | 'spectate'

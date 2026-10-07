@@ -143,6 +143,25 @@ export function createAvatar(THREE, world, P, who) {
     bn.matrixWorldNeedsUpdate = true;
   }
 
+  // unlockable hats: small meshes parented to the head bone (one draw call while worn)
+  const hats = [];
+  {
+    const hb = new GeoBuf(THREE, 1200, { dynamic: false });
+    const ink = P.outline; const T = world.T;
+    const mk = (fn) => { hb.reset(); fn(hb); const g = hb.freeze(THREE); const m = new THREE.Mesh(g, world.mat); m.visible = false; m.position.y = 0.6; bones[4].add(m); hats.push({ m, g }); };
+    // crown: a gold band with four points and a jewel
+    mk((b) => {
+      b.add(T.cyl6, 0, 0, 0, 0.56, 0.16, 0.56, 0, P.hl, FX_PLAIN, 0.02, ink);
+      for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2 + Math.PI / 4; b.add(T.cone, Math.cos(a) * 0.22, 0.2, Math.sin(a) * 0.22, 0.16, 0.26, 0.16, 0, P.hl, FX_PLAIN, 0.018, ink); }
+      b.add(T.sphere12, 0, 0.02, -0.27, 0.12, 0.12, 0.08, 0, P.b, FX_GLOW, 0, ink);
+    });
+    // halo: a glowing ring floating over the head
+    mk((b) => { b.add(T.disc, 0, 0.22, 0, 0.62, 0.05, 0.62, 0, mix(P.hl, P.white, 0.5), FX_GLOW, 0.02, ink); b.add(T.disc, 0, 0.22, 0, 0.4, 0.07, 0.4, 0, P.skin, FX_PLAIN, 0, ink); });
+    // party cone with a pompom
+    mk((b) => { b.add(T.cone, 0, 0.26, 0, 0.36, 0.56, 0.36, 0, who === 'a' ? P.b : P.a, FX_PLAIN, 0.02, ink); b.add(T.lowSphere, 0, 0.56, 0, 0.14, 0.14, 0.14, 0, P.hl, FX_GLOW, 0, ink); });
+    hb.dispose();
+  }
+  let hatK = 0;
   const bubbleGeo = new THREE.SphereGeometry(1.25, 22, 16);
   const bubbleMat = bubbleMaterial(THREE, P);
   const bubble = new THREE.Mesh(bubbleGeo, bubbleMat);
@@ -329,6 +348,7 @@ export function createAvatar(THREE, world, P, who) {
     BA[0] = J[20]; BA[1] = 0; BA[2] = J[21]; BA[3] = BP[13 * 3 + 1]; setBone(13);
     A.blinkT += dt;
     mesh.visible = s.visible !== false && !(s.invuln && !s.down && Math.floor(A.blinkT * 14) % 2 === 0);
+    if (hatK) hats[hatK - 1].m.visible = mesh.visible;
     bubble.visible = mesh.visible && !!s.shield;
     if (bubble.visible) {
       bubble.position.set(s.x, s.y + (s.roll ? 0.6 : 1.05), -s.z);
@@ -343,10 +363,14 @@ export function createAvatar(THREE, world, P, who) {
     /** Things to draw once behind the loading screen so their shaders are compiled. */
     warmList: () => [mesh, bubble],
     lunge(dir) { A.lungeT = 0.35; A.lungeDir = dir; },
+    /** Wear hat k (0 none, 1 crown, 2 halo, 3 party cone). */
+    setHat(k) { k = k | 0; if (k === hatK) return; hatK = k; for (let i = 0; i < hats.length; i++) hats[i].m.visible = i + 1 === k; },
+    get hat() { return hatK; },
     get downPose() { return A.downPose; },
     headPos(out) { out.set(A.px, A.py + 2.1 * A.sy, A.pz); return out; },
     dispose() {
       world.scene.remove(mesh); world.scene.remove(bubble);
+      for (const h of hats) { bones[4].remove(h.m); h.g.dispose(); }
       bubbleGeo.dispose(); bubbleMat.dispose();
       mesh.skeleton.dispose();
     },

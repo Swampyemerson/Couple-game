@@ -18,6 +18,9 @@ export const HALF_D = 0.35;           // runner half depth (z)
 export const HALF_W = 0.42;           // runner half width (x)
 export const STEP_UP = 0.5;           // max climb without a collision
 export const TRIP_TOL = 0.32;         // feet this close to a low barrier's top = trip, not crash
+export const LATE_DODGE_T = 0.1;      // a lane change begun this recently before a head-on = a clip (stumble), not a crash
+export const COMBO_TIERS = [3, 6, 10, 15, 21];  // consecutive clean passes that pay a bonus…
+export const COMBO_BONUS = [5, 10, 15, 25, 40]; // …of this many coins
 
 export const V0 = 12.5;               // start speed (m/s)
 export const VMAX = 30;               // top speed
@@ -49,6 +52,9 @@ export const REVIVE_WINDOW = 10000;   // ms
 
 export const RACE_LEN = 2000;         // m
 export const BRAWL_CAP = 3000;        // m: tiebreak distance for Brawl
+export const DAILY_CAP = 5000;        // m: a Daily run that gets this far is a win on distance
+export const HIT_STOP = 0.09;         // s the picture freezes on a crash
+export const FINALE_MS = 1700;        // ms of finale before the result card (was 2300)
 
 export const START_DELAY = 3500;      // ms between "start" and GO
 export const RESUME_DELAY = 3000;     // ms countdown after a pause

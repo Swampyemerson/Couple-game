@@ -20,6 +20,7 @@ export const ICONS = {
   hand: '<svg viewBox="0 0 44 56" aria-hidden="true"><path d="M15 30V8a4 4 0 0 1 8 0v15l10 2c4 1 6 4 5 8l-3 14c-1 4-4 6-8 6h-7c-3 0-5-1-7-4L5 37c-2-3 2-7 5-5Z" fill="var(--g-card)" stroke="var(--g-ink)" stroke-width="3" stroke-linejoin="round"/></svg>',
   runner: '<svg viewBox="0 0 64 64" aria-hidden="true"><circle cx="38" cy="11" r="7" fill="var(--g-card)" stroke="var(--g-ink)" stroke-width="3"/><path d="M33 20 22 30l9 4-6 14M33 20l3 14 12 2M33 20l12 3 5-8M31 34 18 38l-6 8" fill="none" stroke="var(--p-a)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   box: '<svg viewBox="0 0 40 40" aria-hidden="true"><rect x="7" y="7" width="26" height="26" rx="4" fill="none" stroke="currentColor" stroke-width="3" stroke-dasharray="5 4"/><path d="M16 16a4 4 0 1 1 5 4c-1 .5-1 1.5-1 3M20 27v.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>',
+  daily: '<svg viewBox="0 0 40 40" aria-hidden="true"><rect x="5" y="8" width="30" height="27" rx="4" fill="var(--g-card)" stroke="var(--g-ink)" stroke-width="3"/><path d="M5 16h30" stroke="var(--g-ink)" stroke-width="3"/><path d="M13 5v6M27 5v6" stroke="var(--g-ink)" stroke-width="3.5" stroke-linecap="round"/><path d="m20 20 2.2 4.6 5 .7-3.6 3.5.9 5-4.5-2.4-4.5 2.4.9-5-3.6-3.5 5-.7Z" fill="var(--g-hl)" stroke="var(--g-ink)" stroke-width="2.2" stroke-linejoin="round"/></svg>',
   gear: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm8.3 2-1.9-.4-.6-1.5 1.1-1.6-1.9-1.9-1.6 1.1-1.5-.6-.4-1.9h-2.7l-.4 1.9-1.5.6-1.6-1.1-1.9 1.9 1.1 1.6-.6 1.5-1.9.4v2.7l1.9.4.6 1.5-1.1 1.6 1.9 1.9 1.6-1.1 1.5.6.4 1.9h2.7l.4-1.9 1.5-.6 1.6 1.1 1.9-1.9-1.1-1.6.6-1.5 1.9-.4Z" fill="currentColor"/></svg>',
 };
 export const WEAPONS = {
@@ -218,7 +219,7 @@ export function createHud(root, o) {
   const tutDots = tut.querySelectorAll('.rr-steps i');
   const tutLast = { step: -1, dir: null, cap: null, hot: null };
   const tag = mk('rr-tag');
-  const tagLast = { on: null, name: null, color: null };
+  const tagLast = { on: null, name: null, color: null, ghost: null };
   let tagX = -1; let tagY = -1; let tagE = 0;
   L.appendChild(tag);
   let lastCount = ''; let lastSub = '';
@@ -262,6 +263,7 @@ export function createHud(root, o) {
               <button class="rr-mode" data-mode="brawl">${ICONS.brawl}<b>Brawl</b><span>Side by side. Shove them into walls.</span></button>
               <button class="rr-mode" data-mode="tandem">${ICONS.tandem}<b>Together</b><span>Shared hearts. Revive each other.</span></button>
             </div>
+            <button class="rr-mode rr-daily" data-mode="daily">${ICONS.daily}<span class="rr-daily-t"><b>Daily run</b><span data-r="daily">One track for the whole day. Furthest wins.</span></span></button>
             <div class="rr-status" data-r="status"></div>
             <div class="rr-keys" data-r="keys"></div>
             <div class="rr-row"><button class="rr-btn hot" data-r="go">Start</button><button class="rr-btn ghost sq" data-r="gear" aria-label="Settings">${ICONS.gear}</button></div>
@@ -278,6 +280,9 @@ export function createHud(root, o) {
       if (s.innerHTML !== st.status) s.innerHTML = st.status;
       const k = ov.lobby.querySelector('[data-r="keys"]');
       if (k.dataset.v !== st.keys) { k.dataset.v = st.keys; k.innerHTML = st.keys; k.hidden = !st.keys; }
+      const d = ov.lobby.querySelector('[data-r="daily"]');
+      const dt = st.daily || 'One track for the whole day. Furthest wins.';
+      if (d.innerHTML !== dt) d.innerHTML = dt;
     },
     hideLobby() { show('lobby', false); },
     count(text, sub = '') {
@@ -304,13 +309,17 @@ export function createHud(root, o) {
       show('pause', true);
     },
     settings(cfg) {
+      // cfg: { scheme, music, sound, trail, hat, styles: [{ key, k, name, how, locked }] }
       if (!cfg) { show('set', false); return; }
       ov.set.classList.add('dim');
       const seg = (key, opts) => `<span class="rr-seg">${opts.map(([v, l]) => `<button data-k="${key}" data-v="${v}" class="${cfg[key] === v ? 'on' : ''}">${l}</button>`).join('')}</span>`;
+      const styles = cfg.styles || [];
+      const chips = (key) => styles.filter((x) => x.key === key).map((x) => `<button class="rr-chip-s ${x.locked ? 'locked' : ''} ${cfg[key] === x.k ? 'on' : ''}" data-k="${key}" data-v="${x.k}" ${x.locked ? 'disabled' : ''} title="${esc(x.how || '')}">${esc(x.name)}${x.locked ? `<small>${esc(x.how)}</small>` : ''}</button>`).join('');
       ov.set.innerHTML = `<div class="rr-card"><h2>Settings</h2>
         <div class="rr-set"><span>Controls</span>${seg('scheme', [['swipe', 'Swipe'], ['buttons', 'Buttons']])}</div>
         <div class="rr-set"><span>Music</span>${seg('music', [['on', 'On'], ['off', 'Off']])}</div>
         <div class="rr-set"><span>Sound</span>${seg('sound', [['on', 'On'], ['off', 'Off']])}</div>
+        ${styles.length ? `<div class="rr-style"><span>Trail</span><div class="rr-chips">${chips('trail')}</div></div><div class="rr-style"><span>Hat</span><div class="rr-chips">${chips('hat')}</div></div>` : ''}
         <p style="font-size:13px">Buttons: tap the left or right side to change lanes, and use the Jump and Roll buttons.</p>
         <button class="rr-btn" data-x="done">Done</button></div>`;
       ov.set.querySelectorAll('[data-k]').forEach((b) => b.addEventListener('click', () => { o.onSet(b.dataset.k, b.dataset.v); }));
@@ -335,10 +344,11 @@ export function createHud(root, o) {
       tutDots.forEach((i, n) => i.classList.toggle('on', n <= step));
     },
     /** Partner name tag above their head; edge ±1 pins it to that screen edge (partner beside you, off screen). */
-    tag(on, x, y, name, color, edge = 0) {
+    tag(on, x, y, name, color, edge = 0, ghost = false) {
       // cached: reading tag.style / textContent back every frame would allocate (and serialize)
       if (!on) { if (tagLast.on !== false) { tagLast.on = false; tag.style.display = 'none'; } return; }
       if (tagLast.on !== true) { tagLast.on = true; tag.style.display = 'block'; }
+      if (tagLast.ghost !== ghost) { tagLast.ghost = ghost; tag.classList.toggle('rr-ghost', ghost); }
       if (tagLast.name !== name) { tagLast.name = name; tag.textContent = name; }
       if (tagLast.color !== color) { tagLast.color = color; tag.style.background = color; }
       const qx = Math.round(x / 2) * 2; const qy = Math.round(y / 2) * 2;

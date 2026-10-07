@@ -21,6 +21,10 @@ const CURB_H = 0.16;
 // engine-drawn breakables that are thin and tall: drawn with the see-through material (poles a
 // metre from the chase camera are a black bar across the screen otherwise)
 const THIN = { pole: 1, lamp: 1, signal: 1, sign: 1 };
+// see-through meshes pool SEE_CELL × SEE_CELL chunks into one draw call. Bigger cells save calls
+// but a cell is drawn whole when any of it is in view: 2×2 cost Santee +18k triangles in its
+// heaviest view and 3×3 +38k (over the 220k budget), one chunk none (+~10–20 calls, within 90)
+const SEE_CELL = 1;
 
 export function chunkKey(x, z) { return `${Math.floor(x / CH)},${Math.floor(z / CH)}`; }
 
@@ -147,13 +151,13 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
 
   // ── chunks ──
   const chunks = new Map();
-  // see-through thin things (poles, lamps, signals, signs, map wires) are pooled per 3×3 chunks:
-  // a few hundred triangles a chunk, so one draw call per 600 m cell instead of one per chunk
+  // see-through thin things (poles, lamps, signals, signs, map wires): one mesh per cell of
+  // SEE_CELL × SEE_CELL chunks, distance-culled in update() and frustum-culled by three
   const seeCells = new Map();
   function seeCell(x, z) {
-    const k = `${Math.floor(x / (CH * 3))},${Math.floor(z / (CH * 3))}`;
+    const k = `${Math.floor(x / (CH * SEE_CELL))},${Math.floor(z / (CH * SEE_CELL))}`;
     let s = seeCells.get(k);
-    if (!s) { s = { b: new Builder(THREE, P.outline), mesh: null, x: 0, z: 0, r: CH * 2.2, tris: 0 }; seeCells.set(k, s); }
+    if (!s) { s = { b: new Builder(THREE, P.outline), mesh: null, x: 0, z: 0, r: CH * SEE_CELL * 0.75, tris: 0 }; seeCells.set(k, s); }
     return s;
   }
   function chunkAt(x, z) {

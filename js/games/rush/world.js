@@ -190,6 +190,49 @@ export function createWorld(THREE, P) {
     return mesh;
   });
 
+  // "best" lines: a glowing stripe across the track with a printed banner over it (your best,
+  // your partner's best), so a run has something to beat in sight
+  const markGeo = freezeWith((b) => {
+    b.boxMM(-4.2, 0.0, -0.5, 4.2, 0.07, 0.5, P.hl, FX_GLOW, 0.03, ink, T);
+    for (let i = 0; i < 12; i++) if (i % 2) b.add(T.quadUp, -4.2 + (i + 0.5) * 0.7, 0.075, 0, 0.7, 1, 1.0, 0, P.ink, FX_PLAIN, 0, ink);
+    for (const sx of [-1, 1]) { b.boxMM(sx * 4.5 - 0.1, 0, -0.1, sx * 4.5 + 0.1, 3.2, 0.1, P.pole, FX_PLAIN, 0.03, ink, T); b.boxMM(sx * 4.5 - 0.06, 3.1, -0.06, sx * 4.5 + 0.06, 3.5, 0.06, P.hl, FX_GLOW, 0, ink, T); }
+  });
+  const marks = inst(markGeo, 2);
+  const markCv = []; const markTex = []; const markMesh = []; const markText = ['', ''];
+  const markGeoB = new THREE.PlaneGeometry(5.2, 1.2);
+  disposables.push(markGeoB);
+  for (let i = 0; i < 2; i++) {
+    const cv = document.createElement('canvas'); cv.width = 512; cv.height = 118;
+    const t = new THREE.CanvasTexture(cv);
+    const m = new THREE.Mesh(markGeoB, new THREE.MeshBasicMaterial({ map: t, fog: true }));
+    m.visible = false; scene.add(m);
+    markCv.push(cv); markTex.push(t); markMesh.push(m); disposables.push(t, m.material);
+  }
+  function drawMark(i, text, col) {
+    const cv = markCv[i]; const g = cv.getContext('2d');
+    g.fillStyle = hexOf(col); g.fillRect(0, 0, 512, 118);
+    g.lineWidth = 10; g.strokeStyle = hexOf(P.outline); g.strokeRect(5, 5, 502, 108);
+    g.fillStyle = hexOf(P.dark ? P.bg : P.ink); g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = `900 64px ${P.font || 'Arial Black, sans-serif'}`;
+    g.fillText(text, 256, 62, 470);
+    markTex[i].needsUpdate = true;
+  }
+  /** Best lines: list of { z, text, col }. Up to two. */
+  function setMarks(list) {
+    const a = marks.instanceMatrix.array;
+    let n = 0;
+    for (let i = 0; i < list.length && n < 2; i++) {
+      const mk = list[i];
+      if (!mk || !(mk.z > 0)) continue;
+      WM[0] = 0; WM[1] = 0; WM[2] = -mk.z; WM[3] = 1; WM[4] = 0; WM[5] = 0; writeM(a, n);
+      if (markText[n] !== mk.text) { markText[n] = mk.text; drawMark(n, mk.text, mk.col || P.hl); }
+      markMesh[n].position.set(0, 3.9, -mk.z + 0.3); markMesh[n].visible = true; n++;
+    }
+    for (let i = n; i < 2; i++) markMesh[i].visible = false;
+    marks.count = n;
+    marks.instanceMatrix.needsUpdate = true;
+  }
+
   // oncoming trains (pooled, 2 cars, front at local z = 0 facing +z)
   const mtGeo = freezeWith((b) => trainCars(b, 0, 0, 2, P.trains[4], true, T, P));
   const mtrains = [];
@@ -447,14 +490,14 @@ export function createWorld(THREE, P) {
 
   return {
     scene, mat, matInst, matInstC, avatarMat, avatarMats, fade, U, T, P,
-    ensure, syncView, setShadows, follow, setPalette, setGates, reset, setMood,
+    ensure, syncView, setShadows, follow, setPalette, setGates, setMarks, reset, setMood,
     chunkCount: () => byChunk.size,
     stats,
     /** Everything that can be drawn, for shader warm-up. */
-    warmList: () => [coins, lows, highs, blocks, gates, shadows, street, skyline, dome, ...Object.values(items), mtrains[0], pool[0].mesh, ...banners],
+    warmList: () => [coins, lows, highs, blocks, gates, marks, shadows, street, skyline, dome, ...Object.values(items), mtrains[0], pool[0].mesh, ...banners, markMesh[0]],
     dispose() {
       for (const d of disposables) { try { d.dispose(); } catch { /* ignore */ } }
-      for (const m of [coins, lows, highs, blocks, gates, ...Object.values(items)]) { try { m.dispose(); } catch { /* ignore */ } }
+      for (const m of [coins, lows, highs, blocks, gates, marks, ...Object.values(items)]) { try { m.dispose(); } catch { /* ignore */ } }
       try { shadows.dispose(); } catch { /* ignore */ }
       scene.clear();
     },

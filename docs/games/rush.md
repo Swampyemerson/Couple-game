@@ -1,7 +1,10 @@
 # Rail Rush — design
 
 Three-lane endless runner for two, on one seeded track, live on two phones or split screen on one
-computer. Entry `js/games/rush.js`; modules in `js/games/rush/`. Test: `tools/test/games/rush.test.js`.
+computer. Entry `js/games/rush.js`; modules in `js/games/rush/`. Test: `tools/test/games/rush.test.js`
+(run in two halves: `ONLY=gen,split,leak,drop,dark` and `ONLY=race,brawl,tandem,pause,daily`; the
+`gen` half also asserts the clip grace, combo tiers and the Daily seed; `race` the ghost marker,
+bests and an unlock's persistence across a re-mount; `daily` a whole Daily run and today's board).
 
 ## Controls
 
@@ -27,11 +30,33 @@ computer. Entry `js/games/rush.js`; modules in `js/games/rush/`. Test: `tools/te
 
 ## Feel numbers (js/games/rush/tune.js)
 
-120 Hz fixed-step sim with render interpolation. Speed `12.5 → 30 m/s` (`v = V0 + (VMAX-V0)(1-e^(-t/110))`),
+120 Hz fixed-step sim with render interpolation (a 4× slower phone steps up to 40 sim steps a frame
+and never drops an input: actions apply to the runner immediately and take effect on the next step). Speed `12.5 → 30 m/s` (`v = V0 + (VMAX-V0)(1-e^(-t/110))`),
 lane change 0.13 s cubic ease-out (test: 100–150 ms), jump apex 1.69 m / 0.75 s in the air with a low-gravity hang near the top, 0.62 s roll,
 sneakers apex 3.9 m (reaches train roofs). Side clip = stumble (−40 % speed, decays over 0.9 s,
 camera shake, bounce back to the lane you came from). Head-on = crash: −1 heart (3), 1.6 s down,
 respawn in the clearest lane with 2 s of ghost invulnerability. Shield absorbs one crash or attack.
+
+**Forgiving-but-fair hits.** The collision loop used to stop at `z0 > z + HALF_D + 0.6`, with no
+other front test, so a hit fired 0.6 m (~25 ms at speed) before the runner's hull reached the
+obstacle: a hit that looked like a miss. The slack is 0.06 m now. A head-on whose lane change began less than `LATE_DODGE_T` = 0.1 s
+before impact is a *clip*, not a crash: the runner bounces back to the lane it came from, stumbles
+(1.1×) and the obstacle is ignored for 0.45 s ("Clipped it! · swipe a touch earlier"). In the
+headless human model (perfect-information bot + 250 ms reaction + ±90 ms timing jitter + 6 % missed
+inputs + 3 % wrong directions, `scratchpad/rush3/simplay.mjs`) that turned 10/48 "unfair-looking"
+deaths (a swipe one step before the hit) into 5/48 (jumping into a high bar, falling off a bridge:
+legit), and a 3-heart run from ~860 m to ~880 m (median; first death ~350 m, difficulty 0.4).
+The perfect bot's "never caught" guarantee is unchanged (clips count as stumbles in its search).
+
+**Juice.** Crash: 90 ms hit-stop (`HIT_STOP`: the sim keeps its clock, only the picture holds on
+the impact frame, so nothing desyncs), a −7° zoom punch that relaxes, shake 0.7, flash, haptics,
+and a layered crash sound (thud + crunch + ring + low tail). Near miss: a sparkle burst on the
+obstacle's side, a small FOV kick, +2 coins and "Close call!". Combo: consecutive clean passes
+count (`combo`, 2.6 s window); tiers 3/6/10/15/21 pay 5/10/15/25/40 bonus coins (`COMBO_TIERS`,
+`COMBO_BONUS`, "+10 · combo bonus"). Respawn: whoosh + rising chime + FOV kick. Distance milestones
+pop every 500 m ("1 km!"). A wind bed (looping noise through a lowpass, `audio.setWind`) rises
+with speed under the music, which already fills in with speed. Squash/stretch on jump and land,
+lane lean and camera roll, landing dust and magnet trails were already there.
 
 ## Track generator (js/games/rush/track.js)
 
@@ -58,6 +83,42 @@ respawn in the clearest lane with 2 s of ghost invulnerability. Shield absorbs o
 - Verified by a perfect-information bot (depth-first search over the real sim, 2 s horizon): no crash
   in 500 chunks × 5 seeds (test).
 
+## The loop: bests, Daily, unlocks
+
+- **Shared game data**: `api.data() / api.setData(patch) / api.onData(fn)` (core.js
+  `gameDataApi`): one flat doc per game at `gamedata/rush`, mirrored in `localStorage`
+  (`ju.games.data.v1`), written as field patches (`update`, or `set` the first time) so two phones
+  writing different keys never clobber each other. Numeric `*_m / *_best / *_pb / *_n` keys only go
+  up when merging a snapshot. Keys: `<w>_<mode>_m` (best distance), `<w>_any_m`, `<w>_race_t`
+  (fastest finish, s), `<w>_daily_<YYYY-MM-DD>` (today's board), `<w>_cc`, `<w>_combo`, `<w>_wins`,
+  `<w>_rev`, `<w>_runs`, `unlock_<w>_<trail|hat><k>`.
+- **Death card**: the finale is 1.7 s (`FINALE_MS`, was 2.3), then the engine's card with
+  *Rematch* as the big button. Each device adds its own line to the sub ("You: 1,240 m · best
+  1,980 m · Sydney's best 2,100 m", "New best" / "fastest 2 km yet"); a new best also pops "NEW
+  BEST!" during the finale. The recorded result keeps the shared text.
+- **Beat-their-best lines** (`world.setMarks`): in Race and Daily, a glowing stripe across the track
+  with a printed banner at your partner's best distance ("SYDNEY'S BEST") and at yours ("YOUR
+  BEST"), so every run has a line to cross.
+- **Ghost marker**: in live play the partner is a real runner on your track; when they're out of
+  sight (≥ 120 m ahead, or behind the camera) the name tag becomes a chip in their lane: at the
+  horizon with "Sydney ↑ 230 m", or down by your feet with "↓ 48 m" (gap quantized to 5 m, so the
+  string only rebuilds on change).
+- **Daily**: a fourth mode, one seed for both of you all day: `dailySeed() = hash('rush-daily',
+  YYYY-MM-DD) + 1` (local calendar day; the host picks it and sends it in `start`, so the guest
+  can't disagree). No weapons (boxes pay +5 coins), no rubber band. The run ends when both are out
+  of hearts (or someone reaches `DAILY_CAP` = 5 km); furthest wins, a dead heat within a metre.
+  Whoever is out first spectates the partner ("Out of hearts at 980 m · Sydney is still running
+  1,240"). The lobby row shows today's board ("Today: Emerson 1,240 m · Sydney 980 m · Emerson
+  leads") from the shared data.
+- **Unlockable style** (settings → Trail / Hat; picked per device, worn by whoever has earned it
+  (`resolveWear`, so in split screen each runner wears only their own unlocks), streamed to
+  the partner as `tr` / `ht`): trails Sparkle (1 km in one run), Ink puffs (10 close calls in a
+  run), Confetti (3 wins), Embers (x10 combo); hats Crown (beat your partner's best Daily),
+  Halo (3 revives), Party cone (150 coins in a run). Trails are pooled particles behind the runner
+  (`fx.trailFx`, on its own cadence); hats are one small mesh parented to the head bone (one draw
+  call while worn). Unlocks are checked on the finale from the run's stats and announced
+  ("UNLOCKED · Ink puffs trail") with a fanfare; locked chips show how to earn them.
+
 ## Modes
 
 - **Race** — first to 2,000 m (~105 s) wins, or the last with hearts. Weapon boxes give one of:
@@ -69,6 +130,7 @@ respawn in the clearest lane with 2 s of ghost invulnerability. Shield absorbs o
   partner's lane while level (|Δz| < 2 m) shoves them a lane over and stumbles them; into the wall
   or a train side it's a SLAM (−1 heart). Jumping dodges. Shover gets a short boost; 1.2 s cooldown.
   Last with hearts wins; at 3 km the one with more hearts (then distance) wins.
+- **Daily** — see above: same seed all day, 3 hearts each, furthest wins.
 - **Tandem** (co-op) — 4 shared hearts, a shared coin goal (100, 250, 450…, each +1 heart, max 5).
   A crash puts you *down*: your camera follows your partner, who gets glowing revive tokens ahead
   (every 3 s for 10 s). Grab one and they're back beside you for free; miss and the team loses a
@@ -90,7 +152,7 @@ respawn in the clearest lane with 2 s of ghost invulnerability. Shield absorbs o
   *run time* only while running; the sim steps to `floor(runTime / dt)`. The effective start is `at`
   on both (skew = clock error).
 - Each device publishes its runner at 20/s: `z x y lane speed pose flags hearts coins runTime fin`
-  plus lobby/pause fields. The partner is drawn from an allocation-free interpolation buffer fed by
+  plus lobby/pause fields and the worn style (`tr`, `ht`). The partner is drawn from an allocation-free interpolation buffer fed by
   `net.onRemote` (same algorithm as `net.remote`, `delay = 100 ms`), with `z` dead-reckoned to *now*
   (forward motion is very predictable) and `x/y/pose` interpolated, pose weights eased (no pops).
 - Reliable events: own small channel (same retry/ack/in-order scheme as `net.send`) that also

@@ -14,6 +14,7 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
   let ctx = null;
   let owned = false;
   let master = null; let musicBus = null; let sfxBus = null; let noise = null;
+  let wind = null; let windF = null; let windQ = -1; // speed-driven wind layer (one looping noise source)
   let mutedCache = false; let mutedAt = 0;
   let musicTimer = null;
   let step = 0; let nextT = 0; let playing = false;
@@ -47,6 +48,14 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
     noise = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
     const d = noise.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    // wind: a looping noise bed through a lowpass whose cutoff and level follow running speed
+    try {
+      const src = ctx.createBufferSource(); src.buffer = noise; src.loop = true;
+      windF = ctx.createBiquadFilter(); windF.type = 'lowpass'; windF.frequency.value = 300; windF.Q.value = 0.7;
+      wind = ctx.createGain(); wind.gain.value = 0;
+      src.connect(windF).connect(wind).connect(master);
+      src.start();
+    } catch { wind = null; }
     return true;
   }
   function unlock() {
@@ -96,11 +105,19 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
     bump() { tone(90, 0.1, { vol: 0.16, to: 60 }); },
     stumble() { tone(160, 0.14, { type: 'square', vol: 0.09, to: 70, filter: 900 }); hiss(0.18, { vol: 0.1, f: 600, type: 'lowpass' }); },
     crash() {
+      // thud + crunch + a short metallic ring, then a low tail: layered so it has weight on phone speakers
       tone(140, 0.45, { type: 'sawtooth', vol: 0.16, to: 35, filter: 700 });
-      tone(70, 0.35, { vol: 0.3, to: 30 });
+      tone(70, 0.4, { vol: 0.34, to: 28 });
+      hiss(0.06, { vol: 0.35, f: 2600, to: 900, q: 0.5, attack: 0.001 });
       hiss(0.5, { vol: 0.22, f: 1200, to: 200, q: 0.6 });
       tone(900, 0.08, { type: 'square', vol: 0.05, at: 0.05, to: 400 });
+      tone(1860, 0.3, { type: 'triangle', vol: 0.04, at: 0.03, to: 1500 });
+      tone(55, 0.6, { vol: 0.14, at: 0.12, to: 30 });
     },
+    clip() { tone(200, 0.12, { type: 'square', vol: 0.1, to: 90, filter: 1100 }); hiss(0.16, { vol: 0.14, f: 1800, to: 500, q: 0.9 }); },
+    respawn() { hiss(0.42, { vol: 0.12, f: 500, to: 5200, q: 1.1 }); tone(220, 0.35, { type: 'triangle', vol: 0.07, to: 660 }); [0, 7, 12].forEach((n, i) => tone(mtof(72 + n), 0.09, { type: 'triangle', vol: 0.07, at: 0.18 + i * 0.05 })); },
+    bonus(n) { [0, 4, 7, 12, 16, 19].slice(0, Math.min(6, 3 + Math.floor(n / 10))).forEach((k, i) => tone(mtof(81 + k), 0.11, { type: 'square', vol: 0.055, at: i * 0.045, filter: 5000 })); },
+    unlock() { [0, 4, 7, 12, 16, 12, 19, 24].forEach((n, i) => tone(mtof(72 + n), 0.16, { type: 'triangle', vol: 0.09, at: i * 0.07 })); hiss(0.6, { vol: 0.06, f: 3000, to: 8000 }); },
     shield() { tone(520, 0.12, { type: 'triangle', vol: 0.12, to: 1040 }); tone(780, 0.25, { type: 'sine', vol: 0.08, at: 0.06 }); hiss(0.2, { vol: 0.08, f: 5000 }); },
     pickup() { [0, 4, 7, 12].forEach((n, i) => tone(mtof(76 + n), 0.1, { type: 'triangle', vol: 0.1, at: i * 0.05 })); },
     box() { [0, 7, 12, 19].forEach((n, i) => tone(mtof(72 + n), 0.08, { type: 'square', vol: 0.05, at: i * 0.04, filter: 4000 })); },
@@ -196,6 +213,16 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
     get ready() { return !!ctx && ctx.state === 'running'; },
     play(name, arg) { if (!ok()) return; const f = S[name]; if (f) { try { f(arg); } catch { /* ignore */ } } },
     setIntensity(x) { mx.intensity = Math.max(0, Math.min(1, x)); },
+    /** Wind bed: k = 0..1 running speed (0 = silent). Quantized so it sets automation only on change. */
+    setWind(k) {
+      if (!wind || !ctx) return;
+      const q = isMuted() ? 0 : Math.round(Math.max(0, Math.min(1, k)) * 20) / 20;
+      if (q === windQ) return;
+      windQ = q;
+      const t = ctx.currentTime;
+      wind.gain.setTargetAtTime(q * q * 0.11, t, 0.25);
+      windF.frequency.setTargetAtTime(240 + q * 1500, t, 0.25);
+    },
     /** Duck the music under a pause card. */
     setPaused(on) { pausedDuck = !!on; },
     stats,
@@ -218,6 +245,7 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
       if (!ctx) return;
       if (owned) { if (ctx.state === 'running') ctx.suspend().catch(() => {}); }
       else if (master) master.gain.setTargetAtTime(0, ctx.currentTime, 0.02);
+      if (wind) { wind.gain.setTargetAtTime(0, ctx.currentTime, 0.02); windQ = -1; }
     },
     resume() {
       if (!ctx) return;

@@ -124,6 +124,7 @@ export const CSS = `
   background: var(--g-card); border: 2.5px solid var(--g-ink); box-shadow: 3px 3px 0 var(--g-edge); display: none; }
 .g-rush .rr-banner.on { display: block; }
 .g-rush .rr-banner b { display: block; font-size: 30px; font-variant-numeric: tabular-nums; }
+.g-rush .rr-banner small { display: block; font-size: 12px; color: var(--g-muted); }
 .g-rush .rr-tag { position: absolute; left: 0; top: 0; z-index: 3; pointer-events: none; padding: 2px 8px; border-radius: 8px; font-size: 12px; font-weight: 900; color: var(--g-on-ink); border: 2px solid var(--g-ink); white-space: nowrap; display: none; will-change: transform; }
 .g-rush .rr-tag::after { content: ''; position: absolute; left: 50%; bottom: -7px; margin-left: -5px; border: 5px solid transparent; border-top-color: var(--g-ink); border-bottom: 0; }
 .g-rush .rr-tag.rr-edge-r::after { left: auto; right: -7px; bottom: auto; top: 50%; margin: -5px 0 0; border: 5px solid transparent; border-left-color: var(--g-ink); border-right: 0; }
@@ -180,6 +181,25 @@ export const CSS = `
 .g-rush .rr-keys div { padding: 7px; border-radius: 12px; border: 2px solid var(--g-ink); background: var(--g-bg); }
 .g-rush .rr-keys b { display: block; font-family: var(--g-font-display); font-size: 14px; }
 .g-rush .rr-keys kbd { display: inline-block; min-width: 20px; padding: 1px 4px; margin: 1px; border-radius: 5px; border: 1.5px solid var(--g-ink); background: var(--g-card); font: 800 11px var(--g-font-body); }
+
+/* daily row + style chips */
+.g-rush .rr-mode.rr-daily { flex-direction: row; gap: 10px; padding: 8px 12px; text-align: left; align-items: center; }
+.g-rush .rr-mode.rr-daily svg { width: 30px; height: 30px; flex: none; }
+.g-rush .rr-daily-t { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.g-rush .rr-daily-t b { font-size: 14px; }
+.g-rush .rr-daily-t span { font-size: 11px; }
+.g-rush .rr-daily-t .p-a { color: var(--p-a); } .g-rush .rr-daily-t .p-b { color: var(--p-b); }
+.g-rush .rr-mode.on .rr-daily-t .p-a, .g-rush .rr-mode.on .rr-daily-t .p-b { color: var(--g-on-ink); }
+.g-rush .rr-style { display: grid; grid-template-columns: 52px 1fr; align-items: start; gap: 8px; text-align: left; font-weight: 900; font-family: var(--g-font-display); }
+.g-rush .rr-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.g-rush .rr-chip-s { pointer-events: auto; padding: 5px 9px; border-radius: 999px; border: 2px solid var(--g-ink); font-weight: 900; font-size: 12px; background: var(--g-bg); display: flex; flex-direction: column; align-items: flex-start; line-height: 1.1; }
+.g-rush .rr-chip-s.on { background: var(--g-hl); color: var(--g-on-ink); }
+.g-rush .rr-chip-s.locked { opacity: .55; border-style: dashed; cursor: default; }
+.g-rush .rr-chip-s small { font-weight: 700; font-size: 10px; font-family: var(--g-font-body); color: var(--g-muted); }
+.g-rush .rr-chip-s.on small { color: var(--g-on-ink); }
+.g-rush .rr-tag.rr-ghost { font-size: 13px; padding: 3px 10px; }
+.g-rush .rr-tag.rr-ghost::after { display: none; }
+.g-rush .rr-tag.rr-ghost i { display: inline-block; margin-left: 5px; }
 
 /* countdown */
 .g-rush .rr-ov-count { pointer-events: none; }

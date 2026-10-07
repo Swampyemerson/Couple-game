@@ -357,6 +357,43 @@ function recordResult(id, gameId, res, mode) {
   else lsSet(LS_RESULTS, G.results);
 }
 
+// ── per-game shared data (personal bests, unlocks, daily boards) ─────
+// One small flat doc per game at gamedata/<id>, mirrored in localStorage so it reads instantly
+// and works offline. Writes are field patches (update, or set when the doc doesn't exist yet),
+// so two phones writing different keys never clobber each other; values are monotonic by
+// convention (bests only go up, unlocks only get added), so last-writer-wins per key is safe.
+const LS_DATA = 'ju.games.data.v1';
+G.data = lsGet(LS_DATA, {}) || {};
+G.dataFns = {}; // gameId -> Set(fn)
+G.dataKnown = {}; // gameId -> the server has a doc (so update() works)
+G.healing = {}; // gameId -> a self-heal patch is in flight
+function gameData(id) { return G.data[id] || {}; }
+function setGameData(id, patch) {
+  if (!patch || typeof patch !== 'object') return;
+  const cur = G.data[id] || (G.data[id] = {});
+  const body = {};
+  let n = 0;
+  for (const [k, v] of Object.entries(patch)) {
+    if (!/^[a-zA-Z0-9_.-]{1,60}$/.test(k) || (typeof v !== 'number' && typeof v !== 'string' && typeof v !== 'boolean')) continue;
+    if (cur[k] === v) continue;
+    cur[k] = v; body[k] = v; n++;
+  }
+  if (!n) return;
+  lsSet(LS_DATA, G.data);
+  for (const fn of G.dataFns[id] || []) { try { fn(cur); } catch (e) { console.error(e); } }
+  if (!G.db) return;
+  const ref = G.db.doc(`gamedata/${id}`);
+  (async () => {
+    try { await ref.update(body); G.dataKnown[id] = true; } catch (e) {
+      // update needs an existing doc: create it with everything this device knows (a snapshot
+      // then self-heals whatever the other phone created at the same moment)
+      try { await ref.set({ ...cur }); G.dataKnown[id] = true; } catch { /* offline: the local copy keeps it, and the next write retries */ }
+    }
+  })();
+}
+function onGameData(id, fn) { (G.dataFns[id] = G.dataFns[id] || new Set()).add(fn); return () => G.dataFns[id].delete(fn); }
+export const gameDataApi = (id) => ({ data: () => gameData(id), setData: (patch) => setGameData(id, patch), onData: (fn) => onGameData(id, fn) });
+
 export function gameRecord(gameId) {
   const r = { a: 0, b: 0, draw: 0, best: null, plays: 0 };
   for (const x of Object.values(G.results)) {
@@ -518,6 +555,30 @@ export async function initGames(store, hooks = {}) {
       recordFinished();
       cleanup();
       changed();
+    });
+    watch(() => G.db.collection('gamedata'), (qs) => {
+      if (isCache(qs) && qs.empty) return;
+      qs.docs.forEach((d) => {
+        if (!d.exists) return;
+        const id = d.id; const inc = d.data() || {}; const cur = G.data[id] || (G.data[id] = {});
+        G.dataKnown[id] = true;
+        let changedKeys = 0;
+        for (const [k, v] of Object.entries(inc)) {
+          // bests only go up and unlocks only get added: keep the larger number, else take theirs
+          if (typeof v === 'number' && typeof cur[k] === 'number' && cur[k] > v && /(_m|_best|_pb|_n)$/.test(k)) continue;
+          if (cur[k] !== v) { cur[k] = v; changedKeys++; }
+        }
+        if (changedKeys) for (const fn of G.dataFns[id] || []) { try { fn(cur); } catch (e) { console.error(e); } }
+        // Self-heal: anything this device knows that the server copy lacks (two phones created the
+        // doc at once, or a write was lost offline) goes back up as a field patch.
+        if (!isCache(qs)) {
+          const missing = {};
+          let n = 0;
+          for (const [k, v] of Object.entries(cur)) if (inc[k] !== v && !(typeof v === 'number' && typeof inc[k] === 'number' && inc[k] > v)) { missing[k] = v; n++; }
+          if (n && !G.healing[id]) { G.healing[id] = true; G.db.doc(`gamedata/${id}`).update(missing).catch(() => {}).then(() => { G.healing[id] = false; }); }
+        }
+      });
+      lsSet(LS_DATA, G.data);
     });
     try { G.room = await globalThis.claude.use('room'); } catch { G.room = null; }
     if (G.room) wireRoom();
@@ -1034,6 +1095,7 @@ async function openLive(gameId, mode) {
     toast, sfx, haptic, rand, randInt, rng, shuffled, tokens, audio, muted,
     three: loadThree,
     el: stage,
+    ...gameDataApi(gameId), // data() / setData(patch) / onData(fn): the game's shared bests + unlocks
     get partnerHere() { return mode === 'local' || !!partnerPeer; },
     /** This round's number: 0, then +1 on every rematch. */
     get gen() { return gen; },

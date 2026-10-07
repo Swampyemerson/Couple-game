@@ -18,7 +18,7 @@ for f in "${files[@]}"; do
   if [[ "$f" == *rush.test.js ]]; then
     # rush runs in two halves, like its author does
     ONLY=gen,split,leak,drop,dark timeout 2400 node "$f" > "$SHOTS/$(basename "$f").1.log" 2>&1 && \
-    ONLY=race,brawl,tandem,pause timeout 2400 node "$f" > "$SHOTS/$(basename "$f").2.log" 2>&1
+    ONLY=race,brawl,tandem,pause,daily timeout 2400 node "$f" > "$SHOTS/$(basename "$f").2.log" 2>&1
   else
     timeout 2400 node "$f" > "$SHOTS/$(basename "$f").log" 2>&1
   fi

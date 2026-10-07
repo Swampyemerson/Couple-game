@@ -18,6 +18,7 @@ export const FIELDS = [
   ['z', 1], ['x', 1], ['y', 1], ['g', 1], ['vy', 1], ['sp', 1], ['st', 1], ['dt', 1], ['rt', 1], ['rp', 1],
   ['l', 0], ['p', 0], ['f', 0], ['h', 0], ['c', 0], ['fn', 0], ['ph', 0], ['md', 0], ['sy', 0], ['pz', 0],
   ['ra', 0], ['th', 0], ['tg', 0], ['rd', 0], ['w', 0], ['sv', 0], ['cb', 0], ['tc', 0], ['ep', 0],
+  ['tr', 0], ['ht', 0], // worn trail / hat (unlockable style)
 ];
 const K = FIELDS.length;
 const LERP = Uint8Array.from(FIELDS.map((f) => f[1]));

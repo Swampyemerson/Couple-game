@@ -427,12 +427,16 @@ export function createGame(el, api) {
       }
       const vis = objs.map((o) => o.visible);
       for (const o of objs) o.visible = false;
-      for (const o of pick) {
+      // one program per slice: grouping the cheap ones (doubling while the frame after a slice
+      // stayed short) put two heavy ones together again and brought the stall back
+      const per = 1;
+      for (let i = 0; i < pick.length;) {
         what = 'firstdraw';
-        const fc = o.frustumCulled; const dr = o.geometry && o.geometry.drawRange ? o.geometry.drawRange.count : null;
-        o.visible = true; o.frustumCulled = false; if (dr != null) o.geometry.drawRange.count = 3;
+        const on = pick.slice(i, i + per); i += on.length;
+        const fc = on.map((o) => o.frustumCulled); const dr = on.map((o) => (o.geometry && o.geometry.drawRange ? o.geometry.drawRange.count : null));
+        on.forEach((o, k) => { o.visible = true; o.frustumCulled = false; if (dr[k] != null) o.geometry.drawRange.count = 3; });
         try { renderer.setViewport(0, 0, 1, 1); renderer.render(sc, cam); } catch (e) { console.warn('getaway: warm-up first draw', e); }
-        o.visible = false; o.frustumCulled = fc; if (dr != null) o.geometry.drawRange.count = dr;
+        on.forEach((o, k) => { o.visible = false; o.frustumCulled = fc[k]; if (dr[k] != null) o.geometry.drawRange.count = dr[k]; });
         if (!(await cut(0.3))) { objs.forEach((q, k) => { q.visible = vis[k]; }); return false; }
       }
       objs.forEach((q, k) => { q.visible = vis[k]; });
@@ -1652,6 +1656,7 @@ export function createGame(el, api) {
     const dtReal = lastTs ? Math.min(0.125, (ts - lastTs) / 1000) : 0.016; lastTs = ts;
     if (!ready3D || !world) return;
     if (S.loading && S.loadingCard) return; // a map is building behind the loading card: leave it the main thread
+    if (window.__gtwTest) { const fl = window.__gtwFrames || (window.__gtwFrames = []); fl.push(performance.now()); if (fl.length > 4000) fl.splice(0, 2000); } // tests: tell rendered frames from load work
     const w0 = performance.now();
     const now = clock();
     if (!vec) { vec = new THREE.Vector3(); dm = new THREE.Object3D(); tc = new THREE.Color(); }

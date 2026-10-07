@@ -3,7 +3,7 @@
 import {
   DT, LANE_W, LANE_TIME, GRAV, JUMP_V, SUPER_JUMP_V, HANG_V, HANG_G, FASTFALL_V, SLIDE_TIME,
   BUFFER_T, COYOTE_T, STAND_H, ROLL_H, HALF_D, HALF_W, STEP_UP, TRIP_TOL, CHUNK, LOW_H,
-  STUMBLE_T, CRASH_T, INVULN_T, HEARTS, MAGNET_T, SNEAKERS_T, baseSpeed,
+  STUMBLE_T, CRASH_T, INVULN_T, HEARTS, MAGNET_T, SNEAKERS_T, LATE_DODGE_T, COMBO_TIERS, COMBO_BONUS, baseSpeed,
 } from './tune.js';
 import {
   O_LOW, O_HIGH, O_TRAIN, O_RAMP, O_MTRAIN, O_BLOCK, I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX,
@@ -35,6 +35,8 @@ export const E_BLOCK = 16;
 export const E_BUMP = 17;
 export const E_TRIP = 18;
 export const E_SLAM = 19;
+export const E_BONUS = 20;   // combo tier reached: val = coins awarded
+export const E_CLIP = 21;    // a late dodge clipped the obstacle (stumble, not crash)
 
 // Crash causes
 export const C_HIT = 1;
@@ -58,7 +60,8 @@ export function newRunner(lane = 0) {
     magnetT: 0, sneakersT: 0, shield: 0, boostT: 0,
     bufA: 0, bufT: 0,
     fin: -1, finLen: 0, done: 0,
-    crashes: 0, stumbles: 0, combo: 0, comboT: 0, closeCalls: 0, jumps: 0, rolls: 0, shields: 0,
+    crashes: 0, stumbles: 0, combo: 0, comboT: 0, maxCombo: 0, closeCalls: 0, jumps: 0, rolls: 0, shields: 0, clips: 0, bonus: 0,
+    hitT: 0, hitOv: 0, hitY: 0, // what the last crash hit (telemetry)
     ignoreId: -1, ignoreT: 0,
     tandem: 0, zapT: 0, zapDir: 0, smashN: 0,
   };
@@ -279,14 +282,20 @@ function passed(r, o, ov, dry) {
   if (!clean) return;
   r.combo++;
   r.comboT = 2.6;
+  if (r.combo > r.maxCombo) r.maxCombo = r.combo;
   if (close) { r.closeCalls++; r.coins += 2; ev(r, E_CLOSE, o.lane); }
   if (r.combo >= 2) ev(r, E_COMBO, r.combo);
+  for (let i = 0; i < COMBO_TIERS.length; i++) {
+    if (r.combo === COMBO_TIERS[i]) { r.coins += COMBO_BONUS[i]; r.bonus += COMBO_BONUS[i]; ev(r, E_BONUS, COMBO_BONUS[i]); break; }
+  }
 }
 
 function collideIn(r, obs, h, dry) {
   for (let i = 0; i < obs.length; i++) {
     const o = obs[i];
-    if (o.z0 > r.z + HALF_D + 0.6) break;
+    // the hull's front is z + HALF_D; a hair of slack guards float noise (it used to be 0.6 m,
+    // which fired a hit ~25 ms before the runner visibly reached the obstacle)
+    if (o.z0 > r.z + HALF_D + 0.06) break;
     if (o.z1 < r.z - HALF_D) continue;
     const ox = o.lane * LANE_W;
     const ov = Math.min(r.x + HALF_W, ox + o.hw) - Math.max(r.x - HALF_W, ox - o.hw);
@@ -341,6 +350,17 @@ function hit(r, o, frontal, ov, dry) {
     if (!dry) ev(r, E_TRIP, 0);
     return;
   }
+  // Late dodge: the lane change began within LATE_DODGE_T of the impact, so the player was
+  // visibly on their way out. Count it as a clip: bounce back where they came from, stumble.
+  if (r.laneT < 1 && r.laneAge < LATE_DODGE_T && r.lane !== r.laneFrom) {
+    const back = r.laneFrom; r.laneFrom = r.lane; r.lane = back; r.xFrom = r.x; r.laneT = 0; r.bounceT = 0.32;
+    r.ignoreId = o.id; r.ignoreT = 0.45;
+    r.clips++;
+    stumble(r, 1.1, dry);
+    if (!dry) ev(r, E_CLIP, o.t);
+    return;
+  }
+  r.hitT = o.t; r.hitOv = ov; r.hitY = r.y;
   crash(r, C_HIT, dry);
 }
 
