@@ -5,7 +5,7 @@ import { createSound } from './sound.js';
 import { createStage } from './stage.js';
 import { createHud } from './hud.js';
 import { createControls } from './controls.js';
-import { POSES, REGION_OF_PART, REGION_NAMES } from './avatar.js';
+import { POSES, REGION_OF_PART, REGION_NAMES, REGIONS } from './avatar.js';
 import { loadingCard, errorCard, lobbyCard, titleCard, blindCard, headCard, curtainCard, recapCard, pauseCard, ctxCard, tipsHtml, finalCard, EMOTES, CALLS } from './cards.js';
 import { recordRound, recordMatch, bestsStrip, recapLines, matchStory } from './records.js';
 import { loadWear, saveWear, resolveWear, newUnlocks, packWear, unpackWear, wardrobeSheet, EYE_RGB, SLOT_LABEL } from './wardrobe.js';
@@ -22,6 +22,7 @@ const BONUS = 30;
 const SPEED = { hide: 3.0, seek: 3.3, scurry: 6.2, crawl: 0.78, squeeze: 0.35, sprint: 1.55 };
 const PLAYERS = ['a', 'b'];
 const BRUSH = [0.035, 0.065, 0.11];
+const DAB_CAP = [12, 9, 6]; // dabs per pointer move by brush size (an L dab already covers ~3 S dabs)
 const EYE_H = { stand: 0.46, crouch: 0.36, ball: 0.3, flat: 0.2, wall: 0.4, hang: 0.3, perch: 0.46, squeeze: 0.12, corner: 0.3 };
 const TAG_TOL = 0.75;
 const ZIP = { range: 4.6, dur: 0.42, cdHide: 1100, cdSeek: 4000, cdSeeker: 2500 };
@@ -79,6 +80,7 @@ export function createGame(el, api) {
     callVer: 0, // bumps when a wager chip is picked (the blind / curtain card re-renders)
     matchRecords: [], matchUnlocks: [], // what this match earned, for the final card
     finalRec: false,
+    vote: { a: null, b: null }, voteVer: 0, crowned: 0, finalHold: 0, // the final card's 'Best hide tonight?' vote
     match: null, // { id, mode, map, first, rounds, scores, hist }
     phase: { name: 'lobby', seq: 0, round: 0, at: 0, end: 0, dur: 0, data: null },
     queue: [],
@@ -106,7 +108,7 @@ export function createGame(el, api) {
       path: [], pathNext: 0, closest: Infinity, passes: 0, near: false, seekStart: 0, used: { a: 0, b: 0 }, lockSent: false, rec: null,
       scurry: null, escapeAt: 0, endingHide: false, lockDone: false, toRecap: false, nexting: false, jumpReq: false, jumpAt: -1e9, lastTick: 0, lastTrailT: 0, spawn: null, sprint: false,
       // v3: hunt start seen, live paint while hunted (sender: version + time sent; receiver: tells)
-      huntSeen: false, lpVer: -1, lpAt: 0, lpSent: 0, lpIn: 0, tell: null, tells: 0, tellSkip: 0, tellAt: -1e9,
+      huntSeen: false, lpVer: -1, lpAt: 0, lpSent: 0, lpSame: 0, lpIn: 0, tell: null, tells: 0, tellSkip: 0, tellAt: -1e9,
       // polish: brush strokes per hider, 'in their sights' stares, the seeker's wager, the hide-phase ticker, emotes, stamps, 3-D nearness
       strokes: { a: 0, b: 0 }, stared: 0, stareAt: -1e9, call: { a: null, b: null }, under: false, losNext: 0, nearD: 99,
       actQ: null, actAt: 0, actMoveAt: 0, actStill: false, ticker: '', emoteAt: 0, emoteN: 0, halfShown: false,
@@ -144,9 +146,14 @@ export function createGame(el, api) {
   const hist = { t: new Float64Array(96), x: new Float32Array(96), y: new Float32Array(96), z: new Float32Array(96), n: 0, i: 0 };
 
   // view/camera state
-  const C = { cardCheck: 0, frameY: 0, frameCard: false, oy: 0, orbitBase: 0, orbitT: 0, yaw: Math.PI, pitch: 0.32, dist: 2.3, paintYaw: 0, paintPitch: 0.3, paintDist: 1.25, fpYaw: 0, fpPitch: 0, orbit: 0, whip: 0, freezeUntil: 0, shake: 0,
+  const C = { cardCheck: 0, frameY: 0, frameCard: false, oy: 0, orbitBase: 0, orbitT: 0, yaw: Math.PI, pitch: 0.32, dist: 2.3, paintYaw: 0, paintPitch: 0.3, paintDist: 1.25, fpYaw: 0, fpPitch: 0, orbit: 0, whip: 0, freezeUntil: 0, shake: 0, vsAt: -10, vsPend: false, vsStep: 0, vsOx: 0, vsOy: 0, vsOz: 0, vsLx: 0, vsLy: 0, vsLz: 0,
     // v3: the hider's view while hunted ('eyes' | 'watch' | 'free') + the free cam; the seeker's climb view (absolute view yaw)
-    spect: 'eyes', fcX: 0, fcY: 0, fcZ: 0, fcYaw: 0, fcPitch: 0, fcTop: 3, fcBottom: 0.12, climbV: false, climbNear: false, vYaw: 0 };
+    spect: 'eyes', fcX: 0, fcY: 0, fcZ: 0, fcYaw: 0, fcPitch: 0, fcTop: 3, fcBottom: 0.12, climbV: false, climbNear: false, vYaw: 0,
+    // the third-person look target eases for 0.4 s after a stick / let-go (no 0.3 m dip at the attach)
+    lkX: 0, lkY: 0, lkZ: 0, lkAt: false, lkUntil: 0 };
+  // the free cam flies through furniture but never into a wall or ceiling slab (the map's are listed at load)
+  const FC_WALL = (b) => b.wall === true && (b.ceil || b.maxY - b.minY > 1.2);
+  const fcBoxes = [];
   const P = { on: false, tool: 'brush', size: 1, hard: true, rgb: [74, 132, 116], last: null, lastHit: [0, 0, 0], strokes: 0, texelDirtyAt: 0 };
   let posesOpen = false;
   const shownHints = new Set();
@@ -309,7 +316,16 @@ export function createGame(el, api) {
       // free cam limits: the map's footprint (world bounds) and from the floor to just over the top
       let top = 2.4; let bottom = 0;
       for (const c of m.colliders) { if (c.maxY < 30) top = Math.max(top, c.maxY); if (c.maxY - c.minY < 1 && c.maxY > -6) bottom = Math.min(bottom, c.maxY); }
-      C.fcTop = top + 0.5; C.fcBottom = bottom + 0.12;
+      // …but under the board ceiling where there is one (0.5 m over the tallest collider used to
+      // park the camera above the ceiling slab: a blank screen), and never inside walls (clampFree)
+      let ceilLo = Infinity; let ceilHi = -Infinity;
+      fcBoxes.length = 0;
+      for (const c of m.colliders) {
+        if (c.ceil && c.maxY < 30) { ceilLo = Math.min(ceilLo, c.minY); ceilHi = Math.max(ceilHi, c.minY); }
+        if (FC_WALL(c)) fcBoxes.push(c);
+      }
+      C.fcTop = Number.isFinite(ceilHi) ? Math.max(ceilHi - 0.25, 1.2) : top; C.fcBottom = bottom + 0.12;
+      void ceilLo;
       hud.miniSetup(big ? { minX: m.bounds.minX, maxX: m.bounds.maxX, minZ: m.bounds.minZ, maxZ: m.bounds.maxZ, rooms: fls[0].rooms, boxes: fls[0].boxes, floors: fls } : null);
     }
     return m;
@@ -700,7 +716,8 @@ export function createGame(el, api) {
         // the match's own final card first (round timeline, best hide, fastest find, records); 'See the
         // board' on either phone, or 12 s, hands over to the hub's end card (which carries Rematch)
         if (isHost && !S.finalRec) { S.finalRec = true; setData(recordMatch(data(), d.winner)); }
-        later(() => finishMatch(), DUR.final);
+        S.vote = { a: null, b: null }; S.crowned = 0; S.voteVer++;
+        later(autoFinish, DUR.final);
         break;
       }
       default: break;
@@ -708,6 +725,24 @@ export function createGame(el, api) {
     void prev; void t;
   }
 
+  /** The final card's timer: a vote in progress holds the hand-over a little longer. */
+  function autoFinish() {
+    const wait = S.finalHold - performance.now();
+    if (wait > 50 && S.phase.name === 'final') { later(autoFinish, wait); return; }
+    finishMatch();
+  }
+  /** 'Best hide tonight?': each phone picks a round (hotseat: one tap is the pair's pick); a matching pick crowns it. */
+  function castVote(w, r) {
+    const m = S.match; if (!m || S.phase.name !== 'final' || S.crowned || m.mode !== 'hs') return;
+    const rr = (m.hist || []).find((h) => h && h.round === r); if (!rr || !rr.hider) return;
+    if (local) { S.vote.a = r; S.vote.b = r; } else S.vote[w] = r;
+    S.voteVer++; S.finalHold = performance.now() + 8000;
+    if (S.vote.a && S.vote.a === S.vote.b) {
+      S.crowned = r;
+      hud.pop('CREATIVE HIDE', rr.hider, `${api.name(rr.hider)} · round ${r}`); snd.play('unlock');
+      if (isHost) { const k = `${rr.hider}_creative`; setData({ [k]: (data()[k] | 0) + 1 }); }
+    } else snd.play('pose');
+  }
   /** Hand the finished match to the hub (either phone may; the host records, a guest's is forwarded). */
   function finishMatch() {
     if (S.finished || S.phase.name !== 'final') return;
@@ -805,11 +840,12 @@ export function createGame(el, api) {
     const surf = hit ? stage.surfaceOf(hit) : null;
     if (!surf) return -1;
     const [qx, qy, qz] = surf.q; const [nx, ny, nz] = surf.n; const vc = surf.vc; const br = surf.blobRgb || blendTmp;
-    const wpos = p.wpos; const wnrm = p.wnrm; const data = p.data;
+    const wpos = p.wpos; const wnrm = p.wnrm; const data = p.data; const list = p.list;
     let n = 0; let sum = 0;
-    for (let i = 0; i < wpos.length / 3; i++) {
+    // every other mapped texel: the score is a mean over ~6k samples either way, at half the cost
+    for (let k = 0; k < list.length; k += 2) {
+      const i = list[k];
       const ax = wnrm[i * 3]; const ay = wnrm[i * 3 + 1]; const az = wnrm[i * 3 + 2];
-      if (ax * ax + ay * ay + az * az < 0.5) continue; // not a mapped texel
       const facing = ax * nx + ay * ny + az * nz;
       if (facing < 0.1) continue; // the side pressed against the surface is never seen
       const px = wpos[i * 3]; const py = wpos[i * 3 + 1]; const pz = wpos[i * 3 + 2];
@@ -834,11 +870,13 @@ export function createGame(el, api) {
   function lockPaint(w) {
     if (R.lockSent && !local) return;
     const p = stage.paints[w];
+    const t0 = performance.now();
     const enc = p.encode();
     p.flush();
+    const t1 = performance.now();
     R.paintSum[w] = enc.sum; R.paintOk[w] = true;
     if (controlsOf(w)) { try { R.blend[w] = blendOf(w); } catch (e) { R.blend[w] = -1; console.warn('blend', e); } }
-    stats.lastPaint = { w, bytes: enc.bytes, b64: enc.b64.length, chunks: Math.ceil(enc.b64.length / 3200) };
+    stats.lastPaint = { w, bytes: enc.bytes, b64: enc.b64.length, chunks: Math.ceil(enc.b64.length / 3200), encMs: t1 - t0, blendMs: performance.now() - t1 };
     if (!local) {
       R.lockSent = true;
       const b = body[w];
@@ -853,7 +891,9 @@ export function createGame(el, api) {
     if (p.version === R.lpVer || P.last || t - R.lpAt < 1000) return;
     const enc = p.encode();
     p.flush();
-    R.lpVer = p.version; R.lpAt = t; R.lpSent++;
+    R.lpVer = p.version;
+    if (enc.sum === R.paintSum[me]) { R.lpSame = (R.lpSame | 0) + 1; return; } // undo back / repaint the same: nothing to send
+    R.lpAt = t; R.lpSent++;
     R.paintSum[me] = enc.sum;
     stats.lastPaint = { w: me, bytes: enc.bytes, b64: enc.b64.length, chunks: Math.ceil(enc.b64.length / 3200), live: true };
     link.sendBlob('paint', enc.b64, { w: me, sum: enc.sum, round: R.round, live: 1 });
@@ -938,6 +978,7 @@ export function createGame(el, api) {
   link.on('wear', (d) => { if (d && (d.w === 'a' || d.w === 'b') && d.w !== me) { wornRemote[d.w] = d.wr | 0; applyWear(); } });
   link.on('call', (d) => { if (d && (d.w === 'a' || d.w === 'b')) { R.call[d.w] = d.k || null; } });
   link.on('act', (d) => tickerIn(d));
+  link.on('vote', (d) => { if (d && (d.w === 'a' || d.w === 'b') && d.w !== me) castVote(d.w, d.r | 0); });
   link.on('emote', (d) => { const e = d && EMOTES.find((x) => x[0] === d.k); if (e) { hud.emote(e[1], e[2], false); snd.play('pose'); } });
   link.on('start', () => { /* guests can't start; ignored */ });
   link.on('out', (d) => { if (isHost && d) hostOut(d.w); });
@@ -1080,10 +1121,13 @@ export function createGame(el, api) {
     const ray = stage.setRayFromScreen(stage.size[0] / 2, stage.size[1] / 2, stage.size[0], stage.size[1]);
     const objs = [stage.mapMesh];
     if (stage.av[tgt].root.visible) for (const m of stage.av[tgt].meshes) objs.push(m);
-    const hit = stage.pick(objs, 40);
+    // a pellet can't tag what the fog hides: range = the play fog's far edge (26 m big maps, 30 small)
+    const range = Math.min(40, stage.scene.fog ? stage.scene.fog.far : 40);
+    const hit = stage.pick(objs, range);
     const o = ray.ray.origin; const dir = ray.ray.direction;
     const muzzle = { x: o.x + dir.x * 0.3 - 0, y: o.y - 0.08, z: o.z + dir.z * 0.3 };
-    const p = hit ? hit.point : { x: o.x + dir.x * 30, y: o.y + dir.y * 30, z: o.z + dir.z * 30 };
+    const fly = Math.min(30, range);
+    const p = hit ? hit.point : { x: o.x + dir.x * fly, y: o.y + dir.y * fly, z: o.z + dir.z * fly };
     let n = [0, 1, 0];
     if (hit && hit.face) { const nn = hit.face.normal.clone().transformDirection(hit.object.matrixWorld); n = [nn.x, nn.y, nn.z]; }
     let isTag = !!hit && stage.av[tgt].meshes.includes(hit.object);
@@ -1097,7 +1141,7 @@ export function createGame(el, api) {
         tvA.copy(m.geometry.boundingSphere.center); m.localToWorld(tvA);
         const sc = m.getWorldScale(tv3b).x; const rad = m.geometry.boundingSphere.radius * sc;
         const along = (tvA.x - o.x) * dir.x + (tvA.y - o.y) * dir.y + (tvA.z - o.z) * dir.z;
-        if (along < 0.2 || along > 40) continue;
+        if (along < 0.2 || along > range) continue;
         const dd = Math.hypot(tvA.x - (o.x + dir.x * along), tvA.y - (o.y + dir.y * along), tvA.z - (o.z + dir.z * along));
         if (dd <= rad * 0.72 + slack && along < bestT) bestT = along; // the parts are fat ellipsoids: 0.72 of the sphere
       }
@@ -1119,7 +1163,7 @@ export function createGame(el, api) {
       if (!isTag) stage.fx.splat(pp.x, pp.y, pp.z, n[0], n[1], n[2], ink, 0.22 + Math.random() * 0.1, tSec);
     });
     const msg = { id, T, by: w, o: [muzzle.x, muzzle.y, muzzle.z], p: [p.x, p.y, p.z], n, hit: !!hit, tag: isTag, seen, left: R.pellets[w] };
-    stats.lastShot = { tag: isTag, hit: !!hit, obj: hit ? (stage.isMap(hit.object) ? 'map' : 'other') : null, p: msg.p, o: [o.x, o.y, o.z], d: [dir.x, dir.y, dir.z], tgtVisible: stage.av[tgt].root.visible, seen };
+    stats.lastShot = { range, tag: isTag, hit: !!hit, obj: hit ? (stage.isMap(hit.object) ? 'map' : 'other') : null, p: msg.p, o: [o.x, o.y, o.z], d: [dir.x, dir.y, dir.z], tgtVisible: stage.av[tgt].root.visible, seen };
     if (isTag) {
       R.pendingTag = id;
       if (local) { tagJuice(); hostFound(w, tgt, T, msg.p); return; }
@@ -1246,9 +1290,27 @@ export function createGame(el, api) {
   const VIEWS = ['eyes', 'watch', 'free'];
   const VIEW_L = { eyes: 'View', watch: 'Watching', free: 'Free cam' };
   function viewAllowed() { const v = viewer(); return !!v && !local && mode() === 'hs' && roleOf(v) === 'hider' && hunting() && !frozen(); }
-  function clampFree() {
+  /** px/py/pz: where the camera was last frame (the move is raycast and stops 0.15 m short of a wall). */
+  function clampFree(px, py, pz) {
     const B = stage.world.bounds;
     C.fcX = clamp(C.fcX, B.minX + 0.15, B.maxX - 0.15); C.fcZ = clamp(C.fcZ, B.minZ + 0.15, B.maxZ - 0.15);
+    C.fcY = clamp(C.fcY, C.fcBottom, C.fcTop);
+    // furniture can be flown through; walls and ceilings can't (inside one the screen went blank)
+    if (px !== undefined) {
+      const dx = C.fcX - px; const dy = C.fcY - py; const dz = C.fcZ - pz; const L = Math.hypot(dx, dy, dz);
+      if (L > 1e-5) {
+        const h = stage.world.raycast(px, py, pz, dx / L, dy / L, dz / L, L + 0.15, FC_WALL);
+        if (h) { const k = Math.max(0, h.t - 0.15) / L; C.fcX = px + dx * k; C.fcY = py + dy * k; C.fcZ = pz + dz * k; }
+      }
+    }
+    // still inside (or within 0.15 m of) a wall / ceiling slab: leave by the nearest face
+    for (let i = 0; i < fcBoxes.length; i++) {
+      const b = fcBoxes[i]; const e = 0.15;
+      if (C.fcX <= b.minX - e || C.fcX >= b.maxX + e || C.fcY <= b.minY - e || C.fcY >= b.maxY + e || C.fcZ <= b.minZ - e || C.fcZ >= b.maxZ + e) continue;
+      const l = C.fcX - (b.minX - e); const r = b.maxX + e - C.fcX; const d = C.fcY - (b.minY - e); const u = b.maxY + e - C.fcY; const n = C.fcZ - (b.minZ - e); const f = b.maxZ + e - C.fcZ;
+      const mn = Math.min(l, r, d, u, n, f);
+      if (mn === l) C.fcX = b.minX - e; else if (mn === r) C.fcX = b.maxX + e; else if (mn === d) C.fcY = b.minY - e; else if (mn === u) C.fcY = b.maxY + e; else if (mn === n) C.fcZ = b.minZ - e; else C.fcZ = b.maxZ + e;
+    }
     C.fcY = clamp(C.fcY, C.fcBottom, C.fcTop);
   }
   function setView(m, silent = false) {
@@ -1263,8 +1325,10 @@ export function createGame(el, api) {
       clampFree();
     }
     C.spect = m; U.spect = m; posesOpen = false;
+    // whip the camera to the new view instead of cutting (cameras() eases the offset out)
+    C.vsAt = tSec; C.vsPend = true;
     if (silent) return;
-    snd.play('ui');
+    snd.play('whoosh');
     const mouse = controls && controls.st.usingMouse;
     if (m === 'watch') hint(`Watching ${api.name(other(viewer()))}. You stay right where you are.`, 2600);
     else if (m === 'free') hint(mouse ? 'Free cam: W A S D fly · Space / E up · Q / C down · drag to look' : 'Free cam: left thumb flies where you look · drag to look', 3200);
@@ -1439,9 +1503,15 @@ export function createGame(el, api) {
     if (stage) { stage.fx.setCursor(false); const v = viewer(); if (v) stage.av[v].st.breathe = true; }
     if (controls) controls.setMode('none');
     if (!silent) snd.play('ui');
+    // pre-encode while they walk off, so Ready (or the next live update) reuses the blob instead of
+    // quantising at the tap; the skin settles to the ≤ 32 colours the partner will see
+    const pv = viewer();
+    if (stage && pv && S.phase.name === 'hide') later(() => { if (!P.on && stage) { stage.paints[pv].encode(); stage.paints[pv].flush(); } }, 120);
   }
   function myMeshes() { const v = viewer(); return v ? stage.av[v].meshes : []; }
-  function refreshTexels() { const v = viewer(); if (!v) return; stage.paints[v].updateWorld(stage.av[v].meshes); P.texelDirtyAt = 0; }
+  function refreshTexels() {
+    if (PFX.fillParts) { for (const pi of PFX.fillParts) stage.av[PFX.fillW].meshes[pi].scale.setScalar(1); PFX.fillParts = null; } // texels from the rest pose, not mid-swell
+    const v = viewer(); if (!v) return; stage.paints[v].updateWorld(stage.av[v].meshes); P.texelDirtyAt = 0; }
   const rgbTmp = [0, 0, 0];
   const paintGestures = {
     begin(x, y) {
@@ -1452,8 +1522,11 @@ export function createGame(el, api) {
       const v = viewer();
       stage.paints[v].snapshot();
       P.last = [hit.point.x, hit.point.y, hit.point.z];
+      P.lastAt = now();
       dabAt(hit);
       showCursor(hit);
+      stage.fx.pulseCursor(0.12);
+      snd.brush(P.size, 0.35, P.hard);
       return true;
     },
     hover(x, y) {
@@ -1470,14 +1543,16 @@ export function createGame(el, api) {
       const d = Math.hypot(dx, dy, dz);
       const step = r * 0.35;
       if (d < step) return;
-      const n = Math.min(12, Math.floor(d / step));
+      const n = Math.min(DAB_CAP[P.size], Math.floor(d / step));
       for (let i = 1; i <= n; i++) {
         const k = i / n;
         dab3(P.last[0] + dx * k, P.last[1] + dy * k, P.last[2] + dz * k);
       }
       P.last[0] = hit.point.x; P.last[1] = hit.point.y; P.last[2] = hit.point.z;
       showCursor(hit);
-      snd.play('tick');
+      // stroke speed in body-sizes per second → scrub loudness
+      const tn = now(); const sdt = Math.max(16, tn - (P.lastAt || tn - 16)); P.lastAt = tn;
+      snd.brush(P.size, (d / body[viewer()].s) / (sdt / 1000) / 1.6, P.hard);
     },
     end() { if (P.last) { P.strokes++; P.last = null; const vv = viewer(); if (vv) { R.strokes[vv]++; act('paint', R.strokes[vv]); } } if (!controls.st.usingMouse) stage.fx.setCursor(false); },
     cancel() { if (P.last) { stage.paints[viewer()].undo(); P.last = null; } },
@@ -1490,6 +1565,7 @@ export function createGame(el, api) {
         const region = REGION_NAMES[REGION_OF_PART[hit.object.userData.part]];
         const p = stage.paints[viewer()];
         p.snapshot(); p.fill(region, P.rgb);
+        PFX.fillAt = now(); PFX.fillW = viewer(); PFX.fillParts = REGIONS[region]; PFX.fills++;
         snd.play('fill'); api.haptic(10); act('fill');
         hint(`Filled your ${region}`, 1000);
       } else if (P.tool === 'pick') {
@@ -1512,7 +1588,45 @@ export function createGame(el, api) {
   function showCursor(hit) {
     if (hit.face) { tv3.copy(hit.face.normal).transformDirection(hit.object.matrixWorld); curN.x = tv3.x; curN.y = tv3.y; curN.z = tv3.z; }
     const r = (P.tool === 'fill' ? 0.03 : BRUSH[P.size]) * body[viewer()].s;
-    stage.fx.setCursor(true, hit.point.x, hit.point.y, hit.point.z, curN.x, curN.y, curN.z, r, P.hard ? theme.outline : '#ffffff');
+    // metres per CSS pixel at the hit, so the ring stays ~2.5 px wide at any zoom
+    const cam = stage.camera; const dist = cam.position.distanceTo(hit.point);
+    const mpp = (2 * dist * Math.tan((cam.fov * Math.PI) / 360)) / Math.max(1, SH);
+    stage.fx.setCursor(true, hit.point.x, hit.point.y, hit.point.z, curN.x, curN.y, curN.z, r, theme.outline, P.rgb, mpp, P.tool === 'brush' && !P.hard);
+  }
+  /** Size / hardness changed: show the new brush on the body for a moment (phones have no hover). */
+  function brushPreview() {
+    if (!P.on || !stage) return;
+    const v = viewer(); if (!v) return;
+    snd.brush(P.size, 0.9, P.hard);
+    if (P.last) return;
+    if (P.texelDirtyAt) refreshTexels();
+    const cam = stage.camera.position;
+    stage.av[v].meshes[0].getWorldPosition(tv3);
+    tv3b.copy(tv3).sub(cam).normalize();
+    stage.ray.set(cam, tv3b); stage.ray.far = 10;
+    hitsTmp.length = 0;
+    stage.ray.intersectObjects(myMeshes(), false, hitsTmp);
+    if (!hitsTmp.length) return;
+    showCursor(hitsTmp[0]);
+    stage.fx.pulseCursor(0.3);
+    PFX.previewUntil = now() + 1100; PFX.previewFrames = stats.renders + 10; // long enough to be seen, even on a slow frame
+  }
+  /** Paint juice: the filled part swells 1.08 → 1 (0.18 s); a stamp flashes the outline white → off (0.25 s). */
+  const PFX = { fillAt: -1e9, fillW: null, fillParts: null, stampAt: -1e9, stampW: null, previewUntil: 0, previewFrames: 0, fills: 0, stamps: 0 };
+  function paintFx() {
+    const t = now();
+    if (PFX.fillParts) {
+      const k = (t - PFX.fillAt) / 180; const ms = stage.av[PFX.fillW].meshes;
+      const sc = k >= 1 ? 1 : 1 + 0.08 * (1 - k) * (1 - k);
+      for (const pi of PFX.fillParts) ms[pi].scale.setScalar(sc);
+      if (k >= 1) PFX.fillParts = null;
+    }
+    if (PFX.stampW) {
+      const k = (t - PFX.stampAt) / 250; const av = stage.av[PFX.stampW];
+      if (av.revealOn) PFX.stampW = null; // the real reveal owns the outline
+      else if (k >= 1) { av.setReveal(null); PFX.stampW = null; } else av.setReveal('#ffffff', 0.004 + 0.016 * (1 - k));
+    }
+    if (PFX.previewUntil && t > PFX.previewUntil && stats.renders >= PFX.previewFrames) { PFX.previewUntil = 0; if (!P.last && !controls.st.usingMouse) stage.fx.setCursor(false); }
   }
   function dabAt(hit) { dab3(hit.point.x, hit.point.y, hit.point.z); }
   function dab3(x, y, z) {
@@ -1558,6 +1672,7 @@ export function createGame(el, api) {
     const p = stage.paints[v];
     p.snapshot();
     p.stamp(surf);
+    PFX.stampAt = now(); PFX.stampW = v; PFX.stamps++;
     snd.play('stamp'); api.haptic(20); hud.flash(); act('stamp');
     const kind = surfaceKind(b);
     hint(kind === 'wall' ? 'Stamped the wall onto your back' : kind === 'ceiling' ? 'Stamped the ceiling onto your back' : 'Stamped the surface under you onto your skin', 1600);
@@ -1661,9 +1776,9 @@ export function createGame(el, api) {
       case 'crouch': if (v) setPose(body[v].at ? (body[v].pose === 'wall' ? 'stand' : 'wall') : body[v].pose === 'crouch' ? 'stand' : 'crouch'); break;
       case 'paint': if (P.on) exitPaint(); else enterPaint(); break;
       case 'poses': posesOpen = !posesOpen; snd.play('ui'); break;
-      case 'brush': if (P.on) { if (P.tool === 'brush') P.size = (P.size + 1) % 3; P.tool = 'brush'; snd.play('ui'); } break;
-      case 'size': if (P.on) { P.size = (P.size + 1) % 3; snd.play('ui'); } break;
-      case 'hardness': if (P.on) { P.hard = !P.hard; snd.play('ui'); } break;
+      case 'brush': if (P.on) { const was = P.tool === 'brush'; if (was) P.size = (P.size + 1) % 3; P.tool = 'brush'; snd.play('ui'); if (was) brushPreview(); } break;
+      case 'size': if (P.on) { P.size = (P.size + 1) % 3; snd.play('ui'); brushPreview(); } break;
+      case 'hardness': if (P.on) { P.hard = !P.hard; snd.play('ui'); brushPreview(); } break;
       case 'fill': if (P.on) { P.tool = 'fill'; snd.play('ui'); hint('Tap a body part to fill it', 1500); } break;
       case 'pick': if (P.on) { P.tool = 'pick'; snd.play('ui'); hint('Tap anything to drink its colour', 1500); } break;
       case 'stamp': doStamp(); break;
@@ -1707,8 +1822,8 @@ export function createGame(el, api) {
       return;
     }
     if (t.dataset.tool) { const tool = t.dataset.tool; if (tool === 'stamp') action('stamp'); else if (tool === 'brush') action('brush'); else action(tool); return; }
-    if (t.dataset.size) { P.size = +t.dataset.size; snd.play('ui'); return; }
-    if (t.dataset.hard) { P.hard = t.dataset.hard === '1'; snd.play('ui'); return; }
+    if (t.dataset.size) { P.size = +t.dataset.size; snd.play('ui'); brushPreview(); return; }
+    if (t.dataset.hard) { P.hard = t.dataset.hard === '1'; snd.play('ui'); brushPreview(); return; }
     if (t.dataset.pose) { setPose(t.dataset.pose); return; }
     if (t.dataset.wear) {
       if (t.classList.contains('locked')) { hud.pop('LOCKED', 'ink', t.dataset.hint || ''); snd.play('warn'); return; }
@@ -1718,6 +1833,7 @@ export function createGame(el, api) {
     if (t.dataset.music) { music = t.dataset.music; try { localStorage.setItem(MUSIC_KEY, music); } catch { /* ignore */ } S.dataVer++; snd.play('ui'); return; }
     if (t.dataset.call) { setCall(t.dataset.call); return; }
     if (t.dataset.emote) { sendEmote(t.dataset.emote, t); return; }
+    if (t.dataset.vote) { const r = +t.dataset.vote; if (!local && me) link.send('vote', { w: me, r }); castVote(me || 'a', r); return; }
     if (t.dataset.act) action(t.dataset.act);
   });
   L.on(root, 'pointerdown', () => snd.unlock(), { passive: true });
@@ -1793,21 +1909,27 @@ export function createGame(el, api) {
 
   // ── per-frame ─────────────────────────────────────────────────────
   const mv = [0, 0]; const lk = [0, 0];
-  let lookDir = null; let climbPiv = null; let herePrj = null;
+  let lookDir = null; let climbPiv = null; let herePrj = null; let ccAlt = null;
   let camPos = null; let camLook = null; let camWant = null; let lookWant = null; let tvA = null; let qOwn = null; let prj = null; let camR = null; let camF = null;
   const pubSt = {}; for (const f of FIELDS) pubSt[f] = 0;
+  /** Presence keepalive period while the hider's state is private (constant zeros). */
+  const HIDE_KEEPALIVE_MS = 400;
+  let pubHideAt = -1e9;
+  const NETST = { pubs: 0 }; // publish() calls from network() (the link / net.js still rate-limit to 20/s)
   let lastScaleCheck = 0;
   function initVecs() {
     camPos = new THREE.Vector3(0, 6, 9); camLook = new THREE.Vector3(0, 0.5, 0); camWant = new THREE.Vector3(); lookWant = new THREE.Vector3(); tvA = new THREE.Vector3(); tvZ = new THREE.Vector3(); Y_AXIS = new THREE.Vector3(0, 1, 0); Z_AXIS = new THREE.Vector3(0, 0, 1);
     qOwn = new THREE.Quaternion(); prj = new THREE.Vector3(); camR = [0, 0, 0]; camF = [0, 0, 0];
-    lookDir = new THREE.Vector3(); climbPiv = new THREE.Vector3(); herePrj = new THREE.Vector3();
+    lookDir = new THREE.Vector3(); climbPiv = new THREE.Vector3(); herePrj = new THREE.Vector3(); ccAlt = new THREE.Vector3();
     tv3 = new THREE.Vector3(); tv3b = new THREE.Vector3();
   }
 
+  let SW = 1; let SH = 1; // the stage size this frame
   function frame(tms) {
     raf = requestAnimationFrame(frame);
     if (!stage || S.hidden) return;
     if (!camPos) initVecs();
+    { const sz0 = stage.size; SW = sz0[0]; SH = sz0[1]; } // one read per frame (the getter allocates)
     const frameMs = tms - lastT;
     let dt = frameMs / 1000; lastT = tms;
     if (!(dt > 0)) dt = 0.016; if (dt > 0.1) dt = 0.1;
@@ -1828,6 +1950,7 @@ export function createGame(el, api) {
       animate(dt, t);
       cameras(realDt, t);
       stage.fx.update(dt, tSec);
+      if (PFX.fillParts || PFX.stampW || PFX.previewUntil) paintFx();
       ui(t);
       const blind = isBlind();
       if (blind !== U.blind) { U.blind = blind; stage.canvas.style.visibility = blind ? 'hidden' : 'visible'; }
@@ -1912,8 +2035,9 @@ export function createGame(el, api) {
       const cp = Math.cos(C.fcPitch); const sy = Math.sin(C.fcYaw); const cy = Math.cos(C.fcYaw);
       const sp = FREECAM.speed * (controls.st.sprintHeld ? FREECAM.fast : 1) * dt;
       const rise = controls.rise();
+      const px = C.fcX; const py = C.fcY; const pz = C.fcZ;
       C.fcX += (sy * cp * mv[1] - cy * mv[0]) * sp; C.fcY += (Math.sin(C.fcPitch) * mv[1] + rise) * sp; C.fcZ += (cy * cp * mv[1] + sy * mv[0]) * sp;
-      clampFree();
+      clampFree(px, py, pz);
       lk[0] = 0; lk[1] = 0;
     }
     // Jump is read ONCE per frame: it used to be consumed inside the loop, so in hotseat play
@@ -2091,14 +2215,21 @@ export function createGame(el, api) {
     pubSt.yaw = hiding ? 0 : b.yaw; pubSt.po = hiding ? 0 : POSES.indexOf(b.pose);
     // a climbing seeker looks with its own view yaw: publish it relative to the body (yaw + ly = view)
     pubSt.ly = C.climbV && role === 'seeker' ? wrapAngle(C.vYaw - b.yaw) : b.lookYaw; pubSt.lp = b.lookPitch; pubSt.v = hiding ? 0 : 1; pubSt.wa = b.wa; pubSt.sp = b.speed;
-    if (hiding) { pubSt.q = Q_ID; pubSt.at = 0; }
+    if (hiding) { pubSt.q = Q_ID; pubSt.at = 0; pubSt.ly = 0; pubSt.lp = 0; pubSt.wa = 0; pubSt.sp = 0; }
     else {
       bodyQuat(b, qTmp);
       // quantise, and only re-pack when it changed (keeps publish allocation-free and stable)
       const qq = packQuat(qTmp[0], qTmp[1], qTmp[2], qTmp[3]);
       pubSt.q = qq; pubSt.at = b.at ? 1 : 0;
     }
-    if (S.boot === 'ready' && link.ready) link.publish(pubSt);
+    // while hiding the published state is a constant "nobody here" (v: 0, all zeros): send it as a
+    // ~2.5/s keepalive (it still feeds the host's stall detection) instead of 20/s; the full rate
+    // resumes 500 ms before the hunt so the seeker's buffer is primed
+    if (S.boot === 'ready' && link.ready && (!hiding || t - pubHideAt >= HIDE_KEEPALIVE_MS || t < pubHideAt)) {
+      link.publish(pubSt);
+      pubHideAt = hiding ? t : -1e9;
+      NETST.pubs++;
+    }
     livePaint(t);
     if (R.actQ && t - R.actAt > 2500 && link.ready) { link.send('act', R.actQ); R.actAt = t; R.actQ = null; }
     // silence detection (host pauses on a stalled link)
@@ -2314,6 +2445,8 @@ export function createGame(el, api) {
   function wallTmp(w, wa) { const a = wallArr[w]; a[0] = Math.sin(wa); a[1] = 0; a[2] = Math.cos(wa); return a; }
   const upTmp = [0, 1, 0];
   const snapOrient = { a: true, b: true };
+  /** Seconds a view switch (eyes / watch / free) takes to whip the camera across. */
+  const VIEW_WHIP_S = 0.35;
   let Y_AXIS = null; let Z_AXIS = null;
   function useHint() { rem.x = remHint.x; rem.y = remHint.y; rem.z = remHint.z; rem.yaw = remHint.yaw; rem.po = remHint.po; rem.wa = remHint.wa; rem.v = 1; rem.q = remHint.q; rem.at = remHint.at; unpackQuat(remHint.q, qTmp); rem.qx = qTmp[0]; rem.qy = qTmp[1]; rem.qz = qTmp[2]; rem.qw = qTmp[3]; }
   /** Yaw of a root's forward vector projected on the floor. */
@@ -2334,7 +2467,7 @@ export function createGame(el, api) {
       const sw = Math.sin(C.orbit * 0.16) * 0.55;
       const sz = sizeS();
       const cx = (body.a.x + body.b.x) / 2; const cz = (body.a.z + body.b.z) / 2; const cy = (body.a.y + body.b.y) / 2 + 0.25 * sz;
-      const dist = (stage.size[0] < stage.size[1] ? 2.25 : 2.0) * (0.45 + 0.55 * sz);
+      const dist = (SW < SH ? 2.25 : 2.0) * (0.45 + 0.55 * sz);
       camWant.set(cx + Math.sin(sw) * dist, cy + 0.75, cz + Math.cos(sw) * dist);
       revC.x = cx; revC.y = cy; revC.z = cz;
       aimFramed(revC, true);
@@ -2385,7 +2518,7 @@ export function createGame(el, api) {
       tvA.set(Math.sin(yaw) * cp, Math.sin(rem.lp), Math.cos(yaw) * cp);
       const ux = 2 * (q.x * q.y - q.w * q.z); const uy = 1 - 2 * (q.x * q.x + q.z * q.z); const uz = 2 * (q.y * q.z + q.w * q.x);
       revC.x = ra.position.x + ux * 0.4 * s2; revC.y = ra.position.y + uy * 0.4 * s2 + 0.12 * s2; revC.z = ra.position.z + uz * 0.4 * s2;
-      const tall = stage.size[0] < stage.size[1];
+      const tall = SW < SH;
       const dist = (tall ? 2.3 : 1.8) * (0.6 + 0.4 * s2); const side = (tall ? 0.1 : 0.3) * s2;
       camWant.set(revC.x - tvA.x * dist - Math.cos(yaw) * side, revC.y - tvA.y * dist + 0.38 * s2, revC.z - tvA.z * dist + Math.sin(yaw) * side);
       clampCam(revC, camWant);
@@ -2411,7 +2544,7 @@ export function createGame(el, api) {
         camWant.set(b.x + Math.sin(yaw) * 0.12 * b.s, b.y + eh, b.z + Math.cos(yaw) * 0.12 * b.s);
         lookWant.set(camWant.x + Math.sin(yaw) * Math.cos(b.lookPitch), camWant.y + Math.sin(b.lookPitch), camWant.z + Math.cos(yaw) * Math.cos(b.lookPitch));
         // the paint popper only fits on landscape screens (portrait has the Fire button there)
-        stage.vm.visible = stage.size[0] > stage.size[1] * 1.1;
+        stage.vm.visible = SW > SH * 1.1;
         stage.vm.position.set(0.2, -0.16 + Math.sin(tSec * 8) * 0.004 * Math.min(1, b.speed), -0.42 + C.shake * 0.3);
       }
       snap = true;
@@ -2420,6 +2553,14 @@ export function createGame(el, api) {
       const b = body[v];
       bodyCentre(v, lookWant);
       lookWant.y += (b.at ? 0.05 : 0.14) * b.s;
+      // a stick / let-go jumps the body centre (feet → contact) by ~0.3 m: ease the look target at rate 6
+      // for 0.4 s instead of following it (the player's chosen pitch is left alone)
+      if (!!b.at !== C.lkAt) { C.lkAt = !!b.at; C.lkUntil = tSec + 0.4; }
+      if (tSec < C.lkUntil && Math.abs(lookWant.x - C.lkX) + Math.abs(lookWant.y - C.lkY) + Math.abs(lookWant.z - C.lkZ) < 1.2) {
+        const k = 1 - Math.exp(-6 * dt);
+        C.lkX += (lookWant.x - C.lkX) * k; C.lkY += (lookWant.y - C.lkY) * k; C.lkZ += (lookWant.z - C.lkZ) * k;
+        lookWant.set(C.lkX, C.lkY, C.lkZ);
+      } else { C.lkX = lookWant.x; C.lkY = lookWant.y; C.lkZ = lookWant.z; }
       // under a ceiling the camera eases below the body (world-up always: no rolling horizon)
       if (C.autoUntil > tSec) C.pitch += (C.autoPitch - C.pitch) * (1 - Math.exp(-5 * dt));
       else if (!b.at && C.pitch < 0.05) C.pitch += (0.32 - C.pitch) * (1 - Math.exp(-2.5 * dt));
@@ -2451,7 +2592,20 @@ export function createGame(el, api) {
     stage.setView(overview ? 'overview' : 'play');
     C.shake = Math.max(0, C.shake - dt);
     if (C.override) { camWant.fromArray(C.override, 0); lookWant.fromArray(C.override, 3); snap = true; C.frameCard = false; }
-    if (snap) { camPos.copy(camWant); camLook.copy(lookWant); }
+    // a view switch (eyes / watch / free): start from wherever the camera was and ease the
+    // difference out over VIEW_WHIP_S (smoothstep), riding on the new view's own motion
+    if (C.vsPend) {
+      C.vsPend = false;
+      C.vsOx = camPos.x - camWant.x; C.vsOy = camPos.y - camWant.y; C.vsOz = camPos.z - camWant.z;
+      C.vsLx = camLook.x - lookWant.x; C.vsLy = camLook.y - lookWant.y; C.vsLz = camLook.z - lookWant.z;
+      C.vsStep = Math.hypot(C.vsOx, C.vsOy, C.vsOz);
+    }
+    const vu = C.override ? 1 : (tSec - C.vsAt) / VIEW_WHIP_S;
+    if (vu < 1 && C.vsStep > 0.02 && C.vsStep < 12) {
+      const e = 1 - vu * vu * (3 - 2 * vu);
+      camPos.set(camWant.x + C.vsOx * e, camWant.y + C.vsOy * e, camWant.z + C.vsOz * e);
+      camLook.set(lookWant.x + C.vsLx * e, lookWant.y + C.vsLy * e, lookWant.z + C.vsLz * e);
+    } else if (snap) { camPos.copy(camWant); camLook.copy(lookWant); }
     else if (rate > 0) {
       const k = 1 - Math.exp(-rate * dt);
       camPos.lerp(camWant, k); camLook.lerp(lookWant, k);
@@ -2472,19 +2626,37 @@ export function createGame(el, api) {
     dir.set(Math.sin(yaw) * cp, Math.sin(pitch), Math.cos(yaw) * cp);
     bodyCentre(viewer(), climbPiv); climbPiv.y += 0.1 * s2;
     // a phone held upright sees a narrow slice sideways: sit further back, less to the side, a little higher
-    const tall = stage.size[0] < stage.size[1];
+    const tall = SW < SH;
     const dist = (tall ? 2.0 : 1.55) * (0.55 + 0.45 * s2); const side = (tall ? 0.12 : 0.32) * s2; const lift = (tall ? 0.3 : 0.18) * s2;
     let ux = -dir.x * dist - Math.cos(yaw) * side; let uy = -dir.y * dist + lift; let uz = -dir.z * dist + Math.sin(yaw) * side;
+    const L = Math.hypot(ux, uy, uz) || dist;
     if (b.at) {
-      const k = ux * b.nx + uy * b.ny + uz * b.nz; const lim = 0.3 * dist;
+      // keep well out of the wall plane (0.3 × dist let the camera sit almost in it, looking along the wall)
+      const k = ux * b.nx + uy * b.ny + uz * b.nz; const lim = 0.55 * dist;
       if (k < lim) {
         ux += b.nx * (lim - k); uy += b.ny * (lim - k); uz += b.nz * (lim - k);
-        const l = Math.hypot(ux, uy, uz) || 1; const L = Math.hypot(-dir.x * dist, -dir.y * dist + lift, -dir.z * dist) || dist;
+        const l = Math.hypot(ux, uy, uz) || 1;
         ux = ux / l * L; uy = uy / l * L; uz = uz / l * L;
       }
     }
     out.set(climbPiv.x + ux, climbPiv.y + uy, climbPiv.z + uz);
     clampCam(climbPiv, out);
+    // pulled in hard (a corner, low furniture): slide round the wall's tangent to whichever side is clearer
+    if (b.at && out.distanceTo(climbPiv) < 0.6 * L) {
+      let tx = -b.nz; let ty = 0; let tz = b.nx; // horizontal tangent on a wall
+      if (Math.abs(b.ny) > 0.7) { tx = -Math.cos(yaw); ty = 0; tz = Math.sin(yaw); } // on a ceiling / top: the view's right
+      const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
+      let best = out.distanceTo(climbPiv); let bx = out.x; let by = out.y; let bz = out.z;
+      for (let sgn = -1; sgn <= 1; sgn += 2) {
+        const ax = b.nx * 0.62 + tx * sgn * 0.7; const ay = b.ny * 0.62 + 0.3 * (1 - Math.abs(b.ny)) + ty; const az = b.nz * 0.62 + tz * sgn * 0.7;
+        const al = Math.hypot(ax, ay, az) || 1;
+        ccAlt.set(climbPiv.x + ax / al * L, climbPiv.y + ay / al * L, climbPiv.z + az / al * L);
+        clampCam(climbPiv, ccAlt);
+        const dd = ccAlt.distanceTo(climbPiv);
+        if (dd > best + 0.05) { best = dd; bx = ccAlt.x; by = ccAlt.y; bz = ccAlt.z; }
+      }
+      out.set(bx, by, bz);
+    }
     floorCam(out);
     // squeezed in, or the body sits on the line of fire: hide it so the crosshair always sees past it
     const cx = climbPiv.x - out.x; const cy = climbPiv.y - out.y; const cz = climbPiv.z - out.z;
@@ -2517,12 +2689,12 @@ export function createGame(el, api) {
         const bottom = r && r.top > rr.top + 120 ? r.top - rr.top : rr.height;
         C.frameY = (topUi + bottom) / 2;
       }
-      const H = stage.size[1];
+      const H = SH;
       oy = Math.round(H / 2 - (C.frameY || H / 2));
     }
     C.oy = C.oy == null ? oy : C.oy + (oy - C.oy) * 0.2;
     if (Math.abs(C.oy) < 0.5) { if (cam.view && cam.view.enabled) cam.clearViewOffset(); }
-    else { const [W, H] = stage.size; cam.setViewOffset(W, H, 0, C.oy, W, H); }
+    else cam.setViewOffset(SW, SH, 0, C.oy, SW, SH);
   }
   /** Centre of a body (what cameras look at): contact point + half a body along the normal. */
   function bodyCentre(w, out) {
@@ -2591,7 +2763,7 @@ export function createGame(el, api) {
     const uy = 1 - 2 * (q.x * q.x + q.z * q.z);
     herePrj.copy(a.root.position); herePrj.y += (uy > -0.5 ? 0.62 : 0.15) * s2;
     herePrj.project(stage.camera);
-    const [W, H] = stage.size;
+    const W = SW; const H = SH;
     let nx = herePrj.x; let ny = herePrj.y; let edge = false;
     if (herePrj.z > 1) { nx = -nx; ny = -ny; edge = true; } // behind the camera: point the other way
     const m = Math.max(Math.abs(nx), Math.abs(ny));
@@ -2806,7 +2978,7 @@ export function createGame(el, api) {
     else if (ph === 'seek' && headStartOn(t) && t < S.phase.at + 1500 && v && roleOf(v) === 'hider') { kind = 'headgo'; a = S.phase.seq; }
     else if (ph === 'found' || ph === 'time') { kind = 'stamp'; a = S.phase.seq; }
     else if (ph === 'recap' && R.rec) { kind = 'recap'; a = S.phase.seq; }
-    else if (ph === 'final' && S.match) { kind = 'final'; a = S.phase.seq; b = S.finished; }
+    else if (ph === 'final' && S.match) { kind = 'final'; a = S.phase.seq; b = `${S.finished}${S.voteVer}`; }
     else if (ph === 'lock' && v && roleOf(v) !== 'seeker') { kind = 'locking'; a = S.phase.seq; }
     if (kind === LY.kind && a === LY.a && b === LY.b) return;
     // keep the settings sheet's scroll position across live rebuilds
@@ -2859,7 +3031,8 @@ export function createGame(el, api) {
       case 'final': {
         const d = S.phase.data || {};
         const story = matchStory(api, m.hist || [], curMapEntry().name);
-        return finalCard(api, { winner: d.winner, a: d.a, b: d.b, mode: m.mode, story, records: S.matchRecords, unlocks: S.matchUnlocks, firstNext: m.mode === 'hs' ? other(m.first) : null });
+        const vote = m.mode === 'hs' ? { rounds: (m.hist || []).filter((h) => h && h.hider), votes: S.vote, crowned: S.crowned, local } : null;
+        return finalCard(api, { winner: d.winner, a: d.a, b: d.b, mode: m.mode, story, records: S.matchRecords, unlocks: S.matchUnlocks, firstNext: m.mode === 'hs' ? other(m.first) : null, vote });
       }
       case 'locking': return '<div class="chm-stamp ink">Locked in<small>Sealing your paint… <b data-live="seek-count"></b></small></div>';
       default: return '';
@@ -2892,15 +3065,15 @@ export function createGame(el, api) {
           rules: rules(), sheet: S.sheet, tips: !!U.tips,
           /** what each avatar looks like on THIS device: position, up vector, forward, scale */
           drawn: stage ? { a: drawnOf('a'), b: drawnOf('b') } : null,
-          rem: { x: rem.x, y: rem.y, z: rem.z, q: rem.q, at: rem.at, po: rem.po },
+          rem: { x: rem.x, y: rem.y, z: rem.z, q: rem.q, at: rem.at, po: rem.po, v: rem.v },
           visible: stage ? { a: stage.av.a.root.visible, b: stage.av.b.root.visible } : null,
           paint: P.on ? { tool: P.tool, size: P.size, hard: P.hard, rgb: P.rgb } : null,
           splats: stage ? stage.fx.splatCount : 0,
-          violations: stats.violations, linkReady: link.ready, epoch: link.epoch, rtt: link.rtt, sent: link.sent,
+          violations: stats.violations, linkReady: link.ready, epoch: link.epoch, rtt: link.rtt, sent: link.sent, pubs: NETST.pubs, viewWhip: { at: C.vsAt, step: C.vsStep },
           blind: isBlind(), layer: hud.layerKey, trails: stage ? stage.fx.trailCount : 0, mapId: stage && stage.map ? stage.map.id : null,
           // v3
           spect: U.spect, fc: [C.fcX, C.fcY, C.fcZ, C.fcYaw, C.fcPitch], climbV: C.climbV, vYaw: C.vYaw, hunting: hunting(), huntAt: huntAt(), graceUntil: huntAt() + graceMs(),
-          live: { sent: R.lpSent, got: R.lpIn, tells: R.tells, tellSkip: R.tellSkip, tellOn: !!R.tell }, cam: stage ? stage.camera.position.toArray() : null,
+          live: { sent: R.lpSent, same: R.lpSame, got: R.lpIn, tells: R.tells, tellSkip: R.tellSkip, tellOn: !!R.tell }, cam: stage ? stage.camera.position.toArray() : null,
           here: { on: !hud.el.here.hidden, x: hud.el.here.style.transform }, badge: hud.el.badge.textContent || null, role: hud.el.role.textContent,
           glint: { a: R.glintAt.a, b: R.glintAt.b }, lastPick: stats.lastPick || null, lastPaint: stats.lastPaint || null, lastShot: stats.lastShot || null, lastTagCheck: stats.lastTagCheck || null, lastWindow: stats.lastWindow || null,
         };
@@ -3051,6 +3224,13 @@ export function createGame(el, api) {
       setPaint(o) { Object.assign(P, o); },
       stampNow() { doStamp(); },
       lockPaintNow(w) { lockPaint(w); return stage.paints[w].hash(); },
+      /** Paint perf probe: texels tested by dabs so far, the last blob, the codec timings of one lock. */
+      paintPerf(w) {
+        const p = stage.paints[w || viewer()];
+        const dist = new Set(); for (let i = 0; i < p.data.length; i += 4) dist.add((p.data[i] << 16) | (p.data[i + 1] << 8) | p.data[i + 2]);
+        return { dabTexels: p.dabTexels, dabs: p.dabs, texels: p.texels, version: p.version, lastPaint: stats.lastPaint, colours: dist.size, pfx: { fill: !!PFX.fillParts, stamp: !!PFX.stampW, preview: !!PFX.previewUntil, fills: PFX.fills, stamps: PFX.stamps }, size: P.size, hard: P.hard };
+      },
+      brushPreviewNow() { brushPreview(); return PFX.previewUntil > 0; },
       lookFrom(arr) { C.override = arr; },
       setLook(yaw, pitch) { const b = body[viewer()]; b.lookYaw = yaw; b.lookPitch = pitch; },
       openPoses() { posesOpen = true; },

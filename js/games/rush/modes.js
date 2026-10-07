@@ -1,7 +1,10 @@
 // Rail Rush mode rules: Race (weapons + rubber-banding), Brawl (shoves), Tandem (revives, team
 // hearts, coin goals) and the host's verdicts. Works the same with one device (both runners
 // local, messages delivered directly) and two (messages over the reliable link).
-import { LANE_W, CHUNK, ROOF, BOOST_T, REVIVE_WINDOW, TEAM_HEARTS, TEAM_HEARTS_MAX, BRAWL_CAP, DAILY_CAP, STEP_UP } from './tune.js';
+import {
+  LANE_W, CHUNK, ROOF, BOOST_T, REVIVE_WINDOW, REVIVE_FIRST, REVIVE_EVERY, CHEER_T, CHEER_K, CRASH_T,
+  TEAM_HEARTS, TEAM_HEARTS_MAX, BRAWL_CAP, DAILY_CAP, STEP_UP,
+} from './tune.js';
 import { O_BLOCK, O_TRAIN, O_MTRAIN, O_RAMP, pathLane } from './track.js';
 import { crash, respawn, C_SLAM, E_PICK, E_CRASH, E_FINISH, E_TOKEN, E_BLOCK } from './sim.js';
 import { I_BOX } from './track.js';
@@ -12,6 +15,10 @@ const fmtT = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart
 export const MODE_LABEL = { race: 'Race', brawl: 'Brawl', tandem: 'Together', daily: 'Daily' };
 export const fmtM = (m) => Math.max(0, Math.round(m)).toLocaleString('en-US');
 const GOALS = [100, 250, 450, 700, 1000, 1400, 1900, 2500];
+const SHOVE_SIDE_T = 0.25;  // s side by side before a lane input toward the partner is a shove…
+const SHOVE_DOUBLE = 250;   // …or a second swipe toward them within this many ms
+const BRACE_MS = 300;       // the victim's window after the lunge starts: jump or roll to dodge
+const SHOVE_COINS = 10;
 
 const pick = (table) => {
   let t = 0;
@@ -66,6 +73,8 @@ export function createRules(G) {
     for (const w of AB) {
       const p = P(w);
       p.weapon = null; p.weaponRoll = 0; p.shoveCD = 0; p.revive = null; p.downId = 0; p.downAt = 0; p.pushOff = 0;
+      p.sideT = 0; p.sideAt = 0; p.sideOff = 0; p.laneDir = 0; p.laneAt = -1e9; p.incoming = null; p.brace = 0;
+      p.cheerT = 0; p.cheerAt = -1e9; p.cheerPopAt = -1e9; p.ddAt = 0; p.ddSeen = 0;
       p.stats = { shoves: 0, slams: 0, inks: 0, hits: 0, revives: 0, dodges: 0 };
       if (p.r) {
         p.r.tandem = M.mode === 'tandem' ? 1 : 0;
@@ -125,10 +134,17 @@ export function createRules(G) {
     return false;
   }
 
-  /** A lane input from a local player: in Brawl it may be a shove. */
+  /**
+   * A lane input from a local player: in Brawl it may be a shove, but only a deliberate one: toward
+   * the partner after running side by side for SHOVE_SIDE_T, or a second swipe toward them within
+   * SHOVE_DOUBLE ms. A plain dodge into their lane is just a dodge.
+   */
   function onLane(p, dir) {
     if (M.mode !== 'brawl' || M.phase !== 'run' || !p.r) return;
     const r = p.r;
+    const now = G.now();
+    const twice = p.laneDir === dir && now - p.laneAt < SHOVE_DOUBLE;
+    p.laneDir = dir; p.laneAt = now;
     if (r.down || r.done || p.shoveCD > 0) return;
     const to = r.lane + dir;
     if (to < -1 || to > 1) return;
@@ -136,14 +152,58 @@ export function createRules(G) {
     const qs = G.rs(q);
     if (qs.down || qs.invuln) return;
     const qLane = Math.round(qs.x / LANE_W);
-    if (Math.abs(qs.z - r.z) > 2.0 || qLane !== to || Math.abs(qs.ground - (r.sup > -50 ? r.sup : 0)) > 1) return;
+    if (Math.abs(qs.z - p.rs.z) > 2.0 || qLane !== to || Math.abs(qs.ground - (r.sup > -50 ? r.sup : 0)) > 1) return;
+    if (p.sideT < SHOVE_SIDE_T && !twice) return;
     const id = seq++;
     p.shoveCD = 1.2;
     p.av && p.av.lunge(dir);
     q.pushOff = dir * LANE_W * 0.55; // predicted push, corrected by their real state
     G.audio.play('whoosh', dir);
-    pending.set(id, { k: 'shove', t: G.now() });
+    pending.set(id, { k: 'shove', t: now });
     G.send(q.w, 'shove', { id, z: r.z, from: r.lane, to, y: r.y });
+  }
+
+  /** The victim's side of a shove, once the brace window is over (or at once if it already is). */
+  function landShove(p, inc) {
+    const r = p.r;
+    const v = G.view(p.w);
+    const { d, from } = inc;
+    const reply = (res) => G.send(from, 'res', { id: d.id, k: 'shove', r: res });
+    if (r.down || r.done || r.invulnT > 0) { reply('miss'); return; }
+    if (p.brace) {
+      p.stats.dodges++;
+      v && v.pop('DODGED!', 'good', p.brace === 2 ? 'rolled under it' : p.brace === 3 ? 'side-stepped' : 'jumped it');
+      G.audio.play('whiff');
+      reply('dodged'); return;
+    }
+    if (r.shield) { r.shield = 0; v && v.pop('Shield!', 'hl'); G.audio.play('shield'); reply('blocked'); return; }
+    const dir = Math.sign(d.to - d.from) || 1;
+    const nl = r.lane + dir;
+    G.audio.play('shove'); G.shake(p.w, 0.45);
+    if (nl < -1 || nl > 1 || wallAt(G.track, nl, r.z, r.y)) {
+      crash(r, C_SLAM, false);
+      v && v.pop('SLAMMED!', 'bad', `by ${G.name(from)}`);
+      reply('slam');
+      return;
+    }
+    r.laneFrom = r.lane; r.lane = nl; r.xFrom = r.x; r.laneT = 0; r.laneAge = 0;
+    r.stumbleT = 0.9; r.stumbles++; r.combo = 0;
+    v && v.pop('SHOVED!', 'p' + from);
+    reply('hit');
+  }
+
+  /** Together: a tap while you're down cheers your partner on (a small speed lift, a heart puff). */
+  function cheer(p) {
+    if (M.mode !== 'tandem' || M.phase !== 'run' || !p.r || !p.r.down || !p.downId) return false;
+    const now = G.now();
+    if (now - p.cheerAt < 280) return true;
+    p.cheerAt = now;
+    const q = P(other(p.w));
+    const qs = G.rs(q);
+    G.send(q.w, 'cheer', { n: 1 });
+    G.audio.play('cheer');
+    if (qs.visible !== false) G.fx.burst(qs.x, qs.y + 2.3, qs.z, G.pal[p.w], 5, 2.2);
+    return true;
   }
 
   // ── messages (data, sentAt on the shared clock, from = sender) ──
@@ -194,10 +254,10 @@ export function createRules(G) {
         if (d.r === 'hit' || d.r === 'slam') {
           atk.stats.shoves++;
           if (d.r === 'slam') atk.stats.slams++;
-          if (atk.r) atk.r.shoveT = 1.2;
-          av && av.pop(d.r === 'slam' ? 'SLAM!' : 'SHOVE!', 'p' + to, d.r === 'slam' ? `${qn} hit the wall` : '');
+          if (atk.r) { atk.r.shoveT = 1.2; atk.r.coins += SHOVE_COINS; }
+          av && av.pop(d.r === 'slam' ? 'SLAM!' : 'SHOVE!', 'p' + to, d.r === 'slam' ? `${qn} hit the wall · +${SHOVE_COINS}` : `+${SHOVE_COINS}`);
           G.audio.play('shove'); G.shake(to, 0.25); G.kick(to, 0.6);
-        } else if (d.r === 'dodged') { av && av.pop('Whiff!', '', `${qn} jumped it`); G.audio.play('whiff'); }
+        } else if (d.r === 'dodged') { av && av.pop('Whiff!', '', `${qn} saw it coming`); G.audio.play('whiff'); }
         else if (d.r === 'blocked') av && av.pop('Shielded', 'hl');
         return;
       }
@@ -216,32 +276,31 @@ export function createRules(G) {
       const side = Math.abs(h.z - d.z) < 2.4 || Math.abs(h.z - az) < 2.4;
       const inLane = h.lane === d.to || Math.abs(h.x - d.to * LANE_W) < LANE_W * 0.55;
       if (r.down || r.done || r.invulnT > 0 || !side || !inLane) { reply('miss'); return; }
-      if (h.y - h.g > 0.45 || (!r.grounded && r.y - Math.max(0, r.sup) > 0.6)) {
-        p.stats.dodges++;
-        v && v.pop('DODGED!', 'good'); reply('dodged'); return;
-      }
-      if (r.shield) { r.shield = 0; v && v.pop('Shield!', 'hl'); G.audio.play('shield'); reply('blocked'); return; }
-      const dir = Math.sign(d.to - d.from) || 1;
-      const nl = r.lane + dir;
-      G.audio.play('shove'); G.shake(to, 0.45);
-      if (nl < -1 || nl > 1 || wallAt(G.track, nl, r.z, r.y)) {
-        crash(r, C_SLAM, false);
-        v && v.pop('SLAMMED!', 'bad', `by ${G.name(from)}`);
-        reply('slam');
-        return;
-      }
-      r.laneFrom = r.lane; r.lane = nl; r.xFrom = r.x; r.laneT = 0; r.laneAge = 0;
-      r.stumbleT = 0.9; r.stumbles++;
-      v && v.pop('SHOVED!', 'p' + from);
-      reply('hit');
+      // already in the air at the lunge, or rolling: dodged outright
+      p.brace = h.y - h.g > 0.45 || (!r.grounded && r.y - Math.max(0, r.sup) > 0.6) ? 1 : r.slideT > 0 ? 2 : 0;
+      const inc = { d, from, until: at + BRACE_MS };
+      if (p.brace || G.now() >= inc.until) { landShove(p, inc); p.brace = 0; return; }
+      // a beat to react: brace (jump / roll / step away) before it lands
+      p.incoming = inc;
+      v && v.pop('BRACE!', 'bad', 'jump or roll');
+      return;
+    }
+    if (type === 'cheer') {
+      if (!r || M.phase !== 'run' || M.mode !== 'tandem') return;
+      p.cheerT = CHEER_T;
+      const now = G.now();
+      if (!r.down) G.fx.burst(r.x, r.y + 2.3, r.z, G.pal[from], 5, 2.2);
+      if (now - p.cheerPopAt > 3500) { p.cheerPopAt = now; v && v.pop(`${G.name(from)} is cheering!`, 'good', 'go go go'); }
       return;
     }
     if (type === 'fin') { if (G.isJudge()) M.partnerFin = d.rt; return; }
     if (type === 'out') { if (G.isJudge()) M.partnerOut = d.rt; return; }
     if (type === 'down') {
-      // my partner went down: give me revive tokens
+      // my partner went down: give me revive tokens (unless this is the crash that made a double
+      // down I've already resolved: then it was counted with mine)
       if (!r) return;
-      p.revive = { id: d.id, from, until: at + REVIVE_WINDOW, next: 0, n: 0 };
+      if (p.ddAt && at <= p.ddAt + 300) { if (G.isJudge()) missedIds.add(d.id); return; }
+      p.revive = { id: d.id, from, until: at + REVIVE_WINDOW, next: G.now() + REVIVE_FIRST, n: 0 };
       return;
     }
     if (type === 'revive') {
@@ -333,7 +392,10 @@ export function createRules(G) {
       const gap = qs.z - r.z;
       // rubber bands
       if (M.mode === 'brawl') r.catchup = Math.max(-0.18, Math.min(0.32, gap * 0.012));
-      else if (M.mode === 'tandem') r.catchup = qs.down ? 0 : Math.max(-0.12, Math.min(0.2, gap * 0.008));
+      else if (M.mode === 'tandem') {
+        if (p.cheerT > 0) p.cheerT -= dt;
+        r.catchup = (qs.down ? 0 : Math.max(-0.12, Math.min(0.2, gap * 0.008))) + (p.cheerT > 0 && !r.down ? CHEER_K : 0);
+      }
       else if (M.mode === 'daily') { r.catchup = 0; r.draft = 0; }
       else {
         r.catchup = 0;
@@ -346,9 +408,45 @@ export function createRules(G) {
         if (o.t === O_BLOCK && o.atk && !o.hit && o.z1 < r.z - 3) { G.send(o.from, 'res', { id: o.atk, k: 'block', r: 'dodged' }); o.atk = 0; o.gone = 1; }
       }
       if (r.extra.length > 6) r.extra = r.extra.filter((o) => o.z1 > r.z - 20);
+      // Brawl: how long have we run side by side (a shove needs a beat of it), and my brace window
+      if (M.mode === 'brawl') {
+        const adj = !r.down && !qs.down && Math.abs(qs.z - p.rs.z) < 3 && Math.abs(Math.round(qs.x / LANE_W) - r.lane) === 1;
+        // on the shared clock, not frame dt (frame dt is clamped; a slow phone would never get
+        // there), and a 0.5 s blip of the partner's networked position doesn't reset it
+        if (adj) { if (!p.sideAt) p.sideAt = now; p.sideOff = 0; p.sideT = (now - p.sideAt) / 1000; }
+        else if (p.sideAt) { if (!p.sideOff) p.sideOff = now; if (now - p.sideOff > 500) { p.sideAt = 0; p.sideT = 0; } }
+        const inc = p.incoming;
+        if (inc) {
+          if (!p.brace) p.brace = !r.grounded && r.y - Math.max(0, r.sup) > 0.45 ? 1 : r.slideT > 0 ? 2 : r.lane !== inc.d.to ? 3 : 0;
+          if (now >= inc.until || r.down) { p.incoming = null; landShove(p, inc); p.brace = 0; }
+        }
+      }
+      // Together, both down at once: nobody can revive, so it resolves now: −1 team heart, both
+      // back up side by side at the front after CRASH_T, 2 s of invulnerability
+      if (M.mode === 'tandem' && r.down && p.downId && (qs.down || p.ddSeen)) {
+        if (!p.ddSeen) p.ddSeen = now;
+        if (now - p.ddSeen >= CRASH_T * 1000 && r.downT >= CRASH_T) {
+          const z = Math.max(r.z, qs.z);
+          const prefer = w === 'a' ? -1 : 1;
+          const lane = clearSpot(G.track, prefer, z) ? prefer : freeLaneNear(prefer, z);
+          if (G.isJudge()) {
+            const fresh = !missedIds.has(p.downId);
+            missedIds.add(p.downId);
+            if (p.revive) missedIds.add(p.revive.id);
+            if (fresh) M.th--;
+          }
+          if (p.revive) { p.revive = null; for (const tk of r.tokens) tk.alive = 0; r.tokens.length = 0; }
+          respawn(r, G.track, z, lane);
+          p.downId = 0; p.ddAt = now; p.ddSeen = 0;
+          G.view(w) && G.view(w).pop('Both down!', 'bad', '−1 team heart · up you get, together');
+        }
+        continue;
+      }
+      p.ddSeen = 0;
       // revive tokens for my downed partner
       if (p.revive) {
         const rv = p.revive;
+        if (r.down) { rv.until += dt * 1000; rv.next += dt * 1000; } // the countdown waits for me
         if (now > rv.until) {
           p.revive = null;
           for (const tk of r.tokens) tk.alive = 0;
@@ -357,7 +455,7 @@ export function createRules(G) {
           if (G.isJudge() && !missedIds.has(rv.id)) { missedIds.add(rv.id); M.th--; }
           G.view(w) && G.view(w).pop('Too late', 'bad', '−1 team heart');
         } else if (!r.down && now >= rv.next) {
-          rv.next = now + 3000;
+          rv.next = now + REVIVE_EVERY;
           rv.n++;
           const z = r.z + Math.max(24, r.speed * 1.5);
           let lane = r.lane;
@@ -444,5 +542,5 @@ export function createRules(G) {
     return null;
   }
 
-  return { init, use, onLane, msg, onEvent, tick, verdict, rollWeapon, cap: BRAWL_CAP };
+  return { init, use, onLane, cheer, msg, onEvent, tick, verdict, rollWeapon, cap: BRAWL_CAP };
 }

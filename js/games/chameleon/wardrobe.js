@@ -97,6 +97,7 @@ export function wardrobeSheet(api, { w, d, picks, local = false }) {
     <div class="chm-sheethead"><h2>${esc(api.name(w))}’s wardrobe</h2><button class="chm-done" data-act="wardrobe">Done</button></div>
     ${local ? `<div class="chm-chips">${['a', 'b'].map((x) => `<button class="chm-chip p${x} ${x === w ? 'on' : ''}" data-wfor="${x}"><i></i>${esc(api.name(x))}</button>`).join('')}</div>` : ''}
     <p class="chm-wait">${earned} of ${total} unlocked · paint can’t cover these</p>
+    ${d[`${w}_creative`] ? `<div class="chm-ribbon">Creative hide ×${d[`${w}_creative`] | 0}</div>` : ''}
     ${rows}
     <button class="chm-go" data-act="wardrobe">Done</button>
   </div></div>`;

@@ -19,7 +19,8 @@ const KEYS_B = { ArrowLeft: A_LEFT, ArrowRight: A_RIGHT, ArrowUp: A_UP, ArrowDow
 /**
  * surface: element receiving touches (the canvas layer). opts:
  *  onAction(who, action), who (live: my id), split (two keyboard players),
- *  scheme() -> 'swipe' | 'buttons', enabled() -> bool, onAny() (first interaction: unlock audio)
+ *  scheme() -> 'swipe' | 'buttons', enabled() -> bool, onAny() (first interaction: unlock audio),
+ *  onPress(who) (every touch / click on the surface, before any swipe is recognised)
  */
 export function createInput(surface, opts) {
   const ptrs = new Map();
@@ -40,6 +41,7 @@ export function createInput(surface, opts) {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (e.clientX < EDGE_PX) { stats.ignored++; return; } // iOS back-swipe zone
     const who = opts.who;
+    if (opts.onPress && opts.enabled()) opts.onPress(who); // any touch (e.g. a cheer while you're down)
     if (opts.scheme() === 'buttons' && e.pointerType !== 'mouse') {
       const r = surface.getBoundingClientRect();
       const u = (e.clientX - r.left) / Math.max(1, r.width);

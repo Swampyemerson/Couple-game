@@ -28,10 +28,12 @@ export function designSpeed(d) {
 }
 /**
  * 0 → 1 difficulty by distance, quantized so tiny float differences can't matter. Gentle for the
- * first ~30 s (0.12 at 200 m, 0.30 at 430 m), then ramping (0.65 at 1 km, 0.87 at 2 km).
+ * first ~30 s (0.09 at 200 m, 0.16 at 300 m, 0.23 at 430 m, 0.36 at 600 m), then ramping (0.58 at
+ * 1 km, 0.83 at 2 km). The midpoint sat at 850 m; at 1,000 m the 200–600 m hump where most first
+ * runs died is softer.
  */
 export function difficulty(d) {
-  const x = (d > 0 ? d : 0) / 850;
+  const x = (d > 0 ? d : 0) / 1000;
   return Math.floor((1 - 1 / (1 + 0.3 * x + 1.1 * x * x)) * 64) / 64;
 }
 /** The safe lane at the start of chunk i. */

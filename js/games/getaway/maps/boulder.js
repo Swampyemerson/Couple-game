@@ -8,7 +8,7 @@
 import { BOUNDS, ROADS, OPEN, WATER, LANDMARKS, P } from './boulder-data.js';
 import { layout, layoutGen, height, pickSpawn } from './boulder-layout.js';
 import { buildBoulder } from './boulder-build.js';
-import { buildBackdrop, PEAKS } from './boulder-backdrop.js';
+import { backdropGen, PEAKS } from './boulder-backdrop.js';
 
 const SPAWN_DEFS = [
   // road, nth piece (bridges excluded), fraction along, direction (+1 = drawn direction), label
@@ -56,5 +56,5 @@ export const BOULDER = {
     while (!it.next().done) if (kit.slice) await kit.slice();
   },
   build(THREE, kit) { return buildBoulder(THREE, kit || {}); },
-  backdrop(THREE, kit) { return buildBackdrop(THREE, kit || {}); },
+  backdrop(THREE, kit) { return backdropGen(THREE, kit || {}); }, // a generator: the engine slices it
 };

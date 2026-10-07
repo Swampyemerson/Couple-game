@@ -98,7 +98,7 @@ export function createTraffic(geo, mapId, density) {
   if (gap > 0) {
     for (const r of geo.roads) {
       if (!r.traffic || r.len < 40) continue;
-      const lw = r.hw / r.lanes;
+      const lw = (r.hw - (r.park || 0)) / r.lanes; // (lanes clear of any kerbside parking strip)
       const dirs = r.oneway ? [1] : [1, -1];
       const boxes = boxesOn.get(r.idx) || [];
       for (const dir of dirs) {

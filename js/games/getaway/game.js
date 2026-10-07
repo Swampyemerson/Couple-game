@@ -14,11 +14,12 @@ import { createTraffic } from './traffic.js';
 import { createFx } from './fx.js';
 import { createAudio } from './audio.js';
 import { newPad, readPad, createKeys, createTouch, createTilt } from './input.js';
-import { createHud, makeMapImage, loadingCard, errorCard, lobbyCard, settingsSheet, introCard, resultCard, pauseCard, howToCard, bindTap, esc } from './hud.js';
+import { createHud, makeMapImage, loadingCard, errorCard, lobbyCard, settingsSheet, introCard, resultCard, finalCard, pauseCard, howToCard, bindTap, esc } from './hud.js';
 import { createLink } from './link.js';
 import { createDriver, AI_LEVELS, AI_LEVEL_LABELS } from './ai.js';
 import { MAPS } from './maps/index.js';
-import { liveryFor, liveryRows, careerUpdate, LIVERIES } from './liveries.js';
+import { liveryFor, liveryRows, checkUnlocks, LIVERIES } from './liveries.js';
+import { recordRound, recordMatch, recordsLine, fmtSec, dayKey, dayOfYear, DAILY, dailyScore, dailyText, dailyKey, dailyBoard } from './records.js';
 
 const AB = ['a', 'b'];
 const PH = { loading: 0, lobby: 1, intro: 2, count: 3, chase: 4, result: 5, final: 6, wait: 7 };
@@ -32,6 +33,13 @@ const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const wrapA = (a) => { a = (a + Math.PI) % (Math.PI * 2); if (a < 0) a += Math.PI * 2; return a - Math.PI; };
 const other = (w) => (w === 'a' ? 'b' : 'a');
 const MAP_IDS = MAPS.map((m) => m.id);
+// The match flow (ms). Round 0 gets the full intro card and a 3-2-1; later rounds a short intro only
+// when the start spot moves (every 2 rounds), else straight into a 2-1 with a role stamp. The result
+// card shows at +700 ms and the next round starts at +3 s, sooner when both players tap it away.
+const FLOW = { intro: 3400, introMove: 2000, count0: 3000, count: 2000, result: 3000, card: 700, skipAfter: 1200, finalCard: 4200, rematchLead: 700, sudden: 45 };
+const MAP_SPAN = 900; // m across the zoomed map's longer side
+const QUICK = { rounds: 2, roundTime: 60, spikes: 2, tiebreak: 'sudden' }; // the lobby's 'Quick chase' preset (a match in under 4 min)
+const strHash = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
 
 export function createGame(el, api) {
   const live = api.mode === 'live';
@@ -52,7 +60,7 @@ export function createGame(el, api) {
   el.appendChild(root);
   const glWrap = root.querySelector('.gtw-gl'); const surface = root.querySelector('.gtw-surface');
   root.style.setProperty('--me', `var(--p-${live ? api.me : 'a'})`);
-  const device = Object.assign({ steer: 'slider', localMode: 'ai', practiceRole: 'runner', cam: null, sens: 'normal', dead: 'normal', tiltZero: null, aiLevel: 'normal', seenHow: false, livery: { runner: 0, cop: 0 } }, lsGet(DEV_KEY, {}));
+  const device = Object.assign({ steer: 'slider', localMode: 'ai', practiceRole: 'runner', cam: null, sens: 'normal', dead: 'normal', tiltZero: null, aiLevel: 'normal', seenHow: false, livery: { runner: 0, cop: 0 }, music: 'on', emotes: 'on' }, lsGet(DEV_KEY, {}));
   if (!device.livery || typeof device.livery !== 'object') device.livery = { runner: 0, cop: 0 };
   // shared per-person data (bests, unlocks, careers): core's api.data() / setData(); absent in old shells
   const gdata = () => (typeof api.data === 'function' ? api.data() || {} : {});
@@ -60,15 +68,15 @@ export function createGame(el, api) {
   /** The livery person w's car is drawn with for `kind`: my pick if I've earned it; the partner's as told over the link; the AI plain. */
   function liveryOf(w, kind) {
     if (S.liveryForce) return P2[w].livery[kind] | 0; // tests / screenshots
-    if (live ? w === me : w === human()) return liveryFor(gdata(), w, kind, device.livery[kind]);
+    if (live ? w === me : w === human()) return liveryFor(gdata(), personOf(w), kind, device.livery[kind]);
     if (live) return P2[w].livery[kind] | 0;
     return 0;
   }
   if (!AI_LEVELS.includes(device.aiLevel)) device.aiLevel = 'normal';
   const STEER_RANGE = { low: 96, normal: 72, high: 54 }; const TILT_RANGE = { low: 32, normal: 24, high: 17 }; const DEAD = { small: 0.03, normal: 0.06, large: 0.12 };
   const steerCfg = () => ({ range: STEER_RANGE[device.sens] || 72, tiltRange: TILT_RANGE[device.sens] || 24, dead: DEAD[device.dead] ?? 0.06 });
-  if (!coarse && device.localMode !== 'split' && device.localMode !== 'ai') device.localMode = 'ai';
-  if (phoneish) device.localMode = 'ai';
+  if (!['split', 'ai', 'daily'].includes(device.localMode) || (coarse && device.localMode === 'split')) device.localMode = 'ai';
+  if (phoneish && device.localMode === 'split') device.localMode = 'ai';
   const audio = createAudio({ getCtx: typeof api.audio === 'function' ? () => api.audio() : null, mutedFn: typeof api.muted === 'function' ? () => api.muted() : null });
 
   // ── state ──
@@ -91,7 +99,8 @@ export function createGame(el, api) {
     try { localStorage.removeItem('getaway.loading.v1'); } catch { /* ignore */ }
   }
   const split = () => !live && S.localMode === 'split';
-  const ai = () => !live && S.localMode === 'ai';
+  const ai = () => !live && (S.localMode === 'ai' || S.localMode === 'daily'); // (the Daily chase is a practice round vs a Hard AI cop)
+  const daily = () => !!(S.match && S.match.daily);
   const human = () => (live ? me : 'a');
   const aiW = 'b';
   // (cached arrays: viewers() is called several times a frame and inside the substep loop)
@@ -99,6 +108,9 @@ export function createGame(el, api) {
   const viewers = () => (split() && hud2 && S.R ? VIEWERS_AB : human() === 'a' ? VIEWERS_A : VIEWERS_B);
   const isViewer = (w) => w === human() || (split() && hud2 && !!S.R);
   const nameOf = (w) => (ai() ? (w === human() ? 'You' : 'AI') : api.name(w));
+  // whose records / liveries a car slot is: live and split their own; practice: the device's owner
+  const owner = api.owner === 'a' || api.owner === 'b' ? api.owner : 'a';
+  const personOf = (w) => (live || split() ? w : owner);
 
   // players
   function mkPlayer(w) {
@@ -147,7 +159,7 @@ export function createGame(el, api) {
       hud.card(errorCard('This device couldn’t start WebGL graphics. Try another browser, or restart the app.'), 'solid');
       return;
     }
-    await loadMap(S.setup.map); // on failure loadMap shows the error card; a retry boots from there
+    await loadMap(!live && S.localMode === 'daily' && !S.crashNote ? dailyMap() : S.setup.map); // on failure loadMap shows the error card; a retry boots from there
   }
   /** The first map is in: the lobby and the frame loop start. */
   function bootDone() {
@@ -170,7 +182,8 @@ export function createGame(el, api) {
     const ro = new ResizeObserver(() => resize()); ro.observe(root); offs.push(() => ro.disconnect());
     const keys = createKeys({ split: false, me: human(), pads: { a: P2.a.pad, b: P2.b.pad }, onAct: (w, a) => onAct(w, a), enabled: () => !dead && !S.sheet });
     input = keys;
-    touchIn = createTouch({ surface, root, pad: P2[human()].pad, onAct: (a) => onAct(human(), a), enabled: () => !dead, steerEl: root.querySelector('.gtw-steer'), stats: inputStats, cfg: steerCfg });
+    touchIn = createTouch({ surface, root, pad: P2[human()].pad, onAct: (a) => onAct(human(), a), enabled: () => !dead, steerEl: root.querySelector('.gtw-steer'), stats: inputStats, cfg: steerCfg, onSteer: () => { if (!device.steered) { device.steered = true; lsSet(DEV_KEY, device); root.classList.add('steered'); } } });
+    root.classList.toggle('steered', !!device.steered); // (the dashed STEER hint fades once you've steered; How to play brings it back)
     tilt = createTilt(P2[human()].pad, steerCfg);
     if (device.tiltZero != null) tilt.setZero(device.tiltZero);
     // tilt needs a permission prompt from a tap on iOS; elsewhere it can come back on by itself
@@ -536,37 +549,66 @@ export function createGame(el, api) {
   function delReason(r) { if (reasonBits[r]) S.reasons &= ~reasonBits[r]; else softReasons.delete(r); }
 
   // ── lobby ──
-  function toLobby() {
-    S.phase = 'lobby'; S.match = null; S.R = null; S.paused = false; S.ending = false; S.finalShown = false; S.pauseCard = null;
+  /** Back to the lobby. rematch: a 'Rematch!' card instead, while the host starts the next match on
+   *  the loaded map (frame loop: autoStart) — no remount, no map rebuild. */
+  function toLobby(rematch = false) {
+    S.phase = 'lobby'; S.match = null; S.R = null; S.paused = false; S.ending = false; S.finalShown = false; S.finalDone = false; S.pauseCard = null; S.result = null;
+    S.menu = false; S.appMenu = false; delReason('menu'); S.slowT = 0; S.stopT = 0; S.hitSlowT = 0;
     for (const w of AB) { const p = P2[w]; p.pad.auto = null; p.auto = false; }
-    hud.card(null);
-    renderLobby(true);
+    S.rematchCard = rematch; S.rematchAt = performance.now(); S.autoStart = rematch && isHost ? performance.now() : 0;
+    if (rematch) hud.card(pauseCard('Rematch!', isHost ? (live ? `Same map, roles swap. Waiting for ${api.name(other(me))}…` : 'Same map. Here we go…') : `${api.name(other(me))} is starting it…`), 'dim');
+    else { hud.card(null); renderLobby(true); }
     api.setStatus(null);
     if (isHost && live) link.send('setup', S.setup);
   }
+  /** The app's Rematch: true = handled in place (the world stays built); false = remount. */
+  function onRematch() {
+    if (dead || !ready3D || !world || S.loading || glLost || S.glStuck) return false;
+    if (live && (!partnerHere || !link.ready)) return false;
+    if (S.phase !== 'final' && S.phase !== 'lobby') return !!S.R; // the host's new match got here first: keep it
+    if (isHost && !ai() && S.match && S.match.first) S.setup = sanitizeSetup({ ...S.setup, first: other(S.match.first) }, MAP_IDS, S.setup.first);
+    toLobby(true);
+    return true;
+  }
+  /** The app's ≡ sheet: over a running chase it pauses like the ‖ button (live: both phones). */
+  function onMenu(open) {
+    if (open) { if (S.R && !S.R.over && S.phase !== 'lobby' && S.phase !== 'final' && !S.menu) { S.appMenu = true; S.menu = true; addReason('menu'); if (H0().mapOpen) closeMap(); } }
+    else if (S.appMenu) { S.appMenu = false; S.menu = false; S.sheet = false; renderSheet(); delReason('menu'); }
+  }
   let lobbyKey = '';
   function renderLobby(force = false) {
-    if (S.phase !== 'lobby' || S.loadingCard || S.glStuck) return;
+    if (S.phase !== 'lobby' || S.loadingCard || S.glStuck || S.rematchCard) return;
     const pl = live && P2[other(me)].remote; const partnerLoading = !!(pl && partnerHere && pl.ph === PH.lobby && pl.sv !== S.mapIdx + 1);
     const portraitPhone = phoneish && H > W;
-    const key = JSON.stringify([S.setup, S.sheet, S.localMode, S.practiceRole, S.partnerReady, partnerHere, partnerLoading, device.aiLevel, device.steer, device.sens, device.dead, device.cam, device.seenHow, S.meReady, portraitPhone, gfxSetting(), S.loading, device.livery, S.sheet && liveryRows(gdata(), live ? me : human(), device.livery)]);
+    const ns = live || S.localMode === 'split' ? '' : 'ai_';
+    const records = recordsLine(gdata(), ns, (w) => (ns ? (w === owner ? 'You' : api.name(w)) : api.name(w)), ns ? [owner] : ['a', 'b']);
+    const dl = !live ? dailyInfo() : null;
+    const key = JSON.stringify([S.setup, S.sheet, S.localMode, S.practiceRole, S.partnerReady, partnerHere, partnerLoading, device.aiLevel, device.steer, device.sens, device.dead, device.cam, device.seenHow, S.meReady, portraitPhone, gfxSetting(), S.loading, device.livery, S.sheet && liveryRows(gdata(), live ? me : personOf(human()), device.livery), records, dl]);
     if (!force && key === lobbyKey) return;
     lobbyKey = key;
     hud.card(lobbyCard({ name: nameOf }, {
       maps: MAPS, setup: S.setup, canEdit: isHost, local: !live, localMode: S.localMode, practiceRole: S.practiceRole,
       splitOK: !coarse && !phoneish, waitingFor: 'a', partnerReady: S.partnerReady, me: human(), meReady: !!S.meReady,
       levels: AI_LEVELS, levelLabels: AI_LEVEL_LABELS, aiLevel: device.aiLevel, partnerHere, partnerName: live ? api.name(other(me)) : '', partnerLoading,
-      portraitPhone, newcomer: !device.seenHow, loading: S.loading,
+      portraitPhone, newcomer: !device.seenHow, loading: S.loading, records, daily: dl,
     }), 'clear bottom');
     drawPlans();
     renderSheet();
+  }
+  /** The lobby's Daily chase panel: today's map, the rules, today's board. */
+  function dailyInfo() {
+    const id = dailyMap(); const m = MAPS.find((x) => x.id === id) || {};
+    const real = MAPS.filter((x) => !x.stub); const want = real[dayOfYear() % real.length];
+    const b = dailyBoard(gdata()); const rt = DAILY.roundTime;
+    const board = AB.filter((w) => b[w] > 0).sort((x, y) => b[y] - b[x]).map((w) => ({ w, name: api.name(w), text: dailyText(b[w], rt) }));
+    return { mapId: id, title: `Today: ${m.name || 'Dockside'}`, short: `Today: ${m.name || 'Dockside'}, same start for both of you.`, how: 'One 2:00 run as the runner vs a Hard AI cop. Survive, or lose the heat for a bonus. Your best try today counts.', board, note: want && want.id !== id ? `${want.name} is today’s map; Low graphics plays ${m.name} instead.` : '' };
   }
   /** The bottom sheet: settings or the how-to-play card (lobby and pause menu). */
   function renderSheet() {
     if (S.sheet === 'how') { hud.showSheet(howToCard({ touch: coarse, split: split() })); return; }
     const inMatch = !!S.R && S.phase !== 'lobby';
     const gs = gfxSetting();
-    hud.showSheet(S.sheet ? settingsSheet(inMatch ? null : S.setup.rules, { canEdit: isHost, live, device: { touch: coarse, steer: device.steer, sens: device.sens, dead: device.dead, gfx: gs, cam: device.cam || rules().camera, liveries: liveryRows(gdata(), live ? me : human(), device.livery), gfxNote: gs === 'auto' && gfx ? `Auto picked ${({ low: 'Low', mid: 'Medium', high: 'High' })[gfx.tier] || gfx.tier} for this ${phoneish ? 'phone' : 'device'}` : '' } }) : null);
+    hud.showSheet(S.sheet ? settingsSheet(inMatch ? null : S.setup.rules, { canEdit: isHost, live, device: { touch: coarse, steer: device.steer, sens: device.sens, dead: device.dead, gfx: gs, cam: device.cam || rules().camera, music: device.music, emotes: device.emotes, live, liveries: liveryRows(gdata(), live ? me : personOf(human()), device.livery), gfxNote: gs === 'auto' && gfx ? `Auto picked ${({ low: 'Low', mid: 'Medium', high: 'High' })[gfx.tier] || gfx.tier} for this ${phoneish ? 'phone' : 'device'}` : '' } }) : null);
   }
   function drawPlans() {
     hud.over.querySelectorAll('canvas[data-plan]').forEach((cv) => {
@@ -599,7 +641,7 @@ export function createGame(el, api) {
       case 'start': if (device.steer === 'tilt' && tilt && !tilt.on) tilt.enable(); hostStart(); break; // (tilt permission needs a tap)
       case 'ready': link.send('ready', { on: (S.meReady = !S.meReady) }); if (device.steer === 'tilt' && tilt && !tilt.on) tilt.enable(); renderLobby(true); audio.tick(); break;
       case 'settings': S.sheet = 'settings'; renderLobby(true); renderSheet(); audio.tick(); break;
-      case 'howto': S.sheet = 'how'; renderLobby(true); renderSheet(); audio.tick(); break;
+      case 'howto': S.sheet = 'how'; if (device.steered) { device.steered = false; lsSet(DEV_KEY, device); root.classList.remove('steered'); } renderLobby(true); renderSheet(); audio.tick(); break;
       case 'howclose': if (!device.seenHow) { device.seenHow = true; lsSet(DEV_KEY, device); } S.sheet = false; renderLobby(true); renderSheet(); audio.tick(); break;
       case 'sheetclose': S.sheet = false; renderLobby(true); renderSheet(); audio.tick(); break;
       case 'ailevel': if (AI_LEVELS.includes(t.dataset.v)) { device.aiLevel = t.dataset.v; lsSet(DEV_KEY, device); renderLobby(true); audio.tick(); } break;
@@ -620,13 +662,23 @@ export function createGame(el, api) {
       }
       case 'first': if (isHost) { setSetup({ ...S.setup, first: t.dataset.v }); audio.tick(); } break;
       case 'rule': if (isHost) { setSetup({ ...S.setup, rules: stepRule(S.setup.rules, t.dataset.k, +t.dataset.step) }); audio.tick(); } break;
-      case 'lmode': S.localMode = t.dataset.v; device.localMode = S.localMode; lsSet(DEV_KEY, device); renderLobby(true); audio.tick(); break;
+      case 'lmode': {
+        if (!['ai', 'split', 'daily'].includes(t.dataset.v) || (t.dataset.v === 'split' && (coarse || phoneish))) break;
+        S.localMode = t.dataset.v; device.localMode = S.localMode; lsSet(DEV_KEY, device);
+        // the Daily chase has its own map: have it built before Start (and the lobby's back after)
+        const want = S.localMode === 'daily' ? dailyMap() : S.setup.map;
+        if (want !== S.mapId && !S.loading) loadMap(want).then((ok) => { if (ok && S.phase === 'lobby') { S.loadingCard = false; renderLobby(true); } });
+        renderLobby(true); audio.tick(); break;
+      }
       case 'prole': S.practiceRole = t.dataset.v; device.practiceRole = S.practiceRole; lsSet(DEV_KEY, device); renderLobby(true); audio.tick(); break;
       case 'steer':
         device.steer = t.dataset.v; lsSet(DEV_KEY, device);
         if (device.steer === 'tilt') tilt.enable().then((r) => { if (r !== 'ok') { device.steer = 'slider'; lsSet(DEV_KEY, device); hud.view().hint(r === 'denied' ? 'Motion access was refused, so the slider stays.' : 'This device has no tilt sensor.'); } renderLobby(true); renderSheet(); });
         else { tilt.disable(); renderLobby(true); renderSheet(); }
         break;
+      case 'skip': skipResult(); break;
+      case 'finskip': if (performance.now() - (S.finalAt || 0) > 1200) { audio.tick(); finishNow(); } break;
+      case 'quick': if (isHost) { setSetup({ ...S.setup, rules: { ...S.setup.rules, ...QUICK } }); audio.tick(); H0().view(human()).hint('Quick chase: 2 rounds of 1:00, 2 spike strips, sudden death if level', 2400); } break;
       case 'resume': S.menu = false; S.sheet = false; renderSheet(); delReason('menu'); if (glLost) return; delReason('tap'); audio.tick(); break;
       default:
     }
@@ -638,7 +690,8 @@ export function createGame(el, api) {
     if (k === 'sens' && ['low', 'normal', 'high'].includes(v)) device.sens = v;
     else if (k === 'dead' && ['small', 'normal', 'large'].includes(v)) device.dead = v;
     else if (k === 'cam' && (v === 'near' || v === 'far')) { device.cam = v; for (const w of AB) cams[w].mode = v; }
-    else if ((k === 'liveryrunner' || k === 'liverycop') && LIVERIES[k.slice(6)][v | 0]) { const kind = k.slice(6); if (!liveryFor(gdata(), live ? me : human(), kind, v | 0) && (v | 0)) return; device.livery[kind] = v | 0; sendLivery(); }
+    else if ((k === 'music' || k === 'emotes') && (v === 'on' || v === 'off')) { device[k] = v; if (k === 'music') audio.setMusic(v === 'on'); }
+    else if ((k === 'liveryrunner' || k === 'liverycop') && LIVERIES[k.slice(6)][v | 0]) { const kind = k.slice(6); if (!liveryFor(gdata(), live ? me : personOf(human()), kind, v | 0) && (v | 0)) return; device.livery[kind] = v | 0; sendLivery(); }
     else if (k === 'gfx') {
       setGfxSetting(v);
       const t = v === 'auto' ? autoTier() : v;
@@ -671,33 +724,53 @@ export function createGame(el, api) {
   }
 
   // ── match start ──
-  function hostStart() {
-    if (!isHost || S.phase !== 'lobby' || S.loading || !ready3D) return;
-    const entry = MAPS.find((m) => m.id === S.setup.map);
-    if (!entry || entry.stub) { hud.view().hint('That map is still being built. Pick another one.'); return; }
+  /** Host: start a match. lead: ms before round 0 begins; quiet: no hints when it can't yet (rematch). */
+  function hostStart(lead, quiet = false) {
+    if (!isHost || S.phase !== 'lobby' || S.loading || !ready3D) return false;
+    const hint = (t) => { if (!quiet) hud.view().hint(t); };
+    const daily = !live && S.localMode === 'daily';
+    const mapId = daily ? dailyMap() : S.setup.map;
+    const entry = MAPS.find((m) => m.id === mapId);
+    if (!entry || entry.stub) { hint('That map is still being built. Pick another one.'); return false; }
     if (live) {
       const ps = P2[other(me)].remote;
-      if (!partnerHere || !link.ready) { hud.view().hint(`Waiting for ${api.name(other(me))}…`); return; }
-      if (ps.ph !== PH.lobby || ps.sv !== S.mapIdx + 1) { hud.view().hint(`${api.name(other(me))} is still loading the map…`); return; }
+      if (!partnerHere || !link.ready) { hint(`Waiting for ${api.name(other(me))}…`); return false; }
+      if (ps.ph !== PH.lobby || ps.sv !== S.mapIdx + 1) { hint(`${api.name(other(me))} is still loading the map…`); return false; }
     }
-    const first = ai() ? (S.practiceRole === 'runner' ? human() : aiW) : S.setup.first;
-    const seed = ((Math.random() * 2147483646) | 0) + 1;
-    const match = { id: Math.random().toString(36).slice(2, 9), map: S.setup.map, rules: { ...S.setup.rules }, first, seed, rounds: TUNE.rounds || S.setup.rules.rounds, scores: { a: 0, b: 0 }, hist: [], mode: S.localMode };
-    const R = nextRound(match, 0);
+    S.rematchCard = false;
+    // the Daily chase: today's map, start and seed for both of you; one 2:00 round as the runner vs a Hard AI cop
+    const first = daily ? human() : ai() ? (S.practiceRole === 'runner' ? human() : aiW) : S.setup.first;
+    const seed = daily ? (strHash('getaway-daily:' + dayKey()) % 2147483646) + 1 : ((Math.random() * 2147483646) | 0) + 1;
+    const rules0 = daily ? { ...DEFAULTS, roundTime: DAILY.roundTime, rounds: 1, tiebreak: 'time' } : { ...S.setup.rules };
+    const match = { id: Math.random().toString(36).slice(2, 9), map: mapId, rules: rules0, first, seed, rounds: daily ? 1 : TUNE.rounds || S.setup.rules.rounds, scores: { a: 0, b: 0 }, hist: [], mode: S.localMode, daily: daily ? dayKey() : null, aiLevel: daily ? 'hard' : device.aiLevel };
+    const R = nextRound(match, 0, null, lead);
     if (live) link.urgent('match', { match, R });
     applyMatch(match, R);
+    return true;
   }
-  function nextRound(match, idx) {
+  /** Today's Daily chase map (the same for both of you): the real maps in turn by day of the year. */
+  function dailyMap() {
+    const real = MAPS.filter((m) => !m.stub);
+    const m = real[dayOfYear() % real.length];
+    // a phone on Low graphics plays the lightest map instead (noted in the lobby)
+    return gfx && gfx.tier === 'low' && phoneish ? real[0].id : m.id;
+  }
+  /** Round idx of a match. sd: the sudden-death decider ({ runner }). lead: ms until it begins. */
+  function nextRound(match, idx, sd = null, lead = live ? 700 : 150) {
     const spawns = (MAPS.find((m) => m.id === match.map) || MAPS[0]).spawns || [];
     const sp = spawns.length ? (match.seed + Math.floor(idx / 2)) % spawns.length : 0;
-    const runner = idx % 2 === 0 ? match.first : other(match.first);
-    const at = clock() + (live ? 700 : 150);
-    const intro = TUNE.intro ?? RULES.intro; const count = TUNE.count ?? RULES.countdown;
+    const runner = sd ? sd.runner : idx % 2 === 0 ? match.first : other(match.first);
+    const at = clock() + lead;
+    // the intro card only when it tells you something new: round 0, a new start spot, the decider
+    const moved = idx === 0 || !!sd || Math.floor(idx / 2) !== Math.floor((idx - 1) / 2);
+    const intro = !moved ? 0 : TUNE.intro != null ? TUNE.intro : idx === 0 ? FLOW.intro : FLOW.introMove;
+    const count = TUNE.count != null ? TUNE.count : idx === 0 ? FLOW.count0 : FLOW.count;
     const t0 = at + intro + count;
-    const endAt = t0 + (TUNE.roundMs || match.rules.roundTime * 1000);
-    return { idx, runner, spawn: sp, at, t0, endAt };
+    const endAt = t0 + (TUNE.roundMs || (sd ? FLOW.sudden : match.rules.roundTime) * 1000);
+    return { idx, runner, spawn: sp, at, t0, endAt, intro, sd: sd ? 1 : 0 };
   }
   function applyMatch(match, R) {
+    S.rematchCard = false; S.autoStart = 0; S.finalShown = false; S.finalDone = false; S.result = null;
     S.match = { ...match, rules: sanitizeSetup({ rules: match.rules }, MAP_IDS).rules };
     S.sheet = false; hud.showSheet(null);
     setSplitKeys(split());
@@ -713,7 +786,7 @@ export function createGame(el, api) {
   function applyRound(R) {
     if (S.R && S.R.idx === R.idx && !S.R.over) return;
     S.R = { ...R, over: false, result: null, spikes: [], oils: [], seq: 0 };
-    S.phase = 'wait'; S.ending = false;
+    S.phase = 'wait'; S.ending = false; S.final15 = false; S.dailyPassed = false; S.copBoxT = 0; S.dailyRv = S.match && S.match.daily ? dailyRival() : null;
     S.slowT = 0; S.slowK = 1;
     S.paused = false; S.resumeAt = 0; S.pausedAt = 0; // a pause never carries into a new round
     const entry = S.mapEntry;
@@ -725,14 +798,14 @@ export function createGame(el, api) {
       const s = role === 'runner' ? sp.runner : sp.cop;
       placeCar(c, s.x, s.z, s.yaw, geo);
       c.nitro = role === 'runner' ? NITRO[rules0.nitro].start : NITRO.cop.start;
-      p.car = c; p.esc = 0; p.escPeak = 0; p.escPeakT = 0; p.escMax = 0; p.seenT = 0; p.cover = false; p.stopT = 0; p.oilLeft = role === 'runner' ? 1 : 0; p.spikesLeft = role === 'cop' ? rules0.spikes : 0;
+      p.car = c; p.esc = 0; p.escPeak = 0; p.escPeakT = 0; p.escMax = 0; p.seenT = 0; p.cover = false; p.stopT = 0; p.oilLeft = role === 'runner' ? 1 : 0; p.spikesLeft = role === 'cop' && !R.sd ? rules0.spikes : 0;
       p.stats = { top: 0, near: 0, pits: 0, spikes: 0, hits: 0, topBoost: 0 };
       p.spikeHit.clear(); p.oilHit.clear(); p.nearIds.clear(); p.hpSeen = 100; p.lastSeen = null; p.los = true; p.shown.init = false; p.corr = null;
       p.prevRL[0] = NaN; p.prevRR[0] = NaN;
       if (p.rig) p.rig = null;
       cams[w].init = false; cams[w].mode = cams[w].mode || rules0.camera;
       p.driver = null;
-      if (ai() && w === aiW) { p.driver = createDriver(geo, role, { seed: S.match.seed + R.idx, level: device.aiLevel || 'normal' }); p.pad.auto = p.driver.out; }
+      if (ai() && w === aiW) { p.driver = createDriver(geo, role, { seed: S.match.seed + R.idx, level: S.match.aiLevel || device.aiLevel || 'normal' }); p.pad.auto = p.driver.out; }
       else if (p.auto) { p.driver = createDriver(geo, role, { seed: 7 + R.idx, level: 'hard' }); p.pad.auto = p.driver.out; }
       else p.pad.auto = null;
     }
@@ -749,51 +822,120 @@ export function createGame(el, api) {
   }
 
   // ── rounds: end + next ──
-  function endRound(outcome, reason) {
+  function endRound(outcome, reason, extra) {
     const R = S.R; if (!R || R.over || S.ending) return;
     S.ending = true;
     const rw = R.runner;
     const st = P2[rw].stats; const cs = P2[other(rw)].stats;
-    const res = { idx: R.idx, outcome, reason, at: clock(), stats: { top: Math.max(st.top, P2[rw].car.topSpeed), near: st.near, pits: cs.pits + st.pits, spikes: st.spikes }, ran: Math.max(0, clock() - R.t0), hp: Math.round(Math.max(0, P2[rw].car.hp)), escMax: Math.round(P2[rw].escMax * 100) / 100 };
+    const rc = posOf(rw); const cc = posOf(other(rw));
+    // (local modes count a PIT on both cars' stats; live each device counts its own: never sum them)
+    const res = { idx: R.idx, outcome, reason, at: clock(), stats: { top: Math.max(st.top, P2[rw].car.topSpeed), near: st.near, pits: Math.max(cs.pits, st.pits), spikes: st.spikes }, ran: Math.max(0, clock() - R.t0), hp: Math.round(Math.max(0, P2[rw].car.hp)), escMax: Math.round(P2[rw].escMax * 100) / 100, d: Math.round(Math.hypot(rc.x - cc.x, rc.z - cc.z)), ...(extra || {}) };
     if (live) link.urgent('end', res);
     applyEnd(res);
   }
   link.on('end', (d) => { if (d && S.R && d.idx === S.R.idx) applyEnd(clone(d)); });
+  /** The people whose records this device keeps (each phone writes only its own person's keys). */
+  const recPeople = () => (live ? [me] : split() ? AB : [human()]);
+  const recNs = () => (live || split() ? '' : 'ai_');
   function applyEnd(res) {
     const R = S.R; if (!R || R.over || res.idx !== R.idx) return;
-    R.over = true; R.result = res; S.phase = 'result';
+    R.over = true; R.result = res; S.phase = 'result'; R.endWall = performance.now(); S.skipMe = false; S.skipThem = false; S.final15 = false;
     const winner = res.outcome === 'busted' ? other(R.runner) : R.runner;
     S.match.scores[winner]++;
-    S.match.hist.push({ runner: R.runner, outcome: res.outcome, reason: res.reason, ran: res.ran, hp: +res.hp || 0, escMax: +res.escMax || 0 });
+    const st = res.stats || {};
+    S.match.hist.push({ runner: R.runner, outcome: res.outcome, reason: res.reason, ran: res.ran, hp: +res.hp || 0, escMax: +res.escMax || 0, pits: st.pits | 0, top: +st.top || 0, near: st.near | 0, spikes: st.spikes | 0, sd: !!R.sd });
     api.setScore(S.match.scores);
     const vs = viewers();
-    for (const w of vs) {
-      const v = H0().view(w);
-      v.stamp(res.outcome === 'busted' ? (res.reason === 'water' ? 'SPLASH!' : 'BUSTED!') : 'ESCAPED!', res.outcome === 'busted' ? 'bad' : R.runner);
-      v.flash();
-    }
+    const left = Math.max(0, R.endAt - res.at);
+    // the stamp: the ending's own words (a buzzer with the cop on the bumper is a photo finish)
+    const photo = res.outcome === 'escaped' && res.reason === 'time' && res.d >= 0 && res.d <= 15;
+    let head; let cls = res.outcome === 'busted' ? 'bad' : R.runner;
+    if (res.outcome === 'busted') head = res.reason === 'water' ? 'SPLASH!' : left < 10000 && res.reason !== 'quit' ? 'LAST SECOND BUST!' : 'BUSTED!';
+    else head = photo ? (res.d <= 7 ? 'BY A BUMPER!' : 'PHOTO FINISH!') : res.reason === 'heat' ? 'VANISHED!' : 'ESCAPED!';
+    if (head.length > 9) cls += ' sm';
+    for (const w of vs) { const v = H0().view(w); const copSide = w !== R.runner && !split(); v.stamp(copSide && res.reason === 'heat' ? 'LOST THEM' : head, copSide && res.reason === 'heat' ? 'bad' : cls); v.flash(); }
+    if ((photo || res.reason === 'heat') && !reduced) S.slowT = Math.max(S.slowT || 0, 0.75);
     const youWon = live ? winner === me : ai() ? winner === human() : true;
-    audio.stamp(); later(() => (youWon ? audio.win() : audio.lose()), 300);
+    audio.stamp(); if (photo && audio.sting) audio.sting(); later(() => (youWon ? audio.win() : audio.lose()), 300);
+    // the other side's line (automatic trash talk): a heat escape under the cop's nose, a streak
+    if (res.outcome === 'escaped' && res.reason === 'heat' && res.d < 60) for (const w of vs) if (w !== R.runner) later(() => H0().view(w).hint('SO CLOSE: they slipped away ' + res.d + ' m from you', 2400), 900);
     const done = matchDecided();
-    const next = done ? 'Final whistle…' : `Next round: ${nameOf(other(R.runner))} runs.`;
-    // careers + livery unlocks for the people on this device (liveries.js)
-    const unlocks = [];
-    for (const w of live ? [me] : ai() ? [human()] : AB) {
-      const ranCop = w !== R.runner;
-      const { patch, pops } = careerUpdate(gdata(), w, ranCop ? { bust: res.outcome === 'busted' && res.reason !== 'quit', bustT: res.ran / 1000, pits: P2[w].stats.pits } : { esc: res.outcome === 'escaped', heat: res.outcome === 'escaped' && res.reason === 'heat', topBoost: P2[w].stats.topBoost });
-      gset(patch); for (const u of pops) unlocks.push({ ...u, w });
+    const sd = !done && S.match.hist.length >= S.match.rounds;
+    const next = done ? 'Final whistle…' : sd ? `All square: sudden death, ${nameOf(suddenRunner())} runs` : `Next: ${nameOf(other(R.runner))} runs`;
+    // records + livery unlocks for the people on this device (records.js, liveries.js)
+    const lines = []; const unlocks = []; let newRec = null; let streak = 0;
+    const ns = recNs();
+    for (const w of recPeople()) {
+      const role = w === R.runner ? 'runner' : 'cop';
+      const p = P2[w];
+      const ev = { role, won: winner === w, outcome: res.outcome, reason: res.reason, t: res.ran / 1000, pits: role === 'cop' ? (live ? p.stats.pits : st.pits) : 0, top: role === 'runner' ? (+st.top || p.stats.top) * 3.6 : 0, topBoost: p.stats.topBoost, near: role === 'runner' ? st.near | 0 : 0 };
+      const pw = personOf(w);
+      const r = recordRound(gdata(), pw, ns, ev, ns ? null : other(pw));
+      gset(r.patch);
+      if (S.match.daily && role === 'runner') { // today's Daily chase score (the best of today's tries)
+        const sc0 = dailyScore(res.outcome, res.reason, res.ran / 1000, S.match.rules.roundTime); const dk = dailyKey(pw, S.match.daily);
+        const prev = gdata()[dk] | 0; const patch = {};
+        if (sc0 > prev) patch[dk] = sc0;
+        if (sc0 > (gdata()[`${pw}_daily_best`] | 0)) patch[`${pw}_daily_best`] = sc0;
+        gset(patch);
+        const rv = dailyRival(); if (rv) lines.push({ t: sc0 > rv.score ? `You beat ${rv.name}’s ${dailyText(rv.score)} today` : sc0 === rv.score ? `Level with ${rv.name} today` : `${rv.name} still leads today: ${dailyText(rv.score)}`, hot: sc0 > rv.score });
+        else if (prev) lines.push({ t: sc0 > prev ? `Your best today (was ${dailyText(prev)})` : `Your best today: ${dailyText(prev)}`, hot: sc0 > prev });
+      }
+      const who = split() ? `${nameOf(w)}: ` : '';
+      if (r.news.length) { lines.push({ t: who + r.news[0].text, hot: true }); newRec = newRec || r.news[0]; }
+      else if (r.held) lines.push({ t: `${who}${nameOf(other(w))} still holds ${r.held.label.toLowerCase()}, ${r.held.text}` });
+      if (r.streak >= 2) { streak = Math.max(streak, r.streak); if (r.streak >= 3) lines.push({ t: `${who}${r.streak} rounds in a row`, hot: true }); }
+      const u = checkUnlocks(gdata(), pw); gset(u.patch); for (const x of u.pops) unlocks.push({ ...x, w });
     }
-    if (unlocks.length) later(() => { for (const w of vs) H0().view(w).stamp('UNLOCKED!', 'good'); audio.win(); }, 900);
-    later(() => { if (S.R === R) hud.card(resultCard({ name: nameOf }, { outcome: res.outcome, reason: res.reason, runner: R.runner, stats: res.stats, scores: S.match.scores, next, local: !live, me: human(), ran: res.ran, unlocks }), 'dim'); }, 1100);
-    if (isHost) later(() => { if (S.R !== R || dead) return; if (done) finalize(); else startNext(); }, TUNE.result ?? RULES.result);
+    if (newRec) later(() => { for (const w of vs) H0().view(w).stamp('NEW RECORD!', 'good sm'); if (audio.fanfare) audio.fanfare(); }, 1000);
+    else if (streak >= 3) later(() => { for (const w of vs) if (winner === w || !live) H0().view(w).stamp(`STREAK ×${streak}`, 'good sm'); audio.win(); }, 1000);
+    if (unlocks.length) later(() => { for (const w of vs) H0().view(w).stamp('UNLOCKED!', 'good sm'); audio.win(); }, newRec || streak >= 3 ? 2000 : 1000);
+    S.resultInfo = { lines, unlocks, next, photo, head };
+    later(() => { if (S.R === R) showResultCard(); }, Math.min(FLOW.card, TUNE.result != null ? TUNE.result / 2 : FLOW.card));
+    if (isHost) later(() => proceed(R), TUNE.result ?? FLOW.result);
+  }
+  function showResultCard() {
+    const R = S.R; if (!R || !R.result || !S.resultInfo) return;
+    const res = R.result; const I = S.resultInfo;
+    const wait = S.skipMe ? (live && !S.skipThem ? `Waiting for ${api.name(other(me))}…` : 'Starting…') : live && S.skipThem ? `${api.name(other(me))} is ready · tap to go` : 'Tap to continue';
+    hud.card(resultCard({ name: nameOf }, { outcome: res.outcome, reason: res.reason, runner: R.runner, stats: res.stats, scores: S.match.scores, next: I.next, local: !live, me: human(), ran: res.ran, unlocks: I.unlocks, lines: I.lines, head: !split() && human() !== R.runner && res.reason === 'heat' ? 'LOST THEM' : I.head, queue: !!res.queue, d: res.d, wait, ai: ai() || !!S.match.daily, daily: S.match.daily ? dailyLine(res) : '' }), 'dim');
+  }
+  /** Tap on the result card: practice / split goes on at once; live when both phones have tapped. */
+  function skipResult() {
+    const R = S.R; if (!R || !R.over || S.phase !== 'result' || S.skipMe) return;
+    if (performance.now() - (R.endWall || 0) < (TUNE.skipAfter ?? FLOW.skipAfter)) return;
+    S.skipMe = true; audio.tick();
+    if (live) link.urgent('skip', { idx: R.idx });
+    if (isHost && (!live || S.skipThem)) proceed(R);
+    else showResultCard();
+  }
+  link.on('skip', (d) => {
+    const R = S.R; if (!d || !R || d.idx !== R.idx || !R.over) return;
+    S.skipThem = true;
+    if (isHost && S.skipMe) proceed(R); else if (S.phase === 'result') showResultCard();
+  });
+  /** Host: on to the next round (or the decider, or the final). Once per round. */
+  function proceed(R) {
+    if (S.R !== R || dead || R.proceeded) return;
+    R.proceeded = true;
+    if (matchDecided()) finalize(); else startNext();
   }
   function matchDecided() {
     const m = S.match; const played = m.hist.length; const left = m.rounds - played;
     const d = Math.abs(m.scores.a - m.scores.b);
+    if (played > m.rounds) return true; // the decider has been played
+    if (left <= 0 && d === 0 && m.rules.tiebreak === 'sudden' && !m.daily) return false; // level: sudden death
     return left <= 0 || d > left;
   }
+  /** The decider's runner: whoever spent less time on the run (escapes count as the full clock). */
+  function suddenRunner() {
+    const run = { a: 0, b: 0 };
+    for (const h of S.match.hist) run[h.runner] += h.outcome === 'escaped' ? 1e6 : (h.ran || 0);
+    return run.a === run.b ? other(S.match.first) : run.a < run.b ? 'a' : 'b';
+  }
   function startNext() {
-    const R = nextRound(S.match, S.R.idx + 1);
+    const idx = S.R.idx + 1;
+    const R = nextRound(S.match, idx, idx >= S.match.rounds ? { runner: suddenRunner() } : null);
     if (live) link.urgent('round', { R, scores: S.match.scores, hist: S.match.hist });
     applyRound(R);
   }
@@ -805,7 +947,7 @@ export function createGame(el, api) {
       const run = { a: 0, b: 0 }; for (const h of m.hist) run[h.runner] += h.outcome === 'escaped' ? 1e6 + (h.hp || 0) + 50 * (h.escMax || 0) : (h.ran || 0) / 1000;
       if (run.a !== run.b) { winner = run.a > run.b ? 'a' : 'b'; tbWhy = Math.max(run.a, run.b) >= 1e6 ? 'health left after the escapes' : 'longest time on the run'; }
     }
-    const fin = { scores: m.scores, winner, tie: m.scores.a === m.scores.b, tbWhy };
+    const fin = { scores: m.scores, winner, tie: m.scores.a === m.scores.b, tbWhy, sd: m.hist.some((h) => h.sd) };
     if (live) link.urgent('final', fin);
     applyFinal(fin);
   }
@@ -813,23 +955,78 @@ export function createGame(el, api) {
   function applyFinal(fin) {
     if (S.finalShown) return; S.finalShown = true;
     S.phase = 'final';
-    if (fin.winner && (live ? fin.winner === me : ai() ? fin.winner === human() : true)) { const { patch, pops } = careerUpdate(gdata(), fin.winner, { win: true }); gset(patch); if (pops.length) later(() => { for (const w of viewers()) H0().view(w).stamp('UNLOCKED!', 'good'); }, 1500); }
+    const daily = !!S.match.daily;
+    // match wins + unlocks for the people on this device
+    const ns = recNs(); const unlocks = [];
+    if (!daily) for (const w of recPeople()) { const pw = personOf(w); gset(recordMatch(gdata(), pw, ns, fin.winner === w)); const u = checkUnlocks(gdata(), pw); gset(u.patch); for (const x of u.pops) unlocks.push(x); }
+    if (unlocks.length) later(() => { for (const w of viewers()) H0().view(w).stamp('UNLOCKED!', 'good sm'); }, 1500);
     const sc = `${fin.scores.a}–${fin.scores.b}`;
+    const sum = matchSummary();
     let res;
-    const tb = fin.tie && fin.winner ? ' on the tiebreak' : '';
-    const tbSub = `Tiebreak: ${typeof fin.tbWhy === 'string' && fin.tbWhy ? fin.tbWhy : 'longest time on the run'}`;
-    if (ai()) res = { winner: null, text: fin.winner === human() ? `You beat the AI${tb}, ${sc}` : fin.winner ? `The AI won${tb}, ${fin.scores.a}–${fin.scores.b}` : `Practice: ${sc}`, sub: tb ? tbSub : 'Practice vs AI' };
-    else res = { winner: fin.winner, text: fin.winner ? (tb ? `${api.name(fin.winner)} wins on the tiebreak, ${sc}` : `${api.name(fin.winner)} wins ${Math.max(fin.scores.a, fin.scores.b)}–${Math.min(fin.scores.a, fin.scores.b)}`) : `All square, ${sc}`, sub: tb ? tbSub : 'Getaway', score: { a: fin.scores.a, b: fin.scores.b } };
+    const tb = fin.sd && fin.winner ? ' in sudden death' : fin.tie && fin.winner ? ' on the tiebreak' : '';
+    const tbSub = fin.sd ? 'Decided by sudden death' : `Tiebreak: ${typeof fin.tbWhy === 'string' && fin.tbWhy ? fin.tbWhy : 'longest time on the run'}`;
+    if (daily) { const h = S.match.hist[0] || {}; const sc0 = dailyScore(h.outcome, h.reason, (h.ran || 0) / 1000, S.match.rules.roundTime); res = { winner: null, text: `Daily chase: ${dailyText(sc0, S.match.rules.roundTime)}`, sub: dailyBoardText(), record: false }; }
+    else if (ai()) res = { winner: null, text: fin.winner === human() ? `You beat the ${aiLabel()} AI${tb}, ${sc}` : fin.winner ? `The AI won${tb}, ${sc}` : `Practice: ${sc}`, sub: [tb ? tbSub : `vs ${aiLabel()} AI`, sum.line].filter(Boolean).join(' · '), record: false };
+    else res = { winner: fin.winner, text: fin.winner ? (tb ? `${api.name(fin.winner)} wins${tb}, ${sc}` : `${api.name(fin.winner)} wins ${Math.max(fin.scores.a, fin.scores.b)}–${Math.min(fin.scores.a, fin.scores.b)}`) : `All square, ${sc}`, sub: [tb ? tbSub : 'Getaway', sum.line].filter(Boolean).join(' · '), score: { a: fin.scores.a, b: fin.scores.b } };
     S.result = res;
-    hud.card(null);
-    for (const w of viewers()) H0().view(w).stamp(fin.winner ? `${nameOf(fin.winner).toUpperCase()} WINS` : 'DRAW', fin.winner || '');
-    later(() => { try { api.finish(res); } catch (e) { console.error(e); } }, TUNE.final ?? 1600);
+    const head = daily ? 'DAILY DONE' : fin.winner ? (nameOf(fin.winner) === 'You' ? 'YOU WIN!' : `${nameOf(fin.winner).toUpperCase()} WINS`) : 'DRAW';
+    for (const w of viewers()) H0().view(w).stamp(head, (fin.winner || '') + (head.length > 9 ? ' sm' : ''));
+    if (fin.winner && (live ? fin.winner === me : ai() ? fin.winner === human() : true)) later(() => audio.win(), 250);
+    // Getaway's own match card (round by round, the two columns, the MVP), then the app's end card
+    S.finalAt = performance.now();
+    const ms = TUNE.final ?? FLOW.finalCard;
+    later(() => { if (S.phase === 'final' && !S.finalDone) hud.card(finalCard({ name: nameOf }, { hist: S.match.hist, scores: fin.scores, winner: fin.winner, rounds: S.match.rounds, sum, daily: daily ? res.text : '', dailySub: daily ? res.sub : '', ai: ai(), tb: tb ? tbSub : '' }), 'dim'); }, Math.min(900, ms / 2));
+    later(finishNow, ms + 900);
+  }
+  function finishNow() {
+    if (S.phase !== 'final' || S.finalDone || dead) return;
+    S.finalDone = true; hud.card(null);
+    try { api.finish(S.result); } catch (e) { console.error(e); }
+  }
+  const aiLabel = () => (AI_LEVEL_LABELS[S.match && S.match.aiLevel] || AI_LEVEL_LABELS[device.aiLevel] || 'Normal');
+  /** Per-person match totals and the MVP line (finalCard, and the app card's sub line). */
+  function matchSummary() {
+    const m = S.match; const T = { a: { pits: 0, top: 0, near: 0, ran: 0, spikes: 0, esc: 0, heat: 0, busts: 0, pitted: 0 }, b: { pits: 0, top: 0, near: 0, ran: 0, spikes: 0, esc: 0, heat: 0, busts: 0, pitted: 0 } };
+    for (const h of m.hist) {
+      const r = T[h.runner]; const c = T[other(h.runner)];
+      r.top = Math.max(r.top, Math.round((h.top || 0) * 3.6)); r.near += h.near | 0; r.ran += h.outcome === 'escaped' ? 0 : (h.ran || 0); r.pitted += h.pits | 0;
+      if (h.outcome === 'escaped') { r.esc++; if (h.reason === 'heat') r.heat++; } else if (h.reason !== 'quit') c.busts++;
+      c.pits += h.pits | 0; c.spikes += h.spikes | 0;
+    }
+    // the MVP: the match's most distinctive feat
+    const cands = [];
+    for (const w of ai() ? [human()] : AB) { // (practice: the MVP line is about you, not the AI)
+      const t = T[w]; const n = nameOf(w);
+      if (t.heat >= 2) cands.push({ w, s: 50 + t.heat, t: `HOUDINI · ${n} lost the heat ${t.heat} times` });
+      if (t.pits >= 3) cands.push({ w, s: 40 + t.pits, t: `BUMPER CAR · ${n} landed ${t.pits} PITs` });
+      if (t.spikes >= 2) cands.push({ w, s: 35 + t.spikes, t: `ROADBLOCK · ${n} spiked them ${t.spikes} times` });
+      if (t.esc >= 1 && t.pitted === 0 && m.hist.some((h) => h.runner === w)) cands.push({ w, s: 30 + t.esc, t: `UNTOUCHABLE · ${n} was never PITed` });
+      if (t.near >= 5) cands.push({ w, s: 20 + t.near, t: `THREAD THE NEEDLE · ${n}: ${t.near} near misses` });
+      if (t.top >= 160) cands.push({ w, s: 10 + t.top / 100, t: `LEAD FOOT · ${n} hit ${t.top} km/h` });
+    }
+    cands.sort((x, y) => y.s - x.s);
+    const mvp = cands[0] || null;
+    return { T, mvp, line: mvp ? mvp.t : '' };
+  }
+  function dailyLine(res) {
+    const sc0 = dailyScore(res.outcome, res.reason, res.ran / 1000, S.match.rules.roundTime);
+    return `Daily chase: ${dailyText(sc0, S.match.rules.roundTime)}`;
+  }
+  /** The partner's Daily chase score today, for the line to beat ({ name, score } or null). */
+  function dailyRival() {
+    const b = dailyBoard(gdata(), S.match && S.match.daily || dayKey()); const q = other(owner);
+    return b[q] > 0 ? { name: api.name(q), score: b[q] } : null;
+  }
+  function dailyBoardText() {
+    const b = dailyBoard(gdata()); const rt = DAILY.roundTime;
+    const bits = AB.filter((w) => b[w] > 0).map((w) => `${api.name(w)} ${dailyText(b[w], rt)}`);
+    return bits.length ? `Today: ${bits.join(' · ')}` : 'Today’s board is empty';
   }
 
   // ── pause / resume ──
   link.on('pause', (d) => { if (!isHost && d && S.R) { S.paused = true; S.pausedAt = d.at; S.resumeAt = 0; } });
   link.on('resume', (d) => { if (!isHost && d && S.R && d.idx === S.R.idx) { S.R.t0 = d.t0; S.R.endAt = d.endAt; S.resumeAt = d.at; S.paused = true; } });
-  link.on('endat', (d) => { if (d && S.R && d.idx === S.R.idx) S.R.endAt = d.endAt; });
+  link.on('endat', (d) => { if (d && S.R && d.idx === S.R.idx) { S.R.endAt = d.endAt; if (d.ot && !S.R.ot) { S.R.ot = 1; overtimeFx(); } } });
   function hostPauseCheck(now) {
     if (!S.R || S.R.over || (S.phase !== 'chase' && S.phase !== 'count' && S.phase !== 'intro')) return;
     const p = P2[other(human())];
@@ -857,7 +1054,7 @@ export function createGame(el, api) {
     // a (re)linked partner: the host re-sends the lobby setup or the current round
     if (!isHost) return;
     if (S.phase === 'lobby') link.send('setup', S.setup);
-    else if (S.match && S.R) link.send('match', { match: { ...S.match }, R: { idx: S.R.idx, runner: S.R.runner, spawn: S.R.spawn, at: S.R.at, t0: S.R.t0, endAt: S.R.endAt } });
+    else if (S.match && S.R) link.send('match', { match: { ...S.match }, R: { idx: S.R.idx, runner: S.R.runner, spawn: S.R.spawn, at: S.R.at, t0: S.R.t0, endAt: S.R.endAt, intro: S.R.intro, sd: S.R.sd } });
     delReason('stale');
   }
 
@@ -872,12 +1069,41 @@ export function createGame(el, api) {
     }
     if (a === 'pause') { if (H0().mapOpen) closeMap(); if (S.menu) onClick({ dataset: { l: 'resume' } }); else openMenu(); return; }
     if (a === 'cam') { const c = cams[w]; c.mode = (c.mode || rules().camera) === 'near' ? 'far' : 'near'; device.cam = c.mode; lsSet(DEV_KEY, device); audio.tick(); return; }
+    if (a === 'horn') { sendEmote(w); return; }
     if (a === 'look') { cams[w].look = cams[w].look ? 0 : 1; later(() => { cams[w].look = 0; }, 1600); return; }
     if (a === 'map') { if (H0().mapOpen) closeMap(); else openMap(w); return; }
     if (a === 'act') {
       if (!S.R || S.R.over) return;
       if (roleOf(w) === 'cop') { if (H0().mapOpen) closeMap(); else openMap(w); } else dropOil(w);
     }
+  }
+  // ── emotes (live): one tap sends the next line of my role's list; one per 4 s ──
+  const EMOTES = { runner: ['HONK', 'Catch me!', 'lol'], cop: ['HONK', 'Pull over!', 'lol'] };
+  const EMOTE_OK = new Set([...EMOTES.runner, ...EMOTES.cop]);
+  const emoteNext = (w) => { const L = EMOTES[roleOf(w)]; return L[(S.emoteK || 0) % L.length]; };
+  function sendEmote(w) {
+    if (!live || !S.R || device.emotes === 'off' || S.phase === 'lobby' || S.phase === 'final') return;
+    const t = performance.now(); if (t - (S.emoteT || 0) < 4000) return;
+    S.emoteT = t; const txt = emoteNext(w); S.emoteK = (S.emoteK || 0) + 1;
+    link.urgent('emote', { k: txt });
+    H0().view(w).hint(`You: ${txt}`, 1200); audio.honk();
+  }
+  link.on('emote', (d) => {
+    if (!d || !EMOTE_OK.has(d.k) || device.emotes === 'off' || !S.R) return;
+    const o = other(me); S.bubble = { w: o, text: d.k, until: performance.now() + 1600 };
+    const oc = P2[o].car; const mc = P2[me].car; const far = Math.hypot(oc.x - mc.x, oc.z - mc.z) > 120;
+    if (far || S.phase !== 'chase') H0().view(me).hint(`${api.name(o)}: ${d.k}`, 1600);
+    audio.honk(far);
+  });
+  // ── the runner's style chain: near misses, drifts, a cop on your oil; chained within 3 s ──
+  const STYLE_TIERS = [[10, 'UNTOUCHABLE'], [6, 'SMOOTH'], [3, 'SLICK']];
+  function addStyle(w, pts, what) {
+    const p = P2[w]; const t = performance.now();
+    if (!p.style || t - p.style.t > 3000) p.style = { n: 0, t, tier: 0 };
+    p.style.n += pts; p.style.t = t;
+    const tier = STYLE_TIERS.findIndex((x) => p.style.n >= x[0]); const lvl = tier < 0 ? 0 : 3 - tier;
+    if (lvl > p.style.tier) { p.style.tier = lvl; p.car.nitro = Math.min(1, p.car.nitro + 0.05 * lvl); p.nitroPulseT = 0.3; }
+    if (isViewer(w)) H0().view(w).hint(p.style.n >= 3 ? `${what} ×${p.style.n} ${STYLE_TIERS[tier][1]}` : what, 1100);
   }
   let mapFor = null;
   function openMap(w) {
@@ -888,7 +1114,10 @@ export function createGame(el, api) {
     H0().openMap({
       img: mapImg, title: cop ? 'Spike strips' : (S.mapEntry ? S.mapEntry.name : 'Map'), sub: sub(),
       marks: (g, toPx, dpr, k) => drawMarks(g, toPx, dpr, k, w, true),
-      onTap: (x, z) => { if (!cop) return; const r = placeSpike(w, x, z); if (r !== true) H0().mapSub(r); else { H0().mapSub(sub()); H0().redrawMap(); } },
+      // the cop's map zooms to a 900 m window ahead of the cruiser (roads 6–8 px wide, the 400 m range
+      // fills it; 'Whole map' toggles); the runner's map follows its car the same way
+      view: S.R && !S.R.over && S.phase === 'chase' ? () => { const c = P2[w].car; const span = MAP_SPAN; const ah = cop ? span * 0.15 : 0; return { cx: c.x + Math.sin(c.yaw) * ah, cz: c.z - Math.cos(c.yaw) * ah, span }; } : null,
+      onTap: (x, z) => { if (!cop) return undefined; const r = placeSpike(w, x, z); if (r === true) { H0().mapSub(sub()); H0().redrawMap(); } return r; },
       onClose: closeMap,
     });
     S.mapT = 0;
@@ -1032,7 +1261,10 @@ export function createGame(el, api) {
       readPad(p.pad, p.inp, dt);
       const prevX = c.x; const prevZ = c.z;
       stepCar(c, p.inp, dt, geo, role === 'cop' ? CAR.cop : CAR.runner, role === 'cop' ? NITRO.cop : NITRO[rules0.nitro]);
+      // the final 15 s: both tanks refill twice as fast (a boost each for the finale)
+      if (S.final15 && !c.boost) { const nt = role === 'cop' ? NITRO.cop : NITRO[rules0.nitro]; if (nt.regen > 0 && c.nitro < 1) c.nitro = Math.min(1, c.nitro + nt.regen * dt); }
       if (c.speed > p.stats.top) p.stats.top = c.speed;
+      if (role === 'runner') { if (c.slip > 3 && c.speed > 12) p.driftT = (p.driftT || 0) + dt; else { if (p.driftT > 1) addStyle(w, 1, 'Drift!'); p.driftT = 0; } }
       if (c.boost && c.speed * 3.6 > p.stats.topBoost) p.stats.topBoost = c.speed * 3.6;
       // world collision events
       for (const ev of c.ev) {
@@ -1079,7 +1311,7 @@ export function createGame(el, api) {
           const rot = o.rot || 0; const dx = c.x - o.x; const dz = c.z - o.z;
           const la = dx * Math.sin(rot) - dz * Math.cos(rot); const lb = dx * Math.cos(rot) + dz * Math.sin(rot);
           const ra = o.r + 0.6; const rb = o.r * 0.8 + 0.6;
-          if ((la * la) / (ra * ra) + (lb * lb) / (rb * rb) < 1) { p.oilHit.add(o.id); c.oilT = RULES.oilSlide; c.r += ((o.id.length + Math.round(o.x)) & 1 ? -1 : 1) * RULES.oilKick; cams[w].shake = Math.min(1, cams[w].shake + 0.3); if (isViewer(w)) { H0().view(w).stamp('OIL!', 'bad'); audio.oil(); } }
+          if ((la * la) / (ra * ra) + (lb * lb) / (rb * rb) < 1) { p.oilHit.add(o.id); c.oilT = RULES.oilSlide; c.r += ((o.id.length + Math.round(o.x)) & 1 ? -1 : 1) * RULES.oilKick; cams[w].shake = Math.min(1, cams[w].shake + 0.3); if (isViewer(w)) { H0().view(w).stamp('OIL!', 'bad'); audio.oil(); } if (local(other(w))) addStyle(other(w), 3, 'Oiled them!'); }
         }
       }
     }
@@ -1214,6 +1446,7 @@ export function createGame(el, api) {
         for (const v of viewers()) H0().view(v).stamp('PIT!', o);
         audio.pit();
         if (c0.pitPush >= DAMAGE.pitSlowMo) slowMo(c0.pitPush);
+        if (c0.pitPush >= 6 && isViewer(w)) later(() => H0().view(w).hint('THAT’S GOTTA HURT', 1600), 500);
       }
     } else if (vrel > DAMAGE.ramMin) {
       // a ram: capped (one head-on used to cost half the runner's health) and blame-split by who
@@ -1245,7 +1478,9 @@ export function createGame(el, api) {
     const role = roleOf(w);
     c.hp = role === 'cop' ? Math.max(DAMAGE.copMinHp, c.hp - d) : Math.max(0, c.hp - d);
     if (d > 3) { p.hurtT = 0.35; const cr = cams[w]; cr.shake = Math.min(1, cr.shake + d / 25); cr.rollKick = (cr.rollKick || 0) + (((Math.round(d * 10)) & 1) ? -1 : 1) * 0.06 * Math.min(1, d / 25); }
-    void why;
+    // every hit of 3+ lands as a number: on my health chip, and on the attacker's screen in its colour
+    if (d >= 3) for (const v of viewers()) { if (v === w) H0().view(v).dmg(d, role === 'cop' ? 'cop' : ''); else if (role === 'runner' && why !== 'wall' && why !== 'traffic') H0().view(v).dmg(d, 'them'); }
+    if (why === 'nudge') for (const v of viewers()) H0().view(v).stamp('NUDGE', 'sm');
   }
   function crashFx(x, y, z, v, w) {
     if (v < 2) return; // a lean or a rub: nothing
@@ -1355,7 +1590,7 @@ export function createGame(el, api) {
           p.nearIds.set(id, performance.now());
           p.stats.near++;
           c.nitro = Math.min(1, c.nitro + NITRO.nearMiss); p.nitroPulseT = 0.3;
-          if (isViewer(w)) { H0().view(w).hint('Near miss! +nitro', 900); audio.nearMiss(); }
+          addStyle(w, 1, 'Near miss!'); if (isViewer(w)) audio.nearMiss();
         }
       }
     }
@@ -1374,7 +1609,14 @@ export function createGame(el, api) {
     const d = Math.hypot(cop.x - c.x, cop.z - c.z);
     if (c.hp <= 0) return endRound('busted', 'hp');
     if (c.water) return endRound('busted', 'water');
-    if (c.speed < RULES.bustStop && d < RULES.bustNear) { p.stopT += dt; if (p.stopT >= RULES.bustT) return endRound('busted', 'boxed'); } else p.stopT = 0;
+    // boxed in: stopped with the cop right there and the cop stopped too (or touching): a cop flying
+    // past at 12 m doesn't count. Queued behind a civilian it takes 4 s, not 3. The HUD counts it down.
+    const copV = Math.hypot(cop.vx || 0, cop.vz || 0);
+    if (c.speed < RULES.bustStop && d < RULES.bustNear && (copV < BOX.copSlow || d < BOX.touch)) {
+      if (p.stopT === 0) p.boxQueue = queuedAhead(rw, c, (now - R.t0) / 1000 + 600);
+      p.stopT += dt; p.boxT = p.boxQueue ? BOX.queueT : RULES.bustT;
+      if (p.stopT >= p.boxT) return endRound('busted', 'boxed', p.boxQueue ? { queue: 1 } : null);
+    } else p.stopT = 0;
     // losing the heat: the meter moves every round. Beyond the heat distance and hidden (no line
     // of sight, or under cover) it fills in heatT s; beyond 60% of it ('Breaking away') at a third
     // of the rate; otherwise it drains at heatDecay × the fill rate, but never below half its
@@ -1391,10 +1633,27 @@ export function createGame(el, api) {
     if (p.esc < p.escPeak * 0.5) p.esc = p.escPeak * 0.5;
     if (p.esc > p.escMax) p.escMax = p.esc;
     if (p.esc >= 1) { S.dbgEnd = { d, heat, los: p.los, cop: { x: cop.x, z: cop.z }, me: { x: c.x, z: c.z } }; return endRound('escaped', 'heat'); }
-    if (now >= R.endAt) return endRound('escaped', 'time');
+    if (now >= R.endAt) {
+      // overtime: still spinning from a PIT at the buzzer, the round runs 2 s on (a last-second PIT can still bust)
+      if (c.spinT > 0 && !R.ot) { R.ot = 1; R.endAt = now + 2000; if (live) link.urgent('endat', { idx: R.idx, endAt: R.endAt, ot: 1 }); overtimeFx(); return; }
+      return endRound('escaped', 'time');
+    }
+  }
+  const BOX = { copSlow: 6, touch: 5.5, queueT: 4, queueAhead: 11.5, queueLat: 2.2 };
+  function overtimeFx() { for (const v of viewers()) H0().view(v).stamp('OVERTIME!', 'bad sm'); audio.beep(true); }
+  /** A civilian car right in front of mine (a queue at a signal): the boxed-in clock is longer. */
+  function queuedAhead(w, c, tT) {
+    if (!traffic || !traffic.total) return false;
+    const n = candN[w]; const ids = cand[w]; const fx0 = Math.sin(c.yaw); const fz0 = -Math.cos(c.yaw);
+    for (let q = 0; q < n; q++) {
+      if (!traffic.poseOf(ids[q], tT, tPose) || tPose.sc < 0.95) continue;
+      const dx = tPose.x - c.x; const dz = tPose.z - c.z; const along = dx * fx0 + dz * fz0; const lat = Math.abs(dx * fz0 - dz * fx0);
+      if (along > 0 && along < BOX.queueAhead && lat < BOX.queueLat) return true;
+    }
+    return false;
   }
   /** The heat distance: the setting, or the map's own when the setting is at its default. */
-  const heatDist = () => { const r = rules().heat; const m = S.mapEntry && S.mapEntry.heat; return r === DEFAULTS.heat && m > 0 ? Math.max(60, Math.min(400, m)) : r; };
+  const heatDist = () => { const r = rules().heat; const m = S.mapEntry && S.mapEntry.heat; const h = r === DEFAULTS.heat && m > 0 ? Math.max(60, Math.min(400, m)) : r; return S.R && S.R.sd ? Math.round(h * 0.75) : h; }; // (sudden death: a quarter closer)
   /** Cop-side fallback: the runner's device went quiet right at the buzzer. */
   function copFallback(now) {
     const R = S.R; if (!live || !isHost || R.over || local(R.runner)) return;
@@ -1484,7 +1743,7 @@ export function createGame(el, api) {
     const R = S.R;
     if (!R || S.phase === 'final' || S.phase === 'lobby' || S.phase === 'loading') return;
     if (R.over) { S.phase = 'result'; return; }
-    const intro = TUNE.intro ?? RULES.intro;
+    const intro = R.intro != null ? R.intro : TUNE.intro ?? FLOW.intro;
     let ph;
     if (now < R.at) ph = 'wait';
     else if (now < R.at + intro && now < R.t0) ph = 'intro';
@@ -1497,14 +1756,22 @@ export function createGame(el, api) {
         const lm = (spw && spw.where) || nearestLandmark(P2[R.runner].car);
         hud.card(introCard({ name: nameOf }, { map: S.mapEntry, round: R.idx, rounds: S.match.rounds, runner: R.runner, me: human(), landmark: lm, roundTime: Math.round((R.endAt - R.t0) / 1000), local: !live }), 'clear bottom');
       }
-      if (ph === 'count') hud.card(null);
+      if (ph === 'count') {
+        hud.card(null);
+        // no intro card this round: the role swap is a stamp over the countdown
+        if (prev !== 'intro' && R.idx > 0) { for (const w of viewers()) H0().view(w).stamp(split() ? `${nameOf(R.runner).toUpperCase()} RUNS` : roleOf(w) === 'cop' ? 'YOU’RE THE COP' : 'YOU’RE RUNNING', (roleOf(w) === 'cop' && !split() ? 'bad' : R.runner) + ' sm'); audio.whoosh(); }
+      }
       if (ph === 'chase') {
         hud.card(null);
-        for (const w of viewers()) { const v = H0().view(w); v.count('GO'); later(() => v.count(''), 700); v.hint(roleOf(w) === 'cop' ? (rules().spikes ? 'Bust them! Tap the map to drop spike strips.' : 'Bust them! Get alongside and PIT their back corner.') : 'Go! Lose the cop or survive the clock.', 3200); }
+        const db = daily() ? dailyRival() : null;
+        for (const w of viewers()) { const v = H0().view(w); v.count('GO'); later(() => v.count(''), 700); v.hint(db ? `Beat ${db.name}: ${dailyText(db.score, S.match.rules.roundTime)}` : R.sd ? (roleOf(w) === 'cop' ? 'Sudden death! Bust them and it’s yours.' : 'Sudden death! Survive 0:45 and it’s yours.') : roleOf(w) === 'cop' ? (rules().spikes ? 'Bust them! Tap the map to drop spike strips.' : 'Bust them! Get alongside and PIT their back corner.') : 'Go! Lose the cop or survive the clock.', 3200); }
         audio.beep(true);
       }
       void prev;
     }
+    // the final 15 seconds: a stamp, a heartbeat that quickens (frame), the siren yelping within 60 m
+    const f15 = ph === 'chase' && !R.over && R.endAt - now < 15000 && R.endAt > now;
+    if (f15 !== !!S.final15) { S.final15 = f15; if (f15) { for (const w of viewers()) H0().view(w).stamp('FINAL 15', 'bad sm'); S.beatT = 0; } }
     if (ph === 'count') {
       const n = Math.ceil((R.t0 - now) / 1000);
       for (const w of viewers()) { const v = H0().view(w); const t = n > 0 && n <= 3 ? String(n) : ''; if (v.els.count.textContent !== t) { v.count(t); if (t) audio.beep(false); } }
@@ -1750,17 +2017,19 @@ export function createGame(el, api) {
       if (!inGame) continue;
       if (hudT <= 0) {
         v.scores(S.match.scores.a, S.match.scores.b);
-        const pips = []; for (let i = 0; i < S.match.rounds; i++) { const h = S.match.hist[i]; pips.push(h ? (h.outcome === 'busted' ? other(h.runner) : h.runner) : i === R.idx ? 'now' : ''); }
+        const pips = []; for (let i = 0, nP = Math.max(S.match.rounds, R.idx + 1); i < nP; i++) { const h = S.match.hist[i]; pips.push(h ? (h.outcome === 'busted' ? other(h.runner) : h.runner) : i === R.idx ? 'now' : ''); }
         v.pips(pips);
         v.role(role, w);
         v.health(c.hp, role);
       }
       const left = R.over && R.result ? Math.max(0, R.endAt - R.result.at) : S.phase === 'chase' ? R.endAt - now : R.endAt - R.t0;
-      v.clock(S.paused && S.pausedAt > R.t0 ? R.endAt - S.pausedAt : left, `Round ${R.idx + 1}/${S.match.rounds}`, S.phase === 'chase' && left < 15000);
+      v.clock(S.paused && S.pausedAt > R.t0 ? R.endAt - S.pausedAt : left, daily() ? 'Daily chase' : R.sd ? 'Sudden death' : `Round ${R.idx + 1}/${S.match.rounds}`, S.phase === 'chase' && left < 15000);
+      // the Daily chase: the partner's time today is the line to beat
+      if (S.dailyRv && !S.dailyPassed && S.phase === 'chase' && !R.over && S.dailyRv.score < S.match.rules.roundTime && (now - R.t0) / 1000 >= S.dailyRv.score) { S.dailyPassed = true; v.stamp(`PASSED ${S.dailyRv.name.toUpperCase()}!`, 'good sm'); audio.win(); }
       // heat meter
       const rp = P2[R.runner];
       const d = Math.hypot(posOf('a').x - posOf('b').x, posOf('a').z - posOf('b').z);
-      if (role === 'runner') { const hd = heatDist(); v.heat(rp.esc, p.los && !p.cover ? (d > hd * RULES.heatBreak ? 'Breaking away' : 'Spotted') : d > hd ? 'Losing them' : 'Get further away', `${Math.round(d)} m`, p.los && !p.cover && d <= hd * RULES.heatBreak, S.phase === 'chase'); }
+      if (role === 'runner') { const hd = heatDist(); v.heat(rp.esc, p.los && !p.cover ? (d > hd * RULES.heatBreak ? 'Breaking away' : 'Spotted') : d > hd ? 'Losing them' : 'Too close', `${Math.round(d)} m`, p.los && !p.cover && d <= hd * RULES.heatBreak, S.phase === 'chase'); }
       else v.heat(rp.esc, rp.esc > 0.02 ? 'Slipping away' : 'On their tail', `${Math.round(d)} m`, rp.esc > 0.3, S.phase === 'chase');
       v.speed(c.speed * 3.6);
       v.nitro(c.nitro, c.boost, role === 'cop' || rules().nitro !== 'off');
@@ -1769,9 +2038,14 @@ export function createGame(el, api) {
       p.hurtT -= dt;
       const copClose = role === 'runner' && S.phase === 'chase' && d < 45;
       v.vignette(p.hurtT > 0 ? 'hurt' : copClose ? 'siren' : '');
-      // partner tag
-      if (live && w === me) tagFor(w, v);
+      // the other car's tag + off-screen arrow (live: the partner; practice: the AI)
+      if ((live && w === me) || (ai() && w === human())) tagFor(w, v);
+      // boxed in: the runner's 3·2·1 to get moving; the cop's 'hold them'
+      boxHud(w, v, role, p, d, dt);
+      // a hit on the other car lands as a number too (live: from its streamed health)
+      if (S.phase === 'chase' && !R.over && role === 'cop' && !local(R.runner) && w === human()) { const rp2 = P2[R.runner]; const hp = rp2.car.hp; if (hp < rp2.hpSeen - 2.5) { v.dmg(rp2.hpSeen - hp, 'them'); rp2.hpSeen = hp; } else if (hp > rp2.hpSeen) rp2.hpSeen = hp; }
       if (miniT <= 0 && mapImg) v.mini(mapImg, c.x, c.z, (g, toPx, dpr, k) => drawMarks(g, toPx, dpr, k, w, false));
+      if (!split() && w === human()) hud.setHorn(live && device.emotes !== 'off' && S.phase === 'chase', emoteNext(w));
       if (!split() && w === human()) hud.setAct(role, role === 'cop' ? p.spikesLeft > 0 && S.phase === 'chase' : p.oilLeft > 0 && S.phase === 'chase', role === 'cop' ? p.spikesLeft : p.oilLeft);
     }
     if (hudT <= 0) hudT = 0.2;
@@ -1780,6 +2054,10 @@ export function createGame(el, api) {
     // pause card
     if (S.paused && S.R && !S.R.over) {
       const sec = S.resumeAt ? Math.max(0, Math.ceil((S.resumeAt - now) / 1000)) : 0;
+      // (rebuilt only when what it says changes: no template + escaping every paused frame)
+      const pk = (S.resumeAt ? sec + 1 : 0) * 256 + (glLost ? 1 : 0) + (S.glStuck ? 2 : 0) + (S.menu ? 4 : 0) + (partnerHere ? 8 : 0) + (live && link.silence > 2000 ? 16 : 0) + ((S.reasons & PZ.hidden) ? 32 : 0) + (live && P2[other(me)].remote.pz ? 64 : 0);
+      if (pk === S.pauseKey && S.pauseCard && hud._card === S.pauseCard) return;
+      S.pauseKey = pk;
       const t = S.resumeAt ? `Back in ${sec}…` : glLost || S.glStuck ? 'Graphics paused' : S.menu ? 'Paused' : live && (!partnerHere || link.silence > 2000) ? `Waiting for ${api.name(other(me))}` : 'Paused';
       const sub = S.resumeAt ? 'Get ready' : S.glStuck ? 'The phone ran short of memory and dropped the graphics.' : glLost ? 'One moment…' : S.menu ? (live ? `The chase is paused for ${api.name(other(me))} too.` : '') : live && !partnerHere ? 'The chase carries on when they’re back.' : (S.reasons & PZ.hidden) ? '' : live && P2[other(me)].remote.pz ? `${api.name(other(me))} paused the chase.` : '';
       let btns = null;
@@ -1791,18 +2069,37 @@ export function createGame(el, api) {
     } else if (S.pauseCard) {
       // Only take down the card we put up: Quit/Restart may already have replaced it with the lobby.
       if (hud._card === S.pauseCard) hud.card(null);
-      S.pauseCard = null;
+      S.pauseCard = null; S.pauseKey = -1;
     }
+  }
+  /** Boxed-in countdown on the HUD (runner: get moving; cop: hold them). */
+  function boxHud(w, v, role, p, d, dt) {
+    const R = S.R;
+    if (S.phase !== 'chase' || !R || R.over || S.paused) { v.boxed(null); return; }
+    if (role === 'runner') {
+      if (local(w) && p.stopT > 0.25) { const T = p.boxT || RULES.bustT; const n = Math.max(1, Math.ceil(T - p.stopT)); if (v.boxN !== n || v.boxQ !== !!p.boxQueue) { v.boxN = n; v.boxQ = !!p.boxQueue; v.boxS = `${p.boxQueue ? 'BOXED IN TRAFFIC' : 'BOXED IN'} · MOVE! ${n}`; } v.boxed(1 - p.stopT / T, v.boxS, ''); } else v.boxed(null);
+      return;
+    }
+    // the cop: the runner's own clock when it's on this device, else my estimate from what I see
+    const rp = P2[R.runner]; let t = 0; let T = RULES.bustT;
+    if (local(R.runner)) { t = rp.stopT; T = rp.boxT || RULES.bustT; } else {
+      const stopped = rp.car.speed < RULES.bustStop && d < RULES.bustNear && (P2[w].car.speed < BOX.copSlow || d < BOX.touch);
+      S.copBoxT = stopped ? (S.copBoxT || 0) + dt : 0; t = S.copBoxT;
+    }
+    if (t > 0.25) { const n = Math.max(1, Math.ceil(T - t)); if (v.boxN !== n) { v.boxN = n; v.boxS = `HOLD THEM · ${n}`; } v.boxed(1 - t / T, v.boxS, 'cop'); } else v.boxed(null);
   }
   const proj = { x: 0, y: 0, z: 0 };
   function tagFor(w, v) {
     const o = other(w); const oc = P2[o].car; const cam = cams[w].cam;
     if (!S.R || S.phase === 'intro' || S.phase === 'wait') { v.tag(0, 0, false); v.edgeArrow(0, 0, 0, false); return; }
+    if (!live && !otherVisible(w)) { v.tag(0, 0, false); v.edgeArrow(0, 0, 0, false); return; } // (practice: the AI runner's tag follows the radar rule)
     vec.set(oc.x, oc.y + 2.4, oc.z).project(cam);
     const d = Math.hypot(oc.x - P2[w].car.x, oc.z - P2[w].car.z);
     const vw = W; const vh = H;
     const on = vec.z < 1 && Math.abs(vec.x) < 1 && Math.abs(vec.y) < 1 && d < 300;
-    v.tag((vec.x * 0.5 + 0.5) * vw, (-vec.y * 0.5 + 0.5) * vh, on, `${api.name(o)} · ${Math.round(d)} m`, roleOf(o) === 'cop' ? 'cop' : '');
+    const bub = S.bubble && S.bubble.w === o && performance.now() < S.bubble.until ? S.bubble : null;
+    const dm = Math.round(d); if (v.tagD !== dm || v.tagO !== o || v.tagB !== bub) { v.tagD = dm; v.tagO = o; v.tagB = bub; v.tagS = bub ? `${nameOf(o)}: ${bub.text}` : `${nameOf(o)} · ${dm} m`; }
+    v.tag((vec.x * 0.5 + 0.5) * vw, (-vec.y * 0.5 + 0.5) * vh, on, v.tagS, bub ? 'emote' : roleOf(o) === 'cop' ? 'cop' : '');
     void proj;
     // off-screen: an edge arrow towards them (when close)
     if (!on && d < 160 && otherVisible(w)) {
@@ -1814,7 +2111,7 @@ export function createGame(el, api) {
   let vec = null;
 
   // ── frame ──
-  let acc = 0; let lastTs = 0; let lastWall = 0;
+  let acc = 0; let lastTs = 0; let lastWall = 0; let lobbyT = 0;
   function frame(ts) {
     if (dead) return;
     raf = requestAnimationFrame(frame);
@@ -1831,6 +2128,12 @@ export function createGame(el, api) {
     if (isHost || !live) hostPauseCheck(now); else guestPauseCheck(now);
     if (!live && S.paused === false && (S.reasons || softReasons.size)) { /* handled by hostPauseCheck */ }
     updatePhase(now);
+    if (S.phase === 'lobby' && (lobbyT -= dtReal) <= 0) { lobbyT = 0.5; renderLobby(false); } // (partner arriving / loading, records: keyed, cheap)
+    // a rematch in place: the host starts the next match as soon as both are back in the lobby
+    if (S.rematchCard) {
+      if (S.autoStart && S.phase === 'lobby' && hostStart(FLOW.rematchLead, true)) S.autoStart = 0;
+      else if (performance.now() - S.rematchAt > 15000) { S.rematchCard = false; S.autoStart = 0; renderLobby(true); }
+    }
     updateRemote(dtReal);
     // slow motion after a PIT; a hard hit's quarter second at half speed; the hit-stop itself
     // (60–90 ms with the simulation held while the frame still draws: the frame of impact lands)
@@ -1872,7 +2175,7 @@ export function createGame(el, api) {
         // countdown: hold the cars (but let them rev)
         for (const w of AB) { const p = P2[w]; readPad(p.pad, p.inp, dtReal); p.car.rpm += ((p.inp.gas ? 0.9 : 0.2) - p.car.rpm) * Math.min(1, dtReal * 6); }
       }
-      if (S.R && S.R.over) for (const w of AB) if (local(w)) { const c = P2[w].car; c.vx *= Math.max(0, 1 - dtReal * 1.5); c.vz *= Math.max(0, 1 - dtReal * 1.5); c.r *= Math.max(0, 1 - dtReal * 2); c.x += c.vx * dtReal; c.z += c.vz * dtReal; c.yaw += c.r * dtReal; c.speed = Math.hypot(c.vx, c.vz); }
+      if (S.R && S.R.over) { const dk = dtReal * tsK; for (const w of AB) if (local(w)) { const c = P2[w].car; c.vx *= Math.max(0, 1 - dk * 1.5); c.vz *= Math.max(0, 1 - dk * 1.5); c.r *= Math.max(0, 1 - dk * 2); c.x += c.vx * dk; c.z += c.vz * dk; c.yaw += c.r * dk; c.speed = Math.hypot(c.vx, c.vz); } }
     }
     S.tSec += dtReal;
     // visuals
@@ -1894,12 +2197,19 @@ export function createGame(el, api) {
         const cy = cams[human()].yaw || mc.yaw; themA.pan = (dx * Math.cos(cy) + dz * Math.sin(cy)) / d;
       }
       const cop = P2[copW()].car; const iAmCop = roleOf(human()) === 'cop';
-      sirenA.on = S.phase === 'chase' && !S.paused; sirenA.dist = iAmCop ? 30 : themA.dist;
+      sirenA.on = S.phase === 'chase' && !S.paused; sirenA.dist = iAmCop ? 30 : themA.dist; sirenA.yelpR = S.final15 ? 60 : 40;
+      if (S.final15 && !S.paused && S.R) { S.beatT -= dtReal; if (S.beatT <= 0) { const k = clamp(1 - (S.R.endAt - now) / 15000, 0, 1); S.beatT = 60 / (72 + 38 * k); if (audio.heartbeat) audio.heartbeat(k); } }
       sirenA.vrel = iAmCop ? 0 : themA.vrel; sirenA.pan = iAmCop ? 0 : themA.pan; void cop;
       audio.engine(S.paused ? null : meA, S.paused ? null : themA, sirenA, dtReal);
+      // the pursuit bed: closer, hotter and later is louder and faster (records.js-free, audio.js music)
+      if (S.phase === 'chase' && !S.paused && !S.R.over && device.music !== 'off') {
+        const rp = P2[S.R.runner]; const I = clamp(0.35 * (1 - themA.dist / 200) + 0.4 * rp.esc + (S.R.endAt - now < 20000 ? 0.25 : 0), 0, 1);
+        audio.music(I);
+        if (rp.esc > 0.5 && !S.riserOn) { S.riserOn = true; if (audio.riser) audio.riser(); } else if (rp.esc < 0.35) S.riserOn = false;
+      } else audio.music(null);
       if (mc.boost && !S.wasBoost) audio.nitro();
       S.wasBoost = mc.boost;
-    } else audio.engine(null, null, null, dtReal);
+    } else { audio.engine(null, null, null, dtReal); audio.music(null); }
     // render
     const vs = viewers();
     renderer.info.reset();
@@ -1937,7 +2247,7 @@ export function createGame(el, api) {
     lastWall = w0;
   }
   void lastWall;
-  const meA = { rpm: 0, gas: 0, slip: 0, speed: 0, flat: 0, boost: false, offroad: false }; const themA = { rpm: 0, dist: 999, vrel: 0, pan: 0 }; const sirenA = { on: false, dist: 999, vrel: 0, pan: 0 };
+  const meA = { rpm: 0, gas: 0, slip: 0, speed: 0, flat: 0, boost: false, offroad: false }; const themA = { rpm: 0, dist: 999, vrel: 0, pan: 0 }; const sirenA = { on: false, dist: 999, vrel: 0, pan: 0, yelpR: 40 };
   const animCars = [{ x: 0, z: 0 }, { x: 0, z: 0 }];
   // Dynamic quality: a ladder of levers, cheapest first, with hysteresis so a phone sitting at the
   // 60 fps edge doesn't pulse (every resize() re-makes the drawable + MSAA buffers: a hitch).
@@ -1999,8 +2309,8 @@ export function createGame(el, api) {
     if (split()) return '<b>Left</b> <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> drive · <kbd>Space</kbd> drift · <kbd>⇧</kbd> nitro · <kbd>E</kbd> spike/oil · <kbd>Q</kbd> look back<br><b>Right</b> <kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> · <kbd>⇧</kbd> drift · <kbd>Enter</kbd> nitro · <kbd>/</kbd> spike/oil · <kbd>.</kbd> look back';
     return '<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> drive · <kbd>Space</kbd> drift · <kbd>Shift</kbd> nitro<br><kbd>E</kbd> spike strip / oil · <kbd>M</kbd> map · <kbd>C</kbd> camera · <kbd>B</kbd> look back';
   }
-  const legendTimer = setInterval(() => { if (!dead) hud.setLegend(S.R && !S.R.over && S.phase === 'chase' ? legendHTML() : ''); }, 500);
-  timers.push(legendTimer);
+  // (phones have no keyboard legend: no timer at all; setLegend diffs, so a laptop writes only on change)
+  if (!coarse) timers.push(setInterval(() => { if (!dead) hud.setLegend(S.R && !S.R.over && S.phase === 'chase' ? legendHTML() : ''); }, 500));
 
   load();
 
@@ -2088,6 +2398,7 @@ export function createGame(el, api) {
   }
 
   return {
+    onRematch, onMenu,
     destroy() {
       dead = true;
       cancelAnimationFrame(raf);

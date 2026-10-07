@@ -6,7 +6,7 @@
 // brick, tile, grass, water, rock …), so a chunk costs one draw call.
 import { BOUNDS, OPEN, WATER, CREEK, CREEK_HW, US36, usPt, footX } from './boulder-data.js';
 import { layout, smoothedRoads, height, HEIGHT_GRID, zoneAt, mulberry, isFarMtn } from './boulder-layout.js';
-import { makeAtlas, tileUV, T } from './boulder-atlas.js';
+import { atlasGen, tileUV, T } from './boulder-atlas.js';
 
 // ── merged-geometry buffer ───────────────────────────────────────────────────
 const WHITE_UV = (() => { const [u0, v0, u1, v1] = tileUV(T.white); return [(u0 + u1) / 2, (v0 + v1) / 2]; })();
@@ -118,8 +118,16 @@ function ico() {
 }
 
 export async function buildBoulder(THREE, kit = {}) {
-  const t0 = performance.now(); const TT = {}; let tl = t0; const TR = {}; let trPrev = 0; const mark = (k) => { const n = performance.now(); TT[k] = Math.round(n - tl); tl = n; let t = 0; for (const bb of bufs.values()) if (bb) t += bb.ni / 3; TR[k] = Math.round(t - trPrev); trPrev = t; };
-  const slice = typeof kit.slice === 'function' ? () => kit.slice() : () => null;
+  const t0 = performance.now(); const TT = {}; let tl = t0; const TR = {}; let trPrev = 0; const mark = (k) => { stage = 'after ' + k; const n = performance.now(); TT[k] = Math.round(n - tl); tl = n; let t = 0; for (const bb of bufs.values()) if (bb) t += bb.ni / 3; TR[k] = Math.round(t - trPrev); trPrev = t; };
+  // kit.slice() yields to the browser only once the engine's slice budget has run out, so it is
+  // cheap to call often: every loop below calls it every few items (each item is ≤ ~1 ms on a 4×
+  // throttled core), keeping every main-thread block near the budget instead of one stage long.
+  // gap / gapAt: the longest stretch between two calls here (and where), for the test's report.
+  let gap = 0; let gapAt = ''; let gapT = performance.now(); let stage = 'start';
+  const slice = typeof kit.slice === 'function'
+    ? () => { const n = performance.now(); if (n - gapT > gap) { gap = n - gapT; gapAt = stage; } const p = kit.slice(); return p && p.then ? p.then(() => { gapT = performance.now(); }) : (gapT = performance.now(), p); }
+    : () => null;
+  const every = (k, n) => ((k % n) === 0 ? slice() : null);
   const quality = kit.quality || 'high';
   const low = quality === 'low';
   const L = layout();
@@ -132,7 +140,8 @@ export async function buildBoulder(THREE, kit = {}) {
   // surface codes (graphics v2): feature-detected; an older engine gets plain shading
   const FXN = { plain: 0, ink: 1, windows: 2, glow: 3, shop: 11, tower: 12, road: 5, paint: 6, glass: 7, chrome: 8, trim: 9, brick: 13, stucco: 14, tile: 15, shingle: 16, concrete: 17, grass: 18, dirt: 19, water: 24, metal: 25, wood: 26, rock: 27, foliage: 28, lot: 29 };
   const F = {}; for (const k of Object.keys(FXN)) F[k] = kit.FX ? (kit.FX[k] != null ? kit.FX[k] : 0) : (k === 'ink' ? 1 : k === 'glow' ? 3 : 0);
-  const canvas = makeAtlas({ night: dark });
+  let canvas = null;
+  { stage = 'atlas'; const it = atlasGen({ night: dark }); for (;;) { const st = it.next(); if (st.done) { canvas = st.value; break; } await slice(); } }
   let tex = null;
   if (canvas) {
     tex = new THREE.CanvasTexture(canvas);
@@ -149,6 +158,7 @@ export async function buildBoulder(THREE, kit = {}) {
       mat.defines = { ...(base.defines || {}) }; mat.userData = { ...base.userData };
     } catch (e) { mat = null; }
   }
+  stage = 'materials'; await slice();
   if (!mat) mat = new THREE.MeshLambertMaterial({ vertexColors: true });
   mat.vertexColors = true; if (tex) mat.map = tex; mat.needsUpdate = true;
   // power poles and wires: the engine's see-through toon (they dither away when the chase camera is
@@ -232,8 +242,8 @@ export async function buildBoulder(THREE, kit = {}) {
         I[n++] = a; I[n++] = a + cols; I[n++] = a + 1; I[n++] = a + 1; I[n++] = a + cols; I[n++] = a + cols + 1; buf.ni = n; added += 2;
       }
       terrTris += added;
+      await slice();
     }
-    await slice();
   }
   mark('terrain');
 
@@ -254,6 +264,7 @@ export async function buildBoulder(THREE, kit = {}) {
           withFx(buf, F.grass, () => buf.quad(at(p0, s * 7, -0.04), at(p1, s * 7, -0.04), at(p1, s * 16, -0.05), at(p0, s * 16, -0.05), grass, null, [0, 1, 0]));
         }
         if (rnd() < 0.45) { const o = (rnd() * 2 - 1) * 4.2; const [rx, ry, rz] = at(p0, o, -0.62); withFx(buf, F.rock, () => blob(buf, rx, ry, rz, 0.55 + rnd() * 0.8, 0.5, rgb(rnd() < 0.5 ? '#b3a28a' : '#9d8f7c'))); }
+        if (q === n - 1) await slice();
         if (!low && rnd() < 0.3) { const s = rnd() < 0.5 ? -1 : 1; const [wx, wy, wz] = at(p0, s * (5.5 + rnd() * 2), -0.1); withFx(buf, F.foliage, () => blob(buf, wx, wy + 0.6, wz, 1.2 + rnd() * 0.7, 0.75, shade(willow, 0.9 + rnd() * 0.2))); }
       }
     }
@@ -288,7 +299,7 @@ export async function buildBoulder(THREE, kit = {}) {
       }
       const tr = THREE.ShapeUtils.triangulateShape(poly.map(([x, z]) => new THREE.Vector2(x, z)), []);
       withFx(buf, fx, () => { for (const [a, b2, c2] of tr) buf.tri([poly[a][0], Y(poly[a][0], poly[a][1]), poly[a][1]], [poly[b2][0], Y(poly[b2][0], poly[b2][1]), poly[b2][1]], [poly[c2][0], Y(poly[c2][0], poly[c2][1]), poly[c2][1]], colr, [0, 1, 0]); });
-      if (++k % 200 === 0) await slice();
+      await every(++k, 12);
     }
     if (!low) { // stall stripes (laid out with the parked cars in boulder-layout.js)
       const W2 = rgb('#e6e2d6');
@@ -313,7 +324,7 @@ export async function buildBoulder(THREE, kit = {}) {
     for (let ri = 0; ri < R2.length; ri++) {
       const r = R2[ri]; const walk = r.sidewalk || 0;
       if (!curbed(r) || walk < 2.15) continue; // downtown, campus, commercial and the arterials
-      if (ri % 8 === 0) await slice();
+      await slice();
       const n = r.n; const hw = r.hw; const lift = r.kind === 'arterial' ? 0.045 : 0.04;
       const filt = (o) => o !== r && !o.bridge;
       const nx = new Float64Array(n); const nz = new Float64Array(n);
@@ -337,6 +348,7 @@ export async function buildBoulder(THREE, kit = {}) {
       };
       for (let i = 0; i < n - 1; i++) {
         if (!noCurb(i)) continue;
+        await every(i, 8);
         const ax = r.x[i]; const az = r.z[i]; const bx = r.x[i + 1]; const bz = r.z[i + 1];
         const segL = Math.hypot(bx - ax, bz - az); const m = Math.max(1, Math.round(segL / 1.25));
         const buf = B((ax + bx) / 2, (az + bz) / 2);
@@ -369,6 +381,7 @@ export async function buildBoulder(THREE, kit = {}) {
   if (!low) {
     const W2 = rgb('#eceae2'); const lift = 0.045 + 0.032;
     for (const r of sm.list.filter((o) => o.src.bike && !o.bridge)) {
+      await slice();
       const off = r.hw - 1.75;
       for (const sd of [-1, 1]) {
         let lastStencil = -1e9;
@@ -402,14 +415,14 @@ export async function buildBoulder(THREE, kit = {}) {
     const buf = B(b.x, b.z); const v0 = buf.v; const i0 = buf.ni;
     drawBuilding(buf, b);
     if (OL && b.style !== 'stands' && !b.tower && (b.landmark || b.home || (b.w * b.d > 520 && /brick|sandstone|hotel|school|courthouse|theater/.test(b.style)))) buf.hull(v0, i0, OL * (b.w > 30 || b.h > 14 ? 1.6 : 1), INK);
-    if (++bc % 100 === 0) await slice();
+    await every(++bc, 6);
   }
   mark('buildings');
   // ── props: walls, rails, rocks, fences, bus stops, gantries, power lines, the mall, the home ──
-  { let k = 0; for (const p of L.props) { drawProp(p); if (++k % 150 === 0) await slice(); } }
+  { let k = 0; for (const p of L.props) { drawProp(p); await every(++k, 12); } }
   await slice();
   // ── parked cars (their collision boxes are kind 'car' solids) ─────────────────────────
-  { let k = 0; for (const c of L.parked) { drawCar(B(c.x, c.z), c); if (++k % 300 === 0) await slice(); } }
+  { let k = 0; for (const c of L.parked) { drawCar(B(c.x, c.z), c); await every(++k, 24); } }
   mark('props');
   // ── decor trees (backyards, the foothill forest, the mesa's ponderosas) ──────────────────
   {
@@ -417,7 +430,7 @@ export async function buildBoulder(THREE, kit = {}) {
     let k = 0;
     for (const d of decor) {
       drawTree(B(d.x, d.z), d);
-      if (++k % 400 === 0) await slice();
+      await every(++k, 24);
     }
   }
   await slice();
@@ -455,10 +468,11 @@ export async function buildBoulder(THREE, kit = {}) {
     m.matrixAutoUpdate = false; m.updateMatrix();
     grp.add(m); tris += buf.tris; meshes++;
     if (bm === mat) bufs.set(grp, null); else wbufs.set(grp, null);
-    if (meshes % 12 === 0) await slice();
+    await slice();
   }
   mark('flush');
-  root.userData.stats = { TT, TR, tris, meshes, terrTris, buildMs: Math.round(performance.now() - t0), layoutMs: Math.round(L.ms), solids: L.solids.length, buildings: L.buildings.length, parked: L.parked.length };
+  { const n = performance.now(); if (n - gapT > gap) { gap = n - gapT; gapAt = stage; } }
+  root.userData.stats = { TT, TR, gapMs: Math.round(gap), gapAt, tris, meshes, terrTris, buildMs: Math.round(performance.now() - t0), layoutMs: Math.round(L.ms), solids: L.solids.length, buildings: L.buildings.length, parked: L.parked.length };
   return root;
 
   // ── helpers (hoisted) ─────────────────────────────────────────────────────────────

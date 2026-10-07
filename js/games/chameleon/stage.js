@@ -171,6 +171,32 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
   function pickMap(far = 60) { return mapMesh ? pick([mapMesh], far) : null; }
 
   /** Blob-shadow coverage (0..1) at a world point (matches the blob shader). */
+  /** blobAt over only the blob shadows near a point (stamp / blend scoring call it per texel:
+   *  a big map has hundreds of blobs). Returns a shade function (x, y, z) → 0..1. */
+  function nearBlobs(px, py, pz, reach = 1.6) {
+    const L = [];
+    if (map) for (const b of map.blobs) {
+      const r = reach + Math.max(b.rx, b.rz) * 1.25;
+      if (Math.abs(py - b.y) > reach || (b.x - px) * (b.x - px) + (b.z - pz) * (b.z - pz) > r * r) continue;
+      L.push({ x: b.x, y: b.y, c: Math.cos(b.yaw), s: Math.sin(b.yaw), ru: b.rx * 1.25, rv: b.rz * 1.25, a: b.a, z: b.z });
+    }
+    const n = L.length;
+    return (x, y, z) => {
+      let a = 0;
+      for (let i = 0; i < n; i++) {
+        const b = L[i];
+        if (Math.abs(y - b.y) > 0.04) continue;
+        const dx = x - b.x; const dz = z - b.z;
+        const u = (dx * b.c - dz * b.s) / b.ru; const v = (dx * b.s + dz * b.c) / b.rv;
+        const d2 = (u * u + v * v) * 1.5625;
+        if (d2 >= 1) continue;
+        const t = clamp((Math.sqrt(d2) - 0.35) / 0.65, 0, 1);
+        const k = (1 - t * t * (3 - 2 * t)) * b.a;
+        a = 1 - (1 - a) * (1 - k);
+      }
+      return a;
+    };
+  }
   function blobAt(x, y, z) {
     if (!map) return 0;
     let a = 0;
@@ -243,7 +269,7 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
         out[0] = t0[0] + s * (t1[0] - t0[0]) + t * (t2[0] - t0[0]);
         out[1] = t0[1] + s * (t1[1] - t0[1]) + t * (t2[1] - t0[1]);
       },
-      shadeAt: (x, y, z) => blobAt(x, y, z),
+      shadeAt: nearBlobs(hit.point.x, hit.point.y, hit.point.z),
       blobRgb: BLOB_RGB,
     };
   }

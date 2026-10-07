@@ -171,6 +171,7 @@ export function settingsSheet(api, { canEdit, local, setup, waitingFor, music = 
     ${row('Escapes', 'Scurries or tongue-zips while hunted', stepper(r, 'escapes', canEdit))}
     ${row('Seeker speed', '', seg(r, 'seekSpeed', [['slow', 'Slow'], ['normal', 'Normal'], ['fast', 'Fast']], canEdit))}
     ${hs ? row('Seeker scores', r.seekScore === 'off' ? 'Only the hider scores (1 pt per second hidden)' : r.seekScore === 'time' ? '½ pt per second left on the clock when they tag' : '½ pt per second left, +10 per unused pellet', seg(r, 'seekScore', [['off', 'Off'], ['time', 'Time left'], ['full', 'Time + pellets']], canEdit)) : ''}
+    ${hs ? row('Seeker wager', r.wager ? `Blindfolded, the seeker calls floor, furniture, wall or ceiling: +${r.wager} if right` : 'No call during the hide', seg(r, 'wager', [[0, 'Off'], [5, '+5'], [10, '+10']], canEdit)) : ''}
     </div>
     <h3>Timing</h3>
     <div class="chm-sets">
@@ -203,14 +204,14 @@ export function settingsSheet(api, { canEdit, local, setup, waitingFor, music = 
 /** First-time tips for the v2 movement (non-modal sticker). */
 export function tipsHtml(mouse) {
   const k = (key, touch) => (mouse ? `<kbd>${key}</kbd>` : `<b>${touch}</b>`);
-  return `<div class="chm-kicker">New moves</div>
+  // 'Got it' sits in the header row: a bottom row pushed the card down over the hider's I'm-hidden pill on phones
+  return `<div class="chm-tiphead"><div class="chm-kicker">New moves</div><button class="chm-go" data-act="tips-ok">Got it</button></div>
     <ul>
       <li><span class="chm-ti t1"></span><p>${k('E', 'Stick')} to grab a wall — or just walk into one. Crawl up onto the ceiling.</p></li>
       <li><span class="chm-ti t2"></span><p>On a ceiling, pick <b>Hang</b> to dangle. On a rail or pole, <b>Perch</b>.</p></li>
       <li><span class="chm-ti t3"></span><p><b>Squeeze</b> slides you into gaps behind sofas and under beds.</p></li>
       <li><span class="chm-ti t4"></span><p>${k('Z', 'Zip')} tongue-zips to the surface you’re looking at. ${k('Space', 'Jump')} on a wall leaps off.</p></li>
-    </ul>
-    <button class="chm-go" data-act="tips-ok">Got it</button>`;
+    </ul>`;
 }
 
 export const SURF_HEAD = {
@@ -285,7 +286,7 @@ export function curtainCard(api, { kind, who, wager = 0, call = null, climbs = 1
   </div></div>`;
 }
 
-export const EMOTES = [['lol', '😂', 'LOL'], ['how', '😤', 'HOW'], ['sneaky', '👀', 'Sneaky'], ['love', '❤️', ''], ['again', '🔁', 'Again!'], ['paint', '🎨', 'Nice paint']];
+export const EMOTES = [['lol', '😂', 'LOL'], ['how', '😤', 'HOW'], ['sneaky', '👀', 'Sneaky'], ['love', '❤️', ''], ['again', '🔁', 'Again!'], ['paint', '🎨', 'Nice!']];
 export function emoteRow() {
   return `<div class="chm-emotes" role="group" aria-label="React">${EMOTES.map(([k, e, l]) => `<button class="chm-emote" data-emote="${k}" aria-label="${esc(l || k)}"><span>${e}</span>${l ? `<em>${esc(l)}</em>` : ''}</button>`).join('')}</div>`;
 }
@@ -340,7 +341,13 @@ export function ctxCard() {
 
 /** The match's final card (before the hub's end card): a round timeline, best hide / fastest find,
  *  record stickers and a Continue button; either player's tap (or 12 s) hands over to the hub. */
-export function finalCard(api, { winner, a, b, mode, story, records = [], unlocks = [], firstNext = null }) {
+/** 'Best hide tonight?': both players tap a round; a matching pick crowns it (a Creative hide on the wardrobe). */
+function voteRow(api, { rounds, votes, crowned, local }) {
+  if (!rounds || rounds.length < 2) return '';
+  const pip = (r) => ['a', 'b'].filter((w) => votes[w] === r.round).map((w) => `<i class="chm-vpip p${w}" title="${esc(api.name(w))}"></i>`).join('');
+  return `<div class="chm-vote"><h3>${crowned ? 'Best hide tonight' : local ? 'Best hide tonight? Pick one together' : 'Best hide tonight? You both pick'}</h3><div class="chm-chips">${rounds.map((r) => `<button class="chm-chip p${r.hider} ${crowned === r.round ? 'on crown' : ''}" data-vote="${r.round}" ${crowned ? 'disabled' : ''}><i></i>R${r.round} ${esc(api.name(r.hider))} ${fmtTime(r.ms | 0)}${pip(r)}</button>`).join('')}</div></div>`;
+}
+export function finalCard(api, { winner, a, b, mode, story, records = [], unlocks = [], firstNext = null, vote = null }) {
   const head = mode === 'db' ? (winner ? `${esc(api.name(winner))} wins ${a}–${b}` : 'Perfectly matched') : winner ? `${esc(api.name(winner))} blends best` : 'Perfectly matched';
   const sub = mode === 'db' ? 'Rounds won' : `${esc(api.name('a'))} ${a} · ${b} ${esc(api.name('b'))}`;
   const recs = records.map((r) => `<span>${esc(r.text)}</span>`).concat(unlocks.map((u) => `<span>Unlocked · ${esc(u)}</span>`));
@@ -351,6 +358,7 @@ export function finalCard(api, { winner, a, b, mode, story, records = [], unlock
     ${story.bars ? `<div class="chm-tl">${story.bars}</div>` : ''}
     ${story.lines.length ? `<div class="chm-story">${story.lines.join('')}</div>` : ''}
     ${recs.length ? `<div class="chm-recs">${recs.join('')}</div>` : ''}
+    ${vote ? voteRow(api, vote) : ''}
     ${emoteRow()}
     ${firstNext ? `<p class="chm-nextline">Rematch: ${nameSpan(api, firstNext)} hides first</p>` : ''}
     <button class="chm-go me" data-act="finish">See the board</button>

@@ -180,8 +180,9 @@ export function createHud(root, o) {
         while (R.pops.children.length > 2) R.pops.firstChild.remove();
         setTimeout(() => p.remove(), 1200);
       },
-      combo(n, label) {
+      combo(n, label, tier = 0) {
         R.combo.innerHTML = `x${n}<small>${esc(label)}</small>`;
+        R.combo.dataset.t = tier > 0 ? tier : 0; // the ladder grows and heats up by tier
         flip ^= 1; R.combo.classList.toggle('go', !!flip); R.combo.classList.toggle('go2', !flip);
       },
       warn(on, xPct) {
@@ -259,7 +260,7 @@ export function createHud(root, o) {
         ov.lobby.innerHTML = `<div class="rr-head"><div class="rr-logo"><span>RAIL</span><span>RUSH</span></div><div class="rr-tagline">Same track. Two runners. No mercy.</div></div><div></div>
           <div class="rr-sheet">
             <div class="rr-modes">
-              <button class="rr-mode" data-mode="race">${ICONS.flag}<b>Race</b><span>First to 2 km. Ink, roadblocks, zaps.</span></button>
+              <button class="rr-mode" data-mode="race">${ICONS.flag}<b>Race</b><span>First to 1.5 km. Ink, roadblocks, zaps.</span></button>
               <button class="rr-mode" data-mode="brawl">${ICONS.brawl}<b>Brawl</b><span>Side by side. Shove them into walls.</span></button>
               <button class="rr-mode" data-mode="tandem">${ICONS.tandem}<b>Together</b><span>Shared hearts. Revive each other.</span></button>
             </div>

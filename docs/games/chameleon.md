@@ -195,8 +195,10 @@ i.e. the shooter's screen could already have shown the dash, the window shrinks 
 `[T − delay − ½ RTT − 120 ms, T + 60 ms]` (`TAG_WINDOW_ESCAPE`). A 6.6 m/s Large scurry covers
 ~3 m in the old window on a 120 ms link; now a tag has to land on where the hider actually was
 when the shooter saw them. `state().lastWindow` reports which window judged the last shot
-(`feel2` fires 450 ms into a scurry on a 60 ms link: window `escape`, still confirmed because the
-seen position matched within tolerance).
+(`feel2` aims and fires in the same animation frame 250 ms after a second scurry on a 60 ms
+link, landing 543 ms into the dash: window `escape`, confirmed because the seeker's screen showed
+the dashing body 0.19 m from its true position; a test-runner click used to land 300+ ms late
+and miss the dashing body entirely, which made the section flaky).
 
 ### Scoring: the seeker scores too, the dry-out pays the time survived, the blend %
 
@@ -259,7 +261,8 @@ Room, mean 4 s). Now: Huge, 8 pellets, blink **On**, scan cooldown 20 s, seeker 
 ### Hygiene
 
 `PLAYERS = ['a', 'b']` index loops in `simulate` / `animate`; the camera clamp's box filter is a
-module constant (`CAM_FILTER`); `controls.js` reads the surface rect on pointerdown and at most once
+module constant (`CAM_FILTER`); the stage size is read once per frame into `SW/SH` (the
+`stage.size` getter allocates an array; the cameras and the here-marker read it up to 6× a frame); `controls.js` reads the surface rect on pointerdown and at most once
 a second afterwards (every pointermove used to force a synchronous layout right after writing the
 knob transform).
 
@@ -341,7 +344,7 @@ condition in grey halftone and a tap says what's missing ("Survive 2 more hunts"
   hides · Sydney seeks · Living Room" inside the recap, and the round 2+ title card cut to **0.9 s**
   (round 1 keeps 1.8 s for the map orbit). FOUND → next hide: 14.3 s → ~10.8 s untouched, ~5 s on a
   tap. Either tap still skips.
-- **Emotes**: six riso stickers under the stats (LOL · HOW · Sneaky · ❤️ · Again! · Nice paint),
+- **Emotes**: six riso stickers under the stats (LOL · HOW · Sneaky · ❤️ · Again! · Nice!),
   reliable `emote {k}`, rate-limited 1 per 700 ms and 8 per recap; the partner's lands big at a
   random tilt near the card with the `pose` sound and a squash, yours small and mirrored. DOM only.
 - **Final card** before the hub's end card: a round timeline (one bar per round in the hider's ink,
@@ -384,8 +387,40 @@ condition in grey halftone and a tap says what's missing ("Survive 2 more hunts"
   buttons); type floor raised to ~11 px (captions, pose names, preset subtitles, size labels, map
   facts, "Move").
 
-Not done here (mechanics' camera): the free cam's wall clamp, the climb camera's tangent slide and
-the attach-time camera dip. Haptics are a no-op in `core.js` now (iPhone first).
+### Cameras (finished in the resumed pass)
+
+- **Free cam**: still flies through furniture, but each frame's move is raycast against walls and
+  ceiling slabs (`wall: true` colliders taller than 1.2 m, or `ceil`) and stops 0.15 m short; a
+  point that still ends up within 0.15 m of one leaves by the nearest face. The ceiling limit is
+  now the topmost board ceiling's underside − 0.25 m (was tallest collider + 0.5 m, i.e. above the
+  slab: the blank white/beige screen). Measured on Living Room: flying 3.5 s into the back wall
+  stops at z −3.85 (wall face −4.0), flying up stops at y 2.25 (ceiling 2.5); no blank frames.
+- **Seeker climb camera**: the half-space limit is 0.55 × dist (was 0.3), and when walls or low
+  furniture still pull it under 0.6 × dist it tries two positions slid round the wall's tangent
+  (the view's right on a ceiling) and keeps the clearer one. Sweep (9 contacts × 3 pitches × 4 yaws,
+  climb-view samples): camera ≥ 0.9 m from the body in **96 / 96** (was 5 under 0.5 m, worst
+  0.17 m), body→camera blocked by walls 2 (was 6). The 35 % alpha fade was not needed at these
+  distances (the body is still hidden only when jammed, `climbNear`).
+- **Stick / let-go dip**: the hider's third-person look target eases at rate 6 for 0.4 s after any
+  attach or detach (snaps if the jump is over 1.2 m, e.g. a new round) instead of following the
+  0.3 m body-centre jump; the player's pitch is left alone.
+
+### Creative hide vote
+
+The final card (Hide & Seek, ≥ 2 rounds) asks "Best hide tonight?": one chip per round. Each phone
+picks (reliable `vote {w, r}`, the partner's pick shows as an ink pip on the chip; in hotseat one
+tap is the pair's pick); a matching pick crowns the round (★ chip, CREATIVE HIDE sticker + `unlock`
+chord) and the host adds 1 to `${hider}_creative`, which prints a "Creative hide ×N" ribbon on that
+person's wardrobe. A pick holds the 12 s auto hand-over for 8 s more. Settings sheet, Round group,
+also gained the *Seeker wager* row (Off · +5 · +10).
+
+First-run tips: "Got it" moved into the card's header row and the list tightened, because the
+taller card covered the new I'm-hidden pill on a 390 × 664 phone (a Playwright tap on Ready landed
+on the tips; found by the maps suite's Museum round). While the tips are up the action cluster also
+draws above them, so a shorter phone never loses the buttons. In the tests' FAST tune the final
+card lasts 3 s (12 s live) so the suites that wait for the hub end card keep their margins.
+
+Haptics are a no-op in `core.js` now (iPhone first).
 
 ## v2: sticky feet, sizes, settings, big maps
 
@@ -618,6 +653,52 @@ drags are decided in `pointermove` past a 9 px slop. A legend shows the keys on 
   wallpaper stamp is typically 1.5–2.5 KB of base64 (one chunk). A checksum mismatch asks the
   owner to resend.
 
+### Pro pass: paint cost and feel (paint owner)
+
+- **Quantiser** (`paint.js`): a bounded median cut. One pass fills a 5-bit-per-channel
+  histogram (32 768 bins: count plus exact channel sums), the cut runs over the occupied bins
+  only (a counting sort per split, populations summed per box), the palette is the
+  population-weighted mean of the real colours in each box, and a per-bin LUT maps the pixels.
+  All buffers are module scratch, so there is no garbage. A skin that already has ≤ 32 exact
+  colours keeps them exactly, so a second quantise changes nothing and the checksums still match.
+  `encode(data, q)` takes the quantise it just ran, so nothing is quantised twice, and
+  `paint.encode()` caches the blob per paint version. Node, 1x: a stamped-like skin with 12k
+  colours went from 23 ms (median; max 110) to 0.2 ms, 16k-colour noise from 61 ms (max 213)
+  to 3 ms. Error is 2.8 vs 2.5 levels per channel and the blob is the same size. In the page
+  on CU Boulder, a freshly stamped skin locks in about 3 ms warm: encode 0.6 ms and blend
+  score 1.8 ms. The first lock in a session is about 20 ms while the JIT is still cold (it was
+  25–66 ms). The blob is 2.5 KB (2 chunks), or 1.7 KB (1 chunk) after brushing. The codec is
+  warmed once when the first paint is created. Closing the paint tools in the hide phase
+  pre-encodes 120 ms later, so Ready reuses the blob.
+- **Blend score / stamp shade**: `stage.surfaceOf().shadeAt` only looks at blob shadows within
+  1.6 m of the hit (a big map has hundreds). Blend scoring samples every other mapped texel.
+  Together these took the score from 20–24 ms to about 2 ms warm.
+- **Live paint** (paint while hunted): a settled change whose checksum equals the last one
+  sent (undo back, or a repaint with the same colour) sends nothing (`live.same`).
+- **Dabs**: each part keeps its own texel list and a world bounding sphere (made in
+  `updateWorld`), so a dab walks only the parts it can reach. On CU that is 5.8k / 6.1k / 7.3k
+  texels for S / M / L instead of 16k. A pointer move makes at most 12 / 9 / 6 dabs for
+  S / M / L.
+- **Feel**:
+  - The cursor is a dark ring kept about 2.5 px wide at any zoom (its inner radius is
+    rewritten from metres-per-pixel at the hit), with a 1.2 px white halo outside it so it
+    reads on a white or a dark body. It has a 20 % fill of the brush colour and a centre dot.
+    A soft brush adds a faint inner ring where the falloff core ends and drops the ring to
+    60 % opacity.
+  - Changing size or hardness pulses the cursor and shows it on the body for 1.1 s (at least
+    10 frames), because phones have no hover. A new stroke gives a small pulse.
+  - The brush sound is a filtered-noise scrub whose pitch tells the size (S 3200 Hz, M 2200,
+    L 1500). Its volume follows stroke speed (0.04 + 0.10 × speed, where speed is body-sizes
+    per second / 1.6). Hard brushes are a tight band (Q 3.2) and soft brushes a breathy one
+    (Q 1.1). It is throttled to one per 55 ms.
+  - Fill swells the filled part 1.08 → 1 over 0.18 s (ease-out). Texels are refreshed from
+    the rest pose if you stroke mid-swell.
+  - Stamp flashes the outline white and thins it to nothing over 0.25 s. The real reveal
+    outline always wins.
+- Test: `ONLY=paintfeel` covers lock cost (cold and warm), blob reuse, part culling, the
+  preview ring, and the fill and stamp juice. It writes `brush-*.png`, and `PAINT_MONT=<mont.js>`
+  makes a montage.
+
 ## Netcode (net.js via `chameleon/link.js`)
 
 `link.js` wraps `createNet` because net.js numbers reliable messages per sender session and
@@ -631,7 +712,7 @@ net.js type (`g`) and big payloads (paint, snapshots) as chunked blobs.
 | State | Authority | Transport |
 |---|---|---|
 | own avatar: position, yaw, pose, wall angle, eye look, speed, orientation `q` (packed quaternion), stuck `at` | owning device | `net.publish` 20/s; the partner is drawn from an allocation-free ring-buffer interpolation at `now − 100 ms` (q by slerp) |
-| hider position during Hide | owning device | **not sent** — presence carries zeros and `v: 0` |
+| hider position during Hide | owning device | **not sent** — presence carries zeros (look, wall angle, speed too) and `v: 0`, as a **2.5/s keepalive** (one publish per 400 ms; it still feeds the host's 4.5 s stall detection); full 20/s resumes 500 ms before the hunt so the seeker's buffer is primed |
 | paint texture | owning device | reliable blob at lock (+ snapshot on resync) |
 | mode, map, first hider, rules (validated) | host | reliable `setup`; rules also inside every `ph` match info |
 | phases `hide lock seek found time recap final` (+ local `curtain`) | host | reliable `ph {seq, at, dur, scores, match}` **plus two unreliable copies** (deduped by `seq`, not held back by in-order delivery); both devices switch with `setTimeout(at − now)` and a per-frame check |
@@ -659,7 +740,19 @@ with a 3-2-1 once everything is back and a `hello` arrived on the current link. 
 exclude pauses. If the guest remounts, the host's snapshot restores the guest's paint and
 hiding spot; if the host remounts, the host restores the whole match from the guest.
 
-Budget per device: presence 20/s, `chi` ~0.5/s, net.js pings/acks, reliable events a few per
+**Pellet range = the fog (pro pass).** `fire()` picks (and the near-miss assist searches) only
+up to the play fog's far edge, `min(40, fog.far)`: 26 m on big maps, 30 m on small ones, so a
+shot can't tag a hider the fog has fully hidden. A miss flies `min(30, range)`. CU's glass is a
+collider without a mesh: pellets pass through it (you can see through it), bodies and tongues stop.
+
+**Watch / free cam / eyes switch (pro pass).** `setView()` no longer cuts: the first camera frame
+after a switch records the offset between where the camera was and the new view's target, and
+`cameras()` eases it out with a smoothstep over `VIEW_WHIP_S = 0.35 s`, riding on the new view's
+own motion (eyes stay locked, watch keeps its rate-9 follow afterwards), with the `whoosh` sound.
+Measured: a 1.2-8 m switch now spreads over 4-6 frames at 65 ms (largest single step 40 % of the
+move, was 100 %).
+
+Budget per device: presence 20/s (2.5/s while hiding), `chi` ~0.5/s, net.js pings/acks, reliable events a few per
 second; a phase change costs 3 messages; the paint burst is one or two chunks.
 
 ## Maps (deterministic data, no assets)
@@ -747,6 +840,8 @@ the hider moving during the head start while the seeker is blind, grace refusing
 `settings3` (every new control through the sheet with taps, the slider, presets, validation, map
 scaling, persistence), `v3house` / `v3cu` (full 2-round matches with the v3 settings), `shots3`
 (screenshots). Screenshots go to `$SHOTS` (default `$TMPDIR/chameleon-shots`).
+
+- `netpolish` (pro pass, net owner): the hiding keepalive (≤ 3.2 publishes/s while hiding, one per frame once hunted, host never stalls), the eased View → Watch switch (no single frame takes > 85 % of the move), pellet range = fog far. `NETSHOTS=1` also saves the whip frames.
 
 ## Known limits
 

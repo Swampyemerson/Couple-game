@@ -3,7 +3,9 @@
 // slider on the left (starts where your thumb lands; drag ± 72 px for full lock), pedals and
 // buttons on the right, true multi-touch; optional tilt steering. Touches starting within 20 px
 // of the left edge are ignored (iOS back gesture). No allocations per frame.
-import { CAR } from './tune.js';
+// Keys slew the steering here at 8/s (0.125 s to full lock, 0.08 s to centre); the car's own slew
+// (car.js) then only smooths. (CAR.steerRate 5.5 on top of the car's 9/s made 0.24 s key-to-lock.)
+const KEY_STEER = 8;
 
 export function newPad() {
   return { kL: 0, kR: 0, kU: 0, kD: 0, hand: 0, nitro: 0, look: 0, touchSteer: 0, touchOn: 0, tilt: 0, tiltOn: 0, gasT: 0, brakeT: 0, handT: 0, nitroT: 0, steer: 0, gas: 0, brake: 0, auto: null };
@@ -18,7 +20,7 @@ export function readPad(p, out, dt) {
   else target = p.kR - p.kL;
   if (p.touchOn || p.tiltOn) p.steer = target;
   else {
-    const rate = CAR.steerRate * (target === 0 || Math.sign(target) !== Math.sign(p.steer) ? 1.6 : 1);
+    const rate = KEY_STEER * (target === 0 || Math.sign(target) !== Math.sign(p.steer) ? 1.6 : 1);
     p.steer += Math.max(-rate * dt, Math.min(rate * dt, target - p.steer));
   }
   out.steer = p.steer;
@@ -38,7 +40,7 @@ const SPLIT = {
   b: { ArrowUp: 'U', ArrowDown: 'D', ArrowLeft: 'L', ArrowRight: 'R', ShiftRight: 'hand', Enter: 'nitro', Period: 'look' },
 };
 const SPLIT_ACT = { a: { KeyE: 'act', KeyM: 'map', KeyC: 'cam' }, b: { Slash: 'act', Comma: 'map', Backslash: 'cam' } };
-const SINGLE_ACT = { KeyE: 'act', KeyF: 'act', KeyM: 'map', KeyC: 'cam', Escape: 'esc' };
+const SINGLE_ACT = { KeyE: 'act', KeyF: 'act', KeyM: 'map', KeyC: 'cam', KeyH: 'horn', Escape: 'esc' };
 
 /** Keyboard. pads: { a, b } (live/practice uses pads[me]). onAct(w, name). */
 export function createKeys({ split, me, pads, onAct, enabled }) {
@@ -74,7 +76,7 @@ export function createKeys({ split, me, pads, onAct, enabled }) {
  * Touch controls over `surface` (the play area) and the pedal buttons (elements with
  * data-pad="gas|brake|hand|nitro" and data-tap="act|map|cam|look"). steerEl shows the slider.
  */
-export function createTouch({ surface, root, pad, onAct, enabled, steerEl, stats, cfg }) {
+export function createTouch({ surface, root, pad, onAct, enabled, steerEl, stats, cfg, onSteer }) {
   const ptrs = new Map(); // pointerId → { kind: 'steer'|'pad', key, x0 }
   // cfg() → { range: px for full lock (sensitivity), dead: centre dead zone 0..0.2 }
   const conf = () => { const c = (cfg && cfg()) || {}; return { range: c.range || 72, dead: c.dead == null ? 0.06 : c.dead }; };
@@ -106,11 +108,16 @@ export function createTouch({ surface, root, pad, onAct, enabled, steerEl, stats
     if (e.pointerType === 'mouse') return; // laptops steer with keys
     const r = surface.getBoundingClientRect();
     if (e.clientX - r.left < 20) { if (stats) stats.ignored++; return; } // iOS back gesture
-    if (e.clientX - r.left > r.width * 0.55) return;
+    // the steer zone runs right up to the pedal cluster (a thumb at 215–221 px on a 390 px phone used
+    // to land in a dead strip between the 55% cap and the brake)
+    let edge = r.width * 0.55;
+    for (const el of root.querySelectorAll('.gtw-ctl [data-pad]')) { const b = el.getBoundingClientRect(); if (b.width) edge = Math.max(edge, Math.min(r.width * 0.8, b.left - r.left - 2)); }
+    if (e.clientX - r.left > edge) return;
     e.preventDefault();
     const p = { kind: 'steer', x0: e.clientX };
     ptrs.set(e.pointerId, p);
     pad.touchOn = 1; pad.touchSteer = 0;
+    if (onSteer) onSteer();
     if (steerEl) { steerEl.style.left = `${e.clientX - r.left}px`; steerEl.style.top = `${e.clientY - r.top}px`; steerEl.classList.add('on'); steerEl.style.setProperty('--k', '0'); }
     try { surface.setPointerCapture(e.pointerId); } catch { /* ignore */ }
   }

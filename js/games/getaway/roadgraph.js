@@ -123,7 +123,7 @@ function* graphBuild(geo, res) {
   // is the right-hand lane from s0 to s1 (direction by sign) blocked by a solid?
   const blocked = (r, s0, s1) => {
     const dir = s1 >= s0 ? 1 : -1; const L = Math.abs(s1 - s0);
-    const off = (0.5 * r.hw) / r.lanes;
+    const off = (0.5 * (r.hw - (r.park || 0))) / r.lanes;
     let hit = 0;
     for (let d = 2; d < L - 1; d += 3) {
       let s = s0 + dir * d; if (r.closed) { s %= r.len; if (s < 0) s += r.len; }
@@ -331,7 +331,8 @@ export function routePolyline(geo, spans, laneK = 0.5, step = 4, maxLen = 1e9, o
     if (sp.road < 0) { continue; } // junction link: the next span starts there
     const r = geo.roads[sp.road];
     const dir = sp.s1 >= sp.s0 ? 1 : -1; const L = Math.abs(sp.s1 - sp.s0);
-    const off = r.lanes > 1 ? (laneK * r.hw) / r.lanes : r.hw * 0.5 * Math.min(1, laneK * 2);
+    const hwL = r.hw - (r.park || 0); // (a parking strip is not a lane)
+    const off = r.lanes > 1 ? (laneK * hwL) / r.lanes : hwL * 0.5 * Math.min(1, laneK * 2);
     const offK = r.kind === 'alley' || r.width < 7 ? 0.35 : 1;
     const nS = Math.max(1, Math.ceil(L / step));
     for (let k = 0; k <= nS; k++) {

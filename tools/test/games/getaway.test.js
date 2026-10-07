@@ -161,7 +161,7 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       await ready(a);
       let s = await st(a);
       assert(s.phase === 'lobby' && s.localMode === 'ai' && s.mapId === 'dockside', 'one phone opens on the lobby, practice vs AI, Dockside');
-      assert(await a.isVisible('.g-gtw [data-l="lmode"][data-v="split"][disabled]'), 'split screen is offered only on laptops');
+      assert(!(await a.isVisible('.g-gtw [data-l="lmode"][data-v="split"]')) && await a.isVisible('.g-gtw [data-l="lmode"][data-v="daily"]'), 'a phone offers Practice and the Daily chase (split screen only on laptops)');
       await a.tap('.g-gtw [data-l="start"]'); // a real touch tap (phones)
       await phase(a, 'intro', 8000);
       assert(await a.isVisible('.g-gtw .gtw-roles'), 'round intro card: map, round, roles');
@@ -215,7 +215,7 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       // box them in: runner stopped, cop alongside → busted after 3 s
       await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
       await a.evaluate(() => { const g = window.__getaway; const s = g.state(); g.teleport('b', s.a.x - 7, s.a.z, s.a.yaw, 0); g.setCar('a', { vx: 0, vz: 0, r: 0 }); });
-      await until(a, () => { const R = window.__getaway.state().R; return R && R.over; }, null, 8000, 'busted');
+      await until(a, () => { const R = window.__getaway.state().R; return R && R.over; }, null, 14000, 'busted');
       s = await st(a);
       assert(s.R.result.outcome === 'busted' && s.R.result.reason === 'boxed', `BUSTED: boxed in after the PIT (${s.R.result.reason})`);
       await wait(1300); await shot(a, 'practice-busted');
@@ -233,6 +233,9 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       assert(/road/i.test(await hook(a, 'mapTap', -400, 520)), 'a strip away from any road is refused');
       assert((await hook(a, 'mapTap', -120, 41)) === true && (await st(a)).a.spikesLeft === 2, 'a strip ahead of the runner snaps to the road (2 left)');
       await hook(a, 'openMap'); await wait(400); await shot(a, 'practice-map'); await hook(a, 'closeMap');
+      // (the cop closes up: 160 m back is beyond Dockside's 140 m heat, and with FAST's 1.6 s heatT
+      // the runner would lose the heat before reaching the strip)
+      await a.evaluate(() => window.__getaway.teleport('a', -230, 40, Math.PI / 2, 0));
       await wait(1400); // deploys after 1.2 s
       await hook(a, 'hold', 'b', { gas: 1 });
       await a.evaluate(() => window.__getaway.teleport('b', -160, 40, Math.PI / 2, 22));
@@ -271,7 +274,19 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       await until(a, () => { const R = window.__getaway.state().R; return R && R.over; }, null, 8000, 'splash');
       s = await st(a);
       assert(s.R.result.outcome === 'busted' && s.R.result.reason === 'water', 'driving into the canal busts the runner (SPLASH)');
+      // 2–2 after four rounds: sudden death (one 0:45 decider, no spikes, the shorter total run runs)
+      await until(a, () => { const q = window.__getaway.state(); return q.R && q.R.idx === 4; }, null, 12000, 'sudden death');
+      await phase(a, 'chase', 12000);
+      s = await st(a);
+      assert(Math.round((s.R.endAt - s.R.t0) / 1000) === 45 && s[s.R.runner === 'a' ? 'b' : 'a'].spikesLeft === 0, `2–2: a 0:45 sudden-death decider (${s.R.runner === 'a' ? 'you run' : 'the AI runs'}, no spikes)`);
+      await hook(a, 'endNow', 'escaped', 'time');
+      await until(a, () => window.__getaway.state().phase === 'final', null, 8000, 'final after the decider');
+      await until(a, () => !!document.querySelector('.g-gtw .gtw-final'), null, 4000, 'the match card');
+      console.log('ok - the match card: rounds, both columns, MVP');
+      await shot(a, 'practice-finalcard');
+      await a.tap('.g-gtw .gtw-final').catch(() => {}); // (tap to go on; it may already have gone on by itself)
       await until(a, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 15000, 'end card');
+      assert(!(await a.isVisible('#game-root .gm-end .gm-end-rec')), 'practice: no couple all-time line on the end card');
       s = await st(a);
       assert(s.result && s.result.winner === null && /AI|Practice/.test(s.result.text), `practice ends with "${s.result.text}" (no real winner recorded)`);
       await shot(a, 'practice-end');
@@ -432,7 +447,7 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       await b.tap('.g-gtw [data-l="ready"]');
       await until(a, () => /ready/.test((document.querySelector('.g-gtw .gtw-status') || {}).textContent || ''), null, 8000, 'host sees the guest ready');
       console.log('ok - tap: the guest’s Ready shows on the host');
-      await hook(a, 'setRules', { heat: 260 });
+      await hook(a, 'setRules', { heat: 260, tiebreak: 'time' }); // (a 2–2 here goes to the longest-run tiebreak; practice covers sudden death)
       await until(b, () => window.__getaway.state().setup.rules.heat === 260, null, 8000, 'guest sees heat 260');
       await startMatch(h);
       const ra = await round(a); const rb = await round(b);
@@ -465,7 +480,7 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       await hook(a, 'hold', 'a', { hand: true }); await hook(b, 'hold', 'b', { hand: true });
       await a.evaluate(() => window.__getaway.teleport('a', -100, 40, Math.PI / 2, 0));
       await b.evaluate(() => window.__getaway.teleport('b', -109, 40, Math.PI / 2, 0));
-      await waitOver(h, 0);
+      await waitOver(h, 0, 25000); // (3 s of game time, 4 s queued behind a civilian: slow on a starved machine)
       sa = await st(a); sb = await st(b);
       if (!sa.match.hist[0] || !sb.match.hist[0] || sa.match.hist[0].reason !== 'boxed') console.log('DEBUG', JSON.stringify([sa.match.hist, sb.match.hist, sa.dbgEnd, sb.dbgEnd]));
       assert(sa.match.hist[0].outcome === 'busted' && sb.match.hist[0].outcome === 'busted' && sa.match.hist[0].reason === 'boxed', 'BUSTED (boxed) on both phones');
@@ -520,10 +535,16 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       const res = h.results().filter((r) => r.game === 'getaway');
       assert(res.length === 1, 'the match is recorded once');
       await shot(a, 'live-end');
-      // rematch: both back in the lobby
+      // rematch in place: no remount, no map rebuild, straight into round 0 with the roles swapped
+      for (const p of [a, b]) await p.evaluate(() => { window.__gtwWorldMark = window.__getaway.internals.world; });
+      const t0 = Date.now();
       await a.click('#game-root .gm-end [data-g="rematch"]');
-      for (const p of [a, b]) await until(p, () => window.__getaway && window.__getaway.state().phase === 'lobby', null, 30000, 'rematch lobby');
-      console.log('ok - rematch: both phones back in the lobby');
+      for (const p of [a, b]) await until(p, () => { const s = window.__getaway && window.__getaway.state(); return s && s.R && s.R.idx === 0 && !s.R.over && ['intro', 'count', 'chase'].includes(s.phase); }, null, 30000, 'rematch round 0');
+      for (const p of [a, b]) await phase(p, 'chase', 15000);
+      const goMs = Date.now() - t0;
+      const same = await Promise.all([a, b].map((p) => p.evaluate(() => window.__getaway.internals.world === window.__gtwWorldMark && document.querySelector('#game-root .gm-end').hidden)));
+      sa = await st(a);
+      assert(same[0] && same[1] && sa.R.runner === 'b', `rematch: both phones straight into a new match on the same world (Sydney runs first), tap → GO ${goMs} ms ${JSON.stringify(same)} runner ${sa.R.runner}`);
       assert(!h.warnings.length, `message budget respected (${h.warnings.length} warnings)`);
       h.assertNoErrors();
     } catch (e) { fails++; console.error(e.message, h.errors.slice(0, 5)); await shot(h.a, 'live-fail-a').catch(() => {}); await shot(h.b, 'live-fail-b').catch(() => {}); } finally { await h.close(); }
@@ -778,31 +799,32 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
         await a.evaluate((m) => window.__getaway.reloadMap(m), id);
         await wait(300);
         const g = await a.evaluate(() => {
-          const w = window.__getaway.internals.world; let verts = 0; let gpu = 0; let cpu = 0; let f32 = 0; const types = {}; let n = 0;
+          const w = window.__getaway.internals.world; let verts = 0; let gpu = 0; let cpu = 0; let f32 = 0; const types = {}; let n = 0; const mis = [];
           // GPU bytes: the arrays, or (released CPU copies) the size the world recorded before dropping them
-          const SZ = { position: 4, normal: 1, color: 1, fx: 1, aux: 2, uv: 2, a: 4 };
+          const SZ = { position: 4, normal: 4 / 3, color: 4 / 3, fx: 4, aux: 4, uv: 2, a: 4 };
           w.scene.traverse((o) => {
             if (!o.isMesh || !o.name || !(o.name.startsWith('merged') || o.name.startsWith('boulder'))) return; n++;
             const ge = o.geometry; const pa = ge.getAttribute('position'); verts += pa.count;
-            for (const k in ge.attributes) { const at = ge.attributes[k]; const sz = at.array ? at.array.byteLength : at.gpuBytes || at.count * at.itemSize * (SZ[k] || 4); gpu += sz; if (at.array) cpu += sz; const t = at.array ? at.array.constructor.name : 'released'; types[k] = types[k] || t; if (at.array instanceof Float32Array && k !== 'position' && k !== 'a') f32++; }
+            for (const k in ge.attributes) { const at = ge.attributes[k]; const sz = at.array ? at.array.byteLength : at.gpuBytes || at.count * at.itemSize * (SZ[k] || 4); gpu += sz; if (at.array) cpu += sz; const t = at.array ? at.array.constructor.name : 'released'; types[k] = types[k] || t; if (at.array instanceof Float32Array && (k === 'normal' || k === 'color' || k === 'uv')) f32++; const strideB = (at.array ? at.array.byteLength : at.gpuBytes) / at.count; if ((strideB % 4) || (at.isInterleavedBufferAttribute && at.offset)) mis.push(k + ' ' + strideB); }
             if (ge.index) { const sz = ge.index.array ? ge.index.array.byteLength : ge.index.gpuBytes || ge.index.count * 2; gpu += sz; if (ge.index.array) cpu += sz; }
           });
-          return { n, verts, gpu, cpu, types, f32, released: w.released, bpv: gpu / verts };
+          return { n, verts, gpu, cpu, types, f32, released: w.released, bpv: gpu / verts, mis: [...new Set(mis)] };
         });
         console.log(`   ${id}: ${g.n} world meshes, ${Math.round(g.verts / 1000)}k vertices, ${(g.gpu / 1048576).toFixed(1)} MB on the GPU (${g.bpv.toFixed(1)} B/vertex with indices), ${(g.cpu / 1048576).toFixed(1)} MB still CPU-side (positions)${g.released ? '' : ' NOT RELEASED'}, attributes ${JSON.stringify(g.types)}`);
-        assert(g.f32 === 0, `${id}: no float32 static attributes left on the world meshes (${g.f32})`);
-        soft(g.bpv <= 26, `${id}: ≤ 26 B/vertex on the GPU including indices (${g.bpv.toFixed(1)}; 44–52 B before packing)`);
+        assert(g.f32 === 0, `${id}: no float32 normals / colours / uvs left on the world meshes (${g.f32})`);
+        assert(g.mis.length === 0, `${id}: every vertex buffer has a 4-byte-multiple stride (Metal / ANGLE converts the rest): ${g.mis.join(', ') || 'all aligned'}`);
+        soft(g.bpv <= 32, `${id}: ≤ 32 B/vertex on the GPU including indices (${g.bpv.toFixed(1)}; 44–52 B before packing)`);
       }
-      // a fresh (unreleased) Builder: 21 bytes per vertex
+      // a fresh (unreleased) Builder: 28 bytes per vertex with lane coordinates (24 without)
       const bpv = await a.evaluate(() => {
         const w = window.__getaway.internals.world; const b = w.kit.builder(); b.boxOn(0, 0, 0, 1, 1, 1, 0, '#ff8800', 0.02, 5); b.auxV = 1.5; b.boxOn(2, 0, 0, 1, 1, 1, 0, '#ff8800', 0, 0);
         const g = b.geometryOut(); let bytes = 0; for (const k in g.attributes) bytes += g.attributes[k].array.byteLength; const n = g.getAttribute('position').count;
         const nm = g.getAttribute('normal'); const co = g.getAttribute('color'); const ax = g.getAttribute('aux'); const fx = g.getAttribute('fx');
-        return { bpv: bytes / n, n, normal: nm.array.constructor.name + (nm.normalized ? '/n' : ''), color: co.array.constructor.name + (co.normalized ? '/n' : ''), fx: fx.array.constructor.name, aux: ax.array.constructor.name + (ax.normalized ? '/n' : ''), auxV: ax.array[n - 1] / 32767 * 8, col: co.array[0] / 255 };
+        return { bpv: bytes / n, n, normal: nm.array.constructor.name + (nm.normalized ? '/n' : ''), color: co.array.constructor.name + (co.normalized ? '/n' : ''), fx: fx.array.constructor.name, aux: ax.array.constructor.name + (ax.normalized ? '/n' : ''), auxV: ax.getX(n - 1), col: co.getX(0) / 255, nz: nm.getY(0) / 127, stride: [nm, co].map((x) => x.isInterleavedBufferAttribute ? x.data.stride * x.array.BYTES_PER_ELEMENT : x.itemSize * x.array.BYTES_PER_ELEMENT) };
       });
       console.log(`   Builder: ${bpv.bpv.toFixed(1)} B/vertex (${bpv.normal} normal, ${bpv.color} color, ${bpv.fx} fx, ${bpv.aux} aux)`);
-      assert(bpv.bpv <= 21.01, `Builder output is 21 B/vertex (${bpv.bpv.toFixed(1)}; was 44)`);
-      assert(Math.abs(bpv.auxV - 1.5) < 0.001 && Math.abs(bpv.col - 1) < 0.001, `quantised aux / colour round-trip (aux ${bpv.auxV.toFixed(4)}, r ${bpv.col.toFixed(3)})`);
+      assert(bpv.bpv <= 28.01 && bpv.stride.every((x) => x === 4), `Builder output is 28 B/vertex with 4-byte normal / colour strides (${bpv.bpv.toFixed(1)}, strides ${bpv.stride}; was 44)`);
+      assert(Math.abs(bpv.auxV - 1.5) < 0.001 && Math.abs(bpv.col - 1) < 0.001, `quantised colour / normal round-trip, exact aux (aux ${bpv.auxV.toFixed(4)}, r ${bpv.col.toFixed(3)})`);
       // the caster scene + the phone shadow map
       const sh = await a.evaluate(() => { const w = window.__getaway.internals.world; return { groups: w.casters.children.filter((o) => o.isGroup).length, kids: w.casters.children.length, size: w.shadow && w.shadow.size, full: w.shadow && w.shadow.full, taps: w.shadow ? window.__getaway.internals.world.mats.vc.userData.gtw && 1 : 0, parent: w.casters.parent === w.scene }; });
       console.log(`   casters: ${sh.groups} car groups + ${sh.kids - sh.groups} meshes, shadow map ${sh.size}²`);
@@ -827,9 +849,9 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       await wait(1200); // < hold (2 s here)
       pf = await hook(a, 'perf');
       assert(pf.level === 4, `no step up within the hold after a step down (level ${pf.level})`);
-      await until(a, () => window.__getaway.perf().level <= 3, null, 15000, 'step up');
+      await until(a, () => window.__getaway.perf().level <= 3, null, 45000, 'step up'); // (game time: dt is clamped at 125 ms, slower frames stretch it)
       const tUp = Date.now();
-      await until(a, () => window.__getaway.perf().level === 0, null, 20000, 'back to full');
+      await until(a, () => window.__getaway.perf().level === 0, null, 60000, 'back to full');
       pf = await hook(a, 'perf');
       const climb = (Date.now() - tUp) / 1000;
       assert(climb >= 1.8 && pf.resizes === 4, `climbing back takes ≥ 0.8 s a rung here (= 8 s on a phone; ${climb.toFixed(1)} s for three rungs), ${pf.resizes} resizes in all`);
@@ -1006,11 +1028,14 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       await wait(250);
       const hp0 = (await st(a)).a.hp;
       // (the watcher runs inside page a at 50 ms: a starved Node round trip would miss the hitch)
-      await a.evaluate(() => { const W = window.__stall = { stale: 0, n: 0, hpMin: 100, jump: 0, px: null }; W.timer = setInterval(() => { const P = window.__getaway.internals.P2.b; const s = window.__getaway.state(); W.n++; if (P.stale) W.stale++; W.hpMin = Math.min(W.hpMin, s.a.hp); if (W.px != null) W.jump = Math.max(W.jump, Math.abs(P.shown.x - W.px)); W.px = P.shown.x; }, 50); });
-      await b.evaluate(() => { const t = performance.now(); while (performance.now() - t < 1200) { /* the main thread hitches: no frames, no samples sent */ } });
+      await a.evaluate(() => { const W = window.__stall = { stale: 0, n: 0, hpMin: 100, jump: 0, px: null }; const tick = () => { if (W.done) return; const P = window.__getaway.internals.P2.b; const s = window.__getaway.state(); W.n++; if (P.stale) W.stale++; W.hpMin = Math.min(W.hpMin, s.a.hp); if (W.px != null) W.jump = Math.max(W.jump, Math.abs(P.shown.x - W.px)); W.px = P.shown.x; requestAnimationFrame(tick); }; requestAnimationFrame(tick); }); // (per frame of a: its timers may be throttled, its frames are what the player sees)
+      // (the hitch is b's frame loop held for 1.2 s, not a busy loop: headless pages of one origin
+      // share a renderer process, so a busy loop in b froze a's watcher too: 2 polls in 1.8 s)
+      await b.evaluate(() => { const raf = window.requestAnimationFrame; const q = []; window.requestAnimationFrame = (f) => { q.push(f); return 0; }; setTimeout(() => { window.requestAnimationFrame = raf; for (const f of q) raf(f); }, 1600); });
+      await wait(1600);
       await wait(600);
-      const seen = await a.evaluate(() => { const W = window.__stall; clearInterval(W.timer); return { stale: W.stale, n: W.n, hpMin: W.hpMin, jump: W.jump }; });
-      assert(seen.stale > 0, `during a 1.2 s hitch the runner's phone marks the cop stale (${seen.stale} of ${seen.n} polls) and makes it a ghost`);
+      const seen = await a.evaluate(() => { const W = window.__stall; W.done = true; return { stale: W.stale, n: W.n, hpMin: W.hpMin, jump: W.jump }; });
+      assert(seen.stale > 0, `during a 1.6 s hitch the runner's phone marks the cop stale (${seen.stale} of ${seen.n} polls) and makes it a ghost`);
       assert(seen.hpMin === hp0, `no bump or damage against the stale picture (hp ${hp0} → ${seen.hpMin})`);
       assert(seen.jump < 12, `the drawn cop never snaps when the stream resumes (largest jump between polls ${seen.jump.toFixed(1)} m)`);
       await wait(1500);

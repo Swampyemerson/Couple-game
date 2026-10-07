@@ -783,7 +783,7 @@ function endHTML(def, res, { rematch = true } = {}) {
   const lookLabel = def.endLookLabel || 'See the board';
   const { head, cls } = resultHead(def, res);
   const rec = gameRecord(def.id);
-  const recLine = def.team
+  const recLine = res.record === false ? '' : def.team
     ? (rec.best != null ? `<span class="gm-end-rec-l">Best team score</span><b>${rec.best}</b>` : '')
     : `<span class="gm-end-rec-l">All time</span><span class="p-a">${esc(nameOf('a'))} <b>${rec.a}</b></span><span class="gm-end-rec-sep" aria-hidden="true">:</span><span class="p-b"><b>${rec.b}</b> ${esc(nameOf('b'))}</span>`;
   return `<div class="gm-end-card ${cls}">
@@ -1068,9 +1068,12 @@ async function openLive(gameId, mode) {
     },
     toggleMenu() {
       const sh = $('.gm-sheet');
-      if (!sh.hidden) { sh.hidden = true; return; }
+      // the game hears about it (a running chase pauses under the app's sheet, like its own ‖)
+      const tell = (open) => { try { inst && inst.onMenu && inst.onMenu(open); } catch (e) { console.error(e); } };
+      if (!sh.hidden) { sh.hidden = true; tell(false); return; }
       sh.innerHTML = menuHTML(def, { live: true });
       sh.hidden = false;
+      tell(true);
     },
     rematch() {
       if (mode === 'live') {
@@ -1089,6 +1092,7 @@ async function openLive(gameId, mode) {
   const api = {
     mode, kind: 'live',
     me: mode === 'live' ? me() : null,
+    owner: me() || null, // whose device this is (also on one device: practice records go to them)
     isHost: mode === 'local' || me() === 'a',
     names: { a: nameOf('a'), b: nameOf('b') },
     name: nameOf, other,
@@ -1173,6 +1177,10 @@ async function openLive(gameId, mode) {
     try { inst = def.mount(stage, api) || {}; } catch (e) { console.error(e); stage.innerHTML = '<p class="gm-error">This game failed to load.</p>'; inst = {}; }
   }
   function restart() {
+    // a game that can rematch in place (keeps its loaded world) says so; else a fresh mount
+    let soft = false;
+    try { soft = !!(inst && inst.onRematch && inst.onRematch() === true); } catch (e) { console.error(e); }
+    if (soft) { finished = false; endDismissed = false; lastRes = null; $('.gm-end').hidden = true; paintStatus(); return; }
     try { inst && inst.destroy && inst.destroy(); } catch (e) { console.error(e); }
     inst = null;
     mountGame();

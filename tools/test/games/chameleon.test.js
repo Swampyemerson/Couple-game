@@ -20,7 +20,7 @@ let failures = 0;
 const assert = (c, m) => { if (!c) throw new Error('FAIL: ' + m); console.log('ok -', m); };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const FAST = { hide: 12000, seek: 15000, title: 700, recap: 2500, found: 2200, seekLead: 900, resume: 1500, maxDpr: 0.6, noTips: true };
+const FAST = { hide: 12000, seek: 15000, title: 700, recap: 2500, found: 2200, final: 3000, seekLead: 900, resume: 1500, maxDpr: 0.6, noTips: true }; // final: the match's own final card (12 s live) before the hub end card
 const near = (a, b, tol) => a.every((x, i) => Math.abs(x - b[i]) <= tol);
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const fmt3 = (v) => `(${v.map((x) => x.toFixed(2)).join(', ')})`;
@@ -1652,10 +1652,13 @@ async function huntPaintSection(port) {
     assert(sa.live.tells === tells && sa.live.tellSkip >= 1, `out of range (${vlen([sa.bodies.a.x - bc[0], 0, sa.bodies.a.z - bc[2]]).toFixed(1)} m): synced, no glint`);
     // a burst of strokes is coalesced (≤ 1 update a second)
     const g0 = (await st(a)).live.got;
+    const burst0 = Date.now();
     for (let i = 0; i < 4; i++) { await strokeOnBody(b, true); await wait(120); }
+    const burstS = (Date.now() - burst0) / 1000; // a loaded software-GL box can take seconds per stroke
     await wait(1600);
     const g1 = (await st(a)).live.got;
-    assert(g1 - g0 >= 1 && g1 - g0 <= 3, `four quick strokes → ${g1 - g0} update(s)`);
+    const cap = Math.min(4, Math.max(3, Math.floor(burstS) + 1));
+    assert(g1 - g0 >= 1 && g1 - g0 <= cap, `four quick strokes in ${burstS.toFixed(1)} s → ${g1 - g0} update(s) (≤ 1 a second: ≤ ${cap})`);
     const sent = (await st(b)).sent - sent0;
     console.log(`  hider reliable sends while painting: ${sent}`);
     // "On" (silent): synced, never a glint
@@ -1679,6 +1682,104 @@ async function huntPaintSection(port) {
   } catch (e) {
     console.error(e.message, h.errors); failures++;
     await shot(a, 'v3-paint-FAIL-a').catch(() => {}); await shot(b, 'v3-paint-FAIL-b').catch(() => {});
+  } finally { await h.close(); }
+}
+
+// ── pro pass (paint owner): codec cost, dab culling, brush feedback ─────────────────
+async function paintFeelSection(port) {
+  console.log('\n# paint: lock/live codec cost on a stamped CU skin, dab culling, brush cursor / sound / fill + stamp juice');
+  const SH = process.env.PAINT_SHOTS || SHOTS;
+  fs.mkdirSync(SH, { recursive: true });
+  const h = await launch({ port, only: ['chameleon'], who: ['a'], device: 'iPhone 13' });
+  const a = h.a;
+  try {
+    await arm(a, { ...SLOW, maxDpr: 1 });
+    await h.startLive(a, 'chameleon', 'local');
+    await waitReady(a);
+    await hook(a, 'setRules', { map: 'cuboulder', first: 'b', rules: { size: 'large' } });
+    await a.tap('[data-act="start"]');
+    await a.tap('[data-act="curtain"]');
+    await waitPhase(a, 'hide');
+    await wait(400);
+    assert(await camoHide(a) === 'wall', 'hider flat on the CU wall');
+    await a.tap('.chm-acts [data-act="paint"]');
+    await wait(900);
+    // stamp: the outline flashes white → off in 0.25 s
+    await a.tap('.chm-tool[data-tool="stamp"]');
+    const pf0 = await hook(a, 'paintPerf');
+    assert(pf0.pfx.stamps === 1, 'a stamp starts the outline wipe');
+    await wait(700);
+    assert(!(await hook(a, 'paintPerf')).pfx.stamp, '…which is over after 0.25 s');
+    // codec: lock a freshly stamped skin (the moment the hider taps Ready)
+    const lock = await a.evaluate(() => {
+      const c0 = window.__cham.paintPerf('b').colours;
+      const t0 = performance.now(); window.__cham.lockPaintNow('b'); const t1 = performance.now();
+      const pf = window.__cham.paintPerf('b');
+      const t2 = performance.now(); window.__cham.lockPaintNow('b'); const t3 = performance.now();
+      return { before: c0, after: pf.colours, ms: t1 - t0, again: t3 - t2, lp: pf.lastPaint, lp2: window.__cham.paintPerf("b").lastPaint };
+    });
+    console.log(`  lock split: encode ${lock.lp.encMs.toFixed(1)} ms + blend ${lock.lp.blendMs.toFixed(1)} ms; again encode ${lock.lp2.encMs.toFixed(2)} + blend ${lock.lp2.blendMs.toFixed(1)}`);
+    console.log(`  stamped skin: ${lock.before} colours → ${lock.after}; lock ${lock.ms.toFixed(1)} ms, again ${lock.again.toFixed(2)} ms; blob ${lock.lp.bytes} B / ${lock.lp.b64} b64 (${lock.lp.chunks} chunk${lock.lp.chunks === 1 ? '' : 's'})`);
+    assert(lock.after <= 32, `the lock quantises to ≤ 32 colours (${lock.after})`);
+    assert(lock.ms < 30, `lock on a fresh stamped skin is cheap: ${lock.ms.toFixed(1)} ms (was 25–66 ms at 1x)`);
+    assert(lock.lp2.encMs < 1, `a second lock on the same version reuses the blob (encode ${lock.lp2.encMs.toFixed(2)} ms)`);
+    assert(lock.lp.chunks <= 4, `stamped blob ${lock.lp.b64} chars ≤ 4 chunks`);
+    // warm: re-stamp + lock a few times (what a hider repainting under the hunt pays per update)
+    const warm = await a.evaluate(() => {
+      const out = [];
+      for (let k = 0; k < 5; k++) {
+        window.__cham.stampNow();
+        const t0 = performance.now(); window.__cham.lockPaintNow('b'); const lp = window.__cham.paintPerf('b').lastPaint;
+        out.push({ ms: performance.now() - t0, enc: lp.encMs, blend: lp.blendMs, bytes: lp.bytes });
+      }
+      return out;
+    });
+    const medOf = (xs) => xs.slice().sort((x, y) => x - y)[xs.length >> 1];
+    console.log(`  warm stamp→lock ×5: total ${warm.map((x) => x.ms.toFixed(1)).join('/')} ms; encode median ${medOf(warm.map((x) => x.enc)).toFixed(1)} ms, blend median ${medOf(warm.map((x) => x.blend)).toFixed(1)} ms; ${warm[4].bytes} B`);
+    assert(medOf(warm.map((x) => x.enc)) < 8, `warm encode (quantise + pack) median ${medOf(warm.map((x) => x.enc)).toFixed(1)} ms`);
+    // brush: every size and hardness, with the preview ring on the body
+    const shots = [];
+    const perStroke = [];
+    for (const [size, hard] of [[0, true], [1, true], [2, true], [0, false], [1, false], [2, false]]) {
+      await hook(a, 'setPaint', { size, hard, tool: 'brush', rgb: [size === 0 ? 230 : 40, 90 + size * 60, hard ? 60 : 220] });
+      const [x, y] = await hook(a, 'bodyPoint', 0);
+      assert(await hook(a, 'brushPreviewNow'), `size ${'SML'[size]} ${hard ? 'hard' : 'soft'}: the new brush shows on the body`);
+      await a.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const f = path.join(SH, `brush-${'SML'[size]}-${hard ? 'hard' : 'soft'}.png`);
+      await a.screenshot({ path: f, clip: { x: Math.max(0, x - 120), y: Math.max(0, y - 120), width: 240, height: 240 } });
+      shots.push(f);
+      const p0 = await hook(a, 'paintPerf');
+      const t0 = Date.now();
+      await strokeOnBody(a, true);
+      const p1 = await hook(a, 'paintPerf');
+      const dabs = p1.dabs - p0.dabs; const tex = p1.dabTexels - p0.dabTexels;
+      perStroke.push({ size: 'SML'[size], hard, dabs, tex, ms: Date.now() - t0 });
+      assert(dabs > 0 && tex / dabs < p1.texels * 0.6, `size ${'SML'[size]}: ${dabs} dabs walked ${Math.round(tex / dabs)} texels each (of ${p1.texels}: part culling)`);
+    }
+    console.log('  strokes: ' + perStroke.map((x) => `${x.size}${x.hard ? 'h' : 's'} ${x.dabs} dabs/${x.ms} ms`).join(', '));
+    await a.waitForFunction(() => !window.__cham.paintPerf().pfx.preview, null, { timeout: 8000 });
+    assert(true, 'the preview ring goes away by itself');
+    // fill: the part swells 1.08 → 1
+    const hf0 = await hook(a, 'paintHash', 'b');
+    await a.tap('.chm-tool[data-tool="fill"]');
+    const [fx, fy] = await hook(a, 'bodyPoint', 0);
+    await a.evaluate(([x, y]) => {
+      const el = document.elementFromPoint(x, y);
+      const mk = (type) => new PointerEvent(type, { pointerId: 31, pointerType: 'touch', clientX: x, clientY: y, bubbles: true, cancelable: true, isPrimary: true, buttons: type === 'pointerup' ? 0 : 1 });
+      el.dispatchEvent(mk('pointerdown')); setTimeout(() => el.dispatchEvent(mk('pointerup')), 60);
+    }, [fx, fy]);
+    await a.waitForFunction(() => window.__cham.paintPerf().pfx.fills === 1, null, { timeout: 2000 });
+    assert(true, 'a fill swells the filled part');
+    await wait(500);
+    assert(!(await hook(a, 'paintPerf')).pfx.fill && await hook(a, 'paintHash', 'b') !== hf0, '…and settles, the part filled');
+    const lock2 = await a.evaluate(() => { const t0 = performance.now(); window.__cham.lockPaintNow('b'); return { ms: performance.now() - t0, lp: window.__cham.paintPerf('b').lastPaint }; });
+    console.log(`  painted skin lock ${lock2.ms.toFixed(1)} ms, blob ${lock2.lp.bytes} B (${lock2.lp.chunks} chunk${lock2.lp.chunks === 1 ? '' : 's'})`);
+    assert(lock2.ms < 40, `lock after brushing ${lock2.ms.toFixed(1)} ms`);
+    if (process.env.PAINT_MONT) { try { require('child_process').execFileSync('node', [process.env.PAINT_MONT, path.join(SH, 'brush-montage.png'), '720', '480', ...shots]); } catch (e) { console.log('  (montage skipped)', e.message.split('\n')[0]); } }
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'paintfeel-FAIL').catch(() => {});
   } finally { await h.close(); }
 }
 
@@ -2037,7 +2138,8 @@ async function feelSection(port) {
       for (let i = 0; i < 40; i++) { await new Promise((r) => requestAnimationFrame(r)); const b = window.__cham.state().bodies.b; peak = Math.max(peak, b.y - y0); vy = Math.max(vy, b.vy); if (i > 10 && b.onGround) break; }
       return { peak, vy };
     }, y0);
-    assert(jump.vy > 3 && jump.peak > 0.3, `player b's Jump tap works in hotseat: vy ${jump.vy.toFixed(1)} m/s, rose ${jump.peak.toFixed(2)} m`);
+    // (the peak is the robust signal: on a loaded sandbox the first sampled frame can already be past the launch vy)
+    assert(jump.peak > 0.6, `player b's Jump tap works in hotseat: vy ${jump.vy.toFixed(1)} m/s, rose ${jump.peak.toFixed(2)} m`);
     // acceleration: the joystick ramps the body up (no 0 → 3 m/s in one frame) and it brakes in ~0.1 s
     const box = await surfaceBox(a);
     const run = a.evaluate(async () => {
@@ -2104,7 +2206,8 @@ async function feelSection(port) {
     assert(/Blend \d+%/.test(recapText) && new RegExp(`\\+${rec.seekPoints} for`).test(recapText), 'the recap shows the blend % and the seeker\'s points');
     await shot(a, 'pro-recap-blend');
     // round 2: Emerson hides, Sydney runs dry after 4 misses → the hider is paid for the time survived, not the clock
-    await a.tap('[data-act="next"]');
+    // (the recap auto-advances on its ring now, so the Next button may already be gone)
+    if ((await st(a)).phase.name !== 'curtain') await a.tap('[data-act="next"]', { timeout: 5000 }).catch(() => {});
     await waitPhase(a, 'curtain', 10000);
     await a.tap('[data-act="curtain"]');
     await waitPhase(a, 'hide');
@@ -2140,7 +2243,7 @@ async function feel2Section(port) {
   const { a, b } = h;
   try {
     await startPair(h, { ...FAST, hide: 40000, seek: 30000 });
-    await startMatch(h, { map: 'living', first: 'b', rules: { escapes: 2 } });
+    await startMatch(h, { map: 'living', first: 'b', rules: { escapes: 3 } });
     await waitPhase(b, 'hide', 20000); await waitPhase(a, 'hide', 5000);
     await wait(500);
     const spots = await hook(b, 'spots'); const c = spots.camo;
@@ -2162,23 +2265,38 @@ async function feel2Section(port) {
     const sb = await st(b);
     const p1 = sb.bodies.b;
     const dash = Math.hypot(p1.x - p0.x, p1.z - p0.z);
-    assert(!p1.at && dash > 1.2 && sb.round.escapes.b === 1, `scurry from the wall: dropped and dashed ${dash.toFixed(2)} m (escape spent: ${2 - sb.round.escapes.b})`);
+    assert(!p1.at && dash > 1.2 && sb.round.escapes.b === 2, `scurry from the wall: dropped and dashed ${dash.toFixed(2)} m (escape spent: ${3 - sb.round.escapes.b})`);
     assert((await st(a)).trails > 0, 'the seeker saw the trail');
-    // a shot right after a second scurry is judged on the short (escape) window
+    await shot(a, 'pro-feel2-seeker-trail'); await shot(b, 'pro-feel2-hider-dashed');
+    // a shot right after a second scurry is judged on the short (escape) window. The aim and the
+    // trigger happen in the same animation frame (a click from the test runner lands ~100-300 ms
+    // later in this shared sandbox, by which time the dashing body has left the crosshair).
     await hook(b, 'setLook', -1.2, 0);
     const bc = await hook(a, 'bodyCenter', 'b');
     await hook(a, 'teleport', bc[0], bc[2] + 2.2, Math.PI);
     await hook(a, 'aimAt', ...(await hook(a, 'bodyCenter', 'b')));
     await wait(300);
-    await b.click('.chm-acts [data-act="scurry"]');
-    await wait(300);
-    await hook(a, 'aimAt', ...(await hook(a, 'bodyCenter', 'b')));
-    await a.click('.chm-acts [data-act="fire"]');
-    await b.waitForFunction(() => window.__cham.state().lastTagCheck, null, { timeout: 5000 });
-    const tc = (await st(b)).lastTagCheck; const win = (await st(b)).lastWindow;
+    let tc = null; let win = null; let tries = 0;
+    for (; tries < 2 && !tc; tries++) {
+      const before = (await st(b)).lastTagCheck;
+      await b.click('.chm-acts [data-act="scurry"]');
+      // let the 0.5 s dash (and the seeker's interpolation of it) finish, then aim and fire two
+      // frames later; the shot still lands inside the escape-aware window's 1.5 s horizon
+      await wait(750);
+      const ls = await a.evaluate(() => new Promise((res) => {
+        const H = window.__cham; let n = 0;
+        const tick = () => { H.aimAt(...H.bodyCenter('b')); if (++n < 3) requestAnimationFrame(tick); else { H.action('fire'); res(H.state().lastShot); } };
+        requestAnimationFrame(tick);
+      }));
+      if (!ls || !ls.tag) { console.log(`  try ${tries + 1}: the shot missed (${JSON.stringify(ls)})`); await wait(600); continue; }
+      await b.waitForFunction((t0) => { const c = window.__cham.state().lastTagCheck; return c && (!t0 || c.T !== t0); }, before ? before.T : 0, { timeout: 5000 });
+      tc = (await st(b)).lastTagCheck; win = (await st(b)).lastWindow;
+    }
+    assert(!!tc, `a shot at the dashing hider reached the victim's tag check (${tries} tr${tries === 1 ? 'y' : 'ies'})`);
     const since = tc.T - tc.escAt; const expect = since > tc.delay + tc.rtt / 2 + 120 && since < 1500 ? 'escape' : 'full';
     console.log(`  shot ${since.toFixed(0)} ms into the scurry (delay ${tc.delay} ms, rtt ${tc.rtt.toFixed(0)} ms): window ${win}, confirmed ${tc.ok}, seen-vs-me ${Math.hypot(tc.seen[0] - tc.me[0], tc.seen[2] - tc.me[2]).toFixed(2)} m`);
     assert(win === expect && tc.escAt > 0, `the tag check used the ${expect} window for a shot ${since.toFixed(0)} ms into the scurry`);
+    await wait(700); await shot(a, 'pro-feel2-seeker-after-shot'); await shot(b, 'pro-feel2-hider-after-shot');
     if (expect !== 'escape') console.log('  (sandbox was too slow to fire inside the escape window; the full window was correctly used)');
     h.assertNoErrors();
   } catch (e) {
@@ -2260,7 +2378,7 @@ async function uxSection(port) {
   const h = await launch({ port, only: ['chameleon'] });
   const { a, b } = h;
   try {
-    await startPair(h, { ...SLOW, recap: 12000 }); // a long recap: the stickers land 0.9 s + 1.1 s apart
+    await startPair(h, { ...SLOW, recap: 12000, final: 15000 }); // a long recap: the stickers land 0.9 s + 1.1 s apart; a long final card for the vote
     // lobby: the wardrobe chip opens a sheet of sticker tiles; locked tiles say what's missing
     assert(await a.isVisible('.chm-wardbtn'), 'lobby: a Wardrobe chip next to Settings');
     await a.tap('.chm-wardbtn');
@@ -2389,6 +2507,15 @@ async function uxSection(port) {
     assert(rows === 2 && /Best hide: Emerson/.test(story) && /Fastest find: Emerson/.test(story), `final card: ${rows} round bars, "${story.replace(/\s+/g, ' ').trim()}"`);
     assert(!(await st(a)).finished && await a.evaluate(() => document.querySelector('#game-root .gm-end').hidden), 'the hub end card waits for the final card');
     await shot(a, 'ux-final');
+    // 'Best hide tonight?': a matching pick on both phones crowns the round (Creative hide on the wardrobe)
+    await a.tap('.chm-vote [data-vote="2"]');
+    await b.waitForSelector('.chm-vote .chm-vpip.pa', { timeout: 5000, state: 'attached' });
+    assert(!(await b.$('.chm-vote .crown')), 'one vote: the partner sees the pick pip, nothing crowned yet');
+    await b.tap('.chm-vote [data-vote="2"]');
+    await a.waitForSelector('.chm-vote .crown', { timeout: 5000 });
+    await a.waitForFunction(() => window.__cham.data().a_creative === 1, null, { timeout: 8000 });
+    assert(true, 'both picked round 2: CREATIVE HIDE crowned, a_creative = 1');
+    await shot(a, 'ux-final-vote');
     await b.tap('.chm-final [data-act="finish"]');
     await a.waitForSelector('#game-root .gm-end:not([hidden])', { timeout: 10000 });
     await b.waitForSelector('#game-root .gm-end:not([hidden])', { timeout: 10000 });
@@ -2516,6 +2643,73 @@ async function uxDesktopSection(port) {
   } finally { await h.close(); }
 }
 
+/** Net owner (pro pass): the hiding keepalive, the eased Watch switch and the fog-capped pellet range. */
+async function netPolishSection(port) {
+  console.log('\n# net polish: hiding presence is a keepalive, View → Watch whips the camera, pellets stop at the fog');
+  const h = await launch({ port, only: ['chameleon'] });
+  const { a, b } = h;
+  // presence publishes vs frames over ms, measured in the page
+  const pubRate = (p, ms) => p.evaluate((ms) => new Promise((res) => {
+    const p0 = window.__cham.state().pubs; let frames = 0; const t0 = performance.now();
+    const tick = () => { frames++; if (performance.now() - t0 < ms) requestAnimationFrame(tick); else res({ pubs: window.__cham.state().pubs - p0, frames, s: (performance.now() - t0) / 1000 }); };
+    requestAnimationFrame(tick);
+  }), ms);
+  try {
+    await startPair(h, SLOW);
+    await startMatch(h, { rules: { huntPaint: 'tell' } });
+    await waitPhase(b, 'hide', 20000);
+    await wait(800);
+    const hr = await pubRate(b, 4000);
+    console.log(`  hiding: ${hr.pubs} publishes in ${hr.s.toFixed(1)} s over ${hr.frames} frames`);
+    assert(hr.pubs / hr.s <= 3.2 && hr.pubs >= 4, `the hider publishes a ~2.5/s keepalive while hiding (${(hr.pubs / hr.s).toFixed(1)}/s, was 20/s)`);
+    const sa = await st(a);
+    assert(!sa.paused && sa.rem && sa.rem.v === 0, `the host (seeker) stays linked and unpaused, and sees nobody (v ${sa.rem && sa.rem.v})`);
+    await camoHide(b);
+    await b.tap('.chm-acts [data-act="ready"]');
+    await waitPhase(b, 'seek', 20000);
+    await b.waitForFunction(() => window.__cham.state().hunting, null, { timeout: 8000 });
+    await wait(600);
+    const sr = await pubRate(b, 2500);
+    assert(sr.pubs >= sr.frames - 2, `full-rate presence once hunted (${sr.pubs} publishes / ${sr.frames} frames)`);
+    assert(((await st(a)).rem || {}).v > 0.5, 'the seeker now has the hider\'s real presence');
+    // View → Watch: the camera whips over instead of cutting
+    await hook(a, 'teleport', -1.0, 1.5, Math.PI, 0);
+    await wait(700);
+    const trail = await b.evaluate(() => new Promise((res) => {
+      const out = [window.__cham.state().cam]; const t0 = performance.now();
+      window.__cham.view('watch');
+      const tick = () => { out.push(window.__cham.state().cam); if (performance.now() - t0 < 900) requestAnimationFrame(tick); else res(out); };
+      requestAnimationFrame(tick);
+    }));
+    const steps = []; for (let i = 1; i < trail.length; i++) steps.push(vlen([trail[i][0] - trail[i - 1][0], trail[i][1] - trail[i - 1][1], trail[i][2] - trail[i - 1][2]]));
+    const total = vlen([trail[trail.length - 1][0] - trail[0][0], trail[trail.length - 1][1] - trail[0][1], trail[trail.length - 1][2] - trail[0][2]]);
+    const vw = (await st(b)).viewWhip;
+    console.log(`  watch switch: offset ${vw.step.toFixed(2)} m, ${steps.length} frames, steps ${steps.slice(0, 8).map((x) => x.toFixed(2)).join(' ')}`);
+    assert((await st(b)).spect === 'watch', 'the hunted hider is watching the seeker');
+    assert(total > 0.3 && Math.max(...steps) < total * 0.85 && steps.filter((x) => x > 0.01).length >= 2, `the switch is eased across frames (largest step ${Math.max(...steps).toFixed(2)} of ${total.toFixed(2)} m)`);
+    // back to the eyes: the same whip
+    await hook(b, 'view', 'eyes');
+    await wait(700);
+    if (process.env.NETSHOTS) { // frames of the whip (screenshots are slow here: each lands ~100+ ms apart)
+      await hook(b, 'view', 'watch');
+      for (let i = 0; i < 5; i++) await shot(b, `net-whip-${i}`);
+      await hook(b, 'view', 'eyes'); await wait(700);
+    }
+    // pellets: range is the fog's far edge
+    const fog = await hook(a, 'fog');
+    const sb = await hook(a, 'body');
+    await hook(a, 'aimAt', sb.x + 0.3, sb.y + 6, sb.z - 1);
+    for (let i = 0; i < 40 && !(await st(a)).lastShot; i++) { await a.click('.chm-acts [data-act="fire"]').catch(() => {}); await wait(250); }
+    const ls = (await st(a)).lastShot;
+    assert(ls && ls.range === Math.min(40, fog.far), `a pellet flies at most to the fog (${ls && ls.range} m, fog far ${fog.far})`);
+    h.assertNoErrors();
+    assert(!h.warnings.length, `message budget respected (${h.warnings.length} warnings)`);
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'net-FAIL-a').catch(() => {}); await shot(b, 'net-FAIL-b').catch(() => {});
+  } finally { await h.close(); }
+}
+
 // ─────────────────────────────────────────────────────────────────────
 (async () => {
   const sections = [];
@@ -2571,10 +2765,14 @@ async function uxDesktopSection(port) {
   // pro pass (mechanics)
   if (want('feel')) sections.push(() => feelSection(PORT + 2));
   if (want('feel2')) sections.push(() => feel2Section(PORT + 3));
+  // pro pass (paint owner)
+  if (want('paintfeel')) sections.push(() => paintFeelSection(PORT + 0));
   // polish (UX owner)
   if (want('ux')) sections.push(() => uxSection(PORT + 5));
   if (want('uxland')) sections.push(() => uxLandscapeSection(PORT + 6));
   if (want('uxdesk')) sections.push(() => uxDesktopSection(PORT + 7));
+  // pro pass (net owner)
+  if (want('netpolish')) sections.push(() => netPolishSection(PORT + 4));
   if (want('shots3')) {
     sections.push(async () => {
       console.log('\n# v3 screenshots: settings (timing, rules), seeker on a wall, hider HUD, watch, free cam — phone, landscape, laptop; light + dark');

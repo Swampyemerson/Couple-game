@@ -2,7 +2,7 @@
 // the fixed-step loop, pause / resume protocol, partner re-mounts, finale, HUD, test hook.
 import {
   DT, LANE_W, SLIDE_TIME, STUMBLE_T, START_DELAY, RESUME_DELAY, RACE_LEN, BRAWL_CAP, MT_LEAD, CHUNK,
-  HEARTS, TEAM_HEARTS_MAX, HIT_STOP, FINALE_MS, baseSpeed,
+  HEARTS, TEAM_HEARTS_MAX, HIT_STOP, FINALE_MS, REVIVE_WINDOW, baseSpeed,
 } from './tune.js';
 import { hash } from '../core.js';
 import { createTrack, trackHash, difficulty, O_MTRAIN, TUT_JUMP, TUT_ROLL } from './track.js';
@@ -27,13 +27,16 @@ const F_RUN = 64; const F_OUT = 128; const F_BOOST = 256; const F_MAGNET = 512; 
 const WEAPON_IDX = [null, 'ink', 'block', 'zap', 'rocket', 'shield'];
 const PZ = { menu: 1, hidden: 2, gl: 3, gone: 4, stale: 5, sync: 6, tap: 7 };
 const PZ_ORDER = ['gl', 'tap', 'menu', 'hidden', 'sync', 'gone', 'stale'];
-const RULE_MSGS = ['atk', 'res', 'shove', 'fin', 'out', 'down', 'revive', 'missed'];
+const RULE_MSGS = ['atk', 'res', 'shove', 'fin', 'out', 'down', 'revive', 'missed', 'cheer'];
 const SKEY = 'rush.settings.v1';
 const TKEY = 'rush.tutorial.v1';
 const MKEY = 'rush.mode.v1';
 const MUTE = 'ju.games.mute';
 const HN = 150; // lag-compensation history (frames)
-const COMBO_WORDS = ['', '', 'Nice', 'Great', 'Slick', 'Wild', 'Unreal', 'Legend'];
+// the combo ladder reads by tier, not by count: x2 Nice … x16 Legend (tiers pay at 3/5/8/12/16, see tune.js)
+const COMBO_AT = [2, 3, 5, 8, 12, 16];
+const COMBO_WORDS = ['Nice', 'Great', 'Slick', 'Wild', 'Unreal', 'Legend'];
+const comboTier = (n) => { let t = -1; for (let i = 0; i < COMBO_AT.length; i++) if (n >= COMBO_AT[i]) t = i; return t; };
 const DIGITS = ['', '1', '2', '3'];
 const TUT_KEYS = ['← → or A D to switch lanes', '↑ W or Space to jump', '↓ or S to roll under'];
 const TUT_BTNS = ['Tap left or right to switch lanes', 'Tap JUMP to jump', 'Tap ROLL to roll under'];
@@ -42,9 +45,9 @@ const TUT_SWIPE = ['Swipe left or right to switch lanes', 'Swipe up to jump', 'S
 const STYLES = [
   { key: 'trail', k: 0, name: 'None' },
   { key: 'trail', k: 1, name: 'Sparkle', how: 'Run 1 km in one go', test: (S) => S.dist >= 1000 },
-  { key: 'trail', k: 2, name: 'Ink puffs', how: '10 close calls in one run', test: (S) => S.closeCalls >= 10 },
+  { key: 'trail', k: 2, name: 'Ink puffs', how: '15 close calls in one run', test: (S) => S.closeCalls >= 15 },
   { key: 'trail', k: 3, name: 'Confetti', how: 'Win 3 matches', test: (S) => S.wins >= 3 },
-  { key: 'trail', k: 4, name: 'Embers', how: 'A x10 combo', test: (S) => S.maxCombo >= 10 },
+  { key: 'trail', k: 4, name: 'Embers', how: 'A x8 combo (Wild)', test: (S) => S.maxCombo >= 8 },
   { key: 'hat', k: 0, name: 'None' },
   { key: 'hat', k: 1, name: 'Crown', how: 'Beat your partner’s best Daily run', test: (S) => S.beatDaily },
   { key: 'hat', k: 2, name: 'Halo', how: 'Revive your partner 3 times', test: (S) => S.revives >= 3 },
@@ -282,6 +285,7 @@ export function createGame(el, api) {
       scheme: () => settings.scheme,
       enabled: () => !dead && !hud.ov.set.classList.contains('on'),
       onAction: (w, a) => onAction(w, a),
+      onPress: (w) => { const p = players[w]; if (rules && p && p.local && p.r && p.r.down && M.phase === 'run' && !isPaused(clock())) rules.cheer(p); },
       onAny: () => audio.unlock(),
     });
   }
@@ -348,7 +352,7 @@ export function createGame(el, api) {
     if (world) { world.reset(); world.setGates([7]); }
     hud.finale(null); hud.count(''); hud.pause(null); countK = -1; pauseK = -1;
     for (const w of viewers) players[w].view && players[w].view.banner(null);
-    audio.stopMusic();
+    audio.stopMusic(); audio.setMagnet(0);
     api.setStatus(null);
   }
 
@@ -457,7 +461,7 @@ export function createGame(el, api) {
     const pbLine = recordBests(res);
     hud.finale(res.team ? res.text : w ? `${api.name(w)} wins!` : (res.daily ? 'Dead heat!' : 'Photo finish!'), cls, pbLine || (res.team ? res.sub : (live ? (w === meW ? 'You did it' : 'So close') : '')));
     audio.play('finish');
-    audio.stopMusic();
+    audio.stopMusic(); audio.setMagnet(0);
     const tz = w ? players[w].rs : players[viewers[0]].rs;
     fx.confetti(tz.x, tz.ground, tz.z, w ? [P[w], P.hl, P.card] : [P.a, P.b, P.hl], 60);
     v.forEach((x) => x && x.banner(null));
@@ -552,6 +556,7 @@ export function createGame(el, api) {
     if (!p || !p.local || !p.r) return;
     if (a === A_USE) { useWeapon(w); return; }
     if (M.phase !== 'run' || isPaused(clock())) return;
+    if (p.r.down) { rules.cheer(p); return; } // down in Together: any input cheers your partner on
     if (a === A_LEFT || a === A_RIGHT) rules.onLane(p, a === A_LEFT ? -1 : 1);
     act(p.r, a);
     tutorial.did(p, a);
@@ -780,9 +785,12 @@ export function createGame(el, api) {
       if (p.auto && M.steps % p.bot.every === 0 && !r.down) {
         let goal = null;
         for (const tk of r.tokens) if (tk.alive && tk.z > r.z && tk.z - r.z < 70) goal = Math.round(tk.x / LANE_W);
+        // Brawl: after half a second side by side the bot leans in for a shove (when it's safe to)
+        if (goal === null && M.mode === 'brawl' && p.sideT >= 0.5) goal = Math.round(players[other(p.w)].rs.x / LANE_W);
         const a = p.bot.decide(r, goal);
         if (a) { if (a === A_LEFT || a === A_RIGHT) rules.onLane(p, a === A_LEFT ? -1 : 1); act(r, a); }
       }
+      else if (p.auto && r.down && M.mode === 'tandem' && M.steps % 48 === 0) rules.cheer(p);
       step(r, M.track, false);
       drain(p);
     }
@@ -813,7 +821,7 @@ export function createGame(el, api) {
               if (f) { f.on = true; f.t = 0; f.fx = cn.x; f.fy = cn.y; f.fz = cn.z; f.x = cn.x; f.y = cn.y; f.z = cn.z; f.s = 1; }
             } else fx.coin(cn.x, cn.y, cn.z);
           }
-          if (mine) audio.play('coin');
+          if (mine) audio.play('coin', r.magnetT > 0);
           break;
         }
         case E_PICK: {
@@ -825,7 +833,7 @@ export function createGame(el, api) {
         }
         case E_STUMBLE: if (mine) { api.haptic(15); audio.play('stumble'); if (Math.random() < 0.4) v.pop('Oof', 'bad'); } shake(p.w, 0.28); fx.dust(r.x, r.y, r.z, 5, 1); break;
         case E_CLIP: if (mine) { api.haptic(20); audio.play('clip'); v.pop('Clipped it!', 'bad', 'swipe a touch earlier'); } shake(p.w, 0.35); fx.dust(r.x, r.y, r.z, 6, 1.1); fx.burst(r.x, r.y + 1, r.z, P.hl, 5, 3); break;
-        case E_BONUS: if (mine) { audio.play('bonus', val); v.pop(`+${val}`, 'hl', 'combo bonus'); } fx.burst(r.x, r.y + 1.4, r.z, P.hl, 10, 4); break;
+        case E_BONUS: if (mine) { const ti = comboTier(r.combo); audio.play('bonus', val); v.combo(r.combo, `${COMBO_WORDS[ti < 0 ? 0 : ti]} · +${val} coins`, ti); } // on the combo ladder, not a centre pop (a close call usually pops on the same step) fx.burst(r.x, r.y + 1.4, r.z, P.hl, 10, 4); break;
         case E_CRASH:
           if (mine) { api.haptic(45); audio.play('crash'); audio.duck(1400); v.flash(); v.pop(val === 2 ? 'FELL!' : val === 3 ? 'SLAMMED!' : 'CRASH!', 'bad'); }
           shake(p.w, 0.7);
@@ -836,8 +844,8 @@ export function createGame(el, api) {
           break;
         case E_RESPAWN: fx.dust(r.x, 0, r.z, 8, 1.2); fx.burst(r.x, r.y + 1, r.z, P.hl, 8, 3); if (mine) { audio.play('respawn'); const rg = p.rig; if (rg) rg.kick(0.5); } break;
         case E_SHIELD: fx.burst(r.x, r.y + 1.1, r.z, P.hl, 16, 6); if (mine) { audio.play('shield'); v.pop('Shield saved you', 'hl'); } shake(p.w, 0.3); break;
-        case E_CLOSE: fx.sparkle(r.x, r.y, r.z, val * LANE_W > r.x ? 1 : -1); if (mine) { audio.play('close'); v.pop('Close call!', 'hl', '+2'); api.haptic(8); const rg = p.rig; if (rg) rg.kick(0.25); } break;
-        case E_COMBO: if (mine) { audio.play('combo', val); v.combo(val, COMBO_WORDS[Math.min(val, COMBO_WORDS.length - 1)]); } break;
+        case E_CLOSE: fx.sparkle(r.x, r.y, r.z, val * LANE_W > r.x ? 1 : -1); if (mine) { audio.play('close', r.combo); v.pop('Close call!', 'hl', '+2'); api.haptic(8); const rg = p.rig; if (rg) rg.kick(r.combo >= 3 ? 0.35 : 0.25); } break;
+        case E_COMBO: if (mine) { const ti = comboTier(val); audio.play('combo', val); v.combo(val, COMBO_WORDS[ti < 0 ? 0 : ti], ti); } break;
         case E_SMASH: fx.burst(r.x, r.y + 0.6, r.z + 0.6, P.hl, 14, 7); if (mine) audio.play('smash'); shake(p.w, 0.15); break;
         default: break;
       }
@@ -1018,10 +1026,20 @@ export function createGame(el, api) {
       const ht = p.local ? wear[AB[i]].ht : p.net.ht;
       if (p.av) p.av.setHat(ht);
       if (tr && M.phase === 'run' && p.rs.speed > 6 && !p.rs.down && p.rs.visible) fx.trailFx(tr, p.rs.x, p.rs.y, p.rs.z, P[AB[i]], frameN);
-      // distance milestones every 500 m
-      if (p.local && p.view && p.r && M.phase === 'run') {
-        const mile = Math.floor(p.r.z / 500);
-        if (mile > p.lastMile) { p.lastMile = mile; if (mile >= 1) { p.view.pop(`${fmtM(mile * 500)} m`, 'hl', mile * 500 === 1000 ? '1 km!' : ''); audio.play('good'); } }
+      // distance milestones every 500 m; in a Race each one gives a lost heart back (Daily is the
+      // survival mode: no regen there)
+      if (p.local && p.r && M.phase === 'run') {
+        const r = p.r;
+        const mile = Math.floor(r.z / 500);
+        if (mile > p.lastMile && !r.down) {
+          p.lastMile = mile;
+          const heal = M.mode === 'race' && mile >= 1 && !r.out && !r.done && r.hearts < HEARTS;
+          if (heal) r.hearts++;
+          if (mile >= 1 && p.view) {
+            p.view.pop(`${fmtM(mile * 500)} m`, heal ? 'good' : 'hl', heal ? '+♥ heart back' : mile * 500 === 1000 ? '1 km!' : '');
+            audio.play(heal ? 'heart' : 'good');
+          }
+        }
       }
     }
     tutorial.update();
@@ -1084,6 +1102,9 @@ export function createGame(el, api) {
     for (let i = 0; i < viewers.length; i++) { const rs = players[viewers[i]].rs; if (rs.speed > sp) sp = rs.speed; }
     audio.setIntensity(clamp((sp - 12) / 16, 0, 1));
     audio.setWind(M.phase === 'run' && !paused ? clamp((sp - 8) / 22, 0, 1) : 0);
+    let mag = 0;
+    for (let i = 0; i < viewers.length; i++) { const r = players[viewers[i]].r; if (r && r.magnetT > 0 && !r.down) mag = 1; }
+    audio.setMagnet(mag && M.phase === 'run' && !paused ? Math.max(0.01, clamp((sp - 8) / 22, 0, 1)) : 0);
     for (let vi = 0; vi < viewers.length; vi++) {
       const w = viewers[vi];
       const p = players[w]; const v = p.view; const r = p.r;
@@ -1146,8 +1167,8 @@ export function createGame(el, api) {
       // tandem banners
       if (M.mode === 'tandem' && M.phase === 'run') {
         if (r.down && p.downId) {
-          const left = Math.max(0, Math.ceil((p.downAt + 10000 - now) / 1000));
-          if (hk.ban !== 1) { hk.ban = 1; v.banner(`You’re down! ${esc(q.name)} can revive you<b>${left}</b>`); }
+          const left = Math.max(0, Math.ceil((p.downAt + REVIVE_WINDOW - now) / 1000));
+          if (hk.ban !== 1) { hk.ban = 1; v.banner(`You’re down! ${esc(q.name)} can revive you<b>${left}</b><small>tap to cheer them on</small>`); }
           v.bannerNum(left);
         } else if (p.revive) {
           const left = Math.max(0, Math.ceil((p.revive.until - now) / 1000));

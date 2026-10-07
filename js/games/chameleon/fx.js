@@ -185,25 +185,76 @@ export function createFx(THREE, scene, { gradientMap }) {
 
   // ── brush cursor + recap ring ──
   const ringGeo = own(new THREE.RingGeometry(0.9, 1, 32));
-  const cursorMat = own(new THREE.MeshBasicMaterial({ color: 0x1d1b22, transparent: true, opacity: 0.85, depthTest: false, depthWrite: false }));
-  const cursor = new THREE.Mesh(ringGeo, cursorMat);
+  // The cursor: a dark ring whose width stays ~2.5 px on screen (inner radius rewritten per call),
+  // a 1 px light halo outside it so it reads on a white or a dark body, a 20 % fill of the brush
+  // colour, a centre dot, and (soft brush) a faint inner ring where the falloff core ends.
+  const CSEG = 40;
+  const cRingGeo = own(new THREE.RingGeometry(0.9, 1, CSEG, 1));
+  const cHaloGeo = own(new THREE.RingGeometry(0.9, 1, CSEG, 1));
+  const cDiscGeo = own(new THREE.CircleGeometry(1, CSEG));
+  const cDotGeo = own(new THREE.CircleGeometry(1, 12));
+  const cCoreGeo = own(new THREE.RingGeometry(0.5, 0.54, CSEG, 1));
+  const cmat = (color, opacity) => own(new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthTest: false, depthWrite: false }));
+  const cursorMat = cmat(0x1d1b22, 0.92);
+  const cHaloMat = cmat(0xffffff, 0.85);
+  const cFillMat = cmat(0xffffff, 0.22);
+  const cDotMat = cmat(0x1d1b22, 0.92);
+  const cCoreMat = cmat(0x1d1b22, 0.4);
+  const cursor = new THREE.Group();
+  const cParts = [[cDiscGeo, cFillMat, 5], [cCoreGeo, cCoreMat, 6], [cHaloGeo, cHaloMat, 6], [cRingGeo, cursorMat, 7], [cDotGeo, cDotMat, 7]].map(([g, m, o]) => { const me = new THREE.Mesh(g, m); me.renderOrder = o; me.frustumCulled = false; cursor.add(me); return me; });
+  const cDot = cParts[4]; const cCore = cParts[1];
   cursor.visible = false; cursor.renderOrder = 5;
   scene.add(cursor);
+  /** Rewrite a ring's inner (j = 0) and outer (j = 1) radii in place (RingGeometry vertex order). */
+  function setRingRadii(geo, rin, rout) {
+    const P = geo.attributes.position; const a = P.array;
+    for (let j = 0; j < 2; j++) {
+      const rr = j ? rout : rin;
+      for (let i = 0; i <= CSEG; i++) { const th = (i / CSEG) * Math.PI * 2; const o = (j * (CSEG + 1) + i) * 3; a[o] = Math.cos(th) * rr; a[o + 1] = Math.sin(th) * rr; }
+    }
+    P.needsUpdate = true;
+  }
+  const cur = { r: 0.05, w: -1, pulseAt: -1e9, pulseAmp: 0, now: 0 };
   const hlMat = own(new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide }));
   const ring = new THREE.Mesh(ringGeo, hlMat);
   ring.rotation.x = -Math.PI / 2; ring.visible = false; ring.renderOrder = 2;
   scene.add(ring);
 
-  function setCursor(on, x, y, z, nx, ny, nz, r, color) {
+  /**
+   * Brush cursor at (x,y,z) facing n, radius r (m). color: the ring colour; fill: the brush
+   * colour ([r,g,b] 0..255) for the 20 % disc; mpp: metres per screen pixel at the hit (keeps
+   * the ring ~2.5 px wide); soft: show the falloff core ring.
+   */
+  function setCursor(on, x, y, z, nx, ny, nz, r, color, fill, mpp, soft) {
     cursor.visible = on;
     if (!on) return;
     cursor.position.set(x + nx * 0.01, y + ny * 0.01, z + nz * 0.01);
     v1.set(nx, ny, nz); q1.setFromUnitVectors(zAxis, v1); cursor.quaternion.copy(q1);
-    cursor.scale.setScalar(r);
-    if (color) cursorMat.color.set(color);
+    cur.r = r;
+    cursor.scale.setScalar(r * cursorPulse());
+    if (color) { cursorMat.color.set(color); cDotMat.color.set(color); cCoreMat.color.set(color); }
+    if (fill) cFillMat.color.setRGB(fill[0] / 255, fill[1] / 255, fill[2] / 255);
+    // ring width in units of r: 2.5 px dark + 1.2 px halo outside
+    const w = mpp > 0 ? Math.min(0.35, Math.max(0.03, (2.5 * mpp) / r)) : 0.1;
+    if (Math.abs(w - cur.w) > 0.004) {
+      cur.w = w;
+      setRingRadii(cRingGeo, 1 - w, 1);
+      setRingRadii(cHaloGeo, 1, 1 + w * 0.5);
+      const d = Math.min(0.12, w * 0.9); cDot.scale.setScalar(d);
+    }
+    cCore.visible = !!soft; cursorMat.opacity = soft ? 0.6 : 0.92;
+  }
+  /** A quick "boing" on the cursor (size / hardness changed, stroke began). */
+  function pulseCursor(amp = 0.22) { cur.pulseAt = cur.now; cur.pulseAmp = amp; }
+  function cursorPulse() {
+    const k = (cur.now - cur.pulseAt) / 0.2;
+    if (k >= 1 || k < 0) return 1;
+    return 1 + cur.pulseAmp * (1 - k) * (1 - k) * Math.cos(k * 7);
   }
 
   function update(dt, now) {
+    cur.now = now;
+    if (cursor.visible && now - cur.pulseAt < 0.25) cursor.scale.setScalar(cur.r * cursorPulse());
     // splats grow in with a little overshoot
     let anySplat = false;
     for (let i = 0; i < MAX_SPLATS; i++) {
@@ -275,7 +326,7 @@ export function createFx(THREE, scene, { gradientMap }) {
   }
 
   return {
-    splat, pellet, burst, trailDot, setPath, setCursor, update, clearRound, shootTongue, pop,
+    splat, pellet, burst, trailDot, setPath, setCursor, pulseCursor, update, clearRound, shootTongue, pop,
     glints, ring, hlMat, trailMat, pathMat,
     get tongueOn() { return tg.on; },
     get splatCount() { return sp.filter((s) => s.on).length; },

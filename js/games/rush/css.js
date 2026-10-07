@@ -85,6 +85,9 @@ export const CSS = `
 .g-rush .rr-combo { position: absolute; right: 10px; top: 42%; text-align: right; font-weight: 900; font-size: 26px; color: var(--g-hl); opacity: 0; transform-origin: right center;
   text-shadow: 2px 0 0 var(--g-edge), -2px 0 0 var(--g-edge), 0 2px 0 var(--g-edge), 0 -2px 0 var(--g-edge), 2px 2px 0 var(--g-edge), -2px -2px 0 var(--g-edge), 3px 3px 0 var(--g-edge); }
 .g-rush .rr-combo small { display: block; font-size: 13px; color: var(--g-white); }
+.g-rush .rr-combo[data-t="2"] { font-size: 30px; } .g-rush .rr-combo[data-t="3"] { font-size: 34px; }
+.g-rush .rr-combo[data-t="4"], .g-rush .rr-combo[data-t="5"] { font-size: 38px; text-shadow: 2px 0 0 var(--g-edge), -2px 0 0 var(--g-edge), 0 2px 0 var(--g-edge), 0 -2px 0 var(--g-edge), 2px 2px 0 var(--g-edge), -2px -2px 0 var(--g-edge), 3px 3px 0 var(--g-edge), 0 0 18px var(--g-hl); }
+.g-rush .rr-combo[data-t="5"] small { color: var(--g-hl); letter-spacing: .12em; }
 .g-rush .rr-combo.go { animation: rr-combo 1.4s ease-out forwards; } .g-rush .rr-combo.go2 { animation: rr-combo2 1.4s ease-out forwards; }
 @keyframes rr-combo { 0% { opacity: 0; transform: scale(1.6); } 12% { opacity: 1; transform: scale(1); } 75% { opacity: 1; } 100% { opacity: 0; transform: translateY(-10px); } }
 @keyframes rr-combo2 { 0% { opacity: 0; transform: scale(1.6); } 12% { opacity: 1; transform: scale(1); } 75% { opacity: 1; } 100% { opacity: 0; transform: translateY(-10px); } }

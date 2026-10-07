@@ -24,7 +24,7 @@ const SHOTS = process.env.SHOTS || path.join(os.tmpdir(), 'getaway-boulder-shots
 const PORT = Number(process.env.PORT) || 8940;
 const ONLY = (process.env.ONLY || '').split(',').filter(Boolean);
 const want = (k) => !ONLY.length || ONLY.includes(k);
-const BUDGET = { calls: 90, viewTris: 220000, totalTris: 900000, buildMs: 1500, blockMs: 200, textures: 2 };
+const BUDGET = { calls: 90, viewTris: 220000, totalTris: 900000, buildMs: 1500, blockMs: 200, textures: 2, mapGapMs: 40 };
 let failures = 0;
 const ok = (c, m) => { if (!c) { failures++; console.log('FAIL -', m); return false; } console.log('ok -', m); return true; };
 const warn = (c, m) => { console.log(c ? 'ok -' : 'WARN -', m); return c; };
@@ -170,6 +170,31 @@ async function staticSection() {
     }
     const uniq = [...new Set(lane)];
     ok(uniq.length === 0, `no traffic lane runs through a solid${uniq.length ? ` (${uniq.length}): ` + uniq.slice(0, 6).join('; ') : ''}`);
+    // the AI's lane line (roadgraph routePolyline at laneK 0.5: the centre of hw − park, or of the
+    // nearest lane on a multi-lane road) keeps ≥ 2.2 m from every parked car's box: the AI's body
+    // (0.95 m) plus 1.25 m for its line wobble at speed. Curb parking used to sit 1.5 m off it and
+    // AI rounds swung on 90 km/h hits on Pearl / Walnut that the player had nothing to do with.
+    const PARK_CLR = 2.2; let worst = Infinity; let worstAt = ''; const tight = new Set();
+    for (const r of geo.roads) {
+      if (r.traffic === false) continue;
+      const hwL = r.hw - (r.park || 0);
+      const off = (r.lanes > 1 ? (0.5 * hwL) / r.lanes : hwL * 0.5) * (r.kind === 'alley' || r.width < 7 ? 0.35 : 1);
+      for (const dir of [1, -1]) {
+        for (let sd = 2; sd < r.len - 2; sd += 1.5) {
+          geo.sampleRoad(r, sd, o); const tx = o.tx * dir; const tz = o.tz * dir; const x = o.x - tz * off; const z = o.z + tx * off;
+          geo.eachSolid(x, z, 5, (q) => {
+            if (q.kind !== 'car' || (q.y != null && Math.abs(q.y - geo.ground(x, z)) > 2.5)) return;
+            const ax = x - q.x; const az = z - q.z; const lx = ax * q.c - az * q.s; const lz = ax * q.s + az * q.c;
+            const d = Math.hypot(Math.max(0, Math.abs(lx) - q.hw), Math.max(0, Math.abs(lz) - q.hd));
+            if (d < worst) { worst = d; worstAt = `${r.name}@${q.x.toFixed(0)},${q.z.toFixed(0)}`; }
+            if (d < PARK_CLR) tight.add(`${r.name}@${q.x.toFixed(0)},${q.z.toFixed(0)} ${d.toFixed(2)} m`);
+          });
+        }
+      }
+    }
+    ok(tight.size === 0, `the AI's lane line keeps ≥ ${PARK_CLR} m from every parked car (closest ${worst.toFixed(2)} m, ${worstAt})${tight.size ? ` (${tight.size}): ` + [...tight].slice(0, 6).join('; ') : ''}`);
+    const parkRoads = geo.roads.filter((r) => r.park > 0).map((r) => r.name);
+    ok(parkRoads.length >= 3, `curb-parking roads carry a parking strip for the engine's lanes (${[...new Set(parkRoads)].join(', ')})`);
   }
   let steep = 0; let steepest = 0;
   for (const r of geo.roads) { if (r.bridge) continue; for (let i = 1; i < r.n; i++) { const dl = r.cum[i] - r.cum[i - 1]; if (dl < 1) continue; const g = Math.abs(geo.ground(r.x[i], r.z[i]) - geo.ground(r.x[i - 1], r.z[i - 1])) / dl; steepest = Math.max(steepest, g); if (g > 0.12) steep++; } }
@@ -379,6 +404,8 @@ async function engineSection() {
       const errors = [];
       page.on('pageerror', (e) => errors.push(e.message));
       page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+      // THROTTLE=4: a phone-class core (CDP CPU throttle) for the load-blocking numbers
+      if (Number(process.env.THROTTLE) > 1) { const cdp = await page.context().newCDPSession(page); await cdp.send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.THROTTLE) }); }
       await page.goto(`http://localhost:${PORT}/boulder.html?w=960&h=600&quality=${quality}&dark=${dark ? 1 : 0}`);
       await page.waitForFunction(() => document.title === 'ready', null, { timeout: 240000 });
       const s = await page.evaluate(() => window.__stats);
@@ -392,7 +419,11 @@ async function engineSection() {
       console.log(`  [${tag}] prepare ${Math.round(s.prepMs)} ms (longest slice ${Math.round(s.maxPrep)} ms); world`, JSON.stringify(s.world), 'map', JSON.stringify(s.mapStats));
       ok(s.world.tris <= BUDGET.totalTris, `[${tag}] total triangles ${s.world.tris} ≤ ${BUDGET.totalTris} (roads, props, map)`);
       warn(s.world.buildMs <= BUDGET.buildMs, `[${tag}] world build ${s.world.buildMs} ms ≤ ${BUDGET.buildMs} (software GL)`);
-      warn(s.world.maxBlockMs <= BUDGET.blockMs && s.maxPrep <= BUDGET.blockMs, `[${tag}] longest main-thread block ${s.world.maxBlockMs} ms / prepare slice ${Math.round(s.maxPrep)} ms ≤ ${BUDGET.blockMs}`);
+      const ms = s.mapStats || {}; const thr = Number(process.env.THROTTLE) > 1 ? ` at ${process.env.THROTTLE}× CPU throttle` : '';
+      warn(s.world.maxBlockMs <= BUDGET.blockMs && s.maxPrep <= BUDGET.blockMs, `[${tag}] longest main-thread block ${s.world.maxBlockMs} ms (${s.world.maxBlockAt}) / prepare slice ${Math.round(s.maxPrep)} ms ≤ ${BUDGET.blockMs}${thr}`);
+      // the map's own build: the longest run between two kit.slice() calls (each one may yield)
+      // (a warning, like the block above: one preempted slice on a shared, loaded machine reads as a long step)
+      if (ms.gapMs != null) warn(ms.gapMs <= BUDGET.mapGapMs * (Number(process.env.THROTTLE) > 1 ? Number(process.env.THROTTLE) : 1), `[${tag}] map build: longest step between slices ${ms.gapMs} ms (${ms.gapAt}) ≤ ${BUDGET.mapGapMs}${thr ? ` × ${process.env.THROTTLE}` : ''}`);
       ok(s.textures <= BUDGET.textures && s.texSizes.every(([w, h]) => w <= 1024 && h <= 1024), `[${tag}] ${s.textures} canvas texture(s) ≤ ${BUDGET.textures} × 1024²`);
       let worst = { calls: 0, tris: 0, at: '' };
       for (const v of VIEWS) {
@@ -409,10 +440,10 @@ async function engineSection() {
       await page.setViewportSize({ width: 960, height: 600 }); await page.evaluate(() => window.setSize(960, 600));
       ok(worst.calls <= BUDGET.calls, `[${tag}] worst view: ${worst.calls} draw calls ≤ ${BUDGET.calls}`);
       ok(worst.tris <= BUDGET.viewTris, `[${tag}] worst view: ${worst.tris} triangles ≤ ${BUDGET.viewTris}`);
-      if (quality === 'high' && !dark) {
+      if (quality === 'high' && !dark && !(Number(process.env.THROTTLE) > 1)) { // (the 2000² plan render takes minutes under a CPU throttle)
         await page.setViewportSize({ width: 2000, height: 1760 });
         await page.evaluate((labels) => window.plan(labels), await planLabels());
-        await page.screenshot({ path: path.join(SHOTS, 'plan.png'), timeout: 180000 });
+        await page.screenshot({ path: path.join(SHOTS, 'plan.png'), timeout: 480000 });
         console.log('  plan.png written');
       }
       ok(!errors.length, `[${tag}] no page errors${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);

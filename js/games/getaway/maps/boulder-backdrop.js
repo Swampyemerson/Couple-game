@@ -40,7 +40,11 @@ export function rangeHeight(x, z) {
   return h;
 }
 
-export function buildBackdrop(THREE, kit = {}) {
+/** The backdrop in one go (boulder.js hands the engine the generator below, which it slices). */
+export function buildBackdrop(THREE, kit = {}) { const it = backdropGen(THREE, kit); for (;;) { const st = it.next(); if (st.done) return st.value; } }
+/** The backdrop as a generator: yields every few grid rows and between the parts (~240 ms in one
+ *  step on a 4×-throttled core before). */
+export function* backdropGen(THREE, kit = {}) {
   const root = new THREE.Group(); root.name = 'boulder-backdrop';
   let mat = null;
   if (typeof kit.toon === 'function') { try { mat = kit.toon(null, { vertexColors: true, fog: false }); } catch (e) { mat = null; } }
@@ -71,14 +75,16 @@ export function buildBackdrop(THREE, kit = {}) {
   const zs = []; for (let z = -5600; z <= 6600; z += z < -700 || z > 2000 ? 240 : 60) zs.push(z);
   const inIn = (x, z) => x > inner.x0 && x < inner.x1 && z > inner.z0 && z < inner.z1;
   const Hh = (x, z) => (inIn(x, z) ? height(x, z) - 0.4 : rangeHeight(x, z) - 0.6);
-  const hs = zs.map((z) => xs.map((x) => Hh(x, z)));
-  for (let j = 0; j < zs.length - 1; j++) for (let i = 0; i < xs.length - 1; i++) {
+  const hs = []; for (let j = 0; j < zs.length; j++) { hs.push(xs.map((x) => Hh(x, zs[j]))); if ((j & 15) === 15) yield; }
+  yield;
+  for (let j = 0; j < zs.length - 1; j++) { if ((j & 7) === 7) yield; for (let i = 0; i < xs.length - 1; i++) {
     const xa = xs[i]; const xb = xs[i + 1]; const za = zs[j]; const zb = zs[j + 1];
     if (xa >= inner.x0 && xb <= inner.x1 && za >= inner.z0 && zb <= inner.z1 && ![[xa, za], [xb, za], [xa, zb], [xb, zb], [(xa + xb) / 2, (za + zb) / 2]].some(([x, z]) => isFarMtn(x, z))) continue; // the town terrain covers this
     const p00 = [xa, hs[j][i], za]; const p10 = [xb, hs[j][i + 1], za]; const p01 = [xa, hs[j + 1][i], zb]; const p11 = [xb, hs[j + 1][i + 1], zb];
     const cA = colAt((xa + xb) / 2, (za + zb) / 2, (p00[1] + p10[1] + p11[1]) / 3); const cB = colAt((xa + xb) / 2 + 1, (za + zb) / 2 + 1, (p00[1] + p11[1] + p01[1]) / 3);
     tri(p00, p11, p10, cA); tri(p00, p01, p11, cB);
-  }
+  } }
+  yield;
 
   // the foothill forest on the far flank (one cone each; fog-free so the hills read crisp)
   for (const d of layout().decor) {
@@ -90,6 +96,7 @@ export function buildBackdrop(THREE, kit = {}) {
       const am = (a0 + a1) / 2; triRaw(p1, p0, [d.x, y + h, d.z], i % 2 ? g : [g[0] * 0.85, g[1] * 0.85, g[2] * 0.85], [Math.cos(am), 0.5, Math.sin(am)]);
     }
   }
+  yield;
   // the Flatirons: tilted slabs of pink Fountain sandstone, steep faces to the east
   const face = C('#d9937a'); const faceD = C('#c27c66'); const edge = C('#8c5446');
   const lichen = C('#9c8d6a'); const faceL = C('#e3a487');
@@ -138,6 +145,7 @@ export function buildBackdrop(THREE, kit = {}) {
       triRaw(sn0, sn1, c, snow, n); triRaw(sn0, c, dd, snow, n);
     }
   }
+  yield;
   if (kit.dark) for (let k = 0; k < col.length; k += 3) { col[k] = col[k] * 0.42 + 0.04; col[k + 1] = col[k + 1] * 0.42 + 0.05; col[k + 2] = col[k + 2] * 0.45 + 0.1; }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));

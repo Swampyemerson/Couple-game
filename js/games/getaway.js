@@ -31,6 +31,7 @@ registerGame({
   endDelay: 0,
   mount(el, api) {
     const game = createGame(el, api);
-    return { destroy() { game.destroy(); } };
+    // onRematch: a rematch keeps the loaded map (no rebuild); onMenu: the app's ≡ sheet pauses the chase
+    return { destroy() { game.destroy(); }, onRematch: () => game.onRematch(), onMenu: (open) => game.onMenu(open) };
   },
 });

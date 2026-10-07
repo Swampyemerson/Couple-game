@@ -33,7 +33,7 @@ const LV = {
 
 const wrap = (a) => { a = (a + Math.PI) % (Math.PI * 2); if (a < 0) a += Math.PI * 2; return a - Math.PI; };
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
-const BASE = 2.75; const STEER_LOCK = 0.6; const STEER_SPEED = 18;
+const BASE = 2.75; const STEER_LOCK = 0.6; const STEER_SPEED = 18; const GRIP_YAW = 19.5 * 0.97 * 1.18; // tune.js CAR.{runner,cop}.grip × 0.97 × lockGripK (car.js)
 
 export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = {}) {
   const lv = LV[level] || LV.normal;
@@ -205,7 +205,15 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
     const alpha = wrap(Math.atan2(dx, -dz) - car.yaw);
     const kap = (2 * Math.sin(alpha)) / Ld;
     const delta = Math.atan(kap * BASE);
-    const lock = STEER_LOCK / (1 + Math.abs(car.vf || car.speed) / STEER_SPEED);
+    // the car's lock is grip-limited at speed (car.js: full lock = lockGripK × the grip-limited yaw
+    // rate), far below the kinematic lock past ~50 km/h. Mapping the curvature onto the kinematic
+    // lock under-steered 2.6× at 90 km/h: the AI wallowed ±2 m off its line out of every corner and
+    // clipped Pearl St's parked cars. 1.4 × the grip lock keeps a little of pure pursuit's
+    // under-steer (exact grip mapping tracks the chord tighter and cut more kerbs on Dockside).
+    // Bench (39 AI-vs-AI rounds × 90 s per map): Boulder route error 1.11 → 0.74 m, ≥ 43 km/h wall
+    // hits 24 → 8, parked-car hits 33 → 4; Santee 20 → 8; Dockside 3 → 1.
+    const va = Math.max(Math.abs(car.vf || car.speed || 0), 4);
+    const lock = Math.min(STEER_LOCK / (1 + va / STEER_SPEED), 1.4 * Math.atan((GRIP_YAW * BASE) / (va * va)));
     let st = delta / lock;
     if (Math.abs(alpha) > 1.2) st = Math.sign(alpha) * 1.2; // behind us: full lock
     st -= (car.r || 0) * 0.04; // a touch of yaw damping
@@ -268,7 +276,7 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
     // corridors relative to my path: 0 my lane, 1 the oncoming lane, 2 right verge, 3 left verge
     geo.nearestRoad(car.x, car.z, loc2, 30);
     const r = loc2.road >= 0 ? roads[loc2.road] : null;
-    const hw = r ? r.hw : 4; const off = r ? (r.lanes > 1 ? (0.5 * hw) / r.lanes : hw * 0.5) : 2;
+    const hw = r ? r.hw - (r.park || 0) : 4; const off = r ? (r.lanes > 1 ? (0.5 * hw) / r.lanes : hw * 0.5) : 2; // (hw less any parking strip)
     lanes[0] = 0; lanes[1] = -2 * off; lanes[2] = hw - off + 1.7; lanes[3] = -(hw + off) - 1.7;
     const me = D.laneShift; // where I am across my path (the corridors are measured from the path)
     lanes[4] = D.dodgeOff || 0;
@@ -515,7 +523,7 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
       if (D.stuckLvl >= 4 && opts.viewer && Math.hypot(opts.viewer.x - car.x, opts.viewer.z - car.z) > 70 && loc.road >= 0) {
         const r = roads[loc.road]; const tmp = {};
         geo.sampleRoad(r, clamp(loc.s - loc.dir * 12, 0, r.len), tmp);
-        const tx0 = tmp.tx * loc.dir; const tz0 = tmp.tz * loc.dir; const off = r.hw * 0.5;
+        const tx0 = tmp.tx * loc.dir; const tz0 = tmp.tz * loc.dir; const off = (r.hw - (r.park || 0)) * 0.5;
         out.warp = { x: tmp.x - tz0 * off, z: tmp.z + tx0 * off, yaw: Math.atan2(tx0, -tz0) };
         D.stats.hops++; D.revT = 0; D.stuckLvl = 0;
       }
@@ -605,8 +613,10 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
         if (D.laneShift) { const hx = tx - car.x; const hz = tz - car.z; const hl = Math.hypot(hx, hz) || 1; tx += (-hz / hl) * D.laneShift; tz += (hx / hl) * D.laneShift; }
         if (D.offRoute > 6) vT = Math.min(vT, 9 + 30 / D.offRoute); // getting back to the road: gently
         if (D.routeLeft < 30 && role === 'cop') vT = Math.min(vT, Math.max(k ? k.speed + 6 : 10, D.routeLeft * 0.8));
-        // the runner right ahead on my line: close at +4 m/s at most (a PIT, not a 125 km/h rear-ender)
-        if (role === 'cop' && k && dist < 28 && lv.pit > 0) { const fx = Math.sin(car.yaw); const fz = -Math.cos(car.yaw); const lz = (k.x - car.x) * fx + (k.z - car.z) * fz; const lx = Math.abs((k.x - car.x) * Math.cos(car.yaw) + (k.z - car.z) * Math.sin(car.yaw)); if (lz > 3 && lx < 2.2) vT = Math.min(vT, k.speed + 4); }
+        // the runner ahead within 32 m (on my line, or across a corner I'm cutting): close at
+        // +3..+14 m/s, tapering to +3 by 10 m, so the cop arrives on the quarter for a PIT instead
+        // of a 100 km/h side-swipe (the bench had 13 rams to 3 PITs in 6 min of Hard chases)
+        if (role === 'cop' && k && dist < 32 && lv.pit > 0) { const fx = Math.sin(car.yaw); const fz = -Math.cos(car.yaw); const lz = (k.x - car.x) * fx + (k.z - car.z) * fz; if (lz > 2) vT = Math.min(vT, k.speed + 3 + Math.max(0, dist - 10) * 0.5); }
       } else {
         // no route (yet): on a road, keep driving along it the way I'm facing, in my lane (a
         // runner that sat at a road point waiting for a plan was a sitting duck); off the road,
@@ -615,7 +625,7 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
         if (loc.road >= 0 && loc.d < roads[loc.road].hw + 4) {
           const r = roads[loc.road];
           geo.sampleRoad(r, clamp(loc.s + loc.dir * look, 0, r.len), tmpS);
-          const tx0 = tmpS.tx * loc.dir; const tz0 = tmpS.tz * loc.dir; const off = r.oneway ? 0 : r.hw * 0.5;
+          const tx0 = tmpS.tx * loc.dir; const tz0 = tmpS.tz * loc.dir; const off = r.oneway ? 0 : (r.hw - (r.park || 0)) * 0.5;
           tx = tmpS.x - tz0 * off; tz = tmpS.z + tx0 * off; vT = Math.min(vMax, 15);
         } else {
           geo.nearestRoad(car.x, car.z, loc, 150);

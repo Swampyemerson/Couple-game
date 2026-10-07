@@ -19,7 +19,11 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
   let musicTimer = null;
   let step = 0; let nextT = 0; let playing = false;
   const mx = { intensity: 0.5 }; mx.intensity = 0; // set every frame: an object field, not a boxed closure slot
-  let coinStreak = 0; let lastCoin = 0;
+  let coinStreak = 0; let lastCoin = 0; let magCoins = 0;
+  let hoover = null; let hooverF = null; let hooverO = null; let hooverQ = -1; // magnet: one soft lowpassed saw
+  const cstats = { coins: 0, voiced: 0 };
+  // coin streak: +12 semitones over 8 coins at most, so a long line climbs an octave, not to 5 kHz
+  const STREAK = [0, 2, 4, 5, 7, 9, 11, 12];
   let dead = false;
   let pausedDuck = false;
   const stats = { steps: 0, resets: 0, maxAhead: 0 };
@@ -90,11 +94,24 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
   }
 
   const S = {
-    coin() {
+    coin(mag) {
+      cstats.coins++;
+      if (mag) {
+        // under a magnet the hoover loop carries it: one light sparkle per 3 coins, not a coin bomb
+        if (++magCoins % 3) return;
+        const t = performance.now();
+        if (t - lastCoin < 45) return;
+        lastCoin = t; cstats.voiced++;
+        tone(mtof(96 + STREAK[coinStreak]), 0.09, { type: 'sine', vol: 0.05 });
+        return;
+      }
       const t = performance.now();
-      coinStreak = t - lastCoin < 450 ? Math.min(coinStreak + 1, 12) : 0;
-      lastCoin = t;
-      const f = mtof(84 + [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24, 26, 28][coinStreak]);
+      const gap = t - lastCoin;
+      if (gap < 45) return; // one voice per 45 ms: the HUD still counts every coin
+      // climbs while coins keep coming, and sinks one step per 250 ms of silence (not a reset)
+      coinStreak = gap < 300 ? Math.min(coinStreak + 1, STREAK.length - 1) : Math.max(0, coinStreak + 1 - Math.floor(gap / 250));
+      lastCoin = t; cstats.voiced++;
+      const f = mtof(84 + STREAK[coinStreak]);
       tone(f, 0.07, { type: 'square', vol: 0.06, filter: 5000 });
       tone(f * 1.5, 0.12, { type: 'sine', vol: 0.07, at: 0.04 });
     },
@@ -127,7 +144,8 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
     shove() { tone(120, 0.12, { vol: 0.3, to: 60 }); hiss(0.12, { vol: 0.14, f: 1500 }); },
     whiff() { hiss(0.2, { vol: 0.08, f: 2500, to: 600, q: 2 }); },
     horn() { [0, 0.16].forEach((at) => { tone(311, 0.55, { type: 'sawtooth', vol: 0.05, at, filter: 1400 }); tone(370, 0.55, { type: 'sawtooth', vol: 0.04, at, filter: 1400 }); }); },
-    close() { tone(mtof(88), 0.08, { type: 'square', vol: 0.05, filter: 5000 }); tone(mtof(95), 0.16, { type: 'triangle', vol: 0.08, at: 0.06 }); },
+    close(n) { const k = 2 * Math.min(n | 0, 6); tone(mtof(88 + k), 0.08, { type: 'square', vol: 0.05, filter: 5000 }); tone(mtof(95 + k), 0.16, { type: 'triangle', vol: 0.08, at: 0.06 }); },
+    cheer() { hiss(0.05, { vol: 0.16, f: 1500, q: 0.9, attack: 0.001 }); hiss(0.06, { vol: 0.12, f: 1900, q: 0.9, at: 0.035, attack: 0.001 }); tone(mtof(86), 0.12, { type: 'sine', vol: 0.05, at: 0.02 }); },
     combo(n) { tone(mtof(79 + Math.min(n, 10) * 2), 0.14, { type: 'triangle', vol: 0.09 }); },
     tick() { tone(880, 0.07, { type: 'square', vol: 0.06, filter: 3000 }); },
     go() { tone(mtof(84), 0.3, { type: 'square', vol: 0.08, filter: 4000 }); tone(mtof(91), 0.35, { type: 'triangle', vol: 0.1, at: 0.02 }); },
@@ -223,6 +241,28 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
       wind.gain.setTargetAtTime(q * q * 0.11, t, 0.25);
       windF.frequency.setTargetAtTime(240 + q * 1500, t, 0.25);
     },
+    /** Magnet hoover: k = 0 (off) or 0..1 running speed. One lowpassed saw, created on first use. */
+    setMagnet(k) {
+      if (!ctx || dead) return;
+      const q = isMuted() || !(k > 0) ? 0 : 0.5 + Math.round(Math.min(1, k) * 10) / 20;
+      if (q === hooverQ) return;
+      if (!hoover) {
+        if (!q) return;
+        try {
+          hooverO = ctx.createOscillator(); hooverO.type = 'sawtooth'; hooverO.frequency.value = 70;
+          hooverF = ctx.createBiquadFilter(); hooverF.type = 'lowpass'; hooverF.frequency.value = 500; hooverF.Q.value = 3;
+          hoover = ctx.createGain(); hoover.gain.value = 0;
+          hooverO.connect(hooverF).connect(hoover).connect(sfxBus);
+          hooverO.start();
+        } catch { hoover = null; return; }
+      }
+      hooverQ = q;
+      const t = ctx.currentTime;
+      hoover.gain.setTargetAtTime(q ? 0.05 : 0, t, q ? 0.08 : 0.2);
+      if (q) { hooverO.frequency.setTargetAtTime(55 + q * 50, t, 0.3); hooverF.frequency.setTargetAtTime(350 + q * 700, t, 0.3); }
+      if (!q) magCoins = 0;
+    },
+    cstats,
     /** Duck the music under a pause card. */
     setPaused(on) { pausedDuck = !!on; },
     stats,
@@ -246,6 +286,7 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
       if (owned) { if (ctx.state === 'running') ctx.suspend().catch(() => {}); }
       else if (master) master.gain.setTargetAtTime(0, ctx.currentTime, 0.02);
       if (wind) { wind.gain.setTargetAtTime(0, ctx.currentTime, 0.02); windQ = -1; }
+      if (hoover) { hoover.gain.setTargetAtTime(0, ctx.currentTime, 0.02); hooverQ = 0; }
     },
     resume() {
       if (!ctx) return;

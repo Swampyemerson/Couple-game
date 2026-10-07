@@ -32,10 +32,12 @@ export const FX = {
   sirenR: 20, sirenB: 21, tail: 22, reverse: 23, water: 24, metal: 25, wood: 26, rock: 27, foliage: 28, lot: 29,
 };
 
-// Vertex layout (Builder.geometryOut / packGeometry): position f32×3, normal i8×3 normalised,
-// color u8×3 normalised, fx u8, aux i16 normalised × AUX_SCALE (lane coordinate, ±8 at 2.4e-4):
-// 21 B/vertex instead of 44 (f32 everything), i.e. roughly −40 MB of GPU memory on the big maps.
-export const AUX_SCALE = 8;
+// Vertex layout (Builder.geometryOut / packGeometry): position f32×3, normal i8×3 normalised and
+// color u8×3 normalised (each in its own 4-byte-stride buffer), fx f32, aux f32 (lane coordinate):
+// 24 B/vertex (28 with aux) instead of 44. Every attribute starts on a 4-byte boundary with a
+// 4-byte-multiple stride: Metal (WebKit's ANGLE backend on iPhones) can't fetch anything else and
+// would silently convert each misaligned buffer into a padded copy on first draw (a hitch + the
+// memory back). Non-normalised small integers (u8 fx) would be converted too, hence f32 fx / aux.
 /** Multiplier that turns a (possibly normalised integer) attribute's raw array value into its float value. */
 export function attrScale(a) {
   if (!a || !a.normalized) return 1;
@@ -44,8 +46,8 @@ export function attrScale(a) {
   if (A instanceof Int16Array) return 1 / 32767; if (A instanceof Uint16Array) return 1 / 65535;
   return 1;
 }
-/** aux attribute raw value → lane coordinate (see AUX_SCALE). */
-export function auxScale(a) { return a && a.normalized ? attrScale(a) * AUX_SCALE : 1; }
+/** aux attribute raw value → lane coordinate (aux is f32 since v2.1, normalised i16 never shipped). */
+export function auxScale(a) { return a && a.normalized ? attrScale(a) * 8 : 1; }
 
 // quality tier ('low' | 'mid' | 'high'): set by render.js before any material is made
 let TIER = 'high';
@@ -158,7 +160,7 @@ const VERT_COLOR = `#if defined( USE_COLOR ) || defined( USE_INSTANCING_COLOR )
 #endif`;
 const VERT_POST = `#include <fog_vertex>
 vFx = fx + uFxm;
-vAux = aux * 8.0; // AUX_SCALE: aux is an i16 normalised lane coordinate
+vAux = aux;
 vLPos = transformed;
 vec3 gN = normal;
 #ifdef USE_INSTANCING
@@ -697,14 +699,14 @@ export class Builder {
     this.ni = n; this.nv += 4;
     return this;
   }
-  /** The merged geometry, with the static attributes quantised (see AUX_SCALE above). */
+  /** The merged geometry, with normals and colours quantised (see the vertex layout above). */
   geometryOut() {
     const THREE = this.THREE; const g = new THREE.BufferGeometry(); const n = this.nv;
     g.setAttribute('position', new THREE.BufferAttribute(this.pos.slice(0, n * 3), 3));
-    g.setAttribute('normal', new THREE.BufferAttribute(packNormals(this.nrm, n), 3, true));
-    g.setAttribute('color', new THREE.BufferAttribute(packColors(this.col, n), 3, true));
-    g.setAttribute('fx', new THREE.BufferAttribute(packFx(this.fx, n), 1));
-    if (this.hasAux || this.auxV) g.setAttribute('aux', new THREE.BufferAttribute(packAux(this.aux, n), 1, true));
+    g.setAttribute('normal', packed(THREE, packNormals(this.nrm, n)));
+    g.setAttribute('color', packed(THREE, packColors(this.col, n)));
+    g.setAttribute('fx', new THREE.BufferAttribute(this.fx.slice(0, n), 1));
+    if (this.hasAux || this.auxV) g.setAttribute('aux', new THREE.BufferAttribute(this.aux.slice(0, n), 1));
     const ix = n > 65535 ? this.idx.slice(0, this.ni) : Uint16Array.from(this.idx.subarray(0, this.ni));
     g.setIndex(new THREE.BufferAttribute(ix, 1));
     g.computeBoundingSphere(); g.computeBoundingBox();
@@ -714,23 +716,29 @@ export class Builder {
 }
 
 // ── attribute packing ──
-function packNormals(src, n) { const o = new Int8Array(n * 3); for (let i = 0; i < n * 3; i++) { const v = src[i]; o[i] = Math.round((v > 1 ? 1 : v < -1 ? -1 : v) * 127); } return o; }
-function packColors(src, n) { const o = new Uint8Array(n * 3); for (let i = 0; i < n * 3; i++) { const v = src[i]; o[i] = Math.round((v > 1 ? 1 : v < 0 ? 0 : v) * 255); } return o; }
-function packFx(src, n) { const o = new Uint8Array(n); for (let i = 0; i < n; i++) { const v = Math.round(src[i]); o[i] = v > 255 ? 255 : v < 0 ? 0 : v; } return o; }
-function packAux(src, n) { const o = new Int16Array(n); for (let i = 0; i < n; i++) { const v = src[i] / AUX_SCALE; o[i] = Math.round((v > 1 ? 1 : v < -1 ? -1 : v) * 32767); } return o; }
+// xyz in a 4-byte stride (the 4th byte is padding), normalised to -1..1 (i8) / 0..1 (u8)
+function packNormals(src, n) { const o = new Int8Array(n * 4); for (let i = 0; i < n; i++) for (let k = 0; k < 3; k++) { const v = src[i * 3 + k]; o[i * 4 + k] = Math.round((v > 1 ? 1 : v < -1 ? -1 : v) * 127); } return o; }
+function packColors(src, n) { const o = new Uint8Array(n * 4); for (let i = 0; i < n; i++) { for (let k = 0; k < 3; k++) { const v = src[i * 3 + k]; o[i * 4 + k] = Math.round((v > 1 ? 1 : v < 0 ? 0 : v) * 255); } o[i * 4 + 3] = 255; } return o; }
+/** A normalised xyz view on a 4-byte-stride integer array. It answers onUpload / gpuBytes like a
+ *  plain BufferAttribute so the release-after-upload code (world.js, maps) needn't care. */
+function packed(THREE, arr) {
+  const ib = new THREE.InterleavedBuffer(arr, 4);
+  const a = new THREE.InterleavedBufferAttribute(ib, 3, 0, true);
+  a.onUpload = (cb) => { ib.onUpload(cb); return a; };
+  Object.defineProperty(a, 'gpuBytes', { get: () => ib.gpuBytes });
+  return a;
+}
 /**
  * Quantise a float geometry built outside the Builder (a map's own buffers) to the Builder's
- * layout: normal → i8, color → u8, fx → u8, aux → i16, uv → u16 normalised (atlas coordinates in
- * 0..1). Positions and indices stay. Returns the geometry. Safe to call twice.
+ * layout: normal → i8, color → u8 (both padded to 4 bytes), uv → u16 normalised (atlas coordinates
+ * in 0..1); fx / aux stay f32. Positions and indices stay. Returns the geometry. Safe to call twice.
  */
 export function packGeometry(THREE, g) {
   const n = g.getAttribute('position') ? g.getAttribute('position').count : 0; if (!n) return g;
-  const nr = g.getAttribute('normal'); if (nr && nr.array instanceof Float32Array) g.setAttribute('normal', new THREE.BufferAttribute(packNormals(nr.array, n), 3, true));
-  const co = g.getAttribute('color'); if (co && co.array instanceof Float32Array && co.itemSize === 3) g.setAttribute('color', new THREE.BufferAttribute(packColors(co.array, n), 3, true));
-  const fx = g.getAttribute('fx'); if (fx && fx.array instanceof Float32Array) g.setAttribute('fx', new THREE.BufferAttribute(packFx(fx.array, n), 1));
-  const ax = g.getAttribute('aux'); if (ax && ax.array instanceof Float32Array) g.setAttribute('aux', new THREE.BufferAttribute(packAux(ax.array, n), 1, true));
+  const nr = g.getAttribute('normal'); if (nr && nr.array instanceof Float32Array && nr.itemSize === 3 && !nr.isInterleavedBufferAttribute) g.setAttribute('normal', packed(THREE, packNormals(nr.array, n)));
+  const co = g.getAttribute('color'); if (co && co.array instanceof Float32Array && co.itemSize === 3 && !co.isInterleavedBufferAttribute) g.setAttribute('color', packed(THREE, packColors(co.array, n)));
   const uv = g.getAttribute('uv');
-  if (uv && uv.array instanceof Float32Array && uv.itemSize === 2) {
+  if (uv && uv.array instanceof Float32Array && uv.itemSize === 2 && !uv.isInterleavedBufferAttribute) {
     let ok = true; const U = uv.array; for (let i = 0; i < n * 2 && ok; i++) if (!(U[i] >= 0 && U[i] <= 1)) ok = false;
     if (ok) { const o = new Uint16Array(n * 2); for (let i = 0; i < n * 2; i++) o[i] = Math.round(U[i] * 65535); g.setAttribute('uv', new THREE.BufferAttribute(o, 2, true)); }
   }

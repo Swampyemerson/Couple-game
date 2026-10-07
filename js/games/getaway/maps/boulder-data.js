@@ -115,10 +115,10 @@ add('Pine St', 'street', 10, EW(Z.pine, X.st4, X.st28));
 add('Spruce St', 'street', 10, EW(Z.spruce, X.st4, X.folsom));
 add('Pearl St alley', 'alley', 5.5, EW(Z.alleyN, X.st9, X.st13));
 add('Pearl St alley', 'alley', 5.5, EW(Z.alleyN, X.st14, X.st19)); // the Courthouse block has no alley
-add('Pearl St', 'street', 14, EW(Z.pearl, X.st4, X.st11), { parking: true }); // West Pearl: curb parking both sides
-add('Pearl St', 'arterial', 14.5, EW(Z.pearl, X.st15, X.st30), { lanes: 1, parking: [X.st15, X.st21], bike: true }); // one lane each way, parking downtown, bike lanes
+add('Pearl St', 'street', 14, EW(Z.pearl, X.st4, X.st11), { parking: true, park: 2.2 }); // West Pearl: curb parking both sides (park: the 2.2 m kerbside strip the engine keeps its lanes out of)
+add('Pearl St', 'arterial', 14.5, EW(Z.pearl, X.st15, X.st30), { lanes: 1, parking: [X.st15, X.st21], park: 2.2, bike: true }); // one lane each way, parking downtown, bike lanes
 add('Pearl St alley', 'alley', 5.5, EW(Z.alleyS, X.st9, X.st19));
-add('Walnut St', 'street', 14.5, EW(Z.walnut, X.st9, X.st28), { lanes: 1, parking: [X.st9, X.st21] });
+add('Walnut St', 'street', 14.5, EW(Z.walnut, X.st9, X.st28), { lanes: 1, parking: [X.st9, X.st21], park: 2.2 });
 add('Canyon Blvd', 'arterial', 18, [...EW(Z.canyon, X.st30, -300).slice(0, -1), [-300, 120], [-345, 124], [-378, 133], [-404, 142]]);
 add('Arapahoe Ave', 'arterial', 14, EW(Z.arapahoe, -330, X.st55));
 add('Arapahoe Ave', 'arterial', 14, [[-330, 200], [-352, 192], [-372, 178], [-388, 160], [-404, 142]], { bridge: true, clear: 3 });

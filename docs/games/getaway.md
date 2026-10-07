@@ -14,22 +14,41 @@ screen on a laptop), phone + computer, `immersive: true`, `ownsPauseUI: true`. E
 ## A round
 
 ```
-intro 3.4 s (map · round · roles · "starting near …") → 3-2-1 → CHASE (2:30) → BUSTED / ESCAPED card 5.2 s → next round
+round 0:      intro 3.4 s (map · round · roles · "starting near …") → 3-2-1 → CHASE (2:30)
+new spawn:    intro 2.0 s → 2-1 → CHASE          (every 2 rounds, and the sudden-death decider)
+same spawn:   "YOU'RE THE COP" / "YOU'RE RUNNING" stamp over a 2-1 → CHASE
+after a round: stamp → result card at +0.7 s → next round at +3.0 s (sooner: tap the card; live, both tap)
 ```
 
-- **Cop wins (BUSTED)** when the runner's car health reaches 0; when the runner is stopped
-  (< 2 m/s) for 3 s with the cop within 12 m (boxed in); or when the runner drives into water
-  (SPLASH).
+Between chases is ~5.5 s instead of ~12 s (was: card 5.2 s + intro 3.4 s + countdown 3 s): a 4 × 1:30
+match lost 86 s of 360 s to overhead (24%), now ~25 s. `FLOW` in game.js holds the numbers
+(`intro 3400, introMove 2000, count0 3000, count 2000, result 3000, card 700, skipAfter 1200,
+finalCard 4200, rematchLead 700, sudden 45`); the round carries its own `intro` length so both
+phones agree. A tap on the result card after 1.2 s skips it: practice and split at once, live with
+`skip {idx}` (urgent) from both phones (each card shows "Waiting for Sydney…" / "Sydney is ready").
+
+- **Cop wins (BUSTED)** when the runner's car health reaches 0; when the runner is **boxed in**:
+  stopped (< 2 m/s) with the cop within 12 m **and the cop slow too** (< 6 m/s) or touching
+  (< 5.5 m): 3 s, or **4 s when a civilian car is right in front** (a queue at a signal: within
+  11.5 m ahead, 2.2 m to the side; the result says "Boxed in, stuck in traffic"); or when the runner
+  drives into water (SPLASH). The boxed-in clock is on screen: a red "BOXED IN · MOVE! 3" bar
+  emptying on the runner's phone, "HOLD THEM · 3" in red/blue on the cop's (live: the cop's phone
+  estimates it from what it sees). Before, 26 of 49 sampled stop streaks had a civilian directly
+  ahead and the bust came with no warning.
 - **Runner wins (ESCAPED)** when the clock runs out, or by **losing the heat**. The escape meter
   moves every round: beyond the heat distance (the setting, 180 m by default, or the map's own
   `heat` when the setting is at its default: Dockside 140 m) and **hidden** (no line of sight, under
-  a bridge deck, or on a road the map flags `cover: true`) it fills in 8 s (`RULES.heatT`); beyond
+  a bridge deck, or on a road the map flags `cover: true`) it fills in 7 s (`RULES.heatT`, was 8); beyond
   60% of the distance with the cop still watching ("Breaking away") at a third of the rate;
   otherwise it drains at the fill rate (`heatDecay` 1.0, was 2.5), but never below half its peak of
   the last 10 s (`heatMemory`: a near-escape stays on the table), and a line of sight that
   flickers back for under 1 s (`heatFlicker`) doesn't count as spotted. Both players see the meter.
   (Before this the meter needed > heat AND no LOS and drained 2.5× faster: in 18 sampled practice
-  rounds it reached 0 in 15 and 17 of 18 ended by the clock.)
+  rounds it reached 0 in 15 and 17 of 18 ended by the clock. After, Hard bot runner vs Hard AI,
+  90 s rounds on all three maps: at heatT 8, 2 of 10 rounds lost the heat and four more peaked at
+  0.71–0.9, so heatT went to 7; at 7, 4 rounds: one heat escape (0.99), one bust, two by the clock
+  (peaks 0.35/0.8). The meter is above 0 for 31–86% of the chase in every round the cop doesn't
+  sit on the runner's bumper.)
 - **PIT**: the cop pushes the runner's rear quarter from the side, running roughly the same way
   (headings within 57°, the contact behind the runner's middle and off its centre line, the cop
   pushing sideways into it at ≥ 1.4 m/s, the runner doing ≥ 7 m/s). It does 24 damage (× the
@@ -51,14 +70,59 @@ intro 3.4 s (map · round · roles · "starting near …") → 3-2-1 → CHASE (
   all × the damage setting. Smoke below 55%, fire below 25%. The **cop** takes damage too (rams
   at 60%) but never drops below 15%. Its top speed scales 72–100% with health, so reckless
   ramming costs it. The runner loses up to 14% of top speed when wrecked.
+- **Endings with a name.** A bust with < 10 s left stamps LAST SECOND BUST!; a buzzer with the cop
+  within 15 m is PHOTO FINISH! (within 7 m: BY A BUMPER!) with 0.75 s of slow motion and a sting; a
+  heat escape is VANISHED! for the runner and LOST THEM for the cop (slow motion too), and a heat
+  escape under 60 m tells the cop "SO CLOSE". **Overtime**: a runner still spinning from a PIT at
+  the buzzer gets 2 more seconds (`endat` with `ot: 1`, OVERTIME! on both phones), so a last-second
+  PIT can still turn into a bust.
+- **The final 15 seconds**: a FINAL 15 stamp, the clock beats like a heart (CSS), a heartbeat
+  (lub-dub) quickening from 72 to 110 bpm, the siren yelps from 60 m instead of 40, and both nitro
+  tanks refill twice as fast so each has a boost for the finale.
 - Matches are 2 / 4 / 6 / 8 rounds (each player runs half), 1 point per round won. A match ends
-  early once it's decided. A tie: an escape beats a bust; between escapes the **health left plus
+  early once it's decided. Level after the last round with **Tiebreak: Sudden death** (the
+  default): one 0:45 decider, heat distance × 0.75, no spikes, the runner is whoever spent less
+  time on the run (escapes count as the whole clock); the card says "All square: sudden death,
+  Emerson runs". With **Tiebreak: Longest run**, or a decider that can't be played: an escape beats a bust; between escapes the **health left plus
   50 × the escape meter's best progress** decides (the final card says "Tiebreak: health left after
   the escapes"), between busts the longer total time on the run. (Two runners who both escaped
   twice used to be "All square".)
-- `api.finish({ winner, text, score })` once per match (host and guest both call; core records
-  it once). Practice vs the AI finishes with `winner: null` ("You beat the AI 3–1"), so the
-  couple's record isn't touched.
+- After the last round: the winner stamp (YOU WIN! / SYDNEY WINS / DRAW), then **Getaway's match
+  card** for 4.2 s (tap to go on): round pips with how each ended (BUSTED 0:41 / LOST THEM 1:12 /
+  ESCAPED / SPLASH, SD for the decider), the two of you side by side (PITs, top km/h, near misses,
+  spikes landed, escapes) and an **MVP** line picked from the match (HOUDINI lost the heat twice ·
+  BUMPER CAR 3+ PITs · ROADBLOCK 2+ spike hits · UNTOUCHABLE never PITed · THREAD THE NEEDLE 5+ near
+  misses · LEAD FOOT 160+ km/h). Then `api.finish({ winner, text, sub, score })` once per match
+  (host and guest both call; core records it once); `sub` carries the MVP line to the app card.
+  Practice vs the AI finishes with `winner: null` ("You beat the Hard AI in sudden death, 3–2") and
+  `record: false`, so the app card hides the couple's all-time line (core endHTML).
+- **Rematch in place**: the app's Rematch asks the game first (`inst.onRematch()`, core restart());
+  Getaway keeps its world, traffic and renderer, shows a "Rematch!" card, swaps who runs first, and
+  the host starts round 0 as soon as both phones are back (frame loop `autoStart`, 15 s timeout to
+  the lobby). It falls back to a remount when the partner isn't linked or the graphics are down.
+  Was 12–14 s of map rebuild plus Start and Ready; now tap → GO is the 0.7 s lead + intro + count.
+
+## Records, the Daily chase, quick matches (records.js)
+
+- **Records** go to the shared game data (`api.setData`, numbers only, each phone writes only its
+  own person's keys): `<w>_busts, _escapes, _heats, _pits, _pits_r, _fastbust, _heatesc, _top,
+  _topboost, _near_r, _streak, _streak_best, _wins, _runs`. Live and split use those; practice and
+  the Daily use `ai_<w>_…` so AI rounds never touch the couple's numbers. On one device the records
+  belong to the device's owner (`api.owner`, new in core), not the 'a' slot. The result card shows
+  one line: "Fastest bust yet: 41 s (was 58 s)" with a NEW RECORD! stamp and fanfare, or "Sydney
+  still holds fastest bust, 38 s", plus "3 rounds in a row" (STREAK ×3 stamp). The lobby shows a
+  Records row (Fastest bust · Fastest getaway · Most PITs · Streak, with names; practice: "Your
+  practice"). Liveries now test these keys (`careerFrom`: couple + practice summed) — the old
+  `career_<w>` object was dropped by setData (objects aren't stored), so no milestone above 1 could
+  ever unlock.
+- **Daily chase** (local modes row): one 2:00 run as the runner vs a Hard AI cop on today's map
+  (Dockside / Boulder / Santee by day of the year; a phone on Low graphics plays Dockside, noted),
+  the spawn and traffic from `hash('getaway-daily:' + date)`. Score = seconds survived; a heat escape
+  scores 120 + the seconds left. `<w>_daily_<date>` keeps your best try today, `<w>_daily_best` your
+  best ever. The lobby panel lists today's two scores; the chase opens with "Beat Sydney: 1:12" and
+  stamps PASSED SYDNEY! at that second.
+- **Quick chase** (a chip by the facts line, host): 2 rounds of 1:00, 2 spike strips, sudden death
+  if level — a whole match in under 4 minutes.
 
 ## Tools
 
@@ -365,7 +429,20 @@ Under it: speed, the nitro bar and the tool count. On touch the tool count is a 
 spike button instead (one count on screen), and a short landscape phone puts speed and nitro in the
 sky left of the minimap, clear of the car and both thumbs. The full map (M) shows every landmark name, the
 400 m drop range and the runner's no-drop circle. Partner name tag with distance, and an edge
-arrow when they're close but off screen. Stamps: PIT!, SPIKED!, OIL!, BUSTED!, SPLASH!, ESCAPED!.
+arrow when they're close but off screen (practice: the AI's, "AI · 82 m", by the radar rule).
+Floating damage numbers: any hit of 3+ shows "−6" by my health bar (blue for the cruiser), and the
+attacker sees the number in the victim's colour (live: from the streamed health); a tier-1 PIT
+stamps NUDGE. The runner's **style chain**: near miss +1, a drift over 1 s +1, the cop on your oil
++3; chained within 3 s it counts up ("Near miss! ×4 SLICK"), and each tier (3 SLICK / 6 SMOOTH /
+10 UNTOUCHABLE) pays 5% nitro per tier. **Emotes** (live): a Honk button on the left under the bars
+(H on a laptop) sends the next line of your role's list (HONK · Catch me! / Pull over! · lol) as
+`emote {k}`, one per 4 s, shown as a bubble on your car's tag on their phone with a honk (Settings
+→ Emotes off mutes them). The spike map zooms to a 900 m window ahead of the cruiser (≈ 0.7 px/m on
+a 390 × 844 phone: roads 6–8 px, the 400 m range fills it; "Whole map" toggles), a tap shows a ring
+at the finger and a failure reason in a red toast 60 px above it. The dashed STEER hint fades after
+your first steer (How to play brings it back) and the steer zone now reaches the pedal cluster.
+Labels are at least 0.7 rem (11.2 px); the heat bar's distance is a 0.85 rem number; every tap
+target is ≥ 44 px (chips, steppers, arrows, ghosts, map buttons, look 56 × 48, CAM 56 × 44, ‖ 48). Stamps: PIT!, SPIKED!, OIL!, BUSTED!, SPLASH!, ESCAPED!.
 Vignettes: red/blue when the cop is within 45 m of the runner, red when hurt. Cop radar setting:
 `always` · `los` (default: line of sight or within 60 m) · `off` (within 35 m only). The runner
 always sees the cop.
@@ -375,7 +452,7 @@ always sees the cop.
 | Setting | Options (default **bold**) |
 |---|---|
 | Map | Dockside · Boulder · Santee (stubs show "coming soon") |
-| Round time | 1:30 · 2:00 · **2:30** · 3:00 · 4:00 |
+| Round time | 1:00 · 1:30 · 2:00 · **2:30** · 3:00 · 4:00 |
 | Rounds | 2 · **4** · 6 · 8 |
 | Spike strips | 0–6 (**3**) |
 | Traffic | off · light · **normal** |
@@ -386,17 +463,20 @@ always sees the cop.
 | Camera | **near** · far |
 | Runner livery / Cruiser (per device, from `liveries.js`) | earned paint jobs; locked chips show how to earn them |
 | Runner sees spikes | **within 120 m** · always |
+| Tiebreak (level after the last round) | **sudden death** · longest run |
 
 Plus "who runs first" (or, for practice: you start as runner / cop, and the AI driver level) and,
-per device: steering (slider / tilt), sensitivity, dead zone, tilt calibration, graphics level and
-camera. Settings are validated (`rules.js`, snapped to their option lists) on both
+per device: steering (slider / tilt), sensitivity, dead zone, tilt calibration, graphics level,
+camera, music, and (live) emotes. The app's ≡ sheet over a running chase pauses it exactly like
+the ‖ button (core `inst.onMenu(open)`; live, the partner gets "paused for Emerson too" and the
+3-2-1 back). Settings are validated (`rules.js`, snapped to their option lists) on both
 devices, travel in `setup` and in the match start, and are saved for the next time this device
 hosts.
 
 ## Liveries (js/games/getaway/liveries.js)
 
 Unlockable paint jobs, the Rail Rush pattern: earned by milestones, kept per person in the shared
-game data (`unlock_<w>_<kind><k>`, careers in `career_<w>` via `api.data()`), worn per device
+game data (`unlock_<w>_<kind><k>`, careers from the record keys above via `api.data()`), worn per device
 (Settings → This phone), and told to the partner over the link (`livery` message on link and on
 change) so both phones draw the same car. Runner: Plain · Racing stripe (escape once) · Rally
 (lose the heat 3 times) · Flames (175 km/h on nitro) · Gold roof (win 3 matches). Cruiser: Black &
@@ -418,14 +498,20 @@ the backdrop renders first in its own pass with its own far plane, fog-free. Eff
 (a 1,400-quad ring buffer), tyre smoke, dust off road, sparks on impacts and rims, damage smoke and
 fire, nitro flames, knocked-over props falling in the direction of the hit, speed lines.
 
-All audio is synthesised (WebAudio, the app's shared context and mute switch), no music: my engine
+All audio is synthesised (WebAudio, the app's shared context and mute switch). A **pursuit
+bed** (Settings → Music): a pulsing bass riff always, hi-hats above intensity 0.4, a two-note brass
+stab every 2 bars above 0.75, 100 → 140 bpm, with intensity I = 0.35 × (1 − distance/200) + 0.4 ×
+the heat meter + 0.25 in the last 20 s; scheduled 0.15 s ahead from the frame loop as automation
+on fixed voices (no nodes per note), a filtered-noise riser when the meter passes 50%. Then: my engine
 (three oscillators through a low-pass, pitch by fake RPM, a dip at each gear change, louder with
 throttle), the other car's engine by distance, **Doppler-shifted and panned** by its bearing from my
 camera, the siren (wail, yelp within 40 m, Doppler, pan, muffled with distance), tyre squeal
 (band-passed noise by slip), wind and road roar rising with speed, a quiet city ambience, the
 flapping of a flat tyre, an off-road rumble, crashes by impact speed with variety (a metal clang
 above 10 m/s, glass on big hits), a scrape, a prop knock, the spike pop, nitro, oil, near-miss,
-countdown beeps, stamps and win/lose stings. One-shots are rate-limited (scrape 110 ms, crash 70 ms)
+countdown beeps, stamps and win/lose stings, the final-15 heartbeat, a photo-finish sting, a
+new-record fanfare and the emote honk. Keyboard steering slews at 8/s in input.js (0.125 s to full
+lock; was CAR.steerRate 5.5/s on top of the car's own slew, 0.24 s key-to-lock). One-shots are rate-limited (scrape 110 ms, crash 70 ms)
 so a long grind can't pile up voices.
 
 ## Performance
@@ -441,10 +527,14 @@ so a long grind can't pile up voices.
   settles on the lower rung instead of pulsing. Every resize re-makes the drawable and its MSAA
   buffers (a hitch), so a resize happens at most about once per thermal state change. `perf()`
   reports `level`, `resizes` and `hold`; the `gfx` test drives it with a synthetic frame time.
-- **Vertex packing** (`gfx.js Builder.geometryOut` / `packGeometry`): position f32×3, normal i8×3,
-  colour u8×3, fx u8, aux (lane coordinate) i16 × 8, uv u16 — 21 B/vertex instead of 44–52.
-  Measured on the GPU with indices: Dockside 7.0 MB (was 13), Boulder 24 MB (was 74), Santee
-  34 MB (was 83) and the sliced warm-up upload moves ~55 % less data.
+- **Vertex packing** (`gfx.js Builder.geometryOut` / `packGeometry`): position f32×3, normal i8×3
+  and colour u8×3 (normalised, each padded to a 4-byte stride), fx f32, aux (lane coordinate) f32,
+  uv u16×2 — 24 B/vertex (28 with lane coordinates) instead of 44–52. Every vertex buffer has a
+  4-byte-multiple stride and offset 0: Metal (WebKit's ANGLE backend on iPhones) cannot fetch
+  3-, 2- or 1-byte strides or non-normalised small integers and would convert each such buffer
+  into a padded copy on first draw (a hitch, and the memory back); a tighter 21 B layout was
+  tried and dropped for that reason. Measured on the GPU with indices: Dockside 7.4 MB (was 13),
+  Boulder 40 MB (was 74), Santee 49 MB (was 83); the sliced warm-up upload moves ~40 % less data.
 - **Car shadow map**: a 512² (mid) / 1536² (high) depth pass over ~50 m, rendered from the
   world's small `casters` scene (the two cars, wheels, the near traffic instances, falling props)
   so the pass never walks the chunk groups, skipped while no car group is visible (lobby, intro
@@ -474,6 +564,16 @@ JS cost are what count):
 | Dockside | 122 ms (23 ms) | 107k | ≤ 26 draw calls, ≤ 114k triangles (25, 113k) |
 | Boulder (v2 map, engine v2) | 720–1020 ms (≤ 70 ms) + prepare ~500 ms | 878k (map's own 281k) | ≤ 58 draw calls, ≤ 215k triangles |
 | Santee | 485 ms (18 ms) + prepare ~370 ms | 568k | ≤ 41 draw calls, ≤ 194k triangles (38, 186k) |
+
+Boulder's load is sliced finely enough for a phone (polish wave 3): `prepare()` (boulder-layout.js
+`layoutGen`) yields on a 5 ms clock (`yielder()`) inside every long loop instead of at fixed points,
+`buildBoulder` calls `kit.slice()` every few items in every loop (the engine's slice is budget-gated,
+so the calls are free until the 12 ms budget is spent) and draws its texture atlas tile by tile
+(`atlasGen`). Measured as CPU time per step in Node (robust to the shared machine's load): longest
+prepare step 41 → 12–18 ms, same total; in Chromium at a 4× CPU throttle the map build is no longer
+the longest block (was 1297 ms in one step). `root.userData.stats.gapMs / gapAt` report the longest
+stretch between two slices; the Boulder test prints it (THROTTLE=4 runs the engine section on a
+throttled core).
 
 With the see-through thin-prop family (one more merged mesh per chunk that has poles, lamps,
 signals or wires) the perf test now reads: Dockside ≤ 34 draw calls (laptop 33), Boulder ≤ 55 (53),
@@ -519,6 +619,15 @@ either spawn point until 6 s after the go; then the zone shrinks to nothing over
 grow back in as its edge passes (`traffic.setClear`, a pure function of the round, so both phones
 agree; the shared lane schedule is untouched).
 
+**Steering** (`ai.js pursue`): pure pursuit maps the arc's curvature onto 1.4 × the car's real
+grip-limited lock (car.js caps full lock at `lockGripK` × the grip yaw rate, far under the kinematic
+lock past ~50 km/h). Mapping it onto the kinematic lock under-steered ~2.6× at 90 km/h and the AI
+wallowed ±2 m off its line out of corners. Bench, 39 AI-vs-AI rounds × 90 s per map: Boulder route
+error 1.11 → 0.74 m, wall hits ≥ 43 km/h 24 → 8, parked-car hits 33 → 4; Santee 20 → 8; Dockside
+3 → 1. (1.0 × tracked tighter still, 0.48 m, but cut Dockside kerbs more often.) Roads with a
+kerbside parking strip (`roads[i].park`, Boulder's Pearl and Walnut) lay their lanes across
+`hw − park`, for traffic and the AI's lane line alike.
+
 **Cop**: pursues along the roads when close; further away it intercepts on the runner's predicted
 route (the straightest continuation at each junction) where it can arrive first. Within ~38 m with
 a clear, drivable line it runs a PIT routine: approach → align alongside the rear quarter → tap →
@@ -527,8 +636,9 @@ shoving). Spike strips go on the predicted route 3–5 s ahead. Without line of 
 the last sighting with a radar ping every 6 / 4 / 2 s, 1.75× slower while the runner is beyond
 the heat distance, and **no ping at all once the runner's escape meter is half full** (the fix
 only extrapolates, up to 4 s): the ping is a readable rule, and a well-hidden runner can actually
-lose the heat. In route mode within 28 m of the runner dead ahead it closes at +4 m/s at most (a
-PIT, not a 125 km/h rear-ender). `locateCar` searches 40 m first and 120 only on a miss
+lose the heat. In route mode with the runner ahead within 32 m (on its line or across a corner it is
+cutting) it closes at +3 m/s plus 0.5 m/s per metre beyond 10 m (so it arrives on the quarter for a
+PIT, not a 100 km/h side-swipe; bench: Hard cop vs a runner cruising at 55% gas, 6 min, 4 PITs). `locateCar` searches 40 m first and 120 only on a miss
 (`geo.nearestRoad` at 120 m was the chase's top JS self function).
 **Runner**: Dijkstra from itself and from the cop; picks escape junctions 6–28 s away it reaches
 well before the cop, preferring ones out of the cop's sight and avoiding dead ends, bridges and
@@ -552,8 +662,8 @@ traffic (≤ 15% off road), and started nose-in against a building it backs out 
 
 ## Tests (`node tools/test/games/getaway.test.js`, ports 8930–8939)
 
-`gfx`: the packed vertex layout on every map (no float32 static attributes left, ≤ 26 B/vertex on
-the GPU with indices), the caster scene and the 512² phone shadow map, no shadow pass in the lobby,
+`gfx`: the packed vertex layout on every map (no float32 normals / colours / uvs left, every vertex
+buffer 4-byte aligned, ≤ 32 B/vertex on the GPU with indices), the caster scene and the 512² phone shadow map, no shadow pass in the lobby,
 the dynamic-quality ladder driven by a synthetic frame time (cheapest lever first, the hold, the
 back-off), and the camera rig in a chase (no speed lag, further back at speed).
 

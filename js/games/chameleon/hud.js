@@ -504,6 +504,16 @@ export const CSS = `
 .chm-final .chm-recs { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
 .chm-final .chm-recs span { padding: 4px 9px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-hl); color: var(--g-on-ink); font-size: .7rem; font-weight: 900; text-transform: uppercase; letter-spacing: .05em; transform: rotate(-2deg); }
 .chm-final .chm-recs span:nth-child(even) { transform: rotate(2deg); }
+.chm-vote { display: flex; flex-direction: column; gap: 6px; }
+.chm-vote h3 { margin: 0; }
+.chm-vote .chm-chip { position: relative; font-variant-numeric: tabular-nums; }
+.chm-vote .chm-chip.crown { background: var(--g-hl); color: var(--g-on-ink); border-color: var(--g-ink); transform: rotate(-2deg); }
+.chm-vote .chm-chip.crown::before { content: '★'; margin-right: 4px; }
+.chm-vote .chm-chip:disabled:not(.crown) { opacity: .5; }
+.chm-vpip { position: absolute; top: -6px; right: -4px; width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--g-ink); }
+.chm-vpip + .chm-vpip { right: 10px; }
+.chm-vpip.pa { background: var(--p-a); } .chm-vpip.pb { background: var(--p-b); }
+.chm-ribbon { align-self: center; padding: 4px 14px; border: 2px solid var(--g-ink); border-radius: 6px; background: var(--g-hl); color: var(--g-on-ink); font: 900 .72rem/1.2 var(--g-font-body); text-transform: uppercase; letter-spacing: .06em; transform: rotate(-2deg); }
 /* the hider's Ready: a wide pill at the top of the cluster, out of the thumb's path to Paint/Pose */
 .chm-b.wide { grid-column: 1 / -1; justify-self: stretch; margin-bottom: 8px; }
 .chm-b.wide > span:first-child { width: auto; height: 46px; border-radius: 999px; padding: 0 16px; flex-direction: row; gap: 8px; display: inline-flex; align-items: center; justify-content: center; }
@@ -519,6 +529,11 @@ export const CSS = `
 .chm-chip { min-height: 44px; padding: 8px 14px; }
 .chm-arrow { width: 44px; height: 48px; }
 .chm-tips .chm-go { min-height: 44px; }
+.chm-tiphead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: -4px -4px 0 0; }
+.chm-tiphead .chm-go { align-self: center; flex: none; padding: 8px 14px; }
+.chm-tips { gap: 4px; padding-top: 8px; padding-bottom: 10px; } .chm-tips ul { gap: 4px; } .chm-tips p { line-height: 1.22; }
+/* never let a first-run card sit over the thumb cluster (short phones): the buttons draw on top */
+.chm-hud:has(.chm-tips:not([hidden])) .chm-acts { z-index: 4; }
 .chm-step button { width: 44px; height: 44px; } .chm-step output { line-height: 44px; }
 .chm-seg2 button { height: 44px; }
 .chm-opts { padding: 4px 6px; gap: 5px; }

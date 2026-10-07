@@ -122,6 +122,7 @@ Everything below is optional and feature-detected. The fields above are unchange
 | `landmarks[i].home: true` | Drawn with a pink house icon on the minimap and the full map; the lobby title shot orbits it. |
 | `landmarks[i].far: true` | Beyond the bounds: skipped on the minimap, pinned to the edge of the full map with an arrow. |
 | `roads[i].lanes` | Traffic lanes per direction (default: highway 2, arterial 2 when ≥ 14 m wide, else 1). |
+| `roads[i].park` | Width (m) of a kerbside parking strip on each side. Traffic lanes and the AI's lane line are laid out across `hw − park`, so curb-parked `car` solids stay out of the driven line (Boulder: 2.2 on Pearl and Walnut; parked cars sit at `hw − 1.02`, ≥ 12 m from any cross street). |
 | `roads[i].traffic: false` | No civilian traffic on this road. `oneway: true` gives traffic one direction only. |
 | `roads[i].clear` | Bridge deck clearance in metres. |
 | `roads[i].cover: true` | A covered road (tunnel, underpass, a street under a deck): a runner on its asphalt counts as out of the cop's sight for the escape meter. Roads under a bridge deck (> 2.5 m above) count automatically. |
@@ -228,10 +229,12 @@ them on walls standing near the ground they sit on. Colours still come from vert
 - Night (dark mode) is a lighting rig: keep darkening your colours, but let lit windows, lamps
   (`kit.lamp`) and glows do the work; per-pixel siren light no longer washes whole roads.
 
-**Memory.** The engine's geometry is packed: position f32×3, normal i8×3 (normalised), colour
-u8×3 (normalised), fx u8, aux i16 (normalised, × 8 = the lane coordinate) — 21 B/vertex. Every
+**Memory.** The engine's geometry is packed: position f32×3, normal i8×3 and colour u8×3
+(normalised, each in a 4-byte stride: iPhone GPUs need 4-byte-aligned vertex buffers), fx and aux
+f32 — 24–28 B/vertex. Every
 `kit.builder()` mesh comes out packed; a map that builds its own float buffers (Boulder) calls
-`kit.pack(geometry)` once before handing the mesh over (uv → u16 too, when it is in 0..1). Once
+`kit.pack(geometry)` once before handing the mesh over (uv → u16 too, when it is in 0..1). A
+packed normal / colour is an interleaved attribute: read it with `getX/Y/Z` (× 1/127, × 1/255), not `.array[i * 3]`. Once
 a chunk's merged geometry is on the GPU the engine drops its CPU copies of normals, colours, fx
 codes and indices (positions stay, for knocked-over props). Don't read those attributes from
 merged meshes after the build (meshes marked `userData.noMerge` are untouched). After a WebGL

@@ -1,4 +1,4 @@
-// Getaway audio, all synthesized (no music, no samples): my engine (three oscillators through a
+// Getaway audio, all synthesized (no samples): a procedural pursuit bed (music, below), my engine (three oscillators through a
 // low-pass, pitch by RPM, a gear-change dip, louder with throttle), the other car's engine
 // (quieter by distance, Doppler-shifted and panned), a siren (wail / yelp, Doppler + pan), tyre
 // squeal (band-passed noise by slip), wind and road roar by speed, a low city ambience, crashes
@@ -65,8 +65,19 @@ export function createAudio({ getCtx = null, mutedFn = null } = {}) {
     noiseLoop('wind', 'bandpass', 700, 0.6);
     noiseLoop('road', 'lowpass', 260, 0.8);
     noiseLoop('amb', 'lowpass', 320, 0.5);
+    // the pursuit bed (music): persistent voices, notes scheduled as gain/frequency automation a
+    // beat ahead from the frame loop — no nodes made per note
+    { const out = ctx.createGain(); out.gain.value = 0; out.connect(master);
+      const mk = (type, f) => { const o = ctx.createOscillator(); o.type = type; o.frequency.value = f; return o; };
+      const bass = mk('sawtooth', 55); const bf = ctx.createBiquadFilter(); bf.type = 'lowpass'; bf.frequency.value = 260; bf.Q.value = 4; const bg = ctx.createGain(); bg.gain.value = 0; bass.connect(bf); bf.connect(bg); bg.connect(out); bass.start();
+      const hs = ctx.createBufferSource(); hs.buffer = noise; hs.loop = true; const hf = ctx.createBiquadFilter(); hf.type = 'highpass'; hf.frequency.value = 7000; const hg = ctx.createGain(); hg.gain.value = 0; hs.connect(hf); hf.connect(hg); hg.connect(out); hs.start();
+      const b1 = mk('sawtooth', 220); const b2 = mk('sawtooth', 261.6); const sf = ctx.createBiquadFilter(); sf.type = 'lowpass'; sf.frequency.value = 1500; const sg = ctx.createGain(); sg.gain.value = 0; b1.connect(sf); b2.connect(sf); sf.connect(sg); sg.connect(out); b1.start(); b2.start();
+      mus = { out, bass, bg, hs, hg, b1, b2, sg, next: 0, step: 0, on: false }; }
     return true;
   }
+  let mus = null; let musicOn = true;
+  // A minor riff in eighths (Hz): A A C A | G G A# G
+  const RIFF = [55, 55, 65.41, 55, 49, 49, 58.27, 49];
   function unlock() { if (dead) return; if (!ctx && !init()) return; if (ctx.state === 'suspended') ctx.resume().catch(() => {}); }
   const ok = () => ctx && ctx.state === 'running' && !isMuted();
   const set = (p, v, tc = 0.05) => { try { p.setTargetAtTime(v, ctx.currentTime, tc); } catch { /* ignore */ } };
@@ -136,7 +147,7 @@ export function createAudio({ getCtx = null, mutedFn = null } = {}) {
       const Si = loops.siren;
       if (ok() && siren && siren.on) {
         Si.t += dt;
-        const yelp = siren.dist < 40;
+        const yelp = siren.dist < (siren.yelpR || 40); // (the final 15 s: yelping from 60 m)
         const ph = yelp ? (Si.t * 3.2) % 1 : (Si.t * 0.42) % 1;
         const tri = ph < 0.5 ? ph * 2 : 2 - ph * 2;
         set(Si.o.frequency, (640 + tri * 720) * doppler(siren.vrel), 0.02);
@@ -169,12 +180,50 @@ export function createAudio({ getCtx = null, mutedFn = null } = {}) {
     win() { [0, 4, 7, 12].forEach((n, i) => tone(523 * Math.pow(2, n / 12), 0.22, { type: 'triangle', vol: 0.14, at: i * 0.09 })); },
     lose() { [7, 4, 0, -5].forEach((n, i) => tone(392 * Math.pow(2, n / 12), 0.24, { type: 'triangle', vol: 0.12, at: i * 0.11 })); },
     nearMiss() { tone(900, 0.18, { type: 'sine', vol: 0.08, to: 1500 }); burst(0.3, { vol: 0.1, f0: 2400, f1: 500, type: 'bandpass', q: 1.2 }); },
+    /** The final 15 s: a heartbeat (lub-dub), louder and brighter as k → 1. */
+    heartbeat(k = 0) { const v = 0.16 + 0.12 * k; tone(58, 0.16, { type: 'sine', vol: v, to: 42 }); tone(52, 0.14, { type: 'sine', vol: v * 0.75, to: 38, at: 0.17 }); if (k > 0.6) burst(0.05, { vol: 0.03 * k, f0: 900, f1: 300, at: 0.01 }); },
+    /** A photo finish: a bright two-note sting. */
+    sting() { tone(988, 0.16, { type: 'square', vol: 0.07 }); tone(1319, 0.42, { type: 'square', vol: 0.08, at: 0.13 }); burst(0.5, { vol: 0.12, f0: 5000, f1: 1500, type: 'highpass', at: 0.12 }); },
+    /** A new record: a rising arpeggio and a cymbal. */
+    fanfare() { [0, 4, 7, 12, 16].forEach((n, i) => tone(523 * Math.pow(2, n / 12), i === 4 ? 0.5 : 0.16, { type: 'triangle', vol: 0.13, at: i * 0.075 })); burst(0.8, { vol: 0.1, f0: 7000, f1: 2500, type: 'highpass', at: 0.3 }); },
     whoosh() { burst(0.4, { vol: 0.08, f0: 1800, f1: 400, type: 'bandpass', q: 1 }); },
-    silence() { if (!ctx) return; for (const k of Object.keys(loops)) set(loops[k].g.gain, 0, 0.03); },
+    silence() { if (!ctx) return; for (const k of Object.keys(loops)) set(loops[k].g.gain, 0, 0.03); if (mus) set(mus.out.gain, 0, 0.05); },
+    /** Music on/off (this device's setting; the app's mute switch silences it too). */
+    setMusic(on) { musicOn = !!on; if (!on && mus) set(mus.out.gain, 0, 0.1); },
+    /**
+     * The pursuit bed, every frame. I: intensity 0..1 (null = off: it fades). Layer 1 a pulsing
+     * bass riff (always), layer 2 hi-hats above I 0.4, layer 3 a two-note brass stab every 2 bars
+     * above I 0.75; 100 → 140 bpm with I. Notes go in ~0.15 s ahead as automation on fixed voices.
+     */
+    music(I) {
+      if (!ctx || !mus) return;
+      const on = I != null && musicOn && ok();
+      if (!on) { if (mus.on) { mus.on = false; set(mus.out.gain, 0, 0.25); } return; }
+      const now = ctx.currentTime;
+      if (!mus.on) { mus.on = true; mus.next = now + 0.05; set(mus.out.gain, 0.13, 0.4); }
+      if (mus.next < now) mus.next = now + 0.02; // (a stall: don't schedule the past)
+      const bpm = 100 + 40 * I; const e8 = 30 / bpm; // an eighth note
+      const hat = Math.max(0, Math.min(1, (I - 0.4) / 0.2)); const stab = I > 0.75;
+      while (mus.next < now + 0.15) {
+        const t = mus.next; const k = mus.step & 7; const bar2 = mus.step & 31;
+        try {
+          mus.bass.frequency.setValueAtTime(RIFF[k], t);
+          mus.bg.gain.setValueAtTime(0.0001, t); mus.bg.gain.linearRampToValueAtTime(k % 2 ? 0.55 : 0.8, t + 0.012); mus.bg.gain.exponentialRampToValueAtTime(0.0001, t + e8 * 0.9);
+          if (hat > 0) { const v = (k % 2 ? 0.16 : 0.07) * hat; mus.hg.gain.setValueAtTime(0.0001, t); mus.hg.gain.linearRampToValueAtTime(v, t + 0.004); mus.hg.gain.exponentialRampToValueAtTime(0.0001, t + 0.05); }
+          if (stab && (bar2 === 0 || bar2 === 3)) { mus.sg.gain.setValueAtTime(0.0001, t); mus.sg.gain.linearRampToValueAtTime(0.16, t + 0.02); mus.sg.gain.exponentialRampToValueAtTime(0.0001, t + e8 * 1.6); }
+        } catch { /* ignore */ }
+        mus.next += e8; mus.step++;
+      }
+    },
+    /** The heat meter passing half: a rising filtered-noise sweep (2 s). */
+    riser() { if (!limit('riser', 3000)) return; burst(2, { vol: 0.12, f0: 300, f1: 4200, type: 'bandpass', q: 2.5 }); },
+    /** An emote's honk (two detuned squares). */
+    honk(far = false) { if (!limit('honk', 300)) return; const v = far ? 0.05 : 0.09; tone(392, 0.22, { type: 'square', vol: v }); tone(330, 0.22, { type: 'square', vol: v * 0.8 }); tone(392, 0.16, { type: 'square', vol: v, at: 0.27 }); tone(330, 0.16, { type: 'square', vol: v * 0.8, at: 0.27 }); },
     destroy() {
       dead = true;
       if (!ctx) return;
       for (const k of Object.keys(loops)) { const L = loops[k]; try { L.g.gain.value = 0; (L.o1 || L.o || L.src).stop(); if (L.o2) L.o2.stop(); if (L.o3) L.o3.stop(); L.g.disconnect(); } catch { /* ignore */ } }
+      if (mus) { try { mus.bass.stop(); mus.hs.stop(); mus.b1.stop(); mus.b2.stop(); mus.out.disconnect(); } catch { /* ignore */ } }
       try { master.disconnect(); } catch { /* ignore */ }
       if (owned) ctx.close().catch(() => {});
     },

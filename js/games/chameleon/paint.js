@@ -23,7 +23,16 @@ export function createPaint(THREE, kit) {
   const undo = [];
   let dirty = false;
   let version = 0;
+  let encVer = -1; let encCache = null;
+  if (!warmed) warmCodec();
   const tmp = [0, 0, 0];
+  // per-part texel lists + world bounding spheres (from updateWorld) so a dab only walks the
+  // one or two parts it can reach instead of every texel on the body
+  let NP = 0; for (let k = 0; k < list.length; k++) if (part[list[k]] + 1 > NP) NP = part[list[k]] + 1;
+  const plist = []; { const cnt = new Int32Array(NP); for (let k = 0; k < list.length; k++) cnt[part[list[k]]]++; for (let p = 0; p < NP; p++) plist.push(new Int32Array(cnt[p])); cnt.fill(0); for (let k = 0; k < list.length; k++) { const i = list[k]; const p = part[i]; plist[p][cnt[p]++] = i; } }
+  const psph = new Float32Array(NP * 4).fill(0); // cx, cy, cz, r (r = 1e9 until the first updateWorld)
+  for (let p = 0; p < NP; p++) psph[p * 4 + 3] = 1e9;
+  let dabTexels = 0; let dabs = 0; // texels tested by dabs, dabs made (perf counters)
 
   /** Recompute world-space texel positions from the avatar meshes (call when the pose settles). */
   function updateWorld(meshes) {
@@ -38,6 +47,15 @@ export function createPaint(THREE, kit) {
       let ax = e[0] * nx + e[4] * ny + e[8] * nz; let ay = e[1] * nx + e[5] * ny + e[9] * nz; let az = e[2] * nx + e[6] * ny + e[10] * nz;
       const L = Math.hypot(ax, ay, az) || 1; ax /= L; ay /= L; az /= L;
       wnrm[i * 3] = ax; wnrm[i * 3 + 1] = ay; wnrm[i * 3 + 2] = az;
+    }
+    for (let p = 0; p < NP; p++) {
+      const L = plist[p]; if (!L.length) continue;
+      let cx = 0; let cy = 0; let cz = 0;
+      for (let k = 0; k < L.length; k++) { const i = L[k] * 3; cx += wpos[i]; cy += wpos[i + 1]; cz += wpos[i + 2]; }
+      cx /= L.length; cy /= L.length; cz /= L.length;
+      let r2 = 0;
+      for (let k = 0; k < L.length; k++) { const i = L[k] * 3; const dx = wpos[i] - cx; const dy = wpos[i + 1] - cy; const dz = wpos[i + 2] - cz; const d = dx * dx + dy * dy + dz * dz; if (d > r2) r2 = d; }
+      psph[p * 4] = cx; psph[p * 4 + 1] = cy; psph[p * 4 + 2] = cz; psph[p * 4 + 3] = Math.sqrt(r2);
     }
   }
 
@@ -54,22 +72,28 @@ export function createPaint(THREE, kit) {
    */
   function dab(hx, hy, hz, vx, vy, vz, radius, rgb, hard, flow = 0.4) {
     const r2 = radius * radius;
-    let hit = 0;
-    for (let k = 0; k < list.length; k++) {
-      const i = list[k];
-      const dx = wpos[i * 3] - hx; const dy = wpos[i * 3 + 1] - hy; const dz = wpos[i * 3 + 2] - hz;
-      const d2 = dx * dx + dy * dy + dz * dz;
-      if (d2 > r2) continue;
-      const facing = wnrm[i * 3] * vx + wnrm[i * 3 + 1] * vy + wnrm[i * 3 + 2] * vz;
-      if (facing > 0.35) continue;
-      let a;
-      if (hard) a = d2 > r2 * 0.82 ? 0.5 : 1;
-      else { const t = 1 - Math.sqrt(d2) / radius; a = Math.min(1, t * t * 1.6) * flow; }
-      const o = i * 4;
-      data[o] = Math.round(data[o] + (rgb[0] - data[o]) * a);
-      data[o + 1] = Math.round(data[o + 1] + (rgb[1] - data[o + 1]) * a);
-      data[o + 2] = Math.round(data[o + 2] + (rgb[2] - data[o + 2]) * a);
-      hit++;
+    let hit = 0; dabs++;
+    for (let p = 0; p < NP; p++) {
+      const sx = psph[p * 4] - hx; const sy = psph[p * 4 + 1] - hy; const sz = psph[p * 4 + 2] - hz; const reach = psph[p * 4 + 3] + radius;
+      if (sx * sx + sy * sy + sz * sz > reach * reach) continue;
+      const L = plist[p];
+      dabTexels += L.length;
+      for (let k = 0; k < L.length; k++) {
+        const i = L[k];
+        const dx = wpos[i * 3] - hx; const dy = wpos[i * 3 + 1] - hy; const dz = wpos[i * 3 + 2] - hz;
+        const d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 > r2) continue;
+        const facing = wnrm[i * 3] * vx + wnrm[i * 3 + 1] * vy + wnrm[i * 3 + 2] * vz;
+        if (facing > 0.35) continue;
+        let a;
+        if (hard) a = d2 > r2 * 0.82 ? 0.5 : 1;
+        else { const t = 1 - Math.sqrt(d2) / radius; a = Math.min(1, t * t * 1.6) * flow; }
+        const o = i * 4;
+        data[o] = Math.round(data[o] + (rgb[0] - data[o]) * a);
+        data[o + 1] = Math.round(data[o + 1] + (rgb[1] - data[o + 1]) * a);
+        data[o + 2] = Math.round(data[o + 2] + (rgb[2] - data[o + 2]) * a);
+        hit++;
+      }
     }
     if (hit) touch();
     return hit;
@@ -185,99 +209,179 @@ export function createPaint(THREE, kit) {
   }
 
   return {
-    data, texture, wpos, wnrm,
+    data, texture, wpos, wnrm, list,
     get version() { return version; },
     get canUndo() { return undo.length > 0; },
+    get dabTexels() { return dabTexels; }, get dabs() { return dabs; }, get texels() { return list.length; },
     updateWorld, snapshot, dab, fill, stamp, tintFacing, paintLocal, colorAtUV, flush, changedPoints,
     undo() { const s = undo.pop(); if (!s) return false; data.set(s); touch(); return true; },
     clearUndo() { undo.length = 0; },
     reset(rgb = [255, 255, 255]) { for (let i = 0; i < N; i++) { data[i * 4] = rgb[0]; data[i * 4 + 1] = rgb[1]; data[i * 4 + 2] = rgb[2]; data[i * 4 + 3] = 255; } undo.length = 0; touch(); },
     hash() { return fnv(data); },
-    quantize(max = 32) { return quantize(data, max); },
-    encode() { return encode(data); },
+    quantize(max = 32) { const q = quantize(data, max); dirty = true; return q; },
+    /** Quantise in place + encode, once per paint version (a lock right after a live update, or
+     *  a re-request, reuses the blob). */
+    encode() {
+      if (encVer === version && encCache) return encCache;
+      encCache = encode(data, quantize(data, 32)); encVer = version; dirty = true;
+      return encCache;
+    },
     decode(b64) { const ok = decodeInto(b64, data); touch(); return ok; },
     dispose() { texture.dispose(); },
   };
 }
 
-// ── quantisation (median cut) ──────────────────────────────────────────
+let warmed = false;
+/** Run the codec once on a busy buffer so the first real lock isn't paid in the interpreter. */
+function warmCodec() {
+  warmed = true;
+  const d = new Uint8Array(N * 4);
+  let h = 7;
+  for (let i = 0; i < d.length; i++) { h = (h * 1103515245 + 12345) & 0x7fffffff; d[i] = h >> 16; }
+  for (let k = 0; k < 2; k++) { const c = d.slice(); encode(c, quantize(c, 32)); encode(c); }
+}
+
+// ── quantisation (median cut over a 5-bit histogram) ─────────────────────
+// Bounded work regardless of brush softness / stamp detail: one pass into a 32×32×32 histogram
+// (counts + exact channel sums per bin), median cut over the occupied bins with a counting sort
+// per split, palette = population-weighted mean of the real colours in each box, then a per-bin
+// nearest-palette LUT. Buffers are module scratch (no garbage). Data that already has ≤ max
+// exact colours keeps them exactly (so quantize is idempotent and the receiver sees the same
+// pixels and checksum).
+const HB = 32768;
+const H_N = new Uint32Array(HB); const H_R = new Uint32Array(HB); const H_G = new Uint32Array(HB); const H_B = new Uint32Array(HB);
+const H_LUT = new Uint8Array(HB);
+const BINS = new Int32Array(HB); const BINS2 = new Int32Array(HB);
+const PIXBIN = new Uint16Array(N);
+const CNT = new Int32Array(33);
+const EXACT = new Int32Array(64);
+const BOX_LO = new Int32Array(64); const BOX_HI = new Int32Array(64);
+const BOX_SC = new Float64Array(64); const BOX_CH = new Int8Array(64);
+const chOf = (bin, ch) => (ch === 0 ? bin >> 10 : ch === 1 ? (bin >> 5) & 31 : bin & 31);
+
+/** Score a box [lo,hi) of BINS: widest channel (bin units) × sqrt(population). */
+function scoreBox(k) {
+  const lo = BOX_LO[k]; const hi = BOX_HI[k];
+  if (hi - lo < 2) { BOX_SC[k] = -1; return; }
+  let r0 = 31; let r1 = 0; let g0 = 31; let g1 = 0; let b0 = 31; let b1 = 0; let pop = 0;
+  for (let i = lo; i < hi; i++) {
+    const b = BINS[i]; const r = b >> 10; const g = (b >> 5) & 31; const bl = b & 31;
+    if (r < r0) r0 = r; if (r > r1) r1 = r; if (g < g0) g0 = g; if (g > g1) g1 = g; if (bl < b0) b0 = bl; if (bl > b1) b1 = bl;
+    pop += H_N[b];
+  }
+  const rr = r1 - r0; const gr = g1 - g0; const br = b1 - b0;
+  let ch = 0; let rg = rr; if (gr > rg) { rg = gr; ch = 1; } if (br > rg) { rg = br; ch = 2; }
+  BOX_CH[k] = ch; BOX_SC[k] = rg > 0 ? rg * Math.sqrt(pop) : -1;
+}
+
 export function quantize(data, max = 32) {
-  const counts = new Map();
+  const n = data.length >> 2;
+  // exact pass: ≤ max distinct colours → keep them as they are
+  let ne = 0; let last = -1; let lastK = 0; let exact = true;
   for (let i = 0; i < data.length; i += 4) {
     const c = (data[i] << 16) | (data[i + 1] << 8) | data[i + 2];
-    counts.set(c, (counts.get(c) || 0) + 1);
+    if (c === last) continue;
+    let k = 0; while (k < ne && EXACT[k] !== c) k++;
+    if (k === ne) { if (ne >= max) { exact = false; break; } EXACT[ne++] = c; }
+    last = c; lastK = k;
   }
-  let palette;
-  if (counts.size <= max) {
-    palette = [...counts.keys()];
-  } else {
-    const cols = [...counts.entries()].map(([c, n]) => [(c >> 16) & 255, (c >> 8) & 255, c & 255, n]);
-    let boxes = [cols];
-    const range = (b) => {
-      let best = -1; let ch = 0;
-      for (let k = 0; k < 3; k++) { let lo = 255; let hi = 0; for (const c of b) { if (c[k] < lo) lo = c[k]; if (c[k] > hi) hi = c[k]; } if (hi - lo > best) { best = hi - lo; ch = k; } }
-      return [best, ch];
-    };
-    while (boxes.length < max) {
-      // split the box with the largest (range × population)
-      let bi = -1; let score = -1; let bch = 0;
-      boxes.forEach((b, i) => { if (b.length < 2) return; const [rg, ch] = range(b); const pop = b.reduce((s, c) => s + c[3], 0); const sc = rg * Math.sqrt(pop); if (sc > score) { score = sc; bi = i; bch = ch; } });
-      if (bi < 0 || score <= 0) break;
-      const b = boxes[bi].sort((x, y) => x[bch] - y[bch]);
-      const tot = b.reduce((s, c) => s + c[3], 0);
-      let acc = 0; let cut = 1;
-      for (let i = 0; i < b.length; i++) { acc += b[i][3]; if (acc >= tot / 2) { cut = Math.min(b.length - 1, Math.max(1, i + 1)); break; } }
-      boxes.splice(bi, 1, b.slice(0, cut), b.slice(cut));
+  const idx = new Uint8Array(n);
+  if (exact) {
+    const pr = [];
+    for (let k = 0; k < ne; k++) pr.push([(EXACT[k] >> 16) & 255, (EXACT[k] >> 8) & 255, EXACT[k] & 255]);
+    last = -1;
+    for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+      const c = (data[i] << 16) | (data[i + 1] << 8) | data[i + 2];
+      if (c !== last) { let k = 0; while (EXACT[k] !== c) k++; last = c; lastK = k; }
+      idx[p] = lastK; data[i + 3] = 255;
     }
-    palette = boxes.map((b) => {
-      let r = 0; let g = 0; let bl = 0; let n = 0;
-      for (const c of b) { r += c[0] * c[3]; g += c[1] * c[3]; bl += c[2] * c[3]; n += c[3]; }
-      return (Math.round(r / n) << 16) | (Math.round(g / n) << 8) | Math.round(bl / n);
-    });
-    palette = [...new Set(palette)];
+    return { palette: pr, idx };
   }
-  const pr = palette.map((c) => [(c >> 16) & 255, (c >> 8) & 255, c & 255]);
-  const lut = new Map();
-  const idx = new Uint8Array(data.length / 4);
+  // histogram
+  let nb = 0;
   for (let i = 0, p = 0; i < data.length; i += 4, p++) {
-    const c = (data[i] << 16) | (data[i + 1] << 8) | data[i + 2];
-    let k = lut.get(c);
-    if (k === undefined) {
-      let best = 1e9; k = 0;
-      for (let j = 0; j < pr.length; j++) { const dr = pr[j][0] - data[i]; const dg = pr[j][1] - data[i + 1]; const db = pr[j][2] - data[i + 2]; const d = dr * dr * 2 + dg * dg * 4 + db * db * 3; if (d < best) { best = d; k = j; } }
-      lut.set(c, k);
-    }
-    idx[p] = k;
-    data[i] = pr[k][0]; data[i + 1] = pr[k][1]; data[i + 2] = pr[k][2]; data[i + 3] = 255;
+    const r = data[i]; const g = data[i + 1]; const b = data[i + 2];
+    const bin = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+    if (H_N[bin] === 0) BINS[nb++] = bin;
+    H_N[bin]++; H_R[bin] += r; H_G[bin] += g; H_B[bin] += b;
+    PIXBIN[p] = bin;
+  }
+  // median cut
+  let nbox = 1; BOX_LO[0] = 0; BOX_HI[0] = nb; scoreBox(0);
+  while (nbox < max) {
+    let bi = -1; let best = 0;
+    for (let k = 0; k < nbox; k++) if (BOX_SC[k] > best) { best = BOX_SC[k]; bi = k; }
+    if (bi < 0) break;
+    const lo = BOX_LO[bi]; const hi = BOX_HI[bi]; const ch = BOX_CH[bi];
+    // counting sort BINS[lo,hi) by channel ch (stable), via BINS2
+    CNT.fill(0);
+    let tot = 0;
+    for (let i = lo; i < hi; i++) { CNT[chOf(BINS[i], ch) + 1]++; tot += H_N[BINS[i]]; }
+    for (let v = 1; v <= 32; v++) CNT[v] += CNT[v - 1];
+    for (let i = lo; i < hi; i++) { const b = BINS[i]; BINS2[lo + CNT[chOf(b, ch)]++] = b; }
+    for (let i = lo; i < hi; i++) BINS[i] = BINS2[i];
+    // population median, kept off the ends
+    let acc = 0; let cut = lo + 1;
+    for (let i = lo; i < hi; i++) { acc += H_N[BINS[i]]; if (acc * 2 >= tot) { cut = i + 1; break; } }
+    if (cut >= hi) cut = hi - 1; if (cut <= lo) cut = lo + 1;
+    BOX_HI[bi] = cut; BOX_LO[nbox] = cut; BOX_HI[nbox] = hi;
+    scoreBox(bi); scoreBox(nbox); nbox++;
+  }
+  // palette: weighted means of the real colours in each box (deduped)
+  const pr = [];
+  for (let k = 0; k < nbox; k++) {
+    let r = 0; let g = 0; let b = 0; let c = 0;
+    for (let i = BOX_LO[k]; i < BOX_HI[k]; i++) { const bin = BINS[i]; r += H_R[bin]; g += H_G[bin]; b += H_B[bin]; c += H_N[bin]; }
+    const cr = Math.round(r / c); const cg = Math.round(g / c); const cb = Math.round(b / c);
+    let dup = false; for (const q of pr) if (q[0] === cr && q[1] === cg && q[2] === cb) { dup = true; break; }
+    if (!dup) pr.push([cr, cg, cb]);
+  }
+  // per-bin nearest palette entry (to the bin's mean colour), then clear the histogram
+  const np = pr.length;
+  for (let i = 0; i < nb; i++) {
+    const bin = BINS2[i] = BINS[i]; const c = H_N[bin];
+    const mr = H_R[bin] / c; const mg = H_G[bin] / c; const mb = H_B[bin] / c;
+    let bestD = 1e12; let bk = 0;
+    for (let j = 0; j < np; j++) { const q = pr[j]; const dr = q[0] - mr; const dg = q[1] - mg; const db = q[2] - mb; const d = dr * dr * 2 + dg * dg * 4 + db * db * 3; if (d < bestD) { bestD = d; bk = j; } }
+    H_LUT[bin] = bk;
+    H_N[bin] = 0; H_R[bin] = 0; H_G[bin] = 0; H_B[bin] = 0;
+  }
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    const k = H_LUT[PIXBIN[p]]; const q = pr[k];
+    idx[p] = k; data[i] = q[0]; data[i + 1] = q[1]; data[i + 2] = q[2]; data[i + 3] = 255;
   }
   return { palette: pr, idx };
 }
 
 // ── codec ──────────────────────────────────────────────────────────────
-/** Encode an already-quantised (≤ 32 colours) RGBA buffer. Returns { b64, sum, bytes }. */
-export function encode(data) {
-  const q = quantize(data, 32); // idempotent on quantised data: exact palette
-  const { palette, idx } = q;
+const ENC_OUT = new Uint8Array(4 + 32 * 3 + N * 2 + 16);
+/**
+ * Encode an RGBA buffer, quantising it in place first (≤ 32 colours). Pass the result of a
+ * quantize() you just ran as `q` to skip the second pass. Returns { b64, sum, bytes }.
+ */
+export function encode(data, q = null) {
+  const { palette, idx } = q || quantize(data, 32);
   const W = TEX; const H = TEX; const n = W * H;
-  const out = [1, W, H, palette.length];
-  for (const c of palette) out.push(c[0], c[1], c[2]);
+  const out = ENC_OUT;
+  let o = 0;
+  out[o++] = 1; out[o++] = W; out[o++] = H; out[o++] = palette.length;
+  for (const c of palette) { out[o++] = c[0]; out[o++] = c[1]; out[o++] = c[2]; }
   let p = 0;
   while (p < n) {
     let r = 1; while (p + r < n && idx[p + r] === idx[p] && r < 256) r++;
     let c = 0;
     if (p >= W) { while (p + c < n && idx[p + c] === idx[p + c - W] && c < 8192) c++; }
     if (c >= 2 && c >= r) {
-      if (c <= 64) out.push(0x80 | (c - 1));
-      else { const L = c - 1; out.push(0xe0 | (L >> 8), L & 255); }
+      if (c <= 64) out[o++] = 0x80 | (c - 1);
+      else { const L = c - 1; out[o++] = 0xe0 | (L >> 8); out[o++] = L & 255; }
       p += c;
     } else if (r <= 4) {
-      out.push((idx[p] << 2) | (r - 1)); p += r;
+      out[o++] = (idx[p] << 2) | (r - 1); p += r;
     } else {
-      out.push(0xc0 | idx[p], r - 1); p += r;
+      out[o++] = 0xc0 | idx[p]; out[o++] = r - 1; p += r;
     }
   }
-  const bytes = Uint8Array.from(out);
-  return { b64: bytesToB64(bytes), sum: fnv(data), bytes: bytes.length };
+  return { b64: bytesToB64(out.subarray(0, o)), sum: fnv(data), bytes: o };
 }
 
 /** Decode into an RGBA buffer. Returns the checksum of the result (or -1 on a malformed stream). */

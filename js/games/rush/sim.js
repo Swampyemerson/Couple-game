@@ -3,7 +3,7 @@
 import {
   DT, LANE_W, LANE_TIME, GRAV, JUMP_V, SUPER_JUMP_V, HANG_V, HANG_G, FASTFALL_V, SLIDE_TIME,
   BUFFER_T, COYOTE_T, STAND_H, ROLL_H, HALF_D, HALF_W, STEP_UP, TRIP_TOL, CHUNK, LOW_H,
-  STUMBLE_T, CRASH_T, INVULN_T, HEARTS, MAGNET_T, SNEAKERS_T, LATE_DODGE_T, COMBO_TIERS, COMBO_BONUS, baseSpeed,
+  STUMBLE_T, CRASH_T, INVULN_T, HEARTS, MAGNET_T, SNEAKERS_T, LATE_DODGE_T, COMBO_TIERS, COMBO_BONUS, COMBO_T, MT_K, baseSpeed,
 } from './tune.js';
 import {
   O_LOW, O_HIGH, O_TRAIN, O_RAMP, O_MTRAIN, O_BLOCK, I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX,
@@ -60,7 +60,7 @@ export function newRunner(lane = 0) {
     magnetT: 0, sneakersT: 0, shield: 0, boostT: 0,
     bufA: 0, bufT: 0,
     fin: -1, finLen: 0, done: 0,
-    crashes: 0, stumbles: 0, combo: 0, comboT: 0, maxCombo: 0, closeCalls: 0, jumps: 0, rolls: 0, shields: 0, clips: 0, bonus: 0,
+    crashes: 0, stumbles: 0, combo: 0, comboT: 0, maxCombo: 0, passZ: -1e9, passClose: 0, closeCalls: 0, jumps: 0, rolls: 0, shields: 0, clips: 0, bonus: 0,
     hitT: 0, hitOv: 0, hitY: 0, // what the last crash hit (telemetry)
     ignoreId: -1, ignoreT: 0,
     tandem: 0, zapT: 0, zapDir: 0, smashN: 0,
@@ -269,25 +269,42 @@ function collectIn(r, c, h) {
   }
 }
 
-function passed(r, o, ov, dry) {
-  if (dry) return;
-  let clean = false;
+// A dodge feeds the combo chain: jumping / rolling / climbing past an obstacle in your lane, or
+// having swerved out of its lane within the last 30 m (one count per row front, so a two-lane
+// row is one dodge). "Close" (+2, sparkle) is measured in metres, not seconds, so it stays a
+// real near miss at any speed: lateral when the swerve began within 2.5 m + 0.05 s·v of the
+// front, roll within 1.5 m + 0.04 s·v, jump with the feet under 0.3 m over a low barrier.
+function passed(r, o, ov, h, dry) {
+  if (dry || o.t === O_RAMP || r.invulnT > 0 || o.id === r.ignoreId || o.gone) return;
   let close = false;
+  const v = r.speed > 1 ? r.speed : 1;
   if (ov > 0) {
-    if (o.t === O_LOW && r.y >= LOW_H - 0.02) { clean = true; close = r.y < LOW_H + 0.3; }
-    else if (o.t === O_HIGH && r.slideT > 0) { clean = true; close = r.slideAge < 0.16; }
-  } else if ((o.t === O_TRAIN || o.t === O_MTRAIN || o.t === O_LOW || o.t === O_HIGH) && r.laneFrom === o.lane && r.laneAge < 0.28 && Math.abs(o.lane * LANE_W - r.x) < LANE_W * 1.3) {
-    clean = true; close = true;
+    const clear = r.y + h <= o.b + 0.02 || r.y >= o.h - 0.02 || (o.walk && r.y >= o.h - STEP_UP);
+    if (!clear) return; // a hit follows (crash / stumble / smash): not a dodge
+    if (o.t === O_LOW) close = r.y < LOW_H + 0.3;
+    else if (o.t === O_HIGH) close = r.slideT > 0 && r.slideAge * v < 1.5 + 0.04 * v;
+  } else {
+    if (r.laneFrom !== o.lane || r.laneAge * v > 30) return; // never lined up with it: nothing dodged
+    if (o.t !== O_TRAIN && o.t !== O_MTRAIN && o.t !== O_LOW && o.t !== O_HIGH && o.t !== O_BLOCK) return;
+    const rel = o.t === O_MTRAIN ? v * (1 + MT_K) : v; // an oncoming train closes faster
+    close = r.laneAge * rel < 2.5 + 0.05 * rel;
   }
-  if (!clean) return;
-  r.combo++;
-  r.comboT = 2.6;
-  if (r.combo > r.maxCombo) r.maxCombo = r.combo;
-  if (close) { r.closeCalls++; r.coins += 2; ev(r, E_CLOSE, o.lane); }
-  if (r.combo >= 2) ev(r, E_COMBO, r.combo);
-  for (let i = 0; i < COMBO_TIERS.length; i++) {
-    if (r.combo === COMBO_TIERS[i]) { r.coins += COMBO_BONUS[i]; r.bonus += COMBO_BONUS[i]; ev(r, E_BONUS, COMBO_BONUS[i]); break; }
+  if (o.z0 > r.passZ - 0.5 && o.z0 < r.passZ + 0.5) { // same row as the last dodge
+    if (!close || r.passClose) return;
+  } else {
+    r.passZ = o.z0;
+    r.passClose = 0;
+    r.combo++;
+    r.comboT = COMBO_T;
+    if (r.combo > r.maxCombo) r.maxCombo = r.combo;
+    if (r.combo >= 2) ev(r, E_COMBO, r.combo);
+    const last = COMBO_TIERS[COMBO_TIERS.length - 1];
+    let pay = 0;
+    for (let i = 0; i < COMBO_TIERS.length; i++) if (r.combo === COMBO_TIERS[i]) pay = COMBO_BONUS[i];
+    if (r.combo > last && (r.combo - last) % 8 === 0) pay = COMBO_BONUS[COMBO_BONUS.length - 1]; // past Legend: every 8 more pays again
+    if (pay) { r.coins += pay; r.bonus += pay; ev(r, E_BONUS, pay); }
   }
+  if (close) { r.passClose = 1; r.closeCalls++; r.coins += 2; ev(r, E_CLOSE, o.lane); }
 }
 
 function collideIn(r, obs, h, dry) {
@@ -300,7 +317,7 @@ function collideIn(r, obs, h, dry) {
     const ox = o.lane * LANE_W;
     const ov = Math.min(r.x + HALF_W, ox + o.hw) - Math.max(r.x - HALF_W, ox - o.hw);
     const crossed = r.zPrev + HALF_D <= o.z0 && r.z + HALF_D > o.z0;
-    if (crossed && !r.down) passed(r, o, ov, dry);
+    if (crossed && !r.down) passed(r, o, ov, h, dry);
     if (ov <= 0 || r.down) continue;
     if (o.id === r.ignoreId || o.gone) continue;
     if (r.smashN && r.smashed.has(o.id)) continue;

@@ -4,9 +4,10 @@
 // and told to the partner over the link so they see it. A livery only changes the colours and
 // decals of the existing car model (carmodel.js buildPlayerCar `livery`): no extra draw calls.
 //
-// Career counters live in the same shared doc as `career_<w>`: { esc, heat, bust, fastBust, pits,
-// topBoost, wins } (escapes, heat escapes, busts as cop, fastest bust in s, PITs landed, top km/h
-// while on nitro, matches won).
+// Career counters come from the flat record keys in the same shared doc (records.js careerFrom:
+// couple + practice summed): { esc, heat, bust, fastBust, pits, topBoost, wins }. (The doc keeps
+// numbers only, so the old `career_<w>` object never persisted.)
+import { careerFrom } from './records.js';
 
 export const LIVERIES = {
   runner: [
@@ -27,7 +28,7 @@ export const CAREER0 = { esc: 0, heat: 0, bust: 0, fastBust: 0, pits: 0, topBoos
 
 export const liveryKey = (w, kind, k) => `unlock_${w}_${kind}${k}`;
 export const careerKey = (w) => `career_${w}`;
-export function careerOf(data, w) { return { ...CAREER0, ...((data && data[careerKey(w)]) || {}) }; }
+export function careerOf(data, w) { return { ...CAREER0, ...careerFrom(data || {}, w) }; }
 /** Is livery k of kind unlocked for person w? (0 always.) */
 export function liveryUnlocked(data, w, kind, k) { return !k || !!(data && data[liveryKey(w, kind, k)]); }
 /** The livery k if person w has it, else 0 (what the car is drawn with). */
@@ -54,6 +55,17 @@ export function careerUpdate(data, w, ev) {
     }
   }
   return { career: c, patch, pops };
+}
+/** Liveries person w has earned but not yet been given (data = the doc with this round's records in). */
+export function checkUnlocks(data, w) {
+  const c = careerOf(data, w); const patch = {}; const pops = [];
+  for (const kind of Object.keys(LIVERIES)) {
+    for (const L of LIVERIES[kind]) {
+      if (!L.test || liveryUnlocked(data, w, kind, L.k)) continue;
+      if (L.test(c)) { patch[liveryKey(w, kind, L.k)] = 1; pops.push({ kind, k: L.k, name: L.name }); }
+    }
+  }
+  return { patch, pops };
 }
 /** Rows for the settings sheet: [{ k, name, how, on (unlocked), cur }] per kind. */
 export function liveryRows(data, w, chosen) {

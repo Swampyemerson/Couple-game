@@ -19,7 +19,7 @@ export const CSS = `
 .gtw-sc em { font-style: normal; font-size: 0.68rem; font-weight: 800; color: var(--g-muted); max-width: 5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 520px) { .gtw-sc em { display: none; } }
 .gtw-clock { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2px 10px 3px; min-width: 76px; }
-.gtw-clock small { white-space: nowrap; font-size: 0.58rem; font-weight: 900; letter-spacing: .14em; text-transform: uppercase; color: var(--g-muted); line-height: 1.1; }
+.gtw-clock small { white-space: nowrap; font-size: 0.7rem; font-weight: 900; letter-spacing: .14em; text-transform: uppercase; color: var(--g-muted); line-height: 1.1; }
 .gtw-clock b { font-family: var(--g-font-display); font-weight: 900; font-size: 1.32rem; line-height: 1; font-variant-numeric: tabular-nums; }
 .gtw-clock.hot b { color: var(--g-bad); }
 .gtw-pips { display: flex; gap: 3px; margin-top: 2px; } .gtw-pips i { width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--g-ink); background: var(--g-card); }
@@ -31,9 +31,10 @@ export const CSS = `
 .gtw-role { padding: 4px 10px; border-radius: 999px; font: 900 0.72rem/1 var(--g-font-body); letter-spacing: .12em; text-transform: uppercase; border: 2px solid var(--g-ink); background: var(--g-ink); color: var(--g-bg); }
 .gtw-role.runner { background: var(--me); color: var(--g-on-ink); }
 .gtw-role.cop { background: linear-gradient(90deg, #e2333f 50%, #2f6bff 50%); color: #fff; text-shadow: 0 1px 0 #0008; }
-.gtw-bar { width: 128px; padding: 4px 6px 5px; }
-.gtw-bar small { display: flex; justify-content: space-between; font: 900 0.58rem/1 var(--g-font-body); letter-spacing: .1em; text-transform: uppercase; color: var(--g-muted); margin-bottom: 3px; }
-.gtw-bar small b { color: var(--g-ink); }
+.gtw-bar { width: 140px; padding: 4px 6px 5px; }
+.gtw-bar small { display: flex; justify-content: space-between; align-items: baseline; gap: 4px; white-space: nowrap; font: 900 0.7rem/1 var(--g-font-body); letter-spacing: .03em; text-transform: uppercase; color: var(--g-muted); margin-bottom: 3px; }
+.gtw-bar small b { color: var(--g-ink); flex: none; } .gtw-bar small span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.gtw-heat small b { font-size: .85rem; letter-spacing: .02em; font-variant-numeric: tabular-nums; } /* the distance: the number both roles watch */
 .gtw-bar .t { height: 9px; border-radius: 5px; border: 2px solid var(--g-ink); background: var(--g-bg); overflow: hidden; }
 .gtw-bar .t i { display: block; height: 100%; width: 100%; background: var(--g-good); transform-origin: left center; transition: transform .25s, background .25s; }
 .gtw-bar.low .t i { background: var(--g-bad); } .gtw-bar.mid .t i { background: var(--g-hl); }
@@ -60,7 +61,7 @@ export const CSS = `
 .g-gtw.short .gtw-mini { width: 100px; height: 100px; }
 .g-gtw.touch.short .gtw-ctl [data-tap="cam"] { top: calc(var(--cs) + 110px); }
 .gtw-speed b { font-family: var(--g-font-display); font-weight: 900; font-size: 2rem; line-height: .9; font-variant-numeric: tabular-nums; -webkit-text-stroke: 1.5px var(--g-ink); color: var(--g-card); text-shadow: 2px 2px 0 var(--g-edge); }
-.gtw-speed small { font: 900 0.6rem/1 var(--g-font-body); letter-spacing: .14em; color: var(--g-ink); background: var(--g-card); border-radius: 4px; padding: 2px 4px; }
+.gtw-speed small { font: 900 0.7rem/1 var(--g-font-body); letter-spacing: .14em; color: var(--g-ink); background: var(--g-card); border-radius: 4px; padding: 2px 4px; }
 .gtw-nitro { width: 92px; height: 10px; border-radius: 6px; border: 2px solid var(--g-ink); background: var(--g-card); overflow: hidden; }
 .gtw-nitro i { display: block; height: 100%; width: 100%; background: var(--g-hl); transform-origin: left; }
 .gtw-nitro.on i { background: #33c6ff; }
@@ -74,7 +75,7 @@ export const CSS = `
 .gtw-stamp.bad { color: var(--g-bad); } .gtw-stamp.a { color: var(--p-a); } .gtw-stamp.b { color: var(--p-b); }
 @keyframes gtw-stamp { 0% { opacity: 0; transform: translate(-50%, -50%) rotate(-7deg) scale(2.2); } 14% { opacity: 1; transform: translate(-50%, -50%) rotate(-7deg) scale(1); } 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -50%) rotate(-7deg) scale(1.05); } }
 .gtw-hint { position: absolute; left: 50%; top: calc(var(--cs) + 30px); transform: translateX(-50%); max-width: min(calc(100% - 300px), 360px); padding: 6px 12px; font-weight: 800; font-size: 0.82rem; text-align: center; border-radius: 10px; background: var(--g-ink); color: var(--g-bg); box-shadow: 3px 3px 0 var(--g-hl); opacity: 0; transition: opacity .25s; }
-@media (max-width: 600px) { .gtw-hint { top: calc(var(--cs) + 168px); max-width: calc(100% - 40px); } }
+@media (max-width: 600px) { .gtw-hint { top: calc(var(--cs) + 206px); max-width: calc(100% - 40px); } }
 .g-gtw.short .gtw-hint { top: calc(var(--st) + 64px); max-width: min(calc(100% - 460px), 360px); }
 .gtw-hint.on { opacity: 1; }
 .gtw-count { position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); font-family: var(--g-font-display); font-weight: 900; font-size: clamp(4rem, 22vw, 9rem); line-height: 1; color: var(--g-card); -webkit-text-stroke: 4px var(--g-ink); text-shadow: 6px 6px 0 var(--g-edge); }
@@ -94,7 +95,7 @@ export const CSS = `
 
 /* touch controls */
 .gtw-ctl { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
-.gtw-ctl [data-pad], .gtw-ctl [data-tap] { pointer-events: auto; position: absolute; display: grid; place-items: center; background: var(--g-card); color: var(--g-ink); border: 2.5px solid var(--g-ink); box-shadow: var(--g-shadow, 3px 3px 0 var(--g-edge)); font: 900 0.68rem/1 var(--g-font-body); letter-spacing: .08em; text-transform: uppercase; touch-action: none; padding: 0; transition: transform .06s, box-shadow .06s; }
+.gtw-ctl [data-pad], .gtw-ctl [data-tap] { pointer-events: auto; position: absolute; display: grid; place-items: center; background: var(--g-card); color: var(--g-ink); border: 2.5px solid var(--g-ink); box-shadow: var(--g-shadow, 3px 3px 0 var(--g-edge)); font: 900 0.75rem/1 var(--g-font-body); letter-spacing: .08em; text-transform: uppercase; touch-action: none; padding: 0; transition: transform .06s, box-shadow .06s; }
 .gtw-ctl .press { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge); }
 .gtw-ctl [data-pad="gas"] { right: calc(16px + var(--sr)); bottom: calc(18px + var(--sb)); width: 82px; height: 118px; border-radius: 20px 20px 16px 16px; background: var(--g-hl); color: var(--g-on-ink); }
 .gtw-ctl [data-pad="brake"] { right: calc(110px + var(--sr)); bottom: calc(18px + var(--sb)); width: 72px; height: 78px; border-radius: 16px; }
@@ -105,21 +106,21 @@ export const CSS = `
 .gtw-ctl [data-tap="act"][disabled] { opacity: .4; }
 .gtw-ctl [data-tap="act"] .n { position: absolute; top: -7px; right: -7px; min-width: 24px; height: 24px; padding: 0 5px; box-sizing: border-box; border-radius: 12px; background: var(--g-ink); color: var(--g-bg); border: 2px solid var(--g-card); font: 900 0.78rem/20px var(--g-font-body); font-style: normal; letter-spacing: 0; text-align: center; }
 .gtw-ctl [data-tap="act"] .n.zero { background: var(--g-card); color: var(--g-muted); border-color: var(--g-ink); }
-.gtw-ctl [data-tap="look"] { right: calc(194px + var(--sr)); bottom: calc(92px + var(--sb)); width: 50px; height: 40px; border-radius: 12px; }
-.gtw-ctl [data-tap="cam"] { left: calc(10px + var(--sl)); top: calc(var(--cs) + 128px); width: 50px; height: 34px; border-radius: 10px; font-size: .58rem; }
+.gtw-ctl [data-tap="look"] { right: calc(194px + var(--sr)); bottom: calc(92px + var(--sb)); width: 56px; height: 48px; border-radius: 12px; }
+.gtw-ctl [data-tap="cam"] { left: calc(10px + var(--sl)); top: calc(var(--cs) + 128px); width: 56px; height: 44px; border-radius: 10px; font-size: .7rem; }
 .gtw-ctl svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
 .gtw-ctl span.l { display: block; margin-top: 2px; }
 .gtw-steer { position: absolute; width: 168px; height: 54px; margin: -27px 0 0 -84px; border-radius: 27px; border: 2.5px dashed rgba(128,128,128,.75); border-color: color-mix(in srgb, var(--g-ink) 55%, transparent); opacity: 0; pointer-events: none; transition: opacity .12s; }
 .gtw-steer.on { opacity: 1; }
 .gtw-steer i { position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px; border-radius: 50%; background: var(--g-card); border: 2.5px solid var(--g-ink); box-shadow: var(--g-shadow, 3px 3px 0 var(--g-edge)); transform: translateX(calc(var(--k, 0) * 60px)); }
-.gtw-steerhint { position: absolute; left: calc(28px + var(--sl)); bottom: calc(40px + var(--sb)); width: 150px; height: 50px; border-radius: 25px; border: 2.5px dashed rgba(128,128,128,.55); border-color: color-mix(in srgb, var(--g-ink) 35%, transparent); display: grid; place-items: center; font: 900 0.6rem/1 var(--g-font-body); letter-spacing: .1em; color: rgba(128,128,128,.9); color: color-mix(in srgb, var(--g-ink) 60%, transparent); text-transform: uppercase; pointer-events: none; }
+.gtw-steerhint { position: absolute; left: calc(28px + var(--sl)); bottom: calc(40px + var(--sb)); width: 150px; height: 50px; border-radius: 25px; border: 2.5px dashed rgba(128,128,128,.55); border-color: color-mix(in srgb, var(--g-ink) 35%, transparent); display: grid; place-items: center; font: 900 0.7rem/1 var(--g-font-body); letter-spacing: .1em; color: rgba(128,128,128,.9); color: color-mix(in srgb, var(--g-ink) 60%, transparent); text-transform: uppercase; pointer-events: none; }
 .g-gtw:not(.touch) .gtw-ctl, .g-gtw:not(.playing) .gtw-ctl { display: none; }
 .g-gtw.portrait .gtw-ctl [data-pad="gas"] { height: 104px; width: 76px; }
 .g-gtw.portrait .gtw-ctl [data-pad="brake"] { right: calc(102px + var(--sr)); width: 66px; }
 .g-gtw.portrait .gtw-ctl [data-pad="hand"] { right: calc(102px + var(--sr)); width: 66px; bottom: calc(104px + var(--sb)); }
 .g-gtw.portrait .gtw-ctl [data-pad="nitro"] { width: 76px; bottom: calc(132px + var(--sb)); }
 .g-gtw.portrait .gtw-ctl [data-tap="act"] { right: calc(102px + var(--sr)); bottom: calc(166px + var(--sb)); width: 56px; height: 56px; }
-.g-gtw.portrait .gtw-ctl [data-tap="look"] { right: calc(16px + var(--sr)); bottom: calc(190px + var(--sb)); width: 50px; }
+.g-gtw.portrait .gtw-ctl [data-tap="look"] { right: calc(16px + var(--sr)); bottom: calc(190px + var(--sb)); width: 56px; }
 .g-gtw.portrait .gtw-steerhint { width: 130px; }
 
 /* legend (keyboard) */
@@ -134,7 +135,8 @@ export const CSS = `
 .gtw-map canvas { flex: 1 1 0; min-height: 0; height: 0; width: 100%; border-radius: 8px; border: 2px solid var(--g-ink); touch-action: none; cursor: crosshair; background: var(--g-bg); }
 .gtw-map .row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
 .gtw-map h3 { margin: 0; font: 900 1rem/1.1 var(--g-font-body); } .gtw-map p { margin: 0; font-size: 0.8rem; font-weight: 700; color: var(--g-muted); }
-.gtw-map button { appearance: none; border: 2.5px solid var(--g-ink); border-radius: 12px; background: var(--g-ink); color: var(--g-bg); font: 900 0.9rem/1 var(--g-font-body); padding: 10px 14px; cursor: pointer; }
+.gtw-map button { appearance: none; border: 2.5px solid var(--g-ink); border-radius: 12px; background: var(--g-ink); color: var(--g-bg); font: 900 0.9rem/1 var(--g-font-body); padding: 10px 14px; min-height: 44px; min-width: 64px; cursor: pointer; flex: none; }
+.gtw-map button.gtw-mapwhole { background: var(--g-card); color: var(--g-ink); margin-left: auto; }
 
 /* overlay cards */
 .gtw-over { position: absolute; inset: 0; z-index: 6; display: grid; place-items: center; padding: calc(12px + var(--st)) 14px calc(12px + var(--sb)); pointer-events: auto; overflow-y: auto; }
@@ -156,12 +158,12 @@ export const CSS = `
 .gtw-mapcard .info { display: flex; flex-direction: column; gap: 2px; text-align: left; min-width: 0; }
 .gtw-mapcard .info b { font-size: 1.05rem; font-weight: 900; } .gtw-mapcard .info small { font-size: .74rem; font-weight: 700; color: var(--g-muted); line-height: 1.25; }
 .gtw-mapcard .info em { font-style: normal; font-size: .64rem; font-weight: 900; letter-spacing: .1em; text-transform: uppercase; color: var(--g-bad); }
-.gtw-arrow { width: 38px; height: 38px; border-radius: 50%; border: 2.5px solid var(--g-ink); background: var(--g-card); color: var(--g-ink); font: 900 1.2rem/1 var(--g-font-body); cursor: pointer; }
+.gtw-arrow { width: 44px; height: 44px; border-radius: 50%; border: 2.5px solid var(--g-ink); background: var(--g-card); color: var(--g-ink); font: 900 1.2rem/1 var(--g-font-body); cursor: pointer; }
 .gtw-arrow[disabled] { opacity: .35; }
 .gtw-mapsel { display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: center; }
 .gtw-lrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .gtw-chips { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
-.gtw-chip { padding: 8px 11px; border: 2px solid var(--g-line); border-radius: 999px; background: transparent; color: var(--g-ink); font: 800 0.82rem/1 var(--g-font-body); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; touch-action: manipulation; }
+.gtw-chip { min-height: 44px; padding: 12px 14px; border: 2px solid var(--g-line); border-radius: 999px; background: transparent; color: var(--g-ink); font: 800 0.82rem/1 var(--g-font-body); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; touch-action: manipulation; }
 .gtw-chip.on { border-color: var(--g-ink); background: var(--g-ink); color: var(--g-bg); }
 .gtw-chip i { width: 10px; height: 10px; border-radius: 50%; } .gtw-chip.pa i { background: var(--p-a); } .gtw-chip.pb i { background: var(--p-b); }
 .gtw-chip[disabled] { opacity: .45; cursor: default; }
@@ -169,7 +171,7 @@ export const CSS = `
 .gtw-go { appearance: none; border: 2.5px solid var(--g-ink); border-radius: 14px; background: var(--me); color: var(--g-on-ink); font: 900 1.05rem/1 var(--g-font-body); padding: 14px 18px; box-shadow: 4px 4px 0 var(--g-edge); cursor: pointer; touch-action: manipulation; flex: 1; }
 .gtw-go:active { transform: translate(3px, 3px); box-shadow: 1px 1px 0 var(--g-edge); }
 .gtw-go[disabled] { opacity: .5; }
-.gtw-ghost { appearance: none; border: 2px solid var(--g-line); border-radius: 12px; background: transparent; color: var(--g-ink); font: 800 0.88rem/1 var(--g-font-body); padding: 11px 13px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+.gtw-ghost { appearance: none; border: 2px solid var(--g-line); border-radius: 12px; background: transparent; color: var(--g-ink); font: 800 0.88rem/1 var(--g-font-body); padding: 11px 13px; min-height: 44px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
 .gtw-wait { font-weight: 800; color: var(--g-muted); font-size: .88rem; flex: 1; }
 .gtw-name-a { color: var(--p-a-text, var(--p-a)); } .gtw-name-b { color: var(--p-b-text, var(--p-b)); }
 .gtw-bar2 { height: 12px; border-radius: 7px; border: 2px solid var(--g-ink); overflow: hidden; background: var(--g-bg); }
@@ -179,10 +181,10 @@ export const CSS = `
 .gtw-roles b { font-size: .95rem; } .gtw-roles small { font-size: .7rem; font-weight: 800; color: var(--g-muted); letter-spacing: .1em; text-transform: uppercase; }
 .gtw-roles .me { background: var(--g-hl-soft, var(--g-bg)); box-shadow: var(--g-shadow-sm, 2px 2px 0 var(--g-edge)); }
 .gtw-big { font-family: var(--g-font-display); font-weight: 900; font-size: 2.6rem; line-height: 1; }
-.gtw-big.bad { color: var(--g-bad); } .gtw-big.good { color: var(--g-good); }
+.gtw-big.long { font-size: 1.9rem; } .gtw-big.bad { color: var(--g-bad); } .gtw-big.good { color: var(--g-good); }
 .gtw-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .gtw-stats div { border: 2px solid var(--g-line); border-radius: 10px; padding: 6px 2px; display: flex; flex-direction: column; gap: 2px; }
-.gtw-stats b { font-family: var(--g-font-display); font-weight: 900; font-size: 1.05rem; } .gtw-stats small { font-size: .58rem; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; color: var(--g-muted); }
+.gtw-stats b { font-family: var(--g-font-display); font-weight: 900; font-size: 1.05rem; } .gtw-stats small { font-size: .66rem; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; color: var(--g-muted); }
 .gtw-score { display: flex; justify-content: center; gap: 14px; align-items: center; font-weight: 900; }
 .gtw-score span { display: inline-flex; align-items: center; gap: 6px; font-size: 1.05rem; } .gtw-score i { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--g-ink); }
 .gtw-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -197,7 +199,7 @@ export const CSS = `
 .gtw-srow { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; padding: 6px 0; border-bottom: 1.5px dashed var(--g-line); }
 .gtw-srow b { font-size: .88rem; font-weight: 900; display: block; } .gtw-srow small { font-size: .7rem; font-weight: 700; color: var(--g-muted); }
 .gtw-step { display: flex; align-items: center; border: 2px solid var(--g-ink); border-radius: 10px; overflow: hidden; }
-.gtw-step button { width: 34px; height: 34px; border: 0; background: var(--g-card); color: var(--g-ink); font: 900 1.1rem/1 var(--g-font-body); cursor: pointer; }
+.gtw-step button { width: 44px; height: 44px; border: 0; background: var(--g-card); color: var(--g-ink); font: 900 1.1rem/1 var(--g-font-body); cursor: pointer; }
 .gtw-step button[disabled] { opacity: .3; }
 .gtw-step output { min-width: 86px; text-align: center; font: 900 .8rem/1 var(--g-font-body); padding: 0 4px; }
 .gtw-ro .gtw-step button { display: none; } .gtw-ro .gtw-step output { padding: 9px 8px; }
@@ -216,7 +218,7 @@ export const CSS = `
 .g-gtw.short .gtw-lobby .gtw-card { width: min(100%, 760px); display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; text-align: left; }
 .g-gtw.short .gtw-lobby .col { display: flex; flex-direction: column; gap: 8px; }
 /* v2: pause button, loading, errors, lobby status, sheets, how-to */
-.gtw-pausebtn { pointer-events: auto !important; width: 40px; padding: 0; display: grid; place-items: center; color: var(--g-ink); cursor: pointer; touch-action: manipulation; }
+.gtw-pausebtn { pointer-events: auto !important; width: 48px; min-height: 44px; padding: 0; display: grid; place-items: center; color: var(--g-ink); cursor: pointer; touch-action: manipulation; }
 .gtw-pausebtn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: round; }
 .gtw-view.r .gtw-pausebtn { display: none; }
 .gtw-road b { position: absolute; left: 0; top: 0; bottom: 0; background: var(--me); background: color-mix(in srgb, var(--me) 45%, transparent); transition: width .25s; }
@@ -236,8 +238,8 @@ export const CSS = `
 .gtw-status.ok i { background: var(--g-good); animation: none; }
 .gtw-landtip { opacity: .8; }
 .gtw-seg { gap: 4px; }
-.gtw-seg .gtw-chip { padding: 8px 10px; }
-.gtw-srow.gtw-livery { grid-template-columns: 1fr; } .gtw-livery .gtw-chips { flex-wrap: wrap; } .gtw-livery .gtw-chip { font-size: .74rem; padding: 7px 9px; }
+.gtw-seg .gtw-chip { padding: 12px 11px; }
+.gtw-srow.gtw-livery { grid-template-columns: 1fr; } .gtw-livery .gtw-chips { flex-wrap: wrap; } .gtw-livery .gtw-chip { font-size: .74rem; padding: 10px 10px; }
 .gtw-unlock { border: 2px solid var(--g-ink); border-radius: 10px; padding: 6px 10px; font-weight: 800; font-size: .82rem; background: rgba(60,160,110,.18); background: color-mix(in srgb, var(--g-good, #2a9d6a) 18%, transparent); } .gtw-unlock b { font-family: var(--g-font-display); letter-spacing: .06em; margin-right: 6px; }
 .gtw-new { border-color: var(--g-ink); position: relative; }
 .gtw-new::after { content: ''; position: absolute; top: -4px; right: -4px; width: 10px; height: 10px; border-radius: 50%; background: var(--g-bad); border: 2px solid var(--g-card); }
@@ -260,4 +262,60 @@ export const CSS = `
 .g-gtw.touch.portrait .gtw-ctl [data-tap="cam"] { display: none; }
 .gtw-bar .t { height: 10px; }
 @media (max-width: 380px) { .gtw-howgrid { grid-template-columns: 1fr; } }
+/* ux polish wave: stamps for longer words, the boxed-in clock, damage numbers, the final 15 */
+.gtw-stamp.sm { font-size: clamp(1.7rem, 8vw, 3.4rem); -webkit-text-stroke: 2.5px var(--g-ink); }
+.gtw-stamp.good { color: var(--g-good); }
+.gtw-clock.hot { animation: gtw-beat .83s ease-in-out infinite; }
+@keyframes gtw-beat { 0%, 30%, 100% { transform: scale(1); } 12% { transform: scale(1.08); } 22% { transform: scale(1.02); } }
+.gtw-box { position: absolute; left: 50%; top: 50%; transform: translateX(-50%); width: min(78%, 300px); padding: 7px 10px 8px; border-radius: 12px; border: 2.5px solid var(--g-ink); background: var(--g-bad); color: #fff; text-align: center; box-shadow: 3px 3px 0 var(--g-edge); animation: gtw-boxp .5s ease-in-out infinite alternate; }
+.gtw-box b { display: block; font: 900 1rem/1.1 var(--g-font-display); letter-spacing: .04em; }
+.gtw-box i { display: block; height: 7px; margin-top: 5px; border-radius: 4px; background: rgba(0,0,0,.3); overflow: hidden; } .gtw-box s { display: block; height: 100%; background: #fff; transform-origin: left center; transition: transform .1s linear; }
+.gtw-box.cop { background: linear-gradient(90deg, #e2333f, #2f6bff); }
+@keyframes gtw-boxp { to { box-shadow: 0 0 0 6px rgba(226,51,63,.35), 3px 3px 0 var(--g-edge); } }
+.gtw-dmg { position: absolute; left: calc(156px + var(--sl)); top: calc(var(--cs) + 34px); font: 900 1.25rem/1 var(--g-font-display); color: var(--g-bad); -webkit-text-stroke: 1.5px var(--g-ink); text-shadow: 2px 2px 0 var(--g-edge); opacity: 0; pointer-events: none; }
+.gtw-dmg.cop { color: #2f6bff; }
+.gtw-dmg.them { left: 50%; top: 48%; color: var(--them); font-size: 1.5rem; }
+.gtw-dmg.go { animation: gtw-dmg 1s ease-out forwards; }
+@keyframes gtw-dmg { 0% { opacity: 0; transform: translateY(6px) scale(1.5); } 15% { opacity: 1; transform: translateY(0) scale(1); } 75% { opacity: 1; } 100% { opacity: 0; transform: translateY(-18px); } }
+.g-gtw.steered .gtw-steerhint { opacity: 0; transition: opacity .6s; }
+/* result + final cards: tap anywhere on the card to go on */
+.gtw-result, .gtw-final { cursor: pointer; }
+.gtw-tapon { font-size: .74rem !important; font-weight: 800 !important; letter-spacing: .06em; opacity: .75; }
+.gtw-rec { font-size: .84rem !important; color: var(--g-ink) !important; }
+.gtw-rec.hot { background: var(--g-hl); border: 2px solid var(--g-ink); border-radius: 10px; padding: 5px 8px; color: var(--g-on-ink, var(--g-ink)) !important; }
+.gtw-rec b { font-family: var(--g-font-display); letter-spacing: .06em; }
+.gtw-final { width: min(100%, 460px); }
+.gtw-rounds { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 6px; }
+.gtw-rounds li { border: 2px solid var(--g-ink); border-radius: 10px; padding: 5px 4px; display: flex; flex-direction: column; gap: 2px; background: var(--g-bg); }
+.gtw-rounds li.wa { box-shadow: inset 0 -5px 0 var(--p-a); } .gtw-rounds li.wb { box-shadow: inset 0 -5px 0 var(--p-b); } .gtw-rounds li.tbd { opacity: .4; }
+.gtw-rounds small { font-size: .62rem; font-weight: 800; color: var(--g-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .gtw-rounds b { font: 900 .78rem/1.1 var(--g-font-body); }
+.gtw-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; text-align: left; }
+.gtw-cols > div { border: 2px solid var(--g-line); border-radius: 12px; padding: 6px 8px; }
+.gtw-cols h4 { margin: 0 0 4px; font-size: .95rem; }
+.gtw-cols dl { margin: 0; display: grid; grid-template-columns: 1fr auto; gap: 1px 6px; font-size: .78rem; font-weight: 700; color: var(--g-muted); }
+.gtw-cols dd { margin: 0; font-weight: 900; color: var(--g-ink); font-variant-numeric: tabular-nums; }
+.gtw-mvp { border: 2.5px solid var(--g-ink); border-radius: 12px; padding: 6px 10px; background: var(--g-hl); color: var(--g-on-ink, var(--g-ink)) !important; }
+.gtw-mvp b { font-family: var(--g-font-display); letter-spacing: .08em; margin-right: 6px; color: inherit !important; }
+/* lobby: three modes, the Daily panel, quick chase, records */
+.gtw-modes.three { grid-template-columns: 1fr 1fr 1fr; }
+.gtw-factsrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; } .gtw-factsrow .gtw-chip { flex: none; }
+.gtw-records { font-size: .78rem !important; text-align: left; } .gtw-records span { font-size: .66rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; margin-right: 6px; }
+.gtw-daily { border: 2.5px solid var(--g-ink); border-radius: 14px; padding: 8px 10px; background: var(--g-bg); text-align: left; display: flex; flex-direction: column; gap: 4px; }
+.gtw-daily ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-weight: 800; font-size: .86rem; }
+.gtw-daily li i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--g-ink); margin-right: 6px; vertical-align: -1px; } .gtw-daily li.pa i { background: var(--p-a); } .gtw-daily li.pb i { background: var(--p-b); }
+/* the spike map: zoomed window, tap ring, toast by the finger */
+.gtw-mapwrap { position: relative; flex: 1 1 0; min-height: 0; }
+.gtw-map .gtw-mapwrap canvas { position: absolute; inset: 0; height: 100%; }
+.gtw-mapping { position: absolute; width: 56px; height: 56px; margin: -28px; border-radius: 50%; border: 4px solid #e2333f; opacity: 0; pointer-events: none; }
+.gtw-mapping.ok { border-color: var(--g-hl); }
+.gtw-mapping.go { animation: gtw-ring 1.2s ease-out forwards; }
+@keyframes gtw-ring { 0% { opacity: 1; transform: scale(.3); } 100% { opacity: 0; transform: scale(1.8); } }
+@keyframes gtw-ring2 { 0% { opacity: 1; transform: scale(.3); } 100% { opacity: 0; transform: scale(1.8); } }
+.gtw-maptoast { position: absolute; transform: translate(-50%, -100%); max-width: 180px; padding: 6px 10px; border-radius: 10px; background: #e2333f; color: #fff; border: 2px solid var(--g-ink); font: 800 .8rem/1.2 var(--g-font-body); text-align: center; opacity: 0; transition: opacity .2s; pointer-events: none; }
+.gtw-maptoast.on { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .gtw-clock.hot, .gtw-box { animation: none; } }
+.gtw-ctl [data-tap="horn"] { left: calc(10px + var(--sl)); top: calc(var(--cs) + 180px); min-width: 56px; height: 44px; padding: 0 8px; border-radius: 10px; font-size: .7rem; text-transform: none; letter-spacing: 0; }
+.g-gtw.touch.portrait .gtw-ctl [data-tap="horn"] { top: calc(var(--cs) + 128px); }
+.g-gtw.touch.short .gtw-ctl [data-tap="horn"] { top: calc(var(--cs) + 160px); }
+.gtw-tag.emote { font-size: .95rem; padding: 5px 9px; background: var(--g-card); color: var(--g-ink); border-radius: 12px; }
 `;

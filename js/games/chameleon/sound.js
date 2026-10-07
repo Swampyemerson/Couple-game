@@ -162,6 +162,18 @@ export function createSound() {
       const fn = S[name];
       if (fn) { try { fn(); } catch { /* audio is best-effort */ } }
     },
+    /**
+     * Brush stroke texture: a short filtered-noise scrub whose pitch tells the brush size
+     * (S 3200 Hz, M 2200, L 1500) and whose loudness follows stroke speed (0..1). Hard brushes
+     * are a tight, crisp band; soft ones a wider, breathier one. Throttled to one per 55 ms.
+     */
+    brush(size, speed, hard) {
+      if (dead || muted()) return;
+      const n = performance.now(); if (n - lastTick < 55) return; lastTick = n;
+      const f = size === 0 ? 3200 : size === 1 ? 2200 : 1500;
+      const sp = speed < 0 ? 0 : speed > 1 ? 1 : speed;
+      try { noise(hard ? 0.035 : 0.05, { vol: 0.04 + sp * 0.1, freq: f * (0.94 + Math.random() * 0.12), q: hard ? 3.2 : 1.1 }); } catch { /* best-effort */ }
+    },
     /** A footstep at volume vol (0..~0.2), pitch ×pitch (0.8 = heavier / sprinting); crawl = sticky feet. */
     step(vol, pitch = 1, crawl = false) {
       if (dead || muted() || vol < 0.005) return;

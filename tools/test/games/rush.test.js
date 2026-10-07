@@ -13,10 +13,12 @@ const SHOTS = process.env.SHOTS || '/tmp/claude-0/-home-user-Couple-game/0bac293
 fs.mkdirSync(SHOTS, { recursive: true });
 const ONLY = (process.env.ONLY || '').split(',').filter(Boolean);
 const want = (k) => !ONLY.length || ONLY.includes(k);
+// RUSH_PORT=8885 packs every launch into 8885–8887 (they run one after another), so parallel runs can share a machine
+const PORT = (k) => (process.env.RUSH_PORT ? +process.env.RUSH_PORT + (k % 3) : 8960 + k);
 let fails = 0;
 const assert = (c, m) => { if (!c) throw new Error('FAIL: ' + m); console.log('ok -', m); };
 const soft = (c, m) => { if (!c) { fails++; console.log('not ok -', m); } else console.log('ok -', m); };
-const DEBUG = { raceLen: 700, noTutorial: true };
+const DEBUG = { raceLen: 990, noTutorial: true }; // long enough that a loaded machine finishes the race steps before the line (< 1 km: that's an unlock)
 
 const S = (pg) => pg.evaluate(() => window.__rush && window.__rush.state());
 const until = async (pg, fn, arg, ms = 15000, what = 'condition') => {
@@ -26,6 +28,108 @@ const until = async (pg, fn, arg, ms = 15000, what = 'condition') => {
   }
 };
 const shot = (pg, name) => pg.screenshot({ path: `${SHOTS}/${name}.png` });
+
+// Mode rules, headless (no browser): modes.js + sim/track/tune copied into a scratch ESM package
+// with core's hash/rng, two local runners, messages delivered in order with a fake shared clock.
+async function rulesUnit() {
+  const path = require('path');
+  const { pathToFileURL } = require('url');
+  const PKG = path.join(SHOTS, '..', 'rules-pkg');
+  const SRC = path.join(__dirname, '..', '..', '..', 'js', 'games');
+  fs.mkdirSync(path.join(PKG, 'rush'), { recursive: true });
+  fs.writeFileSync(path.join(PKG, 'package.json'), '{"type":"module"}');
+  const core = fs.readFileSync(path.join(SRC, 'core.js'), 'utf8');
+  fs.writeFileSync(path.join(PKG, 'core.js'), core.match(/export function hash[\s\S]*?\n}\n[\s\S]*?export function rng[\s\S]*?\n}\n/)[0]);
+  for (const f of ['tune.js', 'track.js', 'sim.js', 'modes.js']) fs.writeFileSync(path.join(PKG, 'rush', f), fs.readFileSync(path.join(SRC, 'rush', f), 'utf8'));
+  const imp = (f) => import(pathToFileURL(path.join(PKG, 'rush', f)).href);
+  const [U, T, Sm, Md] = await Promise.all([imp('tune.js'), imp('track.js'), imp('sim.js'), imp('modes.js')]);
+  function world(mode) {
+    let now = 100000;
+    const q = [];
+    const sent = [];
+    const pops = { a: [], b: [] };
+    const M = { mode, phase: 'run' };
+    const track = T.createTrack(7);
+    const players = {};
+    for (const w of ['a', 'b']) {
+      const r = Sm.newRunner(w === 'a' ? -1 : 1); r.z = r.zPrev = 300; r.speed = 15;
+      players[w] = { w, r, rs: { x: r.x, z: r.z, y: 0, ground: 0, down: false, invuln: false, visible: true }, stats: {} };
+    }
+    const sync = () => { for (const w of ['a', 'b']) { const p = players[w]; p.rs.x = p.r.x; p.rs.z = p.r.z; p.rs.y = p.r.y; p.rs.down = !!p.r.down; p.rs.invuln = p.r.invulnT > 0; } };
+    const noop = () => {};
+    const G = {
+      M, players, track, now: () => now, rs: (p) => p.rs, view: (w) => ({ pop: (t) => pops[w].push(t), flash: noop }), name: (w) => w.toUpperCase(),
+      pal: { a: 0, b: 0, hl: 0 }, fx: { burst: noop }, audio: { play: noop }, isJudge: () => true, kick: noop, shake: noop,
+      send(to, type, data) { sent.push(type); q.push([type, data, now, to === 'a' ? 'b' : 'a']); },
+      history: (w) => { const r = players[w].r; return { z: r.z, x: r.x, lane: r.lane, y: r.y, g: Math.max(0, r.sup) }; },
+      remoteAt: () => null, coins: (w) => players[w].r.coins, teamGoalReached: noop, splat: noop, projectile: noop,
+    };
+    const rules = Md.createRules(G);
+    rules.init();
+    const tick = (sec, beforeStep) => {
+      for (let i = 0; i < Math.round(sec / U.DT); i++) {
+        now += U.DT * 1000;
+        if (beforeStep) beforeStep();
+        for (const w of ['a', 'b']) { const r = players[w].r; Sm.step(r, track, false); for (let e = 0; e < r.evN; e++) rules.onEvent(players[w], r.evT[e], r.evV[e]); r.evN = 0; }
+        sync();
+        while (q.length) { const [type, data, at, from] = q.shift(); rules.msg(type, data, at, from); }
+        if (i % 2 === 0) rules.tick(now, U.DT * 2);
+      }
+    };
+    sync();
+    return { G, M, players, rules, tick, sent, pops, invuln: () => { for (const w of ['a', 'b']) players[w].r.invulnT = 1e9; } };
+  }
+  const out = {};
+  // Brawl: a plain dodge into the partner's lane is not a shove; a beat side by side, or a double swipe, is
+  {
+    const W = world('brawl');
+    const a = W.players.a; const b = W.players.b;
+    W.invuln(); b.r.invulnT = 0; // b must be shovable (invulnerable runners can't be)
+    Sm.act(a.r, Sm.A_RIGHT); W.tick(0.2, () => { a.r.invulnT = 1e9; }); // a: lane 0, adjacent to b (lane 1) for 0.2 s
+    const n0 = W.sent.filter((x) => x === 'shove').length;
+    W.players.a.sideT = 0; // just arrived beside b
+    W.rules.onLane(a, 1); // into b's lane at once: a dodge, not a shove
+    out.plain = W.sent.filter((x) => x === 'shove').length - n0;
+    W.tick(0.4);
+    W.rules.onLane(a, 1); // after 0.4 s side by side: a shove
+    out.beat = W.sent.filter((x) => x === 'shove').length - n0;
+    const W2 = world('brawl');
+    W2.players.a.sideT = 0; W2.rules.onLane(W2.players.a, 1); W2.players.a.r.lane = 0; // first swipe (a: -1 → 0)
+    W2.tick(0.1);
+    W2.players.a.sideT = 0; W2.rules.onLane(W2.players.a, 1); // second swipe toward b within 250 ms
+    out.double = W2.sent.filter((x) => x === 'shove').length;
+    W2.tick(0.5);
+    out.doubleRes = W2.pops.b.slice(-1)[0] || '';
+  }
+  // Together: both down at once resolves straight away for one team heart; a cheer lifts the partner
+  {
+    const W = world('tandem');
+    const a = W.players.a; const b = W.players.b;
+    W.invuln(); a.r.invulnT = 0; b.r.invulnT = 0;
+    const th0 = W.M.th;
+    Sm.crash(a.r, Sm.C_FORCED, false); W.rules.onEvent(a, Sm.E_CRASH, 0);
+    W.tick(0.3, () => { a.r.invulnT = 0; });
+    out.cheer = W.rules.cheer(a);
+    W.tick(0.05);
+    out.cheerLift = +(b.r.catchup).toFixed(3);
+    Sm.crash(b.r, Sm.C_FORCED, false); W.rules.onEvent(b, Sm.E_CRASH, 0);
+    let t = 0;
+    while ((a.r.down || b.r.down) && t < 10) { W.tick(0.1); t += 0.1; }
+    out.ddSec = +t.toFixed(1);
+    out.ddLost = th0 - W.M.th;
+    out.ddInvuln = a.r.invulnT > 0 && b.r.invulnT > 0;
+    out.ddSide = [a.r.lane, b.r.lane];
+    W.invuln(); // (no inputs in this harness: keep them off the obstacles while we wait)
+    W.tick(9);
+    out.ddLostLater = th0 - W.M.th;
+    // a single down: the partner gets a revive heart after 1 s
+    W.invuln(); a.r.invulnT = 0;
+    Sm.crash(a.r, Sm.C_FORCED, false); W.rules.onEvent(a, Sm.E_CRASH, 0);
+    W.tick(0.5); out.tok05 = b.r.tokens.filter((x) => x.alive).length;
+    W.tick(0.7); out.tok12 = b.r.tokens.filter((x) => x.alive).length;
+  }
+  return out;
+}
 
 async function swipe(pg, x0, y0, dx, dy) {
   const cdp = await pg.context().newCDPSession(pg);
@@ -71,11 +175,17 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
 (async () => {
   // ═══ two phones, live ═══
   if (['gen', 'race', 'brawl', 'tandem', 'pause', 'daily'].some(want)) {
-    const h = await launch({ port: 8960, only: ['rush'], latency: 80, coarse: true });
+    const h = await launch({ port: PORT(0), only: ['rush'], latency: 80, coarse: true });
     const { a, b } = h;
     try {
       await openLivePair(h);
       if (want('gen')) {
+        const ru = await rulesUnit();
+        assert(ru.plain === 0 && ru.beat === 1, `Brawl: a plain dodge into the partner's lane is not a shove (${ru.plain}); after a beat side by side it is (${ru.beat})`);
+        assert(ru.double === 1 && /SHOVED|SLAMMED/.test(ru.doubleRes), `Brawl: a double swipe toward the partner shoves (${ru.double}, "${ru.doubleRes}" after the 300 ms brace window)`);
+        assert(ru.cheer === true && ru.cheerLift >= 0.04, `Together: a tap while down cheers the partner on (+${(ru.cheerLift * 100).toFixed(0)} % speed)`);
+        assert(ru.ddSec <= 2.2 && ru.ddLost === 1 && ru.ddLostLater === 1 && ru.ddInvuln && ru.ddSide[0] !== ru.ddSide[1], `Together: both down at once → both back up side by side in ${ru.ddSec} s with invulnerability, one team heart (${ru.ddLost}, still ${ru.ddLostLater} later)`);
+        assert(ru.tok05 === 0 && ru.tok12 === 1, `Together: the first revive heart appears 1 s after the partner goes down (${ru.tok05} at 0.5 s, ${ru.tok12} at 1.2 s)`);
         // feel numbers, measured on the real sim
         const pr = await a.evaluate(() => window.__rush.probe());
         assert(pr.laneMs >= 100 && pr.laneMs <= 150, `lane change completes in ${pr.laneMs.toFixed(0)} ms (snappy: 100–150 ms)`);
@@ -111,6 +221,9 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         console.log('ok - guest sees the host pick the mode live');
         await pickAndStart(h, 'race');
         await waitRun(a); await waitRun(b);
+        // milestone for an unlock: Emerson racks up 15 close calls this run (set early: a short race
+        // on a loaded machine can be over before the later steps)
+        await a.evaluate(() => { window.__rush.internals.players.a.r.closeCalls = 15; });
         const sa = await S(a); const sb = await S(b);
         const skew = Math.abs(sa.startedWall - sb.startedWall);
         assert(skew < 50, `both phones start within 50 ms on the shared clock (skew ${skew.toFixed(1)} ms, rtt ${sb.rtt} ms)`);
@@ -196,8 +309,6 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         // a rocket (speed lines + FOV kick), and the shield bubble on screen, before the shader check
         await a.evaluate(() => { window.__rush.give('a', 'rocket'); window.__rush.input('a', 'use'); window.__rush.give('a', 'shield'); });
         await h.wait(900);
-        // milestone for an unlock: Emerson racks up 10 close calls this run
-        await a.evaluate(() => { window.__rush.internals.players.a.r.closeCalls = 10; });
         const pa = await a.evaluate(() => window.__rush.perf());
         console.log(`   perf (iPhone 13 profile, SwiftShader, two pages): frame p50 ${pa.p50.toFixed(1)} ms, p95 ${pa.p95.toFixed(1)} ms, js p50 ${pa.work50.toFixed(2)} ms, p95 ${pa.work95.toFixed(2)} ms, draw calls ${pa.calls} (max ${pa.maxCalls}), triangles ${pa.tris} (max ${pa.maxTris}), render scale ${pa.scale}, dpr ${pa.dpr}`);
         assert(pa.maxCalls <= 30, `draw calls within the phone budget of 30 in a busy race (max ${pa.maxCalls})`);
@@ -219,7 +330,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         // bests + unlocks land in the shared game data (and the end card shows this device's line)
         const gd = h.docs['gamedata/rush'] || {};
         assert(gd.a_race_m > 0 && gd.b_race_m > 0 && gd.a_runs === 1, `bests in the shared doc: Emerson ${gd.a_race_m} m, Sydney ${gd.b_race_m} m`);
-        assert(gd.unlock_a_trail2 === 1, 'the "10 close calls" milestone unlocked the Ink trail for Emerson (shared doc)');
+        assert(gd.unlock_a_trail2 === 1, 'the "15 close calls" milestone unlocked the Ink trail for Emerson (shared doc)');
         const sub = await a.$eval('#game-root .gm-end', (e) => e.textContent);
         assert(/\d+ m/.test(sub) && /Sydney/.test(sub), 'the death card shows distance and the partner');
         await shot(a, 'phone-light-end');
@@ -244,12 +355,21 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         }
         await pickAndStart(h, 'brawl');
         await waitRun(a); await waitRun(b);
-        // Emerson (lane -1) steps to the middle, then into Sydney's lane (1) while level: a shove
+        // Emerson (lane -1) steps to the middle, runs beside Sydney a beat, then swipes into her lane
+        // (1) while level: a deliberate shove
         await a.evaluate(() => window.__rush.input('a', 'right'));
-        await h.wait(450);
-        const before = await S(b);
-        await a.evaluate(() => window.__rush.input('a', 'right'));
-        await until(a, () => window.__rush.state().a.stats.shoves >= 1, null, 5000, 'shove lands');
+        let before = null;
+        // (a loaded harness can lag the partner's position past the 2 m window: step back and retry)
+        for (let k = 0; k < 4; k++) {
+          await until(a, () => window.__rush.internals.players.a.sideT >= 0.3 && window.__rush.internals.players.a.r.lane === 0, null, 8000, 'side by side for a beat');
+          before = await S(b);
+          await a.evaluate(() => window.__rush.input('a', 'right'));
+          const ok = await a.waitForFunction(() => window.__rush.state().a.stats.shoves >= 1, null, { timeout: 4000, polling: 100 }).then(() => true, () => false);
+          if (ok) break;
+          console.log(`   shove try ${k + 1} missed (partner position lagging), again`);
+          await a.evaluate(() => { const r = window.__rush.internals.players.a.r; if (r.lane === 1) window.__rush.input('a', 'left'); });
+        }
+        await until(a, () => window.__rush.state().a.stats.shoves >= 1, null, 2000, 'shove lands');
         const after = await S(b);
         assert(after.b.hearts < before.b.hearts || after.b.stumbleT > 0 || after.b.down, `shoved into the wall: Sydney ${before.b.hearts}→${after.b.hearts} hearts`);
         await shot(b, 'phone-light-brawl-shove');
@@ -283,6 +403,19 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
           await until(b, () => !window.__rush.state().b.down, null, 14000, 'revived');
           const sa = await S(a);
           assert(sa.a.stats.revives === 1 && sa.th === 4, `revived by grabbing the token, no team heart lost (team hearts ${sa.th})`);
+          // both down at once: nobody can revive, so it resolves straight away (−1 team heart, both up)
+          await h.wait(2500);
+          await a.evaluate(() => { window.__rush.auto('a', false); window.__rush.crash('a'); });
+          await b.evaluate(() => { window.__rush.auto('b', false); window.__rush.crash('b'); });
+          const t0 = Date.now();
+          await until(a, () => !window.__rush.state().a.down && window.__rush.state().th === 3, null, 6000, 'double down resolves on the host');
+          await until(b, () => !window.__rush.state().b.down, null, 6000, 'double down resolves on the guest');
+          const dd = Date.now() - t0;
+          await h.wait(1500);
+          const sd = await S(a);
+          assert(sd.th === 3 && !sd.a.down && !sd.b.down, `both down at once: back up together in ${(dd / 1000).toFixed(1)} s for one team heart (team hearts ${sd.th}, no revive wait)`);
+          await a.evaluate(() => window.__rush.auto('a', true));
+          await b.evaluate(() => window.__rush.auto('b', true));
         }
         if (want('pause')) {
           // disconnect: Sydney's presence drops out of the room, then comes back
@@ -377,7 +510,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
 
   // ═══ one computer: split screen, keys, leaks ═══
   if (want('split') || want('leak')) {
-    const h = await launch({ port: 8961, only: ['rush'], device: 'Desktop Chrome', who: ['a'] });
+    const h = await launch({ port: PORT(1), only: ['rush'], device: 'Desktop Chrome', who: ['a'] });
     const { a } = h;
     try {
       await a.setViewportSize({ width: 1280, height: 800 });
@@ -458,7 +591,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
 
   // ═══ packet loss ═══
   if (want('drop')) {
-    const h = await launch({ port: 8962, only: ['rush'], latency: 80, dropRate: 0.2, coarse: true });
+    const h = await launch({ port: PORT(2), only: ['rush'], latency: 80, dropRate: 0.2, coarse: true });
     const { a, b } = h;
     try {
       await openLivePair(h, { raceLen: 500 });
@@ -491,7 +624,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
 
   // ═══ screenshots: dark, phone one-device card ═══
   if (want('dark')) {
-    const h = await launch({ port: 8963, only: ['rush'], latency: 60, colorScheme: 'dark', coarse: true });
+    const h = await launch({ port: PORT(3), only: ['rush'], latency: 60, colorScheme: 'dark', coarse: true });
     const { a, b } = h;
     try {
       await openLivePair(h);
@@ -523,7 +656,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
       h.assertNoErrors();
       assert(!h.warnings.length, `dark: inside the room message budget (${h.warnings.length} warnings)`);
     } catch (e) { console.error(e.message); fails++; console.error('errors:', h.errors.slice(0, 8)); } finally { await h.close(); }
-    const d = await launch({ port: 8964, only: ['rush'], device: 'Desktop Chrome', who: ['a'], colorScheme: 'dark' });
+    const d = await launch({ port: PORT(4), only: ['rush'], device: 'Desktop Chrome', who: ['a'], colorScheme: 'dark' });
     try {
       await d.a.setViewportSize({ width: 1280, height: 800 });
       await d.a.evaluate((x) => { window.__RUSH_DEBUG = x; }, { ...DEBUG, raceLen: 400 });
@@ -548,7 +681,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
 
   // ═══ steady-state allocations + heap growth (one computer, so the numbers are this page's own) ═══
   if (want('heap')) {
-    const h = await launch({ port: 8965, only: ['rush'], device: 'Desktop Chrome', who: ['a'] });
+    const h = await launch({ port: PORT(5), only: ['rush'], device: 'Desktop Chrome', who: ['a'] });
     const { a } = h;
     try {
       await a.setViewportSize({ width: 1280, height: 800 });
@@ -609,7 +742,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
 
   // ═══ seamlessness: late lobby, partner + host re-mounts mid-race, 30 s in the background, a slow partner ═══
   if (want('seam')) {
-    const h = await launch({ port: 8966, only: ['rush'], latency: 80, coarse: true });
+    const h = await launch({ port: PORT(6), only: ['rush'], latency: 80, coarse: true });
     const { a, b } = h;
     const running = async (pg, w, what) => {
       await until(pg, () => { const s = window.__rush && window.__rush.state(); return s && s.phase === 'run' && !s.paused && s.now > s.resumeAt + 200; }, null, 20000, what);

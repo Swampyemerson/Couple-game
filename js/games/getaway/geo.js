@@ -101,6 +101,9 @@ export function createGeo(map) {
       cover: !!r.cover, // a covered road (tunnel, underpass, a street under a deck): the runner on it counts as out of sight
       sidewalk: Number.isFinite(r.sidewalk) ? Math.max(0, Math.min(8, r.sidewalk)) : (Number.isFinite(map.sidewalk) ? Math.max(0, Math.min(8, map.sidewalk)) : 0),
       lanes: r.lanes > 0 ? Math.min(3, r.lanes | 0) : (kind === 'highway' ? 2 : kind === 'arterial' && width >= 14 ? 2 : 1),
+      // kerbside parking strip (m, each side): lanes are laid out across hw − park, so traffic and
+      // the AI's lane line run clear of the curb-parked cars (Boulder's Pearl / Walnut)
+      park: Number.isFinite(r.park) ? Math.max(0, Math.min(width / 2 - 2, r.park)) : 0,
       deck: null, // bridges: { h0, h1, clear }
     });
   }

@@ -20,9 +20,9 @@ registerGame({
   minutes: 3,
   howTo: [
     'Swipe left or right to switch lanes, up to jump, down to roll.',
-    'Race: first to 2 km wins. Grab boxes to ink, block or zap each other.',
-    'Brawl: switch into their lane side by side to shove them. Jump to dodge.',
-    'Together: share hearts, and grab the glowing heart to revive your partner.',
+    'Race: first to 1.5 km wins, a heart back every 500 m. Grab boxes to ink, block or zap each other.',
+    'Brawl: run side by side a beat, then swipe into them to shove (or double-swipe). Jump or roll to dodge.',
+    'Together: share hearts and grab the glowing heart to revive your partner. Down? Tap to cheer them on.',
   ],
   css: CSS,
   endDelay: 0,

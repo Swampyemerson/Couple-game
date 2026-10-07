@@ -456,7 +456,10 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
   onProgress(0.62, 'Painting the horizon…');
   stage = 'backdrop';
   try {
-    const bd = map.backdrop ? map.backdrop(THREE, kit) : null;
+    let bd = map.backdrop ? map.backdrop(THREE, kit) : null;
+    // (like build(): a Promise or a generator is sliced — docs/games/getaway-maps.md)
+    if (bd && typeof bd.then === 'function') bd = await bd;
+    else if (bd && typeof bd.next === 'function' && !bd.isObject3D) { for (;;) { const st = bd.next(); if (st.done) { bd = st.value; break; } await slice(); if (dead()) return null; } }
     if (bd && bd.isObject3D) {
       const fogFree = new Map();
       bd.traverse((o) => {
