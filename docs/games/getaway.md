@@ -458,7 +458,10 @@ final, one recorded result, rematch, message budget) · `lossy` (150 ms, 25% los
 (laptop split screen by keyboard) · `robust` (hidden-page pause shifts the clock, no shader
 compiles in play, GL context loss and restore, clean close) · `mapswitch` (switch maps repeatedly
 and render) · `perf` (every playable map on phone and laptop: draw calls, triangles, build blocks;
-a busy chase) · `shots` (390×844, 844×390, 1280×800, light and dark: lobby, settings, intro, chase,
+a busy chase; each long task from a map load to 600 ms after ready is classed as load work or a
+rendered frame — the game logs frame starts in test mode — and load work must stay within
+max(250 ms, 1.3 × an ordinary frame) while frames get 2 ×, since the first software-GL frames of a new
+map run up to ~1.5 × a steady one) · `shots` (390×844, 844×390, 1280×800, light and dark: lobby, settings, intro, chase,
 pursuit, map, result) · `touch` (an iPhone driven only by real `page.tap()`s: the Practice vs AI
 label, opening on Dockside after a crash marker, role / AI level / how-to / settings rows, a forced
 load failure → error card → Play Dockside instead, Cancel on a big map load, Start, the ‖ pause
