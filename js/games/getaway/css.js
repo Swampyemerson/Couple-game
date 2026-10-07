@@ -19,7 +19,7 @@ export const CSS = `
 .gtw-sc em { font-style: normal; font-size: 0.68rem; font-weight: 800; color: var(--g-muted); max-width: 5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 520px) { .gtw-sc em { display: none; } }
 .gtw-clock { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2px 10px 3px; min-width: 76px; }
-.gtw-clock small { font-size: 0.58rem; font-weight: 900; letter-spacing: .14em; text-transform: uppercase; color: var(--g-muted); line-height: 1.1; }
+.gtw-clock small { white-space: nowrap; font-size: 0.58rem; font-weight: 900; letter-spacing: .14em; text-transform: uppercase; color: var(--g-muted); line-height: 1.1; }
 .gtw-clock b { font-family: var(--g-font-display); font-weight: 900; font-size: 1.32rem; line-height: 1; font-variant-numeric: tabular-nums; }
 .gtw-clock.hot b { color: var(--g-bad); }
 .gtw-pips { display: flex; gap: 3px; margin-top: 2px; } .gtw-pips i { width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--g-ink); background: var(--g-card); }
@@ -71,7 +71,8 @@ export const CSS = `
 .gtw-stamp.bad { color: var(--g-bad); } .gtw-stamp.a { color: var(--p-a); } .gtw-stamp.b { color: var(--p-b); }
 @keyframes gtw-stamp { 0% { opacity: 0; transform: translate(-50%, -50%) rotate(-7deg) scale(2.2); } 14% { opacity: 1; transform: translate(-50%, -50%) rotate(-7deg) scale(1); } 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -50%) rotate(-7deg) scale(1.05); } }
 .gtw-hint { position: absolute; left: 50%; top: calc(var(--cs) + 30px); transform: translateX(-50%); max-width: min(calc(100% - 300px), 360px); padding: 6px 12px; font-weight: 800; font-size: 0.82rem; text-align: center; border-radius: 10px; background: var(--g-ink); color: var(--g-bg); box-shadow: 3px 3px 0 var(--g-hl); opacity: 0; transition: opacity .25s; }
-@media (max-width: 600px) { .gtw-hint { top: auto; bottom: calc(150px + var(--sb)); max-width: calc(100% - 40px); } }
+@media (max-width: 600px) { .gtw-hint { top: calc(var(--cs) + 168px); max-width: calc(100% - 40px); } }
+.g-gtw.short .gtw-hint { top: calc(var(--st) + 64px); max-width: min(calc(100% - 330px), 360px); }
 .gtw-hint.on { opacity: 1; }
 .gtw-count { position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); font-family: var(--g-font-display); font-weight: 900; font-size: clamp(4rem, 22vw, 9rem); line-height: 1; color: var(--g-card); -webkit-text-stroke: 4px var(--g-ink); text-shadow: 6px 6px 0 var(--g-edge); }
 .gtw-count.go { color: var(--g-hl); }
@@ -106,7 +107,7 @@ export const CSS = `
 .gtw-steer { position: absolute; width: 168px; height: 54px; margin: -27px 0 0 -84px; border-radius: 27px; border: 2.5px dashed color-mix(in srgb, var(--g-ink) 55%, transparent); opacity: 0; pointer-events: none; transition: opacity .12s; }
 .gtw-steer.on { opacity: 1; }
 .gtw-steer i { position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px; border-radius: 50%; background: var(--g-card); border: 2.5px solid var(--g-ink); box-shadow: var(--g-shadow, 3px 3px 0 var(--g-edge)); transform: translateX(calc(var(--k, 0) * 60px)); }
-.gtw-steerhint { position: absolute; left: calc(28px + var(--sl)); bottom: calc(40px + var(--sb)); width: 150px; height: 50px; border-radius: 25px; border: 2.5px dashed color-mix(in srgb, var(--g-ink) 35%, transparent); display: grid; place-items: center; font: 900 0.6rem/1 var(--g-font-body); letter-spacing: .1em; color: color-mix(in srgb, var(--g-ink) 60%, transparent); text-transform: uppercase; pointer-events: none; }
+.gtw-steerhint { position: absolute; left: calc(28px + var(--sl)); bottom: calc(40px + var(--sb)); width: 150px; height: 50px; border-radius: 25px; border: 2.5px dashed color-mix(in srgb, var(--g-ink) 35%, transparent); display: grid; place-items: center; font: 900 0.6rem/1 var(--g-font-body); letter-spacing: .1em; color: rgba(128,128,128,.9); color: color-mix(in srgb, var(--g-ink) 60%, transparent); text-transform: uppercase; pointer-events: none; }
 .g-gtw:not(.touch) .gtw-ctl, .g-gtw:not(.playing) .gtw-ctl { display: none; }
 .g-gtw.portrait .gtw-ctl [data-pad="gas"] { height: 104px; width: 76px; }
 .g-gtw.portrait .gtw-ctl [data-pad="brake"] { right: calc(102px + var(--sr)); width: 66px; }
@@ -122,7 +123,7 @@ export const CSS = `
 .g-gtw.touch .gtw-legend { display: none; }
 
 /* map view */
-.gtw-map { position: absolute; inset: 0; z-index: 5; background: color-mix(in srgb, var(--g-bg) 82%, transparent); display: flex; align-items: center; justify-content: center; padding: calc(var(--cs) + 4px) 12px calc(10px + var(--sb)); }
+.gtw-map { position: absolute; inset: 0; z-index: 5; background: rgba(128,128,128,.35); background: color-mix(in srgb, var(--g-bg) 82%, transparent); display: flex; align-items: center; justify-content: center; padding: calc(var(--cs) + 4px) 12px calc(10px + var(--sb)); }
 .g-gtw.short .gtw-map { padding: calc(8px + var(--st)) calc(var(--gm-corner-w, 64px) + 8px) calc(8px + var(--sb)); }
 .gtw-map .box { position: relative; width: min(100%, 720px); height: 100%; max-height: 720px; display: flex; flex-direction: column; gap: 8px; padding: 10px; }
 .gtw-map canvas { flex: 1 1 0; min-height: 0; height: 0; width: 100%; border-radius: 8px; border: 2px solid var(--g-ink); touch-action: none; cursor: crosshair; background: var(--g-bg); }
@@ -132,7 +133,7 @@ export const CSS = `
 
 /* overlay cards */
 .gtw-over { position: absolute; inset: 0; z-index: 6; display: grid; place-items: center; padding: calc(12px + var(--st)) 14px calc(12px + var(--sb)); pointer-events: auto; overflow-y: auto; }
-.gtw-over.dim { background: color-mix(in srgb, var(--g-bg) 70%, transparent); }
+.gtw-over.dim { background: rgba(128,128,128,.35); background: color-mix(in srgb, var(--g-bg) 70%, transparent); }
 .gtw-over.solid { background: var(--g-bg); }
 .gtw-over.clear { background: transparent; pointer-events: none; }
 .gtw-over.clear .gtw-card { pointer-events: auto; }
@@ -209,4 +210,47 @@ export const CSS = `
 @media (min-width: 760px) { .gtw-lobby .gtw-card { width: min(100%, 720px); display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; text-align: left; } .gtw-lobby .col { display: flex; flex-direction: column; gap: 10px; } }
 .g-gtw.short .gtw-lobby .gtw-card { width: min(100%, 760px); display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; text-align: left; }
 .g-gtw.short .gtw-lobby .col { display: flex; flex-direction: column; gap: 8px; }
+/* v2: pause button, loading, errors, lobby status, sheets, how-to */
+.gtw-pausebtn { pointer-events: auto !important; width: 40px; padding: 0; display: grid; place-items: center; color: var(--g-ink); cursor: pointer; touch-action: manipulation; }
+.gtw-pausebtn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: round; }
+.gtw-view.r .gtw-pausebtn { display: none; }
+.gtw-road b { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(128,128,128,.35); background: color-mix(in srgb, var(--me) 45%, transparent); transition: width .25s; }
+.gtw-loadtxt { display: flex; justify-content: space-between; gap: 10px; text-align: left; }
+.gtw-loadtxt b { font-variant-numeric: tabular-nums; color: var(--g-ink); }
+.gtw-tip, .gtw-slow, .gtw-landtip { font-size: .8rem !important; }
+.gtw-tip { font-style: italic; }
+.gtw-slow { color: var(--g-bad) !important; }
+.gtw-cancel { align-self: center; }
+.gtw-btns.col { flex-direction: column; align-items: stretch; }
+.gtw-btns.col > * { justify-content: center; }
+.gtw-err h2 { color: var(--g-bad); }
+.gtw-detail { font-size: .7rem !important; opacity: .7; word-break: break-word; }
+.gtw-facts { font-size: .82rem !important; }
+.gtw-status { display: flex; gap: 8px; align-items: flex-start; text-align: left; font-size: .82rem !important; }
+.gtw-status i { flex: none; width: 10px; height: 10px; margin-top: 4px; border-radius: 50%; border: 2px solid var(--g-ink); background: var(--g-hl); animation: gtw-throb 1.2s infinite; }
+.gtw-status.ok i { background: var(--g-good); animation: none; }
+.gtw-landtip { opacity: .8; }
+.gtw-seg { gap: 4px; }
+.gtw-seg .gtw-chip { padding: 8px 10px; }
+.gtw-new { border-color: var(--g-ink); position: relative; }
+.gtw-new::after { content: ''; position: absolute; top: -4px; right: -4px; width: 10px; height: 10px; border-radius: 50%; background: var(--g-bad); border: 2px solid var(--g-card); }
+.gtw-go.on { box-shadow: 1px 1px 0 var(--g-edge); transform: translate(3px, 3px); }
+.gtw-mapcard .info em.ld { color: var(--g-muted); }
+.gtw-sh { margin: 8px 0 0 !important; font-size: .66rem; font-weight: 900; letter-spacing: .14em; text-transform: uppercase; color: var(--g-muted); }
+.gtw-shead { position: sticky; top: -14px; background: var(--g-card); padding: 4px 0; z-index: 1; }
+.gtw-sheet .in, .gtw-over, .gtw-card, .gtw-sheet .gtw-how { touch-action: pan-y; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.gtw-sheet .gtw-how { width: min(100%, 480px); max-height: 100%; overflow-y: auto; border-radius: 18px 18px 0 0; padding-bottom: calc(14px + var(--sb)); }
+.gtw-how { text-align: left; }
+.gtw-howgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.gtw-howgrid > div { border: 2px solid var(--g-line); border-radius: 12px; padding: 8px; }
+.gtw-howgrid small { font-size: .62rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; color: var(--g-muted); }
+.gtw-howgrid p { font-size: .8rem !important; }
+.gtw-howlist { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: .82rem; font-weight: 700; color: var(--g-muted); line-height: 1.35; }
+.gtw-howlist b { color: var(--g-ink); }
+.gtw-pause .gtw-btns { margin-top: 2px; }
+.gtw-chip, .gtw-ghost, .gtw-go, .gtw-arrow, .gtw-step button, .gtw-mode, .gtw-map button { touch-action: manipulation; -webkit-user-select: none; user-select: none; }
+/* phone HUD: fewer things on screen; the camera switch lives in the pause menu and settings */
+.g-gtw.touch.portrait .gtw-ctl [data-tap="cam"] { display: none; }
+.gtw-bar .t { height: 10px; }
+@media (max-width: 380px) { .gtw-howgrid { grid-template-columns: 1fr; } }
 `;

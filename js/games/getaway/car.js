@@ -347,9 +347,10 @@ function wallHit(c, nx, nz, pen, px, pz, dmgK, remember) {
   c.vx += j * nx; c.vz += j * nz;
   // spin from an off-centre hit, damped for glancing scrapes so a wall doesn't twist the car
   c.r += ((rpx * (j * nz) - rpz * (j * nx)) / CAR.inertia) * (-vn < 3 ? 0.35 : 1);
-  // scrape: lose some of the speed along the wall (less when barely touching)
+  // scrape: Coulomb friction along the wall (proportional to how hard it pushes, so a car
+  // leaning on a wall slides along it instead of being glued to it)
   const tx = -nz; const tz = nx; const vt = c.vx * tx + c.vz * tz;
-  const fr = CAR.wallFric * Math.min(1, 0.25 + -vn / 6);
+  const fr = Math.abs(vt) > 1e-3 ? Math.min(1, (CAR.wallFric * j) / Math.abs(vt)) : 0;
   c.vx -= tx * vt * fr; c.vz -= tz * vt * fr;
   // body: a hard hit jolts the suspension
   const fwd = nx * Math.sin(c.yaw) - nz * Math.cos(c.yaw); const rgt = nx * Math.cos(c.yaw) + nz * Math.sin(c.yaw);

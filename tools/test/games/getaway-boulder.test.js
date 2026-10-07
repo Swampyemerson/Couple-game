@@ -109,20 +109,20 @@ async function staticSection() {
   ok(hb.d < 8, `the home's house stands ${hb.d.toFixed(1)} m from its address point`);
 
   // solids
-  const KS = ['building', 'wall', 'rock', 'tree', 'pole', 'barrier', 'bollard'];
+  const KS = ['building', 'wall', 'rock', 'tree', 'pole', 'barrier', 'bollard', 'car'];
   const badS = M.solids.filter((s) => !KS.includes(s.kind) || !Number.isFinite(s.x + s.z + s.w + s.d + s.h + s.rot));
   ok(!badS.length, `${M.solids.length} solids, kinds valid`);
   const breakables = M.solids.filter((s) => !s.drawn);
   ok(breakables.every((s) => ['tree', 'pole', 'bollard'].includes(s.kind) && s.style), `${breakables.length} engine-drawn props (all small kinds with a style)`);
   const onRoad = [];
   for (const s of M.solids) {
-    if (s.kind === 'barrier' || s.kind === 'bollard') continue; // rails, medians and mall bollards sit on purpose
+    if (s.kind === 'barrier' || s.kind === 'bollard' || s.kind === 'car') continue; // rails, medians, mall bollards and curb-parked cars sit on purpose
     geo.nearestRoad(s.x, s.z, nq, 40, (r) => !r.bridge && r.kind !== 'alley');
     if (nq.road >= 0 && nq.d < geo.roads[nq.road].hw - 0.2) onRoad.push(`${s.kind}${s.style ? ':' + s.style : ''}@${s.x.toFixed(0)},${s.z.toFixed(0)}`);
   }
   // big drawn solids: every corner and edge midpoint stays off the asphalt
   for (const s of M.solids) {
-    if (!s.drawn || s.kind === 'barrier' || s.w < 3) continue;
+    if (!s.drawn || s.kind === 'barrier' || s.kind === 'car' || s.w < 3) continue;
     const c = Math.cos(s.rot); const sn = Math.sin(s.rot);
     for (const [a, b] of [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5], [0, -0.5], [0, 0.5], [-0.5, 0], [0.5, 0]]) {
       const lx = a * s.w; const lz = b * s.d; const x = s.x + lx * c + lz * sn; const z = s.z - lx * sn + lz * c;
@@ -133,6 +133,44 @@ async function staticSection() {
   ok(onRoad.length === 0, `solids clear of the road surfaces${onRoad.length ? ': ' + onRoad.slice(0, 8).join('; ') : ''}`);
   let wet = 0; for (const r of geo.roads) { if (r.bridge) continue; for (let i = 0; i < r.n; i += 2) if (geo.inWater(r.x[i], r.z[i])) wet++; }
   ok(wet === 0, `no road runs into the water outside bridges (${wet} samples)`);
+
+  // collisions audit regressions: solid boxes clear of the asphalt (hw + 0.3), traffic lanes clear
+  // of solids, curb-parked cars clear of the traffic lanes
+  {
+    const intr = [];
+    for (const s of M.solids) {
+      if (!s.drawn || ['barrier', 'bollard', 'car'].includes(s.kind)) continue;
+      const c = Math.cos(s.rot); const sn = Math.sin(s.rot); const nu = Math.max(1, Math.ceil(s.w / 0.7)); const nv = Math.max(1, Math.ceil(s.d / 0.7));
+      let bad = null;
+      for (let i = 0; i <= nu && !bad; i++) for (let j = 0; j <= nv; j++) {
+        if (i > 0 && i < nu && j > 0 && j < nv) continue; // the outline is enough
+        const lx = (i / nu - 0.5) * s.w; const lz = (j / nv - 0.5) * s.d; const x = s.x + lx * c + lz * sn; const z = s.z - lx * sn + lz * c;
+        geo.nearestRoad(x, z, nq, 40, (r) => !r.bridge || (s.y != null && s.y > geo.deckY(r, 0) - 3));
+        if (nq.road >= 0 && nq.d < geo.roads[nq.road].hw + 0.3 - 0.05) { bad = `${s.kind}@${s.x.toFixed(0)},${s.z.toFixed(0)} on ${geo.roads[nq.road].name || '(unnamed)'} by ${(geo.roads[nq.road].hw + 0.3 - nq.d).toFixed(2)} m`; break; }
+      }
+      if (bad) intr.push(bad);
+    }
+    ok(intr.length === 0, `no drawn solid inside a road's asphalt + 0.3 m${intr.length ? ` (${intr.length}): ` + intr.slice(0, 6).join('; ') : ''}`);
+    const lane = []; const o = {};
+    for (const r of geo.roads) {
+      if (r.traffic === false || r.kind === 'alley') continue;
+      const lw = r.hw / (r.lanes || 1);
+      for (let k = 0; k < (r.lanes || 1); k++) for (const dir of [1, -1]) {
+        for (let sd = 6; sd < r.len - 6; sd += 3) {
+          geo.sampleRoad(r, sd, o); const off = dir * (k + 0.5) * lw; const x = o.x - o.tz * off; const z = o.z + o.tx * off;
+          geo.eachSolid(x, z, 4, (q) => {
+            if (q.breakable || q.kind === 'car' && false) return;
+            if (r.bridge && (q.y == null || q.y < geo.deckY(r, o.s) - 2.5)) return; // under the deck
+            if (!r.bridge && q.y != null && q.y > geo.ground(x, z) + 2) return; // overhead
+            const ax = x - q.x; const az = z - q.z; const lx = ax * q.c - az * q.s; const lz = ax * q.s + az * q.c;
+            if (Math.abs(lx) < q.hw + 0.9 && Math.abs(lz) < q.hd + 0.9) lane.push(`${q.kind}@${q.x.toFixed(0)},${q.z.toFixed(0)} in ${r.name || '(unnamed)'}`);
+          });
+        }
+      }
+    }
+    const uniq = [...new Set(lane)];
+    ok(uniq.length === 0, `no traffic lane runs through a solid${uniq.length ? ` (${uniq.length}): ` + uniq.slice(0, 6).join('; ') : ''}`);
+  }
   let steep = 0; let steepest = 0;
   for (const r of geo.roads) { if (r.bridge) continue; for (let i = 1; i < r.n; i++) { const dl = r.cum[i] - r.cum[i - 1]; if (dl < 1) continue; const g = Math.abs(geo.ground(r.x[i], r.z[i]) - geo.ground(r.x[i - 1], r.z[i - 1])) / dl; steepest = Math.max(steepest, g); if (g > 0.12) steep++; } }
   ok(steep === 0, `road grades ≤ 12 % (steepest ${(steepest * 100).toFixed(1)} %)`);

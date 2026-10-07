@@ -386,7 +386,7 @@ if ( gLit ) {
   if ( uSiren.w > 0.0 ) {
     vec3 d = vWPos - uSiren.xyz; float q = dot( d, d );
     float a = max( 0.0, 1.0 - q / ( uNight > 0.5 ? 260.0 : 120.0 ) ); a *= a;
-    gL += uSirenCol * uSiren.w * ( uNight > 0.5 ? 0.42 : 0.35 ) * a * ( 0.3 + 0.7 * max( 0.0, -dot( d * inversesqrt( q + 0.01 ), gN ) ) );
+    gL += uSirenCol * uSiren.w * ( uNight > 0.5 ? 0.34 : 0.35 ) * a * ( 0.3 + 0.7 * max( 0.0, -dot( d * inversesqrt( q + 0.01 ), gN ) ) );
   }
   for ( int i = 0; i < 2; i++ ) {
     if ( uSpotP[ i ].w > 0.0 ) {
@@ -398,9 +398,10 @@ if ( gLit ) {
   if ( uNight > 0.5 ) {
     for ( int i = 0; i < 8; i++ ) {
       if ( uLamp[ i ].w > 0.0 ) {
-        vec3 d = vWPos - uLamp[ i ].xyz; float q = dot( d, d );
-        float a = max( 0.0, 1.0 - q / 160.0 ); a *= a;
-        gL += uLampCol * uLamp[ i ].w * a * ( 0.3 + 0.7 * max( 0.0, -dot( d * inversesqrt( q + 0.01 ), gN ) ) );
+        // the pool is measured mostly horizontally so a lamp head 8 m up still lights a ~12 m disc
+        vec3 d = vWPos - uLamp[ i ].xyz; float q = dot( d.xz, d.xz ) + d.y * d.y * 0.3;
+        float a = max( 0.0, 1.0 - q / 170.0 ); a *= a;
+        gL += uLampCol * uLamp[ i ].w * a * ( 0.3 + 0.7 * max( 0.0, -dot( d * inversesqrt( dot( d, d ) + 0.01 ), gN ) ) );
       }
     }
   }

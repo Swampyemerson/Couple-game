@@ -48,39 +48,45 @@ export function createKeys({ split, me, pads, onAct, enabled }) {
   };
   const typing = (e) => { const t = e.target; return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable); };
   function key(e, down) {
-    if (typing(e) || !enabled()) return;
+    if (typing(e) || (!enabled() && e.code !== 'Escape')) return; // (Escape still closes our sheets)
     let used = false;
     if (split) {
       for (const w of ['a', 'b']) {
         const k = SPLIT[w][e.code]; if (k) { set(pads[w], k, down ? 1 : 0); used = true; }
         const a = SPLIT_ACT[w][e.code]; if (a && down && !e.repeat) { onAct(w, a); used = true; }
       }
-      if (e.code === 'Escape' && down) { onAct(null, 'esc'); used = true; }
+      if (e.code === 'Escape' && down && onAct(null, 'esc') !== false) used = true;
     } else {
       const k = SINGLE[e.code]; if (k) { set(pads[me], k[0], down ? 1 : 0); used = true; }
-      const a = SINGLE_ACT[e.code]; if (a && down && !e.repeat) { onAct(me, a); used = true; }
+      const a = SINGLE_ACT[e.code]; if (a && down && !e.repeat && onAct(me, a) !== false) used = true;
     }
-    if (used && (e.code.startsWith('Arrow') || e.code === 'Space')) e.preventDefault();
+    // (Escape we handled, e.g. pause, mustn't also close the game: the app listens on document)
+    if (used && (e.code.startsWith('Arrow') || e.code === 'Space' || e.code === 'Escape')) e.preventDefault();
   }
   const kd = (e) => key(e, true); const ku = (e) => key(e, false);
   const blur = () => { for (const p of Object.values(pads)) { p.kL = p.kR = p.kU = p.kD = p.hand = p.nitro = p.look = 0; } };
-  window.addEventListener('keydown', kd); window.addEventListener('keyup', ku); window.addEventListener('blur', blur);
-  return { destroy() { window.removeEventListener('keydown', kd); window.removeEventListener('keyup', ku); window.removeEventListener('blur', blur); }, release: blur };
+  // capture phase on window: runs before the app's document-level Escape handler
+  window.addEventListener('keydown', kd, true); window.addEventListener('keyup', ku, true); window.addEventListener('blur', blur);
+  return { destroy() { window.removeEventListener('keydown', kd, true); window.removeEventListener('keyup', ku, true); window.removeEventListener('blur', blur); }, release: blur };
 }
 
 /**
  * Touch controls over `surface` (the play area) and the pedal buttons (elements with
  * data-pad="gas|brake|hand|nitro" and data-tap="act|map|cam|look"). steerEl shows the slider.
  */
-export function createTouch({ surface, root, pad, onAct, enabled, steerEl, stats }) {
+export function createTouch({ surface, root, pad, onAct, enabled, steerEl, stats, cfg }) {
   const ptrs = new Map(); // pointerId → { kind: 'steer'|'pad', key, x0 }
-  const RANGE = 72;
+  // cfg() → { range: px for full lock (sensitivity), dead: centre dead zone 0..0.2 }
+  const conf = () => { const c = (cfg && cfg()) || {}; return { range: c.range || 72, dead: c.dead == null ? 0.06 : c.dead }; };
   const counts = { gas: 0, brake: 0, hand: 0, nitro: 0 };
   const apply = () => { pad.gasT = counts.gas > 0 ? 1 : 0; pad.brakeT = counts.brake > 0 ? 1 : 0; pad.handT = counts.hand > 0 ? 1 : 0; pad.nitroT = counts.nitro > 0 ? 1 : 0; };
   function steerFrom(p, x) {
-    let s = (x - p.x0) / RANGE;
-    s = Math.max(-1, Math.min(1, s));
-    const a = Math.abs(s); s = a < 0.06 ? 0 : Math.sign(s) * Math.pow((a - 0.06) / 0.94, 1.25);
+    const { range, dead } = conf();
+    let s = (x - p.x0) / range;
+    // a thumb that drifts past full lock drags the slider's centre along, so steering back
+    // always starts responding at once (no dead travel on the way back)
+    if (s > 1) { p.x0 = x - range; s = 1; } else if (s < -1) { p.x0 = x + range; s = -1; }
+    const a = Math.abs(s); s = a < dead ? 0 : Math.sign(s) * Math.pow((a - dead) / (1 - dead), 1.25);
     pad.touchSteer = s;
     if (steerEl) steerEl.style.setProperty('--k', String(s));
   }
@@ -144,15 +150,19 @@ export function createTouch({ surface, root, pad, onAct, enabled, steerEl, stats
 }
 
 /** Tilt steering (device orientation). Must be enabled from a tap (iOS permission prompt). */
-export function createTilt(pad) {
-  let on = false; let zero = 0;
+export function createTilt(pad, cfg) {
+  let on = false; let zero = 0; let raw = 0;
   function handler(e) {
     if (!on) return;
     const landscape = (screen.orientation && /landscape/.test(screen.orientation.type)) || Math.abs(window.orientation || 0) === 90;
     let a;
     if (landscape) { a = e.beta || 0; if ((screen.orientation && screen.orientation.angle === 270) || window.orientation === -90) a = -a; }
     else a = e.gamma || 0;
-    pad.tilt = Math.max(-1, Math.min(1, (a - zero) / 24));
+    raw = a;
+    const c = (cfg && cfg()) || {}; const range = c.tiltRange || 24; const dead = c.dead == null ? 0.06 : c.dead;
+    let t = Math.max(-1, Math.min(1, (a - zero) / range));
+    const m = Math.abs(t); t = m < dead ? 0 : Math.sign(t) * (m - dead) / (1 - dead);
+    pad.tilt = t;
   }
   return {
     async enable() {
@@ -168,6 +178,10 @@ export function createTilt(pad) {
       } catch { return 'denied'; }
     },
     disable() { on = false; pad.tiltOn = 0; pad.tilt = 0; window.removeEventListener('deviceorientation', handler); },
+    /** Make the way the phone is held right now "straight ahead". */
+    calibrate() { zero = raw; pad.tilt = 0; return zero; },
+    setZero(z) { zero = +z || 0; },
+    get zero() { return zero; },
     get on() { return on; },
   };
 }

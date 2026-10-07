@@ -12,10 +12,12 @@
 // Open roads: a car appears (grows over 6 m) just past the junction box at a road's start and
 // disappears before the box at its end, then drives a hidden stretch back to the start. While
 // growing or shrinking (sc < 0.95) it doesn't collide. Knocked cars leave the lane as wrecks
-// (synced by the game) and rejoin once nobody is near.
+// (synced by the game) and rejoin once nobody is near (a stopped wreck fades out after a while,
+// a rejoining car grows back in).
 //
 // API: each(x, z, rad, t, fn(id, pose, wreck)) · select(viewers, t, max, rad, out) (nearest first,
 // for drawing) · poseOf(id, t, out) · knock / setWreck / stepWrecks · signalState(jid, road, t)
+// · setClear(zones) (spawn points kept clear at a round start)
 // · junctions · dims(id) · hash(t). pose: { x z y yaw vx vz sc hl hw speed id }.
 import { TRAFFIC } from './tune.js';
 import { mulberry, hashStr } from './geo.js';
@@ -224,6 +226,19 @@ export function createTraffic(geo, mapId, density) {
     return true;
   }
 
+  /** Advance the simulation towards time t for about ms milliseconds (loaders and idle frames
+   *  call this so the first chase frame doesn't simulate half a minute at once). True when there. */
+  function warm(t, ms = 4) {
+    if (!N || !(t >= EPOCH)) return true;
+    const K = Math.min(MAX_K, Math.floor((t - EPOCH) / SIM_DT) + 1);
+    if (simK < 0) resetSim();
+    if (simK >= K) return true;
+    const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    const t0 = now();
+    while (simK < K && now() - t0 < ms) stepSim();
+    return simK >= K;
+  }
+
   const knocked = new Map(); // car id → wreck state
   const tmp = { x: 0, z: 0, tx: 0, tz: 0, s: 0 };
   const dimT = { sl: 1, sh: 1, hl: 2.3, hw: 0.95, color: 0 };
@@ -280,7 +295,9 @@ export function createTraffic(geo, mapId, density) {
   function yieldTo(dt, t, obstacles) {
     if (!N || dt <= 0) return;
     const obs = yObs; obs.length = 0;
-    for (const o of obstacles) obs.push(o.x, o.z, o.siren ? 1 : 0, o.yaw || 0);
+    // (a siren only clears the way while the cop is on the move: cars stopping for a cop that is
+    // itself waiting or boxed in would close the box round it)
+    for (const o of obstacles) obs.push(o.x, o.z, o.siren && !(o.speed < 4) ? 1 : 0, o.yaw || 0);
     for (const k of knocked.values()) obs.push(k.x, k.z, 0, 0);
     const touched = yTouched; touched.clear();
     for (let q = 0; q < obs.length; q += 4) {
@@ -288,13 +305,13 @@ export function createTraffic(geo, mapId, density) {
       each(ox, oz, obs[q + 2] ? 60 : 45, t, (id, p, wreck) => {
         if (wreck || touched.has(id)) return;
         const fx = Math.sin(p.yaw); const fz = -Math.cos(p.yaw);
-        let need = Infinity; let pull = 0;
+        let need = Infinity; let pull = 0; let sirenNear = Infinity;
         for (let r = 0; r < obs.length; r += 4) {
           const dx = obs[r] - p.x; const dz = obs[r + 1] - p.z;
           const lz = dx * fx + dz * fz; const lx = dx * -fz + dz * fx;
           if (lz > 0.5 && lz < 32 && Math.abs(lx) < 2.3) need = Math.min(need, lz);
           // a siren within 55 m behind (or coming the other way, ahead): make room
-          if (obs[r + 2] && Math.abs(lx) < 9 && lz < 40 && lz > -55) pull = 1;
+          if (obs[r + 2] && Math.abs(lx) < 9 && lz < 40 && lz > -55) { pull = 1; sirenNear = Math.min(sirenNear, Math.hypot(dx, dz)); }
         }
         if (need === Infinity && !pull) return;
         touched.add(id);
@@ -307,7 +324,7 @@ export function createTraffic(geo, mapId, density) {
         // brake to stop ~6.5 m (centre to centre) behind an obstacle; crawl while pulled over
         const room = need - 6.5;
         let vAllow = need === Infinity ? Infinity : Math.sqrt(Math.max(0, 2 * 5 * Math.max(0, room)));
-        if (pull) vAllow = Math.min(vAllow, p.sched * 0.3);
+        if (pull) vAllow = Math.min(vAllow, sirenNear < 22 ? 0 : p.sched * 0.3); // the siren right behind: stop and let it by
         const vEff = Math.max(0, Math.min(p.sched, vAllow, lg.v + 3 * dt));
         lg.m = Math.max(0, lg.m + (p.sched - vEff) * dt); lg.v = vEff;
       });
@@ -335,11 +352,13 @@ export function createTraffic(geo, mapId, density) {
         if (k) {
           if (Math.abs(k.x - x) > rad || Math.abs(k.z - z) > rad) continue;
           trafficDims(id, dimT);
-          P1.x = k.x; P1.z = k.z; P1.y = k.y; P1.yaw = k.yaw; P1.vx = k.vx; P1.vz = k.vz; P1.sc = 1; P1.hl = dimT.hl; P1.hw = dimT.hw; P1.speed = Math.hypot(k.vx, k.vz); P1.id = id;
+          P1.x = k.x; P1.z = k.z; P1.y = k.y; P1.yaw = k.yaw; P1.vx = k.vx; P1.vz = k.vz; P1.sc = k.fade < 1 ? Math.max(0.03, k.fade) : 1; P1.hl = dimT.hl; P1.hw = dimT.hw; P1.speed = Math.hypot(k.vx, k.vz); P1.id = id;
           fn(id, P1, true);
           continue;
         }
         poseOn(L, j, t, P1, sim, pure);
+        if (regrow.size && !pure) { const g = regrow.get(id); if (g !== undefined) P1.sc *= g; }
+        if (clrZ.length && !pure) P1.sc *= clearK(P1.x, P1.z, t);
         if (P1.sc <= 0.02 || Math.abs(P1.x - x) > rad || Math.abs(P1.z - z) > rad) continue;
         fn(id, P1, false);
       }
@@ -379,16 +398,16 @@ export function createTraffic(geo, mapId, density) {
 
   function knock(id, pose, ivx, ivz, ir) {
     let k = knocked.get(id);
-    if (!k) { k = { x: pose.x, z: pose.z, y: pose.y, yaw: pose.yaw, vx: pose.vx, vz: pose.vz, r: 0, t: 0 }; knocked.set(id, k); }
-    k.vx += ivx; k.vz += ivz; k.r += ir; k.t = 0;
+    if (!k) { k = { x: pose.x, z: pose.z, y: pose.y, yaw: pose.yaw, vx: pose.vx, vz: pose.vz, r: 0, t: 0, fade: 1 }; knocked.set(id, k); }
+    k.vx += ivx; k.vz += ivz; k.r += ir; k.t = 0; k.fade = 1;
     return k;
   }
   /** A wreck state from the other device (it hit the car): adopt it. */
   function setWreck(id, s) {
     if (!(id >= 0 && id < N) || !s) return;
     let k = knocked.get(id);
-    if (!k) { k = { x: 0, z: 0, y: 0, yaw: 0, vx: 0, vz: 0, r: 0, t: 0 }; knocked.set(id, k); }
-    k.x = +s.x || 0; k.z = +s.z || 0; k.yaw = +s.yaw || 0; k.vx = +s.vx || 0; k.vz = +s.vz || 0; k.r = +s.r || 0; k.t = 0;
+    if (!k) { k = { x: 0, z: 0, y: 0, yaw: 0, vx: 0, vz: 0, r: 0, t: 0, fade: 1 }; knocked.set(id, k); }
+    k.fade = 1; k.x = +s.x || 0; k.z = +s.z || 0; k.yaw = +s.yaw || 0; k.vx = +s.vx || 0; k.vz = +s.vz || 0; k.r = +s.r || 0; k.t = 0;
     k.y = geo.ground(k.x, k.z);
   }
   /** Wrecks slide to a stop against the world; after TRAFFIC.knockT s and out of every viewer's
@@ -415,13 +434,39 @@ export function createTraffic(geo, mapId, density) {
         });
       }
       k.y = geo.ground(k.x, k.z);
+      if (k.fade < 1) { k.fade -= dt / 0.8; if (k.fade <= 0) { knocked.delete(id); regrow.set(id, 0); } continue; }
       if (k.t > TRAFFIC.knockT) {
-        let far = true;
-        for (const v of viewers) if (Math.hypot(v.x - k.x, v.z - k.z) < 160) far = false;
-        if (far) knocked.delete(id);
+        // out of sight: rejoin; a stopped wreck nobody is next to fades away (it would otherwise
+        // block a junction for as long as a player stays in the area)
+        let dmin = Infinity;
+        for (const v of viewers) dmin = Math.min(dmin, Math.hypot(v.x - k.x, v.z - k.z));
+        if (dmin > 160) { knocked.delete(id); regrow.set(id, 0); } else if (sp < 0.3 && (dmin > 30 || (k.t > TRAFFIC.knockT * 2.5 && dmin > 9))) k.fade = 0.999;
       }
     }
+    // a rejoined car grows back in over a second (it never pops into view)
+    for (const [id, g] of regrow) { const g2 = g + dt; if (g2 >= 1) regrow.delete(id); else regrow.set(id, g2); }
   }
+  const regrow = new Map(); // id → s since it rejoined its lane
+
+  // Spawn clearing: at a round start no civilian car sits on (or drives into) the players' spawn
+  // points. Inside a zone a car shrinks away (like at a road end: sc < 0.95 never collides);
+  // after t1 the zone shrinks to nothing over CLR_T s and the cars grow back as its edge passes.
+  // Zones are a pure function of the round (spawn points, shared traffic time), so both devices
+  // agree; the shared lane schedule itself (hash) is untouched.
+  const CLR_T = 3;
+  let clrZ = [];
+  function clearK(x, z, t) {
+    let k = 1;
+    for (const c of clrZ) {
+      if (t > c.t1 + CLR_T || t < c.t0) continue;
+      const re = t <= c.t1 ? c.r : c.r * (1 - (t - c.t1) / CLR_T);
+      const d = Math.hypot(x - c.x, z - c.z);
+      if (d < re + GROW) k = Math.min(k, Math.max(0, (d - re) / GROW));
+    }
+    return k;
+  }
+  /** zones: [{ x, z, r, t0, t1 }] (traffic time), or [] to clear. */
+  function setClear(zones) { clrZ = (zones || []).filter((c) => c && Number.isFinite(c.x) && Number.isFinite(c.z) && c.r > 0).map((c) => ({ x: c.x, z: c.z, r: c.r, t0: c.t0 ?? -Infinity, t1: c.t1 })); }
 
   /** Signal state for road ri at junction ji at time t: 'g' | 'y' | 'r' (or null: no signal). */
   function signalState(ji, ri, t) {
@@ -437,15 +482,16 @@ export function createTraffic(geo, mapId, density) {
     const sim = ensure(t);
     for (const L of lanes) for (let j = 0; j < L.n; j++) {
       poseOn(L, j, t, P1, sim, true); // the shared schedule (local yielding left out)
+      if (!(P1.sc > 0)) continue; // on the hidden stretch (place() leaves x, z stale there)
       h = (h + Math.round(P1.x * 100) * 31 + Math.round(P1.z * 100) * 17 + (L.first + j)) | 0;
     }
     return h >>> 0;
   }
 
   return {
-    total, lanes, knocked, each, select, poseOf, knock, setWreck, stepWrecks, yieldTo, hash, poseOn: (L, j, t, out) => poseOn(L, j, t, out, ensure(t)),
-    signalState, signals: sig, junctions: G ? G.junctions : [],
+    total, lanes, knocked, each, warm, density, mapId, select, poseOf, knock, setWreck, stepWrecks, yieldTo, hash, poseOn: (L, j, t, out) => poseOn(L, j, t, out, ensure(t)),
+    signalState, signals: sig, junctions: G ? G.junctions : [], setClear, clearK,
     get simStep() { return simK; },
-    clearWrecks() { knocked.clear(); lag.clear(); },
+    clearWrecks() { knocked.clear(); lag.clear(); regrow.clear(); },
   };
 }

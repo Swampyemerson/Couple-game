@@ -31,9 +31,10 @@ export const SANTEE = {
   get water() { return ensure().water; },
   get spawns() { return ensure().spawns.map(({ runner, cop, where }) => ({ runner, cop, where })); },
   get landmarks() { return ensure().landmarks; },
+  // warm, dusty inland-San-Diego afternoon: a clean blue zenith, a hazy gold horizon, a few clouds
   sky: {
-    top: '#7fb3e3', horizon: '#f3e2c2', fog: '#ecd9b8', fogNear: 160, fogFar: 640,
-    sun: { bearing: 252, elev: 24 },
+    top: '#6aa6dc', horizon: '#f0dfbd', fog: '#e4d6bb', fogNear: 170, fogFar: 660,
+    sun: { bearing: 252, elev: 26 }, clouds: 0.22, sunColor: '#fff0d4',
   },
   /** Optional: generate the layout in slices before the engine reads the data fields. */
   async prepare(kit = {}) {

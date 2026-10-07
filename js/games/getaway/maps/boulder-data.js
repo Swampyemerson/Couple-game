@@ -115,15 +115,15 @@ add('Pine St', 'street', 10, EW(Z.pine, X.st4, X.st28));
 add('Spruce St', 'street', 10, EW(Z.spruce, X.st4, X.folsom));
 add('Pearl St alley', 'alley', 5.5, EW(Z.alleyN, X.st9, X.st13));
 add('Pearl St alley', 'alley', 5.5, EW(Z.alleyN, X.st14, X.st19)); // the Courthouse block has no alley
-add('Pearl St', 'street', 12, EW(Z.pearl, X.st4, X.st11));
-add('Pearl St', 'arterial', 13, EW(Z.pearl, X.st15, X.st30));
+add('Pearl St', 'street', 14, EW(Z.pearl, X.st4, X.st11), { parking: true }); // West Pearl: curb parking both sides
+add('Pearl St', 'arterial', 14.5, EW(Z.pearl, X.st15, X.st30), { lanes: 1, parking: [X.st15, X.st21], bike: true }); // one lane each way, parking downtown, bike lanes
 add('Pearl St alley', 'alley', 5.5, EW(Z.alleyS, X.st9, X.st19));
-add('Walnut St', 'street', 11, EW(Z.walnut, X.st9, X.st28));
+add('Walnut St', 'street', 14.5, EW(Z.walnut, X.st9, X.st28), { lanes: 1, parking: [X.st9, X.st21] });
 add('Canyon Blvd', 'arterial', 18, [...EW(Z.canyon, X.st30, -300).slice(0, -1), [-300, 120], [-345, 124], [-378, 133], [-404, 142]]);
 add('Arapahoe Ave', 'arterial', 14, EW(Z.arapahoe, -330, X.st55));
 add('Arapahoe Ave', 'arterial', 14, [[-330, 200], [-352, 192], [-372, 178], [-388, 160], [-404, 142]], { bridge: true, clear: 3 });
 add('Pearl Pkwy', 'arterial', 16, [[X.st30, 0], [1090, -22], [1160, -55], [1253, -100], [1340, -140], [1450, -180], [1560, -210], [1680, -235], [1790, -250], [X.st55, -258]]);
-add('Valmont Rd', 'arterial', 14, [[X.folsom, Z.balsam], [620, -392], [700, -402], [832, -412], [940, -420], [1035, -426], [1150, -431], [1253, -435], [1400, -440], [1550, -442], [1700, -443], [X.st55, -443]]);
+add('Valmont Rd', 'arterial', 14, [[X.folsom, Z.balsam], [620, -392], [700, -402], [832, -412], [940, -420], [1035, -426], [1150, -431], [1253, -435], [1400, -440], [1550, -442], [1700, -443], [X.st55, -443]], { lanes: 1, bike: true });
 // N–S
 add('4th St', 'street', 9, NS(X.st4, Z.balsam, Z.canyon));
 add('6th St', 'street', 9, NS(X.st6, Z.mapleton, Z.canyon));
@@ -139,10 +139,10 @@ add('15th St', 'street', 9, NS(X.st15, Z.mapleton, Z.canyon));
 creekNS('17th St', 'street', 10, X.st17, Z.balsam, Z.univ);
 add('19th St', 'street', 9, NS(X.st19, Z.balsam, Z.canyon));
 add('21st St', 'street', 9, NS(X.st21, Z.mapleton, Z.canyon));
-creekNS('Folsom St', 'arterial', 14, X.folsom, Z.balsam, Z.colorado);
+creekNS('Folsom St', 'arterial', 14, X.folsom, Z.balsam, Z.colorado, { lanes: 1, bike: true }); // Folsom's one-lane-plus-bike-lane layout
 creekNS('28th St', 'arterial', 20, X.st28, -412, Z.baseline);
 add('29th St', 'street', 10, NS(X.st29, Z.pearl, Z.canyon));
-creekNS('30th St', 'arterial', 14, X.st30, -426, Z.baseline);
+creekNS('30th St', 'arterial', 14, X.st30, -426, Z.baseline, { lanes: 1, bike: true });
 creekNS('Foothills Pkwy', 'arterial', 16, X.foothills, -435, Z.baseline);
 add('Foothills Pkwy', 'arterial', 16, [[X.foothills, Z.baseline], [1255, 980], [1262, 1050], [1280, 1120], [1310, 1185], [1350, 1250], [1395, 1305], usPt(745, 11), usPt(800, 5)]);
 creekNS('55th St', 'arterial', 12, X.st55, -443, 1655);

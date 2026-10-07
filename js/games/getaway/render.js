@@ -10,7 +10,7 @@ export const SHADOW_LAYER = 2;
 
 /** Per-tier settings. dpr = device-pixel-ratio cap; minScale = dynamic-resolution floor. */
 export const TIERS = {
-  low: { dpr: 1.25, minScale: 0.75, msaa: true, shadow: 0, shadowR: 0, beams: false, glows: 64, lampGlows: 10, decals: true, smoke: 0.6 },
+  low: { dpr: 1.25, minScale: 0.75, msaa: true, shadow: 0, shadowR: 0, beams: false, glows: 64, lampGlows: 10, decals: true, smoke: 0.6, fogFar: 330, carNear: 26, carMid: 60 },
   mid: { dpr: 1.5, minScale: 0.7, msaa: true, shadow: 1024, shadowR: 26, beams: true, glows: 128, lampGlows: 20, decals: true, smoke: 1 },
   high: { dpr: 1.5, minScale: 0.7, msaa: true, shadow: 1536, shadowR: 34, beams: true, glows: 160, lampGlows: 28, decals: true, smoke: 1 },
 };

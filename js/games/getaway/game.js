@@ -6,17 +6,17 @@ import { DT, MAX_STEPS, CAR, DAMAGE, RULES, NITRO, CAM, TRAFFIC } from './tune.j
 import { sanitizeSetup, stepRule, loadSaved, saveSetup, fmt } from './rules.js';
 import { createGeo } from './geo.js';
 import { newCar, placeCar, stepCar, carContact, resolveCar, resolvePair, contactImpulse, applyImpulse, judgePit, pitEffect } from './car.js';
-import { makePalette, makeUniforms } from './gfx.js';
+import { makePalette, makeUniforms, setGfxTier } from './gfx.js';
 import { buildWorld } from './world.js';
 import { createCarView, createWheels, createTrafficView } from './cars.js';
-import { createRenderer } from './render.js';
+import { createRenderer, gfxSetting, setGfxSetting, TIERS as GFX_TIERS } from './render.js';
 import { createTraffic } from './traffic.js';
 import { createFx } from './fx.js';
 import { createAudio } from './audio.js';
 import { newPad, readPad, createKeys, createTouch, createTilt } from './input.js';
-import { createHud, makeMapImage, loadingCard, errorCard, lobbyCard, settingsSheet, introCard, resultCard, pauseCard, esc } from './hud.js';
+import { createHud, makeMapImage, loadingCard, errorCard, lobbyCard, settingsSheet, introCard, resultCard, pauseCard, howToCard, bindTap, esc } from './hud.js';
 import { createLink } from './link.js';
-import { createDriver } from './ai.js';
+import { createDriver, AI_LEVELS, AI_LEVEL_LABELS } from './ai.js';
 import { MAPS } from './maps/index.js';
 
 const AB = ['a', 'b'];
@@ -50,7 +50,10 @@ export function createGame(el, api) {
   el.appendChild(root);
   const glWrap = root.querySelector('.gtw-gl'); const surface = root.querySelector('.gtw-surface');
   root.style.setProperty('--me', `var(--p-${live ? api.me : 'a'})`);
-  const device = Object.assign({ steer: 'slider', localMode: 'ai', practiceRole: 'runner', cam: null }, lsGet(DEV_KEY, {}));
+  const device = Object.assign({ steer: 'slider', localMode: 'ai', practiceRole: 'runner', cam: null, sens: 'normal', dead: 'normal', tiltZero: null, aiLevel: 'normal', seenHow: false }, lsGet(DEV_KEY, {}));
+  if (!AI_LEVELS.includes(device.aiLevel)) device.aiLevel = 'normal';
+  const STEER_RANGE = { low: 96, normal: 72, high: 54 }; const TILT_RANGE = { low: 32, normal: 24, high: 17 }; const DEAD = { small: 0.03, normal: 0.06, large: 0.12 };
+  const steerCfg = () => ({ range: STEER_RANGE[device.sens] || 72, tiltRange: TILT_RANGE[device.sens] || 24, dead: DEAD[device.dead] ?? 0.06 });
   if (!coarse && device.localMode !== 'split' && device.localMode !== 'ai') device.localMode = 'ai';
   if (phoneish) device.localMode = 'ai';
   const audio = createAudio({ getCtx: typeof api.audio === 'function' ? () => api.audio() : null, mutedFn: typeof api.muted === 'function' ? () => api.muted() : null });
@@ -63,6 +66,17 @@ export function createGame(el, api) {
     stats: null, lastNow: 0, slowT: 0, slowK: 1, tSec: 0, ending: false, finalShown: false,
   };
   if (!MAPS.find((m) => m.id === S.setup.map && !m.stub)) S.setup.map = MAPS.find((m) => !m.stub).id;
+  { // the last open died while building a map (iOS kills a tab that runs out of memory): open on
+    // the lightest map, and on a phone drop to low graphics unless the player chose a level
+    const crashed = lsGet('getaway.loading.v1', null);
+    const light = MAPS.find((m) => !m.stub);
+    if (crashed && Date.now() - (crashed.t || 0) < 3 * 86400e3) {
+      const m = MAPS.find((x) => x.id === crashed.map);
+      if (crashed.map !== light.id) { S.setup.map = light.id; S.crashNote = `${m ? m.name : 'That map'} didn’t finish loading last time, so we opened ${light.name}.`; }
+      if (phoneish && gfxSetting() === 'auto') { setGfxSetting('low'); S.crashNote = (S.crashNote || 'The game closed while loading last time.') + ' Graphics are on Low (Settings).'; }
+    }
+    try { localStorage.removeItem('getaway.loading.v1'); } catch { /* ignore */ }
+  }
   const split = () => !live && S.localMode === 'split';
   const ai = () => !live && S.localMode === 'ai';
   const human = () => (live ? me : 'a');
@@ -87,6 +101,8 @@ export function createGame(el, api) {
   // ── net ──
   const link = createLink(api, { delay: 100, onLink: () => onLinked(), onUnlink: () => { addReason('stale'); } });
   const clock = () => link.now();
+  // test-only contact log (live car-vs-car contacts, my trajectory, bumps received)
+  const TLOG = typeof window !== 'undefined' && window.__gtwTest ? { contacts: [], traj: [], bumpsIn: [], bumpsOut: [] } : null;
   let partnerHere = live ? !!api.partnerHere : true;
   if (live) offs.push(api.onPartnerHere((h) => { partnerHere = !!h; }));
 
@@ -115,10 +131,14 @@ export function createGame(el, api) {
       hud.card(errorCard('This device couldn’t start WebGL graphics. Try another browser, or restart the app.'), 'solid');
       return;
     }
-    await loadMap(S.setup.map);
-    if (dead) return;
+    await loadMap(S.setup.map); // on failure loadMap shows the error card; a retry boots from there
+  }
+  /** The first map is in: the lobby and the frame loop start. */
+  function bootDone() {
+    if (ready3D || dead) return;
     ready3D = true;
     toLobby();
+    if (S.crashNote) { const n = S.crashNote; S.crashNote = null; later(() => hud.view().hint(n, 6000), 400); }
     raf = requestAnimationFrame(frame);
   }
 
@@ -127,6 +147,25 @@ export function createGame(el, api) {
     hud.setPalette(P);
     U = makeUniforms(THREE, P);
     // graphics tier (low / mid / high), MSAA and the pixel-ratio cap come from render.js
+    setupRenderer();
+    farCam = new THREE.PerspectiveCamera(60, 1, 5, 60000);
+    for (const w of AB) cams[w] = { cam: new THREE.PerspectiveCamera(60, 1, 1, 700), x: 0, y: 20, z: 0, yaw: 0, fov: 60, shake: 0, mode: device.cam || null, look: 0, init: false };
+    resize();
+    const ro = new ResizeObserver(() => resize()); ro.observe(root); offs.push(() => ro.disconnect());
+    const keys = createKeys({ split: false, me: human(), pads: { a: P2.a.pad, b: P2.b.pad }, onAct: (w, a) => onAct(w, a), enabled: () => !dead && !S.sheet });
+    input = keys;
+    touchIn = createTouch({ surface, root, pad: P2[human()].pad, onAct: (a) => onAct(human(), a), enabled: () => !dead, steerEl: root.querySelector('.gtw-steer'), stats: inputStats, cfg: steerCfg });
+    tilt = createTilt(P2[human()].pad, steerCfg);
+    if (device.tiltZero != null) tilt.setZero(device.tiltZero);
+    // tilt needs a permission prompt from a tap on iOS; elsewhere it can come back on by itself
+    if (device.steer === 'tilt' && !(window.DeviceOrientationEvent && typeof window.DeviceOrientationEvent.requestPermission === 'function')) tilt.enable();
+    root.addEventListener('pointerdown', () => audio.unlock(), { passive: true });
+    window.addEventListener('keydown', unlockKey);
+    offs.push(() => window.removeEventListener('keydown', unlockKey));
+    document.addEventListener('visibilitychange', onVis); offs.push(() => document.removeEventListener('visibilitychange', onVis));
+    offs.push(bindTap(root, '[data-l]', onClick));
+  }
+  function setupRenderer() {
     gfx = createRenderer(THREE, { phoneish, coarse, tune: TUNE });
     renderer = gfx.renderer; baseDpr = gfx.dpr; minScale = gfx.cfg.minScale; if (!TUNE.maxDpr) scale = 1;
     renderer.info.autoReset = false;
@@ -136,19 +175,27 @@ export function createGame(el, api) {
     glWrap.appendChild(renderer.domElement);
     renderer.domElement.addEventListener('webglcontextlost', onLost, false);
     renderer.domElement.addEventListener('webglcontextrestored', onRestored, false);
-    farCam = new THREE.PerspectiveCamera(60, 1, 5, 60000);
-    for (const w of AB) cams[w] = { cam: new THREE.PerspectiveCamera(60, 1, 1, 700), x: 0, y: 20, z: 0, yaw: 0, fov: 60, shake: 0, mode: device.cam || null, look: 0, init: false };
+  }
+  /** Use a graphics tier from now on (world rebuilds pick it up; MSAA stays as created). */
+  function applyTier(t) {
+    const tier = GFX_TIERS[t] ? t : 'mid';
+    setGfxTier(tier); if (gfx) { gfx.tier = tier; gfx.cfg = { ...GFX_TIERS[tier], msaa: gfx.cfg.msaa }; }
+    baseDpr = Math.min(window.devicePixelRatio || 1, GFX_TIERS[tier].dpr); minScale = GFX_TIERS[tier].minScale;
+    if (!TUNE.maxDpr) scale = 1;
     resize();
-    const ro = new ResizeObserver(() => resize()); ro.observe(root); offs.push(() => ro.disconnect());
-    const keys = createKeys({ split: false, me: human(), pads: { a: P2.a.pad, b: P2.b.pad }, onAct: (w, a) => onAct(w, a), enabled: () => !dead && !S.sheet });
-    input = keys;
-    touchIn = createTouch({ surface, root, pad: P2[human()].pad, onAct: (a) => onAct(human(), a), enabled: () => !dead, steerEl: root.querySelector('.gtw-steer'), stats: inputStats });
-    tilt = createTilt(P2[human()].pad);
-    root.addEventListener('pointerdown', () => audio.unlock(), { passive: true });
-    window.addEventListener('keydown', unlockKey);
-    offs.push(() => window.removeEventListener('keydown', unlockKey));
-    document.addEventListener('visibilitychange', onVis); offs.push(() => document.removeEventListener('visibilitychange', onVis));
-    root.addEventListener('click', onClick);
+  }
+  const autoTier = () => (gfx && gfx.info && (gfx.info.software || !gfx.info.webgl2) ? 'low' : phoneish || coarse ? 'mid' : 'high');
+  const mapQuality = () => { const t = gfx ? gfx.tier : phoneish ? 'mid' : 'high'; return t === 'low' ? 'low' : t === 'mid' || phoneish ? 'mid' : 'high'; };
+  /** Throw the WebGL context away and start a fresh one (the phone dropped ours), then rebuild the map. */
+  function rebuildGraphics(lower) {
+    S.glStuck = false;
+    disposeWorld();
+    try { renderer.domElement.remove(); renderer.dispose(); } catch { /* ignore */ }
+    if (lower) setGfxSetting('low');
+    try { setupRenderer(); } catch (e) { console.error(e); hud.card(errorCard('This phone couldn’t restart the graphics. Close the game and open it again.', { title: 'Graphics trouble' }), 'solid'); return; }
+    glLost = false; resize();
+    const id = S.mapId || S.setup.map; S.mapId = null;
+    loadMap(id).then((ok) => { if (ok) { delReason('gl'); if (S.phase === 'lobby') renderLobby(true); } });
   }
   const unlockKey = () => audio.unlock();
   const inputStats = { ignored: 0 };
@@ -160,7 +207,7 @@ export function createGame(el, api) {
     if (on && !hud2) {
       hud2 = createHud(root, { name: (w) => nameOf(w) }, { split: true, touch: false });
       hud2.setPalette(P);
-      hud2.root.addEventListener('click', onClick);
+      // (its buttons are inside root, so root's tap binding covers them)
     }
     if (hud2) hud2.root.hidden = !on;
     hud.root.querySelector('.gtw-view.full').hidden = on;
@@ -168,12 +215,77 @@ export function createGame(el, api) {
 
   // ── map loading ──
   let loadSeq = 0;
+  const LOAD_KEY = 'getaway.loading.v1'; // set while a map builds: still there at the next open = it crashed
+  const LOAD_SLOW = TUNE.loadSlow || 20000; const LOAD_FAIL = TUNE.loadFail || 75000;
+  /** Free the current world (and everything built against its materials) before building another:
+   *  a phone never holds two maps at once. */
+  function disposeWorld() {
+    if (carViews) {
+      for (const v of Object.values(carViews)) { detach(v.group); v.dispose(); }
+      if (wheels) { detach(wheels.mesh); wheels.dispose(); }
+      if (trafficMeshes) { for (const m of trafficMeshes.meshes) detach(m); trafficMeshes.dispose(); }
+      carViews = null; wheels = null; trafficMeshes = null;
+    }
+    if (fx) { for (const m of [fx.puffs, fx.sparks, fx.skids, fx.strips, fx.oils, fx.lines]) detach(m); fx.dispose(); fx = null; }
+    if (world) { world.dispose(); world = null; }
+    traffic = null; mapImg = null; S.mapId = null;
+  }
+  /**
+   * Load a map behind the loading card. Never hangs silently: errors and a watchdog end on an
+   * error card (Retry / lower quality / Dockside); the host can cancel a big map from the lobby.
+   * Resolves true once that map is in.
+   */
   async function loadMap(id) {
+    const entry = MAPS.find((m) => m.id === id && !m.stub) || MAPS.find((m) => !m.stub);
+    if (S.mapId === entry.id && world) return true;
+    const seq0 = loadSeq + 1;
+    S.loadFail = null;
+    lsSet(LOAD_KEY, { map: entry.id, t: Date.now() });
+    S.loadAt = performance.now(); S.loadProg = performance.now();
+    const dog = setInterval(() => {
+      if (dead || loadSeq !== seq0 || !S.loading) { clearInterval(dog); return; }
+      const idle = performance.now() - S.loadProg;
+      if (idle > LOAD_FAIL) { clearInterval(dog); loadSeq++; loadFailed(entry, new Error('timeout')); } else if (idle > LOAD_SLOW && !S.loadSlow) { S.loadSlow = true; if (S.loadShow) S.loadShow(); }
+    }, 1000);
+    timers.push(dog);
+    let ok = false;
+    try { await loadMapRaw(entry.id); ok = !dead && loadSeq === seq0 && S.mapId === entry.id && !!world; } catch (e) {
+      console.error('getaway: map load failed', e);
+      if (!dead && loadSeq === seq0) loadFailed(entry, e);
+    }
+    clearInterval(dog);
+    if (!ok) return false;
+    try { localStorage.removeItem(LOAD_KEY); } catch { /* ignore */ }
+    S.lastGood = entry.id;
+    if (isHost && S.setup.map === entry.id) saveSetup(S.setup); // remembered only once it has loaded
+    if (!ready3D) bootDone();
+    return true;
+  }
+  function loadFailed(entry, e) {
+    S.loading = false; S.loadingCard = true;
+    const timeout = e && e.message === 'timeout';
+    S.loadFail = entry.id;
+    try { localStorage.removeItem(LOAD_KEY); } catch { /* ignore */ }
+    const btns = [['loadretry', 'Try again', 'gtw-go']];
+    if (!gfx || gfx.tier !== 'low') btns.push(['loadlow', 'Try lower quality']);
+    const dock = MAPS.find((m) => !m.stub);
+    if (isHost && entry.id !== dock.id) btns.push(['loaddock', `Play ${dock.name} instead`]);
+    hud.card(errorCard(timeout ? `${entry.name} is taking far too long to load on this ${phoneish ? 'phone' : 'device'}.` : `${entry.name} didn’t load. That’s usually memory: a lower quality setting helps.`, { title: 'Map trouble', buttons: btns, detail: timeout ? '' : String((e && e.message) || '').slice(0, 120) }), 'solid');
+  }
+  async function loadMapRaw(id) {
     const seq = ++loadSeq;
     const entry = MAPS.find((m) => m.id === id && !m.stub) || MAPS.find((m) => !m.stub);
     if (S.mapId === entry.id && world) return;
-    S.loading = true;
-    const showLoad = (pct, text) => { if (S.phase === 'loading' || S.loadingCard) hud.card(loadingCard(text, pct, human()), 'solid'); };
+    S.loading = true; S.loadSlow = false;
+    if (S.failLoads > 0) { S.failLoads--; await new Promise((r) => setTimeout(r, 50)); throw new Error('test: forced load failure'); }
+    const tip = Math.floor(Math.random() * 6);
+    const canCancel = () => isHost && S.phase === 'lobby' && entry.id !== (MAPS.find((m) => !m.stub) || {}).id;
+    let lastPct = 0; let lastText = '';
+    const showLoad = (pct, text) => {
+      lastPct = Math.max(lastPct, pct); lastText = text || lastText; S.loadProg = performance.now();
+      if (seq === loadSeq && (S.phase === 'loading' || S.loadingCard)) hud.card(loadingCard(lastText, lastPct, human(), { cancel: canCancel(), tip, slow: S.loadSlow }), 'solid');
+    };
+    S.loadShow = () => showLoad(lastPct, lastText);
     S.loadingCard = true; // every map load shows the loading card (and pauses rendering)
     showLoad(0.08, `Loading ${entry.name}…`);
     await new Promise((r) => setTimeout(r, 16));
@@ -184,46 +296,52 @@ export function createGame(el, api) {
       let sliceT = performance.now();
       const slice = () => { const n = performance.now(); if (n - sliceT < 12) return Promise.resolve(); return new Promise((r) => setTimeout(() => { sliceT = performance.now(); r(); }, 0)); };
       showLoad(0.09, `Surveying ${entry.name}…`);
-      try { await entry.prepare({ THREE, slice, seeded: (n) => { let a = (n >>> 0) || 1; return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }, quality: phoneish ? 'mid' : 'high', palette: P, dark: P.dark }); } catch (e) { console.error('getaway: map prepare failed', e); }
+      try { await entry.prepare({ THREE, slice, seeded: (n) => { let a = (n >>> 0) || 1; return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }, quality: mapQuality(), palette: P, dark: P.dark }); } catch (e) { console.error('getaway: map prepare failed', e); }
       entry.__prepared = true;
       if (dead || seq !== loadSeq) return;
     }
     const L = { prepare: Math.round(performance.now() - t0) }; let lt = performance.now();
+    // the old map goes before the new one is built (memory: one world at a time)
+    disposeWorld();
+    showLoad(0.1, `Mapping the streets of ${entry.name}…`);
     const g = createGeo(entry);
+    // the road graph (AI routes, traffic junctions) in slices: it's 30–200 ms in one go
+    while (g.buildNav(8) < 1) { await new Promise((r) => setTimeout(r, 0)); if (dead || seq !== loadSeq) return; }
     L.geo = Math.round(performance.now() - lt);
-    const w = await buildWorld(THREE, entry, g, P, U, { quality: phoneish ? 'mid' : 'high', onProgress: (p, t) => showLoad(0.1 + p * 0.8, t), dead: () => dead || seq !== loadSeq, budget: TUNE.sliceMs || 12 });
+    const w = await buildWorld(THREE, entry, g, P, U, { quality: mapQuality(), onProgress: (p, t) => showLoad(0.1 + p * 0.8, t), dead: () => dead || seq !== loadSeq, budget: TUNE.sliceMs || 12 });
     if (dead || seq !== loadSeq || !w) { if (w) w.dispose(); return; }
-    // swap worlds: the cars, wheels and traffic meshes are rebuilt against the new world's
-    // materials; take them out of the old scene first so its dispose() doesn't free them
-    if (carViews) {
-      for (const v of Object.values(carViews)) { detach(v.group); v.dispose(); }
-      detach(wheels.mesh); wheels.dispose();
-      for (const m of trafficMeshes.meshes) detach(m);
-      trafficMeshes.dispose();
-      carViews = null;
-    }
-    if (fx) { for (const m of [fx.puffs, fx.sparks, fx.skids, fx.strips, fx.oils, fx.lines]) detach(m); fx.dispose(); fx = null; }
-    if (world) world.dispose();
-    world = w; geo = g; S.mapId = entry.id; S.mapIdx = MAPS.indexOf(entry); S.mapEntry = entry;
+    if (world) disposeWorld(); // (a racing load got in first)
+    // (S.mapId only once the GPU warm-up below is done: until then the map isn't "in")
+    world = w; geo = g; S.mapIdx = MAPS.indexOf(entry); S.mapEntry = entry;
+    const alive = () => !dead && seq === loadSeq && world === w;
+    const yieldFrame = () => new Promise((r) => { let done = false; const go = () => { if (!done) { done = true; setTimeout(r, 0); } }; requestAnimationFrame(go); setTimeout(go, 60); });
     U.uSiren.value.w = 0;
     renderer.setClearColor(new THREE.Color().fromArray(world.fogC), 1);
     for (const k of AB) { cams[k].cam.far = world.fogFar + 80; cams[k].cam.updateProjectionMatrix(); }
     lt = performance.now();
     mapImg = makeMapImage(geo, entry, P, phoneish ? 1100 : 1400);
-    L.mapImage = Math.round(performance.now() - lt); lt = performance.now();
+    L.mapImage = Math.round(performance.now() - lt);
+    showLoad(0.91, 'Starting the engines…');
+    await yieldFrame(); if (!alive()) return;
+    lt = performance.now();
     carViews = { runA: createCarView(THREE, P, U, 'runner', P.a, world.mats), runB: createCarView(THREE, P, U, 'runner', P.b, world.mats), cop: createCarView(THREE, P, U, 'cop', null, world.mats), cop2: createCarView(THREE, P, U, 'cop', null, world.mats) };
     wheels = createWheels(THREE, P, world.mats, 8);
     // traffic: four silhouettes × near / mid detail + far boxes, tinted per instance (cars.js)
-    trafficMeshes = createTrafficView(THREE, P, world.mats, TRAFFIC.max);
+    trafficMeshes = createTrafficView(THREE, P, world.mats, TRAFFIC.max, world.cfg ? { nearR: world.cfg.carNear, midR: world.cfg.carMid } : {});
     for (const v of Object.values(carViews)) world.scene.add(v.group);
     world.scene.add(wheels.mesh); for (const m of trafficMeshes.meshes) world.scene.add(m);
     fx = createFx(THREE, world.scene, P, U, world.mats);
     traffic = createTraffic(geo, entry.id, rules().traffic);
     S.loadMs = Math.round(performance.now() - t0);
     S.buildStats = world.stats;
-    L.cars = Math.round(performance.now() - lt); lt = performance.now();
-    warmUp();
-    L.warmUp = Math.round(performance.now() - lt);
+    L.cars = Math.round(performance.now() - lt);
+    await yieldFrame(); if (!alive()) return;
+    lt = performance.now();
+    // shaders + geometry to the GPU in frame-sized slices behind the card (one go is 1–2 s on a phone)
+    let shown = 0; const wu = await warmUp(entry, alive, yieldFrame, (k) => { S.loadProg = performance.now(); if (S.loadProg - shown > 150) { shown = S.loadProg; showLoad(0.92 + 0.08 * k); } });
+    if (!wu) return;
+    L.warmUp = Math.round(performance.now() - lt); L.warmBusy = wu.busy; L.warmMaxMs = wu.maxMs; L.warmSlices = wu.slices; L.warmMax = wu.maxWhat; L.warmGap = wu.maxGap; L.warmGapAt = wu.gapWhat; L.readyAt = Math.round(performance.now()); L.startAt = Math.round(t0);
+    S.mapId = entry.id;
     S.buildStats = { ...world.stats, load: L };
     S.loading = false; S.loadingCard = false;
     // nav grid for the AI, in the background
@@ -238,26 +356,103 @@ export function createGame(el, api) {
     step();
   }
 
-  function warmUp() {
+  /**
+   * Get the new map onto the GPU before it's shown: every shader program compiled, every geometry
+   * and texture uploaded. Done in slices with a frame in between (the loading card stays up), so no
+   * single task blocks for long: on iOS one big first render of a whole map is 1–2 s of frozen page.
+   * Slices: programs a few objects at a time (renderer.compile on a view of the scene), then the
+   * geometry a few MB at a time (a 1×1 render of just those meshes), then the light dressing and
+   * shadow pass, then one full render. Resolves null if the load was overtaken.
+   */
+  async function warmUp(entry, alive, yieldFrame, onStep) {
+    const budget = TUNE.warmMs || 24; const stat = { busy: 0, maxMs: 0, slices: 0, maxWhat: '', maxGap: 0, gapWhat: '' };
+    let t0 = performance.now(); let what = '';
+    // upload slice size adapts to how fast the GPU swallowed the last one (the frame after it):
+    // aim for ~70 ms a slice; grows on a fast GPU, shrinks on a slow one (or SwiftShader)
+    let cap = 0.4e6; let sent = 0; const most = 12; const capMax = phoneish ? 4e6 : 8e6;
+    const cut = async (k) => {
+      const t1 = performance.now(); const d = t1 - t0; stat.busy += d; stat.slices++; if (d > stat.maxMs) { stat.maxMs = Math.round(d); stat.maxWhat = what; }
+      if (onStep) onStep(k);
+      await yieldFrame(); t0 = performance.now();
+      const gap = t0 - t1; if (gap > stat.maxGap) { stat.maxGap = Math.round(gap); stat.gapWhat = what; }
+      if (what === 'upload' && sent > 5e4) cap = Math.max(1.5e5, Math.min(capMax, cap * 0.4 + 0.6 * sent * (70 / Math.max(gap, 10))));
+      return alive();
+    };
     const list = world.warmList();
-    for (const m of list) m.visible = true;
+    const far = []; world.farScene.traverse((o) => { if (o.isMesh || o.isPoints || o.isLine || o.isSprite) far.push(o); });
     for (const c of world.chunks) c.group.visible = true;
     const cam = cams[human()].cam;
-    const p = (S.mapEntry.spawns && S.mapEntry.spawns[0]) ? S.mapEntry.spawns[0].runner : { x: 0, z: 0 };
-    cam.position.set(p.x, 30, p.z + 40); cam.lookAt(p.x, 0, p.z);
-    fx.setSpeedLines(0.5, 1); fx.puff(p.x, 1, p.z, 0, 0, 0, 1, 0, 0.1, 1, 1, 1); fx.spark(p.x, 1, p.z, 1, 1, 1, 0.1);
-    fx.setStrips([{ x: p.x, y: 0, z: p.z, yaw: 0, len: 6, k: 1 }]); fx.setOils([{ x: p.x, y: 0, z: p.z, r: 2, k: 1 }]);
-    for (const m of trafficMeshes.meshes) { m.count = 1; m.visible = true; }
-    if (fx.crash) fx.crash(p.x, 1, p.z, 0, 0, 0, 1);
-    fx.update(0.016, cam);
+    const p = (entry.spawns && entry.spawns[0]) ? entry.spawns[0].runner : { x: 0, z: 0 };
+    cam.position.set(p.x, 30, p.z + 40); cam.lookAt(p.x, 0, p.z); cam.updateMatrixWorld();
+    const fxOn = () => {
+      fx.setSpeedLines(0.5, 1); fx.puff(p.x, 1, p.z, 0, 0, 0, 1, 0, 0.1, 1, 1, 1); fx.spark(p.x, 1, p.z, 1, 1, 1, 0.1);
+      fx.setStrips([{ x: p.x, y: 0, z: p.z, yaw: 0, len: 6, k: 1 }]); fx.setOils([{ x: p.x, y: 0, z: p.z, r: 2, k: 1 }]);
+      for (const m of trafficMeshes.meshes) { m.count = 1; m.visible = true; }
+      if (fx.crash) fx.crash(p.x, 1, p.z, 0, 0, 0, 1);
+      fx.update(0.016, cam);
+    };
+    fxOn();
+    for (const m of list) m.visible = true;
+    // 1) programs: renderer.compile over a view of the scene that lists only this slice's objects
+    //    (same fog / lights / environment, so the cache keys match the real render's)
+    const progs = (sc, objs) => {
+      const view = Object.create(sc);
+      const batch = [null];
+      view.traverse = (cb) => { for (const o of batch) cb(o); };
+      return async () => {
+        for (let i = 0; i < objs.length; i++) {
+          batch[0] = objs[i];
+          what = 'compile';
+          try { renderer.compile(view, cam); } catch (e) { console.warn('getaway: warm-up compile', e); }
+          if (performance.now() - t0 > budget && !(await cut(0.3 * i / objs.length))) return false;
+        }
+        return true;
+      };
+    };
+    if (!(await progs(world.scene, list)())) return null;
+    if (!(await progs(world.farScene, far)())) return null;
+    // 2) geometry (and textures): render a slice of meshes at a time (see cap above) into a 1×1 viewport
+    const bytes = (m) => { const g = m.geometry; if (!g || !g.attributes) return 0; let b = g.index && g.index.array ? g.index.array.byteLength : 0; for (const k in g.attributes) { const a = g.attributes[k]; if (a && a.array) b += a.array.byteLength; } return b; };
+    const upload = async (sc, objs, base) => {
+      const vis = objs.map((o) => o.visible);
+      for (const o of objs) o.visible = false;
+      for (let i = 0; i < objs.length;) {
+        let b = 0; const on = [];
+        while (i < objs.length && (on.length === 0 || (b < cap && on.length < most && performance.now() - t0 < budget))) { const o = objs[i++]; o.visible = vis[i - 1]; b += bytes(o); on.push(o); }
+        sent = b;
+        what = 'upload';
+        // (what's behind the camera too; one triangle each: the buffers go up whole, the GPU barely draws)
+        const fc = on.map((o) => o.frustumCulled); const dr = on.map((o) => o.geometry && o.geometry.drawRange && o.geometry.drawRange.count);
+        for (const o of on) { o.frustumCulled = false; if (o.geometry && o.geometry.drawRange) o.geometry.drawRange.count = 3; }
+        try { renderer.setViewport(0, 0, 1, 1); renderer.render(sc, cam); } catch (e) { console.warn('getaway: warm-up upload', e); }
+        on.forEach((o, k) => { o.visible = false; o.frustumCulled = fc[k]; if (o.geometry && o.geometry.drawRange) o.geometry.drawRange.count = dr[k]; });
+        if (!(await cut(base + 0.3 * i / objs.length))) { objs.forEach((o, k) => { o.visible = vis[k]; }); return false; }
+      }
+      objs.forEach((o, k) => { o.visible = vis[k]; });
+      return true;
+    };
+    if (!(await upload(world.scene, list, 0.3))) return null;
+    if (!(await upload(world.farScene, far, 0.6))) return null;
+    // 3) the light dressing and the shadow pass (their own programs + render target)
+    fxOn();
+    what = 'lights';
     if (world.warm) world.warm(renderer, cam);
+    if (!(await cut(0.8))) return null;
+    // 4) anything left (state-dependent variants): one full render, then tidy up
+    what = 'final';
     try { renderer.compile(world.scene, cam); renderer.compile(world.farScene, cam); } catch (e) { console.warn(e); }
-    renderer.setViewport(0, 0, W, H);
+    // (a 1×1 viewport and the view's usual culling: all state set up, no full-screen software-GL frame)
+    try { world.update(cam, 0, 0); } catch (e) { console.warn(e); }
+    renderer.setViewport(0, 0, 1, 1);
     try { renderer.clear(); renderer.render(world.farScene, cam); renderer.render(world.scene, cam); } catch (e) { console.warn(e); }
+    renderer.setViewport(0, 0, W, H);
     fx.setSpeedLines(0, 1); fx.setStrips([]); fx.setOils([]); fx.clear();
     for (const m of trafficMeshes.meshes) { m.count = 0; m.visible = false; }
+    if (!(await cut(1))) return null;
     perf.programs0 = renderer.info.programs ? renderer.info.programs.length : 0;
-    perf.programNames0 = renderer.info.programs.map((p) => p.name + ':' + p.cacheKey.length + ':' + p.id);
+    perf.programNames0 = renderer.info.programs.map((q) => q.name + ':' + q.cacheKey.length + ':' + q.id);
+    stat.busy = Math.round(stat.busy);
+    return stat;
   }
 
   function resize() {
@@ -270,8 +465,17 @@ export function createGame(el, api) {
     root.classList.toggle('short', H < 520 && W > H);
     if (fx) fx.setSpeedLines(0, W / H);
   }
-  function onLost(e) { e.preventDefault(); glLost = true; addReason('gl'); }
-  function onRestored() { glLost = false; resize(); delReason('gl'); }
+  function onLost(e) {
+    e.preventDefault(); glLost = true; addReason('gl');
+    // iOS often never gives a dropped context back: offer a reload instead of waiting forever
+    later(() => { if (!glLost || dead) return; S.glStuck = true; if (!S.R || S.phase === 'lobby' || S.phase === 'loading') hud.card(errorCard('The phone ran short of memory and dropped the graphics.', { title: 'Graphics paused', buttons: [['glreload', 'Reload graphics', 'gtw-go'], ['loadlow', 'Reload at low quality']] }), 'solid'); }, TUNE.glStuck || 2500);
+  }
+  function onRestored() {
+    glLost = false; resize(); delReason('gl');
+    if (S.glStuck) { S.glStuck = false; if (S.phase === 'lobby') renderLobby(true); }
+    // the world's GPU-only geometry has no CPU copy left to re-upload: rebuild it (world.js `released`)
+    if (world && world.released && S.mapId) { const id = S.mapId; S.mapId = null; loadMap(id); }
+  }
   function onVis() { if (document.hidden) addReason('hidden'); else delReason('hidden'); }
 
   // ── pause reasons (mine) ──
@@ -282,7 +486,7 @@ export function createGame(el, api) {
 
   // ── lobby ──
   function toLobby() {
-    S.phase = 'lobby'; S.match = null; S.R = null; S.paused = false; S.ending = false; S.finalShown = false;
+    S.phase = 'lobby'; S.match = null; S.R = null; S.paused = false; S.ending = false; S.finalShown = false; S.pauseCard = null;
     for (const w of AB) { const p = P2[w]; p.pad.auto = null; p.auto = false; }
     hud.card(null);
     renderLobby(true);
@@ -291,16 +495,27 @@ export function createGame(el, api) {
   }
   let lobbyKey = '';
   function renderLobby(force = false) {
-    if (S.phase !== 'lobby' || S.loadingCard) return;
-    const key = JSON.stringify([S.setup, S.sheet, S.localMode, S.practiceRole, S.partnerReady, partnerHere]);
+    if (S.phase !== 'lobby' || S.loadingCard || S.glStuck) return;
+    const pl = live && P2[other(me)].remote; const partnerLoading = !!(pl && partnerHere && pl.ph === PH.lobby && pl.sv !== S.mapIdx + 1);
+    const portraitPhone = phoneish && H > W;
+    const key = JSON.stringify([S.setup, S.sheet, S.localMode, S.practiceRole, S.partnerReady, partnerHere, partnerLoading, device.aiLevel, device.steer, device.sens, device.dead, device.cam, device.seenHow, S.meReady, portraitPhone, gfxSetting(), S.loading]);
     if (!force && key === lobbyKey) return;
     lobbyKey = key;
     hud.card(lobbyCard({ name: nameOf }, {
       maps: MAPS, setup: S.setup, canEdit: isHost, local: !live, localMode: S.localMode, practiceRole: S.practiceRole,
-      splitOK: !coarse && !phoneish, waitingFor: 'a', partnerReady: S.partnerReady, me: human(),
+      splitOK: !coarse && !phoneish, waitingFor: 'a', partnerReady: S.partnerReady, me: human(), meReady: !!S.meReady,
+      levels: AI_LEVELS, levelLabels: AI_LEVEL_LABELS, aiLevel: device.aiLevel, partnerHere, partnerName: live ? api.name(other(me)) : '', partnerLoading,
+      portraitPhone, newcomer: !device.seenHow, loading: S.loading,
     }), 'clear bottom');
     drawPlans();
-    hud.showSheet(S.sheet ? settingsSheet(S.setup.rules, { canEdit: isHost, device: { touch: coarse, steer: device.steer } }) : null);
+    renderSheet();
+  }
+  /** The bottom sheet: settings or the how-to-play card (lobby and pause menu). */
+  function renderSheet() {
+    if (S.sheet === 'how') { hud.showSheet(howToCard({ touch: coarse, split: split() })); return; }
+    const inMatch = !!S.R && S.phase !== 'lobby';
+    const gs = gfxSetting();
+    hud.showSheet(S.sheet ? settingsSheet(inMatch ? null : S.setup.rules, { canEdit: isHost, live, device: { touch: coarse, steer: device.steer, sens: device.sens, dead: device.dead, gfx: gs, cam: device.cam || rules().camera, gfxNote: gs === 'auto' && gfx ? `Auto picked ${({ low: 'Low', mid: 'Medium', high: 'High' })[gfx.tier] || gfx.tier} for this ${phoneish ? 'phone' : 'device'}` : '' } }) : null);
   }
   function drawPlans() {
     hud.over.querySelectorAll('canvas[data-plan]').forEach((cv) => {
@@ -315,24 +530,37 @@ export function createGame(el, api) {
     const prevMap = S.setup.map;
     S.setup = sanitizeSetup(next, ok, S.setup.first);
     S.setupVer++;
-    if (isHost) saveSetup(S.setup);
+    // (the map is remembered only once it has loaded, so a map that crashes the phone isn't reopened)
+    if (isHost) saveSetup({ ...S.setup, map: S.lastGood && S.setup.map !== S.mapId ? S.lastGood : S.setup.map });
     if (send && isHost && live) link.send('setup', S.setup);
     if (S.setup.map !== prevMap && !(MAPS.find((m) => m.id === S.setup.map) || {}).stub) loadMap(S.setup.map).then(() => renderLobby(true));
-    if (traffic && geo) traffic = createTraffic(geo, S.mapId, S.setup.rules.traffic);
+    if (traffic && geo && (traffic.density !== S.setup.rules.traffic || traffic.mapId !== S.mapId)) traffic = createTraffic(geo, S.mapId, S.setup.rules.traffic);
     renderLobby(true);
   }
   link.on('setup', (d) => { if (!isHost && d && S.phase === 'lobby') setSetup(clone(d), false); });
   link.on('ready', (d) => { if (isHost) { S.partnerReady = !!(d && d.on); renderLobby(true); } });
 
-  function onClick(e) {
-    const t = e.target.closest('[data-l]'); if (!t) return;
+  function onClick(t) {
+    if (!t || !t.dataset) return;
     audio.unlock();
     const k = t.dataset.l;
     switch (k) {
-      case 'start': hostStart(); break;
-      case 'ready': link.send('ready', { on: (S.meReady = !S.meReady) }); t.textContent = S.meReady ? 'Ready ✓' : 'Ready'; audio.tick(); break;
-      case 'settings': S.sheet = true; renderLobby(true); audio.tick(); break;
-      case 'sheetclose': S.sheet = false; renderLobby(true); audio.tick(); break;
+      case 'start': if (device.steer === 'tilt' && tilt && !tilt.on) tilt.enable(); hostStart(); break; // (tilt permission needs a tap)
+      case 'ready': link.send('ready', { on: (S.meReady = !S.meReady) }); if (device.steer === 'tilt' && tilt && !tilt.on) tilt.enable(); renderLobby(true); audio.tick(); break;
+      case 'settings': S.sheet = 'settings'; renderLobby(true); renderSheet(); audio.tick(); break;
+      case 'howto': S.sheet = 'how'; renderLobby(true); renderSheet(); audio.tick(); break;
+      case 'howclose': if (!device.seenHow) { device.seenHow = true; lsSet(DEV_KEY, device); } S.sheet = false; renderLobby(true); renderSheet(); audio.tick(); break;
+      case 'sheetclose': S.sheet = false; renderLobby(true); renderSheet(); audio.tick(); break;
+      case 'ailevel': if (AI_LEVELS.includes(t.dataset.v)) { device.aiLevel = t.dataset.v; lsSet(DEV_KEY, device); renderLobby(true); audio.tick(); } break;
+      case 'dev': setDevice(t.dataset.k, t.dataset.v); audio.tick(); break;
+      case 'calib': if (tilt) { device.tiltZero = tilt.calibrate(); lsSet(DEV_KEY, device); H0().view(human()).hint('Tilt set: hold it like this for straight ahead.', 1800); audio.tick(); } break;
+      case 'pmenu': openMenu(); break;
+      case 'quit': if (!live) { S.menu = false; delReason('menu'); S.sheet = false; renderSheet(); toLobby(); audio.tick(); } break;
+      case 'loadcancel': cancelLoad(); audio.tick(); break;
+      case 'loadretry': { const id = S.loadFail || S.setup.map; S.loadFail = null; S.mapId = null; loadMap(id).then((ok) => { if (ok && S.phase === 'lobby') { S.loadingCard = false; renderLobby(true); } }); break; }
+      case 'loadlow': { const id = S.loadFail || S.mapId || S.setup.map; S.loadFail = null; setGfxSetting('low'); if (glLost || S.glStuck) { rebuildGraphics(true); break; } applyTier('low'); S.mapId = null; loadMap(id).then((ok) => { if (ok && S.phase === 'lobby') { S.loadingCard = false; renderLobby(true); } }); break; }
+      case 'loaddock': { const d = MAPS.find((m) => !m.stub); S.loadFail = null; if (isHost) { S.setup = sanitizeSetup({ ...S.setup, map: d.id }, MAP_IDS, S.setup.first); S.setupVer++; if (live) link.send('setup', S.setup); } loadMap(d.id).then((ok) => { if (ok && S.phase === 'lobby') { S.loadingCard = false; renderLobby(true); } }); break; }
+      case 'glreload': rebuildGraphics(false); break;
       case 'map': {
         if (!isHost) return;
         const i = MAP_IDS.indexOf(S.setup.map); const n = MAP_IDS.length;
@@ -345,12 +573,49 @@ export function createGame(el, api) {
       case 'prole': S.practiceRole = t.dataset.v; device.practiceRole = S.practiceRole; lsSet(DEV_KEY, device); renderLobby(true); audio.tick(); break;
       case 'steer':
         device.steer = t.dataset.v; lsSet(DEV_KEY, device);
-        if (device.steer === 'tilt') tilt.enable().then((r) => { if (r !== 'ok') { device.steer = 'slider'; lsSet(DEV_KEY, device); hud.view().hint(r === 'denied' ? 'Motion access was refused, so the slider stays.' : 'This device has no tilt sensor.'); } renderLobby(true); });
-        else { tilt.disable(); renderLobby(true); }
+        if (device.steer === 'tilt') tilt.enable().then((r) => { if (r !== 'ok') { device.steer = 'slider'; lsSet(DEV_KEY, device); hud.view().hint(r === 'denied' ? 'Motion access was refused, so the slider stays.' : 'This device has no tilt sensor.'); } renderLobby(true); renderSheet(); });
+        else { tilt.disable(); renderLobby(true); renderSheet(); }
         break;
-      case 'resume': delReason('menu'); if (glLost) return; delReason('tap'); break;
+      case 'resume': S.menu = false; S.sheet = false; renderSheet(); delReason('menu'); if (glLost) return; delReason('tap'); audio.tick(); break;
       default:
     }
+  }
+
+  /** A per-device setting from the sheet (steering, sensitivity, dead zone, graphics, camera). */
+  function setDevice(k, v) {
+    if (k === 'steer') { onClick({ dataset: { l: 'steer', v } }); return; }
+    if (k === 'sens' && ['low', 'normal', 'high'].includes(v)) device.sens = v;
+    else if (k === 'dead' && ['small', 'normal', 'large'].includes(v)) device.dead = v;
+    else if (k === 'cam' && (v === 'near' || v === 'far')) { device.cam = v; for (const w of AB) cams[w].mode = v; }
+    else if (k === 'gfx') {
+      setGfxSetting(v);
+      const t = v === 'auto' ? autoTier() : v;
+      if (gfx && t !== gfx.tier) {
+        applyTier(t);
+        // the map is rebuilt for the new level now in the lobby; mid-match it waits for the next map load
+        if (S.phase === 'lobby' && S.mapId) { const id = S.mapId; S.mapId = null; S.sheet = false; renderSheet(); loadMap(id).then((ok) => { if (ok && S.phase === 'lobby') { S.loadingCard = false; renderLobby(true); } }); }
+        else H0().view(human()).hint('New graphics level applies from the next map load.', 2400);
+      }
+    }
+    lsSet(DEV_KEY, device);
+    renderLobby(true); renderSheet();
+  }
+  /** Host: stop loading a big map and go back to the last one that loaded. */
+  function cancelLoad() {
+    if (!S.loading || !isHost || S.phase !== 'lobby') return;
+    loadSeq++;
+    const dock = MAPS.find((m) => !m.stub).id;
+    const back = S.lastGood && S.lastGood !== S.setup.map ? S.lastGood : dock;
+    S.setup = sanitizeSetup({ ...S.setup, map: back }, MAP_IDS, S.setup.first); S.setupVer++;
+    if (live) link.send('setup', S.setup);
+    if (world && S.mapId === back) { S.loading = false; S.loadingCard = false; renderLobby(true); return; }
+    S.loading = false;
+    loadMap(back).then((ok) => { if (ok && S.phase === 'lobby') { S.loadingCard = false; renderLobby(true); } });
+  }
+  /** The in-game menu (pause). Live: pauses both phones. */
+  function openMenu() {
+    if (!S.R || S.R.over || S.phase === 'lobby' || S.phase === 'final') return;
+    S.menu = true; addReason('menu'); audio.tick();
   }
 
   // ── match start ──
@@ -385,7 +650,7 @@ export function createGame(el, api) {
     S.sheet = false; hud.showSheet(null);
     setSplitKeys(split());
     if (S.mapId !== match.map) { S.pendingRound = R; S.phase = 'wait'; S.loadingCard = true; loadMap(match.map); return; }
-    traffic = createTraffic(geo, S.mapId, S.match.rules.traffic);
+    if (!traffic || traffic.density !== S.match.rules.traffic || traffic.mapId !== S.mapId) traffic = createTraffic(geo, S.mapId, S.match.rules.traffic);
     applyRound(R);
   }
   const detach = (o) => { if (o && o.parent) o.parent.remove(o); };
@@ -410,7 +675,7 @@ export function createGame(el, api) {
       c.nitro = role === 'runner' ? NITRO[rules0.nitro].start : NITRO.cop.start;
       p.car = c; p.esc = 0; p.stopT = 0; p.oilLeft = role === 'runner' ? 1 : 0; p.spikesLeft = role === 'cop' ? rules0.spikes : 0;
       p.stats = { top: 0, near: 0, pits: 0, spikes: 0, hits: 0 };
-      p.spikeHit.clear(); p.oilHit.clear(); p.nearIds.clear(); p.hpSeen = 100; p.lastSeen = null; p.los = true; p.shown.init = false;
+      p.spikeHit.clear(); p.oilHit.clear(); p.nearIds.clear(); p.hpSeen = 100; p.lastSeen = null; p.los = true; p.shown.init = false; p.corr = null;
       p.prevRL[0] = NaN; p.prevRR[0] = NaN;
       if (p.rig) p.rig = null;
       cams[w].init = false; cams[w].mode = cams[w].mode || rules0.camera;
@@ -420,6 +685,9 @@ export function createGame(el, api) {
       else p.pad.auto = null;
     }
     if (traffic) traffic.clearWrecks();
+    // no civilian car on the spawn points for the first seconds of the chase (traffic time 600 is
+    // the go; the same zones on both devices)
+    if (traffic && traffic.setClear) traffic.setClear([sp.runner, sp.cop].map((q) => ({ x: q.x, z: q.z, r: 30, t1: 606 })));
     world.resetProps();
     fx.clear();
     hud.card(null);
@@ -456,7 +724,7 @@ export function createGame(el, api) {
     audio.stamp(); later(() => (youWon ? audio.win() : audio.lose()), 300);
     const done = matchDecided();
     const next = done ? 'Final whistle…' : `Next round: ${nameOf(other(R.runner))} runs.`;
-    later(() => { if (S.R === R) hud.card(resultCard({ name: nameOf }, { outcome: res.outcome, reason: res.reason, runner: R.runner, stats: res.stats, scores: S.match.scores, next, local: !live, me: human() }), 'dim'); }, 1100);
+    later(() => { if (S.R === R) hud.card(resultCard({ name: nameOf }, { outcome: res.outcome, reason: res.reason, runner: R.runner, stats: res.stats, scores: S.match.scores, next, local: !live, me: human(), ran: res.ran }), 'dim'); }, 1100);
     if (isHost) later(() => { if (S.R !== R || dead) return; if (done) finalize(); else startNext(); }, TUNE.result ?? RULES.result);
   }
   function matchDecided() {
@@ -530,7 +798,13 @@ export function createGame(el, api) {
   // ── actions ──
   function onAct(w, a) {
     audio.unlock();
-    if (a === 'esc') { if (H0().mapOpen) closeMap(); return; }
+    if (a === 'esc') {
+      if (H0().mapOpen) closeMap(); else if (S.sheet) { S.sheet = false; renderSheet(); renderLobby(true); } else if (S.menu) onClick({ dataset: { l: 'resume' } });
+      else if (S.R && !S.R.over && S.phase !== 'lobby' && S.phase !== 'final') openMenu();
+      else return false; // nothing of ours open: the app's Escape closes the game
+      return true;
+    }
+    if (a === 'pause') { if (H0().mapOpen) closeMap(); if (S.menu) onClick({ dataset: { l: 'resume' } }); else openMenu(); return; }
     if (a === 'cam') { const c = cams[w]; c.mode = (c.mode || rules().camera) === 'near' ? 'far' : 'near'; device.cam = c.mode; lsSet(DEV_KEY, device); audio.tick(); return; }
     if (a === 'look') { cams[w].look = cams[w].look ? 0 : 1; later(() => { cams[w].look = 0; }, 1600); return; }
     if (a === 'map') { if (H0().mapOpen) closeMap(); else openMap(w); return; }
@@ -599,21 +873,26 @@ export function createGame(el, api) {
     if (d.kind === 'pit') { P2[w].stats.pits++; H0().view(w).stamp('PIT!', w); audio.pit(); if (!(d.push < DAMAGE.pitSlowMo)) slowMo(); }
   });
   // car vs car over the network: the runner's device sees the contact and works out one impulse
-  // for both cars; the cop's device applies its half when this arrives (deduped, 150 ms apart)
-  let lastBump = 0;
+  // for both cars; the cop's device applies its half when this arrives
   link.on('bump', (d) => {
     if (!d || !S.R || S.phase !== 'chase' || typeof d.j !== 'number') return;
-    const t = performance.now(); if (t - lastBump < 150) return; lastBump = t;
+    const t = performance.now(); // (link.urgent's copies are deduped by id)
+    if (TLOG) TLOG.bumpsIn.push({ t: clock(), v: d.v || 0 });
     const c = P2[me].car; const j = Math.min(30, Math.max(0, d.j));
     applyImpulse(c, -j, d.nx, d.nz, c.x + (d.px - (d.ox ?? c.x)), c.z + (d.pz - (d.oz ?? c.z)), 1);
-    P2[other(me)].bumpAt = t; P2[other(me)].bumpT0 = link.latestTime(); // hold the partner's extrapolation until its next sample
+    { // the runner got +j n at time d.at: my picture of it carries that until its samples do
+      const po = P2[other(me)]; po.bumpAt = t;
+      const tb = typeof d.at === 'number' ? d.at : link.now(); const rm = po.remote;
+      const dr = rm ? (((d.px - rm.x) * (j * d.nz) - (d.pz - rm.z) * (j * d.nx)) / CAR.inertia) * 0.8 : 0;
+      addCorr(po, tb, tb, j * d.nx, j * d.nz, Number.isFinite(dr) ? dr : 0, 0, 0);
+    }
     const v = d.v || 0;
     if (v > 2) { if (d.dmg > 0 && roleOf(me) === 'cop') damage(me, d.dmg, 'ram'); crashFx(d.px, c.y + 0.7, d.pz, v, me); }
   });
   // traffic knocked and props broken on the other device
   link.on('knock', (d) => { if (d && traffic && typeof d.id === 'number') traffic.setWreck(d.id, d); });
   link.on('brk', (d) => {
-    if (!d || !geo || typeof d.i !== 'number') return;
+    if (!d || !geo || !world || typeof d.i !== 'number') return;
     const o = geo.solids[d.i]; if (!o || o.broken) return;
     o.broken = true; world.breakSolid(d.i, +d.vx || 0, +d.vz || 0);
   });
@@ -629,7 +908,7 @@ export function createGame(el, api) {
   const snapA = { x: 0, z: 0, y: 0, yaw: 0, vx: 0, vz: 0, r: 0 }; const snapB = { x: 0, z: 0, y: 0, yaw: 0, vx: 0, vz: 0, r: 0 };
   const copy = (o, c) => { o.x = c.x; o.z = c.z; o.y = c.y; o.yaw = c.yaw; o.vx = c.vx; o.vz = c.vz; o.r = c.r; return o; };
   let aiAcc = 0;
-  function simStep(dt, now, tT) {
+  function simStep(dt, now, tT, kSub = 0) {
     const rules0 = rules();
     // the AI drivers think at a fixed 30 Hz of simulated time (slow motion slows them too)
     aiAcc += dt;
@@ -700,20 +979,35 @@ export function createGame(el, api) {
         // against the partner's best estimate *now*: the raw prediction advanced along its arc
         // to this substep (the drawn car is only a smoothed copy of it)
         const rs = remoteSnap; const sub = (performance.now() - po.predAt) / 1000;
-        const held = !!po.bumpAt;
-        const k = held ? 0 : Math.min(0.12, Math.max(0, sub));
+        // (this substep is kSub s before the frame time the prediction is for)
+        const k = Math.min(0.12, Math.max(-0.12, sub + kSub));
         rs.vx = po.remote.vx; rs.vz = po.remote.vz; rs.r = po.remote.r; rs.y = po.remote.y;
-        rs.yaw = po.remote.yaw + rs.r * k; rs.x = po.remote.x + rs.vx * k; rs.z = po.remote.z + rs.vz * k;
-        if (carContact(c, rs, ct) > 0) {
+        rs.yaw = po.remote.yaw + rs.r * k; { const h = rs.r * k * 0.5; const ch = Math.cos(h); const sh = Math.sin(h); rs.x = po.remote.x + (rs.vx * ch - rs.vz * sh) * k; rs.z = po.remote.z + (rs.vx * sh + rs.vz * ch) * k; } // along the arc
+        // (the cop's device leaves contacts to the runner's: it only steps in when the cars are
+        // deep inside each other, e.g. the bump message got lost; the drawn runner is pushed out)
+        const cn = carContact(c, rs, ct);
+        if (cn > 0 && roleOf(w) !== 'runner' && ct.pen <= 0.45) { po.pushX = (po.pushX || 0) - ct.nx * Math.min(ct.pen, 0.3) * 0.5; po.pushZ = (po.pushZ || 0) - ct.nz * Math.min(ct.pen, 0.3) * 0.5; }
+        if (cn > 0 && (roleOf(w) === 'runner' || (ct.pen > 0.45 && !(po.bumpAt && performance.now() - po.bumpAt < 250)))) {
+          if (TLOG) TLOG.contacts.push({ t: now + kSub * 1000, pen: Math.round(ct.pen * 100) / 100, role: roleOf(w), x: c.x, z: c.z, yaw: c.yaw, rx: rs.x, rz: rs.z, ryaw: rs.yaw });
           const pre = copy(snapA, c);
           if (roleOf(w) === 'runner') {
-            // authority: one impulse for both cars; mine now, the cop's by message
+            // authority: one impulse for both cars; mine now, the cop's on my picture of it now
+            // (until its samples show it) and on the real car by message. Every impulse goes to
+            // the cop (a scrape's small ones summed), so both cars always get
+            // equal and opposite pushes and my picture of the cop never keeps driving into me.
             const vrel = resolveCar(c, rs, ct, 1, 1, 0.5);
             p2Hit(o);
-            if (vrel > 0.3) {
-              const res = carHit(w, o, pre, rs, ct, vrel);
-              po.bumpAt = performance.now(); po.bumpT0 = link.latestTime();
-              if (res) link.urgent('bump', { j: Math.round(ct.j * 100) / 100, nx: Math.round(ct.nx * 1000) / 1000, nz: Math.round(ct.nz * 1000) / 1000, px: Math.round(ct.px * 100) / 100, pz: Math.round(ct.pz * 100) / 100, ox: Math.round(rs.x * 100) / 100, oz: Math.round(rs.z * 100) / 100, v: Math.round(vrel * 10) / 10, dmg: res.copDmg });
+            if (ct.j > 0) {
+              const tb = link.now(); const jn = -ct.j;
+              const dr = (((ct.px - rs.x) * (jn * ct.nz) - (ct.pz - rs.z) * (jn * ct.nx)) / CAR.inertia) * 0.8;
+              const corr = Math.min(ct.pen * 0.5, 0.35); // the cop's share of the separation (picture only)
+              const pb = bumpPend; pb.jx += ct.j * ct.nx; pb.jz += ct.j * ct.nz; pb.px = ct.px; pb.pz = ct.pz; pb.ox = rs.x; pb.oz = rs.z; pb.v = Math.max(pb.v, vrel); if (!pb.at) pb.at = tb;
+              let res = null;
+              if (vrel > 0.3) { res = carHit(w, o, pre, rs, ct, vrel); if (res) { pb.dmg += res.copDmg; pb.now = true; } }
+              if (res && TLOG) TLOG.bumpsOut.push({ t: now + kSub * 1000, v: vrel });
+              // the cop's samples show it from about when it arrives there (+ the wait for a plain message)
+              const wait0 = pb.now ? 0 : Math.max(0, 150 - (performance.now() - pb.sentAt));
+              addCorr(po, tb, tb + wait0 + (link.rtt || 0) / 2 + 30, jn * ct.nx, jn * ct.nz, dr, -ct.nx * corr, -ct.nz * corr);
             }
           } else {
             // the cop's device: no impulse of its own, just don't sit inside the runner
@@ -726,6 +1020,7 @@ export function createGame(el, api) {
           po.pushX = (po.pushX || 0) - ct.nx * Math.min(ct.pen, 0.3) * 0.5; po.pushZ = (po.pushZ || 0) - ct.nz * Math.min(ct.pen, 0.3) * 0.5;
         }
       }
+      if (bumpPend.at) flushBump(false);
     } else {
       const a = P2.a.car; const b = P2.b.car;
       if (carContact(a, b, ct) > 0) {
@@ -738,6 +1033,42 @@ export function createGame(el, api) {
           if (rw === 'a') carHit('a', 'b', snapA, snapB, ct, vrel, true); else carHit('b', 'a', snapB, snapA, ct2, vrel, true);
         }
       }
+    }
+  }
+  // the runner's impulses on the cop not sent yet (summed): a hit goes at once as an urgent message,
+  // the small pushes of a scrape or a shove follow as one plain message per 150 ms (message budget)
+  const bumpPend = { jx: 0, jz: 0, px: 0, pz: 0, ox: 0, oz: 0, v: 0, dmg: 0, at: 0, now: false, sentAt: 0 };
+  function flushBump(force) {
+    const pb = bumpPend; const j = Math.hypot(pb.jx, pb.jz);
+    if (!pb.at || (!pb.now && !force && performance.now() - pb.sentAt < 150)) return;
+    if (j > 0.01 || pb.dmg > 0) {
+      const nx = j > 0.01 ? pb.jx / j : 0; const nz = j > 0.01 ? pb.jz / j : 0;
+      link[pb.now ? 'urgent' : 'send']('bump', { j: Math.round(j * 100) / 100, nx: Math.round(nx * 1000) / 1000, nz: Math.round(nz * 1000) / 1000, px: Math.round(pb.px * 100) / 100, pz: Math.round(pb.pz * 100) / 100, ox: Math.round(pb.ox * 100) / 100, oz: Math.round(pb.oz * 100) / 100, v: Math.round(pb.v * 10) / 10, dmg: Math.round(pb.dmg * 10) / 10, at: Math.round(pb.at) });
+      pb.sentAt = performance.now();
+    }
+    pb.jx = 0; pb.jz = 0; pb.v = 0; pb.dmg = 0; pb.at = 0; pb.now = false;
+  }
+  /** An impulse this device applied to its picture of the partner's car (live) that the partner's
+   *  streamed samples don't show yet. tb: when it happened, tE: from when the partner's samples
+   *  include it (shared clock). It stays in the prediction until the sample the prediction is
+   *  based on is from after tE, so the picture never snaps back to driving through the contact. */
+  function addCorr(po, tb, tE, dvx, dvz, dr, ox, oz) {
+    const L = po.corr || (po.corr = []);
+    if (L.length >= 16) L.shift();
+    L.push({ tb, tE, dvx, dvz, dr, ox, oz });
+    // the current prediction gets it right away (the frame's next substeps collide against it)
+    const r = po.remote; if (!r) return;
+    const el = Math.max(0, link.now() - tb) / 1000;
+    r.vx += dvx; r.vz += dvz; r.r = (r.r || 0) + dr; r.yaw += dr * el; r.x += dvx * el + ox; r.z += dvz * el + oz;
+  }
+  function applyCorr(po, pr) {
+    const L = po.corr; if (!L || !L.length) return;
+    const now = link.now(); const base = Math.min(now - link.delay, link.latestTime());
+    for (let i = L.length - 1; i >= 0; i--) {
+      const e = L[i];
+      if (base >= e.tE + 25 || now - e.tb > 1500) { L.splice(i, 1); continue; }
+      const el = Math.max(0, now - e.tb) / 1000;
+      pr.vx += e.dvx; pr.vz += e.dvz; pr.r += e.dr; pr.yaw += e.dr * el; pr.x += e.dvx * el + e.ox; pr.z += e.dvz * el + e.oz;
     }
   }
   function p2Hit(o) { P2[me].aiHit = true; void o; }
@@ -834,7 +1165,8 @@ export function createGame(el, api) {
       tPose.x = pose.x; tPose.z = pose.z; tPose.y = pose.y; tPose.yaw = pose.yaw; tPose.vx = pose.vx; tPose.vz = pose.vz; tPose.r = 0; tPose.hl = pose.hl; tPose.hw = pose.hw;
       if (carContact(c, tPose, ct) <= 0) return;
       const v = resolveCar(c, tPose, ct, 1, 0.8, 1);
-      if (v > 2) {
+      P2[w].aiHit = true; // an AI driver pressed against a car backs off quickly (its watchdog)
+      if (v > TRAFFIC.knockMin) {
         const k = traffic.knock(id, pose, -ct.nx * ct.j * 0.85, -ct.nz * ct.j * 0.85, ((id & 7) - 3.5) * 0.04 * v);
         if (live) link.urgent('knock', { id, x: Math.round(k.x * 100) / 100, z: Math.round(k.z * 100) / 100, yaw: Math.round(k.yaw * 1000) / 1000, vx: Math.round(k.vx * 100) / 100, vz: Math.round(k.vz * 100) / 100, r: Math.round(k.r * 100) / 100 });
         if (v > 9) damage(w, (v - 9) * 0.8 * rules().damage, 'traffic');
@@ -865,7 +1197,7 @@ export function createGame(el, api) {
     }
     // civilians wait behind the players' cars and wrecks and pull over for the siren
     const obs = trafficObs; obs.length = 0;
-    for (const w of AB) { const c = posOf(w); obs.push({ x: c.x, z: c.z, yaw: c.yaw, siren: roleOf(w) === 'cop' && S.phase === 'chase' }); }
+    for (const w of AB) { const c = posOf(w); obs.push({ x: c.x, z: c.z, yaw: c.yaw, siren: roleOf(w) === 'cop' && S.phase === 'chase', speed: Math.hypot(c.vx || 0, c.vz || 0) }); }
     traffic.yieldTo(dt, tT, obs);
   }
   const trafficObs = [];
@@ -912,8 +1244,9 @@ export function createGame(el, api) {
     if (!live) return;
     const o = other(me); const p = P2[o];
     if (!link.predict(pred)) { p.predOk = false; return; }
-    // right after a bump the partner's old velocity is wrong: hold position until a new sample
-    if (p.bumpAt) { if (performance.now() - p.bumpAt < 300 && link.latestTime() <= p.bumpT0) { pred.x = p.remote.x; pred.z = p.remote.z; } else p.bumpAt = 0; }
+    // right after a bump the partner's streamed samples are from before it: carry the impulse in
+    // the prediction until they show it
+    applyCorr(p, pred);
     for (const k in pred) p.remote[k] = pred[k];
     p.predOk = true; p.predAt = performance.now();
     const sh = p.shown;
@@ -926,7 +1259,7 @@ export function createGame(el, api) {
       sh.x = pred.x + sh.ox; sh.z = pred.z + sh.oz; sh.y += (pred.y - sh.y) * Math.min(1, dt * 14); sh.yaw = pred.yaw + sh.oyaw;
     }
     // pushed out of my car on contact (decays)
-    if (p.pushX || p.pushZ) { sh.x += p.pushX; sh.z += p.pushZ; const k = Math.exp(-dt * 8); p.pushX *= k; p.pushZ *= k; if (Math.abs(p.pushX) + Math.abs(p.pushZ) < 0.01) { p.pushX = 0; p.pushZ = 0; } }
+    if (p.pushX || p.pushZ) { const pl = Math.hypot(p.pushX, p.pushZ); if (pl > 0.6) { p.pushX *= 0.6 / pl; p.pushZ *= 0.6 / pl; } sh.x += p.pushX; sh.z += p.pushZ; const k = Math.exp(-dt * 8); p.pushX *= k; p.pushZ *= k; if (Math.abs(p.pushX) + Math.abs(p.pushZ) < 0.01) { p.pushX = 0; p.pushZ = 0; } }
     sh.px = pred.x; sh.pz = pred.z; sh.pyaw = pred.yaw;
     sh.vx = pred.vx; sh.vz = pred.vz; sh.r = pred.r;
     // mirror what we need for visuals
@@ -1120,7 +1453,7 @@ export function createGame(el, api) {
     const tv = trafficMeshes;
     const vs = viewers();
     const c0 = cams[vs[0]].cam.position;
-    tv.begin(c0);
+    tv.begin(c0, vs.map((w) => cams[w].cam));
     // the nearest cars to any viewer first, so every car that can be hit is drawn
     if (traffic.total && S.mapEntry) {
       selV.length = 0; for (const w of vs) { const cp = cams[w].cam.position; const cc = P2[w].car; selV.push({ x: (cp.x + cc.x) / 2, z: (cp.z + cc.z) / 2 }); }
@@ -1246,11 +1579,19 @@ export function createGame(el, api) {
     // pause card
     if (S.paused && S.R && !S.R.over) {
       const sec = S.resumeAt ? Math.max(0, Math.ceil((S.resumeAt - now) / 1000)) : 0;
-      const t = S.resumeAt ? `Back in ${sec}…` : glLost ? 'Graphics paused' : live && (!partnerHere || link.silence > 2000) ? `Waiting for ${api.name(other(me))}` : 'Paused';
-      const sub = S.resumeAt ? 'Get ready' : live && !partnerHere ? 'The chase carries on when they’re back.' : (S.reasons & PZ.hidden) ? '' : live && P2[other(me)].remote.pz ? `${api.name(other(me))} stepped away for a moment.` : '';
-      hud.card(pauseCard(t, sub, glLost ? ['resume', 'Tap to resume'] : null), 'dim');
-      S.pauseCard = true;
-    } else if (S.pauseCard) { S.pauseCard = false; hud.card(null); }
+      const t = S.resumeAt ? `Back in ${sec}…` : glLost || S.glStuck ? 'Graphics paused' : S.menu ? 'Paused' : live && (!partnerHere || link.silence > 2000) ? `Waiting for ${api.name(other(me))}` : 'Paused';
+      const sub = S.resumeAt ? 'Get ready' : S.glStuck ? 'The phone ran short of memory and dropped the graphics.' : glLost ? 'One moment…' : S.menu ? (live ? `The chase is paused for ${api.name(other(me))} too.` : '') : live && !partnerHere ? 'The chase carries on when they’re back.' : (S.reasons & PZ.hidden) ? '' : live && P2[other(me)].remote.pz ? `${api.name(other(me))} paused the chase.` : '';
+      let btns = null;
+      if (S.glStuck) btns = [['glreload', 'Reload graphics'], ['loadlow', 'Reload at low quality']];
+      else if (S.menu && !S.resumeAt) { btns = [['resume', 'Resume'], ['settings', 'Settings'], ['howto', 'How to play']]; if (!live) btns.push(['quit', 'Quit to the lobby']); }
+      const pc = pauseCard(t, sub, btns);
+      hud.card(pc, 'dim');
+      S.pauseCard = pc;
+    } else if (S.pauseCard) {
+      // Only take down the card we put up: Quit/Restart may already have replaced it with the lobby.
+      if (hud._card === S.pauseCard) hud.card(null);
+      S.pauseCard = null;
+    }
   }
   const proj = { x: 0, y: 0, z: 0 };
   function tagFor(w, v) {
@@ -1276,7 +1617,9 @@ export function createGame(el, api) {
   function frame(ts) {
     if (dead) return;
     raf = requestAnimationFrame(frame);
-    const dtReal = lastTs ? Math.min(0.1, (ts - lastTs) / 1000) : 0.016; lastTs = ts;
+    // (up to 125 ms a frame the simulation keeps up with the shared clock: a phone at 8+ fps still
+    // runs in real time, so the partner's prediction of its car stays true; longer gaps are dropped)
+    const dtReal = lastTs ? Math.min(0.125, (ts - lastTs) / 1000) : 0.016; lastTs = ts;
     if (!ready3D || !world) return;
     if (S.loading && S.loadingCard) return; // a map is building behind the loading card: leave it the main thread
     const w0 = performance.now();
@@ -1291,14 +1634,17 @@ export function createGame(el, api) {
     let tsK = 1;
     if (S.slowT > 0) { S.slowT -= dtReal; tsK = RULES.slowMoScale; }
     const chase = S.phase === 'chase' && !S.paused && S.R && !S.R.over;
+    // run the traffic simulation up to the round start a few ms per frame (no hitch at the go)
+    if (!chase && traffic && traffic.warm) traffic.warm(600.5, 4);
     if (chase) {
       acc += dtReal * tsK;
       let n = 0;
       // traffic time of each step: the steps cover the frame up to now (slow motion slows traffic too)
       const tT = (now - S.R.t0) / 1000 + 600;
       const nSteps = Math.min(MAX_STEPS, Math.floor(acc / DT));
-      while (acc >= DT && n < MAX_STEPS) { simStep(DT, now, tT - (nSteps - 1 - n) * DT * tsK); acc -= DT; n++; }
+      while (acc >= DT && n < MAX_STEPS) { simStep(DT, now, tT - (nSteps - 1 - n) * DT * tsK, -(nSteps - 1 - n) * DT * tsK); acc -= DT; n++; }
       if (n >= MAX_STEPS) acc = 0;
+      if (TLOG && live) { const c = P2[me].car; const pr = P2[other(me)]; TLOG.traj.push({ t: now, x: c.x, z: c.z, yaw: c.yaw, px: pr.remote.x, pz: pr.remote.z, nc: pr.corr ? pr.corr.length : 0 }); if (TLOG.traj.length > 2400) TLOG.traj.splice(0, 600); }
       trafficStep(dtReal * tsK, tT);
       traffic.stepWrecks(dtReal, viewers().map((v) => P2[v].car));
       updateLos(dtReal);
@@ -1326,7 +1672,14 @@ export function createGame(el, api) {
     if (S.R && (S.phase === 'chase' || S.phase === 'count' || S.phase === 'result')) {
       meA.rpm = mc.rpm; meA.gas = P2[human()].inp.gas; meA.slip = mc.slip; meA.speed = mc.speed; meA.flat = mc.flat; meA.boost = mc.boost; meA.offroad = mc.surf === 'grass' || mc.surf === 'dirt' || mc.surf === 'sand';
       themA.rpm = oc.rpm; themA.dist = Math.hypot(oc.x - mc.x, oc.z - mc.z);
-      const cop = P2[copW()].car; sirenA.on = S.phase === 'chase' && !S.paused; sirenA.dist = roleOf(human()) === 'cop' ? 30 : Math.hypot(cop.x - mc.x, cop.z - mc.z);
+      { // Doppler (closing speed along the line between us) and stereo pan (bearing vs my camera)
+        const dx = oc.x - mc.x; const dz = oc.z - mc.z; const d = Math.hypot(dx, dz) || 1;
+        themA.vrel = -((oc.vx - mc.vx) * dx + (oc.vz - mc.vz) * dz) / d;
+        const cy = cams[human()].yaw || mc.yaw; themA.pan = (dx * Math.cos(cy) + dz * Math.sin(cy)) / d;
+      }
+      const cop = P2[copW()].car; const iAmCop = roleOf(human()) === 'cop';
+      sirenA.on = S.phase === 'chase' && !S.paused; sirenA.dist = iAmCop ? 30 : themA.dist;
+      sirenA.vrel = iAmCop ? 0 : themA.vrel; sirenA.pan = iAmCop ? 0 : themA.pan; void cop;
       audio.engine(S.paused ? null : meA, S.paused ? null : themA, sirenA, dtReal);
       if (mc.boost && !S.wasBoost) audio.nitro();
       S.wasBoost = mc.boost;
@@ -1365,13 +1718,15 @@ export function createGame(el, api) {
     lastWall = w0;
   }
   void lastWall;
-  const meA = { rpm: 0, gas: 0, slip: 0, speed: 0, flat: 0, boost: false, offroad: false }; const themA = { rpm: 0, dist: 999 }; const sirenA = { on: false, dist: 999 };
+  const meA = { rpm: 0, gas: 0, slip: 0, speed: 0, flat: 0, boost: false, offroad: false }; const themA = { rpm: 0, dist: 999, vrel: 0, pan: 0 }; const sirenA = { on: false, dist: 999, vrel: 0, pan: 0 };
   const animCars = [{ x: 0, z: 0 }, { x: 0, z: 0 }];
   function dynRes(dt) {
     if (TUNE.maxDpr) return;
     perf.ewma = perf.ewma * 0.94 + dt * 1000 * 0.06;
     perf.checkT += dt;
     if (perf.checkT < 0.25) return; perf.checkT = 0;
+    // still slow at the resolution floor: drop the car shadow map (the biggest optional GPU cost)
+    if (perf.ewma > 21 && scale <= minScale && world && world.shadow && world.shadow.enabled) { perf.slowFloor = (perf.slowFloor || 0) + 0.25; if (perf.slowFloor > 3) { world.shadow.enabled = false; perf.shadowOff = true; } } else perf.slowFloor = 0;
     if (perf.ewma > 18.4 && scale > minScale) { scale = Math.max(minScale, scale - (perf.ewma > 26 ? 0.15 : 0.08)); perf.scaleDowns++; perf.lowFor = 0; resize(); }
     else if (perf.ewma < 15.4) { perf.lowFor += 0.25; if (perf.lowFor > 4 && scale < 1) { scale = Math.min(1, scale + 0.05); perf.scaleUps++; perf.lowFor = 0; resize(); } }
     else perf.lowFor = 0;
@@ -1406,6 +1761,8 @@ export function createGame(el, api) {
   // ── test hook ──
   if (typeof window !== 'undefined' && window.__gtwTest) {
     window.__getaway = {
+      clock() { return clock(); },
+      contactLog(clear) { const o = JSON.parse(JSON.stringify(TLOG)); if (clear) { TLOG.contacts.length = 0; TLOG.traj.length = 0; TLOG.bumpsIn.length = 0; TLOG.bumpsOut.length = 0; } return o; },
       get ready() { return ready3D && !S.loading; },
       state() {
         const R = S.R;
@@ -1436,6 +1793,7 @@ export function createGame(el, api) {
       hold(w, inp) { const p = P2[w || human()]; p.driver = null; p.pad.auto = inp ? { steer: 0, gas: 0, brake: 0, hand: false, nitro: false, ...inp } : null; },
       teleport(w, x, z, yaw, v = 0) { const c = P2[w].car; placeCar(c, x, z, yaw, geo); c.vx = Math.sin(yaw) * v; c.vz = -Math.cos(yaw) * v; c.speed = v; },
       setCar(w, o) { Object.assign(P2[w].car, o); },
+      aiState(w) { const d = P2[w].driver; if (!d) return null; const D = d.state; return { level: d.level, mode: D.mode, vWant: D.vWant, vT: D.vT, vCurve: D.vCurve, tFree: D.tFree, tLeadV: D.tLeadV, creep: D.creep, revT: D.revT, turnT: D.turnT, kT: D.kT, stuckLvl: D.stuckLvl, jamT: D.jamT, pinT: D.pinT, offRoute: D.offRoute, routeLeft: D.routeLeft, alpha: D.alpha, fails: D.fails, stats: { ...D.stats }, inp: { ...d.out } }; },
       placeSpike(w, x, z) { return placeSpike(w, x, z); },
       endNow(outcome, reason) { endRound(outcome, reason); },
       shortenRound(ms) { if (isHost && S.R) { S.R.endAt = clock() + ms; if (live) link.urgent('endat', { idx: S.R.idx, endAt: S.R.endAt }); } },
@@ -1454,7 +1812,10 @@ export function createGame(el, api) {
       view(w) { const c = cams[w || human()]; return { x: c.cam.position.x, y: c.cam.position.y, z: c.cam.position.z, fov: c.cam.fov, mode: c.mode }; },
       setCam(w, x, y, z, tx, ty, tz) { const c = cams[w || human()].cam; c.position.set(x, y, z); c.lookAt(tx, ty, tz); },
       pauseReason(r, on) { if (on) addReason(r); else delReason(r); },
-      loseContext() { const ext = renderer.getContext().getExtension('WEBGL_lose_context'); if (ext) { ext.loseContext(); setTimeout(() => ext.restoreContext(), 400); return true; } return false; },
+      loseContext(noRestore) { const ext = renderer.getContext().getExtension('WEBGL_lose_context'); if (ext) { ext.loseContext(); if (!noRestore) setTimeout(() => ext.restoreContext(), 400); return true; } return false; },
+      /** The next n map loads throw (error-card tests). */
+      failLoad(n = 1) { S.failLoads = n; },
+      ui() { return { sheet: S.sheet, menu: !!S.menu, loadFail: S.loadFail, glStuck: !!S.glStuck, loading: S.loading, tier: gfx && gfx.tier, card: hud.over.hidden ? null : (hud.over.querySelector('h2') || {}).textContent || hud.over.className, device: { ...device } }; },
       worldStats() { return world ? { ...world.stats, chunks: world.chunks.length, visible: world.chunks.filter((c) => c.group.visible).length, broken: world.brokenCount() } : null; },
       inputStats: () => ({ ...inputStats }),
       internals: { P2, S, get geo() { return geo; }, get world() { return world; }, get renderer() { return renderer; }, link },

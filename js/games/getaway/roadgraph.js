@@ -13,8 +13,17 @@
 export const ROAD_SPEED = { highway: 33, arterial: 22, ramp: 20, street: 15, alley: 9, dirt: 11 };
 const BLOCK_KINDS = { building: 1, wall: 1, rock: 1, barrier: 1 };
 
-/** Build the graph. geo: from createGeo. Returns the graph object (see the end). */
-export function buildRoadGraph(geo) {
+/** Build the graph in one go. geo: from createGeo. Returns the graph object (see the end). */
+export function buildRoadGraph(geo) { const res = {}; const it = graphBuild(geo, res); while (!it.next().done); return res.g; }
+/** The same in slices: step(ms) works for about ms milliseconds and returns the graph when done
+ *  (else null), so a loader can keep frames flowing on a phone. */
+export function roadGraphBuilder(geo) {
+  const res = {}; const it = graphBuild(geo, res); let done = false;
+  const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  return { step(ms = 8) { const t0 = now(); while (!done && now() - t0 < ms) done = !!it.next().done; return done ? res.g : null; } };
+}
+function* graphBuild(geo, res) {
+  let wk = 0;
   const roads = geo.roads;
   const NR = roads.length;
   const splits = roads.map((r) => (r.closed ? [] : [0, r.len]));
@@ -55,6 +64,7 @@ export function buildRoadGraph(geo) {
   const seenPair = new Set();
   const keys = Array.from(cells.keys()).sort((a, b) => a - b); // deterministic order
   for (const k of keys) {
+    if (++wk % 48 === 0) yield;
     const l = cells.get(k);
     for (let p = 0; p < l.length; p += 2) {
       const A = roads[l[p]]; const i = l[p + 1];
@@ -134,6 +144,7 @@ export function buildRoadGraph(geo) {
     return false;
   };
   for (const r of roads) {
+    yield;
     const l = roadNodes[r.idx]; if (!l || !l.length) continue;
     const sp = ROAD_SPEED[r.kind] || 14;
     const slow = r.kind === 'alley' || r.kind === 'dirt' ? 1.3 : 1;
@@ -195,6 +206,7 @@ export function buildRoadGraph(geo) {
   const divided = new Uint8Array(NR);
   for (const r of roads) {
     if (r.kind !== 'highway' && r.kind !== 'arterial') continue;
+    yield;
     let n = 0; let hit = 0;
     for (let s = 10; s < r.len - 10; s += 25) {
       geo.sampleRoad(r, s, tmp); n++;
@@ -260,7 +272,7 @@ export function buildRoadGraph(geo) {
     out.length = 0;
     if (loc.road < 0) return out;
     const r = roads[loc.road]; const v = spd(loc.road);
-    const uturn = (divided[loc.road] ? 22 : r.kind === 'highway' ? 14 : 5) * Math.min(1, 0.25 + speed / 20);
+    const uturn = (divided[loc.road] ? 22 : r.kind === 'highway' ? 14 : 5) * Math.min(1, 0.6 + speed / 25); // (a three-point turn isn't free either)
     const toB = (loc.sb - loc.s) / v; const toA = (loc.s - loc.sa) / v;
     const offK = 1 + Math.max(0, loc.d - r.hw) / 20; // off the road: a little extra
     if (r.oneway) { out.push(loc.b, toB * offK); out.push(loc.a, toA * offK + 30); return out; }
@@ -284,7 +296,7 @@ export function buildRoadGraph(geo) {
     return { start: u, spans: out };
   }
   /** Nodes reachable going forward from node n arriving by edge e, excluding the reverse. */
-  return {
+  res.g = {
     roads, nodes: { n: NN, road: nodeRoad, s: nodeS, x: nodeX, z: nodeZ, degree, junction: jOf }, roadNodes, edges: E, adjStart, adj,
     junctions: J, divided, speedOf: spd,
     dijkstra, locate, sourcesFor, costTo, spansTo,
@@ -303,6 +315,15 @@ export function routePolyline(geo, spans, laneK = 0.5, step = 4, maxLen = 1e9, o
   let total = 0; let px = NaN; let pz = NaN;
   const push = (x, z, r) => {
     if (xs.length) { const d = Math.hypot(x - px, z - pz); if (d < 0.6) return; total += d; }
+    // no out-and-back spikes (a junction node a few metres past the turn): drop the points that
+    // the route would only drive to turn round and come back
+    let m = xs.length;
+    while (m >= 2) {
+      const ax = xs[m - 1] - xs[m - 2]; const az = zs[m - 1] - zs[m - 2]; const bx = x - xs[m - 1]; const bz = z - zs[m - 1];
+      const la = Math.hypot(ax, az); const lb = Math.hypot(bx, bz);
+      if (la > 0 && lb > 0 && (ax * bx + az * bz) / (la * lb) < -0.5 && la < 30) { total -= la; xs.pop(); zs.pop(); rs.pop(); m--; } else break;
+    }
+    if (m) total += Math.hypot(x - xs[m - 1], z - zs[m - 1]) - Math.hypot(x - px, z - pz);
     xs.push(x); zs.push(z); rs.push(r); px = x; pz = z;
   };
   for (const sp of spans) {

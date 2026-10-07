@@ -9,7 +9,7 @@
 // Solids: { x, z, w, d, rot, h } — rot is THREE's rotation.y (mesh.rotation.y = rot draws the
 // same box). Local→world: x' = x cos + z sin, z' = −x sin + z cos.
 
-import { buildRoadGraph, routePolyline } from './roadgraph.js';
+import { buildRoadGraph, roadGraphBuilder, routePolyline } from './roadgraph.js';
 
 export function mulberry(seed) {
   let a = seed >>> 0;
@@ -310,11 +310,20 @@ export function createGeo(map) {
   }
 
   // ── road graph (AI routing, traffic junctions) ──
-  let graph = null;
-  /** The road graph, built on first use (≈10–60 ms on the big maps). */
-  function roadGraph() { if (!graph) graph = buildRoadGraph(api); return graph; }
-  /** Build the graph (kept as a 'nav build' step so the loader can schedule it); progress 0..1. */
-  function buildNav() { roadGraph(); return 1; }
+  let graph = null; let builder = null;
+  /** The road graph, built on first use (≈30–200 ms on the big maps: loaders should slice it
+   *  with buildNav first). */
+  function roadGraph() { if (!graph) { graph = buildRoadGraph(api); builder = null; } return graph; }
+  /** Build the graph in slices: works for about `ms` (default: all at once) and returns 1 when
+   *  the graph is ready, else 0.5. */
+  function buildNav(ms) {
+    if (graph) return 1;
+    if (!(ms > 0)) { roadGraph(); return 1; }
+    if (!builder) builder = roadGraphBuilder(api);
+    const g = builder.step(ms);
+    if (g) { graph = g; builder = null; return 1; }
+    return 0.5;
+  }
   const fpLoc = {}; const fpLoc2 = {}; const fpRes = {}; const fpSrc = [];
   /** A route from (x0, z0) to (x1, z1) along the roads as a flat [x, z, x, z…] polyline (or null). */
   function findPath(x0, z0, x1, z1) {

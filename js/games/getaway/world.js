@@ -68,7 +68,7 @@ class Decals {
   }
 }
 
-export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onProgress = () => {}, budget = 12, dead = () => false } = {}) {
+export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onProgress = () => {}, budget = 12, dead = () => false, release = true } = {}) {
   const t0 = performance.now();
   const tier = gfxTier(); const cfg = TIERS[tier] || TIERS.mid;
   // stage times count only our own busy time (not the frames the browser runs between slices)
@@ -89,7 +89,9 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
   const nightK = dark ? 0.78 : 0;
   const fogC = mix(cssRGB(sky.fog || sky.horizon || '#f3e9d2'), [0.07, 0.07, 0.14], nightK);
   const scene = new THREE.Scene();
-  const fogNear = sky.fogNear || 120; const fogFar = sky.fogFar || 520;
+  // low tier: a shorter view (fog pulled in proportionally) so far fewer chunks are drawn
+  const fogK = cfg.fogFar ? Math.min(1, cfg.fogFar / (sky.fogFar || 520)) : 1;
+  const fogNear = (sky.fogNear || 120) * fogK; const fogFar = (sky.fogFar || 520) * fogK;
   scene.fog = new THREE.Fog(new THREE.Color().fromArray(fogC), fogNear, fogFar);
   scene.background = null;
   const farScene = new THREE.Scene();
@@ -495,6 +497,22 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
   mark('dispose');
   for (const rec of propRec.values()) rec.mesh = rec.c.mesh;
   lights.setLamps(lampList);
+  // Memory: once the merged chunk geometry is on the GPU, drop the JS copies of everything the CPU
+  // never touches again (normals, colours, fx codes, lane coords, indices) — roughly halves the
+  // resident geometry memory on phones. Positions stay (knocked-over props edit them). After a
+  // WebGL context loss the world must be rebuilt (`released` tells the game).
+  let released = false;
+  if (release) {
+    const free = function freeArray() { this.array = null; };
+    const keep = new Set(['position', 'a']);
+    scene.traverse((o) => {
+      if (!o.isMesh || o.isInstancedMesh || !o.name || !o.name.startsWith('merged')) return;
+      const g = o.geometry;
+      for (const k of Object.keys(g.attributes)) if (!keep.has(k)) g.attributes[k].onUpload(free);
+      if (g.index) g.index.onUpload(free);
+      released = true;
+    });
+  }
 
   // ── falling props: tip over with a little physics (gravity torque, a bounce, a slide) ──
   const falling = [];
@@ -582,7 +600,9 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
   onProgress(1, 'Ready');
   return {
     scene, farScene, sky: skyMesh, mats, kit, chunks: chunkList, toon, breakSolid, update, preRender, fogC, skyTop, sunDir: lightDir, lights, shadow, tier,
-    fogNear, fogFar,
+    fogNear, fogFar, cfg,
+    /** true when GPU-only geometry dropped its CPU copies: rebuild the world after a context loss */
+    get released() { return released; },
     stats: { buildMs: Math.round(busy + performance.now() - sliceT), wallMs: Math.round(performance.now() - t0), maxBlockMs: Math.round(maxBlock), maxBlockAt, chunks: chunkList.length, tris: Math.round(totalTris), stages: T, tier, lamps: lampList.length },
     warmList() { const l = []; scene.traverse((o) => { if (o.isMesh) l.push(o); }); return l; },
     /** Compile everything the light dressing and the shadow pass use (call before renderer.compile). */

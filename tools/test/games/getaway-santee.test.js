@@ -105,8 +105,8 @@ async function staticSection() {
   ok(bw.pts[bw.pts.length - 1][1] < bw.pts[0][1] && Math.hypot(bw.pts[0][0] - tp.pts[2][0], bw.pts[0][1] - tp.pts[2][1]) < 2, 'Boulder Way runs north (left) from Toyon Pl');
 
   // solids
-  const SOLID = ['building', 'wall', 'rock', 'tree', 'pole', 'barrier', 'bollard', 'shrub', 'sign', 'mailbox', 'hydrant', 'lamp', 'signal', 'cactus'];
-  const STYLES = ['cottonwood', 'pine', 'aspen', 'palm', 'jacaranda', 'lamp', 'signal', 'bollard', 'hydrant', 'pole', 'sign', 'mailbox', 'cactus', 'shrub'];
+  const SOLID = ['building', 'wall', 'rock', 'tree', 'pole', 'barrier', 'bollard', 'shrub', 'sign', 'mailbox', 'hydrant', 'lamp', 'signal', 'cactus', 'car'];
+  const STYLES = ['cottonwood', 'tree', 'pine', 'aspen', 'palm', 'jacaranda', 'lamp', 'signal', 'bollard', 'hydrant', 'pole', 'sign', 'mailbox', 'cactus', 'shrub'];
   const badS = M.solids.filter((s) => !SOLID.includes(s.kind) || ![s.x, s.z, s.w, s.d, s.rot, s.h].every(Number.isFinite) || (!s.drawn && !STYLES.includes(s.style)) || (s.drawn && BREAKABLE[s.kind]));
   ok(!badS.length, `${M.solids.length} solids valid (kinds, numbers, styles; breakables engine-drawn)`);
   const bykind = {}; for (const s of M.solids) bykind[s.kind + (s.drawn ? '' : '/' + s.style)] = (bykind[s.kind + (s.drawn ? '' : '/' + s.style)] || 0) + 1;
@@ -126,6 +126,76 @@ async function staticSection() {
   const propsOn = M.solids.filter((s) => { if (s.drawn) return false; geo.nearestRoad(s.x, s.z, nq, 30, (r) => !r.bridge); return nq.road >= 0 && nq.d < geo.roads[nq.road].hw - 0.3; });
   ok(propsOn.length === 0, `engine-drawn props clear of the roads${propsOn.length ? ': ' + propsOn.slice(0, 6).map((s) => `${s.style}@${s.x},${s.z}`).join('; ') : ''}`);
   ok(onRoad.length === 0, `drawn solids clear of the roads${onRoad.length ? ': ' + onRoad.slice(0, 8).join('; ') : ''}`);
+  // v2 collisions audit: no solid inside any road's asphalt + 0.3 m (dense sampling of the whole
+  // footprint, not just corners), and no traffic lane runs through a solid. Overhead solids (base
+  // above 2 m) and bridge decks are excluded; nothing on Santee is allow-listed.
+  {
+    const HARD = { building: 1, wall: 1, rock: 1, barrier: 1, car: 1 };
+    const intr = [];
+    for (const s of M.solids) {
+      if (!HARD[s.kind] || (s.y || 0) > 2) continue;
+      const c = Math.cos(s.rot || 0), sn = Math.sin(s.rot || 0);
+      const nx = Math.max(1, Math.ceil(s.w / 1.5)), nz = Math.max(1, Math.ceil(s.d / 1.5));
+      let hit = null;
+      for (let i = 0; i <= nx && !hit; i++) for (let j = 0; j <= nz && !hit; j++) {
+        const lx = -s.w / 2 + (s.w * i) / nx, lz = -s.d / 2 + (s.d * j) / nz;
+        const x = s.x + c * lx + sn * lz, z = s.z - sn * lx + c * lz;
+        geo.nearestRoad(x, z, nq, 40, (r) => !r.bridge);
+        if (nq.road >= 0 && nq.d < geo.roads[nq.road].hw + 0.3) hit = geo.roads[nq.road].name;
+      }
+      if (hit) intr.push(`${s.kind}@${s.x.toFixed(0)},${s.z.toFixed(0)} (${s.w.toFixed(0)}x${s.d.toFixed(0)}) on ${hit}`);
+    }
+    ok(intr.length === 0, `no solid inside a road's asphalt + 0.3 m${intr.length ? ` (${intr.length}): ` + intr.slice(0, 8).join('; ') : ''}`);
+    // traffic lanes vs solids (a coarse grid of the hard solids, then exact box tests)
+    const G = new Map(); const GC = 20; const gk = (i, j) => i * 100003 + j;
+    for (const s of M.solids) {
+      if (!HARD[s.kind] || (s.y || 0) > 2) continue;
+      const r0 = Math.hypot(s.w, s.d) / 2;
+      for (let i = Math.floor((s.x - r0) / GC); i <= Math.floor((s.x + r0) / GC); i++) for (let j = Math.floor((s.z - r0) / GC); j <= Math.floor((s.z + r0) / GC); j++) { const k = gk(i, j); if (!G.has(k)) G.set(k, []); G.get(k).push(s); }
+    }
+    const inBox = (s, x, z, pad) => { const c = Math.cos(s.rot || 0), sn = Math.sin(s.rot || 0); const dx = x - s.x, dz = z - s.z; return Math.abs(dx * c - dz * sn) < s.w / 2 + pad && Math.abs(dx * sn + dz * c) < s.d / 2 + pad; };
+    const laneHits = []; const out = {};
+    for (const r of geo.roads) {
+      if (!r.traffic || r.bridge) continue;
+      const lw = r.hw / r.lanes;
+      for (let sd = 2; sd < r.len - 2; sd += 3) {
+        geo.sampleRoad(r, sd, out);
+        for (const dir of r.oneway ? [1] : [1, -1]) for (let k = 0; k < r.lanes; k++) {
+          const off = dir * (k + 0.5) * lw; const x = out.x - out.tz * off, z = out.z + out.tx * off;
+          const l = G.get(gk(Math.floor(x / GC), Math.floor(z / GC))); if (!l) continue;
+          for (const s of l) if (inBox(s, x, z, 0.9)) { laneHits.push(`${r.name}@${x.toFixed(0)},${z.toFixed(0)} through ${s.kind}`); break; }
+        }
+      }
+    }
+    ok(laneHits.length === 0, `no traffic lane runs through a solid${laneHits.length ? ` (${laneHits.length}): ` + laneHits.slice(0, 8).join('; ') : ''}`);
+  }
+  // the AI's road graph (engine v2, feature-detected): one component, and the Weston loop routes
+  // out through its stem to Mast Blvd (the practice cop used to cut across lawns here)
+  try {
+    const { buildRoadGraph } = await imp('js/games/getaway/roadgraph.js');
+    const tg = Date.now(); const RG = buildRoadGraph(geo); const gms = Date.now() - tg;
+    const dist = RG.newDist(), prev = RG.newPrev(), src = [], loc = {}, loc2 = {}, res = {};
+    const mg = RG.locate(0, 0, Math.PI / 2, {});
+    RG.dijkstra(RG.sourcesFor(mg, 0, src), dist, prev);
+    let unreach = 0; for (let n = 0; n < RG.nodes.n; n++) if (!Number.isFinite(dist[n])) unreach++;
+    ok(unreach === 0, `road graph (${RG.nodes.n} nodes, ${gms} ms): every node reachable from Mission Gorge Rd${unreach ? ` (${unreach} not)` : ''}`);
+    const mast = RG.locate(-1300, -398, 0, loc2, 30);
+    const far = [[-1430, -624], [-1462, -548], [-1388, -638], [-1340, -626], [-1420, -462], [-1236, -620], [-1500, -604]];
+    const slow = [];
+    for (const [x, z] of far) {
+      for (const yaw of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+        RG.locate(x, z, yaw, loc, 30);
+        RG.dijkstra(RG.sourcesFor(loc, 8, src), dist, prev);
+        const c = RG.costTo(mast, dist, res).cost;
+        // straight-line distance at 15 m/s, x 2.6 for the winding loop + a possible U-turn
+        const lim = (Math.hypot(x + 1300, z + 398) / 15) * 2.6 + 6;
+        if (!(c < lim)) slow.push(`${x},${z}@${yaw.toFixed(1)}: ${c.toFixed(1)} s > ${lim.toFixed(1)}`);
+      }
+    }
+    ok(!slow.length, `Weston streets route out to Mast Blvd via the Weston Rd stem${slow.length ? ': ' + slow.slice(0, 4).join('; ') : ''}`);
+    const wl = RG.roads.find((r) => r.name === 'Weston Rd' && r.closed);
+    ok(wl && RG.roadNodes[wl.idx].length >= 5, `the Weston Rd loop is a closed road with ${wl ? RG.roadNodes[wl.idx].length : 0} junction nodes (stem, Toyon Pl, Yucca St x2, the courts)`);
+  } catch (e) { warn(false, 'road graph check skipped: ' + e.message); }
   // water clear of non-bridge roads
   let wet = 0;
   for (const r of geo.roads) { if (r.bridge) continue; for (let i = 0; i < r.n; i += 2) if (geo.surfaceAt(r.x[i], r.z[i]) === 'water') wet++; }
@@ -391,7 +461,11 @@ async function gameSection() {
         moved = Math.hypot(s[me].x - p.x, s[me].z - p.z); surf = s[me].surf; water = s[me].water;
         if (s.R && s.R.idx === idx0 && s.phase === 'chase') break;
       }
-      ok(moved > 40 && !water && offRoad <= 1, `${name}: follows the road ${moved.toFixed(0)} m from (${p.x.toFixed(0)}, ${p.z.toFixed(0)}), on ${surf} (${offRoad}/7 samples off the asphalt)`);
+      // the game clamps a frame to 100 ms of sim time, so on a slow software-GL page the sim runs
+      // slower than the wall clock: scale the distance we expect by the measured frame time
+      const pf = await a.evaluate(() => window.__getaway.perf());
+      const need = 40 * Math.min(1, 100 / Math.max(100, pf.p50 || 0));
+      ok(moved > need && !water && offRoad <= 1, `${name}: follows the road ${moved.toFixed(0)} m (≥ ${need.toFixed(0)}; frame p50 ${Math.round(pf.p50)} ms) from (${p.x.toFixed(0)}, ${p.z.toFixed(0)}), on ${surf} (${offRoad}/7 samples off the asphalt)`);
       await shot('route-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
     }
     // the riverbed: sand, slow, dry

@@ -138,6 +138,17 @@ falls back by kind (tree → a round tree, anything else → a pole). Lamps and 
 arm along the solid's local −x, so set `rot` to point it over the street. Other kinds without
 `drawn` are drawn as plain toon blocks (building with windows, wall, rock, barrier).
 
+**Collision shapes (engine v2).** An engine-drawn breakable collides as a circle the size of its
+drawn trunk or post (`TRUNK_R` in geo.js: cottonwood 0.4 m, tree / jacaranda 0.32, pine 0.3, palm
+0.28, aspen 0.23, lamp 0.2, pole 0.23…), whatever its `w` / `d` (a `drawn: true` breakable keeps
+its box, so give it a tight one). `shrub` is soft (driven over and flattened); `mailbox hydrant
+bollard sign cactus` give way at 3 m/s, the rest at 9 m/s. Everything else collides as its box,
+so a solid's box must match what's drawn, and **no solid should sit on a road's asphalt** (hw +
+0.3) unless it's meant to be hit there (median barriers): the AI's road graph treats a lane that
+runs into a building, wall, rock or barrier as blocked in that direction, and traffic still drives
+it. A road's `sidewalk` drives like a lot (concrete), not grass. `oneway: true` also makes the AI
+route one way (the wrong way costs × 4).
+
 ### More kit
 
 | Field | What it is |
@@ -214,6 +225,11 @@ them on walls standing near the ground they sit on. Colours still come from vert
   sun, so `sky.fog` can be a little bluer/cleaner than before.
 - Night (dark mode) is a lighting rig: keep darkening your colours, but let lit windows, lamps
   (`kit.lamp`) and glows do the work; per-pixel siren light no longer washes whole roads.
+
+**Memory.** Once a chunk's merged geometry is on the GPU the engine drops its CPU copies of
+normals, colours, fx codes and indices (positions stay, for knocked-over props). Don't read those
+attributes from merged meshes after the build (meshes marked `userData.noMerge` are untouched).
+After a WebGL context loss the game rebuilds the map behind the loading card.
 
 **Budgets with v2.** The engine's extras cost: per visible chunk +1 call (decals) and +1 per
 parked-car silhouette; cars/traffic/lights/fx ~15–20 calls in a chase; the shadow pass ~6–10

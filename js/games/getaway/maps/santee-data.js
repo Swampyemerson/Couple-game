@@ -89,7 +89,10 @@ export const COLLECTORS = [
 // ── Weston (map m): hand-placed from the real driving directions ────────────────────────────────
 export const WESTON = {
   roads: [
-    ['Weston Rd', 'street', 12, [[-1300, -395], [-1300, -432], [-1297, -472], [-1290, -515], [-1291, -560], [-1306, -598], [-1340, -626], [-1388, -638], [-1430, -624], [-1455, -590], [-1462, -548], [-1452, -500], [-1420, -462], [-1372, -440], [-1330, -433], [-1300, -432]]],
+    // Weston Rd: a short stem off Mast Blvd into one closed loop (a lasso). The loop is its own closed
+    // road so the junction where the stem meets it is a real junction for the AI's road graph.
+    ['Weston Rd', 'street', 12, [[-1300, -395], [-1301, -428]]],
+    ['Weston Rd', 'street', 12, [[-1304, -436], [-1298, -452], [-1297, -472], [-1290, -515], [-1291, -560], [-1306, -598], [-1340, -626], [-1388, -638], [-1430, -624], [-1455, -590], [-1462, -548], [-1452, -500], [-1420, -462], [-1372, -440], [-1340, -433], [-1318, -433]], true],
     ['Toyon Pl', 'street', 10, [[-1297, -472], [-1262, -474], [-1235, -475], [-1205, -473], [-1178, -470]]],
     ['Boulder Way', 'street', 10, [[-1235, -475], [-1236, -505], [-1235, -540], [-1229, -575], [-1216, -608], [-1198, -634], [-1182, -650]]],
     ['Yucca St', 'street', 10, [[-1291, -560], [-1340, -555], [-1390, -552], [-1440, -556], [-1462, -548]]],
@@ -111,7 +114,9 @@ export const CENTERS = [
   { x: 196, z: -72, w: 268, d: 104, face: 'S', shops: ['MARKET', 'HARDWARE', 'CINEMA', 'TACO SHOP'], trolley: true },
   { x: 450, z: -70, w: 200, d: 100, face: 'S', shops: ['MARKET'], big: true },
   // Mission Gorge Rd, south side
-  { x: -690, z: 70, w: 280, d: 100, face: 'N', shops: ['MINI STORAGE'], storage: true },
+  // the storage yard sits east of Fanita Dr (it used to straddle it); a small strip west of it
+  { x: -592, z: 70, w: 178, d: 100, face: 'N', shops: ['MINI STORAGE'], storage: true },
+  { x: -770, z: 72, w: 108, d: 96, face: 'N', shops: ['AUTO PARTS', 'DONUT', 'LAUNDRY'] },
   { x: -268, z: 72, w: 440, d: 104, face: 'N', shops: ['HARDWARE', 'TACO SHOP', 'PET SUPPLY', 'BANK', 'GAS'] },
   { x: 180, z: 70, w: 300, d: 100, face: 'N', shops: ['DONUT', 'LAUNDRY', 'NAILS', 'TACO SHOP', 'GAS'] },
   { x: 462, z: 70, w: 176, d: 100, face: 'N', shops: ['MARKET', 'PIZZA'] },

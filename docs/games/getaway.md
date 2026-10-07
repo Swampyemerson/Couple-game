@@ -85,14 +85,57 @@ a 1.4 g carve with no slide, a handbrake turn at 95 km/h rotates 90° in 1.2 s.
 | sand | 0.60 | 0.50 | 3.2 | yes |
 | water | — | — | — | a runner is busted (SPLASH); the cop just wades |
 
-**Collisions.** The car is three circles (r 1 m) along its length. They collide with every
-solid's oriented box (from a 16 m grid), the map bounds and bridge rails. The deepest contact
-pushes the car out and applies an impulse at the contact point (restitution 0.18, 12% tangential
-scrape), so cars slide along walls and spin on corner hits. At 120 Hz a car moves at most 0.5 m
-per step, so it never tunnels through a wall (tested up to 216 km/h). Breakables (poles, trees,
-lamps…) above 9 m/s are knocked over (−14% speed, 2 damage). Car vs car: the same circles. Each
-device resolves the impulse on its own car against the other car as predicted (equal masses,
-restitution 0.25).
+**Collisions (v2).** The car is an **oriented box the size of its body** (4.6 × 1.96 m, `CAR.hl`
+/ `CAR.hw`; traffic boxes follow each car's drawn length). It is tested with SAT against every
+solid's oriented box (16 m grid), the map bounds and bridge rails, every 120 Hz step, so at most
+0.5 m of travel per step and no tunnelling (tested to 216 km/h). The deepest contact pushes the car
+out and applies an impulse at the contact point (restitution 0.18, none under 2 m/s) with
+**Coulomb friction** (μ 0.3 × the normal impulse), so a car leaning on a wall slides along it at
+speed instead of sticking; while sliding it remembers the wall's normal for 0.15 s so the seam
+between two wall boxes can't catch it. Engine-drawn breakables collide as a circle the size of
+their **drawn trunk** (`geo.TRUNK_R`: tree 0.32 m, aspen 0.23, palm 0.28, lamp 0.2…), not their
+map box. Shrubs are soft (driven over, flattened). Mailboxes, hydrants, bollards, signs and cacti
+give way above 3 m/s; trees, poles and lamps above 9 m/s (below that they are a soft wall: 40%
+damage). Damage starts at a 6 m/s closing speed; effects are tiered: under 2 m/s nothing, 2–6 m/s a
+scrape (sparks, scrape sound), above that a crash scaled by speed, with a 400 ms per-pair cooldown
+while two cars stay in contact.
+
+**Car vs car.** Practice and split screen: both cars are local, separated and given the same
+impulse (`resolvePair`). Live: the **runner's device is the authority** for car–car contacts. Each
+substep it tests its car against the partner's raw prediction advanced to that substep (along the
+yaw-rate arc; the drawn car is only a smoothed copy), applies its half of the two-body impulse and
+sends `bump {j, nx, nz, px, pz, v, dmg}` (urgent). The cop's device applies the other half when it
+arrives (the urgent copies are deduped by id); on its own it only pushes the drawn runner out of its car (and steps in
+physically only if the two are more than 0.45 m inside each other, e.g. a lost message), so both
+phones see one hit and neither reacts to a car that isn't really there. **Every** impulse the
+runner's device resolves goes to the cop (a hit at once as an urgent message; the small pushes of
+a scrape or a shove summed into one plain message per 150 ms), so both cars always get equal and
+opposite pushes. Each device also keeps the impulses it gave its *picture* of the partner (the
+runner: the cop's half, plus the cop's share of the separation; the cop: the runner's half, from
+`bump.at`) in that picture's prediction until the partner's streamed samples show them, i.e. until
+the sample the prediction is based on is from after the partner applied the bump (shared clock:
+bump time + half the round trip, + the wait for a plain message). Before this the picture dropped
+the bump at the next sample, which at 120 ms was still from before it, so the runner's phone kept
+scraping a cop that had already bounced away (10–20 % of contact steps at 120 ms, now ~0–3 %). The
+frame loop also lets the simulation keep up with the shared clock down to 8 fps (125 ms a frame,
+15 steps): a device that ran slower than the clock made its partner's prediction of it run ahead. The
+drawn partner car is the prediction plus an error offset that decays to zero (no steady lag), plus
+a short push-out when the bodies touch.
+
+**PIT tiers** (`judgePit`, on the runner's device): contact on the rear 40% (`lz < −0.5`), the cop
+moving the same way at ≥ 12 m/s, headings within 57°, the runner at ≥ 7 m/s. The contact normal's
+angle from the car's axis blends a ram (< 20°) into a side push (> 40°) — no knife edge — and the
+side push decides: ≥ 3.2 m/s a **PIT** (spin 1.15 s, throttle cut, damage 0.55–1.25 × 24 scaled
+by the push; slow motion only for pushes ≥ 6 m/s), 1.8–3.2 m/s a **nudge** (a small twitch, a
+quarter of the damage, no stamp), less: a ram (damage above 4 m/s closing).
+
+**Body motion for the renderer** (car.js; all smoothed by spring-dampers, ≈1.6 Hz, ζ 0.45):
+`c.pitch` (rad, > 0 nose down: braking dive), `c.roll` (rad, > 0 leaning out of a right turn),
+`c.heave` (m, < 0 compressed: kerbs, landings), `c.susp[4]` (wheel compression FL FR RL RR, m),
+`c.drift` (0..1, smoke and tyre audio), `c.slip` (m/s sideways), `c.grip` (surface grip, smoothed).
+Kerbs (road ↔ verge at speed) bounce the suspension and push a `kerb` event; hits jolt it; rough
+ground shakes it. Surfaces ease in over ~0.15 s (no wall-like step at the kerb), and a road's
+`sidewalk` drives like concrete (`lot`), not grass.
 
 **Camera.** A chase camera behind and above (near: 7.4 m back, 2.9 m up; far: 12.5 m, 5.6 m; ×1.3
 in portrait), easing towards the direction of travel while sliding so drifts read. It is pulled
@@ -104,15 +147,34 @@ when reduced motion is on). Speed lines over 86 km/h.
 ## Traffic (js/games/getaway/traffic.js)
 
 Civilian cars drive every road's lanes (highway 2 per direction, wide arterials 2, else 1, on the
-right). A car's position is a **pure function of the shared round clock**: lane, phase and speed
-come from a PRNG seeded by the map id, and every car on a lane shares its speed, so they never
-hit each other. On open roads a car enters at one end and leaves at the other (it grows and
-shrinks over the last 6 m). Density: off / light (1 per ~150 m of lane) / normal (1 per ~78 m).
-Hitting one is local: it leaves the schedule as a sliding wreck (and rejoins once nobody has
-been within 160 m for 12 s). Near misses (passing within ~1.2 m at a closing speed of 12 m/s or
-more) count for stats and top up the runner's nitro. Drawn as two instanced meshes (tinted paint +
-untinted trim) of up to 64 cars nearest the camera. Tested: the same hash and the same cars at the
-same moment on both phones.
+right; `oneway` roads one way). Lanes, phases and speeds come from a PRNG seeded by the map id.
+From `EPOCH` (570 s of round time; rounds run from 600) each lane is a small **fixed-step
+simulation** (0.25 s, intelligent-driver car following) with **signalled junctions**: where two
+through roads cross (from the road graph), a deterministic cycle (green 5 + 1.5 × road rank s,
+amber 2.5 s, all-red 2 s, offset from the junction id) holds one road's cars at the stop line, and a
+car doesn't enter the box while the car ahead is stuck just past it. Only + − × ÷ and sqrt, so the
+state at step k is bit-identical on both phones; it advances with the shared clock and rewinds
+from snapshots when the clock goes back (a new round). It is warmed up a few ms per frame in the
+lobby and the countdown (`traffic.warm`), never in one block. Overlapping traffic pairs at any
+moment: 0.01 (Dockside), 0.6 (Boulder), 0.02 (Santee), down from 2 / 12.6 / 7.4.
+
+On open roads a car appears (grows over 6 m) just past the junction box at a road's start and
+disappears before the box at its end, so nothing pops in or out inside a junction; growing or
+shrinking cars (sc < 0.95) don't collide. Density: off / light (1 per ~150 m of lane) / normal
+(1 per ~78 m). Civilians brake for the players' cars and wrecks in their lane (per device, near
+the players only), pull over for the siren and stop when it is right behind, and squeeze past
+something that won't move.
+
+**Hits.** Traffic contacts are resolved in every 120 Hz step at that step's traffic time. A car
+only leaves its lane as a wreck at a closing speed over 3.5 m/s (`TRAFFIC.knockMin`; below that
+it's a nudge), and the knock goes to the partner (`knock {id, x, z, yaw, vx, vz, r}`) so both
+phones see the same wreck. Wrecks slide to a stop against buildings and walls, rejoin their lane
+after 12 s once nobody is within 160 m, and a stopped wreck nobody is next to fades out (it would
+otherwise block a junction); a rejoining car grows back in. Broken props are sent too
+(`brk {i}`). Traffic damage starts at 9 m/s.
+
+**Drawing.** The `TRAFFIC.max` (112) cars **nearest any viewer** are drawn (`traffic.select`), so
+every car close enough to hit has a body (tested: every car within 60 m at 40 spots per map).
 
 ## Netcode (js/games/getaway/link.js over net.js)
 
@@ -134,7 +196,10 @@ sequence. On top of that:
 | my car (physics, walls, breakables, traffic hits) | its own device | stream |
 | setup (map, rules, who runs first) | host | reliable `setup` (lobby, live) |
 | match start, round start, spawn | host | `match {match, R}`, `round {R, scores, hist}`: R = `{idx, runner, spawn, at, t0, endAt}` on the shared clock |
-| PIT, ram, damage on the runner | the runner's device (victim) | `hit {kind}` to the cop (stamp + slow motion) |
+| PIT, ram, damage on the runner | the runner's device (victim) | `hit {kind, push}` to the cop (stamp; slow motion for hard PITs) |
+| car–car contact impulse | the runner's device | `bump {j, nx, nz, px, pz, ox, oz, v, dmg, at}`: the cop applies its half (+ its ram damage); a hit urgent, a scrape's pushes summed per 150 ms |
+| traffic knocked out of its lane | the device whose car hit it | `knock {id, x, z, yaw, vx, vz, r}` |
+| a prop knocked over | the device whose car hit it | `brk {i, vx, vz}` |
 | damage on the cop | the cop's device | — |
 | spike placement | the cop's device (validated there) | `spike {id, x, z, yaw, len, at}` |
 | spike hit | the runner's device | `spikehit {id}` |
@@ -168,10 +233,43 @@ time, so pauses never cost the runner seconds. A new round always starts unpause
 | Map | tap the minimap | M | M · , |
 | Camera / look back | CAM / ↶ | C / B | C · \ / Q · . |
 
-Touch: multi-touch pointer tracking, `touch-action: none`, non-passive `touchstart`/`touchmove`
-`preventDefault()`, and touches that start within 20 px of the left edge are ignored (iOS back
-gesture). No vibration: feedback is stamps, flashes, vignettes, camera shake and sound. A key
-legend shows on laptops during the chase.
+Touch: multi-touch pointer tracking, `touch-action: none`. `touchstart`/`touchmove` are cancelled
+**only on the driving surface and the pedal/tap buttons**: on iOS a cancelled `touchstart` also
+cancels the click, which once made every lobby button dead on the iPhone. Menus never rely on
+`click`: `bindTap` (hud.js) acts on a touch `pointerup` that stayed on the same control (and then
+swallows the browser's synthetic click for 700 ms, so a menu that re-renders under the finger isn't
+pressed twice) and on `click` for a mouse. Sheets and cards scroll (`touch-action: pan-y`,
+`overscroll-behavior: contain`). Touches that start within 20 px of the left edge are ignored (iOS
+back gesture). Steering feel (per phone, Settings): sensitivity Gentle / Normal / Quick (96 / 72 /
+54 px or 32 / 24 / 17° of tilt for full lock), centre dead zone Small / Normal / Large (3 / 6 /
+12%); dragging past full lock carries the slider's centre along, so steering back responds at
+once. Tilt asks for motion permission from a tap (Start / Ready) and has **Set straight**
+calibration. No vibration: feedback is stamps, flashes, vignettes, camera shake and sound. A key
+legend shows on laptops during the chase. **Pause**: the ‖ button by the clock or Esc (live: it
+pauses both phones) opens Resume · Settings (this device) · How to play · Quit to the lobby
+(practice / split only). Esc that Getaway handles never reaches the app's close-the-game Escape.
+
+## Getting in, loading and failures (phones first)
+
+- The game sheet's one-device button reads **Practice vs AI** (`def.localLabel`; laptops: "…or
+  split screen"). The lobby: Practice vs AI (you start as Runner / Cop, AI driver Easy / Normal /
+  Hard from `ai.js` `AI_LEVELS`) or Split screen (laptops); live: who runs first, the partner's
+  status ("is here", "loading the map", or how to join) and the guest's **I'm ready**. A
+  first-timer's "New here? How to play" opens the how-to sheet (runner, cop, controls).
+  Portrait phones get a one-line tip to turn sideways; nothing forces it.
+- Map loading shows a progress bar with the stage and a tip. The host can **Cancel** a big map
+  (back to the last map that loaded). The old world is disposed **before** the new one is built,
+  so a phone never holds two maps. A watchdog flags a load with no progress for 20 s ("taking
+  longer than usual") and fails it at 75 s; any error or timeout ends on an error card with **Try
+  again**, **Try lower quality** and **Play Dockside instead** — never a silent hang.
+- The chosen map is saved only after it loads, and `getaway.loading.v1` marks a build in progress:
+  if the next open finds it (iOS killed the tab mid-build) it opens on Dockside, and on a phone
+  with Graphics on Auto drops to Low, with a note.
+- Graphics (per device, Settings): Auto (low for software GL, mid for phones, high for laptops) ·
+  Low · Medium · High (`render.js` tiers). Changing it in the lobby rebuilds the map at once.
+- WebGL context loss pauses the chase; if the phone hasn't given the context back after 2.5 s, a
+  card offers **Reload graphics** (a fresh renderer, the map rebuilt, the chase resumes) or
+  **Reload at low quality**.
 
 ## HUD
 
@@ -203,8 +301,9 @@ always sees the cop.
 | Camera | **near** · far |
 | Runner sees spikes | **within 120 m** · always |
 
-Plus "who runs first" (or, for practice: you start as runner / cop) and, per device, steering
-(slider / tilt). Settings are validated (`rules.js`, snapped to their option lists) on both
+Plus "who runs first" (or, for practice: you start as runner / cop, and the AI driver level) and,
+per device: steering (slider / tilt), sensitivity, dead zone, tilt calibration, graphics level and
+camera. Settings are validated (`rules.js`, snapped to their option lists) on both
 devices, travel in `setup` and in the match start, and are saved for the next time this device
 hosts.
 
@@ -220,11 +319,15 @@ the backdrop renders first in its own pass with its own far plane, fog-free. Eff
 (a 1,400-quad ring buffer), tyre smoke, dust off road, sparks on impacts and rims, damage smoke and
 fire, nitro flames, knocked-over props falling in the direction of the hit, speed lines.
 
-All audio is synthesised (WebAudio, the app's shared context and mute switch): my engine (two
-oscillators through a low-pass, pitch by fake RPM, louder with throttle), the other car's engine by
-distance, the siren (wail, yelp within 40 m), tyre squeal (band-passed noise by slip), the flapping
-of a flat tyre, an off-road rumble, crashes by impact speed, a scrape, a prop knock, the spike pop,
-nitro, oil, near-miss, countdown beeps, stamps and win/lose stings.
+All audio is synthesised (WebAudio, the app's shared context and mute switch), no music: my engine
+(three oscillators through a low-pass, pitch by fake RPM, a dip at each gear change, louder with
+throttle), the other car's engine by distance, **Doppler-shifted and panned** by its bearing from my
+camera, the siren (wail, yelp within 40 m, Doppler, pan, muffled with distance), tyre squeal
+(band-passed noise by slip), wind and road roar rising with speed, a quiet city ambience, the
+flapping of a flat tyre, an off-road rumble, crashes by impact speed with variety (a metal clang
+above 10 m/s, glass on big hits), a scrape, a prop knock, the spike pop, nitro, oil, near-miss,
+countdown beeps, stamps and win/lose stings. One-shots are rate-limited (scrape 110 ms, crash 70 ms)
+so a long grind can't pile up voices.
 
 ## Performance
 
@@ -251,7 +354,7 @@ JS cost are what count):
 | Map | world build, busy time (longest block) | triangles in the map | in view, phone 844×390 (laptop 1280×800) |
 |---|---|---|---|
 | Dockside | 122 ms (23 ms) | 107k | ≤ 26 draw calls, ≤ 114k triangles (25, 113k) |
-| Boulder | 529 ms (50 ms) + prepare ~400 ms | 590k | ≤ 50 draw calls, ≤ 188k triangles (47, 180k) |
+| Boulder (v2 map, engine v2) | 720–1020 ms (≤ 70 ms) + prepare ~500 ms | 878k (map's own 281k) | ≤ 58 draw calls, ≤ 215k triangles |
 | Santee | 485 ms (18 ms) + prepare ~370 ms | 568k | ≤ 41 draw calls, ≤ 194k triangles (38, 186k) |
 
 These are maxima over every spawn plus sampled road points, in four directions each (near and far
@@ -261,16 +364,61 @@ Stage timings are recorded in `world.stats.stages` (roads, ground, props, build,
 While a map builds, the game stops rendering behind the solid loading card, so the main thread is
 the build's.
 
-## Practice vs AI (js/games/getaway/ai.js)
+## Practice vs AI (js/games/getaway/ai.js, roadgraph.js)
 
-The AI plans on a nav grid (8 m cells: road 1, lot 1.4, dirt 3, grass 4, sand 7, blocked by
-solids and water), using A* with no corner cutting, re-planned about once a second. It follows the
-path with pure pursuit (look-ahead 7 m + 0.55 s), slows for the sharpest turn ahead, handbrakes
-hairpins, reverses out when stuck for 1.1 s, and uses nitro on straights. The cop goes direct with
-line of sight within 60 m, leads the target, and inside 16 m aims at the runner's rear quarter
-(PITs). It drops a spike strip about every 14–24 s, 90–130 m ahead of the runner. The runner picks
-far road goals away from the cop and re-plans when it gets close. On a laptop, one device can also
-play split screen with two keyboard halves.
+**Road graph** (roadgraph.js, built in slices while the map loads: `geo.buildNav(ms)`): nodes at
+junctions (road-end snaps within hw + 4 m and same-level crossings; bridge decks join only at
+their ends) and road ends; edges along each road per direction (one-way roads forward only, the
+wrong way × 4) and junction links. A direction whose right-hand lane runs into a non-breakable
+solid (median barriers, a building on the road) is blocked; roads with barriers along the centre
+are `divided` (U-turns cost more). Dijkstra over typed arrays, ≈0.2–1.5 ms. The same graph gives
+traffic its junctions.
+
+**Driving.** Routes are followed as a polyline offset into the right-hand lane (out-and-back
+spikes at junctions removed, corners rounded) with pure-pursuit steering (look-ahead 5 + 0.42 v m,
+shortened before sharp turns) and a curvature speed profile (lateral 12.5 × grip, braking 10.5
+m/s²). Re-planning is at most twice a second; a failed plan backs off and never falls back to a
+straight line across lawns. Every 0.1 s it reads the traffic ahead: follows, overtakes in the
+oncoming lane when it's clear long enough (the cop more readily: traffic pulls over for it), uses
+a verge when crawling in a queue, and creeps round a car that has stopped nose to nose with it. A
+**watchdog** (less than 4 m of progress while wanting to move: in 2.4 s, or 2.9 s with traffic just
+ahead; a runner gives up sooner, 1.8 / 2.4 s; or pinned against a wall or a car, traffic included)
+escalates: reverse with the opposite lock, reverse plus a three-point turn, penalise the road it's
+stuck on for 20 s and re-plan, and (practice, 70 m+ from the player) hop back onto the lane behind.
+It thinks at a fixed 30 Hz inside the physics step (slow motion slows it too). Slow and turning
+(pulling out of a junction), it reads the traffic in the direction it is turning to, not along its
+nose (a car waiting at the line straight ahead used to hold it up for good). With no route yet it
+keeps driving along the road it is on, in its lane, instead of parking on the nearest road point.
+**Spawn clearing**: at a round start no civilian car is on (or drives into) a 30 m zone round
+either spawn point until 6 s after the go; then the zone shrinks to nothing over 3 s and the cars
+grow back in as its edge passes (`traffic.setClear`, a pure function of the round, so both phones
+agree; the shared lane schedule is untouched).
+
+**Cop**: pursues along the roads when close; further away it intercepts on the runner's predicted
+route (the straightest continuation at each junction) where it can arrive first. Within ~38 m with
+a clear, drivable line it runs a PIT routine: approach → align alongside the rear quarter → tap →
+peel off (cooldown by level); a runner stopped within 16 m is **boxed** (it pulls up and waits, no
+shoving). Spike strips go on the predicted route 3–5 s ahead. Without line of sight it works from
+the last sighting with a radar ping every 6 / 4 / 2 s.
+**Runner**: Dijkstra from itself and from the cop; picks escape junctions 6–28 s away it reaches
+well before the cop, preferring ones out of the cop's sight and avoiding dead ends, bridges and
+strips; drops oil with the cop on its bumper; nitro on long clear straights.
+
+**Levels** (`createDriver(geo, role, { seed, level })`, `level` ∈ `AI_LEVELS` = `easy | normal |
+hard`, labels in `AI_LEVEL_LABELS`; game.js reads the device setting `device.aiLevel`, default
+normal):
+
+| | top speed | reaction | PIT | radar ping | traffic margin |
+|---|---|---|---|---|---|
+| Easy | 88% | 250 ms | sits on your tail, no PITs | 6 s | wide |
+| Normal | 95% | 150 ms | yes, 1.5 s cooldown | 4 s | normal |
+| Hard | 100% | 80 ms | aggressive, 0.8 s cooldown | 2 s | tight |
+
+Mild catch-up: the cop is 5% faster after 6 s more than 250 m behind and 6% slower after 8 s
+within 25 m without a PIT; the AI runner eases off 8% when it's more than 300 m ahead.
+
+Tested on all three maps (unit): the cop reaches a parked player 100–1200 m away through normal
+traffic (≤ 15% off road), and started nose-in against a building it backs out and gets there.
 
 ## Tests (`node tools/test/games/getaway.test.js`, ports 8930–8939)
 
@@ -287,15 +435,30 @@ final, one recorded result, rematch, message budget) · `lossy` (150 ms, 25% los
 compiles in play, GL context loss and restore, clean close) · `mapswitch` (switch maps repeatedly
 and render) · `perf` (every playable map on phone and laptop: draw calls, triangles, build blocks;
 a busy chase) · `shots` (390×844, 844×390, 1280×800, light and dark: lobby, settings, intro, chase,
-pursuit, map, result). Screenshots go to `$SHOTS`.
+pursuit, map, result) · `touch` (an iPhone driven only by real `page.tap()`s: the Practice vs AI
+label, opening on Dockside after a crash marker, role / AI level / how-to / settings rows, a forced
+load failure → error card → Play Dockside instead, Cancel on a big map load, Start, the ‖ pause
+menu with Settings and Resume, the map's Done, a context loss that never comes back → Reload
+graphics, Quit to the lobby; port PORT + 7). The `practice` and `live` sections also tap Start,
+Settings, the rule steppers, Done and the guest's Ready. Screenshots go to `$SHOTS`.
+
+Engine v2 sections: `unit` also covers the box collider, trunk-sized props, shrubs and mailboxes,
+sliding along a wall of seamed boxes, PIT tiers, braking dive, the road graph (sliced = one go,
+one network), traffic not overlapping at junctions, every nearby traffic car drawn, wrecks stopping
+at walls, and the AI reaching the player / getting unstuck on every map · `contacts` (two phones at
+80 ms / 10% loss shove side by side: every contact step is checked against where the partner car
+really was on the shared clock — no phantom contacts — and every bump reaches the cop's phone; port
+PORT + 9) · `chasecontacts` (also run by `contacts`: both cars driven by the AI on Dockside with
+traffic on at 120 ms / 10% loss, the cop started 12 m behind the runner seven times; under 10 % of
+the runner phone's contact steps may be phantom; DBG=1 prints how far each phone's picture of the
+partner is from the real car, with and without a bump correction).
 
 ## Known limits
 
 - Physics is 2D plus height: no jumps or rollovers, and ramps are just roads. A bridge over a road
   needs about 50 m of length to reach full clearance with 12% ramps.
-- Traffic passes through crossing traffic at intersections (lanes never collide with each other,
-  and there are no traffic lights), and a knocked car is only knocked on the device that hit it.
-- Collisions between the two players use each device's prediction of the other, so at high
-  latency a hard hit can look slightly different on the two screens. Damage and PITs are always
-  judged by the runner's device.
+- Civilians yield to the players and wrecks locally (each phone moves its own nearby cars a
+  little); the shared schedule and every knock are the same on both phones.
+- Car–car hits are resolved on the runner's phone against its prediction of the cop; at high
+  latency the cop's phone sees the shove up to one trip later.
 - No pedestrians.

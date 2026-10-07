@@ -25,7 +25,7 @@ export function* layoutSteps() {
   const open = [];
   const solids = [];
   const water = [];
-  const deco = { houses: [], shops: [], bigs: [], signs: [], bulbs: [], stripes: [], walls: [], rocks: [], scrub: [], reeds: [], fields: [], trolley: null, home: null, cats: [], lights: [], rail: [], misc: [] };
+  const deco = { houses: [], shops: [], bigs: [], signs: [], bulbs: [], stripes: [], walls: [], rocks: [], scrub: [], reeds: [], fields: [], trolley: null, home: null, cats: [], lights: [], rail: [], misc: [], wires: [], medians: [], channel: [], docks: [], paths: [], cobbles: [], arundo: [], xeri: [] };
 
   // ── road registry ──────────────────────────────────────────────────────────────────────────────
   const byName = new Map();
@@ -126,7 +126,7 @@ export function* layoutSteps() {
     if (sB && byName.has(sB)) pts[pts.length - 1] = nearestOn(sB, pts[pts.length - 1][0], pts[pts.length - 1][1]).p;
     addRoad({ name, kind: 'street', width, pts, res: true });
   }
-  for (const [name, kind, width, pts] of WESTON.roads) addRoad({ name, kind, width, pts: pts.map((p) => p.slice()), res: true, weston: true });
+  for (const [name, kind, width, pts, closed] of WESTON.roads) addRoad({ name, kind, width, pts: pts.map((p) => p.slice()), res: true, weston: true, closed: !!closed });
   addRoad({ name: 'Santee Lakes Loop', kind: 'street', width: 8, pts: LAKES_LOOP.map((p) => p.slice()), park: true });
   // Fanita Ranch Rd ends: snap onto the roads it meets
   // Gillespie Field access off Cuyamaca (south of SR-52) and the trolley-square aisles
@@ -434,10 +434,12 @@ export function* layoutSteps() {
     return true;
   }
   // engine-drawn props never stand inside a (smoothed) road ribbon
-  const prop = (kind, style, x, z, h, color, sz = 0.8) => (roadGap(x, z, 30, (r) => r.bridge) < 0.4 ? null : addSolid({ kind, style, x: Math.round(x * 10) / 10, z: Math.round(z * 10) / 10, w: sz, d: sz, rot: 0, h, color }));
+  const prop = (kind, style, x, z, h, color, sz = 0.8, rot = 0) => (roadGap(x, z, 30, (r) => r.bridge) < 0.4 ? null : addSolid({ kind, style, x: Math.round(x * 10) / 10, z: Math.round(z * 10) / 10, w: sz, d: sz, rot: Math.round(rot * 1000) / 1000, h, color }));
   const TREES = [
     ['palm', '#5f8a3a', 14, 0.7], ['palm', '#6a9440', 17, 0.7], ['jacaranda', '#9a7fd6', 7.5, 0.9], ['jacaranda', '#a58ae0', 6.5, 0.9],
     ['cottonwood', '#7a9a4a', 9, 1.0], ['pine', '#4f7a4a', 11, 1.0], ['shrub', '#7f9654', 2.2, 1.4],
+    // California pepper tree (weeping, yellow-green), a dark shade tree (ash / ficus), eucalyptus
+    ['tree', '#7d9440', 8, 0.9], ['tree', '#4f7a3a', 9, 0.9], ['tree', '#8a9c80', 17, 1.0],
   ];
   const pickTree = (bias) => {
     const r = rnd();
@@ -445,7 +447,8 @@ export function* layoutSteps() {
     if (r < bias.palm + bias.jac) return TREES[rnd() < 0.5 ? 2 : 3];
     if (r < bias.palm + bias.jac + 0.15) return TREES[5];
     if (r < bias.palm + bias.jac + 0.23) return TREES[6];
-    return TREES[4];
+    const q = rnd();
+    return q < 0.4 ? TREES[7] : q < 0.65 ? TREES[8] : q < 0.8 ? TREES[9] : TREES[4];
   };
   const addTree = (x, z, bias = { palm: 0.3, jac: 0.25 }, scale = 1) => {
     const t = pickTree(bias);
@@ -477,12 +480,17 @@ export function* layoutSteps() {
       const [bx, bz] = F(0, back + bd / 2 + 4);
       const b = addSolid({ kind: 'building', x: bx, z: bz, w: bw, d: bd, rot, h: 11, drawn: true });
       deco.bigs.push({ ...b, sign: c.shops[0], color: '#e9dcc4', trim: '#2d6fa8' });
+      // the entrance tower stands 2 m proud of the facade: its own solid, so the collider matches
+      const [ex, ez] = F(0, back + bd + 4 + 1);
+      addSolid({ kind: 'building', x: ex, z: ez, w: 18, d: 2, rot, h: 13.5, drawn: true });
       continue;
     }
     if (c.storage) {
       for (let k = 0; k < 4; k++) {
         const [bx, bz] = F(0, back + 10 + k * 20);
-        const b = addSolid({ kind: 'building', x: bx, z: bz, w: c.w * 0.86, d: 9, rot, h: 3.4, drawn: true });
+        const o = { kind: 'building', x: bx, z: bz, w: c.w * 0.86, d: 9, rot, h: 3.4, drawn: true };
+        if (!clearOfRoads(o, 2)) continue;
+        const b = addSolid(o);
         deco.shops.push({ ...b, color: '#efe7d8', roof: '#c4583a', trim: '#c4583a', sign: k === 3 ? c.shops[0] : null, storage: true });
       }
       continue;
@@ -506,8 +514,10 @@ export function* layoutSteps() {
     if (gas) {
       const lx = c.x > 0 ? -c.w / 2 + 34 : c.w / 2 - 34;
       const [gx, gz] = F(lx, c.d / 2 - 30);
-      const can = addSolid({ kind: 'building', x: gx, z: gz, w: 26, d: 14, rot, h: 5.6, drawn: true, canopy: true });
+      // the canopy roof is overhead (you can drive under it); only its four posts are solid
+      const can = { kind: 'building', x: gx, z: gz, w: 26, d: 14, rot, h: 1.0, y: 4.6, drawn: true, canopy: true };
       deco.misc.push({ type: 'canopy', ...can });
+      for (const [px, pz] of [[-11, -5], [11, -5], [-11, 5], [11, 5]]) { const [qx, qz] = F(lx + px, c.d / 2 - 30 + pz); addSolid({ kind: 'building', x: qx, z: qz, w: 0.5, d: 0.5, rot, h: 4.6, drawn: true }); }
       // pumps under the canopy are bollards
       for (const px of [-7, 0, 7]) { const [qx, qz] = F(lx + px, c.d / 2 - 30); prop('bollard', 'bollard', qx, qz, 1.6, '#d9483b', 0.9); }
       const [kx, kz] = F(lx, back + 14);
@@ -520,11 +530,36 @@ export function* layoutSteps() {
     // lot light poles
     for (let lx = -c.w / 2 + 30; lx < c.w / 2 - 20; lx += 46) {
       const [px, pz] = F(lx, 6);
-      prop('pole', 'lamp', px, pz, 9, '#6d6f73', 0.5);
+      prop('pole', 'lamp', px, pz, 9, '#6d6f73', 0.5, Math.atan2(-Math.cos(rot), Math.sin(rot)));
     }
     // a couple of palms at the entrances
     for (const lx of [-c.w / 2 + 8, c.w / 2 - 8]) { const [px, pz] = F(lx, c.d / 2 - 4); addTree(px, pz, { palm: 1, jac: 0 }, 1.1); }
     if (c.trolley) deco.trolleyCenter = { x: c.x, z: c.z, rot };
+  }
+
+  // parked cars in the striped stalls. Solids of kind 'car' that the map draws itself (a ~70-triangle
+  // low-poly car merged into the chunk: 0 extra draw calls; the engine's instanced parked car is
+  // ~1k triangles, too many for hundreds of them). The box is the drawn body. Stalls: 3 x 5.2 m.
+  const rndP = prng(31337);
+  const CAR_COLS = ['#f4f4f2', '#1f2124', '#a7abb0', '#6d7177', '#8c1d22', '#24456e', '#e8e2d2', '#3b4a3f', '#c9c3b6', '#5a6e85'];
+  const parkCar = (x, z, rot, pickupOK, pad = 0.35) => {
+    const sh = rndP() < 0.55 ? 'sedan' : pickupOK && rndP() < 0.45 ? 'pickup' : 'suv';
+    const o = { kind: 'car', style: sh, drawn: true, x: Math.round(x * 100) / 100, z: Math.round(z * 100) / 100, w: 2.0, d: sh === 'sedan' ? 4.6 : 4.9, rot, h: sh === 'sedan' ? 1.45 : 1.85, color: CAR_COLS[Math.floor(rndP() * CAR_COLS.length)] };
+    if (!clearOfRoads(o, 1.2) || blocked(o, pad)) return null;
+    return addSolid(o);
+  };
+  for (const l of deco.lots) {
+    if (!l.stripes) continue;
+    const F = frame(l.x, l.z, l.rot);
+    const busyLot = l.w > 250 ? 0.16 : 0.12;
+    for (const rowZ of [l.d / 2 - 18, l.d / 2 - 40]) {
+      if (rowZ < -l.d / 2 + 30) continue;
+      for (let x = -l.w / 2 + 8; x < l.w / 2 - 9; x += 3) {
+        if (rndP() > busyLot) continue;
+        const [px, pz] = F(x + 1.5, rowZ + (rndP() - 0.5) * 0.5);
+        parkCar(px, pz, l.rot + (rndP() < 0.5 ? 0 : PI) + (rndP() - 0.5) * 0.06, true);
+      }
+    }
   }
 
   // ── 9. the trolley: tracks, platform, the red cars, the viaduct over SR-52 ──────────────────────
@@ -590,13 +625,25 @@ export function* layoutSteps() {
   }
   open.push({ kind: 'lot', poly: AIRPORT.poly });
   deco.airport = AIRPORT;
+  // hangars along the south edge, clear of Magnolia Ave's south end and the trolley
   for (let k = 0; k < 5; k++) {
-    const hx = 100 + k * 115, hz = 626;
-    const b = addSolid({ kind: 'building', x: hx, z: hz, w: 70, d: 24, rot: PI, h: 9, drawn: true });
-    deco.bigs.push({ ...b, hangar: true, color: '#dfe2e2', trim: '#3e6f97', sign: k === 2 ? 'GILLESPIE FIELD' : null });
+    const o = { kind: 'building', x: 84 + k * 108, z: 626, w: 70, d: 24, rot: PI, h: 9, drawn: true };
+    if (!clearOfRoads(o, 2) || Math.abs(o.x - TRACK_X) < o.w / 2 + 5) continue;
+    const b = addSolid(o);
+    deco.bigs.push({ ...b, hangar: true, color: k % 2 ? '#e4e6e3' : '#d6dbdc', trim: '#3e6f97', sign: k === 2 ? 'GILLESPIE FIELD' : null });
   }
-  for (let k = 0; k < 7; k++) deco.misc.push({ type: 'plane', x: 70 + k * 80, z: 588 + (k % 2) * 6, rot: (k % 3) * 0.4 - 0.4 });
-  for (let k = 0; k < 7; k++) addSolid({ kind: 'barrier', x: 70 + k * 80, z: 588 + (k % 2) * 6, w: 8, d: 7, rot: (k % 3) * 0.4 - 0.4, h: 2, drawn: true });
+  // parked planes on the apron north of Gillespie Way (not in its lanes): a fuselage box and a
+  // wing box at wing height, matching what is drawn
+  for (let k = 0; k < 7; k++) {
+    const x = 92 + k * 74, z = 562 + (k % 2) * 4, rot = (k % 3) * 0.35 - 0.35;
+    const c = Math.cos(rot), sn = Math.sin(rot);
+    const fus = { kind: 'barrier', x, z, w: 1.4, d: 7.6, rot, h: 2.2, drawn: true };
+    const wx = x + sn * -0.6, wz = z + c * -0.6; // local z -0.6
+    const wing = { kind: 'barrier', x: wx, z: wz, w: 9.2, d: 1.5, rot, h: 0.3, y: 1.3, drawn: true };
+    if (!clearOfRoads(fus, 3) || !clearOfRoads(wing, 3) || Math.abs(x - TRACK_X) < 10) continue;
+    addSolid(fus); addSolid(wing);
+    deco.misc.push({ type: 'plane', x, z, rot, k });
+  }
 
   // ── 11. Santee Lakes ───────────────────────────────────────────────────────────────────────────
   for (const p of lakePolys) water.push({ poly: p.map(([x, z]) => [Math.round(x * 10) / 10, Math.round(z * 10) / 10]) });
@@ -605,11 +652,38 @@ export function* layoutSteps() {
   deco.lakes = lakePolys;
   for (let k = 0; k < 80; k++) {
     const x = -1072 + rnd() * 165, z = -1145 + rnd() * 620;
-    if (inWater(x, z) || roadGap(x, z) < 3) continue;
-    let nearLake = false;
-    for (const p of lakePolys) { const b = polyBox(p); if (x > b.x0 - 14 && x < b.x1 + 14 && z > b.z0 - 14 && z < b.z1 + 14) nearLake = true; }
-    if (nearLake && rnd() < 0.5) continue;
-    addTree(x, z, { palm: 0.2, jac: 0.05 }, 1.05);
+    // trees stay 12 m off the loop road (the chase camera follows it) and off the lakeside paths
+    if (inWater(x, z) || roadGap(x, z) < 12) continue;
+    let nearLake = false, onPath = false;
+    for (const l of LAKES) { const u = (x - l.cx) / (l.rx * 1.3), v = (z - l.cz) / (l.rz * 1.3); const q = Math.hypot(u, v); if (q < 1.45) nearLake = true; if (Math.abs(q - 1) < 0.12) onPath = true; }
+    if (onPath || (nearLake && rnd() < 0.5)) continue;
+    addTree(x, z, { palm: 0.3, jac: 0.05 }, 1.05);
+  }
+  // lakeside: a paved loop path around each lake, fishing docks, tule reeds along the shore
+  {
+    const rl = prng(9310);
+    LAKES.forEach((l, i) => {
+      const ring = ellipse(l.cx, l.cz, l.rx * 1.3, l.rz * 1.3, 28, l.rot);
+      deco.paths.push(ring.map(([x, z]) => [Math.round(x * 10) / 10, Math.round(z * 10) / 10]));
+      const shore = ellipse(l.cx, l.cz, l.rx, l.rz, 40, l.rot);
+      for (let k = 0; k < shore.length; k++) {
+        if (rl() < 0.35) continue;
+        const [x, z] = shore[k];
+        if (roadGap(x, z) < 4) continue;
+        for (let m = 0; m < 2; m++) { const f = 0.9 + rl() * 0.14; deco.reeds.push([l.cx + (x - l.cx) * f + (rl() - 0.5) * 2, l.cz + (z - l.cz) * f + (rl() - 0.5) * 2, 1.2 + rl() * 1.2]); }
+      }
+      // one or two fishing docks reaching into the water from the path
+      for (let k = 0; k < (i % 2 ? 1 : 2); k++) {
+        const ang = rl() * Math.PI * 2;
+        const ca = Math.cos(ang), sa = Math.sin(ang), cr = Math.cos(l.rot), sr = Math.sin(l.rot);
+        const ex = Math.cos(ang) * l.rx, ez = Math.sin(ang) * l.rz;
+        const x0 = l.cx + ex * cr - ez * sr, z0 = l.cz + ex * sr + ez * cr;
+        const dx = l.cx - x0, dz = l.cz - z0, dl = Math.hypot(dx, dz) || 1;
+        if (roadGap(x0, z0) < 6) continue;
+        deco.docks.push({ x: x0 - (dx / dl) * 3, z: z0 - (dz / dl) * 3, dx: dx / dl, dz: dz / dl, len: 9 + rl() * 5 });
+        void ca; void sa;
+      }
+    });
   }
   // campground RVs at the north end
   for (let k = 0; k < 8; k++) {
@@ -642,20 +716,91 @@ export function* layoutSteps() {
       // a few islands of willow in the channel: obstacles to weave through
       if (rnd() < 0.05) { const x = a.x + (rnd() - 0.5) * 14, z = a.z + (rnd() - 0.5) * 14; if (roadGap(x, z) > 8 && !inWater(x, z)) prop('tree', 'cottonwood', x, z, 8 + rnd() * 3, '#86a24e', 1.2); }
     }
+    // the low-flow channel: a shallow meandering trickle (visual; you splash through it), arundo cane
+    // and willow along it, cobble bars on the inside of the bends
+    const rr = prng(2071);
+    let run = [];
+    const flush = () => { if (run.length > 3) deco.channel.push(run); run = []; };
+    for (let s = 0; s < L; s += 7) {
+      const a = along(RIVER, s);
+      const mo = (RIVER_HALF - 9) * (0.62 * Math.sin(s / 83 + 0.7) + 0.3 * Math.sin(s / 31 + 2.1));
+      const x = a.x - a.tz * mo, z = a.z + a.tx * mo;
+      const w = 3.2 + 1.6 * (0.5 + 0.5 * Math.sin(s / 47));
+      if (roadGap(x, z, 40) < 3 || inWater(x, z) || x < BOUNDS.x0 + 20 || x > BOUNDS.x1 - 20 || z > BOUNDS.z1 - 20) { flush(); continue; }
+      run.push([Math.round(x * 10) / 10, Math.round(z * 10) / 10, Math.round(w * 10) / 10]);
+      // arundo / willow scrub hugging the water
+      for (const sd of [-1, 1]) {
+        if (rr() < 0.45) continue;
+        const o2 = mo + sd * (w / 2 + 1.5 + rr() * 3.5);
+        if (Math.abs(o2) > RIVER_HALF - 1) continue;
+        const px = a.x - a.tz * o2, pz = a.z + a.tx * o2;
+        if (roadGap(px, pz, 30) < 5) continue;
+        deco.arundo.push([Math.round(px * 10) / 10, Math.round(pz * 10) / 10, Math.round((1.2 + rr() * 1.6) * 10) / 10, Math.round((2.4 + rr() * 2.2) * 10) / 10]);
+      }
+      // cobble bar on the inside of the bend
+      if (rr() < 0.5) {
+        const inside = -Math.sign(Math.cos(s / 83 + 0.7)) || 1;
+        const o3 = mo + inside * (w / 2 + 2 + rr() * 6);
+        if (Math.abs(o3) < RIVER_HALF - 2) deco.cobbles.push([Math.round((a.x - a.tz * o3) * 10) / 10, Math.round((a.z + a.tx * o3) * 10) / 10, Math.round((2 + rr() * 3) * 10) / 10]);
+      }
+      // a sandbar willow now and then (breakable)
+      if (rr() < 0.06) {
+        const o4 = mo + (rr() < 0.5 ? -1 : 1) * (w / 2 + 4 + rr() * 4);
+        const px = a.x - a.tz * o4, pz = a.z + a.tx * o4;
+        if (Math.abs(o4) < RIVER_HALF - 3 && roadGap(px, pz, 30) > 8 && !blocked({ x: px, z: pz, w: 1, d: 1, rot: 0 }, 1)) prop('tree', 'tree', px, pz, 6.5 + rr() * 2.5, '#8fa65a', 0.9);
+      }
+    }
+    flush();
   }
 
   T('13. houses'); yield;
   // ── 13. houses ─────────────────────────────────────────────────────────────────────────────────
-  const WALLS = ['#efe0c4', '#e3c9a0', '#f0c8a4', '#f4efe6', '#d6b98f', '#e6ddd0', '#e8b494', '#f2d9b0', '#dcd2bf'];
-  const ROOFS = ['#c8623e', '#b9532f', '#d4774a', '#c8623e', '#a9502f', '#7d7a78', '#8a6a55', '#6f6d6b'];
-  const PRISM_WALLS = ['#f4f2ee', '#e9e6e0', '#d9d6cf', '#c9c4ba', '#f2efe8'];
-  const PRISM_ROOFS = ['#3d4146', '#4a4e54', '#5a5550'];
+  // Archetypes. Older tracts ('ranch' style): 1-storey stucco ranch with a low red-tile or brown
+  // composition roof, 70s wood-sided ranch, 80s/90s 2-storey stucco with a tile hip roof. Weston
+  // ('prism' style, 2019 new build): modern farmhouse (board and batten, steep dark gable), craftsman
+  // (siding, stone base, porch), Spanish (stucco, tile hip roof). Every house has a garage door on
+  // its street front and a driveway; neighbours are joined by side-yard walls with gates, so a row
+  // of houses is sealed and the only way between streets is a road or a footpath.
+  const rndH = prng(8524);
+  const pick = (a) => a[Math.floor(rndH() * a.length)];
+  const STUCCO = ['#efe0c4', '#e3c9a0', '#f0c8a4', '#f4efe6', '#d6b98f', '#e6ddd0', '#e8b494', '#f2d9b0', '#dcd2bf', '#d9c7a7', '#e9d6bd', '#cfc1a6'];
+  const TILE = ['#c0603c', '#b5532f', '#cc7048', '#a94e30', '#b8674a', '#9e4a2e'];
+  const COMP = ['#6f655c', '#7d7a78', '#5d5650', '#8a7a68', '#6b6f73', '#7a6a58'];
+  const WOODS = ['#b9a184', '#a89a7f', '#c2ab88', '#9f8f78', '#b7a98f'];
+  const FARM_W = ['#f4f2ee', '#eceae4', '#dcd9d2', '#c9c6be', '#f2efe8', '#e2e4e2'];
+  const CRAFT_W = ['#b9b49c', '#a8ad98', '#c7b9a0', '#9fa6a0', '#bfb3a0', '#8f9a8c'];
+  const SPAN_W = ['#f3ead8', '#efe2cc', '#e9dcc8', '#f1e6d6'];
+  const DARK_R = ['#33373c', '#3d4146', '#4a4e54', '#2b2e33', '#56524e'];
+  const WESTON_FENCE = ['#ece9e2', '#d9cdb6', '#c9b28e'];
   const artNames = new Set(MAJOR.filter((m) => m.kind !== 'dirt').map((m) => m.name));
   const busy = (r) => r.kind === 'highway' || r.kind === 'ramp' || (artNames.has(r.name) && r.kind === 'arterial');
   const houseRoads = roads.filter((r) => r.res);
   // Boulder Way first, so its numbers are exact
   houseRoads.sort((a, b) => (b.name === 'Boulder Way') - (a.name === 'Boulder Way'));
   const homeList = [];
+  const houseSolids = [];
+  let roadsDone = 0;
+  const archOf = (prism, mobile) => {
+    if (mobile) return 'mobile';
+    const q = rndH();
+    if (prism) return q < 0.42 ? 'farmhouse' : q < 0.72 ? 'craftsman' : 'spanish';
+    return q < 0.5 ? 'ranch' : q < 0.64 ? 'ranchWood' : 'twoStory';
+  };
+  function sideWall(a, b, prism) {
+    // a, b: neighbouring houses on the same side of the same street; a wall + gate across the gap
+    const c = Math.cos(b.rot), sn = Math.sin(b.rot);
+    const dx = a.x - b.x, dz = a.z - b.z;
+    const lx = dx * c - dz * sn, lz = dx * sn + dz * c; // a in b's local frame
+    const dr = Math.abs(Math.atan2(Math.sin(a.rot - b.rot), Math.cos(a.rot - b.rot)));
+    if (Math.abs(lz) > 3 || dr > 0.35) return;
+    const gap = Math.abs(lx) - a.w / 2 - b.w / 2;
+    if (gap < 0.6 || gap > 9) return;
+    const sx = Math.sign(lx), mx = sx * (b.w / 2 + gap / 2), mz = Math.max(-b.d / 2 + 2, lz / 2 + 0.6);
+    const wl = { kind: 'wall', x: b.x + c * mx + sn * mz, z: b.z - sn * mx + c * mz, w: gap + 0.3, d: 0.3, rot: b.rot, h: 1.8, drawn: true };
+    if (!clearOfRoads(wl, 1)) return;
+    addSolid(wl);
+    deco.walls.push({ ...wl, color: prism ? pick(WESTON_FENCE) : rndH() < 0.6 ? WALL : '#9a7a58', gate: gap > 2.2, fence: !prism && rndH() < 0.3 });
+  }
   for (const r of houseRoads) {
     const L = polyLen(r.pts);
     const prism = !!r.weston;
@@ -665,45 +810,73 @@ export function* layoutSteps() {
     for (const side of sides) {
       let s = isBoulder ? 12 : 10 + rnd() * 6;
       let num = WESTON.boulderFirst;
+      let prev = null;
       while (s < L - (r.cul ? 6 : 10)) {
         const a = along(r.pts, s);
         const nx = -a.tz * side, nz = a.tx * side; // outward normal on this side
         const w = mobile ? 5 : prism ? 9 : 12 + rnd() * 3;
         const d = mobile ? 15 : prism ? 13 : 12 + rnd() * 3;
-        const setback = mobile ? 3 : prism ? 5.5 : 7 + rnd() * 2;
+        const setback = mobile ? 3 : prism ? 6.5 : 7 + rnd() * 2;
         const off = r.width / 2 + setback + d / 2;
         const x = a.x + nx * off, z = a.z + nz * off;
-        // house local +x along the street; local +z away from the street
-        const rot = Math.atan2(nz, -nx) - PI / 2 + PI / 2; // local +z = (nx, nz)
+        // house local +x along the street; local -z toward the street
         const o = { x, z, w, d, rot: Math.atan2(-a.tz * 1, a.tx) + (side > 0 ? 0 : PI) };
-        void rot;
         const step = mobile ? 9 : prism ? 10.3 : w + 3 + rnd() * 3;
         const z0 = zoneOf(x, z);
         const okZone = z0 && (mobile ? z0.style === 'mobile' : z0.style !== 'mobile');
+        let placed = null;
         if (okZone && !inWater(x, z) && clearOfRoads(o, 2.5) && !blocked(o, prism ? 1.2 : 2.5) && railGap(x) > 6 + w && riverDist(x, z) > RIVER_HALF + 14) {
           let flat = true;
           for (const [cx, cz] of corners(o)) if (Math.abs(height(cx, cz)) > 0.35) { flat = false; break; }
           if (flat) {
-            const twoStory = prism ? true : rnd() < 0.33;
-            const hh = mobile ? 3.4 : twoStory ? 7 : 4.3;
+            const hero = isBoulder && num === WESTON.home;
+            const arch = hero ? 'farmhouse' : archOf(prism, mobile);
+            const twoStory = prism || arch === 'twoStory' || (arch === 'ranch' && rnd() < 0.12);
+            const hh = mobile ? 3.4 : twoStory ? 6.4 : 3.2;
             const b = addSolid({ kind: 'building', x: Math.round(x * 10) / 10, z: Math.round(z * 10) / 10, w, d, rot: o.rot, h: hh, drawn: true });
+            const tileRoof = arch === 'spanish' || arch === 'twoStory' ? rndH() < 0.85 : arch === 'ranch' ? rndH() < 0.55 : false;
+            const wall = mobile ? '#eef0ea' : arch === 'farmhouse' ? pick(FARM_W) : arch === 'craftsman' ? pick(CRAFT_W) : arch === 'spanish' ? pick(SPAN_W) : arch === 'ranchWood' ? pick(WOODS) : pick(STUCCO);
+            const roof = mobile ? '#b8bcbf' : tileRoof ? pick(TILE) : arch === 'farmhouse' ? pick(DARK_R) : pick(COMP);
+            const gs = rnd() < 0.5 ? -1 : 1;
+            const gw = Math.min(5.4, w * 0.45);
             const rec = {
-              ...b, stories: twoStory ? 2 : 1, style: prism ? 'prism' : mobile ? 'mobile' : 'ranch',
-              wall: prism ? PRISM_WALLS[Math.floor(rnd() * PRISM_WALLS.length)] : mobile ? '#eef0ea' : WALLS[Math.floor(rnd() * WALLS.length)],
-              roof: prism ? PRISM_ROOFS[Math.floor(rnd() * PRISM_ROOFS.length)] : mobile ? '#b8bcbf' : ROOFS[Math.floor(rnd() * ROOFS.length)],
-              gable: prism ? rnd() < 0.7 : rnd() < 0.3, garage: rnd() < 0.5 ? -1 : 1, street: [a.x, a.z], num: isBoulder ? num : null,
+              ...b, stories: twoStory ? 2 : 1, style: prism ? 'prism' : mobile ? 'mobile' : 'ranch', arch,
+              wall, roof, roofFx: mobile ? 'metal' : tileRoof ? 'tile' : arch === 'farmhouse' && rndH() < 0.3 ? 'metal' : 'shingle',
+              // farmhouse + craftsman: gables; Spanish / two-storey: hips; ranch: mostly low hips
+              gable: arch === 'farmhouse' || arch === 'craftsman' ? true : arch === 'spanish' || arch === 'twoStory' ? rndH() < 0.2 : rndH() < 0.35,
+              garage: gs, gw, gx: gs * (w / 2 - gw / 2 - 0.6), street: [a.x, a.z], num: isBoulder ? num : null,
+              garageCol: arch === 'farmhouse' ? pick(['#2b2e33', '#f2efe8', '#6a4a32']) : arch === 'craftsman' ? pick(['#7a5636', '#f2efe8', '#4f4a44']) : pick(['#f2efe8', '#ebe4d6', '#dcd3c3', '#c9bba4']),
+              door: arch === 'farmhouse' ? pick(['#202226', '#9a6a3e', '#2f4f6f']) : pick(['#7a4b2e', '#5c3a26', '#8a2f2a', '#2f4f3f', '#3a3f45']),
+              trim: arch === 'farmhouse' ? '#202226' : arch === 'craftsman' ? '#f2efe8' : '#f6f2ea',
+              yard: prism ? (rndH() < 0.6 ? 'lawn' : 'xeri') : rndH() < 0.45 ? 'lawn' : rndH() < 0.6 ? 'xeri' : 'gravel',
+              setback, porchLight: rndH() < 0.3, hero,
             };
-            deco.houses.push(rec);
+            deco.houses.push(rec); houseSolids.push(rec); placed = rec;
+            // porches and entry towers that stand proud of the house get their own colliders
+            {
+              const c = Math.cos(o.rot), sn = Math.sin(o.rot), dx = rec.gx - gs * (gw / 2 + 1.5);
+              const at = (lx, lz) => [x + c * lx + sn * lz, z - sn * lx + c * lz];
+              let pc = null;
+              if (arch === 'craftsman') pc = { lx: dx, lz: -d / 2 - 1.45, w: 3.2, d: 2.9, h: 2.7 };
+              else if (arch === 'spanish') pc = { lx: dx, lz: -d / 2 - 0.7, w: 2.4, d: 1.4, h: 2.9 };
+              else if (hero) pc = { lx: -gs * 2.2, lz: -d / 2 - 1.4, w: 5.8, d: 2.8, h: 3.0 };
+              if (pc) { const [px, pz] = at(pc.lx, pc.lz); addSolid({ kind: 'building', x: Math.round(px * 100) / 100, z: Math.round(pz * 100) / 100, w: pc.w, d: pc.d, rot: o.rot, h: pc.h, drawn: true, porch: true }); }
+            }
             if (isBoulder) homeList.push(rec);
             // front yard tree / back yard palm
             if (!mobile) {
               if (rnd() < 0.4) {
-                const tx = x - nx * (d / 2 + setback * 0.55) + a.tx * (w / 2 - 1.2) * rec.garage * -1, tz = z - nz * (d / 2 + setback * 0.55) + a.tz * (w / 2 - 1.2) * rec.garage * -1;
-                if (roadGap(tx, tz) > 1.5) addTree(tx, tz, prism ? { palm: 0.1, jac: 0.35 } : { palm: 0.3, jac: 0.25 }, prism ? 0.7 : 0.9);
+                const tx = x - nx * (d / 2 + setback * 0.55) + a.tx * (w / 2 - 1.2) * gs * -1, tz = z - nz * (d / 2 + setback * 0.55) + a.tz * (w / 2 - 1.2) * gs * -1;
+                if (roadGap(tx, tz) > 1.5) addTree(tx, tz, prism ? { palm: 0.1, jac: 0.35 } : { palm: 0.3, jac: 0.2 }, prism ? 0.7 : 0.9);
               }
-              if (!prism && rnd() < 0.15) addTree(x + nx * (d / 2 + 4), z + nz * (d / 2 + 4), { palm: 0.7, jac: 0.1 }, 1.15);
+              if (!prism && rnd() < 0.15 && rndH() < 0.4) addTree(x + nx * (d / 2 + 4), z + nz * (d / 2 + 4), { palm: 0.7, jac: 0.1 }, 1.15);
               // mailbox at the kerb
-              if (rnd() < 0.5) prop('mailbox', 'mailbox', a.x + nx * (r.width / 2 + 0.8) + a.tx * (w / 2 - 1), a.z + nz * (r.width / 2 + 0.8) + a.tz * (w / 2 - 1), 1.2, '#3a3f45', 0.4);
+              if (!prism && rnd() < 0.42) prop('mailbox', 'mailbox', a.x + nx * (r.width / 2 + 0.8) + a.tx * (w / 2 - 1), a.z + nz * (r.width / 2 + 0.8) + a.tz * (w / 2 - 1), 1.2, '#3a3f45', 0.4);
+              // a car on the driveway in front of the garage (some houses)
+              if (!hero && rndH() < (prism ? 0.26 : 0.3)) {
+                const c = Math.cos(o.rot), sn = Math.sin(o.rot), lx = rec.gx + (rndH() - 0.5) * 0.4, lz = -d / 2 - (prism ? 2.6 : 3.0);
+                parkCar(x + c * lx + sn * lz, z - sn * lx + c * lz, o.rot + (rndH() < 0.5 ? 0 : PI), !prism, 0.15);
+              }
             }
             // block wall behind a house that backs onto an arterial or freeway
             const bx = x + nx * (d / 2 + 2.2), bz = z + nz * (d / 2 + 2.2);
@@ -717,13 +890,16 @@ export function* layoutSteps() {
               const wl = { kind: 'wall', x: bx, z: bz, w: step + 0.3, d: 0.4, rot: o.rot, h: 1.9, drawn: true };
               if (clearOfRoads(wl, 1.5)) { addSolid(wl); deco.walls.push({ ...wl, color: rnd() < 0.5 ? WALL : WALL2 }); }
             }
+            if (prev && !mobile && !prev.hero && !hero) sideWall(prev, rec, prism);
           }
         }
+        prev = placed;
         s += step;
         if (isBoulder) num += 2;
         if (isBoulder && num > WESTON.boulderLast) break;
       }
     }
+    if (++roadsDone % 10 === 0) yield;
   }
   // the hero home: 8524 Boulder Way
   let home = homeList.find((h) => h.num === WESTON.home);
@@ -754,16 +930,33 @@ export function* layoutSteps() {
     const hwy = r.kind === 'highway';
     const art = r.kind === 'arterial';
     if (hwy) continue;
-    const stepL = art ? 52 : 70;
+    const stepL = art ? 52 : 46;
+    // streets: wooden utility poles on one side (the wires run pole to pole), a cobra-head lamp on
+    // every third span on the other side; arterials: lamps both sides, arms over the street
+    const uSide = r.cul ? -1 : 1;
+    let lastPole = null, nPole = 0;
     for (let s = 20; s < L - 15; s += stepL) {
       const a = along(r.pts, s);
-      for (const side of art ? [1, -1] : [s % 140 < 70 ? 1 : -1]) {
-        const off = r.width / 2 + 1.6;
+      for (const side of art ? [1, -1] : [uSide]) {
+        const off = r.width / 2 + (art ? 1.6 : 1.9);
         const x = a.x - a.tz * off * side, z = a.z + a.tx * off * side;
-        if (roadGap(x, z, 40, (q) => q === r) < 2.5 || inWater(x, z) || riverDist(x, z) < RIVER_HALF + 2) continue;
+        if (roadGap(x, z, 40, (q) => q === r) < 2.5 || inWater(x, z) || riverDist(x, z) < RIVER_HALF + 2) { if (!art) lastPole = null; continue; }
         const o = { x, z, w: 0.5, d: 0.5, rot: 0 };
-        if (blocked(o, 0.5)) continue;
-        prop('pole', art ? 'lamp' : 'pole', x, z, art ? 9.5 : 8.5, art ? '#6d6f73' : '#7b5a3c', 0.45);
+        if (blocked(o, 0.5)) { if (!art) lastPole = null; continue; }
+        if (art) prop('pole', 'lamp', x, z, 9.5, '#6d6f73', 0.45, Math.atan2(-a.tx * side, -a.tz * side));
+        else {
+          const h = 9 + (nPole++ % 3) * 0.4, rot = Math.atan2(-a.tx, -a.tz);
+          if (prop('pole', 'pole', x, z, h, '#7b5a3c', 0.45, rot)) {
+            const p = { x, z, h, nx: -a.tz, nz: a.tx };
+            if (lastPole && Math.hypot(lastPole.x - x, lastPole.z - z) < 70) deco.wires.push([lastPole, p]);
+            lastPole = p;
+          } else lastPole = null;
+        }
+      }
+      if (!art && r.res && Math.round(s / stepL) % 4 === 1) {
+        const off = r.width / 2 + 1.0, side = -uSide;
+        const x = a.x - a.tz * off * side, z = a.z + a.tx * off * side;
+        if (roadGap(x, z, 40, (q) => q === r) > 0.6 && !blocked({ x, z, w: 0.4, d: 0.4, rot: 0 }, 0.4)) prop('pole', 'lamp', x, z, 7.6, '#7a7d82', 0.4, Math.atan2(-a.tx * side, -a.tz * side));
       }
       // palms between the lights on Mission Gorge, Town Center Pkwy and Mast
       if (art && /Mission Gorge|Town Center/.test(r.name) && Math.round(s / stepL) % 2 === 0) {
@@ -776,9 +969,9 @@ export function* layoutSteps() {
         }
       }
       // hydrants on residential streets
-      if (r.res && rnd() < 0.3) {
+      if (r.res && rnd() < 0.18) {
         const x = a.x + a.tz * (r.width / 2 + 0.9), z = a.z - a.tx * (r.width / 2 + 0.9);
-        if (roadGap(x, z, 40, (q) => q === r) > 2 && !blocked({ x, z, w: 0.4, d: 0.4, rot: 0 }, 0.3)) prop('bollard', 'hydrant', x, z, 0.9, '#e2c23a', 0.4);
+        if (roadGap(x, z, 40, (q) => q === r) > 1.5 && !blocked({ x, z, w: 0.4, d: 0.4, rot: 0 }, 0.3)) prop('bollard', 'hydrant', x, z, 0.9, '#e2c23a', 0.4);
       }
     }
   }
@@ -801,6 +994,37 @@ export function* layoutSteps() {
       }
     }
     deco.signals = done;
+  }
+  // raised, planted medians on Mission Gorge Rd and Mast Blvd (visual: a low kerbed island with
+  // shrubs and decomposed granite, opened at every junction; not solid, the lanes stay clear)
+  for (const r of roads) {
+    if (r.bridge || !(r.name === 'Mission Gorge Rd' || r.name === 'Mast Blvd')) continue;
+    const sm = smoothLine(r.pts, 6, false);
+    let run = [];
+    const flush = () => { if (run.length >= 5) deco.medians.push({ pts: run, w: r.width >= 20 ? 2.6 : 2.0 }); run = []; };
+    for (const [x, z] of sm) {
+      const g = roadGap(x, z, 60, (q) => q.name === r.name || (q.bridge && !(q.kind === 'ramp')));
+      if (g < 16 || roadGap(x, z, 60, (q) => q.name === r.name || !q.bridge) < 2) flush(); else run.push([Math.round(x * 10) / 10, Math.round(z * 10) / 10]);
+    }
+    flush();
+  }
+  // landscaped parkways behind the sidewalks of the commercial arterials: low shrubs in DG
+  deco.parkway = [];
+  {
+    const rp = prng(7734);
+    for (const r of roads) {
+      if (r.bridge || !/^(Mission Gorge Rd|Mast Blvd|Town Center Pkwy)$/.test(r.name)) continue;
+      const Lr = polyLen(r.pts);
+      for (let s = 6; s < Lr - 6; s += 16 + rp() * 10) {
+        const a = along(r.pts, s);
+        for (const side of [1, -1]) {
+          const off = r.width / 2 + 2 + 1.2 + rp() * 2.2;
+          const x = a.x - a.tz * off * side, z = a.z + a.tx * off * side;
+          if (roadGap(x, z, 40) < 2.6 || inWater(x, z) || riverDist(x, z) < RIVER_HALF + 3 || blocked({ x, z, w: 1.4, d: 1.4, rot: 0 }, 0.4)) continue;
+          deco.parkway.push([Math.round(x * 10) / 10, Math.round(z * 10) / 10, Math.round((0.6 + rp() * 0.6) * 10) / 10, Math.floor(rp() * 4)]);
+        }
+      }
+    }
   }
   // sound walls along the freeways (drawn), cut where anything else crosses or joins
   for (const r of roads.filter((q) => q.kind === 'highway' && !q.bridge)) {
@@ -825,7 +1049,7 @@ export function* layoutSteps() {
 
   T('15. hills'); yield;
   // ── 15. hills: chaparral scrub (visual) and granite boulders (solid, drawn) ─────────────────────
-  for (let k = 0; k < 2600; k++) {
+  for (let k = 0; k < 2400; k++) {
     const x = BOUNDS.x0 + rnd() * (BOUNDS.x1 - BOUNDS.x0), z = BOUNDS.z0 + rnd() * (BOUNDS.z1 - BOUNDS.z0);
     const h = height(x, z);
     if (h < 1.2) continue;
@@ -843,6 +1067,31 @@ export function* layoutSteps() {
       const x = cx + (rnd() - 0.5) * 30, z = cz + (rnd() - 0.5) * 30, s = 2 + rnd() * 3;
       const o = { kind: 'rock', x, z, w: s * 1.3, d: s, rot: rnd() * PI, h: s * 0.9, drawn: true };
       if (roadGap(x, z, 30) > 12 && !blocked(o, 0.5)) { addSolid(o); deco.rocks.push({ ...o, y: height(x, z) }); }
+    }
+  }
+  // granite outcrops: little clusters of boulders around the bigger hill rocks
+  {
+    const ro = prng(52052);
+    const base = deco.rocks.slice();
+    for (const r0 of base) {
+      if (ro() < 0.45) continue;
+      for (let k = 0, n = 1 + Math.floor(ro() * 3); k < n; k++) {
+        const a = ro() * PI * 2, dd = r0.w * (0.7 + ro() * 0.6), sz = r0.w * (0.35 + ro() * 0.35);
+        const x = r0.x + Math.cos(a) * dd, z = r0.z + Math.sin(a) * dd;
+        const o = { kind: 'rock', x, z, w: sz * 1.2, d: sz, rot: ro() * PI, h: sz * 0.75, drawn: true };
+        if (roadGap(x, z, 30) > 6 && !blocked(o, 0.3)) { addSolid(o); deco.rocks.push({ ...o, y: height(x, z) }); }
+      }
+    }
+    // eucalyptus windbreaks (old ranch rows) along the golf course and Mast Park, and a few on the hills
+    const rows = [[[-1060, -356], [-590, -366]], [[-630, -296], [-345, -288]], [[-1520, -760], [-1530, -980]], [[620, -1040], [940, -1060]]];
+    for (const [[ax, az], [bx, bz]] of rows) {
+      const n = Math.floor(Math.hypot(bx - ax, bz - az) / 14);
+      for (let k = 0; k <= n; k++) {
+        if (ro() < 0.3) continue;
+        const x = ax + ((bx - ax) * k) / n + (ro() - 0.5) * 3, z = az + ((bz - az) * k) / n + (ro() - 0.5) * 3;
+        if (roadGap(x, z, 30) < 5 || inWater(x, z) || blocked({ x, z, w: 1, d: 1, rot: 0 }, 1.2)) continue;
+        prop('tree', 'tree', x, z, 16 + ro() * 7, ro() < 0.5 ? '#8a9c80' : '#7d917a', 1.0);
+      }
     }
   }
   // dirt where the hills are, so the ground slows you a bit
@@ -986,6 +1235,8 @@ export function* layoutSteps() {
     const o = { name: r.name, kind: r.kind, width: r.width, pts: r.pts };
     if (r.bridge) { o.bridge = true; o.clear = r.clear; }
     if (r.closed) o.closed = true;
+    // concrete sidewalks drawn (and driven as a lot) by the engine: arterials and the tract streets
+    if (!r.bridge && !r.path && (r.kind === 'arterial' || (r.kind === 'street' && (r.res || r.name === 'Riverview Pkwy')))) o.sidewalk = r.kind === 'arterial' ? 2 : r.cul ? 1.2 : 1.4;
     return o;
   });
   deco.roadsFull = roads;

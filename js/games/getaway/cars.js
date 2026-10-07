@@ -193,7 +193,7 @@ export function trafficShape(id) { const v = (id * 2654435761) >>> 0; return SHA
  * Paint is tinted per instance; glass, trim and lights keep their colours.
  */
 export function createTrafficView(THREE, P, mats, max = 64, opts = {}) {
-  const nearR = opts.nearR || 40; const midR = opts.midR || 150;
+  const nearR = opts.nearR || 40; const midR = opts.midR || 90;
   const shapes = ['sedan', 'suv', 'pickup', 'van'];
   const NN = 6; const NM = 24;
   const mk = (geo, n, shadow) => {
@@ -210,15 +210,35 @@ export function createTrafficView(THREE, P, mats, max = 64, opts = {}) {
   const dm = new THREE.Object3D(); const tc = new THREE.Color();
   const len = { sedan: 4.38, suv: 4.6, pickup: 4.58, van: 4.58 };
   let cx = 0; let cz = 0; let n = 0; let night = !!P.dark; let nBeam = 0;
+  // per-instance view culling: a car is drawn when it is inside any viewer's frustum (or close to
+  // a viewer, so shadows / mirrors near the camera stay right)
+  const frs = [new THREE.Frustum(), new THREE.Frustum()]; let nFr = 0; const pm = new THREE.Matrix4(); const sph = new THREE.Sphere(new THREE.Vector3(), 3.2);
+  const camXZ = [];
   const L = () => mats && mats.lights;
   const tp = [0, 0, 0];
   return {
     meshes: all,
-    begin(camPos) { cx = camPos.x; cz = camPos.z; n = 0; nBeam = 0; for (const m of all) m.count = 0; },
+    /** camPos: the main camera position; cams (optional): every camera that renders this frame. */
+    begin(camPos, cams) {
+      cx = camPos.x; cz = camPos.z; n = 0; nBeam = 0; nFr = 0; camXZ.length = 0;
+      for (const m of all) m.count = 0;
+      if (cams) for (const c of cams) {
+        if (!c || !c.projectionMatrix || nFr >= frs.length) continue;
+        c.updateMatrixWorld(); pm.multiplyMatrices(c.projectionMatrix, c.matrixWorldInverse); frs[nFr++].setFromProjectionMatrix(pm);
+        camXZ.push(c.position.x, c.position.z);
+      }
+    },
     /** pose: { x y z yaw sc hl? } from traffic.each / select. */
     add(id, pose) {
       if (n >= max) return;
       const d = Math.hypot(pose.x - cx, pose.z - cz);
+      if (nFr) {
+        let seen = false;
+        // radius grows with distance: ~6° of slack for a camera that turned since last frame
+        sph.center.set(pose.x, pose.y + 1, pose.z); sph.radius = 3.2 + d * 0.1;
+        for (let k = 0; k < nFr && !seen; k++) seen = frs[k].intersectsSphere(sph) || Math.hypot(pose.x - camXZ[k * 2], pose.z - camXZ[k * 2 + 1]) < 14;
+        if (!seen) return;
+      }
       const shape = trafficShape(id);
       let m = d < nearR ? near[shape] : d < midR ? mid[shape] : far;
       if (m.count >= m.instanceMatrix.count) m = d < nearR ? mid[shape] : far;

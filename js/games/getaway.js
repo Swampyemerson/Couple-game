@@ -17,6 +17,7 @@ registerGame({
   immersive: true,
   ownsPauseUI: true,
   team: false,
+  localLabel: (dev) => (dev === 'phone' ? 'Practice vs AI' : 'Practice vs AI or split screen'),
   tags: ['silly', '3d'],
   minutes: 12,
   howTo: [
@@ -24,6 +25,7 @@ registerGame({
     'Runner: survive the clock, or get far away and out of sight to lose the heat.',
     'Cop: hit their back corner to PIT them, drop spike strips from the map, box them in.',
     'Steer with your left thumb; gas, brake, drift and nitro on the right. Laptop: WASD.',
+    'Live: both of you open Getaway and tap Play live. Alone? Practice vs AI.',
   ],
   css: CSS,
   endDelay: 0,

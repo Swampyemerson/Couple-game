@@ -6,7 +6,8 @@
 // roles, synced start, traffic determinism, boxed bust, spikes over the network, swaps, final,
 // one recorded result, rematch) · lossy (150 ms, 25 % drops) · split (laptop split screen) ·
 // robust (pause on hidden, GL context loss, leaks) · perf (every playable map, phone + laptop)
-// · shots (390×844, 844×390, 1280×800, light + dark). Ports 8930–8939 (PORT=… moves them).
+// · shots (390×844, 844×390, 1280×800, light + dark) · touch (every menu by real taps,
+// load errors, pause menu, dropped graphics). Ports 8930–8939 (PORT=… moves them).
 // Screenshots: $SHOTS (default: the session scratchpad getaway/ folder).
 const fs = require('fs');
 const path = require('path');
@@ -90,8 +91,8 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
     assert(ct.pitTier < 2, `a light tap on the rear quarter is at most a nudge (tier ${ct.pitTier}, push ${ct.pitPush.toFixed(1)} m/s)`);
     const ram = newCar('cop'); placeCar(ram, -4.4, 0, Math.PI / 2, geo); ram.vx = 26;
     assert(carContact(runner, ram, ct) > 0 && judgePit(runner, ram, ct) === 0 && ct.pitTier === 0, 'a straight rear-end shunt is a ram, not a PIT');
-    const off = newCar('cop'); placeCar(off, -4.4, -0.4, Math.PI / 2 + 0.05, geo); off.vx = 26; off.vz = 1.3;
-    assert(carContact(runner, off, ct) > 0 && judgePit(runner, off, ct) === 0, 'a rear-end shunt slightly off-centre is still a ram (no knife edge at 0.35 m)');
+    const offc = newCar('cop'); placeCar(offc, -4.4, -0.4, Math.PI / 2 + 0.05, geo); offc.vx = 26; offc.vz = 1.3;
+    assert(carContact(runner, offc, ct) > 0 && judgePit(runner, offc, ct) === 0, 'a rear-end shunt slightly off-centre is still a ram (no knife edge at 0.35 m)');
     const tb = newCar('cop'); placeCar(tb, 0, -3.0, Math.PI, geo); tb.vz = 15;
     assert(carContact(runner, tb, ct) > 0 && judgePit(runner, tb, ct) === 0, 'a T-bone is not a PIT');
     const slow = newCar('runner'); placeCar(slow, 0, 0, Math.PI / 2, geo); slow.vx = 3;
@@ -146,7 +147,7 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
     assert(c3.water && c3.level < 0, 'driving in the canal under a bridge is water (busts a runner)');
     const path1 = (() => { dg.buildNav(); return dg.findPath(-100, 40, 340, -100); })();
     assert(path1 && path1.length > 20, `AI nav: a road route across Dockside (${path1.length / 2} points)`);
-    await engineUnits();
+    if (typeof engineUnits === 'function') await engineUnits();
   }
 
   // ═══ one phone vs the AI ═══
@@ -154,13 +155,13 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
     const h = await launch({ port: PORT, only: ['getaway'], who: ['a'], coarse: true });
     const { a } = h;
     try {
-      await arm(a, { ...FAST, rounds: 4 });
+      await arm(a, { ...FAST, rounds: 4, intro: 2400 }); // (a long enough intro to catch on a busy machine)
       await h.startLive(a, 'getaway', 'local');
       await ready(a);
       let s = await st(a);
       assert(s.phase === 'lobby' && s.localMode === 'ai' && s.mapId === 'dockside', 'one phone opens on the lobby, practice vs AI, Dockside');
       assert(await a.isVisible('.g-gtw [data-l="lmode"][data-v="split"][disabled]'), 'split screen is offered only on laptops');
-      await a.click('.g-gtw [data-l="start"]');
+      await a.tap('.g-gtw [data-l="start"]'); // a real touch tap (phones)
       await phase(a, 'intro', 8000);
       assert(await a.isVisible('.g-gtw .gtw-roles'), 'round intro card: map, round, roles');
       await phase(a, 'count', 8000);
@@ -173,7 +174,8 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       await until(a, () => window.__getaway.navReady(), null, 20000, 'nav grid');
       const d0 = Math.hypot(s.a.x - s.b.x, s.a.z - s.b.z);
       await hook(a, 'hold', 'a', { hand: true });
-      await wait(2600);
+      // (game time, not wall time: a starved headless page runs the physics slower than real time)
+      await until(a, (d) => { const q = window.__getaway.state(); return Math.hypot(q.a.x - q.b.x, q.a.z - q.b.z) < d - 15; }, d0, 9000, 'the AI cop closing in').catch(() => {});
       s = await st(a);
       const d1 = Math.hypot(s.a.x - s.b.x, s.a.z - s.b.z);
       await hook(a, 'hold', 'b', { hand: true });
@@ -244,11 +246,12 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       // a flat runner is slower
       const flatTop = await a.evaluate(async () => { const g = window.__getaway; g.teleport('b', -440, 40, Math.PI / 2, 0); g.hold('b', { gas: 1 }); await new Promise((r) => setTimeout(r, 2500)); return g.state().b.speed; });
       void flatTop;
-      // escape by the clock
+      // escape by the clock (the runner parked near the cop, so losing the heat can't come first)
+      await hook(a, 'hold', 'b', { hand: true }); await a.evaluate(() => window.__getaway.teleport('b', -150, 40, Math.PI / 2, 0));
       await hook(a, 'shortenRound', 1500);
       await until(a, () => { const R = window.__getaway.state().R; return R && R.over; }, null, 8000, 'timer escape');
       s = await st(a);
-      assert(s.R.result.outcome === 'escaped' && s.R.result.reason === 'time', 'ESCAPED when the clock runs out');
+      assert(s.R.result.outcome === 'escaped' && s.R.result.reason === 'time', `ESCAPED when the clock runs out (${JSON.stringify(s.R.result)})`);
       // round 3: escape by losing the heat (far away, out of sight)
       await until(a, () => window.__getaway.state().R.idx === 2, null, 12000, 'round 3');
       await phase(a, 'chase', 12000);
@@ -275,6 +278,118 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
     } catch (e) { fails++; console.error(e.message); await shot(h.a, 'practice-fail').catch(() => {}); } finally { await h.close(); }
   }
 
+  // ═══ touch: every menu driven by real taps (iOS drops the click after a cancelled touchstart) ═══
+  if (want('touch')) {
+    const h = await launch({ port: PORT + 7, only: ['getaway'], who: ['a'], coarse: true });
+    const { a } = h;
+    const tap = async (sel) => { await a.locator(sel).first().tap(); await wait(250); };
+    const ui = () => hook(a, 'ui');
+    try {
+      await arm(a, { ...FAST, rounds: 2, intro: 1500, resume: 900, glStuck: 900 });
+      // a map that crashed the last open is not reopened: the lightest map instead
+      await a.evaluate(() => { localStorage.setItem('getaway.loading.v1', JSON.stringify({ map: 'boulder', t: Date.now() })); localStorage.setItem('getaway.setup.v1', JSON.stringify({ map: 'boulder' })); });
+      await h.openGames(a);
+      await a.locator('[data-g="sheet"][data-game="getaway"]').first().tap();
+      await a.waitForSelector('#game-root .gs');
+      const label = await a.locator('[data-g="live"][data-game="getaway"][data-mode="local"]').textContent();
+      assert(/Practice vs AI/.test(label), `the one-phone button says "${label.trim()}"`);
+      await a.locator('[data-g="live"][data-game="getaway"][data-mode="local"]').tap();
+      await ready(a);
+      let s = await st(a);
+      assert(s.phase === 'lobby' && s.mapId === 'dockside', 'after a crash while loading Boulder, the next open starts on Dockside');
+      assert(!(await a.evaluate(() => localStorage.getItem('getaway.loading.v1'))), 'the crash marker is cleared once a map loads');
+      await tap('.g-gtw [data-l="prole"][data-v="cop"]');
+      assert((await st(a)).localMode === 'ai' && (await ui()).device.practiceRole === 'cop', 'tap: practice role → Cop');
+      await tap('.g-gtw [data-l="ailevel"][data-v="hard"]');
+      assert((await ui()).device.aiLevel === 'hard', 'tap: AI driver → Hard');
+      await tap('.g-gtw [data-l="howto"]');
+      assert((await ui()).sheet === 'how' && await a.isVisible('.g-gtw .gtw-how'), 'tap: How to play opens');
+      await tap('.g-gtw [data-l="howclose"]');
+      assert(!(await ui()).sheet && (await ui()).device.seenHow, 'tap: Got it closes it (remembered)');
+      await tap('.g-gtw [data-l="settings"]');
+      assert((await ui()).sheet === 'settings', 'tap: Settings opens');
+      await tap('.g-gtw [data-l="dev"][data-k="sens"][data-v="high"]');
+      await tap('.g-gtw [data-l="dev"][data-k="dead"][data-v="large"]');
+      await tap('.g-gtw [data-l="rule"][data-k="spikes"][data-step="1"]');
+      s = await st(a); const d = (await ui()).device;
+      assert(d.sens === 'high' && d.dead === 'large' && s.setup.rules.spikes === 4, 'tap: steering sensitivity, dead zone and a rule stepper all respond');
+      const sc = await a.evaluate(() => { const el = document.querySelector('.g-gtw .gtw-sheet .in'); return { ta: getComputedStyle(el).touchAction, over: getComputedStyle(el).overflowY }; });
+      assert(/pan-y|auto/.test(sc.ta) && sc.over === 'auto', `the settings sheet scrolls by touch (touch-action ${sc.ta})`);
+      await tap('.g-gtw [data-l="sheetclose"]');
+      assert(!(await ui()).sheet, 'tap: Done closes settings');
+      // a map that fails to load ends on an error card with a way out (never a silent hang)
+      await hook(a, 'failLoad', 1);
+      await tap('.g-gtw [data-l="map"][data-dir="1"]');
+      await until(a, () => !!document.querySelector('.g-gtw .gtw-err'), null, 15000, 'error card');
+      await shot(a, 'touch-load-error');
+      assert(await a.isVisible('.g-gtw [data-l="loadretry"]') && await a.isVisible('.g-gtw [data-l="loaddock"]'), 'load failure: error card with Try again and Play Dockside instead');
+      await tap('.g-gtw [data-l="loaddock"]');
+      await until(a, () => { const s2 = window.__getaway.state(); return s2.phase === 'lobby' && s2.mapId === 'dockside' && !s2.loading && !!document.querySelector('.g-gtw .gtw-lobby'); }, null, 30000, 'back on Dockside');
+      console.log('ok - tap: "Play Dockside instead" recovers to the lobby');
+      for (let i = h.errors.length - 1; i >= 0; i--) if (/forced load failure/.test(h.errors[i])) h.errors.splice(i, 1);
+      // a big map can be cancelled from its loading card
+      await tap('.g-gtw [data-l="map"][data-dir="1"]');
+      await until(a, () => !!document.querySelector('.g-gtw [data-l="loadcancel"]'), null, 8000, 'cancel button');
+      await shot(a, 'touch-loading');
+      await a.locator('.g-gtw [data-l="loadcancel"]').tap();
+      await until(a, () => { const s2 = window.__getaway.state(); return s2.mapId === 'dockside' && !s2.loading && s2.setup.map === 'dockside' && !!document.querySelector('.g-gtw .gtw-lobby'); }, null, 30000, 'cancelled back to Dockside');
+      console.log('ok - tap: Cancel stops a big map load and goes back to Dockside');
+      // start by tap, pause menu by tap, resume by tap
+      await tap('.g-gtw [data-l="start"]');
+      await phase(a, 'intro', 8000);
+      console.log('ok - tap: Start starts the match');
+      await phase(a, 'chase', 12000);
+      s = await st(a);
+      assert(s.a.role === 'cop', 'practice as the cop (tapped role) starts as the cop');
+      await a.locator('.g-gtw .gtw-view.full [data-tap="pause"]').tap(); await wait(300);
+      s = await st(a);
+      assert(s.paused && (await ui()).menu && await a.isVisible('.g-gtw [data-l="resume"]'), 'tap: the ‖ button pauses with a menu');
+      await shot(a, 'touch-pause');
+      await tap('.g-gtw [data-l="settings"]');
+      assert((await ui()).sheet === 'settings' && !(await a.isVisible('.g-gtw [data-l="rule"]')), 'pause → Settings shows this phone’s settings only');
+      await tap('.g-gtw [data-l="sheetclose"]');
+      await tap('.g-gtw [data-l="resume"]');
+      await until(a, () => !window.__getaway.state().paused, null, 6000, 'resumed');
+      console.log('ok - tap: Resume counts back in and unpauses');
+      // minimap regression: near the map edge the part outside the map image stays paper-coloured
+      // (a translucent fill without a clear used to stack up to solid black there)
+      {
+        const me = (await st(a)).me;
+        const home = await a.evaluate((w) => { const g = window.__getaway; const c = g.state()[w]; const B = g.internals.geo.bounds; g.hold(w, {}); g.setCar(w, { x: B.x0 + 15, z: (B.z0 + B.z1) / 2, vx: 0, vz: 0, speed: 0 }); return c; }, me);
+        await wait(2500);
+        const px = await a.evaluate(() => { const cv = document.querySelector('.g-gtw .gtw-mini canvas'); const d = cv.getContext('2d').getImageData(3, cv.height >> 1, 1, 1).data; return Array.from(d); });
+        await shot(a, 'touch-minimap-edge');
+        await a.evaluate(([w, c]) => { const g = window.__getaway; g.teleport(w, c.x, c.z, c.yaw, 0); g.hold(w, null); }, [me, home]);
+        assert(px[3] === 255 && px[0] + px[1] + px[2] > 45, `minimap outside the map image is paper, not black (got ${px.join(',')})`);
+        console.log('ok - minimap: off-map area near the edge is not black');
+      }
+      // the map overlay closes by tap
+      await a.locator('.g-gtw .gtw-mini').tap(); await wait(300);
+      assert(await a.isVisible('.g-gtw .gtw-map'), 'tap: the minimap opens the map');
+      await a.locator('.g-gtw .gtw-map [data-m="close"]').tap(); await wait(300);
+      assert(!(await a.isVisible('.g-gtw .gtw-map')), 'tap: Done closes the map');
+      // graphics dropped by the phone and never given back: a card with a reload, and the game goes on
+      await hook(a, 'loseContext', true);
+      await until(a, () => !!document.querySelector('.g-gtw [data-l="glreload"]'), null, 8000, 'graphics card');
+      await shot(a, 'touch-gl-lost');
+      await tap('.g-gtw [data-l="glreload"]');
+      await until(a, () => { const g = window.__getaway; return g.ready && !g.state().loading && !g.ui().glStuck; }, null, 30000, 'graphics back');
+      await until(a, () => !window.__getaway.state().paused, null, 8000, 'unpaused after reload');
+      console.log('ok - tap: Reload graphics rebuilds the renderer and the chase carries on');
+      // quit to the lobby from the pause menu
+      await a.locator('.g-gtw .gtw-view.full [data-tap="pause"]').tap(); await wait(300);
+      await tap('.g-gtw [data-l="quit"]');
+      await phase(a, 'lobby', 6000);
+      await wait(600); // several frames: the pause card's clean-up must not take the lobby down with it
+      assert(await a.isVisible('.g-gtw [data-l="start"]') && (await ui()).card && !(await ui()).menu && !(await st(a)).paused, 'tap: Quit to the lobby shows the lobby (Start visible, not a blank screen)');
+      await shot(a, 'touch-afterquit');
+      await tap('.g-gtw [data-l="start"]');
+      await phase(a, 'intro', 8000);
+      console.log('ok - tap: Start works again after quitting');
+      h.assertNoErrors();
+    } catch (e) { fails++; console.error(e.message); await shot(h.a, 'touch-fail').catch(() => {}); } finally { await h.close(); }
+  }
+
   // ═══ two phones, live ═══
   async function openPair(h, tune) {
     const { a, b } = h;
@@ -290,7 +405,7 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
   async function startMatch(h) {
     const { a, b } = h;
     await until(a, () => { const p = window.__getaway.state().partnerSeen; return p && p.ph === 1 && p.sv >= 1; }, null, 30000, 'guest in the lobby with the map loaded');
-    await a.click('.g-gtw [data-l="start"]');
+    await a.tap('.g-gtw [data-l="start"]');
     await until(b, () => ['intro', 'count', 'chase', 'wait'].includes(window.__getaway.state().phase), null, 15000, 'guest starts');
   }
   async function waitOver(h, idx, ms = 15000) {
@@ -303,15 +418,19 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
     try {
       await openPair(h, { ...FAST, rounds: 4 });
       // settings: the host edits, the guest sees it live
-      await a.click('.g-gtw [data-l="settings"]');
-      await a.click('.g-gtw [data-l="rule"][data-k="spikes"][data-step="1"]');
-      await a.click('.g-gtw [data-l="rule"][data-k="traffic"][data-step="-1"]');
+      await a.tap('.g-gtw [data-l="settings"]');
+      await a.tap('.g-gtw [data-l="rule"][data-k="spikes"][data-step="1"]');
+      await a.tap('.g-gtw [data-l="rule"][data-k="traffic"][data-step="-1"]');
       await until(b, () => { const r = window.__getaway.state().setup.rules; return r.spikes === 4 && r.traffic === 'light'; }, null, 8000, 'guest sees the settings');
       console.log('ok - the guest sees the host change spikes and traffic live');
-      await b.click('.g-gtw [data-l="settings"]');
+      await b.tap('.g-gtw [data-l="settings"]');
       assert(await b.isVisible('.g-gtw .gtw-sheet .gtw-ro'), 'the guest’s settings sheet is read-only');
       await shot(b, 'live-guest-settings');
-      await b.click('.g-gtw [data-l="sheetclose"]'); await a.click('.g-gtw [data-l="sheetclose"]');
+      await b.tap('.g-gtw [data-l="sheetclose"]'); await a.tap('.g-gtw [data-l="sheetclose"]');
+      // the guest's Ready by tap reaches the host
+      await b.tap('.g-gtw [data-l="ready"]');
+      await until(a, () => /ready/.test((document.querySelector('.g-gtw .gtw-status') || {}).textContent || ''), null, 8000, 'host sees the guest ready');
+      console.log('ok - tap: the guest’s Ready shows on the host');
       await hook(a, 'setRules', { heat: 260 });
       await until(b, () => window.__getaway.state().setup.rules.heat === 260, null, 8000, 'guest sees heat 260');
       await startMatch(h);
@@ -407,6 +526,116 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       assert(!h.warnings.length, `message budget respected (${h.warnings.length} warnings)`);
       h.assertNoErrors();
     } catch (e) { fails++; console.error(e.message, h.errors.slice(0, 5)); await shot(h.a, 'live-fail-a').catch(() => {}); await shot(h.b, 'live-fail-b').catch(() => {}); } finally { await h.close(); }
+  }
+
+  // ═══ contacts: two phones bump side by side at 80 ms / 10% loss; every contact is checked
+  // against where the partner car really was (its own trajectory, on the shared clock) ═══
+  if (want('contacts')) {
+    const h = await launch({ port: PORT + 9, only: ['getaway'], latency: 80, dropRate: 0.1, coarse: true });
+    const { a, b } = h;
+    try {
+      const { carContact } = await import('file://' + path.join(ROOT, 'js/games/getaway/car.js'));
+      const { CAR } = await import('file://' + path.join(ROOT, 'js/games/getaway/tune.js'));
+      await openPair(h, { ...FAST, rounds: 2 });
+      await hook(a, 'setRules', { traffic: 'off', roundTime: 300 });
+      await until(b, () => window.__getaway.state().setup.rules.traffic === 'off', null, 8000, 'guest sees traffic off');
+      await startMatch(h);
+      await phase(a, 'chase'); await phase(b, 'chase');
+      await hook(a, 'contactLog', true); await hook(b, 'contactLog', true);
+      const tps = [];
+      for (let k = 0; k < 6; k++) {
+        // side by side heading east on Mill St, the cop 3.5 m to the runner's right, both at 14 m/s;
+        // the cop steers in gently (a shove, not a PIT)
+        await hook(a, 'hold', 'a', { gas: 0.45 }); await hook(b, 'hold', 'b', { gas: 0.5, steer: -0.14 - 0.04 * (k % 3) });
+        await Promise.all([a.evaluate(() => window.__getaway.teleport('a', -160, 40, Math.PI / 2, 14)), b.evaluate(() => window.__getaway.teleport('b', -160, 43.5, Math.PI / 2, 14))]);
+        tps.push(await a.evaluate(() => window.__getaway.clock()));
+        await wait(2200);
+      }
+      await hook(a, 'hold', 'a', { hand: true }); await hook(b, 'hold', 'b', { hand: true });
+      await wait(600);
+      const la = await hook(a, 'contactLog'); const lb = await hook(b, 'contactLog');
+      const at = (traj, t) => { let i = traj.findIndex((q) => q.t >= t); if (i <= 0) return null; const p = traj[i - 1]; const q = traj[i]; if (q.t - p.t > 400) return null; const f = (t - p.t) / ((q.t - p.t) || 1); return { x: p.x + (q.x - p.x) * f, z: p.z + (q.z - p.z) * f, yaw: p.yaw + (q.yaw - p.yaw) * f }; };
+      const judge = (log, otherTraj) => {
+        let n = 0; let phantom = 0;
+        for (const c of log.contacts) {
+          if (tps.some((t) => c.t > t - 100 && c.t < t + 500)) continue; // just teleported
+          const o = at(otherTraj, c.t); if (!o) continue;
+          n++;
+          const me = { x: c.x, z: c.z, yaw: c.yaw, hl: CAR.hl + 0.25, hw: CAR.hw + 0.25 }; const them = { ...o, hl: CAR.hl + 0.25, hw: CAR.hw + 0.25 };
+          if (carContact(me, them, {}) <= 0) phantom++;
+        }
+        return { n, phantom };
+      };
+      const ja = judge(la, lb.traj); const jb = judge(lb, la.traj);
+      console.log('   contacts', JSON.stringify({ runner: ja, cop: jb, bumpsOut: la.bumpsOut.length, bumpsIn: lb.bumpsIn.length }));
+      assert(ja.n + jb.n >= 10, `side-by-side shoves make contact (${ja.n} steps on the runner’s phone, ${jb.n} on the cop’s)`);
+      assert(ja.phantom <= Math.max(1, ja.n * 0.1) && jb.phantom <= Math.max(1, jb.n * 0.1), `no phantom contacts: the partner was really within 0.5 m (runner ${ja.phantom}/${ja.n}, cop ${jb.phantom}/${jb.n})`);
+      const matched = la.bumpsOut.filter((o) => lb.bumpsIn.some((q) => Math.abs(q.t - o.t) < 900)).length;
+      assert(la.bumpsOut.length >= 2 && matched >= la.bumpsOut.length - 1, `every bump the runner’s phone resolves reaches the cop’s phone (${matched}/${la.bumpsOut.length}, 10% loss)`);
+      const sa = await st(a); const sb = await st(b);
+      assert(Math.abs(sa.a.hp - sb.partnerSeen.hp) < 1 || sb.partnerSeen.hp == null, 'both phones agree on the runner’s damage');
+    } catch (e) { fails++; console.error(e.message, h.errors.slice(0, 5)); } finally { await h.close(); }
+  }
+
+  // ═══ chase contacts: both cars driven by the AI on Dockside with traffic on, at 120 ms / 10% loss.
+  // Every contact step a phone logs is checked against where the partner really was. Guards against
+  // the runner's phone scraping against its stale picture of the cop after a bump (the cop's half
+  // of the impulse stays in that picture until the cop's samples show it). ═══
+  if (want('contacts') || want('chasecontacts')) {
+    const h = await launch({ port: PORT + 9, only: ['getaway'], latency: 120, dropRate: 0.1, coarse: true });
+    const { a, b } = h;
+    try {
+      const { carContact } = await import('file://' + path.join(ROOT, 'js/games/getaway/car.js'));
+      const { CAR } = await import('file://' + path.join(ROOT, 'js/games/getaway/tune.js'));
+      await openPair(h, { ...FAST, heatT: 60, rounds: 2, maxDpr: 0.3 }); // a long chase (the runner can’t shake the heat); a light render (the frame rate matters here)
+      await hook(a, 'setRules', { roundTime: 300 });
+      await startMatch(h);
+      await phase(a, 'chase'); await phase(b, 'chase');
+      const rw = (await round(a)).runner; const cw = rw === 'a' ? 'b' : 'a';
+      const R = rw === 'a' ? a : b; const C = rw === 'a' ? b : a;
+      await hook(a, 'contactLog', true); await hook(b, 'contactLog', true);
+      await hook(a, 'auto', 'a', true); await hook(b, 'auto', 'b', true);
+      let lr = { contacts: [], traj: [], bumpsIn: [], bumpsOut: [] }; let lc = { contacts: [], traj: [], bumpsIn: [], bumpsOut: [] };
+      for (let k = 0; k < 7; k++) {
+        // the cop starts each run 12 m behind the runner on Mill St (both at speed), then both AIs
+        // drive freely: the cop closes in, rams and PITs, the runner swerves through traffic
+        await Promise.all([R.evaluate((w) => window.__getaway.teleport(w, -150, 40, Math.PI / 2, 13), rw), C.evaluate((w) => window.__getaway.teleport(w, -162, 40.5, Math.PI / 2, 18), cw)]);
+        await wait(5000);
+        // (the test log keeps ~20 s of trajectory: collect in slices; skip the teleport itself)
+        const [x, y] = [await hook(R, 'contactLog', true), await hook(C, 'contactLog', true)];
+        const t1 = Math.min(x.traj.length ? x.traj[0].t : Infinity, y.traj.length ? y.traj[0].t : Infinity) + 600;
+        x.contacts = x.contacts.filter((c) => c.t > t1); y.contacts = y.contacts.filter((c) => c.t > t1);
+        for (const key of Object.keys(lr)) { lr[key] = lr[key].concat(x[key]); lc[key] = lc[key].concat(y[key]); }
+        const s0 = await st(a); if (process.env.DBG) console.log('   slice', k, JSON.stringify({ over: s0.R.over, ph: s0.phase, d: Math.round(Math.hypot(s0.a.x - s0.b.x, s0.a.z - s0.b.z)), n: x.contacts.length, tr: x.traj.length }));
+        if (s0.R.over || s0.phase !== 'chase') break;
+      }
+      await hook(a, 'auto', 'a', false); await hook(b, 'auto', 'b', false);
+      const at = (traj, t) => { let i = traj.findIndex((q) => q.t >= t); if (i <= 0) return null; const p = traj[i - 1]; const q = traj[i]; if (q.t - p.t > 400) return null; const f = (t - p.t) / ((q.t - p.t) || 1); return { x: p.x + (q.x - p.x) * f, z: p.z + (q.z - p.z) * f, yaw: p.yaw + (q.yaw - p.yaw) * f }; };
+      const judge = (log, otherTraj) => {
+        let n = 0; let phantom = 0;
+        for (const c of log.contacts) {
+          const o = at(otherTraj, c.t); if (!o) continue;
+          n++;
+          if (carContact({ x: c.x, z: c.z, yaw: c.yaw, hl: CAR.hl + 0.25, hw: CAR.hw + 0.25 }, { ...o, hl: CAR.hl + 0.25, hw: CAR.hw + 0.25 }, {}) <= 0) { phantom++; if (process.env.DBG) console.log('    phantom', Math.round(c.t), c.pen, 'picture-vs-real', Math.hypot(c.rx - o.x, c.rz - o.z).toFixed(2)); }
+        }
+        return { n, phantom };
+      };
+      const jr = judge(lr, lc.traj); const jc = judge(lc, lr.traj);
+      if (process.env.DBG) { // how far the runner's picture of the cop is from the real cop, with and without a bump correction
+        const e0 = []; const e1 = [];
+        for (const q of lr.traj) { if (q.px == null) continue; const o = at(lc.traj, q.t); if (!o) continue; const d = Math.hypot(q.px - o.x, q.pz - o.z); if (Math.hypot(q.x - o.x, q.z - o.z) < 12) (q.nc ? e1 : e0).push(d); }
+        const pct = (a, k) => { const b = a.slice().sort((x, y) => x - y); return b.length ? b[Math.floor(b.length * k)].toFixed(2) : '-'; };
+        console.log('   picture error near the runner: no bump', e0.length, pct(e0, 0.5), pct(e0, 0.9), ' after a bump', e1.length, pct(e1, 0.5), pct(e1, 0.9));
+      }
+      console.log('   chase contacts', JSON.stringify({ runner: rw, runnerPhone: jr, copPhone: jc, bumpsOut: lr.bumpsOut.length, bumpsIn: lc.bumpsIn.length }));
+      if (jr.n < 8) console.log('   (too few contacts this run to judge the phantom share)');
+      else assert(jr.phantom <= jr.n * 0.1, `chase contacts at 120 ms: the runner’s phone only scrapes where the cop really is (${jr.phantom}/${jr.n} phantom steps)`);
+      assert(jc.phantom <= Math.max(2, jc.n * 0.1), `chase contacts at 120 ms: the cop’s phone too (${jc.phantom}/${jc.n})`);
+      const sr = await st(R); const sc = await st(C);
+      assert(Math.abs(sr[rw].hp - sc.partnerSeen.hp) < 1.5 || sc.partnerSeen.hp == null, 'both phones agree on the runner’s damage');
+      void cw;
+      h.assertNoErrors();
+    } catch (e) { fails++; console.error(e.message, h.errors.slice(0, 5)); } finally { await h.close(); }
   }
 
   if (want('lossy')) {
@@ -523,10 +752,13 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
       await hook(a, 'setSetup', { map: maps[0] });
       await a.click('.g-gtw [data-l="start"]');
       await phase(a, 'chase', 15000);
+      const s0 = await st(a);
       await hook(a, 'hold', 'a', { gas: 1 });
       await wait(2000);
       const s = await st(a);
-      assert(s.a.speed > 5 && !h.errors.length, 'a chase after several switches drives and renders cleanly');
+      // (moved, not "still fast": one Dockside spawn can sit a few car lengths behind traffic queued at a light)
+      const moved = Math.hypot(s.a.x - s0.a.x, s.a.z - s0.a.z);
+      assert((s.a.speed > 5 || moved > 4) && !h.errors.length, `a chase after several switches drives and renders cleanly (${moved.toFixed(1)} m, now ${s.a.speed.toFixed(1)} m/s)`);
       h.assertNoErrors();
     } catch (e) { fails++; console.error(e.message, h.errors.slice(0, 3)); await shot(h.a, 'mapswitch-fail').catch(() => {}); } finally { await h.close(); }
   }
@@ -541,12 +773,31 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
         await arm(a, { ...FAST, maxDpr: 1 });
         await h.startLive(a, 'getaway', 'local');
         await ready(a);
+        // every task while a map loads, the first render after it included (the GPU warm-up): long-task observer
+        await a.evaluate(() => { window.__gtwLT = []; try { new PerformanceObserver((l) => { for (const e of l.getEntries()) window.__gtwLT.push([e.startTime, e.duration]); }).observe({ entryTypes: ['longtask'] }); } catch { window.__gtwLT = null; } });
         const maps = await hook(a, 'maps');
         for (const m of maps) {
           if (m.stub) { console.log(`   ${m.name}: stub (coming soon), skipped`); continue; }
-          await hook(a, 'setSetup', { map: m.id });
+          const lt0 = await a.evaluate(() => performance.now());
+          // (a fresh build each time, also for the map that's already in: the boot load had no observer)
+          if ((await st(a)).mapId === m.id) await a.evaluate((id) => window.__getaway.reloadMap(id), m.id);
+          else await hook(a, 'setSetup', { map: m.id });
           await until(a, (id) => { const s = window.__getaway.state(); return s.mapId === id && !s.loading; }, m.id, 180000, 'map ' + m.id);
+          await wait(600); // the first frames after ready
+          const lt1 = await a.evaluate(() => performance.now());
+          await wait(2000); // steady lobby frames: what one ordinary frame costs on this (software) GL
           const pf = await hook(a, 'perf');
+          const wl = (pf.build && pf.build.load) || {};
+          // from the moment the load starts (the old map's last frames don't count) to 600 ms after ready
+          const ltRaw = await a.evaluate((t) => window.__gtwLT && window.__gtwLT.filter((x) => x[0] >= t[0] && x[0] < t[1]).map((x) => [Math.round(x[0] - t[0]), Math.round(x[1])]), [Math.max(lt0, (wl.startAt || 0) - 20), lt1]);
+          const lts = ltRaw && ltRaw.map((x) => x[1]);
+          const steady = await a.evaluate((t) => window.__gtwLT && window.__gtwLT.filter((x) => x[0] >= t).map((x) => x[1]).sort((x, y) => x - y), lt1);
+          if (lts) {
+            const worst = Math.max(0, ...lts); const frame = steady.length ? Math.round(steady[steady.length >> 1]) : 0;
+            const cap = Math.max(250, Math.round(frame * 1.3));
+            console.log(`   ${kind} ${m.name}: load → first frames: longest task ${worst} ms (an ordinary frame here: ${frame || '<50'} ms; GPU warm-up ${wl.warmUp} ms in ${wl.warmSlices} slices, longest JS ${wl.warmMaxMs} ms, longest frame gap ${wl.warmGap} ms at ${wl.warmGapAt}; tasks > 200 ms at +ms: ${JSON.stringify(ltRaw.filter((x) => x[1] > 200))}, ready at +${Math.round(wl.readyAt - Math.max(lt0, wl.startAt - 20))})`);
+            soft(worst <= cap, `${kind} ${m.name}: loading and the first frames never block much longer than an ordinary frame or ~200 ms (${worst} ms ≤ ${cap} ms, software GL)`);
+          }
           const views = await a.evaluate(() => {
             const g = window.__getaway; const out = [];
             const sp = g.internals.S.mapEntry.spawns || [];
@@ -619,3 +870,146 @@ const round = (p) => p.evaluate(() => window.__getaway.state().R);
 
   if (fails) { console.log(`\n${fails} FAILED`); process.exitCode = 1; } else console.log('\nALL GOOD');
 })();
+
+// ═══ engine v2 units (ENGINE): traffic at junctions and what's drawn, wrecks, the road graph,
+// the practice AI reaching the player and getting unstuck on every map ═══
+async function engineUnits() {
+  const url = (f) => 'file://' + path.join(ROOT, 'js/games/getaway', f);
+  const { createGeo } = await import(url('geo.js'));
+  const { buildRoadGraph } = await import(url('roadgraph.js'));
+  const C = await import(url('car.js'));
+  const { CAR, NITRO, DT, TRAFFIC } = await import(url('tune.js'));
+  const { createTraffic } = await import(url('traffic.js'));
+  const { createDriver, AI_LEVELS } = await import(url('ai.js'));
+  const { MAPS } = await import(url('maps/index.js'));
+  assert(AI_LEVELS.join() === 'easy,normal,hard', 'AI levels: easy, normal, hard');
+  const nq = {}; const ct = {}; const tp = {};
+  for (const id of ['dockside', 'boulder', 'santee']) {
+    const e = MAPS.find((m) => m.id === id);
+    if (e.prepare) await e.prepare({});
+    const geo = createGeo(e);
+    // the road graph: built in slices it's identical to one go, and every map is one network
+    let g = null; let slices = 0; while (geo.buildNav(5) < 1 && slices < 5000) slices++; g = geo.roadGraph();
+    const g1 = buildRoadGraph(createGeo(e));
+    const comp = new Int32Array(g.nodes.n).fill(-1); let ncomp = 0;
+    for (let s0 = 0; s0 < g.nodes.n; s0++) { if (comp[s0] >= 0) continue; const st = [s0]; comp[s0] = ncomp; while (st.length) { const u = st.pop(); for (let k = g.adjStart[u]; k < g.adjStart[u + 1]; k++) { const v = g.edges.to[g.adj[k]]; if (comp[v] < 0) { comp[v] = ncomp; st.push(v); } } } ncomp++; }
+    const sizes = new Array(ncomp).fill(0); for (const c of comp) sizes[c]++;
+    assert(g.nodes.n === g1.nodes.n && g.edges.cost.length === g1.edges.cost.length && Math.max(...sizes) / g.nodes.n > 0.97, `${id}: road graph ${g.nodes.n} nodes in ${slices + 1} slices = one go; ${(Math.max(...sizes) / g.nodes.n * 100).toFixed(0)}% in one network`);
+    // traffic: crossing cars take turns at signalled junctions, so they don't drive through each other
+    const tr = createTraffic(geo, id, 'normal');
+    let pairs = 0; let samples = 0;
+    for (let t = 600; t < 690; t += 0.5) {
+      samples++;
+      const all = []; for (const L of tr.lanes) for (let j = 0; j < L.n; j++) { const p = {}; tr.poseOn(L, j, t, p); if (p.sc >= 0.95) all.push(p); }
+      const grid = new Map(); for (const p of all) { const k = Math.floor(p.x / 10) + ',' + Math.floor(p.z / 10); (grid.get(k) || grid.set(k, []).get(k)).push(p); }
+      for (const p of all) { const cx = Math.floor(p.x / 10); const cz = Math.floor(p.z / 10); for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) { const l = grid.get((cx + dx) + ',' + (cz + dz)); if (!l) continue; for (const q of l) if (q.id > p.id && Math.abs(p.y - q.y) < 2.5 && C.carContact(p, q, ct) > 0.2) pairs++; } }
+    }
+    const lim = { dockside: 0.1, boulder: 1, santee: 0.2 }[id];
+    assert(pairs / samples <= lim, `${id}: traffic doesn’t drive through traffic (${(pairs / samples).toFixed(2)} overlapping pairs at a time, was 2–12.6; ${tr.signals.filter(Boolean).length} signalled junctions)`);
+    // every car close enough to hit is drawn (the nearest TRAFFIC.max go to the GPU)
+    const rnd = (() => { let a = 99; return () => { a = (Math.imul(a, 1664525) + 1013904223) >>> 0; return a / 4294967296; }; })();
+    let miss = 0; let near = 0; const sel = [];
+    for (let k = 0; k < 40; k++) {
+      const p = geo.randomRoadPoint(rnd, {}); const t = 600 + k * 3.1;
+      const n = tr.select([{ x: p.x, z: p.z }], t, TRAFFIC.max, TRAFFIC.near, sel); const ids = new Set(sel.slice(0, n).map((q) => q.id));
+      tr.each(p.x, p.z, 60, t, (cid, q) => { if (q.sc < 0.95 || Math.hypot(q.x - p.x, q.z - p.z) > 60) return; near++; if (!ids.has(cid)) miss++; });
+    }
+    assert(miss === 0, `${id}: every traffic car within 60 m of the player is drawn (${near} checked at 40 spots)`);
+    // spawn clearing: at the go (traffic time 600) no civilian car can be hit near either spawn, the
+    // shared schedule is untouched, and after the zones lapse the cars are back
+    {
+      const tc = createTraffic(geo, id, 'normal'); const h0 = tc.hash(600.2);
+      const zones = []; for (const sp of e.spawns) zones.push({ x: sp.runner.x, z: sp.runner.z, r: 30, t1: 606 }, { x: sp.cop.x, z: sp.cop.z, r: 30, t1: 606 });
+      tc.setClear(zones);
+      let solid = 0; let hidden = 0; let back = 0;
+      for (const t of [598, 600, 602, 605.9]) for (const z of zones) tc.each(z.x, z.z, 24, t, (cid, q, wr) => { if (wr) return; if (Math.hypot(q.x - z.x, q.z - z.z) < 24 && q.sc >= 0.95) solid++; });
+      tc.setClear([]); for (const z of zones) tc.each(z.x, z.z, 24, 600, (cid, q) => { if (Math.hypot(q.x - z.x, q.z - z.z) < 24 && q.sc >= 0.95) hidden++; });
+      tc.setClear(zones); for (const z of zones) tc.each(z.x, z.z, 24, 610, (cid, q) => { if (Math.hypot(q.x - z.x, q.z - z.z) < 24 && q.sc >= 0.95) back++; });
+      assert(solid === 0 && tc.hash(600.2) === h0 && (hidden === 0 || back > 0), `${id}: traffic keeps clear of the spawns at the go (${hidden} cars would sit within 24 m of a spawn; ${solid} with clearing; ${back} back 4 s later)`);
+    }
+    // the AI cop reaches a parked runner from the spawns, through traffic, and gets unstuck
+    const traffic = createTraffic(geo, id, 'normal');
+    const runs = []; let maxMs = 0;
+    const builds = geo.solids.filter((o) => o.kind === 'building' && o.hw > 3 && o.hd > 3);
+    for (let run = 0; run < 3; run++) {
+      traffic.clearWrecks();
+      const sp = e.spawns[run % e.spawns.length]; let goal = geo.randomRoadPoint(rnd, {});
+      for (let q = 0; q < 50 && Math.hypot(goal.x - sp.cop.x, goal.z - sp.cop.z) > 1200; q++) goal = geo.randomRoadPoint(rnd, {});
+      let bStart = null;
+      if (run === 2 && builds.length) {
+        for (let q = 0; q < 300 && !bStart; q++) { const o = builds[Math.floor(rnd() * builds.length)]; geo.nearestRoad(o.x, o.z, nq, 40); if (nq.road >= 0 && !geo.roads[nq.road].bridge && nq.d > Math.max(o.hw, o.hd) + 3) bStart = { o, px: nq.px, pz: nq.pz }; }
+        if (bStart) for (let q = 0; q < 200; q++) { const dd = Math.hypot(goal.x - bStart.o.x, goal.z - bStart.o.z); if (dd > 200 && dd < 600) break; goal = geo.randomRoadPoint(rnd, {}); }
+      }
+      const rn = C.newCar('runner'); const cp = C.newCar('cop');
+      C.placeCar(rn, goal.x - goal.tz * 2.5, goal.z + goal.tx * 2.5, Math.atan2(goal.tx, -goal.tz), geo);
+      let stuckStart = false;
+      if (run === 2 && builds.length) {
+        // nose against a building beside a road: it has to back out and find its way
+        const b = bStart;
+        if (b) {
+          const { o } = b; let dx = b.px - o.x; let dz = b.pz - o.z; const L = Math.hypot(dx, dz) || 1; dx /= L; dz /= L;
+          // walk out from the box centre until a car fits, nose towards the building
+          let d = 0; const yaw = Math.atan2(-dx, dz);
+          for (; d < 60; d += 0.25) { C.placeCar(cp, o.x + dx * d, o.z + dz * d, yaw, geo); let hit = false; geo.eachSolid(cp.x, cp.z, 4, (s) => { if (!s.broken && !s.breakable && Math.abs(s.x - cp.x) < s.rad + 3 && Math.abs(s.z - cp.z) < s.rad + 3) { const sv = { x: s.x, z: s.z, yaw: -s.rot, hl: s.hd, hw: s.hw }; if (C.carContact(cp, sv, ct) > 0) hit = true; } }); if (!hit) break; }
+          C.placeCar(cp, o.x + dx * (d + 0.3), o.z + dz * (d + 0.3), yaw, geo); stuckStart = true;
+        }
+      }
+      if (!stuckStart) C.placeCar(cp, sp.cop.x, sp.cop.z, sp.cop.yaw, geo);
+      const drv = createDriver(geo, 'cop', { seed: 9 + run, level: 'normal' });
+      const x0 = cp.x; const z0 = cp.z;
+      let acc = 0; let t = 0; let off = 0; let reach = null; let left = false;
+      for (; t < 180; t += DT) {
+        acc += DT;
+        if (acc >= 1 / 30) { acc -= 1 / 30; const los = geo.lineOfSight(cp.x, cp.z, cp.y, rn.x, rn.z, rn.y); drv.update(1 / 30, cp, rn, { los, traffic, tT: 600 + t, spikesLeft: 0, viewer: { x: rn.x, z: rn.z } }); if (drv.out.warp) C.placeCar(cp, drv.out.warp.x, drv.out.warp.z, drv.out.warp.yaw, geo); }
+        C.stepCar(cp, drv.out, DT, geo, CAR.cop, NITRO.cop); cp.ev.length = 0;
+        traffic.each(cp.x, cp.z, 8, 600 + t, (cid, q) => { if (q.sc < 0.95) return; Object.assign(tp, q); tp.r = 0; if (C.carContact(cp, tp, ct) > 0) { const v = C.resolveCar(cp, tp, ct, 1, 0.8, 1); if (v > TRAFFIC.knockMin) traffic.knock(cid, q, -ct.nx * ct.j * 0.8, -ct.nz * ct.j * 0.8, 0); } });
+        if (Math.round(t / DT) % 4 === 0) { traffic.stepWrecks(DT * 4, [cp]); traffic.yieldTo(DT * 4, 600 + t, [{ x: cp.x, z: cp.z, yaw: cp.yaw, siren: true }, { x: rn.x, z: rn.z }]); }
+        if (process.env.AITR === id + run && Math.round(t / DT) % 30 === 0 && t > +(process.env.AIT0 || 0)) console.log('   tr', t.toFixed(1), cp.x.toFixed(0), cp.z.toFixed(0), 'v', cp.speed.toFixed(1), drv.state.mode, drv.state.pit, 'lane', drv.state.laneK, 'offR', (drv.state.offRoute || 0).toFixed(1), 'tgt', (drv.state.tx || 0).toFixed(0), (drv.state.tz || 0).toFixed(0), 'left', (drv.state.routeLeft || 0).toFixed(0), 'free', (drv.state.tFree || 0).toFixed(0), 'rev', drv.state.revT > 0, 'st', drv.out.steer.toFixed(2), 'd', Math.hypot(rn.x - cp.x, rn.z - cp.z).toFixed(0));
+        if (cp.level < 0) { geo.nearestRoad(cp.x, cp.z, nq, 30); if (!(nq.road >= 0 && nq.d <= geo.roads[nq.road].hw + 1.5)) { off += DT; if (process.env.AIDBG && Math.round(t / DT) % 60 === 0) console.log('   off', id, run, t.toFixed(1), cp.x.toFixed(0), cp.z.toFixed(0), nq.road >= 0 ? geo.roads[nq.road].name : '-', (nq.d - (nq.road >= 0 ? geo.roads[nq.road].hw : 0)).toFixed(1), geo.surfaceAt(cp.x, cp.z), drv.state.mode, drv.state.laneK, 'v', cp.speed.toFixed(1), 'vT', (drv.state.vT || 0).toFixed(1), 'free', (drv.state.tFree || 0).toFixed(0), 'offR', (drv.state.offRoute || 0).toFixed(1), 'shift', drv.state.laneShift.toFixed(1), 'left', (drv.state.routeLeft || 0).toFixed(0), 'rev', drv.state.revT > 0, 'curve', (drv.state.vCurve || 0).toFixed(0)); } }
+        if (Math.hypot(cp.x - x0, cp.z - z0) > 15) left = true;
+        if (Math.hypot(rn.x - cp.x, rn.z - cp.z) < 15) { reach = t; break; }
+      }
+      maxMs = Math.max(maxMs, drv.state.stats.maxMs);
+      runs.push({ reach, off: off / t, stuckStart, end: Math.round(Math.hypot(rn.x - cp.x, rn.z - cp.z)), left, d0: Math.round(Math.hypot(rn.x - x0, rn.z - z0)), stucks: drv.state.stats.stucks });
+    }
+    const ok = runs.filter((r) => r.reach !== null);
+    assert(ok.length === runs.length && runs.every((r) => r.off < 0.15 || r.stuckStart), `${id}: the AI cop reaches a parked player through traffic (${runs.map((r) => `${r.d0} m in ${r.reach == null ? '— (' + r.end + ' m to go)' : r.reach.toFixed(0) + ' s'}, ${(r.off * 100).toFixed(0)}% off road${r.stuckStart ? ' from a building' : ''}`).join('; ')})`);
+    const st0 = runs.find((r) => r.stuckStart);
+    if (st0) assert(st0.left && st0.reach !== null, `${id}: started nose-in against a building, it backs out and gets there (${st0.stucks} stuck recoveries)`);
+    soft(maxMs < 60, `${id}: AI think time per update in Node (max ${maxMs.toFixed(1)} ms; GC and a busy machine included)`);
+    // practice: an Easy AI runner chased by a Hard AI cop from the first spawn drives away through
+    // traffic (spawns kept clear at the go) and never sits still for long
+    {
+      const tc = createTraffic(geo, id, 'normal'); const sp = e.spawns[0];
+      tc.setClear([sp.runner, sp.cop].map((q) => ({ x: q.x, z: q.z, r: 30, t1: 606 })));
+      const rn = C.newCar('runner'); const cp = C.newCar('cop');
+      C.placeCar(rn, sp.runner.x, sp.runner.z, sp.runner.yaw, geo); C.placeCar(cp, sp.cop.x, sp.cop.z, sp.cop.yaw, geo);
+      const dR = createDriver(geo, 'runner', { seed: 3, level: 'easy' }); const dC = createDriver(geo, 'cop', { seed: 5, level: 'hard' });
+      let acc = 0; let hitR = false; let hitC = false; let path = 0; let top = 0; let spell = 0; let maxSpell = 0; let px = rn.x; let pz = rn.z;
+      for (let t = 0; t < 20; t += DT) {
+        acc += DT; const tT = 600 + t;
+        if (acc >= 1 / 30) {
+          acc -= 1 / 30; const los = geo.lineOfSight(cp.x, cp.z, cp.y, rn.x, rn.z, rn.y);
+          dR.update(1 / 30, rn, cp, { los, traffic: tc, tT, oilLeft: 0, hit: hitR }); dC.update(1 / 30, cp, rn, { los, traffic: tc, tT, spikesLeft: 0, hit: hitC, viewer: { x: 1e6, z: 1e6 } }); hitR = hitC = false;
+          for (const [d, c] of [[dR, rn], [dC, cp]]) if (d.out.warp) C.placeCar(c, d.out.warp.x, d.out.warp.z, d.out.warp.yaw, geo);
+          path += Math.hypot(rn.x - px, rn.z - pz); px = rn.x; pz = rn.z; top = Math.max(top, rn.speed);
+          // (pinned by the cop doesn't count: that's the cop's job)
+          if (rn.speed < 1.2 && t > 1.5 && Math.hypot(rn.x - cp.x, rn.z - cp.z) > 14) { spell += 1 / 30; maxSpell = Math.max(maxSpell, spell); } else spell = 0;
+        }
+        C.stepCar(rn, dR.out, DT, geo, CAR.runner, NITRO.normal); C.stepCar(cp, dC.out, DT, geo, CAR.cop, NITRO.cop); rn.ev.length = 0; cp.ev.length = 0;
+        if (C.carContact(rn, cp, ct) > 0) { C.resolvePair(rn, cp, ct, 1, 1); hitR = hitC = true; }
+        for (const c of [rn, cp]) tc.each(c.x, c.z, 8, tT, (cid, q) => { if (q.sc < 0.95) return; Object.assign(tp, q); tp.r = 0; if (C.carContact(c, tp, ct) > 0) { if (c === rn) hitR = true; else hitC = true; const v = C.resolveCar(c, tp, ct, 1, 0.8, 1); if (v > TRAFFIC.knockMin) tc.knock(cid, q, -ct.nx * ct.j * 0.8, -ct.nz * ct.j * 0.8, 0); } });
+        if (Math.round(t / DT) % 4 === 0) { tc.stepWrecks(DT * 4, [rn, cp]); tc.yieldTo(DT * 4, tT, [{ x: cp.x, z: cp.z, yaw: cp.yaw, siren: true, speed: cp.speed }, { x: rn.x, z: rn.z, yaw: rn.yaw }]); }
+      }
+      assert(path > 150 && top * 3.6 > 60 && maxSpell < 3, `${id}: an Easy AI runner gets away from the spawn through traffic (${path.toFixed(0)} m in 20 s, top ${(top * 3.6).toFixed(0)} km/h, longest stop ${maxSpell.toFixed(1)} s)`);
+    }
+  }
+  // wrecks: a knocked car slides into a building and stops at its wall (not through it)
+  { const geo = createGeo({ id: 'w', bounds: { x0: -500, z0: -500, x1: 500, z1: 500 }, roads: [{ name: 'a', kind: 'street', width: 10, pts: [[-400, 0], [400, 0]] }], solids: [{ kind: 'building', x: 0, z: 20, w: 40, d: 10, h: 8 }] });
+    const tr = createTraffic(geo, 'w', 'normal');
+    let id0 = -1; let pose = null; tr.each(0, 0, 400, 600, (id, p) => { if (id0 < 0 && p.sc > 0.95) { id0 = id; pose = { ...p }; } });
+    pose.x = 0; pose.z = 5; tr.knock(id0, pose, 0, 25, 0);
+    for (let i = 0; i < 120; i++) tr.stepWrecks(1 / 60, [{ x: 0, z: 0 }]);
+    const k = tr.knocked.get(id0);
+    assert(k && k.z < 15 - 1.0 && k.z > 5, `a knocked car stops at a building’s wall (${k && k.z.toFixed(2)} m, wall at 15)`); }
+}

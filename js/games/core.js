@@ -1403,7 +1403,8 @@ function openSheet(gameId) {
   const btns = [];
   if (live) {
     if (modes.includes('live') && G.room) btns.push(['live', 'live', `Play live with ${pName}${G.partner.here ? ' <span class="gs-here">here now</span>' : ''}`]);
-    if (modes.includes('local')) btns.push(['live', 'local', oneDevice]);
+    // def.localLabel(dev) names the one-device mode when it isn't two people on one device (e.g. practice vs an AI)
+    if (modes.includes('local')) btns.push(['live', 'local', esc((typeof def.localLabel === 'function' ? def.localLabel(dev) : def.localLabel) || '') || oneDevice]);
   } else {
     if (modes.includes('online') && online) btns.push(['new', 'online', `New game with ${pName}`]);
     if (modes.includes('local')) btns.push(['new', 'local', oneDevice]);

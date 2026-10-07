@@ -148,6 +148,7 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
 
   // ── following ──
   const tgt = { x: 0, z: 0 };
+  const tmpS = { x: 0, z: 0, tx: 0, tz: 0, s: 0 };
   /** Advance the projection along the route, find the look-ahead point and the speed limit
    *  from the curvature ahead. Returns false when there is no route. */
   function follow(car, vMax, look) {
@@ -233,7 +234,15 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
     D.trafT -= opts.dt; if (D.trafT > 0) return; D.trafT = 0.1;
     obsN = 0;
     const tr = opts.traffic;
-    const fx = Math.sin(car.yaw); const fz = -Math.cos(car.yaw); const rx = Math.cos(car.yaw); const rz = Math.sin(car.yaw);
+    // slow and turning (pulling out of a junction, round a corner): look where I'm turning to, not
+    // along my nose, or a car waiting at the line straight ahead (for a red light, or giving way
+    // to me) holds me up for ever while I'm not even going that way
+    let hy = car.yaw;
+    if (car.speed < 8 && D.tx != null && Math.hypot(D.tx - car.x, D.tz - car.z) > 3) {
+      const da = wrap(Math.atan2(D.tx - car.x, -(D.tz - car.z)) - car.yaw);
+      if (Math.abs(da) > 0.5) hy = car.yaw + clamp(da, -1.2, 1.2) * 0.7;
+    }
+    const fx = Math.sin(hy); const fz = -Math.cos(hy); const rx = Math.cos(hy); const rz = Math.sin(hy);
     const v = Math.max(5, car.speed);
     if (tr && tr.total) {
       tr.each(car.x + fx * 30, car.z + fz * 30, 42, opts.tT, (id, p) => {
@@ -246,7 +255,9 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
         const tau = Math.max(0, lz - 3) / Math.max(3, v - Math.max(0, along));
         const flx = lx + (p.vx * rx + p.vz * rz) * Math.min(tau, 3);
         let o = obs[obsN]; if (!o) { o = {}; obs[obsN] = o; } obsN++;
-        o.lz = lz; o.lx = lx; o.flx = flx; o.along = along; o.hdot = hdot;
+        o.lz = lz; o.lx = lx; o.flx = flx; o.along = along; o.hdot = hdot; o.spd = p.speed;
+        // the siren makes cars ahead slow down and pull over to the right: count on it
+        if (role === 'cop' && hdot > 0.6 && p.speed < 5 && lx > 0.6 && lz > 3) o.flx = Math.max(flx, 2.6);
       });
     }
     // corridors relative to my path: 0 my lane, 1 the oncoming lane, 2 right verge, 3 left verge
@@ -255,38 +266,59 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
     const hw = r ? r.hw : 4; const off = r ? (r.lanes > 1 ? (0.5 * hw) / r.lanes : hw * 0.5) : 2;
     lanes[0] = 0; lanes[1] = -2 * off; lanes[2] = hw - off + 1.7; lanes[3] = -(hw + off) - 1.7;
     const me = D.laneShift; // where I am across my path (the corridors are measured from the path)
+    lanes[4] = D.dodgeOff || 0;
     /** Free distance along a corridor centred at c (my frame); sweep: also the band from me to c. */
     const freeAt = (c, sweep) => {
-      const lo = Math.min(0, c) - 2.35; const hi = Math.max(0, c) + 2.35;
-      let free = 70; let lv0 = 99;
+      // the sweep is the strip I cross on the way (not my own lane: what's there is what I'm passing)
+      const lo = c < 0 ? c - 2.35 : 1.4; const hi = c < 0 ? -1.4 : c + 2.35;
+      let free = 70; let lv0 = 99; let bs = 99;
       for (let i = 0; i < obsN; i++) {
         const o = obs[i];
         const inLane = Math.abs(o.flx - c) < 2.25 || (o.lz < 25 && Math.abs(o.lx - c) < 2.25);
-        const inSweep = sweep && o.lz < 20 && o.lx > lo && o.lx < hi;
+        const inSweep = sweep && o.lz < 9 && o.lx > lo && o.lx < hi; // the stretch where I move across
         if (!inLane && !inSweep) continue;
         const eff = Math.max(0, o.hdot < -0.5 ? o.lz * v / (v + Math.max(0, -o.along)) : o.lz); // oncoming closes fast
-        if (eff < free) { free = eff; lv0 = o.hdot > 0.5 ? Math.max(0, o.along) : 0; }
+        if (eff < free) { free = eff; lv0 = o.hdot > 0.5 ? Math.max(0, o.along) : 0; bs = o.spd; }
       }
-      return [free, lv0];
+      return [free, lv0, bs];
     };
     // where I am right now: this is what the speed limit is about
     const here = freeAt(0, false);
     let cur = D.laneK || 0; let keepT = D.laneHold || 0;
     keepT -= 0.1;
     const own = freeAt(lanes[0] - me, cur !== 0);
-    const need = Math.max(38, v * 2.2);
-    if (cur !== 0) {
+    // (the cop runs with the siren on: traffic pulls over for it, so it passes more readily)
+    // a runner with the cop close behind can't sit in a queue: it takes smaller gaps
+    const urgent = role === 'runner' && (D.copNear || 0) < 70;
+    const need = role === 'cop' ? Math.max(28, v * 1.7) : urgent ? Math.max(24, v * 1.5) : Math.max(38, v * 2.2);
+    // nose to nose with a car that isn't moving (it's waiting for me, or stuck): creep round it
+    // (the runner, with room to swing out; the cop's siren clears its way, and squeezing past a
+    // car closer than that just wedges it against the car's corner: the watchdog backs it out)
+    D.blockT = role === 'runner' && car.speed < 4 && here[0] < 12 && here[0] >= 6 && here[2] < 1 ? (D.blockT || 0) + 0.1 : 0;
+    if (cur === 4) {
+      const f = freeAt(lanes[4] - me, false);
+      if (keepT <= 0 && (own[0] >= 14 || f[0] < 3)) { cur = 0; keepT = 0.6; }
+    } else if (D.blockT > (urgent ? 0.3 : 1.0)) {
+      for (const c of [2.9, -2.9, 4.3, -4.3, 5.8, -5.8]) {
+        const f = freeAt(c, true); if (f[0] < 10) continue;
+        const ox = car.x + rx * c; const oz = car.z + rz * c;
+        if (vergeBlocked(car.x + fx * 2, car.z + fz * 2, ox + fx * 5, oz + fz * 5) < 1 || vergeBlocked(ox + fx * 5, oz + fz * 5, ox + fx * 14, oz + fz * 14) < 1) continue;
+        const sf = geo.surfaceAt(ox + fx * 8, oz + fz * 8); if (sf === 'water') continue;
+        cur = 4; keepT = 2.2; D.dodgeOff = me + c; lanes[4] = D.dodgeOff; D.blockT = 0; break;
+      }
+    }
+    if (cur === 4) { /* creeping round: handled above */ } else if (cur !== 0) {
       // back to my own lane as soon as it's clear (and the move across is clear)
       if (keepT <= 0 && own[0] >= Math.max(30, v * 1.6)) { cur = 0; keepT = 1.2; }
       else {
         const f = freeAt(lanes[cur] - me, false);
         if (f[0] < 12 && own[0] > f[0] + 6) { cur = 0; keepT = 1.2; } // the overtake is closing up: abort
       }
-    } else if (here[0] < 45 && here[1] < Math.max(v, D.vWant || 0) - 4 && keepT <= 0) {
+    } else if (here[0] < 45 && here[1] < Math.max(v, D.vWant || 0) - 4 && keepT <= 0 && Math.abs(D.alpha || 0) < 0.5) { // (not mid-turn: the corridors are along my nose)
       // something slow ahead: overtake on the oncoming side if it's clear for long enough
       const opp = r && r.oneway ? [0, 0] : freeAt(lanes[1] - me, true);
       if (opp[0] >= need) { cur = 1; keepT = 1.5; }
-      else if (v < 12 && here[0] < 14) { // crawling in a queue: try a verge
+      else if (v < 12 && here[0] < (urgent ? 22 : 14)) { // crawling in a queue: try a verge
         for (const q of [2, 3]) {
           const c = lanes[q] - me; const f = freeAt(c, true);
           if (f[0] < 18) continue;
@@ -303,6 +335,8 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
     D.sideNudge = clamp(side, -1.2, 1.2);
     D.laneK = cur; D.laneHold = keepT; D.laneTarget = lanes[cur] + D.sideNudge;
     D.tFree = here[0]; D.tLeadV = here[1]; D.tLead = own[0];
+    D.creep = cur === 4;
+    if (cur === 4) { const f = freeAt(lanes[4] - me, false); D.tFree = Math.max(f[0], Math.min(here[0] + 6, 12)); D.tLeadV = f[1]; }
   }
 
   // ── decisions ──
@@ -316,7 +350,7 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
     G.sourcesFor(loc, car.speed, srcs);
     G.dijkstra(srcs, dMe, pMe, penal.size ? penalty : null);
     let goal = null;
-    if (dist > 90) {
+    if (dist > 90 && k.speed > 4) { // (a car that's stopped isn't going anywhere: go to it)
       predictRoute(loc2, k.speed, 14, pts);
       const lt = {};
       for (const p of pts) {
@@ -338,7 +372,7 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
     locateCar(car, loc); if (loc.road < 0) return false;
     G.sourcesFor(loc, car.speed, srcs);
     // with the cop close, turning back means driving at it: keep going forward
-    if (cop && Math.hypot(cop.x - car.x, cop.z - car.z) < 90 && car.speed > 3 && srcs.length === 4) srcs.length = 2;
+    if (cop && Math.hypot(cop.x - car.x, cop.z - car.z) < 90 && srcs.length === 4) srcs.length = 2;
     G.dijkstra(srcs, dMe, pMe, penal.size ? penalty : null, 40);
     if (cop) {
       locateCar(cop, loc2, 150);
@@ -446,7 +480,8 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
     D.pinT = wantMove && car.speed < 1.5 ? (D.pinT || 0) + opts.dt : 0;
     // nose in a wall, or shoved against something by the other car: back out quickly
     const pinned = D.pinT > (role === 'runner' ? 0.7 : 1.1) && (car.wnT > 0 || D.t - (D.hitT || -9) < 0.6);
-    const patience = D.tFree < 9 ? 3.4 : 2.4;
+    // (a runner stuck for long is a sitting duck: it gives up sooner)
+    const patience = role === 'runner' ? (D.tFree < 9 ? 2.4 : 1.8) : D.tFree < 9 ? 2.9 : 2.4;
     if (!(wantMove && span >= patience - 0.01 && moved < 4) && !pinned) { if (D.t - D.stuckAt > 10) D.stuckLvl = 0; return; }
     trail.length = 0; D.pinT = 0;
     D.stats.stucks++;
@@ -491,6 +526,7 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
       k = { ...k, x: k.x + k.vx * age * 0.6, z: k.z + k.vz * age * 0.6 };
     }
     const dist = k ? Math.hypot(k.x - car.x, k.z - car.z) : 999;
+    D.copNear = role === 'runner' ? dist : 999;
     // recovering
     if (D.revT > 0) {
       D.revT -= dt; out.gas = 0; out.brake = 1; out.steer = D.revSteer;
@@ -550,9 +586,19 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
         if (D.offRoute > 6) vT = Math.min(vT, 9 + 30 / D.offRoute); // getting back to the road: gently
         if (D.routeLeft < 30 && role === 'cop') vT = Math.min(vT, Math.max(k ? k.speed + 6 : 10, D.routeLeft * 0.8));
       } else {
-        // no route: get back to the nearest road point (never a straight line at the runner)
-        geo.nearestRoad(car.x, car.z, loc, 150);
-        if (loc.road >= 0) { tx = loc.px; tz = loc.pz; vT = 10; } else { tx = car.x + Math.sin(car.yaw) * 20; tz = car.z - Math.cos(car.yaw) * 20; vT = 8; }
+        // no route (yet): on a road, keep driving along it the way I'm facing, in my lane (a
+        // runner that sat at a road point waiting for a plan was a sitting duck); off the road,
+        // get back to the nearest road point (never a straight line at the runner)
+        locateCar(car, loc, 60);
+        if (loc.road >= 0 && loc.d < roads[loc.road].hw + 4) {
+          const r = roads[loc.road];
+          geo.sampleRoad(r, clamp(loc.s + loc.dir * look, 0, r.len), tmpS);
+          const tx0 = tmpS.tx * loc.dir; const tz0 = tmpS.tz * loc.dir; const off = r.oneway ? 0 : r.hw * 0.5;
+          tx = tmpS.x - tz0 * off; tz = tmpS.z + tx0 * off; vT = Math.min(vMax, 15);
+        } else {
+          geo.nearestRoad(car.x, car.z, loc, 150);
+          if (loc.road >= 0) { tx = loc.px; tz = loc.pz; vT = 10; } else { tx = car.x + Math.sin(car.yaw) * 20; tz = car.z - Math.cos(car.yaw) * 20; vT = 8; }
+        }
       }
     }
     D.vWant = vT;
@@ -569,8 +615,9 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
       const tk = lv.traffic;
       const want = D.laneTarget || 0;
       D.laneShift += clamp(want - D.laneShift, -5 * dt, 5 * dt);
+      if (D.creep) vT = Math.min(vT, 6);
       if (D.tFree < 70) { // never drive into what's in front of me right now
-        const gapOk = D.tFree - 7.5 * tk - car.speed * 0.2;
+        const gapOk = D.tFree - (D.creep ? 3 : 7.5 * tk) - car.speed * 0.2;
         const vFollow = Math.sqrt(Math.max(0, Math.min(D.tLeadV, 40) ** 2 + 2 * 9 * Math.max(0, gapOk)));
         vT = Math.min(vT, vFollow);
         if (gapOk < 0 && car.speed > 3) brakeHard = true;
@@ -580,9 +627,19 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
     D.vT = vT; D.tx = tx; D.tz = tz;
     // steer
     const p = pursue(car, tx, tz);
-    out.steer = p.st;
+    out.steer = p.st; D.alpha = p.alpha;
     if (Math.abs(out.steer) > 0.05) D.lastSteer = out.steer;
     if (Math.abs(p.alpha) > 0.9 && car.speed > 6) vT = Math.min(vT, 10);
+    // the way on is behind me and I'm slow: a three-point turn (back up on the opposite lock)
+    // rather than a full-lock loop across the kerb and the oncoming lane
+    if (D.kT > 0) {
+      D.kT -= dt;
+      if (Math.abs(p.alpha) < 1.1 || car.vf < -6) D.kT = 0;
+      else { out.gas = 0; out.brake = 1; out.steer = D.kSteer; finish(t0); return out; }
+    } else if (!direct && Math.abs(p.alpha) > 1.9 && car.speed < 7 && D.t - (D.kAt || -9) > 4 && (role === 'cop' || dist > 50)) {
+      const bx = car.x - Math.sin(car.yaw) * 8; const bz = car.z + Math.cos(car.yaw) * 8;
+      if (vergeBlocked(car.x, car.z, bx, bz) >= 1 && geo.surfaceAt(bx, bz) !== 'water') { D.kT = 1.8; D.kSteer = -Math.sign(p.alpha); D.kAt = D.t; out.gas = 0; out.brake = 1; out.steer = D.kSteer; finish(t0); return out; }
+    }
     // throttle / brake
     const ev = vT - car.vf;
     if (brakeHard && car.vf > 0.5) { out.gas = 0; out.brake = 1; }
@@ -629,6 +686,6 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
 
   return {
     update, out, state: D, level,
-    reset() { D.route = null; D.replanT = 0; D.goalT = 0; D.revT = 0; D.turnT = 0; D.stuckLvl = 0; D.mode = 'route'; D.pit = 'approach'; trail.length = 0; hist.length = 0; penal.clear(); D.known = null; },
+    reset() { D.kT = 0; D.route = null; D.replanT = 0; D.goalT = 0; D.revT = 0; D.turnT = 0; D.stuckLvl = 0; D.mode = 'route'; D.pit = 'approach'; trail.length = 0; hist.length = 0; penal.clear(); D.known = null; },
   };
 }

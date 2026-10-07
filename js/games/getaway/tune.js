@@ -3,7 +3,7 @@
 // so a car's heading is (sin yaw, −cos yaw) and its right is (cos yaw, sin yaw).
 
 export const DT = 1 / 120;            // fixed simulation step
-export const MAX_STEPS = 14;          // per frame (a ~120 ms hitch catches up, a longer one is dropped)
+export const MAX_STEPS = 15;          // per frame (a 125 ms frame catches up, a longer gap is dropped)
 export const G = 9.81;
 
 /** Car handling. The runner and the cop share the model; the cop is a touch faster in a straight
@@ -27,7 +27,7 @@ export const CAR = {
   steerRate: 5.5,                     // keyboard steering slew (full lock per s)
   slipSkid: 2.4,                      // lateral slip (m/s) that leaves skid marks / squeals
   wallE: 0.18,                        // wall restitution
-  wallFric: 0.12,                     // tangential speed lost per wall contact step (fraction)
+  wallFric: 0.3,                      // wall friction coefficient (tangential impulse ≤ μ × normal impulse)
   carE: 0.25,                         // car-car restitution
 };
 
@@ -91,5 +91,6 @@ export const TRAFFIC = {
   gap: { light: 150, normal: 78 },     // metres of lane per car
   max: 112,                            // instances drawn (nearest first: every car within ~150 m)
   near: 340,                           // only cars within this of a viewer are placed
-  knockT: 12,
+  knockT: 12,                          // s before a wreck may rejoin its lane
+  knockMin: 3.5,                       // closing speed (m/s) that knocks a car out of its lane (below: a nudge)
 };

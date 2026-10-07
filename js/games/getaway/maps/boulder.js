@@ -48,7 +48,8 @@ export const BOULDER = {
   water: WATER.map(({ poly }) => ({ poly })),
   spawns: SPAWNS,
   landmarks: [...LANDMARKS, ...FAR],
-  sky: { top: '#5d9bd3', horizon: '#f3dcb0', fog: '#ead8b9', fogNear: 140, fogFar: 520, sun: { bearing: 255, elev: 24 } },
+  // crisp high-altitude Front Range air: deep blue zenith, a pale clean horizon, a few cumulus over the peaks
+  sky: { top: '#3f84cc', horizon: '#d6e3ec', fog: '#c9d8e2', fogNear: 150, fogFar: 520, sun: { bearing: 255, elev: 26 }, clouds: 0.38, sunColor: '#fff2d8' },
   /** Optional: generate the layout ahead of build(), in slices. */
   async prepare(kit = {}) {
     const it = layoutGen();

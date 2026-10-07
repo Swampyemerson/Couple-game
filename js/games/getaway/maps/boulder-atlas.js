@@ -10,6 +10,7 @@ const NAMES = [
   'shopFront', 'officeUpper', 'glassUpper', 'aptUpper', 'towerUpper', 'boxWall', 'boxFront', 'schoolUpper',
   'roofTile', 'shingle', 'seats', 'rock', 'pavers', 'courtUpper', 'theaterFront', 'hotelUpper',
   'ncar', 'blank', 'turf', 'homeFront', 'soundwall', 'flowers', 'asphalt', 'concrete',
+  'gantryA', 'gantryB', 'busAd', 'blade',
 ];
 export const T = Object.fromEntries(NAMES.map((n, i) => [n, i]));
 /** UV rect [u0, v0, u1, v1] of tile i, inset by 2 px against mip bleed (v up). */
@@ -126,5 +127,30 @@ export function makeAtlas({ night = false } = {}) {
   at(T.flowers, () => { fill('#6f9a48'); for (let i = 0; i < 260; i++) { fill(['#e94f64', '#f2c14e', '#ffffff', '#b45fc4', '#f08a3c'][Math.floor(r() * 5)], r() * S, r() * S, 4, 4); } });
   at(T.asphalt, () => { fill('#ffffff'); for (let i = 0; i < 500; i++) fill(`rgba(0,0,0,${r() * 0.08})`, r() * S, r() * S, 2, 2); });
   at(T.concrete, () => { fill('#ffffff'); for (let x = 0; x < S; x += 32) fill('#d9d6cf', x, 0, 2, S); for (let y = 0; y < S; y += 32) fill('#d9d6cf', 0, y, S, 2); });
+  // overhead highway signs (green, white legend, reflective border)
+  const hwy = (lines, shield) => {
+    fill('#1f6b45'); g.strokeStyle = '#f4f4ef'; g.lineWidth = 3; g.strokeRect(4, 4, S - 8, S - 8);
+    if (shield) { // an interstate-style shield outline with the route number (generic, not a logo)
+      g.fillStyle = '#f4f4ef'; g.beginPath(); g.moveTo(14, 18); g.lineTo(46, 18); g.lineTo(46, 40); g.quadraticCurveTo(46, 54, 30, 60); g.quadraticCurveTo(14, 54, 14, 40); g.closePath(); g.fill();
+      g.fillStyle = '#1f2a33'; g.font = 'bold 20px sans-serif'; g.textAlign = 'center'; g.fillText(shield, 30, 46);
+    }
+    g.fillStyle = '#f4f4ef'; g.textAlign = shield ? 'left' : 'center';
+    lines.forEach(([t, sz, y]) => { g.font = `bold ${sz}px sans-serif`; g.fillText(t, shield ? 54 : S / 2, y); });
+  };
+  at(T.gantryA, () => hwy([['EAST', 14, 34], ['Denver', 20, 58], ['Table Mesa Dr', 15, 92], ['1 MILE', 13, 114]], '36'));
+  at(T.gantryB, () => hwy([['Boulder', 24, 44], ['Baseline Rd', 18, 76], ['NEXT EXIT', 13, 104]], null));
+  at(T.busAd, () => {
+    fill('#f3efe6'); fill('#2f6f8f', 6, 6, S - 12, S - 12); g.fillStyle = '#f2c14e'; g.beginPath(); g.arc(92, 40, 22, 0, 7); g.fill();
+    g.fillStyle = '#ffffff'; g.font = 'bold 22px sans-serif'; g.textAlign = 'left'; g.fillText('HIKE', 14, 74); g.fillText('THE', 14, 96); g.fillText('MESA', 14, 118);
+    g.fillStyle = '#3d6b3a'; g.beginPath(); g.moveTo(60, 122); g.lineTo(88, 84); g.lineTo(104, 104); g.lineTo(116, 92); g.lineTo(122, 122); g.fill();
+  });
+  at(T.blade, () => { // four blade signs (one per quarter): generic shop words
+    const W2 = S / 2; const words = [['BOOKS', '#7a1f24', '#f4e8d0'], ['CAFE', '#1f4a3f', '#f2c14e'], ['BIKES', '#24395e', '#ffffff'], ['TEA', '#5b2d5e', '#f4e8d0']];
+    words.forEach(([t, bg, fg], k) => {
+      const x = (k % 2) * W2; const y = Math.floor(k / 2) * W2;
+      fill('#e9e2d3', x, y, W2, W2); fill(bg, x + 3, y + 3, W2 - 6, W2 - 6);
+      g.save(); g.translate(x + W2 / 2, y + W2 / 2); g.rotate(-Math.PI / 2); g.fillStyle = fg; g.font = `bold ${t.length > 4 ? 13 : 17}px serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(t, 0, 0); g.restore();
+    });
+  });
   return cv;
 }

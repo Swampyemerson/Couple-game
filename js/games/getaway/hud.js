@@ -5,7 +5,42 @@ import { OPTIONS, LABELS, HINTS, fmt, KEYS } from './rules.js';
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export const fmtTime = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+/**
+ * Tap handling that works on every phone: a touch acts on pointerup (if the finger didn't move
+ * and stayed on the same control), a mouse on click. iOS drops the click after any cancelled
+ * touchstart, so menus must never depend on it. After a touch tap, the browser's own synthetic
+ * click for it is swallowed (700 ms), so a menu that re-renders under the finger can't get a
+ * second, unintended press. Returns an unbind function.
+ */
+export function bindTap(root, sel, fn) {
+  let down = null; let swallowUntil = 0;
+  const keyOf = (el) => { const d = el.dataset; return `${d.l || ''}|${d.v || ''}|${d.dir || ''}|${d.k || ''}|${d.step || ''}|${d.m || ''}`; };
+  const pick = (t) => { const el = t && t.closest ? t.closest(sel) : null; return el && root.contains(el) && !el.disabled ? el : null; };
+  const pd = (e) => {
+    if (e.pointerType === 'mouse' || (e.isPrimary === false)) { down = null; return; }
+    const el = pick(e.target); down = el ? { id: e.pointerId, key: keyOf(el), x: e.clientX, y: e.clientY } : null;
+  };
+  const pu = (e) => {
+    if (!down || e.pointerId !== down.id) return;
+    const d = down; down = null;
+    if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 14) return; // a scroll or a drag, not a tap
+    const el = pick(e.target) || pick(document.elementFromPoint && document.elementFromPoint(e.clientX, e.clientY));
+    if (!el || keyOf(el) !== d.key) return;
+    swallowUntil = performance.now() + 700;
+    fn(el, e);
+  };
+  const pc = () => { down = null; };
+  const ck = (e) => {
+    if (performance.now() < swallowUntil) { swallowUntil = 0; return; }
+    const el = pick(e.target); if (el) fn(el, e);
+  };
+  root.addEventListener('pointerdown', pd, true); root.addEventListener('pointerup', pu, true);
+  root.addEventListener('pointercancel', pc, true); root.addEventListener('click', ck);
+  return () => { root.removeEventListener('pointerdown', pd, true); root.removeEventListener('pointerup', pu, true); root.removeEventListener('pointercancel', pc, true); root.removeEventListener('click', ck); };
+}
+
 const IC = {
+  pause: '<svg viewBox="0 0 24 24"><path d="M9 6v12M15 6v12"/></svg>',
   spike: '<svg viewBox="0 0 24 24"><path d="M3 16h18M5 16l2-6 2 6M10 16l2-6 2 6M15 16l2-6 2 6"/></svg>',
   oil: '<svg viewBox="0 0 24 24"><path d="M12 3c3 4 6 7 6 10a6 6 0 0 1-12 0c0-3 3-6 6-10z"/></svg>',
   look: '<svg viewBox="0 0 24 24"><path d="M9 7l-5 5 5 5M4 12h11a5 5 0 0 1 5 5"/></svg>',
@@ -72,7 +107,8 @@ export function createHud(root, api, { split, touch }) {
   const viewHTML = (cls) => `<div class="gtw-view ${cls}">
     <div class="gtw-top"><div class="gtw-sc a gtw-st"><i></i><b data-s="a">0</b><em>${esc(api.name('a'))}</em></div>
       <div class="gtw-clock gtw-st"><small data-c="lab">Round 1</small><b data-c="t">2:30</b><div class="gtw-pips"></div></div>
-      <div class="gtw-sc b gtw-st"><i></i><b data-s="b">0</b><em>${esc(api.name('b'))}</em></div></div>
+      <div class="gtw-sc b gtw-st"><i></i><b data-s="b">0</b><em>${esc(api.name('b'))}</em></div>
+      <button class="gtw-pausebtn gtw-st" data-tap="pause" aria-label="Pause">${IC.pause}</button></div>
     <div class="gtw-left"><span class="gtw-role">Runner</span>
       <div class="gtw-bar gtw-hp gtw-st"><small><span>Car</span><b data-h="v">100%</b></small><div class="t"><i></i></div></div>
       <div class="gtw-bar gtw-heat gtw-st"><small><span data-e="lab">Lose the heat</span><b data-e="v"></b></small><div class="t"><i></i></div></div></div>
@@ -175,7 +211,10 @@ export function createHud(root, api, { split, touch }) {
         if (cv.width !== S) { cv.width = S; cv.height = S; }
         const g = cv.getContext('2d');
         const span = 420; const k = S / span;
-        g.fillStyle = '#0003'; g.fillRect(0, 0, S, S);
+        // Opaque backdrop each frame (same paper as the full map view): a translucent fill without a
+        // clear accumulates to solid black wherever the map image doesn't reach (near the map edges).
+        g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
+        g.clearRect(0, 0, S, S); g.fillStyle = P0.dark ? '#141821' : '#d9d3c0'; g.fillRect(0, 0, S, S);
         const sx = (cx - span / 2 - img.B.x0) * img.k; const sz = (cz - span / 2 - img.B.z0) * img.k;
         g.drawImage(img.cv, sx, sz, span * img.k, span * img.k, 0, 0, S, S);
         draw(g, (x, z) => [(x - cx) * k + S / 2, (z - cz) * k + S / 2], dpr, k);
@@ -217,7 +256,7 @@ export function createHud(root, api, { split, touch }) {
     if (!mapState || !mapState.onTap) return;
     const p = mapToWorld(e.clientX, e.clientY); if (p) mapState.onTap(p.x, p.z);
   });
-  mapEl.querySelector('[data-m="close"]').addEventListener('click', () => { if (mapState && mapState.onClose) mapState.onClose(); });
+  const unbindMap = bindTap(mapEl, '[data-m="close"]', () => { if (mapState && mapState.onClose) mapState.onClose(); });
 
   // ── public ──
   const H = {
@@ -240,7 +279,7 @@ export function createHud(root, api, { split, touch }) {
     card(html, cls = 'dim') { if (html == null) { over.hidden = true; over.innerHTML = ''; H._card = null; return; } if (H._card === html && !over.hidden) return; H._card = html; over.className = 'gtw-over ' + cls; over.innerHTML = html; over.hidden = false; },
     showSheet(html) { if (html == null) { sheet.hidden = true; sheet.innerHTML = ''; return; } const sc = sheet.querySelector('.in'); const keep = sc ? sc.scrollTop : 0; sheet.innerHTML = html; sheet.hidden = false; const sc2 = sheet.querySelector('.in'); if (sc2 && keep) sc2.scrollTop = keep; },
     drawArrow, drawSpike, drawLandmark,
-    destroy() { hudEl.remove(); },
+    destroy() { unbindMap(); hudEl.remove(); },
   };
   void touch;
   return H;
@@ -248,71 +287,130 @@ export function createHud(root, api, { split, touch }) {
 
 // ── cards ──
 const nameB = (api, w) => `<b class="gtw-name-${w}">${esc(api.name(w))}</b>`;
-export function loadingCard(text, pct, w = 'a') {
-  return `<div class="gtw-load" style="--me: var(--p-${w})"><div class="gtw-card gtw-st" role="status">
+const btnHTML = (b) => `<button class="${b[2] || 'gtw-ghost'}" data-l="${esc(b[0])}"${b[3] ? ` data-v="${esc(b[3])}"` : ''}>${esc(b[1])}</button>`;
+const TIPS = [
+  'Cop: get alongside and nudge their back corner to PIT them.',
+  'Runner: break line of sight behind buildings to lose the heat.',
+  'Drift (handbrake) swings the tail round tight corners.',
+  'Near misses with traffic top up the runner’s nitro.',
+  'Cop: tap the minimap to drop spike strips ahead of them.',
+  'Runner: drop oil when the cop is right behind you.',
+];
+/** Loading: a progress bar with a stage line and an optional Cancel. */
+export function loadingCard(text, pct, w = 'a', { cancel = false, tip = -1, slow = false } = {}) {
+  const p = Math.max(0, Math.min(1, pct || 0));
+  const t = tip >= 0 ? TIPS[tip % TIPS.length] : '';
+  return `<div class="gtw-load" style="--me: var(--p-${w})"><div class="gtw-card gtw-st" role="status" aria-live="polite">
     <div class="gtw-logo">Get<span>away</span></div>
-    <div class="gtw-road"><i style="left:${Math.round(4 + pct * 82)}%"></i></div>
-    <p>${esc(text)}</p></div></div>`;
+    <div class="gtw-road" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(p * 100)}"><b style="width:${Math.round(p * 100)}%"></b><i style="left:${Math.round(2 + p * 84)}%"></i></div>
+    <p class="gtw-loadtxt"><span>${esc(text)}</span><b>${Math.round(p * 100)}%</b></p>
+    ${slow ? '<p class="gtw-slow">Taking longer than usual. Hang on, or cancel and pick a smaller map.</p>' : t ? `<p class="gtw-tip">${esc(t)}</p>` : ''}
+    ${cancel ? '<button class="gtw-ghost gtw-cancel" data-l="loadcancel">Cancel</button>' : ''}</div></div>`;
 }
-export function errorCard(msg) {
-  return `<div class="gtw-card gtw-st" role="alert"><h2>Engine trouble</h2><p>${esc(msg)}</p><p>Close the game and open it again.</p></div>`;
+/** An error with a way out: buttons [[action, label, cls]]. */
+export function errorCard(msg, { title = 'Engine trouble', buttons = null, detail = '' } = {}) {
+  const bs = buttons && buttons.length ? `<div class="gtw-btns col">${buttons.map(btnHTML).join('')}</div>` : '<p>Close the game and open it again.</p>';
+  return `<div class="gtw-card gtw-st gtw-err" role="alert"><h2>${esc(title)}</h2><p>${esc(msg)}</p>${detail ? `<p class="gtw-detail">${esc(detail)}</p>` : ''}${bs}</div>`;
 }
 
-export function mapCardHTML(maps, setup, canEdit) {
+export function mapCardHTML(maps, setup, canEdit, loading = false) {
   const i = Math.max(0, maps.findIndex((m) => m.id === setup.map)); const m = maps[i];
   const dis = canEdit ? '' : 'disabled';
   return `<div class="gtw-mapcard">
     <button class="gtw-arrow" data-l="map" data-dir="-1" aria-label="Previous map" ${dis}>‹</button>
     <div class="gtw-mapsel"><canvas class="plan" data-plan="${esc(m.id)}" width="168" height="168"></canvas>
-      <div class="info"><b>${esc(m.name)}</b><small>${esc(m.blurb || '')}</small>${m.stub ? '<em>Coming soon</em>' : ''}</div></div>
+      <div class="info"><b>${esc(m.name)}</b><small>${esc(m.blurb || '')}</small>${m.stub ? '<em>Coming soon</em>' : loading ? '<em class="ld">Loading…</em>' : ''}</div></div>
     <button class="gtw-arrow" data-l="map" data-dir="1" aria-label="Next map" ${dis}>›</button></div>`;
 }
 
-export function lobbyCard(api, { maps, setup, canEdit, local, localMode, practiceRole, splitOK, waitingFor, partnerReady, me }) {
+export function lobbyCard(api, o) {
+  const { maps, setup, canEdit, local, localMode, practiceRole, splitOK, waitingFor, partnerReady, me } = o;
   const first = setup.first; const r = setup.rules;
+  const ai = local && localMode === 'ai';
   const modeRow = local ? `<div class="gtw-modes">
       <button class="gtw-mode ${localMode === 'ai' ? 'on' : ''}" data-l="lmode" data-v="ai"><b>Practice vs AI</b><small>You against a computer driver. Roles swap.</small></button>
       <button class="gtw-mode ${localMode === 'split' ? 'on' : ''}" data-l="lmode" data-v="split" ${splitOK ? '' : 'disabled'}><b>Split screen</b><small>${splitOK ? 'Two on one keyboard: WASD vs arrows.' : 'Needs a laptop keyboard.'}</small></button></div>` : '';
-  const firstRow = local && localMode === 'ai'
-    ? `<div class="gtw-lrow"><h3>You start as</h3><div class="gtw-chips">${['runner', 'cop'].map((x) => `<button class="gtw-chip ${practiceRole === x ? 'on' : ''}" data-l="prole" data-v="${x}">${x === 'cop' ? 'Cop' : 'Runner'}</button>`).join('')}</div></div>`
+  const levels = o.levels || ['easy', 'normal', 'hard'];
+  const lvLab = o.levelLabels || { easy: 'Easy', normal: 'Normal', hard: 'Hard' };
+  const firstRow = ai
+    ? `<div class="gtw-lrow"><h3>You start as</h3><div class="gtw-chips">${['runner', 'cop'].map((x) => `<button class="gtw-chip ${practiceRole === x ? 'on' : ''}" data-l="prole" data-v="${x}">${x === 'cop' ? 'Cop' : 'Runner'}</button>`).join('')}</div></div>
+      <div class="gtw-lrow"><h3>AI driver</h3><div class="gtw-chips gtw-seg">${levels.map((x) => `<button class="gtw-chip ${o.aiLevel === x ? 'on' : ''}" data-l="ailevel" data-v="${esc(x)}">${esc(lvLab[x] || x)}</button>`).join('')}</div></div>`
     : `<div class="gtw-lrow"><h3>Runs first</h3><div class="gtw-chips">${['a', 'b'].map((w) => `<button class="gtw-chip p${w} ${first === w ? 'on' : ''}" data-l="first" data-v="${w}" ${canEdit ? '' : 'disabled'}><i></i>${esc(api.name(w))}</button>`).join('')}</div></div>`;
-  const facts = `<p>${r.rounds} rounds · ${fmt('roundTime', r.roundTime)} each · ${r.spikes ? `${r.spikes} spike strip${r.spikes === 1 ? '' : 's'}` : 'no spikes'} · traffic ${r.traffic}</p>`;
+  const facts = `<p class="gtw-facts">${r.rounds} rounds · ${fmt('roundTime', r.roundTime)} each · ${r.spikes ? `${r.spikes} spike strip${r.spikes === 1 ? '' : 's'}` : 'no spikes'} · traffic ${r.traffic}</p>`;
+  const partner = o.partnerName || 'your partner';
+  let status = '';
+  if (!local) {
+    if (canEdit) status = o.partnerHere ? `<p class="gtw-status ok"><i></i>${esc(partner)} is here${partnerReady ? ' and ready' : ''}${o.partnerLoading ? ' (loading the map…)' : ''}</p>` : `<p class="gtw-status"><i></i>Waiting for ${esc(partner)}: open Games → Getaway → Play live on the other phone.</p>`;
+  }
   const btn = canEdit
-    ? `<button class="gtw-go" data-l="start" ${maps.find((m) => m.id === setup.map && !m.stub) ? '' : 'disabled'}>Start</button>`
-    : `<p class="gtw-wait">${nameB(api, waitingFor)} is setting up…${partnerReady ? '' : ''}</p><button class="gtw-ghost" data-l="ready">${partnerReady ? 'Ready ✓' : 'Ready'}</button>`;
+    ? `<button class="gtw-go" data-l="start" ${maps.find((m) => m.id === setup.map && !m.stub) && !o.loading ? '' : 'disabled'}>${local ? (ai ? 'Start practice' : 'Start') : 'Start the chase'}</button>`
+    : `<p class="gtw-wait">${nameB(api, waitingFor)} picks the map and starts.</p><button class="gtw-go ${partnerReady ? 'on' : ''}" data-l="ready">${o.meReady ? 'Ready ✓' : 'I’m ready'}</button>`;
+  const tip = o.portraitPhone ? '<p class="gtw-landtip">Tip: turn your phone sideways for a wider view.</p>' : '';
   return `<div class="gtw-lobby" style="--me: var(--p-${me})"><div class="gtw-card gtw-st">
     <div class="col"><div class="gtw-logo">Get<span>away</span></div>
     <p class="gtw-tagline">One runs, one chases. PIT them, spike them, or lose the heat.</p>
-    ${modeRow}${firstRow}${facts}</div>
-    <div class="col">${mapCardHTML(maps, setup, canEdit)}
-    <div class="gtw-btns"><button class="gtw-ghost" data-l="settings">${canEdit ? 'Settings' : 'See settings'}</button>${btn}</div></div>
+    ${modeRow}${firstRow}${facts}${status}</div>
+    <div class="col">${mapCardHTML(maps, setup, canEdit, o.loading)}
+    <div class="gtw-btns"><button class="gtw-ghost" data-l="settings">${canEdit ? 'Settings' : 'Settings'}</button><button class="gtw-ghost ${o.newcomer ? 'gtw-new' : ''}" data-l="howto">${o.newcomer ? 'New here? How to play' : 'How to play'}</button></div>
+    <div class="gtw-btns">${btn}</div>${tip}</div>
   </div></div>`;
 }
 
-export function settingsSheet(rules, { canEdit, device }) {
+/** First-time help. touch: phone controls, else keyboard. */
+export function howToCard({ touch = true, split = false } = {}) {
+  const ctl = touch
+    ? '<li><b>Steer</b> put your left thumb down anywhere on the left half and slide it. The slider starts where your thumb lands.</li><li><b>Right thumb</b> Gas, Brake (hold to reverse), Drift, Nitro.</li><li><b>Map</b> tap the minimap. <b>Pause</b> the ‖ button at the top.</li>'
+    : split ? '<li><b>Left player</b> WASD, Space drift, Shift nitro, E spike/oil.</li><li><b>Right player</b> arrows, right Shift drift, Enter nitro, / spike/oil.</li><li><b>Esc</b> pauses.</li>'
+      : '<li><b>Drive</b> WASD or arrows. <b>Space</b> drift, <b>Shift</b> nitro.</li><li><b>E</b> spike strip / oil, <b>M</b> map, <b>C</b> camera, <b>B</b> look back.</li><li><b>Esc</b> pauses.</li>';
+  return `<div class="gtw-card gtw-st gtw-how"><h2>How to play</h2>
+    <div class="gtw-howgrid">
+      <div><small>Runner</small><p>Survive the clock, or get far away and out of sight to fill the <b>escape</b> meter. Drop <b>oil</b> on a cop right behind you.</p></div>
+      <div><small>Cop</small><p>Get alongside and push their <b>back corner</b> to PIT them, box them in, or tap the map to drop <b>spike strips</b> ahead.</p></div>
+    </div>
+    <ul class="gtw-howlist">${ctl}</ul>
+    <p>Roles swap every round. Crashes cost health; at 0 the runner is busted.</p>
+    <div class="gtw-btns"><button class="gtw-go" data-l="howclose">Got it</button></div></div>`;
+}
+
+const chipRow = (k, cur, opts, labels) => `<div class="gtw-chips gtw-seg">${opts.map((v) => `<button class="gtw-chip ${cur === v ? 'on' : ''}" data-l="dev" data-k="${k}" data-v="${v}">${esc(labels[v] || v)}</button>`).join('')}</div>`;
+export function settingsSheet(rules, { canEdit, device, live = false }) {
   const row = (k) => {
     const opts = OPTIONS[k]; const i = opts.indexOf(rules[k]);
     return `<div class="gtw-srow"><div><b>${esc(LABELS[k])}</b><small>${esc(HINTS[k])}</small></div>
       <div class="gtw-step"><button data-l="rule" data-k="${k}" data-step="-1" ${i <= 0 || !canEdit ? 'disabled' : ''} aria-label="Less">−</button><output data-rule="${k}">${esc(fmt(k, rules[k]))}</output><button data-l="rule" data-k="${k}" data-step="1" ${i >= opts.length - 1 || !canEdit ? 'disabled' : ''} aria-label="More">+</button></div></div>`;
   };
-  const dev = `<div class="gtw-srow"><div><b>Steering (this phone)</b><small>Slider under your thumb, or tilt the phone</small></div>
-    <div class="gtw-chips">${['slider', 'tilt'].map((v) => `<button class="gtw-chip ${device.steer === v ? 'on' : ''}" data-l="steer" data-v="${v}">${v === 'tilt' ? 'Tilt' : 'Slider'}</button>`).join('')}</div></div>`;
-  return `<div class="in gtw-st ${canEdit ? '' : 'gtw-ro'}"><div class="gtw-lrow"><h2>Settings</h2><button class="gtw-go" data-l="sheetclose" style="flex:none">Done</button></div>
-    ${canEdit ? '' : '<p class="note">The host picks these. You see changes live.</p>'}
-    ${KEYS.map(row).join('')}${device.touch ? dev : ''}</div>`;
+  const d = device || {};
+  let dev = '';
+  if (d.touch) {
+    dev += `<div class="gtw-srow"><div><b>Steering</b><small>Slider under your thumb, or tilt the phone</small></div>${chipRow('steer', d.steer, ['slider', 'tilt'], { slider: 'Slider', tilt: 'Tilt' })}</div>`;
+    dev += `<div class="gtw-srow"><div><b>Sensitivity</b><small>How far you slide${d.steer === 'tilt' ? ' or tilt' : ''} for full lock</small></div>${chipRow('sens', d.sens, ['low', 'normal', 'high'], { low: 'Gentle', normal: 'Normal', high: 'Quick' })}</div>`;
+    dev += `<div class="gtw-srow"><div><b>Centre dead zone</b><small>Ignores tiny wobbles around straight ahead</small></div>${chipRow('dead', d.dead, ['small', 'normal', 'large'], { small: 'Small', normal: 'Normal', large: 'Large' })}</div>`;
+    if (d.steer === 'tilt') dev += '<div class="gtw-srow"><div><b>Calibrate tilt</b><small>Hold the phone how you like to drive, then tap</small></div><button class="gtw-chip on" data-l="calib">Set straight</button></div>';
+  }
+  dev += `<div class="gtw-srow"><div><b>Graphics</b><small>${esc(d.gfxNote || 'Lower is smoother and uses less memory')}</small></div>${chipRow('gfx', d.gfx || 'auto', ['auto', 'low', 'mid', 'high'], { auto: 'Auto', low: 'Low', mid: 'Medium', high: 'High' })}</div>`;
+  dev += `<div class="gtw-srow"><div><b>Camera</b><small>Chase camera distance (C switches)</small></div>${chipRow('cam', d.cam || 'near', ['near', 'far'], { near: 'Close', far: 'Far' })}</div>`;
+  const match = rules ? `<h3 class="gtw-sh">Match${canEdit ? '' : ` · ${live ? 'the host picks these' : ''}`}</h3>${canEdit ? '' : '<p class="note">The host picks these. You see changes live.</p>'}${KEYS.map(row).join('')}` : '';
+  return `<div class="in gtw-st ${canEdit ? '' : 'gtw-ro'}"><div class="gtw-lrow gtw-shead"><h2>Settings</h2><button class="gtw-go" data-l="sheetclose" style="flex:none">Done</button></div>
+    <h3 class="gtw-sh">This ${d.touch ? 'phone' : 'device'}</h3>${dev}${match}</div>`;
 }
 
+const ROLE_TIP = {
+  runner: 'Survive the clock or lose the heat: get far away and out of sight.',
+  cop: 'Hit their back corner from the side to PIT them. Tap the map for spike strips.',
+};
 export function introCard(api, { map, round, rounds, runner, me, landmark, roundTime, local }) {
   const cop = runner === 'a' ? 'b' : 'a';
   const youRun = !local && me === runner; const youCop = !local && me === cop;
-  return `<div class="gtw-card gtw-st"><h3>${esc(map.name)} · Round ${round + 1} of ${rounds}</h3>
+  const myRole = local ? (api.name(runner) === 'You' ? 'runner' : api.name(runner) === 'AI' ? 'cop' : '') : youRun ? 'runner' : 'cop';
+  return `<div class="gtw-card gtw-st gtw-intro"><h3>${esc(map.name)} · Round ${round + 1} of ${rounds}</h3>
     <h2>${local ? (api.name(runner) === 'You' ? 'You’re running' : api.name(runner) === 'AI' ? 'You’re the cop' : `${esc(api.name(runner))} runs`) : youRun ? 'You’re running' : 'You’re the cop'}</h2>
     ${landmark ? `<p>Starting near <b>${esc(landmark)}</b></p>` : ''}
-    <div class="gtw-roles"><div class="${youRun ? 'me' : ''}"><small>Runner</small>${nameB(api, runner)}<p>Survive ${fmt('roundTime', roundTime)} or lose the heat</p></div>
-      <div class="${youCop ? 'me' : ''}"><small>Cop</small>${nameB(api, cop)}<p>PIT, spike or box them in</p></div></div></div>`;
+    <div class="gtw-roles"><div class="${youRun || myRole === 'runner' ? 'me' : ''}"><small>Runner</small>${nameB(api, runner)}<p>Survive ${fmt('roundTime', roundTime)} or lose the heat</p></div>
+      <div class="${youCop || myRole === 'cop' ? 'me' : ''}"><small>Cop</small>${nameB(api, cop)}<p>PIT, spike or box them in</p></div></div>
+    ${myRole ? `<p class="gtw-tip">${esc(ROLE_TIP[myRole])}</p>` : ''}</div>`;
 }
 
-export function resultCard(api, { outcome, reason, runner, stats, scores, next, local, me }) {
+export function resultCard(api, { outcome, reason, runner, stats, scores, next, local, me, ran }) {
   const busted = outcome === 'busted';
   const head = busted ? (reason === 'water' ? 'SPLASH!' : 'BUSTED!') : 'ESCAPED!';
   const why = {
@@ -321,13 +419,17 @@ export function resultCard(api, { outcome, reason, runner, stats, scores, next, 
   const winner = busted ? (runner === 'a' ? 'b' : 'a') : runner;
   const youWon = !local && winner === me;
   const st = stats || {};
-  return `<div class="gtw-card gtw-st"><div class="gtw-big ${busted ? 'bad' : 'good'}">${head}</div>
+  const t = ran ? fmtTime(ran) : '';
+  return `<div class="gtw-card gtw-st gtw-result"><div class="gtw-big ${busted ? 'bad' : 'good'}">${head}</div>
     <p>${why} ${nameB(api, winner)} takes the round${local ? '' : youWon ? ' — nice driving' : ''}.</p>
-    <div class="gtw-stats"><div><b>${Math.round((st.top || 0) * 3.6)}</b><small>Top km/h</small></div><div><b>${st.near || 0}</b><small>Near misses</small></div><div><b>${st.pits || 0}</b><small>PITs</small></div><div><b>${st.spikes || 0}</b><small>Spikes hit</small></div></div>
+    <div class="gtw-stats">${t ? `<div><b>${t}</b><small>On the run</small></div>` : ''}<div><b>${Math.round((st.top || 0) * 3.6)}</b><small>Top km/h</small></div><div><b>${st.near || 0}</b><small>Near misses</small></div><div><b>${st.pits || 0}</b><small>PITs</small></div>${t ? '' : `<div><b>${st.spikes || 0}</b><small>Spikes hit</small></div>`}</div>
     <div class="gtw-score"><span><i style="background:var(--p-a)"></i>${esc(api.name('a'))} ${scores.a}</span><span><i style="background:var(--p-b)"></i>${esc(api.name('b'))} ${scores.b}</span></div>
     <p>${esc(next)}</p></div>`;
 }
 
-export function pauseCard(text, sub, btn) {
-  return `<div class="gtw-card gtw-st gtw-pause"><h2>${esc(text)}</h2>${sub ? `<p>${esc(sub)}</p>` : ''}${btn ? `<button class="gtw-go" data-l="${btn[0]}">${esc(btn[1])}</button>` : ''}</div>`;
+/** Pause: text, sub, buttons ([action, label, cls] or a list of them). */
+export function pauseCard(text, sub, btns) {
+  const list = !btns ? [] : Array.isArray(btns[0]) ? btns : [btns];
+  const bs = list.map((b, i) => btnHTML([b[0], b[1], b[2] || (i ? 'gtw-ghost' : 'gtw-go'), b[3]])).join('');
+  return `<div class="gtw-card gtw-st gtw-pause"><h2>${esc(text)}</h2>${sub ? `<p>${esc(sub)}</p>` : ''}${bs ? `<div class="gtw-btns col">${bs}</div>` : ''}</div>`;
 }
