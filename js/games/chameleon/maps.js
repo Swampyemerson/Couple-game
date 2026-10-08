@@ -9,6 +9,9 @@
 //   build(atlas, kit) → (b) => void   register atlas tiles with atlas.add(key, kit.P.<pattern>(…),
 //                                     { size: 'S'|'M'|'L'|'XL', repeat }), then return a fill
 //                                     function that adds geometry to the builder b (geo.js).
+//                                     It may be a generator (function* (b)) that yields between
+//                                     sections: a build then spreads over frames (buildMapAsync);
+//                                     never change a geometry / options object after b.add().
 //                                     kit = { frame, room, plant, books, yarn, P, boxGeo, cylGeo,
 //                                     sphereGeo, latheGeo, seeded } (don't import ../maps.js).
 //   size: 'S'|'M'|'L'|'XL', rooms: n, climbs: 1..3     lobby preview card
@@ -172,7 +175,7 @@ function living(atlas) {
   atlas.add('wains', P.stripes({ cols: ['#6f8f7a', '#5f7f6a'], widths: [5, 1], n: 4 }), { size: 'M' });
   atlas.add('ceilboards', P.stripes({ cols: ['#fffaf0', '#e9dcc4', '#fbf4e6', '#e3d5bb'], widths: [7, 0.5, 7, 0.5], n: 3 }), { size: 'M' });
 
-  return (b) => {
+  return function* fill(b) {
     const w = 10; const d = 8;
     room(b, {
       w, d, h: 2.5, front: 0.7, floorTile: 'planks', floorRep: 1.3, ceiling: { tile: 'ceilboards', rep: 1.1 },
@@ -184,10 +187,12 @@ function living(atlas) {
         skirt: '#f4ead8',
       },
     });
+    yield 'right-wall wainscot panel';
     // right-wall wainscot panel
     b.add(boxGeo(0.03, 0.9, d - 0.4), { at: [w / 2 - 0.02, 0.45, 0], tile: 'wains', rep: 0.6, color: '#ffffff', collide: { wall: true } });
     const r = seeded('living');
 
+    yield 'rug';
     // Rug + coffee table
     b.add(boxGeo(3.6, 0.012, 2.6, { fit: true }), { at: [-0.5, 0.006, -1.1], tile: 'kilim', rep: 1, outline: true });
     const ct = frame(b, -0.5, -1.25);
@@ -195,11 +200,13 @@ function living(atlas) {
     for (const [lx, lz] of [[-0.55, -0.26], [0.55, -0.26], [-0.55, 0.26], [0.55, 0.26]]) ct.box(0.05, 0.45, 0.05, [lx, 0.225, lz], { color: '#6b4430' });
     ct.box(1.1, 0.03, 0.52, [0, 0.12, 0], { color: '#8d5a3b', tile: 'wood', rep: 0.5 }); // lower shelf
     ct.blob(0, 0, 0.75, 0.42, { a: 0.22 });
+    yield 'mug';
     // mug + book stack on the table
     ct.cyl(0.045, 0.04, 0.1, [0.32, 0.545, 0.1], { color: C.coral });
     ct.box(0.28, 0.04, 0.2, [-0.3, 0.515, -0.05], { color: C.teal });
     ct.box(0.25, 0.035, 0.18, [-0.29, 0.552, -0.04], { color: C.mustard, yaw: 0.2 });
 
+    yield 'sofa against the';
     // Sofa against the back wall, with a hiding gap behind it
     const sf = frame(b, -0.5, -3.05);
     const fab = { color: C.mustard, tile: 'weave', rep: 0.3 };
@@ -212,6 +219,7 @@ function living(atlas) {
     for (const sx of [-1.2, 1.2]) for (const sz of [-0.4, 0.4]) sf.cyl(0.03, 0.02, 0.06, [sx, 0.03, sz], { color: '#3a2a2a', outline: false });
     sf.blob(0, 0.05, 1.45, 0.62, { a: 0.3 });
 
+    yield 'side table';
     // Side table + lamp
     const stb = frame(b, -2.35, -3.4);
     stb.cyl(0.26, 0.26, 0.04, [0, 0.55, 0], { color: C.teal, collide: true });
@@ -221,6 +229,7 @@ function living(atlas) {
     stb.cyl(0.11, 0.17, 0.18, [0, 0.86, 0], { color: '#f3e7cf', tile: 'gingham', rep: 0.2 });
     stb.blob(0, 0, 0.3, 0.3);
 
+    yield 'floor lamp';
     // Floor lamp
     const fl = frame(b, -4.3, -3.4);
     fl.cyl(0.2, 0.22, 0.04, [0, 0.02, 0], { color: C.ink });
@@ -229,11 +238,13 @@ function living(atlas) {
     fl.collide(-0.08, 0, -0.08, 0.08, 1.8, 0.08, { wall: false });
     fl.blob(0, 0, 0.26, 0.26);
 
+    yield 'big plant by';
     // Big plant by the sofa + one in the front corner
     plant(b, 1.45, -3.45, 1.35, { seed: 'liv1', leaf: '#4f7d4f', leaf2: '#7aa35a' });
     plant(b, 4.35, 3.35, 1.0, { seed: 'liv2', pot: '#2f5d73', leaf: '#5f8a6e', leaf2: '#86b06a' });
     plant(b, -4.4, 3.4, 0.8, { seed: 'liv3', pot: '#e0a43d' });
 
+    yield 'window';
     // Window + curtains + art on the back wall
     b.add(boxGeo(1.6, 1.1, 0.04, { fit: true }), { at: [2.75, 1.45, -d / 2 + 0.02], tile: 'window', rep: 1 });
     b.add(boxGeo(1.8, 0.07, 0.12), { at: [2.75, 0.88, -d / 2 + 0.06], color: '#f4efe6', collide: true });
@@ -241,6 +252,7 @@ function living(atlas) {
     b.add(boxGeo(0.7, 0.55, 0.03, { fit: true }), { at: [-1.1, 1.55, -d / 2 + 0.015], tile: 'art1', rep: 1 });
     b.add(boxGeo(0.5, 0.5, 0.03, { fit: true }), { at: [0.2, 1.62, -d / 2 + 0.015], tile: 'art2', rep: 1 });
 
+    yield 'bookshelf on the';
     // Bookshelf on the left wall
     const bs = frame(b, -4.78, -1.0, Math.PI / 2); // local +z faces into the room
     const shelfW = 1.9; const shelfD = 0.42; const sh = 2.05;
@@ -255,12 +267,14 @@ function living(atlas) {
     books(b, bs, -0.9, 0.9, 1.04, -0.02, 0.3, bookCols.slice(3).concat(bookCols.slice(0, 3)), r, { gapAt: [[-0.9, -0.35]] });
     books(b, bs, -0.9, 0.9, 1.54, -0.02, 0.3, bookCols.slice(5).concat(bookCols.slice(0, 5)), r, { gapAt: [[-0.1, 0.3]] });
     bs.blob(0, 0, 1.0, 0.3, { a: 0.25 });
+    yield 'step stool beside';
     // step stool beside it
     const stool = frame(b, -4.45, 0.4);
     stool.box(0.42, 0.06, 0.36, [0, 0.42, 0], { color: C.coral, round: 0.02, collide: true });
     for (const [lx, lz] of [[-0.17, -0.14], [0.17, -0.14], [-0.17, 0.14], [0.17, 0.14]]) stool.box(0.04, 0.4, 0.04, [lx, 0.2, lz], { color: C.coral });
     stool.blob(0, 0, 0.3, 0.26);
 
+    yield 'armchair';
     // Armchair (facing the coffee table)
     const ac = frame(b, 2.3, -1.4, -Math.PI / 2 - 0.3);
     const hf = { color: '#ffffff', tile: 'hounds', rep: 0.3 };
@@ -270,6 +284,7 @@ function living(atlas) {
     ac.box(0.66, 0.12, 0.62, [0, 0.42, 0.06], { ...hf, round: 0.04, collide: true });
     ac.blob(0, 0, 0.62, 0.55, { a: 0.3 });
 
+    yield 'tv unit on';
     // TV unit on the right wall
     const tv = frame(b, 4.7, -0.3, -Math.PI / 2);
     tv.box(1.7, 0.5, 0.45, [0, 0.29, 0], { color: '#f0e6d6', round: 0.02, collide: { wall: true } });
@@ -280,6 +295,7 @@ function living(atlas) {
     tv.box(1.12, 0.62, 0.01, [0, 0.95, -0.02], { tile: 'screen', rep: 1, fit: true, faces: ['pz'] });
     tv.box(0.3, 0.05, 0.2, [0, 0.565, -0.05], { color: '#2a2f36' });
     tv.blob(0, 0, 0.95, 0.32, { a: 0.24 });
+    yield 'game boxes stacked';
     // game boxes stacked beside it
     const gb = frame(b, 4.55, 1.05, -Math.PI / 2);
     [[C.brick, 0.4, 0.08], [C.teal, 0.36, 0.1], [C.mustard, 0.42, 0.07], [C.plum, 0.34, 0.09]].reduce((y, [col, sz, hh], i) => {
@@ -287,6 +303,7 @@ function living(atlas) {
     }, 0);
     gb.blob(0, 0, 0.3, 0.25);
 
+    yield 'yarn basket';
     // Yarn basket
     const yb = frame(b, 1.3, 0.9);
     yb.lathe([[0.3, 0], [0.36, 0.3], [0.38, 0.32], [0.35, 0.32]], [0, 0, 0], { color: '#c99a5b', tile: 'weave', rep: 0.12, collide: true });
@@ -296,6 +313,7 @@ function living(atlas) {
     yarn(b, 0.95, 0, 1.45, 0.1, C.mustard);
     yb.blob(0, 0, 0.45, 0.45);
 
+    yield 'pouf';
     // Pouf + floor cushions
     b.add(cylGeo(0.36, 0.38, 0.4, { radial: 18 }), { at: [-0.2, 0.2, 1.3], color: '#ffffff', tile: 'chevron', rep: 0.45, collide: true });
     b.blob(-0.2, 1.3, 0.45, 0.45);
@@ -303,6 +321,7 @@ function living(atlas) {
     b.add(boxGeo(0.62, 0.14, 0.62, { round: 0.06 }), { at: [2.75, 0.21, 1.85], color: '#ffffff', tile: 'gingham', rep: 0.35, yaw: 0.1, collide: true });
     b.blob(2.65, 1.9, 0.45, 0.45);
 
+    yield 'dining nook';
     // Dining nook: table + chairs (walk under)
     const dt = frame(b, -2.9, 2.35);
     dt.box(1.5, 0.05, 0.9, [0, 0.76, 0], { color: '#a8754d', tile: 'wood', rep: 0.6, round: 0.015, collide: true });
@@ -319,12 +338,14 @@ function living(atlas) {
     }
     dt.blob(0, 0, 0.95, 0.6, { a: 0.22 });
 
+    yield 'toy chest by';
     // Toy chest by the front wall
     const tc = frame(b, 0.9, 3.55);
     tc.box(1.0, 0.5, 0.5, [0, 0.25, 0], { color: '#ffffff', tile: 'gingham', rep: 0.25, round: 0.03, collide: { wall: true } });
     tc.box(1.04, 0.06, 0.54, [0, 0.52, 0], { color: C.brick, round: 0.02, collide: true });
     tc.blob(0, 0, 0.6, 0.32);
 
+    yield 'v2 climbing';
     // v2 climbing: an exposed rafter across the room (crawl up a wall, then along under it),
     // a pendant lamp hanging from it over the dining table (hang from the shade, perch on the
     // cord), a floating shelf on the right wall (its underside) and a curtain rail (a perch).
@@ -344,6 +365,7 @@ function living(atlas) {
     b.add(cylGeo(0.015, 0.015, 2.1, { radial: 8 }), { at: [2.75, 2.08, -d / 2 + 0.14], rot: [0, 0, Math.PI / 2], color: C.ink });
     b.collide(1.7, 2.065, -d / 2 + 0.125, 3.8, 2.095, -d / 2 + 0.155, { wall: false, name: 'perch:rail', perch: true });
 
+    yield 'spawns';
     // Spawns + spots
     b.spot('lobby', { x: -1.15, z: 1.25 });
     b.spot('hiderSpawn', { x: 0, z: 0.3, yaw: Math.PI });
@@ -352,6 +374,7 @@ function living(atlas) {
     b.spot('spawnB', { x: 3.4, z: 0.6, yaw: -Math.PI / 2 });
     b.spot('camo', { x: -3.15, z: -3.7, wallNormal: [0, 0, 1], y: 0.42, note: 'open stretch of the back wallpaper' });
     b.spot('rug', { x: -1.5, z: -0.45, yaw: 0 });
+    yield 'probes for the';
     // Probes for the eyedropper test: a wallpaper stripe centre, a plain wall, the teal side table top.
     b.probe('wallpaper-sage-stripe', [-5.16 + 8.095 * 0.8, 2.0, -d / 2 + 0.001], [0, 0, 1], C.sage);
     b.probe('right-wall-paint', [w / 2 - 0.001, 1.6, 2.0], [-1, 0, 0], '#e9cdb1');
@@ -386,12 +409,14 @@ function garden(atlas) {
   atlas.add('yarn', P.bands({ cols: ['#ffffff', '#d6d6d6'], n: 4 }), { size: 'S' });
   atlas.add('bark', P.bands({ cols: ['#ffffff', '#cfcfcf', '#e8e8e8'], widths: [3, 1, 2], n: 5 }), { size: 'S' });
 
-  return (b) => {
+  return function* fill(b) {
     const w = 12; const d = 10;
+    yield 'ground';
     // ground + plinth (soil sides)
     b.add(boxGeo(w + 0.6, 0.3, d + 0.6, { faces: ['py'] }), { at: [0, -0.15, 0], tile: 'lawn', rep: 1.6, color: '#ffffff', outline: false });
     b.add(boxGeo(w + 0.9, 0.5, d + 0.9, { round: 0.05 }), { at: [0, -0.28, 0], color: '#6b4a32' });
     b.add(boxGeo(w + 0.95, 0.08, d + 0.95, { round: 0.03 }), { at: [0, -0.05, 0], color: '#7bb156' });
+    yield 'fence';
     // fence (pickets merged as boxes) around three sides + front, with rails
     const fenceH = 1.05;
     const picket = (x, z, yaw) => b.add(boxGeo(0.09, fenceH, 0.025, { faces: ['px', 'nx', 'pz', 'nz'] }), { at: [x, fenceH / 2, z], yaw, color: C.fence, tile: 'wood', rep: 0.5 });
@@ -408,24 +433,28 @@ function garden(atlas) {
     b.collide(-w / 2 - 0.2, 0, -d / 2, -w / 2 + 0.02, fenceH, d / 2, { wall: true, name: 'fence-left' });
     b.collide(w / 2 - 0.02, 0, -d / 2, w / 2 + 0.2, fenceH, d / 2, { wall: true, name: 'fence-right' });
     b.collide(-w / 2, 0, d / 2 - 0.02, w / 2, 3, d / 2 + 0.2, { wall: false, name: 'front' });
+    yield 'gate arch';
     // gate arch
     b.add(boxGeo(0.12, 1.6, 0.12), { at: [-0.95, 0.8, d / 2], color: C.woodD });
     b.add(boxGeo(0.12, 1.6, 0.12), { at: [0.95, 0.8, d / 2], color: C.woodD });
     b.add(boxGeo(2.1, 0.12, 0.16), { at: [0, 1.62, d / 2], color: C.woodD });
     const r = seeded('garden');
 
+    yield 'back hedge';
     // Back hedge (U-shape) with a gap to crawl into
     const hedge = { color: '#ffffff', tile: 'leafy', rep: 0.9, collide: { wall: true } };
     b.add(boxGeo(4.2, 1.3, 0.8, { round: 0.18, seg: 2 }), { at: [-3.4, 0.65, -4.4], ...hedge });
     b.add(boxGeo(3.0, 1.3, 0.8, { round: 0.18, seg: 2 }), { at: [1.4, 0.65, -4.4], ...hedge });
     b.add(boxGeo(0.8, 1.1, 2.6, { round: 0.18, seg: 2 }), { at: [-5.4, 0.55, -2.4], ...hedge });
     b.blob(-3.4, -4.4, 2.3, 0.6, { a: 0.28 }); b.blob(1.4, -4.4, 1.7, 0.6, { a: 0.28 }); b.blob(-5.4, -2.4, 0.6, 1.5, { a: 0.28 });
+    yield 'round topiary balls';
     // round topiary balls
     for (const [x, z, s] of [[3.2, -4.45, 0.42], [-1.2, -4.45, 0.38], [5.2, 0.6, 0.45]]) {
       b.add(sphereGeo(s, s, s, { w: 14, h: 10 }), { at: [x, s, z], color: '#ffffff', tile: 'leafy', rep: 0.6, collide: { wall: true } });
       b.blob(x, z, s * 1.05, s * 1.05, { a: 0.3 });
     }
 
+    yield 'flower beds';
     // Flower beds (raised borders)
     const bed = (x, z, bw, bd) => {
       b.add(boxGeo(bw, 0.24, bd, { faces: ['py'] }), { at: [x, 0.12, z], tile: 'bed', rep: 0.9, color: '#ffffff', collide: true });
@@ -444,10 +473,12 @@ function garden(atlas) {
     bed(4.7, -2.6, 1.2, 3.0);
     bed(-1.6, -3.4, 2.0, 0.9);
 
+    yield 'stepping-stone path from';
     // Stepping-stone path from the gate to the shed
     const stones = [[0, 4.3], [0.3, 3.5], [0.8, 2.7], [1.5, 2.0], [2.2, 1.2], [2.8, 0.3], [3.2, -0.6], [3.4, -1.6]];
     stones.forEach(([x, z], i) => { b.add(cylGeo(0.3 + (i % 3) * 0.04, 0.32, 0.04, { radial: 10, fit: true }), { at: [x, 0.02, z], yaw: i, tile: 'flag', rep: 1, color: '#ffffff' }); });
 
+    yield 'shed';
     // Shed (back right) — walls collide, door is a panel
     const sh = frame(b, 4.2, -4.0);
     sh.box(2.4, 2.0, 1.6, [0, 1.0, 0], { color: C.shed, tile: 'planksV', rep: 0.9, collide: { wall: true } });
@@ -455,6 +486,7 @@ function garden(atlas) {
     sh.box(0.8, 1.5, 0.04, [-0.5, 0.75, 0.81], { color: '#f4efe6' });
     sh.box(0.5, 0.45, 0.04, [0.55, 1.2, 0.81], { color: '#a9d2e6' });
     sh.blob(0, 0.2, 1.4, 1.0, { a: 0.3 });
+    yield 'log pile beside';
     // Log pile beside it
     for (let i = 0; i < 6; i++) {
       const row = i < 3 ? 0 : i < 5 ? 1 : 2; const k = i < 3 ? i : i < 5 ? i - 3 : 0;
@@ -462,6 +494,7 @@ function garden(atlas) {
     }
     b.blob(2.55, -4.45, 0.6, 0.5);
 
+    yield 'deck chair';
     // Deck chair (striped) + side crate
     const dc = frame(b, -2.2, -0.2, 0.5);
     dc.box(0.62, 0.025, 1.1, [0, 0.42, 0.05], { color: '#ffffff', tile: 'deck', rep: [0.62, 1.1], rot: [-0.55, 0, 0], collide: false, fit: false });
@@ -476,6 +509,7 @@ function garden(atlas) {
     cr.cyl(0.07, 0.07, 0.18, [0.08, 0.45, 0], { color: C.white });
     cr.blob(0, 0, 0.36, 0.32);
 
+    yield 'parasol table set';
     // Parasol table set
     const pt = frame(b, 1.4, -1.0);
     pt.cyl(0.55, 0.55, 0.04, [0, 0.72, 0], { color: C.white, collide: true });
@@ -491,18 +525,21 @@ function garden(atlas) {
     }
     pt.blob(0, 0, 1.25, 1.25, { a: 0.16 });
 
+    yield 'pond with lily';
     // Pond with lily pads
     b.add(cylGeo(1.1, 1.1, 0.04, { radial: 24, fit: true }), { at: [-1.6, 0.02, 2.6], tile: 'water', rep: 0.6, color: '#ffffff', outline: true });
     for (let i = 0; i < 9; i++) { const a = i * 0.7; b.add(sphereGeo(0.16, 0.08, 0.16, { w: 10, h: 5, thetaMax: Math.PI / 2 }), { at: [-1.6 + Math.cos(a) * 1.25, 0.02, 2.6 + Math.sin(a) * 1.25], color: '#9a9184', collide: false }); }
     b.add(cylGeo(0.14, 0.14, 0.01, { radial: 10 }), { at: [-1.3, 0.045, 2.4], color: '#5f9a4c', outline: false });
     b.add(cylGeo(0.11, 0.11, 0.01, { radial: 10 }), { at: [-1.9, 0.045, 2.9], color: '#5f9a4c', outline: false });
 
+    yield 'washing line with';
     // Washing line with towels (front right)
     for (const x of [2.0, 5.0]) b.add(cylGeo(0.04, 0.04, 1.8, { radial: 8 }), { at: [x, 0.9, 3.3], color: C.woodD, collide: true });
     b.add(cylGeo(0.006, 0.006, 3.0, { radial: 4, caps: false }), { at: [3.5, 1.72, 3.3], rot: [0, 0, Math.PI / 2], color: '#555', outline: false });
     [['towel1', 2.5, 0.75], ['towel2', 3.4, 0.9], ['towel3', 4.35, 0.8]].forEach(([t, x, hh]) => b.add(boxGeo(0.7, hh, 0.03), { at: [x, 1.72 - hh / 2, 3.3], tile: t, rep: 0.7, color: '#ffffff' }));
     b.blob(3.5, 3.3, 1.6, 0.4, { a: 0.12 });
 
+    yield 'wheelbarrow watering can';
     // Wheelbarrow, watering can, gnome, pots, bird bath
     const wb = frame(b, 3.6, 1.8, -0.6);
     wb.box(0.7, 0.3, 0.95, [0, 0.42, 0], { color: '#c94f3d', round: 0.06, collide: { wall: true } });
@@ -563,7 +600,7 @@ function studio(atlas) {
   atlas.add('herring', P.herringbone({ a: '#c99a6b', b: '#b8875b', seam: '#8a5d3b' }), { size: 'M' });
   atlas.add('ceilpanel', P.check({ a: '#f1ede4', b: '#e4ddd0', n: 2 }), { size: 'M' });
 
-  return (b) => {
+  return function* fill(b) {
     const w = 10; const d = 8;
     room(b, {
       w, d, h: 2.7, front: 0.6, floorTile: 'splat', floorRep: 1.8, plinth: '#6f6a63', ceiling: { tile: 'ceilpanel', rep: 1.6 },
@@ -577,10 +614,12 @@ function studio(atlas) {
     });
     const r = seeded('studio');
 
+    yield 'checker rug and';
     // Checker rug and drop cloth
     b.add(boxGeo(2.4, 0.012, 2.4), { at: [1.6, 0.006, 0.9], tile: 'checker', rep: 0.6, color: '#ffffff' });
     b.add(boxGeo(2.8, 0.02, 2.0, { round: 0.008 }), { at: [-2.4, 0.01, -1.4], tile: 'dropcloth', rep: 0.8, color: '#ffffff', yaw: 0.15 });
 
+    yield 'easels with canvases';
     // Easels with canvases
     const easel = (x, z, yaw, art, cw, chh) => {
       const e = frame(b, x, z, yaw);
@@ -594,12 +633,14 @@ function studio(atlas) {
     easel(-1.0, 0.4, 0.3, 'art1', 0.9, 0.7);
     easel(2.9, -1.8, -0.6, 'art3', 0.7, 0.9);
     easel(0.6, -2.4, 0, 'art4', 0.8, 0.8);
+    yield 'big canvases leaning';
     // big canvases leaning on the walls
     b.add(boxGeo(1.6, 1.3, 0.06, { fit: true }), { at: [-3.3, 0.68, -d / 2 + 0.25], rot: [-0.18, 0, 0], tile: 'art2', rep: 1, color: '#ffffff', collide: { wall: true } });
     b.blob(-3.3, -d / 2 + 0.35, 0.9, 0.25);
     b.add(boxGeo(0.06, 1.1, 1.4, {}), { at: [w / 2 - 0.25, 0.58, 1.6], rot: [0, 0, 0.16], tile: 'art5', rep: [1.4, 1.1], color: '#ffffff', collide: { wall: true } });
     b.blob(w / 2 - 0.35, 1.6, 0.25, 0.8);
 
+    yield 'shelves with jars';
     // Shelves with jars on the left wall
     const sh = frame(b, -4.75, 1.7, Math.PI / 2);
     for (const y of [0.0, 0.55, 1.1, 1.65]) sh.box(2.2, 0.04, 0.4, [0, y + 0.02, 0], { color: '#a8754d', tile: 'wood', rep: 0.6, collide: { wall: false } });
@@ -616,6 +657,7 @@ function studio(atlas) {
     }
     sh.blob(0, 0, 1.2, 0.3, { a: 0.22 });
 
+    yield 'paint cans stack';
     // Paint cans stack + spilled can
     const pc = frame(b, 3.9, 2.9);
     [[0, 0, 0, 'label1'], [0.36, 0, 0.1, 'label2'], [0.18, 0.3, 0.05, 'label3'], [-0.3, 0, -0.25, 'label2']].forEach(([lx, ly, lz, t]) => pc.cyl(0.16, 0.16, 0.3, [lx, ly + 0.15, lz], { tile: t, rep: [1.0, 0.3], color: '#ffffff', fit: false, collide: true }));
@@ -623,6 +665,7 @@ function studio(atlas) {
     b.add(cylGeo(0.16, 0.16, 0.3, { radial: 14 }), { at: [2.6, 0.16, 3.2], rot: [Math.PI / 2, 0.8, 0], tile: 'label3', rep: [1.0, 0.3], color: '#ffffff', collide: true });
     b.add(cylGeo(0.5, 0.55, 0.01, { radial: 18 }), { at: [2.95, 0.006, 3.5], color: C.yellow, outline: false });
 
+    yield 'plinths with sculptures';
     // Plinths with sculptures
     const plinthAt = (x, z, h, col, shape) => {
       b.add(boxGeo(0.5, h, 0.5, { round: 0.02 }), { at: [x, h / 2, z], color: C.white, collide: { wall: true } });
@@ -635,6 +678,7 @@ function studio(atlas) {
     plinthAt(0.6, 2.9, 0.45, C.blue, 'cube');
     plinthAt(-1.1, 3.1, 0.9, C.yellow, 'cone');
 
+    yield 'work table with';
     // Work table with brush pots and paper rolls
     const wt = frame(b, -2.9, -3.3);
     wt.box(2.0, 0.06, 0.85, [0, 0.82, 0], { color: '#c99a6b', tile: 'splat', rep: 0.9, collide: true });
@@ -646,12 +690,14 @@ function studio(atlas) {
     }
     for (let i = 0; i < 3; i++) wt.cyl(0.07, 0.07, 0.8, [0.6 + i * 0.05, 0.3, -0.05 + i * 0.12], { rot: [Math.PI / 2, 0, 0], color: [C.white, '#f4b6a6', '#9fb4c7'][i], collide: false });
     wt.blob(0, 0, 1.2, 0.6, { a: 0.22 });
+    yield 'stool';
     // stool
     const st = frame(b, -1.6, -2.1);
     st.cyl(0.2, 0.2, 0.05, [0, 0.62, 0], { color: C.red, collide: true });
     for (const a of [0, 2.1, 4.2]) st.box(0.035, 0.62, 0.035, [Math.sin(a) * 0.14, 0.31, Math.cos(a) * 0.14], { color: C.ink, rot: [Math.cos(a) * 0.1, 0, -Math.sin(a) * 0.1] });
     st.blob(0, 0, 0.25, 0.25);
 
+    yield 'clothes rack with';
     // Clothes rack with aprons (right wall)
     const cr = frame(b, 4.4, -2.6, -Math.PI / 2);
     for (const sx of [-0.8, 0.8]) cr.box(0.05, 1.6, 0.05, [sx, 0.8, 0], { color: C.ink });
@@ -660,6 +706,7 @@ function studio(atlas) {
     cr.box(0.55, 0.95, 0.04, [0.3, 1.07, 0], { color: C.orange });
     cr.collide(-0.9, 0.6, -0.1, 0.9, 1.6, 0.1, { wall: true });
     cr.blob(0, 0, 0.9, 0.2, { a: 0.18 });
+    yield 'big drop-cloth pile';
     // Big drop-cloth pile
     b.add(sphereGeo(0.7, 0.32, 0.55, { w: 14, h: 8, thetaMax: Math.PI / 2 }), { at: [3.6, 0, 0.3], tile: 'dropcloth', rep: 0.5, color: '#ffffff', collide: true });
     b.blob(3.6, 0.3, 0.75, 0.6);
@@ -774,12 +821,15 @@ function makeChunker(entry) {
 
 // ── session cache (maps pass) ───────────────────────────────────────────────────────────────
 // A built map is pure data plus BufferGeometries (whose GPU buffers the renderer creates on
-// first draw), so it is kept for the session: the lobby arrows, the guest following the host,
-// a rematch remount and a match on the map you just previewed then cost a scene swap instead
-// of a rebuild (atlas painting + merging + upload were 70–800 ms a switch). LRU, at most
-// CACHE_MAX maps and CACHE_BYTES of CPU arrays + atlas pixels (CU alone is ~9 MB), never
-// evicting the two most recent (the map on screen and the one replacing it). Evicting
-// disposes the geometries' GPU buffers; the stage drops its atlas texture for that map.
+// first draw), so it is kept while the game is open: the lobby arrows, the guest following the
+// host, a rematch remount and a match on the map you just previewed then cost a scene swap
+// instead of a rebuild. LRU, at most CACHE_MAX maps and CACHE_BYTES of CPU arrays + atlas pixels
+// (CU alone is ~9 MB), never evicting the two most recent (the map on screen and the one
+// replacing it). Evicting disposes the geometries' GPU buffers; the stage drops its atlas texture
+// for that map. QA round 1: the cache lives only as long as a stage does (or one parked for a
+// rematch): the last stage's dispose empties it (clearMapCache), and a hidden page keeps only
+// the maps on screen / being prefetched (stage.js), so closing the game leaves nothing behind
+// while you play something else.
 const CACHE = new Map(); // key → built map, oldest first
 const CACHE_MAX = 3;
 const CACHE_BYTES = 36 * 1048576;
@@ -809,8 +859,206 @@ function trimCache() {
 export function mapCached(m) { return !!m && !m.evicted && CACHE.get(m.cacheKey) === m; }
 /** Drop every cached map's GPU buffers (the renderer is going away; the CPU data stays cached). */
 export function releaseMapGPU() { for (const m of CACHE.values()) { for (const ch of m.chunks) ch.geometry.dispose(); if (m.blobGeo) m.blobGeo.dispose(); } }
-/** Tests / tools: what the cache holds. */
+/**
+ * Empty the session cache except the maps in `keep` (built map objects): evicted maps lose their
+ * GPU buffers and atlas pixels, and builds still in progress are dropped (unless one of `keepIds`).
+ * The game closing (the last stage disposed) passes nothing; a hidden page keeps what's on screen.
+ */
+export function clearMapCache(keep = [], keepIds = []) {
+  for (const [k, m] of CACHE) {
+    if (keep.includes(m)) continue;
+    CACHE.delete(k); evictMap(m);
+    // the atlas canvas is the biggest single allocation: let go of its pixels now rather than
+    // whenever the last texture / closure holding the map is collected (nothing shows it)
+    if (m.atlas && m.atlas.canvas) { m.atlas.canvas.width = 1; m.atlas.canvas.height = 1; }
+  }
+  for (const [k, j] of JOBS) if (!keepIds.includes(j.id)) { JOBS.delete(k); j.dead = true; }
+}
+/** Tests / tools: what the cache holds (and which builds are under way). */
 export function mapCacheInfo() { return [...CACHE.values()].map((m) => ({ id: m.id, bytes: mapBytes(m), hits: m.cacheHits })); }
+export function mapBuildStats() { return STATS.slice(); }
+/** Tests / tools: the build as its generator (direct: the fill writes straight to the builder). */
+export function mapBuildSteps(THREE, id, { ink = [0.11, 0.1, 0.13], direct = false } = {}) { return buildSteps(THREE, id, ink, direct); }
+export function mapJobsInfo() { return [...JOBS.values()].map((j) => ({ id: j.id, steps: j.steps, maxMs: Math.round(j.maxMs * 10) / 10, slices: j.slices })); }
+
+// ── builds in slices (maps pass, QA round 1) ────────────────────────────────────────────────
+// A cold build was one task: 40–130 ms at 1x in this sandbox, 0.2–0.8 s at 4x CPU (2 s with
+// the box busy), the lobby frozen on the old diorama and the recap of Mix it up stalling while it
+// prefetched. buildSteps() is the same build as a generator that yields after every atlas tile,
+// every map section (fill functions may be generators: `yield` between rooms), every ~1.5 ms of
+// replayed builder calls, and every attribute of every geometry chunk. buildMap() runs it to the
+// end at once (same result, byte for byte: the tests compare); buildMapAsync() runs it in
+// time-boxed slices, yielding a frame between them, and a sync buildMap() of a map being built
+// in slices finishes that build instead of starting another.
+//
+// The builder calls are recorded during a section and replayed in ~REPLAY_MS steps after it
+// (b.add is most of a build: merging a primitive into its chunk); add and collide keep their
+// order, so colliders come out in the same order; blob / probe / spot / room / colorOf go
+// straight through (separate lists). The map code must not change a geometry or an options
+// object after passing it to b.add (none does; the tests compare recorded and direct builds).
+const JOBS = new Map(); // key → job in progress { id, it, map, dead, steps, maxMs, slices }
+const STATS = []; // the last builds: { id, steps, slices, maxMs (longest step), maxSlice (longest slice), drained, drainMs }
+const REPLAY_MS = 1.5; // a replay step: as many recorded calls as fit in this (plus one)
+function recorder(b) {
+  const ops = [];
+  const api = {
+    add(g, o) { ops.push(0, g, o); return 0; },
+    collide(...a) { ops.push(1, a, null); },
+    blob: b.blob, probe: b.probe, spot: b.spot, room: b.room, colorOf: b.colorOf,
+  };
+  function* replay() {
+    let t0 = now();
+    for (let i = 0; i < ops.length; i += 3) {
+      if (ops[i] === 0) b.add(ops[i + 1], ops[i + 2]); else b.collide(...ops[i + 1]);
+      ops[i + 1] = ops[i + 2] = null; // let each primitive's arrays go as soon as they're merged
+      if (now() - t0 > REPLAY_MS) { yield 'add'; t0 = now(); }
+    }
+    ops.length = 0;
+  }
+  return { api, replay };
+}
+/** Run a map's fill function on a builder to the end (plain function or generator). */
+export function runFill(fill, b) {
+  const r = fill(b);
+  if (r && typeof r.next === 'function') for (let s = r.next(); !s.done; s = r.next());
+}
+/** Drain a generator, returning its value. */
+function drain(it) { for (;;) { const s = it.next(); if (s.done) return s.value; } }
+
+function* buildSteps(THREE, id, ink, direct = false) {
+  const entry = MAPS.find((m) => m.id === id) || MAPS[0];
+  const inf = entry.info || {};
+  const atlasB = createAtlas(1024, inf.atlasPages === 2 ? 2048 : 1024);
+  const fill = entry.build(atlasB, KIT);
+  yield 'tiles';
+  const atlas = atlasB.finishSteps ? yield* atlasB.finishSteps() : atlasB.finish();
+  const b = createBuilder({ tiles: atlas.tiles, ink, chunker: makeChunker(entry) });
+  if (direct) {
+    const r = fill(b);
+    if (r && typeof r.next === 'function') for (let s = r.next(); !s.done; s = r.next()) yield 'fill:' + (s.value || '');
+  } else {
+    const rec = recorder(b);
+    const r = fill(rec.api);
+    if (r && typeof r.next === 'function') for (let s = r.next(); !s.done; s = r.next()) { yield 'fill:' + (s.value || ''); yield* rec.replay(); }
+    yield 'fill';
+    yield* rec.replay();
+  }
+  const out = b.finishSteps ? yield* b.finishSteps(THREE) : b.finish(THREE);
+  closeSlots(out.colliders);
+  yield 'slots';
+  const probes = out.probes.filter((p) => p.point && p.hex);
+  const bounds = boundsOf(out.colliders, inf);
+  const rooms = out.rooms.length ? out.rooms : (inf.rooms || []).map((r) => ({ name: r.name, floor: r.floor || 0, landmark: r.landmark || '', x0: Math.min(r.x0, r.x1), z0: Math.min(r.z0, r.z1), x1: Math.max(r.x0, r.x1), z1: Math.max(r.z0, r.z1) }));
+  const spots = out.spots;
+  // spawn lists (fall back to the legacy single spots)
+  const asList = (v) => (Array.isArray(v) ? v.filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.z)) : []);
+  spots.hiderSpawns = asList(spots.hiderSpawns); spots.seekerSpawns = asList(spots.seekerSpawns);
+  if (!spots.hiderSpawns.length) spots.hiderSpawns = [spots.hiderSpawn || spots.lobby || { x: 0, z: 0, yaw: 0 }];
+  if (!spots.seekerSpawns.length) spots.seekerSpawns = [spots.seekerSpawn || spots.lobby || { x: 0, z: 1, yaw: 0 }];
+  if (!spots.lobby) spots.lobby = spots.hiderSpawns[0];
+  if (!spots.spawnA) spots.spawnA = spots.hiderSpawns[0];
+  if (!spots.spawnB) spots.spawnB = spots.seekerSpawns[spots.seekerSpawns.length - 1];
+  const overview = inf.overview && Number.isFinite(inf.overview.radius) ? inf.overview : { y: 5.4, radius: Math.max(9.2, Math.hypot(inf.w || 10, inf.d || 8) * 0.72) };
+  return { id, entry, info: inf, atlas, ...out, probes, bounds, rooms, overview, area: mapArea(entry), big: mapArea(entry) > 160 };
+}
+function store(key, m, THREE) {
+  const old = CACHE.get(key);
+  if (old && old !== m) { CACHE.delete(key); evictMap(old); }
+  m.cacheKey = key; m.THREE = THREE; m.cacheHits = 0;
+  CACHE.delete(key); CACHE.set(key, m);
+  trimCache();
+  return m;
+}
+const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+function jobFor(THREE, id, ink) {
+  const key = cacheKey(id, ink);
+  let j = JOBS.get(key);
+  if (j && j.THREE !== THREE) { JOBS.delete(key); j.dead = true; j = null; }
+  if (!j) { j = { key, id, THREE, it: buildSteps(THREE, id, ink), map: null, dead: false, steps: 0, maxMs: 0, maxSlice: 0, slices: 0 }; JOBS.set(key, j); }
+  return j;
+}
+/** Advance a job until `until` (ms timestamp; Infinity = to the end). True when built. */
+function advance(j, until) {
+  if (j.map) return true;
+  const t00 = now();
+  for (;;) {
+    const t = now();
+    let s;
+    try { s = j.it.next(); } catch (e) { if (JOBS.get(j.key) === j) JOBS.delete(j.key); j.dead = true; throw e; }
+    const t1 = now(); if (t1 - t > j.maxMs) j.maxMs = t1 - t;
+    j.steps++;
+    if (s.done) {
+      j.map = store(j.key, s.value, j.THREE); if (JOBS.get(j.key) === j) JOBS.delete(j.key);
+      // drained: finished by a sync buildMap() (a round starting before its prefetch was done),
+      // drainMs: how long that last part took
+      // maxSlice: the longest slice before this one (the last slice is timed by the caller)
+      STATS.push({ id: j.id, steps: j.steps, slices: j.slices, maxMs: Math.round(j.maxMs * 10) / 10, maxSlice: Math.round(Math.max(j.maxSlice, until === Infinity ? 0 : t1 - t00)), drained: until === Infinity, drainMs: until === Infinity ? Math.round(t1 - t00) : 0 }); if (STATS.length > 16) STATS.shift();
+      return true;
+    }
+    if (t1 >= until) return false;
+  }
+}
+
+/** Build a map (or reuse this session's copy): geometry chunks + atlas + gameplay data. */
+export function buildMap(THREE, id, { ink = [0.11, 0.1, 0.13], fresh = false, direct = false } = {}) {
+  const key = cacheKey(id, ink);
+  if (fresh) return drain(buildSteps(THREE, id, ink, direct));
+  const hit = CACHE.get(key);
+  if (hit && hit.THREE === THREE) { CACHE.delete(key); CACHE.set(key, hit); hit.cacheHits++; return hit; }
+  // a build of this map under way in slices: finish it here
+  const j = jobFor(THREE, id, ink);
+  advance(j, Infinity);
+  return j.map;
+}
+
+/** The next slice: after a frame (rAF, then a task), or in idle time; never stuck on a hidden page. */
+function nextSlice(idle) {
+  return new Promise((res) => {
+    let done = false;
+    const go = (dl) => { if (done) return; done = true; res(dl && typeof dl.timeRemaining === 'function' ? dl : null); };
+    if (idle && typeof requestIdleCallback === 'function') requestIdleCallback(go, { timeout: 120 });
+    else if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => setTimeout(go, 0));
+    setTimeout(go, idle ? 160 : 120); // rAF is paused while the page is hidden
+  });
+}
+/**
+ * Build a map in slices of at most ~`budget` ms (one per frame), or with `idle` in idle-time
+ * slices (≤ `budget`, and only what the idle deadline allows, the whole budget when no idle time
+ * came within 120 ms; Safari has no requestIdleCallback: a slice after each frame). Resolves the
+ * built map (cached), or null when `alive()` turns false (the build is dropped unless another
+ * caller still waits for it) or the cache was cleared under it. A cached map resolves at once.
+ */
+export async function buildMapAsync(THREE, id, { ink = [0.11, 0.1, 0.13], budget = 24, idle = false, alive = () => true } = {}) {
+  const key = cacheKey(id, ink);
+  const hit = CACHE.get(key);
+  if (hit && hit.THREE === THREE) return hit;
+  const j = jobFor(THREE, id, ink);
+  j.waiters = (j.waiters || 0) + 1;
+  let dl = null; let gap = 0; let end = 0;
+  try {
+    for (;;) {
+      if (j.map) return j.map;
+      if (j.dead || !alive()) return null;
+      if (!j.pumping) { // another caller may be pumping it: then just wait for the result
+        // idle: what the idle period allows (at least 4 ms), the whole budget when it timed out;
+        // when frames are slow (slices 100+ ms apart) up to 15 % of the wall clock (≤ 3× budget),
+        // so the next round's map is still done within the recap
+        let b = idle && dl && !dl.didTimeout ? Math.min(budget, Math.max(4, dl.timeRemaining() - 1)) : budget;
+        if (idle && gap > 0) b = Math.max(b, Math.min(budget * 3, gap * 0.15));
+        j.pumping = true;
+        const t0 = now();
+        try { if (advance(j, t0 + b)) return j.map; } finally { j.pumping = false; const d = now() - t0; if (d > j.maxSlice) j.maxSlice = d; }
+        j.slices++;
+      }
+      end = now();
+      dl = await nextSlice(idle);
+      gap = now() - end;
+    }
+  } finally {
+    // nobody wants it any more: drop the half-built map (a later request starts over)
+    if (--j.waiters === 0 && !j.map && JOBS.get(key) === j) { JOBS.delete(key); j.dead = true; }
+  }
+}
 
 // ── slots (maps pass) ───────────────────────────────────────────────────────────────────────
 // A prop standing 2–15 cm off a wall or off its neighbour (fridges in a row, a counter or a
@@ -895,44 +1143,4 @@ export function boundsOf(colliders, inf = {}) {
     if (!Number.isFinite(bounds.minZ)) bounds.minZ = -inf.d / 2; if (!Number.isFinite(bounds.maxZ)) bounds.maxZ = inf.d / 2;
   }
   return bounds;
-}
-
-/** Build a map (or reuse this session's copy): geometry chunks + atlas + gameplay data. */
-export function buildMap(THREE, id, { ink = [0.11, 0.1, 0.13], fresh = false } = {}) {
-  const key = cacheKey(id, ink);
-  const hit = CACHE.get(key);
-  if (hit && !fresh && hit.THREE === THREE) { CACHE.delete(key); CACHE.set(key, hit); hit.cacheHits++; return hit; }
-  const m = buildMapNow(THREE, id, ink);
-  if (fresh) return m;
-  if (hit) { CACHE.delete(key); evictMap(hit); }
-  m.cacheKey = key; m.THREE = THREE; m.cacheHits = 0;
-  CACHE.set(key, m);
-  trimCache();
-  return m;
-}
-
-function buildMapNow(THREE, id, ink) {
-  const entry = MAPS.find((m) => m.id === id) || MAPS[0];
-  const inf = entry.info || {};
-  const atlasB = createAtlas(1024, inf.atlasPages === 2 ? 2048 : 1024);
-  const fill = entry.build(atlasB, KIT);
-  const atlas = atlasB.finish();
-  const b = createBuilder({ tiles: atlas.tiles, ink, chunker: makeChunker(entry) });
-  fill(b);
-  const out = b.finish(THREE);
-  closeSlots(out.colliders);
-  const probes = out.probes.filter((p) => p.point && p.hex);
-  const bounds = boundsOf(out.colliders, inf);
-  const rooms = out.rooms.length ? out.rooms : (inf.rooms || []).map((r) => ({ name: r.name, floor: r.floor || 0, landmark: r.landmark || '', x0: Math.min(r.x0, r.x1), z0: Math.min(r.z0, r.z1), x1: Math.max(r.x0, r.x1), z1: Math.max(r.z0, r.z1) }));
-  const spots = out.spots;
-  // spawn lists (fall back to the legacy single spots)
-  const asList = (v) => (Array.isArray(v) ? v.filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.z)) : []);
-  spots.hiderSpawns = asList(spots.hiderSpawns); spots.seekerSpawns = asList(spots.seekerSpawns);
-  if (!spots.hiderSpawns.length) spots.hiderSpawns = [spots.hiderSpawn || spots.lobby || { x: 0, z: 0, yaw: 0 }];
-  if (!spots.seekerSpawns.length) spots.seekerSpawns = [spots.seekerSpawn || spots.lobby || { x: 0, z: 1, yaw: 0 }];
-  if (!spots.lobby) spots.lobby = spots.hiderSpawns[0];
-  if (!spots.spawnA) spots.spawnA = spots.hiderSpawns[0];
-  if (!spots.spawnB) spots.spawnB = spots.seekerSpawns[spots.seekerSpawns.length - 1];
-  const overview = inf.overview && Number.isFinite(inf.overview.radius) ? inf.overview : { y: 5.4, radius: Math.max(9.2, Math.hypot(inf.w || 10, inf.d || 8) * 0.72) };
-  return { id, entry, info: inf, atlas, ...out, probes, bounds, rooms, overview, area: mapArea(entry), big: mapArea(entry) > 160 };
 }

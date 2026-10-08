@@ -590,9 +590,10 @@ function build(atlas, kit) {
   atlas.add('spine', P.spine({ band: '#f6e7b8' }), { size: 'S', repeat: false });
   atlas.add('exit', Q.sign({ bg: '#fbf6ec', fg: '#d62f2f', text: 'EXIT' }), { w: 96, h: 40, repeat: false });
 
-  return (b) => {
+  return function* fill(b) {
     const R = kit.seeded('cuboulder');
 
+    yield 'base plinth';
     // ── base plinth + floors ──
     deco(b, -W / 2 - 0.45, -0.55, -D / 2 - 0.45, W / 2 + 0.45, -0.02, D / 2 + 0.45, { color: '#8a5d45', tile: 'sandstone', rep: 2.2 });
     deco(b, -W / 2 - 0.5, -0.1, -D / 2 - 0.5, W / 2 + 0.5, -0.004, D / 2 + 0.5, { color: '#7bb156', faces: ['py', 'px', 'nx', 'pz', 'nz'], outline: false });
@@ -623,21 +624,22 @@ function build(atlas, kit) {
     guard(b, -17.2, 0.7, 12.85, 17.2, 9, 13.3, 'front'); guard(b, -17.3, 0.7, 1.5, -16.85, 9, 13.3, 'left');
     guard(b, 8.1, 0.7, -13.3, 17.3, 9, -12.85, 'back-yard'); guard(b, 16.85, 0.7, -13.3, 17.3, 9, -8.7, 'right-yard');
     guard(b, 16.85, 0.7, -1, 17.3, 9, 2.3, 'right-arcade'); guard(b, 16.85, 0.7, 11.5, 17.3, 9, 13.3, 'right-front');
+    yield 'walls';
     // the Front Range and the plains, placed by real compass bearings (see landscape())
-    landscape(b);
-
-    g1b30(b, R);
-    corridor(b);
-    norlin(b, R, kit);
+    landscape(b); yield 'landscape';
+    yield* g1b30(b, R); yield 'g1b30';
+    corridor(b); yield 'corridor';
+    norlin(b, R, kit); yield 'norlin';
     // the UMC turns a quarter (no mirroring) to stand on the quad's south side, door facing the quad;
     // the Engineering lab moves east of the quad, south of Norlin (plain translation)
-    umc(xform(b, { cx: 12.5, cz: -7, rot: -Math.PI / 2, dx: -1.5, dz: 13.9 }), R, kit);
-    lab(xform(b, { dx: 25, dz: -10 }), R);
-    labShell(b);
-    yard(b);
-    arcade(b);
+    umc(xform(b, { cx: 12.5, cz: -7, rot: -Math.PI / 2, dx: -1.5, dz: 13.9 }), R, kit); yield 'umc';
+    lab(xform(b, { dx: 25, dz: -10 }), R); yield 'lab';
+    labShell(b); yield 'labShell';
+    yard(b); yield 'yard';
+    arcade(b); yield 'arcade';
     quad(b, R, kit);
 
+    yield 'spawns';
     // ── spawns + spots (all ≥ 0.45 m clear of colliders; checked by the tests) ──
     b.spot('lobby', { x: -8.8, z: 5.2 });
     b.spot('hiderSpawn', { x: -3.0, z: 5.6, yaw: Math.PI });
@@ -750,7 +752,7 @@ const zN = (k) => -5.2 - TIER_D * k; // north edge of tier k (k = 0 is the floor
 const BLOCKS = [[-15.9, -12.78, 6], [-11.6, -7.44, 8], [-6.26, -4.18, 4]]; // seat blocks: x0, x1, seats
 const AISLES = [[-16.9, -15.9], [-12.78, -11.6], [-7.44, -6.26], [-4.18, -3.1]];
 
-function g1b30(b, R) {
+function* g1b30(b, R) {
   const FZ = -1.6; // lower front wall face (boards); the upper wall behind the catwalk sits at −1.1
   const CREAM = '#ece4d0'; const DOORS = [{ c: -4.05, w: 1.1, top: 2.3 }, { c: -6.95, w: 1.0, top: 2.3 }];
   // south wall (to the corridor) + the thick lower front wall the boards hang on
@@ -769,6 +771,7 @@ function g1b30(b, R) {
   for (const z of [-11.0, -8.0, -5.0]) deco(b, -16.9, 3.6, z - 1.2, -16.86, 5.6, z + 1.2, { color: '#8e8c8f', tile: 'seatfab', rep: 0.6 });
   for (const z of [-9.0, -6.0]) deco(b, -3.14, 3.6, z - 1.2, -3.1, 5.6, z + 1.2, { color: '#8e8c8f', tile: 'seatfab', rep: 0.6 });
 
+  yield 'g1b30 tiers';
   // ── tiers: dark charcoal carpet, solid (no pockets); aisles step half-way on the south half
   const carpet = { color: '#46484d', tile: 'seatfab', rep: 0.8, outline: false };
   for (let k = 1; k <= 8; k++) {
@@ -788,6 +791,7 @@ function g1b30(b, R) {
     b.collide(rx - 0.02, y, z0, rx + 0.02, y + 0.92, zs, { wall: false, perch: true, name: 'perch:stair-rail-bars' });
     for (let q = 0; q < 4; q++) deco(b, rx - 0.012, y - (q >= 2 ? 0.17 : 0), z0 + 0.05 + q * 0.23, rx + 0.012, y + 0.92, z0 + 0.07 + q * 0.23, { color: C.black, outline: false });
   }
+  yield 'g1b30 seats';
   // ── seats: grey plastic shells on black pedestals with light-wood tablet arms; office chairs at the front left
   const officeChair = (x, y, z) => {
     b.add(cylGeo(0.24, 0.24, 0.04, { radial: 5 }), { at: [x, y + 0.05, z], color: C.black, outline: false });
@@ -814,6 +818,7 @@ function g1b30(b, R) {
     });
   }
 
+  yield 'g1b30 front';
   // ── front wall: sliding dark-green chalkboards with light wood trim + a wood ledge (perch)
   const WOODL = '#cda477';
   for (let col = 0; col < 4; col++) for (let row = 0; row < 2; row++) {
@@ -843,6 +848,7 @@ function g1b30(b, R) {
   exitSign(b, -4.05, 2.5, FZ, 'z-'); exitSign(b, -4.05, 2.5, -0.9, 'z+');
   exitSign(b, -3.1, UP + 2.2, -12.4, 'x-');
 
+  yield 'g1b30 catwalk';
   // ── catwalk: bulkhead, black steel deck on brackets, vertical-bar railing (walk, crawl, hang under)
   deco(b, -16.9, 4.45, -2.0, -3.1, 4.75, FZ, { color: '#e3dac4' });
   aabb(b, -16.9, 4.75, -2.45, -3.1, 4.82, FZ, { color: '#2e2f33', tile: 'grid', rep: 0.3, collide: { wall: false, ceil: true, name: 'ceil:catwalk' } });
@@ -877,6 +883,7 @@ function g1b30(b, R) {
   for (let i = 0; i <= 10; i++) { const t = i / 10; b.add(sphereGeo(0.035, 0.035, 0.035, { w: 6, h: 4 }), { at: [-3.3 - t * 2.0, 4.72 - Math.sin(t * Math.PI) * 0.22, -2.47], color: '#fffbe6', outline: false }); }
   b.add(sphereGeo(0.07, 0.07, 0.07, { w: 8, h: 6 }), { at: [-3.9, 4.45, -2.5], color: '#d8322e' });
 
+  yield 'g1b30 projector';
   // ── projector on a long white pole from the ceiling
   b.add(cylGeo(0.05, 0.05, H.g1 - 4.55, { radial: 8 }), { at: [-8.0, (H.g1 + 4.55) / 2, -6.6], color: '#f4f2ee', collide: { wall: false, perch: true, name: 'perch:projector-pole' } });
   solid(b, -8.28, 4.42, -6.85, -7.72, 4.57, -6.35, { color: '#25252a' }, { name: 'projector-mount' });
@@ -884,6 +891,7 @@ function g1b30(b, R) {
   for (let i = 0; i < 6; i++) deco(b, -8.3 + i * 0.1, 4.16, -6.252, -8.26 + i * 0.1, 4.36, -6.24, { color: '#9a9ea3', outline: false });
   b.add(cylGeo(0.07, 0.07, 0.04, { radial: 10 }), { at: [-7.7, 4.26, -6.23], rot: [Math.PI / 2, 0, 0], color: '#2a3a4a', outline: false });
 
+  yield 'g1b30 front';
   // ── front floor furniture
   // the long demo bench: sage laminate top, cream panelled body, open behind (hide in the kneehole from the board side)
   const bz0 = -3.35; const bz1 = -2.6; const BODY = '#efe7d2';

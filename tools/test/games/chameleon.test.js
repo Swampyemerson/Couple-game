@@ -1336,6 +1336,101 @@ async function mapCacheSection(port) {
   } finally { await h.close(); }
 }
 
+// ── maps QA round 1: cold builds in slices, the cache released on close / trimmed when hidden ──
+async function mapSliceSection(port) {
+  console.log('\n# maps QA round 1: cold map builds in slices (boot, lobby arrows), a burst drops half-built maps, the cache trimmed on pagehide and released on close');
+  const h = await launch({ port, only: ['chameleon'], who: ['a'], coarse: true });
+  const a = h.a;
+  try {
+    const cdp = await a.context().newCDPSession(a);
+    const mem = async () => { await cdp.send('HeapProfiler.collectGarbage'); await wait(250); await cdp.send('HeapProfiler.collectGarbage'); const u = await cdp.send('Runtime.getHeapUsage'); return (u.usedSize + (u.backingStorageSize || 0)) / 1048576; };
+    await h.openGames(a); await wait(500);
+    const m0 = await mem();
+    await a.evaluate(() => {
+      window.__lt = []; window.__raf = 0;
+      try { new PerformanceObserver((l) => { for (const e of l.getEntries()) window.__lt.push([e.startTime, e.duration]); }).observe({ entryTypes: ['longtask'] }); } catch { /* no longtask API */ }
+      const tick = () => { window.__raf++; requestAnimationFrame(tick); }; requestAnimationFrame(tick);
+    });
+    await arm(a, { ...FAST, maxDpr: 0.5 });
+    await h.startLive(a, 'chameleon', 'local');
+    await waitReady(a);
+    const b0 = await hook(a, 'bootInfo');
+    const boot = b0.builds[b0.builds.length - 1];
+    // (bounds with room for a busy box: the sandbox shares its CPU; at rest steps are ≤ 6 ms)
+    assert(boot && boot.id === 'living' && boot.slices >= 2 && boot.maxMs < 80, `the boot builds the lobby map in slices behind the loading card (${JSON.stringify(boot)})`);
+    // real taps on the lobby arrow through every map: each is a cold build (the cache keeps 3)
+    const ids = await hook(a, 'mapIds');
+    const rows = [];
+    for (let i = 1; i <= ids.length; i++) {
+      const want = ids[i % ids.length];
+      const t0 = await a.evaluate(() => { window.__raf0 = window.__raf; return performance.now(); });
+      await a.tap('.chm-mapcard .chm-arrow[aria-label="Next map"]');
+      await a.waitForFunction((m) => window.__cham.state().mapId === m, want, { timeout: 30000 });
+      const r0 = await a.evaluate((t) => ({ ms: performance.now() - t, frames: window.__raf - window.__raf0, t1: performance.now() }), t0);
+      await wait(150); // long-task entries arrive a little late
+      const r = { ...r0, longest: await a.evaluate(([t, t1]) => window.__lt.filter((x) => x[0] >= t && x[0] <= t1).reduce((m, x) => Math.max(m, x[1]), 0), [t0, r0.t1]) };
+      const bi = await hook(a, 'bootInfo'); const bs = bi.builds[bi.builds.length - 1];
+      rows.push({ id: want, ms: Math.round(r.ms), frames: r.frames, longest: Math.round(r.longest), slices: bs.id === want ? bs.slices : 0, step: bs.id === want ? bs.maxMs : 0, slice: bs.id === want ? bs.maxSlice : 0 });
+      await wait(250);
+    }
+    console.log('  cold switches by arrow taps: ' + rows.map((r) => `${r.id} ${r.ms} ms / ${r.frames} frames / ${r.slices} slices (longest ${r.slice} ms, step ${r.step}), longest task ${r.longest}`).join(' · '));
+    const big = rows.filter((r) => r.id === 'cuboulder' || r.id === 'house');
+    assert(big.every((r) => r.slices >= 3 && r.frames >= 3), `the big maps build over several frames while the old diorama keeps drawing (${big.map((r) => `${r.id}: ${r.slices} slices, ${r.frames} frames`).join(', ')})`);
+    const worstStep = Math.max(...rows.map((r) => r.step));
+    assert(worstStep < 80, `no single build step runs long (the longest ${worstStep} ms at 1x; a whole CU build was one 0.3–0.8 s task at 4x)`);
+    // the build's own slices (frames in software GL are long tasks by themselves on a busy box, so
+    // the longest task is only reported)
+    const worstSlice = Math.max(...rows.map((r) => r.slice));
+    assert(worstSlice < 100, `no build slice blocks the main thread (the longest across ${rows.length} cold switches: ${worstSlice} ms, 16 ms budget + one step; the longest task, frames included: ${Math.max(...rows.map((r) => r.longest))} ms)`);
+    // a newer tap drops a half-built map: Next while the House is building goes on to the Market
+    await hook(a, 'setRules', { map: 'studio' }); await wait(300);
+    const n0 = (await hook(a, 'bootInfo')).builds.length;
+    const next = () => a.evaluate(() => document.querySelector('.chm-mapcard .chm-arrow[aria-label="Next map"]').click());
+    await next();
+    await a.waitForFunction(() => window.__cham.bootInfo().jobs.some((j) => j.id === 'house'), null, { timeout: 15000, polling: 5 });
+    const mid = await hook(a, 'bootInfo');
+    await next();
+    await a.waitForFunction(() => window.__cham.state().mapId === 'market', null, { timeout: 30000 });
+    await wait(300);
+    const bb = await hook(a, 'bootInfo');
+    const built = bb.builds.slice(n0).map((x) => x.id);
+    assert(built.join() === 'market' && !bb.jobs.length && (await st(a)).mapId === 'market', `Next while the House was building (${JSON.stringify(mid.jobs)}) dropped it and built the Market only (${built.join(', ')}; jobs left ${JSON.stringify(bb.jobs)})`);
+    const last = 'market';
+    // pagehide (and a hidden page) keeps only the map on screen
+    const c0 = bb.cache.map((c) => c.id);
+    await a.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+    const c1 = (await hook(a, 'bootInfo')).cache.map((c) => c.id);
+    assert(c0.length >= 2 && c1.length === 1 && c1[0] === last, `pagehide trims the map cache to the map on screen (${c0.join(', ')} → ${c1.join(', ')})`);
+    await a.tap('.chm-mapcard .chm-arrow[aria-label="Next map"]');
+    await a.waitForFunction((m) => window.__cham.state().mapId === m, ids[(ids.indexOf(last) + 1) % ids.length], { timeout: 30000 });
+    assert((await hook(a, 'perf')).calls > 0, 'maps still switch and draw after the trim');
+    // close: nothing of the cache stays behind
+    await h.closeGame(a); await wait(1200);
+    const m1 = await mem();
+    console.log(`  JS heap + array buffers: hub ${m0.toFixed(1)} MB, after the game closed ${m1.toFixed(1)} MB`);
+    assert(m1 - m0 < 8, `closing the game releases the map cache (+${(m1 - m0).toFixed(1)} MB over the hub; it kept ~28 MB before)`);
+    await arm(a, { ...FAST, maxDpr: 0.5 });
+    await h.startLive(a, 'chameleon', 'local');
+    await waitReady(a);
+    const c2 = (await hook(a, 'bootInfo')).cache;
+    assert(c2.length === 1 && c2[0].hits <= 1, `a reopen starts from an empty cache: the lobby map built afresh (${JSON.stringify(c2.map((c) => ({ id: c.id, hits: c.hits })))})`);
+    // closing while the boot is still building the lobby map (CU, the last map picked, cold after
+    // the close): the stage it made goes too
+    await h.closeGame(a); await wait(400);
+    await arm(a, { ...FAST, maxDpr: 0.5 });
+    await h.startLive(a, 'chameleon', 'local');
+    await a.waitForFunction(() => (window.__chamGL || 0) >= 1, null, { timeout: 30000, polling: 5 });
+    const midBoot = await a.evaluate(() => ({ ready: !!(window.__cham && window.__cham.ready) }));
+    await h.closeGame(a); await wait(1500);
+    const left = await a.evaluate(() => ({ gl: window.__chamGL || 0, canvases: document.querySelectorAll('canvas').length, inst: window.__chamCount || 0 }));
+    assert(!midBoot.ready && left.gl === 0 && left.canvases === 0 && left.inst === 0, `closing mid-boot (the lobby map still building) disposes the stage (${JSON.stringify(left)})`);
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'mapslice-FAIL').catch(() => {});
+  } finally { await h.close(); }
+}
+
 // ── maps pass: Mix it up, Today's hide, where you start ──────────────────────────────────────
 async function varietySection(port) {
   console.log('\n# maps pass: Mix it up (a new map every round), Today\'s hide, "You start in the …"');
@@ -1392,6 +1487,7 @@ async function varietySection(port) {
     // rounds 1 and 2 on the House: the hiders tap Ready, the seek clock runs out
     for (const [hider, r] of [[b, 1], [a, 2]]) {
       await hider.waitForFunction((rr) => { const s = window.__cham.state(); return s.phase.name === 'hide' && s.phase.round === rr; }, r, { timeout: 40000 });
+      if (r === 2) await a.evaluate(() => { window.__lt2 = []; try { new PerformanceObserver((l) => { for (const e of l.getEntries()) window.__lt2.push([e.startTime, e.duration, window.__cham && window.__cham.state().phase.name]); }).observe({ entryTypes: ['longtask'] }); } catch { /* no longtask API */ } });
       await wait(500);
       await hider.click('.chm-acts [data-act="ready"]');
       await a.waitForFunction((rr) => { const s = window.__cham.state(); return s.phase.name === 'recap' && s.phase.round === rr; }, r, { timeout: 60000 });
@@ -1403,6 +1499,13 @@ async function varietySection(port) {
     // both phones preload round 3's map while the recap is up
     for (const p of [a, b]) await p.waitForFunction((m) => window.__cham.bootInfo().cache.some((c) => c.id === m), m1.maps[2], { timeout: 15000 });
     assert(true, `round 3's map (${m1.maps[2]}) was built during the recap on both phones`);
+    // maps QA round 1: in idle-time slices (it was one 0.3–0.8 s task at 4x CPU in the recap)
+    await wait(200);
+    const pf = (await hook(a, 'bootInfo')).builds.filter((x) => x.id === m1.maps[2]).pop();
+    const recapLong = await a.evaluate(() => (window.__lt2 || []).filter((x) => x[2] === 'recap').reduce((m, x) => Math.max(m, x[1]), 0));
+    // (with two software-GL phones on a busy box a frame can take 300 ms and the 3.5 s test recap
+    // may end first: then the round's loadMap finishes the rest, which must be small)
+    assert(pf && pf.slices >= 2 && pf.maxMs < 40 && (!pf.drained || pf.drainMs < 150), `the recap's prefetch ran in ${pf ? pf.slices : '?'} idle slices (longest step ${pf ? pf.maxMs : '?'} ms), ${pf && pf.drained ? `the round's start finished the last ${pf.drainMs} ms` : 'done before the round'} (the recap's longest task, frames included, ${Math.round(recapLong)} ms)`);
     await a.waitForFunction(() => { const s = window.__cham.state(); return s.phase.name === 'hide' && s.phase.round === 3; }, null, { timeout: 30000 });
     await b.waitForFunction((m) => window.__cham.state().mapId === m, m1.maps[2], { timeout: 15000 });
     assert((await st(a)).mapId === m1.maps[2] && (await st(b)).match.map === m1.maps[2], `round 3 plays on ${m1.maps[2]} on both phones`);
@@ -1987,9 +2090,11 @@ async function paintJuiceSection(port) {
     assert(true, 'the wipe finishes by itself');
     await a.waitForFunction((p0) => { const k = window.__cham.camo(); return !k.busy && k.score > p0 + 20 && k.meter.text === `${k.score}%`; }, plain, { timeout: 10000 });
     c = await hook(a, 'camo');
-    assert(c.score >= 85 && c.meter.grade >= 2, `after the stamp the meter reads ${c.score}% "${c.meter.word}"`);
+    // paint QA1: the score looks from the side too, so a stamp on the busy wallpaper is a good start, not a free Ghost
+    assert(c.score >= plain + 25 && c.score < 90 && c.meter.grade >= 1, `after the stamp the meter reads ${c.score}% "${c.meter.word}" (from ${plain}%)`);
+    const stamped = c.score;
     assert((c.slices - c0.slices) / Math.max(1, c.runs - c0.runs) >= 3, `re-scoring is sliced over frames (${c.slices - c0.slices} slices for ${c.runs - c0.runs} run${c.runs - c0.runs === 1 ? '' : 's'}; the round's first score is taken at once)`);
-    assert(c.meter.pops >= 1 && c.meter.sounds >= 1 && c.meter.bonusOn, `the better grade popped a sticker with a sound, and the +10 star lit (pops ${c.meter.pops}, sounds ${c.meter.sounds})`);
+    assert(c.meter.pops >= 1 && c.meter.sounds >= 1, `the better grade popped a sticker with a sound (pops ${c.meter.pops}, sounds ${c.meter.sounds}; the +10 star is ONLY=blendfair's)`);
     await snap('2-stamped');
     // a slow wipe, frozen mid-way: part of the body changed, reading the hash settles it
     await hook(a, 'reveal', { stamp: { dur: 30 } });
@@ -2023,9 +2128,9 @@ async function paintJuiceSection(port) {
     await a.tap('.chm-tools [data-act="undo"]');
     rv = await hook(a, 'reveal', null, 'b');
     assert(rv.kind === 'undo' && rv.count === rc0 + 1 && rv.n > 1000, `undo dissolves ${rv.n} changed texels back`);
-    await a.waitForFunction(() => { const k = window.__cham.camo(); return !k.busy && k.score >= 80 && k.meter.text === `${k.score}%`; }, null, { timeout: 10000 });
+    await a.waitForFunction((s0) => { const k = window.__cham.camo(); return !k.busy && k.score >= s0 - 4 && k.meter.text === `${k.score}%`; }, stamped, { timeout: 10000 });
     c = await hook(a, 'camo');
-    assert(true, `undo: back to ${c.score}%`);
+    assert(true, `undo: back to ${c.score}% (stamped ${stamped}%)`);
     // layout: the meter never covers the tools, poses, top bar or hint (portrait, landscape, SE)
     await hook(a, 'openPoses');
     for (const [w, hh] of [[390, 844], [844, 390], [375, 667]]) {
@@ -2101,18 +2206,20 @@ async function paintProSection(port) {
     const pf2 = (await hook(a, 'paintPerf', 'b')).perf;
     assert(pf1.snapAllocs <= 25 && pf2.snapAllocs === pf1.snapAllocs, `undo snapshots come from a pool: ${pf0.snapAllocs} → ${pf1.snapAllocs} buffers after 30 stamps, +${pf2.snapAllocs - pf1.snapAllocs} after 20 more (history ${pf2.undo})`);
     await a.waitForFunction(() => !window.__cham.reveal(null, 'b').on, null, { timeout: 5000 });
-    // a stamp on a plain body: straight to "Invisible!" (above Ghost)
+    // a stamp on the wallpaper, a white fill over it, undo: the meter drops and climbs back with a
+    // grade pop (paint QA1: "Invisible!" needs a calm surface now, ONLY=blendfair stamps the Market's)
     await a.waitForFunction(() => { const k = window.__cham.camo(); return !k.busy && k.meter.text === `${k.score}%`; }, null, { timeout: 10000 });
     let c = await hook(a, 'camo');
-    assert(c.score >= 98 && c.meter.inv, `the stamped body reads ${c.score}%: past the Invisible line`);
+    const st0 = c.score;
+    assert(st0 >= 50 && !c.meter.inv, `the stamped body reads ${st0}% "${c.meter.word}" on the wallpaper`);
     await hook(a, 'setPaint', { rgb: [255, 255, 255], tool: 'fill' });
     await a.tap('.chm-tool[data-tool="fill"]'); await tapBody(a);
-    await a.waitForFunction(() => { const k = window.__cham.camo(); return !k.busy && !window.__cham.reveal(null, 'b').on && k.score < 90 && k.meter.text === `${k.score}%`; }, null, { timeout: 10000 });
-    const pops0 = (await hook(a, 'camo')).meter.pops;
+    await a.waitForFunction((s0) => { const k = window.__cham.camo(); return !k.busy && !window.__cham.reveal(null, 'b').on && k.score < s0 - 10 && k.meter.text === `${k.score}%`; }, st0, { timeout: 10000 });
+    const lo = await hook(a, 'camo');
     await a.tap('.chm-tools [data-act="undo"]');
-    await a.waitForFunction((n) => { const k = window.__cham.camo(); return !k.busy && k.meter.pops > n; }, pops0, { timeout: 10000 });
+    await a.waitForFunction((s0) => { const k = window.__cham.camo(); return !k.busy && !window.__cham.reveal(null, 'b').on && k.score >= s0 - 4 && k.meter.text === `${k.score}%`; }, st0, { timeout: 10000 });
     c = await hook(a, 'camo');
-    assert(c.meter.lastPop === 'Invisible!' && c.meter.sounds >= 1, `climbing back past 98 % pops "${c.meter.lastPop}" with a sound`);
+    assert(c.meter.grade > lo.meter.grade ? c.meter.pops > lo.meter.pops && c.meter.sounds > lo.meter.sounds && /!$/.test(c.meter.lastPop) : c.meter.pops === lo.meter.pops, `white fill ${lo.score}% "${lo.meter.word}" → undo ${c.score}% "${c.meter.word}": ${c.meter.grade > lo.meter.grade ? `pops "${c.meter.lastPop}" with a sound` : 'same grade, no pop'}`);
     // a sloppy pink patch, then the x-ray from a real tap on the meter
     await hook(a, 'setPaint', { size: 2, hard: false, tool: 'brush', rgb: [226, 70, 130] });
     await strokeOnBody(a, true);
@@ -2122,12 +2229,13 @@ async function paintProSection(port) {
     const cdp = await a.context().newCDPSession(a);
     await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
     await a.tap('.chm-meter');
+    await a.waitForFunction(() => window.__cham.camo().xray.on, null, { timeout: 10000 });
     await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
     c = await hook(a, 'camo');
     let pp = (await hook(a, 'paintPerf', 'b')).perf;
-    console.log(`  x-ray at 4x CPU: error pass ${c.xray.ms.toFixed(1)} ms, ${c.xray.bad} texels show`);
+    console.log(`  x-ray at 4x CPU: error map ${c.xray.ms.toFixed(1)} ms in ${c.xray.slices} slices (largest ${c.xray.slice.toFixed(1)} ms; the meter's score ${c.xray.lent ? 'lent' : 'not lent'}), ${c.xray.bad} texels show`);
     assert(c.xray.on && c.xray.bad > 50 && c.meter.check === 'Shows', `tapping the meter x-rays the body (${c.xray.bad} texels show, the pill reads "${c.meter.check}")`);
-    assert(c.xray.ms < 120, `the x-ray's error pass is a tap-sized cost at 4x CPU: ${c.xray.ms.toFixed(1)} ms`);
+    assert(c.xray.slice < 16 && c.xray.ms < 400, `the x-ray's five-view error map is sliced over frames at 4x CPU: largest slice ${c.xray.slice.toFixed(1)} ms (paint QA1; it was one 8–47 ms pass)`);
     await a.waitForFunction(() => window.__cham.paintPerf('b').perf.xray.frames >= 2, null, { timeout: 5000 });
     await snap('2-xray');
     assert(await hook(a, 'paintHash', 'b') === hp, 'the x-ray never touches the skin (hash unchanged)');
@@ -2136,7 +2244,8 @@ async function paintProSection(port) {
     assert(c.meter.check === 'Check', 'the x-ray ends by itself and the pill reads Check again');
     // painting ends it at once; a second tap turns it off
     await a.tap('.chm-meter');
-    assert((await hook(a, 'camo')).xray.on, 'x-ray on again');
+    await a.waitForFunction(() => window.__cham.camo().xray.on, null, { timeout: 10000 });
+    assert(true, 'x-ray on again');
     await strokeOnBody(a, true);
     pp = (await hook(a, 'paintPerf', 'b')).perf;
     assert(!pp.xray.on, 'a stroke ends the x-ray at once (the stroke lands on the real skin)');
@@ -2171,6 +2280,146 @@ async function paintProSection(port) {
     console.error(e.message, h.errors); failures++;
     await shot(a, 'paintpro-FAIL').catch(() => {});
   } finally { await h.close(); }
+}
+
+// ── paint owner, QA round 1: the blend % is what a seeker walking round sees, not the stamp's own
+// projection (every stamp used to read 98-100 % "Invisible!", so the bonus and Gold were one tap) ──
+const camoSettled = (a, cond = '') => a.waitForFunction(new Function(`const k = window.__cham.camo(); return !k.busy && !window.__cham.reveal(null, 'b').on && k.meter && k.meter.text === k.score + '%'${cond ? ` && (${cond})` : ''};`), null, { timeout: 15000 });
+const hintText = (a) => a.evaluate(() => { const e = document.querySelector('.chm-hint'); return e ? e.textContent : ''; });
+async function blendHide(a, map) {
+  await hook(a, 'setRules', { map, first: 'b', rules: { size: 'large', blendBonus: 10 } });
+  await a.tap('[data-act="start"]');
+  await a.tap('[data-act="curtain"]');
+  await waitPhase(a, 'hide');
+  await wait(400);
+}
+async function blendFairSection(port) {
+  console.log('\n# paint QA1: the blend % from five viewpoints (a stamp is a start, not a free Ghost), the side hint, the x-ray, Gold needs a hide that held up');
+  const SH = process.env.PAINT_SHOTS || SHOTS;
+  fs.mkdirSync(SH, { recursive: true });
+  const shots = [];
+  // Gold eyes: the best blend of a hide that SURVIVED (records.js `${w}_blend_surv`), not a lock score
+  const R = await import('file://' + path.resolve(__dirname, '../../../js/games/chameleon/records.js'));
+  const W = await import('file://' + path.resolve(__dirname, '../../../js/games/chameleon/wardrobe.js'));
+  let d = {};
+  const names = { a: 'Emerson', b: 'Sydney' };
+  const gold = W.STYLES.find((x) => x.key === 'eye' && x.name === 'Gold');
+  const fold = (rec) => { const r = R.recordRound(d, { seeker: 'a', hider: 'b', surf: 'wall', ...rec }, { mode: 'hs', map: 'living', names, strokes: { a: 0, b: 0 } }); d = { ...d, ...r.patch }; const u = W.newUnlocks(d, 'b'); d = { ...d, ...u.patch }; return u.pops.map((x) => x.st.name); };
+  let pops = fold({ found: true, ms: 21000, blend: 97 });
+  assert(!pops.includes('Gold') && d.b_blend === 97 && !d.b_blend_surv, `a 97 % hide that got found: best blend 97, no Gold (hint: "${W.hintFor(gold, W.statsOf(d, 'b'))}")`);
+  pops = fold({ found: false, ms: 90000, blend: 86 });
+  assert(!pops.includes('Gold') && d.b_blend_surv === 86, `an 86 % hide that survived: no Gold yet (hint: "${W.hintFor(gold, W.statsOf(d, 'b'))}")`);
+  pops = fold({ found: false, ms: 90000, blend: 91 });
+  assert(pops.includes('Gold') && d.b_blend_surv === 91 && gold.how === 'Survive a hunt at 90 % blend', `a 91 % hide that survived the hunt unlocks Gold ("${gold.how}")`);
+  // one phone, Living Room: flat on the busy wallpaper
+  let h = await launch({ port, only: ['chameleon'], who: ['a'], device: 'iPhone 13' });
+  let a = h.a;
+  const snap = async (n) => { const f = path.join(SH, `fair-${n}.png`); await a.screenshot({ path: f, clip: { x: 0, y: 80, width: 390, height: 560 } }); shots.push(f); };
+  try {
+    await arm(a, { ...SLOW, hide: 300000, maxDpr: 0.6 });
+    await h.startLive(a, 'chameleon', 'local');
+    await waitReady(a);
+    await blendHide(a, 'living');
+    assert(await camoHide(a) === 'wall', 'hider flat on the Living Room wallpaper');
+    await a.tap('.chm-acts [data-act="paint"]');
+    await camoSettled(a, 'k.score >= 0');
+    let c = await hook(a, 'camo');
+    const plain = c.score;
+    assert(plain < 50, `a plain white body on the wallpaper: ${plain}% "${c.meter.word}"`);
+    await a.tap('.chm-tool[data-tool="stamp"]');
+    await camoSettled(a, `k.score > ${plain} + 20`);
+    c = await hook(a, 'camo');
+    let v = (await hook(a, 'blendViews')).last;
+    const side = Math.min(...v.slice(1));
+    console.log(`  stamp on the wallpaper: ${c.score}% "${c.meter.word}" (front ${v[0]}, sides ${v.slice(1).join(' / ')})`);
+    assert(c.score >= plain + 25 && c.score < 90 && !c.meter.inv, `one Stamp tap: ${plain}% → ${c.score}% "${c.meter.word}": a good start, not a free Ghost`);
+    assert(v.length === 5 && v[0] >= 72 && side <= v[0] - 8, `head-on the stamp holds up (${v[0]}%), from 50° to the side the stripes stop lining up (worst side ${side}%)`);
+    const stamped = c.score;
+    const old = await a.evaluate(() => { window.__cham.blendViews({ views: 1, dist: 1000 }); const n = window.__cham.blend('b').now; window.__cham.blendViews({ views: 5, dist: 2.6 }); return n; });
+    assert(old >= 85 && old - stamped >= 8, `scored from the stamp's own projection only (the old score) the same body reads ${old}%`);
+    await a.waitForFunction(() => /From the side/.test((document.querySelector('.chm-hint') || {}).textContent || ''), null, { timeout: 5000 });
+    assert(true, `the side hint explains it once: "${await hintText(a)}"`);
+    await snap('1-stamp-wallpaper');
+    // the x-ray: parallax shows as hazard tape where the pattern breaks, and the hint says why
+    await a.tap('.chm-meter');
+    await a.waitForFunction(() => window.__cham.camo().xray.on, null, { timeout: 10000 });
+    c = await hook(a, 'camo');
+    assert(c.xray.on && c.xray.bad > 200 && c.xray.lent && /From the side|Head-on/.test(await hintText(a)), `the x-ray flags ${c.xray.bad} texels that break up from the side (borrowing the meter's score) and says why: "${await hintText(a)}"`);
+    assert(c.xray.slice < 16, `the five-view error map is sliced: ${c.xray.ms.toFixed(1)} ms in ${c.xray.slices} slices, largest ${c.xray.slice.toFixed(1)} ms`);
+    await a.waitForFunction(() => window.__cham.paintPerf('b').perf.xray.frames >= 2, null, { timeout: 5000 });
+    await snap('2-xray');
+    await a.tap('.chm-meter');
+    // the busy kilim, standing: worse than the wallpaper (a tall body on a busy floor breaks up more)
+    const rug = (await hook(a, 'spots')).rug;
+    await hook(a, 'teleport', rug.x, rug.z, 0, 0);
+    await wait(500);
+    await camoSettled(a);
+    await a.tap('.chm-tool[data-tool="stamp"]');
+    await wait(300);
+    await camoSettled(a);
+    c = await hook(a, 'camo'); v = (await hook(a, 'blendViews')).last;
+    console.log(`  stamp standing on the kilim: ${c.score}% (front ${v[0]}, sides ${v.slice(1).join(' / ')})`);
+    assert(c.score < stamped - 5 && v[0] >= 70, `stamped standing on the busy kilim: ${c.score}% < the wallpaper's ${stamped}%`);
+    await snap('3-stamp-kilim');
+    // costs: the meter's slices and a cold lock score (nothing cached) at 1x and 4x CPU
+    const cdp = await a.context().newCDPSession(a);
+    const cost = async () => a.evaluate(() => { const t = []; for (let i = 0; i < 5; i++) { const t0 = performance.now(); window.__cham.blend('b'); t.push(performance.now() - t0); } t.sort((x, y) => x - y); return t; });
+    const c1 = await cost();
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+    const c4 = await cost();
+    await hook(a, 'camoPerfReset');
+    await hook(a, 'setPaint', { size: 1, hard: false, tool: 'brush', rgb: [90, 140, 200] });
+    await strokeOnBody(a, true);
+    await camoSettled(a);
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+    c = await hook(a, 'camo');
+    console.log(`  whole score (cold, as the lock): 1x median ${c1[2].toFixed(1)} / max ${c1[4].toFixed(1)} ms, 4x median ${c4[2].toFixed(1)} / max ${c4[4].toFixed(1)} ms; meter slices at 4x avg ${c.sliceAvg.toFixed(2)} / max ${c.sliceMax.toFixed(2)} ms (${c.slices} slices)`);
+    assert(c4[4] < 120 && c.sliceMax < 16, 'a whole score stays far under the 200 ms rule at 4x CPU, a meter slice inside a frame');
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'blendfair-FAIL').catch(() => {});
+  } finally { await h.close(); }
+  // a calm surface still blends: the Corner Market's plain wall takes a stamp to Ghost, past the
+  // +10 line (the star lights) and past "Invisible!"
+  h = await launch({ port, only: ['chameleon'], who: ['a'], device: 'iPhone 13' });
+  a = h.a;
+  try {
+    await arm(a, { ...SLOW, hide: 300000, maxDpr: 0.6 });
+    await h.startLive(a, 'chameleon', 'local');
+    await waitReady(a);
+    await blendHide(a, 'market');
+    assert(await camoHide(a) === 'wall', 'hider flat on the Corner Market\'s camo wall');
+    await a.tap('.chm-acts [data-act="paint"]');
+    await camoSettled(a, 'k.score >= 0');
+    const c0 = await hook(a, 'camo');
+    await hook(a, 'setPaint', { rgb: [200, 40, 90], tool: 'fill' });
+    await a.tap('.chm-tool[data-tool="fill"]'); await tapBody(a);
+    await camoSettled(a, `k.score < ${c0.score} - 10`);
+    const pink = await hook(a, 'camo');
+    await a.tap('.chm-tool[data-tool="stamp"]');
+    await camoSettled(a, `k.score > ${pink.score} + 10`);
+    let c = await hook(a, 'camo'); const v = (await hook(a, 'blendViews')).last;
+    console.log(`  Market wall: plain ${c0.score}%, a pink body ${pink.score}%, stamped ${c.score}% (front ${v[0]}, sides ${v.slice(1).join(' / ')})`);
+    assert(c.score >= 86 && c.meter.bonusOn && c.meter.pops > pink.meter.pops && c.meter.sounds > pink.meter.sounds, `on a calm wall a stamp still blends: ${c.score}% "${c.meter.word}", the +10 star lit, "${c.meter.lastPop}" with a sound`);
+    assert(!/From the side/.test(await hintText(a)), 'no side hint where the pattern holds up from the side');
+    // the meter's "Invisible!" line (95) is unchanged UI: scored head-on only (the old score), the same stamp pops it
+    await hook(a, 'blendViews', { views: 1, dist: 1000 });
+    await a.tap('.chm-tools [data-act="undo"]');
+    await camoSettled(a, `k.score < ${pink.score} + 10`);
+    const lo = await hook(a, 'camo');
+    await a.tap('.chm-tool[data-tool="stamp"]');
+    await camoSettled(a, `k.score >= 95`);
+    c = await hook(a, 'camo');
+    await hook(a, 'blendViews', { views: 5, dist: 2.6 });
+    assert(c.meter.inv && c.meter.lastPop === 'Invisible!' && c.meter.sounds > lo.meter.sounds, `past 95 % the meter pops "${c.meter.lastPop}" with a sound (${c.score}%, head-on scoring)`);
+    const f = path.join(SH, 'fair-4-market.png'); await a.screenshot({ path: f, clip: { x: 0, y: 80, width: 390, height: 560 } }); shots.push(f);
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'blendfair2-FAIL').catch(() => {});
+  } finally { await h.close(); }
+  if (process.env.PAINT_MONT) { try { require('child_process').execFileSync('node', [process.env.PAINT_MONT, path.join(SH, 'fair-montage.png'), '300', '430', ...shots]); } catch (e) { console.log('  (montage skipped)', e.message.split('\n')[0]); } }
 }
 
 const REALTIME = { ...SLOW, hide: undefined, seek: undefined, seekLead: undefined, realCountdown: true };
@@ -2554,7 +2803,7 @@ async function feelSection(port) {
     await hook(a, 'stampNow');
     await wait(200);
     const b1 = (await hook(a, 'blend', 'b')).now;
-    assert(b0 >= 0 && b0 < 60 && b1 > b0 + 20 && b1 >= 70, `blend score: plain white ${b0} % → stamped ${b1} %`);
+    assert(b0 >= 0 && b0 < 60 && b1 > b0 + 20 && b1 >= 60, `blend score: plain white ${b0} % → stamped ${b1} %`); // (paint QA1: the score looks from the side too, a stamp on this wallpaper reads ~74)
     await a.tap('.chm-done');
     await wait(200);
     await a.tap('.chm-acts [data-act="ready"]');
@@ -2623,6 +2872,75 @@ async function feelSection(port) {
     console.error(e.message, h.errors); failures++;
     await shot(a, 'pro-feel-FAIL').catch(() => {});
     try { console.error(JSON.stringify(await st(a)).slice(0, 1500)); } catch { /* ignore */ }
+  } finally { await h.close(); }
+}
+
+/**
+ * QA round 1 (mechanics): the body has to fit, not just its contact point. On the Market's right
+ * wall a carton stack sits 0.25 m off the wall: a Large chameleon (r 0.31) used to crawl along
+ * the wall behind it with its body inside the cartons (and over lockers, into fridges). Crawling
+ * now stops at the stack, a body wedged in by other means can still crawl out, and the tongue
+ * won't zip into the slot (a normal zip still lands).
+ */
+async function fitSection(port) {
+  console.log('\n# QA1 mechanics: a crawling body never ends inside a prop (Market carton slot, Large); escape hatch; tongue-zip into a slot refused');
+  const h = await launch({ port, only: ['chameleon'], who: ['a'] });
+  const a = h.a;
+  try {
+    await arm(a, { ...SLOW, hide: undefined, seek: undefined });
+    await h.startLive(a, 'chameleon', 'local');
+    await waitReady(a);
+    if (!(await hook(a, 'mapIds')).includes('market')) { console.log('  (no market map: skipped)'); return; }
+    await hook(a, 'setRules', { map: 'market', first: 'b', rules: { size: 'large', hide: 300, seek: 300 } });
+    await a.click('[data-act="start"]');
+    await waitPhase(a, 'curtain');
+    await a.click('[data-act="curtain"]');
+    await waitPhase(a, 'hide');
+    await wait(400);
+    const carton = { minX: 9.05, maxX: 9.75, minY: 1.63, maxY: 2.12, minZ: 0.78, maxZ: 1.22 };
+    const centreOf = (bd) => [bd.x + bd.nx * bd.r, bd.y + bd.ny * bd.r, bd.z + bd.nz * bd.r];
+    const inCarton = (c) => c[0] > carton.minX && c[0] < carton.maxX && c[1] > carton.minY && c[1] < carton.maxY && c[2] > carton.minZ && c[2] < carton.maxZ;
+    // on the right wall beside the stack, heading toward it
+    await hook(a, 'attachAt', 10, 1.9, 2.0, -1, 0, 0, 0, 0, -1);
+    let bd = await hook(a, 'body');
+    assert(bd.at && bd.nx < -0.9 && Math.abs(bd.r - 0.312) < 0.01, `a Large chameleon (r ${bd.r.toFixed(3)}) on the Market's right wall beside the carton stack`);
+    await hook(a, 'setCam', -2.2, 0.25, 2.6);
+    let res = await hook(a, 'crawl', 0, 0, -1.2, 45);
+    bd = await hook(a, 'body');
+    let c = centreOf(bd);
+    assert(bd.at && !inCarton(c) && bd.z > carton.maxZ - 0.02 && res.res.includes(3), `crawling along the wall stops at the stack (contact z ${bd.z.toFixed(2)}, body centre ${fmt3(c)} outside the carton; results ${[...new Set(res.res)].join(',')})`);
+    await wait(700);
+    await shot(a, 'qa1-fit-stops-at-stack');
+    // the slot behind the stack, as the old engine let a body into it
+    await hook(a, 'attachAt', 10, 1.9, 1.0, -1, 0, 0, 0, 0, 1);
+    await wait(700);
+    await shot(a, 'qa1-fit-old-inside-cartons');
+    c = centreOf(await hook(a, 'body'));
+    assert(inCarton(c), `(attachAt bypasses the checks: the old reach had the body centre ${fmt3(c)} inside the cartons)`);
+    // wedged in by other means (a forced attach, a stale snapshot): it can still crawl out
+    res = await hook(a, 'crawl', 0, 0, 1.2, 30);
+    bd = await hook(a, 'body');
+    c = centreOf(bd);
+    assert(bd.at && bd.z > carton.maxZ + 0.1 && !inCarton(c), `a wedged body isn't frozen: it crawls out of the slot (z 1.00 → ${bd.z.toFixed(2)})`);
+    // the tongue: a ray that passes the stack and hits the wall behind it is refused, no cooldown spent
+    await hook(a, 'attachAt', 10, 1.9, 2.0, -1, 0, 0, 0, 0, -1);
+    const L = Math.hypot(0.15, 0.6);
+    const ok1 = await hook(a, 'zip', [9.85, 1.9, 1.75, 0.15 / L, 0, -0.6 / L]);
+    const ht = (await a.textContent('.chm-hint')).trim();
+    bd = await hook(a, 'body');
+    assert(ok1 === false && !bd.zip && /tight/i.test(ht) && Math.abs(bd.z - 2.0) < 0.01, `a tongue-zip at the wall behind the stack is refused ("${ht}")`);
+    // …while a zip to the open underside of the shelf above still lands, upside down
+    const ok2 = await hook(a, 'zip', [9.2, 1.5, 1.6, 0, 1, 0]);
+    await a.waitForFunction(() => !window.__cham.body().zip, null, { timeout: 5000 });
+    bd = await hook(a, 'body');
+    c = centreOf(bd);
+    assert(ok2 === true && bd.at && bd.ny < -0.9 && Math.abs(bd.y - 2.12) < 0.02 && !inCarton(c), `a zip to the open shelf underside still lands (at ${fmt3([bd.x, bd.y, bd.z])}, upside down)`);
+    await wait(600);
+    await shot(a, 'qa1-fit-zip-shelf-underside');
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'qa1-fit-FAIL').catch(() => {});
   } finally { await h.close(); }
 }
 
@@ -3201,6 +3519,206 @@ async function netPolishSection(port) {
   } finally { await h.close(); }
 }
 
+// ── UX QA round 1: the final card on a short phone, who hides first after Rematch, wardrobe rows ──
+/** One scripted hotseat round: the hider stamps on the map's camo wall, the seeker tags from 2.5 m. */
+async function quickHsRound(a) {
+  await waitPhase(a, 'curtain', 60000); await hook(a, 'action', 'curtain');
+  await waitPhase(a, 'hide', 60000); await wait(200);
+  const sp = await hook(a, 'spots');
+  await hook(a, 'teleport', sp.camo.x, sp.camo.z - 0.1, 0, sp.camo.y); await hook(a, 'setPose', 'wall'); await hook(a, 'stampNow');
+  await wait(300);
+  await hook(a, 'action', 'ready');
+  await waitPhase(a, 'curtain', 60000); await hook(a, 'action', 'curtain');
+  await waitPhase(a, 'seek', 60000); await a.waitForFunction(() => window.__cham.state().hunting, null, { timeout: 30000 });
+  const s = await st(a); const hider = s.viewer === 'a' ? 'b' : 'a';
+  const bc = await hook(a, 'bodyCenter', hider); const cn = sp.camo.wallNormal || [0, 0, 1];
+  // stand 2.5 m out from the hider's wall on that floor (the House's camo wall can be upstairs)
+  const dn = await hook(a, 'surfaceAt', bc[0] + cn[0] * 2.5, bc[1] + 0.2, bc[2] + cn[2] * 2.5, 0, -1, 0, 4);
+  await hook(a, 'teleport', bc[0] + cn[0] * 2.5, bc[2] + cn[2] * 2.5, 0, dn ? dn.p[1] : undefined);
+  for (let k = 0; k < 3; k++) {
+    await a.evaluate(([x, y, z]) => new Promise((r2) => { let n = 0; const tk = () => { window.__cham.aimAt(x, y, z); if (++n < 3) requestAnimationFrame(tk); else { window.__cham.action('fire'); r2(); } }; requestAnimationFrame(tk); }), bc);
+    try { await a.waitForFunction(() => window.__cham.state().phase.name !== 'seek', null, { timeout: 4000 }); break; } catch { /* missed: aim again */ }
+  }
+  await a.waitForFunction(() => ['recap', 'final'].includes(window.__cham.state().phase.name), null, { timeout: 40000 });
+}
+/** A real one-finger drag (CDP touch events) from (x, y) by dy px. */
+async function touchDrag(page, x, y, dy, steps = 8) {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 7 }] });
+  for (let i = 1; i <= steps; i++) { await wait(30); await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y + (dy * i) / steps, id: 7 }] }); }
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await cdp.detach().catch(() => {});
+  await wait(400);
+}
+/** The final card's geometry on this viewport: overflow, the sticky button, the hub stickers. */
+async function finalGeom(a) {
+  return a.evaluate(() => {
+    const c = document.querySelector('.chm-final .chm-card'); const r = c.getBoundingClientRect();
+    const btn = c.querySelector('[data-act="finish"]'); const br = btn.getBoundingClientRect();
+    const top = document.elementFromPoint(br.left + br.width / 2, br.top + br.height / 2);
+    const corners = [...document.querySelectorAll('#game-root .gm-top > button')].filter((e) => e.offsetParent).map((e) => e.getBoundingClientRect());
+    const hit = corners.some((q) => q.left < r.right && r.left < q.right && q.top < r.bottom && r.top < q.bottom);
+    return { vh: innerHeight, vw: innerWidth, top: Math.round(r.top), bottom: Math.round(r.bottom), sh: c.scrollHeight, ch: c.clientHeight, st: c.scrollTop, x: r.left + r.width / 2, y: r.top + r.height * 0.55,
+      btn: [Math.round(br.top), Math.round(br.bottom)], btnTop: !!top && (top === btn || btn.contains(top)), corner: hit,
+      stickers: [...c.querySelectorAll('.chm-recs span')].map((e) => e.textContent), labels: [...c.querySelectorAll('.chm-recs span')].map((e) => e.getAttribute('aria-label')).join(' | '), first: (c.querySelector('.chm-nextline[data-first]') || {}).dataset?.first || null,
+      chips: [...c.querySelectorAll('.chm-vote .chm-chip')].map((e) => { const q = e.getBoundingClientRect(); return [Math.round(q.left), Math.round(q.top), e.scrollWidth > e.clientWidth + 1]; }) };
+  });
+}
+async function uxFinalSection(port) {
+  console.log('\n# UX QA: a 4-round hotseat final card on a short phone (390×664, 375×667) scrolls under a finger, See the board stays on screen; Rematch keeps the "hides first" promise');
+  const h = await launch({ port, only: ['chameleon'], who: ['a'], coarse: true, device: 'iPhone 13' });
+  const a = h.a;
+  try {
+    await a.setViewportSize({ width: 390, height: 664 });
+    await arm(a, { ...FAST, hide: 60000, seek: 60000, recap: 600000, final: 600000, found: 1200, title: 300, maxDpr: 0.5 });
+    await h.startLive(a, 'chameleon', 'local');
+    await waitReady(a);
+    await hook(a, 'setRules', { map: 'house', first: 'a', rules: { rounds: 4 } });
+    await a.waitForFunction(() => window.__cham.state().mapId === 'house', null, { timeout: 60000 });
+    // the lobby: a [data-scroll] card; a drag on a card that fits is still held (the app sheet stays put)
+    const lob = await a.evaluate(() => { const c = document.querySelector('.chm-lobby .chm-card'); return { ds: c.hasAttribute('data-scroll'), sh: c.scrollHeight, ch: c.clientHeight }; });
+    assert(lob.ds && lob.sh <= lob.ch + 1, `390×664: the House lobby fits without scrolling (${lob.sh} / ${lob.ch} px)`);
+    await a.setViewportSize({ width: 375, height: 560 }); await wait(500);
+    const lob2 = await a.evaluate(() => { const c = document.querySelector('.chm-lobby .chm-card'); const r = c.getBoundingClientRect(); return { sh: c.scrollHeight, ch: c.clientHeight, x: r.left + r.width / 2, y: r.top + r.height * 0.6 }; });
+    await touchDrag(a, lob2.x, lob2.y, -200);
+    const lobS = await a.evaluate(() => document.querySelector('.chm-lobby .chm-card').scrollTop);
+    assert(lob2.sh > lob2.ch && lobS > 0, `375×560: the lobby scrolls under a finger to Start (scrollTop ${lobS} of ${lob2.sh - lob2.ch})`);
+    await a.evaluate(() => { document.querySelector('.chm-lobby .chm-card').scrollTop = 0; });
+    await a.setViewportSize({ width: 390, height: 664 }); await wait(300);
+    await a.tap('[data-act="start"]');
+    for (let r = 1; r <= 4; r++) { await quickHsRound(a); if (r < 4) { await waitPhase(a, 'recap', 30000); await hook(a, 'action', 'next'); } }
+    await waitPhase(a, 'recap', 30000); await hook(a, 'action', 'next');
+    await waitPhase(a, 'final', 30000); await wait(900);
+    // the QA case on top of whatever this run earned: a first match's FOUND IN + four unlocks (Gold and Ruby for both)
+    await hook(a, 'finalExtras', [{ w: 'b', kind: 'find', text: 'Found in 0:05' }, { w: 'b', kind: 'find', text: 'Found in 0:04' }], [{ w: 'a', name: 'Gold', slot: 'eyes' }, { w: 'a', name: 'Ruby', slot: 'eyes' }, { w: 'b', name: 'Gold', slot: 'eyes' }, { w: 'b', name: 'Ruby', slot: 'eyes' }]);
+    await wait(300);
+    const pol = await hook(a, 'polish');
+    // 375 × 560: an SE-sized phone with Safari's bars, where the card has to scroll
+    for (const [w, hh] of [[390, 664], [375, 667], [375, 560]]) {
+      await a.setViewportSize({ width: w, height: hh }); await wait(500);
+      await a.evaluate(() => { document.querySelector('.chm-final .chm-card').scrollTop = 0; });
+      const g0 = await finalGeom(a);
+      console.log(`  ${w}×${hh}: card ${g0.top}–${g0.bottom} (scroll ${g0.sh} / ${g0.ch}), See the board ${g0.btn.join('–')}, stickers ${JSON.stringify(g0.stickers)} of ${pol.records.length} records + ${pol.unlocks.length} unlocks`);
+      assert(g0.bottom <= g0.vh && g0.btn[1] <= g0.vh && g0.btnTop, `${w}×${hh}: See the board is on screen and on top before any scroll (${g0.btn.join('–')} of ${g0.vh})`);
+      assert(!g0.corner, `${w}×${hh}: the hub's back / menu stickers clear the card (card top ${g0.top})`);
+      const rowsN = new Set(g0.chips.map((q) => q[1])).size;
+      assert(g0.chips.length < 2 || (rowsN <= Math.ceil(g0.chips.length / 2) && !g0.chips.some((q) => q[2])), `${w}×${hh}: vote chips sit two to a row (${g0.chips.length} chips in ${rowsN} rows), none clipped`);
+      assert(g0.stickers.length <= 3 && (g0.stickers.length < 3 || !/^\+/.test(g0.stickers[2]) || /^\+\d+ (unlocked|more)$/.test(g0.stickers[2])) && !g0.labels.includes('0:05') && g0.labels.includes('Sydney: Found in 0:04') && (g0.labels.match(/Gold/g) || []).length === 1, `${w}×${hh}: ${pol.records.length} records + ${pol.unlocks.length} unlocks fold into ≤ 3 stickers, a record beaten twice shows once (${g0.stickers.join(' | ')})`);
+      if (g0.sh > g0.ch + 1) {
+        await touchDrag(a, g0.x, g0.y, -240);
+        const g1 = await finalGeom(a);
+        assert(g1.st > 0, `${w}×${hh}: a finger drag scrolls the final card (scrollTop ${g0.st} → ${g1.st} of ${g1.sh - g1.ch})`);
+        assert(g1.btnTop && g1.btn[1] <= g1.vh, `${w}×${hh}: See the board stays pinned after the scroll (${g1.btn.join('–')})`);
+      } else assert(hh > 600, `${w}×${hh}: the final card fits (${g0.sh} ≤ ${g0.ch}), nothing to scroll`);
+      await shot(a, `uxqa-final-${w}x${hh}`);
+    }
+    // a vote rebuilds the card: the scroll position holds
+    await a.evaluate(() => { const c = document.querySelector('.chm-final .chm-card'); c.scrollTop = c.scrollHeight; });
+    const keep = (await finalGeom(a)).st;
+    await a.tap('.chm-vote [data-vote="1"]');
+    await a.waitForSelector('.chm-vote .crown', { timeout: 4000 });
+    const after = (await finalGeom(a)).st;
+    assert(keep === 0 || after >= keep - 2, `a vote rebuilds the card without jumping to the top (scrollTop ${keep} → ${after})`);
+    const promised = (await finalGeom(a)).first;
+    assert(promised === 'b', `the final card promises the other player first ("Rematch: … hides first" → ${promised})`);
+    await a.tap('.chm-final [data-act="finish"]');
+    // two rematches in a row: each new lobby (and round 1) follows what the last final card said
+    let promise = promised;
+    for (let k = 1; k <= 2; k++) {
+      await a.waitForSelector('#game-root .gm-end [data-g="rematch"]', { timeout: 20000 });
+      await a.click('#game-root .gm-end [data-g="rematch"]');
+      await waitReady(a);
+      const s1 = await st(a);
+      assert(s1.setup.first === promise, `hotseat rematch ${k}: ${promise === 'a' ? 'Emerson' : 'Sydney'} hides first, as the final card said (lobby: ${s1.setup.first})`);
+      if (k === 2) break;
+      await hook(a, 'setRules', { rules: { rounds: 2 } });
+      await a.tap('[data-act="start"]');
+      await quickHsRound(a); await waitPhase(a, 'recap', 30000);
+      assert((await st(a)).match.first === promise, `rematch ${k}: round 1's hider is ${promise}`);
+      await hook(a, 'action', 'next');
+      await quickHsRound(a); await waitPhase(a, 'recap', 30000); await hook(a, 'action', 'next');
+      await waitPhase(a, 'final', 30000); await wait(500);
+      const nextP = (await finalGeom(a)).first;
+      assert(nextP === (promise === 'a' ? 'b' : 'a'), `rematch ${k}'s final card promises the other one next (${promise} → ${nextP})`);
+      promise = nextP;
+      await a.tap('.chm-final [data-act="finish"]');
+    }
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'uxqa-final-FAIL').catch(() => {});
+  } finally { await h.close(); }
+}
+async function uxRematchLiveSection(port) {
+  console.log('\n# UX QA: two phones, Sydney picked to hide first: the final card promises Emerson, and the rematch starts with Emerson on both phones');
+  const h = await launch({ port, only: ['chameleon'] });
+  const { a, b } = h;
+  try {
+    await startPair(h, { ...FAST, hide: 6000, seek: 3000, recap: 900, found: 700, final: 600000, title: 300, maxDpr: 0.45 });
+    await startMatch(h, { map: 'living', first: 'b', rules: { rounds: 2 } });
+    // both rounds run out the clocks (Ready skips the hide)
+    for (let r = 1; r <= 2; r++) {
+      const hider = r === 1 ? b : a;
+      await hider.waitForFunction((rr) => { const s = window.__cham.state(); return s.phase.round >= rr && s.phase.name !== 'title'; }, r, { timeout: 60000 });
+      await hider.tap('.chm-acts [data-act="ready"]', { timeout: 2500 }).catch(() => {}); // or the 6 s hide clock runs out
+      await a.waitForFunction((rr) => { const s = window.__cham.state(); return (s.phase.name === 'recap' && s.phase.round === rr) || s.phase.name === 'final'; }, r, { timeout: 60000 });
+      // the 0.9 s recap moves on by itself
+    }
+    await waitPhase(a, 'final', 30000); await waitPhase(b, 'final', 10000); await wait(600);
+    const fa = await finalGeom(a); const fb = await finalGeom(b);
+    assert(fa.first === 'a' && fb.first === 'a', `both final cards: "Rematch: Emerson hides first" (${fa.first} / ${fb.first})`);
+    await a.tap('.chm-final [data-act="finish"]');
+    await a.waitForSelector('#game-root .gm-end [data-g="rematch"]', { timeout: 15000 });
+    await b.waitForSelector('#game-root .gm-end:not([hidden])', { timeout: 15000 });
+    await a.click('#game-root .gm-end [data-g="rematch"]');
+    await waitLinked(a); await waitLinked(b);
+    await a.waitForFunction(() => window.__cham.state().phase.name === 'lobby', null, { timeout: 20000 });
+    await b.waitForFunction(() => window.__cham.state().setup.first === 'a', null, { timeout: 15000 }).catch(() => {});
+    const sa = await st(a); const sb = await st(b);
+    assert(sa.setup.first === 'a' && sb.setup.first === 'a', `after Rematch both lobbies say Emerson hides first (${sa.setup.first} / ${sb.setup.first})`);
+    await a.tap('[data-act="start"]');
+    await waitPhase(a, 'hide', 30000);
+    const m = (await st(b)).match;
+    assert(m && m.first === 'a', `the rematch's round 1 hider is Emerson on both phones (${m && m.first})`);
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'uxqa-rematch-FAIL-a').catch(() => {}); await shot(b, 'uxqa-rematch-FAIL-b').catch(() => {});
+  } finally { await h.close(); }
+}
+async function uxWardrobeSection(port) {
+  console.log('\n# UX QA: wardrobe rows keep their tile height on short phones (390×664, 375×667); the sheet scrolls under a finger');
+  const h = await launch({ port, only: ['chameleon'], who: ['a'], coarse: true, device: 'iPhone 13' });
+  const a = h.a;
+  try {
+    await arm(a, { ...FAST, maxDpr: 0.5 });
+    await h.startLive(a, 'chameleon', 'local');
+    await waitReady(a);
+    for (const [w, hh] of [[390, 844], [390, 664], [375, 667]]) {
+      await a.setViewportSize({ width: w, height: hh }); await wait(400);
+      if (!(await a.isVisible('.chm-wardrobe'))) await a.tap('.chm-wardbtn');
+      await a.waitForSelector('.chm-wardrobe', { timeout: 4000 }); await wait(300);
+      const m = await a.evaluate(() => {
+        const rows = [...document.querySelectorAll('.chm-wardrobe .chm-wrow')].map((r) => { const t = r.querySelector('.chm-wt'); return { row: Math.round(r.getBoundingClientRect().height), tile: Math.round(t.getBoundingClientRect().height), clip: [...r.querySelectorAll('.chm-wt')].filter((x) => x.scrollHeight > x.clientHeight + 1).length, cut: r.clientHeight < r.scrollHeight - 1 }; });
+        const sh = document.querySelector('.chm-wardrobe'); const sr = sh.getBoundingClientRect();
+        return { rows, sh: sh.scrollHeight, ch: sh.clientHeight, x: sr.left + sr.width / 2, y: sr.top + sr.height * 0.6 };
+      });
+      assert(m.rows.length === 4 && m.rows.every((r) => r.row >= r.tile && !r.cut && !r.clip), `${w}×${hh}: every wardrobe row is as tall as its tiles (${m.rows.map((r) => `${r.row}/${r.tile}`).join(', ')} px), nothing clipped`);
+      if (m.sh > m.ch + 1) {
+        await a.evaluate(() => { document.querySelector('.chm-wardrobe').scrollTop = 0; });
+        await touchDrag(a, m.x, m.y, -220);
+        const s1 = await a.evaluate(() => document.querySelector('.chm-wardrobe').scrollTop);
+        assert(s1 > 0, `${w}×${hh}: a finger drag scrolls the wardrobe sheet (scrollTop ${s1} of ${m.sh - m.ch})`);
+      }
+      await shot(a, `uxqa-ward-${w}x${hh}`);
+    }
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'uxqa-ward-FAIL').catch(() => {});
+  } finally { await h.close(); }
+}
+
 // ─────────────────────────────────────────────────────────────────────
 (async () => {
   const sections = [];
@@ -3256,19 +3774,26 @@ async function netPolishSection(port) {
   // pro pass (mechanics)
   if (want('feel')) sections.push(() => feelSection(PORT + 2));
   if (want('feel2')) sections.push(() => feel2Section(PORT + 3));
+  if (want('fit')) sections.push(() => fitSection(PORT + 4));
   // pro pass (paint owner)
   if (want('paintfeel')) sections.push(() => paintFeelSection(PORT + 0));
   if (want('paintjuice')) sections.push(() => paintJuiceSection(PORT + 1));
   if (want('paintpro')) sections.push(() => paintProSection(PORT + 2));
+  if (want('blendfair')) sections.push(() => blendFairSection(PORT + 3));
   // polish (UX owner)
   if (want('ux')) sections.push(() => uxSection(PORT + 5));
   if (want('uxland')) sections.push(() => uxLandscapeSection(PORT + 6));
   if (want('uxdesk')) sections.push(() => uxDesktopSection(PORT + 7));
+  // UX QA round 1
+  if (want('uxfinal')) sections.push(() => uxFinalSection(PORT + 8));
+  if (want('uxrematch')) sections.push(() => uxRematchLiveSection(PORT + 9));
+  if (want('uxward')) sections.push(() => uxWardrobeSection(PORT + 7));
   // pro pass (net owner)
   if (want('netpolish')) sections.push(() => netPolishSection(PORT + 4));
   // pro pass (maps owner)
   if (want('mapcache')) sections.push(() => mapCacheSection(PORT + 0));
   if (want('variety')) sections.push(() => varietySection(PORT + 1));
+  if (want('mapslice')) sections.push(() => mapSliceSection(PORT + 2));
   if (want('shots3')) {
     sections.push(async () => {
       console.log('\n# v3 screenshots: settings (timing, rules), seeker on a wall, hider HUD, watch, free cam — phone, landscape, laptop; light + dark');

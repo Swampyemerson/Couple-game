@@ -1,6 +1,6 @@
 // Renderer, scene, lights, map meshes, avatars and picking for Blend & Seek.
 // Owns every GPU resource and disposes them all in dispose().
-import { buildMap, mapCached, releaseMapGPU } from './maps.js';
+import { buildMap, buildMapAsync, mapCached, releaseMapGPU, clearMapCache } from './maps.js';
 import { makeGradient, makeWorldMaterial, makeBlobMaterial } from './toon.js';
 import { createKit, createAvatar } from './avatar.js';
 import { createPaint } from './paint.js';
@@ -11,6 +11,9 @@ import { hexToRgb, luminance, clamp } from './util.js';
 
 // collision worlds of cached maps (a world is stateless apart from scratch buffers)
 const worlds = new WeakMap();
+// stages alive (one, or two for a moment while a parked one waits for the rematch's mount): the
+// session map cache lives exactly as long as they do (maps QA round 1)
+let liveStages = 0;
 const idle = (fn) => { if (typeof requestIdleCallback === 'function') requestIdleCallback(fn, { timeout: 3000 }); else setTimeout(fn, 400); };
 
 // ── rematch: one parked stage (maps pass) ──
@@ -34,6 +37,8 @@ export function takeParkedStage(THREE, maxDpr) {
 }
 
 export function createStage(THREE, host, { theme, maxDpr = 2 }) {
+  liveStages++;
+  let dead = false;
   const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', alpha: false, stencil: false, depth: true, preserveDrawingBuffer: false });
   const baseDpr = Math.min(window.devicePixelRatio || 1, maxDpr);
   let dynScale = 1;
@@ -88,6 +93,7 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
   camera.add(vm);
 
   let map = null; let mapMesh = null; let atlasTex = null; let world = null;
+  let pending = null; let nextMap = null; // a map id being prepared / a map prepared, not shown yet
   const mapMeshes = []; // one per chunk (frustum culled individually); mapMesh = mapMeshes[0]
   const backMeshes = []; let backdropReach = 0; let fogCull = Infinity;
   const cullV = new THREE.Vector3();
@@ -138,13 +144,17 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
     return r;
   }
   /** Drop GPU resources of maps the session cache let go of (their geometry is already disposed). */
-  function pruneRes() { for (const [m, r] of mapRes) if (m !== map && !mapCached(m)) { r.tex.dispose(); mapRes.delete(m); } }
+  function pruneRes() {
+    for (const [m, r] of mapRes) if (m !== map && !mapCached(m)) { r.tex.dispose(); mapRes.delete(m); }
+    if (nextMap && !mapCached(nextMap)) nextMap = null;
+  }
 
   function loadMap(id) {
     if (map && map.id === id) return map;
     unloadMap();
     const ink = hexToRgb(inkCol).map((x) => x / 255);
     map = buildMap(THREE, id, { ink });
+    if (nextMap === map) nextMap = null;
     pruneRes();
     const r = resFor(map);
     atlasTex = r.tex;
@@ -199,18 +209,54 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
     }
     chunksDrawn = n;
   }
-  /** Build a map into the session cache and put its atlas on the GPU without showing it (the
-   *  recap does this for Mix it up's next round, so the round's title is a scene swap). */
-  function prefetch(id) {
+  /**
+   * Build a map into the session cache in slices without showing it (maps QA round 1), then, a
+   * slice each, its collision world and its atlas upload, so the loadMap() that follows is a
+   * scene swap. The lobby's map switches use it (16 ms slices, one a frame: the old diorama keeps
+   * moving until the new one swaps in) and so does the boot. `idle`: only in idle-time slices
+   * (Mix it up's next map, built during the recap). Resolves the map, or null when `alive()`
+   * turned false first (a newer tap, the game closing): the half-built map is dropped.
+   */
+  async function prepare(id, { idle = false, budget = idle ? 10 : 16, alive = () => true, upload = true } = {}) {
+    const ok = () => !dead && alive();
+    pending = id;
     const ink = hexToRgb(inkCol).map((x) => x / 255);
-    const m = buildMap(THREE, id, { ink });
-    if (map) buildMap(THREE, map.id, { ink }); // the map on screen stays the most recent in the LRU
-    const r = resFor(m);
-    try { renderer.initTexture(r.tex); } catch { /* uploads at first draw instead */ }
-    if (!worlds.has(m)) worlds.set(m, createWorld(m));
-    pruneRes();
+    const m = await buildMapAsync(THREE, id, { ink, budget, idle, alive: ok });
+    if (pending === id) pending = null;
+    if (!m || !ok()) return null;
+    const step = () => new Promise((r) => {
+      let done = false; const go = () => { if (!done) { done = true; r(); } };
+      if (idle && typeof requestIdleCallback === 'function') requestIdleCallback(go, { timeout: 120 }); else requestAnimationFrame(() => setTimeout(go, 0));
+      setTimeout(go, idle ? 160 : 120); // rAF is paused on a hidden page
+    });
+    if (!worlds.has(m)) { await step(); if (!ok() || !mapCached(m)) return ok() ? m : null; if (!worlds.has(m)) worlds.set(m, createWorld(m)); }
+    if (upload && !mapRes.has(m)) {
+      await step(); if (!ok() || !mapCached(m)) return ok() ? m : null;
+      const r = resFor(m);
+      try { renderer.initTexture(r.tex); } catch { /* uploads at first draw instead */ }
+      pruneRes();
+    }
+    if (m !== map) nextMap = m;
     return m;
   }
+  /** Mix it up's next map during the recap: prepare() in idle-time slices, keeping the map on
+   *  screen the most recent in the LRU. */
+  function prefetch(id, opts = {}) {
+    const keep = map ? map.id : null;
+    return prepare(id, { idle: true, ...opts }).then((m) => {
+      if (keep && map && map.id === keep && !dead) buildMap(THREE, keep, { ink: hexToRgb(inkCol).map((x) => x / 255) });
+      return m;
+    });
+  }
+  /** A hidden page (app switch, tab change, pagehide) keeps only the map on screen and the one
+   *  being prepared: iOS reclaims memory from background web views first. */
+  function onHide(e) {
+    if (dead || (e.type === 'visibilitychange' && document.visibilityState !== 'hidden')) return;
+    clearMapCache([map, nextMap].filter(Boolean), pending ? [pending] : []);
+    pruneRes();
+  }
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onHide);
+  if (typeof window !== 'undefined') window.addEventListener('pagehide', onHide);
   /** Take the map out of the scene; its geometry, texture and world stay for the session cache. */
   function unloadMap() {
     if (!map) return;
@@ -447,17 +493,24 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
     THREE, renderer, scene, camera, canvas, hemi, sun, kit, paints, av, fx, vm, gradientMap,
     get map() { return map; }, get world() { return world; }, get mapMesh() { return mapMesh; }, mapMeshes, isMap,
     get size() { return [W, H]; }, get dpr() { return baseDpr * dynScale; }, get scale() { return dynScale; },
-    loadMap, unloadMap, prefetch, resize, setScale, setTheme, compile, warm, park, adopt, setView, maxDpr,
+    loadMap, unloadMap, prepare, prefetch, resize, setScale, setTheme, compile, warm, park, adopt, setView, maxDpr,
     ray, setRayFromScreen, pick, pickMap, albedoAtHit, surfaceOf, blobAt,
     render() { cullChunks(); renderer.render(scene, camera); },
     get backdrops() { return backMeshes.length; },
     /** Map chunks drawn last frame (after the fog cull and the frustum). */
     get chunksDrawn() { return chunksDrawn; },
     dispose() {
+      if (dead) return;
+      dead = true;
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onHide);
+      if (typeof window !== 'undefined') window.removeEventListener('pagehide', onHide);
       unloadMap();
       for (const r of mapRes.values()) r.tex.dispose();
       mapRes.clear();
-      releaseMapGPU(); // this renderer's buffers for every cached map (the CPU data stays cached)
+      // the last stage going (the game closed, or a parked stage nobody claimed): the session
+      // cache goes with it (QA round 1: ~28 MB of arrays + atlases stayed while the couple played
+      // something else). Otherwise just this renderer's buffers for the cached maps.
+      if (--liveStages <= 0) { liveStages = 0; clearMapCache(); } else releaseMapGPU();
       worldMat.dispose(); backMat.dispose(); blobMat.dispose(); placeholder.dispose(); warmGeo.dispose();
       for (const m of warmMeshes) scene.remove(m);
       scene.remove(blobMesh);

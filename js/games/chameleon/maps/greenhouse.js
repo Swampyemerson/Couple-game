@@ -59,12 +59,14 @@ function build(atlas) {
   atlas.add('bark', P.bands({ cols: ['#ffffff', '#cfcfcf', '#e8e8e8'], widths: [3, 1, 2], n: 5 }), { size: 'S' });
   atlas.add('label', P.label({ bg: '#ffffff', band: C.teal, text: C.ink }), { size: 'S', repeat: false });
 
-  return (b) => {
+  return function* fill(b) {
     const r = seeded('greenhouse');
+    yield 'ground plinth boundary';
     // ── ground, plinth, boundary ──
     b.add(boxGeo(W + 0.6, 0.3, D + 0.6, { faces: ['py'] }), { at: [0, -0.15, 0], tile: 'lawn', rep: 1.6, color: '#ffffff', outline: false });
     b.add(boxGeo(W + 0.9, 0.5, D + 0.9, { round: 0.05 }), { at: [0, -0.28, 0], color: '#6b4a32' });
     b.add(boxGeo(W + 0.95, 0.08, D + 0.95, { round: 0.03 }), { at: [0, -0.05, 0], color: '#7bb156' });
+    yield 'back';
     // back: a tall brick garden wall; sides + front: picket fence
     aabb(b, X0 - 0.2, 0, Z0 - 0.25, X1 + 0.2, 2.2, Z0, { tile: 'bricks', rep: 0.8, color: '#ffffff', outline: true, collide: { wall: true, name: 'back' } });
     aabb(b, X0 - 0.22, 2.2, Z0 - 0.27, X1 + 0.22, 2.28, Z0 + 0.02, { color: '#8a3e2e', outline: true });
@@ -85,25 +87,30 @@ function build(atlas) {
     b.collide(X0, fenceH, Z1 - 0.03, X1, 8, Z1 + 0.3, { wall: false, climb: false, name: 'guard-front' });
     b.collide(X0, 0, Z1 - 0.03, X1, 8, Z1 + 0.3, { wall: false, climb: false, name: 'guard-gate' });
     b.collide(X0 - 0.2, 2.28, Z0 - 0.3, X1 + 0.2, 8, Z0 + 0.02, { wall: false, climb: false, name: 'guard-back' });
+    yield 'gate arch';
     // gate arch
     for (const x of [-1.05, 1.05]) aabb(b, x - 0.06, 0, Z1 - 0.06, x + 0.06, 1.7, Z1 + 0.06, { color: C.woodD, outline: true });
     aabb(b, -1.15, 1.7, Z1 - 0.08, 1.15, 1.82, Z1 + 0.08, { color: C.woodD, outline: true });
 
+    yield 'greenhouse';
     // ── GREENHOUSE ──
     floor(b, GX0, GZ0, GX1, GZ1, 0, { tile: 'tiles', rep: 0.9 });
     floor(b, GX0 + 0.5, RZ - 0.8, GX1 - 0.5, RZ + 0.8, 0.006, { tile: 'gravel', rep: 1.0 });
     const knee = 0.5;
     const glassSide = { tile: 'glass', rep: 1.2, color: '#ffffff' };
     const brickSide = { tile: 'bricks', rep: 0.8, color: '#ffffff' };
+    yield 'knee walls';
     // knee walls (all four sides) with door gaps on the front (garden) and right (yard)
     wall(b, { x0: GX0, z0: GZ1, x1: GX1, z1: GZ1, h: knee, t: 0.2, both: brickSide, cap: '#e9e3d8', open: [{ c: -6.2, w: 1.3, top: 2.4 }, { c: -0.6, w: 1.3, top: 2.4 }], name: 'gh-front' });
     wall(b, { x0: GX1, z0: GZ0, x1: GX1, z1: GZ1, h: knee, t: 0.2, both: brickSide, cap: '#e9e3d8', open: [{ c: -1.0, w: 1.3, top: 2.4 }], name: 'gh-right' });
     wall(b, { x0: GX0, z0: GZ0, x1: GX0, z1: GZ1, h: knee, t: 0.2, both: brickSide, cap: '#e9e3d8', name: 'gh-left' });
+    yield 'glazing';
     // glazing: back + left + right walls up to the eaves (glass: not climbable); front left open (cutaway)
     aabb(b, GX0, knee, GZ0 + 0.02, GX1, EAVE, GZ0 + 0.06, { ...glassSide, faces: ['pz', 'nz'], outline: false, collide: { wall: true, climb: false, name: 'glass-back' } });
     aabb(b, GX0 - 0.03, knee, GZ0, GX0 + 0.01, EAVE, GZ1, { ...glassSide, faces: ['px', 'nx'], outline: false, collide: { wall: true, climb: false, name: 'glass-left' } });
     for (const [z0, z1] of [[GZ0, -1.65], [-0.35, GZ1]]) aabb(b, GX1 - 0.02, knee, z0, GX1 + 0.02, EAVE, z1, { ...glassSide, faces: ['px', 'nx'], outline: false, collide: { wall: true, climb: false, name: 'glass-right' } });
     aabb(b, GX1 - 0.02, 2.4, -1.65, GX1 + 0.02, EAVE, -0.35, { ...glassSide, faces: ['px', 'nx'], outline: false, collide: { wall: true, climb: false, ceil: true, name: 'glass-over-door' } });
+    yield 'white frame';
     // white frame: posts every 1.5 m on all sides, eave beams, rafters to the ridge, purlins
     const post = (x, z) => aabb(b, x - 0.05, knee, z - 0.05, x + 0.05, EAVE, z + 0.05, { color: C.frame, outline: true, collide: { wall: true, perch: true, name: 'perch:post' } });
     for (let x = GX0; x <= GX1 + 0.01; x += 1.5) { if (Math.abs(x + 8.1) > 0.1) post(x, GZ0 + 0.04); if (!(x > -7 && x < -5.4) && !(x > -1.4 && x < 0.2)) post(x, GZ1); }
@@ -117,19 +124,23 @@ function build(atlas) {
       if (x === GX0 || x > GX1 - 0.1) aabb(b, x - 0.05, EAVE, RZ - 0.05, x + 0.05, RIDGE, RZ + 0.05, { color: C.frame, outline: true });
     }
     aabb(b, GX0, RIDGE - 0.08, RZ - 0.08, GX1, RIDGE + 0.06, RZ + 0.08, { color: C.frame, outline: true, collide: { wall: false, perch: true, name: 'perch:ridge' } });
+    yield 'purlins';
     // purlins (perches) on both slopes at 1/3 and 2/3
     for (const s of [-1, 1]) for (const k of [0.36, 0.7]) {
       const z = RZ + s * half * (1 - k); const y = EAVE + rise * k;
       aabb(b, GX0, y - 0.05, z - 0.05, GX1, y + 0.05, z + 0.05, { color: C.frame, outline: true, collide: { wall: false, perch: true, name: 'perch:purlin' } });
     }
+    yield 'roof glass';
     // roof glass: undersides only (the camera sees in from above), back slope only
     b.add(boxGeo(GX1 - GX0, 0.02, rl, { faces: ['ny'] }), { at: [(GX0 + GX1) / 2, EAVE + rise / 2 + 0.06, RZ - half / 2], rot: [-ang, 0, 0], tile: 'glass', rep: 1.4, color: '#ffffff', outline: false });
     b.collide(GX0, EAVE + 0.1, GZ0, GX1, RIDGE + 0.1, RZ - 0.1, { wall: false, ceil: true, climb: false, name: 'ceil:roof-glass' });
     b.collide(GX0, RIDGE + 0.1, GZ0, GX1, RIDGE + 3, GZ1, { wall: false, climb: false, name: 'roof-guard' });
+    yield 'sign over the';
     // sign over the main door
     b.add(boxGeo(1.9, 0.62, 0.04, { fit: true, faces: ['pz'] }), { at: [-3.4, 2.62, GZ1 + 0.05], tile: 'signPlants', rep: 1, color: '#ffffff', outline: false });
     aabb(b, -4.38, 2.3, GZ1 + 0.02, -2.42, 2.94, GZ1 + 0.05, { color: C.leafD, outline: true, collide: { wall: true, perch: true, name: 'perch:sign' } });
 
+    yield 'catwalk along the';
     // catwalk along the back glazing, stairs up the left end
     const cw0 = -8.2; const cw1 = 2.3; const cz0 = GZ0 + 0.08; const cz1 = cz0 + 1.4;
     aabb(b, cw0, CAT - 0.08, cz0, cw1, CAT, cz1, { color: '#8a969c', tile: 'gravel', rep: 0.4, outline: true, collide: { wall: false, ceil: true, name: 'ceil:catwalk' } });
@@ -139,6 +150,7 @@ function build(atlas) {
     stairs(b, { x: cw0 - 0.72, z: cz0 + 13 * 0.25 + 0.0, dir: 'z-', width: 1.05, n: 13, rise: CAT / 13, run: 0.25, tread: { color: '#8a969c', tile: 'gravel', rep: 0.3 }, stringer: C.steel, railSide: 1, rail: C.teal, name: 'cat-stairs' });
     aabb(b, cw0 - 1.3, CAT - 0.08, cz0, cw0, CAT, cz0 + 0.3, { color: '#8a969c', outline: true, collide: { wall: false, name: 'cat-landing' } });
 
+    yield 'staging benches under';
     // staging benches under the catwalk (3 tiers) with pots, and along the front
     const pots = (x0, x1, y, z, seed, dz = 0) => {
       const rr = seeded(seed);
@@ -165,6 +177,7 @@ function build(atlas) {
     };
     staging(-6.2, -0.4, GZ0 + 0.2, GZ0 + 1.1, [[0.8, false]], 'stA');
     staging(-6.2, -0.4, GZ1 - 1.1, GZ1 - 0.25, [[0.85, false]], 'stB');
+    yield 'tiered fern stand';
     // tiered fern stand at the left end
     const fs = F(b, GX0 + 0.6, -0.8, Math.PI / 2);
     for (let i = 0; i < 3; i++) { fs.box(1.6, 0.04, 0.32, [0, 0.45 + i * 0.45, -0.1 + i * 0.12], { color: C.white, collide: { wall: false, ceil: true, name: 'fern-stand' } }); }
@@ -176,6 +189,7 @@ function build(atlas) {
     }
     fs.blob(0, 0, 0.9, 0.35);
 
+    yield 'central bed with';
     // central bed with the big plants (landmarks): palm, banana, monstera, cactus
     aabb(b, -5.2, 0, RZ - 0.55, -1.8, 0.35, RZ + 0.55, { color: '#ffffff', tile: 'bricks', rep: 0.6, outline: true, collide: { wall: true, name: 'bed-wall' } });
     aabb(b, -5.1, 0.35, RZ - 0.45, -1.9, 0.38, RZ + 0.45, { color: '#ffffff', tile: 'soil', rep: 0.6, outline: false });
@@ -183,10 +197,12 @@ function build(atlas) {
     palm(b, -4.4, RZ, 0.38, 3.9, 'palm1');
     banana(b, -2.6, RZ + 0.1, 0.38, 'ban1');
     monstera(b, -3.5, RZ - 0.2, 0.38, 'mon1');
+    yield 'potted cactus';
     // potted cactus + big pots elsewhere
     cactus(b, 1.6, 1.4, 'cac1');
     bigPot(b, -8.8, 1.4, 1.2, 'p1', C.terracotta); bigPot(b, 1.6, -6.4, 1.4, 'p2', C.teal);
     palm(b, -7.3, -5.4, 0, 3.4, 'palm2', true);
+    yield 'hanging baskets on';
     // hanging baskets on the purlins
     for (const [x, z, col] of [[-7.5, RZ - 1.5, C.pink], [-4.5, RZ + 1.5, C.purple], [-1.5, RZ - 1.5, C.yellow], [1.2, RZ + 1.5, C.red], [-6.2, RZ + 1.5, C.orange]]) {
       const s2 = Math.sign(z - RZ); const yh = EAVE + rise * 0.36; const zp = RZ + s2 * half * 0.64;
@@ -195,6 +211,7 @@ function build(atlas) {
       b.add(sphereGeo(0.32, 0.16, 0.32, { w: 10, h: 6 }), { at: [x, 1.9, zp], color: '#ffffff', tile: 'vine', rep: 0.3 });
       for (let k = 0; k < 6; k++) b.add(sphereGeo(0.06, 0.05, 0.06, { w: 6, h: 4 }), { at: [x + Math.cos(k) * 0.3, 1.78 - (k % 3) * 0.12, zp + Math.sin(k) * 0.3], color: k % 2 ? col : C.leafL, outline: false });
     }
+    yield 'trellis panels with';
     // trellis panels with climbing vines (cling to them)
     for (const [x, z] of [[-9.2, -4.6], [-9.2, -2.2]]) {
       const tf = F(b, x, z, Math.PI / 2);
@@ -202,6 +219,7 @@ function build(atlas) {
       tf.box(1.7, 0.06, 0.08, [0, 2.27, 0], { color: C.white });
       for (let k = 0; k < 9; k++) tf.sph(0.16 + r() * 0.08, 0.14, 0.06, [-0.6 + r() * 1.2, 0.3 + k * 0.22, 0.05], { color: '#ffffff', tile: 'vine', rep: 0.25, w: 8, h: 5 });
     }
+    yield 'striped potting bench';
     // striped potting bench (right end, by the yard door)
     const pb = F(b, 1.5, -3.6, -Math.PI / 2);
     pb.box(2.0, 0.06, 0.8, [0, 0.9, 0], { color: '#ffffff', tile: 'oilcloth', rep: 0.5, collide: { wall: false, ceil: true, name: 'potting-bench' } });
@@ -215,6 +233,7 @@ function build(atlas) {
     pb.box(0.6, 0.3, 0.02, [-0.4, 1.25, -0.34], { color: '#ffffff', tile: 'seeds', rep: [0.6, 0.15] });
     for (let i = 0; i < 4; i++) pb.cyl(0.14, 0.11, 0.2, [-0.6 + i * 0.32, 0.42, 0.05], { color: C.terracotta, tile: 'rings', rep: [0.3, 0.2] });
     pb.blob(0, 0, 1.2, 0.5);
+    yield 'watering cans';
     // watering cans + a hose reel
     for (const [x, z, col] of [[-0.3, 1.5, C.teal], [-7.4, -1.6, C.yellow]]) {
       const wc = F(b, x, z, 0.6);
@@ -223,6 +242,7 @@ function build(atlas) {
       wc.blob(0, 0, 0.2, 0.2);
     }
 
+    yield 'side yard';
     // ── SIDE YARD (x 2.4…10, z −2.6…2.2): cold frames, log pile, wheelbarrow ──
     floor(b, GX1 + 0.1, -2.6, X1, GZ1, 0, { tile: 'gravel', rep: 1.2 });
     for (const [x, z] of [[4.2, 1.2], [6.2, 1.2]]) {
@@ -244,16 +264,19 @@ function build(atlas) {
     for (const sx of [-1, 1]) wb.box(0.04, 0.04, 0.8, [sx * 0.3, 0.3, -0.6], { color: C.woodD, rot: [0.25, 0, 0] });
     wb.blob(0, 0, 0.5, 0.6);
 
+    yield 'shed';
     // ── SHED ──
     floor(b, SX0, SZ0, SX1, SZ1, 0, { tile: 'wood', rep: 0.8, color: '#c99a6b' });
     const shedOut = { tile: 'planksV', rep: 0.9, color: C.shed }; const shedIn = { tile: 'planksV', rep: 0.9, color: '#e8d6b8' };
     wall(b, { x0: SX0, z0: SZ1, x1: SX1, z1: SZ1, h: SH, t: 0.12, n: shedIn, p: shedOut, trim: C.white, open: [{ c: 6.0, w: 1.1, top: 2.0 }, { c: 8.4, w: 0.9, bottom: 1.0, top: 1.7 }], name: 'shed-front' });
     wall(b, { x0: SX0, z0: SZ0, x1: SX0, z1: SZ1, h: SH, t: 0.12, n: shedOut, p: shedIn, trim: C.white, open: [{ c: -5.0, w: 1.0, top: 2.0 }], name: 'shed-left' });
     wall(b, { x0: SX1, z0: SZ0, x1: SX1, z1: SZ1, h: SH, t: 0.12, n: shedIn, p: shedOut, name: 'shed-right' });
+    yield 'pegboard back wall';
     // pegboard back wall (the brick garden wall behind) with tools
     aabb(b, SX0 + 0.1, 0.9, Z0 + 0.0, SX1 - 0.1, 2.2, Z0 + 0.04, { tile: 'pegboard', rep: 0.6, color: '#ffffff', outline: true, collide: { wall: true, name: 'pegboard' } });
     const tools = [[5.3, 1.6, 0.06, 0.9, C.red], [5.7, 1.5, 0.3, 0.12, C.yellow], [6.1, 1.65, 0.05, 1.0, C.woodD], [6.5, 1.4, 0.25, 0.35, C.steel], [6.9, 1.7, 0.4, 0.06, C.blue], [7.4, 1.55, 0.05, 0.8, C.teal], [7.8, 1.6, 0.3, 0.3, C.orange], [8.3, 1.45, 0.06, 0.7, C.red], [8.8, 1.65, 0.35, 0.1, C.purple], [9.2, 1.5, 0.12, 0.5, C.yellow]];
     for (const [x, y, w2, h2, col] of tools) aabb(b, x - w2 / 2, y - h2 / 2, Z0 + 0.04, x + w2 / 2, y + h2 / 2, Z0 + 0.08, { color: col, outline: true });
+    yield 'workbench';
     // workbench
     const wk = F(b, 7.2, Z0 + 0.45);
     wk.box(3.2, 0.07, 0.75, [0, 0.9, 0], { color: C.wood, tile: 'wood', rep: 0.6, collide: { wall: false, ceil: true, name: 'workbench' } });
@@ -264,15 +287,18 @@ function build(atlas) {
     wk.box(0.6, 0.25, 0.02, [0.2, 1.06, 0.25], { color: '#ffffff', tile: 'seeds', rep: [0.6, 0.12] });
     stack(F(b, 6.0, Z0 + 0.45), 0, 0.0, [[0.35, 0.12, 0.35, C.terracotta], [0.3, 0.12, 0.3, C.terracotta], [0.26, 0.12, 0.26, C.clay]], { collide: false });
     wk.blob(0, 0, 1.8, 0.5);
+    yield 'loft over the';
     // loft over the back half (y 1.6) reached by a little stair
     slab(b, SX0 + 0.06, SZ0, 6.8, -5.6, LOFT, { thick: 0.1, under: { color: '#d8c4a0' }, edge: C.woodD, name: 'ceil:loft' });
     floor(b, SX0 + 0.06, SZ0, 6.8, -5.6, LOFT, { tile: 'wood', rep: 0.6, color: '#d2a46a' });
     railing(b, SX0 + 0.06, -5.6, 5.95, -5.6, LOFT, { h: 0.7, color: C.woodD, top: C.wood, name: 'loft' });
     stairs(b, { x: 6.4, z: -5.6 + 8 * 0.24, dir: 'z-', width: 0.75, n: 8, rise: LOFT / 8, run: 0.24, tread: { color: C.wood }, stringer: C.woodD, name: 'loft-stairs' });
     for (const [x, z, col] of [[5.3, -7.4, C.red], [5.9, -7.2, C.teal], [5.3, -6.6, C.yellow]]) aabb(b, x - 0.22, LOFT, z - 0.22, x + 0.22, LOFT + 0.35, z + 0.22, { color: col, tile: 'slats', rep: 0.3, outline: true, collide: { wall: true, name: 'loft-box' } });
+    yield 'the rolled-up deck';
     // the rolled-up deck chair lies by the railing (maps pass: at the back, with the boxes, it
     // walled off a Tiny-sized pocket nobody could see into from a metre away)
     b.add(cylGeo(0.25, 0.25, 0.7, { radial: 12 }), { at: [5.4, LOFT + 0.25, -5.95], rot: [0, 0, Math.PI / 2], color: '#ffffff', tile: 'gingham', rep: 0.3, collide: { wall: true, name: 'deckchair-roll' } });
+    yield 'shelves on the';
     // shelves on the right wall: paint tins, pots, seed packets
     const ss = F(b, SX1 - 0.3, -4.4, -Math.PI / 2);
     shelves(ss, 2.4, 1.9, 0.4, 4, { color: C.wood, tile: null, name: 'shed-shelf' });
@@ -280,13 +306,16 @@ function build(atlas) {
       if (lv === 2) ss.box(0.3, 0.14, 0.04, [-0.9 + i * 0.45, 0.04 + lv * 0.62 + 0.25, 0.1], { color: '#ffffff', tile: 'seeds', rep: [0.6, 0.14], uvOff: [i * 0.3, 0], rot: [-0.2, 0, 0] });
       else ss.cyl(0.11, 0.11, 0.2, [-0.9 + i * 0.45, 0.04 + lv * 0.62 + 0.1, 0.0], { color: [C.red, C.blue, C.yellow, C.teal, C.pink][(i + lv) % 5] });
     }
+    yield 'shed lid';
     // shed lid (underside only) + guard; a simple dark roof edge
     slab(b, SX0 - 0.06, SZ0, SX1 + 0.06, SZ1 + 0.06, SH + 0.12, { thick: 0.12, lid: true, under: { color: '#cdb48c', tile: 'planksV', rep: 1.0 }, name: 'ceil:shed' });
     aabb(b, SX0 - 0.2, SH + 0.1, SZ1 + 0.05, SX1 + 0.2, SH + 0.24, SZ1 + 0.25, { color: '#3a2f2a', outline: true });
+    yield 'flower pots stacked';
     // flower pots stacked by the door + a garden gnome
     stack(F(b, 5.2, -2.1), 0, 0, [[0.5, 0.3, 0.5, C.terracotta, 'rings'], [0.42, 0.28, 0.42, C.terracotta, 'rings'], [0.34, 0.26, 0.34, C.clay, 'rings']]);
     gnome(b, 4.4, -2.0);
 
+    yield 'garden';
     // ── GARDEN (front): veg beds, rose arch, scarecrow, bench, compost, water butt ──
     floor(b, -1.0, GZ1, 1.0, Z1, 0, { tile: 'gravel', rep: 1.0 });
     floor(b, -7.2, GZ1, -5.2, 3.2, 0, { tile: 'gravel', rep: 1.0 });
@@ -304,6 +333,7 @@ function build(atlas) {
     };
     veg(-8.2, 5.4, 2.4, 1.2, 'cabbage'); veg(-4.4, 5.4, 2.4, 1.2, 'carrot'); veg(-4.4, 7.0, 2.4, 0.7, 'tomato');
     veg(3.0, 6.6, 2.6, 1.0, 'tomato');
+    yield 'rose arch over';
     // rose arch over the path (trellis sides, perch on the top)
     for (const x of [-0.95, 0.95]) {
       aabb(b, x - 0.04, 0, 3.2, x + 0.04, 2.2, 3.8, { color: C.white, tile: 'lattice', rep: 0.5, outline: true, collide: { wall: true, name: 'arch-side' } });
@@ -312,6 +342,7 @@ function build(atlas) {
     b.add(cylGeo(1.0, 1.0, 0.6, { radial: 16, open: true, caps: false }), { at: [0, 2.2, 3.5], rot: [Math.PI / 2, 0, 0], color: C.white, outline: true });
     b.collide(-1.0, 2.2, 3.2, 1.0, 2.35, 3.8, { wall: false, perch: true, name: 'perch:arch' });
     for (let k = 0; k < 7; k++) { const a = (k / 6) * Math.PI; b.add(sphereGeo(0.13, 0.13, 0.13, { w: 8, h: 5 }), { at: [Math.cos(a) * 0.98, 2.2 + Math.sin(a) * 0.98, 3.4 + (k % 2) * 0.2], color: k % 2 ? C.pink : C.red }); }
+    yield 'scarecrow';
     // scarecrow (plaid shirt) — the garden's landmark
     const sc = F(b, -6.4, 6.2, 0.3);
     sc.cyl(0.04, 0.04, 2.0, [0, 1.0, 0], { color: C.woodD, radial: 6, collide: { wall: false, perch: true, name: 'perch:scarecrow' } });
@@ -322,6 +353,7 @@ function build(atlas) {
     sc.sph(0.17, 0.19, 0.17, [0, 1.75, 0], { color: '#e8c98f' });
     sc.cyl(0.32, 0.32, 0.03, [0, 1.92, 0], { color: '#c9a24a' }); sc.cyl(0.14, 0.17, 0.2, [0, 2.02, 0], { color: '#c9a24a' });
     sc.blob(0, 0, 0.4, 0.3);
+    yield 'bench';
     // bench + cushions
     const bn = F(b, 5.4, 4.2, Math.PI);
     bn.box(1.6, 0.06, 0.5, [0, 0.45, 0], { color: C.teal, tile: 'slats', rep: 0.3, collide: { wall: false, ceil: true, name: 'bench' } });
@@ -330,6 +362,7 @@ function build(atlas) {
     bn.box(0.5, 0.42, 0.12, [-0.45, 0.68, -0.15], { color: '#ffffff', tile: 'stripeCush', rep: 0.4, rot: [-0.2, 0, 0], round: 0.04 });
     bn.box(0.45, 0.1, 0.42, [0.4, 0.53, 0], { color: '#ffffff', tile: 'gingham', rep: 0.3, round: 0.03 });
     bn.blob(0, 0, 0.9, 0.35);
+    yield 'compost bin water';
     // compost bin, water butt, bird house, pot stack, flower bed along the greenhouse
     const cb = F(b, 8.6, 6.8);
     cb.box(1.1, 0.9, 1.0, [0, 0.45, 0], { color: '#8a6a44', tile: 'slats', rep: [0.4, 0.2], collide: { wall: true, name: 'compost' } });
@@ -346,9 +379,11 @@ function build(atlas) {
     bh.blob(0, 0, 0.25, 0.25);
     aabb(b, -9.5, 0, GZ1 + 0.3, -7.4, 0.24, GZ1 + 1.1, { color: '#ffffff', tile: 'blooms', rep: 0.8, outline: true, collide: { wall: false, name: 'flower-bed' } });
     aabb(b, 1.6, 0, GZ1 + 0.3, 2.4, 0.24, GZ1 + 1.6, { color: '#ffffff', tile: 'blooms', rep: 0.8, outline: true, collide: { wall: false, name: 'flower-bed' } });
+    yield 'stepping stones in';
     // stepping stones in the lawn
     [[-3.0, 5.8], [-2.2, 6.6], [-1.6, 7.3], [5.8, 5.6], [6.6, 6.4]].forEach(([x, z], i) => b.add(cylGeo(0.3, 0.32, 0.04, { radial: 10, fit: true }), { at: [x, 0.02, z], yaw: i, tile: 'flag', rep: 1, color: '#ffffff' }));
 
+    yield 'spots';
     // ── spots ──
     b.spot('lobby', { x: -0.3, z: 6.0 });
     b.spot('hiderSpawn', { x: -3.4, z: -1.4, yaw: 0 });

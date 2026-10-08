@@ -1,5 +1,5 @@
 // Extra (bigger) maps for Blend & Seek. Owned by the level designer; see the format notes at the
-// top of ../maps.js. Each entry: { id, name, blurb, build(atlas, kit) => (b) => void, size, rooms,
+// top of ../maps.js. Each entry: { id, name, blurb, build(atlas, kit) => function* fill(b), size, rooms,
 // climbs, info }.
 import { HOUSE } from './house.js';
 import { MARKET } from './market.js';

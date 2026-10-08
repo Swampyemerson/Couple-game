@@ -115,7 +115,7 @@ const SHUFFLE = '<svg class="chm-ic" viewBox="0 0 24 24" aria-hidden="true"><pat
 export function lobbyCard(api, { canEdit, local, setup, waitingFor, sheet, bests = '', wardrobe = '', music = 'on' }) {
   const mode = setup.mode; const first = setup.first; const rules = setup.rules;
   const dis = canEdit ? '' : 'data-ro="1"';
-  const card = `<div class="chm-over chm-lobby bottom${sheet ? ' sheet-open' : ''}"><div class="chm-card chm-sticker" ${dis}>
+  const card = `<div class="chm-over chm-lobby bottom${sheet ? ' sheet-open' : ''}"><div class="chm-card chm-sticker" ${dis} data-scroll>
     <div class="chm-col">
     <div class="chm-title"><span class="c1">Blend</span><span class="c2">&amp;</span><span class="c3">Seek</span></div>
     <p class="chm-tag">Paint yourself to vanish into the room. Then hunt.</p>
@@ -317,7 +317,7 @@ export function recapCard(api, { rec, mode, scores, round, rounds, isLast, canNe
   } else if (rec.found) { head = rec.surf && SURF_HEAD[rec.surf] ? SURF_HEAD[rec.surf](esc(api.name(hider))) : `${esc(api.name(hider))} was RIGHT there`; sub = `Found after ${fmtTime(rec.ms)} · +${rec.points} for ${esc(api.name(hider))}${rec.seekPoints ? ` · +${rec.seekPoints} for ${esc(api.name(rec.seeker))}${rec.spare ? ` (${rec.spare} pellet${rec.spare === 1 ? '' : 's'} spare)` : ''}` : ''}`; }
   else { head = `${esc(api.name(hider))} survived!`; sub = `+${rec.points} points${rec.surf && SURF_SHORT[rec.surf] ? ` · ${SURF_SHORT[rec.surf]} the whole time` : ''}${rec.outOfPellets ? ` · the seeker ran dry at ${fmtTime(rec.ms)}` : ''}`; }
   if (mode !== 'db' && rec.blend != null && rec.blend >= 0) sub += ` · <b data-blend="${rec.blend}">Blend ${rec.blend}%</b> ${blendWord(rec.blend)}${rec.blendPts ? ` (+${rec.blendPts})` : ''}`;
-  return `<div class="chm-over chm-recap bottom"><div class="chm-card chm-sticker">
+  return `<div class="chm-over chm-recap bottom"><div class="chm-card chm-sticker" data-scroll>
     <div class="chm-kicker">Round ${round} of ${rounds}</div>
     <h2>${head}</h2>
     <p>${sub}</p>
@@ -329,8 +329,10 @@ export function recapCard(api, { rec, mode, scores, round, rounds, isLast, canNe
     ${lines.length ? `<p class="chm-lines">${lines.map((l) => `<span>${l}</span>`).join('')}</p>` : ''}
     <div class="chm-tally"><span><i style="background:var(--p-a)"></i>${esc(api.name('a'))} ${scores.a}</span><span><i style="background:var(--p-b)"></i>${esc(api.name('b'))} ${scores.b}</span></div>
     ${emotes ? emoteRow() : ''}
+    <div class="chm-foot">
     ${next ? `<p class="chm-nextline">Next: ${nameSpan(api, next.hider)} hides · ${nameSpan(api, api.other(next.hider))} seeks · ${next.mixed ? `<b class="chm-newmap">new map: ${esc(next.map)}</b>` : esc(next.map)}</p>` : ''}
     ${canNext ? `<button class="chm-go me chm-ring" data-act="next" style="--k:1">${isLast ? 'See who won' : 'Next round'}<small data-live="recap-time">${autoMs ? Math.ceil(autoMs / 1000) : ''}</small></button>` : '<p class="chm-wait">Next round starts in a moment…</p>'}
+    </div>
   </div></div>`;
 }
 
@@ -363,11 +365,35 @@ function voteRow(api, { rounds, votes, crowned, local }) {
   const pip = (r) => ['a', 'b'].filter((w) => votes[w] === r.round).map((w) => `<i class="chm-vpip p${w}" title="${esc(api.name(w))}"></i>`).join('');
   return `<div class="chm-vote"><h3>${crowned ? 'Best hide tonight' : local ? 'Best hide tonight? Pick one together' : 'Best hide tonight? You both pick'}</h3><div class="chm-chips">${rounds.map((r) => `<button class="chm-chip p${r.hider} ${crowned === r.round ? 'on crown' : ''}" data-vote="${r.round}" ${crowned ? 'disabled' : ''}><i></i>R${r.round} ${esc(api.name(r.hider))} ${fmtTime(r.ms | 0)}${pip(r)}</button>`).join('')}</div></div>`;
 }
+/** The final card's record + unlock stickers: a record beaten twice in one match shows once (the
+ *  last, best one), each wears its owner's ink dot (two "Found in 0:05" read as Emerson's and
+ *  Sydney's), the same look unlocked by both is one sticker with both dots, and past two stickers
+ *  the rest fold into one '+N unlocked' (or '+N more') sticker that names them in its label: a big
+ *  first match (4 unlocks + records) stays two rows instead of five, so the vote and See the board
+ *  stay on a phone's screen. */
+export function finalStickers(api, records = [], unlocks = [], max = 2) {
+  const dots = (ws) => ws.filter((w) => w === 'a' || w === 'b').map(() => '<i></i>').join('');
+  const cls = (ws) => ws.filter((w) => w === 'a' || w === 'b').map((w) => `p${w}`).join(' ');
+  const last = new Map();
+  for (const r of records) if (r && r.text) last.set(`${r.w || ''}:${r.kind || r.text}`, r);
+  const all = [...last.values()].map((r) => ({ ws: [r.w], text: r.text, label: `${r.w ? `${api.name(r.w)}: ` : ''}${r.text}`, un: 0 }));
+  const looks = new Map();
+  for (const u of unlocks) {
+    if (typeof u === 'string') { all.push({ ws: [], text: `Unlocked · ${u}`, label: `Unlocked · ${u}`, un: 1 }); continue; }
+    const k = `${u.name}|${u.slot || ''}`; const x = looks.get(k);
+    if (x) { if (x.ws.includes(u.w)) continue; x.ws.push(u.w); x.un++; x.label = `Unlocked: ${x.ws.map((w) => api.name(w)).join(' and ')}: ${u.name} ${u.slot || ''}`.trim(); } else { const y = { ws: [u.w], text: `Unlocked: ${u.name}`, label: `Unlocked: ${api.name(u.w)}: ${u.name} ${u.slot || ''}`.trim(), un: 1 }; looks.set(k, y); all.push(y); }
+  }
+  const tag = (x) => `<span class="${cls(x.ws)}${x.ws.length > 1 ? ' two' : ''}" aria-label="${esc(x.label)}">${dots(x.ws)}${esc(x.text)}</span>`;
+  if (all.length <= max + 1) return all.map(tag);
+  const rest = all.slice(max); const label = rest.map((x) => x.label).join(', ');
+  const n = rest.reduce((t, x) => t + (x.un || 1), 0);
+  return all.slice(0, max).map(tag).concat(`<span class="more" title="${esc(label)}" aria-label="${esc(label)}">+${n} ${rest.every((x) => x.un) ? 'unlocked' : 'more'}</span>`);
+}
 export function finalCard(api, { winner, a, b, mode, story, records = [], unlocks = [], firstNext = null, vote = null }) {
   const head = mode === 'db' ? (winner ? `${esc(api.name(winner))} wins ${a}–${b}` : 'Perfectly matched') : winner ? `${esc(api.name(winner))} blends best` : 'Perfectly matched';
   const sub = mode === 'db' ? 'Rounds won' : `${esc(api.name('a'))} ${a} · ${b} ${esc(api.name('b'))}`;
-  const recs = records.map((r) => `<span>${esc(r.text)}</span>`).concat(unlocks.map((u) => `<span>Unlocked · ${esc(u)}</span>`));
-  return `<div class="chm-over chm-final bottom"><div class="chm-card chm-sticker">
+  const recs = finalStickers(api, records, unlocks);
+  return `<div class="chm-over chm-final bottom"><div class="chm-card chm-sticker" data-scroll>
     <div class="chm-kicker">Final</div>
     <h2 class="${winner ? `chm-name-${winner}` : ''}">${head}</h2>
     <p>${sub}</p>
@@ -376,7 +402,9 @@ export function finalCard(api, { winner, a, b, mode, story, records = [], unlock
     ${recs.length ? `<div class="chm-recs">${recs.join('')}</div>` : ''}
     ${vote ? voteRow(api, vote) : ''}
     ${emoteRow()}
-    ${firstNext ? `<p class="chm-nextline">Rematch: ${nameSpan(api, firstNext)} hides first</p>` : ''}
+    <div class="chm-foot">
+    ${firstNext ? `<p class="chm-nextline" data-first="${firstNext}">Rematch: ${nameSpan(api, firstNext)} hides first</p>` : ''}
     <button class="chm-go me" data-act="finish">See the board</button>
+    </div>
   </div></div>`;
 }

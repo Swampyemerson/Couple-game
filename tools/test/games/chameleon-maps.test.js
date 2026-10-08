@@ -14,9 +14,14 @@
 //            probes + camo wall + spawns pass checkMap, draw calls while playing, build time
 //            with the real atlas; then a quick hotseat hide-and-seek round per map.
 //   rooms    screenshots of every room (390×844, 844×390, 1280×800; light + dark).
+//   slices   (maps QA round 1, Node) every map built as the game builds it in slices (atlas tile by
+//            tile, builder calls recorded per section and replayed, chunks finished in steps) is
+//            byte-identical to a direct build: every vertex / index array, collider, blob, probe,
+//            spot and room; and the steps are small (the longest step per map, CPU-only here).
 //   pockets  (maps pass) every map at Tiny / Large / Huge: crawl from every open contact with the
 //            real crawl code and require each reached contact to be in sight of somewhere ≥ 1 m
-//            away (no sealed nooks); the review's Market fridge-header slot and House armchair.
+//            away (no sealed nooks) and none to put the body's centre inside a prop or past the
+//            outer walls; the review's Market fridge-header slot and House armchair.
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -86,7 +91,7 @@ function buildStatic(M, entry) {
     const fill = entry.build(atlas, M.maps.KIT);
     at = atlas.finish();
     const b = M.geo.createBuilder({ tiles: at.tiles, ink: [0.1, 0.1, 0.1] });
-    fill(b);
+    M.maps.runFill(fill, b); // fills are generators (they yield between sections)
     out = b.finish(FAKE_THREE);
     if (M.maps.closeSlots) M.maps.closeSlots(out.colliders); // as buildMap does
     times.push(performance.now() - t0);
@@ -309,17 +314,17 @@ async function staticSection() {
 // ─────────────────────────────────────────────────────────────────────
 // pockets (maps pass): no sealed nooks. Seed every clearly open sticky-feet contact (on a 0.5 m
 // grid over every collider face, legal by the engine's rules: in bounds, contact point not buried,
-// body clear of guards; ≥ 30 of 60 escape rays run 1.5 m into the room), crawl from all of them
+// body clear of guards and fitting (clearOf); ≥ 30 of 60 escape rays run 1.5 m into the room), crawl from all of them
 // with the real world.crawl / move.crawlStep in four directions per state (BFS on a 0.2 m grid),
 // and require every reached contact whose body centre is in open air to be in sight of somewhere
 // ≥ 1 m away (60 escape rays first, then a 0.35 m viewpoint grid out to 6 m; guards and glass are
-// see-through, the map's box and its top ceiling clip). Bodies whose centre ends up inside solid
-// geometry (a contact point that fits a slot the body doesn't) are counted and reported: the maps
-// close the slots they can (closeSlots), the rest is the engine's (see docs, maps pass).
+// see-through, the map's box and its top ceiling clip). No reached body may have its centre inside
+// solid geometry or past the outer walls (a contact point that fits a slot the body doesn't): the
+// maps close the slots they can (closeSlots), the engine refuses the rest (world.clearOf).
 function pocketScan(M, entry, size) {
   const tiles = new Proxy({}, { get: () => [0, 0, 0.1, 0.1] });
   const fill = entry.build({ add() {}, finish() { return { tiles }; } }, M.maps.KIT);
-  const b = M.geo.createBuilder({ tiles, ink: [0, 0, 0] }); fill(b);
+  const b = M.geo.createBuilder({ tiles, ink: [0, 0, 0] }); M.maps.runFill(fill, b);
   const out = b.finish(FAKE_THREE);
   M.maps.closeSlots(out.colliders);
   const bounds = M.maps.boundsOf(out.colliders, entry.info || {});
@@ -377,7 +382,7 @@ function pocketScan(M, entry, size) {
       for (let p0 = lo[0] + 0.05; p0 <= hi[0] - 0.05 + 1e-9; p0 += 0.5) for (let p1 = lo[1] + 0.05; p1 <= hi[1] - 0.05 + 1e-9; p1 += 0.5) {
         const p = [0, 0, 0]; p[ax] = fixed; p[u[0]] = p0; p[u[1]] = p1;
         if (p[1] < 0.001 && nrm[1] < 0) continue;
-        if (!world.inside(p[0], p[2]) || world.buried(p[0], p[1], p[2], ...nrm) || world.guarded(p[0], p[1], p[2], ...nrm, clear)) continue;
+        if (!world.inside(p[0], p[2]) || world.buried(p[0], p[1], p[2], ...nrm) || world.guarded(p[0], p[1], p[2], ...nrm, clear) || (world.clearOf && !world.clearOf(p[0], p[1], p[2], ...nrm, r))) continue;
         const c = [p[0] + nrm[0] * r, p[1] + nrm[1] * r, p[2] + nrm[2] * r];
         if (c[1] < r * 0.7 || centreIn(...c) || escapes(c, 30) < 30) continue;
         const bd = { x: p[0], y: p[1], z: p[2], nx: nrm[0], ny: nrm[1], nz: nrm[2], fx: 0, fy: 0, fz: 0, box: bx, r, head: d.head, step: d.step, sq: false, at: true, yaw: 0, wa: 0 };
@@ -386,15 +391,16 @@ function pocketScan(M, entry, size) {
       }
     }
   }
-  const sealed = []; let inSolid = 0; let outside = 0; let overlap = 0; let states = 0;
+  const sealed = []; const ex = []; let inSolid = 0; let outside = 0; let overlap = 0; let states = 0;
   while (queue.length && states < 300000) {
     const s0 = queue.pop(); states++;
     const c = [s0.x + s0.nx * r, s0.y + s0.ny * r, s0.z + s0.nz * r];
     if (c[1] < r * 0.7) continue; // crawling down a wall onto the floor releases the body first
     // a body the engine let into a slot narrower than itself (centre past the walls, inside a box,
     // or overlapping a neighbour) is the engine's contact check, not a map nook: counted apart
-    if (c[0] < bounds.minX - 0.01 || c[0] > bounds.maxX + 0.01 || c[2] < bounds.minZ - 0.01 || c[2] > bounds.maxZ + 0.01) outside++;
-    else if (centreIn(...c)) inSolid++;
+    let inBox = null;
+    if (c[0] < bounds.minX - 0.01 || c[0] > bounds.maxX + 0.01 || c[2] < bounds.minZ - 0.01 || c[2] > bounds.maxZ + 0.01) { outside++; if (ex.length < 8) ex.push({ out: [s0.x, s0.y, s0.z, s0.nx, s0.ny, s0.nz].map((v) => +v.toFixed(2)) }); }
+    else if ((inBox = centreIn(...c))) { inSolid++; if (ex.length < 8) ex.push({ in: inBox.name || '-', at: [s0.x, s0.y, s0.z, s0.nx, s0.ny, s0.nz].map((v) => +v.toFixed(2)) }); }
     else if (overlaps(c, r * 0.8, s0.box)) overlap++;
     else if (escapes(c, 4) < 4 && viewpoints(c) < 3) sealed.push({ p: [s0.x, s0.y, s0.z].map((v) => +v.toFixed(2)), n: [s0.nx, s0.ny, s0.nz].map((v) => Math.round(v)), on: s0.box ? s0.box.name || '-' : 'floor' });
     const f = [s0.fx, s0.fy, s0.fz]; const sx = [s0.ny * f[2] - s0.nz * f[1], s0.nz * f[0] - s0.nx * f[2], s0.nx * f[1] - s0.ny * f[0]];
@@ -411,7 +417,52 @@ function pocketScan(M, entry, size) {
       const k = key(bd); if (seen.has(k)) continue; seen.add(k); queue.push(bd);
     }
   }
-  return { seeds, states, sealed, inSolid, outside, overlap, world, colliders: boxes, r };
+  return { seeds, states, sealed, inSolid, outside, overlap, ex, world, colliders: boxes, r };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// slices (maps QA round 1): the sliced build is the same build. A Node canvas stand-in (every 2D
+// call accepted, getImageData zeros) lets the real atlas.js / maps.js run here.
+function fakeDom() {
+  const any = new Proxy(function () {}, { get: (t, k) => (k === Symbol.toPrimitive ? () => 0 : k === 'width' ? 10 : any), apply: () => any, set: () => true });
+  const ctx = new Proxy({}, {
+    get(t, k) {
+      if (k === 'getImageData' || k === 'createImageData') return (x, y, w, h) => { const W = k === 'getImageData' ? w : x; const H = k === 'getImageData' ? h : y; return { width: W, height: H, data: new Uint8ClampedArray(Math.max(1, W * H * 4)) }; };
+      if (k === 'measureText') return () => ({ width: 10 });
+      if (k in t) return t[k];
+      return () => any;
+    },
+    set(t, k, v) { t[k] = v; return true; },
+  });
+  globalThis.document = globalThis.document || { createElement: () => ({ width: 0, height: 0, getContext: () => ctx }) };
+}
+async function slicesSection() {
+  console.log('\n# slices (maps QA round 1): sliced builds are byte-identical to direct builds; small steps');
+  fakeDom();
+  const M = await loadModules();
+  if (!M.maps.mapBuildSteps) { assert(false, 'maps.js exports mapBuildSteps'); return; }
+  const FT = { ...FAKE_THREE };
+  const run = (id, direct) => {
+    const it = M.maps.mapBuildSteps(FT, id, { direct });
+    let steps = 0; let maxMs = 0; let maxAt = ''; let prev = 'start';
+    for (;;) { const t = performance.now(); const s = it.next(); const d = performance.now() - t; steps++; if (d > maxMs) { maxMs = d; maxAt = `${prev} → ${s.value}`; } if (s.done) return { m: s.value, steps, maxMs, maxAt }; prev = s.value; }
+  };
+  const digest = (m) => {
+    const arrs = [];
+    for (const ch of m.chunks) { const g = ch.geometry; for (const k of ['position', 'normal', 'uv', 'color', 'tile', 'onrm']) arrs.push(g[k].array); arrs.push(g.index.array); }
+    if (m.blobGeo) for (const k of ['position', 'uv', 'alpha']) arrs.push(m.blobGeo[k].array);
+    let h = 2166136261 >>> 0; let n = 0;
+    for (const a of arrs) { const v = new Uint32Array(new Float32Array(Array.from(a)).buffer); n += v.length; for (let i = 0; i < v.length; i++) { h ^= v[i]; h = Math.imul(h, 16777619) >>> 0; } }
+    const meta = JSON.stringify({ k: m.chunks.map((c) => [c.key, c.mainIndexCount, c.hullIndexCount, c.vertexCount]), c: m.colliders, b: m.blobs, p: m.probes, s: m.spots, r: m.rooms, bo: m.bounds });
+    return { h, n, meta };
+  };
+  for (const entry of M.maps.MAPS) {
+    run(entry.id, true); // JIT warm-up
+    const D = run(entry.id, true); const S = run(entry.id, false);
+    const a = digest(D.m); const b = digest(S.m);
+    assert(a.h === b.h && a.n === b.n && a.meta === b.meta, `${entry.id}: the sliced build equals the direct build (${a.n} floats + ${D.m.colliders.length} colliders, hash ${a.h.toString(16)} vs ${b.h.toString(16)}${a.meta === b.meta ? '' : ', metadata differs'})`);
+    console.log(`  ${entry.id}: ${S.steps} steps (direct ${D.steps}), longest ${S.maxMs.toFixed(1)} ms at ${S.maxAt}`);
+  }
 }
 
 async function pocketsSection() {
@@ -425,7 +476,10 @@ async function pocketsSection() {
       const groups = [];
       for (const f of res.sealed) { const g = groups.find((G) => Math.hypot(G.p[0] - f.p[0], G.p[1] - f.p[1], G.p[2] - f.p[2]) < 0.8); if (g) g.k++; else groups.push({ ...f, k: 1 }); }
       assert(!res.sealed.length, `${entry.id} @${label}: no sealed pockets among ${res.states} crawled contacts from ${res.seeds} open seeds${groups.length ? ' — ' + JSON.stringify(groups.slice(0, 6)) : ''} (${((performance.now() - t0) / 1000).toFixed(1)} s)`);
-      if (res.inSolid + res.outside + res.overlap) console.log(`  note ${entry.id} @${label}: of ${res.states} reached contacts, ${res.inSolid} put the body's centre inside a box, ${res.outside} past the outer walls, ${res.overlap} overlapping a neighbour (slots narrower than the body: the engine checks the contact point only)`);
+      // the engine checks the body as well as the contact point (world.clearOf): a crawl never
+      // leaves the body's centre inside a prop (a locker, a fridge) or past the outer walls
+      assert(res.inSolid === 0 && res.outside === 0, `${entry.id} @${label}: no reached contact puts the body's centre inside a box (${res.inSolid}) or past the outer walls (${res.outside})${res.ex.length ? ' — ' + JSON.stringify(res.ex.slice(0, 4)) : ''}`);
+      if (res.overlap) console.log(`  note ${entry.id} @${label}: of ${res.states} reached contacts, ${res.overlap} have the body (a 0.8 r sphere round its centre) brushing a neighbour box`);
     }
   }
   // the two cavities from the review are shut
@@ -604,6 +658,7 @@ if (require.main === module) {
   (async () => {
     try {
       if (want('static')) await staticSection();
+      if (want('slices')) await slicesSection();
       if (want('pockets')) await pocketsSection();
       if (want('browser')) {
         await browserSection(PORT, { device: 'iPhone 13', viewport: null, label: 'phone' });

@@ -58,8 +58,9 @@ function build(atlas) {
   atlas.add('label', P.label({ bg: '#ffffff', band: C.red, text: C.ink }), { size: 'S', repeat: false });
   atlas.add('rings', P.rings({ n: 3 }), { size: 'S' });
 
-  return (b) => {
+  return function* fill(b) {
     const r = seeded('market');
+    yield 'shell';
     // ── shell ──
     const T = 0.16;
     b.add(boxGeo(W + 0.9, 0.36, D + 0.9, { round: 0.04 }), { at: [0, -0.2, 0], color: '#4b5560' });
@@ -67,22 +68,27 @@ function build(atlas) {
     aabb(b, X0 - T, 0, Z0 - T, X1 + T, CEIL, Z0, { tile: 'wallband', rep: [1.6, CEIL], color: '#ffffff', outline: false, collide: { wall: true, name: 'back' } });
     aabb(b, X0 - T, 0, Z0, X0, CEIL, Z1, { tile: 'wallband', rep: [1.6, CEIL], color: '#ffffff', outline: false, collide: { wall: true, name: 'left' } });
     aabb(b, X1, 0, Z0, X1 + T, CEIL, Z1, { tile: 'block', rep: 1.0, color: '#ffffff', outline: false, collide: { wall: true, name: 'right' } });
+    yield 'low front with';
     // low front with the entrance gap marked by door frames
     aabb(b, X0 - T, 0, Z1, X1 + T, 0.6, Z1 + T, { color: '#e9e3d6', outline: true, collide: { wall: true, name: 'front' } });
     b.collide(X0 - T, 0.6, Z1, X1 + T, CEIL + 2, Z1 + 0.4, { wall: false, climb: false, name: 'front-guard' });
+    yield 'the lid runs';
     // the lid runs to the walls' inner faces: its outer edges over the wall tops are no place to
     // cling to (maps pass: a Tiny body there sat outside the shop)
     for (const [x0, z0, x1, z1] of [[X0 - T - 0.05, Z0 - T - 0.05, X0, Z1], [X1, Z0 - T - 0.05, X1 + T + 0.05, Z1], [X0 - T - 0.05, Z0 - T - 0.05, X1 + T + 0.05, Z0]]) b.collide(x0, CEIL, z0, x1, CEIL + 0.3, z1, { wall: false, climb: false, name: 'eave-guard' });
     for (const x of [-1.6, 1.6]) aabb(b, x - 0.08, 0.6, Z1, x + 0.08, 2.4, Z1 + T, { color: C.steel, outline: true });
     aabb(b, -1.68, 2.4, Z1, 1.68, 2.56, Z1 + T, { color: C.steel, outline: true });
     for (const [x0, x1] of [[X0 - T, -1.68], [1.68, X1 + T]]) aabb(b, x0, 2.4, Z1, x1, 2.56, Z1 + T, { color: C.teal, outline: true });
+    yield 'ceiling';
     // ceiling (lid) with a grid underside
     slab(b, X0, Z0, X1, Z1, CEIL + 0.12, { thick: 0.12, lid: true, under: { tile: 'ceilgrid', rep: 1.2 }, name: 'ceil:market' });
+    yield 'floors';
     // floors
     floor(b, X0, Z0, 4, Z1, 0, { tile: 'floor', rep: 1.4 });
     floor(b, 4, Z0, X1, Z1, 0, { tile: 'concrete', rep: 1.6 });
     rug(b, 0, 6.3, 3.0, 1.0, 0, 'mat', { rep: 0.6 });
 
+    yield 'wall between the';
     // ── wall between the shop and the stockroom (strip-curtain doors, office window above) ──
     const SH = { tile: 'wallband', rep: [1.6, CEIL] }; const ST = { tile: 'block', rep: 1.0 };
     wall(b, { x0: 4, z0: Z0, x1: 4, z1: Z1, h: CEIL, t: 0.16, n: SH, p: ST, trim: C.steel, open: [{ c: 0.6, w: 1.5, top: 2.3 }, { c: 5.2, w: 1.2, top: 2.2 }, { c: -4.9, w: 3.6, bottom: MZ + 0.35, top: MZ + 1.45 }], name: 'w:stock' });
@@ -90,6 +96,7 @@ function build(atlas) {
     strips(0.6, 1.5, 2.3); strips(5.2, 1.2, 2.2);
     for (const [zc, t] of [[0.6, 'signStaff']]) aabb(b, 3.9, 2.45, zc - 0.6, 3.91, 2.85, zc + 0.6, { faces: ['nx'], tile: t, rep: 1, fit: true, color: '#ffffff', outline: false });
 
+    yield 'back wall';
     // ── back wall: fridges with glass doors full of drinks ──
     for (let k = 0; k < 6; k++) {
       const x0 = -9.9 + k * 2.3; const x1 = x0 + 2.2;
@@ -100,6 +107,7 @@ function build(atlas) {
     }
     b.blob(-3, Z0 + 1.0, 7.2, 0.5, { a: 0.22 });
 
+    yield 'bakery shelf on';
     // ── bakery shelf on the left wall ──
     const bk = F(b, X0 + 0.32, -1.0, Math.PI / 2);
     const ys = shelves(bk, 6.4, 1.8, 0.55, 5, { color: C.brown, tile: null, name: 'bakery' });
@@ -108,6 +116,7 @@ function build(atlas) {
     });
     bk.box(2.4, 0.8, 0.03, [0, 2.45, -0.25], { tile: 'signBakery', rep: 1, fit: true, color: '#ffffff' });
 
+    yield 'four aisles of';
     // ── four aisles of gondola shelving ──
     const gz0 = -4.3; const gz1 = 2.2; const GL = gz1 - gz0; const gh = 1.95;
     const levels = [0.12, 0.58, 1.04, 1.5];
@@ -158,11 +167,13 @@ function build(atlas) {
       for (const z of [gz0 + 0.6, gz1 - 0.6]) b.add(cylGeo(0.005, 0.005, CEIL - 3.38, { radial: 4, caps: false }), { at: [gx, (CEIL + 3.38) / 2, z], color: C.ink, outline: false });
       b.blob(gx, zc, 0.65, GL * 0.5, { a: 0.2 });
     });
+    yield 'big round duct';
     // big round duct across the shop
     b.add(cylGeo(0.3, 0.3, 13.6, { radial: 12 }), { at: [-3.0, 3.62, -2.6], rot: [0, 0, Math.PI / 2], color: '#c3ccd1', tile: 'rings', rep: [0.6, 0.5] });
     b.collide(-9.8, 3.32, -2.9, 3.8, 3.92, -2.3, { wall: false, perch: true, name: 'perch:duct' });
     for (const x of [-8, -4, 0]) aabb(b, x - 0.03, 3.9, -2.65, x + 0.03, CEIL, -2.55, { color: C.ink, outline: false });
 
+    yield 'checkouts';
     // ── checkouts ──
     for (const [cx, n] of [[-7.6, 1], [-4.6, 2]]) {
       const ck = F(b, cx, 4.8);
@@ -179,6 +190,7 @@ function build(atlas) {
       ck.box(0.35, 1.3, 0.8, [-0.6, 0.65, 0.4], { color: '#ffffff', tile: 'candy', rep: [0.8, 0.65], collide: { wall: true, name: 'candy' } });
       ck.blob(0, 0, 0.6, 1.2, { a: 0.24 });
     }
+    yield 'stacked shopping carts';
     // stacked shopping carts + baskets by the door
     for (let i = 0; i < 3; i++) {
       const ct = F(b, -9.2, 6.25 - i * 0.22, Math.PI / 2);
@@ -191,6 +203,7 @@ function build(atlas) {
     stack(F(b, -6.0, 6.4), 0, 0, [[0.5, 0.18, 0.36, C.red, 'wire'], [0.5, 0.18, 0.36, C.blue, 'wire', 0.05], [0.5, 0.18, 0.36, C.red, 'wire', -0.04], [0.5, 0.18, 0.36, C.green, 'wire', 0.08]]);
     b.blob(-6.0, 6.4, 0.35, 0.3);
 
+    yield 'produce';
     // ── produce: tilted crates, an orange pyramid, flower buckets ──
     const crate = (x, z, yaw, fruit, h = 0.75) => {
       const cr = F(b, x, z, yaw);
@@ -201,6 +214,7 @@ function build(atlas) {
     };
     crate(0.7, 3.6, 0, 'apples'); crate(1.8, 3.6, 0, 'oranges', 0.68); crate(2.9, 3.6, 0, 'limes'); crate(3.4, 5.2, -Math.PI / 2, 'lemons', 0.62);
     crate(0.7, 5.4, Math.PI, 'oranges', 0.55);
+    yield 'orange pyramid on';
     // orange pyramid on a low table
     const pt = F(b, 1.9, 5.6);
     pt.box(1.1, 0.5, 0.9, [0, 0.25, 0], { color: C.green, collide: { wall: true, name: 'fruit-table' } });
@@ -218,10 +232,12 @@ function build(atlas) {
       fb.cyl(0.006, 0.006, 0.3, [0, 0.45, 0], { color: C.green, outline: false, radial: 4 });
       fb.blob(0, 0, 0.2, 0.2);
     }
+    yield 'front window posters';
     // front window posters
     picture(b, -5.0, 1.75, Z1 - 0.06, 0.7, 0.9, 'z-', 'poster1', { frame: C.red, depth: 0.02 });
     picture(b, 6.0, 1.75, Z1 - 0.06, 0.9, 0.7, 'z-', 'poster2', { frame: C.blue, depth: 0.02 });
 
+    yield 'stockroom';
     // ── stockroom: pallet racks you can climb by box stacks, cartons, pallet jack ──
     const rack = (x, z0, z1, lv = [0.15, 1.2, 2.2]) => {
       for (const z of [z0, (z0 + z1) / 2, z1]) for (const dx of [-0.45, 0.45]) aabb(b, x + dx - 0.04, 0, z - 0.04, x + dx + 0.04, lv[lv.length - 1] + 0.1, z + 0.04, { color: C.blueRack, outline: true, collide: { wall: true, perch: true, name: 'perch:upright' } });
@@ -241,13 +257,16 @@ function build(atlas) {
       }
       return yy;
     };
+    yield 'rack contents';
     // rack contents (leave cubbies)
     cartons(9.4, -1.4, 0.15, 2, 'r1'); cartons(9.4, 1.6, 0.15, 1, 'r2'); cartons(9.4, -0.6, 1.2, 1, 'r3'); cartons(9.4, 1.0, 1.2, 2, 'r4b'); cartons(9.4, 0.2, 2.2, 1, 'r5');
     cartons(5.0, 3.2, 0.15, 2, 'r6'); cartons(5.0, 5.6, 0.15, 1, 'r7'); cartons(5.0, 4.4, 1.2, 1, 'r8');
+    yield 'climbing route';
     // climbing route: crate → pallet → rack (each ≤ 0.6 up)
     cartons(8.3, -0.6, 0, 1, 'stepA'); cartons(8.2, 0.5, 0, 2, 'stepB');
     cartons(6.6, 4.7, 0, 3, 'stack1'); cartons(7.4, 5.6, 0, 2, 'stack2'); cartons(8.6, 5.9, 0, 4, 'stack3'); cartons(7.6, -1.9, 0, 2, 'stack4');
     b.blob(7.4, 5.2, 1.6, 1.0, { a: 0.22 });
+    yield 'pallet jack';
     // pallet jack
     const pj = F(b, 7.6, 2.9, 0.4);
     pj.box(0.55, 0.07, 1.1, [0, 0.07, 0], { color: C.red, collide: false });
@@ -255,14 +274,17 @@ function build(atlas) {
     pj.box(0.3, 0.3, 0.2, [0, 0.2, -0.55], { color: C.red, collide: { wall: true, name: 'jack' } });
     pj.blob(0, 0, 0.35, 0.6);
 
+    yield 'office mezzanine';
     // ── office mezzanine (x 4…10, z −7…−2.5, y 2.4) + stairs up the right wall ──
     slab(b, 4.08, Z0, X1, -2.5, MZ, { under: { color: '#d7d2c8' }, edge: C.ink, name: 'ceil:mezzanine' });
     floor(b, 4.08, Z0, X1, -2.5, MZ, { tile: 'concrete', rep: 1.2, color: '#c9d8e6' });
     for (const [x, z] of [[4.4, -2.7], [7.6, -2.7]]) aabb(b, x - 0.09, 0, z - 0.09, x + 0.09, MZ - 0.2, z + 0.09, { color: C.steel, outline: true, collide: { wall: true, perch: true, name: 'perch:column' } });
+    yield 'free-standing stairs in';
     // free-standing stairs in the middle of the stockroom (walk round and under them)
     stairs(b, { x: 5.9, z: -2.5 + 14 * 0.28, dir: 'z-', width: 1.0, n: 14, rise: MZ / 14, run: 0.28, tread: { color: '#8a969c', tile: 'wire', rep: 0.3 }, stringer: C.ink, railSide: 2, rail: C.yellow, name: 'mezz-stairs' });
     railing(b, 4.1, -2.5, 5.35, -2.5, MZ, { color: C.yellow, top: C.yellow, name: 'mezz-a' });
     railing(b, 6.45, -2.5, 9.95, -2.5, MZ, { color: C.yellow, top: C.yellow, name: 'mezz-b' });
+    yield 'office stuff';
     // office stuff
     const desk = F(b, 6.0, -6.3, 0, MZ);
     desk.box(1.6, 0.05, 0.7, [0, 0.74, 0], { color: '#c99a6b', collide: { wall: false, ceil: true, name: 'desk' } });
@@ -284,6 +306,7 @@ function build(atlas) {
     fc.box(0.5, 0.95, 0.55, [0, 0.475, 0], { color: C.steel, tile: 'carton', rep: [0.5, 0.32], collide: { wall: true, name: 'filing' } });
     fc.cyl(0.12, 0.1, 0.12, [0, 1.01, 0], { color: C.pink });
     picture(b, 7.6, MZ + 1.4, Z0 + 0.001, 0.6, 0.45, 'z+', 'poster2', { frame: C.ink });
+    yield 'under the office';
     // under the office: shelving of cleaning stock and a mop bucket
     const us = F(b, 6.8, Z0 + 0.35);
     shelves(us, 3.0, 1.9, 0.6, 4, { color: C.blueRack, tile: null, name: 'stock-shelf' });
@@ -293,6 +316,7 @@ function build(atlas) {
     mb.cyl(0.015, 0.015, 1.3, [0.05, 0.7, 0], { color: '#c99a6b', rot: [0, 0, 0.15], radial: 6 });
     mb.blob(0, 0, 0.26, 0.26);
 
+    yield 'spots';
     // ── spots ──
     b.spot('lobby', { x: -1.6, z: 5.8 });
     b.spot('hiderSpawn', { x: -3.0, z: 3.4, yaw: Math.PI });

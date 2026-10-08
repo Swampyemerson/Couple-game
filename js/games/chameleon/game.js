@@ -10,10 +10,10 @@ import { loadingCard, errorCard, lobbyCard, titleCard, blindCard, headCard, curt
 import { recordRound, recordMatch, bestsStrip, dailyLine, recapLines, matchStory } from './records.js';
 import { loadWear, saveWear, resolveWear, newUnlocks, packWear, unpackWear, wardrobeSheet, EYE_RGB, SLOT_LABEL } from './wardrobe.js';
 import { clamp, dampAngle, wrapAngle, hexToRgb, cssColor, luminance, listeners, fmtTime, mixHex, esc, seeded, packQuat, unpackQuat } from './util.js';
-import { MAPS, mapArea, mapCacheInfo, mixPlan, dailyPlan, dayKey, roomAt } from './maps.js';
+import { MAPS, mapArea, mapCacheInfo, mapBuildStats, mapJobsInfo, mixPlan, dailyPlan, dayKey, roomAt } from './maps.js';
 import { sanitizeSetup, sanitizeRules, applyPreset, stepRule, setRule, loadSaved, saveSetup, sizeScale, SPEED_MUL, CLIMB_MUL, tipsSeen, markTipsSeen, PRESETS, timeScale, hideScale, effSeconds, sprintMul, dbSpeed, OPTIONS, fmtRule } from './rules.js';
 import { REVEAL } from './paint.js';
-import { createBlendJob, startBlend, stepBlend, scoreBlend, createMeter, errorMap } from './camo.js';
+import { createBlendJob, startBlend, stepBlend, scoreBlend, createMeter, startErrorMap, stepErrorMap, BLEND } from './camo.js';
 import { mkBody, sizeBody, resetBody, headingYaw, attachBody, detachBody, freeStep, crawlStep, inputOnSurface, bodyQuat, quatUpY, spotKind, surfaceKind, accelStep, coyoteJump, shortHop, JUMP } from './move.js';
 import { SQUEEZE_R } from './world.js';
 
@@ -36,6 +36,11 @@ const TAG_WINDOW = 250;
 // a hider mid-scurry / mid-zip is confirmed against a much shorter window (see confirmTag)
 const TAG_WINDOW_ESCAPE = 120;
 const other = (w) => (w === 'a' ? 'b' : 'a');
+// Who hides first next match, carried across the hub's Rematch (a fresh mount) within this page:
+// set when the final card goes up (it promises "Rematch: X hides first") and read by the next
+// mount's lobby. Deriving it from api.gen broke that promise: gen only counts live rematches
+// (hotseat stayed 'a' every time) and ignored the lobby's own pick on two phones.
+let nextFirst = null;
 
 export function createGame(el, api) {
   const local = api.mode !== 'live';
@@ -73,8 +78,9 @@ export function createGame(el, api) {
   // ── state ──
   const S = {
     boot: 'loading', // loading | ready | error
-    // who hides first alternates with the hub's rematch counter (the same person used to hide first match after match)
-    setup: sanitizeSetup({ ...(loadSaved() || {}), first: (api.gen | 0) % 2 ? 'b' : 'a' }, MAP_IDS),
+    // who hides first alternates match to match: what the last final card promised (nextFirst),
+    // else the hub's rematch counter (a page that never saw a final card; the host's pick wins anyway)
+    setup: sanitizeSetup({ ...(loadSaved() || {}), first: nextFirst || ((api.gen | 0) % 2 ? 'b' : 'a') }, MAP_IDS),
     sheet: false, // settings sheet open (local view state)
     wardrobe: false, // wardrobe sheet open (local view state)
     wardW: null, // whose wardrobe (hotseat: a toggle)
@@ -240,15 +246,33 @@ export function createGame(el, api) {
       S.boot = 'error';
       hud.layer('error', errorCard('Your device couldn’t start the 3D view.'));
     };
+    let st = null;
     try {
       // a rematch takes the stage the last mount parked (programs linked, map uploaded)
       reused = takeParkedStage(THREE, DUR.maxDpr || 2);
-      if (reused) { stage = reused; stage.adopt(view, theme); stage.unloadMap(); } else {
-        stage = createStage(THREE, view, { theme, maxDpr: DUR.maxDpr || 2 });
+      if (reused) { st = reused; st.adopt(view, theme); st.unloadMap(); } else {
+        st = createStage(THREE, view, { theme, maxDpr: DUR.maxDpr || 2 });
         if (testing) window.__chamGL = (window.__chamGL || 0) + 1;
       }
       S.bootReused = !!reused;
-      stage.resize();
+      st.resize();
+    } catch (e) { if (st) stage = st; fail(e); return; }
+    // maps QA round 1: the lobby map builds in slices behind the loading card (a cold CU was one
+    // 0.3–0.8 s task at 4x CPU); a rematch's parked stage has it cached. `stage` stays unset
+    // until the map is in, so nothing (a setup message, a resize) sees a stage without a map.
+    // closed (or failed) before the map was in: nothing else holds this stage, so dispose it here
+    cleanup.push(() => { if (stage !== st) { st.dispose(); if (testing) window.__chamGL = (window.__chamGL || 1) - 1; } });
+    const built = (id) => {
+      if (S.destroyed) return;
+      if (S.setup.map !== id) { st.prepare(S.setup.map, { alive: () => !S.destroyed }).then(() => built(S.setup.map), fail); return; } // the host's setup arrived meanwhile
+      stage = st;
+      bootMap(reused, fail);
+    };
+    const id0 = S.setup.map;
+    st.prepare(id0, { alive: () => !S.destroyed }).then(() => built(id0), (e) => { if (S.destroyed) return; fail(e); });
+  }
+  function bootMap(reused, fail) {
+    try {
       loadMap(S.setup.map);
       applySize();
       setLivery('a', 'lobby'); setLivery('b', 'lobby');
@@ -356,13 +380,26 @@ export function createGame(el, api) {
     return m;
   }
   // Lobby map changes (the host's arrows / chips, the guest following the host): the card shows
-  // the new map at once and the diorama follows a frame later, so the tap paints first; a burst
-  // of changes builds only the last one. A map seen this session is a scene swap (maps.js cache).
-  let mapQ = null; let mapQRaf = 0;
+  // the new map at once and the diorama follows, so the tap paints first; a burst of changes
+  // builds only the last one. A map seen this session is a scene swap (maps.js cache); a new one
+  // builds in 16 ms slices, one a frame, while the old diorama keeps moving (maps QA round 1: it
+  // was one 0.2–0.8 s task at 4x CPU), and a newer tap drops a half-built map.
+  let mapQ = null; let mapQRaf = 0; let mapQBusy = null;
   function queueMap(id) {
     mapQ = id;
-    if (mapQRaf || S.destroyed) return;
-    mapQRaf = requestAnimationFrame(() => { mapQRaf = 0; later(flushMap, 0); });
+    if (mapQRaf || mapQBusy === id || S.destroyed) return;
+    mapQRaf = requestAnimationFrame(() => { mapQRaf = 0; later(pumpMap, 0); });
+  }
+  function pumpMap() {
+    const id = mapQ;
+    if (!stage || id == null || S.match || stage.map.id === id) { if (id === mapQ) mapQ = null; return; }
+    mapQBusy = id;
+    stage.prepare(id, { alive: () => !S.destroyed && mapQ === id && !S.match }).then(() => {
+      if (mapQBusy === id) mapQBusy = null;
+      if (S.destroyed) return;
+      if (mapQ === id) flushMap();
+      else if (mapQ != null && mapQBusy == null && !mapQRaf) queueMap(mapQ); // moved on meanwhile
+    }, (e) => { if (mapQBusy === id) mapQBusy = null; console.error('chameleon map', e); if (mapQ === id) flushMap(); });
   }
   function flushMap() {
     const id = mapQ; mapQ = null;
@@ -742,7 +779,7 @@ export function createGame(el, api) {
         C.orbitT = 0;
         // Mix it up: build the next round's map into the session cache while the recap is up
         // (both phones; the round's title is then a scene swap), once the card has settled in
-        if (S.match && S.match.maps && p.round < S.match.rounds) { const nid = S.match.maps[p.round % S.match.maps.length]; later(() => { if (stage && S.phase.name === 'recap' && stage.map.id !== nid) stage.prefetch(nid); }, Math.min(1500, Math.max(200, (p.dur || 0) * 0.2))); }
+        if (S.match && S.match.maps && p.round < S.match.rounds) { const nid = S.match.maps[p.round % S.match.maps.length]; later(() => { if (stage && S.phase.name === 'recap' && stage.map.id !== nid) stage.prefetch(nid); }, Math.min(600, Math.max(200, (p.dur || 0) * 0.08))); } // idle-time slices (maps QA round 1): it can start as the card lands
         const seekerW = R.rec && (R.rec.seeker || (R.rec.winner || null));
         if (stage && R.path.length && seekerW) stage.fx.setPath(R.path, seekerW === 'a' ? theme.a : theme.b);
         if (stage) {
@@ -761,7 +798,7 @@ export function createGame(el, api) {
         if (rx) {
           let i = 0;
           for (const r of rx.records || []) { const k = i++; S.matchRecords.push(r); later(() => { hud.pop('NEW RECORD', 'hl', r.text); snd.play('survive'); }, 900 + k * 1100); }
-          for (const u of rx.unlocks || []) { const k = i++; S.matchUnlocks.push(`${api.name(u.w)}: ${u.name}`); later(() => { hud.pop('UNLOCKED', 'ink', `${api.name(u.w)}: ${u.name} ${(SLOT_LABEL[u.key] || '').toLowerCase()}`); snd.play('unlock'); }, 900 + k * 1100); }
+          for (const u of rx.unlocks || []) { const k = i++; S.matchUnlocks.push({ w: u.w, name: u.name, slot: (SLOT_LABEL[u.key] || '').toLowerCase() }); later(() => { hud.pop('UNLOCKED', 'ink', `${api.name(u.w)}: ${u.name} ${(SLOT_LABEL[u.key] || '').toLowerCase()}`); snd.play('unlock'); }, 900 + k * 1100); }
           const rc = R.rec; // captured: the round may have moved on by the time the sticker fires
           if (rc && rc.called) { const k = i++; later(() => { hud.pop('CALLED IT', rc.seeker || 'hl', `+${rc.wagerPts} for ${api.name(rc.seeker)}`); snd.play('good'); }, 900 + k * 1100); }
         }
@@ -770,6 +807,8 @@ export function createGame(el, api) {
       case 'final': {
         const d = p.data || {};
         snd.ambience('off');
+        // the rematch's first hider: the other one after Hide & Seek (the card says so), the same pick after Double Blind
+        if (S.match) nextFirst = S.match.mode === 'hs' ? other(S.match.first) : S.match.first;
         // the match's own final card first (round timeline, best hide, fastest find, records); 'See the
         // board' on either phone, or 12 s, hands over to the hub's end card (which carries Rematch)
         if (isHost && !S.finalRec) { S.finalRec = true; setData(recordMatch(data(), d.winner)); }
@@ -880,11 +919,11 @@ export function createGame(el, api) {
 
   // ── paint lock + sync ─────────────────────────────────────────────
   /**
-   * Blend score (camo %): at the lock, every body texel that faces away from the surface the
-   * hider is on (the wall behind a stuck body, else the floor below) is projected onto that surface,
-   * the surface's albedo there is sampled exactly as the stamp samples it (blob shadows included),
-   * and the mean per-channel difference is turned into a percentage: a perfect stamp seen from the
-   * front is ~100, a plain white chameleon on sage wallpaper ~30. No per-frame cost.
+   * Blend score (camo %): the body against the surface the hider is on (the wall behind a stuck
+   * body, else the floor below), seen from five viewpoints round it (camo.js): every texel facing
+   * a view is compared with the surface point behind it along that sight line (parallax), sampled
+   * exactly as the stamp samples it (blob shadows included). A stamp is perfect only from straight
+   * in front, so it no longer scores ~100 by construction. No per-frame cost.
    */
   /** The surface a hider is scored against: the face a stuck body is on, else the floor below. */
   function blendSurf(w) {
@@ -900,8 +939,9 @@ export function createGame(el, api) {
     const p = stage.paints[w];
     p.updateWorld(stage.av[w].meshes);
     const surf = blendSurf(w);
-    return surf ? scoreBlend(p, surf) : -1;
+    return surf ? scoreBlend(p, surf, BLENDJ) : -1;
   }
+  const BLENDJ = createBlendJob(); // the lock's job (no garbage; its per-view scores for the tests)
 
   // ── live camo meter (paint mode) ──────────────────────────────────
   // After every settled change (stroke end, wipe / flood finished, the body moved or posed) the
@@ -919,19 +959,43 @@ export function createGame(el, api) {
     const v = viewer();
     if (!P.on || !v || !stage || !CAMO.meter || !CAMO.meter.shown) return;
     const p = stage.paints[v];
-    if (p.xraying) { p.xrayOff(); return; }
-    refreshTexels();
-    const surf = blendSurf(v);
+    if (p.xraying || XRAYJ.xon) { XRAYJ.xon = false; CAMO.meter.checking(false); p.xrayOff(); return; } // a second tap: off
+    // the meter's score is current: its views and colours behind are lent to the x-ray (no second score pass)
+    const cur = !CAMO.job.on && CAMO.w === v && CAMO.ver === p.version && !!CAMO.surf && sameSig(bodySig(v, CAMO.cur), CAMO.sig);
+    if (!cur) refreshTexels();
+    const surf = cur ? CAMO.surf : blendSurf(v);
     if (!surf) { hint('Nothing behind you to match yet: get on a wall, or onto the floor', 1800); snd.play('warn'); return; }
     if (!xerr) xerr = new Uint8Array(p.data.length >> 2);
+    startErrorMap(XRAYJ, p, surf, xerr, cur ? CAMO.job : null);
+    CAMO.xrayVer = p.version; CAMO.xrayMs = 0; CAMO.xraySlice = 0; CAMO.xraySlices = 0; CAMO.xrayLent = cur;
+    CAMO.meter.checking(true);
+    camoXrayStep(); // the first slice right away: a quick phone shows it on the tap's frame
+  }
+  /** One slice (≤ XRAY_SLICE_MS) of the x-ray's five-view error map; flashes the stripes when done. */
+  const XRAY_SLICE_MS = 4;
+  function camoXrayStep() {
+    const v = viewer(); const p = v && stage.paints[v];
+    if (!p || p.version !== CAMO.xrayVer) { XRAYJ.xon = false; CAMO.meter.checking(false); return; } // painted while checking: dropped
     const t0 = performance.now();
-    const bad = errorMap(p, surf, xerr);
+    const done = stepErrorMap(XRAYJ, XRAY_SLICE_MS);
+    const ms = performance.now() - t0; CAMO.xrayMs += ms; CAMO.xraySlices++; if (ms > CAMO.xraySlice) CAMO.xraySlice = ms;
+    if (!done) return;
+    const bad = XRAYJ.bad;
+    CAMO.meter.checking(false);
     p.xray(xerr, XRAY_MS);
-    CAMO.xrayMs = performance.now() - t0; CAMO.xrays++; CAMO.xrayBad = bad; CAMO.xrayOn = true; CAMO.xrayHint = true;
+    CAMO.xrays++; CAMO.xrayBad = bad; CAMO.xrayOn = true; CAMO.xrayHint = true;
     CAMO.meter.xray(true, bad);
     snd.play(bad ? 'glint' : 'good'); act('xray');
     const frac = bad / Math.max(1, p.texels);
-    hint(!bad ? 'Nothing shows. A perfect match!' : frac > 0.2 ? 'The stripes show against the surface behind you' : 'Nearly there: paint over the stripes', 1800);
+    hint(!bad ? 'Nothing shows. A perfect match!' : sideOnly(XRAYJ) ? 'Head-on you vanish. From the side the pattern stops lining up: calmer surfaces hide you better' : frac > 0.2 ? 'The stripes show against the surface behind you' : 'Nearly there: paint over the stripes', bad && sideOnly(XRAYJ) ? 2800 : 1800);
+  }
+  const XRAYJ = createBlendJob();
+  /** The score's front view holds up but a side view doesn't: parallax (a stamp on a busy pattern
+   *  seen from the side), which paint barely fixes. The hints say so instead of "paint over the stripes". */
+  function sideOnly(J) {
+    if (J.nv < 2 || J.views[0] < 75) return false;
+    let lo = 101; for (let v = 1; v < J.nv; v++) if (J.views[v] >= 0 && J.views[v] < lo) lo = J.views[v];
+    return lo <= J.views[0] - 10;
   }
   function bodySig(w, out) { const b = body[w]; out[0] = b.x; out[1] = b.y; out[2] = b.z; out[3] = b.at ? 1 : 0; out[4] = b.nx || 0; out[5] = b.ny || 0; out[6] = b.nz || 0; out[7] = POSES.indexOf(b.pose); out[8] = b.wa || 0; return out; }
   function sameSig(a, b) { for (let i = 0; i < 9; i++) if (!(Math.abs(a[i] - b[i]) < 1e-4)) return false; return true; }
@@ -943,6 +1007,7 @@ export function createGame(el, api) {
     const m = CAMO.meter;
     m.show(on);
     if (CAMO.xrayOn && (!on || !stage.paints[CAMO.w || v || 'a'].xraying)) { CAMO.xrayOn = false; m.xray(false); if (CAMO.w) stage.paints[CAMO.w].xrayOff(); } // timed out, painted over, or the tools closed
+    if (XRAYJ.xon) { if (on) camoXrayStep(); else { XRAYJ.xon = false; m.checking(false); } } // the x-ray being worked out, a slice a frame
     if (!on) { CAMO.job.on = false; return; } // a half-done score is dropped; reopening rescores if anything changed
     const round = S.phase.round | 0;
     if (CAMO.w !== v || CAMO.round !== round) { CAMO.w = v; CAMO.round = round; CAMO.ver = -1; CAMO.sig.fill(NaN); CAMO.surfSig.fill(NaN); CAMO.job.on = false; m.reset(); }
@@ -958,8 +1023,11 @@ export function createGame(el, api) {
       CAMO.score = CAMO.job.score; CAMO.ver = CAMO.jobVer; CAMO.sig.set(CAMO.jobSig);
       const bb = mode() === 'hs' ? rules().blendBonus | 0 : 0;
       m.set(CAMO.score, bb ? (bb === 20 ? 90 : 80) : -1, bb);
+      // a fresh stamp that only shows from the side: say why once (the score is the seeker's view
+      // from round about, not the stamp's own head-on projection)
+      if (CAMO.score >= 0 && CAMO.score < 85 && now() - PFX.stampAt < 4000 && sideOnly(CAMO.job) && !shownHints.has('side')) hintOnce('side', 'Stamped! From the side the pattern breaks up: calm surfaces hide you best', 3000);
       // the x-ray is easy to miss: once a session, when there is something to find
-      if (!CAMO.xrayHint && CAMO.score >= 0 && CAMO.score < 90 && CAMO.runs > 1 && !P.last) { CAMO.xrayHint = true; hintOnce('xray', 'Tap the camo meter to see where you show', 2600); }
+      else if (!CAMO.xrayHint && CAMO.score >= 0 && CAMO.score < 90 && CAMO.runs > 1 && !P.last) { CAMO.xrayHint = true; hintOnce('xray', 'Tap the camo meter to see where you show', 2600); }
       return;
     }
     // wait for the change to settle: a stroke in progress, a wipe / flood, a fill swell, the pose easing in
@@ -1544,7 +1612,7 @@ export function createGame(el, api) {
   }
   /** Tongue-zip: shoot the tongue at the surface in the middle of the view and reel in. */
   let tvZ = null;
-  function zip(w = viewer()) {
+  function zip(w = viewer(), aim = null) {
     if (!w || !stage || frozen()) return false;
     const ph = S.phase.name; const role = roleOf(w); const b = body[w];
     const seeking = ph === 'seek' && role === 'hider' && !local && hunting(); // costs an escape
@@ -1559,7 +1627,8 @@ export function createGame(el, api) {
     // aim: the centre of the screen (third person) or the eyes' look direction (first person)
     let ox; let oy; let oz; let dx; let dy; let dz;
     const cam = stage.camera;
-    if (seeking) {
+    if (aim) [ox, oy, oz, dx, dy, dz] = aim; // tests: an explicit ray
+    else if (seeking) {
       const yaw = fpBaseYaw(w) + b.lookYaw;
       ox = cam.position.x; oy = cam.position.y; oz = cam.position.z;
       dx = Math.sin(yaw) * Math.cos(b.lookPitch); dy = Math.sin(b.lookPitch); dz = Math.cos(yaw) * Math.cos(b.lookPitch);
@@ -1575,6 +1644,8 @@ export function createGame(el, api) {
     if (H && H.box && H.box.climb === false) { hint('Too slippery to stick there', 1300); snd.play('warn'); return false; }
     if (!H || Math.hypot(H.x - cx, H.y - cy, H.z - cz) > range || !stage.world.inside(H.x, H.z)) { hint('Nothing in tongue range there — aim at a nearby surface', 1500); snd.play('warn'); return false; }
     if (stage.world.guarded(H.x, H.y, H.z, H.nx, H.ny, H.nz, Math.min(0.35, b.head * 0.8))) { hint('No hiding up there', 1300); snd.play('warn'); return false; }
+    // a slot the tongue fits but the body doesn't (over a locker, behind a shelf): no landing inside the prop
+    if (stage.world.buried(H.x, H.y, H.z, H.nx, H.ny, H.nz) || !stage.world.clearOf(H.x, H.y, H.z, H.nx, H.ny, H.nz, b.r)) { hint('Too tight to fit in there', 1300); snd.play('warn'); return false; }
     if (Math.hypot(H.x - cx, H.y - cy, H.z - cz) < 0.35 * b.s) { hint('Too close — just crawl there', 1000); return false; }
     b.zip = { t0: tSec, dur: ZIP.dur, sx: b.x, sy: b.y, sz: b.z, tx: H.x, ty: H.y, tz: H.z, nx: H.nx, ny: H.ny, nz: H.nz, box: H.box, hx: dx, hy: dy, hz: dz, from: b.at ? 1 : 0 };
     if (!b.at) { b.zip.sy = b.y + b.r; }
@@ -1925,8 +1996,9 @@ export function createGame(el, api) {
       if (!b.at) {
         const wall = stage.world.nearestWall(b.x, b.y, b.z, 0.5 + b.r, (bx) => bx.climb !== false);
         if (!wall) { hint('Get right up against a wall or the side of something first', 2200); snd.play('warn'); return; }
-        // press flat against it: stick to the face, head up
+        // press flat against it: stick to the face, head up (if the body fits there)
         const cy = b.y + 0.25 * b.s;
+        if (!stage.world.clearOf(wall.nx ? wall.px : b.x, cy, wall.nz ? wall.pz : b.z, wall.nx, 0, wall.nz, b.r)) { hint('Too tight to flatten here', 1600); snd.play('warn'); return; }
         attachBody(stage.world, b, wall.nx ? wall.px : b.x, cy, wall.nz ? wall.pz : b.z, wall.nx, 0, wall.nz, wall.box, 0, 1, 0);
         b.lockY = !rules().climb;
         stage.av[v].squash(0.7); snd.play('stick');
@@ -2389,7 +2461,7 @@ export function createGame(el, api) {
         if (got < want * 0.35 && want > 0.001) {
           const sp = Math.hypot(vx, vz) || 1; const dx = vx / sp; const dz = vz / sp;
           const H = world.raycast(b.x, b.y + Math.min(b.head * 0.5, 0.2), b.z, dx, 0, dz, b.r + 0.12, (bx) => bx.maxY - bx.minY > 0.25, false);
-          if (H && H.box && H.box.climb !== false && H.nx * dx + H.nz * dz < -0.7 && world.inside(H.x, H.z)) {
+          if (H && H.box && H.box.climb !== false && H.nx * dx + H.nz * dz < -0.7 && world.inside(H.x, H.z) && world.clearOf(H.x, H.y, H.z, H.nx, 0, H.nz, b.r)) {
             b.pushT += dt;
             if (b.pushT > (role === 'seeker' ? 0.45 : 0.22)) { b.pushT = 0; attachTo(w, H.x, H.y, H.z, H.nx, 0, H.nz, H.box, 0, 1, 0); }
           } else b.pushT = 0;
@@ -3230,11 +3302,14 @@ export function createGame(el, api) {
     else if (ph === 'final' && S.match) { kind = 'final'; a = S.phase.seq; b = `${S.finished}${S.voteVer}`; }
     else if (ph === 'lock' && v && roleOf(v) !== 'seeker') { kind = 'locking'; a = S.phase.seq; }
     if (kind === LY.kind && a === LY.a && b === LY.b) return;
-    // keep the settings sheet's scroll position across live rebuilds
+    // keep the settings sheet's scroll position across live rebuilds, and a scrolled card's when the
+    // same card rebuilds (a vote on the final card, a data bump on the lobby)
     const sc = root.querySelector('.chm-sheet'); const keep = sc ? sc.scrollTop : 0;
+    const cd = kind === LY.kind ? root.querySelector('.chm-over > [data-scroll]') : null; const keepCard = cd ? cd.scrollTop : 0;
     LY.kind = kind; LY.a = a; LY.b = b;
     hud.layer(`${kind}-${++LY.n}`, buildLayer(kind, t, v, role));
     if (keep) { const sc2 = root.querySelector('.chm-sheet'); if (sc2) sc2.scrollTop = keep; }
+    if (keepCard) { const cd2 = root.querySelector('.chm-over > [data-scroll]'); if (cd2) cd2.scrollTop = keepCard; }
     live.blind = root.querySelector('[data-live="blind-time"]'); live.blindS = -1;
     live.resume = root.querySelector('[data-live="resume-count"]'); live.resumeS = -1;
     live.seek = root.querySelector('[data-live="seek-count"]'); live.seekS = -1;
@@ -3286,7 +3361,7 @@ export function createGame(el, api) {
         const d = S.phase.data || {};
         const story = matchStory(api, m.hist || [], curMapEntry().name);
         const vote = m.mode === 'hs' ? { rounds: (m.hist || []).filter((h) => h && h.hider), votes: S.vote, crowned: S.crowned, local } : null;
-        return finalCard(api, { winner: d.winner, a: d.a, b: d.b, mode: m.mode, story, records: S.matchRecords, unlocks: S.matchUnlocks, firstNext: m.mode === 'hs' ? other(m.first) : null, vote });
+        return finalCard(api, { winner: d.winner, a: d.a, b: d.b, mode: m.mode, story, records: S.matchRecords, unlocks: S.matchUnlocks, firstNext: m.mode === 'hs' ? nextFirst || other(m.first) : null, vote });
       }
       case 'locking': return '<div class="chm-stamp ink">Locked in<small>Sealing your paint… <b data-live="seek-count"></b></small></div>';
       default: return '';
@@ -3334,7 +3409,7 @@ export function createGame(el, api) {
       },
       paintHash(w) { return stage.paints[w].hash(); },
       /** Blend score (camo %) of a body against the surface it's on, right now; and the round's locked scores. */
-      blend(w) { return { now: blendOf(w || viewer()), locked: { a: R.blend.a, b: R.blend.b }, assisted: stats.assisted || 0 }; },
+      blend(w) { const now = blendOf(w || viewer()); return { now, views: Array.from(BLENDJ.views.subarray(0, BLENDJ.nv)), locked: { a: R.blend.a, b: R.blend.b }, assisted: stats.assisted || 0 }; },
       phaseLog() { return stats.phaseLog.slice(); },
       perf() {
         const f = Array.from(stats.frames.subarray(0, stats.fn)).sort((x, y) => x - y);
@@ -3343,11 +3418,11 @@ export function createGame(el, api) {
       },
       resetPerf() { stats.fn = 0; stats.fi = 0; },
       /** Maps pass: did this mount reuse a parked stage, the sliced warm-up, the session map cache. */
-      bootInfo() { return { reused: !!S.bootReused, warm: S.bootWarm || null, at: S.bootAt || null, cache: mapCacheInfo(), programs: (stage.renderer.info.programs || []).length }; },
+      bootInfo() { return { reused: !!S.bootReused, warm: S.bootWarm || null, at: S.bootAt || null, cache: mapCacheInfo(), builds: mapBuildStats(), jobs: mapJobsInfo(), programs: (stage.renderer.info.programs || []).length }; },
       teleport(x, z, yaw, y) { const v = viewer(); const b = body[v]; b.x = x; b.z = z; if (yaw != null) b.yaw = yaw; resetBody(b); b.sq = false; b.y = y != null ? y : stage.world.groundAt(x, z, 0.2, 3); b.vy = 0; if (b.pose !== 'stand' && b.pose !== 'crouch') setPoseFor(v, 'stand'); snapOrient[v] = true; return { ...b, box: null }; },
       /** Sticky feet through the same code paths as the buttons. */
       stick() { action('stick'); const b = body[viewer()]; return { at: b.at, n: [b.nx, b.ny, b.nz], f: [b.fx, b.fy, b.fz], p: [b.x, b.y, b.z] }; },
-      zip() { return zip(); },
+      zip(aim) { return zip(viewer(), Array.isArray(aim) && aim.length === 6 ? aim : null); },
       body(w) { const b = body[w || viewer()]; return { ...b, box: b.box ? { minX: b.box.minX, maxX: b.box.maxX, minY: b.box.minY, maxY: b.box.maxY, minZ: b.box.minZ, maxZ: b.box.maxZ, name: b.box.name } : null, zip: !!b.zip }; },
       /** Crawl with a world velocity for n steps of dt (deterministic; no camera mapping). */
       crawl(vx, vy, vz, n = 30, dt = 1 / 30) { const v = viewer(); const b = body[v]; const out = []; for (let i = 0; i < n && b.at; i++) out.push(crawlStep(stage.world, b, vx, vy, vz, dt)); return { res: out, at: b.at, n: [b.nx, b.ny, b.nz], p: [b.x, b.y, b.z] }; },
@@ -3494,9 +3569,11 @@ export function createGame(el, api) {
       },
       brushPreviewNow() { brushPreview(); return PFX.previewUntil > 0; },
       /** The live camo meter: its score, the paint version it was taken at, whether it shows, jobs run. */
-      camo() { return { score: CAMO.score, ver: CAMO.ver, shown: !!(CAMO.meter && CAMO.meter.shown), busy: CAMO.job.on, runs: CAMO.runs, slices: CAMO.slices, sliceMax: CAMO.sliceMax, sliceAvg: CAMO.sliceSum / Math.max(1, CAMO.slices), xray: { on: CAMO.xrayOn, n: CAMO.xrays, bad: CAMO.xrayBad, ms: CAMO.xrayMs }, meter: CAMO.meter ? CAMO.meter.stats : null, cached: !!stats.blendCached }; },
+      camo() { return { score: CAMO.score, ver: CAMO.ver, shown: !!(CAMO.meter && CAMO.meter.shown), busy: CAMO.job.on, runs: CAMO.runs, slices: CAMO.slices, sliceMax: CAMO.sliceMax, sliceAvg: CAMO.sliceSum / Math.max(1, CAMO.slices), xray: { on: CAMO.xrayOn, n: CAMO.xrays, bad: CAMO.xrayBad, ms: CAMO.xrayMs, slice: CAMO.xraySlice || 0, slices: CAMO.xraySlices || 0, lent: !!CAMO.xrayLent, busy: !!XRAYJ.xon }, meter: CAMO.meter ? CAMO.meter.stats : null, cached: !!stats.blendCached }; },
       /** Reset the camo meter's slice timing (perf runs). */
       camoPerfReset() { CAMO.sliceMax = 0; CAMO.sliceSum = 0; CAMO.slices = 0; },
+      /** The blend score's viewpoints (tests may tune them; see camo.js BLEND) and the per-view scores of the meter's last job. */
+      blendViews(o) { if (o) Object.assign(BLEND, o); return { ...BLEND, views: BLEND.views, last: Array.from(CAMO.job.views.subarray(0, CAMO.job.nv)) }; },
       /** Slow the stamp wipe / fill flood down (screenshots) or read the current reveal. */
       reveal(o, w) { if (o) { if (o.stamp) Object.assign(REVEAL.stamp, o.stamp); if (o.fill) Object.assign(REVEAL.fill, o.fill); } return stage.paints[w || viewer() || 'a'].reveal; },
       lookFrom(arr) { C.override = arr; },
@@ -3510,6 +3587,8 @@ export function createGame(el, api) {
       timing() { return { hide: hideMs(), seek: seekMs(), head: headStartMs(), countdown: countdownMs(), grace: graceMs(), scale: mapTime(), hideScale: mapHideTime() }; },
       // polish: records / wardrobe / wager / ticker / emotes
       data() { return { ...data() }; },
+      /** Final card stickers on demand (the worst case is a first match: four unlocks + records). */
+      finalExtras(recs = [], unls = []) { S.matchRecords.push(...recs); S.matchUnlocks.push(...unls); S.voteVer++; },
       polish() { return { stared: R.stared, call: { ...R.call }, ticker: R.ticker, strokes: { ...R.strokes }, passes: R.passes, under: R.under, closest: R.closest, nearD: R.nearD, music, wear: { a: { ...stage.av.a.wear }, b: { ...stage.av.b.wear } }, picks: wearPicks, records: S.matchRecords.slice(), unlocks: S.matchUnlocks.slice(), finished: S.finished }; },
       setCall(k) { setCall(k); return { ...R.call }; },
       emote(k) { sendEmote(k, null); },

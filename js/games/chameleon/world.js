@@ -8,7 +8,9 @@
 // Crawl mode (sticky feet): the body is a contact point on a box face (or the ground) with a
 // surface normal n and a heading f. crawl() slides it along the surface; at a concave corner
 // (a wall ahead) it transfers onto that face, at a convex edge it wraps around onto the side
-// face it just left, so it can walk floor → wall → ceiling → wall → floor.
+// face it just left, so it can walk floor → wall → ceiling → wall → floor. A contact counts only
+// where the body fits: the point itself not buried, and the body's centre (a radius out along n)
+// and the half-way point free of solid boxes and inside the outer walls (clearOf).
 //
 // A uniform XZ grid (CSR arrays) accelerates every query; everything is allocation-free per
 // frame (shared result objects, a stamp array for de-duplication).
@@ -266,7 +268,22 @@ export function createWorld(map) {
     }
     return false;
   }
-  const okContact = (H, clear) => inside(H.x, H.z) && !buried(H.x, H.y, H.z, H.nx, H.ny, H.nz) && !guarded(H.x, H.y, H.z, H.nx, H.ny, H.nz, clear);
+  /** Is there room for the body itself (half way and all the way out along n to its centre)? A
+   *  contact point can fit a slot the body can't (between a locker top and the ceiling, behind a
+   *  shelf against the outer wall): the body then sat inside the next box or past the walls. */
+  const inBox = (b, px, py, pz) => px > b.minX + 0.01 && px < b.maxX - 0.01 && py > b.minY + 0.01 && py < b.maxY - 0.01 && pz > b.minZ + 0.01 && pz < b.maxZ - 0.01;
+  function clearOf(x, y, z, nx, ny, nz, r) {
+    const cx = x + nx * r; const cy = y + ny * r; const cz = z + nz * r;
+    if (!(cx > bounds.minX && cx < bounds.maxX && cz > bounds.minZ && cz < bounds.maxZ)) return false;
+    const hx = x + nx * r * 0.5; const hy = y + ny * r * 0.5; const hz = z + nz * r * 0.5;
+    const n = gather(hx < cx ? hx : cx, hz < cz ? hz : cz, hx < cx ? cx : hx, hz < cz ? cz : hz);
+    for (let q = 0; q < n; q++) {
+      const b = boxes[qbuf[q]];
+      if (b.climb !== false && (inBox(b, cx, cy, cz) || inBox(b, hx, hy, hz))) return false;
+    }
+    return true;
+  }
+  const okContact = (H, clear, r = 0) => inside(H.x, H.z) && !buried(H.x, H.y, H.z, H.nx, H.ny, H.nz) && !guarded(H.x, H.y, H.z, H.nx, H.ny, H.nz, clear) && (!r || clearOf(H.x, H.y, H.z, H.nx, H.ny, H.nz, r));
   function setContact(body, x, y, z, nx, ny, nz, box) {
     body.x = x; body.y = y; body.z = z; body.nx = nx; body.ny = ny; body.nz = nz; body.box = box;
   }
@@ -310,7 +327,7 @@ export function createWorld(map) {
       const G = raycast(ox, oy, oz, dx, dy, dz, k === 0 ? Math.min(look, dist + 0.06) : look, null, true);
       // a non-climbable face (invisible guards, glass) is a solid stop, never a new surface
       if (G && G.box && G.box.climb === false && G.t < dist + r * 0.85) return 3;
-      if (G && G.nx * dx + G.ny * dy + G.nz * dz < -0.5 && okContact(G, clear)) { H = G; break; }
+      if (G && G.nx * dx + G.ny * dy + G.nz * dz < -0.5 && okContact(G, clear, r)) { H = G; break; }
     }
     if (H) {
       setContact(body, H.x, H.y, H.z, H.nx, H.ny, H.nz, H.box);
@@ -320,15 +337,17 @@ export function createWorld(map) {
     // 2. move
     const px = body.x; const py = body.y; const pz = body.z;
     body.x += dx * dist; body.y += dy * dist; body.z += dz * dist;
-    // 3. snap to the surface under the feet (same plane, maybe the next coplanar box)
+    // 3. snap to the surface under the feet (same plane, maybe the next coplanar box) if the body
+    //    fits there (a body already wedged somewhere it doesn't fit may always crawl out)
     H = raycast(body.x + nx * 0.06, body.y + ny * 0.06, body.z + nz * 0.06, -nx, -ny, -nz, 0.06 + 0.1, climbable, true);
-    if (H && H.nx * nx + H.ny * ny + H.nz * nz > 0.9 && inside(H.x, H.z) && !guarded(H.x, H.y, H.z, nx, ny, nz, clear)) {
+    if (H && H.nx * nx + H.ny * ny + H.nz * nz > 0.9 && inside(H.x, H.z) && !guarded(H.x, H.y, H.z, nx, ny, nz, clear)
+      && ((!buried(H.x, H.y, H.z, nx, ny, nz) && clearOf(H.x, H.y, H.z, nx, ny, nz, r)) || !clearOf(px, py, pz, nx, ny, nz, r))) {
       body.x = H.x; body.y = H.y; body.z = H.z; body.box = H.box;
       return 0;
     }
     // 4. convex edge: wrap round onto the side face we just walked off
     H = raycast(body.x - nx * 0.05, body.y - ny * 0.05, body.z - nz * 0.05, -dx, -dy, -dz, dist + 0.3, climbable, false);
-    if (H && H.nx * dx + H.ny * dy + H.nz * dz > 0.7 && okContact(H, clear)) {
+    if (H && H.nx * dx + H.ny * dy + H.nz * dz > 0.7 && okContact(H, clear, r)) {
       setContact(body, H.x, H.y, H.z, H.nx, H.ny, H.nz, H.box);
       reHead(body, -nx, -ny, -nz);
       return 2;
@@ -353,7 +372,7 @@ export function createWorld(map) {
       const H = raycast(body.x, oy, body.z, dx, dy, dz, lim, null, false);
       if (!H || (H.box && H.box.climb === false)) continue;
       if (H.nx * dx + H.ny * dy + H.nz * dz > -0.5) continue;
-      if (!okContact(H, Math.min(0.35, head * 0.8))) continue;
+      if (!okContact(H, Math.min(0.35, head * 0.8), r)) continue;
       const d = H.t - (dy ? head * 0.5 : r);
       if (d < best) { best = d; found = true; stickRes.x = H.x; stickRes.y = H.y; stickRes.z = H.z; stickRes.nx = H.nx; stickRes.ny = H.ny; stickRes.nz = H.nz; stickRes.box = H.box; stickRes.d = d; }
     }
@@ -373,7 +392,7 @@ export function createWorld(map) {
   }
 
   return {
-    boxes, bounds, stats, guarded, step, pushOut, groundAt, groundRes, ceilingAt, raycast, nearestWall, crawl, reHead, nearestSurface, cornerAt, roomFor, inside, buried,
+    boxes, bounds, stats, guarded, clearOf, step, pushOut, groundAt, groundRes, ceilingAt, raycast, nearestWall, crawl, reHead, nearestSurface, cornerAt, roomFor, inside, buried,
     blocks(b, feet, body) { return b.maxY > feet + stepOf(body || {}) && b.minY < feet + headOf(body || {}); },
     /** For tests: how many boxes a query would touch (grid effectiveness). */
     gather,

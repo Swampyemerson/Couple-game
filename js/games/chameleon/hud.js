@@ -310,6 +310,15 @@ export const CSS = `
 /* short portrait phones (SE, mini, Safari with its bars): drop the tagline and the map blurb so Start stays on screen */
 @media (orientation: portrait) and (max-height: 740px) {
   .chm-lobby .chm-tag, .chm-lobby .chm-mapinfo small { display: none; }
+  /* the map's facts run under the plan + name (two chips a row) instead of a four-high stack in the
+     narrow column beside them: the House / CU lobby fits a 390 × 664 / 375 × 667 phone again */
+  .chm-lobby .chm-mapcard { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; grid-template-areas: "prev plan name next" "prev facts facts next"; column-gap: 8px; row-gap: 5px; align-items: center; }
+  .chm-lobby .chm-mapcard > .chm-arrow:first-child { grid-area: prev; }
+  .chm-lobby .chm-mapcard > .chm-arrow:last-child { grid-area: next; }
+  .chm-lobby .chm-mapcard > .chm-plan { grid-area: plan; }
+  .chm-lobby .chm-mapinfo { display: contents; }
+  .chm-lobby .chm-mapinfo b { grid-area: name; }
+  .chm-lobby .chm-facts { grid-area: facts; margin-top: 0; }
 }
 .chm-start { font-weight: 800; }
 .chm-start b { color: var(--g-ink); background: var(--g-hl); padding: 0 6px; border-radius: 6px; }
@@ -461,7 +470,7 @@ export const CSS = `
 .chm-bests span { white-space: nowrap; } .chm-bests i { font-style: normal; opacity: .5; } .chm-bests em { font-style: normal; text-transform: lowercase; }
 .chm-wardbtn { padding: 0 10px; min-width: 48px; flex: none; }
 .chm-wardrobe h3 { margin: 8px 0 0; }
-.chm-wrow { display: flex; gap: 8px; overflow-x: auto; padding: 4px 2px 8px; -webkit-overflow-scrolling: touch; scroll-snap-type: x proximity; }
+.chm-wrow { flex: none; display: flex; gap: 8px; overflow-x: auto; padding: 4px 2px 8px; -webkit-overflow-scrolling: touch; scroll-snap-type: x proximity; }
 .chm-wt { flex: none; width: 92px; min-height: 96px; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 3px; padding: 8px 4px 6px; border: 2px solid var(--g-ink); border-radius: 14px; background: var(--g-card); color: var(--g-ink); font: 900 .72rem/1.1 var(--g-font-body); cursor: pointer; touch-action: manipulation; box-shadow: var(--g-shadow-sm, 2px 2px 0 var(--g-edge)); scroll-snap-align: start; text-align: center; }
 .chm-wt small { font-size: .58rem; font-weight: 700; color: var(--g-muted); line-height: 1.15; }
 .chm-wt.on { background: var(--g-hl); color: var(--g-on-ink); transform: translate(-2px, -2px); box-shadow: 4px 4px 0 var(--g-edge); }
@@ -511,6 +520,31 @@ export const CSS = `
 .chm-ring::after { content: ''; position: absolute; inset: -6px; border-radius: 18px; padding: 3px; background: conic-gradient(var(--g-ink) calc(var(--k, 1) * 100%), transparent 0); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; opacity: .55; pointer-events: none; }
 /* final card */
 .chm-final .chm-card { gap: 10px; }
+/* a card taller than the phone scrolls under a finger (controls.js lets a [data-scroll] drag through
+   when it can pan); nothing in a scrolling card or sheet squashes: the card scrolls instead */
+.chm-card[data-scroll] { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; touch-action: pan-y; }
+:where(.chm-card, .chm-sheet) > * { flex-shrink: 0; }
+/* the recap / final card's button (and who's next) stay pinned to the card's bottom edge */
+.chm-card:has(> .chm-foot) { padding-bottom: 0; }
+.chm-foot { position: sticky; bottom: 0; z-index: 1; display: flex; flex-direction: column; gap: 8px; margin: 0 -18px; padding: 8px 18px 16px; background: var(--g-card); border-radius: 0 0 11px 11px; }
+.chm-foot::before { content: ''; position: absolute; left: 0; right: 0; top: -8px; height: 8px; background: linear-gradient(to bottom, color-mix(in srgb, var(--g-card) 0%, transparent), var(--g-card)); pointer-events: none; }
+.chm-final .chm-recs span.more { background: var(--g-card); color: var(--g-ink); }
+.chm-final .chm-recs span i { display: inline-block; width: 8px; height: 8px; margin-right: 5px; border-radius: 50%; border: 1.5px solid var(--g-ink); vertical-align: 0; }
+.chm-final .chm-recs span.pa i { background: var(--p-a); } .chm-final .chm-recs span.pb i { background: var(--p-b); }
+.chm-final .chm-recs span.two i { background: var(--p-a); margin-right: -2px; } .chm-final .chm-recs span.two i + i { background: var(--p-b); margin-right: 5px; }
+/* the vote's round chips: two to a row on any phone (375 px used to stack all four) */
+.chm-vote .chm-chips { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.chm-vote .chm-chips .chm-chip { justify-content: center; min-width: 0; padding: 8px 6px; gap: 5px; font-size: .8rem; white-space: nowrap; }
+/* short phones: the final card tightens up so a 4-round match (records, vote, emotes) fits 390 × 664 */
+@media (orientation: portrait) and (max-height: 740px) {
+  .chm-final .chm-card { gap: 7px; padding-top: 14px; }
+  .chm-final .chm-card h2 { font-size: 1.45rem; }
+  .chm-final .chm-story { font-size: .76rem; gap: 2px; }
+  .chm-final .chm-tl { gap: 3px; } .chm-final .chm-tl-bar { height: 14px; }
+  .chm-final .chm-foot { gap: 6px; padding-top: 6px; }
+}
+/* a phone: the tall cards start below the hub's back / menu stickers instead of under them */
+@media (max-width: 560px) { .chm-over.chm-final, .chm-over.chm-recap { padding-top: calc(var(--gm-corner-safe, 64px) + 6px); } }
 .chm-tl { display: flex; flex-direction: column; gap: 4px; }
 .chm-tl-row { display: flex; align-items: center; gap: 6px; font-size: .72rem; font-weight: 900; }
 .chm-tl-n { width: 24px; text-align: right; color: var(--g-muted); }
@@ -644,6 +678,11 @@ export function createHud(root, api) {
   const actBtn = new Map(); // act -> { btn, em, cd, label, disabled, cdOff, hl }
   const mini = { bg: null, k: 1, ox: 0, oz: 0, px: -1, pz: -1, ya: 0, col: '', ink: '#000' };
   const pellets = [];
+  // the body font token, read once at mount (maps QA round 1: getComputedStyle in miniSetup forced
+  // a style recalc inside every big-map switch, 414 ms of self time at 4x CPU on a House switch)
+  let fontTok = '';
+  const bodyFont = () => fontTok || (fontTok = getComputedStyle(root).getPropertyValue('--g-font-body').trim()) || 'sans-serif';
+  try { bodyFont(); } catch { /* read on first use */ }
 
   const hud = {
     el,
@@ -733,14 +772,13 @@ export function createHud(root, api) {
       const w = plan.maxX - plan.minX; const d = plan.maxZ - plan.minZ;
       const k = Math.min((W - 16) / w, (H - 16) / d);
       mini.k = k; mini.ox = (W - w * k) / 2 - plan.minX * k; mini.oz = (H - d * k) / 2 - plan.minZ * k;
-      const css = getComputedStyle(root);
       // a fixed paper / ink pair in both themes: the dark theme's grey-on-near-black plan was unreadable
       const ink = '#1d1b22'; const paper = '#e9e5dc'; const line = 'rgba(29,27,34,0.35)';
       const card = '#f7f4ee'; const muted = '#4a4650';
       // maps pass: the floor label in the web font only once that face is loaded (fillText in a
       // face still loading cost ~380 ms on the Market switch), and the drawn plans are kept on
       // the plan object, which game.js keeps per built map: a revisit draws nothing
-      let font = css.getPropertyValue('--g-font-body').trim() || 'sans-serif';
+      let font = bodyFont();
       const fpx = Math.round(H / 11);
       let fontOk = true; try { fontOk = !document.fonts || document.fonts.check(`800 ${fpx}px ${font}`); } catch { fontOk = false; }
       if (!fontOk) font = 'system-ui, -apple-system, sans-serif';

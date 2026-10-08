@@ -22,7 +22,10 @@ export function createAtlas(size = 1024, height = size) {
     reqs.push({ key, painter, iw, ih, repeat });
   }
 
-  function finish() {
+  /** Paint every tile (all at once). finishSteps() is the same work one tile per step (it
+   *  yields after each tile), so a map build can be spread over frames (maps.js buildMapAsync). */
+  function finish() { const it = finishSteps(); for (;;) { const s = it.next(); if (s.done) return s.value; } }
+  function* finishSteps() {
     add('white', (g, w, h) => { g.fillStyle = '#ffffff'; g.fillRect(0, 0, w, h); }, { size: 'S', repeat: true });
     // shelf packing, tallest first
     const order = [...reqs].sort((a, b) => b.ih + PAD * 2 - (a.ih + PAD * 2) || b.iw - a.iw);
@@ -67,6 +70,7 @@ export function createAtlas(size = 1024, height = size) {
       rects[r.key] = { x: ix, y: iy, w, h, repeat: r.repeat };
       tiles[r.key] = [ix / size, 1 - (iy + h) / height, w / size, h / height];
       x += W; shelf = Math.max(shelf, H);
+      yield r.key;
     }
     // The CPU copy for the eyedropper / stamp / blend score is read on first use (or by
     // warm() in idle time after a map switch): a 4-8 MB getImageData no longer sits in the
@@ -79,7 +83,7 @@ export function createAtlas(size = 1024, height = size) {
       warm() { void this.data; },
     };
   }
-  return { add, finish };
+  return { add, finish, finishSteps };
 }
 
 /** CPU texel lookup matching the shader: tile + fract(uv). Writes [r,g,b] (0-255) into out. */

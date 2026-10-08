@@ -9,7 +9,7 @@ export const STYLES = [
   { key: 'eye', k: 0, name: 'Amber', how: '' },
   { key: 'eye', k: 1, name: 'Emerald', how: 'Survive 3 hunts', test: (S) => S.surv >= 3 },
   { key: 'eye', k: 2, name: 'Ruby', how: 'Tag someone in under 15 s', test: (S) => S.findMs > 0 && S.findMs <= 15000 },
-  { key: 'eye', k: 3, name: 'Gold', how: 'Blend 90 % or better', test: (S) => S.blend >= 90 },
+  { key: 'eye', k: 3, name: 'Gold', how: 'Survive a hunt at 90 % blend', test: (S) => S.blendSurv >= 90 },
   { key: 'eye', k: 4, name: 'Galaxy', how: 'Survive on a ceiling 3 times', test: (S) => S.ceiling >= 3 },
   { key: 'shape', k: 0, name: 'Round', how: '' },
   { key: 'shape', k: 1, name: 'Cat slit', how: 'Win a Double Blind round', test: (S) => S.dbwins >= 1 },
@@ -35,7 +35,7 @@ export const unlocked = (d, w, st) => st.k === 0 || !!d[`unlock_${w}_${st.key}${
 /** Stats for the unlock tests, from the shared data for one person. */
 export function statsOf(d, w) {
   const g = (k) => d[`${w}_${k}`] | 0;
-  return { surv: g('surv'), findMs: g('find_ms'), ghost: g('ghost'), blend: g('blend'), ceiling: g('surf_ceiling') + g('surf_hang'), dbwins: g('dbwins'), stared: g('stared'), rounds: g('rounds'), hang: g('surf_hang'), strokes: g('strokes'), streakBest: g('streak_best'), wins: g('wins') };
+  return { surv: g('surv'), findMs: g('find_ms'), ghost: g('ghost'), blend: g('blend'), blendSurv: g('blend_surv'), ceiling: g('surf_ceiling') + g('surf_hang'), dbwins: g('dbwins'), stared: g('stared'), rounds: g('rounds'), hang: g('surf_hang'), strokes: g('strokes'), streakBest: g('streak_best'), wins: g('wins') };
 }
 /** New unlocks for `w` given the data (after a patch has been folded in): [{ w, st }] and the patch. */
 export function newUnlocks(d, w) {
@@ -63,7 +63,7 @@ export function hintFor(st, S) {
   switch (`${st.key}${st.k}`) {
     case 'eye1': return `Survive ${Math.max(1, 3 - S.surv)} more hunt${3 - S.surv === 1 ? '' : 's'}`;
     case 'eye2': return S.findMs ? `Your fastest tag is ${(S.findMs / 1000).toFixed(1)} s: beat 15 s` : 'Tag someone in under 15 s';
-    case 'eye3': return S.blend ? `Your best blend is ${S.blend} %: stamp the surface you’re on and get to 90` : 'Blend 90 % or better at the lock (Stamp helps)';
+    case 'eye3': return S.blendSurv ? `Your best hide that lasted was ${S.blendSurv} % blend: get to 90 and survive` : S.blend ? `Your best blend is ${S.blend} %: get to 90 on a calm surface, then survive the hunt` : 'Lock in at 90 % blend or better, then survive the hunt';
     case 'eye4': return `Survive on a ceiling ${Math.max(1, 3 - S.ceiling)} more time${3 - S.ceiling === 1 ? '' : 's'}`;
     case 'shape1': return 'Win a round of Double Blind (two phones)';
     case 'shape2': return 'Get stared at 5 times in one hunt and live';

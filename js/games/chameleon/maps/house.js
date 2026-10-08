@@ -63,7 +63,7 @@ function build(atlas) {
   atlas.add('dots', P.dots({ bg: C.red, fg: '#ffffff', n: 3, r: 0.2 }), { size: 'S' });
   atlas.add('stripe', P.stripes({ cols: [C.blue, '#ffffff'], n: 3 }), { size: 'S' });
 
-  return (b) => {
+  return function* fill(b) {
     const r = seeded('house');
     const skin = (side, a0, a1, y0, y1, d, inset = 0) => {
       const o = { tile: d.tile, rep: d.rep || 1, color: d.color || '#ffffff', outline: false };
@@ -84,6 +84,7 @@ function build(atlas) {
       if (side === 'right') aabb(b, X1 - 0.12, y - 0.06, c - w / 2 - 0.08, X1, y, c + w / 2 + 0.08, { color: C.paper, collide: { wall: false, perch: true, name: 'perch:sill' } });
     };
 
+    yield 'shell';
     // ── shell: plinth, outer walls (bricks outside), low front ──
     const T = 0.16;
     b.add(boxGeo(W + 0.9, 0.36, D + 0.9, { round: 0.04 }), { at: [0, -0.2, 0], color: '#5a3d2b' });
@@ -102,6 +103,7 @@ function build(atlas) {
     aabb(b, X0 - T - 0.01, TOP - 0.03, Z0, X0 + 0.01, TOP, Z1, { color: '#3a2f2a', outline: false, faces: ['py', 'px', 'nx'] });
     aabb(b, X1 - 0.01, TOP - 0.03, Z0, X1 + T + 0.01, TOP, Z1, { color: '#3a2f2a', outline: false, faces: ['py', 'px', 'nx'] });
 
+    yield 'floors';
     // ── floors ──
     floor(b, -9, -6, -2.5, 0.5, 0, { tile: 'kfloor', rep: 1.2 });
     floor(b, -9, 0.5, -2.5, 6, 0, { tile: 'herring', rep: 1.1 });
@@ -109,6 +111,7 @@ function build(atlas) {
     floor(b, 0.5, -6, 9, 0, 0, { tile: 'planks', rep: 1.4, color: '#e9d6c0' });
     floor(b, 0.5, 0, 4.5, 6, 0, { tile: 'terrazzo', rep: 1.0 });
     floor(b, 4.5, 0, 9, 6, 0, { tile: 'bfloor', rep: 0.9 });
+    yield 'upper slabs';
     // upper slabs (ceilings of the ground floor) + their floor skins
     slab(b, -9, -6, 0.5, 6, FH, { under: { color: '#fdf8ee' }, edge: '#3a2f2a', name: 'ceil:ground-west' });
     slab(b, 0.5, 0, 9, 6, FH, { under: { color: '#fdf8ee' }, edge: '#3a2f2a', name: 'ceil:ground-east' });
@@ -116,10 +119,12 @@ function build(atlas) {
     floor(b, -9, 1, -2.5, 6, FH, { tile: 'planks', rep: 1.3, color: '#e7d2ea' });
     floor(b, -2.5, -6, 0.5, 6, FH, { tile: 'planks', rep: 1.4 });
     floor(b, 0.5, 0, 9, 6, FH, { tile: 'planks', rep: 1.6, color: '#d9c6a6' });
+    yield 'lids';
     // lids: stairwell (coffered, chandelier) and bedroom (ceiling fan); shingles on top for the outside view
     slab(b, 0.5, -6, 9, 0, TOP + 0.2, { under: { tile: 'coffer', rep: 1.2 }, lid: true, name: 'ceil:stairwell' });
     slab(b, -9, -6, -2.5, 1, TOP + 0.2, { under: { color: '#fbf3ee' }, lid: true, name: 'ceil:bedroom' });
 
+    yield 'outer wall skins';
     // ── outer wall skins per room ──
     const K = { tile: 'kwall', rep: 0.7 }; const DM = { tile: 'damask', rep: 1.1 }; const HL = { tile: 'hallpaper', rep: 0.9 };
     const SW = { color: '#f2e6d6' }; const LA = { tile: 'laundry', rep: 0.6 }; const BA = { tile: 'subway', rep: 0.55 };
@@ -134,6 +139,7 @@ function build(atlas) {
     win('back', -5.0, 1.55, 1.3, 0.85); win('left', 3.2, 1.0, 1.4, 1.1); win('back', 4.5, 3.6, 1.6, 1.3); win('right', -3, 1.2, 1.2, 1.2);
     win('back', -5.8, FH + 1.0, 1.5, 1.1); win('left', -2.5, FH + 1.0, 1.1, 1.0); win('right', 3, FH + 1.2, 1.2, 0.9); win('right', 3, 1.3, 0.9, 0.8);
 
+    yield 'ground-floor interior walls';
     // ── ground-floor interior walls ──
     const trim = '#f4efe6';
     wall(b, { x0: -2.5, z0: -6, x1: -2.5, z1: 0.5, h: UH, n: K, p: HL, trim, open: [{ c: -1.4, w: 1.0 }, { c: -4.3, w: 1.3, bottom: 0.95, top: 1.75 }], name: 'w:kitchen-hall' });
@@ -142,9 +148,11 @@ function build(atlas) {
     wall(b, { x0: 0.5, z0: -6, x1: 0.5, z1: 0, h: UH, n: HL, p: SW, trim, open: [{ c: -2.6, w: 2.2, top: 2.35 }], name: 'w:hall-stair' });
     wall(b, { x0: 0.5, z0: 0, x1: 0.5, z1: 6, h: UH, n: HL, p: LA, trim, open: [{ c: 3.4, w: 1.0 }], name: 'w:hall-laundry' });
     wall(b, { x0: 0.5, z0: 0, x1: 9, z1: 0, h: UH, n: SW, p: LA, trim, open: [{ c: 2.4, w: 1.0 }, { c: 6.8, w: 1.0 }], name: 'w:stair-south' });
+    yield 'bath side of';
     // bath side of that same wall is tiled
     skin2(b, 4.5, 9, 0.07, BA);
     wall(b, { x0: 4.5, z0: 0, x1: 4.5, z1: 6, h: UH, n: LA, p: BA, trim, open: [{ c: 4.6, w: 1.0 }, { c: 1.6, w: 0.9, bottom: 1.1, top: 1.7 }], name: 'w:laundry-bath' });
+    yield 'upstairs walls';
     // ── upstairs walls ──
     wall(b, { x0: -2.5, z0: -6, x1: -2.5, z1: 1, y: FH, h: UH, n: BR, p: HL, trim, open: [{ c: -1.6, w: 1.0 }], name: 'w:bed-landing' });
     wall(b, { x0: -2.5, z0: 1, x1: -2.5, z1: 6, y: FH, h: UH, n: CL, p: HL, trim, open: [{ c: 4.4, w: 1.0 }], name: 'w:closet-landing' });
@@ -154,9 +162,11 @@ function build(atlas) {
     railing(b, 0.6, 0, 9, 0, FH, { name: 'attic-balcony' });
     railing(b, 0.5, -6, 0.5, -5.97, FH, { h: 0.95 });
 
+    yield 'stairs';
     // ── STAIRS (stairwell back wall, climbing toward the landing) ──
     const st = stairs(b, { x: 0.5 + 16 * 0.28, z: -5.42, dir: 'x-', width: 1.05, n: 16, rise: FH / 16, run: 0.28, tread: { color: '#b07a4f', tile: 'wood', rep: 0.5 }, stringer: '#6b4430', railSide: 1, name: 'stairs' });
     void st;
+    yield 'runner on the';
     // runner on the treads is implied by colour; under-stair storage
     const us = F(b, 2.0, -5.5);
     us.box(0.5, 0.45, 0.4, [0, 0.225, 0], { color: C.teal, collide: { wall: true, name: 'understair-box' } });
@@ -166,6 +176,7 @@ function build(atlas) {
     for (let i = 0; i < 4; i++) us.box(0.12, 0.08, 0.28, [-0.6 + i * 0.16, 0.04, 0.35], { color: [C.red, C.blue, C.yellow, C.green][i] });
     us.blob(0.2, 0, 0.9, 0.4);
 
+    yield 'stairwell';
     // ── STAIRWELL: chandelier, clock, bench, plant, rug, mirror ──
     rug(b, 5.2, -2.6, 3.4, 2.4, 0, 'kilim', { fit: true });
     const ch = F(b, 5.2, -2.7);
@@ -179,6 +190,7 @@ function build(atlas) {
       b.add(sphereGeo(0.035, 0.06, 0.035, { w: 6, h: 5 }), { at: [px, TOP - 1.46, pz], color: '#ffd23f', outline: false });
     }
     for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2; b.add(sphereGeo(0.05, 0.08, 0.05, { w: 6, h: 5 }), { at: [5.2 + Math.cos(a) * 0.4, TOP - 1.82, -2.7 + Math.sin(a) * 0.4], color: '#cfe8f0' }); }
+    yield 'grandfather clock against';
     // grandfather clock against the right wall
     const gc = F(b, 8.62, -3.8, -Math.PI / 2);
     gc.box(0.6, 2.1, 0.45, [0, 1.05, 0], { color: '#7a3e2a', tile: 'wood', rep: 0.6, collide: { wall: true, name: 'clock' } });
@@ -186,6 +198,7 @@ function build(atlas) {
     gc.cyl(0.2, 0.2, 0.03, [0, 1.75, 0.235], { color: C.cream, rot: [Math.PI / 2, 0, 0] });
     gc.box(0.3, 0.8, 0.02, [0, 0.9, 0.23], { color: '#e0a43d' });
     gc.blob(0, 0, 0.45, 0.35);
+    yield 'bench';
     // bench + cushions, coat stand, umbrella stand, big plant
     const be = F(b, 8.55, -1.4, -Math.PI / 2);
     be.box(1.5, 0.08, 0.45, [0, 0.45, 0], { color: C.brown, tile: 'wood', rep: 0.6, collide: { wall: false, ceil: true, name: 'bench' } });
@@ -202,10 +215,12 @@ function build(atlas) {
     cs.blob(0, 0, 0.3, 0.3);
     plantPot(b, 1.2, -1.6, 0, 1.5, 'h1', C.coral);
     plantPot(b, 8.4, -5.5, 0, 1.7, 'h2', C.teal);
+    yield 'round mirror over';
     // round mirror over the bench
     b.add(cylGeo(0.45, 0.45, 0.04, { radial: 20 }), { at: [X1 - 0.03, 1.6, -1.4], rot: [0, 0, Math.PI / 2], color: C.mustard });
     b.add(cylGeo(0.38, 0.38, 0.01, { radial: 20 }), { at: [X1 - 0.055, 1.6, -1.4], rot: [0, 0, Math.PI / 2], color: '#d6ecf2', outline: false });
 
+    yield 'hall';
     // ── HALL: runner rug, framed photos, console, shoe rack ──
     rug(b, -1.0, 0, 1.1, 10.5, 0, 'runner', { rep: [1.1, 1.0] });
     const photos = [['pic1', 0.42, 0.52], ['pic2', 0.6, 0.42], ['pic3', 0.4, 0.4], ['pic4', 0.45, 0.55], ['art', 0.55, 0.45]];
@@ -229,21 +244,25 @@ function build(atlas) {
     pendant(b, -1.0, -2.5, UH, 2.05, { shade: C.mustard });
     pendant(b, -1.0, 2.5, UH, 2.05, { shade: C.teal });
 
+    yield 'kitchen';
     // ── KITCHEN: counters, island + pot rack, fridge, pantry, table bits ──
     const cab = { color: '#7fa89a', tile: 'panel', rep: [0.6, 0.85] };
     aabb(b, -8.95, 0, -5.95, -3.0, 0.88, -5.35, { ...cab, outline: true, collide: { wall: true, name: 'counter-back' } });
     aabb(b, -9.0, 0.88, -6.0, -2.95, 0.93, -5.3, { color: '#f4efe6', outline: true, collide: { wall: false, name: 'counter-top' } });
     aabb(b, -8.95, 1.5, -5.95, -6.4, 2.2, -5.6, { ...cab, outline: true, collide: { wall: true, ceil: true, name: 'upper-cab-a' } });
     aabb(b, -3.6, 1.5, -5.95, -3.0, 2.2, -5.6, { ...cab, outline: true, collide: { wall: true, ceil: true, name: 'upper-cab-b' } });
+    yield 'sink';
     // sink + tap + kettle + jars
     aabb(b, -5.5, 0.9, -5.9, -4.5, 0.935, -5.4, { color: '#c9d6dc', outline: true });
     b.add(cylGeo(0.02, 0.02, 0.3, { radial: 6 }), { at: [-5.0, 1.08, -5.85], color: '#9aa7ad' });
     b.add(boxGeo(0.03, 0.03, 0.18), { at: [-5.0, 1.22, -5.78], color: '#9aa7ad' });
     b.add(latheGeo([[0.1, 0], [0.12, 0.12], [0.08, 0.2], [0.02, 0.22]], { radial: 12 }), { at: [-3.7, 0.93, -5.6], color: C.red });
     for (let i = 0; i < 4; i++) b.add(cylGeo(0.06, 0.06, 0.16 + i * 0.03, { radial: 10 }), { at: [-8.6 + i * 0.16, 0.93 + (0.16 + i * 0.03) / 2, -5.7], color: [C.yellow, C.coral, C.teal, C.plum][i] });
+    yield 'stove';
     // stove + hood
     aabb(b, -7.4, 0.935, -5.9, -6.6, 0.96, -5.35, { color: C.ink, outline: true });
     for (const [x, z] of [[-7.2, -5.75], [-6.8, -5.75], [-7.2, -5.5], [-6.8, -5.5]]) b.add(cylGeo(0.08, 0.08, 0.01, { radial: 10 }), { at: [x, 0.97, z], color: '#5a5560', outline: false });
+    yield 'fridge';
     // fridge + pantry on the left wall
     aabb(b, -8.95, 0, -4.9, -8.25, 1.95, -4.05, { color: '#e9f2f4', outline: true, collide: { wall: true, name: 'fridge' } });
     aabb(b, -8.24, 1.2, -4.85, -8.23, 1.21, -4.1, { color: '#b7c6cc', outline: false });
@@ -259,6 +278,7 @@ function build(atlas) {
         if (lv === 1 && x > -0.1 && x < 0.3) x = 0.35; // a gap to hide in
       }
     }
+    yield 'island with an';
     // island with an open shelf you can slip into
     const is = F(b, -5.6, -2.7);
     is.box(2.2, 0.05, 1.1, [0, 0.905, 0], { color: '#f4efe6', collide: { wall: false, ceil: true, name: 'island-top' } });
@@ -273,6 +293,7 @@ function build(atlas) {
       s2.cyl(0.14, 0.16, 0.02, [0, 0.01, 0], { color: C.ink });
       s2.blob(0, 0, 0.22, 0.22);
     }
+    yield 'hanging pot rack';
     // hanging pot rack over the island
     const pr = F(b, -5.6, -2.7);
     for (const [sx, sz] of [[-0.8, -0.3], [0.8, -0.3], [-0.8, 0.3], [0.8, 0.3]]) pr.cyl(0.008, 0.008, 0.6, [sx, UH - 0.3, sz], { color: C.ink, radial: 4, outline: false });
@@ -283,11 +304,13 @@ function build(atlas) {
       pr.cyl(rr, rr * 0.85, 0.12, [px, UH - 0.9, 0], { color: pc });
     }
     pendant(b, -5.6, -0.8, UH, 2.1, { shade: C.red });
+    yield 'little breakfast table';
     // little breakfast table + chairs under the window side
     const kt = F(b, -3.5, -0.6);
     table(kt, 0.9, 0.9, 0.74, { top: '#f4efe6', tile: null, leg: C.ink, cloth: 'kwall', clothRep: 0.4 });
     for (const [lx, yaw] of [[-0.62, Math.PI / 2], [0.62, -Math.PI / 2]]) chair(F(b, ...kt.W(lx, 0), yaw), { color: C.mustard, leg: C.brown });
     kt.cyl(0.07, 0.06, 0.18, [0, 0.83, 0], { color: C.sky }); kt.sph(0.08, 0.07, 0.08, [0, 0.98, 0], { color: C.pink });
+    yield 'fruit bowl';
     // fruit bowl + bin
     b.add(sphereGeo(0.24, 0.12, 0.24, { w: 12, h: 6, thetaMax: Math.PI / 2 }), { at: [-5.6, 1.05, -2.6], rot: [Math.PI, 0, 0], color: C.teal });
     for (let i = 0; i < 4; i++) b.add(sphereGeo(0.07, 0.07, 0.07, { w: 8, h: 6 }), { at: [-5.68 + (i % 2) * 0.14, 1.05, -2.66 + Math.floor(i / 2) * 0.12], color: [C.orange, C.red, C.yellow, C.green][i], outline: false });
@@ -295,6 +318,7 @@ function build(atlas) {
     b.blob(-3.2, -4.9, 0.22, 0.22);
     b.blob(-6, -5.65, 3.1, 0.5, { a: 0.24 });
 
+    yield 'dining';
     // ── DINING: big table with a tablecloth tent, sideboard, chairs, rug ──
     rug(b, -5.8, 3.3, 4.2, 3.0, 0, 'kilim', { fit: true });
     const dt = F(b, -5.8, 3.3);
@@ -313,11 +337,13 @@ function build(atlas) {
     plantPot(b, -8.5, 5.4, 0, 1.4, 'h3', C.mustard);
     plantPot(b, -3.1, 5.4, 0, 1.1, 'h4', C.blue);
     picture(b, -5.8, 1.65, 0.57, 1.2, 0.8, 'z+', 'art', { frame: C.ink });
+    yield 'a dog bed';
     // a dog bed by the pet door
     const db = F(b, -7.6, 1.2);
     db.lathe([[0.4, 0], [0.42, 0.14], [0.36, 0.16], [0.32, 0.06]], [0, 0, 0], { color: '#ffffff', tile: 'plaid', rep: 0.4, collide: true });
     db.blob(0, 0, 0.45, 0.45);
 
+    yield 'laundry';
     // ── LAUNDRY: washer + dryer, drying rack, basket, ironing board, shelf ──
     for (const [x, col] of [[1.1, '#f4f7f8'], [1.85, '#f4f7f8']]) {
       aabb(b, x - 0.33, 0, 5.25, x + 0.33, 0.86, 5.9, { color: col, outline: true, collide: { wall: true, name: 'washer' } });
@@ -343,12 +369,14 @@ function build(atlas) {
     ib.blob(0, 0, 0.7, 0.25, { a: 0.15 });
     pendant(b, 2.5, 3, UH, 2.1, { shade: C.sky });
 
+    yield 'bathroom';
     // ── BATHROOM: clawfoot tub + shower curtain, toilet, vanity, towel rail, mat ──
     const tb = F(b, 7.9, 4.6);
     tb.box(1.0, 0.5, 1.7, [0, 0.42, 0], { color: '#fbf7ee', round: 0.18, seg: 2, collide: { wall: true, name: 'tub' } });
     tb.box(0.82, 0.02, 1.5, [0, 0.62, 0], { color: '#9cd0dc', outline: false });
     for (const [sx, sz] of [[-0.38, -0.7], [0.38, -0.7], [-0.38, 0.7], [0.38, 0.7]]) tb.sph(0.06, 0.09, 0.06, [sx, 0.09, sz], { color: C.mustard });
     tb.blob(0, 0, 0.6, 0.95);
+    yield 'curtain rail';
     // curtain rail (perch) + curtain hanging along the open side of the tub
     aabb(b, 7.3, 2.05, 3.6, 7.33, 2.08, 6.0, { color: '#9aa7ad', collide: { wall: false, perch: true, name: 'perch:curtain-rail' } });
     for (let i = 0; i < 4; i++) b.add(boxGeo(0.03, 1.6, 0.42), { at: [7.31 + (i % 2) * 0.05, 1.25, 3.85 + i * 0.36], color: '#ffffff', tile: 'curtain', rep: 0.45, uvOff: [i * 0.3, 0] });
@@ -371,10 +399,12 @@ function build(atlas) {
     aabb(b, 5.7, 0.7, 0.12, 6.1, 1.22, 0.14, { color: '#ffffff', tile: 'dots', rep: 0.25 });
     rug(b, 6.6, 3.4, 1.0, 0.65, 0, 'chevron', { rep: 0.4 });
     plantPot(b, 5.0, 0.5, 0, 0.9, 'h5', C.pink);
+    yield 'rubber duck';
     // rubber duck
     b.add(sphereGeo(0.06, 0.05, 0.07, { w: 8, h: 6 }), { at: [7.9, 0.67, 4.2], color: C.yellow });
     b.add(sphereGeo(0.035, 0.035, 0.035, { w: 8, h: 6 }), { at: [7.9, 0.74, 4.15], color: C.yellow });
 
+    yield 'bedroom';
     // ── BEDROOM (upstairs): bed with quilt (squeeze under), nightstands, dresser, fan, armchair ──
     const Y = FH;
     rug(b, -5.4, -2.6, 3.4, 2.6, Y, 'chevron', { rep: 0.7 });
@@ -411,6 +441,7 @@ function build(atlas) {
     for (const sx of [-1, 1]) ac.box(0.15, 0.45, 0.75, [sx * 0.4, 0.3, 0], { color: '#ffffff', tile: 'plaid', rep: 0.35, round: 0.05 });
     ac.blob(0, 0, 0.55, 0.5);
     plantPot(b, -8.5, 0.5, Y, 1.3, 'h6', C.blue);
+    yield 'ceiling fan';
     // ceiling fan (perch on the blades)
     const fan = F(b, -5.4, -2.6, 0, Y);
     fan.cyl(0.02, 0.02, 0.5, [0, UH - 0.25, 0], { color: C.ink, radial: 6 });
@@ -421,6 +452,7 @@ function build(atlas) {
     fan.sph(0.12, 0.08, 0.12, [0, UH - 0.66, 0], { color: '#fff3c4' });
     picture(b, -5.4, Y + 1.85, -5.97, 0.9, 0.6, 'z+', 'pic2', { frame: C.mustard });
 
+    yield 'closet';
     // ── CLOSET (upstairs): clothes rails of patterns, shoe tower, hat boxes, mirror, pouf ──
     const garments = ['plaid', 'argyle', 'towel', 'dots', 'stripe', 'curtain', 'quilt', 'chevron'];
     const rail = (x0, z0, x1, z1, n, seed) => {
@@ -447,6 +479,7 @@ function build(atlas) {
     rug(b, -6.2, 3.5, 2.2, 1.6, Y, 'argyle', { rep: 0.6 });
     aabb(b, -2.62, Y + 0.1, 4.95, -2.58, Y + 1.9, 5.65, { color: '#d6ecf2', outline: true });
 
+    yield 'landing';
     // ── LANDING (upstairs hall): runner, bookcase, laundry hamper, window seat ──
     rug(b, -1.0, -0.3, 1.0, 9.0, Y, 'runner', { rep: [1.0, 1.0] });
     const bk = F(b, -2.25, -3.8, Math.PI / 2, Y);
@@ -468,6 +501,7 @@ function build(atlas) {
     picture(b, -2.43, Y + 1.5, -0.2, 0.5, 0.6, 'x+', 'pic3', { frame: C.red });
     picture(b, 0.43, Y + 1.5, 3.6, 0.5, 0.4, 'x-', 'pic4', { frame: C.ink });
 
+    yield 'attic';
     // ── ATTIC (upstairs, over laundry + bathroom): beams, boxes, trunk, rocking horse, dress form ──
     // roof: rafters slope from the balcony (y 5.4 at z 0) down to the low front (y 3.6 at z 6)
     const zr0 = 0.0; const yr0 = TOP + 0.1; const zr1 = 6.0; const yr1 = FH + 0.75;
@@ -476,11 +510,13 @@ function build(atlas) {
       const x = 0.7 + i * 1.18;
       b.add(boxGeo(0.12, 0.16, rl), { at: [x, (yr0 + yr1) / 2, (zr0 + zr1) / 2], rot: [slope, 0, 0], color: '#8a5d3b', tile: 'wood', rep: 0.8 });
     }
+    yield 'boards over the';
     // boards over the back half of the roof (a ceiling to hang from), open at the front for the view
     const bz1 = 2.6; const by1 = yr0 - (bz1 - zr0) * Math.tan(slope);
     b.add(boxGeo(8.5, 0.04, bz1 / Math.cos(slope)), { at: [4.75, (yr0 + by1) / 2 + 0.1, bz1 / 2], rot: [slope, 0, 0], color: '#c9a274', tile: 'planks', rep: 1.2 });
     b.collide(0.5, by1 + 0.05, 0, 9, yr0 + 0.2, bz1, { wall: false, ceil: true, name: 'ceil:attic-boards' });
     b.collide(0.3, yr0 + 0.2, -0.2, 9.2, yr0 + 2.5, bz1 + 0.2, { wall: false, climb: false, name: 'roof-guard' });
+    yield 'collar beam';
     // collar beam + purlins (thin, perchable)
     aabb(b, 0.5, FH + 1.9, 3.0, 9, FH + 2.04, 3.14, { color: '#7a4e35', tile: 'wood', rep: 0.8, outline: true, collide: { wall: false, perch: true, name: 'perch:attic-beam' } });
     aabb(b, 0.5, FH + 1.2, 4.6, 9, FH + 1.34, 4.74, { color: '#7a4e35', tile: 'wood', rep: 0.8, outline: true, collide: { wall: false, perch: true, name: 'perch:attic-beam-low' } });
@@ -492,6 +528,7 @@ function build(atlas) {
     tr.blob(0, 0, 0.7, 0.4);
     stack(F(b, 3.7, 5.2, 0, Y), 0, 0, [[0.7, 0.5, 0.6, '#c99a6b', null], [0.6, 0.4, 0.5, '#d2a46a', null, 0.25], [0.45, 0.35, 0.4, C.coral, 'dots', -0.2]]);
     stack(F(b, 1.3, 5.3, 0, Y), 0, 0, [[0.8, 0.22, 0.5, C.teal, 'stripe'], [0.7, 0.2, 0.45, C.red, null, 0.1], [0.6, 0.18, 0.4, C.mustard, null, -0.1]]);
+    yield 'rocking horse';
     // rocking horse
     const rh = F(b, 5.4, 2.4, 0.6, Y);
     for (const s of [-1, 1]) rh.box(0.05, 0.08, 1.0, [s * 0.2, 0.06, 0], { color: C.red, round: 0.02 });
@@ -501,6 +538,7 @@ function build(atlas) {
     for (const [sx, sz] of [[-0.12, -0.25], [0.12, -0.25], [-0.12, 0.25], [0.12, 0.25]]) rh.box(0.05, 0.42, 0.05, [sx, 0.28, sz], { color: '#fbf7ee' });
     rh.box(0.32, 0.03, 0.28, [0, 0.71, -0.02], { color: C.red });
     rh.blob(0, 0, 0.35, 0.55);
+    yield 'dress form';
     // dress form + old lamp + rolled rug
     const df = F(b, 2.2, 2.1, 0, Y);
     df.cyl(0.18, 0.2, 0.03, [0, 0.015, 0], { color: C.ink }); df.cyl(0.02, 0.02, 0.9, [0, 0.45, 0], { color: C.ink, radial: 6 });
@@ -513,9 +551,11 @@ function build(atlas) {
     ol.cyl(0.15, 0.25, 0.28, [0, 1.48, 0], { color: '#ffffff', tile: 'quilt', rep: 0.3 });
     ol.cyl(0.16, 0.18, 0.03, [0, 0.015, 0], { color: C.ink });
     ol.blob(0, 0, 0.22, 0.22);
+    yield 'string lights along';
     // string lights along the collar beam
     for (let i = 0; i < 14; i++) b.add(sphereGeo(0.035, 0.05, 0.035, { w: 6, h: 4 }), { at: [0.9 + i * 0.58, FH + 1.82 - Math.sin((i % 2) * 1.2) * 0.05, 3.07], color: [C.pink, C.yellow, C.teal, C.coral][i % 4], outline: false });
 
+    yield 'spots';
     // ── spots ──
     b.spot('lobby', { x: -1.0, z: 2.6, y: 0 });
     b.spot('hiderSpawn', { x: -1.0, z: 0.5, y: 0, yaw: Math.PI });

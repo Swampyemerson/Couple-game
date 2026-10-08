@@ -346,27 +346,35 @@ export function createBuilder({ tiles, ink = [0.11, 0.1, 0.13], chunker = null }
   /** Label a room (culling, minimap, preview). floor: index into info.floors (default 0). */
   function room(name, x0, z0, x1, z1, o = {}) { rooms.push({ name, x0: Math.min(x0, x1), z0: Math.min(z0, z1), x1: Math.max(x0, x1), z1: Math.max(z0, z1), floor: o.floor || 0, landmark: o.landmark || '' }); }
 
-  function finishChunk(THREE, K) {
+  // a generator: one attribute per step (a big chunk's conversions were one 5–10 ms block)
+  function* finishChunk(THREE, K) {
     const { P, N, U, C, T, O, IDX, HULL } = K;
     const vcount = P.length / 3;
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
-    geo.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3));
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); yield 'chunk';
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3)); yield 'chunk';
     geo.setAttribute('uv', new THREE.Float32BufferAttribute(U, 2));
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(C, 3));
-    geo.setAttribute('tile', new THREE.Float32BufferAttribute(T, 4));
-    geo.setAttribute('onrm', new THREE.Float32BufferAttribute(O, 3));
-    const all = IDX.concat(HULL);
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(C, 3)); yield 'chunk';
+    geo.setAttribute('tile', new THREE.Float32BufferAttribute(T, 4)); yield 'chunk';
+    geo.setAttribute('onrm', new THREE.Float32BufferAttribute(O, 3)); yield 'chunk';
     const Arr = vcount > 65535 ? Uint32Array : Uint16Array;
-    geo.setIndex(new THREE.BufferAttribute(new Arr(all), 1));
+    const idx = new Arr(IDX.length + HULL.length); idx.set(IDX); idx.set(HULL, IDX.length);
+    geo.setIndex(new THREE.BufferAttribute(idx, 1));
     geo.computeBoundingSphere();
     geo.computeBoundingBox();
     return { key: K.key, backdrop: K.key === BACKDROP, geometry: geo, mainIndexCount: IDX.length, hullIndexCount: HULL.length, vertexCount: vcount };
   }
 
-  function finish(THREE) {
+  /** finishSteps(THREE) is finish() in steps (maps.js spreads a map build over frames). */
+  function finish(THREE) { const it = finishSteps(THREE); for (;;) { const s = it.next(); if (s.done) return s.value; } }
+  function* finishSteps(THREE) {
     if (!chunks.size) chunkOf(0);
-    const parts = [...chunks.values()].sort((a, b) => a.key - b.key).filter((k) => k.IDX.length || chunks.size === 1).map((K) => finishChunk(THREE, K));
+    const parts = [];
+    for (const K of [...chunks.values()].sort((a, b) => a.key - b.key).filter((k) => k.IDX.length || chunks.size === 1)) {
+      parts.push(yield* finishChunk(THREE, K));
+      K.P = K.N = K.U = K.C = K.T = K.O = K.IDX = K.HULL = null; // the typed copies are all that's kept
+      yield K.key;
+    }
     // Blob shadows: one merged quad mesh.
     const bp = []; const bu = []; const bi = []; const ba = [];
     for (const b of blobs) {
@@ -394,5 +402,5 @@ export function createBuilder({ tiles, ink = [0.11, 0.1, 0.13], chunker = null }
     };
   }
 
-  return { add, collide, blob, probe, spot, room, finish, colorOf };
+  return { add, collide, blob, probe, spot, room, finish, finishSteps, colorOf };
 }

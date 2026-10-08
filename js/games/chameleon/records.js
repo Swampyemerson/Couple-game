@@ -56,6 +56,8 @@ export function recordRound(d, rec, extra) {
       }
     } else {
       set(`${hider}_surv`, g(`${hider}_surv`) + 1);
+      // the best blend that held up for a whole hunt (Gold eyes): a lock score alone is one tap of Stamp
+      if (Number.isFinite(rec.blend) && rec.blend > g(`${hider}_blend_surv`)) set(`${hider}_blend_surv`, Math.round(rec.blend));
       if (sk && SURF_KEYS.includes(sk)) set(`${hider}_surf_${sk}`, g(`${hider}_surf_${sk}`) + 1);
       if (!(extra.passes | 0)) set(`${hider}_ghost`, g(`${hider}_ghost`) + 1);
       const ms = rec.ms | 0; const best = d[`${hider}_surv_ms`] | 0;

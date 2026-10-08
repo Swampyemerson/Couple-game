@@ -171,9 +171,26 @@ export function createControls({ surface, root, joyBase, joyKnob, onAction, pain
   L.on(surface, 'contextmenu', (e) => e.preventDefault());
   L.on(surface, 'wheel', (e) => { if (st.mode === 'paint') { e.preventDefault(); paint.zoom(e.deltaY > 0 ? 1.08 : 1 / 1.08); } }, { passive: false });
 
-  // iOS: stop the iframe / app sheet from scrolling or being dismissed by drags on the game.
-  const stopTouch = (e) => { if (e.target.closest && e.target.closest('[data-scroll]')) return; if (e.cancelable) e.preventDefault(); };
-  L.on(root, 'touchstart', (e) => { if (e.touches[0] && e.touches[0].clientX < EDGE && e.cancelable) e.preventDefault(); }, { passive: false });
+  // iOS: stop the iframe / app sheet from scrolling or being dismissed by drags on the game. A
+  // one-finger drag that starts inside a [data-scroll] card or sheet is let through when something
+  // between the finger and that card can really scroll (decided once, at touchstart): a tall final
+  // card or the wardrobe's tile rows pan, a card that fits keeps the app sheet still.
+  let panOk = false;
+  const canPan = (t) => {
+    const lim = t && t.closest ? t.closest('[data-scroll]') : null;
+    if (lim && t.closest('input, select, textarea')) return true; // a slider drags natively
+    for (let n = lim ? t : null; n && n !== root; n = n.parentElement) {
+      const y = n.scrollHeight > n.clientHeight + 1; const x = n.scrollWidth > n.clientWidth + 1;
+      if (y || x) { const cs = getComputedStyle(n); if ((y && /auto|scroll/.test(cs.overflowY)) || (x && /auto|scroll/.test(cs.overflowX))) return true; }
+      if (n === lim) break;
+    }
+    return false;
+  };
+  const stopTouch = (e) => { if (panOk) return; if (e.cancelable) e.preventDefault(); };
+  L.on(root, 'touchstart', (e) => {
+    panOk = e.touches.length === 1 && canPan(e.target);
+    if (e.touches[0] && e.touches[0].clientX < EDGE && e.cancelable) e.preventDefault();
+  }, { passive: false });
   L.on(root, 'touchmove', stopTouch, { passive: false });
 
   // pointer lock state

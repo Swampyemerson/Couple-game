@@ -61,8 +61,9 @@ function build(atlas) {
   atlas.add('rings', P.rings({ n: 3 }), { size: 'S' });
   atlas.add('stripeS', P.stripes({ cols: [C.red, '#ffffff'], n: 3 }), { size: 'S' });
 
-  return (b) => {
+  return function* fill(b) {
     const r = seeded('museum');
+    yield 'shell';
     // ── shell ──
     const T = 0.2;
     b.add(boxGeo(W + 0.9, 0.36, D + 0.9, { round: 0.04 }), { at: [0, -0.2, 0], color: '#3a3550' });
@@ -76,6 +77,7 @@ function build(atlas) {
     // entrance columns on the low front wall
     for (const x of [-2.2, 2.2]) b.add(latheGeo([[0.3, 0], [0.26, 0.15], [0.22, 0.3], [0.2, 3.6], [0.28, 3.75], [0.3, 3.9]], { radial: 14 }), { at: [x, 0, Z1 - 0.05], color: C.marble, collide: { wall: true, perch: true, name: 'perch:front-column' } });
 
+    yield 'floors';
     // floors
     floor(b, -6, Z0, 6, HZ1, 0, { tile: 'floorchk', rep: 2.0 });
     floor(b, -6, HZ1, 6, Z1, 0, { tile: 'marble', rep: 2.0, color: '#f4f1ea' });
@@ -84,6 +86,7 @@ function build(atlas) {
     floor(b, 6, Z0, X1, 2, 0, { color: '#e9e6e0' });
     floor(b, 6, 2, X1, Z1, 0, { tile: 'parquet', rep: 1.0, color: '#f0d9c0' });
 
+    yield 'outer wall skins';
     // ── outer wall skins per room (night windows on the back + sides) ──
     const skin = (side, a0, a1, y0, y1, d) => {
       const o = { tile: d.tile, rep: d.rep || 1, color: d.color || '#ffffff', outline: false }; const rep = Array.isArray(o.rep) ? o.rep[0] : o.rep;
@@ -106,9 +109,11 @@ function build(atlas) {
     win('back', -3.2, 4.6, 1.4, 2.0); win('back', 3.2, 4.6, 1.4, 2.0); win('back', 0, 5.0, 1.8, 1.6);
     win('left', 5.0, 1.2, 1.2, 1.4); win('right', 5.0, 1.4, 1.0, 1.2); win('left', -3.0, UP + 1.0, 1.4, 1.6);
 
+    yield 'interior walls';
     // ── interior walls ──
     const trim = C.gold;
     wall(b, { x0: -6, z0: Z0, x1: -6, z1: Z1, h: UP, t: 0.2, n: DM, p: MB, trim, open: [{ c: -2.0, w: 2.4, top: 3.0 }, { c: 5.4, w: 1.8, top: 2.6 }], name: 'w:left-wing' });
+    yield 'sculpture-room side of';
     // sculpture-room side of that wall (z > 2) is the sculpture paper
     aabb(b, -6.1 - 0.004, 0, 2, -6.1, UP, 4.5, { faces: ['nx'], tile: 'sculptwall', rep: 0.9, color: '#ffffff', outline: false });
     aabb(b, -6.1 - 0.004, 0, 6.3, -6.1, UP, Z1, { faces: ['nx'], tile: 'sculptwall', rep: 0.9, color: '#ffffff', outline: false });
@@ -122,9 +127,11 @@ function build(atlas) {
     wall(b, { x0: X0, z0: 2, x1: -6, z1: 2, y: UP, h: HALL - UP, t: 0.2, n: AN, p: MB, name: 'w:ancient-front' });
     wall(b, { x0: X0, z0: 2, x1: -6, z1: 2, h: UP, t: 0.2, n: DM, p: SC, trim, open: [{ c: -9.0, w: 1.6, top: 2.6 }, { c: -11.0, w: 1.0, bottom: 1.0, top: 1.8 }], name: 'w:paint-sculpt' });
     wall(b, { x0: 6, z0: 2, x1: X1, z1: 2, h: WING, t: 0.2, n: M1, p: GW, trim, open: [{ c: 9.0, w: 1.6, top: 2.6 }], name: 'w:modern-gift' });
+    yield 'hall';
     // hall / foyer: one great arch, the hall wall above it
     wall(b, { x0: -6, z0: HZ1, x1: 6, z1: HZ1, h: HALL, t: 0.3, n: MB, p: MB, trim, open: [{ c: 0, w: 7.6, top: 4.2 }], name: 'w:hall-front' });
 
+    yield 'ceilings';
     // ── ceilings ──
     slab(b, -6, Z0, 6, HZ1, HALL + 0.15, { thick: 0.15, lid: true, under: { tile: 'coffer', rep: 2.0 }, name: 'ceil:hall' });
     for (let x = -4; x <= 4; x += 2) aabb(b, x - 0.1, HALL - 0.3, Z0, x + 0.1, HALL, HZ1, { color: '#d9cdb5', outline: true, collide: { wall: false, ceil: true, perch: true, name: 'perch:coffer-beam' } });
@@ -135,6 +142,7 @@ function build(atlas) {
     slab(b, X0, Z0, -6, 2, HALL + 0.15, { thick: 0.15, lid: true, under: { tile: 'coffer', rep: 1.6 }, name: 'ceil:ancient' });
     slab(b, 6, Z0, X1, Z1, WING + 0.15, { thick: 0.15, lid: true, under: { color: '#f4f1ea' }, name: 'ceil:right-wing' });
     slab(b, -6, HZ1, 6, Z1, FOY + 0.15, { thick: 0.15, lid: true, under: { tile: 'coffer', rep: 1.4 }, name: 'ceil:foyer' });
+    yield 'balcony across the';
     // balcony across the back of the hall + twin stairs
     slab(b, -6, Z0, 6, -5.0, UP, { under: { color: '#e6dccb' }, edge: C.gold, name: 'ceil:balcony' });
     floor(b, -6, Z0, 6, -5.0, UP, { tile: 'parquet', rep: 1.0 });
@@ -142,14 +150,17 @@ function build(atlas) {
     for (const s of [-1, 1]) stairs(b, { x: s * 5.3, z: -5.0 + 20 * RUN, dir: 'z-', width: 1.25, n: 20, rise: SR, run: RUN, tread: { color: '#b3213a' }, stringer: C.gold, railSide: -s, rail: C.gold, name: 'grand-stairs' });
     railing(b, -4.62, -5.0, 4.62, -5.0, UP, { color: C.gold, top: C.gold, gap: 0.2, name: 'balcony' });
     for (const x of [-3.9, 3.9]) b.add(latheGeo([[0.32, 0], [0.26, 0.2], [0.24, UP - 0.4], [0.32, UP - 0.25], [0.36, UP - 0.2]], { radial: 14 }), { at: [x, 0, -5.25], color: C.marble, tile: 'marble', rep: 1.0, collide: { wall: true, perch: true, name: 'perch:column' } });
+    yield 'tall hall columns';
     // tall hall columns along the sides (inside the stairs)
     for (const z of [-2.5, 0.5]) for (const x of [-3.9, 3.9]) b.add(latheGeo([[0.38, 0], [0.32, 0.25], [0.28, HALL - 0.6], [0.38, HALL - 0.4], [0.42, HALL - 0.3]], { radial: 16 }), { at: [x, 0, z], color: C.marble, tile: 'marble', rep: 1.2, collide: { wall: true, perch: true, name: 'perch:column' } });
 
+    yield 'grand hall';
     // ── GRAND HALL: dinosaur skeleton on its plinth, velvet ropes, benches, signs ──
     const dz = -1.0;
     aabb(b, -3.0, 0, dz - 1.2, 3.0, 0.3, dz + 1.2, { color: '#3a3550', outline: true, collide: { wall: true, name: 'dino-plinth' } });
     aabb(b, -3.05, 0.3, dz - 1.25, 3.05, 0.34, dz + 1.25, { color: C.gold, outline: true, collide: { wall: false, name: 'dino-plinth-top' } });
     dino(b, 0, 0.34, dz);
+    yield 'velvet ropes on';
     // velvet ropes on brass posts around the plinth
     const ropePosts = [[-3.6, dz - 1.7], [0, dz - 1.7], [3.6, dz - 1.7], [3.6, dz + 1.7], [0, dz + 1.7], [-3.6, dz + 1.7]];
     for (const [x, z] of ropePosts) {
@@ -168,6 +179,7 @@ function build(atlas) {
     for (let i = 0; i < ropePosts.length; i++) { const [x0, z0] = ropePosts[i]; const [x1, z1] = ropePosts[(i + 1) % ropePosts.length]; if (!(i === 2 || i === 5)) rope(x0, z0, x1, z1); }
     b.collide(-3.65, 0.6, dz - 1.75, 3.65, 0.85, dz - 1.65, { wall: false, perch: true, name: 'perch:rope' });
     b.collide(-3.65, 0.6, dz + 1.65, 3.65, 0.85, dz + 1.75, { wall: false, perch: true, name: 'perch:rope' });
+    yield 'dinosaur sign on';
     // dinosaur sign on a stand + two benches
     const ds = F(b, -2.0, 1.6, Math.PI);
     ds.box(1.2, 0.44, 0.05, [0, 1.15, 0], { color: '#ffffff', tile: 'signDino', rep: 1, fit: true, faces: ['pz', 'nz'], outline: true, rot: [-0.25, 0, 0] });
@@ -179,6 +191,7 @@ function build(atlas) {
       for (const sx of [-0.7, 0.7]) bn.box(0.1, 0.36, 0.42, [sx, 0.18, 0], { color: C.gold, collide: { wall: true, name: 'bench-leg' } });
       bn.blob(0, 0, 0.9, 0.35);
     }
+    yield 'hanging banners in';
     // hanging banners in the hall (huge patterns to cling to, landmarks from the balcony)
     for (const [x, tile, col] of [[-4.7, 'bannerA', C.velvet], [4.7, 'bannerB', C.navy]]) {
       b.add(boxGeo(0.03, 2.8, 1.5, { fit: true }), { at: [x, HALL - 1.75, -1.0], color: '#ffffff', tile, rep: 1, outline: true, collide: { wall: true, name: 'banner' } });
@@ -186,20 +199,24 @@ function build(atlas) {
       for (const z of [-1.7, -0.3]) b.add(cylGeo(0.006, 0.006, 0.32, { radial: 3, caps: false }), { at: [x, HALL - 0.18, z], color: C.ink, outline: false });
       void col;
     }
+    yield 'paintings on the';
     // paintings on the hall walls: under the balcony and high on the side walls
     picture(b, -2.6, 1.7, Z0 + 0.01, 1.4, 1.0, 'z+', 'art10', { frame: C.gold, depth: 0.06 });
     picture(b, 2.6, 1.7, Z0 + 0.01, 1.4, 1.0, 'z+', 'art5', { frame: C.gold, depth: 0.06 });
     picture(b, -5.89, 5.0, -1.0, 2.0, 1.4, 'x+', 'art2', { frame: C.gold, depth: 0.06 });
     picture(b, 5.89, 5.0, -1.0, 2.0, 1.4, 'x-', 'art6', { frame: C.gold, depth: 0.06 });
+    yield 'a display case';
     // a display case of fossils under the balcony
     const fc = F(b, 0, -7.3);
     fc.box(2.4, 0.9, 0.8, [0, 0.45, 0], { color: C.navy, collide: { wall: true, name: 'fossil-case' } });
     fc.box(2.3, 0.45, 0.7, [0, 1.13, 0], { color: '#cfe8e4', collide: { wall: true, climb: false, name: 'glass-case' } });
     for (let i = 0; i < 5; i++) fc.sph(0.12, 0.06, 0.1, [-0.9 + i * 0.45, 0.96, 0], { color: [C.bone, C.boneD, '#c9b48a', C.bone, '#b8a070'][i], w: 8, h: 5 });
     fc.blob(0, 0, 1.4, 0.5);
+    yield 'track lights on';
     // track lights on the coffer beams
     for (const x of [-2, 2]) for (const z of [-4, 0]) b.add(cylGeo(0.07, 0.1, 0.22, { radial: 8 }), { at: [x, HALL - 0.42, z], color: C.ink, rot: [0.4, 0, 0] });
 
+    yield 'paintings gallery';
     // ── PAINTINGS GALLERY (left, ground) ──
     const paint = [['art1', 1.5, 1.1], ['art3', 0.9, 1.2], ['art7', 1.2, 0.9], ['art8', 1.4, 1.0], ['art2', 1.2, 0.9]];
     picture(b, -9.0, 1.7, Z0 + 0.01, 1.8, 1.3, 'z+', 'art1', { frame: C.gold, depth: 0.06 });
@@ -208,6 +225,7 @@ function build(atlas) {
     picture(b, -6.11, 1.6, -5.6, 1.4, 1.0, 'x-', 'art8', { frame: C.gold, depth: 0.06 });
     picture(b, -9.0, 1.6, 1.89, 1.2, 0.9, 'z-', 'art2', { frame: C.gold, depth: 0.06 });
     void paint;
+    yield 'a big easel';
     // a big easel painting mid-room (walk round it), ottoman bench, rope barrier
     const ea = F(b, -9.0, -3.2, 0.5);
     for (const sx of [-1, 1]) ea.box(0.06, 2.0, 0.06, [sx * 0.5, 1.0, 0], { color: C.wood, rot: [0.1, 0, sx * -0.08], collide: false });
@@ -220,6 +238,7 @@ function build(atlas) {
     ot.box(1.8, 0.4, 0.7, [0, 0.2, 0], { color: '#ffffff', tile: 'damask', rep: 0.7, round: 0.06, collide: { wall: true, name: 'ottoman' } });
     ot.blob(0, 0, 1.0, 0.45);
     rug(b, -9.0, -3.0, 4.0, 7.0, 0, 'meander', { rep: 1.2, color: '#e8dcc0' });
+    yield 'sculpture room';
     // ── SCULPTURE ROOM (left front) ──
     const plinth = (x, z, h, shape, col) => {
       aabb(b, x - 0.3, 0, z - 0.3, x + 0.3, h, z + 0.3, { color: C.white, outline: true, collide: { wall: true, name: 'plinth' } });
@@ -232,12 +251,14 @@ function build(atlas) {
     };
     plinth(-10.6, 3.6, 0.9, 'head', C.marble); plinth(-8.6, 4.4, 0.6, 'ball', C.blue); plinth(-7.2, 6.6, 1.1, 'cone', C.gold);
     plinth(-10.8, 6.8, 0.7, 'stack', C.red); plinth(-9.0, 7.0, 0.5, 'ring', C.pink);
+    yield 'a big reclining';
     // a big reclining figure on a low block
     aabb(b, -9.6, 0, 5.4, -7.6, 0.45, 6.0, { color: C.stone, outline: true, collide: { wall: true, name: 'figure-block' } });
     b.add(sphereGeo(0.9, 0.35, 0.28, { w: 14, h: 8 }), { at: [-8.6, 0.72, 5.7], color: '#9fb4c7', rot: [0, 0, 0.15], collide: { wall: true, name: 'figure' } });
     b.add(sphereGeo(0.22, 0.24, 0.22, { w: 10, h: 8 }), { at: [-7.7, 1.0, 5.7], color: '#9fb4c7' });
     b.blob(-8.6, 5.7, 1.2, 0.5);
 
+    yield 'ancient worlds';
     // ── ANCIENT WORLDS (upstairs left) ──
     const U = UP;
     const sa = F(b, -9.0, -3.0, 0, U);
@@ -250,6 +271,7 @@ function build(atlas) {
       b.add(latheGeo([[0.12 * s, 0], [0.22 * s, 0.15 * s], [0.26 * s, 0.4 * s], [0.12 * s, 0.7 * s], [0.1 * s, 0.82 * s], [0.16 * s, 0.9 * s]], { radial: 14 }), { at: [x, U + 0.5, z], color: col, tile: 'meander', rep: [0.5, 0.45 * s], collide: { wall: true, name: 'vase' } });
       b.blob(x, z, 0.45, 0.45, { y: U + 0.004 });
     }
+    yield 'broken columns';
     // broken columns + a mosaic panel + a gold mask in a case
     for (const [x, z, h] of [[-10.6, -1.0, 1.4], [-7.4, -1.0, 0.9], [-10.6, -4.8, 2.1]]) b.add(cylGeo(0.26, 0.28, h, { radial: 14 }), { at: [x, U + h / 2, z], color: C.marble, tile: 'rings', rep: [0.4, 0.3], collide: { wall: true, perch: true, name: 'perch:broken-column' } });
     const mc = F(b, -7.4, -5.2, 0, U);
@@ -259,14 +281,17 @@ function build(atlas) {
     mc.blob(0, 0, 0.5, 0.4);
     aabb(b, X0, U + 0.6, -7.4, X0 + 0.03, U + 2.4, -4.4, { faces: ['px'], tile: 'mosaic', rep: 0.5, color: '#ffffff', outline: true });
     b.add(boxGeo(2.0, 0.66, 0.04, { fit: true, faces: ['nz'] }), { at: [-9.0, U + 2.6, 2 - 0.12], color: '#ffffff', tile: 'signAncient', rep: 1, outline: false });
+    yield 'sign at the';
     // sign at the balcony door
     b.add(boxGeo(0.04, 0.5, 1.5, { fit: true, faces: ['px'] }), { at: [-5.88, U + 2.7, -6.6], color: '#ffffff', tile: 'signAncient', rep: 1, outline: false });
 
+    yield 'modern art';
     // ── MODERN ART (right, ground) ──
     picture(b, 9.0, 1.75, Z0 + 0.01, 2.2, 1.6, 'z+', 'art4', { frame: C.ink, depth: 0.05 });
     picture(b, X1 - 0.01, 1.7, -4.8, 1.6, 1.6, 'x-', 'art5', { frame: '#ffffff', depth: 0.05 });
     picture(b, X1 - 0.01, 1.6, -1.2, 1.2, 1.4, 'x-', 'art10', { frame: C.ink, depth: 0.05 });
     picture(b, 6.11, 1.6, -5.5, 1.4, 1.0, 'x+', 'art9', { frame: C.yellow, depth: 0.05 });
+    yield 'colourful sculptures';
     // colourful sculptures: a giant red cube, a stack of rings, a yellow arch you can walk through
     aabb(b, 7.4, 0, -6.4, 8.4, 1.0, -5.4, { color: C.red, outline: true, collide: { wall: true, name: 'red-cube' } });
     for (let k = 0; k < 4; k++) b.add(latheGeo([[0.35 - k * 0.05, 0], [0.45 - k * 0.05, 0.08], [0.35 - k * 0.05, 0.16], [0.25 - k * 0.05, 0.08], [0.35 - k * 0.05, 0]], { radial: 16 }), { at: [10.4, k * 0.16, -2.6], color: [C.blue, C.pink, C.yellow, C.teal][k], collide: k === 0 ? { wall: true, name: 'rings' } : false });
@@ -274,6 +299,7 @@ function build(atlas) {
     for (const x of [8.0, 9.6]) aabb(b, x - 0.15, 0, -0.4, x + 0.15, 2.0, -0.1, { color: C.yellow, outline: true, collide: { wall: true, perch: true, name: 'arch-leg' } });
     aabb(b, 7.85, 2.0, -0.4, 9.75, 2.3, -0.1, { color: C.yellow, outline: true, collide: { wall: false, ceil: true, perch: true, name: 'perch:arch' } });
     b.blob(8.8, -0.25, 1.1, 0.3);
+    yield 'hanging mobile';
     // hanging mobile (perch on the arms)
     const mx = 9.0; const mz = -3.6;
     b.add(cylGeo(0.006, 0.006, 0.8, { radial: 4, caps: false }), { at: [mx, WING - 0.4, mz], color: C.ink, outline: false });
@@ -288,6 +314,7 @@ function build(atlas) {
     b.add(boxGeo(2.0, 0.66, 0.04, { fit: true, faces: ['pz'] }), { at: [9.0, 2.95, 1.88], color: '#ffffff', tile: 'signModern', rep: 1, outline: false });
     rug(b, 9.4, -3.2, 2.4, 2.4, 0, 'modern2', { rep: 0.8 });
 
+    yield 'gift shop';
     // ── GIFT SHOP (right front) ──
     const gs = F(b, X1 - 0.3, 4.8, -Math.PI / 2);
     const gy = shelves(gs, 3.6, 1.9, 0.5, 4, { color: C.white, tile: null, name: 'gift-shelf' });
@@ -300,6 +327,7 @@ function build(atlas) {
         else gs.box(0.36, 0.26, 0.16, [lx, y + 0.15, 0], { color: [C.navy, C.pink, C.teal, C.yellow, C.red, C.lime][k], tile: 'postcards', rep: [0.4, 0.26] });
       }
     });
+    yield 'postcard spinner counter';
     // postcard spinner, counter + till, giant inflatable T-rex
     const ps = F(b, 8.2, 3.4);
     ps.cyl(0.03, 0.03, 1.6, [0, 0.8, 0], { color: C.ink, radial: 6, collide: { wall: false, perch: true, name: 'perch:spinner' } });
@@ -316,6 +344,7 @@ function build(atlas) {
     trex(b, 10.0, 7.0, -2.3);
     stack(F(b, 6.9, 2.6), 0, 0, [[0.6, 0.3, 0.45, C.yellow, 'postcards'], [0.5, 0.28, 0.4, C.teal, null, 0.2], [0.42, 0.26, 0.36, C.pink, 'plush', -0.15]]);
 
+    yield 'foyer';
     // ── FOYER (front middle): ticket desk, turnstiles, coat rail, info board ──
     const td = F(b, -3.8, 6.0);
     td.box(2.2, 1.0, 0.7, [0, 0.5, 0], { color: C.teal, round: 0.04, collide: { wall: true, name: 'ticket-desk' } });
@@ -341,6 +370,7 @@ function build(atlas) {
     rug(b, 0, 6.6, 3.0, 1.6, 0, 'meander', { rep: 1.0, color: '#ffffff' });
     for (const x of [-5.2, 5.2]) { b.add(cylGeo(0.3, 0.26, 0.6, { radial: 14 }), { at: [x, 0.3, 3.6], color: C.gold, tile: 'rings', rep: [0.4, 0.3], collide: { wall: true, name: 'urn' } }); b.add(sphereGeo(0.32, 0.36, 0.32, { w: 10, h: 7 }), { at: [x, 0.95, 3.6], color: '#3f7d4a' }); b.blob(x, 3.6, 0.35, 0.35); }
 
+    yield 'spots';
     // ── spots ──
     b.spot('lobby', { x: 0, z: 6.4 });
     b.spot('hiderSpawn', { x: 0, z: 1.65, yaw: Math.PI });
