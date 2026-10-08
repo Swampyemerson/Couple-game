@@ -779,13 +779,16 @@ function resultStatus(el, def, res) {
   el.insertAdjacentHTML('beforeend', '<button class="gm-status-btn" data-g="end-show">Rematch or leave</button>');
 }
 
+function endRecHTML(def, res) {
+  const rec = gameRecord(def.id);
+  return res.record === false ? '' : def.team
+    ? (rec.best != null ? `<span class="gm-end-rec-l">Best team score</span><b>${rec.best}</b>` : '')
+    : `<span class="gm-end-rec-l">All time</span><span class="p-a">${esc(nameOf('a'))} <b>${rec.a}</b></span><span class="gm-end-rec-sep" aria-hidden="true">:</span><span class="p-b"><b>${rec.b}</b> ${esc(nameOf('b'))}</span>`;
+}
 function endHTML(def, res, { rematch = true } = {}) {
   const lookLabel = def.endLookLabel || 'See the board';
   const { head, cls } = resultHead(def, res);
-  const rec = gameRecord(def.id);
-  const recLine = res.record === false ? '' : def.team
-    ? (rec.best != null ? `<span class="gm-end-rec-l">Best team score</span><b>${rec.best}</b>` : '')
-    : `<span class="gm-end-rec-l">All time</span><span class="p-a">${esc(nameOf('a'))} <b>${rec.a}</b></span><span class="gm-end-rec-sep" aria-hidden="true">:</span><span class="p-b"><b>${rec.b}</b> ${esc(nameOf('b'))}</span>`;
+  const recLine = endRecHTML(def, res);
   return `<div class="gm-end-card ${cls}">
     <div class="gm-end-burst" aria-hidden="true">${'<i></i>'.repeat(10)}</div>
     <div class="gm-end-band">
@@ -1060,7 +1063,10 @@ async function openLive(gameId, mode) {
 
   const screen = {
     id: null, game: gameId, live: true, mode,
-    refresh() {},
+    refresh() { // the end card's all-time line follows the results (the guest's copy of the host's record arrives after the card is up)
+      const p = finished && lastRes && $('.gm-end .gm-end-rec'); if (!p) return;
+      const h = endRecHTML(def, lastRes); if (p._h !== h && h) { p._h = h; p.innerHTML = h; }
+    },
     close() {
       try { inst && inst.destroy && inst.destroy(); } catch (e) { console.error(e); }
       offs.forEach((f) => { try { f(); } catch { /* ignore */ } });

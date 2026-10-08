@@ -10,26 +10,28 @@ export const fmtTime = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); re
  * and stayed on the same control), a mouse on click. iOS drops the click after any cancelled
  * touchstart, so menus must never depend on it. After a touch tap, the browser's own synthetic
  * click for it is swallowed (700 ms), so a menu that re-renders under the finger can't get a
- * second, unintended press. Returns an unbind function.
+ * second, unintended press. Taps are tracked per pointer, so a menu button works while another
+ * finger is still on a pedal (map Done, pause Resume with the gas held). Returns an unbind function.
  */
 export function bindTap(root, sel, fn) {
-  let down = null; let swallowUntil = 0;
+  const downs = new Map(); let swallowUntil = 0; // pointerId -> { key, x, y } of a touch that began on a control
   const keyOf = (el) => { const d = el.dataset; return `${d.l || ''}|${d.v || ''}|${d.dir || ''}|${d.k || ''}|${d.step || ''}|${d.m || ''}`; };
   const pick = (t) => { const el = t && t.closest ? t.closest(sel) : null; return el && root.contains(el) && !el.disabled ? el : null; };
   const pd = (e) => {
-    if (e.pointerType === 'mouse' || (e.isPrimary === false)) { down = null; return; }
-    const el = pick(e.target); down = el ? { id: e.pointerId, key: keyOf(el), x: e.clientX, y: e.clientY } : null;
+    if (e.pointerType === 'mouse') return;
+    const el = pick(e.target);
+    if (el) downs.set(e.pointerId, { key: keyOf(el), x: e.clientX, y: e.clientY }); else downs.delete(e.pointerId);
   };
   const pu = (e) => {
-    if (!down || e.pointerId !== down.id) return;
-    const d = down; down = null;
+    const d = downs.get(e.pointerId); if (!d) return;
+    downs.delete(e.pointerId);
     if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 14) return; // a scroll or a drag, not a tap
     const el = pick(e.target) || pick(document.elementFromPoint && document.elementFromPoint(e.clientX, e.clientY));
     if (!el || keyOf(el) !== d.key) return;
     swallowUntil = performance.now() + 700;
     fn(el, e);
   };
-  const pc = () => { down = null; };
+  const pc = (e) => { downs.delete(e.pointerId); };
   const ck = (e) => {
     // a click the browser made from a touch we already acted on at pointerup (Chrome says so with
     // pointerType; a starved page can deliver it after the 700 ms window: a double step)
@@ -481,7 +483,7 @@ export function introCard(api, { map, round, rounds, runner, me, landmark, round
 }
 
 const takes = (n) => (n === 'You' ? 'take' : 'takes');
-export function resultCard(api, { outcome, reason, runner, stats, scores, next, local, me, ran, unlocks, lines, head, queue, d, wait, daily }) {
+export function resultCard(api, { outcome, reason, runner, stats, scores, next, local, me, ran, unlocks, lines, head, queue, d, wait, daily, adv }) {
   const busted = outcome === 'busted';
   const big = head || (busted ? (reason === 'water' ? 'SPLASH!' : 'BUSTED!') : 'ESCAPED!');
   const why = {
@@ -499,7 +501,7 @@ export function resultCard(api, { outcome, reason, runner, stats, scores, next, 
     ${recs}
     ${daily ? '' : `<div class="gtw-score"><span><i style="background:var(--p-a)"></i>${esc(api.name('a'))} ${scores.a}</span><span><i style="background:var(--p-b)"></i>${esc(api.name('b'))} ${scores.b}</span></div>`}
     ${unlocks && unlocks.length ? `<p class="gtw-unlock"><b>UNLOCKED</b> ${unlocks.map((u) => `${esc(u.name)} (${u.kind === 'cop' ? 'cruiser' : 'runner'})`).join(', ')} — pick it in Settings</p>` : ''}
-    <p>${esc(next)}</p><p class="gtw-tapon">${esc(wait || 'Tap to continue')}</p></div>`;
+    <p>${esc(next)}</p><p class="gtw-tapon">${esc(wait || 'Tap to continue')}</p>${adv && adv.total > 0 ? `<i class="gtw-adv" aria-hidden="true" style="animation-duration:${Math.round(adv.total)}ms;animation-delay:${-Math.round(adv.total - adv.left)}ms"></i>` : ''}</div>`;
 }
 
 /** The match card: round by round, the two of you side by side, the MVP. Tap to go on. */

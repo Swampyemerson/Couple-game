@@ -17,15 +17,20 @@ screen on a laptop), phone + computer, `immersive: true`, `ownsPauseUI: true`. E
 round 0:      intro 3.4 s (map · round · roles · "starting near …") → 3-2-1 → CHASE (2:30)
 new spawn:    intro 2.0 s → 2-1 → CHASE          (every 2 rounds, and the sudden-death decider)
 same spawn:   "YOU'RE THE COP" / "YOU'RE RUNNING" stamp over a 2-1 → CHASE
-after a round: stamp → result card at +0.7 s → next round at +3.0 s (sooner: tap the card; live, both tap)
+after a round: stamp → result card at +0.7 s → next round at +4.5 s, +6.0 s if either phone's card has news (sooner: tap the card; live, both tap)
 ```
 
 Between chases is ~5.5 s instead of ~12 s (was: card 5.2 s + intro 3.4 s + countdown 3 s): a 4 × 1:30
 match lost 86 s of 360 s to overhead (24%), now ~25 s. `FLOW` in game.js holds the numbers
-(`intro 3400, introMove 2000, count0 3000, count 2000, result 3000, card 700, skipAfter 1200,
-finalCard 4200, rematchLead 700, sudden 45`); the round carries its own `intro` length so both
-phones agree. A tap on the result card after 1.2 s skips it: practice and split at once, live with
-`skip {idx}` (urgent) from both phones (each card shows "Waiting for Sydney…" / "Sydney is ready").
+(`intro 3400, introMove 2000, count0 3000, count 2000, result 4500, resultHold 6000, card 700,
+skipAfter 1200, finalCard 4200, rematchLead 700, sudden 45`); the round carries its own `intro`
+length so both phones agree. The result card stays up ~3.8 s (at 3.0 s it was gone after ~2.3 s,
+before the NEW RECORD / UNLOCKED stamps at +1 / +2 s and the record lines could be read); a card
+with a record, streak or unlock line holds to 6 s, and in live that phone sends `hold {idx}` so the
+host's advance (and the other card) wait for it too. A thin bar along the card's bottom drains
+toward the auto-advance. A tap on the result card after 1.2 s skips it: practice and split at once,
+live with `skip {idx}` (urgent) from both phones (each card shows "Waiting for Sydney…" / "Sydney
+is ready").
 
 - **Cop wins (BUSTED)** when the runner's car health reaches 0; when the runner is **boxed in**:
   stopped (< 2 m/s) with the cop within 12 m **and the cop slow too** (< 6 m/s) or touching
@@ -155,7 +160,9 @@ world space. Each step:
   0.6: a lift now reads as a decision, 100 km/h coasts 196 m instead of 254), drag `0.00042 v²`,
   rolling `0.012 v`, surface drag, slope from `map.height`, 1.2 m/s² on a flat tyre. Over the top
   speed the excess bleeds at 0.3/s (`overTopBleed`, was 0.9: nitro running out eased from −6.7 m/s²
-  to −2.4). Brake at a standstill reverses (to 12 m/s).
+  to −2.4). Brake at a standstill reverses (to 12 m/s); under 5 cm/s forward counts as a standstill
+  (a car at rest but for a dying yaw rate kept 1e-11 m/s forward, so the brake kept 'stopping' it
+  and the reverse didn't come for seconds).
 - yaw rate chases the kinematic rate `v · tan(δ) / L` with a **grip-aware lock**: the lock is the
   smaller of the mechanical one (0.62 rad falling off as `1 / (1 + v/18)`) and the angle that asks
   for `lockGripK` (1.18) × the grip-limited yaw rate, so the slider maps 0..100% to 0..118% of what
@@ -229,7 +236,12 @@ frame loop also lets the simulation keep up with the shared clock down to 8 fps 
 A **slow frame** (> 50 ms: a hot phone after a thermal throttle) steps at 1/60 with at most 8
 substeps (`MAX_STEPS_SLOW`) and lets the clock slip the rest, and the AI thinks at most twice a
 frame (`AI_TICKS_MAX`), so a 125 ms frame costs ~4 substeps' worth of JS instead of 15 plus 3.75
-AI ticks (the regime where a 125 ms frame used to breed the next one). The
+AI ticks (the regime where a 125 ms frame used to breed the next one). The time past that cap
+carries into the next think (≤ 0.1 s): dropping it ran the AI's own clocks (stuck and queue
+timers) at half speed on a slow phone, so it sat twice as long in a jam. Each device streams how
+fast its simulation runs against the wall clock (`gk`, smoothed over ~0.3 s; 1 when it keeps up,
+less under 8 fps or in slow motion) and the partner dead-reckons its car by that much: at full
+velocity a slow partner's car was drawn and collided 1–3 m ahead of where it was. The
 drawn partner car is the prediction plus an error offset that decays to zero (no steady lag), plus
 a short push-out when the bodies touch.
 
@@ -324,15 +336,19 @@ every car close enough to hit has a body (tested: every car within 60 m at 40 sp
 channel namespaced by both sessions, so a re-mounted partner gets a fresh clock sync and reliable
 sequence. On top of that:
 
-- **Streaming** (20/s): `x z y yaw vx vz r st hp fl es nt lv rpm ph rd pz ry sv tp sl` (flags:
+- **Streaming** (20/s): `x z y yaw vx vz r st hp fl es nt lv rpm ph rd pz ry sv tp sl gk` (flags:
   boost, braking, handbrake, spinning, flat, siren, skidding, water). They go into an
   allocation-free ring buffer. The partner car is **interpolated at now − 100 ms, then
-  dead-reckoned forward** by the delay with its velocity and yaw rate (≤ 320 ms). The drawn car
+  dead-reckoned forward** by the delay with its velocity and yaw rate (≤ 320 ms, × the sender's
+  sim rate `gk`). The drawn car
   converges on that prediction (k = 10/s; a 12–40 m error slews at 4/s, ~250 ms; a snap only past
   40 m). Collisions are resolved against this predicted pose. A **stalled stream** (the newest
   sample older than 400 ms, `STALE_MS`: the partner's phone hitched) makes the partner's car a
   ghost: not solid on either phone (`p.stale`, `S.linkStale` for a HUD chip / faded drawing)
-  until a fresh sample arrives, so a 1–2 s hitch can't snap a solid car 20–40 m into yours. If the sender's clock is corrected backwards by more than 400 ms (its early sync
+  until the stream is back for one more sample interval (≥ 120 ms: the interpolation then has
+  samples from after the stall on both sides) and the two cars are apart (turning solid inside a
+  car that drove into the ghost would be a violent shove), so a 1–2 s hitch can't snap a solid car
+  20–40 m into yours. If the sender's clock is corrected backwards by more than 400 ms (its early sync
   was off), the buffer starts over instead of rejecting samples.
 - Room payloads arrive frozen, so every received message is deep-cloned before use.
 
@@ -383,9 +399,10 @@ time, so pauses never cost the runner seconds. A new round always starts unpause
 Touch: multi-touch pointer tracking, `touch-action: none`. `touchstart`/`touchmove` are cancelled
 **only on the driving surface and the pedal/tap buttons**: on iOS a cancelled `touchstart` also
 cancels the click, which once made every lobby button dead on the iPhone. Menus never rely on
-`click`: `bindTap` (hud.js) acts on a touch `pointerup` that stayed on the same control (and then
-swallows the browser's synthetic click for 700 ms, so a menu that re-renders under the finger isn't
-pressed twice) and on `click` for a mouse. Sheets and cards scroll (`touch-action: pan-y`,
+`click`: `bindTap` (hud.js) acts on a touch `pointerup` that stayed on the same control, tracked per
+pointer id, so a menu button works with another finger still on a pedal (the cop's loop: gas held,
+map, spike, Done; ‖ and Resume). It then swallows the browser's synthetic click for 700 ms, so a
+menu that re-renders under the finger isn't pressed twice. A mouse acts on `click`. Sheets and cards scroll (`touch-action: pan-y`,
 `overscroll-behavior: contain`). Touches that start within 20 px of the left edge are ignored (iOS
 back gesture). Steering feel (per phone, Settings): sensitivity Gentle / Normal / Quick (96 / 72 /
 54 px or 32 / 24 / 17° of tilt for full lock), centre dead zone Small / Normal / Large (3 / 6 /
@@ -549,7 +566,16 @@ so a long grind can't pile up voices.
   of each program gets a slice of its own (one object, 1×1 viewport, 3 vertices): drivers and
   SwiftShader build a program's pipeline lazily at its first draw (50–250 ms each in software GL),
   and several of them landing in one upload slice were the load's longest block (the perf test's
-  flaky 259–378 ms task). The test asserts no program is compiled during play.
+  flaky 259–378 ms task). The test asserts no program is compiled during play. Meanwhile the
+  canvas is out of the document and each slice ends on a WebGL2 fence that the warm-up polls
+  between tasks (render.js `createGpuPacer`). With the canvas in the page, the next compositing
+  step waited on the main thread for that slice's GPU work: Chrome's software compositor reads the
+  canvas back, and WebKit's prepareForDisplay is a synchronous call. Each heavy first draw was then
+  a 130–650 ms frozen task behind the loading card (the perf test's 415–649 ms Dockside block).
+  The fence keeps one slice in flight, so nothing piles up for the first real frame. WebGL1 keeps
+  the old pacing. So does the rest of a warm-up once a fence has waited 4 s, for example while the
+  GPU remakes everything after a context restore. A fence from before a context loss ends its wait
+  at once, because Chrome reads it as unsignalled forever.
 - Map builds are sliced (about 12 ms per slice; `prepare`/`build` may be async) behind a progress
   bar. The AI nav grid builds in 4 ms slices per frame in the background.
 - `webglcontextlost` pauses with "Tap to resume" and restore resumes. A hidden page pauses.
@@ -605,11 +631,21 @@ straight line across lawns. Every 0.1 s it reads the traffic ahead: follows, ove
 oncoming lane when it's clear long enough (the cop more readily: traffic pulls over for it), uses
 a verge when crawling in a queue (and leaves it as soon as its lane flows again or after ~3.5 s,
 for any decent slot: it used to ride the grass beside a moving line of cars for 10+ s), and creeps
-round a car that has stopped nose to nose with it. A
+round a car that has stopped nose to nose with it (6–14 m ahead; the runner after 1 s, 0.3 s with
+the cop close; the cop too, after 2.6 / 1.8 / 1.2 s by level, pulling out to the oncoming side
+first: its siren only clears the way while it's moving, so a red-light queue it was stopped
+behind stayed put for 5–12 s; the wait timer decays instead of resetting on one odd read). Held
+there with no way round, the watchdog counts it as stuck whatever the gap. A
 **watchdog** (less than 4 m of progress while wanting to move: in 2.4 s, or 2.9 s with traffic just
 ahead; a runner gives up sooner, 1.8 / 2.4 s; or pinned against a wall or a car, traffic included)
 escalates: reverse with the opposite lock, reverse plus a three-point turn, penalise the road it's
 stuck on for 20 s and re-plan, and (practice, 70 m+ from the player) hop back onto the lane behind.
+A reverse (or the turn after it) that moves under 0.3 m in 0.5 s straightens the wheel, then tries
+the other lock (a full-lock reverse with a fence behind one corner used to sit out the whole
+manoeuvre), and a recovery that got nowhere brings the next level after 0.8 s instead of 2.4.
+Waiting (a target speed of 0) it holds still on the handbrake: the brake pedal at a standstill is
+reverse, so it used to back away from the car it was queued behind at ~1 m/s. A cop lined up in
+front of a parked runner no longer counts as 'too close behind' it (it sat 16–38 m ahead for good).
 It thinks at a fixed 30 Hz inside the physics step (slow motion slows it too). Slow and turning
 (pulling out of a junction), it reads the traffic in the direction it is turning to, not along its
 nose (a car waiting at the line straight ahead used to hold it up for good). With no route yet it
@@ -672,9 +708,11 @@ brakes, turning, drifts, walls without tunnelling at up to 216 km/h, sliding alo
 PIT vs ram vs T-bone, Dockside spawns and surfaces, traffic determinism and density, bridge decks,
 nav; the feel pass: steering resolution at 60/100/140 km/h, the grip limit's squeal and the no-runaway power
 slide, lift-off oversteer, coast, nitro run-out, oil, humps, a flat tyre, PIT continuity and the cop-lateral
-PIT rule, Dockside's carriageway clear of solids, `traffic.each()` = brute force, the grow-in hold) ·
-`stall` (two phones: one main thread hitches 1.2 s next to the partner: its car goes stale and ghostly, no
-bump, no damage, no snap when the stream resumes) · `practice` (one phone vs the AI: lobby, intro, countdown, AI pursuit, touch pedals and
+PIT rule, Dockside's carriageway clear of solids, `traffic.each()` = brute force, the grow-in hold; the
+reverse from rest with a dying yaw rate) ·
+`stall` (two phones: one main thread hitches 1.6 s next to the partner, which lets go of the gas as it
+freezes: its car goes stale and ghostly, no bump, no damage then or in the 0.6 s after the stream
+resumes (a picture ahead of the real car would be a phantom hit), no snap) · `practice` (one phone vs the AI: lobby, intro, countdown, AI pursuit, touch pedals and
 slider, iOS edge, scripted PIT → boxed bust, role swap, spike rules and effect, cop immunity, clock
 escape, heat escape, water bust, final) · `live` (two phones at 80 ms: settings sync, read-only
 guest sheet, shared timeline, same spawn, roles, traffic determinism across devices, remote car
@@ -686,8 +724,12 @@ and render) · `perf` (every playable map on phone and laptop: draw calls, trian
 a busy chase; each long task from a map load to 600 ms after ready is classed as load work or a
 rendered frame — the game logs frame starts in test mode — and load work must stay within
 max(250 ms, 1.3 × an ordinary frame) while frames get 2 ×, since the first software-GL frames of a new
-map run up to ~1.5 × a steady one) · `shots` (390×844, 844×390, 1280×800, light and dark: lobby, settings, intro, chase,
-pursuit, map, result) · `touch` (an iPhone driven only by real `page.tap()`s: the Practice vs AI
+map run up to ~1.5 × a steady one; a map over the cap is loaded once more, because the sandbox is shared, and the
+canvas must be back in the page after the warm-up) · `shots` (390×844, 844×390, 1280×800, light and dark: lobby, settings, intro, chase,
+pursuit, map, result; the game runs with `drawHold` on, so the clock, phases, cars and HUD go on but nothing
+is drawn, and each shot draws two fresh frames first. A full-size software-GL frame is 1–3 s, which starved
+taps and timers. Intro and result are held for 120 s and the test moves past the intro itself; phones press
+by `page.tap()`) · `touch` (an iPhone driven only by real `page.tap()`s: the Practice vs AI
 label, opening on Dockside after a crash marker, role / AI level / how-to / settings rows, a forced
 load failure → error card → Play Dockside instead, Cancel on a big map load, Start, the ‖ pause
 menu with Settings and Resume, the map's Done, a context loss that never comes back → Reload
@@ -697,13 +739,18 @@ Settings, the rule steppers, Done and the guest's Ready. Screenshots go to `$SHO
 Engine v2 sections: `unit` also covers the box collider, trunk-sized props, shrubs and mailboxes,
 sliding along a wall of seamed boxes, PIT tiers, braking dive, the road graph (sliced = one go,
 one network), traffic not overlapping at junctions, every nearby traffic car drawn, wrecks stopping
-at walls, and the AI reaching the player / getting unstuck on every map · `contacts` (two phones at
-80 ms / 10% loss shove side by side: every contact step is checked against where the partner car
-really was on the shared clock — no phantom contacts — and every bump reaches the cop's phone; port
-PORT + 9) · `chasecontacts` (also run by `contacts`: both cars driven by the AI on Dockside with
-traffic on at 120 ms / 10% loss, the cop started 12 m behind the runner seven times; under 10 % of
-the runner phone's contact steps may be phantom; DBG=1 prints how far each phone's picture of the
-partner is from the real car, with and without a bump correction).
+at walls, and the AI reaching the player / getting unstuck on every map, an Easy AI cop never
+sitting still for long through traffic · `contacts` (two phones at
+80 ms / 10% loss shove side by side six times: at least four shoves make contact, every contact step
+is checked against where the partner car really was on the shared clock — no phantom contacts — and
+every bump reaches the cop's phone; both phones agree on the damage once the streamed hp settles;
+port PORT + 9) · `chasecontacts` (also run by `contacts`: both cars driven by the AI on Dockside with
+traffic on at 120 ms / 10% loss, the cop started 12 m behind the runner 7–14 times, until the
+runner's phone has 30 contact steps; under 10 % of them may be phantom, 25 % when the pages
+simulate below 0.85 of real time (a starved sandbox at 5–7 fps: one mispredicted frame is 8 steps,
+and the real track is itself interpolated across 150–400 ms frames); DBG=1 prints how far each
+phone's picture of the partner is from the real car, with and without a bump correction: in the
+sandbox at ~0.55 of real time the median was 1.6–2.2 m before the sim-rate scaling, 0.7 m after).
 
 ## Known limits
 

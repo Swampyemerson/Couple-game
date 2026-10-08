@@ -25,11 +25,16 @@ import { routePolyline } from './roadgraph.js';
 
 export const AI_LEVELS = ['easy', 'normal', 'hard'];
 export const AI_LEVEL_LABELS = { easy: 'Easy', normal: 'Normal', hard: 'Hard' };
+// hold: how long the cop waits behind a stopped car before creeping round it (s)
 const LV = {
-  easy: { vK: 0.88, react: 0.25, pit: 0, ping: 6, nitro: 0.5, traffic: 1.25, cool: 2.4 },
-  normal: { vK: 0.95, react: 0.15, pit: 1, ping: 4, nitro: 0.8, traffic: 1, cool: 1.5 },
-  hard: { vK: 1.0, react: 0.08, pit: 2, ping: 2, nitro: 1, traffic: 0.85, cool: 0.8 },
+  easy: { vK: 0.88, react: 0.25, pit: 0, ping: 6, nitro: 0.5, traffic: 1.25, cool: 2.4, hold: 2.6 },
+  normal: { vK: 0.95, react: 0.15, pit: 1, ping: 4, nitro: 0.8, traffic: 1, cool: 1.5, hold: 1.8 },
+  hard: { vK: 1.0, react: 0.08, pit: 2, ping: 2, nitro: 1, traffic: 0.85, cool: 0.8, hold: 1.2 },
 };
+// creep-round offsets across my path (m; + is right): the runner tries the verge side first, the
+// cop the oncoming lane
+const CREEP_RUNNER = [2.9, -2.9, 4.3, -4.3, 5.8, -5.8];
+const CREEP_COP = [-2.9, -4.3, 2.9, 4.3, -5.8, 5.8];
 
 const wrap = (a) => { a = (a + Math.PI) % (Math.PI * 2); if (a < 0) a += Math.PI * 2; return a - Math.PI; };
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -46,6 +51,7 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
     t: 0, mode: 'route', pit: 'approach', pitT: 0, pitSide: 1, coolT: 0,
     replanT: 0, goalT: 0, fails: 0, route: null, ri: 0, laneShift: 0, laneT: 0, target: null,
     stuckLvl: 0, stuckAt: -99, revT: 0, revSteer: 0, turnT: 0, turnSteer: 0, lastSteer: 0, hopT: 0,
+    revSteer0: 0, revTry: 0, revRun: 0, revX: 0, revZ: 0, recX: null, recZ: 0, quick: false, blockT: 0, held: false,
     spikeT: 8 + rnd() * 6, oilT: 0, known: null, pingT: 0, farT: 0, closeT: 0, aheadT: 0,
     trafT: 0, tLead: Infinity, tLeadV: 0, tFree: Infinity, laneK: 0, laneTarget: 0, sideNudge: 0, vWant: 0,
     stats: { replans: 0, stucks: 0, hops: 0, maxMs: 0 },
@@ -304,15 +310,22 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
     // a runner with the cop close behind can't sit in a queue: it takes smaller gaps
     const urgent = role === 'runner' && (D.copNear || 0) < 70;
     const need = role === 'cop' ? Math.max(28, v * 1.7) : urgent ? Math.max(24, v * 1.5) : Math.max(38, v * 2.2);
-    // nose to nose with a car that isn't moving (it's waiting for me, or stuck): creep round it
-    // (the runner, with room to swing out; the cop's siren clears its way, and squeezing past a
-    // car closer than that just wedges it against the car's corner: the watchdog backs it out)
-    D.blockT = role === 'runner' && car.speed < 4 && here[0] < 12 && here[0] >= 6 && here[2] < 1 ? (D.blockT || 0) + 0.1 : 0;
+    // nose to nose with a car that isn't moving (it's waiting for me, at a red light, or stuck):
+    // creep round it, with room to swing out (closer than 6 m, squeezing past just wedges the car
+    // against the other's corner: the watchdog backs it out first). The runner soon; the cop too,
+    // more patiently by level: its siren only clears the way while it's moving, so a queue it's
+    // stopped behind stays put (an Easy cop sat 5–12 s behind a red-light queue in practice).
+    // (a timer that decays instead of resetting: one 0.1 s read with the blocker just outside my
+    // lane used to restart the wait)
+    const blocked = car.speed < 4 && here[0] < 14 && here[0] >= 6 && here[2] < 1;
+    D.blockT = blocked ? (D.blockT || 0) + 0.1 : Math.max(0, (D.blockT || 0) - 0.3);
+    D.held = D.blockT > (role === 'runner' ? (urgent ? 0.3 : 1.0) : lv.hold);
     if (cur === 4) {
       const f = freeAt(lanes[4] - me, false);
       if (keepT <= 0 && (own[0] >= 14 || f[0] < 3)) { cur = 0; keepT = 0.6; }
-    } else if (D.blockT > (urgent ? 0.3 : 1.0)) {
-      for (const c of [2.9, -2.9, 4.3, -4.3, 5.8, -5.8]) {
+    } else if (D.held) {
+      // (the cop pulls out to the left first: the oncoming lane, through the light, siren on)
+      for (const c of role === 'cop' ? CREEP_COP : CREEP_RUNNER) {
         const f = freeAt(c, true); if (f[0] < 10) continue;
         const ox = car.x + rx * c; const oz = car.z + rz * c;
         if (vergeBlocked(car.x + fx * 2, car.z + fz * 2, ox + fx * 5, oz + fz * 5) < 1 || vergeBlocked(ox + fx * 5, oz + fz * 5, ox + fx * 14, oz + fz * 14) < 1) continue;
@@ -483,7 +496,9 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
         }
         tx = kx - fx * 7 + rx * D.pitSide * 2.3; tz = kz - fz * 7 + rz * D.pitSide * 2.3;
         vT = k.speed + clamp((dist - 8) * 0.45, 1, 9);
-        if (Math.abs(lx) < 1.8 && lz > -7) vT = Math.min(vT, k.speed - 1); // too close behind
+        // too close behind (a stopped runner with me in line in front of it isn't 'behind': that
+        // held the cop at a standstill 16–38 m ahead of a parked runner, waiting for good)
+        if (Math.abs(lx) < 1.8 && lz > -7 && (lz < 0 || k.speed > 3)) vT = Math.min(vT, k.speed - 1);
         if (lz < -1 && lz > -10 && Math.abs(lx - D.pitSide * 2.3) < 1.3 && lv.pit > 0 && D.coolT <= 0) { D.pit = 'align'; D.pitT = 0; }
         if (lv.pit === 0) { tx = kx - fx * 5 + rx * 1.5; tz = kz - fz * 5 + rz * 1.5; vT = k.speed + clamp((dist - 7) * 0.4, -2, 6); } // easy: sits on its tail
       }
@@ -496,6 +511,8 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
   function watchdog(car, wantMove, opts) {
     if (!trail.length || D.t - trail[trail.length - 1].t >= 0.25) { trail.push({ t: D.t, x: car.x, z: car.z }); if (trail.length > 15) trail.shift(); }
     if (D.revT > 0 || D.turnT > 0) return;
+    // a recovery that got nowhere (wedged between a fence and a house): the next level comes quickly
+    if (D.recX != null) { D.quick = Math.hypot(car.x - D.recX, car.z - D.recZ) < 1; D.recX = null; }
     const old = trail[0];
     const span = D.t - old.t;
     const moved = Math.hypot(car.x - old.x, car.z - old.z);
@@ -504,21 +521,21 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
     // nose in a wall, or shoved against something by the other car: back out quickly
     const pinned = D.pinT > (role === 'runner' ? 0.7 : 1.1) && (car.wnT > 0 || D.t - (D.hitT || -9) < 0.6);
     // (a runner stuck for long is a sitting duck: it gives up sooner)
-    const patience = role === 'runner' ? (D.tFree < 9 ? 2.4 : 1.8) : D.tFree < 9 ? 2.9 : 2.4;
-    if (!(wantMove && span >= patience - 0.01 && moved < 4) && !pinned) { if (D.t - D.stuckAt > 10) D.stuckLvl = 0; return; }
+    const patience = D.quick ? 0.8 : role === 'runner' ? (D.tFree < 9 ? 2.4 : 1.8) : D.tFree < 9 ? 2.9 : 2.4;
+    if (!(wantMove && span >= patience - 0.01 && moved < 4) && !pinned) { if (moved >= 4) D.quick = false; if (D.t - D.stuckAt > 10) D.stuckLvl = 0; return; }
     trail.length = 0; D.pinT = 0;
     D.stats.stucks++;
     D.stuckLvl = D.t - D.stuckAt < 9 ? D.stuckLvl + 1 : 1;
-    D.stuckAt = D.t;
+    D.stuckAt = D.t; D.recX = car.x; D.recZ = car.z;
     const opp = -Math.sign(D.lastSteer || 1);
-    if (D.stuckLvl === 1) { D.revT = 1.2; D.revSteer = opp; }
-    else if (D.stuckLvl === 2) { D.revT = 2.0; D.revSteer = opp; D.turnT = 1.4; D.turnSteer = -opp; }
+    if (D.stuckLvl === 1) backUp(car, 1.2, opp);
+    else if (D.stuckLvl === 2) { backUp(car, 2.0, opp); D.turnT = 1.4; D.turnSteer = -opp; }
     else {
       // block the road I'm on (this direction) for a while and plan around it
       G.locate(car.x, car.z, car.yaw, loc, 60);
       if (loc.road >= 0) for (let q = G.adjStart[loc.a]; q < G.adjStart[loc.a + 1]; q++) { const e = G.adj[q]; if (G.edges.to[e] === loc.b) penal.set(e, D.t + 20); }
       if (loc.road >= 0) for (let q = G.adjStart[loc.b]; q < G.adjStart[loc.b + 1]; q++) { const e = G.adj[q]; if (G.edges.to[e] === loc.a) penal.set(e, D.t + 20); }
-      D.revT = 1.6; D.revSteer = opp; D.replanT = 0;
+      backUp(car, 1.6, opp); D.replanT = 0;
       // last resort (practice only): hop back onto the lane behind, out of the player's way
       if (D.stuckLvl >= 4 && opts.viewer && Math.hypot(opts.viewer.x - car.x, opts.viewer.z - car.z) > 70 && loc.road >= 0) {
         const r = roads[loc.road]; const tmp = {};
@@ -529,6 +546,24 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
       }
     }
     D.replanT = Math.min(D.replanT, 0.3);
+  }
+  /** Reverse for t s on this lock; recover() changes the lock when it isn't going anywhere. */
+  function backUp(car, t, steer) { D.revT = t; D.revSteer = steer; D.revSteer0 = steer; D.revTry = 0; D.revRun = 0; D.revX = car.x; D.revZ = car.z; }
+  /** Every 0.5 s of a reverse (or of the forward turn after it): moved under 0.3 m means the tail
+   *  (or nose) is against something on this lock: straighten the wheel, then the other lock. A
+   *  full-lock reverse with a fence behind one corner sat still for the whole manoeuvre, every level. */
+  function recover(car, dt, fwd) {
+    // (only once it's going the new way: braking out of the old direction first isn't stuck)
+    const vf = car.vf != null ? car.vf : 0;
+    if (fwd ? vf < -0.3 : vf > 0.3) { D.revRun = 0; D.revX = car.x; D.revZ = car.z; return; }
+    D.revRun += dt;
+    if (D.revRun < 0.5) return;
+    if (Math.hypot(car.x - D.revX, car.z - D.revZ) < 0.3 && D.revTry < 2) {
+      D.revTry++;
+      if (fwd) D.turnSteer = D.revTry === 1 ? 0 : -D.turnSteer;
+      else { D.revSteer = D.revTry === 1 ? 0 : -D.revSteer0; D.revT = Math.max(D.revT, 0.9); }
+    }
+    D.revRun = 0; D.revX = car.x; D.revZ = car.z;
   }
 
   // ── main ──
@@ -557,11 +592,11 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
     D.copNear = role === 'runner' ? dist : 999;
     // recovering
     if (D.revT > 0) {
-      D.revT -= dt; out.gas = 0; out.brake = 1; out.steer = D.revSteer;
-      if (D.revT <= 0) D.replanT = 0;
+      D.revT -= dt; recover(car, dt, false); out.gas = 0; out.brake = 1; out.steer = D.revSteer;
+      if (D.revT <= 0) { D.replanT = 0; D.revTry = 0; D.revRun = 0; D.revX = car.x; D.revZ = car.z; }
       finish(t0); return out;
     }
-    if (D.turnT > 0) { D.turnT -= dt; out.gas = 0.7; out.brake = 0; out.steer = D.turnSteer; finish(t0); return out; }
+    if (D.turnT > 0) { D.turnT -= dt; recover(car, dt, true); out.gas = 0.7; out.brake = 0; out.steer = D.turnSteer; finish(t0); return out; }
     // catch-up / ease-off
     let vK = lv.vK * (skill || 1);
     if (role === 'cop') {
@@ -678,7 +713,9 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
     else if (ev > 0.5) { out.gas = clamp(ev / 4, 0.3, 1); out.brake = 0; }
     else if (ev < -2.5) { out.gas = 0; out.brake = clamp(-ev / 8, 0.2, 1); }
     else { out.gas = ev > -0.5 ? 0.25 : 0; out.brake = 0; }
-    if (vT < 0.5 && car.speed < 1) { out.gas = 0; out.brake = 0.4; }
+    // waiting: hold still on the handbrake (the brake pedal at a standstill is reverse: the AI used
+    // to back away from the car it was queued behind at ~1 m/s, and a boxing cop off the runner)
+    if (vT < 0.5 && car.speed < 1) { out.gas = 0; out.brake = 0; out.hand = true; }
     // a hairpin at speed: a dab of handbrake
     if (Math.abs(p.alpha) > 0.7 && car.speed > 15 && Math.abs(out.steer) > 0.8 && car.vf > vT + 3) out.hand = true;
     // nitro on a long clear straight
@@ -710,7 +747,8 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
       } else D.spikeT = 3;
     }
     // stuck = wanting to go but not getting anywhere (also when boxed in by traffic, more patiently)
-    watchdog(car, D.vWant > 4 && !brakeHard && (out.gas > 0.2 || D.tFree < 9), opts);
+    // (held behind a stopped car with no way round it: that's stuck too, whatever the gap)
+    watchdog(car, D.vWant > 4 && !brakeHard && (out.gas > 0.2 || D.tFree < 9 || D.blockT > lv.hold + 1.2), opts);
     finish(t0);
     return out;
   }

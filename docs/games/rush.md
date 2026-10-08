@@ -5,6 +5,10 @@ computer. Entry `js/games/rush.js`; modules in `js/games/rush/`. Test: `tools/te
 (run in two halves: `ONLY=gen,split,leak,drop,dark` and `ONLY=race,brawl,tandem,pause,daily`; the
 `gen` half also asserts the clip grace, combo tiers and the Daily seed; `race` the ghost marker,
 bests and an unlock's persistence across a re-mount; `daily` a whole Daily run and today's board).
+Every run section (split, race, brawl, tandem, daily) also spies the feedback layer and asserts crash
+sounds, music ducks and CRASH!/FELL!/SLAMMED! pops equal the local runners' real crashes (one pop per
+crash: a Brawl slam shows only the mode's "SLAMMED! by …"); `split`
+queues a combo payout (`__rush.emit('a', 'bonus', 5)`) and checks it lands on the ladder with no crash.
 
 ## Controls
 

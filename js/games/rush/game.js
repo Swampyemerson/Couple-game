@@ -7,7 +7,7 @@ import {
 import { hash } from '../core.js';
 import { createTrack, trackHash, difficulty, O_MTRAIN, TUT_JUMP, TUT_ROLL } from './track.js';
 import {
-  newRunner, step, act, createBot, botRun, crash, C_FORCED, A_LEFT, A_RIGHT, A_UP, A_DOWN,
+  newRunner, step, act, createBot, botRun, crash, C_FORCED, C_FALL, C_SLAM, A_LEFT, A_RIGHT, A_UP, A_DOWN,
   E_JUMP, E_LAND, E_ROLL, E_LANE, E_COIN, E_PICK, E_STUMBLE, E_CRASH, E_RESPAWN, E_SHIELD,
   E_CLOSE, E_COMBO, E_FINISH, E_SMASH, E_TOKEN, E_BLOCK, E_BUMP, E_BONUS, E_CLIP,
 } from './sim.js';
@@ -216,7 +216,6 @@ export function createGame(el, api) {
   let rules = null;
   const pal = { a: null, b: null, hl: null };
   const lobbyTrack = createTrack(1);
-  const tmpV = { x: 0, y: 0, z: 0 };
   let vec3 = null;
   const shadowList = [[0, 0, 0, 1, 1], [0, 0, 0, 1, 1]];
   const zsBuf = new Float64Array(3); // view positions handed to world.ensure (no array regrowth per frame)
@@ -833,9 +832,11 @@ export function createGame(el, api) {
         }
         case E_STUMBLE: if (mine) { api.haptic(15); audio.play('stumble'); if (Math.random() < 0.4) v.pop('Oof', 'bad'); } shake(p.w, 0.28); fx.dust(r.x, r.y, r.z, 5, 1); break;
         case E_CLIP: if (mine) { api.haptic(20); audio.play('clip'); v.pop('Clipped it!', 'bad', 'swipe a touch earlier'); } shake(p.w, 0.35); fx.dust(r.x, r.y, r.z, 6, 1.1); fx.burst(r.x, r.y + 1, r.z, P.hl, 5, 3); break;
-        case E_BONUS: if (mine) { const ti = comboTier(r.combo); audio.play('bonus', val); v.combo(r.combo, `${COMBO_WORDS[ti < 0 ? 0 : ti]} · +${val} coins`, ti); } // on the combo ladder, not a centre pop (a close call usually pops on the same step) fx.burst(r.x, r.y + 1.4, r.z, P.hl, 10, 4); break;
+        // on the combo ladder, not a centre pop (a close call usually pops on the same step)
+        case E_BONUS: if (mine) { const ti = comboTier(r.combo); audio.play('bonus', val); v.combo(r.combo, `${COMBO_WORDS[ti < 0 ? 0 : ti]} · +${val} coins`, ti); } fx.burst(r.x, r.y + 1.4, r.z, P.hl, 10, 4); break;
         case E_CRASH:
-          if (mine) { api.haptic(45); audio.play('crash'); audio.duck(1400); v.flash(); v.pop(val === 2 ? 'FELL!' : val === 3 ? 'SLAMMED!' : 'CRASH!', 'bad'); }
+          // (a Brawl slam pops its own "SLAMMED! by …" from the mode rules: one pop per crash)
+          if (mine) { api.haptic(45); audio.play('crash'); audio.duck(1400); v.flash(); if (val !== C_SLAM) v.pop(val === C_FALL ? 'FELL!' : 'CRASH!', 'bad'); }
           shake(p.w, 0.7);
           if (mine && !reducedMotion) { K.hitPend = HIT_STOP; const rg = p.rig; if (rg) rg.punch(0.7); }
           fx.crash(r.x, r.y, r.z);
@@ -1422,6 +1423,13 @@ export function createGame(el, api) {
       auto(w, on) { const p = players[w || meW]; if (p) p.auto = on !== false; },
       give(w, kind) { const p = players[w || meW]; if (!p || !p.r) return false; if (kind === 'shield') { p.r.shield = 1; return true; } if (kind === 'magnet') { p.r.magnetT = 10; return true; } p.weapon = kind; p.weaponRoll = 0; return true; },
       crash(w) { const p = players[w || meW]; if (p && p.r && !p.r.down) { p.r.invulnT = 0; p.r.shield = 0; crash(p.r, C_FORCED, false); drain(p); } },
+      /** Queue a sim event on a local runner; the next step drains it through the real feedback path. */
+      emit(w, kind, val) {
+        const p = players[w || meW]; const t = { bonus: E_BONUS, combo: E_COMBO, close: E_CLOSE }[kind];
+        if (!p || !p.r || !t || p.r.evN >= p.r.evT.length) return false;
+        p.r.evT[p.r.evN] = t; p.r.evV[p.r.evN] = val; p.r.evN++;
+        return true;
+      },
       setHearts(w, n) { const p = players[w || meW]; if (p && p.r) p.r.hearts = n; },
       ghost(w, sec) { const p = players[w || meW]; if (p && p.r && !p.r.done) p.r.invulnT = sec; },
       teamHearts(n) { M.th = n; },

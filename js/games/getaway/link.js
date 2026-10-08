@@ -7,8 +7,9 @@
 // Collisions use this prediction; the drawn car is the prediction plus a decaying error offset.
 import { createNet } from '../net.js';
 
-/** Streamed at 20/s. Every field is a number. */
-export const FIELDS = ['x', 'z', 'y', 'yaw', 'vx', 'vz', 'r', 'st', 'hp', 'fl', 'es', 'nt', 'lv', 'rpm', 'ph', 'rd', 'pz', 'ry', 'sv', 'tp', 'sl'];
+/** Streamed at 20/s. Every field is a number. gk: how fast the sender's simulation runs against
+ *  the wall clock (1 when it keeps up; a phone under 8 fps, or in slow motion, runs slower). */
+export const FIELDS = ['x', 'z', 'y', 'yaw', 'vx', 'vz', 'r', 'st', 'hp', 'fl', 'es', 'nt', 'lv', 'rpm', 'ph', 'rd', 'pz', 'ry', 'sv', 'tp', 'sl', 'gk'];
 const F = FIELDS.length;
 const YAW = FIELDS.indexOf('yaw');
 const STEP = new Set(['fl', 'lv', 'ph', 'rd', 'pz', 'ry', 'sv']); // flags: newest wins, no lerp
@@ -170,7 +171,11 @@ export function createLink(api, { delay = 100, onLink = () => {}, onUnlink = () 
       const now = at ?? this.now();
       const ex = rb.sample(now - net.delay, out);
       if (ex < 0) return false;
-      const ahead = Math.min(0.32, (net.delay + ex) / 1000);
+      // (the samples are on the wall clock, the velocity is per second of the sender's simulation:
+      // a sender running at half speed covers half of v × t. Projecting at full v put a slow
+      // partner's car 1–3 m ahead of where it really was: contacts with a car that wasn't there.)
+      const gk = out.gk > 0.05 && out.gk < 1 ? out.gk : 1;
+      const ahead = Math.min(0.32, (net.delay + ex) / 1000) * gk;
       // dead-reckon along the arc it is turning on (velocity turns with the yaw rate)
       const r = Math.max(-2.5, Math.min(2.5, out.r || 0));
       let vx = out.vx; let vz = out.vz; const h = ahead / 4;

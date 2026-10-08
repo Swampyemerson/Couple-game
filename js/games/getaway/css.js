@@ -281,6 +281,10 @@ export const CSS = `
 /* result + final cards: tap anywhere on the card to go on */
 .gtw-result, .gtw-final { cursor: pointer; }
 .gtw-tapon { font-size: .74rem !important; font-weight: 800 !important; letter-spacing: .06em; opacity: .75; }
+.gtw-result { position: relative; }
+/* the result card's auto-advance: a bar that drains along the card's bottom edge */
+.gtw-adv { position: absolute; left: 12px; right: 12px; bottom: 5px; height: 4px; border-radius: 3px; background: var(--g-ink); opacity: .35; transform-origin: left center; animation: gtw-adv linear forwards; pointer-events: none; }
+@keyframes gtw-adv { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 .gtw-rec { font-size: .84rem !important; color: var(--g-ink) !important; }
 .gtw-rec.hot { background: var(--g-hl); border: 2px solid var(--g-ink); border-radius: 10px; padding: 5px 8px; color: var(--g-on-ink, var(--g-ink)) !important; }
 .gtw-rec b { font-family: var(--g-font-display); letter-spacing: .06em; }

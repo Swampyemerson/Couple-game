@@ -29,6 +29,45 @@ const until = async (pg, fn, arg, ms = 15000, what = 'condition') => {
 };
 const shot = (pg, name) => pg.screenshot({ path: `${SHOTS}/${name}.png` });
 
+// Feedback spy (install after each mount): counts crash sounds, music ducks, CRASH!/FELL!/SLAMMED! pops
+// and combo-ladder updates on one page, against its local runners' real crashes. A combo payout once
+// fell through into the crash case, so every x3/x5/x8 sounded, shook and froze like a crash.
+const spyFeedback = (pg) => pg.evaluate(() => {
+  const I = window.__rush.internals;
+  const f = window.__fb = { play: {}, duck: 0, pops: [], ladder: [], c0: {} };
+  for (const w of ['a', 'b']) { const r = I.players[w].r; if (r && I.players[w].view) f.c0[w] = r.crashes; }
+  const au = I.audio;
+  if (!au.__spy) {
+    const p0 = au.play; const d0 = au.duck;
+    au.play = function (n, x) { window.__fb.play[n] = (window.__fb.play[n] || 0) + 1; return p0.call(this, n, x); };
+    au.duck = function (ms) { window.__fb.duck++; return d0.call(this, ms); };
+    au.__spy = 1;
+  }
+  for (const w of ['a', 'b']) {
+    const v = I.players[w].view;
+    if (!v || v.__spy) continue;
+    const pop0 = v.pop; const combo0 = v.combo;
+    v.pop = function (t, c, s) { window.__fb.pops.push(`${w}:${t}`); return pop0.call(this, t, c, s); };
+    v.combo = function (n, label, tier) { window.__fb.ladder.push(`${w}:x${n} ${label}`); return combo0.call(this, n, label, tier); };
+    v.__spy = 1;
+  }
+});
+const feedback = (pg) => pg.evaluate(() => {
+  const I = window.__rush.internals; const f = window.__fb;
+  let crashes = 0;
+  for (const w in f.c0) crashes += I.players[w].r.crashes - f.c0[w];
+  return {
+    crashes, crashSounds: f.play.crash || 0, ducks: f.duck, bonus: f.play.bonus || 0,
+    crashPops: f.pops.filter((p) => /:(CRASH|FELL|SLAMMED)!$/.test(p)).length, ladder: f.ladder.slice(-4),
+  };
+});
+const checkFeedback = async (pg, what) => {
+  const f = await feedback(pg);
+  assert(f.crashSounds === f.crashes && f.crashPops === f.crashes && f.ducks === f.crashes,
+    `${what}: crash sound, music duck and CRASH! pop only on real crashes (${f.crashes} crashes; ${f.crashSounds} sounds, ${f.ducks} ducks, ${f.crashPops} pops; ${f.bonus} combo payouts)`);
+  return f;
+};
+
 // Mode rules, headless (no browser): modes.js + sim/track/tune copied into a scratch ESM package
 // with core's hash/rng, two local runners, messages delivered in order with a fake shared clock.
 async function rulesUnit() {
@@ -221,6 +260,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         console.log('ok - guest sees the host pick the mode live');
         await pickAndStart(h, 'race');
         await waitRun(a); await waitRun(b);
+        await spyFeedback(a); await spyFeedback(b);
         // milestone for an unlock: Emerson racks up 15 close calls this run (set early: a short race
         // on a loaded machine can be over before the later steps)
         await a.evaluate(() => { window.__rush.internals.players.a.r.closeCalls = 15; });
@@ -252,8 +292,10 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         console.log('ok - down-swipe rolls');
         // ghost marker: when the partner is out of sight ahead, a chip with the live gap sits at the horizon in their lane
         await b.evaluate(() => { const r = window.__rush.internals.players.b.r; r.z += 135; r.zPrev = r.z; });
-        await until(a, () => { const t = document.querySelector('.g-rush .rr-tag'); return t && t.classList.contains('rr-ghost') && t.style.display !== 'none' && /↑ \d+ m/.test(t.textContent); }, null, 6000, 'ghost marker for a partner far ahead');
-        const gt = await a.$eval('.g-rush .rr-tag', (t) => t.textContent);
+        // (text read in the same poll: the 135 m teleport sits just past the 120 m threshold, and on a
+        // loaded machine the interpolated partner can briefly sample from before it, flipping back to the name tag)
+        await until(a, () => { const t = document.querySelector('.g-rush .rr-tag'); const ok = t && t.classList.contains('rr-ghost') && t.style.display !== 'none' && /↑ \d+ m/.test(t.textContent); if (ok) window.__gt = t.textContent; return ok; }, null, 6000, 'ghost marker for a partner far ahead');
+        const gt = await a.evaluate(() => window.__gt);
         assert(/Sydney ↑ \d+ m/.test(gt), `host sees the partner's ghost marker: "${gt}"`);
         await shot(a, 'phone-light-ghost');
         await b.evaluate(() => { const r = window.__rush.internals.players.b.r; r.z -= 135; r.zPrev = r.z; }); // back to the pack
@@ -281,7 +323,15 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         await lead.evaluate((w) => window.__rush.give(w, 'shield'), lw);
         await trail.evaluate((w) => window.__rush.give(w, 'zap'), tw);
         await fireWeapon(trail);
-        await until(lead, (w) => !window.__rush.state()[w].shield, lw, 5000, 'shield used up by the zap');
+        // (a tap while the thrower is down is ignored and the zap stays loaded: on a loaded machine the
+        // autopilot can be mid-crash at the click, so tap again while it's still in the slot)
+        for (let k = 0; k < 3; k++) {
+          const gone = await lead.waitForFunction((w) => !window.__rush.state()[w].shield, lw, { timeout: 5000, polling: 100 }).then(() => true, () => false);
+          if (gone || (await trail.evaluate((w) => window.__rush.state()[w].weapon, tw)) !== 'zap') break;
+          console.log(`   zap tap ${k + 1} ignored (thrower down at the click), again`);
+          await fireWeapon(trail);
+        }
+        await until(lead, (w) => !window.__rush.state()[w].shield, lw, 3000, 'shield used up by the zap');
         console.log('ok - shield blocks a zap (victim decides)');
         // roadblock from the leader lands in the trailer's lane
         await lead.evaluate((w) => window.__rush.give(w, 'block'), lw);
@@ -322,6 +372,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         // finish
         await until(a, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 90000, 'end card on the host');
         await until(b, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 15000, 'end card on the guest');
+        await checkFeedback(a, 'race (host)'); await checkFeedback(b, 'race (guest)');
         const ra = await S(a); const rb = await S(b);
         assert(ra.result && rb.result && ra.result.winner === rb.result.winner, `both phones agree: ${ra.result.text} (${ra.result.sub})`);
         await h.wait(500);
@@ -355,13 +406,19 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         }
         await pickAndStart(h, 'brawl');
         await waitRun(a); await waitRun(b);
+        await spyFeedback(a); await spyFeedback(b);
         // Emerson (lane -1) steps to the middle, runs beside Sydney a beat, then swipes into her lane
         // (1) while level: a deliberate shove
         await a.evaluate(() => window.__rush.input('a', 'right'));
         let before = null;
         // (a loaded harness can lag the partner's position past the 2 m window: step back and retry)
         for (let k = 0; k < 4; k++) {
-          await until(a, () => window.__rush.internals.players.a.sideT >= 0.3 && window.__rush.internals.players.a.r.lane === 0, null, 8000, 'side by side for a beat');
+          // (re-nudged to the middle every 0.5 s: a step back can bump off a train, or be swallowed by a stumble)
+          await until(a, () => {
+            const p = window.__rush.internals.players.a; const r = p.r; const t = performance.now();
+            if (r.lane !== 0 && !r.down && r.laneT >= 1 && t - (window.__nudge || 0) > 500) { window.__nudge = t; window.__rush.input('a', r.lane > 0 ? 'left' : 'right'); }
+            return p.sideT >= 0.3 && r.lane === 0;
+          }, null, 8000, 'side by side for a beat');
           before = await S(b);
           await a.evaluate(() => window.__rush.input('a', 'right'));
           const ok = await a.waitForFunction(() => window.__rush.state().a.stats.shoves >= 1, null, { timeout: 4000, polling: 100 }).then(() => true, () => false);
@@ -380,6 +437,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         // finish the brawl: Sydney runs out of hearts
         await b.evaluate(() => { window.__rush.auto('b', false); window.__rush.setHearts('b', 1); window.__rush.crash('b'); });
         await until(a, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 15000, 'brawl ends');
+        await checkFeedback(a, 'brawl (host)'); await checkFeedback(b, 'brawl (guest)');
         const rs = await S(a);
         assert(rs.result.winner === 'a', `brawl winner: ${rs.result.text}`);
         await h.wait(400);
@@ -392,6 +450,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         await until(b, () => window.__rush && window.__rush.state().phase === 'lobby' && window.__rush.state().synced, null, 15000, 'guest lobby');
         await pickAndStart(h, 'tandem');
         await waitRun(a); await waitRun(b);
+        await spyFeedback(a); await spyFeedback(b);
         await a.evaluate(() => window.__rush.auto('a', true));
         await b.evaluate(() => window.__rush.auto('b', true));
         await h.wait(1500);
@@ -458,6 +517,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
           await a.evaluate(() => { window.__rush.crash('a'); });
           await until(a, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 25000, 'tandem ends');
           await until(b, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 10000, 'tandem ends for the guest');
+          await checkFeedback(a, 'tandem (host)'); await checkFeedback(b, 'tandem (guest)');
           const st = await S(a);
           assert(st.result.team && st.result.score > 0, `team result: ${st.result.text} (${st.result.sub})`);
           await h.wait(400);
@@ -471,6 +531,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         await until(b, () => window.__rush && window.__rush.state().phase === 'lobby' && window.__rush.state().synced, null, 15000, 'guest lobby for daily');
         await pickAndStart(h, 'daily');
         await waitRun(a); await waitRun(b);
+        await spyFeedback(a); await spyFeedback(b);
         const ds = await a.evaluate(() => window.__rush.dailySeed());
         const sa = await S(a); const sb = await S(b);
         assert(sa.seed === ds && sb.seed === ds, `the Daily run uses today's seed on both phones (${ds})`);
@@ -486,6 +547,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         await a.evaluate(() => { window.__rush.auto('a', false); window.__rush.setHearts('a', 1); window.__rush.crash('a'); });
         await until(a, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 20000, 'daily ends');
         await until(b, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 10000, 'daily ends for the guest');
+        await checkFeedback(a, 'daily (host)'); await checkFeedback(b, 'daily (guest)');
         const rd = await S(a);
         assert(rd.result.daily && rd.result.winner === 'a' && rd.result.za > rd.result.zb, `furthest wins the Daily: ${rd.result.text} (${rd.result.sub})`);
         await h.wait(500);
@@ -539,7 +601,14 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         await h.wait(900);
         await shot(a, 'desk-light-run');
         await a.evaluate(() => { window.__rush.auto('a', true); window.__rush.auto('b', true); });
-        await h.wait(1500);
+        // a combo payout plays the bonus chime on the ladder, and nothing of a crash
+        await spyFeedback(a);
+        assert(await a.evaluate(() => window.__rush.emit('a', 'bonus', 5)), 'queued a combo payout on Emerson');
+        await until(a, () => window.__fb.play.bonus >= 1, null, 4000, 'bonus chime');
+        await h.wait(300);
+        const fb = await checkFeedback(a, 'combo payout');
+        assert(fb.bonus >= 1 && fb.ladder.some((l) => /^a:x\d+ .*\+5 coins$/.test(l)), `the payout lands on the combo ladder (${fb.ladder.join(' | ')})`);
+        await h.wait(1200);
         s = await S(a);
         const [tw, lw] = s.a.z >= s.b.z ? ['b', 'a'] : ['a', 'b'];
         await a.evaluate(([t, l]) => { window.__rush.internals.players[l].r.shield = 0; window.__rush.give(t, 'ink'); }, [tw, lw]);
@@ -548,6 +617,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         await shot(a, 'desk-light-hit');
         console.log('ok - weapon keys work in split screen');
         await until(a, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 90000, 'split race ends');
+        await checkFeedback(a, 'split race on autopilot');
         await h.wait(400);
         assert(h.results().filter((r) => r.game === 'rush').length === 1, 'one-device result recorded');
         await shot(a, 'desk-light-end');

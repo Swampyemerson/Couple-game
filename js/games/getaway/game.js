@@ -9,7 +9,7 @@ import { newCar, placeCar, stepCar, carContact, resolveCar, resolvePair, contact
 import { makePalette, makeUniforms, setGfxTier } from './gfx.js';
 import { buildWorld } from './world.js';
 import { createCarView, createWheels, createTrafficView } from './cars.js';
-import { createRenderer, gfxSetting, setGfxSetting, TIERS as GFX_TIERS } from './render.js';
+import { createRenderer, createGpuPacer, gfxSetting, setGfxSetting, TIERS as GFX_TIERS } from './render.js';
 import { createTraffic } from './traffic.js';
 import { createFx } from './fx.js';
 import { createAudio } from './audio.js';
@@ -35,8 +35,10 @@ const other = (w) => (w === 'a' ? 'b' : 'a');
 const MAP_IDS = MAPS.map((m) => m.id);
 // The match flow (ms). Round 0 gets the full intro card and a 3-2-1; later rounds a short intro only
 // when the start spot moves (every 2 rounds), else straight into a 2-1 with a role stamp. The result
-// card shows at +700 ms and the next round starts at +3 s, sooner when both players tap it away.
-const FLOW = { intro: 3400, introMove: 2000, count0: 3000, count: 2000, result: 3000, card: 700, skipAfter: 1200, finalCard: 4200, rematchLead: 700, sudden: 45 };
+// card shows at +700 ms and the next round starts at +4.5 s (+6 s with news), sooner when both players tap it away.
+// result: the between-round card auto-advances this long after the round ends (tap skips after
+// skipAfter); resultHold when either phone's card has a record, streak or unlock line to read
+const FLOW = { intro: 3400, introMove: 2000, count0: 3000, count: 2000, result: 4500, resultHold: 6000, card: 700, skipAfter: 1200, finalCard: 4200, rematchLead: 700, sudden: 45 };
 const MAP_SPAN = 900; // m across the zoomed map's longer side
 const QUICK = { rounds: 2, roundTime: 60, spikes: 2, tiebreak: 'sudden' }; // the lobby's 'Quick chase' preset (a match in under 4 min)
 const strHash = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
@@ -395,9 +397,18 @@ export function createGame(el, api) {
    * program's first draw on its own (the driver builds the pipeline there: in SwiftShader 50–250 ms
    * a program, and several in one slice were the load's longest block), then the geometry a few MB
    * at a time (a 1×1 render of just those meshes), then the light dressing and shadow pass, then
-   * one full render. Resolves null if the load was overtaken.
+   * one full render. Resolves null if the load was overtaken. Meanwhile the canvas is out of the
+   * document and each slice waits on a fence, polled (render.js createGpuPacer): the GPU's share of
+   * a slice no longer freezes the page at the next compositing step.
    */
+  let pacer = null; // render.js createGpuPacer: the warm-up's canvas out of the document + fences
   async function warmUp(entry, alive, yieldFrame, onStep) {
+    if (!pacer || pacer.renderer !== renderer) pacer = createGpuPacer(renderer);
+    const gate = pacer; const tok = {};
+    gate.detach(tok);
+    try { return await warmRun(entry, alive, yieldFrame, onStep, gate); } finally { if (pacer === gate && gate.renderer === renderer) gate.attach(tok); } // (a rebuilt renderer's old canvas stays out)
+  }
+  async function warmRun(entry, alive, yieldFrame, onStep, gate) {
     const budget = TUNE.warmMs || 24; const stat = { busy: 0, maxMs: 0, slices: 0, maxWhat: '', maxGap: 0, gapWhat: '' };
     let t0 = performance.now(); let what = '';
     // upload slice size adapts to how fast the GPU swallowed the last one (the frame after it):
@@ -406,7 +417,8 @@ export function createGame(el, api) {
     const cut = async (k) => {
       const t1 = performance.now(); const d = t1 - t0; stat.busy += d; stat.slices++; if (d > stat.maxMs) { stat.maxMs = Math.round(d); stat.maxWhat = what; }
       if (onStep) onStep(k);
-      await yieldFrame(); t0 = performance.now();
+      const fs = gate.fence(); // (the GPU finishes this slice before the next goes: polled, not waited on)
+      await yieldFrame(); if (fs) await gate.drain(fs); t0 = performance.now();
       const gap = t0 - t1; if (gap > stat.maxGap) { stat.maxGap = Math.round(gap); stat.gapWhat = what; }
       if (what === 'upload' && sent > 5e4) cap = Math.max(1.5e5, Math.min(capMax, cap * 0.4 + 0.6 * sent * (70 / Math.max(gap, 10))));
       return alive();
@@ -891,14 +903,26 @@ export function createGame(el, api) {
     else if (streak >= 3) later(() => { for (const w of vs) if (winner === w || !live) H0().view(w).stamp(`STREAK ×${streak}`, 'good sm'); audio.win(); }, 1000);
     if (unlocks.length) later(() => { for (const w of vs) H0().view(w).stamp('UNLOCKED!', 'good sm'); audio.win(); }, newRec || streak >= 3 ? 2000 : 1000);
     S.resultInfo = { lines, unlocks, next, photo, head };
-    later(() => { if (S.R === R) showResultCard(); }, Math.min(FLOW.card, TUNE.result != null ? TUNE.result / 2 : FLOW.card));
-    if (isHost) later(() => proceed(R), TUNE.result ?? FLOW.result);
+    // the card stays up long enough to read; longer when it has news (either phone's news: the
+    // other phone hears 'hold', and the host's advance waits for the later of the two)
+    const news = !!newRec || streak >= 3 || unlocks.length > 0 || lines.some((l) => l.hot);
+    R.advAt = R.endWall + (TUNE.result ?? (news || R.holdWant ? FLOW.resultHold : FLOW.result));
+    if (news && live && TUNE.result == null) link.urgent('hold', { idx: R.idx });
+    later(() => { if (S.R === R) { R.cardShown = true; showResultCard(); } }, Math.min(FLOW.card, TUNE.result != null ? TUNE.result / 2 : FLOW.card));
+    if (isHost) { const adv = () => { if (S.R !== R || R.proceeded) return; const left = R.advAt - performance.now(); if (left > 40) later(adv, left); else proceed(R); }; later(adv, R.advAt - performance.now()); }
   }
+  link.on('hold', (d) => {
+    const R = S.R; if (!d || !R || d.idx !== R.idx || TUNE.result != null) return;
+    if (!R.over) { R.holdWant = true; return; } // (the partner's end arrived first)
+    const at = R.endWall + FLOW.resultHold; if (at <= R.advAt) return;
+    R.advAt = at; if (R.cardShown && S.phase === 'result') showResultCard();
+  });
   function showResultCard() {
     const R = S.R; if (!R || !R.result || !S.resultInfo) return;
     const res = R.result; const I = S.resultInfo;
     const wait = S.skipMe ? (live && !S.skipThem ? `Waiting for ${api.name(other(me))}…` : 'Starting…') : live && S.skipThem ? `${api.name(other(me))} is ready · tap to go` : 'Tap to continue';
-    hud.card(resultCard({ name: nameOf }, { outcome: res.outcome, reason: res.reason, runner: R.runner, stats: res.stats, scores: S.match.scores, next: I.next, local: !live, me: human(), ran: res.ran, unlocks: I.unlocks, lines: I.lines, head: !split() && human() !== R.runner && res.reason === 'heat' ? 'LOST THEM' : I.head, queue: !!res.queue, d: res.d, wait, ai: ai() || !!S.match.daily, daily: S.match.daily ? dailyLine(res) : '' }), 'dim');
+    const adv = R.advAt ? { total: R.advAt - R.endWall, left: Math.max(0, R.advAt - performance.now()) } : null; // the auto-advance bar
+    hud.card(resultCard({ name: nameOf }, { adv, outcome: res.outcome, reason: res.reason, runner: R.runner, stats: res.stats, scores: S.match.scores, next: I.next, local: !live, me: human(), ran: res.ran, unlocks: I.unlocks, lines: I.lines, head: !split() && human() !== R.runner && res.reason === 'heat' ? 'LOST THEM' : I.head, queue: !!res.queue, d: res.d, wait, ai: ai() || !!S.match.daily, daily: S.match.daily ? dailyLine(res) : '' }), 'dim');
   }
   /** Tap on the result card: practice / split goes on at once; live when both phones have tapped. */
   function skipResult() {
@@ -1239,16 +1263,18 @@ export function createGame(el, api) {
   let aiAcc = 0; let aiTicks = 0; const AI_TICKS_MAX = 2;
   function simStep(dt, now, tT, kSub = 0) {
     const rules0 = rules();
-    // the AI drivers think at a fixed 30 Hz of simulated time (slow motion slows them too), at most
-    // twice a frame: a 125 ms frame used to run 3.75 ticks of planning on top of its 15 substeps
+    // the AI drivers think at 30 Hz of simulated time (slow motion slows them too), at most twice a
+    // frame: a 125 ms frame used to run 3.75 ticks of planning on top of its 15 substeps. The time
+    // past the cap carries into the next think (≤ 0.1 s): dropping it ran the AI's clocks (its
+    // stuck and queue timers) at half speed on a slow phone, and it sat twice as long in a jam.
     aiAcc += dt;
-    if (aiAcc >= 1 / 30 && aiTicks >= AI_TICKS_MAX) aiAcc = 1 / 30;
-    else if (aiAcc >= 1 / 30) {
-      aiAcc -= 1 / 30; aiTicks++;
+    if (aiTicks >= AI_TICKS_MAX) { if (aiAcc > 0.1) aiAcc = 0.1; }
+    else if (aiAcc >= 1 / 30 - 1e-6) {
+      const aiDt = aiAcc; aiAcc = 0; aiTicks++;
       for (const w of AB) {
         const p = P2[w]; if (!p.driver || !local(w)) continue;
         const o = posOf(other(w)); const role = roleOf(w);
-        const out = p.driver.update(1 / 30, p.car, o, { los: p.los, traffic, tT, spikes: role === 'runner' ? visibleStrips(w, now) : null, spikesLeft: p.spikesLeft, oilLeft: p.oilLeft, hit: p.aiHit, viewer: ai() ? P2[human()].car : null, esc: P2[runnerW()].esc, heat: heatDist() });
+        const out = p.driver.update(aiDt, p.car, o, { los: p.los, traffic, tT, spikes: role === 'runner' ? visibleStrips(w, now) : null, spikesLeft: p.spikesLeft, oilLeft: p.oilLeft, hit: p.aiHit, viewer: ai() ? P2[human()].car : null, esc: P2[runnerW()].esc, heat: heatDist() });
         p.aiHit = false;
         if (out.spike && role === 'cop') aiSpike(w, out.spike);
         if (out.oil && role === 'runner') dropOil(w);
@@ -1687,7 +1713,8 @@ export function createGame(el, api) {
   const posOf = (w) => (local(w) ? P2[w].car : P2[w].shown);
 
   // ── remote car ──
-  const pred = { x: 0, z: 0, y: 0, yaw: 0, vx: 0, vz: 0, r: 0, st: 0, hp: 100, fl: 0, es: 0, nt: 0, lv: -1, rpm: 0, ph: 0, rd: -1, pz: 0, ry: 0, sv: 0, tp: 0, sl: 0 };
+  const pred = { x: 0, z: 0, y: 0, yaw: 0, vx: 0, vz: 0, r: 0, st: 0, hp: 100, fl: 0, es: 0, nt: 0, lv: -1, rpm: 0, ph: 0, rd: -1, pz: 0, ry: 0, sv: 0, tp: 0, sl: 0, gk: 1 };
+  const ctR = { pen: 0, nx: 0, nz: 0, px: 0, pz: 0, ia: 0, ib: 0 };
   function updateRemote(dt) {
     if (!live) return;
     const o = other(me); const p = P2[o];
@@ -1703,7 +1730,15 @@ export function createGame(el, api) {
     // the partner's car a ghost (not solid on either phone, drawn faded by cars.js via p.stale)
     // until a fresh sample arrives, and a 12–40 m prediction error slews over 250 ms instead of snapping
     const age = link.sampleAge; // (a hitch is a gap well above the partner's own cadence: a phone streaming at 3 fps is slow, not stalled)
-    p.stale = age > Math.max(STALE_MS, link.sampleGap * 2.2); S.linkStale = p.stale;
+    if (age > Math.max(STALE_MS, link.sampleGap * 2.2)) { p.stale = true; p.freshAt = 0; }
+    else if (p.stale) {
+      // the stream is back: still a ghost for one more sample interval (until the interpolation
+      // has samples from after the stall on both sides) and until the cars are apart (turning
+      // solid inside my car, driven into the ghost meanwhile, would be a violent shove)
+      const tn = performance.now(); if (!p.freshAt) p.freshAt = tn;
+      if (tn - p.freshAt > Math.max(120, link.sampleGap * 1.5) && carContact(P2[me].car, pred, ctR) <= 0) p.stale = false;
+    }
+    S.linkStale = p.stale;
     const err = sh.init ? Math.hypot(pred.x - sh.x, pred.z - sh.z) : Infinity;
     if (!sh.init || err > 40) { sh.x = pred.x; sh.z = pred.z; sh.y = pred.y; sh.yaw = pred.yaw; sh.ox = 0; sh.oz = 0; sh.oy = 0; sh.oyaw = 0; sh.init = true; p.pushX = 0; p.pushZ = 0; }
     else {
@@ -1725,7 +1760,7 @@ export function createGame(el, api) {
     p.esc = pred.es;
     if (pred.lv >= 0 !== (c.level >= 0)) c.level = pred.lv;
   }
-  const pubS = { x: 0, z: 0, y: 0, yaw: 0, vx: 0, vz: 0, r: 0, st: 0, hp: 100, fl: 0, es: 0, nt: 0, lv: -1, rpm: 0, ph: 0, rd: -1, pz: 0, ry: 0, sv: 0, tp: 0, sl: 0 };
+  const pubS = { x: 0, z: 0, y: 0, yaw: 0, vx: 0, vz: 0, r: 0, st: 0, hp: 100, fl: 0, es: 0, nt: 0, lv: -1, rpm: 0, ph: 0, rd: -1, pz: 0, ry: 0, sv: 0, tp: 0, sl: 0, gk: 1 };
   function publish() {
     if (!live) return;
     const p = P2[me]; const c = p.car;
@@ -1734,7 +1769,7 @@ export function createGame(el, api) {
     pubS.st = Math.round(c.steer * 100) / 100; pubS.hp = Math.round(c.hp * 10) / 10;
     pubS.fl = (c.boost ? F_BOOST : 0) | (c.braking ? F_BRAKE : 0) | (c.hand ? F_HAND : 0) | (c.spinT > 0 ? F_SPIN : 0) | (c.flat > 0 ? F_FLAT : 0) | (S.phase === 'chase' && roleOf(me) === 'cop' ? F_SIREN : 0) | (c.skid ? F_SKID : 0) | (c.water ? F_WATER : 0);
     pubS.es = Math.round(p.esc * 100) / 100; pubS.nt = Math.round(c.nitro * 100) / 100; pubS.lv = c.level; pubS.rpm = Math.round(c.rpm * 100) / 100;
-    pubS.ph = PH[S.phase] ?? 0; pubS.rd = S.R ? S.R.idx : -1; pubS.pz = S.reasons; pubS.ry = S.meReady ? 1 : 0; pubS.sv = S.loading ? 0 : S.mapIdx + 1; pubS.tp = Math.round(p.stats.top * 10) / 10; pubS.sl = Math.round(c.slip * 10) / 10;
+    pubS.ph = PH[S.phase] ?? 0; pubS.rd = S.R ? S.R.idx : -1; pubS.pz = S.reasons; pubS.ry = S.meReady ? 1 : 0; pubS.sv = S.loading ? 0 : S.mapIdx + 1; pubS.tp = Math.round(p.stats.top * 10) / 10; pubS.sl = Math.round(c.slip * 10) / 10; pubS.gk = Math.round(simRate * 100) / 100;
     link.publish(pubS);
   }
 
@@ -2112,12 +2147,16 @@ export function createGame(el, api) {
 
   // ── frame ──
   let acc = 0; let lastTs = 0; let lastWall = 0; let lobbyT = 0;
+  // simulated seconds per wall second, smoothed over ~0.3 s (streamed as gk: the partner dead-
+  // reckons my car with it); 1 while the phone keeps up, less under 8 fps or in slow motion
+  let simRate = 1;
   function frame(ts) {
     if (dead) return;
     raf = requestAnimationFrame(frame);
     // (up to 125 ms a frame the simulation keeps up with the shared clock: a phone at 8+ fps still
     // runs in real time, so the partner's prediction of its car stays true; longer gaps are dropped)
-    const dtReal = lastTs ? Math.min(0.125, (ts - lastTs) / 1000) : 0.016; lastTs = ts;
+    const wallDt = lastTs ? (ts - lastTs) / 1000 : 0.016; lastTs = ts;
+    const dtReal = Math.min(0.125, wallDt); let simDt = dtReal;
     if (!ready3D || !world) return;
     if (S.loading && S.loadingCard) return; // a map is building behind the loading card: leave it the main thread
     if (window.__gtwTest) { const fl = window.__gtwFrames || (window.__gtwFrames = []); fl.push(performance.now()); if (fl.length > 4000) fl.splice(0, 2000); } // tests: tell rendered frames from load work
@@ -2160,6 +2199,7 @@ export function createGame(el, api) {
         const nSteps = Math.min(maxN, Math.floor(acc / step));
         while (acc >= step && n < maxN) { simStep(step, now, tT - (nSteps - 1 - n) * step * tsK, -(nSteps - 1 - n) * step * tsK); acc -= step; n++; }
         if (n >= maxN) acc = 0;
+        simDt = n * step;
         if (n > 0) flushKnocks();
         if (TLOG && live) { const c = P2[me].car; const pr = P2[other(me)]; TLOG.traj.push({ t: now, x: c.x, z: c.z, yaw: c.yaw, px: pr.remote.x, pz: pr.remote.z, nc: pr.corr ? pr.corr.length : 0 }); if (TLOG.traj.length > 2400) TLOG.traj.splice(0, 600); }
         trafficStep(dtReal * tsK, tT);
@@ -2177,6 +2217,8 @@ export function createGame(el, api) {
       }
       if (S.R && S.R.over) { const dk = dtReal * tsK; for (const w of AB) if (local(w)) { const c = P2[w].car; c.vx *= Math.max(0, 1 - dk * 1.5); c.vz *= Math.max(0, 1 - dk * 1.5); c.r *= Math.max(0, 1 - dk * 2); c.x += c.vx * dk; c.z += c.vz * dk; c.yaw += c.r * dk; c.speed = Math.hypot(c.vx, c.vz); } }
     }
+    // (a hitch over 0.25 s isn't a rate: that time is dropped from the shared clock anyway)
+    if (wallDt > 0 && wallDt < 0.25) { const inst = !chase ? 1 : stopped ? 0 : Math.min(1.2, simDt / wallDt); simRate += (inst - simRate) * Math.min(1, wallDt / 0.3); }
     S.tSec += dtReal;
     // visuals
     const tT = S.R ? (now - S.R.t0) / 1000 + 600 : now / 1000;
@@ -2229,6 +2271,7 @@ export function createGame(el, api) {
       const c = P2[w].car;
       const sl = S.phase === 'chase' && !reduced ? clamp((c.speed - 24) / 20, 0, 1) * 0.85 + (c.boost ? 0.35 : 0) : 0;
       fx.setSpeedLines(sl, cr.aspect);
+      if (S.drawHold) continue; // (tests: the canvas keeps its last picture, see the hook)
       if (world.preRender) world.preRender(renderer, cr.cam); // car shadow map (render.js)
       renderer.clear();
       renderer.render(world.farScene, farCam);
@@ -2374,6 +2417,9 @@ export function createGame(el, api) {
       view(w) { const c = cams[w || human()]; return { x: c.cam.position.x, y: c.cam.position.y, z: c.cam.position.z, fov: c.cam.fov, mode: c.mode }; },
       setCam(w, x, y, z, tx, ty, tz) { const c = cams[w || human()].cam; c.position.set(x, y, z); c.lookAt(tx, ty, tz); },
       pauseReason(r, on) { if (on) addReason(r); else delReason(r); },
+      /** Screenshot tests: on = the game runs (clock, phases, cars, HUD) but draws nothing, so the canvas
+       *  keeps its last picture: software GL spends 1–3 s a frame, which starved clicks and timers. */
+      drawHold(on) { S.drawHold = !!on; },
       loseContext(noRestore) { const ext = renderer.getContext().getExtension('WEBGL_lose_context'); if (ext) { ext.loseContext(); if (!noRestore) setTimeout(() => ext.restoreContext(), 400); return true; } return false; },
       /** The next n map loads throw (error-card tests). */
       failLoad(n = 1) { S.failLoads = n; },

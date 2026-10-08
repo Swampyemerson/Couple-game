@@ -93,6 +93,7 @@ function updateLevel(c, geo) {
 const isBridge = (o) => o.bridge;
 
 const ROUGH = { grass: 1, dirt: 1, sand: 1 };
+const REV_DEAD = 0.05; // m/s: slower than this forward, the brake pedal reverses
 
 /**
  * One fixed step. inp: { steer −1..1, gas 0..1, brake 0..1, hand bool, nitro bool }.
@@ -133,7 +134,10 @@ export function stepCar(c, inp, dt, geo, T, nit) {
   let a = 0;
   c.braking = false;
   if (brake > 0 && vf > 0.8) { a = -T.brake * brake * (0.55 + 0.45 * c.sg); c.braking = true; }
-  else if (brake > 0 && gas <= 0) { a = vf > -CAR.revTop ? -CAR.revAccel * brake : 0; if (vf > 0) a = -T.brake; }
+  // (under 5 cm/s forward counts as stopped: a car at rest but for a dying sideways slide kept a
+  // forward speed of 1e-11 m/s, so the brake 'stopped' it every step and never reversed, for
+  // seconds — the AI backing out of a queue sat still for 2–3 s, a player's reverse didn't come)
+  else if (brake > 0 && gas <= 0) { a = vf > -CAR.revTop ? -CAR.revAccel * brake : 0; if (vf > REV_DEAD) a = -T.brake; }
   else if (gas > 0) {
     if (vf < -0.5) { a = T.brake * gas; c.braking = true; }
     else { const u = Math.max(0, vf) / vTop; a = gas * T.accel * Math.max(0, 1 - u * u * u) + (wantBoost ? T.nitroA : 0); }
@@ -148,7 +152,7 @@ export function stepCar(c, inp, dt, geo, T, nit) {
   }
   const vf0 = vf;
   vf += a * dt;
-  if ((c.braking || hand || (brake > 0 && gas <= 0 && vf0 > 0)) && vf0 > 0 && vf < 0) vf = 0; // brakes stop, they don't reverse
+  if ((c.braking || hand || (brake > 0 && gas <= 0 && vf0 > REV_DEAD)) && vf0 > 0 && vf < 0) vf = 0; // brakes stop, they don't reverse
   c.accel = a;
   // weight transfer: + under braking (load on the nose), − under power
   const wt = Math.max(-1, Math.min(1, -c.accF / 12));

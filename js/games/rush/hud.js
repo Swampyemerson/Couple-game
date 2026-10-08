@@ -110,7 +110,6 @@ export function createHud(root, o) {
     R.btns.querySelectorAll('button').forEach((b) => b.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); o.onBtn(who, +b.dataset.a); }));
     if (R.pause) R.pause.addEventListener('click', () => o.onPause());
     const last = { h: -1, hmax: -1, hcol: '', c: -1, d: -1, pt: null, pc: '', bo: null, bca: null, bcb: null, bia: null, bib: null, bm: -1, bt: -1, g: null, ws: null, w: undefined, wo: null, wx: -999, bn: null, bnum: -1, btn: null };
-    let popN = 0;
     let barW = 0;          // cached race-bar width (read on resize, never per frame)
     let bannerB = null;    // the countdown number inside the banner
     let flip = 0;          // alternate animation names to restart them without a reflow
@@ -176,7 +175,6 @@ export function createHud(root, o) {
       pop(text, cls = '', sub = '') {
         const p = mk('rr-pop go ' + cls, esc(text) + (sub ? `<small>${esc(sub)}</small>` : ''));
         R.pops.appendChild(p); // a fresh element starts its animation on insertion: no reflow needed
-        popN++;
         while (R.pops.children.length > 2) R.pops.firstChild.remove();
         setTimeout(() => p.remove(), 1200);
       },

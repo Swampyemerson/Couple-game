@@ -110,5 +110,73 @@ export function createShadow(THREE, U, cfg) {
   };
 }
 
+/**
+ * GPU pacing for the map warm-up (game.js warmUp). A warm-up slice is a few ms of JS, but a
+ * program's first draw makes the driver build its pipeline: 130–650 ms of GPU-side work in
+ * SwiftShader. While the canvas is in the document, the next compositing step waits for that work
+ * on the main thread (Chrome's software compositor reads the canvas back; WebKit's
+ * prepareForDisplay is a synchronous call to its GPU process), so every heavy slice was one long
+ * frozen task behind the loading card. While the solid loading card is up, the canvas is taken out
+ * of the document instead (nothing composites it, the same drawing buffer gets the same pipelines),
+ * and each slice ends on a fence that the warm-up polls between tasks (WebGL2), so the GPU finishes
+ * one slice before the next is sent and nothing piles up for the first real frame. Without fences
+ * (WebGL1), or after a slice whose fence hasn't signalled in 4 s, the canvas stays (or goes back)
+ * in the page and the compositor's wait paces the slices as before.
+ * detach/attach take an owner token: a newer warm-up takes over a detached canvas and an
+ * overtaken one doesn't put it back under the newer one's feet.
+ */
+export function createGpuPacer(renderer) {
+  const cv = renderer.domElement;
+  let gl = null; try { gl = renderer.getContext(); } catch { /* ignore */ }
+  let ok = !!gl && typeof gl.fenceSync === 'function' && typeof gl.getSyncParameter === 'function';
+  let owner = null; let parent = null; let next = null; let gen = 0; let seen = false; // seen: a fence has signalled here
+  if (cv.addEventListener) cv.addEventListener('webglcontextlost', () => { gen++; }, false);
+  const tick = () => new Promise((r) => setTimeout(r, 4));
+  const putBack = () => {
+    owner = null;
+    if (!cv.parentNode && parent) parent.insertBefore(cv, next && next.parentNode === parent ? next : null);
+    parent = null; next = null;
+  };
+  return {
+    renderer,
+    get ok() { return ok; },
+    get detached() { return !!owner; },
+    get seen() { return seen; },
+    /** Take the canvas out of the document for `tok` (false without working fences: stays put). */
+    detach(tok) {
+      if (!ok) return false;
+      if (!owner) { if (!cv.parentNode) return false; parent = cv.parentNode; next = cv.nextSibling; parent.removeChild(cv); }
+      owner = tok; return true;
+    },
+    /** Put it back where it was (only by its current owner). */
+    attach(tok) { if (owner && owner === tok) putBack(); },
+    /** A fence after everything sent so far (null when not pacing). */
+    fence() {
+      if (!ok || !owner) return null;
+      try { const s = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0); gl.flush(); return s ? { s, gen } : null; } catch { return null; }
+    },
+    /** Resolves once the GPU is past fence `f`: polled every few ms between tasks, never waited on.
+     *  After maxMs the canvas goes back for the rest of this warm-up (the compositor's wait paces
+     *  it: a slow GPU, e.g. re-making everything after a context restore), and if no fence has ever
+     *  signalled here, fences don't work: no pacing from then on. A context loss ends the wait (a
+     *  fence from before a lost-and-restored context reads "unsignalled" forever in Chrome). */
+    async drain(f, maxMs = 4000) {
+      if (!f) return;
+      const t0 = performance.now(); let done = false;
+      try {
+        while (performance.now() - t0 < maxMs) {
+          if (f.gen !== gen || gl.isContextLost()) { done = true; break; }
+          const v = gl.getSyncParameter(f.s, gl.SYNC_STATUS);
+          if (v === gl.SIGNALED) { seen = true; done = true; break; }
+          if (v == null) { done = true; break; }
+          await tick();
+        }
+      } catch { /* ignore */ }
+      try { gl.deleteSync(f.s); } catch { /* ignore */ }
+      if (!done) { putBack(); if (!seen) ok = false; }
+    },
+  };
+}
+
 /** Put an object (and its children) on the shadow-caster layer as well as the normal one. */
 export function castShadow(o) { if (o) o.traverse((c) => c.layers.enable(SHADOW_LAYER)); return o; }
