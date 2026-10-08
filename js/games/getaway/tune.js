@@ -79,7 +79,7 @@ export const RULES = {
   bustStop: 2, bustT: 3, bustNear: 12, // stopped (< 2 m/s) for 3 s with the cop within 12 m
   heatT: 7,                            // seconds out of sight and out of range to lose the heat (8 left 4 of 10 sampled rounds peaking at 0.85–0.95 without escaping)
   heatDecay: 1.0,                      // escape meter falls this many times faster when spotted (was 2.5: it never left 0)
-  heatBreak: 0.6,                      // beyond this × the heat distance with the cop still watching, the meter fills at heatBreakK ('Breaking away')
+  heatBreak: 0.6,                      // beyond this × the heat distance with the cop still watching, the meter fills at heatBreakK ('Escaping' on the heat panel)
   heatBreakK: 1 / 3,
   heatMemory: 10,                      // s: the meter can't drop below half its peak of the last 10 s (a near-escape stays on the table)
   heatFlicker: 1.0,                    // s: a line of sight that flickers back for less than this doesn't count as spotted

@@ -251,7 +251,10 @@ async function hpAgree(pr, pc, rw, tol) {
       await wait(1400); // deploys after 1.2 s
       await hook(a, 'hold', 'b', { gas: 1 });
       await a.evaluate(() => window.__getaway.teleport('b', -160, 40, Math.PI / 2, 22));
-      await until(a, () => window.__getaway.state().b.flat > 0, null, 6000, 'tyres popped');
+      // (until the runner has reached the strip in game time, not 6 s of wall time: a starved page
+      // simulates a fraction of real time)
+      await until(a, () => { const q = window.__getaway.state().b; return q.flat > 0 || q.x > -105; }, null, 20000, 'the runner reaches the strip');
+      assert((await st(a)).b.flat > 0, 'tyres popped');
       s = await st(a);
       const sp = s.R.spikes[0];
       assert(sp.gone && s.b.stats.spikes === 1, 'driving over it pops the tyres; the strip is used up');
@@ -327,6 +330,12 @@ async function hpAgree(pr, pc, rw, tol) {
       let s = await st(a);
       assert(s.phase === 'lobby' && s.mapId === 'dockside', 'after a crash while loading Boulder, the next open starts on Dockside');
       assert(!(await a.evaluate(() => localStorage.getItem('getaway.loading.v1'))), 'the crash marker is cleared once a map loads');
+      // that crash also dropped this phone to Low graphics: the Daily chase is still today's map (both
+      // scores go on one board, so both phones must race the same map, start and traffic)
+      {
+        const dl = await hook(a, 'daily'); const real = (await hook(a, 'maps')).filter((m) => !m.stub);
+        assert(dl.tier === 'low' && dl.map === real[dl.day % real.length].id && !dl.note && !/low/i.test(dl.short), `Low graphics plays today's Daily map like every phone (${dl.map} on day ${dl.day}, tier ${dl.tier}: "${dl.short}")`);
+      }
       await tap('.g-gtw [data-l="prole"][data-v="cop"]');
       assert((await st(a)).localMode === 'ai' && (await ui()).device.practiceRole === 'cop', 'tap: practice role → Cop');
       await tap('.g-gtw [data-l="ailevel"][data-v="hard"]');
@@ -370,6 +379,35 @@ async function hpAgree(pr, pc, rw, tol) {
       await phase(a, 'chase', 12000);
       s = await st(a);
       assert(s.a.role === 'cop', 'practice as the cop (tapped role) starts as the cop');
+      // landscape phones: CAM (and the live horn beside it) clear of the heat panel and above the
+      // steering thumb; every heat label fits beside a 4-digit distance; the other car's tag, drawn
+      // for a car right beside mine (projected to the screen edge), stays off the left column
+      {
+        const vp0 = a.viewportSize();
+        for (const [w, hh] of [[667, 375], [844, 390], [926, 428]]) {
+          await a.setViewportSize({ width: w, height: hh }); await wait(600);
+          const r = await a.evaluate(() => {
+            const q = (x) => document.querySelector(x);
+            const R = (el) => { const b = el.getBoundingClientRect(); return { l: Math.round(b.left), t: Math.round(b.top), r: Math.round(b.right), b: Math.round(b.bottom) }; };
+            const heat = R(q('.g-gtw .gtw-view.full .gtw-heat')); const cam = R(q('.g-gtw [data-tap="cam"]'));
+            const horn = q('.g-gtw [data-tap="horn"]'); const hid = horn.hidden; horn.hidden = false; const hr = R(horn); horn.hidden = hid;
+            const sh = R(q('.g-gtw .gtw-steerhint'));
+            const lab = q('.g-gtw .gtw-view.full [data-e="lab"]'); const val = q('.g-gtw .gtw-view.full [data-e="v"]'); const old = [lab.textContent, val.textContent];
+            val.textContent = '1888 m'; const cut = [];
+            for (const t of ['Escaping', 'Spotted', 'Losing them', 'Too close', 'On their tail']) { lab.textContent = t; if (lab.scrollWidth > lab.clientWidth) cut.push(t); }
+            lab.textContent = old[0]; val.textContent = old[1];
+            window.__getaway.internals.hud.view().tag(0, heat.t + 30, true, 'AI · 9 m', '');
+            const tg = R(q('.g-gtw .gtw-view.full .gtw-tag'));
+            return { heat, cam, hr, sh, cut, tg, W: window.innerWidth };
+          });
+          const col = Math.max(r.heat.r, r.cam.r, r.hr.r);
+          assert(r.cam.t >= r.heat.b + 5 && r.hr.t >= r.heat.b + 5 && (r.hr.l >= r.cam.r + 4 || r.hr.t >= r.cam.b + 4), `${w}×${hh}: CAM (y ${r.cam.t}) and the horn sit under the heat panel (ends at ${r.heat.b}, plus its shadow), not on it`);
+          assert(r.cam.b <= r.sh.t - 8 && r.hr.b <= r.sh.t - 8, `${w}×${hh}: CAM and the horn stay above the steering thumb (end at ${Math.max(r.cam.b, r.hr.b)}, the STEER zone's hint starts at ${r.sh.t})`);
+          assert(!r.cut.length, `${w}×${hh}: every heat label fits beside "1888 m"${r.cut.length ? ` (cut: ${r.cut.join(', ')})` : ''}`);
+          assert(r.tg.l >= col && r.tg.r <= r.W, `${w}×${hh}: a tag for a car at the screen's edge stays on screen and off the left column (tag ${r.tg.l}–${r.tg.r}, column ends at ${col})`);
+        }
+        await a.setViewportSize(vp0); await wait(600);
+      }
       await a.locator('.g-gtw .gtw-view.full [data-tap="pause"]').tap(); await wait(300);
       s = await st(a);
       assert(s.paused && (await ui()).menu && await a.isVisible('.g-gtw [data-l="resume"]'), 'tap: the ‖ button pauses with a menu');
@@ -537,8 +575,11 @@ async function hpAgree(pr, pc, rw, tol) {
       await wait(1500);
       await hook(b, 'hold', 'b', { gas: 1 });
       await b.evaluate(() => window.__getaway.teleport('b', -240, 40, Math.PI / 2, 22));
-      await until(b, () => window.__getaway.state().b.flat > 0, null, 6000, 'runner popped');
-      await until(a, () => { const s = window.__getaway.state(); return s.R.spikes[0].gone && s.a.stats.spikes >= 1; }, null, 6000, 'cop hears the strip hit');
+      // (game progress, not wall time: until the runner has driven past the strip at x −200; a loaded
+      // page once simulated 22 m in the old 6 s)
+      await until(b, () => { const q = window.__getaway.state().b; return q.flat > 0 || q.x > -185; }, null, 20000, 'the runner reaches the strip');
+      assert((await st(b)).b.flat > 0, 'runner popped');
+      await until(a, () => { const s = window.__getaway.state(); return s.R.spikes[0].gone && s.a.stats.spikes >= 1; }, null, 10000, 'cop hears the strip hit');
       console.log('ok - the runner’s phone pops its tyres; the cop’s phone hears about it');
       await shot(b, 'live-spiked');
       // escape by the clock (decided by the runner's phone)
@@ -618,7 +659,12 @@ async function hpAgree(pr, pc, rw, tol) {
       await hook(a, 'hold', 'a', { hand: true }); await hook(b, 'hold', 'b', { hand: true });
       await wait(600);
       const la = await hook(a, 'contactLog'); const lb = await hook(b, 'contactLog');
-      const at = (traj, t) => { let i = traj.findIndex((q) => q.t >= t); if (i <= 0) return null; const p = traj[i - 1]; const q = traj[i]; if (q.t - p.t > 400) return null; const f = (t - p.t) / ((q.t - p.t) || 1); return { x: p.x + (q.x - p.x) * f, z: p.z + (q.z - p.z) * f, yaw: p.yaw + (q.yaw - p.yaw) * f }; };
+      // the partner's trajectory is interpolated between its frames; frames further apart than the
+      // limit are a hitch, not a frame. 400 ms, or 3 × the typical frame spacing on a starved page
+      // (5–7 fps, and slower under load: every contact was dropped and none could be judged)
+      const gapLim = (traj) => { const d = []; for (let i = 1; i < traj.length; i++) d.push(traj[i].t - traj[i - 1].t); d.sort((x, y) => x - y); return Math.max(400, 3 * (d.length ? d[d.length >> 1] : 0)); };
+      const lim = { a: gapLim(la.traj), b: gapLim(lb.traj) };
+      const at = (traj, t) => { let i = traj.findIndex((q) => q.t >= t); if (i <= 0) return null; const p = traj[i - 1]; const q = traj[i]; if (q.t - p.t > (traj === la.traj ? lim.a : lim.b)) return null; const f = (t - p.t) / ((q.t - p.t) || 1); return { x: p.x + (q.x - p.x) * f, z: p.z + (q.z - p.z) * f, yaw: p.yaw + (q.yaw - p.yaw) * f }; };
       const judge = (log, otherTraj) => {
         let n = 0; let phantom = 0;
         for (const c of log.contacts) {
@@ -635,7 +681,7 @@ async function hpAgree(pr, pc, rw, tol) {
       // count says more about the frame rate than about the contact)
       const shoves = tps.filter((t, k) => la.contacts.concat(lb.contacts).some((c) => c.t > t + 500 && c.t < tes[k] + 200)).length;
       if (process.env.DBG) console.log('   contact times after each teleport (ms)', JSON.stringify(tps.map((t, k) => la.contacts.concat(lb.contacts).filter((c) => c.t > t - 100 && c.t < tes[k] + 200).map((c) => Math.round(c.t - t)))), 'shove lengths', JSON.stringify(tps.map((t, k) => Math.round(tes[k] - t))), 'traj', la.traj.length, lb.traj.length);
-      console.log('   contacts', JSON.stringify({ runner: ja, cop: jb, shoves, bumpsOut: la.bumpsOut.length, bumpsIn: lb.bumpsIn.length }));
+      console.log('   contacts', JSON.stringify({ runner: ja, cop: jb, shoves, bumpsOut: la.bumpsOut.length, bumpsIn: lb.bumpsIn.length, frameGapLimit: lim }));
       assert(shoves >= 4 && ja.n + jb.n >= 4, `side-by-side shoves make contact (${shoves} of 6 shoves; ${ja.n} steps on the runner’s phone, ${jb.n} on the cop’s)`);
       assert(ja.phantom <= Math.max(1, ja.n * 0.1) && jb.phantom <= Math.max(1, jb.n * 0.1), `no phantom contacts: the partner was really within 0.5 m (runner ${ja.phantom}/${ja.n}, cop ${jb.phantom}/${jb.n})`);
       const matched = la.bumpsOut.filter((o) => lb.bumpsIn.some((q) => Math.abs(q.t - o.t) < 900)).length;
@@ -765,7 +811,8 @@ async function hpAgree(pr, pc, rw, tol) {
       await a.click('.g-gtw [data-l="start"]');
       await phase(a, 'chase', 15000);
       await a.keyboard.down('KeyW'); await a.keyboard.down('ArrowUp'); await a.keyboard.down('ArrowRight');
-      await wait(2500);
+      // (both cars over 18 km/h in game time; 2.5 s of wall time on a loaded machine was 13–17 km/h)
+      await until(a, () => { const q = window.__getaway.state(); return q.a.speed > 5 && q.b.speed > 5; }, null, 8000, 'both cars moving').catch(() => {});
       const s = await st(a);
       await a.keyboard.up('KeyW'); await a.keyboard.up('ArrowUp'); await a.keyboard.up('ArrowRight');
       assert(s.a.speed > 5 && s.b.speed > 5, `split screen: W drives the left car, ↑ the right (${(s.a.speed * 3.6).toFixed(0)} / ${(s.b.speed * 3.6).toFixed(0)} km/h)`);

@@ -2,6 +2,7 @@
 // full map (tap a road to drop a spike strip), and the overlay cards. Every setter diffs against
 // its last value, so a frame touches the DOM only when something visibly changed.
 import { OPTIONS, LABELS, HINTS, fmt, KEYS } from './rules.js';
+import { fmtSec } from './records.js';
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export const fmtTime = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
@@ -151,10 +152,32 @@ export function createHud(root, api, { split, touch }) {
       box: $('.gtw-box'), boxT: $('.gtw-box b'), boxI: $('.gtw-box s'), dmg: $('.gtw-dmg'),
     };
     let hintT = 0; let stampAlt = false; let dmgAlt = false;
+    // Where the other car's tag may go: on screen, and off the left HUD column (role, health, heat,
+    // and the CAM / horn buttons under it). A car right beside mine projects to the screen edge, and
+    // the tag used to sit there half off-screen, on top of the panels. Measured at most every 0.5 s
+    // (layout reads), in this view's coordinates.
+    const colEls = [$('.gtw-left'), ctl.querySelector('[data-tap="cam"]'), ctl.querySelector('[data-tap="horn"]')];
+    const keep = { at: -1e9, w: 0, l: 6, r: 0, colR: 0, colT: 0, colB: 0 };
+    function keepOut() {
+      const t = performance.now(); if (t - keep.at < 500) return keep; keep.at = t;
+      const vb = el.getBoundingClientRect(); keep.w = vb.width;
+      let l = 1e9; let r = 0; let top = 1e9; let b = 0;
+      for (const n of colEls) {
+        if (!n || n.hidden) continue; const q = n.getBoundingClientRect(); if (!q.width || !q.height) continue;
+        l = Math.min(l, q.left - vb.left); r = Math.max(r, q.right - vb.left); top = Math.min(top, q.top - vb.top); b = Math.max(b, q.bottom - vb.top);
+      }
+      keep.l = l < 1e9 ? l : 6; keep.colR = r; keep.colT = top < 1e9 ? top : 0; keep.colB = b;
+      const m = els.mini.getBoundingClientRect(); keep.r = m.width ? m.right - vb.left : vb.width - 6; // (the minimap's right edge: inside the safe area)
+      return keep;
+    }
     const V = {
       el, els,
       scores(a, b) { setText('sa', els.sa, String(a)); setText('sb', els.sb, String(b)); },
-      clock(ms, label, hot) { setText('ct', els.clkT, ms == null ? '–:––' : fmtTime(ms)); setText('cl', els.clkL, label); setCls('ch', els.clk, 'hot', !!hot); },
+      clock(ms, label, hot) {
+        const sec = ms == null ? -1 : Math.max(0, Math.ceil(ms / 1000)); // (a new string only when the shown second changes)
+        if (last.cs !== sec) { last.cs = sec; setText('ct', els.clkT, sec < 0 ? '–:––' : fmtTime(ms)); }
+        setText('cl', els.clkL, label); setCls('ch', els.clk, 'hot', !!hot);
+      },
       pips(list) { const key = list.join(''); if (last.pips !== key) { last.pips = key; els.pips.innerHTML = list.map((c) => `<i class="${c}"></i>`).join(''); } },
       role(r, w) { setText('role', els.role, r === 'cop' ? 'Cop' : 'Runner'); setCls('r', els.role, 'cop', r === 'cop'); setCls('r', els.role, 'runner', r !== 'cop'); el.style.setProperty('--me', `var(--p-${w})`); el.style.setProperty('--them', `var(--p-${w === 'a' ? 'b' : 'a'})`); },
       health(hp, role) {
@@ -172,7 +195,7 @@ export function createHud(root, api, { split, touch }) {
         setText('hl', els.heatL, label); setText('hv', els.heatV, sub);
         setCls('hs', els.heat, 'spotted', !!spotted); setCls('hh', els.heat, 'hot', v > 70);
       },
-      speed(kmh) { setText('sp', els.speed, String(Math.round(kmh))); },
+      speed(kmh) { const v = Math.round(kmh); if (last.spv !== v) { last.spv = v; els.speed.textContent = String(v); } },
       nitro(k, on, show) {
         if (last.nitroH !== !show) { last.nitroH = !show; els.nitro.hidden = !show; }
         const v = Math.round(k * 50) / 50;
@@ -214,7 +237,15 @@ export function createHud(root, api, { split, touch }) {
         if (!on) { if (last.tagOn) { last.tagOn = false; els.tag.hidden = true; } return; }
         if (!last.tagOn) { last.tagOn = true; els.tag.hidden = false; }
         setText('tagt', els.tag, text); setCls('tc', els.tag, 'cop', cls === 'cop'); setCls('te', els.tag, 'emote', cls === 'emote');
-        els.tag.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px) translate(-50%, -100%)`;
+        // clamp: half the tag's width from its text (heavy 0.7rem type ≈ 7 px a character, plus
+        // padding and border; an emote is bigger), no layout read per frame
+        const emo = cls === 'emote'; const hw = text.length * (emo ? 4.8 : 3.6) + (emo ? 13 : 10); const th = emo ? 32 : 22;
+        const k = keepOut();
+        let tx = Math.max(k.l + hw, Math.min(k.r - hw, x));
+        if (y > k.colT - 4 && y - th < k.colB + 4 && tx - hw < k.colR + 8) tx = k.colR + 8 + hw;
+        const ty = Math.max(th + 4, y);
+        const px = Math.round(tx); const py = Math.round(ty);
+        if (last.tagX !== px || last.tagY !== py) { last.tagX = px; last.tagY = py; els.tag.style.transform = `translate(${px}px, ${py}px) translate(-50%, -100%)`; }
       },
       edgeArrow(x, y, ang, on) {
         if (!on) { if (!els.edge.hidden) els.edge.hidden = true; return; }
@@ -492,7 +523,8 @@ export function resultCard(api, { outcome, reason, runner, stats, scores, next, 
   const winner = busted ? (runner === 'a' ? 'b' : 'a') : runner;
   const youWon = !local && winner === me;
   const st = stats || {};
-  const t = ran ? fmtTime(ran) : '';
+  // (an elapsed time: rounded like the Daily score beside it, not counted up like the round clock)
+  const t = ran ? fmtSec(ran / 1000) : '';
   const recs = (lines || []).slice(0, 2).map((l) => `<p class="gtw-rec ${l.hot ? 'hot' : ''}">${l.hot ? '<b>NEW</b> ' : ''}${esc(l.t)}</p>`).join('');
   return `<div class="gtw-card gtw-st gtw-result" data-l="skip" role="button" aria-label="Continue"><div class="gtw-big ${busted ? 'bad' : 'good'}${big.length > 10 ? ' long' : ''}">${esc(big)}</div>
     <p>${why} ${nameB(api, winner)} ${takes(api.name(winner))} the round${local ? '' : youWon ? ' — nice driving' : ''}.</p>
@@ -509,7 +541,7 @@ export function finalCard(api, { hist, scores, winner, rounds, sum, daily, daily
   const pip = (h, i) => {
     if (!h) return `<li class="tbd"><small>R${i + 1}</small><b>–</b></li>`;
     const w = h.outcome === 'busted' ? (h.runner === 'a' ? 'b' : 'a') : h.runner;
-    const what = h.outcome === 'busted' ? (h.reason === 'water' ? 'SPLASH' : `BUSTED ${fmtTime(h.ran)}`) : h.reason === 'heat' ? `LOST THEM ${fmtTime(h.ran)}` : 'ESCAPED';
+    const what = h.outcome === 'busted' ? (h.reason === 'water' ? 'SPLASH' : `BUSTED ${fmtSec(h.ran / 1000)}`) : h.reason === 'heat' ? `LOST THEM ${fmtSec(h.ran / 1000)}` : 'ESCAPED';
     return `<li class="w${w}"><small>${h.sd ? 'SD' : `R${i + 1}`} · ${esc(api.name(h.runner))} ran</small><b>${what}</b></li>`;
   };
   const list = []; for (let i = 0; i < Math.max(rounds, hist.length); i++) list.push(pip(hist[i], i));

@@ -52,6 +52,7 @@ export const BOOST_T = 2.2;
 export const REVIVE_WINDOW = 7000;    // ms a downed partner can be revived (paused while the reviver is down)
 export const REVIVE_FIRST = 1000;     // ms until the first revive heart appears…
 export const REVIVE_EVERY = 2000;     // …and between hearts after that
+export const REVIVE_SLACK = 1500;     // ms of a revive window given back at most when the reviver's page drops sim time (frames over 250 ms); < the downed phone's 2.5 s fallback margin
 export const CHEER_T = 1.0;           // s a cheer from a downed partner speeds you up…
 export const CHEER_K = 0.04;          // …by this fraction
 

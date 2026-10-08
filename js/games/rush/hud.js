@@ -111,6 +111,7 @@ export function createHud(root, o) {
     if (R.pause) R.pause.addEventListener('click', () => o.onPause());
     const last = { h: -1, hmax: -1, hcol: '', c: -1, d: -1, pt: null, pc: '', bo: null, bca: null, bcb: null, bia: null, bib: null, bm: -1, bt: -1, g: null, ws: null, w: undefined, wo: null, wx: -999, bn: null, bnum: -1, btn: null };
     let barW = 0;          // cached race-bar width (read on resize, never per frame)
+    let centerDirty = true; // the pops / '!' positions need measuring (resize, bar or pill shown or hidden)
     let bannerB = null;    // the countdown number inside the banner
     let flip = 0;          // alternate animation names to restart them without a reflow
     function pwUpd(k, frac) {
@@ -120,6 +121,25 @@ export function createHud(root, o) {
       p.last = q;
       p.el.hidden = q < 0;
       if (q >= 0) p.ring.style.strokeDashoffset = String(100 - q * 100);
+    }
+    /** Pops and the train '!' sit under the race bar and the gap / coin-goal pill wherever those
+     *  reach the middle of the view (they fly up 18 px as they fade, and a −1 team heart landed on
+     *  the '2 / 100 coins together' pill), and the '!' under the pops. Measured lazily: on the next
+     *  pop or warning after a resize or a bar / pill showing or hiding, never per frame. */
+    function placeCenter() {
+      const hb = el.getBoundingClientRect(); if (!hb.height) return;
+      centerDirty = false;
+      const cx = hb.left + hb.width / 2; let bottom = 0;
+      for (let i = 0; i < 2; i++) {
+        const n = i ? R.gap.firstChild : R.bar;
+        if (!n || (i ? R.gap.hidden : R.bar.hidden)) continue;
+        const b = n.getBoundingClientRect();
+        if (b.height && b.right > cx - 130 && b.left < cx + 130) bottom = Math.max(bottom, b.bottom - hb.top);
+      }
+      const short = L.classList.contains('rr-short');
+      const pt = Math.round(Math.max(hb.height * (short ? 0.2 : 0.225), bottom ? bottom + 16 : 0));
+      R.pops.style.top = pt + 'px';
+      R.warn.style.top = Math.round(Math.max(hb.height * 0.295, pt + 52)) + 'px';
     }
     const v = {
       el, who,
@@ -148,7 +168,7 @@ export function createHud(root, o) {
         if (last.pc !== color) { last.pc = color; R.partner.querySelector('.rr-dot').style.background = color; }
       },
       bar(on, me, other, meCol, otherCol, meInit, otherInit) {
-        if (last.bo !== on) { last.bo = on; R.bar.hidden = !on; barW = 0; }
+        if (last.bo !== on) { last.bo = on; R.bar.hidden = !on; barW = 0; centerDirty = true; }
         if (!on) return;
         if (last.bca !== meCol || last.bcb !== otherCol || last.bia !== meInit || last.bib !== otherInit) {
           last.bca = meCol; last.bcb = otherCol; last.bia = meInit; last.bib = otherInit;
@@ -162,7 +182,11 @@ export function createHud(root, o) {
         if (last.bm !== pm) { last.bm = pm; R.mkm.style.transform = `translateX(${pm}px)`; R.fill.style.width = pm + 'px'; }
         if (last.bt !== po) { last.bt = po; R.mko.style.transform = `translateX(${po}px)`; }
       },
-      gap(text) { if (last.g !== text) { last.g = text; R.gap.hidden = !text; if (text) R.gap.firstChild.textContent = text; } },
+      /** The pill under the bar; hot: the reviver's prompt in Together (it stands in for the coin goal). */
+      gap(text, hot = false) {
+        if (last.g !== text) { if (!last.g !== !text) centerDirty = true; last.g = text; R.gap.hidden = !text; if (text) R.gap.firstChild.textContent = text; }
+        if (last.gh !== hot) { last.gh = hot; R.gap.classList.toggle('hot', hot); }
+      },
       powers(m, s, sh, rk) { pwUpd('magnet', m); pwUpd('sneakers', s); pwUpd('shield', sh ? 1 : 0); pwUpd('rocket', rk); },
       weapon(kind, show) {
         if (last.ws !== show) { last.ws = show; R.weapon.hidden = !show; }
@@ -173,6 +197,7 @@ export function createHud(root, o) {
         R.weapon.querySelector('.rr-wname').textContent = kind ? WEAPONS[kind].name : '';
       },
       pop(text, cls = '', sub = '') {
+        if (centerDirty) placeCenter();
         const p = mk('rr-pop go ' + cls, esc(text) + (sub ? `<small>${esc(sub)}</small>` : ''));
         R.pops.appendChild(p); // a fresh element starts its animation on insertion: no reflow needed
         while (R.pops.children.length > 2) R.pops.firstChild.remove();
@@ -184,6 +209,7 @@ export function createHud(root, o) {
         flip ^= 1; R.combo.classList.toggle('go', !!flip); R.combo.classList.toggle('go2', !flip);
       },
       warn(on, xPct) {
+        if (on && centerDirty) placeCenter();
         if (last.wo !== on) { last.wo = on; R.warn.classList.toggle('on', on); }
         if (on && last.wx !== xPct) { last.wx = xPct; R.warn.style.transform = `translateX(${xPct}%)`; }
       },
@@ -200,7 +226,7 @@ export function createHud(root, o) {
       banner(html) { const t = html || ''; if (last.bn !== t) { last.bn = t; R.banner.classList.toggle('on', !!t); if (t) { R.banner.innerHTML = t; bannerB = R.banner.querySelector('b'); last.bnum = -1; } else bannerB = null; } },
       bannerNum(n) { if (bannerB && last.bnum !== n) { last.bnum = n; bannerB.textContent = n; } },
       /** The view's size changed: re-measure on the next update. */
-      resized() { barW = 0; last.bm = -1; last.bt = -1; },
+      resized() { barW = 0; last.bm = -1; last.bt = -1; centerDirty = true; },
     };
     views[who] = v;
     return v;

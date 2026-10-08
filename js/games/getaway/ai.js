@@ -249,6 +249,23 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
   // they stay clear, and the car steers for the best one (with some stickiness).
   const obs = []; let obsN = 0;
   const lanes = [0, 0, 0, 0];
+  // (readTraffic's visitor is made once; its frame goes through RT)
+  const RT = { car: null, fx: 0, fz: 0, rx: 0, rz: 0, v: 0 };
+  function seeCar(id, p) {
+    const car = RT.car; const fx = RT.fx; const fz = RT.fz; const rx = RT.rx; const rz = RT.rz;
+    if (p.sc < 0.05 || Math.abs((p.y || 0) - (car.y || 0)) > 2.5) return; // growing ones count too
+    const dx = p.x - car.x; const dz = p.z - car.z;
+    const lz = dx * fx + dz * fz; const lx = dx * rx + dz * rz;
+    if (lz < -2 || lz > 70) return;
+    const hdot = Math.sin(p.yaw) * fx - Math.cos(p.yaw) * fz;
+    const along = p.vx * fx + p.vz * fz; // its speed along my heading
+    const tau = Math.max(0, lz - 3) / Math.max(3, RT.v - Math.max(0, along));
+    const flx = lx + (p.vx * rx + p.vz * rz) * Math.min(tau, 3);
+    let o = obs[obsN]; if (!o) { o = {}; obs[obsN] = o; } obsN++;
+    o.lz = lz; o.lx = lx; o.flx = flx; o.along = along; o.hdot = hdot; o.spd = p.speed;
+    // the siren makes cars ahead slow down and pull over to the right: count on it
+    if (role === 'cop' && hdot > 0.6 && p.speed < 5 && lx > 0.6 && lz > 3) o.flx = Math.max(flx, 2.6);
+  }
   function readTraffic(car, opts) {
     D.trafT -= opts.dt; if (D.trafT > 0) return; D.trafT = 0.1;
     obsN = 0;
@@ -264,20 +281,9 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
     const fx = Math.sin(hy); const fz = -Math.cos(hy); const rx = Math.cos(hy); const rz = Math.sin(hy);
     const v = Math.max(5, car.speed);
     if (tr && tr.total) {
-      tr.each(car.x + fx * 30, car.z + fz * 30, 42, opts.tT, (id, p) => {
-        if (p.sc < 0.05 || Math.abs((p.y || 0) - (car.y || 0)) > 2.5) return; // growing ones count too
-        const dx = p.x - car.x; const dz = p.z - car.z;
-        const lz = dx * fx + dz * fz; const lx = dx * rx + dz * rz;
-        if (lz < -2 || lz > 70) return;
-        const hdot = Math.sin(p.yaw) * fx - Math.cos(p.yaw) * fz;
-        const along = p.vx * fx + p.vz * fz; // its speed along my heading
-        const tau = Math.max(0, lz - 3) / Math.max(3, v - Math.max(0, along));
-        const flx = lx + (p.vx * rx + p.vz * rz) * Math.min(tau, 3);
-        let o = obs[obsN]; if (!o) { o = {}; obs[obsN] = o; } obsN++;
-        o.lz = lz; o.lx = lx; o.flx = flx; o.along = along; o.hdot = hdot; o.spd = p.speed;
-        // the siren makes cars ahead slow down and pull over to the right: count on it
-        if (role === 'cop' && hdot > 0.6 && p.speed < 5 && lx > 0.6 && lz > 3) o.flx = Math.max(flx, 2.6);
-      });
+      RT.car = car; RT.fx = fx; RT.fz = fz; RT.rx = rx; RT.rz = rz; RT.v = v;
+      tr.each(car.x + fx * 30, car.z + fz * 30, 42, opts.tT, seeCar);
+      RT.car = null;
     }
     // corridors relative to my path: 0 my lane, 1 the oncoming lane, 2 right verge, 3 left verge
     geo.nearestRoad(car.x, car.z, loc2, 30);
@@ -307,8 +313,12 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
     keepT -= 0.1;
     const own = freeAt(lanes[0] - me, cur !== 0);
     // (the cop runs with the siren on: traffic pulls over for it, so it passes more readily)
-    // a runner with the cop close behind can't sit in a queue: it takes smaller gaps
-    const urgent = role === 'runner' && (D.copNear || 0) < 70;
+    // a runner with the cop close behind can't sit in a queue: it takes smaller gaps. So also with
+    // the cop in sight within 120 m, or anywhere inside the heat distance (the heat isn't going to
+    // drop while it waits there): queuing at a light with the cop closing from 80 m read as a
+    // passive runner (3–7 s at under 1.5 m/s in practice play-tests)
+    const cn = D.copNear || 0;
+    const urgent = role === 'runner' && (cn < 70 || (D.copLos ? cn < 120 : cn < (D.heatR || 0)));
     const need = role === 'cop' ? Math.max(28, v * 1.7) : urgent ? Math.max(24, v * 1.5) : Math.max(38, v * 2.2);
     // nose to nose with a car that isn't moving (it's waiting for me, at a red light, or stuck):
     // creep round it, with room to swing out (closer than 6 m, squeezing past just wedges the car
@@ -589,7 +599,7 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
       k = kx;
     }
     const dist = k ? Math.hypot(k.x - car.x, k.z - car.z) : 999;
-    D.copNear = role === 'runner' ? dist : 999;
+    D.copNear = role === 'runner' ? dist : 999; D.copLos = los; D.heatR = opts.heat || 0;
     // recovering
     if (D.revT > 0) {
       D.revT -= dt; recover(car, dt, false); out.gas = 0; out.brake = 1; out.steer = D.revSteer;

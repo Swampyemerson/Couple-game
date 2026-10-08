@@ -71,6 +71,10 @@ export const CSS = `
 .g-rush .rr-gap { margin-top: 8px; text-align: center; font-size: 14px; font-weight: 900; }
 .g-rush .rr-gap span { display: inline-block; padding: 3px 10px; border-radius: 999px; background: var(--g-card); border: 2px solid var(--g-ink); }
 .g-rush .rr-goal { margin-top: 6px; font-size: 12px; font-weight: 900; text-align: center; }
+/* Together, while the partner is down: the reviver's prompt takes the coin-goal pill (top of the
+   screen, off the track in front of the runner) with the seconds left */
+.g-rush .rr-gap.hot span { background: var(--g-bad); color: #fff; animation: rr-revp .7s ease-in-out infinite alternate; }
+@keyframes rr-revp { to { transform: scale(1.06); } }
 
 /* center pops, combo, warnings */
 /* pops sit between the HUD and the horizon: never over the vanishing point, where obstacles appear */
@@ -260,6 +264,6 @@ export const CSS = `
 .g-rush.rr-narrow .rr-hearts { height: 26px; }
 .g-rush.rr-narrow .rr-heart { width: 15px; height: 14px; }
 @media (prefers-reduced-motion: reduce) {
-  .g-rush .rr-weapon.full, .g-rush .rr-runner-ico, .g-rush .rr-warn, .g-rush .rr-coins.bump, .g-rush .rr-coins.bump2 { animation: none; }
+  .g-rush .rr-weapon.full, .g-rush .rr-runner-ico, .g-rush .rr-warn, .g-rush .rr-coins.bump, .g-rush .rr-coins.bump2, .g-rush .rr-gap.hot span { animation: none; }
 }
 `;

@@ -113,7 +113,10 @@ lane lean and camera roll, landing dust and magnet trails were already there.
 - Pickups: magnet (10 s), sneakers (10 s), shield; Race adds weapon-box rows across all lanes;
   Tandem adds revive tokens at run time.
 - Verified by a perfect-information bot (depth-first search over the real sim, 2 s horizon): no crash
-  in 500 chunks × 5 seeds (test).
+  in 500 chunks × 5 seeds (test). With a goal lane (a revive heart within 70 m, a Brawl shove) the
+  search tries the move towards it before the last plan's hint, and in the goal lane holds it before
+  a planned move away (hint-first, a feasible 'stay' won and the bot ran past the heart: split-screen
+  Together on autopilot showed 0 revives).
 
 ## The loop: bests, Daily, unlocks
 
@@ -177,7 +180,13 @@ lane lean and camera roll, landing dust and magnet trails were already there.
   ahead after 1 s and every 2 s after (`REVIVE_FIRST`, `REVIVE_EVERY`) for 7 s (`REVIVE_WINDOW`; it
   was 10 s with a heart every 3 s, mostly dead time; 6 s cost more hearts than 7 because the third
   heart, spawned at +5 s, was still ahead when the window closed). Grab one and they're back beside you for
-  free; miss and the team loses a heart. The countdown waits while the reviver is down. Both down at
+  free; miss and the team loses a heart. The countdown waits while the reviver is down, and gets
+  back (up to `REVIVE_SLACK`, 1.5 s, inside the downed phone's 2.5 s fallback margin) any time the
+  reviver's page drops from its simulation (frames over 250 ms on a starved phone). The reviver's
+  prompt ("Grab the ♥ for Sydney · 5", pulsing red) takes the coin-goal pill under the bar, at
+  the top of the screen; only the one who's down, who isn't steering, gets the big centred card
+  ("You're down! … tap to cheer them on": in front of the reviver it covered the next 24–45 m of
+  track, where the heart appears). Both down at
   once (nobody can revive) resolves at once: −1 team heart, and both get up side by side at the
   front after `CRASH_T` (1.6 s) with 2 s of invulnerability (each device respawns its own runner;
   the host counts the heart once and ignores the partner's late "down"). While you're down, any
@@ -256,7 +265,12 @@ Island inset). Top: hearts, then coins and power-up rings in one fixed-height ro
 jumps when a power-up starts), distance; under the menu sticker: my pause button (pauses both phones
 in live play). Race: a bar with both runners and the finish, plus a gap pill ("Sydney +23 m").
 Pops ("Close call!", "MAGNET") sit between the HUD and the horizon, never on the vanishing point
-where obstacles appear; the oncoming-train "!" sits above the far track. Landscape phones put the
+where obstacles appear, and at least 16 px under the race bar and the gap / coin-goal pill where
+those reach the middle of the view (a "−1 team heart" landed on "2 / 100 coins together"); the
+oncoming-train "!" sits above the far track, under the pops. Both are placed by measuring once
+after a resize or the bar / pill showing or hiding (on the next pop or warning), never per frame.
+A race whose two finish times read the same to the second shows "Photo finish! 0.4 km in 0:27 · Sydney 0.3 s behind" instead of
+two identical times. Landscape phones put the
 race bar between the corner columns and the gap pill in the top row, so the HUD ends ~25 % down.
 All setters diff against their last value and never force a reflow (animations restart by
 alternating two identical keyframe names instead of reading `offsetWidth`).
@@ -315,6 +329,14 @@ Sky and city (all from the theme inks):
   view: 14–23 calls in a busy race (test budget ≤ 30), 33–42k triangles (test budget ≤ 60k; was
   45–58k: coins are 12-sided now, 156 triangles each, drawn to 132 m where fog takes them anyway;
   runners 4.5k each with 8-segment capsules). Chunk buffers hold ≤ 18k vertices (peak ~10.3k).
+- The phone budget (30 calls / 60k triangles) is per frame on a phone, where there is only ever one
+  view (two-phone live: 18–20 calls / 43–47k). **Split screen is laptop-only** (one keyboard, two
+  views of the same frame, each its own camera, so each view draws its own chunks, sky and
+  overlay: 38–40 calls / 88–91k triangles at 1280×800, i.e. each view stays inside the phone
+  budget). Its budget is the **laptop split budget, ≤ 50 calls / 120k triangles per frame**
+  (asserted in the `split` test section). Halving the far distance per view would bring it near
+  the phone numbers, but at the cost of pop-in on the screen size that shows it most, for a GPU
+  that doesn't need it.
 - Far layers (street, skyline, sky dome) draw after the near world (`renderOrder`), so early depth
   testing skips every pixel a building or train already covers.
 - `antialias:false`, `alpha:false`, `stencil:false`, `powerPreference:'high-performance'`.

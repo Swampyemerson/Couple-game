@@ -86,7 +86,7 @@ export function createGame(el, api) {
     phase: 'loading', setup: sanitizeSetup({ ...(loadSaved() || {}), first: 'a' }, MAP_IDS.filter((id) => !MAPS.find((m) => m.id === id).stub).concat(MAP_IDS)), setupVer: 0,
     sheet: false, match: null, R: null, paused: false, pausedAt: 0, resumeAt: 0, reasons: 0, partnerPz: 0, partnerReady: false,
     localMode: live ? 'live' : device.localMode, practiceRole: device.practiceRole, mapId: null, mapIdx: -1, loading: false,
-    stats: null, lastNow: 0, slowT: 0, slowK: 1, tSec: 0, ending: false, finalShown: false,
+    stats: null, lastNow: 0, slowT: 0, slowK: 1, tSec: 0, simT: 0, ending: false, finalShown: false, // simT: seconds the chase physics has run (tests time by it, not by the wall)
   };
   if (!MAPS.find((m) => m.id === S.setup.map && !m.stub)) S.setup.map = MAPS.find((m) => !m.stub).id;
   { // the last open died while building a map (iOS kills a tab that runs out of memory): open on
@@ -110,6 +110,8 @@ export function createGame(el, api) {
   const viewers = () => (split() && hud2 && S.R ? VIEWERS_AB : human() === 'a' ? VIEWERS_A : VIEWERS_B);
   const isViewer = (w) => w === human() || (split() && hud2 && !!S.R);
   const nameOf = (w) => (ai() ? (w === human() ? 'You' : 'AI') : api.name(w));
+  /** '<name> runs' with the verb agreeing ('You run'; mid-sentence, 'you run'). */
+  const nameRuns = (w, mid) => { const n = nameOf(w); return n === 'You' ? (mid ? 'you run' : 'You run') : `${n} runs`; };
   // whose records / liveries a car slot is: live and split their own; practice: the device's owner
   const owner = api.owner === 'a' || api.owner === 'b' ? api.owner : 'a';
   const personOf = (w) => (live || split() ? w : owner);
@@ -610,10 +612,9 @@ export function createGame(el, api) {
   /** The lobby's Daily chase panel: today's map, the rules, today's board. */
   function dailyInfo() {
     const id = dailyMap(); const m = MAPS.find((x) => x.id === id) || {};
-    const real = MAPS.filter((x) => !x.stub); const want = real[dayOfYear() % real.length];
     const b = dailyBoard(gdata()); const rt = DAILY.roundTime;
     const board = AB.filter((w) => b[w] > 0).sort((x, y) => b[y] - b[x]).map((w) => ({ w, name: api.name(w), text: dailyText(b[w], rt) }));
-    return { mapId: id, title: `Today: ${m.name || 'Dockside'}`, short: `Today: ${m.name || 'Dockside'}, same start for both of you.`, how: 'One 2:00 run as the runner vs a Hard AI cop. Survive, or lose the heat for a bonus. Your best try today counts.', board, note: want && want.id !== id ? `${want.name} is today’s map; Low graphics plays ${m.name} instead.` : '' };
+    return { mapId: id, title: `Today: ${m.name || 'Dockside'}`, short: `Today: ${m.name || 'Dockside'}, same start for both of you.`, how: 'One 2:00 run as the runner vs a Hard AI cop. Survive, or lose the heat for a bonus. Your best try today counts.', board, note: '' };
   }
   /** The bottom sheet: settings or the how-to-play card (lobby and pause menu). */
   function renderSheet() {
@@ -760,12 +761,13 @@ export function createGame(el, api) {
     applyMatch(match, R);
     return true;
   }
-  /** Today's Daily chase map (the same for both of you): the real maps in turn by day of the year. */
-  function dailyMap() {
+  /** Today's Daily chase map: the real maps in turn by day of the year. It never depends on this
+   *  device (graphics tier, phone or laptop): both scores go on one board, so both of you must race
+   *  the same map, start and traffic. Low graphics draws the same map with less detail; the roads,
+   *  solids and traffic (everything the chase touches) are the same at every tier. */
+  function dailyMap(day = dayOfYear()) {
     const real = MAPS.filter((m) => !m.stub);
-    const m = real[dayOfYear() % real.length];
-    // a phone on Low graphics plays the lightest map instead (noted in the lobby)
-    return gfx && gfx.tier === 'low' && phoneish ? real[0].id : m.id;
+    return real[day % real.length].id;
   }
   /** Round idx of a match. sd: the sudden-death decider ({ runner }). lead: ms until it begins. */
   function nextRound(match, idx, sd = null, lead = live ? 700 : 150) {
@@ -873,7 +875,7 @@ export function createGame(el, api) {
     if (res.outcome === 'escaped' && res.reason === 'heat' && res.d < 60) for (const w of vs) if (w !== R.runner) later(() => H0().view(w).hint('SO CLOSE: they slipped away ' + res.d + ' m from you', 2400), 900);
     const done = matchDecided();
     const sd = !done && S.match.hist.length >= S.match.rounds;
-    const next = done ? 'Final whistle…' : sd ? `All square: sudden death, ${nameOf(suddenRunner())} runs` : `Next: ${nameOf(other(R.runner))} runs`;
+    const next = done ? 'Final whistle…' : sd ? `All square: sudden death, ${nameRuns(suddenRunner(), true)}` : `Next: ${nameRuns(other(R.runner))}`;
     // records + livery unlocks for the people on this device (records.js, liveries.js)
     const lines = []; const unlocks = []; let newRec = null; let streak = 0;
     const ns = recNs();
@@ -1024,7 +1026,7 @@ export function createGame(el, api) {
       if (t.heat >= 2) cands.push({ w, s: 50 + t.heat, t: `HOUDINI · ${n} lost the heat ${t.heat} times` });
       if (t.pits >= 3) cands.push({ w, s: 40 + t.pits, t: `BUMPER CAR · ${n} landed ${t.pits} PITs` });
       if (t.spikes >= 2) cands.push({ w, s: 35 + t.spikes, t: `ROADBLOCK · ${n} spiked them ${t.spikes} times` });
-      if (t.esc >= 1 && t.pitted === 0 && m.hist.some((h) => h.runner === w)) cands.push({ w, s: 30 + t.esc, t: `UNTOUCHABLE · ${n} was never PITed` });
+      if (t.esc >= 1 && t.pitted === 0 && m.hist.some((h) => h.runner === w)) cands.push({ w, s: 30 + t.esc, t: `UNTOUCHABLE · ${n} ${n === 'You' ? 'were' : 'was'} never PITted` });
       if (t.near >= 5) cands.push({ w, s: 20 + t.near, t: `THREAD THE NEEDLE · ${n}: ${t.near} near misses` });
       if (t.top >= 160) cands.push({ w, s: 10 + t.top / 100, t: `LEAD FOOT · ${n} hit ${t.top} km/h` });
     }
@@ -1644,7 +1646,7 @@ export function createGame(el, api) {
       if (p.stopT >= p.boxT) return endRound('busted', 'boxed', p.boxQueue ? { queue: 1 } : null);
     } else p.stopT = 0;
     // losing the heat: the meter moves every round. Beyond the heat distance and hidden (no line
-    // of sight, or under cover) it fills in heatT s; beyond 60% of it ('Breaking away') at a third
+    // of sight, or under cover) it fills in heatT s; beyond 60% of it ('Escaping') at a third
     // of the rate; otherwise it drains at heatDecay × the fill rate, but never below half its
     // peak of the last heatMemory s, and a line of sight that flickers back for under heatFlicker s
     // doesn't count as spotted. (It used to need > heat AND no LOS and drained 2.5× faster: in 18
@@ -2040,6 +2042,9 @@ export function createGame(el, api) {
 
   // ── HUD per frame ──
   let miniT = 0; let hudT = 0;
+  // '123 m' strings, made once per value (the heat panel's distance changes most frames)
+  const M_STR = [];
+  const metres = (d) => { const n = Math.max(0, Math.round(d)); return n < 4096 ? (M_STR[n] || (M_STR[n] = n + ' m')) : n + ' m'; };
   function updateHud(dt, now) {
     hudT -= dt; miniT -= dt;
     const playing = !!S.R && !split() && (S.phase === 'count' || S.phase === 'chase');
@@ -2064,8 +2069,10 @@ export function createGame(el, api) {
       // heat meter
       const rp = P2[R.runner];
       const d = Math.hypot(posOf('a').x - posOf('b').x, posOf('a').z - posOf('b').z);
-      if (role === 'runner') { const hd = heatDist(); v.heat(rp.esc, p.los && !p.cover ? (d > hd * RULES.heatBreak ? 'Breaking away' : 'Spotted') : d > hd ? 'Losing them' : 'Too close', `${Math.round(d)} m`, p.los && !p.cover && d <= hd * RULES.heatBreak, S.phase === 'chase'); }
-      else v.heat(rp.esc, rp.esc > 0.02 ? 'Slipping away' : 'On their tail', `${Math.round(d)} m`, rp.esc > 0.3, S.phase === 'chase');
+      // (labels short enough to read beside the distance on a phone: 'Breaking away' / 'Slipping
+      // away' showed as 'BREAKING …'; both sides now say the runner is 'Escaping')
+      if (role === 'runner') { const hd = heatDist(); v.heat(rp.esc, p.los && !p.cover ? (d > hd * RULES.heatBreak ? 'Escaping' : 'Spotted') : d > hd ? 'Losing them' : 'Too close', metres(d), p.los && !p.cover && d <= hd * RULES.heatBreak, S.phase === 'chase'); }
+      else v.heat(rp.esc, rp.esc > 0.02 ? 'Escaping' : 'On their tail', metres(d), rp.esc > 0.3, S.phase === 'chase');
       v.speed(c.speed * 3.6);
       v.nitro(c.nitro, c.boost, role === 'cop' || rules().nitro !== 'off');
       if (hudT <= 0) v.tools(role === 'cop' ? `<span class="${p.spikesLeft ? '' : 'off'}">SPIKES ${p.spikesLeft}</span>` : `<span class="${p.oilLeft ? '' : 'off'}">OIL ${p.oilLeft}</span>`);
@@ -2199,7 +2206,7 @@ export function createGame(el, api) {
         const nSteps = Math.min(maxN, Math.floor(acc / step));
         while (acc >= step && n < maxN) { simStep(step, now, tT - (nSteps - 1 - n) * step * tsK, -(nSteps - 1 - n) * step * tsK); acc -= step; n++; }
         if (n >= maxN) acc = 0;
-        simDt = n * step;
+        simDt = n * step; S.simT += simDt;
         if (n > 0) flushKnocks();
         if (TLOG && live) { const c = P2[me].car; const pr = P2[other(me)]; TLOG.traj.push({ t: now, x: c.x, z: c.z, yaw: c.yaw, px: pr.remote.x, pz: pr.remote.z, nc: pr.corr ? pr.corr.length : 0 }); if (TLOG.traj.length > 2400) TLOG.traj.splice(0, 600); }
         trafficStep(dtReal * tsK, tT);
@@ -2370,7 +2377,7 @@ export function createGame(el, api) {
           phase: S.phase, paused: S.paused, resumeAt: S.resumeAt, reasons: S.reasons, setup: S.setup, setupVer: S.setupVer, mapId: S.mapId, loading: S.loading,
           match: S.match && { scores: { ...S.match.scores }, hist: S.match.hist.slice(), rounds: S.match.rounds, map: S.match.map, rules: S.match.rules },
           R: R && { idx: R.idx, spawn: R.spawn, runner: R.runner, at: R.at, t0: R.t0, endAt: R.endAt, over: R.over, result: R.result, spikes: R.spikes.map((s) => ({ id: s.id, x: s.x, z: s.z, yaw: s.yaw, gone: s.gone, at: s.at })), oils: R.oils.length },
-          a: car('a'), b: car('b'), now: clock(), dbgEnd: S.dbgEnd || null, rtt: link.rtt, linked: link.ready, result: S.result || null, localMode: S.localMode, me: human(),
+          a: car('a'), b: car('b'), now: clock(), simT: S.simT, dbgEnd: S.dbgEnd || null, rtt: link.rtt, linked: link.ready, result: S.result || null, localMode: S.localMode, me: human(),
           partnerSeen: live ? { ...P2[other(me)].remote, shown: { ...P2[other(me)].shown } } : null, sent: link.sent,
         };
       },
@@ -2411,6 +2418,8 @@ export function createGame(el, api) {
       surface(x, z) { return geo.surfaceAt(x, z); },
       navReady() { return geo && geo.navReady(); },
       maps() { return MAPS.map((m) => ({ id: m.id, name: m.name, stub: !!m.stub })); },
+      /** Today's Daily chase map on this device, and the lobby's Daily panel text (tests: the same on every tier). */
+      daily() { const d = dailyInfo(); return { map: dailyMap(), day: dayOfYear(), tier: gfx && gfx.tier, short: d.short, note: d.note }; },
       openMap() { openMap(human()); }, closeMap() { closeMap(); },
       mapTap(x, z) { return placeSpike(human(), x, z); },
       landmarks() { return (S.mapEntry && S.mapEntry.landmarks) || []; },
@@ -2426,7 +2435,7 @@ export function createGame(el, api) {
       ui() { return { sheet: S.sheet, menu: !!S.menu, loadFail: S.loadFail, glStuck: !!S.glStuck, loading: S.loading, tier: gfx && gfx.tier, card: hud.over.hidden ? null : (hud.over.querySelector('h2') || {}).textContent || hud.over.className, device: { ...device } }; },
       worldStats() { return world ? { ...world.stats, chunks: world.chunks.length, visible: world.chunks.filter((c) => c.group.visible).length, broken: world.brokenCount() } : null; },
       inputStats: () => ({ ...inputStats }),
-      internals: { P2, S, get geo() { return geo; }, get world() { return world; }, get renderer() { return renderer; }, get carViews() { return carViews; }, link },
+      internals: { P2, S, hud, get geo() { return geo; }, get world() { return world; }, get renderer() { return renderer; }, get carViews() { return carViews; }, link },
       /** Render a fixed view and count draw calls / triangles (perf budgets per map). */
       measureView(x, z, yaw, mode = 'near') {
         const cr = cams[human()]; const cam = cr.cam; const md = CAM[mode];

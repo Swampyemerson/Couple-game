@@ -764,15 +764,17 @@ export function createGame(el, api) {
   // ── simulation ──
   function advance(now) {
     const running = M.phase === 'run' && !isPaused(now);
+    let lost = 0; // shared-clock ms the simulation skips this frame (a starved page)
     if (running) {
       const from = Math.max(M.lastNow, M.startAt, M.resumeAt);
-      if (now > from) M.runMs += Math.min(now - from, 250);
+      if (now > from) { const d = now - from; M.runMs += Math.min(d, 250); if (d > 250) lost += d - 250; }
     }
     M.lastNow = now;
     const target = Math.floor(M.runMs / (DT * 1000));
     let n = 0;
     while (M.steps < target && n < 40) { stepAll(); M.steps++; n++; }
-    if (M.steps < target) M.runMs = M.steps * DT * 1000;
+    if (M.steps < target) { lost += M.runMs - M.steps * DT * 1000; M.runMs = M.steps * DT * 1000; }
+    if (lost > 0 && rules) rules.simLost(lost);
     M.alpha = clamp((M.runMs - M.steps * DT * 1000) / (DT * 1000), 0, 1);
   }
   function stepAll() {
@@ -1122,8 +1124,12 @@ export function createGame(el, api) {
         v.coins(tc);
         const goal = live && !isHost ? (q.net.tg || M.goal) : M.goal;
         v.bar(true, Math.min(1, tc / goal), 0, 'var(--g-hl)', '', '', '');
-        const k = tc * 100000 + goal;
-        if (hk.gap !== k) { hk.gap = k; v.gap(`${tc} / ${goal} coins together`); }
+        // my partner is down and I'm running: the pill under the bar becomes the prompt, with the
+        // seconds left (the big centred card is only for the one who's down, who isn't steering:
+        // in front of the reviver it covered the next 24–45 m of track, where the heart appears)
+        const rvLeft = p.revive && !r.down && M.phase === 'run' ? Math.max(0, Math.ceil((p.revive.until - now) / 1000)) : -1;
+        const k = rvLeft >= 0 ? -1 - rvLeft : tc * 100000 + goal;
+        if (hk.gap !== k) { hk.gap = k; if (rvLeft >= 0) v.gap(`Grab the ♥ for ${q.name} · ${rvLeft}`, true); else v.gap(`${tc} / ${goal} coins together`, false); }
         if (!isHost && live && q.net.th > (p._th || 0) && p._th) { v.pop('+1 heart', 'good', 'coin goal reached'); audio.play('heart'); }
         if (live) p._th = q.net.th;
       } else {
@@ -1171,11 +1177,7 @@ export function createGame(el, api) {
           const left = Math.max(0, Math.ceil((p.downAt + REVIVE_WINDOW - now) / 1000));
           if (hk.ban !== 1) { hk.ban = 1; v.banner(`You’re down! ${esc(q.name)} can revive you<b>${left}</b><small>tap to cheer them on</small>`); }
           v.bannerNum(left);
-        } else if (p.revive) {
-          const left = Math.max(0, Math.ceil((p.revive.until - now) / 1000));
-          if (hk.ban !== 2) { hk.ban = 2; v.banner(`${esc(q.name)} is down! Grab the glowing heart<b>${left}</b>`); }
-          v.bannerNum(left);
-        } else if (hk.ban) { hk.ban = 0; v.banner(null); }
+        } else if (hk.ban) { hk.ban = 0; v.banner(null); } // (the reviver's prompt is the pill under the bar)
       } else if (M.mode === 'daily' && M.phase === 'run' && r.out) {
         const qz = Math.round(qs.z / 5) * 5;
         if (hk.ban !== 3) { hk.ban = 3; v.banner(`Out of hearts at ${fmtM(r.z)} m · ${esc(q.name)} is still running<b>${qz}</b><small>metres so far</small>`); }

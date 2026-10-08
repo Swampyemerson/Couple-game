@@ -402,9 +402,16 @@ async function gameSection() {
     // traffic off, so the drivability checks below aren't decided by civilian cars
     await hook('setRules', { traffic: 'off' });
     // a practice round: intro shows where we are, then the chase
+    // (the intro card is caught by an observer in the page, not by polling: on a loaded machine the
+    // 2.5 s intro could come and go between two polls of a starved page)
+    await a.evaluate(() => {
+      window.__introSeen = '';
+      const grab = () => { for (const c of document.querySelectorAll('.gtw-card')) if (/Round/i.test(c.textContent) && /Starting near/i.test(c.textContent)) window.__introSeen = c.textContent; };
+      window.__introObs = new MutationObserver(grab); window.__introObs.observe(document.body, { childList: true, subtree: true, characterData: true });
+    });
     await a.click('.g-gtw [data-l="start"]');
-    await a.waitForFunction(() => [...document.querySelectorAll('.gtw-card')].some((c) => /Round/i.test(c.textContent)), null, { timeout: 20000, polling: 50 }).catch(() => {});
-    const introText = await a.evaluate(() => [...document.querySelectorAll('.gtw-card')].map((c) => c.textContent).join(' '));
+    await a.waitForFunction(() => !!window.__introSeen || window.__getaway.state().phase === 'chase', null, { timeout: 30000, polling: 100 }).catch(() => {});
+    const introText = await a.evaluate(() => { window.__introObs.disconnect(); return window.__introSeen || [...document.querySelectorAll('.gtw-card')].map((c) => c.textContent).join(' '); });
     await shot('intro');
     ok(/santee/i.test(introText), 'the round intro names Santee');
     ok(/Starting near/i.test(introText), `the intro says where: ${(introText.match(/Starting near[^\n]*/) || [''])[0]}`);
@@ -443,7 +450,13 @@ async function gameSection() {
       const ri = roads.findIndex((r) => r.name === name && !r.bridge && r.len > 200);
       if (ri < 0) { ok(false, `route ${name} found`); continue; }
       const len = roads[ri].len, s0 = Math.max(70, Math.min(len - 120, len * 0.35));
-      let p, moved = 0, surf = '', water = false, offRoad = 0;
+      // Timed by the game's own simulation clock (state().simT, the seconds the chase physics has run),
+      // not the wall: the game clamps a frame to 125 ms of simulation, so a loaded software-GL page
+      // simulates a fraction of real time, and the frame-time p50 this used to scale by reads 125
+      // (the clamp itself) however slow the frames really are. 3.5 simulated seconds, sampled every
+      // 0.5 of them; the distance is checked as a speed along the road: ≥ 8 m per simulated second.
+      const SIM_S = 3.5;
+      let p, moved = 0, simS = 0, surf = '', water = false, offRoad = 0, n = 0;
       for (let tries = 0; tries < 3; tries++) {
         await live();
         const idx0 = (await st()).R.idx;
@@ -452,20 +465,23 @@ async function gameSection() {
         await hook('hold', other, { brake: 1 });
         await hook('teleport', other, back.x, back.z, back.yaw, 0);
         await hook('teleport', me, p.x, p.z, p.yaw, 12);
+        const t0 = (await st()).simT;
         const id = await a.evaluate(([w, r, ss, l]) => window.__follow(w, r, ss, l), [me, ri, s0, len]);
-        offRoad = 0;
-        for (let k = 0; k < 7; k++) { await wait(500); const q = (await st())[me]; if (q.surf !== 'road') offRoad++; }
+        offRoad = 0; n = 0;
+        const wall0 = Date.now();
+        while (n < SIM_S / 0.5 && Date.now() - wall0 < 60000) {
+          await wait(100);
+          const q = await st(); if (q.phase !== 'chase' || !q.R || q.R.idx !== idx0) break;
+          if (q.simT - t0 >= (n + 1) * 0.5) { n++; if (q[me].surf !== 'road') offRoad++; }
+        }
         await a.evaluate((x) => clearInterval(x), id);
         s = await st();
         await hook('hold', me, null); await hook('hold', other, null);
-        moved = Math.hypot(s[me].x - p.x, s[me].z - p.z); surf = s[me].surf; water = s[me].water;
-        if (s.R && s.R.idx === idx0 && s.phase === 'chase') break;
+        moved = Math.hypot(s[me].x - p.x, s[me].z - p.z); simS = s.simT - t0; surf = s[me].surf; water = s[me].water;
+        if (s.R && s.R.idx === idx0 && s.phase === 'chase' && n >= SIM_S / 0.5) break;
       }
-      // the game clamps a frame to 100 ms of sim time, so on a slow software-GL page the sim runs
-      // slower than the wall clock: scale the distance we expect by the measured frame time
-      const pf = await a.evaluate(() => window.__getaway.perf());
-      const need = 40 * Math.min(1, 100 / Math.max(100, pf.p50 || 0));
-      ok(moved > need && !water && offRoad <= 1, `${name}: follows the road ${moved.toFixed(0)} m (≥ ${need.toFixed(0)}; frame p50 ${Math.round(pf.p50)} ms) from (${p.x.toFixed(0)}, ${p.z.toFixed(0)}), on ${surf} (${offRoad}/7 samples off the asphalt)`);
+      const need = 8 * simS;
+      ok(n >= SIM_S / 0.5 && moved >= need && !water && offRoad <= 1, `${name}: follows the road ${moved.toFixed(0)} m in ${simS.toFixed(1)} simulated s (≥ ${need.toFixed(0)}: 8 m/s) from (${p.x.toFixed(0)}, ${p.z.toFixed(0)}), on ${surf} (${offRoad}/${n} samples off the asphalt)`);
       await shot('route-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
     }
     // the riverbed: sand, slow, dry

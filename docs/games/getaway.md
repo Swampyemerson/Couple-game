@@ -44,7 +44,7 @@ is ready").
   moves every round: beyond the heat distance (the setting, 180 m by default, or the map's own
   `heat` when the setting is at its default: Dockside 140 m) and **hidden** (no line of sight, under
   a bridge deck, or on a road the map flags `cover: true`) it fills in 7 s (`RULES.heatT`, was 8); beyond
-  60% of the distance with the cop still watching ("Breaking away") at a third of the rate;
+  60% of the distance with the cop still watching ("Escaping") at a third of the rate;
   otherwise it drains at the fill rate (`heatDecay` 1.0, was 2.5), but never below half its peak of
   the last 10 s (`heatMemory`: a near-escape stays on the table), and a line of sight that
   flickers back for under 1 s (`heatFlicker`) doesn't count as spotted. Both players see the meter.
@@ -96,7 +96,7 @@ is ready").
   card** for 4.2 s (tap to go on): round pips with how each ended (BUSTED 0:41 / LOST THEM 1:12 /
   ESCAPED / SPLASH, SD for the decider), the two of you side by side (PITs, top km/h, near misses,
   spikes landed, escapes) and an **MVP** line picked from the match (HOUDINI lost the heat twice ·
-  BUMPER CAR 3+ PITs · ROADBLOCK 2+ spike hits · UNTOUCHABLE never PITed · THREAD THE NEEDLE 5+ near
+  BUMPER CAR 3+ PITs · ROADBLOCK 2+ spike hits · UNTOUCHABLE never PITted · THREAD THE NEEDLE 5+ near
   misses · LEAD FOOT 160+ km/h). Then `api.finish({ winner, text, sub, score })` once per match
   (host and guest both call; core records it once); `sub` carries the MVP line to the app card.
   Practice vs the AI finishes with `winner: null` ("You beat the Hard AI in sudden death, 3–2") and
@@ -121,9 +121,12 @@ is ready").
   `career_<w>` object was dropped by setData (objects aren't stored), so no milestone above 1 could
   ever unlock.
 - **Daily chase** (local modes row): one 2:00 run as the runner vs a Hard AI cop on today's map
-  (Dockside / Boulder / Santee by day of the year; a phone on Low graphics plays Dockside, noted),
+  (Dockside / Boulder / Santee by day of the year, the same on every device and graphics tier: both
+  scores go on one board, so a phone on Low draws today's map with less detail rather than playing
+  another one; roads, solids and traffic don't depend on the tier),
   the spawn and traffic from `hash('getaway-daily:' + date)`. Score = seconds survived; a heat escape
-  scores 120 + the seconds left. `<w>_daily_<date>` keeps your best try today, `<w>_daily_best` your
+  scores 120 + the seconds left (the result card's "on the run" time rounds the same way, so the
+  card never shows 0:19 beside 0:20). `<w>_daily_<date>` keeps your best try today, `<w>_daily_best` your
   best ever. The lobby panel lists today's two scores; the chase opens with "Beat Sydney: 1:12" and
   stamps PASSED SYDNEY! at that second.
 - **Quick chase** (a chip by the facts line, host): 2 rounds of 1:00, 2 spike strips, sudden death
@@ -439,14 +442,20 @@ pauses both phones) opens Resume · Settings (this device) · How to play · Qui
 
 Top: both scores, the round clock (turns red in the last 15 s) and round pips (coloured by the
 winner). Left, under the back sticker: the role chip (the cop's is red/blue), car health, and the
-heat meter ("Spotted / Losing them / 240 m"; the cop sees "Slipping away"). Right, under the menu
+heat meter ("Spotted / Escaping / Losing them / 240 m"; the cop sees "On their tail / Escaping"; the
+bars are 154 px wide so every label reads in full beside a 4-digit distance: "Breaking away" and
+"Slipping away" showed as "BREAKING …" on phones). A short landscape phone puts CAM (and the live
+Honk beside it) under that column, clear of the heat panel's edge and shadow and above the STEER
+zone (CAM used to cover the bottom of the escape bar). Right, under the menu
 sticker: a north-up round minimap 420 m across, with landmarks (home = pink house), both cars
 (the cop flashes red/blue), strips, and for the cop a "last seen" ping when line of sight is lost.
 Under it: speed, the nitro bar and the tool count. On touch the tool count is a badge on the oil /
 spike button instead (one count on screen), and a short landscape phone puts speed and nitro in the
 sky left of the minimap, clear of the car and both thumbs. The full map (M) shows every landmark name, the
 400 m drop range and the runner's no-drop circle. Partner name tag with distance, and an edge
-arrow when they're close but off screen (practice: the AI's, "AI · 82 m", by the radar rule).
+arrow when they're close but off screen (practice: the AI's, "AI · 82 m", by the radar rule). The
+tag stays on screen and off the left column (a car right beside yours projects to the screen's
+edge, and its tag used to sit there half off-screen on the SPOTTED panel and CAM).
 Floating damage numbers: any hit of 3+ shows "−6" by my health bar (blue for the cruiser), and the
 attacker sees the number in the victim's colour (live: from the streamed health); a tier-1 PIT
 stamps NUDGE. The runner's **style chain**: near miss +1, a drift over 1 s +1, the cop on your oil
@@ -533,6 +542,10 @@ so a long grind can't pile up voices.
 
 ## Performance
 
+- Hot loops make no closures: the traffic visitors (`traffic.each` from the yield pass, `select`
+  for drawing, the AI's traffic read, contact candidates) are functions made once that take the
+  call's state through scratch fields, and the sort order is hoisted; the heat panel's "123 m"
+  strings are made once per value, and the clock and speed text only when the shown number changes.
 - WebGL2 via three r128 (`render.js`): MSAA on, `alpha:false`, `stencil:false`, `high-performance`;
   tiers low / mid (phones) / high with a pixel-ratio cap (1.25 / 1.5 / 1.5).
 - **Dynamic quality** (`game.js dynRes`) is a ladder of levers, cheapest first, with hysteresis:
@@ -632,7 +645,9 @@ oncoming lane when it's clear long enough (the cop more readily: traffic pulls o
 a verge when crawling in a queue (and leaves it as soon as its lane flows again or after ~3.5 s,
 for any decent slot: it used to ride the grass beside a moving line of cars for 10+ s), and creeps
 round a car that has stopped nose to nose with it (6–14 m ahead; the runner after 1 s, 0.3 s with
-the cop close; the cop too, after 2.6 / 1.8 / 1.2 s by level, pulling out to the oncoming side
+the cop close — within 70 m, within 120 m in sight, or anywhere inside the heat distance, where
+waiting won't lose the heat: it used to idle 3–7 s at a light with the cop closing from 80 m; the
+same urgency takes smaller overtaking gaps and tries a verge sooner; the cop too, after 2.6 / 1.8 / 1.2 s by level, pulling out to the oncoming side
 first: its siren only clears the way while it's moving, so a red-light queue it was stopped
 behind stayed put for 5–12 s; the wait timer decays instead of resetting on one odd read). Held
 there with no way round, the watchdog counts it as stuck whatever the gap. A
@@ -733,8 +748,18 @@ by `page.tap()`) · `touch` (an iPhone driven only by real `page.tap()`s: the Pr
 label, opening on Dockside after a crash marker, role / AI level / how-to / settings rows, a forced
 load failure → error card → Play Dockside instead, Cancel on a big map load, Start, the ‖ pause
 menu with Settings and Resume, the map's Done, a context loss that never comes back → Reload
-graphics, Quit to the lobby; port PORT + 7). The `practice` and `live` sections also tap Start,
+graphics, Quit to the lobby; the landscape HUD at 667×375, 844×390 and 926×428: CAM and the horn
+clear of the heat panel and above the STEER zone, every heat label in full beside "1888 m", a tag
+for a car at the screen's edge kept off the left column; and, on the Low graphics that crash put it
+on, today's Daily map; port PORT + 7). The `practice` and `live` sections also tap Start,
 Settings, the rule steppers, Done and the guest's Ready. Screenshots go to `$SHOTS`.
+
+Waits that depend on driving are timed by the game, not the wall: `state().simT` is the seconds
+the chase physics has run (a loaded headless page simulates a fraction of real time, every frame
+clamped to 125 ms), and the spike, split-screen and shove checks poll the cars' positions and
+speeds with a generous wall-clock ceiling; `contacts` interpolates the partner's trajectory across
+gaps up to 400 ms or 3 × its typical frame spacing, whichever is longer. getaway-santee.test.js
+drives each main route for 3.5 simulated seconds and asks for ≥ 8 m per simulated second.
 
 Engine v2 sections: `unit` also covers the box collider, trunk-sized props, shrubs and mailboxes,
 sliding along a wall of seamed boxes, PIT tiers, braking dive, the road graph (sliced = one go,

@@ -31,10 +31,11 @@ export const CSS = `
 .gtw-role { padding: 4px 10px; border-radius: 999px; font: 900 0.72rem/1 var(--g-font-body); letter-spacing: .12em; text-transform: uppercase; border: 2px solid var(--g-ink); background: var(--g-ink); color: var(--g-bg); }
 .gtw-role.runner { background: var(--me); color: var(--g-on-ink); }
 .gtw-role.cop { background: linear-gradient(90deg, #e2333f 50%, #2f6bff 50%); color: #fff; text-shadow: 0 1px 0 #0008; }
-.gtw-bar { width: 140px; padding: 4px 6px 5px; }
+.gtw-bar { width: 154px; padding: 4px 6px 5px; } /* (wide enough for 'On their tail' beside a 4-digit distance) */
 .gtw-bar small { display: flex; justify-content: space-between; align-items: baseline; gap: 4px; white-space: nowrap; font: 900 0.7rem/1 var(--g-font-body); letter-spacing: .03em; text-transform: uppercase; color: var(--g-muted); margin-bottom: 3px; }
 .gtw-bar small b { color: var(--g-ink); flex: none; } .gtw-bar small span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .gtw-heat small b { font-size: .85rem; letter-spacing: .02em; font-variant-numeric: tabular-nums; } /* the distance: the number both roles watch */
+.gtw-heat small span { letter-spacing: .01em; } /* (the label fits beside a 4-digit distance: 'On their tail · 1250 m') */
 .gtw-bar .t { height: 9px; border-radius: 5px; border: 2px solid var(--g-ink); background: var(--g-bg); overflow: hidden; }
 .gtw-bar .t i { display: block; height: 100%; width: 100%; background: var(--g-good); transform-origin: left center; transition: transform .25s, background .25s; }
 .gtw-bar.low .t i { background: var(--g-bad); } .gtw-bar.mid .t i { background: var(--g-hl); }
@@ -59,7 +60,9 @@ export const CSS = `
 /* touch: the tool count is a badge on the oil / spike button instead of a HUD chip */
 .g-gtw.touch .gtw-view.full .gtw-tools { display: none; }
 .g-gtw.short .gtw-mini { width: 100px; height: 100px; }
-.g-gtw.touch.short .gtw-ctl [data-tap="cam"] { top: calc(var(--cs) + 110px); }
+/* short landscape phone: CAM (and the horn beside it, live) sit under the left column, clear of the
+   heat panel's bottom edge and shadow (the panel ends at --cs + 117 px) and well above the thumb */
+.g-gtw.touch.short .gtw-ctl [data-tap="cam"] { top: calc(var(--cs) + 126px); }
 .gtw-speed b { font-family: var(--g-font-display); font-weight: 900; font-size: 2rem; line-height: .9; font-variant-numeric: tabular-nums; -webkit-text-stroke: 1.5px var(--g-ink); color: var(--g-card); text-shadow: 2px 2px 0 var(--g-edge); }
 .gtw-speed small { font: 900 0.7rem/1 var(--g-font-body); letter-spacing: .14em; color: var(--g-ink); background: var(--g-card); border-radius: 4px; padding: 2px 4px; }
 .gtw-nitro { width: 92px; height: 10px; border-radius: 6px; border: 2px solid var(--g-ink); background: var(--g-card); overflow: hidden; }
@@ -272,7 +275,7 @@ export const CSS = `
 .gtw-box i { display: block; height: 7px; margin-top: 5px; border-radius: 4px; background: rgba(0,0,0,.3); overflow: hidden; } .gtw-box s { display: block; height: 100%; background: #fff; transform-origin: left center; transition: transform .1s linear; }
 .gtw-box.cop { background: linear-gradient(90deg, #e2333f, #2f6bff); }
 @keyframes gtw-boxp { to { box-shadow: 0 0 0 6px rgba(226,51,63,.35), 3px 3px 0 var(--g-edge); } }
-.gtw-dmg { position: absolute; left: calc(156px + var(--sl)); top: calc(var(--cs) + 34px); font: 900 1.25rem/1 var(--g-font-display); color: var(--g-bad); -webkit-text-stroke: 1.5px var(--g-ink); text-shadow: 2px 2px 0 var(--g-edge); opacity: 0; pointer-events: none; }
+.gtw-dmg { position: absolute; left: calc(170px + var(--sl)); top: calc(var(--cs) + 34px); font: 900 1.25rem/1 var(--g-font-display); color: var(--g-bad); -webkit-text-stroke: 1.5px var(--g-ink); text-shadow: 2px 2px 0 var(--g-edge); opacity: 0; pointer-events: none; }
 .gtw-dmg.cop { color: #2f6bff; }
 .gtw-dmg.them { left: 50%; top: 48%; color: var(--them); font-size: 1.5rem; }
 .gtw-dmg.go { animation: gtw-dmg 1s ease-out forwards; }
@@ -320,6 +323,6 @@ export const CSS = `
 @media (prefers-reduced-motion: reduce) { .gtw-clock.hot, .gtw-box { animation: none; } }
 .gtw-ctl [data-tap="horn"] { left: calc(10px + var(--sl)); top: calc(var(--cs) + 180px); min-width: 56px; height: 44px; padding: 0 8px; border-radius: 10px; font-size: .7rem; text-transform: none; letter-spacing: 0; }
 .g-gtw.touch.portrait .gtw-ctl [data-tap="horn"] { top: calc(var(--cs) + 128px); }
-.g-gtw.touch.short .gtw-ctl [data-tap="horn"] { top: calc(var(--cs) + 160px); }
+.g-gtw.touch.short .gtw-ctl [data-tap="horn"] { top: calc(var(--cs) + 126px); left: calc(74px + var(--sl)); }
 .gtw-tag.emote { font-size: .95rem; padding: 5px 9px; background: var(--g-card); color: var(--g-ink); border-radius: 12px; }
 `;

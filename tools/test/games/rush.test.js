@@ -459,7 +459,12 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
           await until(a, () => window.__rush.state().a.revive, null, 5000, 'partner gets revive tokens');
           await h.wait(400);
           await shot(a, 'phone-light-revive-token');
-          await until(b, () => !window.__rush.state().b.down, null, 14000, 'revived');
+          // the revive is judged by the token: wait for Emerson's window to close (a heart grabbed, or
+          // missed), however slowly a loaded page simulates, then for the revive to reach Sydney
+          await until(a, () => { const q = window.__rush.state().a; return q.stats.revives >= 1 || !q.revive; }, null, 30000, 'the revive window closes');
+          const ra = (await S(a)).a.stats.revives;
+          assert(ra === 1, `the bot steers into a revive heart and grabs it (${ra} revive${ra === 1 ? '' : 's'})`);
+          await until(b, () => !window.__rush.state().b.down, null, 10000, 'revived');
           const sa = await S(a);
           assert(sa.a.stats.revives === 1 && sa.th === 4, `revived by grabbing the token, no team heart lost (team hearts ${sa.th})`);
           // both down at once: nobody can revive, so it resolves straight away (−1 team heart, both up)
@@ -618,6 +623,11 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         console.log('ok - weapon keys work in split screen');
         await until(a, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 90000, 'split race ends');
         await checkFeedback(a, 'split race on autopilot');
+        // split screen is laptop-only: two views a frame, so its own budget (docs/games/rush.md,
+        // Performance): ≤ 50 calls / 120k triangles a frame (the phone budget, 30 / 60k, is one view)
+        const sp = await a.evaluate(() => window.__rush.perf());
+        console.log(`   split screen (1280×800, both views): ≤ ${sp.maxCalls} draw calls, ≤ ${sp.maxTris} triangles a frame`);
+        assert(sp.maxCalls <= 50 && sp.maxTris <= 120000, `split screen within the laptop split budget of 50 calls / 120k triangles (max ${sp.maxCalls} / ${sp.maxTris})`);
         await h.wait(400);
         assert(h.results().filter((r) => r.game === 'rush').length === 1, 'one-device result recorded');
         await shot(a, 'desk-light-end');
@@ -706,14 +716,21 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
       await b.evaluate(() => window.__rush.auto('b', true));
       await h.wait(2200);
       await shot(a, 'phone-dark-run');
-      const s = await S(a);
-      const tw = s.a.z >= s.b.z ? 'b' : 'a';
-      const tp = tw === 'a' ? a : b; const vp = tw === 'a' ? b : a;
-      await vp.evaluate((w) => { window.__rush.internals.players[w].r.shield = 0; }, tw === 'a' ? 'b' : 'a');
-      await tp.evaluate((w) => window.__rush.give(w, 'ink'), tw);
-      await fireWeapon(tp);
-      await until(vp, (w) => window.__rush.state()[w].splat, tw === 'a' ? 'b' : 'a', 6000, 'dark ink');
-      await shot(vp, 'phone-dark-hit');
+      // ink the leader. Whoever leads is read again before each throw (the bots swap the lead), and a
+      // throw that can't land (the leader changed hands, or was down when it arrived) is thrown again
+      let inked = null;
+      for (let k = 0; k < 3 && !inked; k++) {
+        const s = await S(a);
+        const tw = s.a.z >= s.b.z ? 'b' : 'a'; const lw = tw === 'a' ? 'b' : 'a';
+        const tp = tw === 'a' ? a : b; const vp = tw === 'a' ? b : a;
+        await vp.evaluate((w) => { window.__rush.internals.players[w].r.shield = 0; }, lw);
+        await tp.evaluate((w) => window.__rush.give(w, 'ink'), tw);
+        await fireWeapon(tp);
+        if (await until(vp, (w) => window.__rush.state()[w].splat, lw, 10000, 'dark ink').then(() => true, () => false)) inked = vp;
+        else console.log(`   (ink throw ${k + 1} didn't land: ${JSON.stringify(await S(a).then((q) => ({ a: Math.round(q.a.z), b: Math.round(q.b.z), da: q.a.down, db: q.b.down })))}; again)`);
+      }
+      assert(!!inked, 'dark: an ink bomb lands on the leader');
+      await shot(inked, 'phone-dark-hit');
       await until(a, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 90000, 'dark end');
       await shot(a, 'phone-dark-end');
       await a.click('#game-root [data-g="close"]');

@@ -337,35 +337,9 @@ export function createTraffic(geo, mapId, density) {
         }
       }
     }
-    for (let q = 0; q < obs.length; q += 4) {
-      const ox = obs[q]; const oz = obs[q + 1];
-      each(ox, oz, obs[q + 2] ? 60 : 45, t, (id, p, wreck) => {
-        if (wreck || touched.has(id)) return;
-        const fx = Math.sin(p.yaw); const fz = -Math.cos(p.yaw);
-        let need = Infinity; let pull = 0; let sirenNear = Infinity;
-        for (let r = 0; r < obs.length; r += 4) {
-          const dx = obs[r] - p.x; const dz = obs[r + 1] - p.z;
-          const lz = dx * fx + dz * fz; const lx = dx * -fz + dz * fx;
-          if (lz > 0.5 && lz < 32 && Math.abs(lx) < 2.3) need = Math.min(need, lz);
-          // a siren within 55 m behind (or coming the other way, ahead): make room
-          if (obs[r + 2] && Math.abs(lx) < 9 && lz < 40 && lz > -55) { pull = 1; sirenNear = Math.min(sirenNear, Math.hypot(dx, dz)); }
-        }
-        if (need === Infinity && !pull) return;
-        touched.add(id);
-        let lg = lag.get(id); if (!lg) { lg = { m: 0, v: p.sched, side: 0 }; lag.set(id, lg); }
-        // held up for a while by something that isn't moving: squeeze past it on the right
-        lg.held = need < 12 && lg.v < 0.6 ? (lg.held || 0) + dt : Math.max(0, (lg.held || 0) - dt);
-        const sideT = pull ? 2.7 : lg.held > 3 ? 3.4 : 0;
-        if (lg.held > 3 && Math.abs(lg.side - 3.4) > 0.5) need = Math.max(need, 9);
-        lg.side += Math.max(-1.6 * dt, Math.min(1.6 * dt, sideT - lg.side));
-        // brake to stop ~6.5 m (centre to centre) behind an obstacle; crawl while pulled over
-        const room = need - 6.5;
-        let vAllow = need === Infinity ? Infinity : Math.sqrt(Math.max(0, 2 * 5 * Math.max(0, room)));
-        if (pull) vAllow = Math.min(vAllow, sirenNear < 22 ? 0 : p.sched * 0.3); // the siren right behind: stop and let it by
-        const vEff = Math.max(0, Math.min(p.sched, vAllow, lg.v + 3 * dt));
-        lg.m = Math.max(0, lg.m + (p.sched - vEff) * dt); lg.v = vEff;
-      });
-    }
+    yDt = dt;
+    for (let q = 0; q < obs.length; q += 4) each(obs[q], obs[q + 1], obs[q + 2] ? 60 : 45, t, yieldOne);
+
     // the rest ease back into the lane and catch up with their schedule
     for (const [id, lg] of lag) {
       if (touched.has(id)) continue;
@@ -376,6 +350,35 @@ export function createTraffic(geo, mapId, density) {
     }
   }
   const yObs = []; const yTouched = new Set(); const HOLD_R = 14;
+  let yDt = 0; // (this frame's dt for yieldOne: made once, not a closure per obstacle per frame)
+  /** One car near an obstacle: hold back behind it, or pull over for a siren (yieldTo). */
+  function yieldOne(id, p, wreck) {
+    const obs = yObs; const touched = yTouched; const dt = yDt;
+    if (wreck || touched.has(id)) return;
+    const fx = Math.sin(p.yaw); const fz = -Math.cos(p.yaw);
+    let need = Infinity; let pull = 0; let sirenNear = Infinity;
+    for (let r = 0; r < obs.length; r += 4) {
+      const dx = obs[r] - p.x; const dz = obs[r + 1] - p.z;
+      const lz = dx * fx + dz * fz; const lx = dx * -fz + dz * fx;
+      if (lz > 0.5 && lz < 32 && Math.abs(lx) < 2.3) need = Math.min(need, lz);
+      // a siren within 55 m behind (or coming the other way, ahead): make room
+      if (obs[r + 2] && Math.abs(lx) < 9 && lz < 40 && lz > -55) { pull = 1; sirenNear = Math.min(sirenNear, Math.hypot(dx, dz)); }
+    }
+    if (need === Infinity && !pull) return;
+    touched.add(id);
+    let lg = lag.get(id); if (!lg) { lg = { m: 0, v: p.sched, side: 0 }; lag.set(id, lg); }
+    // held up for a while by something that isn't moving: squeeze past it on the right
+    lg.held = need < 12 && lg.v < 0.6 ? (lg.held || 0) + dt : Math.max(0, (lg.held || 0) - dt);
+    const sideT = pull ? 2.7 : lg.held > 3 ? 3.4 : 0;
+    if (lg.held > 3 && Math.abs(lg.side - 3.4) > 0.5) need = Math.max(need, 9);
+    lg.side += Math.max(-1.6 * dt, Math.min(1.6 * dt, sideT - lg.side));
+    // brake to stop ~6.5 m (centre to centre) behind an obstacle; crawl while pulled over
+    const room = need - 6.5;
+    let vAllow = need === Infinity ? Infinity : Math.sqrt(Math.max(0, 2 * 5 * Math.max(0, room)));
+    if (pull) vAllow = Math.min(vAllow, sirenNear < 22 ? 0 : p.sched * 0.3); // the siren right behind: stop and let it by
+    const vEff = Math.max(0, Math.min(p.sched, vAllow, lg.v + 3 * dt));
+    lg.m = Math.max(0, lg.m + (p.sched - vEff) * dt); lg.v = vEff;
+  }
 
   const P1 = { x: 0, z: 0, y: 0, yaw: 0, vx: 0, vz: 0, sc: 1, hl: 2.3, hw: 0.95, speed: 0, id: 0, sched: 0 };
   /** Visit every car within `rad` of (x, z) at time t: fn(id, pose, wreck) — pose is reused. */
@@ -421,20 +424,26 @@ export function createTraffic(geo, mapId, density) {
   /** The `max` cars nearest any viewer within rad, nearest first (for drawing). out: array of
    *  pose objects (grown as needed). Returns the count. */
   const selD = []; const selPool = [];
+  // (select's visitor and sort order are made once; the call's viewers and radius go through these)
+  let selV = null; let selR2 = 0;
+  function selOne(id, p) {
+    let d = Infinity;
+    for (let i = 0; i < selV.length; i++) { const v = selV[i]; const q = (p.x - v.x) * (p.x - v.x) + (p.z - v.z) * (p.z - v.z); if (q < d) d = q; }
+    if (d > selR2) return;
+    const n = selD.length;
+    let o = selPool[n]; if (!o) { o = {}; selPool[n] = o; }
+    o.x = p.x; o.z = p.z; o.y = p.y; o.yaw = p.yaw; o.vx = p.vx; o.vz = p.vz; o.sc = p.sc; o.hl = p.hl; o.hw = p.hw; o.id = id; o.d = d; o.speed = p.speed;
+    selD.push(o);
+  }
+  const byD = (a, b) => a.d - b.d;
   function select(viewers, t, max, rad, out) {
     selD.length = 0;
-    let n = 0;
     const vx0 = viewers[0]; const vx1 = viewers[1] || viewers[0];
     const cx = (vx0.x + vx1.x) / 2; const cz = (vx0.z + vx1.z) / 2; const R = rad + Math.hypot(vx0.x - vx1.x, vx0.z - vx1.z) / 2;
-    each(cx, cz, R, t, (id, p) => {
-      let d = Infinity;
-      for (const v of viewers) { const q = (p.x - v.x) * (p.x - v.x) + (p.z - v.z) * (p.z - v.z); if (q < d) d = q; }
-      if (d > rad * rad) return;
-      let o = selPool[n]; if (!o) { o = {}; selPool[n] = o; }
-      o.x = p.x; o.z = p.z; o.y = p.y; o.yaw = p.yaw; o.vx = p.vx; o.vz = p.vz; o.sc = p.sc; o.hl = p.hl; o.hw = p.hw; o.id = id; o.d = d; o.speed = p.speed;
-      selD.push(o); n++;
-    });
-    selD.sort((a, b) => a.d - b.d);
+    selV = viewers; selR2 = rad * rad;
+    each(cx, cz, R, t, selOne);
+    selV = null;
+    selD.sort(byD);
     const m = Math.min(max, selD.length);
     out.length = m;
     for (let i = 0; i < m; i++) out[i] = selD[i];

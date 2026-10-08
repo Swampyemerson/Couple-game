@@ -498,6 +498,7 @@ const BOT_EVERY = 12; // steps per decision (0.1 s)
 const BOT_H = 20;     // decisions of look-ahead (2 s)
 const BOT_BUDGET = 60000;
 
+const BOT_ACTS = [0, A_UP, A_DOWN, A_LEFT, A_RIGHT]; // (hoisted: dfs runs ~10⁴ times a decision)
 export function createBot(track) {
   const pool = [];
   for (let i = 0; i <= BOT_H + 1; i++) pool.push(newRunner(0));
@@ -535,12 +536,14 @@ export function createBot(track) {
     const node = pool[d + 1];
     let n = 0;
     const hint = d + 1 < prevN ? prev[d + 1] : 0;
-    order[n++] = hint;
-    if (goal !== null && src.lane !== goal && src.laneT >= 1) {
-      const toward = goal < src.lane ? A_LEFT : A_RIGHT;
-      if (toward !== hint) order[n++] = toward;
-    }
-    for (const a of [0, A_UP, A_DOWN, A_LEFT, A_RIGHT]) {
+    // a goal lane (a revive heart, a shove) comes before the last plan's hint: the hint is a plan
+    // that was feasible without the goal, so trying it first meant 'stay' won and the bot ran past
+    // the heart. In the goal lane, holding it comes before a planned lane change away from it.
+    if (goal !== null && src.lane !== goal && src.laneT >= 1) order[n++] = goal < src.lane ? A_LEFT : A_RIGHT;
+    else if (goal !== null && src.lane === goal && (hint === A_LEFT || hint === A_RIGHT)) order[n++] = 0;
+    if (n === 0 || order[0] !== hint) order[n++] = hint;
+    for (let ai = 0; ai < BOT_ACTS.length; ai++) {
+      const a = BOT_ACTS[ai];
       let dup = false;
       for (let j = 0; j < n; j++) if (order[j] === a) dup = true;
       if (!dup) order[n++] = a;

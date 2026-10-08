@@ -2,7 +2,7 @@
 // hearts, coin goals) and the host's verdicts. Works the same with one device (both runners
 // local, messages delivered directly) and two (messages over the reliable link).
 import {
-  LANE_W, CHUNK, ROOF, BOOST_T, REVIVE_WINDOW, REVIVE_FIRST, REVIVE_EVERY, CHEER_T, CHEER_K, CRASH_T,
+  LANE_W, CHUNK, ROOF, BOOST_T, REVIVE_WINDOW, REVIVE_FIRST, REVIVE_EVERY, REVIVE_SLACK, CHEER_T, CHEER_K, CRASH_T,
   TEAM_HEARTS, TEAM_HEARTS_MAX, BRAWL_CAP, DAILY_CAP, STEP_UP,
 } from './tune.js';
 import { O_BLOCK, O_TRAIN, O_MTRAIN, O_RAMP, pathLane } from './track.js';
@@ -377,6 +377,19 @@ export function createRules(G) {
     }
   }
 
+  /** The simulation dropped `ms` of the shared clock (a frame over 250 ms on a starved page: the
+   *  runner covered less track than the clock says). A revive window counts that clock, so it gets
+   *  the time back, up to REVIVE_SLACK in all: a frame hitch can't eat the reviver's chance, and a
+   *  revive still lands before the downed phone's own fallback (REVIVE_WINDOW + 2.5 s). */
+  function simLost(ms) {
+    if (M.mode !== 'tandem' || !(ms > 0)) return;
+    for (let wi = 0; wi < 2; wi++) {
+      const rv = P(AB[wi]).revive; if (!rv) continue;
+      const add = Math.min(ms, REVIVE_SLACK - (rv.slack || 0)); if (add <= 0) continue;
+      rv.slack = (rv.slack || 0) + add; rv.until += add; rv.next += add;
+    }
+  }
+
   // ── per frame ──
   function tick(now, dt) {
     for (let wi = 0; wi < 2; wi++) {
@@ -504,7 +517,14 @@ export function createRules(G) {
       if (!w) return null;
       const nm = { a: G.name('a'), b: G.name('b') };
       const W = w === 'a' ? A : B; const Lp = w === 'a' ? B : A;
-      const sub = why || `${(M.len / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })} km in ${fmtT(W.fin)} · ${Lp.fin >= 0 ? `${fmtT(Lp.fin)} for ${nm[w === 'a' ? 'b' : 'a']}` : `${Math.max(0, Math.round(M.len - Lp.z))} m short`}`;
+      const km = (M.len / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 });
+      const ln = nm[w === 'a' ? 'b' : 'a'];
+      // two finish times that read the same to the second are a photo finish: say by how much
+      // ('0:27 · 0:27 for Sydney' looked like a tie the game had decided at random)
+      const photo = Lp.fin >= 0 && fmtT(W.fin) === fmtT(Lp.fin);
+      const by = photo ? Math.max(0, Lp.fin - W.fin) : 0;
+      const sub = why || (photo ? `Photo finish! ${km} km in ${fmtT(W.fin)} · ${ln} ${by < 0.005 ? 'level on the line' : `${by < 0.1 ? by.toFixed(2) : by.toFixed(1)} s behind`}`
+        : `${km} km in ${fmtT(W.fin)} · ${Lp.fin >= 0 ? `${fmtT(Lp.fin)} for ${ln}` : `${Math.max(0, Math.round(M.len - Lp.z))} m short`}`);
       return { winner: w, text: `${nm[w]} wins the race`, sub, za: Math.round(A.z), zb: Math.round(B.z), ta: A.fin, tb: B.fin };
     }
     if (M.mode === 'brawl') {
@@ -542,5 +562,5 @@ export function createRules(G) {
     return null;
   }
 
-  return { init, use, onLane, cheer, msg, onEvent, tick, verdict, rollWeapon, cap: BRAWL_CAP };
+  return { init, use, onLane, cheer, msg, onEvent, tick, simLost, verdict, rollWeapon, cap: BRAWL_CAP };
 }
