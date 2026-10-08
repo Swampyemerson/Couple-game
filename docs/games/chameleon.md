@@ -45,7 +45,8 @@ the seeker exactly as they stop the hider (same feelers, same refusals; tested o
   narrow slice sideways, so portrait sits further back (2.0 × size factor vs 1.55), less to the side
   and a little higher. The aim stays at the screen centre with no lag (position eases, direction
   doesn't), and when the body would cover the crosshair (looking straight down a wall, or the camera
-  jammed into a corner) it is hidden. Let go / land → first person again, looking the same way (the
+  jammed into a corner) it fades to a ghost (final QA: it used to be hidden; collisions are the shared
+  solver, see "Final QA" below). Let go / land → first person again, looking the same way (the
   view yaw is carried across both switches).
 - **Hunting while climbing.** Fire and Scan work anywhere (pellets are raycast from the camera
   through the crosshair, ignoring your own body). Crawl speed is the seeker's walking speed × 0.78 ×
@@ -66,12 +67,14 @@ the seeker exactly as they stop the hider (same feelers, same refusals; tested o
 While hunted, the hider's **View** button (V) cycles **your eyes → watching the seeker → free cam**:
 
 - **Watching** rides over the seeker's shoulder (their presence: position, orientation, `yaw + ly`,
-  `lp`), clamped out of walls.
+  `lp`), through the shared camera solver; a seeker stuck to a wall or ceiling (`at`) gets the climb
+  camera's framing, its surface normal taken from the drawn up vector (final QA: it sat inside the body).
 - **Free cam** flies where you look (left thumb / W A S D, drag or mouse to look, Space / E up,
   Q / C down, Shift fast), collides with nothing and is clamped to the map's footprint and from the
   floor to just above its tallest collider.
-- A **"You" sticker** marks your own body (pinned to the screen edge when it's off screen), the role
-  pill turns yellow and names the view, and a thin highlight frames the screen.
+- A **"You" sticker** marks your own body (pinned to the screen edge when it's off screen, and
+  never over the role pill: where they'd overlap its label sits 6 px under it), the role pill turns
+  yellow and names the view, and a thin highlight frames the screen.
 - Purely local: the body never moves, its published look (`ly`, `lp`) is untouched, nothing is sent
   (tested: zero reliable messages, the seeker's copy unchanged). Escapes and poses are hidden while
   spectating; Paint switches back to your eyes. The heartbeat keeps beating.
@@ -126,7 +129,10 @@ title → HIDE (clock, or none with On Ready) → LOCK → countdown → SEEK [h
   "Blindfold on · head start" card, no moving, firing or scanning) while the hider gets the hiding
   moves back (walk, climb, zip without spending an escape, pose, paint: synced live). The hider's
   position stays private until 0.75 s before the blindfold lifts (so the seeker's interpolation
-  buffer is warm even at the adaptive delay's 250 ms cap; it was 0.5 s with a fixed 100 ms delay). Only the hunt scores: points = seconds of hunt (+30 for surviving).
+  buffer is warm even at the adaptive delay's 250 ms cap; it was 0.5 s with a fixed 100 ms delay),
+  through the paint lock and the countdown too (final QA: the lock used to publish it, and the lock's
+  paint blob carried it; with a head start the blob now carries only the seeker spawn the hider's
+  phone picked). Only the hunt scores: points = seconds of hunt (+30 for surviving).
 - **Grace period**: the first seconds of the hunt; Fire is disabled and reads "Wait 3".
 - **One device**: the same clocks (the curtain used to start a fixed 60 s hide / 90 s seek whatever
   the settings said); the head start is just a blindfold countdown there (the hider has already
@@ -402,7 +408,7 @@ condition in grey halftone and a tap says what's missing ("Survive 2 more hunts"
   now the topmost board ceiling's underside − 0.25 m (was tallest collider + 0.5 m, i.e. above the
   slab: the blank white/beige screen). Measured on Living Room: flying 3.5 s into the back wall
   stops at z −3.85 (wall face −4.0), flying up stops at y 2.25 (ceiling 2.5); no blank frames.
-- **Seeker climb camera**: the half-space limit is 0.55 × dist (was 0.3), and when walls or low
+- **Seeker climb camera** (superseded by the shared solver in "Final QA" below): the half-space limit is 0.55 × dist (was 0.3), and when walls or low
   furniture still pull it under 0.6 × dist it tries two positions slid round the wall's tangent
   (the view's right on a ceiling) and keeps the clearer one. Sweep (9 contacts × 3 pitches × 4 yaws,
   climb-view samples): camera ≥ 0.9 m from the body in **96 / 96** (was 5 under 0.5 m, worst
@@ -428,6 +434,72 @@ draws above them, so a shorter phone never loses the buttons. In the tests' FAST
 card lasts 3 s (12 s live) so the suites that wait for the hub end card keep their margins.
 
 Haptics are a no-op in `core.js` now (iPhone first).
+
+## Final QA: one camera solver, the void round, a private lock, quieter stickers
+
+QA's last round found the third-person cameras failing in the same way from four places (the Watch
+view inside a climbing seeker, the seeker's own back across the FOUND frame, the climb camera in or
+behind walls by corners and low on walls, the hider's camera through thin walls): each clamped one
+point ray (`clampCam`: `max(0.25, hit − 0.18)` could land past a wall closer than 0.25 m, rays below
+the floor passed under wall boxes and `floorCam` lifted them out on the far side, low props were
+ignored). They now share one solver (`solveCam` in game.js, `world.sweep` in world.js):
+
+- **A sphere cast, boxes not points.** The camera is a 0.12 m sphere cast from the body centre to
+  where the view wants it, against every box grown by the radius (a slightly conservative stand-in
+  for the rounded sum), and the floor. A 0.16 m wall stops it like a thick one; the camera ends
+  in front of the first face and the body always sees it. A box already nearer than the radius is
+  grown only to the gap, so a body pressed into a corner can still move out. Low props count (a
+  pouf covered half the FOUND reveal, a bin swallowed the climb camera): the camera rises over them.
+- **Slides and alternatives.** Short of 85 % of the way (or of the minimum distance below), it
+  tries the slide along the face it hit, the direction swung ±0.55 / ±1.1 rad, raised, nearly
+  overhead, and (stuck to a surface) out along the normal to either side, straight out or along the
+  surface; each is cast the same way and scored by reach − turn − 2 × shortfall under the minimum.
+  The last pick wins near-ties (no flicker). A body in a pocket (under a shelf board, between two
+  planters) gets a second pass with a 0.05 m camera (still clear of the 0.03 m near plane).
+- **A minimum distance, then a fade.** `camMinD` = 0.6 × size + 0.15 m (Large 0.93). Closer than
+  that the body it looks past fades (down to 25 %, eased), never hidden; when the climb camera's view
+  ray passes within 0.3 × size of the body (it covers the crosshair) 35 %. `avatar.setFade` flips `transparent` and `opacity` only (r128 keeps them out of the
+  program key: no shader switch), depth writes stay on.
+- **The eased camera stays out too.** After the lerp, the camera is cast again from the pivot once
+  it's near its spot (not during a view whip or the whip to FOUND, which cross the map on purpose).
+- **Watch** frames a climbing seeker like the climb camera (normal = the drawn up vector), solves a
+  seeker on foot from the body centre (not the aim anchor above the head), and fades the watched body
+  under the minimum. Every view casts from the body centre for the same reason. **FOUND / SURVIVED**: a seeker within the framing distance + 1 m
+  of the hider swings the camera 60° off their line to the clearer side (picked once per stamp); the
+  other body fades when it's between the camera and the reveal or fills over a quarter of the frame.
+  The look hint is cleared when the stamp lands.
+
+Sweep (`ONLY=camsweep`: all 8 maps, 292 wall / low-wall / corner / ceiling contacts near the camo
+spot and spawns, plus 157 standing spots for the hider and Watch, × 4 yaws × 3 pitches, Large,
+portrait; settled camera; ok = ≥ 0.9 m from the body centre with no collider in between):
+
+| View | Before | After |
+|---|---|---|
+| Seeker climb | 3263 / 3504 ok (93.1 %), 48 inside a collider, 156 occluded, closest 0.24 m | 3482 / 3504 (99.4 %), 0 inside, 0 occluded |
+| Watch (seeker drawn there) | 3627 / 5388 (67.3 %), 110 inside, 465 occluded, closest 0.05 m | 5342 / 5388 (99.1 %), 0 inside, 0 occluded |
+| Hider third person | 4417 / 5388 (82.0 %), 55 inside, 258 occluded, closest 0.16 m | 5348 / 5388 (99.3 %), 0 inside, 0 occluded |
+
+The 22–46 left are pockets (a body under a bench, in a slot between checkout and candy stand); there
+the camera sits in the clear and the body fades. FOUND (`ONLY=foundcam`, 75 seeker spots × Medium /
+Large / Huge): the shooter's own body filled > 30 % of the frame unfaded in 17 before, 0 after; a
+1.6 m Large tag puts the camera 1.6–1.7 m from it (0.78 before); a hider behind a low prop was
+hidden in 7 of 13 before, 0 after. `cameras()` costs ~0.01 ms a frame (worst 0.06, 3 × before).
+
+The rest of the round:
+
+- **Double Blind void round** (both seekers dry): `posOf(null)` threw in the time phase on both
+  phones (no flash, sound or confetti) and the round recorded the whole clock. The burst now goes
+  between the two in both inks, and the both-out `roundOver` carries `T` (`ONLY=db` plays one).
+- **Privacy**: the hider's presence is neutral (v 0, zeros) through the lock and the countdown until
+  0.75 s before the hunt (`queuedHuntAt`), and with a head start the lock's paint blob drops `pos`
+  (the host's seeker-spawn pick travels as `ss`). Last round's hint is dropped at each round start.
+- **Stickers**: HALF TIME and LAST PELLET wait while a tag is being confirmed, a FOUND / SURVIVED is
+  queued or the round is over (`huntOpen`); they used to pop over the FOUND stamp.
+- **Tap targets**: the landscape "I'm hidden" pill (40 → 44 tall), the landscape lobby size chips
+  (38 → 44) and More, the paint brush-size / hardness segments (40 → 44 wide).
+- **Mute**: sound.js caches core's `muted()` (a localStorage read + JSON.parse) and re-reads it at
+  most once a second, on `visibilitychange`, and at once on core's new `ju:mute` event (the toggle).
+  It was 1–2 reads a frame (ambience + tempo) plus every footstep; now ≤ 1 a second.
 
 ## v2: sticky feet, sizes, settings, big maps
 
@@ -1491,6 +1563,7 @@ scaling, persistence), `v3house` / `v3cu` (full 2-round matches with the v3 sett
 - `blendfair` (paint QA round 1, 1b): the blend % from five viewpoints against what is really behind the body (a stamp is a start, not a free Ghost), the side hint, the x-ray, the Market's fridge pillar (the bottles show past its edges; the stamp prints them), a plain painted wall (one stamp → the +10 star, filled → Ghost, "Invisible!" past 95), Gold needs a hide that held up.
 - `paintfeel` / `paintjuice` / `paintpro` (pro pass, paint owner): codec and lock cost, dab culling, brush cursor and sound, fill / stamp juice; the stamp wipe and fill flood (settle-before-read), the live camo meter (sliced scoring, grade pops, layout at three viewports) and the lock reusing its score; the meter x-ray (a real tap), "Invisible!", the stroke tail, the undo pool and the paint path's costs at 4x CPU. `PAINT_SHOTS=<dir>` / `PAINT_MONT=<mont.js>` for screenshots and montages.
 - `uxfinal` / `uxrematch` / `uxward` (UX QA round 1): a 4-round hotseat House final card at 390 × 664, 375 × 667 and 375 × 560 (See the board on screen and on top, the hub stickers clear, vote chips two to a row, stickers folded, a real CDP finger drag scrolls the card with the button pinned, a vote keeps the scroll), the House lobby fits 390 × 664 and scrolls at 375 × 560, two hotseat rematches follow the card's "hides first"; two phones with Sydney picked first: both cards promise Emerson and the rematch starts with Emerson on both; wardrobe rows as tall as their tiles at 390 × 844 / 664 and 375 × 667, the sheet scrolls under a finger.
+- Final QA: `camsweep` (the camera sweep above, asserting ≥ 95 % ok and 0 inside per view), `foundcam` (one device: the hint clears at FOUND, a real 1.6 m tag, 75 seeker spots × 3 sizes, a hider behind each low prop), `finalqa` (two phones, 150 ms: the lock and head start keep the spot neutral on the seeker's phone, mute reads ≤ 1 a second, no HALF TIME / LAST PELLET after a tag yet both still pop in round 2, portrait paint options 44 × 44); `spectate` also checks the Watch camera ≥ 0.9 m from a climbing seeker at six contacts and the "You" sticker clear of the role pill; `db` plays a both-dry void round; `uxland` asserts 44 × 44 for the lobby, the hide buttons and the paint options.
 - `netpolish` (pro pass, net owner; 60 ms link): the presence schedule in Node on 60 / 120 / 30 Hz frame clocks (≥ 19.5/s, ≤ 21 in any second), presence keepalive (≤ 3.5 real sends/s in the lobby, for the hiding hider and the blindfolded seeker, ≤ 3.2 publishes/s for a still hunted hider, full rate the moment it looks round: ≥ 85 % of min(frames, 20/s) and never over 21.5/s, host never stalls), the adaptive delay (above 100 ms, ≤ 250), the eased View → Watch switch (no single frame takes > 85 % of the move or the turn, the aim never swings back), pellet range = fog far, a remote miss launched in step with the drawn shooter (≤ 300 ms), a tag judged with the shooter's delay, and the tag juice reaching the shooter no later than FOUND in both directions (round 2: the guest seeks the host). `NETSHOTS=1` also saves the whip frames.
 
 ### UX QA round 1 (final card, rematch order, wardrobe)

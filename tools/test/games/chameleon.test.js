@@ -526,6 +526,27 @@ async function doubleBlindSection(port) {
     await waitPhase(a, 'recap', 8000);
     assert(await a.isVisible('.chm-recap') && /wins the round/.test(await a.textContent('.chm-recap h2')), 'recap names the round winner');
     h.assertNoErrors();
+    // round 2: a void round, both seekers run dry (final QA: posOf(null) threw in 'time' on both
+    // phones, skipping the flash, the sound and the confetti, and the round recorded the whole clock)
+    await a.click('[data-act="next"]');
+    await waitPhase(a, 'hide', 20000); await waitPhase(b, 'hide', 5000);
+    await a.click('.chm-acts [data-act="ready"]'); await b.click('.chm-acts [data-act="ready"]');
+    await waitPhase(a, 'seek', 20000); await waitPhase(b, 'seek', 5000);
+    for (const p of [a, b]) await p.waitForFunction(() => window.__cham.state().hunting, null, { timeout: 5000 });
+    for (const p of [a, b]) await hook(p, 'lookAtPitch', 1.4); // into the ceiling, nowhere near each other
+    const t0 = (await st(a)).now;
+    const n0 = (await st(a)).round.pellets.a;
+    for (let i = 0; i < n0; i++) for (const p of [a, b]) { await hook(p, 'action', 'fire'); }
+    await waitPhase(a, 'time', 8000); await waitPhase(b, 'time', 3000);
+    const t1 = (await st(a)).now;
+    const vr = (await st(a)).round.rec; const vrB = (await st(b)).round.rec;
+    assert(!vr.found && !vr.winner && vrB && !vrB.winner, 'both seekers dry: a void round on both phones (no winner)');
+    assert(vr.ms < Math.min(t1 - t0 + 1500, 12000), `the void round records the time it actually lasted (${(vr.ms / 1000).toFixed(1)} s of a ${(15000 / 1000).toFixed(0)} s clock, ended ${((t1 - t0) / 1000).toFixed(1)} s in)`);
+    const sv = await st(a);
+    assert(sv.match.scores.a + sv.match.scores.b === 1, `nobody scores for a void round (${sv.match.scores.a}–${sv.match.scores.b})`);
+    await wait(900);
+    h.assertNoErrors();
+    await shot(a, 'db-void-a');
   } catch (e) {
     console.error(e.message, h.errors); failures++;
     await shot(a, 'db-FAIL-a').catch(() => {}); await shot(b, 'db-FAIL-b').catch(() => {});
@@ -1832,6 +1853,27 @@ async function spectateSection(port) {
     assert(d > 0.6 && d < 3.5, `the camera rides over the seeker's shoulder (${d.toFixed(2)} m from them)`);
     assert(!(await b.isVisible('.chm-acts [data-act="scurry"]')), 'no scurry / zip / poses while spectating');
     await shot(b, 'v3-watch-seeker');
+    // final QA: the Watch view never sits inside a climbing seeker (it was 0.18–0.53 m from the body
+    // in 20 of 24 samples). Emerson sticks to walls, low walls and the ceiling round the room and looks
+    // four ways; Sydney's camera keeps ≥ 0.9 m from the body she watches, and nothing in between
+    const wcs = (await hook(a, 'camContacts')).filter((c) => c[6] === 'wall' || c[6] === 'low' || c[6] === 'ceil');
+    const pickC = [...wcs.filter((c) => c[6] === 'ceil').slice(0, 2), ...wcs.filter((c) => c[6] !== 'ceil').slice(0, 4)];
+    const wd = [];
+    for (let i = 0; i < pickC.length; i++) {
+      const c = pickC[i]; const yaw = (i * Math.PI) / 2 + 0.3;
+      const hd = Math.abs(c[4]) > 0.7 ? [Math.sin(yaw), 0, Math.cos(yaw)] : [0, 1, 0];
+      await hook(a, 'attachAt', c[0], c[1], c[2], c[3], c[4], c[5], ...hd);
+      await wait(120);
+      await hook(a, 'aimAt', c[0] + c[3] * 0.4 + Math.sin(yaw) * 3, c[1] + c[4] * 0.4 + 0.2, c[2] + c[5] * 0.4 + Math.cos(yaw) * 3);
+      await wait(1400);
+      const s2 = await st(b); const bcW = await hook(b, 'bodyCenter', 'a');
+      const dW = vlen([s2.cam[0] - bcW[0], s2.cam[1] - bcW[1], s2.cam[2] - bcW[2]]);
+      wd.push(`${c[6]} ${dW.toFixed(2)}${s2.rem.at ? '' : ' (not drawn stuck?)'}`);
+      assert(s2.rem.at === 1 && dW >= 0.9, `Watch: ${c[6]} contact ${fmt3(c.slice(0, 3))}, looking ${yaw.toFixed(1)}: the camera is ${dW.toFixed(2)} m from the climbing seeker's body (≥ 0.9)`);
+      await shot(b, `v3-watch-climbing-seeker-${i}`);
+    }
+    console.log(`  Watch over a climbing seeker: ${wd.join(' · ')}`);
+    await hook(a, 'stick'); // let go
     // free cam: fly with the joystick
     await b.tap('.chm-acts [data-act="view"]');
     await wait(300);
@@ -1855,6 +1897,18 @@ async function spectateSection(port) {
     sb = await st(b);
     assert(sb.here.on && sb.visible.b, 'the free cam shows my own body with the "You" marker');
     await shot(b, 'v3-free-cam');
+    // final QA: the "You" sticker pinned to the top edge sat on the role pill ("WATCHI[YOU]RSON"):
+    // with my body above the view, the sticker clears the pill
+    const hb0 = await hook(b, 'bodyCenter', 'b'); const hbB = await hook(b, 'body');
+    const wnx = hbB.at && Math.abs(hbB.ny) < 0.7 ? hbB.nx : 0; const wnz = hbB.at && Math.abs(hbB.ny) < 0.7 ? hbB.nz : 1;
+    for (const [dy, pit] of [[-1.0, -0.55], [-0.6, -0.2], [-1.4, -0.9]]) {
+      await hook(b, 'freeCamTo', hb0[0] + wnx * 2.2 + wnz * 0.15, Math.max(0.3, hb0[1] + dy), hb0[2] + wnz * 2.2 - wnx * 0.15, Math.atan2(-wnx, -wnz), pit);
+      await wait(700);
+      const ov = await b.evaluate(() => { const l = document.querySelector('.chm-here b').getBoundingClientRect(); const r = document.querySelector('.chm-role').getBoundingClientRect(); return { on: !document.querySelector('.chm-here').hidden, l: [l.left, l.top, l.right, l.bottom], r: [r.left, r.top, r.right, r.bottom] }; });
+      const hit = ov.l[0] < ov.r[2] && ov.r[0] < ov.l[2] && ov.l[1] < ov.r[3] && ov.r[1] < ov.l[3];
+      assert(ov.on && !hit, `the "You" sticker (${ov.l.map(Math.round).join(',')}) keeps clear of the role pill (${ov.r.map(Math.round).join(',')})`);
+    }
+    await shot(b, 'v3-free-cam-you-top');
     // nothing moved, nothing leaked
     const body1 = await hook(b, 'body');
     assert(key(body0) === key(body1), 'the hider\'s body stayed exactly where it was (position, heading, look, pose)');
@@ -3313,7 +3367,11 @@ async function uxLandscapeSection(port) {
     await h.startLive(a, 'chameleon', 'local');
     await waitReady(a);
     await wait(500);
-    // tap targets on the lobby + sheet
+    // tap targets on the lobby + sheet (final QA: the lobby's size chips were 65 × 38 in landscape)
+    const lobSmall = await a.$$eval('.chm-lobby button', (els) => els.filter((e) => e.offsetParent).map((e) => { const r = e.getBoundingClientRect(); return [(e.dataset.lobby || e.dataset.act || e.className.split(' ')[0]) + (e.dataset.k ? ':' + e.dataset.k : ''), Math.round(r.width), Math.round(r.height)]; }).filter((x) => x[2] < 44 || x[1] < 44));
+    assert(lobSmall.length === 0, `landscape lobby: every button ≥ 44 × 44 px (${lobSmall.length ? JSON.stringify(lobSmall.slice(0, 6)) : 'ok'})`);
+    const lobFit = await a.evaluate(() => { const c = document.querySelector('.chm-lobby .chm-card'); return c ? { sh: c.scrollHeight, ch: c.clientHeight } : null; });
+    console.log(`  landscape lobby card: ${lobFit ? `${lobFit.sh} px of content in ${lobFit.ch}` : '?'}`);
     await a.tap('[data-act="settings"]');
     await a.waitForSelector('.chm-sheet', { timeout: 4000 });
     const small = await a.$$eval('.chm-sheet button, .chm-sheet .chm-chip', (els) => els.filter((e) => e.offsetParent).map((e) => { const r = e.getBoundingClientRect(); return [e.className.split(' ')[0] + (e.dataset.k ? ':' + e.dataset.k : ''), Math.round(r.width), Math.round(r.height)]; }).filter((x) => x[2] < 44 || x[1] < 40));
@@ -3328,11 +3386,11 @@ async function uxLandscapeSection(port) {
     await waitPhase(a, 'hide');
     await wait(400);
     const opts = await a.$$eval('.chm-acts .chm-b', (els) => els.map((e) => { const r = e.querySelector('span').getBoundingClientRect(); return [e.dataset.act, Math.round(r.width), Math.round(r.height)]; }));
-    assert(opts.every((x) => x[2] >= 40), `hide buttons: ${JSON.stringify(opts)}`);
+    assert(opts.every((x) => x[2] >= 44 && x[1] >= 44), `hide buttons ≥ 44 px, the "I'm hidden" pill too (was 40 tall): ${JSON.stringify(opts)}`);
     await a.tap('.chm-acts [data-act="paint"]');
     await wait(500);
     const seg = await a.$$eval('.chm-seg button, .chm-done', (els) => els.map((e) => { const r = e.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; }));
-    assert(seg.every((x) => x[1] >= 44 && x[0] >= 40), `paint options ≥ 44 px: ${JSON.stringify(seg)}`);
+    assert(seg.every((x) => x[1] >= 44 && x[0] >= 44), `paint options ≥ 44 × 44 px (brush size / hardness were 40 wide): ${JSON.stringify(seg)}`);
     await a.tap('.chm-done');
     await a.tap('.chm-acts [data-act="ready"]');
     await waitPhase(a, 'curtain');
@@ -3779,6 +3837,248 @@ async function uxWardrobeSection(port) {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// Final QA: one camera-collision solver for every third-person view (sphere cast, tangent slides,
+// a minimum distance with body fading below it, never inside a collider)
+const CAM_KINDS = { orbit: { yaws: [0, Math.PI / 2, Math.PI, Math.PI * 1.5], pitches: [-0.35, 0.32, 0.9] }, climb: { yaws: [0, Math.PI / 2, Math.PI, Math.PI * 1.5], pitches: [-0.6, 0, 0.6] }, watch: { yaws: [0, Math.PI / 2, Math.PI, Math.PI * 1.5], pitches: [-0.6, 0, 0.6] } };
+/** Sweep one map: every contact × yaw × pitch for these view kinds (in-page, synchronous). */
+async function camSweepMap(p, id, kinds) {
+  return p.evaluate(([mid, ks, K]) => {
+    const H = window.__cham; H.useMap(mid);
+    const cs = H.camContacts(); const res = {};
+    for (const k of ks) {
+      const r = { n: 0, ok: 0, near: 0, occ: 0, inside: 0, insideNear: 0, faded: 0, worst: Infinity, bad: [] };
+      for (const c of cs) for (const yaw of K[k].yaws) for (const pit of K[k].pitches) {
+        if (k === 'climb' && c[6] === 'floor') continue; // (the climb view is for a body stuck to something)
+        const s = H.camProbe(k, c, yaw, pit);
+        r.n++;
+        if (s.d < 0.9) r.near++; if (s.occ) r.occ++; if (s.inside) r.inside++; if (s.near) r.insideNear++; if (s.alpha < 0.99) r.faded++;
+        if (s.d >= 0.9 && !s.occ) r.ok++;
+        r.worst = Math.min(r.worst, s.d);
+        if ((s.d < 0.9 || s.occ || s.inside) && r.bad.length < 6) r.bad.push(`${c[6]}@${c.slice(0, 3).map((x) => x.toFixed(2)).join(',')} y${yaw.toFixed(1)} p${pit} → ${s.d.toFixed(2)} m${s.occ ? ` occ:${s.occBy}` : ''}${s.inside ? ` IN:${s.box}` : ''} a${s.alpha.toFixed(2)}`);
+      }
+      res[k] = r;
+    }
+    return { contacts: cs.length, kinds: res };
+  }, [id, kinds, CAM_KINDS]);
+}
+async function camSweepSection(port) {
+  console.log('\n# camera sweep: every map, wall / low / corner / ceiling contacts (and standing spots for the hider and Watch) × 4 yaws × 3 pitches: the climbing seeker\'s view, the hider\'s third-person camera, the Watch view');
+  const h = await launch({ port, only: ['chameleon'], who: ['a'] });
+  const a = h.a;
+  const total = {};
+  const add = (k, r) => { const t = total[k] || (total[k] = { n: 0, ok: 0, near: 0, occ: 0, inside: 0, insideNear: 0, faded: 0, worst: Infinity }); for (const f of ['n', 'ok', 'near', 'occ', 'inside', 'insideNear', 'faded']) t[f] += r[f]; t.worst = Math.min(t.worst, r.worst); };
+  const line = (k, r) => `${k}: ${r.ok}/${r.n} ≥ 0.9 m and unoccluded (${(100 * r.ok / Math.max(1, r.n)).toFixed(1)} %), under 0.9 m ${r.near}, occluded ${r.occ}, inside a collider ${r.inside} (within 5 cm ${r.insideNear}), faded ${r.faded}, closest ${r.worst.toFixed(2)} m`;
+  try {
+    await arm(a, SLOW);
+    await h.startLive(a, 'chameleon', 'local');
+    await waitReady(a);
+    const ids = await hook(a, 'mapIds');
+    await hook(a, 'setRules', { map: 'living', first: 'b', rules: { seekClimb: true } });
+    await a.tap('[data-act="start"]');
+    await a.tap('[data-act="curtain"]');
+    await waitPhase(a, 'hide');
+    const per = {};
+    for (const id of ids) { const r = await camSweepMap(a, id, ['orbit']); per[id] = { contacts: r.contacts, ...r.kinds }; add('orbit', r.kinds.orbit); }
+    await hook(a, 'useMap', 'living');
+    await a.tap('.chm-acts [data-act="ready"]');
+    await waitPhase(a, 'curtain');
+    await a.tap('[data-act="curtain"]');
+    await waitPhase(a, 'seek');
+    await a.waitForFunction(() => window.__cham.state().hunting, null, { timeout: 8000 });
+    for (const id of ids) { const r = await camSweepMap(a, id, ['climb', 'watch']); Object.assign(per[id], r.kinds); add('climb', r.kinds.climb); add('watch', r.kinds.watch); }
+    for (const id of ids) {
+      const m = per[id];
+      console.log(`  ${id} (${m.contacts} contacts): ${['climb', 'watch', 'orbit'].map((k) => `${k} ${m[k].ok}/${m[k].n}${m[k].inside ? ` IN ${m[k].inside}` : ''}${m[k].occ ? ` occ ${m[k].occ}` : ''}`).join(' · ')}`);
+      for (const k of ['climb', 'watch', 'orbit']) for (const b of m[k].bad) console.log(`     ${k} ${b}`);
+    }
+    for (const k of ['climb', 'watch', 'orbit']) console.log('  ' + line(k, total[k]));
+    if (process.env.CAMSWEEP_REPORT) { fs.writeFileSync(process.env.CAMSWEEP_REPORT, JSON.stringify({ total, per }, null, 1)); return; }
+    for (const k of ['climb', 'watch', 'orbit']) {
+      const t = total[k];
+      assert(t.n >= 300 && t.ok / t.n >= 0.95, `${k} view: the camera is ≥ 0.9 m from the body with nothing in between in ${t.ok}/${t.n} samples (${(100 * t.ok / t.n).toFixed(1)} %, want ≥ 95 %)`);
+      assert(t.inside === 0, `${k} view: never inside a collider or under the floor (${t.inside} of ${t.n})`);
+    }
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'camsweep-FAIL').catch(() => {});
+  } finally { await h.close(); }
+}
+
+/** FOUND / SURVIVED framing (one device, Living Room camo wall): a real 1.6 m tag, then the seeker stood at
+ *  5 distances × 5 angles in front of the hider at Medium / Large / Huge, and the hider behind each low
+ *  prop with the seeker beyond it. The shooter's own body never fills the frame unless faded; nothing
+ *  hides the revealed hider; the look hint is gone when the stamp lands. */
+async function foundCamSection(port) {
+  console.log('\n# FOUND framing: the shooter\'s own body never fills the frame (faded when the camera must come close); low props never hide the reveal; the look hint clears');
+  const h = await launch({ port, only: ['chameleon'], who: ['a'] });
+  const a = h.a;
+  try {
+    await arm(a, { ...SLOW, found: 90000 });
+    await h.startLive(a, 'chameleon', 'local');
+    await waitReady(a);
+    await hook(a, 'setRules', { map: 'living', first: 'b', rules: { size: 'large', grace: 0, headStart: 0 } });
+    await a.tap('[data-act="start"]');
+    await a.tap('[data-act="curtain"]');
+    await waitPhase(a, 'hide');
+    await camoHide(a);
+    const hb = await hook(a, 'body');
+    const nx = hb.at ? hb.nx : 0; const nz = hb.at ? hb.nz : 1;
+    await a.tap('.chm-acts [data-act="ready"]');
+    await waitPhase(a, 'curtain');
+    await a.tap('[data-act="curtain"]');
+    await waitPhase(a, 'seek');
+    await a.waitForFunction(() => window.__cham.state().hunting, null, { timeout: 8000 });
+    await wait(300);
+    const hintOn0 = await a.evaluate(() => document.querySelector('.chm-hint').classList.contains('on'));
+    // the QA case: a 1.6 m tag (Large) within the look hint's 3 s
+    const bc = await hook(a, 'bodyCenter', 'b');
+    await hook(a, 'teleport', bc[0] + nx * 1.6, bc[2] + nz * 1.6, Math.atan2(-nx, -nz), 0);
+    await hook(a, 'aimAt', ...bc);
+    await wait(150);
+    await hook(a, 'action', 'fire');
+    await waitPhase(a, 'found', 4000);
+    const hintOn = await a.evaluate(() => document.querySelector('.chm-hint').classList.contains('on'));
+    assert(hintOn0 && !hintOn, `the "Left thumb moves…" hint (up at the hunt's start: ${hintOn0}) is cleared when FOUND lands`);
+    await wait(1600);
+    const s1 = await st(a); const own = await hook(a, 'bodyCenter', 'a');
+    const d1 = vlen([s1.cam[0] - own[0], s1.cam[1] - own[1], s1.cam[2] - own[2]]);
+    console.log(`  1.6 m tag, Large, settled FOUND frame: camera ${d1.toFixed(2)} m from the shooter's own body (fade ${s1.fade.a.toFixed(2)})`);
+    assert(d1 >= 1.2 * 1.3 || s1.fade.a < 0.6, `1.6 m tag: the camera keeps 1.2 × size from the shooter's own body, or the body fades (${d1.toFixed(2)} m, fade ${s1.fade.a.toFixed(2)})`);
+    await shot(a, 'found-1.6-large');
+    // the sweep: the seeker stood all round the front of the hider, three sizes
+    const rows = []; let n = 0; let bad = 0; let occ = 0; let worst = Infinity; let worstCover = 0;
+    for (const size of ['medium', 'large', 'huge']) {
+      await hook(a, 'forceSize', size);
+      await wait(100);
+      const c = await hook(a, 'bodyCenter', 'b');
+      for (const dist of [1.2, 1.6, 2.2, 2.8, 4]) {
+        for (const ang of [-0.9, -0.45, 0, 0.45, 0.9]) {
+          const dx = nx * Math.cos(ang) - nz * Math.sin(ang); const dz = nz * Math.cos(ang) + nx * Math.sin(ang);
+          const r = await hook(a, 'foundProbe', c[0] + dx * dist, c[2] + dz * dist);
+          n++;
+          const fills = r.cover > 0.3 && r.alpha > 0.45;
+          if (fills) { bad++; if (rows.length < 8) rows.push(`${size} ${dist} m ${ang}: ${r.dSeeker.toFixed(2)} m, covers ${(r.cover * 100).toFixed(0)} %, fade ${r.alpha.toFixed(2)}`); }
+          if (r.occ) { occ++; if (rows.length < 8) rows.push(`${size} ${dist} m ${ang}: hider hidden by ${r.occBy}`); }
+          worst = Math.min(worst, r.dSeeker); if (r.alpha > 0.45) worstCover = Math.max(worstCover, r.cover);
+        }
+      }
+      if (size === 'huge') { await hook(a, 'foundProbe', c[0] + nx * 2.2, c[2] + nz * 2.2); await wait(300); await shot(a, 'found-2.2-huge'); }
+    }
+    console.log(`  FOUND sweep: ${n} seeker spots, own body filling > 30 % of the frame unfaded ${bad}, hider hidden ${occ}, closest ${worst.toFixed(2)} m, largest unfaded cover ${(worstCover * 100).toFixed(0)} %`);
+    for (const r of rows) console.log('     ' + r);
+    // low props between the camera and the reveal (the chevron pouf covered half of it)
+    await hook(a, 'forceSize', 'large');
+    const lows = (await hook(a, 'lowProps')).slice(0, 4);
+    let lowN = 0; let lowOcc = 0;
+    for (const p of lows) {
+      const cx = (p.minX + p.maxX) / 2; const cz = (p.minZ + p.maxZ) / 2;
+      for (const [ux, uz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const hw = Math.abs(ux) ? (p.maxX - p.minX) / 2 : (p.maxZ - p.minZ) / 2;
+        const hx = cx + ux * (hw + 0.45); const hz = cz + uz * (hw + 0.45);
+        const sx = cx - ux * (hw + 2.2); const sz = cz - uz * (hw + 2.2);
+        const r = await hook(a, 'foundProbe', sx, sz, 45, hx, hz);
+        if (!r.hiderFree) continue; // (that side of the prop is furniture)
+        lowN++; if (r.occ) { lowOcc++; console.log(`     low prop ${p.name || '?'}: hider hidden by ${r.occBy}`); }
+      }
+    }
+    console.log(`  hider behind a low prop, seeker beyond it: ${lowN - lowOcc}/${lowN} reveals seen clear (${lows.map((p) => p.name || '?').join(', ')})`);
+    assert(n === 75 && bad === 0, `the shooter's own body never fills the FOUND frame unfaded (${bad} of ${n})`);
+    assert(occ === 0 && lowOcc === 0 && lowN >= 4, `nothing hides the revealed hider: ${occ} of ${n} round the wall, ${lowOcc} of ${lowN} behind low props`);
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'found-FAIL').catch(() => {});
+  } finally { await h.close(); }
+}
+
+/** Two phones on a 150 ms link: no sticker pops after a confirmed tag; the hider's spot stays private
+ *  through the lock and the head start; the mute flag isn't read from storage every frame; paint
+ *  options are 44 px both ways in portrait. */
+async function finalQaSection(port) {
+  console.log('\n# final QA (two phones, 150 ms): stickers after a tag, the lock and head start keep the spot private, mute reads, paint tap targets');
+  const h = await launch({ port, only: ['chameleon'], latency: 150 });
+  const { a, b } = h;
+  const rec = (p) => p.evaluate(() => {
+    window.__pops = []; window.__rems = []; window.__muteReads = 0;
+    if (!window.__muteWrap) { window.__muteWrap = true; const g = Storage.prototype.getItem; Storage.prototype.getItem = function (k) { if (k === 'ju.games.mute') window.__muteReads++; return g.call(this, k); }; }
+    const host = document.querySelector('.chm-pops') || document.body;
+    new MutationObserver((ms) => { for (const m of ms) for (const n of m.addedNodes) if (n.classList && n.classList.contains('chm-pop')) window.__pops.push([window.__cham.state().now, n.textContent]); }).observe(host, { childList: true, subtree: true });
+    const tick = () => { const H = window.__cham; if (!H) return; const s = H.state(); if (s.phase.name === 'lock' || s.phase.name === 'seek') window.__rems.push([s.phase.name, s.now, s.huntAt, s.rem.v, s.rem.x, s.rem.y, s.rem.z]); if (window.__rems.length < 4000) requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
+  });
+  try {
+    await startPair(h, { ...FAST, hide: 60000, seek: 40000, maxDpr: 0.45 });
+    await startMatch(h, { rules: { pellets: 3, headStart: 5, grace: 0, countdown: 3 } });
+    await waitPhase(b, 'hide', 20000);
+    // paint options in portrait: 44 px both ways (brush size / hardness were 40 wide)
+    await b.tap('.chm-acts [data-act="paint"]');
+    await wait(500);
+    const seg = await b.$$eval('.chm-seg button, .chm-done', (els) => els.map((e) => { const r = e.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; }));
+    assert(seg.length >= 6 && seg.every((x) => x[0] >= 44 && x[1] >= 44), `portrait paint options ≥ 44 × 44 px: ${JSON.stringify(seg)}`);
+    await b.tap('.chm-done');
+    await camoHide(b);
+    const hp = await hook(b, 'body');
+    const wn = hp.at && Math.abs(hp.ny) < 0.7 ? [hp.nx, hp.nz] : [0, 1];
+    await rec(a);
+    await b.tap('.chm-acts [data-act="ready"]');
+    await waitPhase(a, 'seek', 20000);
+    await a.waitForFunction(() => window.__cham.state().hunting, null, { timeout: 12000 });
+    // the lock and the head start: the seeker's copy of the hider stays neutral until 0.75 s before the hunt
+    const rems = await a.evaluate(() => window.__rems.slice());
+    const priv = rems.filter((r) => r[0] === 'lock' || r[1] < r[2] - 800);
+    const leaks = priv.filter((r) => r[3] > 0 || Math.abs(r[4]) + Math.abs(r[6]) > 1e-6);
+    const lockN = priv.filter((r) => r[0] === 'lock').length;
+    assert(lockN >= 3 && priv.length >= 30 && leaks.length === 0, `the hider's spot never reaches the seeker's phone during the lock (${lockN} frames) or the head start (${priv.length - lockN}): ${leaks.length ? `leaked ${JSON.stringify(leaks[0])} (she's at ${fmt3([hp.x, hp.y, hp.z])})` : 'neutral throughout'}`);
+    const live = await a.evaluate(() => { const s = window.__cham.state(); return s.rem; });
+    assert(live.v === 1 && Math.hypot(live.x - hp.x, live.z - hp.z) < 0.3, `…and it's there once the hunt starts (${fmt3([live.x, live.y, live.z])})`);
+    // mute: no storage read per frame (it was 1–2 a frame: ambience + tempo + footsteps)
+    await a.evaluate(() => { window.__muteReads = 0; window.__raf0 = performance.now(); });
+    const box = await surfaceBox(a);
+    await touchHold(a, box[0] + 80, box[1] + box[3] - 150, box[0] + 80, box[1] + box[3] - 196, 1500);
+    await wait(1500);
+    const mr = await a.evaluate(() => ({ n: window.__muteReads, s: (performance.now() - window.__raf0) / 1000 }));
+    assert(mr.n <= Math.ceil(mr.s) + 2, `the mute flag is read from storage ${mr.n} times in ${mr.s.toFixed(1)} s of hunt with footsteps (cached: ≤ once a second)`);
+    // a miss (3 → 2), then, a moment before HALF TIME, a tag with the second-to-last pellet:
+    // neither HALF TIME (due in 0.25 s) nor LAST PELLET (450 ms after the shot) may pop over FOUND
+    await hook(a, 'lookAtPitch', 1.4);
+    await hook(a, 'action', 'fire');
+    const bc = await hook(a, 'bodyCenter', 'b');
+    await hook(a, 'teleport', bc[0] + wn[0] * 2.2, bc[2] + wn[1] * 2.2, Math.atan2(-wn[0], -wn[1]), 0);
+    await a.waitForFunction(() => { const s = window.__cham.state(); const hm = s.phase.data.hunt; return s.now >= s.phase.end - hm / 2 - 260; }, null, { timeout: 30000, polling: 10 });
+    await hook(a, 'aimAt', ...(await hook(a, 'bodyCenter', 'b')));
+    await hook(a, 'action', 'fire');
+    const shotAt = (await st(a)).now;
+    await waitPhase(a, 'found', 6000);
+    await wait(1200);
+    const pops = await a.evaluate(() => window.__pops.slice());
+    const late = pops.filter((p) => p[0] >= shotAt - 50 && /HALF TIME|LAST PELLET/.test(p[1]));
+    const fs = await st(a);
+    assert(fs.round.rec && fs.round.rec.found, `the tag was confirmed (found ${((fs.round.rec.ms || 0) / 1000).toFixed(1)} s into the hunt)`);
+    assert(late.length === 0, `no HALF TIME / LAST PELLET sticker after the tag (${late.length ? JSON.stringify(late) : `pops: ${JSON.stringify(pops.map((p) => p[1]))}`})`);
+    await shot(a, 'finalqa-found-no-stickers');
+    // round 2 (Sydney seeks): the stickers still pop when they should
+    await waitPhase(a, 'recap', 8000);
+    await a.tap('[data-act="next"]');
+    await waitPhase(a, 'hide', 20000);
+    await camoHide(a);
+    await rec(b);
+    await a.tap('.chm-acts [data-act="ready"]');
+    await waitPhase(b, 'seek', 20000);
+    await b.waitForFunction(() => window.__cham.state().hunting, null, { timeout: 12000 });
+    await hook(b, 'lookAtPitch', 1.4);
+    await hook(b, 'action', 'fire'); await wait(150); await hook(b, 'action', 'fire');
+    await b.waitForFunction(() => window.__pops.some((p) => /LAST PELLET/.test(p[1])), null, { timeout: 3000 });
+    await b.waitForFunction(() => window.__pops.some((p) => /HALF TIME/.test(p[1])), null, { timeout: 30000 });
+    assert(true, 'round 2: LAST PELLET after two misses, HALF TIME at half time');
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'finalqa-FAIL-a').catch(() => {}); await shot(b, 'finalqa-FAIL-b').catch(() => {});
+  } finally { await h.close(); }
+}
+
+// ─────────────────────────────────────────────────────────────────────
 (async () => {
   const sections = [];
   if (want('hotseat')) {
@@ -3853,6 +4153,10 @@ async function uxWardrobeSection(port) {
   if (want('mapcache')) sections.push(() => mapCacheSection(PORT + 0));
   if (want('variety')) sections.push(() => varietySection(PORT + 1));
   if (want('mapslice')) sections.push(() => mapSliceSection(PORT + 2));
+  // final QA: one camera-collision solver (sweep)
+  if (want('camsweep')) sections.push(() => camSweepSection(PORT + 0));
+  if (want('foundcam')) sections.push(() => foundCamSection(PORT + 1));
+  if (want('finalqa')) sections.push(() => finalQaSection(PORT + 2));
   if (want('shots3')) {
     sections.push(async () => {
       console.log('\n# v3 screenshots: settings (timing, rules), seeker on a wall, hider HUD, watch, free cam — phone, landscape, laptop; light + dark');

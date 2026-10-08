@@ -120,6 +120,8 @@ export function createGame(el, api) {
       // polish: brush strokes per hider, 'in their sights' stares, the seeker's wager, the hide-phase ticker, emotes, stamps, 3-D nearness
       strokes: { a: 0, b: 0 }, stared: 0, stareAt: -1e9, call: { a: null, b: null }, under: false, losNext: 0, nearD: 99,
       actQ: null, actAt: 0, actMoveAt: 0, actStill: false, ticker: '', emoteAt: 0, emoteN: 0, halfShown: false,
+      // final QA: the seeker spawn a head-start hider's device picked (its lock spot stays private)
+      remSS: null,
     };
   }
 
@@ -158,7 +160,11 @@ export function createGame(el, api) {
     // v3: the hider's view while hunted ('eyes' | 'watch' | 'free') + the free cam; the seeker's climb view (absolute view yaw)
     spect: 'eyes', fcX: 0, fcY: 0, fcZ: 0, fcYaw: 0, fcPitch: 0, fcTop: 3, fcBottom: 0.12, climbV: false, climbNear: false, vYaw: 0,
     // the third-person look target eases for 0.4 s after a stick / let-go (no 0.3 m dip at the attach)
-    lkX: 0, lkY: 0, lkZ: 0, lkAt: false, lkUntil: 0 };
+    lkX: 0, lkY: 0, lkZ: 0, lkAt: false, lkUntil: 0,
+    // final QA: the body a close camera looks past fades (cameras()); the FOUND framing's swing off the seeker's line
+    fade: { a: 1, b: 1 }, fadeW: null, fadeFrame: false, fadeFire: false, fadeTx: 0, fadeTy: 0, fadeTz: 0, fSide: 0,
+    // the "You" sticker keeps clear of the role pill (hereMarker)
+    hereChk: 0, hereL: 0, hereR: -1, hereB: 0, hereH: 22 };
   // the free cam flies through furniture but never into a wall or ceiling slab (the map's are listed at load)
   const FC_WALL = (b) => b.wall === true && (b.ceil || b.maxY - b.minY > 1.2);
   const fcBoxes = [];
@@ -503,7 +509,7 @@ export function createGame(el, api) {
     if (K.length < 2 || mode() !== 'hs') return null;
     const h = hiderOf(S.phase.round);
     let hx; let hz;
-    if (controlsOf(h)) { hx = body[h].x; hz = body[h].z; } else if (remHint.set) { hx = remHint.x; hz = remHint.z; } else return null;
+    if (controlsOf(h)) { hx = body[h].x; hz = body[h].z; } else if (remHint.set) { hx = remHint.x; hz = remHint.z; } else return Number.isInteger(R.remSS) && R.remSS < K.length ? R.remSS : null;
     const far = []; let fallback = 0; let bestD = -1;
     K.forEach((p, i) => { const d = Math.hypot(p.x - hx, p.z - hz); if (d >= 6) far.push(i); if (d > bestD) { bestD = d; fallback = i; } });
     const rnd = seeded(`${S.match.id}:${S.phase.round}:seek`);
@@ -691,6 +697,7 @@ export function createGame(el, api) {
     const keep = R.round === round;
     if (keep) return;
     Object.assign(R, freshRound(round));
+    remHint.set = false; // last round's lock spot is nobody's business this round
     if (!stage) return;
     applySize();
     stage.fx.clearRound();
@@ -777,16 +784,20 @@ export function createGame(el, api) {
         R.rec = rec;
         if (R.juiceT) { clearTimeout(R.juiceT); R.juiceT = 0; tagJuice(); } // a tag's juice still waiting for its pellet: never after the stamp
         C.freezeUntil = tSec + 0.5;
-        C.whip = 0;
+        C.whip = 0; C.fSide = 0;
+        hud.hint(null); // a lingering "Left thumb moves…" never sits over the stamp
         snd.ambience('off');
         exitPaint(true);
         prefetchNext(p, 700); // Mix it up's next map, after the freeze (maps QA round 1)
-        const victim = rec.hider || rec.victim || hiderOf(p.round);
-        const winInk = name === 'found' ? (rec.seeker || rec.winner || other(victim)) : victim;
+        // a Double Blind void (both seekers dry, or the clock) has no victim: confetti between the two
+        // in neither's ink (posOf(null) threw here and skipped the flash, the sound and the confetti)
+        const victim = rec.hider || rec.victim || hiderOf(p.round) || null;
+        const winInk = name === 'found' ? (rec.seeker || rec.winner || (victim ? other(victim) : null)) : victim;
         if (stage) {
-          const vb = posOf(victim);
-          stage.fx.burst(vb.x, vb.y + 0.4, vb.z, confettiColors(winInk), name === 'found' && rec.ms < 20000 ? 160 : 110, name === 'found' && rec.ms < 20000 ? 1.2 : 1);
-          if (name === 'found' && rec.p) stage.fx.splat(rec.p[0], rec.p[1], rec.p[2], 0, 1, 0, winInk === 'a' ? theme.a : theme.b, 0.32, tSec);
+          let bx; let by; let bz;
+          if (victim) { const vb = posOf(victim); bx = vb.x; by = vb.y; bz = vb.z; } else { const pa = stage.av.a.root.position; const pb = stage.av.b.root.position; bx = (pa.x + pb.x) / 2; by = Math.min(pa.y, pb.y); bz = (pa.z + pb.z) / 2; }
+          stage.fx.burst(bx, by + 0.4, bz, winInk ? confettiColors(winInk) : [theme.a, theme.b, theme.hl, '#ffffff'], name === 'found' && rec.ms < 20000 ? 160 : 110, name === 'found' && rec.ms < 20000 ? 1.2 : 1);
+          if (name === 'found' && rec.p && winInk) stage.fx.splat(rec.p[0], rec.p[1], rec.p[2], 0, 1, 0, winInk === 'a' ? theme.a : theme.b, 0.32, tSec);
         }
         hud.flash();
         const vv = v || winInk;
@@ -1107,7 +1118,11 @@ export function createGame(el, api) {
     if (!local) {
       R.lockSent = true;
       const b = body[w];
-      link.sendBlob('paint', enc.b64, { w, sum: enc.sum, round: R.round, pos: posArr(b), blend: R.blend[w] });
+      // with a head start the hider still moves after the lock: the spot stays private until the
+      // presence goes public just before the hunt (it was held on the seeker's phone all through the
+      // blindfold). The host still learns the fair seeker spawn (ss: what pickSeekSpawn makes of it).
+      const priv = mode() === 'hs' && !hunting() && (S.phase.name === 'seek' || headStartMs() > 0);
+      link.sendBlob('paint', enc.b64, { w, sum: enc.sum, round: R.round, pos: priv ? null : posArr(b), ss: priv ? pickSeekSpawn() : null, blend: R.blend[w] });
     }
   }
   /** Paint while hunted (or during the head start): the same quantised blob as the lock, at most
@@ -1170,6 +1185,7 @@ export function createGame(el, api) {
       R.paintOk[w] = true; R.paintSum[w] = sum;
       if (Number.isFinite(meta.blend)) R.blend[w] = meta.blend;
       if (meta.pos) setRemHint(meta.pos);
+      if (Number.isInteger(meta.ss)) R.remSS = meta.ss;
       hud.drops(paletteOf(w)); // the blind card's drops take their actual colours (a tease)
       if (isHost) hostAck(w); else link.send('gotpaint', { w, sum });
     } else link.send('paintreq', { w, round: meta.round });
@@ -1343,7 +1359,7 @@ export function createGame(el, api) {
     if (now() < huntAt() + graceMs()) { hint(`Grace period — fire in ${Math.ceil((huntAt() + graceMs() - now()) / 1000)} s`, 900); snd.play('warn'); return; }
     if (R.pellets[w] <= 0) { hint('Out of pellets!'); snd.play('warn'); return; }
     R.pellets[w]--; R.used[w]++;
-    if (R.pellets[w] === 1) later(() => { if (S.phase.name === 'seek' && R.pellets[w] === 1) { hud.pop('LAST PELLET', w, 'Make it count'); snd.play('warn'); } }, 450);
+    if (R.pellets[w] === 1) later(() => { if (S.phase.name === 'seek' && R.pellets[w] === 1 && huntOpen()) { hud.pop('LAST PELLET', w, 'Make it count'); snd.play('warn'); } }, 450);
     const T = now();
     const tgt = targetOf(w);
     const ray = stage.setRayFromScreen(stage.size[0] / 2, stage.size[1] / 2, stage.size[0], stage.size[1]);
@@ -1407,6 +1423,13 @@ export function createGame(el, api) {
       if (R.pellets[w] === 0) later(() => sendOut(w), 600);
     }
   }
+  /** Still worth a sticker: no tag waiting for its confirmation, no FOUND / SURVIVED on its way
+   *  (HALF TIME and LAST PELLET used to pop over the FOUND stamp: the phase is 'seek' until it lands). */
+  function huntOpen() {
+    if (R.pendingTag || R.foundSent || R.outSent) return false;
+    for (let i = 0; i < S.queue.length; i++) { const n = S.queue[i].name; if (n === 'found' || n === 'time') return false; }
+    return true;
+  }
   function sendOut(w) {
     if (R.outSent || R.pellets[w] > 0 || R.pendingTag) return;
     R.outSent = true;
@@ -1417,7 +1440,7 @@ export function createGame(el, api) {
     if (!isHost || S.phase.name !== 'seek') return;
     R.out[w] = true;
     if (mode() === 'hs') roundOver({ found: false, out: true, T: now() });
-    else if (R.out.a && R.out.b) roundOver({ found: false, out: true });
+    else if (R.out.a && R.out.b) roundOver({ found: false, out: true, T: now() }); // the void round lasted until now, not the whole clock
   }
   function onShot(d) {
     if (!d || !stage || S.phase.name !== 'seek') return;
@@ -1577,7 +1600,7 @@ export function createGame(el, api) {
       C.fcYaw = Math.atan2(tvA.x, tvA.z); C.fcPitch = Math.asin(clamp(tvA.y, -1, 1));
       clampFree();
     }
-    C.spect = m; U.spect = m; posesOpen = false;
+    C.spect = m; U.spect = m; posesOpen = false; C.hereChk = tSec + 0.05; // (the role pill's new text: re-measured next frame but one)
     // whip the camera to the new view instead of cutting (cameras() eases the offset out)
     C.vsAt = tSec; C.vsPend = true;
     if (silent) return;
@@ -2246,7 +2269,7 @@ export function createGame(el, api) {
 
   // ── per-frame ─────────────────────────────────────────────────────
   const mv = [0, 0]; const lk = [0, 0];
-  let lookDir = null; let climbPiv = null; let herePrj = null; let ccAlt = null;
+  let lookDir = null; let climbPiv = null; let herePrj = null;
   let camPos = null; let camLook = null; let camWant = null; let lookWant = null; let tvA = null; let qOwn = null; let prj = null; let camR = null; let camF = null;
   const pubSt = {}; for (const f of FIELDS) pubSt[f] = 0;
   const sentSt = {}; for (const f of FIELDS) sentSt[f] = NaN; // what the last publish carried
@@ -2263,7 +2286,7 @@ export function createGame(el, api) {
   function initVecs() {
     camPos = new THREE.Vector3(0, 6, 9); camLook = new THREE.Vector3(0, 0.5, 0); camWant = new THREE.Vector3(); lookWant = new THREE.Vector3(); tvA = new THREE.Vector3(); tvZ = new THREE.Vector3(); Y_AXIS = new THREE.Vector3(0, 1, 0); Z_AXIS = new THREE.Vector3(0, 0, 1);
     qOwn = new THREE.Quaternion(); prj = new THREE.Vector3(); camR = [0, 0, 0]; camF = [0, 0, 0];
-    lookDir = new THREE.Vector3(); climbPiv = new THREE.Vector3(); herePrj = new THREE.Vector3(); ccAlt = new THREE.Vector3();
+    lookDir = new THREE.Vector3(); climbPiv = new THREE.Vector3(); herePrj = new THREE.Vector3();
     tv3 = new THREE.Vector3(); tv3b = new THREE.Vector3();
   }
 
@@ -2555,13 +2578,21 @@ export function createGame(el, api) {
       Math.abs(a.yaw - o.yaw) < 0.004 && Math.abs(a.ly - o.ly) < 0.004 && Math.abs(a.lp - o.lp) < 0.004 && Math.abs(a.wa - o.wa) < 0.004 &&
       Math.abs(a.sp - o.sp) < 0.02 && a.q === o.q && a.po === o.po && a.v === o.v && a.at === o.at);
   }
+  /** When the hunt of the queued seek phase starts (the lock's countdown), or never if none is queued yet. */
+  function queuedHuntAt() {
+    for (let i = 0; i < S.queue.length; i++) { const q = S.queue[i]; if (q.name === 'seek') return q.at + ((q.data && q.data.blind) || 0); }
+    return Infinity;
+  }
   function network(t) {
     if (local) return;
     const b = body[me];
     const ph = S.phase.name; const role = roleOf(me);
-    // where a hider is stays private while hiding, and during a head start until just before the
-    // blindfold comes off (so the seeker's buffer holds real positions when the hunt starts)
-    const hiding = (ph === 'hide' && (role === 'hider' || role === 'both')) || (ph === 'seek' && role === 'hider' && t < huntAt() - PUB_HUNT_LEAD_MS);
+    // where a hider is stays private while hiding, through the paint lock and the countdown, and
+    // during a head start, until PUB_HUNT_LEAD_MS before the hunt (so the seeker's buffer holds real
+    // positions when the blindfold comes off). The lock used to publish the real spot, which the
+    // seeker's phone then held all through a head start.
+    const hides = role === 'hider' || role === 'both';
+    const hiding = hides && (ph === 'hide' || (ph === 'lock' && t < queuedHuntAt() - PUB_HUNT_LEAD_MS) || (ph === 'seek' && role === 'hider' && t < huntAt() - PUB_HUNT_LEAD_MS));
     pubSt.x = hiding ? 0 : b.x; pubSt.y = hiding ? 0 : b.y; pubSt.z = hiding ? 0 : b.z;
     pubSt.yaw = hiding ? 0 : b.yaw; pubSt.po = hiding ? 0 : POSES.indexOf(b.pose);
     // a climbing seeker looks with its own view yaw: publish it relative to the body (yaw + ly = view)
@@ -2615,7 +2646,7 @@ export function createGame(el, api) {
         a.st.wallN = null;
         a.st.speed = b.speed;
         a.st.lookYaw = b.lookYaw; a.st.lookPitch = b.lookPitch;
-        if (ph === 'seek' && w === v && (roleOf(w) === 'seeker' || roleOf(w) === 'both') && !frozenView() && (!C.climbV || C.climbNear)) vis = false; // my own body in first person (shown while climbing: over the shoulder, unless the camera is jammed against it)
+        if (ph === 'seek' && w === v && (roleOf(w) === 'seeker' || roleOf(w) === 'both') && !frozenView() && !C.climbV) vis = false; // my own body in first person (shown while climbing: over the shoulder, faded when the camera has to come close: cameras())
       } else {
         let ok = link.sample(rem, t);
         if (!ok && remHint.set) { useHint(); rem.ly = 0; rem.lp = 0; rem.sp = 0; ok = true; }
@@ -2818,6 +2849,7 @@ export function createGame(el, api) {
     let rate = 10;
     C.frameCard = false;
     stage.vm.visible = false;
+    CS.on = false; C.fadeW = null; C.fadeFrame = false; C.fadeFire = false;
     if (S.boot !== 'ready') return;
     if ((!S.match || ph === 'lobby') && !S.pendingTitle) {
       // frame both chameleons in the part of the screen the lobby card leaves free
@@ -2839,21 +2871,37 @@ export function createGame(el, api) {
     } else if (ph === 'found' || ph === 'time' || ph === 'recap' || ph === 'final') {
       // whip to the hider, then a slow half-orbit in front of the spot; keep them above the card
       const tw = recapTarget(); const cen = revealCenter(tw);
-      if (ph === 'found' || ph === 'time') {
-        const sk = other(tw); const ps = stage.av[sk].root.position;
-        let dx = ps.x - cen.x; let dz = ps.z - cen.z; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
-        C.orbitBase = Math.atan2(dx, dz); C.orbitT = 0;
-      }
-      C.orbitT = (C.orbitT || 0) + dt;
-      const ang = (C.orbitBase || 0) + (ph === 'recap' || ph === 'final' ? Math.sin(C.orbitT * 0.35) * 0.75 : 0);
       const sz = stage.av[tw].st.size;
       const k2 = 0.5 + 0.5 * sz;
       const dist = (ph === 'recap' || ph === 'final' ? 2.2 : 1.55) * k2;
+      if (ph === 'found' || ph === 'time') {
+        const sk = other(tw); const ps = stage.av[sk].root.position;
+        let dx = ps.x - cen.x; let dz = ps.z - cen.z; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
+        // from the seeker's side, but a seeker standing where the camera would go (a tag closer
+        // than the framing distance + a body) filled the bottom of the shooter's FOUND frame: swing
+        // 60° off their line, to whichever side is clearer (picked once per stamp)
+        if (!C.fSide && l < dist + 1 + 0.35 * stage.av[sk].st.size) {
+          let bestS = -1;
+          for (let sg = -1; sg <= 1; sg += 2) {
+            const a = Math.atan2(dx, dz) + sg * 1.05; const ux = Math.sin(a); const uz = Math.cos(a); const uy = 0.55 * k2 / dist;
+            const ul = Math.hypot(ux, uy, uz);
+            const r = camReach(cen.x, cen.y, cen.z, ux / ul, uy / ul, uz / ul, dist);
+            if (r > bestS + 0.05) { bestS = r; C.fSide = sg; }
+          }
+        }
+        C.orbitBase = Math.atan2(dx, dz) + (C.fSide || 0) * 1.05; C.orbitT = 0;
+      }
+      C.orbitT = (C.orbitT || 0) + dt;
+      const ang = (C.orbitBase || 0) + (ph === 'recap' || ph === 'final' ? Math.sin(C.orbitT * 0.35) * 0.75 : 0);
       // a ceiling hider is framed from below
       const upY = 1 - 2 * (stage.av[tw].root.quaternion.x ** 2 + stage.av[tw].root.quaternion.z ** 2);
       const dy = upY < -0.5 ? -Math.min(cen.y - 0.25, 0.9 * k2) : (ph === 'recap' ? 0.95 : 0.55) * k2;
       camWant.set(cen.x + Math.sin(ang) * dist, cen.y + dy, cen.z + Math.cos(ang) * dist);
-      clampCam(cen, camWant);
+      // nothing in front of the body: low props count here (a pouf covered half the reveal), and
+      // raising the camera over them beats swinging round
+      solveCam(cen, camWant, false, 0, 0, 0, 0.3, CAMK.found, ang + Math.PI, camMinD(sz));
+      camGuard(cen);
+      C.fadeW = other(tw); C.fadeFrame = true; C.fadeTx = cen.x; C.fadeTy = cen.y; C.fadeTz = cen.z;
       aimFramed(cen, ph === 'recap' || ph === 'final');
       rate = tSec < C.freezeUntil ? 0 : (ph === 'found' || ph === 'time') ? 8 : 3;
     } else if (P.on && v) {
@@ -2870,23 +2918,20 @@ export function createGame(el, api) {
       lookWant.set(C.fcX + Math.sin(C.fcYaw) * cp, C.fcY + Math.sin(C.fcPitch), C.fcZ + Math.cos(C.fcYaw) * cp);
       snap = true;
     } else if (ph === 'seek' && v && U.spect === 'watch') {
-      // watch the seeker: over their shoulder, looking where they look (from their presence)
+      // watch the seeker: over their shoulder, looking where they look (from their presence); a
+      // climbing seeker gets the climb camera's framing (it used to sit inside their body)
       const sk = other(v); const ra = stage.av[sk].root; const q = ra.quaternion; const s2 = stage.av[sk].st.size;
-      const yaw = rem.yaw + rem.ly; const cp = Math.cos(rem.lp);
-      tvA.set(Math.sin(yaw) * cp, Math.sin(rem.lp), Math.cos(yaw) * cp);
       const ux = 2 * (q.x * q.y - q.w * q.z); const uy = 1 - 2 * (q.x * q.x + q.z * q.z); const uz = 2 * (q.y * q.z + q.w * q.x);
-      revC.x = ra.position.x + ux * 0.4 * s2; revC.y = ra.position.y + uy * 0.4 * s2 + 0.12 * s2; revC.z = ra.position.z + uz * 0.4 * s2;
-      const tall = SW < SH;
-      const dist = (tall ? 2.3 : 1.8) * (0.6 + 0.4 * s2); const side = (tall ? 0.1 : 0.3) * s2;
-      camWant.set(revC.x - tvA.x * dist - Math.cos(yaw) * side, revC.y - tvA.y * dist + 0.38 * s2, revC.z - tvA.z * dist + Math.sin(yaw) * side);
-      clampCam(revC, camWant);
-      floorCam(camWant);
-      lookWant.set(revC.x + tvA.x * 2.5, revC.y + tvA.y * 2.5, revC.z + tvA.z * 2.5);
+      watchCamWant(ra.position.x, ra.position.y, ra.position.z, ux, uy, uz, rem.at > 0.5, s2, rem.yaw + rem.ly, rem.lp, camWant, lookWant);
+      camGuard(watchPiv);
+      C.fadeW = sk;
       rate = 9;
     } else if (ph === 'seek' && v && role === 'seeker' && C.climbV) {
       // the seeker on a wall / ceiling (or zipping): close over-the-shoulder, aim = screen centre
       climbCamWant(body[v], C.vYaw, body[v].lookPitch, camWant, lookDir);
       lookWant.copy(camWant).add(lookDir);
+      camGuard(climbPiv);
+      C.fadeW = v; C.fadeFire = C.climbNear;
       climbCam = true; rate = 14;
     } else if (ph === 'seek' && v && (role === 'seeker' || role === 'both' || (role === 'hider' && !local && hunting(t)))) {
       const b = body[v];
@@ -2936,8 +2981,11 @@ export function createGame(el, api) {
           camWant.set(lookWant.x + ux / l * dist, lookWant.y + uy / l * dist, lookWant.z + uz / l * dist);
         }
       }
-      clampCam(lookWant, camWant);
-      floorCam(camWant);
+      // (solved from the body centre itself: the look point sits a little above it and eases)
+      bodyCentre(v, tv3);
+      solveCam(tv3, camWant, !!b.at, b.nx, b.ny, b.nz, 0.6, CAMK.orbit, C.yaw + Math.PI, camMinD(b.s));
+      camGuard(tv3);
+      C.fadeW = v;
       rate = 12;
     } else {
       // seeker waiting in local mode, or anything else: gentle overview
@@ -2977,8 +3025,32 @@ export function createGame(el, api) {
       const k = 1 - Math.exp(-rate * dt);
       camPos.lerp(camWant, k); camLook.lerp(lookWant, k);
     }
+    // the eased camera never cuts through a wall on its way to a solved spot once it's arrived near it
+    // (not during a view whip or the FOUND whip from the shooter's eyes: those cross the map on purpose;
+    // nor in the FOUND freeze-frame)
+    if (CS.on && rate > 0 && !C.override && !(vu < 1 && (C.vsStep > 0.02 || C.vsLz > 0.05) && C.vsStep < 12)) {
+      let ex = camPos.x - CS.px; let ey = camPos.y - CS.py; let ez = camPos.z - CS.pz; const el = Math.hypot(ex, ey, ez);
+      if (el > 1e-3 && el < CS.d * 1.5 + 0.5) {
+        ex /= el; ey /= el; ez /= el;
+        camRad = CS.rad; const r = camReach(CS.px, CS.py, CS.pz, ex, ey, ez, el); camRad = CAM_R;
+        if (r < el - 0.005) camPos.set(CS.px + ex * r, CS.py + ey * r, CS.pz + ez * r);
+      }
+    }
     // the climb view eases its position but aims exactly where the stick says (no aim lag)
     if (climbCam) camLook.copy(camPos).add(lookDir);
+    // a camera that had to come in close fades the body it looks past (never hides it); eased
+    const fk = 1 - Math.exp(-12 * dt);
+    for (let wi = 0; wi < 2; wi++) {
+      const w = PLAYERS[wi];
+      let al = 1;
+      if (w === C.fadeW && !P.on) {
+        al = bodyFade(w, camPos, C.fadeTx, C.fadeTy, C.fadeTz, C.fadeFrame);
+        if (C.fadeFire) al = Math.min(al, 0.35);
+      }
+      C.fade[w] += (al - C.fade[w]) * (snap || C.fade[w] > 1 ? 1 : fk);
+      if (al >= 1 && C.fade[w] > 0.985) C.fade[w] = 1;
+      stage.av[w].setFade(C.fade[w]);
+    }
     cam.position.copy(camPos);
     cam.lookAt(camLook);
     applyFraming();
@@ -2986,52 +3058,68 @@ export function createGame(el, api) {
     void t;
   }
   const revC = { x: 0, y: 0, z: 0 };
-  /** Where the seeker's climb camera wants to be for view (yaw, pitch): behind and over the right
-   *  shoulder of the body, kept in front of the surface it's on and out of walls. dir = view dir. */
+  /** Where the seeker's climb camera wants to be for view (yaw, pitch): over the right shoulder of
+   *  the body (shoulderCam). dir = view dir. Also flags a body sitting on the line of fire (faded). */
   function climbCamWant(b, yaw, pitch, out, dir) {
     const cp = Math.cos(pitch); const s2 = b.s;
     dir.set(Math.sin(yaw) * cp, Math.sin(pitch), Math.cos(yaw) * cp);
-    bodyCentre(viewer(), climbPiv); climbPiv.y += 0.1 * s2;
-    // a phone held upright sees a narrow slice sideways: sit further back, less to the side, a little higher
+    bodyCentre(viewer(), climbPiv);
+    shoulderCam(climbPiv, !!b.at, b.nx, b.ny, b.nz, s2, yaw, dir, out, CAMK.climb);
+    // the body over the crosshair (looking straight down a wall, a camera slid to one side): the view
+    // ray passes within its half-width (0.3 × size; the usual shoulder offset is 0.42) → faded
+    const cx = climbPiv.x - out.x; const cy = climbPiv.y - out.y; const cz = climbPiv.z - out.z;
+    const along = cx * dir.x + cy * dir.y + cz * dir.z;
+    const off = Math.sqrt(Math.max(0, cx * cx + cy * cy + cz * cz - along * along));
+    C.climbNear = along > 0 && off < 0.3 * s2;
+    return out;
+  }
+  /**
+   * Over-the-shoulder camera on a body centred at piv (stuck to a surface with normal n when `at`),
+   * looking along dir (view yaw): behind and to the right, a little up (a phone held upright sees a
+   * narrow slice sideways: further back, less to the side, a little higher), kept 0.55 × dist in
+   * front of the surface (0.3 let it sit almost in the wall plane), then through solveCam. Shared by
+   * the climbing seeker's own view and the hider's Watch view of a climbing seeker.
+   */
+  function shoulderCam(piv, at, nx, ny, nz, s2, yaw, dir, out, key) {
     const tall = SW < SH;
-    const dist = (tall ? 2.0 : 1.55) * (0.55 + 0.45 * s2); const side = (tall ? 0.12 : 0.32) * s2; const lift = (tall ? 0.3 : 0.18) * s2;
+    const dist = (tall ? 2.0 : 1.55) * (0.55 + 0.45 * s2); const side = (tall ? 0.12 : 0.32) * s2; const lift = ((tall ? 0.3 : 0.18) + (!at || ny > -0.5 ? 0.1 : 0)) * s2;
     let ux = -dir.x * dist - Math.cos(yaw) * side; let uy = -dir.y * dist + lift; let uz = -dir.z * dist + Math.sin(yaw) * side;
     const L = Math.hypot(ux, uy, uz) || dist;
-    if (b.at) {
-      // keep well out of the wall plane (0.3 × dist let the camera sit almost in it, looking along the wall)
-      const k = ux * b.nx + uy * b.ny + uz * b.nz; const lim = 0.55 * dist;
+    if (at) {
+      const k = ux * nx + uy * ny + uz * nz; const lim = 0.55 * dist;
       if (k < lim) {
-        ux += b.nx * (lim - k); uy += b.ny * (lim - k); uz += b.nz * (lim - k);
+        ux += nx * (lim - k); uy += ny * (lim - k); uz += nz * (lim - k);
         const l = Math.hypot(ux, uy, uz) || 1;
         ux = ux / l * L; uy = uy / l * L; uz = uz / l * L;
       }
     }
-    out.set(climbPiv.x + ux, climbPiv.y + uy, climbPiv.z + uz);
-    clampCam(climbPiv, out);
-    // pulled in hard (a corner, low furniture): slide round the wall's tangent to whichever side is clearer
-    if (b.at && out.distanceTo(climbPiv) < 0.6 * L) {
-      let tx = -b.nz; let ty = 0; let tz = b.nx; // horizontal tangent on a wall
-      if (Math.abs(b.ny) > 0.7) { tx = -Math.cos(yaw); ty = 0; tz = Math.sin(yaw); } // on a ceiling / top: the view's right
-      const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
-      let best = out.distanceTo(climbPiv); let bx = out.x; let by = out.y; let bz = out.z;
-      for (let sgn = -1; sgn <= 1; sgn += 2) {
-        const ax = b.nx * 0.62 + tx * sgn * 0.7; const ay = b.ny * 0.62 + 0.3 * (1 - Math.abs(b.ny)) + ty; const az = b.nz * 0.62 + tz * sgn * 0.7;
-        const al = Math.hypot(ax, ay, az) || 1;
-        ccAlt.set(climbPiv.x + ax / al * L, climbPiv.y + ay / al * L, climbPiv.z + az / al * L);
-        clampCam(climbPiv, ccAlt);
-        const dd = ccAlt.distanceTo(climbPiv);
-        if (dd > best + 0.05) { best = dd; bx = ccAlt.x; by = ccAlt.y; bz = ccAlt.z; }
-      }
-      out.set(bx, by, bz);
-    }
-    floorCam(out);
-    // squeezed in, or the body sits on the line of fire: hide it so the crosshair always sees past it
-    const cx = climbPiv.x - out.x; const cy = climbPiv.y - out.y; const cz = climbPiv.z - out.z;
-    const along = cx * dir.x + cy * dir.y + cz * dir.z;
-    const off = Math.sqrt(Math.max(0, cx * cx + cy * cy + cz * cz - along * along));
-    C.climbNear = Math.hypot(cx, cy, cz) < 0.8 * s2 || (along > 0 && off < 0.42 * s2);
-    return out;
+    out.set(piv.x + ux, piv.y + uy, piv.z + uz);
+    return solveCam(piv, out, at, nx, ny, nz, 0.6, key, yaw, camMinD(s2));
   }
+  /** The hider's Watch view of the seeker drawn at root p with up u (stuck to a surface: at), size
+   *  s2, looking (yaw, pitch): camera → out, aim point → look. A climbing seeker gets the climb
+   *  camera's framing (its surface normal is the drawn up vector); on foot, over the shoulder. */
+  function watchCamWant(px, py, pz, ux, uy, uz, at, s2, yaw, pitch, out, look) {
+    const cp = Math.cos(pitch);
+    tvA.set(Math.sin(yaw) * cp, Math.sin(pitch), Math.cos(yaw) * cp);
+    if (at) {
+      revC.x = px + ux * 0.18 * s2; revC.y = py + uy * 0.18 * s2; revC.z = pz + uz * 0.18 * s2;
+      shoulderCam(revC, true, ux, uy, uz, s2, yaw, tvA, out, CAMK.watch);
+    } else {
+      revC.x = px + ux * 0.4 * s2; revC.y = py + uy * 0.4 * s2 + 0.12 * s2; revC.z = pz + uz * 0.4 * s2;
+      const tall = SW < SH;
+      const dist = (tall ? 2.3 : 1.8) * (0.6 + 0.4 * s2); const side = (tall ? 0.1 : 0.3) * s2;
+      out.set(revC.x - tvA.x * dist - Math.cos(yaw) * side, revC.y - tvA.y * dist + 0.38 * s2, revC.z - tvA.z * dist + Math.sin(yaw) * side);
+      // solved from the body centre (the aim anchor sits above the head: a low prop could hide the body from it)
+      watchPiv.x = px + ux * 0.28 * s2; watchPiv.y = py + uy * 0.28 * s2; watchPiv.z = pz + uz * 0.28 * s2;
+      solveCam(watchPiv, out, false, 0, 0, 0, 0.6, CAMK.watch, yaw, camMinD(s2));
+    }
+    if (at) { watchPiv.x = revC.x; watchPiv.y = revC.y; watchPiv.z = revC.z; }
+    look.set(revC.x + tvA.x * 2.5, revC.y + tvA.y * 2.5, revC.z + tvA.z * 2.5);
+    return null;
+  }
+  /** Where the Watch camera was solved from (cameras() keeps the eased camera out of walls from there). */
+  const watchPiv = { x: 0, y: 0, z: 0 };
   function revealCenter(w) {
     const m = stage.av[w].meshes[0];
     m.updateWorldMatrix(true, false);
@@ -3070,19 +3158,174 @@ export function createGame(el, api) {
     else out.set(b.x, b.y + (b.sq ? 0.08 : 0.28) * s2, b.z);
     return out;
   }
-  /** Never put the camera under the floor it's above. */
+  /** Never put the camera under the floor it's above (the paint camera; the others go through solveCam). */
   function floorCam(want) {
     const g = stage.world.groundAt(want.x, want.z, 0.05, want.y + 0.05, 0.05);
     if (want.y < g + 0.1) want.y = g + 0.1;
   }
-  /** Pull the camera in front of walls between the target and it. */
-  // invisible guards (climb:false) never push the camera; thin low props are looked over
+  // ── third-person camera collision: one solver for the climb view, Watch, the hider's orbit and the
+  // FOUND / recap framing (QA final round: each used to clamp a single point ray on its own) ──
+  /** The camera is a sphere this big against the colliders (near plane 0.03 m: every face stays out of its corners). */
+  const CAM_R = 0.12;
+  // the paint camera's framing rays: invisible guards (climb:false) never count, thin low props are looked over
   const CAM_FILTER = (b) => b.climb !== false && (b.maxY - b.minY > 0.5 || b.minY > 0.6);
-  function clampCam(target, want) {
-    const dx = want.x - target.x; const dy = want.y - target.y; const dz = want.z - target.z;
-    const d = Math.hypot(dx, dy, dz) || 1;
-    const h = stage.world.raycast(target.x, target.y, target.z, dx / d, dy / d, dz / d, d, CAM_FILTER);
-    if (h && h.t < d) { const k = Math.max(0.25, h.t - 0.18) / d; want.x = target.x + dx * k; want.y = target.y + dy * k; want.z = target.z + dz * k; }
+  /** What the camera collides with: everything you can see (invisible guards don't count). Low props
+   *  too: the camera used to look "over" them from below their top (a pouf covered half the FOUND
+   *  reveal, a bin held the climb camera inside it); now it rises over them. */
+  const CAM_SOLID = (b) => b.climb !== false;
+  /** Views that keep a hysteresis pick (the alternative chosen last frame wins near-ties). */
+  const CAMK = { climb: 1, watch: 2, orbit: 3, found: 4 };
+  const CS = { key: 0, pick: 0, rad: 0.12, d: 0, px: 0, py: 0, pz: 0, on: false };
+  const camN = [0, 0, 0];
+  /** The sphere's radius for this cast: CAM_R, or CAM_R_THIN for a body in a pocket (solveCam). */
+  const CAM_R_THIN = 0.05;
+  let camRad = CAM_R;
+  /** How far the camera sphere gets from p along unit d (≤ len) against everything you can see (low
+   *  props too: the camera rises over a pouf rather than looking through it); the face → camN. */
+  function camReach(px, py, pz, dx, dy, dz, len) {
+    const h = stage.world.sweep(px, py, pz, dx, dy, dz, len, camRad, CAM_SOLID, true);
+    if (!h) { camN[0] = 0; camN[1] = 0; camN[2] = 0; return len; }
+    camN[0] = h.nx; camN[1] = h.ny; camN[2] = h.nz;
+    return Math.max(0, h.t - 0.01);
+  }
+  // candidate directions (unit) and how much turning away from the wish costs each (fixed order: the hysteresis keys on it)
+  const CAND = new Float64Array(16 * 3); const CAND_W = new Float64Array(16); let candN = 0;
+  function candPush(x, y, z, w) {
+    const l = Math.hypot(x, y, z);
+    if (l < 1e-6) { x = 0; y = 1; z = 0; w = 99; } else { x /= l; y /= l; z /= l; }
+    CAND[candN * 3] = x; CAND[candN * 3 + 1] = y; CAND[candN * 3 + 2] = z; CAND_W[candN] = w; candN++;
+  }
+  /** One pass of solveCam at the current camRad → SP (reach, direction, pick). */
+  const SP = { r: 0, x: 0, y: 0, z: 0, pick: 0 };
+  function solvePass(px, py, pz, dx, dy, dz, L, at, nx, ny, nz, upW, yaw, same, minD) {
+    const r0 = camReach(px, py, pz, dx, dy, dz, L);
+    SP.r = r0; SP.x = dx; SP.y = dy; SP.z = dz; SP.pick = 0;
+    if (!(r0 < 0.85 * L || r0 < minD || (same && CS.pick !== 0 && r0 < 0.95 * L))) return;
+    candN = 0;
+    // 1: slide along the face it hit (the rest of the move, projected on that face)
+    const n0x = camN[0]; const n0y = camN[1]; const n0z = camN[2]; const rest = L - r0;
+    const dn = dx * n0x + dy * n0y + dz * n0z;
+    let tx = dx - n0x * dn; let ty = dy - n0y * dn; let tz = dz - n0z * dn; const tl = Math.hypot(tx, ty, tz);
+    if (tl > 0.05) {
+      tx /= tl; ty /= tl; tz /= tl;
+      const hx = px + dx * r0; const hy = py + dy * r0; const hz = pz + dz * r0;
+      const r2 = camReach(hx, hy, hz, tx, ty, tz, rest * tl);
+      candPush(hx + tx * r2 - px, hy + ty * r2 - py, hz + tz * r2 - pz, 0.45);
+    } else candPush(dx, dy, dz, 99);
+    // 2-5: swung round the vertical
+    for (let k = 0; k < 4; k++) {
+      const a = k === 0 ? 0.55 : k === 1 ? -0.55 : k === 2 ? 1.1 : -1.1; const ca = Math.cos(a); const sa = Math.sin(a);
+      candPush(dx * ca + dz * sa, dy, -dx * sa + dz * ca, 0.6);
+    }
+    // 6-9: raised (straight, swung a little each way, and nearly overhead: out of a pocket)
+    const hz0 = Math.hypot(dx, dz);
+    const hxn = hz0 > 1e-3 ? dx / hz0 : Math.sin(yaw); const hzn = hz0 > 1e-3 ? dz / hz0 : Math.cos(yaw);
+    const e = Math.atan2(dy, hz0); const e2 = Math.min(1.35, e + 0.5); const e3 = Math.min(1.35, e + 0.3);
+    candPush(hxn * Math.cos(e2), Math.sin(e2), hzn * Math.cos(e2), upW);
+    for (let k = 0; k < 2; k++) {
+      const a = k === 0 ? 0.55 : -0.55; const ca = Math.cos(a); const sa = Math.sin(a);
+      candPush((hxn * ca + hzn * sa) * Math.cos(e3), Math.sin(e3), (-hxn * sa + hzn * ca) * Math.cos(e3), (upW + 0.6) / 2);
+    }
+    if (at) candPush(hxn * 0.12 + nx * 0.35, 1 + ny * 0.35, hzn * 0.12 + nz * 0.35, upW + 0.15); // (leaning out of the surface it's on)
+    else candPush(hxn * 0.12, 1, hzn * 0.12, upW + 0.15);
+    // 10-14: stuck to a surface: out along its normal slid to either side, straight out (lifted), or
+    // along the surface itself (a body low on a wall under a shelf board)
+    if (at) {
+      let sx = -nz; let sz = nx; // horizontal tangent of a wall
+      if (Math.abs(ny) > 0.7) { sx = -Math.cos(yaw); sz = Math.sin(yaw); } // a ceiling / top: the view's right
+      const sl = Math.hypot(sx, sz) || 1; sx /= sl; sz /= sl;
+      const lift = 0.3 * (1 - Math.abs(ny));
+      candPush(nx * 0.62 + sx * 0.7, ny * 0.62 + lift, nz * 0.62 + sz * 0.7, 0.7);
+      candPush(nx * 0.62 - sx * 0.7, ny * 0.62 + lift, nz * 0.62 - sz * 0.7, 0.7);
+      candPush(nx, ny + 0.35 * (1 - Math.abs(ny)), nz, 0.8);
+      candPush(nx * 0.35 + sx * 0.85, ny * 0.35 + lift * 0.5, nz * 0.35 + sz * 0.85, 0.75);
+      candPush(nx * 0.35 - sx * 0.85, ny * 0.35 + lift * 0.5, nz * 0.35 - sz * 0.85, 0.75);
+    }
+    // under minD the body has to fade: any way out past it beats a short reach straight back
+    let bestS = r0 - 2 * Math.max(0, minD - r0) + (same && CS.pick === 0 ? 0.12 * L : 0);
+    for (let k = 0; k < candN; k++) {
+      const cx = CAND[k * 3]; const cy = CAND[k * 3 + 1]; const cz = CAND[k * 3 + 2]; const w = CAND_W[k];
+      if (w > 50) continue;
+      if (at && cx * nx + cy * ny + cz * nz < 0.15) continue; // behind the surface it's stuck to
+      const cosD = cx * dx + cy * dy + cz * dz;
+      const bonus = same && CS.pick === k + 1 ? 0.12 * L : 0;
+      if (L - L * w * (1 - cosD) + bonus <= bestS) continue; // can't win even at full reach: no cast
+      const r = camReach(px, py, pz, cx, cy, cz, L);
+      const sc = r - L * w * (1 - cosD) - 2 * Math.max(0, minD - r) + bonus;
+      if (sc > bestS) { bestS = sc; SP.pick = k + 1; SP.r = r; SP.x = cx; SP.y = cy; SP.z = cz; }
+    }
+  }
+  /**
+   * Solve a third-person camera. piv: what it looks at (in free space); want: where it would like to
+   * be (rewritten with the answer). Returns the camera's distance from piv.
+   *  1. A sphere cast from piv to want against every collider you can see (boxes, so a thin wall
+   *     blocks like a thick one; low props too; the floor): the camera never ends inside or behind a
+   *     collider, and piv always sees it.
+   *  2. Stopped short of 85 % of the way (or of minD): alternatives, each cast the same way: the slide along the
+   *     face it hit (the rest of the move projected on that face), the direction swung ±0.55 / ±1.1 rad
+   *     round the vertical, raised (upW: how cheap raising is; the FOUND framing prefers it) or nearly
+   *     overhead, and, stuck to a surface (at, n), out along the normal to either side, straight out, or
+   *     along the surface. Score = how far it gets − how far it turns from the wish − twice what it
+   *     falls short of minD (camMinD: any way out past it beats a short reach straight back); last
+   *     frame's pick gets a bonus (no flicker between near-equal answers); alternatives stay in front
+   *     of the surface.
+   *  3. Still under 45 % of the way (a body in a pocket: under a shelf board, between two planters):
+   *     the same again with a thinner camera (CAM_R_THIN still clears the 0.03 m near plane).
+   * Below the view's minimum distance the body fades (cameras(): bodyFade); it is never hidden.
+   */
+  function solveCam(piv, want, at, nx, ny, nz, upW, key, yaw, minD) {
+    const px = piv.x; const py = piv.y; const pz = piv.z;
+    let dx = want.x - px; let dy = want.y - py; let dz = want.z - pz;
+    const L = Math.hypot(dx, dy, dz);
+    if (!(L > 1e-4)) return 0;
+    dx /= L; dy /= L; dz /= L;
+    const same = key === CS.key;
+    camRad = CAM_R;
+    minD = Math.min(minD, 0.9 * L);
+    solvePass(px, py, pz, dx, dy, dz, L, at, nx, ny, nz, upW, yaw, same, minD);
+    let rad = CAM_R;
+    if (SP.r < (same && CS.rad < CAM_R ? 0.55 : 0.45) * L) {
+      const r1 = SP.r; const x1 = SP.x; const y1 = SP.y; const z1 = SP.z; const p1 = SP.pick;
+      camRad = CAM_R_THIN;
+      solvePass(px, py, pz, dx, dy, dz, L, at, nx, ny, nz, upW, yaw, same && CS.rad < CAM_R, minD);
+      camRad = CAM_R;
+      if (SP.r > r1 + 0.1) rad = CAM_R_THIN;
+      else { SP.r = r1; SP.x = x1; SP.y = y1; SP.z = z1; SP.pick = p1; }
+    }
+    CS.key = key; CS.pick = SP.pick; CS.rad = rad; CS.d = SP.r;
+    want.set(px + SP.x * SP.r, py + SP.y * SP.r, pz + SP.z * SP.r);
+    return SP.r;
+  }
+  /** This frame's third-person view keeps its eased camera out of walls too (cameras(): after the lerp). */
+  function camGuard(piv) { CS.on = true; CS.px = piv.x; CS.py = piv.y; CS.pz = piv.z; }
+  /** The closest a third-person camera means to come to a body of size s (Large 0.93 m): solveCam
+   *  prefers any way out past it, and closer than that the body fades (bodyFade). */
+  const camMinD = (s) => 0.6 * s + 0.15;
+  /** How see-through body w should be with the camera at c: solid from camMinD out, down
+   *  to 0.25 within 0.3 × size + 0.05 m. Framing a reveal (frame, t: what it frames): 0.3 when it
+   *  sits between the camera and t, 0.35 when it's in the frame and covers over a quarter of its height. */
+  function bodyFade(w, c, tx, ty, tz, frame) {
+    const a = stage.av[w];
+    if (!a.root.visible) return 1;
+    const m = a.meshes[0]; m.updateWorldMatrix(true, false);
+    const e = m.matrixWorld.elements; const s = a.st.size;
+    const ox = e[12] - c.x; const oy = e[13] - c.y; const oz = e[14] - c.z; const d = Math.hypot(ox, oy, oz);
+    const far = camMinD(s); const near = 0.3 * s + 0.05;
+    let al = d >= far ? 1 : d <= near ? 0.25 : 0.25 + 0.75 * (d - near) / (far - near);
+    if (frame) {
+      let fx = tx - c.x; let fy = ty - c.y; let fz = tz - c.z; const fl = Math.hypot(fx, fy, fz) || 1; fx /= fl; fy /= fl; fz /= fl;
+      const along = ox * fx + oy * fy + oz * fz;
+      if (along > 0 && along < fl - 0.15 && Math.sqrt(Math.max(0, d * d - along * along)) < 0.5 * s) al = Math.min(al, 0.3);
+      // in the frame and big (a Huge seeker a stride from the reveal): a foreground ghost, not a wall of colour
+      const vx = camLook.x - c.x; const vy = camLook.y - c.y; const vz = camLook.z - c.z; const vl = Math.hypot(vx, vy, vz) || 1;
+      const z = (ox * vx + oy * vy + oz * vz) / vl;
+      if (z > 0.05) {
+        const tanV = Math.tan((stage.camera.fov * Math.PI) / 360); const rad = 0.32 * s / z;
+        const side = Math.sqrt(Math.max(0, d * d - z * z)) / z; // off-axis (tan of the angle)
+        if (rad / tanV > 0.25 && side < tanV * Math.max(1, SW / SH) + rad) al = Math.min(al, 0.35);
+      }
+    }
+    return al;
   }
 
   // ── HUD per frame (allocation-free: stable descriptors, precomputed labels) ──
@@ -3137,6 +3380,16 @@ export function createGame(el, api) {
     if (m > 0.86) { nx = (nx / m) * 0.86; ny = (ny / m) * 0.86; edge = true; }
     let x = (nx + 1) / 2 * W; let y = (1 - ny) / 2 * H;
     y = clamp(y, 96, H - 40); x = clamp(x, 34, W - 34);
+    // never over the role pill ("Watching Emerson"): where they'd overlap, the sticker's label sits
+    // 6 px under it (measured twice a second: the pill's width follows its text)
+    if (tSec > C.hereChk) {
+      C.hereChk = tSec + 0.5;
+      const host = hud.el.here.parentElement; const lab = hud.el.here.firstElementChild;
+      const hr = host ? host.getBoundingClientRect() : null; const pr = hud.el.role.getBoundingClientRect();
+      C.hereL = hr && pr.height ? pr.left - hr.left : 0; C.hereR = hr && pr.height ? pr.right - hr.left : -1; C.hereB = hr && pr.height ? pr.bottom - hr.top : 0;
+      C.hereH = (lab && lab.offsetHeight) || 22;
+    }
+    if (C.hereR > C.hereL && x > C.hereL - 34 && x < C.hereR + 34) y = Math.max(y, Math.min(H - 40, C.hereB + 6 + C.hereH + 9));
     hud.here(true, x, y, edge);
   }
   function mkActs(mouse) {
@@ -3322,7 +3575,7 @@ export function createGame(el, api) {
         const d0 = S.phase.data; const hm = d0 && d0.hunt ? d0.hunt : S.phase.dur || 1;
         snd.tempo(70 + 70 * clamp(1 - Math.max(0, S.phase.end - t) / hm, 0, 1) + (R.nearD < 6 ? 20 : 0));
         // the seeker's half-time stamp (hunts of 40 s and more)
-        if (role === 'seeker' && !R.halfShown && hm >= 40000 && t >= S.phase.end - hm / 2) { R.halfShown = true; hud.pop('HALF TIME', 'ink', `${Math.round((S.phase.end - t) / 1000)} s left`); snd.play('beep'); }
+        if (role === 'seeker' && !R.halfShown && hm >= 40000 && t >= S.phase.end - hm / 2 && huntOpen()) { R.halfShown = true; hud.pop('HALF TIME', 'ink', `${Math.round((S.phase.end - t) / 1000)} s left`); snd.play('beep'); }
       } else snd.ambience(music === 'on' ? 'hide' : 'off');
     } else snd.ambience('off');
     // the hide-phase ticker: went still after 20 s without moving
@@ -3449,7 +3702,7 @@ export function createGame(el, api) {
           // v3
           spect: U.spect, fc: [C.fcX, C.fcY, C.fcZ, C.fcYaw, C.fcPitch], climbV: C.climbV, vYaw: C.vYaw, hunting: hunting(), huntAt: huntAt(), graceUntil: huntAt() + graceMs(),
           live: { sent: R.lpSent, same: R.lpSame, got: R.lpIn, tells: R.tells, tellSkip: R.tellSkip, tellOn: !!R.tell }, cam: stage ? stage.camera.position.toArray() : null,
-          here: { on: !hud.el.here.hidden, x: hud.el.here.style.transform }, badge: hud.el.badge.textContent || null, role: hud.el.role.textContent,
+          here: { on: !hud.el.here.hidden, x: hud.el.here.style.transform }, badge: hud.el.badge.textContent || null, role: hud.el.role.textContent, fade: { a: C.fade.a, b: C.fade.b },
           glint: { a: R.glintAt.a, b: R.glintAt.b }, lastPick: stats.lastPick || null, lastPaint: stats.lastPaint || null, lastStamp: stats.lastStamp || null, lastShot: stats.lastShot || null, lastTagCheck: stats.lastTagCheck || null, lastWindow: stats.lastWindow || null, juice: stats.juice ? { ...stats.juice, fired: stats.juiceAt || 0 } : null,
         };
       },
@@ -3512,6 +3765,116 @@ export function createGame(el, api) {
           b.lookPitch = Math.atan2(y - ey, Math.hypot(x - ex, z - ez));
         }
         return { yaw: b.yaw, pitch: b.lookPitch };
+      },
+      /** FOUND / SURVIVED framing (tests, during a long found phase): stand the seeker at (x, z) facing the
+       *  hider, settle the camera, and say how close it is to the seeker's body, whether that body is
+       *  faded or fills the frame, and whether anything you can see hides the revealed hider. */
+      foundProbe(x, z, n = 45, atX = null, atZ = null) {
+        const tw = recapTarget(); const sk = other(tw); const b = body[sk];
+        if (atX != null) { const h2 = body[tw]; if (h2.at) detachBody(stage.world, h2, 0, 0); h2.x = atX; h2.z = atZ; resetBody(h2); h2.sq = false; h2.y = stage.world.groundAt(atX, atZ, 0.2, 0.5); h2.vy = 0; h2.pose = 'stand'; stage.av[tw].setPose('stand', true); snapOrient[tw] = true; animate(1 / 30, now()); }
+        const feet = Math.max(0, b.y) + 0.5; b.x = x; b.z = z; resetBody(b); b.sq = false; b.y = stage.world.groundAt(x, z, 0.2, feet); b.vy = 0; // (the floor it stands on, not the rafter)
+        const hc0 = revealCenter(tw); b.yaw = Math.atan2(hc0.x - x, hc0.z - z); b.lookYaw = 0; b.lookPitch = 0;
+        snapOrient[sk] = true; C.fSide = 0; C.vsAt = -10; C.freezeUntil = 0;
+        for (let i = 0; i < n; i++) { animate(1 / 30, now()); cameras(1 / 30, now()); }
+        const c = stage.camera.position; const W = stage.world; const SOLID = (bx) => bx.climb !== false;
+        const m = stage.av[sk].meshes[0]; m.updateWorldMatrix(true, false); const e = m.matrixWorld.elements;
+        const ds = Math.hypot(e[12] - c.x, e[13] - c.y, e[14] - c.z);
+        const hc = revealCenter(tw); const hx = hc.x - c.x; const hy = hc.y - c.y; const hz = hc.z - c.z; const hl = Math.hypot(hx, hy, hz);
+        const occ = W.raycast(c.x, c.y, c.z, hx / hl, hy / hl, hz / hl, Math.max(0, hl - 0.15 * stage.av[tw].st.size), SOLID, true);
+        // how much of the screen height the seeker's body covers (0 when it's behind the camera or off screen)
+        const v3 = new THREE.Vector3(e[12], e[13], e[14]).project(stage.camera);
+        const inView = v3.z < 1 && Math.abs(v3.x) < 1.2 && Math.abs(v3.y) < 1.2;
+        const cover = inView ? Math.min(1, (0.32 * stage.av[sk].st.size / Math.max(0.05, ds)) / Math.tan((stage.camera.fov * Math.PI) / 360)) : 0;
+        const hb2 = body[tw]; const hr = 0.24 * hb2.s; const hiderFree = !W.boxAt(hc.x, hc.y, hc.z, 0.1, SOLID) && !W.boxAt(hb2.x + hr, hc.y, hb2.z, 0, SOLID) && !W.boxAt(hb2.x - hr, hc.y, hb2.z, 0, SOLID) && !W.boxAt(hb2.x, hc.y, hb2.z + hr, 0, SOLID) && !W.boxAt(hb2.x, hc.y, hb2.z - hr, 0, SOLID);
+        return { hiderFree, cam: [c.x, c.y, c.z], dSeeker: ds, dHider: hl, size: stage.av[sk].st.size, alpha: C.fade ? C.fade[sk] : 1, visible: stage.av[sk].root.visible, inView, cover, screenY: v3.y, occ: !!occ, occBy: occ && occ.box ? occ.box.name || '?' : null };
+      },
+      /** Low props (≤ 0.5 m tall, small footprint) on this map: the FOUND framing must look over them, not through. */
+      lowProps() { return stage.world.boxes.filter((bx) => bx.climb !== false && bx.maxY - bx.minY <= 0.5 && bx.minY <= 0.6 && bx.maxY > 0.25 && (bx.maxX - bx.minX) * (bx.maxZ - bx.minZ) < 2 && (bx.maxX - bx.minX) > 0.25 && (bx.maxZ - bx.minZ) > 0.25).map((bx) => ({ name: bx.name || '', minX: bx.minX, maxX: bx.maxX, minY: bx.minY, maxY: bx.maxY, minZ: bx.minZ, maxZ: bx.maxZ })); },
+      /** Tests: switch the stage to another map mid-round (the camera sweep). */
+      useMap(id) { loadMap(id); return stage.map.id; },
+      /** Camera sweep (tests): wall (low, high, by a corner) and ceiling contacts near this map's camo spot and spawns. */
+      camContacts() {
+        const W = stage.world; const sp = stage.map.spots; const out = [];
+        const pts = [sp.camo, sp.spawnA, sp.spawnB, ...(sp.hiderSpawns || []), ...(sp.seekerSpawns || [])].filter(Boolean);
+        const s = body[viewer() || 'a'].s; const r = 0.24 * s; const clr = Math.min(0.35, 0.34 * s * 0.8);
+        const SOLID = (bx) => bx.climb !== false;
+        const ok = (x, y, z, nx, ny, nz) => W.inside(x, z) && !W.buried(x, y, z, nx, ny, nz) && W.clearOf(x, y, z, nx, ny, nz, r) && !W.guarded(x, y, z, nx, ny, nz, clr);
+        const add = (x, y, z, nx, ny, nz, kind) => { if (out.some((c) => Math.hypot(c[0] - x, c[1] - y, c[2] - z) < 0.6)) return; if (ok(x, y, z, nx, ny, nz)) out.push([x, y, z, nx, ny, nz, kind]); };
+        for (const p of pts) {
+          const gy = W.groundAt(p.x, p.z, 0.05, (p.y || 0) + 0.3);
+          for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            for (const hh of [0.3, 1.3]) {
+              const H = W.raycast(p.x, gy + hh, p.z, dx, 0, dz, 5, SOLID, false);
+              if (!H || Math.abs(H.ny) > 0.2 || H.nx * dx + H.nz * dz > -0.5) continue;
+              const hx = H.x; const hy = H.y; const hz = H.z; const nx = H.nx; const nz = H.nz;
+              add(hx, hy, hz, nx, 0, nz, hh < 1 ? 'low' : 'wall');
+              const c = W.cornerAt(hx, hy, hz, nx, nz, 3);
+              if (c) {
+                const tx = -nz; const tz = nx; const pr = (c.x - hx) * tx + (c.z - hz) * tz;
+                if (Math.abs(pr) > 0.6) { const k = pr - Math.sign(pr) * 0.4; add(hx + tx * k, hy, hz + tz * k, nx, 0, nz, hh < 1 ? 'cornerLow' : 'corner'); }
+              }
+            }
+          }
+          const U = W.raycast(p.x, gy + 1, p.z, 0, 1, 0, 4, SOLID, false);
+          if (U && U.ny < -0.9) add(U.x, U.y, U.z, 0, -1, 0, 'ceil');
+        }
+        // standing on the floor: at each spot, and with the back to each wall found above (0.35 m off it)
+        const fl = [];
+        for (const p of pts) {
+          const gy = W.groundAt(p.x, p.z, 0.05, (p.y || 0) + 0.3);
+          fl.push([p.x, gy, p.z]);
+          for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const H = W.raycast(p.x, gy + 0.3, p.z, dx, 0, dz, 5, SOLID, false);
+            if (H && Math.abs(H.ny) < 0.2) { const fx = H.x + H.nx * 0.35; const fz = H.z + H.nz * 0.35; fl.push([fx, W.groundAt(fx, fz, 0.05, gy + 0.3), fz]); }
+          }
+        }
+        for (const [x, y, z] of fl) {
+          if (out.some((c) => c[4] > 0.9 && Math.hypot(c[0] - x, c[2] - z) < 0.6)) continue;
+          const bb = { x, y, z, r, step: Math.max(0.2, 0.24 * s), head: 0.34 * s };
+          W.pushOut(bb);
+          if (Math.hypot(bb.x - x, bb.z - z) < 0.02 && W.inside(x, z) && !W.boxAt(x, y + 0.28 * s, z, 0.05, SOLID)) out.push([x, y, z, 0, 1, 0, 'floor']);
+        }
+        return out;
+      },
+      /** Camera sweep (tests): put the viewer's body at contact c and settle a view on it ('climb': the seeker's
+       *  over-the-shoulder view; 'orbit': the hider's third-person camera; 'watch': the hider's Watch view of
+       *  a seeker drawn there). Returns where the camera ended, its distance to the body centre, whether a
+       *  collider hides the body, whether the camera is inside one (or under the floor), and the body's fade. */
+      camProbe(kind, c, yaw, pitch, n = 40) {
+        const v = viewer(); const b = body[v];
+        const hz = Math.abs(c[4]) > 0.7 ? [Math.sin(yaw), 0, Math.cos(yaw)] : [0, 1, 0];
+        if (c[6] === 'floor') { b.yaw = yaw; resetBody(b); b.x = c[0]; b.y = c[1]; b.z = c[2]; b.vy = 0; b.onGround = true; } // (standing, not stuck)
+        else attachBody(stage.world, b, c[0], c[1], c[2], c[3], c[4], c[5], null, hz[0], hz[1], hz[2]);
+        b.pose = 'stand'; stage.av[v].setPose('stand', true); snapOrient[v] = true;
+        b.lookYaw = 0; b.lookPitch = pitch;
+        C.vsAt = -10; C.autoUntil = 0; C.lkAt = !!b.at; C.lkUntil = 0; C.override = null;
+        bodyCentre(v, tvA); const cx = tvA.x; const cy = tvA.y; const cz = tvA.z;
+        let px; let py; let pz; let alpha = 1;
+        if (kind === 'watch') {
+          bodyQuat(b, qTmp); const q = { x: qTmp[0], y: qTmp[1], z: qTmp[2], w: qTmp[3] };
+          const ux = 2 * (q.x * q.y - q.w * q.z); const uy = 1 - 2 * (q.x * q.x + q.z * q.z); const uz = 2 * (q.y * q.z + q.w * q.x);
+          const out = new THREE.Vector3(); const look = new THREE.Vector3();
+          animate(1 / 30, now());
+          watchCamWant(b.x, b.y, b.z, ux, uy, uz, b.at, b.s, yaw, pitch, out, look);
+          px = out.x; py = out.y; pz = out.z; alpha = bodyFade(v, out, 0, 0, 0, false);
+        } else {
+          if (kind === 'climb') { C.climbV = true; C.vYaw = yaw; } else { C.yaw = yaw; C.pitch = pitch; }
+          for (let i = 0; i < n; i++) { animate(1 / 30, now()); cameras(1 / 30, now()); }
+          px = camPos.x; py = camPos.y; pz = camPos.z;
+          if (C.fade && Number.isFinite(C.fade[v])) alpha = C.fade[v];
+          else if (kind === 'climb' && C.climbNear) alpha = 0;
+        }
+        const W = stage.world; const SOLID = (bx) => bx.climb !== false;
+        const dx = cx - px; const dy = cy - py; const dz = cz - pz; const L = Math.hypot(dx, dy, dz) || 1e-6;
+        const H = W.raycast(px, py, pz, dx / L, dy / L, dz / L, Math.max(0, L - 0.05), SOLID, true);
+        let inside = py < 0.02; let near = py < 0.05; let box = null;
+        for (const bx of W.boxes) {
+          if (bx.climb === false) continue;
+          const g = Math.max(bx.minX - px, px - bx.maxX, bx.minY - py, py - bx.maxY, bx.minZ - pz, pz - bx.maxZ);
+          if (g < 0) { inside = true; box = bx.name || '?'; }
+          if (g < 0.05) near = true;
+        }
+        return { cam: [px, py, pz], d: L, occ: !!H, occBy: H && H.box ? H.box.name || '?' : null, inside, near, box, alpha };
       },
       partnerPos(w) { const r = stage.av[w].root.position; return [r.x, r.y, r.z]; },
       /** Net probe (cheap, per frame): shared clock, my body, the partner as drawn, the camera, presence calls. */

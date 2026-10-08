@@ -260,11 +260,11 @@ export const CSS = `
   .chm-lobby .chm-plan { width: 52px; height: 40px; }
   .chm-lobby .chm-mapcard { padding: 5px; }
   .chm-lobby .chm-mapinfo small { display: none; }
-  .chm-lobby .chm-sizes button { min-height: 38px; }
+  .chm-lobby .chm-sizes button { min-height: 44px; } /* tap targets: 44 px here too (final QA: 38) */
   .chm-lobby .chm-firstrow { flex-direction: row; align-items: center; justify-content: space-between; }
   .chm-lobby .chm-firstrow .chm-chip { padding: 7px 10px; }
   .chm-lobby .chm-go { padding: 12px 14px; }
-  .chm-lobby .chm-more { min-height: 42px; }
+  .chm-lobby .chm-more { min-height: 44px; }
   .chm-mini { top: calc(84px + var(--chm-st)); width: 96px; height: 96px; }
   .chm-tips { top: calc(70px + var(--chm-st)); width: min(calc(100% - 24px), 520px); }
   .chm-tips ul { display: grid; grid-template-columns: 1fr 1fr; }
@@ -577,8 +577,8 @@ export const CSS = `
 /* in-their-sights: the peek vignette pulses in the seeker's ink */
 .chm.peek.sights .chm-vig { animation: chm-sights .6s ease-out; }
 @keyframes chm-sights { 0% { box-shadow: inset 0 0 110px 44px color-mix(in srgb, var(--chm-them) 75%, transparent); } 100% { box-shadow: inset 0 0 90px 30px rgba(20, 16, 24, 0.42); } }
-/* tap targets: 44 px everywhere a thumb lands */
-.chm-seg button { min-width: 40px; height: 44px; }
+/* tap targets: 44 px everywhere a thumb lands (the brush size / hardness segments were 40 wide) */
+.chm-seg button { min-width: 44px; height: 44px; }
 .chm-done { height: 44px; }
 .chm-chip { min-height: 44px; padding: 8px 14px; }
 .chm-arrow { width: 44px; height: 48px; }
@@ -591,7 +591,7 @@ export const CSS = `
 .chm-step button { width: 44px; height: 44px; } .chm-step output { line-height: 44px; }
 .chm-seg2 button { height: 44px; }
 .chm-opts { padding: 4px 6px; gap: 5px; }
-@media (max-width: 380px) { .chm-opts { flex-wrap: wrap; } .chm-seg button { min-width: 40px !important; padding: 0 5px !important; } }
+@media (max-width: 380px) { .chm-opts { flex-wrap: wrap; } .chm-seg button { min-width: 44px !important; padding: 0 5px !important; } }
 /* type floor: 11 px on captions, pose labels, preset subtitles, size labels, map facts, the joystick hint */
 .chm-b em { font-size: .7rem; }
 .chm-pose { width: 56px; font-size: .68rem; }
@@ -611,7 +611,7 @@ export const CSS = `
   .chm.acts7 .chm-gear { top: calc(64px + var(--chm-st)); right: calc(12px + var(--chm-sr)); }
   .chm.posesup .chm-joyhint { display: none; }
   .chm-pose { width: 50px; }
-  .chm-b.wide > span:first-child { height: 40px; }
+  .chm-b.wide > span:first-child { height: 44px; } /* (was 40: under the 44 px tap floor) */
 }
 @media (prefers-reduced-motion: reduce) { .chm *, .chm *::before, .chm *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; } }
 @media (min-width: 900px) and (min-height: 600px) { .chm-sc { font-size: 1.1rem; padding: 6px 12px 6px 9px; } .chm-sc span { font-size: 0.82rem; } .chm-clock { min-width: 104px; } .chm-time { font-size: 1.8rem; } .chm-phase { font-size: 0.7rem; } .chm-sub { top: calc(78px + var(--chm-st)); font-size: 0.9rem; } .chm-gear { top: calc(116px + var(--chm-st)); } }

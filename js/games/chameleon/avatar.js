@@ -327,6 +327,7 @@ export function createAvatar(THREE, kit, { gradientMap, texture }) {
   charm.visible = false; charm.raycast = () => {};
   charm.position.set(0, -0.09, -0.19); piv.tail.add(charm);
   const wear = { eye: 0, shape: 0, charm: 0, twitch: 0 };
+  const fadeMats = [mat, eyeMat, charmMat]; let fadeA = 1;
   for (const [k, i] of [['legFL', 6], ['legFR', 7], ['legBL', 8], ['legBR', 9]]) { const m = mk(i); piv[k].add(m); meshes.push(m); }
   // order meshes by part index for the paint system
   meshes.sort((a, b) => a.userData.part - b.userData.part);
@@ -439,6 +440,16 @@ export function createAvatar(THREE, kit, { gradientMap, texture }) {
     setTexture(t) { mat.map = t; mat.needsUpdate = true; },
     /** Visible or not (also hides the blob). */
     setVisible(v) { root.visible = v; blob.visible = v; },
+    /** See-through (1 = solid): a camera that has to sit close fades the body instead of hiding it.
+     *  r128 keeps `transparent` out of the program key, so this switches no shader; depth writes stay
+     *  on, so the body's own parts still hide each other (a ghost, not an x-ray). */
+    setFade(a) {
+      const k = a > 0.985 ? 1 : a < 0.05 ? 0.05 : a;
+      if (k === fadeA) return;
+      fadeA = k;
+      for (let i = 0; i < fadeMats.length; i++) { fadeMats[i].transparent = k < 1; fadeMats[i].opacity = k; }
+    },
+    get fade() { return fadeA; },
     /** Highlight outline for the reveal (null to hide). */
     setReveal(color, width = 0.014) {
       const on = !!color;

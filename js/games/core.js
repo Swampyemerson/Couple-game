@@ -1529,7 +1529,7 @@ const ACTIONS = {
   menu: () => G.screen && G.screen.toggleMenu && G.screen.toggleMenu(),
   'menu-backdrop': (d, el, e) => { if (e.target === el && G.screen && G.screen.toggleMenu) G.screen.toggleMenu(); },
   'end-show': () => G.screen && G.screen.reshowEnd && G.screen.reshowEnd(),
-  mute: (d, el) => { lsSet(LS_MUTE, !muted()); el.textContent = muted() ? 'Sound: off' : 'Sound: on'; if (!muted()) sfx('tap'); },
+  mute: (d, el) => { lsSet(LS_MUTE, !muted()); el.textContent = muted() ? 'Sound: off' : 'Sound: on'; if (!muted()) sfx('tap'); try { window.dispatchEvent(new Event('ju:mute')); } catch { /* games re-read it within a second anyway */ } },
   reveal: () => G.screen && G.screen.reveal && G.screen.reveal(),
   'end-look': () => G.screen && G.screen.look && G.screen.look(),
   resign: async () => {

@@ -218,6 +218,58 @@ export function createWorld(map) {
     return hit;
   }
 
+  /**
+   * Sphere cast (radius r, the cameras): the ray against every box grown by r, a slightly
+   * conservative stand-in for the rounded sum at edges. Boxes, not points: a 0.16 m wall stops it
+   * like a thick one. A box already closer than r to the origin is grown only up to that gap, so a
+   * centre starting near a wall can still move away from it or along it (and never starts inside a
+   * grown box, which the slab test would skip); a box holding the origin is ignored. floor: the
+   * y = 0 ground too. Returns the shared `sweepHit` ({ t, nx, ny, nz, box }) or null.
+   */
+  const sweepHit = { t: 0, nx: 0, ny: 0, nz: 0, box: null };
+  function sweep(ox, oy, oz, dx, dy, dz, maxT, r, filter = null, floor = true) {
+    let best = maxT; let any = false; let bnx = 0; let bny = 0; let bnz = 0; let bb = null;
+    const ex = ox + dx * maxT; const ez = oz + dz * maxT;
+    const n = gather(Math.min(ox, ex) - r, Math.min(oz, ez) - r, Math.max(ox, ex) + r, Math.max(oz, ez) + r);
+    for (let q = 0; q < n; q++) {
+      const b = boxes[qbuf[q]];
+      if (filter && !filter(b)) continue;
+      const gap = Math.max(b.minX - ox, ox - b.maxX, b.minY - oy, oy - b.maxY, b.minZ - oz, oz - b.maxZ);
+      if (gap <= 0.002) continue;
+      const rr = gap > r + 0.002 ? r : gap - 0.002;
+      let t0 = 0; let t1 = best; let nx = 0; let ny = 0; let nz = 0; let ok = true;
+      for (let a = 0; a < 3 && ok; a++) {
+        const o = a === 0 ? ox : a === 1 ? oy : oz; const d = a === 0 ? dx : a === 1 ? dy : dz;
+        const lo = (a === 0 ? b.minX : a === 1 ? b.minY : b.minZ) - rr; const hi = (a === 0 ? b.maxX : a === 1 ? b.maxY : b.maxZ) + rr;
+        if (Math.abs(d) < 1e-9) { if (o <= lo || o >= hi) ok = false; continue; }
+        let ta = (lo - o) / d; let tb = (hi - o) / d; let sgn = -1;
+        if (ta > tb) { const t = ta; ta = tb; tb = t; sgn = 1; }
+        if (ta > t0) { t0 = ta; nx = a === 0 ? sgn : 0; ny = a === 1 ? sgn : 0; nz = a === 2 ? sgn : 0; }
+        if (tb < t1) t1 = tb;
+        if (t0 > t1) ok = false;
+      }
+      if (ok && t0 > 0 && t0 < best) { best = t0; any = true; bnx = nx; bny = ny; bnz = nz; bb = b; }
+    }
+    if (floor && dy < -1e-6) {
+      const rr = oy > r + 0.002 ? r : Math.max(0, oy - 0.002);
+      const t = (oy - rr) / -dy;
+      if (t >= 0 && t < best) { best = t; any = true; bnx = 0; bny = 1; bnz = 0; bb = null; }
+    }
+    if (!any) return null;
+    sweepHit.t = best; sweepHit.nx = bnx; sweepHit.ny = bny; sweepHit.nz = bnz; sweepHit.box = bb;
+    return sweepHit;
+  }
+  /** The first box (passing filter) holding the point, each grown by m; null when it's in the clear. */
+  function boxAt(x, y, z, m = 0, filter = null) {
+    const n = gather(x - m, z - m, x + m, z + m);
+    for (let q = 0; q < n; q++) {
+      const b = boxes[qbuf[q]];
+      if (filter && !filter(b)) continue;
+      if (x > b.minX - m && x < b.maxX + m && y > b.minY - m && y < b.maxY + m && z > b.minZ - m && z < b.maxZ + m) return b;
+    }
+    return null;
+  }
+
   /** Nearest vertical wall face within `maxD` of (x,z) at height y (for the wall pose). Shared result object. */
   const wallRes = { nx: 0, nz: 0, px: 0, pz: 0, box: null, d: 0 };
   function putWall(nx, nz, px, pz, b, d) { wallRes.nx = nx; wallRes.nz = nz; wallRes.px = px; wallRes.pz = pz; wallRes.box = b; wallRes.d = d; return d; }
@@ -392,7 +444,7 @@ export function createWorld(map) {
   }
 
   return {
-    boxes, bounds, stats, guarded, clearOf, step, pushOut, groundAt, groundRes, ceilingAt, raycast, nearestWall, crawl, reHead, nearestSurface, cornerAt, roomFor, inside, buried,
+    boxes, bounds, stats, guarded, clearOf, step, pushOut, groundAt, groundRes, ceilingAt, raycast, sweep, boxAt, nearestWall, crawl, reHead, nearestSurface, cornerAt, roomFor, inside, buried,
     blocks(b, feet, body) { return b.maxY > feet + stepOf(body || {}) && b.minY < feet + headOf(body || {}); },
     /** For tests: how many boxes a query would touch (grid effectiveness). */
     gather,

@@ -3,6 +3,15 @@
 import { muted } from '../core.js';
 
 export function createSound() {
+  // the app's mute switch, cached: ambience() and tempo() run every frame and the step sound on every
+  // footfall, and core's muted() is a localStorage read + JSON.parse each time. Re-read at most once a
+  // second, when the page comes back into view, and at once when core flips it ('ju:mute').
+  let mutedC = muted(); let mutedAt = performance.now();
+  const remute = () => { mutedC = muted(); mutedAt = performance.now(); };
+  const isMuted = () => { const n = performance.now(); if (n - mutedAt > 1000 || n < mutedAt) remute(); return mutedC; };
+  const onVis = () => { if (!document.hidden) remute(); };
+  if (typeof window !== 'undefined') window.addEventListener('ju:mute', remute);
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVis);
   let ctx = null;
   let master = null;
   let noiseBuf = null;
@@ -132,18 +141,18 @@ export function createSound() {
   };
 
   return {
-    unlock() { if (!muted()) ensure(); },
+    unlock() { remute(); if (!mutedC) ensure(); },
     /** Ambience mode: 'off' | 'hide' | 'hunt'. Idempotent; cheap to call every frame. */
     ambience(mode) {
       if (dead) return;
-      if (muted()) { if (amb.mode !== 'off') ambStop(); return; }
+      if (isMuted()) { if (amb.mode !== 'off') ambStop(); return; }
       if (mode === amb.mode) return;
       if (mode === 'off') ambStop(); else ambStart(mode);
     },
     /** Hunt pulse tempo (bpm); called per frame with a number, schedules at most one beat per call. */
     tempo(bpm) {
       amb.bpm = bpm;
-      if (dead || amb.mode !== 'hunt' || !ctx || muted()) return;
+      if (dead || amb.mode !== 'hunt' || !ctx || isMuted()) return;
       const now = ctx.currentTime;
       if (now < amb.duckUntil) { amb.nextBeat = Math.max(amb.nextBeat, amb.duckUntil); return; }
       if (now >= amb.nextBeat) {
@@ -158,7 +167,7 @@ export function createSound() {
       try { const t = ctx.currentTime; amb.padG.gain.cancelScheduledValues(t); amb.padG.gain.setValueAtTime(0.0001, t); amb.padG.gain.exponentialRampToValueAtTime(amb.mode === 'hide' ? 0.07 : 0.045, t + ms / 1000 + 0.3); amb.duckUntil = t + ms / 1000; } catch { /* ignore */ }
     },
     play(name) {
-      if (dead || muted()) return;
+      if (dead || isMuted()) return;
       const fn = S[name];
       if (fn) { try { fn(); } catch { /* audio is best-effort */ } }
     },
@@ -168,7 +177,7 @@ export function createSound() {
      * are a tight, crisp band; soft ones a wider, breathier one. Throttled to one per 55 ms.
      */
     brush(size, speed, hard) {
-      if (dead || muted()) return;
+      if (dead || isMuted()) return;
       const n = performance.now(); if (n - lastTick < 55) return; lastTick = n;
       const f = size === 0 ? 3200 : size === 1 ? 2200 : 1500;
       const sp = speed < 0 ? 0 : speed > 1 ? 1 : speed;
@@ -176,12 +185,14 @@ export function createSound() {
     },
     /** A footstep at volume vol (0..~0.2), pitch ×pitch (0.8 = heavier / sprinting); crawl = sticky feet. */
     step(vol, pitch = 1, crawl = false) {
-      if (dead || muted() || vol < 0.005) return;
+      if (dead || isMuted() || vol < 0.005) return;
       stepVol = vol; stepPitch = pitch;
       try { (crawl ? S.stepTup : S.stepTap)(); } catch { /* best-effort */ }
     },
     destroy() {
       dead = true;
+      if (typeof window !== 'undefined') window.removeEventListener('ju:mute', remute);
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVis);
       ambStop();
       if (ctx) { try { ctx.close(); } catch { /* ignore */ } }
       ctx = null; master = null; noiseBuf = null;
