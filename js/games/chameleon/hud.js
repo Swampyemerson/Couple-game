@@ -680,9 +680,13 @@ export function createHud(root, api) {
   const pellets = [];
   // the body font token, read once at mount (maps QA round 1: getComputedStyle in miniSetup forced
   // a style recalc inside every big-map switch, 414 ms of self time at 4x CPU on a House switch)
-  let fontTok = '';
-  const bodyFont = () => fontTok || (fontTok = getComputedStyle(root).getPropertyValue('--g-font-body').trim()) || 'sans-serif';
-  try { bodyFont(); } catch { /* read on first use */ }
+  // (null = not read yet; an empty token is remembered too, so a theme without it never re-reads)
+  let fontTok = null;
+  const bodyFont = () => {
+    if (fontTok === null && root.isConnected) { try { fontTok = getComputedStyle(root).getPropertyValue('--g-font-body').trim(); } catch { fontTok = ''; } }
+    return fontTok || 'sans-serif';
+  };
+  bodyFont();
 
   const hud = {
     el,

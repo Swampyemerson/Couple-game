@@ -1356,8 +1356,9 @@ async function mapSliceSection(port) {
     await waitReady(a);
     const b0 = await hook(a, 'bootInfo');
     const boot = b0.builds[b0.builds.length - 1];
-    // (bounds with room for a busy box: the sandbox shares its CPU; at rest steps are ≤ 6 ms)
-    assert(boot && boot.id === 'living' && boot.slices >= 2 && boot.maxMs < 80, `the boot builds the lobby map in slices behind the loading card (${JSON.stringify(boot)})`);
+    // (bounds with room for a busy box: the sandbox shares its CPU; at rest steps are ≤ 6 ms. The
+    // p90 is the code's step size; the longest step also holds any GC pause or preemption)
+    assert(boot && boot.id === 'living' && boot.slices >= 2 && boot.p90 < 16 && boot.over50 <= 2, `the boot builds the lobby map in slices behind the loading card (${JSON.stringify(boot)})`);
     // real taps on the lobby arrow through every map: each is a cold build (the cache keeps 3)
     const ids = await hook(a, 'mapIds');
     const rows = [];
@@ -1370,18 +1371,22 @@ async function mapSliceSection(port) {
       await wait(150); // long-task entries arrive a little late
       const r = { ...r0, longest: await a.evaluate(([t, t1]) => window.__lt.filter((x) => x[0] >= t && x[0] <= t1).reduce((m, x) => Math.max(m, x[1]), 0), [t0, r0.t1]) };
       const bi = await hook(a, 'bootInfo'); const bs = bi.builds[bi.builds.length - 1];
-      rows.push({ id: want, ms: Math.round(r.ms), frames: r.frames, longest: Math.round(r.longest), slices: bs.id === want ? bs.slices : 0, step: bs.id === want ? bs.maxMs : 0, slice: bs.id === want ? bs.maxSlice : 0 });
+      rows.push({ id: want, ms: Math.round(r.ms), frames: r.frames, longest: Math.round(r.longest), slices: bs.id === want ? bs.slices : 0, step: bs.id === want ? bs.maxMs : 0, at: bs.id === want ? bs.maxAt : '', p90: bs.id === want ? bs.p90 : 0, o50: bs.id === want ? bs.over50 : 0, sp90: bs.id === want ? bs.sliceP90 : 0, slice: bs.id === want ? bs.maxSlice : 0 });
       await wait(250);
     }
-    console.log('  cold switches by arrow taps: ' + rows.map((r) => `${r.id} ${r.ms} ms / ${r.frames} frames / ${r.slices} slices (longest ${r.slice} ms, step ${r.step}), longest task ${r.longest}`).join(' · '));
+    console.log('  cold switches by arrow taps: ' + rows.map((r) => `${r.id} ${r.ms} ms / ${r.frames} frames / ${r.slices} slices (p90 ${r.sp90} / longest ${r.slice} ms; steps p90 ${r.p90} / max ${r.step} at ${r.at}, ${r.o50} over 50 ms), longest task ${r.longest}`).join(' · '));
     const big = rows.filter((r) => r.id === 'cuboulder' || r.id === 'house');
     assert(big.every((r) => r.slices >= 3 && r.frames >= 3), `the big maps build over several frames while the old diorama keeps drawing (${big.map((r) => `${r.id}: ${r.slices} slices, ${r.frames} frames`).join(', ')})`);
-    const worstStep = Math.max(...rows.map((r) => r.step));
-    assert(worstStep < 80, `no single build step runs long (the longest ${worstStep} ms at 1x; a whole CU build was one 0.3–0.8 s task at 4x)`);
+    // Step and slice times are wall time. On this shared 4-core box (load 8–16, the software-GL GPU
+    // processes run at a higher priority than the pages) a preemption or a GC pause lands on a step
+    // or two: 135–206 ms on steps that take 4–14 ms at rest. So the code's own sizes are the p90s,
+    // and only a couple of steps per map may run past 50 ms (an unsliced build is one big step).
+    const worstStep = Math.max(...rows.map((r) => r.step)); const worstP90 = Math.max(...rows.map((r) => r.p90)); const worstO50 = Math.max(...rows.map((r) => r.o50));
+    assert(worstP90 < 16 && worstO50 <= 2, `build steps are small: p90 ≤ ${worstP90} ms on every map, at most ${worstO50} step(s) a map over 50 ms (the longest ${worstStep} ms; a whole CU build was one 0.3–0.8 s task at 4x)`);
     // the build's own slices (frames in software GL are long tasks by themselves on a busy box, so
     // the longest task is only reported)
-    const worstSlice = Math.max(...rows.map((r) => r.slice));
-    assert(worstSlice < 100, `no build slice blocks the main thread (the longest across ${rows.length} cold switches: ${worstSlice} ms, 16 ms budget + one step; the longest task, frames included: ${Math.max(...rows.map((r) => r.longest))} ms)`);
+    const worstSlice = Math.max(...rows.map((r) => r.slice)); const worstSP90 = Math.max(...rows.map((r) => r.sp90));
+    assert(worstSP90 < 40, `build slices keep to their budget: p90 ≤ ${worstSP90} ms on every map (16 ms + one step; the longest ${worstSlice} ms; the longest task, frames included: ${Math.max(...rows.map((r) => r.longest))} ms)`);
     // a newer tap drops a half-built map: Next while the House is building goes on to the Market
     await hook(a, 'setRules', { map: 'studio' }); await wait(300);
     const n0 = (await hook(a, 'bootInfo')).builds.length;
@@ -1453,7 +1458,9 @@ async function varietySection(port) {
   const h = await launch({ port, only: ['chameleon'] });
   const { a, b } = h;
   try {
-    await startPair(h, { ...FAST, hide: 6000, seek: 6000, recap: 3500, title: 3000, noTips: true });
+    // (mixSeed 'cu1' plans House, House, CU, CU: round 3's prefetch is the biggest map, the case
+    // that used to run short in a 3.5 s test recap; VARIETY_SEED=… for another plan)
+    await startPair(h, { ...FAST, hide: 6000, seek: 6000, recap: 3500, title: 3000, noTips: true, mixSeed: process.env.VARIETY_SEED || 'cu1' });
     // Mix it up chip: both phones see it on
     await a.tap('.chm-lobby .chm-presets .chm-mix');
     await b.waitForFunction(() => window.__cham.state().setup.mix === true, null, { timeout: 8000 });
@@ -1496,16 +1503,18 @@ async function varietySection(port) {
     const nl = await a.evaluate(() => { const e = document.querySelector('.chm-nextline'); return e ? e.textContent : ''; });
     assert(nl.includes('new map'), `the recap says what's next: "${nl.trim()}"`);
     await shot(a, 'variety-recap-next');
-    // both phones preload round 3's map while the recap is up
+    // both phones preload round 3's map during round 2 (maps QA round 1: from its hide phase; it
+    // was the recap, too short for CU on a busy box)
     for (const p of [a, b]) await p.waitForFunction((m) => window.__cham.bootInfo().cache.some((c) => c.id === m), m1.maps[2], { timeout: 15000 });
-    assert(true, `round 3's map (${m1.maps[2]}) was built during the recap on both phones`);
+    assert(true, `round 3's map (${m1.maps[2]}) was built during round 2 on both phones`);
     // maps QA round 1: in idle-time slices (it was one 0.3–0.8 s task at 4x CPU in the recap)
     await wait(200);
     const pf = (await hook(a, 'bootInfo')).builds.filter((x) => x.id === m1.maps[2]).pop();
-    const recapLong = await a.evaluate(() => (window.__lt2 || []).filter((x) => x[2] === 'recap').reduce((m, x) => Math.max(m, x[1]), 0));
-    // (with two software-GL phones on a busy box a frame can take 300 ms and the 3.5 s test recap
-    // may end first: then the round's loadMap finishes the rest, which must be small)
-    assert(pf && pf.slices >= 2 && pf.maxMs < 40 && (!pf.drained || pf.drainMs < 150), `the recap's prefetch ran in ${pf ? pf.slices : '?'} idle slices (longest step ${pf ? pf.maxMs : '?'} ms), ${pf && pf.drained ? `the round's start finished the last ${pf.drainMs} ms` : 'done before the round'} (the recap's longest task, frames included, ${Math.round(recapLong)} ms)`);
+    const recapLong = await a.evaluate(() => (window.__lt2 || []).reduce((m, x) => Math.max(m, x[1]), 0));
+    // (if round 3 starts first, e.g. two software-GL phones on a very busy box, its loadMap
+    // finishes the rest, which must be small)
+    // (wall time on a busy box: the p90 is the code's step size, a preemption or GC lands on one step)
+    assert(pf && pf.slices >= 2 && pf.p90 < 16 && pf.over50 <= 2 && (!pf.drained || pf.drainMs < 150), `round 3's map (${m1.maps[2]}) was prefetched during round 2 (from its hide phase) in ${pf ? pf.slices : '?'} idle slices (steps p90 ${pf ? pf.p90 : '?'} ms, ${pf ? pf.over50 : '?'} over 50 ms, longest ${pf ? `${pf.maxMs} ms at ${pf.maxAt}` : '?'}), ${pf && pf.drained ? `the round's start finished the last ${pf.drainMs} ms` : 'done before the round'} (round 2's longest task, frames included, ${Math.round(recapLong)} ms)`);
     await a.waitForFunction(() => { const s = window.__cham.state(); return s.phase.name === 'hide' && s.phase.round === 3; }, null, { timeout: 30000 });
     await b.waitForFunction((m) => window.__cham.state().mapId === m, m1.maps[2], { timeout: 15000 });
     assert((await st(a)).mapId === m1.maps[2] && (await st(b)).match.map === m1.maps[2], `round 3 plays on ${m1.maps[2]} on both phones`);
@@ -2079,7 +2088,7 @@ async function paintJuiceSection(port) {
     await a.tap('.chm-acts [data-act="paint"]');
     await a.waitForFunction(() => { const c = window.__cham.camo(); return c.shown && c.score >= 0 && c.meter && c.meter.text === `${c.score}%`; }, null, { timeout: 10000 });
     let c = await hook(a, 'camo');
-    assert(c.score >= 20 && c.score < 75, `the meter scores a plain white body on the wallpaper: ${c.score}% "${c.meter.word}"`);
+    assert(c.score >= 10 && c.score < 75, `the meter scores a plain white body on the wallpaper: ${c.score}% "${c.meter.word}"`);
     const plain = c.score; const c0 = c;
     await snap('1-open');
     // stamp: the print wipes up the body; anything that reads the skin settles it first
@@ -2195,6 +2204,7 @@ async function paintProSection(port) {
     // smoothing: a fast loop of 7 moves (a slow phone's frames) is drawn as a curve, and the last
     // half-segment lands on lift
     await hook(a, 'setPaint', { size: 0, hard: true, tool: 'brush', rgb: [40, 40, 60] });
+    { const ctr = await hook(a, 'bodyCenter', 'b'); const bb = await hook(a, 'body', 'b'); await hook(a, 'paintCamAt', ctr[0], ctr[1], ctr[2], bb.nx, bb.ny, bb.nz, 1.2); await wait(500); } // face on (the paint camera may have picked a clear side view): the loop stays on the body
     const [cx, cy] = await hook(a, 'bodyPoint', 0);
     const lp = await sparseLoop(a, cx, cy, 40, 7);
     assert(lp.afterUp > lp.beforeUp, `the stroke's last half-segment is drawn on lift (${lp.afterUp - lp.beforeUp} dabs)`);
@@ -2330,13 +2340,13 @@ async function blendFairSection(port) {
     await camoSettled(a, `k.score > ${plain} + 20`);
     c = await hook(a, 'camo');
     let v = (await hook(a, 'blendViews')).last;
-    const side = Math.min(...v.slice(1));
+    const side = Math.min(...v.slice(1).filter((x) => x >= 0)); // (−1: a view with no room for a seeker)
     console.log(`  stamp on the wallpaper: ${c.score}% "${c.meter.word}" (front ${v[0]}, sides ${v.slice(1).join(' / ')})`);
     assert(c.score >= plain + 25 && c.score < 90 && !c.meter.inv, `one Stamp tap: ${plain}% → ${c.score}% "${c.meter.word}": a good start, not a free Ghost`);
     assert(v.length === 5 && v[0] >= 72 && side <= v[0] - 8, `head-on the stamp holds up (${v[0]}%), from 50° to the side the stripes stop lining up (worst side ${side}%)`);
     const stamped = c.score;
-    const old = await a.evaluate(() => { window.__cham.blendViews({ views: 1, dist: 1000 }); const n = window.__cham.blend('b').now; window.__cham.blendViews({ views: 5, dist: 2.6 }); return n; });
-    assert(old >= 85 && old - stamped >= 8, `scored from the stamp's own projection only (the old score) the same body reads ${old}%`);
+    const old = await a.evaluate(() => { window.__cham.blendViews({ views: 1, dist: 1000, backdrop: 0 }); const n = window.__cham.blend('b').now; window.__cham.blendViews({ views: 5, dist: 2.6, backdrop: 1 }); return n; });
+    assert(old >= 80 && old - stamped >= 8, `scored from the stamp's own projection only (the old score) the same body reads ${old}%`);
     await a.waitForFunction(() => /From the side/.test((document.querySelector('.chm-hint') || {}).textContent || ''), null, { timeout: 5000 });
     assert(true, `the side hint explains it once: "${await hintText(a)}"`);
     await snap('1-stamp-wallpaper');
@@ -2380,8 +2390,10 @@ async function blendFairSection(port) {
     console.error(e.message, h.errors); failures++;
     await shot(a, 'blendfair-FAIL').catch(() => {});
   } finally { await h.close(); }
-  // a calm surface still blends: the Corner Market's plain wall takes a stamp to Ghost, past the
-  // +10 line (the star lights) and past "Invisible!"
+  // paint QA1b: the score sees what is really behind the body, not the plane of the surface it's
+  // on extended for ever. The Corner Market's camo spot is a narrow cream pillar between fridge
+  // doors full of bottles: a stamp used to read 97 % "Invisible!" (a plain white body 87 %) while
+  // the seeker saw a cream lump against the bottles
   h = await launch({ port, only: ['chameleon'], who: ['a'], device: 'iPhone 13' });
   a = h.a;
   try {
@@ -2389,35 +2401,82 @@ async function blendFairSection(port) {
     await h.startLive(a, 'chameleon', 'local');
     await waitReady(a);
     await blendHide(a, 'market');
-    assert(await camoHide(a) === 'wall', 'hider flat on the Corner Market\'s camo wall');
+    assert(await camoHide(a) === 'wall', 'hider flat on the Corner Market\'s fridge pillar');
     await a.tap('.chm-acts [data-act="paint"]');
     await camoSettled(a, 'k.score >= 0');
     const c0 = await hook(a, 'camo');
-    await hook(a, 'setPaint', { rgb: [200, 40, 90], tool: 'fill' });
-    await a.tap('.chm-tool[data-tool="fill"]'); await tapBody(a);
-    await camoSettled(a, `k.score < ${c0.score} - 10`);
-    const pink = await hook(a, 'camo');
+    const plane0 = await a.evaluate(() => { window.__cham.blendViews({ backdrop: 0 }); const n = window.__cham.blend('b').now; window.__cham.blendViews({ backdrop: 1 }); return n; });
+    assert(c0.score < 40 && plane0 >= 80, `a plain white body on the cream pillar: ${c0.score}% with the bottles round it; ${plane0}% scored against the pillar's plane extended for ever (the old way)`);
     await a.tap('.chm-tool[data-tool="stamp"]');
-    await camoSettled(a, `k.score > ${pink.score} + 10`);
-    let c = await hook(a, 'camo'); const v = (await hook(a, 'blendViews')).last;
-    console.log(`  Market wall: plain ${c0.score}%, a pink body ${pink.score}%, stamped ${c.score}% (front ${v[0]}, sides ${v.slice(1).join(' / ')})`);
-    assert(c.score >= 86 && c.meter.bonusOn && c.meter.pops > pink.meter.pops && c.meter.sounds > pink.meter.sounds, `on a calm wall a stamp still blends: ${c.score}% "${c.meter.word}", the +10 star lit, "${c.meter.lastPop}" with a sound`);
-    assert(!/From the side/.test(await hintText(a)), 'no side hint where the pattern holds up from the side');
-    // the meter's "Invisible!" line (95) is unchanged UI: scored head-on only (the old score), the same stamp pops it
-    await hook(a, 'blendViews', { views: 1, dist: 1000 });
-    await a.tap('.chm-tools [data-act="undo"]');
-    await camoSettled(a, `k.score < ${pink.score} + 10`);
-    const lo = await hook(a, 'camo');
-    await a.tap('.chm-tool[data-tool="stamp"]');
-    await camoSettled(a, `k.score >= 95`);
+    await camoSettled(a, `k.runs >= ${c0.runs + 1}`);
+    let c = await hook(a, 'camo'); let v = await hook(a, 'blendViews'); const ls = (await st(a)).lastStamp;
+    console.log(`  Market pillar: plain ${c0.score}%, stamped ${c.score}% (front ${v.last[0]}, sides ${v.last.slice(1).join(' / ')}; ${v.diag.tris} map triangles round it, ${v.diag.hidden} texel views hidden by the map; the stamp found something behind ${ls.hits} texels in ${ls.ms.toFixed(1)} ms)`);
+    assert(ls.hits > 3000 && v.last[0] >= 75 && c.score < 80 && !c.meter.inv && !c.meter.bonusOn, `the stamp prints what is behind each bit of the body (the bottles past the pillar's edges): head-on ${v.last[0]}%, but the bottles break up from the side: ${c.score}% "${c.meter.word}", no star, no "Invisible!" (it read 97 %)`);
+    await snap('4-market-pillar');
+    // the x-ray shows the overhang
+    await a.tap('.chm-meter');
+    await a.waitForFunction(() => window.__cham.camo().xray.on, null, { timeout: 10000 });
     c = await hook(a, 'camo');
-    await hook(a, 'blendViews', { views: 5, dist: 2.6 });
-    assert(c.meter.inv && c.meter.lastPop === 'Invisible!' && c.meter.sounds > lo.meter.sounds, `past 95 % the meter pops "${c.meter.lastPop}" with a sound (${c.score}%, head-on scoring)`);
-    const f = path.join(SH, 'fair-4-market.png'); await a.screenshot({ path: f, clip: { x: 0, y: 80, width: 390, height: 560 } }); shots.push(f);
+    assert(c.xray.bad > 500 && c.xray.slice < 16, `the x-ray flags ${c.xray.bad} texels (sliced: largest ${c.xray.slice.toFixed(1)} ms)`);
+    await a.tap('.chm-meter');
     h.assertNoErrors();
   } catch (e) {
     console.error(e.message, h.errors); failures++;
     await shot(a, 'blendfair2-FAIL').catch(() => {});
+  } finally { await h.close(); }
+  // a calm surface still blends: the Living Room's plain painted wall. One Stamp tap is a good
+  // start (Sneaky, the +10 star lit); painting the rest of the body the wall's colour (eyedropper,
+  // fill) takes it to Ghost and "Invisible!", with a sticker and a sound each
+  h = await launch({ port, only: ['chameleon'], who: ['a'], device: 'iPhone 13' });
+  a = h.a;
+  try {
+    await arm(a, { ...SLOW, hide: 300000, maxDpr: 0.6 });
+    await h.startLive(a, 'chameleon', 'local');
+    await waitReady(a);
+    await blendHide(a, 'living');
+    const probe = (await hook(a, 'probes')).find((p) => p.name === 'right-wall-paint');
+    await hook(a, 'teleport', probe.point[0] - 0.25, probe.point[2], Math.PI / 2, 1.7); // (clear of the dado below)
+    await wait(150);
+    assert(await hook(a, 'setPose', 'wall') === 'wall' && (await hook(a, 'body', 'b')).nx < -0.9, 'hider flat on the Living Room\'s plain painted wall');
+    await a.tap('.chm-acts [data-act="paint"]');
+    await camoSettled(a, 'k.score >= 0');
+    await hook(a, 'setPaint', { rgb: [200, 40, 90], tool: 'fill' });
+    await a.tap('.chm-tool[data-tool="fill"]'); await tapBody(a);
+    await camoSettled(a, 'k.score < 40');
+    const pink = await hook(a, 'camo');
+    await a.tap('.chm-tool[data-tool="stamp"]');
+    await camoSettled(a, `k.score > ${pink.score} + 30`);
+    let c = await hook(a, 'camo'); const v = (await hook(a, 'blendViews')).last;
+    console.log(`  plain wall: a pink body ${pink.score}%, stamped ${c.score}% (front ${v[0]}, sides ${v.slice(1).join(' / ')})`);
+    assert(c.score >= 80 && c.score < 95 && c.meter.bonusOn && c.meter.pops > pink.meter.pops && c.meter.sounds > pink.meter.sounds, `on a calm wall one Stamp tap gets ${c.score}% "${c.meter.word}": the +10 star lit, "${c.meter.lastPop}" with a sound`);
+    assert(!/From the side/.test(await hintText(a)), 'no side hint where the pattern holds up from the side');
+    // the rest of the body (its sides, the bits the stamp only half covered) in the wall's colour
+    const st = c;
+    await hook(a, 'setPaint', { rgb: probe.hex.match(/\w\w/g).map((x) => parseInt(x, 16)), tool: 'fill' });
+    { const ctr = await hook(a, 'bodyCenter', 'b'); const bb = await hook(a, 'body', 'b'); await hook(a, 'paintCamAt', ctr[0], ctr[1], ctr[2], bb.nx, bb.ny, bb.nz, 1.4); await wait(500); } // face on: every region in sight
+    for (let part = 0; part < 8; part++) {
+      const pt = await hook(a, 'bodyPoint', part).catch(() => null); if (!pt) break;
+      await a.evaluate(([cx, cy]) => { const el = document.elementFromPoint(cx, cy); const mk = (type) => new PointerEvent(type, { pointerId: 62, pointerType: 'touch', clientX: cx, clientY: cy, bubbles: true, cancelable: true, isPrimary: true, buttons: type === 'pointerup' ? 0 : 1 }); el.dispatchEvent(mk('pointerdown')); setTimeout(() => el.dispatchEvent(mk('pointerup')), 60); }, pt);
+      await wait(350);
+    }
+    await camoSettled(a, `k.score >= ${st.score} + 2`);
+    c = await hook(a, 'camo');
+    assert(c.score >= 90 && c.meter.grade === 3, `filled in the wall's colour: ${st.score}% → ${c.score}% "${c.meter.word}" (views ${(await hook(a, 'blendViews')).last.join(' / ')}: from close above and below the wainscot and the ceiling still show past the body)`);
+    // the meter's "Invisible!" line (95): scored head-on only, a stamp over that pops it
+    if (!c.meter.inv) {
+      const s0 = c.meter.sounds;
+      await hook(a, 'blendViews', { views: 1 });
+      await a.tap('.chm-tool[data-tool="stamp"]');
+      await camoSettled(a, 'k.score >= 95');
+      c = await hook(a, 'camo');
+      await hook(a, 'blendViews', { views: 5 });
+      assert(c.meter.inv && c.meter.lastPop === 'Invisible!' && c.meter.sounds > s0, `past 95 % the meter pops "${c.meter.lastPop}" with a sound (${c.score}%, head-on)`);
+    } else assert(c.meter.lastPop === 'Invisible!', `past 95 % the meter popped "${c.meter.lastPop}"`);
+    await snap('5-plain-wall');
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'blendfair3-FAIL').catch(() => {});
   } finally { await h.close(); }
   if (process.env.PAINT_MONT) { try { require('child_process').execFileSync('node', [process.env.PAINT_MONT, path.join(SH, 'fair-montage.png'), '300', '430', ...shots]); } catch (e) { console.log('  (montage skipped)', e.message.split('\n')[0]); } }
 }

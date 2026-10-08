@@ -216,13 +216,14 @@ and miss the dashing body entirely, which made the section flaky).
   Classic, +165 on CU). Now `roundOver` is called with the moment the seeker ran out and pays
   `floor(seconds survived) + 30`; the SURVIVED stamp and recap say "ran dry at 0:05 · +35".
 - **Blend %** (`blendOf` in game.js, the math in `camo.js`, shown live while painting): the body
-  against the surface the hider is on (the wall behind a stuck body, else the floor below, found
-  exactly as the stamp finds it), sampled with the stamp's sampler (vertex colour × atlas tile ×
-  blob shadow) and seen from five viewpoints round it (paint QA round 1, below: it used to be the
-  stamp's own head-on projection, so every stamp read 98–100 %), `camo = 100 × (1 − 2.8 × loss)`
-  (clamped). Grade words: Ghost ≥ 90, Sneaky ≥ 75, Spotted ≥ 50, Sore thumb < 50. Measured (QA1):
-  plain white on the Living Room wallpaper 21 %, after one stamp 74 %; one stamp on the Market's
-  plain wall 91 %. The hider's device computes it (`R.blend[w]`), it travels in the paint blob's
+  seen from five viewpoints round the surface the hider is on (the wall behind a stuck body, else
+  the floor below), each texel against whatever map triangle is really behind it along that sight
+  line (vertex colour × atlas tile × blob shadow, as drawn): paint QA round 1 and 1b, below (it
+  used to be the stamp's own head-on projection, so every stamp read 98–100 %, then the plane of
+  the surface extended for ever, so a body on a narrow pillar read 97 %). `camo = 100 × (1 − 2.8 ×
+  loss)` (clamped). Grade words: Ghost ≥ 90, Sneaky ≥ 75, Spotted ≥ 50, Sore thumb < 50. Measured
+  (QA1b): plain white on the Living Room wallpaper 24 %, after one stamp 71 %; the Market's fridge
+  pillar 11 % → 65 %; one stamp on the Living Room's plain painted wall 89–91 %. The hider's device computes it (`R.blend[w]`), it travels in the paint blob's
   meta (`blend`), the host adds the bonus (`blendPointsFor`) and records `rec.blend` /
   `rec.blendPts`; the recap prints "Blend 96% Ghost (+10)". Cost: one pass over ≤ 16 k texels at
   the lock, nothing per frame. (The before/after strip and the share card are the UX pass's.)
@@ -898,6 +899,66 @@ unlocked for both players in their first match in every run.
   whole-score and slice costs at 1x / 4x; one phone on the Market's calm wall: from a pink body
   a stamp reaches ≥ 86 with the +10 star and a grade pop, no side hint, and "Invisible!" pops past
   95). `paintjuice` / `paintpro` assert the new stamp numbers; `feel`'s stamp line is ≥ 60 (was 70).
+
+### Paint owner, QA round 1b: what is really behind the body (and a stamp that prints it)
+
+Re-checking round 1 in play: the Corner Market's camo spot still read **97 % "Invisible!"** after
+one Stamp tap, and an unpainted white body **87 %** (Classic's +10 for nothing), while the
+screenshot showed a cream lump against rows of bottles. The camo spot attaches the hider to the
+narrow cream pillar between two fridge doors; the body is wider than the pillar.
+
+- **Root cause.** Both the score and the stamp took the triangle the body is stuck to and sampled
+  its tile, uv mapping and vertex colour on that triangle's PLANE, extended for ever. Past the
+  pillar's edges (or below a dado line, or off a table's edge) the seeker sees something else.
+- **The score casts at the map's own triangles** (`camo.js`): the triangles within `rb + 1.6 m` of
+  the body are copied out of the map chunks once per spot (`GAT`, shared by the meter, the lock,
+  the x-ray and the stamp; ~200–2 500 triangles of 5–28 k scanned, 0.2–2 ms), then binned per view
+  on a 16 × 16 screen grid, nearest first. A sample casts its sight line (Möller–Trumbore) through
+  its bin: the first front face beyond the texel is what's behind it (tile × interpolated vertex
+  colour × blob shadow, as drawn); a front face between the eye and the texel hides it from that
+  view (it doesn't count); nothing within reach is the room's background colour. Items come
+  nearest first, so a sample stops at the first one that starts beyond its best hit: 7–13 tests a
+  sample (23 unsorted). An eye that would be inside a collider comes forward of it
+  (`world.raycast`), and a view with no room for a seeker (< 0.5 m) is dropped.
+- **The stamp prints what is behind each texel** (`stampSampler`): the same triangles, binned
+  once along the surface normal, so every texel takes the colour straight behind it: on the pillar
+  the overhanging parts print the bottles, below the dado line the green. Head-on a stamp is exact
+  again wherever it is, and the score's side views say what parallax costs. Texels with nothing
+  behind them within reach keep the old projection. 3.5–8 ms a stamp.
+- **Numbers** (Large, one Stamp tap, scripted phone runs; "plane" = the round 1 score):
+
+  | Spot | plain white | one stamp (head-on view) | plane score of the same stamp |
+  |---|---|---|---|
+  | Corner Market camo (fridge pillar) | 87 → **11** | 97 → **65** (87) | 97 |
+  | Living Room wallpaper | 22 → 24 | 74 → 71 (78) | 74 |
+  | Living Room plain painted wall | – | **89–91** (98–100); filled in its colour 93–95 | – |
+  | Garden hedge / Studio / House / CU / Museum | 0 / 9 / 0 / 7 / 0 | 66 / 66 / 79 / 81 / 76 (93 / 93 / 94 / 95 / 97) | 70 / 65 / 78 / 82 / 75 |
+  | rugs, standing (Garden / House / Market / CU / Greenhouse / Museum) | – | 47 / 40 / 58 / 78 / 84 / 56 | 54 / 40 / 47 / 78 / 87 / 56 |
+
+  Big flat walls and floors score as before (the plane was right there); the spots where it
+  mattered were the ones a body hangs over. One tap reaches Classic's 80 only on a calm surface;
+  Hard's 90 (and Gold, which also needs the hunt survived) needs a calm wall plus touch-ups.
+- **Lighting is not scored** (`BLEND.lit`, default 0): the toon ramp shades a body's sides
+  differently from the flat wall behind it, and the score could compare rendered colours
+  (`lightOf`, the scene's own hemisphere + sun + ramp, copied in by `setBlendLights`). With it on,
+  a stamp on the plain wall fell from 88 to 58 with nothing a player could do about it (the brush,
+  fill and eyedropper all work in albedo), so it stays a tuning knob, not the rule.
+- **Costs** (sandbox, shared CPU): a warm whole score 4.5–7 ms at 1x, a cold one (gather + bins)
+  12–17 ms median; the meter's slices at 4x avg 3.3–5 / max 6–9.5 ms (gather ≤ 30 k triangles, or
+  ~2 ms of binning, or 1 800 samples a slice); the x-ray at 4x ≤ 9.7 ms a slice, copying the
+  meter's bins (`adoptBins`) instead of making its own. The lock no longer pays for a score the
+  meter is half way through: `camoCached` finishes the meter's job for the same paint and pose
+  (paintfeel: a lock right after a stamp 14.7 ms, of which blend 0.2 ms; it was 42–112 ms with a
+  cold score). No allocation per frame: the gather, bins and depth order live in typed arrays that
+  only grow; nothing keeps a map alive after a switch or a close (`releaseBackdrop` on unmount).
+- Tests: `ONLY=blendfair` now also plays the Market pillar (plain < 40 against ≥ 80 on the old
+  plane; the stamp finds something behind > 3 000 texels, head-on ≥ 75, overall < 80 with no star
+  and no "Invisible!"; the x-ray flags the overhang) and the Living Room's plain painted wall (a
+  pink body, one stamp ≥ 80 with the +10 star and a grade pop with a sound, filled in the wall's
+  colour ≥ 90 Ghost, "Invisible!" past 95 head-on). `paintpro`'s stroke test looks at the body face
+  on first (the paint camera may pick a clear side view, where the 40 px loop left the body).
+  Hooks: `blendViews({ backdrop: 0 | 1, lit, drop })`, `blendViews().diag / .lock` (triangles,
+  hidden texels, tests, eyes), `blendProbe(view, step)`, `state().lastStamp`.
   Writes `fair-*.png` (+ a montage with `PAINT_MONT`).
 
 ## Netcode (net.js via `chameleon/link.js`)
@@ -1211,9 +1272,9 @@ stack is refused and a zip to the shelf underside beside it still lands.
   one of you hiding on CU (270 s hunt) while the other hid in the Garden (90 s) wasn't fair. Double
   Blind (both hide every round) changes map every round. The plan travels in the match info
   (`m.maps`); the host loads the round's map before picking spawns and every phone follows `m.map`.
-  The recap's next line says "new map: Museum Night", both phones build it into the cache during
-  that recap (1.5 s in, `stage.prefetch`, atlas uploaded with `initTexture`), and the title kicker
-  reads "mixed".
+  The recap's next line says "new map: Museum Night", both phones build it into the cache a round
+  ahead (from the hide phase of the round before the change, `stage.prefetch` in idle-time slices,
+  atlas uploaded with `initTexture`; QA round 1 below), and the title kicker reads "mixed".
 - **Today's hide** (a Today tile under the presets): one setup per calendar day from the date
   alone (`dailyPlan(dayKey)`): every map once per 8-day cycle, a size, who hides first, and one
   twist on top of Classic (Floor only · Tiny chameleons · 3 pellets · 10 s head start · Paint while
@@ -1295,26 +1356,49 @@ during Mix it up's recap (`stage.prefetch`), and `hud.miniSetup` added a forced 
   set once the map is in, so nothing (a setup message from the host, a resize) ever sees a stage
   without a map; a game closed mid-build disposes the stage it made.
 - **Mix it up's next map** is prepared in idle-time slices (`requestIdleCallback`'s deadline,
-  ≥ 4 ms, ≤ 10; Safari has no `requestIdleCallback`: a slice after each frame), starting 0.2–0.6 s
-  into the recap; when frames are slow (slices 100+ ms apart, as with two software-GL phones) a
-  slice may take up to 15 % of the wall clock (≤ 30 ms) so the map is still ready by the round. If
-  the round starts first, its sync `loadMap` finishes the build (`bootInfo().builds[]`: `drained`,
-  `drainMs`).
-  Measured (two phones, 1x): 5–8 idle slices, done during the recap, longest step 5–16 ms.
+  ≥ 4 ms, ≤ 10; Safari has no `requestIdleCallback`: a slice after each frame); when frames are
+  slow (slices 100+ ms apart, as with two software-GL phones) a slice may take up to 15 % of the
+  wall clock (≤ 30 ms). It starts 1.5 s into the **hide phase of the round before the map
+  changes** (`prefetchNext` in game.js: in Hide & Seek round 2's hide for round 3's map, in Double
+  Blind every round's), so it has a whole round: the seeker's canvas is hidden then and the hider
+  mostly orbits and paints. FOUND / SURVIVED and the recap call it again (a no-op while that build
+  runs or once it's cached, a restart if it was dropped). It used to start 0.3 s into the recap: in
+  the 3.5 s test recap with two software-GL phones at load 9–13, CU came up short and the round's
+  start finished it in one 173–545 ms task (`bootInfo().builds[]`: `drained`, `drainMs`).
+  Measured (two phones, House → CU, load ~15): 14 idle slices during round 2, done long before
+  round 3, step p90 2.1 ms. `ONLY=variety` pins the plan to House, House, CU, CU (`mixSeed`), the
+  biggest prefetch.
+- **closeSlots in steps.** In a fresh page (cold JIT) on a busy box CU's slot pass over 1 016
+  colliders was one 15–47 ms step (once 395 ms with a GC in it); it now yields every ~3 ms
+  (`closeSlotsSteps`, same result: the `slices` hashes are unchanged).
+- **Step sizes in the tests.** Builds record each step's and slice's time: `maxMs` / `maxAt` (the
+  longest step and its label), `p90`, `over50` (steps past 50 ms), `sliceP90`, `maxSlice`. These
+  are wall times: under load 8–18 on this 4-core box (the software-GL GPU processes run at a higher
+  priority than the pages) a preemption or a GC pause lands on a step or two (seen: 66–206 ms on
+  `add` / `chunk` / atlas-tile steps that take 2–14 ms at rest), so the tests bound the code's own
+  sizes: step p90 < 16 ms (measured 1–4.3), at most two steps a map past 50 ms, slice p90 < 40.
 - **Minimap**: the body font token is read once at mount (`hud.js`), not with `getComputedStyle`
-  in every big-map switch.
+  in every big-map switch (an empty token is remembered too, so a theme without it never re-reads).
+- **QA's own probes, re-run on the fix** (iPhone 13 profile): `pt-retain` hub 2.7 + 3.3 MB → open,
+  CU, House, Museum (8.2 + 34.0 MB with three maps cached) → closed + 10 s **6.6 + 3.9 MB**, a
+  reopen builds the lobby map afresh (`hits 1`), a second close 6.7 + 3.9. `pt-maps` at 4x CPU, real
+  arrow taps, two cycles through all 8 maps (load ~4, another browser running): **longest task per
+  cold switch 66–153 ms** (QA: 216–839 at load ~10, up to 2.1 s at 20–28), programs 15 throughout.
+  A filmstrip of a cold Market → CU switch at 4x (`film-cu-montage.png` in the maps scratch dir):
+  the card reads "CU Boulder" in the first frame, the Market diorama keeps orbiting behind it
+  while CU builds (51 slices, the longest 66 ms with three browsers on the box), then the swap.
 
 Tests: `ONLY=mapslice` (one phone): the boot's sliced build; real arrow taps through all 8 maps
-(cold), the big maps over ≥ 3 slices and frames, no build step ≥ 80 ms and no slice ≥ 100 ms
-(bounds that hold on a busy shared box; at rest steps are ≤ 6–16 ms and slices ≤ ~30 ms; the
+(cold), the big maps over ≥ 3 slices and frames, step p90 < 16 ms with at most two steps a map
+past 50 ms (the boot too) and slice p90 < 40 ms (bounds that hold on a busy shared box; at rest
+steps are ≤ 6–16 ms and slices ≤ ~30 ms; the
 longest task, frames included, is reported: software-GL frames on a busy box are long tasks by
 themselves); closing while the boot is still building the lobby map disposes its stage; Next
 while the House is building drops it and builds only the Market; `pagehide` trims the cache to the
 map on screen and maps still switch; closing leaves < 8 MB over the hub (measured +5.4 MB with
 the three.js engine loaded; ~+33 MB before); a reopen starts from an empty cache. `ONLY=variety`
-now also requires the recap's prefetch to run in idle slices (≥ 2, no step ≥ 40 ms) and be done
-before the round, or leave < 150 ms for the round's start to finish (the 3.5 s test recap on a
-busy box with two software-GL phones, where a frame can take 300 ms).
+now also requires round 3's prefetch (CU) to run during round 2 in idle slices (≥ 2, step p90
+< 16 ms, ≤ 2 steps past 50 ms) and be done before the round, or leave < 150 ms for the round's start.
 `chameleon-maps.test.js ONLY=slices` (Node, a stub canvas): sliced = direct, byte for byte.
 
 ## Maps (deterministic data, no assets)
@@ -1404,7 +1488,7 @@ the hider moving during the head start while the seeker is blind, grace refusing
 scaling, persistence), `v3house` / `v3cu` (full 2-round matches with the v3 settings), `shots3`
 (screenshots). Screenshots go to `$SHOTS` (default `$TMPDIR/chameleon-shots`).
 
-- `blendfair` (paint QA round 1): the blend % from five viewpoints (a stamp is a start, not a free Ghost), the side hint, the x-ray, Gold needs a hide that held up.
+- `blendfair` (paint QA round 1, 1b): the blend % from five viewpoints against what is really behind the body (a stamp is a start, not a free Ghost), the side hint, the x-ray, the Market's fridge pillar (the bottles show past its edges; the stamp prints them), a plain painted wall (one stamp → the +10 star, filled → Ghost, "Invisible!" past 95), Gold needs a hide that held up.
 - `paintfeel` / `paintjuice` / `paintpro` (pro pass, paint owner): codec and lock cost, dab culling, brush cursor and sound, fill / stamp juice; the stamp wipe and fill flood (settle-before-read), the live camo meter (sliced scoring, grade pops, layout at three viewports) and the lock reusing its score; the meter x-ray (a real tap), "Invisible!", the stroke tail, the undo pool and the paint path's costs at 4x CPU. `PAINT_SHOTS=<dir>` / `PAINT_MONT=<mont.js>` for screenshots and montages.
 - `uxfinal` / `uxrematch` / `uxward` (UX QA round 1): a 4-round hotseat House final card at 390 × 664, 375 × 667 and 375 × 560 (See the board on screen and on top, the hub stickers clear, vote chips two to a row, stickers folded, a real CDP finger drag scrolls the card with the button pinned, a vote keeps the scroll), the House lobby fits 390 × 664 and scrolls at 375 × 560, two hotseat rematches follow the card's "hides first"; two phones with Sydney picked first: both cards promise Emerson and the rematch starts with Emerson on both; wardrobe rows as tall as their tiles at 390 × 844 / 664 and 375 × 667, the sheet scrolls under a finger.
 - `netpolish` (pro pass, net owner; 60 ms link): the presence schedule in Node on 60 / 120 / 30 Hz frame clocks (≥ 19.5/s, ≤ 21 in any second), presence keepalive (≤ 3.5 real sends/s in the lobby, for the hiding hider and the blindfolded seeker, ≤ 3.2 publishes/s for a still hunted hider, full rate the moment it looks round: ≥ 85 % of min(frames, 20/s) and never over 21.5/s, host never stalls), the adaptive delay (above 100 ms, ≤ 250), the eased View → Watch switch (no single frame takes > 85 % of the move or the turn, the aim never swings back), pellet range = fog far, a remote miss launched in step with the drawn shooter (≤ 300 ms), a tag judged with the shooter's delay, and the tag juice reaching the shooter no later than FOUND in both directions (round 2: the guest seeks the host). `NETSHOTS=1` also saves the whip frames.

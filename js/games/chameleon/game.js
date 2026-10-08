@@ -13,7 +13,7 @@ import { clamp, dampAngle, wrapAngle, hexToRgb, cssColor, luminance, listeners, 
 import { MAPS, mapArea, mapCacheInfo, mapBuildStats, mapJobsInfo, mixPlan, dailyPlan, dayKey, roomAt } from './maps.js';
 import { sanitizeSetup, sanitizeRules, applyPreset, stepRule, setRule, loadSaved, saveSetup, sizeScale, SPEED_MUL, CLIMB_MUL, tipsSeen, markTipsSeen, PRESETS, timeScale, hideScale, effSeconds, sprintMul, dbSpeed, OPTIONS, fmtRule } from './rules.js';
 import { REVEAL } from './paint.js';
-import { createBlendJob, startBlend, stepBlend, scoreBlend, createMeter, startErrorMap, stepErrorMap, BLEND } from './camo.js';
+import { createBlendJob, startBlend, stepBlend, scoreBlend, createMeter, startErrorMap, stepErrorMap, setBlendLights, blendDiag, dropBackdrop, releaseBackdrop, blendProbe, stampSampler, BLEND } from './camo.js';
 import { mkBody, sizeBody, resetBody, headingYaw, attachBody, detachBody, freeStep, crawlStep, inputOnSurface, bodyQuat, quatUpY, spotKind, surfaceKind, accelStep, coyoteJump, shortHop, JUMP } from './move.js';
 import { SQUEEZE_R } from './world.js';
 
@@ -261,11 +261,13 @@ export function createGame(el, api) {
     // 0.3–0.8 s task at 4x CPU); a rematch's parked stage has it cached. `stage` stays unset
     // until the map is in, so nothing (a setup message, a resize) sees a stage without a map.
     // closed (or failed) before the map was in: nothing else holds this stage, so dispose it here
+    cleanup.push(releaseBackdrop); // (camo.js: the triangles gathered round the hider)
     cleanup.push(() => { if (stage !== st) { st.dispose(); if (testing) window.__chamGL = (window.__chamGL || 1) - 1; } });
     const built = (id) => {
       if (S.destroyed) return;
       if (S.setup.map !== id) { st.prepare(S.setup.map, { alive: () => !S.destroyed }).then(() => built(S.setup.map), fail); return; } // the host's setup arrived meanwhile
       stage = st;
+      setBlendLights(st.hemi, st.sun); // the blend % shades each texel with the scene's own lights
       bootMap(reused, fail);
     };
     const id0 = S.setup.map;
@@ -406,6 +408,25 @@ export function createGame(el, api) {
     if (!stage || id == null || S.match || stage.map.id === id) return;
     loadMap(id); applySize(); placeLobby();
   }
+  // Mix it up: the next round's map is built into the session cache in idle-time slices (both
+  // phones) from the hide phase of the round before it, so the next round's title is a scene
+  // swap. Maps QA round 1: starting 0.3 s into the recap left a 3.5 s test recap short of CU with
+  // two software-GL phones on a busy box, and the round's start finished it in one 170–545 ms
+  // task; the hide phase (the seeker's canvas is hidden, the hider mostly orbits and paints) is a
+  // whole round earlier. FOUND / SURVIVED and the recap call it again: a no-op while that build
+  // is running or done, a restart if it was dropped (a resync, a hidden page).
+  let prefetching = null; // the map id being prefetched
+  function prefetchNext(p, delay) {
+    if (!S.match || !S.match.maps || !(p.round < S.match.rounds)) return;
+    const nid = S.match.maps[p.round % S.match.maps.length];
+    const mid = S.match.id;
+    later(() => {
+      if (!stage || S.destroyed || !S.match || S.match.id !== mid || stage.map.id === nid || prefetching === nid) return;
+      prefetching = nid;
+      const done = () => { if (prefetching === nid) prefetching = null; };
+      stage.prefetch(nid).then(done, done);
+    }, delay);
+  }
   function placeLobby() {
     const s = stage.map.spots.lobby || { x: 0, z: 0.9 };
     const sz = sizeS();
@@ -436,7 +457,7 @@ export function createGame(el, api) {
     S.match = { id: Math.random().toString(36).slice(2, 9), mode: st.mode, map: st.map, first: st.first, rounds: st.mode === 'db' ? 3 : st.rules.rounds, scores: { a: 0, b: 0 }, hist: [], rules: { ...st.rules } };
     // maps pass: "Mix it up" plans a map per round (same pool, seeded by the match id); "Today's
     // hide" carries its day key so the rounds count on today's board
-    S.match.maps = st.mix ? mixPlan(S.match.id, st.map, S.match.rounds, st.mode === 'hs' ? 2 : 1) : null;
+    S.match.maps = st.mix ? mixPlan(TUNE.mixSeed || S.match.id, st.map, S.match.rounds, st.mode === 'hs' ? 2 : 1) : null; // (tests may pin the seed)
     S.match.daily = st.daily || null;
     applySize();
     startRound(1);
@@ -719,6 +740,7 @@ export function createGame(el, api) {
           hint(mode() === 'db' ? 'Find a spot, pose, paint. Then hit “Ready”.' : rules().climb ? 'Find a spot — walls and ceilings count — then paint yourself to match.' : 'Find a spot, pick a pose, then paint yourself to match.', 3600);
           if (rules().climb && !tipsSeen() && !TUNE.noTips) U.tips = true;
         }
+        prefetchNext(p, 1500); // Mix it up: the next round's map, if it's a new one (maps QA round 1)
         break;
       }
       case 'lock':
@@ -758,6 +780,7 @@ export function createGame(el, api) {
         C.whip = 0;
         snd.ambience('off');
         exitPaint(true);
+        prefetchNext(p, 700); // Mix it up's next map, after the freeze (maps QA round 1)
         const victim = rec.hider || rec.victim || hiderOf(p.round);
         const winInk = name === 'found' ? (rec.seeker || rec.winner || other(victim)) : victim;
         if (stage) {
@@ -777,9 +800,9 @@ export function createGame(el, api) {
       case 'recap': {
         R.rec = p.data || R.rec;
         C.orbitT = 0;
-        // Mix it up: build the next round's map into the session cache while the recap is up
-        // (both phones; the round's title is then a scene swap), once the card has settled in
-        if (S.match && S.match.maps && p.round < S.match.rounds) { const nid = S.match.maps[p.round % S.match.maps.length]; later(() => { if (stage && S.phase.name === 'recap' && stage.map.id !== nid) stage.prefetch(nid); }, Math.min(600, Math.max(200, (p.dur || 0) * 0.08))); } // idle-time slices (maps QA round 1): it can start as the card lands
+        // Mix it up: the next round's map is built from FOUND / SURVIVED on (prefetchNext); this
+        // covers a recap entered without one (a resync), once the card has settled in
+        prefetchNext(p, Math.min(600, Math.max(200, (p.dur || 0) * 0.08)));
         const seekerW = R.rec && (R.rec.seeker || (R.rec.winner || null));
         if (stage && R.path.length && seekerW) stage.fx.setPath(R.path, seekerW === 'a' ? theme.a : theme.b);
         if (stage) {
@@ -931,7 +954,17 @@ export function createGame(el, api) {
     let hit = null;
     if (b.at) { stage.ray.set(tv3.set(b.x + b.nx * 0.5, b.y + b.ny * 0.5, b.z + b.nz * 0.5), tv3b.set(-b.nx, -b.ny, -b.nz)); hit = stage.pickMap(1.0); }
     if (!hit) { stage.ray.set(tv3.set(b.x, b.y + 0.7, b.z), tv3b.set(0, -1, 0)); hit = stage.pickMap(2.5); }
-    return hit ? stage.surfaceOf(hit) : null;
+    return camoSurf(hit);
+  }
+  /** stage.surfaceOf(hit) plus what camo.js casts at: the map's own triangles (what is really behind
+   *  the body), the colliders a seeker can't stand in, the room's background colour past them. */
+  function camoSurf(hit) {
+    const surf = hit ? stage.surfaceOf(hit) : null;
+    if (surf) {
+      const bg = stage.scene.background;
+      surf.map = stage.map; surf.world = stage.world; surf.bg = bg && bg.isColor ? [bg.r * 255, bg.g * 255, bg.b * 255] : null;
+    }
+    return surf;
   }
   /** The score, all at once (the math lives in camo.js, shared with the live meter). */
   function blendOf(w) {
@@ -1020,14 +1053,7 @@ export function createGame(el, api) {
       if (m.value >= 0) { const ms = performance.now() - ts; CAMO.sliceSum += ms; if (ms > CAMO.sliceMax) CAMO.sliceMax = ms; }
       if (!done) return;
       if (p.version !== CAMO.jobVer) return; // painted while scoring: rescore below next frame
-      CAMO.score = CAMO.job.score; CAMO.ver = CAMO.jobVer; CAMO.sig.set(CAMO.jobSig);
-      const bb = mode() === 'hs' ? rules().blendBonus | 0 : 0;
-      m.set(CAMO.score, bb ? (bb === 20 ? 90 : 80) : -1, bb);
-      // a fresh stamp that only shows from the side: say why once (the score is the seeker's view
-      // from round about, not the stamp's own head-on projection)
-      if (CAMO.score >= 0 && CAMO.score < 85 && now() - PFX.stampAt < 4000 && sideOnly(CAMO.job) && !shownHints.has('side')) hintOnce('side', 'Stamped! From the side the pattern breaks up: calm surfaces hide you best', 3000);
-      // the x-ray is easy to miss: once a session, when there is something to find
-      else if (!CAMO.xrayHint && CAMO.score >= 0 && CAMO.score < 90 && CAMO.runs > 1 && !P.last) { CAMO.xrayHint = true; hintOnce('xray', 'Tap the camo meter to see where you show', 2600); }
+      camoScored();
       return;
     }
     // wait for the change to settle: a stroke in progress, a wipe / flood, a fill swell, the pose easing in
@@ -1040,8 +1066,25 @@ export function createGame(el, api) {
     if (!CAMO.surf) { CAMO.ver = p.version; CAMO.sig.set(CAMO.cur); CAMO.score = -1; m.set(-1); return; }
     startBlend(CAMO.job, p, CAMO.surf); CAMO.runs++;
   }
-  /** The meter's score for w if neither the paint nor the spot changed since it was taken, else null. */
+  /** The meter's job finished: take its score and show it. */
+  function camoScored() {
+    const m = CAMO.meter;
+    CAMO.score = CAMO.job.score; CAMO.ver = CAMO.jobVer; CAMO.sig.set(CAMO.jobSig);
+    const bb = mode() === 'hs' ? rules().blendBonus | 0 : 0;
+    m.set(CAMO.score, bb ? (bb === 20 ? 90 : 80) : -1, bb);
+    // a fresh stamp that only shows from the side: say why once (the score is the seeker's view
+    // from round about, not the stamp's own head-on projection)
+    if (CAMO.score >= 0 && CAMO.score < 85 && now() - PFX.stampAt < 4000 && sideOnly(CAMO.job) && !shownHints.has('side')) hintOnce('side', 'Stamped! From the side the pattern breaks up: calm surfaces hide you best', 3000);
+    // the x-ray is easy to miss: once a session, when there is something to find
+    else if (!CAMO.xrayHint && CAMO.score >= 0 && CAMO.score < 90 && CAMO.runs > 1 && !P.last) { CAMO.xrayHint = true; hintOnce('xray', 'Tap the camo meter to see where you show', 2600); }
+  }
+  /** The meter's score for w if neither the paint nor the spot changed since it was taken, else null.
+   *  A score still being worked out (sliced) for this very paint and pose is finished on the spot:
+   *  cheaper than a fresh one (its triangles and bins are in place) and the same number. */
   function camoCached(w) {
+    if (CAMO.job.on && CAMO.meter && CAMO.w === w && CAMO.round === (S.phase.round | 0) && stage.paints[w].version === CAMO.jobVer && sameSig(bodySig(w, CAMO.cur), CAMO.jobSig)) {
+      stepBlend(CAMO.job, 1e9); camoScored(); stats.blendFinished = (stats.blendFinished | 0) + 1;
+    }
     if (CAMO.w !== w || CAMO.ver < 0 || CAMO.job.on || CAMO.round !== (S.phase.round | 0)) return null;
     if (stage.paints[w].version !== CAMO.ver || !sameSig(bodySig(w, CAMO.cur), CAMO.sig)) return null;
     return CAMO.score;
@@ -1945,13 +1988,16 @@ export function createGame(el, api) {
       stage.ray.set(tv3.set(b.x, b.y + 0.7, b.z), tv3b.set(0, -1, 0));
       hit = stage.pickMap(2);
     }
-    const surf = stage.surfaceOf(hit);
+    const surf = camoSurf(hit);
     if (!surf) { hint('Nothing to stamp here'); return; }
     const p = stage.paints[v];
     p.snapshot();
-    // the print wipes up the screen (camera up) like a sheet being pulled off the wall
+    // the print wipes up the screen (camera up) like a sheet being pulled off the wall; each texel
+    // takes what is really behind it (camo.js stampSampler: past a pillar's edge, the bottles)
     const cu = stage.camera.matrixWorld.elements;
-    p.stamp(surf, [cu[4], cu[5], cu[6]]);
+    const behind = stampSampler(surf, p);
+    p.stamp(surf, [cu[4], cu[5], cu[6]], behind);
+    if (behind) { stats.lastStamp = behind.stats; behind.release(); }
     PFX.stampAt = now(); PFX.stampW = v; PFX.stamps++;
     snd.play('stamp'); snd.play('whoosh'); api.haptic(20); act('stamp'); // no full-screen flash: it hid the wipe
     const kind = surfaceKind(b);
@@ -3404,7 +3450,7 @@ export function createGame(el, api) {
           spect: U.spect, fc: [C.fcX, C.fcY, C.fcZ, C.fcYaw, C.fcPitch], climbV: C.climbV, vYaw: C.vYaw, hunting: hunting(), huntAt: huntAt(), graceUntil: huntAt() + graceMs(),
           live: { sent: R.lpSent, same: R.lpSame, got: R.lpIn, tells: R.tells, tellSkip: R.tellSkip, tellOn: !!R.tell }, cam: stage ? stage.camera.position.toArray() : null,
           here: { on: !hud.el.here.hidden, x: hud.el.here.style.transform }, badge: hud.el.badge.textContent || null, role: hud.el.role.textContent,
-          glint: { a: R.glintAt.a, b: R.glintAt.b }, lastPick: stats.lastPick || null, lastPaint: stats.lastPaint || null, lastShot: stats.lastShot || null, lastTagCheck: stats.lastTagCheck || null, lastWindow: stats.lastWindow || null, juice: stats.juice ? { ...stats.juice, fired: stats.juiceAt || 0 } : null,
+          glint: { a: R.glintAt.a, b: R.glintAt.b }, lastPick: stats.lastPick || null, lastPaint: stats.lastPaint || null, lastStamp: stats.lastStamp || null, lastShot: stats.lastShot || null, lastTagCheck: stats.lastTagCheck || null, lastWindow: stats.lastWindow || null, juice: stats.juice ? { ...stats.juice, fired: stats.juiceAt || 0 } : null,
         };
       },
       paintHash(w) { return stage.paints[w].hash(); },
@@ -3573,7 +3619,8 @@ export function createGame(el, api) {
       /** Reset the camo meter's slice timing (perf runs). */
       camoPerfReset() { CAMO.sliceMax = 0; CAMO.sliceSum = 0; CAMO.slices = 0; },
       /** The blend score's viewpoints (tests may tune them; see camo.js BLEND) and the per-view scores of the meter's last job. */
-      blendViews(o) { if (o) Object.assign(BLEND, o); return { ...BLEND, views: BLEND.views, last: Array.from(CAMO.job.views.subarray(0, CAMO.job.nv)) }; },
+      blendProbe(v, step) { return blendProbe(BLENDJ, v, step); },
+      blendViews(o) { if (o && o.drop) { dropBackdrop(); o = null; } if (o) Object.assign(BLEND, o); return { ...BLEND, views: BLEND.views, last: Array.from(CAMO.job.views.subarray(0, CAMO.job.nv)), diag: blendDiag(CAMO.job), lock: blendDiag(BLENDJ) }; },
       /** Slow the stamp wipe / fill flood down (screenshots) or read the current reveal. */
       reveal(o, w) { if (o) { if (o.stamp) Object.assign(REVEAL.stamp, o.stamp); if (o.fill) Object.assign(REVEAL.fill, o.fill); } return stage.paints[w || viewer() || 'a'].reveal; },
       lookFrom(arr) { C.override = arr; },

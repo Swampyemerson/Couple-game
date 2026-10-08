@@ -897,7 +897,7 @@ export function mapJobsInfo() { return [...JOBS.values()].map((j) => ({ id: j.id
 // straight through (separate lists). The map code must not change a geometry or an options
 // object after passing it to b.add (none does; the tests compare recorded and direct builds).
 const JOBS = new Map(); // key → job in progress { id, it, map, dead, steps, maxMs, slices }
-const STATS = []; // the last builds: { id, steps, slices, maxMs (longest step), maxSlice (longest slice), drained, drainMs }
+const STATS = []; // the last builds: { id, steps, slices, maxMs (longest step), maxAt (its label), p90 (of the step times), over50 (steps > 50 ms), sliceP90, maxSlice (longest slice), drained, drainMs }
 const REPLAY_MS = 1.5; // a replay step: as many recorded calls as fit in this (plus one)
 function recorder(b) {
   const ops = [];
@@ -944,7 +944,8 @@ function* buildSteps(THREE, id, ink, direct = false) {
     yield* rec.replay();
   }
   const out = b.finishSteps ? yield* b.finishSteps(THREE) : b.finish(THREE);
-  closeSlots(out.colliders);
+  yield 'blobs';
+  yield* closeSlotsSteps(out.colliders);
   yield 'slots';
   const probes = out.probes.filter((p) => p.point && p.hex);
   const bounds = boundsOf(out.colliders, inf);
@@ -974,7 +975,7 @@ function jobFor(THREE, id, ink) {
   const key = cacheKey(id, ink);
   let j = JOBS.get(key);
   if (j && j.THREE !== THREE) { JOBS.delete(key); j.dead = true; j = null; }
-  if (!j) { j = { key, id, THREE, it: buildSteps(THREE, id, ink), map: null, dead: false, steps: 0, maxMs: 0, maxSlice: 0, slices: 0 }; JOBS.set(key, j); }
+  if (!j) { j = { key, id, THREE, it: buildSteps(THREE, id, ink), map: null, dead: false, steps: 0, maxMs: 0, maxSlice: 0, slices: 0, times: [], sliceTimes: [] }; JOBS.set(key, j); }
   return j;
 }
 /** Advance a job until `until` (ms timestamp; Infinity = to the end). True when built. */
@@ -985,14 +986,20 @@ function advance(j, until) {
     const t = now();
     let s;
     try { s = j.it.next(); } catch (e) { if (JOBS.get(j.key) === j) JOBS.delete(j.key); j.dead = true; throw e; }
-    const t1 = now(); if (t1 - t > j.maxMs) j.maxMs = t1 - t;
+    const t1 = now(); if (t1 - t > j.maxMs) { j.maxMs = t1 - t; j.maxAt = s.done ? 'end' : s.value; } // (maxAt: the step's label, for the tests' reports)
+    j.times.push(t1 - t); // (the step times' p90: a GC pause or a busy box lands on one step, not on most)
     j.steps++;
     if (s.done) {
       j.map = store(j.key, s.value, j.THREE); if (JOBS.get(j.key) === j) JOBS.delete(j.key);
       // drained: finished by a sync buildMap() (a round starting before its prefetch was done),
       // drainMs: how long that last part took
       // maxSlice: the longest slice before this one (the last slice is timed by the caller)
-      STATS.push({ id: j.id, steps: j.steps, slices: j.slices, maxMs: Math.round(j.maxMs * 10) / 10, maxSlice: Math.round(Math.max(j.maxSlice, until === Infinity ? 0 : t1 - t00)), drained: until === Infinity, drainMs: until === Infinity ? Math.round(t1 - t00) : 0 }); if (STATS.length > 16) STATS.shift();
+      // p90s and the count of steps over 50 ms: on a busy box a GC pause or a preemption lands on
+      // a step or two (wall time), the p90 is the code's own step / slice size
+      const ts = j.times.sort((x, y) => x - y); j.times = null;
+      const sl = j.sliceTimes; if (until !== Infinity) sl.push(t1 - t00); sl.sort((x, y) => x - y); j.sliceTimes = null;
+      const p90 = (a) => (a.length ? Math.round(a[Math.floor(a.length * 0.9)] * 10) / 10 : 0);
+      STATS.push({ id: j.id, steps: j.steps, slices: j.slices, maxMs: Math.round(j.maxMs * 10) / 10, maxAt: j.maxAt || '', p90: p90(ts), over50: ts.filter((x) => x > 50).length, sliceP90: p90(sl), maxSlice: Math.round(Math.max(j.maxSlice, until === Infinity ? 0 : t1 - t00)), drained: until === Infinity, drainMs: until === Infinity ? Math.round(t1 - t00) : 0 }); if (STATS.length > 16) STATS.shift();
       return true;
     }
     if (t1 >= until) return false;
@@ -1047,7 +1054,7 @@ export async function buildMapAsync(THREE, id, { ink = [0.11, 0.1, 0.13], budget
         if (idle && gap > 0) b = Math.max(b, Math.min(budget * 3, gap * 0.15));
         j.pumping = true;
         const t0 = now();
-        try { if (advance(j, t0 + b)) return j.map; } finally { j.pumping = false; const d = now() - t0; if (d > j.maxSlice) j.maxSlice = d; }
+        try { if (advance(j, t0 + b)) return j.map; } finally { j.pumping = false; const d = now() - t0; if (d > j.maxSlice) j.maxSlice = d; if (j.sliceTimes) j.sliceTimes.push(d); }
         j.slices++;
       }
       end = now();
@@ -1078,8 +1085,12 @@ const isStructure = (c) => {
 // gondola spine) is still a wall here
 const isRail = (c) => !!c.perch || (c.name || '').startsWith('perch:') || [c.maxX - c.minX, c.maxY - c.minY, c.maxZ - c.minZ].filter((e) => e < 0.16).length >= 2;
 /** Close slots ≤ SLOT m between a prop and a wall / another prop. Returns a log (opts.log). */
-export function closeSlots(cols, { gap = SLOT, log = false } = {}) {
+export function closeSlots(cols, opts) { return drain(closeSlotsSteps(cols, opts)); }
+/** closeSlots() in steps of ~3 ms (maps QA round 1: CU's 1 016 colliders were one 15–47 ms
+ *  step in a fresh page on a busy box, before the JIT warms up). Same result. */
+function* closeSlotsSteps(cols, { gap = SLOT, log = false } = {}) {
   const out = [];
+  let t0 = now();
   const lo = (c, k) => (k === 0 ? c.minX : k === 1 ? c.minY : c.minZ);
   const hi = (c, k) => (k === 0 ? c.maxX : k === 1 ? c.maxY : c.maxZ);
   const set = (c, k, side, v) => { const key = (side > 0 ? 'max' : 'min') + 'XYZ'[k]; c[key] = v; };
@@ -1095,9 +1106,11 @@ export function closeSlots(cols, { gap = SLOT, log = false } = {}) {
       const kk = cell(i, j); let L = grid.get(kk); if (!L) { L = []; grid.set(kk, L); } L.push(ci);
     }
   });
+  yield 'slots'; t0 = now();
   const mark = new Int32Array(cols.length).fill(-1); let stamp = 0; const near = [];
   for (const a of cols) {
     if (!movable(a)) continue;
+    if (now() - t0 > REPLAY_MS * 2) { yield 'slots'; t0 = now(); }
     // candidates: targets in the cells around a (grown by the slot width)
     stamp++; near.length = 0;
     for (let i = Math.floor((a.minX - gap) / G); i <= Math.floor((a.maxX + gap) / G); i++) for (let j = Math.floor((a.minZ - gap) / G); j <= Math.floor((a.maxZ + gap) / G); j++) {

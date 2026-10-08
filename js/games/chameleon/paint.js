@@ -34,7 +34,7 @@ export function createPaint(THREE, kit) {
   let version = 0;
   let encVer = -1; let encCache = null;
   if (!warmed) warmCodec();
-  const tmp = [0, 0, 0];
+  const tmp = [0, 0, 0]; const rgb3 = [0, 0, 0];
   // per-part texel lists + world bounding spheres (from updateWorld) so a dab only walks the
   // one or two parts it can reach instead of every texel on the body
   let NP = 0; for (let k = 0; k < list.length; k++) if (part[list[k]] + 1 > NP) NP = part[list[k]] + 1;
@@ -246,9 +246,11 @@ export function createPaint(THREE, kit) {
   /**
    * Stamp: project the surface pattern under the avatar onto every texel that faces away from
    * that surface. surf = { q:[x,y,z], n:[x,y,z] (unit, out of the surface), uvAt(x,y,z,out2),
-   * tile, vc:[r,g,b] 0..1, atlas, shadeAt(x,y,z) -> factor }.
+   * tile, vc:[r,g,b] 0..1, atlas, shadeAt(x,y,z) -> factor }. behind (camo.js stampSampler):
+   * at(i, out) gives the colour really behind texel i along −n (past a pillar's edge, the bottles);
+   * a texel it has nothing for falls back to the surface's plane.
    */
-  function stamp(surf, wave = null) {
+  function stamp(surf, wave = null, behind = null) {
     settle();
     const [qx, qy, qz] = surf.q; const [nx, ny, nz] = surf.n;
     const uv = [0, 0];
@@ -259,15 +261,19 @@ export function createPaint(THREE, kit) {
       const facing = wnrm[i * 3] * nx + wnrm[i * 3 + 1] * ny + wnrm[i * 3 + 2] * nz;
       if (facing < -0.25) continue;
       const px = wpos[i * 3]; const py = wpos[i * 3 + 1]; const pz = wpos[i * 3 + 2];
-      const dist = (px - qx) * nx + (py - qy) * ny + (pz - qz) * nz;
-      const sx = px - nx * dist; const sy = py - ny * dist; const sz = pz - nz * dist;
-      surf.uvAt(sx, sy, sz, uv);
-      sampleAtlas(surf.atlas, surf.tile, uv[0], uv[1], tmp);
-      const sh = surf.shadeAt ? surf.shadeAt(sx, sy, sz) : 0;
-      const br = surf.blobRgb || BLACK;
+      let r; let g; let b;
+      if (behind && behind.at(i, rgb3)) { r = rgb3[0]; g = rgb3[1]; b = rgb3[2]; } else {
+        // (no map triangle behind it within reach: the hit surface's plane, as it always was)
+        const dist = (px - qx) * nx + (py - qy) * ny + (pz - qz) * nz;
+        const sx = px - nx * dist; const sy = py - ny * dist; const sz = pz - nz * dist;
+        surf.uvAt(sx, sy, sz, uv);
+        sampleAtlas(surf.atlas, surf.tile, uv[0], uv[1], tmp);
+        const sh = surf.shadeAt ? surf.shadeAt(sx, sy, sz) : 0;
+        const br = surf.blobRgb || BLACK;
+        r = tmp[0] * surf.vc[0] * (1 - sh) + br[0] * sh; g = tmp[1] * surf.vc[1] * (1 - sh) + br[1] * sh; b = tmp[2] * surf.vc[2] * (1 - sh) + br[2] * sh;
+      }
       const a = facing < 0 ? 1 + facing / 0.25 : 1;
       const o = i * 4;
-      const r = tmp[0] * surf.vc[0] * (1 - sh) + br[0] * sh; const g = tmp[1] * surf.vc[1] * (1 - sh) + br[1] * sh; const b = tmp[2] * surf.vc[2] * (1 - sh) + br[2] * sh;
       out[o] = Math.round(data[o] + (r - data[o]) * a);
       out[o + 1] = Math.round(data[o + 1] + (g - data[o + 1]) * a);
       out[o + 2] = Math.round(data[o + 2] + (b - data[o + 2]) * a);
