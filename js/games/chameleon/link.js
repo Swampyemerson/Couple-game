@@ -127,6 +127,17 @@ export function createLink(api, { delay = 100, onLink = () => {}, onUnlink = () 
   }
   const pubState = { k: sess, p: '' };
   for (const f of FIELDS) pubState[f] = 0;
+  pubState.__t = 0;
+  // Presence goes out on a 20/s SCHEDULE (one slot per PUB_MS), not "≥ 48 ms since the last
+  // send" (net.publish's gate). Frames land on a 16.7 / 33.3 ms grid, so that gate turned a
+  // 30 Hz phone (Low Power Mode) into 15 sends/s and a jittery 60 Hz one into a 15–20/s mix (a
+  // send 47.9 ms after the last waited a whole frame). A slot may be taken PUB_EARLY early and
+  // never closer than PUB_GAP to the previous send; pubNext advances ≥ PUB_MS per send, so the
+  // average never exceeds 20/s. Stamped with the shared game clock (linkNow: the guest's refined
+  // estimate), the clock both phones draw, shoot and confirm tags with.
+  const PUB_MS = 50; const PUB_EARLY = 6; const PUB_GAP = 30;
+  let pubNext = 0; let pubLast = -1e9;
+  const pubDue = (tp) => tp >= pubNext - PUB_EARLY && tp - pubLast >= PUB_GAP;
   let sent = 0; // reliable sends (for budget tests)
 
   function dispatch(m, at) {
@@ -153,16 +164,27 @@ export function createLink(api, { delay = 100, onLink = () => {}, onUnlink = () 
   const retired = new Set();
   // Fast clock refinement (guest): net.js converges slowly when the first few pings are noisy,
   // so we keep our own min-RTT NTP estimate of the host clock, independent of net.js's offset.
-  const clk = { off: 0, n: 0, samples: [], id: 0, sent: new Map(), timer: 0, offs: [] };
+  // The estimate (`tgt`: the mean of the 3 quickest of the last 24 round trips) is taken as is for
+  // the first CLK_FAST samples (the lobby); after that the clock the game reads (`off`) slews toward
+  // it at ≤ CLK_SLEW (5 %) of real time. It used to jump to each new best-3 mean: steps of 10–40 ms
+  // every few seconds under load, so the drawn partner skipped (or rewound) that much motion.
+  const CLK_KEEP = 24; const CLK_FAST = 6; const CLK_SLEW = 0.05;
+  const clk = { off: 0, tgt: 0, at: 0, n: 0, samples: [], id: 0, sent: new Map(), timer: 0, offs: [], raw: globalThis.__chamClockRaw ? [] : null };
   const hostNow = () => (net ? net.now() : performance.now());
   /** The shared clock as the game reads it (see now() below). */
   function linkNow() {
     if (!net) return performance.now();
     if (local || api.isHost || clk.n < 3) return net.now();
-    return performance.now() + clk.off;
+    const t = performance.now();
+    if (clk.off !== clk.tgt) {
+      const m = Math.max(0, t - clk.at) * CLK_SLEW; const d = clk.tgt - clk.off;
+      clk.off = d > m ? clk.off + m : d < -m ? clk.off - m : clk.tgt;
+    }
+    clk.at = t;
+    return t + clk.off;
   }
   function clockReset() {
-    clk.off = 0; clk.n = 0; clk.samples.length = 0; clk.sent.clear();
+    clk.off = 0; clk.tgt = 0; clk.at = 0; clk.n = 0; clk.samples.length = 0; clk.sent.clear();
     clearTimeout(clk.timer); clk.timer = 0;
     clk.offs.forEach((f) => { try { f(); } catch { /* ignore */ } }); clk.offs.length = 0;
   }
@@ -177,10 +199,15 @@ export function createLink(api, { delay = 100, onLink = () => {}, onUnlink = () 
       if (!d || !clk.sent.has(d.id)) return;
       const t0 = clk.sent.get(d.id); clk.sent.delete(d.id);
       const t1 = performance.now(); const rtt = t1 - t0;
-      clk.samples.push({ rtt, off: d.h + rtt / 2 - t1 });
-      if (clk.samples.length > 12) clk.samples.shift();
+      clk.samples.push({ rtt, off: d.h + rtt / 2 - t1, t: t1 });
+      if (clk.raw) { clk.raw.push([t1, rtt, d.h + rtt / 2 - t1]); if (clk.raw.length > 400) clk.raw.shift(); }
+      if (clk.samples.length > CLK_KEEP) clk.samples.shift();
       const best = clk.samples.slice().sort((x, y) => x.rtt - y.rtt).slice(0, 3);
-      clk.off = best.reduce((s, x) => s + x.off, 0) / best.length;
+      const est = best.reduce((s, x) => s + x.off, 0) / best.length;
+      linkNow(); // bring the slew up to now before moving the target
+      clk.tgt = est;
+      if (clk.n < CLK_FAST || Math.abs(est - clk.off) > 1000) clk.off = est; // first samples, or the host's clock restarted: jump
+      clk.at = performance.now();
       clk.n++;
     }));
     let k = 0;
@@ -273,6 +300,10 @@ export function createLink(api, { delay = 100, onLink = () => {}, onUnlink = () 
     /** Shared game clock: the host's net.js clock; guests use the refined estimate once it has 3 samples. */
     now: linkNow,
     get clockSamples() { return clk.n; },
+    /** net.js's clock minus the game clock (ms; 0 on the host): what stamping presence with net.now() used to be off by. */
+    get clockSkew() { return net && !local ? net.now() - linkNow() : 0; },
+    /** Tests / tuning: every clock sample [t, rtt, offset] (guest; kept when window.__chamClockRaw was set at mount). */
+    clockRaw() { return clk.raw ? clk.raw.slice() : null; },
     send(type, data) { if (!net) return false; sent++; net.send('g', { t: type, d: data ?? null }); return true; },
     /** Two unreliable copies right now (not held back by in-order delivery). Use for idempotent messages. */
     blast(type, data) {
@@ -293,11 +324,20 @@ export function createLink(api, { delay = 100, onLink = () => {}, onUnlink = () 
       for (let i = 0; i < n; i++) { sent++; net.send('g', { t: '__b', d: { id, i, n, k: kind, m: i === 0 ? (meta ?? null) : undefined, c: str.slice(i * CHUNK, (i + 1) * CHUNK) } }); }
       return n;
     },
-    /** Publish my avatar (rate-limited inside net.js). st: object with FIELDS. */
+    /** Would publish() send right now (a free slot on the 20/s schedule)? */
+    pubDue(tp = performance.now()) { return !!net && !local && (pubDue(tp) || tp < pubLast); },
+    /** Publish my avatar on the 20/s schedule (see PUB_MS). st: object with FIELDS. True when it went out. */
     publish(st) {
-      if (!net || local) return;
+      if (!net || local) return false;
+      const tp = performance.now();
+      if (!pubDue(tp) && tp >= pubLast) return false;
       for (let i = 0; i < FIELDS.length; i++) pubState[FIELDS[i]] = st[FIELDS[i]];
-      net.publish(pubState);
+      pubState.__t = Math.round(linkNow());
+      // the same wire format as net.publish (it reads __t; no __s: link.js already filters by
+      // session with k / p and replaces the whole net.js instance on a new partner session)
+      api.setPresence({ ...pubState });
+      pubNext = Math.max(pubNext + PUB_MS, tp + PUB_GAP); pubLast = tp;
+      return true;
     },
     /** Interpolated partner state at (now − delay) into out; false if none yet. Call once a frame: it also eases the adaptive delay. */
     sample(out, at) { if (net && !local) dlySlew(); return rb.sample((at ?? (net ? net.now() : 0)) - (net ? net.delay : delay), out); },

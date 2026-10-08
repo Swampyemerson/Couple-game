@@ -25,6 +25,11 @@ export function createPaint(THREE, kit) {
   const wpos = new Float32Array(N * 3);
   const wnrm = new Float32Array(N * 3);
   const undo = [];
+  // undo snapshots are 64 KB each: recycled through a pool, so a stroke allocates nothing once
+  // the history is full (it used to slice() a fresh buffer per stroke / fill / stamp)
+  const pool = [];
+  const recycle = (b) => { if (b && pool.length < UNDO_MAX + 1) pool.push(b); };
+  let snapAllocs = 0;
   let dirty = false;
   let version = 0;
   let encVer = -1; let encCache = null;
@@ -37,6 +42,7 @@ export function createPaint(THREE, kit) {
   const psph = new Float32Array(NP * 4).fill(0); // cx, cy, cz, r (r = 1e9 until the first updateWorld)
   for (let p = 0; p < NP; p++) psph[p * 4 + 3] = 1e9;
   let dabTexels = 0; let dabs = 0; // texels tested by dabs, dabs made (perf counters)
+  let fxMs = 0; let fxMax = 0; let fxN = 0; // reveal / x-ray frame cost (flush)
 
   // ── reveals: a stamp wipes up the body, a fill floods out from the finger ──
   // The new colours go into `tgt`; every affected texel gets a key 0..1 (when the wave reaches
@@ -115,11 +121,57 @@ export function createPaint(THREE, kit) {
 
   function snapshot() {
     settle();
-    undo.push(data.slice());
-    if (undo.length > UNDO_MAX) undo.shift();
+    let b = pool.pop();
+    if (!b) { b = new Uint8Array(N * 4); snapAllocs++; }
+    b.set(data);
+    undo.push(b);
+    if (undo.length > UNDO_MAX) recycle(undo.shift());
   }
 
-  function touch() { dirty = true; version++; }
+  function touch() { dirty = true; version++; if (xr.on) xrayOff(); }
+
+  // ── x-ray ("where do I show?"): mismatched texels flash with crawling hazard stripes ──
+  // err (Uint8Array(N), camo.js errorMap): how much each texel loses against the surface behind
+  // (0 = perfect, 255 = scores nothing). The stripes are drawn into a display copy that the
+  // texture points at while the x-ray runs; `data` is never touched, and any edit (touch) ends
+  // the x-ray at once, so a stroke always lands on the real skin.
+  const xr = { on: false, t0: 0, dur: 0, n: 0, frames: 0 };
+  let disp = null; let xbad = null; let xerr = null;
+  const XRAY_MIN = 64; // a texel shows when it loses more than 25 % of its score
+  function xray(err, durMs = 2200) {
+    settle();
+    if (!disp) { disp = new Uint8Array(N * 4); xbad = new Int32Array(N); }
+    let n = 0;
+    for (let k = 0; k < list.length; k++) { const i = list[k]; if (err[i] > XRAY_MIN) xbad[n++] = i; }
+    xerr = err; xr.n = n; xr.t0 = performance.now(); xr.dur = durMs; xr.frames = 0;
+    disp.set(data);
+    xr.on = true;
+    texture.image.data = disp; dirty = true;
+    return n;
+  }
+  function xrayOff() {
+    if (!xr.on) return;
+    xr.on = false;
+    texture.image.data = data; dirty = true;
+  }
+  /** One x-ray frame: stripes crawl along the texture diagonal; fade in 0.12 s, out over the last 0.45 s. */
+  function stepXray(t) {
+    const el = t - xr.t0;
+    if (el >= xr.dur) { xrayOff(); return; }
+    const env = Math.min(1, el / 120, (xr.dur - el) / 450);
+    const ph = (el / 40) | 0;
+    for (let j = 0; j < xr.n; j++) {
+      const i = xbad[j]; const o = i * 4;
+      // hazard tape: yellow / ink diagonal bands 6 texels wide, crawling; they read on any paint
+      // colour (a magenta hatch vanished on a pink body), stronger where the texel shows more
+      const on = ((i & 127) + (i >> 7) + ph) % 12 < 6;
+      const a = env * Math.min(1, (xerr[i] - XRAY_MIN) / 96 + 0.45) * (on ? 0.94 : 0.8);
+      const tr = on ? 255 : 26; const tg = on ? 208 : 24; const tb = on ? 20 : 32;
+      disp[o] = data[o] + (tr - data[o]) * a; disp[o + 1] = data[o + 1] + (tg - data[o + 1]) * a; disp[o + 2] = data[o + 2] + (tb - data[o + 2]) * a;
+    }
+    xr.frames++;
+    dirty = true;
+  }
 
   /**
    * One brush dab at world point (hx,hy,hz). view = direction camera→hit (skips texels facing
@@ -277,7 +329,12 @@ export function createPaint(THREE, kit) {
 
   /** Once a frame: advance a running reveal, upload the texture if anything changed. */
   function flush() {
-    if (rv.on) stepReveal(performance.now());
+    if (rv.on || xr.on) {
+      const t = performance.now();
+      if (rv.on) stepReveal(t);
+      if (xr.on) stepXray(t);
+      const ms = performance.now() - t; fxMs += ms; if (ms > fxMax) fxMax = ms; fxN++;
+    }
     if (!dirty) return false;
     dirty = false;
     texture.needsUpdate = true;
@@ -292,12 +349,16 @@ export function createPaint(THREE, kit) {
     /** A stamp wipe / fill flood is still running (live paint waits for it to settle). */
     get revealing() { return rv.on; },
     get reveal() { return { on: rv.on, kind: rv.kind, count: rv.count, n: rv.n, done: rv.done }; },
-    updateWorld, snapshot, dab, fill, stamp, tintFacing, paintLocal, colorAtUV, flush, changedPoints, settle,
+    /** The x-ray is showing (see xray()). */
+    get xraying() { return xr.on; },
+    /** Perf counters: undo buffers ever allocated, reveal / x-ray frames and their cost (ms). */
+    get perf() { return { snapAllocs, pool: pool.length, undo: undo.length, fxN, fxMax, fxAvg: fxN ? fxMs / fxN : 0, xray: { on: xr.on, n: xr.n, frames: xr.frames } }; },
+    updateWorld, snapshot, dab, fill, stamp, tintFacing, paintLocal, colorAtUV, flush, changedPoints, settle, xray, xrayOff,
     /** Undo the last change. wave: the undone paint dissolves back over 0.2 s instead of snapping. */
     undo(wave = false) {
       settle();
       const s = undo.pop(); if (!s) return false;
-      if (!wave) { data.set(s); touch(); return true; }
+      if (!wave) { data.set(s); recycle(s); touch(); return true; }
       let rn = 0;
       for (let i = 0; i < N; i++) {
         const o = i * 4;
@@ -305,11 +366,12 @@ export function createPaint(THREE, kit) {
         tgt[o] = s[o]; tgt[o + 1] = s[o + 1]; tgt[o + 2] = s[o + 2];
         rtmp[rn++] = i; rkey[i] = ((Math.imul(i, 0x9e3779b1) >>> 0) & 1023) / 1023; // a speckled dissolve
       }
+      recycle(s);
       if (rn) beginReveal(rn, 'undo', REVEAL.undo.dur, REVEAL.undo.band, REVEAL.undo.glow); else touch();
       return true;
     },
-    clearUndo() { undo.length = 0; },
-    reset(rgb = [255, 255, 255]) { rv.on = false; for (let i = 0; i < N; i++) { data[i * 4] = rgb[0]; data[i * 4 + 1] = rgb[1]; data[i * 4 + 2] = rgb[2]; data[i * 4 + 3] = 255; } undo.length = 0; touch(); },
+    clearUndo() { while (undo.length) recycle(undo.pop()); },
+    reset(rgb = [255, 255, 255]) { rv.on = false; xrayOff(); for (let i = 0; i < N; i++) { data[i * 4] = rgb[0]; data[i * 4 + 1] = rgb[1]; data[i * 4 + 2] = rgb[2]; data[i * 4 + 3] = 255; } while (undo.length) recycle(undo.pop()); touch(); },
     hash() { settle(); return fnv(data); },
     quantize(max = 32) { settle(); const q = quantize(data, max); dirty = true; return q; },
     /** Quantise in place + encode, once per paint version (a lock right after a live update, or
@@ -321,7 +383,7 @@ export function createPaint(THREE, kit) {
       return encCache;
     },
     decode(b64) { rv.on = false; const ok = decodeInto(b64, data); touch(); return ok; },
-    dispose() { texture.dispose(); },
+    dispose() { xrayOff(); texture.dispose(); },
   };
 }
 

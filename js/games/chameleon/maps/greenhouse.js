@@ -270,7 +270,9 @@ function build(atlas) {
     railing(b, SX0 + 0.06, -5.6, 5.95, -5.6, LOFT, { h: 0.7, color: C.woodD, top: C.wood, name: 'loft' });
     stairs(b, { x: 6.4, z: -5.6 + 8 * 0.24, dir: 'z-', width: 0.75, n: 8, rise: LOFT / 8, run: 0.24, tread: { color: C.wood }, stringer: C.woodD, name: 'loft-stairs' });
     for (const [x, z, col] of [[5.3, -7.4, C.red], [5.9, -7.2, C.teal], [5.3, -6.6, C.yellow]]) aabb(b, x - 0.22, LOFT, z - 0.22, x + 0.22, LOFT + 0.35, z + 0.22, { color: col, tile: 'slats', rep: 0.3, outline: true, collide: { wall: true, name: 'loft-box' } });
-    b.add(cylGeo(0.25, 0.25, 0.7, { radial: 12 }), { at: [6.3, LOFT + 0.25, -7.3], rot: [0, 0, Math.PI / 2], color: '#ffffff', tile: 'gingham', rep: 0.3, collide: { wall: true, name: 'deckchair-roll' } });
+    // the rolled-up deck chair lies by the railing (maps pass: at the back, with the boxes, it
+    // walled off a Tiny-sized pocket nobody could see into from a metre away)
+    b.add(cylGeo(0.25, 0.25, 0.7, { radial: 12 }), { at: [5.4, LOFT + 0.25, -5.95], rot: [0, 0, Math.PI / 2], color: '#ffffff', tile: 'gingham', rep: 0.3, collide: { wall: true, name: 'deckchair-roll' } });
     // shelves on the right wall: paint tins, pots, seed packets
     const ss = F(b, SX1 - 0.3, -4.4, -Math.PI / 2);
     shelves(ss, 2.4, 1.9, 0.4, 4, { color: C.wood, tile: null, name: 'shed-shelf' });

@@ -45,6 +45,8 @@ export function recordRound(d, rec, extra) {
       const prevB = g(`${hider}_blend`); set(`${hider}_blend`, Math.round(rec.blend));
       if (prevB > 0 && rec.blend >= 50) records.push({ w: hider, kind: 'blend', text: `${Math.round(rec.blend)}% blend`, sub: `${esc(extra.names[hider])}’s best camouflage` });
     }
+    // Today's hide (maps pass): the longest each of you lasted as the hider in today's setup
+    if (extra.daily) { const k = `${hider}_daily_${extra.daily}`; if ((rec.ms | 0) > g(k)) set(k, rec.ms | 0); }
     if (rec.found) {
       set(`${seeker}_finds`, g(`${seeker}_finds`) + 1);
       const best = d[`${seeker}_find_ms`];
@@ -93,6 +95,16 @@ export function bestsStrip(api, d, mapNames = {}) {
   void mapNames;
   if (!bits.length) return '';
   return `<div class="chm-bests">${bits.join('<i>·</i>')}</div>`;
+}
+
+/** Today's board (maps pass): 'Today: Emerson 0:41 · Sydney 1:10 · Sydney leads', or '' if
+ *  nobody has played today's hide yet. */
+export function dailyLine(api, d, day) {
+  const t = { a: d[`a_daily_${day}`] | 0, b: d[`b_daily_${day}`] | 0 };
+  if (!t.a && !t.b) return '';
+  const bits = ['a', 'b'].filter((w) => t[w]).map((w) => `<span>${nm(api, w)} ${fmtTime(t[w])}</span>`);
+  const lead = t.a && t.b && t.a !== t.b ? (t.a > t.b ? 'a' : 'b') : null;
+  return `<div class="chm-bests chm-daily"><span class="chm-daily-k">Today</span>${bits.join('<i>·</i>')}${lead ? `<i>·</i><span>${nm(api, lead)} leads</span>` : ''}</div>`;
 }
 
 /** Taunt lines for the recap (free from the counters): [] when nothing is worth saying. */

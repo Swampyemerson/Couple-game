@@ -134,7 +134,11 @@ export function sanitizeSetup(s, mapIds, fallbackFirst = 'a') {
   const mode = src.mode === 'db' ? 'db' : 'hs';
   const map = mapIds.includes(src.map) ? src.map : mapIds[0];
   const first = src.first === 'a' || src.first === 'b' ? src.first : fallbackFirst;
-  return { mode, map, first, rules: sanitizeRules(src.rules) };
+  // maps pass: "Mix it up" (a new map from the same pool every round) and "Today's hide" (the
+  // day key of a setup derived from the date; maps.js dailyPlan)
+  const daily = typeof src.daily === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(src.daily) ? src.daily : null;
+  const mix = !daily && (src.mix === true || src.mix === 'on');
+  return { mode, map, first, rules: sanitizeRules(src.rules), mix, daily };
 }
 
 /** Step a field through its option list (dir ±1), clamped at the ends. */
@@ -163,7 +167,7 @@ export function loadSaved() {
   try { const raw = localStorage.getItem(KEY); return raw ? JSON.parse(raw) : null; } catch { return null; }
 }
 export function saveSetup(setup) {
-  try { localStorage.setItem(KEY, JSON.stringify({ mode: setup.mode, map: setup.map, rules: setup.rules })); } catch { /* private mode etc. */ }
+  try { localStorage.setItem(KEY, JSON.stringify({ mode: setup.mode, map: setup.map, rules: setup.rules, mix: !!setup.mix })); } catch { /* private mode etc. */ }
 }
 const TIPS = 'chm.tips.v2';
 export function tipsSeen() { try { return localStorage.getItem(TIPS) === '1'; } catch { return false; } }

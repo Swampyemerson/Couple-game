@@ -679,6 +679,73 @@ function studio(atlas) {
 /** Helpers handed to EXTRA_MAPS builders as the 2nd argument (no circular import needed). */
 export const KIT = { frame, room, plant, books, yarn, P, boxGeo, cylGeo, sphereGeo, latheGeo, seeded };
 
+// ── variety (maps pass) ─────────────────────────────────────────────────────────────────────
+/** Map pools for "Mix it up": the small one-room dioramas, or the big multi-room maps. */
+export const mapPool = (entry) => (entry && entry.size === 'S' ? 'S' : 'XL');
+/**
+ * "Mix it up": the map id of every round (index 0 = round 1), the same on both phones (seeded by
+ * the match id). The map the host picked comes first; then each new map is drawn from the same
+ * pool (small dioramas or big maps), never the one before, the whole pool before any repeats.
+ * `per` rounds share a map: Hide & Seek passes 2, so you each hide once on every map (clocks and
+ * points scale with the map, so one of you hiding on CU and the other in the Garden wasn't fair);
+ * Double Blind (both hide every round) passes 1.
+ */
+export function mixPlan(seed, startId, rounds, per = 1) {
+  const start = MAPS.find((m) => m.id === startId) || MAPS[0];
+  const pool = MAPS.filter((m) => mapPool(m) === mapPool(start)).map((m) => m.id);
+  const rnd = seeded(`mix:${seed}`);
+  const n = Math.max(1, rounds | 0); const k = Math.max(1, per | 0);
+  const maps = [start.id]; let bag = [];
+  while (maps.length * k < n) {
+    if (!bag.length) { bag = pool.filter((id) => pool.length < 2 || id !== maps[maps.length - 1]); for (let i = bag.length - 1; i > 0; i--) { const j = rnd.int(i + 1); [bag[i], bag[j]] = [bag[j], bag[i]]; } }
+    const next = bag.shift();
+    if (next === maps[maps.length - 1] && pool.length > 1) { bag.push(next); continue; }
+    maps.push(next);
+  }
+  const out = []; for (let r = 0; r < n; r++) out.push(maps[Math.floor(r / k)]);
+  return out;
+}
+
+/** The local calendar day 'YYYY-MM-DD' (Today's hide is the same all day on both phones). */
+export function dayKey(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+/** Today's hide twists: one rule change on top of Classic. */
+export const TWISTS = [
+  { id: 'floor', label: 'Floor only', sub: 'no walls, no ceilings', rules: { climb: false, seekClimb: false } },
+  { id: 'tiny', label: 'Tiny chameleons', sub: 'small and quick', rules: { size: 'tiny' } },
+  { id: 'pellets', label: '3 pellets', sub: 'make every shot count', rules: { pellets: 3 } },
+  { id: 'head', label: '10 s head start', sub: 'the hider keeps moving', rules: { headStart: 10 } },
+  { id: 'paint', label: 'Paint while hunted', sub: 'repaint silently', rules: { huntPaint: 'on' } },
+];
+/**
+ * Today's hide: one shared setup per calendar day, derived from the date alone (both phones get
+ * the same from the host's day key): the map (every map once before any repeats), one twist,
+ * a size, who hides first; two rounds so each of you hides once and today's board compares them.
+ */
+export function dailyPlan(day) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(day || ''));
+  const n = m ? Math.floor(Date.UTC(+m[1], +m[2] - 1, +m[3]) / 86400000) : 0;
+  const N = MAPS.length; const cycle = Math.floor(n / N);
+  const order = MAPS.map((x) => x.id); const rc = seeded(`daily-cycle:${cycle}`);
+  for (let i = order.length - 1; i > 0; i--) { const j = rc.int(i + 1); [order[i], order[j]] = [order[j], order[i]]; }
+  const rnd = seeded(`daily:${day}`);
+  const twist = TWISTS[(n + rnd.int(TWISTS.length)) % TWISTS.length];
+  const size = twist.id === 'tiny' ? 'tiny' : ['small', 'medium', 'large', 'large', 'huge'][rnd.int(5)];
+  return { day, map: order[((n % N) + N) % N], twist, size, first: rnd() < 0.5 ? 'a' : 'b', rounds: 2 };
+}
+
+/** The named room a point is in (floor-aware; null outside every room or on one-room maps). */
+export function roomAt(map, x, y, z) {
+  const rooms = (map && map.rooms) || [];
+  if (rooms.length < 2) return null;
+  const floors = ((map.info && map.info.floors) || []).map((f) => +f.y || 0);
+  let fl = 0; for (let i = 0; i < floors.length; i++) if (y >= floors[i] - 0.3) fl = i;
+  const r = rooms.find((q) => (q.floor || 0) === fl && x >= q.x0 && x <= q.x1 && z >= q.z0 && z <= q.z1)
+    || rooms.find((q) => x >= q.x0 && x <= q.x1 && z >= q.z0 && z <= q.z1);
+  return r ? r.name : null;
+}
+
 /** Map footprint area in m² (from info, else the first room). */
 export function mapArea(m) {
   const inf = (m && m.info) || {};
@@ -705,19 +772,120 @@ function makeChunker(entry) {
   };
 }
 
-/** Build a map: returns geometry chunks + atlas + gameplay data. */
-export function buildMap(THREE, id, { ink = [0.11, 0.1, 0.13] } = {}) {
-  const entry = MAPS.find((m) => m.id === id) || MAPS[0];
-  const inf = entry.info || {};
-  const atlasB = createAtlas(1024, inf.atlasPages === 2 ? 2048 : 1024);
-  const fill = entry.build(atlasB, KIT);
-  const atlas = atlasB.finish();
-  const b = createBuilder({ tiles: atlas.tiles, ink, chunker: makeChunker(entry) });
-  fill(b);
-  const out = b.finish(THREE);
-  const probes = out.probes.filter((p) => p.point && p.hex);
+// ── session cache (maps pass) ───────────────────────────────────────────────────────────────
+// A built map is pure data plus BufferGeometries (whose GPU buffers the renderer creates on
+// first draw), so it is kept for the session: the lobby arrows, the guest following the host,
+// a rematch remount and a match on the map you just previewed then cost a scene swap instead
+// of a rebuild (atlas painting + merging + upload were 70–800 ms a switch). LRU, at most
+// CACHE_MAX maps and CACHE_BYTES of CPU arrays + atlas pixels (CU alone is ~9 MB), never
+// evicting the two most recent (the map on screen and the one replacing it). Evicting
+// disposes the geometries' GPU buffers; the stage drops its atlas texture for that map.
+const CACHE = new Map(); // key → built map, oldest first
+const CACHE_MAX = 3;
+const CACHE_BYTES = 36 * 1048576;
+const cacheKey = (id, ink) => `${id}|${ink.map((v) => Math.round(v * 1000)).join(',')}`;
+/** Approximate bytes a built map holds (vertex + index arrays, atlas canvas + its CPU copy). */
+function mapBytes(m) {
+  let n = 0;
+  const geo = (g) => { if (!g) return; for (const k in g.attributes) n += g.attributes[k].array.byteLength; if (g.index) n += g.index.array.byteLength; };
+  for (const ch of m.chunks) geo(ch.geometry);
+  geo(m.blobGeo);
+  const a = m.atlas; if (a) n += a.width * a.height * 4 * (a.hasData ? 2 : 1);
+  return n;
+}
+function evictMap(m) {
+  m.evicted = true;
+  for (const ch of m.chunks) ch.geometry.dispose(); // frees the GPU buffers; the arrays go with the map
+  if (m.blobGeo) m.blobGeo.dispose();
+}
+function trimCache() {
+  let bytes = 0; for (const m of CACHE.values()) bytes += mapBytes(m);
+  for (const [k, m] of CACHE) {
+    if (CACHE.size <= 2 || (CACHE.size <= CACHE_MAX && bytes <= CACHE_BYTES)) break;
+    CACHE.delete(k); bytes -= mapBytes(m); evictMap(m);
+  }
+}
+/** True while a built map is still cached (the stage keeps GPU resources only for those). */
+export function mapCached(m) { return !!m && !m.evicted && CACHE.get(m.cacheKey) === m; }
+/** Drop every cached map's GPU buffers (the renderer is going away; the CPU data stays cached). */
+export function releaseMapGPU() { for (const m of CACHE.values()) { for (const ch of m.chunks) ch.geometry.dispose(); if (m.blobGeo) m.blobGeo.dispose(); } }
+/** Tests / tools: what the cache holds. */
+export function mapCacheInfo() { return [...CACHE.values()].map((m) => ({ id: m.id, bytes: mapBytes(m), hits: m.cacheHits })); }
+
+// ── slots (maps pass) ───────────────────────────────────────────────────────────────────────
+// A prop standing 2–15 cm off a wall or off its neighbour (fridges in a row, a counter or a
+// dresser against the wall, a locker under the ceiling) leaves a slot no chameleon can squeeze
+// into (the squeeze profile needs 16 cm), but sticky feet could: the contact point fits, and
+// the body sat half inside the neighbouring box, hidden in geometry and visible from nowhere
+// (the Market fridge header, the House counter). closeSlots() extends the prop's collider to
+// touch whatever is across a slot that narrow. Structure (outer and interior walls, slabs,
+// stairs), perches, guards and glass never move; they can only be the thing touched.
+const SLOT = 0.15;
+const isStructure = (c) => {
+  const n = c.name || '';
+  if (/^(back|front|left|right|ceiling|ceiling-lip|fence-|w:|ceil:|stairs|floor|slab|roof|guard)/.test(n) || n.endsWith('-guard')) return true;
+  return c.maxX - c.minX > 6 || c.maxZ - c.minZ > 6 || c.maxY - c.minY > 3;
+};
+// rails, poles, cords (thin in two axes) and explicit perches; a thin panel (a shelf back, a
+// gondola spine) is still a wall here
+const isRail = (c) => !!c.perch || (c.name || '').startsWith('perch:') || [c.maxX - c.minX, c.maxY - c.minY, c.maxZ - c.minZ].filter((e) => e < 0.16).length >= 2;
+/** Close slots ≤ SLOT m between a prop and a wall / another prop. Returns a log (opts.log). */
+export function closeSlots(cols, { gap = SLOT, log = false } = {}) {
+  const out = [];
+  const lo = (c, k) => (k === 0 ? c.minX : k === 1 ? c.minY : c.minZ);
+  const hi = (c, k) => (k === 0 ? c.maxX : k === 1 ? c.maxY : c.maxZ);
+  const set = (c, k, side, v) => { const key = (side > 0 ? 'max' : 'min') + 'XYZ'[k]; c[key] = v; };
+  // flat decals (a flower bed's 0-height top) are neither
+  const flat = (c) => c.maxX - c.minX < 0.02 || c.maxY - c.minY < 0.02 || c.maxZ - c.minZ < 0.02;
+  const solidTarget = (c) => c.climb !== false && !isRail(c) && !flat(c);
+  const movable = (c) => c.climb !== false && !isRail(c) && !isStructure(c) && !flat(c);
+  // a 1 m XZ grid of the targets (CU has ~1000 colliders: all pairs was 180 ms)
+  const G = 1; const grid = new Map(); const cell = (i, j) => i * 4096 + j;
+  cols.forEach((c, ci) => {
+    if (!solidTarget(c)) return;
+    for (let i = Math.floor(c.minX / G); i <= Math.floor(c.maxX / G); i++) for (let j = Math.floor(c.minZ / G); j <= Math.floor(c.maxZ / G); j++) {
+      const kk = cell(i, j); let L = grid.get(kk); if (!L) { L = []; grid.set(kk, L); } L.push(ci);
+    }
+  });
+  const mark = new Int32Array(cols.length).fill(-1); let stamp = 0; const near = [];
+  for (const a of cols) {
+    if (!movable(a)) continue;
+    // candidates: targets in the cells around a (grown by the slot width)
+    stamp++; near.length = 0;
+    for (let i = Math.floor((a.minX - gap) / G); i <= Math.floor((a.maxX + gap) / G); i++) for (let j = Math.floor((a.minZ - gap) / G); j <= Math.floor((a.maxZ + gap) / G); j++) {
+      const L = grid.get(cell(i, j)); if (!L) continue;
+      for (const bi of L) if (mark[bi] !== stamp) { mark[bi] = stamp; near.push(cols[bi]); }
+    }
+    for (let k = 0; k < 3; k++) for (const side of [1, -1]) {
+      const face = side > 0 ? hi(a, k) : lo(a, k);
+      let best = gap + 1e-6; let tgt = null;
+      for (const b of near) {
+        if (b === a) continue;
+        const d = side > 0 ? lo(b, k) - face : face - hi(b, k);
+        if (d <= 0.002 || d >= best) continue;
+        // the target must cover (nearly) all of the prop's face: extending a long hedge to a
+        // flower bed that faces a third of it would put an invisible lip along the rest
+        let ok = true;
+        for (let j = 0; j < 3 && ok; j++) {
+          if (j === k) continue;
+          const ov = Math.min(hi(a, j), hi(b, j)) - Math.max(lo(a, j), lo(b, j));
+          if (ov < (hi(a, j) - lo(a, j)) * 0.8 - 0.01) ok = false;
+        }
+        if (ok) { best = d; tgt = b; }
+      }
+      if (!tgt) continue;
+      const v = side > 0 ? lo(tgt, k) : hi(tgt, k);
+      if (log) { const bb = (c) => `[${[c.minX, c.minY, c.minZ, c.maxX, c.maxY, c.maxZ].map((q) => q.toFixed(2)).join(' ')}]`; out.push(`${a.name || '-'} ${bb(a)} ${side > 0 ? '+' : '-'}${'xyz'[k]} ${best.toFixed(3)} m → ${tgt.name || '-'} ${bb(tgt)}`); }
+      set(a, k, side, v);
+    }
+  }
+  return out;
+}
+
+/** The playable XZ box: the outer walls (or fence) by name, else info.w × info.d. */
+export function boundsOf(colliders, inf = {}) {
   const bounds = { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity };
-  for (const c of out.colliders) {
+  for (const c of colliders) {
     if (c.name === 'back') bounds.minZ = c.maxZ; if (c.name === 'front') bounds.maxZ = c.minZ;
     if (c.name === 'left') bounds.minX = c.maxX; if (c.name === 'right') bounds.maxX = c.minX;
     if (c.name === 'fence-back') bounds.minZ = c.maxZ; if (c.name === 'fence-left') bounds.minX = c.maxX; if (c.name === 'fence-right') bounds.maxX = c.minX;
@@ -726,6 +894,35 @@ export function buildMap(THREE, id, { ink = [0.11, 0.1, 0.13] } = {}) {
     if (!Number.isFinite(bounds.minX)) bounds.minX = -inf.w / 2; if (!Number.isFinite(bounds.maxX)) bounds.maxX = inf.w / 2;
     if (!Number.isFinite(bounds.minZ)) bounds.minZ = -inf.d / 2; if (!Number.isFinite(bounds.maxZ)) bounds.maxZ = inf.d / 2;
   }
+  return bounds;
+}
+
+/** Build a map (or reuse this session's copy): geometry chunks + atlas + gameplay data. */
+export function buildMap(THREE, id, { ink = [0.11, 0.1, 0.13], fresh = false } = {}) {
+  const key = cacheKey(id, ink);
+  const hit = CACHE.get(key);
+  if (hit && !fresh && hit.THREE === THREE) { CACHE.delete(key); CACHE.set(key, hit); hit.cacheHits++; return hit; }
+  const m = buildMapNow(THREE, id, ink);
+  if (fresh) return m;
+  if (hit) { CACHE.delete(key); evictMap(hit); }
+  m.cacheKey = key; m.THREE = THREE; m.cacheHits = 0;
+  CACHE.set(key, m);
+  trimCache();
+  return m;
+}
+
+function buildMapNow(THREE, id, ink) {
+  const entry = MAPS.find((m) => m.id === id) || MAPS[0];
+  const inf = entry.info || {};
+  const atlasB = createAtlas(1024, inf.atlasPages === 2 ? 2048 : 1024);
+  const fill = entry.build(atlasB, KIT);
+  const atlas = atlasB.finish();
+  const b = createBuilder({ tiles: atlas.tiles, ink, chunker: makeChunker(entry) });
+  fill(b);
+  const out = b.finish(THREE);
+  closeSlots(out.colliders);
+  const probes = out.probes.filter((p) => p.point && p.hex);
+  const bounds = boundsOf(out.colliders, inf);
   const rooms = out.rooms.length ? out.rooms : (inf.rooms || []).map((r) => ({ name: r.name, floor: r.floor || 0, landmark: r.landmark || '', x0: Math.min(r.x0, r.x1), z0: Math.min(r.z0, r.z1), x1: Math.max(r.x0, r.x1), z1: Math.max(r.z0, r.z1) }));
   const spots = out.spots;
   // spawn lists (fall back to the legacy single spots)

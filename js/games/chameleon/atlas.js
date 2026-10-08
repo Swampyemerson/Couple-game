@@ -27,37 +27,57 @@ export function createAtlas(size = 1024, height = size) {
     // shelf packing, tallest first
     const order = [...reqs].sort((a, b) => b.ih + PAD * 2 - (a.ih + PAD * 2) || b.iw - a.iw);
     let x = 0; let y = 0; let shelf = 0;
-    const tmp = document.createElement('canvas');
     for (const r of order) {
       const W = r.iw + PAD * 2; const H = r.ih + PAD * 2;
       if (x + W > size) { x = 0; y += shelf; shelf = 0; }
       if (y + H > height) { console.warn('atlas full, dropping', r.key); continue; }
-      tmp.width = r.iw; tmp.height = r.ih;
-      const g = tmp.getContext('2d');
-      g.clearRect(0, 0, r.iw, r.ih);
-      g.save();
-      try { r.painter(g, r.iw, r.ih, seeded(r.key)); } catch (e) { console.error('atlas painter', r.key, e); }
-      g.restore();
-      const ix = x + PAD; const iy = y + PAD;
+      const ix = x + PAD; const iy = y + PAD; const w = r.iw; const h = r.ih;
+      // maps pass (perf): paint straight into the (CPU-backed) atlas, clipped to the tile, and
+      // copy the gutters with putImageData. The old tmp canvas + 9 clipped drawImage blits per
+      // tile (and self-drawImage of the whole atlas for clamped gutters) were 25-225 ms a map;
+      // this is 8-40 ms with the same pixels (± rounding on anti-aliased edges).
+      ctx.save(); ctx.beginPath(); ctx.rect(ix, iy, w, h); ctx.clip(); ctx.translate(ix, iy);
+      try { r.painter(ctx, w, h, seeded(r.key)); } catch (e) { console.error('atlas painter', r.key, e); }
+      ctx.restore();
+      const img = ctx.getImageData(ix, iy, w, h);
       if (r.repeat) {
-        ctx.save(); ctx.beginPath(); ctx.rect(x, y, W, H); ctx.clip();
-        for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) ctx.drawImage(tmp, ix + ox * r.iw, iy + oy * r.ih);
-        ctx.restore();
+        // wrap-around gutter: the opposite edges (and corners) of the tile
+        for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
+          if (!ox && !oy) continue;
+          ctx.putImageData(img, ix + ox * w, iy + oy * h, ox < 0 ? w - PAD : 0, oy < 0 ? h - PAD : 0, ox ? PAD : w, oy ? PAD : h);
+        }
       } else {
-        ctx.drawImage(tmp, ix, iy);
-        // clamp-extend the gutter
-        ctx.drawImage(tmp, 0, 0, r.iw, 1, ix, y, r.iw, PAD);
-        ctx.drawImage(tmp, 0, r.ih - 1, r.iw, 1, ix, iy + r.ih, r.iw, PAD);
-        ctx.drawImage(canvas, ix, y, 1, H, x, y, PAD, H);
-        ctx.drawImage(canvas, ix + r.iw - 1, y, 1, H, ix + r.iw, y, PAD, H);
+        // clamp-extend: the edge rows, then the edge columns (corners included), across the gutter
+        const d = img.data; const rowLen = w * 4;
+        const strip = ctx.createImageData(w, PAD);
+        for (const [sy, dy] of [[0, y], [h - 1, iy + h]]) {
+          const src = d.subarray(sy * rowLen, (sy + 1) * rowLen);
+          for (let k = 0; k < PAD; k++) strip.data.set(src, k * rowLen);
+          ctx.putImageData(strip, ix, dy);
+        }
+        const col = ctx.createImageData(PAD, H); const cd = col.data;
+        for (const [sx, dx] of [[0, x], [w - 1, ix + w]]) {
+          for (let yy = 0; yy < H; yy++) {
+            const si = ((yy < PAD ? 0 : yy >= PAD + h ? h - 1 : yy - PAD) * w + sx) * 4;
+            for (let k = 0; k < PAD; k++) { const di = (yy * PAD + k) * 4; cd[di] = d[si]; cd[di + 1] = d[si + 1]; cd[di + 2] = d[si + 2]; cd[di + 3] = d[si + 3]; }
+          }
+          ctx.putImageData(col, dx, y);
+        }
       }
-      rects[r.key] = { x: ix, y: iy, w: r.iw, h: r.ih, repeat: r.repeat };
-      tiles[r.key] = [ix / size, 1 - (iy + r.ih) / height, r.iw / size, r.ih / height];
+      rects[r.key] = { x: ix, y: iy, w, h, repeat: r.repeat };
+      tiles[r.key] = [ix / size, 1 - (iy + h) / height, w / size, h / height];
       x += W; shelf = Math.max(shelf, H);
     }
-    tmp.width = tmp.height = 1;
-    const data = ctx.getImageData(0, 0, size, height).data;
-    return { canvas, data, size, width: size, height, tiles, rects, used: y + shelf };
+    // The CPU copy for the eyedropper / stamp / blend score is read on first use (or by
+    // warm() in idle time after a map switch): a 4-8 MB getImageData no longer sits in the
+    // switch itself, and a cached map that is never sampled never pays for it.
+    let data = null;
+    return {
+      canvas, size, width: size, height, tiles, rects, used: y + shelf,
+      get data() { if (!data) data = ctx.getImageData(0, 0, size, height).data; return data; },
+      get hasData() { return !!data; },
+      warm() { void this.data; },
+    };
   }
   return { add, finish };
 }
@@ -69,8 +89,8 @@ export function sampleAtlas(atlas, tile, u, v, out) {
   if (fu >= 1) fu = 0; if (fv >= 1) fv = 0;
   const px = Math.min(S - 1, Math.max(0, Math.floor((tile[0] + fu * tile[2]) * S)));
   const py = Math.min(SH - 1, Math.max(0, Math.floor((1 - (tile[1] + fv * tile[3])) * SH)));
-  const i = (py * S + px) * 4;
-  out[0] = atlas.data[i]; out[1] = atlas.data[i + 1]; out[2] = atlas.data[i + 2];
+  const i = (py * S + px) * 4; const D = atlas.data; // a getter (read on first use)
+  out[0] = D[i]; out[1] = D[i + 1]; out[2] = D[i + 2];
   return out;
 }
 

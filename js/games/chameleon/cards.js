@@ -1,6 +1,6 @@
 // Overlay cards for Blend & Seek: pure HTML builders (state in, markup out).
 import { esc, fmtTime } from './util.js';
-import { MAPS } from './maps.js';
+import { MAPS, mapPool, dailyPlan, dayKey } from './maps.js';
 import { SIZES, OPTIONS, PRESET_LABEL, PRESET_SUB, fmtRule, timeScale, hideScale, effSeconds } from './rules.js';
 
 const nameSpan = (api, w) => `<b class="chm-name-${w}">${esc(api.name(w))}</b>`;
@@ -81,7 +81,8 @@ function mapCard(api, setup, canEdit) {
     ${MAPS.length > 1 ? `<button class="chm-arrow" data-lobby="map" data-v="${prev.id}" aria-label="Previous map" ${dis}>‹</button>` : ''}
     ${mapPlan(m)}
     <div class="chm-mapinfo"><b>${esc(m.name)}</b><small>${esc(m.blurb || '')}</small>
-      <span class="chm-facts">${f.area ? `<em class="ar">${f.area}</em>` : ''}<em>${f.rooms} room${f.rooms === 1 ? '' : 's'}</em>${f.floors > 1 ? `<em>${f.floors} floors</em>` : ''}<em class="chm-climbs" title="Climbing spots">Climbs <span>${dots}</span></em></span></div>
+      <span class="chm-facts">${f.area ? `<em class="ar">${f.area}</em>` : ''}<em>${f.rooms} room${f.rooms === 1 ? '' : 's'}</em>${f.floors > 1 ? `<em>${f.floors} floors</em>` : ''}<em class="chm-climbs" title="Climbing spots">Climbs <span>${dots}</span></em></span>
+      </div>
     ${MAPS.length > 1 ? `<button class="chm-arrow" data-lobby="map" data-v="${next.id}" aria-label="Next map" ${dis}>›</button>` : ''}
   </div>`;
 }
@@ -91,11 +92,25 @@ function sizeSeg(rules, canEdit) {
   return `<div class="chm-sizes" role="radiogroup" aria-label="Chameleon size">${SIZES.map((z) => `<button class="${rules.size === z.id ? 'on' : ''}" data-lobby="rule" data-k="size" data-v="${z.id}" role="radio" aria-checked="${rules.size === z.id}" ${dis}><i style="width:${SIZE_DOT[z.id]}px;height:${Math.round(SIZE_DOT[z.id] * 0.62)}px"></i>${z.label}</button>`).join('')}</div>`;
 }
 
-function presetSeg(rules, canEdit) {
-  const dis = canEdit ? '' : 'disabled';
-  const cur = rules.preset || 'custom';
-  return `<div class="chm-presets" role="radiogroup" aria-label="Preset">${['easy', 'classic', 'hard', 'custom'].map((id) => `<button class="${cur === id ? 'on' : ''} ${id === 'custom' ? 'custom' : ''}" ${id === 'custom' ? 'tabindex="-1" data-lobby="custom"' : `data-lobby="preset" data-v="${id}"`} role="radio" aria-checked="${cur === id}" ${dis}><b>${PRESET_LABEL[id]}</b><small>${PRESET_SUB[id]}</small></button>`).join('')}</div>`;
+// Mix it up (maps pass): a toggle tile beside Today's hide, so the variety row costs one line, not two
+function mixBtn(setup, canEdit) {
+  if (setup.daily) return '';
+  const m = MAPS.find((x) => x.id === setup.map) || MAPS[0];
+  const tip = setup.mix ? `A new ${mapPool(m) === 'S' ? 'room' : 'big map'} every ${setup.mode === 'hs' ? 'two rounds (you each hide once on it)' : 'round'}` : 'One map all match';
+  return `<button class="chm-mix ${setup.mix ? 'on' : ''}" data-lobby="mix" data-v="${setup.mix ? 'off' : 'on'}" aria-pressed="${!!setup.mix}" title="${tip}" ${canEdit ? '' : 'disabled'}>${SHUFFLE}<span>Mix it up</span></button>`;
 }
+
+function presetSeg(rules, canEdit, setup) {
+  const dis = canEdit ? '' : 'disabled';
+  const daily = setup.daily || null;
+  const cur = daily ? 'today' : rules.preset || 'custom';
+  // Today's hide (maps pass): the same map, twist and size on both phones all day
+  const pl = dailyPlan(daily || dayKey()); const dm = MAPS.find((x) => x.id === pl.map);
+  const mix = mixBtn(setup, canEdit);
+  const today = `<button class="chm-today${mix ? ' withmix' : ''} ${cur === 'today' ? 'on' : ''}" data-lobby="daily" data-v="${esc(pl.day)}" role="radio" aria-checked="${cur === 'today'}" ${dis}><b>Today</b><small>${esc(dm ? dm.name : '')} · ${esc(pl.twist.label)}</small></button>`;
+  return `<div class="chm-presets"><div class="chm-rg" role="radiogroup" aria-label="Preset">${['easy', 'classic', 'hard', 'custom'].map((id) => `<button class="${cur === id ? 'on' : ''} ${id === 'custom' ? 'custom' : ''}" ${id === 'custom' ? 'tabindex="-1" data-lobby="custom"' : `data-lobby="preset" data-v="${id}"`} role="radio" aria-checked="${cur === id}" ${dis}><b>${PRESET_LABEL[id]}</b><small>${PRESET_SUB[id]}</small></button>`).join('')}${today}</div>${mix}</div>`;
+}
+const SHUFFLE = '<svg class="chm-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h3.5c2.2 0 3.4 1 4.6 3l1.8 3.2c1.1 2 2.4 3.3 4.6 3.3H21"/><path d="M18 13.8l3 2.7-3 2.7"/><path d="M3 16.5h3.5c1.3 0 2.2-.4 3-1.1"/><path d="M14.4 8.6c.8-.8 1.7-1.6 3.1-1.6H21"/><path d="M18 4.3L21 7l-3 2.7"/></svg>';
 
 export function lobbyCard(api, { canEdit, local, setup, waitingFor, sheet, bests = '', wardrobe = '', music = 'on' }) {
   const mode = setup.mode; const first = setup.first; const rules = setup.rules;
@@ -108,7 +123,7 @@ export function lobbyCard(api, { canEdit, local, setup, waitingFor, sheet, bests
       <button class="chm-mode ${mode === 'hs' ? 'on' : ''}" data-lobby="mode" data-v="hs" role="radio" aria-checked="${mode === 'hs'}"><b>Hide &amp; Seek</b><small>One hides, one hunts. ${rules.rounds} rounds, swap roles.</small></button>
       <button class="chm-mode ${mode === 'db' ? 'on' : ''}" data-lobby="mode" data-v="db" role="radio" aria-checked="${mode === 'db'}" ${local ? 'disabled' : ''}><b>Double Blind</b><small>${local ? 'Needs two phones.' : 'Both hide, then both hunt. Best of 3.'}</small></button>
     </div>
-    ${presetSeg(rules, canEdit)}
+    ${presetSeg(rules, canEdit, setup)}
     </div><div class="chm-col">
     ${mapCard(api, setup, canEdit)}
     ${bests}
@@ -157,7 +172,7 @@ export function settingsSheet(api, { canEdit, local, setup, waitingFor, music = 
   return `<div class="chm-sheetwrap" role="dialog" aria-label="Game settings"><div class="chm-sheet chm-sticker" data-scroll>
     <div class="chm-sheethead"><h2>Game settings</h2><button class="chm-done" data-act="settings">Done</button></div>
     ${canEdit ? '' : `<p class="chm-wait">${nameSpan(api, waitingFor)} is choosing. You’ll see every change here.</p>`}
-    ${presetSeg(r, canEdit)}
+    ${presetSeg(r, canEdit, setup)}
     <h3>Diorama</h3>
     ${mapCard(api, setup, canEdit)}
     <div class="chm-chips chm-mapchips">${MAPS.map((m) => `<button class="chm-chip ${setup.map === m.id ? 'on' : ''}" data-lobby="map" data-v="${m.id}" ${canEdit ? '' : 'disabled'}>${esc(m.name)}</button>`).join('')}</div>
@@ -227,17 +242,18 @@ export const SURF_HEAD = {
 };
 export const SURF_SHORT = { ceiling: 'on the ceiling', under: 'upside down', hang: 'hanging', hangHigh: 'hanging from the ceiling', wall: 'up the wall', flat: 'on the wall', perch: 'perched', squeeze: 'squeezed in a gap', corner: 'in the corner' };
 
-export function titleCard(api, { round, rounds, mode, hider, youHide, youSeek, map }) {
+export function titleCard(api, { round, rounds, mode, hider, youHide, youSeek, map, start = null, mixed = false }) {
   const m = MAPS.find((x) => x.id === map);
   const line = mode === 'db'
     ? 'Both of you hide. Then hunt each other — slowly.'
     : `${nameSpan(api, hider)} hides · ${nameSpan(api, api.other(hider))} seeks`;
   const you = mode === 'db' ? 'Paint fast, pose, and don’t blink.' : youHide ? 'You hide. Find a spot, pose, then paint yourself to match.' : youSeek ? 'You seek. Eyes shut while they hide…' : '';
   return `<div class="chm-over dim veil chm-titlecard"><div class="chm-card chm-sticker">
-    <div class="chm-kicker">Round ${round} of ${rounds} · ${esc(m ? m.name : '')}</div>
+    <div class="chm-kicker">Round ${round} of ${rounds} · ${esc(m ? m.name : '')}${mixed ? ' <span class="chm-mixtag">mixed</span>' : ''}</div>
     <h2>${mode === 'db' ? 'Double Blind' : 'Hide &amp; Seek'}</h2>
     <p>${line}</p>
     ${you ? `<p>${you}</p>` : ''}
+    ${start ? `<p class="chm-start">You start in the <b>${esc(start)}</b></p>` : ''}
   </div></div>`;
 }
 
@@ -313,7 +329,7 @@ export function recapCard(api, { rec, mode, scores, round, rounds, isLast, canNe
     ${lines.length ? `<p class="chm-lines">${lines.map((l) => `<span>${l}</span>`).join('')}</p>` : ''}
     <div class="chm-tally"><span><i style="background:var(--p-a)"></i>${esc(api.name('a'))} ${scores.a}</span><span><i style="background:var(--p-b)"></i>${esc(api.name('b'))} ${scores.b}</span></div>
     ${emotes ? emoteRow() : ''}
-    ${next ? `<p class="chm-nextline">Next: ${nameSpan(api, next.hider)} hides · ${nameSpan(api, api.other(next.hider))} seeks · ${esc(next.map)}</p>` : ''}
+    ${next ? `<p class="chm-nextline">Next: ${nameSpan(api, next.hider)} hides · ${nameSpan(api, api.other(next.hider))} seeks · ${next.mixed ? `<b class="chm-newmap">new map: ${esc(next.map)}</b>` : esc(next.map)}</p>` : ''}
     ${canNext ? `<button class="chm-go me chm-ring" data-act="next" style="--k:1">${isLast ? 'See who won' : 'Next round'}<small data-live="recap-time">${autoMs ? Math.ceil(autoMs / 1000) : ''}</small></button>` : '<p class="chm-wait">Next round starts in a moment…</p>'}
   </div></div>`;
 }

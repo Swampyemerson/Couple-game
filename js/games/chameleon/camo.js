@@ -13,7 +13,7 @@
 import { sampleAtlas } from './atlas.js';
 import { blendWord } from './cards.js';
 
-const UV = [0, 0]; const TMP = [0, 0, 0];
+const UV = [0, 0]; const TMP = [0, 0, 0]; const ZERO = [0, 0, 0];
 
 /** A resumable blend-score job. */
 export function createBlendJob() {
@@ -31,7 +31,7 @@ export function stepBlend(J, budget = 1e9) {
   const list = p.list; const wpos = p.wpos; const wnrm = p.wnrm; const data = p.data;
   const qx = surf.q[0]; const qy = surf.q[1]; const qz = surf.q[2];
   const nx = surf.n[0]; const ny = surf.n[1]; const nz = surf.n[2];
-  const vc = surf.vc; const br = surf.blobRgb || TMP;
+  const vc = surf.vc; const br = surf.blobRgb || ZERO; // (the stamp's fallback: black)
   const end = Math.min(list.length, J.k + budget * 2);
   let n = J.n; let sum = J.sum; let k = J.k;
   for (; k < end; k += 2) {
@@ -59,14 +59,60 @@ export function stepBlend(J, budget = 1e9) {
 export function scoreBlend(p, surf) {
   const J = createBlendJob(); startBlend(J, p, surf); stepBlend(J); return J.score;
 }
+/**
+ * The x-ray's error map: for EVERY mapped texel (not every other one), how much of its score it
+ * loses against `surf` (0 = a perfect match … 255 = scores nothing; the side pressed against the
+ * surface is 0, it is never seen). out: Uint8Array(texels). Returns how many texels lose > 25 %.
+ */
+export function errorMap(p, surf, out) {
+  if (p.settle) p.settle();
+  const list = p.list; const wpos = p.wpos; const wnrm = p.wnrm; const data = p.data;
+  const qx = surf.q[0]; const qy = surf.q[1]; const qz = surf.q[2];
+  const nx = surf.n[0]; const ny = surf.n[1]; const nz = surf.n[2];
+  const vc = surf.vc; const br = surf.blobRgb || ZERO; // (the stamp's fallback: black)
+  let bad = 0;
+  for (let k = 0; k < list.length; k++) {
+    const i = list[k];
+    const facing = wnrm[i * 3] * nx + wnrm[i * 3 + 1] * ny + wnrm[i * 3 + 2] * nz;
+    if (facing < 0.1) { out[i] = 0; continue; }
+    const px = wpos[i * 3]; const py = wpos[i * 3 + 1]; const pz = wpos[i * 3 + 2];
+    const dist = (px - qx) * nx + (py - qy) * ny + (pz - qz) * nz;
+    const sx = px - nx * dist; const sy = py - ny * dist; const sz = pz - nz * dist;
+    surf.uvAt(sx, sy, sz, UV);
+    sampleAtlas(surf.atlas, surf.tile, UV[0], UV[1], TMP2);
+    const sh = surf.shadeAt ? surf.shadeAt(sx, sy, sz) : 0;
+    const r = TMP2[0] * vc[0] * (1 - sh) + br[0] * sh; const g = TMP2[1] * vc[1] * (1 - sh) + br[1] * sh; const b = TMP2[2] * vc[2] * (1 - sh) + br[2] * sh;
+    const o = i * 4;
+    // the same per-texel loss as the score: 2.8 × mean |ΔRGB| / 255, capped at 1
+    const loss = Math.min(1, 2.8 * (Math.abs(data[o] - r) + Math.abs(data[o + 1] - g) + Math.abs(data[o + 2] - b)) / 765);
+    out[i] = (loss * 255) | 0;
+    if (loss > 0.25) bad++;
+  }
+  return bad;
+}
+const TMP2 = [0, 0, 0];
 
 /** Grade index: 0 Sore thumb, 1 Spotted, 2 Sneaky, 3 Ghost. */
 export const gradeOf = (b) => (b >= 90 ? 3 : b >= 75 ? 2 : b >= 50 ? 1 : 0);
 const GRADE_CLS = ['g0', 'g1', 'g2', 'g3'];
 const GRADE_SND = [null, 'pose', 'good', 'unlock'];
+/** The meter's "Invisible!" line (above Ghost's 90). */
+export const INVISIBLE = 98;
 
 const METER_CSS = `
-.chm-meter { position: absolute; right: calc(8px + var(--chm-sr)); top: calc(184px + var(--chm-st)); width: 56px; padding: 5px 0 6px; display: flex; flex-direction: column; align-items: center; gap: 4px; pointer-events: none; z-index: 1; transform-origin: 100% 50%; animation: cm-in .28s cubic-bezier(.34,1.56,.64,1) both; }
+.chm-meter { position: absolute; right: calc(8px + var(--chm-sr)); top: calc(184px + var(--chm-st)); width: 56px; padding: 5px 0 5px; margin: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; pointer-events: auto; z-index: 1; transform-origin: 100% 50%; animation: cm-in .28s cubic-bezier(.34,1.56,.64,1) both; font: inherit; color: var(--g-ink); cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+.chm-meter:focus-visible { outline: 3px solid var(--g-hl); outline-offset: 2px; }
+.chm-meter .cm-chk { display: inline-flex; align-items: center; gap: 2px; padding: 2px 5px 2px 4px; border: 1.5px solid var(--g-ink); border-radius: 999px; font: 900 0.5rem/1 var(--g-font-body); letter-spacing: .06em; text-transform: uppercase; background: var(--g-card); }
+.chm-meter .cm-chk svg { width: 8px; height: 8px; flex: none; }
+.chm-meter.xray .cm-chk { background: repeating-linear-gradient(135deg, #ffd014 0 4px, #fff1a8 4px 8px); background-size: 11.3px 11.3px; color: #1a1820; animation: cm-hatch .45s linear infinite; }
+.chm-meter.xray.clear .cm-chk { background: var(--g-good); color: var(--g-on-signal, #fff); animation: none; }
+.chm-meter .cm-tube.flash { animation: cm-tube .5s ease-out; }
+.chm-meter .cm-pop.inv { background: linear-gradient(100deg, var(--g-good) 0 38%, #fff 50%, var(--g-good) 62% 100%) 0 0 / 300% 100%; color: var(--g-on-signal, #fff); font-size: 1.05rem; }
+.chm-meter .cm-pop.inv.go { animation: cm-pop 1.5s cubic-bezier(.2,.9,.3,1) both, cm-shine 1.1s .15s linear; }
+@keyframes cm-hatch { to { background-position: 11.3px 0; } }
+@media (prefers-reduced-motion: reduce) { .chm-meter.xray .cm-chk, .chm-meter .cm-tube.flash { animation: none; } }
+@keyframes cm-tube { 30% { transform: scale(1.1); box-shadow: 0 0 0 4px var(--g-hl); } }
+@keyframes cm-shine { from { background-position: 100% 0; } to { background-position: 0 0; } }
 .chm-meter .cm-cap { font: 900 0.56rem/1 var(--g-font-body); letter-spacing: .1em; text-transform: uppercase; color: var(--g-muted, var(--g-ink)); }
 .chm-meter .cm-num { font: 900 1.12rem/1 var(--g-font-display); font-variant-numeric: tabular-nums; color: var(--g-ink); display: inline-block; }
 .chm-meter .cm-num small { font-size: 0.55em; margin-left: 1px; }
@@ -79,12 +125,12 @@ const METER_CSS = `
 .chm-meter.g3 .cm-fill::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 0 35%, rgb(255 255 255 / .55) 50%, transparent 65% 100%) 0 0 / 100% 300%; animation: cm-sheen 1.6s linear infinite; }
 .chm-meter .cm-tick { position: absolute; left: 0; width: 7px; height: 2px; background: var(--g-ink); margin-bottom: -1px; text-decoration: none; }
 .chm-meter .cm-col { position: relative; }
-.chm-meter .cm-star { position: absolute; right: calc(100% + 1px); transform: translateY(50%); font: 900 0.9rem/1 var(--g-font-body); color: var(--g-card); -webkit-text-stroke: 1.4px var(--g-ink); }
+.chm-meter .cm-star { pointer-events: none; position: absolute; right: calc(100% + 1px); transform: translateY(50%); font: 900 0.9rem/1 var(--g-font-body); color: var(--g-card); -webkit-text-stroke: 1.4px var(--g-ink); }
 .chm-meter.bonus .cm-star { color: var(--g-hl); animation: cm-star .45s ease-out; }
 .chm-meter .cm-starline { position: absolute; left: 0; right: 0; height: 0; border-top: 2px dashed var(--g-ink); margin-bottom: -1px; opacity: .7; }
 .chm-meter .cm-word { font: 900 0.6rem/1.05 var(--g-font-body); text-transform: uppercase; letter-spacing: .03em; text-align: center; min-height: 2.1em; display: grid; place-items: center; padding: 0 3px; font-style: normal; }
 .chm-meter .cm-word.pop { animation: cm-bump .4s ease-out; }
-.chm-meter .cm-pop { position: absolute; right: calc(100% + 10px); top: 46%; padding: 5px 9px; border: 2.5px solid var(--g-ink); border-radius: 10px; background: var(--g-good); color: var(--g-on-signal, #fff); font: 900 0.95rem/1 var(--g-font-display); white-space: nowrap; box-shadow: 3px 3px 0 var(--g-edge); opacity: 0; transform-origin: 100% 50%; }
+.chm-meter .cm-pop { pointer-events: none; position: absolute; right: calc(100% + 10px); top: 46%; padding: 5px 9px; border: 2.5px solid var(--g-ink); border-radius: 10px; background: var(--g-good); color: var(--g-on-signal, #fff); font: 900 0.95rem/1 var(--g-font-display); white-space: nowrap; box-shadow: 3px 3px 0 var(--g-edge); opacity: 0; transform-origin: 100% 50%; }
 .chm-meter .cm-pop.g1 { background: var(--g-hl); color: var(--g-on-ink, #18171d); }
 .chm-meter .cm-pop.g2 { background: var(--chm-me); color: var(--g-on-ink, #18171d); }
 .chm-meter .cm-pop.go { animation: cm-pop 1.25s cubic-bezier(.2,.9,.3,1) both; }
@@ -104,17 +150,21 @@ const METER_CSS = `
 export function createMeter(host, { play = () => {} } = {}) {
   const doc = host.ownerDocument;
   const style = doc.createElement('style'); style.textContent = METER_CSS;
-  const el = doc.createElement('div');
+  // a button: tapping it x-rays the body (game.js 'xray' → paint.xray): the bits that show flash
+  const el = doc.createElement('button');
+  el.type = 'button'; el.dataset.act = 'xray';
   el.className = 'chm-meter chm-sticker'; el.hidden = true;
-  el.setAttribute('role', 'status'); el.setAttribute('aria-label', 'Camouflage');
+  el.setAttribute('aria-label', 'Camo meter: tap to see where you show');
   el.innerHTML = '<span class="cm-cap">Camo</span><b class="cm-num">--</b>'
     + '<div class="cm-col"><div class="cm-tube"><i class="cm-fill"></i><s class="cm-tick" style="bottom:50%"></s><s class="cm-tick" style="bottom:75%"></s><s class="cm-tick" style="bottom:90%"></s><i class="cm-starline" hidden></i></div><span class="cm-star" hidden>★</span></div>'
-    + '<em class="cm-word"></em><span class="cm-pop"></span>';
+    + '<em class="cm-word" aria-live="polite"></em>'
+    + '<span class="cm-chk"><svg viewBox="0 0 10 10" aria-hidden="true"><circle cx="4" cy="4" r="2.9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M6.2 6.2 9 9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span class="cm-chkt">Check</span></span>'
+    + '<span class="cm-pop"></span>';
   host.appendChild(style); host.appendChild(el);
   const $ = (s) => el.querySelector(s);
   const num = $('.cm-num'); const fill = $('.cm-fill'); const word = $('.cm-word'); const pop = $('.cm-pop');
-  const star = $('.cm-star'); const starLine = $('.cm-starline');
-  const M = { shown: false, target: -1, from: 0, val: -1, shownVal: -2, t0: 0, tNow: 0, grade: -1, first: true, bonusAt: -1, bonusPts: 0, bonusOn: false, sounds: 0, pops: 0 };
+  const star = $('.cm-star'); const starLine = $('.cm-starline'); const chk = $('.cm-chkt'); const tube = $('.cm-tube');
+  const M = { shown: false, target: -1, from: 0, val: -1, shownVal: -2, t0: 0, tNow: 0, grade: -1, first: true, bonusAt: -1, bonusPts: 0, bonusOn: false, sounds: 0, pops: 0, inv: false, xray: false, lastPop: '' };
   const DUR = 0.55;
   function writeNum(v) {
     if (v === M.shownVal) return;
@@ -122,20 +172,28 @@ export function createMeter(host, { play = () => {} } = {}) {
     num.innerHTML = v < 0 ? '--' : `${v}<small>%</small>`;
   }
   function popSticker(text, cls) {
-    pop.className = `cm-pop ${cls}`; pop.textContent = text; void pop.offsetWidth; pop.classList.add('go'); M.pops++;
+    pop.className = `cm-pop ${cls}`; pop.textContent = text; void pop.offsetWidth; pop.classList.add('go'); M.pops++; M.lastPop = text;
+    tube.classList.remove('flash'); void tube.offsetWidth; tube.classList.add('flash');
   }
   return {
     el,
     get value() { return M.target; },
     get shown() { return M.shown; },
-    get stats() { return { target: M.target, grade: M.grade, sounds: M.sounds, pops: M.pops, bonusOn: M.bonusOn, text: num.textContent, word: word.textContent }; },
+    get stats() { return { target: M.target, grade: M.grade, sounds: M.sounds, pops: M.pops, lastPop: M.lastPop, bonusOn: M.bonusOn, inv: M.inv, xray: M.xray, check: chk.textContent, text: num.textContent, word: word.textContent }; },
+    /** The x-ray is showing (bad = texels that show): the Check pill hatches ("Shows") or goes green ("Clear"). */
+    xray(on, bad = 0) {
+      if (on === M.xray && (!on || el.classList.contains('clear') === !bad)) return;
+      M.xray = on;
+      el.classList.toggle('xray', on); el.classList.toggle('clear', on && !bad);
+      chk.textContent = !on ? 'Check' : bad ? 'Shows' : 'Clear';
+    },
     show(on) {
       if (on === M.shown) return;
       M.shown = on; el.hidden = !on;
       if (on) { el.style.animation = 'none'; void el.offsetWidth; el.style.animation = ''; }
     },
     /** A new round / a new painter: the next score counts up from zero, silently. */
-    reset() { M.first = true; M.target = -1; M.val = -1; M.grade = -1; M.bonusOn = false; el.classList.remove('bonus', ...GRADE_CLS); fill.style.transform = 'scaleY(0)'; writeNum(-1); word.textContent = ''; },
+    reset() { M.first = true; M.target = -1; M.val = -1; M.grade = -1; M.bonusOn = false; M.inv = false; el.classList.remove('bonus', ...GRADE_CLS); fill.style.transform = 'scaleY(0)'; writeNum(-1); word.textContent = ''; },
     /** A fresh score (−1: nothing to score against). bonusAt: the bonus line (80 / 90) or −1. */
     set(score, bonusAt = -1, bonusPts = 0) {
       if (bonusAt !== M.bonusAt || bonusPts !== M.bonusPts) {
@@ -153,16 +211,18 @@ export function createMeter(host, { play = () => {} } = {}) {
       if (score < 0) { el.classList.remove(...GRADE_CLS); fill.style.transform = 'scaleY(0)'; word.textContent = 'No surface'; writeNum(-1); M.val = -1; M.grade = -1; return; }
       fill.style.transform = `scaleY(${score / 100})`;
       const g = gradeOf(score);
+      // ≥ 98: past Ghost — a shinier "Invisible!" sticker (in place of "Ghost!" when it jumps straight there)
+      const inv = score >= INVISIBLE; const invUp = inv && !M.inv && !first; M.inv = inv;
       if (g !== prevGrade) {
         el.classList.remove(...GRADE_CLS); el.classList.add(GRADE_CLS[g]);
         word.textContent = blendWord(score);
         word.classList.remove('pop'); void word.offsetWidth; word.classList.add('pop');
         if (!first && prevGrade >= 0 && g > prevGrade) {
-          popSticker(`${blendWord(score)}!`, GRADE_CLS[g]);
+          if (invUp) popSticker('Invisible!', 'g3 inv'); else popSticker(`${blendWord(score)}!`, GRADE_CLS[g]);
           if (GRADE_SND[g]) { play(GRADE_SND[g]); M.sounds++; }
         }
         M.grade = g;
-      }
+      } else if (invUp) { popSticker('Invisible!', 'g3 inv'); play('unlock'); M.sounds++; }
       const bonusNow = bonusAt >= 0 && score >= bonusAt;
       if (bonusNow !== M.bonusOn) {
         M.bonusOn = bonusNow; el.classList.toggle('bonus', bonusNow);

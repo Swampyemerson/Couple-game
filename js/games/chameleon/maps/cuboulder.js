@@ -829,6 +829,9 @@ function g1b30(b, R) {
   for (const [x0, half] of [[-11.85, 0.5], [-15.95, 0]]) {
     b.add(boxGeo(3.8, 2.1, 0.02, { faces: ['nz'] }), { at: [x0 + 1.9, 3.3, FZ - 0.18], tile: 'screens', rep: [3.8, 4.2], uvOff: [0, half], color: '#ffffff', outline: false });
     solid(b, x0 - 0.04, 2.23, FZ - 0.18, x0 + 3.84, 4.37, FZ - 0.16, { color: '#2b2b2f', faces: ['px', 'nx', 'py', 'ny', 'pz'] }, { name: 'screen' });
+    // the 16 cm behind a screen is shut (maps pass): a Tiny chameleon could crawl round the edge
+    // and sit between screen and wall where no seat, aisle or catwalk can see it
+    b.collide(x0 - 0.04, 2.23, FZ - 0.16, x0 + 3.84, 4.45, FZ, { wall: true, climb: false, name: 'guard:screen-gap' });
     deco(b, x0 - 0.08, 4.37, FZ - 0.26, x0 + 3.88, 4.45, FZ, { color: '#2b2b2f' });
   }
   // speaker, clock, periodic table poster, EXIT sign

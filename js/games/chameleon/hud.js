@@ -296,6 +296,26 @@ export const CSS = `
 .chm-facts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
 .chm-facts em { font-style: normal; font-size: .62rem; font-weight: 900; letter-spacing: .04em; text-transform: uppercase; padding: 2px 6px; border-radius: 999px; background: var(--g-card); box-shadow: 0 0 0 1.5px var(--g-ink); display: inline-flex; align-items: center; gap: 4px; }
 .chm-facts em.ar { text-transform: none; letter-spacing: .02em; }
+/* maps pass: Mix it up (map card), Today's hide (preset row), where you start, today's board */
+.chm-rg { display: contents; }
+.chm-presets .chm-mix { justify-content: center; gap: 2px; padding: 4px 2px; border-style: dashed; }
+.chm-mix .chm-ic { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.chm-mix span { font-size: .7rem; font-weight: 900; white-space: nowrap; line-height: 1; }
+.chm-presets .chm-mix.on { border-style: solid; border-color: var(--g-ink); background: var(--g-hl); color: var(--g-on-ink); box-shadow: var(--g-shadow-sm, 2px 2px 0 var(--g-edge)); }
+.chm-presets .chm-today { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; justify-content: center; align-items: center; gap: 1px 8px; min-height: 44px; padding: 5px 8px; border-style: dashed; }
+.chm-presets .chm-today.withmix { grid-column: 1 / 4; }
+.chm-presets .chm-today b { letter-spacing: .12em; text-transform: uppercase; font-size: .74rem; }
+.chm-presets .chm-today small { font-size: .7rem; }
+.chm-presets .chm-today.on { border-style: solid; }
+/* short portrait phones (SE, mini, Safari with its bars): drop the tagline and the map blurb so Start stays on screen */
+@media (orientation: portrait) and (max-height: 740px) {
+  .chm-lobby .chm-tag, .chm-lobby .chm-mapinfo small { display: none; }
+}
+.chm-start { font-weight: 800; }
+.chm-start b { color: var(--g-ink); background: var(--g-hl); padding: 0 6px; border-radius: 6px; }
+.chm-mixtag { display: inline-block; margin-left: 4px; padding: 1px 6px; border-radius: 999px; background: var(--g-hl); color: var(--g-on-ink); letter-spacing: .08em; }
+.chm-newmap { background: var(--g-hl); color: var(--g-on-ink); padding: 0 6px; border-radius: 6px; }
+.chm-daily .chm-daily-k { font-weight: 900; letter-spacing: .14em; text-transform: uppercase; }
 .chm-climbs span { display: inline-flex; gap: 2px; }
 .chm-climbs i { width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--g-ink); }
 .chm-climbs i.on { background: var(--p-b); }
@@ -717,7 +737,15 @@ export function createHud(root, api) {
       // a fixed paper / ink pair in both themes: the dark theme's grey-on-near-black plan was unreadable
       const ink = '#1d1b22'; const paper = '#e9e5dc'; const line = 'rgba(29,27,34,0.35)';
       const card = '#f7f4ee'; const muted = '#4a4650';
-      const font = css.getPropertyValue('--g-font-body').trim() || 'sans-serif';
+      // maps pass: the floor label in the web font only once that face is loaded (fillText in a
+      // face still loading cost ~380 ms on the Market switch), and the drawn plans are kept on
+      // the plan object, which game.js keeps per built map: a revisit draws nothing
+      let font = css.getPropertyValue('--g-font-body').trim() || 'sans-serif';
+      const fpx = Math.round(H / 11);
+      let fontOk = true; try { fontOk = !document.fonts || document.fonts.check(`800 ${fpx}px ${font}`); } catch { fontOk = false; }
+      if (!fontOk) font = 'system-ui, -apple-system, sans-serif';
+      const bgKey = `${W}x${H}:${fontOk ? 1 : 0}`;
+      if (plan.bgs && plan.bgKey === bgKey) { mini.bgs = plan.bgs; mini.bg = mini.bgs[0].bg; mini.ink = ink; mini.fi = -1; g.drawImage(mini.bg, 0, 0); return; }
       // one background per floor (two-storey maps show the floor the seeker is on)
       const floors = plan.floors && plan.floors.length ? plan.floors : [{ y: 0, rooms: plan.rooms, boxes: plan.boxes }];
       mini.bgs = floors.map((fl) => {
@@ -730,9 +758,10 @@ export function createHud(root, api) {
         b.fillStyle = line;
         for (const c of fl.boxes) b.fillRect(mini.ox + c.minX * k, mini.oz + c.minZ * k, Math.max(1.5, (c.maxX - c.minX) * k), Math.max(1.5, (c.maxZ - c.minZ) * k));
         for (const r of fl.rooms) b.strokeRect(mini.ox + r.x0 * k, mini.oz + r.z0 * k, (r.x1 - r.x0) * k, (r.z1 - r.z0) * k);
-        if (floors.length > 1 && fl.name) { b.fillStyle = muted; b.font = `800 ${Math.round(H / 11)}px ${font}`; b.textAlign = 'center'; b.fillText(String(fl.name).toUpperCase(), W / 2, H - 3); }
+        if (floors.length > 1 && fl.name) { b.fillStyle = muted; b.font = `800 ${fpx}px ${font}`; b.textAlign = 'center'; b.fillText(String(fl.name).toUpperCase(), W / 2, H - 3); }
         return { y: fl.y || 0, bg };
       });
+      plan.bgs = mini.bgs; plan.bgKey = bgKey;
       mini.bg = mini.bgs[0].bg; mini.ink = ink; mini.fi = -1;
       g.drawImage(mini.bg, 0, 0);
     },

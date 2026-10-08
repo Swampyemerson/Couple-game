@@ -18,6 +18,7 @@ function stubCanvas() {
       if (k === 'createLinearGradient' || k === 'createRadialGradient') return () => ({ addColorStop: noop });
       if (k === 'measureText') return () => ({ width: 10 });
       if (k === 'getImageData') return (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4) });
+      if (k === 'createImageData') return (w, h) => ({ data: new Uint8ClampedArray(w * h * 4), width: w, height: h });
       if (k === 'getLineDash') return () => [];
       return noop;
     },
@@ -31,7 +32,7 @@ export async function analyse({ cell = 0.25, r = 0.24 } = {}) {
   const THREE = require(path.join(ROOT, 'tools/test/.cache/three.min.js'));
   const imp = (p) => import(pathToFileURL(path.join(ROOT, p)).href);
   const { CUBOULDER } = await imp('js/games/chameleon/maps/cuboulder.js');
-  const { KIT } = await imp('js/games/chameleon/maps.js');
+  const { KIT, closeSlots } = await imp('js/games/chameleon/maps.js');
   const { createAtlas } = await imp('js/games/chameleon/atlas.js');
   const { createBuilder } = await imp('js/games/chameleon/geo.js');
   const { createWorld, dims } = await imp('js/games/chameleon/world.js');
@@ -46,6 +47,7 @@ export async function analyse({ cell = 0.25, r = 0.24 } = {}) {
   const b = createBuilder({ tiles: atlas.tiles, ink: [0.1, 0.1, 0.1] });
   fill(b);
   const out = b.finish(THREE);
+  if (closeSlots) closeSlots(out.colliders); // as buildMap does (maps pass)
   const ms = performance.now() - t0;
   const map = { colliders: out.colliders, bounds: { minX: -16.9, maxX: 16.85, minZ: -12.9, maxZ: 12.85 } };
   const world = createWorld(map);

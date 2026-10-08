@@ -758,6 +758,70 @@ moment of payoff for the two big tools.
   takes the meter's score without re-scoring. Writes `juice-*.png` (+ a montage with
   `PAINT_MONT`).
 
+### Paint owner, third pass: the x-ray, round strokes, a camera that sees you
+
+Played through with scripted phone runs on all eight maps (iPhone 13 viewport, 1x and 4x CPU),
+watching the paint view, the strokes and the meter. The first two passes' findings (the
+quantiser, blob reuse, brush cues, dab caps) were already in and measured; what play showed was
+a meter that says *how much* you show but not *where*, polygonal strokes on slow frames, and a
+paint camera that opened behind furniture.
+
+- **X-ray: "where do I show?"** The camo meter is now a button (a small `Check` pill under the
+  grade word). A tap runs one full error pass (`camo.errorMap`: every mapped texel, not every
+  other one, scored exactly as the blend %) and `paint.xray()` flashes every texel that loses
+  more than 25 % of its score with crawling hazard tape (yellow / ink bands 6 texels wide,
+  stronger where it shows more) for 2.2 s: fade in 0.12 s, out over the last 0.45 s. The pill
+  hatches and reads `Shows` (or turns green, `Clear`, and the hint says "Nothing shows. A perfect
+  match!"). The stripes go into a display copy the texture points at while it runs, so the skin,
+  undo, the codec and the checksums never see them, and any edit (a stroke, fill, stamp, undo,
+  decode) ends it at once so paint always lands on the real skin. A second tap turns it off; so
+  do closing the tools and the timer. Magenta stripes were tried first and vanished on a pink
+  body; hazard tape reads on any colour (and found the cheek blush on the face, which counts
+  against you). Sound `glint` (or `good` when clear); the partner's hide-phase ticker says
+  "Sydney is checking their camo…". A once-a-session hint ("Tap the camo meter to see where you
+  show") appears after a re-score under 90 %. Cost: the error pass 7–9 ms at 1x, 8–47 ms at 4x
+  CPU (Living Room, measured at the tap); an x-ray frame touches only the striped texels (0.17 ms
+  for 8 k in Node). The meter's invisible pop sticker sits beside it over the play area, so it
+  (and the star) take no pointer events: a stroke beside the meter never turns into a tap on it.
+- **"Invisible!"** at 98 % and up: past Ghost's 90 there is one more line. Jumping straight there
+  (a stamp on a plain body: 45 → 98) pops a shiny "Invisible!" sticker in place of "Ghost!";
+  climbing past 98 inside Ghost pops it with the `unlock` chord. Every grade-up also flashes the
+  tube (a 0.5 s swell with a highlight ring). Drops stay silent.
+- **Round strokes.** A slow phone delivers one pointer move per frame, so a fast curve came out
+  as a polygon of straight chords. Strokes now follow the midpoint quadratic Bézier (from the
+  previous midpoint, bent toward the last finger point, to the new midpoint; the arc length
+  estimated from the control polygon), with the same dab spacing (0.35 × radius) and per-move
+  caps (12 / 9 / 6 for S / M / L); the last half-segment is drawn on lift. A quick circle that
+  arrives as 6 moves (a 20 fps phone) came out as a hexagon on the Living Room body; it is now a
+  round loop (`loop6-before-after.png`). The paint trails the finger by half a move while
+  drawing (the cursor ring stays on the finger).
+- **The paint camera finds you.** Opening the tools used to orbit to `yaw + 0.9` whatever was in
+  the way: on the Living Room spot the gingham lampshade covered half the body, on CU the desk
+  edge the legs. `framePaintCam` now tries the default first, then ±0.45 rad, a higher angle
+  (pitch 0.8), then ±0.9, judging each by three sight lines (body centre, counted twice, head,
+  tail → camera) against the map mesh, and the colliders for the centre (a bench or shelf top
+  always has one); the first with all three clear wins, else the most clear, and if even the
+  centre is hidden from the side chosen the camera comes in to just short of the obstacle (no
+  closer than the zoom's 0.6). Never more than 12 mesh rays (it stops at the first clear side: 3
+  rays on most spots, 7–9 on the Living Room, House and CU spots, which now open with the whole
+  body in view); a ray is ~2 ms on the one-chunk Living Room, ≤ 0.7 ms on the chunked maps. A
+  body wedged right under the Greenhouse potting bench behind a pot can't be seen from anywhere the camera may go; see-through
+  occluders (as Getaway has) would be the fix, and are the renderer's job.
+- **Zero-garbage undo.** Every stroke, fill and stamp used to `slice()` a fresh 64 KB snapshot
+  (and drop the 25th). Snapshots now come from a pool that the history recycles into: 25 buffers
+  in a session, then none (`ONLY=paintpro`: 30 stamps → 25 buffers, 20 more → +0).
+- **Costs at 4x CPU** (`ONLY=paintpro`, Living Room; ranges over four runs on a sandbox at load
+  10–40): a stamp-wipe frame max 2.2–5.0 ms, a meter re-score slice avg 0.4–0.9 / max 1.0–3.5 ms,
+  a brush pointer move median 0.7–2.2 / max 3.6–8.6 ms (CU: median 2.3–2.5 / max 5.4 ms), the
+  x-ray tap 8–47 ms, a lock 35 ms cold (encode 23 + blend 12, 2.6 KB in 2 chunks). Nothing in the
+  paint path comes near the 200 ms rule; the frame budget on a phone is the renderer's.
+- Test: `ONLY=paintpro` (one phone, Living Room): the stroke tail lands on lift, the undo pool
+  stops allocating, a stamp reads ≥ 98 %, climbing back past 98 pops "Invisible!" with a sound, a
+  real `page.tap` on the meter x-rays a pink patch (pill `Shows`, the skin hash unchanged), the
+  x-ray ends by itself, a stroke ends it at once, a second tap turns it off, the meter's invisible
+  pop sticker never catches a stroke, and the 4x-CPU costs above. Writes `pro-*.png` (+ a
+  montage with `PAINT_MONT`).
+
 ## Netcode (net.js via `chameleon/link.js`)
 
 `link.js` wraps `createNet` because net.js numbers reliable messages per sender session and
@@ -770,14 +834,14 @@ net.js type (`g`) and big payloads (paint, snapshots) as chunked blobs.
 
 | State | Authority | Transport |
 |---|---|---|
-| own avatar: position, yaw, pose, wall angle, eye look, speed, orientation `q` (packed quaternion), stuck `at` | owning device | `net.publish` 20/s while anything changes (and 250 ms after), a **2.5/s keepalive** while nothing does (pro pass); the partner is drawn from an allocation-free ring-buffer interpolation at `now − delay`, the delay **adaptive** (100–250 ms, q by slerp) |
+| own avatar: position, yaw, pose, wall angle, eye look, speed, orientation `q` (packed quaternion), stuck `at` | owning device | presence on link.js's **20/s schedule** while anything changes (and 250 ms after), a **2.5/s keepalive** while nothing does (pro pass), stamped with the shared game clock; the partner is drawn from an allocation-free ring-buffer interpolation at `now − delay`, the delay **adaptive** (100–250 ms, q by slerp) |
 | hider position during Hide | owning device | **not sent** — presence carries zeros (look, wall angle, speed too) and `v: 0`: a constant state, so it goes out as the 2.5/s keepalive (it still feeds the host's 4.5 s stall detection); the real state resumes 750 ms before the hunt so the seeker's buffer is primed |
 | paint texture | owning device | reliable blob at lock (+ snapshot on resync) |
 | mode, map, first hider, rules (validated) | host | reliable `setup`; rules also inside every `ph` match info |
 | phases `hide lock seek found time recap final` (+ local `curtain`) | host | reliable `ph {seq, at, dur, scores, match}` **plus two unreliable copies** (deduped by `seq`, not held back by in-order delivery); both devices switch with `setTimeout(at − now)` and a per-frame check |
-| timed transitions | host | pre-announced one lead (≥ 380 ms, `1.3 × RTT + 160`) before the deadline so both flip exactly at it |
+| timed transitions | host | pre-announced one lead (≥ 380 ms, `1.3 × RTT + 160`) before the deadline so both flip exactly at it; FOUND / SURVIVED (events, not deadlines) use 260 ms, or `0.6 × RTT + 80` on a slow link |
 | shots, splats, pellets | shooter | reliable `shot` |
-| tag confirmation | victim | reliable `tagres` |
+| tag confirmation | victim | reliable `tagres` (always, also when the victim is the host: it carries the shooter's juice) |
 | round result + scores | host | inside `ph` |
 | scan / scurry / zip | seeker / hider | reliable `scan {at, left}` / `scurry {at, left}` / `zip {at, to, left}` (v3: the seeker's `zip {at, to, sk: 1}`) |
 | paint while hunted / during a head start (v3) | hider | the lock's paint blob with `live: 1`, ≤ 1/s, 1 chunk typically |
@@ -860,8 +924,230 @@ there; on phones it should sit near 130–180 ms.) The hider's head-start positi
 750 ms before the blindfold lifts (was 500) so the buffer is warm at the cap. `link.interpStats`
 counts frames interpolated / extrapolated / held at the 160 ms cap / past a still pair.
 
+**A 20/s schedule, not a 48 ms gate (net owner, second pass).** net.js's `publish` sends when
+≥ 48 ms have passed since its last send. Frames land on a 16.7 / 33.3 ms grid, so on a 60 Hz phone
+a publish that ran 47.9 ms after the last one (a little less JS before `network()` this frame)
+waited a whole frame, and a 30 Hz phone (Low Power Mode) could only ever send every other frame.
+link.js now sends presence itself (`api.setPresence`, net.js's wire format, read by its
+`onPartnerState` as before) on a schedule: one slot per `PUB_MS = 50`, takeable `PUB_EARLY = 6 ms`
+early, never closer than `PUB_GAP = 30 ms` to the previous send; the next slot advances ≥ 50 ms per
+send, so the average can't exceed 20/s (any 1 s window: ≤ 21). `network()` asks `link.pubDue()`
+and counts a publish only when `link.publish()` says it went out. Presence is stamped with the game
+clock (`link.now()`: the guest's refined NTP estimate) instead of net.js's own estimate, so drawing,
+shots and tag confirmation all read one clock. Node simulation of the real link.js against the old
+gates (`network()` running 0–N ms into each frame, 30 s each):
+
+| frame clock | old sends/s, gap p95 / max | new sends/s, gap p95 / max |
+|---|---|---|
+| 60 Hz, 0–1 ms jitter | 20.0, 51 / 51 ms | 20.0, 51 / 51 ms |
+| 60 Hz, 0–4 ms | 18.0, 67 / 69 ms | **20.0, 53 / 54 ms** |
+| 60 Hz, 0–8 ms | 17.3, 68 / 72 ms | **20.0, 62 / 67 ms** |
+| 120 Hz, 0–3 ms | 19.2, 58 / 60 ms | **20.0, 52 / 53 ms** |
+| 30 Hz (Low Power Mode) | 15.0, 69 / 70 ms | **20.0, 69 / 70 ms** (33 / 67 ms alternating) |
+
+The p95 gap is what the partner's adaptive delay has to cover, so a jittery 60 Hz phone draws its
+partner ~15 ms fresher. In the sandbox (60–90 ms frames) every frame sends either way; the playtest
+numbers there are unchanged (60 ms link: err p95 0.013 m, 5 / 147 velocity hitches; 110 ms + 5 %
+loss: 0.030 m, 8 / 146).
+
+**The guest's game clock slews instead of jumping.** link.js keeps its own min-RTT estimate of the
+host clock for the guest (the mean of the 3 quickest round trips, now of the last 24 instead of 12).
+It used to jump to each new estimate; under load those were 10–40 ms steps every few seconds
+(measured with both pages' wall clocks as the reference: one-frame steps up to 18 ms), and every
+step skipped or rewound that much of the partner's motion, now on both screens since presence is
+stamped with this clock. After its first 6 samples (the lobby) the clock now slews toward the
+estimate at ≤ 5 % of real time: ≤ 0.8 ms per 60 Hz frame. Accuracy is the estimator's: recording
+the guest's raw ping samples against the true host clock (`window.__chamClockRaw`, `clockRaw()`) and
+scoring seven estimators offline on the same stream (best 1 / 3 / 6 of 12 / 24, RTT within 20 ms or
+25 % of the minimum, net.js's ¼-slew), every one settled on the same ~15 ms error on the loaded
+sandbox: the bias is the host page answering pings later than the guest reads them (event-loop
+delay asymmetry, ~50 ms of the 125 ms minimum RTT there), which no filter can see. So the estimator
+stays best-3 (now of 24) and only the steps are gone. The `match` section's "clocks agree within
+20 ms" check therefore depends on load: 18.8 ms at load 12.6 (passes), 39–41 ms at load 21–24
+(fails, before and after this pass); phones answer in a few ms.
+
+**The tag lands on both phones (net owner, second pass).** Between the trigger and the FOUND
+stamp:
+
+- **A guest seeker's tags had no juice.** The victim answers a confirmed shot with `tagres`, and
+  the shooter's hit-stop, flash and tag sound ride on it; but a *host* victim went straight to
+  `hostFound` and sent nothing, so whoever wasn't hosting tagged in silence (half the rounds of
+  every match, since roles swap). The victim now always answers.
+- **The juice waits for the pellet.** On a quick link the confirmation can beat the pellet (it flies
+  at 28 m/s: 180 ms over 5 m), and the flash fired while the pellet was still in the air. The
+  shooter now delays the juice to the pellet's landing, at most 220 ms; a FOUND stamp that
+  arrives first (a guest on a slow link) fires the waiting juice, so there's never a flash after it.
+- **FOUND came ≥ 380 ms after the confirmation.** `roundOver` asked for a 260 ms lead
+  (`DUR.foundLead`), but `enter()` raised every lead to `leadFor()` (≥ 380 ms, `1.3 × RTT + 160`),
+  a margin meant for deadlines both phones must hit together. FOUND / SURVIVED are events: the
+  partner only needs the message in time, so they now use `max(260, min(leadFor(), 0.6 × RTT + 80))`.
+- **A partner's miss leaves the muzzle when the partner as drawn fires.** Each screen draws its
+  partner `link.delay` (100–250 ms) behind the shared clock, and the `shot` message usually
+  arrives sooner than that, so watching over the seeker's shoulder the pellet flew off before the
+  drawn seeker had turned to aim (or from where a walking seeker would only be 0.3–0.6 m later).
+  A miss now launches at `T + delay` (`clamp(…, 0, 300 ms)`); a tag still flies at once (the
+  confirmation and FOUND follow it).
+- **"Hit! Checking…" → "Hit!"**: the confirmation is a round trip away and "They slipped away!"
+  still follows a refused tag; the text no longer announces the wait.
+
+Measured (`netpolish`, 60 ms link, ~180–250 ms sandbox RTT, one run): host seeker fire → confirmed
+176 ms → FOUND 437 ms (the old lead, `1.3 × RTT + 160` = 391 ms at that RTT, would have put it at
+~567 ms); guest seeker confirmed 254 ms, juice +8 ms (the pellet still landing), FOUND 328 ms (no
+juice at all before). A remote miss waited 18–145 ms for the drawn shooter.
+
 Budget per device: presence ≤ 20/s while moving, 2.5/s otherwise, `chi` ~0.5/s, net.js pings/acks, reliable events a few per
 second; a phase change costs 3 messages; the paint burst is one or two chunks.
+
+## Pro pass: maps (switches, rematch, sealed nooks, variety)
+
+Asked for: "polish the shit out of these games … addictive … play through what you can". The
+maps owner's findings: every map switch, boot and rematch was one synchronous block (71–785 ms
+at 1x, up to 1.6 s at 4x CPU; a rematch rebuilt everything: 6 s of long task in software GL);
+crawlable nooks nobody could see into; nothing that made today different from yesterday; and a
+test hook the culling undid every frame. Measured with scripted one- and two-phone runs (iPhone
+13 profile) and an A/B page that builds both versions of every map side by side (same load).
+
+### Map switches and boot
+
+- **Session map cache** (`maps.js`): a built map (chunk geometries, blob shadows, atlas, colliders,
+  spots) is kept for the session, LRU, at most 3 maps and 36 MB of CPU arrays + atlas pixels,
+  never evicting the two newest (the map on screen and the one replacing it). Evicting disposes
+  the geometries' GPU buffers. The stage keeps, per cached map, its atlas texture and chunk meshes
+  (`mapRes`), and the collision world (`worlds`, a WeakMap); the minimap plan and its drawn
+  canvases live with the map too (`MINI_PLANS` in game.js, `plan.bgs` in hud.js). Sizes held:
+  Living Room 5.9 MB (9.9 once the eyedropper copy is read), Studio 4.8, Market 7.2, Greenhouse
+  8.1, Garden / Museum 10.5, House 12.8, CU Boulder 16.7.
+- **No program per switch.** The world, backdrop and blob materials are made once per stage (a
+  1×1 placeholder keeps `USE_MAP` on; the atlas texture and `uAtlas` are swapped on load).
+  Disposing the old world material used to release its program and the new one relinked it, and
+  CU's fog-free backdrop material linked a 15th program on every CU switch (~155 ms). All three
+  are in the boot compile (hidden one-triangle meshes); switching through all 8 maps: programs
+  15 → 15.
+- **Atlas painting** (`atlas.js` `finish()`): painters draw straight into the CPU-backed atlas,
+  clipped to the tile, and the 8 px gutters are copied with `putImageData` (the old tmp canvas +
+  9 clipped `drawImage` blits per tile + self-`drawImage` of the whole atlas for clamped gutters).
+  Same pixels inside the tiles (± a few levels on anti-aliased edges): 25–225 ms → 8–40 ms a map.
+  The 4–8 MB CPU copy for the eyedropper / stamp / blend score (`atlas.data`) is now a getter read
+  on first use, or in `requestIdleCallback` after a switch.
+- **Minimap**: the floor labels use the web font only once `document.fonts.check()` says that face
+  is loaded (a still-loading face cost ~380 ms of `fillText` on the Market switch), else a system
+  font; the drawn plans are reused on a revisit.
+- **Cold build, before → after** (min / median of 5 in one page, ms, this sandbox at 1x; the
+  geometry fill is most of what's left):
+
+  | map | 1x before | 1x after | 4x before | 4x after |
+  |---|---|---|---|---|
+  | Living Room | 72 / 124 | 43 / 88 | 222 | 169 |
+  | Garden | 88 / 102 | 72 / 75 | 139 | 114 |
+  | Art Studio | 61 / 81 | 19 / 24 | 254 | 49 |
+  | The Whole House | 109 / 141 | 96 / 113 | 328 | 336 |
+  | Corner Market | 99 / 116 | 46 / 61 | 230 | 110 |
+  | CU Boulder | 245 / 313 | 137 / 167 | 518 | 326 |
+  | Greenhouse & Shed | 84 / 150 | 51 / 70 | 256 | 178 |
+  | Museum Night | 167 / 244 | 43 / 73 | 521 | 188 |
+
+  A map seen this session switches in **1–5 ms** of JS (`ONLY=mapcache`: best of three 1 / 4 ms).
+- **The tap paints first.** A lobby map change (the host's arrows and chips, the guest following
+  the host's `setup`, a lobby resync) updates the setup and the card at once and queues the build
+  for the next frame (`queueMap`: rAF, then a task), so the card is drawn before the diorama is
+  built, and a burst of taps builds only the last map. The arrow's click handler now runs in
+  < 50 ms (asserted; it used to contain the whole build). Starting a match right after a tap
+  loads the match map before the spawns are picked.
+- **Boot in slices** (`stage.warm`): the "Warming up the paint" card now paints, then the programs
+  compile one material at a time over a view of the scene (same fog and lights, so the cache keys
+  match), yielding a frame whenever a slice ran past 24 ms, then each material's first draw on
+  its own (3 vertices, everything else hidden, `gl.finish()` so the driver's pipeline work lands
+  in that slice). Measured: 29 materials in 5–7 slices of ≤ 30–48 ms; the boot's GPU stall in
+  software GL went from one 1.27 s block to ~0.4 s pieces.
+- **Build-free rematch.** core.js already asks `inst.onRematch()`; chameleon answers false (a
+  fresh mount keeps every flow simple) but the destroy that follows **parks the stage**
+  (`parkStage`: canvas detached, map unloaded, fx cleared; renderer, programs, uploaded maps and
+  paint textures kept) and the new mount's boot takes it (`takeParkedStage`, same three.js and
+  pixel-ratio cap), so it links nothing and builds nothing. Unclaimed, it is disposed after 8 s;
+  closing the game disposes as before (the `leaks` section is unchanged). Measured: Rematch tap →
+  ready **48 ms** on CU (was a 6 s long task in software GL: CU build + 15 program links).
+- **Mix it up's next map** is built during the recap (see below), so a round's title is a swap.
+
+### Sealed nooks (`closeSlots`, guards, the pockets test)
+
+The two cavities from the review: the Market fridge-header "gap" was a contact in the 10 cm slot
+between two fridge headers, the body centred inside the neighbouring header; the House "wall cap"
+was the armchair seat under its back cushion, which the engine already refuses (`buried`). The
+pattern behind the first is common: a prop standing 2–15 cm off a wall or its neighbour leaves a
+slot no chameleon can squeeze into (the squeeze profile needs 16 cm) but whose contact point
+sticky feet accept. `closeSlots()` (maps.js, run on every build and in the map tests) extends a
+prop's collider across any slot ≤ 15 cm to whatever covers ≥ 80 % of its face on the other side
+(walls, slabs, stairs, rails, guards, glass and flat decals never move); it closes 8–420 slots a map (the Market's product blocks
+and fridge row, CU's seat rows, counters and dressers against walls) in ≤ 3 ms on a warm build.
+Map edits: the House and Market top slabs got eave guards over the outer wall tops (a Tiny body
+could hang on the slab's outer edge, outside the walls); CU's two projector screens got a guard
+in the 16 cm behind them; the Greenhouse shed loft's deck-chair roll moved to the railing (it
+walled off a Tiny-sized pocket).
+
+`ONLY=pockets node tools/test/games/chameleon-maps.test.js` (every map, Tiny / Large / Huge, ~65 s):
+seeds every clearly open sticky-feet contact (0.5 m grid on every collider face, legal by the
+engine's rules, ≥ 30 of 60 escape rays running 1.5 m into the room), crawls from all of them with
+the real `world.crawl` / `move.crawlStep` (BFS on a 0.2 m grid, 3–75 k contacts a map), and
+requires every reached contact whose body is in open air to be in sight of somewhere ≥ 1 m away
+(escape rays, then a 0.35 m viewpoint grid out to 6 m; guards and glass see-through). All 24 map ×
+size runs pass. It also checks the fridge headers meet edge to edge and that the armchair spot is
+refused.
+
+**For the mechanics owner** (not changed here: `world.js` is theirs): the engine accepts a contact
+when its *contact point* is free, so a body can still end up centred inside a box through slots
+wider than 15 cm, along an underside that rests on another box (crawl step 3 doesn't re-check
+`buried`), or past an outer wall at the 2 cm `inside()` tolerance. The pockets test counts them per
+map (e.g. CU Tiny 9 151 of 74 570 reached contacts centred in a box, Market 5 055 of 43 117). A
+tested patch (`clearOf`: the body's centre and half-way point must be free, in `okContact` and in
+step 3, with `buried` re-checked there) takes every map to 0 with 0–15 % fewer reachable contacts;
+it's in this pass's notes (`world-clearOf.patch`).
+
+### Variety: Mix it up, Today's hide, where you start
+
+- **Mix it up** (a shuffle toggle tile beside Today, under the presets; `setup.mix`): the match plans its maps
+  (`mixPlan(matchId, map, rounds, per)`: the map you picked first, then the same pool, the small
+  dioramas or the big maps, never the one before, the whole pool before a repeat). In Hide & Seek
+  a map lasts **two rounds**, so you each hide once on it: clocks and points scale with the map, and
+  one of you hiding on CU (270 s hunt) while the other hid in the Garden (90 s) wasn't fair. Double
+  Blind (both hide every round) changes map every round. The plan travels in the match info
+  (`m.maps`); the host loads the round's map before picking spawns and every phone follows `m.map`.
+  The recap's next line says "new map: Museum Night", both phones build it into the cache during
+  that recap (1.5 s in, `stage.prefetch`, atlas uploaded with `initTexture`), and the title kicker
+  reads "mixed".
+- **Today's hide** (a Today tile under the presets): one setup per calendar day from the date
+  alone (`dailyPlan(dayKey)`): every map once per 8-day cycle, a size, who hides first, and one
+  twist on top of Classic (Floor only · Tiny chameleons · 3 pellets · 10 s head start · Paint while
+  hunted), two rounds so each of you hides once. The host's day key travels in `setup.daily`, so
+  both phones agree; any other change makes it the host's own setup again. Each round of a daily
+  match records how long the hider lasted (`${w}_daily_${day}`, best of the day), and the lobby
+  shows today's board above the records: "Today Emerson 1:10 · Sydney 0:41 · Emerson leads".
+- **You start in the …**: on multi-room maps the hider's title card names the room of their
+  spawn ("You start in the Stairwell", `roomAt(map, x, y, z)`, floor-aware); the seeker isn't told.
+  Double Blind tells each hider their own.
+- **Lobby fit**: Today and Mix share one row (Today spans three preset columns, Mix the fourth;
+  while Today is on, Mix hides and Today spans the row). On short portrait phones (height ≤ 740 px)
+  the tagline and the map blurb drop out, as they already do in landscape. Corner Market at 375×667:
+  the card overflows 10 px with Start's bottom at 643 px (before this pass: 22 px, 655 px; with the
+  Mix chip still on the map card: 120 px and Start off screen at 753 px). 390×844 and 844×390: no
+  overflow.
+
+### Culling hook
+
+`cullChunks()` honours `userData.forceHidden` (what `tweak({ hideMap })` sets now), and counts the
+chunks it actually draws (fog cull and the camera frustum): `perf().chunksDrawn`.
+
+### Tests
+
+`ONLY=mapcache` (one phone): the sliced boot, all 8 maps switched with no program linked, a
+cached switch < 60 ms, an arrow tap's handler < 50 ms with the card updated at once, `chunksDrawn`
+with `tweak({ hideMap })`, a hotseat match to the end card and a Rematch that reuses the parked
+stage (programs unchanged, one GL stage), maps still switch after it, closing tears it down.
+`ONLY=variety` (two phones): `mixPlan` / `dailyPlan` / today's board in Node; the Mix chip and the
+Today tile sync to the guest; a mixed 4-round House match: the hider's "You start in the …", round
+2 still on the House, the round-2 recap's "new map", both phones prebuilding round 3's map, round 3
+on it on both phones.
+`chameleon-maps.test.js ONLY=pockets` as above (its static section now runs `closeSlots` like the
+game).
 
 ## Maps (deterministic data, no assets)
 
@@ -916,7 +1202,7 @@ the first touch, respecting the app's mute switch).
   26 m, a 1.5 m collision grid (each query touches a handful of the 929 boxes on the biggest map).
 - Shaders are compiled with `renderer.compile()` behind the loading card.
 - Per frame: no allocations in game code (ring buffers, shared vectors, stable HUD
-  descriptors, DOM writes only on change); net.js allocates one object per publish (≤ 20/s while
+  descriptors, DOM writes only on change); a presence send allocates one object (≤ 20/s while
   moving, 2.5/s keepalive otherwise).
 - Pauses rendering when hidden; handles `webglcontextlost` / `restored` (paint buffers
   re-uploaded, programs recompiled, "Tap to resume").
@@ -950,8 +1236,8 @@ the hider moving during the head start while the seeker is blind, grace refusing
 scaling, persistence), `v3house` / `v3cu` (full 2-round matches with the v3 settings), `shots3`
 (screenshots). Screenshots go to `$SHOTS` (default `$TMPDIR/chameleon-shots`).
 
-- `paintfeel` / `paintjuice` (pro pass, paint owner): codec and lock cost, dab culling, brush cursor and sound, fill / stamp juice; the stamp wipe and fill flood (settle-before-read), the live camo meter (sliced scoring, grade pops, layout at three viewports) and the lock reusing its score. `PAINT_SHOTS=<dir>` / `PAINT_MONT=<mont.js>` for screenshots and montages.
-- `netpolish` (pro pass, net owner; 60 ms link): presence keepalive (≤ 3.5 real sends/s in the lobby, for the hiding hider and the blindfolded seeker, ≤ 3.2 publishes/s for a still hunted hider, full rate the moment it looks round, host never stalls), the adaptive delay (above 100 ms, ≤ 250), the eased View → Watch switch (no single frame takes > 85 % of the move or the turn, the aim never swings back), pellet range = fog far, and a tag judged with the shooter's delay. `NETSHOTS=1` also saves the whip frames.
+- `paintfeel` / `paintjuice` / `paintpro` (pro pass, paint owner): codec and lock cost, dab culling, brush cursor and sound, fill / stamp juice; the stamp wipe and fill flood (settle-before-read), the live camo meter (sliced scoring, grade pops, layout at three viewports) and the lock reusing its score; the meter x-ray (a real tap), "Invisible!", the stroke tail, the undo pool and the paint path's costs at 4x CPU. `PAINT_SHOTS=<dir>` / `PAINT_MONT=<mont.js>` for screenshots and montages.
+- `netpolish` (pro pass, net owner; 60 ms link): the presence schedule in Node on 60 / 120 / 30 Hz frame clocks (≥ 19.5/s, ≤ 21 in any second), presence keepalive (≤ 3.5 real sends/s in the lobby, for the hiding hider and the blindfolded seeker, ≤ 3.2 publishes/s for a still hunted hider, full rate the moment it looks round: ≥ 85 % of min(frames, 20/s) and never over 21.5/s, host never stalls), the adaptive delay (above 100 ms, ≤ 250), the eased View → Watch switch (no single frame takes > 85 % of the move or the turn, the aim never swings back), pellet range = fog far, a remote miss launched in step with the drawn shooter (≤ 300 ms), a tag judged with the shooter's delay, and the tag juice reaching the shooter no later than FOUND in both directions (round 2: the guest seeks the host). `NETSHOTS=1` also saves the whip frames.
 
 ## Known limits
 

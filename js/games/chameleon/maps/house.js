@@ -94,6 +94,9 @@ function build(atlas) {
     aabb(b, X0 - T, 0, Z1, X1 + T, 0.7, Z1 + T, { tile: 'bricks', rep: 0.9, color: '#ffffff', outline: true, collide: { wall: true, name: 'front' } });
     aabb(b, X0 - T, FH, Z1 - 0.02, X1 + T, FH + 0.7, Z1 + T, { color: '#f4efe6', outline: true, collide: { wall: true, name: 'front-up' } });
     b.collide(X0 - T, 0.7, Z1, X1 + T, TOP + 1, Z1 + 0.4, { wall: false, climb: false, name: 'front-guard' }); // invisible: no falling out of the diorama
+    // the top slabs run to the walls' inner faces: their outer edges, over the wall tops, are no
+    // place to cling to (maps pass: a Tiny body there sat outside the house, seen by nobody)
+    for (const [x0, z0, x1, z1] of [[X0 - T - 0.05, Z0 - T - 0.05, X0, Z1], [X1, Z0 - T - 0.05, X1 + T + 0.05, Z1], [X0 - T - 0.05, Z0 - T - 0.05, X1 + T + 0.05, Z0]]) b.collide(x0, TOP, z0, x1, TOP + 0.35, z1, { wall: false, climb: false, name: 'eave-guard' });
     for (const [x, z] of [[X0 - T, Z0 - T], [X1 + T, Z0 - T]]) b.add(boxGeo(0.06, TOP, 0.06), { at: [x, TOP / 2, z], color: C.ink, outline: false });
     aabb(b, X0 - T - 0.01, TOP - 0.03, Z0 - T - 0.01, X1 + T + 0.01, TOP, Z0 + 0.01, { color: '#3a2f2a', outline: false, faces: ['py', 'pz', 'nz'] });
     aabb(b, X0 - T - 0.01, TOP - 0.03, Z0, X0 + 0.01, TOP, Z1, { color: '#3a2f2a', outline: false, faces: ['py', 'px', 'nx'] });

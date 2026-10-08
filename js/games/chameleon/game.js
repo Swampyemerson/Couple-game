@@ -2,18 +2,18 @@
 // painting, cameras, per-frame update and the test hook.
 import { createLink, FIELDS, Q_ID } from './link.js';
 import { createSound } from './sound.js';
-import { createStage } from './stage.js';
+import { createStage, parkStage, takeParkedStage } from './stage.js';
 import { createHud } from './hud.js';
 import { createControls } from './controls.js';
 import { POSES, REGION_OF_PART, REGION_NAMES, REGIONS } from './avatar.js';
 import { loadingCard, errorCard, lobbyCard, titleCard, blindCard, headCard, curtainCard, recapCard, pauseCard, ctxCard, tipsHtml, finalCard, EMOTES, CALLS } from './cards.js';
-import { recordRound, recordMatch, bestsStrip, recapLines, matchStory } from './records.js';
+import { recordRound, recordMatch, bestsStrip, dailyLine, recapLines, matchStory } from './records.js';
 import { loadWear, saveWear, resolveWear, newUnlocks, packWear, unpackWear, wardrobeSheet, EYE_RGB, SLOT_LABEL } from './wardrobe.js';
 import { clamp, dampAngle, wrapAngle, hexToRgb, cssColor, luminance, listeners, fmtTime, mixHex, esc, seeded, packQuat, unpackQuat } from './util.js';
-import { MAPS, mapArea } from './maps.js';
+import { MAPS, mapArea, mapCacheInfo, mixPlan, dailyPlan, dayKey, roomAt } from './maps.js';
 import { sanitizeSetup, sanitizeRules, applyPreset, stepRule, setRule, loadSaved, saveSetup, sizeScale, SPEED_MUL, CLIMB_MUL, tipsSeen, markTipsSeen, PRESETS, timeScale, hideScale, effSeconds, sprintMul, dbSpeed, OPTIONS, fmtRule } from './rules.js';
 import { REVEAL } from './paint.js';
-import { createBlendJob, startBlend, stepBlend, scoreBlend, createMeter } from './camo.js';
+import { createBlendJob, startBlend, stepBlend, scoreBlend, createMeter, errorMap } from './camo.js';
 import { mkBody, sizeBody, resetBody, headingYaw, attachBody, detachBody, freeStep, crawlStep, inputOnSurface, bodyQuat, quatUpY, spotKind, surfaceKind, accelStep, coyoteJump, shortHop, JUMP } from './move.js';
 import { SQUEEZE_R } from './world.js';
 
@@ -31,6 +31,7 @@ const ZIP = { range: 4.6, dur: 0.42, cdHide: 1100, cdSeek: 4000, cdSeeker: 2500 
 const TELL = { range: 6, secs: 1.1, minGap: 1000 };
 const FREECAM = { speed: 4.2, fast: 2.2 };
 const MAP_IDS = MAPS.map((m) => m.id);
+const MINI_PLANS = new WeakMap(); // built map → minimap plan (+ the canvases hud draws once)
 const TAG_WINDOW = 250;
 // a hider mid-scurry / mid-zip is confirmed against a much shorter window (see confirmTag)
 const TAG_WINDOW_ESCAPE = 120;
@@ -105,7 +106,7 @@ export function createGame(el, api) {
     return {
       round, pellets: { a: 0, b: 0 }, maxPellets: 0, scanReady: { a: 0, b: 0 }, scansLeft: { a: 0, b: 0 }, scurried: { a: false, b: false }, escapes: { a: 0, b: 0 }, zipReady: { a: 0, b: 0 }, ready: new Set(), acks: new Set(),
       paintSum: { a: 0, b: 0 }, paintOk: { a: false, b: false }, blend: { a: -1, b: -1 }, glintAt: { a: -1e9, b: -1e9 }, trailUntil: { a: 0, b: 0 }, trailNext: 0,
-      pendingTag: 0, foundSent: false, out: { a: false, b: false }, outSent: false, tagWindow: null,
+      pendingTag: 0, tagLand: 0, tagLandAt: 0, juiceT: 0, foundSent: false, out: { a: false, b: false }, outSent: false, tagWindow: null,
       path: [], pathNext: 0, closest: Infinity, passes: 0, near: false, seekStart: 0, used: { a: 0, b: 0 }, lockSent: false, rec: null,
       scurry: null, escapeAt: 0, endingHide: false, lockDone: false, toRecap: false, nexting: false, jumpReq: false, jumpAt: -1e9, lastTick: 0, lastTrailT: 0, spawn: null, sprint: false,
       // v3: hunt start seen, live paint while hunted (sender: version + time sent; receiver: tells)
@@ -158,7 +159,7 @@ export function createGame(el, api) {
   const P = { on: false, tool: 'brush', size: 1, hard: true, rgb: [74, 132, 116], last: null, lastHit: [0, 0, 0], strokes: 0, texelDirtyAt: 0 };
   let posesOpen = false;
   const shownHints = new Set();
-  const stats = { frames: new Float32Array(240), fi: 0, fn: 0, calls: 0, tris: 0, ewma: 16, lastScale: 0, phaseLog: [], violations: 0, renders: 0 };
+  const stats = { frames: new Float32Array(240), fi: 0, fn: 0, calls: 0, tris: 0, chunks: 0, ewma: 16, lastScale: 0, phaseLog: [], violations: 0, renders: 0 };
   let stage = null; let THREE = null; let controls = null;
   let raf = 0; let lastT = 0; let tSec = 0;
   const timers = new Set();
@@ -233,9 +234,20 @@ export function createGame(el, api) {
   });
 
   function boot() {
+    let reused = null;
+    const fail = (e) => {
+      console.error('chameleon boot', e);
+      S.boot = 'error';
+      hud.layer('error', errorCard('Your device couldn’t start the 3D view.'));
+    };
     try {
-      stage = createStage(THREE, view, { theme, maxDpr: DUR.maxDpr || 2 });
-      if (testing) window.__chamGL = (window.__chamGL || 0) + 1;
+      // a rematch takes the stage the last mount parked (programs linked, map uploaded)
+      reused = takeParkedStage(THREE, DUR.maxDpr || 2);
+      if (reused) { stage = reused; stage.adopt(view, theme); stage.unloadMap(); } else {
+        stage = createStage(THREE, view, { theme, maxDpr: DUR.maxDpr || 2 });
+        if (testing) window.__chamGL = (window.__chamGL || 0) + 1;
+      }
+      S.bootReused = !!reused;
       stage.resize();
       loadMap(S.setup.map);
       applySize();
@@ -244,14 +256,19 @@ export function createGame(el, api) {
       applyWear();
       controls = createControls({ surface, root, joyBase: hud.el.joy, joyKnob: hud.el.knob, onAction: action, paint: paintGestures, isActive: () => !S.destroyed && S.boot === 'ready' });
       hud.layer('loading3', loadingCard('Warming up the paint…', 0.8));
-      stage.compile();
-      stage.render();
-    } catch (e) {
-      console.error('chameleon boot', e);
-      S.boot = 'error';
-      hud.layer('error', errorCard('Your device couldn’t start the 3D view.'));
-      return;
-    }
+    } catch (e) { fail(e); return; }
+    S.bootAt = [Math.round(performance.now())];
+    if (reused) { bootReady(); return; }
+    // the card paints first, then the programs compile in slices (one material a task when
+    // slow) instead of one block that kept the card from ever showing
+    const yieldFrame = () => new Promise((r) => requestAnimationFrame(() => later(r, 0)));
+    yieldFrame()
+      .then(() => stage.warm(yieldFrame, { alive: () => !S.destroyed }))
+      .then((w) => { if (S.destroyed || !w) return; S.bootWarm = w; S.bootAt.push(Math.round(performance.now())); bootReady(); })
+      .catch(fail);
+  }
+  function bootReady() {
+    try { stage.render(); } catch (e) { console.error('chameleon boot', e); S.boot = 'error'; hud.layer('error', errorCard('Your device couldn’t start the 3D view.')); return; }
     S.boot = 'ready';
     root.classList.toggle('mouse', !!controls.st.usingMouse);
     root.classList.toggle('touch', !controls.st.usingMouse);
@@ -308,12 +325,19 @@ export function createGame(el, api) {
     const before = stage.map;
     const m = stage.loadMap(id);
     if (m !== before) {
+      mapQ = null; // a queued lobby switch is superseded by whatever loaded last
       const big = m.big;
       const outer = (c) => c.name === 'back' || c.name === 'front' || c.name === 'left' || c.name === 'right';
-      const fls = (m.info && Array.isArray(m.info.floors) && m.info.floors.length ? m.info.floors : [{ y: 0 }]).map((fl, i, all) => {
-        const y0 = (fl.y || 0) - 0.1; const y1 = i + 1 < all.length ? all[i + 1].y - 0.1 : Infinity;
-        return { y: fl.y || 0, name: fl.name, rooms: m.rooms.filter((r) => (r.floor || 0) === i), boxes: m.colliders.filter((c) => c.maxY - c.minY > 0.5 && c.minY >= y0 && c.minY < Math.min(y1, y0 + 1.3) && !outer(c) && c.climb !== false) };
-      });
+      // the minimap plan (and the canvases hud draws from it) live as long as the cached map
+      let plan = MINI_PLANS.get(m);
+      if (!plan && big) {
+        const fls = (m.info && Array.isArray(m.info.floors) && m.info.floors.length ? m.info.floors : [{ y: 0 }]).map((fl, i, all) => {
+          const y0 = (fl.y || 0) - 0.1; const y1 = i + 1 < all.length ? all[i + 1].y - 0.1 : Infinity;
+          return { y: fl.y || 0, name: fl.name, rooms: m.rooms.filter((r) => (r.floor || 0) === i), boxes: m.colliders.filter((c) => c.maxY - c.minY > 0.5 && c.minY >= y0 && c.minY < Math.min(y1, y0 + 1.3) && !outer(c) && c.climb !== false) };
+        });
+        plan = { minX: m.bounds.minX, maxX: m.bounds.maxX, minZ: m.bounds.minZ, maxZ: m.bounds.maxZ, rooms: fls[0].rooms, boxes: fls[0].boxes, floors: fls };
+        MINI_PLANS.set(m, plan);
+      }
       // free cam limits: the map's footprint (world bounds) and from the floor to just over the top
       let top = 2.4; let bottom = 0;
       for (const c of m.colliders) { if (c.maxY < 30) top = Math.max(top, c.maxY); if (c.maxY - c.minY < 1 && c.maxY > -6) bottom = Math.min(bottom, c.maxY); }
@@ -327,9 +351,23 @@ export function createGame(el, api) {
       }
       C.fcTop = Number.isFinite(ceilHi) ? Math.max(ceilHi - 0.25, 1.2) : top; C.fcBottom = bottom + 0.12;
       void ceilLo;
-      hud.miniSetup(big ? { minX: m.bounds.minX, maxX: m.bounds.maxX, minZ: m.bounds.minZ, maxZ: m.bounds.maxZ, rooms: fls[0].rooms, boxes: fls[0].boxes, floors: fls } : null);
+      hud.miniSetup(big ? plan : null);
     }
     return m;
+  }
+  // Lobby map changes (the host's arrows / chips, the guest following the host): the card shows
+  // the new map at once and the diorama follows a frame later, so the tap paints first; a burst
+  // of changes builds only the last one. A map seen this session is a scene swap (maps.js cache).
+  let mapQ = null; let mapQRaf = 0;
+  function queueMap(id) {
+    mapQ = id;
+    if (mapQRaf || S.destroyed) return;
+    mapQRaf = requestAnimationFrame(() => { mapQRaf = 0; later(flushMap, 0); });
+  }
+  function flushMap() {
+    const id = mapQ; mapQ = null;
+    if (!stage || id == null || S.match || stage.map.id === id) return;
+    loadMap(id); applySize(); placeLobby();
   }
   function placeLobby() {
     const s = stage.map.spots.lobby || { x: 0, z: 0.9 };
@@ -344,10 +382,10 @@ export function createGame(el, api) {
   }
 
   // ── host director ─────────────────────────────────────────────────
-  function matchInfo() { const m = S.match; return m ? { id: m.id, mode: m.mode, map: m.map, first: m.first, rounds: m.rounds, hist: m.hist, rules: m.rules } : null; }
+  function matchInfo() { const m = S.match; return m ? { id: m.id, mode: m.mode, map: m.map, first: m.first, rounds: m.rounds, hist: m.hist, rules: m.rules, maps: m.maps || null, daily: m.daily || null } : null; }
   function enter(name, { round, dur = 0, data = null, at = null } = {}, lead = DUR.lead) {
     if (!isHost) return;
-    if (!local && lead > 0) lead = Math.max(lead, leadFor());
+    if (!local && lead > 0) lead = Math.max(lead, name === 'found' || name === 'time' ? foundLeadFor() : leadFor());
     const p = { seq: ++S.hostSeq, name, round: round ?? S.phase.round, at: at != null ? Math.max(at, now() + 40) : now() + lead, dur, data, sc: S.match ? { ...S.match.scores } : { a: 0, b: 0 }, m: matchInfo() };
     if (!local) { link.send('ph', p); link.blast('ph', p); }
     queuePhase(p);
@@ -359,11 +397,19 @@ export function createGame(el, api) {
     saveSetup(st);
     S.sheet = false;
     S.match = { id: Math.random().toString(36).slice(2, 9), mode: st.mode, map: st.map, first: st.first, rounds: st.mode === 'db' ? 3 : st.rules.rounds, scores: { a: 0, b: 0 }, hist: [], rules: { ...st.rules } };
+    // maps pass: "Mix it up" plans a map per round (same pool, seeded by the match id); "Today's
+    // hide" carries its day key so the rounds count on today's board
+    S.match.maps = st.mix ? mixPlan(S.match.id, st.map, S.match.rounds, st.mode === 'hs' ? 2 : 1) : null;
+    S.match.daily = st.daily || null;
     applySize();
     startRound(1);
   }
   /** How far ahead to schedule a shared moment so the message is there in time. */
   function leadFor() { return Math.max(DUR.lead, Math.min(1200, link.rtt * 1.3 + 160)); }
+  /** FOUND / SURVIVED are events, not deadlines: every ms of lead is a ms the tag's payoff waits.
+   *  The partner only needs the message in time (one way ≈ ½ RTT), so DUR.foundLead (260 ms)
+   *  unless the link is slow (enter() used to raise it to leadFor()'s ≥ 380 ms). */
+  function foundLeadFor() { return Math.min(leadFor(), link.rtt * 0.6 + 80); }
   /** Two devices: after the seek clock hits zero, how long a shot fired just before it may take
    *  to be confirmed by the victim (shooter → victim → host) before time is called. */
   function tagGrace() { return local ? 0 : Math.min(1600, link.rtt * 1.2 + 250); }
@@ -379,6 +425,12 @@ export function createGame(el, api) {
     return { hs, ss: rnd.int(K.length), da: a, db: b };
   }
   function startRound(r, at = null) {
+    // Mix it up: this round's map (the recap preloaded it, so this is a scene swap)
+    const plan = S.match.maps;
+    if (plan && plan.length) { const id = plan[(r - 1) % plan.length]; if (MAP_IDS.includes(id)) S.match.map = id; }
+    // the spawns index this map's lists: a lobby switch still queued for the next frame (or the
+    // round's mixed map) is loaded first
+    if (stage.map.id !== S.match.map) loadMap(S.match.map);
     const spawn = pickSpawns(r);
     if (local) enter('curtain', { round: r, data: { kind: 'hide', who: hiderOfRound(r), spawn }, at }, 0);
     else {
@@ -478,7 +530,7 @@ export function createGame(el, api) {
   /** Host, once per round: fold the round into the shared records; returns what to celebrate. */
   function recordNow(rec) {
     const d = { ...data() }; const m = S.match;
-    const extra = { mode: m.mode, map: m.map, names: { a: api.name('a'), b: api.name('b') }, closest: R.closest, passes: R.passes, strokes: R.strokes, stared: R.stared, called: !!rec.called };
+    const extra = { mode: m.mode, map: m.map, names: { a: api.name('a'), b: api.name('b') }, closest: R.closest, passes: R.passes, strokes: R.strokes, stared: R.stared, called: !!rec.called, daily: m.daily || null };
     const r1 = recordRound(d, rec, extra);
     Object.assign(d, r1.patch);
     const patch = { ...r1.patch }; const unlocks = [];
@@ -540,7 +592,7 @@ export function createGame(el, api) {
   function adoptMatch(p) {
     if (!p.m) return;
     if (!S.match || S.match.id !== p.m.id) S.match = { ...p.m, scores: { ...(p.sc || { a: 0, b: 0 }) }, rules: sanitizeRules(p.m.rules) };
-    else { S.match.hist = p.m.hist; S.match.scores = { ...(p.sc || S.match.scores) }; S.match.rounds = p.m.rounds; if (p.m.rules) S.match.rules = sanitizeRules(p.m.rules); }
+    else { S.match.hist = p.m.hist; S.match.scores = { ...(p.sc || S.match.scores) }; S.match.rounds = p.m.rounds; if (p.m.rules) S.match.rules = sanitizeRules(p.m.rules); if (MAP_IDS.includes(p.m.map)) S.match.map = p.m.map; S.match.maps = p.m.maps || null; }
     if (stage && stage.map && stage.map.id !== S.match.map) { loadMap(S.match.map); stage.compile(); }
     applySize();
     api.setScore(S.match.scores);
@@ -664,6 +716,7 @@ export function createGame(el, api) {
       case 'found': case 'time': {
         const rec = p.data || {};
         R.rec = rec;
+        if (R.juiceT) { clearTimeout(R.juiceT); R.juiceT = 0; tagJuice(); } // a tag's juice still waiting for its pellet: never after the stamp
         C.freezeUntil = tSec + 0.5;
         C.whip = 0;
         snd.ambience('off');
@@ -687,6 +740,9 @@ export function createGame(el, api) {
       case 'recap': {
         R.rec = p.data || R.rec;
         C.orbitT = 0;
+        // Mix it up: build the next round's map into the session cache while the recap is up
+        // (both phones; the round's title is then a scene swap), once the card has settled in
+        if (S.match && S.match.maps && p.round < S.match.rounds) { const nid = S.match.maps[p.round % S.match.maps.length]; later(() => { if (stage && S.phase.name === 'recap' && stage.map.id !== nid) stage.prefetch(nid); }, Math.min(1500, Math.max(200, (p.dur || 0) * 0.2))); }
         const seekerW = R.rec && (R.rec.seeker || (R.rec.winner || null));
         if (stage && R.path.length && seekerW) stage.fx.setPath(R.path, seekerW === 'a' ? theme.a : theme.b);
         if (stage) {
@@ -755,7 +811,7 @@ export function createGame(el, api) {
     api.finish({ winner: d.winner, text, sub });
   }
   /** A confirmed tag on my screen: a 90 ms hit-stop, a hard shake, a white flash, the pitched-up splat; the ambience cuts for 0.4 s. */
-  function tagJuice() { C.freezeUntil = Math.max(C.freezeUntil, tSec + 0.09); C.shake = 0.25; hud.flash(); snd.play('tag'); snd.duck(400); }
+  function tagJuice() { C.freezeUntil = Math.max(C.freezeUntil, tSec + 0.09); C.shake = 0.25; hud.flash(); snd.play('tag'); snd.duck(400); stats.juiceAt = now(); }
   /** The seeker's wager chip (blind card, or the hotseat's hand-over curtain). */
   function setCall(k) {
     if (!rules().wager || mode() !== 'hs' || !CALLS.some((c) => c[0] === k)) return;
@@ -776,7 +832,7 @@ export function createGame(el, api) {
   }
   const TICK_L = {
     paint: (n, c) => `${n} is painting… (${c} stroke${c === 1 ? '' : 's'})`, stamp: (n) => `${n} used the stamp`, fill: (n) => `${n} filled a whole region`,
-    pick: (n) => `${n} drank a colour from the room`, ready: (n) => `${n} is locking in…`, still: (n) => `${n} went still…`, move: (n) => `${n} is on the move`,
+    pick: (n) => `${n} drank a colour from the room`, xray: (n) => `${n} is checking their camo…`, ready: (n) => `${n} is locking in…`, still: (n) => `${n} went still…`, move: (n) => `${n} is on the move`,
   };
   function tickerIn(d) {
     if (!d || !TICK_L[d.k]) return;
@@ -854,7 +910,29 @@ export function createGame(el, api) {
   // number the hider saw is the number that scores (the lock's quantise to 32 colours moves it by
   // ±1 at most, and it would be unfair to lose a bonus to that).
   const CAMO_SLICE = 1800;
-  const CAMO = { job: createBlendJob(), meter: null, w: null, round: -1, ver: -1, score: -1, jobVer: -1, sig: new Float64Array(9).fill(NaN), jobSig: new Float64Array(9), cur: new Float64Array(9), surf: null, surfSig: new Float64Array(9).fill(NaN), runs: 0, slices: 0 };
+  const CAMO = { job: createBlendJob(), meter: null, w: null, round: -1, ver: -1, score: -1, jobVer: -1, sig: new Float64Array(9).fill(NaN), jobSig: new Float64Array(9), cur: new Float64Array(9), surf: null, surfSig: new Float64Array(9).fill(NaN), runs: 0, slices: 0, sliceMax: 0, sliceSum: 0, xrayOn: false, xrays: 0, xrayBad: -1, xrayMs: 0, xrayHint: false };
+  const XRAY_MS = 2200; let xerr = null;
+  /** Tap on the meter: x-ray the body. Every texel that doesn't match the surface behind it
+   *  flashes with crawling hazard stripes for XRAY_MS (paint.xray; any edit ends it at once). A
+   *  second tap turns it off. One full error pass (camo.errorMap) at the tap. */
+  function camoXray() {
+    const v = viewer();
+    if (!P.on || !v || !stage || !CAMO.meter || !CAMO.meter.shown) return;
+    const p = stage.paints[v];
+    if (p.xraying) { p.xrayOff(); return; }
+    refreshTexels();
+    const surf = blendSurf(v);
+    if (!surf) { hint('Nothing behind you to match yet: get on a wall, or onto the floor', 1800); snd.play('warn'); return; }
+    if (!xerr) xerr = new Uint8Array(p.data.length >> 2);
+    const t0 = performance.now();
+    const bad = errorMap(p, surf, xerr);
+    p.xray(xerr, XRAY_MS);
+    CAMO.xrayMs = performance.now() - t0; CAMO.xrays++; CAMO.xrayBad = bad; CAMO.xrayOn = true; CAMO.xrayHint = true;
+    CAMO.meter.xray(true, bad);
+    snd.play(bad ? 'glint' : 'good'); act('xray');
+    const frac = bad / Math.max(1, p.texels);
+    hint(!bad ? 'Nothing shows. A perfect match!' : frac > 0.2 ? 'The stripes show against the surface behind you' : 'Nearly there: paint over the stripes', 1800);
+  }
   function bodySig(w, out) { const b = body[w]; out[0] = b.x; out[1] = b.y; out[2] = b.z; out[3] = b.at ? 1 : 0; out[4] = b.nx || 0; out[5] = b.ny || 0; out[6] = b.nz || 0; out[7] = POSES.indexOf(b.pose); out[8] = b.wa || 0; return out; }
   function sameSig(a, b) { for (let i = 0; i < 9; i++) if (!(Math.abs(a[i] - b[i]) < 1e-4)) return false; return true; }
   function camoTick() {
@@ -864,6 +942,7 @@ export function createGame(el, api) {
     if (!CAMO.meter) { if (!on) return; CAMO.meter = createMeter(root.querySelector('.chm-hud') || root, { play: (n) => snd.play(n) }); }
     const m = CAMO.meter;
     m.show(on);
+    if (CAMO.xrayOn && (!on || !stage.paints[CAMO.w || v || 'a'].xraying)) { CAMO.xrayOn = false; m.xray(false); if (CAMO.w) stage.paints[CAMO.w].xrayOff(); } // timed out, painted over, or the tools closed
     if (!on) { CAMO.job.on = false; return; } // a half-done score is dropped; reopening rescores if anything changed
     const round = S.phase.round | 0;
     if (CAMO.w !== v || CAMO.round !== round) { CAMO.w = v; CAMO.round = round; CAMO.ver = -1; CAMO.sig.fill(NaN); CAMO.surfSig.fill(NaN); CAMO.job.on = false; m.reset(); }
@@ -871,11 +950,16 @@ export function createGame(el, api) {
     const p = stage.paints[v];
     if (CAMO.job.on) {
       CAMO.slices++;
-      if (!stepBlend(CAMO.job, m.value < 0 ? 1e9 : CAMO_SLICE)) return; // the first score of a round at once (a number on screen right away), then sliced
+      const ts = performance.now();
+      const done = stepBlend(CAMO.job, m.value < 0 ? 1e9 : CAMO_SLICE); // the first score of a round at once (a number on screen right away), then sliced
+      if (m.value >= 0) { const ms = performance.now() - ts; CAMO.sliceSum += ms; if (ms > CAMO.sliceMax) CAMO.sliceMax = ms; }
+      if (!done) return;
       if (p.version !== CAMO.jobVer) return; // painted while scoring: rescore below next frame
       CAMO.score = CAMO.job.score; CAMO.ver = CAMO.jobVer; CAMO.sig.set(CAMO.jobSig);
       const bb = mode() === 'hs' ? rules().blendBonus | 0 : 0;
       m.set(CAMO.score, bb ? (bb === 20 ? 90 : 80) : -1, bb);
+      // the x-ray is easy to miss: once a session, when there is something to find
+      if (!CAMO.xrayHint && CAMO.score >= 0 && CAMO.score < 90 && CAMO.runs > 1 && !P.last) { CAMO.xrayHint = true; hintOnce('xray', 'Tap the camo meter to see where you show', 2600); }
       return;
     }
     // wait for the change to settle: a stroke in progress, a wipe / flood, a fill swell, the pose easing in
@@ -1004,7 +1088,7 @@ export function createGame(el, api) {
   link.on('gotpaint', (d) => { if (isHost && d && S.phase.name === 'lock') hostAck(d.w); });
   link.on('paintreq', (d) => { if (d && d.w === me) { R.lockSent = false; lockPaint(me); } });
   link.on('ph', (p) => { if (!isHost) queuePhase(p); });
-  link.on('setup', (d) => { if (!isHost && d) { S.setup = sanitizeSetup({ ...S.setup, ...d }, MAP_IDS, S.setup.first); S.setupVer++; if (stage && !S.match) { loadMap(S.setup.map); applySize(); placeLobby(); stage.compile(); } } });
+  link.on('setup', (d) => { if (!isHost && d) { S.setup = sanitizeSetup({ ...S.setup, ...d }, MAP_IDS, S.setup.first); S.setupVer++; if (stage && !S.match) { applySize(); placeLobby(); if (stage.map.id !== S.setup.map || mapQ != null) queueMap(S.setup.map); } } });
   link.on('ready', (d) => { if (isHost && d) { if (d.strokes > (R.strokes[d.w] | 0)) R.strokes[d.w] = d.strokes | 0; R.ready.add(d.w); if (S.phase.name === 'hide' && (mode() === 'hs' ? R.ready.has(hiderOf(S.phase.round)) : R.ready.size >= 2)) endHide(); } });
   link.on('next', () => { if (isHost) hostNext(); });
   link.on('wear', (d) => { if (d && (d.w === 'a' || d.w === 'b') && d.w !== me) { wornRemote[d.w] = d.wr | 0; applyWear(); } });
@@ -1083,6 +1167,7 @@ export function createGame(el, api) {
     S.match = s.match;
     if (S.match) S.match.rules = sanitizeRules(S.match.rules);
     if (S.match && stage.map.id !== S.match.map) { loadMap(S.match.map); stage.compile(); }
+    else if (!S.match && stage.map.id !== S.setup.map) queueMap(S.setup.map); // a lobby resync follows the host's map too
     applySize();
     const ph = s.phase;
     if (R.round !== ph.round) resetRound(ph.round);
@@ -1200,9 +1285,12 @@ export function createGame(el, api) {
     stats.lastShot = { range, tag: isTag, hit: !!hit, obj: hit ? (stage.isMap(hit.object) ? 'map' : 'other') : null, p: msg.p, o: [o.x, o.y, o.z], d: [dir.x, dir.y, dir.z], tgtVisible: stage.av[tgt].root.visible, seen };
     if (isTag) {
       R.pendingTag = id;
+      // when the pellet lands on this screen (fx.pellet flies at 28 m/s): the confirmation's
+      // juice waits for it, so the flash and hit-stop land with the pellet, not ahead of it
+      R.tagLand = id; R.tagLandAt = tSec + Math.max(0.06, Math.hypot(pp.x - muzzle.x, pp.y - muzzle.y, pp.z - muzzle.z) / 28);
       if (local) { tagJuice(); hostFound(w, tgt, T, msg.p); return; }
       link.send('shot', msg);
-      hint('Hit! Checking…', 900);
+      hint('Hit!', 700); // the victim's confirmation follows in ~1 RTT ("They slipped away!" if it fails): don't announce the wait
     } else {
       if (!local) link.send('shot', msg);
       if (R.pellets[w] === 0) later(() => sendOut(w), 600);
@@ -1226,7 +1314,13 @@ export function createGame(el, api) {
     R.pellets[d.by] = d.left; R.used[d.by] = R.maxPellets - d.left;
     const from = { x: d.o[0], y: d.o[1], z: d.o[2] }; const to = { x: d.p[0], y: d.p[1], z: d.p[2] };
     if (!d.tag) {
-      stage.fx.pellet(from, to, ink, tSec, () => { if (d.hit) { stage.fx.splat(to.x, to.y, to.z, d.n[0], d.n[1], d.n[2], ink, 0.26, tSec); snd.play('splat'); } });
+      // a miss leaves the muzzle when the shooter AS DRAWN here fires: this screen shows them
+      // link.delay behind the shared clock, and the message usually beats that (watching over
+      // their shoulder, the pellet used to fly before the drawn seeker had turned to aim)
+      const lag = Number.isFinite(d.T) ? clamp(d.T + link.delay - now(), 0, 300) : 0;
+      const go = () => { if (stage && S.phase.name === 'seek') stage.fx.pellet(from, to, ink, tSec, () => { if (d.hit) { stage.fx.splat(to.x, to.y, to.z, d.n[0], d.n[1], d.n[2], ink, 0.26, tSec); snd.play('splat'); } }); };
+      stats.shotLag = Math.round(lag);
+      if (lag > 16) later(go, lag); else go();
       return;
     }
     stage.fx.pellet(from, to, ink, tSec, null);
@@ -1235,8 +1329,10 @@ export function createGame(el, api) {
     const ok = confirmTag(d.T, d.seen, dl);
     stats.lastTagCheck = { ok, T: d.T, seen: d.seen, me: [body[me].x, body[me].y, body[me].z], n: hist.n, escAt: R.escapeAt, delay: dl, rtt: link.rtt };
     if (ok) {
+      // the shooter always hears back: its hit-stop, flash and tag sound ride on this (a host
+      // victim used to go straight to hostFound, so a guest seeker's tags landed with no juice)
+      link.send('tagres', { id: d.id, ok: true, T: d.T, by: d.by, victim: me, p: d.p });
       if (isHost) hostFound(d.by, me, d.T, d.p);
-      else link.send('tagres', { id: d.id, ok: true, T: d.T, by: d.by, victim: me, p: d.p });
     } else {
       link.send('tagres', { id: d.id, ok: false, by: d.by });
       stage.fx.splat(to.x, to.y, to.z, d.n[0], d.n[1], d.n[2], ink, 0.24, tSec);
@@ -1265,7 +1361,18 @@ export function createGame(el, api) {
   }
   function onTagRes(d) {
     if (!d) return;
-    if (d.ok) { if (d.by === me) tagJuice(); if (isHost) hostFound(d.by, d.victim, d.T, d.p); return; }
+    if (d.ok) {
+      if (d.by === me) {
+        // a quick confirmation waits for the pellet to land on this screen (≤ 220 ms; the FOUND
+        // stamp follows the confirmation by ≥ DUR.foundLead, and if it comes first anyway, e.g. a
+        // guest on a slow link, it fires the waiting juice: never a flash after the stamp)
+        const wt = R.tagLand === d.id ? Math.min(0.22, R.tagLandAt - tSec) : 0;
+        stats.juice = { n: ((stats.juice && stats.juice.n) || 0) + 1, wait: Math.max(0, Math.round(wt * 1000)), at: now() };
+        if (wt > 0.016 && S.phase.name === 'seek') R.juiceT = later(() => { R.juiceT = 0; tagJuice(); }, wt * 1000); else tagJuice();
+      }
+      if (isHost) hostFound(d.by, d.victim, d.T, d.p);
+      return;
+    }
     if (d.by === me) {
       R.pendingTag = 0;
       hint('They slipped away!', 1600); snd.play('warn');
@@ -1525,17 +1632,61 @@ export function createGame(el, api) {
     controls.setMode('paint');
     stage.av[v].st.breathe = false;
     C.paintYaw = body[v].yaw + 0.9; C.paintPitch = 0.32; C.paintDist = 1.3;
+    framePaintCam(v);
     P.texelDirtyAt = tSec + 0.35;
     snd.play('ui');
     root.classList.add('painting');
     if (hunting() && rules().huntPaint === 'tell' && !shownHints.has('tell')) { shownHints.add('tell'); hint('Careful: fresh paint glints if the seeker is close and can see you.', 3400); }
     else hint(controls.st.usingMouse ? 'Drag on your body to paint · drag elsewhere to turn · wheel to zoom' : 'Paint with one finger · two fingers turn and zoom', 3400);
   }
+  /**
+   * Open the paint camera on a side the body can be seen from. The default (yaw + 0.9, slightly
+   * above) is tried first, then swings 0.45 rad either way, a higher angle, then wider swings.
+   * A candidate is judged by three sight lines (body centre, counted twice, head, tail → the
+   * camera) against the map mesh (and the colliders, for the centre); the first with all three
+   * clear wins, else the one with the most clear (a lampshade,
+   * shelf or desk edge used to hide half the body on the Living Room and CU spots). Rays stop at
+   * the first clear candidate and never exceed PAINT_CAM_RAYS (a ray is ~2 ms on the one-chunk
+   * Living Room, ≤ 0.7 ms on the chunked maps; usually 3 rays in all).
+   */
+  const PAINT_CAM_TRY = [[0, 0.32], [0.45, 0.32], [-0.45, 0.32], [0, 0.8], [0.9, 0.32], [-0.9, 0.32]];
+  const PAINT_CAM_RAYS = 12;
+  const camPts = new Float64Array(9);
+  function framePaintCam(v) {
+    const b = body[v]; const k2 = 0.5 + 0.5 * b.s; const pd = C.paintDist * k2; const y0 = C.paintYaw;
+    const ms = stage.av[v].meshes;
+    bodyCentre(v, tv3); const cx = tv3.x; const cy = tv3.y; const cz = tv3.z;
+    camPts[0] = cx; camPts[1] = cy; camPts[2] = cz;
+    ms[1].getWorldPosition(tv3); camPts[3] = tv3.x; camPts[4] = tv3.y; camPts[5] = tv3.z; // head
+    ms[5].getWorldPosition(tv3); camPts[6] = tv3.x; camPts[7] = tv3.y; camPts[8] = tv3.z; // tail
+    let bestK = 0; let bestClear = -1; let bestFree = 0; let rays = 0;
+    for (let k = 0; k < PAINT_CAM_TRY.length && rays + 3 <= PAINT_CAM_RAYS; k++) {
+      const yaw = y0 + PAINT_CAM_TRY[k][0]; const pit = PAINT_CAM_TRY[k][1]; const cp = Math.cos(pit);
+      const ex = cx + Math.sin(yaw) * cp * pd; const ey = cy + Math.sin(pit) * pd; const ez = cz + Math.cos(yaw) * cp * pd;
+      let clear = 0; let free = pd;
+      for (let j = 0; j < 3; j++) {
+        const px = camPts[j * 3]; const py = camPts[j * 3 + 1]; const pz = camPts[j * 3 + 2];
+        let dx = ex - px; let dy = ey - py; let dz = ez - pz; const d = Math.hypot(dx, dy, dz) || 1; dx /= d; dy /= d; dz /= d;
+        // the centre also checks the colliders (cheap; a bench or shelf top is always one), then
+        // every line the map mesh (lampshades and other collider-less props)
+        const box = j === 0 ? stage.world.raycast(px, py, pz, dx, dy, dz, d, CAM_FILTER) : null;
+        let t = box && box.t < d ? box.t : Infinity;
+        if (t === Infinity) { stage.ray.set(tv3.set(px + dx * 0.06, py + dy * 0.06, pz + dz * 0.06), tv3b.set(dx, dy, dz)); rays++; const hit = stage.pickMap(d - 0.06); if (hit) t = hit.distance + 0.06; }
+        if (t === Infinity) clear += j === 0 ? 2 : 1; else if (j === 0) free = t;
+      }
+      if (clear > bestClear) { bestClear = clear; bestK = k; bestFree = free; }
+      if (clear === 4) break;
+    }
+    C.paintYaw = y0 + PAINT_CAM_TRY[bestK][0]; C.paintPitch = PAINT_CAM_TRY[bestK][1];
+    // the centre itself is hidden from every side tried: come in to just short of the thing in the way
+    if (bestFree < pd) C.paintDist = clamp((bestFree - 0.12) / k2, 0.6, C.paintDist);
+    stats.paintCam = { k: bestK, rays, clear: bestClear, free: bestFree, pd };
+  }
   function exitPaint(silent = false) {
     if (!P.on) return;
     P.on = false; P.last = null;
     root.classList.remove('painting');
-    if (stage) { stage.fx.setCursor(false); const v = viewer(); if (v) stage.av[v].st.breathe = true; }
+    if (stage) { stage.fx.setCursor(false); const v = viewer(); if (v) { stage.av[v].st.breathe = true; stage.paints[v].xrayOff(); } }
     if (controls) controls.setMode('none');
     if (!silent) snd.play('ui');
     // pre-encode while they walk off, so Ready (or the next live update) reuses the blob instead of
@@ -1548,6 +1699,18 @@ export function createGame(el, api) {
     if (PFX.fillParts) { for (const pi of PFX.fillParts) stage.av[PFX.fillW].meshes[pi].scale.setScalar(1); PFX.fillParts = null; } // texels from the rest pose, not mid-swell
     const v = viewer(); if (!v) return; stage.paints[v].updateWorld(stage.av[v].meshes); P.texelDirtyAt = 0; }
   const rgbTmp = [0, 0, 0];
+  // the smoothed stroke has been drawn up to strokeFrom (the midpoint before P.last)
+  const strokeFrom = [0, 0, 0]; let strokeSeg = 0;
+  /** Lift: draw the last half-segment, strokeFrom → the last finger point. */
+  function strokeTail() {
+    const v = viewer(); const L = P.last; const F = strokeFrom;
+    if (!v || !L || !strokeSeg) return;
+    const step = BRUSH[P.size] * body[v].s * 0.35;
+    const d = Math.hypot(L[0] - F[0], L[1] - F[1], L[2] - F[2]);
+    if (d < step * 0.3) return;
+    const n = Math.min(DAB_CAP[P.size], Math.max(1, Math.floor(d / step)));
+    for (let i = 1; i <= n; i++) { const k = i / n; dab3(F[0] + (L[0] - F[0]) * k, F[1] + (L[1] - F[1]) * k, F[2] + (L[2] - F[2]) * k); }
+  }
   const paintGestures = {
     begin(x, y) {
       if (!P.on || P.tool !== 'brush') return false;
@@ -1557,6 +1720,7 @@ export function createGame(el, api) {
       const v = viewer();
       stage.paints[v].snapshot();
       P.last = [hit.point.x, hit.point.y, hit.point.z];
+      strokeFrom[0] = hit.point.x; strokeFrom[1] = hit.point.y; strokeFrom[2] = hit.point.z; strokeSeg = 0;
       P.lastAt = now();
       dabAt(hit);
       showCursor(hit);
@@ -1574,22 +1738,30 @@ export function createGame(el, api) {
       const hit = pickOwn(x, y);
       if (!hit) return;
       const r = BRUSH[P.size] * body[viewer()].s;
-      const dx = hit.point.x - P.last[0]; const dy = hit.point.y - P.last[1]; const dz = hit.point.z - P.last[2];
-      const d = Math.hypot(dx, dy, dz);
+      const L = P.last; const F = strokeFrom;
+      const hx = hit.point.x; const hy = hit.point.y; const hz = hit.point.z;
+      const d = Math.hypot(hx - L[0], hy - L[1], hz - L[2]);
       const step = r * 0.35;
       if (d < step) return;
-      const n = Math.min(DAB_CAP[P.size], Math.floor(d / step));
+      // Smoothed stroke: a quadratic from the previous midpoint, bent toward the last finger point,
+      // to the new midpoint (the classic midpoint-Bézier). A slow phone delivers one move per frame,
+      // so a fast curve used to come out as a polygon of straight chords; now it stays round. The
+      // last half-segment is drawn on lift (end → strokeTail).
+      const mx = (L[0] + hx) * 0.5; const my = (L[1] + hy) * 0.5; const mz = (L[2] + hz) * 0.5;
+      const len = (Math.hypot(L[0] - F[0], L[1] - F[1], L[2] - F[2]) + Math.hypot(mx - L[0], my - L[1], mz - L[2]) + Math.hypot(mx - F[0], my - F[1], mz - F[2])) * 0.5;
+      const n = Math.min(DAB_CAP[P.size], Math.max(1, Math.floor(len / step)));
       for (let i = 1; i <= n; i++) {
-        const k = i / n;
-        dab3(P.last[0] + dx * k, P.last[1] + dy * k, P.last[2] + dz * k);
+        const t = i / n; const u = 1 - t; const a = u * u; const b = 2 * u * t; const c = t * t;
+        dab3(a * F[0] + b * L[0] + c * mx, a * F[1] + b * L[1] + c * my, a * F[2] + b * L[2] + c * mz);
       }
-      P.last[0] = hit.point.x; P.last[1] = hit.point.y; P.last[2] = hit.point.z;
+      F[0] = mx; F[1] = my; F[2] = mz; strokeSeg++;
+      L[0] = hx; L[1] = hy; L[2] = hz;
       showCursor(hit);
       // stroke speed in body-sizes per second → scrub loudness
       const tn = now(); const sdt = Math.max(16, tn - (P.lastAt || tn - 16)); P.lastAt = tn;
       snd.brush(P.size, (d / body[viewer()].s) / (sdt / 1000) / 1.6, P.hard);
     },
-    end() { if (P.last) { P.strokes++; P.last = null; const vv = viewer(); if (vv) { R.strokes[vv]++; act('paint', R.strokes[vv]); } } if (!controls.st.usingMouse) stage.fx.setCursor(false); },
+    end() { if (P.last) { strokeTail(); P.strokes++; P.last = null; const vv = viewer(); if (vv) { R.strokes[vv]++; act('paint', R.strokes[vv]); } } if (!controls.st.usingMouse) stage.fx.setCursor(false); },
     cancel() { if (P.last) { stage.paints[viewer()].undo(); P.last = null; } },
     tap(x, y) {
       if (!P.on) return;
@@ -1820,6 +1992,7 @@ export function createGame(el, api) {
       case 'pick': if (P.on) { P.tool = 'pick'; snd.play('ui'); hint('Tap anything to drink its colour', 1500); } break;
       case 'stamp': doStamp(); break;
       case 'undo': if (P.on && v && stage.paints[v].undo(true)) snd.play('undo'); break; // dissolves back (paint.js REVEAL.undo)
+      case 'xray': camoXray(); break; // the camo meter: where do I show?
       case 'ready': ready(); break;
       case 'next': if (S.phase.name === 'recap') { if (isHost) hostNext(); else link.send('next', {}); snd.play('ui'); } break;
       case 'confirm': if (S.phase.name === 'recap') action('next'); else if (S.phase.name === 'curtain') action('curtain'); else if (S.phase.name === 'lobby') action('start'); break;
@@ -1853,6 +2026,7 @@ export function createGame(el, api) {
       if (k === 'custom') return;
       let next = S.setup;
       if (k === 'preset') next = { ...S.setup, rules: applyPreset(val) };
+      else if (k === 'daily') next = dailySetup(val);
       else if (k === 'rule') next = { ...S.setup, rules: t.dataset.step ? stepRule(S.setup.rules, t.dataset.k, +t.dataset.step) : setRule(S.setup.rules, t.dataset.k, val) };
       else next = { ...S.setup, [k]: val };
       commitSetup(next, k);
@@ -1874,18 +2048,26 @@ export function createGame(el, api) {
     if (t.dataset.act) action(t.dataset.act);
   });
   L.on(root, 'pointerdown', () => snd.unlock(), { passive: true });
+  /** Today's hide (maps pass): the day's map, size, twist and first hider on top of Classic, two
+   *  rounds; derived from the day key alone, so both phones agree (maps.js dailyPlan). */
+  function dailySetup(day) {
+    const pl = dailyPlan(/^\d{4}-\d{2}-\d{2}$/.test(day || '') ? day : dayKey());
+    return { ...S.setup, mode: 'hs', map: pl.map, first: pl.first, mix: false, daily: pl.day, rules: sanitizeRules({ ...PRESETS.classic, size: pl.size, rounds: pl.rounds, ...pl.twist.rules }) };
+  }
   /** Host: validate, apply, remember and share a lobby change. */
   function commitSetup(next, k) {
+    // any other change makes it the host's own setup again (who hides first may still swap)
+    if (k !== 'daily' && k !== 'first') next = { ...next, daily: null };
     next = sanitizeSetup(next, MAP_IDS, S.setup.first);
     const mapChanged = next.map !== S.setup.map;
     S.setup = next;
     S.setupVer++;
     snd.play('ui');
     saveSetup(S.setup);
-    if (mapChanged) { loadMap(S.setup.map); stage.compile(); }
     applySize();
-    if (mapChanged || k === 'rule' || k === 'preset') placeLobby();
-    if (!local) link.send('setup', S.setup);
+    if (k === 'rule' || k === 'preset') placeLobby();
+    if (!local) link.send('setup', S.setup); // before the build, so the guest starts on it too
+    if (mapChanged) queueMap(S.setup.map); // the card first, the diorama next frame (+ placeLobby)
   }
   // time sliders (hide / seek): preview the value while dragging, commit on release
   const rangeVal = (r) => { const k = r.dataset.range; const opts = OPTIONS[k]; return opts ? opts[clamp(Math.round(+r.value), 0, opts.length - 1)] : undefined; };
@@ -1950,10 +2132,10 @@ export function createGame(el, api) {
   let camPos = null; let camLook = null; let camWant = null; let lookWant = null; let tvA = null; let qOwn = null; let prj = null; let camR = null; let camF = null;
   const pubSt = {}; for (const f of FIELDS) pubSt[f] = 0;
   const sentSt = {}; for (const f of FIELDS) sentSt[f] = NaN; // what the last publish carried
-  /** Presence: full rate (one publish per ≥ 49 ms: net.js's 20/s) while anything changes and for
-   *  PUB_HOLD_MS after, so the partner's buffer ends on a still pair (no extrapolated overshoot);
-   *  then a keepalive every PUB_KEEPALIVE_MS (it still feeds the partner's 4.5 s stall detection). */
-  const PUB_KEEPALIVE_MS = 400; let PUB_HOLD_MS = 250; const PUB_MIN_MS = 49;
+  /** Presence: full rate (link.js's 20/s schedule) while anything changes and for PUB_HOLD_MS
+   *  after, so the partner's buffer ends on a still pair (no extrapolated overshoot); then a
+   *  keepalive every PUB_KEEPALIVE_MS (it still feeds the partner's 4.5 s stall detection). */
+  const PUB_KEEPALIVE_MS = 400; let PUB_HOLD_MS = 250;
   /** A hider's position goes public this long before a head start ends: the seeker's buffer then holds
    *  real samples when the blindfold lifts (covers the adaptive delay's 250 ms cap + a slow trip). */
   const PUB_HUNT_LEAD_MS = 750;
@@ -2003,7 +2185,7 @@ export function createGame(el, api) {
         stage.render();
         stats.renders++;
         const inf = stage.renderer.info.render;
-        stats.calls = inf.calls; stats.tris = inf.triangles;
+        stats.calls = inf.calls; stats.tris = inf.triangles; stats.chunks = stage.chunksDrawn;
       }
       perf(frameMs > 0 && frameMs < 1000 ? frameMs : 16, tms);
     } catch (e) {
@@ -2276,14 +2458,13 @@ export function createGame(el, api) {
     // a state that doesn't change goes out as a ~2.5/s keepalive instead of 20/s: the hider's
     // private "nobody here" (v: 0, zeros) all through the hide phase, a still hider all hunt, a
     // blindfolded seeker, both players in the lobby. Moving, looking round, a pose: full rate at once
-    // (the first changed sample leaves the same frame), plus PUB_HOLD_MS after the last change
+    // (the first changed sample takes the next 20/s slot: link.pubDue), plus PUB_HOLD_MS after the last change
     if (S.boot === 'ready' && link.ready) {
       const tp = performance.now();
-      if (tp - pubAt >= PUB_MIN_MS || tp < pubAt) {
+      if (link.pubDue(tp)) {
         if (pubEpoch !== link.epoch || pubDiffers()) { pubMoveAt = tp; pubEpoch = link.epoch; } // a fresh link starts at full rate
         const idle = tp - pubMoveAt > PUB_HOLD_MS;
-        if (!idle || tp - pubAt >= PUB_KEEPALIVE_MS || tp < pubAt) {
-          link.publish(pubSt);
+        if ((!idle || tp - pubAt >= PUB_KEEPALIVE_MS || tp < pubAt) && link.publish(pubSt)) {
           for (let i = 0; i < FIELDS.length; i++) sentSt[FIELDS[i]] = pubSt[FIELDS[i]];
           pubAt = tp; NETST.pubs++; if (idle) NETST.idle++;
         }
@@ -3067,10 +3248,14 @@ export function createGame(el, api) {
     switch (kind) {
       case 'ctx': return ctxCard();
       case 'pause': return pauseCard(api, { reason: S.paused ? S.paused.reason : 'resume', countdown: !S.paused });
-      case 'lobby': return lobbyCard(api, { canEdit: isHost, local, setup: S.setup, waitingFor: 'a', sheet: S.sheet, music, bests: bestsStrip(api, data()), wardrobe: S.wardrobe ? wardrobeSheet(api, { w: wardrobeFor(), d: data(), picks: wearPicks[wardrobeFor()], local }) : '' });
+      case 'lobby': return lobbyCard(api, { canEdit: isHost, local, setup: S.setup, waitingFor: 'a', sheet: S.sheet, music, bests: dailyLine(api, data(), S.setup.daily || dayKey()) + bestsStrip(api, data()), wardrobe: S.wardrobe ? wardrobeSheet(api, { w: wardrobeFor(), d: data(), picks: wearPicks[wardrobeFor()], local }) : '' });
       case 'title': {
         const p = S.pendingTitle; const hd = m && m.mode === 'hs' ? hiderOfRound(p.round) : null;
-        return titleCard(api, { round: p.round, rounds: m ? m.rounds : 4, mode: m ? m.mode : 'hs', hider: hd, youHide: !local && hd === me, youSeek: !local && hd && hd !== me, map: m ? m.map : S.setup.map });
+        // "You start in the Kitchen": the hider's spawn room on multi-room maps (the seeker isn't told)
+        let start = null;
+        if (!local && hd === me && p.data && p.data.spawn && stage && stage.map) { const H = stage.map.spots.hiderSpawns; const sp = H[p.data.spawn.hs] || H[0]; if (sp) start = roomAt(stage.map, sp.x, sp.y || 0, sp.z); }
+        if (!local && m && m.mode === 'db' && p.data && p.data.spawn && stage && stage.map) { const all = stage.map.spots.hiderSpawns.concat(stage.map.spots.seekerSpawns); const sp = all[me === 'a' ? p.data.spawn.da : p.data.spawn.db]; if (sp) start = roomAt(stage.map, sp.x, sp.y || 0, sp.z); }
+        return titleCard(api, { round: p.round, rounds: m ? m.rounds : 4, mode: m ? m.mode : 'hs', hider: hd, youHide: !local && hd === me, youSeek: !local && hd && hd !== me, map: m ? m.map : S.setup.map, start, mixed: !!(m && m.maps) });
       }
       case 'count': { const d = S.phase.data || {}; return `<div class="chm-over solid"><div class="chm-card chm-sticker"><div class="chm-kicker">${esc(api.name(d.who))}, get ready</div><div class="chm-big" data-live="seek-count">3</div><p>Find them before the timer runs out.</p></div></div>`; }
       case 'curtain': { const d = S.phase.data || {}; return curtainCard(api, { kind: d.kind, who: d.who, wager: mode() === 'hs' ? rules().wager : 0, call: d.who ? R.call[d.who] : null, climbs: curMapEntry().climbs || 1 }); }
@@ -3093,7 +3278,8 @@ export function createGame(el, api) {
         const isLast = S.phase.round >= m.rounds || (m.mode === 'db' && (m.scores.a >= 2 || m.scores.b >= 2));
         const rx = R.rec.rx || {};
         const lines = recapLines(api, data(), R.rec, { mode: m.mode, passes: R.passes, under: R.under, stared: R.stared, called: !!R.rec.called, calledWhat: R.rec.called ? (CALLS.find((c) => c[0] === R.rec.call) || [])[1] : '' }, rx.records || []);
-        const next = !isLast && m.mode === 'hs' ? { hider: hiderOfRound(S.phase.round + 1), map: curMapEntry().name } : null;
+        const nextId = m.maps && m.maps.length ? m.maps[S.phase.round % m.maps.length] : m.map;
+        const next = !isLast && m.mode === 'hs' ? { hider: hiderOfRound(S.phase.round + 1), map: (MAPS.find((x) => x.id === nextId) || curMapEntry()).name, mixed: !!(m.maps && nextId !== m.map) } : null;
         return recapCard(api, { rec: R.rec, mode: m.mode, scores: m.scores, round: S.phase.round, rounds: m.rounds, isLast, canNext: true, stats: st, lines, next, autoMs: Math.max(0, S.phase.end - t) });
       }
       case 'final': {
@@ -3143,7 +3329,7 @@ export function createGame(el, api) {
           spect: U.spect, fc: [C.fcX, C.fcY, C.fcZ, C.fcYaw, C.fcPitch], climbV: C.climbV, vYaw: C.vYaw, hunting: hunting(), huntAt: huntAt(), graceUntil: huntAt() + graceMs(),
           live: { sent: R.lpSent, same: R.lpSame, got: R.lpIn, tells: R.tells, tellSkip: R.tellSkip, tellOn: !!R.tell }, cam: stage ? stage.camera.position.toArray() : null,
           here: { on: !hud.el.here.hidden, x: hud.el.here.style.transform }, badge: hud.el.badge.textContent || null, role: hud.el.role.textContent,
-          glint: { a: R.glintAt.a, b: R.glintAt.b }, lastPick: stats.lastPick || null, lastPaint: stats.lastPaint || null, lastShot: stats.lastShot || null, lastTagCheck: stats.lastTagCheck || null, lastWindow: stats.lastWindow || null,
+          glint: { a: R.glintAt.a, b: R.glintAt.b }, lastPick: stats.lastPick || null, lastPaint: stats.lastPaint || null, lastShot: stats.lastShot || null, lastTagCheck: stats.lastTagCheck || null, lastWindow: stats.lastWindow || null, juice: stats.juice ? { ...stats.juice, fired: stats.juiceAt || 0 } : null,
         };
       },
       paintHash(w) { return stage.paints[w].hash(); },
@@ -3153,9 +3339,11 @@ export function createGame(el, api) {
       perf() {
         const f = Array.from(stats.frames.subarray(0, stats.fn)).sort((x, y) => x - y);
         const q = (p) => f.length ? f[Math.min(f.length - 1, Math.floor(f.length * p))] : 0;
-        return { p50: q(0.5), p95: q(0.95), n: f.length, calls: stats.calls, tris: stats.tris, scale: stage.scale, dpr: stage.dpr, renders: stats.renders, geometries: stage.renderer.info.memory.geometries, textures: stage.renderer.info.memory.textures, programs: (stage.renderer.info.programs || []).length };
+        return { p50: q(0.5), p95: q(0.95), n: f.length, calls: stats.calls, tris: stats.tris, chunksDrawn: stats.chunks || 0, scale: stage.scale, dpr: stage.dpr, renders: stats.renders, geometries: stage.renderer.info.memory.geometries, textures: stage.renderer.info.memory.textures, programs: (stage.renderer.info.programs || []).length };
       },
       resetPerf() { stats.fn = 0; stats.fi = 0; },
+      /** Maps pass: did this mount reuse a parked stage, the sliced warm-up, the session map cache. */
+      bootInfo() { return { reused: !!S.bootReused, warm: S.bootWarm || null, at: S.bootAt || null, cache: mapCacheInfo(), programs: (stage.renderer.info.programs || []).length }; },
       teleport(x, z, yaw, y) { const v = viewer(); const b = body[v]; b.x = x; b.z = z; if (yaw != null) b.yaw = yaw; resetBody(b); b.sq = false; b.y = y != null ? y : stage.world.groundAt(x, z, 0.2, 3); b.vy = 0; if (b.pose !== 'stand' && b.pose !== 'crouch') setPoseFor(v, 'stand'); snapOrient[v] = true; return { ...b, box: null }; },
       /** Sticky feet through the same code paths as the buttons. */
       stick() { action('stick'); const b = body[viewer()]; return { at: b.at, n: [b.nx, b.ny, b.nz], f: [b.fx, b.fy, b.fz], p: [b.x, b.y, b.z] }; },
@@ -3208,7 +3396,8 @@ export function createGame(el, api) {
       /** Net probe (cheap, per frame): shared clock, my body, the partner as drawn, the camera, presence calls. */
       /** Net A/B: { maxDelay } caps the adaptive delay (100 = the old fixed delay); { keepalive: false } publishes every tick. */
       netTune(o) { if (o.maxDelay != null) link.setDelayMax(o.maxDelay); if (o.keepalive != null) PUB_HOLD_MS = o.keepalive ? 250 : Infinity; return { maxDelay: o.maxDelay, hold: PUB_HOLD_MS }; },
-      netStats() { return { interp: { ...link.interpStats }, pubs: NETST.pubs, idle: NETST.idle, delay: link.delay, target: link.delayTarget, rtt: link.rtt }; },
+      clockRaw() { return link.clockRaw(); },
+      netStats() { return { interp: { ...link.interpStats }, pubs: NETST.pubs, idle: NETST.idle, delay: link.delay, target: link.delayTarget, rtt: link.rtt, skew: link.clockSkew, shotLag: stats.shotLag ?? null }; },
       netProbe() { const v = viewer() || me; const o = other(v); const b = body[v]; const r = stage.av[o].root.position; const c = stage.camera.position; return [now(), b.x, b.y, b.z, r.x, r.y, r.z, c.x, c.y, c.z, NETST.pubs, stage.av[o].root.visible ? 1 : 0, S.phase.name === 'seek' && hunting() ? 1 : 0, link.delay]; },
       /** World centre of a player's body mesh (what to aim at). */
       bodyCenter(w) { const m = stage.av[w].meshes[0]; m.updateWorldMatrix(true, false); const c = new THREE.Vector3(); m.geometry.computeBoundingBox(); m.geometry.boundingBox.getCenter(c); m.localToWorld(c); return [c.x, c.y, c.z]; },
@@ -3272,7 +3461,7 @@ export function createGame(el, api) {
       camera() { const c = stage.camera; return { p: c.position.toArray(), fov: c.fov, dir: c.getWorldDirection(new THREE.Vector3()).toArray() }; },
       tweak(o) {
         if (o.aniso != null) { stage.mapMesh.material.map.anisotropy = o.aniso; stage.mapMesh.material.map.needsUpdate = true; }
-        if (o.hideMap != null) for (const m of stage.mapMeshes) m.visible = !o.hideMap;
+        if (o.hideMap != null) for (const m of stage.mapMeshes) { m.userData.forceHidden = !!o.hideMap; m.visible = !o.hideMap; } // cullChunks keeps it
         if (o.fog != null) stage.scene.fog.far = o.fog ? 30 : 1e6;
         if (o.hull != null) for (const ch of stage.map.chunks) ch.geometry.setDrawRange(0, o.hull ? Infinity : ch.mainIndexCount);
         return true;
@@ -3301,11 +3490,13 @@ export function createGame(el, api) {
       paintPerf(w) {
         const p = stage.paints[w || viewer()];
         const dist = new Set(); for (let i = 0; i < p.data.length; i += 4) dist.add((p.data[i] << 16) | (p.data[i + 1] << 8) | p.data[i + 2]);
-        return { dabTexels: p.dabTexels, dabs: p.dabs, texels: p.texels, version: p.version, lastPaint: stats.lastPaint, colours: dist.size, pfx: { fill: !!PFX.fillParts, stamp: !!PFX.stampW, preview: !!PFX.previewUntil, fills: PFX.fills, stamps: PFX.stamps }, size: P.size, hard: P.hard };
+        return { dabTexels: p.dabTexels, dabs: p.dabs, texels: p.texels, version: p.version, lastPaint: stats.lastPaint, colours: dist.size, pfx: { fill: !!PFX.fillParts, stamp: !!PFX.stampW, preview: !!PFX.previewUntil, fills: PFX.fills, stamps: PFX.stamps }, size: P.size, hard: P.hard, perf: p.perf, cam: stats.paintCam || null };
       },
       brushPreviewNow() { brushPreview(); return PFX.previewUntil > 0; },
       /** The live camo meter: its score, the paint version it was taken at, whether it shows, jobs run. */
-      camo() { return { score: CAMO.score, ver: CAMO.ver, shown: !!(CAMO.meter && CAMO.meter.shown), busy: CAMO.job.on, runs: CAMO.runs, slices: CAMO.slices, meter: CAMO.meter ? CAMO.meter.stats : null, cached: !!stats.blendCached }; },
+      camo() { return { score: CAMO.score, ver: CAMO.ver, shown: !!(CAMO.meter && CAMO.meter.shown), busy: CAMO.job.on, runs: CAMO.runs, slices: CAMO.slices, sliceMax: CAMO.sliceMax, sliceAvg: CAMO.sliceSum / Math.max(1, CAMO.slices), xray: { on: CAMO.xrayOn, n: CAMO.xrays, bad: CAMO.xrayBad, ms: CAMO.xrayMs }, meter: CAMO.meter ? CAMO.meter.stats : null, cached: !!stats.blendCached }; },
+      /** Reset the camo meter's slice timing (perf runs). */
+      camoPerfReset() { CAMO.sliceMax = 0; CAMO.sliceSum = 0; CAMO.slices = 0; },
       /** Slow the stamp wipe / fill flood down (screenshots) or read the current reveal. */
       reveal(o, w) { if (o) { if (o.stamp) Object.assign(REVEAL.stamp, o.stamp); if (o.fill) Object.assign(REVEAL.fill, o.fill); } return stage.paints[w || viewer() || 'a'].reveal; },
       lookFrom(arr) { C.override = arr; },
@@ -3330,7 +3521,11 @@ export function createGame(el, api) {
   }
 
   // ── destroy ───────────────────────────────────────────────────────
+  let rematching = false;
   return {
+    /** The hub's Rematch: not handled in place (false → destroy + mount), but the destroy that
+     *  follows parks the stage so the new mount reuses it (maps pass: build-free rematch). */
+    onRematch() { rematching = true; return false; },
     destroy() {
       S.destroyed = true;
       cancelAnimationFrame(raf); raf = 0;
@@ -3344,7 +3539,11 @@ export function createGame(el, api) {
       hud.destroy();
       link.destroy();
       snd.destroy();
-      if (stage) { stage.dispose(); if (testing) window.__chamGL = (window.__chamGL || 1) - 1; }
+      if (stage) {
+        const gone = () => { if (testing) window.__chamGL = (window.__chamGL || 1) - 1; };
+        // a rematch remounts at once: park the stage for the new mount (stage.js), else dispose
+        if (rematching && !S.ctxLost && S.boot === 'ready') parkStage(stage, gone); else { stage.dispose(); gone(); }
+      }
       stage = null;
       el.innerHTML = '';
       if (testing) { window.__chamCount = (window.__chamCount || 1) - 1; if (window.__cham) delete window.__cham; }

@@ -70,6 +70,9 @@ function build(atlas) {
     // low front with the entrance gap marked by door frames
     aabb(b, X0 - T, 0, Z1, X1 + T, 0.6, Z1 + T, { color: '#e9e3d6', outline: true, collide: { wall: true, name: 'front' } });
     b.collide(X0 - T, 0.6, Z1, X1 + T, CEIL + 2, Z1 + 0.4, { wall: false, climb: false, name: 'front-guard' });
+    // the lid runs to the walls' inner faces: its outer edges over the wall tops are no place to
+    // cling to (maps pass: a Tiny body there sat outside the shop)
+    for (const [x0, z0, x1, z1] of [[X0 - T - 0.05, Z0 - T - 0.05, X0, Z1], [X1, Z0 - T - 0.05, X1 + T + 0.05, Z1], [X0 - T - 0.05, Z0 - T - 0.05, X1 + T + 0.05, Z0]]) b.collide(x0, CEIL, z0, x1, CEIL + 0.3, z1, { wall: false, climb: false, name: 'eave-guard' });
     for (const x of [-1.6, 1.6]) aabb(b, x - 0.08, 0.6, Z1, x + 0.08, 2.4, Z1 + T, { color: C.steel, outline: true });
     aabb(b, -1.68, 2.4, Z1, 1.68, 2.56, Z1 + T, { color: C.steel, outline: true });
     for (const [x0, x1] of [[X0 - T, -1.68], [1.68, X1 + T]]) aabb(b, x0, 2.4, Z1, x1, 2.56, Z1 + T, { color: C.teal, outline: true });

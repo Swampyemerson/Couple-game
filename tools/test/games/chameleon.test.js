@@ -1254,6 +1254,166 @@ async function guardsSection(port) {
 }
 
 /** Screenshots of the settings panel and the new mechanics (one device). */
+// ── maps pass: the session map cache, build-free switches and rematch, chunk culling ──────────
+/** Drive a hotseat match to the hub's end card (curtains, Ready, Next). */
+async function playToEnd(a, limitMs = 150000) {
+  const tEnd = Date.now() + limitMs;
+  while (Date.now() < tEnd) {
+    if (await a.$('#game-root .gm-end:not([hidden]) [data-g="rematch"]')) return true;
+    const ph = await a.evaluate(() => window.__cham && window.__cham.state().phase.name);
+    try {
+      if (ph === 'curtain') await a.click('[data-act="curtain"]', { timeout: 2000 });
+      else if (ph === 'recap') await a.click('[data-act="next"]', { timeout: 2000 });
+      else if (ph === 'hide') await a.click('.chm-acts [data-act="ready"]', { timeout: 2000 });
+    } catch { /* the phase moved on */ }
+    await wait(350);
+  }
+  return false;
+}
+async function mapCacheSection(port) {
+  console.log('\n# maps pass: session map cache, deferred lobby switches, no relinks, chunk culling hook, build-free rematch');
+  const h = await launch({ port, only: ['chameleon'], who: ['a'], coarse: true });
+  const a = h.a;
+  try {
+    await arm(a, { ...FAST, hide: 2500, seek: 2500, recap: 1200, found: 900, final: 1500, title: 300, maxDpr: 0.5 });
+    await h.startLive(a, 'chameleon', 'local');
+    await waitReady(a);
+    const b0 = await hook(a, 'bootInfo');
+    assert(b0.warm && b0.warm.slices >= 1 && !b0.reused, `boot compiles in slices behind the loading card (${JSON.stringify(b0.warm)}), ${b0.programs} programs`);
+    const ids = await hook(a, 'mapIds');
+    const sw = (id) => a.evaluate((m) => { const t = performance.now(); window.__cham.setRules({ map: m }); return performance.now() - t; }, id);
+    const cold = {};
+    for (const id of ids.slice(1).concat(ids[0])) cold[id] = Math.round(await sw(id));
+    const p1 = (await hook(a, 'perf')).programs;
+    assert(p1 === b0.programs, `switching through all ${ids.length} maps links no program (${b0.programs} → ${p1}; CU's backdrop is in the boot compile)`);
+    const back = ids[ids.length - 1]; await sw(back);
+    // best of three per cached map (a GC or a busy box can land on any one switch)
+    const warm = [];
+    for (const id of [ids[0], back]) { let best = Infinity; for (let k = 0; k < 3; k++) { await sw(id === ids[0] ? back : ids[0]); await wait(120); best = Math.min(best, await sw(id)); await wait(120); } warm.push(Math.round(best)); }
+    const cache = (await hook(a, 'bootInfo')).cache;
+    console.log(`  cold switch ms ${JSON.stringify(cold)}; cached ${warm.join(' / ')} ms; cache ${cache.map((c) => `${c.id} ${(c.bytes / 1048576).toFixed(1)} MB`).join(', ')}`);
+    assert(Math.max(...warm) < 60, `a map seen this session is a scene swap (${warm.join(' / ')} ms JS, < 60)`);
+    assert(cache.length >= 2 && cache.length <= 3, `the cache keeps 2–3 maps (${cache.length})`);
+    // a real arrow tap: the click handler builds nothing, the card shows the next map at once
+    await a.evaluate(() => { window.__clk = []; window.addEventListener('click', () => { window.__clk.push(performance.now()); }, true); window.addEventListener('click', () => { const t = window.__clk.pop(); window.__clkMs = performance.now() - t; }, false); });
+    const before = (await st(a)).mapId;
+    await a.tap('.chm-mapcard .chm-arrow[aria-label="Next map"]');
+    const clickMs = await a.evaluate(() => window.__clkMs);
+    const nm = await a.evaluate(() => document.querySelector('.chm-mapinfo b').textContent);
+    await a.waitForFunction((b0) => window.__cham.state().mapId !== b0, before, { timeout: 15000 });
+    assert(clickMs < 50, `the arrow's tap handler takes ${clickMs.toFixed(1)} ms (the build runs a frame later, < 50)`);
+    assert(nm && nm.length > 2, `the card shows the next map right away (${nm})`);
+    // chunk culling hook: tweak({ hideMap }) survives cullChunks, perf() counts drawn chunks
+    await hook(a, 'setRules', { map: 'house' }); await wait(500);
+    const c0 = (await hook(a, 'perf')).chunksDrawn;
+    await hook(a, 'tweak', { hideMap: true }); await wait(500);
+    const c1 = (await hook(a, 'perf')).chunksDrawn;
+    await hook(a, 'tweak', { hideMap: false }); await wait(500);
+    const c2 = (await hook(a, 'perf')).chunksDrawn;
+    assert(c0 > 0 && c1 === 0 && c2 > 0, `perf().chunksDrawn counts drawn chunks (${c0}), tweak({ hideMap }) holds across frames (${c1}), and lets go (${c2})`);
+    // rematch: the stage is parked across the remount and reused
+    await hook(a, 'setRules', { map: 'cuboulder', rules: { rounds: 2 } });
+    await a.click('[data-act="start"]');
+    assert(await playToEnd(a), 'a quick hotseat match reaches the end card');
+    await wait(400);
+    const pr = (await hook(a, 'perf')).programs;
+    const t0 = Date.now();
+    await a.click('#game-root .gm-end [data-g="rematch"]');
+    await waitReady(a);
+    const ms = Date.now() - t0;
+    const b1 = await hook(a, 'bootInfo');
+    assert(b1.reused && b1.programs === pr, `Rematch reuses the parked stage: ready ${ms} ms after the tap, programs ${pr} → ${b1.programs}, no rebuild`);
+    assert((await a.evaluate(() => window.__chamGL)) === 1, 'one GL stage alive after the rematch');
+    await hook(a, 'setRules', { map: 'living' }); await wait(300);
+    assert((await st(a)).mapId === 'living' && (await hook(a, 'perf')).calls > 0, 'the reused stage switches maps and draws');
+    await h.closeGame(a); await wait(400);
+    const left = await a.evaluate(() => ({ gl: window.__chamGL || 0, canvases: document.querySelectorAll('canvas').length }));
+    assert(left.gl === 0 && left.canvases === 0, `closing after a rematch tears the stage down (${JSON.stringify(left)})`);
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'mapcache-FAIL').catch(() => {});
+  } finally { await h.close(); }
+}
+
+// ── maps pass: Mix it up, Today's hide, where you start ──────────────────────────────────────
+async function varietySection(port) {
+  console.log('\n# maps pass: Mix it up (a new map every round), Today\'s hide, "You start in the …"');
+  // pure parts (Node): the per-round plan, today's setup, today's board
+  {
+    const imp = (f) => import(require('url').pathToFileURL(path.join(__dirname, '../../../js/games/chameleon', f)).href);
+    const [mp, rc] = await Promise.all([imp('maps.js'), imp('records.js')]);
+    const small = mp.mixPlan('m1', 'living', 6); const big = mp.mixPlan('m1', 'house', 6); const paired = mp.mixPlan('m1', 'house', 6, 2);
+    const pool = (ids) => ids.map((id) => mp.mapPool(mp.MAPS.find((m) => m.id === id)));
+    assert(JSON.stringify(small) === JSON.stringify(mp.mixPlan('m1', 'living', 6)) && small[0] === 'living' && small.every((id, i) => !i || id !== small[i - 1]) && pool(small).every((p) => p === 'S') && pool(big).every((p) => p === 'XL'), `mixPlan is seeded, starts on the picked map, never repeats a round and stays in its pool (${small.join(' ')} · ${big.join(' ')})`);
+    assert(paired[0] === 'house' && paired[0] === paired[1] && paired[2] === paired[3] && paired[4] === paired[5] && paired[1] !== paired[2] && paired[3] !== paired[4], `Hide & Seek pairs the rounds: you each hide once on every map (${paired.join(' ')})`);
+    const days = []; for (let i = 0; i < 8; i++) days.push(mp.dailyPlan(mp.dayKey(new Date(2026, 0, 1 + i))));
+    assert(new Set(days.map((d) => d.map)).size >= 6 && days.every((d) => d.rounds === 2 && d.twist && ['a', 'b'].includes(d.first)), `Today's hide changes every day (${days.map((d) => `${d.map}/${d.twist.id}`).join(' ')})`);
+    const api = { name: (w) => (w === 'a' ? 'Emerson' : 'Sydney') };
+    const r1 = rc.recordRound({}, { hider: 'b', seeker: 'a', found: true, ms: 41000 }, { mode: 'hs', names: { a: 'Emerson', b: 'Sydney' }, daily: '2026-10-08' });
+    const r2 = rc.recordRound(r1.patch, { hider: 'a', seeker: 'b', found: false, ms: 70000 }, { mode: 'hs', names: { a: 'Emerson', b: 'Sydney' }, daily: '2026-10-08' });
+    const line = rc.dailyLine(api, { ...r1.patch, ...r2.patch }, '2026-10-08').replace(/<[^>]+>/g, '');
+    assert(/Today.*Emerson.*1:10.*Sydney.*0:41.*Emerson leads/.test(line) && rc.dailyLine(api, {}, '2026-10-08') === '', `today's board: "${line}"`);
+  }
+  const h = await launch({ port, only: ['chameleon'] });
+  const { a, b } = h;
+  try {
+    await startPair(h, { ...FAST, hide: 6000, seek: 6000, recap: 3500, title: 3000, noTips: true });
+    // Mix it up chip: both phones see it on
+    await a.tap('.chm-lobby .chm-presets .chm-mix');
+    await b.waitForFunction(() => window.__cham.state().setup.mix === true, null, { timeout: 8000 });
+    assert((await st(a)).setup.mix && await a.isVisible('.chm-mix.on'), 'the host taps Mix it up; the guest\'s setup follows');
+    await shot(a, 'variety-lobby-mix');
+    // Today's hide: the same map / size / first hider on both phones, from the date
+    await a.tap('.chm-presets .chm-today');
+    await b.waitForFunction(() => !!window.__cham.state().setup.daily, null, { timeout: 8000 });
+    const sa = (await st(a)).setup; const sb = (await st(b)).setup;
+    assert(sa.daily === sb.daily && sa.map === sb.map && sa.first === sb.first && sa.rules.size === sb.rules.size && !sa.mix, `Today's hide: ${sa.daily} → ${sa.map}, ${sa.rules.size}, ${sa.first} hides first, ${sa.rules.rounds} rounds on both phones (mix off)`);
+    await b.waitForFunction((m) => window.__cham.state().mapId === m, sa.map, { timeout: 20000 });
+    await shot(a, 'variety-lobby-today');
+    await a.tap('.chm-presets [data-v="classic"]');
+    await b.waitForFunction(() => !window.__cham.state().setup.daily, null, { timeout: 8000 });
+    assert(!(await st(a)).setup.daily, 'any other change makes it the host\'s own setup again');
+    // Mix it up on the big maps: a 4-round match on the House; rounds 1–2 there (each hides once),
+    // round 3 on another big map
+    await hook(a, 'setRules', { map: 'house', mix: true, first: 'b', rules: { rounds: 4 } });
+    await b.waitForFunction(() => window.__cham.state().mapId === 'house', null, { timeout: 20000 });
+    // the hider (Sydney) is told where she starts: watch both title cards from inside the pages
+    for (const p of [a, b]) await p.evaluate(() => { window.__startTxt = null; window.__titleSeen = false; const poll = () => { const t = document.querySelector('.chm-titlecard'); if (t) { window.__titleSeen = true; const e = t.querySelector('.chm-start'); if (e && !window.__startTxt) window.__startTxt = e.textContent; } if (!window.__cham || window.__cham.state().phase.name !== 'hide') requestAnimationFrame(poll); }; requestAnimationFrame(poll); });
+    await a.click('[data-act="start"]');
+    await b.waitForFunction(() => window.__startTxt, null, { timeout: 15000 }).catch(() => {});
+    await shot(b, 'variety-title-start');
+    const startTxt = await b.evaluate(() => window.__startTxt);
+    await waitPhase(a, 'hide', 20000);
+    const aStart = await a.evaluate(() => ({ seen: window.__titleSeen, start: window.__startTxt }));
+    assert(startTxt && /You start in the /.test(startTxt) && aStart.seen && !aStart.start, `round 1 title: the hider reads "${startTxt}", the seeker isn't told`);
+    const m1 = (await st(a)).match;
+    assert(Array.isArray(m1.maps) && m1.maps[0] === 'house' && m1.maps[1] === 'house' && m1.maps[2] !== 'house', `the match plans a map per pair of rounds (${JSON.stringify(m1.maps)})`);
+    // rounds 1 and 2 on the House: the hiders tap Ready, the seek clock runs out
+    for (const [hider, r] of [[b, 1], [a, 2]]) {
+      await hider.waitForFunction((rr) => { const s = window.__cham.state(); return s.phase.name === 'hide' && s.phase.round === rr; }, r, { timeout: 40000 });
+      await wait(500);
+      await hider.click('.chm-acts [data-act="ready"]');
+      await a.waitForFunction((rr) => { const s = window.__cham.state(); return s.phase.name === 'recap' && s.phase.round === rr; }, r, { timeout: 60000 });
+      if (r === 1) { const nl1 = await a.evaluate(() => (document.querySelector('.chm-nextline') || {}).textContent || ''); assert(!nl1.includes('new map') && (await st(b)).mapId === 'house', `round 2 stays on the House so you each hide there once ("${nl1.trim()}")`); }
+    }
+    const nl = await a.evaluate(() => { const e = document.querySelector('.chm-nextline'); return e ? e.textContent : ''; });
+    assert(nl.includes('new map'), `the recap says what's next: "${nl.trim()}"`);
+    await shot(a, 'variety-recap-next');
+    // both phones preload round 3's map while the recap is up
+    for (const p of [a, b]) await p.waitForFunction((m) => window.__cham.bootInfo().cache.some((c) => c.id === m), m1.maps[2], { timeout: 15000 });
+    assert(true, `round 3's map (${m1.maps[2]}) was built during the recap on both phones`);
+    await a.waitForFunction(() => { const s = window.__cham.state(); return s.phase.name === 'hide' && s.phase.round === 3; }, null, { timeout: 30000 });
+    await b.waitForFunction((m) => window.__cham.state().mapId === m, m1.maps[2], { timeout: 15000 });
+    assert((await st(a)).mapId === m1.maps[2] && (await st(b)).match.map === m1.maps[2], `round 3 plays on ${m1.maps[2]} on both phones`);
+    await shot(b, 'variety-round3');
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'variety-FAIL-a').catch(() => {}); await shot(b, 'variety-FAIL-b').catch(() => {});
+  } finally { await h.close(); }
+}
+
 async function shotsRun(port, { colorScheme, device, viewport, prefix, mechanics }) {
   const h = await launch({ port, only: ['chameleon'], who: ['a'], colorScheme, device });
   const a = h.a;
@@ -1693,7 +1853,7 @@ async function paintFeelSection(port) {
   const h = await launch({ port, only: ['chameleon'], who: ['a'], device: 'iPhone 13' });
   const a = h.a;
   try {
-    await arm(a, { ...SLOW, maxDpr: 1 });
+    await arm(a, { ...SLOW, hide: 300000, maxDpr: 1 }); // (a loaded sandbox can take > 90 s over the brush shots)
     await h.startLive(a, 'chameleon', 'local');
     await waitReady(a);
     await hook(a, 'setRules', { map: 'cuboulder', first: 'b', rules: { size: 'large' } });
@@ -1803,7 +1963,7 @@ async function paintJuiceSection(port) {
   const shots = [];
   const snap = async (n) => { const f = path.join(SH, `juice-${n}.png`); await a.screenshot({ path: f }); shots.push(f); };
   try {
-    await arm(a, { ...SLOW, maxDpr: 0.6 });
+    await arm(a, { ...SLOW, hide: 300000, maxDpr: 0.6 });
     await h.startLive(a, 'chameleon', 'local');
     await waitReady(a);
     await hook(a, 'setRules', { map: 'living', first: 'b', rules: { size: 'large', blendBonus: 10 } });
@@ -1891,6 +2051,125 @@ async function paintJuiceSection(port) {
   } catch (e) {
     console.error(e.message, h.errors); failures++;
     await shot(a, 'paintjuice-FAIL').catch(() => {});
+  } finally { await h.close(); }
+}
+
+// ── paint owner, third pass: smoothed strokes, the x-ray, "Invisible!", zero-garbage undo, 4x CPU costs ──
+async function sparseLoop(p, cx, cy, R, moves, id = 43) {
+  return p.evaluate(async ([cx, cy, R, moves, pid]) => {
+    const pt = (k) => [cx + Math.cos(k * Math.PI * 1.9) * R, cy + Math.sin(k * Math.PI * 1.9) * R];
+    const [x0, y0] = pt(0); const el = document.elementFromPoint(x0, y0);
+    const mk = (type, x, y) => new PointerEvent(type, { pointerId: pid, pointerType: 'touch', clientX: x, clientY: y, bubbles: true, cancelable: true, isPrimary: true, buttons: type === 'pointerup' ? 0 : 1 });
+    el.dispatchEvent(mk('pointerdown', x0, y0));
+    for (let i = 1; i <= moves; i++) { await new Promise((r) => setTimeout(r, 40)); const [x, y] = pt(i / moves); el.dispatchEvent(mk('pointermove', x, y)); }
+    const beforeUp = window.__cham.paintPerf('b').dabs;
+    const [x1, y1] = pt(1); el.dispatchEvent(mk('pointerup', x1, y1));
+    return { beforeUp, afterUp: window.__cham.paintPerf('b').dabs };
+  }, [cx, cy, R, moves, id]);
+}
+async function paintProSection(port) {
+  console.log('\n# paint: smoothed strokes, the meter x-ray (page.tap), "Invisible!", zero-garbage undo, costs at 4x CPU');
+  const SH = process.env.PAINT_SHOTS || SHOTS;
+  fs.mkdirSync(SH, { recursive: true });
+  const h = await launch({ port, only: ['chameleon'], who: ['a'], device: 'iPhone 13' });
+  const a = h.a;
+  const shots = [];
+  const snap = async (n) => { const f = path.join(SH, `pro-${n}.png`); await a.screenshot({ path: f, clip: { x: 0, y: 80, width: 390, height: 520 } }); shots.push(f); };
+  try {
+    await arm(a, { ...SLOW, hide: 300000, maxDpr: 0.6 });
+    await h.startLive(a, 'chameleon', 'local');
+    await waitReady(a);
+    await hook(a, 'setRules', { map: 'living', first: 'b', rules: { size: 'large', blendBonus: 10 } });
+    await a.tap('[data-act="start"]');
+    await a.tap('[data-act="curtain"]');
+    await waitPhase(a, 'hide');
+    await wait(400);
+    assert(await camoHide(a) === 'wall', 'hider flat on the Living Room wallpaper');
+    await a.tap('.chm-acts [data-act="paint"]');
+    await a.waitForFunction(() => { const c = window.__cham.camo(); return c.shown && c.score >= 0 && !c.busy; }, null, { timeout: 10000 });
+    // smoothing: a fast loop of 7 moves (a slow phone's frames) is drawn as a curve, and the last
+    // half-segment lands on lift
+    await hook(a, 'setPaint', { size: 0, hard: true, tool: 'brush', rgb: [40, 40, 60] });
+    const [cx, cy] = await hook(a, 'bodyPoint', 0);
+    const lp = await sparseLoop(a, cx, cy, 40, 7);
+    assert(lp.afterUp > lp.beforeUp, `the stroke's last half-segment is drawn on lift (${lp.afterUp - lp.beforeUp} dabs)`);
+    // zero garbage: once the undo history is full, strokes recycle its buffers
+    const pf0 = (await hook(a, 'paintPerf', 'b')).perf;
+    for (let k = 0; k < 30; k++) await a.evaluate(() => { const p = window.__cham; p.stampNow(); });
+    const pf1 = (await hook(a, 'paintPerf', 'b')).perf;
+    for (let k = 0; k < 20; k++) await a.evaluate(() => window.__cham.stampNow());
+    const pf2 = (await hook(a, 'paintPerf', 'b')).perf;
+    assert(pf1.snapAllocs <= 25 && pf2.snapAllocs === pf1.snapAllocs, `undo snapshots come from a pool: ${pf0.snapAllocs} → ${pf1.snapAllocs} buffers after 30 stamps, +${pf2.snapAllocs - pf1.snapAllocs} after 20 more (history ${pf2.undo})`);
+    await a.waitForFunction(() => !window.__cham.reveal(null, 'b').on, null, { timeout: 5000 });
+    // a stamp on a plain body: straight to "Invisible!" (above Ghost)
+    await a.waitForFunction(() => { const k = window.__cham.camo(); return !k.busy && k.meter.text === `${k.score}%`; }, null, { timeout: 10000 });
+    let c = await hook(a, 'camo');
+    assert(c.score >= 98 && c.meter.inv, `the stamped body reads ${c.score}%: past the Invisible line`);
+    await hook(a, 'setPaint', { rgb: [255, 255, 255], tool: 'fill' });
+    await a.tap('.chm-tool[data-tool="fill"]'); await tapBody(a);
+    await a.waitForFunction(() => { const k = window.__cham.camo(); return !k.busy && !window.__cham.reveal(null, 'b').on && k.score < 90 && k.meter.text === `${k.score}%`; }, null, { timeout: 10000 });
+    const pops0 = (await hook(a, 'camo')).meter.pops;
+    await a.tap('.chm-tools [data-act="undo"]');
+    await a.waitForFunction((n) => { const k = window.__cham.camo(); return !k.busy && k.meter.pops > n; }, pops0, { timeout: 10000 });
+    c = await hook(a, 'camo');
+    assert(c.meter.lastPop === 'Invisible!' && c.meter.sounds >= 1, `climbing back past 98 % pops "${c.meter.lastPop}" with a sound`);
+    // a sloppy pink patch, then the x-ray from a real tap on the meter
+    await hook(a, 'setPaint', { size: 2, hard: false, tool: 'brush', rgb: [226, 70, 130] });
+    await strokeOnBody(a, true);
+    await a.waitForFunction(() => { const k = window.__cham.camo(); return !k.busy && k.score < 98 && k.meter.text === `${k.score}%`; }, null, { timeout: 10000 });
+    await snap('1-pink');
+    const hp = await hook(a, 'paintHash', 'b');
+    const cdp = await a.context().newCDPSession(a);
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+    await a.tap('.chm-meter');
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+    c = await hook(a, 'camo');
+    let pp = (await hook(a, 'paintPerf', 'b')).perf;
+    console.log(`  x-ray at 4x CPU: error pass ${c.xray.ms.toFixed(1)} ms, ${c.xray.bad} texels show`);
+    assert(c.xray.on && c.xray.bad > 50 && c.meter.check === 'Shows', `tapping the meter x-rays the body (${c.xray.bad} texels show, the pill reads "${c.meter.check}")`);
+    assert(c.xray.ms < 120, `the x-ray's error pass is a tap-sized cost at 4x CPU: ${c.xray.ms.toFixed(1)} ms`);
+    await a.waitForFunction(() => window.__cham.paintPerf('b').perf.xray.frames >= 2, null, { timeout: 5000 });
+    await snap('2-xray');
+    assert(await hook(a, 'paintHash', 'b') === hp, 'the x-ray never touches the skin (hash unchanged)');
+    await a.waitForFunction(() => !window.__cham.camo().xray.on, null, { timeout: 6000 });
+    c = await hook(a, 'camo');
+    assert(c.meter.check === 'Check', 'the x-ray ends by itself and the pill reads Check again');
+    // painting ends it at once; a second tap turns it off
+    await a.tap('.chm-meter');
+    assert((await hook(a, 'camo')).xray.on, 'x-ray on again');
+    await strokeOnBody(a, true);
+    pp = (await hook(a, 'paintPerf', 'b')).perf;
+    assert(!pp.xray.on, 'a stroke ends the x-ray at once (the stroke lands on the real skin)');
+    await a.waitForFunction(() => !window.__cham.camo().busy && !window.__cham.camo().xray.on, null, { timeout: 6000 });
+    await a.tap('.chm-meter'); await wait(150); await a.tap('.chm-meter');
+    assert(!(await hook(a, 'camo')).xray.on, 'a second tap on the meter turns the x-ray off');
+    const popHit = await a.evaluate(() => { const r = document.querySelector('.chm-meter .cm-pop').getBoundingClientRect(); const e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return { w: r.width, inMeter: !!(e && e.closest('.chm-meter')) }; });
+    assert(!popHit.inMeter, `the meter's (invisible) pop sticker never catches a paint stroke beside it (${Math.round(popHit.w)} px wide)`);
+    // per-frame costs at 4x CPU: a stamp wipe, sliced re-scoring, brush moves
+    await hook(a, 'camoPerfReset');
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+    await a.tap('.chm-tool[data-tool="stamp"]');
+    await a.waitForFunction(() => !window.__cham.reveal(null, 'b').on && !window.__cham.camo().busy, null, { timeout: 30000 });
+    await hook(a, 'setPaint', { size: 1, hard: false, tool: 'brush', rgb: [90, 140, 200] });
+    const mv = await a.evaluate(async ([x, y]) => {
+      const el = document.elementFromPoint(x, y);
+      const mk = (type, xx, yy) => new PointerEvent(type, { pointerId: 44, pointerType: 'touch', clientX: xx, clientY: yy, bubbles: true, cancelable: true, isPrimary: true, buttons: type === 'pointerup' ? 0 : 1 });
+      const ms = []; el.dispatchEvent(mk('pointerdown', x - 30, y));
+      for (let i = 1; i <= 8; i++) { await new Promise((r) => setTimeout(r, 30)); const t = performance.now(); el.dispatchEvent(mk('pointermove', x - 30 + i * 8, y + Math.sin(i) * 12)); ms.push(performance.now() - t); }
+      const t = performance.now(); el.dispatchEvent(mk('pointerup', x + 34, y)); ms.push(performance.now() - t);
+      return ms;
+    }, [cx, cy]);
+    await a.waitForFunction(() => !window.__cham.camo().busy, null, { timeout: 30000 });
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+    c = await hook(a, 'camo'); pp = (await hook(a, 'paintPerf', 'b')).perf;
+    const mvs = mv.slice().sort((x, y) => x - y);
+    console.log(`  4x CPU: wipe frame avg ${pp.fxAvg.toFixed(2)} / max ${pp.fxMax.toFixed(2)} ms; camo slice avg ${c.sliceAvg.toFixed(2)} / max ${c.sliceMax.toFixed(2)} ms; brush move median ${mvs[mvs.length >> 1].toFixed(2)} / max ${mvs[mvs.length - 1].toFixed(2)} ms`);
+    assert(pp.fxMax < 16 && c.sliceMax < 16 && mvs[mvs.length - 1] < 30, 'wipe frames, meter slices and brush moves stay well inside a frame at 4x CPU');
+    if (process.env.PAINT_MONT) { try { require('child_process').execFileSync('node', [process.env.PAINT_MONT, path.join(SH, 'pro-montage.png'), '300', '400', ...shots]); } catch (e) { console.log('  (montage skipped)', e.message.split('\n')[0]); } }
+    h.assertNoErrors();
+  } catch (e) {
+    console.error(e.message, h.errors); failures++;
+    await shot(a, 'paintpro-FAIL').catch(() => {});
   } finally { await h.close(); }
 }
 
@@ -2770,6 +3049,25 @@ async function netPolishSection(port) {
   const sends = (p) => p.evaluate(() => ({ n: window.__sendCount.presence, t: performance.now() }));
   const angle = (u, v) => Math.acos(Math.max(-1, Math.min(1, (u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) / (vlen(u) * vlen(v) || 1))));
   try {
+    // the presence schedule itself, in Node on phone frame clocks (the sandbox's slow frames can't show it):
+    // link.js's publish() with network() running 0–4 ms into each frame, 30 s per clock
+    const sim = JSON.parse(require('child_process').execFileSync(process.execPath, ['--input-type=module', '-e', `
+      let T = 0; globalThis.performance = { now: () => T };
+      const { createLink } = await import(${JSON.stringify('file://' + path.resolve(__dirname, '../../../js/games/chameleon/link.js'))});
+      const out = {};
+      for (const hz of [60, 120, 30]) {
+        const H = {}; const sends = []; let r = 7;
+        const api = { mode: 'live', isHost: true, send() {}, on(t, fn) { (H[t] = H[t] || []).push(fn); return () => {}; }, setPresence() { sends.push(T); }, onPartnerState() { return () => {}; } };
+        const link = createLink(api, {}); H.chi.forEach((f) => f({ s: 'zz', p: null }));
+        const st = { x: 0, y: 0, z: 0, yaw: 0, po: 0, ly: 0, lp: 0, v: 1, wa: 0, sp: 0, q: 0, at: 0 };
+        for (let k = 0; k < 30 * hz; k++) { r = (r * 16807) % 2147483647; T = 1e4 + k * 1000 / hz + 4 * r / 2147483647; st.x = k; if (link.pubDue(T)) link.publish(st); }
+        link.destroy();
+        let win = 0; for (let i = 0, j = 0; i < sends.length; i++) { while (sends[i] - sends[j] > 1000) j++; win = Math.max(win, i - j + 1); }
+        out[hz] = { rate: sends.length / 30, win };
+      }
+      console.log(JSON.stringify(out)); process.exit(0);`], { encoding: 'utf8' }));
+    console.log(`  presence schedule (Node, 0–4 ms jitter): ${Object.entries(sim).map(([hz, x]) => `${hz} Hz ${x.rate.toFixed(1)}/s (≤ ${x.win} in any 1 s)`).join(', ')}`);
+    assert(Object.values(sim).every((x) => x.rate >= 19.5 && x.win <= 21), 'presence keeps 20/s on 60, 120 and 30 Hz frame clocks, never more than 21 in a second');
     await startPair(h, SLOW);
     for (const p of [a, b]) await countSends(p);
     // the lobby: both idle
@@ -2796,13 +3094,16 @@ async function netPolishSection(port) {
     const still = await pubRate(b, 2500);
     assert(still.pubs / still.s <= 3.2 && still.pubs >= 3, `a still hider in the hunt sends a keepalive (${(still.pubs / still.s).toFixed(1)}/s; was one per frame)`);
     const look = await pubRate(b, 2000, true);
-    const full = Math.min(look.frames, Math.floor(look.s * 1000 / 49));
-    console.log(`  looking round: ${look.pubs} publishes / ${look.frames} frames in ${look.s.toFixed(1)} s`);
-    assert(look.pubs >= full * 0.85 - 2, `looking round goes back to full rate at once (${look.pubs} of ≤ ${full})`);
+    // full rate = link.js's 20/s schedule, or every frame when frames are slower than 50 ms
+    const full = Math.min(look.frames, Math.floor(look.s * 20));
+    console.log(`  looking round: ${look.pubs} publishes / ${look.frames} frames in ${look.s.toFixed(1)} s (${(look.pubs / look.s).toFixed(1)}/s)`);
+    assert(look.pubs >= full * 0.85 - 2 && look.pubs / look.s <= 21.5, `looking round goes back to full rate at once (${look.pubs} of ≤ ${full}, ≤ 20/s)`);
     // the adaptive interpolation delay: above the old fixed 100 ms on a 60 ms link, capped at 250
     const ns = await hook(a, 'netStats');
     console.log(`  seeker draws the hider ${ns.delay.toFixed(0)} ms back (target ${ns.target.toFixed(0)}, rtt ${ns.rtt}); frames interpolated ${ns.interp.interp}, extrapolated ${ns.interp.extra}, held ${ns.interp.held}`);
     assert(ns.delay > 100 && ns.delay <= 250, `the interpolation delay adapted to the link (${ns.delay.toFixed(0)} ms)`);
+    const nsb = await hook(b, 'netStats'); // the guest's presence stamps use the refined game clock now, not net.js's estimate
+    console.log(`  guest clocks: net.js minus game clock ${nsb.skew.toFixed(1)} ms (what presence stamps used to be off by)`);
     // View → Watch: the camera whips over instead of cutting, and the aim turns by angle
     await hook(a, 'teleport', -1.0, 1.5, Math.PI, 0);
     await hook(b, 'setLook', 2.6, 0); // the hider looks away from where the seeker looks
@@ -2843,6 +3144,11 @@ async function netPolishSection(port) {
     for (let i = 0; i < 40 && !(await st(a)).lastShot; i++) { await a.click('.chm-acts [data-act="fire"]').catch(() => {}); await wait(250); }
     const ls = (await st(a)).lastShot;
     assert(ls && ls.range === Math.min(40, fog.far), `a pellet flies at most to the fog (${ls && ls.range} m, fog far ${fog.far})`);
+    // the hider's copy of that miss leaves the muzzle when the seeker as drawn there fires (T + delay)
+    await b.waitForFunction(() => window.__cham.netStats().shotLag != null, null, { timeout: 6000 });
+    const nb = await hook(b, 'netStats');
+    console.log(`  the miss on the hider's screen waited ${nb.shotLag} ms for the seeker as drawn (delay ${nb.delay.toFixed(0)} ms)`);
+    assert(nb.shotLag >= 0 && nb.shotLag <= 300, `a remote miss is lined up with the drawn shooter (${nb.shotLag} ms)`);
     // a tag: the victim judges it against the shooter's own (adaptive) interpolation delay
     const bc = await hook(a, 'bodyCenter', 'b');
     await hook(a, 'teleport', bc[0], bc[2] + 2.0, Math.PI);
@@ -2856,6 +3162,37 @@ async function netPolishSection(port) {
     await b.waitForFunction(() => !!window.__cham.state().lastTagCheck, null, { timeout: 6000 });
     const tc = (await st(b)).lastTagCheck;
     assert(tc.ok && Math.abs(tc.delay - shotDl.d) <= 1, `the victim used the shooter's delay (${tc.delay} vs ${shotDl.d.toFixed(0)} ms) and confirmed the tag`);
+    // the shooter's juice (hit-stop, flash, tag sound) lands before the FOUND stamp, in both
+    // directions: a host victim used to call hostFound without answering, so a guest seeker got none
+    const juiceCheck = async (shooter, label, T) => {
+      await shooter.waitForFunction(() => window.__cham.state().phase.name === 'found' && !!window.__cham.state().juice, null, { timeout: 8000 });
+      const s2 = await st(shooter); const j = s2.juice;
+      const fl = (await hook(shooter, 'phaseLog')).filter((x) => x.name === 'found').pop(); // when this phone put the stamp up
+      console.log(`  ${label}: fire → confirmed ${(j.at - T).toFixed(0)} ms, juice ${(j.fired - T).toFixed(0)} ms (waited ${j.wait} ms for the pellet), FOUND at ${(s2.phase.at - T).toFixed(0)} ms (shown ${(fl.now - T).toFixed(0)})`);
+      assert(j.n >= 1 && j.fired >= j.at - 1 && j.fired <= fl.now + 1, `${label} gets the tag juice, no later than the FOUND stamp`);
+    };
+    await juiceCheck(a, 'host seeker', tc.T);
+    // round 2: roles swap; the guest seeks and tags the host
+    await waitPhase(a, 'hide', 20000);
+    await waitPhase(b, 'hide', 20000);
+    await wait(500);
+    await a.tap('.chm-acts [data-act="ready"]');
+    await waitPhase(b, 'seek', 20000);
+    await b.waitForFunction(() => window.__cham.state().hunting, null, { timeout: 8000 });
+    await wait(500);
+    const ac = await hook(b, 'bodyCenter', 'a');
+    await hook(b, 'teleport', ac[0], ac[2] + 2.0, Math.PI);
+    await wait(400);
+    const shot2 = await b.evaluate(() => new Promise((res) => {
+      const H = window.__cham; let n = 0;
+      const tick = () => { H.aimAt(...H.bodyCenter('a')); if (++n < 3) requestAnimationFrame(tick); else { H.action('fire'); res(H.state().lastShot); } };
+      requestAnimationFrame(tick);
+    }));
+    assert(shot2 && shot2.tag, 'round 2: the guest seeker\'s pellet hits the host hider on its screen');
+    await a.waitForFunction((t0) => { const c = window.__cham.state().lastTagCheck; return c && c.T > t0; }, tc.T, { timeout: 8000 });
+    const tc2 = (await st(a)).lastTagCheck;
+    assert(tc2.ok, 'the host hider confirms the guest\'s tag');
+    await juiceCheck(b, 'guest seeker', tc2.T);
     h.assertNoErrors();
     assert(!h.warnings.length, `message budget respected (${h.warnings.length} warnings)`);
   } catch (e) {
@@ -2922,12 +3259,16 @@ async function netPolishSection(port) {
   // pro pass (paint owner)
   if (want('paintfeel')) sections.push(() => paintFeelSection(PORT + 0));
   if (want('paintjuice')) sections.push(() => paintJuiceSection(PORT + 1));
+  if (want('paintpro')) sections.push(() => paintProSection(PORT + 2));
   // polish (UX owner)
   if (want('ux')) sections.push(() => uxSection(PORT + 5));
   if (want('uxland')) sections.push(() => uxLandscapeSection(PORT + 6));
   if (want('uxdesk')) sections.push(() => uxDesktopSection(PORT + 7));
   // pro pass (net owner)
   if (want('netpolish')) sections.push(() => netPolishSection(PORT + 4));
+  // pro pass (maps owner)
+  if (want('mapcache')) sections.push(() => mapCacheSection(PORT + 0));
+  if (want('variety')) sections.push(() => varietySection(PORT + 1));
   if (want('shots3')) {
     sections.push(async () => {
       console.log('\n# v3 screenshots: settings (timing, rules), seeker on a wall, hider HUD, watch, free cam — phone, landscape, laptop; light + dark');

@@ -14,6 +14,9 @@
 //            probes + camo wall + spawns pass checkMap, draw calls while playing, build time
 //            with the real atlas; then a quick hotseat hide-and-seek round per map.
 //   rooms    screenshots of every room (390×844, 844×390, 1280×800; light + dark).
+//   pockets  (maps pass) every map at Tiny / Large / Huge: crawl from every open contact with the
+//            real crawl code and require each reached contact to be in sight of somewhere ≥ 1 m
+//            away (no sealed nooks); the review's Market fridge-header slot and House armchair.
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -70,8 +73,8 @@ function fakeAtlas(size = 1024) {
 
 async function loadModules() {
   const imp = (f) => import(pathToFileURL(path.join(ROOT, 'js/games/chameleon', f)).href);
-  const [maps, geo, extra] = await Promise.all([imp('maps.js'), imp('geo.js'), imp('maps/index.js')]);
-  return { maps, geo, extra: extra.EXTRA_MAPS };
+  const [maps, geo, extra, world, move] = await Promise.all([imp('maps.js'), imp('geo.js'), imp('maps/index.js'), imp('world.js'), imp('move.js')]);
+  return { maps, geo, extra: extra.EXTRA_MAPS, world, move };
 }
 
 function buildStatic(M, entry) {
@@ -85,6 +88,7 @@ function buildStatic(M, entry) {
     const b = M.geo.createBuilder({ tiles: at.tiles, ink: [0.1, 0.1, 0.1] });
     fill(b);
     out = b.finish(FAKE_THREE);
+    if (M.maps.closeSlots) M.maps.closeSlots(out.colliders); // as buildMap does
     times.push(performance.now() - t0);
   }
   times.sort((x, y) => x - y);
@@ -303,6 +307,143 @@ async function staticSection() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// pockets (maps pass): no sealed nooks. Seed every clearly open sticky-feet contact (on a 0.5 m
+// grid over every collider face, legal by the engine's rules: in bounds, contact point not buried,
+// body clear of guards; ≥ 30 of 60 escape rays run 1.5 m into the room), crawl from all of them
+// with the real world.crawl / move.crawlStep in four directions per state (BFS on a 0.2 m grid),
+// and require every reached contact whose body centre is in open air to be in sight of somewhere
+// ≥ 1 m away (60 escape rays first, then a 0.35 m viewpoint grid out to 6 m; guards and glass are
+// see-through, the map's box and its top ceiling clip). Bodies whose centre ends up inside solid
+// geometry (a contact point that fits a slot the body doesn't) are counted and reported: the maps
+// close the slots they can (closeSlots), the rest is the engine's (see docs, maps pass).
+function pocketScan(M, entry, size) {
+  const tiles = new Proxy({}, { get: () => [0, 0, 0.1, 0.1] });
+  const fill = entry.build({ add() {}, finish() { return { tiles }; } }, M.maps.KIT);
+  const b = M.geo.createBuilder({ tiles, ink: [0, 0, 0] }); fill(b);
+  const out = b.finish(FAKE_THREE);
+  M.maps.closeSlots(out.colliders);
+  const bounds = M.maps.boundsOf(out.colliders, entry.info || {});
+  const world = M.world.createWorld({ colliders: out.colliders, bounds });
+  const d = M.world.dims(size); const r = d.r;
+  let top = 0; for (const c of out.colliders) if (c.ceil && c.maxY < 30) top = Math.max(top, c.maxY); if (!top) top = 8;
+  const boxes = out.colliders; const solid = (bx) => bx.climb !== false;
+  // 1 m XZ buckets of solid boxes for the centre test
+  const G = new Map(); const gk = (i, j) => i * 4096 + j;
+  boxes.forEach((bx) => { if (!solid(bx)) return; for (let i = Math.floor(bx.minX); i <= Math.floor(bx.maxX); i++) for (let j = Math.floor(bx.minZ); j <= Math.floor(bx.maxZ); j++) { const k = gk(i, j); let L = G.get(k); if (!L) G.set(k, (L = [])); L.push(bx); } });
+  const centreIn = (x, y, z) => { const L = G.get(gk(Math.floor(x), Math.floor(z))); if (L) for (const bx of L) if (x > bx.minX + 0.01 && x < bx.maxX - 0.01 && y > bx.minY + 0.01 && y < bx.maxY - 0.01 && z > bx.minZ + 0.01 && z < bx.maxZ - 0.01) return bx; return null; };
+  // does a body (a sphere of 0.8 r round its centre) overlap a solid box other than the one it's on?
+  const overlaps = (c, rr, on) => {
+    const r2 = rr * rr; const seenB = new Set();
+    for (let i = Math.floor(c[0] - rr); i <= Math.floor(c[0] + rr); i++) for (let j = Math.floor(c[2] - rr); j <= Math.floor(c[2] + rr); j++) {
+      const L = G.get(gk(i, j)); if (!L) continue;
+      for (const bx of L) {
+        if (bx === on || seenB.has(bx)) continue; seenB.add(bx);
+        const dx = Math.max(bx.minX - c[0], 0, c[0] - bx.maxX); const dy = Math.max(bx.minY - c[1], 0, c[1] - bx.maxY); const dz = Math.max(bx.minZ - c[2], 0, c[2] - bx.maxZ);
+        if (dx * dx + dy * dy + dz * dz < r2) return bx;
+      }
+    }
+    return null;
+  };
+  const freeAt = (x, y, z) => { const L = G.get(gk(Math.floor(x), Math.floor(z))); if (L) for (const bx of L) if (x > bx.minX - 0.08 && x < bx.maxX + 0.08 && y > bx.minY - 0.08 && y < bx.maxY + 0.08 && z > bx.minZ - 0.08 && z < bx.maxZ + 0.08) return false; return true; };
+  const DIRS = []; const ND = 60;
+  for (let i = 0; i < ND; i++) { const y = 1 - (2 * (i + 0.5)) / ND; const rr = Math.sqrt(1 - y * y); const a = i * Math.PI * (3 - Math.sqrt(5)); DIRS.push([Math.cos(a) * rr, y, Math.sin(a) * rr]); }
+  const clipT = (o, dd) => { let t = 8; const lo = [bounds.minX, -0.01, bounds.minZ]; const hi = [bounds.maxX, top, bounds.maxZ]; for (let a = 0; a < 3; a++) { if (Math.abs(dd[a]) < 1e-9) continue; const tt = ((dd[a] > 0 ? hi[a] : lo[a]) - o[a]) / dd[a]; if (tt < t) t = Math.max(0, tt); } return t; };
+  const escapes = (c, enough = ND) => { let e = 0; for (const dd of DIRS) { const far = Math.min(8, clipT(c, dd)); if (far < 1.5) continue; const H = world.raycast(c[0], c[1], c[2], dd[0], dd[1], dd[2], far, solid, true); if (!H || H.t >= 1.5) { if (++e >= enough) return e; } } return e; };
+  const viewpoints = (c) => {
+    let n = 0;
+    for (let i = -17; i <= 17; i++) for (let j = -17; j <= 17; j++) {
+      const x = c[0] + i * 0.35; const z = c[2] + j * 0.35;
+      if (x < bounds.minX || x > bounds.maxX || z < bounds.minZ || z > bounds.maxZ) continue;
+      for (let kk = Math.ceil((0.2 - c[1]) / 0.35); c[1] + kk * 0.35 <= Math.min(top - 0.1, c[1] + 4); kk++) {
+        const y = c[1] + kk * 0.35;
+        const dx = x - c[0]; const dy = y - c[1]; const dz = z - c[2]; const dd = Math.hypot(dx, dy, dz);
+        if (dd < 1 || dd > 6) continue;
+        if (world.raycast(c[0], c[1], c[2], dx / dd, dy / dd, dz / dd, dd, solid, true)) continue;
+        if (!freeAt(x, y, z)) continue;
+        if (++n >= 3) return n;
+      }
+    }
+    return n;
+  };
+  const key = (bd) => `${Math.round(bd.x / 0.2)},${Math.round(bd.y / 0.2)},${Math.round(bd.z / 0.2)},${Math.round(bd.nx)},${Math.round(bd.ny)},${Math.round(bd.nz)}`;
+  const queue = []; const seen = new Set(); let seeds = 0; const clear = Math.min(0.35, d.head * 0.8);
+  for (const bx of boxes) {
+    if (bx.climb === false) continue;
+    for (const nrm of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
+      const ax = nrm[0] ? 0 : nrm[1] ? 1 : 2; const sg = nrm[ax] > 0 ? 1 : -1;
+      const fixed = ax === 0 ? (sg > 0 ? bx.maxX : bx.minX) : ax === 1 ? (sg > 0 ? bx.maxY : bx.minY) : (sg > 0 ? bx.maxZ : bx.minZ);
+      const u = [0, 1, 2].filter((k) => k !== ax);
+      const lo = u.map((k) => [bx.minX, bx.minY, bx.minZ][k]); const hi = u.map((k) => [bx.maxX, bx.maxY, bx.maxZ][k]);
+      for (let p0 = lo[0] + 0.05; p0 <= hi[0] - 0.05 + 1e-9; p0 += 0.5) for (let p1 = lo[1] + 0.05; p1 <= hi[1] - 0.05 + 1e-9; p1 += 0.5) {
+        const p = [0, 0, 0]; p[ax] = fixed; p[u[0]] = p0; p[u[1]] = p1;
+        if (p[1] < 0.001 && nrm[1] < 0) continue;
+        if (!world.inside(p[0], p[2]) || world.buried(p[0], p[1], p[2], ...nrm) || world.guarded(p[0], p[1], p[2], ...nrm, clear)) continue;
+        const c = [p[0] + nrm[0] * r, p[1] + nrm[1] * r, p[2] + nrm[2] * r];
+        if (c[1] < r * 0.7 || centreIn(...c) || escapes(c, 30) < 30) continue;
+        const bd = { x: p[0], y: p[1], z: p[2], nx: nrm[0], ny: nrm[1], nz: nrm[2], fx: 0, fy: 0, fz: 0, box: bx, r, head: d.head, step: d.step, sq: false, at: true, yaw: 0, wa: 0 };
+        world.reHead(bd, 0, nrm[1] ? 0 : 1, nrm[1] ? 1 : 0);
+        const k = key(bd); if (seen.has(k)) continue; seen.add(k); queue.push(bd); seeds++;
+      }
+    }
+  }
+  const sealed = []; let inSolid = 0; let outside = 0; let overlap = 0; let states = 0;
+  while (queue.length && states < 300000) {
+    const s0 = queue.pop(); states++;
+    const c = [s0.x + s0.nx * r, s0.y + s0.ny * r, s0.z + s0.nz * r];
+    if (c[1] < r * 0.7) continue; // crawling down a wall onto the floor releases the body first
+    // a body the engine let into a slot narrower than itself (centre past the walls, inside a box,
+    // or overlapping a neighbour) is the engine's contact check, not a map nook: counted apart
+    if (c[0] < bounds.minX - 0.01 || c[0] > bounds.maxX + 0.01 || c[2] < bounds.minZ - 0.01 || c[2] > bounds.maxZ + 0.01) outside++;
+    else if (centreIn(...c)) inSolid++;
+    else if (overlaps(c, r * 0.8, s0.box)) overlap++;
+    else if (escapes(c, 4) < 4 && viewpoints(c) < 3) sealed.push({ p: [s0.x, s0.y, s0.z].map((v) => +v.toFixed(2)), n: [s0.nx, s0.ny, s0.nz].map((v) => Math.round(v)), on: s0.box ? s0.box.name || '-' : 'floor' });
+    const f = [s0.fx, s0.fy, s0.fz]; const sx = [s0.ny * f[2] - s0.nz * f[1], s0.nz * f[0] - s0.nx * f[2], s0.nx * f[1] - s0.ny * f[0]];
+    for (const dir of [f, f.map((v) => -v), sx, sx.map((v) => -v)]) {
+      const bd = { ...s0 }; let moved = 0;
+      for (let k = 0; k < 8 && moved < 0.2; k++) {
+        const px = bd.x; const py = bd.y; const pz = bd.z;
+        const res = M.move.crawlStep(world, bd, dir[0] * 2, dir[1] * 2, dir[2] * 2, 1 / 30);
+        if (res === 3 || res === 4 || !bd.at) break;
+        moved += Math.hypot(bd.x - px, bd.y - py, bd.z - pz) + (res ? 0.2 : 0);
+        if (res === 1 || res === 2) break;
+      }
+      if (moved < 0.02 || !bd.at) continue;
+      const k = key(bd); if (seen.has(k)) continue; seen.add(k); queue.push(bd);
+    }
+  }
+  return { seeds, states, sealed, inSolid, outside, overlap, world, colliders: boxes, r };
+}
+
+async function pocketsSection() {
+  console.log('\n# pockets: no sealed nooks a crawling chameleon can reach (Node, real crawl code, every map, Tiny / Large / Huge)');
+  const M = await loadModules();
+  const list = M.maps.MAPS.filter((m) => !MAPF.length || MAPF.includes(m.id));
+  for (const entry of list) {
+    for (const [label, s] of [['Tiny', 0.6], ['Large', 1.3], ['Huge', 1.8]]) {
+      const t0 = performance.now();
+      const res = pocketScan(M, entry, s);
+      const groups = [];
+      for (const f of res.sealed) { const g = groups.find((G) => Math.hypot(G.p[0] - f.p[0], G.p[1] - f.p[1], G.p[2] - f.p[2]) < 0.8); if (g) g.k++; else groups.push({ ...f, k: 1 }); }
+      assert(!res.sealed.length, `${entry.id} @${label}: no sealed pockets among ${res.states} crawled contacts from ${res.seeds} open seeds${groups.length ? ' — ' + JSON.stringify(groups.slice(0, 6)) : ''} (${((performance.now() - t0) / 1000).toFixed(1)} s)`);
+      if (res.inSolid + res.outside + res.overlap) console.log(`  note ${entry.id} @${label}: of ${res.states} reached contacts, ${res.inSolid} put the body's centre inside a box, ${res.outside} past the outer walls, ${res.overlap} overlapping a neighbour (slots narrower than the body: the engine checks the contact point only)`);
+    }
+  }
+  // the two cavities from the review are shut
+  const mk = M.maps.MAPS.find((m) => m.id === 'market');
+  if (mk && (!MAPF.length || MAPF.includes('market'))) {
+    const res = pocketScan(M, mk, 0.6);
+    const tops = res.colliders.filter((c) => c.name === 'fridge-top');
+    const row = tops.length && tops.every((c) => tops.some((o) => o !== c && (Math.abs(o.minX - c.maxX) < 1e-6 || Math.abs(o.maxX - c.minX) < 1e-6)) || c.minX <= -9.99 || c.maxX >= 3.9);
+    assert(row, `market: the fridge-top colliders meet edge to edge (no 10 cm slot between the headers: ${tops.map((c) => `${c.minX.toFixed(2)}..${c.maxX.toFixed(2)}`).join(' ')})`);
+  }
+  const hs = M.maps.MAPS.find((m) => m.id === 'house');
+  if (hs && (!MAPF.length || MAPF.includes('house'))) {
+    const res = pocketScan(M, hs, 1.3);
+    assert(res.world.buried(-3.25, 3.15, -0.25, 0, 1, 0), 'house: the armchair seat under its back cushion (-3.25, 3.15, -0.25) is not a place to stick to (buried)');
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // browser sections
 const FAST = { hide: 12000, seek: 15000, title: 700, recap: 2500, found: 2200, seekLead: 900, resume: 1500, maxDpr: 0.6 };
 async function arm(page, tune = FAST) { await page.evaluate((t) => { window.__chamTest = true; window.__chamTune = t; }, tune); }
@@ -457,12 +598,13 @@ async function roomsSection(port) {
   }
 }
 
-module.exports = { analyse, loadModules, floodFill, clusters };
+module.exports = { analyse, loadModules, floodFill, clusters, pocketScan };
 
 if (require.main === module) {
   (async () => {
     try {
       if (want('static')) await staticSection();
+      if (want('pockets')) await pocketsSection();
       if (want('browser')) {
         await browserSection(PORT, { device: 'iPhone 13', viewport: null, label: 'phone' });
         await browserSection(PORT + 1, { device: 'Desktop Chrome', viewport: { width: 1280, height: 800 }, label: 'laptop' });

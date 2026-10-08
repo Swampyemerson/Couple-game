@@ -1,6 +1,6 @@
 // Renderer, scene, lights, map meshes, avatars and picking for Blend & Seek.
 // Owns every GPU resource and disposes them all in dispose().
-import { buildMap } from './maps.js';
+import { buildMap, mapCached, releaseMapGPU } from './maps.js';
 import { makeGradient, makeWorldMaterial, makeBlobMaterial } from './toon.js';
 import { createKit, createAvatar } from './avatar.js';
 import { createPaint } from './paint.js';
@@ -8,6 +8,30 @@ import { createFx } from './fx.js';
 import { createWorld } from './world.js';
 import { sampleAtlas } from './atlas.js';
 import { hexToRgb, luminance, clamp } from './util.js';
+
+// collision worlds of cached maps (a world is stateless apart from scratch buffers)
+const worlds = new WeakMap();
+const idle = (fn) => { if (typeof requestIdleCallback === 'function') requestIdleCallback(fn, { timeout: 3000 }); else setTimeout(fn, 400); };
+
+// ── rematch: one parked stage (maps pass) ──
+// The hub's Rematch destroys the game and mounts a fresh one. The stage (renderer, compiled
+// programs, uploaded map, paint textures) is parked across that remount instead of disposed,
+// so the new mount links no programs and builds nothing; unclaimed, it is disposed after `ms`.
+let parked = null; let parkTimer = 0;
+function dropParked(st) { if (parked === st) parked = null; clearTimeout(parkTimer); st.dispose(); if (st.onParkDispose) st.onParkDispose(); }
+export function parkStage(st, onDispose, ms = 8000) {
+  if (parked && parked !== st) dropParked(parked);
+  st.park(); st.onParkDispose = onDispose; parked = st;
+  clearTimeout(parkTimer);
+  parkTimer = setTimeout(() => { if (parked === st) dropParked(st); }, ms);
+}
+/** The parked stage if it fits this mount (same three.js, same pixel-ratio cap), else null. */
+export function takeParkedStage(THREE, maxDpr) {
+  const st = parked; if (!st) return null;
+  parked = null; clearTimeout(parkTimer);
+  if (st.THREE !== THREE || st.maxDpr !== maxDpr) { dropParked(st); return null; }
+  return st;
+}
 
 export function createStage(THREE, host, { theme, maxDpr = 2 }) {
   const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', alpha: false, stencil: false, depth: true, preserveDrawingBuffer: false });
@@ -63,52 +87,81 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
   vm.visible = false;
   camera.add(vm);
 
-  let map = null; let mapMesh = null; let blobMesh = null; let atlasTex = null; let worldMat = null; let blobMat = null; let world = null;
+  let map = null; let mapMesh = null; let atlasTex = null; let world = null;
   const mapMeshes = []; // one per chunk (frustum culled individually); mapMesh = mapMeshes[0]
-  const backMeshes = []; let backMat = null; let backdropReach = 0; let fogCull = Infinity;
+  const backMeshes = []; let backdropReach = 0; let fogCull = Infinity;
   const cullV = new THREE.Vector3();
   const inkCol = theme.outline;
   const isMap = (o) => !!o && o.userData.isMap === true;
+
+  // Maps pass: the map materials live as long as the stage (one per kind, the atlas texture
+  // swapped on load), so a switch links no program: disposing the old world material used to
+  // release its program and the new one relinked it, and CU's fog-free backdrop material
+  // linked a 15th program on every CU switch (~155 ms). A 1×1 placeholder keeps USE_MAP on,
+  // and hidden one-triangle meshes put all three into the boot compile.
+  const placeholder = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, THREE.RGBAFormat);
+  placeholder.needsUpdate = true;
+  const worldMat = makeWorldMaterial(THREE, { map: placeholder, gradientMap, ink: inkCol });
+  const backMat = makeWorldMaterial(THREE, { map: placeholder, gradientMap, ink: inkCol }); backMat.fog = false;
+  const blobMat = makeBlobMaterial(THREE, '#3a2a1c');
+  const warmGeo = new THREE.BufferGeometry();
+  for (const [k, n] of [['position', 3], ['normal', 3], ['uv', 2], ['color', 3], ['tile', 4], ['onrm', 3], ['alpha', 1]]) warmGeo.setAttribute(k, new THREE.Float32BufferAttribute(new Float32Array(n * 3), n));
+  const warmMeshes = [worldMat, backMat, blobMat].map((mt) => { const m = new THREE.Mesh(warmGeo, mt); m.visible = false; m.frustumCulled = false; m.userData.warm = true; scene.add(m); return m; });
+  const blobMesh = new THREE.Mesh(warmGeo, blobMat);
+  blobMesh.matrixAutoUpdate = false; blobMesh.renderOrder = 1; blobMesh.visible = false; blobMesh.frustumCulled = false;
+  scene.add(blobMesh);
+  // per built map (while the session cache keeps it): its atlas texture and chunk meshes
+  const mapRes = new Map();
+  function resFor(m) {
+    let r = mapRes.get(m);
+    if (r) return r;
+    const tex = new THREE.CanvasTexture(m.atlas.canvas);
+    tex.anisotropy = Math.min(2, renderer.capabilities.getMaxAnisotropy());
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    r = { tex, meshes: [], backs: [], reach: 0 };
+    for (const ch of m.chunks) {
+      if (ch.backdrop) {
+        // far scenery: the same look without fog, always drawn, never picked
+        const bm = new THREE.Mesh(ch.geometry, backMat);
+        bm.matrixAutoUpdate = false; bm.updateMatrix(); bm.frustumCulled = false;
+        bm.userData.backdrop = true;
+        r.backs.push(bm);
+        const bs = ch.geometry.boundingSphere; r.reach = Math.max(r.reach, bs.center.length() + bs.radius);
+        continue;
+      }
+      const cm = new THREE.Mesh(ch.geometry, worldMat);
+      cm.matrixAutoUpdate = false; cm.updateMatrix();
+      cm.userData.isMap = true; cm.userData.chunk = ch;
+      r.meshes.push(cm);
+    }
+    mapRes.set(m, r);
+    return r;
+  }
+  /** Drop GPU resources of maps the session cache let go of (their geometry is already disposed). */
+  function pruneRes() { for (const [m, r] of mapRes) if (m !== map && !mapCached(m)) { r.tex.dispose(); mapRes.delete(m); } }
 
   function loadMap(id) {
     if (map && map.id === id) return map;
     unloadMap();
     const ink = hexToRgb(inkCol).map((x) => x / 255);
     map = buildMap(THREE, id, { ink });
-    atlasTex = new THREE.CanvasTexture(map.atlas.canvas);
-    atlasTex.anisotropy = Math.min(2, renderer.capabilities.getMaxAnisotropy());
-    atlasTex.minFilter = THREE.LinearMipmapLinearFilter;
-    worldMat = makeWorldMaterial(THREE, { map: atlasTex, gradientMap, ink: inkCol, atlasSize: map.atlas.size });
-    backdropReach = 0;
-    for (const ch of map.chunks) {
-      if (ch.backdrop) {
-        // far scenery: the same look without fog, always drawn, never picked
-        if (!backMat) { backMat = makeWorldMaterial(THREE, { map: atlasTex, gradientMap, ink: inkCol, atlasSize: map.atlas.size }); backMat.fog = false; }
-        const m = new THREE.Mesh(ch.geometry, backMat);
-        m.matrixAutoUpdate = false; m.updateMatrix(); m.frustumCulled = false;
-        m.userData.backdrop = true;
-        scene.add(m); backMeshes.push(m);
-        const bs = ch.geometry.boundingSphere; backdropReach = Math.max(backdropReach, bs.center.length() + bs.radius);
-        continue;
-      }
-      const m = new THREE.Mesh(ch.geometry, worldMat);
-      m.matrixAutoUpdate = false; m.updateMatrix();
-      m.userData.isMap = true; m.userData.chunk = ch;
-      scene.add(m); mapMeshes.push(m);
-    }
+    pruneRes();
+    const r = resFor(map);
+    atlasTex = r.tex;
+    for (const mt of [worldMat, backMat]) { mt.map = atlasTex; mt.userData.uniforms.uAtlas.value = map.atlas.size; }
+    for (const m of r.meshes) { m.userData.forceHidden = false; scene.add(m); mapMeshes.push(m); }
+    for (const m of r.backs) { scene.add(m); backMeshes.push(m); }
+    backdropReach = r.reach;
     mapMesh = mapMeshes[0];
     // draw distance: big maps fog out (and cull) beyond a room or two while playing; the
     // overview orbit pulls the fog back so the whole map reads from up high (see setView)
     viewKind = '';
     setView('play');
-    if (map.blobGeo) {
-      blobMat = makeBlobMaterial(THREE, '#3a2a1c');
-      blobMesh = new THREE.Mesh(map.blobGeo, blobMat);
-      blobMesh.matrixAutoUpdate = false; blobMesh.updateMatrix(); blobMesh.renderOrder = 1;
-      scene.add(blobMesh);
-    }
-    world = createWorld(map);
-    // map atlas CPU copy is kept for the eyedropper; the canvas itself can go once uploaded
+    blobMesh.geometry = map.blobGeo || warmGeo; blobMesh.visible = !!map.blobGeo;
+    world = worlds.get(map);
+    if (!world) { world = createWorld(map); worlds.set(map, world); }
+    // the eyedropper's CPU copy of the atlas: read when the main thread is idle, not in the switch
+    if (!map.atlas.hasData) idle(() => { if (map && !map.atlas.hasData) map.atlas.warm(); });
     return map;
   }
   let viewKind = '';
@@ -127,25 +180,45 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
     fogCull = far + 2;
     camera.far = Math.max(far + 6, backdropReach + 10); camera.updateProjectionMatrix();
   }
-  /** Per frame: hide map chunks entirely inside the fog (cheap: one sphere test per chunk). */
+  /** Per frame: hide map chunks entirely inside the fog (cheap: one sphere test per chunk), and
+   *  count the ones the camera actually draws (fog + frustum) for perf(). A chunk a test hid
+   *  with tweak({ hideMap }) stays hidden (userData.forceHidden). */
+  let chunksDrawn = 0;
+  const frustum = new THREE.Frustum(); const projScreen = new THREE.Matrix4();
   function cullChunks() {
     const cp = camera.position;
+    camera.updateMatrixWorld();
+    projScreen.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    frustum.setFromProjectionMatrix(projScreen);
+    let n = 0;
     for (let i = 0; i < mapMeshes.length; i++) {
       const m = mapMeshes[i]; const bs = m.geometry.boundingSphere;
-      m.visible = cullV.copy(bs.center).distanceTo(cp) - bs.radius < fogCull;
+      const v = !m.userData.forceHidden && cullV.copy(bs.center).distanceTo(cp) - bs.radius < fogCull;
+      m.visible = v;
+      if (v && frustum.intersectsSphere(bs)) n++;
     }
+    chunksDrawn = n;
   }
+  /** Build a map into the session cache and put its atlas on the GPU without showing it (the
+   *  recap does this for Mix it up's next round, so the round's title is a scene swap). */
+  function prefetch(id) {
+    const ink = hexToRgb(inkCol).map((x) => x / 255);
+    const m = buildMap(THREE, id, { ink });
+    if (map) buildMap(THREE, map.id, { ink }); // the map on screen stays the most recent in the LRU
+    const r = resFor(m);
+    try { renderer.initTexture(r.tex); } catch { /* uploads at first draw instead */ }
+    if (!worlds.has(m)) worlds.set(m, createWorld(m));
+    pruneRes();
+    return m;
+  }
+  /** Take the map out of the scene; its geometry, texture and world stay for the session cache. */
   function unloadMap() {
     if (!map) return;
     for (const m of mapMeshes) scene.remove(m);
     for (const m of backMeshes) scene.remove(m);
     mapMeshes.length = 0; backMeshes.length = 0;
-    if (backMat) { backMat.dispose(); backMat = null; }
-    if (blobMesh) scene.remove(blobMesh);
-    for (const ch of map.chunks) ch.geometry.dispose();
-    if (map.blobGeo) map.blobGeo.dispose();
-    atlasTex.dispose(); worldMat.dispose(); if (blobMat) blobMat.dispose();
-    map = null; mapMesh = null; blobMesh = null; atlasTex = null; worldMat = null; blobMat = null; world = null;
+    blobMesh.geometry = warmGeo; blobMesh.visible = false;
+    map = null; mapMesh = null; atlasTex = null; world = null;
   }
 
   // ── picking ──
@@ -306,17 +379,88 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
     renderer.compile(scene, camera);
     vis.forEach((o) => { o.visible = false; });
   }
+  /**
+   * Boot warm-up in slices (the maps pass; KHR_parallel_shader_compile-style, as Getaway's): the
+   * programs of one material at a time through renderer.compile over a view of the scene that
+   * lists just that object (same fog and lights, so the cache keys match the real render's),
+   * yielding a frame whenever a slice ran past `budget` ms, so the loading card keeps painting
+   * instead of one 15-program block. Returns { slices, maxMs }.
+   */
+  async function warm(yieldFrame, { budget = 24, alive = () => true, sync = true } = {}) {
+    const gl = renderer.getContext();
+    const objs = []; const seen = new Set();
+    scene.traverse((o) => { const m = o.material; if (!m || Array.isArray(m) || seen.has(m)) return; seen.add(m); objs.push(o); });
+    const view = Object.create(scene); const one = [null];
+    view.traverse = (cb) => { for (const o of one) cb(o); };
+    let t0 = performance.now(); let slices = 1; let maxMs = 0;
+    const cut = async (last) => {
+      const d = performance.now() - t0;
+      if (d <= budget || last) return true;
+      maxMs = Math.max(maxMs, d);
+      await yieldFrame();
+      t0 = performance.now(); slices++;
+      return alive();
+    };
+    for (let i = 0; i < objs.length; i++) {
+      one[0] = objs[i];
+      renderer.compile(view, camera);
+      if (!(await cut(false))) return null;
+    }
+    // first draws, one material per slice: drivers build a program's pipeline (and upload its
+    // textures) at its first draw; drawing everything in the first frame was one 0.6–0.9 s
+    // block in software GL. Everything else hidden, 3 vertices, no frustum cull.
+    const vis = []; scene.traverse((o) => { if (o !== scene && !o.isLight) vis.push(o, o.visible); }); // lights stay: they are in the program key
+    for (let i = 0; i < vis.length; i += 2) vis[i].visible = false;
+    for (let i = 0; i < objs.length; i++) {
+      const o = objs[i]; const chain = [];
+      for (let p = o; p && p !== scene; p = p.parent) { chain.push(p); p.visible = true; }
+      const fc = o.frustumCulled; o.frustumCulled = false;
+      const g = o.geometry; const dr = g && g.drawRange ? g.drawRange.count : null;
+      if (dr != null) g.drawRange.count = 3;
+      try { renderer.render(scene, camera); if (sync) gl.finish(); } finally {
+        if (dr != null) g.drawRange.count = dr;
+        o.frustumCulled = fc;
+        for (const p of chain) p.visible = false;
+      }
+      if (!(await cut(i === objs.length - 1))) { for (let k = 0; k < vis.length; k += 2) vis[k].visible = vis[k + 1]; return null; }
+    }
+    for (let i = 0; i < vis.length; i += 2) vis[i].visible = vis[i + 1];
+    maxMs = Math.max(maxMs, performance.now() - t0);
+    return { slices, maxMs: Math.round(maxMs), materials: objs.length };
+  }
+  /** Rematch (maps pass): leave the canvas, keep the renderer, programs and uploaded maps. */
+  function park() {
+    canvas.remove();
+    canvas.style.visibility = '';
+    unloadMap();
+    fx.clearRound();
+    vm.visible = false;
+  }
+  /** A parked stage taken by the next mount: its canvas goes into the new host. */
+  function adopt(newHost, t) {
+    host = newHost;
+    host.prepend(canvas);
+    setTheme(t);
+  }
 
   return {
     THREE, renderer, scene, camera, canvas, hemi, sun, kit, paints, av, fx, vm, gradientMap,
     get map() { return map; }, get world() { return world; }, get mapMesh() { return mapMesh; }, mapMeshes, isMap,
     get size() { return [W, H]; }, get dpr() { return baseDpr * dynScale; }, get scale() { return dynScale; },
-    loadMap, resize, setScale, setTheme, compile, setView,
+    loadMap, unloadMap, prefetch, resize, setScale, setTheme, compile, warm, park, adopt, setView, maxDpr,
     ray, setRayFromScreen, pick, pickMap, albedoAtHit, surfaceOf, blobAt,
     render() { cullChunks(); renderer.render(scene, camera); },
     get backdrops() { return backMeshes.length; },
+    /** Map chunks drawn last frame (after the fog cull and the frustum). */
+    get chunksDrawn() { return chunksDrawn; },
     dispose() {
       unloadMap();
+      for (const r of mapRes.values()) r.tex.dispose();
+      mapRes.clear();
+      releaseMapGPU(); // this renderer's buffers for every cached map (the CPU data stays cached)
+      worldMat.dispose(); backMat.dispose(); blobMat.dispose(); placeholder.dispose(); warmGeo.dispose();
+      for (const m of warmMeshes) scene.remove(m);
+      scene.remove(blobMesh);
       fx.dispose();
       for (const w of ['a', 'b']) { scene.remove(av[w].root); scene.remove(av[w].blob); av[w].dispose(); paints[w].dispose(); }
       kit.dispose();
