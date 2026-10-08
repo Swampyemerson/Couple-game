@@ -1017,6 +1017,12 @@ test hook the culling undid every frame. Measured with scripted one- and two-pho
   canvases live with the map too (`MINI_PLANS` in game.js, `plan.bgs` in hud.js). Sizes held:
   Living Room 5.9 MB (9.9 once the eyedropper copy is read), Studio 4.8, Market 7.2, Greenhouse
   8.1, Garden / Museum 10.5, House 12.8, CU Boulder 16.7.
+  Cached maps stay uploaded, so going back is upload-free; the price is GPU residency bounded by
+  the cache. Walking all 8 maps in order on one page (`renderer.info.memory` after each): 32 → 128
+  geometries peak, 125 at the end, textures 7–9, programs 15 throughout, JS heap flat at 23 MB
+  (before this pass: 19–59 geometries, 6 textures, 28 MB heap). Worst case held: about 36 MB of
+  CPU arrays + atlas pixels (CU + House + Living Room is 35.4), the geometry part again in GL
+  buffers, and three 1024² mipmapped atlases (~5.6 MB each).
 - **No program per switch.** The world, backdrop and blob materials are made once per stage (a
   1×1 placeholder keeps `USE_MAP` on; the atlas texture and `uAtlas` are swapped on load).
   Disposing the old world material used to release its program and the new one relinked it, and
