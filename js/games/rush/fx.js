@@ -5,6 +5,9 @@ import { LANE_W } from './tune.js';
 
 const PUFFS = 96;
 const BITS = 220;
+const GOLD_C = [1, 0.74, 0.18];   // trail kind 5 (gold dust)
+const PINK_C = [1, 0.36, 0.55];   // trail kind 6 (love hearts)
+const RED_C = [0.93, 0.2, 0.3];
 
 export function createFx(THREE, world) {
   const T = world.T; const P = world.P;
@@ -90,13 +93,25 @@ export function createFx(THREE, world) {
     },
     /**
      * Unlockable trail behind a runner. kind 1 sparkle, 2 ink puffs (player colour), 3 confetti,
-     * 4 embers. Called every frame; it spawns on its own cadence.
+     * 4 embers, 5 gold dust, 6 love hearts. Called every frame; it spawns on its own cadence.
      */
     trailFx(kind, x, y, d, col, k) {
       if (kind === 1) { spawn(BP, x + R() * 0.35, y + 0.5 + Math.random() * 1.0, d - 0.5, R() * 0.8, 0.8 + Math.random() * 1.2, -0.5, 0.5, 0.13 + Math.random() * 0.1, Math.random() < 0.6 ? P.hl : P.white, 0, 1.5, 0); }
       else if (kind === 2) { if (k % 3) return; spawn(PP, x + R() * 0.25, y + 0.35 + Math.random() * 0.3, d - 0.6, R() * 0.5, 0.4 + Math.random() * 0.6, -1.5, 0.5 + Math.random() * 0.2, 0.18 + Math.random() * 0.14, col, -0.4, 2.2, 2); }
       else if (kind === 3) { spawn(BP, x + R() * 0.5, y + 0.8 + Math.random() * 1.2, d - 0.4, R() * 2.5, 1.5 + Math.random() * 2.5, -1 - Math.random() * 2, 0.8 + Math.random() * 0.5, 0.16 + Math.random() * 0.1, k % 6 < 2 ? P.a : k % 6 < 4 ? P.b : P.hl, 5, 1.6, 0); }
       else if (kind === 4) { if (k % 2) return; spawn(BP, x + R() * 0.3, y + 0.2 + Math.random() * 0.4, d - 0.5, R() * 0.4, 1.2 + Math.random() * 2, -1 - Math.random() * 2, 0.35 + Math.random() * 0.25, 0.1 + Math.random() * 0.1, Math.random() < 0.5 ? P.bad : P.hl, -2, 1.2, 0); }
+      // 5 gold dust: glints in coin gold (and the theme's highlight) that settle slowly
+      else if (kind === 5) { if (k % 2) return; spawn(BP, x + R() * 0.3, y + 0.4 + Math.random() * 1.1, d - 0.5, R() * 0.5, 0.15 + Math.random() * 0.5, -0.6, 0.75 + Math.random() * 0.3, 0.09 + Math.random() * 0.08, Math.random() < 0.65 ? GOLD_C : P.hl, 0.9, 1.3, 0); }
+      // 6 love hearts: three bits that travel together (two lobes over a point = a small heart from behind), pink or red, drifting up
+      else if (kind === 6) {
+        if (k % 6) return;
+        const hx = x + R() * 0.35; const hy = y + 0.9 + Math.random() * 0.8; const hz = d - 0.5;
+        const vx = R() * 0.35; const vy = 0.7 + Math.random() * 0.5;
+        const c = k % 12 ? PINK_C : RED_C;
+        spawn(BP, hx - 0.07, hy + 0.05, hz, vx, vy, -0.6, 1.1, 0.12, c, 0, 0.6, 0);
+        spawn(BP, hx + 0.07, hy + 0.05, hz, vx, vy, -0.6, 1.1, 0.12, c, 0, 0.6, 0);
+        spawn(BP, hx, hy - 0.06, hz, vx, vy, -0.6, 1.1, 0.12, c, 0, 0.6, 0);
+      }
     },
     ink(x, y, d, col, n = 8) {
       for (let i = 0; i < n; i++) spawn(PP, x + R() * 0.4, y + R() * 0.4, d + R() * 0.4, R() * 4, R() * 3 + 1, R() * 4, 0.5 + Math.random() * 0.3, 0.25 + Math.random() * 0.25, col, 6, 1.5, 2);

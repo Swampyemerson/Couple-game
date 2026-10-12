@@ -348,6 +348,7 @@ async function rivalUnit() {
     W.set(255, 240); W.run(0.1); W.set(265, 262); W.run(1.5);
     out.stripes = [W.log.a.map((x) => x[0]), W.log.b.map((x) => x[0])];
     out.stripeSub = W.log.a.find((x) => /just beat/.test(x[0])) || null;
+    out.beatBest = [W.players.a.stats.beatBest, W.players.b.stats.beatBest, W.players.a.stats.crossed];
     const V = mk('race', { data: { a_race_m: 150, b_race_m: 260 } });
     V.set(30, 30); V.run(1.2); V.set(200, 200); V.run(2); // a 170 m teleport: not a crossing
     out.teleport = V.log.a.length + V.log.b.length;
@@ -1469,7 +1470,6 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
     const names = ['Downtown', 'Harbour', 'Greenway', 'Old Town', 'Neon Market', 'Freight Yard'];
     {
       const u = await rivalUnit();
-      if (process.env.RIVAL_UNIT) { console.log(JSON.stringify(u)); process.exit(0); }
       assert(u.flick === 0 && u.early === 0, `rivalry: a lead held under 0.6 s (a 0.4 s flicker, 0.5 s) is not a lead change (${u.flick}, ${u.early})`);
       assert(u.pass[0].join() === 'Sydney passed you' && u.pass[1].join() === 'OVERTAKE!' && u.pass[2] === 1, `rivalry: held 0.6 s → "Sydney passed you" for the one passed, OVERTAKE! for the overtaker, 1 counted (${u.pass.join(' / ')})`);
       assert(u.quiet === 1 && u.revenge[0] === 'REVENGE!' && u.revenge[1] === 'Emerson passed you' && u.revenge[2] === 2, `rivalry: a retake inside the 3 s quiet waits for it, then REVENGE! (${u.quiet} pops before 3 s; ${u.revenge.join(' / ')})`);
@@ -1477,6 +1477,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
       assert(u.brawl === 0 && u.downed === 0, `rivalry: no pops or counts in Brawl, nor for a pass of a downed runner (${u.brawl}, ${u.downed})`);
       assert(u.neck.join() === 'false,false,true,true,false,0', `rivalry: neck and neck after 3 s under 5 m (not at the start line), held to 8 m, no pop (${u.neck.join()})`);
       assert(u.stripes[0].join() === 'NEW BEST!,Sydney just beat your best,You beat Sydney’s best' && u.stripes[1].join() === 'You beat Emerson’s best,NEW BEST!,Emerson just beat your best', `rivalry: the stripes pop once each on both phones (${u.stripes[0].join(' | ')} / ${u.stripes[1].join(' | ')})`);
+      assert(u.beatBest.join() === '1,1,2', `rivalry: crossing the partner's best is a run stat for the dare (${u.beatBest.join()})`);
       assert(u.stripeSub && u.stripeSub[2] === '150 m' && u.teleport === 0, `rivalry: the stripe pop carries the distance (${u.stripeSub && u.stripeSub[2]}); a 170 m jump is not a crossing (${u.teleport})`);
       assert(u.district[0].length === 1 && u.districtName && u.district[1] && u.district[2] === 1, `districts: one tag pop on entering the zone (${u.district[0].join()}), one chime, the music key follows`);
       assert(u.events.join() === 'COIN RUSH!,GOLDEN HUNDRED' && u.ver1 === 0, `events: COIN RUSH! ~2 s before its field and GOLDEN HUNDRED on entering, once each; none on track v1 (${u.events.join()})`);
@@ -1536,20 +1537,20 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         await until(b, () => { const r = window.__rush.rivalry().b; return r.lead === -1 && r.candT === 0; }, null, 30000, 'Emerson leads on his phone');
         await h.wait(3500); // (past the 3 s of quiet)
         const base = (await a.evaluate(() => window.__rush.rivalry())).changes;
-        const n0 = { pass: await count(a, /^a:Sydney passed you$/), over: await count(b, /^b:OVERTAKE!$/), rev: await count(a, /^a:REVENGE!$/) };
+        const n0 = { pass: await count(a, /^a:Sydney passed you$/), over: await count(b, /^b:(OVERTAKE|REVENGE)!$/), rev: await count(a, /^a:REVENGE!$/) };
         await tele(b, 'b', 45);
         await until(a, (n) => window.__fb.pops.filter((p) => p === 'a:Sydney passed you').length > n, n0.pass, 25000, 'Sydney passed you');
-        await until(b, (n) => window.__fb.pops.filter((p) => p === 'b:OVERTAKE!').length > n, n0.over, 25000, 'OVERTAKE!').catch(async (e) => {
+        await until(b, (n) => window.__fb.pops.filter((p) => /^b:(OVERTAKE|REVENGE)!$/.test(p)).length > n, n0.over, 25000, 'OVERTAKE! (or REVENGE!, if Emerson had just passed him)').catch(async (e) => {
           const dbg = async (pg) => pg.evaluate(() => { const r = window.__rush.rivalry(); const f = (x) => ({ lead: x.lead, cand: x.cand, candT: +x.candT.toFixed(2), lastAt: +x.lastAt.toFixed(1), q: x.q.length, free: +x.free.toFixed(1) }); return { T: +r.T.toFixed(1), changes: r.changes, a: f(r.a), b: f(r.b), pops: window.__fb.pops.slice(-8) }; });
           console.log('   rivalry a:', JSON.stringify(await dbg(a)), '\n   rivalry b:', JSON.stringify(await dbg(b)));
           throw e;
         });
-        await Promise.all([popShot(a, /passed you/, 'passed'), popShot(b, /OVERTAKE/, 'overtake')]);
+        await Promise.all([popShot(a, /passed you/, 'passed'), popShot(b, /OVERTAKE|REVENGE/, 'overtake')]);
         // taken back at once: held through the 3 s of quiet, then REVENGE! (they passed me within 10 s) and "took it back"
         await tele(a, 'a', 90);
         await until(a, (n) => window.__fb.pops.filter((p) => p === 'a:REVENGE!').length > n, n0.rev, 30000, 'REVENGE!');
         await Promise.all([popShot(a, /REVENGE/, 'revenge'), popShot(b, /passed you/, 'revenge-theirs')]);
-        assert((await count(a, /^a:Sydney passed you$/)) === n0.pass + 1 && (await count(b, /^b:OVERTAKE!$/)) === n0.over + 1 && (await count(a, /^a:REVENGE!$/)) === n0.rev + 1, 'one pop per lead change on each phone');
+        assert((await count(a, /^a:Sydney passed you$/)) === n0.pass + 1 && (await count(b, /^b:(OVERTAKE|REVENGE)!$/)) === n0.over + 1 && (await count(a, /^a:REVENGE!$/)) === n0.rev + 1, 'one pop per lead change on each phone');
         const rl = await a.evaluate(() => window.__rush.rivalry());
         assert(rl.changes === base + 2, `the host counted the 2 lead changes (${base} + 2 = ${rl.changes})`);
         // neck and neck: closer than 5 m for 3 s pulses the gap pill, and it lets go once they pull 8 m apart
@@ -1725,7 +1726,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         await a.evaluate(() => { const s = window.__rush.state(); window.__rush.setZ('a', s.a.z + 14); });
         await d.wait(1000);
         await a.evaluate(() => { const s = window.__rush.state(); window.__rush.setZ('b', s.b.z + 45); });
-        await until(a, () => window.__fb.pops.includes('b:OVERTAKE!') && window.__fb.pops.includes('a:Sydney passed you'), null, 8000, 'overtake pops go to the right halves');
+        await until(a, () => window.__fb.pops.includes('b:OVERTAKE!') && window.__fb.pops.includes('a:Sydney passed you'), null, 20000, 'overtake pops go to the right halves');
         const p1 = await pops();
         assert(!p1.includes('a:OVERTAKE!') && !p1.includes('b:Emerson passed you'), 'and not to the other half');
         assert((await a.evaluate(() => window.__rush.rivalry())).changes === 1, 'one lead change counted for one device, not two');

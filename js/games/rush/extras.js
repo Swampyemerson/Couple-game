@@ -81,9 +81,6 @@ export function cleanNote(s) {
 }
 
 const ENV = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="5" width="19" height="14" rx="2.5" fill="var(--g-card)" stroke="currentColor" stroke-width="2"/><path d="M3.2 7.2 12 13.6l8.8-6.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>';
-const GOLD = [1, 0.74, 0.18];
-const PINK = [1, 0.36, 0.55];
-const R2 = () => Math.random() * 2 - 1;
 
 /**
  * C: { live, split, meW, locals, M, players, root, data(), setData(p), name(w), other(w), audio, world(), palette(),
@@ -344,12 +341,8 @@ export function createExtras(C) {
       if (v && found[w]) lines.push(`${C.split ? C.name(w) : 'You'} found ${found[w].from}’s note`);
       return lines;
     },
-    /** A trail look the fx module has no kind for: gold dust (5) and love hearts (6) from its burst particles. */
-    trail(fx, kind, x, y, z, k) {
-      if (kind === 5) { if (k % 2) return true; fx.burst(x + R2() * 0.25, y + 0.5 + Math.random() * 0.9, z - 0.5, GOLD, 1, 1.4); return true; }
-      if (kind === 6) { if (k % 5) return true; fx.burst(x + R2() * 0.3, y + 0.9 + Math.random() * 0.7, z - 0.4, PINK, 2, 1.8); return true; }
-      return false;
-    },
+    /** (Gold dust and Love hearts are fx.trailFx kinds 5 and 6 now: nothing to fake. game.js may drop its X.trail call.) */
+    trail() { return false; },
     debug() { return { mod, mirror, night, uses: { ...uses }, leads: lead.n, found: { a: found.a, b: found.b }, beatAt: { ...beatAt }, coinsMesh: !!coinsMesh }; },
   };
 

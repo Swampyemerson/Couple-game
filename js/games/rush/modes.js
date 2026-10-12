@@ -42,7 +42,7 @@ export function wallAt(track, lane, z, y) {
   return false;
 }
 
-function clearSpot(track, lane, z) {
+export function clearSpot(track, lane, z) {
   const ci = Math.floor(z / CHUNK);
   for (let c = ci - 1; c <= ci + 1; c++) {
     if (c < 0) continue;

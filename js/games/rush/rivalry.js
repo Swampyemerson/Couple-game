@@ -78,7 +78,7 @@ export function createRivalry(X) {
       s.dci = -1; s.zone = -1; s.rushAt = -1; s.hundAt = -1;
       s.clz = -1; s.clDone = false; s.clutches = 0; s.free = 0; s.q.length = 0;
       const p = players[w];
-      if (p) { p.stats.clutch = 0; p.stats.crossed = 0; p.stats.leadChanges = 0; }
+      if (p) { p.stats.clutch = 0; p.stats.crossed = 0; p.stats.beatBest = 0; p.stats.leadChanges = 0; }
     }
   }
 
@@ -149,10 +149,11 @@ export function createRivalry(X) {
     const step = pz - s.pz; const qstep = qz - s.qz;
     if (!s.fMine && s.pz >= 0 && s.pz < s.mine && pz >= s.mine && step < 60) {
       s.fMine = true; p.stats.crossed++;
+      if (s.theirs > 60 && Math.abs(s.mine - s.theirs) <= 3) p.stats.beatBest++; // (one stripe for both)
       say(w, s, 'NEW BEST!', 'hl', `past ${X.fmtM(s.mine)} m`, 'sting');
     }
     if (!s.fTheirs && s.pz >= 0 && s.pz < s.theirs && pz >= s.theirs && step < 60) {
-      s.fTheirs = true; p.stats.crossed++;
+      s.fTheirs = true; p.stats.crossed++; p.stats.beatBest++;
       say(w, s, `You beat ${q.name}’s best`, 'good', `${X.fmtM(s.theirs)} m`, 'sting');
       X.haptic(15);
     }
