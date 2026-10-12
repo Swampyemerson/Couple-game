@@ -30,9 +30,16 @@ const canStillLine = (big, w) => LINES.some((L) => L.every((k) => big[k] === nul
 /** Boards won per player. Hot boards (Hot Boards mode) count double. Legacy states: one each. */
 function boardsWon(s) {
   const out = { a: 0, b: 0 };
-  s.big.forEach((x, b) => { if (x === 'a' || x === 'b') out[x] += s.mode === 'hot' && s.hot && s.hot.includes(b) ? 2 : 1; });
+  s.big.forEach((x, b) => { if (x === 'a' || x === 'b') out[x] += s.mode === 'hot' ? HOT.weight(s, b) : 1; });
   return out;
 }
+// ── HOT BOARDS (v2 mode `hot`; the only two places to tune it) ──────────
+const HOT = {
+  /** Which small boards are hot, from the match seed: an array of board indexes, stored in s.hot. */
+  pick: (seed) => shuffled([0, 1, 2, 3, 4, 5, 6, 7, 8], `${seed}|hot`).slice(0, 2).sort((x, y) => x - y),
+  /** What winning small board `b` counts as in the boards-won count (score, count ending, tie-break). */
+  weight: (s, b) => (s.hot && s.hot.includes(b) ? 2 : 1),
+};
 const marksOf = (s) => { let n = 0; for (const c of s.cells) if (c) n++; return n; };
 
 // ── modes ──────────────────────────────────────────────────────────────
@@ -84,7 +91,7 @@ function applySetup(s, who, move) {
   s.first = who;
   s.lw = 0;
   s.down = { a: 0, b: 0 };
-  if (move.mode === 'hot') s.hot = shuffled([0, 1, 2, 3, 4, 5, 6, 7, 8], `${s.seed}|hot`).slice(0, 2).sort((x, y) => x - y);
+  if (move.mode === 'hot') s.hot = HOT.pick(s.seed);
   if (move.mode === 'wild') s.wild = { a: 1, b: 1 };
   return s;
 }

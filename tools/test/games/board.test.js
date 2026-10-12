@@ -764,7 +764,7 @@ async function rulesTests() {
           lists[st.turn].push(m); st = step(st, m); n++;
         }
       }
-      ok(!!ULT_LL && /^Only the .+ can still win it$/.test(ULT_LL.text), `last light: found a real game that gets down to ${ULT_LL ? '"' + ULT_LL.text + '"' : 'nothing'}`);
+      ok(!!ULT_LL && /^Only the .+ can still win it( · .+)?$/.test(ULT_LL.text), `last light: found a real game that gets down to ${ULT_LL ? '"' + ULT_LL.text + '"' : 'nothing'}`);
     }
 
     // 7. records, rivalry, moments
@@ -1801,7 +1801,7 @@ async function uiTests(scheme, port) {
       await h.wait(250);
       const e = await h.engine(h.a, id);
       const txt = await h.a.textContent('.gu-light');
-      ok(!(await h.a.$eval('.gu-light', (x) => x.hidden)) && /^Only the .+ can still win it$/.test(txt), `ultimate: the plate area says "${txt}"`);
+      ok(!(await h.a.$eval('.gu-light', (x) => x.hidden)) && /^Only the .+ can still win it( · .+)?$/.test(txt), `ultimate: the plate area says "${txt}"`);
       ok(await h.a.$$eval('.gu-lv', (xs) => xs.length) >= 1 && await h.a.$$eval('.gu-lv', (xs) => xs.length) <= 2, 'ultimate: the live big lines are drawn faintly on the board');
       await shot(h.a, 'ultimate-light-390-lastlight');
       await h.closeGame(h.a);

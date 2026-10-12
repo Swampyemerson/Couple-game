@@ -11,7 +11,6 @@ boards won wins (equal is a draw).
 |---|---|
 | `{ b, i }` | place a mark in small board `b`, square `i` (both 0-8, row-major) |
 | `{ setup: 2, mode }` | v2 only. The very first move of a match. First mover only, before any mark, once. Sets `s.v = 2` and `s.mode`; **does not pass the turn**. Unknown mode throws `Unknown mode` |
-| `{ steal: 1 }` | v2 only. The second player's very first action, right after the opener's first mark (see Balance) |
 | `{ b, i, wild: 1 }` | Wildcards mode only: play in any open board, ignoring the send. Once per player per game |
 
 Legacy matches (saved before v2) have no setup move, so `s.v` is undefined and the original rules run
@@ -23,15 +22,14 @@ The UI sends the setup move right before the first real move (two `api.move` cal
 the board without touching the mode picker plays the remembered mode (`api.data().mode`, default
 `classic`), so there is no extra step.
 
-State additions (v2 only): `v`, `mode`, `first` (the opener), `stl` (1 once the opening mark was
-taken), `lw` (1 when the last move was a wildcard), `down` (`{a, b}`: the most boards each player was
+State additions (v2 only): `v`, `mode`, `first` (the first mover, recorded at setup; the komi reads it), `lw` (1 when the last move was a wildcard), `down` (`{a, b}`: the most boards each player was
 ever behind, for the comeback moment), `hot` (Hot Boards), `wild` (`{a, b}` wildcards left).
 
 ## Modes
 
-- **classic**: the balanced v2 rules (the steal, below).
+- **classic**: the balanced v2 rules (komi, below).
 - **hot** (Hot Boards): two boards, picked from the match seed (`shuffled([0..8], seed|hot)`), are hot.
-  They wear a Riso star. A hot board counts 2 in the boards-won count (score chips, the count ending,
+  They wear a Riso star. A hot board counts 2 in the boards-won count (the `HOT` object in the file is the one place to change which boards are hot and what they weigh) (score chips, the count ending,
   the result text); line rules are unchanged. Winning a hot board plays a small stamp.
 - **wild** (Wildcards): each player holds one wildcard. In the UI, tap your token to arm it, then
   tap a square in any open board. Refused (friendly message, nothing spent) when you already have a
@@ -40,20 +38,43 @@ ever behind, for the comeback moment), `hot` (Hot Boards), `wild` (`{a, b}` wild
 
 ## Balance (the BALANCE section in the file)
 
-Bot self-play showed the first mover winning clearly more often than the second. v2 games use the pie
-rule: after the opener's first mark the second player may play `{ steal: 1 }` instead of a mark of
-their own. The mark changes owner, the opener moves next, and the send rule is untouched: the force
-stays as set by the stolen mark's cell. Legal only for the second player, only as their very first
-action, once. The UI shows a "Take that mark" button (at least 44 px) on that turn. All code for this
-is isolated in the `BALANCE` section (`stealWhy`, `canSteal`, `applySteal`); `BALANCE.steal = false`
-switches it off.
+Bot self-play (equal-strength bots on both sides, MCTS with the given rollout budget) showed the
+first mover winning clearly more often than the second:
+
+| Variant | Bot | P1 | P2 | Draw |
+|---|---|---|---|---|
+| baseline | MCTS 500 | 49.6 % | 42.9 % | 7.5 % |
+| baseline | MCTS 20000 | 48.3 % | 33.3 % | 18.5 % |
+| **komi** | MCTS 500 | 49.2 % | 50.8 % | 0 |
+| **komi** | MCTS 20000 | 50.0 % | 50.0 % | 0 |
+| pie (steal) | MCTS 2500 | 44.7 % | 44.7 % | 10.7 % |
+| pie (steal) | MCTS 20000 | 38 % | 43 % | 19 % |
+
+The stronger the players, the more draws and the bigger P1's edge, and the first mover's edge is
+mostly "ties and near-ties on the count go their way". Komi removes exactly that: v2 games have no
+draws, and a count ending tied on boards (hot boards weighed double in Hot Boards) is won by the
+player who did **not** move first. It is exactly even at the stronger budget and within noise at
+the weaker one, costs no extra UI step, needs no new move (so no new encoding to replay), and is
+easy to explain: "Tied on boards at the end? The player who went second wins." The pie rule
+(`{ steal: 1 }`) was tried first and dropped: it overshoots at higher strength (P2 ahead) and keeps
+the draws. It never shipped, so no saved log contains it and `{ steal: 1 }` is rejected like any
+bad move.
+
+Rules: the first mover is stored at setup (`s.first`). Only a *count* ending is affected (a big
+line still wins outright, and a lead on boards still wins); the end is stored as
+`{ why: 'count', who: <second mover>, a, b, tie: 1 }` and the result sub is "Boards tied 4–4 — ties
+go to the player who went second." Legacy matches (no setup move) keep the old count rules, draws
+included. It is visible before it matters: a "Ties → <second mover>" chip (name in their ink) sits
+above the plate from the empty board on, Last Light adds "Tied on boards so far: ties go to
+<name>" while boards are level, and the finale says who the tie went to. Flip `BALANCE.komi` to
+switch it off.
 
 ## Last Light (view only)
 
 Derived from the big board, no state: when one or two big lines can still be completed by anyone,
 the plate area names them ("Only the left column can still win it") and the lines are drawn as a
 faint dotted rail; boards on no live line get a slightly dimmer paper. When the game ends on a
-count, the finale says "No big line left — boards decide".
+count, the finale says "No big line left — boards decide" (or, on a tie, who the tie went to).
 
 ## Records, rivalry and moments
 
@@ -71,7 +92,7 @@ already-finished match reads the stored code, or shows nothing). Draws leave the
 
 Moment situations, in priority order: draw, record (fastest win ever), streakBreak, streakExt,
 comeback (won after being 2+ boards behind), wild (the winning move was the wildcard), hot (won with a
-hot board), stolen (the stealer won), rout, photo (count win by one board), firstMode, then generic
+hot board), komi (won on the tie-break), rout, photo (count win by one board), firstMode, then generic
 line/count. 65 lines in the pool. The strip on the empty board (both phones) picks from first game,
 streak, first game in this mode, running score and level lines, chosen with `randInt(n, matchId,
 'strip')`.
@@ -89,4 +110,4 @@ streak, first game in this mode, running score and level lines, chosen with `ran
   (`fit()`), and the empty status line is reclaimed while playing. `.gm` stays a column in
   `games.css`, so the board is limited to roughly 225 to 280 px tall on the smallest phones.
 - Test hook: `def.kit` exposes the pure helpers (`tally`, `momentKeys`, `momentText`, `stripText`,
-  `liveLines`, `lastLight`, `canSteal`).
+  `liveLines`, `lastLight`, `tieNote`, `secondMover`).

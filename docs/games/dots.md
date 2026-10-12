@@ -79,7 +79,7 @@ first line a `Quick`/`Big`/... chip labels the mode (hidden for Classic).
   (it comes back with the result and the Rematch button after the end card is dismissed).
 - **Layout**: the board is sized in JS to what the stage leaves. Landscape (stage wider than 1.2x its
   height) puts the board left and picker/strip/plate right, no scrolling (844x390, 667x375 tested).
-  Portrait stacks board over plate. The stage scrolls only on very small screens.
+  Portrait stacks board over plate. After "see the board" the plate steps aside (the stage's status line carries the result and Rematch), and the board is re-fitted; its minimum is 140 px in landscape so the end view never scrolls. The stage scrolls only on very small screens.
 - **Keyboard**: the grid is one tab stop (roving `tabindex`). Left/Right move along a row of lines,
   Up/Down move to the next row (horizontal rows and vertical rows alternate) keeping the column,
   skipping lines already drawn. Enter or Space picks the focused line, again draws it; Escape lets go.
@@ -108,7 +108,7 @@ the transition from not-over to over writes `last_id: matchId` along with the to
 The **rivalry strip** shows above the picker on an empty board ("Sydney is on a 3-game streak · break
 it?", "First game of Dots & Boxes. Be gentle.", a series line...). The **moment line** shows under the
 plate when a match ends, picked deterministically from `state.seed` (so both phones agree) in this
-order: draw, sacrifice by the winner, new chain record, comeback (winner trailed by at least 20 % of
+order: draw, sacrifice by the winner, new chain record (only when an earlier chain exists to beat; the first game says "first chain on the books"), comeback (winner trailed by at least 20 % of
 the points), streak broken, streak extended (3+), first win in a mode, rout, photo finish, big chain,
 plain win. 40+ lines in `MOMENTS`/`STRIP`, none shaming. Situations that need the records are only used
 when the match was counted (otherwise only what the match itself shows).
