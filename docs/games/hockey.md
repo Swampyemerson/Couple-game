@@ -12,9 +12,13 @@ rivalry line). Tests: the hockey parts of `tools/test/games/live.test.js` (`GAME
   (table sideways) or, live, the mouse. Enter starts the picked table.
 - **Power curve.** A *still* mallet bounces the puck back at full restitution. A *moving* mallet's
   push is scaled down with its speed (`transferScale`: full at 0, half from 60 u/s up), so the puck
-  leaves at about 0.9 x mallet speed: a slow push is a soft pass, a 165 u/s swipe a firm one, and the
-  300 u/s cap needs a flick of about 330 u/s (about 2x the old saturating speed, which was 167).
-  `MALLET_MAX` is 440 so a flick can get there; the keyboard top speed is 235.
+  leaves at about the mallet's own speed: a slow push is a soft pass (a 100 u/s finger, about 350 px/s
+  on a phone, gives ~105 u/s), a firm swipe (~500 px/s) ~150-200, and the 300 u/s cap needs a flick of
+  about 330 u/s (about 1100 px/s; 2x the old saturating speed of 167). `MALLET_MAX` is 440 so a flick
+  can get there; the keyboard top speed is 235.
+  The mallet's speed is `distance / real frame time` (`rdt` in `simulate`/`guestUpdate`), not
+  `distance / (substeps * DT)`: the substep count wobbles 1-2-3 between frames, which used to double a
+  push now and then (a 100 u/s swipe randomly became a 200 u/s shot).
 - **Shot clock (stall breaker).** A puck that stays on one half (or crawls below 25 u/s) for 6 s gets a
   3-2-1 ring from 3 s. At 0: "HOG!" stamp, the puck goes back to the centre and is served to the
   *other* player. A puck squeezed between both mallets for 0.5 s ("RESET") is served from the centre
@@ -50,6 +54,10 @@ per puck, `m` host mallet, `s` score, `g` goal count, `h` hit counters, `ry`/`lh
 record, 5 fastest goal, 6 slow-mo, 7 table intro, 8 comeback). The table choice and events ride in the
 same stream, so a dropped message heals itself. The guest mirrors `tb`/`keep` so a host that reloads
 mid-match re-adopts the table and score.
+- **The guest's mallet on the host.** The host extrapolates the newest sample up to 100 ms and blends a
+  new sample's offset away over ~70 ms (`REMOTE_LEAD`, `REMOTE_BLEND`), so the mallet moves at the
+  guest's finger speed. Without it the host saw 0 ... 300 u/s spikes between samples and a soft guest
+  pass became a slap (test: `hockeyGuestMallet`).
 - **Guest puck correction (B2).** The guest draws each puck ahead of the host state by age + lead. A new
   state re-bases the displayed puck so nothing jumps (offset = shown - new trajectory); the offset
   then decays (about 60 ms time constant) at no more than 700 u/s. Only a reset (new puck epoch, a

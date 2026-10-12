@@ -1174,7 +1174,8 @@ registerGame({
         if (age > st.dur) { stamps.splice(i, 1); continue; }
         const pop = reduced ? 1 : 1 + 0.4 * Math.max(0, 1 - age / 150);
         c.globalAlpha = age > st.dur - 250 ? (st.dur - age) / 250 : 1;
-        const copies = st.both && local && view === 'up' ? [[0, st.x, st.y], [Math.PI, W - st.x, H - st.y]] : [[st.rot, st.x, st.y]];
+        const dd = st.size * 1.05; // two readers face each other: each gets the stamp on their side of the middle, not on top of each other
+        const copies = st.both && local && view === 'up' ? [[0, st.x, st.y + dd], [Math.PI, W - st.x, H - st.y - dd]] : [[st.rot, st.x, st.y]];
         for (const [rot, x, y] of copies) {
           const [sx, sy] = toPx(x, y); const sz = st.size * s * pop;
           sticker(c, st.text, sx, sy, sz, colOf(st.col), rot - 0.07, 62 * s);
@@ -1204,7 +1205,7 @@ registerGame({
         } else {
           for (const w of local ? ['a', 'b'] : [me]) {
             if (ctl[w].used) continue;
-            const [x, y] = toPx(W / 2, sideways() ? (w === 'a' ? H - 72 : 72) : w === 'a' ? H - 42 : 42);
+            const [x, y] = toPx(W / 2, sideways() ? (w === 'a' ? H - 46 : 46) : w === 'a' ? H - 42 : 42);
             c.globalAlpha = hintA * (reduced ? 1 : 0.65 + 0.35 * Math.sin(now / 420));
             text(c, coarse ? 'Drag your mallet' : 'Move your mouse', x, y, Math.max(13, 4.4 * s), T.ink, readRot(w), T.card, 800, T.fontBody);
             c.globalAlpha = 1;

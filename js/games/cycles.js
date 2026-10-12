@@ -86,7 +86,9 @@ registerGame({
       return w >= 700 && w >= h * 1.05 ? 's' : 'p';
     };
     let pref = prefNow();
-    const pickLayout = (x, y) => (x === 'p' || y === 'p' ? 'p' : x === 'l' || y === 'l' ? 'l' : 's');
+    // two screens, one grid: a phone on its side wins over a portrait one (the portrait phone then draws the wide grid turned a
+    // quarter, see `qr`), so the smaller screen never gets a tiny board; a computer with a portrait phone plays portrait
+    const pickLayout = (x, y) => (x === y ? x : x === 'l' || y === 'l' ? 'l' : 'p');
     const offs = [];
     const timers = new Set();
     let alive = true;
@@ -166,6 +168,9 @@ registerGame({
     let cssW = 0;
     let cssH = 0;
     let cell = 8;
+    let gW = 0; // the grid's own size in px (cssW/cssH are the screen's: swapped when the board is turned a quarter)
+    let gH = 0;
+    let qr = 0; // how far this screen draws the agreed grid turned: 0 upright, 1 a quarter clockwise, 3 a quarter back
     let dpr = 1;
     let C = {};
     let msgKey = '';
@@ -241,6 +246,14 @@ registerGame({
     function legendHTML(p, tag) {
       return `<div class="cy-legend p-${p}"><span class="cy-legend-name">${esc(api.name(p))}</span>${p === 'a' ? capsWASD() : capsArrows()}${tag ? `<span class="cy-legend-tag">${tag}</span>` : ''}</div>`;
     }
+    // Mixed screens: the grid is agreed once, but each screen may draw it turned a quarter so it fills that screen (a phone on
+    // its side showing the portrait grid, an upright phone showing the wide one). One device, one screen: never turned.
+    function qrFor() {
+      if (local || !layout || layout === 's' || pref === 's') return 0;
+      if (layout === 'l' && pref === 'p') return 3; // the wide grid turned anticlockwise: you still start at the bottom
+      if (layout === 'p' && pref === 'l') return 1; // the tall grid turned clockwise: you start on the left
+      return 0;
+    }
     function teardownBoard() {
       if (ro) { ro.disconnect(); ro = null; }
       canvas = ctx = board = msgEl = rpEl = null;
@@ -249,11 +262,13 @@ registerGame({
     function build() {
       teardownBoard();
       pickShown = false;
-      const wide = layout !== 'p';
+      qr = qrFor();
+      const vl = qr === 3 ? 'p' : qr === 1 ? 'l' : layout; // the layout of this screen: where the pads sit, how big the banners are
+      const wide = vl !== 'p';
       const boardHTML = '<div class="cy-board"><canvas aria-label="Light Cycles grid" role="img"></canvas><div class="cy-rp"><span class="cy-rp-tag">REPLAY</span><span class="cy-rp-skip">tap to skip</span><span class="cy-rp-cap"></span></div><div class="cy-msg" aria-live="polite"></div></div>';
       const info = '<div class="cy-info"><span class="cy-pips p-a"></span><span class="cy-round"></span><span class="cy-pips p-b"></span></div>';
       let html;
-      root.dataset.ui = local ? `local-${touch ? 'touch' : 'keys'}-${layout}` : touch ? 'live-touch' : 'live-keys';
+      root.dataset.ui = local ? `local-${touch ? 'touch' : 'keys'}-${vl}` : touch ? 'live-touch' : 'live-keys';
       if (local && touch && !wide) {
         html = `${padHTML('b', { rot: true, row: true })}<div class="cy-row">${boardHTML}</div>${info}${padHTML('a', { row: true })}`;
       } else if (local && touch) {
@@ -271,7 +286,7 @@ registerGame({
         html = `<div class="cy-row"><div class="cy-legend p-${me}"><span class="cy-legend-name">${esc(api.name(me))}</span>${capsWASD()}<span class="cy-or">or</span>${capsArrows()}<span class="cy-legend-tag">${mine}</span></div>${boardHTML}<div class="cy-legend is-them p-${them}"><span class="cy-legend-name">${esc(api.name(them))}</span><i class="cy-bike" aria-hidden="true"></i><span class="cy-legend-tag">${theirs}</span></div></div>${info}`;
       }
       root.innerHTML = html;
-      root.dataset.layout = layout;
+      root.dataset.layout = vl;
       canvas = root.querySelector('canvas');
       ctx = canvas.getContext('2d');
       board = root.querySelector('.cy-board');
@@ -291,10 +306,14 @@ registerGame({
       const gap = parseFloat(getComputedStyle(row).columnGap) || 0;
       const bw = row.clientWidth - sides.reduce((n, x) => n + x.offsetWidth + gap, 0) - 14;
       const bh = row.clientHeight - 12;
-      const c = Math.max(3, Math.floor(Math.min(bw / g.W, bh / g.H) * 4) / 4);
+      const sw = qr & 1 ? g.H : g.W; // the board as this screen sees it, in cells
+      const sh = qr & 1 ? g.W : g.H;
+      const c = Math.max(3, Math.floor(Math.min(bw / sw, bh / sh) * 4) / 4);
       cell = c;
-      cssW = Math.round(c * g.W);
-      cssH = Math.round(c * g.H);
+      gW = Math.round(c * g.W);
+      gH = Math.round(c * g.H);
+      cssW = qr & 1 ? gH : gW;
+      cssH = qr & 1 ? gW : gH;
       dpr = Math.min(3, window.devicePixelRatio || 1);
       canvas.style.width = cssW + 'px';
       canvas.style.height = cssH + 'px';
@@ -302,6 +321,8 @@ registerGame({
       canvas.height = Math.round(cssH * dpr);
       board.classList.add('is-fit');
       board.style.width = cssW + 14 + 'px';
+      // the countdown and GO stamps scale with a small board
+      root.style.setProperty('--cy-s', clamp(Math.round(Math.min(cssW, cssH) * 0.34), 52, 92) + 'px');
       bgKey = '';
     }
     const modeLabel = () => `${ARENA_NAME[cfg && cfg.ar ? cfg.ar : matchAr] || ''}${md.bo ? ' + boosts' : ''}`;
@@ -433,7 +454,7 @@ registerGame({
       publishGuest();
     }
     // screen direction -> world direction for a player (rot: that player's pad is upside down)
-    const world = (d, rot) => (d + (rot ? 2 : 0) + (flip ? 2 : 0)) & 3;
+    const world = (d, rot) => (d + 4 - qr + (rot ? 2 : 0) + (flip ? 2 : 0)) & 3;
     function flash(sel) {
       const k = root.querySelector(sel);
       if (!k) return;
@@ -459,6 +480,7 @@ registerGame({
     offs.push(() => window.removeEventListener('keydown', onKey));
 
     let swipe = null;
+    let rootWired = false;
     function wireInputs() {
       const press = (b) => {
         const p = b.dataset.p;
@@ -466,11 +488,14 @@ registerGame({
         input(local ? p : me, d);
         api.haptic(8);
       };
-      root.addEventListener('pointerdown', (e) => {
-        const b = e.target.closest('.cy-key');
-        if (b) { e.preventDefault(); press(b); }
-      });
-      root.addEventListener('click', (e) => { const b = e.target.closest('.cy-key'); if (b && e.detail === 0) press(b); });
+      if (!rootWired) { // the root outlives every rebuild of the board: wire it once
+        rootWired = true;
+        root.addEventListener('pointerdown', (e) => {
+          const b = e.target.closest('.cy-key');
+          if (b) { e.preventDefault(); press(b); }
+        });
+        root.addEventListener('click', (e) => { const b = e.target.closest('.cy-key'); if (b && e.detail === 0) press(b); });
+      }
       board.addEventListener('pointerdown', (e) => {
         if (endStage(perf()) === 'hit' || endStage(perf()) === 'replay') { skipReplay(); return; }
         const r = canvas.getBoundingClientRect();
@@ -511,6 +536,7 @@ registerGame({
       try { api.setData({ cycles_last: md.ar, cycles_boosts: !!md.bo }); } catch { /* ignore */ }
       if (ar === 'surprise') ar = ARENAS[Math.floor(Math.random() * ARENAS.length)];
       matchAr = ar;
+      base = { ...(api.data() || {}) };
       rotOrder = ARENAS.slice().sort(() => Math.random() - 0.5);
       startRound(now);
     }
@@ -559,13 +585,16 @@ registerGame({
       if (sim.done) roundOver(now);
       publish();
     }
+    // A record is only "new" if it beat one that stood before this match began: what the match itself set a round ago doesn't count.
+    let base = null;
     function bump(patch, key, val, who, tag, label) {
       const d = api.data() || {};
+      if (!base) base = { ...d };
       const prev = +d[key] || 0;
       if (val > prev) {
         patch[key] = val;
         if (who != null) patch[key.replace(/_n$/, '_who')] = who;
-        if (prev > 0) { rc.push(tag); matchRecs.push(label); }
+        if ((+base[key] || 0) > 0) { rc.push(tag); matchRecs.push(label); }
       }
     }
     const matchRecs = [];
@@ -808,6 +837,33 @@ registerGame({
       const n = Math.min(ext, aheadFree(base.x, base.y, d, c.boost > 0 ? 2 : 1));
       return { i: base.i, x: base.x + DX[d] * n, y: base.y + DY[d] * n, d };
     }
+    /** Guest: its own head, turned at once on a pending turn, stepping on with the display clock. */
+    function ownRaw(running) {
+      const c = sim[me];
+      const d = pending.length && okTurn(c.d, pending[pending.length - 1].d) ? pending[pending.length - 1].d : c.d;
+      const ext = running ? clamp(tdisp - sim.t, 0, 1) * (c.boost > 0 ? 2 : 1) : 0;
+      return extended(me, d, ext);
+    }
+    /** Guest: when the host's log lands, the predicted head (turned early) and the confirmed one (a cell or two on) differ.
+     *  Rather than pop, the drawn head carries the difference as an offset that fades out in about 80 ms; the trail and the
+     *  log stay exactly the host's. */
+    const ob = { x: 0, y: 0, last: null, r: 0 };
+    function stepBlend(dt) {
+      const live = sim && sim[me].alive && !sim.done && phase === 'run' && !paused && cfg;
+      if (!live) { ob.x = 0; ob.y = 0; ob.last = null; return; }
+      const v = ownRaw(true);
+      if (ob.last && ob.r === round) {
+        const jx = v.x - ob.last[0];
+        const jy = v.y - ob.last[1];
+        const m = Math.hypot(jx, jy);
+        const move = (dt / tickMs(cfg, sim.t)) * (sim[me].boost > 0 ? 2 : 1); // what steady riding covers in this frame
+        if (m > move + 0.3 && m < 3.2) { const k = 1 - move / m; ob.x -= jx * k; ob.y -= jy * k; } else if (m >= 3.2) { ob.x = 0; ob.y = 0; }
+      } else { ob.x = 0; ob.y = 0; }
+      ob.last = [v.x, v.y]; ob.r = round;
+      const f = Math.exp(-dt / 38);
+      ob.x *= f; ob.y *= f;
+      if (Math.abs(ob.x) < 0.01 && Math.abs(ob.y) < 0.01) { ob.x = 0; ob.y = 0; }
+    }
     function viewOf(p) {
       const c = sim[p];
       if (!c.alive || sim.done) return pathAt(sim, p, sim.t);
@@ -819,9 +875,8 @@ registerGame({
         return extended(p, d, ext);
       }
       if (p === me) {
-        const d = pending.length && okTurn(c.d, pending[pending.length - 1].d) ? pending[pending.length - 1].d : c.d;
-        const ext = running ? clamp(tdisp - sim.t, 0, 1) * (c.boost > 0 ? 2 : 1) : 0;
-        return extended(p, d, ext);
+        const v = ownRaw(running);
+        return running && (ob.x || ob.y) ? { ...v, x: v.x + ob.x, y: v.y + ob.y } : v;
       }
       return running ? pathAt(sim, p, clamp(tdisp - OPP_LAG, 0, sim.t)) : pathAt(sim, p, sim.t);
     }
@@ -852,6 +907,11 @@ registerGame({
       }
       ctx.closePath();
     }
+    // the hard shadow falls down-right on screen, whichever way the board is turned
+    function shadowSign() {
+      const t = (qr + (flip ? 2 : 0)) & 3;
+      return [[1, 1], [1, -1], [-1, -1], [-1, 1]][t];
+    }
     function drawBgVector(g2, c, W, H, S) {
       // graph-paper grid, a heavier line every 8 cells from the centre
       g2.lineWidth = 1;
@@ -880,10 +940,11 @@ registerGame({
       g2.globalAlpha = 1;
       // arena blocks: printed ink squares with a paper rule inside, and the same hard shadow as the trails
       const occ = S.occ;
-      const sh = Math.max(1, c * 0.2) * (flip ? -1 : 1);
+      const [ssx, ssy] = shadowSign();
+      const sh = Math.max(1, c * 0.2);
       g2.fillStyle = C.edge;
       g2.globalAlpha = C.dark ? 0.9 : 0.28;
-      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (occ[y * W + x] === 3) g2.fillRect(x * c + sh, y * c + sh, c, c);
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (occ[y * W + x] === 3) g2.fillRect(x * c + sh * ssx, y * c + sh * ssy, c, c);
       g2.globalAlpha = 1;
       g2.fillStyle = C.ink;
       for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (occ[y * W + x] === 3) g2.fillRect(x * c, y * c, c + 0.5, c + 0.5);
@@ -904,7 +965,8 @@ registerGame({
       ctx.lineWidth = Math.max(1.2, c * 0.14);
       ctx.strokeStyle = C.ink;
       ctx.fillStyle = C.edge; ctx.globalAlpha = C.dark ? 0.9 : 0.28;
-      ctx.beginPath(); ctx.arc(x + c * 0.15, y + c * 0.15, R, 0, 7); ctx.fill();
+      const [tsx, tsy] = shadowSign();
+      ctx.beginPath(); ctx.arc(x + c * 0.15 * tsx, y + c * 0.15 * tsy, R, 0, 7); ctx.fill();
       ctx.globalAlpha = 1;
       ctx.fillStyle = C.hl;
       ctx.beginPath(); ctx.arc(x, y, R, 0, 7); ctx.fill(); ctx.stroke();
@@ -1045,8 +1107,10 @@ registerGame({
       const zx = (fxy[0] + 0.5) * c;
       const zy = (fxy[1] + 0.5) * c;
       if (zoom !== 1) {
-        const sx = flip ? cssW - zx : zx;
-        const sy = flip ? cssH - zy : zy;
+        let sx = zx;
+        let sy = zy;
+        if (qr === 1) { sx = gH - zy; sy = zx; } else if (qr === 3) { sx = zy; sy = gW - zx; }
+        if (flip) { sx = cssW - sx; sy = cssH - sy; }
         const hw = cssW / (2 * zoom);
         const hh = cssH / (2 * zoom);
         ctx.translate(cssW / 2, cssH / 2);
@@ -1054,18 +1118,19 @@ registerGame({
         ctx.translate(-clamp(sx, hw, cssW - hw), -clamp(sy, hh, cssH - hh));
       }
       if (flip) { ctx.translate(cssW, cssH); ctx.rotate(Math.PI); }
+      if (qr === 1) { ctx.translate(gH, 0); ctx.rotate(Math.PI / 2); } else if (qr === 3) { ctx.translate(0, gW); ctx.rotate(-Math.PI / 2); }
       // the board, cached unless zoomed (the cache is a raster)
-      const key = `${layout}|${cell}|${dpr}|${cfg.sd}|${cfg.ar}|${C.ink}|${C.line}|${C.card}|${C.muted}|${flip}`;
+      const key = `${layout}|${cell}|${dpr}|${cfg.sd}|${cfg.ar}|${C.ink}|${C.line}|${C.card}|${C.muted}|${flip}|${qr}`;
       if (zoom === 1) {
         if (!bgCan || bgKey !== key) {
           bgCan = bgCan || document.createElement('canvas');
-          bgCan.width = canvas.width; bgCan.height = canvas.height;
+          bgCan.width = Math.round(gW * dpr); bgCan.height = Math.round(gH * dpr);
           const b = bgCan.getContext('2d');
           b.setTransform(dpr, 0, 0, dpr, 0, 0);
           drawBgVector(b, c, g.W, g.H, sim);
           bgKey = key;
         }
-        ctx.drawImage(bgCan, 0, 0, cssW, cssH);
+        ctx.drawImage(bgCan, 0, 0, gW, gH);
       } else drawBgVector(ctx, c, g.W, g.H, sim);
       const tShow = T == null ? sim.t : T;
       // tokens still lying on the grid
@@ -1077,14 +1142,15 @@ registerGame({
       }
       const tw = Math.max(2.5, c * 0.6);
       const ow = Math.max(1.2, c * 0.15);
-      const sh = Math.max(1, c * 0.2) * (flip ? -1 : 1);
+      const [ssx, ssy] = shadowSign();
+      const sh = Math.max(1, c * 0.2);
       const views = {};
       for (const p of ['a', 'b']) views[p] = T == null ? viewOf(p) : pathAt(sim, p, T);
       ctx.lineJoin = 'miter';
       ctx.lineCap = 'square';
       // hard offset shadow, then an ink outline, then each rider's ink
       ctx.save();
-      ctx.translate(sh, sh);
+      ctx.translate(sh * ssx, sh * ssy);
       ctx.strokeStyle = C.edge;
       ctx.globalAlpha = C.dark ? 0.9 : 0.28;
       ctx.lineWidth = tw + ow * 2;
@@ -1150,7 +1216,7 @@ registerGame({
       if (key[0] === 'e' && sim && cell) {
         // keep the banner off the crash: it sits in the half of the board the crash isn't in
         const f = crashFocus();
-        const y = (f[1] + 0.5) / sim.H;
+        const y = qr === 0 ? (f[1] + 0.5) / sim.H : qr === 1 ? (f[0] + 0.5) / sim.W : 1 - (f[0] + 0.5) / sim.W;
         const want = (flip ? 1 - y : y) < 0.5 ? 0.76 : 0.24;
         // keep the whole banner inside the board, even on a short landscape board
         const bh = board.clientHeight;
@@ -1166,6 +1232,7 @@ registerGame({
       if (host) hostUpdate(now, dt);
       if (!host && sim && phase === 'run' && !paused && !sim.done) tdisp = Math.min(sim.t + 1, tdisp + dt / tickMs(cfg, Math.floor(tdisp)));
       else if (!host && sim) tdisp = sim.t;
+      if (!host) stepBlend(dt);
       syncMsg(now);
       if (canvas) draw(now);
     }
@@ -1193,6 +1260,7 @@ registerGame({
       if (np === pref) return;
       pref = np;
       if (phase === 'pick' && pickShown) showPicker();
+      else if (!local && canvas && qrFor() !== qr) build(); // the grid stays, this screen draws it the way that fills it
       if (!host) publishGuest();
     };
     const onResize = () => {
@@ -1232,7 +1300,7 @@ registerGame({
         rebuilt: host && sim && cfg ? summary(rebuild(cfg, entries, sim.t)) : null,
         log: host ? encs.join(',') : gEntries.filter(Boolean).map(enc).join(','),
         pending: pending.map((p) => p.d),
-        cell, cssW, cssH, stage: endStage(perf()), skipped, rc: rc.slice(), caption: sim && sim.done ? captionOf() : '',
+        cell, cssW, cssH, qr, stage: endStage(perf()), skipped, rc: rc.slice(), caption: sim && sim.done ? captionOf() : '',
         shaves: sim ? sim.a.sh + sim.b.sh : 0, tdisp, tms: cfg && sim ? tickMs(cfg, sim.t) : 0, picker: pickShown,
       }),
       go: (o) => go(o),

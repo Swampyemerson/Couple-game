@@ -365,6 +365,28 @@ async function hockeyPower(h) {
   assert(med > slow && med <= fast + 5, `a medium swipe lands in between (${Math.round(med)} u/s; timing-dependent, so no absolute bound)`);
   assert(fast > 245, `a real flick = slap shot (${Math.round(fast)} u/s)`);
   assert(fast > slow * 2.5, 'the shot range is wide: flick vs push is > 2.5x');
+  // Frame jitter must not double a push: the mallet's speed is the finger's speed whatever the touch / frame cadence
+  // (30 % of the frames bring no touch sample, like a 120 Hz screen over a 60 Hz digitiser).
+  const finger = 104; // u/s (about 350 px/s on a phone)
+  const worst = await a.evaluate(async (finger) => {
+    const cv = document.querySelector('.g-hockey canvas'); const T = window.__hockeyTest; const frame = () => new Promise((r) => requestAnimationFrame(r));
+    const send = (type, y) => { const [cx, cy] = T.toClient(50, y); cv.dispatchEvent(new PointerEvent(`pointer${type}`, { bubbles: true, cancelable: true, pointerId: 61, pointerType: 'touch', isPrimary: true, clientX: cx, clientY: cy, buttons: type === 'up' ? 0 : 1 })); };
+    let worst = 0;
+    for (let rep = 0; rep < 3; rep++) {
+      let y = 158; send('down', y); for (let i = 0; i < 30; i++) await frame();
+      T.place(50, 118, 0, 0); let last = performance.now();
+      while (y > 96) {
+        await frame(); const now = performance.now(); const dt = (now - last) / 1000; last = now;
+        if (Math.random() < 0.3) { y -= finger * dt * 0; } else { y -= finger * dt / 0.7; send('move', y); }
+        const p = T.state().puck; worst = Math.max(worst, Math.hypot(p.vx, p.vy));
+      }
+      send('up', y);
+      for (let i = 0; i < 20; i++) { await frame(); const p = T.state().puck; worst = Math.max(worst, Math.hypot(p.vx, p.vy)); }
+      T.place(50, 80, 0, 0);
+    }
+    return worst;
+  }, finger);
+  assert(worst < 175, `a ${finger} u/s push stays a soft pass under frame jitter (peak ${Math.round(worst)} u/s, was ~200)`);
   await h.closeGame(a);
 }
 
@@ -584,6 +606,30 @@ async function hockeyLag(h) {
   }
   assert(hostHits >= 4 && n > 200, `the host hit the puck ${hostHits} times; ${n} guest frames measured`);
   assert(worst < 25, `latency 120 + 20 % loss: the guest's puck never jumps more than 25 u in a frame (worst ${worst.toFixed(1)} u)`);
+  await h.closeGame(a); await h.closeGame(b);
+}
+
+/** The host's copy of the guest's mallet moves at the guest's finger speed: no catch-up spikes between presence samples
+ *  (a spike would turn a soft guest pass into a slap on the host, and the guest would see the puck suddenly speed up). */
+async function hockeyGuestMallet(h) {
+  const { a, b } = h;
+  await joinLive(h, 'hockey');
+  await hkStart(a, 'classic');
+  await hkPhase(a, 'play', 9000); await hkPhase(b, 'play', 9000);
+  await a.evaluate(() => window.__hockeyTest.place(92, 140, 0, 0));
+  const sampler = a.evaluate(() => new Promise((res) => { const out = []; const t0 = performance.now(); const f = () => { out.push([performance.now() - t0, window.__hockeyTest.state().mallets.b.y]); if (performance.now() - t0 < 1800) requestAnimationFrame(f); else res(out); }; f(); }));
+  const finger = 89; // u/s
+  await b.evaluate(async (finger) => {
+    const T = window.__hockeyTest; const cv = document.querySelector('.g-hockey canvas'); const frame = () => new Promise((r) => requestAnimationFrame(r));
+    const send = (type, y) => { const [cx, cy] = T.toClient(50, y); cv.dispatchEvent(new PointerEvent(`pointer${type}`, { bubbles: true, pointerId: 44, pointerType: 'touch', isPrimary: true, clientX: cx, clientY: cy, buttons: 1 })); };
+    send('down', 15); for (let i = 0; i < 40; i++) await frame();
+    let y = 15; while (y < 70) { await frame(); y += finger / 60; send('move', y); }
+    send('up', y);
+  }, finger);
+  const out = await sampler;
+  let peak = 0; let moved = 0;
+  for (let i = 1; i < out.length; i++) { const v = Math.abs(out[i][1] - out[i - 1][1]) / ((out[i][0] - out[i - 1][0]) / 1000); if (out[i][0] > 600 && out[i][0] < 1500) { peak = Math.max(peak, v); moved++; } }
+  assert(moved > 20 && peak < 2.6 * finger, `the host sees the guest's mallet at the finger's speed, with no catch-up spikes (peak ${Math.round(peak)} u/s for a ${finger} u/s finger)`);
   await h.closeGame(a); await h.closeGame(b);
 }
 
@@ -1188,6 +1234,7 @@ const want = (g) => GAME === 'all' || GAME === g;
   if (want('hockey')) {
     await run(PORT + 4, 'light', async (h) => {
       await hockeyLag(h);
+      await hockeyGuestMallet(h);
       await hockeyLiveTables(h, ['twin', 'shrink'], 'latency 120, 20 % loss');
     }, { coarse: true, latency: 120, dropRate: 0.2 });
   }

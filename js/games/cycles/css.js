@@ -14,8 +14,8 @@ export const CSS = `
 .g-cycles .cy-msg small { font: 800 0.74rem/1.25 var(--g-font-body); letter-spacing: 0.06em; color: var(--g-muted); white-space: normal; }
 .g-cycles .cy-msg b { font-family: var(--g-font-display); font-weight: 400; }
 .g-cycles .cy-msg .w-a b { color: var(--p-a-text, var(--p-a)); } .g-cycles .cy-msg .w-b b { color: var(--p-b-text, var(--p-b)); }
-.g-cycles .cy-msg .is-num { display: grid; place-items: center; width: 92px; height: 92px; padding: 0; border-radius: 50%; background: var(--g-hl); color: var(--g-on-ink); font: 400 2.9rem/1 var(--g-font-display); box-shadow: var(--g-shadow-lg, 6px 6px 0 var(--g-ink)); }
-.g-cycles .cy-msg .is-go { display: grid; width: auto; height: auto; padding: 14px 22px; border-radius: 16px; font-size: 2.4rem; transform: rotate(-4deg); }
+.g-cycles .cy-msg .is-num { display: grid; place-items: center; width: var(--cy-s, 92px); height: var(--cy-s, 92px); padding: 0; border-radius: 50%; background: var(--g-hl); color: var(--g-on-ink); font: 400 calc(var(--cy-s, 92px) * 0.5)/1 var(--g-font-display); box-shadow: var(--g-shadow-lg, 6px 6px 0 var(--g-ink)); }
+.g-cycles .cy-msg .is-go { display: grid; width: auto; height: auto; padding: calc(var(--cy-s, 92px) * 0.15) calc(var(--cy-s, 92px) * 0.24); border-radius: 16px; font-size: calc(var(--cy-s, 92px) * 0.42); transform: rotate(-4deg); }
 .g-cycles .cy-msg .w-d { background: var(--g-hl); color: var(--g-on-ink); }
 .g-cycles .cy-msg .w-d small { color: var(--g-on-ink); }
 .g-cycles .cy-msg .is-heat .cy-t { font: 400 1.6rem/1 var(--g-font-display); letter-spacing: 0.04em; }
@@ -31,8 +31,6 @@ export const CSS = `
 .g-cycles[data-layout="l"] .cy-msg > span { padding: 6px 12px; gap: 2px; font-size: 0.9rem; }
 .g-cycles[data-layout="l"] .cy-msg .is-heat .cy-t { font-size: 1.25rem; }
 .g-cycles[data-layout="l"] .cy-msg small { font-size: 0.66rem; }
-.g-cycles[data-layout="l"] .cy-msg .is-num { width: 70px; height: 70px; font-size: 2.2rem; }
-.g-cycles[data-layout="l"] .cy-msg .is-go { width: auto; height: auto; font-size: 1.8rem; padding: 8px 16px; }
 .g-cycles[data-layout="l"] .cy-stamp { font-size: 0.62rem; padding: 4px 6px 3px; }
 
 /* crash replay overlay */
@@ -129,9 +127,16 @@ export const CSS = `
 /* a small phone on its side (667x375, 568x320): slimmer pads so the board keeps its size */
 @media (orientation: landscape) and (max-height: 520px) and (max-width: 760px) {
   .g-cycles[data-ui*="touch"] { column-gap: 8px; }
-  .g-cycles[data-ui*="touch"] .cy-pad { gap: 6px; }
-  .g-cycles[data-ui*="touch"] .cy-pad .cy-pad-keys { grid-template-columns: repeat(3, 46px); grid-template-rows: repeat(2, 46px); gap: 5px; }
+  .g-cycles[data-ui*="touch"] .cy-row { gap: 6px; }
+  .g-cycles[data-ui*="touch"] .cy-pad { gap: 4px; }
+  .g-cycles[data-ui*="touch"] .cy-pad .cy-pad-keys { grid-template-columns: repeat(3, 44px); grid-template-rows: repeat(2, 46px); gap: 4px; }
   .g-cycles[data-ui*="touch"] .cy-pad-name { font-size: 0.7rem; }
+}
+/* a short screen (a small upright phone, a 500 px laptop): the picker keeps GO in view */
+@media (max-height: 640px) {
+  .g-cycles .cy-pick { gap: 8px; padding: 10px 10px 12px; }
+  .g-cycles .cy-pick-t { font-size: 1.12rem; }
+  .g-cycles .cy-chip { min-height: 84px; }
 }
 @media (prefers-reduced-motion: reduce) { .g-cycles *, .g-cycles *::before { animation: none !important; transition: none !important; } }
 
@@ -146,5 +151,19 @@ export const CSS = `
   .g-cycles .cy-rp-skip { display: none; }
   .g-cycles .cy-recs { flex: 1 1 0; min-width: 0; text-align: left; margin-left: 10px; }
   .g-cycles .cy-go { align-self: center; flex: 0 0 auto; width: 200px; }
+}
+/* a very short screen (667x375, 568x320): the host's status line already says "Pick an arena", so the picker drops its title and blurb */
+@media (orientation: landscape) and (max-height: 400px) {
+  .g-cycles .cy-pick:not(.is-ro) .cy-pick-t, .g-cycles .cy-pick:not(.is-ro) .cy-pick-sub { display: none; }
+  .g-cycles .cy-chip { min-height: 56px; }
+  .g-cycles .cy-mini { width: 26px; } .g-cycles .cy-mini.is-wide { width: 38px; }
+  .g-cycles .cy-glyph { height: 34px; }
+}
+@media (orientation: landscape) and (max-height: 340px) {
+  .g-cycles .cy-pick { padding: 4px 8px 6px; gap: 4px; }
+  .g-cycles .cy-pick-sub { display: none; }
+  .g-cycles .cy-chip { min-height: 50px; gap: 3px; padding: 3px 2px 4px; }
+  .g-cycles .cy-mini { width: 22px; } .g-cycles .cy-mini.is-wide { width: 32px; }
+  .g-cycles .cy-glyph { height: 28px; font-size: 1.2rem; } .g-cycles .cy-glyph svg { width: 22px; height: 22px; }
 }
 `;
