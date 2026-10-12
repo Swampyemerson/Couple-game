@@ -142,7 +142,19 @@ None of the three named must-haves (Tic-Tac-Toe balance, the Battleships cheat, 
 
 ## Tests
 
-TEST_RESULTS
+Final regression on the branch head, both suites run one after the other:
+
+- `node tools/test/games/live.test.js` (Air Hockey and Quick Draw: phones light and dark, laptop, latency and packet-loss runs): **434 ok, ALL GOOD**, no page errors. It had 92 checks before the update.
+- `node tools/test/games/computer.test.js` (Light Cycles and Defuse; the new `cyx` cycles group runs as part of it): **229 ok, ALL GOOD**, no page errors. It had 117 checks before the update.
+- `python3 tools/build_artifact.py`: a full build of all 113 modules succeeds.
+
+On flakiness: earlier full runs exposed three intermittent failures.
+- Two were real game bugs, the stale guest-mallet speed and the double-foul window, both fixed above.
+- One was a test that dropped touch samples at random; its drops are now deterministic.
+
+A Light Cycles test also read the canvas before it repainted after a resize; it now waits for the repaint.
+
+After these fixes, each game's suite was re-run several times without a failure.
 
 New suites:
 - **Air Hockey:** picker, B1 on one phone and on the live guest, B2 at 120 ms with 20 % loss, power curve and jitter, shot clock and sandwich reset, drama and records, every table, overlays and bands.
