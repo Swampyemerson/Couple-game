@@ -581,7 +581,8 @@ async function celebrations(h, pg) {
     const shown = await pg.$eval(kind === 'comeback' ? '.gb-stamp.sm' : '.gb-stamp:not(.sm)', (e) => { const r = e.getBoundingClientRect(); return { cls: e.className, text: e.textContent, op: Number(getComputedStyle(e).opacity), inside: r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight && r.width > 40 }; });
     ok(shown.cls.includes('show') && shown.text === stamp.slice(6) && shown.inside, `bones celebration: …the stamp is on the board (${kind}, opacity ${shown.op})`);
     await pg.waitForTimeout(120);
-    ok(await pg.$eval(kind === 'comeback' ? '.gb-stamp.sm' : '.gb-stamp:not(.sm)', (e) => Number(getComputedStyle(e).opacity) > 0.3), `bones celebration: …and it is visible (${kind})`);
+    const vis = await pg.$eval(kind === 'comeback' ? '.gb-stamp.sm' : '.gb-stamp:not(.sm)', (e) => ({ op: Number(getComputedStyle(e).opacity), an: getComputedStyle(e).animationName, dur: getComputedStyle(e).animationDuration, cls: e.className }));
+    ok(vis.op > 0.3, `bones celebration: …and it is visible (${kind}: ${JSON.stringify(vis)})`);
     ok((await logOf(pg)).includes('sfx:win') || kind === 'comeback', `bones celebration: …with its sound`);
     if (kind === 'wipe') { await h.wait(250); await shot(pg, 'bones-light-390-wipe.png'); }
     if (kind === 'triple') { await h.wait(250); await shot(pg, 'bones-light-390-triple.png'); }
