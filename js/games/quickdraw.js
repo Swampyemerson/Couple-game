@@ -25,6 +25,8 @@ const TIE_MS = 5;           // dead heat
 const PHOTO_MS = 15;        // closer than this is a photo finish
 const FALSE_START = 100;    // a "reaction" under this is a guess: a foul
 const DOUBLE_MS = 30;       // two fouls this close are a re-round
+const HC_MIN_GAP = 40;      // Gunslinger handicap: PBs at least this far apart switch it on
+const HC_CAP = 60;          // ... and the quicker hand's signal waits half that gap, at most this long
 const LATE_MS = 450;        // one phone: time for the slower hand to register after the first shot
 const SLOW_MS = 4000;       // no shot this long after the signal: too slow
 const RESULT_MS = 2600;     // verdict on screen before the next round
@@ -52,6 +54,14 @@ const KIND_SIGN = { classic: 'CLASSIC', decoys: 'DECOYS', colour: 'COLOUR', bell
 const DECOY_WORDS = ['BRAW!', 'DRAWL', 'DREW', 'DRAW?', 'DRAMA'];
 const DECOY_COLOURS = [['BLUE', '--p-a'], ['PINK', '--p-b'], ['GREEN', '--g-good']];
 
+/** Gunslinger handicap, from the two personal bests: the quicker player's signal is shown later. */
+function handicapFrom(d) {
+  const pa = d && d.qd_pb_a_ms; const pb = d && d.qd_pb_b_ms;
+  if (typeof pa !== 'number' || typeof pb !== 'number') return null;
+  const gap = Math.abs(pa - pb);
+  if (gap < HC_MIN_GAP) return null;
+  return { w: pa < pb ? 'a' : 'b', o: Math.min(HC_CAP, Math.round(gap / 2)) };
+}
 const other = (w) => (w === 'a' ? 'b' : 'a');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const rnd = (a, b) => a + Math.random() * (b - a);
@@ -205,7 +215,11 @@ registerGame({
     .g-qd .qd-bars span { text-align: left; } .g-qd .qd-bars em { font-style: normal; text-align: right; }
 
     .g-qd .qd-tally { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-weight: 800; flex: 0 0 auto; }
-    .g-qd .qd-who { display: inline-flex; align-items: center; gap: 8px; }
+    .g-qd .qd-who { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0 8px; min-width: 0; }
+    .g-qd .qd-hc { display: inline-block; padding: 0 6px; font: 900 0.6rem/1.5 var(--g-font-body); letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; color: var(--g-ink); background: var(--g-hl-soft, var(--g-card)); border: 1.5px solid var(--g-ink); border-radius: 999px; }
+    .g-qd .qd-who .qd-hc { flex-basis: auto; }
+    .g-qd .qd-hc[hidden] { display: none; }
+    .g-qd .qd-hc-n { font-size: 0.78em; font-weight: 800; color: var(--g-muted); }
     .g-qd .qd-who.t-a { color: var(--p-a-text, var(--p-a)); } .g-qd .qd-who.t-b { color: var(--p-b-text, var(--p-b)); }
     .g-qd .qd-to { font-size: 0.74rem; color: var(--g-muted); font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; text-align: center; }
     .g-qd .qd-notches { display: inline-flex; gap: 5px; }
@@ -285,6 +299,9 @@ registerGame({
     .g-qd .qd-opts { display: grid; gap: 6px; }
     .g-qd .qd-packs { grid-template-columns: repeat(3, 1fr); }
     .g-qd .qd-series { grid-template-columns: repeat(4, 1fr); }
+    .g-qd .qd-hand { grid-template-columns: 1fr; }
+    .g-qd .qd-hand[hidden] { display: none; }
+    .g-qd .qd-hand .qd-opt { min-height: 44px; flex-direction: row; flex-wrap: wrap; gap: 0 8px; }
     .g-qd .qd-opt { min-height: 46px; padding: 4px 4px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; font-family: var(--g-font-body); color: var(--g-ink); background: var(--g-card); border: 2px solid var(--g-ink); border-radius: 10px; box-shadow: var(--g-shadow-sm, 2px 2px 0 var(--g-ink)); touch-action: manipulation; text-align: center; }
     .g-qd .qd-opt b { font-weight: 900; font-size: 0.86rem; line-height: 1.1; }
     .g-qd .qd-opt small { font-weight: 700; font-size: 0.66rem; line-height: 1.1; color: var(--g-muted); }
@@ -338,14 +355,14 @@ registerGame({
 
     // ── DOM ──
     const pad = (w, top) => `<button type="button" class="qd-pad${top ? ' qd-top' : ''}" data-w="${w}" aria-label="${N(w)}: fire">
-        ${local ? `<span class="qd-pad-name">${N(w)}</span><span class="qd-notches" data-w="${w}" aria-hidden="true"></span>` : ''}
+        ${local ? `<span class="qd-pad-name">${N(w)}</span><span class="qd-hc" data-w="${w}" hidden></span><span class="qd-notches" data-w="${w}" aria-hidden="true"></span>` : ''}
         <span class="qd-pad-cta">FIRE</span>
         ${layout === 'desk' ? `<span class="qd-pad-hint"><kbd>${w === 'a' ? 'A' : 'L'}</kbd> key</span>` : ''}
         ${layout === 'live' && !coarse ? '<span class="qd-pad-hint"><kbd>Space</kbd> or click</span>' : ''}
       </button>`;
     const sig = (flip) => `<div class="qd-sig${flip ? ' qd-top' : ''}" aria-live="${flip ? 'off' : 'assertive'}"><div class="qd-word"></div><div class="qd-line"></div><div class="qd-times"></div></div>`;
     const scene = `<div class="qd-scene"><span class="qd-kind" hidden></span>${layout === 'phone' ? '<span class="qd-kind qd-top" hidden></span>' : ''}${SCENE('a', 'b')}<div class="qd-flashout"></div></div>`;
-    const tally = `<div class="qd-tally"><span class="qd-who t-a">${N('a')} <span class="qd-notches" data-w="a" aria-hidden="true"></span></span><span class="qd-to"></span><span class="qd-who t-b"><span class="qd-notches" data-w="b" aria-hidden="true"></span> ${N('b')}</span></div>`;
+    const tally = `<div class="qd-tally"><span class="qd-who t-a">${N('a')} <span class="qd-notches" data-w="a" aria-hidden="true"></span><span class="qd-hc" data-w="a" hidden></span></span><span class="qd-to"></span><span class="qd-who t-b"><span class="qd-notches" data-w="b" aria-hidden="true"></span> ${N('b')}<span class="qd-hc" data-w="b" hidden></span></span></div>`;
     // one phone: the stamp is printed twice, the second upside down for the player at the top
     const stampEl = `<p class="qd-stamp" aria-hidden="true"></p>${layout === 'phone' ? '<p class="qd-stamp qd-top" aria-hidden="true"></p>' : ''}`;
     const setupEl = `<div class="qd-setup" role="group" aria-label="Duel setup"><div class="qd-setup-card">
@@ -353,6 +370,7 @@ registerGame({
         <div class="qd-opts qd-packs" role="group" aria-label="Duel pack">${PACK_ORDER.map((p) => `<button type="button" class="qd-opt" data-pack="${p}" aria-pressed="false"><b>${PACKS[p].name}</b></button>`).join('')}</div>
         <p class="qd-pack-desc"></p>
         <div class="qd-opts qd-series" role="group" aria-label="Series">${Object.keys(SERIES).map((s) => `<button type="button" class="qd-opt" data-series="${s}" aria-pressed="false"><b>${s === 'sd' ? 'Showdown' : `Best of ${s}`}</b>${s === 'sd' ? '<small>first to 5, by 2</small>' : `<small>first to ${SERIES[s].win}</small>`}</button>`).join('')}</div>
+        <div class="qd-opts qd-hand" role="group" aria-label="Handicap"><button type="button" class="qd-opt" data-hcap aria-pressed="false"><b>Gunslinger handicap</b><small></small></button></div>
         <p class="qd-setup-note">Tied at match point? Both barrels: two draws, fire on the second.</p>
         <div class="qd-gorow"><button type="button" class="gm-btn qd-again" hidden>Pick again</button><button type="button" class="gm-btn gm-btn-big qd-go">GO</button></div>
       </div></div>`;
@@ -403,7 +421,7 @@ registerGame({
     let phase = 'setup';       // setup | intro | steady | draw | wait | result | paused | over
     let tl = { a: 0, b: 0 };   // the duel tally
     let cfg = parseLast(dataOf().qd_last);   // { p: pack, s: series } of the running duel
-    let pick = { ...cfg };     // the host's choice in the picker
+    let pick = { ...cfg, h: layout !== 'desk' && !!dataOf().qd_hcap };     // the host's choice in the picker (h: Gunslinger handicap)
     let started = false;       // the duel left the picker
     let cur = null;            // this device's round: { rd, r, D, t0, res, ids, cue, cueI }
     let lastR = 0;             // newest round started here
@@ -450,11 +468,13 @@ registerGame({
       dim.style.transition = ms ? `opacity ${ms}ms linear` : 'none';
       dim.style.opacity = String(op);
     }
+    /** How much later player `w`'s own signal shows this round (the Gunslinger handicap). */
+    const shiftOf = (w) => (cur && cur.rd.ho ? cur.rd.ho[w] | 0 : 0);
     function beginRound(rd) {
       if (!net.synced) { net.ready.then(() => { if (!dead && rd.r > lastR && !paused) beginRound(rd); }); return; } // the shared clock first
       endRound();
       const D = rd.at + drawAt(rd);
-      cur = { rd, r: rd.r, D, t0: null, res: {}, ids: [], cue: 'none', cueI: 0 };
+      cur = { rd, r: rd.r, D, t0: {}, cs: { a: { k: 'none', i: 0 }, b: { k: 'none', i: 0 } }, res: {}, ids: [], cue: 'none', cueI: 0 };
       lastR = Math.max(lastR, rd.r);
       if (rd.cfg) cfg = rd.cfg;
       phase = 'intro'; // "Ready" until the shared start time
@@ -490,47 +510,59 @@ registerGame({
         cur.ids.push(later(tick, 600 * rnd(0.82, 1.2) + (tickN % 5 === 0 ? 90 : 0)));
       };
       cur.ids.push(later(tick, 250));
+      // Gunslinger handicap: a favoured player's whole timeline (decoys, first draw, signal) runs `ho` ms later.
+      // Online each device only shows its own player's timeline; on one phone each half has its own.
+      const shifts = [...new Set(sides.map(shiftOf))].sort((x, y) => x - y);
       for (const cue of cuesOf(rd)) {
-        cur.ids.push(later(() => onFrame(() => showCue(r, cue)), rd.at + cue.t - net.now()));
+        shifts.forEach((sh, k) => {
+          const ws = sides.filter((w) => shiftOf(w) === sh);
+          cur.ids.push(later(() => onFrame(() => showCue(r, cue, ws, k === shifts.length - 1)), rd.at + cue.t + sh - net.now()));
+        });
       }
     }
-    function showCue(r, cue) {
+    /** `ws`: the players whose own cue this is. `scene`: the shared scene and the speaker react too (the last of the shifted cues, so nobody gets a hint). */
+    function showCue(r, cue, ws, scene) {
       if (!cur || cur.r !== r || (phase !== 'steady' && phase !== 'draw')) return;
-      if (cue.k === 'real') { showDraw(r); return; }
+      if (cue.k === 'real') { showDraw(r, ws, scene); return; }
       const kind = cur.rd.kind;
       cur.cue = cue.k; cur.cueI = cue.i;
-      root.dataset.cue = cue.k;
+      for (const w of ws) cur.cs[w] = { k: cue.k, i: cue.i };
       const first = cue.k === 'first';
-      if (first) { if (kind === 'bell') ring(); else api.sfx('hit'); }
-      else if (kind === 'decoys') { api.sfx('hit'); }
-      else if (kind === 'bell') { tink(); }
-      if (kind === 'colour') lantern.style.setProperty('--lc', first ? 'var(--g-hl)' : `var(${DECOY_COLOURS[cue.i % 3][1]})`);
-      if (kind === 'bell') { bellEl.classList.remove('is-ring', 'is-tink'); void bellEl.getBoundingClientRect(); bellEl.classList.add(first ? 'is-ring' : 'is-tink'); }
+      if (scene) {
+        root.dataset.cue = cue.k;
+        if (first) { if (kind === 'bell') ring(); else api.sfx('hit'); }
+        else if (kind === 'decoys') { api.sfx('hit'); }
+        else if (kind === 'bell') { tink(); }
+        if (kind === 'colour') lantern.style.setProperty('--lc', first ? 'var(--g-hl)' : `var(${DECOY_COLOURS[cue.i % 3][1]})`);
+        if (kind === 'bell') { bellEl.classList.remove('is-ring', 'is-tink'); void bellEl.getBoundingClientRect(); bellEl.classList.add(first ? 'is-ring' : 'is-tink'); }
+      }
       paint();
       cur.ids.push(later(() => {
         if (!cur || cur.r !== r || phase !== 'steady') return;
-        cur.cue = 'none'; root.dataset.cue = '';
-        if (kind === 'colour') lantern.style.removeProperty('--lc');
+        for (const w of ws) if (cur.cs[w].k === cue.k) cur.cs[w] = { k: 'none', i: 0 };
+        if (scene) { cur.cue = 'none'; root.dataset.cue = ''; if (kind === 'colour') lantern.style.removeProperty('--lc'); }
         paint();
       }, cue.k === 'first' ? 480 : DECOY_MS));
     }
-    function showDraw(r) {
-      if (!cur || cur.r !== r || phase !== 'steady') return;
+    function showDraw(r, ws, scene) {
+      if (!cur || cur.r !== r || (phase !== 'steady' && phase !== 'draw')) return;
       const kind = cur.rd.kind;
-      cur.t0 = performance.now(); // this frame paints the signal
+      const t = performance.now(); // this frame paints the signal
+      for (const w of ws) { cur.t0[w] = t; cur.cs[w] = { k: 'real', i: 0 }; if (R && R.r === r) (R.t0 = R.t0 || {})[w] = t; }
       cur.cue = 'real';
       phase = 'draw';
-      root.dataset.cue = 'real';
-      dimTo(0, 80);
-      if (kind === 'colour') lantern.style.setProperty('--lc', 'var(--g-hl)');
-      if (kind === 'bell') { bellEl.classList.remove('is-ring', 'is-tink'); void bellEl.getBoundingClientRect(); bellEl.classList.add('is-ring'); ring(); } else api.sfx('hit');
-      if (R && R.r === r) R.tDraw = cur.t0;
+      if (scene) {
+        root.dataset.cue = 'real';
+        dimTo(0, 80);
+        if (kind === 'colour') lantern.style.setProperty('--lc', 'var(--g-hl)');
+        if (kind === 'bell') { bellEl.classList.remove('is-ring', 'is-tink'); void bellEl.getBoundingClientRect(); bellEl.classList.add('is-ring'); ring(); } else api.sfx('hit');
+      }
       paint();
-      cur.ids.push(later(() => tooSlow(r), SLOW_MS));
+      cur.ids.push(later(() => tooSlow(r, ws), SLOW_MS));
     }
-    function tooSlow(r) {
+    function tooSlow(r, ws) {
       if (!cur || cur.r !== r) return;
-      for (const w of sides) if (!cur.res[w] && (phase === 'draw' || phase === 'wait')) record(w, { slow: true });
+      for (const w of ws) if (!cur.res[w] && (phase === 'draw' || phase === 'wait')) record(w, { slow: true });
     }
     const stampTs = (e) => {
       const n = performance.now(); const t = e && e.timeStamp;
@@ -539,13 +571,14 @@ registerGame({
     function fire(w, e) {
       if (dead || paused || !cur || cur.void || !sides.includes(w) || cur.res[w]) return;
       const ts = stampTs(e);
-      if (phase === 'steady') {
+      if (phase !== 'steady' && phase !== 'draw') return;
+      if (cur.t0[w] == null) { // this player's own signal hasn't shown yet (with a handicap, the other half may already have it)
         const rel = Math.round((net.now() - (performance.now() - ts) - cur.D) * 10) / 10; // shared clock: negative = before the signal
         api.sfx('bad');
         record(w, { foul: true, rel, early: Math.max(1, Math.round(-rel)) });
-      } else if (phase === 'draw') {
-        const reaction = Math.max(0, Math.round((ts - cur.t0) * 10) / 10);
-        if (reaction < FALSE_START) { api.sfx('bad'); record(w, { foul: true, jump: true, rel: reaction, early: 0 }); } else {
+      } else {
+        const reaction = Math.max(0, Math.round((ts - cur.t0[w]) * 10) / 10);
+        if (reaction < FALSE_START) { api.sfx('bad'); record(w, { foul: true, jump: true, rel: Math.round((reaction + shiftOf(w)) * 10) / 10, early: 0 }); } else {
           api.sfx('pop');
           api.haptic(20);
           record(w, { reaction });
@@ -593,6 +626,7 @@ registerGame({
       }
       const lead = local ? 700 : Math.min(1600, Math.max(900, net.rtt * 1.5 + 600));
       const rd = { hk: key, r, at: Math.round(net.now() + lead), delay: Math.round(delay), gap: both ? Math.round(rnd(700, 1400)) : 0, both: both ? 1 : 0, sd: suddenOf(tl, cfg) ? 1 : 0, kind, decoys, dw, cfg, t: tl, mp: matchPointOf(tl) };
+      if (cfg.h && cfg.h.o > 0) rd.ho = { a: cfg.h.w === 'a' ? cfg.h.o : 0, b: cfg.h.w === 'b' ? cfg.h.o : 0 }; // the host sends each player's cue offset
       if (forced) { Object.assign(rd, forced); forced = null; }
       return rd;
     }
@@ -635,10 +669,13 @@ registerGame({
         // the other player may have jumped too, a moment earlier, with the news still in flight
         R.armed = later(() => refDecide(r), local ? DOUBLE_MS + 10 : Math.max(220, net.rtt + 150));
       } else if (Number.isFinite(got.reaction)) {
-        const base = R.tDraw != null ? R.tDraw : performance.now() - got.reaction;
+        // when the undelayed signal would have been shown here (a handicap shifts each player's own cue)
+        const ho = R.rd.ho || {};
+        const own = R.t0 && R.t0[local ? w : me];
+        const nominal = own != null ? own - (ho[local ? w : me] | 0) : performance.now() - got.reaction - (ho[w] | 0);
         // the host sees its own taps at once; the guest's arrive about rtt/2 late
         const extra = local ? LATE_MS : w === 'b' ? TIE_MS : Math.max(net.rtt, 40) + 250;
-        R.armed = later(() => refDecide(r), base + got.reaction + extra - performance.now());
+        R.armed = later(() => refDecide(r), nominal + (ho[w] | 0) + got.reaction + extra - performance.now());
       }
     }
     function refDecide(r) {
@@ -647,6 +684,7 @@ registerGame({
       cancel(R.armed); cancel(R.safety);
       const A = R.res.a; const B = R.res.b;
       const rt = (x) => (x && Number.isFinite(x.reaction) ? x.reaction : null);
+      const hand = R.rd.ho || {};
       let w = null; let why;
       if ((A && A.void) || (B && B.void)) why = 'void';
       else if (A && A.foul && B && B.foul) {
@@ -654,13 +692,16 @@ registerGame({
         if (Math.abs(d) < DOUBLE_MS) why = 'dfoul'; else { why = 'fouls'; w = d < 0 ? 'b' : 'a'; } // the earlier jump loses
       } else if (A && A.foul) { why = 'foul'; w = 'b'; } else if (B && B.foul) { why = 'foul'; w = 'a'; } else {
         const ra = rt(A); const rb = rt(B);
+        // with a handicap each reaction is timed from the player's own (later) cue, so compare when they actually fired
+        const ea = ra == null ? null : ra + (hand.a | 0); const eb = rb == null ? null : rb + (hand.b | 0);
         if (ra == null && rb == null) why = 'none';
-        else if (ra == null) { why = 'time'; w = 'b'; } else if (rb == null) { why = 'time'; w = 'a'; } else if (Math.abs(ra - rb) <= TIE_MS) why = 'tie';
-        else { why = 'time'; w = ra < rb ? 'a' : 'b'; }
+        else if (ra == null) { why = 'time'; w = 'b'; } else if (rb == null) { why = 'time'; w = 'a'; } else if (Math.abs(ea - eb) <= TIE_MS) why = 'tie';
+        else { why = 'time'; w = ea < eb ? 'a' : 'b'; }
       }
       const ra = rt(A); const rb = rt(B);
       const v = { hk: key, r, w, why, a: A, b: B, kind: R.rd.kind, both: R.rd.both, tally: { ...tl }, pb: [] };
-      if (why === 'time' && ra != null && rb != null) { v.diff = Math.round(Math.abs(ra - rb)); v.photo = v.diff < PHOTO_MS; }
+      if (R.rd.ho) v.ho = { a: hand.a | 0, b: hand.b | 0 };
+      if (why === 'time' && ra != null && rb != null) { v.diff = Math.round(Math.abs(ra + (hand.a | 0) - (rb + (hand.b | 0)))); v.photo = v.diff < PHOTO_MS; }
       const sd = suddenOf(tl, cfg); // the Showdown cap: whoever takes this round takes the duel
       if (w) { v.tally[w]++; if (sd) v.tally[w] = Math.max(v.tally[w], v.tally[other(w)] + 1); }
       if (sd) v.sd = 1;
