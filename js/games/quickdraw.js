@@ -126,10 +126,11 @@ registerGame({
   minutes: 3,
   howTo: [
     'Pick a duel pack and a series, then GO.',
-    'Hands off the trigger while it says Steady. Fire when the signal comes: tap your button (computer: A or L, or Space when live).',
-    'Too early, or faster than 100 ms (a guess), and you lose the round.',
-    'Tied at match point? Both barrels: two draws, fire on the second.',
+    'Hands off while it says Steady. Fire on the signal: tap your button (computer: A or L, or Space when live).',
+    'Too early, or faster than 100 ms (a guess), loses the round.',
+    'Tied at match point? Both barrels: fire on the second draw.',
   ],
+
   css: `
     .g-qd { --qd-gap: 8px; position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--qd-gap); padding: 2px 0 4px; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; font-family: var(--g-font-body); color: var(--g-ink); }
     .g-qd.is-live { touch-action: manipulation; cursor: crosshair; }
@@ -194,7 +195,7 @@ registerGame({
     .g-qd .qd-times { font-weight: 700; font-size: 0.92rem; line-height: 1.25; color: var(--g-ink); min-height: 1.25em; font-variant-numeric: tabular-nums; }
     .g-qd .qd-times b.t-a { color: var(--p-a-text, var(--p-a)); } .g-qd .qd-times b.t-b { color: var(--p-b-text, var(--p-b)); }
     .g-qd .qd-times .qd-sep { color: var(--g-muted); margin: 0 4px; }
-    .g-qd .qd-bars { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 1px 6px; width: min(100%, 260px); margin: 0 auto; font-size: 0.78rem; }
+    .g-qd .qd-bars { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 1px 6px; width: 250px; max-width: 80vw; margin: 0 auto; font-size: 0.74rem; line-height: 1.15; }
     .g-qd .qd-bars i { display: block; height: 9px; border: 2px solid var(--g-ink); border-radius: 3px; background: var(--c); width: var(--w); }
     .g-qd .qd-bars .t-a { --c: var(--p-a); } .g-qd .qd-bars .t-b { --c: var(--p-b); }
     .g-qd .qd-bars span { text-align: left; } .g-qd .qd-bars em { font-style: normal; text-align: right; }
@@ -396,7 +397,7 @@ registerGame({
     const stamps = [];
     let stamping = false;
     function nextStamp() {
-      if (!stamps.length) { stamping = false; return; }
+      if (!stamps.length) { stamping = false; stampNode.classList.remove('go'); return; }
       stamping = true;
       const s = stamps.shift();
       stampNode.textContent = s.text;
