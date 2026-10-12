@@ -1,0 +1,204 @@
+// Doodle v2: modes, packs and the new prompt decks. Pure data, no imports.
+//
+// ORDER IS FOREVER. Saved matches store content as indices into
+// [282 v1 prompts, then US easy/medium/tricky, KITCHEN easy/medium/tricky, OUTABOUT..., CREATURES...].
+// Never edit, reorder or grow an existing tier (every later index would move): add a NEW deck at
+// the END of NEW_DECKS instead.
+// Prompt format: 'shown|also accepted|also accepted'.
+
+export const US = [
+  [
+    'love lock|padlock on a bridge|love padlock|bridge padlock',
+    'two straws|shared milkshake|sharing a milkshake|one milkshake',
+    'matching mugs|couple mugs|his and hers mugs',
+    'photo booth|photobooth|photo strip',
+    'shared blanket|blanket for two|snuggle blanket|cozy blanket',
+    'carved initials|initials on a tree|names carved in a tree|tree carving',
+    'anniversary card|greeting card|love card|card with a heart',
+    'mixtape|mix tape|cassette|cassette tape',
+    'two toothbrushes|toothbrush cup|toothbrush holder',
+    'house keys|new keys|keys to our place',
+  ],
+  [
+    'forehead kiss|kiss on the forehead|kiss on forehead',
+    'piggyback ride|piggyback|piggy back|piggybacking',
+    'sharing an umbrella|under one umbrella|umbrella for two|sharing umbrella',
+    'sharing headphones|one earbud each|sharing earbuds|share earbuds',
+    'stealing fries|stealing food|food thief|fry thief',
+    'grocery run|grocery shopping|groceries|grocery store',
+    'sunday pancakes|pancake breakfast|sunday breakfast',
+    'dancing in socks|sock dancing|sliding in socks|sock slide',
+    'couch nap|napping on the couch|couch napping',
+    'love note on the mirror|note on the mirror|mirror note|lipstick note',
+    'car singalong|singing in the car|car karaoke|car sing along',
+    'goodnight text|good night text|text goodnight|goodnight message',
+    'reading in bed|reading together|book in bed|bedtime reading',
+  ],
+  [
+    'the good side of the bed|side of the bed|my side of the bed|bed side',
+    'arguing about the thermostat|thermostat war|thermostat fight|thermostat',
+    'forehead thermometer|checking for a fever|sick day|taking a temperature',
+    'ugly christmas sweaters|matching sweaters|ugly sweater|ugly sweaters',
+    'airport hug|airport reunion|airport pickup|hugging at the airport',
+    'tangled earphones|tangled headphones|tangled wires|tangled cables',
+    'lazy sunday|sunday morning|lazy morning|lazy day',
+    'cooking together|cooking dinner|cooking as a team|cook together',
+    'inside joke|private joke|secret joke|laughing at an inside joke',
+    'saying i love you|i love you|telling someone i love you|love you',
+  ],
+];
+
+export const KITCHEN = [
+  [
+    'ramen|instant noodles|cup noodles|ramen bowl',
+    'dumplings|dumpling|gyoza|potstickers',
+    'croissant|croissants',
+    'waffle|belgian waffle',
+    'whisk|wire whisk',
+    'kettle|tea kettle|teapot|tea pot',
+    'bagel|bagel with cream cheese',
+    'pretzel|soft pretzel',
+    'frying pan|skillet|fry pan',
+    'rolling pin',
+  ],
+  [
+    'grilled cheese|cheese toastie|toastie|grilled cheese sandwich',
+    'bubble tea|boba|boba tea|bubble milk tea',
+    'espresso machine|coffee machine|coffee maker|espresso maker',
+    'oven mitt|oven glove|oven mitts|pot holder',
+    'blender|making a smoothie|smoothie',
+    'bowl of cereal|cereal bowl|cereal',
+    'garlic bread|garlic toast',
+    'birthday candles|candles on a cake|blowing out candles',
+    'leftovers|takeout box|takeaway box|doggy bag',
+    'burnt cookies|burned cookies|burnt biscuits',
+  ],
+  [
+    'spilled milk|spilt milk|crying over spilled milk',
+    'empty fridge|open fridge|nothing to eat|fridge light',
+    'midnight snack|late night snack|fridge raid|raiding the fridge',
+    'too many cooks|too many cooks in the kitchen|crowded kitchen',
+    'boiling over|pot boiling over|boiled over|overflowing pot',
+    'smoke alarm|smoke detector|burnt dinner',
+    'taste testing|tasting the sauce|taste test|tasting soup',
+    'recipe disaster|kitchen disaster|cooking fail|kitchen fail',
+    'flipping a pancake|pancake flip|tossing a pancake|flipping pancakes',
+    'sharing dessert|sharing a spoon|one spoon two forks|sharing a dessert',
+    'cookie dough|licking the spoon|licking the bowl|raw cookie dough',
+  ],
+];
+
+export const OUTABOUT = [
+  [
+    'beach towel|towel on the sand|beach towels',
+    'passport|passports',
+    'suitcase|luggage|travel bag|rolling suitcase',
+    'campfire|bonfire|camp fire',
+    'snorkel|snorkeling|snorkelling|snorkel mask',
+    'gondola|venice|gondolier',
+    'hiking boots|hiking|hike|walking boots',
+    'double-decker bus|london bus|double decker|double decker bus',
+    'subway|metro|underground|subway train',
+    'compass|pocket compass',
+  ],
+  [
+    'tent in the rain|camping in the rain|wet tent|rainy camping',
+    'drive-in movie|drive in|drive in movie|drive-in',
+    'farmers market|farmers’ market|farm market|veggie market',
+    'souvenir shop|gift shop|souvenirs|souvenir',
+    'hot spring|hot springs|onsen|hot spring bath',
+    'botanical garden|botanic garden|greenhouse|glasshouse',
+    'hotel pillow mints|pillow mint|mint on the pillow|pillow mints',
+    'sunrise hike|hiking at sunrise|sunrise on a mountain|watching the sunrise',
+    'beach picnic|picnic on the beach|beach day',
+    'ferry ride|ferry|taking the ferry',
+  ],
+  [
+    'lost luggage|lost suitcase|missing luggage|lost bag',
+    'taking a wrong turn|wrong turn|lost on the road|lost in the car',
+    'airport security|security line|security check|going through security',
+    'missed the train|missed the bus|missed flight|missed the plane',
+    'window seat|plane window|looking out the plane window|airplane window',
+    'asking a stranger for a photo|photo with a stranger|stranger takes our photo|tourist photo',
+    'postcard from home|postcard|sending a postcard|writing a postcard',
+    'hotel check in|hotel check-in|checking in|front desk',
+    'map upside down|holding the map upside down|reading the map|lost with a map',
+    'overpacked suitcase|sitting on the suitcase|closing an overpacked suitcase|stuffed suitcase',
+    'hotel balcony|balcony view|balcony',
+  ],
+];
+
+export const CREATURES = [
+  [
+    'sloth|sleepy sloth',
+    'hedgehog|spiky hedgehog',
+    'flamingo|pink flamingo',
+    'koala|koala bear',
+    'otter|sea otter',
+    'raccoon|trash panda',
+    'llama|alpaca',
+    'jellyfish|jelly fish',
+    'seahorse|sea horse',
+    'chameleon|lizard',
+    'hummingbird|humming bird',
+    'panda|giant panda',
+  ],
+  [
+    'otters holding hands|holding hands otters|two otters|otter pair',
+    'thunderstorm|thunder storm|thunder and lightning',
+    'foggy morning|fog|foggy|misty morning',
+    'heatwave|heat wave|hot summer day|melting in the heat',
+    'first snow|snowfall|first snowfall|snow falling',
+    'double rainbow|two rainbows',
+    'puddle jumping|jumping in puddles|splashing in puddles|puddle splash',
+    'tornado|twister|funnel cloud',
+    'penguins huddling|penguin huddle|huddling penguins',
+    'cat on a windowsill|cat in the window|cat at the window',
+  ],
+  [
+    'rain on the window|raindrops on the window|rainy window|rain on the glass',
+    'sunshower|rain while sunny|sun and rain|sun shower',
+    'northern lights|aurora|aurora borealis|the northern lights',
+    'dog in the rain|wet dog|soaked dog|dog shaking off water',
+    'frost on the window|frosty window|frosted glass|ice on the window',
+    'geese flying south|flock of geese|geese in a v|birds migrating',
+    'sleeping cat|cat napping|cat curled up',
+    'snow day|snowed in|snowed-in|stuck in the snow',
+    'sunset over the sea|ocean sunset|sunset on the beach|sun setting over water',
+    'windy day|umbrella blowing away|windy|gust of wind',
+  ],
+];
+
+// Order = index order after the 282 v1 prompts. Append new decks at the END only.
+export const NEW_DECKS = [
+  { id: 'us', tiers: US },
+  { id: 'kitchen', tiers: KITCHEN },
+  { id: 'outabout', tiers: OUTABOUT },
+  { id: 'creatures', tiers: CREATURES },
+];
+
+export const MODE_LIST = ['classic', 'halfhalf', 'ladder', 'invisible', 'mixed'];
+export const MODE_INFO = {
+  classic: { title: 'Classic', pitch: 'Pick 1 of 3 cards. Harder cards pay more.' },
+  halfhalf: { title: 'Half & Half', pitch: 'Guess from half a drawing for bonus points.' },
+  ladder: { title: 'Ladder', pitch: 'No picking. Nail it and the cards get harder.' },
+  invisible: { title: 'Invisible Ink', pitch: 'Your lines fade as you draw. +1 per hit.' },
+  mixed: { title: 'Mixed Bag', pitch: 'A fresh twist every round.' },
+};
+export const PACK_LIST = ['classic', 'us', 'kitchen', 'outabout', 'creatures', 'everything'];
+export const PACK_INFO = {
+  classic: { title: 'Classic', pitch: 'The original 282 cards.' },
+  us: { title: 'Us', pitch: 'Couple moments.' },
+  kitchen: { title: 'Kitchen', pitch: 'Cooking, snacking, spilling.' },
+  outabout: { title: 'Out & About', pitch: 'Trips, trails and travel.' },
+  creatures: { title: 'Creatures & Weather', pitch: 'Animals, skies and storms.' },
+  everything: { title: 'Everything', pitch: 'Every card in one deck.' },
+};
+export const TWIST_LIST = ['normal', 'halfhalf', 'invisible', 'sprint', 'oneline'];
+export const TWIST_INFO = {
+  normal: { title: 'Plain round', pitch: 'No twist. Just draw.' },
+  halfhalf: { title: 'Half & Half', pitch: 'Your partner can call it from half the drawing.' },
+  invisible: { title: 'Invisible ink', pitch: 'Your lines fade as you draw. +1 on a hit.' },
+  sprint: { title: 'Sprint', pitch: '35 seconds. +1 on a hit.' },
+  oneline: { title: 'One line', pitch: 'Lift your finger once. +1 on a hit.' },
+};

@@ -22,6 +22,7 @@ const wordRe = (w) => new RegExp(`(^|[^a-z])${w.toLowerCase().replace(/[^a-z0-9 
 async function loadRules() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'party-rules-'));
   for (const f of ['core.js', 'covers.js', 'doodle.js', 'wave.js']) fs.copyFileSync(path.join(ROOT, 'js/games', f), path.join(dir, f));
+  for (const sub of ['wave', 'doodle']) if (fs.existsSync(path.join(ROOT, 'js/games', sub))) fs.cpSync(path.join(ROOT, 'js/games', sub), path.join(dir, sub), { recursive: true }); // helper folders
   fs.writeFileSync(path.join(dir, 'package.json'), '{"type":"module"}');
   const core = await import(pathToFileURL(path.join(dir, 'core.js')).href);
   const doodle = await import(pathToFileURL(path.join(dir, 'doodle.js')).href);
@@ -182,6 +183,18 @@ async function forge(pg, id, w, move) {
   }, [id, w, move]);
 }
 
+// Same Wave: a fresh match opens on the setup screen for the first player. Pick a mode and start.
+async function waveSetup(pages, h, id, mode = 'classic') {
+  const e = await h.engine(pages.a, id);
+  const F = pages[e.first];
+  await F.waitForSelector('.wv-start', { timeout: 8000 });
+  await F.tap(`.wv-mode[data-mode="${mode}"]`);
+  await F.tap('.wv-start');
+  await h.settle();
+}
+// what a v2 round pays, from its own state (edge bonus, Jackpot doubling), given the base band
+const wvPays = (Rd, base) => (base + (Rd.edge && Math.abs(Rd.at - Rd.target) <= 4 ? 1 : 0)) * (Rd.jp ? 2 : 1);
+
 // Doodle drawing: shapes in 0..1 space, drawn by mouse or by touch (CDP touch events).
 const ring = (cx, cy, r, n = 26, a0 = 0, a1 = Math.PI * 2) => Array.from({ length: n + 1 }, (_, i) => { const a = a0 + ((a1 - a0) * i) / n; return [cx + r * Math.cos(a), cy + r * Math.sin(a)]; });
 const PICTURES = [
@@ -321,6 +334,18 @@ async function dragPastEnd(pg, side) {
   await pg.waitForTimeout(120);
 }
 
+// Doodle opens on a setup screen: the first player picks mode and cards (Classic / Classic by default).
+async function doodleSetup(pages, h, id, { mode = 'classic', pack = 'classic' } = {}) {
+  const e = await h.engine(pages.a, id);
+  const F = pages[e.first];
+  await F.waitForSelector('.dd-start');
+  await F.click(`.dd-mode[data-m="${mode}"]`);
+  await F.click(`.dd-pack[data-p="${pack}"]`);
+  await F.click('.dd-start');
+  await h.settle();
+  return (await h.engine(pages.a, id)).state;
+}
+
 // QA regressions: reloads mid-draw / mid-guess / mid-clue / mid-dial, theme switch by attribute,
 // symbol-only guesses, the keyboard covering inputs, the dial's exact ends.
 async function regressions(h, pages) {
@@ -330,6 +355,7 @@ async function regressions(h, pages) {
   await h.settle();
   await h.openMatch(b, id);
   await h.settle();
+  await doodleSetup(pages, h, id);
   let e = await h.engine(a, id);
   const D = pages[e.state.rounds[0].drawer]; const G = pages[other(e.state.rounds[0].drawer)];
   await D.waitForSelector('.dd-pick');
@@ -369,13 +395,14 @@ async function regressions(h, pages) {
   await G.fill('.dd-input', word);
   await G.press('.dd-input', 'Enter');
   await h.settle();
-  assert((await h.engine(a, id)).state.rounds[0].points === 3, 'doodle: the restored drawing was guessed for 3');
+  assert((await h.engine(a, id)).state.rounds[0].points === 5, 'doodle: the restored drawing was guessed for 5 (Tricky, first try)');
   await h.closeGame(a); await h.closeGame(b);
 
   const wid = await h.newOnlineGame(b, 'wave');
   await h.settle();
   await h.openMatch(a, wid);
   await h.settle();
+  await waveSetup(pages, h, wid);
   e = await h.engine(a, wid);
   const GV = pages[e.state.rounds[0].giver]; const GS = pages[other(e.state.rounds[0].giver)];
   await GV.waitForSelector('.wv-input');
@@ -421,7 +448,9 @@ async function regressions(h, pages) {
     await h.settle();
     await h.openMatch(b, id);
     await h.settle();
-    // guesses per round: '!' = the answer, 'GIVEUP' = give up.  3 + 2 + 1 + 0 + 0 + 3 = 9
+    await doodleSetup(pages, h, id);
+    // guesses per round: '!' = the answer, 'GIVEUP' = give up.  Stakes on tiers 0,1,2,0,1,2: 2 + 2 + 2 + 0 + 0 + 5 = 11 (x2 on a golden round)
+    const BASE = [2, 2, 2, 0, 0, 5];
     const PLAN = [['!'], ['lamp', '!'], ['blob', 'squiggle', '~'], ['nope', 'still no', 'what'], ['GIVEUP'], ['!!']];
     const words = [];
     for (let r = 0; r < 6; r++) {
@@ -495,7 +524,7 @@ async function regressions(h, pages) {
       }
       const ea = await h.engine(a, id); const eb = await h.engine(b, id);
       assert(JSON.stringify(ea.state) === JSON.stringify(eb.state), `round ${r + 1}: both phones agree`);
-      const want = [3, 2, 1, 0, 0, 3][r];
+      const want = BASE[r] * (ea.state.gold === r ? 2 : 1);
       assert(ea.state.rounds[r].points === want, `round ${r + 1}: scored ${want}`);
       if (r === 0) {
         await G.waitForSelector('.dd-next');
@@ -507,13 +536,14 @@ async function regressions(h, pages) {
     }
     const fa = await h.engine(a, id); const fb = await h.engine(b, id);
     assert(fa.over && fb.over, 'doodle: game over on both phones');
-    assert(fa.result.score === 9 && fb.result.score === 9, `doodle: team score 9 of 18 on both (got ${fa.result.score})`);
+    const expScore = BASE.reduce((n, v, i) => n + v * (fa.state.gold === i ? 2 : 1), 0);
+    assert(fa.result.score === expScore && fb.result.score === expScore, `doodle: team score ${expScore} on both (got ${fa.result.score})`);
     assert(JSON.stringify(fa.state) === JSON.stringify(fb.state), 'doodle: final states identical');
-    await h.wait(2700);
+    await waitFor(async () => (await visible(a, '#game-root .gm-end')) && (await visible(b, '#game-root .gm-end')), 9000, 'doodle end cards');
     assert(await visible(a, '#game-root .gm-end') && await visible(b, '#game-root .gm-end'), 'doodle: end card on both phones');
     await snapAll(a, 'doodle-10-end-card');
     const rec = h.results().find((x) => x.game === 'doodle' && x.mode === 'online');
-    assert(rec && rec.winner === 'team' && rec.score === 9, 'doodle: online result recorded (team, 9)');
+    assert(rec && rec.winner === 'team' && rec.score === expScore, `doodle: online result recorded (team, ${expScore})`);
     assert(/See the gallery/.test(await a.textContent('#game-root [data-g="end-look"]')), 'doodle: the end card offers "See the gallery"');
     for (const pg of [a, b]) await pg.click('#game-root [data-g="end-look"]');
     await a.waitForSelector('.dd-wall .dd-frame:nth-child(6)');
@@ -559,6 +589,7 @@ async function regressions(h, pages) {
       const e = await h.engine(pg, id2);
       assert(e.rejected.length === 1 && /too big/i.test(e.rejected[0].error) && e.state.phase === 'draw', `oversized drawing in the db is rejected on ${pg.__who}`);
     }
+    await doodleSetup(pages, h, id2);
     for (let r = 0; r < 6; r++) {
       const e = await h.engine(a, id2);
       const dr = e.state.rounds[r].drawer; const D = pages[dr]; const G = pages[other(dr)];
@@ -584,7 +615,6 @@ async function regressions(h, pages) {
     const doc = h.docs[`matches/${id2}`];
     const size = JSON.stringify(doc).length;
     assert(size < 150 * 1024, `match JSON after 6 dense drawings is ${(size / 1024).toFixed(1)} KB (< 150 KB)`);
-    await h.wait(2700);
     await h.closeGame(a); await h.closeGame(b);
 
     // ════════════════ SAME WAVE, online ════════════════
@@ -593,7 +623,8 @@ async function regressions(h, pages) {
     await h.settle();
     await h.openMatch(a, wid);
     await h.settle();
-    // planned distance from the target per round: 4,4,3,3,2,2,0,0 = 18
+    await waveSetup(pages, h, wid);
+    // planned distance from the target per round: 4,4,3,3,2,2,0,0 = 18 (plus any edge bonus / Jackpot, read from the state)
     const OFFS = [0, -3, 7, -9, 13, -16, 24, 41];
     const VIA = ['mouse', 'touch', 'keys', 'mouse', 'touch', 'mouse', 'mouse', 'touch'];
     for (let r = 0; r < 8; r++) {
@@ -647,7 +678,7 @@ async function regressions(h, pages) {
       await h.settle();
       const ea = await h.engine(a, wid); const eb = await h.engine(b, wid);
       assert(JSON.stringify(ea.state) === JSON.stringify(eb.state), `wave round ${r + 1}: both phones agree`);
-      assert(ea.state.rounds[r].points === [4, 4, 3, 3, 2, 2, 0, 0][r], `wave round ${r + 1}: ${Math.abs(OFFS[r])} off scores ${[4, 4, 3, 3, 2, 2, 0, 0][r]}`);
+      assert(ea.state.rounds[r].points === wvPays(ea.state.rounds[r], [4, 4, 3, 3, 2, 2, 0, 0][r]), `wave round ${r + 1}: ${Math.abs(OFFS[r])} off scores ${wvPays(ea.state.rounds[r], [4, 4, 3, 3, 2, 2, 0, 0][r])}`);
       if (r === 0) {
         await GS.waitForSelector('.wv-result:not(.hide)');
         await snapAll(GS, 'wave-05-reveal');
@@ -657,12 +688,13 @@ async function regressions(h, pages) {
       if (r === 6) { await GS.waitForSelector('.wv-result:not(.hide)'); await snapAll(GS, 'wave-07-reveal-miss'); }
     }
     const wa = await h.engine(a, wid); const wb = await h.engine(b, wid);
-    assert(wa.over && wb.over && wa.result.score === 18 && wb.result.score === 18, `wave: 18 of 32 on both phones (got ${wa.result.score})`);
-    await h.wait(3300);
-    assert(await visible(a, '#game-root .gm-end') && await visible(b, '#game-root .gm-end'), 'wave: end card on both phones');
+    const wexp = wa.state.rounds.reduce((n, Rd, r) => n + wvPays(Rd, [4, 4, 3, 3, 2, 2, 0, 0][r]), 0);
+    assert(wa.over && wb.over && wa.result.score === wexp && wb.result.score === wexp, `wave: ${wexp} on both phones (got ${wa.result.score})`);
+    await waitFor(async () => (await visible(a, '#game-root .gm-end')) && (await visible(b, '#game-root .gm-end')), 9000, 'wave end cards');
+    assert(true, 'wave: end card on both phones');
     await snapAll(b, 'wave-08-end-card');
     const wrec = h.results().find((x) => x.game === 'wave' && x.mode === 'online');
-    assert(wrec && wrec.winner === 'team' && wrec.score === 18, 'wave: online result recorded (team, 18)');
+    assert(wrec && wrec.winner === 'team' && wrec.score === wexp, `wave: online result recorded (team, ${wexp})`);
     assert(/See every round/.test(await b.textContent('#game-root [data-g="end-look"]')), 'wave: the end card offers "See every round"');
     await b.click('#game-root [data-g="end-look"]');
     await b.waitForSelector('.wv-rows .wv-row:nth-child(8)');
@@ -693,6 +725,7 @@ async function regressions(h, pages) {
         continue;
       }
       if (await visible(a, '.dd-next')) { await a.click('.dd-next'); continue; }
+      if (await visible(a, '.dd-start')) { await a.click('.dd-start'); await a.waitForTimeout(150); continue; }
       if (await visible(a, '.dd-pick')) {
         await a.click('.dd-pick[data-i="1"]');
         await a.waitForSelector('.dd-paper.can-draw canvas');
@@ -712,18 +745,20 @@ async function regressions(h, pages) {
       await a.waitForTimeout(150);
     }
     const le = await h.engine(a, lid);
-    assert(le.over && le.result.score === 18 && local === 6, `same-phone doodle finished: 18 of 18 (got ${le.result.score})`);
+    const lexp = 18 + (le.state.gold > 0 ? 3 : 0); // six first-try Medium hits (x2 on a golden round)
+    assert(le.over && le.result.score === lexp && local === 6, `same-phone doodle finished: ${lexp} (got ${le.result.score})`);
     assert(curtains === 7, `same-phone doodle: pass-the-phone curtain at the start and after every drawing (${curtains})`);
-    await h.wait(2700);
+    await waitFor(() => visible(a, '#game-root .gm-end'), 9000, 'same-phone doodle end card');
     assert(await visible(a, '#game-root .gm-end'), 'same-phone doodle: end card');
     await h.settle();
-    assert(h.results().length === resBefore + 1 && h.results().some((x) => x.game === 'doodle' && x.mode === 'local' && x.score === 18), 'same-phone doodle result recorded');
+    assert(h.results().length === resBefore + 1 && h.results().some((x) => x.game === 'doodle' && x.mode === 'local' && x.score === lexp), 'same-phone doodle result recorded');
     await h.closeGame(a);
 
     console.log('# wave same phone');
     await h.newLocalGame(b, 'wave');
     const lw = await b.evaluate(() => window.__lastMatchId);
     curtains = 0;
+    let wavePicked = false;
     for (let guard = 0; guard < 80; guard++) {
       const e = await h.engine(b, lw);
       if (e.over) break;
@@ -735,6 +770,7 @@ async function regressions(h, pages) {
         await b.waitForTimeout(120);
         continue;
       }
+      if (await visible(b, '.wv-start')) { await b.tap('.wv-mode[data-mode="classic"]'); await b.tap('.wv-start'); wavePicked = true; await b.waitForTimeout(150); continue; }
       if (await visible(b, '.wv-go') && !(await b.$('.wv-dial.live'))) { await b.click('.wv-go'); continue; }
       if (await visible(b, '.wv-input')) { await b.fill('.wv-input', 'just right'); await b.press('.wv-input', 'Enter'); await b.waitForTimeout(150); continue; }
       if (await b.$('.wv-dial.live')) {
@@ -748,10 +784,10 @@ async function regressions(h, pages) {
       await b.waitForTimeout(150);
     }
     const lwe = await h.engine(b, lw);
-    assert(lwe.over && lwe.result.score === 32 && lwe.result.text === 'Telepathic', `same-phone wave finished: 32, Telepathic (got ${lwe.result.score})`);
+    assert(wavePicked && lwe.over && lwe.result.score === lwe.result.max && lwe.result.text === 'Telepathic', `same-phone wave finished: every point (${lwe.result.score} of ${lwe.result.max}), Telepathic`);
     assert(curtains === 9, `same-phone wave: curtain at the start and after every clue (${curtains})`);
-    await h.wait(3300);
-    assert(await visible(b, '#game-root .gm-end'), 'same-phone wave: end card');
+    await waitFor(() => visible(b, '#game-root .gm-end'), 9000, 'same-phone wave end card');
+    assert(true, 'same-phone wave: end card');
     await h.closeGame(b);
 
     await regressions(h, pages);
@@ -761,21 +797,19 @@ async function regressions(h, pages) {
     await h.newLocalGame(a, 'doodle');
     const tid = await a.evaluate(() => window.__lastMatchId);
     await a.click('#game-root [data-g="reveal"]');
+    await a.waitForSelector('.dd-start');
+    await a.click('.dd-start');
     await a.waitForSelector('.dd-pick');
     await a.clock.install();
     await a.click('.dd-pick[data-i="0"]');
     await a.waitForSelector('.dd-paper.can-draw canvas');
     await a.clock.fastForward(76000);
-    await a.waitForSelector('.toast:has-text("Time’s up")');
-    assert((await h.engine(a, tid)).state.phase === 'draw', 'timer at zero with an empty canvas: nothing sent, a nudge instead');
-    assert(await a.$eval('.dd-secs', (x) => x.textContent) === '0:00', 'timer shows 0:00');
-    await drawPicture(a, 2, 'mouse');
-    await a.click('.dd-send');
     await a.waitForSelector('#game-root .gm-curtain:not([hidden])');
+    const tz = (await h.engine(a, tid)).state;
+    assert(tz.r === 1 && tz.rounds[0].timeUp === true && tz.rounds[0].points === 0, 'timer at zero with an empty canvas: a blank drawing is sent, the round scores 0 and the next one starts');
     await a.click('#game-root [data-g="reveal"]');
-    await a.waitForSelector('.dd-giveup');
-    await a.click('.dd-giveup'); await a.click('.dd-giveup');
     await a.waitForSelector('.dd-next');
+    assert(/Time/i.test(await a.textContent('.dd-stamp')), 'the reveal says the time ran out');
     await a.click('.dd-next');
     await a.click('.dd-pick[data-i="2"]');
     await a.waitForSelector('.dd-paper.can-draw canvas');

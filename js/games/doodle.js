@@ -2,7 +2,10 @@
 // A drawing is one compact string: strokes joined by '.', each stroke is
 //   [style][gap gap][x y t]…   (base64url; style = colour + 4*size, gap in 10 ms,
 //   every point = 24 bits: x 0–255, y 0–255, dt in 8 ms units).
-import { registerGame, shuffled } from './core.js';
+import { registerGame, shuffled, rand, randInt } from './core.js';
+import { NEW_DECKS, MODE_LIST, PACK_LIST, TWIST_LIST } from './doodle/packs.js';
+import { mountDoodle } from './doodle/view.js';
+import { CSS } from './doodle/css.js';
 
 const ROUNDS = 6;
 const DRAW_SECONDS = 75;
@@ -191,122 +194,279 @@ function finishRound(s, pts) {
   s.phase = 'draw';
 }
 
-// ── view helpers ─────────────────────────────────────────────────────
-const esc = (x) => String(x ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
-const fitWord = (t) => { const n = Math.max(...t.split(/\s+/).map((w) => w.length)); return n >= 13 ? 'fs' : n >= 10 ? 'fm' : ''; };
-const reduced = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
-const ICON = {
-  undo: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7H4V2M4.5 6.5A8.5 8.5 0 1 1 3.6 14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  clear: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6.5 7l1 13h9l1-13M10 11v6M14 11v6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  skip: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5l8 7-8 7zM12 5l8 7-8 7z" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>',
-  replay: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.6-5.9M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  yes: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  no: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>',
-  close: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>',
-};
-const PENCIL = `<svg class="dd-pencil" viewBox="0 0 220 90" aria-hidden="true">
-  <path class="dd-pencil-line" d="M14 62c18-26 30-30 40-10s22 22 34-6 26-30 36-4 20 26 34 2 22-26 34-14 10 18 14 20"/>
-  <g class="dd-pencil-body"><path d="M0 0l-9-26 14-5 9 26z" class="dd-pencil-wood"/><path d="M0 0l14-5-3 8z" class="dd-pencil-tip"/><path d="M-9-26l14-5 3 8-14 5z" class="dd-pencil-cap"/></g>
-</svg>`;
+// ═════════════════════════════════════════════════════════════════════
+// v2 (everything below is gated on s.v === 2; the v1 code above never changes)
+// ═════════════════════════════════════════════════════════════════════
+const ROUNDS_V2 = 6;
+const STAKES = [[2, 1, 1], [3, 2, 1], [5, 3, 2]]; // by tier, by guess number
+const EARLY = [4, 5, 7];                           // Half & Half early call: first-guess stakes + 2
+const BONUS_KINDS = new Set(['invisible', 'sprint', 'oneline']);
 
-// Timeline of a drawing for replay: per point absolute ms.
-function timeline(strokes) {
-  let t = 0;
-  const T = strokes.map((st) => {
-    t += Math.min(st.gap * 10, 900);
-    return st.pts.map(([, , dt]) => (t += Math.min(dt * 8, 450)));
+// The whole card pool: the 282 v1 prompts first (same indices as PROMPTS), then the new decks.
+export const POOL = PROMPTS.map((p, i) => ({ show: p.show, all: p.all, i }));
+const POOL_TIER = PROMPTS.map((_, i) => tierOf(i));
+const V1_IDX = TIERS.map((t, k) => t.map((_, i) => OFFS[k] + i));
+const PACK_IDX = { classic: V1_IDX };
+for (const deck of NEW_DECKS) {
+  PACK_IDX[deck.id] = [[], [], []];
+  deck.tiers.forEach((tier, k) => tier.forEach((str) => {
+    const all = str.split('|');
+    PACK_IDX[deck.id][k].push(POOL.length);
+    POOL.push({ show: all[0], all, i: POOL.length });
+    POOL_TIER.push(k);
+  }));
+}
+PACK_IDX.everything = [0, 1, 2].map((k) => [...V1_IDX[k], ...NEW_DECKS.flatMap((d) => PACK_IDX[d.id][k])]);
+export const poolTier = (i) => POOL_TIER[i];
+export const packIndices = (pack) => (PACK_IDX[pack] || PACK_IDX.classic).map((t) => t.slice());
+
+// v2 guess matching: v1's rules, plus "a guess that is itself a word of another prompt is never
+// forgiven as a typo for this one" (horse is not a typo of house, clown is not crown...).
+let altOwners = null;
+let showOwners = null;
+function owners() {
+  if (altOwners) return altOwners;
+  altOwners = new Map();
+  showOwners = new Map();
+  for (const p of POOL) {
+    for (const keep of [false, true]) {
+      p.all.forEach((alt, n) => {
+        const a = squash(alt, keep);
+        if (!a) return;
+        for (const f of forms(a)) {
+          if (!altOwners.has(f)) altOwners.set(f, new Set());
+          altOwners.get(f).add(p.i);
+        }
+        if (n === 0) { if (!showOwners.has(a)) showOwners.set(a, new Set()); showOwners.get(a).add(p.i); }
+      });
+    }
+  }
+  return altOwners;
+}
+export function guessMatchesV2(guess, prompt) {
+  const own = owners();
+  for (const keep of [false, true]) {
+    const g = squash(guess, keep);
+    if (!g) continue;
+    // a side alternate that is another card's own name does not count ("butterfly" is not
+    // "butterflies in your stomach"): that guess belongs to the other card
+    const named = showOwners.get(g);
+    const foreign = named && [...named].some((i) => i !== prompt.i);
+    for (let n = 0; n < prompt.all.length; n++) {
+      const a = squash(prompt.all[n], keep);
+      if (a && forms(a).has(g) && !(n > 0 && foreign)) return true;
+    }
+  }
+  for (const keep of [false, true]) {
+    const g = squash(guess, keep);
+    if (!g) continue;
+    const others = own.get(g);
+    if (others && [...others].some((i) => i !== prompt.i)) continue;
+    for (const alt of prompt.all) {
+      const a = squash(alt, keep);
+      if (!a || a.length < 5 || g[0] !== a[0]) continue;
+      for (const f of forms(a)) if (oneEdit(f, g)) return true;
+    }
+  }
+  return false;
+}
+// "So close!" on a wrong guess: one edit away, or a whole word shared with a multi-word answer.
+const STOP = new Set(['and', 'the', 'for', 'with', 'you', 'your', 'our', 'in', 'on', 'of', 'to', 'at']);
+const wordsOf = (x) => String(x || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/['’`]/g, '')
+  .split(/[^a-z0-9]+/).filter((w) => w && !ARTICLES.has(w)).map((w) => (w.length > 3 && w.endsWith('s') && !w.endsWith('ss') ? w.slice(0, -1) : w));
+export function nearMiss(guess, prompt) {
+  const g = squash(guess);
+  if (!g) return false;
+  for (const alt of prompt.all) {
+    const a = squash(alt);
+    if (a.length < 4 || g.length < 4 || g === a) continue;
+    for (const f of forms(a)) if (f !== g && oneEdit(f, g)) return true;
+  }
+  const gw = wordsOf(guess);
+  for (const alt of prompt.all) {
+    const aw = wordsOf(alt);
+    if (aw.length < 2) continue;
+    for (const w of gw) if (w.length >= 3 && !STOP.has(w) && aw.includes(w)) return true;
+  }
+  return false;
+}
+
+// Half & Half: how many strokes the guesser sees first. The first stroke at which the cumulative
+// drawing time reaches half of the total, inclusive; never fewer than one.
+export function halfSplit(str) {
+  const d = decode(str);
+  if (!d || !d.length) return 0;
+  const dur = d.map((st) => st.pts.reduce((t, p) => t + Math.min(p[2] * 8, 450), 0));
+  const total = dur.reduce((a, b) => a + b, 0);
+  let cum = 0;
+  for (let k = 0; k < d.length; k++) {
+    cum += dur[k];
+    if (cum >= total / 2) return k + 1;
+  }
+  return d.length;
+}
+
+export function dealFor(seed, pack) {
+  const deal = new Array(ROUNDS_V2 * 3);
+  PACK_IDX[pack].forEach((idx, k) => {
+    const pick = shuffled(idx, `${seed}:doodle2:${pack}:${k}`).slice(0, ROUNDS_V2);
+    for (let r = 0; r < ROUNDS_V2; r++) deal[r * 3 + k] = pick[r];
   });
-  return { T, total: t };
+  return deal;
+}
+// A fresh deal for a new match from cards you have not seen yet (the UI freezes it in the setup move).
+// Returns { deal, seen }; `seen` is the new seen-list. `rnd` is any () => [0,1).
+export function dealFresh(pack, seenList, rnd = Math.random) {
+  const seen = new Set(seenList || []);
+  const next = new Set(seen);
+  const deal = new Array(ROUNDS_V2 * 3);
+  const shuf = (a) => { const x = a.slice(); for (let i = x.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [x[i], x[j]] = [x[j], x[i]]; } return x; };
+  PACK_IDX[pack].forEach((idx, k) => {
+    const fresh = idx.filter((i) => !seen.has(i));
+    let pick;
+    if (fresh.length >= ROUNDS_V2) pick = shuf(fresh).slice(0, ROUNDS_V2);
+    else { // the deck is used up: start it over, but play what was never seen first
+      for (const i of idx) next.delete(i);
+      const rest = shuf(idx.filter((i) => !fresh.includes(i)));
+      pick = shuf([...fresh, ...rest.slice(0, ROUNDS_V2 - fresh.length)]);
+    }
+    for (let r = 0; r < ROUNDS_V2; r++) { deal[r * 3 + k] = pick[r]; next.delete(pick[r]); next.add(pick[r]); }
+  });
+  return { deal, seen: [...next] };
 }
 
-// A square canvas in a 256×256 grid space.
-class Paper {
-  constructor(canvas, inks) { this.cv = canvas; this.g = canvas.getContext('2d'); this.inks = inks; this.size = 0; }
-  fit(css) {
-    const dpr = Math.min(3, (typeof devicePixelRatio === 'number' && devicePixelRatio) || 1);
-    this.size = css;
-    this.cv.style.width = this.cv.style.height = `${css}px`;
-    const px = Math.max(1, Math.round(css * dpr));
-    if (this.cv.width !== px) { this.cv.width = px; this.cv.height = px; }
-    this.reset();
+const kindOf = (s, R) => (s.mode === 'mixed' ? R.twist : s.mode === 'halfhalf' ? 'halfhalf' : s.mode === 'invisible' ? 'invisible' : 'normal');
+const drawSecondsFor = (kind) => (kind === 'invisible' ? 60 : kind === 'sprint' ? 35 : DRAW_SECONDS);
+const roundMax = (s, r) => {
+  const R = s.rounds[r];
+  const m = s.mode === 'ladder' ? STAKES[Math.min(2, r)][0] : { halfhalf: 7, invisible: 6, sprint: 6, oneline: 6 }[kindOf(s, R)] || 5;
+  return R.gold ? m * 2 : m;
+};
+const maxScore = (s) => (s.v === 2 ? s.rounds.reduce((n, _, r) => n + roundMax(s, r), 0) : ROUNDS * POINTS[0]);
+const RATINGS2 = [[0.85, 'Mind readers'], [0.68, 'Gallery-worthy'], [0.5, 'Fridge-door art'], [0.3, 'Abstract art'], [0.0001, 'Modern art, probably'], [0, 'Pure mystery']];
+export const ratingOf2 = (score, max) => RATINGS2.find(([min]) => score / Math.max(1, max) >= min)[1];
+
+function buildV2(s, st) {
+  const { seed, first } = s;
+  const mode = st.mode; const pack = st.pack;
+  const deal = Array.isArray(st.deal) ? st.deal : dealFor(seed, pack);
+  const twists = mode === 'mixed'
+    ? shuffled([...shuffled(TWIST_LIST, `${seed}:doodle2:tw`), TWIST_LIST[randInt(TWIST_LIST.length, seed, 'doodle2', 'twx')]], `${seed}:doodle2:tw2`)
+    : null;
+  const rounds = [];
+  for (let r = 0; r < ROUNDS_V2; r++) {
+    rounds.push({
+      drawer: r % 2 ? other(first) : first, choices: [deal[r * 3], deal[r * 3 + 1], deal[r * 3 + 2]], pick: null, tier: r === 0 && mode === 'ladder' ? 0 : null,
+      strokes: null, guesses: [], points: null, gaveUp: false, twist: twists ? twists[r] : null, gold: false,
+    });
   }
-  reset() {
-    const g = this.g;
-    g.setTransform(1, 0, 0, 1, 0, 0);
-    g.clearRect(0, 0, this.cv.width, this.cv.height);
-    const k = this.cv.width / 256;
-    g.setTransform(k, 0, 0, k, 0, 0);
-    g.lineCap = 'round'; g.lineJoin = 'round';
-  }
-  pen(st) { const c = this.inks()[st.c]; this.g.strokeStyle = c; this.g.fillStyle = c; this.g.lineWidth = WIDTHS[st.s]; }
-  dot(st) { const [x, y] = st.pts[0]; this.pen(st); const g = this.g; g.beginPath(); g.arc(x + 0.5, y + 0.5, WIDTHS[st.s] / 2, 0, Math.PI * 2); g.fill(); }
-  // the curve piece that point k (k >= 1) completes
-  seg(st, k) {
-    const p = st.pts; const g = this.g;
-    this.pen(st);
-    g.beginPath();
-    if (k === 1) { g.moveTo(p[0][0] + 0.5, p[0][1] + 0.5); g.lineTo((p[0][0] + p[1][0]) / 2 + 0.5, (p[0][1] + p[1][1]) / 2 + 0.5); }
-    else {
-      const a = p[k - 2]; const b = p[k - 1]; const c = p[k];
-      g.moveTo((a[0] + b[0]) / 2 + 0.5, (a[1] + b[1]) / 2 + 0.5);
-      g.quadraticCurveTo(b[0] + 0.5, b[1] + 0.5, (b[0] + c[0]) / 2 + 0.5, (b[1] + c[1]) / 2 + 0.5);
-    }
-    g.stroke();
-  }
-  tail(st) {
-    const p = st.pts; const n = p.length;
-    if (n === 1) { this.dot(st); return; }
-    const g = this.g; this.pen(st);
-    g.beginPath();
-    g.moveTo((p[n - 2][0] + p[n - 1][0]) / 2 + 0.5, (p[n - 2][1] + p[n - 1][1]) / 2 + 0.5);
-    g.lineTo(p[n - 1][0] + 0.5, p[n - 1][1] + 0.5);
-    g.stroke();
-  }
-  stroke(st, n = st.pts.length, done = true) {
-    const p = st.pts;
-    if (!n) return;
-    if (n === 1) { if (done) this.dot(st); return; }
-    const g = this.g; this.pen(st);
-    g.beginPath();
-    g.moveTo(p[0][0] + 0.5, p[0][1] + 0.5);
-    g.lineTo((p[0][0] + p[1][0]) / 2 + 0.5, (p[0][1] + p[1][1]) / 2 + 0.5);
-    for (let k = 2; k < n; k++) g.quadraticCurveTo(p[k - 1][0] + 0.5, p[k - 1][1] + 0.5, (p[k - 1][0] + p[k][0]) / 2 + 0.5, (p[k - 1][1] + p[k][1]) / 2 + 0.5);
-    if (done) g.lineTo(p[n - 1][0] + 0.5, p[n - 1][1] + 0.5);
-    g.stroke();
-  }
-  all(strokes) { this.reset(); for (const st of strokes) this.stroke(st); }
+  // Golden Frame: in about one match of three, one round after the first pays double.
+  let gold = -1;
+  if (rand(seed, 'doodle2', 'gold') < 1 / 3) { gold = 1 + randInt(ROUNDS_V2 - 1, seed, 'doodle2', 'goldr'); rounds[gold].gold = true; }
+  return { first, seed, v: 2, mode, pack, r: 0, phase: 'draw', score: 0, rung: 0, gold, rounds };
+}
+function checkDeal(deal, pack) {
+  if (!Array.isArray(deal) || deal.length !== ROUNDS_V2 * 3) throw new Error('That deal has the wrong number of cards.');
+  const seen = new Set();
+  deal.forEach((i, n) => {
+    if (!Number.isInteger(i) || i < 0 || i >= POOL.length) throw new Error('That deal has a card that does not exist.');
+    if (seen.has(i)) throw new Error('That deal repeats a card.');
+    seen.add(i);
+    if (!PACK_IDX[pack][n % 3].includes(i)) throw new Error('That deal has a card from the wrong pack.');
+  });
+}
+function applySetup(s, who, st) {
+  if (s.v) throw new Error('This game is already set up.');
+  if (s.r !== 0 || s.phase !== 'draw' || s.rounds[0].pick != null || s.rounds[0].strokes != null) throw new Error('It is too late to change the setup.');
+  if (who !== s.first) throw new Error('Only the first player sets up the game.');
+  if (!st || typeof st !== 'object' || st.v !== 2) throw new Error('That setup makes no sense.');
+  if (!MODE_LIST.includes(st.mode)) throw new Error('Unknown game mode.');
+  if (!PACK_LIST.includes(st.pack)) throw new Error('Unknown card pack.');
+  if (st.deal !== undefined) checkDeal(st.deal, st.pack);
+  return buildV2(s, st);
 }
 
-// Plays a drawing back on a Paper, at real speed squeezed into `cap` ms.
-function player(paper, strokes, { cap: capMs = REPLAY_CAP, onDone = () => {} } = {}) {
-  const { T, total } = timeline(strokes);
-  const k = total > capMs ? total / capMs : 1;
-  let si = 0; let pi = 0; let raf = 0; let t0 = 0; let done = false;
-  const finish = () => { if (done) return; done = true; cancelAnimationFrame(raf); onDone(); };
-  const step = (now) => {
-    if (!t0) t0 = now;
-    const e = (now - t0) * k;
-    while (si < strokes.length && T[si][pi] <= e) {
-      const st = strokes[si];
-      if (pi >= 1) paper.seg(st, pi);
-      if (pi === st.pts.length - 1) { paper.tail(st); si++; pi = 0; } else pi++;
-    }
-    if (si >= strokes.length) finish(); else raf = requestAnimationFrame(step);
-  };
-  paper.reset();
-  raf = requestAnimationFrame(step);
-  return {
-    get done() { return done; },
-    skip() { cancelAnimationFrame(raf); si = strokes.length; pi = 0; paper.all(strokes); finish(); },
-    stop() { cancelAnimationFrame(raf); done = true; },
-    redraw() {
-      paper.reset();
-      for (let i = 0; i < Math.min(si, strokes.length); i++) paper.stroke(strokes[i]);
-      if (si < strokes.length && pi > 0) paper.stroke(strokes[si], pi, false);
-    },
-  };
+function finishV2(s, base) {
+  const R = s.rounds[s.r];
+  let pts = base;
+  R.base = base;
+  if (pts > 0 && BONUS_KINDS.has(kindOf(s, R))) { R.bonus = 1; pts += 1; }
+  if (pts > 0 && R.gold) { pts *= 2; R.x2 = true; }
+  R.points = pts;
+  s.score += pts;
+  if (s.mode === 'ladder') s.rung = pts > 0 ? Math.min(2, s.rung + 1) : Math.max(0, s.rung - 1);
+  s.r++;
+  s.phase = 'draw';
+  if (s.mode === 'ladder' && s.rounds[s.r]) s.rounds[s.r].tier = s.rung;
 }
+
+function applyV2(s, who, mv) {
+  if (s.r >= s.rounds.length) throw new Error('The game is over.');
+  if (!mv || typeof mv !== 'object') throw new Error('That move makes no sense.');
+  const R = s.rounds[s.r];
+  const kind = kindOf(s, R);
+  if (s.phase === 'draw') {
+    if (who !== R.drawer) throw new Error(mv.guess != null || mv.giveUp ? 'Wait for the drawing to arrive.' : 'It’s not your turn to draw.');
+    if (!Number.isInteger(mv.prompt) || mv.prompt < 0 || mv.prompt > 2) throw new Error('Pick one of the three prompts.');
+    if (s.mode === 'ladder' && mv.prompt !== R.tier) throw new Error('The ladder deals this card. Draw the one it picked.');
+    if (mv.timeUp === true) {
+      if (mv.strokes) throw new Error('A time-up round has no drawing.');
+      R.pick = mv.prompt; R.tier = POOL_TIER[R.choices[R.pick]]; R.strokes = ''; R.timeUp = true;
+      finishV2(s, 0);
+      return s;
+    }
+    const err = drawingError(mv.strokes);
+    if (err) throw new Error(err);
+    if (kind === 'oneline' && mv.strokes.split('.').length !== 1) throw new Error('One line only: lift your finger just once.');
+    R.pick = mv.prompt;
+    R.tier = POOL_TIER[R.choices[R.pick]];
+    R.strokes = mv.strokes;
+    s.phase = 'guess';
+    return s;
+  }
+  if (who === R.drawer) throw new Error('You drew this one. Your partner guesses.');
+  const half = kind === 'halfhalf';
+  if (mv.rest === true) {
+    if (!half || R.rest || R.guesses.length) throw new Error('The rest of the drawing is already showing.');
+    R.rest = true;
+    return s;
+  }
+  if (mv.giveUp === true) { R.gaveUp = true; finishV2(s, 0); return s; }
+  if (mv.guess != null && typeof mv.guess !== 'string') throw new Error('Type a guess.');
+  const g = String(mv.guess || '').trim().replace(/\s+/g, ' ');
+  if (!g) throw new Error('Type a guess first.');
+  if (g.length > 40) throw new Error('Keep guesses under 40 letters.');
+  if (!squash(g, true)) throw new Error('Guess with letters or numbers.');
+  const same = (x) => squash(x) || squash(x, true);
+  if (R.guesses.some((x) => same(x) === same(g))) throw new Error('You already tried that one.');
+  const early = mv.early === true;
+  if (early) {
+    if (!half) throw new Error('Early calls are for Half & Half rounds.');
+    if (R.rest || R.guesses.length) throw new Error('Too late for an early call. You have seen the rest.');
+  } else if (half && !R.rest) R.rest = true;
+  R.guesses.push(g);
+  const hit = guessMatchesV2(g, POOL[R.choices[R.pick]]);
+  if (early) {
+    if (hit) { R.early = 'hit'; finishV2(s, EARLY[R.tier]); } else { R.early = 'miss'; R.rest = true; }
+    return s;
+  }
+  const n = R.guesses.length - (R.early ? 1 : 0); // which normal guess this was (1, 2, 3)
+  const pay = half ? STAKES[R.tier][n] : STAKES[R.tier][n - 1];
+  if (hit) finishV2(s, pay);
+  else if (n >= (half ? 2 : 3)) finishV2(s, 0);
+  return s;
+}
+function resultV2(s) {
+  const max = maxScore(s);
+  const got = s.rounds.filter((R) => R.points > 0).length;
+  return { winner: null, team: true, score: s.score, text: ratingOf2(s.score, max), sub: `${s.score} of ${max} points, ${got} of ${s.rounds.length} guessed. Your drawings are hanging in the gallery.` };
+}
+
+const KIT = {
+  ROUNDS, DRAW_SECONDS, INK_CHARS, TIER_NAMES, POOL, tierOf: poolTier, encode, decode, charsOf, other,
+  ratingOf, guessMatches, guessMatchesV2, nearMiss, halfSplit, STAKES, EARLY, kindOf, drawSecondsFor, maxScore, ratingOf2,
+  dealFresh, POINTS, ROUNDS_V2,
+};
 
 registerGame({
   id: 'doodle',
@@ -319,12 +479,12 @@ registerGame({
   platforms: ['phone', 'computer'],
   best: 'phone',
   minutes: 12,
-  endDelay: 2400,
+  endDelay: 'manual',
   endLookLabel: 'See the gallery',
   howTo: [
-    'Take turns drawing. Pick one of three prompts and sketch it in 75 seconds.',
-    'Your partner watches it replay, then gets three guesses.',
-    '3 points on the first guess, 2 on the second, 1 on the third.',
+    'Take turns drawing. Pick a card and sketch it before the timer runs out.',
+    'Your partner watches it replay, then guesses. Fewer guesses, more points.',
+    'Harder cards pay more. Try Half & Half, Ladder, Invisible Ink or Mixed Bag.',
     'Six rounds. Then admire your gallery.',
   ],
 
@@ -338,11 +498,13 @@ registerGame({
     return { first, seed, r: 0, phase: 'draw', score: 0, rounds };
   },
   next(s) {
-    if (s.r >= ROUNDS) return [];
+    if (s.r >= (s.v === 2 ? s.rounds.length : ROUNDS)) return [];
     const d = s.rounds[s.r].drawer;
     return [s.phase === 'draw' ? d : other(d)];
   },
   apply(s, who, mv) {
+    if (mv && typeof mv === 'object' && mv.setup !== undefined) return applySetup(s, who, mv.setup);
+    if (s.v === 2) return applyV2(s, who, mv);
     if (s.r >= ROUNDS) throw new Error('The game is over.');
     if (!mv || typeof mv !== 'object') throw new Error('That move makes no sense.');
     const R = s.rounds[s.r];
@@ -371,790 +533,12 @@ registerGame({
     return s;
   },
   result(s) {
+    if (s.v === 2) return resultV2(s);
     const got = s.rounds.filter((R) => R.points > 0).length;
     return { winner: null, team: true, score: s.score, text: ratingOf(s.score), sub: `${s.score} of 18 points, ${got} of 6 guessed. Your drawings are hanging in the gallery.` };
   },
 
-  // ── view ──
-  css: `
-    .g-doodle { position: absolute; inset: 0; color: var(--g-ink); -webkit-user-select: none; user-select: none; }
-    .g-doodle .dd-scroll { position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
-    .g-doodle .dd-scr { width: 100%; max-width: 560px; min-height: 100%; margin: 0 auto; padding: 2px 2px calc(14px + var(--kb, 0px)); display: flex; flex-direction: column; align-items: center; gap: 10px; }
-    .g-doodle .dd-top { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 36px; }
-    .g-doodle .dd-round { font-family: var(--g-font-display); font-weight: 900; font-size: 0.95rem; letter-spacing: 0.02em; text-transform: uppercase; }
-    .g-doodle .dd-round i { font-style: normal; color: var(--g-muted); }
-    .g-doodle .dd-team { display: inline-flex; align-items: baseline; gap: 5px; padding: 4px 11px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); font-weight: 800; font-size: 0.85rem; box-shadow: var(--g-shadow); white-space: nowrap; }
-    .g-doodle .dd-team b { font-family: var(--g-font-display); font-size: 1.05rem; }
-    .g-doodle .dd-h { font-family: var(--g-font-display); font-weight: 900; font-size: 1.45rem; line-height: 1.15; margin: 4px 0 0; text-align: center; }
-    .g-doodle .dd-sub { margin: 0; color: var(--g-muted); font-weight: 700; text-align: center; font-size: 0.95rem; }
-    .g-doodle .p-a { color: var(--p-a-text, var(--p-a)); } .g-doodle .p-b { color: var(--p-b-text, var(--p-b)); }
-    .g-doodle b.p-a, .g-doodle b.p-b { font-weight: 900; }
-
-    /* prompt cards */
-    .g-doodle .dd-picks { width: 100%; display: flex; flex-direction: column; gap: 14px; margin-top: 6px; }
-    .g-doodle .dd-pick { position: relative; display: flex; align-items: center; gap: 14px; width: 100%; min-height: 76px; padding: 14px 16px; text-align: left; background: var(--g-card); color: var(--g-ink); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow); touch-action: manipulation; transition: transform 0.12s ease; }
-    .g-doodle .dd-pick:nth-child(1) { transform: rotate(-1.2deg); } .g-doodle .dd-pick:nth-child(2) { transform: rotate(0.8deg); } .g-doodle .dd-pick:nth-child(3) { transform: rotate(-0.5deg); }
-    .g-doodle .dd-pick:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge, var(--g-ink)); }
-    .g-doodle .dd-pick-word { font-family: var(--g-font-display); font-weight: 900; font-size: 1.35rem; line-height: 1.1; flex: 1; min-width: 0; overflow-wrap: anywhere; }
-    .g-doodle .dd-pick-word.fm { font-size: 1.18rem; } .g-doodle .dd-pick-word.fs { font-size: 1.04rem; }
-    .g-doodle .dd-tier { flex: none; width: 64px; padding: 5px 0; text-align: center; font-weight: 900; font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; border: 2px solid var(--g-ink); border-radius: 6px; }
-    .g-doodle .dd-tier.t0 { background: var(--g-card); } .g-doodle .dd-tier.t1 { background: var(--g-hl); color: var(--g-on-ink); } .g-doodle .dd-tier.t2 { background: var(--g-ink); color: var(--g-card); }
-    .g-doodle .dd-pts { flex: none; font-weight: 800; color: var(--g-muted); font-size: 0.8rem; }
-
-    /* paper */
-    .g-doodle .dd-paper { position: relative; flex: none; background: var(--g-card); border: 2px solid var(--g-ink); border-radius: calc(var(--g-radius) * 0.6); box-shadow: var(--g-shadow); overflow: hidden; }
-    .g-doodle .dd-paper canvas { display: block; touch-action: none; }
-    .g-doodle .dd-paper.can-draw canvas { cursor: crosshair; }
-    .g-doodle .dd-ink { position: absolute; left: 8px; right: 8px; bottom: 6px; height: 5px; border-radius: 3px; background: var(--g-line); opacity: 0; transition: opacity 0.2s; pointer-events: none; }
-    .g-doodle .dd-ink.on { opacity: 1; }
-    .g-doodle .dd-ink i { display: block; height: 100%; width: 0; border-radius: 3px; background: var(--g-ink); }
-    .g-doodle .dd-ink.low i { background: var(--g-bad); }
-    .g-doodle .dd-over-btn { position: absolute; right: 8px; bottom: 8px; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 6px 12px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); font-weight: 800; font-size: 0.85rem; box-shadow: var(--g-shadow); touch-action: manipulation; }
-    .g-doodle .dd-over-btn svg { width: 16px; height: 16px; }
-    .g-doodle .dd-over-btn:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge, var(--g-ink)); }
-
-    /* top bar of the draw screen */
-    .g-doodle .dd-word { font-family: var(--g-font-display); font-weight: 900; font-size: 1.15rem; line-height: 1.15; flex: 1; min-width: 0; overflow-wrap: anywhere; }
-    .g-doodle .dd-word small { display: block; font-family: var(--g-font-body); font-size: 0.72rem; font-weight: 800; color: var(--g-muted); text-transform: uppercase; letter-spacing: 0.06em; }
-    .g-doodle .dd-timer { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px 4px 6px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); font-family: var(--g-font-display); font-weight: 900; font-variant-numeric: tabular-nums; font-size: 1.05rem; box-shadow: var(--g-shadow); }
-    .g-doodle .dd-timer svg { width: 26px; height: 26px; transform: rotate(-90deg); }
-    .g-doodle .dd-timer .dd-ring-bg { fill: none; stroke: var(--g-line); stroke-width: 5; }
-    .g-doodle .dd-timer .dd-ring { fill: none; stroke: var(--g-ink); stroke-width: 5; stroke-linecap: butt; }
-    .g-doodle .dd-timer.low { color: var(--g-bad); border-color: var(--g-bad); }
-    .g-doodle .dd-timer.low .dd-ring { stroke: var(--g-bad); }
-    .g-doodle .dd-timer.zero { animation: dd-shake 0.5s ease 2; }
-
-    /* tools */
-    .g-doodle .dd-tools { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-    .g-doodle .dd-group { display: flex; align-items: center; gap: 4px; }
-    .g-doodle .dd-swatch, .g-doodle .dd-size, .g-doodle .dd-tool { position: relative; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 50%; touch-action: manipulation; color: var(--g-ink); }
-    .g-doodle .dd-swatch i { width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--g-ink); background: var(--ink); transition: transform 0.12s; }
-    .g-doodle .dd-swatch[aria-checked="true"] i { transform: scale(1.18); box-shadow: 0 0 0 3px var(--g-bg), 0 0 0 5px var(--g-ink); }
-    .g-doodle .dd-size i { border-radius: 50%; background: var(--g-ink); }
-    .g-doodle .dd-size[data-s="0"] i { width: 7px; height: 7px; } .g-doodle .dd-size[data-s="1"] i { width: 17px; height: 17px; }
-    .g-doodle .dd-size::before { content: ''; position: absolute; inset: 3px; border-radius: 50%; border: 2px solid transparent; }
-    .g-doodle .dd-size[aria-checked="true"]::before { border-color: var(--g-ink); background: var(--g-hl); }
-    .g-doodle .dd-size[aria-checked="true"] i { background: var(--g-on-ink); }
-    .g-doodle .dd-size i { position: relative; }
-    .g-doodle .dd-sep { width: 2px; height: 26px; background: var(--g-line); margin: 0 4px; border-radius: 1px; }
-    .g-doodle .dd-tool { border-radius: 12px; border: 2px solid var(--g-ink); background: var(--g-card); box-shadow: var(--g-shadow); }
-    .g-doodle .dd-tool svg { width: 22px; height: 22px; }
-    .g-doodle .dd-tool:disabled { opacity: 0.35; box-shadow: none; }
-    .g-doodle .dd-tool:not(:disabled):active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge, var(--g-ink)); }
-    .g-doodle .dd-send { flex: 1; min-height: 48px; }
-    .g-doodle .dd-actions { width: 100%; display: flex; gap: 8px; align-items: center; }
-    .g-doodle .gm-btn:disabled { opacity: 0.4; }
-
-    /* guessing */
-    .g-doodle .dd-by { font-weight: 800; font-size: 0.95rem; flex: 1; min-width: 0; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .g-doodle .dd-blanks { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 12px; }
-    .g-doodle .dd-blanks span { display: inline-flex; gap: 3px; }
-    .g-doodle .dd-blanks i { width: 13px; height: 3px; border-radius: 2px; background: var(--g-ink); margin-top: 12px; }
-    .g-doodle .dd-tries { width: 100%; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 34px; }
-    .g-doodle .dd-pips { display: inline-flex; gap: 5px; margin-right: 2px; }
-    .g-doodle .dd-pips i { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--g-ink); background: var(--g-card); }
-    .g-doodle .dd-pips i.used { background: var(--g-ink); }
-    .g-doodle .dd-chip { display: inline-flex; align-items: center; gap: 4px; min-width: 0; padding: 3px 10px 3px 6px; border: 2px solid var(--g-ink); border-radius: 999px; font-weight: 800; font-size: 0.85rem; background: var(--g-card); max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
-    .g-doodle .dd-chip svg { width: 15px; height: 15px; flex: none; }
-    .g-doodle .dd-chip.no { color: var(--g-muted); text-decoration: line-through; text-decoration-thickness: 2px; }
-    .g-doodle .dd-chip.no svg { color: var(--g-bad); }
-    .g-doodle .dd-chip.yes { background: var(--g-hl); color: var(--g-on-ink); }
-    .g-doodle .dd-chip.new { animation: dd-pop 0.35s ease; }
-    .g-doodle .dd-form { width: 100%; display: flex; gap: 8px; }
-    .g-doodle .dd-input { flex: 1; min-width: 0; height: 52px; padding: 0 14px; font: inherit; font-size: 17px; font-weight: 800; color: var(--g-ink); background: var(--g-card); border: 2px solid var(--g-ink); border-radius: 12px; outline: none; -webkit-user-select: text; user-select: text; }
-    .g-doodle .dd-input:focus-visible { box-shadow: 0 0 0 3px var(--g-hl); }
-    .g-doodle .dd-input:disabled { opacity: 0.5; }
-    .g-doodle .dd-input.shake { animation: dd-shake 0.4s ease; border-color: var(--g-bad); }
-    .g-doodle .dd-form .gm-btn { min-width: 92px; min-height: 52px; }
-    .g-doodle .dd-giveup { align-self: center; min-height: 44px; padding: 8px 16px; font-weight: 800; color: var(--g-muted); text-decoration: underline; text-underline-offset: 3px; touch-action: manipulation; }
-    .g-doodle .dd-giveup.armed { color: var(--g-bad); }
-
-    /* stamps + results */
-    .g-doodle .dd-stamp { position: absolute; left: 50%; top: 50%; padding: 6px 14px; border: 4px solid currentColor; border-radius: 8px; background: color-mix(in srgb, var(--g-card) 82%, transparent); font-family: var(--g-font-display); font-weight: 900; font-size: 2.3rem; line-height: 1.05; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; transform: translate(-50%, -50%) rotate(-9deg); pointer-events: none; }
-    .g-doodle .dd-stamp.good { color: var(--g-good); } .g-doodle .dd-stamp.bad { color: var(--g-bad); }
-    .g-doodle .dd-stamp.anim { animation: dd-stamp 0.42s cubic-bezier(.2,1.6,.4,1) both; }
-    .g-doodle .dd-answer { text-align: center; display: flex; flex-direction: column; gap: 2px; }
-    .g-doodle .dd-answer small { color: var(--g-muted); font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem; }
-    .g-doodle .dd-answer b { font-family: var(--g-font-display); font-size: 1.6rem; font-weight: 900; line-height: 1.1; overflow-wrap: anywhere; }
-    .g-doodle .dd-glist { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
-    .g-doodle .dd-next { width: 100%; min-height: 52px; font-size: 1.05rem; }
-    .g-doodle .dd-note { margin: 0; color: var(--g-muted); font-weight: 700; text-align: center; font-size: 0.9rem; }
-    .g-doodle .dd-card { width: 100%; display: flex; align-items: center; gap: 12px; padding: 10px; background: var(--g-card); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow); }
-    .g-doodle .dd-card canvas { flex: none; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-card); }
-    .g-doodle .dd-card-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-weight: 700; }
-    .g-doodle .dd-card-txt b { font-family: var(--g-font-display); font-weight: 900; font-size: 1.1rem; }
-    .g-doodle .dd-badge { flex: none; margin-left: auto; padding: 4px 10px; border: 2px solid var(--g-ink); border-radius: 8px; font-family: var(--g-font-display); font-weight: 900; background: var(--g-hl); color: var(--g-on-ink); }
-    .g-doodle .dd-badge.zero { background: var(--g-card); color: var(--g-muted); }
-    .g-doodle .dd-waiting { display: flex; flex-direction: column; align-items: center; gap: 6px; margin: auto 0; padding: 18px 0; }
-    .g-doodle .dd-pencil { width: 220px; height: 90px; overflow: visible; }
-    .g-doodle .dd-pencil-line { fill: none; stroke: var(--g-ink); stroke-width: 4; stroke-linecap: round; stroke-dasharray: 420; stroke-dashoffset: 420; animation: dd-scribble 2.6s ease-in-out infinite; }
-    .g-doodle .dd-pencil-body { offset-path: path('M14 62c18-26 30-30 40-10s22 22 34-6 26-30 36-4 20 26 34 2 22-26 34-14 10 18 14 20'); offset-rotate: 0deg; animation: dd-pencil 2.6s ease-in-out infinite; }
-    .g-doodle .dd-pencil-wood { fill: var(--g-hl); stroke: var(--g-ink); stroke-width: 2.5; stroke-linejoin: round; }
-    .g-doodle .dd-pencil-tip { fill: var(--g-ink); }
-    .g-doodle .dd-pencil-cap { fill: var(--p-b); stroke: var(--g-ink); stroke-width: 2.5; stroke-linejoin: round; }
-    .g-doodle .dd-wait-name { font-family: var(--g-font-display); font-weight: 900; font-size: 1.35rem; text-align: center; }
-    .g-doodle .dd-live { width: 100%; display: flex; flex-direction: column; gap: 6px; }
-    .g-doodle .dd-live-row { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 2px solid var(--g-ink); border-radius: 12px; background: var(--g-card); font-weight: 800; }
-    .g-doodle .dd-live-row svg { width: 18px; height: 18px; flex: none; }
-    .g-doodle .dd-live-row.no svg { color: var(--g-bad); }
-    .g-doodle .dd-live-row.new { animation: dd-pop 0.35s ease; }
-    .g-doodle .dd-live-row small { margin-left: auto; color: var(--g-muted); font-weight: 800; }
-        .g-doodle .dd-dots { display: inline-flex; gap: 4px; }
-    .g-doodle .dd-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--g-muted); animation: dd-blink 1.2s infinite; }
-    .g-doodle .dd-dots i:nth-child(2) { animation-delay: 0.2s; } .g-doodle .dd-dots i:nth-child(3) { animation-delay: 0.4s; }
-
-    /* gallery */
-    .g-doodle .dd-gal-head { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 4px; padding-top: 4px; }
-    .g-doodle .dd-gal-kicker { font-weight: 900; font-size: 0.75rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--g-muted); }
-    .g-doodle .dd-plaque { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border: 2px solid var(--g-ink); border-radius: 10px; background: var(--g-hl); color: var(--g-on-ink); box-shadow: var(--g-shadow); }
-    .g-doodle .dd-plaque b { font-family: var(--g-font-display); font-size: 2rem; font-weight: 900; line-height: 1; }
-    .g-doodle .dd-plaque b small { font-size: 1rem; }
-    .g-doodle .dd-plaque span { font-family: var(--g-font-display); font-weight: 900; font-size: 1.05rem; line-height: 1.1; max-width: 12em; }
-    .g-doodle .dd-wall { width: 100%; display: grid; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); gap: 18px 14px; padding: 8px 4px 4px; }
-    .g-doodle .dd-frame { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 0; padding: 8px 8px 10px; text-align: left; background: var(--g-card); color: var(--g-ink); border: 2px solid var(--g-ink); border-radius: 6px; box-shadow: var(--g-shadow); touch-action: manipulation; transform: rotate(var(--tilt, 0deg)); transition: transform 0.15s ease; }
-    .g-doodle .dd-frame:active { transform: rotate(0deg) translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge, var(--g-ink)); }
-    .g-doodle .dd-frame canvas { display: block; border: 2px solid var(--g-line); border-radius: 3px; background: var(--g-card); }
-    .g-doodle .dd-frame-title { margin-top: 8px; font-family: var(--g-font-display); font-weight: 900; font-size: 1rem; line-height: 1.15; overflow-wrap: anywhere; }
-    .g-doodle .dd-frame-meta { margin-top: 3px; font-size: 0.8rem; font-weight: 800; color: var(--g-muted); overflow-wrap: anywhere; }
-    /* the score is a sticker slapped on the frame's corner */
-    .g-doodle .dd-frame-pts { position: absolute; z-index: 1; top: -9px; right: -8px; padding: 2px 8px; border: 2px solid var(--g-ink); border-radius: 6px; color: var(--g-on-ink); background: var(--g-hl); font-family: var(--g-font-display); font-weight: 900; font-size: 0.9rem; box-shadow: var(--g-shadow-sm); transform: rotate(7deg); }
-    .g-doodle .dd-frame-pts.zero { background: var(--g-card); color: var(--g-muted); font-family: var(--g-font-body); font-size: 0.78rem; letter-spacing: 0.04em; text-transform: uppercase; }
-    .g-doodle .dd-gal-actions { width: 100%; display: flex; gap: 8px; margin-top: 6px; }
-    .g-doodle .dd-gal-actions .gm-btn { flex: 1; min-height: 50px; }
-    .g-doodle .dd-gal-hint { margin: 0; color: var(--g-muted); font-weight: 700; font-size: 0.85rem; }
-
-    /* lightbox */
-    .g-doodle .dd-lb { position: absolute; inset: 0; z-index: 3; display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; padding: 10px; background: color-mix(in srgb, var(--g-bg) 92%, transparent); overflow-y: auto; }
-    .g-doodle .dd-lb-card { width: 100%; max-width: 460px; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 14px; background: var(--g-card); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow); }
-    .g-doodle .dd-lb-card.anim { animation: dd-rise 0.25s ease both; }
-    .g-doodle .dd-lb-top { width: 100%; display: flex; align-items: flex-start; gap: 8px; }
-    .g-doodle .dd-lb-top .dd-answer { flex: 1; min-width: 0; text-align: left; }
-    .g-doodle .dd-lb .dd-paper { box-shadow: none; }
-
-    @keyframes dd-shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(3px); } }
-    @keyframes dd-pop { 0% { transform: scale(0.6); opacity: 0; } 70% { transform: scale(1.08); opacity: 1; } 100% { transform: scale(1); } }
-    @keyframes dd-stamp { 0% { transform: translate(-50%, -50%) rotate(-9deg) scale(2.4); opacity: 0; } 100% { transform: translate(-50%, -50%) rotate(-9deg) scale(1); opacity: 1; } }
-    @keyframes dd-scribble { 0% { stroke-dashoffset: 420; } 70%, 100% { stroke-dashoffset: 0; } }
-    @keyframes dd-pencil { 0% { offset-distance: 0%; } 70%, 100% { offset-distance: 100%; } }
-    @keyframes dd-blink { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
-    @keyframes dd-rise { from { transform: translateY(14px); opacity: 0; } to { transform: none; opacity: 1; } }
-    @media (prefers-reduced-motion: reduce) {
-      .g-doodle *, .g-doodle *::before { animation: none !important; transition: none !important; }
-      .g-doodle .dd-pencil-line { stroke-dashoffset: 0; }
-      .g-doodle .dd-pencil-body { offset-distance: 100%; }
-    }
-  `,
-
-  mount(el, api) {
-    el.innerHTML = '<div class="g-doodle"><div class="dd-scroll"></div><div class="dd-lb" hidden></div></div>';
-    const root = el.firstChild;
-    const scroller = root.querySelector('.dd-scroll');
-    const lb = root.querySelector('.dd-lb');
-    const nm = (w) => `<b class="p-${w}">${esc(api.name(w))}</b>`;
-    let toks = api.tokens();
-    const inks = () => [toks.ink, toks.a, toks.b, toks.good];
-    const vs = { ack: {}, color: 0, size: 0, replayed: {}, galleryPlayed: false, wasOver: null, draft: null };
-    let ctx = null;
-    let scr = null;
-    let lbClose = null;
-    let lbRedraw = null;
-
-    // Drafts survive a reload on this device: the drawing in progress (with its clock) and a
-    // half-typed guess. One slot per match.
-    const DRAFT = 'ju.doodle.draft.';
-    const draftGet = (k) => { try { const v = JSON.parse(localStorage.getItem(DRAFT + ctx.matchId) || 'null'); return v && v.k === k ? v : null; } catch { return null; } };
-    const draftPut = (k, data) => { try { if (data == null) localStorage.removeItem(DRAFT + ctx.matchId); else localStorage.setItem(DRAFT + ctx.matchId, JSON.stringify({ k, ...data })); } catch { /* storage off */ } };
-    const drawSlot = () => `${ctx.viewer}|draw|${ctx.state.r}`;
-    const saveDrawing = () => {
-      const D = vs.draft;
-      if (!D || D.sent || !ctx) return;
-      draftPut(drawSlot(), { pick: D.pick, s: encode(D.strokes), left: Math.round(D.deadline - performance.now()), at: Date.now() });
-    };
-    function restoreDrawing() {
-      const d = draftGet(drawSlot());
-      if (!d || !Number.isInteger(d.pick) || d.pick < 0 || d.pick > 2) return false;
-      const strokes = (d.s && decode(d.s)) || [];
-      const now = performance.now();
-      const left = Math.max(0, Number(d.left) - Math.max(0, Date.now() - Number(d.at)));
-      vs.draft = { r: ctx.state.r, pick: d.pick, strokes, hist: strokes.map(() => ({ k: 'stroke' })), started: now, deadline: now + (Number.isFinite(left) ? left : 0), lastEnd: now, sent: false };
-      if (ctx.state.r > 0) vs.ack[ctx.state.r - 1] = true; // they were past the reveal already
-      return true;
-    }
-
-    // Keep a focused text box above the on-screen keyboard by scrolling our own scroller,
-    // padding it by the keyboard's height when the visual viewport shrinks (iOS).
-    const kbFix = () => {
-      const a = document.activeElement;
-      if (!a || !a.matches || !a.matches('.dd-input') || !root.contains(a)) return;
-      const vv = window.visualViewport;
-      const vb = vv ? vv.offsetTop + vv.height : window.innerHeight;
-      scroller.style.setProperty('--kb', `${Math.max(0, Math.round(window.innerHeight - vb))}px`);
-      const box = (a.form || a).getBoundingClientRect();
-      const sb = scroller.getBoundingClientRect();
-      const limit = Math.min(vb, sb.bottom) - 12;
-      if (box.bottom > limit) scroller.scrollTop += box.bottom - limit;
-      else if (box.top < sb.top + 8) scroller.scrollTop -= sb.top + 8 - box.top;
-    };
-    const kbSoon = () => { requestAnimationFrame(kbFix); clearTimeout(vs.kbT); vs.kbT = setTimeout(kbFix, 350); };
-    const kbOff = () => { clearTimeout(vs.kbOffT); vs.kbOffT = setTimeout(() => { if (!root.contains(document.activeElement) || !document.activeElement.matches('.dd-input')) scroller.style.removeProperty('--kb'); }, 250); };
-    root.addEventListener('focusin', kbSoon);
-    root.addEventListener('focusout', kbOff);
-    const vvp = typeof window !== 'undefined' ? window.visualViewport : null;
-    if (vvp) { vvp.addEventListener('resize', kbSoon); vvp.addEventListener('scroll', kbSoon); }
-    window.addEventListener('resize', kbSoon);
-
-    const top = (s, right = '') => `<div class="dd-top"><span class="dd-round">Round ${Math.min(s.r + 1, ROUNDS)}<i>/${ROUNDS}</i></span>${right}<span class="dd-team">Team <b>${s.score}</b></span></div>`;
-    const blanks = (text) => `<div class="dd-blanks" aria-label="${text.replace(/[^a-z0-9 ]/gi, '').split(' ').filter(Boolean).map((w) => w.length).join(', ')} letters">${text.split(/\s+/).map((w) => `<span>${'<i></i>'.repeat(w.replace(/[^a-z0-9]/gi, '').length)}</span>`).join('')}</div>`;
-    const promptOf = (R) => PROMPTS[R.choices[R.pick]];
-
-    // Make a paper inside `host` that is sized to fit the screen.
-    function makePaper(host, { draw = false } = {}) {
-      const box = document.createElement('div');
-      box.className = 'dd-paper' + (draw ? ' can-draw' : '');
-      const cv = document.createElement('canvas');
-      box.appendChild(cv);
-      host.replaceWith(box);
-      return { box, cv, paper: new Paper(cv, inks) };
-    }
-    function fitPaper(s) {
-      if (!s || !s.p) return;
-      const w = scroller.clientWidth - 8;
-      s.el.style.minHeight = '0px';
-      const others = s.el.offsetHeight - s.p.box.offsetHeight;
-      s.el.style.minHeight = '';
-      const avail = scroller.clientHeight - others - 4;
-      const size = Math.floor(Math.max(170, Math.min(w, avail, 520)));
-      if (Math.abs(size - s.p.paper.size) < 1) return;
-      s.p.paper.fit(size);
-      s.redraw && s.redraw();
-    }
-
-    function setScreen(key, build) {
-      if (scr && scr.key === key) { scr.refresh && scr.refresh(ctx); return; }
-      if (scr) { try { scr.destroy && scr.destroy(); } catch (e) { console.error(e); } }
-      closeLightbox();
-      scroller.innerHTML = '';
-      const node = document.createElement('div');
-      node.className = 'dd-scr';
-      scroller.appendChild(node);
-      scroller.scrollTop = 0;
-      scr = build(node) || {};
-      scr.key = key;
-      scr.el = node;
-      fitPaper(scr);
-      scr.refresh && scr.refresh(ctx);
-    }
-
-    // ── screens ──
-    function blank(node) { node.innerHTML = ''; return {}; }
-
-    function pickScreen(node) {
-      const s = ctx.state; const R = s.rounds[s.r];
-      const guesser = other(R.drawer);
-      node.innerHTML = `${top(s)}
-        <h2 class="dd-h">Pick something to draw</h2>
-        <p class="dd-sub">${nm(guesser)} has to guess it. You get ${DRAW_SECONDS} seconds.</p>
-        <div class="dd-picks">${R.choices.map((pi, i) => `<button class="dd-pick" data-i="${i}">
-          <span class="dd-tier t${tierOf(pi)}">${TIER_NAMES[tierOf(pi)]}</span>
-          <span class="dd-pick-word ${fitWord(PROMPTS[pi].show)}">${esc(cap(PROMPTS[pi].show))}</span></button>`).join('')}</div>
-        ${ctx.mode === 'local' ? `<p class="dd-note">${esc(api.name(guesser))}, no peeking.</p>` : ''}`;
-      node.querySelector('.dd-picks').addEventListener('click', (e) => {
-        const b = e.target.closest('.dd-pick');
-        if (!b || !ctx.canMove) return;
-        api.sfx('flip'); api.haptic(8);
-        vs.draft = { r: s.r, pick: Number(b.dataset.i), strokes: [], hist: [], started: performance.now(), deadline: performance.now() + DRAW_SECONDS * 1000, lastEnd: performance.now(), sent: false };
-        saveDrawing();
-        render();
-      });
-      return {};
-    }
-
-    function drawScreen(node) {
-      const s = ctx.state; const R = s.rounds[s.r];
-      const D = vs.draft;
-      const word = PROMPTS[R.choices[D.pick]].show;
-      node.innerHTML = `<div class="dd-top">
-          <span class="dd-word"><small>Round ${s.r + 1} of ${ROUNDS} · draw</small>${esc(cap(word))}</span>
-          <span class="dd-timer" role="timer" aria-label="Time left"><svg viewBox="0 0 26 26"><circle class="dd-ring-bg" cx="13" cy="13" r="9.5"/><circle class="dd-ring" cx="13" cy="13" r="9.5" stroke-dasharray="59.7" stroke-dashoffset="0"/></svg><span class="dd-secs">1:15</span></span>
-        </div>
-        <div class="dd-ph"></div>
-        <div class="dd-tools">
-          <div class="dd-group" role="radiogroup" aria-label="Ink">${['Ink', `${api.name('a')}’s colour`, `${api.name('b')}’s colour`, 'Green'].map((n, i) => `<button class="dd-swatch" role="radio" data-c="${i}" aria-label="${esc(n)}" aria-checked="${vs.color === i}" style="--ink:${INK_VARS[i]}"><i></i></button>`).join('')}</div>
-          <div class="dd-group" role="radiogroup" aria-label="Brush"><button class="dd-size" role="radio" data-s="0" aria-label="Thin brush" aria-checked="${vs.size === 0}"><i></i></button><button class="dd-size" role="radio" data-s="1" aria-label="Thick brush" aria-checked="${vs.size === 1}"><i></i></button></div>
-        </div>
-        <div class="dd-actions">
-          <button class="dd-tool" data-a="undo" aria-label="Undo">${ICON.undo}</button>
-          <button class="dd-tool" data-a="clear" aria-label="Clear">${ICON.clear}</button>
-          <button class="gm-btn dd-send">Send drawing</button>
-        </div>`;
-      const p = makePaper(node.querySelector('.dd-ph'), { draw: true });
-      const ink = document.createElement('div');
-      ink.className = 'dd-ink'; ink.innerHTML = '<i></i>';
-      p.box.appendChild(ink);
-      const cv = p.cv;
-      const timerEl = node.querySelector('.dd-timer');
-      const secsEl = node.querySelector('.dd-secs');
-      const ring = node.querySelector('.dd-ring');
-      let active = null;
-      let lastSec = -1;
-      let warnedInk = false;
-      let autoTried = false;
-
-      const used = () => charsOf(D.strokes) + (active ? 4 * active.st.pts.length + 4 : 0);
-      const paintInk = () => {
-        const f = used() / INK_CHARS;
-        ink.classList.toggle('on', f > 0.45);
-        ink.classList.toggle('low', f > 0.85);
-        ink.firstChild.style.width = `${Math.min(100, f * 100)}%`;
-      };
-      const paintTools = () => {
-        node.querySelector('[data-a="undo"]').disabled = !D.hist.length;
-        node.querySelector('[data-a="clear"]').disabled = !D.strokes.length;
-        node.querySelector('.dd-send').disabled = !D.strokes.length || !ctx.canMove;
-        node.querySelectorAll('.dd-swatch').forEach((b) => b.setAttribute('aria-checked', String(Number(b.dataset.c) === vs.color)));
-        node.querySelectorAll('.dd-size').forEach((b) => b.setAttribute('aria-checked', String(Number(b.dataset.s) === vs.size)));
-        paintInk();
-      };
-      const send = (auto = false) => {
-        if (D.sent || !ctx.canMove) return;
-        if (active) endStroke();
-        if (!D.strokes.length) { if (auto) api.toast('Time’s up! Draw anything and send it.'); return; }
-        const res = api.move({ prompt: D.pick, strokes: encode(D.strokes) });
-        if (res.ok) { D.sent = true; vs.draft = null; draftPut('', null); api.sfx('pop'); api.haptic(15); } else api.toast(res.error);
-      };
-      const tick = () => {
-        const left = Math.max(0, D.deadline - performance.now());
-        const sec = Math.ceil(left / 1000);
-        if (sec !== lastSec) {
-          lastSec = sec;
-          secsEl.textContent = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
-          timerEl.classList.toggle('low', sec <= 10);
-          if (sec <= 5 && sec > 0) api.sfx('tick');
-          if (sec === 0) { timerEl.classList.add('zero'); if (!autoTried) { autoTried = true; queueMicrotask(() => { if (vs.draft === D) send(true); }); } }
-        }
-        ring.setAttribute('stroke-dashoffset', String(59.7 * (1 - left / (DRAW_SECONDS * 1000))));
-      };
-
-      const gridPt = (ev, rect) => {
-        const x = Math.round(((ev.clientX - rect.left) / rect.width) * 256 - 0.5);
-        const y = Math.round(((ev.clientY - rect.top) / rect.height) * 256 - 0.5);
-        return [Math.max(0, Math.min(255, x)), Math.max(0, Math.min(255, y))];
-      };
-      const addPoint = (ev) => {
-        const [x, y] = gridPt(ev, active.rect);
-        const pts = active.st.pts;
-        const now = ev.timeStamp || performance.now();
-        if (pts.length) {
-          const l = pts[pts.length - 1];
-          const dx = x - l[0]; const dy = y - l[1];
-          if (dx * dx + dy * dy < 3) return;
-        }
-        if (charsOf(D.strokes) + 1 + 3 + 4 * (pts.length + 1) > INK_CHARS) {
-          if (!warnedInk) { warnedInk = true; api.toast('Out of ink! Send it as it is.'); api.sfx('bad'); }
-          return;
-        }
-        const dt = pts.length ? Math.max(0, Math.min(255, Math.round((now - active.t) / 8))) : 0;
-        active.t = now;
-        pts.push([x, y, dt]);
-        if (pts.length >= 2) p.paper.seg(active.st, pts.length - 1);
-      };
-      const endStroke = () => {
-        const a = active; active = null;
-        if (!a) return;
-        if (a.st.pts.length) {
-          p.paper.tail(a.st);
-          D.strokes.push(a.st);
-          D.hist.push({ k: 'stroke' });
-          D.lastEnd = performance.now();
-          saveDrawing();
-        }
-        paintTools();
-      };
-      cv.addEventListener('pointerdown', (e) => {
-        if (!ctx.canMove || D.sent || active) return;
-        if (e.pointerType === 'mouse' && e.button !== 0) return;
-        e.preventDefault();
-        try { cv.setPointerCapture(e.pointerId); } catch { /* synthetic pointer */ }
-        const now = performance.now();
-        if (charsOf(D.strokes) + 8 > INK_CHARS) { if (!warnedInk) { warnedInk = true; api.toast('Out of ink! Send it as it is.'); } return; }
-        active = { id: e.pointerId, rect: cv.getBoundingClientRect(), t: e.timeStamp || now, st: { c: vs.color, s: vs.size, gap: Math.min(4095, Math.round((now - D.lastEnd) / 10)), pts: [] } };
-        addPoint(e);
-      });
-      cv.addEventListener('pointermove', (e) => {
-        if (!active || e.pointerId !== active.id) return;
-        e.preventDefault();
-        const list = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [];
-        for (const ev of list.length ? list : [e]) addPoint(ev);
-        paintInk();
-      });
-      const up = (e) => { if (active && e.pointerId === active.id) { e.preventDefault(); endStroke(); } };
-      cv.addEventListener('pointerup', up);
-      cv.addEventListener('pointercancel', up);
-      cv.addEventListener('lostpointercapture', up);
-      const stopTouch = (e) => e.preventDefault();
-      cv.addEventListener('touchstart', stopTouch, { passive: false });
-      cv.addEventListener('touchmove', stopTouch, { passive: false });
-      cv.addEventListener('contextmenu', stopTouch);
-
-      node.querySelector('.dd-tools').addEventListener('click', (e) => {
-        const sw = e.target.closest('.dd-swatch'); const sz = e.target.closest('.dd-size');
-        if (sw) { vs.color = Number(sw.dataset.c); api.sfx('tap'); }
-        if (sz) { vs.size = Number(sz.dataset.s); api.sfx('tap'); }
-        paintTools();
-      });
-      node.querySelector('[data-a="undo"]').addEventListener('click', () => {
-        const h = D.hist.pop();
-        if (!h) return;
-        if (h.k === 'stroke') D.strokes.pop(); else D.strokes = h.prev;
-        p.paper.all(D.strokes); api.sfx('flip'); paintTools(); saveDrawing();
-      });
-      node.querySelector('[data-a="clear"]').addEventListener('click', () => {
-        if (!D.strokes.length) return;
-        D.hist.push({ k: 'clear', prev: D.strokes }); D.strokes = [];
-        p.paper.all(D.strokes); api.sfx('hit'); api.haptic(20); paintTools(); saveDrawing();
-      });
-      node.querySelector('.dd-send').addEventListener('click', () => send(false));
-      paintTools();
-      const timer = setInterval(tick, 200);
-      tick();
-      return {
-        p,
-        redraw() { p.paper.all(D.strokes); if (active) p.paper.stroke(active.st, active.st.pts.length, false); },
-        refresh() { paintTools(); },
-        destroy() { clearInterval(timer); },
-      };
-    }
-
-    function guessScreen(node) {
-      const s = ctx.state; const r = s.r; const R = s.rounds[r];
-      const prompt = promptOf(R);
-      const strokes = decode(R.strokes) || [];
-      const prev = s.rounds[r - 1];
-      const recap = prev && prev.drawer === ctx.viewer && ctx.mode === 'local'
-        ? `<p class="dd-note">Last round ${esc(api.name(other(ctx.viewer)))} ${prev.points ? `got your ${esc(PROMPTS[prev.choices[prev.pick]].show)} (+${prev.points})` : `missed your ${esc(PROMPTS[prev.choices[prev.pick]].show)}`}.</p>` : '';
-      node.innerHTML = `${top(s, `<span class="dd-by">by ${nm(R.drawer)}</span>`)}
-        <div class="dd-ph"></div>
-        ${blanks(prompt.show)}
-        <div class="dd-tries"><span class="dd-pips" aria-label="Guesses used"></span><span class="dd-chips"></span></div>
-        <form class="dd-form" autocomplete="off"><input class="dd-input" name="g" maxlength="40" placeholder="What is it?" aria-label="Your guess" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send"><button class="gm-btn" type="submit">Guess</button></form>
-        <button class="dd-giveup" type="button">Give up</button>
-        ${recap}`;
-      const p = makePaper(node.querySelector('.dd-ph'));
-      const btn = document.createElement('button');
-      btn.className = 'dd-over-btn';
-      p.box.appendChild(btn);
-      const input = node.querySelector('.dd-input');
-      const form = node.querySelector('.dd-form');
-      const give = node.querySelector('.dd-giveup');
-      const gSlot = `${ctx.viewer}|guess|${r}`;
-      const saved = draftGet(gSlot);
-      if (saved && typeof saved.t === 'string') input.value = saved.t.slice(0, 40);
-      input.addEventListener('input', () => draftPut(gSlot, input.value ? { t: input.value } : null));
-      let pl = null;
-      let seen = R.guesses.length;
-      let armT = 0;
-      const setBtn = () => {
-        if (pl && !pl.done) btn.innerHTML = `${ICON.skip}<span>Skip</span>`;
-        else btn.innerHTML = `${ICON.replay}<span>Replay</span>`;
-        btn.setAttribute('aria-label', pl && !pl.done ? 'Skip the replay' : 'Replay the drawing');
-      };
-      const play = () => { if (pl) pl.stop(); pl = player(p.paper, strokes, { onDone: () => { vs.replayed[r] = true; setBtn(); } }); setBtn(); };
-      btn.addEventListener('click', () => { if (pl && !pl.done) pl.skip(); else play(); api.sfx('tap'); });
-      form.addEventListener('submit', (e) => {
-        e.preventDefault();
-        if (!ctx.canMove) return;
-        const g = input.value.trim();
-        if (!g) { input.focus({ preventScroll: true }); return; }
-        const res = api.move({ guess: g });
-        if (!res.ok) { api.toast(res.error); api.sfx('bad'); return; }
-        input.value = '';
-        draftPut(gSlot, null);
-      });
-      give.addEventListener('click', () => {
-        if (!ctx.canMove) return;
-        if (!give.classList.contains('armed')) {
-          give.classList.add('armed'); give.textContent = 'Really? Tap again to give up';
-          clearTimeout(armT); armT = setTimeout(() => { give.classList.remove('armed'); give.textContent = 'Give up'; }, 3000);
-          return;
-        }
-        const res = api.move({ giveUp: true });
-        if (!res.ok) api.toast(res.error); else api.sfx('lose');
-      });
-      const refresh = () => {
-        const RR = ctx.state.rounds[r];
-        node.querySelector('.dd-pips').innerHTML = [0, 1, 2].map((i) => `<i class="${i < RR.guesses.length ? 'used' : ''}"></i>`).join('');
-        node.querySelector('.dd-chips').innerHTML = RR.guesses.map((g, i) => `<span class="dd-chip no ${i >= seen ? 'new' : ''}">${ICON.no}${esc(g)}</span>`).join(' ');
-        if (RR.guesses.length > seen) {
-          api.sfx('bad'); api.haptic(30);
-          input.classList.remove('shake'); void input.offsetWidth; input.classList.add('shake');
-          seen = RR.guesses.length;
-        }
-        input.disabled = !ctx.canMove;
-        form.querySelector('button').disabled = !ctx.canMove;
-        give.disabled = !ctx.canMove;
-        const left = 3 - RR.guesses.length;
-        input.placeholder = left === 3 ? 'What is it?' : left === 1 ? 'Last guess…' : `${left} guesses left`;
-      };
-      return {
-        p,
-        redraw() { if (pl && !pl.done) pl.redraw(); else p.paper.all(strokes); },
-        refresh,
-        start() { if (reduced() || vs.replayed[r]) { p.paper.all(strokes); setBtn(); } else play(); },
-        destroy() { if (pl) pl.stop(); clearTimeout(armT); },
-      };
-    }
-
-    // The round that just ended, shown to the guesser (then they draw next) or to the drawer while they wait.
-    function resultBlock(R, viewer) {
-      const word = cap(promptOf(R).show);
-      const guesser = other(R.drawer);
-      const chips = R.guesses.map((g, i) => {
-        const ok = R.points > 0 && i === R.guesses.length - 1;
-        return `<span class="dd-chip ${ok ? 'yes' : 'no'}">${ok ? ICON.yes : ICON.no}${esc(g)}</span>`;
-      }).join('');
-      const line = R.points > 0
-        ? (viewer === guesser ? `You got it on guess ${R.guesses.length}.` : `${esc(api.name(guesser))} got it on guess ${R.guesses.length}.`)
-        : R.gaveUp ? (viewer === guesser ? 'You gave up on this one.' : `${esc(api.name(guesser))} gave up.`)
-          : (viewer === guesser ? 'Three misses. So close.' : `${esc(api.name(guesser))} couldn’t get it.`);
-      return { word, chips, line, stamp: R.points > 0 ? `<div class="dd-stamp good anim">+${R.points}</div>` : `<div class="dd-stamp bad anim">${R.gaveUp ? 'Pass' : 'Missed'}</div>` };
-    }
-
-    function revealScreen(node, ri, { next = false, waiting = false } = {}) {
-      const s = ctx.state; const R = s.rounds[ri];
-      const strokes = decode(R.strokes) || [];
-      const b = resultBlock(R, ctx.viewer);
-      const nextDrawer = s.rounds[s.r] ? s.rounds[s.r].drawer : null;
-      node.innerHTML = `${top({ ...s, r: ri })}
-        <div class="dd-ph"></div>
-        <div class="dd-answer"><small>It was</small><b>${esc(b.word)}</b></div>
-        <p class="dd-note">${b.line}</p>
-        ${b.chips ? `<div class="dd-glist">${b.chips}</div>` : ''}
-        ${next ? `<button class="gm-btn dd-next">${ctx.state.r >= ROUNDS ? 'See the gallery' : 'Your turn to draw'}</button>
-          ${ctx.mode === 'local' && nextDrawer ? `<p class="dd-note">${esc(api.name(other(nextDrawer)))}, look away while ${esc(api.name(nextDrawer))} picks.</p>` : ''}` : ''}
-        ${waiting ? `<div class="dd-waiting">${PENCIL}<div class="dd-wait-name">${nm(nextDrawer)} is drawing</div><p class="dd-sub">Your turn to guess is next.</p></div>` : ''}`;
-      const p = makePaper(node.querySelector('.dd-ph'));
-      p.box.insertAdjacentHTML('beforeend', reduced() ? b.stamp.replace(' anim', '') : b.stamp);
-      if (next) node.querySelector('.dd-next').addEventListener('click', () => { vs.ack[ri] = true; api.sfx('tap'); render(); });
-      if (R.points > 0) api.sfx('good'); else api.sfx('bad');
-      return { p, redraw() { p.paper.all(strokes); } };
-    }
-
-    function waitDrawScreen(node) {
-      const s = ctx.state; const R = s.rounds[s.r];
-      const prev = s.rounds[s.r - 1];
-      if (prev && prev.drawer === ctx.viewer) return revealScreen(node, s.r - 1, { waiting: true });
-      node.innerHTML = `${top(s)}
-        <div class="dd-waiting">${PENCIL}<div class="dd-wait-name">${nm(R.drawer)} is drawing something</div><p class="dd-sub">You’ll watch it replay, then get three guesses.</p></div>`;
-      return {};
-    }
-
-    function watchScreen(node) {
-      const s = ctx.state; const r = s.r; const R = s.rounds[r];
-      const strokes = decode(R.strokes) || [];
-      const guesser = other(R.drawer);
-      node.innerHTML = `${top(s)}
-        <div class="dd-ph"></div>
-        <div class="dd-answer"><small>You drew</small><b>${esc(cap(promptOf(R).show))}</b></div>
-        <div class="dd-live" aria-live="polite"></div>`;
-      const p = makePaper(node.querySelector('.dd-ph'));
-      let seen = R.guesses.length;
-      const live = node.querySelector('.dd-live');
-      return {
-        p,
-        redraw() { p.paper.all(strokes); },
-        refresh() {
-          const RR = ctx.state.rounds[r];
-          live.innerHTML = RR.guesses.map((g, i) => `<div class="dd-live-row no ${i >= seen ? 'new' : ''}">${ICON.no}<span>${esc(g)}</span><small>Guess ${i + 1}</small></div>`).join('')
-            + `<div class="dd-live-row"><span>${nm(guesser)} is guessing</span><span class="dd-dots"><i></i><i></i><i></i></span><small>${3 - RR.guesses.length} left</small></div>`;
-          if (RR.guesses.length > seen) { api.sfx('flip'); seen = RR.guesses.length; }
-        },
-      };
-    }
-
-    function openLightbox(ri) {
-      const s = ctx.state; const R = s.rounds[ri];
-      const strokes = decode(R.strokes) || [];
-      const b = resultBlock(R, null);
-      lb.innerHTML = `<div class="dd-lb-card ${reduced() ? '' : 'anim'}" role="dialog" aria-label="${esc(b.word)}">
-        <div class="dd-lb-top"><div class="dd-answer"><small>Round ${ri + 1} · by ${esc(api.name(R.drawer))}</small><b>${esc(b.word)}</b></div>
-          <button class="dd-tool" data-a="close" aria-label="Close">${ICON.close}</button></div>
-        <div class="dd-ph"></div>
-        <p class="dd-note">${b.line}</p>
-        ${b.chips ? `<div class="dd-glist">${b.chips}</div>` : ''}
-      </div>`;
-      lb.hidden = false;
-      const p = makePaper(lb.querySelector('.dd-ph'));
-      const size = Math.floor(Math.max(170, Math.min(lb.clientWidth - 52, 420, lb.clientHeight - 230)));
-      p.paper.fit(size);
-      const btn = document.createElement('button');
-      btn.className = 'dd-over-btn';
-      p.box.appendChild(btn);
-      let pl = null;
-      const setBtn = () => { btn.innerHTML = pl && !pl.done ? `${ICON.skip}<span>Skip</span>` : `${ICON.replay}<span>Replay</span>`; };
-      const play = () => { if (pl) pl.stop(); pl = player(p.paper, strokes, { onDone: setBtn }); setBtn(); };
-      btn.addEventListener('click', () => { if (pl && !pl.done) pl.skip(); else play(); });
-      if (reduced()) { p.paper.all(strokes); setBtn(); } else play();
-      lb.querySelector('[data-a="close"]').addEventListener('click', closeLightbox);
-      lbClose = () => { if (pl) pl.stop(); };
-      lbRedraw = () => { if (pl && !pl.done) pl.redraw(); else p.paper.all(strokes); };
-      api.sfx('pop');
-    }
-    function closeLightbox() {
-      if (lbClose) { lbClose(); lbClose = null; }
-      lbRedraw = null;
-      lb.hidden = true; lb.innerHTML = '';
-    }
-    lb.addEventListener('click', (e) => { if (e.target === lb) closeLightbox(); });
-
-    function galleryScreen(node) {
-      const s = ctx.state;
-      const got = s.rounds.filter((R) => R.points > 0).length;
-      node.innerHTML = `<div class="dd-gal-head">
-          <span class="dd-gal-kicker">The gallery</span>
-          <div class="dd-plaque"><b>${s.score}<small>/18</small></b><span>${esc(ratingOf(s.score))}</span></div>
-          <p class="dd-gal-hint">${got} of 6 guessed. Tap a drawing to watch it again.</p>
-        </div>
-        <div class="dd-wall">${s.rounds.map((R, i) => `<button class="dd-frame" data-i="${i}" style="--tilt:${[-1.6, 1.2, 0.9, -1.1, -0.7, 1.5][i]}deg" aria-label="Round ${i + 1}: ${esc(PROMPTS[R.choices[R.pick]].show)} by ${esc(api.name(R.drawer))}">
-          <canvas></canvas>
-          <span class="dd-frame-title">${esc(cap(PROMPTS[R.choices[R.pick]].show))}</span>
-          <span class="dd-frame-meta">by ${nm(R.drawer)}</span>
-          <span class="dd-frame-pts ${R.points ? '' : 'zero'}">${R.points ? `+${R.points}` : R.gaveUp ? 'pass' : 'missed'}</span>
-        </button>`).join('')}</div>
-        <div class="dd-gal-actions"><button class="gm-btn" data-g="rematch">Play again</button><button class="gm-btn gm-btn-ghost" data-g="close">Back to games</button></div>`;
-      const frames = [...node.querySelectorAll('.dd-frame')];
-      const papers = frames.map((f) => new Paper(f.querySelector('canvas'), inks));
-      const drawings = s.rounds.map((R) => decode(R.strokes) || []);
-      const players = papers.map(() => null);
-      const waiting = papers.map(() => false);
-      const layout = () => {
-        const w = node.clientWidth;
-        const cols = w >= 520 ? 3 : 2;
-        node.querySelector('.dd-wall').style.setProperty('--cols', cols);
-        const size = Math.floor((Math.min(w, 560) - 8 - 14 * (cols - 1)) / cols - 24);
-        papers.forEach((pp, i) => {
-          if (Math.abs(pp.size - size) < 1) return;
-          pp.fit(size);
-          if (waiting[i]) return;
-          if (players[i] && !players[i].done) players[i].redraw(); else pp.all(drawings[i]);
-        });
-      };
-      layout();
-      // The six drawings sketch themselves once, as soon as the gallery is actually in view
-      // (the end card sits on top of it at first).
-      const timers = [];
-      let mo = null;
-      const playAll = () => {
-        if (mo) { mo.disconnect(); mo = null; }
-        papers.forEach((pp, i) => {
-          timers.push(setTimeout(() => { waiting[i] = false; players[i] = player(pp, drawings[i], { cap: 2600 }); }, 250 + i * 260));
-        });
-      };
-      if (!vs.galleryPlayed && !reduced()) {
-        vs.galleryPlayed = true;
-        papers.forEach((pp, i) => { waiting[i] = true; pp.reset(); });
-        const end = el.closest('.gm') && el.closest('.gm').querySelector('.gm-end');
-        if (!end || typeof MutationObserver !== 'function') playAll();
-        else {
-          let seen = !end.hidden;
-          mo = new MutationObserver(() => {
-            if (!end.hidden) seen = true;
-            else if (seen) playAll();
-          });
-          mo.observe(end, { attributes: true, attributeFilter: ['hidden'] });
-          timers.push(setTimeout(() => { if (mo && !seen) playAll(); }, 4500));
-        }
-      }
-      node.querySelector('.dd-wall').addEventListener('click', (e) => {
-        const f = e.target.closest('.dd-frame');
-        if (f) openLightbox(Number(f.dataset.i));
-      });
-      const redraw = () => papers.forEach((pp, i) => {
-        if (waiting[i]) return;
-        if (players[i] && !players[i].done) players[i].redraw(); else pp.all(drawings[i]);
-      });
-      return { layout, redraw, destroy() { timers.forEach(clearTimeout); if (mo) mo.disconnect(); players.forEach((pl) => pl && pl.stop()); } };
-    }
-
-    // ── routing ──
-    function render() {
-      const c = ctx;
-      if (!c) return;
-      const s = c.state;
-      const v = c.viewer;
-      if (c.over) {
-        const lastR = ROUNDS - 1;
-        if (vs.wasOver === false && !vs.ack[lastR]) {
-          // we watched the last guess land: show it first, then the gallery
-          setScreen(`reveal:${lastR}`, (n) => revealScreen(n, lastR, { next: true }));
-          return;
-        }
-        setScreen('gallery', galleryScreen);
-        return;
-      }
-      if (!v) { setScreen('blank', blank); return; }
-      const R = s.rounds[s.r];
-      const prev = s.rounds[s.r - 1];
-      if (s.phase === 'draw') {
-        if (v === R.drawer) {
-          if ((!vs.draft || vs.draft.r !== s.r) && c.canMove) restoreDrawing();
-          if (prev && !vs.ack[s.r - 1]) { setScreen(`reveal:${s.r - 1}`, (n) => revealScreen(n, s.r - 1, { next: true })); return; }
-          if (vs.draft && vs.draft.r === s.r && !vs.draft.sent) { setScreen(`draw:${s.r}`, drawScreen); return; }
-          setScreen(`pick:${s.r}`, pickScreen);
-          return;
-        }
-        setScreen(`wait:${s.r}`, waitDrawScreen);
-        return;
-      }
-      if (v === R.drawer) setScreen(`watch:${s.r}`, watchScreen);
-      else {
-        const fresh = !scr || scr.key !== `guess:${s.r}`;
-        setScreen(`guess:${s.r}`, guessScreen);
-        if (fresh && scr.start) scr.start();
-      }
-    }
-
-    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { fitPaper(scr); if (scr && scr.layout) scr.layout(); }) : null;
-    if (ro) ro.observe(scroller);
-    const mq = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null;
-    const onTheme = () => {
-      requestAnimationFrame(() => {
-        toks = api.tokens();
-        if (scr && scr.redraw) scr.redraw();
-        if (lbRedraw) lbRedraw();
-      });
-    };
-    if (mq && mq.addEventListener) mq.addEventListener('change', onTheme);
-    const themeMo = typeof MutationObserver === 'function' ? new MutationObserver(onTheme) : null;
-    if (themeMo) themeMo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class'] });
-    const noGesture = (e) => e.preventDefault();
-    root.addEventListener('gesturestart', noGesture);
-
-    return {
-      update(c) {
-        ctx = c;
-        toks = api.tokens();
-        render();
-        if (vs.wasOver === null || !c.over) vs.wasOver = c.over;
-        if (c.over) draftPut('', null);
-        if (c.over && scr && scr.key === `reveal:${ROUNDS - 1}`) {
-          clearTimeout(vs.toGallery);
-          vs.toGallery = setTimeout(() => { vs.ack[ROUNDS - 1] = true; render(); }, 2300);
-        }
-      },
-      destroy() {
-        clearTimeout(vs.toGallery);
-        if (scr && scr.destroy) scr.destroy();
-        closeLightbox();
-        if (ro) ro.disconnect();
-        if (mq && mq.removeEventListener) mq.removeEventListener('change', onTheme);
-        if (themeMo) themeMo.disconnect();
-        clearTimeout(vs.kbT); clearTimeout(vs.kbOffT);
-        root.removeEventListener('focusin', kbSoon);
-        root.removeEventListener('focusout', kbOff);
-        if (vvp) { vvp.removeEventListener('resize', kbSoon); vvp.removeEventListener('scroll', kbSoon); }
-        window.removeEventListener('resize', kbSoon);
-        root.removeEventListener('gesturestart', noGesture);
-      },
-    };
-  },
+  // ── view (see doodle/view.js) ──
+  css: CSS,
+  mount(el, api) { return mountDoodle(el, api, KIT); },
 });
