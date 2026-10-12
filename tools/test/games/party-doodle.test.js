@@ -434,7 +434,7 @@ function rulesTests({ core, doodle, records, packs, D }) {
     if (!B.all.some((b) => formsOf(squashAll(b)).has(g))) cross.push(`${x} (${A.show}) -> ${B.show}`);
   }
   assert(cross.length === 0, `no card word matches another card by accident, only through a word both list (${cross.slice(0, 8).join('; ')})`);
-  const fair = [['keys', 'house keys'], ['umbrella', 'sharing an umbrella'], ['fries', 'stealing fries'], ['pancakes', 'sunday pancakes'], ['socks', 'dancing in socks'], ['dancing', 'dancing in socks'], ['noodles', 'ramen'], ['candles', 'birthday candles'], ['birthday cake', 'birthday candles'], ['toothbrushes', 'two toothbrushes'], ['rainbows', 'double rainbow'], ['penguins', 'penguins huddling'], ['tent', 'tent in the rain'], ['cat sleeping', 'sleeping cat'], ['sleepy cat', 'sleeping cat'], ['napping cat', 'sleeping cat'], ['sunset over the ocean', 'sunset over the sea'], ['rain and sun', 'sunshower'], ['check in', 'hotel check in'], ['reception', 'hotel check in'], ['missing the train', 'missed the train'], ['nap', 'couch nap'], ['napping', 'couch nap'], ['sleeping on the couch', 'couch nap'], ['blanket', 'shared blanket'], ['sharing a blanket', 'shared blanket'], ['mugs', 'matching mugs'], ['thermometer', 'forehead thermometer'], ['christmas sweaters', 'ugly christmas sweaters'], ['christmas jumpers', 'ugly christmas sweaters'], ['takeout', 'leftovers'], ['takeaway', 'leftovers'], ['towel', 'beach towel'], ['bus', 'double-decker bus'], ['market', 'farmers market'], ['storm', 'thunderstorm'], ['thunder', 'thunderstorm'], ['mist', 'foggy morning'], ['misty', 'foggy morning'], ['snowing', 'first snow'], ['geese', 'geese flying south'], ['migrating birds', 'geese flying south'], ['panda bear', 'panda'], ['boat ride', 'ferry ride'], ['ferry boat', 'ferry ride'], ['security', 'airport security'], ['espresso', 'espresso machine'], ['cooking', 'cooking together']];
+  const fair = [['keys', 'house keys'], ['umbrella', 'sharing an umbrella'], ['fries', 'stealing fries'], ['pancakes', 'sunday pancakes'], ['socks', 'dancing in socks'], ['dancing', 'dancing in socks'], ['noodles', 'ramen'], ['candles', 'birthday candles'], ['birthday cake', 'birthday candles'], ['toothbrushes', 'two toothbrushes'], ['rainbows', 'double rainbow'], ['penguins', 'penguins huddling'], ['tent', 'tent in the rain'], ['cat sleeping', 'sleeping cat'], ['sleepy cat', 'sleeping cat'], ['napping cat', 'sleeping cat'], ['sunset over the ocean', 'sunset over the sea'], ['rain and sun', 'sunshower'], ['check in', 'hotel check in'], ['reception', 'hotel check in'], ['missing the train', 'missed the train'], ['nap', 'couch nap'], ['napping', 'couch nap'], ['sleeping on the couch', 'couch nap'], ['blanket', 'shared blanket'], ['sharing a blanket', 'shared blanket'], ['mugs', 'matching mugs'], ['thermometer', 'forehead thermometer'], ['christmas sweaters', 'ugly christmas sweaters'], ['christmas jumpers', 'ugly christmas sweaters'], ['takeout', 'leftovers'], ['takeaway', 'leftovers'], ['towel', 'beach towel'], ['bus', 'double-decker bus'], ['market', 'farmers market'], ['storm', 'thunderstorm'], ['thunder', 'thunderstorm'], ['mist', 'foggy morning'], ['misty', 'foggy morning'], ['snowing', 'first snow'], ['geese', 'geese flying south'], ['migrating birds', 'geese flying south'], ['panda bear', 'panda'], ['boat ride', 'ferry ride'], ['ferry boat', 'ferry ride'], ['security', 'airport security'], ['espresso', 'espresso machine'], ['cooking', 'cooking together'], ['padlock', 'love lock'], ['lock', 'love lock'], ['supermarket', 'grocery run'], ['carpool karaoke', 'car singalong'], ['sofa nap', 'couch nap'], ['sticky note', 'love note on the mirror'], ['ducklings', 'ducks in a row'], ['hanging bridge', 'rope bridge']];
   for (const [g, p] of fair) assert(guessMatchesV2(g, by(p)) === true, `fair guess: "${g}" is accepted for "${p}"`);
   assert(guessMatchesV2('butterfly', by('butterflies in your stomach')) === false && guessMatchesV2('butterflies', by('butterflies in your stomach')) === true, 'a listed alternate always matches; a plural of one never steals another card\'s own name');
   // two cards of one deck never share a listed word
@@ -627,7 +627,8 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
   const seedDocs = {
     // an earlier match's records are already in the shared doc: they must never show on any other match
     'gamedata/doodle': { lastRec: 'old-match', plays: 7, best_classic: 12, hitStreakBest: 8, perfects: 0, drawings: 9, rc_mode: 'classic', rc_score: 12, rc_prev: 0, rc_new: 1, rc_mile: 10, rc_perfect: 1, rc_gold: 1, rc_streak: 8, rc_plays: 7, a_guessRounds: 20, a_guessPts: 58, b_guessRounds: 20, b_guessPts: 62 },
-    'matches/enc2': doc({ ...encM, seed: 4321, first: 'a' }),
+    'matches/enc2': doc({ ...encM, seed: 4321, first: 'a' }), 'matches/enc3': doc({ ...encM, seed: 4321, first: 'a' }),
+    'matches/chip2': doc({ ...near, seed: NEAR_SEED, first: 'a' }),
     'matches/mxlay': doc(mxLay), 'matches/mxone': doc(mxOne), 'matches/mxsprint': doc(mxSprint), 'matches/clk1': doc(clk1), 'matches/clk2': doc({ ...clk2, seed: clk2.seed + 1 }),
     'matches/fin2g': doc({ ...finished, seed: goldSeed, first: 'a' }),
     'matches/near2': doc({ ...near, seed: NEAR_SEED, first: 'a' }),
@@ -707,8 +708,24 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
     await a.tap('.dd-pin');
     await a.waitForTimeout(300);
     assert(/Unpin/.test(await a.textContent('.dd-pin')) && (await a.evaluate(() => JSON.parse(localStorage.getItem('ju.games.data.v1') || '{}').doodle || {})).pin === 'fin2g:' + G, 'lightbox: pinning stores matchId:round in the shared data');
+    for (const [w, hh] of [[375, 548], [844, 390], [390, 664]]) {
+      await a.tap('.dd-lb [data-a="close"]'); await a.setViewportSize({ width: w, height: hh }); await a.waitForTimeout(300);
+      await a.tap(`.dd-frame[data-i="${G}"]`); await a.waitForSelector('.dd-lb:not([hidden]) .dd-pin'); await a.waitForTimeout(300);
+      const lbOk = await a.evaluate(() => { const l = document.querySelector('.dd-lb').getBoundingClientRect(); return ['.dd-lb-card', '.dd-pin', '[data-a="close"]', '.dd-paper'].every((s) => { const r = document.querySelector('.dd-lb ' + s).getBoundingClientRect(); return r.top >= l.top - 1 && r.bottom <= l.bottom + 1 && r.left >= l.left - 1 && r.right <= l.right + 1; }); });
+      const lbDbg = await a.evaluate(() => { const o = { lb: JSON.stringify(document.querySelector('.dd-lb').getBoundingClientRect()), cls: document.querySelector('.dd-lb-card').className }; for (const s of ['.dd-lb-card', '.dd-pin', '[data-a="close"]', '.dd-paper']) { const r = document.querySelector('.dd-lb ' + s).getBoundingClientRect(); o[s] = [Math.round(r.left), Math.round(r.top), Math.round(r.right), Math.round(r.bottom)]; } return JSON.stringify(o); });
+      assert(lbOk, `lightbox ${w}x${hh}: the drawing, close and "Pin to the fridge" are all in view without scrolling ${lbDbg}`);
+    }
+    await a.setViewportSize({ width: 390, height: 664 });
     await a.tap('.dd-lb [data-a="close"]'); await closeGame(a);
 
+    await openSeed(b, 'chip2');
+    await b.setViewportSize({ width: 375, height: 548 }); await b.waitForSelector('.dd-input:not([disabled])'); await b.waitForTimeout(600);
+    if (await b.$eval('.dd-over-btn', (x) => /skip/i.test(x.textContent)).catch(() => false)) await b.tap('.dd-over-btn');
+    const paperBefore = await b.$eval('.dd-paper canvas', (c) => c.getBoundingClientRect().width);
+    await guessText(b, 'a really quite long wrong guess'); await h.settle(); await guessText(b, 'another extremely long wrong guess'); await h.settle();
+    const chipLay = await b.evaluate(() => ({ paper: document.querySelector('.dd-paper canvas').getBoundingClientRect().width, chips: document.querySelector('.dd-chips').getBoundingClientRect().height, btn: document.querySelector('.dd-over-btn').getBoundingClientRect().width, scrolls: document.querySelector('.dd-chips').scrollWidth > document.querySelector('.dd-chips').clientWidth }));
+    assert(Math.abs(chipLay.paper - paperBefore) <= 2 && chipLay.paper >= 130 && chipLay.chips <= 44 && chipLay.btn <= 48 && await inView(b, '.dd-giveup') && await inView(b, '.dd-form button'), `two long wrong guesses at 375x548 scroll sideways instead of shrinking the paper (paper ${Math.round(paperBefore)} -> ${Math.round(chipLay.paper)} px, chips ${Math.round(chipLay.chips)} px high, replay ${Math.round(chipLay.btn)} px)`);
+    await b.setViewportSize({ width: 390, height: 664 }); await closeGame(b);
     await openSeed(b, 'near2');
     await b.waitForSelector('.dd-input:not([disabled])');
     await b.waitForTimeout(600);
@@ -987,6 +1004,8 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
       for (const [w, hh, name] of SZ) {
         await b.setViewportSize({ width: w, height: hh }); await b.waitForTimeout(350);
         assert(await inView(b, '.dd-next') && await inView(b, '.dd-stamp') && await noSideScroll(b), `reveal ${w}x${hh}: the next button and the stamp are in view`);
+        const noSliver = await b.evaluate(() => { const st = document.querySelector('.dd-stick').getBoundingClientRect(); return [...document.querySelectorAll('.dd-foot > *:not(.dd-stick)')].filter((e) => e.getClientRects().length).every((e) => { const r = e.getBoundingClientRect(); return !(r.top < st.top - 1 && r.bottom > st.top + 1) && !(r.top >= st.top - 1 && r.top < st.bottom - 1); }); });
+        assert(noSliver, `reveal ${w}x${hh}: nothing is cut off behind the sticky next button`);
         const stampFits = await b.evaluate(() => { const s = document.querySelector('.dd-stamp').getBoundingClientRect(); const p = document.querySelector('.dd-paper').getBoundingClientRect(); return s.left >= p.left - 1 && s.right <= p.right + 1 && s.top >= p.top - 1 && s.bottom <= p.bottom + 1; });
         assert(stampFits, `reveal ${w}x${hh}: the stamp sits inside the paper`);
         if (name !== 'portrait') await b.screenshot({ path: `${SHOTS}/reveal-${name}.png` });
@@ -1224,6 +1243,22 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
       }
       await a.tap('.dd-encpin[data-w="b"]'); await a.waitForTimeout(300);
       assert(/Unpin/.test(await a.textContent('.dd-encpin[data-w="b"]')) && (await a.evaluate(() => JSON.parse(localStorage.getItem('ju.games.data.v1') || '{}').doodle || {})).pin === 'enc2:eb', 'encore gallery: pinning one of the two drawings stores it on the fridge');
+      await closeGame(a); await closeGame(b);
+    }
+    // a phone that reloads on the waiting screen still gets the end card at once when the other finishes
+    {
+      await openSeed(a, 'enc3'); await openSeed(b, 'enc3');
+      await a.waitForSelector('.dd-next'); await b.waitForSelector('.dd-next'); await a.tap('.dd-next'); await b.tap('.dd-next');
+      await a.waitForSelector('.dd-paper.can-draw canvas'); await b.waitForSelector('.dd-paper.can-draw canvas');
+      await touchDraw(a, cdps.a, PICS[0]); await a.tap('.dd-send'); await h.settle();
+      await a.waitForSelector('.dd-waiting');
+      await a.reload(); await a.waitForFunction(() => !!document.querySelector('.tabbar'), null, { timeout: 15000 }); await a.waitForTimeout(300);
+      await h.openMatch(a, 'enc3'); await a.waitForSelector('.dd-waiting'); await a.waitForTimeout(400);
+      await touchDraw(b, cdps.b, PICS[1]); await b.tap('.dd-send');
+      const t0 = Date.now();
+      await waitFor(() => visible(a, '#game-root .gm-end'), 8000, 'end card on the reloaded phone');
+      const took = Date.now() - t0;
+      assert(took < 2500, `encore: after a reload on the waiting screen the end card still follows the other phone's drawing promptly (${took} ms)`);
       await closeGame(a); await closeGame(b);
     }
     h.assertNoErrors();

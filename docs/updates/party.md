@@ -35,7 +35,7 @@ Evidence:
   - **Mixed Bag.** A seeded twist each round: half & half, invisible, a 35 s sprint, or one-line (a single stroke).
 - **Encore** (opt-in switch). After the last round you both draw the same Us card at the same time, without seeing each other's. The gallery
   shows the pair side by side, and either one can be pinned. It is unscored.
-- **4 new prompt packs**: Us, Kitchen, Out & About, Creatures & Weather (127 prompts, ≥ 9 per tier), plus Classic (the 282) and
+- **4 new prompt packs**: Us, Kitchen, Out & About, Creatures & Weather (29–36 prompts each, 8+ per tier), plus Classic (the 282) and
   Everything. **Rotation** deals unseen prompts first.
 - **Golden Frame.** About 1 match in 3 has a secret double-points round, revealed with a gold frame and a stamp.
 - **Near-miss**: "So close!" on a wrong guess that is one letter off or shares a word with the answer. It never scores and never leaks the answer.
@@ -105,7 +105,7 @@ Evidence:
 
 | Suite | Result |
 |---|---|
-| `node tools/test/games/party-doodle.test.js` (new) | ALL GOOD, 512 checks: rules 354, browser 158 |
+| `node tools/test/games/party-doodle.test.js` (new) | ALL GOOD, 528 checks: rules 354, browser 174 |
 | `node tools/test/games/party-wave.test.js` (new) | ALL GOOD, 327 checks |
 | `QUICK=1 node tools/test/games/party.test.js` | ALL GOOD, 234 checks; existing flows now pick Classic on the setup screen |
 | `QUICK=1 node tools/test/all-games.test.js` | ALL GOOD (35 checks) |

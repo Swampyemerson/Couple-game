@@ -713,7 +713,7 @@ export function mountDoodle(el, api, K) {
     };
     return {
       p, minPaper: 120,
-      redraw() { if (pl && !pl.done) pl.redraw(); else p.paper.all(stage === 'half' ? firstHalf : strokes); },
+      redraw() { btn.classList.toggle('compact', p.paper.size < 200); if (pl && !pl.done) pl.redraw(); else p.paper.all(stage === 'half' ? firstHalf : strokes); },
       refresh,
       start() {
         const RR = ctx.state.rounds[r];
@@ -843,18 +843,20 @@ export function mountDoodle(el, api, K) {
       <div class="dd-lb-top"><div class="dd-answer"><small>Round ${ri + 1} · by ${esc(api.name(R.drawer))}</small><b>${esc(b.word)}</b></div>
         <button class="dd-tool" data-a="close" aria-label="Close">${ICON.close}</button></div>
       <div class="dd-ph"></div>
-      <p class="dd-note">${b.line}</p>
+      <div class="dd-lb-rest"><p class="dd-note">${b.line}</p>
       ${b.chips ? `<div class="dd-glist">${b.chips}</div>` : ''}
-      ${strokes.length ? '<button class="gm-btn gm-btn-ghost dd-pin" type="button"></button>' : ''}
+      ${strokes.length ? '<button class="gm-btn gm-btn-ghost dd-pin" type="button"></button>' : ''}</div>
     </div>`;
     lb.hidden = false;
+    const wide = lb.clientWidth >= lb.clientHeight * 1.25;
+    lb.querySelector('.dd-lb-card').classList.toggle('wide', wide);
     const p = makePaper(lb.querySelector('.dd-ph'));
     if (R.gold) p.box.classList.add('gold');
-    const size = Math.floor(Math.max(150, Math.min(lb.clientWidth - 52, 420, lb.clientHeight - 270)));
+    const size = Math.floor(wide ? Math.max(130, Math.min(420, lb.clientHeight - 56)) : Math.max(130, Math.min(lb.clientWidth - 52, 420, lb.clientHeight - 250)));
     p.paper.fit(size);
     sizeStamps(p.box, size);
     const btn = document.createElement('button');
-    btn.className = 'dd-over-btn';
+    btn.className = 'dd-over-btn' + (size < 200 ? ' compact' : '');
     p.box.appendChild(btn);
     let pl = null;
     const setBtn = () => { btn.innerHTML = pl && !pl.done ? `${ICON.skip}<span>Skip</span>` : `${ICON.replay}<span>Replay</span>`; };
@@ -1103,7 +1105,13 @@ export function mountDoodle(el, api, K) {
       render();
       if (vs.wasOver === null || !c.over) vs.wasOver = c.over;
       if (c.over) draftPut('', null);
-      if (c.over && c.state.enc && vs.wasOver === false && scr && scr.key === 'gallery' && !vs.encEnd) { vs.encEnd = true; api.showEnd(); }
+      if (!c.over) vs.sawLive = true;
+      // The match finished while this view was mounted (even after a reload on the waiting screen):
+      // show the end card now. showEnd is idempotent, so a couple of retries cover any ordering race.
+      if (c.over && c.state.enc && vs.sawLive && scr && scr.key === 'gallery' && !vs.encEnd) {
+        vs.encEnd = true; api.showEnd();
+        setTimeout(() => api.showEnd(), 350); setTimeout(() => api.showEnd(), 1200);
+      }
       const lastR = c.state.rounds.length - 1;
       if (c.over && scr && scr.key === `reveal:${lastR}`) {
         // the last result gets a proper moment; a tap on the button skips ahead

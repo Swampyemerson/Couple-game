@@ -75,7 +75,10 @@ export const CSS = `
     .g-doodle .dd-blanks { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 12px; }
     .g-doodle .dd-blanks span { display: inline-flex; gap: 3px; }
     .g-doodle .dd-blanks i { width: 13px; height: 3px; border-radius: 2px; background: var(--g-ink); margin-top: 12px; }
-    .g-doodle .dd-tries { width: 100%; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 34px; }
+    .g-doodle .dd-tries { width: 100%; display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; min-height: 34px; }
+    .g-doodle .dd-chips { flex: 1; min-width: 0; display: flex; gap: 6px; overflow-x: auto; padding: 2px 2px 4px; touch-action: pan-x; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+    .g-doodle .dd-chips::-webkit-scrollbar { display: none; }
+    .g-doodle .dd-chips .dd-chip { flex: none; white-space: nowrap; }
     .g-doodle .dd-pips { display: inline-flex; gap: 5px; margin-right: 2px; }
     .g-doodle .dd-pips i { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--g-ink); background: var(--g-card); }
     .g-doodle .dd-pips i.used { background: var(--g-ink); }
@@ -101,7 +104,12 @@ export const CSS = `
     .g-doodle .dd-answer { text-align: center; display: flex; flex-direction: column; gap: 2px; }
     .g-doodle .dd-answer small { color: var(--g-muted); font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem; }
     .g-doodle .dd-answer b { font-family: var(--g-font-display); font-size: 1.6rem; font-weight: 900; line-height: 1.1; overflow-wrap: anywhere; }
-    .g-doodle .dd-glist { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+    .g-doodle .dd-glist { max-width: 100%; display: flex; flex-wrap: nowrap; justify-content: center; justify-content: safe center; gap: 6px; overflow-x: auto; padding: 2px 2px 4px; touch-action: pan-x; scrollbar-width: none; }
+    .g-doodle .dd-glist::-webkit-scrollbar { display: none; }
+    .g-doodle .dd-glist .dd-chip { flex: none; white-space: nowrap; }
+    .g-doodle .dd-scr.short .dd-foot .dd-glist, .g-doodle .dd-scr.land .dd-foot .dd-glist { display: none; }
+    .g-doodle .dd-over-btn.compact { width: 44px; padding: 6px; justify-content: center; right: 6px; bottom: 6px; }
+    .g-doodle .dd-over-btn.compact span { display: none; }
     .g-doodle .dd-next { width: 100%; min-height: 52px; font-size: 1.05rem; }
     .g-doodle .dd-note { margin: 0; color: var(--g-muted); font-weight: 700; text-align: center; font-size: 0.9rem; }
     .g-doodle .dd-card { width: 100%; display: flex; align-items: center; gap: 12px; padding: 10px; background: var(--g-card); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow); }
@@ -154,7 +162,14 @@ export const CSS = `
     .g-doodle .dd-lb-card.anim { animation: dd-rise 0.25s ease both; }
     .g-doodle .dd-lb-top { width: 100%; display: flex; align-items: flex-start; gap: 8px; }
     .g-doodle .dd-lb-top .dd-answer { flex: 1; min-width: 0; text-align: left; }
-    .g-doodle .dd-lb .dd-paper { box-shadow: none; }
+    .g-doodle .dd-lb .dd-paper { box-shadow: none; grid-area: paper; }
+    .g-doodle .dd-lb-card { display: grid; grid-template-areas: 'top' 'paper' 'rest'; justify-items: center; gap: 8px; }
+    .g-doodle .dd-lb-top { grid-area: top; }
+    .g-doodle .dd-lb-rest { grid-area: rest; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 8px; min-width: 0; }
+    .g-doodle .dd-lb-card.wide { max-width: 760px; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: 'paper top' 'paper rest'; grid-template-rows: auto 1fr; align-items: start; column-gap: 14px; }
+    .g-doodle .dd-lb-card.wide { padding: 10px; gap: 6px 14px; }
+    .g-doodle .dd-lb-card.wide .dd-lb-rest { align-self: start; gap: 4px; }
+    .g-doodle .dd-lb-card.wide .dd-note { font-size: 0.8rem; }
 
     /* v2 structure: head / paper / foot. Portrait stacks them; landscape puts the paper on the left. */
     .g-doodle [hidden] { display: none !important; }
@@ -237,7 +252,7 @@ export const CSS = `
     .g-doodle .dd-history { margin: 0; text-align: center; font-weight: 800; }
     .g-doodle .dd-chase { margin: 0; text-align: center; color: var(--g-muted); font-weight: 700; font-size: 0.9rem; }
     .g-doodle .dd-frame-gold { position: absolute; z-index: 1; top: -10px; left: -6px; padding: 2px 8px; border: 2px solid var(--g-ink); border-radius: 6px; background: var(--g-hl); color: var(--g-on-ink); font-weight: 900; font-size: 0.66rem; letter-spacing: 0.08em; text-transform: uppercase; box-shadow: var(--g-shadow-sm); transform: rotate(-6deg); }
-    .g-doodle .dd-pin { align-self: stretch; min-height: 48px; }
+    .g-doodle .dd-pin { align-self: stretch; min-height: 44px; }
 
     /* Encore: the toggle on the setup screen, the pair in the gallery */
     .g-doodle .dd-toggle { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 6px 12px; text-align: left; color: var(--g-ink); background: var(--g-card); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow-sm); font-weight: 700; font-size: 0.8rem; touch-action: manipulation; }
