@@ -160,7 +160,7 @@ export function createHud(root, api, { split, touch }) {
     // the tag used to sit there half off-screen, on top of the panels. Measured at most every 0.5 s
     // (layout reads), in this view's coordinates.
     const colEls = [$('.gtw-left'), ctl.querySelector('[data-tap="cam"]'), ctl.querySelector('[data-tap="horn"]')];
-    const keep = { at: -1e9, w: 0, l: 6, r: 0, colR: 0, colT: 0, colB: 0 };
+    const keep = { at: -1e9, w: 0, l: 6, r: 0, colR: 0, colT: 0, colB: 0, twL: 0, twR: 0, twT: 0, twB: 0 };
     function keepOut() {
       const t = performance.now(); if (t - keep.at < 500) return keep; keep.at = t;
       const vb = el.getBoundingClientRect(); keep.w = vb.width;
@@ -170,6 +170,7 @@ export function createHud(root, api, { split, touch }) {
         l = Math.min(l, q.left - vb.left); r = Math.max(r, q.right - vb.left); top = Math.min(top, q.top - vb.top); b = Math.max(b, q.bottom - vb.top);
       }
       keep.l = l < 1e9 ? l : 6; keep.colR = r; keep.colT = top < 1e9 ? top : 0; keep.colB = b;
+      if (els.twrow.hidden) keep.twB = 0; else { const q = els.twrow.getBoundingClientRect(); keep.twL = q.left - vb.left; keep.twR = q.right - vb.left; keep.twT = q.top - vb.top; keep.twB = q.height ? q.bottom - vb.top : 0; } // (the wildcard / half-time chips)
       const m = els.mini.getBoundingClientRect(); keep.r = m.width ? m.right - vb.left : vb.width - 6; // (the minimap's right edge: inside the safe area)
       return keep;
     }
@@ -258,7 +259,8 @@ export function createHud(root, api, { split, touch }) {
         const k = keepOut();
         let tx = Math.max(k.l + hw, Math.min(k.r - hw, x));
         if (y > k.colT - 4 && y - th < k.colB + 4 && tx - hw < k.colR + 8) tx = k.colR + 8 + hw;
-        const ty = Math.max(th + 4, y);
+        let ty = Math.max(th + 4, y);
+        if (k.twB > 0 && tx + hw > k.twL - 4 && tx - hw < k.twR + 4 && ty > k.twT && ty - th < k.twB + 2) ty = k.twB + 4 + th; // (never under the chip row: drop below it)
         const px = Math.round(tx); const py = Math.round(ty);
         if (last.tagX !== px || last.tagY !== py) { last.tagX = px; last.tagY = py; els.tag.style.transform = `translate(${px}px, ${py}px) translate(-50%, -100%)`; }
       },
@@ -455,7 +457,7 @@ export function lobbyCard(api, o) {
   const quickOn = r.rounds === 2 && r.roundTime === 60;
   const facts = daily
     ? `<div class="gtw-daily"><p><b>${esc(o.daily.title)}</b></p><p>${esc(o.daily.how)}</p>${o.daily.board.length ? `<ul>${o.daily.board.map((x) => `<li class="p${x.w}"><i></i>${esc(x.name)}${x.verb ? ' ' + esc(x.verb) + ':' : ''} <b>${esc(x.text)}</b></li>`).join('')}</ul>` : `<p class="gtw-tapon">Nobody has ${o.daily.role === 'cop' ? 'chased' : 'run'} it yet today.</p>`}${(o.daily.lines || []).map((t) => `<p class="gtw-tapon">${esc(t)}</p>`).join('')}${o.daily.note ? `<p class="gtw-tapon">${esc(o.daily.note)}</p>` : ''}</div>`
-    : `<div class="gtw-factsrow"><p class="gtw-facts">${r.rounds} rounds${r.score === 'rounds' ? '' : ' · scored in pairs'} · ${fmt('roundTime', r.roundTime)} each · ${r.spikes ? `${r.spikes} spike strip${r.spikes === 1 ? '' : 's'}` : 'no spikes'} · traffic ${r.traffic}${r.tiebreak === 'sudden' ? ' · sudden death' : ''}${r.wildcards === 'on' ? ' · wildcards' : ''}</p>${canEdit ? (quickOn ? '<button class="gtw-chip" data-l="standard">Standard</button>' : '<button class="gtw-chip" data-l="quick">Quick chase</button>') : ''}</div>`;
+    : `<div class="gtw-factsrow"><p class="gtw-facts">${r.rounds} rounds${r.score === 'rounds' ? '' : ' · scored in pairs'} · ${fmt('roundTime', r.roundTime)} each · ${r.spikes ? `${r.spikes} spike strip${r.spikes === 1 ? '' : 's'}` : 'no spikes'} · traffic ${r.traffic}${r.tiebreak === 'sudden' ? ' · sudden death' : ''}${r.wildcards === 'on' ? ' · wild rounds on' : ''}</p>${canEdit ? (quickOn ? '<button class="gtw-chip" data-l="standard">Standard</button>' : '<button class="gtw-chip" data-l="quick">Quick chase</button>') : ''}</div>`;
   const series = !daily && !ai && o.series ? `<p class="gtw-series">${esc(o.series)}</p>` : '';
   const recs = !daily && o.records && o.records.length ? `<p class="gtw-records"><span>${ai ? 'Your practice' : 'Records'}</span>${o.records.map((x) => `${esc(x.t)} <b class="gtw-name-${x.w}">${esc(x.name)}</b> ${esc(x.v)}`).join(' · ')}</p>` : '';
   const partner = o.partnerName || 'your partner';
@@ -536,15 +538,31 @@ const ROLE_TIP = {
   runner: 'Survive the clock or lose the heat: get far away and out of sight.',
   cop: 'Hit their back corner from the side to PIT them. Tap the map for spike strips.',
 };
+/** What a wildcard says on the intro card, from the viewer's side (role: 'runner' | 'cop' | '' for split screen / a neutral reading).
+ *  The blurbs in twists.js are the runner's reading; the cop must not be told "the radar sees you" or to "reach" the safehouse. */
+const TWIST_LINES = {
+  eagle: { runner: 'The cop’s radar sees you the whole round, and the heat is 40 m further', cop: 'Your radar sees them the whole round, and the heat is 40 m further', '': 'The cop’s radar sees the runner the whole round, and the heat is 40 m further' },
+  rain: { runner: 'The cop gets 6 spike strips, and you see every one', cop: 'You get 6 spike strips, and the runner sees every one', '': 'The cop gets 6 spike strips, and the runner sees every one' },
+  fog: { cop: 'Thick fog: no radar for you, and the heat is 30% closer' },
+  double: { '': 'Worth 2 points' },
+};
+function twistLine(twist, safe, role) {
+  if (twist.id === 'safe' && safe) {
+    const n = `<b>${esc(safe.name)}</b>`;
+    return role === 'cop' ? `Guard ${n}: don’t let them in unseen` : role === 'runner' ? `Reach ${n} unseen: ${esc(safe.home ? 'it’s home' : 'a safehouse')}` : `The runner must reach ${n} unseen`;
+  }
+  const t = TWIST_LINES[twist.id] || {};
+  return esc(t[role] !== undefined ? t[role] : t[''] !== undefined ? t[''] : twist.blurb);
+}
 export function introCard(api, { map, round, rounds, runner, me, landmark, roundTime, local, twist = null, safe = null, pts = 1, sd = false, target = null, pairs = false, ribbon = '' }) {
   const cop = runner === 'a' ? 'b' : 'a';
   const youRun = !local && me === runner; const youCop = !local && me === cop;
   const myRole = local ? (api.name(runner) === 'You' ? 'runner' : api.name(runner) === 'AI' ? 'cop' : '') : youRun ? 'runner' : 'cop';
   // a wildcard round names its twist (and where the safehouse is); the second half of a pair says what to beat
-  const tw = twist ? `<div class="gtw-twist ${esc(twist.id)}"><b>${esc(twist.name)}${pts > 1 && twist.id !== 'double' ? ' ×2' : ''}</b><span>${safe ? `Reach <b>${esc(safe.name)}</b> unseen: ${esc(safe.home ? 'it’s home' : 'a safehouse')}` : esc(twist.blurb)}</span></div>` : '';
+  const tw = twist ? `<div class="gtw-twist ${esc(twist.id)}"><b>${esc(twist.name)}${pts > 1 && twist.id !== 'double' ? ' ×2' : ''}</b><span>${twistLine(twist, safe, myRole)}</span></div>` : '';
   const half = target ? `<p class="gtw-half"><b>Half time:</b> ${myRole ? esc(myRole === 'runner' ? target.run : target.cop) : `${esc(api.name(runner))} must ${esc(target.run)}`}</p>` : '';
   const rib = ribbon ? `<div class="gtw-ribbon">${esc(ribbon)}</div>` : '';
-  return `<div class="gtw-card gtw-st gtw-intro">${rib}<h3>${esc(map.name)} · ${sd ? 'Sudden death' : `Round ${round + 1} of ${rounds}`}${twist ? ` · ${esc(twist.name)}` : ''}</h3>
+  return `<div class="gtw-card gtw-st gtw-intro">${rib}<h3>${esc(map.name)} · ${sd ? 'Sudden death' : `Round ${round + 1} of ${rounds}`}</h3>
     <h2>${local ? (api.name(runner) === 'You' ? 'You’re running' : api.name(runner) === 'AI' ? 'You’re the cop' : `${esc(api.name(runner))} runs`) : youRun ? 'You’re running' : 'You’re the cop'}</h2>
     ${tw}${landmark ? `<p>Starting near <b>${esc(landmark)}</b></p>` : ''}${half}
     <div class="gtw-roles"><div class="${youRun || myRole === 'runner' ? 'me' : ''}"><small>Runner</small>${nameB(api, runner)}<p>Survive ${fmt('roundTime', roundTime)} or lose the heat</p></div>
@@ -574,14 +592,19 @@ export function resultCard(api, { outcome, reason, runner, stats, scores, next, 
   } else if (pair && pair.done) {
     pairHtml = pair.winner ? `<p class="gtw-pair done"><b>PAIR</b> ${nameB(api, pair.winner)} ${takes(api.name(pair.winner))} the ${pair.pts > 1 ? `${pair.pts} points` : 'point'} · ${esc(pair.why)}</p>` : '<p class="gtw-pair done"><b>PAIR</b> Dead level: no point</p>';
   }
-  const tag = twist || pts > 1 ? `<small class="gtw-twtag">${esc([twist ? twist.name : '', pts > 1 && !(twist && twist.id === 'double') ? '×2' : ''].filter(Boolean).join(' · '))}</small>` : '';
+  // (the twist's name above the verdict, unless the verdict already says it: 'SAFEHOUSE!', 'HOME SAFE!', 'THEY'RE SAFE')
+  const twSaid = !!twist && ((reason === 'safe' && twist.id === 'safe') || big.replace(/!/g, '').trim().toUpperCase() === twist.name);
+  const tagTxt = [twist && !twSaid ? twist.name : '', pts > 1 && !(twist && twist.id === 'double') ? '×2' : ''].filter(Boolean).join(' · ');
+  const tag = tagTxt ? `<small class="gtw-twtag">${esc(tagTxt)}</small>` : '';
   // what the card has to say, most important first: the pair / half-time line (or the Daily score) > a NEW record > an unlock > the rest.
   // A short landscape phone (667×375, two columns) has room for three of them (measured: a card with three is ~230 px of 350); everything shows elsewhere.
-  const ls = (lines || []).slice(0, 2);
+  // (a line may carry its own pri: the Daily rival line "You beat Sydney's …" outranks the streak line)
+  const priOf = (l) => (l.pri !== undefined ? l.pri : l.rec ? 1 : 3);
+  const ls = (lines || []).map((l, i) => ({ l, i })).sort((x, y) => priOf(x.l) - priOf(y.l) || x.i - y.i).slice(0, 2).sort((x, y) => x.i - y.i).map((x) => x.l);
   const items = [];
   if (pairHtml) items.push({ k: 'pair', pri: 0 });
   if (daily) items.push({ k: 'daily', pri: 0 });
-  ls.forEach((l, i) => items.push({ k: `l${i}`, pri: l.rec ? 1 : 3 }));
+  ls.forEach((l, i) => items.push({ k: `l${i}`, pri: priOf(l) }));
   if (unlocks && unlocks.length) items.push({ k: 'unlock', pri: 2 });
   const keep = new Set(items.map((it, i) => ({ it, i })).sort((x, y) => x.it.pri - y.it.pri || x.i - y.i).slice(0, short ? 3 : 99).map((x) => x.it.k));
   const recs = ls.map((l, i) => (keep.has(`l${i}`) ? `<p class="gtw-rec ${l.hot ? 'hot' : ''}">${l.rec ? '<b>NEW</b> ' : ''}${esc(l.t)}</p>` : '')).join('');
@@ -597,24 +620,31 @@ export function resultCard(api, { outcome, reason, runner, stats, scores, next, 
 }
 
 /** The match card: round by round, the two of you side by side, the MVP. Tap to go on. */
-export function finalCard(api, { hist, scores, winner, rounds, sum, daily, dailySub, ai, tb, pips = null, ribbons = null, series = '' }) {
+export function finalCard(api, { hist, scores, winner, rounds, sum, daily, dailySub, ai, tb, pips = null, ribbons = null, series = '', pairs = false }) {
   const pip = (h, i) => {
     if (!h) return `<li class="tbd"><small>R${i + 1}</small><b>–</b></li>`;
     const rw = h.outcome === 'busted' ? (h.runner === 'a' ? 'b' : 'a') : h.runner;
     const w = pips && pips[i] !== undefined ? pips[i] : rw; // (pairs: the pair's winner marks both its rounds; null = a level pair)
     const what = h.outcome === 'busted' ? (h.reason === 'water' ? 'SPLASH' : `BUSTED ${fmtSec(h.ran / 1000)}`) : h.reason === 'heat' ? `LOST THEM ${fmtSec(h.ran / 1000)}` : h.reason === 'safe' ? 'SAFEHOUSE' : 'ESCAPED';
-    const tw = h.tw ? `<small class="tw">${esc((twistInfo(h.tw) || { chip: '' }).chip)}${h.pts > 1 && h.tw !== 'double' ? ' ×2' : ''}</small>` : '';
+    const tw = h.tw && !(h.tw === 'safe' && h.reason === 'safe') ? `<small class="tw">${esc((twistInfo(h.tw) || { chip: '' }).chip)}${h.pts > 1 && h.tw !== 'double' ? ' ×2' : ''}</small>` : '';
     return `<li class="${w ? 'w' + w : 'lv'}"><small>${h.sd ? 'SD' : `R${i + 1}`} · ${esc(api.name(h.runner))} ran</small><b>${what}</b>${tw}</li>`;
   };
-  const list = []; for (let i = 0; i < Math.max(rounds, hist.length); i++) list.push(pip(hist[i], i));
+  const nR = Math.max(rounds, hist.length); const list = []; for (let i = 0; i < nR; i++) list.push(pip(hist[i], i));
+  // scored in pairs: the rounds sit by pair (PAIR 1 / PAIR 2: two rounds each, a sudden-death decider on its own), so the card reads as the points it is
+  let roundsHtml = `<ol class="gtw-rounds">${list.join('')}</ol>`;
+  if (pairs) {
+    const grp = []; for (let g = 0; g * 2 < nR; g++) grp.push(`<div class="gtw-pg"><small>${g * 2 >= rounds ? 'SUDDEN DEATH' : `PAIR ${g + 1}`}</small><ol>${list.slice(g * 2, g * 2 + 2).join('')}</ol></div>`);
+    roundsHtml = `<div class="gtw-rounds pairs">${grp.join('')}</div>`;
+  }
   const T = sum.T; const col = (w) => `<div class="p${w}"><h4>${nameB(api, w)}</h4><dl><dt>PITs</dt><dd>${T[w].pits}</dd><dt>Top km/h</dt><dd>${T[w].top || '–'}</dd><dt>Near misses</dt><dd>${T[w].near}</dd><dt>Spikes landed</dt><dd>${T[w].spikes}</dd><dt>Escapes</dt><dd>${T[w].esc}</dd></dl></div>`;
   const head = daily ? 'Daily chase' : winner ? `${esc(api.name(winner))} ${api.name(winner) === 'You' ? 'win' : 'wins'}` : 'All square';
   const rib = ribbons && ribbons.length ? `<div class="gtw-ribbons">${ribbons.map((x) => `<span>${esc(x)}</span>`).join('')}</div>` : '';
-  return `<div class="gtw-card gtw-st gtw-final" data-l="finskip" role="button" aria-label="Continue">${rib}<h3>${daily ? esc(dailySub) : `Match · ${scores.a}–${scores.b}${tb ? ` · ${esc(tb)}` : ''}`}</h3><h2>${daily ? esc(daily) : head}</h2>
-    ${daily ? '' : `<ol class="gtw-rounds">${list.join('')}</ol><div class="gtw-cols">${col('a')}${col('b')}</div>`}
+  return `<div class="gtw-card gtw-st gtw-final" data-l="finskip" role="button" aria-label="Continue"><div class="gtw-fh">${rib}<h3>${daily ? esc(dailySub) : `Match · ${scores.a}–${scores.b}${tb ? ` · ${esc(tb)}` : ''}`}</h3><h2>${daily ? esc(daily) : head}</h2></div>
+    ${daily ? '' : `<div class="gtw-fl">${roundsHtml}</div>`}
+    <div class="gtw-fr">${daily ? '' : `<div class="gtw-cols">${col('a')}${col('b')}</div>`}
     ${series && !daily ? `<p class="gtw-series">${esc(series)}</p>` : ''}
-    ${sum.mvp ? `<p class="gtw-mvp"><b>${esc(sum.mvp.t.split(' · ')[0])}</b> ${esc(sum.mvp.t.split(' · ')[1] || '')}</p>` : ''}
-    ${ai && !daily ? '<p class="gtw-tapon">Practice rounds go to your practice bests, not the couple’s record</p>' : ''}<p class="gtw-tapon">Tap to continue</p></div>`;
+    ${sum.mvp ? `<p class="gtw-mvp"><b>${esc(sum.mvp.t.split(' · ')[0])}</b> ${esc(sum.mvp.t.split(' · ')[1] || '')}</p>` : ''}</div>
+    <div class="gtw-ff">${ai && !daily ? '<p class="gtw-tapon">Practice rounds go to your practice bests, not the couple’s record</p>' : ''}<p class="gtw-tapon">Tap to continue</p></div></div>`;
 }
 
 /** Pause: text, sub, buttons ([action, label, cls] or a list of them). */

@@ -236,13 +236,13 @@ function dress(b, S, shape, o) {
   b.box(0, rear.pts[1][1] + 0.3, rz - 0.035, 0.42, 0.12, 0.02, 0, [0.92, 0.92, 0.86], 0, FX_TRIM);
 }
 
-const CREAM = [0.98, 0.93, 0.8]; const HEART_RED = [0.93, 0.18, 0.36]; const NAVY = [0.05, 0.1, 0.27];
+const CREAM = [0.98, 0.93, 0.8]; const HEART_PINK = [1, 0.42, 0.66]; const NAVY = [0.05, 0.1, 0.27];
 const GOLD = [0.95, 0.78, 0.3]; const ORANGE = [1, 0.5, 0.08]; const YELLOW = [1, 0.86, 0.25]; const HP_BLUE = [0.1, 0.24, 0.62];
 const RED_LENS = [1, 0.18, 0.2]; const BLUE_LENS = [0.2, 0.42, 1];
 /**
  * Player car geometry (no wheels: those are instanced). kind: 'runner' | 'cop'. livery (liveries.js):
  * runner 0 plain ink · 1 racing stripes · 2 rally (dark lower panels) · 3 flames · 4 gold roof ·
- * 5 sweetheart (pink-and-cream, a heart on the hood) · 6 checkerboard;
+ * 5 sweetheart (the owner's ink with cream panels and pink-and-cream hearts) · 6 checkerboard;
  * cop 0 black & white · 1 undercover (matte black, low lightbar) · 2 highway patrol (white, blue
  * band) · 3 light-up (wide lightbar, grille and deck lenses) · 4 interceptor (navy, white chevrons) ·
  * 5 classic (1970s panda with a single red beacon). Only colours and decals change.
@@ -250,8 +250,9 @@ const RED_LENS = [1, 0.18, 0.2]; const BLUE_LENS = [0.2, 0.42, 1];
 export function buildPlayerCar(THREE, P, kind, ink, livery = 0) {
   const b = new Builder(THREE, P.outline); const L = livery | 0;
   if (kind === 'runner') {
-    // 5 Sweetheart: the runner's ink warmed towards pink, with cream panels and a heart on the hood
-    const body = L === 5 ? [ink[0] * 0.25 + 1.0 * 0.75, ink[1] * 0.25 + 0.45 * 0.75, ink[2] * 0.25 + 0.7 * 0.75] : ink;
+    // 5 Sweetheart: the owner's own ink stays the body (the car must always read as theirs), dressed with cream panels and pink-and-cream hearts
+    const body = ink;
+    const heartCol = ink[0] > 0.7 && ink[1] < 0.6 && ink[2] > 0.4 ? CREAM : HEART_PINK; // (a pink car gets cream hearts, anything else pink ones)
     const stripe = L === 3 ? ORANGE : L === 4 ? GOLD : L === 5 ? CREAM : [0.96, 0.95, 0.92];
     const dark = [0.1, 0.1, 0.11];
     buildCar(b, SHAPES.runner, body, {
@@ -268,7 +269,7 @@ export function buildPlayerCar(THREE, P, kind, ink, livery = 0) {
         if (L === 5) { // cream lower panels and a heart (7 × 6 cells of 0.1 m, point towards the driver, lobes at the nose) on the front of the hood
           S.overlay([1, 2, 3, 8, 9, 10], -2.3, 2.3, CREAM);
           const HEART = ['...X...', '..XXX..', '.XXXXX.', 'XXXXXXX', 'XXXXXXX', '.XX.XX.'];
-          const heart = (z0, top, k) => HEART.forEach((row, r) => { const za = z0 + r * 0.1 * k; const zb = za + 0.1 * k; let c = 0; while (c < 7) { if (row[c] !== 'X') { c++; continue; } let e = c; while (e < 7 && row[e] === 'X') e++; cell((c - 3.5) * 0.1 * k, (e - 3.5) * 0.1 * k, za, zb, top, HEART_RED); c = e; } });
+          const heart = (z0, top, k) => HEART.forEach((row, r) => { const za = z0 + r * 0.1 * k; const zb = za + 0.1 * k; let c = 0; while (c < 7) { if (row[c] !== 'X') { c++; continue; } let e = c; while (e < 7 && row[e] === 'X') e++; cell((c - 3.5) * 0.1 * k, (e - 3.5) * 0.1 * k, za, zb, top, heartCol); c = e; } });
           heart(1.52, topBody, 1); heart(-0.85, topCab, 1.25); // (the roof's is the one a chase camera sees)
         }
         if (L === 6) { // checkerboard: black and white cells over the hood, roof and deck, a black belt line

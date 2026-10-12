@@ -971,13 +971,13 @@ export function createGame(el, api) {
         if (sf.changed) { patch[`${pw}_daily_streak`] = sf.streak; patch[`${pw}_daily_streak_best`] = sf.best; patch[`${pw}_daily_last`] = sf.last; lines.push({ t: `Daily streak: Day ${sf.streak}${sf.streak > 1 && sf.streak > so.best ? ' (your best)' : ''}`, hot: sf.streak >= 2 }); }
         gset(patch);
         const ph = (x) => dailyPhrase(dr, x, rt);
-        const rv = dailyRival(); if (rv) lines.push({ t: sc0 > rv.score ? `You beat ${rv.name}’s ${ph(rv.score)} today` : sc0 === rv.score ? `Level with ${rv.name} today` : `${rv.name} still leads today: ${ph(rv.score)}`, hot: sc0 > rv.score });
+        const rv = dailyRival(); if (rv) lines.push({ t: sc0 > rv.score ? `You beat ${rv.name}’s ${ph(rv.score)} today` : sc0 === rv.score ? `Level with ${rv.name} today` : `${rv.name} still leads today: ${ph(rv.score)}`, hot: sc0 > rv.score, pri: 1 });
         else if (prev) lines.push({ t: sc0 > prev ? `Your best today (was ${ph(prev)})` : `Your best today: ${ph(prev)}`, hot: sc0 > prev, rec: sc0 > prev });
       }
       const who = split() ? `${nameOf(w)}: ` : '';
       if (r.news.length) { lines.push({ t: who + r.news[0].text, hot: true, rec: true }); newRec = newRec || r.news[0]; }
       else if (r.held) lines.push({ t: `${who}${nameOf(other(w))} still holds ${r.held.label.toLowerCase()}, ${r.held.text}` });
-      if (r.streak >= 2) { streak = Math.max(streak, r.streak); if (r.streak >= 3) lines.push({ t: `${who}${r.streak} rounds in a row`, hot: true }); }
+      if (r.streak >= 2) { streak = Math.max(streak, r.streak); if (r.streak >= 3 && !(r.news.length && r.news[0].k === 'streak_best')) lines.push({ t: `${who}${r.streak} rounds in a row`, hot: true }); } // (when the record line already says 'Longest win streak yet: 3 rounds', that is the one line)
       if (pairWon === w) gset(recordPair(gdata(), pw, ns)); // (a pair won: the Classic cruiser's counter)
       const u = checkUnlocks(gdata(), pw); gset(u.patch); for (const x of u.pops) unlocks.push({ ...x, w });
     }
@@ -1087,7 +1087,7 @@ export function createGame(el, api) {
     // Getaway's own match card (round by round, the two columns, the MVP), then the app's end card
     S.finalAt = performance.now();
     const ms = TUNE.final ?? FLOW.finalCard;
-    later(() => { if (S.phase === 'final' && !S.finalDone) hud.card(finalCard({ name: nameOf }, { hist: S.match.hist, scores: fin.scores, winner: fin.winner, rounds: S.match.rounds, sum, daily: daily ? res.text : '', dailySub: daily ? res.sub : '', ai: ai(), tb: tb ? tbSub : '', pips: winnersByRound(S.match.hist, pairsOn() ? 'pairs' : 'rounds', S.match.rounds), ribbons, series: srLine }), 'dim'); }, Math.min(900, ms / 2));
+    later(() => { if (S.phase === 'final' && !S.finalDone) hud.card(finalCard({ name: nameOf }, { hist: S.match.hist, scores: fin.scores, winner: fin.winner, rounds: S.match.rounds, sum, daily: daily ? res.text : '', dailySub: daily ? res.sub : '', ai: ai(), tb: tb ? tbSub : '', pips: winnersByRound(S.match.hist, pairsOn() ? 'pairs' : 'rounds', S.match.rounds), ribbons, series: srLine, pairs: pairsOn() }), 'dim'); }, Math.min(900, ms / 2));
     later(finishNow, ms + 900);
   }
   function finishNow() {
@@ -1219,7 +1219,7 @@ export function createGame(el, api) {
     const o = other(me);
     if (d.k === 'HEART') {
       addHeart(o); audio.heart();
-      const oc = P2[o].car; const mc = P2[me].car; if (S.phase !== 'chase' || Math.hypot(oc.x - mc.x, oc.z - mc.z) > 120) H0().view(me).hint(`${api.name(o)} sent a heart`, 1600);
+      const oc = P2[o].car; const mc = P2[me].car; if (S.phase !== 'chase' || Math.hypot(oc.x - mc.x, oc.z - mc.z) > 120 || !heartVisible(o, me)) H0().view(me).hint(`${api.name(o)} sent a heart`, 1600); // (a car behind the camera has no sprite on screen: say it in words)
       return;
     }
     S.bubble = { w: o, text: d.k, until: performance.now() + 1600 };
@@ -1238,6 +1238,12 @@ export function createGame(el, api) {
     if (!reduced) for (let k = 0; k < 6; k++) fx.puff(x + (Math.random() - 0.5) * 1.8, y + Math.random() * 0.6, z + (Math.random() - 0.5) * 1.8, (Math.random() - 0.5) * 0.8, 1.3 + Math.random(), (Math.random() - 0.5) * 0.8, 0.5, 0.45, 1.5, col[0], col[1], col[2]);
   }
   const HR = [];
+  /** Would viewer v see a heart floating over w's car right now? (the same projection and culling as heartsHud) */
+  function heartVisible(w, v) {
+    const cv = cams[v]; if (!vec || !cv || !cv.cam) return true;
+    const a = posOf(w); vec.set(a.x, (a.y || 0) + 4.6, a.z).project(cv.cam);
+    return vec.z < 1 && Math.abs(vec.x) <= 1.15 && Math.abs(vec.y) <= 1.15;
+  }
   /** Project the live hearts into each viewer's screen (the sprites follow the cars). */
   function heartsHud() {
     const tN = performance.now(); const L = S.hearts; if (!L) return;

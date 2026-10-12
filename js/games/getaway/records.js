@@ -25,7 +25,7 @@ const BESTS = [
   { k: 'fastbust', lower: true, label: 'Fastest bust', fmt: (v) => `${Math.round(v)} s` },
   { k: 'heatesc', lower: true, label: 'Fastest getaway', fmt: (v) => fmtSec(v) },
   { k: 'pits_r', label: 'Most PITs in a round', fmt: (v) => `${v}` },
-  { k: 'streak_best', label: 'Longest win streak', fmt: (v) => `${v} rounds`, min: 2 },
+  { k: 'streak_best', label: 'Longest win streak', fmt: (v) => `${v} round${v === 1 ? '' : 's'}`, min: 2 },
   { k: 'top', label: 'Top speed', fmt: (v) => `${v} km/h`, min: 120, step: 5 },
   { k: 'near_r', label: 'Near misses in a round', fmt: (v) => `${v}`, min: 3 },
   { k: 'chain_r', label: 'Longest pursuit chain', fmt: (v) => `×${v}`, min: 6 },

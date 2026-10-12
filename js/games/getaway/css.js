@@ -290,6 +290,7 @@ export const CSS = `
 @keyframes gtw-adv { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 .gtw-rec { font-size: .84rem !important; color: var(--g-ink) !important; }
 .gtw-rec.hot { background: var(--g-hl); border: 2px solid var(--g-ink); border-radius: 10px; padding: 5px 8px; color: var(--g-on-ink, var(--g-ink)) !important; }
+.gtw-card p.gtw-rec.hot b, .gtw-card p.gtw-rec.hot { color: var(--g-on-ink, var(--g-ink)) !important; } /* (text on the yellow plate is the black overprint in both themes: .gtw-card p b would make the NEW label cream on yellow in dark) */
 .gtw-rec b { font-family: var(--g-font-display); letter-spacing: .06em; }
 .gtw-final { width: min(100%, 460px); }
 .gtw-rounds { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 6px; }
@@ -361,6 +362,9 @@ export const CSS = `
 .gtw-series { font-size: .8rem !important; font-weight: 800 !important; text-align: left; }
 .gtw-rounds li.lv { box-shadow: inset 0 -5px 0 var(--g-muted); }
 .gtw-rounds small.tw { color: var(--g-ink); letter-spacing: .06em; }
+/* portrait phone: the left column (role, car, heat) and the minimap leave only a gap of ~85 px under the clock, so the chips sit lower, in the clear
+   band between the HONK button and the speed readout (they wrap to two short lines there: 'SPIKE RAIN' / 'BUST THEM TO WIN') */
+.g-gtw.portrait .gtw-view.full .gtw-twrow { left: calc(74px + var(--sl)); right: auto; top: calc(var(--cs) + 136px); transform: none; max-width: calc(100% - 190px - var(--sl) - var(--sr)); justify-content: center; }
 /* short landscape phones: the chips sit below the hint; the result card gets tighter */
 .g-gtw.short .gtw-twrow { top: calc(var(--st) + 112px); }
 .g-gtw.short .gtw-pair { padding: 3px 8px; font-size: .76rem !important; }
@@ -379,4 +383,40 @@ export const CSS = `
 .g-gtw.short .gtw-result .gtw-score span { font-size: .9rem; }
 .g-gtw.short .gtw-result .gtw-unlock { font-size: .76rem !important; }
 .g-gtw.short .gtw-result .gtw-rf p { margin: 0; font-size: .74rem; }
+/* the match card: in pairs the rounds sit by pair; the wrappers vanish except on a short landscape phone, which gets two columns (844×390, 667×375) */
+.gtw-final .gtw-fh, .gtw-final .gtw-fl, .gtw-final .gtw-fr, .gtw-final .gtw-ff { display: contents; }
+.gtw-rounds.pairs { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 6px; }
+.gtw-pg { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.gtw-pg small { font: 900 .62rem/1 var(--g-font-body); letter-spacing: .12em; color: var(--g-muted); text-align: left; }
+.gtw-pg ol { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr; gap: 5px; }
+.gtw-pg li { border: 2px solid var(--g-ink); border-radius: 10px; padding: 5px 6px; display: flex; flex-direction: column; gap: 2px; background: var(--g-bg); text-align: left; }
+.gtw-pg li.wa { box-shadow: inset 0 -5px 0 var(--p-a); } .gtw-pg li.wb { box-shadow: inset 0 -5px 0 var(--p-b); } .gtw-pg li.lv { box-shadow: inset 0 -5px 0 var(--g-muted); } .gtw-pg li.tbd { opacity: .4; }
+.gtw-pg li small { font-size: .62rem; font-weight: 800; letter-spacing: 0; color: var(--g-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gtw-pg li small.tw { color: var(--g-ink); letter-spacing: .06em; }
+.gtw-pg li b { font: 900 .78rem/1.1 var(--g-font-body); }
+.g-gtw.short .gtw-final { width: min(100%, 700px); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto 1fr auto; gap: 5px 14px; padding: 8px 12px; align-items: start; overflow: hidden; }
+.g-gtw.short .gtw-final .gtw-fh { display: flex; flex-direction: column; gap: 3px; grid-column: 1; grid-row: 1; }
+.g-gtw.short .gtw-final .gtw-fl { display: block; grid-column: 1; grid-row: 2; min-width: 0; }
+.g-gtw.short .gtw-final .gtw-fr { display: flex; flex-direction: column; gap: 5px; grid-column: 2; grid-row: 1 / span 2; min-width: 0; }
+.g-gtw.short .gtw-final .gtw-ff { display: flex; flex-direction: column; gap: 2px; grid-column: 1 / -1; grid-row: 3; }
+.g-gtw.short .gtw-final .gtw-ff p { margin: 0; }
+.g-gtw.short .gtw-final h2 { font-size: 1.3rem; }
+.g-gtw.short .gtw-final .gtw-ribbons span { font-size: .66rem; padding: 2px 9px; }
+.g-gtw.short .gtw-final .gtw-rounds { gap: 4px; grid-template-columns: repeat(auto-fit, minmax(76px, 1fr)); }
+.g-gtw.short .gtw-final .gtw-rounds.pairs { grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); }
+.g-gtw.short .gtw-final .gtw-rounds li { padding: 3px 4px; gap: 1px; } .g-gtw.short .gtw-final .gtw-pg ol { gap: 3px; } .g-gtw.short .gtw-final .gtw-pg li { padding: 3px 5px; }
+.g-gtw.short .gtw-final .gtw-rounds b, .g-gtw.short .gtw-final .gtw-pg li b { font-size: .7rem; } .g-gtw.short .gtw-final .gtw-rounds small { font-size: .56rem; }
+.g-gtw.short .gtw-final .gtw-cols { gap: 6px; } .g-gtw.short .gtw-final .gtw-cols > div { padding: 4px 7px; }
+.g-gtw.short .gtw-final .gtw-cols h4 { margin: 0 0 2px; font-size: .84rem; } .g-gtw.short .gtw-final .gtw-cols dl { font-size: .68rem; gap: 0 6px; }
+.g-gtw.short .gtw-final .gtw-series, .g-gtw.short .gtw-final .gtw-mvp { font-size: .74rem !important; padding: 3px 8px; } .g-gtw.short .gtw-final .gtw-series { padding: 0; }
+.g-gtw.short .gtw-final .gtw-mvp { margin: 0; }
+/* the Daily panel in the lobby, on a short landscape phone: tighter, so its last line clears the card's bottom edge */
+.g-gtw.short .gtw-lobby .gtw-daily { padding: 5px 8px; gap: 2px; } .g-gtw.short .gtw-lobby .gtw-daily p { font-size: .76rem; line-height: 1.2; } .g-gtw.short .gtw-lobby .gtw-daily ul { gap: 1px; font-size: .78rem; }
+.g-gtw.short .gtw-lobby .gtw-daily .gtw-tapon { font-size: .68rem !important; }
+/* the intro card, on a short landscape phone: compact, and never taller than the space under the top HUD (scores + clock end ~58 px down) */
+.g-gtw.short .gtw-intro { gap: 4px; padding: 7px 12px; max-height: calc(100% - 52px - var(--st)); }
+.g-gtw.short .gtw-intro h2 { font-size: 1.35rem; } .g-gtw.short .gtw-intro p { font-size: .8rem; line-height: 1.2; }
+.g-gtw.short .gtw-intro .gtw-roles { gap: 6px; } .g-gtw.short .gtw-intro .gtw-roles > div { padding: 4px 6px; gap: 0; } .g-gtw.short .gtw-intro .gtw-roles b { font-size: .88rem; } .g-gtw.short .gtw-intro .gtw-roles p { font-size: .74rem; }
+.g-gtw.short .gtw-intro .gtw-twist { padding: 4px 8px; } .g-gtw.short .gtw-intro .gtw-twist b { font-size: .9rem; } .g-gtw.short .gtw-intro .gtw-twist span { font-size: .76rem; }
+.g-gtw.short .gtw-intro .gtw-tip, .g-gtw.short .gtw-intro .gtw-half { font-size: .74rem !important; }
 `;
