@@ -83,6 +83,23 @@ the plate area names them ("Only the left column can still win it") and the line
 faint dotted rail; boards on no live line get a slightly dimmer paper. When the game ends on a
 count, the finale says "No big line left — boards decide" (or, on a tie, who the tie went to).
 
+## Match point, Denied!, the wildcard tell and the ledger (view only, plus one counter)
+
+- **Match point:** for the player to move, if winning the board they are sent to (any open board on a
+  free move) would complete a big line, the plate on both phones says "<name> is one board from the
+  win" (mover: followed by where to play). Pure function of `s.big`, `s.force`, `s.turn` (`matchPoint`),
+  so it also shows in legacy matches.
+- **Denied!:** when a move wins a small board that was the third cell of a big line the other player
+  held two of (`denies` / `deniedNow(prev, s)`), a "Denied!" stamp (the moment-line styling) shows over
+  the board for about 1.5 s on both phones. It only plays for a move seen arriving, never when a
+  match is opened. v2 states also count denials per player in `s.dn`, which feeds the `deny` moment
+  (priority right after `comeback`: "<w> denied the line, then took it." and four more).
+- **Wildcard tell:** in Wildcards, while the opponent's wildcard is unspent, the mover's plate ends
+  with "· <opponent> still holds a wildcard".
+- **Series ledger:** under the moment line on both phones, "Series: Emerson 5 · Sydney 4 · Sydney on 2"
+  (streak shown from 2, draws only when there are some), read from the shared data once the tally for
+  this match is in (`last_id === matchId`), so both phones show the same numbers.
+
 ## Records, rivalry and moments
 
 Shared game data (`gameDataApi('ultimate')`), flat keys. Counters that only go up end in `_n` or
@@ -117,4 +134,4 @@ streak, first game in this mode, running score and level lines, chosen with `ran
   (`fit()`), and the empty status line is reclaimed while playing. `.gm` stays a column in
   `games.css`, so the board is limited to roughly 225 to 280 px tall on the smallest phones.
 - Test hook: `def.kit` exposes the pure helpers (`tally`, `momentKeys`, `momentText`, `stripText`,
-  `liveLines`, `lastLight`, `tieNote`, `secondMover`).
+  `liveLines`, `lastLight`, `tieNote`, `secondMover`, `matchPoint`, `deniedNow`, `ledgerText`).
