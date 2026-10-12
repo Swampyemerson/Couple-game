@@ -147,10 +147,25 @@ New assertions:
 - Rivalry hysteresis, pops on the right phone, clutch, `share`, team best.
 - Twists, dares, notes, unlocks and landscape lobby fit.
 
-RESULTS_PLACEHOLDER
+Final run on the finished tree (12 Oct, 09:48–10:20 UTC), with the three parts run one after another on a quiet machine:
 
-Budgets, measured on the phone view: max 21 draw calls (limit 30), worst frame ~46k triangles (limit 60k), 10 shader
-programs (unchanged), chunk vertex peak 13.7k of the 18k buffer. Allocation and heap tests pass.
+| Part | Result |
+|---|---|
+| `gen,split,leak,drop,dark` | 63 ok, ALL GOOD |
+| `race,brawl,tandem,pause,daily` | 64 ok, ALL GOOD |
+| `rival,loop,rejoin` | 112 ok, ALL GOOD |
+| `heap,seam` | 18 ok, ALL GOOD |
+
+Highlights from that run:
+- **Perfect bot:** 5 seeds × 500 chunks (50 km each), 0 crashes and 0 stumbles on v1 and on v2.
+- **Frozen hashes:** the v1 and v2 hashes match the pinned values.
+- **Phone, busy Race:** max 21 draw calls and max 47.4k triangles.
+- **Split screen:** max 44 calls / 87.9k triangles, against the laptop budget of 50 / 120k.
+- **Shader programs:** 10 on host and guest, unchanged after every effect.
+- **Room budget:** 0 warnings.
+- **Build:** `build_artifact.py --only=rush` builds (801 KB, 25 modules).
+
+Chunk vertex peak 13.7k of the 18k buffer (worst district: Freight Yard).
 
 ## Known issues
 - **Love hearts trail:** it reads as a small cluster of pink gems rather than an unmistakable heart, because the
