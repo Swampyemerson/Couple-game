@@ -600,7 +600,7 @@ export function resultCard(api, { outcome, reason, runner, stats, scores, next, 
   // A short landscape phone (667×375, two columns) has room for three of them (measured: a card with three is ~230 px of 350); everything shows elsewhere.
   // (a line may carry its own pri: the Daily rival line "You beat Sydney's …" outranks the streak line)
   const priOf = (l) => (l.pri !== undefined ? l.pri : l.rec ? 1 : 3);
-  const ls = (lines || []).map((l, i) => ({ l, i })).sort((x, y) => priOf(x.l) - priOf(y.l) || x.i - y.i).slice(0, 2).sort((x, y) => x.i - y.i).map((x) => x.l);
+  const ls = (lines || []).slice(0, short ? 4 : 3); // (the short card trims by priority below; the portrait one has room for three)
   const items = [];
   if (pairHtml) items.push({ k: 'pair', pri: 0 });
   if (daily) items.push({ k: 'daily', pri: 0 });
