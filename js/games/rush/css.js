@@ -80,6 +80,16 @@ export const CSS = `
 .g-rush .rr-gap.hot span { background: var(--g-bad); color: var(--g-on-signal, #fff); animation: rr-revp .7s ease-in-out infinite alternate; }
 @keyframes rr-revp { to { transform: scale(1.06); } }
 
+/* rivalry & moments: the last heart rings, neck and neck pulses the gap pill, a district name is a small tag pop */
+.g-rush .rr-hearts.last { border-color: var(--g-bad); animation: rr-last 1s ease-out infinite; }
+.g-rush .rr-hearts.last .rr-heart:not(.off) { animation: rr-hb 1s ease-in-out infinite; transform-origin: 50% 60%; }
+@keyframes rr-last { 0% { box-shadow: 2px 2px 0 var(--g-edge), 0 0 0 0 var(--g-bad); } 70%, 100% { box-shadow: 2px 2px 0 var(--g-edge), 0 0 0 9px transparent; } }
+@keyframes rr-hb { 0%, 100% { transform: scale(1); } 12% { transform: scale(1.28); } 24% { transform: scale(1); } 36% { transform: scale(1.18); } 48% { transform: scale(1); } }
+.g-rush .rr-gap.neck span { border-color: var(--g-bad); animation: rr-neck .55s ease-in-out infinite alternate; }
+@keyframes rr-neck { from { transform: scale(1); box-shadow: 0 0 0 0 var(--g-bad); } to { transform: scale(1.07); box-shadow: 0 0 0 4px color-mix(in srgb, var(--g-bad) 35%, transparent); } }
+.g-rush .rr-pop.tag { font-size: 14px; letter-spacing: .1em; text-transform: uppercase; color: var(--g-ink); background: var(--g-card); border: 2px solid var(--g-ink); border-radius: 999px; padding: 6px 14px; width: max-content; justify-self: center; margin-top: 78px; text-shadow: none; box-shadow: 2px 2px 0 var(--g-edge); }
+.g-rush .rr-pop.tag::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background: var(--g-hl); border: 2px solid var(--g-ink); vertical-align: 1px; }
+
 /* center pops, combo, warnings */
 /* pops sit between the HUD and the horizon: never over the vanishing point, where obstacles appear */
 .g-rush .rr-pops { position: absolute; left: 0; right: 0; top: 22.5%; display: grid; place-items: center; pointer-events: none; }
@@ -305,7 +315,75 @@ export const CSS = `
 .g-rush.rr-narrow .rr-combo[data-t="2"] { font-size: 24px; } .g-rush.rr-narrow .rr-combo[data-t="3"] { font-size: 26px; }
 .g-rush.rr-narrow .rr-combo[data-t="4"], .g-rush.rr-narrow .rr-combo[data-t="5"] { font-size: 28px; }
 .g-rush.rr-narrow .rr-combo small { font-size: 12px; }
+/* the Daily's twist, dares and love notes (extras.js) */
+.g-rush.rr-mirror .rr-gl { transform: scaleX(-1); } /* Mirror: only the picture flips (the HUD sits above it); extras.js swaps left / right */
+.g-rush:not(.rr-short) .rr-ov-lobby { grid-template-columns: minmax(0, 1fr); } /* (a long note or the input must never widen the sheet) */
+.g-rush .rr-ov-lobby .rr-sheet { max-width: 100%; min-width: 0; }
+.g-rush .rr-xtra { display: flex; flex-direction: column; gap: 8px; }
+.g-rush .rr-daily-t .rr-modl, .g-rush .rr-daily-t .rr-modt, .g-rush .rr-daily-t .rr-modb { display: block; font-style: normal; }
+.g-rush .rr-daily-t .rr-modl { font-weight: 900; font-size: 12px; font-family: var(--g-font-display); }
+.g-rush .rr-dares { padding: 8px 10px 7px; border-radius: 14px; border: 2px solid var(--g-ink); background: var(--g-bg); font-family: var(--g-font-body); }
+.g-rush .rr-dares-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.g-rush .rr-dares-h b { font-family: var(--g-font-display); font-size: 14px; font-weight: 900; }
+.g-rush .rr-dares-who { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 800; color: var(--g-muted); }
+.g-rush .rr-dares-l { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.g-rush .rr-dares-l li { display: flex; align-items: center; gap: 5px; min-height: 22px; font-size: 13px; font-weight: 800; line-height: 1.2; }
+.g-rush .rr-dares-l li span { margin-left: 3px; min-width: 0; }
+.g-rush .rr-dares-f { margin-top: 4px; font-size: 11px; font-weight: 800; color: var(--g-muted); line-height: 1.25; }
+.g-rush .rr-ck { flex: none; position: relative; display: inline-block; width: 17px; height: 17px; border-radius: 50%; border: 2px solid var(--p-a); }
+.g-rush .rr-ck.b { border-color: var(--p-b); }
+.g-rush .rr-ck.on.a { background: var(--p-a); } .g-rush .rr-ck.on.b { background: var(--p-b); }
+.g-rush .rr-ck.on::after { content: ''; position: absolute; left: 4.5px; top: 1px; width: 4px; height: 8px; border: solid var(--g-bg); border-width: 0 2.5px 2.5px 0; transform: rotate(45deg); }
+.g-rush .rr-ck.lg { width: 10px; height: 10px; border: 0; background: var(--p-a); } .g-rush .rr-ck.lg.b { background: var(--p-b); }
+.g-rush .rr-notes { display: flex; gap: 8px; }
+.g-rush .rr-note-chip { pointer-events: auto; flex: 1; min-width: 0; min-height: 48px; display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-radius: 14px; border: 2px solid var(--g-ink); background: var(--g-card); color: var(--g-ink); text-align: left; box-shadow: 2px 2px 0 var(--g-edge); }
+.g-rush .rr-note-chip.open { background: var(--g-hl); color: var(--g-on-ink); }
+.g-rush .rr-note-chip.open small { color: var(--g-on-ink); }
+.g-rush .rr-note-ic { flex: none; width: 26px; height: 26px; display: grid; place-items: center; color: var(--p-b); }
+.g-rush .rr-note-chip.a .rr-note-ic { color: var(--p-a); }
+.g-rush .rr-note-chip.open .rr-note-ic { color: var(--g-on-ink); }
+.g-rush .rr-note-ic svg { width: 26px; height: 26px; display: block; }
+.g-rush .rr-note-tx { display: flex; flex-direction: column; min-width: 0; line-height: 1.15; font-family: var(--g-font-body); }
+.g-rush .rr-note-tx b { font-family: var(--g-font-display); font-size: 14px; font-weight: 900; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.g-rush .rr-note-tx small { font-size: 11px; font-weight: 800; color: var(--g-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.g-rush .rr-note-ed { display: flex; gap: 8px; pointer-events: auto; }
+.g-rush .rr-note-ed[hidden] { display: none; }
+/* 16 px keeps iOS from zooming in on focus; user-select must be on for an input inside a user-select:none game */
+.g-rush .rr-note-in { flex: 1; min-width: 0; min-height: 44px; padding: 8px 12px; font: 700 16px/1.2 var(--g-font-body); color: var(--g-ink); background: var(--g-bg); border: 2px solid var(--g-ink); border-radius: 12px; -webkit-user-select: text; user-select: text; touch-action: manipulation; }
+.g-rush .rr-note-in::placeholder { color: var(--g-muted); font-weight: 600; }
+.g-rush .rr-note-save { pointer-events: auto; min-width: 68px; min-height: 44px; padding: 0 14px; border-radius: 12px; border: 2px solid var(--g-ink); background: var(--g-hl); color: var(--g-on-ink); font-family: var(--g-font-display); font-weight: 900; font-size: 15px; box-shadow: 2px 2px 0 var(--g-edge); }
+/* the partner's note, popped for 3 s when you grab the envelope */
+.g-rush .rr-lnote { position: absolute; left: 50%; top: 33%; z-index: 6; width: min(88%, 340px); display: none; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 16px; border: 2.5px solid var(--g-ink); background: var(--g-card); color: var(--g-ink); box-shadow: 4px 4px 0 var(--g-edge); transform: translateX(-50%); pointer-events: none; font-family: var(--g-font-body); }
+.g-rush .rr-lnote.on { display: flex; animation: rr-lnote 3s ease-out forwards; }
+.g-rush .rr-lnote .rr-note-ic { color: var(--p-b); width: 30px; height: 30px; } .g-rush .rr-lnote .rr-note-ic svg { width: 30px; height: 30px; }
+.g-rush .rr-lnote-t { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.g-rush .rr-lnote-t b { font: 900 11px/1.1 var(--g-font-display); letter-spacing: .06em; text-transform: uppercase; color: var(--g-muted); }
+.g-rush .rr-lnote-t span { font-weight: 900; font-size: 17px; line-height: 1.2; overflow-wrap: anywhere; }
+@keyframes rr-lnote { 0% { opacity: 0; transform: translate(-50%, 16px) scale(.8) rotate(-3deg); } 9% { opacity: 1; transform: translate(-50%, 0) scale(1.05) rotate(-1.5deg); } 15% { transform: translate(-50%, 0) scale(1) rotate(-1.5deg); } 88% { opacity: 1; transform: translate(-50%, 0) rotate(-1.5deg); } 100% { opacity: 0; transform: translate(-50%, -12px) rotate(-1.5deg); } }
+.g-rush.rr-short .rr-lnote { top: 24%; }
+.g-rush.rr-short .rr-daily-t .rr-modt, .g-rush.rr-short .rr-note-tx small { display: none; }
+.g-rush.rr-short .rr-note-chip { min-height: 44px; padding: 2px 10px; }
+.g-rush.rr-short .rr-dares-l { margin-top: 2px; gap: 0; }
+.g-rush.rr-short .rr-dares-l li { min-height: 18px; }
+.g-rush.rr-short .rr-ov-lobby .rr-sheet > .rr-row { position: sticky; bottom: -8px; z-index: 2; padding: 4px 0 2px; background: var(--g-card); } /* Start stays in reach while the rest scrolls */
+/* a short portrait phone (SE class): the dares and note still fit above Start */
+@media (max-height: 760px) and (orientation: portrait) {
+  .g-rush .rr-ov-lobby .rr-tagline { display: none; }
+  .g-rush .rr-ov-lobby .rr-logo { font-size: 42px; }
+  .g-rush .rr-ov-lobby .rr-sheet { gap: 7px; padding: 10px; }
+  .g-rush .rr-ov-lobby .rr-mode:not(.rr-daily) > span { display: none; }
+  .g-rush .rr-ov-lobby .rr-mode:not(.rr-daily) { padding: 7px 6px; }
+  .g-rush .rr-daily-t .rr-modt { display: none; }
+  .g-rush .rr-dares-f { display: none; }
+  .g-rush .rr-dares-l li { min-height: 20px; }
+  .g-rush .rr-note-tx small { display: none; }
+  .g-rush .rr-note-chip { min-height: 44px; }
+}
+.g-rush.rr-short .rr-xtra { gap: 6px; }
+.g-rush.rr-short .rr-dares { padding: 5px 8px 4px; }
+.g-rush.rr-short .rr-dares-l li { min-height: 20px; font-size: 12px; }
+.g-rush.rr-short .rr-dares-f { display: none; }
 @media (prefers-reduced-motion: reduce) {
-  .g-rush .rr-weapon.full, .g-rush .rr-runner-ico, .g-rush .rr-warn, .g-rush .rr-coins.bump, .g-rush .rr-coins.bump2, .g-rush .rr-gap.hot span { animation: none; }
+  .g-rush .rr-lnote.on, .g-rush .rr-weapon.full, .g-rush .rr-runner-ico, .g-rush .rr-warn, .g-rush .rr-coins.bump, .g-rush .rr-coins.bump2, .g-rush .rr-gap.hot span, .g-rush .rr-gap.neck span, .g-rush .rr-hearts.last, .g-rush .rr-hearts.last .rr-heart { animation: none; }
 }
 `;

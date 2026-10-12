@@ -14,6 +14,7 @@ export const ICONS = {
   shield: '<svg viewBox="0 0 40 40" aria-hidden="true"><path d="M20 4 33 9v9c0 9-6 15-13 18C13 33 7 27 7 18V9Z" fill="var(--g-hl)" stroke="var(--g-ink)" stroke-width="3" stroke-linejoin="round"/><path d="M14 19l4 4 8-8" fill="none" stroke="var(--g-ink)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   magnet: '<svg viewBox="0 0 40 40" aria-hidden="true"><path d="M8 6h8v14a4 4 0 0 0 8 0V6h8v14a12 12 0 0 1-24 0Z" fill="var(--g-bad)" stroke="var(--g-ink)" stroke-width="3" stroke-linejoin="round"/><path d="M8 6h8v6H8zM24 6h8v6h-8z" fill="var(--g-card)" stroke="var(--g-ink)" stroke-width="3"/></svg>',
   sneakers: '<svg viewBox="0 0 40 40" aria-hidden="true"><path d="M5 26c0-6 2-13 7-15l4 7 8 2c6 1 11 3 11 8v3H5Z" fill="var(--g-good)" stroke="var(--g-ink)" stroke-width="3" stroke-linejoin="round"/><path d="M5 31h30" stroke="var(--g-ink)" stroke-width="3"/><path d="M13 9c-3-3-7-3-9-1 3 0 5 2 6 4" fill="var(--g-hl)" stroke="var(--g-ink)" stroke-width="2.5" stroke-linejoin="round"/></svg>',
+  double: '<svg viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="16" fill="var(--g-hl)" stroke="var(--g-ink)" stroke-width="3"/><text x="20" y="26.5" text-anchor="middle" font-size="18" font-weight="900" fill="var(--g-ink)" font-family="var(--g-font-display), system-ui, sans-serif">×2</text></svg>',
   flag: '<svg viewBox="0 0 40 40" aria-hidden="true"><path d="M9 36V5" stroke="var(--g-ink)" stroke-width="3.5" stroke-linecap="round"/><path d="M10 6h22l-5 7 5 7H10Z" fill="var(--g-card)" stroke="var(--g-ink)" stroke-width="3" stroke-linejoin="round"/><path d="M15 6v14M21 6v14M10 13h18" stroke="var(--g-ink)" stroke-width="3"/></svg>',
   brawl: '<svg viewBox="0 0 40 40" aria-hidden="true"><path d="M3 15h13l-3-5 10 10-10 10 3-5H3Z" fill="var(--p-a)" stroke="var(--g-ink)" stroke-width="2.5" stroke-linejoin="round"/><path d="M37 15H27l3-5-9 10 9 10-3-5h10Z" fill="var(--p-b)" stroke="var(--g-ink)" stroke-width="2.5" stroke-linejoin="round"/><path d="M20 4v6M14 6l3 4M26 6l-3 4" stroke="var(--g-ink)" stroke-width="2.5" stroke-linecap="round"/></svg>',
   tandem: '<svg viewBox="0 0 40 40" aria-hidden="true"><path d="M14 30 5 21a5 5 0 0 1 9-6 5 5 0 0 1 9 6Z" fill="var(--p-a)" stroke="var(--g-ink)" stroke-width="2.5" stroke-linejoin="round"/><path d="M26 35l-9-9a5 5 0 0 1 9-6 5 5 0 0 1 9 6Z" fill="var(--p-b)" stroke="var(--g-ink)" stroke-width="2.5" stroke-linejoin="round"/></svg>',
@@ -103,7 +104,7 @@ export function createHud(root, o) {
       bar: $('bar'), fill: el.querySelector('.rr-fill'), mkm: $('mkm'), mko: $('mko'), gap: $('gap'), pops: $('pops'), combo: $('combo'),
       warn: $('warn'), banner: $('banner'), splat: $('splat'), flash: $('flash'), weapon: $('weapon'), pause: $('pause'), btns: $('btns'),
     };
-    R.powers.innerHTML = ['magnet', 'sneakers', 'shield', 'rocket'].map((k) => `<div class="rr-pw" data-pw="${k}" hidden>${ICONS[k].replace('<svg ', '<svg class="ic" ')}<svg class="ring" viewBox="0 0 36 36"><circle cx="18" cy="18" r="15.9" pathLength="100"/></svg></div>`).join('');
+    R.powers.innerHTML = ['magnet', 'sneakers', 'double', 'shield', 'rocket'].map((k) => `<div class="rr-pw" data-pw="${k}" hidden>${ICONS[k].replace('<svg ', '<svg class="ic" ')}<svg class="ring" viewBox="0 0 36 36"><circle cx="18" cy="18" r="15.9" pathLength="100"/></svg></div>`).join('');
     const pw = {};
     R.powers.querySelectorAll('[data-pw]').forEach((p) => { pw[p.dataset.pw] = { el: p, ring: p.querySelector('.ring circle'), last: -1 }; });
     R.weapon.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); o.onUse(who); });
@@ -187,7 +188,11 @@ export function createHud(root, o) {
         if (last.g !== text) { if (!last.g !== !text) centerDirty = true; last.g = text; R.gap.hidden = !text; if (text) R.gap.firstChild.textContent = text; }
         if (last.gh !== hot) { last.gh = hot; R.gap.classList.toggle('hot', hot); }
       },
-      powers(m, s, sh, rk) { pwUpd('magnet', m); pwUpd('sneakers', s); pwUpd('shield', sh ? 1 : 0); pwUpd('rocket', rk); },
+      powers(m, s, sh, rk, db = 0) { pwUpd('magnet', m); pwUpd('sneakers', s); pwUpd('double', db); pwUpd('shield', sh ? 1 : 0); pwUpd('rocket', rk); },
+      /** The last heart: a pulsing ring around the hearts. */
+      clutch(on) { if (last.cl !== on) { last.cl = on; R.hearts.classList.toggle('last', on); } },
+      /** Neck and neck: the gap pill pulses. */
+      neck(on) { if (last.nk !== on) { last.nk = on; R.gap.classList.toggle('neck', on); } },
       weapon(kind, show) {
         if (last.ws !== show) { last.ws = show; R.weapon.hidden = !show; }
         if (last.w === kind) return;
@@ -289,6 +294,7 @@ export function createHud(root, o) {
               <button class="rr-mode" data-mode="tandem">${ICONS.tandem}<b>Together</b><span>Shared hearts. Revive each other.</span></button>
             </div>
             <button class="rr-mode rr-daily" data-mode="daily">${ICONS.daily}<span class="rr-daily-t"><b>Daily run</b><span data-r="daily">One track for the whole day. Furthest wins.</span></span></button>
+            <div class="rr-xtra" data-r="xtra"></div>
             <div class="rr-status" data-r="status"></div>
             <div class="rr-keys" data-r="keys"></div>
             <div class="rr-row"><button class="rr-btn hot" data-r="go">Start</button><button class="rr-btn ghost sq" data-r="gear" aria-label="Settings">${ICONS.gear}</button></div>

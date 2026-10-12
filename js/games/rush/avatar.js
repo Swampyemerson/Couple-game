@@ -159,6 +159,23 @@ export function createAvatar(THREE, world, P, who) {
     mk((b) => { b.add(T.disc, 0, 0.22, 0, 0.62, 0.05, 0.62, 0, mix(P.hl, P.white, 0.5), FX_GLOW, 0.02, ink); b.add(T.disc, 0, 0.22, 0, 0.4, 0.07, 0.4, 0, P.skin, FX_PLAIN, 0, ink); });
     // party cone with a pompom
     mk((b) => { b.add(T.cone, 0, 0.26, 0, 0.36, 0.56, 0.36, 0, who === 'a' ? P.b : P.a, FX_PLAIN, 0.02, ink); b.add(T.lowSphere, 0, 0.56, 0, 0.14, 0.14, 0.14, 0, P.hl, FX_GLOW, 0, ink); });
+    // lantern (Neon Market): a glowing red paper lantern with gold caps and a little handle
+    mk((b) => {
+      b.add(T.disc, 0, 0.04, 0, 0.3, 0.06, 0.3, 0, P.hl, FX_PLAIN, 0.02, ink);
+      b.add(T.sphere12, 0, 0.23, 0, 0.44, 0.36, 0.44, 0, P.bad, FX_GLOW, 0.02, ink);
+      b.add(T.disc, 0, 0.43, 0, 0.22, 0.05, 0.22, 0, P.hl, FX_PLAIN, 0.02, ink);
+      b.add(T.box, 0, 0.53, 0, 0.05, 0.16, 0.05, 0, P.hl, FX_PLAIN, 0.015, ink);
+    });
+    // trophy: a gold cup with two handles (the week's stamp winner)
+    mk((b) => {
+      const gold = mix(P.hl, P.white, 0.12);
+      b.add(T.disc, 0, 0.03, 0, 0.36, 0.06, 0.36, 0, P.hl, FX_PLAIN, 0.02, ink);
+      b.add(T.cyl6, 0, 0.14, 0, 0.1, 0.18, 0.1, 0, P.hl, FX_PLAIN, 0.02, ink);
+      b.add(T.cyl, 0, 0.34, 0, 0.38, 0.28, 0.38, 0, gold, FX_PLAIN, 0.02, ink);
+      b.add(T.disc, 0, 0.49, 0, 0.42, 0.04, 0.42, 0, P.hl, FX_PLAIN, 0.02, ink);
+      b.add(T.lowSphere, -0.25, 0.36, 0, 0.14, 0.16, 0.08, 0, P.hl, FX_PLAIN, 0.02, ink);
+      b.add(T.lowSphere, 0.25, 0.36, 0, 0.14, 0.16, 0.08, 0, P.hl, FX_PLAIN, 0.02, ink);
+    });
     hb.dispose();
   }
   let hatK = 0;
@@ -363,7 +380,7 @@ export function createAvatar(THREE, world, P, who) {
     /** Things to draw once behind the loading screen so their shaders are compiled. */
     warmList: () => [mesh, bubble],
     lunge(dir) { A.lungeT = 0.35; A.lungeDir = dir; },
-    /** Wear hat k (0 none, 1 crown, 2 halo, 3 party cone). */
+    /** Wear hat k (0 none, 1 crown, 2 halo, 3 party cone, 4 lantern, 5 trophy). */
     setHat(k) { k = k | 0; if (k === hatK) return; hatK = k; for (let i = 0; i < hats.length; i++) hats[i].m.visible = i + 1 === k; },
     get hat() { return hatK; },
     get downPose() { return A.downPose; },

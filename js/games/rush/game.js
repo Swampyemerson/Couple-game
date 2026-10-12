@@ -2,7 +2,7 @@
 // the fixed-step loop, pause / resume protocol, partner re-mounts, finale, HUD, test hook.
 import {
   DT, LANE_W, SLIDE_TIME, STUMBLE_T, START_DELAY, RESUME_DELAY, RACE_LEN, BRAWL_CAP, MT_LEAD, CHUNK,
-  HEARTS, TEAM_HEARTS_MAX, HIT_STOP, FINALE_MS, REVIVE_WINDOW, TRACK_V, baseSpeed,
+  HEARTS, TEAM_HEARTS_MAX, HIT_STOP, FINALE_MS, REVIVE_WINDOW, TRACK_V, DOUBLE_T, baseSpeed,
 } from './tune.js';
 import { hash } from '../core.js';
 import { createTrack, trackHash, difficulty, O_MTRAIN, TUT_JUMP, TUT_ROLL } from './track.js';
@@ -18,6 +18,8 @@ import { createFx, createRig, createOverlay } from './fx.js';
 import { createAudio } from './audio.js';
 import { createInput, A_USE } from './input.js';
 import { createHud } from './hud.js';
+import { createRivalry, PICK_NAME } from './rivalry.js';
+import { createExtras } from './extras.js';
 import { createLink, emptyState } from './link.js';
 import { createRules, MODES, MODE_LABEL, fmtM } from './modes.js';
 
@@ -27,7 +29,7 @@ const F_RUN = 64; const F_OUT = 128; const F_BOOST = 256; const F_MAGNET = 512; 
 const WEAPON_IDX = [null, 'ink', 'block', 'zap', 'rocket', 'shield'];
 const PZ = { menu: 1, hidden: 2, gl: 3, gone: 4, stale: 5, sync: 6, tap: 7 };
 const PZ_ORDER = ['gl', 'tap', 'menu', 'hidden', 'sync', 'gone', 'stale'];
-const RULE_MSGS = ['atk', 'res', 'shove', 'fin', 'out', 'down', 'revive', 'missed', 'cheer'];
+const RULE_MSGS = ['atk', 'res', 'shove', 'fin', 'out', 'down', 'revive', 'missed', 'cheer', 'share'];
 const SKEY = 'rush.settings.v1';
 const TKEY = 'rush.tutorial.v1';
 const MKEY = 'rush.mode.v1';
@@ -53,6 +55,10 @@ const STYLES = [
   { key: 'hat', k: 1, name: 'Crown', how: 'Beat your partner’s best Daily run', test: (S) => S.beatDaily },
   { key: 'hat', k: 2, name: 'Halo', how: 'Revive your partner 3 times', test: (S) => S.revives >= 3 },
   { key: 'hat', k: 3, name: 'Party cone', how: '150 coins in one run', test: (S) => S.coins >= 150 },
+  { key: 'trail', k: 5, name: 'Gold dust', how: 'Grab 3 gold branches in one run', test: (S) => S.branches >= 3 },
+  { key: 'trail', k: 6, name: 'Love hearts', how: 'Find 5 love notes', test: (S) => S.notesTotal >= 5 },
+  { key: 'hat', k: 4, name: 'Lantern', how: 'Reach the Neon Market', test: (S) => S.neon },
+  { key: 'hat', k: 5, name: 'Trophy', how: '7 dare stamps in a week, or most stamps last week', test: (S) => S.trophy },
 ];
 const fmtT = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 const dayKey = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
@@ -177,6 +183,13 @@ export function createGame(el, api) {
   const players = { a: mkPlayer('a'), b: mkPlayer('b') };
   const locals = live ? [meW] : ['a', 'b'];
   const viewers = live ? [meW] : ['a', 'b'];
+  // the Daily's twist, dares, love notes (extras.js); world / P are read lazily (created in init3D)
+  const X = createExtras({
+    live, split, meW, M, players, root, other, audio, dbg, data, setData,
+    name: (w) => api.name(w), tokens: () => api.tokens(),
+    world: () => world, palette: () => P,
+    later: (fn, ms) => { timers.push(setTimeout(() => { if (!dead) fn(); }, ms)); },
+  });
 
   // ── net ──
   const link = live ? createLink(api, { delay: 100 }) : null;
@@ -203,7 +216,7 @@ export function createGame(el, api) {
     offs.push(link.on('end', (d) => { if (!isHost && M.phase !== 'over') startFinale(d.res, d.at); }));
     offs.push(link.on('resume', (d) => { if (d && d.at > M.resumeAt && (M.phase === 'run' || M.phase === 'countdown')) M.resumeAt = d.at; }));
     offs.push(link.on('rejoin', (d) => { if (!d) return; if (!isHost && !d.fromGuest) applyRejoin(d); else if (isHost && d.fromGuest && (M.phase === 'lobby' || M.phase === 'loading')) applyRejoin(d); }));
-    for (const t of RULE_MSGS) offs.push(link.on(t, (d, at) => { if (rules) rules.msg(t, d || {}, at, other(meW)); }));
+    for (const t of RULE_MSGS) offs.push(link.on(t, (d, at) => ruleMsg(t, d || {}, at, other(meW))));
   }
 
   // ── 3D ──
@@ -218,7 +231,7 @@ export function createGame(el, api) {
   K.tAnim = 0; K.lastTs = 0; K.lowFor = 0; K.checkT = 0; K.coolT = 0; K.hudT = 0; K.scoreT = 0; K.hitStop = 0; K.hitPend = 0; K.wind = 0;
   let frameN = 0;
   const perf = { dts: new Float32Array(600), work: new Float32Array(600), n: 0, calls: 0, tris: 0, maxCalls: 0, maxTris: 0, programs0: 0, scaleDowns: 0, scaleUps: 0 };
-  let rules = null;
+  let rules = null; let rival = null;
   const pal = { a: null, b: null, hl: null };
   const lobbyTrack = createTrack(1);
   let vec3 = null;
@@ -353,6 +366,7 @@ export function createGame(el, api) {
       p.rs.z = 0; p.rs.x = p.rs.laneX = (w === 'a' ? -1 : 1) * LANE_W; p.rs.y = 0; p.rs.idle = true; p.rs.down = false; p.rs.win = false; p.rs.visible = true;
       if (p.rig) p.rig.snap();
     }
+    X.reset();
     if (world) { world.reset(); world.setGates([7]); }
     hud.finale(null); hud.count(''); hud.pause(null); countK = -1; pauseK = -1;
     for (const w of viewers) players[w].view && players[w].view.banner(null);
@@ -372,7 +386,7 @@ export function createGame(el, api) {
     const len = (dbg && dbg.raceLen) || RACE_LEN;
     const cap = (dbg && dbg.brawlCap) || BRAWL_CAP;
     const at = clock() + (live ? START_DELAY : 3000);
-    const info = { day: today, v: TRACK_V, ep: epochOf(seed, at) };
+    const info = { day: today, v: TRACK_V, ep: epochOf(seed, at), mod: X.modFor(mode, today) };
     if (live) link.send('start', { mode, seed, at, len, cap, ...info });
     beginMatch(mode, seed, at, len, cap, info);
   }
@@ -388,7 +402,8 @@ export function createGame(el, api) {
     M.epoch = info.ep > 0 ? info.ep | 0 : epochOf(seed, at);
     M.day = typeof info.day === 'string' && /^\d{4}-\d\d-\d\d$/.test(info.day) ? info.day : dayKey();
     M.trackV = info.v > 0 ? info.v | 0 : 1;
-    M.track = createTrack(seed);
+    const xo = X.begin(M.mode, info, M.trackV); // the day's twist (Daily): sets the scene, returns track options (Gold rush)
+    M.track = createTrack(seed, M.trackV, xo);
     M.phase = 'countdown';
     M.runMs = 0; M.steps = 0; M.lastNow = clock(); M.ruleAt = M.lastNow; M.alpha = 0;
     M.paused = false; M.reasons.clear(); M.resumeAt = 0; M.result = null; M.endAt = 0;
@@ -407,6 +422,7 @@ export function createGame(el, api) {
     }
     rules = createRules(G);
     rules.init();
+    rival.reset();
     countK = -1; pauseK = -1;
     world.reset();
     world.setGates(M.mode === 'race' ? [7, M.len] : [7]);
@@ -431,7 +447,7 @@ export function createGame(el, api) {
     // (link.latest() is already the re-mounted partner's lobby state here: use the last in-match snapshot)
     const s = players[other(meW)].snap;
     link.send('rejoin', {
-      mode: M.mode, seed: M.seed, startAt: M.startAt, len: M.len, cap: M.cap, th: M.th, goal: M.goal, goalIdx: M.goalIdx, day: M.day, v: M.trackV, ep: M.epoch,
+      mode: M.mode, seed: M.seed, startAt: M.startAt, len: M.len, cap: M.cap, th: M.th, goal: M.goal, goalIdx: M.goalIdx, day: M.day, v: M.trackV, ep: M.epoch, mod: X.mod,
       you: s.ok && s.ep === M.epoch ? { z: s.z, l: s.l, h: s.h, c: s.c, rt: s.rt, fn: s.fn, o: s.o } : null,
     });
   }
@@ -481,12 +497,14 @@ export function createGame(el, api) {
   }
   function endMatch(res) {
     if (M.phase !== 'run') return;
+    rival.decorate(res); // the shared line (lead changes, team best) is written once, by the judge
     const at = clock() + FINALE_MS;
     if (live) link.send('end', { res, at });
     startFinale(res, at);
   }
   function startFinale(res, at) {
     M.result = res; M.endAt = at; M.phase = 'finale';
+    rival.finale(res);
     const w = res.winner;
     const v = viewers.map((x) => players[x].view);
     const cls = res.team ? 'team' : w ? 'p' + w : '';
@@ -560,6 +578,7 @@ export function createGame(el, api) {
       // unlocks
       const q = other(w);
       const S = { dist, closeCalls: r.closeCalls, maxCombo: r.maxCombo, coins: r.coins, wins, revives, beatDaily: M.mode === 'daily' && dist > (d[`${q}_daily_m`] | 0) && (d[`${q}_daily_m`] | 0) > 0 };
+      const xl = X.finale(w, S, patch, p, r, d, res); // dares, notes, stamps; fills the new unlock tests' inputs
       for (const st of STYLES) {
         if (!st.test || unlocked(w, st) || patch[`unlock_${w}_${st.key}${st.k}`]) continue;
         if (st.test(S)) { patch[`unlock_${w}_${st.key}${st.k}`] = 1; pops.push([w, st]); }
@@ -580,6 +599,7 @@ export function createGame(el, api) {
           else if (prevMode) bits.push(`${who}: best ${fmtM(prevMode)} m`);
           if (theirs && (M.mode !== 'daily' || theirs !== Math.round(res.winner === q ? (q === 'a' ? res.za : res.zb) : -1))) bits.push(`${api.name(q)}’s best ${fmtM(theirs)} m`);
         }
+        if (xl.length) bits.push(...xl);
         if (bits.length) lines.push(bits.join(' · '));
       }
     }
@@ -607,6 +627,7 @@ export function createGame(el, api) {
     if (a === A_USE) { useWeapon(w); return; }
     if (M.phase !== 'run' || isPaused(clock())) return;
     if (p.r.down) { rules.cheer(p); return; } // down in Together: any input cheers your partner on
+    a = X.swap(a, A_LEFT, A_RIGHT); // Mirror: the picture is flipped, so the inputs are
     if (a === A_LEFT || a === A_RIGHT) rules.onLane(p, a === A_LEFT ? -1 : 1);
     act(p.r, a);
     tutorial.did(p, a);
@@ -614,7 +635,7 @@ export function createGame(el, api) {
   function useWeapon(w) {
     const p = players[w];
     if (!p || !p.local || !rules || M.phase !== 'run' || isPaused(clock())) return;
-    if (rules.use(p)) players[w].view && players[w].view.weapon(null, true);
+    if (rules.use(p)) { X.used(w); players[w].view && players[w].view.weapon(null, true); }
   }
 
   // ── G: what the rules see ──
@@ -679,6 +700,16 @@ export function createGame(el, api) {
       audio.play('heart');
     },
   };
+
+  // rivalry & moments (rivalry.js): pops from presence, districts, events, the last heart, shared power-ups
+  rival = createRivalry({
+    M, players, viewers, audio, other,
+    now: () => clock(),
+    send: (to, type, data) => G.send(to, type, data),
+    data, setData, haptic: (n) => api.haptic(n), fmtM,
+    zOf: (w) => { const v = G.judgeView(w); return v ? v.z : 0; },
+    bestKey: (w) => (M.mode === 'daily' ? `${w}_daily_m` : `${w}_race_m`),
+  });
 
   function shake(w, a) { const rg = players[w] && players[w].rig; if (rg) rg.shake(reducedMotion ? a * 0.25 : a); }
 
@@ -765,7 +796,7 @@ export function createGame(el, api) {
       M.rejoin.sentAt = now;
       const sn = players[other(meW)].snap;
       link.send('rejoin', {
-        fromGuest: 1, mode: M.mode, seed: M.seed, len: M.len, cap: M.cap, th: sn.th, goal: sn.tg, goalIdx: M.goalIdx, day: M.day, v: M.trackV, ep: M.epoch,
+        fromGuest: 1, mode: M.mode, seed: M.seed, len: M.len, cap: M.cap, th: sn.th, goal: sn.tg, goalIdx: M.goalIdx, day: M.day, v: M.trackV, ep: M.epoch, mod: X.mod,
         you: sn.ok && sn.ep === M.epoch ? { z: sn.z, l: sn.l, h: sn.h, c: sn.c, rt: sn.rt, fn: sn.fn, o: sn.o } : null,
       });
     }
@@ -846,6 +877,7 @@ export function createGame(el, api) {
       }
       else if (p.auto && r.down && M.mode === 'tandem' && M.steps % 48 === 0) rules.cheer(p);
       step(r, M.track, false);
+      X.afterStep(r);
       drain(p);
     }
   }
@@ -875,14 +907,16 @@ export function createGame(el, api) {
               if (f) { f.on = true; f.t = 0; f.fx = cn.x; f.fy = cn.y; f.fz = cn.z; f.x = cn.x; f.y = cn.y; f.z = cn.z; f.s = 1; }
             } else fx.coin(cn.x, cn.y, cn.z);
           }
-          if (mine) audio.play('coin', r.magnetT > 0);
+          if (mine) { if (cn && cn.v >= 3) audio.play('gold'); else audio.play('coin', r.magnetT > 0); }
           break;
         }
         case E_PICK: {
           const k = Math.floor(val / 1000000);
           const it = coinAt(val % 1000000);
           if (it) fx.burst(it.x, it.y, it.z, P.hl, 12, 5);
-          if (mine && k !== 4) { audio.play('pickup'); v.pop(k === 1 ? 'MAGNET' : k === 2 ? 'SUPER SNEAKERS' : 'SHIELD', 'hl'); }
+          const shared = rival.onPick(p, k); // Together: a magnet / sneakers / doubler is mirrored to the partner
+          if (mine && PICK_NAME[k]) { audio.play('pickup'); v.pop(PICK_NAME[k], 'hl', shared); }
+          if (mine) X.onPick(p.w, k);
           break;
         }
         case E_STUMBLE: if (mine) { api.haptic(15); audio.play('stumble'); if (Math.random() < 0.4) v.pop('Oof', 'bad'); } shake(p.w, 0.28); fx.dust(r.x, r.y, r.z, 5, 1); break;
@@ -913,8 +947,12 @@ export function createGame(el, api) {
   function deliver() {
     while (queue.length) {
       const [type, data, at, from] = queue.shift();
-      rules.msg(type, data || {}, at, from);
+      ruleMsg(type, data || {}, at, from);
     }
+  }
+  /** Rule messages go to the mode rules; `share` (Together's mirrored power-ups) is the rivalry layer's. */
+  function ruleMsg(type, d, at, from) {
+    if (type === 'share') { if (rival) rival.onShare(d, at, from); } else if (rules) rules.msg(type, d, at, from);
   }
 
   // ── render states ──
@@ -1085,7 +1123,7 @@ export function createGame(el, api) {
       const tr = p.local ? wear[AB[i]].tr : p.net.tr;
       const ht = p.local ? wear[AB[i]].ht : p.net.ht;
       if (p.av) p.av.setHat(ht);
-      if (tr && M.phase === 'run' && p.rs.speed > 6 && !p.rs.down && p.rs.visible) fx.trailFx(tr, p.rs.x, p.rs.y, p.rs.z, P[AB[i]], frameN);
+      if (tr && M.phase === 'run' && p.rs.speed > 6 && !p.rs.down && p.rs.visible) { if (tr < 5 || !X.trail(fx, tr, p.rs.x, p.rs.y, p.rs.z, frameN)) fx.trailFx(tr, p.rs.x, p.rs.y, p.rs.z, P[AB[i]], frameN); }
       // distance milestones every 500 m; in a Race each one gives a lost heart back (Daily is the
       // survival mode: no regen there)
       if (p.local && p.r && M.phase === 'run') {
@@ -1102,6 +1140,8 @@ export function createGame(el, api) {
         }
       }
     }
+    if (M.phase === 'run' && !isPaused(now)) rival.tick(dt);
+    if (M.phase === 'run' && !isPaused(now)) X.tick(dt);
     tutorial.update();
     K.hudT += dt;
     updateHud(now, dt);
@@ -1124,6 +1164,11 @@ export function createGame(el, api) {
     if (gapM > 0) return `${short ? '' : q.name + ' '}leads by ${n} m`;
     return split ? `${short ? '' : p.name + ' '}leads by ${n} m` : `${short ? 'you' : 'You'} lead by ${n} m`;
   }
+  /** The gap pill when it's been close for a while: "Neck and neck · Sydney +2 m". */
+  function neckText(gapM, p, q) {
+    const n = Math.abs(gapM);
+    return n < 1 ? 'Neck and neck!' : `Neck and neck · ${gapM > 0 ? q.name : split ? p.name : 'you'} +${n} m`;
+  }
   function updateHud(now, dt) {
     const paused = isPaused(now);
     // countdowns: a numeric code per state, so the DOM (and the beep) only changes on a change
@@ -1135,7 +1180,7 @@ export function createGame(el, api) {
     else if (M.phase === 'run' && !paused && M.steps < 70 && M.runMs < 700) ck = 30;
     if (ck !== countK) {
       countK = ck;
-      if (ck >= 11 && ck <= 14) { hud.count(DIGITS[Math.min(3, ck - 10)], M.mode ? MODE_LABEL[M.mode] : ''); if (ck <= 13) audio.play('tick'); }
+      if (ck >= 11 && ck <= 14) { hud.count(DIGITS[Math.min(3, ck - 10)], M.mode ? MODE_LABEL[M.mode] + X.countLabel() : ''); if (ck <= 13) audio.play('tick'); }
       else if (ck >= 21 && ck <= 23) { hud.count(DIGITS[ck - 20], 'Get ready'); audio.play('tick'); }
       else if (ck === 30) { hud.count('RUN!'); audio.play('go'); }
       else hud.count('');
@@ -1173,6 +1218,7 @@ export function createGame(el, api) {
     let mag = 0;
     for (let i = 0; i < viewers.length; i++) { const r = players[viewers[i]].r; if (r && r.magnetT > 0 && !r.down) mag = 1; }
     audio.setMagnet(mag && M.phase === 'run' && !paused ? Math.max(0.01, clamp((sp - 8) / 22, 0, 1)) : 0);
+    audio.setHeart(M.phase === 'run' && !paused && rival.anyLow);
     for (let vi = 0; vi < viewers.length; vi++) {
       const w = viewers[vi];
       const p = players[w]; const v = p.view; const r = p.r;
@@ -1204,12 +1250,14 @@ export function createGame(el, api) {
       v.dist(Math.max(0, Math.floor(p.rs.z)));
       if (M.mode === 'race') {
         v.bar(true, clamp(p.rs.z / M.len, 0, 1), clamp(qs.z / M.len, 0, 1), p.css, q.css, p.name[0], q.name[0]);
-        if (hk.gap !== gapM) { hk.gap = gapM; v.gap(Math.abs(gapM) < 1 ? `${q.name} level with you` : leadText(gapM, p, q)); }
+        const nk = rival.neck(w); const gk = gapM * 2 + (nk ? 1 : 0);
+        if (hk.gap !== gk) { hk.gap = gk; v.gap(nk ? neckText(gapM, p, q) : Math.abs(gapM) < 1 ? `${q.name} level with you` : leadText(gapM, p, q)); }
         v.weapon(p.weaponRoll > 0 ? WEAPON_IDX[1 + (Math.floor(K.tAnim * 12) % 5)] : p.weapon, true);
       } else if (M.mode === 'daily') {
         v.bar(false);
-        const k = (Math.abs(gapM) <= 2 ? 99999 : gapM) * 10 + qh;
-        if (hk.gap !== k) { hk.gap = k; v.gap(Math.abs(gapM) <= 2 ? `${q.name} level with you` : leadText(gapM, p, q)); }
+        const nk = rival.neck(w);
+        const k = (Math.abs(gapM) <= 2 ? 99999 : gapM) * 20 + qh * 2 + (nk ? 1 : 0);
+        if (hk.gap !== k) { hk.gap = k; v.gap(nk ? neckText(gapM, p, q) : Math.abs(gapM) <= 2 ? `${q.name} level with you` : leadText(gapM, p, q)); }
       } else if (M.mode === 'brawl') {
         v.bar(false);
         const k = (Math.abs(gapM) <= 2 ? 99999 : gapM) * 10 + qh;
@@ -1220,7 +1268,9 @@ export function createGame(el, api) {
         }
       }
       v.partner('', q.css);
-      v.powers(r.magnetT / 10, r.sneakersT / 10, r.shield, r.boostT / 2.2);
+      v.powers(r.magnetT / 10, r.sneakersT / 10, r.shield, r.boostT / 2.2, r.dblT / DOUBLE_T);
+      v.clutch(rival.low(w));
+      v.neck(rival.neck(w));
       // oncoming train warning + horn
       let warn = false; let warnLane = 0;
       const ci = Math.floor(r.z / CHUNK);
@@ -1235,7 +1285,7 @@ export function createGame(el, api) {
           }
         }
       }
-      v.warn(warn && M.phase === 'run', warnLane * 230);
+      v.warn(warn && M.phase === 'run', warnLane * (X.mirror ? -230 : 230));
       // tandem banners
       if (M.mode === 'tandem' && M.phase === 'run') {
         if (r.down && p.downId) {
@@ -1252,6 +1302,8 @@ export function createGame(el, api) {
     void dt;
   }
   // partner name tag (live): after render, so the camera matrices are this frame's
+  /** hud.tag in a mirrored picture: the canvas is flipped, the HUD isn't. */
+  const tagM = (on, x, y, text, css, side, ghost) => hud.tag(on, X.mirror ? W - x : x, y, text, css, X.mirror ? -side : side, ghost);
   function updateTag() {
     if (live && players[meW].rig && vec3 && M.phase !== 'lobby') {
       const q = players[other(meW)];
@@ -1262,13 +1314,13 @@ export function createGame(el, api) {
         vec3.set(q.rs.x, q.rs.y + 2.75, -q.rs.z);
         vec3.project(cam);
         if (vec3.z < 1 && Math.abs(vec3.x) < 1.1 && vec3.y < 1 && vec3.y > -1) {
-          hud.tag(true, clamp((vec3.x * 0.5 + 0.5) * W, 44, W - 44), clamp((-vec3.y * 0.5 + 0.5) * H, 120, H - 40), q.name, q.css, 0);
+          tagM(true, clamp((vec3.x * 0.5 + 0.5) * W, 44, W - 44), clamp((-vec3.y * 0.5 + 0.5) * H, 120, H - 40), q.name, q.css, 0);
         } else if (vec3.z < 1 && Math.abs(dz) < 12) {
           // right beside me but outside a narrow portrait view: pin the tag to that edge, pointing at them
           const side = vec3.x > 0 ? 1 : -1;
           vec3.set(q.rs.x, q.rs.y + 1.1, -q.rs.z);
           vec3.project(cam);
-          hud.tag(true, side > 0 ? W - 10 : 10, clamp((-vec3.y * 0.5 + 0.5) * H, 150, H - 170), q.name, q.css, side);
+          tagM(true, side > 0 ? W - 10 : 10, clamp((-vec3.y * 0.5 + 0.5) * H, 150, H - 170), q.name, q.css, side);
         } else hud.tag(false);
       } else if (M.phase === 'run' && q.rs.visible && (dz >= 120 || dz <= -6) && Math.abs(dz) < 100000) {
         // ghost marker: they're out of sight, so pin a chip where they'd be (their lane, up at the
@@ -1279,12 +1331,12 @@ export function createGame(el, api) {
         if (dz > 0) {
           vec3.set(q.rs.x, 1.2, -(me.z + 140));
           vec3.project(cam);
-          hud.tag(true, clamp((vec3.x * 0.5 + 0.5) * W, 60, W - 60), clamp((-vec3.y * 0.5 + 0.5) * H, H * 0.3, H * 0.5), ghostText, q.css, 0, true);
+          tagM(true, clamp((vec3.x * 0.5 + 0.5) * W, 60, W - 60), clamp((-vec3.y * 0.5 + 0.5) * H, H * 0.3, H * 0.5), ghostText, q.css, 0, true);
         } else if (M.mode === 'tandem') {
           // behind me: down at my feet in portrait, along the bottom edge in landscape (there it sat on the runner's torso).
           // (Race / Brawl / Daily already say it in the gap pill at the top)
           const lands = H < 560 && W > H;
-          hud.tag(true, clamp(W / 2 + (q.rs.x - me.x) * 34, lands ? 130 : 70, W - (lands ? 130 : 70)), lands ? H - 30 : H - 120, ghostText, q.css, 0, true);
+          tagM(true, clamp(W / 2 + (q.rs.x - me.x) * 34, lands ? 130 : 70, W - (lands ? 130 : 70)), lands ? H - 30 : H - 120, ghostText, q.css, 0, true);
         } else hud.tag(false);
       } else hud.tag(false);
     } else hud.tag(false);
@@ -1306,10 +1358,11 @@ export function createGame(el, api) {
       if (!isHost) { const hm = fresh && ps.ph === PH.lobby ? MODES[ps.md] : null; if (hm) M.lobbyMode = hm; k = (k & ~0xff00) | ((MODES.indexOf(M.lobbyMode) + 1) << 8); }
       k |= (partnerHere ? 4 : 0) | (fresh && ps.ph === PH.lobby ? 8 : 0) | (fresh && ps.sy ? 16 : 0) | (fresh && ps.rd ? 32 : 0) | (link.synced ? 64 : 0) | (M.ready ? 128 : 0);
     }
+    X.lobbyTick(hud.ov.lobby, day());
     if (k === lobbyK && ov_lobbyOn()) return;
     lobbyK = k;
     const keys = split ? `<div><b>${esc(api.name('a'))}</b><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> · weapon <kbd>E</kbd></div><div><b>${esc(api.name('b'))}</b><kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> · weapon <kbd>Enter</kbd></div>` : '';
-    const daily = dailyText();
+    const daily = X.dailyTile(dailyText(), day());
     if (!live) { hud.lobby({ mode: M.lobbyMode, canPick: true, canStart: true, startLabel: 'Start', status: '', keys, daily }); return; }
     const pn = api.name(other(meW));
     if (isHost) {
@@ -1374,7 +1427,9 @@ export function createGame(el, api) {
       rg.update(dt, mode, tg, K.tAnim);
       viewArg.track = tr; viewArg.z = p.rs.z; viewArg.r = p.r; viewArg.time = K.tAnim; viewArg.boxes = M.mode === 'race' && M.phase !== 'lobby'; viewArg.fly = p.fly; viewArg.front = mode === 'lobby' || mode === 'finale';
       world.syncView(viewArg);
+      X.afterSync(viewArg.z); // Blind coins
       world.follow(rg.cam);
+      world.setDistrictAt(tr.seed, p.rs.z);
       // A runner between this camera and its own runner dissolves through a halftone screen
       // (the partner close behind you would otherwise fill a third of a phone screen).
       for (let k = 0; k < 2; k++) {
@@ -1388,7 +1443,7 @@ export function createGame(el, api) {
         }
         world.fade[w].value = f;
       }
-      if (split) { renderer.setViewport(i * vw, 0, vw, H); renderer.setScissor(i * vw, 0, vw, H); }
+      if (split) { const vx = X.mirror ? (nv - 1 - i) * vw : i * vw; renderer.setViewport(vx, 0, vw, H); renderer.setScissor(vx, 0, vw, H); }
       else renderer.setViewport(0, 0, W, H);
       if (draw) renderer.render(world.scene, rg.cam);
       const sk = mode === 'run' && !isPaused(now) ? Math.min(1, Math.max(0, (p.rs.speed - 18) / 12)) * 0.8 + (p.rs.boost ? 0.5 : 0) : 0;
@@ -1493,15 +1548,18 @@ export function createGame(el, api) {
       },
       input(w, a) { onAction(w || meW || 'a', { left: A_LEFT, right: A_RIGHT, up: A_UP, down: A_DOWN, use: A_USE }[a] || a); },
       auto(w, on) { const p = players[w || meW]; if (p) p.auto = on !== false; },
-      give(w, kind) { const p = players[w || meW]; if (!p || !p.r) return false; if (kind === 'shield') { p.r.shield = 1; return true; } if (kind === 'magnet') { p.r.magnetT = 10; return true; } p.weapon = kind; p.weaponRoll = 0; return true; },
+      give(w, kind) { const p = players[w || meW]; if (!p || !p.r) return false; if (kind === 'shield') { p.r.shield = 1; return true; } if (kind === 'magnet') { p.r.magnetT = 10; return true; } if (kind === 'sneakers') { p.r.sneakersT = 10; return true; } if (kind === 'double') { p.r.dblT = DOUBLE_T; return true; } p.weapon = kind; p.weaponRoll = 0; return true; },
       crash(w) { const p = players[w || meW]; if (p && p.r && !p.r.down) { p.r.invulnT = 0; p.r.shield = 0; crash(p.r, C_FORCED, false); drain(p); } },
       /** Queue a sim event on a local runner; the next step drains it through the real feedback path. */
       emit(w, kind, val) {
-        const p = players[w || meW]; const t = { bonus: E_BONUS, combo: E_COMBO, close: E_CLOSE }[kind];
+        const p = players[w || meW]; const t = { bonus: E_BONUS, combo: E_COMBO, close: E_CLOSE, pick: E_PICK }[kind];
         if (!p || !p.r || !t || p.r.evN >= p.r.evT.length) return false;
         p.r.evT[p.r.evN] = t; p.r.evV[p.r.evN] = val; p.r.evN++;
         return true;
       },
+      /** Put a local runner at distance z (rivalry tests: pass the partner, cross a best stripe). */
+      setZ(w, z) { const p = players[w || meW]; if (p && p.r) { p.r.z = p.r.zPrev = z; p.prev.z = z; } },
+      rivalry: () => rival.debug(),
       setHearts(w, n) { const p = players[w || meW]; if (p && p.r) p.r.hearts = n; },
       ghost(w, sec) { const p = players[w || meW]; if (p && p.r && !p.r.done) p.r.invulnT = sec; },
       teamHearts(n) { M.th = n; },
@@ -1509,7 +1567,8 @@ export function createGame(el, api) {
       start() { hostStart(); },
       trackHash: (seed, n) => trackHash(seed, n),
       dailySeed: (d) => dailySeed(d),
-      matchInfo: () => ({ day: M.day, trackV: M.trackV, epoch: M.epoch }),
+      matchInfo: () => ({ day: M.day, trackV: M.trackV, epoch: M.epoch, mod: X.mod }),
+      extras: () => X.debug(),
       data: () => data(),
       setData: (patch) => setData(patch),
       settings,
@@ -1550,7 +1609,7 @@ export function createGame(el, api) {
       inputStats: () => (input ? input.stats : null),
       get canvas() { return renderer ? renderer.domElement : null; },
       instances: () => liveGames,
-      get internals() { return { renderer, world, fx, overlay, players, THREE, M, audio }; },
+      get internals() { return { renderer, world, fx, overlay, players, THREE, M, audio, X }; },
     };
   }
 

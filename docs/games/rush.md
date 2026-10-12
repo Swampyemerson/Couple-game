@@ -154,6 +154,30 @@ lane lean and camera roll, landing dust and magnet trails were already there.
   call while worn). Unlocks are checked on the finale from the run's stats and announced
   ("UNLOCKED · Ink puffs trail") with a fanfare; locked chips show how to earn them.
 
+### Daily twist, dares, love notes (js/games/rush/extras.js)
+
+- **Twist of the day** (Daily only): `dailyMod(day) = hash('rush-daily-mod', day) % 7`; the host sends it in `start` (and
+  `rejoin`) as `mod`, so the guest can't disagree. 0 plain, 1 **Mirror** (the canvas is flipped with CSS `scaleX(-1)` on
+  `.rr-gl`, the HUD sits above it and is not; `onAction` swaps left / right, the sim is untouched; split screen renders
+  view 0 into the right half so the flip puts it back on the left; name tags, the train "!" and the tutorial hand are
+  mirrored in `game.js`), 2 **Fog** (`scene.fog` 40–110 m instead of 62–170), 3 **Night** (a light phone swaps to the dark
+  palette through `world.setPalette`, restored in the lobby), 4 **Blind coins** (after `syncView` the coin instance count
+  is cut at 28 m ahead; coins are sorted by z), 5 **Double ladder** (after each step the combo payout is paid again and the
+  event's value doubled, so the ladder says `+20 coins`), 6 **Gold rush** (`createTrack(seed, v, { goldP: 0.7 })`, track v2;
+  same chunks, a superset of the normal day's branches). Shown on the Daily tile ("Twist of the day: …") and the countdown.
+  Test override: `__RUSH_DEBUG.mod`.
+- **Dares**: `hash('rush-dare', day, k)` picks 3 of 12 goals (`DARES`), judged at the finale from the run's stats; the
+  lobby lists them with a check per player. `<w>_dare_<day>` is a bitmask (read-modify-write, bits are only ever added;
+  core.js protects only `_m|_best|_pb|_n` suffixes), `<w>_stamps_<ISOweek>_n` counts one stamp per new dare. Completions pop
+  "DARE DONE" and add a "Dare done: …" line to the end card; misses say nothing. "Swap the lead twice" counts lead changes
+  itself (4 m held 0.6 s).
+- **Love notes**: the lobby's "Note for <partner>" chip opens a one-line input (60 chars, 16 px, `<w>_note` in the shared
+  data). The envelope item (kind 6, track v2) pops the partner's note for 3 s (or a line from `NOTE_LINES`); the end card says
+  "You found Sydney’s note". All note text is user content: `textContent` only.
+- **Unlocks** (`STYLES` appended): trails Gold dust (3 gold branches in a run; looks come from `fx.burst` until fx has its own
+  kind) and Love hearts (`<w>_notes_n` ≥ 5), hats Lantern (reach the Neon Market) and Trophy (7 stamps in a week, or more
+  stamps than your partner last week).
+
 ## Modes
 
 - **Race** — first to 1,500 m (`RACE_LEN`, ~88 s) wins, or the last with hearts. Every 500 m

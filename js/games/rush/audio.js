@@ -9,6 +9,10 @@ const BASS = [1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0];
 const ARP = [0, 2, 1, 3, 2, 1, 3, 2, 0, 2, 1, 3, 2, 3, 1, 2];
 const LEAD = [12, -1, 15, -1, 19, -1, 17, 15, 12, -1, 10, -1, 12, 15, -1, 19];
 const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
+// the loop's key per district (semitones from A minor): Downtown, Harbour, Greenway, Old Town, Neon Market, Freight Yard.
+// Moves at bar lines, at most KEY_STEP semitones a bar, so a change reads as a modulation, not a glitch.
+const DIST_KEY = [0, 2, 5, -2, 3, -5];
+const KEY_STEP = 3;
 
 export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = null } = {}) {
   let ctx = null;
@@ -19,6 +23,8 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
   let mutedCache = false; let mutedAt = 0;
   let musicTimer = null;
   let step = 0; let nextT = 0; let playing = false;
+  let keyNow = 0; let keyWant = 0; // key shift in semitones (see DIST_KEY)
+  let heartOn = false;             // the last heart: a heartbeat under the music
   const mx = { intensity: 0.5 }; mx.intensity = 0; // set every frame: an object field, not a boxed closure slot
   let coinStreak = 0; let lastCoin = 0; let magCoins = 0;
   let hoover = null; let hooverF = null; let hooverO = null; let hooverQ = -1; // magnet: one soft lowpassed saw
@@ -156,13 +162,24 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
     smash() { hiss(0.25, { vol: 0.2, f: 2000, to: 400 }); tone(200, 0.1, { type: 'square', vol: 0.08, to: 80, filter: 1200 }); },
     good() { [0, 7, 12].forEach((n, i) => tone(mtof(79 + n), 0.1, { type: 'triangle', vol: 0.09, at: i * 0.05 })); },
     power() { tone(220, 0.5, { type: 'sawtooth', vol: 0.06, to: 880, filter: 2400 }); hiss(0.5, { vol: 0.08, f: 1500, to: 5000 }); },
+    // rivalry & moments
+    pass() { hiss(0.22, { vol: 0.1, f: 600, to: 4200, q: 1.4 }); [0, 4, 7].forEach((n, i) => tone(mtof(79 + n), 0.1, { type: 'triangle', vol: 0.1, at: 0.04 + i * 0.05 })); },
+    revenge() { hiss(0.3, { vol: 0.12, f: 500, to: 5200, q: 1.4 }); tone(mtof(55), 0.2, { type: 'sawtooth', vol: 0.09, filter: 900 }); [0, 7, 12, 16].forEach((n, i) => tone(mtof(76 + n), 0.11, { type: 'square', vol: 0.06, at: 0.1 + i * 0.05, filter: 4500 })); },
+    passed() { tone(mtof(72), 0.12, { type: 'triangle', vol: 0.09 }); tone(mtof(67), 0.2, { type: 'triangle', vol: 0.09, at: 0.08 }); hiss(0.14, { vol: 0.05, f: 3200, to: 900, q: 1.2 }); },
+    sting() { [0, 7].forEach((n) => { tone(mtof(72 + n), 0.3, { type: 'sawtooth', vol: 0.05, filter: 2600 }); tone(mtof(84 + n), 0.3, { type: 'square', vol: 0.03, filter: 3200 }); }); [4, 11].forEach((n) => tone(mtof(72 + n + 12), 0.34, { type: 'triangle', vol: 0.08, at: 0.1 })); hiss(0.18, { vol: 0.07, f: 5000, q: 0.8 }); },
+    district() { tone(mtof(88), 0.4, { type: 'sine', vol: 0.09 }); tone(mtof(88) * 2.76, 0.18, { type: 'sine', vol: 0.025 }); tone(mtof(95), 0.5, { type: 'sine', vol: 0.09, at: 0.12 }); tone(mtof(95) * 2.76, 0.2, { type: 'sine', vol: 0.02, at: 0.12 }); },
+    gold() { const t = performance.now(); cstats.coins++; if (t - lastCoin < 45) return; lastCoin = t; cstats.voiced++; tone(mtof(96), 0.22, { type: 'sine', vol: 0.08 }); tone(mtof(96) * 2.76, 0.1, { type: 'sine', vol: 0.03 }); tone(mtof(103), 0.3, { type: 'sine', vol: 0.08, at: 0.05 }); tone(mtof(108), 0.3, { type: 'triangle', vol: 0.04, at: 0.1 }); },
+    event() { [0, 4, 7, 12, 16, 19, 24].forEach((n, i) => tone(mtof(79 + n), 0.1, { type: 'square', vol: 0.045, at: i * 0.045, filter: 5000 })); hiss(0.4, { vol: 0.05, f: 4000, to: 9000, q: 1 }); },
+    clutch() { tone(mtof(43), 0.35, { vol: 0.2, to: 36 }); [0, 7, 12, 19, 24].forEach((n, i) => tone(mtof(72 + n), 0.16, { type: 'triangle', vol: 0.1, at: 0.06 + i * 0.06 })); hiss(0.5, { vol: 0.06, f: 2500, to: 8000 }); },
+    share() { [7, 12, 16].forEach((n, i) => tone(mtof(72 + n), 0.1, { type: 'triangle', vol: 0.09, at: i * 0.05 })); tone(mtof(91), 0.22, { type: 'sine', vol: 0.07, at: 0.16 }); },
     finish() { [0, 4, 7, 12, 7, 12, 16].forEach((n, i) => tone(mtof(76 + n), 0.14, { type: 'square', vol: 0.05, at: i * 0.07, filter: 5000 })); },
   };
 
   function schedStep(t) {
     const bar = Math.floor(step / 16) % 4;
     const s = step % 16;
-    const [root, ch] = PROG[bar];
+    const [base, ch] = PROG[bar];
+    const root = base + keyNow;
     const I = mx.intensity;
     const vol = 1;
     // kick
@@ -210,6 +227,20 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
       o.connect(g).connect(musicBus); o.start(t); o.stop(t + 0.24);
     }
   }
+  /** Last heart: lub-dub twice a bar (58–75 beats a minute with the music's tempo), a low thump plus a mid body that carries on a phone speaker. */
+  function heartbeat(t, s16) {
+    const lub = s16 === 0 || s16 === 8;
+    if (!lub && s16 !== 3 && s16 !== 11) return;
+    const v = lub ? 1 : 0.7;
+    const o = ctx.createOscillator(); const g = ctx.createGain();
+    o.type = 'sine'; o.frequency.setValueAtTime(lub ? 70 : 60, t); o.frequency.exponentialRampToValueAtTime(38, t + 0.14);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.34 * v, t + 0.012); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+    o.connect(g).connect(sfxBus); o.start(t); o.stop(t + 0.2);
+    const b = ctx.createOscillator(); const bg = ctx.createGain();
+    b.type = 'triangle'; b.frequency.setValueAtTime(lub ? 150 : 128, t); b.frequency.exponentialRampToValueAtTime(80, t + 0.1);
+    bg.gain.setValueAtTime(0.0001, t); bg.gain.exponentialRampToValueAtTime(0.1 * v, t + 0.008); bg.gain.exponentialRampToValueAtTime(0.0001, t + 0.11);
+    b.connect(bg).connect(sfxBus); b.start(t); b.stop(t + 0.13);
+  }
   function pump() {
     if (!ctx || !playing || ctx.state !== 'running') return;
     const bpm = 116 + mx.intensity * 34;
@@ -218,7 +249,14 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
     // of firing a burst of overdue notes, so the loop can't stack or drift.
     if (nextT < ctx.currentTime) { if (nextT > 0) stats.resets++; nextT = ctx.currentTime + 0.05; }
     const silent = isMuted() || !musicOn();
-    while (nextT < ctx.currentTime + 0.2) { if (!silent) schedStep(nextT); nextT += dur; step++; stats.steps++; } // 200 ms look-ahead rides out main-thread stalls
+    const beat = heartOn && !isMuted();
+    while (nextT < ctx.currentTime + 0.2) {
+      const s16 = step % 16;
+      if (s16 === 0 && keyNow !== keyWant) keyNow += Math.max(-KEY_STEP, Math.min(KEY_STEP, keyWant - keyNow)); // modulate at the bar line
+      if (!silent) schedStep(nextT);
+      if (beat) heartbeat(nextT, s16);
+      nextT += dur; step++; stats.steps++;
+    } // 200 ms look-ahead rides out main-thread stalls
     if (nextT - ctx.currentTime > stats.maxAhead) stats.maxAhead = nextT - ctx.currentTime;
     const want = silent ? 0 : pausedDuck ? 0.16 : 0.55;
     // one automation event per change of target (not one every 45 ms while it glides)
@@ -233,6 +271,11 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
     get ready() { return !!ctx && ctx.state === 'running'; },
     play(name, arg) { if (!ok()) return; const f = S[name]; if (f) { try { f(arg); } catch { /* ignore */ } } },
     setIntensity(x) { mx.intensity = Math.max(0, Math.min(1, x)); },
+    /** The loop's key follows the district the front runner is in (applied at bar lines, a few semitones a bar). */
+    setDistrict(id) { keyWant = DIST_KEY[id | 0] | 0; },
+    /** Last heart: a heartbeat under the music while on. */
+    setHeart(on) { heartOn = !!on; },
+    get key() { return keyNow; },
     /** Wind bed: k = 0..1 running speed (0 = silent). Quantized so it sets automation only on change. */
     setWind(k) {
       if (!wind || !ctx) return;
@@ -270,11 +313,11 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
     stats,
     startMusic() {
       if (playing) return;
-      playing = true; step = 0; nextT = 0; lastWant = -1;
+      playing = true; step = 0; nextT = 0; lastWant = -1; keyNow = 0; keyWant = 0; heartOn = false;
       if (!musicTimer) musicTimer = setInterval(pump, 45);
     },
     stopMusic() {
-      playing = false; lastWant = 0;
+      playing = false; lastWant = 0; heartOn = false;
       if (ctx && musicBus) musicBus.gain.setTargetAtTime(0, ctx.currentTime, 0.15);
     },
     duck(ms = 900) {

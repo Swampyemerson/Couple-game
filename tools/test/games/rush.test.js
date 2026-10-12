@@ -4,8 +4,11 @@
 // heap growth, seamlessness (late lobby, partner / host re-mounts mid-race, 30 s in the
 // background, a much slower partner), and screenshots in light and dark.
 //   node tools/test/games/rush.test.js            (ONLY=gen,race,... to run some sections)
-// Sections: gen race brawl tandem pause daily | split leak | drop | dark | heap | seam | rejoin. Ports 8960-8969.
-// (the author runs two halves: ONLY=gen,split,leak,drop,dark and ONLY=race,brawl,tandem,pause,daily)
+// Sections: gen race brawl tandem pause daily rival | split leak | drop | dark | heap | seam | rejoin | loop. Ports 8960-8969.
+// `loop` (two phones + one computer): the Daily's twist of the day (Mirror flips the canvas not the HUD and swaps left / right, Double
+// ladder, Fog, Blind coins, Night, Gold rush: same on both phones, restored in the lobby), three dares a day with checks and weekly
+// stamps, the love-note input (44 px chip, 16 px, keys reach it, 60 chars, text only) and note pickup, and the new unlocks.
+// (the author runs two halves: ONLY=gen,split,leak,drop,dark and ONLY=race,brawl,tandem,pause,daily,rival)
 const fs = require('fs');
 const { launch } = require('../harness');
 
@@ -681,6 +684,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         const today = await a.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
         assert(ma.day === today && mb.day === today && ma.trackV === 2 && mb.trackV === 2 && ma.epoch > 0 && ma.epoch === mb.epoch, `the match carries its day (${ma.day}) and track version (v${ma.trackV}) from the host to the guest, same epoch ${ma.epoch}`);
         dailyEpoch = ma.epoch;
+        assert(ma.mod === mb.mod && ma.mod === (await a.evaluate((d) => window.__rush.internals.X.dailyMod(d), today)), `the Daily carries the day's twist from the host to the guest (${ma.mod} / ${mb.mod})`);
         await a.evaluate(() => window.__rush.auto('a', true));
         await b.evaluate(() => window.__rush.auto('b', true));
         await h.wait(2500);
@@ -1118,6 +1122,496 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
       assert(sb.b.out && sb.b.down && sb.b.hearts === 0 && sa.b.out, `the guest comes back still out of hearts (out ${sb.b.out}, down ${sb.b.down}, hearts ${sb.b.hearts}; the host still sees it out: ${sa.b.out})`);
       h.assertNoErrors();
     } catch (e) { console.error(e.message); fails++; await shot(h.a, 'fail-rejoin-a').catch(() => {}); } finally { await h.close(); }
+  }
+
+  // ═══ the loop: the Daily's twist of the day, three dares + stamps, love notes, their unlocks (extras.js) ═══
+  if (want('loop')) {
+    const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+    const h = await launch({ port: PORT(10), only: ['rush'], latency: 40, coarse: true });
+    const { a, b } = h;
+    try {
+      await openLivePair(h);
+      // pure helpers: every twist comes up, three distinct dares a day, ISO weeks, notes are cleaned
+      const pure = await a.evaluate(() => {
+        const X = window.__rush.internals.X; const seen = new Set(); let distinct = true;
+        for (let i = 0; i < 400; i++) {
+          const d = new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10); seen.add(X.dailyMod(d));
+          const ds = X.daresOf(d); if (new Set(ds).size !== 3 || ds.some((k) => k < 0 || k >= X.DARES.length)) distinct = false;
+        }
+        return { mods: [...seen].sort().join(), distinct, weeks: ['2026-10-12', '2026-01-01', '2021-01-03', '2024-12-30', '2026-12-31'].map((d) => X.isoWeek(d)).join(), clean: X.cleanNote('  hi‮ there\n\n you  ' + 'z'.repeat(80)) };
+      });
+      assert(pure.mods === '0,1,2,3,4,5,6' && pure.distinct, `the day's twist covers all seven (${pure.mods}) and its dares are three distinct goals`);
+      assert(pure.weeks === '2026-W42,2026-W01,2020-W53,2025-W01,2026-W53', `ISO weeks: ${pure.weeks}`);
+      assert(pure.clean.length === 60 && !/[\n‮]/.test(pure.clean) && pure.clean.startsWith('hi there you z'), `a note is one clean line of at most 60 characters ("${pure.clean}")`);
+
+      // lobby: today's three dares with a check per player, and the note chip
+      const day = today();
+      await a.evaluate((d) => window.__rush.setData({ ['a_dare_' + d]: 1, ['b_dare_' + d]: 3 }), day);
+      await until(a, () => document.querySelectorAll('.g-rush .rr-dares-l li').length === 3 && document.querySelectorAll('.g-rush .rr-dares-l .rr-ck.on').length === 3, null, 6000, 'the lobby shows the 3 dares with 1 + 2 checks');
+      assert((await a.evaluate(() => [...document.querySelectorAll('.g-rush .rr-dares-l li')].every((li) => li.textContent.trim().length > 8))), 'each dare reads as a goal');
+      const chip = await a.evaluate(() => { const r = document.querySelector('.g-rush .rr-note-chip').getBoundingClientRect(); return { w: r.width, h: r.height, t: document.querySelector('.g-rush .rr-note-chip').textContent }; });
+      assert(chip.h >= 44 && chip.w >= 44 && /Note for Sydney/.test(chip.t), `the note chip is a 44 px target ("${chip.t.trim()}", ${Math.round(chip.h)} px)`);
+      await shot(a, 'phone-light-lobby-dares');
+      // the input: iOS-safe (16 px, no zoom), the game's key handler leaves its keys alone, ≤ 60 chars, saved to the shared data
+      await a.click('.g-rush .rr-note-chip');
+      await until(a, () => document.activeElement && document.activeElement.classList.contains('rr-note-in'), null, 3000, 'the input is focused');
+      const fz = await a.evaluate(() => parseFloat(getComputedStyle(document.querySelector('.rr-note-in')).fontSize));
+      assert(fz >= 16, `the note input is ${fz} px (iOS doesn't zoom at 16 or more)`);
+      await a.evaluate(() => { const i = document.querySelector('.rr-note-in'); window.__kd = []; window.addEventListener('keydown', (e) => window.__kd.push([e.key, e.defaultPrevented]), false); i.value = ''; });
+      await a.keyboard.type('a b', { delay: 10 }); await a.keyboard.press('Space'); await a.keyboard.press('KeyW'); await a.keyboard.press('ArrowLeft');
+      const typed = await a.inputValue('.rr-note-in');
+      const kd = await a.evaluate(() => window.__kd);
+      assert(typed === 'a b w' && kd.every(([, dp]) => !dp), `typing in the note input reaches the input, with nothing prevented ("${typed}", prevented: ${kd.filter(([, dp]) => dp).length})`);
+      await a.fill('.rr-note-in', 'Race you to the bakery <b>after</b> this!! ' + 'x'.repeat(40));
+      assert((await a.inputValue('.rr-note-in')).length === 60, 'the input stops at 60 characters');
+      await shot(a, 'phone-light-note-input');
+      await a.keyboard.press('Enter');
+      await until(b, () => (window.__rush.data().a_note || '').startsWith('Race you to the bakery <b>after</b>'), null, 8000, 'Sydney sees the note in the shared data');
+      assert((await a.evaluate(() => window.__rush.data().a_note)).length <= 60 && (await a.evaluate(() => window.__rush.state().phase)) === 'lobby', 'saving the note keeps the lobby open and stores at most 60 characters');
+      await b.click('.g-rush .rr-note-chip'); await b.fill('.rr-note-in', 'Last one to the bakery pays'); await b.keyboard.press('Enter');
+      await until(a, () => (window.__rush.data().b_note || '') === 'Last one to the bakery pays', null, 8000, 'Emerson sees Sydney’s note');
+
+      // Daily twists, one match each: the host's day picks it, both phones agree, the scene follows, the lobby restores it
+      const finish = async () => {
+        await a.evaluate(() => { window.__rush.auto('a', false); window.__rush.setHearts('a', 1); window.__rush.crash('a'); });
+        await b.evaluate(() => { window.__rush.auto('b', false); window.__rush.setHearts('b', 1); window.__rush.crash('b'); });
+        await until(a, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 40000, 'twist run ends');
+        await until(b, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 20000, 'twist run ends (guest)');
+      };
+      const back = async () => {
+        await a.click('#game-root [data-g="rematch"]').catch(() => {});
+        await until(a, () => window.__rush && window.__rush.state().phase === 'lobby', null, 20000, 'lobby');
+        await until(b, () => window.__rush && window.__rush.state().phase === 'lobby' && window.__rush.state().synced, null, 20000, 'guest lobby');
+      };
+      const twist = async (m) => {
+        await a.evaluate((x) => { window.__RUSH_DEBUG.mod = x; }, m);
+        await pickAndStart(h, 'daily');
+        await waitRun(a); await waitRun(b);
+        const ia = await a.evaluate(() => window.__rush.matchInfo()); const ib = await b.evaluate(() => window.__rush.matchInfo());
+        assert(ia.mod === m && ib.mod === m, `twist ${m}: the guest runs the host's twist (${ia.mod} / ${ib.mod})`);
+        await a.evaluate(() => window.__rush.auto('a', true)); await b.evaluate(() => window.__rush.auto('b', true));
+        return ia;
+      };
+      const goldChunks = (pg) => pg.evaluate(() => { const t = window.__rush.internals.M.track; const o = []; for (let i = 3; i < 60; i++) if (t.chunk(i).coins.some((c) => c.v === 3)) o.push(i); return o; });
+      let baseGold = [];
+      // 1 Mirror: the picture flips, left / right swap, the HUD does not
+      await twist(1);
+      baseGold = await goldChunks(a);
+      await a.evaluate(() => window.__rush.auto('a', false));
+      await h.wait(300);
+      const m1 = await a.evaluate(() => { const l0 = window.__rush.state().a.lane; window.__rush.input('a', 'left'); return { l0, root: document.querySelector('.g-rush').classList.contains('rr-mirror'), tf: getComputedStyle(document.querySelector('.rr-gl')).transform, hud: getComputedStyle(document.querySelector('.rr-hud')).transform }; });
+      await h.wait(400);
+      const l1 = await a.evaluate(() => window.__rush.state().a.lane);
+      assert(m1.root && /matrix\(-1/.test(m1.tf) && m1.hud === 'none', `Mirror: the canvas is flipped (${m1.tf}), the HUD isn't (${m1.hud})`);
+      assert(m1.l0 === -1 && l1 === 0, `Mirror: swiping left steers right (lane ${m1.l0} → ${l1}), the sim untouched`);
+      await shot(a, 'phone-light-daily-mirror');
+      // the finale also shows a found note: grab the envelope on both phones, with the partner's note
+      await a.evaluate(() => window.__rush.emit('a', 'pick', 6000000 + 504)); await b.evaluate(() => window.__rush.emit('b', 'pick', 6000000 + 504));
+      await until(a, () => !!document.querySelector('.g-rush .rr-lnote.on'), null, 4000, 'the note card shows on pickup');
+      await h.wait(300);
+      const nc = await a.evaluate(() => { const e = document.querySelector('.g-rush .rr-lnote'); e.style.animationPlayState = 'paused'; return { text: e.querySelector('.rr-lnote-t span').textContent, head: e.querySelector('b').textContent, kids: e.querySelector('.rr-lnote-t span').children.length }; });
+      assert(nc.text === 'Last one to the bakery pays' && /Sydney left you a note/.test(nc.head) && nc.kids === 0, `grabbing the envelope pops the partner's note ("${nc.head}": "${nc.text}")`);
+      await shot(a, 'phone-light-note-pop');
+      const nb = await b.evaluate(() => { const e = document.querySelector('.g-rush .rr-lnote'); return e && e.querySelector('.rr-lnote-t span').textContent; });
+      assert(nb && nb.startsWith('Race you to the bakery <b>after</b>') && !(await b.evaluate(() => document.querySelector('.g-rush .rr-lnote b + span b'))), 'Sydney reads Emerson’s note as plain text (the <b> is just characters)');
+      await a.evaluate(() => { const e = document.querySelector('.g-rush .rr-lnote'); e.style.animationPlayState = ''; });
+      await finish();
+      await h.wait(500);
+      const line = await a.evaluate(() => (document.querySelector('#game-root .gm-end .rr-you') || {}).textContent || '');
+      assert(/You found Sydney’s note/.test(line), `the end card says "You found Sydney’s note" ("${line}")`);
+      await back();
+      assert(await a.evaluate(() => !document.querySelector('.g-rush').classList.contains('rr-mirror')), 'back in the lobby the picture is un-flipped');
+      // 5 Double ladder: a combo payout pays twice
+      await twist(5);
+      await spyFeedback(a);
+      await a.evaluate(() => window.__rush.auto('a', false));
+      const b0 = await a.evaluate(() => window.__rush.internals.players.a.r.bonus);
+      await a.evaluate(() => window.__rush.emit('a', 'bonus', 10));
+      await until(a, () => window.__fb.ladder.some((l) => /\+20 coins/.test(l)), null, 4000, 'the ladder shows the doubled payout');
+      const b1 = await a.evaluate(() => window.__rush.internals.players.a.r.bonus);
+      assert(b1 - b0 === 10, `Double ladder: a x5 payout of 10 pays 20 (the extra 10 booked: ${b1 - b0})`);
+      await finish(); await back();
+      // 2 Fog: haze 40-110 m, restored after
+      await twist(2);
+      const fog = await a.evaluate(() => { const f = window.__rush.internals.world.scene.fog; return [f.near, f.far]; });
+      assert(fog[0] === 40 && fog[1] === 110, `Fog: the haze runs ${fog[0]}–${fog[1]} m`);
+      await finish(); await back();
+      const fog1 = await a.evaluate(() => { const f = window.__rush.internals.world.scene.fog; return [f.near, f.far]; });
+      assert(fog1[0] === 62 && fog1[1] === 170, `the lobby gets its own haze back (${fog1})`);
+      // 4 Blind coins: nothing past 28 m
+      await twist(4);
+      await h.wait(1200);
+      const bl = await a.evaluate(() => {
+        const I = window.__rush.internals; const m = I.world.warmList()[0]; const z = I.players.a.rs.z; const arr = m.instanceMatrix.array; let far = 0;
+        for (let i = 0; i < m.count; i++) if (-arr[i * 16 + 14] > z + 28.6) far++;
+        return { n: m.count, far, z };
+      });
+      assert(bl.far === 0 && bl.n > 0, `Blind coins: ${bl.n} coins drawn, none past 28 m (${bl.far})`);
+      await finish(); await back();
+      // 3 Night: the dark world on a light phone, then the light one back
+      await twist(3);
+      const nt = await a.evaluate(() => ({ n: window.__rush.internals.world.U.uNight.value, d: window.__rush.extras().night }));
+      assert(nt.n === 1 && nt.d, 'Night: the light phone runs in the dark palette');
+      await shot(a, 'phone-light-daily-night');
+      await finish(); await back();
+      assert((await a.evaluate(() => window.__rush.internals.world.U.uNight.value)) === 0, 'the lobby is back to the light palette');
+      // 6 Gold rush: the same track, more fool's-gold branches (at least every one of a normal day)
+      await twist(6);
+      const gold = await goldChunks(a); const goldB = await goldChunks(b);
+      assert(gold.length > baseGold.length && baseGold.every((c) => gold.includes(c)) && gold.join() === goldB.join(), `Gold rush: ${gold.length} branches in 57 chunks (a normal day: ${baseGold.length}), identical on both phones`);
+      // the finale: dares, stamps, unlocks. Runner a: the stats of a good run, 3 km out (Neon Market), 3 gold branches, a 5th note
+      await a.evaluate((d) => {
+        const w = window.__rush; const r = w.internals.players.a.r; const wk = w.internals.X.isoWeek(d);
+        w.setData({ a_notes_n: 4, ['a_stamps_' + wk + '_n']: 6, ['a_dare_' + d]: 0 });
+        r.maxCombo = 9; r.closeCalls = 20; r.coins = 500; r.notes = 1; r.branches = 3; w.setZ('a', 3000);
+      }, day);
+      await finish(); await h.wait(1800);
+      const fd = await a.evaluate((d) => {
+        const w = window.__rush; const X = w.internals.X; const ds = w.data();
+        const st = { mode: 'daily', dist: 3000, coins: 500, maxCombo: 9, closeCalls: 20, hearts: 0, fin: -1, revives: 0, shoves: 0, uses: 0, notes: 1, branches: 3, beat: false, leads: 0 };
+        const idx = X.daresOf(d); let want = 0; idx.forEach((k, i) => { if (![5, 11].includes(k) && X.DARES[k].ok(st)) want |= 1 << i; });
+        const known = idx.reduce((m, k, i) => ([5, 11].includes(k) ? m : m | (1 << i)), 0);
+        return { bits: ds['a_dare_' + d] | 0, want, known, stamps: ds['a_stamps_' + X.isoWeek(d) + '_n'], notes: ds.a_notes_n, hat4: ds.unlock_a_hat4, trail5: ds.unlock_a_trail5, trail6: ds.unlock_a_trail6, hat5: ds.unlock_a_hat5 };
+      }, day);
+      assert((fd.bits & fd.known) === fd.want && fd.want > 0, `dares are checked at the finale and saved as a bitmask (${fd.bits}, expected ${fd.want} of ${fd.known})`);
+      const pc = (n) => { let c = 0; while (n) { c += n & 1; n >>= 1; } return c; };
+      assert(fd.stamps === 6 + pc(fd.bits), `each new dare adds one stamp to this week's counter (${fd.stamps})`);
+      assert(fd.notes === 5 && fd.trail6 === 1, 'a fifth note found unlocks Love hearts');
+      assert(fd.hat4 === 1 && fd.trail5 === 1, 'reaching the Neon Market unlocks the Lantern hat; 3 gold branches unlock Gold dust');
+      assert(fd.hat5 === 1, 'seven stamps in a week unlock the Trophy hat');
+      await shot(a, 'phone-light-daily-dares-end');
+      const fl = await a.evaluate(() => (document.querySelector('#game-root .gm-end .rr-you') || {}).textContent || '');
+      assert(/Dare done: /.test(fl), `the end card celebrates the dares ("${fl}")`);
+      // bits only ever get added: finishing again with nothing new keeps them and adds no stamps
+      const before = { bits: fd.bits, stamps: fd.stamps };
+      await back();
+      await pickAndStart(h, 'daily'); await waitRun(a); await finish(); await h.wait(1200);
+      const af = await a.evaluate((d) => { const ds = window.__rush.data(); return { bits: ds['a_dare_' + d] | 0, stamps: ds['a_stamps_' + window.__rush.internals.X.isoWeek(d) + '_n'] }; }, day);
+      assert((af.bits & before.bits) === before.bits && af.stamps >= before.stamps, `a dare done stays done (${before.bits} → ${af.bits}), stamps only go up (${before.stamps} → ${af.stamps})`);
+      // the new hats and trails are worn through the settings and streamed (hat meshes exist for 4 and 5)
+      const worn = await a.evaluate(() => { const I = window.__rush.internals; I.players.a.av.setHat(4); const h4 = I.players.a.av.hat; I.players.a.av.setHat(5); const h5 = I.players.a.av.hat; I.players.a.av.setHat(0); return [h4, h5]; });
+      assert(worn[0] === 4 && worn[1] === 5, 'the Lantern and Trophy hats are meshes on the head bone');
+      h.assertNoErrors();
+      assert(!h.warnings.length, `loop: inside the room message budget (${h.warnings.length} warnings)`);
+    } catch (e) { console.error(e.message); fails++; await shot(h.a, 'fail-loop-a').catch(() => {}); await shot(h.b, 'fail-loop-b').catch(() => {}); console.error('errors:', h.errors.slice(0, 8)); } finally { await h.close(); }
+
+    // one computer: a note chip per player, a Mirror Daily steers with the keys swapped
+    const d = await launch({ port: PORT(11), only: ['rush'], device: 'Desktop Chrome', who: ['a'] });
+    try {
+      await d.a.setViewportSize({ width: 1280, height: 800 });
+      await d.a.evaluate((x) => { window.__RUSH_DEBUG = x; }, { ...DEBUG, mod: 1 });
+      await d.startLive(d.a, 'rush', 'local');
+      await until(d.a, () => window.__rush && window.__rush.state().ready3D && window.__rush.state().phase === 'lobby', null, 30000, 'split lobby');
+      await until(d.a, () => document.querySelectorAll('.g-rush .rr-note-chip').length === 2, null, 4000, 'a note chip for each of them');
+      assert(await d.a.evaluate(() => /Note for Sydney/.test(document.querySelectorAll('.g-rush .rr-note-chip')[0].textContent) && /Note for Emerson/.test(document.querySelectorAll('.g-rush .rr-note-chip')[1].textContent)), 'split screen: Emerson writes for Sydney and Sydney for Emerson');
+      await shot(d.a, 'desk-light-lobby-dares');
+      await d.a.click('.g-rush .rr-mode[data-mode="daily"]');
+      await d.a.click('.g-rush .rr-ov-lobby [data-r="go"]');
+      await waitRun(d.a);
+      await d.a.evaluate(() => { window.__rush.auto('a', false); window.__rush.auto('b', false); });
+      const k0 = await d.a.evaluate(() => [window.__rush.state().a.lane, window.__rush.state().b.lane]);
+      await d.a.keyboard.press('KeyA'); await d.a.keyboard.press('ArrowRight');
+      await d.wait(500);
+      const k1 = await d.a.evaluate(() => [window.__rush.state().a.lane, window.__rush.state().b.lane]);
+      assert(k0[0] === -1 && k0[1] === 1 && k1[0] === 0 && k1[1] === 0, `split screen Mirror: A (left key) goes right, → (right key) goes left (${k0} → ${k1})`);
+      await shot(d.a, 'desk-light-daily-mirror');
+      d.assertNoErrors();
+    } catch (e) { console.error(e.message); fails++; await shot(d.a, 'fail-loop-desk').catch(() => {}); console.error('errors:', d.errors.slice(0, 8)); } finally { await d.close(); }
+  }
+
+
+  // ═══ rivalry & moments: pops from presence, stripes, neck and neck, districts, events, the last heart,
+  //     Together's shared power-ups, the shared end-card lines (two phones, light and dark; then one device) ═══
+  if (want('rival')) {
+    const names = ['Downtown', 'Harbour', 'Greenway', 'Old Town', 'Neon Market', 'Freight Yard'];
+    for (const scheme of ['light', 'dark']) {
+      const h = await launch({ port: PORT(scheme === 'dark' ? 9 : 8), only: ['rush'], latency: 60, colorScheme: scheme, coarse: true });
+      const { a, b } = h;
+      const rshot = (pg, name) => shot(pg, `rival-${scheme}-${name}`);
+      const has = (pg, re) => pg.evaluate((src) => window.__fb.pops.some((p) => new RegExp(src).test(p)), re.source);
+      const count = (pg, re) => pg.evaluate((src) => window.__fb.pops.filter((p) => new RegExp(src).test(p)).length, re.source);
+      const waitPop = (pg, re, ms = 9000) => until(pg, (src) => window.__fb.pops.some((p) => new RegExp(src).test(p)), re.source, ms, `pop ${re}`);
+      // the pop is on screen (a pop lives 1.1 s and settles after ~0.3 s): screenshot it
+      const popShot = async (pg, re, name, seen = []) => {
+        await until(pg, ([src, sn]) => { const e = [...document.querySelectorAll('.g-rush .rr-pop')].find((x) => new RegExp(src).test(x.textContent) && !sn.includes(x.textContent)); if (e) window.__ps = e.textContent; return !!e; }, [re.source, seen], 9000, `pop on screen ${re}`);
+        seen.push(await pg.evaluate(() => window.__ps));
+        await h.wait(320);
+        await rshot(pg, name);
+      };
+      const zOf = async (pg, w) => (await S(pg))[w].z;
+      const tele = (pg, w, dz) => pg.evaluate(([x, d]) => { const s = window.__rush.state()[x]; window.__rush.setZ(x, s.z + d); }, [w, dz]);
+      const ghost = (pg, w) => pg.evaluate((x) => window.__rush.ghost(x, 1e6), w);
+      try {
+        await openLivePair(h, { raceLen: 45000, seed: 7 });
+        // ── Race: stripes at 75 m (Emerson) and 110 m (Sydney), then passes, neck and neck, districts, events ──
+        await a.evaluate(() => window.__rush.setData({ a_race_m: 75, b_race_m: 110 }));
+        await until(b, () => window.__rush.data().b_race_m === 110, null, 8000, 'guest sees the bests');
+        await pickAndStart(h, 'race');
+        await waitRun(a); await waitRun(b);
+        await spyFeedback(a); await spyFeedback(b);
+        await ghost(a, 'a'); await ghost(b, 'b');
+        await h.wait(300);
+        // the stripes: crossing my own best, their best, and them crossing mine: a pop on both phones, one each
+        const stripes = async (pg, tag) => { const seen = []; for (let i = 0; i < 3; i++) await popShot(pg, /NEW BEST|just beat|You beat/, `stripe-${tag}${i}`, seen).catch(() => {}); };
+        await Promise.all([stripes(a, 'a'), stripes(b, 'b')]);
+        await waitPop(a, /^a:NEW BEST!$/, 30000); await waitPop(b, /^b:NEW BEST!$/, 30000);
+        await waitPop(a, /^a:Sydney just beat your best$/, 30000); await waitPop(b, /^b:Emerson just beat your best$/, 30000);
+        await waitPop(a, /^a:You beat Sydney’s best$/, 30000); await waitPop(b, /^b:You beat Emerson’s best$/, 30000);
+        assert((await count(a, /^a:NEW BEST!$/)) === 1 && (await count(a, /just beat your best/)) === 1 && (await count(b, /^b:You beat/)) === 1, 'each best stripe pops once per phone');
+        assert((await a.evaluate(() => window.__fb.play.sting || 0)) >= 2, 'the stripes sting');
+        await h.wait(1500);
+        // OVERTAKE!: a flicker of the lead (200 ms) is nothing; a held lead of 4 m or more for 0.6 s is a change
+        await tele(a, 'a', 14);
+        await h.wait(4500); // (the lead settles: if they happened to be a few metres apart already, that was a change, counted below)
+        const any = /passed you|OVERTAKE|REVENGE/;
+        const flick0 = await count(a, any) + await count(b, any);
+        const base = (await a.evaluate(() => window.__rush.rivalry())).changes;
+        const n0 = { pass: await count(a, /^a:Sydney passed you$/), over: await count(b, /^b:OVERTAKE!$/), rev: await count(a, /^a:REVENGE!$/) };
+        await b.evaluate(() => { const s = window.__rush.state().b; window.__rush.setZ('b', s.z + 30); setTimeout(() => { const t = window.__rush.state().b; window.__rush.setZ('b', t.z - 30); }, 200); });
+        await h.wait(1600);
+        const flick1 = await count(a, any) + await count(b, any);
+        assert(flick1 === flick0, `a 0.2 s flicker of the lead is not a lead change (${flick0} → ${flick1} pops)`);
+        await tele(b, 'b', 45);
+        await until(a, (n) => window.__fb.pops.filter((p) => p === 'a:Sydney passed you').length > n, n0.pass, 9000, 'Sydney passed you');
+        await until(b, (n) => window.__fb.pops.filter((p) => p === 'b:OVERTAKE!').length > n, n0.over, 9000, 'OVERTAKE!');
+        await Promise.all([popShot(a, /passed you/, 'passed'), popShot(b, /OVERTAKE/, 'overtake')]);
+        // taken back at once: held through the 3 s of quiet, then REVENGE! (they passed me within 10 s) and "took it back"
+        await tele(a, 'a', 90);
+        await until(a, (n) => window.__fb.pops.filter((p) => p === 'a:REVENGE!').length > n, n0.rev, 14000, 'REVENGE!');
+        await Promise.all([popShot(a, /REVENGE/, 'revenge'), popShot(b, /passed you/, 'revenge-theirs')]);
+        assert((await count(a, /^a:Sydney passed you$/)) === n0.pass + 1 && (await count(b, /^b:OVERTAKE!$/)) === n0.over + 1 && (await count(a, /^a:REVENGE!$/)) === n0.rev + 1, 'one pop per lead change on each phone');
+        const rl = await a.evaluate(() => window.__rush.rivalry());
+        assert(rl.changes === base + 2, `the host counted the 2 lead changes (${base} + 2 = ${rl.changes})`);
+        // neck and neck: closer than 5 m for 3 s pulses the gap pill, and it lets go once they pull 8 m apart
+        await b.evaluate(() => { const s = window.__rush.state().a; window.__rush.setZ('b', s.z - 0.5); });
+        await until(a, () => { const g = document.querySelector('.g-rush .rr-gap'); return g && g.classList.contains('neck') && /^Neck and neck/.test(g.textContent); }, null, 12000, 'the gap pill pulses neck and neck');
+        await until(b, () => { const g = document.querySelector('.g-rush .rr-gap'); return g && g.classList.contains('neck'); }, null, 6000, 'and on the other phone');
+        await rshot(a, 'neck');
+        assert((await a.$eval('.g-rush .rr-gap span', (e) => { const r = e.getBoundingClientRect(); return r.height; })) > 14, 'the pill is readable');
+        await tele(b, 'b', 12);
+        await until(a, () => !document.querySelector('.g-rush .rr-gap').classList.contains('neck'), null, 8000, 'the pulse stops when they pull apart');
+        // districts: the next zone start (chunks 3, 7, 11… = 300 m + 400 m × n): a small tag pop and a chime
+        for (const [pg, w] of [[a, 'a'], [b, 'b']]) {
+          await pg.evaluate((x) => { const s = window.__rush.state()[x]; const nz = 300 + 400 * Math.ceil((s.z + 30 - 300) / 400); window.__rush.setZ(x, nz - 10); }, w);
+        }
+        await waitPop(a, new RegExp(`^a:(${names.join('|')})$`)); await waitPop(b, new RegExp(`^b:(${names.join('|')})$`));
+        await popShot(a, new RegExp(names.join('|')), 'district');
+        assert((await a.evaluate(() => document.querySelectorAll('.g-rush .rr-pop.tag').length)) >= 0 && (await a.evaluate(() => window.__fb.play.district || 0)) >= 1, 'a district name pops as a tag with a chime');
+        // events (track v2): Coin Rush ~2 s before its field, Golden Hundred on entering its chunk
+        const ev = await a.evaluate(() => {
+          const M = window.__rush.internals.M; const out = { v: M.track.ver, rush: null, hund: null };
+          for (let i = 30; i < 400 && !(out.rush && out.hund); i++) { const c = M.track.chunk(i); if (c.event === 1 && !out.rush) out.rush = { z: c.eventZ }; if (c.event === 2 && !out.hund) out.hund = { z: c.z0 }; }
+          return out;
+        });
+        assert(ev.v >= 2, `the match runs track v${ev.v}`);
+        if (ev.rush) {
+          await a.evaluate((z) => window.__rush.setZ('a', z - 75), ev.rush.z);
+          await waitPop(a, /^a:COIN RUSH!$/, 12000);
+          await popShot(a, /COIN RUSH/, 'coin-rush');
+        } else console.log('   (no Coin Rush on this seed in 400 chunks)');
+        if (ev.hund) {
+          await a.evaluate((z) => window.__rush.setZ('a', z - 18), ev.hund.z);
+          await waitPop(a, /^a:GOLDEN HUNDRED$/, 12000);
+          await popShot(a, /GOLDEN/, 'golden-hundred');
+        } else console.log('   (no Golden Hundred on this seed in 400 chunks)');
+        assert(ev.rush || ev.hund, 'the seed has at least one event chunk');
+        // the shared end card: finish; the host's lead-change count is in the text both phones show
+        await h.wait(1200);
+        const hostChanges = (await a.evaluate(() => window.__rush.rivalry())).changes;
+        await a.evaluate(() => { const s = window.__rush.state().a; window.__rush.setZ('a', 44992); });
+        await until(a, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 30000, 'race ends on the host');
+        await until(b, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 15000, 'race ends on the guest');
+        const cardSub = (pg) => pg.$eval('#game-root .gm-end', (e) => [...e.querySelectorAll('.gm-end-sub:not(.rr-you)')].map((x) => x.textContent).join(' | '));
+        const sa = await cardSub(a); const sb = await cardSub(b);
+        assert(sa === sb && new RegExp(`${hostChanges} lead changes?`).test(sa), `the shared end-card line is the same on both phones and counts the lead changes: "${sa}"`);
+        await rshot(a, 'end-lead-changes');
+        await checkFeedback(a, 'rivalry race (host)'); await checkFeedback(b, 'rivalry race (guest)');
+
+        // ── Daily: the last heart (heartbeat + ring), CLUTCH! once per heart lost ──
+        await a.click('#game-root [data-g="rematch"]').catch(() => {});
+        await until(a, () => window.__rush && window.__rush.state().phase === 'lobby', null, 15000, 'lobby for daily');
+        await until(b, () => window.__rush && window.__rush.state().phase === 'lobby' && window.__rush.state().synced, null, 15000, 'guest lobby for daily');
+        await pickAndStart(h, 'daily');
+        await waitRun(a); await waitRun(b);
+        await spyFeedback(a); await spyFeedback(b);
+        await a.evaluate(() => { const au = window.__rush.internals.audio; const f = au.setHeart; window.__heart = []; au.setHeart = function (x) { if (window.__heart[window.__heart.length - 1] !== x) window.__heart.push(x); return f.call(this, x); }; });
+        await ghost(a, 'a'); await ghost(b, 'b');
+        await h.wait(500);
+        await a.evaluate(() => window.__rush.setHearts('a', 1));
+        await until(a, () => !!document.querySelector('.g-rush .rr-hearts.last'), null, 4000, 'the hearts ring pulses at one heart');
+        assert(await a.evaluate(() => window.__heart[window.__heart.length - 1] === true), 'the heartbeat is on at one heart');
+        const c0 = (await S(a)).a.coins;
+        await h.wait(400);
+        await tele(a, 'a', 520);
+        await waitPop(a, /^a:CLUTCH!$/, 8000);
+        await popShot(a, /CLUTCH/, 'clutch');
+        const c1 = (await S(a)).a.coins;
+        assert(c1 - c0 >= 20, `CLUTCH! pays 20 coins onto the coin count (${c0} → ${c1})`);
+        await rshot(a, 'clutch-ring');
+        await tele(a, 'a', 700); await h.wait(1500);
+        assert((await count(a, /^a:CLUTCH!$/)) === 1, 'CLUTCH! once per heart lost, however far you run');
+        await a.evaluate(() => window.__rush.setHearts('a', 2));
+        await h.wait(500);
+        assert(!(await a.evaluate(() => !!document.querySelector('.g-rush .rr-hearts.last'))), 'the ring stops once a heart is back');
+        await a.evaluate(() => window.__rush.setHearts('a', 1));
+        await h.wait(500); await tele(a, 'a', 520);
+        await until(a, () => window.__rush.state().a.stats.clutch >= 2, null, 8000, 'a second clutch after losing another heart');
+        assert((await S(a)).a.stats.clutch === 2 && (await S(b)).b.stats.clutch === 0, 'stat clutch counted per runner');
+        await checkFeedback(a, 'clutch (host)');
+        // both out of hearts: the Daily ends
+        await a.evaluate(() => { window.__rush.ghost('a', 0); window.__rush.setHearts('a', 1); window.__rush.crash('a'); });
+        await b.evaluate(() => { window.__rush.ghost('b', 0); window.__rush.setHearts('b', 1); window.__rush.crash('b'); });
+        await until(a, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 25000, 'daily ends');
+        await until(b, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 15000, 'daily ends for the guest');
+        assert(await a.evaluate(() => window.__heart[window.__heart.length - 1] === false), 'the heartbeat stops when the run is over');
+
+        // ── Together: shared power-ups, no clutch, the team best ──
+        await a.click('#game-root [data-g="rematch"]').catch(() => {});
+        await until(a, () => window.__rush && window.__rush.state().phase === 'lobby', null, 15000, 'lobby for together');
+        await until(b, () => window.__rush && window.__rush.state().phase === 'lobby' && window.__rush.state().synced, null, 15000, 'guest lobby for together');
+        await a.evaluate(() => window.__rush.setData({ team_best_m: 40 }));
+        await until(b, () => window.__rush.data().team_best_m === 40, null, 8000, 'guest sees the team best');
+        await pickAndStart(h, 'tandem');
+        await waitRun(a); await waitRun(b);
+        await spyFeedback(a); await spyFeedback(b);
+        await ghost(a, 'a'); await ghost(b, 'b');
+        await h.wait(500);
+        const pw = (pg, w, f) => pg.evaluate(([x, k]) => window.__rush.internals.players[x].r[k], [w, f]);
+        // a magnet picked by Emerson runs on Sydney's phone for the same duration; so do sneakers and a doubler
+        await a.evaluate(() => { window.__rush.give('a', 'magnet'); window.__rush.emit('a', 'pick', 1000000); });
+        await until(b, () => window.__rush.internals.players.b.r.magnetT > 6, null, 6000, 'Sydney gets Emerson’s magnet');
+        await waitPop(b, /^b:Emerson shared a MAGNET$/);
+        await popShot(b, /shared a MAGNET/, 'share-magnet');
+        assert(/shared with Sydney/.test(await a.evaluate(() => [...document.querySelectorAll('.g-rush .rr-pop small')].map((e) => e.textContent).join('|'))), 'the picker is told it was shared');
+        await a.evaluate(() => { window.__rush.give('a', 'sneakers'); window.__rush.emit('a', 'pick', 2000000); });
+        await until(b, () => window.__rush.internals.players.b.r.sneakersT > 6, null, 6000, 'Sydney gets Emerson’s sneakers');
+        await a.evaluate(() => { window.__rush.give('a', 'double'); window.__rush.emit('a', 'pick', 7000000); });
+        await until(b, () => window.__rush.internals.players.b.r.dblT > 4, null, 6000, 'Sydney gets Emerson’s doubler');
+        await until(b, () => !!document.querySelector('.g-rush .rr-pw[data-pw="double"]:not([hidden])'), null, 4000, 'the doubler ring shows in the power-up row');
+        await h.wait(300);
+        await rshot(b, 'share-powerups');
+        await b.evaluate(() => { window.__rush.give('b', 'magnet'); window.__rush.emit('b', 'pick', 1000000); });
+        await until(a, () => window.__rush.internals.players.a.r.magnetT > 6, null, 6000, 'and the other way round');
+        const sh0 = await b.evaluate(() => window.__rush.internals.players.b.r.shield);
+        await a.evaluate(() => window.__rush.emit('a', 'pick', 3000000)); // a shield is not shared
+        await h.wait(800);
+        assert((await pw(b, 'b', 'shield')) === sh0 && !(await has(b, /shared a SHIELD/)), 'a shield stays with whoever picked it');
+        // Together has no last-heart clutch
+        await a.evaluate(() => window.__rush.setHearts('a', 1));
+        await h.wait(400); await tele(a, 'a', 520); await h.wait(1200);
+        assert(!(await has(a, /CLUTCH/)) && !(await a.evaluate(() => !!document.querySelector('.g-rush .rr-hearts.last'))), 'no clutch ring or pop in Together');
+        // team best: a run past the old best (40 m) is "New team best!", on both phones' card and as a pop
+        await tele(a, 'a', 300);
+        await a.evaluate(() => window.__rush.teamHearts(0));
+        await until(a, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 25000, 'together ends');
+        await until(b, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 15000, 'together ends for the guest');
+        const ta = await cardSub(a); const tb = await cardSub(b);
+        assert(ta === tb && /New team best!/.test(ta), `the end card says "New team best!" on both phones: "${ta}"`);
+        await waitPop(a, /NEW TEAM BEST!/, 5000); await waitPop(b, /NEW TEAM BEST!/, 5000);
+        const rt = await S(a);
+        assert((await a.evaluate(() => window.__rush.data().team_best_m)) === rt.result.m && rt.result.m > 40, `team_best_m went up to ${rt.result.m} m`);
+        await rshot(a, 'team-best');
+        await h.wait(500);
+        // a lower run shows the best to beat
+        await a.click('#game-root [data-g="rematch"]').catch(() => {});
+        await until(a, () => window.__rush && window.__rush.state().phase === 'lobby', null, 15000, 'lobby for the second together');
+        await until(b, () => window.__rush && window.__rush.state().phase === 'lobby' && window.__rush.state().synced, null, 15000, 'guest lobby for the second together');
+        await pickAndStart(h, 'tandem');
+        await waitRun(a); await waitRun(b);
+        await a.evaluate(() => window.__rush.teamHearts(0));
+        await until(a, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 25000, 'second together ends');
+        await until(b, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 15000, 'second together ends for the guest');
+        const ua = await cardSub(a); const ub = await cardSub(b);
+        assert(ua === ub && /Team best [\d,]+ m/.test(ua) && !/New team best/.test(ua), `a shorter run shows the team best to beat: "${ua}"`);
+        await rshot(a, 'team-best-old');
+        h.assertNoErrors();
+        assert(!h.warnings.length, `rivalry (${scheme}): inside the room message budget (${h.warnings.length} warnings)`);
+      } catch (e) {
+        console.error(e.message); fails++;
+        await shot(h.a, `fail-rival-${scheme}-a`).catch(() => {}); await shot(h.b, `fail-rival-${scheme}-b`).catch(() => {});
+        console.error('errors:', h.errors.slice(0, 8));
+      } finally { await h.close(); }
+    }
+
+    // one device: each pop goes to the right half; Brawl has no overtakes; both halves get their own district
+    {
+      const d = await launch({ port: PORT(10), only: ['rush'], device: 'Desktop Chrome', who: ['a'] });
+      const { a } = d;
+      try {
+        await a.setViewportSize({ width: 1280, height: 800 });
+        await a.evaluate((x) => { window.__RUSH_DEBUG = x; }, { ...DEBUG, raceLen: 45000, seed: 7 });
+        await d.startLive(a, 'rush', 'local');
+        await until(a, () => window.__rush && window.__rush.state().ready3D && window.__rush.state().phase === 'lobby', null, 30000, 'rival split lobby');
+        const spyAll = () => spyFeedback(a);
+        const pops = () => a.evaluate(() => window.__fb.pops.slice());
+        const reach = async () => {
+          await a.evaluate(() => { window.__rush.ghost('a', 1e6); window.__rush.ghost('b', 1e6); window.__rush.auto('a', false); window.__rush.auto('b', false); });
+        };
+        await a.click('.g-rush .rr-mode[data-mode="race"]');
+        await a.click('.g-rush .rr-ov-lobby [data-r="go"]');
+        await waitRun(a); await spyAll(); await reach();
+        await a.evaluate(() => { window.__sd = new Set(); const w = window.__rush.internals.world; const f = w.setDistrictAt; w.setDistrictAt = function (s, z) { window.__sd.add(Math.round(z / 50)); return f.call(this, s, z); }; });
+        await d.wait(1500);
+        await a.evaluate(() => { const s = window.__rush.state(); window.__rush.setZ('a', s.a.z + 14); });
+        await d.wait(1000);
+        await a.evaluate(() => { const s = window.__rush.state(); window.__rush.setZ('b', s.b.z + 45); });
+        await until(a, () => window.__fb.pops.includes('b:OVERTAKE!') && window.__fb.pops.includes('a:Sydney passed you'), null, 8000, 'overtake pops go to the right halves');
+        const p1 = await pops();
+        assert(!p1.includes('a:OVERTAKE!') && !p1.includes('b:Emerson passed you'), 'and not to the other half');
+        assert((await a.evaluate(() => window.__rush.rivalry())).changes === 1, 'one lead change counted for one device, not two');
+        // districts per half: Emerson only gets the next zone's name
+        await a.evaluate(() => { const s = window.__rush.state(); const nz = 300 + 400 * Math.ceil((s.a.z + 30 - 300) / 400); window.__rush.setZ('a', nz - 10); });
+        await until(a, (re) => window.__fb.pops.some((p) => new RegExp(re).test(p)), `^a:(${names.join('|')})$`, 8000, 'Emerson gets her district name');
+        assert(!(await pops()).some((p) => new RegExp(`^b:(${names.join('|')})$`).test(p)), 'Sydney (still on her stretch) does not');
+        assert((await a.evaluate(() => window.__sd.size)) >= 2, 'each half sets its own district sky (setDistrictAt per view)');
+        // Together on one device: the power-up goes to the other runner
+        await a.evaluate(() => { window.__rush.give('a', 'magnet'); window.__rush.emit('a', 'pick', 1000000); });
+        // (Race: no share) ...
+        await d.wait(600);
+        assert(!(await a.evaluate(() => window.__rush.internals.players.b.r.magnetT > 1)), 'a Race pickup is not shared');
+        d.assertNoErrors();
+      } catch (e) { console.error(e.message); fails++; await shot(a, 'fail-rival-split').catch(() => {}); console.error('errors:', d.errors.slice(0, 8)); } finally { await d.close(); }
+    }
+    {
+      const d = await launch({ port: PORT(11), only: ['rush'], device: 'Desktop Chrome', who: ['a'] });
+      const { a } = d;
+      try {
+        await a.setViewportSize({ width: 1280, height: 800 });
+        await a.evaluate((x) => { window.__RUSH_DEBUG = x; }, { ...DEBUG, raceLen: 45000, seed: 7 });
+        await d.startLive(a, 'rush', 'local');
+        await until(a, () => window.__rush && window.__rush.state().ready3D && window.__rush.state().phase === 'lobby', null, 30000, 'brawl split lobby');
+        await a.click('.g-rush .rr-mode[data-mode="brawl"]');
+        await a.click('.g-rush .rr-ov-lobby [data-r="go"]');
+        await waitRun(a); await spyFeedback(a);
+        await a.evaluate(() => { window.__rush.ghost('a', 1e6); window.__rush.ghost('b', 1e6); });
+        await d.wait(1500);
+        await a.evaluate(() => { const s = window.__rush.state(); window.__rush.setZ('a', s.a.z + 14); });
+        await d.wait(900);
+        await a.evaluate(() => { const s = window.__rush.state(); window.__rush.setZ('b', s.b.z + 45); });
+        await d.wait(2500);
+        const bp = await a.evaluate(() => window.__fb.pops.filter((p) => /OVERTAKE|REVENGE|passed you/.test(p)));
+        assert(bp.length === 0, `Brawl has no overtake pops (side by side they mean nothing): ${bp.join(', ') || 'none'}`);
+        await a.click('.g-rush .rr-pause').catch(() => {});
+        d.assertNoErrors();
+      } catch (e) { console.error(e.message); fails++; await shot(a, 'fail-rival-brawl').catch(() => {}); console.error('errors:', d.errors.slice(0, 8)); } finally { await d.close(); }
+    }
+    {
+      // Together on one device: the shared power-up reaches the other runner
+      const d = await launch({ port: PORT(12), only: ['rush'], device: 'Desktop Chrome', who: ['a'] });
+      const { a } = d;
+      try {
+        await a.setViewportSize({ width: 1280, height: 800 });
+        await a.evaluate((x) => { window.__RUSH_DEBUG = x; }, { ...DEBUG, seed: 7 });
+        await d.startLive(a, 'rush', 'local');
+        await until(a, () => window.__rush && window.__rush.state().ready3D && window.__rush.state().phase === 'lobby', null, 30000, 'together split lobby');
+        await a.click('.g-rush .rr-mode[data-mode="tandem"]');
+        await a.click('.g-rush .rr-ov-lobby [data-r="go"]');
+        await waitRun(a);
+        await a.evaluate(() => { window.__rush.ghost('a', 1e6); window.__rush.ghost('b', 1e6); window.__rush.give('b', 'sneakers'); window.__rush.emit('b', 'pick', 2000000); });
+        await until(a, () => window.__rush.internals.players.a.r.sneakersT > 6, null, 6000, 'one device: Sydney’s sneakers reach Emerson');
+        d.assertNoErrors();
+      } catch (e) { console.error(e.message); fails++; await shot(a, 'fail-rival-tsplit').catch(() => {}); console.error('errors:', d.errors.slice(0, 8)); } finally { await d.close(); }
+    }
   }
 
   if (fails) { console.log(`\n${fails} FAILED`); process.exitCode = 1; } else console.log('\nALL GOOD');

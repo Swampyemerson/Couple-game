@@ -29,10 +29,11 @@ const ITEM_MAX = 16;
 const BAR_MAX = 40;
 const VIEW_AHEAD = 175;
 const COIN_AHEAD = 132;   // coins further out are lost in the fog anyway
+const COIN_LOD = 36;      // coins further than this ahead of the runner draw as a cheap 6-sided token (48 triangles instead of 156)
 const VIEW_BEHIND = 14;
 const SIDE_X = 4.35;      // parapet line
 // instance-colour tints of gold coins (they multiply the coin's vertex colours; > 1 brightens)
-const GOLD_T = [1.0, 0.72, 0.9];   // fool's gold: deeper, warmer than the plain coin
+const GOLD_T = [1.05, 0.8, 0.85];   // fool's gold: deeper, warmer than the plain coin
 const HUND_T = [1.0, 0.86, 1.4];   // Golden Hundred: paler, brighter
 
 export function createWorld(THREE, P) {
@@ -95,9 +96,17 @@ export function createWorld(THREE, P) {
   // disc template is a Y-axis cylinder: rotate its axis to Z by swapping in the instance matrix (see writeCoin)
   // Coins draw with the instance-colour material (the barrier blocks' program: no new shader): the
   // per-instance colour multiplies the vertex colours, white for plain coins, a gold tint for fool's gold.
-  const coins = inst(coinGeo, COIN_MAX, matInstC);
-  coins.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(COIN_MAX * 3).fill(1), 3);
-  coins.instanceColor.setUsage(THREE.DynamicDrawUsage);
+  const coinFarGeo = freezeWith((b) => {
+    b.add(T.cyl6, 0, 0, 0, 0.84, 0.22, 0.84, 0, mix(P.coin, P.coinRim, 0.3), FX_GLOW, 0.05, ink);
+  });
+  const instColored = (geo) => {
+    const im = inst(geo, COIN_MAX, matInstC);
+    im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(COIN_MAX * 3).fill(1), 3);
+    im.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    return im;
+  };
+  const coins = instColored(coinGeo);
+  const coinsFar = instColored(coinFarGeo); // the same coins past COIN_LOD m: one more call, the same program
 
   const itemGeo = {};
   itemGeo[I_MAGNET] = freezeWith((b) => {
@@ -139,7 +148,7 @@ export function createWorld(THREE, P) {
     b.add(T.pen, 0, 0.1, 0.08, 0.96, 0.4, 1, 0, mix(P.b, P.white, 0.4), FX_PLAIN, 0, ink);
     b.add(T.pen, 0, 0.1, -0.08, 0.96, 0.4, 1, Math.PI, mix(P.b, P.white, 0.4), FX_PLAIN, 0, ink);
     for (const sz of [1, -1]) {
-      b.add(T.sphere, 0, -0.02, 0.1 * sz, 0.26, 0.26, 0.14, 0, P.b, FX_GLOW, 0.03, ink);
+      b.add(T.lowSphere, 0, -0.02, 0.1 * sz, 0.26, 0.26, 0.14, 0, P.b, FX_GLOW, 0.03, ink);
       b.add(T.box, 0.34, 0.2, 0.075 * sz, 0.16, 0.2, 0.02, 0, P.hl, FX_PLAIN, 0, ink);
     }
   });
@@ -447,6 +456,9 @@ export function createWorld(THREE, P) {
     const c1 = Math.floor((z + VIEW_AHEAD) / CHUNK);
     const ca = coins.instanceMatrix.array;
     const cca = coins.instanceColor.array;
+    const fa = coinsFar.instanceMatrix.array;
+    const fca = coinsFar.instanceColor.array;
+    let nf = 0;
     if (sunFront !== !!v.front) { sunFront = !!v.front; U.uSun.value.set(-0.42, 0.8, sunFront ? -0.43 : 0.43).normalize(); }
     let nc = 0;
     const ic = itemCount;
@@ -457,15 +469,17 @@ export function createWorld(THREE, P) {
       const c = track.chunk(ci);
       const base = ci * 1000;
       const cs = c.coins;
-      for (let i = 0; i < cs.length && nc < COIN_MAX; i++) {
+      for (let i = 0; i < cs.length && nc < COIN_MAX && nf < COIN_MAX; i++) {
         const cn = cs[i];
         if (cn.z < z - VIEW_BEHIND) continue;
         if (cn.z > z + COIN_AHEAD) break; // sorted by z
         if (r && r.taken.has(base + i)) continue;
+        const far = cn.z > z + COIN_LOD;
+        const A = far ? fa : ca; const C = far ? fca : cca; const o3 = (far ? nf : nc) * 3;
         const cv = cn.v; // track v2: 3 = fool's gold (big, gold), 2 = Golden Hundred (gold); undefined / 1 = plain
-        if (cv > 1) { const gd = cv > 2; cca[nc * 3] = gd ? GOLD_T[0] : HUND_T[0]; cca[nc * 3 + 1] = gd ? GOLD_T[1] : HUND_T[1]; cca[nc * 3 + 2] = gd ? GOLD_T[2] : HUND_T[2]; WM[3] = gd ? 1.4 : 1.12; }
-        else { cca[nc * 3] = 1; cca[nc * 3 + 1] = 1; cca[nc * 3 + 2] = 1; WM[3] = 1; }
-        WM[0] = cn.x; WM[1] = cn.y; WM[2] = -cn.z; WM[4] = spin + cn.z * 0.05; WM[5] = Math.PI / 2; writeM(ca, nc++);
+        if (cv > 1) { const gd = cv > 2; C[o3] = gd ? GOLD_T[0] : HUND_T[0]; C[o3 + 1] = gd ? GOLD_T[1] : HUND_T[1]; C[o3 + 2] = gd ? GOLD_T[2] : HUND_T[2]; WM[3] = gd ? 1.4 : 1.12; }
+        else { C[o3] = 1; C[o3 + 1] = 1; C[o3 + 2] = 1; WM[3] = 1; }
+        WM[0] = cn.x; WM[1] = cn.y; WM[2] = -cn.z; WM[4] = spin + cn.z * 0.05; WM[5] = Math.PI / 2; writeM(A, far ? nf++ : nc++);
       }
       const its = c.items;
       for (let i = 0; i < its.length; i++) {
@@ -476,7 +490,7 @@ export function createWorld(THREE, P) {
         const m = items[it.k];
         if (ic[it.k] >= ITEM_MAX) continue;
         const bob = Math.sin(v.time * 3 + it.z) * 0.12;
-        WM[0] = it.x; WM[1] = it.y + bob; WM[2] = -it.z; WM[3] = it.k === I_BOX ? 1 : it.k === I_NOTE ? 1.3 : it.k === I_DOUBLE ? 1.2 : 1.05; WM[4] = spin * 0.7 + it.z; WM[5] = it.k === I_BOX ? 0.6 : 0; writeM(m.instanceMatrix.array, ic[it.k]++);
+        WM[0] = it.x; WM[1] = it.y + bob + (it.k === I_NOTE ? 0.3 : 0); WM[2] = -it.z; WM[3] = it.k === I_BOX ? 1 : it.k === I_NOTE ? 1.55 : it.k === I_DOUBLE ? 1.35 : 1.05; WM[4] = spin * 0.7 + it.z; WM[5] = it.k === I_BOX ? 0.6 : 0; writeM(m.instanceMatrix.array, ic[it.k]++);
       }
       const obs = c.obs;
       for (let oi = 0; oi < obs.length; oi++) {
@@ -520,6 +534,7 @@ export function createWorld(THREE, P) {
     } else blocks.count = 0;
     for (let i = nm; i < mtrains.length; i++) mtrains[i].visible = false;
     coins.count = nc; coins.instanceMatrix.needsUpdate = true; coins.instanceColor.needsUpdate = true;
+    coinsFar.count = nf; coinsFar.instanceMatrix.needsUpdate = true; coinsFar.instanceColor.needsUpdate = true;
     for (let k = 1; k <= 7; k++) { items[k].count = ic[k]; items[k].instanceMatrix.needsUpdate = true; }
     lows.count = nl; lows.instanceMatrix.needsUpdate = true;
     highs.count = nh; highs.instanceMatrix.needsUpdate = true;
@@ -587,10 +602,10 @@ export function createWorld(THREE, P) {
     chunkCount: () => byChunk.size,
     stats,
     /** Everything that can be drawn, for shader warm-up. */
-    warmList: () => [coins, lows, highs, blocks, gates, marks, shadows, street, skyline, dome, ...Object.values(items), mtrains[0], pool[0].mesh, ...banners, markMesh[0]],
+    warmList: () => [coins, coinsFar, lows, highs, blocks, gates, marks, shadows, street, skyline, dome, ...Object.values(items), mtrains[0], pool[0].mesh, ...banners, markMesh[0]],
     dispose() {
       for (const d of disposables) { try { d.dispose(); } catch { /* ignore */ } }
-      for (const m of [coins, lows, highs, blocks, gates, marks, ...Object.values(items)]) { try { m.dispose(); } catch { /* ignore */ } }
+      for (const m of [coins, coinsFar, lows, highs, blocks, gates, marks, ...Object.values(items)]) { try { m.dispose(); } catch { /* ignore */ } }
       try { shadows.dispose(); } catch { /* ignore */ }
       scene.clear();
     },
