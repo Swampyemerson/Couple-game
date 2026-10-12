@@ -60,7 +60,7 @@ shown in a reveal that sits above the curtain (`.g-wd-hold-layer`) until "Done, 
 `a_wins_n b_wins_n draws_n matches_n sets_n comeback_n`, `a_streak b_streak` (reset) with
 `a_streak_best b_streak_best`, `a_fast_pb b_fast_pb` (8 - fewest guesses), `a_two_n b_two_n` (cracks in 2 or
 fewer), `a_lastditch_n b_lastditch_n` (crack on guess 6), `a_held_n b_held_n` (their word held out),
-`recent_m` (last 20 recorded match ids, comma-joined), `lastm`, `pbm` (match that beat a personal best),
+`recent_m` (last 60 recorded match ids, comma-joined), `lastm`, `pbm` (match that beat a personal best),
 `last_setup` (`pool:hard:dealt:bo3`, e.g. `love:1:0:1`, what the rules card defaults to).
 
 Idempotence: counters are written as absolute values computed from the data snapshot. A match is recorded when this
