@@ -14,9 +14,9 @@ const other = (w) => (w === 'a' ? 'b' : 'a');
 const DIRS = [[1, 0, 'across'], [0, 1, 'down'], [1, 1, 'diag'], [1, -1, 'diag']];
 
 const MODES = {
-  classic: { name: 'Classic', desc: 'The original. Seven columns, first to line up four.' },
-  ghost: { name: 'Ghost Column', desc: 'A ghost caps one column at three discs. Plan around it.' },
-  pop: { name: 'PopOut', desc: 'Or pop one of your own bottom discs out. Everything above slips down.' },
+  classic: { name: 'Classic', desc: 'The original. First to line up four.' },
+  ghost: { name: 'Ghost Column', desc: 'A ghost caps one column at three discs.' },
+  pop: { name: 'PopOut', desc: 'Or pop your own bottom disc out.' },
 };
 const MODE_IDS = ['classic', 'ghost', 'pop'];
 const isMode = (m) => typeof m === 'string' && Object.prototype.hasOwnProperty.call(MODES, m);
@@ -131,13 +131,13 @@ function momentFor(s, first, name, st) {
   const wm = movesBy(s, w, first);
   const pre = st || null;
   const order = [];
-  if (pre && pre.quick > 0 && wm < 100 - pre.quick) order.push('record');
+  if (!win.gift && pre && pre.quick > 0 && wm < 100 - pre.quick) order.push('record');
   if (pre && pre.who === l && pre.streak >= 2) order.push('broke');
   if (pre && pre.who === w && pre.streak + 1 >= 3) order.push('streak');
   if (s.bl && s.bl[w] >= 2) order.push('comeback');
   if (!win.pop && s.n >= 36 && mode !== 'pop') order.push('photo');
   if (pre && pre.mw === 0 && mode !== 'classic') order.push('firstmode');
-  if (wm <= 7) order.push('rout');
+  if (wm <= 7 && !win.gift) order.push('rout');
   if (closeCalls(s, l) > 0) order.push('close');
   order.push('generic');
   const sit = order[0];
@@ -278,6 +278,7 @@ function resultOf(s) {
   }
   if (s.draw === 'long') return { winner: null, text: 'Long game', sub: 'A hundred moves and no four. Call it a draw.' };
   if (s.draw === 'stuck') return { winner: null, text: 'No moves left', sub: 'Nothing left to drop or pop. It’s a draw.' };
+  if (s.draw === 'full' && s.mode === 'ghost') return { winner: null, text: 'No drops left', sub: 'The ghost kept its column and nobody lined up four. It’s a draw.' };
   return { winner: null, text: 'Board full', sub: 'Nobody lined up four. It’s a draw.' };
 }
 
@@ -417,7 +418,7 @@ registerGame({
 .g-four .g4-chip { flex: none; width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--g-ink); box-shadow: inset 0 0 0 4px color-mix(in srgb, var(--g-ink) 22%, transparent); }
 .g-four .g4-chip.none { background: transparent; border-style: dashed; box-shadow: none; }
 
-@media (max-height: 720px) and (orientation: portrait) { .g-four { --g4-chrome: 314px; } .g-four .g4-mdesc { display: none; } }
+@media (max-height: 720px) and (orientation: portrait) { .g-four { --g4-chrome: 314px; } }
 @media (orientation: landscape) and (min-width: 560px) {
   .g-four { --g4-chrome: 175px; flex-direction: row; align-items: center; justify-content: center; gap: 18px; padding: 0; }
   .g-four .g4-bd { width: auto; flex: none; }
@@ -868,7 +869,6 @@ registerGame({
       const ownButton = t && t.closest && t.closest('.g4-mc, .g4-act');
       if (/^[1-7]$/.test(e.key)) { e.preventDefault(); aim(Number(e.key) - 1); return; }
       if ((e.key === 'p' || e.key === 'P') && modeOf(ctx.state) === 'pop' && ctx.moves > 0) { e.preventDefault(); setAct(act === 'pop' ? 'drop' : 'pop'); return; }
-      if (e.key === 'Escape' && lifted != null) { unlift(); return; }
       if (ownButton) return; // Enter / Space on a chip works the chip
       const fc = focusedCol();
       const from = fc != null ? fc : lifted != null ? lifted : null;
@@ -886,6 +886,15 @@ registerGame({
       }
     };
     document.addEventListener('keydown', onKey);
+    // Escape puts a lifted disc away first. Core closes the game on Escape unless it was handled, and its
+    // listener is registered earlier, so this one runs in the capture phase. With nothing lifted Esc closes as before.
+    const onEsc = (e) => {
+      if (e.key !== 'Escape' || lifted == null || !ctx || !ctx.canMove || !root.isConnected) return;
+      if (document.querySelector('#game-root .gm-sheet:not([hidden]), #game-root .gm-end:not([hidden]), .sheet-wrap')) return;
+      e.preventDefault();
+      unlift();
+    };
+    document.addEventListener('keydown', onEsc, true);
     const offData = (() => { try { return store.onData(() => { if (ctx) renderTop(); }); } catch { return null; } })();
     layout();
 
@@ -912,7 +921,7 @@ registerGame({
         patch[`wins_${w}_n`] = (d[`wins_${w}_n`] || 0) + 1;
         patch[`${mode}_${w}_n`] = pre.mw + 1;
         const q = 100 - movesBy(s, w, c.first);
-        if (q > pre.quick) { patch.quick_best = q; patch.quick_best_who = w; }
+        if (!(s.win && s.win.gift) && q > pre.quick) { patch.quick_best = q; patch.quick_best_who = w; }
         if (s.bl && s.bl[w] >= 2) patch[`comeback_${w}_n`] = (d[`comeback_${w}_n`] || 0) + 1;
       }
       store.setData(patch);
@@ -990,6 +999,7 @@ registerGame({
       },
       destroy() {
         document.removeEventListener('keydown', onKey);
+        document.removeEventListener('keydown', onEsc, true);
         try { mq && mq.removeEventListener('change', onMq); } catch { /* fine */ }
         try { offData && offData(); } catch { /* fine */ }
         for (const t of timers) clearTimeout(t);
