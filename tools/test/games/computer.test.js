@@ -250,6 +250,24 @@ async function cyclesLiveLaptops(h, scheme) {
 }
 
 // ══════════════════════════ Defuse ══════════════════════════
+// Defuse now builds every round from { seed, tier } (js/games/defuse/round.js). These tests pick the Classic tier, which is
+// today's game with today's field guide, and read each round the way the old tests read a bomb. The full tier / twist / records
+// coverage lives in tools/test/games/defuse.test.js.
+let DXR = null;
+const dxLoad = async () => { DXR = DXR || (await import(require('url').pathToFileURL(path.join(__dirname, '../../../js/games/defuse/round.js')).href)); return DXR; };
+function oldGen(round) {
+  const B = DXR.BY_ID;
+  const [w, bt, kp, sq] = round.slots;
+  const E = round.E, T = round.T, R = (id) => round.book[id].R;
+  const b = B.button.solve(bt.S, E, R('button'), T);
+  return {
+    seed: round.seed, serial: E.serial, batteries: E.batteries, indicators: E.indicators, vowel: E.vowel, wires: w.S.w,
+    button: { color: bt.S.color, label: bt.S.label, strip: bt.S.strip }, keypad: kp.S.keys, seq: sq.S.seq,
+    answers: { wire: B.wires.solve(w.S, E, R('wires'), T).wire, button: { act: b.act, digit: b.digit }, keypad: B.keypad.solve(kp.S, E, R('keypad'), T).order, seq: B.sequence.solve(sq.S, E, R('sequence'), T) },
+  };
+}
+const dxGen = async (pg) => { await dxLoad(); return oldGen((await dx(pg)).bomb.round); };
+const dxClassic = async (h, pg) => { await pg.click('.dx-tiers [data-diff="classic"]'); await h.settle(); };
 // The rules exactly as the field guide prints them. If the guide changes, this list (and the
 // solver under it) must be updated by a person reading the new text.
 const GUIDE = {
@@ -363,17 +381,18 @@ async function defusePhones(h) {
   await h.settle();
   const seen = await h.a.evaluate(() => [...document.querySelectorAll('.dx-role[data-role="manual"] .dx-who')].map((x) => x.className));
   assert(seen.some((c) => /p-b/.test(c)), 'roles are shown live: Emerson sees Sydney on the manual');
-  await h.b.click('.dx-diff [data-diff="chill"]');
+  await h.b.click('.dx-tiers [data-diff="chill"]');
   await h.settle();
-  assert(await h.a.evaluate(() => document.querySelector('.dx-diff [data-diff="chill"]').getAttribute('aria-checked')) === 'true', 'difficulty pick reaches the other phone');
-  await h.b.click('.dx-diff [data-diff="normal"]');
+  assert(await h.a.evaluate(() => document.querySelector('.dx-tiers [data-diff="chill"]').getAttribute('aria-checked')) === 'true', 'difficulty pick reaches the other phone');
+  await h.b.click('.dx-tiers [data-diff="classic"]');
   await h.settle();
   await shot(h.a, 'defuse-phone-lobby-light');
   await startRound(h, h.b); // the manual side asks the bomb side to start
   const A = await dx(h.a);
   assert(A.phase === 'bomb' && (await dx(h.b)).phase === 'manual', 'Emerson has the bomb, Sydney has the manual');
-  const g = A.bomb.gen;
-  assert(A.bomb.diff === 'normal' && Math.abs(A.bomb.left - 300000) < 3000, 'Normal is a 5:00 clock');
+  await dxLoad();
+  const g = oldGen(A.bomb.round);
+  assert(A.bomb.tier === 'classic' && Math.abs(A.bomb.left - 300000) < 3000, 'Classic is a 5:00 clock');
 
   // what the bomb shows is what was generated
   const shown = await h.a.evaluate(() => ({
@@ -391,7 +410,7 @@ async function defusePhones(h) {
   const page = await readGuide(h.b);
   assert(Object.keys(page.rules).length === Object.keys(GUIDE).length && Object.entries(GUIDE).every(([k, t]) => page.rules[k] === t), 'the guide prints exactly the rules the solver reads');
   assert(page.columns.length === 5 && page.columns.every((c) => c.length === 7) && new Set(page.columns.flat()).size === 30, 'glyph keypad page: 5 columns of 7 from 30 glyphs');
-  const gens = await h.a.evaluate(() => Array.from({ length: 100 }, (_, i) => window.__defuse.gen('test-' + i, ['chill', 'normal', 'spicy'][i % 3])));
+  const gens = Array.from({ length: 100 }, (_, i) => oldGen(DXR.buildRound('test-' + i, 'classic')));
   let ok = 0;
   const holds = { tap: 0, hold: 0 };
   for (const x of [g, ...gens]) {
@@ -460,7 +479,7 @@ async function defusePhones(h) {
   await startRound(h, h.a);
   const B = await dx(h.b);
   assert(B.phase === 'bomb' && (await dx(h.a)).phase === 'manual', 'now Sydney has the bomb');
-  const a2 = B.bomb.gen.answers;
+  const a2 = oldGen(B.bomb.round).answers;
   await h.b.click(`.dx-wire[data-wire="${a2.wire === 0 ? 1 : 0}"]`);
   await h.b.click(`.dx-gkey[data-glyph="${a2.keypad[3]}"]`);
   await sleep(150);
@@ -499,9 +518,10 @@ async function defuseShots(h, tag, opts = {}) {
   await goLive(h, 'defuse');
   await until(async () => (await dx(h.a)) && (await dx(h.b)), 'both lobbies');
   await pickRoles(h, h.a, h.b);
+  await dxClassic(h, h.b);
   if (opts.lobby) await shot(h.b, `defuse-${tag}-lobby`);
   await startRound(h, h.a);
-  const g = (await dx(h.a)).bomb.gen;
+  const g = await dxGen(h.a);
   await h.a.click(`.dx-wire[data-wire="${g.answers.wire}"]`);
   await h.a.click(`.dx-gkey[data-glyph="${g.answers.keypad[0]}"]`);
   await h.b.click('.dx-index [data-page="sequence"]');
@@ -527,13 +547,16 @@ async function defuseShots(h, tag, opts = {}) {
     await h.b.setViewportSize({ width: 390, height: 844 });
   }
   // three wrong moves: boom
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 8; i++) {
     const x = await dx(h.a);
     if (x.bomb.over) break;
     const keyAt = x.bomb.keyAt;
     const bad = g.answers.keypad.find((k, j) => j > keyAt);
     if (!x.bomb.solved[2] && bad) await h.a.click(`.dx-gkey[data-glyph="${bad}"]`);
-    else await h.a.click('.dx-pad[data-color="red"]').catch(() => {});
+    else { // a pad that is never the first answer, so it is always a strike
+      const right = g.answers.seq[Math.min(2, x.bomb.strikes)][0];
+      await h.a.click(`.dx-pad[data-color="${['red', 'blue', 'green', 'yellow'].find((c) => c !== right)}"]`).catch(() => {});
+    }
     await sleep(420); // separate presses: the same wrong key tapped twice within 400 ms is one mistake
 
   }
@@ -599,8 +622,9 @@ async function defuseResilience(h) {
   await goLive(h, 'defuse');
   await until(async () => (await dx(h.a)) && (await dx(h.b)), 'both lobbies');
   await pickRoles(h, h.b, h.a);
+  await dxClassic(h, h.a);
   await startRound(h, h.b);
-  const g = (await dx(h.b)).bomb.gen;
+  const g = await dxGen(h.b);
   const wrong = g.keypad.find((k) => k !== g.answers.keypad[0]);
   await h.b.evaluate((k) => { const el = document.querySelector(`.dx-gkey[data-glyph="${k}"]`); el.click(); el.click(); }, wrong);
   await sleep(150);
@@ -662,13 +686,14 @@ async function droppedEvents(h) {
   await bothLive(h, 'defuse');
   await until(async () => (await dx(h.a)) && (await dx(h.b)), 'both lobbies');
   await pickRoles(h, h.a, h.b);
+  await dxClassic(h, h.b);
   await until(async () => (await dx(h.a)).partnerRole === 'manual', 'roles to show');
   await h.b.click('[data-act="swap"]');
   await until(async () => (await dx(h.a)).role === 'manual' && (await dx(h.b)).role === 'bomb', 'the swap to land', 6000);
   assert(true, 'Defuse: swap lands even when its event is lost');
   await startRound(h, h.a);
   assert((await dx(h.b)).phase === 'bomb', 'Defuse: the start request lands');
-  const ans = (await dx(h.b)).bomb.gen.answers;
+  const ans = (await dxGen(h.b)).answers;
   await h.b.click(`.dx-wire[data-wire="${ans.wire === 0 ? 1 : 0}"]`);
   await h.b.click(`.dx-gkey[data-glyph="${ans.keypad[3]}"]`);
   await h.b.click(`.dx-gkey[data-glyph="${ans.keypad[2]}"]`);

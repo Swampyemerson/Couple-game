@@ -274,7 +274,8 @@ export const CSS = `
 .g-defuse .dx-index .sm { font: 800 0.8rem/1.15 var(--g-font-body); letter-spacing: 0.04em; text-transform: uppercase; }
 .g-defuse .dx-index button[aria-selected="true"] { background: var(--g-ink); color: var(--g-bg); }
 .g-defuse .dx-index button[aria-selected="true"] .big { border-color: var(--g-bg); background: var(--g-hl); color: var(--g-on-ink); }
-.g-defuse .dx-index button.is-done::after { content: ''; position: absolute; right: 7px; top: 7px; width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--g-ink); background: var(--g-good); }
+.g-defuse .dx-index button.is-done .big { background: var(--g-good); color: var(--g-card); }
+.g-defuse .dx-index button.is-done .big::after { content: ''; display: inline-block; width: 0.4em; height: 0.7em; margin-left: 5px; border: solid currentColor; border-width: 0 3px 3px 0; transform: rotate(40deg) translate(-2px, -3px); }
 .g-defuse .dx-index button.is-gold { box-shadow: 0 0 0 3px var(--dx-yellow); }
 .g-defuse .dx-index button.is-gold .big { background: var(--dx-yellow); }
 .g-defuse .dx-index button.is-twin .big { font-size: 1rem; }
@@ -293,6 +294,13 @@ export const CSS = `
 .g-defuse .dx-drawer-body { max-height: min(62vh, 520px); overflow: auto; padding: 0 12px 12px; }
 .g-defuse .dx-drawer:not(.is-open) .dx-drawer-body { display: none; }
 .g-defuse .dx-drawer.is-done .dx-drawer-head { color: var(--g-good); }
+.g-defuse .dx-drawer .dx-relay-box { margin-top: 0; padding: 8px; gap: 8px; }
+.g-defuse .dx-drawer .dx-relay-lamp { padding: 4px 10px; }
+.g-defuse .dx-drawer .dx-relay-row { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.g-defuse .dx-drawer .dx-relay-sw { min-height: 112px; padding: 6px 2px 6px; }
+.g-defuse .dx-drawer .dx-relay-cap { width: 42px; height: 42px; } .g-defuse .dx-drawer .dx-relay-cap b { font-size: 1.2rem; }
+.g-defuse .dx-drawer .dx-relay-sw small { font-size: 0.58rem; letter-spacing: 0.05em; }
+.g-defuse .dx-drawer .dx-relay-lever { width: 22px; height: 36px; } .g-defuse .dx-drawer .dx-relay-state { font-size: 0.8rem; }
 .g-defuse .dx-openrelay { min-height: 48px; padding: 8px 14px; background: var(--g-hl); color: var(--g-on-ink); border: 2.5px solid var(--g-ink); border-radius: 10px; box-shadow: var(--g-shadow-sm, 2px 2px 0 var(--g-ink)); font-weight: 800; }
 
 @media (min-width: 760px) and (max-width: 1099px) {
