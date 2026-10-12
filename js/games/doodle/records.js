@@ -114,7 +114,7 @@ export function historyLine(d, modeTitle) {
   const score = num(d, 'rc_score'); const prev = num(d, 'rc_prev'); const best = Math.max(prev, score);
   if (plays <= 1) return `Your first match together. ${score} is the number to beat.`;
   const head = `Your ${ordinal(plays)} match together.`;
-  if (num(d, 'rc_new')) return prev > 0 ? `${head} A new ${modeTitle} best: ${score}, up from ${prev}.` : `${head} Your first ${modeTitle} score on the board: ${score}.`;
+  if (num(d, 'rc_new')) return prev > 0 ? `${head} A new ${modeTitle} best: ${score}, up from ${prev}.` : `${head} Your first ${modeTitle} game: ${score} is the number to beat.`;
   if (score === best) return `${head} You matched your ${modeTitle} best of ${best}.`;
   const gap = best - score;
   return `${head} Best ever ${best}, tonight ${score}: ${gap <= Math.max(3, Math.round(best * 0.12)) ? 'so close.' : 'plenty of room to climb.'}`;
@@ -144,7 +144,6 @@ export function stampsOf(d, modeTitle) {
   const out = [];
   const score = num(d, 'rc_score'); const prev = num(d, 'rc_prev');
   if (num(d, 'rc_new') && prev > 0) out.push({ id: 'best', text: 'New best', sub: `${score}, was ${prev}` });
-  else if (num(d, 'rc_new')) out.push({ id: 'first', text: 'On the board', sub: `${modeTitle} ${score}` });
   const mile = num(d, 'rc_mile');
   if (mile) out.push({ id: 'mile', text: `${mile} drawings`, sub: 'Gallery milestone' });
   if (num(d, 'rc_perfect')) out.push({ id: 'perfect', text: 'Perfect match', sub: 'Every drawing guessed' });

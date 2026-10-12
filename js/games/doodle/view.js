@@ -205,10 +205,12 @@ export function mountDoodle(el, api, K) {
   const blanks = (text) => `<div class="dd-blanks" aria-label="${text.replace(/[^a-z0-9 ]/gi, '').split(' ').filter(Boolean).map((w) => w.length).join(', ')} letters">${text.split(/\s+/).map((w) => `<span>${'<i></i>'.repeat(w.replace(/[^a-z0-9]/gi, '').length)}</span>`).join('')}</div>`;
   const promptOf = (R) => PROMPTS[R.choices[R.pick]];
   // The twist banner (Mixed Bag) and, in the other modes, nothing: the mode is the twist.
-  const twistBanner = (s, R) => {
-    if (s.v !== 2 || s.mode !== 'mixed' || !R || !R.twist) return '';
+  // The twist banner (Mixed Bag): one slim line, nothing for a plain round. `soft` banners (guess,
+  // watch, wait) disappear on short screens, where the controls need the room.
+  const twistBanner = (s, R, soft = false) => {
+    if (s.v !== 2 || s.mode !== 'mixed' || !R || !R.twist || R.twist === 'normal') return '';
     const t = TWIST_INFO[R.twist];
-    return `<div class="dd-twist t-${R.twist}" role="status"><b>${esc(t.title)}</b><span>${esc(t.pitch)}</span></div>`;
+    return `<div class="dd-twist t-${R.twist}${soft ? ' soft' : ''}" role="status"><b>${esc(t.title)}</b><span>${esc(t.pitch)}</span></div>`;
   };
   const payLine = (tier, kind) => `Pays ${STAKES[tier].join(' · ')}${kind === 'halfhalf' ? ` · early call ${EARLY[tier]}` : ''}`;
 
@@ -217,6 +219,7 @@ export function mountDoodle(el, api, K) {
   function applyLand(s) {
     if (!s || !s.el) return;
     s.el.classList.toggle('land', isLand());
+    s.el.classList.toggle('short', scroller.clientHeight < 470);
   }
   // Make a paper inside `host` that is sized to fit the screen.
   function makePaper(host, { draw = false } = {}) {
@@ -226,6 +229,10 @@ export function mountDoodle(el, api, K) {
     box.appendChild(cv);
     host.replaceWith(box);
     return { box, cv, paper: new Paper(cv, inks) };
+  }
+  // scale the stamp text to the paper it sits on ("Time’s up" must fit a small paper)
+  function sizeStamps(box, size) {
+    box.querySelectorAll('.dd-stamp').forEach((st) => { st.style.fontSize = `${Math.round(Math.max(11, Math.min(36, (size * 0.86 - 22) / (st.textContent.trim().length * 0.95 + 0.8))))}px`; });
   }
   function fitPaper(s) {
     if (!s || !s.p) return;
@@ -243,6 +250,7 @@ export function mountDoodle(el, api, K) {
     }
     if (Math.abs(size - s.p.paper.size) < 1) return;
     s.p.paper.fit(size);
+    sizeStamps(s.p.box, size);
     s.redraw && s.redraw();
   }
 
@@ -276,12 +284,11 @@ export function mountDoodle(el, api, K) {
     const sel = vs.setup || (vs.setup = { mode: lastMode || 'classic', pack: lastPack || 'classic' });
     const pinned = typeof d.pin_s === 'string' && d.pin_s ? decode(d.pin_s) : null;
     node.classList.add('dd-setup');
-    node.innerHTML = `<div class="dd-head"><h2 class="dd-h">Set up the game</h2></div>
+    node.innerHTML = `<div class="dd-head dd-sethead"><h2 class="dd-h">Set up the game</h2>${pinned && pinned.length ? `<div class="dd-fridge" role="img" aria-label="On the fridge: ${esc(cap(String(d.pin_t || 'our favourite')))}${d.pin_by === 'a' || d.pin_by === 'b' ? ` by ${esc(api.name(d.pin_by))}` : ''}"><div class="dd-fridge-pic"></div></div>` : ''}</div>
       <div class="dd-sec"><span class="g-label">How to play</span>
         <div class="dd-modes" role="radiogroup" aria-label="Mode">${MODE_LIST.map((m) => `<button class="dd-mode" role="radio" data-m="${m}" aria-checked="false"><b>${esc(MODE_INFO[m].title)}</b><span>${esc(MODE_INFO[m].pitch)}</span></button>`).join('')}</div></div>
       <div class="dd-sec"><span class="g-label">Which cards</span>
         <div class="dd-packs" role="radiogroup" aria-label="Cards">${PACK_LIST.map((p) => `<button class="dd-pack" role="radio" data-p="${p}" aria-checked="false" title="${esc(PACK_INFO[p].pitch)}">${esc(PACK_INFO[p].title)}</button>`).join('')}</div></div>
-      ${pinned && pinned.length ? `<div class="dd-fridge"><div class="dd-fridge-pic"></div><div class="dd-fridge-txt"><span class="g-label">On the fridge</span><b>${esc(cap(String(d.pin_t || 'Our favourite')))}</b><span>${d.pin_by === 'a' || d.pin_by === 'b' ? `by ${esc(api.name(d.pin_by))}` : ''}</span></div></div>` : ''}
       <div class="dd-setup-foot"><button class="gm-btn gm-btn-big dd-start"></button></div>`;
     const startBtn = node.querySelector('.dd-start');
     const paint = () => {
@@ -306,7 +313,7 @@ export function mountDoodle(el, api, K) {
     if (pinned && pinned.length) {
       const fp = new Paper(document.createElement('canvas'), inks);
       node.querySelector('.dd-fridge-pic').appendChild(fp.cv);
-      fp.fit(76); fp.all(pinned);
+      fp.fit(44); fp.all(pinned);
       fridge = fp;
     }
     paint();
@@ -555,7 +562,7 @@ export function mountDoodle(el, api, K) {
     const timer = setInterval(tick, 200);
     tick();
     return {
-      p,
+      p, minPaper: 150,
       redraw() { if (fade) kick(); else { p.paper.all(D.strokes); if (active) p.paper.stroke(active.st, active.st.pts.length, false); } },
       refresh() { paintTools(); },
       destroy() { clearInterval(timer); clearTimeout(retryT); if (fadeRaf) cancelAnimationFrame(fadeRaf); },
@@ -576,13 +583,16 @@ export function mountDoodle(el, api, K) {
     const half = kind === 'halfhalf';
     const prompt = promptOf(R0);
     const strokes = decode(R0.strokes) || [];
-    const h = half ? Math.max(1, Math.min(strokes.length, K.halfSplit(R0.strokes))) : strokes.length;
-    const firstHalf = strokes.slice(0, h);
-    const secondHalf = strokes.slice(h);
+    // Half & Half: whole strokes up to the split, or (one-stroke drawings) the first part of the stroke
+    const plan = half ? K.halfPlan(R0.strokes) : { k: strokes.length, cut: 0 };
+    const baseStrokes = strokes.slice(0, plan.k);
+    const partial = plan.cut && strokes[plan.k] ? [{ ...strokes[plan.k], pts: strokes[plan.k].pts.slice(0, plan.cut) }] : [];
+    const firstHalf = [...baseStrokes, ...partial];
+    const secondHalf = strokes.slice(plan.k);
     const prev = s.rounds[r - 1];
     const recap = prev && prev.drawer === ctx.viewer && ctx.mode === 'local'
       ? `<p class="dd-note">Last round ${esc(api.name(other(ctx.viewer)))} ${prev.points ? `got your ${esc(PROMPTS[prev.choices[prev.pick]].show)} (+${prev.points})` : `missed your ${esc(PROMPTS[prev.choices[prev.pick]].show)}`}.</p>` : '';
-    node.innerHTML = `<div class="dd-head">${top(s, `<span class="dd-by">by ${nm(R0.drawer)}</span>`)}${twistBanner(s, R0)}</div>
+    node.innerHTML = `<div class="dd-head">${top(s, `<span class="dd-by">by ${nm(R0.drawer)}</span>`)}${twistBanner(s, R0, true)}</div>
       <div class="dd-ph"></div>
       <div class="dd-foot">
         ${blanks(prompt.show)}
@@ -592,7 +602,7 @@ export function mountDoodle(el, api, K) {
         </div>
         <div class="dd-tries"><span class="dd-pips" aria-label="Guesses"></span><span class="dd-chips"></span></div>
         <form class="dd-form" autocomplete="off"><input class="dd-input" name="g" maxlength="40" placeholder="What is it?" aria-label="Your guess" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send"><button class="gm-btn" type="submit">Guess</button></form>
-        <button class="dd-giveup" type="button">Give up</button>
+        <div class="dd-actrow"><button class="dd-unearly" type="button" hidden>Never mind, show me the rest</button><button class="dd-giveup" type="button">Give up</button></div>
         ${recap}
       </div>`;
     const p = makePaper(node.querySelector('.dd-ph'));
@@ -602,6 +612,7 @@ export function mountDoodle(el, api, K) {
     const input = node.querySelector('.dd-input');
     const form = node.querySelector('.dd-form');
     const give = node.querySelector('.dd-giveup');
+    const unearly = node.querySelector('.dd-unearly');
     const halfBox = node.querySelector('.dd-half');
     const gSlot = `${ctx.viewer}|guess|${r}`;
     const saved = draftGet(gSlot);
@@ -620,7 +631,7 @@ export function mountDoodle(el, api, K) {
     const done = () => { vs.replayed[r] = true; setBtn(); };
     const playFull = () => { if (pl) pl.stop(); pl = player(p.paper, strokes, { onDone: done }); setBtn(); };
     const playFirst = () => { if (pl) pl.stop(); pl = player(p.paper, firstHalf, { onDone: setBtn }); setBtn(); };
-    const playRest = () => { if (pl) pl.stop(); pl = player(p.paper, secondHalf, { base: firstHalf, onDone: done }); setBtn(); };
+    const playRest = () => { if (pl) pl.stop(); pl = player(p.paper, secondHalf, { base: baseStrokes, onDone: done }); setBtn(); };
     const showStatic = () => { if (pl) pl.stop(); pl = null; p.paper.all(stage === 'half' ? firstHalf : strokes); setBtn(); };
     btn.addEventListener('click', () => {
       if (pl && !pl.done) pl.skip();
@@ -643,11 +654,13 @@ export function mountDoodle(el, api, K) {
       vs.early[r] = true; api.sfx('tap'); refresh();
       input.focus({ preventScroll: true });
     });
-    node.querySelector('.dd-rest').addEventListener('click', () => {
+    const showRest = () => {
       if (!ctx.canMove) return;
       const res = api.move({ rest: true });
-      if (!res.ok) api.toast(res.error); else api.sfx('flip');
-    });
+      if (!res.ok) api.toast(res.error); else { api.sfx('flip'); vs.early[r] = false; }
+    };
+    node.querySelector('.dd-rest').addEventListener('click', showRest);
+    unearly.addEventListener('click', showRest); // the way back from an early call you have not sent
     give.addEventListener('click', () => {
       if (!ctx.canMove) return;
       if (!give.classList.contains('armed')) {
@@ -676,6 +689,8 @@ export function mountDoodle(el, api, K) {
       const wantEarly = stage === 'half' && !!vs.early[r];
       halfBox.hidden = stage !== 'half' || wantEarly;
       form.hidden = stage === 'half' && !wantEarly;
+      unearly.hidden = !wantEarly;
+      unearly.disabled = !ctx.canMove;
       node.querySelector('.dd-know small').textContent = `+${EARLY[RR.tier]} if right`;
       input.disabled = !ctx.canMove;
       form.querySelector('button').disabled = !ctx.canMove;
@@ -742,8 +757,8 @@ export function mountDoodle(el, api, K) {
         ${b.extras.length ? `<p class="dd-bonus">${b.extras.map(esc).join(' · ')}</p>` : ''}
         ${b.gold}
         ${b.chips ? `<div class="dd-glist">${b.chips}</div>` : ''}
-        ${next ? `<button class="gm-btn dd-next">${last ? 'See the gallery' : 'Your turn to draw'}</button>
-          ${ctx.mode === 'local' && nextDrawer ? `<p class="dd-note">${esc(api.name(other(nextDrawer)))}, look away while ${esc(api.name(nextDrawer))} picks.</p>` : ''}` : ''}
+        ${next ? `<div class="dd-stick"><button class="gm-btn dd-next">${last ? 'See the gallery' : 'Your turn to draw'}</button>
+          ${ctx.mode === 'local' && nextDrawer ? `<p class="dd-note">${esc(api.name(other(nextDrawer)))}, look away while ${esc(api.name(nextDrawer))} picks.</p>` : ''}</div>` : ''}
         ${waiting ? `<div class="dd-waiting">${PENCIL}<div class="dd-wait-name">${nm(nextDrawer)} is drawing</div><p class="dd-sub">Your turn to guess is next.</p></div>` : ''}
       </div>`;
     const p = makePaper(node.querySelector('.dd-ph'));
@@ -765,7 +780,7 @@ export function mountDoodle(el, api, K) {
     const s = ctx.state; const R = s.rounds[s.r];
     const prev = s.rounds[s.r - 1];
     if (prev && prev.drawer === ctx.viewer) return revealScreen(node, s.r - 1, { waiting: true });
-    node.innerHTML = `<div class="dd-head">${top(s)}${twistBanner(s, R)}</div>
+    node.innerHTML = `<div class="dd-head">${top(s)}${twistBanner(s, R, true)}</div>
       <div class="dd-waiting">${PENCIL}<div class="dd-wait-name">${nm(R.drawer)} is drawing something</div><p class="dd-sub">You’ll watch it replay, then guess.</p></div>`;
     return {};
   }
@@ -776,7 +791,7 @@ export function mountDoodle(el, api, K) {
     const guesser = other(R.drawer);
     const half = kindOf(s, R) === 'halfhalf';
     const prompt = promptOf(R);
-    node.innerHTML = `<div class="dd-head">${top(s)}${twistBanner(s, R)}</div>
+    node.innerHTML = `<div class="dd-head">${top(s)}${twistBanner(s, R, true)}</div>
       <div class="dd-ph"></div>
       <div class="dd-foot">
         <div class="dd-answer"><small>You drew</small><b>${esc(cap(promptOf(R).show))}</b></div>
@@ -818,6 +833,7 @@ export function mountDoodle(el, api, K) {
     if (R.gold) p.box.classList.add('gold');
     const size = Math.floor(Math.max(150, Math.min(lb.clientWidth - 52, 420, lb.clientHeight - 270)));
     p.paper.fit(size);
+    sizeStamps(p.box, size);
     const btn = document.createElement('button');
     btn.className = 'dd-over-btn';
     p.box.appendChild(btn);

@@ -344,10 +344,6 @@ function rulesTests({ core, doodle, records, packs, D }) {
   for (const [g, p, want] of [['penguen', 'penguin', true], ['pengiun', 'penguin', true], ['pinguen', 'penguin', false], ['strawberries', 'strawberry', true], ['televison', 'tv', true], ['the eiffel tower', 'eiffel tower', true], ['bee', 'bed', false], ['Hot Dogs', 'hot dog', true], ['grlled cheese', 'grilled cheese', true], ['hedgehog', 'hedgehog', true], ['hedgehgo', 'hedgehog', true], ['flamingo', 'flamingo', true], ['flamengo', 'flamingo', true], ['flamengo', 'koala', false]]) {
     assert(guessMatchesV2(g, by(p)) === want, `v2 typo rules: "${g}" ${want ? 'matches' : 'does not match'} "${p}"`);
   }
-  // whole-pool check: no card's own words ever match another card (the only deliberate overlap is the plural "butterflies")
-  const cross = [];
-  for (const A of POOL) for (const x of A.all) for (const B of POOL) if (A.i !== B.i && guessMatchesV2(x, B)) cross.push(`${x} (${A.show}) -> ${B.show}`);
-  assert(cross.join('|') === 'butterflies (butterflies in your stomach) -> butterfly', `no card word matches another card in the whole pool (${cross.join('; ')})`);
   // content checks
   const newPacks = packs.NEW_DECKS;
   assert(newPacks.map((d) => d.id).join() === 'us,kitchen,outabout,creatures', 'new decks are in the frozen order');
@@ -357,12 +353,22 @@ function rulesTests({ core, doodle, records, packs, D }) {
   assert(new Set(POOL.map((p) => p.show)).size === POOL.length && POOL.length === 282 + newPacks.flatMap((d) => d.tiers.flat()).length, `the pool has ${POOL.length} cards, all different`);
   const squashAll = (x) => x.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/['’`]/g, '').replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter((w) => w && !['a', 'an', 'the'].includes(w)).join('');
   const formsOf = (x) => { const f = new Set([x, x + 's', x + 'es']); if (x.endsWith('y')) f.add(x.slice(0, -1) + 'ies'); if (x.endsWith('ies')) f.add(x.slice(0, -3) + 'y'); if (x.endsWith('es')) f.add(x.slice(0, -2)); if (x.endsWith('s') && !x.endsWith('ss')) f.add(x.slice(0, -1)); return f; };
-  const owner = new Map(); const clash = [];
-  for (const p of POOL) for (const alt of p.all) for (const f of formsOf(squashAll(alt))) { if (owner.has(f) && owner.get(f) !== p.i && (p.i >= 282 || owner.get(f) >= 282)) clash.push(`${alt}/${p.show}`); if (!owner.has(f)) owner.set(f, p.i); }
-  assert(clash.length === 0, `no new card shares a word (or its plural) with any other card (${clash.join(', ')})`);
-  const v1Fuzzy = [];
-  for (const N of POOL.filter((p) => p.i >= 282)) for (const B of POOL) { if (B.i === N.i) continue; for (const x of N.all) if (guessMatches(x, B)) v1Fuzzy.push(`${x} -> ${B.show}`); for (const x of B.all) if (guessMatches(x, N)) v1Fuzzy.push(`${x} -> ${N.show}`); }
-  assert(v1Fuzzy.every((x) => /piggy/.test(x)), `no new card fuzzy-matches another, even by the old rules (${v1Fuzzy.join('; ') || 'none'}; only piggyback vs piggy bank, which v2 resolves)`);
+  // a card's words only ever match another card when both list that word (a shared head noun such as
+  // "umbrella") or as its plural / singular. Never by accident (typos, other forms).
+  const cross = [];
+  for (const A of POOL) for (const x of A.all) for (const B of POOL) {
+    if (A.i === B.i || !guessMatchesV2(x, B)) continue;
+    const g = squashAll(x);
+    if (!B.all.some((b) => formsOf(squashAll(b)).has(g))) cross.push(`${x} (${A.show}) -> ${B.show}`);
+  }
+  assert(cross.length === 0, `no card word matches another card by accident, only through a word both list (${cross.slice(0, 8).join('; ')})`);
+  const fair = [['keys', 'house keys'], ['umbrella', 'sharing an umbrella'], ['fries', 'stealing fries'], ['pancakes', 'sunday pancakes'], ['socks', 'dancing in socks'], ['dancing', 'dancing in socks'], ['noodles', 'ramen'], ['candles', 'birthday candles'], ['birthday cake', 'birthday candles'], ['toothbrushes', 'two toothbrushes'], ['rainbows', 'double rainbow'], ['penguins', 'penguins huddling'], ['tent', 'tent in the rain'], ['cat sleeping', 'sleeping cat'], ['sleepy cat', 'sleeping cat'], ['napping cat', 'sleeping cat'], ['sunset over the ocean', 'sunset over the sea'], ['rain and sun', 'sunshower'], ['check in', 'hotel check in'], ['reception', 'hotel check in'], ['missing the train', 'missed the train'], ['nap', 'couch nap'], ['napping', 'couch nap'], ['sleeping on the couch', 'couch nap'], ['blanket', 'shared blanket'], ['sharing a blanket', 'shared blanket'], ['mugs', 'matching mugs'], ['thermometer', 'forehead thermometer'], ['christmas sweaters', 'ugly christmas sweaters'], ['christmas jumpers', 'ugly christmas sweaters'], ['takeout', 'leftovers'], ['takeaway', 'leftovers'], ['towel', 'beach towel'], ['bus', 'double-decker bus'], ['market', 'farmers market'], ['storm', 'thunderstorm'], ['thunder', 'thunderstorm'], ['mist', 'foggy morning'], ['misty', 'foggy morning'], ['snowing', 'first snow'], ['geese', 'geese flying south'], ['migrating birds', 'geese flying south'], ['panda bear', 'panda'], ['boat ride', 'ferry ride'], ['ferry boat', 'ferry ride'], ['security', 'airport security'], ['espresso', 'espresso machine'], ['cooking', 'cooking together']];
+  for (const [g, p] of fair) assert(guessMatchesV2(g, by(p)) === true, `fair guess: "${g}" is accepted for "${p}"`);
+  assert(guessMatchesV2('butterfly', by('butterflies in your stomach')) === false && guessMatchesV2('butterflies', by('butterflies in your stomach')) === true, 'a listed alternate always matches; a plural of one never steals another card\'s own name');
+  // two cards of one deck never share a listed word
+  const dupe = [];
+  for (const d of newPacks) { const seenW = new Map(); for (const t of d.tiers.flat()) { const all = t.split('|'); for (const w of all) { const k = squashAll(w); if (seenW.has(k) && seenW.get(k) !== all[0]) dupe.push(`${w}: ${seenW.get(k)} / ${all[0]}`); seenW.set(k, all[0]); } } }
+  assert(dupe.length === 0, `no two cards in a deck list the same word (${dupe.join(', ')})`);
 
   // near miss
   const nm = (g, p) => nearMiss(g, by(p));
@@ -371,15 +377,18 @@ function rulesTests({ core, doodle, records, packs, D }) {
   assert(!nm('zzzz', 'penguin') && !nm('', 'penguin'), 'near miss: unrelated guesses are not close');
 
   // Half & Half split
-  const dtTotal = (n) => n;
-  assert(halfSplit(enc([stroke(10)])) === 1, 'halfSplit: a one-stroke drawing shows that stroke');
-  assert(halfSplit(enc([stroke(10), stroke(10), stroke(10), stroke(10)])) === 2, 'halfSplit: four equal strokes show two');
-  assert(halfSplit(enc([stroke(10), stroke(10), stroke(60)])) === 3, 'halfSplit: the stroke that crosses half the drawing time is included');
-  assert(halfSplit(enc([stroke(60), stroke(10), stroke(10)])) === 1, 'halfSplit: a long first stroke is the half');
-  assert(halfSplit(enc([stroke(0), stroke(0), stroke(0)])) === 1, 'halfSplit: zero-time strokes still show one');
+  const hs = (strokes) => halfSplit(enc(strokes));
+  assert(hs([stroke(10), stroke(10)]) === 1, 'halfSplit: two equal strokes show the first');
+  assert(hs([stroke(10), stroke(10), stroke(10), stroke(10)]) === 2, 'halfSplit: four equal strokes show two');
+  assert(hs([stroke(10), stroke(10), stroke(60)]) === 2, 'halfSplit: never the whole drawing when it has two or more strokes (capped at n - 1)');
+  assert(hs([stroke(60), stroke(10), stroke(10)]) === 1, 'halfSplit: a long first stroke is the half');
+  assert(hs([stroke(0), stroke(0), stroke(0)]) === 1, 'halfSplit: zero-time strokes still show one');
+  const onePlan = doodle.halfPlan(enc([stroke(10, 10)]));
+  assert(onePlan.k === 0 && onePlan.cut >= 1 && onePlan.cut < 10, `halfPlan: a one-stroke drawing shows the first part of its points (${onePlan.cut} of 10)`);
+  assert(doodle.halfPlan(enc([stroke(10, 2)])).cut === 1 && doodle.halfPlan(enc([stroke(10, 1)])).cut === 1, 'halfPlan: tiny strokes still show one point');
   assert(halfSplit('') === 0 && halfSplit('$$') === 0, 'halfSplit: garbage shows nothing');
   const sp = enc([stroke(9), stroke(12), stroke(7), stroke(30), stroke(5)]);
-  assert(halfSplit(sp) === halfSplit(sp), 'halfSplit is deterministic');
+  assert(halfSplit(sp) === halfSplit(sp) && halfSplit(sp) < 5, 'halfSplit is deterministic and never the full drawing');
 
   // dealing and rotation
   console.log('# doodle rotation and records (pure)');
@@ -451,7 +460,7 @@ function rulesTests({ core, doodle, records, packs, D }) {
   // history, chase, stamps
   const after = { ...patch2, lastRec: 'm-2' };
   assert(/^Your 2nd match together\. Best ever \d+, tonight \d+: so close\.$/.test(records.historyLine(after, 'Classic')), `history line: "${records.historyLine(after, 'Classic')}"`);
-  assert(/Your first match together\./.test(records.historyLine(patch1, 'Classic')) && /new Classic best: 20, up from 12/.test(records.historyLine({ rc_plays: 12, rc_score: 20, rc_prev: 12, rc_new: 1 }, 'Classic')), 'history line: first match, new best');
+  assert(/Your first match together\./.test(records.historyLine(patch1, 'Classic')) && /first Classic game: 7 is the number to beat/.test(records.historyLine({ rc_plays: 3, rc_score: 7, rc_prev: 0, rc_new: 1 }, 'Classic')) && /new Classic best: 20, up from 12/.test(records.historyLine({ rc_plays: 12, rc_score: 20, rc_prev: 12, rc_new: 1 }, 'Classic')), 'history line: first match, new best');
   assert(/12th match together\. Best ever 26, tonight 24: so close\./.test(records.historyLine({ rc_plays: 12, rc_score: 24, rc_prev: 26, rc_new: 0 }, 'Classic')) && /plenty of room to climb/.test(records.historyLine({ rc_plays: 3, rc_score: 9, rc_prev: 26, rc_new: 0 }, 'Classic')) && /matched your Classic best of 26/.test(records.historyLine({ rc_plays: 4, rc_score: 26, rc_prev: 26, rc_new: 0 }, 'Classic')), 'history line: so close / path forward / matched');
   assert(records.ordinal(1) === '1st' && records.ordinal(12) === '12th' && records.ordinal(22) === '22nd' && records.ordinal(113) === '113th', 'ordinals');
   const ch = records.chaseLine({ a_guessRounds: 20, a_guessPts: 58, b_guessRounds: 20, b_guessPts: 62 }, { a: 'Emerson', b: 'Sydney' });
@@ -459,7 +468,7 @@ function rulesTests({ core, doodle, records, packs, D }) {
   assert(records.chaseLine({ a_guessRounds: 2, a_guessPts: 5, b_guessRounds: 2, b_guessPts: 4 }, { a: 'E', b: 'S' }) === '' && /dead level/.test(records.chaseLine({ a_guessRounds: 10, a_guessPts: 30, b_guessRounds: 10, b_guessPts: 30 }, { a: 'E', b: 'S' })), 'chase line: needs a few rounds; equal is "dead level"');
   const stamps = records.stampsOf({ rc_new: 1, rc_prev: 24, rc_score: 26, rc_mile: 25, rc_perfect: 1, rc_gold: 1, rc_streak: 7, hitStreakBest: 7 }, 'Classic');
   assert(stamps.map((x) => x.id).join() === 'best,mile,perfect,gold,streak' && stamps[0].sub === '26, was 24', 'stamps: new best (with the old best), milestone, perfect, golden hit, streak');
-  assert(records.stampsOf({ rc_new: 0, rc_score: 5, rc_streak: 1 }, 'Classic').length === 0, 'no stamps when there is nothing to stamp');
+  assert(records.stampsOf({ rc_new: 0, rc_score: 5, rc_streak: 1 }, 'Classic').length === 0 && records.stampsOf({ rc_new: 1, rc_prev: 0, rc_score: 5, rc_streak: 1 }, 'Classic').length === 0, 'no stamps when there is nothing to stamp, and no NEW BEST without a previous best');
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -538,11 +547,14 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
   // fresh v2 matches (setup done, round 0 waiting for the drawer 'a'), for the twist and clock tests
   const setupOnly = (mode, ok) => { for (let seed = 700; seed < 1400; seed++) { const m = script({ seed, mode, pack: 'classic', plan: [] }); if (ok(m.state)) return { ...m, seed, first: 'a' }; } throw new Error('no seed for ' + mode); };
   const mxOne = setupOnly('mixed', (x) => x.rounds[0].twist === 'oneline' && x.gold < 0);
+  const mxLay = setupOnly('mixed', (x) => x.rounds[0].twist === 'halfhalf' && x.gold < 0);
   const mxSprint = setupOnly('mixed', (x) => x.rounds[0].twist === 'sprint' && x.gold < 0);
   const clk1 = setupOnly('classic', (x) => x.gold < 0);
   const clk2 = setupOnly('classic', (x) => x.gold < 0);
   const seedDocs = {
-    'matches/mxone': doc(mxOne), 'matches/mxsprint': doc(mxSprint), 'matches/clk1': doc(clk1), 'matches/clk2': doc({ ...clk2, seed: clk2.seed + 1 }),
+    // an earlier match's records are already in the shared doc: they must never show on any other match
+    'gamedata/doodle': { lastRec: 'old-match', plays: 7, best_classic: 12, hitStreakBest: 8, perfects: 0, drawings: 9, rc_mode: 'classic', rc_score: 12, rc_prev: 0, rc_new: 1, rc_mile: 10, rc_perfect: 1, rc_gold: 1, rc_streak: 8, rc_plays: 7, a_guessRounds: 20, a_guessPts: 58, b_guessRounds: 20, b_guessPts: 62 },
+    'matches/mxlay': doc(mxLay), 'matches/mxone': doc(mxOne), 'matches/mxsprint': doc(mxSprint), 'matches/clk1': doc(clk1), 'matches/clk2': doc({ ...clk2, seed: clk2.seed + 1 }),
     'matches/fin2g': doc({ ...finished, seed: goldSeed, first: 'a' }),
     'matches/near2': doc({ ...near, seed: NEAR_SEED, first: 'a' }),
     'matches/v1mid': doc(v1mid),
@@ -603,6 +615,7 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
     assert(await a.$$eval('.dd-badge2 b', (xs) => xs.every((x) => x.textContent.trim().length > 2)), 'gallery: each person has a badge');
     const stickersOk = await a.evaluate(() => { const w = document.querySelector('.dd-wall').getBoundingClientRect(); return [...document.querySelectorAll('.dd-frame-pts, .dd-frame-gold')].every((x) => { const r = x.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.right <= w.right + 1 && r.left >= w.left - 1; }); });
     assert(stickersOk, 'gallery: the score and golden stickers sit fully inside the screen (not clipped at the right edge)');
+    assert(!(await visible(a, '.dd-strip')) && !(await visible(a, '.dd-history')) && !(await visible(a, '.dd-chase')), 'gallery of a match that is not the last recorded one: no records strip, history or chase line borrowed from another match');
     assert(await noSideScroll(a), 'gallery: no sideways scrolling');
     await a.waitForTimeout(2500);
     for (const scheme of ['light', 'dark']) {
@@ -829,16 +842,82 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
       await closeGame(a); await closeGame(b);
     }
 
-    // ── Mixed Bag: a twist banner on both phones ──
+    // ── Mixed Bag: a slim twist banner on both phones, nothing on a plain round ──
     {
       const { mid, first, F, O } = await startMatch('mixed', 'everything');
       const st = (await h.engine(a, mid)).state;
       const tw0 = st.rounds[0].twist;
       await F.waitForSelector('.dd-pick');
-      assert(await F.$eval('.dd-twist', (x, t) => x.textContent.includes(t), TWIST_INFO[tw0].title), `mixed: the drawer's pick screen shows the twist banner (${tw0})`);
-      await O.waitForSelector('.dd-twist');
-      assert(await O.$eval('.dd-twist', (x, t) => x.textContent.includes(t), TWIST_INFO[tw0].title), 'mixed: the guesser sees the same twist while waiting');
+      if (tw0 === 'normal') {
+        assert(!(await F.$('.dd-twist')) && !(await O.$('.dd-twist')), 'mixed: a plain round shows no banner at all');
+      } else {
+        assert(await F.$eval('.dd-twist', (x, t) => x.textContent.includes(t), TWIST_INFO[tw0].title), `mixed: the drawer's pick screen shows the twist banner (${tw0})`);
+        await O.waitForSelector('.dd-twist');
+        assert(await O.$eval('.dd-twist', (x, t) => x.textContent.includes(t), TWIST_INFO[tw0].title), 'mixed: the guesser sees the same twist while waiting');
+        assert(await F.$eval('.dd-twist', (x) => x.getBoundingClientRect().height <= 34), 'mixed: the banner is one slim line');
+      }
       await F.screenshot({ path: `${SHOTS}/mixed-pick.png` });
+      await closeGame(a); await closeGame(b);
+    }
+
+    // ── Mixed Bag, a Half & Half round: pick, draw, guess, the way back from an early call, reveal; three screen sizes ──
+    console.log('# doodle Mixed Bag layouts and the early-call way back');
+    {
+      const SZ = [[390, 664, 'portrait'], [375, 548, 'small'], [844, 390, 'landscape']];
+      await openSeed(a, 'mxlay'); await openSeed(b, 'mxlay');
+      await a.waitForSelector('.dd-pick');
+      assert(/Half & Half/i.test(await a.textContent('.dd-twist')), 'mxlay: the pick screen names the twist');
+      for (const [w, hh, name] of SZ) {
+        await a.setViewportSize({ width: w, height: hh }); await a.waitForTimeout(300);
+        const cards = await a.$$eval('.dd-pick', (xs) => xs.length);
+        const first1 = await inView(a, '.dd-pick:nth-child(1)');
+        const all3 = name !== 'landscape' || (await inView(a, '.dd-pick:nth-child(2)') && await inView(a, '.dd-pick:nth-child(3)') && await inView(a, '.dd-pick:nth-child(1)'));
+        assert(cards === 3 && first1 && all3 && await noSideScroll(a), `Mixed Bag pick ${w}x${hh}: the cards are above the fold (first ${first1}, landscape all three ${all3})`);
+        if (name === 'landscape') await a.screenshot({ path: `${SHOTS}/mixed-pick-landscape.png` });
+      }
+      await a.setViewportSize({ width: 390, height: 664 }); await a.waitForTimeout(250);
+      await a.tap('.dd-pick[data-i="0"]'); await a.waitForSelector('.dd-paper.can-draw canvas');
+      assert(await a.$eval('.dd-paper canvas', (c) => getComputedStyle(c).touchAction) === 'none', 'the drawing paper blocks touch scrolling (touch-action: none)');
+      for (const [w, hh, name] of SZ) {
+        await a.setViewportSize({ width: w, height: hh }); await a.waitForTimeout(350);
+        const ok = await inView(a, '.dd-paper') && await inView(a, '.dd-send') && await inView(a, '.dd-timer') && await inView(a, '.dd-swatch[data-c="3"]') && await inView(a, '[data-a="undo"]');
+        assert(ok && await noSideScroll(a), `Mixed Bag draw ${w}x${hh}: paper, timer, tools and Send are in view with the twist banner`);
+        if (name === 'small') await a.screenshot({ path: `${SHOTS}/mixed-draw-small.png` });
+      }
+      await a.setViewportSize({ width: 390, height: 664 }); await a.waitForTimeout(250);
+      await touchDraw(a, cdps.a, PICS[1]); await a.tap('.dd-send'); await h.settle();
+      await b.waitForSelector('.dd-half:not([hidden])');
+      assert(await b.$eval('.dd-paper canvas', (c) => getComputedStyle(c).touchAction) !== 'none', 'the replay paper does not block scrolling (touch-action is not none)');
+      assert(await b.$eval('.dd-over-btn', (x) => x.getBoundingClientRect().height >= 44 && x.getBoundingClientRect().width >= 44), 'the Replay / Skip button is at least 44 px');
+      for (const [w, hh, name] of SZ) {
+        await b.setViewportSize({ width: w, height: hh }); await b.waitForTimeout(350);
+        const ok = await inView(b, '.dd-know') && await inView(b, '.dd-rest') && await inView(b, '.dd-giveup') && await inView(b, '.dd-paper');
+        assert(ok && await noSideScroll(b), `Mixed Bag guess ${w}x${hh}: the paper, both Half & Half buttons and Give up are in view`);
+      }
+      await b.setViewportSize({ width: 390, height: 664 }); await b.waitForTimeout(250);
+      await b.tap('.dd-know'); await b.waitForSelector('.dd-form:not([hidden])');
+      for (const [w, hh] of SZ) {
+        await b.setViewportSize({ width: w, height: hh }); await b.waitForTimeout(350);
+        assert(await inView(b, '.dd-unearly') && await inView(b, '.dd-form button') && await inView(b, '.dd-giveup') && await inView(b, '.dd-input'), `early call ${w}x${hh}: "Never mind, show me the rest", the guess box and Give up are all in view`);
+      }
+      await b.setViewportSize({ width: 390, height: 664 }); await b.waitForTimeout(250);
+      await b.tap('.dd-unearly'); await h.settle();
+      let ms = (await h.engine(a, 'mxlay')).state;
+      assert(ms.rounds[0].rest === true && ms.rounds[0].guesses.length === 0 && !(await visible(b, '.dd-half')) && await visible(b, '.dd-form'), 'the way back from an early call: "Never mind, show me the rest" shows the rest and opens the guess box without costing a try');
+      const mw = POOL[ms.rounds[0].choices[ms.rounds[0].pick]].show;
+      await b.waitForTimeout(600); if (await b.$eval('.dd-over-btn', (x) => /skip/i.test(x.textContent)).catch(() => false)) await b.tap('.dd-over-btn');
+      await guessText(b, mw); await h.settle();
+      ms = (await h.engine(a, 'mxlay')).state;
+      assert(ms.r === 1 && ms.rounds[0].points === STAKES[ms.rounds[0].tier][1], `mixed halfhalf: after the rest, a first guess pays the 2nd-guess value (${ms.rounds[0].points})`);
+      await b.waitForSelector('.dd-next');
+      for (const [w, hh, name] of SZ) {
+        await b.setViewportSize({ width: w, height: hh }); await b.waitForTimeout(350);
+        assert(await inView(b, '.dd-next') && await inView(b, '.dd-stamp') && await noSideScroll(b), `reveal ${w}x${hh}: the next button and the stamp are in view`);
+        const stampFits = await b.evaluate(() => { const s = document.querySelector('.dd-stamp').getBoundingClientRect(); const p = document.querySelector('.dd-paper').getBoundingClientRect(); return s.left >= p.left - 1 && s.right <= p.right + 1 && s.top >= p.top - 1 && s.bottom <= p.bottom + 1; });
+        assert(stampFits, `reveal ${w}x${hh}: the stamp sits inside the paper`);
+        if (name !== 'portrait') await b.screenshot({ path: `${SHOTS}/reveal-${name}.png` });
+      }
+      await b.setViewportSize({ width: 390, height: 664 });
       await closeGame(a); await closeGame(b);
     }
 
@@ -875,9 +954,9 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
       await a.waitForSelector('.dd-wall'); await b.waitForSelector('.dd-wall');
       await waitFor(async () => (await visible(a, '.dd-strip')) && (await visible(b, '.dd-strip')), 6000, 'records strip on both phones');
       const stripA = (await a.textContent('.dd-strip')).replace(/\s+/g, ' '); const stripB = (await b.textContent('.dd-strip')).replace(/\s+/g, ' ');
-      assert(stripA === stripB && /On the board|New best/i.test(stripA) && /Perfect match/.test(stripA) && /6 in a row/.test(stripA), `records strip (same on both phones): ${stripA}`);
+      assert(stripA === stripB && /New best/i.test(stripA) && /30[^,]*, was 12|was 12/.test(stripA) && /10 drawings/.test(stripA) && /Perfect match/.test(stripA) && /6 in a row/.test(stripA) && !/On the board/.test(stripA), `records strip (same on both phones): ${stripA}`);
       const histA = await a.textContent('.dd-history'); const histB = await b.textContent('.dd-history');
-      assert(histA === histB && /match together/.test(histA), `history line: "${histA}"`);
+      assert(histA === histB && /8th match together\. A new Classic best: \d+, up from 12/.test(histA), `history line: "${histA}"`);
       const dd = await a.evaluate(() => JSON.parse(localStorage.getItem('ju.games.data.v1') || '{}').doodle);
       assert(dd.lastRec === mid && dd.perfects === 1 && dd.hitStreak >= 6 && dd.drawings >= 6 && dd.best_classic === fin.state.score && typeof dd.seen === 'string', 'records: lastRec, perfects, hitStreak, drawings, best_classic are in the shared doc');
       const dbDoc = h.docs['gamedata/doodle'];
@@ -898,7 +977,7 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
       const F2 = pages[e2.first];
       await F2.waitForSelector('.dd-start');
       assert(/^Same again/.test(await F2.textContent('.dd-start')) && /Classic · Us/.test(await F2.textContent('.dd-start')), 'rematch: one tap "Same again" with the last mode and pack preselected');
-      if (!process.env.LATE) assert(await visible(F2, '.dd-fridge') && /On the fridge/.test(await F2.textContent('.dd-fridge')), 'the pinned drawing shows on the setup screen as a keepsake');
+      if (!process.env.LATE) assert(await visible(F2, '.dd-fridge') && /On the fridge/.test(await F2.$eval('.dd-fridge', (x) => x.getAttribute('aria-label'))) && await F2.evaluate(() => { const f = document.querySelector('.dd-fridge').getBoundingClientRect(); const s = document.querySelector('.dd-start').getBoundingClientRect(); const m = document.querySelector('.dd-mode').getBoundingClientRect(); return f.bottom <= m.top + 1 && f.bottom < s.top && f.right <= innerWidth; }), 'the pinned drawing shows on the setup screen as a small keepsake in the header, clear of the Start button');
       await F2.screenshot({ path: `${SHOTS}/setup-same-again.png` });
       await F2.tap('.dd-mode[data-m="mixed"]');
       assert(/^Start/.test(await F2.textContent('.dd-start')), 'changing the mode turns the button back into "Start"');
@@ -955,6 +1034,9 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
     assert(t2.rounds[0].timeUp === true && t2.rounds[0].points === 0 && t2.phase === 'draw', 'time up with an empty paper: a blank drawing, 0 points, the next round starts');
     await a.waitForSelector('.dd-waiting');
     assert(/Time/i.test(await a.textContent('.dd-stamp')) && /ran out/i.test(await a.textContent('.dd-note')), 'the drawer sees "Time’s up" on the result');
+    await a.setViewportSize({ width: 375, height: 548 }); await a.waitForTimeout(400);
+    assert(await a.evaluate(() => { const s = document.querySelector('.dd-stamp').getBoundingClientRect(); const p = document.querySelector('.dd-paper').getBoundingClientRect(); return s.left >= p.left && s.right <= p.right; }), 'the "Time’s up" stamp fits inside a small paper');
+    await a.setViewportSize({ width: 390, height: 664 });
     await closeGame(a);
     await openSeed(b, 'clk2');
     await b.waitForSelector('.dd-next');

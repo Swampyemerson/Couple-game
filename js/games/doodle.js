@@ -248,13 +248,16 @@ export function guessMatchesV2(guess, prompt) {
   for (const keep of [false, true]) {
     const g = squash(guess, keep);
     if (!g) continue;
-    // a side alternate that is another card's own name does not count ("butterfly" is not
-    // "butterflies in your stomach"): that guess belongs to the other card
+    // An alternate listed for this card always matches as written. A plural / singular variant of
+    // one does not when it is another card's own name ("butterfly" is not "butterflies in your
+    // stomach"): that guess belongs to the other card.
     const named = showOwners.get(g);
     const foreign = named && [...named].some((i) => i !== prompt.i);
-    for (let n = 0; n < prompt.all.length; n++) {
-      const a = squash(prompt.all[n], keep);
-      if (a && forms(a).has(g) && !(n > 0 && foreign)) return true;
+    for (const alt of prompt.all) {
+      const a = squash(alt, keep);
+      if (!a) continue;
+      if (a === g) return true;
+      if (!foreign && forms(a).has(g)) return true;
     }
   }
   for (const keep of [false, true]) {
@@ -291,19 +294,32 @@ export function nearMiss(guess, prompt) {
   return false;
 }
 
-// Half & Half: how many strokes the guesser sees first. The first stroke at which the cumulative
-// drawing time reaches half of the total, inclusive; never fewer than one.
-export function halfSplit(str) {
+// Half & Half: how much of the drawing the guesser sees first. The first stroke at which the
+// cumulative drawing time reaches half of the total, inclusive, but never the whole drawing when
+// it has two or more strokes. A one-stroke drawing shows the first part of that stroke's points
+// (up to half the drawing time, at least one point, never all of them).
+// Returns { k, cut }: k whole strokes, then (when cut > 0) the first `cut` points of the next one.
+export function halfPlan(str) {
   const d = decode(str);
-  if (!d || !d.length) return 0;
-  const dur = d.map((st) => st.pts.reduce((t, p) => t + Math.min(p[2] * 8, 450), 0));
-  const total = dur.reduce((a, b) => a + b, 0);
-  let cum = 0;
-  for (let k = 0; k < d.length; k++) {
-    cum += dur[k];
-    if (cum >= total / 2) return k + 1;
+  if (!d || !d.length) return { k: 0, cut: 0 };
+  const sum = (a) => a.reduce((t, x) => t + x, 0);
+  if (d.length === 1) {
+    const dt = d[0].pts.map((p) => Math.min(p[2] * 8, 450));
+    const total = sum(dt);
+    let cum = 0; let cut = d[0].pts.length;
+    for (let i = 0; i < dt.length; i++) { cum += dt[i]; if (cum >= total / 2) { cut = i + 1; break; } }
+    return { k: 0, cut: Math.max(1, Math.min(cut, d[0].pts.length - 1 || 1)) };
   }
-  return d.length;
+  const dur = d.map((st) => sum(st.pts.map((p) => Math.min(p[2] * 8, 450))));
+  const total = sum(dur);
+  let cum = 0; let shown = d.length - 1;
+  for (let k = 0; k < d.length; k++) { cum += dur[k]; if (cum >= total / 2) { shown = k + 1; break; } }
+  return { k: Math.max(1, Math.min(shown, d.length - 1)), cut: 0 };
+}
+// How many strokes (whole or partial) the half shows.
+export function halfSplit(str) {
+  const { k, cut } = halfPlan(str);
+  return k + (cut ? 1 : 0);
 }
 
 export function dealFor(seed, pack) {
@@ -464,7 +480,7 @@ function resultV2(s) {
 
 const KIT = {
   ROUNDS, DRAW_SECONDS, INK_CHARS, TIER_NAMES, POOL, tierOf: poolTier, encode, decode, charsOf, other,
-  ratingOf, guessMatches, guessMatchesV2, nearMiss, halfSplit, STAKES, EARLY, kindOf, drawSecondsFor, maxScore, ratingOf2,
+  ratingOf, guessMatches, guessMatchesV2, nearMiss, halfSplit, halfPlan, STAKES, EARLY, kindOf, drawSecondsFor, maxScore, ratingOf2,
   dealFresh, POINTS, ROUNDS_V2,
 };
 

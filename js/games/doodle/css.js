@@ -27,13 +27,14 @@ export const CSS = `
 
     /* paper */
     .g-doodle .dd-paper { position: relative; flex: none; background: var(--g-card); border: 2px solid var(--g-ink); border-radius: calc(var(--g-radius) * 0.6); box-shadow: var(--g-shadow); overflow: hidden; }
-    .g-doodle .dd-paper canvas { display: block; touch-action: none; }
+    .g-doodle .dd-paper canvas { display: block; }
+    .g-doodle .dd-paper.can-draw canvas { touch-action: none; }
     .g-doodle .dd-paper.can-draw canvas { cursor: crosshair; }
     .g-doodle .dd-ink { position: absolute; left: 8px; right: 8px; bottom: 6px; height: 5px; border-radius: 3px; background: var(--g-line); opacity: 0; transition: opacity 0.2s; pointer-events: none; }
     .g-doodle .dd-ink.on { opacity: 1; }
     .g-doodle .dd-ink i { display: block; height: 100%; width: 0; border-radius: 3px; background: var(--g-ink); }
     .g-doodle .dd-ink.low i { background: var(--g-bad); }
-    .g-doodle .dd-over-btn { position: absolute; right: 8px; bottom: 8px; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 6px 12px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); font-weight: 800; font-size: 0.85rem; box-shadow: var(--g-shadow); touch-action: manipulation; }
+    .g-doodle .dd-over-btn { position: absolute; right: 8px; bottom: 8px; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 6px 14px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); font-weight: 800; font-size: 0.85rem; box-shadow: var(--g-shadow); touch-action: manipulation; }
     .g-doodle .dd-over-btn svg { width: 16px; height: 16px; }
     .g-doodle .dd-over-btn:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge, var(--g-ink)); }
 
@@ -94,7 +95,7 @@ export const CSS = `
     .g-doodle .dd-giveup.armed { color: var(--g-bad); }
 
     /* stamps + results */
-    .g-doodle .dd-stamp { position: absolute; left: 50%; top: 50%; padding: 6px 14px; border: 4px solid currentColor; border-radius: 8px; background: color-mix(in srgb, var(--g-card) 82%, transparent); font-family: var(--g-font-display); font-weight: 900; font-size: 2.3rem; line-height: 1.05; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; transform: translate(-50%, -50%) rotate(-9deg); pointer-events: none; }
+    .g-doodle .dd-stamp { position: absolute; left: 50%; top: 50%; padding: 0.12em 0.36em; border: 3px solid currentColor; border-radius: 8px; background: color-mix(in srgb, var(--g-card) 82%, transparent); font-family: var(--g-font-display); font-weight: 900; font-size: 2.3rem; line-height: 1.05; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; transform: translate(-50%, -50%) rotate(-9deg); pointer-events: none; }
     .g-doodle .dd-stamp.good { color: var(--g-good); } .g-doodle .dd-stamp.bad { color: var(--g-bad); }
     .g-doodle .dd-stamp.anim { animation: dd-stamp 0.42s cubic-bezier(.2,1.6,.4,1) both; }
     .g-doodle .dd-answer { text-align: center; display: flex; flex-direction: column; gap: 2px; }
@@ -164,7 +165,9 @@ export const CSS = `
     .g-doodle .dd-scr.land.has-p > .dd-head { grid-column: 2; grid-row: 1; }
     .g-doodle .dd-scr.land.has-p > .dd-foot { grid-column: 2; grid-row: 2; justify-content: flex-start; }
     .g-doodle .dd-scr.land .dd-picks { flex-direction: row; }
-    .g-doodle .dd-scr.land .dd-pick { flex-direction: column; align-items: flex-start; min-height: 110px; flex: 1; min-width: 0; }
+    .g-doodle .dd-scr.land .dd-head .dd-sub, .g-doodle .dd-scr.land .dd-picks ~ .dd-note { display: none; }
+    .g-doodle .dd-scr.land .dd-head .dd-h { font-size: 1.15rem; margin: 0; }
+    .g-doodle .dd-scr.land .dd-pick { flex-direction: column; align-items: flex-start; min-height: 84px; padding: 8px 10px; gap: 6px; flex: 1; min-width: 0; }
     .g-doodle .dd-scr.land .dd-modes { grid-template-columns: repeat(3, 1fr); }
     .g-doodle .dd-scr.land .dd-mode:last-child { grid-column: auto; }
 
@@ -184,15 +187,16 @@ export const CSS = `
     .g-doodle .dd-packnote { text-align: left; font-size: 0.82rem; }
     .g-doodle .dd-setup-foot { position: sticky; bottom: 0; z-index: 2; width: 100%; margin-top: auto; padding: 8px 0 2px; background: var(--g-bg); }
     .g-doodle .dd-start small { display: block; font-size: 0.72rem; font-weight: 800; opacity: 0.85; }
-    .g-doodle .dd-fridge { width: 100%; display: flex; align-items: center; gap: 12px; padding: 8px 10px; border: 2px dashed var(--g-ink); border-radius: var(--g-radius); }
-    .g-doodle .dd-fridge-pic canvas { display: block; border: 2px solid var(--g-ink); border-radius: 4px; background: var(--g-card); transform: rotate(-2deg); }
-    .g-doodle .dd-fridge-txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; font-weight: 700; font-size: 0.85rem; }
-    .g-doodle .dd-fridge-txt b { font-family: var(--g-font-display); font-weight: 900; font-size: 1rem; overflow-wrap: anywhere; }
+    .g-doodle .dd-sethead { position: relative; }
+    .g-doodle .dd-fridge { position: absolute; right: 2px; top: 0; }
+    .g-doodle .dd-fridge-pic canvas { display: block; border: 2px solid var(--g-ink); border-radius: 4px; background: var(--g-card); transform: rotate(3deg); }
 
     /* twists, pay, ladder, Half & Half */
-    .g-doodle .dd-twist { width: 100%; box-sizing: border-box; display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 10px; padding: 6px 12px; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-hl); color: var(--g-on-ink); box-shadow: var(--g-shadow-sm); }
-    .g-doodle .dd-twist b { font-family: var(--g-font-display); font-weight: 900; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.03em; }
-    .g-doodle .dd-twist span { font-weight: 800; font-size: 0.8rem; }
+    .g-doodle .dd-twist { width: 100%; box-sizing: border-box; display: flex; align-items: baseline; gap: 10px; padding: 3px 10px; white-space: nowrap; overflow: hidden; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-hl); color: var(--g-on-ink); box-shadow: var(--g-shadow-sm); }
+    .g-doodle .dd-twist b { flex: none; font-family: var(--g-font-display); font-weight: 900; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; }
+    .g-doodle .dd-twist span { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 800; font-size: 0.78rem; }
+    .g-doodle .dd-scr.short .dd-twist span { display: none; }
+    .g-doodle .dd-scr.short .dd-twist.soft { display: none; }
     .g-doodle .dd-pay { font-weight: 800; font-size: 0.74rem; color: var(--g-muted); }
     .g-doodle .dd-rungs { display: flex; gap: 6px; justify-content: center; }
     .g-doodle .dd-rungs i { font-style: normal; font-weight: 900; font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 10px; border: 2px solid var(--g-ink); border-radius: 6px; background: var(--g-card); color: var(--g-muted); }
@@ -200,6 +204,9 @@ export const CSS = `
     .g-doodle .dd-rungs i.now { background: var(--g-hl); color: var(--g-on-ink); }
     .g-doodle .dd-half { width: 100%; display: flex; gap: 8px; }
     .g-doodle .dd-half .gm-btn { flex: 1; min-height: 54px; padding-left: 8px; padding-right: 8px; }
+    .g-doodle .dd-stick { position: sticky; bottom: 0; z-index: 2; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 6px 0 2px; background: var(--g-bg); }
+    .g-doodle .dd-actrow { width: 100%; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 0 12px; }
+    .g-doodle .dd-unearly { min-height: 44px; padding: 8px 10px; font-weight: 800; font-size: 0.88rem; color: var(--g-ink); text-decoration: underline; text-underline-offset: 3px; touch-action: manipulation; }
     .g-doodle .dd-know small { display: block; font-size: 0.72rem; font-weight: 800; }
     .g-doodle .dd-pips i.pay { width: auto; min-width: 24px; height: 24px; padding: 0 6px; box-sizing: border-box; border-radius: 12px; display: inline-grid; place-items: center; font-style: normal; font-weight: 900; font-size: 0.78rem; }
     .g-doodle .dd-pips i.pay.used { color: var(--g-card); text-decoration: line-through; }
