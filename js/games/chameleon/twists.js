@@ -14,7 +14,7 @@ export const DUSK = { steps: 12, hemi: 0.45, sun: 0.6, tint: '#2b2447', tintK: 0
 /** Bounty spot: radius (m) of the prize, the hider's multiplier on a survive, the seeker's bonus on a tag. */
 export const BOUNTY = { r: 3, mult: 1.5, tag: 15 };
 /** The underdog gap (points); XL maps are bigger, so every point is cheaper there (× 1.5). */
-export const UNDERDOG = { gap: 25, xl: 1.5, hotseatHideMs: 10000 };
+export const UNDERDOG = { gap: 40, xl: 1.5, hotseatHideMs: 10000 };
 /** Sudden death: a quick pair of rounds. */
 export const SUDDEN = { hide: 20000, seek: 30000, dbSeek: 60000, rounds: 2, dbRounds: 1 };
 
@@ -216,15 +216,17 @@ export const wagerPay = (base, streak) => base * Math.min(3, Math.max(1, streak 
 
 /**
  * Today's hide on one phone: the day's twist, unless it is one of the rules a hotseat can't play
- * (maps.js TWISTS: head start, paint while hunted), then the next one in the list that works.
+ * (maps.js TWISTS: head start, paint while hunted), then a seeded pick of the day among the ones that work.
  * cards.js shows this label on the Today button, game.js plays it.
  */
 export function dailyTwistFor(plan, local) {
   if (!local || !plan || !plan.twist) return plan ? plan.twist : null;
   const alive = (t) => !Object.keys(t.rules || {}).some((k) => LOCAL_DEAD.includes(k));
   if (alive(plan.twist)) return plan.twist;
-  const i = Math.max(0, TWISTS.findIndex((t) => t.id === plan.twist.id));
-  for (let k = 1; k <= TWISTS.length; k++) { const t = TWISTS[(i + k) % TWISTS.length]; if (alive(t)) return t; }
+  // a seeded pick of the day among the twists a hotseat can play (head start and paint-while-hunted used to
+  // all turn into Floor only: 14 of 31 days)
+  const ok = TWISTS.filter(alive);
+  if (ok.length) return ok[seeded(`daily-hot:${plan.day}:${plan.twist.id}`).int(ok.length)];
   return plan.twist;
 }
 
@@ -236,6 +238,12 @@ export const TWIST_CSS = `
 .chm .chm-twisttag { font-weight: 900; white-space: nowrap; }
 .chm .chm-twistrow { margin: 6px 0 0; }
 .chm .chm-twistrow .chm-seg2 button { min-height: 44px; }
+/* round announcements are small and sit high, clear of the hide buttons, the pose bar and the paint tools; and a hand-over curtain never wears the last recap's stickers */
+.chm .chm-poplane:has(.chm-pop.ann) { top: calc(96px + var(--chm-st)); gap: 4px; }
+.chm .chm-poplane .chm-pop.ann { font-size: 1.05rem; padding: 3px 14px 4px; border-width: 2.5px; border-radius: 12px; box-shadow: 3px 3px 0 var(--g-edge); display: flex; align-items: baseline; gap: 8px; }
+.chm .chm-poplane .chm-pop.ann small { display: inline; margin: 0; font-size: .7rem; }
+@media (max-height: 520px) and (orientation: landscape) { .chm .chm-poplane:has(.chm-pop.ann) { top: calc(100px + var(--chm-st)); right: 34%; } }
+.chm:has(.chm-over[data-curtain]) .chm-pops { display: none; }
 /* hand-over curtains: the main button is always on screen. It sticks to the foot of the card whenever the card has to scroll (chips, twist and underdog stickers make it tall), and a short landscape phone (iPhone 13: 342 px) also packs the stickers and the call chips into single lines. */
 .chm .chm-over[data-curtain] .chm-go { position: sticky; bottom: 0; z-index: 2; margin-top: auto; box-shadow: 0 0 0 8px var(--g-card), var(--g-shadow, 3px 3px 0 var(--g-edge)); }
 @media (max-height: 520px) and (orientation: landscape) {
@@ -284,7 +292,7 @@ export function twistRows(r, hs, canEdit) {
   const row = (label, hint, control) => `<div class="chm-set"><span><b>${label}</b>${hint ? `<small>${hint}</small>` : ''}</span>${control}</div>`;
   return `<h3>Twists &amp; comebacks</h3><div class="chm-sets" data-twistrows="1">`
     + row('Round twists', r.twists === 'off' ? 'Every round plays by the plain rules' : r.twists === 'every' ? 'Fog, dusk, three colours or a bounty spot every round' : 'About half the rounds (never the first) get fog, dusk, three colours or a bounty spot', seg('twists', [['off', 'Off'], ['some', 'Some'], ['every', 'Every']]))
-    + (hs ? row('Underdog boost', r.underdog ? 'Trailing by 25+ points: +1 pellet seeking, +1 escape hiding' : 'No catch-up help', seg('underdog', [[true, 'On'], [false, 'Off']])) : '')
+    + (hs ? row('Underdog boost', r.underdog ? `Trailing by ${UNDERDOG.gap}+ points (round 3 on): +1 pellet seeking, +1 escape hiding` : 'No catch-up help', seg('underdog', [[true, 'On'], [false, 'Off']])) : '')
     + row('Sudden death', r.sudden ? (hs ? 'A tied match plays one more pair: 20 s hide, 30 s hunt' : 'A tied match plays one more round') : 'A tied match is a draw', seg('sudden', [[true, 'On'], [false, 'Off']]))
     + '</div>';
 }

@@ -538,7 +538,7 @@ export function createGame(el, api) {
     if (stage.map.id !== S.match.map) loadMap(S.match.map);
     // update pass: the underdog of this round (the player trailing by 25+ points; not in a sudden-death round)
     const um = S.match;
-    um.ud = um.mode === 'hs' && um.rules.underdog && r > 1 && !sdRound(r) ? (() => { const w = underdogOf(um.scores, curMapEntry().size === 'XL'); return w ? { r, w } : null; })() : null;
+    um.ud = um.mode === 'hs' && um.rules.underdog && r > 2 && !sdRound(r) ? (() => { const w = underdogOf(um.scores, curMapEntry().size === 'XL'); return w ? { r, w } : null; })() : null;
     const spawn = pickSpawns(r);
     if (local) enter('curtain', { round: r, data: { kind: 'hide', who: hiderOfRound(r), spawn }, at }, 0);
     else {
@@ -623,11 +623,13 @@ export function createGame(el, api) {
       // the seeker's wager (rules.wager): a right call on where they hid pays the stake ('CALLED IT')
       const wg = (m.rules && m.rules.wager) | 0; const call = R.call[sk];
       rec.zone = hideZone(h, rec.surf); // R: where they were (tendencies + the wager)
-      // called-it streak: the stake × min(3, the seeker's run of right calls in a row); a wrong call or none ends the run
+      // called-it streak: the stake × min(3, the seeker's run of right calls on rounds they found the hider); a wrong call or none ends the run
       if (!m.cs) m.cs = { a: 0, b: 0 };
       if (wg && call) {
         rec.call = call;
-        if (call === rec.zone) { m.cs[sk] = (m.cs[sk] | 0) + 1; rec.called = true; rec.streak = m.cs[sk]; rec.wagerPts = wagerPay(wg, m.cs[sk]); m.scores[sk] += rec.wagerPts; }
+        // a right call on a round the hider SURVIVED pays the plain stake and leaves the run alone (it neither grows nor ends it): the streak counts finds
+        if (call === rec.zone && res.found) { m.cs[sk] = (m.cs[sk] | 0) + 1; rec.called = true; rec.streak = m.cs[sk]; rec.wagerPts = wagerPay(wg, m.cs[sk]); m.scores[sk] += rec.wagerPts; }
+        else if (call === rec.zone) { rec.called = true; rec.wagerPts = wg; m.scores[sk] += wg; }
         else { if ((m.cs[sk] | 0) >= 2) rec.streakBroken = m.cs[sk] | 0; m.cs[sk] = 0; }
       } else m.cs[sk] = 0;
       rec.passes = R.passes; rec.closest = Number.isFinite(R.closest) ? Math.round(R.closest * 10) / 10 : null; rec.stared = R.stared; rec.under = R.under;
@@ -860,6 +862,14 @@ export function createGame(el, api) {
       add(px + nx * off, pz + nz * off, floorBelow(py));
     }
     for (const r of mp.rooms || []) add((r.x0 + r.x1) / 2, (r.z0 + r.z1) / 2, floors[r.floor || 0] || 0);
+    // …and a seeded scatter of floor points over each floor's footprint (the same list on both phones: it only depends on the map),
+    // so a small map's spot is no longer one of a few probes / spawns. Each must stand clear (no collider within a body's width).
+    { const B = W.bounds; const rs = seeded(`bpool:${mp.id}`); const per = Math.max(24, Math.min(60, Math.round(((B.maxX - B.minX) * (B.maxZ - B.minZ)) / 3)));
+      for (const fy of floors) for (let i = 0; i < per; i++) {
+        const x = B.minX + 0.6 + rs() * (B.maxX - B.minX - 1.2); const z = B.minZ + 0.6 + rs() * (B.maxZ - B.minZ - 1.2);
+        if (W.boxAt(x, fy + 0.3, z, 0.45, SOLID)) continue;
+        add(x, z, fy);
+      } }
     const avoid = (sp.hiderSpawns || []).concat(sp.seekerSpawns || []);
     const inf = mp.info || {}; const minD = clamp(Math.hypot(inf.w || 10, inf.d || 8) * 0.3, 2.5, 5);
     const c = pickBounty(S.match.id, round, cands, avoid, minD);
@@ -899,7 +909,7 @@ export function createGame(el, api) {
     const m = S.match; if (!m) return;
     const v0 = viewer(); if (!local && v0 && roleOf(v0) === 'seeker') return; // the seeker's blind card already carries them
     let i = 0;
-    const pop = (text, cls, sub) => { const k = i++; later(() => { if (S.phase.round === round) hud.pop(text, cls, sub); }, 250 + k * 1100); };
+    const pop = (text, cls, sub) => { const k = i++; later(() => { if (S.phase.round === round) hud.pop(text, `${cls} ann`, sub); }, 250 + k * 1100); };
     if (sdRound(round)) pop('SUDDEN DEATH', 'ink', m.mode === 'db' ? 'one more round decides it' : round === m.rounds - m.sd + 1 ? 'round 1 of 2 · 20 s to hide' : 'round 2 of 2 · points decide');
     const tw = twistOfRound(round); if (tw) pop(tw.label, 'hl', tw.short === 'Bounty' ? `survive or tag within ${BOUNTY.r} m of the ring` : tw.short === '3 colours' ? 'only these three colours' : tw.short === 'Fog' ? 'it thickens near the end' : 'the light is fading');
     const ud = underdogFor(round);

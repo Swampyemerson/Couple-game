@@ -14,7 +14,8 @@
 //   hotcolours hotseat: Three colours locks the hider's phone only
 //   hotunder  hotseat: Underdog (+10 s to hide, +1 pellet, the sticker on the hand-over curtain)
 //   sudden    hotseat: a tie after the last round plays a sudden-death pair (20 s / 30 s clocks, title card, final card, sd_wins)
-//   streak    hotseat: the called-it streak pays 5 / 10 / 15, 'Streak broken' for the hider, a_callstreak
+//   streak    hotseat: the called-it streak pays 5 / 10 / 15 (counting finds only: a right call on a survived round pays 5 and leaves the run), 'Streak broken' for the hider, a_callstreak
+//   hostreload two phones: the host reloads mid-hide and mid-hunt (the clock keeps its absolute end, hunting stays on), the seeker's wager call survives its own reload
 //   fog       two phones, House: Fog rolls in (≤ 6 steps over the last third, pellet range follows, restored exactly, draw calls)
 //   dusk      two phones: Dusk (lights fade in steps, glints brighter, restored exactly), the card stickers
 //   colours   two phones: Three colours (3 map colours, brush locked, no Pick/Stamp, cleared at the round's end)
@@ -164,13 +165,25 @@ async function unitSection() {
     assert(pal.length === 3 && new Set(pal).size === 3 && pal.every((x) => /^#[0-9a-f]{6}$/.test(x)), `Three colours: three distinct swatches (${pal.join(' ')})`);
     assert(JSON.stringify(pal) === JSON.stringify(T.paletteFor('s', 2, probes)) && JSON.stringify(pal) !== JSON.stringify(T.paletteFor('s', 3, probes)), 'the palette is seeded by match and round');
     assert(T.paletteFor('s', 1, [{ hex: '#ffffff' }]).length === 3, 'a map with one probe still gets three swatches');
+    // the room's own colours (area-weighted): a major surface is always in, every pair is clearly different (ΔE), aqua / sage come up
+    const launder = [['#b8c8cc', 698], ['#4c6c78', 507], ['#f8fcf8', 434], ['#e8e0d4', 376], ['#90d8cc', 156], ['#4070d0', 54], ['#b8b4ac', 48], ['#40a8a4', 38], ['#f07060', 24]].map(([hex, w]) => ({ hex, w }));
+    const living = [['#5c3c2c', 196], ['#f8f4e8', 113], ['#c49868', 80], ['#e8ccb0', 62], ['#d0e0e4', 36], ['#f0e4c8', 31], ['#784c34', 29], ['#80a89c', 24], ['#cc9438', 21], ['#70907c', 17], ['#b84c3c', 14]].map(([hex, w]) => ({ hex, w }));
+    for (const [nm, cs] of [['Launderette', launder], ['Living', living]]) {
+      let minDE = 1e9; let major = true;
+      for (let r = 1; r <= 24; r++) { const p = T.paletteFor('m' + (r % 5), r, cs); for (let i = 0; i < 3; i++) for (let j = i + 1; j < 3; j++) minDE = Math.min(minDE, T.deltaE(p[i], p[j])); major = major && cs.slice(0, 3).some((c) => p.includes(c.hex)); }
+      assert(minDE >= T.SWATCH_DE && major, `${nm}: every pair of swatches differs by ΔE ${minDE.toFixed(0)} (>= ${T.SWATCH_DE}) and one is a major surface colour`);
+    }
+    const inPal = (cs, test) => { for (let r = 1; r <= 24; r++) if (T.paletteFor('m' + (r % 5), r, cs).some(test)) return true; return false; };
+    assert(inPal(launder, (h) => ['#90d8cc', '#40a8a4'].includes(h)), 'Launderette palettes include its aqua');
+    assert(inPal(living, (h) => ['#80a89c', '#70907c'].includes(h)), 'Living palettes include its sage');
+
     const cands = [{ x: 0, y: 0, z: 0 }, { x: 8, y: 0, z: 0 }, { x: 0, y: 0, z: 8 }];
     const bp = T.pickBounty('m', 2, cands, [{ x: 0, z: 0 }], 5);
     assert(bp && Math.hypot(bp.x, bp.z) >= 5 && JSON.stringify(bp) === JSON.stringify(T.pickBounty('m', 2, cands, [{ x: 0, z: 0 }], 5)), 'the bounty spot keeps clear of the spawns and is seeded');
     assert(T.pickBounty('m', 2, [{ x: 1, y: 0, z: 1 }], [{ x: 0, z: 0 }], 5).x === 1 && T.pickBounty('m', 2, [], [], 5) === null, 'no far spot: the farthest one; none: null');
     // underdog + wager
-    assert(T.underdogOf({ a: 0, b: 25 }, false) === 'a' && T.underdogOf({ a: 30, b: 5 }, false) === 'b' && T.underdogOf({ a: 0, b: 24 }, false) === null, 'underdog: the player behind by 25+');
-    assert(T.underdogOf({ a: 0, b: 37 }, true) === null && T.underdogOf({ a: 0, b: 38 }, true) === 'a', 'underdog on XL maps: the gap is 38');
+    assert(T.underdogOf({ a: 0, b: 40 }, false) === 'a' && T.underdogOf({ a: 45, b: 5 }, false) === 'b' && T.underdogOf({ a: 0, b: 39 }, false) === null, 'underdog: the player behind by 40+');
+    assert(T.underdogOf({ a: 0, b: 59 }, true) === null && T.underdogOf({ a: 0, b: 60 }, true) === 'a', 'underdog on XL maps: the gap is 60');
     assert(T.wagerPay(5, 1) === 5 && T.wagerPay(5, 2) === 10 && T.wagerPay(5, 3) === 15 && T.wagerPay(5, 9) === 15 && T.wagerPay(10, 3) === 30, 'wager pays base × min(3, streak)');
     // rules
     for (const id of R.PRESET_IDS) assert(R.PRESETS[id].twists === 'some' && R.PRESETS[id].underdog === true && R.PRESETS[id].sudden === true, `preset ${id}: twists some, underdog on, sudden death on`);
@@ -183,15 +196,17 @@ async function unitSection() {
     assert(hot.escapes === 0 && hot.huntPaint === 'off' && hot.heartbeat === false && hot.sights === false && hot.headStart === 0 && hot.pellets === 5, 'rulesFor(hotseat) switches the dead rules off and keeps the rest');
     assert(two === R.PRESETS.hard && R.rulesFor(R.PRESETS.hard, true) === hot, 'two devices: untouched; one phone: cached per rules object');
     // Today's hide on one phone: never a dead twist
-    let swapped = 0; let dead = 0;
+    let swapped = 0; let dead = 0; const ids = new Set();
     for (let d = 0; d < 80; d++) {
       const plan = M.dailyPlan(`2026-${String(1 + (d % 12)).padStart(2, '0')}-${String(1 + (d % 28)).padStart(2, '0')}`);
       const tw = T.dailyTwistFor(plan, true);
       if (Object.keys(tw.rules).some((k) => R.LOCAL_DEAD.includes(k))) dead++;
-      if (tw.id !== plan.twist.id) swapped++;
+      if (tw.id !== plan.twist.id) { swapped++; ids.add(tw.id); }
+      if (JSON.stringify(T.dailyTwistFor(plan, true)) !== JSON.stringify(tw)) dead += 1000000;
       if (T.dailyTwistFor(plan, false) !== plan.twist) dead += 1000;
     }
     assert(dead === 0 && swapped > 0, `Today's hide on one phone never picks a dead twist (${swapped} of 80 days swapped)`);
+    assert(ids.size >= 2, `the swapped days spread over the playable twists (${[...ids].join(', ')}), not all Floor only`);
   } catch (e) { console.error(e.message); failures++; }
 }
 
@@ -329,14 +344,13 @@ async function hotUnderdogSection(port) {
     await hotSeek(a);
     await waitPhase(a, 'time', 20000); // Sydney survives: 37 points
     await waitPhase(a, 'recap', 8000);
+    await hook(a, 'forceScores', 0, 50); // a gap of 50: past the 40 points, but round 2 is too early
     await a.tap('[data-act="next"]');
     await waitPhase(a, 'curtain', 10000);
-    // round 2: Emerson hides, 37 points behind: ten more seconds
     await a.tap('[data-act="curtain"]');
     await waitPhase(a, 'hide');
     let t = await ti(a);
-    assert(t.ud === 'a' && (await st(a)).phase.dur === 30000 && t.escapes.a === (await st(a)).rules.escapes, `round 2: the underdog hider gets 10 s more (${(await st(a)).phase.dur / 1000} s), and no escape (there are none on one phone)`);
-    assert(/\+10 s to hide/.test((await collectPops(a, 2500)) + ''), 'the sticker says so');
+    assert(!t.ud && (await st(a)).phase.dur === 20000, 'round 2: 50 points behind, but the underdog never starts before round 3 (20 s to hide, nobody boosted)');
     await camoHide(a);
     await a.tap('.chm-acts [data-act="ready"]');
     await waitPhase(a, 'curtain', 20000);
@@ -345,9 +359,10 @@ async function hotUnderdogSection(port) {
     await hook(a, 'action', 'fire');
     await waitPhase(a, 'found', 6000);
     await waitPhase(a, 'recap', 8000);
+    await hook(a, 'forceScores', 0, 50);
     await a.tap('[data-act="next"]');
     await waitPhase(a, 'curtain', 10000);
-    // round 3: Sydney hides, Emerson (still behind) seeks with a 7th pellet
+    // round 3: Sydney hides, Emerson (50 behind) seeks with a 7th pellet
     await a.tap('[data-act="curtain"]');
     await waitPhase(a, 'hide');
     t = await ti(a);
@@ -357,6 +372,20 @@ async function hotUnderdogSection(port) {
     await waitPhase(a, 'curtain', 20000);
     const cur = await a.textContent('[data-curtain="seek"]');
     assert(/Underdog/.test(cur) && /\+1 pellet/.test(cur), 'the hand-over curtain announces it');
+    const btn = await a.evaluate(() => { const r = document.querySelector('[data-curtain] [data-act="curtain"]').getBoundingClientRect(); return { b: r.bottom, h: innerHeight }; });
+    assert(btn.b <= btn.h, `the hand-over button is on screen (${Math.round(btn.b)} <= ${btn.h})`);
+    await hotSeek(a);
+    await waitPhase(a, 'time', 20000);
+    await waitPhase(a, 'recap', 8000);
+    await hook(a, 'forceScores', 0, 60);
+    await a.tap('[data-act="next"]');
+    await waitPhase(a, 'curtain', 10000);
+    // round 4: Emerson hides, 60 behind: ten more seconds
+    await a.tap('[data-act="curtain"]');
+    await waitPhase(a, 'hide');
+    t = await ti(a);
+    assert(t.ud === 'a' && (await st(a)).phase.dur === 30000 && t.escapes.a === (await st(a)).rules.escapes, `round 4: the underdog hider gets 10 s more (${(await st(a)).phase.dur / 1000} s), and no escape (there are none on one phone)`);
+    assert(/\+10 s to hide/.test((await collectPops(a, 2500)) + ''), 'the sticker says so');
     h.assertNoErrors();
   } catch (e) { console.error(e.message.split('\n')[0], h.errors); failures++; await shot(a, 'hotunder-FAIL').catch(() => {}); } finally { await h.close(); }
 }
@@ -506,13 +535,11 @@ async function streakSection(port) {
     await hotSeek(a);
     await waitPhase(a, 'time', 20000);
     let rec = (await st(a)).round.rec;
-    assert(rec.called && rec.streak === 3 && rec.wagerPts === 15, `a right call as the 3rd in a row pays ${rec.wagerPts} (streak ${rec.streak})`);
-    assert((await st(a)).match.scores.a === 15, 'the 15 is in the score');
+    assert(rec.called && rec.wagerPts === 5 && !rec.streak && (await ti(a)).cs.a === 2, `a right call on a SURVIVED round pays the plain stake (${rec.wagerPts}) and leaves the run at ${(await ti(a)).cs.a}`);
+    assert((await st(a)).match.scores.a === 5, 'only the 5 is in the seeker\'s score');
     await waitPhase(a, 'recap', 8000);
-    const pop = await collectPops(a, 7000);
-    assert(/CALLED IT/.test(pop) && /3 in a row/.test(pop), `the sticker says it ("${pop.slice(0, 120)}")`);
-    await wait(300);
-    assert(((await hook(a, 'data')).a_callstreak | 0) === 3, 'a_callstreak = 3');
+    const pop = await collectPops(a, 5000);
+    assert(/CALLED IT/.test(pop) && !/in a row/.test(pop), `the sticker says it without a streak ("${pop.slice(0, 120)}")`);
     // round 2: b seeks with a run of 2 and calls wrong
     await a.tap('[data-act="next"]');
     await waitPhase(a, 'curtain', 10000);
@@ -527,8 +554,69 @@ async function streakSection(port) {
     await waitPhase(a, 'recap', 8000);
     const pop2 = await collectPops(a, 7000);
     assert(/STREAK BROKEN/.test(pop2), `the hider sees "Streak broken" ("${pop2.slice(0, 120)}")`);
+    // round 3: a seeks again (run still 2), calls WALL right and FINDS the hider: the 3rd in a row pays 15
+    await a.tap('[data-act="next"]');
+    await waitPhase(a, 'curtain', 10000);
+    await hotHide(a, () => camoHide(a));
+    await a.tap('[data-call="wall"]');
+    await hotSeek(a);
+    await aimAtHider(a, 'b');
+    await hook(a, 'action', 'fire');
+    await waitPhase(a, 'found', 6000);
+    rec = (await st(a)).round.rec;
+    assert(rec.found && rec.called && rec.streak === 3 && rec.wagerPts === 15, `a right call on a round the hider was FOUND, as the 3rd in a row, pays ${rec.wagerPts} (streak ${rec.streak})`);
+    await waitPhase(a, 'recap', 8000);
+    const pop3 = await collectPops(a, 6000);
+    assert(/CALLED IT/.test(pop3) && /3 in a row/.test(pop3), `the sticker says it ("${pop3.slice(0, 120)}")`);
+    await wait(300);
+    assert(((await hook(a, 'data')).a_callstreak | 0) === 3, 'a_callstreak = 3');
     h.assertNoErrors();
   } catch (e) { console.error(e.message, h.errors); failures++; await shot(a, 'streak-FAIL').catch(() => {}); } finally { await h.close(); }
+}
+
+async function hostReloadSection(port) {
+  console.log('\n# two phones: the HOST reloads mid-round (the clock keeps its absolute end; the seeker can still fire; the wager call survives)');
+  const h = await launch({ port, only: ['chameleon'] });
+  const { a, b } = h;
+  const rem = async (p) => { const s = await st(p); return { left: s.phase.end - s.now, hunting: s.hunting, name: s.phase.name }; };
+  try {
+    const tune = { ...FAST, hide: 30000, seek: 40000, title: 800, recap: 30000, found: 1800, twists: [null, null] };
+    await startPair(h, tune);
+    await startMatch(h, { map: 'living', first: 'a', rules: { rounds: 2, twists: 'off', underdog: false, sudden: false, wager: 5 } });
+    await waitPhase(a, 'hide', 40000); await waitPhase(b, 'hide', 15000);
+    // b seeks: it picks a call on the blind card
+    await b.tap('[data-call="floor"]');
+    await wait(500);
+    assert((await hook(b, 'polish')).call.b === 'floor', 'the seeker chose FLOOR on the blind card');
+    await wait(2500);
+    const before = await rem(a);
+    await h.closeGame(a); await wait(1500); await arm(a, tune); await h.startLive(a, 'chameleon', 'live'); await waitLinked(a);
+    await a.waitForFunction(() => window.__cham.state().match && window.__cham.state().phase.name === 'hide', null, { timeout: 25000 });
+    await wait(1500);
+    const after = await rem(a); const afterB = await rem(b);
+    assert(after.left < before.left + 4500 && afterB.left < before.left + 4500, `the hide clock does not jump after the host's reload (${Math.round(before.left / 1000)} s -> ${Math.round(after.left / 1000)} s host, ${Math.round(afterB.left / 1000)} s guest)`);
+    assert(Math.abs(after.left - afterB.left) < 1500, 'both phones agree on the clock afterwards');
+    // hunt: the hider (a) readies, the host reloads again mid-hunt
+    await camoHide(a);
+    await a.tap('.chm-acts [data-act="ready"]');
+    await waitPhase(a, 'seek', 30000); await waitPhase(b, 'seek', 10000);
+    await b.waitForFunction(() => window.__cham.state().hunting, null, { timeout: 15000 });
+    await wait(2500);
+    const hb = await rem(b);
+    await h.closeGame(a); await wait(1500); await arm(a, tune); await h.startLive(a, 'chameleon', 'live'); await waitLinked(a);
+    await a.waitForFunction(() => window.__cham.state().match && window.__cham.state().phase.name === 'seek', null, { timeout: 25000 });
+    await wait(1500);
+    const ha = await rem(a); const hb2 = await rem(b);
+    assert(ha.left < hb.left + 4500 && hb2.left < hb.left + 4500, `the hunt clock does not jump either (${Math.round(hb.left / 1000)} s -> ${Math.round(ha.left / 1000)} s)`);
+    await b.waitForFunction(() => window.__cham.state().hunting, null, { timeout: 6000 });
+    assert(ha.hunting || (await rem(a)).hunting, 'the hunt is still on: hunting stays true after the host reload');
+    // the seeker (b, guest) reloads mid-hunt: the call survives from the host's snapshot
+    await h.closeGame(b); await wait(1500); await arm(b, tune); await h.startLive(b, 'chameleon', 'live'); await waitLinked(b);
+    await b.waitForFunction(() => window.__cham.state().match && window.__cham.state().phase.name === 'seek', null, { timeout: 25000 });
+    await wait(1200);
+    assert((await hook(b, 'polish')).call.b === 'floor', 'a reloaded seeker keeps the wager call chosen on the blind card');
+    h.assertNoErrors();
+  } catch (e) { console.error(e.message.split('\n')[0], h.errors); failures++; await shot(a, 'hostreload-FAIL-a').catch(() => {}); } finally { await h.close(); }
 }
 
 async function fogSection(port) {
@@ -681,14 +769,11 @@ async function underdogSection(port) {
     await waitPhase(a, 'time', 20000); await waitPhase(b, 'time', 5000); // b survives: 7 + 30 = 37
     await waitPhase(a, 'recap', 8000);
     assert((await st(a)).match.scores.b === 37, 'Sydney banked 37 points');
+    await hook(a, 'forceScores', 0, 50); // 50 behind, but the underdog never starts before round 3
     await a.tap('[data-act="next"]');
-    // round 2: a hides and is the underdog (0 vs 37 >= 25): +1 escape
     await waitPhase(a, 'hide', 20000); await waitPhase(b, 'hide', 8000);
     await wait(400);
-    for (const p of [a, b]) { const x = await ti(p); assert(x.ud === 'a' && x.escapes.a === 2 && x.escapes.b === 1 && x.maxPellets === 6, 'round 2: Emerson hides as the underdog: 2 escapes (Sydney still 1), pellets unchanged'); }
-    const pops = await collectPops(a, 3000);
-    assert(/Underdog: \+1 escape/.test(pops), `the hider sees the sticker ("${pops}")`);
-    assert(/Underdog/.test(await b.evaluate(() => document.querySelector('.chm-blind').textContent)), "the seeker's blind card says it too");
+    for (const p of [a, b]) { const x = await ti(p); assert(!x.ud && x.escapes.a === 1 && x.maxPellets === 6, 'round 2: 50 points behind, but nobody is boosted before round 3'); }
     await camoHide(a);
     await a.tap('.chm-acts [data-act="ready"]');
     await waitPhase(b, 'seek', 30000);
@@ -696,11 +781,25 @@ async function underdogSection(port) {
     await hook(b, 'action', 'fire');
     await waitPhase(a, 'found', 8000);
     await waitPhase(a, 'recap', 8000);
+    await hook(a, 'forceScores', 0, 50);
     await a.tap('[data-act="next"]');
-    // round 3: b hides, a (still behind: ~1 vs 37) seeks with +1 pellet
+    // round 3: b hides, a (50 behind) seeks with +1 pellet
     await waitPhase(a, 'hide', 20000); await waitPhase(b, 'hide', 8000);
     await wait(400);
     for (const p of [a, b]) { const x = await ti(p); assert(x.ud === 'a' && x.maxPellets === 7 && x.pellets.a === 7 && x.escapes.b === 1, 'round 3: Emerson seeks as the underdog: 7 pellets on both phones, the hider\'s escapes unchanged'); }
+    await camoHide(b);
+    await b.tap('.chm-acts [data-act="ready"]');
+    await waitPhase(a, 'seek', 30000);
+    await waitPhase(a, 'time', 20000); await waitPhase(a, 'recap', 8000);
+    await hook(a, 'forceScores', 0, 60);
+    await a.tap('[data-act="next"]');
+    // round 4: a hides, still behind: +1 escape
+    await waitPhase(a, 'hide', 20000); await waitPhase(b, 'hide', 8000);
+    await wait(400);
+    for (const p of [a, b]) { const x = await ti(p); assert(x.ud === 'a' && x.escapes.a === 2 && x.escapes.b === 1 && x.maxPellets === 6, 'round 4: Emerson hides as the underdog: 2 escapes (Sydney still 1), pellets unchanged'); }
+    const pops = await collectPops(a, 3000);
+    assert(/Underdog: \+1 escape/.test(pops), `the hider sees the sticker ("${pops}")`);
+    assert(/Underdog/.test(await b.evaluate(() => document.querySelector('.chm-blind').textContent)), "the seeker's blind card says it too");
     h.assertNoErrors();
   } catch (e) { console.error(e.message, h.errors); failures++; await shot(a, 'underdog-FAIL-a').catch(() => {}); await shot(b, 'underdog-FAIL-b').catch(() => {}); } finally { await h.close(); }
 }
@@ -825,6 +924,7 @@ async function shotsSection(port) {
   if (want('hotunder')) sections.push(() => hotUnderdogSection(PORT + 7));
   if (want('sudden')) sections.push(() => suddenSection(PORT + 3));
   if (want('streak')) sections.push(() => streakSection(PORT + 4));
+  if (want('hostreload')) sections.push(() => hostReloadSection(PORT + 12));
   if (want('fog')) sections.push(() => fogSection(PORT + 5));
   if (want('dusk')) sections.push(() => duskSection(PORT + 6));
   if (want('colours')) sections.push(() => coloursSection(PORT + 7));

@@ -138,22 +138,32 @@ export function createFx(THREE, scene, { gradientMap }) {
     if (k > 1) glintMat.color.lerp(glintWhite, Math.min(0.6, (k - 1) * 0.8));
   }
 
-  // ── bounty spot (twist): a flat marker ring on the floor, a 3 m boundary ring and a star over it.
+  // ── bounty spot (twist): a bold flat ring on the floor (ink outline, yellow band), a 3 m boundary ring, a tall beacon pole and a star on top of it.
   // One merged mesh + one sprite = 2 draw calls, only while the twist is on. ──
+  // parts: [geometry, [r, g, b]] (vertex colours multiply the material's ink: yellow parts are 1, the outline parts are near black)
   const mergeGeo = (parts) => {
-    const g = new THREE.BufferGeometry(); const pos = []; const idx = []; let off = 0;
-    for (const pg of parts) {
+    const g = new THREE.BufferGeometry(); const pos = []; const idx = []; const col = []; let off = 0;
+    for (const [pg, c] of parts) {
       const pa = pg.attributes.position.array; for (let i = 0; i < pa.length; i++) pos.push(pa[i]);
+      for (let i = 0; i < pa.length / 3; i++) col.push(c[0], c[1], c[2]);
       if (pg.index) { const ia = pg.index.array; for (let i = 0; i < ia.length; i++) idx.push(ia[i] + off); } else for (let i = 0; i < pa.length / 3; i++) idx.push(off + i);
       off += pa.length / 3; pg.dispose();
     }
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
     g.setIndex(idx);
     return g;
   };
-  const bGeo = own(mergeGeo([new THREE.RingGeometry(0.34, 0.5, 32), new THREE.CircleGeometry(0.1, 12), new THREE.RingGeometry(2.94, 3.0, 72)]));
-  bGeo.rotateX(-Math.PI / 2);
-  const bMat = own(new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.8, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
+  // flat on the floor: a bold ring (ink outline under a yellow band), a dot, the 3 m boundary (a band too); standing up: a tall beacon pole
+  const INK = [0.11, 0.1, 0.13]; const YEL = [1, 1, 1];
+  const flatPart = (g, y, c) => { g.rotateX(-Math.PI / 2); g.translate(0, y, 0); return [g, c]; };
+  const bGeo = own(mergeGeo([
+    flatPart(new THREE.RingGeometry(0.24, 0.74, 40), 0, INK), flatPart(new THREE.RingGeometry(0.33, 0.65, 40), 0.008, YEL), flatPart(new THREE.CircleGeometry(0.18, 16), 0.012, YEL),
+    flatPart(new THREE.RingGeometry(2.8, 3.16, 80), 0, INK), flatPart(new THREE.RingGeometry(2.88, 3.08, 80), 0.008, YEL),
+    [new THREE.CylinderGeometry(0.07, 0.13, 3.1, 8, 1, true).translate(0, 1.55, 0), YEL],
+    [new THREE.CylinderGeometry(0.0, 0.2, 0.34, 8).translate(0, 3.27, 0), INK],
+  ]));
+  const bMat = own(new THREE.MeshBasicMaterial({ color: 0xffd23f, vertexColors: true, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
   const bountyRing = new THREE.Mesh(bGeo, bMat);
   bountyRing.visible = false; bountyRing.frustumCulled = false; bountyRing.renderOrder = 2;
   scene.add(bountyRing);
@@ -352,9 +362,9 @@ export function createFx(THREE, scene, { gradientMap }) {
     if (glintBoost !== 1) for (let i = 0; i < glints.length; i++) if (glints[i].visible) glints[i].scale.multiplyScalar(glintBoost);
     if (bounty.on) {
       const k = 0.5 + 0.5 * Math.sin(now * 3);
-      bountyStar.position.set(bounty.x, bounty.y + 1.15 + 0.08 * Math.sin(now * 2), bounty.z);
-      bountyStar.scale.setScalar(0.34 + 0.12 * k); bStarMat.rotation = now * 0.6;
-      bountyRing.scale.set(1, 1, 1); bMat.opacity = 0.6 + 0.3 * k;
+      bountyStar.position.set(bounty.x, bounty.y + 3.55 + 0.08 * Math.sin(now * 2), bounty.z);
+      bountyStar.scale.setScalar(0.8 + 0.25 * k); bStarMat.rotation = now * 0.6;
+      bountyRing.scale.set(1, 1, 1); bMat.opacity = 0.72 + 0.26 * k;
     }
     // recap ring pulse
     if (ring.visible) { const s = (0.45 + Math.sin(now * 4) * 0.04) * (ring.userData.size || 1); ring.scale.setScalar(s); hlMat.opacity = 0.65 + Math.sin(now * 4) * 0.25; }
