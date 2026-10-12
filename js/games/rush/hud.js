@@ -327,10 +327,20 @@ export function createHud(root, o) {
       ov.pause.innerHTML = `<div class="rr-card"><h2>${esc(info.title)}</h2>${info.text ? `<p>${esc(info.text)}</p>` : ''}
         ${info.resume ? `<button class="rr-btn hot" data-x="resume">${esc(info.resumeLabel || 'Resume')}</button>` : ''}
         ${info.invite ? '<button class="rr-btn hot" data-g="invite-again">Invite them back</button>' : ''}
+        ${info.end ? `<button class="rr-btn ghost" data-x="forfeit">${esc(info.end)}</button>` : ''}
         <div class="rr-row"><button class="rr-btn ghost" data-x="set">Settings</button><button class="rr-btn ghost" data-g="close">Quit</button></div></div>`;
       const r = ov.pause.querySelector('[data-x="resume"]');
       if (r) r.addEventListener('click', () => o.onResume());
       ov.pause.querySelector('[data-x="set"]').addEventListener('click', () => o.onSettings());
+      const ff = ov.pause.querySelector('[data-x="forfeit"]');
+      if (ff) { // two taps, so a stray one can't hand over a match
+        let armed = 0; const label = ff.textContent;
+        ff.addEventListener('click', () => {
+          if (armed) { armed = 0; o.onForfeit(); return; }
+          armed = 1; ff.textContent = 'Tap again to end it';
+          setTimeout(() => { armed = 0; ff.textContent = label; }, 3000);
+        });
+      }
       show('pause', true);
     },
     settings(cfg) {
@@ -339,14 +349,14 @@ export function createHud(root, o) {
       ov.set.classList.add('dim');
       const seg = (key, opts) => `<span class="rr-seg">${opts.map(([v, l]) => `<button data-k="${key}" data-v="${v}" class="${cfg[key] === v ? 'on' : ''}">${l}</button>`).join('')}</span>`;
       const styles = cfg.styles || [];
-      const chips = (key) => styles.filter((x) => x.key === key).map((x) => `<button class="rr-chip-s ${x.locked ? 'locked' : ''} ${cfg[key] === x.k ? 'on' : ''}" data-k="${key}" data-v="${x.k}" ${x.locked ? 'disabled' : ''} title="${esc(x.how || '')}">${esc(x.name)}${x.locked ? `<small>${esc(x.how)}</small>` : ''}</button>`).join('');
+      const chips = (key) => styles.filter((x) => x.key === key).map((x) => `<button class="rr-chip-s ${x.locked ? 'locked' : ''} ${cfg[key] === x.k ? 'on' : ''}" data-k="${key}" data-v="${x.k}" ${x.locked ? 'disabled' : ''} title="${esc(x.how || '')}">${esc(x.name)}${x.locked ? `<small>${esc(x.how)}</small>` : x.only ? `<small>${esc(x.only)} only</small>` : ''}</button>`).join('');
       ov.set.innerHTML = `<div class="rr-card"><h2>Settings</h2>
         <div class="rr-set"><span>Controls</span>${seg('scheme', [['swipe', 'Swipe'], ['buttons', 'Buttons']])}</div>
         <div class="rr-set"><span>Music</span>${seg('music', [['on', 'On'], ['off', 'Off']])}</div>
         <div class="rr-set"><span>Sound</span>${seg('sound', [['on', 'On'], ['off', 'Off']])}</div>
         ${styles.length ? `<div class="rr-style"><span>Trail</span><div class="rr-chips">${chips('trail')}</div></div><div class="rr-style"><span>Hat</span><div class="rr-chips">${chips('hat')}</div></div>` : ''}
         <p style="font-size:13px">Buttons: tap the left or right side to change lanes, and use the Jump and Roll buttons.</p>
-        <button class="rr-btn" data-x="done">Done</button></div>`;
+        <div class="rr-done"><button class="rr-btn" data-x="done">Done</button></div></div>`;
       ov.set.querySelectorAll('[data-k]').forEach((b) => b.addEventListener('click', () => { o.onSet(b.dataset.k, b.dataset.v); }));
       ov.set.querySelector('[data-x="done"]').addEventListener('click', () => o.onSettingsDone());
       show('set', true);

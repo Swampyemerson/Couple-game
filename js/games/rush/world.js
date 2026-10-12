@@ -4,8 +4,9 @@
 // (collected coins, smashed barriers, oncoming train positions) right before rendering a view.
 import { rng } from '../core.js';
 import { CHUNK, LANE_W, CAR, ROOF, LOW_H, HIGH_B, HIGH_T } from './tune.js';
-import { O_LOW, O_HIGH, O_TRAIN, O_RAMP, O_MTRAIN, O_BLOCK, I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX, I_REVIVE, mtrainFront } from './track.js';
-import { GeoBuf, makeToon, makeUniforms, makeTemplates, blobTexture, mix, FX_PLAIN, FX_GLOW, FX_SKY } from './gfx.js';
+import { O_LOW, O_HIGH, O_TRAIN, O_RAMP, O_MTRAIN, O_BLOCK, I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX, I_REVIVE, mtrainFront, districtSeq, districtIn } from './track.js';
+import { GeoBuf, makeToon, makeUniforms, applyPaletteUniforms, makeTemplates, blobTexture, mix, FX_PLAIN, FX_GLOW, FX_SKY } from './gfx.js';
+import { makeBio, bioGate, bioScenery, bx, qz, qx, qu, stripes, windows } from './bio.js';
 
 // Sky dome: two theme inks printed as a halftone gradient (dots grow from the horizon up), so the
 // sky reads as Riso print rather than a CSS gradient. Its uniforms carry the colour script.
@@ -33,6 +34,7 @@ const SIDE_X = 4.35;      // parapet line
 
 export function createWorld(THREE, P) {
   const T = makeTemplates(THREE);
+  let BIO = makeBio(P); // per-district palettes (mixes of the theme palette: light and dark both follow the tokens)
   const U = makeUniforms(THREE, P);
   // Same shader, separate instances per object kind: three r128 recomputes program parameters
   // (and allocates) whenever one material alternates between plain and instanced draws.
@@ -278,16 +280,69 @@ export function createWorld(THREE, P) {
   const calm0 = new THREE.Color().fromArray(P.skyCalm[0]); const calm1 = new THREE.Color().fromArray(P.skyCalm[1]);
   const fast0 = new THREE.Color().fromArray(P.skyFast[0]); const fast1 = new THREE.Color().fromArray(P.skyFast[1]);
   let moodK = -1;
+  let moodE = 0;
   let sunFront = null;
+  // District sky tints (horizon + zenith per district, null for Downtown), blended on top of the
+  // calm/fast pair. Scratch colours: nothing is allocated when the view changes.
+  const SKY_K = 0.6;
+  const tintH = []; const tintT = [];
+  const streetCol = streetGeo.getAttribute('color');
+  const streetBase = new THREE.Color();
+  const skyTmp = [new THREE.Color(), new THREE.Color(), new THREE.Color()];
+  function buildTints() {
+    tintH.length = 0; tintT.length = 0;
+    for (const B of BIO) { tintH.push(B.sky ? new THREE.Color().fromArray(B.sky[0]) : null); tintT.push(B.sky ? new THREE.Color().fromArray(B.sky[1]) : null); }
+  }
+  buildTints();
+  let dA = 0; let dB = 0; let dQ = 0;
+  const tintOf = (out, base, tints, d) => { out.copy(base); if (tints[d]) out.lerp(tints[d], SKY_K); return out; };
+  function applySky() {
+    const e = moodE;
+    skyTmp[0].copy(calm0).lerp(fast0, e); // base horizon
+    skyTmp[1].copy(calm1).lerp(fast1, e); // base zenith
+    if (dA === 0 && dB === 0) { skyU.uHor.value.copy(skyTmp[0]); skyU.uTop.value.copy(skyTmp[1]); }
+    else {
+      const bl = dQ;
+      tintOf(skyU.uHor.value, skyTmp[0], tintH, dA); tintOf(skyTmp[2], skyTmp[0], tintH, dB); skyU.uHor.value.lerp(skyTmp[2], bl);
+      tintOf(skyU.uTop.value, skyTmp[1], tintT, dA); tintOf(skyTmp[2], skyTmp[1], tintT, dB); skyU.uTop.value.lerp(skyTmp[2], bl);
+    }
+    scene.fog.color.copy(skyU.uHor.value);
+    // the far street layer (water in the harbour) takes the district colour too
+    streetBase.fromArray(BIO[dA].street); skyTmp[2].fromArray(BIO[dB].street); streetBase.lerp(skyTmp[2], dQ);
+    const ca = streetCol.array;
+    for (let i = 0; i < streetCol.count; i++) { ca[i * 3] = streetBase.r; ca[i * 3 + 1] = streetBase.g; ca[i * 3 + 2] = streetBase.b; }
+    streetCol.needsUpdate = true;
+  }
   /** Colour script: 0 = strolling, 1 = flat out (sky and fog warm up together). */
   function setMood(k) {
     const q = Math.round(Math.max(0, Math.min(1, k)) * 64) / 64;
     if (q === moodK) return;
     moodK = q;
-    const e = q * q * (3 - 2 * q);
-    skyU.uHor.value.copy(calm0).lerp(fast0, e);
-    skyU.uTop.value.copy(calm1).lerp(fast1, e);
-    scene.fog.color.copy(skyU.uHor.value);
+    moodE = q * q * (3 - 2 * q);
+    applySky();
+  }
+  /**
+   * District sky / fog / far street for the view about to be drawn: district a blends into b by t
+   * (0..1), quantized to 1/32, uniforms and one tiny colour buffer only (no recompiles). Call it per
+   * view, right before rendering it (split screen: each view in its own district).
+   */
+  function setDistrict(a, b, t) {
+    const q = Math.round(Math.max(0, Math.min(1, t)) * 32) / 32;
+    a |= 0; b |= 0;
+    if (a === dA && b === dB && q === dQ) return;
+    dA = a; dB = b; dQ = q;
+    applySky();
+  }
+  const D_BLEND = 50; // metres either side of a zone boundary over which the sky changes
+  let dSeed = null; let dSeq = null;
+  /** setDistrict for a runner at track position z on `seed`'s track: blends over the 100 m around the zone boundary. */
+  function setDistrictAt(seed, z) {
+    if (seed !== dSeed || !dSeq) { dSeed = seed; dSeq = districtSeq(seed); }
+    const kf = Math.floor((z + D_BLEND) / CHUNK); const kb = Math.floor((z - D_BLEND) / CHUNK);
+    const a = districtIn(dSeq, kb < 0 ? 0 : kb); const b = districtIn(dSeq, kf < 0 ? 0 : kf);
+    let t = 0;
+    if (a !== b) { t = (z + D_BLEND - kf * CHUNK) / CHUNK; t = t * t * (3 - 2 * t); }
+    setDistrict(a, b, t);
   }
   setMood(0);
 
@@ -303,7 +358,7 @@ export function createWorld(THREE, P) {
     if (e.ci !== null) byChunk.delete(e.ci);
     const c = ci < 0 ? behindChunk(ci) : track.chunk(ci);
     e.buf.reset();
-    buildChunk(e.buf, c, T, P);
+    buildChunk(e.buf, c, T, P, BIO);
     e.buf.commit(140, 0, 4, -(c.z0 + CHUNK / 2));
     if (e.buf.nv > stats.maxV) stats.maxV = e.buf.nv;
     if (e.buf.ni > stats.maxI) stats.maxI = e.buf.ni;
@@ -482,15 +537,18 @@ export function createWorld(THREE, P) {
 
   function setPalette(P2) {
     // Rebuilding everything is simplest; palette changes are rare (theme switch).
+    P = P2; BIO = makeBio(P2); buildTints();
+    applyPaletteUniforms(U, P2);
     scene.background.fromArray(P2.bg);
-    scene.fog.color.fromArray(P2.fog);
+    calm0.fromArray(P2.skyCalm[0]); calm1.fromArray(P2.skyCalm[1]); fast0.fromArray(P2.skyFast[0]); fast1.fromArray(P2.skyFast[1]);
+    applySky();
     for (const p of pool) { p.ci = null; p.mesh.visible = false; }
     byChunk.clear();
   }
 
   return {
     scene, mat, matInst, matInstC, avatarMat, avatarMats, fade, U, T, P,
-    ensure, syncView, setShadows, follow, setPalette, setGates, setMarks, reset, setMood,
+    ensure, syncView, setShadows, follow, setPalette, setGates, setMarks, reset, setMood, setDistrict, setDistrictAt,
     chunkCount: () => byChunk.size,
     stats,
     /** Everything that can be drawn, for shader warm-up. */
@@ -506,29 +564,12 @@ export function createWorld(THREE, P) {
 
 /** Scenery-only chunk behind the start line (seen in the lobby). */
 function behindChunk(ci) {
-  return { i: ci, z0: ci * CHUNK, z1: (ci + 1) * CHUNK, obs: [], gaps: [], coins: [], items: [], tunnel: null, path: [], scen: 777 + ci };
+  return { i: ci, z0: ci * CHUNK, z1: (ci + 1) * CHUNK, obs: [], gaps: [], coins: [], items: [], tunnel: null, path: [], scen: 777 + ci, bio: 0, bioNext: 0, zi: 0, zoneStart: false };
 }
 
 const hexOf = (c) => '#' + c.map((v) => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0')).join('');
 
-// ── builders (all coordinates: x, y, track distance d; world z = -d) ──
-function bx(b, T, x0, y0, d0, x1, y1, d1, rgb, fx, ol, ink) {
-  b.add(T.box, (x0 + x1) / 2, (y0 + y1) / 2, -(d0 + d1) / 2, Math.abs(x1 - x0), Math.abs(y1 - y0), Math.abs(d1 - d0), 0, rgb, fx, ol, ink);
-}
-/** Quad facing the runner (+z) centred at (x, y, d). */
-function qz(b, T, x, y, d, w, h, rgb, fx) { b.add(T.quad, x, y, -d, w, h, 1, 0, rgb, fx, 0, rgb); }
-/** Quad facing ±x (side = +1 faces +x) centred at (x, y, d), `len` along the track. */
-function qx(b, T, side, x, y, d, len, h, rgb, fx) { b.add(T.quad, x, y, -d, len, h, 1, side * Math.PI / 2, rgb, fx, 0, rgb); }
-/** Quad facing up centred at (x, y, d). */
-function qu(b, T, x, y, d, w, len, rgb) { b.add(T.quadUp, x, y, -d, w, 1, len, 0, rgb, FX_PLAIN, 0, rgb); }
-
-/** Diagonal stripes across a front face (local coords, z = face plane). */
-function stripes(b, T, x0, y0, x1, y1, z, rgb, n) {
-  const w = (x1 - x0) / n;
-  const h = y1 - y0;
-  for (let i = 0; i < n; i++) b.add(T.stripe, x0 + (i + 0.5) * w, (y0 + y1) / 2, z, w * 0.95, h, 1, 0, rgb, FX_PLAIN, 0, rgb);
-}
-
+// ── builders (bx / qz / qx / qu / stripes / windows live in bio.js; coordinates: x, y, track distance d; world z = -d) ──
 /** Intervals of [d0, d1] not covered by gaps that include lane l. */
 function openSpans(c, l, d0, d1, out) {
   out.length = 0;
@@ -549,7 +590,7 @@ function trainCars(b, x, d, n, liv, oncoming, T, P) {
   const under = mix(liv.body, [0.08, 0.08, 0.1], 0.6);
   const roof = mix(liv.body, P.white, 0.35);
   const door = mix(liv.body, P.ink, 0.25);
-  const win = P.dark ? P.lit : P.glass;
+  const win = P.dark ? P.warm : P.glass;
   const wfx = P.dark ? FX_GLOW : FX_PLAIN;
   for (let k = 0; k < n; k++) {
     const a = d + k * CAR + (k ? 0.2 : 0);
@@ -592,34 +633,9 @@ function trainCars(b, x, d, n, liv, oncoming, T, P) {
   if (oncoming) bx(b, T, x - 0.3, ROOF, d + 0.6, x + 0.3, ROOF + 0.25, d + 1.2, P.bad, FX_GLOW, 0.03, ink);
 }
 
-/** Windows on a facade. Facing ±x (side) along d, or facing +z across x. */
-function windows(b, T, r, P, facing, fixed, a0, a1, y0, y1, pat) {
-  const night = P.dark;
-  const lit = P.lit; const glass = P.glass;
-  const put = (u, v, w, h) => {
-    const on = night && r() < 0.42;
-    const col = on ? lit : glass;
-    const fx = on ? FX_GLOW : FX_PLAIN;
-    if (facing === 0) qz(b, T, u, v, fixed, w, h, col, fx);
-    else qx(b, T, facing, fixed, v, u, w, h, col, fx);
-  };
-  const span = a1 - a0;
-  if (span < 2.5 || y1 - y0 < 2) return;
-  if (pat === 0) {
-    for (let y = y0 + 1.1; y < y1 - 0.7; y += 3.2) put((a0 + a1) / 2, y, span - 1.2, 1.25);
-  } else if (pat === 1) {
-    const n = Math.max(1, Math.floor((span - 0.8) / 2.4));
-    const st = (span - 0.8) / n;
-    for (let i = 0; i < n; i++) put(a0 + 0.4 + (i + 0.5) * st, (y0 + 0.6 + y1 - 0.9) / 2, 0.95, y1 - y0 - 1.5);
-  } else {
-    const n = Math.max(1, Math.floor((span - 0.8) / 2.4));
-    const st = (span - 0.8) / n;
-    for (let y = y0 + 1.2; y < y1 - 0.8; y += 3.2) for (let i = 0; i < n; i++) put(a0 + 0.4 + (i + 0.5) * st, y, 1.15, 1.45);
-  }
-}
-
-function buildChunk(b, c, T, P) {
+function buildChunk(b, c, T, P, BIO) {
   const ink = P.outline;
+  const B = BIO[c.bio | 0] || BIO[0];
   const d0 = c.z0; const d1 = c.z1;
   const spans = [];
   const r = rng(c.scen);
@@ -631,8 +647,8 @@ function buildChunk(b, c, T, P) {
     const xl = l === -1 ? -SIDE_X : l * LANE_W - LANE_W / 2;
     const xr = l === 1 ? SIDE_X : l * LANE_W + LANE_W / 2;
     for (const [a, e] of spans) {
-      bx(b, T, xl, -1.5, a, xr, -0.12, e, P.deck, FX_PLAIN, 0, ink);
-      bx(b, T, l * LANE_W - 1.18, -0.12, a, l * LANE_W + 1.18, -0.03, e, P.bed, FX_PLAIN, 0, ink);
+      bx(b, T, xl, -1.5, a, xr, -0.12, e, B.deck, FX_PLAIN, 0, ink);
+      bx(b, T, l * LANE_W - 1.18, -0.12, a, l * LANE_W + 1.18, -0.03, e, B.bed, FX_PLAIN, 0, ink);
       for (let d = Math.ceil(a / 0.9) * 0.9 + 0.2; d < e - 0.2; d += 0.9) qu(b, T, l * LANE_W, -0.02, d, 2.05, 0.34, P.sleeper);
       for (const sx of [-0.72, 0.72]) bx(b, T, l * LANE_W + sx - 0.06, -0.03, a, l * LANE_W + sx + 0.06, 0.1, e, P.rail, FX_PLAIN, 0, ink);
     }
@@ -641,7 +657,7 @@ function buildChunk(b, c, T, P) {
       if (!(g.mask & (1 << (l + 1)))) continue;
       if (g.z0 > d0 + 1) {
         for (let k = 0; k < 4; k++) qu(b, T, l * LANE_W - 0.86 + k * 0.57, 0.0, g.z0 - 0.75, 0.29, 0.9, P.hl);
-        bx(b, T, xl + 0.2, -1.9, g.z0 - 0.5, xr - 0.2, -1.5, g.z0, P.deck, FX_PLAIN, 0.04, ink);
+        bx(b, T, xl + 0.2, -1.9, g.z0 - 0.5, xr - 0.2, -1.5, g.z0, B.deck, FX_PLAIN, 0.04, ink);
       }
     }
   }
@@ -662,7 +678,7 @@ function buildChunk(b, c, T, P) {
   // parapets
   for (const side of [-1, 1]) {
     openSpans(c, side, d0, d1, spans);
-    for (const [a, e] of spans) bx(b, T, side * SIDE_X - 0.16, -0.12, a, side * SIDE_X + 0.16, 0.8, e, P.parapet, FX_PLAIN, 0.04, ink);
+    for (const [a, e] of spans) bx(b, T, side * SIDE_X - 0.16, -0.12, a, side * SIDE_X + 0.16, 0.8, e, B.parapet, FX_PLAIN, 0.04, ink);
   }
   // signal masts every 50 m, alternating sides, one lamp lit (red / yellow / green)
   for (let d = Math.ceil((d0 - 20) / 50) * 50 + 20; d < d1; d += 50) {
@@ -695,7 +711,7 @@ function buildChunk(b, c, T, P) {
       for (let d = t0 + 4; d < t1; d += 9) qx(b, T, -side, side * 4.44, 4.85, d, 1.4, 0.3, P.lit, FX_GLOW);
     }
     bx(b, T, -4.95, 6.2, t0, 4.95, 6.8, t1, mix(wall, P.ink, 0.15), FX_PLAIN, 0, ink);
-    bx(b, T, -16, 6.8, t0 + 1, 16, 8.4, t1 - 1, mix(P.card, P.good, 0.42), FX_PLAIN, 0.08, ink);
+    bx(b, T, -16, 6.8, t0 + 1, 16, 8.4, t1 - 1, B.top, FX_PLAIN, 0.08, ink);
     for (const pd of [t0, t1]) {
       const f = pd === t0 ? -1 : 1;
       bx(b, T, -12, 6.0, pd - 0.5 * f - 0.5, 12, 11.5, pd - 0.5 * f + 0.5, P.portal, FX_PLAIN, 0.08, ink);
@@ -726,8 +742,10 @@ function buildChunk(b, c, T, P) {
     }
   }
 
-  // buildings (deterministic per chunk)
-  for (const side of [-1, 1]) {
+  // buildings (deterministic per chunk): Downtown here, the other districts in bio.js
+  const X = { b, T, P, B, r, c, d0, d1, ink, tun };
+  if (c.bio) bioScenery(X);
+  else for (const side of [-1, 1]) {
     let d = d0 + r() * 3;
     while (d < d1) {
       const w = 8 + Math.floor(r() * 10);
@@ -749,7 +767,7 @@ function buildChunk(b, c, T, P) {
         const sb = mix(col, P.ink, 0.3);
         bx(b, T, x0 - side * 0.15, -8, d + 0.6, x0 + side * 0.4, -4.6, de - 0.6, sb, FX_PLAIN, 0, ink);
         if (r() < 0.6) {
-          const aw = [P.a, P.b, P.hl, P.good][Math.floor(r() * 4)];
+          const aw = B.awn[Math.floor(r() * 4)];
           bx(b, T, x0 - side * 1.3, -4.7, d + 1, x0, -4.3, de - 1, aw, FX_PLAIN, 0.05, ink);
           for (let k = d + 1.5; k < de - 1.2; k += 1.6) qx(b, T, -side, x0 - side * 1.31, -4.5, k, 0.8, 0.4, P.white, FX_PLAIN);
         }
@@ -787,6 +805,7 @@ function buildChunk(b, c, T, P) {
       e = ee + 2 + r() * 6;
     }
   }
+  bioGate(X);
 }
 
 function buildSkyline(b, T, P) {

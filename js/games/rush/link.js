@@ -167,7 +167,8 @@ export function createLink(api, { delay = 100 } = {}) {
     hold.set(d.s, d);
     while (hold.has(inNext)) { const m = hold.get(inNext); hold.delete(inNext); inNext++; deliver(m.ty, m.d, m.at); }
   }));
-  offs.push(api.on('ra', (d) => { if (d && d.t === iid) outbox.delete(d.s); }));
+  // (an ack from an earlier instance of the partner must not delete the new instance's seq 1)
+  offs.push(api.on('ra', (d) => { if (d && d.t === iid && (!partnerIid || d.f === partnerIid)) outbox.delete(d.s); }));
   timers.push(setInterval(flush, 90));
 
   const link = {

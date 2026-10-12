@@ -66,6 +66,48 @@ function makeObs(c, t, lane, z0, z1, extra) {
   return o;
 }
 
+// ── districts (scenery biomes) ──
+// Purely visual: chunks 0-2 are Downtown, then zones of DISTRICT_ZONE chunks (400 m) walk a cycle
+// through the six districts (step 1 or 5, i.e. coprime to 6, from a seeded offset), so a district
+// never repeats back to back. Computed from its own hash, never from the chunk's r() stream, and
+// not part of chunkSig / trackHash: gameplay is untouched.
+export const DISTRICTS = [
+  { id: 0, name: 'Downtown' },
+  { id: 1, name: 'Harbour' },
+  { id: 2, name: 'Greenway' },
+  { id: 3, name: 'Old Town' },
+  { id: 4, name: 'Neon Market' },
+  { id: 5, name: 'Freight Yard' },
+];
+export const DISTRICT_FIRST = 3;  // chunks 0..2 are Downtown
+export const DISTRICT_ZONE = 4;   // chunks per district zone
+/** Seeded cycle { o: start district 1..5, s: step 1 | 5 } (allocates; cache it for per-frame use). */
+export function districtSeq(seed) {
+  const h = hash(seed, 'district');
+  return { o: 1 + (h % 5), s: Math.floor(h / 8) % 2 ? 5 : 1 };
+}
+/** District id of chunk i for a cached sequence (pure arithmetic, no allocation). */
+export function districtIn(seq, i) {
+  if (i < DISTRICT_FIRST) return 0;
+  const k = Math.floor((i - DISTRICT_FIRST) / DISTRICT_ZONE);
+  const x = seq.o + seq.s * k;
+  return x - Math.floor(x / 6) * 6;
+}
+/** District id of chunk i. */
+export function districtOf(seed, i) { return districtIn(districtSeq(seed), i); }
+/** District id at track position z (metres). */
+export function districtAt(seed, z) { return districtOf(seed, Math.floor((z > 0 ? z : 0) / CHUNK)); }
+/** True for the first chunk of a district zone after Downtown (it carries the district gate). */
+export function isZoneStart(i) { return i >= DISTRICT_FIRST && (i - DISTRICT_FIRST) % DISTRICT_ZONE === 0; }
+/** Fields every chunk carries (set last in genChunk, no r() use): bio, bioNext, zi (index in its zone), zoneStart. */
+function tagDistrict(c, seed) {
+  const seq = districtSeq(seed);
+  c.bio = districtIn(seq, c.i);
+  c.bioNext = districtIn(seq, c.i + 1);
+  c.zi = c.i < DISTRICT_FIRST ? c.i : (c.i - DISTRICT_FIRST) % DISTRICT_ZONE;
+  c.zoneStart = isZoneStart(c.i);
+}
+
 /** Build chunk i for a seed. */
 export function genChunk(seed, i) {
   const z0 = i * CHUNK;
@@ -94,6 +136,7 @@ export function genChunk(seed, i) {
     c.obs.sort((a, b) => a.z0 - b.z0);
     c.coins.sort((a, b) => a.z - b.z);
     c.path.push([z1, sOut]);
+    tagDistrict(c, seed);
     return c;
   }
   if (i >= 3 && c.diff > 0.12 && r() < 0.2) { c.tunnel = [z0 + 3, z1 - 3]; X.tunnel = true; }
@@ -130,6 +173,7 @@ export function genChunk(seed, i) {
   placeItems(c, r, X);
   c.obs.sort((a, b) => a.z0 - b.z0);
   c.coins.sort((a, b) => a.z - b.z);
+  tagDistrict(c, seed);
   return c;
 }
 

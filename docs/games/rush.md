@@ -305,6 +305,20 @@ Sky and city (all from the theme inks):
 - **Colour script**: the sky's two inks (and the fog, which always matches the horizon) warm with
   the fastest viewer's speed (a rocket pushes it further): blue → yellow/pink by day, blue → pink
   neon by night. Uniforms only, quantized, no recompiles.
+- **Districts** (js/games/rush/bio.js, track.js `DISTRICTS` / `districtOf`): chunks 0-2 are Downtown, then zones of 4 chunks
+  (400 m) walk a seeded cycle (step 1 or 5 mod 6, so never the same district twice running) through Harbour (quay and water,
+  sheds, stacked containers, a quay crane about every 300 m, boats, a cargo ship), Greenway (lawns, box-trunk trees with octahedron /
+  low-sphere / cone crowns, hedges, cottages), Old Town (narrow gabled houses, chimneys, bunting across the street), Neon Market
+  (stalls with striped canopies, blade signs, glowing lantern strings) and Freight Yard (silos, banded chimney stack, pipe rack,
+  rusty containers, a gantry crane over the track). The district is a pure function of `(seed, chunk)` from its own hash (never the
+  chunk's `r()` stream, not in `chunkSig` / `trackHash`), so both phones see the same one; `c.bio`, `c.bioNext`, `c.zi`,
+  `c.zoneStart` are set last in `genChunk`. `createWorld` builds one palette per district from the theme palette (mixes of the
+  tokens, so light and dark both follow), tints the deck / bed / parapet / awnings beside the track only, and the first chunk of a
+  zone carries a gate arch over the track with the name in baked pixel letters (on the tunnel's entry lintel when the zone starts
+  in a tunnel): no extra draw call. `world.setDistrictAt(seed, z)` (per view, before rendering it) blends the sky tint, the fog and
+  the far street layer (the harbour's water) over the 100 m around a zone boundary: uniforms and one tiny colour buffer, quantized
+  to 1/32, no recompiles. Lit windows beside the track are warm white (`P.warm`), never the coin yellow. Chunk buffers peak
+  at ~13.7k vertices (Downtown 11.7k), district chunks cost +0..+1.5k triangles over Downtown on identical content.
 - **Skyline**: two rings of flat silhouettes (setback towers with antennas, spires, domed halls,
   water towers, one needle tower), the far ring paler. Tunnel portals are concrete with a hazard band.
 - **Trains with faces**: windscreen "eyes" with glints and a destination board. Parked trains doze

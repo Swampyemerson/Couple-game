@@ -33,6 +33,7 @@ const TKEY = 'rush.tutorial.v1';
 const MKEY = 'rush.mode.v1';
 const MUTE = 'ju.games.mute';
 const HN = 150; // lag-compensation history (frames)
+const AWAY_MS = 20000; // partner away this long mid-match: the waiting card offers to end it
 // the combo ladder reads by tier, not by count: x2 Nice … x16 Legend (tiers pay at 3/5/8/12/16, see tune.js)
 const COMBO_AT = [2, 3, 5, 8, 12, 16];
 const COMBO_WORDS = ['Nice', 'Great', 'Slick', 'Wild', 'Unreal', 'Legend'];
@@ -117,7 +118,7 @@ export function createGame(el, api) {
     runMs: 0, steps: 0, lastNow: 0, alpha: 0,
     paused: false, reasons: new Set(), partnerPz: 0, resumeAt: 0, pauseShownAt: 0,
     result: null, endAt: 0, th: 4, goal: 100, goalIdx: 0, revives: 0, partnerFin: -1, partnerOut: -1,
-    startedWall: 0, firstRunWall: 0, epoch: 0, lastScore: 0, ruleAt: 0, day: '', trackV: 1,
+    startedWall: 0, firstRunWall: 0, epoch: 0, lastScore: 0, ruleAt: 0, day: '', trackV: 1, goneAt: 0,
   };
   if (!MODES.includes(M.lobbyMode)) M.lobbyMode = 'race';
 
@@ -137,16 +138,20 @@ export function createGame(el, api) {
       openSettings();
     },
     onSettingsDone: () => hud.settings(null),
+    onForfeit: () => forfeit(),
     keyHint: split ? (w) => (w === 'a' ? 'E' : 'Enter') : (coarse ? null : () => 'E'),
   });
   root.classList.toggle('rr-buttons', settings.scheme === 'buttons' && !split);
   function openSettings() {
     let snd = 'on';
     try { snd = JSON.parse(localStorage.getItem(MUTE) || 'false') ? 'off' : 'on'; } catch { /* ignore */ }
-    const w = meW || 'a';
-    const styles = STYLES.map((st) => ({ key: st.key, k: st.k, name: st.name, how: st.how || '', locked: !unlocked(w, st) }));
-    if (!unlocked(w, STYLES.find((x) => x.key === 'trail' && x.k === settings.trail) || STYLES[0])) settings.trail = 0;
-    if (!unlocked(w, STYLES.find((x) => x.key === 'hat' && x.k === settings.hat) || STYLES[0])) settings.hat = 0;
+    // live: this phone's runner. Split screen: one pick for both, worn by whoever has earned it
+    // (resolveWear), so a style is locked only when neither has it, and says if it's just one of them
+    const who = locals;
+    const has = (st) => who.filter((w) => unlocked(w, st));
+    const styles = STYLES.map((st) => ({ key: st.key, k: st.k, name: st.name, how: st.how || '', locked: !has(st).length, only: has(st).length && has(st).length < who.length ? api.name(has(st)[0]) : '' }));
+    if (!has(STYLES.find((x) => x.key === 'trail' && x.k === settings.trail) || STYLES[0]).length) settings.trail = 0;
+    if (!has(STYLES.find((x) => x.key === 'hat' && x.k === settings.hat) || STYLES[0]).length) settings.hat = 0;
     hud.settings({ scheme: settings.scheme, music: settings.music, sound: snd, trail: settings.trail, hat: settings.hat, styles });
   }
 
@@ -340,7 +345,7 @@ export function createGame(el, api) {
     M.phase = 'lobby';
     resolveWear();
     root.classList.add('rr-in-lobby');
-    M.track = null; M.result = null; M.ready = false; M.reasons.clear(); M.paused = false; M.resumeAt = 0; M.rejoin = null;
+    M.track = null; M.result = null; M.ready = false; M.reasons.clear(); M.paused = false; M.resumeAt = 0; M.rejoin = null; M.goneAt = 0;
     players.a.snap.ok = 0; players.b.snap.ok = 0;
     for (const w of AB) {
       const p = players[w];
@@ -387,7 +392,7 @@ export function createGame(el, api) {
     M.phase = 'countdown';
     M.runMs = 0; M.steps = 0; M.lastNow = clock(); M.ruleAt = M.lastNow; M.alpha = 0;
     M.paused = false; M.reasons.clear(); M.resumeAt = 0; M.result = null; M.endAt = 0;
-    M.startedWall = 0; M.firstRunWall = 0; M.partnerFin = -1; M.partnerOut = -1; M.rejoin = null;
+    M.startedWall = 0; M.firstRunWall = 0; M.partnerFin = -1; M.partnerOut = -1; M.rejoin = null; M.goneAt = 0;
     for (const w of AB) {
       const p = players[w];
       p.outT = -1; p.lastHorn = -1; p.histN = 0; p.weapon = null; p.tut = 0; p.hk.gap = null; p.hk.ban = 0;
@@ -459,6 +464,21 @@ export function createGame(el, api) {
     link.send('resume', { at: M.resumeAt });
   }
 
+  /** The partner has been away a while and the person still here chose to end it: a win for them
+   *  (Together: the run so far, as the team score). Either side may finish (core.js), so no host is needed. */
+  function forfeit() {
+    if (!live || M.phase !== 'run' || !M.goneAt) return;
+    const pn = api.name(other(meW)); const r = players[meW].r;
+    let res;
+    if (M.mode === 'tandem') {
+      const meters = Math.round(r ? r.z : 0); const coins = r ? r.coins : 0; const score = meters + coins;
+      res = { winner: null, team: true, score, text: `Team score ${score.toLocaleString('en-US')}`, sub: `${pn} left the run · ${meters.toLocaleString('en-US')} m · ${coins} coins`, forfeit: 1 };
+    } else res = { winner: meW, text: `${api.name(meW)} wins`, sub: `${pn} left the game`, forfeit: 1, za: Math.round(players.a.rs.z), zb: Math.round(players.b.rs.z) };
+    const at = clock() + FINALE_MS;
+    if (isHost) link.send('end', { res, at }); // (if they come back to a fresh page, the engine hands them the card)
+    M.reasons.clear(); M.paused = false; M.resumeAt = 0; M.goneAt = 0;
+    startFinale(res, at);
+  }
   function endMatch(res) {
     if (M.phase !== 'run') return;
     const at = clock() + FINALE_MS;
@@ -531,7 +551,7 @@ export function createGame(el, api) {
       if (M.mode === 'race' && r.fin >= 0) { const k = `${w}_race_t`; if (!d[k] || r.fin < d[k]) patch[k] = Math.round(r.fin * 100) / 100; }
       if (r.closeCalls > (d[`${w}_cc`] | 0)) patch[`${w}_cc`] = r.closeCalls;
       if (r.maxCombo > (d[`${w}_combo`] | 0)) patch[`${w}_combo`] = r.maxCombo;
-      const won = res.winner === w;
+      const won = res.winner === w && !res.forfeit; // (a win handed over by a quit doesn't count towards unlocks)
       const wins = (d[`${w}_wins`] | 0) + (won ? 1 : 0);
       if (won) patch[`${w}_wins`] = wins;
       const revives = (d[`${w}_rev`] | 0) + (p.stats.revives | 0);
@@ -552,7 +572,8 @@ export function createGame(el, api) {
         if (M.mode === 'race' && r.fin >= 0) {
           const prevT = d[`${w}_race_t`];
           if (prevT && r.fin < prevT) { bits.push(`${who}: fastest yet (was ${fmtT(prevT)})`); p.view.pop('NEW BEST!', 'hl', fmtT(r.fin)); audio.play('good'); }
-          else if (prevT) bits.push(`${who}: best ${fmtT(prevT)}`);
+          else if (prevT) bits.push(`${who}: ${fmtT(r.fin)} · best ${fmtT(prevT)}`);
+          else bits.push(`${who}: finished in ${fmtT(r.fin)}`);
         } else if (M.mode === 'race' || M.mode === 'daily') {
           if (newMode && prevMode > 0) { bits.push(`${who}: new best ${fmtM(dist)} m`); p.view.pop('NEW BEST!', 'hl', `${fmtM(dist)} m`); audio.play('good'); }
           else if (M.mode === 'race') bits.push(`${who}: ${fmtM(dist)} m${prevMode ? ` · best ${fmtM(prevMode)} m` : ''}`);
@@ -752,6 +773,8 @@ export function createGame(el, api) {
     if (inMatch) {
       if (!partnerHere) M.reasons.add('gone'); else M.reasons.delete('gone');
       if (partnerHere && link.age() > 1600) M.reasons.add('stale'); else M.reasons.delete('stale');
+      // how long they've been away (left the game, or their connection is down): after 20 s the card offers to end the match
+      if (M.reasons.has('gone') || M.reasons.has('stale')) { if (!M.goneAt) M.goneAt = performance.now(); } else M.goneAt = 0;
       const pin = ps && (ps.ph === PH.countdown || ps.ph === PH.run || ps.ph === PH.finale) && ps.ep === M.epoch;
       if (now > M.startAt + 1500 && partnerHere && link.age() < 1600 && !pin) M.reasons.add('sync'); else M.reasons.delete('sync');
     }
@@ -1095,6 +1118,12 @@ export function createGame(el, api) {
   }
 
   // ── HUD ──
+  /** Who's ahead, said plainly: "Sydney leads by 23 m" / "You lead by 23 m" (split screen has no "you": the name). gapM = partner − me. */
+  function leadText(gapM, p, q, short = false) {
+    const n = Math.abs(gapM);
+    if (gapM > 0) return `${short ? '' : q.name + ' '}leads by ${n} m`;
+    return split ? `${short ? '' : p.name + ' '}leads by ${n} m` : `${short ? 'you' : 'You'} lead by ${n} m`;
+  }
   function updateHud(now, dt) {
     const paused = isPaused(now);
     // countdowns: a numeric code per state, so the DOM (and the beep) only changes on a change
@@ -1115,7 +1144,8 @@ export function createGame(el, api) {
     let pk = 0;
     if ((M.phase === 'run' || M.phase === 'countdown') && M.paused) {
       const R = M.reasons;
-      pk = R.has('gl') ? 1 : R.has('tap') ? 2 : R.has('menu') ? 3 : R.has('gone') ? 4 : R.has('stale') ? 5 : R.has('sync') ? 6 : M.partnerPz ? 10 + M.partnerPz : 9;
+      const away = live && M.phase === 'run' && M.goneAt && performance.now() - M.goneAt > ((dbg && dbg.awayMs) || AWAY_MS) && (R.has('gone') || R.has('stale')) && !R.has('gl') && !R.has('tap') && !R.has('menu');
+      pk = R.has('gl') ? 1 : R.has('tap') ? 2 : R.has('menu') ? 3 : away ? (R.has('gone') ? 8 : 7) : R.has('gone') ? 4 : R.has('stale') ? 5 : R.has('sync') ? 6 : M.partnerPz ? 10 + M.partnerPz : 9;
     }
     audio.setPaused(pk > 0);
     if (pk !== pauseK) {
@@ -1128,6 +1158,7 @@ export function createGame(el, api) {
       else if (pk === 4) info = { title: `Waiting for ${pn}`, text: `${pn} left the game. The run picks up where you left off when they’re back.`, invite: true };
       else if (pk === 5) info = { title: `Waiting for ${pn}`, text: 'Their connection dropped. The run picks up where you left off when they’re back.' };
       else if (pk === 6) info = { title: `Getting ${pn} back in`, text: 'Syncing the run…' };
+      else if (pk === 7 || pk === 8) info = { title: `Waiting for ${pn}`, text: pk === 8 ? `${pn} left the game. You can keep waiting, or end the match here.` : `${pn} has been offline for a while. You can keep waiting, or end the match here.`, invite: pk === 8, end: M.mode === 'tandem' ? 'End the run' : 'End match · you win' };
       else if (pk > 10) { const z = pk - 10; info = { title: `${pn} paused`, text: z === PZ.hidden ? `${pn} switched apps. Hang tight.` : z === PZ.menu ? 'They’ll be right back.' : z >= PZ.gone ? 'Reconnecting…' : 'One moment…' }; }
       else if (pk === 9) info = { title: 'Paused', text: '' };
       hud.pause(info);
@@ -1173,19 +1204,19 @@ export function createGame(el, api) {
       v.dist(Math.max(0, Math.floor(p.rs.z)));
       if (M.mode === 'race') {
         v.bar(true, clamp(p.rs.z / M.len, 0, 1), clamp(qs.z / M.len, 0, 1), p.css, q.css, p.name[0], q.name[0]);
-        if (hk.gap !== gapM) { hk.gap = gapM; v.gap(Math.abs(gapM) < 1 ? `${q.name} level with you` : `${q.name} ${gapM > 0 ? '+' : '−'}${Math.abs(gapM)} m`); }
+        if (hk.gap !== gapM) { hk.gap = gapM; v.gap(Math.abs(gapM) < 1 ? `${q.name} level with you` : leadText(gapM, p, q)); }
         v.weapon(p.weaponRoll > 0 ? WEAPON_IDX[1 + (Math.floor(K.tAnim * 12) % 5)] : p.weapon, true);
       } else if (M.mode === 'daily') {
         v.bar(false);
         const k = (Math.abs(gapM) <= 2 ? 99999 : gapM) * 10 + qh;
-        if (hk.gap !== k) { hk.gap = k; v.gap(Math.abs(gapM) <= 2 ? `${q.name} level with you` : `${q.name} ${gapM > 0 ? '+' : '−'}${Math.abs(gapM)} m`); }
+        if (hk.gap !== k) { hk.gap = k; v.gap(Math.abs(gapM) <= 2 ? `${q.name} level with you` : leadText(gapM, p, q)); }
       } else if (M.mode === 'brawl') {
         v.bar(false);
         const k = (Math.abs(gapM) <= 2 ? 99999 : gapM) * 10 + qh;
         if (hk.gap !== k) {
           hk.gap = k;
           const hs = `${'♥'.repeat(Math.max(0, qh))}${'♡'.repeat(Math.max(0, HEARTS - qh))}`;
-          v.gap(Math.abs(gapM) <= 2 ? `${q.name} ${hs} · side by side!` : `${q.name} ${hs} · ${gapM > 0 ? '+' : '−'}${Math.abs(gapM)} m`);
+          v.gap(Math.abs(gapM) <= 2 ? `${q.name} ${hs} · side by side!` : `${q.name} ${hs} · ${leadText(gapM, p, q, true)}`);
         }
       }
       v.partner('', q.css);
@@ -1249,7 +1280,12 @@ export function createGame(el, api) {
           vec3.set(q.rs.x, 1.2, -(me.z + 140));
           vec3.project(cam);
           hud.tag(true, clamp((vec3.x * 0.5 + 0.5) * W, 60, W - 60), clamp((-vec3.y * 0.5 + 0.5) * H, H * 0.3, H * 0.5), ghostText, q.css, 0, true);
-        } else hud.tag(true, clamp(W / 2 + (q.rs.x - me.x) * 34, 70, W - 70), H - 120, ghostText, q.css, 0, true);
+        } else if (M.mode === 'tandem') {
+          // behind me: down at my feet in portrait, along the bottom edge in landscape (there it sat on the runner's torso).
+          // (Race / Brawl / Daily already say it in the gap pill at the top)
+          const lands = H < 560 && W > H;
+          hud.tag(true, clamp(W / 2 + (q.rs.x - me.x) * 34, lands ? 130 : 70, W - (lands ? 130 : 70)), lands ? H - 30 : H - 120, ghostText, q.css, 0, true);
+        } else hud.tag(false);
       } else hud.tag(false);
     } else hud.tag(false);
   }

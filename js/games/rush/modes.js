@@ -55,6 +55,9 @@ function clearSpot(track, lane, z) {
 export function createRules(G) {
   const { M } = G;
   let seq = 1;
+  // Ids (attacks, shoves, downs) are told apart across both devices by the judge's sets: even for
+  // 'a', odd for 'b', so two devices can never mint the same one (one device with both local runners can't clash with itself)
+  const nextId = () => { const id = seq; seq += 2; return id; };
   const pending = new Map(); // my attacks waiting for a result
   const missedIds = new Set();
   const revivedIds = new Set();
@@ -64,7 +67,7 @@ export function createRules(G) {
   const P = (w) => G.players[w];
 
   function init() {
-    seq = 1 + Math.floor(Math.random() * 1000) * 10;
+    seq = (1 + Math.floor(Math.random() * 1000) * 10) * 2 + (!P('a').local && P('b').local ? 1 : 0);
     pending.clear();
     missedIds.clear();
     revivedIds.clear();
@@ -103,7 +106,7 @@ export function createRules(G) {
     const q = P(other(p.w));
     const r = p.r;
     const qs = G.rs(q);
-    const id = seq++;
+    const id = nextId();
     const v = G.view(p.w);
     G.audio.play('weapon');
     if (kind === 'rocket') { r.boostT = BOOST_T; v && v.pop('ROCKET!', 'hl'); G.kick(p.w, 1); G.audio.play('power'); return true; }
@@ -154,7 +157,7 @@ export function createRules(G) {
     const qLane = Math.round(qs.x / LANE_W);
     if (Math.abs(qs.z - p.rs.z) > 2.0 || qLane !== to || Math.abs(qs.ground - (r.sup > -50 ? r.sup : 0)) > 1) return;
     if (p.sideT < SHOVE_SIDE_T && !twice) return;
-    const id = seq++;
+    const id = nextId();
     p.shoveCD = 1.2;
     p.av && p.av.lunge(dir);
     q.pushOff = dir * LANE_W * 0.55; // predicted push, corrected by their real state
@@ -225,7 +228,7 @@ export function createRules(G) {
       if (d.k === 'zap') {
         if (r.down || r.done) { reply('miss'); return; }
         if (r.shield) { r.shield = 0; v && v.pop('Blocked!', 'hl'); G.audio.play('shield'); reply('blocked'); return; }
-        r.zapT = 0.35; r.zapDir = d.id % 2 ? 1 : -1;
+        r.zapT = 0.35; r.zapDir = (d.id >> 1) % 2 ? 1 : -1;
         v && v.pop('ZAPPED!', 'hl', 'hold on'); v && v.flash();
         G.audio.play('zap');
         G.fx.burst(r.x, r.y + 2, r.z, G.pal.hl, 10, 4);
@@ -342,7 +345,7 @@ export function createRules(G) {
     }
     if (t === E_CRASH) {
       if (M.mode === 'tandem') {
-        const id = seq++;
+        const id = nextId();
         p.downId = id; p.downAt = G.now();
         G.send(other(p.w), 'down', { id, z: r.z });
       } else if (r.out) {

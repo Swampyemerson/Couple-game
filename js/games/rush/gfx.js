@@ -63,6 +63,8 @@ export function makePalette(tok) {
     pole: dark ? mix(card, ink, 0.25) : mix(ink, card, 0.55),
     glass: dark ? mix(bg, [0, 0, 0], 0.35) : mix(mix(a, ink, 0.55), card, 0.12),
     lit: mix(hl, [1, 1, 1], 0.25),
+    // lit windows beside the track: warm white, so the coin / hazard yellow stays the only yellow near the lanes
+    warm: mix(mix(hl, [1, 1, 1], 0.78), [1, 0.88, 0.74], 0.35),
     shadeInk,
     tunnel: dark ? mix(bg, [0, 0, 0], 0.3) : mix(bg, ink, 0.55),
     portal: dark ? mix(card, ink, 0.22) : mix(card, ink, 0.34), // concrete, banded in hazard yellow
@@ -264,6 +266,26 @@ function parallelogram(THREE, mirror = false) {
   return g;
 }
 
+/** Gable roof: two sloped quads (no caps, no floor), ridge along local z, eaves at y = -0.5, ridge at +0.5. */
+function gableRoof(THREE) {
+  const g = new THREE.BufferGeometry();
+  const k = 0.8944272; const q = 0.4472136;
+  g.setAttribute('position', new THREE.Float32BufferAttribute([
+    -0.5, -0.5, -0.5, -0.5, -0.5, 0.5, 0, 0.5, 0.5, 0, 0.5, -0.5,
+    0.5, -0.5, 0.5, 0.5, -0.5, -0.5, 0, 0.5, -0.5, 0, 0.5, 0.5], 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute([-k, q, 0, -k, q, 0, -k, q, 0, -k, q, 0, k, q, 0, k, q, 0, k, q, 0, k, q, 0], 3));
+  g.setIndex([0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7]);
+  return g;
+}
+/** Flat triangle facing +z: apex up (up = true: gable ends) or apex down (bunting pennants). */
+function triangle(THREE, up) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(up ? [-0.5, -0.5, 0, 0.5, -0.5, 0, 0, 0.5, 0] : [-0.5, 0.5, 0, 0, -0.5, 0, 0.5, 0.5, 0], 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute([0, 0, 1, 0, 0, 1, 0, 0, 1], 3));
+  g.setIndex([0, 1, 2]);
+  return g;
+}
+
 /** Build every template once. */
 export function makeTemplates(THREE) {
   const capsule = (r, len, seg = 8, rings = 3) => {
@@ -294,6 +316,9 @@ export function makeTemplates(THREE) {
     disc12: tpl(new THREE.CylinderGeometry(0.5, 0.5, 1, 12, 1), 'smooth'),
     quad: tpl(new THREE.PlaneGeometry(1, 1), 'box'),
     quadUp: tpl(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), 'box'),
+    roof: tpl(gableRoof(THREE), 'box'),
+    tri: tpl(triangle(THREE, true), 'box'),
+    pen: tpl(triangle(THREE, false), 'box'),
     stripe: tpl(parallelogram(THREE), 'box'),
     stripeL: tpl(parallelogram(THREE, true), 'box'),
     discZ: tpl(new THREE.CylinderGeometry(0.5, 0.5, 1, 28, 1).rotateX(Math.PI / 2), 'smooth'),

@@ -13,7 +13,8 @@ const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
 export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = null } = {}) {
   let ctx = null;
   let owned = false;
-  let master = null; let musicBus = null; let sfxBus = null; let noise = null;
+  let master = null; let musicBus = null; let sfxBus = null; let noise = null; let comp = null;
+  let windSrc = null; // (kept to stop it: on the app's shared context nothing else would)
   let wind = null; let windF = null; let windQ = -1; // speed-driven wind layer (one looping noise source)
   let mutedCache = false; let mutedAt = 0;
   let musicTimer = null;
@@ -43,7 +44,7 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
       if (!AC) return false;
       try { ctx = new AC(); owned = true; } catch { ctx = null; return false; }
     }
-    const comp = ctx.createDynamicsCompressor();
+    comp = ctx.createDynamicsCompressor();
     comp.threshold.value = -16; comp.ratio.value = 5; comp.attack.value = 0.004; comp.release.value = 0.2;
     master = ctx.createGain(); master.gain.value = 0.85;
     master.connect(comp); comp.connect(ctx.destination);
@@ -59,6 +60,7 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
       wind = ctx.createGain(); wind.gain.value = 0;
       src.connect(windF).connect(wind).connect(master);
       src.start();
+      windSrc = src;
     } catch { wind = null; }
     return true;
   }
@@ -297,7 +299,12 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
       dead = true;
       if (musicTimer) clearInterval(musicTimer);
       musicTimer = null;
-      try { if (master) master.disconnect(); } catch { /* ignore */ }
+      // Stop the long-lived sources (the wind loop, the magnet hoover) and unplug the graph. On the
+      // app's shared context nothing else would: each mount used to leave a looping node running.
+      for (const n of [windSrc, hooverO]) { try { if (n) n.stop(); } catch { /* ignore */ } }
+      for (const n of [windSrc, windF, wind, hooverO, hooverF, hoover, musicBus, sfxBus, master, comp]) { try { if (n) n.disconnect(); } catch { /* ignore */ } }
+      windSrc = null; wind = null; windF = null; hooverO = null; hooverF = null; hoover = null;
+      musicBus = null; sfxBus = null; master = null; comp = null;
       if (ctx && owned) { try { ctx.close(); } catch { /* ignore */ } }
       ctx = null;
     },
