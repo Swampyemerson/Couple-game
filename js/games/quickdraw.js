@@ -149,10 +149,10 @@ registerGame({
     .g-qd .qd-dim { position: absolute; inset: -8px; background: var(--g-edge, var(--g-ink)); opacity: 0; pointer-events: none; z-index: 3; }
     .g-qd .qd-mid { position: relative; flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
     .g-qd .qd-scene { position: relative; flex: 1 1 0; min-height: 0; max-height: 260px; display: flex; background: var(--g-card); border: 2.5px solid var(--g-ink); border-radius: 12px; box-shadow: var(--g-shadow); overflow: hidden; transition: background-color 0.06s; }
-    .g-qd[data-kind="classic"][data-phase="draw"] .qd-scene, .g-qd[data-kind="classic"][data-cue="first"] .qd-scene { background: var(--g-hl); }
+    .g-qd[data-kind="classic"][data-lit="1"] .qd-scene { background: var(--g-hl); }
     .g-qd .qd-svg { display: block; flex: 1 1 0; min-height: 0; width: 100%; height: 100%; margin: 0 auto; overflow: visible; }
     .g-qd .qd-sun { fill: var(--g-hl); stroke: var(--g-ink); stroke-width: 2.5; }
-    .g-qd[data-kind="classic"][data-phase="draw"] .qd-sun, .g-qd[data-kind="classic"][data-cue="first"] .qd-sun { fill: var(--g-card); }
+    .g-qd[data-kind="classic"][data-lit="1"] .qd-sun { fill: var(--g-card); }
     .g-qd .qd-ground { fill: var(--g-hl-soft, var(--g-bg)); }
     .g-qd .qd-horizon { stroke: var(--g-ink); stroke-width: 2.5; }
     .g-qd .qd-tufts { stroke: var(--g-ink); stroke-width: 1.6; fill: none; stroke-linecap: round; opacity: 0.55; }
@@ -834,6 +834,11 @@ registerGame({
       for (const b of setup.querySelectorAll('[data-pack]')) { b.setAttribute('aria-pressed', String(heard && b.dataset.pack === pick.p)); b.setAttribute('aria-disabled', String(!ref)); }
       for (const b of setup.querySelectorAll('[data-series]')) { b.setAttribute('aria-pressed', String(heard && b.dataset.series === pick.s)); b.setAttribute('aria-disabled', String(!ref)); }
       $1('.qd-pack-desc').textContent = heard ? PACKS[pick.p].desc : '';
+      const hb = $1('.qd-hand'); const chip = hb.querySelector('[data-hcap]');
+      hb.hidden = layout === 'desk'; // one keyboard shows one shared signal: nothing to delay for one player
+      chip.setAttribute('aria-pressed', String(heard && !!pick.h)); chip.setAttribute('aria-disabled', String(!ref));
+      const pv = handicapFrom(dataOf());
+      chip.querySelector('small').textContent = heard && pick.h ? (pv ? `${api.name(pv.w)}'s signal shows ${pv.o} ms later` : 'needs both best times first') : 'the quicker draw waits a beat';
       goBtn.hidden = !ref;
       goBtn.textContent = autoLeft ? `GO · ${autoLeft}` : 'GO';
       againBtn.hidden = !(ref && autoLeft);
@@ -852,15 +857,17 @@ registerGame({
       renderSetup();
       publish();
     }
-    function startDuel(p = pick.p, s = pick.s) {
+    function startDuel(p = pick.p, s = pick.s, h = pick.h) {
       if (!ref || started || dead) return;
       cancel(autoT); autoT = 0; autoLeft = 0;
       let pack = p;
       if (pack === 'surprise') pack = pickOf(['decoys', 'colour', 'bell', 'mixed']);
-      cfg = { p: pack, s };
-      pick = { p, s };
+      // Gunslinger handicap: fixed for the whole duel, from the personal bests as they stand now ({w, o}, or a test's own)
+      const hc = layout === 'desk' || !h ? null : h && h.o > 0 ? { w: h.w === 'b' ? 'b' : 'a', o: Math.round(h.o) } : handicapFrom(dataOf());
+      cfg = { p: pack, s, h: hc || 0 };
+      pick = { p, s, h: !!h };
       started = true;
-      saveData({ qd_last: `${p}:${s}` });
+      saveData({ qd_last: `${p}:${s}`, qd_hcap: !!h });
       phase = 'intro';
       if (!local) net.send('go', { hk: key, cfg });
       paint();
@@ -926,7 +933,7 @@ registerGame({
       if (!adoptHost(S.k)) return;
       const away = !!S.away;
       if (away !== partnerAway) { partnerAway = away; checkPause(); }
-      if (S.ph === 'setup' && S.pk && !started) { pick = { p: PACKS[S.pk.p] ? S.pk.p : 'classic', s: SERIES[S.pk.s] ? S.pk.s : '5' }; heard = true; autoLeft = S.ac | 0; renderSetup(); }
+      if (S.ph === 'setup' && S.pk && !started) { pick = { p: PACKS[S.pk.p] ? S.pk.p : 'classic', s: SERIES[S.pk.s] ? S.pk.s : '5', h: !!S.pk.h }; heard = true; autoLeft = S.ac | 0; renderSetup(); }
       if (S.cfg && !started) leaveSetup(S.cfg);
       if (S.v && S.v.hk === hostKey) applyVerdict(S.v);
       else takeTally(S.tally);
@@ -940,8 +947,8 @@ registerGame({
       const a = st.ht.a | 0; const b = st.ht.b | 0;
       if (verdict || isWin({ a, b }, st.hc || cfg) || !(a + b)) return;
       tl = { a, b };
-      if (st.hc && PACKS[st.hc.p] && SERIES[st.hc.s]) cfg = st.hc;
-      pick = { ...cfg };
+      if (st.hc && PACKS[st.hc.p] && SERIES[st.hc.s]) cfg = { p: st.hc.p, s: st.hc.s, h: st.hc.h && st.hc.h.o > 0 ? { w: st.hc.h.w === 'b' ? 'b' : 'a', o: st.hc.h.o | 0 } : 0 };
+      pick = { p: cfg.p, s: cfg.s, h: !!cfg.h };
       started = true; phase = 'intro';
       cancel(autoT); autoT = 0; autoLeft = 0;
       api.setScore(tl); paint(); publish();
@@ -977,40 +984,48 @@ registerGame({
         onFrame(step);
       }
     }
-    const msHTML = (res) => (!res ? 'too slow' : res.foul ? 'jumped early' : res.slow ? 'too slow' : `<span class="qd-ms" data-v="${Math.round(res.reaction)}">${Math.round(res.reaction)}</span> ms`);
+    const hoOf = (v, x) => (v && v.ho ? v.ho[x] | 0 : 0);
+    const plus = (o) => (o ? ` <span class="qd-hc-n">+${o}</span>` : '');
+    const msHTML = (res, o) => (!res ? 'too slow' : res.foul ? 'jumped early' : res.slow ? 'too slow' : `<span class="qd-ms" data-v="${Math.round(res.reaction)}">${Math.round(res.reaction)}</span> ms${plus(o)}`);
     function timesHTML(v) {
       if (v.photo && v.a && v.b) {
-        const hi = Math.max(v.a.reaction, v.b.reaction);
-        const row = (x) => `<b class="t-${x}">${N(x)}</b><i class="t-${x}" style="--w:${Math.round((v[x].reaction / hi) * 100)}%"></i><em><span class="qd-ms" data-v="${Math.round(v[x].reaction)}">${Math.round(v[x].reaction)}</span> ms</em>`;
+        const eff = (x) => v[x].reaction + hoOf(v, x);   // with a handicap the bar is when they actually fired
+        const hi = Math.max(eff('a'), eff('b'));
+        const row = (x) => `<b class="t-${x}">${N(x)}</b><i class="t-${x}" style="--w:${Math.round((eff(x) / hi) * 100)}%"></i><em><span class="qd-ms" data-v="${Math.round(v[x].reaction)}">${Math.round(v[x].reaction)}</span> ms${plus(hoOf(v, x))}</em>`;
         return `<div class="qd-bars">${row('a')}${row('b')}</div>`;
       }
-      if (v.why === 'time') return ['a', 'b'].map((x) => `<b class="t-${x}">${N(x)}</b> ${msHTML(v[x])}`).join('<span class="qd-sep">·</span>');
+      if (v.why === 'time') return ['a', 'b'].map((x) => `<b class="t-${x}">${N(x)}</b> ${msHTML(v[x], hoOf(v, x))}`).join('<span class="qd-sep">·</span>');
       return '';
     }
+    /** "with 30 ms handicap" (the favoured player won anyway) or "Sydney's 30 ms handicap counted". */
+    function handNote(v) {
+      const f = hoOf(v, 'a') ? 'a' : hoOf(v, 'b') ? 'b' : null;
+      if (!f || !v.w) return '';
+      return v.w === f ? `with ${hoOf(v, f)} ms handicap` : `${N(f)}'s ${hoOf(v, f)} ms handicap counted`;
+    }
     const roundNo = () => Math.min(tl.a + tl.b + 1, 99);
-    function sigState() {
+    function sigState(side) {
       const rd = cur && cur.rd;
       const S = seriesOf(cfg);
       switch (phase) {
         case 'setup': return { word: '', line: '', cls: '' };
         case 'intro': return { word: 'Ready', line: rd && rd.both ? 'BOTH BARRELS' : rd && rd.sd ? 'SUDDEN DEATH' : `${S.name} · ${PACKS[cfg.p].name}`, cls: '' };
-        case 'steady': {
+        case 'steady':
+        case 'draw': {
           const kind = rd.kind;
+          const c = cur.cs[side] || { k: 'none', i: 0 };
           const mp = rd.mp ? `MATCH POINT · ` : '';
           let line = rd.both ? 'Fire on the SECOND draw' : KIND_HINT[kind] || `Round ${roundNo()}`;
           if (rd.sd) line = `SUDDEN DEATH · ${KIND_HINT[kind] || 'next hit wins'}`;
           else if (mp) line = rd.both ? 'MATCH POINT · the SECOND draw' : `${mp}${KIND_HINT[kind] || `Round ${roundNo()}`}`;
-          if (cur.cue === 'first') return { word: realWord(kind), line: 'One…', cls: 'is-draw' };
-          if (cur.cue === 'decoy') {
-            if (kind === 'decoys') return { word: DECOY_WORDS[cur.cueI % DECOY_WORDS.length], line, cls: 'is-draw' };
-            if (kind === 'colour') return { word: DECOY_COLOURS[cur.cueI % 3][0], line, cls: 'is-cue' };
+          if (cur.t0[side] != null) return { word: realWord(kind), line: rd.both ? 'Two! Fire!' : '', cls: 'is-draw' };   // this player's own signal
+          if (c.k === 'first') return { word: realWord(kind), line: 'One…', cls: 'is-draw' };
+          if (c.k === 'decoy') {
+            if (kind === 'decoys') return { word: DECOY_WORDS[c.i % DECOY_WORDS.length], line, cls: 'is-draw' };
+            if (kind === 'colour') return { word: DECOY_COLOURS[c.i % 3][0], line, cls: 'is-cue' };
             if (kind === 'bell') return { word: 'tink', line, cls: 'is-cue' };
           }
           return { word: 'Steady…', line, cls: 'is-steady' };
-        }
-        case 'draw': {
-          const kind = rd.kind;
-          return { word: realWord(kind), line: rd.both ? 'Two! Fire!' : '', cls: 'is-draw' };
         }
         case 'wait': {
           const mine = cur && cur.res[me];
@@ -1031,8 +1046,8 @@ registerGame({
           else if (v.why === 'dfoul') line = 'Both jumped together. Go again.';
           else if (v.why === 'fouls') line = `Both jumped. ${N(l)} jumped first.`;
           else if (v.why === 'foul') line = `${N(l)} ${jumped(l)}`;
-          else line = v.diff != null ? `${N(v.w)} by ${v.diff} ms` : `${N(v.w)} takes the round`;
-          if (v.res) line = `${N(v.w)} wins the duel${v.sd ? ' in sudden death' : ''}!${v.why === 'time' && v.diff != null ? ` (by ${v.diff} ms)` : ''}`;
+          else line = v.diff != null ? `${N(v.w)} by ${v.diff} ms${handNote(v) ? ` (${handNote(v)})` : ''}` : `${N(v.w)} takes the round`;
+          if (v.res) line = `${N(v.w)} wins the duel${v.sd ? ' in sudden death' : ''}!${v.why === 'time' && v.diff != null ? ` (by ${v.diff} ms${handNote(v) ? `, ${handNote(v)}` : ''})` : ''}`;
           const word = v.w ? 'BANG!' : v.why === 'tie' ? 'Dead heat' : v.why === 'none' ? 'Nobody fired' : v.why === 'dfoul' ? 'Double foul' : 'Again';
           return { word, line, cls: v.w ? `is-bang p-${v.w}` : '', times: timesHTML(v) };
         }
@@ -1051,13 +1066,24 @@ registerGame({
     }
     function paint(prevTally) {
       root.dataset.phase = phase;
-      const st = sigState();
+      const sideOf = (el) => (el.classList.contains('qd-top') ? 'b' : layout === 'live' ? me : 'a'); // whose half of the signal this is
+      const stOf = {};
       for (const s of $$('.qd-sig')) {
+        const side = sideOf(s);
+        const st = stOf[side] || (stOf[side] = sigState(side));
         s.className = `qd-sig${s.classList.contains('qd-top') ? ' qd-top' : ''}${st.cls ? ` ${st.cls}` : ''}`;
         const w = s.querySelector('.qd-word');
         if (st.html) w.innerHTML = st.word; else w.textContent = st.word;
         s.querySelector('.qd-line').innerHTML = st.line;
         s.querySelector('.qd-times').innerHTML = st.times || '';
+      }
+      // scene lighting (classic: the whole sky turns) once every player on this device has their signal
+      const all = (k) => !!cur && sides.every((w) => (k === 'real' ? cur.t0[w] != null : cur.cs[w].k === k));
+      root.dataset.lit = (phase === 'draw' && all('real')) || (phase === 'steady' && all('first')) ? '1' : '';
+      for (const t of $$('.qd-hc')) {
+        const hcw = started && cfg.h && cfg.h.o > 0 && cfg.h.w === t.dataset.w;
+        t.hidden = !hcw;
+        if (hcw) t.textContent = `handicap +${cfg.h.o} ms`;
       }
       renderNotches();
       if (prevTally) for (const nEl of $$('.qd-notches:not(.num)')) { const w = nEl.dataset.w; [...nEl.children].forEach((i, k) => i.classList.toggle('new', k < tl[w] && k >= prevTally[w])); }
@@ -1102,7 +1128,8 @@ registerGame({
       const b = e.target.closest('button'); if (!b) return;
       if (b.classList.contains('qd-go')) { startDuel(); return; }
       if (b.classList.contains('qd-again')) { stopAuto(); return; }
-      if (b.dataset.pack) setPick({ p: b.dataset.pack });
+      if (b.hasAttribute('data-hcap')) setPick({ h: !pick.h });
+      else if (b.dataset.pack) setPick({ p: b.dataset.pack });
       else if (b.dataset.series) setPick({ s: b.dataset.series });
     });
     on(window, 'keydown', (e) => {
@@ -1151,11 +1178,11 @@ registerGame({
 
     if (location.port) {
       window.__qdTest = {
-        state: () => ({ phase, tally: { ...tl }, verdict, r: cur ? cur.r : 0, layout, coarse, paused, res: cur ? { ...cur.res } : null, cfg: { ...cfg }, pick: { ...pick }, started, kind: cur ? cur.rd.kind : null, cue: cur ? cur.cue : null, rd: cur ? cur.rd : null, rtt: net.rtt, now: net.now() }),
+        state: () => ({ phase, tally: { ...tl }, verdict, r: cur ? cur.r : 0, layout, coarse, paused, res: cur ? { ...cur.res } : null, cfg: { ...cfg }, pick: { ...pick }, started, kind: cur ? cur.rd.kind : null, cue: cur ? cur.cue : null, cs: cur ? { a: { ...cur.cs.a }, b: { ...cur.cs.b } } : null, t0: cur ? { ...cur.t0 } : null, rd: cur ? cur.rd : null, rtt: net.rtt, now: net.now() }),
         timers: () => timers.size + rafs.size,
         recv: () => recvLog.slice(),
         /** Skip the picker: start a duel right away (host / one device). */
-        start: (p = 'classic', s = '5', t = null) => { if (t && ref && !started) { tl = { a: t.a | 0, b: t.b | 0 }; api.setScore(tl); } startDuel(p, s); },
+        start: (p = 'classic', s = '5', t = null, h = false) => { if (t && ref && !started) { tl = { a: t.a | 0, b: t.b | 0 }; api.setScore(tl); } startDuel(p, s, h); },
         /** Override the next round's plan (e.g. { kind: 'decoys', decoys: [900], dw: [0], delay: 2600 }). */
         force: (o) => { forced = o; },
       };
