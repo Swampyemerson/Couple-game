@@ -109,6 +109,12 @@ A second Fable check ranked three ideas. Two shipped:
   what they just read while the bomb stays live. It's drawn from its own seeded stream, so every existing round and pinned test
   seed is unchanged. It never overlaps a surge or blackout and is never in the first or last 30 s. The manual's basics page
   announces it.
+- An independent verifier checked Par on a laptop bomb with a phone manual (and on two phones), light and dark, with real taps,
+  and checked Hush in the browser. It found three problems, all now fixed and re-checked in the browser:
+  - on a par clock, a Hush scheduled before the shortened clock fired at second 0;
+  - surges or blackouts could land in the first 30 s of a short clock;
+  - the end card offered a gold medal that a shortened clock makes impossible.
+  The Par clock is also ignored on Today's bomb, so daily times stay comparable.
 - Not shipped: **Chain ×2** (two bombs back to back, leftover time carries over). The builder hit a rate limit before it had
   written code, and its partial edit was reverted. It's a good next step.
 

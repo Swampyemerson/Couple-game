@@ -197,7 +197,7 @@ registerGame({
       const pe = $('.dx-par');
       if (pe) { pe.hidden = !par; pe.textContent = par ? `Par ${clock(par.secs)}` : ''; }
       const pcb = $('[data-act="parclock"]');
-      if (pcb) { pcb.disabled = !par; pcb.setAttribute('aria-disabled', String(!par)); pcb.setAttribute('aria-checked', String(!!par && L.pc)); }
+      if (pcb) { const ok = !!par && !L.td; pcb.disabled = !ok; pcb.setAttribute('aria-disabled', String(!ok)); pcb.setAttribute('aria-checked', String(ok && L.pc)); }
       const sg = $('.dx-suggest');
       if (sg) { const t = suggestTier(r, k); sg.hidden = !t; sg.textContent = t ? t.text : ''; }
       for (const b of $$('.dx-tiers button')) {
@@ -290,11 +290,13 @@ registerGame({
     function begin() {
       const date = L.td ? dayKey(Date.now()) : null;
       lobbySince = 0; partnerLobby = false;
-      const par = L.pc ? parOf(D(), L.diff) : null; // Par clock: the couple's own average plus 20 s, never more than the tier's clock
+      const par = L.pc && !date ? parOf(D(), L.diff) : null; // Par clock: the couple's own average plus 20 s, never more than the tier's clock (not on Today's bomb, so days stay comparable)
       B = newBomb(forced || (date ? dailySeed(date) : token()), L.diff, date, par ? par.secs + 20 : 0);
-      if (B.pc) { // events scheduled before the shortened clock even starts never fire
+      if (B.pc) { // events scheduled before, or in the first 30 s of, the shortened clock never fire
         const X = B.round.twistRules;
-        for (const key of ['surge', 'blackout']) if (X[key]) X[key].at.forEach((a, k) => { if (a > B.start) (key === 'surge' ? B.surge : B.dark).fired[k] = 1; });
+        const early = (a) => a > B.start - 30;
+        for (const key of ['surge', 'blackout']) if (X[key]) X[key].at.forEach((a, k) => { if (early(a)) (key === 'surge' ? B.surge : B.dark).fired[k] = 1; });
+        if (X.hush && early(X.hush.at)) B.hush.fired = 1;
       }
       forced = null;
       memo.saved = null;
@@ -503,7 +505,7 @@ registerGame({
       if (info.newRecord) bits.push(`New record for ${T.label}!`);
       else if (info.firstWin) bits.push(`First ${T.label} defuse!`);
       if (info.medalUp) bits.push(`${MEDAL_NAME[info.medal]} medal earned.`);
-      const hint = nextMedalHint(info.medal || 0);
+      const hint = B.pc && (info.medal || 0) === 2 ? '' : nextMedalHint(info.medal || 0); // gold needs the full clock
       if (hint) bits.push(hint);
       if (par) { const gap = par.secs - Math.max(0, B.start - secs); bits.push(gap > 0 ? `Under par by ${gap} s.` : gap < 0 ? `Over par by ${-gap} s.` : 'Right on par.'); }
       const tag = `${T.label} · ${B.round.edition}${B.daily ? ' · Today’s bomb' : ''}`;
