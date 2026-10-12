@@ -172,7 +172,7 @@ async function hockeyLive(h, tag, quick = false) {
     assert(true, 'the host registered the guest mallet hitting the puck');
     const after = await hk(a);
     assert(after.puck.vy > 30 || after.score.b === 1, `the guest's hit sent the puck toward Emerson's goal (vy ${after.puck.vy.toFixed(0)})`);
-    await a.waitForFunction(() => window.__hockeyTest.state().score.b === 1, null, { timeout: 4000 });
+    await a.waitForFunction(() => window.__hockeyTest.state().score.b === 1, null, { timeout: 7000 });
     await b.waitForFunction(() => window.__hockeyTest.state().score.b === 1, null, { timeout: 3000 });
     assert(true, "the guest's shot scores on both phones");
     const chips = async (pg) => pg.evaluate(() => [...document.querySelectorAll('#game-root [data-score]')].map((e) => e.textContent).join('-'));

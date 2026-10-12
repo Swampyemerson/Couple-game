@@ -658,7 +658,8 @@ async function cyclesTurnedLive(h) {
     const j = await until(async () => { const b = await cy(h.b); return b && b.qr === 1 && b.cssW > b.cssH ? b : null; }, 'the guest to turn the board', 4000, 30);
     assert(j.layout === 'p' && j.cell >= 6, `turned on its side mid-round: the same grid is drawn wide, filling the screen (cell ${i.cell} → ${j.cell} px)`);
     // Sydney starts on the left of her turned screen; up is up
-    const b0 = await inkBox(h.b, 'b');
+    // the resized canvas is blank until its next paint: wait for Sydney's ink to show
+    const b0 = await until(() => inkBox(h.b, 'b'), 'the turned board to repaint', 2000, 30);
     await h.b.keyboard.press('ArrowUp');
     await sleep(120);
     const b1 = await inkBox(h.b, 'b');
