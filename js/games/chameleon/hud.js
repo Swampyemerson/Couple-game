@@ -141,6 +141,19 @@ export const CSS = `
 .chm-rc[hidden] { display: none; }
 .chm-pat { margin-left: 5px; }
 @media (max-width: 340px) { .chm-pal { gap: 3px; padding: 3px 4px; } .chm-pat { margin-left: 3px; } }
+/* the camo meter keeps clear of the paint panel in portrait: its tube shrinks to the room between its top and the panel's top
+   (--chm-tools-top / --chm-h are measured in JS); on a 320 px phone it also rides up beside the title row so the colour chips and Soft stay free */
+@media (orientation: portrait) {
+  .chm.painting .chm-meter .cm-tube { height: clamp(44px, calc(var(--chm-h, 800px) - var(--chm-tools-top, 198px) - 184px - var(--chm-st) - 12px - 91px), 148px); }
+}
+@media (orientation: portrait) and (max-height: 700px) {
+  .chm.painting .chm-meter .cm-tube { height: clamp(44px, calc(var(--chm-h, 600px) - var(--chm-tools-top, 198px) - 184px - var(--chm-st) - 12px - 91px), 128px); }
+}
+@media (orientation: portrait) and (max-width: 340px) {
+  .chm.painting .chm-meter { top: calc(98px + var(--chm-st)); }
+  .chm.painting .chm-meter .cm-tube { height: clamp(44px, calc(var(--chm-h, 568px) - var(--chm-tools-top, 198px) - 98px - var(--chm-st) - 12px - 91px), 128px); }
+  .chm.painting .chm-hint { max-width: calc(100% - 136px); }
+}
 .chm-pat svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .chm-lockcap { flex: 1 1 0; min-width: 0; font: 900 .68rem/1.15 var(--g-font-body); text-transform: uppercase; letter-spacing: .03em; color: var(--g-ink); padding-left: 3px; }
 .chm-lockcap small { display: block; font-weight: 800; letter-spacing: 0; text-transform: none; opacity: .75; }
@@ -521,11 +534,23 @@ export const CSS = `
 .chm-emote.sent { animation: chm-squash .3s; border-color: var(--g-ink); }
 @keyframes chm-squash { 30% { transform: scale(1.25, .8); } 60% { transform: scale(.9, 1.15); } }
 .chm-pops { position: absolute; inset: 0; pointer-events: none; z-index: 6; }
-.chm-pop { position: absolute; left: 50%; top: 30%; transform: translate(-50%, -50%) rotate(-5deg); padding: 8px 18px 10px; font-family: var(--g-font-display); font-size: 1.7rem; font-weight: 900; letter-spacing: .02em; color: var(--g-on-ink); background: var(--g-hl); border: 3px solid var(--g-ink); border-radius: 14px; box-shadow: 5px 5px 0 var(--g-edge); white-space: nowrap; animation: chm-stamp .45s cubic-bezier(.2,1.6,.4,1), chm-popout .4s ease-in 1.5s forwards; }
-.chm-pop small { display: block; font-family: var(--g-font-body); font-size: .8rem; font-weight: 800; letter-spacing: 0; text-align: center; margin-top: 2px; }
+/* stickers stack in a lane (flex column, never on top of each other); the lane starts below the hint (portrait 140 px, landscape 104 px) */
+.chm-poplane { position: absolute; left: 0; right: 0; top: calc(196px + var(--chm-st)); display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; }
+.chm-pop { position: relative; flex: none; max-width: calc(100% - 16px); transform: rotate(-5deg); padding: 8px 18px 10px; font-family: var(--g-font-display); font-size: 1.7rem; font-weight: 900; letter-spacing: .02em; color: var(--g-on-ink); background: var(--g-hl); border: 3px solid var(--g-ink); border-radius: 14px; box-shadow: 5px 5px 0 var(--g-edge); white-space: nowrap; animation: chm-popin .45s cubic-bezier(.2,1.6,.4,1), chm-poplift .4s ease-in 1.5s forwards; }
+.chm-pop small { display: block; font-family: var(--g-font-body); font-size: .8rem; font-weight: 800; letter-spacing: 0; text-align: center; margin-top: 2px; white-space: normal; }
 .chm-pop.a { background: var(--p-a); } .chm-pop.b { background: var(--p-b); } .chm-pop.ink { background: var(--g-ink); color: var(--g-bg); }
-.chm-pop.low { top: 62%; } .chm-pop.mid { top: 46%; }
+@keyframes chm-popin { from { transform: rotate(-24deg) scale(2.2); opacity: 0; } to { transform: rotate(-5deg) scale(1); opacity: 1; } }
+@keyframes chm-poplift { to { opacity: 0; transform: translateY(-10px) rotate(-5deg) scale(.9); } }
 @keyframes chm-popout { to { opacity: 0; transform: translate(-50%, -60%) rotate(-5deg) scale(.9); } }
+/* the recap card covers the screen (portrait) or the right half (landscape): the stickers go in a compact lane in the strip above it / left of it, never on its text */
+.chm:has(.chm-recap) .chm-poplane, .chm:has(.chm-final) .chm-poplane { top: calc(64px + var(--chm-st)); gap: 4px; }
+.chm:has(.chm-recap) .chm-pop, .chm:has(.chm-final) .chm-pop { font-size: 1.05rem; padding: 3px 14px 4px; border-width: 2.5px; border-radius: 12px; box-shadow: 3px 3px 0 var(--g-edge); display: flex; align-items: baseline; gap: 8px; }
+.chm:has(.chm-recap) .chm-pop small, .chm:has(.chm-final) .chm-pop small { display: inline; margin: 0; font-size: .7rem; }
+.chm-over.chm-recap, .chm-over.chm-final { padding-top: calc(var(--chm-st) + 140px); }
+@media (orientation: landscape) and (max-height: 520px) {
+  .chm-poplane { top: calc(150px + var(--chm-st)); }
+  .chm:has(.chm-recap) .chm-poplane, .chm:has(.chm-final) .chm-poplane { top: calc(70px + var(--chm-st)); right: calc(min(46vw, 400px) + 82px + var(--chm-sr)); }
+}
 .chm-emo { position: absolute; width: 0; height: 0; pointer-events: none; z-index: 6; }
 .chm-emo i { position: absolute; left: 0; top: 0; transform: translate(-50%, -50%) rotate(var(--r, 0deg)); display: flex; flex-direction: column; align-items: center; padding: 6px 10px; border: 2.5px solid var(--g-ink); border-radius: 14px; background: var(--g-card); box-shadow: 4px 4px 0 var(--g-edge); font: 900 .7rem/1 var(--g-font-body); text-transform: uppercase; color: var(--g-ink); animation: chm-emoin .3s cubic-bezier(.2,1.6,.4,1), chm-popout .35s ease-in 1.6s forwards; }
 .chm-emo i span { font-size: 2rem; line-height: 1.1; } .chm-emo.mine i span { font-size: 1.3rem; } .chm-emo.mine i { padding: 4px 8px; box-shadow: 2px 2px 0 var(--g-edge); }
@@ -724,7 +749,7 @@ export function createHud(root, api) {
       <div class="chm-legend chm-sticker"></div>
       <div class="chm-ripple"></div>
     </div>
-    <div class="chm-pops"></div>
+    <div class="chm-pops"><div class="chm-poplane"></div></div>
     <div class="chm-vig"></div>
     <div class="chm-flash"></div>
     <div class="chm-layer"></div>`);
@@ -736,7 +761,7 @@ export function createHud(root, api) {
     joy: $('.chm-joy'), knob: $('.chm-joy i'), joyhint: $('.chm-joyhint'), mini: $('.chm-mini'), miniCv: $('.chm-mini canvas'), tips: $('.chm-tips'),
     poses: $('.chm-poses'), tools: $('.chm-tools'), swatch: $('.chm-swatch'), acts: $('.chm-acts'),
     hint: $('.chm-hint'), legend: $('.chm-legend'), badge: $('.chm-badge'), here: $('.chm-here'), ripple: $('.chm-ripple'), vig: $('.chm-vig'), flash: $('.chm-flash'),
-    layer: $('.chm-layer'), pops: $('.chm-pops'),
+    layer: $('.chm-layer'), pops: $('.chm-pops'), lane: $('.chm-poplane'),
   };
   const cache = new Map();
   let hintTimer = 0;
@@ -818,12 +843,12 @@ export function createHud(root, api) {
   el.chips = root.querySelector('.chm-pal');
   // the paint tools' height (it grows when the swatch row wraps on a narrow phone): the pose bar sits just above it
   if (typeof ResizeObserver !== 'undefined') {
-    let lastTop = -1;
+    let lastTop = -1; let lastH = -1;
     new ResizeObserver(() => {
       if (el.tools.hidden) return;
       const r = el.tools.getBoundingClientRect(); const rr = root.getBoundingClientRect();
       const d = Math.round(rr.bottom - r.top);
-      if (r.height && d !== lastTop) { lastTop = d; root.style.setProperty('--chm-tools-top', d + 'px'); }
+      if (r.height && (d !== lastTop || Math.round(rr.height) !== lastH)) { lastTop = d; lastH = Math.round(rr.height); root.style.setProperty('--chm-tools-top', d + 'px'); root.style.setProperty('--chm-h', lastH + 'px'); }
     }).observe(el.tools);
   }
   el.chips.addEventListener('click', (e) => {
@@ -1060,9 +1085,9 @@ export function createHud(root, api) {
     /** A sticker pop ('NEW RECORD', 'UNLOCKED · Ruby eyes'): DOM only, removed after 2 s. */
     pop(text, cls = 'hl', sub = '') {
       const d = document.createElement('div');
-      d.className = `chm-pop ${cls} ${(N.popN = (N.popN | 0) + 1) % 2 ? '' : 'mid'}`; // alternate heights: two stickers 1.1 s apart never sit on each other
+      d.className = `chm-pop ${cls}`; // (they stack in the lane: two stickers never sit on each other)
       d.innerHTML = `${esc(text)}${sub ? `<small>${esc(sub)}</small>` : ''}`;
-      el.pops.appendChild(d);
+      el.lane.appendChild(d);
       setTimeout(() => d.remove(), 2000);
     },
     /** A reaction sticker: theirs lands big near the card at a random tilt, mine small and mirrored. */

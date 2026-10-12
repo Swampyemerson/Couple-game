@@ -9,7 +9,7 @@
 // with `| 0` defaults, so an old doc just reads as zero.
 import { esc, fmtTime } from './util.js';
 import { SURF_SHORT, CUP_SVG } from './cards.js';
-import { portraitImg } from './gallery.js';
+import { portraitImg, portraitOk } from './gallery.js';
 
 const other = (w) => (w === 'a' ? 'b' : 'a');
 /** Surface counters worth keeping (where a hider survived). */
@@ -212,18 +212,19 @@ export function bestsStrip(api, d, mapNames = {}) {
 export function rivalryBlock(api, d) {
   const h2h = headToHead(api, d);
   const holder = d.cup_holder === 'a' || d.cup_holder === 'b';
-  const pics = ['a', 'b'].filter((w) => d[`${w}_portrait`]).map((w) => portraitFig(api, d, w)).join('');
+  const pics = ['a', 'b'].map((w) => portraitFig(api, d, w)).join('');
   const matches = (d.a_matches | 0) + (d.b_matches | 0);
   if (!h2h && !holder && !pics && !matches) return '';
   return `<div class="chm-rivalry">${cupLine(api, d)}${h2h}${pics ? `<div class="chm-gallery">${pics}</div>` : ''}</div>`;
 }
 /** One framed portrait: the skin of a player's best surviving hide, flat. */
 export function portraitFig(api, d, w, mapName = '') {
-  const blob = d[`${w}_portrait`]; if (!blob) return '';
+  const blob = d[`${w}_portrait`]; const ms = d[`${w}_portrait_ms`] | 0;
+  if (!blob || !portraitOk(String(blob), ms)) return ''; // a corrupt blob or a missing time: nothing, never a black tile or "0:00"
   const img = portraitImg(String(blob), w);
-  const ms = d[`${w}_portrait_ms`] | 0;
+  if (!img) return '';
   const cap = `${esc(api.name(w))} ${fmtTime(ms)}`;
-  return `<figure class="chm-port p${w}" data-portrait="${w}">${img || '<span class="chm-port-ph"></span>'}<figcaption>${cap}${mapName ? ` <em>${esc(mapName)}</em>` : ''}</figcaption></figure>`;
+  return `<figure class="chm-port p${w}" data-portrait="${w}">${img}<figcaption>${cap}${mapName ? ` <em>${esc(mapName)}</em>` : ''}</figcaption></figure>`;
 }
 
 /** Today's board (maps pass): 'Today: Emerson 0:41 · Sydney 1:10 · Sydney leads', or '' if

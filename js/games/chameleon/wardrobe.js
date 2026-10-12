@@ -5,7 +5,7 @@
 // device's pick (localStorage), guarded by unlocked() when resolved, and sent to the partner
 // as one small int per slot (reliable `wear`), so both phones draw the same chameleon.
 import { esc, fmtTime } from './util.js';
-import { portraitImg } from './gallery.js';
+import { portraitImg, portraitOk } from './gallery.js';
 
 export const STYLES = [
   { key: 'eye', k: 0, name: 'Amber', how: '' },
@@ -136,7 +136,7 @@ export function wardrobeSheet(api, { w, d, picks, local = false }) {
     return `<h3>${SLOT_LABEL[key]}${key === 'trim' ? ' <small>seen from across the room (not while you hide)</small>' : ''}</h3><div class="chm-wrow">${tiles}</div>`;
   }).join('');
   const earned = STYLES.filter((st) => st.k && unlocked(d, w, st)).length; const total = STYLES.filter((st) => st.k).length;
-  const pimg = d[`${w}_portrait`] ? portraitImg(String(d[`${w}_portrait`]), w) : '';
+  const pimg = portraitOk(String(d[`${w}_portrait`] || ''), d[`${w}_portrait_ms`] | 0) ? portraitImg(String(d[`${w}_portrait`]), w) : '';
   return `<div class="chm-sheetwrap" role="dialog" aria-label="Wardrobe"><div class="chm-sheet chm-wardrobe chm-sticker" data-scroll>
     <div class="chm-sheethead"><h2>${esc(api.name(w))}’s wardrobe</h2><button class="chm-done" data-act="wardrobe">Done</button></div>
     ${local ? `<div class="chm-chips">${['a', 'b'].map((x) => `<button class="chm-chip p${x} ${x === w ? 'on' : ''}" data-wfor="${x}"><i></i>${esc(api.name(x))}</button>`).join('')}</div>` : ''}

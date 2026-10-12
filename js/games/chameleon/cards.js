@@ -322,7 +322,7 @@ export const EMOTES = [
   ['lol', ES('<circle class="f1" cx="16" cy="16" r="12.5"/><path class="k" d="M9.5 12.5l3.6 2.4-3.6 2.4M22.5 12.5l-3.6 2.4 3.6 2.4"/><path class="k f4" d="M9.5 19.5q6.5 9 13 0z"/>'), 'LOL'],
   ['how', ES('<circle class="f2" cx="16" cy="17" r="12"/><path class="k" d="M8.5 11.5l5.5 2.6M23.5 11.5l-5.5 2.6"/><circle class="ik" cx="12" cy="17" r="1.7"/><circle class="ik" cx="20" cy="17" r="1.7"/><path class="k" d="M12 23.5h8"/><path class="k" d="M5 8q-1.5-3 1-5M27 8q1.5-3-1-5"/>'), 'HOW'],
   ['sneaky', ES('<ellipse class="f4 k" cx="10" cy="16" rx="6.5" ry="8"/><ellipse class="f4 k" cx="22" cy="16" rx="6.5" ry="8"/><circle class="ik" cx="12.8" cy="17" r="3"/><circle class="ik" cx="24.8" cy="17" r="3"/><path class="k" d="M3.5 6.5l9 2M28.5 6.5l-9 2"/>'), 'Sneaky'],
-  ['love', ES('<path class="f2 k" d="M16 27.5C3.5 18.5 4.5 7.5 10.8 7.5c3.2 0 5.2 2.6 5.2 4 0-1.4 2-4 5.2-4 6.3 0 7.3 11-5.2 20z"/><path class="k" d="M9 12.5q1-2 3-1.8"/>'), ''],
+  ['love', ES('<path class="f2 k" d="M16 27.5C3.5 18.5 4.5 7.5 10.8 7.5c3.2 0 5.2 2.6 5.2 4 0-1.4 2-4 5.2-4 6.3 0 7.3 11-5.2 20z"/><path class="k" d="M9 12.5q1-2 3-1.8"/>'), 'Love'],
   ['again', ES('<path class="k" d="M25 12.5A10 10 0 1 0 26 20"/><path class="k f3" d="M26.5 4.5v9h-9z"/>'), 'Again!'],
   ['paint', ES('<path class="f4 k" d="M16 4C8 4 3 9.5 3 16c0 7.5 6 12 11 12 3.5 0 3.5-3 2.2-5-1-1.8.8-3.8 3.8-3.8H24c3.3 0 5-1.8 5-4.2C29 9 23.5 4 16 4z"/><circle class="f2 k" cx="10" cy="13.5" r="2.4"/><circle class="f1 k" cx="16.5" cy="9.5" r="2.4"/><circle class="f3 k" cx="22.5" cy="13" r="2.4"/>'), 'Nice!'],
 ];
@@ -445,6 +445,16 @@ export const CARDS_CSS = `
 /* R: records, rivalry and cards. Riso tokens only; text separators are gaps, never dots. */
 .chm-step button { width: 44px; min-width: 44px; height: 44px; }
 .chm-step output { line-height: 44px; }
+/* settings sheet touch targets: every segment >= 44 x 44, sliders 44 px tall, the size picker's five buttons >= 44 px wide */
+.chm-seg2 button { height: 44px; }
+.chm-set .chm-sizes, .chm-sheet .chm-sizes { width: 236px; }
+.chm-set .chm-sizes button, .chm-sheet .chm-sizes button { min-height: 44px; min-width: 44px; }
+@media (max-width: 380px) { .chm-set .chm-sizes button, .chm-sheet .chm-sizes button { font-size: .5rem; letter-spacing: 0; padding-left: 0; padding-right: 0; } }
+.chm-set:has(.chm-sizes) { flex-wrap: wrap; row-gap: 6px; }
+.chm-set:has(.chm-sizes) > span { flex: 1 1 120px; }
+.chm-set:has(.chm-sizes) .chm-sizes { margin-left: auto; }
+.chm-range { height: 44px; margin: 0; }
+.chm-sheet .chm-mapinfo small { white-space: normal; overflow: visible; text-overflow: clip; }
 .chm-set.dead { opacity: .5; }
 .chm-set.dead .chm-step, .chm-set.dead .chm-seg2 { pointer-events: none; }
 .chm-set.dead b::after { content: 'two phones'; margin-left: 6px; padding: 1px 6px; border: 1.5px solid var(--g-line); border-radius: 999px; font-size: .56rem; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; color: var(--g-muted); vertical-align: 2px; }
@@ -513,6 +523,11 @@ export const CARDS_CSS = `
   .chm-recap .chm-card h2, .chm-final .chm-card h2 { font-size: 1.2rem; }
   .chm-recap .chm-card p { font-size: .8rem; }
   .chm-recap .chm-stats { display: none; }
+  /* reactions right under the headline (above the lines, tally and head-to-head), so they are on screen without scrolling and clear of the pinned Next bar */
+  .chm-recap .chm-card > * { order: 2; }
+  .chm-recap .chm-card > .chm-kicker, .chm-recap .chm-card > h2, .chm-recap .chm-card > p:not(.chm-lines) { order: 0; }
+  .chm-recap .chm-card > .chm-emotes { order: 1; }
+  .chm-recap .chm-card > .chm-foot { order: 3; }
   .chm:has(.chm-recap) .chm-top, .chm:has(.chm-final) .chm-top { display: none; } /* the card's tally says it; the pills sat on top of the panel */
   .chm-recap .chm-h2h { gap: 0; line-height: 1.2; }
   .chm-recap .chm-tally { font-size: .95rem; }

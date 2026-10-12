@@ -89,6 +89,28 @@ export function unpackPortrait(blob, out) {
   return true;
 }
 
+/**
+ * Is this saved portrait fit to show? A string that decodes (either format), is not all black, and a
+ * best-hide time that is a real positive number. A corrupt blob or a missing / garbage `_ms` means
+ * "show nothing": never a black tile or a "0:00" caption.
+ */
+const okCache = new Map();
+export function portraitOk(blob, ms) {
+  if (typeof blob !== 'string' || blob.length < 8 || blob.length > 4000) return false;
+  if (!(Number(ms) > 0) || !Number.isFinite(Number(ms))) return false;
+  if (okCache.has(blob)) return okCache.get(blob);
+  let ok = false;
+  try {
+    if (!data) data = new Uint8Array(TEX * TEX * 4);
+    if (unpackPortrait(blob, data)) {
+      let lit = 0; for (let i = 0; i < data.length; i += 4 * 16) if (data[i] + data[i + 1] + data[i + 2] > 24) lit++;
+      ok = lit > 8;
+    }
+  } catch { ok = false; }
+  if (okCache.size >= 24) okCache.delete(okCache.keys().next().value);
+  okCache.set(blob, ok);
+  return ok;
+}
 /** The flat sticker for one blob as a PNG data URL, or '' (no DOM, or a bad blob). */
 export function portraitUrl(blob) {
   if (typeof document === 'undefined' || !blob) return '';

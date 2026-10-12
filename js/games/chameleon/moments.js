@@ -48,6 +48,8 @@ export function momentLines(api, rec) {
   const hn = esc(api.name(rec.hider)); const sn = esc(api.name(rec.seeker || api.other(rec.hider)));
   if (rec.whisker) out.push(`${sn} missed ${hn} by a whisker${rec.whisker > 1 ? ` ${rec.whisker}×` : ''}`);
   if (rec.mercy) out.push(`${hn} took pity: a ${esc(rec.mercy)} ping${rec.mercyPts ? ` (−${rec.mercyPts})` : ''}`);
+  // the revealed note, as a sticker line inside the card (portrait / wide screens: the card covers the body); a phone on its side letters it over the body instead (.chm-notetag)
+  if (rec.note) out.push(`<b class="chm-noteline"><small>${hn} left a note</small><i>${esc(rec.note)}</i></b>`);
   return out;
 }
 /** Final-card lines: the notes people left on their skins. */
@@ -66,7 +68,7 @@ const svg = (k) => `<svg class="chm-ic" viewBox="0 0 24 24" aria-hidden="true">$
 
 export const MOMENTS_CSS = `
 /* hunt interactions & couple moments (moments.js) */
-.chm-mo { position: absolute; left: 50%; transform: translateX(-50%); top: calc(98px + var(--chm-st)); min-height: 44px; min-width: 44px; padding: 0 16px 0 12px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 2.5px solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); font: 900 .82rem/1 var(--g-font-body); letter-spacing: .05em; text-transform: uppercase; white-space: nowrap; box-shadow: var(--g-shadow, 3px 3px 0 var(--g-edge)); cursor: pointer; touch-action: manipulation; pointer-events: auto; z-index: 3; }
+.chm-mo { position: absolute; left: 50%; transform: translateX(-50%); top: calc(94px + var(--chm-st)); min-height: 44px; min-width: 44px; padding: 0 16px 0 12px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 2.5px solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); font: 900 .82rem/1 var(--g-font-body); letter-spacing: .05em; text-transform: uppercase; white-space: nowrap; box-shadow: var(--g-shadow, 3px 3px 0 var(--g-edge)); cursor: pointer; touch-action: manipulation; pointer-events: auto; z-index: 3; }
 .chm-mo:active { transform: translateX(-50%) translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge); }
 .chm-mo .chm-ic { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.3; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 .chm-mo em { font-style: normal; font-size: .66rem; opacity: .75; letter-spacing: .02em; }
@@ -79,11 +81,14 @@ export const MOMENTS_CSS = `
 .chm-notesheet .chm-nrow { display: flex; gap: 8px; }
 .chm-notesheet .chm-nrow button { flex: 1; min-height: 46px; }
 .chm-notesheet small { color: var(--g-muted); font-weight: 800; font-size: .72rem; }
-.chm-notetag { position: absolute; left: 0; top: 0; z-index: 5; pointer-events: none; will-change: transform; }
+.chm-notetag { position: absolute; left: 0; top: 0; z-index: 5; pointer-events: none; will-change: transform; display: none; } /* (shown only where the recap card is a side panel: see the landscape block) */
+.chm-noteline { display: block; margin: 2px auto; padding: 6px 12px 7px; max-width: 100%; box-sizing: border-box; background: var(--g-hl); color: var(--g-on-ink); border: 2.5px solid var(--g-ink); border-radius: 6px 12px 8px 12px; box-shadow: 3px 3px 0 var(--g-edge); text-align: center; transform: rotate(-1.2deg); overflow-wrap: anywhere; }
+.chm-noteline small { display: block; font: 900 .58rem/1 var(--g-font-body); letter-spacing: .14em; text-transform: uppercase; opacity: .8; margin-bottom: 3px; }
+.chm-noteline i { display: block; font: 900 1rem/1.15 var(--g-font-display); font-style: normal; }
 .chm-notetag b { display: block; max-width: min(78vw, 300px); padding: 7px 12px 8px; background: var(--g-card); color: var(--g-ink); border: 2.5px solid var(--g-ink); border-radius: 6px 12px 8px 12px; box-shadow: 3px 3px 0 var(--g-edge); font: 900 1rem/1.15 var(--g-font-display); text-align: center; overflow-wrap: anywhere; transform: translate(-50%, -100%) rotate(-3deg); animation: chm-stamp .45s cubic-bezier(.2,1.6,.4,1); }
 .chm-notetag b small { display: block; font: 900 .58rem/1 var(--g-font-body); letter-spacing: .14em; text-transform: uppercase; color: var(--g-muted); margin-bottom: 3px; }
 .chm-notetag i { position: absolute; left: -6px; top: 0; width: 0; height: 0; border-left: 7px solid transparent; border-right: 7px solid transparent; border-top: 10px solid var(--g-ink); }
-@media (orientation: landscape) and (max-height: 520px) { .chm-notesheet { padding-top: calc(48px + var(--chm-st)); } .chm-notesheet p { display: none; } .chm-notesheet .chm-card { padding-top: 12px; padding-bottom: 12px; gap: 8px; } .chm-mo { top: auto; bottom: calc(12px + var(--chm-sb)); } }
+@media (orientation: landscape) and (max-height: 520px) { .chm-notetag { display: block; } .chm-noteline { display: none; } .chm-notesheet { padding-top: calc(48px + var(--chm-st)); } .chm-notesheet p { display: none; } .chm-notesheet .chm-card { padding-top: 12px; padding-bottom: 12px; gap: 8px; } .chm-mo { top: auto; bottom: calc(12px + var(--chm-sb)); } }
 `;
 
 /**
@@ -108,10 +113,10 @@ export function createMoments(env) {
   /** A sticker of our own (the hud pops sit at fixed heights): auto-removed. */
   const stickerLog = [];
   function sticker(text, sub = '', cls = 'hl', top = 30, ms = 2400) {
-    const pops = root.querySelector('.chm-pops'); if (!pops) return;
+    const pops = root.querySelector('.chm-poplane') || root.querySelector('.chm-pops'); if (!pops) return; // (the lane stacks stickers: they never sit on each other or on the hint)
     stickerLog.push(text); if (stickerLog.length > 12) stickerLog.shift();
     const d = document.createElement('div');
-    d.className = `chm-pop ${cls}`; d.style.top = `${top}%`;
+    d.className = `chm-pop ${cls}`; // (top is unused now: the lane lays them out)
     d.innerHTML = `${esc(text)}${sub ? `<small>${esc(sub)}</small>` : ''}`;
     pops.appendChild(d);
     env.later(() => d.remove(), ms);
@@ -130,7 +135,7 @@ export function createMoments(env) {
     snd.unlock();
     if (t.dataset.mo === 'mercy') mercyTap(); else if (t.dataset.mo === 'note') openSheet();
   });
-  const N = { cardChk: 0, cardL: 0, tagW: 220, mercy: false, note: false, noteSet: null, tag: null, tagX: -1, tagY: -1, tagFor: '' };
+  const N = { cardChk: 0, cardL: 0, tagW: 220, mercy: false, note: false, noteSet: null, tag: null, tagX: -1, tagY: -1, tagFor: '', side: false };
 
   // ── whisker shots ──────────────────────────────────────────────────────────────────────────────
   const GAP = {};
@@ -384,9 +389,9 @@ export function createMoments(env) {
     let x = (q.x + 1) / 2 * W; let y = (1 - q.y) / 2 * H;
     if (q.w <= 0) { x = W / 2; y = H * 0.3; }
     // a recap card that is a side panel (landscape) is not covered: the sticker stays left of it
-    if (++N.cardChk % 20 === 1) { const cd = root.querySelector('.chm-recap .chm-card'); N.cardL = cd && cd.getBoundingClientRect().left > W * 0.35 ? cd.getBoundingClientRect().left : W; N.tagW = N.tag.firstElementChild.offsetWidth || 220; }
+    if (++N.cardChk % 20 === 1) { const cd = root.querySelector('.chm-recap .chm-card'); N.cardL = cd && cd.getBoundingClientRect().left > W * 0.35 ? cd.getBoundingClientRect().left : W; N.side = N.cardL < W; N.tagW = N.tag.firstElementChild.offsetWidth || 220; }
     const half = Math.min(N.tagW, W) / 2 + 10;
-    x = clamp(x, half, Math.max(half, N.cardL - 8 - half)); y = clamp(y - 8, 176, Math.max(176, H * 0.55));
+    x = clamp(x, half, Math.max(half, N.cardL - 8 - half)); const lo = N.side ? 190 : 176; y = clamp(y - 8, lo, Math.max(lo, H * 0.55));
     const rx = Math.round(x); const ry = Math.round(y);
     if (rx !== N.tagX || ry !== N.tagY) { N.tagX = rx; N.tagY = ry; N.tag.style.transform = `translate(${rx}px, ${ry}px)`; }
   }
