@@ -57,8 +57,8 @@ TIME, a new round, the lobby and dispose.
 |---|---|---|---|
 | **Fog rolls in** (`fog`) | maps > 160 m² (the dioramas fit inside the fog); both modes; hotseat ok | fog near and far scale from the map's play fog to 45 %; pellet range follows fog far, so it shrinks too: a hider comeback window | nothing for the first two thirds of the hunt, then 6 steps (`FOG`), each one `stage.setMood` (two numbers on the existing Fog) |
 | **Dusk** (`dusk`) | every map and mode; hotseat ok | hemi x 1 → 0.45, sun x 1 → 0.6, sky and fog colour 55 % toward `#2b2447`, scan glints up to 1.7× | 12 steps over the hunt (`DUSK`) |
-| **Three colours** (`colours`) | every map; DB locks both hiders; hotseat ok | the hider's paint is locked to 3 swatches taken from the map's own probe colours (`paletteFor`: seeded, farthest-point pick, fallback swatches on a map with fewer than 4 colours) through the paint panel's `setPaletteLock`; Pick and Stamp are off | set at hide start, cleared at FOUND / TIME |
-| **Bounty spot** (`bounty`) | Hide & Seek only | a seeded floor spot 2.5–5 m (≥ 0.3 × the diagonal) from every spawn, marked for both players by one merged ring (0.5 m marker, 3 m boundary) and a star sprite. Survive within 3 m of it (3-D, hider's final position): hider points × 1.5; tag within 3 m: seeker +15 | resolved in `roundOver`; marker cleared at the next round |
+| **Three colours** (`colours`) | every map; DB locks both hiders; hotseat ok | the hider's paint is locked to 3 swatches taken from the room itself (`mapSwatches(map)`: area-weighted dominant colours of the map's atlas tiles × vertex colours, merged at ΔE < 9; `paletteFor` picks one of the 3 biggest surfaces then two seeded swatches ≥ ΔE 24 apart; deterministic from map data + match id + round. Launderette gets its aqua, the Living Room its sage) through the paint panel's `setPaletteLock`; Pick and Stamp are off | set at hide start, cleared at FOUND / TIME |
+| **Bounty spot** (`bounty`) | Hide & Seek only | a seeded floor spot 2.5–5 m (≥ 0.3 × the diagonal) from every spawn, marked for both players by one merged mesh (bold ring and dot, 3 m boundary band, a 3.1 m beacon pole with an ink cap) and a star sprite at 3.5 m: 2 draw calls. Candidates include a seeded scatter of clear floor points, so small maps vary between matches. Survive within 3 m of it (3-D, hider's final position): hider points × 1.5; tag within 3 m: seeker +15 | resolved in `roundOver`; marker cleared at the next round |
 
 `stage.setMood({hemi, sun, fogNear, fogFar, bg})` / `clearMood()` take absolute values and add no
 light, relink no shader and cost no draw call; `setBlendLights` re-runs at each step so the live camo
@@ -70,8 +70,8 @@ linked.
 
 ### Comebacks and drama
 
-- **Underdog.** At a round start (Hide & Seek, round > 1, not sudden death) the player behind by
-  ≥ 25 points (38 on XL maps) gets +1 pellet when seeking (it counts as a spare for the +10) or +1
+- **Underdog.** At a round start (Hide & Seek, round 3 onward, not sudden death) the player behind by
+  ≥ 40 points (60 on XL maps; a single round is worth 36+, so a lower bar fired almost every round) gets +1 pellet when seeking (it counts as a spare for the +10) or +1
   escape when hiding; in hotseat, which has no escapes, +10 s to hide instead. `m.ud = {r, w}` is
   chosen by the host and carried in `matchInfo()`; a sticker "Underdog: +1 pellet / +1 escape /
   +10 s to hide" shows on both phones and the title / blind / curtain card names it.
@@ -83,8 +83,9 @@ linked.
   three rounds (e.g. 1–1 with a void) plays one round, hunt ≤ 60 s. Tests pin the clocks with
   `__chamTune.sdHide / sdSeek`.
 - **Called-it streak.** `m.cs = {a, b}` counts consecutive right wager calls per seeker (a wrong call
-  or no call resets it). A right call pays `wager × min(3, run)`: 5 / 10 / 15 at the Classic wager 5
-  (10 / 20 / 30 at 10). A wrong call after a run of ≥ 2 shows "STREAK BROKEN" to the hider; the CALLED
+  or no call resets it). A right call on a find pays `wager × min(3, run)`: 5 / 10 / 15 at the Classic wager 5
+  (10 / 20 / 30 at 10). A right call on a survived round pays the plain stake (as before this update) and
+  neither extends nor breaks the run. A wrong call after a run of ≥ 2 shows "STREAK BROKEN" to the hider; the CALLED
   IT sticker adds "3 in a row". The host writes `${w}_callstreak` (best run).
 - **Whisker shots.** A miss whose pellet segment (`o` → landing in the `shot` message) passes within
   0.35 m × size of any body part's bounding sphere (× 0.72, the tag assist's own factor) is a whisker;
@@ -232,6 +233,33 @@ Round-record fields added (all optional): `whisker`, `mercy`, `mercyPts`, `note`
 | K | `.chm-step button` is 44 × 44 everywhere. |
 | L | Living Room seeker spawn (0.2, 3.3 on the toy-chest lid, y 0.55) → (−0.4, 3.3); Garden `spawnA` (−3.8, 4.0 on the flower-bed edge) → (−3.1, 4.0). New static `ONLY=spawns`: every spawn of every map placed as the game places it (`groundAt` + `pushOut`) at sizes 0.6 / 1 / 1.3 / 1.8 must land at its intended y, unpushed. |
 | M | Test hygiene: the cold map-load budget evicts the map first (it used to time a cache hit of 4–12 ms; now House 194 / 1130 ms, Museum 108 / 236 phone / laptop; budget 2000 ms, CU 2500); the House static build budget is a warm-up plus the minimum of three in CPU time (`process.cpuUsage`: 74 ms where a cold wall-clock build read 705); unused `MINE` removed; the match section's recap Next click no longer races the 2.5 s auto-advance. The Variety test seed became `'cu3'` because the Launderette joined the big pool. |
+
+### Fixes after verification
+
+Two Sonnet verifiers re-played everything (both players, hotseat and two phones, light / dark,
+portrait / landscape); two fixers then fixed:
+
+- **Host reload stretched the clock (pre-existing).** The shared clock is the host's net.js clock, so a
+  host reload restarted it near 0 and the guest's `now()` jumped back by the host's old uptime: the guest
+  then reported an inflated `remaining`, the host adopted it (hide 21 s left → 36 s; hunt 26 s → 45 s) and
+  `hunting` stayed false, so the seeker couldn't fire. `clockGuard()` (guests, from `hostTick`) spots a
+  jump of the shared clock (> 1 s against `performance.now()`) and shifts every held absolute time by it;
+  `S.awayHold` freezes the guest's remaining time while the host is away, as the host already did for a
+  guest reload. Measured after the fix: hide 21.5 s → 18.2 s, hunt 26.7 s → 22.3 s, `hunting` stays true.
+  The resync snapshot also carries the seeker's wager `call`, so a reloaded seeker keeps it.
+- **Layout:** at 320 px every paint control is clear of the camo meter (the meter's tube shrinks to the
+  room above the panel); reactions sit right under the recap / final headline, so they are never under the
+  pinned Next / See the board bar; pops stack in one lane below the hint (in cards, compact one-liners
+  outside the card text); the note is a line inside the portrait recap card (lettered over the body only
+  in landscape); round announcements are compact stickers high on the screen, never over I'm hidden; the
+  landscape hand-over curtains keep their button on screen (sticky foot, inline chips: 247–303 px of
+  342); pops are hidden under a curtain; settings size segments 46 px, segments and sliders 44 px tall.
+- **Rules:** Three colours now comes from the room; underdog from round 3 at a 40 / 60 point gap;
+  called-it multiplier on finds only; a bolder bounty marker and a bigger, seeded spot pool; Today's hide
+  on one phone swaps a dead twist to a seeded playable one (it was always Floor only).
+- **Gallery:** a corrupt saved portrait (bad blob or time) shows nothing instead of a black "0:00" tile.
+- **Tests:** load-proof bounds (paintpro averages with a loose max, netpolish +150 ms, showcase hide 240 s,
+  variety hide 15 s, the meter compare ± 2 %).
 
 ### New `api.data()` keys
 
