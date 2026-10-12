@@ -5,6 +5,9 @@
 // Moves:  { clue: 'ocean', n: 2 }   the clue-giver (one plain word, not on the board, 1-9)
 //         { pick: 7 }               the guesser taps card 7 (judged against the GIVER's key)
 //         { stop: true }            the guesser ends the turn (after at least one pick)
+//         { setup: { v: 2, level, pack, sudden } }   v2 rules, sent once by the first giver
+//                                   before the first clue. Matches without it play the v1 rules
+//                                   exactly as they always did (see docs/games/agents.md).
 //
 // The two keys. Every card has a pair of roles (Emerson's key, Sydney's key):
 //   agent/agent          3    shared agents
@@ -24,7 +27,9 @@
 // giver's key: agent = found (stays green, keep guessing); bystander = marked on the giver's
 // key and the turn ends; assassin = mission lost. Givers alternate, except that someone with
 // no agents left to find never gives the clue. Win by finding all 15 before the tokens run out.
-import { registerGame, shuffled } from './core.js';
+import { registerGame, shuffled, gameDataApi } from './core.js';
+import { checkClue } from './agents/clue.js';
+import { PACK_IDS, PACK_INFO, PACK_BREAKS, PACKS, packWords } from './agents/packs.js';
 
 const NOUNS = `
 kiss ring honey candle picnic blanket pillow rose wine letter photo puppy kitten pancake coffee brunch beach
@@ -99,6 +104,10 @@ function pickWords(seed) {
   return out;
 }
 
+// v2 rules ride on a { setup } move: s.v === 2 switches them on. A v1 state never gets these fields.
+const LEVELS = { rookie: 11, agent: 9, spy: 7 };
+const tok = (s) => s.tokens || TOKENS;
+const judgeOf = (s) => (s.phase === 'sudden' ? other(s.picker) : s.giver); // whose key a pick is judged on
 const foundCount = (s) => s.found.filter(Boolean).length;
 const agentsLeft = (s, w) => { let n = 0; for (let i = 0; i < 25; i++) if (s.key[w][i] === 'G' && !s.found[i]) n++; return n; };
 const curTurn = (s) => s.log[s.log.length - 1] || null;
@@ -130,9 +139,59 @@ function cleanClue(s, x) {
 
 function endTurn(s) {
   s.phase = 'clue';
-  if (s.turns >= TOKENS) { s.over = 'time'; return; }
+  if (s.turns >= tok(s)) {
+    if (s.v === 2 && s.sudden) { enterSudden(s); return; }
+    s.over = 'time';
+    return;
+  }
   const nx = other(s.giver);
   if (agentsLeft(s, nx) > 0) s.giver = nx; // someone with nothing left to find keeps guessing
+}
+// Out of turns with agents left: no more clues. One player picks at a time on the partner's key.
+function enterSudden(s) {
+  const nx = agentsLeft(s, other(s.giver)) > 0 ? other(s.giver) : s.giver; // who would have clued next
+  let p = other(nx); // ...so this is who would have guessed
+  if (agentsLeft(s, other(p)) === 0) p = other(p);
+  s.phase = 'sudden';
+  s.picker = p;
+  s.sd = [];
+}
+function applySetup(s, who, mv) {
+  if (s.v || s.log.length) throw new Error('The rules are already set.');
+  if (who !== s.giver) throw new Error('The first player sets the rules.');
+  const o = mv.setup;
+  if (!o || typeof o !== 'object' || Array.isArray(o)) throw new Error('Those rules didn’t make sense.');
+  for (const k of Object.keys(o)) if (!['v', 'level', 'pack', 'sudden'].includes(k)) throw new Error(`Unknown rule “${k}”.`);
+  if (o.v !== 2) throw new Error('Unknown rules version.');
+  const level = o.level === undefined ? 'agent' : o.level;
+  const pack = o.pack === undefined ? 'classic' : o.pack;
+  const sudden = o.sudden === undefined ? true : o.sudden;
+  if (!Object.prototype.hasOwnProperty.call(LEVELS, level)) throw new Error('Pick rookie, agent or spy.');
+  if (!PACK_IDS.includes(pack)) throw new Error('Unknown word pack.');
+  if (typeof sudden !== 'boolean') throw new Error('Sudden death is on or off.');
+  s.v = 2;
+  s.level = level;
+  s.pack = pack;
+  s.sudden = sudden;
+  s.tokens = LEVELS[level];
+  if (pack !== 'classic') s.words = packWords(s.seed, pack, NOUNS);
+  return s;
+}
+function applySudden(s, who, mv) {
+  if (who !== s.picker) throw new Error('Your partner is picking.');
+  if (mv.clue !== undefined || mv.setup !== undefined || mv.stop) throw new Error('Sudden death: no clues. Just pick a card.');
+  const i = mv.pick;
+  if (!Number.isInteger(i) || i < 0 || i > 24) throw new Error('Pick a card on the board.');
+  const key = other(who);
+  if (s.found[i]) throw new Error(`${up(s.words[i])} is already found.`);
+  if (s.miss[key].includes(i)) throw new Error(`${up(s.words[i])} is already marked as a bystander on this key.`);
+  const r = s.key[key][i];
+  s.sd.push({ by: who, i, r });
+  if (r !== 'G') { s.hit = i; s.over = 'caught'; return s; }
+  s.found[i] = who;
+  if (foundCount(s) >= TOTAL) { s.over = 'win'; return s; }
+  if (agentsLeft(s, who) > 0) s.picker = other(who); // the turn passes, unless they have nothing left for you to find
+  return s;
 }
 
 // ── rules (pure, deterministic) ──
@@ -152,15 +211,21 @@ function init({ first, seed }) {
 }
 function next(s) {
   if (s.over) return [];
+  if (s.phase === 'sudden') return [s.picker];
   return s.phase === 'clue' ? [s.giver] : [other(s.giver)];
 }
 function apply(s, who, mv) {
   if (s.over) throw new Error('The mission is over.');
   if (!mv || typeof mv !== 'object') throw new Error('That move didn’t make sense.');
+  if (s.phase === 'sudden') return applySudden(s, who, mv);
+  if (mv.setup !== undefined) {
+    if (s.phase !== 'clue') throw new Error('The rules are already set.');
+    return applySetup(s, who, mv);
+  }
   if (s.phase === 'clue') {
     if (who !== s.giver) throw new Error('Wait for the clue.');
     if (mv.pick !== undefined || mv.stop) throw new Error('Wait for a clue first.');
-    const clue = cleanClue(s, mv.clue);
+    const clue = s.v === 2 ? checkClue(s.words, s.found, mv.clue) : cleanClue(s, mv.clue);
     const n = Number(mv.n);
     if (!Number.isInteger(n) || n < 1 || n > 9) throw new Error('Pick a number from 1 to 9.');
     s.turns += 1;
@@ -187,9 +252,23 @@ function apply(s, who, mv) {
   s.found[i] = who;
   if (foundCount(s) >= TOTAL) { s.over = 'win'; return s; }
   if (agentsLeft(s, s.giver) === 0) endTurn(s); // nothing more to find on this key
+  else if (s.v === 2 && turn.picks.filter((p) => p.r === 'G').length > turn.n) endTurn(s); // n + 1 is the limit
   return s;
 }
+function result2(s) {
+  const n = foundCount(s);
+  const base = { winner: null, team: true, score: n };
+  if (s.over === 'win') {
+    if (s.sd) return { ...base, text: 'Mission complete', sub: `Escaped in sudden death: all ${TOTAL} agents found.` };
+    const spare = tok(s) - s.turns;
+    return { ...base, text: 'Mission complete', sub: `All ${TOTAL} agents found${spare ? ` with ${spare} turn${spare === 1 ? '' : 's'} to spare` : ' on the very last turn'}.` };
+  }
+  if (s.over === 'caught') return { ...base, text: 'Caught in sudden death', sub: `${up(s.words[s.hit])} was ${s.sd[s.sd.length - 1].r === 'K' ? 'an assassin' : 'a bystander'}. ${n} of ${TOTAL} agents found.` };
+  if (s.over === 'burned') return { ...base, text: 'Burned', sub: `${up(s.words[s.hit])} was an assassin. ${n} of ${TOTAL} agents found.` };
+  return { ...base, text: 'Out of time', sub: `The trail went cold at ${n} of ${TOTAL} agents.` };
+}
 function result(s) {
+  if (s.v === 2) return result2(s);
   const n = foundCount(s);
   const base = { winner: null, team: true, score: n };
   if (s.over === 'win') {
@@ -200,18 +279,107 @@ function result(s) {
   return { ...base, text: 'Out of time', sub: `The trail went cold at ${n} of ${TOTAL} agents.` };
 }
 
+// ── derived facts (read-only: records, stamps, the debrief) ──
+const turnDone = (s, k) => k < s.log.length - 1 || !!s.over || s.phase !== 'guess';
+const agentPicks = (t) => t.picks.filter((p) => p.r === 'G').length;
+/** Mind meld: a clue for 2+ cards where the guesser found exactly n agents, no bystander, and the turn is over. */
+const isMeld = (t, done) => done && t.n >= 2 && t.picks.length === t.n && agentPicks(t) === t.n;
+function matchStats(s) {
+  const clues = s.log.map((t, k) => ({ k, by: t.by, clue: t.clue, n: t.n, got: agentPicks(t), meld: isMeld(t, turnDone(s, k)) }));
+  const best = { a: 0, b: 0 };
+  const bestOf = { a: null, b: null }; // each player's best clue (first one wins a tie)
+  for (const c of clues) if (c.got > best[c.by]) { best[c.by] = c.got; bestOf[c.by] = c; }
+  const top = clues.filter((c) => c.got > 0).sort((x, y) => y.got - x.got || (y.meld ? 1 : 0) - (x.meld ? 1 : 0) || x.k - y.k).slice(0, 2).sort((x, y) => x.k - y.k);
+  return { clues, melds: clues.filter((c) => c.meld).length, best, bestOf, top, spare: s.over === 'win' && !s.sd ? tok(s) - s.turns : 0, tier: s.level || 'agent', pack: s.pack || 'classic' };
+}
+
+// ── records (api.data): flat numbers, bests only rise ──
+// Ids of recently recorded matches (comma-joined, newest last). Core keeps the newest 25 finished online
+// matches and local ones forever, so the memory is generous.
+const RECENT_CAP = 60;
+const recentIds = (str) => String(str || '').split(',').filter(Boolean);
+const pushRecent = (str, id) => [...recentIds(str).filter((x) => x !== id), id].slice(-RECENT_CAP).join(',');
+const MILESTONES = [10, 25, 50];
+// A remembered clue: `ocean|4|b|us|<matchId>` (clue, agents found from it, who gave it, pack, match).
+const fmtClue = (c, pack, matchId) => `${c.clue}|${c.got}|${c.by}|${pack}|${matchId}`;
+const parseClue = (str) => { const [clue, got, by, pack, mid] = String(str || '').split('|'); return clue && Number(got) > 0 && (by === 'a' || by === 'b') ? { clue, got: Number(got), by, pack: pack || 'classic', mid: mid || '' } : null; };
+/** The ledger line for the standing record clue, e.g. "Record clue: OCEAN for 4 (Sydney, Wanderlust)." */
+const recordClueText = (d, nameOf) => { const r = parseClue(d.best_clue); return r ? `Record clue: ${r.clue.toUpperCase()} for ${r.got} (${nameOf(r.by)}, ${(PACK_INFO[r.pack] || PACK_INFO.classic).name}).` : ''; };
+const streakLine = (n) => (n >= 2 ? `${NUMWORD[n] || n} missions unbeaten. Keep it clean.` : '');
+/** The patch that records a finished mission, computed from a data snapshot `d`. Also returns the stamps earned. */
+function recordPatch(d, s, matchId) {
+  const g = (k) => Number(d[k]) || 0;
+  const st = matchStats(s);
+  const win = s.over === 'win';
+  const badges = [];
+  const p = { lastm: matchId, missions_n: g('missions_n') + 1 };
+  if (s.sd) p.sudden_n = g('sudden_n') + 1;
+  if (st.melds) p.meld_n = g('meld_n') + st.melds;
+  p[`pack_${st.pack}_n`] = g(`pack_${st.pack}_n`) + 1;
+  for (const w of ['a', 'b']) if (st.best[w] > g(`${w}_clue_best`)) { p[`${w}_clue_best`] = st.best[w]; p[`${w}_best_clue`] = fmtClue(st.bestOf[w], st.pack, matchId); }
+  const clueBest = Math.max(st.best.a, st.best.b);
+  if (clueBest > g('clue_best')) {
+    p.clue_best = clueBest;
+    p.best_clue = fmtClue(st.bestOf[st.best.a >= st.best.b ? 'a' : 'b'], st.pack, matchId);
+    if (g('clue_best') > 0 && clueBest >= 3) badges.push('record');
+  } else if (clueBest === g('clue_best') && clueBest >= 3) badges.push('tie');
+  if (win) {
+    p.wins_n = g('wins_n') + 1;
+    p[`${st.tier}_wins_n`] = g(`${st.tier}_wins_n`) + 1;
+    p.streak = g('streak') + 1;
+    if (p.streak > g('streak_best')) { p.streak_best = p.streak; if (p.streak > 1) badges.push('record'); }
+    if (p.streak >= 2) badges.push(`row${p.streak}`);
+    if (s.sd) p.escape_n = g('escape_n') + 1;
+    if (st.spare > g('spare_best')) { p.spare_best = st.spare; badges.push('record'); }
+    if (!s.sd && st.spare === 0) badges.push('last');
+    if (s.sd) badges.push('escape');
+  } else {
+    p.streak = 0;
+    const n = foundCount(s);
+    if (s.over === 'burned') p.burned_n = g('burned_n') + 1;
+    else if (s.over === 'caught') p.caught_n = g('caught_n') + 1;
+    else p.cold_n = g('cold_n') + 1;
+    if (n > g('close_best')) { p.close_best = n; if (g('close_best') > 0) badges.push('record'); }
+  }
+  if (st.melds) badges.push(`meld${st.melds}`);
+  if (MILESTONES.includes(p.missions_n)) badges.push(`ms${p.missions_n}`);
+  p.lastb = [...new Set(badges)].join(',');
+  return p;
+}
+
 // ── view ──
 const ICON = {
   mask: '<svg class="g-ag-ico" viewBox="0 0 32 16" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M1.5 4.5C6 0.5 12 1.2 16 4c4-2.8 10-3.5 14.5 0.5 1.4 5.2-1.6 10-6.6 10-3.2 0-4.6-3-7.9-3s-4.7 3-7.9 3c-5 0-8-4.8-6.6-10zM5.2 7.6a3.6 2.4 0 1 0 7.2 0a3.6 2.4 0 1 0-7.2 0zM19.6 7.6a3.6 2.4 0 1 0 7.2 0a3.6 2.4 0 1 0-7.2 0z"/></svg>',
   cross: '<svg class="g-ag-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7.5" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M12 1.5v6M12 16.5v6M1.5 12h6M16.5 12h6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/></svg>',
 };
 
+
+// ── view helpers ──
+const pristine = (s) => !s.v && !s.log.length && s.phase === 'clue' && !s.over;
+const breakOf = (w) => BREAKS.get(w) || PACK_BREAKS.get(w);
+const NUMWORD = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten'];
+function parseSetup(str) {
+  const [lv, pk, sd] = String(str || '').split('|');
+  return { level: Object.prototype.hasOwnProperty.call(LEVELS, lv) ? lv : 'agent', pack: PACK_IDS.includes(pk) ? pk : 'classic', sudden: sd !== '0' };
+}
+const EPILOGUES = {
+  win: ['Debrief over coffee. You two are terrifying.', 'Every agent home, nobody the wiser. Order the good dessert.', 'Two keys, one brain. Please never use this against us.', 'File it under: suspiciously good teamwork.'],
+  escape: ['No clues, no net, no mistakes. Frame that one.', 'You walked out of sudden death side by side. Dramatic.', 'The handler checked the tape twice. Nobody blinked.', 'Ice in your veins, both of you.'],
+  burned: ['The handler regrets nothing. Mostly.', 'Somebody tapped the wrong word. We will not say who.', 'Cover blown. The rematch is already warm.', 'Even the best agents pick a bad word once.'],
+  time: ['The trail went cold, but the agents went home together.', 'Not every mission ends in a bow. Go again.', 'Out of tokens, not out of ideas.', 'The clock won this round. The next one is yours.'],
+  caught: ['So close the handler could taste it.', 'Sudden death does that. Breathe, then ask for a rematch.', 'One tap from the exit. Respect for the nerve.', 'Caught at the door. The best stories start like this.'],
+};
+function epilogue(s) {
+  const list = EPILOGUES[s.over === 'win' && s.sd ? 'escape' : s.over] || EPILOGUES.time;
+  return list[(Math.abs(Number(s.seed) || 0) + s.turns) % list.length];
+}
+
 const css = `
 .g-agents { --gap: 6px; --ag-on-good: var(--g-white); flex: 1; min-height: 0; width: 100%; display: flex; flex-direction: column; gap: 10px; color: var(--g-ink); font-family: var(--g-font-body); touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .g-agents { --ag-on-good: var(--g-on-ink); } }
 :root[data-theme="dark"] .g-agents { --ag-on-good: var(--g-on-ink); }
-.g-ag-top { display: flex; flex-direction: column; align-items: center; gap: 6px; }
-.g-ag-say { margin: 0; min-height: 1.35em; text-align: center; font-weight: 800; font-size: 0.98rem; line-height: 1.35; text-wrap: balance; }
+.g-ag-top { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.g-ag-say { margin: 0; min-height: 1.3em; text-align: center; font-weight: 800; font-size: 0.92rem; line-height: 1.3; text-wrap: balance; }
 .g-ag-who { font-weight: 900; } .g-ag-who.p-a { color: var(--p-a-text); } .g-ag-who.p-b { color: var(--p-b-text); }
 .g-ag-meta { display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap; font-size: 0.8rem; font-weight: 800; color: var(--g-muted); }
 .g-ag-tokens { display: flex; align-items: center; gap: 4px; }
@@ -236,17 +404,23 @@ const css = `
 .g-ag-input:focus { outline: 3px solid var(--g-hl); outline-offset: 1px; }
 .g-ag-input.shake { animation: g-ag-shake 0.4s ease; }
 .g-ag-step { flex-shrink: 0; display: flex; align-items: stretch; border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); background: var(--g-card); box-shadow: var(--g-shadow); overflow: hidden; }
-.g-ag-step button { width: 34px; min-height: 44px; color: var(--g-ink); font-weight: 900; font-size: 1.25rem; background: transparent; touch-action: manipulation; }
+.g-ag-step button { width: 44px; min-height: 44px; color: var(--g-ink); font-weight: 900; font-size: 1.25rem; background: transparent; touch-action: manipulation; }
 .g-ag-step button:active { background: var(--g-hl-soft); }
 .g-ag-step output { min-width: 22px; display: grid; place-items: center; font-family: var(--g-font-display); font-weight: 900; font-size: 1.1rem; }
 .g-ag-form .gm-btn { min-height: 48px; padding: 0 14px; }
+@media (max-width: 380px) {
+  .g-ag-form { flex-wrap: wrap; }
+  .g-ag-input { flex: 1 1 100%; }
+  .g-ag-form .g-ag-step { flex: none; }
+  .g-ag-form .gm-btn { flex: 1 1 0; min-width: 0; padding: 0 8px; }
+}
 
 /* board: printed word cards, every word set at one size; long words break onto two lines */
 .g-ag-body { display: flex; flex-direction: column; gap: 12px; }
 .g-ag-main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .g-ag-wrap { container-type: inline-size; width: 100%; }
 .g-ag-grid { --gap: clamp(4px, 1.2cqw, 10px); --fs: 12px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--gap); }
-.g-ag-card { --cw: calc((100cqw - 4 * var(--gap)) / 5); --face: var(--g-card); --ink: var(--g-ink); position: relative; height: clamp(52px, min(calc(var(--cw) * 0.8), calc((100dvh - 330px) / 5)), 96px); min-width: 0; padding: 0 1px 9px; box-sizing: border-box; display: grid; place-items: center; overflow: hidden; border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); background-color: var(--face); color: var(--ink); box-shadow: var(--g-shadow); font-family: var(--g-font-body); font-weight: 900; text-transform: uppercase; cursor: default; transition: transform 0.12s ease; }
+.g-ag-card { --cw: calc((100cqw - 4 * var(--gap)) / 5); --face: var(--g-card); --ink: var(--g-ink); position: relative; height: clamp(44px, min(calc(var(--cw) * 0.8), calc((100dvh - 395px) / 5)), 96px); min-width: 0; padding: 0 4px 9px; box-sizing: border-box; display: grid; place-items: center; overflow: hidden; border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); background-color: var(--face); color: var(--ink); box-shadow: var(--g-shadow); font-family: var(--g-font-body); font-weight: 900; text-transform: uppercase; cursor: default; transition: transform 0.12s ease; }
 .g-ag-card::before { content: ''; position: absolute; left: 34%; right: 34%; bottom: 6px; height: 2px; border-radius: 1px; background: var(--g-line); }
 .g-ag-word { position: relative; z-index: 1; max-width: 100%; display: block; text-align: center; font-size: var(--fs); line-height: 1.02; letter-spacing: 0; white-space: nowrap; }
 .g-ag-word .hy { display: none; }
@@ -274,9 +448,16 @@ const css = `
 .g-ag-tag.t-a { left: 2px; background: var(--p-a); } .g-ag-tag.t-b { right: 2px; background: var(--p-b); }
 
 /* dock */
-.g-ag-dock { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.g-ag-dock { position: sticky; bottom: 0; z-index: 5; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 8px 0 max(6px, env(safe-area-inset-bottom)); background: var(--g-bg); }
+.g-ag-dock.is-over { position: static; padding-bottom: 0; }
 .g-ag-dock:empty { display: none; }
 .g-ag-acts { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 10px; }
+.g-ag-acts.three { grid-template-columns: minmax(0, 0.9fr) minmax(0, 0.8fr) minmax(0, 1.5fr); gap: 8px; }
+.g-ag-acts.two { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.5fr); gap: 8px; }
+.g-ag-acts .gm-btn { font-size: 0.88rem; }
+.g-ag-acts.three .gm-btn, .g-ag-acts.two .gm-btn { padding: 6px 4px; }
+.g-ag-mine[aria-pressed="true"] { background: var(--g-ink); color: var(--g-bg); }
+.g-ag-clhead { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .g-ag-acts .gm-btn { min-height: 48px; padding: 8px 10px; min-width: 0; }
 .g-ag-acts .gm-btn span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .g-ag-row { display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap; }
@@ -285,7 +466,7 @@ const css = `
 .g-ag-legend .lg-g { border-color: var(--g-good); background: linear-gradient(135deg, var(--g-good) 50%, transparent 50%); }
 .g-ag-legend .lg-k { background: var(--g-card) repeating-linear-gradient(135deg, transparent 0 2px, color-mix(in srgb, var(--g-ink) 30%, transparent) 2px 3px); }
 .g-ag-toggle { display: inline-flex; border: 2px solid var(--g-ink); border-radius: 999px; overflow: hidden; background: var(--g-card); box-shadow: var(--g-shadow-sm); }
-.g-ag-toggle button { min-height: 40px; padding: 0 16px; font-weight: 800; font-size: 0.9rem; color: var(--g-ink); background: transparent; touch-action: manipulation; }
+.g-ag-toggle button { min-height: 44px; padding: 0 16px; font-weight: 800; font-size: 0.9rem; color: var(--g-ink); background: transparent; touch-action: manipulation; }
 .g-ag-toggle button + button { border-left: 2px solid var(--g-ink); }
 .g-ag-toggle button[aria-pressed="true"] { background: var(--g-ink); color: var(--g-bg); }
 .g-ag-end { width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -308,6 +489,60 @@ const css = `
 .g-ag-chip.r-N { background: transparent; color: var(--g-muted); border-style: dashed; border-color: var(--g-muted); text-decoration: line-through; }
 .g-ag-chip.r-K { background: var(--g-ink); color: var(--g-bg); }
 
+
+/* v2: rules card, sudden death, stamps */
+.g-ag-rules[hidden], .g-ag-banner[hidden] { display: none; }
+.g-agents.is-setup .g-ag-slip, .g-agents.is-setup .g-ag-wrap, .g-agents.is-setup .g-ag-dock, .g-agents.is-setup .g-ag-side, .g-agents.is-setup .g-ag-meta { display: none; }
+.g-ag-card-rules { box-sizing: border-box; width: 100%; max-width: 480px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; padding: 14px 12px 12px; background: var(--g-card); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow); }
+.g-ag-h { margin: 0; font: 900 1.05rem var(--g-font-display); text-transform: uppercase; letter-spacing: 0.04em; }
+.g-ag-wait { margin: 0; font-weight: 800; }
+.g-ag-opt { display: flex; flex-direction: column; gap: 6px; }
+.g-ag-seg { display: grid; gap: 6px; }
+.g-ag-seg.s3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.g-ag-seg.s2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.g-ag-seg button { min-height: 48px; box-sizing: border-box; padding: 5px 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); background: var(--g-card); color: var(--g-ink); text-align: center; touch-action: manipulation; }
+.g-ag-seg button b { font-weight: 900; font-size: 0.95rem; }
+.g-ag-seg button small { font-size: 0.68rem; font-weight: 700; line-height: 1.15; color: var(--g-muted); }
+.g-ag-seg button[aria-pressed="true"] { background: var(--g-ink); color: var(--g-bg); box-shadow: var(--g-shadow-sm); }
+.g-ag-seg button[aria-pressed="true"] small { color: inherit; opacity: 0.85; }
+.g-ag-playbar { position: sticky; bottom: 0; z-index: 5; box-sizing: border-box; width: 100%; max-width: 480px; margin: 0 auto; padding: 8px 0 max(6px, env(safe-area-inset-bottom)); background: var(--g-bg); }
+@media (max-height: 700px) {
+  .g-ag-card-rules { gap: 8px; padding: 10px; }
+  .g-ag-h { display: none; }
+  .g-ag-seg button { min-height: 44px; }
+}
+.g-ag-ledger { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 12px; font-size: 0.76rem; font-weight: 800; color: var(--g-muted); text-align: center; }
+.g-ag-ledger b { color: var(--g-ink); }
+.g-ag-banner { margin: 0; display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 900; font-size: 0.9rem; }
+.g-ag-last { color: var(--g-bad); text-transform: uppercase; letter-spacing: 0.06em; }
+.g-ag-stamp { display: inline-block; padding: 3px 9px; border: 3px solid currentColor; border-radius: 6px; font: 900 0.74rem/1.15 var(--g-font-display); letter-spacing: 0.06em; text-transform: uppercase; transform: rotate(var(--r, -3deg)); }
+.g-ag-stamp.k-rec { color: var(--p-b-text); }
+.g-ag-stamp.k-a { color: var(--p-a-text); }
+.g-ag-stamp.k-bad { color: var(--g-bad); }
+.g-ag-stamp.k-good { color: var(--g-good); }
+.g-ag-stamp.k-ink { color: var(--g-ink); }
+.g-ag-stamp.k-gold { background: var(--g-hl); color: var(--g-on-ink); border-color: var(--g-on-ink); }
+.g-ag-debrief { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.g-ag-epi { margin: 0; text-align: center; font-weight: 800; font-size: 0.92rem; text-wrap: balance; }
+.g-ag-stamps { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 10px; padding: 4px 0; }
+.g-ag-best { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.g-ag-best > small { font-size: 0.7rem; font-weight: 800; color: var(--g-muted); text-transform: uppercase; letter-spacing: 0.1em; }
+.g-ag-best > div { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; max-width: 100%; }
+.g-ag-paper.sm .g-ag-clueword { font-size: 1.05rem; }
+.g-ag-paper.sm { position: relative; }
+.g-ag-over { position: absolute; top: -9px; right: 6px; padding: 1px 6px; border: 2px solid var(--p-b-text); border-radius: 4px; background: var(--g-card); color: var(--p-b-text); font: 900 0.58rem/1.2 var(--g-font-display); letter-spacing: 0.06em; text-transform: uppercase; transform: rotate(3deg); }
+.g-ag-paper.meld, .g-ag-log li.meld { background: var(--g-hl); color: var(--g-on-ink); }
+.g-ag-paper.meld small, .g-ag-log li.meld .g-ag-chip.r-N { color: var(--g-on-ink); }
+.g-ag-log li.meld { border-color: var(--g-ink); }
+.g-ag-melded { font: 900 0.62rem var(--g-font-display); letter-spacing: 0.06em; text-transform: uppercase; border: 2px solid currentColor; border-radius: 4px; padding: 1px 5px; transform: rotate(-3deg); }
+.g-ag-log li.g-ag-sd { border-color: var(--g-bad); }
+.g-ag-left { display: inline; font-size: 0.68rem; text-transform: none; letter-spacing: 0; font-weight: 800; color: var(--g-muted); }
+.g-ag-tok.sudden { width: 18px; height: 18px; background: var(--g-bad); border-color: var(--g-ink); }
+.g-ag-tok.last { background: var(--g-bad); border-color: var(--g-ink); }
+@keyframes g-ag-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.4); } }
+.g-ag-tok.sudden, .g-ag-tok.last { animation: g-ag-pulse 1.1s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .g-ag-tok.sudden, .g-ag-tok.last { animation: none; } }
+
 /* wide screens: bigger cards, history beside the board */
 @media (min-width: 760px) {
   .g-agents { width: min(calc(100vw - 56px), 1080px); align-self: center; }
@@ -321,6 +556,38 @@ const css = `
   .g-ag-card .g-ag-ico { width: 17px; height: 17px; bottom: 5px; }
   .g-ag-card.is-found .g-ag-ico { width: 28px; height: 14px; bottom: 6px; }
   .g-ag-acts, .g-ag-end { max-width: 460px; }
+}
+
+
+/* landscape phones: board on the left, slip / actions / history on the right, all inside the short viewport */
+@media (orientation: landscape) and (max-height: 500px) {
+  .g-agents { gap: 4px; }
+  .g-ag-top { flex-direction: row; justify-content: space-between; align-items: center; gap: 12px; }
+  .g-ag-say { min-height: 0; flex: 1 1 auto; text-align: center; font-size: 0.8rem; line-height: 1.2; }
+  .g-ag-meta { flex: none; gap: 10px; font-size: 0.72rem; }
+  .g-ag-banner { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .g-ag-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, 36%); grid-template-rows: auto auto minmax(0, 1fr); gap: 6px 12px; align-items: start; }
+  .g-ag-main { display: contents; }
+  .g-ag-rules { grid-column: 1 / -1; grid-row: 1; }
+  .g-ag-wrap { grid-column: 1; grid-row: 1 / span 3; }
+  .g-ag-slip { grid-column: 2; grid-row: 1; justify-content: stretch; }
+  .g-ag-dock, .g-ag-dock.is-over { grid-column: 2; grid-row: 2; position: static; padding: 0; gap: 6px; }
+  .g-ag-side { grid-column: 2; grid-row: 3; max-height: 100px; overflow-y: auto; padding: 0; }
+  .g-ag-side h3 { margin-bottom: 4px; }
+  .g-ag-log li { padding: 4px 8px; }
+  .g-ag-grid { --gap: 3px; }
+  .g-ag-card { height: clamp(36px, calc((100dvh - 205px) / 5), 48px); padding-bottom: 4px; }
+  .g-ag-card::before { bottom: 3px; }
+  .g-ag-card .g-ag-ico { display: none; }
+  .g-ag-paper { padding: 4px 8px 5px 12px; }
+  .g-ag-form { flex-wrap: wrap; }
+  .g-ag-input { flex: 1 1 100%; }
+  .g-ag-form .g-ag-step { flex: none; }
+  .g-ag-form .gm-btn { flex: 1 1 0; min-width: 0; }
+  .g-ag-form .gm-btn, .g-ag-input { min-height: 44px; height: 44px; }
+  .g-ag-acts .gm-btn { min-height: 44px; }
+  .g-ag-end .gm-btn { min-height: 44px; }
+  .g-ag-card-rules { gap: 6px; padding: 8px 10px; }
 }
 
 /* motion */
@@ -356,23 +623,25 @@ registerGame({
     'You each hold a secret key: 9 of the 25 words are your agents, 3 are assassins.',
     'Take turns giving a one-word clue and a number that point at your agents.',
     'Your partner taps words. Agent: keep going. Bystander: turn over. Assassin: mission lost.',
-    'Find all 15 agents within 9 turns. Agents on both keys count once.',
+    'Find all 15 agents before the turns run out (pick your level first). Then it\u2019s sudden death: no clues.',
   ],
   css,
   endDelay: 1300,
   endLookLabel: 'See the board',
   init, next, apply, result,
   // exposed for tests
-  _test: { makeKeys, pickWords, NOUNS, LAYOUT, TOKENS, TOTAL, BREAKS, cleanClue },
+  _test: { makeKeys, pickWords, NOUNS, LAYOUT, TOKENS, TOTAL, BREAKS, cleanClue, cleanClue2: (s, x) => checkClue(s.words, s.found, x), PACKS, PACK_BREAKS, packWords: (seed, pack) => packWords(seed, pack, NOUNS), LEVELS, matchStats, recordPatch, isMeld, recordClueText, streakLine, parseClue, recentIds, pushRecent, RECENT_CAP },
 
   mount(el, api) {
     el.innerHTML = `<div class="g-agents">
       <div class="g-ag-top">
         <p class="g-ag-say" aria-live="polite"></p>
         <div class="g-ag-meta"><div class="g-ag-tokens" role="img"></div><div class="g-ag-count"></div></div>
+        <p class="g-ag-banner" hidden></p>
       </div>
       <div class="g-ag-body">
         <div class="g-ag-main">
+          <div class="g-ag-rules" hidden></div>
           <div class="g-ag-slip"></div>
           <div class="g-ag-wrap"><div class="g-ag-grid" role="group" aria-label="The board"></div></div>
           <div class="g-ag-dock"></div>
@@ -385,25 +654,36 @@ registerGame({
     const sayEl = q('.g-ag-say');
     const tokEl = q('.g-ag-tokens');
     const countEl = q('.g-ag-count');
+    const bannerEl = q('.g-ag-banner');
+    const rules = q('.g-ag-rules');
     const slip = q('.g-ag-slip');
     const grid = q('.g-ag-grid');
     const dock = q('.g-ag-dock');
     const logEl = q('.g-ag-log');
 
+    // the turn-game api has no data(): use the engine's per-game shared records directly
+    const store = typeof api.data === 'function' ? api : gameDataApi('agents');
     let ctx = null;
     let sel = null; // selected card index (guesser)
+    let selAt = 0; // when it was selected (a double-tap must not confirm)
+    let lockUntil = 0; // taps are ignored briefly after a move is sent
     let showMine = false; // guesser: show my own key
     let keyView = null; // game over: whose key to show
     let num = 2; // clue number draft
     let prevMoves = null;
+    let prevOver; // was the match over at the previous update (undefined before the first)
     let anim = null; // { i, kind } newest pick to animate
     let slipSig = '';
+    let rulesSig = '';
     let viewKey = '';
+    let draft = parseSetup(safeData().last_setup); // the rules card remembers the last choice
     const timers = new Set();
     const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); fn(); }, ms); timers.add(t); };
     const nm = (w) => esc(api.name(w));
     const ini = (w) => esc((api.name(w) || w).trim().charAt(0).toUpperCase());
     const who = (w) => `<span class="g-ag-who p-${w}">${nm(w)}</span>`;
+    const stamp = () => Date.now();
+    function safeData() { try { return store.data() || {}; } catch { return {}; } }
 
     // A half-typed clue survives a reload (this device only).
     const DRAFT = 'ju.agents.draft.';
@@ -415,23 +695,26 @@ registerGame({
       const s = c.state;
       if (c.over) return 'over';
       if (!c.viewer) return 'blank';
+      if (s.phase === 'sudden') return c.viewer === s.picker ? 'sudden' : 'sudden-watch';
+      if (pristine(s)) return c.viewer === s.giver ? 'setup' : 'await-setup';
       if (s.phase === 'clue') return c.viewer === s.giver ? 'give' : 'await-clue';
       return c.viewer === s.giver ? 'watch' : 'guess';
     }
+    const guessing = (c) => { const r = roleOf(c); return r === 'guess' || r === 'sudden'; };
     function shownKey(c) {
       const role = roleOf(c);
       if (role === 'over') return keyView || c.viewer || c.first || 'a';
-      if (role === 'blank') return null;
-      if (role === 'give' || role === 'watch') return c.viewer; // the giver's own key
+      if (role === 'blank' || role === 'setup' || role === 'await-setup') return null;
+      if (role === 'give' || role === 'watch' || role === 'sudden-watch') return c.viewer; // the key being guessed
       return showMine ? c.viewer : null;
     }
     const pickable = (c, i) => {
       const s = c.state;
-      return c.canMove && roleOf(c) === 'guess' && !s.found[i] && !s.miss[s.giver].includes(i);
+      return c.canMove && guessing(c) && !s.found[i] && !s.miss[judgeOf(s)].includes(i);
     };
 
     function wordHTML(w) {
-      const parts = BREAKS.get(w);
+      const parts = breakOf(w);
       const inner = parts ? `<span class="p">${up(parts[0])}<span class="hy">-</span></span><span class="p">${up(parts[1])}</span>` : up(w);
       return `<span class="g-ag-word" data-w="${w}">${inner}</span>`;
     }
@@ -442,7 +725,7 @@ registerGame({
       let ico = '';
       let label = up(w);
       if (s.found[i]) { cls.push('is-found'); ico = ICON.mask; label += ', agent found'; }
-      else if (s.hit === i) { cls.push('is-hit'); ico = ICON.cross; label += ', assassin'; }
+      else if (s.hit === i) { cls.push('is-hit'); ico = ICON.cross; label += s.over === 'caught' && s.sd[s.sd.length - 1].r === 'N' ? ', bystander, caught' : ', assassin'; }
       else {
         const missA = s.miss.a.includes(i);
         const missB = s.miss.b.includes(i);
@@ -457,7 +740,7 @@ registerGame({
       }
       const can = pickable(c, i);
       if (can) cls.push('can');
-      else if (roleOf(c) === 'guess' && c.canMove && !s.found[i]) cls.push('dim');
+      else if (guessing(c) && c.canMove && !s.found[i]) cls.push('dim');
       if (sel === i) cls.push('is-sel');
       if (anim && anim.i === i) cls.push(anim.kind);
       const tags = s.found[i] || s.hit === i ? '' : `${s.miss.a.includes(i) ? `<i class="g-ag-tag t-a" aria-hidden="true">${ini('a')}</i>` : ''}${s.miss.b.includes(i) ? `<i class="g-ag-tag t-b" aria-hidden="true">${ini('b')}</i>` : ''}`;
@@ -466,7 +749,8 @@ registerGame({
 
     function renderGrid() {
       const c = ctx;
-      if (!c.viewer && !c.over) { grid.innerHTML = ''; return; }
+      const role = roleOf(c);
+      if ((!c.viewer && !c.over) || role === 'setup' || role === 'await-setup') { grid.innerHTML = ''; return; }
       const k = shownKey(c);
       grid.innerHTML = c.state.words.map((_, i) => cardHTML(c, i, k)).join('');
       fit();
@@ -478,8 +762,8 @@ registerGame({
       const spans = [...grid.querySelectorAll('.g-ag-word')];
       if (!spans.length) return;
       const card = spans[0].parentElement;
-      const avail = card.clientWidth - 3;
-      const availH = card.clientHeight - 16;
+      const avail = card.clientWidth - 9;
+      const availH = card.clientHeight - parseFloat(getComputedStyle(card).paddingBottom) - 7;
       if (avail < 20 || availH < 16) return;
       meter = meter || document.createElement('canvas').getContext('2d');
       const cs = getComputedStyle(spans[0]);
@@ -488,7 +772,7 @@ registerGame({
       let fs = Math.min(22, card.clientHeight * 0.3);
       const plan = spans.map((sp) => {
         const w = up(sp.dataset.w);
-        const parts = BREAKS.get(sp.dataset.w);
+        const parts = breakOf(sp.dataset.w);
         const one = em(w);
         const two = parts ? Math.max(em(up(parts[0]) + '-'), em(up(parts[1]))) : Infinity;
         fs = Math.min(fs, Math.max(avail / one, Math.min(avail / two, availH / 2.06)));
@@ -503,23 +787,138 @@ registerGame({
     if (ro) ro.observe(grid);
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { if (grid.isConnected) fit(); });
 
+    // ── ledger, stamps, debrief ──
+    function ledgerHTML() {
+      const d = safeData();
+      const g = (k) => Number(d[k]) || 0;
+      if (!g('missions_n')) return '<div class="g-ag-ledger"><span>No missions logged yet. Make the first one count.</span></div>';
+      const bits = [`<b>${g('missions_n')}</b> mission${g('missions_n') === 1 ? '' : 's'}`, `<b>${g('wins_n')}</b> home safe`];
+      if (g('spare_best')) bits.push(`best: <b>${g('spare_best')}</b> turn${g('spare_best') === 1 ? '' : 's'} to spare`);
+      else if (g('close_best')) bits.push(`closest call: <b>${g('close_best')}</b>/${TOTAL}`);
+      if (g('meld_n')) bits.push(`<b>${g('meld_n')}</b> mind meld${g('meld_n') === 1 ? '' : 's'}`);
+      const lines = [`<div class="g-ag-ledger">${bits.map((b) => `<span>${b}</span>`).join('')}</div>`];
+      const rc = recordClueText(d, (w) => api.name(w));
+      if (rc) lines.push(`<div class="g-ag-ledger"><span>${esc(rc)}</span></div>`);
+      if (g('streak') >= 2) lines.push(`<div class="g-ag-ledger"><span>${esc(streakLine(g('streak')))}</span></div>`);
+      return lines.join('');
+    }
+    const STAMP_TEXT = (b) => {
+      if (b === 'record') return ['NEW RECORD', 'rec'];
+      if (b === 'tie') return ['EQUALS THE RECORD', 'rec'];
+      if (b === 'last') return ['ON THE LAST TOKEN', 'bad'];
+      if (b === 'escape') return ['SUDDEN-DEATH ESCAPE', 'good'];
+      let m = /^row(\d+)$/.exec(b);
+      if (m) return [`${m[1]} IN A ROW`, 'a'];
+      m = /^meld(\d+)$/.exec(b);
+      if (m) return [Number(m[1]) > 1 ? `MIND MELD ×${m[1]}` : 'MIND MELD', 'gold'];
+      m = /^ms(\d+)$/.exec(b);
+      if (m) return [`MISSION No. ${m[1]}`, 'ink'];
+      return null;
+    };
+    function stampsFor(c) {
+      const s = c.state;
+      const st = matchStats(s);
+      const d = safeData();
+      const set = new Set();
+      if (s.over === 'win' && !s.sd && st.spare === 0) set.add('last');
+      if (s.over === 'win' && s.sd) set.add('escape');
+      if (st.melds) set.add(`meld${st.melds}`);
+      if (d.lastm === c.matchId && d.lastb) for (const b of String(d.lastb).split(',')) if (b) set.add(b);
+      return [...set].map(STAMP_TEXT).filter(Boolean);
+    }
+    function debriefHTML(c) {
+      const s = c.state;
+      const st = matchStats(s);
+      const stamps = stampsFor(c).map(([t, k], n) => `<span class="g-ag-stamp k-${k}" style="--r:${n % 2 ? 3 : -4}deg">${t}</span>`).join('');
+      const dd = safeData();
+      const recd = dd.lastm === c.matchId ? parseClue(dd.best_clue) : null;
+      const over = (t) => (recd && recd.mid === c.matchId && recd.clue === t.clue && recd.by === t.by ? 'Record' : dd.lastm === c.matchId && String(dd.lastb || '').split(',').includes('tie') && t.got === Number(dd.clue_best) ? 'Equals the record' : '');
+      const best = st.top.map((t) => `<div class="g-ag-paper sm${t.meld ? ' meld' : ''}">${over(t) ? `<i class="g-ag-over">${over(t)}</i>` : ''}<div class="g-ag-cluebox"><small>${nm(t.by)}’s clue${t.meld ? ' · mind meld' : ''}</small><span class="g-ag-clueword">${esc(t.clue)}</span></div><span class="g-ag-num" aria-label="${t.got} of ${t.n}">${t.got}</span></div>`).join('');
+      return `<div class="g-ag-debrief">
+        <p class="g-ag-epi">${esc(epilogue(s))}</p>
+        ${stamps ? `<div class="g-ag-stamps">${stamps}</div>` : ''}
+        ${best ? `<div class="g-ag-best"><small>Best clue${st.top.length > 1 ? 's' : ''} of the mission</small><div>${best}</div></div>` : ''}
+        ${ledgerHTML()}
+      </div>`;
+    }
+    // Records: once per match, on the phone that watched it end. Counters are absolute values from
+    // the data snapshot, so two phones recording the same match write the same numbers.
+    // `watched`: this phone saw the match end during this mount. Anything else (a finished match opened
+    // later from the hub) only counts if it is a v2 match nobody recorded; v1 matches never count on reopen.
+    function maybeRecord(c, watched) {
+      if (!c.over || !c.matchId) return;
+      const d = safeData();
+      if (recentIds(d.recent_m).includes(c.matchId)) return;
+      if (!watched && c.state.v !== 2) return;
+      try { store.setData({ ...recordPatch(d, c.state, c.matchId), recent_m: pushRecent(d.recent_m, c.matchId) }); } catch { /* records are a bonus */ }
+    }
+
+    // ── the rules card (first giver, before the first clue) ──
+    function renderRules() {
+      const c = ctx;
+      const role = roleOf(c);
+      const on = role === 'setup' || role === 'await-setup';
+      rules.hidden = !on;
+      root.classList.toggle('is-setup', on);
+      if (!on) { rulesSig = ''; return; }
+      const sig = JSON.stringify([role, c.canMove, draft, safeData().missions_n, safeData().lastm, c.state.giver]);
+      if (sig === rulesSig) return;
+      rulesSig = sig;
+      if (role === 'await-setup') {
+        rules.innerHTML = `<div class="g-ag-card-rules"><h2 class="g-ag-h">Mission briefing</h2><p class="g-ag-wait">Waiting for ${who(c.state.giver)} to set the rules…</p>${ledgerHTML()}</div>`;
+        return;
+      }
+      const lv = Object.entries(LEVELS).map(([id, t]) => `<button type="button" data-lv="${id}" aria-pressed="${draft.level === id}"><b>${id[0].toUpperCase()}${id.slice(1)}</b><small>${t} turns</small></button>`).join('');
+      const pk = PACK_IDS.map((id) => `<button type="button" data-pk="${id}" aria-pressed="${draft.pack === id}"><b>${PACK_INFO[id].name}</b><small>${PACK_INFO[id].blurb}</small></button>`).join('');
+      rules.innerHTML = `<div class="g-ag-card-rules">
+        <h2 class="g-ag-h">Mission briefing</h2>
+        <div class="g-ag-opt"><span class="g-label">Difficulty</span><div class="g-ag-seg s3" role="group" aria-label="Difficulty">${lv}</div></div>
+        <div class="g-ag-opt"><span class="g-label">Word pack</span><div class="g-ag-seg s2" role="group" aria-label="Word pack">${pk}</div></div>
+        <div class="g-ag-opt"><span class="g-label">Sudden death</span><div class="g-ag-seg s2" role="group" aria-label="Sudden death"><button type="button" data-sd="1" aria-pressed="${draft.sudden}"><b>On</b><small>No clues, one pick each</small></button><button type="button" data-sd="0" aria-pressed="${!draft.sudden}"><b>Off</b><small>Out of turns: mission over</small></button></div></div>
+        ${ledgerHTML()}
+      </div><div class="g-ag-playbar"><button class="gm-btn gm-btn-big g-ag-play" type="button" data-act="play"${c.canMove ? '' : ' disabled'}>Play</button></div>`;
+    }
+
     function renderTop() {
       const c = ctx;
       const s = c.state;
       const role = roleOf(c);
       const g = s.giver;
       const t = curTurn(s);
-      const left = TOKENS - s.turns;
+      const T = tok(s);
+      const left = T - s.turns;
+      const sudden = s.phase === 'sudden';
+      const last = !c.over && !sudden && !pristine(s) && left <= 1;
       let text = '';
-      if (role === 'give') text = `Your clue: one word and a number for your <b>green</b> agents (${agentsLeft(s, g)} left).`;
+      if (role === 'setup') text = 'Set the rules, then give the first clue.';
+      else if (role === 'await-setup') text = ''; // the briefing card says it once
+      else if (role === 'give') text = `Your clue: one word and a number for your <b>green</b> agents (${agentsLeft(s, g)} left).`;
       else if (role === 'await-clue') text = `${who(g)} is thinking of a clue…`;
       else if (role === 'guess') text = t.picks.length ? 'Nice. Keep going, or end the turn.' : `Tap the words you think are ${who(g)}’s agents.`;
       else if (role === 'watch') text = `${who(other(g))} is guessing your clue…`;
-      else if (role === 'over') text = s.over === 'win' ? 'Mission complete. Every agent is home.' : s.over === 'burned' ? `Burned. ${up(s.words[s.hit])} was an assassin.` : 'Out of time. The trail went cold.';
-      sayEl.innerHTML = text;
-      tokEl.innerHTML = Array.from({ length: TOKENS }, (_, i) => `<span class="g-ag-tok${i < s.turns - (s.phase === 'guess' && !s.over ? 1 : 0) ? ' used' : i === s.turns - 1 && s.phase === 'guess' && !s.over ? ' now' : ''}"></span>`).join('') + `<span>${left} turn${left === 1 ? '' : 's'} left</span>`;
-      tokEl.setAttribute('aria-label', `${left} of ${TOKENS} turns left`);
+      else if (role === 'sudden') text = `<b>Sudden death: no clues, no mistakes.</b> Find ${who(other(s.picker))}’s agents.`;
+      else if (role === 'sudden-watch') text = `<b>Sudden death.</b> ${who(s.picker)} is picking from your key…`;
+      else if (role === 'over') {
+        text = s.over === 'win' ? (s.sd ? 'Escaped! Every agent is home.' : 'Mission complete. Every agent is home.')
+          : s.over === 'burned' ? `Burned. ${up(s.words[s.hit])} was an assassin.`
+            : s.over === 'caught' ? `Caught in sudden death. ${up(s.words[s.hit])} was ${s.sd[s.sd.length - 1].r === 'K' ? 'an assassin' : 'a bystander'}.`
+              : 'Out of time. The trail went cold.';
+      }
+      sayEl.innerHTML = (last && (role === 'give' || role === 'guess' || role === 'watch' || role === 'await-clue') ? '<b class="g-ag-last">Last call.</b> ' : '') + text;
+      const turnNow = s.phase === 'guess' && !s.over;
+      if (sudden || (c.over && s.sd)) {
+        tokEl.innerHTML = '<span class="g-ag-tok sudden"></span><span>Sudden death</span>';
+        tokEl.setAttribute('aria-label', 'Sudden death');
+      } else {
+        tokEl.innerHTML = Array.from({ length: T }, (_, i) => `<span class="g-ag-tok${i < s.turns - (turnNow ? 1 : 0) ? ' used' : i === s.turns - 1 && turnNow ? ' now' : ''}${last && i === T - 1 ? ' last' : ''}"></span>`).join('') + (c.over && s.over === 'win' ? '' : `<span>${left} turn${left === 1 ? '' : 's'} left</span>`);
+        tokEl.setAttribute('aria-label', `${left} of ${T} turns left`);
+      }
       countEl.innerHTML = `Agents <b>${foundCount(s)}</b>/${TOTAL}`;
+      // mind meld: the clue slip prints in gold for the turn that just ended
+      const lastIdx = s.log.length - 1;
+      const meldNow = lastIdx >= 0 && (s.over ? s.over === 'win' : s.phase === 'clue') && isMeld(s.log[lastIdx], turnDone(s, lastIdx));
+      bannerEl.hidden = !meldNow;
+      if (meldNow) { const n = s.log[lastIdx].n; bannerEl.innerHTML = `<span class="g-ag-stamp k-gold" style="--r:-2deg">Mind meld</span> ${NUMWORD[n] || n} for ${NUMWORD[n] ? NUMWORD[n].toLowerCase() : n}.`; }
     }
 
     function renderSlip() {
@@ -528,22 +927,25 @@ registerGame({
       const role = roleOf(c);
       const t = curTurn(s);
       const sig = JSON.stringify([role, c.viewer, s.giver, s.log.length, c.canMove]);
-      if (sig === slipSig) return;
-      const fresh = slipSig && s.phase === 'guess';
-      slipSig = sig;
-      if (role === 'give' && c.canMove) {
-        const d = draftGet(c);
-        const max = Math.max(1, Math.min(9, agentsLeft(s, s.giver)));
-        num = Math.max(1, Math.min(d ? d.n : num, max));
-        slip.innerHTML = `<form class="g-ag-form" autocomplete="off">
+      if (sig !== slipSig) {
+        const fresh = slipSig && s.phase === 'guess';
+        slipSig = sig;
+        if (role === 'give' && c.canMove) {
+          const d = draftGet(c);
+          const max = Math.max(1, Math.min(9, agentsLeft(s, s.giver)));
+          num = Math.max(1, Math.min(d ? d.n : num, max));
+          slip.innerHTML = `<form class="g-ag-form" autocomplete="off">
           <input class="g-ag-input" name="clue" maxlength="20" placeholder="Your clue" aria-label="Your clue, one word" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send">
           <div class="g-ag-step" role="group" aria-label="How many cards"><button type="button" data-act="minus" aria-label="Fewer">−</button><output aria-live="polite">${num}</output><button type="button" data-act="plus" aria-label="More">+</button></div>
           <button class="gm-btn" type="submit">Send</button>
         </form>`;
-        if (d) slip.querySelector('.g-ag-input').value = d.t;
-      } else if (t && s.phase === 'guess' && role !== 'blank' && role !== 'over') {
-        slip.innerHTML = `<div class="g-ag-paper${fresh ? ' fresh' : ''}"><div class="g-ag-cluebox"><small>${nm(t.by)}’s clue</small><span class="g-ag-clueword" style="--len:${t.clue.length}">${esc(t.clue)}</span></div><span class="g-ag-num" aria-label="${t.n} cards">${t.n}</span></div>`;
-      } else slip.innerHTML = '';
+          if (d) slip.querySelector('.g-ag-input').value = d.t;
+        } else if (t && s.phase === 'guess' && role !== 'blank' && role !== 'over') {
+          slip.innerHTML = `<div class="g-ag-paper${fresh ? ' fresh' : ''}"><div class="g-ag-cluebox"><span class="g-ag-clhead"><small>${nm(t.by)}’s clue</small>${s.v === 2 ? '<span class="g-ag-left"></span>' : ''}</span><span class="g-ag-clueword" style="--len:${t.clue.length}">${esc(t.clue)}</span></div><span class="g-ag-num" aria-label="${t.n} cards">${t.n}</span></div>`;
+        } else slip.innerHTML = '';
+      }
+      const lf = slip.querySelector('.g-ag-left');
+      if (lf && t) { const k = Math.max(0, t.n + 1 - agentPicks(t)); lf.textContent = `${k} pick${k === 1 ? '' : 's'} left`; }
     }
 
     function renderDock() {
@@ -551,36 +953,46 @@ registerGame({
       const s = c.state;
       const role = roleOf(c);
       const t = curTurn(s);
-      const mine = `<div class="g-ag-toggle"><button data-act="mine" aria-pressed="${showMine}">Show my key</button></div>`;
+      const mineBtn = `<button class="gm-btn gm-btn-ghost g-ag-mine" data-act="mine" aria-pressed="${showMine}" aria-label="Show my key"><span>My key</span></button>`;
+      const mine = `<div class="g-ag-row">${mineBtn}</div>`;
       const legend = (whose) => `<div class="g-ag-legend" aria-hidden="true"><span><i class="lg-g"></i>${whose} agents</span><span><i class="lg-k"></i>assassins</span></div>`;
+      const pickBtn = sel != null ? `<button class="gm-btn" data-act="pick"><span>Pick ${up(s.words[sel])}</span></button>` : '<button class="gm-btn" data-act="pick" disabled><span>Tap a word</span></button>';
       let h = '';
       if (role === 'guess' && c.canMove) {
-        h = `<div class="g-ag-acts"><button class="gm-btn gm-btn-ghost" data-act="stop"${t.picks.length ? '' : ' disabled'}>End turn</button>`;
-        h += sel != null ? `<button class="gm-btn" data-act="pick"><span>Pick ${up(s.words[sel])}</span></button>` : '<button class="gm-btn" data-act="pick" disabled><span>Tap a word</span></button>';
-        h += `</div><div class="g-ag-row">${mine}${showMine ? legend('your') : ''}</div>`;
-      } else if (role === 'give' || role === 'watch') {
+        h = `${showMine ? legend('your') : ''}<div class="g-ag-acts three"><button class="gm-btn gm-btn-ghost" data-act="stop"${t.picks.length ? '' : ' disabled'}>End turn</button>${mineBtn}${pickBtn}</div>`;
+      } else if (role === 'sudden' && c.canMove) {
+        h = `${showMine ? legend('your') : ''}<div class="g-ag-acts two">${mineBtn}${pickBtn}</div>`;
+      } else if (role === 'give' || role === 'watch' || role === 'sudden-watch') {
         h = legend('your');
-      } else if (role === 'await-clue' || role === 'guess') {
-        h = `<div class="g-ag-row">${mine}${showMine ? legend('your') : ''}</div>`;
+      } else if (role === 'await-clue' || role === 'guess' || role === 'sudden') {
+        h = `${mine}${showMine ? legend('your') : ''}`;
       } else if (role === 'over') {
         const k = shownKey(c);
-        h = `<div class="g-ag-toggle" role="group" aria-label="Show a key">${['a', 'b'].map((w) => `<button data-act="key" data-w="${w}" aria-pressed="${k === w}">${nm(w)}’s key</button>`).join('')}</div>
+        h = `${debriefHTML(c)}<div class="g-ag-toggle" role="group" aria-label="Show a key">${['a', 'b'].map((w) => `<button data-act="key" data-w="${w}" aria-pressed="${k === w}">${nm(w)}’s key</button>`).join('')}</div>
           <div class="g-ag-end"><button class="gm-btn" data-g="rematch">Play again</button><button class="gm-btn gm-btn-ghost" data-g="close">Back to games</button></div>`;
       }
+      dock.classList.toggle('is-over', role === 'over');
       dock.innerHTML = h;
     }
 
     function renderLog() {
       const s = ctx.state;
       if (!s.log.length) { logEl.innerHTML = '<li class="g-ag-empty">No clues yet.</li>'; return; }
-      logEl.innerHTML = s.log.map((t, n) => `<li class="${n === s.log.length - 1 && s.phase === 'guess' && !s.over ? 'now' : ''}">
-        <span class="g-ag-by p-${t.by}" aria-label="${nm(t.by)}">${ini(t.by)}</span><b>${esc(t.clue)}</b><span class="g-ag-num" aria-label="${t.n} cards">${t.n}</span>
-        <span class="g-ag-chips">${t.picks.map((p) => `<span class="g-ag-chip r-${p.r}" title="${p.r === 'G' ? 'agent' : p.r === 'K' ? 'assassin' : 'bystander'}">${s.words[p.i]}</span>`).join('')}</span>
-      </li>`).reverse().join('');
+      const chips = (list) => list.map((p) => `<span class="g-ag-chip r-${p.r}" title="${p.r === 'G' ? 'agent' : p.r === 'K' ? 'assassin' : 'bystander'}">${s.words[p.i]}</span>`).join('');
+      const rows = s.log.map((t, n) => {
+        const meld = isMeld(t, turnDone(s, n));
+        return `<li class="${n === s.log.length - 1 && s.phase === 'guess' && !s.over ? 'now' : ''}${meld ? ' meld' : ''}">
+        <span class="g-ag-by p-${t.by}" aria-label="${nm(t.by)}">${ini(t.by)}</span><b>${esc(t.clue)}</b><span class="g-ag-num" aria-label="${t.n} cards">${t.n}</span>${meld ? '<span class="g-ag-melded">Mind meld</span>' : ''}
+        <span class="g-ag-chips">${chips(t.picks)}</span>
+      </li>`;
+      }).reverse();
+      if (s.sd && s.sd.length) rows.unshift(`<li class="g-ag-sd"><b>Sudden death</b><span class="g-ag-chips">${chips(s.sd)}</span></li>`);
+      logEl.innerHTML = rows.join('');
     }
 
     function render() {
       if (!ctx) return;
+      renderRules();
       renderTop();
       renderSlip();
       renderGrid();
@@ -603,6 +1015,7 @@ registerGame({
         later(() => input.classList.remove('shake'), 420);
         return;
       }
+      lockUntil = stamp() + 400;
       draftSet(c, '');
       input.blur();
       api.sfx('place');
@@ -627,13 +1040,30 @@ registerGame({
       if (input && input.value) draftSet(ctx, input.value, num);
       api.sfx('tick');
     });
+    rules.addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b || !ctx) return;
+      if (b.dataset.lv) draft = { ...draft, level: b.dataset.lv };
+      else if (b.dataset.pk) draft = { ...draft, pack: b.dataset.pk };
+      else if (b.dataset.sd) draft = { ...draft, sudden: b.dataset.sd === '1' };
+      else if (b.dataset.act === 'play' && ctx.canMove) {
+        const r = api.move({ setup: { v: 2, level: draft.level, pack: draft.pack, sudden: draft.sudden } });
+        if (!r.ok) { api.toast(r.error); api.sfx('bad'); return; }
+        lockUntil = stamp() + 400;
+        try { store.setData({ last_setup: `${draft.level}|${draft.pack}|${draft.sudden ? 1 : 0}` }); } catch { /* optional */ }
+        api.sfx('place');
+        return;
+      } else return;
+      api.sfx('tick');
+      renderRules();
+    });
 
     function pick(i) {
       const c = ctx;
       if (!c || !pickable(c, i)) return;
       const r = api.move({ pick: i });
       sel = null;
-      if (!r.ok) { api.toast(r.error); api.sfx('bad'); render(); }
+      if (!r.ok) { api.toast(r.error); api.sfx('bad'); render(); } else lockUntil = stamp() + 400;
     }
     grid.addEventListener('click', (e) => {
       const b = e.target.closest('.g-ag-card');
@@ -647,8 +1077,20 @@ registerGame({
         if (roleOf(ctx) === 'give') api.toast('You give the clue this turn. Type it above.');
         return;
       }
-      if (sel === i) { pick(i); return; }
+      if (stamp() < lockUntil) { // right after a move: a stray second tap, not a new choice (but show it was felt)
+        b.classList.remove('thunk');
+        void b.offsetWidth;
+        b.classList.add('thunk');
+        later(() => b.classList.remove('thunk'), 380);
+        return;
+      }
+      if (sel === i) {
+        if (stamp() - selAt < 350) return; // a double-tap selects; it never commits
+        pick(i);
+        return;
+      }
       sel = i;
+      selAt = stamp();
       api.sfx('tap');
       renderGrid();
       renderDock();
@@ -657,14 +1099,16 @@ registerGame({
       const b = e.target.closest('button[data-act]');
       if (!b || b.disabled || !ctx) return;
       const act = b.dataset.act;
+      if ((act === 'pick' || act === 'stop') && stamp() < lockUntil) return;
       if (act === 'pick' && sel != null) pick(sel);
       else if (act === 'stop') {
         const r = api.move({ stop: true });
         sel = null;
-        if (!r.ok) { api.toast(r.error); api.sfx('bad'); } else api.sfx('tick');
+        if (!r.ok) { api.toast(r.error); api.sfx('bad'); } else { lockUntil = stamp() + 400; api.sfx('tick'); }
       } else if (act === 'mine') { showMine = !showMine; api.sfx('flip'); renderGrid(); renderDock(); }
       else if (act === 'key') { keyView = b.dataset.w; api.sfx('flip'); renderGrid(); renderDock(); }
     });
+    const offData = typeof store.onData === 'function' ? store.onData(() => { if (ctx) { rulesSig = ''; renderRules(); if (ctx.over) renderDock(); } }) : null;
 
     return {
       update(c) {
@@ -673,9 +1117,11 @@ registerGame({
         ctx = c;
         const s = c.state;
         anim = null;
-        if (s.phase !== 'guess' || !c.canMove) sel = null;
+        if (!guessing(c) || !c.canMove) sel = null;
         if (sel != null && !pickable(c, sel)) sel = null;
-        if (c.over) draftSet(c, '');
+        const watched = prevOver === false && !!c.over && prevMoves != null && c.moves > prevMoves;
+        prevOver = !!c.over;
+        if (c.over) { draftSet(c, ''); maybeRecord(c, watched); }
         if (prevMoves != null && c.moves > prevMoves && c.last && c.last.move && c.last.move.pick !== undefined && c.viewer !== undefined) {
           const i = c.last.move.pick;
           const kind = s.found[i] ? 'reveal' : s.hit === i ? 'reveal' : 'thunk';
@@ -687,10 +1133,10 @@ registerGame({
         } else if (prevMoves != null && c.moves > prevMoves && c.last && c.last.move && c.last.move.clue !== undefined && c.last.who !== c.viewer) api.sfx('pop');
         prevMoves = c.moves;
         render();
-        grid.classList.toggle('boom', s.over === 'burned' && !!anim);
+        grid.classList.toggle('boom', (s.over === 'burned' || s.over === 'caught') && !!anim);
         grid.classList.toggle('party', s.over === 'win' && !!anim);
       },
-      destroy() { for (const t of timers) clearTimeout(t); timers.clear(); if (ro) ro.disconnect(); },
+      destroy() { for (const t of timers) clearTimeout(t); timers.clear(); if (ro) ro.disconnect(); if (typeof offData === 'function') offData(); },
     };
   },
 });
