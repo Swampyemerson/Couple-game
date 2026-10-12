@@ -220,6 +220,11 @@ export const CSS = `
 @media (min-width: 760px) { .gtw-lobby .gtw-card { width: min(100%, 720px); display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; text-align: left; } .gtw-lobby .col { display: flex; flex-direction: column; gap: 10px; } }
 .g-gtw.short .gtw-lobby .gtw-card { width: min(100%, 760px); display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; text-align: left; }
 .g-gtw.short .gtw-lobby .col { display: flex; flex-direction: column; gap: 8px; }
+/* the title row spans the card, clear of the two corner stickers (it is what sits under them); the columns start below it */
+.gtw-head { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+@media (min-width: 760px) { .gtw-lobby .gtw-head { grid-column: 1 / -1; } }
+.g-gtw.short .gtw-lobby .gtw-head { grid-column: 1 / -1; flex-direction: row; justify-content: center; gap: 12px; padding: 0 calc(var(--gm-corner-w, 64px) - 8px); min-height: 40px; }
+.g-gtw.short .gtw-lobby .gtw-head .gtw-tagline { font-size: .76rem; line-height: 1.2; max-width: 420px; }
 /* v2: pause button, loading, errors, lobby status, sheets, how-to */
 .gtw-pausebtn { pointer-events: auto !important; width: 48px; min-height: 44px; padding: 0; display: grid; place-items: center; color: var(--g-ink); cursor: pointer; touch-action: manipulation; }
 .gtw-pausebtn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: round; }
@@ -400,6 +405,8 @@ export const CSS = `
 .g-gtw.short .gtw-final .gtw-fr { display: flex; flex-direction: column; gap: 5px; grid-column: 2; grid-row: 1 / span 2; min-width: 0; }
 .g-gtw.short .gtw-final .gtw-ff { display: flex; flex-direction: column; gap: 2px; grid-column: 1 / -1; grid-row: 3; }
 .g-gtw.short .gtw-final .gtw-ff p { margin: 0; }
+/* sits below the corner stickers: bottom-aligned, and never taller than the room under them (it scrolls past that, never up under them) */
+.g-gtw.short .gtw-final { align-self: end; max-height: calc(100% - var(--cs) + 12px + var(--st)); }
 .g-gtw.short .gtw-final h2 { font-size: 1.3rem; }
 .g-gtw.short .gtw-final .gtw-ribbons span { font-size: .66rem; padding: 2px 9px; }
 .g-gtw.short .gtw-final .gtw-rounds { gap: 4px; grid-template-columns: repeat(auto-fit, minmax(76px, 1fr)); }

@@ -1256,7 +1256,11 @@ export function createGame(el, api) {
         vec.set((a.x + b.x) / 2, (a.y || 0) + 4.6 + k * 2, (a.z + b.z) / 2).project(cams[vs[i]].cam);
         if (vec.z >= 1 || Math.abs(vec.x) > 1.15 || Math.abs(vec.y) > 1.15) continue;
         const vw = vs.length > 1 ? Math.floor(W / 2) : W;
-        HR.push({ x: (vec.x * 0.5 + 0.5) * vw + (vs.length > 1 ? i * vw : 0), y: (-vec.y * 0.5 + 0.5) * H, k, w: h.mid ? 'x' : h.w });
+        let hx = (vec.x * 0.5 + 0.5) * vw + (vs.length > 1 ? i * vw : 0); let hy = (-vec.y * 0.5 + 0.5) * H;
+        // keep the sprite above the partner's name tag (the tag hangs from 2.4 m over their car; it is 22-32 px tall and the heart 40-56 px)
+        const oc = P2[other(vs[i])].car; vec.set(oc.x, oc.y + 2.4, oc.z).project(cams[vs[i]].cam);
+        if (vec.z < 1) { const tx = (vec.x * 0.5 + 0.5) * vw + (vs.length > 1 ? i * vw : 0); const ty = (-vec.y * 0.5 + 0.5) * H; if (Math.abs(hx - tx) < 110 && hy > ty - 62) hy = Math.max(30, ty - 62); }
+        HR.push({ x: hx, y: hy, k, w: h.mid ? 'x' : h.w });
       }
     }
     H0().hearts(HR);
@@ -2256,7 +2260,17 @@ export function createGame(el, api) {
     else if (P2[w].lastSeen && myRole === 'cop') {
       const ls = P2[w].lastSeen; const age = (performance.now() - ls.t) / 1000;
       const keep = S.wLvl >= 3 ? 15 : 12; // (Wanted ★★★: the last-seen ping lingers 3 s longer)
-      if (age < keep) { const [x, y] = toPx(ls.x, ls.z); g.beginPath(); g.arc(x, y, (6 + (age % 1.2) * 8) * dpr, 0, Math.PI * 2); g.strokeStyle = `rgba(226,51,63,${Math.max(0, 1 - age / keep)})`; g.lineWidth = 2 * dpr; g.stroke(); g.font = `900 ${9 * dpr}px system-ui`; g.fillStyle = '#e2333f'; g.fillText('last seen', x + 8 * dpr, y - 6 * dpr); }
+      if (age < keep) { const [x, y] = toPx(ls.x, ls.z); g.beginPath(); g.arc(x, y, (6 + (age % 1.2) * 8) * dpr, 0, Math.PI * 2); g.strokeStyle = `rgba(226,51,63,${Math.max(0, 1 - age / keep)})`; g.lineWidth = 2 * dpr; g.stroke(); g.font = `900 ${9 * dpr}px system-ui`; g.fillStyle = '#e2333f';
+        // the label stays inside the minimap's circle: the right of the ring, else the left, else below; then nudged in
+        const tw = g.measureText('last seen').width; const C = g.canvas.width / 2; const R2 = C - 3 * dpr; const cr = (qx, qy) => [[qx, qy - 9 * dpr], [qx + tw, qy - 9 * dpr], [qx, qy + 2 * dpr], [qx + tw, qy + 2 * dpr]].every(([a, b]) => Math.hypot(a - C, b - C) <= R2);
+        const full2 = !g.canvas.closest || !g.canvas.closest('.gtw-mini'); let lx = x + 8 * dpr; let ly = y - 6 * dpr;
+        if (!full2) {
+          const cands = [[x + 8 * dpr, y - 6 * dpr], [x - 8 * dpr - tw, y - 6 * dpr], [x + 8 * dpr, y + 14 * dpr], [x - 8 * dpr - tw, y + 14 * dpr]];
+          const fit = cands.find(([qx, qy]) => cr(qx, qy));
+          if (fit) [lx, ly] = fit;
+          else { lx = cands[0][0]; ly = cands[0][1]; for (let n = 0; n < 60 && !cr(lx, ly); n++) { lx += (C - (lx + tw / 2)) * 0.1; ly += (C - ly) * 0.1; } }
+        }
+        g.fillText('last seen', lx, ly); }
     }
     const mc = P2[w].car; const [mx, my] = toPx(mc.x, mc.z);
     hud.drawArrow(g, mx, my, mc.yaw, myRole === 'cop' ? (Math.floor(performance.now() / 250) % 2 ? '#e2333f' : '#2f6bff') : cssInk(w), (full ? 10 : 8) * dpr, true);

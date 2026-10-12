@@ -231,7 +231,7 @@ export function pairTarget(h0) {
   const t = fmtSec((h0.ran || 0) / 1000);
   if (h0.outcome === 'busted') return { run: `survive past ${t}`, cop: `bust them before ${t}`, hudRun: `Beat ${t}`, hudCop: `Bust by ${t}` };
   if (early(h0)) return { run: `get away before ${t}`, cop: `stop them escaping before ${t}`, hudRun: `Escape by ${t}`, hudCop: `Stop them by ${t}` };
-  return { run: 'escape too: losing the heat wins it outright, a clock escape goes to health left', cop: 'bust them and the pair is yours', hudRun: 'Escape to match', hudCop: 'Bust them to win' };
+  return { run: 'escape too (lose the heat to win it outright)', cop: 'bust them and the pair is yours', hudRun: 'Escape to match', hudCop: 'Bust them to win' };
 }
 /** The words for how a pair was won. */
 export function pairWhy(why) { return why === 'level' ? 'dead level' : why; }

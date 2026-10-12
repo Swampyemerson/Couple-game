@@ -159,7 +159,7 @@ export function createHud(root, api, { split, touch }) {
     // and the CAM / horn buttons under it). A car right beside mine projects to the screen edge, and
     // the tag used to sit there half off-screen, on top of the panels. Measured at most every 0.5 s
     // (layout reads), in this view's coordinates.
-    const colEls = [$('.gtw-left'), ctl.querySelector('[data-tap="cam"]'), ctl.querySelector('[data-tap="horn"]')];
+    const colEls = [$('.gtw-left'), ctl.querySelector('[data-tap="cam"]'), ctl.querySelector('[data-tap="horn"]'), $('.gtw-wstar')]; // (the Wanted sticker hangs off the heat panel's right edge: the tag keeps out of it too)
     const keep = { at: -1e9, w: 0, l: 6, r: 0, colR: 0, colT: 0, colB: 0, twL: 0, twR: 0, twT: 0, twB: 0 };
     function keepOut() {
       const t = performance.now(); if (t - keep.at < 500) return keep; keep.at = t;
@@ -471,9 +471,9 @@ export function lobbyCard(api, o) {
     : `<p class="gtw-wait">${nameB(api, waitingFor)} picks the map and starts.</p><button class="gtw-go ${partnerReady ? 'on' : ''}" data-l="ready">${o.meReady ? 'Ready ✓' : 'I’m ready'}</button>`;
   const tip = o.portraitPhone ? '<p class="gtw-landtip">Tip: turn your phone sideways for a wider view.</p>' : '';
   return `<div class="gtw-lobby" style="--me: var(--p-${me})"><div class="gtw-card gtw-st">
-    <div class="col"><div class="gtw-logo">Get<span>away</span></div>
-    <p class="gtw-tagline">One runs, one chases. PIT them, spike them, or lose the heat.</p>
-    ${modeRow}${daily ? '' : firstRow}${facts}${series}${recs}${status}</div>
+    <div class="gtw-head"><div class="gtw-logo">Get<span>away</span></div>
+    <p class="gtw-tagline">One runs, one chases. PIT them, spike them, or lose the heat.</p></div>
+    <div class="col">${modeRow}${daily ? '' : firstRow}${facts}${series}${recs}${status}</div>
     <div class="col">${mapCardHTML(maps, daily ? { ...setup, map: o.daily.mapId } : setup, canEdit && !daily, o.loading)}
     <div class="gtw-btns"><button class="gtw-ghost" data-l="settings">${canEdit ? 'Settings' : 'Settings'}</button><button class="gtw-ghost ${o.newcomer ? 'gtw-new' : ''}" data-l="howto">${o.newcomer ? 'New here? How to play' : 'How to play'}</button></div>
     <div class="gtw-btns">${btn}</div>${tip}</div>
@@ -544,6 +544,8 @@ const TWIST_LINES = {
   eagle: { runner: 'The cop’s radar sees you the whole round, and the heat is 40 m further', cop: 'Your radar sees them the whole round, and the heat is 40 m further', '': 'The cop’s radar sees the runner the whole round, and the heat is 40 m further' },
   rain: { runner: 'The cop gets 6 spike strips, and you see every one', cop: 'You get 6 spike strips, and the runner sees every one', '': 'The cop gets 6 spike strips, and the runner sees every one' },
   fog: { cop: 'Thick fog: no radar for you, and the heat is 30% closer' },
+  tank: { runner: 'Big nitro tank for you, and the cop’s boost recharges 1.5× faster', cop: 'The runner has a big nitro tank, and your boost recharges 1.5× faster', '': 'Big nitro for the runner, and the cop’s boost recharges 1.5× faster' },
+  slick: { runner: 'Less grip for both cars, and you get 2 oil slicks', cop: 'Less grip for both cars, and the runner gets 2 oil slicks', '': 'Less grip for both cars, and the runner gets 2 oil slicks' },
   double: { '': 'Worth 2 points' },
 };
 function twistLine(twist, safe, role) {
