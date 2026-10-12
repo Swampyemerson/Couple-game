@@ -1,136 +1,48 @@
-// Air Hockey: live, versus, first to 7.
+// Air Hockey: live, versus. Tables: Classic (first to 7), Pillar, Twin Pucks, Shrinking Goals,
+// Power Puck and Quick (first to 3). Design notes, data keys and testing: docs/games/hockey.md.
 //
 // One phone: the table fills the stage and each player drags the mallet on their half (real
-// multi-touch: every pointer belongs to the half it started in). One computer: W/A/S/D against
-// the arrow keys, with the table turned sideways. Two devices: each sees its own goal at the
-// bottom (or, on a computer, the mouse drives your mallet).
+// multi-touch: every pointer belongs to the half it started in; a second finger on a half waits
+// its turn and takes over when the first lifts). One computer: W/A/S/D against the arrow keys, with
+// the table turned sideways. Two devices: each sees its own goal at the bottom (or, on a computer,
+// the mouse drives your mallet).
 //
 // Netcode. The host ('a') runs the only real simulation: 120 Hz fixed steps, the guest's mallet
 // fed in from its presence samples (velocity estimated from successive samples). The host streams
-// { puck, mallet, score, phase, hit counters } at ~25/s, stamped on the shared clock (net.js).
-// The guest draws its own mallet straight from the finger and draws the puck *ahead* of the last
-// host state by (state age + the measured guest->host lag): that is where the puck will be when
-// the guest's mallet position reaches the host, so a hit the guest sees is a hit the host sees.
+// { pucks, mallet, score, phase, table, hit counters, events } at ~25/s, stamped on the shared clock
+// (net.js). The guest draws its own mallet straight from the finger and draws each puck *ahead* of
+// the last host state by (state age + the measured guest->host lag): that is where the puck will be
+// when the guest's mallet position reaches the host, so a hit the guest sees is a hit the host sees.
 // The guest predicts its own hits locally and holds that prediction until the host's hit counter
-// confirms it; every other correction is blended away over ~80 ms.
+// confirms it. Every other correction is blended away over ~100 ms at a limited speed (never a
+// visible teleport unless the puck was reset). The host's table choice rides in the same stream
+// (phase 'setup' + the chosen table), so a dropped message heals itself.
 import { registerGame } from './core.js';
 import { createNet } from './net.js';
+import { W, H, RM, RP, GH, POST_R, DT, SERVE_V, MALLET_MAX, HIT_WALL, HIT_PILLAR, HIT_FRAME, TABLES, TABLE_ORDER, tableOf, newEnv, setGoals, goalHalf, clampMallet, clampTarget, unsqueeze, trackHand, capToHand, stepPuck, clamp, r1, other } from './hockey/physics.js';
+import { createSound } from './hockey/sound.js';
+import { SETUP_CSS, createSetup } from './hockey/setup.js';
+import { readRecords, rallyResult, fastResult, matchResult, rivalryLine } from './hockey/records.js';
 
-const W = 100;          // table width, logical units
-const H = 170;          // table length. 'a' defends y = H (bottom), 'b' defends y = 0 (top)
-const RM = 7.5;         // mallet radius
-const RP = 4.6;         // puck radius
-const GH = 16;          // goal half-width
 const RAIL = 5;         // rail thickness (drawn outside the play field)
-const DT = 1 / 120;     // fixed physics step
-const PUCK_MAX = 300;   // units/s (2.5 units per step: no tunnelling through a 12-unit contact)
-const MALLET_MAX = 300; // ≤ PUCK_MAX, so a struck puck always outruns the mallet (no double hits)
-const WALL_E = 0.86;    // wall restitution
-const MALLET_E = 0.8;   // mallet restitution
-const FRICTION = 0.28;  // 1/s, exponential
-const SERVE_V = 42;
 const GOAL_MS = 1150;   // goal celebration before the countdown
 const COUNT_MS = 1500;  // 3-2-1
-const TO_WIN = 7;
-const KEY_V = 150;      // keyboard mallet top speed
+const KEY_V = 235;      // keyboard mallet top speed (a soft-to-medium pass; the power curve wants a real flick for a slap)
 const KEY_ACC = 11;     // keyboard response (1/s): smooth acceleration and stop
 const HIT_FX = 16;      // impact speed for a hit sound
 const RATE = 25;        // network updates per second
 const EDGE = 20;        // px: touches starting this close to the left edge are the iOS back swipe
-
-const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
-const r1 = (v) => Math.round(v * 10) / 10;
-const other = (w) => (w === 'a' ? 'b' : 'a');
-
-// ── physics (shared by the host, one-device play and the guest's prediction) ──
-function clampMallet(m) {
-  m.x = clamp(m.x, RM, W - RM);
-  m.y = m.who === 'a' ? clamp(m.y, H / 2 + RM, H - RM) : clamp(m.y, RM, H / 2 - RM);
-}
-function clampTarget(who, x, y) {
-  return [clamp(x, RM, W - RM), who === 'a' ? clamp(y, H / 2 + RM, H - RM) : clamp(y, RM, H / 2 - RM)];
-}
-function bouncePoint(p, px, py) {
-  const dx = p.x - px; const dy = p.y - py; const d2 = dx * dx + dy * dy;
-  if (d2 >= RP * RP || d2 < 1e-9) return false;
-  const d = Math.sqrt(d2); const nx = dx / d; const ny = dy / d;
-  p.x = px + nx * RP; p.y = py + ny * RP;
-  const vn = p.vx * nx + p.vy * ny;
-  if (vn < 0) { p.vx -= (1 + WALL_E) * vn * nx; p.vy -= (1 + WALL_E) * vn * ny; return true; }
-  return false;
-}
-/** Rails, goal posts and the goal pockets. Returns true on a bounce. */
-function walls(p) {
-  let hit = false;
-  if (p.x < RP) { p.x = RP; if (p.vx < 0) { p.vx = -p.vx * WALL_E; p.vy *= 0.98; hit = true; } }
-  else if (p.x > W - RP) { p.x = W - RP; if (p.vx > 0) { p.vx = -p.vx * WALL_E; p.vy *= 0.98; hit = true; } }
-  if (Math.abs(p.x - W / 2) >= GH) {
-    if (p.y < RP) { p.y = RP; if (p.vy < 0) { p.vy = -p.vy * WALL_E; p.vx *= 0.98; hit = true; } }
-    else if (p.y > H - RP) { p.y = H - RP; if (p.vy > 0) { p.vy = -p.vy * WALL_E; p.vx *= 0.98; hit = true; } }
-  } else if (p.y < RP || p.y > H - RP) {
-    for (const py of [0, H]) for (const px of [W / 2 - GH, W / 2 + GH]) if (bouncePoint(p, px, py)) hit = true;
-    if (p.y < 0 || p.y > H) p.x = clamp(p.x, W / 2 - GH + RP, W / 2 + GH - RP);
-  }
-  return hit;
-}
-/** Puck vs a kinematic mallet (infinite mass): the mallet's velocity transfers. Returns impact speed. */
-function collideMallet(p, m) {
-  const dx = p.x - m.x; const dy = p.y - m.y; const R = RM + RP;
-  const d2 = dx * dx + dy * dy;
-  if (d2 >= R * R) return 0;
-  const d = Math.sqrt(d2);
-  let nx; let ny;
-  if (d < 1e-6) { nx = 0; ny = m.who === 'a' ? -1 : 1; } else { nx = dx / d; ny = dy / d; }
-  p.x = m.x + nx * R; p.y = m.y + ny * R;
-  const vn = (p.vx - m.vx) * nx + (p.vy - m.vy) * ny;
-  if (vn < 0) { p.vx -= (1 + MALLET_E) * vn * nx; p.vy -= (1 + MALLET_E) * vn * ny; return -vn; }
-  return 0.001;
-}
-/** The puck is pinned against a rail: push the mallet back instead of through the puck. */
-function unsqueeze(p, m) {
-  const dx = m.x - p.x; const dy = m.y - p.y; const R = RM + RP; const d = Math.hypot(dx, dy);
-  if (d >= R - 0.01) return;
-  const nx = d > 1e-6 ? dx / d : 0; const ny = d > 1e-6 ? dy / d : m.who === 'a' ? 1 : -1;
-  m.x = p.x + nx * R; m.y = p.y + ny * R;
-  clampMallet(m);
-}
-/** Track how fast the player's hand (the mallet's target) is moving, with a short peak hold. */
-function trackHand(m, dt) {
-  if (m.ptx === undefined) { m.ptx = m.tx; m.pty = m.ty; m.hand = 0; }
-  const sp = dt > 0 ? Math.hypot(m.tx - m.ptx, m.ty - m.pty) / dt : 0;
-  m.hand = Math.max(sp, m.hand * Math.exp(-dt / 0.1));
-  m.ptx = m.tx; m.pty = m.ty;
-}
-/** A mallet hits only as hard as the hand behind it moves: when it snaps back after being
- *  pushed off the puck (pinned on a rail, or released at the serve) it nudges, not slams. */
-function capToHand(m) {
-  const sp = Math.hypot(m.vx, m.vy); const cap = Math.max(25, m.hand * 1.25);
-  if (sp > cap) { m.vx *= cap / sp; m.vy *= cap / sp; }
-}
-/** One fixed step. Returns { wall, goal } where goal is the scorer ('a' scores in the top goal). */
-function stepPuck(p, mallets, onHit, hold) {
-  const f = Math.exp(-FRICTION * DT);
-  p.vx *= f; p.vy *= f;
-  p.x += p.vx * DT; p.y += p.vy * DT;
-  const wall = walls(p);
-  for (const m of mallets) {
-    const imp = collideMallet(p, m);
-    if (imp > 0) {
-      if (onHit) onHit(m, imp);
-      if (walls(p)) unsqueeze(p, m);
-    }
-  }
-  const sp = Math.hypot(p.vx, p.vy);
-  if (sp > PUCK_MAX) { p.vx *= PUCK_MAX / sp; p.vy *= PUCK_MAX / sp; }
-  let goal = p.y < -RP ? 'a' : p.y > H + RP ? 'b' : null;
-  if (goal && hold) { p.y = goal === 'a' ? -RP : H + RP; p.vx = 0; p.vy = 0; goal = null; }
-  return { wall, goal };
-}
+const GLIDE_V = 180;    // u/s: how fast a mallet slides to a second finger that takes over
+const HOG_S = 6;        // seconds a puck may sit on one half (or crawl) before the shot clock fires
+const HOG_WARN = 3;     // the 3-2-1 ring starts here
+const SAND_S = 0.5;     // a puck squeezed between both mallets this long is reset
+const SLOW_MS = 400;    // match-point slow motion (real ms at 0.5x)
+const CORRECT_RATE = 700; // u/s: the fastest a guest's puck display may close a correction
 
 registerGame({
   id: 'hockey',
   title: 'Air Hockey',
-  blurb: 'Fast hands, flat puck. First to 7.',
+  blurb: 'Fast hands, flat puck. Pick a table, first to 7.',
   kind: 'live',
   team: false,
   tags: ['silly'],
@@ -139,10 +51,10 @@ registerGame({
   immersive: true,
   minutes: 4,
   howTo: [
-    'Drag your mallet around your half of the table.',
+    'Pick a table, then drag your mallet around your half. A slow push passes, a fast flick slaps.',
     'One computer: W A S D against the arrow keys. Live on a computer: your mouse.',
-    'Knock the puck into the slot at the far end. First to 7 wins.',
-    'After a goal, the puck is served to whoever let it in.',
+    'Knock the puck into the slot at the far end. First to 7 wins (3 on the Quick table).',
+    'Nobody may sit on the puck: after 6 seconds on one half the shot clock serves it to the other player.',
   ],
   css: `
     .g-hockey { position: absolute; inset: 0; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
@@ -155,6 +67,7 @@ registerGame({
     .g-hockey .hk-slab { position: absolute; background: var(--g-card); box-shadow: var(--g-shadow-lg, var(--g-shadow)); }
     .g-hockey canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: none; }
     .g-hockey.is-local canvas { cursor: grab; }
+    ${SETUP_CSS}
   `,
   mount(el, api) {
     const local = api.mode === 'local';
@@ -162,6 +75,7 @@ registerGame({
     const mine = local ? ['a', 'b'] : [api.me];  // mallets this device controls
     const me = local ? 'a' : api.me;
     const net = local ? null : createNet(api);
+    const snd = createSound(api);
     const key = Math.random().toString(36).slice(2, 9); // this mount, so rematches don't mix states
     const coarseMQ = matchMedia('(pointer: coarse)');
     const motionMQ = matchMedia('(prefers-reduced-motion: reduce)');
@@ -184,15 +98,22 @@ registerGame({
     let T = readTokens();
 
     // ── world ──
-    const P = { x: W / 2, y: H / 2, vx: 0, vy: 0 };
     const M = {
       a: { who: 'a', x: W / 2, y: H - 22, vx: 0, vy: 0, tx: W / 2, ty: H - 22 },
       b: { who: 'b', x: W / 2, y: 22, vx: 0, vy: 0, tx: W / 2, ty: 22 },
     };
     const score = { a: 0, b: 0 };
     const hits = { a: 0, b: 0 };
-    let phase = host ? 'count' : 'wait'; // count | play | goal | paused | over (guest: 'wait' until the host speaks)
-    let phaseEnd = performance.now() + COUNT_MS + 600;
+    const lastPick = (() => { const l = readRecords(api.data()).last; return l === 'surprise' || TABLES[l] ? l : 'classic'; })();
+    let sel = lastPick;                     // the picker's choice: a table id or 'surprise'
+    let table = tableOf(sel);
+    let env = newEnv(table, score);
+    const gd = { a: GH, b: GH };            // goal half-widths as drawn (they glide to env's)
+    const newPuck = (i) => ({ i, x: W / 2, y: H / 2, vx: 0, vy: 0, on: true, ep: 0, back: 0, serveTo: 'a', t0: 0, half: null, stall: 0, slow: 0, sand: 0, sk: 0 });
+    const PK = [newPuck(0), newPuck(1)];
+    const pucksOn = () => PK.slice(0, table.pucks);
+    let phase = host ? 'setup' : 'wait'; // setup | count | play | goal | paused | over (guest: 'wait' until the host speaks)
+    let phaseEnd = 0;
     let serveTo = Math.random() < 0.5 ? 'a' : 'b';
     let resumeSlow = false;
     let goals = 0;
@@ -202,17 +123,33 @@ registerGame({
     let acc = 0;
     let pausedFor = null;       // { phase, left }: what to resume after a pause
     const lastHitAt = { a: 0, b: 0 };
+    // the drama
+    let rally = 0;              // alternating mallet hits since the serve
+    let lastHitter = null;
+    let rallyAt = -1e9;
+    const maxDef = { a: 0, b: 0 };
+    let slowUsed = false;
+    let slowUntil = 0;
+    let ts = 1;                 // puck time scale (match-point slow motion)
+    let evN = 0;
+    const evq = [];             // [n, code, x, y, extra]: the last few events, streamed to the guest
+    let lastEv = -1;
+    const stamps = [];
+    let pillarAt = -1e9;
+    let mpAt = -1e9;
+    let prevPhaseR = null;
+    let tableAt = -1e9;
 
     // ── input ──
-    const ctl = {
-      a: { ptr: null, keys: new Set(), kvx: 0, kvy: 0, used: false },
-      b: { ptr: null, keys: new Set(), kvx: 0, kvy: 0, used: false },
-    };
+    // Every pointer belongs to a player. The first finger down on a half drives that half's mallet;
+    // later ones queue (with their latest position) and take over, in order, when it lifts.
+    const mkCtl = () => ({ q: [], pos: new Map(), keys: new Set(), kvx: 0, kvy: 0, used: false, glide: false, fx: 0, fy: 0 });
+    const ctl = { a: mkCtl(), b: mkCtl() };
     const ptrs = new Map(); // pointerId -> who
 
     // ── effects ──
     const fx = { flashWho: null, flashAt: -1e9, shakeAt: -1e9, stampAt: -1e9, stampWho: null };
-    const trail = [];
+    const trails = [[], []];
     const t0 = performance.now();
 
     // ── layout ──
@@ -229,6 +166,7 @@ registerGame({
     const screenToTable = (su, sv) => (view === 'up' ? [su, sv] : view === 'down' ? [-su, -sv] : view === 'sideb' ? [-sv, su] : [sv, -su]);
     // Text near player w is read by w on a shared phone (top player reads upside down).
     const readRot = (w) => (local && view === 'up' && w === 'b' ? Math.PI : 0);
+    const px = (n) => n / s; // css px -> table units
 
     function layout() {
       const r = rig.getBoundingClientRect();
@@ -249,18 +187,21 @@ registerGame({
       Object.assign(slab.style, { left: `${ox - rp}px`, top: `${oy - rp}px`, width: `${VW * s + rp * 2}px`, height: `${VH * s + rp * 2}px`, borderRadius: `${Math.round(rp * 1.6)}px` });
       drawTable();
     }
-
-    // ── the printed table (static layer) ──
-    function drawTable() {
-      const c = layer.getContext('2d');
-      c.setTransform(1, 0, 0, 1, 0, 0);
-      c.clearRect(0, 0, layer.width, layer.height);
+    /** Set a canvas transform so drawing happens in table units. */
+    function tableT(c) {
       const k = dpr * s;
       if (view === 'up') c.setTransform(k, 0, 0, k, dpr * ox, dpr * oy);
       else if (view === 'down') c.setTransform(-k, 0, 0, -k, dpr * (ox + W * s), dpr * (oy + H * s));
       else if (view === 'sideb') c.setTransform(0, -k, k, 0, dpr * ox, dpr * (oy + W * s));
       else c.setTransform(0, k, -k, 0, dpr * (ox + H * s), dpr * oy);
-      const px = (n) => n / s; // css px -> table units
+    }
+
+    // ── the printed table (static layer; goal mouths and the Pillar are drawn live) ──
+    function drawTable() {
+      const c = layer.getContext('2d');
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      c.clearRect(0, 0, layer.width, layer.height);
+      tableT(c);
       const inkW = px(2.5);
       // rail
       roundRect(c, -RAIL, -RAIL, W + RAIL * 2, H + RAIL * 2, RAIL * 1.6);
@@ -298,14 +239,6 @@ registerGame({
       // play field outline
       c.strokeStyle = T.ink; c.lineWidth = inkW;
       c.strokeRect(0, 0, W, H);
-      // goal slots cut through the rail
-      for (const [w, y0, y1] of [['b', -RAIL - 0.5, 0], ['a', H, H + RAIL + 0.5]]) {
-        c.fillStyle = T.edge; c.fillRect(W / 2 - GH, y0, GH * 2, y1 - y0);
-        c.fillStyle = T[w]; c.fillRect(W / 2 - GH, w === 'b' ? -px(4) : H, GH * 2, px(4));
-      }
-      // posts
-      c.fillStyle = T.card; c.strokeStyle = T.ink; c.lineWidth = px(2);
-      for (const y0 of [0, H]) for (const x0 of [W / 2 - GH, W / 2 + GH]) { c.beginPath(); c.arc(x0, y0, 1.6, 0, Math.PI * 2); c.fill(); c.stroke(); }
       // rail outline
       c.lineWidth = inkW;
       roundRect(c, -RAIL, -RAIL, W + RAIL * 2, H + RAIL * 2, RAIL * 1.6);
@@ -339,72 +272,204 @@ registerGame({
       api.sfx('hit');
       api.haptic(imp > 120 ? 14 : 8);
     }
+    /** wall / Pillar sounds for a puck step's bounce mask (the goal frame is the host's POST event). */
+    function bounceFx(mask, p) {
+      if (!mask) return;
+      const sp = Math.hypot(p.vx, p.vy);
+      if (sp < 22) return;
+      if (mask & HIT_PILLAR) { snd.pillar(sp); pillarAt = performance.now(); } else if (mask & HIT_WALL) snd.wall(sp);
+    }
     function goalFx(scorer) {
       fx.flashWho = scorer; fx.flashAt = performance.now(); fx.shakeAt = fx.flashAt;
       fx.stampWho = scorer; fx.stampAt = fx.flashAt;
-      trail.length = 0;
+      for (const t of trails) t.length = 0;
       api.sfx(local || scorer === me ? 'good' : 'bad');
       api.haptic(40);
     }
+    function addStamp(text, sub, x, y, colKey, size, dur, o = {}) {
+      stamps.push({ t0: performance.now(), dur, text, sub, x, y, col: colKey, size, rot: o.rot || 0, both: !!o.both });
+    }
+    /** An event happened (host: just now; guest: the host told us). Stamps and sounds. */
+    function runEvent(code, x, y, extra) {
+      if (code === 1) { // POST!
+        snd.clang();
+        addStamp('POST!', null, clamp(x, 26, W - 26), y < H / 2 ? 30 : H - 30, 'hl', 8.5, 900, { rot: readRot(y < H / 2 ? 'b' : 'a') });
+      } else if (code === 2 || code === 3) { // HOG! / RESET
+        snd.buzz();
+        const who = extra === 0 ? 'a' : 'b';
+        addStamp(code === 2 ? 'HOG!' : 'RESET', code === 2 ? `${api.name(who)} sat on it` : 'puck squeezed', W / 2, H / 2, 'bad', 17, 1500, { both: true });
+      } else if (code === 4) { // rally record
+        snd.record();
+        addStamp(`RALLY RECORD ${extra}`, 'longest ever', W / 2, H / 2 + (local && view === 'up' ? 0 : 24), 'good', 9, 1900, { both: true });
+      } else if (code === 5) { // fastest goal
+        snd.record();
+        addStamp('FASTEST GOAL', `${(extra / 1000).toFixed(1)} s from the serve`, W / 2, H / 2 + (local && view === 'up' ? 0 : -24), 'good', 9, 1900, { both: true });
+      } else if (code === 6) { // slow motion
+        snd.slow();
+      } else if (code === 7) { // table intro
+        tableAt = performance.now();
+      } else if (code === 8) { // comeback on the winning goal
+        addStamp('COMEBACK!', `from ${extra} down`, W / 2, H / 2, 'good', 15, 1700, { both: true });
+      }
+    }
+    function emit(code, x, y, extra = 0) {
+      const ev = [++evN, code, r1(x), r1(y), extra];
+      evq.push(ev); if (evq.length > 5) evq.shift();
+      runEvent(code, x, y, extra);
+      publishSoon();
+    }
 
     // ── host / one-device simulation ──
-    function onHit(m, imp) {
+    const heatOf = (r) => Math.min(10, r) / 10;
+    const boostOf = (r) => 1 + 0.06 * Math.min(10, r);
+    function onHit(m, imp, p) {
       const now = performance.now();
       lastHv = Math.max(lastHv, imp); // rides along so the guest can play the host's hit sounds
-      if (now - lastHitAt[m.who] > 80) { lastHitAt[m.who] = now; hits[m.who]++; hitFx(imp); }
+      if (now - lastHitAt[m.who] > 80) {
+        lastHitAt[m.who] = now; hits[m.who]++; hitFx(imp);
+        if (lastHitter !== m.who && imp >= 14) { // a mallet just touching/squeezing a resting puck isn't a rally hit
+          const before = boostOf(rally);
+          rally++; lastHitter = m.who; rallyAt = now;
+          if (env.power) { const r = boostOf(rally) / before; p.vx *= r; p.vy *= r; if (rally >= 2) snd.heat(heatOf(rally)); }
+        }
+      }
+    }
+    function placePucks(serve) {
+      PK.forEach((p, i) => {
+        Object.assign(p, { x: table.pucks > 1 ? W / 2 + (i ? 14 : -14) : env.post ? W / 2 + (Math.random() < 0.5 ? -22 : 22) : W / 2, y: H / 2, vx: 0, vy: 0, on: true, back: 0, half: null, stall: 0, slow: 0, sand: 0, sk: 0 });
+        p.ep++;
+        p.serveTo = i ? other(serve) : serve; p.launch = true;
+      });
+      for (const t of trails) t.length = 0;
     }
     function startCount(serve) {
       phase = 'count';
       phaseEnd = performance.now() + COUNT_MS;
-      serveTo = serve;
-      if (serve) { P.x = W / 2; P.y = H / 2; P.vx = 0; P.vy = 0; trail.length = 0; }
+      serveTo = serve || serveTo;
+      if (serve) placePucks(serve);
+      rally = 0; lastHitter = null; slowUsed = false;
       publishSoon();
+    }
+    function serveVec(to) {
+      const th = (Math.random() - 0.5) * 0.7;
+      return [Math.sin(th) * SERVE_V, Math.cos(th) * SERVE_V * (to === 'a' ? 1 : -1)];
     }
     const goalLog = []; // for tests: how each goal happened
-    function scoreGoal(w, how = 'puck') {
+    function endRally(who) {
+      if (rally < 3) return;
+      const rr = rallyResult(api.data(), rally, who);
+      if (rr.patch) api.setData(rr.patch);
+      if (rr.record) emit(4, W / 2, H / 2, rally);
+    }
+    function scoreGoal(w, how = 'puck', pk = PK[0]) {
       if (phase === 'over' || winner) return;
-      goalLog.push({ w, how, phase, at: Math.round(performance.now()), x: r1(P.x), y: r1(P.y), vx: r1(P.vx), vy: r1(P.vy) });
+      const now = performance.now();
+      goalLog.push({ w, how, phase, at: Math.round(now), x: r1(pk.x), y: r1(pk.y), vx: r1(pk.vx), vy: r1(pk.vy) });
+      endRally(w);
+      if (how === 'puck' && pk.t0) {
+        const fr = fastResult(api.data(), now - pk.t0, w);
+        if (fr.patch) api.setData(fr.patch);
+        if (fr.record) emit(5, W / 2, H / 2, Math.round(now - pk.t0));
+      }
       score[w]++; goals++; lastScorer = w;
-      phase = 'goal'; phaseEnd = performance.now() + GOAL_MS;
-      if (score[w] >= TO_WIN) winner = w;
+      for (const p of ['a', 'b']) maxDef[p] = Math.max(maxDef[p], score[other(p)] - score[p]);
+      setGoals(env, score);
+      const wins = score[w] >= table.toWin;
+      if (wins) winner = w;
+      rally = 0; lastHitter = null; slowUsed = false; ts = 1; slowUntil = 0;
       api.setScore(score);
       goalFx(w);
+      if (wins || table.pucks === 1) {
+        phase = 'goal';
+        const cb = wins && maxDef[w] >= 3;
+        phaseEnd = now + (wins ? (cb ? 1900 : 1300) : GOAL_MS);
+        if (cb) emit(8, W / 2, H / 2, maxDef[w]);
+      } else { // Twin Pucks: only that puck re-serves, the other keeps playing
+        pk.on = false; pk.back = now + GOAL_MS + 500; pk.serveTo = other(w); pk.sk = 0;
+      }
       publishSoon();
     }
+    function stallBreak(pk, kind, half) {
+      const now = performance.now();
+      emit(kind === 'hog' ? 2 : 3, W / 2, H / 2, half === 'a' ? 0 : 1);
+      if (kind === 'hog') endRally(lastHitter || half);
+      rally = 0; lastHitter = null;
+      const to = kind === 'hog' ? other(half) : Math.random() < 0.5 ? 'a' : 'b';
+      if (table.pucks === 1) startCount(to);
+      else { pk.on = false; pk.back = now + 700; pk.serveTo = to; pk.sk = 0; }
+    }
+    function respawn(pk, now) {
+      const [vx, vy] = serveVec(pk.serveTo);
+      Object.assign(pk, { x: W / 2 + (pk.i ? 14 : -14), y: H / 2, vx, vy, on: true, back: 0, t0: now, half: null, stall: 0, slow: 0, sand: 0, sk: 0 });
+      pk.ep++;
+      trails[pk.i].length = 0;
+    }
+    /** shot clock + squeezed-puck check for one puck over dt seconds */
+    function stallTick(pk, dt) {
+      const half = pk.y >= H / 2 ? 'a' : 'b';
+      if (pk.half !== half) { pk.half = half; pk.stall = 0; } else pk.stall += dt;
+      if (Math.hypot(pk.vx, pk.vy) < 25) pk.slow += dt; else pk.slow = 0;
+      const t = Math.max(pk.stall, pk.slow);
+      const R = RM + RP + 0.4;
+      if (Math.hypot(pk.x - M.a.x, pk.y - M.a.y) < R && Math.hypot(pk.x - M.b.x, pk.y - M.b.y) < R) pk.sand += dt; else pk.sand = 0;
+      pk.sk = t >= HOG_WARN ? Math.max(1, Math.round((HOG_S - t) * 1000)) : 0;
+      if (pk.sand >= SAND_S) stallBreak(pk, 'reset', half);
+      else if (t >= HOG_S) stallBreak(pk, 'hog', half);
+      else if (pk.sk && Math.ceil(pk.sk / 1000) !== pk.tk) { pk.tk = Math.ceil(pk.sk / 1000); snd.shotTick(pk.tk); }
+    }
+    /** Match point, once per point: the puck enters the defending third headed at goal. */
+    function slowCheck(now) {
+      if (slowUsed || phase !== 'play') return;
+      for (const pk of pucksOn()) {
+        if (!pk.on) continue;
+        for (const att of ['a', 'b']) {
+          if (score[att] !== table.toWin - 1) continue;
+          const up = att === 'a'; // 'a' scores in the top goal (y = 0)
+          if (up ? !(pk.y < H / 3 && pk.vy < -70) : !(pk.y > (2 * H) / 3 && pk.vy > 70)) continue;
+          const t = up ? pk.y / -pk.vy : (H - pk.y) / pk.vy;
+          if (Math.abs(pk.x + pk.vx * t - W / 2) > goalHalf(env, other(att)) + 8) continue;
+          slowUsed = true; slowUntil = now + SLOW_MS;
+          emit(6, pk.x, pk.y, 0);
+          return;
+        }
+      }
+    }
     function simulate(dt, now) {
+      if (phase === 'setup') return;
       if (phase === 'goal' && now >= phaseEnd) {
-        if (winner) {
-          phase = 'over';
-          result = { winner, sub: `${score[winner]} – ${score[other(winner)]}` };
-          publishSoon();
-          api.finish(result);
-        } else startCount(other(lastScorer));
+        if (winner) finishMatch();
+        else startCount(other(lastScorer));
       }
       if (phase === 'count' && now >= phaseEnd) {
         phase = 'play';
-        if (serveTo) {
-          const th = (Math.random() - 0.5) * 0.7;
-          const dir = serveTo === 'a' ? 1 : -1;
-          P.vx = Math.sin(th) * SERVE_V; P.vy = Math.cos(th) * SERVE_V * dir;
-        } else if (resumeSlow) { P.vx *= 0.5; P.vy *= 0.5; }
+        for (const pk of pucksOn()) {
+          pk.t0 = now; pk.half = null; pk.stall = 0; pk.slow = 0; pk.sand = 0;
+          if (pk.launch) { [pk.vx, pk.vy] = serveVec(pk.serveTo); pk.launch = false; } else if (resumeSlow) { pk.vx *= 0.5; pk.vy *= 0.5; }
+        }
         resumeSlow = false;
         publishSoon();
       }
+      if (phase === 'play') for (const pk of pucksOn()) if (!pk.on && pk.back && now >= pk.back) respawn(pk, now);
+      // slow motion eases back
+      if (now < slowUntil) ts = 0.5; else if (ts < 1) ts = Math.min(1, ts + dt / 0.12);
       acc += dt;
       let n = Math.floor(acc / DT);
       if (n > 14) { n = 14; acc = 0; } else acc -= n * DT;
       if (!n) return;
       const ms = [M.a, M.b];
       const frozen = phase === 'paused' || phase === 'over';
+      const parked = pucksOn().filter((p) => p.on);
       for (const m of ms) {
         trackHand(m, n * DT);
-        // While the puck is parked, it's an obstacle: aim beside it, never into it. (Pushing
+        // While a puck is parked, it's an obstacle: aim beside it, never into it. (Pushing
         // the mallet out every step would give it a fake speed that slams the puck at the serve.)
         if (phase !== 'play') {
-          const dx = m.tx - P.x; const dy = m.ty - P.y; const d = Math.hypot(dx, dy); const R = RM + RP + 0.05;
-          if (d < R) {
-            const nx = d > 1e-6 ? dx / d : 0; const ny = d > 1e-6 ? dy / d : m.who === 'a' ? 1 : -1;
-            [m.tx, m.ty] = clampTarget(m.who, P.x + nx * R, P.y + ny * R);
+          for (const P of parked) {
+            const dx = m.tx - P.x; const dy = m.ty - P.y; const d = Math.hypot(dx, dy); const R = RM + RP + 0.05;
+            if (d < R) {
+              const nx = d > 1e-6 ? dx / d : 0; const ny = d > 1e-6 ? dy / d : m.who === 'a' ? 1 : -1;
+              [m.tx, m.ty] = clampTarget(m.who, P.x + nx * R, P.y + ny * R, env);
+            }
           }
         }
         m.sx = m.x; m.sy = m.y;
@@ -417,75 +482,143 @@ registerGame({
         for (const m of ms) {
           const nx = m.sx + (m.dx * i) / n; const ny = m.sy + (m.dy * i) / n;
           m.vx = (nx - m.x) / DT; m.vy = (ny - m.y) / DT; m.x = nx; m.y = ny;
+          clampMallet(m, env);
           capToHand(m);
-          if (phase !== 'play') unsqueeze(P, m); // keep mallets off the parked puck
+          if (phase !== 'play') for (const P of parked) unsqueeze(P, m, env); // keep mallets off parked pucks
         }
         if (phase === 'play') {
-          const r = stepPuck(P, ms, onHit, false);
-          if (r.goal) { scoreGoal(r.goal); break; }
+          for (const pk of pucksOn()) {
+            if (!pk.on) continue;
+            const r = stepPuck(pk, ms, onHit, false, env, ts);
+            if (r.mask) {
+              bounceFx(r.mask, pk);
+              if (r.mask & HIT_FRAME && Math.hypot(pk.vx, pk.vy) > 55) emit(1, pk.x, pk.y < H / 2 ? 0 : H, 0);
+            }
+            if (r.goal) { scoreGoal(r.goal, 'puck', pk); if (phase !== 'play') break; }
+          }
+          if (phase !== 'play') break;
         }
       }
+      if (phase === 'play') {
+        for (const pk of pucksOn()) if (pk.on) stallTick(pk, n * DT);
+        if (phase === 'play') slowCheck(now);
+      }
+    }
+    function finishMatch() {
+      phase = 'over';
+      const mr = matchResult(api.data(), { winner, score, deficit: maxDef[winner] });
+      api.setData(mr.patch);
+      result = {
+        winner,
+        score: { a: score.a, b: score.b },
+        sub: rivalryLine({ names: { a: api.name('a'), b: api.name('b') }, winner, score, tableName: table.name, comeback: mr.comeback, deficit: maxDef[winner], streak: mr.streak, shutout: mr.shutout, newStreakBest: mr.newStreakBest }),
+      };
+      publishSoon();
+      api.finish(result);
+    }
+    /** The host picks GO (or a test does): lock in the table and start the first countdown. */
+    function startMatch(pick) {
+      if (!host || phase !== 'setup') return;
+      if (pick) sel = pick;
+      let id = sel;
+      if (id === 'surprise') id = TABLE_ORDER[Math.floor(Math.random() * TABLE_ORDER.length)];
+      applyTable(id);
+      api.setData({ hockey_last: sel });
+      setup.hide();
+      score.a = 0; score.b = 0; goals = 0; winner = null; maxDef.a = 0; maxDef.b = 0;
+      api.setScore(score);
+      setGoals(env, score);
+      serveTo = Math.random() < 0.5 ? 'a' : 'b';
+      startCount(serveTo);
+      phaseEnd = performance.now() + COUNT_MS + 400;
+      emit(7, W / 2, H / 2, 0);
+    }
+    function applyTable(id) {
+      table = tableOf(id);
+      env = newEnv(table, score);
+      gd.a = env.ghA; gd.b = env.ghB;
+      placePucks(serveTo);
     }
 
     // ── guest: prediction ──
     let HS = null;              // latest host state
     let staleKey = null;        // a finished game's host state still in presence after a rematch
     let lastN = -1;
-    const DP = { x: W / 2, y: H / 2, vx: 0, vy: 0 }; // displayed (predicted) puck
-    const off = { x: 0, y: 0 };                      // display correction, decays to 0
-    let override = null;        // { hb, until }: our predicted hit, awaiting the host's confirmation
+    const mkG = (i) => ({ dp: { i, x: W / 2, y: H / 2, vx: 0, vy: 0 }, ox: 0, oy: 0, on: true, ep: -1, sk: 0, ov: null });
+    const G = [mkG(0), mkG(1)];   // displayed (predicted) pucks and their display corrections (decay to 0)
     const hostM = { who: 'a', x: W / 2, y: H - 22, vx: 0, vy: 0 };
     // The host's match as last seen in progress. Mirrored in our presence, so a host that
     // reloads or closes and reopens the game picks the score back up instead of restarting 0–0.
-    let keep = null;            // { k, s: [a, b], g, ph }
+    let keep = null;            // { k, s: [a, b], g, ph, tb }
     let hostAway = false;
 
     function hostAge(S, now) {
       return net && net.synced ? net.now() - S.__t : now - S.recv + 40;
     }
-    function extrapolate(S, now) {
-      const p = { x: S.p[0], y: S.p[1], vx: S.p[2], vy: S.p[3] };
+    function extrapolate(S, a, now) {
+      const p = { i: 0, x: a[0], y: a[1], vx: a[2], vy: a[3] };
       const lead = clamp(S.gl || 60, 15, 160);
       const steps = Math.round(clamp(hostAge(S, now) + lead, 0, 280) / (DT * 1000));
       const ms = [{ ...M[me] }, { ...hostM }];
-      for (let i = 0; i < steps; i++) stepPuck(p, ms, guestHit, true);
+      const sts = S.ts || 1;
+      for (let i = 0; i < steps; i++) { const r = stepPuck(p, ms, guestHit, true, env, sts); if (r.mask) bounceFx(r.mask & ~HIT_FRAME, p); }
       return p;
     }
-    function guestHit(m, imp) {
+    function guestHit(m, imp, p) {
       if (m.who !== me) return;
       const now = performance.now();
       if (!HS || now - lastHitAt[me] < 90) return;
       lastHitAt[me] = now;
-      override = { hb: HS.h[1], until: now + clamp((net ? net.rtt : 80) + 160, 200, 450) };
+      const g = G[p.i] || G[0];
+      g.ov = { hb: HS.h[1], until: now + clamp((net ? net.rtt : 80) + 160, 200, 450) };
+      if (env.power && HS.lh !== me) { const r = boostOf((HS.ry || 0) + 1) / boostOf(HS.ry || 0); p.vx *= r; p.vy *= r; }
       hitFx(imp);
     }
     function onHostState(S) {
-      if (!S || !Array.isArray(S.p) || S.k === staleKey) return;
+      if (!S || !Array.isArray(S.pk) || S.k === staleKey) return;
       if (HS && S.k === HS.k && S.n <= lastN) return;
       const now = performance.now();
       const prev = HS && HS.k === S.k ? HS : null;
       lastN = S.n;
       HS = { ...S, recv: now };
       // A fresh host mount (new key, fewer goals) hasn't picked our score up yet: keep reporting it.
-      if (!keep || S.k === keep.k || (S.g || 0) >= keep.g || S.res) keep = { k: S.k, s: [S.s[0], S.s[1]], g: S.g || 0, ph: S.res ? 'over' : S.ph };
+      if (!keep || S.k === keep.k || (S.g || 0) >= keep.g || S.res) keep = { k: S.k, s: [S.s[0], S.s[1]], g: S.g || 0, ph: S.res ? 'over' : S.ph, tb: S.tb };
+      // which table
+      const tid = TABLES[S.tb] ? S.tb : null;
+      if (tid && (tid !== table.id)) { table = tableOf(tid); env = newEnv(table, score); gd.a = env.ghA; gd.b = env.ghB; }
+      if (S.ph === 'setup') { sel = S.tb; setup.select(S.tb); }
+      // events (once each, in order; a late joiner skips the old ones)
+      if (Array.isArray(S.ev)) {
+        for (const e of S.ev) if (e[0] > lastEv) { if (lastEv >= 0 || prev) runEvent(e[1], e[2], e[3], e[4]); lastEv = e[0]; }
+      }
       if (prev) {
         if (S.g > prev.g && S.sc) goalFx(S.sc);
         if (S.h[0] > prev.h[0] && (S.hv || 0) >= HIT_FX) api.sfx('hit');
       }
-      if (score.a !== S.s[0] || score.b !== S.s[1] || !prev) { score.a = S.s[0]; score.b = S.s[1]; api.setScore(score); }
-      phase = S.ph;
-      if (S.ph === 'play') {
-        if (override && S.h[1] <= override.hb && now < override.until) return; // keep our predicted hit
-        override = null;
-        const sx = DP.x + off.x; const sy = DP.y + off.y;
-        const ext = extrapolate(S, now);
-        const ex = sx - ext.x; const ey = sy - ext.y;
-        Object.assign(DP, ext);
-        if (prev && prev.ph === 'play' && Math.hypot(ex, ey) < 30) { off.x = ex; off.y = ey; } else { off.x = 0; off.y = 0; trail.length = 0; }
-      } else {
-        Object.assign(DP, { x: S.p[0], y: S.p[1], vx: 0, vy: 0 });
-        off.x = 0; off.y = 0; override = null;
-      }
+      if (score.a !== S.s[0] || score.b !== S.s[1] || !prev) { score.a = S.s[0]; score.b = S.s[1]; api.setScore(score); setGoals(env, score); }
+      phase = S.ph; ts = S.ts || 1; rally = S.ry || 0; lastHitter = S.lh || null;
+      if (S.ry && (!prev || S.ry !== prev.ry)) rallyAt = now;
+      S.pk.forEach((a, i) => {
+        if (i >= table.pucks) return;
+        const g = G[i];
+        const wasOn = g.on && g.ep === a[5];
+        g.on = !!a[4]; g.sk = a[6] || 0;
+        if (!g.on) { g.ep = a[5]; return; }
+        if (S.ph === 'play') {
+          if (g.ov && S.h[1] <= g.ov.hb && now < g.ov.until) { g.ep = a[5]; return; } // keep our predicted hit
+          g.ov = null;
+          const sx = g.dp.x + g.ox; const sy = g.dp.y + g.oy;
+          const ext = extrapolate(S, a, now);
+          const ex = sx - ext.x; const ey = sy - ext.y;
+          Object.assign(g.dp, ext, { i });
+          // Blend, never snap: only a reset (new epoch / phase change) or a huge error jumps.
+          if (prev && prev.ph === 'play' && wasOn && Math.hypot(ex, ey) < 160) { g.ox = ex; g.oy = ey; } else { g.ox = 0; g.oy = 0; trails[i].length = 0; }
+        } else {
+          Object.assign(g.dp, { x: a[0], y: a[1], vx: 0, vy: 0, i });
+          g.ox = 0; g.oy = 0; g.ov = null;
+        }
+        g.ep = a[5];
+      });
     }
     function guestUpdate(dt, now) {
       const S = HS;
@@ -496,7 +629,7 @@ registerGame({
         const k = 1 - Math.exp(-dt / 0.045);
         const nx = hostM.x + (tx - hostM.x) * k; const ny = hostM.y + (ty - hostM.y) * k;
         hostM.vx = S.m[2]; hostM.vy = S.m[3]; hostM.x = nx; hostM.y = ny;
-        clampMallet(hostM);
+        clampMallet(hostM, env);
         M.a.x = hostM.x; M.a.y = hostM.y;
       }
       acc += dt;
@@ -507,18 +640,25 @@ registerGame({
       if (n) {
         trackHand(m, n * DT);
         m.sx = m.x; m.sy = m.y;
-        let dx = m.tx - m.x; let dy = m.ty - m.y;
+        let dx = phase === 'setup' ? 0 : m.tx - m.x; let dy = phase === 'setup' ? 0 : m.ty - m.y;
         const maxd = MALLET_MAX * n * DT; const d = Math.hypot(dx, dy);
         if (d > maxd) { dx *= maxd / d; dy *= maxd / d; }
         for (let i = 1; i <= n; i++) {
           const nx = m.sx + (dx * i) / n; const ny = m.sy + (dy * i) / n;
           m.vx = (nx - m.x) / DT; m.vy = (ny - m.y) / DT; m.x = nx; m.y = ny;
+          clampMallet(m, env);
           capToHand(m);
-          if (live) stepPuck(DP, [m, hostM], guestHit, true);
+          if (live) for (let j = 0; j < table.pucks; j++) { const g = G[j]; if (g.on) { const r = stepPuck(g.dp, [m, hostM], guestHit, true, env, ts); if (r.mask) bounceFx(r.mask & ~HIT_FRAME, g.dp); } }
         }
       }
-      const k = Math.exp(-dt / 0.08);
-      off.x *= k; off.y *= k;
+      // close display corrections: exponential, ~100 ms, but never faster than CORRECT_RATE (no visible jump)
+      const k = Math.exp(-dt / 0.06);
+      for (const g of G) {
+        const mag = Math.hypot(g.ox, g.oy);
+        if (mag < 0.01) { g.ox = 0; g.oy = 0; continue; }
+        const step = Math.min(mag * (1 - k), CORRECT_RATE * dt);
+        g.ox -= (g.ox / mag) * step; g.oy -= (g.oy / mag) * step;
+      }
     }
 
     // ── network ──
@@ -534,11 +674,13 @@ registerGame({
     function publishSoon() { pubSoon = true; }
     function hostState() {
       return {
-        k: key, ph: phase,
+        k: key, ph: phase, tb: phase === 'setup' ? sel : table.id,
         cd: phase === 'count' || phase === 'goal' ? Math.max(0, Math.round(phaseEnd - performance.now())) : 0,
-        p: [r1(P.x), r1(P.y), r1(P.vx), r1(P.vy)],
+        pk: pucksOn().map((p) => [r1(p.x), r1(p.y), r1(p.vx), r1(p.vy), p.on ? 1 : 0, p.ep, p.sk | 0]),
         m: [r1(M.a.x), r1(M.a.y), r1(M.a.vx), r1(M.a.vy)],
         s: [score.a, score.b], g: goals, sc: lastScorer, h: [hits.a, hits.b], hv: Math.round(lastHv),
+        ry: rally, lh: lastHitter, ts: Math.round(ts * 100) / 100,
+        ev: evq,
         gl: Math.round(glag), res: result, away: document.hidden ? 1 : 0,
       };
     }
@@ -562,19 +704,23 @@ registerGame({
       }
       lastPub = now; pubSoon = false;
     }
-    const keepState = () => (keep ? { hk: keep.k, hs: keep.s, hg: keep.g, hph: keep.ph } : {});
+    const keepState = () => (keep ? { hk: keep.k, hs: keep.s, hg: keep.g, hph: keep.ph, htb: keep.tb } : {});
     // Host: we were reloaded or reopened mid-match. The guest still remembers our old game's
-    // score; carry on from it (only right after mounting, and only if nothing has happened here yet).
+    // table and score; carry on from them (only right after mounting, and only if nothing has happened here yet).
     let adopted = false;
     function adoptMatch(st) {
       if (adopted || !st || typeof st.hk !== 'string' || st.hk === key || st.hph === 'over' || !Array.isArray(st.hs)) return;
       adopted = true;
       if (goals > 0 || winner || phase === 'over' || performance.now() - t0 > 6000) return;
-      const a0 = clamp(st.hs[0] | 0, 0, TO_WIN); const b0 = clamp(st.hs[1] | 0, 0, TO_WIN);
+      if (st.hph === 'setup') return; // they were still picking: we pick again
+      if (TABLES[st.htb]) { sel = st.htb; if (phase === 'setup') { applyTable(st.htb); setup.hide(); setup.select(sel); serveTo = Math.random() < 0.5 ? 'a' : 'b'; startCount(serveTo); phaseEnd = performance.now() + COUNT_MS + 400; } }
+      const a0 = clamp(st.hs[0] | 0, 0, table.toWin); const b0 = clamp(st.hs[1] | 0, 0, table.toWin);
       if (!a0 && !b0) return;
       score.a = a0; score.b = b0;
       goals = Math.max(st.hg | 0, a0 + b0);
-      const w = a0 >= TO_WIN ? 'a' : b0 >= TO_WIN ? 'b' : null;
+      setGoals(env, score); gd.a = env.ghA; gd.b = env.ghB;
+      for (const p of ['a', 'b']) maxDef[p] = Math.max(maxDef[p], score[other(p)] - score[p]);
+      const w = a0 >= table.toWin ? 'a' : b0 >= table.toWin ? 'b' : null;
       if (w) { winner = w; lastScorer = w; phase = 'goal'; phaseEnd = performance.now() + 400; }
       api.setScore(score);
       publishSoon();
@@ -589,7 +735,7 @@ registerGame({
       if (away !== partnerAway) { partnerAway = away; updatePause(); }
       if (!Array.isArray(st.m)) return;
       const now = performance.now();
-      const [x, y] = clampTarget('b', st.m[0], st.m[1]);
+      const [x, y] = clampTarget('b', st.m[0], st.m[1], env);
       if (gs && !fresh && st.__t > gs.t) {
         const dts = clamp((st.__t - gs.t) / 1000, 0.012, 0.25);
         const vx = (x - gs.x) / dts; const vy = (y - gs.y) / dts;
@@ -603,14 +749,14 @@ registerGame({
       const age = (now - gs.at) / 1000;
       if (age > 0.25) { gv.x *= 0.8; gv.y *= 0.8; }
       const e = Math.min(age, 0.05);
-      const [x, y] = clampTarget('b', gs.x + gv.x * e, gs.y + gv.y * e);
+      const [x, y] = clampTarget('b', gs.x + gv.x * e, gs.y + gv.y * e, env);
       M.b.tx = x; M.b.ty = y;
     }
 
     // ── pausing: partner gone, partner's tab hidden, or ours hidden ──
     let partnerHere = local || api.partnerHere;
     function updatePause() {
-      if (!host || phase === 'over') return;
+      if (!host || phase === 'over' || phase === 'setup') return;
       const why = document.hidden ? 'hidden' : !local && (!partnerHere || partnerAway) ? 'away' : null;
       if (why && phase !== 'paused') {
         pausedFor = { phase, left: phaseEnd - performance.now() };
@@ -624,40 +770,97 @@ registerGame({
       }
     }
 
+    // ── the table picker ──
+    const setup = createSetup(root, {
+      chooser: host,
+      hostName: api.name('a'),
+      onPick(id) {
+        if (!host) return;
+        sel = id; api.sfx('tap');
+        if (TABLES[id]) { applyTable(id); }
+        setup.setRecords(recordsHTML());
+        publishSoon();
+      },
+      onGo() { api.sfx('place'); startMatch(); },
+    });
+    function recordsHTML() {
+      const r = readRecords(api.data());
+      const bits = [];
+      if (r.rallyBest) bits.push(`Longest rally <b>${r.rallyBest}</b>${r.rallyWho ? ` (${esc(api.name(r.rallyWho))})` : ''}`);
+      if (r.fastMs) bits.push(`Fastest goal <b>${(r.fastMs / 1000).toFixed(1)} s</b>${r.fastWho ? ` (${esc(api.name(r.fastWho))})` : ''}`);
+      if (r.streakWho && r.streakN > 1) bits.push(`${esc(api.name(r.streakWho))} is on a <b>${r.streakN}</b>-match streak`);
+      return bits.join(' · ');
+    }
+    const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    setup.select(sel);
+    setup.setRecords(recordsHTML());
+    if (phase === 'setup' || !host) setup.show();
+    if (host) placePucks(serveTo);
+
     // ── input handlers ──
     function canonFromEvent(e) {
       const r = cv.getBoundingClientRect();
       return fromPx(e.clientX - r.left, e.clientY - r.top);
     }
+    /** The controlling finger moved: steer who's mallet. */
     function aim(who, e) {
       const [x, y] = canonFromEvent(e);
-      const [tx, ty] = clampTarget(who, x, y);
-      const m = M[who];
-      m.tx = tx; m.ty = ty;
-      ctl[who].kvx = 0; ctl[who].kvy = 0; ctl[who].used = true;
+      const [tx, ty] = clampTarget(who, x, y, env);
+      steer(who, tx, ty);
+    }
+    function steer(who, tx, ty) {
+      const c = ctl[who]; const m = M[who];
+      c.fx = tx; c.fy = ty;
+      if (!c.glide) { m.tx = tx; m.ty = ty; }
+      c.kvx = 0; c.kvy = 0; c.used = true;
     }
     function onDown(e) {
       if (e.pointerType !== 'mouse' && e.clientX < EDGE) return; // iOS back-swipe zone
       e.preventDefault();
+      if (phase === 'setup') return;
       let who;
       if (local) { const [, y] = canonFromEvent(e); who = y >= H / 2 ? 'a' : 'b'; } else who = me;
+      const c = ctl[who];
       ptrs.set(e.pointerId, who);
-      ctl[who].ptr = e.pointerId;
       try { cv.setPointerCapture(e.pointerId); } catch { /* synthetic pointers can't be captured */ }
-      aim(who, e);
-      api.sfx('tap');
+      const [x, y] = canonFromEvent(e);
+      c.pos.set(e.pointerId, clampTarget(who, x, y, env));
+      c.q.push(e.pointerId);
+      if (c.q.length === 1) { c.glide = false; aim(who, e); api.sfx('tap'); }
     }
     function onMove(e) {
       const who = ptrs.get(e.pointerId);
-      if (who) { if (ctl[who].ptr === e.pointerId) aim(who, e); return; }
-      if (!local && e.pointerType === 'mouse') aim(me, e); // on a computer the mouse just drives your mallet
+      if (who) {
+        const c = ctl[who];
+        const [x, y] = canonFromEvent(e);
+        c.pos.set(e.pointerId, clampTarget(who, x, y, env));
+        if (c.q[0] === e.pointerId) aim(who, e);
+        return;
+      }
+      if (!local && e.pointerType === 'mouse' && phase !== 'setup') aim(me, e); // on a computer the mouse just drives your mallet
     }
     function onUp(e) {
       const who = ptrs.get(e.pointerId);
       if (!who) return;
       ptrs.delete(e.pointerId);
-      if (ctl[who].ptr === e.pointerId) ctl[who].ptr = null;
+      const c = ctl[who];
+      const wasFirst = c.q[0] === e.pointerId;
+      c.q = c.q.filter((id) => id !== e.pointerId);
+      c.pos.delete(e.pointerId);
       try { cv.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+      if (wasFirst && c.q.length) { // control passes to the next finger on this half: slide there, don't slam
+        const [tx, ty] = c.pos.get(c.q[0]);
+        c.fx = tx; c.fy = ty; c.glide = true;
+      }
+    }
+    function glideDrive(dt) {
+      for (const w of mine) {
+        const c = ctl[w]; const m = M[w];
+        if (!c.glide) continue;
+        if (c.q.length) { const p = c.pos.get(c.q[0]); if (p) { c.fx = p[0]; c.fy = p[1]; } }
+        const dx = c.fx - m.tx; const dy = c.fy - m.ty; const d = Math.hypot(dx, dy); const step = GLIDE_V * dt;
+        if (d <= step) { m.tx = c.fx; m.ty = c.fy; c.glide = false; } else { m.tx += (dx / d) * step; m.ty += (dy / d) * step; }
+      }
     }
     const stopTouch = (e) => { if (e.cancelable) e.preventDefault(); };
     const KEYS = {
@@ -673,8 +876,10 @@ registerGame({
       const t = e.target;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
       if (!root.isConnected || el.closest('[hidden]')) return;
+      if (e.type === 'keydown' && phase === 'setup' && host && (e.key === 'Enter' || (e.key === ' ' && !(t && t.tagName === 'BUTTON'))) && !(t && t.classList && t.classList.contains('hk-go'))) { e.preventDefault(); startMatch(); return; }
       const k = keyOf(e);
       if (!k) return;
+      if (phase === 'setup') return;
       e.preventDefault();
       const c = ctl[k[0]];
       if (e.type === 'keydown') { c.keys.add(k[1]); c.used = true; } else c.keys.delete(k[1]);
@@ -690,7 +895,7 @@ registerGame({
         const k = 1 - Math.exp(-KEY_ACC * dt);
         c.kvx += (dx * KEY_V - c.kvx) * k; c.kvy += (dy * KEY_V - c.kvy) * k;
         if (Math.abs(c.kvx) < 0.3 && Math.abs(c.kvy) < 0.3 && !l) { c.kvx = 0; c.kvy = 0; continue; }
-        const [tx, ty] = clampTarget(w, m.tx + c.kvx * dt, m.ty + c.kvy * dt);
+        const [tx, ty] = clampTarget(w, m.tx + c.kvx * dt, m.ty + c.kvy * dt, env);
         if (tx !== m.tx + c.kvx * dt) c.kvx = 0;
         if (ty !== m.ty + c.kvy * dt) c.kvy = 0;
         m.tx = tx; m.ty = ty;
@@ -704,27 +909,33 @@ registerGame({
       if (stroke) { c.strokeStyle = stroke; c.lineWidth = lw; c.stroke(); }
     }
     function drawMallet(c, w, x, y) {
-      const [px, py] = toPx(x, y); const r = RM * s; const lw = Math.max(1.5, s * 0.55);
+      const [px0, py0] = toPx(x, y); const r = RM * s; const lw = Math.max(1.5, s * 0.55);
       const sh = Math.max(2, s * 0.9);
-      disc(c, px + sh, py + sh * 1.2, r, T.edge);
-      disc(c, px, py, r, T[w], T.ink, lw);
-      c.globalAlpha = 0.28; disc(c, px, py, r * 0.68, T.card); c.globalAlpha = 1;
-      disc(c, px, py, r * 0.68, null, T.ink, lw * 0.7);
-      disc(c, px + sh * 0.35, py + sh * 0.45, r * 0.4, T.edge);
-      disc(c, px, py, r * 0.4, T[w], T.ink, lw);
-      c.globalAlpha = 0.55; c.beginPath(); c.arc(px, py, r * 0.25, Math.PI * 1.05, Math.PI * 1.6); c.strokeStyle = T.card; c.lineWidth = lw; c.stroke(); c.globalAlpha = 1;
+      disc(c, px0 + sh, py0 + sh * 1.2, r, T.edge);
+      disc(c, px0, py0, r, T[w], T.ink, lw);
+      c.globalAlpha = 0.28; disc(c, px0, py0, r * 0.68, T.card); c.globalAlpha = 1;
+      disc(c, px0, py0, r * 0.68, null, T.ink, lw * 0.7);
+      disc(c, px0 + sh * 0.35, py0 + sh * 0.45, r * 0.4, T.edge);
+      disc(c, px0, py0, r * 0.4, T[w], T.ink, lw);
+      c.globalAlpha = 0.55; c.beginPath(); c.arc(px0, py0, r * 0.25, Math.PI * 1.05, Math.PI * 1.6); c.strokeStyle = T.card; c.lineWidth = lw; c.stroke(); c.globalAlpha = 1;
     }
-    function drawPuck(c, x, y) {
-      const [px, py] = toPx(x, y); const r = RP * s; const lw = Math.max(1.5, s * 0.5);
+    function heatColour(h, now) {
+      const pulse = 0.5 + 0.5 * Math.sin(now / (170 - 110 * h));
+      return { col: h > 0.55 ? T.bad : T.hl, a: reduced ? 0.8 : 0.45 + 0.55 * pulse };
+    }
+    function drawPuck(c, x, y, i, heat, now) {
+      const [px0, py0] = toPx(x, y); const r = RP * s; const lw = Math.max(1.5, s * 0.5);
       const sh = Math.max(1.5, s * 0.6);
-      disc(c, px + sh, py + sh * 1.2, r, T.edge);
-      disc(c, px, py, r, T.ink, T.ink, lw);
-      disc(c, px, py, r * 0.62, null, T.card, Math.max(1, lw * 0.6));
-      disc(c, px, py, r * 0.16, T.card);
+      disc(c, px0 + sh, py0 + sh * 1.2, r, T.edge);
+      if (heat > 0.05) { const hc = heatColour(heat, now); c.globalAlpha = hc.a; disc(c, px0, py0, r * (1.25 + 0.35 * heat), null, hc.col, Math.max(2, s * (0.5 + 0.9 * heat))); c.globalAlpha = 1; }
+      disc(c, px0, py0, r, i ? T.hl : T.ink, T.ink, lw);
+      disc(c, px0, py0, r * 0.62, null, i ? T.ink : T.card, Math.max(1, lw * 0.6));
+      disc(c, px0, py0, r * 0.16, i ? T.ink : T.card);
     }
-    function text(c, str, x, y, size, fill, rot = 0, stroke = null, weight = 900, font = T.fontDisplay) {
+    function text(c, str, x, y, size, fill, rot = 0, stroke = null, weight = 900, font = T.fontDisplay, maxW = 0) {
       c.save(); c.translate(x, y); c.rotate(rot);
       c.font = `${weight} ${size}px ${font || 'system-ui'}`;
+      if (maxW) { const w = c.measureText(str).width; if (w > maxW) { size *= maxW / w; c.font = `${weight} ${size}px ${font || 'system-ui'}`; } }
       c.textAlign = 'center'; c.textBaseline = 'middle';
       if (stroke) { c.lineJoin = 'round'; c.lineWidth = Math.max(2, size * 0.09); c.strokeStyle = stroke; c.strokeText(str, 0, 0); }
       c.fillStyle = fill; c.fillText(str, 0, 0);
@@ -751,8 +962,9 @@ registerGame({
       c.globalAlpha = 1;
     }
 
-    // Comic-book speed lines behind a fast puck: crisp ink strokes, no blur.
-    function speedLines(c, pp) {
+    // Comic-book speed lines behind a fast puck: crisp ink strokes, no blur. On the Power Puck the
+    // lines heat up (yellow, then red) and pulse.
+    function speedLines(c, pp, trail, heat, now) {
       const [hx, hy] = toPx(pp.x, pp.y);
       const [ox0, oy0] = toPx(trail[0][0], trail[0][1]);
       let dx = hx - ox0; let dy = hy - oy0;
@@ -760,13 +972,51 @@ registerGame({
       if (len < RP * s * 0.9) return;
       dx /= len; dy /= len;
       const nx = -dy; const ny = dx; const r = RP * s;
-      const L = Math.min(len * 1.3, r * 4.5);
-      c.strokeStyle = T.ink; c.lineCap = 'round'; c.lineWidth = Math.max(1.5, s * 0.45);
-      for (const [o, f] of [[-0.62, 0.6], [0, 1], [0.62, 0.75]]) {
-        const sx = hx - dx * r * 1.25 + nx * o * r; const sy = hy - dy * r * 1.25 + ny * o * r;
-        c.beginPath(); c.moveTo(sx, sy); c.lineTo(sx - dx * L * f, sy - dy * L * f); c.stroke();
+      const L = Math.min(len * 1.3, r * (4.5 + 3 * heat));
+      c.lineCap = 'round';
+      const hc = heat > 0.05 ? heatColour(heat, now) : null;
+      for (const pass of hc ? [0, 1] : [0]) {
+        c.strokeStyle = pass ? hc.col : T.ink; c.globalAlpha = pass ? hc.a : 1;
+        c.lineWidth = pass ? Math.max(1, s * 0.25) : Math.max(1.5, s * 0.45) + (hc ? s * 0.4 : 0);
+        for (const [o, f] of [[-0.62, 0.6], [0, 1], [0.62, 0.75]]) {
+          const sx = hx - dx * r * 1.25 + nx * o * r; const sy = hy - dy * r * 1.25 + ny * o * r;
+          c.beginPath(); c.moveTo(sx, sy); c.lineTo(sx - dx * L * f, sy - dy * L * f); c.stroke();
+        }
       }
+      c.globalAlpha = 1;
     }
+    /** goal mouths (they can shrink) and the Pillar, drawn in table units over the printed table */
+    function drawLive(c, now) {
+      tableT(c);
+      const inkW = px(2.5);
+      for (const [w, y0] of [['b', 0], ['a', H]]) {
+        const target = w === 'a' ? env.ghA : env.ghB;
+        gd[w] += (target - gd[w]) * (reduced ? 1 : 0.12);
+        if (Math.abs(target - gd[w]) < 0.02) gd[w] = target;
+        const gh = gd[w];
+        const outer = w === 'b' ? -RAIL : H + RAIL;
+        c.fillStyle = T.edge; c.fillRect(W / 2 - gh, w === 'b' ? -RAIL - 0.5 : H, gh * 2, RAIL + 0.5);
+        c.fillStyle = T[w]; c.fillRect(W / 2 - gh, w === 'b' ? -px(4) : H, gh * 2, px(4));
+        c.strokeStyle = T.ink; c.lineWidth = inkW; line(c, W / 2 - gh, outer, W / 2 + gh, outer);
+        c.fillStyle = T.card; c.strokeStyle = T.ink; c.lineWidth = px(2);
+        for (const x0 of [W / 2 - gh, W / 2 + gh]) { c.beginPath(); c.arc(x0, y0, 1.6, 0, Math.PI * 2); c.fill(); c.stroke(); }
+      }
+      if (env.post) {
+        const pulse = reduced ? 0 : Math.max(0, 1 - (now - pillarAt) / 220);
+        const r = POST_R * (1 + 0.14 * pulse);
+        c.fillStyle = T.edge; c.beginPath(); c.arc(W / 2 + 1.3, H / 2 + 1.8, r, 0, Math.PI * 2); c.fill();
+        c.fillStyle = T.card; c.strokeStyle = T.ink; c.lineWidth = px(2.5); c.beginPath(); c.arc(W / 2, H / 2, r, 0, Math.PI * 2); c.fill(); c.stroke();
+        c.fillStyle = T.hl; c.beginPath(); c.arc(W / 2, H / 2, r * 0.6, 0, Math.PI * 2); c.fill(); c.lineWidth = px(1.6); c.stroke();
+        c.fillStyle = T.ink; c.beginPath(); c.arc(W / 2, H / 2, r * 0.18, 0, Math.PI * 2); c.fill();
+      }
+      c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    /** a printed sticker: the stamp's colour, a hard shadow, ink outline */
+    function sticker(c, str, x, y, size, fill, rot, maxW) {
+      text(c, str, x + size * 0.05, y + size * 0.07, size, T.edge, rot, null, 900, T.fontDisplay, maxW);
+      text(c, str, x, y, size, fill, rot, T.ink, 900, T.fontDisplay, maxW);
+    }
+    const colOf = (k) => (k === 'a' || k === 'b' ? T[k] : k === 'hl' ? T.hl : k === 'bad' ? T.bad : k === 'good' ? T.good : T.ink);
 
     function render(now) {
       const c = cx;
@@ -777,6 +1027,14 @@ registerGame({
       const [fx0, fy0] = toPx(0, 0); const [fx1, fy1] = toPx(W, H);
       const field = [Math.min(fx0, fx1), Math.min(fy0, fy1), Math.abs(fx1 - fx0), Math.abs(fy1 - fy0)];
       const [ccx, ccy] = toPx(W / 2, H / 2);
+      const setupOn = phase === 'setup' || phase === 'wait';
+      drawLive(c, now);
+      // match point: the banner when the countdown starts, a small tag by the leader's score
+      const mp = ['a', 'b'].filter((w) => score[w] === table.toWin - 1 && !winner);
+      if (phase !== prevPhaseR) {
+        if (phase === 'count' && mp.length) { mpAt = now; snd.matchPoint(); }
+        prevPhaseR = phase;
+      }
       // scores, printed on each half
       const ss = Math.min(64, 15 * s);
       for (const w of ['a', 'b']) {
@@ -784,6 +1042,11 @@ registerGame({
         c.globalAlpha = 0.9;
         text(c, String(score[w]), x, y, ss, T[w], readRot(w), T.ink);
         c.globalAlpha = 1;
+        if (mp.includes(w) && !setupOn) {
+          const [mx, my] = toPx(w === 'a' ? W - 14 : 14, w === 'a' ? H / 2 + 32 : H / 2 - 32);
+          const bob = reduced ? 0 : Math.sin(now / 260) * 0.8;
+          sticker(c, 'MATCH POINT', mx, my + bob, Math.max(8, 3.1 * s), T.hl, readRot(w), 30 * s);
+        }
       }
       // goal flash in the scorer's ink
       const since = now - fx.flashAt;
@@ -792,14 +1055,56 @@ registerGame({
         c.fillStyle = T[fx.flashWho]; c.fillRect(...field);
         c.globalAlpha = 1;
       }
-      // puck + trail
-      const pp = host ? P : { x: DP.x + off.x, y: DP.y + off.y };
-      const showPuck = (phase !== 'goal' || since < 120) && (phase === 'play' || (pp.y > 0 && pp.y < H));
-      if (phase === 'play') { trail.push([pp.x, pp.y]); if (trail.length > 5) trail.shift(); } else if (phase !== 'paused') trail.length = 0;
-      if (showPuck && trail.length > 3) speedLines(c, pp);
+      // rally counter (4+), a sticker at 8+
+      if (rally >= 4 && phase === 'play') {
+        const big = rally >= 8;
+        const pop = reduced ? 1 : 1 + 0.35 * Math.max(0, 1 - (now - rallyAt) / 200);
+        const copies = sideways() ? [[me, view === 'side' ? 12 : W - 12, H / 2]] : local && view === 'up' ? [['a', W - 17, H / 2], ['b', 17, H / 2]] : [[me, W - 17, H / 2]];
+        for (const [w, x, y] of copies) {
+          const [rx, ry] = toPx(x, y);
+          sticker(c, big ? `RALLY ${rally}!` : `RALLY ${rally}`, rx, ry, (big ? 4.6 : 3.4) * s * pop, big ? T.hl : T.card, readRot(w) + (big ? -0.06 : 0), 30 * s);
+        }
+      }
+      // shot clock rings
+      for (let i = 0; i < table.pucks; i++) {
+        const pk = host ? PK[i] : G[i];
+        const sk = host ? pk.sk : G[i].sk;
+        const on = host ? pk.on : G[i].on;
+        if (!on || !sk || phase !== 'play') continue;
+        const pp = host ? pk : { x: G[i].dp.x + G[i].ox, y: G[i].dp.y + G[i].oy };
+        const [px0, py0] = toPx(pp.x, pp.y);
+        const frac = Math.max(0, Math.min(1, sk / (HOG_WARN * 1000)));
+        const rr = RP * s * 2.6;
+        c.strokeStyle = T.bad; c.lineWidth = Math.max(2, s * 0.9); c.lineCap = 'round';
+        c.beginPath(); c.arc(px0, py0, rr, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac); c.stroke();
+        c.lineWidth = Math.max(1, s * 0.3); c.strokeStyle = T.ink; c.globalAlpha = 0.5; disc(c, px0, py0, rr + s * 0.9, null, T.ink, Math.max(1, s * 0.3)); c.globalAlpha = 1;
+        const half = pp.y >= H / 2 ? 'a' : 'b';
+        const [nx, ny] = toPx(W / 2, half === 'a' ? H / 2 + 30 : H / 2 - 30);
+        c.globalAlpha = 0.9;
+        text(c, String(Math.max(1, Math.ceil(sk / 1000))), nx, ny + (i ? s * 12 : 0), 15 * s, T.bad, readRot(half), T.ink);
+        c.globalAlpha = 1;
+      }
+      // pucks + trails
+      for (let i = 0; i < table.pucks; i++) {
+        const pk = host ? PK[i] : G[i];
+        if (!(host ? pk.on : G[i].on)) continue;
+        const pp = host ? pk : { x: G[i].dp.x + G[i].ox, y: G[i].dp.y + G[i].oy };
+        const showPuck = (phase !== 'goal' || since < 120) && (phase === 'play' || phase === 'count' || phase === 'setup' || (pp.y > 0 && pp.y < H)) && phase !== 'wait';
+        const tr = trails[i];
+        if (phase === 'play') { tr.push([pp.x, pp.y]); if (tr.length > 5) tr.shift(); } else if (phase !== 'paused') tr.length = 0;
+        const heat = env.power && phase === 'play' ? heatOf(rally) : 0;
+        if (showPuck && tr.length > 3) speedLines(c, pp, tr, heat, now);
+        if (showPuck) { pk._draw = pp; }
+      }
       // mallets under the puck's shadow side, puck on top
       for (const w of ['b', 'a']) drawMallet(c, w, M[w].x, M[w].y);
-      if (showPuck) drawPuck(c, pp.x, pp.y);
+      for (let i = 0; i < table.pucks; i++) {
+        const pk = host ? PK[i] : G[i];
+        if (!(host ? pk.on : G[i].on) || !pk._draw) continue;
+        const heat = env.power && phase === 'play' ? heatOf(rally) : 0;
+        drawPuck(c, pk._draw.x, pk._draw.y, i, heat, now);
+        pk._draw = null;
+      }
       // countdown, readable from each player's side
       const readers = local && view === 'up' ? ['a', 'b'] : [me];
       if (phase === 'count' && (host || HS)) {
@@ -812,6 +1117,29 @@ registerGame({
             const rot = readRot(w);
             const y = ccy + (sideways() ? -26 : 26) * s * (rot ? -1 : 1);
             text(c, String(Math.min(3, n)), ccx, y, 22 * s * pop, T.hl, rot, T.ink);
+          }
+        }
+      }
+      // the table's name and the match-point banner while the first countdown runs
+      if (phase === 'count' || now - tableAt < 1700) {
+        const first = !goals && now - tableAt < 1900;
+        if (first && table.id !== 'classic') {
+          for (const w of readers) {
+            const rot = readRot(w);
+            const dir = rot ? -1 : 1;
+            const y = sideways() ? ccy - 20 * s : ccy - 26 * s * dir;
+            sticker(c, table.name.toUpperCase(), ccx, y, 7 * s, T.hl, rot - 0.04, 60 * s);
+            text(c, table.blurb, ccx, y + dir * 6.6 * s, 2.6 * s, T.ink, rot - 0.04, T.card, 900, T.fontBody, 60 * s);
+          }
+        }
+        if (mp.length && now - mpAt < 1800) {
+          const both = mp.length === 2;
+          for (const w of readers) {
+            const rot = readRot(w);
+            const dir = rot ? -1 : 1;
+            const y = sideways() ? ccy + 20 * s : ccy + 26 * s * dir;
+            sticker(c, both ? 'DOUBLE MATCH POINT' : 'MATCH POINT', ccx, y, 7 * s, both ? T.hl : T[mp[0]], rot + 0.03, 62 * s);
+            if (!both) text(c, api.name(mp[0]), ccx, y + dir * 6.2 * s, 3 * s, T.ink, rot + 0.03, T.card, 900, T.fontBody, 60 * s);
           }
         }
       }
@@ -829,9 +1157,30 @@ registerGame({
         }
         c.globalAlpha = 1;
       }
-      // first-time hints
-      const hintA = Math.max(0, Math.min(1, (7000 - (now - t0)) / 600));
-      if (hintA > 0) {
+      // stamps from events
+      for (let i = stamps.length - 1; i >= 0; i--) {
+        const st = stamps[i]; const age = now - st.t0;
+        if (age > st.dur) { stamps.splice(i, 1); continue; }
+        const pop = reduced ? 1 : 1 + 0.4 * Math.max(0, 1 - age / 150);
+        c.globalAlpha = age > st.dur - 250 ? (st.dur - age) / 250 : 1;
+        const copies = st.both && local && view === 'up' ? [[0, st.x, st.y], [Math.PI, W - st.x, H - st.y]] : [[st.rot, st.x, st.y]];
+        for (const [rot, x, y] of copies) {
+          const [sx, sy] = toPx(x, y); const sz = st.size * s * pop;
+          sticker(c, st.text, sx, sy, sz, colOf(st.col), rot - 0.07, 62 * s);
+          if (st.sub) text(c, st.sub, sx, sy + (rot ? -1 : 1) * sz * 0.66, Math.max(9, sz * 0.3), T.ink, rot - 0.07, T.card, 900, T.fontBody, 62 * s);
+        }
+        c.globalAlpha = 1;
+      }
+      // match-point slow motion: a printed frame closes in
+      if (ts < 0.98 && !reduced) {
+        const a = Math.min(1, (1 - ts) * 2.2);
+        c.globalAlpha = 0.22 * a; c.strokeStyle = T.ink; c.lineWidth = 7 * s;
+        c.strokeRect(field[0] + 3.5 * s, field[1] + 3.5 * s, field[2] - 7 * s, field[3] - 7 * s);
+        c.globalAlpha = 1;
+      }
+      // hints stay until the first touch (or key press)
+      if (!setupOn && phase !== 'over') {
+        const hintA = Math.min(1, (now - t0) / 500 + 0.0);
         if (!coarse && local) {
           for (const w of ['a', 'b']) {
             if (ctl[w].used) continue;
@@ -844,8 +1193,8 @@ registerGame({
         } else {
           for (const w of local ? ['a', 'b'] : [me]) {
             if (ctl[w].used) continue;
-            const [x, y] = toPx(W / 2, w === 'a' ? H - 42 : 42);
-            c.globalAlpha = hintA;
+            const [x, y] = toPx(W / 2, sideways() ? (w === 'a' ? H - 72 : 72) : w === 'a' ? H - 42 : 42);
+            c.globalAlpha = hintA * (reduced ? 1 : 0.65 + 0.35 * Math.sin(now / 420));
             text(c, coarse ? 'Drag your mallet' : 'Move your mouse', x, y, Math.max(13, 4.4 * s), T.ink, readRot(w), T.card, 800, T.fontBody);
             c.globalAlpha = 1;
           }
@@ -861,6 +1210,9 @@ registerGame({
         const a = 7 * (1 - sk / 380);
         rig.style.transform = `translate(${(Math.random() - 0.5) * a * 2}px, ${(Math.random() - 0.5) * a * 2}px)`;
       } else if (rig.style.transform) rig.style.transform = '';
+      // the picker follows the phase
+      if (phase !== 'setup' && phase !== 'wait' && setup.visible) setup.hide();
+      else if (phase === 'setup' && !setup.visible) setup.show();
     }
 
     // ── loop ──
@@ -874,6 +1226,7 @@ registerGame({
       const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
       last = now;
       keyDrive(dt);
+      glideDrive(dt);
       if (host) {
         if (!local) remoteTarget(now);
         simulate(dt, now);
@@ -891,8 +1244,8 @@ registerGame({
     on(cv, 'pointerup', onUp);
     on(cv, 'pointercancel', onUp);
     on(cv, 'lostpointercapture', onUp);
-    on(root, 'touchstart', stopTouch, { passive: false });
-    on(root, 'touchmove', stopTouch, { passive: false });
+    on(rig, 'touchstart', stopTouch, { passive: false });
+    on(rig, 'touchmove', stopTouch, { passive: false });
     on(root, 'contextmenu', stopTouch);
     on(window, 'keydown', onKey);
     on(window, 'keyup', onKey);
@@ -931,6 +1284,7 @@ registerGame({
         offs.push(api.onPartnerState(onHostState));
       }
     }
+    offs.push(api.onData(() => { if (setup.visible) setup.setRecords(recordsHTML()); }));
     api.setScore(score);
     layout();
     raf = requestAnimationFrame(frame);
@@ -940,15 +1294,23 @@ registerGame({
     if (location.port) {
       window.__hockeyTest = {
         state: () => ({
-          phase, score: { ...score }, hits: { ...hits }, view, coarse, host, me,
-          puck: host ? { ...P } : { x: DP.x + off.x, y: DP.y + off.y, vx: DP.vx, vy: DP.vy },
+          phase, score: { ...score }, hits: { ...hits }, view, coarse, host, me, table: table.id, sel, rally, ts,
+          pucks: pucksOn().map((p, i) => (host ? { x: p.x, y: p.y, vx: p.vx, vy: p.vy, on: p.on, sk: p.sk, stall: p.stall, slow: p.slow, sand: p.sand } : { x: G[i].dp.x + G[i].ox, y: G[i].dp.y + G[i].oy, vx: G[i].dp.vx, vy: G[i].dp.vy, on: G[i].on, sk: G[i].sk })),
+          puck: host ? { x: PK[0].x, y: PK[0].y, vx: PK[0].vx, vy: PK[0].vy } : { x: G[0].dp.x + G[0].ox, y: G[0].dp.y + G[0].oy, vx: G[0].dp.vx, vy: G[0].dp.vy },
+          goals: { a: env.ghA, b: env.ghB }, post: env.post, setup: setup.visible,
           mallets: { a: { x: M.a.x, y: M.a.y }, b: { x: M.b.x, y: M.b.y } },
-          rtt: net ? net.rtt : 0, lag: Math.round(glag), override: !!override,
+          targets: { a: { x: M.a.tx, y: M.a.ty }, b: { x: M.b.tx, y: M.b.ty } },
+          rtt: net ? net.rtt : 0, lag: Math.round(glag), override: G.some((g) => !!g.ov),
         }),
+        start: (id = 'classic') => { if (host) startMatch(id); },
+        pick: (id) => { if (host && phase === 'setup') { sel = id; if (TABLES[id]) applyTable(id); setup.select(id); publishSoon(); } },
         score: (w) => { if (host && phase !== 'over') scoreGoal(w, 'test'); },
         goals: () => goalLog.slice(),
-        place: (x, y, vx = 0, vy = 0) => { if (!host) return; Object.assign(P, { x, y, vx, vy }); phase = 'play'; publishSoon(); },
-        toClient: (x, y) => { const r = cv.getBoundingClientRect(); const [px, py] = toPx(x, y); return [r.left + px, r.top + py]; },
+        place: (x, y, vx = 0, vy = 0, i = 0) => { if (!host) return; Object.assign(PK[i], { x, y, vx, vy, on: true }); PK[i].ep++; phase = 'play'; publishSoon(); },
+        setRally: (n, who = 'a') => { if (host) { rally = n; lastHitter = who; rallyAt = performance.now(); publishSoon(); } },
+        toClient: (x, y) => { const r = cv.getBoundingClientRect(); const [px0, py0] = toPx(x, y); return [r.left + px0, r.top + py0]; },
+        stamps: () => stamps.map((x) => x.text),
+        events: () => evq.slice(),
       };
     }
 

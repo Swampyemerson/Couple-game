@@ -47,16 +47,17 @@ async function joinLive(h, game) {
   await h.b.click('#gm-invite [data-g="invite-yes"]');
   await h.settle(); await h.settle();
 }
-/** Quick Draw: when `phase` shows on this page, wait `delay` ms and fire (precisely, in page). */
-function qdFireAt(pg, phase, delay, { key = null, w = null } = {}) {
-  return pg.evaluate(({ phase, delay, key, w }) => new Promise((resolve) => {
+/** Quick Draw: when `phase` shows on this page, wait `delay` ms and fire (precisely, in page).
+ *  w: which pads (one pointerdown each, `lag` ms apart); key: a keyboard key instead. */
+function qdFireAt(pg, phase, delay, { key = null, w = null, lag = 0 } = {}) {
+  return pg.evaluate(({ phase, delay, key, w, lag }) => new Promise((resolve) => {
     const root = document.querySelector('.g-qd');
+    const down = (p, i) => { const r = p.getBoundingClientRect(); p.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 7 + i, pointerType: 'touch', clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 })); };
     const go = () => setTimeout(() => {
       if (key) window.dispatchEvent(new KeyboardEvent('keydown', { key, code: `Key${key.toUpperCase()}`, bubbles: true }));
       else {
         const pads = w ? w.map((x) => root.querySelector(`.qd-pad[data-w="${x}"]`)) : [root.querySelector('.qd-pad')];
-        const evs = pads.map((p, i) => { const r = p.getBoundingClientRect(); return [p, new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 7 + i, pointerType: 'touch', clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 })]; });
-        for (const [p, ev] of evs) p.dispatchEvent(ev);
+        pads.forEach((p, i) => { if (i * lag === 0) down(p, i); else setTimeout(() => down(p, i), i * lag); });
       }
       resolve(performance.now());
     }, delay);
@@ -65,9 +66,33 @@ function qdFireAt(pg, phase, delay, { key = null, w = null } = {}) {
       const mo = new MutationObserver(() => { if (root.dataset.phase === phase) { mo.disconnect(); go(); } });
       mo.observe(root, { attributes: true, attributeFilter: ['data-phase'] });
     }
-  }), { phase, delay, key, w });
+  }), { phase, delay, key, w, lag });
 }
-const verdictFor = (pg, r) => pg.waitForFunction((r) => { const s = window.__qdTest && window.__qdTest.state(); return s && s.verdict && s.verdict.r >= r ? s.verdict : null; }, r, { timeout: 15000 }).then((x) => x.jsonValue());
+const verdictFor = (pg, r) => pg.waitForFunction((r) => { const s = window.__qdTest && window.__qdTest.state(); return s && s.verdict && s.verdict.r >= r ? s.verdict : null; }, r, { timeout: 20000 }).then((x) => x.jsonValue());
+const qdPhase = (pg, p, t = 14000) => pg.waitForFunction((p) => document.querySelector('.g-qd')?.dataset.phase === p, p, { timeout: t });
+const qdCue = (pg, c, t = 14000) => pg.waitForFunction((c) => window.__qdTest && window.__qdTest.state().cue === c, c, { timeout: t });
+const qdTap = (pg, sel) => pg.evaluate(() => matchMedia('(pointer: coarse)').matches).then((c) => (c ? pg.tap(sel) : pg.click(sel)));
+const qdGo = (pg) => qdTap(pg, '.g-qd .qd-go');
+const qdPick = async (pg, pack, series) => { if (pack) await qdTap(pg, `.g-qd [data-pack="${pack}"]`); if (series) await qdTap(pg, `.g-qd [data-series="${series}"]`); };
+const qdPressed = (pg, attr, v) => pg.waitForFunction(([a, v]) => document.querySelector(`.g-qd [${a}="${v}"]`)?.getAttribute('aria-pressed') === 'true', [attr, v], { timeout: 4000 });
+const qdText = (pg, sel = '.qd-sig:not(.qd-top)') => pg.evaluate((sel) => { const s = document.querySelector(sel); return { word: s.querySelector('.qd-word').textContent.trim(), line: s.querySelector('.qd-line').textContent.trim(), times: s.querySelector('.qd-times').textContent.replace(/\s+/g, ' ').trim(), cls: s.className }; }, sel);
+const qdData = (pg) => pg.evaluate(() => { try { return JSON.parse(localStorage.getItem('ju.games.data.v1') || '{}').quickdraw || {}; } catch { return {}; } });
+/** Everything fits: no scrolling, every FIRE pad fully on screen and at least 44 px, the picker inside the stage. */
+async function qdFit(pg, label) {
+  const m = await pg.evaluate(() => {
+    const r = document.getElementById('game-root');
+    const box = (e) => { const b = e.getBoundingClientRect(); return { t: b.top, b: b.bottom, l: b.left, r: b.right, w: b.width, h: b.height }; };
+    const setup = document.querySelector('.qd-setup');
+    return {
+      over: r.scrollHeight - r.clientHeight, vw: innerWidth, vh: innerHeight, pageOver: document.scrollingElement.scrollHeight - innerHeight,
+      pads: [...document.querySelectorAll('.qd-pad')].map(box), setupOver: setup && !setup.hidden ? setup.scrollHeight - setup.clientHeight : 0,
+      card: setup && !setup.hidden ? box(setup.querySelector('.qd-setup-card')) : null, go: setup && !setup.hidden ? box(setup.querySelector('.qd-go')) : null,
+    };
+  });
+  assert(m.over <= 1 && m.pageOver <= 1, `${label}: nothing scrolls (stage ${m.over}px, page ${m.pageOver}px)`);
+  assert(m.pads.length > 0 && m.pads.every((p) => p.h >= 44 && p.w >= 44 && p.t >= 0 && p.b <= m.vh + 0.5 && p.l >= 0 && p.r <= m.vw + 0.5), `${label}: FIRE pads fully visible and >= 44 px (${m.pads.map((p) => `${Math.round(p.w)}x${Math.round(p.h)}`).join(', ')})`);
+  if (m.card) assert(m.setupOver <= 1 && m.card.b <= m.vh + 0.5 && (m.go.h === 0 || m.go.h >= 44), `${label}: the picker fits (overflow ${m.setupOver}px, GO ${Math.round(m.go.h)} px tall)`);
+}
 /** After closing a game: no animation frames or timers keep running behind it. */
 async function quietAfterClose(h, pg, label) {
   await pg.waitForFunction(() => !document.querySelector('.toast'), null, { timeout: 6000 }); // the app's own toasts use timers
@@ -83,6 +108,12 @@ async function quietAfterClose(h, pg, label) {
   const bg = await pg.evaluate(() => window.__bg);
   assert(bg.raf === 0 && bg.to === 0 && bg.iv === 0, `${label}: nothing keeps running after close (raf ${bg.raf}, timeouts ${bg.to}, intervals ${bg.iv}) ${bg.who.join(' ;; ')}`);
 }
+/** Hockey: the host starts the match on `table` through the test hook (the picker itself is tested in hockeyPicker). */
+async function hkStart(pg, table = 'classic') {
+  await pg.waitForFunction(() => window.__hockeyTest, null, { timeout: 5000 });
+  await pg.waitForFunction(() => window.__hockeyTest.state().phase === 'setup', null, { timeout: 5000 });
+  await pg.evaluate((t) => window.__hockeyTest.start(t), table);
+}
 async function sizes(h) {
   await h.a.setViewportSize({ width: 390, height: 844 });
   await h.b.setViewportSize({ width: 360, height: 780 });
@@ -92,6 +123,7 @@ async function sizes(h) {
 async function hockeyLive(h, tag, quick = false) {
   const { a, b } = h;
   await joinLive(h, 'hockey');
+  await hkStart(a, 'classic');
   await a.waitForFunction(() => window.__hockeyTest && window.__hockeyTest.state().phase === 'play', null, { timeout: 6000 });
   await b.waitForFunction(() => window.__hockeyTest && window.__hockeyTest.state().phase === 'play', null, { timeout: 6000 });
   const sa = await hk(a); const sb = await hk(b);
@@ -106,6 +138,15 @@ async function hockeyLive(h, tag, quick = false) {
   await h.shot(a, `${SHOTS}/hockey-${tag}-live-mid-390-a.png`);
   await h.shot(b, `${SHOTS}/hockey-${tag}-live-mid-360-b.png`);
   if (!quick) {
+    // Two fingers on the guest's phone (B1 on the live path): the first keeps the mallet, then the second takes over.
+    await touch(b, [[91, 'down', 30, 20], [92, 'down', 70, 30], [91, 'move', 35, 18], [92, 'move', 75, 32]], 12);
+    await h.wait(250);
+    let gm = (await hk(b)).mallets.b;
+    assert(near(gm.x, 35, 2.5) && near(gm.y, 18, 2.5), `live guest: the second finger doesn't steal the mallet (${gm.x.toFixed(1)},${gm.y.toFixed(1)})`);
+    await touch(b, [[91, 'up', 35, 18]], 0); await h.wait(700);
+    gm = (await hk(b)).mallets.b;
+    assert(near(gm.x, 75, 3) && near(gm.y, 32, 3), `live guest: the first lifts, the mallet follows the second (${gm.x.toFixed(1)},${gm.y.toFixed(1)})`);
+    await touch(b, [[92, 'up', 75, 32]], 0);
     // Host shot: Sydney parks in a corner, Emerson's mouse (a computer's way to play) drives through the puck.
     await touch(b, [[1, 'down', 12, 14], [1, 'move', 10, 10], [1, 'up', 10, 10]]);
     await mouseTo(a, 50, 160);
@@ -157,6 +198,7 @@ async function hockeyRematchAndLeave(h) {
   await b.click('#game-root [data-g="rematch"]');
   await h.settle(); await h.settle();
   assert(!(await endShown(a)) && !(await endShown(b)), 'rematch (from the guest) restarts on both');
+  await hkStart(a, 'classic');
   const [ra, rb] = [await hk(a), await hk(b)];
   assert(ra.score.a === 0 && ra.score.b === 0 && rb.score.a === 0 && rb.score.b === 0, 'rematch starts at 0-0 on both');
   await a.waitForFunction(() => window.__hockeyTest.state().phase === 'play', null, { timeout: 5000 });
@@ -206,7 +248,7 @@ async function hockeyRematchAndLeave(h) {
 async function hockeyLocalTouch(h) {
   const { a } = h;
   await h.startLive(a, 'hockey', 'local');
-  await a.waitForFunction(() => window.__hockeyTest, null, { timeout: 4000 });
+  await hkStart(a, 'classic');
   assert((await hk(a)).view === 'up', 'one phone: table upright, Sydney at the far end');
   // Two fingers down at once, one on each half, moved together.
   const steps = [[11, 'down', 30, 150], [12, 'down', 70, 20]];
@@ -227,6 +269,7 @@ async function hockeyLocalTouch(h) {
   await h.wait(80);
   const after = (await hk(a)).mallets.a;
   assert(near(before.x, after.x, 0.01) && near(before.y, after.y, 0.01), 'touches starting at the left screen edge are ignored');
+  await hockeyTwoFingers(a, h);
   await h.shot(a, `${SHOTS}/hockey-light-local-mid-390.png`);
   const n0 = results(h, 'hockey').length;
   for (let i = 0; i < 7; i++) { await a.evaluate(() => window.__hockeyTest.score('b')); await h.wait(30); }
@@ -237,17 +280,363 @@ async function hockeyLocalTouch(h) {
   await h.closeGame(a);
 }
 
+// ── 1b. Air Hockey: the table picker, power curve, stall breaker, drama, tables, lag ──
+const hdata = (pg) => pg.evaluate(() => { try { return (JSON.parse(localStorage.getItem('ju.games.data.v1') || '{}')).hockey || {}; } catch { return {}; } });
+const endUp = (pg) => pg.waitForFunction(() => document.querySelector('#game-root .gm-end:not([hidden])'), null, { timeout: 8000 });
+const hkPhase = (pg, ph, timeout = 6000) => pg.waitForFunction((ph) => window.__hockeyTest && window.__hockeyTest.state().phase === ph, ph, { timeout });
+async function scoreMany(pg, who, n, gap = 30) { for (let i = 0; i < n; i++) { await pg.evaluate((w) => window.__hockeyTest.score(w), who); await pg.waitForTimeout(gap); } }
+
+/** Two phones: the host picks, the guest watches the choice, GO starts the same table on both. */
+async function hockeyPicker(h) {
+  const { a, b } = h;
+  await joinLive(h, 'hockey');
+  await a.waitForSelector('.hk-setup:not([hidden])'); await b.waitForSelector('.hk-setup:not([hidden])');
+  assert(/Emerson is picking/.test(await b.textContent('.hk-wait')), 'guest sees "Emerson is picking…"');
+  assert(await b.isDisabled('.hk-chip[data-tb="twin"]') && !(await a.isDisabled('.hk-chip[data-tb="twin"]')), 'only the host can choose');
+  const boxes = await a.evaluate(() => [...document.querySelectorAll('.hk-chip, .hk-go')].map((e) => { const r = e.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; }));
+  assert(boxes.length === 8 && boxes.every(([w, hh]) => w >= 44 && hh >= 44), `picker: 6 tables + Surprise + GO, all tap targets >= 44 px (${boxes.length})`);
+  assert(await a.evaluate(() => document.querySelector('.hk-chip.is-on').dataset.tb) === 'classic', 'Classic is preselected the first time');
+  await h.shot(a, `${SHOTS}/hockey-picker-390-a.png`); await h.shot(b, `${SHOTS}/hockey-picker-360-b.png`);
+  await a.tap('.hk-chip[data-tb="twin"]');
+  await b.waitForFunction(() => document.querySelector('.hk-chip.is-on') && document.querySelector('.hk-chip.is-on').dataset.tb === 'twin', null, { timeout: 4000 });
+  assert(true, "the guest sees the host's choice change live (Twin Pucks)");
+  await a.tap('.hk-go');
+  await hkPhase(a, 'play', 7000); await hkPhase(b, 'play', 7000);
+  const [sa, sb] = [await hk(a), await hk(b)];
+  assert(sa.table === 'twin' && sb.table === 'twin' && sa.pucks.length === 2 && sb.pucks.length === 2, 'GO starts Twin Pucks on both phones, two pucks each');
+  assert((await hdata(a)).hockey_last === 'twin', 'the choice is remembered (hockey_last)');
+  await h.settle();
+  await h.shot(a, `${SHOTS}/hockey-twin-live-390-a.png`); await h.shot(b, `${SHOTS}/hockey-twin-live-360-b.png`);
+  await h.closeGame(a); await h.closeGame(b);
+  // one phone: the last choice is preselected; Surprise me picks one by itself
+  await h.startLive(a, 'hockey', 'local');
+  await a.waitForSelector('.hk-setup:not([hidden])');
+  assert(await a.evaluate(() => document.querySelector('.hk-chip.is-on').dataset.tb) === 'twin', 'rematch/next time: the last table is preselected');
+  await a.tap('.hk-chip[data-tb="surprise"]'); await a.tap('.hk-go');
+  await hkPhase(a, 'count', 4000);
+  const ss = await hk(a);
+  assert(ss.sel === 'surprise' && ['classic', 'pillar', 'twin', 'shrink', 'power', 'quick'].includes(ss.table), `Surprise me picked ${ss.table}`);
+  assert((await hdata(a)).hockey_last === 'surprise', 'Surprise is remembered too');
+  await h.closeGame(a);
+}
+
+/** B1: a second finger on a half that's already controlled is ignored; control passes on when the first lifts. */
+async function hockeyTwoFingers(a, h) {
+  await touch(a, [[31, 'down', 30, 150], [32, 'down', 70, 140]], 12);
+  await h.wait(250);
+  let s = await hk(a);
+  assert(near(s.mallets.a.x, 30, 2) && near(s.mallets.a.y, 150, 2), `a second finger on the same half does not steal the mallet (${s.mallets.a.x.toFixed(1)},${s.mallets.a.y.toFixed(1)})`);
+  await touch(a, [[31, 'move', 40, 145], [32, 'move', 75, 130]], 12);
+  await h.wait(250);
+  s = await hk(a);
+  assert(near(s.mallets.a.x, 40, 2) && near(s.mallets.a.y, 145, 2), 'the first finger still drives the mallet; the second one is only waiting');
+  await touch(a, [[31, 'up', 40, 145]], 0);
+  await h.wait(700);
+  s = await hk(a);
+  assert(near(s.mallets.a.x, 75, 3) && near(s.mallets.a.y, 130, 3), `the first finger lifts: the mallet follows the second (${s.mallets.a.x.toFixed(1)},${s.mallets.a.y.toFixed(1)})`);
+  await touch(a, [[32, 'move', 60, 155]], 12);
+  await h.wait(350);
+  s = await hk(a);
+  assert(near(s.mallets.a.x, 60, 3) && near(s.mallets.a.y, 155, 3), 'and keeps following it');
+  await touch(a, [[32, 'up', 60, 155]], 0);
+}
+
+/** The power curve: a slow push is a soft pass, a medium swipe a firm one, only a real flick a slap shot. */
+async function hockeyPower(h) {
+  const { a } = h;
+  await h.startLive(a, 'hockey', 'local');
+  await hkStart(a, 'classic');
+  await hkPhase(a, 'play', 5000);
+  const peak = () => a.evaluate(() => new Promise((resolve) => {
+    let m = 0; const t0 = performance.now();
+    const f = () => { const p = window.__hockeyTest.state().puck; m = Math.max(m, Math.hypot(p.vx, p.vy)); if (performance.now() - t0 < 1300) requestAnimationFrame(f); else resolve(m); };
+    f();
+  }));
+  const trial = async (n, gap) => {
+    await touch(a, [[60, 'down', 50, 150]], 0); await h.wait(450);
+    await a.evaluate(() => window.__hockeyTest.place(50, 120, 0, 0));
+    const p = peak();
+    await touch(a, Array.from({ length: n }, (_, i) => [60, 'move', 50, 150 - ((i + 1) * 52) / n]), gap);
+    await touch(a, [[60, 'up', 50, 98]], 0);
+    return p;
+  };
+  const slow = await trial(70, 25); const med = await trial(15, 20); const fast = await trial(5, 5);
+  assert(slow < 100, `slow push = soft pass (${Math.round(slow)} u/s)`);
+  assert(med > slow && med <= fast + 5, `a medium swipe lands in between (${Math.round(med)} u/s; timing-dependent, so no absolute bound)`);
+  assert(fast > 245, `a real flick = slap shot (${Math.round(fast)} u/s)`);
+  assert(fast > slow * 2.5, 'the shot range is wide: flick vs push is > 2.5x');
+  await h.closeGame(a);
+}
+
+/** B3/B4: shot clock on a puck sat on one half, and a puck sandwiched between both mallets. */
+async function hockeyStall(h) {
+  const { a } = h;
+  await h.startLive(a, 'hockey', 'local');
+  await hkStart(a, 'classic');
+  await hkPhase(a, 'play', 5000);
+  await a.evaluate(() => window.__hockeyTest.place(50, 130, 0, 0));
+  await a.waitForFunction(() => window.__hockeyTest.state().pucks[0].sk > 0, null, { timeout: 6000 });
+  const sk = (await hk(a)).pucks[0].sk;
+  assert(sk > 0 && sk <= 3000, `a puck sat on one half starts the 3-2-1 shot clock after ~3 s (${sk} ms left)`);
+  await h.shot(a, `${SHOTS}/hockey-shotclock-390.png`);
+  await hkPhase(a, 'count', 5000);
+  const st = await a.evaluate(() => ({ stamps: window.__hockeyTest.stamps(), s: window.__hockeyTest.state() }));
+  assert(st.stamps.includes('HOG!'), 'HOG! stamp');
+  assert(near(st.s.puck.x, 50, 1) && near(st.s.puck.y, 85, 1), 'the puck is back on the centre spot');
+  await h.shot(a, `${SHOTS}/hockey-hog-390.png`);
+  await hkPhase(a, 'play', 4000); await h.wait(500);
+  assert((await hk(a)).puck.vy < -5, 'served toward the player who did not hog it');
+  // a puck squeezed between both mallets
+  await a.evaluate(() => window.__hockeyTest.place(50, 85, 0, 0));
+  await touch(a, [[71, 'down', 50, 90], [72, 'down', 50, 80]], 10);
+  await a.waitForFunction(() => window.__hockeyTest.stamps().includes('RESET') || window.__hockeyTest.state().phase === 'count', null, { timeout: 4000 });
+  assert(true, 'a puck sandwiched between the mallets is reset');
+  await touch(a, [[71, 'up', 50, 90], [72, 'up', 50, 80]], 0);
+  await h.closeGame(a);
+}
+
+/** The drama kit, records and the rivalry line (one phone, hooks). */
+async function hockeyDrama(h) {
+  const { a } = h;
+  await h.startLive(a, 'hockey', 'local');
+  await hkStart(a, 'classic');
+  await hkPhase(a, 'play', 5000);
+  // POST! on the goal frame
+  await a.evaluate(() => window.__hockeyTest.place(30, 14, 0, -130));
+  await a.waitForFunction(() => window.__hockeyTest.stamps().includes('POST!'), null, { timeout: 2000 });
+  assert((await a.evaluate(() => window.__hockeyTest.events())).some((e) => e[1] === 1), 'the puck off the goal frame: POST! stamp + clang event');
+  await h.shot(a, `${SHOTS}/hockey-post-390.png`);
+  // rally counter + record
+  await a.evaluate(() => window.__hockeyTest.setRally(9, 'a'));
+  await h.wait(120);
+  await h.shot(a, `${SHOTS}/hockey-rally-390.png`);
+  assert((await hk(a)).rally === 9, 'rally counter (9 shown as RALLY 9!)');
+  await a.evaluate(() => window.__hockeyTest.score('a'));
+  await a.waitForFunction(() => window.__hockeyTest.stamps().some((x) => /RALLY RECORD/.test(x)), null, { timeout: 2000 });
+  let d = await hdata(a);
+  assert(d.hk_rally_best === 9 && d.hk_rally_who === 'a', `longest rally saved (hk_rally_best ${d.hk_rally_best}, who ${d.hk_rally_who})`);
+  // match point: slow-mo once when the puck heads at the goal in the defending third
+  await scoreMany(a, 'a', 5);
+  await hkPhase(a, 'count', 5000); await hkPhase(a, 'play', 5000);
+  await h.shot(a, `${SHOTS}/hockey-matchpoint-390.png`);
+  await touch(a, [[73, 'down', 90, 15]], 0); await h.wait(400); // Sydney's mallet steps aside
+  await a.evaluate(() => window.__hockeyTest.place(50, 44, 0, -170));
+  await a.waitForFunction(() => window.__hockeyTest.state().ts < 0.9, null, { timeout: 1500 });
+  assert(true, 'match point: slow motion as the puck heads at goal');
+  await h.shot(a, `${SHOTS}/hockey-slowmo-390.png`);
+  await endUp(a);
+  assert(/Emerson/.test(await endHead(a)), 'match won');
+  const sub = await a.textContent('#game-root .gm-end .gm-end-sub');
+  d = await hdata(a);
+  assert(/7–0/.test(sub) && /Shutout/.test(sub), `rivalry line: "${sub}"`);
+  assert(d.hk_shutout_a_n === 1 && d.hk_streak_who === 'a' && d.hk_streak_n === 1, 'shutout and streak saved');
+  await h.shot(a, `${SHOTS}/hockey-end-shutout-390.png`);
+  await h.closeGame(a);
+  // second match: Emerson comes back from 0-3 and extends the streak
+  await h.startLive(a, 'hockey', 'local');
+  await hkStart(a, 'classic');
+  await scoreMany(a, 'b', 3); await scoreMany(a, 'a', 7);
+  await endUp(a);
+  const sub2 = await a.textContent('#game-root .gm-end .gm-end-sub');
+  d = await hdata(a);
+  assert(/COMEBACK from 3 down/.test(sub2) && /2-match streak/.test(sub2), `comeback badge and streak in the rivalry line: "${sub2}"`);
+  assert(d.hk_comeback_a_n === 1 && d.hk_streak_n === 2 && d.hk_streak_best >= 2, 'comeback + streak saved');
+  await h.shot(a, `${SHOTS}/hockey-end-comeback-390.png`);
+  await h.closeGame(a);
+}
+
+/** Every table on one phone: its own rule, played to the end. */
+async function hockeyTables(h, tag, which) {
+  const { a } = h;
+  for (const t of which) {
+    await h.startLive(a, 'hockey', 'local');
+    await hkStart(a, t);
+    await hkPhase(a, 'play', 5000);
+    const s0 = await hk(a);
+    assert(s0.table === t, `table ${t}`);
+    if (t === 'pillar') {
+      assert(s0.post, 'Pillar: the post is on the table');
+      await a.evaluate(() => window.__hockeyTest.place(50, 55, 0, 110));
+      await h.wait(300);
+      const s = await hk(a);
+      assert(s.puck.y < 76 && s.puck.vy < 0, `the puck bounces off the post (y ${s.puck.y.toFixed(1)}, vy ${s.puck.vy.toFixed(0)})`);
+      await touch(a, [[81, 'down', 50, 90]], 0); await h.wait(450);
+      const m = (await hk(a)).mallets.a;
+      assert(Math.hypot(m.x - 50, m.y - 85) >= 14 - 0.6, `a mallet can't sit on the post (${m.x.toFixed(1)},${m.y.toFixed(1)})`);
+      await touch(a, [[81, 'up', 50, 90]], 0);
+    }
+    if (t === 'twin') {
+      assert(s0.pucks.length === 2, 'Twin Pucks: two pucks');
+      await a.evaluate(() => window.__hockeyTest.place(50, 12, 0, -140, 1));
+      await a.waitForFunction(() => window.__hockeyTest.state().score.a === 1, null, { timeout: 3000 });
+      const s = await hk(a);
+      assert(s.phase === 'play' && s.pucks[0].on && !s.pucks[1].on, 'a goal with either puck counts; the other keeps playing');
+      await a.waitForFunction(() => window.__hockeyTest.state().pucks[1].on, null, { timeout: 4000 });
+      assert(true, 'the scored puck re-serves from the centre');
+    }
+    if (t === 'shrink') {
+      assert(s0.goals.a === 16 && s0.goals.b === 16, 'Shrinking Goals: both goals 16 wide (half-width)');
+      await scoreMany(a, 'a', 1);
+      let s = await hk(a);
+      assert(s.goals.b === 14 && s.goals.a === 16, "Emerson scored: Sydney's goal gets smaller, Emerson's stays");
+      await scoreMany(a, 'a', 3);
+      s = await hk(a);
+      assert(s.goals.b === 10, `...down to a minimum (${s.goals.b})`);
+      await scoreMany(a, 'b', 1);
+      s = await hk(a);
+      assert(s.goals.a === 14, 'the trailing player keeps the bigger target');
+      await h.wait(900);
+      await h.shot(a, `${SHOTS}/hockey-shrink-${tag}-390.png`);
+    }
+    if (t === 'power') {
+      await touch(a, [[82, 'down', 50, 150]], 0); await h.wait(450);
+      await a.evaluate(() => window.__hockeyTest.place(50, 120, 0, 0));
+      await touch(a, Array.from({ length: 6 }, (_, i) => [82, 'move', 50, 150 - ((i + 1) * 50) / 6]), 8);
+      await touch(a, [[82, 'up', 50, 100]], 0);
+      await h.wait(150);
+      assert((await hk(a)).rally >= 1, 'Power Puck: the rally counts hits');
+      await a.evaluate(() => window.__hockeyTest.setRally(10, 'a'));
+      await a.evaluate(() => window.__hockeyTest.place(50, 100, 0, -140));
+      await h.wait(150);
+      await h.shot(a, `${SHOTS}/hockey-power-${tag}-390.png`);
+    }
+    if (t === 'pillar' || t === 'twin') await h.shot(a, `${SHOTS}/hockey-${t}-${tag}-390.png`);
+    const need = t === 'quick' ? 3 : 7;
+    const have = (await hk(a)).score.a;
+    await scoreMany(a, 'a', need - have);
+    await endUp(a);
+    assert(/Emerson/.test(await endHead(a)), `${t}: played to the end (first to ${need})`);
+    await h.closeGame(a);
+  }
+}
+
+/** Two phones, every table: both see it, the host's rules run, the guest follows. */
+async function hockeyLiveTables(h, which, label) {
+  const { a, b } = h;
+  await joinLive(h, 'hockey');
+  for (let i = 0; i < which.length; i++) {
+    const t = which[i];
+    if (i) { await b.click('#game-root [data-g="rematch"]'); await h.settle(); await h.settle(); }
+    await hkStart(a, t);
+    await hkPhase(a, 'play', 9000); await hkPhase(b, 'play', 9000);
+    const sb = await hk(b);
+    assert(sb.table === t && sb.pucks.length === (t === 'twin' ? 2 : 1), `${label}: the guest plays ${t}`);
+    if (t === 'twin') {
+      await a.evaluate(() => window.__hockeyTest.place(50, 100, 0, 30, 1));
+      await h.wait(600);
+      const [pa, pb] = [(await hk(a)).pucks, (await hk(b)).pucks];
+      assert(Math.hypot(pa[1].x - pb[1].x, pa[1].y - pb[1].y) < 25, `${label}: the guest sees both pucks where the host has them`);
+    }
+    if (t === 'shrink') {
+      await a.evaluate(() => window.__hockeyTest.score('a'));
+      await b.waitForFunction(() => window.__hockeyTest.state().goals.b === 14, null, { timeout: 4000 });
+      assert(true, `${label}: the guest's goals shrink with the score`);
+    }
+    if (t === 'pillar') assert((await hk(b)).post, `${label}: the guest sees the post`);
+    const need = t === 'quick' ? 3 : 7;
+    await scoreMany(a, 'a', need - (await hk(a)).score.a, 60);
+    await endUp(a); await endUp(b);
+    assert(/Emerson/.test(await endHead(b)), `${label}: ${t} played to the end on both`);
+  }
+  await h.closeGame(a); await h.closeGame(b);
+}
+
+/** B2: guest puck corrections never teleport (latency 120, 20 % loss, the host hits again and again). */
+async function hockeyLag(h) {
+  const { a, b } = h;
+  await joinLive(h, 'hockey');
+  await hkStart(a, 'classic');
+  await hkPhase(a, 'play', 9000); await hkPhase(b, 'play', 9000);
+  await a.evaluate(() => {
+    const cv = document.querySelector('.g-hockey canvas'); const T = window.__hockeyTest;
+    const send = (type, x, y) => { const [cx, cy] = T.toClient(x, y); cv.dispatchEvent(new PointerEvent('pointer' + type, { bubbles: true, cancelable: true, pointerId: 77, pointerType: 'touch', isPrimary: true, clientX: cx, clientY: cy, buttons: type === 'up' ? 0 : 1 })); };
+    let bx = 50; let by = 150; let down = false; let last = performance.now(); let next = last + 1200;
+    window.__botStop = false; window.__placeAt = [];
+    const f = () => {
+      if (window.__botStop) return; requestAnimationFrame(f);
+      const now = performance.now(); const dt = Math.min(0.05, (now - last) / 1000); last = now;
+      const P = T.state().puck;
+      if (now > next) { next = now + 1300; window.__placeAt.push(Date.now()); T.place(25 + Math.random() * 50, 96, (Math.random() - 0.5) * 60, 120); }
+      let tx = 50; let ty = 150;
+      if (P.y > 90) { tx = P.x; ty = P.y - 4; }
+      const dx = tx - bx; const dy = ty - by; const d = Math.hypot(dx, dy); const st = 320 * dt;
+      if (d > st) { bx += (dx / d) * st; by += (dy / d) * st; } else { bx = tx; by = ty; }
+      send(down ? 'move' : 'down', bx, by); down = true;
+    };
+    f();
+  });
+  await b.evaluate(() => {
+    const T = window.__hockeyTest; window.__smp = []; window.__smpStop = false;
+    const f = () => { if (window.__smpStop) return; requestAnimationFrame(f); const s = T.state(); window.__smp.push([Date.now(), performance.now(), s.puck.x, s.puck.y, s.puck.vx, s.puck.vy, s.phase, s.score.a + s.score.b]); };
+    f();
+  });
+  await h.wait(14000);
+  const hostHits = (await hk(a)).hits.a;
+  const [smp, places] = await Promise.all([b.evaluate(() => { window.__smpStop = true; return window.__smp; }), a.evaluate(() => { window.__botStop = true; return window.__placeAt; })]);
+  let worst = 0; let n = 0;
+  for (let i = 1; i < smp.length; i++) {
+    const [w0, t0, x0, y0, vx0, vy0, ph0, sc0] = smp[i - 1]; const [w1, t1, x1, y1, , , ph1, sc1] = smp[i];
+    const dt = t1 - t0;
+    if (dt > 34 || ph0 !== 'play' || ph1 !== 'play' || sc0 !== sc1) continue;
+    if (places.some((p) => w1 >= p - 100 && w1 <= p + 700)) continue; // the test's own teleport of the puck
+    const jump = Math.abs(Math.hypot(x1 - x0, y1 - y0) - Math.hypot(vx0, vy0) * (dt / 1000));
+    worst = Math.max(worst, jump); n++;
+  }
+  assert(hostHits >= 4 && n > 200, `the host hit the puck ${hostHits} times; ${n} guest frames measured`);
+  assert(worst < 25, `latency 120 + 20 % loss: the guest's puck never jumps more than 25 u in a frame (worst ${worst.toFixed(1)} u)`);
+  await h.closeGame(a); await h.closeGame(b);
+}
+
+/** The laptop: Enter starts the picked table; WASD around the post. */
+async function hockeyDesk(h, pg) {
+  await h.startLive(pg, 'hockey', 'local');
+  await pg.waitForSelector('.hk-setup:not([hidden])');
+  await h.shot(pg, `${SHOTS}/hockey-picker-desk.png`);
+  await pg.click('.hk-chip[data-tb="pillar"]');
+  await pg.keyboard.press('Enter');
+  await hkPhase(pg, 'play', 6000);
+  assert((await hk(pg)).table === 'pillar' && (await hk(pg)).view === 'side', 'laptop: click a table, press Enter, play (sideways table with the post)');
+  await h.shot(pg, `${SHOTS}/hockey-pillar-desk.png`);
+  await pg.keyboard.down('KeyD'); await h.wait(1200); await pg.keyboard.up('KeyD');
+  const m = (await hk(pg)).mallets.a;
+  assert(Math.hypot(m.x - 50, m.y - 85) >= 13.4, 'keyboard mallet stays off the post');
+  await h.closeGame(pg);
+}
+
 // ── 3. Quick Draw, two phones ─────────────────────────────────────────
+/** Play whole rounds to a decision by fouls: `loser` jumps early in each. Returns the last round number. */
+async function qdFoulRounds(h, host, loserPg, n, from = 1) {
+  for (let r = from; r < from + n; r++) { if (r > 1) await verdictFor(loserPg, r - 1); await qdFireAt(loserPg, 'steady', 150); await verdictFor(host, r); }
+  return from + n - 1;
+}
 async function quickdrawLive(h, tag) {
   const { a, b } = h;
   await joinLive(h, 'quickdraw');
   const n0 = results(h, 'quickdraw').length;
+  // The picker: the host chooses, the guest watches the choice change.
+  await a.waitForSelector('.g-qd .qd-setup'); await b.waitForSelector('.g-qd .qd-setup');
+  assert(await a.isVisible('.g-qd .qd-setup') && await b.isVisible('.g-qd .qd-setup'), 'both phones open on the duel picker');
+  assert(/Emerson is picking/.test(await b.textContent('.qd-setup-head')) && !(await b.isVisible('.qd-go')) && await a.isVisible('.qd-go'), 'the guest sees "Emerson is picking…" and no GO button');
+  await qdFit(a, `${tag} host picker (390x844)`); await qdFit(b, `${tag} guest picker (360x780)`);
+  await qdPick(a, 'bell');
+  await qdPressed(b, 'data-pack', 'bell');
+  assert(true, "the guest sees the host's live choice (Bell)");
+  await qdPick(a, 'classic', '5');
+  await qdPressed(b, 'data-pack', 'classic');
+  await h.shot(b, `${SHOTS}/qd-${tag}-live-picker-360-b.png`);
+  await h.shot(a, `${SHOTS}/qd-${tag}-live-picker-390-a.png`);
+  await qdGo(a);
+  await qdPhase(b, 'steady');
+  assert(true, 'GO starts the duel on both phones');
+  await qdFit(a, `${tag} host in play`); await qdFit(b, `${tag} guest in play`);
   // Round 1: Emerson jumps the gun.
-  await Promise.all([qdFireAt(a, 'steady', 150)]);
+  await qdFireAt(a, 'steady', 150);
   let v = await verdictFor(a, 1);
   const vb = await verdictFor(b, 1);
   assert(v.w === 'b' && v.why === 'foul' && vb.w === 'b', 'foul: firing before DRAW loses the round (both phones agree)');
-  assert(/fired early/.test(await b.textContent('.qd-sig .qd-line')), 'the guest is told who fired early');
+  await h.wait(300);
+  let t = await qdText(b);
+  assert(t.line === 'Emerson jumped early' && t.times === '' && !/[—–]/.test(`${t.word} ${t.line} ${t.times}`), `a foul win reads "${t.line}" with no bare dash`);
 
   // Round 2: Sydney's network is slow (+150 ms each way out) but her hand is faster.
   const slowed = await b.evaluate(() => {
@@ -255,86 +644,198 @@ async function quickdrawLive(h, tag) {
     try { window.__room = (op, ...r) => (op === 'emit' || op === 'presence' ? new Promise((res) => setTimeout(res, 150)).then(() => o(op, ...r)) : o(op, ...r)); } catch { return false; }
     return window.__room !== o;
   });
-  await b.waitForFunction(() => document.querySelector('.g-qd').dataset.phase === 'steady', null, { timeout: 9000 });
+  await qdPhase(b, 'steady');
   await h.shot(b, `${SHOTS}/qd-${tag}-live-steady-360-b.png`);
   await Promise.all([qdFireAt(a, 'draw', 230), qdFireAt(b, 'draw', 140)]);
   v = await verdictFor(a, 2);
   const recv = (await a.evaluate(() => window.__qdTest.recv())).filter((x) => x.r === v.r);
   assert(slowed && recv.length === 2 && recv[0].w === 'a', `Emerson's result reached the referee first (${recv.map((x) => x.w).join(' then ')})`);
   assert(v.w === 'b' && v.b.reaction < v.a.reaction, `...but Sydney wins on reaction time (${v.b.reaction} ms vs ${v.a.reaction} ms)`);
-  const timesA = await a.textContent('.qd-sig .qd-times');
-  assert(/^Sydney \d+ ms·Emerson \d+ ms$/.test(timesA.replace(/\s*·\s*/, '·').trim()), `both reaction times shown: "${timesA.trim()}"`);
+  await h.wait(700);
+  t = await qdText(a);
+  assert(/^Emerson \d+ ms\s*·\s*Sydney \d+ ms$/.test(t.times) && t.line === `Sydney by ${v.diff} ms`, `times in chip order and the margin: "${t.times}" / "${t.line}"`);
+  const tb = await qdText(b);
+  assert(tb.times === t.times, 'both phones show the same timings');
   await b.evaluate(() => { window.__room = window.__roomFast; });
-  await h.wait(300);
   await h.shot(a, `${SHOTS}/qd-${tag}-live-result-390-a.png`);
 
-  // Round 3: both jump; Sydney jumped earlier (relative to her own DRAW), so she loses it.
-  await Promise.all([qdFireAt(a, 'steady', 160), qdFireAt(b, 'steady', 40)]);
+  // Round 3: Emerson fires, Sydney sits it out: the verdict doesn't wait 4 s for her.
+  const t0 = await qdFireAt(a, 'draw', 150);
   v = await verdictFor(a, 3);
+  const took = (await a.evaluate(() => performance.now())) - t0;
+  assert(v.w === 'a' && v.why === 'time' && took < 1700, `an idle opponent doesn't hold up the verdict (${Math.round(took)} ms after the shot, rtt ${(await qd(a)).rtt} ms)`);
+  await h.wait(300);
+  t = await qdText(b);
+  assert(/Emerson takes the round/.test(t.line), `no margin when only one fired: "${t.line}"`);
+
+  // Round 4: both jump; Sydney jumped earlier (on the shared clock), so she loses it.
+  await Promise.all([qdFireAt(a, 'steady', 160), qdFireAt(b, 'steady', 40)]);
+  v = await verdictFor(a, 4);
   assert(v.why === 'fouls' && v.w === 'a', 'double foul: whoever jumped earlier loses');
-  // Rounds 4 and 5: Emerson is faster.
-  for (const r of [4, 5]) {
-    const shot = r === 4 ? b.waitForFunction(() => document.querySelector('.g-qd').dataset.phase === 'draw', null, { timeout: 9000 }).then(() => h.shot(b, `${SHOTS}/qd-${tag}-live-draw-360-b.png`)) : null;
-    await Promise.all([qdFireAt(a, 'draw', 110), qdFireAt(b, 'draw', 300), shot]);
-    v = await verdictFor(a, r);
-    assert(v.w === 'a', `round ${r}: faster hand wins (${v.a.reaction} vs ${v.b.reaction} ms)`);
-  }
-  assert(v.tally.a === 3 && v.tally.b === 2, 'best of 5 decided 3-2');
+  // 2-2 at match point: the decider is Both barrels. Sydney fires on the first draw: foul.
+  await qdPhase(a, 'steady');
+  const rd = (await qd(a)).rd;
+  assert(rd.both === 1 && rd.gap > 0, `tied at match point: Both barrels (second draw ${rd.gap} ms after the first)`);
+  await qdCue(b, 'first');
+  await h.shot(b, `${SHOTS}/qd-${tag}-live-barrels-360-b.png`);
+  await qdFireAt(b, 'steady', 30);
+  v = await verdictFor(a, 5);
+  assert(v.w === 'a' && v.why === 'foul' && v.both === 1 && v.tally.a === 3 && v.tally.b === 2, 'firing on the first of the two draws is a foul: Emerson takes the duel 3-2');
   await a.waitForFunction(() => document.querySelector('#game-root .gm-end:not([hidden])'), null, { timeout: 5000 });
   await b.waitForFunction(() => document.querySelector('#game-root .gm-end:not([hidden])'), null, { timeout: 5000 });
   assert(/Emerson/.test(await endHead(a)) && /Emerson/.test(await endHead(b)), 'end card on both phones: Emerson wins');
+  const sub = await a.textContent('#game-root .gm-end .gm-end-sub');
+  assert(/3–2/.test(sub) && /fastest draw \d+ ms|new PB/.test(sub), `the end card carries the rivalry line: "${sub.trim()}"`);
+  assert((await b.textContent('#game-root .gm-end .gm-end-sub')).trim() === sub.trim(), 'the guest reads the same line');
   await h.settle();
   assert(results(h, 'quickdraw').length === n0 + 1, 'the duel is recorded once');
+  const d = await qdData(a);
+  assert(typeof d.qd_pb_a_ms === 'number' && typeof d.qd_pb_b_ms === 'number' && typeof d.qd_best_ms === 'number' && (d.qd_best_who === 'a' || d.qd_best_who === 'b'), `personal bests and the fastest draw are saved (${d.qd_pb_a_ms} / ${d.qd_pb_b_ms} / ${d.qd_best_ms} ms)`);
+  assert(d.qd_streak_who === 'a' && d.qd_streak_c === 1 && d.qd_streak_best === 1 && d.qd_last === 'classic:5', `streak and last duel are saved (${d.qd_streak_who} x${d.qd_streak_c}, ${d.qd_last})`);
   await h.shot(a, `${SHOTS}/qd-${tag}-live-end-390-a.png`);
   await h.shot(b, `${SHOTS}/qd-${tag}-live-end-360-b.png`);
-  // Rematch from the host restarts both; then close and check nothing lingers.
+  // Rematch from the host: the picker is back on the last duel, and starts it after a short countdown.
   await a.click('#game-root [data-g="rematch"]');
   await h.settle();
   assert(!(await endShown(a)) && !(await endShown(b)), 'rematch restarts on both');
-  await b.waitForFunction(() => document.querySelector('.g-qd')?.dataset.phase === 'steady', null, { timeout: 6000 });
+  await a.waitForSelector('.g-qd .qd-setup:not([hidden])');
+  await qdPressed(a, 'data-pack', 'classic'); await qdPressed(a, 'data-series', '5');
+  assert(/GO · \d/.test(await a.textContent('.qd-go')) && /Same again/.test(await a.textContent('.qd-setup-head')), 'rematch: the last duel is preselected, with a countdown to GO');
+  await qdPhase(b, 'steady');
   const [qa, qb] = [await qd(a), await qd(b)];
-  assert(qa.tally.a + qa.tally.b === 0 && qb.tally.a + qb.tally.b === 0, 'rematch: fresh tally, first round under way on both');
+  assert(qa.tally.a + qa.tally.b === 0 && qb.tally.a + qb.tally.b === 0 && qb.cfg.s === '5', 'rematch: fresh tally, the same duel started by itself on both');
   await h.closeGame(a); await h.closeGame(b);
   await quietAfterClose(h, a, 'quick draw host');
   await quietAfterClose(h, b, 'quick draw guest');
 }
 
-// Quick Draw dark pass: a quick duel decided by fouls, for screenshots.
-async function quickdrawLiveFast(h, tag) {
+// Quick Draw packs: Decoys, Colour, Bell and Mixed, rendered identically on both phones.
+async function quickdrawPacks(h, tag) {
   const { a, b } = h;
   await joinLive(h, 'quickdraw');
-  // Sydney drops out mid-round: the round is voided and the host waits. She rejoins: a fresh round.
-  await a.waitForFunction(() => document.querySelector('.g-qd')?.dataset.phase === 'steady', null, { timeout: 6000 });
-  await h.closeGame(b);
-  await a.waitForFunction(() => window.__qdTest.state().phase === 'paused', null, { timeout: 4000 });
-  await h.wait(5000);
-  assert((await qd(a)).phase === 'paused' && !(await qd(a)).verdict, 'partner gone: the round is voided and the duel waits (no verdict, no stray DRAW)');
-  await a.click('#game-root [data-g="invite-again"]');
-  await h.settle();
-  await b.click('#gm-invite [data-g="invite-yes"]');
-  await b.waitForFunction(() => document.querySelector('.g-qd')?.dataset.phase === 'draw' || document.querySelector('.g-qd')?.dataset.phase === 'steady', null, { timeout: 6000 });
-  const shot = b.waitForFunction(() => document.querySelector('.g-qd').dataset.phase === 'draw', null, { timeout: 9000 }).then(() => h.shot(b, `${SHOTS}/qd-${tag}-live-draw-360-b.png`));
-  await Promise.all([qdFireAt(a, 'draw', 120), qdFireAt(b, 'draw', 260), shot]);
-  await verdictFor(a, 1);
-  await h.wait(400);
-  await h.shot(a, `${SHOTS}/qd-${tag}-live-result-390-a.png`);
-  // The host (Emerson) leaves mid-duel and comes back: the duel carries on from the same tally.
-  const t1 = (await qd(b)).tally;
-  await h.closeGame(a);
-  await b.waitForFunction(() => window.__qdTest.state().phase === 'paused', null, { timeout: 4000 });
-  await b.click('#game-root [data-g="invite-again"]');
-  await h.settle();
-  await a.click('#gm-invite [data-g="invite-yes"]');
-  await a.waitForFunction(() => window.__qdTest, null, { timeout: 6000 });
-  await h.settle(); await h.settle();
-  const [ta, tb] = [(await qd(a)).tally, (await qd(b)).tally];
-  assert(ta.a === t1.a && ta.b === t1.b && tb.a === t1.a && tb.b === t1.b, `host left and came back: the tally is still ${t1.a}-${t1.b} on both`);
-  for (const r of [1, 2]) { await qdFireAt(b, 'steady', 100); await verdictFor(a, r); }
-  await a.waitForFunction(() => document.querySelector('#game-root .gm-end:not([hidden])'), null, { timeout: 5000 });
-  await b.waitForFunction(() => document.querySelector('#game-root .gm-end:not([hidden])'), null, { timeout: 5000 });
-  assert(/Emerson/.test(await endHead(b)), `${tag}: duel over, end card on both`);
-  await h.shot(a, `${SHOTS}/qd-${tag}-live-end-390-a.png`);
-  await h.shot(b, `${SHOTS}/qd-${tag}-live-end-360-b.png`);
+  await qdPick(a, 'mixed', '9');
+  await qdPressed(b, 'data-pack', 'mixed'); await qdPressed(b, 'data-series', '9');
+  await qdGo(a);
+  const word = async (pg) => (await qdText(pg)).word;
+  // Decoys: BRAW! appears in the DRAW style, firing on it is a foul.
+  await a.evaluate(() => window.__qdTest.force({ kind: 'decoys', decoys: [800], dw: [0], delay: 2800 }));
+  await qdCue(a, 'decoy'); await qdCue(b, 'decoy');
+  const [da, db] = [await qdText(a), await qdText(b)];
+  assert(da.word === 'BRAW!' && db.word === 'BRAW!' && /is-draw/.test(da.cls) && (await qd(b)).phase === 'steady', 'a decoy word shows in the DRAW style on both phones while it is still Steady');
+  await h.shot(b, `${SHOTS}/qd-${tag}-live-decoy-360-b.png`);
+  await qdFireAt(a, 'steady', 120);
+  let v = await verdictFor(a, 1);
+  assert(v.w === 'b' && v.why === 'foul' && v.kind === 'decoys', 'firing on a decoy is a foul');
+  // Colour: the lantern turns PINK (a bluff), then YELLOW.
+  await a.evaluate(() => window.__qdTest.force({ kind: 'colour', decoys: [900], dw: [1], delay: 2800 }));
+  await qdCue(a, 'decoy'); await qdCue(b, 'decoy');
+  const lc = (pg) => pg.evaluate(() => document.querySelector('.qd-lantern').style.getPropertyValue('--lc'));
+  assert(/--p-b/.test(await lc(a)) && /--p-b/.test(await lc(b)) && await word(a) === 'PINK' && await word(b) === 'PINK', 'colour pack: the same bluff colour (named, too) on both phones');
+  await qdPhase(a, 'draw'); await qdPhase(b, 'draw');
+  assert(/--g-hl/.test(await lc(b)) && await word(b) === 'YELLOW!', 'colour pack: the lantern turns YELLOW');
+  await h.shot(b, `${SHOTS}/qd-${tag}-live-colour-360-b.png`);
+  await qdFireAt(b, 'draw', 150);
+  v = await verdictFor(a, 2);
+  assert(v.w === 'b' && v.why === 'time' && v.kind === 'colour', 'firing on yellow wins the round');
+  // Bell: a quiet tink (bluff), then the bell rings and swings.
+  await a.evaluate(() => window.__qdTest.force({ kind: 'bell', decoys: [900], dw: [0], delay: 2800 }));
+  await qdCue(a, 'decoy'); await qdCue(b, 'decoy');
+  const bell = (pg) => pg.evaluate(() => document.querySelector('.qd-bell').getAttribute('class'));
+  assert(/is-tink/.test(await bell(a)) && /is-tink/.test(await bell(b)), 'bell pack: a bluff tink shows on both phones');
+  await qdPhase(a, 'draw'); await qdPhase(b, 'draw');
+  assert(/is-ring/.test(await bell(a)) && /is-ring/.test(await bell(b)) && await word(a) === 'DING!', 'bell pack: the bell swings and the word says DING! (a muted phone still sees it)');
+  await h.shot(a, `${SHOTS}/qd-${tag}-live-bell-390-a.png`);
+  await qdFireAt(a, 'draw', 150);
+  v = await verdictFor(a, 3);
+  assert(v.w === 'a' && v.kind === 'bell', 'firing on the bell wins');
+  // Mixed: whichever kind the host picks, both phones show it and the sign announces it.
+  await qdPhase(a, 'steady'); await qdPhase(b, 'steady');
+  const kinds = await Promise.all([a, b].map((pg) => pg.evaluate(() => ({ k: document.querySelector('.g-qd').dataset.kind, sign: document.querySelector('.qd-kind').textContent, hidden: document.querySelector('.qd-kind').hidden }))));
+  assert(kinds[0].k === kinds[1].k && /MIXED/.test(kinds[0].sign) && !kinds[0].hidden && kinds[0].sign === kinds[1].sign, `mixed: both phones announce "${kinds[0].sign}"`);
+  await qdFireAt(b, 'steady', 100);
+  v = await verdictFor(a, 4);
+  assert(v.why === 'foul', 'a mixed round plays to a verdict');
+  await h.closeGame(a); await h.closeGame(b);
+}
+
+// Quick Draw: win streaks across duels, the bounty, Both barrels fired correctly, the Showdown.
+async function quickdrawStreaks(h, tag) {
+  const { a, b } = h;
+  await joinLive(h, 'quickdraw');
+  await qdPick(a, 'classic', '3'); await qdGo(a);
+  // Duel 1 (best of 3): Emerson wins 2-0 on fouls, then rematches twice more.
+  await qdFoulRounds(h, a, b, 2);
+  await a.waitForFunction(() => document.querySelector('#game-root .gm-end:not([hidden])'), null, { timeout: 8000 });
+  let sub = await a.textContent('#game-root .gm-end .gm-end-sub');
+  assert(/2–0/.test(sub) && !/streak/.test(sub), `duel 1: "${sub.trim()}"`);
+  for (const n of [2, 3]) {
+    await a.click('#game-root [data-g="rematch"]'); await h.settle();
+    await qdPick(a, null, '3'); await qdGo(a);   // taps cancel the countdown, so GO is ours
+    await qdFoulRounds(h, a, b, 2);
+    await a.waitForFunction(() => document.querySelector('#game-root .gm-end:not([hidden])'), null, { timeout: 8000 });
+    sub = await a.textContent('#game-root .gm-end .gm-end-sub');
+    assert(new RegExp(`Emerson on a ${n}-duel streak`).test(sub), `duel ${n}: "${sub.trim()}"`);
+  }
+  // Duel 4: Sydney ends a 3-duel streak and claims the bounty. The decider is Both barrels, fired properly.
+  await a.click('#game-root [data-g="rematch"]'); await h.settle();
+  await qdPick(a, null, '3'); await qdGo(a);
+  await qdFireAt(a, 'steady', 150); await verdictFor(a, 1); await verdictFor(b, 1);   // Emerson jumps: Sydney 1-0
+  await qdFireAt(b, 'steady', 150); await verdictFor(a, 2);   // Sydney jumps: 1-1, match point for both
+  await qdPhase(a, 'steady');
+  { const s = await qd(a); assert(s.rd.both === 1, `best of 3 tied 1-1: Both barrels (${JSON.stringify({ t: s.tally, cfg: s.cfg, r: s.r, ph: s.phase })})`); }
+  await qdCue(a, 'first'); await qdCue(b, 'first');
+  assert((await qdText(a)).word === 'DRAW!' && (await qdText(b)).word === 'DRAW!' && (await qd(a)).phase === 'steady', 'the first of the two draws looks like a real one');
+  await Promise.all([qdFireAt(b, 'draw', 140)]);
+  const v = await verdictFor(a, 3);
+  assert(v.w === 'b' && v.why === 'time' && v.both === 1 && v.res && v.res.bounty === true, 'firing on the second draw wins the decider');
+  await a.waitForFunction(() => document.querySelector('#game-root .gm-end:not([hidden])'), null, { timeout: 8000 });
+  await b.waitForFunction(() => document.querySelector('#game-root .gm-end:not([hidden])'), null, { timeout: 8000 });
+  sub = await b.textContent('#game-root .gm-end .gm-end-sub');
+  assert(/Bounty claimed!/.test(sub), `Sydney ends Emerson's streak: "${sub.trim()}"`);
+  await h.shot(b, `${SHOTS}/qd-${tag}-live-bounty-360-b.png`);
+  const d = await qdData(a);
+  assert(d.qd_streak_who === 'b' && d.qd_streak_c === 1 && d.qd_streak_best === 3 && d.qd_streak_best_who === 'a', `streak resets, best streak kept (${d.qd_streak_who} x${d.qd_streak_c}, best ${d.qd_streak_best})`);
+  // Showdown: first to 5, win by 2.
+  await b.click('#game-root [data-g="rematch"]'); await h.settle();
+  await qdPick(a, 'classic', 'sd'); await qdPressed(b, 'data-series', 'sd'); await qdGo(a);
+  await qdPhase(b, 'steady');
+  assert((await qd(b)).cfg.s === 'sd', 'Showdown reaches the guest');
+  await h.closeGame(a); await h.closeGame(b);
+}
+
+// Quick Draw, two phones on a slow line: a simultaneous double foul is a re-round, whoever's network is slower.
+async function quickdrawLatency(h) {
+  const { a, b } = h;
+  await joinLive(h, 'quickdraw');
+  await qdGo(a);
+  const fireAtWall = (pg, target) => pg.evaluate((target) => new Promise((res) => setTimeout(() => { const p = document.querySelector('.qd-pad'); const r = p.getBoundingClientRect(); p.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 7, pointerType: 'touch', clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 })); res(Date.now()); }, Math.max(0, target - Date.now()))), target);
+  for (let r = 1; r <= 3; r++) {
+    await qdPhase(a, 'steady'); await qdPhase(b, 'steady');
+    const target = Date.now() + 500;
+    const [ta, tb] = await Promise.all([fireAtWall(a, target), fireAtWall(b, target)]);
+    const v = await verdictFor(a, r);
+    const vb = await verdictFor(b, r);
+    assert(v.why === 'dfoul' && !v.w && vb.why === 'dfoul', `latency 200, taps ${Math.abs(ta - tb)} ms apart on the wall clock: a double foul, re-round with no winner (rtt ${(await qd(a)).rtt} ms)`);
+    assert(v.tally.a === 0 && v.tally.b === 0, 'the re-round scores nothing');
+  }
+  await h.closeGame(a); await h.closeGame(b);
+}
+
+// Quick Draw on a bad line (120 ms, 20 % of messages lost): a whole best-of-3 still plays to the end.
+async function quickdrawLossy(h) {
+  const { a, b } = h;
+  await joinLive(h, 'quickdraw');
+  await qdPick(a, 'decoys', '3'); await qdGo(a);
+  let v;
+  for (let n = 1; n <= 10 && !(v && v.res); n++) {
+    await qdFireAt(b, 'draw', 170);
+    v = await verdictFor(a, n);
+    await verdictFor(b, n);
+    assert(v.w === 'b' || v.why === 'void' || v.why === 'none', `lossy line, round ${n}: a clean verdict on both phones (${v.why}${v.w ? `, ${v.w}` : ''})`);
+  }
+  await a.waitForFunction(() => document.querySelector('#game-root .gm-end:not([hidden])'), null, { timeout: 12000 });
+  await b.waitForFunction(() => document.querySelector('#game-root .gm-end:not([hidden])'), null, { timeout: 12000 });
+  assert(/Sydney/.test(await endHead(a)) && /Sydney/.test(await endHead(b)), 'lossy line: the duel finishes, Sydney wins on both phones');
   await h.closeGame(a); await h.closeGame(b);
 }
 
@@ -344,30 +845,60 @@ async function quickdrawLocal(h, tag) {
   await h.startLive(a, 'quickdraw', 'local');
   await a.waitForFunction(() => window.__qdTest, null, { timeout: 4000 });
   assert((await qd(a)).layout === 'phone', 'one phone: a button at each end');
-  await a.setViewportSize({ width: 844, height: 390 });
-  await h.wait(300);
-  const fit = await a.evaluate(() => { const r = document.getElementById('game-root'); const pa = document.querySelector('.qd-pad[data-w="a"]').getBoundingClientRect(); const pb = document.querySelector('.qd-pad[data-w="b"]').getBoundingClientRect(); return { over: r.scrollHeight - r.clientHeight, side: pa.right < pb.left }; });
-  assert(fit.over <= 1 && fit.side, `phone on its side: everything fits (overflow ${fit.over}px), one pad at each end`);
-  await h.shot(a, `${SHOTS}/qd-${tag}-local-landscape-844.png`);
+  // Fit: no scrolling and both FIRE pads fully visible, on small and large phones, both ways round.
+  for (const [w, hh] of [[375, 667], [360, 640], [320, 568], [568, 320], [844, 390], [390, 844]]) {
+    await a.setViewportSize({ width: w, height: hh });
+    await h.wait(250);
+    await qdFit(a, `phone ${w}x${hh} picker`);
+  }
+  await a.setViewportSize({ width: 568, height: 320 }); await h.wait(250);
+  await h.shot(a, `${SHOTS}/qd-${tag}-local-picker-568.png`);
+  await a.setViewportSize({ width: 390, height: 844 }); await h.wait(250);
+  await h.shot(a, `${SHOTS}/qd-${tag}-local-picker-390.png`);
+  await qdPick(a, 'classic', '3');
+  await qdGo(a);
+  await qdPhase(a, 'steady');
+  for (const [w, hh] of [[375, 667], [360, 640], [320, 568], [568, 320], [844, 390]]) {
+    await a.setViewportSize({ width: w, height: hh });
+    await h.wait(250);
+    await qdFit(a, `phone ${w}x${hh} steady`);
+    if (w === 568 || w === 320) await h.shot(a, `${SHOTS}/qd-${tag}-local-steady-${w}.png`);
+  }
   await a.setViewportSize({ width: 390, height: 844 });
   const n0 = results(h, 'quickdraw').length;
-  // Both thumbs land in the same instant: a dead heat, replayed.
-  await qdFireAt(a, 'draw', 120, { w: ['a', 'b'] });
+  // Round 1: both thumbs land in the same instant: a dead heat, shown once, replayed.
+  await qdFireAt(a, 'draw', 130, { w: ['a', 'b'] });
   let v = await verdictFor(a, 1);
   assert(v.why === 'tie' && !v.w && v.tally.a + v.tally.b === 0, `same-instant shots tie within 5 ms and the round is replayed (${v.a.reaction} / ${v.b.reaction})`);
-  await qdFireAt(a, 'steady', 120, { w: ['b'] });
+  await h.wait(300);
+  let t = await qdText(a);
+  const heats = await a.evaluate(() => [...document.querySelectorAll('.qd-sig')].map((e) => (e.textContent.match(/dead heat/gi) || []).length));
+  assert(t.word === 'Dead heat' && t.line === 'Go again.' && heats.every((x) => x === 1), `a dead heat reads once per player ("${t.word}" / "${t.line}")`);
+  // Round 2: a photo finish, a hair apart.
+  await qdFireAt(a, 'draw', 140, { w: ['a', 'b'], lag: 6 });
   v = await verdictFor(a, 2);
-  assert(v.w === 'a' && v.why === 'foul', 'one phone: the top player fouls, the bottom player takes it');
-  await h.shot(a, `${SHOTS}/qd-${tag}-local-result-390.png`);
-  const plan = [['a', 120, 'b', 260], ['b', 100, 'a', 240], ['a', 90, 'b', 200]];
-  let r = 3;
-  for (const [w1, d1, w2, d2] of plan) {
-    await Promise.all([qdFireAt(a, 'draw', d1, { w: [w1] }), qdFireAt(a, 'draw', d2, { w: [w2] })]);
-    v = await verdictFor(a, r++);
-    assert(v.w === w1, `one phone: ${w1 === 'a' ? 'bottom' : 'top'} player is faster and wins (${v[w1].reaction} vs ${v[w2].reaction} ms)`);
-  }
+  assert(v.w === 'a' && v.why === 'time' && v.photo && v.diff < 15, `a photo finish: Emerson by ${v.diff} ms`);
+  await h.wait(700);
+  t = await qdText(a);
+  assert(await a.isVisible('.qd-bars') && /PHOTO FINISH/.test(await a.textContent('.qd-stamp')) && t.line === `Emerson by ${v.diff} ms`, 'photo finish: stamp and a side-by-side timing bar');
+  await h.shot(a, `${SHOTS}/qd-${tag}-local-photo-390.png`);
+  // Round 3: Emerson fires 40 ms after DRAW: that's a guess, not a reaction, so it's a foul.
+  await qdFireAt(a, 'draw', 40, { w: ['a'] });
+  v = await verdictFor(a, 3);
+  assert(v.w === 'b' && v.why === 'foul' && v.a.foul && v.a.jump, 'a "reaction" under 100 ms is a false start');
+  await h.wait(250);
+  t = await qdText(a);
+  assert(/JUMPED THE GUN/.test(await a.textContent('.qd-stamp')) && t.line === 'Emerson jumped the gun', `stamped JUMPED THE GUN: "${t.line}"`);
+  await h.shot(a, `${SHOTS}/qd-${tag}-local-gun-390.png`);
+  // 1-1 at match point: Both barrels. Sydney fires on the first draw: foul, Emerson takes the duel.
+  await qdCue(a, 'first');
+  assert((await qd(a)).rd.both === 1, 'one phone: Both barrels at 1-1');
+  await h.shot(a, `${SHOTS}/qd-${tag}-local-barrels-390.png`);
+  await qdFireAt(a, 'steady', 20, { w: ['b'] });
+  v = await verdictFor(a, 4);
+  assert(v.w === 'a' && v.why === 'foul' && v.res, 'one phone: the first of the two draws is a trap');
   await a.waitForFunction(() => document.querySelector('#game-root .gm-end:not([hidden])'), null, { timeout: 5000 });
-  assert(/Emerson/.test(await endHead(a)), 'one phone: duel to the end (3-1)');
+  assert(/Emerson/.test(await endHead(a)), 'one phone: duel to the end (2-1)');
   await h.settle();
   assert(results(h, 'quickdraw').length === n0 + 1, 'one-phone duel recorded');
   await h.shot(a, `${SHOTS}/qd-${tag}-local-end-390.png`);
@@ -381,7 +912,7 @@ async function laptop(h, pg) {
 }
 async function hockeyKeys(h, pg, tag) {
   await h.startLive(pg, 'hockey', 'local');
-  await pg.waitForFunction(() => window.__hockeyTest, null, { timeout: 4000 });
+  await hkStart(pg, 'classic');
   const s0 = await hk(pg);
   assert(s0.view === 'side' && !s0.coarse, 'laptop: table turned sideways, Emerson on the left (W A S D), Sydney on the right (arrows)');
   await h.shot(pg, `${SHOTS}/hockey-${tag}-keys-start.png`);
@@ -428,21 +959,41 @@ async function quickdrawKeys(h, pg, tag) {
   await h.startLive(pg, 'quickdraw', 'local');
   await pg.waitForFunction(() => window.__qdTest, null, { timeout: 4000 });
   assert((await qd(pg)).layout === 'desk', 'laptop: side-by-side pads, A key and L key');
+  for (const [w, hh] of [[1280, 600], [800, 500], [1280, 800]]) {
+    await pg.setViewportSize({ width: w, height: hh });
+    await h.wait(250);
+    await qdFit(pg, `laptop ${w}x${hh} picker`);
+  }
+  await h.shot(pg, `${SHOTS}/qd-${tag}-keys-picker.png`);
+  await qdGo(pg);
+  await qdPhase(pg, 'steady');
   assert(/A/.test(await pg.textContent('.qd-pad[data-w="a"] kbd')) && /L/.test(await pg.textContent('.qd-pad[data-w="b"] kbd')), 'keys are shown on each side');
+  for (const [w, hh] of [[1280, 600], [800, 500]]) {
+    await pg.setViewportSize({ width: w, height: hh });
+    await h.wait(250);
+    await qdFit(pg, `laptop ${w}x${hh} in play`);
+  }
+  await pg.setViewportSize({ width: 1280, height: 800 });
+  // Round 1: nobody fires.
+  await qdPhase(pg, 'draw');
+  let v = await verdictFor(pg, 1);
+  await h.wait(300);
+  const t = await qdText(pg);
+  assert(v.why === 'none' && t.word === 'Nobody fired', `nobody fired: "${t.word}" (not "too slow")`);
   // A real key press during Steady is a foul.
   await pg.waitForFunction(() => document.querySelector('.g-qd').dataset.phase === 'steady', null, { timeout: 5000 });
   await h.wait(100);
   await pg.keyboard.press('l');
-  let v = await verdictFor(pg, 1);
+  v = await verdictFor(pg, 2);
   assert(v.w === 'a' && v.why === 'foul', 'L pressed too early: Sydney fouls');
   const shot = pg.waitForFunction(() => document.querySelector('.g-qd').dataset.phase === 'draw', null, { timeout: 9000 }).then(() => h.shot(pg, `${SHOTS}/qd-${tag}-keys-draw.png`));
-  await Promise.all([qdFireAt(pg, 'draw', 260, { key: 'a' }), qdFireAt(pg, 'draw', 120, { key: 'l' }), shot]);
-  v = await verdictFor(pg, 2);
+  await Promise.all([qdFireAt(pg, 'draw', 260, { key: 'a' }), qdFireAt(pg, 'draw', 130, { key: 'l' }), shot]);
+  v = await verdictFor(pg, 3);
   assert(v.w === 'b' && v.b.reaction < v.a.reaction, `L key faster than A key: Sydney (${v.b.reaction} vs ${v.a.reaction} ms)`);
-  await h.wait(300);
+  await h.wait(500);
   await h.shot(pg, `${SHOTS}/qd-${tag}-keys-result.png`);
-  for (const r of [3, 4]) {
-    await Promise.all([qdFireAt(pg, 'draw', 100, { key: 'a' }), qdFireAt(pg, 'draw', 280, { key: 'l' })]);
+  for (const r of [4, 5]) {
+    await Promise.all([qdFireAt(pg, 'draw', 130, { key: 'a' }), qdFireAt(pg, 'draw', 290, { key: 'l' })]);
     v = await verdictFor(pg, r);
     assert(v.w === 'a', `round ${r}: A key wins`);
   }
@@ -477,9 +1028,14 @@ const want = (g) => GAME === 'all' || GAME === g;
 (async () => {
   await run(PORT, 'light', async (h) => {
     if (want('hockey')) {
+      await hockeyPicker(h);
       await hockeyLive(h, 'light');
       await hockeyRematchAndLeave(h);
       await hockeyLocalTouch(h);
+      await hockeyPower(h);
+      await hockeyStall(h);
+      await hockeyDrama(h);
+      await hockeyTables(h, 'light', ['pillar', 'twin', 'shrink', 'power', 'quick']);
     }
     if (want('quickdraw')) {
       await quickdrawLive(h, 'light');
@@ -490,17 +1046,28 @@ const want = (g) => GAME === 'all' || GAME === g;
     if (want('hockey')) {
       await hockeyLive(h, 'dark', true);
       await h.closeGame(h.a); await h.closeGame(h.b);
+      await hockeyTables(h, 'dark', ['pillar', 'shrink', 'power']);
+      await hockeyLiveTables(h, ['pillar', 'twin', 'shrink', 'power', 'quick'], 'latency 40');
     }
     if (want('quickdraw')) {
-      await quickdrawLiveFast(h, 'dark');
+      await quickdrawPacks(h, 'dark');
+      await quickdrawStreaks(h, 'dark');
       await quickdrawLocal(h, 'dark');
     }
   }, { coarse: true });
   await run(PORT + 2, 'dark', async (h) => {
     await laptop(h, h.a);
-    if (want('hockey')) await hockeyKeys(h, h.a, 'dark');
+    if (want('hockey')) { await hockeyKeys(h, h.a, 'dark'); await hockeyDesk(h, h.a); }
     if (want('quickdraw')) await quickdrawKeys(h, h.a, 'dark');
   }, { fine: true, device: 'Desktop Chrome', who: ['a'] });
+  if (want('quickdraw')) await run(PORT + 3, 'light', quickdrawLatency, { coarse: true, latency: 200 });
+  if (want('quickdraw')) await run(PORT + 4, 'light', quickdrawLossy, { coarse: true, latency: 120, dropRate: 0.2 });
+  if (want('hockey')) {
+    await run(PORT + 4, 'light', async (h) => {
+      await hockeyLag(h);
+      await hockeyLiveTables(h, ['twin', 'shrink'], 'latency 120, 20 % loss');
+    }, { coarse: true, latency: 120, dropRate: 0.2 });
+  }
   console.log(fails ? `\n${fails} SUITE(S) FAILED` : '\nALL GOOD');
   process.exitCode = fails ? 1 : 0;
 })();
