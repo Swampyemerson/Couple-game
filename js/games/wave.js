@@ -83,7 +83,7 @@ registerGame({
     'The clue-giver sees a hidden target on a spectrum, like Cold to Hot.',
     'They type a short clue that lands right there.',
     'The other turns the dial to where the clue belongs and locks it in.',
-    'Bullseye 4, close 3, near 2. Eight rounds, then pick a mode and a deck to keep it fresh.',
+    'Bullseye 4, close 3, near 2. Pick a mode and a deck, then eight rounds to chase.',
   ],
 
   // ── rules (pure, deterministic) ──

@@ -95,6 +95,8 @@ function rulesTests({ core, W, R, C, Rec, V }) {
   assert(R.poolFor('classic').length === 139 && R.poolFor('everything').length === 139 + NEW.length, 'classic is the 139 original cards, everything is all of them');
   assert(NEW.every((c) => Array.isArray(c) && c.length === 2 && c.every((t) => typeof t === 'string' && t.length > 2 && t.length < 40)) && new Set(NEW.map((c) => c.join('|'))).size === NEW.length, 'every new card has two poles and none repeats');
   assert(NEW.every((c) => c[0] !== c[1]) && NEW.every((c) => !/^\s|\s$/.test(c[0] + c[1])), 'poles differ, no stray spaces');
+  const gtxt = (i) => C.NEW_CARDS[i - 139].join(' / ');
+  assert(NEW.length === 79 && gtxt(154) === 'Says “I love you” out loud / Shows it by doing things' && gtxt(170) === 'Double espresso / Gentle herbal tea' && gtxt(174) === 'Never leaves the seat / Up and down all flight' && gtxt(198) === 'Saw it coming / Never saw it coming' && gtxt(207) === 'Rocking-chair hobby / Adventure-trip hobby' && gtxt(211) === 'Peaceful garden project / Noisy garage project', 'the six reworked cards are real spectra at the same indices (79 new cards)');
   const cozy = R.poolFor('cozy');
   assert(C.COZY_OUT.length === 5 && C.COZY_OUT.join() === '64,111,112,120,130' && cozy.length === R.poolFor('everything').length - 5 && C.COZY_OUT.every((i) => !cozy.includes(i)), 'cozy is everything minus the five suggestive cards, listed explicitly');
   for (const id of R.PACK_IDS) {
@@ -220,6 +222,7 @@ function rulesTests({ core, W, R, C, Rec, V }) {
   assert(nm({}, 5) === '1 off the bullseye!' && nm({}, 6) === '2 off the bullseye!' && nm({}, 4) === '' && nm({}, 7) === '', 'near the bullseye: "1 off the bullseye!"');
   assert(nm({}, 11) === 'Just missed 3 points' && nm({}, 10) === '' && nm({}, 18) === 'Just missed 2 points' && nm({}, 17) === '' && nm({}, 30) === '', 'just missed 3 / 2 points');
   assert(nm({ sure: true }, 11) === 'Just missed the 6!', 'a Sure that missed by a hair says so');
+  assert(nm({ sure: true }, 5) === '' && nm({ sure: true }, 10) === '' && nm({ sure: true }, 0) === '', 'no near-miss nudge when Sure already paid its full 6');
 
   // ── records ──
   console.log('# records');
@@ -242,6 +245,9 @@ function rulesTests({ core, W, R, C, Rec, V }) {
   assert(p4.best_bet === m2.score && p4.best_classic === undefined, 'bests are kept per mode');
   // stamps, milestones, history line
   const dataNow = { ...d1, ...p2 };
+  const first = Rec.stampsOf(m1, { ...p1 }, 'match-1', 'classic');
+  assert(!first.stamps.some((x) => x.id === 'best') && !Rec.stampsOf(m1, {}, 'match-1', 'classic').stamps.some((x) => x.id === 'best'), 'NEW BEST needs an earlier best to beat: the very first score gets no stamp');
+  assert(/goes on the Classic board/.test(Rec.historyLine(m1, { ...p1 }, 'match-1', 'classic', m1.score)), 'the first score of a mode says it goes on the board');
   const st = Rec.stampsOf(m2, dataNow, 'match-2', 'classic');
   assert(st.stamps.some((x) => x.id === 'best' && x.sub === `was ${m1.score}`) && st.stamps.some((x) => x.id === 'dead'), 'the strip shows NEW BEST (with the old best) and DEAD CENTRE');
   const mile = Rec.stampsOf(m2, { plays: 10, bulls: 12, lastRec: 'match-2' }, 'match-2', 'classic');
@@ -279,6 +285,16 @@ function rulesTests({ core, W, R, C, Rec, V }) {
     data = { seen };
   }
   assert(true, 'rotation: unseen cards come first (22 cards = 3 deals), then the pool starts over without breaking');
+  // a new lap never opens with the deal you just had (small packs)
+  for (const pack of ['justus', 'future', 'hottakes']) {
+    const P = R.poolFor(pack); let dd = {}; let prev = [];
+    for (let i = 0; i < 12; i++) {
+      const { deal, seen } = Rec.pickDeal(P, dd, Math.random, 7);
+      if (i > 0 && deal.some((x) => prev.includes(x)) && P.length - 7 >= 7) throw new Error(`${pack}: deal ${i + 1} repeats a card from the deal before`);
+      prev = deal; dd = { seen };
+    }
+    assert(true, `rotation: ${pack} never repeats a card from the immediately previous deal (12 deals in a row)`);
+  }
   assert(Rec.parseSeen({ seen: 'a.1z.0' }).join() === '10,71,0' && Rec.encodeSeen([10, 71, 0]) === 'a.1z.0', 'the seen list is base36 joined by dots');
   const big = Rec.encodeSeen(Array.from({ length: 2000 }, (_, i) => 100000 + i));
   assert(big.length <= 3000 && Rec.parseSeen({ seen: big }).length > 100, 'the seen list is capped at 3000 characters, keeping the newest');
@@ -310,6 +326,13 @@ async function dragDial(pg, v, cdp) {
   for (let k = 1; k <= 8; k++) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: a.x + ((b.x - a.x) * k) / 8, y: a.y + ((b.y - a.y) * k) / 8, id: 3 }] });
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await pg.waitForTimeout(60);
+}
+async function reloadInto(h, pg, id) {
+  await pg.reload();
+  await pg.waitForFunction(() => !!document.querySelector('.tabbar'), null, { timeout: 15000 });
+  await pg.waitForTimeout(300);
+  await h.openMatch(pg, id);
+  await pg.waitForTimeout(300);
 }
 const toastText = (pg) => pg.evaluate(() => { const t = [...document.querySelectorAll('.toast')]; return t.length ? t[t.length - 1].textContent : ''; });
 const gd = (h) => h.docs['gamedata/wave'] || {};
@@ -409,6 +432,32 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
     assert(modeNames.join() === 'Classic,Giver’s Bet,Double Down,One Word,Mixed Bag', `five mode cards: ${modeNames}`);
     const packNames = await S1.F.$$eval('.wv-pack', (x) => x.map((e) => e.textContent));
     assert(packNames.join() === 'Classic,Just Us,Everyday,Hot Takes,Future Us,Everything,Cozy', `seven packs: ${packNames}`);
+    // every mode tile and pack chip is on screen and tappable at first view, at the three sizes
+    for (const [w, hh] of [[390, 664], [375, 548], [844, 390]]) {
+      for (const pg of [a, b]) await pg.setViewportSize({ width: w, height: hh });
+      await S1.F.waitForTimeout(350);
+      const r = await S1.F.evaluate(() => {
+        const sc = document.querySelector('.wv-scroll'); const st = document.querySelector('.wv-sticky').getBoundingClientRect();
+        const bad = [];
+        for (const e of document.querySelectorAll('.wv-mode, .wv-pack, .wv-pitch, .wv-packnote, .wv-start')) {
+          const q = e.getBoundingClientRect();
+          const isStart = e.classList.contains('wv-start');
+          if (q.top < 0 || q.bottom > innerHeight + 0.5 || (!isStart && q.bottom > st.top + 0.5)) bad.push(`${e.className.split(' ')[0]} ${e.textContent.trim().slice(0, 14)} [${Math.round(q.top)}..${Math.round(q.bottom)}] sticky ${Math.round(st.top)}`);
+          if (/wv-mode|wv-pack/.test(e.className)) { const hit = document.elementFromPoint(q.left + q.width / 2, q.top + q.height / 2); if (!hit || !e.contains(hit)) bad.push(`${e.textContent.trim()} is covered`); }
+        }
+        return { bad, noScroll: sc.scrollHeight <= sc.clientHeight + 1 };
+      });
+      assert(r.bad.length === 0 && r.noScroll, `setup ${w}x${hh}: all five modes, all seven packs, the notes and Start are visible and tappable without scrolling (${r.bad.join('; ')}${r.noScroll ? '' : ' scrolls'})`);
+      await shot(S1.F, `setup-${w}x${hh}`);
+      assert(await visible(S1.S, '#game-root .wv-h'), `the waiting screen keeps its heading at ${w}x${hh}`);
+    }
+    for (const pg of [a, b]) await pg.setViewportSize({ width: 390, height: 664 });
+    // a reload mid-setup keeps what was picked
+    await S1.F.tap('.wv-mode[data-mode="sure"]'); await S1.F.tap('.wv-pack[data-pack="future"]');
+    await reloadInto(h, S1.F, S1.id);
+    await S1.F.waitForSelector('.wv-start');
+    assert((await S1.F.textContent('.wv-start')).startsWith('Start: Double Down · Future Us'), 'a reload mid-setup keeps the picked mode and pack');
+    await S1.F.tap('.wv-mode[data-mode="classic"]'); await S1.F.tap('.wv-pack[data-pack="everything"]');
     const geo = await S1.F.evaluate(() => [...document.querySelectorAll('.wv-mode, .wv-pack, .wv-start')].map((e) => Math.round(e.getBoundingClientRect().height)));
     assert(geo.every((x) => x >= 44), `setup tap targets are at least 44 px (${Math.min(...geo)})`);
     assert((await inView(S1.F, ['.wv-start'])).bad.length === 0, 'the Start button is on screen at 390x664 without scrolling');
@@ -536,6 +585,15 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
     // 5: the zone numbers are drawn above the needle
     const order = await GS.evaluate(() => { const svg = document.querySelector('.wv-svg'); const kids = [...svg.children]; return [kids.findIndex((k) => k.querySelector && k.querySelector('.wv-needle')), kids.findIndex((k) => k.classList && k.classList.contains('wv-zlabels'))]; });
     assert(order[0] >= 0 && order[1] > order[0], 'the 4 / 3 / 2 labels sit above the needle, so a bullseye never hides its 4');
+    // a reload on a reveal this phone has already shown does not replay it: Next is ready at once
+    await reloadInto(h, GS, D.id);
+    await GS.waitForSelector('.wv-result:not(.hide)', { timeout: 3000 });
+    assert(!(await GS.$eval('.wv-go', (x) => x.disabled)), 'a reload on a reveal that was already shown comes back with the stamp down and Next ready (no replay)');
+    await GS.tap('.wv-go');
+    await GS.waitForSelector('.wv-input');
+    await reloadInto(h, GS, D.id);
+    await GS.waitForSelector('.wv-input', { timeout: 4000 });
+    assert(!(await GS.$('.wv-result')), 'a reload after moving past a reveal goes to the clue screen, not back to the reveal');
     await h.closeGame(a); await h.closeGame(b);
 
     // ════════ layouts ════════
@@ -605,11 +663,20 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
       const last = r === 7;
       const m = await round(M.id, r, { off: OFFS[r], sure, bet, keep: last });
       if (last) {
+        // Déjà vu is announced to both players on the last round, at every size, whatever the twist
+        for (const [w, hh] of [[390, 664], [375, 548], [844, 390]]) {
+          for (const pg of [a, b]) await pg.setViewportSize({ width: w, height: hh });
+          await m.GS.waitForTimeout(350);
+          const g = await inView(m.GS, ['.wv-dvb', '.wv-go', '.wv-dial']); const v = await inView(m.GV, ['.wv-dvb', '.wv-dial']);
+          assert(g.bad.length === 0 && v.bad.length === 0 && /Déjà vu/.test(await m.GS.textContent('.wv-dvb')) && /Déjà vu/.test(await m.GV.textContent('.wv-dvb')), `round 8 at ${w}x${hh} (${eM.state.rounds[7].tw}): both players see the Déjà vu strip, with the dial and Lock still in view (${g.bad}${v.bad})`);
+        }
+        for (const pg of [a, b]) await pg.setViewportSize({ width: 390, height: 664 });
+        await m.GS.waitForTimeout(250);
         // 2: the final reveal is seen before the end card
         await m.GS.tap('.wv-go');
         await m.GS.waitForSelector('.wv-result:not(.hide)', { timeout: 6000 });
         assert(await visible(m.GS, '.wv-go') && /see how you did/i.test(await m.GS.textContent('.wv-go')) && !(await visible(a, '#game-root .gm-end')) && !(await visible(b, '#game-root .gm-end')), 'the final reveal shows its stamp first; the end card has not cut in');
-        assert(/Déjà vu/i.test(await m.GV.textContent('.wv-tw')) || eM.state.rounds[7].tw !== 'normal', 'the last round announces Déjà vu');
+        assert(/Déjà vu/i.test(await m.GV.textContent('.wv-dvb')), 'the final reveal still carries the Déjà vu strip');
         await m.GS.waitForTimeout(1200);
         assert(!(await visible(m.GS, '#game-root .gm-end')), '1.2 s after the stamp the end card still waits for the reveal');
         await m.GS.tap('.wv-go');
@@ -623,7 +690,7 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
     await h.settle();
     assert(eM.over && eM.result.max === L.R.maxOf(eM.state), `the match is over: ${eM.result.score} of ${eM.result.max}`);
     const dga = gd(h);
-    assert(dga.lastRec === M.id && dga.plays === 1 && dga.best_mixed === eM.state.score && dga.lastNewBest === M.id, 'records: one match counted, best_mixed set, flagged NEW BEST');
+    assert(dga.lastRec === M.id && dga.plays === 1 && dga.best_mixed === eM.state.score, 'records: one match counted, best_mixed set');
     assert(dga.a_givePts + dga.b_givePts === eM.state.score && dga.bulls === eM.state.rounds.filter((x) => Math.abs(x.at - x.target) <= 4).length, 'records: give points add up to the score, bullseyes counted');
     const lastMover = other(eM.state.rounds[7].giver);
     // the engine may re-send a device's own keys when a stale snapshot lands (a harmless self-heal), so
@@ -640,7 +707,7 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
     const medal = await b.$$eval('.wv-medal b', (x) => x.map((e) => e.textContent));
     assert(medal.every((t) => ['Fortune Teller', 'Edge Walker', 'Economist', 'Clue Poet', 'Dial Whisperer', 'Dead heat', 'Wave Rider'].includes(t)), `badges: ${medal}`);
     assert(await b.$$eval('.wv-row .wv-mini .tick', (x) => x.length) === 8, 'every recap row marks the exact target tick');
-    assert(/NEW BEST/.test(await b.textContent('.wv-stamps')) && /Your first match together/.test(await b.textContent('.wv-recs')), 'the records strip: NEW BEST stamp and the history line');
+    assert(!/NEW BEST/.test(await b.textContent('.wv-recwrap')) && /Your first match together/.test(await b.textContent('.wv-recs')) && /goes on the Mixed Bag board/.test(await b.textContent('.wv-recs')), 'the records strip of a first-ever score: no NEW BEST stamp (nothing to beat), the history line instead');
     assert(/^\d+\/\d+$/.test((await b.textContent('.wv-plaque b')).trim()) && (await b.textContent('.wv-plaque b')).includes(`/${eM.result.max}`), 'the plaque shows the score out of this match’s maximum');
     await shot(b, 'recap');
     // rematch brings the setup back with the last choice preselected: "Same again"
@@ -742,6 +809,7 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
     const fe = await h.engine(a, idF);
     assert(fe.over && fe.state.v === undefined && (await a.textContent('.wv-plaque b')).replace(/\s/g, '').endsWith('/32') && await a.$$eval('.wv-meter i', (x) => x.length) === 32, `a finished v1 match recaps as ${fe.result.score}/32, like before`);
     assert(await a.$$eval('.wv-medal', (x) => x.length) === 2 && await a.$$eval('.wv-row .tick', (x) => x.length) === 8, 'the v1 recap also has badges and target ticks');
+    assert(!(await a.$('.wv-stamps')) && (await a.textContent('.wv-recwrap')).trim() === '' && !/match together|NEW BEST|BULLSEYES/.test(await a.textContent('.wv-recwrap')), 'an old finished match shows no stamps, history line or streak (they would be made up)');
     await h.settle();
     assert(gd(h).plays === playsBefore, 'opening a match that finished earlier writes no records');
     await h.closeGame(a);

@@ -112,8 +112,8 @@ export function stampsOf(s, data, matchId, mode) {
   const t = tally(s, data, matchId);
   const out = [];
   const bk = `best_${mode}`;
-  if (data.lastNewBest === matchId) out.push({ id: 'best', text: 'NEW BEST', sub: data.lastOldBest > 0 ? `was ${data.lastOldBest}` : 'first score on the board' });
-  else if (typeof data[bk] !== 'number' && s.score >= 0 && !t.done) out.push({ id: 'best', text: 'NEW BEST', sub: 'first score on the board' });
+  // NEW BEST only means something when there was an earlier best to beat
+  if (data.lastNewBest === matchId && data.lastOldBest > 0) out.push({ id: 'best', text: 'NEW BEST', sub: `was ${data.lastOldBest}` });
   for (const m of crossed(t.bulls, t.matchBulls)) out.push({ id: 'bulls', text: `${m} BULLSEYES`, sub: 'together, all time' });
   for (const m of crossed(t.plays, 1)) out.push({ id: 'plays', text: `${m} MATCHES`, sub: 'together' });
   const { rows } = statsOf(s);
@@ -180,8 +180,10 @@ export function pickDeal(pool, data, rnd, len) {
     // pool exhausted: the stragglers first, then a fresh lap
     const poolSet = new Set(pool);
     keep = seen.filter((i) => !poolSet.has(i));
-    const lap = shuf(pool.filter((i) => !fresh.includes(i)));
-    deal = [...shuf(fresh), ...lap].slice(0, len);
+    // ...but never open the new lap with the cards of the deal you just had, when there are others to use
+    const lastDeal = new Set(seen.slice(-len));
+    const lap = pool.filter((i) => !fresh.includes(i));
+    deal = [...shuf(fresh), ...shuf(lap.filter((i) => !lastDeal.has(i))), ...shuf(lap.filter((i) => lastDeal.has(i)))].slice(0, len);
   }
   return { deal, seen: encodeSeen([...keep, ...deal]) };
 }

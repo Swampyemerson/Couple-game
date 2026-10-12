@@ -17,6 +17,8 @@ export const CSS = `
     .g-wave .wv-tw { flex: 1 1 auto; min-width: 0; text-align: center; }
     .g-wave .wv-tw span { display: inline-block; max-width: 100%; padding: 3px 10px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-hl); color: var(--g-on-ink); font-weight: 900; font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
     .g-wave .wv-tw span.dv { background: var(--g-ink); color: var(--g-bg); }
+    .g-wave .wv-dvb { display: flex; align-items: center; justify-content: center; gap: 6px; font-weight: 800; font-size: 0.76rem; color: var(--g-muted); }
+    .g-wave .wv-dvb span { padding: 1px 9px; border-radius: 999px; background: var(--g-ink); color: var(--g-bg); font-weight: 900; font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase; }
     .g-wave .wv-rule { margin: 0; max-width: 34em; text-align: center; color: var(--g-muted); font-weight: 800; font-size: 0.8rem; line-height: 1.3; }
     .g-wave .wv-rule b { color: var(--g-ink); font-weight: 900; }
     .g-wave .wv-h { font-family: var(--g-font-display); font-weight: 900; font-size: 1.25rem; line-height: 1.15; margin: 0; text-align: center; }
@@ -120,16 +122,14 @@ export const CSS = `
 
     /* setup */
     .g-wave .wv-scr.flow { gap: 10px; padding-bottom: 0; }
-    .g-wave .wv-modes { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-    .g-wave .wv-mode { min-height: 78px; padding: 8px 10px; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; border: 2px solid var(--g-ink); border-radius: 12px; background: var(--g-card); color: var(--g-ink); font: inherit; touch-action: manipulation; box-shadow: var(--g-shadow-sm); }
-    .g-wave .wv-mode:last-child { grid-column: 1 / -1; }
-    .g-wave .wv-mode b { font-family: var(--g-font-display); font-weight: 900; font-size: 0.95rem; line-height: 1.15; }
-    .g-wave .wv-mode span { font-weight: 700; font-size: 0.76rem; line-height: 1.25; color: var(--g-muted); }
+    .g-wave .wv-modes { width: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+    .g-wave .wv-mode { min-height: 48px; padding: 4px 6px; display: flex; align-items: center; justify-content: center; text-align: center; border: 2px solid var(--g-ink); border-radius: 12px; background: var(--g-card); color: var(--g-ink); font: inherit; touch-action: manipulation; box-shadow: var(--g-shadow-sm); }
+    .g-wave .wv-mode b { font-family: var(--g-font-display); font-weight: 900; font-size: 0.86rem; line-height: 1.12; }
     .g-wave .wv-mode[aria-checked="true"] { background: var(--g-hl); color: var(--g-on-ink); transform: translate(2px, 2px); box-shadow: none; }
-    .g-wave .wv-mode[aria-checked="true"] span { color: var(--g-on-ink); }
+    .g-wave .wv-pitch { width: 100%; min-height: 2.6em; margin: 0; text-align: center; font-weight: 800; font-size: 0.84rem; line-height: 1.3; }
     .g-wave .wv-lab { align-self: flex-start; margin: 2px 0 -4px; font-weight: 900; font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--g-muted); }
     .g-wave .wv-packs { width: 100%; display: flex; flex-wrap: wrap; gap: 6px; }
-    .g-wave .wv-pack { min-height: 44px; padding: 0 14px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); font: inherit; font-weight: 800; font-size: 0.88rem; touch-action: manipulation; }
+    .g-wave .wv-pack { min-height: 44px; padding: 0 12px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); font: inherit; font-weight: 800; font-size: 0.88rem; touch-action: manipulation; }
     .g-wave .wv-pack[aria-checked="true"] { background: var(--g-ink); color: var(--g-bg); }
     .g-wave .wv-sticky { position: sticky; bottom: 0; z-index: 3; width: 100%; margin-top: auto; padding: 6px 0 10px; background: var(--g-bg); }
     .g-wave .wv-start { width: 100%; min-height: 54px; font-size: 1rem; }
@@ -198,6 +198,13 @@ export const CSS = `
       .g-wave .wv-result-txt > b { font-size: 1rem; }
       .g-wave .wv-actions .gm-btn, .g-wave .wv-go { min-height: 48px; }
       .g-wave .wv-main { min-height: 120px; }
+      .g-wave .wv-scr.flow { gap: 6px; }
+      .g-wave .wv-seth, .g-wave .wv-lab { display: none; }
+      .g-wave .wv-mode { min-height: 44px; }
+      .g-wave .wv-sticky { padding: 4px 0 6px; }
+      .g-wave .wv-start { min-height: 48px; }
+      .g-wave .wv-pitch { font-size: 0.8rem; }
+      .g-wave .wv-packnote { font-size: 0.78rem; margin-top: -2px; }
     }
     /* wide and short (landscape): the dial on the left, everything else on the right */
     @media (orientation: landscape) and (min-width: 600px) {
@@ -222,9 +229,14 @@ export const CSS = `
       .g-wave .wv-input { height: 46px; }
       .g-wave .wv-clue { margin-bottom: 6px; }
       .g-wave .wv-modes { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
-      .g-wave .wv-mode { min-height: 96px; padding: 6px 8px; }
-      .g-wave .wv-mode:last-child { grid-column: auto; }
-      .g-wave .wv-scr.flow > .wv-h { display: none; }
+      .g-wave .wv-scr.flow > .wv-seth, .g-wave .wv-lab { display: none; }
+      .g-wave .wv-scr.flow { gap: 6px; max-width: 860px; }
+      .g-wave .wv-mode { min-height: 44px; }
+      .g-wave .wv-packs { gap: 4px; }
+      .g-wave .wv-pack { padding: 0 8px; font-size: 0.8rem; }
+      .g-wave .wv-pitch { min-height: 0; }
+      .g-wave .wv-sticky { padding: 4px 0 6px; }
+      .g-wave .wv-start { min-height: 46px; }
     }
 
     @keyframes wv-pop { 0% { transform: scale(0.7); opacity: 0; } 70% { transform: scale(1.06); opacity: 1; } 100% { transform: scale(1); } }

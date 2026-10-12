@@ -43,6 +43,7 @@ const labelFor = (Rd, d) => (Rd.sure && d > 10 ? 'Sure? Not this time' : d <= 4 
 
 // A miss that stung: nudge, never scold. d is how far off the guess was.
 export function nearMiss(Rd, d) {
+  if (Rd.sure && d <= 10) return ''; // Sure already paid its full 6
   if (Rd.sure && d >= 11 && d <= 12) return 'Just missed the 6!';
   if (d >= 5 && d <= 6) return `${d - 4} off the bullseye!`;
   if (d >= 11 && d <= 12) return 'Just missed 3 points';
@@ -58,7 +59,7 @@ export function createWaveView(el, api, env) {
   const plain = (t) => t.replace(/\{a\}/g, api.name('a')).replace(/\{b\}/g, api.name('b'));
   const label = (t) => esc(plain(t));
   const cardTxt = (i) => { const c = cardOf(env.CARDS, i); return `${plain(c[0])} ↔ ${plain(c[1])}`; };
-  const vs = { ack: {}, wasOver: null, toRecap: 0, recorded: false, recapAnimated: false, busy: false };
+  const vs = { ack: {}, fresh: false, wasOver: null, toRecap: 0, recorded: false, recapAnimated: false, busy: false };
   let ctx = null;
   let scr = null;
   const rafs = new Set();
@@ -73,6 +74,12 @@ export function createWaveView(el, api, env) {
   const DRAFT = 'ju.wave.draft.';
   const draftGet = (k) => { try { const v = JSON.parse(localStorage.getItem(DRAFT + ctx.matchId) || 'null'); return v && v.k === k ? v : null; } catch { return null; } };
   const draftPut = (k, data) => { try { if (data == null) localStorage.removeItem(DRAFT + ctx.matchId); else localStorage.setItem(DRAFT + ctx.matchId, JSON.stringify({ k, ...data })); } catch { /* storage off */ } };
+
+  // Which reveals this device has already seen (and moved past): a reload must not replay them with Next locked.
+  const MEMO = 'ju.wave.memo.';
+  const memoGet = () => { try { const v = JSON.parse(localStorage.getItem(MEMO + ctx.matchId) || 'null'); return v && typeof v === 'object' ? v : {}; } catch { return {}; } };
+  const memoPut = (patch) => { try { localStorage.setItem(MEMO + ctx.matchId, JSON.stringify({ ...memoGet(), ...patch })); } catch { /* storage off */ } };
+  const acked = (i) => !!vs.ack[i] || (Number.isInteger(memoGet().ack) && memoGet().ack >= i);
 
   // Keep the focused clue box above the on-screen keyboard: scroll our own scroller, padded by
   // the keyboard's height when only the visual viewport shrinks (iOS).
@@ -114,13 +121,14 @@ export function createWaveView(el, api, env) {
   const twistChip = (s, Rd) => {
     const tw = twOf(s, Rd);
     if (tw !== 'normal') return `<span>${esc(TWIST_INFO[tw].name)}</span>`;
-    if (Rd.dv) return '<span class="dv">Déjà vu</span>';
     return '';
   };
   const top = (s, ri = s.r, shown = null) => {
     const i = Math.min(ri, nR(s) - 1);
     const Rd = s.rounds[i];
-    return `<div class="wv-top"><span class="wv-round">Round ${i + 1}<i>/${nR(s)}</i></span><span class="wv-tw">${twistChip(s, Rd)}</span><span class="wv-team">Team <b>${shown == null ? scoreBefore(s, ri) : shown}</b></span></div>`;
+    // Déjà vu always has a strip of its own, whatever the twist and the screen size
+    const dv = Rd.dv ? '<div class="wv-dvb"><span>Déjà vu</span> this card again</div>' : '';
+    return `<div class="wv-top"><span class="wv-round">Round ${i + 1}<i>/${nR(s)}</i></span><span class="wv-tw">${twistChip(s, Rd)}</span><span class="wv-team">Team <b>${shown == null ? scoreBefore(s, ri) : shown}</b></span></div>${dv}`;
   };
   const ruleLine = (s, Rd) => {
     const parts = [];
@@ -128,7 +136,7 @@ export function createWaveView(el, api, env) {
     if (tw !== 'normal' && TWIST_INFO[tw].rule) parts.push(`<b>${esc(TWIST_INFO[tw].name)}.</b> ${esc(TWIST_INFO[tw].rule)}`);
     if (Rd.dv) {
       const R0 = s.rounds[0];
-      parts.push(`<b>Déjà vu.</b> This card again${R0.clue ? `, first seen with “${esc(R0.clue)}”` : ''}. New target.`);
+      parts.push(`Round 1 had “${esc(R0.clue || '')}” on this card. New target.`);
     }
     return parts.length ? `<p class="wv-rule">${parts.join(' ')}</p>` : '';
   };
@@ -223,14 +231,19 @@ export function createWaveView(el, api, env) {
   // ── setup (the first player picks the game) ──
   function setupScreen(node) {
     const d0 = dataOf();
-    const remembered = MODE_IDS.includes(d0.lastMode) && PACK_IDS.includes(d0.lastPack);
+    const slot = `${ctx.viewer}|setup`;
+    const saved = draftGet(slot);
+    let remembered = MODE_IDS.includes(d0.lastMode) && PACK_IDS.includes(d0.lastPack);
     let mode = MODE_IDS.includes(d0.lastMode) ? d0.lastMode : 'classic';
     let pack = PACK_IDS.includes(d0.lastPack) ? d0.lastPack : 'everything';
     let changed = false;
+    // a reload mid-setup keeps what was picked
+    if (saved && MODE_IDS.includes(saved.mode) && PACK_IDS.includes(saved.pack)) { mode = saved.mode; pack = saved.pack; changed = !!saved.changed; }
     const modeName = () => MODES.find((m) => m.id === mode).name;
     const packName = () => PACKS.find((p) => p.id === pack).name;
-    node.innerHTML = `<h2 class="wv-h">How shall we play?</h2>
-      <div class="wv-modes" role="radiogroup" aria-label="Game mode">${MODES.map((m) => `<button class="wv-mode" type="button" role="radio" data-mode="${m.id}"><b>${esc(m.name)}</b><span>${esc(m.pitch)}</span></button>`).join('')}</div>
+    node.innerHTML = `<h2 class="wv-h wv-seth">How shall we play?</h2>
+      <div class="wv-modes" role="radiogroup" aria-label="Game mode">${MODES.map((m) => `<button class="wv-mode" type="button" role="radio" data-mode="${m.id}"><b>${esc(m.name)}</b></button>`).join('')}</div>
+      <p class="wv-pitch" aria-live="polite"></p>
       <p class="wv-lab">Cards</p>
       <div class="wv-packs" role="radiogroup" aria-label="Card pack">${PACKS.map((p) => `<button class="wv-pack" type="button" role="radio" data-pack="${p.id}">${esc(p.name)}</button>`).join('')}</div>
       <p class="wv-note wv-packnote"></p>
@@ -239,18 +252,20 @@ export function createWaveView(el, api, env) {
     const paint = () => {
       node.querySelectorAll('.wv-mode').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.mode === mode)));
       node.querySelectorAll('.wv-pack').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.pack === pack)));
+      node.querySelector('.wv-pitch').textContent = MODES.find((m) => m.id === mode).pitch;
       const p = PACKS.find((x) => x.id === pack);
       node.querySelector('.wv-packnote').textContent = `${p.pitch} · ${poolFor(pack).length} cards`;
       start.textContent = `${remembered && !changed ? 'Same again' : 'Start'}: ${modeName()} · ${packName()}`;
     };
-    node.querySelector('.wv-modes').addEventListener('click', (e) => { const b = e.target.closest('.wv-mode'); if (!b) return; mode = b.dataset.mode; changed = true; api.sfx('tap'); paint(); });
-    node.querySelector('.wv-packs').addEventListener('click', (e) => { const b = e.target.closest('.wv-pack'); if (!b) return; pack = b.dataset.pack; changed = true; api.sfx('tap'); paint(); });
+    const remember = () => draftPut(slot, { mode, pack, changed });
+    node.querySelector('.wv-modes').addEventListener('click', (e) => { const b = e.target.closest('.wv-mode'); if (!b) return; mode = b.dataset.mode; changed = true; api.sfx('tap'); paint(); remember(); });
+    node.querySelector('.wv-packs').addEventListener('click', (e) => { const b = e.target.closest('.wv-pack'); if (!b) return; pack = b.dataset.pack; changed = true; api.sfx('tap'); paint(); remember(); });
     start.addEventListener('click', () => {
       if (!ctx.canMove || vs.busy) return;
       vs.busy = true; start.disabled = true;
       const { deal, seen } = pickDeal(poolFor(pack), dataOf(), Math.random, DEAL_LEN);
       const res = api.move({ setup: { v: 2, mode, pack, deal } });
-      if (res.ok) { putData({ lastMode: mode, lastPack: pack, seen }); api.sfx('pop'); api.haptic(12); } else { api.toast(res.error); api.sfx('bad'); vs.busy = false; start.disabled = false; }
+      if (res.ok) { draftPut(slot, null); putData({ lastMode: mode, lastPack: pack, seen }); api.sfx('pop'); api.haptic(12); } else { api.toast(res.error); api.sfx('bad'); vs.busy = false; start.disabled = false; }
     });
     paint();
     return { refresh() { start.disabled = !ctx.canMove || vs.busy; } };
@@ -454,26 +469,30 @@ export function createWaveView(el, api, env) {
     const team = node.querySelector('.wv-team');
     const goBtn = node.querySelector('.wv-go');
     let dead = false;
+    const memo = memoGet();
+    const replay = Number.isInteger(memo.rv) && memo.rv >= ri; // already shown on this device (a reload): no show, Next is ready
     const showResult = () => {
       if (dead) return;
+      memoPut({ rv: Math.max(ri, Number.isInteger(memo.rv) ? memo.rv : -1) });
       if (goBtn) goBtn.disabled = false; // the next round waits for the stamp, so a double tap on Lock can't skip it
       res.classList.remove('hide');
       if (!reduced()) res.classList.add('anim');
       if (Rd.jp && Rd.points) D.box.querySelector('.wv-needle').classList.add('jp');
-      api.sfx(Rd.jp && Rd.points ? 'win' : Rd.points >= 3 ? 'good' : Rd.points ? 'pop' : 'bad');
-      api.haptic(Rd.points ? 25 : 60);
+      if (!replay) { api.sfx(Rd.jp && Rd.points ? 'win' : Rd.points >= 3 ? 'good' : Rd.points ? 'pop' : 'bad'); api.haptic(Rd.points ? 25 : 60); }
       team.querySelector('b').textContent = String(before + Rd.points);
       if (Rd.points && !reduced()) team.classList.add('bump');
       if (final && !vs.toRecap) vs.toRecap = setTimeout(finish, 3500);
     };
-    D.setZone(0);
-    D.setLid(0);
-    api.sfx('flip');
-    animate(650, (k) => D.setLid(-180 * easeInOut(k)), () => {
-      D.setLid(-180);
-      animate(520, (k) => D.setZone(easeOutBack(k)), () => { D.setZone(1); showResult(); });
-    });
-    if (goBtn) goBtn.addEventListener('click', () => { api.sfx('tap'); if (final) finish(); else { vs.ack[ri] = true; render(); } });
+    if (replay) { D.setLid(-180); D.setZone(1); showResult(); } else {
+      D.setZone(0);
+      D.setLid(0);
+      api.sfx('flip');
+      animate(650, (k) => D.setLid(-180 * easeInOut(k)), () => {
+        D.setLid(-180);
+        animate(520, (k) => D.setZone(easeOutBack(k)), () => { D.setZone(1); showResult(); });
+      });
+    }
+    if (goBtn) goBtn.addEventListener('click', () => { api.sfx('tap'); if (final) finish(); else { vs.ack[ri] = true; memoPut({ ack: ri }); render(); } });
     return { destroy() { dead = true; } };
   }
 
@@ -514,6 +533,9 @@ export function createWaveView(el, api, env) {
     const data = dataOf();
     const mode = isV2(s) ? s.mode : 'classic';
     const names = { a: api.name('a'), b: api.name('b') };
+    // Stamps, history and streaks belong to the match that was just played (or the one recorded last). Any other
+    // finished match opened later gets none of them: the numbers would be made up.
+    if (!vs.fresh && data.lastRec !== c.matchId) return '';
     const st = stampsOf(s, data, c.matchId, mode);
     const lines = [];
     lines.push(`<p><b>${esc(historyLine(s, data, c.matchId, mode, s.score))}</b></p>`);
@@ -596,7 +618,7 @@ export function createWaveView(el, api, env) {
     if (s.phase === 'clue') {
       vs.busy = false;
       if (v === Rd.giver) {
-        if (prev && !vs.ack[s.r - 1]) setScreen(`reveal:${s.r - 1}`, (n) => revealScreen(n, s.r - 1, { next: true }));
+        if (prev && !acked(s.r - 1)) setScreen(`reveal:${s.r - 1}`, (n) => revealScreen(n, s.r - 1, { next: true }));
         else setScreen(`clue:${s.r}`, clueScreen);
       } else if (prev) setScreen(`reveal:${s.r - 1}`, (n) => revealScreen(n, s.r - 1, { waiting: true }));
       else setScreen(`wclue:${s.r}`, waitClueScreen);
@@ -612,6 +634,7 @@ export function createWaveView(el, api, env) {
   return {
     update(c) {
       const was = vs.wasOver;
+      if (c.over && was === false) vs.fresh = true; // finished while this screen was open
       ctx = c;
       render();
       if (c.over && was === false) writeRecords(c);
