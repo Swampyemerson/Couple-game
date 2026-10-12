@@ -2,10 +2,10 @@
 // the fixed-step loop, pause / resume protocol, partner re-mounts, finale, HUD, test hook.
 import {
   DT, LANE_W, SLIDE_TIME, STUMBLE_T, START_DELAY, RESUME_DELAY, RACE_LEN, BRAWL_CAP, MT_LEAD, CHUNK,
-  HEARTS, TEAM_HEARTS_MAX, HIT_STOP, FINALE_MS, REVIVE_WINDOW, TRACK_V, DOUBLE_T, baseSpeed,
+  HEARTS, TEAM_HEARTS_MAX, BARREL_LEAD, HIT_STOP, FINALE_MS, REVIVE_WINDOW, TRACK_V, DOUBLE_T, baseSpeed,
 } from './tune.js';
 import { hash } from '../core.js';
-import { createTrack, trackHash, difficulty, O_MTRAIN, TUT_JUMP, TUT_ROLL } from './track.js';
+import { createTrack, trackHash, difficulty, O_MTRAIN, O_BARREL, TUT_JUMP, TUT_ROLL } from './track.js';
 import {
   newRunner, step, act, createBot, botRun, crash, C_FORCED, C_FALL, C_SLAM, A_LEFT, A_RIGHT, A_UP, A_DOWN,
   E_JUMP, E_LAND, E_ROLL, E_LANE, E_COIN, E_PICK, E_STUMBLE, E_CRASH, E_RESPAWN, E_SHIELD,
@@ -175,7 +175,7 @@ export function createGame(el, api) {
       rs: { x: (w === 'a' ? -1 : 1) * LANE_W, y: 0, z: 0, ground: 0, speed: 0, air: false, vy: 0, roll: false, rollT: 0, stumble: 0, down: false, downT: 0, win: false, idle: true, invuln: false, shield: false, t: 0, visible: true, laneX: (w === 'a' ? -1 : 1) * LANE_W, bump: 0, boost: false },
       prev: { z: 0, x: 0, y: 0 }, net: emptyState(), weapon: null, weaponRoll: 0, shoveCD: 0, revive: null, downId: 0, downAt: 0, pushOff: 0,
       stats: { shoves: 0, slams: 0, inks: 0, hits: 0, revives: 0, dodges: 0 }, fly, hist: new Float64Array(HN * 7), histN: 0, histHead: 0,
-      lastHorn: -1, outT: -1, lastGround: false, tut: 0, css: `var(--p-${w})`, hk: { gap: null, ban: 0 },
+      lastHorn: -1, lastRumble: -1, outT: -1, lastGround: false, tut: 0, css: `var(--p-${w})`, hk: { gap: null, ban: 0 },
       // the partner's last in-match state, kept so a reloaded host can be handed its run back
       snap: { ok: 0, ep: 0, z: 0, l: 0, h: 0, c: 0, rt: 0, fn: -1, th: 0, tg: 0, o: 0 },
     };
@@ -340,6 +340,7 @@ export function createGame(el, api) {
     if (overlay) overlay.resize(vw, H);
     root.classList.toggle('rr-short', H < 560 && W > H);
     root.classList.toggle('rr-narrow', vw < 370);
+    root.classList.toggle('rr-tiny', vw < 340);
   }
 
   function onLost(e) { e.preventDefault(); glLost = true; M.reasons.add('gl'); }
@@ -410,7 +411,7 @@ export function createGame(el, api) {
     M.startedWall = 0; M.firstRunWall = 0; M.partnerFin = -1; M.partnerOut = -1; M.rejoin = null; M.goneAt = 0;
     for (const w of AB) {
       const p = players[w];
-      p.outT = -1; p.lastHorn = -1; p.histN = 0; p.weapon = null; p.tut = 0; p.hk.gap = null; p.hk.ban = 0;
+      p.outT = -1; p.lastHorn = -1; p.lastRumble = -1; p.histN = 0; p.weapon = null; p.tut = 0; p.hk.gap = null; p.hk.ban = 0;
       for (const f of p.fly) f.on = false;
       if (p.local) {
         p.r = newRunner(w === 'a' ? -1 : 1);
@@ -1272,19 +1273,27 @@ export function createGame(el, api) {
       v.clutch(rival.low(w));
       v.neck(rival.neck(w));
       // oncoming train warning + horn
-      let warn = false; let warnLane = 0;
+      let warn = false; let warnLane = 0; let trainWarn = false; let bl = 0; let bn = 0;
       const ci = Math.floor(r.z / CHUNK);
       for (let c = ci; c <= ci + 1; c++) {
         const obs = M.track.chunk(c).obs;
         for (let oi = 0; oi < obs.length; oi++) {
           const o = obs[oi];
+          if (o.t === O_BARREL) { // a rolling barrel (track v2): "!" over its lane + a low rumble, once per barrel
+            if (r.z >= o.zm - BARREL_LEAD && r.z < o.zm - 6) {
+              warn = true; bl += o.lane; bn++;
+              if (p.lastRumble !== o.id) { p.lastRumble = o.id; audio.play('rumble'); }
+            }
+            continue;
+          }
           if (o.t !== O_MTRAIN) continue;
           if (r.z >= o.zm - MT_LEAD && r.z < o.zm + 1) {
-            warn = true; warnLane = o.lane;
+            warn = true; trainWarn = true; warnLane = o.lane;
             if (p.lastHorn !== o.id) { p.lastHorn = o.id; audio.play('horn'); }
           }
         }
       }
+      if (bn && !trainWarn) warnLane = bl / bn; // (a train's lane wins when both are close)
       v.warn(warn && M.phase === 'run', warnLane * (X.mirror ? -230 : 230));
       // tandem banners
       if (M.mode === 'tandem' && M.phase === 'run') {
@@ -1565,7 +1574,7 @@ export function createGame(el, api) {
       teamHearts(n) { M.th = n; },
       mode(m) { if (isHost && M.phase === 'lobby') { M.lobbyMode = m; } },
       start() { hostStart(); },
-      trackHash: (seed, n) => trackHash(seed, n),
+      trackHash: (seed, n, ver) => trackHash(seed, n, ver || 1),
       dailySeed: (d) => dailySeed(d),
       matchInfo: () => ({ day: M.day, trackV: M.trackV, epoch: M.epoch, mod: X.mod }),
       extras: () => X.debug(),
@@ -1605,7 +1614,7 @@ export function createGame(el, api) {
         while (rc.z < 1200 && n < 120 * 90) { if (n % bot.every === 0) { const a = bot.decide(rc); if (a) act(rc, a); } step(rc, tr, false); rc.evN = 0; n++; if (rc.down) break; }
         return { late, none, early, combo: { max: rc.maxCombo, bonus: rc.bonus, coins: rc.coins, closeCalls: rc.closeCalls } };
       },
-      botRun: (seed, n) => botRun(seed, n),
+      botRun: (seed, n, o) => botRun(seed, n, o),
       inputStats: () => (input ? input.stats : null),
       get canvas() { return renderer ? renderer.domElement : null; },
       instances: () => liveGames,

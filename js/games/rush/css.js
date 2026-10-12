@@ -28,8 +28,14 @@ export const CSS = `
 .g-rush .rr-hud[data-side="full"] .rr-top, .g-rush .rr-hud[data-side="r"] .rr-top { padding-right: 58px; }
 .g-rush.rr-in-lobby .rr-hud, .g-rush.rr-in-lobby .rr-divider { display: none; }
 .g-rush.rr-split .rr-divider { position: absolute; z-index: 3; top: 0; bottom: 0; left: calc(50% - 2px); width: 4px; background: var(--g-ink); pointer-events: none; }
-.g-rush .rr-top { display: grid; grid-template-columns: 1fr auto 1fr; align-items: start; gap: 6px; }
-.g-rush .rr-left { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+/* hearts | distance | partner on the top row; the coins + power-up row spans the full width under them, so
+   five team hearts or three rings never push the distance out from under the menu sticker */
+.g-rush .rr-top { display: grid; grid-template-columns: 1fr auto 1fr; grid-template-rows: auto auto; align-items: start; column-gap: 6px; row-gap: 6px; }
+.g-rush .rr-left { display: contents; }
+.g-rush .rr-hearts { grid-area: 1 / 1; justify-self: start; }
+.g-rush .rr-dist { grid-area: 1 / 2; }
+.g-rush .rr-right { grid-area: 1 / 3; }
+.g-rush .rr-row2 { grid-area: 2 / 1 / 3 / 4; justify-self: start; }
 /* coins + power-up rings share one fixed-height row, so nothing below jumps when a power-up starts */
 .g-rush .rr-row2 { display: flex; align-items: center; gap: 6px; height: 34px; }
 .g-rush .rr-coins.bump { animation: rr-bump .2s ease-out; } .g-rush .rr-coins.bump2 { animation: rr-bump2 .2s ease-out; }
@@ -310,6 +316,12 @@ export const CSS = `
 .g-rush.rr-narrow .rr-chip { font-size: 13px; height: 26px; }
 .g-rush.rr-narrow .rr-hearts { height: 26px; }
 .g-rush.rr-narrow .rr-heart { width: 15px; height: 14px; }
+.g-rush.rr-tiny .rr-dist { font-size: 24px; min-width: 3.4ch; }
+.g-rush.rr-tiny .rr-dist small { font-size: 13px; }
+.g-rush.rr-tiny .rr-hearts { padding: 0 5px; gap: 1px; }
+.g-rush.rr-tiny .rr-heart { width: 13px; height: 12px; }
+.g-rush.rr-tiny .rr-row2 { gap: 4px; }
+.g-rush.rr-tiny .rr-powers { gap: 3px; }
 .g-rush.rr-narrow .rr-pop { font-size: 23px; }
 .g-rush.rr-narrow .rr-combo { font-size: 22px; }
 .g-rush.rr-narrow .rr-combo[data-t="2"] { font-size: 24px; } .g-rush.rr-narrow .rr-combo[data-t="3"] { font-size: 26px; }

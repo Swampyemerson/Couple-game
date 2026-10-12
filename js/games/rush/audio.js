@@ -151,6 +151,7 @@ export function createAudio({ musicOn = () => true, getCtx = null, mutedFn = nul
     zap() { tone(1400, 0.25, { type: 'sawtooth', vol: 0.07, to: 200, filter: 3000 }); hiss(0.2, { vol: 0.1, f: 6000, q: 3 }); },
     shove() { tone(120, 0.12, { vol: 0.3, to: 60 }); hiss(0.12, { vol: 0.14, f: 1500 }); },
     whiff() { hiss(0.2, { vol: 0.08, f: 2500, to: 600, q: 2 }); },
+    rumble() { hiss(0.7, { vol: 0.14, f: 140, to: 320, type: 'lowpass', q: 0.8 }); tone(62, 0.7, { vol: 0.12, to: 88 }); },
     horn() { [0, 0.16].forEach((at) => { tone(311, 0.55, { type: 'sawtooth', vol: 0.05, at, filter: 1400 }); tone(370, 0.55, { type: 'sawtooth', vol: 0.04, at, filter: 1400 }); }); },
     close(n) { const k = 2 * Math.min(n | 0, 6); tone(mtof(88 + k), 0.08, { type: 'square', vol: 0.05, filter: 5000 }); tone(mtof(95 + k), 0.16, { type: 'triangle', vol: 0.08, at: 0.06 }); },
     cheer() { hiss(0.05, { vol: 0.16, f: 1500, q: 0.9, attack: 0.001 }); hiss(0.06, { vol: 0.12, f: 1900, q: 0.9, at: 0.035, attack: 0.001 }); tone(mtof(86), 0.12, { type: 'sine', vol: 0.05, at: 0.02 }); },
