@@ -147,7 +147,7 @@ New assertions:
 - Rivalry hysteresis, pops on the right phone, clutch, `share`, team best.
 - Twists, dares, notes, unlocks and landscape lobby fit.
 
-Final run on the finished tree (12 Oct, 09:48–10:20 UTC), with the three parts run one after another on a quiet machine:
+Final run on the finished tree (12 Oct, 09:48–10:07 UTC), with the three parts run one after another on a quiet machine:
 
 | Part | Result |
 |---|---|
