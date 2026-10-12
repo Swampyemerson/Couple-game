@@ -239,6 +239,15 @@ async function unitTests() {
   // records
   const rp = T.recordPatch({}, run([['a', S()]]), 'm1');
   assert(rp.missions_n === 1 && rp.streak === 0 && rp.lastm === 'm1' && rp.pack_classic_n === 1, 'recordPatch: a first mission');
+  // the record clue is remembered by name
+  const clueMatch = (by, clue, n, got) => { const w = run([['a', S()]]); w.log = [{ by, clue, n, picks: Array.from({ length: got }, (_, i) => ({ i, r: 'G' })) }]; w.over = 'burned'; w.hit = 20; return w; };
+  const pr = T.recordPatch({ clue_best: 3 }, clueMatch('b', 'river', 4, 4), 'mX');
+  assert(pr.clue_best === 4 && pr.best_clue === 'river|4|b|classic|mX' && pr.b_clue_best === 4 && pr.b_best_clue === 'river|4|b|classic|mX' && !('a_best_clue' in pr) && /record/.test(pr.lastb), 'record clue: RIVER for 4 by Sydney is stored by name when it beats 3');
+  const pt = T.recordPatch({ clue_best: 4, best_clue: pr.best_clue, b_clue_best: 4, b_best_clue: pr.b_best_clue }, clueMatch('a', 'ocean', 4, 4), 'mY');
+  assert(!('best_clue' in pt) && !('clue_best' in pt) && /tie/.test(pt.lastb) && !/record/.test(pt.lastb), 'record clue: a later 4-clue ties, leaves best_clue unchanged and earns the tie badge');
+  assert(!/tie/.test(T.recordPatch({ clue_best: 2 }, clueMatch('a', 'ocean', 2, 2), 'mZ').lastb), 'record clue: no tie badge below 3');
+  assert(T.recordClueText({ best_clue: 'river|4|b|classic|mX' }, (w) => (w === 'a' ? 'Emerson' : 'Sydney')) === 'Record clue: RIVER for 4 (Sydney, Classic).' && T.recordClueText({ best_clue: 'ocean|4|b|travel|m1' }, () => 'Sydney').includes('(Sydney, Wanderlust)') && T.recordClueText({}, () => 'x') === '', 'record clue: the ledger line reads "RIVER for 4 (Sydney, ..."');
+  assert(T.streakLine(3) === 'Three missions unbeaten. Keep it clean.' && T.streakLine(10).startsWith('Ten ') && T.streakLine(12).startsWith('12 ') && T.streakLine(1) === '', 'streak line uses number words up to ten');
   // the recently-recorded memory holds well over core's 25 kept finished matches
   let ids = '';
   for (let k = 0; k < 30; k++) ids = T.pushRecent(ids, `m${k}`);
@@ -405,6 +414,7 @@ async function v2Online(h, scheme) {
   assert(/MIND MELD/.test(await G.textContent('.g-ag-stamps')), 'the result view stamps the mind meld');
   assert((await G.$$('.g-ag-best .g-ag-paper')).length >= 1, 'the best clue is printed as a slip');
   assert(/1\s*mission(?!s)/.test(await G.textContent('.g-ag-debrief .g-ag-ledger')), 'records: the ledger counts the mission');
+  assert(/Record clue: [A-Z]+ for 2 \(.+, Mythic\)\./.test(await G.textContent('.g-ag-debrief')) && /Record/.test(await G.textContent('.g-ag-best .g-ag-over')), 'the record clue is named on the result view, with a RECORD overprint on its slip');
   await snap(G, scheme, 'v2-4-end');
   // both phones recorded the same match once: still one mission
   await R.waitForSelector('#game-root .gm-end:not([hidden])', { timeout: 6000 });

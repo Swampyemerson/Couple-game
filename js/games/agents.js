@@ -287,9 +287,10 @@ const isMeld = (t, done) => done && t.n >= 2 && t.picks.length === t.n && agentP
 function matchStats(s) {
   const clues = s.log.map((t, k) => ({ k, by: t.by, clue: t.clue, n: t.n, got: agentPicks(t), meld: isMeld(t, turnDone(s, k)) }));
   const best = { a: 0, b: 0 };
-  for (const c of clues) best[c.by] = Math.max(best[c.by], c.got);
+  const bestOf = { a: null, b: null }; // each player's best clue (first one wins a tie)
+  for (const c of clues) if (c.got > best[c.by]) { best[c.by] = c.got; bestOf[c.by] = c; }
   const top = clues.filter((c) => c.got > 0).sort((x, y) => y.got - x.got || (y.meld ? 1 : 0) - (x.meld ? 1 : 0) || x.k - y.k).slice(0, 2).sort((x, y) => x.k - y.k);
-  return { clues, melds: clues.filter((c) => c.meld).length, best, top, spare: s.over === 'win' && !s.sd ? tok(s) - s.turns : 0, tier: s.level || 'agent', pack: s.pack || 'classic' };
+  return { clues, melds: clues.filter((c) => c.meld).length, best, bestOf, top, spare: s.over === 'win' && !s.sd ? tok(s) - s.turns : 0, tier: s.level || 'agent', pack: s.pack || 'classic' };
 }
 
 // ── records (api.data): flat numbers, bests only rise ──
@@ -299,6 +300,12 @@ const RECENT_CAP = 60;
 const recentIds = (str) => String(str || '').split(',').filter(Boolean);
 const pushRecent = (str, id) => [...recentIds(str).filter((x) => x !== id), id].slice(-RECENT_CAP).join(',');
 const MILESTONES = [10, 25, 50];
+// A remembered clue: `ocean|4|b|us|<matchId>` (clue, agents found from it, who gave it, pack, match).
+const fmtClue = (c, pack, matchId) => `${c.clue}|${c.got}|${c.by}|${pack}|${matchId}`;
+const parseClue = (str) => { const [clue, got, by, pack, mid] = String(str || '').split('|'); return clue && Number(got) > 0 && (by === 'a' || by === 'b') ? { clue, got: Number(got), by, pack: pack || 'classic', mid: mid || '' } : null; };
+/** The ledger line for the standing record clue, e.g. "Record clue: OCEAN for 4 (Sydney, Wanderlust)." */
+const recordClueText = (d, nameOf) => { const r = parseClue(d.best_clue); return r ? `Record clue: ${r.clue.toUpperCase()} for ${r.got} (${nameOf(r.by)}, ${(PACK_INFO[r.pack] || PACK_INFO.classic).name}).` : ''; };
+const streakLine = (n) => (n >= 2 ? `${NUMWORD[n] || n} missions unbeaten. Keep it clean.` : '');
 /** The patch that records a finished mission, computed from a data snapshot `d`. Also returns the stamps earned. */
 function recordPatch(d, s, matchId) {
   const g = (k) => Number(d[k]) || 0;
@@ -309,9 +316,13 @@ function recordPatch(d, s, matchId) {
   if (s.sd) p.sudden_n = g('sudden_n') + 1;
   if (st.melds) p.meld_n = g('meld_n') + st.melds;
   p[`pack_${st.pack}_n`] = g(`pack_${st.pack}_n`) + 1;
-  for (const w of ['a', 'b']) if (st.best[w] > g(`${w}_clue_best`)) p[`${w}_clue_best`] = st.best[w];
+  for (const w of ['a', 'b']) if (st.best[w] > g(`${w}_clue_best`)) { p[`${w}_clue_best`] = st.best[w]; p[`${w}_best_clue`] = fmtClue(st.bestOf[w], st.pack, matchId); }
   const clueBest = Math.max(st.best.a, st.best.b);
-  if (clueBest > g('clue_best')) { p.clue_best = clueBest; if (g('clue_best') > 0 && clueBest >= 3) badges.push('record'); }
+  if (clueBest > g('clue_best')) {
+    p.clue_best = clueBest;
+    p.best_clue = fmtClue(st.bestOf[st.best.a >= st.best.b ? 'a' : 'b'], st.pack, matchId);
+    if (g('clue_best') > 0 && clueBest >= 3) badges.push('record');
+  } else if (clueBest === g('clue_best') && clueBest >= 3) badges.push('tie');
   if (win) {
     p.wins_n = g('wins_n') + 1;
     p[`${st.tier}_wins_n`] = g(`${st.tier}_wins_n`) + 1;
@@ -346,7 +357,7 @@ const ICON = {
 // ── view helpers ──
 const pristine = (s) => !s.v && !s.log.length && s.phase === 'clue' && !s.over;
 const breakOf = (w) => BREAKS.get(w) || PACK_BREAKS.get(w);
-const NUMWORD = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
+const NUMWORD = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten'];
 function parseSetup(str) {
   const [lv, pk, sd] = String(str || '').split('|');
   return { level: Object.prototype.hasOwnProperty.call(LEVELS, lv) ? lv : 'agent', pack: PACK_IDS.includes(pk) ? pk : 'classic', sudden: sd !== '0' };
@@ -518,6 +529,8 @@ const css = `
 .g-ag-best > small { font-size: 0.7rem; font-weight: 800; color: var(--g-muted); text-transform: uppercase; letter-spacing: 0.1em; }
 .g-ag-best > div { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; max-width: 100%; }
 .g-ag-paper.sm .g-ag-clueword { font-size: 1.05rem; }
+.g-ag-paper.sm { position: relative; }
+.g-ag-over { position: absolute; top: -9px; right: 6px; padding: 1px 6px; border: 2px solid var(--p-b-text); border-radius: 4px; background: var(--g-card); color: var(--p-b-text); font: 900 0.58rem/1.2 var(--g-font-display); letter-spacing: 0.06em; text-transform: uppercase; transform: rotate(3deg); }
 .g-ag-paper.meld, .g-ag-log li.meld { background: var(--g-hl); color: var(--g-on-ink); }
 .g-ag-paper.meld small, .g-ag-log li.meld .g-ag-chip.r-N { color: var(--g-on-ink); }
 .g-ag-log li.meld { border-color: var(--g-ink); }
@@ -617,7 +630,7 @@ registerGame({
   endLookLabel: 'See the board',
   init, next, apply, result,
   // exposed for tests
-  _test: { makeKeys, pickWords, NOUNS, LAYOUT, TOKENS, TOTAL, BREAKS, cleanClue, cleanClue2: (s, x) => checkClue(s.words, s.found, x), PACKS, PACK_BREAKS, packWords: (seed, pack) => packWords(seed, pack, NOUNS), LEVELS, matchStats, recordPatch, isMeld, recentIds, pushRecent, RECENT_CAP },
+  _test: { makeKeys, pickWords, NOUNS, LAYOUT, TOKENS, TOTAL, BREAKS, cleanClue, cleanClue2: (s, x) => checkClue(s.words, s.found, x), PACKS, PACK_BREAKS, packWords: (seed, pack) => packWords(seed, pack, NOUNS), LEVELS, matchStats, recordPatch, isMeld, recordClueText, streakLine, parseClue, recentIds, pushRecent, RECENT_CAP },
 
   mount(el, api) {
     el.innerHTML = `<div class="g-agents">
@@ -780,14 +793,18 @@ registerGame({
       const g = (k) => Number(d[k]) || 0;
       if (!g('missions_n')) return '<div class="g-ag-ledger"><span>No missions logged yet. Make the first one count.</span></div>';
       const bits = [`<b>${g('missions_n')}</b> mission${g('missions_n') === 1 ? '' : 's'}`, `<b>${g('wins_n')}</b> home safe`];
-      if (g('streak') >= 2) bits.push(`<b>${g('streak')}</b> in a row`);
       if (g('spare_best')) bits.push(`best: <b>${g('spare_best')}</b> turn${g('spare_best') === 1 ? '' : 's'} to spare`);
       else if (g('close_best')) bits.push(`closest call: <b>${g('close_best')}</b>/${TOTAL}`);
       if (g('meld_n')) bits.push(`<b>${g('meld_n')}</b> mind meld${g('meld_n') === 1 ? '' : 's'}`);
-      return `<div class="g-ag-ledger">${bits.map((b) => `<span>${b}</span>`).join('')}</div>`;
+      const lines = [`<div class="g-ag-ledger">${bits.map((b) => `<span>${b}</span>`).join('')}</div>`];
+      const rc = recordClueText(d, (w) => api.name(w));
+      if (rc) lines.push(`<div class="g-ag-ledger"><span>${esc(rc)}</span></div>`);
+      if (g('streak') >= 2) lines.push(`<div class="g-ag-ledger"><span>${esc(streakLine(g('streak')))}</span></div>`);
+      return lines.join('');
     }
     const STAMP_TEXT = (b) => {
       if (b === 'record') return ['NEW RECORD', 'rec'];
+      if (b === 'tie') return ['EQUALS THE RECORD', 'rec'];
       if (b === 'last') return ['ON THE LAST TOKEN', 'bad'];
       if (b === 'escape') return ['SUDDEN-DEATH ESCAPE', 'good'];
       let m = /^row(\d+)$/.exec(b);
@@ -813,7 +830,10 @@ registerGame({
       const s = c.state;
       const st = matchStats(s);
       const stamps = stampsFor(c).map(([t, k], n) => `<span class="g-ag-stamp k-${k}" style="--r:${n % 2 ? 3 : -4}deg">${t}</span>`).join('');
-      const best = st.top.map((t) => `<div class="g-ag-paper sm${t.meld ? ' meld' : ''}"><div class="g-ag-cluebox"><small>${nm(t.by)}’s clue${t.meld ? ' · mind meld' : ''}</small><span class="g-ag-clueword">${esc(t.clue)}</span></div><span class="g-ag-num" aria-label="${t.got} of ${t.n}">${t.got}</span></div>`).join('');
+      const dd = safeData();
+      const recd = dd.lastm === c.matchId ? parseClue(dd.best_clue) : null;
+      const over = (t) => (recd && recd.mid === c.matchId && recd.clue === t.clue && recd.by === t.by ? 'Record' : dd.lastm === c.matchId && String(dd.lastb || '').split(',').includes('tie') && t.got === Number(dd.clue_best) ? 'Equals the record' : '');
+      const best = st.top.map((t) => `<div class="g-ag-paper sm${t.meld ? ' meld' : ''}">${over(t) ? `<i class="g-ag-over">${over(t)}</i>` : ''}<div class="g-ag-cluebox"><small>${nm(t.by)}’s clue${t.meld ? ' · mind meld' : ''}</small><span class="g-ag-clueword">${esc(t.clue)}</span></div><span class="g-ag-num" aria-label="${t.got} of ${t.n}">${t.got}</span></div>`).join('');
       return `<div class="g-ag-debrief">
         <p class="g-ag-epi">${esc(epilogue(s))}</p>
         ${stamps ? `<div class="g-ag-stamps">${stamps}</div>` : ''}

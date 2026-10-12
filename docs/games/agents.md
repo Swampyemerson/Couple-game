@@ -44,7 +44,7 @@ these fields.
 
 The turn-game `api` has no `data()`, so the game imports `gameDataApi` from core and uses it directly.
 Flat keys: `missions_n wins_n burned_n caught_n cold_n sudden_n escape_n meld_n rookie_wins_n agent_wins_n spy_wins_n
-pack_<p>_n spare_best close_best streak streak_best clue_best a_clue_best b_clue_best lastm lastb recent_m last_setup`.
+pack_<p>_n spare_best close_best streak streak_best clue_best a_clue_best b_clue_best lastm lastb recent_m last_setup best_clue a_best_clue b_best_clue`.
 
 - Recorded once per match. `recent_m` (comma-joined, newest 60 match ids) is checked before recording and appended on
   record. A phone records when it watched the match end during this mount, or when the match is v2 and its id is not in
@@ -53,6 +53,11 @@ pack_<p>_n spare_best close_best streak streak_best clue_best a_clue_best b_clue
 - `spare_best`: most turns to spare on a win. `close_best`: most agents found on a loss ("closest call"). The core
   end card still says "Best team score 0" (a team result's score is not what it counts); our own ledger separates wins
   and losses.
+- The record clue is remembered by name: when `clue_best` (or `a_clue_best` / `b_clue_best`) rises, the same patch stores
+  `best_clue` (`a_best_clue` / `b_best_clue`) as `clue|agents|giver|pack|matchId`, e.g. `ocean|4|b|us|<id>`. A later clue that
+  ties a standing record of 3 or more adds the `tie` badge (stamp "EQUALS THE RECORD") and leaves `best_clue` as it was.
+  The rules card shows "Record clue: OCEAN for 4 (Sydney, Wanderlust)." and, on a streak of 2+, "Three missions
+  unbeaten. Keep it clean."; the result view's best-clue slip gets a RECORD or EQUALS THE RECORD overprint.
 - `lastb` holds the stamps earned by the last match (`record`, `rowN`, `last`, `escape`, `meldK`, `msN`) so both phones
   show the same stamps. `last_setup` (`agent|us|1`) is the rules card's remembered choice.
 - The ledger strip shows on the rules card and on the result view; stamps, an epilogue line and the two best clues
