@@ -360,6 +360,7 @@ const CSS = `
 .g-fleet { --gut: 14px; --fl-edge: var(--g-edge, var(--g-ink)); position: relative; container-type: inline-size; width: 100%; margin: 0 auto; padding: 0 0 4px; color: var(--g-ink); font-family: var(--g-font-body); -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 .g-fleet.is-hidden { min-height: 240px; }
 .g-fleet .fl-place, .g-fleet .fl-battle, .g-fleet .fl-wait { --cell: min(52px, calc((100cqw - var(--gut)) / 8)); --mini: clamp(17px, calc(100cqw / 19), 26px); }
+.g-fleet .fl-place { --cell: min(40px, calc((100cqw - var(--gut)) / 8)); }
 .g-fleet h2, .g-fleet h3, .g-fleet p { margin: 0; }
 
 /* ── chart ── */
@@ -506,15 +507,17 @@ const CSS = `
 .g-fleet .fl-aside { padding-left: var(--gut); display: flex; flex-direction: column; gap: 12px; }
 .g-fleet .fl-hint { font-size: .84rem; color: var(--g-muted); padding: 0 0 10px var(--gut); line-height: 1.35; }
 .g-fleet .fl-hint b { color: var(--g-ink); }
-.g-fleet .fl-rules { display: flex; gap: 6px; padding-left: var(--gut); margin: 2px 0 6px; }
-.g-fleet .fl-rule { flex: 1; min-height: 44px; padding: 0 8px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); font: 800 .84rem/1 var(--g-font-body); box-shadow: var(--g-shadow-sm); touch-action: manipulation; -webkit-appearance: none; appearance: none; }
+.g-fleet .fl-setup { display: flex; flex-wrap: nowrap; gap: 4px 7px; align-items: center; padding-left: var(--gut); margin: 2px 0 5px; }
+.g-fleet .fl-rules { display: flex; gap: 5px; flex: 1 1 auto; min-width: 0; }
+.g-fleet .fl-rule { flex: 1 1 0; min-width: 0; min-height: 42px; padding: 0 4px; border: 2px solid var(--g-ink); border-radius: 10px; background: var(--g-card); color: var(--g-ink); font: 800 .8rem/1 var(--g-font-body); box-shadow: var(--g-shadow-sm); white-space: nowrap; touch-action: manipulation; -webkit-appearance: none; appearance: none; }
 .g-fleet .fl-rule[aria-pressed="true"] { background: var(--g-hl); color: var(--g-on-ink); }
 .g-fleet .fl-rule:not(:disabled):active { transform: translate(2px, 2px); box-shadow: none; }
-.g-fleet .fl-rules-note { font-size: .8rem; line-height: 1.35; color: var(--g-muted); padding: 0 0 8px var(--gut); }
+.g-fleet .fl-stake { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; color: var(--g-muted); font-size: .76rem; }
+.g-fleet .fl-stake .g-label { white-space: nowrap; } @container (max-width: 380px) { .g-fleet .fl-stake .g-label { display: none; } }
+.g-fleet .fl-stake select { width: clamp(104px, 33vw, 150px); min-height: 42px; padding: 0 8px; border: 2px solid var(--g-ink); border-radius: 10px; background: var(--g-card); color: var(--g-ink); font: 800 14px/1.1 var(--g-font-body); box-shadow: var(--g-shadow-sm); touch-action: manipulation; }
+.g-fleet .fl-setup .fl-rules-note { margin: 0; padding: 0; flex: 1 1 100%; }
+.g-fleet .fl-rules-note { font-size: .8rem; line-height: 1.3; color: var(--g-muted); padding: 0 0 6px var(--gut); }
 .g-fleet .fl-rules-note b { color: var(--g-ink); }
-.g-fleet .fl-stakes { padding: 0 0 8px var(--gut); }
-.g-fleet .fl-stake { display: flex; align-items: center; gap: 8px; font: 800 .8rem/1 var(--g-font-body); color: var(--g-muted); white-space: nowrap; }
-.g-fleet .fl-stake select { flex: 1; min-width: 0; min-height: 44px; padding: 0 12px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); font: 800 16px/1.1 var(--g-font-body); box-shadow: var(--g-shadow-sm); touch-action: manipulation; }
 .g-fleet .is-edit .fl-ship { pointer-events: auto; cursor: grab; touch-action: none; -webkit-appearance: none; appearance: none; }
 .g-fleet .is-edit .fl-ship:focus-visible { outline: 3px solid var(--g-hl); outline-offset: 2px; }
 .g-fleet .is-edit .fl-cell { cursor: pointer; }
@@ -805,25 +808,20 @@ registerGame({
       else paintBattle(fresh, battleStart, freshScans);
     }
 
-    function rulesHTML(s) {
+    // Rules and stakes share one compact row above the chart. Each side is a control while it is
+    // still open (before you hide your own fleet), and a short status line once it is decided.
+    function setupHTML(s) {
       const mode = modeOf(s);
-      const open = !s.mode && !s.fleets[V] && ctx.canMove;
-      if (open) {
-        return `<div class="fl-rules" role="group" aria-label="Rules">${MODE_KEYS.map((k) => `<button type="button" class="fl-rule" data-rules="${k}" aria-pressed="${k === mode}">${MODES[k].name}</button>`).join('')}</div>
-          <p class="fl-rules-note">${esc(MODES[mode].line)} Pick before a fleet is hidden.</p>`;
-      }
-      const by = s.mode && s.modeBy ? (ctx.mode === 'online' && s.modeBy === V ? ' (your pick)' : ` (${esc(nm(s.modeBy))}’s pick)`) : '';
-      return `<p class="fl-rules-note"><b>${MODES[mode].name} rules${by}.</b> ${esc(MODES[mode].line)}</p>`;
-    }
-    function stakesHTML(s) {
-      if (s.stake) {
-        const by = s.stakeBy ? (ctx.mode === 'online' && s.stakeBy === V ? ' (your idea)' : ` (${esc(nm(s.stakeBy))}’s idea)`) : '';
-        return `<p class="fl-rules-note fl-stake-set"><b>Playing for ${esc(STAKES[s.stake])}${by}.</b></p>`;
-      }
-      if (s.fleets[V] || !ctx.canMove) return '';
-      return `<div class="fl-stakes"><label class="fl-stake"><span>Play for</span><select data-stake>
-        <option value="">just the glory</option>${Object.entries(STAKES).map(([k, t]) => `<option value="${k}">${esc(t)}</option>`).join('')}
-      </select></label></div>`;
+      const canSet = !s.fleets[V] && ctx.canMove;
+      const byMode = s.mode && s.modeBy ? (ctx.mode === 'online' && s.modeBy === V ? ' (your pick)' : ` (${esc(nm(s.modeBy))}’s pick)`) : '';
+      const byStake = s.stake && s.stakeBy ? (ctx.mode === 'online' && s.stakeBy === V ? ' (your idea)' : ` (${esc(nm(s.stakeBy))}’s idea)`) : '';
+      const left = !s.mode && canSet
+        ? `<div class="fl-rules" role="group" aria-label="Rules">${MODE_KEYS.map((k) => `<button type="button" class="fl-rule" data-rules="${k}" aria-pressed="${k === mode}">${MODES[k].name}</button>`).join('')}</div>`
+        : `<p class="fl-rules-note"><b>${MODES[mode].name} rules${byMode}.</b></p>`;
+      const right = !s.stake && canSet
+        ? `<label class="fl-stake"><span class="g-label">Play for</span><select data-stake aria-label="Play for"><option value="">glory only</option>${Object.entries(STAKES).map(([k, t]) => `<option value="${k}">${esc(t)}</option>`).join('')}</select></label>`
+        : (s.stake ? `<p class="fl-rules-note fl-stake-set"><b>Playing for ${esc(STAKES[s.stake])}${byStake}.</b></p>` : '');
+      return `<div class="fl-setup">${left}${right}</div>`;
     }
 
     function paintPlace() {
@@ -848,14 +846,13 @@ registerGame({
       const foe = foeOf(v);
       const note = ctx.mode === 'online' && s.fleets[foe] ? `<p class="fl-note">${esc(nm(foe))} is ready and waiting.</p>` : '';
       const hint = fine
-        ? 'Drag ships onto the chart, or pick one and click a square. Click a ship or press <b>R</b> to turn it.'
-        : 'Drag ships onto the chart, or tap a square to drop the picked one. Tap a ship to turn it.';
+        ? 'Drag a ship on, or pick one and click. Click a ship or press <b>R</b> to turn it.'
+        : 'Drag a ship on, or tap to drop. Tap a ship to turn.';
       root.className = 'g-fleet';
       root.innerHTML = `<div class="fl-place">
         <div class="fl-main">
           <header class="fl-head"><h2 class="fl-h p-${v}"><span class="fl-sw"></span>${ctx.mode === 'local' ? `${esc(nm(v))}’s fleet` : 'Your fleet'}</h2><span class="fl-pill${placed === SIZES.length ? '' : ' is-quiet'}">${placed}/5 at sea</span></header>
-          ${rulesHTML(s)}
-          ${stakesHTML(s)}
+          ${setupHTML(s)}
           ${captainsLine(s)}
           <p class="fl-hint">${hint}</p>
           ${chartHTML({ cls: 'fl-home-chart is-edit', cells, layer: `${ships}<div class="fl-preview" hidden></div>` })}
