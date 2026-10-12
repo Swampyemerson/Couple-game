@@ -158,6 +158,52 @@ async function hpAgree(pr, pc, rw, tol) {
     assert(c3.water && c3.level < 0, 'driving in the canal under a bridge is water (busts a runner)');
     const path1 = (() => { dg.buildNav(); return dg.findPath(-100, 40, 340, -100); })();
     assert(path1 && path1.length > 20, `AI nav: a road route across Dockside (${path1.length / 2} points)`);
+    // ── update pass: records, Daily scoring, result card tone, lobby / settings wording ──
+    {
+      const R = await import(url('records.js'));
+      const H = await import(url('hud.js'));
+      const Rules = await import(url('rules.js'));
+      // B1 Daily: a bust never ties or beats an escape, even in overtime or a hair before the bell
+      const rt = 120;
+      const esc = R.dailyScore('escaped', 'time', 120, rt);
+      for (const t of [30, 119.4, 119.6, 120, 121.9, 122]) {
+        const b = R.dailyScore('busted', 'hp', t, rt);
+        assert(b <= rt - 1 && b < esc, `Daily: a bust at ${t} s scores ${b} (at most ${rt - 1}, below an escape)`);
+        assert(!/lost them|escaped/.test(R.dailyText(b, rt)), `Daily: a bust at ${t} s reads "${R.dailyText(b, rt)}", never lost them / escaped`);
+      }
+      assert(R.dailyScore('busted', 'hp', 45.4, rt) === 45 && R.dailyScore('busted', 'water', 0, rt) === 0, 'Daily: an ordinary bust still scores the seconds survived');
+      assert(R.dailyScore('escaped', 'heat', 80, rt) === 160 && R.dailyText(160, rt) === 'lost them, +40' && R.dailyText(120, rt) === '2:00 (escaped)', 'Daily: escapes and saved scores keep their scores and wording');
+      // B2 a splash is a bust for the cop but never the fastest-bust mark
+      const dry = R.recordRound({}, 'a', '', { role: 'cop', won: true, outcome: 'busted', reason: 'hp', t: 20, pits: 1 }, 'b');
+      const wet = R.recordRound({}, 'a', '', { role: 'cop', won: true, outcome: 'busted', reason: 'water', t: 8, pits: 0 }, 'b');
+      assert(dry.patch.a_fastbust === 20 && dry.patch.a_busts === 1, 'a PIT / hp bust sets the fastest-bust record');
+      assert(wet.patch.a_busts === 1 && wet.patch.a_streak === 1 && !('a_fastbust' in wet.patch) && !wet.news.some((n) => n.k === 'fastbust'), 'a water bust counts as a bust and a win but never sets fastbust');
+      assert(R.recordRound({}, 'a', '', { role: 'cop', won: true, outcome: 'busted', reason: 'boxed', t: 25 }, 'b').patch.a_fastbust === 25, 'a boxed-in bust sets fastbust too');
+      // S3 top speed: a stamp needs 5 km/h more, not 2
+      const fast = (top, d) => R.recordRound(d, 'a', '', { role: 'runner', won: false, outcome: 'busted', reason: 'hp', t: 50, top }, 'b');
+      assert(!fast(163, { a_top: 160 }).news.some((n) => n.k === 'top') && fast(163, { a_top: 160 }).patch.a_top === 163, 'top speed +3 km/h updates the record quietly, no NEW RECORD');
+      assert(fast(166, { a_top: 160 }).news.some((n) => n.k === 'top'), 'top speed +6 km/h is a NEW RECORD');
+      // B4 the result headline's colour is the viewer's
+      const api = { name: (w) => (w === 'a' ? 'Emerson' : 'Sydney') };
+      const tone = (o) => (H.resultCard(api, { scores: { a: 0, b: 0 }, next: '', ...o }).match(/gtw-big (good|bad)/) || [])[1];
+      const bust = { outcome: 'busted', reason: 'hp', runner: 'a', head: 'BUSTED!' };
+      assert(tone({ ...bust, me: 'b' }) === 'good' && tone({ ...bust, me: 'a' }) === 'bad', 'result: the cop who busted sees green BUSTED!, the runner red');
+      const heat = { outcome: 'escaped', reason: 'heat', runner: 'a' };
+      assert(tone({ ...heat, me: 'a', head: 'VANISHED!' }) === 'good' && tone({ ...heat, me: 'b', head: 'LOST THEM' }) === 'bad', 'result: the runner who got away sees green, the cop who lost them red LOST THEM');
+      assert(tone({ ...bust, me: 'a', local: true }) === 'bad' && tone({ ...heat, me: 'a', local: true }) === 'good', 'result: practice (one viewer) follows that viewer too');
+      assert(tone({ ...bust, me: 'a', split: true }) === 'bad' && tone({ ...heat, me: 'b', split: true }) === 'good', 'result: split screen (two viewers on one card) stays runner-centric');
+      // S2 only real records carry NEW
+      const card = H.resultCard(api, { ...bust, me: 'b', scores: { a: 0, b: 1 }, next: '', lines: [{ t: 'Fastest bust: 20 s', hot: true, rec: true }, { t: '3 rounds in a row', hot: true }] });
+      assert((card.match(/<b>NEW<\/b>/g) || []).length === 1 && /3 rounds in a row/.test(card) && !/<b>NEW<\/b> 3 rounds/.test(card), 'result: NEW only on a real record; streak lines are highlighted without it');
+      // S1 Quick chase has a way back
+      const lobby = (rules) => H.lobbyCard(api, { maps: [{ id: 'dockside', name: 'Dockside' }], setup: { map: 'dockside', first: 'a', rules }, canEdit: true, local: true, localMode: 'ai', practiceRole: 'runner', aiLevel: 'normal', me: 'a' });
+      assert(/data-l="quick"/.test(lobby(Rules.DEFAULTS)) && !/data-l="standard"/.test(lobby(Rules.DEFAULTS)), 'lobby: standard rules show the Quick chase chip');
+      assert(/data-l="standard"/.test(lobby({ ...Rules.DEFAULTS, rounds: 2, roundTime: 60, spikes: 2 })) && !/data-l="quick"/.test(lobby({ ...Rules.DEFAULTS, rounds: 2, roundTime: 60 })), 'lobby: with Quick on, a Standard chip takes its place');
+      // S5 the heat row says what the default really is
+      const sheet = H.settingsSheet(Rules.DEFAULTS, { canEdit: true, device: {}, map: { name: 'Dockside', heat: 140 } });
+      assert(/Map default/.test(sheet) && /Dockside 140 m/.test(sheet), 'settings: the default heat reads "Map default" and names Dockside\'s 140 m');
+      assert(/<output data-rule="heat">220 m<\/output>/.test(H.settingsSheet({ ...Rules.DEFAULTS, heat: 220 }, { canEdit: true, device: {}, map: { name: 'Dockside', heat: 140 } })), 'settings: a chosen heat distance still shows its metres');
+    }
     if (typeof engineUnits === 'function') await engineUnits();
     if (typeof feelUnits === 'function') await feelUnits();
   }

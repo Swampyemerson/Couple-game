@@ -31,7 +31,7 @@ export const CSS = `
 .gtw-role { padding: 4px 10px; border-radius: 999px; font: 900 0.72rem/1 var(--g-font-body); letter-spacing: .12em; text-transform: uppercase; border: 2px solid var(--g-ink); background: var(--g-ink); color: var(--g-bg); }
 .gtw-role.runner { background: var(--me); color: var(--g-on-ink); }
 .gtw-role.cop { background: linear-gradient(90deg, #e2333f 50%, #2f6bff 50%); color: #fff; text-shadow: 0 1px 0 #0008; }
-.gtw-bar { width: 154px; padding: 4px 6px 5px; } /* (wide enough for 'On their tail' beside a 4-digit distance) */
+.gtw-bar { width: 162px; padding: 4px 6px 5px; } /* (wide enough for 'On their tail' beside a 4-digit distance) */
 .gtw-bar small { display: flex; justify-content: space-between; align-items: baseline; gap: 4px; white-space: nowrap; font: 900 0.7rem/1 var(--g-font-body); letter-spacing: .03em; text-transform: uppercase; color: var(--g-muted); margin-bottom: 3px; }
 .gtw-bar small b { color: var(--g-ink); flex: none; } .gtw-bar small span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .gtw-heat small b { font-size: .85rem; letter-spacing: .02em; font-variant-numeric: tabular-nums; } /* the distance: the number both roles watch */

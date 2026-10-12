@@ -1,7 +1,7 @@
 // Getaway HUD: per-viewer views (one, or two for split screen), touch controls, the minimap and
 // full map (tap a road to drop a spike strip), and the overlay cards. Every setter diffs against
 // its last value, so a frame touches the DOM only when something visibly changed.
-import { OPTIONS, LABELS, HINTS, fmt, KEYS } from './rules.js';
+import { OPTIONS, DEFAULTS, LABELS, HINTS, fmt, KEYS } from './rules.js';
 import { fmtSec } from './records.js';
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -427,7 +427,7 @@ export function lobbyCard(api, o) {
   const quickOn = r.rounds === 2 && r.roundTime === 60;
   const facts = daily
     ? `<div class="gtw-daily"><p><b>${esc(o.daily.title)}</b></p><p>${esc(o.daily.how)}</p>${o.daily.board.length ? `<ul>${o.daily.board.map((x) => `<li class="p${x.w}"><i></i>${esc(x.name)} <b>${esc(x.text)}</b></li>`).join('')}</ul>` : '<p class="gtw-tapon">Nobody has run it yet today.</p>'}${o.daily.note ? `<p class="gtw-tapon">${esc(o.daily.note)}</p>` : ''}</div>`
-    : `<div class="gtw-factsrow"><p class="gtw-facts">${r.rounds} rounds · ${fmt('roundTime', r.roundTime)} each · ${r.spikes ? `${r.spikes} spike strip${r.spikes === 1 ? '' : 's'}` : 'no spikes'} · traffic ${r.traffic}${r.tiebreak === 'sudden' ? ' · sudden death' : ''}</p>${canEdit && !quickOn ? '<button class="gtw-chip" data-l="quick">Quick chase</button>' : ''}</div>`;
+    : `<div class="gtw-factsrow"><p class="gtw-facts">${r.rounds} rounds · ${fmt('roundTime', r.roundTime)} each · ${r.spikes ? `${r.spikes} spike strip${r.spikes === 1 ? '' : 's'}` : 'no spikes'} · traffic ${r.traffic}${r.tiebreak === 'sudden' ? ' · sudden death' : ''}</p>${canEdit ? (quickOn ? '<button class="gtw-chip" data-l="standard">Standard</button>' : '<button class="gtw-chip" data-l="quick">Quick chase</button>') : ''}</div>`;
   const recs = !daily && o.records && o.records.length ? `<p class="gtw-records"><span>${ai ? 'Your practice' : 'Records'}</span>${o.records.map((x) => `${esc(x.t)} <b class="gtw-name-${x.w}">${esc(x.name)}</b> ${esc(x.v)}`).join(' · ')}</p>` : '';
   const partner = o.partnerName || 'your partner';
   let status = '';
@@ -466,12 +466,17 @@ export function howToCard({ touch = true, split = false } = {}) {
 }
 
 const chipRow = (k, cur, opts, labels) => `<div class="gtw-chips gtw-seg">${opts.map((v) => `<button class="gtw-chip ${cur === v ? 'on' : ''}" data-l="dev" data-k="${k}" data-v="${v}">${esc(labels[v] || v)}</button>`).join('')}</div>`;
-export function settingsSheet(rules, { canEdit, device, live = false }) {
+export function settingsSheet(rules, { canEdit, device, live = false, map = null }) {
   const row = (k) => {
     const opts = OPTIONS[k]; const i = opts.indexOf(rules[k]);
-    const hint = k === 'camera' && (device || {}).touch ? 'Default chase camera' : HINTS[k]; // (no C key on a phone)
+    let hint = k === 'camera' && (device || {}).touch ? 'Default chase camera' : HINTS[k]; // (no C key on a phone)
+    let shown = fmt(k, rules[k]);
+    if (k === 'heat' && rules[k] === DEFAULTS.heat) { // the default lets a map use its own distance (Dockside 140 m)
+      shown = 'Map default';
+      hint = map && map.heat > 0 && map.heat !== DEFAULTS.heat ? `${DEFAULTS.heat} m, or the map’s own (${map.name} ${map.heat} m)` : `${DEFAULTS.heat} m, or the map’s own if it sets one`;
+    }
     return `<div class="gtw-srow"><div><b>${esc(LABELS[k])}</b><small>${esc(hint)}</small></div>
-      <div class="gtw-step"><button data-l="rule" data-k="${k}" data-step="-1" ${i <= 0 || !canEdit ? 'disabled' : ''} aria-label="Less">−</button><output data-rule="${k}">${esc(fmt(k, rules[k]))}</output><button data-l="rule" data-k="${k}" data-step="1" ${i >= opts.length - 1 || !canEdit ? 'disabled' : ''} aria-label="More">+</button></div></div>`;
+      <div class="gtw-step"><button data-l="rule" data-k="${k}" data-step="-1" ${i <= 0 || !canEdit ? 'disabled' : ''} aria-label="Less">−</button><output data-rule="${k}">${esc(shown)}</output><button data-l="rule" data-k="${k}" data-step="1" ${i >= opts.length - 1 || !canEdit ? 'disabled' : ''} aria-label="More">+</button></div></div>`;
   };
   const d = device || {};
   let dev = '';
@@ -514,7 +519,7 @@ export function introCard(api, { map, round, rounds, runner, me, landmark, round
 }
 
 const takes = (n) => (n === 'You' ? 'take' : 'takes');
-export function resultCard(api, { outcome, reason, runner, stats, scores, next, local, me, ran, unlocks, lines, head, queue, d, wait, daily, adv }) {
+export function resultCard(api, { outcome, reason, runner, stats, scores, next, local, me, ran, unlocks, lines, head, queue, d, wait, daily, adv, split = false }) {
   const busted = outcome === 'busted';
   const big = head || (busted ? (reason === 'water' ? 'SPLASH!' : 'BUSTED!') : 'ESCAPED!');
   const why = {
@@ -522,11 +527,13 @@ export function resultCard(api, { outcome, reason, runner, stats, scores, next, 
   }[reason] || '';
   const winner = busted ? (runner === 'a' ? 'b' : 'a') : runner;
   const youWon = !local && winner === me;
+  // the headline's colour is the viewer's: green when they won the round, red when they lost it (one card for two viewers, split screen: the runner's side)
+  const tone = split || (me !== 'a' && me !== 'b') ? (busted ? 'bad' : 'good') : winner === me ? 'good' : 'bad';
   const st = stats || {};
   // (an elapsed time: rounded like the Daily score beside it, not counted up like the round clock)
   const t = ran ? fmtSec(ran / 1000) : '';
-  const recs = (lines || []).slice(0, 2).map((l) => `<p class="gtw-rec ${l.hot ? 'hot' : ''}">${l.hot ? '<b>NEW</b> ' : ''}${esc(l.t)}</p>`).join('');
-  return `<div class="gtw-card gtw-st gtw-result" data-l="skip" role="button" aria-label="Continue"><div class="gtw-big ${busted ? 'bad' : 'good'}${big.length > 10 ? ' long' : ''}">${esc(big)}</div>
+  const recs = (lines || []).slice(0, 2).map((l) => `<p class="gtw-rec ${l.hot ? 'hot' : ''}">${l.rec ? '<b>NEW</b> ' : ''}${esc(l.t)}</p>`).join('');
+  return `<div class="gtw-card gtw-st gtw-result" data-l="skip" role="button" aria-label="Continue"><div class="gtw-big ${tone}${big.length > 10 ? ' long' : ''}">${esc(big)}</div>
     <p>${why} ${nameB(api, winner)} ${takes(api.name(winner))} the round${local ? '' : youWon ? ' — nice driving' : ''}.</p>
     ${daily ? `<p class="gtw-rec hot">${esc(daily)}</p>` : ''}
     <div class="gtw-stats">${t ? `<div><b>${t}</b><small>On the run</small></div>` : ''}<div><b>${Math.round((st.top || 0) * 3.6)}</b><small>Top km/h</small></div><div><b>${st.near || 0}</b><small>Near misses</small></div><div><b>${st.pits || 0}</b><small>PITs</small></div>${t ? '' : `<div><b>${st.spikes || 0}</b><small>Spikes hit</small></div>`}</div>

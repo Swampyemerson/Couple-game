@@ -20,7 +20,7 @@ const BESTS = [
   { k: 'heatesc', lower: true, label: 'Fastest getaway', fmt: (v) => fmtSec(v) },
   { k: 'pits_r', label: 'Most PITs in a round', fmt: (v) => `${v}` },
   { k: 'streak_best', label: 'Longest win streak', fmt: (v) => `${v} rounds`, min: 2 },
-  { k: 'top', label: 'Top speed', fmt: (v) => `${v} km/h`, min: 120, step: 2 },
+  { k: 'top', label: 'Top speed', fmt: (v) => `${v} km/h`, min: 120, step: 5 },
   { k: 'near_r', label: 'Near misses in a round', fmt: (v) => `${v}`, min: 3 },
 ];
 
@@ -51,7 +51,11 @@ export function recordRound(data, w, ns, ev, partner) {
     best('topboost', Math.round(ev.topBoost || 0));
     best('near_r', ev.near | 0); touched.push('near_r');
   } else {
-    if (ev.outcome === 'busted' && ev.reason !== 'quit') { add('busts'); best('fastbust', Math.round(ev.t), true); touched.unshift('fastbust'); }
+    if (ev.outcome === 'busted' && ev.reason !== 'quit') {
+      add('busts');
+      // a splash is a bust, but it never sets the fastest-bust mark (nor unlocks the highway patrol livery)
+      if (ev.reason !== 'water') { best('fastbust', Math.round(ev.t), true); touched.unshift('fastbust'); }
+    }
     if (ev.pits) { add('pits', ev.pits | 0); best('pits_r', ev.pits | 0); touched.push('pits_r'); }
   }
   const streak = ev.won ? num(d, K('streak')) + 1 : 0;
@@ -97,8 +101,9 @@ export function careerFrom(data, w) {
 export const dayKey = (t = Date.now()) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 export const dayOfYear = (t = Date.now()) => { const d = new Date(t); return Math.floor((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(d.getFullYear(), 0, 0)) / 86400000); };
 export const DAILY = { roundTime: 120, heat: 0 }; // one 2:00 round as the runner vs a Hard AI cop
-/** Score: seconds survived; a heat escape scores 120 + the seconds that were left. */
-export const dailyScore = (outcome, reason, t, roundTime = DAILY.roundTime) => (outcome === 'escaped' ? (reason === 'heat' ? roundTime + Math.max(0, Math.round(roundTime - t)) : roundTime) : Math.max(0, Math.round(t)));
+/** Score: seconds survived; a heat escape scores 120 + the seconds that were left. Any bust (even one
+ *  in overtime) tops out at roundTime - 1, so it can never tie or beat an escape. */
+export const dailyScore = (outcome, reason, t, roundTime = DAILY.roundTime) => (outcome === 'escaped' ? (reason === 'heat' ? roundTime + Math.max(0, Math.round(roundTime - t)) : roundTime) : Math.min(roundTime - 1, Math.max(0, Math.round(t))));
 export const dailyText = (score, roundTime = DAILY.roundTime) => (score > roundTime ? `lost them, +${score - roundTime}` : score >= roundTime ? `${fmtSec(roundTime)} (escaped)` : fmtSec(score));
 export const dailyKey = (w, day = dayKey()) => `${w}_daily_${day}`;
 /** Today's two scores: { a, b } (0 = not played). */

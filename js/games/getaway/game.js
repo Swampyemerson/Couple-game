@@ -53,7 +53,8 @@ export function createGame(el, api) {
   const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
   let dead = false;
   const timers = []; const offs = [];
-  const later = (fn, ms) => { const t = setTimeout(() => { if (!dead) fn(); }, ms); timers.push(t); if (timers.length > 200) timers.splice(0, 100); return t; };
+  // (a fired timeout leaves the list; nothing live is ever dropped, so destroy() clears every pending timer and the legend interval)
+  const later = (fn, ms) => { const t = setTimeout(() => { const i = timers.indexOf(t); if (i >= 0) timers.splice(i, 1); if (!dead) fn(); }, ms); timers.push(t); return t; };
 
   // ── DOM ──
   const root = document.createElement('div');
@@ -621,7 +622,7 @@ export function createGame(el, api) {
     if (S.sheet === 'how') { hud.showSheet(howToCard({ touch: coarse, split: split() })); return; }
     const inMatch = !!S.R && S.phase !== 'lobby';
     const gs = gfxSetting();
-    hud.showSheet(S.sheet ? settingsSheet(inMatch ? null : S.setup.rules, { canEdit: isHost, live, device: { touch: coarse, steer: device.steer, sens: device.sens, dead: device.dead, gfx: gs, cam: device.cam || rules().camera, music: device.music, emotes: device.emotes, live, liveries: liveryRows(gdata(), live ? me : personOf(human()), device.livery), gfxNote: gs === 'auto' && gfx ? `Auto picked ${({ low: 'Low', mid: 'Medium', high: 'High' })[gfx.tier] || gfx.tier} for this ${phoneish ? 'phone' : 'device'}` : '' } }) : null);
+    hud.showSheet(S.sheet ? settingsSheet(inMatch ? null : S.setup.rules, { canEdit: isHost, live, map: MAPS.find((m) => m.id === S.setup.map), device: { touch: coarse, steer: device.steer, sens: device.sens, dead: device.dead, gfx: gs, cam: device.cam || rules().camera, music: device.music, emotes: device.emotes, live, liveries: liveryRows(gdata(), live ? me : personOf(human()), device.livery), gfxNote: gs === 'auto' && gfx ? `Auto picked ${({ low: 'Low', mid: 'Medium', high: 'High' })[gfx.tier] || gfx.tier} for this ${phoneish ? 'phone' : 'device'}` : '' } }) : null);
   }
   function drawPlans() {
     hud.over.querySelectorAll('canvas[data-plan]').forEach((cv) => {
@@ -691,6 +692,7 @@ export function createGame(el, api) {
         break;
       case 'skip': skipResult(); break;
       case 'finskip': if (performance.now() - (S.finalAt || 0) > 1200) { audio.tick(); finishNow(); } break;
+      case 'standard': if (isHost) { const back = {}; for (const k of Object.keys(QUICK)) back[k] = DEFAULTS[k]; setSetup({ ...S.setup, rules: { ...S.setup.rules, ...back } }); audio.tick(); H0().view(human()).hint('Standard chase: 4 rounds of 2:30, 3 spike strips', 2400); } break;
       case 'quick': if (isHost) { setSetup({ ...S.setup, rules: { ...S.setup.rules, ...QUICK } }); audio.tick(); H0().view(human()).hint('Quick chase: 2 rounds of 1:00, 2 spike strips, sudden death if level', 2400); } break;
       case 'resume': S.menu = false; S.sheet = false; renderSheet(); delReason('menu'); if (glLost) return; delReason('tap'); audio.tick(); break;
       default:
@@ -893,10 +895,10 @@ export function createGame(el, api) {
         if (sc0 > (gdata()[`${pw}_daily_best`] | 0)) patch[`${pw}_daily_best`] = sc0;
         gset(patch);
         const rv = dailyRival(); if (rv) lines.push({ t: sc0 > rv.score ? `You beat ${rv.name}’s ${dailyText(rv.score)} today` : sc0 === rv.score ? `Level with ${rv.name} today` : `${rv.name} still leads today: ${dailyText(rv.score)}`, hot: sc0 > rv.score });
-        else if (prev) lines.push({ t: sc0 > prev ? `Your best today (was ${dailyText(prev)})` : `Your best today: ${dailyText(prev)}`, hot: sc0 > prev });
+        else if (prev) lines.push({ t: sc0 > prev ? `Your best today (was ${dailyText(prev)})` : `Your best today: ${dailyText(prev)}`, hot: sc0 > prev, rec: sc0 > prev });
       }
       const who = split() ? `${nameOf(w)}: ` : '';
-      if (r.news.length) { lines.push({ t: who + r.news[0].text, hot: true }); newRec = newRec || r.news[0]; }
+      if (r.news.length) { lines.push({ t: who + r.news[0].text, hot: true, rec: true }); newRec = newRec || r.news[0]; }
       else if (r.held) lines.push({ t: `${who}${nameOf(other(w))} still holds ${r.held.label.toLowerCase()}, ${r.held.text}` });
       if (r.streak >= 2) { streak = Math.max(streak, r.streak); if (r.streak >= 3) lines.push({ t: `${who}${r.streak} rounds in a row`, hot: true }); }
       const u = checkUnlocks(gdata(), pw); gset(u.patch); for (const x of u.pops) unlocks.push({ ...x, w });
@@ -924,7 +926,7 @@ export function createGame(el, api) {
     const res = R.result; const I = S.resultInfo;
     const wait = S.skipMe ? (live && !S.skipThem ? `Waiting for ${api.name(other(me))}…` : 'Starting…') : live && S.skipThem ? `${api.name(other(me))} is ready · tap to go` : 'Tap to continue';
     const adv = R.advAt ? { total: R.advAt - R.endWall, left: Math.max(0, R.advAt - performance.now()) } : null; // the auto-advance bar
-    hud.card(resultCard({ name: nameOf }, { adv, outcome: res.outcome, reason: res.reason, runner: R.runner, stats: res.stats, scores: S.match.scores, next: I.next, local: !live, me: human(), ran: res.ran, unlocks: I.unlocks, lines: I.lines, head: !split() && human() !== R.runner && res.reason === 'heat' ? 'LOST THEM' : I.head, queue: !!res.queue, d: res.d, wait, ai: ai() || !!S.match.daily, daily: S.match.daily ? dailyLine(res) : '' }), 'dim');
+    hud.card(resultCard({ name: nameOf }, { adv, outcome: res.outcome, reason: res.reason, runner: R.runner, stats: res.stats, scores: S.match.scores, next: I.next, local: !live, me: human(), ran: res.ran, unlocks: I.unlocks, lines: I.lines, head: !split() && human() !== R.runner && res.reason === 'heat' ? 'LOST THEM' : I.head, queue: !!res.queue, d: res.d, wait, ai: ai() || !!S.match.daily, daily: S.match.daily ? dailyLine(res) : '', split: split() }), 'dim');
   }
   /** Tap on the result card: practice / split goes on at once; live when both phones have tapped. */
   function skipResult() {
@@ -971,7 +973,8 @@ export function createGame(el, api) {
     let tbWhy = '';
     if (winner === null) { // tiebreak: an escape beats a bust; between escapes, health left + 50 × how far the heat meter got; between busts, the longer run
       const run = { a: 0, b: 0 }; for (const h of m.hist) run[h.runner] += h.outcome === 'escaped' ? 1e6 + (h.hp || 0) + 50 * (h.escMax || 0) : (h.ran || 0) / 1000;
-      if (run.a !== run.b) { winner = run.a > run.b ? 'a' : 'b'; tbWhy = Math.max(run.a, run.b) >= 1e6 ? 'health left after the escapes' : 'longest time on the run'; }
+      if (run.a !== run.b) { winner = run.a > run.b ? 'a' : 'b'; const esc = { a: Math.floor(run.a / 1e6), b: Math.floor(run.b / 1e6) };
+        tbWhy = esc.a + esc.b === 0 ? 'longest time on the run' : esc.a === esc.b ? 'health left after the escapes' : Math.min(esc.a, esc.b) === 0 ? 'an escape beats a bust' : 'more escapes'; }
     }
     const fin = { scores: m.scores, winner, tie: m.scores.a === m.scores.b, tbWhy, sd: m.hist.some((h) => h.sd) };
     if (live) link.urgent('final', fin);
@@ -1026,7 +1029,8 @@ export function createGame(el, api) {
       if (t.heat >= 2) cands.push({ w, s: 50 + t.heat, t: `HOUDINI · ${n} lost the heat ${t.heat} times` });
       if (t.pits >= 3) cands.push({ w, s: 40 + t.pits, t: `BUMPER CAR · ${n} landed ${t.pits} PITs` });
       if (t.spikes >= 2) cands.push({ w, s: 35 + t.spikes, t: `ROADBLOCK · ${n} spiked them ${t.spikes} times` });
-      if (t.esc >= 1 && t.pitted === 0 && m.hist.some((h) => h.runner === w)) cands.push({ w, s: 30 + t.esc, t: `UNTOUCHABLE · ${n} ${n === 'You' ? 'were' : 'was'} never PITted` });
+      const runs = m.hist.filter((h) => h.runner === w).length;
+      if (runs >= 1 && t.esc === runs && t.pitted === 0) cands.push({ w, s: 30 + t.esc, t: `UNTOUCHABLE · ${n} ${n === 'You' ? 'were' : 'was'} never PITted` });
       if (t.near >= 5) cands.push({ w, s: 20 + t.near, t: `THREAD THE NEEDLE · ${n}: ${t.near} near misses` });
       if (t.top >= 160) cands.push({ w, s: 10 + t.top / 100, t: `LEAD FOOT · ${n} hit ${t.top} km/h` });
     }
@@ -2047,6 +2051,7 @@ export function createGame(el, api) {
   const metres = (d) => { const n = Math.max(0, Math.round(d)); return n < 4096 ? (M_STR[n] || (M_STR[n] = n + ' m')) : n + ' m'; };
   function updateHud(dt, now) {
     hudT -= dt; miniT -= dt;
+    if (S.hudR !== S.R) { S.hudR = S.R; hudT = 0; } // a new round: its scores, pips and clock at once, not after the last round's 0.2 s tick
     const playing = !!S.R && !split() && (S.phase === 'count' || S.phase === 'chase');
     if (S.playingCls !== playing) { S.playingCls = playing; root.classList.toggle('playing', playing); }
     const vs = viewers(); const R = S.R;
@@ -2057,7 +2062,7 @@ export function createGame(el, api) {
       if (!inGame) continue;
       if (hudT <= 0) {
         v.scores(S.match.scores.a, S.match.scores.b);
-        const pips = []; for (let i = 0, nP = Math.max(S.match.rounds, R.idx + 1); i < nP; i++) { const h = S.match.hist[i]; pips.push(h ? (h.outcome === 'busted' ? other(h.runner) : h.runner) : i === R.idx ? 'now' : ''); }
+        const pips = []; for (let i = 0, nP = Math.max(S.match.rounds, Math.min(R.idx, S.match.hist.length) + 1); i < nP; i++) { const h = S.match.hist[i]; pips.push(h ? (h.outcome === 'busted' ? other(h.runner) : h.runner) : i === R.idx ? 'now' : ''); }
         v.pips(pips);
         v.role(role, w);
         v.health(c.hp, role);
