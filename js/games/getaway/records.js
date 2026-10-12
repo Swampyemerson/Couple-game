@@ -11,6 +11,8 @@
 // (matches), runs (rounds as the runner), chain_r (the cop's longest Hot Pursuit chain in a round).
 // The Daily chase also keeps `<w>_daily_streak`, `<w>_daily_streak_best` and `<w>_daily_last` (the
 // day number of the last Daily played): see foldStreak.
+// Content update: safe (safehouse escapes), clean (escapes at full health over 45 s), revenge (grudge
+// matches won), pairs (pairs won); the couple's ledger is the shared `series_*` keys (seriesAfter).
 
 import { twistFor, ptsFor } from './twists.js';
 
@@ -138,6 +140,8 @@ export function foldStreak(st, day) {
   const streak = last === day ? Math.max(1, was) : last === day - 1 && was > 0 ? was + 1 : 1;
   return { streak, best: Math.max(streak, st && st.best > 0 ? st.best : 0), last: day, changed: last !== day };
 }
+/** The day number of a Daily's date key ('2026-10-12'). */
+export const dayNumFromKey = (k) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(k || ''); return m ? Math.floor(Date.UTC(+m[1], +m[2] - 1, +m[3]) / 86400000) : dayNum(); };
 /** Person w's streak keys in the shared data. */
 export const streakOf = (data, w) => ({ streak: num(data, `${w}_daily_streak`), best: num(data, `${w}_daily_streak_best`), last: num(data, `${w}_daily_last`) });
 /** The patch for person w playing today's Daily (empty when they already have today). */
@@ -228,7 +232,7 @@ export function seriesOf(data) {
 }
 /** The player who has lost their last 2 or more matches to the other ('a' | 'b' | ''): a grudge match. */
 export function seriesGrudge(data) { const s = seriesOf(data); return s.run >= 2 && (s.last === 1 || s.last === 2) ? flip(s.last === 1 ? 'a' : 'b') : ''; }
-/** Fold one finished match into the ledger. winner: 'a' | 'b' | null. grudge: seriesGrudge() as it stood at the start. Returns { patch, sr } (sr: what the match card tells). */
+/** Fold one finished match into the ledger (leadChange: someone edges ahead of a ledger where they were not in front). winner: 'a' | 'b' | null. grudge: seriesGrudge() as it stood at the start. Returns { patch, sr } (sr: what the match card tells). */
 export function seriesAfter(data, winner, grudge = '') {
   const s = seriesOf(data); const n = { ...s };
   n.n = s.n + 1;
@@ -237,7 +241,7 @@ export function seriesAfter(data, winner, grudge = '') {
   n.run = code && code === s.last ? s.run + 1 : code ? 1 : 0; n.last = code;
   const lead0 = Math.sign(s.a - s.b); const lead1 = Math.sign(n.a - n.b);
   const patch = { series_a: n.a, series_b: n.b, series_d: n.d, series_n: n.n, series_last: n.last, series_run: n.run };
-  return { patch, sr: { ...n, leadChange: lead0 !== 0 && lead1 !== 0 && lead0 !== lead1, revenge: !!winner && winner === grudge, grudge, tenth: n.n % 10 === 0 } };
+  return { patch, sr: { ...n, leadChange: s.n > 0 && lead1 !== 0 && lead1 !== lead0, revenge: !!winner && winner === grudge, grudge, tenth: n.n % 10 === 0 } };
 }
 /** The lobby's ledger line: 'Series: Sydney 7–5 · Sydney has won the last 2' ('' before the first match). */
 export function seriesLine(data, name) {
@@ -247,4 +251,16 @@ export function seriesLine(data, name) {
   if (s.d) t += ` (${s.d} drawn)`;
   if (s.run >= 2 && (s.last === 1 || s.last === 2)) t += ` · ${name(s.last === 1 ? 'a' : 'b')} has won the last ${s.run}`;
   return t;
+}
+/** Who each played round counts for on the match card: the pair's winner for both its rounds (pairs), else the round's own winner. null = a level pair. */
+export function winnersByRound(hist, mode = 'pairs', total = 0) {
+  const out = []; let i = 0;
+  while (i < hist.length) {
+    const h = hist[i];
+    if (mode !== 'pairs' || h.sd) { out.push(roundWinner(h)); i++; continue; }
+    const g = hist[i + 1];
+    if (g && !g.sd) { const w = pairWinner(h, g).winner; out.push(w, w); i += 2; continue; }
+    out.push(!g && total && hist.length >= total ? roundWinner(h) : undefined); i++; // (undefined: its pair is still open)
+  }
+  return out;
 }

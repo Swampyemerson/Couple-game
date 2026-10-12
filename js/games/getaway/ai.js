@@ -590,7 +590,7 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
     if (role === 'cop' && obs) {
       D.pingT -= dt;
       const escaping = (opts.esc || 0) >= 0.5;
-      if (los || (D.pingT <= 0 && !escaping) || !D.known) { D.known = setKnown(obs); if (!los) D.pingT = lv.ping * (Math.hypot(obs.x - car.x, obs.z - car.z) > (opts.heat || 180) ? 1.75 : 1); }
+      if (los || (D.pingT <= 0 && !escaping) || !D.known) { D.known = setKnown(obs); if (!los) D.pingT = lv.ping * (opts.wanted >= 3 ? 0.6 : 1) * (Math.hypot(obs.x - car.x, obs.z - car.z) > (opts.heat || 180) ? 1.75 : 1); } // (Wanted ★★★: the radar pings 40% sooner)
     } else if (obs) D.known = setKnown(obs);
     let k = D.known;
     if (k && role === 'cop' && !los) { // extrapolate a stale fix a little

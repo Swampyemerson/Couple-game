@@ -19,7 +19,8 @@ import { createLink } from './link.js';
 import { createDriver, AI_LEVELS, AI_LEVEL_LABELS } from './ai.js';
 import { MAPS } from './maps/index.js';
 import { liveryFor, liveryRows, checkUnlocks, LIVERIES } from './liveries.js';
-import { recordRound, recordMatch, recordsLine, fmtSec, dayKey, dayOfYear, DAILY, dailyScore, dailyText, dailyKey, dailyBoard, dayNum, streakPatch, streakView } from './records.js';
+import { rulesFor, heatWith, twistFor, twistInfo, ptsFor, pickSafehouse } from './twists.js';
+import { recordRound, recordMatch, recordPair, pairWinner, pairPts, pairTarget, pairWhy, scoresFromHist, winnersByRound, remainingPoints, roundWinner, seriesAfter, seriesGrudge, seriesLine, recordsLine, fmtSec, dayKey, dayOfYear, DAILY, dailyScore, dailyText, dailyKey, dailyBoard, dayNum, dayNumFromKey, foldStreak, streakOf, streakView } from './records.js';
 import { wantedLevel, wantedStars, copRegen, chainNew, chainReset, chainStep, chainAdd, chainText, CHAIN, CHAIN_TIERS, aheadPoints, QUICK_DIST, isKiss } from './chase.js';
 
 const AB = ['a', 'b'];
@@ -88,7 +89,7 @@ export function createGame(el, api) {
     phase: 'loading', setup: sanitizeSetup({ ...(loadSaved() || {}), first: 'a' }, MAP_IDS.filter((id) => !MAPS.find((m) => m.id === id).stub).concat(MAP_IDS)), setupVer: 0,
     sheet: false, match: null, R: null, paused: false, pausedAt: 0, resumeAt: 0, reasons: 0, partnerPz: 0, partnerReady: false,
     localMode: live ? 'live' : device.localMode, practiceRole: device.practiceRole, mapId: null, mapIdx: -1, loading: false,
-    stats: null, lastNow: 0, slowT: 0, slowK: 1, tSec: 0, simT: 0, ending: false, finalShown: false, // simT: seconds the chase physics has run (tests time by it, not by the wall)
+    cp: { runner: CAR.runner, cop: CAR.cop }, stats: null, lastNow: 0, slowT: 0, slowK: 1, tSec: 0, simT: 0, ending: false, finalShown: false, // simT: seconds the chase physics has run (tests time by it, not by the wall)
   };
   if (!MAPS.find((m) => m.id === S.setup.map && !m.stub)) S.setup.map = MAPS.find((m) => !m.stub).id;
   { // the last open died while building a map (iOS kills a tab that runs out of memory): open on
@@ -130,7 +131,8 @@ export function createGame(el, api) {
   const roleOf = (w) => (S.R ? (S.R.runner === w ? 'runner' : 'cop') : (w === S.setup.first ? 'runner' : 'cop'));
   const runnerW = () => (S.R ? S.R.runner : S.setup.first);
   const copW = () => other(runnerW());
-  const rules = () => (S.match ? S.match.rules : S.setup.rules);
+  // the rules the current round plays by: the match rules with the round's wildcard laid over them (twists.js)
+  const rules = () => (S.R && S.R.rules ? S.R.rules : S.match ? S.match.rules : S.setup.rules);
 
   // ── net ──
   const link = createLink(api, { delay: 100, onLink: () => onLinked(), onUnlink: () => { addReason('stale'); } });
@@ -599,14 +601,16 @@ export function createGame(el, api) {
     const ns = live || S.localMode === 'split' ? '' : 'ai_';
     const records = recordsLine(gdata(), ns, (w) => (ns ? (w === owner ? 'You' : api.name(w)) : api.name(w)), ns ? [owner] : ['a', 'b']);
     const dl = !live ? dailyInfo() : null;
-    const key = JSON.stringify([S.setup, S.sheet, S.localMode, S.practiceRole, S.partnerReady, partnerHere, partnerLoading, device.aiLevel, device.steer, device.sens, device.dead, device.cam, device.seenHow, S.meReady, portraitPhone, gfxSetting(), S.loading, device.livery, S.sheet && liveryRows(gdata(), live ? me : personOf(human()), device.livery), records, dl]);
+    // The Series: the couple's head-to-head (live and split only)
+    const series = live || S.localMode === 'split' ? seriesLine(gdata(), (w) => api.name(w)) : '';
+    const key = JSON.stringify([series, S.setup, S.sheet, S.localMode, S.practiceRole, S.partnerReady, partnerHere, partnerLoading, device.aiLevel, device.steer, device.sens, device.dead, device.cam, device.seenHow, S.meReady, portraitPhone, gfxSetting(), S.loading, device.livery, S.sheet && liveryRows(gdata(), live ? me : personOf(human()), device.livery), records, dl]);
     if (!force && key === lobbyKey) return;
     lobbyKey = key;
     hud.card(lobbyCard({ name: nameOf }, {
       maps: MAPS, setup: S.setup, canEdit: isHost, local: !live, localMode: S.localMode, practiceRole: S.practiceRole,
       splitOK: !coarse && !phoneish, waitingFor: 'a', partnerReady: S.partnerReady, me: human(), meReady: !!S.meReady,
       levels: AI_LEVELS, levelLabels: AI_LEVEL_LABELS, aiLevel: device.aiLevel, partnerHere, partnerName: live ? api.name(other(me)) : '', partnerLoading,
-      portraitPhone, newcomer: !device.seenHow, loading: S.loading, records, daily: dl,
+      portraitPhone, newcomer: !device.seenHow, loading: S.loading, records, daily: dl, series,
     }), 'clear bottom');
     drawPlans();
     renderSheet();
@@ -615,8 +619,14 @@ export function createGame(el, api) {
   function dailyInfo() {
     const id = dailyMap(); const m = MAPS.find((x) => x.id === id) || {};
     const b = dailyBoard(gdata()); const rt = DAILY.roundTime;
-    const board = AB.filter((w) => b[w] > 0).sort((x, y) => b[y] - b[x]).map((w) => ({ w, name: api.name(w), text: dailyText(b[w], rt) }));
-    return { mapId: id, title: `Today: ${m.name || 'Dockside'}`, short: `Today: ${m.name || 'Dockside'}, same start for both of you.`, how: 'One 2:00 run as the runner vs a Hard AI cop. Survive, or lose the heat for a bonus. Your best try today counts.', board, note: '' };
+    const board = AB.filter((w) => b[w] > 0).sort((x, y) => b[y] - b[x]).map((w) => ({ w, name: api.name(w), verb: 'ran today', text: dailyText(b[w], rt) }));
+    // Daily 2.0: your best ever, and the streak (days in a row; a gap is just 'Day 1' again)
+    const d0 = gdata(); const dn = dayNum(); const lines = []; const best = d0[`${owner}_daily_best`] | 0;
+    if (best > 0) lines.push(`Your best ever: ${dailyText(best, rt)}`);
+    const sv = AB.map((w) => ({ w, ...streakView(d0, w, dn) }));
+    lines.push(`Streak: ${sv.map((x) => `${api.name(x.w)} Day ${x.day}${x.played ? ' ✓' : ''}`).join(' · ')}`);
+    if (sv.some((x) => x.best >= 2)) lines.push(`Best streak: ${sv.filter((x) => x.best >= 1).map((x) => `${api.name(x.w)} ${x.best}`).join(' · ')}`);
+    return { mapId: id, title: `Today: ${m.name || 'Dockside'}`, short: `Today: ${m.name || 'Dockside'}, same start for both of you.`, how: 'One 2:00 run as the runner vs a Hard AI cop. Survive, or lose the heat for a bonus. Your best try today counts.', board, lines, note: '' };
   }
   /** The bottom sheet: settings or the how-to-play card (lobby and pause menu). */
   function renderSheet() {
@@ -757,8 +767,10 @@ export function createGame(el, api) {
     // the Daily chase: today's map, start and seed for both of you; one 2:00 round as the runner vs a Hard AI cop
     const first = daily ? human() : ai() ? (S.practiceRole === 'runner' ? human() : aiW) : S.setup.first;
     const seed = daily ? (strHash('getaway-daily:' + dayKey()) % 2147483646) + 1 : ((Math.random() * 2147483646) | 0) + 1;
-    const rules0 = daily ? { ...DEFAULTS, roundTime: DAILY.roundTime, rounds: 1, tiebreak: 'time' } : { ...S.setup.rules };
-    const match = { id: Math.random().toString(36).slice(2, 9), map: mapId, rules: rules0, first, seed, rounds: daily ? 1 : TUNE.rounds || S.setup.rules.rounds, scores: { a: 0, b: 0 }, hist: [], mode: S.localMode, daily: daily ? dayKey() : null, aiLevel: daily ? 'hard' : device.aiLevel };
+    const rules0 = daily ? { ...DEFAULTS, roundTime: DAILY.roundTime, rounds: 1, tiebreak: 'time', score: 'rounds', wildcards: 'off' } : { ...S.setup.rules, ...(TUNE.rules || {}) };
+    // (a grudge match: the series ledger as it stood when this match began; it travels in `match` so both phones agree)
+    const grudge = daily || ai() ? '' : seriesGrudge(gdata());
+    const match = { id: Math.random().toString(36).slice(2, 9), map: mapId, rules: rules0, first, seed, rounds: daily ? 1 : TUNE.rounds || S.setup.rules.rounds, scores: { a: 0, b: 0 }, hist: [], mode: S.localMode, daily: daily ? dayKey() : null, aiLevel: daily ? 'hard' : device.aiLevel, grudge };
     const R = nextRound(match, 0, null, lead);
     if (live) link.urgent('match', { match, R });
     applyMatch(match, R);
@@ -778,14 +790,30 @@ export function createGame(el, api) {
     const sp = spawns.length ? (match.seed + Math.floor(idx / 2)) % spawns.length : 0;
     const runner = sd ? sd.runner : idx % 2 === 0 ? match.first : other(match.first);
     const at = clock() + lead;
-    // the intro card only when it tells you something new: round 0, a new start spot, the decider
-    const moved = idx === 0 || !!sd || Math.floor(idx / 2) !== Math.floor((idx - 1) / 2);
+    // the wildcard (twists.js): from (seed, idx) alone; round 0 and the decider are plain. A safehouse needs a spot to drive to.
+    let tw = twistFor(match.seed, idx, { sd: !!sd, wild: match.rules.wildcards !== 'off' && !match.daily });
+    if (TUNE.tw && TUNE.tw[idx] != null && !sd && idx > 0) tw = TUNE.tw[idx]; // (tests)
+    let safe = null;
+    if (tw === 'safe') { safe = safehouseFor(match, idx, spawns[sp]); if (!safe) tw = ''; }
+    // the intro card only when it tells you something new: round 0, a new start spot, the decider, a wildcard
+    const moved = idx === 0 || !!sd || !!tw || Math.floor(idx / 2) !== Math.floor((idx - 1) / 2);
     const intro = !moved ? 0 : TUNE.intro != null ? TUNE.intro : idx === 0 ? FLOW.intro : FLOW.introMove;
     const count = TUNE.count != null ? TUNE.count : idx === 0 ? FLOW.count0 : FLOW.count;
     const t0 = at + intro + count;
     const endAt = t0 + (TUNE.roundMs || (sd ? FLOW.sudden : match.rules.roundTime) * 1000);
-    return { idx, runner, spawn: sp, at, t0, endAt, intro, sd: sd ? 1 : 0 };
+    const R = { idx, runner, spawn: sp, at, t0, endAt, intro, sd: sd ? 1 : 0, tw, pts: sd ? 1 : ptsFor(tw) };
+    if (safe) R.safe = safe;
+    return R;
   }
+  /** The safehouse for round idx: a landmark with a road to drive to (3865 Moorhead / 8524 Boulder Way first), or null. */
+  function safehouseFor(match, idx, spawn) {
+    const entry = MAPS.find((m) => m.id === match.map); const o = {};
+    if (!entry || !geo || S.mapId !== match.map || !entry.landmarks) return null;
+    const used = match.hist.map((h) => h.sn).filter(Boolean);
+    return pickSafehouse(entry.landmarks, spawn, (x, z) => { const d = geo.nearestRoad(x, z, o, 110, (r) => !r.bridge); return o.road >= 0 ? { x: o.px, z: o.pz, d } : null; }, match.seed, idx, used);
+  }
+  /** What travels of a round (match / round / the relink re-send): everything both phones must agree on. */
+  const wireR = (R) => ({ idx: R.idx, runner: R.runner, spawn: R.spawn, at: R.at, t0: R.t0, endAt: R.endAt, intro: R.intro, sd: R.sd, tw: R.tw || '', pts: R.pts || 1, safe: R.safe || null });
   function applyMatch(match, R) {
     S.rematchCard = false; S.autoStart = 0; S.finalShown = false; S.finalDone = false; S.result = null;
     S.match = { ...match, rules: sanitizeSetup({ rules: match.rules }, MAP_IDS).rules };
@@ -800,6 +828,15 @@ export function createGame(el, api) {
   link.on('match', (d) => { if (!isHost && d && d.match) applyMatch(clone(d.match), clone(d.R)); });
   link.on('round', (d) => { if (!isHost && d && S.match && d.R) { const c = clone(d); S.match.scores = c.scores || S.match.scores; S.match.hist = c.hist || S.match.hist; applyRound(c.R); } });
 
+  /** Pairs scoring on for this match (the Daily and a 'Per round' match score every round). */
+  const pairsOn = () => !!S.match && S.match.rules.score !== 'rounds' && !S.match.daily;
+  /** The cars' handling for a round's rules (SLICK STREETS: lateral grip × 0.88). BIG TANK's faster cop recharge rides on S.copK. */
+  function carParams(r) {
+    const gk = r.gripK || 1;
+    return { runner: gk === 1 ? CAR.runner : { ...CAR.runner, grip: CAR.runner.grip * gk }, cop: gk === 1 ? CAR.cop : { ...CAR.cop, grip: CAR.cop.grip * gk } };
+  }
+  /** FOG: the render fog pulled in (render-only; 1 restores the map's own). */
+  function setFog(k) { const f = world && world.scene && world.scene.fog; if (f && world.fogFar) { f.near = world.fogNear * (k || 1); f.far = world.fogFar * (k || 1); } }
   function applyRound(R) {
     if (S.R && S.R.idx === R.idx && !S.R.over) return;
     S.R = { ...R, over: false, result: null, spikes: [], oils: [], seq: 0 };
@@ -808,6 +845,10 @@ export function createGame(el, api) {
     S.paused = false; S.resumeAt = 0; S.pausedAt = 0; // a pause never carries into a new round
     const entry = S.mapEntry;
     const sp = (entry.spawns && entry.spawns[R.spawn]) || { runner: { x: 0, z: 0, yaw: 0 }, cop: { x: 0, z: 80, yaw: 0 } };
+    // this round's rules: the match rules with its wildcard laid over them; the second half of a pair knows the first half's target
+    S.R.rules = rulesFor(S.match.rules, R.tw, R.sd);
+    S.R.target = pairsOn() && R.idx % 2 === 1 && !R.sd && S.match.hist[R.idx - 1] && !S.match.hist[R.idx - 1].sd ? pairTarget(S.match.hist[R.idx - 1]) : null;
+    S.cp = carParams(S.R.rules); S.copK = S.R.rules.copBoostK || 1; setFog(S.R.rules.fog); // (S.copK: BIG TANK's faster cop recharge, read by copRegen below)
     const rules0 = rules();
     for (const w of AB) {
       const p = P2[w]; const role = roleOf(w);
@@ -815,7 +856,7 @@ export function createGame(el, api) {
       const s = role === 'runner' ? sp.runner : sp.cop;
       placeCar(c, s.x, s.z, s.yaw, geo);
       c.nitro = role === 'runner' ? NITRO[rules0.nitro].start : NITRO.cop.start;
-      p.car = c; p.esc = 0; p.escPeak = 0; p.escPeakT = 0; p.escMax = 0; p.seenT = 0; p.cover = false; p.stopT = 0; p.oilLeft = role === 'runner' ? 1 : 0; p.spikesLeft = role === 'cop' && !R.sd ? rules0.spikes : 0;
+      p.car = c; p.esc = 0; p.escPeak = 0; p.escPeakT = 0; p.escMax = 0; p.seenT = 0; p.cover = false; p.stopT = 0; p.oilLeft = role === 'runner' ? rules0.oils : 0; p.spikesLeft = role === 'cop' ? rules0.spikes : 0; p.hideT = 0; p.safeBonus = false; p.safeHint = false;
       p.stats = { top: 0, near: 0, pits: 0, spikes: 0, hits: 0, topBoost: 0 };
       p.spikeHit.clear(); p.oilHit.clear(); p.nearIds.clear(); p.hpSeen = 100; p.lastSeen = null; p.los = true; p.shown.init = false; p.corr = null;
       chainReset(p.chain); p.wFilled = false; p.style = null;
@@ -859,19 +900,21 @@ export function createGame(el, api) {
     const R = S.R; if (!R || R.over || res.idx !== R.idx) return;
     R.over = true; R.result = res; S.phase = 'result'; R.endWall = performance.now(); S.skipMe = false; S.skipThem = false; S.final15 = false;
     const winner = res.outcome === 'busted' ? other(R.runner) : R.runner;
-    S.match.scores[winner]++;
     const st = res.stats || {};
-    S.match.hist.push({ runner: R.runner, outcome: res.outcome, reason: res.reason, ran: res.ran, hp: +res.hp || 0, escMax: +res.escMax || 0, pits: st.pits | 0, top: +st.top || 0, near: st.near | 0, spikes: st.spikes | 0, sd: !!R.sd });
+    S.match.hist.push({ runner: R.runner, outcome: res.outcome, reason: res.reason, ran: res.ran, hp: +res.hp || 0, escMax: +res.escMax || 0, pits: st.pits | 0, top: +st.top || 0, near: st.near | 0, spikes: st.spikes | 0, sd: !!R.sd, tw: R.tw || '', pts: R.pts || 1, sn: R.safe ? R.safe.name : '' });
+    // the score is recomputed from the rounds played (pairs: a pair's point comes after its second round)
+    S.match.scores = scoresFromHist(S.match.hist, pairsOn() ? 'pairs' : 'rounds', S.match.rounds);
     api.setScore(S.match.scores);
+    setFog(1);
     const vs = viewers();
     const left = Math.max(0, R.endAt - res.at);
     // the stamp: the ending's own words (a buzzer with the cop on the bumper is a photo finish)
     const photo = res.outcome === 'escaped' && res.reason === 'time' && res.d >= 0 && res.d <= 15;
     let head; let cls = res.outcome === 'busted' ? 'bad' : R.runner;
     if (res.outcome === 'busted') head = res.reason === 'water' ? 'SPLASH!' : left < 10000 && res.reason !== 'quit' ? 'LAST SECOND BUST!' : 'BUSTED!';
-    else head = photo ? (res.d <= 7 ? 'BY A BUMPER!' : 'PHOTO FINISH!') : res.reason === 'heat' ? 'VANISHED!' : 'ESCAPED!';
+    else head = photo ? (res.d <= 7 ? 'BY A BUMPER!' : 'PHOTO FINISH!') : res.reason === 'heat' ? 'VANISHED!' : res.reason === 'safe' ? (R.safe && R.safe.home ? 'HOME SAFE!' : 'SAFEHOUSE!') : 'ESCAPED!';
     if (head.length > 9) cls += ' sm';
-    for (const w of vs) { const v = H0().view(w); const copSide = w !== R.runner && !split(); v.stamp(copSide && res.reason === 'heat' ? 'LOST THEM' : head, copSide && res.reason === 'heat' ? 'bad' : cls); v.flash(); }
+    for (const w of vs) { const v = H0().view(w); const copSide = w !== R.runner && !split(); v.stamp(copSide && res.reason === 'heat' ? 'LOST THEM' : copSide && res.reason === 'safe' ? 'THEY’RE SAFE' : head, copSide && (res.reason === 'heat' || res.reason === 'safe') ? 'bad' : cls); v.flash(); }
     if ((photo || res.reason === 'heat') && !reduced) S.slowT = Math.max(S.slowT || 0, 0.75);
     const youWon = live ? winner === me : ai() ? winner === human() : true;
     audio.stamp(); if (photo && audio.sting) audio.sting(); later(() => (youWon ? audio.win() : audio.lose()), 300);
@@ -879,6 +922,14 @@ export function createGame(el, api) {
     if (res.outcome === 'escaped' && res.reason === 'heat' && res.d < 60) for (const w of vs) if (w !== R.runner) later(() => H0().view(w).hint('SO CLOSE: they slipped away ' + res.d + ' m from you', 2400), 900);
     const done = matchDecided();
     const sd = !done && S.match.hist.length >= S.match.rounds;
+    // pairs: the first half says what the second must beat; the second half names the pair's winner
+    let pair = null;
+    if (pairsOn() && !R.sd) {
+      const hs = S.match.hist; const i = R.idx;
+      if (i % 2 === 1) { const pw = pairWinner(hs[i - 1], hs[i]); pair = { done: true, winner: pw.winner, why: pairWhy(pw.why), pts: pairPts(hs[i - 1], hs[i]) }; }
+      else if (!done && hs.length < S.match.rounds) pair = { half: pairTarget(hs[i]), next: other(R.runner), pts: hs[i].pts || 1 };
+    }
+    const pairWon = pair && pair.done ? pair.winner : null;
     const next = done ? 'Final whistle…' : sd ? `All square: sudden death, ${nameRuns(suddenRunner(), true)}` : `Next: ${nameRuns(other(R.runner))}`;
     // records + livery unlocks for the people on this device (records.js, liveries.js)
     const lines = []; const unlocks = []; let newRec = null; let streak = 0;
@@ -886,15 +937,18 @@ export function createGame(el, api) {
     for (const w of recPeople()) {
       const role = w === R.runner ? 'runner' : 'cop';
       const p = P2[w];
-      const ev = { role, won: winner === w, outcome: res.outcome, reason: res.reason, t: res.ran / 1000, pits: role === 'cop' ? (live ? p.stats.pits : st.pits) : 0, top: role === 'runner' ? (+st.top || p.stats.top) * 3.6 : 0, topBoost: p.stats.topBoost, near: role === 'runner' ? st.near | 0 : 0 };
+      const ev = { role, won: winner === w, outcome: res.outcome, reason: res.reason, t: res.ran / 1000, pits: role === 'cop' ? (live ? p.stats.pits : st.pits) : 0, top: role === 'runner' ? (+st.top || p.stats.top) * 3.6 : 0, topBoost: p.stats.topBoost, near: role === 'runner' ? st.near | 0 : 0, chain: role === 'cop' ? p.chain.best : 0, hp: role === 'runner' ? res.hp : 0 };
       const pw = personOf(w);
       const r = recordRound(gdata(), pw, ns, ev, ns ? null : other(pw));
       gset(r.patch);
+      if (role === 'cop' && p.chain.best >= 10) { (S.match.chains || (S.match.chains = {}))[R.idx] = p.chain.best; if (live) link.urgent('emote', { k: 'CHAIN', i: R.idx, n: p.chain.best }); } // (RELENTLESS: the match card's MVP knows on both phones)
       if (S.match.daily && role === 'runner') { // today's Daily chase score (the best of today's tries)
         const sc0 = dailyScore(res.outcome, res.reason, res.ran / 1000, S.match.rules.roundTime); const dk = dailyKey(pw, S.match.daily);
         const prev = gdata()[dk] | 0; const patch = {};
         if (sc0 > prev) patch[dk] = sc0;
         if (sc0 > (gdata()[`${pw}_daily_best`] | 0)) patch[`${pw}_daily_best`] = sc0;
+        const so = streakOf(gdata(), pw); const sf = foldStreak(so, dayNumFromKey(S.match.daily)); // Daily streak: consecutive days, Day 1 after a gap
+        if (sf.changed) { patch[`${pw}_daily_streak`] = sf.streak; patch[`${pw}_daily_streak_best`] = sf.best; patch[`${pw}_daily_last`] = sf.last; lines.push({ t: `Daily streak: Day ${sf.streak}${sf.streak > 1 && sf.streak > so.best ? ' (your best)' : ''}`, hot: sf.streak >= 2 }); }
         gset(patch);
         const rv = dailyRival(); if (rv) lines.push({ t: sc0 > rv.score ? `You beat ${rv.name}’s ${dailyText(rv.score)} today` : sc0 === rv.score ? `Level with ${rv.name} today` : `${rv.name} still leads today: ${dailyText(rv.score)}`, hot: sc0 > rv.score });
         else if (prev) lines.push({ t: sc0 > prev ? `Your best today (was ${dailyText(prev)})` : `Your best today: ${dailyText(prev)}`, hot: sc0 > prev, rec: sc0 > prev });
@@ -903,12 +957,13 @@ export function createGame(el, api) {
       if (r.news.length) { lines.push({ t: who + r.news[0].text, hot: true, rec: true }); newRec = newRec || r.news[0]; }
       else if (r.held) lines.push({ t: `${who}${nameOf(other(w))} still holds ${r.held.label.toLowerCase()}, ${r.held.text}` });
       if (r.streak >= 2) { streak = Math.max(streak, r.streak); if (r.streak >= 3) lines.push({ t: `${who}${r.streak} rounds in a row`, hot: true }); }
+      if (pairWon === w) gset(recordPair(gdata(), pw, ns)); // (a pair won: the Classic cruiser's counter)
       const u = checkUnlocks(gdata(), pw); gset(u.patch); for (const x of u.pops) unlocks.push({ ...x, w });
     }
     if (newRec) later(() => { for (const w of vs) H0().view(w).stamp('NEW RECORD!', 'good sm'); if (audio.fanfare) audio.fanfare(); }, 1000);
     else if (streak >= 3) later(() => { for (const w of vs) if (winner === w || !live) H0().view(w).stamp(`STREAK ×${streak}`, 'good sm'); audio.win(); }, 1000);
     if (unlocks.length) later(() => { for (const w of vs) H0().view(w).stamp('UNLOCKED!', 'good sm'); audio.win(); }, newRec || streak >= 3 ? 2000 : 1000);
-    S.resultInfo = { lines, unlocks, next, photo, head };
+    S.resultInfo = { lines, unlocks, next, photo, head, pair };
     // the card stays up long enough to read; longer when it has news (either phone's news: the
     // other phone hears 'hold', and the host's advance waits for the later of the two)
     const news = !!newRec || streak >= 3 || unlocks.length > 0 || lines.some((l) => l.hot);
@@ -928,7 +983,7 @@ export function createGame(el, api) {
     const res = R.result; const I = S.resultInfo;
     const wait = S.skipMe ? (live && !S.skipThem ? `Waiting for ${api.name(other(me))}…` : 'Starting…') : live && S.skipThem ? `${api.name(other(me))} is ready · tap to go` : 'Tap to continue';
     const adv = R.advAt ? { total: R.advAt - R.endWall, left: Math.max(0, R.advAt - performance.now()) } : null; // the auto-advance bar
-    hud.card(resultCard({ name: nameOf }, { adv, outcome: res.outcome, reason: res.reason, runner: R.runner, stats: res.stats, scores: S.match.scores, next: I.next, local: !live, me: human(), ran: res.ran, unlocks: I.unlocks, lines: I.lines, head: !split() && human() !== R.runner && res.reason === 'heat' ? 'LOST THEM' : I.head, queue: !!res.queue, d: res.d, wait, ai: ai() || !!S.match.daily, daily: S.match.daily ? dailyLine(res) : '', split: split() }), 'dim');
+    hud.card(resultCard({ name: nameOf }, { adv, outcome: res.outcome, reason: res.reason, runner: R.runner, stats: res.stats, scores: S.match.scores, next: I.next, local: !live, me: human(), ran: res.ran, unlocks: I.unlocks, lines: I.lines, head: !split() && human() !== R.runner && res.reason === 'heat' ? 'LOST THEM' : !split() && human() !== R.runner && res.reason === 'safe' ? 'THEY’RE SAFE' : I.head, pair: I.pair, twist: twistInfo(R.tw), pts: R.pts || 1, queue: !!res.queue, d: res.d, wait, ai: ai() || !!S.match.daily, daily: S.match.daily ? dailyLine(res) : '', split: split() }), 'dim');
   }
   /** Tap on the result card: practice / split goes on at once; live when both phones have tapped. */
   function skipResult() {
@@ -951,18 +1006,15 @@ export function createGame(el, api) {
     if (matchDecided()) finalize(); else startNext();
   }
   function matchDecided() {
-    const m = S.match; const played = m.hist.length; const left = m.rounds - played;
-    const d = Math.abs(m.scores.a - m.scores.b);
+    const m = S.match; const played = m.hist.length;
     if (played > m.rounds) return true; // the decider has been played
-    if (left <= 0 && d === 0 && m.rules.tiebreak === 'sudden' && !m.daily) return false; // level: sudden death
-    return left <= 0 || d > left;
+    const d = Math.abs(m.scores.a - m.scores.b);
+    const rem = remainingPoints(m); // the most points still to be won (a pair counts once; DOUBLE OR NOTHING is 2)
+    if (rem <= 0 && d === 0 && m.rules.tiebreak === 'sudden' && !m.daily) return false; // level: sudden death
+    return rem <= 0 || d > rem;
   }
-  /** The decider's runner: whoever spent less time on the run (escapes count as the full clock). */
-  function suddenRunner() {
-    const run = { a: 0, b: 0 };
-    for (const h of S.match.hist) run[h.runner] += h.outcome === 'escaped' ? 1e6 : (h.ran || 0);
-    return run.a === run.b ? other(S.match.first) : run.a < run.b ? 'a' : 'b';
-  }
+  /** The decider's runner: the player who did not run first (the first runner already had the opening move). The cop keeps 1 spike strip. */
+  function suddenRunner() { return other(S.match.first); }
   function startNext() {
     const idx = S.R.idx + 1;
     const R = nextRound(S.match, idx, idx >= S.match.rounds ? { runner: suddenRunner() } : null);
@@ -979,6 +1031,8 @@ export function createGame(el, api) {
         tbWhy = esc.a + esc.b === 0 ? 'longest time on the run' : esc.a === esc.b ? 'health left after the escapes' : Math.min(esc.a, esc.b) === 0 ? 'an escape beats a bust' : 'more escapes'; }
     }
     const fin = { scores: m.scores, winner, tie: m.scores.a === m.scores.b, tbWhy, sd: m.hist.some((h) => h.sd) };
+    // the series ledger (couple modes only): worked out here, by the one authority, so both phones show the same words; written once in applyFinal by the host
+    if (!m.daily && !ai()) { const sa = seriesAfter(gdata(), winner, m.grudge || ''); fin.sr = { ...sa.sr, patch: sa.patch }; }
     if (live) link.urgent('final', fin);
     applyFinal(fin);
   }
@@ -989,7 +1043,9 @@ export function createGame(el, api) {
     const daily = !!S.match.daily;
     // match wins + unlocks for the people on this device
     const ns = recNs(); const unlocks = [];
-    if (!daily) for (const w of recPeople()) { const pw = personOf(w); gset(recordMatch(gdata(), pw, ns, fin.winner === w)); const u = checkUnlocks(gdata(), pw); gset(u.patch); for (const x of u.pops) unlocks.push(x); }
+    const sr = !daily && fin.sr && typeof fin.sr === 'object' ? fin.sr : null;
+    if (sr && isHost && sr.patch) gset(sr.patch); // The Series: once per match, by the host (live) or the device (split)
+    if (!daily) for (const w of recPeople()) { const pw = personOf(w); gset(recordMatch(gdata(), pw, ns, fin.winner === w, !!(sr && sr.revenge))); const u = checkUnlocks(gdata(), pw); gset(u.patch); for (const x of u.pops) unlocks.push(x); }
     if (unlocks.length) later(() => { for (const w of viewers()) H0().view(w).stamp('UNLOCKED!', 'good sm'); }, 1500);
     const sc = `${fin.scores.a}–${fin.scores.b}`;
     const sum = matchSummary();
@@ -1000,13 +1056,17 @@ export function createGame(el, api) {
     else if (ai()) res = { winner: null, text: fin.winner === human() ? `You beat the ${aiLabel()} AI${tb}, ${sc}` : fin.winner ? `The AI won${tb}, ${sc}` : `Practice: ${sc}`, sub: [tb ? tbSub : `vs ${aiLabel()} AI`, sum.line].filter(Boolean).join(' · '), record: false };
     else res = { winner: fin.winner, text: fin.winner ? (tb ? `${api.name(fin.winner)} wins${tb}, ${sc}` : `${api.name(fin.winner)} wins ${Math.max(fin.scores.a, fin.scores.b)}–${Math.min(fin.scores.a, fin.scores.b)}`) : `All square, ${sc}`, sub: [tb ? tbSub : 'Getaway', sum.line].filter(Boolean).join(' · '), score: { a: fin.scores.a, b: fin.scores.b } };
     S.result = res;
-    const head = daily ? 'DAILY DONE' : fin.winner ? (nameOf(fin.winner) === 'You' ? 'YOU WIN!' : `${nameOf(fin.winner).toUpperCase()} WINS`) : 'DRAW';
+    const head = daily ? 'DAILY DONE' : sr && sr.revenge ? 'REVENGE!' : fin.winner ? (nameOf(fin.winner) === 'You' ? 'YOU WIN!' : `${nameOf(fin.winner).toUpperCase()} WINS`) : 'DRAW';
     for (const w of viewers()) H0().view(w).stamp(head, (fin.winner || '') + (head.length > 9 ? ' sm' : ''));
+    // the ledger's moments: a series lead that changed hands, every tenth match
+    const ribbons = sr ? [sr.revenge ? 'REVENGE!' : '', sr.leadChange ? 'SERIES LEAD!' : '', sr.tenth ? `MATCH ${sr.n}` : ''].filter(Boolean) : [];
+    if (sr && (sr.leadChange || sr.tenth)) later(() => { for (const w of viewers()) H0().view(w).stamp(sr.leadChange ? 'SERIES LEAD!' : `MATCH ${sr.n}`, 'good sm'); if (audio.fanfare) audio.fanfare(); }, 1300);
+    const srLine = sr ? seriesLine({ series_a: sr.a, series_b: sr.b, series_d: sr.d, series_n: sr.n, series_last: sr.last, series_run: sr.run }, (w) => api.name(w)) : '';
     if (fin.winner && (live ? fin.winner === me : ai() ? fin.winner === human() : true)) later(() => audio.win(), 250);
     // Getaway's own match card (round by round, the two columns, the MVP), then the app's end card
     S.finalAt = performance.now();
     const ms = TUNE.final ?? FLOW.finalCard;
-    later(() => { if (S.phase === 'final' && !S.finalDone) hud.card(finalCard({ name: nameOf }, { hist: S.match.hist, scores: fin.scores, winner: fin.winner, rounds: S.match.rounds, sum, daily: daily ? res.text : '', dailySub: daily ? res.sub : '', ai: ai(), tb: tb ? tbSub : '' }), 'dim'); }, Math.min(900, ms / 2));
+    later(() => { if (S.phase === 'final' && !S.finalDone) hud.card(finalCard({ name: nameOf }, { hist: S.match.hist, scores: fin.scores, winner: fin.winner, rounds: S.match.rounds, sum, daily: daily ? res.text : '', dailySub: daily ? res.sub : '', ai: ai(), tb: tb ? tbSub : '', pips: winnersByRound(S.match.hist, pairsOn() ? 'pairs' : 'rounds', S.match.rounds), ribbons, series: srLine }), 'dim'); }, Math.min(900, ms / 2));
     later(finishNow, ms + 900);
   }
   function finishNow() {
@@ -1021,13 +1081,19 @@ export function createGame(el, api) {
     for (const h of m.hist) {
       const r = T[h.runner]; const c = T[other(h.runner)];
       r.top = Math.max(r.top, Math.round((h.top || 0) * 3.6)); r.near += h.near | 0; r.ran += h.outcome === 'escaped' ? 0 : (h.ran || 0); r.pitted += h.pits | 0;
-      if (h.outcome === 'escaped') { r.esc++; if (h.reason === 'heat') r.heat++; } else if (h.reason !== 'quit') c.busts++;
+      if (h.outcome === 'escaped') { r.esc++; if (h.reason === 'heat') r.heat++; if (h.reason === 'safe') r.safe = (r.safe | 0) + 1; } else if (h.reason !== 'quit') c.busts++;
       c.pits += h.pits | 0; c.spikes += h.spikes | 0;
     }
+    for (const k of Object.keys(m.chains || {})) { const h = m.hist[+k]; if (h) { const cw = other(h.runner); T[cw].chain = Math.max(T[cw].chain | 0, m.chains[k] | 0); } } // (a cop's Hot Pursuit chains, told over the link)
+    // CLEAN SWEEP: won both halves of a pair (escaped as the runner and busted them as the cop)
+    for (let i = 0; i + 1 < m.hist.length; i += 2) { const h0 = m.hist[i]; const h1 = m.hist[i + 1]; if (h0.sd || h1.sd) break; const w0 = roundWinner(h0); if (w0 === roundWinner(h1)) T[w0].sweeps = (T[w0].sweeps | 0) + 1; }
     // the MVP: the match's most distinctive feat
     const cands = [];
     for (const w of ai() ? [human()] : AB) { // (practice: the MVP line is about you, not the AI)
       const t = T[w]; const n = nameOf(w);
+      if ((t.chain | 0) >= 10) cands.push({ w, s: 55 + t.chain, t: `RELENTLESS · ${n} kept a ×${t.chain} pursuit going` });
+      if ((t.safe | 0) >= 1) cands.push({ w, s: 52 + t.safe, t: `SAFE AND SOUND · ${n} made it to the safehouse` });
+      if ((t.sweeps | 0) >= 1) cands.push({ w, s: 45 + t.sweeps, t: `CLEAN SWEEP · ${n} won both halves of ${t.sweeps > 1 ? `${t.sweeps} pairs` : 'a pair'}` });
       if (t.heat >= 2) cands.push({ w, s: 50 + t.heat, t: `HOUDINI · ${n} lost the heat ${t.heat} times` });
       if (t.pits >= 3) cands.push({ w, s: 40 + t.pits, t: `BUMPER CAR · ${n} landed ${t.pits} PITs` });
       if (t.spikes >= 2) cands.push({ w, s: 35 + t.spikes, t: `ROADBLOCK · ${n} spiked them ${t.spikes} times` });
@@ -1086,7 +1152,7 @@ export function createGame(el, api) {
     // a (re)linked partner: the host re-sends the lobby setup or the current round
     if (!isHost) return;
     if (S.phase === 'lobby') link.send('setup', S.setup);
-    else if (S.match && S.R) link.send('match', { match: { ...S.match }, R: { idx: S.R.idx, runner: S.R.runner, spawn: S.R.spawn, at: S.R.at, t0: S.R.t0, endAt: S.R.endAt, intro: S.R.intro, sd: S.R.sd } });
+    else if (S.match && S.R) link.send('match', { match: { ...S.match }, R: wireR(S.R) });
     delReason('stale');
   }
 
@@ -1106,27 +1172,117 @@ export function createGame(el, api) {
     if (a === 'map') { if (H0().mapOpen) closeMap(); else openMap(w); return; }
     if (a === 'act') {
       if (!S.R || S.R.over) return;
-      if (roleOf(w) === 'cop') { if (H0().mapOpen) closeMap(); else openMap(w); } else dropOil(w);
+      if (roleOf(w) === 'cop') { if (H0().mapOpen) closeMap(); else quickDrop(w); } else dropOil(w); // (the cop's button / E: a strip on the road ahead; the map places one exactly)
     }
   }
-  // ── emotes (live): one tap sends the next line of my role's list; one per 4 s ──
-  const EMOTES = { runner: ['HONK', 'Catch me!', 'lol'], cop: ['HONK', 'Pull over!', 'lol'] };
-  const EMOTE_OK = new Set([...EMOTES.runner, ...EMOTES.cop]);
+  // ── emotes (live): one tap sends the next line of my role's list; one per 4 s. HEART floats a heart over my car on both phones. ──
+  const EMOTES = { runner: ['HONK', 'Catch me!', 'lol', 'Too slow!', 'Nice one!', 'HEART'], cop: ['HONK', 'Pull over!', 'lol', 'Got you!', 'Nice one!', 'HEART'] };
+  const EMOTE_OK = new Set([...EMOTES.runner, ...EMOTES.cop, 'KISS', 'CHAIN']); // (KISS: the bumper kiss; CHAIN: a cop's RELENTLESS chain, for the match card's MVP)
   const emoteNext = (w) => { const L = EMOTES[roleOf(w)]; return L[(S.emoteK || 0) % L.length]; };
+  const emoteLabel = (w) => { const t = emoteNext(w); return t === 'HEART' ? 'Heart' : t; };
   function sendEmote(w) {
     if (!live || !S.R || device.emotes === 'off' || S.phase === 'lobby' || S.phase === 'final') return;
     const t = performance.now(); if (t - (S.emoteT || 0) < 4000) return;
     S.emoteT = t; const txt = emoteNext(w); S.emoteK = (S.emoteK || 0) + 1;
     link.urgent('emote', { k: txt });
+    if (txt === 'HEART') { addHeart(w); H0().view(w).hint('You sent a heart', 1200); audio.heart(); return; }
     H0().view(w).hint(`You: ${txt}`, 1200); audio.honk();
   }
   link.on('emote', (d) => {
-    if (!d || !EMOTE_OK.has(d.k) || device.emotes === 'off' || !S.R) return;
-    const o = other(me); S.bubble = { w: o, text: d.k, until: performance.now() + 1600 };
+    if (!d || !EMOTE_OK.has(d.k) || !S.R) return;
+    if (d.k === 'KISS') { kissShow(); return; }
+    if (d.k === 'CHAIN') { if (d.i >= 0 && d.n >= 10) (S.match.chains || (S.match.chains = {}))[d.i | 0] = Math.min(99, d.n | 0); return; }
+    if (device.emotes === 'off') return;
+    const o = other(me);
+    if (d.k === 'HEART') {
+      addHeart(o); audio.heart();
+      const oc = P2[o].car; const mc = P2[me].car; if (S.phase !== 'chase' || Math.hypot(oc.x - mc.x, oc.z - mc.z) > 120) H0().view(me).hint(`${api.name(o)} sent a heart`, 1600);
+      return;
+    }
+    S.bubble = { w: o, text: d.k, until: performance.now() + 1600 };
     const oc = P2[o].car; const mc = P2[me].car; const far = Math.hypot(oc.x - mc.x, oc.z - mc.z) > 120;
     if (far || S.phase !== 'chase') H0().view(me).hint(`${api.name(o)}: ${d.k}`, 1600);
     audio.honk(far);
   });
+  // ── hearts: the HEART emote and the bumper kiss. A DOM sprite per viewer (hud.hearts, no draw call) plus a few glowing puffs. ──
+  function addHeart(w, mid = false) {
+    const L = S.hearts || (S.hearts = []);
+    L.push({ w, mid, t0: performance.now(), ms: TUNE.heartMs || 1800 }); if (L.length > 4) L.shift();
+    if (!fx || !S.R) return;
+    const a = posOf(mid ? 'a' : w); const b = posOf(mid ? 'b' : w);
+    const x = (a.x + b.x) / 2; const z = (a.z + b.z) / 2; const y = (a.y || 0) + 2.4;
+    const col = mid ? [1, 0.38, 0.62] : P && P[w] ? P[w] : [1, 0.38, 0.62];
+    if (!reduced) for (let k = 0; k < 6; k++) fx.puff(x + (Math.random() - 0.5) * 1.8, y + Math.random() * 0.6, z + (Math.random() - 0.5) * 1.8, (Math.random() - 0.5) * 0.8, 1.3 + Math.random(), (Math.random() - 0.5) * 0.8, 0.5, 0.45, 1.5, col[0], col[1], col[2]);
+  }
+  const HR = [];
+  /** Project the live hearts into each viewer's screen (the sprites follow the cars). */
+  function heartsHud() {
+    const tN = performance.now(); const L = S.hearts; if (!L) return;
+    const vs = viewers(); HR.length = 0;
+    for (let q = L.length - 1; q >= 0; q--) if (tN - L[q].t0 > L[q].ms) L.splice(q, 1);
+    for (const h of L) {
+      const k = (tN - h.t0) / h.ms;
+      for (let i = 0; i < vs.length; i++) {
+        const a = posOf(h.mid ? 'a' : h.w); const b = posOf(h.mid ? 'b' : h.w);
+        vec.set((a.x + b.x) / 2, (a.y || 0) + 4.6 + k * 2, (a.z + b.z) / 2).project(cams[vs[i]].cam);
+        if (vec.z >= 1 || Math.abs(vec.x) > 1.15 || Math.abs(vec.y) > 1.15) continue;
+        const vw = vs.length > 1 ? Math.floor(W / 2) : W;
+        HR.push({ x: (vec.x * 0.5 + 0.5) * vw + (vs.length > 1 ? i * vw : 0), y: (-vec.y * 0.5 + 0.5) * H, k, w: h.mid ? 'x' : h.w });
+      }
+    }
+    H0().hearts(HR);
+  }
+  // ── the bumper kiss: after the round, two cars that touch gently (under 3 m/s) trade a heart, once a round ──
+  function kissShow() {
+    const R = S.R; if (!R) return; R.kissed = true;
+    addHeart(null, true); audio.heart();
+    for (const v of viewers()) H0().view(v).hint('Bumper kiss', 1600);
+    if (S.resultInfo && S.resultInfo.lines && !S.resultInfo.kiss) { S.resultInfo.kiss = true; S.resultInfo.lines.push({ t: 'Bumper kiss: a gentle touch after the chase' }); if (R.cardShown && S.phase === 'result') showResultCard(); }
+  }
+  function kissCheck() {
+    const R = S.R; if (!R || !R.over || R.kissed || S.phase !== 'result' || performance.now() - (R.endWall || 0) > 3500) return;
+    const rw = R.runner; if (live && !local(rw)) return; // the runner's device decides
+    const o = other(rw); const a = P2[rw].car; const b = posOf(o); const bv = live ? P2[o].remote : P2[o].car;
+    if (!isKiss(a, b, Math.hypot(a.vx - bv.vx, a.vz - bv.vz))) return;
+    if (live) link.urgent('emote', { k: 'KISS' });
+    kissShow();
+  }
+  // ── the cop's Hot Pursuit chain: close and in sight for 2.5 s +1, a spike hit +3, a PIT +2; each tier tops the boost up 25%. It lives on the cop's own device. ──
+  const chainCop = (w) => local(w) && roleOf(w) === 'cop' && !daily() && !(ai() && w === aiW);
+  function chainNote(w, up, what, n) {
+    const p = P2[w]; const c = p.chain;
+    if (up > 0) { p.car.nitro = Math.min(1, p.car.nitro + CHAIN.refill * up); p.nitroPulseT = 0.3; if (isViewer(w)) { H0().view(w).hint(`ON THEIR TAIL ${chainText(c)}`, 1600); if (audio.chain) audio.chain(c.tier); } }
+    else if (what && isViewer(w)) H0().view(w).hint(`${what} +${n} · ${chainText(c)}`, 1100);
+  }
+  function chainBump(w, pts, what) {
+    if (!S.R || S.R.over || S.phase !== 'chase' || !chainCop(w)) return;
+    chainNote(w, chainAdd(P2[w].chain, pts), what, pts);
+  }
+  function chainFrame(dt) {
+    const R = S.R; if (!R || R.over) return;
+    for (const w of AB) {
+      if (!chainCop(w)) continue;
+      const p = P2[w]; const o = posOf(R.runner); const c = p.car;
+      const ev = chainStep(p.chain, dt, Math.hypot(o.x - c.x, o.z - c.z), p.los);
+      if (ev & 1) chainNote(w, p.chain.up, '', 1);
+      if ((ev & 4) && p.chain.ended >= 3 && isViewer(w)) H0().view(w).hint(`Chain over · ×${p.chain.ended}`, 1100);
+    }
+  }
+  // ── Wanted level: ★★ after 60 s on the run, ★★★ after 100 s (shorter rounds sooner), a pure function of the round clock ──
+  const roundLenS = () => (TUNE.roundMs ? TUNE.roundMs / 1000 : S.R && S.R.sd ? FLOW.sudden : rules().roundTime);
+  function wantedFrame(now) {
+    const was = S.wLvl || 1;
+    const lvl = daily() ? 1 : wantedLevel(Math.max(0, now - S.R.t0) / 1000, roundLenS(), TUNE.wanted);
+    S.copK = rules().copBoostK || 1; // (a round twist like BIG TANK feeds the cop's recharge here)
+    if (lvl <= was) return;
+    S.wLvl = lvl;
+    for (const w of viewers()) {
+      const cop = roleOf(w) === 'cop'; const v = H0().view(w);
+      v.hint(`WANTED ${wantedStars(lvl)} · ${cop ? (lvl >= 3 ? 'boost refilled' : 'boost recharges faster') : 'they’re getting serious'}`, 2600);
+    }
+    if (audio.wanted) audio.wanted(lvl);
+    if (lvl >= 3) for (const w of AB) { const p = P2[w]; if (local(w) && roleOf(w) === 'cop' && !p.wFilled) { p.wFilled = true; p.car.nitro = 1; } }
+  }
   // ── the runner's style chain: near misses, drifts, a cop on your oil; chained within 3 s ──
   const STYLE_TIERS = [[10, 'UNTOUCHABLE'], [6, 'SMOOTH'], [3, 'SLICK']];
   function addStyle(w, pts, what) {
@@ -1179,6 +1335,21 @@ export function createGame(el, api) {
     audio.spikeDrop();
     return true;
   }
+  /** The cop's round button / E: a strip on the road ahead of the cruiser (62 m; else 90, 40, then 120 and 160 for a runner close ahead),
+   *  through the same checks as a map tap. Nothing fits: the first reason, as a hint. */
+  function quickDrop(w) {
+    const R = S.R; const p = P2[w]; const v = H0().view(w);
+    if (!R || R.over || S.phase !== 'chase' || roleOf(w) !== 'cop') return false;
+    if (p.spikesLeft <= 0) { v.hint('No spike strips left', 1400); return false; }
+    let why = '';
+    for (const q of aheadPoints(geo, p.car, QUICK_DIST)) {
+      const r = placeSpike(w, q.x, q.z);
+      if (r === true) { v.hint(`Spike strip down · ${p.spikesLeft} left`, 1400); return true; }
+      if (!why) why = String(r);
+    }
+    v.hint(`${why} · or pick a spot on the map`, 2200);
+    return false;
+  }
   function addSpike(s) {
     if (!S.R || S.R.spikes.find((x) => x.id === s.id)) return;
     S.R.spikes.push({ ...s, gone: !!s.gone });
@@ -1197,7 +1368,7 @@ export function createGame(el, api) {
   /** Reveal radius for the runner, scaled by its speed (4 s of travel; 120 m floor). */
   const spikeRevealR = (w) => { const c = P2[w].car; return Math.max(RULES.spikeReveal, RULES.spikeRevealT * Math.hypot(c.vx || 0, c.vz || 0)); };
   link.on('spike', (d) => { if (d && S.R) addSpike(clone(d)); });
-  link.on('spikehit', (d) => { if (!d || !S.R) return; const s = S.R.spikes.find((x) => x.id === d.id); if (s) s.gone = true; const cw = copW(); P2[cw].stats.spikes++; for (const v of viewers()) if (v === cw) H0().view(v).stamp('SPIKED!', 'bad'); });
+  link.on('spikehit', (d) => { if (!d || !S.R) return; const s = S.R.spikes.find((x) => x.id === d.id); if (s) s.gone = true; const cw = copW(); P2[cw].stats.spikes++; chainBump(cw, CHAIN.spike, 'SPIKED'); for (const v of viewers()) if (v === cw) H0().view(v).stamp('SPIKED!', 'bad'); });
   function dropOil(w) {
     const p = P2[w]; const R = S.R;
     if (!R || R.over || S.phase !== 'chase' || p.oilLeft <= 0) { H0().view(w).hint('No oil left this round', 1400); return; }
@@ -1214,7 +1385,7 @@ export function createGame(el, api) {
     if (!d || !S.R) return;
     const w = human();
     if (d.kind === 'pit') {
-      P2[w].stats.pits++; H0().view(w).stamp('PIT!', w); audio.pit(); if (!(d.push < DAMAGE.pitSlowMo)) slowMo(d.push);
+      P2[w].stats.pits++; chainBump(w, CHAIN.pit, 'PIT'); H0().view(w).stamp('PIT!', w); audio.pit(); if (!(d.push < DAMAGE.pitSlowMo)) slowMo(d.push);
       // the attacker's own moment: a jolt and a puff at the contact (the stamp alone read as nothing)
       cams[w].shake = Math.min(1, cams[w].shake + 0.5);
       const c = P2[w].car; if (typeof d.px === 'number') fx.puff(d.px, c.y + 0.6, d.pz, 0, 1.2, 0, 0.7, 2.0, 0.6, 0.85, 0.83, 0.8);
@@ -1269,6 +1440,7 @@ export function createGame(el, api) {
   const snapA = { x: 0, z: 0, y: 0, yaw: 0, vx: 0, vz: 0, r: 0 }; const snapB = { x: 0, z: 0, y: 0, yaw: 0, vx: 0, vz: 0, r: 0 };
   const copy = (o, c) => { o.x = c.x; o.z = c.z; o.y = c.y; o.yaw = c.yaw; o.vx = c.vx; o.vz = c.vz; o.r = c.r; return o; };
   let aiAcc = 0; let aiTicks = 0; const AI_TICKS_MAX = 2;
+  const copNit = { drain: NITRO.cop.drain, regen: NITRO.cop.regen, start: NITRO.cop.start };
   function simStep(dt, now, tT, kSub = 0) {
     const rules0 = rules();
     // the AI drivers think at 30 Hz of simulated time (slow motion slows them too), at most twice a
@@ -1282,7 +1454,7 @@ export function createGame(el, api) {
       for (const w of AB) {
         const p = P2[w]; if (!p.driver || !local(w)) continue;
         const o = posOf(other(w)); const role = roleOf(w);
-        const out = p.driver.update(aiDt, p.car, o, { los: p.los, traffic, tT, spikes: role === 'runner' ? visibleStrips(w, now) : null, spikesLeft: p.spikesLeft, oilLeft: p.oilLeft, hit: p.aiHit, viewer: ai() ? P2[human()].car : null, esc: P2[runnerW()].esc, heat: heatDist() });
+        const out = p.driver.update(aiDt, p.car, o, { los: p.los, traffic, tT, spikes: role === 'runner' ? visibleStrips(w, now) : null, spikesLeft: p.spikesLeft, oilLeft: p.oilLeft, hit: p.aiHit, viewer: ai() ? P2[human()].car : null, esc: P2[runnerW()].esc, heat: heatDist(), wanted: S.wLvl || 1 });
         p.aiHit = false;
         if (out.spike && role === 'cop') aiSpike(w, out.spike);
         if (out.oil && role === 'runner') dropOil(w);
@@ -1294,9 +1466,10 @@ export function createGame(el, api) {
       const p = P2[w]; const c = p.car; const role = roleOf(w);
       readPad(p.pad, p.inp, dt);
       const prevX = c.x; const prevZ = c.z;
-      stepCar(c, p.inp, dt, geo, role === 'cop' ? CAR.cop : CAR.runner, role === 'cop' ? NITRO.cop : NITRO[rules0.nitro]);
+      if (role === 'cop') copNit.regen = copRegen(S.wLvl || 1, S.copK || 1); // (the cop's recharge: one function of the Wanted level and the round's rules)
+      stepCar(c, p.inp, dt, geo, role === 'cop' ? S.cp.cop : S.cp.runner, role === 'cop' ? copNit : NITRO[rules0.nitro]);
       // the final 15 s: both tanks refill twice as fast (a boost each for the finale)
-      if (S.final15 && !c.boost) { const nt = role === 'cop' ? NITRO.cop : NITRO[rules0.nitro]; if (nt.regen > 0 && c.nitro < 1) c.nitro = Math.min(1, c.nitro + nt.regen * dt); }
+      if (S.final15 && !c.boost) { const nt = role === 'cop' ? copNit : NITRO[rules0.nitro]; if (nt.regen > 0 && c.nitro < 1) c.nitro = Math.min(1, c.nitro + nt.regen * dt); }
       if (c.speed > p.stats.top) p.stats.top = c.speed;
       if (role === 'runner') { if (c.slip > 3 && c.speed > 12) p.driftT = (p.driftT || 0) + dt; else { if (p.driftT > 1) addStyle(w, 1, 'Drift!'); p.driftT = 0; } }
       if (c.boost && c.speed * 3.6 > p.stats.topBoost) p.stats.topBoost = c.speed * 3.6;
@@ -1330,7 +1503,7 @@ export function createGame(el, api) {
               cams[w].shake = Math.min(1, cams[w].shake + 0.6); p.hurtT = Math.max(p.hurtT, 0.35);
             }
             if (live) link.urgent('spikehit', { id: s.id });
-            else P2[other(w)].stats.spikes++;
+            else { P2[other(w)].stats.spikes++; chainBump(other(w), CHAIN.spike, 'SPIKED'); }
             for (const v of viewers()) H0().view(v).stamp('SPIKED!', 'bad');
             audio.pop();
             for (let k = 0; k < 14; k++) fx.spark(c.x, c.y + 0.3, c.z, (Math.random() - 0.5) * 10, 3 + Math.random() * 4, (Math.random() - 0.5) * 10, 0.5);
@@ -1476,7 +1649,7 @@ export function createGame(el, api) {
       if (tier === 2) {
         p.stats.pits++;
         if (live) link.urgent('hit', { kind: 'pit', at: clock(), push: Math.round(c0.pitPush * 10) / 10, px: Math.round(c0.px * 10) / 10, pz: Math.round(c0.pz * 10) / 10 });
-        else { P2[o].stats.pits++; cams[o].shake = Math.min(1, cams[o].shake + 0.5); }
+        else { P2[o].stats.pits++; chainBump(o, CHAIN.pit, 'PIT'); cams[o].shake = Math.min(1, cams[o].shake + 0.5); }
         for (const v of viewers()) H0().view(v).stamp('PIT!', o);
         audio.pit();
         if (c0.pitPush >= DAMAGE.pitSlowMo) slowMo(c0.pitPush);
@@ -1657,6 +1830,13 @@ export function createGame(el, api) {
     // peak of the last heatMemory s, and a line of sight that flickers back for under heatFlicker s
     // doesn't count as spotted. (It used to need > heat AND no LOS and drained 2.5× faster: in 18
     // sampled practice rounds it reached 0 in 15.)
+    // SAFEHOUSE: within 25 m of it while unseen for 2 s ends the round; reaching it spotted adds 35% to the escape meter, once
+    p.hideT = !p.los || p.cover ? p.hideT + dt : 0;
+    if (R.safe && Math.hypot(c.x - R.safe.x, c.z - R.safe.z) < SAFE_R) {
+      if (p.hideT >= SAFE_HIDE) return endRound('escaped', 'safe');
+      if (p.hideT === 0 && !p.safeBonus) { p.safeBonus = true; p.esc = Math.min(1, p.esc + 0.35); p.escPeak = Math.max(p.escPeak, p.esc); } // spotted at the door: a boost to the escape meter, once
+      if (!p.safeHint && isViewer(rw)) { p.safeHint = true; H0().view(rw).hint(p.hideT > 0 ? 'Almost there: stay out of sight…' : 'You’re here! Break their line of sight for 2 s.', 2400); }
+    }
     const heat = heatDist();
     const T = TUNE.heatT || RULES.heatT;
     const hidden = !p.los || p.cover || p.seenT < RULES.heatFlicker;
@@ -1673,6 +1853,7 @@ export function createGame(el, api) {
       return endRound('escaped', 'time');
     }
   }
+  const SAFE_R = 25; const SAFE_HIDE = 2; // the safehouse: reach within 25 m, unseen for 2 s
   const BOX = { copSlow: 6, touch: 5.5, queueT: 4, queueAhead: 11.5, queueLat: 2.2 };
   function overtimeFx() { for (const v of viewers()) H0().view(v).stamp('OVERTIME!', 'bad sm'); audio.beep(true); }
   /** A civilian car right in front of mine (a queue at a signal): the boxed-in clock is longer. */
@@ -1687,7 +1868,7 @@ export function createGame(el, api) {
     return false;
   }
   /** The heat distance: the setting, or the map's own when the setting is at its default. */
-  const heatDist = () => { const r = rules().heat; const m = S.mapEntry && S.mapEntry.heat; const h = r === DEFAULTS.heat && m > 0 ? Math.max(60, Math.min(400, m)) : r; return S.R && S.R.sd ? Math.round(h * 0.75) : h; }; // (sudden death: a quarter closer)
+  const heatDist = () => { const r = rules().heat; const m = S.mapEntry && S.mapEntry.heat; const h = r === DEFAULTS.heat && m > 0 ? Math.max(60, Math.min(400, m)) : r; return S.R ? heatWith(h, rules()) : h; }; // (the round's rules: sudden death a quarter closer, EAGLE EYE +40 m, FOG ×0.7)
   /** Cop-side fallback: the runner's device went quiet right at the buzzer. */
   function copFallback(now) {
     const R = S.R; if (!live || !isHost || R.over || local(R.runner)) return;
@@ -1797,7 +1978,8 @@ export function createGame(el, api) {
       if (ph === 'intro') {
         const spw = S.mapEntry.spawns && S.mapEntry.spawns[R.spawn];
         const lm = (spw && spw.where) || nearestLandmark(P2[R.runner].car);
-        hud.card(introCard({ name: nameOf }, { map: S.mapEntry, round: R.idx, rounds: S.match.rounds, runner: R.runner, me: human(), landmark: lm, roundTime: Math.round((R.endAt - R.t0) / 1000), local: !live }), 'clear bottom');
+        const ti = twistInfo(R.tw);
+        hud.card(introCard({ name: nameOf }, { map: S.mapEntry, round: R.idx, rounds: S.match.rounds, runner: R.runner, me: human(), landmark: lm, roundTime: Math.round((R.endAt - R.t0) / 1000), local: !live, twist: ti, safe: R.safe, pts: R.pts || 1, sd: !!R.sd, target: R.target, pairs: pairsOn(), ribbon: R.idx === 0 && S.match.grudge ? `GRUDGE MATCH · ${nameOf(S.match.grudge)}${nameOf(S.match.grudge) === 'You' ? ' want' : ' wants'} revenge` : '' }), 'clear bottom');
       }
       if (ph === 'count') {
         hud.card(null);
@@ -1807,7 +1989,7 @@ export function createGame(el, api) {
       if (ph === 'chase') {
         hud.card(null);
         const db = daily() ? dailyRival() : null;
-        for (const w of viewers()) { const v = H0().view(w); v.count('GO'); later(() => v.count(''), 700); v.hint(db ? `Beat ${db.name}: ${dailyText(db.score, S.match.rules.roundTime)}` : R.sd ? (roleOf(w) === 'cop' ? 'Sudden death! Bust them and it’s yours.' : 'Sudden death! Survive 0:45 and it’s yours.') : roleOf(w) === 'cop' ? (rules().spikes ? 'Bust them! Tap the map to drop spike strips.' : 'Bust them! Get alongside and PIT their back corner.') : 'Go! Lose the cop or survive the clock.', 3200); }
+        for (const w of viewers()) { const v = H0().view(w); v.count('GO'); later(() => v.count(''), 700); v.hint(db ? `Beat ${db.name}: ${dailyText(db.score, S.match.rules.roundTime)}` : R.tw && twistInfo(R.tw) ? twistHint(w) : R.sd ? (roleOf(w) === 'cop' ? 'Sudden death! Bust them and it’s yours.' : 'Sudden death! Survive 0:45 and it’s yours.') : roleOf(w) === 'cop' ? (rules().spikes ? (coarse ? 'Bust them! SPIKE drops a strip ahead, or tap the map.' : 'Bust them! E drops a strip ahead, M picks a spot.') : 'Bust them! Get alongside and PIT their back corner.') : 'Go! Lose the cop or survive the clock.', 3200); }
         audio.beep(true);
       }
       void prev;
@@ -1819,6 +2001,12 @@ export function createGame(el, api) {
       const n = Math.ceil((R.t0 - now) / 1000);
       for (const w of viewers()) { const v = H0().view(w); const t = n > 0 && n <= 3 ? String(n) : ''; if (v.els.count.textContent !== t) { v.count(t); if (t) audio.beep(false); } }
     }
+  }
+  /** The line on the HUD as a wildcard round starts. */
+  function twistHint(w) {
+    const t = twistInfo(S.R.tw); const cop = roleOf(w) === 'cop';
+    if (S.R.tw === 'safe' && S.R.safe) return cop ? `Guard ${S.R.safe.name}: don’t let them in unseen.` : `Reach ${S.R.safe.name} unseen to escape!`;
+    return `${t.name}: ${cop ? t.cop : t.run}`;
   }
   function nearestLandmark(c) {
     const L = (S.mapEntry && S.mapEntry.landmarks) || []; let best = null; let bd = Infinity;
@@ -1922,8 +2110,17 @@ export function createGame(el, api) {
     if (P.dark && inGame) { const c = P2[human()].car; U.uHead.value.set(c.x + Math.sin(c.yaw) * 2.2, c.y + 0.7, c.z - Math.cos(c.yaw) * 2.2, 1); U.uHeadDir.value.set(Math.sin(c.yaw), -0.08, -Math.cos(c.yaw)).normalize(); }
     else U.uHead.value.w = 0;
   }
+  /** The safehouse's beacon: a column of glowing green puffs (the existing puff system: no extra draw call), while someone is within 500 m. */
+  function safeFx(dt) {
+    const R = S.R; if (!R || !R.safe || R.over || (S.phase !== 'count' && S.phase !== 'chase') || !fx) return;
+    S.beaconT = (S.beaconT || 0) - dt; if (S.beaconT > 0) return;
+    const hc = P2[human()].car; if (Math.hypot(hc.x - R.safe.x, hc.z - R.safe.z) > 500) { S.beaconT = 0.5; return; }
+    S.beaconT = 0.08; const gy = geo.ground(R.safe.x, R.safe.z);
+    fx.puff(R.safe.x + (Math.random() - 0.5) * 3, gy + 0.5, R.safe.z + (Math.random() - 0.5) * 3, 0, 11, 0, 1.4, 1.2, 2.6, 0.2, 1, 0.55);
+  }
   function carFx(dt) {
     if (!S.R) return;
+    safeFx(dt);
     for (const w of AB) {
       const p = P2[w]; const c = p.car;
       const sy = Math.sin(c.yaw); const cy = Math.cos(c.yaw); const fx0 = sy; const fz0 = -cy; const rx = cy; const rz = sy;
@@ -2009,6 +2206,7 @@ export function createGame(el, api) {
       if (lm.far) { const B = geo.bounds; lx = clamp(lx, B.x0 + 30, B.x1 - 30); lz = clamp(lz, B.z0 + 30, B.z1 - 30); }
       const [x, y] = toPx(lx, lz); hud.drawLandmark(g, x, y, lm, dpr * (full ? 1 : 0.8)); if (full) { g.font = `800 ${11 * dpr}px system-ui, sans-serif`; g.fillStyle = P.dark ? '#eee' : '#1b1a20'; g.strokeStyle = P.dark ? '#000' : '#fff'; g.lineWidth = 3 * dpr; const nm = lm.far ? lm.name + ' →' : lm.name; g.strokeText(nm, x + 9 * dpr, y + 4 * dpr); g.fillText(nm, x + 9 * dpr, y + 4 * dpr); } }
     if (!R) return;
+    if (R.safe && !R.over) drawSafehouse(g, toPx, dpr, k, full);
     const myRole = roleOf(w); const o = other(w);
     // spikes
     for (const s of R.spikes) {
@@ -2027,10 +2225,24 @@ export function createGame(el, api) {
     if (showO) { const [x, y] = toPx(oc.x, oc.z); hud.drawArrow(g, x, y, oc.yaw, roleOf(o) === 'cop' ? (Math.floor(performance.now() / 250) % 2 ? '#e2333f' : '#2f6bff') : cssInk(o), (full ? 9 : 7) * dpr); }
     else if (P2[w].lastSeen && myRole === 'cop') {
       const ls = P2[w].lastSeen; const age = (performance.now() - ls.t) / 1000;
-      if (age < 12) { const [x, y] = toPx(ls.x, ls.z); g.beginPath(); g.arc(x, y, (6 + (age % 1.2) * 8) * dpr, 0, Math.PI * 2); g.strokeStyle = `rgba(226,51,63,${Math.max(0, 1 - age / 12)})`; g.lineWidth = 2 * dpr; g.stroke(); g.font = `900 ${9 * dpr}px system-ui`; g.fillStyle = '#e2333f'; g.fillText('last seen', x + 8 * dpr, y - 6 * dpr); }
+      const keep = S.wLvl >= 3 ? 15 : 12; // (Wanted ★★★: the last-seen ping lingers 3 s longer)
+      if (age < keep) { const [x, y] = toPx(ls.x, ls.z); g.beginPath(); g.arc(x, y, (6 + (age % 1.2) * 8) * dpr, 0, Math.PI * 2); g.strokeStyle = `rgba(226,51,63,${Math.max(0, 1 - age / keep)})`; g.lineWidth = 2 * dpr; g.stroke(); g.font = `900 ${9 * dpr}px system-ui`; g.fillStyle = '#e2333f'; g.fillText('last seen', x + 8 * dpr, y - 6 * dpr); }
     }
     const mc = P2[w].car; const [mx, my] = toPx(mc.x, mc.z);
     hud.drawArrow(g, mx, my, mc.yaw, myRole === 'cop' ? (Math.floor(performance.now() / 250) % 2 ? '#e2333f' : '#2f6bff') : cssInk(w), (full ? 10 : 8) * dpr, true);
+  }
+  /** The round's safehouse on a map: a green house with its 25 m circle; pinned to the edge, pointing, when it's off the minimap. */
+  function drawSafehouse(g, toPx, dpr, k, full) {
+    const sh = S.R.safe; let [x, y] = toPx(sh.x, sh.z); const cw = g.canvas.width; const ch = g.canvas.height; const m = 11 * dpr;
+    const inside = x >= m && x <= cw - m && y >= m && y <= ch - m;
+    if (!inside) { const dx = x - cw / 2; const dy = y - ch / 2; const t = Math.min((cw / 2 - m) / (Math.abs(dx) || 1e-6), (ch / 2 - m) / (Math.abs(dy) || 1e-6)); x = cw / 2 + dx * t; y = ch / 2 + dy * t; }
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 260);
+    if (inside) { g.beginPath(); g.arc(x, y, Math.max(9 * dpr, SAFE_R * k), 0, Math.PI * 2); g.fillStyle = `rgba(40,200,110,${0.16 + 0.12 * pulse})`; g.fill(); g.setLineDash([5 * dpr, 4 * dpr]); g.lineWidth = 1.6 * dpr; g.strokeStyle = '#169b57'; g.stroke(); g.setLineDash([]); }
+    g.save(); g.translate(x, y); g.scale(dpr * (full ? 1.15 : 0.95), dpr * (full ? 1.15 : 0.95));
+    g.beginPath(); g.moveTo(0, -9); g.lineTo(9, -1); g.lineTo(6, -1); g.lineTo(6, 7); g.lineTo(-6, 7); g.lineTo(-6, -1); g.lineTo(-9, -1); g.closePath();
+    g.fillStyle = '#3ddc84'; g.fill(); g.lineWidth = 2; g.strokeStyle = '#1b1a20'; g.stroke();
+    g.fillStyle = '#1b1a20'; g.fillRect(-1.6, 2, 3.2, 5); g.restore();
+    if (full) { g.font = `900 ${11 * dpr}px system-ui, sans-serif`; g.fillStyle = P.dark ? '#7dffb2' : '#0d6b3a'; g.strokeStyle = P.dark ? '#000' : '#fff'; g.lineWidth = 3 * dpr; const nm = sh.home ? `HOME · ${sh.name}` : `SAFEHOUSE · ${sh.name}`; g.strokeText(nm, x + 12 * dpr, y - 8 * dpr); g.fillText(nm, x + 12 * dpr, y - 8 * dpr); }
   }
   const inkCss = {};
   function cssInk(w) { if (!inkCss[w]) { const c = P[w]; inkCss[w] = `rgb(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)})`; } return inkCss[w]; }
@@ -2063,9 +2275,9 @@ export function createGame(el, api) {
       if (!inGame) continue;
       if (hudT <= 0) {
         v.scores(S.match.scores.a, S.match.scores.b);
-        const pips = []; for (let i = 0, nP = Math.max(S.match.rounds, Math.min(R.idx, S.match.hist.length) + 1); i < nP; i++) { const h = S.match.hist[i]; pips.push(h ? (h.outcome === 'busted' ? other(h.runner) : h.runner) : i === R.idx ? 'now' : ''); }
-        v.pips(pips);
-        v.role(role, w);
+        v.pips(pipList(R));
+        v.twist(S.phase === 'count' || S.phase === 'chase' ? twistChips(w, c, R) : null);
+        v.role(role, w, wantedStars(S.wLvl || 1));
         v.health(c.hp, role);
       }
       const left = R.over && R.result ? Math.max(0, R.endAt - R.result.at) : S.phase === 'chase' ? R.endAt - now : R.endAt - R.t0;
@@ -2077,10 +2289,11 @@ export function createGame(el, api) {
       const d = Math.hypot(posOf('a').x - posOf('b').x, posOf('a').z - posOf('b').z);
       // (labels short enough to read beside the distance on a phone: 'Breaking away' / 'Slipping
       // away' showed as 'BREAKING …'; both sides now say the runner is 'Escaping')
-      if (role === 'runner') { const hd = heatDist(); v.heat(rp.esc, p.los && !p.cover ? (d > hd * RULES.heatBreak ? 'Escaping' : 'Spotted') : d > hd ? 'Losing them' : 'Too close', metres(d), p.los && !p.cover && d <= hd * RULES.heatBreak, S.phase === 'chase'); }
-      else v.heat(rp.esc, rp.esc > 0.02 ? 'Escaping' : 'On their tail', metres(d), rp.esc > 0.3, S.phase === 'chase');
+      if (role === 'runner') { const hd = heatDist(); v.heat(rp.esc, p.los && !p.cover ? (d > hd * RULES.heatBreak ? 'Escaping' : 'Spotted') : d > hd ? 'Losing them' : 'Too close', metres(d), p.los && !p.cover && d <= hd * RULES.heatBreak, S.phase === 'chase', wantedStars(S.wLvl || 1)); }
+      else v.heat(rp.esc, rp.esc > 0.02 ? 'Escaping' : 'On their tail', metres(d), rp.esc > 0.3, S.phase === 'chase', wantedStars(S.wLvl || 1));
       v.speed(c.speed * 3.6);
       v.nitro(c.nitro, c.boost, role === 'cop' || rules().nitro !== 'off');
+      v.chain(chainCop(w) && S.phase === 'chase' && !R.over ? chainText(p.chain) : '', p.chain.n > 0 && p.chain.lost > 0.6);
       if (hudT <= 0) v.tools(role === 'cop' ? `<span class="${p.spikesLeft ? '' : 'off'}">SPIKES ${p.spikesLeft}</span>` : `<span class="${p.oilLeft ? '' : 'off'}">OIL ${p.oilLeft}</span>`);
       // vignette: siren behind the runner, red when hurt
       p.hurtT -= dt;
@@ -2093,7 +2306,7 @@ export function createGame(el, api) {
       // a hit on the other car lands as a number too (live: from its streamed health)
       if (S.phase === 'chase' && !R.over && role === 'cop' && !local(R.runner) && w === human()) { const rp2 = P2[R.runner]; const hp = rp2.car.hp; if (hp < rp2.hpSeen - 2.5) { v.dmg(rp2.hpSeen - hp, 'them'); rp2.hpSeen = hp; } else if (hp > rp2.hpSeen) rp2.hpSeen = hp; }
       if (miniT <= 0 && mapImg) v.mini(mapImg, c.x, c.z, (g, toPx, dpr, k) => drawMarks(g, toPx, dpr, k, w, false));
-      if (!split() && w === human()) hud.setHorn(live && device.emotes !== 'off' && S.phase === 'chase', emoteNext(w));
+      if (!split() && w === human()) hud.setHorn(live && device.emotes !== 'off' && S.phase === 'chase', emoteLabel(w));
       if (!split() && w === human()) hud.setAct(role, role === 'cop' ? p.spikesLeft > 0 && S.phase === 'chase' : p.oilLeft > 0 && S.phase === 'chase', role === 'cop' ? p.spikesLeft : p.oilLeft);
     }
     if (hudT <= 0) hudT = 0.2;
@@ -2119,6 +2332,25 @@ export function createGame(el, api) {
       if (hud._card === S.pauseCard) hud.card(null);
       S.pauseCard = null; S.pauseKey = -1;
     }
+  }
+  /** The small chips under the clock: the round's wildcard (with the safehouse's distance) and the half-time target to beat. */
+  function twistChips(w, c, R) {
+    const out = []; const t = twistInfo(R.tw);
+    if (t) out.push({ t: R.tw === 'safe' && R.safe ? `${R.safe.home ? 'HOME' : 'SAFEHOUSE'} ${metres(Math.hypot(c.x - R.safe.x, c.z - R.safe.z))}` : t.chip, c: `tw ${R.tw}` });
+    if (R.target) out.push({ t: roleOf(w) === 'cop' ? R.target.hudCop : R.target.hudRun, c: 'tg' });
+    return out;
+  }
+  /** The round pips: who each round counts for (a finished pair shows its winner on both), 'now', ×2 for a DOUBLE OR NOTHING round, a gap after each pair. */
+  function pipList(R) {
+    const m = S.match; const hist = m.hist; const wb = winnersByRound(hist, pairsOn() ? 'pairs' : 'rounds', m.rounds); const list = [];
+    for (let i = 0, nP = Math.max(m.rounds, Math.min(R.idx, hist.length) + 1); i < nP; i++) {
+      const h = hist[i]; let c = '';
+      if (h) { const w = wb[i] === undefined ? roundWinner(h) : wb[i]; c = (w || 'lv') + (wb[i] === undefined ? ' half' : '') + (h.pts === 2 ? ' x2' : ''); }
+      else if (i === R.idx) c = 'now' + (R.pts === 2 ? ' x2' : '');
+      if (pairsOn() && i % 2 === 1 && i < nP - 1) c += ' pe';
+      list.push(c);
+    }
+    return list;
   }
   /** Boxed-in countdown on the HUD (runner: get moving; cop: hold them). */
   function boxHud(w, v, role, p, d, dt) {
@@ -2146,7 +2378,7 @@ export function createGame(el, api) {
     const vw = W; const vh = H;
     const on = vec.z < 1 && Math.abs(vec.x) < 1 && Math.abs(vec.y) < 1 && d < 300;
     const bub = S.bubble && S.bubble.w === o && performance.now() < S.bubble.until ? S.bubble : null;
-    const dm = Math.round(d); if (v.tagD !== dm || v.tagO !== o || v.tagB !== bub) { v.tagD = dm; v.tagO = o; v.tagB = bub; v.tagS = bub ? `${nameOf(o)}: ${bub.text}` : `${nameOf(o)} · ${dm} m`; }
+    const dm = Math.round(d); if (v.tagD !== dm || v.tagO !== o || v.tagB !== bub || v.tagW !== S.wLvl) { v.tagD = dm; v.tagO = o; v.tagB = bub; v.tagW = S.wLvl; const st = roleOf(o) === 'cop' ? wantedStars(S.wLvl || 1) : ''; v.tagS = bub ? `${nameOf(o)}: ${bub.text === 'HEART' ? '♥' : bub.text}` : `${nameOf(o)}${st ? ' ' + st : ''} · ${dm} m`; }
     v.tag((vec.x * 0.5 + 0.5) * vw, (-vec.y * 0.5 + 0.5) * vh, on, v.tagS, bub ? 'emote' : roleOf(o) === 'cop' ? 'cop' : '');
     void proj;
     // off-screen: an edge arrow towards them (when close)
@@ -2219,6 +2451,7 @@ export function createGame(el, api) {
         traffic.stepWrecks(dtReal, carsOfViewers());
         updateLos(dtReal);
         runnerChecks(dtReal * tsK, now);
+        wantedFrame(now); chainFrame(dtReal * tsK);
         S.stopTT = tT;
       }
       copFallback(now);
@@ -2228,7 +2461,7 @@ export function createGame(el, api) {
         // countdown: hold the cars (but let them rev)
         for (const w of AB) { const p = P2[w]; readPad(p.pad, p.inp, dtReal); p.car.rpm += ((p.inp.gas ? 0.9 : 0.2) - p.car.rpm) * Math.min(1, dtReal * 6); }
       }
-      if (S.R && S.R.over) { const dk = dtReal * tsK; for (const w of AB) if (local(w)) { const c = P2[w].car; c.vx *= Math.max(0, 1 - dk * 1.5); c.vz *= Math.max(0, 1 - dk * 1.5); c.r *= Math.max(0, 1 - dk * 2); c.x += c.vx * dk; c.z += c.vz * dk; c.yaw += c.r * dk; c.speed = Math.hypot(c.vx, c.vz); } }
+      if (S.R && S.R.over) { const dk = dtReal * tsK; for (const w of AB) if (local(w)) { const c = P2[w].car; c.vx *= Math.max(0, 1 - dk * 1.5); c.vz *= Math.max(0, 1 - dk * 1.5); c.r *= Math.max(0, 1 - dk * 2); c.x += c.vx * dk; c.z += c.vz * dk; c.yaw += c.r * dk; c.speed = Math.hypot(c.vx, c.vz); } kissCheck(); }
     }
     // (a hitch over 0.25 s isn't a rate: that time is dropped from the shared clock anyway)
     if (wallDt > 0 && wallDt < 0.25) { const inst = !chase ? 1 : stopped ? 0 : Math.min(1.2, simDt / wallDt); simRate += (inst - simRate) * Math.min(1, wallDt / 0.3); }
@@ -2295,6 +2528,7 @@ export function createGame(el, api) {
     perf.calls = info.calls; perf.tris = info.triangles;
     if (S.phase === 'chase') { perf.maxCalls = Math.max(perf.maxCalls, perf.calls); perf.maxTris = Math.max(perf.maxTris, perf.tris); }
     updateHud(dtReal, now);
+    if ((S.hearts && S.hearts.length) || S.heartsOn) { heartsHud(); S.heartsOn = !!(S.hearts && S.hearts.length); }
     publish();
     // dynamic resolution
     const work = performance.now() - w0;
@@ -2363,7 +2597,7 @@ export function createGame(el, api) {
   function legendHTML() {
     if (coarse) return '';
     if (split()) return '<b>Left</b> <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> drive · <kbd>Space</kbd> drift · <kbd>⇧</kbd> nitro · <kbd>E</kbd> spike/oil · <kbd>Q</kbd> look back<br><b>Right</b> <kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> · <kbd>⇧</kbd> drift · <kbd>Enter</kbd> nitro · <kbd>/</kbd> spike/oil · <kbd>.</kbd> look back';
-    return '<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> drive · <kbd>Space</kbd> drift · <kbd>Shift</kbd> nitro<br><kbd>E</kbd> spike strip / oil · <kbd>M</kbd> map · <kbd>C</kbd> camera · <kbd>B</kbd> look back';
+    return '<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> drive · <kbd>Space</kbd> drift · <kbd>Shift</kbd> nitro<br><kbd>E</kbd> spike strip ahead / oil · <kbd>M</kbd> map (place a strip exactly) · <kbd>C</kbd> camera · <kbd>B</kbd> look back' + (live ? ' · <kbd>H</kbd> emote' : '');
   }
   // (phones have no keyboard legend: no timer at all; setLegend diffs, so a laptop writes only on change)
   if (!coarse) timers.push(setInterval(() => { if (!dead) hud.setLegend(S.R && !S.R.over && S.phase === 'chase' ? legendHTML() : ''); }, 500));
@@ -2381,8 +2615,8 @@ export function createGame(el, api) {
         const car = (w) => { const c = P2[w].car; return { x: c.x, z: c.z, y: c.y, yaw: c.yaw, speed: c.speed, vf: c.vf, hp: c.hp, flat: c.flat, spinT: c.spinT, nitro: c.nitro, level: c.level, surf: c.surf, water: c.water, top: c.topSpeed, role: roleOf(w), esc: P2[w].esc, los: P2[w].los, spikesLeft: P2[w].spikesLeft, oilLeft: P2[w].oilLeft, stats: { ...P2[w].stats } }; };
         return {
           phase: S.phase, paused: S.paused, resumeAt: S.resumeAt, reasons: S.reasons, setup: S.setup, setupVer: S.setupVer, mapId: S.mapId, loading: S.loading,
-          match: S.match && { scores: { ...S.match.scores }, hist: S.match.hist.slice(), rounds: S.match.rounds, map: S.match.map, rules: S.match.rules },
-          R: R && { idx: R.idx, spawn: R.spawn, runner: R.runner, at: R.at, t0: R.t0, endAt: R.endAt, over: R.over, result: R.result, spikes: R.spikes.map((s) => ({ id: s.id, x: s.x, z: s.z, yaw: s.yaw, gone: s.gone, at: s.at })), oils: R.oils.length },
+          match: S.match && { scores: { ...S.match.scores }, hist: S.match.hist.slice(), rounds: S.match.rounds, map: S.match.map, rules: S.match.rules, seed: S.match.seed, grudge: S.match.grudge || '' },
+          R: R && { idx: R.idx, spawn: R.spawn, runner: R.runner, at: R.at, t0: R.t0, endAt: R.endAt, over: R.over, result: R.result, tw: R.tw || '', pts: R.pts || 1, safe: R.safe || null, target: R.target || null, sd: R.sd, heat: heatDist(), eff: { radar: R.rules.radar, spikes: R.rules.spikes, nitro: R.rules.nitro, fog: R.rules.fog, gripK: R.rules.gripK, oils: R.rules.oils }, spikes: R.spikes.map((s) => ({ id: s.id, x: s.x, z: s.z, yaw: s.yaw, gone: s.gone, at: s.at })), oils: R.oils.length },
           a: car('a'), b: car('b'), now: clock(), simT: S.simT, dbgEnd: S.dbgEnd || null, rtt: link.rtt, linked: link.ready, result: S.result || null, localMode: S.localMode, me: human(),
           partnerSeen: live ? { ...P2[other(me)].remote, shown: { ...P2[other(me)].shown } } : null, sent: link.sent,
         };
@@ -2400,6 +2634,8 @@ export function createGame(el, api) {
       testLivery(w, runner, cop) { S.liveryForce = true; P2[w].livery.runner = runner | 0; P2[w].livery.cop = cop | 0; },
       camRig() { const cr = cams[human()]; return { d: cr.d, yaw: cr.yaw, fov: cr.fov, x: cr.x, y: cr.y, z: cr.z }; },
       start() { hostStart(); },
+      /** The shared per-game data as this phone sees it (records, series, unlocks). */
+      data() { return { ...gdata() }; },
       /** Rebuild the world (even for the same map): map-switch regression tests. */
       async reloadMap(id) { S.mapId = null; await loadMap(id || S.setup.map); return S.mapId; },
       setRules(r) { if (!isHost) return null; setSetup({ ...S.setup, rules: { ...S.setup.rules, ...r } }); return S.setup; },
@@ -2413,6 +2649,17 @@ export function createGame(el, api) {
       setCar(w, o) { Object.assign(P2[w].car, o); },
       aiState(w) { const d = P2[w].driver; if (!d) return null; const D = d.state; return { level: d.level, mode: D.mode, vWant: D.vWant, vT: D.vT, vCurve: D.vCurve, tFree: D.tFree, tLeadV: D.tLeadV, creep: D.creep, revT: D.revT, turnT: D.turnT, kT: D.kT, stuckLvl: D.stuckLvl, jamT: D.jamT, pinT: D.pinT, offRoute: D.offRoute, routeLeft: D.routeLeft, alpha: D.alpha, laneShift: D.laneShift, laneTarget: D.laneTarget, tFree: D.tFree, fails: D.fails, stats: { ...D.stats }, inp: { ...d.out } }; },
       placeSpike(w, x, z) { return placeSpike(w, x, z); },
+      /** The cop's quick drop (the round button / E): true, or false with the reason on the HUD hint. */
+      quickDrop(w) { return quickDrop(w || human()); },
+      /** Delight + chase extras: the Wanted level, the cop's chain, hearts in the air, the bumper kiss. */
+      delight(w) { const p = P2[w || human()]; return { wLvl: S.wLvl || 1, copK: S.copK || 1, copRegen: copNit.regen, chain: { n: p.chain.n, tier: p.chain.tier, best: p.chain.best, lost: p.chain.lost }, hearts: (S.hearts || []).length, kissed: !!(S.R && S.R.kissed), chains: S.match && S.match.chains ? { ...S.match.chains } : {}, hint: H0().view(w || human()).els.hint.textContent, stars: H0().view(w || human()).els.role.textContent }; },
+      kissCheck() { kissCheck(); },
+      /** Tests: add points to a local cop's chain; make the next emote the n-th line (the 4 s limiter off). */
+      chainBump(w, pts) { chainBump(w || human(), pts, 'TEST'); return P2[w || human()].chain.n; },
+      setEmote(n) { S.emoteK = n; S.emoteT = 0; },
+      /** Tests: the shared saved data (records, Daily streak), read and written through the real api. */
+      savedData() { return { ...gdata() }; },
+      saveData(patch) { gset(patch); },
       endNow(outcome, reason) { endRound(outcome, reason); },
       shortenRound(ms) { if (isHost && S.R) { S.R.endAt = clock() + ms; if (live) link.urgent('endat', { idx: S.R.idx, endAt: S.R.endAt }); } },
       trafficHash(t) { return traffic ? traffic.hash(t) : 0; },

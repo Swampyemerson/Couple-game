@@ -325,4 +325,45 @@ export const CSS = `
 .g-gtw.touch.portrait .gtw-ctl [data-tap="horn"] { top: calc(var(--cs) + 128px); }
 .g-gtw.touch.short .gtw-ctl [data-tap="horn"] { top: calc(var(--cs) + 126px); left: calc(74px + var(--sl)); }
 .gtw-tag.emote { font-size: .95rem; padding: 5px 9px; background: var(--g-card); color: var(--g-ink); border-radius: 12px; }
+/* Hot Pursuit chain chip (the cop), the Wanted sticker on the heat panel, hearts floating over cars */
+.gtw-chain { padding: 3px 8px; border-radius: 8px; border: 2px solid var(--g-ink); background: var(--g-ink); color: var(--g-bg); font: 900 .72rem/1 var(--g-font-body); letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; box-shadow: 2px 2px 0 var(--g-hl); }
+.gtw-chain.pop { animation: gtw-chainpop .35s ease-out; }
+.gtw-chain.warn { animation: gtw-chainblink .45s steps(2) infinite; }
+@keyframes gtw-chainpop { 0% { transform: scale(1.35); } 100% { transform: scale(1); } }
+@keyframes gtw-chainblink { 50% { opacity: .35; } }
+.gtw-heat { position: relative; }
+.gtw-wstar { position: absolute; right: 10px; top: -16px; padding: 2px 5px; border-radius: 8px; border: 2px solid var(--g-ink); background: var(--g-hl); color: var(--g-on-ink); font: 900 .62rem/1 var(--g-font-body); font-style: normal; letter-spacing: .04em; box-shadow: 2px 2px 0 var(--g-edge); }
+.gtw-hearts { position: absolute; inset: 0; pointer-events: none; z-index: 4; } /* (over the controls, under the map, cards and sheets) */
+.gtw-hearts i { position: absolute; left: 0; top: 0; width: 40px; height: 40px; filter: drop-shadow(2px 2px 0 var(--g-edge)); will-change: transform; }
+.gtw-hearts i b { display: block; width: 100%; height: 100%; background: var(--hc, var(--g-bad)); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z'/%3E%3C/svg%3E") center / contain no-repeat; }
+/* wildcard rounds, pairs, the series */
+.gtw-twrow { position: absolute; left: 50%; top: calc(var(--st) + 66px); transform: translateX(-50%); display: flex; gap: 5px; flex-wrap: wrap; justify-content: center; max-width: calc(100% - 150px); pointer-events: none; }
+.gtw-view.l .gtw-twrow, .gtw-view.r .gtw-twrow { top: 66px; max-width: calc(100% - 16px); }
+.gtw-twrow span { padding: 3px 9px; border-radius: 999px; border: 2px solid var(--g-ink); background: var(--g-hl); color: var(--g-on-ink); font: 900 .66rem/1.15 var(--g-font-body); letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; box-shadow: 2px 2px 0 var(--g-edge); }
+.gtw-twrow span.tg { background: var(--g-card); color: var(--g-ink); }
+.gtw-twrow span.safe { background: #3ddc84; }
+.gtw-twrow span.fog { background: #cfd6dd; }
+.gtw-twrow span.double { background: var(--g-bad); color: #fff; }
+.gtw-pips i.x2 { width: 11px; border-radius: 4px; }
+.gtw-pips i.half { opacity: .55; } .gtw-pips i.lv { background: var(--g-muted); }
+.gtw-pips i.pe { margin-right: 4px; }
+.gtw-intro .gtw-twist { border: 2.5px solid var(--g-ink); border-radius: 12px; padding: 7px 10px; background: var(--g-hl); color: var(--g-on-ink); display: flex; flex-direction: column; gap: 2px; box-shadow: var(--g-shadow-sm, 2px 2px 0 var(--g-edge)); }
+.gtw-intro .gtw-twist b { font-family: var(--g-font-display); font-weight: 900; letter-spacing: .06em; font-size: 1.02rem; }
+.gtw-intro .gtw-twist span { font-size: .82rem; font-weight: 800; } .gtw-intro .gtw-twist span b { font: inherit; letter-spacing: 0; }
+.gtw-intro .gtw-twist.safe { background: #3ddc84; } .gtw-intro .gtw-twist.double { background: var(--g-bad); color: #fff; }
+.gtw-ribbon { align-self: center; padding: 4px 12px; border: 2.5px solid var(--g-ink); border-radius: 999px; background: var(--g-bad); color: #fff; font: 900 .74rem/1.2 var(--g-font-display); letter-spacing: .12em; text-transform: uppercase; box-shadow: var(--g-shadow-sm, 2px 2px 0 var(--g-edge)); transform: rotate(-2deg); }
+.gtw-ribbons { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
+.gtw-ribbons span { padding: 3px 11px; border: 2.5px solid var(--g-ink); border-radius: 999px; background: var(--g-hl); color: var(--g-on-ink); font: 900 .76rem/1.2 var(--g-font-display); letter-spacing: .1em; box-shadow: var(--g-shadow-sm, 2px 2px 0 var(--g-edge)); }
+.gtw-half { font-size: .84rem !important; font-weight: 800 !important; }
+.gtw-pair { border: 2px dashed var(--g-ink); border-radius: 10px; padding: 5px 8px; font-size: .84rem !important; font-weight: 700 !important; } .gtw-pair b { font-family: var(--g-font-display); letter-spacing: .08em; margin-right: 4px; }
+.gtw-pair.done { border-style: solid; background: var(--g-hl-soft, transparent); }
+.gtw-twtag { font-size: .7rem; font-weight: 900; letter-spacing: .14em; text-transform: uppercase; color: var(--g-muted); }
+.gtw-series { font-size: .8rem !important; font-weight: 800 !important; text-align: left; }
+.gtw-rounds li.lv { box-shadow: inset 0 -5px 0 var(--g-muted); }
+.gtw-rounds small.tw { color: var(--g-ink); letter-spacing: .06em; }
+/* short landscape phones: the chips sit below the hint; the result card gets tighter */
+.g-gtw.short .gtw-twrow { top: calc(var(--st) + 112px); }
+.g-gtw.short .gtw-pair { padding: 3px 8px; font-size: .76rem !important; }
+.g-gtw.short .gtw-result .gtw-stats b { font-size: .9rem; } .g-gtw.short .gtw-result .gtw-stats div { padding: 3px 2px; }
+.g-gtw.short .gtw-result .gtw-big { font-size: 2rem; } .g-gtw.short .gtw-result .gtw-big.long { font-size: 1.6rem; }
 `;

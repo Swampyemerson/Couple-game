@@ -29,8 +29,8 @@ export const CHAIN = { close: 30, far: 80, lose: 3, every: 2.5, refill: 0.25, sp
 const TIER_AT = [3, 6, 10];
 export const CHAIN_TIERS = ['', 'CLOSING', 'HOT PURSUIT', 'RELENTLESS'];
 export const chainTier = (n) => (n >= TIER_AT[2] ? 3 : n >= TIER_AT[1] ? 2 : n >= TIER_AT[0] ? 1 : 0);
-export const chainNew = () => ({ n: 0, near: 0, lost: 0, tier: 0, best: 0 });
-export const chainReset = (c) => { c.n = 0; c.near = 0; c.lost = 0; c.tier = 0; c.best = 0; return c; };
+export const chainNew = () => ({ n: 0, near: 0, lost: 0, tier: 0, best: 0, up: 0, ended: 0 });
+export const chainReset = (c) => { c.n = 0; c.near = 0; c.lost = 0; c.tier = 0; c.best = 0; c.up = 0; c.ended = 0; return c; };
 /** The chain's label: '×4 HOT PURSUIT'. */
 export const chainText = (c) => (c.n > 0 ? `×${c.n}${c.tier ? ' ' + CHAIN_TIERS[c.tier] : ''}` : '');
 /** Add pts to the chain. Returns the number of tiers it climbed (each one refills the boost). */
@@ -45,8 +45,8 @@ export function chainAdd(c, pts) {
  */
 export function chainStep(c, dt, d, los) {
   let ev = 0; c.up = 0;
-  if (d > CHAIN.far) { if (c.n > 0) ev |= 4; c.n = 0; c.near = 0; c.lost = 0; c.tier = 0; return ev; }
-  if (!los) { c.lost += dt; if (c.lost > CHAIN.lose) { if (c.n > 0) ev |= 4; c.n = 0; c.near = 0; c.tier = 0; c.lost = CHAIN.lose; return ev; } c.near = 0; return ev; }
+  if (d > CHAIN.far) { if (c.n > 0) { ev |= 4; c.ended = c.n; } c.n = 0; c.near = 0; c.lost = 0; c.tier = 0; return ev; }
+  if (!los) { c.lost += dt; if (c.lost > CHAIN.lose) { if (c.n > 0) { ev |= 4; c.ended = c.n; } c.n = 0; c.near = 0; c.tier = 0; c.lost = CHAIN.lose; return ev; } c.near = 0; return ev; }
   c.lost = 0;
   if (d <= CHAIN.close) {
     c.near += dt;
@@ -66,9 +66,14 @@ export const QUICK_DIST = [62, 90, 40, 120, 160];
  */
 export function aheadPoints(geo, c, dists = QUICK_DIST, snap = 40) {
   const fx = Math.sin(c.yaw); const fz = -Math.cos(c.yaw);
-  const q = { road: -1 }; geo.nearestRoad(c.x, c.z, q, snap, (r) => !r.bridge);
-  const on = q.road >= 0 ? geo.roads[q.road] : null;
-  const dir = on ? (fx * q.tx + fz * q.tz >= 0 ? 1 : -1) : 0; const s0 = on ? q.s : 0;
+  // the road the cruiser is on: the nearest one that runs the way it points (at a junction the crossing road can be nearer)
+  const q = { road: -1 }; const skip = []; let on = null; let dir = 0; let s0 = 0;
+  for (let k = 0; k < 3 && !on; k++) {
+    geo.nearestRoad(c.x, c.z, q, snap, (r) => !r.bridge && skip.indexOf(r.idx) < 0);
+    if (q.road < 0) break;
+    const dot = fx * q.tx + fz * q.tz;
+    if (Math.abs(dot) >= 0.5) { on = geo.roads[q.road]; dir = dot >= 0 ? 1 : -1; s0 = q.s; } else skip.push(q.road);
+  }
   const tmp = {}; const out = [];
   for (const d of dists) {
     let x = c.x + fx * d; let z = c.z + fz * d; let road = false;

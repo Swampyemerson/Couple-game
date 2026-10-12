@@ -18,7 +18,7 @@ export const LIVERIES = {
     { k: 3, name: 'Flames', how: '175 km/h on nitro', test: (c) => c.topBoost >= 175 },
     { k: 4, name: 'Gold roof', how: 'Win 3 matches', test: (c) => c.wins >= 3 },
     { k: 5, name: 'Sweetheart', how: 'Win a grudge match', test: (c) => c.revenge >= 1 },
-    { k: 6, name: 'Checkerboard', how: 'Escape without a scratch', test: (c) => c.clean >= 1 },
+    { k: 6, name: 'Checkerboard', how: 'Escape at full health (45 s or more)', test: (c) => c.clean >= 1 },
   ],
   cop: [
     { k: 0, name: 'Black & white', how: '' },

@@ -219,6 +219,12 @@ export function createAudio({ getCtx = null, mutedFn = null } = {}) {
     riser() { if (!limit('riser', 3000)) return; burst(2, { vol: 0.12, f0: 300, f1: 4200, type: 'bandpass', q: 2.5 }); },
     /** An emote's honk (two detuned squares). */
     honk(far = false) { if (!limit('honk', 300)) return; const v = far ? 0.05 : 0.09; tone(392, 0.22, { type: 'square', vol: v }); tone(330, 0.22, { type: 'square', vol: v * 0.8 }); tone(392, 0.16, { type: 'square', vol: v, at: 0.27 }); tone(330, 0.16, { type: 'square', vol: v * 0.8, at: 0.27 }); },
+    /** A heart (or a bumper kiss): two soft rising notes. */
+    heart() { if (!limit('heart', 400)) return; tone(659, 0.16, { type: 'sine', vol: 0.11 }); tone(988, 0.3, { type: 'sine', vol: 0.1, at: 0.11 }); tone(1319, 0.34, { type: 'sine', vol: 0.05, at: 0.11 }); },
+    /** The cop's Hot Pursuit chain climbing a tier (1 CLOSING, 2 HOT PURSUIT, 3 RELENTLESS): a rising blip, more notes higher up. */
+    chain(tier = 1) { if (!limit('chain', 250)) return; for (let i = 0; i < 1 + tier; i++) tone(520 * Math.pow(2, (i * 4) / 12), 0.1, { type: 'square', vol: 0.07, at: i * 0.06 }); },
+    /** The Wanted level rising: a low two-tone siren yelp. */
+    wanted(lvl = 2) { if (!limit('wanted', 600)) return; tone(440, 0.18, { type: 'sawtooth', vol: 0.07, to: 660 }); tone(660, 0.18, { type: 'sawtooth', vol: 0.07, to: 440, at: 0.2 }); if (lvl >= 3) tone(880, 0.3, { type: 'sawtooth', vol: 0.06, to: 520, at: 0.4 }); },
     destroy() {
       dead = true;
       if (!ctx) return;

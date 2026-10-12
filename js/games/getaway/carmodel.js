@@ -236,19 +236,23 @@ function dress(b, S, shape, o) {
   b.box(0, rear.pts[1][1] + 0.3, rz - 0.035, 0.42, 0.12, 0.02, 0, [0.92, 0.92, 0.86], 0, FX_TRIM);
 }
 
+const CREAM = [0.98, 0.93, 0.8]; const HEART_RED = [0.93, 0.18, 0.36]; const NAVY = [0.05, 0.1, 0.27];
 const GOLD = [0.95, 0.78, 0.3]; const ORANGE = [1, 0.5, 0.08]; const YELLOW = [1, 0.86, 0.25]; const HP_BLUE = [0.1, 0.24, 0.62];
 const RED_LENS = [1, 0.18, 0.2]; const BLUE_LENS = [0.2, 0.42, 1];
 /**
  * Player car geometry (no wheels: those are instanced). kind: 'runner' | 'cop'. livery (liveries.js):
- * runner 0 plain ink · 1 racing stripes · 2 rally (dark lower panels) · 3 flames · 4 gold roof;
+ * runner 0 plain ink · 1 racing stripes · 2 rally (dark lower panels) · 3 flames · 4 gold roof ·
+ * 5 sweetheart (pink-and-cream, a heart on the hood) · 6 checkerboard;
  * cop 0 black & white · 1 undercover (matte black, low lightbar) · 2 highway patrol (white, blue
- * band) · 3 light-up (wide lightbar, grille and deck lenses). Only colours and decals change.
+ * band) · 3 light-up (wide lightbar, grille and deck lenses) · 4 interceptor (navy, white chevrons) ·
+ * 5 classic (1970s panda with a single red beacon). Only colours and decals change.
  */
 export function buildPlayerCar(THREE, P, kind, ink, livery = 0) {
   const b = new Builder(THREE, P.outline); const L = livery | 0;
   if (kind === 'runner') {
-    const body = ink;
-    const stripe = L === 3 ? ORANGE : L === 4 ? GOLD : [0.96, 0.95, 0.92];
+    // 5 Sweetheart: the runner's ink warmed towards pink, with cream panels and a heart on the hood
+    const body = L === 5 ? [ink[0] * 0.25 + 1.0 * 0.75, ink[1] * 0.25 + 0.45 * 0.75, ink[2] * 0.25 + 0.7 * 0.75] : ink;
+    const stripe = L === 3 ? ORANGE : L === 4 ? GOLD : L === 5 ? CREAM : [0.96, 0.95, 0.92];
     const dark = [0.1, 0.1, 0.11];
     buildCar(b, SHAPES.runner, body, {
       ol: 0.03,
@@ -258,7 +262,20 @@ export function buildPlayerCar(THREE, P, kind, ink, livery = 0) {
         const strip = (z0, z1, top, col = stripe) => { for (const sx of [-1, 1]) { const x0 = sx * 0.13; const x1 = sx * 0.37; const n = 6; for (let k = 0; k < n; k++) { const za = lerp(z0, z1, k / n); const zb = lerp(z0, z1, (k + 1) / n); const ya = top(za) + 0.016; const yb = top(zb) + 0.016; const xa = sx > 0 ? x0 : x1; const xb = sx > 0 ? x1 : x0; bb.poly([[xa, ya, za], [xa, yb, zb], [xb, yb, zb], [xb, ya, za]], col, FX_PAINT); } } }; // (wound +z first so the quad faces up)
         const topBody = (z) => { const r = rowAt(SHAPES.runner.body, z); return r[3] + 0.025 - 0.01; };
         const topCab = (z) => { const r = rowAt(SHAPES.runner.cabin, z); return r[4] + 0.02; };
-        if (L >= 1) { strip(0.9, 2.2, topBody); strip(-0.4, 0.0, topCab); strip(-2.2, -1.98, topBody); }
+        // flat decal quad on a top surface (x from xa to xb, z from za to zb, following the surface)
+        const cell = (xa, xb, za, zb, top, col) => bb.poly([[xa, top(za) + 0.018, za], [xa, top(zb) + 0.018, zb], [xb, top(zb) + 0.018, zb], [xb, top(za) + 0.018, za]], col, FX_PAINT);
+        if (L >= 1 && L !== 6) { if (L !== 5) strip(0.9, 2.2, topBody); strip(-0.4, 0.0, topCab); strip(-2.2, -1.98, topBody); }
+        if (L === 5) { // cream lower panels and a heart (7 × 6 cells of 0.1 m, point towards the driver, lobes at the nose) on the front of the hood
+          S.overlay([1, 2, 3, 8, 9, 10], -2.3, 2.3, CREAM);
+          const HEART = ['...X...', '..XXX..', '.XXXXX.', 'XXXXXXX', 'XXXXXXX', '.XX.XX.'];
+          const heart = (z0, top, k) => HEART.forEach((row, r) => { const za = z0 + r * 0.1 * k; const zb = za + 0.1 * k; let c = 0; while (c < 7) { if (row[c] !== 'X') { c++; continue; } let e = c; while (e < 7 && row[e] === 'X') e++; cell((c - 3.5) * 0.1 * k, (e - 3.5) * 0.1 * k, za, zb, top, HEART_RED); c = e; } });
+          heart(1.52, topBody, 1); heart(-0.85, topCab, 1.25); // (the roof's is the one a chase camera sees)
+        }
+        if (L === 6) { // checkerboard: black and white cells over the hood, roof and deck, a black belt line
+          S.overlay([3, 8], -2.3, 2.3, dark, FX_PAINT, 0.01);
+          const check = (z0, z1, nz, nx, hw, top) => { const dz = (z1 - z0) / nz; const dx = (2 * hw) / nx; for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) cell(-hw + i * dx, -hw + (i + 1) * dx, z0 + j * dz, z0 + (j + 1) * dz, top, (i + j) & 1 ? dark : [0.97, 0.97, 0.94]); };
+          check(0.9, 2.1, 6, 4, 0.42, topBody); check(-0.95, 0.4, 6, 5, 0.5, topCab); check(-2.2, -1.9, 2, 4, 0.42, topBody);
+        }
         if (L === 2) { S.overlay([1, 2, 3, 8, 9, 10], -2.3, 2.3, dark); S.overlay([3, 8], -0.6, 1.6, stripe, FX_PAINT, 0.012); } // rally: dark lower panels, a white side flash
         if (L === 3) { S.overlay([2, 3, 8, 9], 0.2, 2.35, ORANGE); S.overlay([3, 8], 1.0, 2.35, YELLOW, FX_PAINT, 0.012); S.overlay([2, 9], 1.5, 2.35, YELLOW, FX_PAINT, 0.012); } // flames licking back from the nose
         if (L === 4) { bb.box(0, topCab(-0.25) + 0.004, -0.25, 1.12, 0.02, 1.25, 0, GOLD, 0, FX_CHROME); S.overlay([3, 8], -2.3, 2.3, GOLD, FX_CHROME, 0.01); } // gold roof + a gold beltline
@@ -270,17 +287,28 @@ export function buildPlayerCar(THREE, P, kind, ink, livery = 0) {
     });
   } else {
     const black = P.copBody; const white = P.copDoor;
-    const under = L === 1; const hp = L === 2; const lit = L === 3;
-    const paint = hp ? white : under ? [0.1, 0.1, 0.11] : black;
+    const under = L === 1; const hp = L === 2; const lit = L === 3; const inter = L === 4; const classic = L === 5;
+    const paint = hp ? white : under ? [0.1, 0.1, 0.11] : inter ? NAVY : black;
     buildCar(b, SHAPES.cop, paint, {
       ol: 0.03,
       extra: (bb, S) => {
         dress(bb, S, 'cop', { mirrorZ: 0.85, mirrorY: 1.1 });
         if (hp) { S.overlay([3, 8], -2.3, 1.7, HP_BLUE, FX_PAINT, 0.01); S.overlay([2, 9], -2.3, 1.7, GOLD, FX_PAINT, 0.012); bb.box(0, 1.515, -0.36, 1.22, 0.02, 1.4, 0, HP_BLUE, 0, FX_PAINT); } // highway patrol: a blue band with a gold pinstripe, blue roof
+        else if (inter) { // interceptor: navy with a white side stripe and a double chevron on the hood
+          S.overlay([3, 8], -2.3, 1.7, white, FX_PAINT, 0.01);
+          const topHood = (z) => rowAt(SHAPES.cop.body, z)[3] + 0.02;
+          for (const zc of [1.7, 1.38]) for (const sx of [-1, 1]) bb.box(sx * 0.28, topHood(zc), zc, 0.12, 0.016, 0.8, -sx * Math.PI / 4, white, 0, FX_PAINT);
+        }
         else if (!under) { S.overlay([2, 3, 8, 9], -1.25, 0.95, white); bb.box(0, 1.515, -0.36, 1.22, 0.02, 1.4, 0, white, 0, FX_PAINT); } // white doors + roof (two-tone)
+        if (classic) { const tz = (z) => rowAt(SHAPES.cop.body, z)[3] + 0.02; bb.box(0, tz(-1.95), -1.95, 1.5, 0.016, 0.62, 0, white, 0, FX_PAINT); } // the classic panda: a white deck lid too
         if (!under) for (const sx of [-1, 1]) bb.box(sx * 1.005, 0.7, -0.2, 0.02, 0.2, 0.22, 0, [0.88, 0.7, 0.2], 0, FX_CHROME); // gold star badges
         // lightbar: housing, red (driver side) and blue lenses, takedown light
-        if (under) { // a slim dash / grille set-up: low lenses behind the windscreen base and in the grille
+        if (classic) { // 1970s: a single round red beacon on a short stalk instead of a lightbar
+          bb.box(0, 1.55, -0.3, 0.3, 0.06, 0.3, 0, TRIM, 0.02, FX_TRIM);
+          bb.add(bb.T.cyl, 0, 1.68, -0.3, 0.34, 0.2, 0.34, 0, RED_LENS, 0.015, FX_SIREN_R);
+          bb.box(0, 1.8, -0.3, 0.12, 0.04, 0.12, 0, TRIM, 0, FX_TRIM);
+          bb.box(-0.5, 0.78, 2.42, 0.26, 0.06, 0.04, 0, RED_LENS, 0, FX_SIREN_R);
+        } else if (under) { // a slim dash / grille set-up: low lenses behind the windscreen base and in the grille
           bb.box(0, 1.5, 0.05, 0.9, 0.03, 0.12, 0, TRIM, 0, FX_TRIM);
           bb.box(-0.25, 1.52, 0.05, 0.3, 0.05, 0.1, 0, RED_LENS, 0, FX_SIREN_R); bb.box(0.25, 1.52, 0.05, 0.3, 0.05, 0.1, 0, BLUE_LENS, 0, FX_SIREN_B);
           bb.box(-0.5, 0.78, 2.42, 0.26, 0.06, 0.04, 0, RED_LENS, 0, FX_SIREN_R); bb.box(0.5, 0.78, 2.42, 0.26, 0.06, 0.04, 0, BLUE_LENS, 0, FX_SIREN_B);

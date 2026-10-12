@@ -3,6 +3,7 @@
 // its last value, so a frame touches the DOM only when something visibly changed.
 import { OPTIONS, DEFAULTS, LABELS, HINTS, fmt, KEYS } from './rules.js';
 import { fmtSec } from './records.js';
+import { twistInfo } from './twists.js';
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export const fmtTime = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
@@ -115,11 +116,12 @@ export function createHud(root, api, { split, touch }) {
       <div class="gtw-clock gtw-st"><small data-c="lab">Round 1</small><b data-c="t">2:30</b><div class="gtw-pips"></div></div>
       <div class="gtw-sc b gtw-st"><i></i><b data-s="b">0</b><em>${esc(api.name('b'))}</em></div>
       <button class="gtw-pausebtn gtw-st" data-tap="pause" aria-label="Pause">${IC.pause}</button></div>
+    <div class="gtw-twrow" hidden></div>
     <div class="gtw-left"><span class="gtw-role">Runner</span>
       <div class="gtw-bar gtw-hp gtw-st"><small><span>Car</span><b data-h="v">100%</b></small><div class="t"><i></i></div></div>
-      <div class="gtw-bar gtw-heat gtw-st"><small><span data-e="lab">Lose the heat</span><b data-e="v"></b></small><div class="t"><i></i></div></div></div>
+      <div class="gtw-bar gtw-heat gtw-st"><small><span data-e="lab">Lose the heat</span><b data-e="v"></b></small><div class="t"><i></i></div><em class="gtw-wstar" hidden></em></div></div>
     <button class="gtw-mini gtw-st" data-tap="map" aria-label="Open the map"><canvas></canvas><b>N</b><kbd>M</kbd></button>
-    <div class="gtw-speed"><div class="gtw-tools"></div><div class="gtw-nitro"><i></i></div><b>0</b><small>KM/H</small></div>
+    <div class="gtw-speed"><div class="gtw-chain" hidden></div><div class="gtw-tools"></div><div class="gtw-nitro"><i></i></div><b>0</b><small>KM/H</small></div>
     <div class="gtw-vig"></div><div class="gtw-tag"></div><div class="gtw-edge" hidden></div>
     <div class="gtw-hint"></div><div class="gtw-count"></div><div class="gtw-stamp"></div><div class="gtw-flash"></div>
     <div class="gtw-box" hidden><b></b><i><s></s></i></div><div class="gtw-dmg"></div>
@@ -132,10 +134,11 @@ export function createHud(root, api, { split, touch }) {
       <button data-tap="act" class="runner">${IC.oil}</button><button data-tap="look">${IC.look}</button><button data-tap="cam">Cam</button><button data-tap="horn" hidden>Honk</button></div>
     <div class="gtw-legend gtw-st" hidden></div>
     <div class="gtw-map" hidden><div class="box gtw-st"><div class="row"><div><h3 data-m="t">Map</h3><p data-m="s"></p></div><button class="gtw-mapwhole" data-m="whole" hidden>Whole map</button><button data-m="close">Done</button></div><div class="gtw-mapwrap"><canvas></canvas><i class="gtw-mapping"></i><b class="gtw-maptoast"></b></div></div></div>
-    <div class="gtw-over" hidden></div><div class="gtw-sheet" hidden></div>`;
+    <div class="gtw-over" hidden></div><div class="gtw-sheet" hidden></div><div class="gtw-hearts" aria-hidden="true"><i><b></b></i><i><b></b></i><i><b></b></i><i><b></b></i></div>`;
   root.appendChild(hudEl);
   const q = (s) => hudEl.querySelector(s);
   const ctl = q('.gtw-ctl'); const actBtn = q('[data-tap="act"]');
+  const heartsEl = q('.gtw-hearts'); for (const el of heartsEl.children) el.hidden = true;
   const over = q('.gtw-over'); const sheet = q('.gtw-sheet'); const mapEl = q('.gtw-map'); const legend = q('.gtw-legend');
   const mapCv = mapEl.querySelector('canvas');
 
@@ -146,8 +149,8 @@ export function createHud(root, api, { split, touch }) {
     const setCls = (k, node, cls, on) => { const key = k + cls; if (last[key] !== on) { last[key] = on; node.classList.toggle(cls, on); } };
     const els = {
       sa: $('[data-s="a"]'), sb: $('[data-s="b"]'), clk: $('.gtw-clock'), clkT: $('[data-c="t"]'), clkL: $('[data-c="lab"]'), pips: $('.gtw-pips'),
-      role: $('.gtw-role'), hp: $('.gtw-hp'), hpI: $('.gtw-hp .t i'), hpV: $('[data-h="v"]'), heat: $('.gtw-heat'), heatI: $('.gtw-heat .t i'), heatL: $('[data-e="lab"]'), heatV: $('[data-e="v"]'),
-      mini: $('.gtw-mini'), miniCv: $('.gtw-mini canvas'), speed: $('.gtw-speed b'), nitro: $('.gtw-nitro'), nitroI: $('.gtw-nitro i'), tools: $('.gtw-tools'),
+      twrow: $('.gtw-twrow'), role: $('.gtw-role'), hp: $('.gtw-hp'), hpI: $('.gtw-hp .t i'), hpV: $('[data-h="v"]'), heat: $('.gtw-heat'), heatI: $('.gtw-heat .t i'), heatL: $('[data-e="lab"]'), heatV: $('[data-e="v"]'),
+      mini: $('.gtw-mini'), miniCv: $('.gtw-mini canvas'), speed: $('.gtw-speed b'), nitro: $('.gtw-nitro'), nitroI: $('.gtw-nitro i'), tools: $('.gtw-tools'), chain: $('.gtw-chain'), wstar: $('.gtw-wstar'),
       vig: $('.gtw-vig'), tag: $('.gtw-tag'), edge: $('.gtw-edge'), hint: $('.gtw-hint'), count: $('.gtw-count'), stamp: $('.gtw-stamp'), flash: $('.gtw-flash'),
       box: $('.gtw-box'), boxT: $('.gtw-box b'), boxI: $('.gtw-box s'), dmg: $('.gtw-dmg'),
     };
@@ -178,8 +181,14 @@ export function createHud(root, api, { split, touch }) {
         if (last.cs !== sec) { last.cs = sec; setText('ct', els.clkT, sec < 0 ? '–:––' : fmtTime(ms)); }
         setText('cl', els.clkL, label); setCls('ch', els.clk, 'hot', !!hot);
       },
+      /** The wildcard / half-time chips under the clock: [{ t, c }] or null. */
+      twist(items) {
+        const key = items && items.length ? items.map((x) => x.c + '|' + x.t).join('~') : '';
+        if (last.tw === key) return; last.tw = key;
+        els.twrow.hidden = !key; els.twrow.innerHTML = key ? items.map((x) => `<span class="${esc(x.c)}">${esc(x.t)}</span>`).join('') : '';
+      },
       pips(list) { const key = list.join(','); /* (not '': ['now','','',''] and ['now'] must differ) */ if (last.pips !== key) { last.pips = key; els.pips.innerHTML = list.map((c) => `<i class="${c}"></i>`).join(''); } },
-      role(r, w) { setText('role', els.role, r === 'cop' ? 'Cop' : 'Runner'); setCls('r', els.role, 'cop', r === 'cop'); setCls('r', els.role, 'runner', r !== 'cop'); el.style.setProperty('--me', `var(--p-${w})`); el.style.setProperty('--them', `var(--p-${w === 'a' ? 'b' : 'a'})`); },
+      role(r, w, stars = '') { setText('role', els.role, r === 'cop' ? (stars ? `Cop ${stars}` : 'Cop') : 'Runner'); setCls('r', els.role, 'cop', r === 'cop'); setCls('r', els.role, 'runner', r !== 'cop'); el.style.setProperty('--me', `var(--p-${w})`); el.style.setProperty('--them', `var(--p-${w === 'a' ? 'b' : 'a'})`); },
       health(hp, role) {
         const v = Math.max(0, Math.round(hp));
         setText('hpv', els.hpV, `${v}%`);
@@ -187,9 +196,10 @@ export function createHud(root, api, { split, touch }) {
         setCls('hp', els.hp, 'low', v < 30); setCls('hp', els.hp, 'mid', v >= 30 && v < 60);
         setText('hpl', els.hp.querySelector('span'), role === 'cop' ? 'Cruiser' : 'Car');
       },
-      heat(k, label, sub, spotted, show) {
+      heat(k, label, sub, spotted, show, stars = '') {
         if (last.heatH !== !show) { last.heatH = !show; els.heat.hidden = !show; }
         if (!show) return;
+        if (last.wst !== stars) { last.wst = stars; els.wstar.hidden = !stars; els.wstar.textContent = stars; } // (Wanted: a sticker on the panel's corner)
         const v = Math.round(Math.max(0, Math.min(1, k)) * 100);
         if (last.heatw !== v) { last.heatw = v; els.heatI.style.transform = `scaleX(${v / 100})`; }
         setText('hl', els.heatL, label); setText('hv', els.heatV, sub);
@@ -203,6 +213,11 @@ export function createHud(root, api, { split, touch }) {
         setCls('no', els.nitro, 'on', !!on);
       },
       tools(html) { if (last.tools !== html) { last.tools = html; els.tools.innerHTML = html; } },
+      /** The cop's Hot Pursuit chain chip ('×4 HOT PURSUIT'; '' hides it); warn blinks it while the chain is about to break. */
+      chain(text, warn) {
+        if (last.chainT !== text) { last.chainT = text; els.chain.hidden = !text; els.chain.textContent = text; if (text) { els.chain.classList.remove('pop'); void els.chain.offsetWidth; els.chain.classList.add('pop'); } }
+        setCls('chw', els.chain, 'warn', !!warn);
+      },
       vignette(cls) { if (last.vig !== cls) { last.vig = cls; els.vig.className = 'gtw-vig' + (cls ? ' ' + cls : ''); } },
       hint(text, ms = 2600) {
         clearTimeout(hintT);
@@ -346,7 +361,7 @@ export function createHud(root, api, { split, touch }) {
       actBtn.className = role; actBtn.disabled = !enabled;
       // the count lives on the button as a badge (touch hides the HUD's tool chip, so it shows once)
       const what = role === 'cop' ? 'Spike' : 'Oil';
-      actBtn.setAttribute('aria-label', `${what} (${count} left)`);
+      actBtn.setAttribute('aria-label', `${role === 'cop' ? 'Spike strip ahead' : what} (${count} left)`);
       actBtn.innerHTML = `${role === 'cop' ? IC.spike : IC.oil}<span class="l">${what}</span><em class="n${count ? '' : ' zero'}">${count}</em>`;
     },
     setLegend(html) { if (H._leg === html) return; H._leg = html; legend.hidden = !html; if (html) legend.innerHTML = html; },
@@ -363,6 +378,19 @@ export function createHud(root, api, { split, touch }) {
     card(html, cls = 'dim') { if (html == null) { over.hidden = true; over.innerHTML = ''; H._card = null; return; } if (H._card === html && !over.hidden) return; H._card = html; over.className = 'gtw-over ' + cls; over.innerHTML = html; over.hidden = false; },
     showSheet(html) { if (html == null) { sheet.hidden = true; sheet.innerHTML = ''; return; } const sc = sheet.querySelector('.in'); const keep = sc ? sc.scrollTop : 0; sheet.innerHTML = html; sheet.hidden = false; const sc2 = sheet.querySelector('.in'); if (sc2 && keep) sc2.scrollTop = keep; },
     /** The emote button: shown in live play, labelled with the line it sends next. */
+    /** Hearts in the air: [{ x, y, k (0..1 age), w ('a' | 'b' | 'x' for the bumper kiss) }] in px of the game area. */
+    hearts(list) {
+      const kids = heartsEl.children; const n = Math.min(kids.length, list.length);
+      for (let i = 0; i < kids.length; i++) {
+        const el = kids[i];
+        if (i >= n) { if (!el.hidden) el.hidden = true; continue; }
+        const h = list[i]; if (el.hidden) el.hidden = false;
+        const sc = (0.7 + 0.5 * Math.min(1, h.k * 4)).toFixed(2);
+        el.style.transform = `translate(${Math.round(h.x)}px, ${Math.round(h.y)}px) translate(-50%, -50%) scale(${sc})`;
+        el.style.opacity = h.k > 0.7 ? String(Math.max(0, (1 - h.k) / 0.3).toFixed(2)) : '1';
+        if (el.dataset.w !== h.w) { el.dataset.w = h.w; el.style.setProperty('--hc', h.w === 'a' ? 'var(--p-a)' : h.w === 'b' ? 'var(--p-b)' : 'var(--g-bad)'); }
+      }
+    },
     setHorn(show, label) { const b = ctl.querySelector('[data-tap="horn"]'); const key = show ? label : ''; if (H._horn === key) return; H._horn = key; b.hidden = !show; if (show) b.textContent = label; },
     drawArrow, drawSpike, drawLandmark,
     destroy() { unbindMap(); hudEl.remove(); },
@@ -379,7 +407,7 @@ const TIPS = [
   'Runner: break line of sight behind buildings to lose the heat.',
   'Drift (handbrake) swings the tail round tight corners.',
   'Near misses with traffic top up the runner’s nitro.',
-  'Cop: tap the minimap to drop spike strips ahead of them.',
+  'Cop: SPIKE (or E) lays a strip on the road ahead; the map places one exactly.',
   'Runner: drop oil when the cop is right behind you.',
 ];
 /** Loading: a progress bar with a stage line and an optional Cancel. */
@@ -426,8 +454,9 @@ export function lobbyCard(api, o) {
     : `<div class="gtw-lrow"><h3>Runs first</h3><div class="gtw-chips">${['a', 'b'].map((w) => `<button class="gtw-chip p${w} ${first === w ? 'on' : ''}" data-l="first" data-v="${w}" ${canEdit ? '' : 'disabled'}><i></i>${esc(api.name(w))}</button>`).join('')}</div></div>`;
   const quickOn = r.rounds === 2 && r.roundTime === 60;
   const facts = daily
-    ? `<div class="gtw-daily"><p><b>${esc(o.daily.title)}</b></p><p>${esc(o.daily.how)}</p>${o.daily.board.length ? `<ul>${o.daily.board.map((x) => `<li class="p${x.w}"><i></i>${esc(x.name)} <b>${esc(x.text)}</b></li>`).join('')}</ul>` : '<p class="gtw-tapon">Nobody has run it yet today.</p>'}${o.daily.note ? `<p class="gtw-tapon">${esc(o.daily.note)}</p>` : ''}</div>`
-    : `<div class="gtw-factsrow"><p class="gtw-facts">${r.rounds} rounds · ${fmt('roundTime', r.roundTime)} each · ${r.spikes ? `${r.spikes} spike strip${r.spikes === 1 ? '' : 's'}` : 'no spikes'} · traffic ${r.traffic}${r.tiebreak === 'sudden' ? ' · sudden death' : ''}</p>${canEdit ? (quickOn ? '<button class="gtw-chip" data-l="standard">Standard</button>' : '<button class="gtw-chip" data-l="quick">Quick chase</button>') : ''}</div>`;
+    ? `<div class="gtw-daily"><p><b>${esc(o.daily.title)}</b></p><p>${esc(o.daily.how)}</p>${o.daily.board.length ? `<ul>${o.daily.board.map((x) => `<li class="p${x.w}"><i></i>${esc(x.name)}${x.verb ? ' ' + esc(x.verb) + ':' : ''} <b>${esc(x.text)}</b></li>`).join('')}</ul>` : '<p class="gtw-tapon">Nobody has run it yet today.</p>'}${(o.daily.lines || []).map((t) => `<p class="gtw-tapon">${esc(t)}</p>`).join('')}${o.daily.note ? `<p class="gtw-tapon">${esc(o.daily.note)}</p>` : ''}</div>`
+    : `<div class="gtw-factsrow"><p class="gtw-facts">${r.rounds} rounds${r.score === 'rounds' ? '' : ' · scored in pairs'} · ${fmt('roundTime', r.roundTime)} each · ${r.spikes ? `${r.spikes} spike strip${r.spikes === 1 ? '' : 's'}` : 'no spikes'} · traffic ${r.traffic}${r.tiebreak === 'sudden' ? ' · sudden death' : ''}${r.wildcards === 'on' ? ' · wildcards' : ''}</p>${canEdit ? (quickOn ? '<button class="gtw-chip" data-l="standard">Standard</button>' : '<button class="gtw-chip" data-l="quick">Quick chase</button>') : ''}</div>`;
+  const series = !daily && !ai && o.series ? `<p class="gtw-series">${esc(o.series)}</p>` : '';
   const recs = !daily && o.records && o.records.length ? `<p class="gtw-records"><span>${ai ? 'Your practice' : 'Records'}</span>${o.records.map((x) => `${esc(x.t)} <b class="gtw-name-${x.w}">${esc(x.name)}</b> ${esc(x.v)}`).join(' · ')}</p>` : '';
   const partner = o.partnerName || 'your partner';
   let status = '';
@@ -442,7 +471,7 @@ export function lobbyCard(api, o) {
   return `<div class="gtw-lobby" style="--me: var(--p-${me})"><div class="gtw-card gtw-st">
     <div class="col"><div class="gtw-logo">Get<span>away</span></div>
     <p class="gtw-tagline">One runs, one chases. PIT them, spike them, or lose the heat.</p>
-    ${modeRow}${daily ? '' : firstRow}${facts}${recs}${status}</div>
+    ${modeRow}${daily ? '' : firstRow}${facts}${series}${recs}${status}</div>
     <div class="col">${mapCardHTML(maps, daily ? { ...setup, map: o.daily.mapId } : setup, canEdit && !daily, o.loading)}
     <div class="gtw-btns"><button class="gtw-ghost" data-l="settings">${canEdit ? 'Settings' : 'Settings'}</button><button class="gtw-ghost ${o.newcomer ? 'gtw-new' : ''}" data-l="howto">${o.newcomer ? 'New here? How to play' : 'How to play'}</button></div>
     <div class="gtw-btns">${btn}</div>${tip}</div>
@@ -452,16 +481,17 @@ export function lobbyCard(api, o) {
 /** First-time help. touch: phone controls, else keyboard. */
 export function howToCard({ touch = true, split = false } = {}) {
   const ctl = touch
-    ? '<li><b>Steer</b> put your left thumb down anywhere on the left half and slide it. The slider starts where your thumb lands.</li><li><b>Right thumb</b> Gas, Brake (hold to reverse), Drift, Nitro.</li><li><b>Map</b> tap the minimap. <b>Pause</b> the ‖ button at the top.</li>'
+    ? '<li><b>Steer</b> put your left thumb down anywhere on the left half and slide it. The slider starts where your thumb lands.</li><li><b>Right thumb</b> Gas, Brake (hold to reverse), Drift, Nitro.</li><li><b>Cop tools</b> SPIKE lays a strip on the road ahead; tap the minimap to choose the spot. <b>Pause</b> the ‖ button at the top.</li>'
     : split ? '<li><b>Left player</b> WASD, Space drift, Shift nitro, E spike/oil.</li><li><b>Right player</b> arrows, right Shift drift, Enter nitro, / spike/oil.</li><li><b>Esc</b> pauses.</li>'
-      : '<li><b>Drive</b> WASD or arrows. <b>Space</b> drift, <b>Shift</b> nitro.</li><li><b>E</b> spike strip / oil, <b>M</b> map, <b>C</b> camera, <b>B</b> look back.</li><li><b>Esc</b> pauses.</li>';
+      : '<li><b>Drive</b> WASD or arrows. <b>Space</b> drift, <b>Shift</b> nitro.</li><li><b>E</b> spike strip ahead / oil, <b>M</b> map (place a strip exactly), <b>C</b> camera, <b>B</b> look back.</li><li><b>Esc</b> pauses.</li>';
   return `<div class="gtw-card gtw-st gtw-how"><h2>How to play</h2>
     <div class="gtw-howgrid">
-      <div><small>Runner</small><p>Survive the clock, or get far away and out of sight to fill the <b>escape</b> meter. Drop <b>oil</b> on a cop right behind you.</p></div>
-      <div><small>Cop</small><p>Get alongside and push their <b>back corner</b> to PIT them, box them in, or tap the map to drop <b>spike strips</b> ahead.</p></div>
+      <div><small>Runner</small><p>Survive the clock, or get far away and out of sight to fill the <b>escape</b> meter. Drop <b>oil</b> on a cop right behind you. Long chases go <b>Wanted ★★</b>.</p></div>
+      <div><small>Cop</small><p>Get alongside and push their <b>back corner</b> to PIT them, box them in, or lay <b>spike strips</b> ahead. Stay close for a <b>Hot Pursuit</b> chain: each step tops up your boost.</p></div>
     </div>
     <ul class="gtw-howlist">${ctl}</ul>
-    <p>Roles swap every round. Crashes cost health; at 0 the runner is busted.</p>
+    <p><b>Pairs:</b> rounds go two at a time from the same start with the roles swapped; the better race across the pair takes the point (an escape beats a bust; a longer run beats a shorter one). <b>Wildcard</b> rounds add a twist: fog, spike rain, a safehouse to hide in, double points.</p>
+    <p>Roles swap every round. Crashes cost health; at 0 the runner is busted. Playing live, <b>Honk</b> cycles quick emotes and a heart.</p>
     <div class="gtw-btns"><button class="gtw-go" data-l="howclose">Got it</button></div></div>`;
 }
 
@@ -506,24 +536,28 @@ const ROLE_TIP = {
   runner: 'Survive the clock or lose the heat: get far away and out of sight.',
   cop: 'Hit their back corner from the side to PIT them. Tap the map for spike strips.',
 };
-export function introCard(api, { map, round, rounds, runner, me, landmark, roundTime, local }) {
+export function introCard(api, { map, round, rounds, runner, me, landmark, roundTime, local, twist = null, safe = null, pts = 1, sd = false, target = null, pairs = false, ribbon = '' }) {
   const cop = runner === 'a' ? 'b' : 'a';
   const youRun = !local && me === runner; const youCop = !local && me === cop;
   const myRole = local ? (api.name(runner) === 'You' ? 'runner' : api.name(runner) === 'AI' ? 'cop' : '') : youRun ? 'runner' : 'cop';
-  return `<div class="gtw-card gtw-st gtw-intro"><h3>${esc(map.name)} · Round ${round + 1} of ${rounds}</h3>
+  // a wildcard round names its twist (and where the safehouse is); the second half of a pair says what to beat
+  const tw = twist ? `<div class="gtw-twist ${esc(twist.id)}"><b>${esc(twist.name)}${pts > 1 && twist.id !== 'double' ? ' ×2' : ''}</b><span>${safe ? `Reach <b>${esc(safe.name)}</b> unseen: ${esc(safe.home ? 'it’s home' : 'a safehouse')}` : esc(twist.blurb)}</span></div>` : '';
+  const half = target ? `<p class="gtw-half"><b>Half time:</b> ${myRole ? esc(myRole === 'runner' ? target.run : target.cop) : `${esc(api.name(runner))} must ${esc(target.run)}`}</p>` : '';
+  const rib = ribbon ? `<div class="gtw-ribbon">${esc(ribbon)}</div>` : '';
+  return `<div class="gtw-card gtw-st gtw-intro">${rib}<h3>${esc(map.name)} · ${sd ? 'Sudden death' : `Round ${round + 1} of ${rounds}`}${twist ? ` · ${esc(twist.name)}` : ''}</h3>
     <h2>${local ? (api.name(runner) === 'You' ? 'You’re running' : api.name(runner) === 'AI' ? 'You’re the cop' : `${esc(api.name(runner))} runs`) : youRun ? 'You’re running' : 'You’re the cop'}</h2>
-    ${landmark ? `<p>Starting near <b>${esc(landmark)}</b></p>` : ''}
+    ${tw}${landmark ? `<p>Starting near <b>${esc(landmark)}</b></p>` : ''}${half}
     <div class="gtw-roles"><div class="${youRun || myRole === 'runner' ? 'me' : ''}"><small>Runner</small>${nameB(api, runner)}<p>Survive ${fmt('roundTime', roundTime)} or lose the heat</p></div>
       <div class="${youCop || myRole === 'cop' ? 'me' : ''}"><small>Cop</small>${nameB(api, cop)}<p>PIT, spike or box them in</p></div></div>
     ${myRole ? `<p class="gtw-tip">${esc(ROLE_TIP[myRole])}</p>` : ''}</div>`;
 }
 
 const takes = (n) => (n === 'You' ? 'take' : 'takes');
-export function resultCard(api, { outcome, reason, runner, stats, scores, next, local, me, ran, unlocks, lines, head, queue, d, wait, daily, adv, split = false }) {
+export function resultCard(api, { outcome, reason, runner, stats, scores, next, local, me, ran, unlocks, lines, head, queue, d, wait, daily, adv, split = false, pair = null, twist = null, pts = 1 }) {
   const busted = outcome === 'busted';
   const big = head || (busted ? (reason === 'water' ? 'SPLASH!' : 'BUSTED!') : 'ESCAPED!');
   const why = {
-    hp: 'Car disabled.', boxed: queue ? 'Boxed in, stuck in traffic.' : 'Boxed in and stopped.', water: 'Straight into the water.', time: d >= 0 && d <= 15 ? `Survived the clock with the cop ${d} m behind.` : 'Survived the clock.', heat: 'Lost the heat.', quit: 'The runner gave up.',
+    hp: 'Car disabled.', boxed: queue ? 'Boxed in, stuck in traffic.' : 'Boxed in and stopped.', water: 'Straight into the water.', time: d >= 0 && d <= 15 ? `Survived the clock with the cop ${d} m behind.` : 'Survived the clock.', heat: 'Lost the heat.', safe: 'Made it to the safehouse unseen.', quit: 'The runner gave up.',
   }[reason] || '';
   const winner = busted ? (runner === 'a' ? 'b' : 'a') : runner;
   const youWon = !local && winner === me;
@@ -532,9 +566,18 @@ export function resultCard(api, { outcome, reason, runner, stats, scores, next, 
   const st = stats || {};
   // (an elapsed time: rounded like the Daily score beside it, not counted up like the round clock)
   const t = ran ? fmtSec(ran / 1000) : '';
+  // pairs: the first half says what the second must beat; the second names the pair's winner
+  let pairHtml = '';
+  if (pair && pair.half) {
+    const nx = pair.next; const role = local ? (api.name(nx) === 'You' ? 'runner' : api.name(nx) === 'AI' ? 'cop' : '') : nx === me ? 'runner' : 'cop';
+    pairHtml = `<p class="gtw-pair half"><b>HALF TIME</b> ${role ? esc(role === 'runner' ? `Your turn to run: ${pair.half.run}` : `You chase next: ${pair.half.cop}`) : `${esc(api.name(nx))} runs next: ${esc(pair.half.run)}`}</p>`;
+  } else if (pair && pair.done) {
+    pairHtml = pair.winner ? `<p class="gtw-pair done"><b>PAIR</b> ${nameB(api, pair.winner)} ${takes(api.name(pair.winner))} the ${pair.pts > 1 ? `${pair.pts} points` : 'point'} · ${esc(pair.why)}</p>` : '<p class="gtw-pair done"><b>PAIR</b> Dead level: no point</p>';
+  }
+  const tag = twist || pts > 1 ? `<small class="gtw-twtag">${esc([twist ? twist.name : '', pts > 1 && !(twist && twist.id === 'double') ? '×2' : ''].filter(Boolean).join(' · '))}</small>` : '';
   const recs = (lines || []).slice(0, 2).map((l) => `<p class="gtw-rec ${l.hot ? 'hot' : ''}">${l.rec ? '<b>NEW</b> ' : ''}${esc(l.t)}</p>`).join('');
-  return `<div class="gtw-card gtw-st gtw-result" data-l="skip" role="button" aria-label="Continue"><div class="gtw-big ${tone}${big.length > 10 ? ' long' : ''}">${esc(big)}</div>
-    <p>${why} ${nameB(api, winner)} ${takes(api.name(winner))} the round${local ? '' : youWon ? ' — nice driving' : ''}.</p>
+  return `<div class="gtw-card gtw-st gtw-result" data-l="skip" role="button" aria-label="Continue">${tag}<div class="gtw-big ${tone}${big.length > 10 ? ' long' : ''}">${esc(big)}</div>
+    <p>${why} ${nameB(api, winner)} ${takes(api.name(winner))} the round${local ? '' : youWon ? ' — nice driving' : ''}.</p>${pairHtml}
     ${daily ? `<p class="gtw-rec hot">${esc(daily)}</p>` : ''}
     <div class="gtw-stats">${t ? `<div><b>${t}</b><small>On the run</small></div>` : ''}<div><b>${Math.round((st.top || 0) * 3.6)}</b><small>Top km/h</small></div><div><b>${st.near || 0}</b><small>Near misses</small></div><div><b>${st.pits || 0}</b><small>PITs</small></div>${t ? '' : `<div><b>${st.spikes || 0}</b><small>Spikes hit</small></div>`}</div>
     ${recs}
@@ -544,18 +587,22 @@ export function resultCard(api, { outcome, reason, runner, stats, scores, next, 
 }
 
 /** The match card: round by round, the two of you side by side, the MVP. Tap to go on. */
-export function finalCard(api, { hist, scores, winner, rounds, sum, daily, dailySub, ai, tb }) {
+export function finalCard(api, { hist, scores, winner, rounds, sum, daily, dailySub, ai, tb, pips = null, ribbons = null, series = '' }) {
   const pip = (h, i) => {
     if (!h) return `<li class="tbd"><small>R${i + 1}</small><b>–</b></li>`;
-    const w = h.outcome === 'busted' ? (h.runner === 'a' ? 'b' : 'a') : h.runner;
-    const what = h.outcome === 'busted' ? (h.reason === 'water' ? 'SPLASH' : `BUSTED ${fmtSec(h.ran / 1000)}`) : h.reason === 'heat' ? `LOST THEM ${fmtSec(h.ran / 1000)}` : 'ESCAPED';
-    return `<li class="w${w}"><small>${h.sd ? 'SD' : `R${i + 1}`} · ${esc(api.name(h.runner))} ran</small><b>${what}</b></li>`;
+    const rw = h.outcome === 'busted' ? (h.runner === 'a' ? 'b' : 'a') : h.runner;
+    const w = pips && pips[i] !== undefined ? pips[i] : rw; // (pairs: the pair's winner marks both its rounds; null = a level pair)
+    const what = h.outcome === 'busted' ? (h.reason === 'water' ? 'SPLASH' : `BUSTED ${fmtSec(h.ran / 1000)}`) : h.reason === 'heat' ? `LOST THEM ${fmtSec(h.ran / 1000)}` : h.reason === 'safe' ? 'SAFEHOUSE' : 'ESCAPED';
+    const tw = h.tw ? `<small class="tw">${esc((twistInfo(h.tw) || { chip: '' }).chip)}${h.pts > 1 && h.tw !== 'double' ? ' ×2' : ''}</small>` : '';
+    return `<li class="${w ? 'w' + w : 'lv'}"><small>${h.sd ? 'SD' : `R${i + 1}`} · ${esc(api.name(h.runner))} ran</small><b>${what}</b>${tw}</li>`;
   };
   const list = []; for (let i = 0; i < Math.max(rounds, hist.length); i++) list.push(pip(hist[i], i));
   const T = sum.T; const col = (w) => `<div class="p${w}"><h4>${nameB(api, w)}</h4><dl><dt>PITs</dt><dd>${T[w].pits}</dd><dt>Top km/h</dt><dd>${T[w].top || '–'}</dd><dt>Near misses</dt><dd>${T[w].near}</dd><dt>Spikes landed</dt><dd>${T[w].spikes}</dd><dt>Escapes</dt><dd>${T[w].esc}</dd></dl></div>`;
   const head = daily ? 'Daily chase' : winner ? `${esc(api.name(winner))} ${api.name(winner) === 'You' ? 'win' : 'wins'}` : 'All square';
-  return `<div class="gtw-card gtw-st gtw-final" data-l="finskip" role="button" aria-label="Continue"><h3>${daily ? esc(dailySub) : `Match · ${scores.a}–${scores.b}${tb ? ` · ${esc(tb)}` : ''}`}</h3><h2>${daily ? esc(daily) : head}</h2>
+  const rib = ribbons && ribbons.length ? `<div class="gtw-ribbons">${ribbons.map((x) => `<span>${esc(x)}</span>`).join('')}</div>` : '';
+  return `<div class="gtw-card gtw-st gtw-final" data-l="finskip" role="button" aria-label="Continue">${rib}<h3>${daily ? esc(dailySub) : `Match · ${scores.a}–${scores.b}${tb ? ` · ${esc(tb)}` : ''}`}</h3><h2>${daily ? esc(daily) : head}</h2>
     ${daily ? '' : `<ol class="gtw-rounds">${list.join('')}</ol><div class="gtw-cols">${col('a')}${col('b')}</div>`}
+    ${series && !daily ? `<p class="gtw-series">${esc(series)}</p>` : ''}
     ${sum.mvp ? `<p class="gtw-mvp"><b>${esc(sum.mvp.t.split(' · ')[0])}</b> ${esc(sum.mvp.t.split(' · ')[1] || '')}</p>` : ''}
     ${ai && !daily ? '<p class="gtw-tapon">Practice rounds go to your practice bests, not the couple’s record</p>' : ''}<p class="gtw-tapon">Tap to continue</p></div>`;
 }

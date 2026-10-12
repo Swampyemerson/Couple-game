@@ -107,11 +107,58 @@ is ready").
   the lobby). It falls back to a remount when the partner isn't linked or the graphics are down.
   Was 12–14 s of map rebuild plus Start and Ready; now tap → GO is the 0.7 s lead + intro + count.
 
+## Pairs, wildcard rounds, the decider, the Series (twists.js, records.js)
+
+- **Pairs scoring** (rule `score`, default `pairs`; `rounds` = the old every-round point). Rounds 2k and 2k+1 share a
+  spawn with the roles swapped; the point goes to whoever ran the better race across the pair, once the second round is
+  played (`pairWinner` in records.js): an escape beats a bust; two busts, the longer survival wins (the cop who busted
+  faster); two escapes, losing the heat or reaching a safehouse beats the clock, then the faster getaway, then health
+  left + 50 × the heat meter's peak; an exact tie (within 0.1 s on the run) is a draw pair with no point. If either
+  round of a pair is DOUBLE OR NOTHING the pair is worth 2 (`pairPts`). Rounds 2/4/6/8 are 1/2/3/4 pairs. The score is
+  recomputed from `hist` every time (`scoresFromHist`, never incremented), so a re-sent `round` message can't double
+  count. `matchDecided` uses points still to be won (`remainingPoints`: a pair counts once, a half-played pair still
+  counts, a future DOUBLE round counts 2 because the twist order is a pure function of the seed), so a 6-round match
+  can end after 5 rounds. After the first half the result card says "HALF TIME: Your turn to run: survive past 1:12" /
+  "You chase next: bust them before 1:12" (`pairTarget`); the second round shows that target as a chip under the clock
+  on both phones ("Beat 1:12" / "Bust by 1:12"); after it the card names the pair ("PAIR Sydney takes the point ·
+  survived longer"). The pips group pairs and show the pair's winner on both its rounds. Sudden death is a single
+  round worth 1. The lobby facts line reads "4 rounds · scored in pairs". The Daily chase plays `score: 'rounds'`.
+- **Wildcard rounds** (rule `wildcards`, default `on`). `R.tw` is a twist id from `twistFor(seed, idx)`: a seeded
+  shuffle of the seven twists, round k gets `order[(k-1) % 7]` (no repeats in a match; round 0 and the decider are
+  plain). The round reads its rules through `rules()` = `rulesFor(match.rules, R.tw, R.sd)` (stored on `S.R.rules`):
+  EAGLE EYE (radar always, heat +40 m) · FOG (radar off, heat ×0.7, render fog × 0.55: `scene.fog` near/far, restored
+  at the round's end) · SPIKE RAIN (cop 6 strips, runner sees them all) · BIG TANK (runner nitro big, cop boost
+  recharge ×1.5 via `S.copK`) · SLICK STREETS (both cars' lateral grip × 0.88 via `S.cp`, runner 2 oil slicks) ·
+  SAFEHOUSE · DOUBLE OR NOTHING (`R.pts = 2`). A wildcard round always gets the 2 s intro card (the twist's name and
+  rule, and the safehouse's name), "ROUND 3 OF 4 · FOG" in its header; during the chase a chip sits under the clock
+  (`.gtw-twrow`), the result card and the match card carry the twist's name. Practice vs the AI plays every twist (the AI
+  runner ignores the safehouse; the AI cop's strips come from the round's rules).
+- **SAFEHOUSE**: `pickSafehouse` (host, in `nextRound`) takes a landmark with a road within 110 m, 200-800 m from the
+  runner's spawn (widening to 120-1300 m), snapped to the road; 3865 Moorhead (Boulder) and 8524 Boulder Way (Santee) win
+  when within 140-1100 m (a safehouse is drawn once a match, so "the first time" is always). It travels in `R.safe`
+  `{x, z, name, home}` (in `match`, `round` and the relink re-send: `wireR`), so both phones agree; if no landmark fits
+  the round is plain. The runner's device ends the round `escaped / 'safe'` when within 25 m and unseen (no line of
+  sight, or under cover) for 2 s (`p.hideT`); reaching it spotted adds +35% to the escape meter once. Stamps SAFEHOUSE! /
+  HOME SAFE! (the cop sees THEY'RE SAFE); the chip shows the distance; the minimap and the full map draw a green house with
+  its 25 m circle (pinned to the minimap's edge when off it); in 3D a column of glowing green puffs rises from it (the
+  existing puff system: no draw call). `recordRound` counts 'safe' as an escape (+ `<w>_safe`) but never as "losing the heat"
+  (no `heats`, no fastest-getaway mark, nothing towards Rally).
+- **Sudden death** (decider): the player who did **not** run first runs (the first runner already had the opening move),
+  the cop keeps **1** spike strip (0 if the match has none), heat ×0.75, 0:45, always plain, worth 1.
+- **The Series** (live and split only; never practice or the Daily): `series_a`, `series_b` (matches won), `series_d`
+  (drawn), `series_n`, `series_last` (1 = a, 2 = b, 0 = draw), `series_run` (in a row by `series_last`'s winner). The
+  authority (`finalize`: host / the local device) folds the match with `seriesAfter` and puts the result in the `final`
+  message (`fin.sr`); `applyFinal` writes the keys once, on the host only. The lobby shows "Series: Sydney 7–5 ·
+  Sydney has won the last 2". A player who lost the last 2 or more matches (`seriesGrudge`, read at `hostStart`, stored in
+  `match.grudge`) sees a GRUDGE MATCH ribbon on round 0's intro; if they win it the stamp and the match card say REVENGE!
+  (`<w>_revenge` counter). Edging ahead of a series that wasn't led by you gives SERIES LEAD!; every 10th match MATCH 10.
+
 ## Records, the Daily chase, quick matches (records.js)
 
 - **Records** go to the shared game data (`api.setData`, numbers only, each phone writes only its
   own person's keys): `<w>_busts, _escapes, _heats, _pits, _pits_r, _fastbust, _heatesc, _top,
-  _topboost, _near_r, _streak, _streak_best, _wins, _runs`. Live and split use those; practice and
+  _topboost, _near_r, _streak, _streak_best, _wins, _runs, _chain_r`, plus (update) `_safe` (safehouse escapes), `_clean` (escapes at
+  full health over 45 s or more), `_revenge` (grudge matches won), `_pairs` (pairs won); the shared Series keys are `series_*` (above). Live and split use those; practice and
   the Daily use `ai_<w>_…` so AI rounds never touch the couple's numbers. On one device the records
   belong to the device's owner (`api.owner`, new in core), not the 'a' slot. The result card shows
   one line: "Fastest bust yet: 41 s (was 58 s)" with a NEW RECORD! stamp and fanfare, or "Sydney
@@ -137,7 +184,7 @@ is ready").
 | | Runner | Cop |
 |---|---|---|
 | Nitro | tank, 3.3 s full burn (normal) or 4.5 s (big), recharges in ~18 s / 12 s after 0.6 s; +10% per near miss; off in the settings | "pursuit boost": 2.5 s burn, recharges in 20 s |
-| Special | **oil slick**, 1 per round, dropped behind you: 3.4 m, 25 s. A cop on it gets 1.2 s at 30% **lateral** grip with the steering's yaw authority kept and the body's yaw damping cut to a quarter, plus a 1.6 rad/s yaw kick (`RULES.oilSlide` / `oilKick`): at 100 km/h it rotates ~50° in 0.6 s with a 20 m/s slide, smoke and squeal, and has to counter-steer (it used to understeer: 8°, slip 3 m/s) | **spike strips** (0–6, default 3): tap the minimap or open the map (button, M or E) and tap a road |
+| Special | **oil slick**, 1 per round, dropped behind you: 3.4 m, 25 s. A cop on it gets 1.2 s at 30% **lateral** grip with the steering's yaw authority kept and the body's yaw damping cut to a quarter, plus a 1.6 rad/s yaw kick (`RULES.oilSlide` / `oilKick`): at 100 km/h it rotates ~50° in 0.6 s with a 20 m/s slide, smoke and squeal, and has to counter-steer (it used to understeer: 8°, slip 3 m/s) | **spike strips** (0–6, default 3): the round button / **E** lays one on the road ahead (quick drop, below); the minimap / **M** opens the map to tap a road |
 | Lights | | lightbar flashes red/blue and tints nearby surfaces; siren (wail, yelp when close) |
 
 **Spike strips.** A tap snaps to the nearest road within 70 m. The strip lies across the road
@@ -153,6 +200,62 @@ jolt and the hurt vignette, then 60% lateral grip, 70% top speed, 1.2 m/s² of r
 (`CAR.flatDrag`), a once-per-wheel-turn roll thump (`flatWobble`), a lower stance, rim sparks and
 a flapping sound (120 km/h → 106 at the pop, settling at ~110); a second strip does 8 damage. The
 strip is used up. The cop is immune to its own strips.
+
+## Chase extras: quick drop, Hot Pursuit, Wanted, hearts, Daily streak (js/games/getaway/chase.js)
+
+The pure logic lives in `chase.js` (Node-testable: `wantedLevel`, `copRegen`, `chainStep` / `chainAdd`, `aheadPoints`,
+`isKiss`); the streak fold is `records.js foldStreak`. game.js only wires them in.
+
+- **Cop quick drop** (`game.js quickDrop`). The cop's round button (the SPIKE button on a phone) and **E** lay a strip on
+  the road ahead of the cruiser. `aheadPoints` finds the road the cruiser is on (the nearest one that runs the way it
+  points: at a junction the crossing road can be nearer), walks 62 m along it in the direction of travel, and each
+  candidate goes through the same `placeSpike` checks as a map tap (and the same `spike` message). Candidates, in order:
+  **62 m, 90, 40, then 120 and 160** (the last two are for a runner close ahead and fast: its no-drop circle is 2.5 s of its
+  speed, so a strip 62 m ahead of the cop is often inside it). Past the end of its road, or off road, a candidate is
+  straight ahead along the heading (`placeSpike` snaps it to the nearest road within 70 m). Nothing fits: the first reason
+  shows as a hint ("Too close to them: drop it further ahead · or pick a spot on the map"), nothing is spent; none left:
+  "No spike strips left". The minimap / **M** still opens the map for an exact spot. The AI cop keeps its own logic.
+- **Hot Pursuit chain** (the cop's style chain; `chainStep`). On the cop's own device only (nothing travels): within 30 m of
+  the runner **and in line of sight** +1 per 2.5 s (the 2.5 s timer restarts when it drops out of the 30 m circle); a
+  spike hit +3, a PIT +2; tiers at 3 CLOSING / 6 HOT PURSUIT / 10 RELENTLESS each top the pursuit boost up 25% (hint
+  "ON THEIR TAIL ×3 CLOSING", a rising blip). Over 3 s without line of sight, or more than 80 m away, ends it ("Chain over ·
+  ×7"). A chip "×4 HOT PURSUIT" sits above the speed (blinking when it is about to break). The AI cop gets no chain, and the
+  Daily has none. `<w>_chain_r` is the longest chain in a round (BESTS "Longest pursuit chain", the record stamp needs ×6).
+  A chain of 10+ is told to the other phone once, at the round's end, as `emote {k: 'CHAIN', i, n}` (the existing `emote`
+  type, no new message), so the match card's **RELENTLESS** MVP line is the same on both phones (`S.match.chains[idx]`).
+- **Wanted level** (`wantedLevel(t, roundTime)`, a pure function of the shared round clock, so both phones agree). After 60 s
+  on the run: ★★; after 100 s: ★★★ (rounds shorter than 2:30 escalate at 40% / 67% of their length, so a Quick 1:00 round
+  gets there at 24 s / 40 s and the 0:45 decider at 18 s / 30 s). ★★: the cop's boost recharges in 14 s instead of 20
+  (`copRegen(level, k)`, one function: `k` is the round rules' `copBoostK`, which BIG TANK sets to 1.5, so ★★ under BIG TANK
+  is ≈ 9.3 s; `S.copK` is read once a round); ★★★: the cop's tank refills fully once, the human cop's last-seen ping stays 3 s
+  longer (15 s) and the AI cop's radar pings come 40% sooner (`opts.wanted`, ai.js). Shown as ★★ on the cop's role chip and
+  on the cop's tag ("Sydney ★★ · 82 m") and as a sticker on the heat panel's top edge; a hint on each rise ("WANTED ★★ ·
+  they're getting serious" for the runner, "boost recharges faster" for the cop). The Daily has no Wanted level (its score
+  stays comparable with older bests). Driving physics are untouched. `TUNE.wanted = [t2, t3]` overrides the thresholds (tests).
+- **Delight.** The Honk button now cycles six lines per role (HONK, Catch me! / Pull over!, lol, Too slow! / Got you!, Nice
+  one!, Heart); a **Heart** sends `emote {k: 'HEART'}` and a heart sprite floats over the sender's car on both phones (a
+  DOM sprite per viewer, `hud.hearts`, drawn above the controls and under the cards: no draw call) with a few glowing puffs
+  in the sender's ink (the existing puff system). The **bumper kiss**: after the round (the 3.5 s the cars coast) two cars
+  that touch gently (bodies a hand's width bigger overlap, closing under 3 m/s: `isKiss`) trade a heart once a round and a
+  "Bumper kiss" line is added to the result card. The runner's device decides (live) and sends `emote {k: 'KISS'}`; the
+  other phone draws its own heart between the cars. Emotes off mutes hearts from the partner but not the kiss.
+- **Daily 2.0.** The lobby's Daily panel lists today's board as "Sydney ran today: 1:12", "Your best ever: 1:48"
+  (`<w>_daily_best`) and "Streak: Emerson Day 3 ✓ · Sydney Day 5" plus "Best streak: …". The streak (`foldStreak`, day
+  numbers by the local calendar date): playing the Daily on the day after the last one adds 1, the same day again changes
+  nothing, anything else is Day 1 again with no fuss (the panel just says "Day 1"); the result card says "Daily streak: Day 3"
+  (hot, and "(your best)", from Day 2). Keys: `<w>_daily_streak`, `<w>_daily_streak_best`, `<w>_daily_last` (the day
+  number), written by the phone that played, next to the existing `<w>_daily_<date>` and `<w>_daily_best`. Cop days (a Daily
+  where you bust a Hard AI runner) are not built.
+- **Netcode and budget.** Nothing new on the wire: the chain, Wanted and the quick drop use the existing clock, `spike` and
+  `spikehit` / `hit` messages; hearts, the kiss and the RELENTLESS note ride on `emote` (≤ 1 per 4 s per player, 1 kiss and
+  1 chain note per round). The live test asserts no message-budget warnings.
+- **Tests.** `unit`: Wanted thresholds, `copRegen` (20 s / 14 s / ×1.5, and on the road), the chain's timing, tiers, ends and
+  spike / PIT points, `chain_r` records, `aheadPoints` on Dockside, `isKiss`, the streak fold and panel, the how-to and Daily
+  panel text. `extras` (one phone, port PORT + 8): Wanted stars and sticker on the runner's phone, the cop's recharge, quick
+  drop by a real tap and by E (62 m, 90 m, a hint when nothing fits, "No spike strips left"), the chain (a ×3 tier-up's
+  tank jump, spike +3, PIT +2), the bumper kiss, and the Daily panel / streak saved. `extraslive` (two phones, port PORT + 1):
+  the heart on both screens, the kiss, RELENTLESS on both match cards, no budget warnings. `touch` also measures the Wanted
+  sticker and the chain chip at 667×375, 844×390 and 926×428.
 
 ## Driving model (js/games/getaway/car.js, tune.js)
 
@@ -395,7 +498,7 @@ time, so pauses never cost the runner seconds. A new round always starts unpause
 | Gas / brake-reverse | GAS pedal (big, yellow) / BRAKE | W / S | W S · ↑ ↓ |
 | Handbrake (drift) | DRIFT | Space | Space · Right Shift |
 | Nitro | NITRO | Shift | Left Shift · Enter |
-| Spike strip (cop) / oil (runner) | the round button | E (F) | E · / |
+| Spike strip ahead (cop) / oil (runner) | the round button | E (F) | E · / |
 | Map | tap the minimap | M | M · , |
 | Camera / look back | CAM / ↶ | C / B | C · \ / Q · . |
 
@@ -461,7 +564,7 @@ attacker sees the number in the victim's colour (live: from the streamed health)
 stamps NUDGE. The runner's **style chain**: near miss +1, a drift over 1 s +1, the cop on your oil
 +3; chained within 3 s it counts up ("Near miss! ×4 SLICK"), and each tier (3 SLICK / 6 SMOOTH /
 10 UNTOUCHABLE) pays 5% nitro per tier. **Emotes** (live): a Honk button on the left under the bars
-(H on a laptop) sends the next line of your role's list (HONK · Catch me! / Pull over! · lol) as
+(H on a laptop) sends the next line of your role's list (HONK · Catch me! / Pull over! · lol · Too slow! / Got you! · Nice one! · Heart; see Chase extras) as
 `emote {k}`, one per 4 s, shown as a bubble on your car's tag on their phone with a honk (Settings
 → Emotes off mutes them). The spike map zooms to a 900 m window ahead of the cruiser (≈ 0.7 px/m on
 a 390 × 844 phone: roads 6–8 px, the 400 m range fills it; "Whole map" toggles), a tap shows a ring
@@ -480,6 +583,7 @@ always sees the cop.
 | Map | Dockside · Boulder · Santee (stubs show "coming soon") |
 | Round time | 1:00 · 1:30 · 2:00 · **2:30** · 3:00 · 4:00 |
 | Rounds | 2 · **4** · 6 · 8 |
+| Scoring | **in pairs** · every round |
 | Spike strips | 0–6 (**3**) |
 | Traffic | off · light · **normal** |
 | Runner nitro | off · **normal** · big |
@@ -490,6 +594,7 @@ always sees the cop.
 | Runner livery / Cruiser (per device, from `liveries.js`) | earned paint jobs; locked chips show how to earn them |
 | Runner sees spikes | **within 120 m** · always |
 | Tiebreak (level after the last round) | **sudden death** · longest run |
+| Wildcard rounds | off · **on** |
 
 Plus "who runs first" (or, for practice: you start as runner / cop, and the AI driver level) and,
 per device: steering (slider / tilt), sensitivity, dead zone, tilt calibration, graphics level,
@@ -505,10 +610,10 @@ Unlockable paint jobs, the Rail Rush pattern: earned by milestones, kept per per
 game data (`unlock_<w>_<kind><k>`, careers from the record keys above via `api.data()`), worn per device
 (Settings → This phone), and told to the partner over the link (`livery` message on link and on
 change) so both phones draw the same car. Runner: Plain · Racing stripe (escape once) · Rally
-(lose the heat 3 times) · Flames (175 km/h on nitro) · Gold roof (win 3 matches). Cruiser: Black &
+(lose the heat 3 times) · Flames (175 km/h on nitro) · Gold roof (win 3 matches) · Sweetheart (win a grudge match: the ink warmed to pink, cream panels, hearts on the roof and hood) · Checkerboard (escape at full health over 45 s or more: checker cells on hood, roof and deck). Cruiser: Black &
 white · Undercover (5 busts: matte black, low dash and grille lenses) · Highway patrol (a bust
 under 30 s: white with a blue band) · Light-up (10 PITs landed: a wide four-lens bar plus grille
-and deck lenses). A livery only changes colours and decals of the one car mesh
+and deck lenses) · Interceptor (a Hot Pursuit chain of 10: navy, white side stripe and double chevron) · Classic (win 5 pairs: 1970s panda with a white deck lid and a single red beacon). A livery only changes colours and decals of the one car mesh
 (`buildPlayerCar(THREE, P, kind, ink, livery)`; `carView.setLivery(k)` rebuilds the body in
 place) — no extra draw calls. New unlocks stamp UNLOCKED! on the result card with the win chime.
 
@@ -713,12 +818,14 @@ traffic (≤ 15% off road), and started nose-in against a building it backs out 
 
 ## Tests (`node tools/test/games/getaway.test.js`, ports 8930–8939)
 
+The older sections run with `rules: { wildcards: 'off', score: 'rounds' }` in `FAST` (the classic flow); `TUNE.tw = { idx: id }` forces a round's twist and `TUNE.rules` overlays the match rules (tests only).
+
 `gfx`: the packed vertex layout on every map (no float32 normals / colours / uvs left, every vertex
 buffer 4-byte aligned, ≤ 32 B/vertex on the GPU with indices), the caster scene and the 512² phone shadow map, no shadow pass in the lobby,
 the dynamic-quality ladder driven by a synthetic frame time (cheapest lever first, the hold, the
 back-off), and the camera rig in a chase (no speed lag, further back at speed).
 
-Sections (`ONLY=`): `unit` (physics from the modules in Node: acceleration, top speed, nitro,
+Sections (`ONLY=`): `unit` (the twist picker, rules overlay, safehouse picker, `pairWinner` table, pair scoring and points remaining, the Series fold, the livery unlocks and every livery model, the new cards; physics from the modules in Node: acceleration, top speed, nitro,
 brakes, turning, drifts, walls without tunnelling at up to 216 km/h, sliding along walls, props,
 PIT vs ram vs T-bone, Dockside spawns and surfaces, traffic determinism and density, bridge decks,
 nav; the feel pass: steering resolution at 60/100/140 km/h, the grip limit's squeal and the no-runaway power
@@ -732,7 +839,7 @@ slider, iOS edge, scripted PIT → boxed bust, role swap, spike rules and effect
 escape, heat escape, water bust, final) · `live` (two phones at 80 ms: settings sync, read-only
 guest sheet, shared timeline, same spawn, roles, traffic determinism across devices, remote car
 accuracy, boxed bust, swaps, spikes over the network, clock and heat escapes, splash, tiebreak
-final, one recorded result, rematch, message budget) · `lossy` (150 ms, 25% loss) · `split`
+final, one recorded result, rematch, message budget) · `wild` (practice with the new defaults: forced SAFEHOUSE / DOUBLE OR NOTHING / FOG rounds, half time, a safehouse escape, the pair's point, ×2 pairs, the fog and its restore, practice never writes the series) · `wildlive` (two phones: the same wildcard, safehouse, rules and half-time target on both, one pair awarded after the second round, the series written once) · `wildsplit` (split screen: both views' chips, one pair, the series) · `lossy` (150 ms, 25% loss) · `split`
 (laptop split screen by keyboard) · `robust` (hidden-page pause shifts the clock, no shader
 compiles in play, GL context loss and restore, clean close) · `mapswitch` (switch maps repeatedly
 and render) · `perf` (every playable map on phone and laptop: draw calls, triangles, build blocks;

@@ -29,7 +29,7 @@ export const LABELS = {
 };
 export const HINTS = {
   roundTime: 'Survive this long to escape', rounds: 'Roles swap every round',
-  score: 'Pairs: both of you run the same start, best race takes the point',
+  score: 'Pairs: two rounds, one start; the better race wins the point',
   spikes: 'Tap the map to drop one ahead', traffic: 'Civilian cars on the roads',
   nitro: 'Boost tank, recharges', damage: 'How hard crashes hit',
   radar: 'When the cop sees the runner on the map', heat: 'Out of sight this far for 7 s',
