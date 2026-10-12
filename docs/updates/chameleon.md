@@ -109,15 +109,81 @@ solver, the budgets and saved data are unchanged in meaning.
 
 ## Fixes after verification
 
-FIXES_PLACEHOLDER
+Two independent verifiers re-played the build: both players, one phone and two phones, light and dark, portrait and
+landscape, with real taps and reloads mid-round. They found no console errors and no desync between the phones; twist,
+scores, round count, bounty and palette agreed everywhere, including after reloads. Two fixers then fixed what they
+found:
+
+- **Host reload stretched the clock (pre-existing bug).**
+  - The shared clock restarts when the host reloads. The guest then reported an inflated time left, which the host
+    adopted: 21 s left in a hide became 36 s, and 26 s left in a hunt became 45 s. The seeker couldn't fire for the
+    extra seconds.
+  - The guest now detects the clock jump and shifts its stored times, and freezes its clock while the host is away.
+    Measured after the fix: 21.5 s → 18.2 s and 26.7 s → 22.3 s, and the seeker can still fire.
+  - A reloaded seeker also keeps their wager call.
+- **Three colours** takes its swatches from the room's actual surfaces, so the Launderette gets its aqua and the Living
+  Room its sage. Before, most maps fell back to generic red and blue.
+- **Layout fixes:**
+  - At 320 px, every paint control is clear of the camo meter.
+  - Recap and final reactions are never under the pinned button.
+  - Stickers stack in one lane without overlapping each other.
+  - In portrait, the note is a line inside the recap card.
+  - Round announcements never cover "I'm hidden".
+  - Landscape hand-over curtains keep their button on screen, and stickers are hidden under a curtain.
+- **Rule tuning:**
+  - Underdog: from round 3, at a 40-point gap (60 on big maps). At 25 points it fired almost every round.
+  - Called-it multiplier: applies to finds only.
+  - Bounty marker: bolder (a beacon pole), with a bigger seeded spot pool so small maps vary.
+  - Today's hide on one phone: no longer always Floor only.
+- **Other:**
+  - A corrupt saved portrait shows nothing instead of a black tile.
+  - The Love emote has a label.
+  - Test bounds no longer trip on a loaded machine. Wall-clock maxima became averages with a loose maximum, and the
+    clocks behind races were lengthened.
 
 ## Tests
 
-TESTS_PLACEHOLDER
+Final regression, run one file or section at a time on the final tree (shared box, load average 10–35).
+
+| Suite | Result |
+|---|---|
+| `chameleon-paint2.test.js` (new, paint) | ALL GOOD, 166 ok |
+| `chameleon-rivalry.test.js` (new, records, the Cup, looks, cards) | ALL GOOD, 118 ok |
+| `chameleon-hunt.test.js` (new, whisker, mercy, note, drama) | ALL GOOD, 117 ok. The `note` section timed out once under load while a fixer was editing, then passed on rerun |
+| `chameleon-twists.test.js` (new, twists, underdog, sudden death, streak, bug A, hotseat rules) | TWISTS_RESULT |
+| `chameleon-maps.test.js ONLY=spawns,launderette,static,slices` | ALL GOOD, 248 ok |
+| `chameleon-cu.test.js ONLY=static,load` | ALL GOOD, 35 ok |
+| `chameleon.test.js`: `paintpro`, `paintjuice`, `netpolish`, `variety`, `maps` (all 10 maps), `camsweep`, `bigperf`, `uxward`, `robust`, `leaks`, `crawl`, `seekclimb`, `spectate`, `huntpaint`, `timing` | ALL GOOD |
+| `chameleon.test.js` `blendfair` | ALL GOOD on rerun (first run: a load timeout) |
+| `chameleon.test.js` `disconnect`, `hotseat`, `db` | OLD_RESULT |
+| Earlier in the session (builders and fixers): `ux`, `uxland`, `uxfinal`, `uxrematch`, `settings`, `settings3`, `toggles`, `timinglive`, `bigmatch`, `finalqa`, `dark`, `desktop`, `mapcache`, `chameleon-maps` `pockets` and `browser` | ALL GOOD (some only on a second run under load) |
+
+Measured:
+- Camera sweep: climb 99.4 %, Watch 99.2 %, orbit 99.3 %, with 0 inside a collider.
+- Draw calls, worst view: Launderette 42, Candy Works 32, CU Boulder with the bounty marker 52 by sweep (70 by
+  construction). All are under 80.
+- Triangles in view: at most 84.5k, under 150k.
+- `build_artifact.py --only=chameleon` builds with 42 modules, about 1.59 MB.
 
 ## Known issues
 
-KNOWN_PLACEHOLDER
+- **Pockets and modes:**
+  - Huge bodies can't reach a few small pockets (the CU upper gallery strip, a Museum corner, the House attic). This is
+    intended: smaller sizes can.
+  - Mercy chirp and the note are not offered in Double Blind.
+  - Double Blind whiskers show the sticker and count, but leave no stain, because there is no sync path for it.
+- **Remounts:** if one device remounts mid-hunt, its moments state is forgotten. Mercy can be offered again and the
+  whisker count restarts. The note is not in the resync snapshot.
+- **Sudden death:** its fixed 20 s / 30 s clocks don't scale with map size. On CU Boulder a 30 s hunt favours the
+  hider.
+- **Maps:** the Launderette has no mezzanine. Adding two maps re-shuffles which map each calendar day gets in Today's
+  hide, but both phones run the same build, so they still agree.
+- **Budget:** CU Boulder's known worst view is 68 draw calls, plus 2 for the bounty marker, so 70 of 80. That figure
+  is by construction; a sweep measured at most 52 around the marker.
+- **Test timing:** the shared machine ran at load averages of 10–35 all session. Some older sections (`match`'s
+  phase-switch skew of 50 ms, `dark`'s long paint flow) can still fail on wall-clock bounds under that load. They pass
+  on rerun and are not logic failures.
+- **For the coordinator:** none. No shared files were edited.
 
 ## README games-table line
 
