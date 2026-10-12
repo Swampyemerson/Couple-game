@@ -5,7 +5,8 @@
 // decals of the existing car model (carmodel.js buildPlayerCar `livery`): no extra draw calls.
 //
 // Career counters come from the flat record keys in the same shared doc (records.js careerFrom:
-// couple + practice summed): { esc, heat, bust, fastBust, pits, topBoost, wins }. (The doc keeps
+// couple + practice summed): { esc, heat, bust, fastBust, pits, topBoost, wins, revenge (grudge
+// matches won), clean (escapes at full health), chainBest (best Hot Pursuit chain), pairs (pairs won) }. (The doc keeps
 // numbers only, so the old `career_<w>` object never persisted.)
 import { careerFrom } from './records.js';
 
@@ -16,15 +17,19 @@ export const LIVERIES = {
     { k: 2, name: 'Rally', how: 'Lose the heat 3 times', test: (c) => c.heat >= 3 },
     { k: 3, name: 'Flames', how: '175 km/h on nitro', test: (c) => c.topBoost >= 175 },
     { k: 4, name: 'Gold roof', how: 'Win 3 matches', test: (c) => c.wins >= 3 },
+    { k: 5, name: 'Sweetheart', how: 'Win a grudge match', test: (c) => c.revenge >= 1 },
+    { k: 6, name: 'Checkerboard', how: 'Escape without a scratch', test: (c) => c.clean >= 1 },
   ],
   cop: [
     { k: 0, name: 'Black & white', how: '' },
     { k: 1, name: 'Undercover', how: '5 busts', test: (c) => c.bust >= 5 },
     { k: 2, name: 'Highway patrol', how: 'A bust under 30 s', test: (c) => c.fastBust > 0 && c.fastBust <= 30 },
     { k: 3, name: 'Light-up', how: '10 PITs landed', test: (c) => c.pits >= 10 },
+    { k: 4, name: 'Interceptor', how: 'Reach RELENTLESS (a pursuit chain of 10)', test: (c) => c.chainBest >= 10 },
+    { k: 5, name: 'Classic', how: 'Win 5 pairs', test: (c) => c.pairs >= 5 },
   ],
 };
-export const CAREER0 = { esc: 0, heat: 0, bust: 0, fastBust: 0, pits: 0, topBoost: 0, wins: 0 };
+export const CAREER0 = { esc: 0, heat: 0, bust: 0, fastBust: 0, pits: 0, topBoost: 0, wins: 0, revenge: 0, clean: 0, chainBest: 0, pairs: 0 };
 
 export const liveryKey = (w, kind, k) => `unlock_${w}_${kind}${k}`;
 export const careerKey = (w) => `career_${w}`;

@@ -178,7 +178,7 @@ export function createHud(root, api, { split, touch }) {
         if (last.cs !== sec) { last.cs = sec; setText('ct', els.clkT, sec < 0 ? '–:––' : fmtTime(ms)); }
         setText('cl', els.clkL, label); setCls('ch', els.clk, 'hot', !!hot);
       },
-      pips(list) { const key = list.join(''); if (last.pips !== key) { last.pips = key; els.pips.innerHTML = list.map((c) => `<i class="${c}"></i>`).join(''); } },
+      pips(list) { const key = list.join(','); /* (not '': ['now','','',''] and ['now'] must differ) */ if (last.pips !== key) { last.pips = key; els.pips.innerHTML = list.map((c) => `<i class="${c}"></i>`).join(''); } },
       role(r, w) { setText('role', els.role, r === 'cop' ? 'Cop' : 'Runner'); setCls('r', els.role, 'cop', r === 'cop'); setCls('r', els.role, 'runner', r !== 'cop'); el.style.setProperty('--me', `var(--p-${w})`); el.style.setProperty('--them', `var(--p-${w === 'a' ? 'b' : 'a'})`); },
       health(hp, role) {
         const v = Math.max(0, Math.round(hp));

@@ -19,7 +19,8 @@ import { createLink } from './link.js';
 import { createDriver, AI_LEVELS, AI_LEVEL_LABELS } from './ai.js';
 import { MAPS } from './maps/index.js';
 import { liveryFor, liveryRows, checkUnlocks, LIVERIES } from './liveries.js';
-import { recordRound, recordMatch, recordsLine, fmtSec, dayKey, dayOfYear, DAILY, dailyScore, dailyText, dailyKey, dailyBoard } from './records.js';
+import { recordRound, recordMatch, recordsLine, fmtSec, dayKey, dayOfYear, DAILY, dailyScore, dailyText, dailyKey, dailyBoard, dayNum, streakPatch, streakView } from './records.js';
+import { wantedLevel, wantedStars, copRegen, chainNew, chainReset, chainStep, chainAdd, chainText, CHAIN, CHAIN_TIERS, aheadPoints, QUICK_DIST, isKiss } from './chase.js';
 
 const AB = ['a', 'b'];
 const PH = { loading: 0, lobby: 1, intro: 2, count: 3, chase: 4, result: 5, final: 6, wait: 7 };
@@ -122,7 +123,7 @@ export function createGame(el, api) {
     return { w, car: newCar('runner'), pad: newPad(), inp: { steer: 0, gas: 0, brake: 0, hand: false, nitro: false }, driver: null, auto: false, view: null, rig: null,
       prevRL: [0, 0, 0], prevRR: [0, 0, 0], smokeT: 0, dustT: 0, sparkT: 0, oilLeft: 1, spikesLeft: 0, lastHit: 0, stats: { top: 0, near: 0, pits: 0, spikes: 0, hits: 0, topBoost: 0 }, livery: { runner: 0, cop: 0 },
       remote: { x: 0, z: 0, y: 0, yaw: 0, vx: 0, vz: 0, r: 0, st: 0, hp: 100, fl: 0, es: 0, nt: 0, lv: -1, rpm: 0, ph: 0, rd: -1, pz: 0, ry: 0, sv: 0, tp: 0, sl: 0 },
-      shown: { x: 0, z: 0, y: 0, yaw: 0, init: false }, hpSeen: 100, nearIds: new Map(), esc: 0, escPeak: 0, escPeakT: 0, escMax: 0, stopT: 0, spikeHit: new Set(), oilHit: new Set(), losT: 0, los: true, seenT: 0, cover: false, lastSeen: null, hurtT: 0 };
+      shown: { x: 0, z: 0, y: 0, yaw: 0, init: false }, hpSeen: 100, nearIds: new Map(), esc: 0, escPeak: 0, escPeakT: 0, escMax: 0, stopT: 0, spikeHit: new Set(), oilHit: new Set(), losT: 0, los: true, seenT: 0, cover: false, lastSeen: null, hurtT: 0, chain: chainNew(), wFilled: false };
   }
   const P2 = { a: mkPlayer('a'), b: mkPlayer('b') };
   const local = (w) => !live || w === me;
@@ -803,7 +804,7 @@ export function createGame(el, api) {
     if (S.R && S.R.idx === R.idx && !S.R.over) return;
     S.R = { ...R, over: false, result: null, spikes: [], oils: [], seq: 0 };
     S.phase = 'wait'; S.ending = false; S.final15 = false; S.dailyPassed = false; S.copBoxT = 0; S.dailyRv = S.match && S.match.daily ? dailyRival() : null;
-    S.slowT = 0; S.slowK = 1;
+    S.slowT = 0; S.slowK = 1; S.wLvl = 1; S.kissed = false; S.hearts = []; // (Wanted level, the bumper kiss, hearts in the air)
     S.paused = false; S.resumeAt = 0; S.pausedAt = 0; // a pause never carries into a new round
     const entry = S.mapEntry;
     const sp = (entry.spawns && entry.spawns[R.spawn]) || { runner: { x: 0, z: 0, yaw: 0 }, cop: { x: 0, z: 80, yaw: 0 } };
@@ -817,6 +818,7 @@ export function createGame(el, api) {
       p.car = c; p.esc = 0; p.escPeak = 0; p.escPeakT = 0; p.escMax = 0; p.seenT = 0; p.cover = false; p.stopT = 0; p.oilLeft = role === 'runner' ? 1 : 0; p.spikesLeft = role === 'cop' && !R.sd ? rules0.spikes : 0;
       p.stats = { top: 0, near: 0, pits: 0, spikes: 0, hits: 0, topBoost: 0 };
       p.spikeHit.clear(); p.oilHit.clear(); p.nearIds.clear(); p.hpSeen = 100; p.lastSeen = null; p.los = true; p.shown.init = false; p.corr = null;
+      chainReset(p.chain); p.wFilled = false; p.style = null;
       p.prevRL[0] = NaN; p.prevRR[0] = NaN;
       if (p.rig) p.rig = null;
       cams[w].init = false; cams[w].mode = cams[w].mode || rules0.camera;
@@ -2051,7 +2053,6 @@ export function createGame(el, api) {
   const metres = (d) => { const n = Math.max(0, Math.round(d)); return n < 4096 ? (M_STR[n] || (M_STR[n] = n + ' m')) : n + ' m'; };
   function updateHud(dt, now) {
     hudT -= dt; miniT -= dt;
-    if (S.hudR !== S.R) { S.hudR = S.R; hudT = 0; } // a new round: its scores, pips and clock at once, not after the last round's 0.2 s tick
     const playing = !!S.R && !split() && (S.phase === 'count' || S.phase === 'chase');
     if (S.playingCls !== playing) { S.playingCls = playing; root.classList.toggle('playing', playing); }
     const vs = viewers(); const R = S.R;
