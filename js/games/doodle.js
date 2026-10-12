@@ -511,6 +511,26 @@ const KIT = {
   dealFresh, POINTS, ROUNDS_V2,
 };
 
+// Fit overrides, appended after the base styles. The pick screen has to show all three cards without scrolling on
+// a short landscape phone (844x390: the app chrome leaves the game about 220px), whatever font the phone falls back to.
+// So there the Round / Team row and the Mixed Bag twist banner share one line, the cards tighten up, and the card word
+// scales with the screen (clamp) instead of being a fixed size that wraps to three lines in a wider fallback font.
+const FIT_CSS = `
+    .g-doodle .dd-scr.land .dd-pickhead { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 10px; }
+    .g-doodle .dd-scr.land .dd-pickhead .dd-top { display: contents; }
+    .g-doodle .dd-scr.land .dd-pickhead .dd-round { order: 0; }
+    .g-doodle .dd-scr.land .dd-pickhead .dd-twist { order: 1; flex: 1 1 0; width: auto; min-width: 0; }
+    .g-doodle .dd-scr.land .dd-pickhead .dd-team { order: 2; }
+    .g-doodle .dd-scr.land .dd-pickhead .dd-rungs { order: 3; flex: 1 0 100%; }
+    .g-doodle .dd-scr.land .dd-picks { gap: 10px; margin-top: 2px; }
+    .g-doodle .dd-scr.land .dd-pick { min-height: 76px; padding: 6px 10px 8px; gap: 4px; }
+    .g-doodle .dd-scr.land .dd-pick-main { gap: 2px; }
+    .g-doodle .dd-scr.land .dd-pick-word { font-size: clamp(1rem, 2.6vw, 1.2rem); }
+    .g-doodle .dd-scr.land .dd-pick-word.fm { font-size: clamp(0.95rem, 2.4vw, 1.08rem); }
+    .g-doodle .dd-scr.land .dd-pick-word.fs { font-size: clamp(0.88rem, 2.1vw, 0.98rem); }
+    .g-doodle .dd-scr.land .dd-tier { padding: 3px 0; }
+`;
+
 registerGame({
   id: 'doodle',
   title: 'Doodle',
@@ -582,6 +602,6 @@ registerGame({
   },
 
   // ── view (see doodle/view.js) ──
-  css: CSS,
+  css: CSS + FIT_CSS,
   mount(el, api) { return mountDoodle(el, api, KIT); },
 });
