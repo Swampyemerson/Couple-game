@@ -62,11 +62,26 @@ async function liveRound(h, n, steer) {
   assert(A.log === B.log && A.rw === B.rw, `round ${n}: same turn log and same round result (${A.rw})`);
   return A;
 }
+/** The pre-match picker: the host taps an arena and Boosts (Classic, no boosts by default) and then GO. */
+async function pickGo(pg, { arena = 'classic', boosts = false } = {}) {
+  await until(() => visible(pg, '.cy-pick .cy-go'), 'the arena picker', 8000);
+  await pg.click(`.cy-chip[data-arena="${arena}"]`);
+  const on = (await pg.getAttribute('.cy-boost', 'aria-checked')) === 'true';
+  if (on !== boosts) await pg.click('.cy-boost');
+  await pg.click('.cy-go');
+}
 const turnsOf = (log, p) => log.split(',').filter(Boolean).filter((e) => (+e.slice(-1) < 4) === (p === 'a'));
 
 async function cyclesLivePhones(h) {
   console.log('\n# Light Cycles, live on two phones');
   await goLive(h, 'cycles');
+  // the guest watches the host pick: names, the live choice, no GO button of its own
+  await until(() => visible(h.b, '.cy-pick.is-ro'), 'the guest to see the picker');
+  assert(/Emerson is picking/.test(await h.b.textContent('.cy-pick-t')) && !(await visible(h.b, '.cy-go')), 'guest sees "Emerson is picking…" and no GO');
+  await h.a.click('.cy-chip[data-arena="rings"]');
+  await until(async () => (await h.b.getAttribute('.cy-chip[data-arena="rings"]', 'aria-checked')) === 'true', 'the guest to see the live choice');
+  assert(true, 'guest sees the host\'s live choice (Rings)');
+  await pickGo(h.a);
   const i0 = await until(async () => { const a = await cy(h.a); const b = await cy(h.b); return a && b && a.layout && b.layout ? [a, b] : null; }, 'both grids');
   assert(i0[0].layout === 'p' && i0[1].layout === 'p', 'phones agree on the portrait grid');
   assert(i0[0].host && !i0[1].host && i0[1].flip, 'host simulates; the guest sees the board turned round');
@@ -137,6 +152,7 @@ async function cyclesLocalLaptop(h, scheme) {
   console.log(`\n# Light Cycles, one computer (${scheme})`);
   const pg = h.a;
   await h.startLive(pg, 'cycles', 'local');
+  await pickGo(pg);
   let i = await localRun(pg, 1);
   assert(i.layout === 's' && !i.touch, 'square grid with key legends on a laptop');
   assert(await visible(pg, '.cy-legend.p-a') && await visible(pg, '.cy-legend.p-b') && !(await visible(pg, '.cy-pad')), 'both key legends, no touch pads');
@@ -152,10 +168,11 @@ async function cyclesLocalLaptop(h, scheme) {
     i = await cy(pg);
     assert(i.sim.a.d === 0 && i.sim.a.y < y0 && turnsOf(i.log, 'a').length === 1, 'no 180° reversals');
     await shot(pg, 'cycles-laptop-local-light');
-    await localEnd(pg, 1);
-    await localRun(pg, 2);
+    const e1 = await localEnd(pg, 1);
+    const r2 = await localRun(pg, 2);
+    assert(e1.rw === 'd' && r2.cfg.sv > 0 && r2.cfg.ar === 'classic', 'round 1 was a draw: round 2 starts from a staggered, symmetric start (Classic otherwise starts on the centre line)');
     const e = await localEnd(pg, 2);
-    assert(e.rw === 'd' && sameState(e.sim.a.crash, e.sim.b.crash) && e.sim.t === 18, 'one computer: riding straight on is a head-on draw');
+    assert(e.rw === 'd' && !e.sim.a.alive && !e.sim.b.alive, 'one computer: riding straight on from the staggered start is a draw too (both reach the far walls together)');
     await sleep(250);
     await shot(pg, 'cycles-laptop-headon-light');
   } else {
@@ -185,6 +202,7 @@ async function cyclesLocalPhone(h, scheme) {
   console.log(`\n# Light Cycles, one phone (${scheme})`);
   const pg = h.a;
   await h.startLive(pg, 'cycles', 'local');
+  await pickGo(pg);
   let i = await localRun(pg, 1);
   assert(i.layout === 'p' && i.touch && await visible(pg, '.cy-pad.p-a') && await visible(pg, '.cy-pad.p-b.is-rot'), 'one phone: a D-pad at each end, the far one turned round');
   // Sydney sits at the top: her pad's left is the screen's right, her pad's up is the screen's down
@@ -223,6 +241,7 @@ async function cyclesLocalPhone(h, scheme) {
 async function cyclesLiveLaptops(h, scheme) {
   console.log(`\n# Light Cycles, live on two laptops (${scheme})`);
   await goLive(h, 'cycles');
+  await pickGo(h.a);
   const i = await until(async () => { const a = await cy(h.a); const b = await cy(h.b); return a && b && b.layout && a.phase === 'run' ? [a, b] : null; }, 'live laptops running', 12000, 25);
   assert(i[0].layout === 's' && i[1].layout === 's', 'two laptops play on the square grid');
   await h.b.keyboard.press('KeyW'); // either key set steers on a laptop
@@ -247,6 +266,256 @@ async function cyclesLiveLaptops(h, scheme) {
     assert(after.round === back.round && turnsOf(after.log, 'b').length === before + 1, 're-joined guest steers again in the same round');
   }
   await closeBoth(h);
+}
+
+// ── Light Cycles: arenas, power-ups, swipes, landscape, replay, records, latency ──
+/** Pure checks of the simulation inside the page (the game's own code, not a copy). */
+async function cyclesUnits(h) {
+  console.log('\n# Light Cycles: arenas, boosts, jump, near misses, speed ramp (pure simulation)');
+  const pg = h.a;
+  await h.startLive(pg, 'cycles', 'local');
+  await until(() => cy(pg), 'the cycles hook');
+  const r = await pg.evaluate(() => {
+    const H = window.__cycles;
+    const out = { arenas: [], bad: [] };
+    for (const L of ['s', 'p', 'l']) {
+      for (const ar of ['classic', 'pillars', 'cross', 'rings', 'scatter']) {
+        for (const sd of [1, 77, 123456, 987654321]) {
+          const cfg = { L, ar, sd, bo: 1, sv: ar === 'classic' ? 0 : sd % 97 + 1, rm: 'r' };
+          const m = H.make(cfg);
+          const m2 = H.make(cfg);
+          const toks = new Set(m.toks.map((t) => t.join(',')));
+          const W = { s: 49, p: 31, l: 41 }[L];
+          const Hh = { s: 49, p: 45, l: 27 }[L];
+          const pairs = m.toks.every((t) => toks.has([W - 1 - t[0], Hh - 1 - t[1], t[2]].join(',')));
+          const st = m.st;
+          const symStart = st.a[0] + st.b[0] === W - 1 && st.a[1] + st.b[1] === Hh - 1 && ((st.a[2] + 2) & 3) === st.b[2];
+          if (!m.sym) out.bad.push(`${L}/${ar}/${sd}: blocks not symmetric`);
+          if (!pairs) out.bad.push(`${L}/${ar}/${sd}: tokens not in symmetric pairs`);
+          if (!symStart) out.bad.push(`${L}/${ar}/${sd}: starts not symmetric`);
+          if (m.obs !== m2.obs) out.bad.push(`${L}/${ar}/${sd}: not deterministic`);
+          if ((ar === 'classic') !== (m.blocks === 0)) out.bad.push(`${L}/${ar}/${sd}: block count ${m.blocks}`);
+          if (m.toks.length < 4) out.bad.push(`${L}/${ar}/${sd}: only ${m.toks.length} tokens`);
+          out.arenas.push(`${L}/${ar}`);
+        }
+      }
+    }
+    out.scatterVaries = H.make({ L: 'p', ar: 'scatter', sd: 1, bo: 0, sv: 1, rm: 'r' }).obs !== H.make({ L: 'p', ar: 'scatter', sd: 2, bo: 0, sv: 1, rm: 'r' }).obs;
+    out.starts = new Set([1, 2, 3, 4, 5, 6].map((sv) => JSON.stringify(H.make({ L: 'p', ar: 'pillars', sd: 5, bo: 0, sv, rm: 'r' }).st))).size;
+    out.ramp = { c0: H.ramp({ rm: 'c' }, 0), c400: H.ramp({ rm: 'c' }, 400), r0: H.ramp({ rm: 'r' }, 0), r400: H.ramp({ rm: 'r' }, 400) };
+    let ms = 0; let t = 0;
+    while (H.ramp({ rm: 'r' }, t) > 50.001) { ms += H.ramp({ rm: 'r' }, t); t++; }
+    out.rampSecs = ms / 1000;
+    // boost: ride over a boost token on the centre row, then move two cells a tick for 8 ticks
+    const { newSim, step } = H.lib;
+    let found = null;
+    for (let sd = 1; sd < 20000 && !found; sd++) {
+      const s = newSim({ L: 's', ar: 'classic', sd, bo: 1, sv: 0, rm: 'c' });
+      const tk = s.tl.find((q) => q.y === 24 && q.k === 1 && q.x > 8 && q.x < 15);
+      if (tk && s.tl.filter((q) => q.y === 24).length === 2) found = { sd, tk }; // the only tokens on the row are this pair
+    }
+    out.foundBoost = !!found;
+    if (found) {
+      const s = newSim({ L: 's', ar: 'classic', sd: found.sd, bo: 1, sv: 0, rm: 'c' });
+      step(s, { b: 0 }); // the other rider turns away, up the board
+      while (s.a.x < found.tk.x) step(s, {});
+      out.boostSet = s.a.boost;
+      const xs = [];
+      for (let i = 0; i < 10; i++) { const x0 = s.a.x; step(s, {}); xs.push(s.a.x - x0); if (s.done) break; }
+      out.boostSteps = xs;
+    }
+    // jump: pass over one trail cell, the second one is a crash; the outer wall is never passable
+    {
+      const s = newSim({ L: 's', ar: 'classic', sd: 1, bo: 0, sv: 0, rm: 'c' });
+      s.occ[24 * 49 + 10] = 2; s.a.jump = 1;
+      for (let i = 0; i < 6; i++) step(s, {});
+      out.jumpPassed = s.a.alive && s.a.x === 12 && s.a.jump === 0;
+      s.occ[24 * 49 + 14] = 2;
+      for (let i = 0; i < 4 && !s.done; i++) step(s, {});
+      out.jumpOnce = !s.a.alive && s.a.ck === 'squeeze' || s.a.ck === 'trail';
+      const w = newSim({ L: 's', ar: 'classic', sd: 1, bo: 0, sv: 0, rm: 'c' });
+      w.a.jump = 1; w.a.x = 47; w.occ[24 * 49 + 47] = 1; w.a.path = [47, 24]; w.a.pi = [0];
+      step(w, {}); step(w, {});
+      out.wallHolds = !w.a.alive && w.a.ck === 'wall';
+    }
+    // near miss: three cells alongside a block counts once; a squeeze counts at once
+    {
+      const s = newSim({ L: 's', ar: 'classic', sd: 1, bo: 0, sv: 0, rm: 'c' });
+      for (let x = 10; x <= 14; x++) s.occ[23 * 49 + x] = 3;
+      for (let i = 0; i < 12; i++) step(s, {});
+      out.shave = s.a.sh;
+      const q = newSim({ L: 's', ar: 'classic', sd: 1, bo: 0, sv: 0, rm: 'c' });
+      for (let x = 10; x <= 11; x++) { q.occ[23 * 49 + x] = 3; q.occ[25 * 49 + x] = 3; }
+      for (let i = 0; i < 8; i++) step(q, {});
+      out.squeeze = q.a.sh;
+      out.shaveEv = s.ev.filter((e) => e.k === 'shave').length;
+    }
+    return out;
+  });
+  assert(r.bad.length === 0, `arenas: symmetric blocks, symmetric token pairs, symmetric starts, deterministic (${r.arenas.length} configs${r.bad.length ? ': ' + r.bad.slice(0, 3).join('; ') : ''})`);
+  assert(r.scatterVaries && r.starts >= 4, `scatter differs by seed; start variants differ (${r.starts} of 6 distinct)`);
+  assert(r.ramp.c0 === 78 && Math.abs(r.ramp.c400 - 70) < 0.01 && r.ramp.r0 === 78 && r.ramp.r400 === 50, `speed ramp: classic 78→70 as today, others 78→50 (${JSON.stringify(r.ramp)})`);
+  assert(r.rampSecs > 17 && r.rampSecs < 23, `the ramp takes about 20 s (${r.rampSecs.toFixed(1)} s)`);
+  assert(r.foundBoost && r.boostSet === 8 && r.boostSteps.slice(0, 8).every((d) => d === 2) && r.boostSteps[8] === 1, `a boost token gives 2 cells per tick for 8 ticks, then 1 (${r.boostSteps})`);
+  assert(r.jumpPassed && r.jumpOnce && r.wallHolds, 'a jump token passes one trail cell once, not the second, and never the outer wall');
+  assert(r.shave === 1 && r.shaveEv === 1 && r.squeeze === 1, `near misses: 3 cells alongside a block is one close shave, a squeeze is one (${r.shave}/${r.squeeze})`);
+  await h.closeGame(pg);
+  await h.settle();
+}
+
+/** Real touch: a swipe on the top half of a phone turns the top rider the way the finger went (the old bug turned it round). */
+const touchSwipe = async (pg, x0, y0, x1, y1) => {
+  const s = await pg.context().newCDPSession(pg);
+  const pt = (x, y) => ({ x: Math.round(x), y: Math.round(y), id: 1 });
+  await s.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [pt(x0, y0)] });
+  for (let i = 1; i <= 6; i++) await s.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [pt(x0 + ((x1 - x0) * i) / 6, y0 + ((y1 - y0) * i) / 6)] });
+  await s.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await s.detach().catch(() => {});
+};
+async function cyclesTouchAndReplay(h) {
+  console.log('\n# Light Cycles, one phone: real swipes on both halves, the crash replay, records');
+  const pg = h.a;
+  await h.startLive(pg, 'cycles', 'local');
+  await pickGo(pg);
+  await localRun(pg, 1);
+  const box = await pg.locator('.cy-board canvas').boundingBox();
+  const cx = box.x + box.width / 2;
+  // top half: Sydney rides down; a swipe to the RIGHT must send her right (world 1), as the finger moved
+  await touchSwipe(pg, cx - 30, box.y + box.height * 0.2, cx + 50, box.y + box.height * 0.2 + 2);
+  // then a swipe down on the same half: she is going right, so down is a quarter turn
+  await touchSwipe(pg, cx, box.y + box.height * 0.15, cx, box.y + box.height * 0.15 + 70);
+  // bottom half: Emerson rides up; a swipe to the LEFT must send him left (world 3)
+  await touchSwipe(pg, cx + 30, box.y + box.height * 0.8, cx - 50, box.y + box.height * 0.8 + 2);
+  await sleep(200);
+  const i = await cy(pg);
+  const dirs = (p) => turnsOf(i.log, p).map((e) => +e.slice(-1) & 3);
+  assert(sameState(dirs('b'), [1, 2]), `top-half swipes right then down turn Sydney right then down on screen (${dirs('b')})`);
+  assert(sameState(dirs('a'), [3]), `bottom-half swipe left turns Emerson left on screen (${dirs('a')})`);
+  // the crash replay: crash, zoomed replay with a caption, a tap skips, then the banner with close shaves
+  await until(async () => (await cy(pg)).stage === 'replay', 'the replay', 12000, 30);
+  await until(async () => (await pg.textContent('.cy-rp-cap')).length > 3, 'the replay caption', 1500, 30);
+  assert(await visible(pg, '.cy-rp.is-on') && (await pg.textContent('.cy-rp-cap')).length > 3, `the replay shows with a caption ("${await pg.textContent('.cy-rp-cap')}")`);
+  await shot(pg, 'cycles-phone-replay-light');
+  await pg.locator('.cy-board').click({ position: { x: 40, y: 200 } });
+  await until(async () => (await cy(pg)).stage === 'banner', 'a tap to skip the replay', 2000, 30);
+  await sleep(500);
+  const ban = await pg.textContent('.cy-msg');
+  assert(/Close shaves: \d+/.test(ban), `the round banner counts close shaves ("${ban.replace(/\s+/g, ' ').trim()}")`);
+  await shot(pg, 'cycles-phone-banner-light');
+  const d1 = (h.docs['gamedata/cycles'] || {});
+  assert(d1.cy_long_n > 0 && typeof d1.cy_long_who === 'string', `the longest ride is recorded (${d1.cy_long_n} ticks, ${d1.cy_long_who})`);
+  assert(d1.cycles_last === 'classic' && d1.cycles_boosts === false, 'the last arena choice is remembered');
+  await h.closeGame(pg);
+  await h.settle();
+}
+
+async function cyclesLandscape(h) {
+  console.log('\n# Light Cycles: a phone on its side (844×390)');
+  const pg = h.a;
+  await pg.setViewportSize({ width: 844, height: 390 });
+  await h.startLive(pg, 'cycles', 'local');
+  await until(() => visible(pg, '.cy-pick .cy-go'), 'the picker in landscape');
+  const pk = await pg.evaluate(() => { const r = document.getElementById('game-root'); const b = document.querySelector('.cy-go').getBoundingClientRect(); const chips = [...document.querySelectorAll('.cy-chip')].map((c) => c.getBoundingClientRect()); return { over: r.scrollHeight - r.clientHeight, goIn: b.bottom <= innerHeight + 1, minH: Math.min(...chips.map((c) => c.height)), minW: Math.min(...chips.map((c) => c.width)) }; });
+  assert(pk.over <= 1 && pk.goIn && pk.minH >= 44 && pk.minW >= 44, `landscape picker fits with big targets (chips ≥ ${Math.round(pk.minW)}×${Math.round(pk.minH)}, overflow ${pk.over})`);
+  await shot(pg, 'cycles-phone-landscape-picker-light');
+  await pickGo(pg, { arena: 'pillars', boosts: true });
+  const i = await localRun(pg, 1);
+  assert(i.layout === 'l' && i.cell >= 7, `a landscape grid with big cells (layout ${i.layout}, ${i.cell} px per cell)`);
+  const land = await pg.evaluate(() => {
+    const r = document.getElementById('game-root');
+    const inView = (el) => { const b = el.getBoundingClientRect(); return b.top >= 0 && b.bottom <= innerHeight + 1 && b.left >= 0 && b.right <= innerWidth + 1; };
+    return { over: r.scrollHeight - r.clientHeight, pads: [...document.querySelectorAll('.cy-pad .cy-key')].every(inView), board: inView(document.querySelector('.cy-board canvas')) };
+  });
+  assert(land.over <= 1 && land.pads && land.board, `board and both pads on screen (overflow ${land.over}px)`);
+  await sleep(500);
+  await shot(pg, 'cycles-phone-landscape-run-light');
+  // a rotate mid-match: the grid changes from the next round
+  await pg.setViewportSize({ width: 390, height: 844 });
+  await sleep(400);
+  const e = await localEnd(pg, 1);
+  const n = await localRun(pg, 2);
+  assert(e.layout === 'l' && n.layout === 'p' && n.cell >= 7, `turned upright mid-match: round 1 stays landscape, round 2 gets the portrait grid (${e.layout} → ${n.layout}, ${n.cell} px)`);
+  await h.closeGame(pg);
+  await pg.setViewportSize({ width: 390, height: 844 });
+  await h.settle();
+}
+
+/** A capped match: nine rounds, 2–1. The end card must say what the score says. */
+async function cyclesCapped(h) {
+  console.log('\n# Light Cycles: a capped nine-round match ends 2–1, and the card matches');
+  const pg = h.a;
+  await h.startLive(pg, 'cycles', 'local');
+  await pickGo(pg);
+  const plan = ['a', 'b', 'a', 'd', 'd', 'd', 'd', 'd', 'd']; // who takes each round (wins first: the classic start is fixed, so the steering is certain)
+  for (let n = 1; n <= plan.length; n++) {
+    await localRun(pg, n);
+    if (plan[n - 1] === 'a') await pg.keyboard.press('ArrowUp'); // Sydney heads for the top wall
+    if (plan[n - 1] === 'b') await pg.keyboard.press('w'); // Emerson heads for the top wall
+    const e = await localEnd(pg, n);
+    assert(e.rw === plan[n - 1], `round ${n}: ${plan[n - 1] === 'd' ? 'a draw' : 'a win'} (${e.rw}) ${e.stage}`);
+    await pg.evaluate(() => window.__cycles.skip());
+    if (n === 4) {
+      assert(e.caption.length > 3, `draw caption: "${e.caption}"`);
+      await sleep(500);
+      assert(/DEAD HEAT/.test(await pg.textContent('.cy-msg')), 'a draw shows DEAD HEAT');
+      await shot(pg, 'cycles-laptop-deadheat-light');
+    }
+  }
+  await until(() => visible(pg, '#game-root .gm-end'), 'the end card', 8000);
+  const txt = await pg.textContent('#game-root .gm-end');
+  assert(/Emerson wins 2–1/.test(txt) && /9 rounds/.test(txt) && !/three times/.test(txt), `the card says 2–1 and why ("${txt.replace(/\s+/g, ' ').slice(0, 120)}")`);
+  await shot(pg, 'cycles-laptop-capped-end-light');
+  await h.closeGame(pg);
+  await h.settle();
+}
+
+/** Two phones with real latency and dropped events: both sides agree, and the guest steers at once. */
+async function cyclesBadNetwork(h, tag) {
+  console.log(`\n# Light Cycles, two phones on a bad network (${tag}): a boosted Pillars match`);
+  await goLive(h, 'cycles');
+  await pickGo(h.a, { arena: 'pillars', boosts: true });
+  for (let n = 1; n <= 2; n++) {
+    const r = await liveRound(h, n, async () => {
+      // smooth motion: sample the guest's drawn heads every frame for 0.7 s before anyone steers
+      const smooth = await h.b.evaluate(() => new Promise((res) => {
+        const H = window.__cycles; const t0 = performance.now(); const last = {}; const mx = { a: 0, b: 0 }; let frames = 0;
+        const loop = () => {
+          for (const p of ['a', 'b']) { const v = H.view(p); if (v && last[p]) mx[p] = Math.max(mx[p], Math.hypot(v.x - last[p][0], v.y - last[p][1])); if (v) last[p] = [v.x, v.y]; }
+          frames++;
+          if (performance.now() - t0 < 700) requestAnimationFrame(loop); else res({ mx, frames });
+        };
+        requestAnimationFrame(loop);
+      }));
+      assert(smooth.frames > 15 && smooth.mx.a < 1.3 && smooth.mx.b < 1.3, `round ${n}: heads glide between ticks (largest per-frame step: opponent ${smooth.mx.a.toFixed(2)}, own ${smooth.mx.b.toFixed(2)} cells over ${smooth.frames} frames)`);
+      // the guest steers; its own head must turn at once, long before the host's log shows it
+      const t0 = Date.now();
+      const pend = await h.b.evaluate(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', code: 'ArrowLeft', bubbles: true })); return window.__cycles.info().pending; });
+      assert(pend.length === 1 && Date.now() - t0 < 60, `round ${n}: the guest's own turn is on screen at once (predicted)`);
+      await sleep(250);
+      await h.a.keyboard.press('a');
+    });
+    assert(r.sim.a.len + r.sim.b.len > 8, `round ${n}: ridden (${r.sim.t} ticks, ${r.sim.a.sh + r.sim.b.sh} close shaves)`);
+    assert(r.rw === 'a' || r.rw === 'b' || r.rw === 'd', `round ${n}: both devices agree on the result (${r.rw})`);
+  }
+  await closeBoth(h);
+}
+
+async function cyclesLandscapeLive(h) {
+  console.log('\n# Light Cycles, two phones on their sides (844×390)');
+  for (const pg of [h.a, h.b]) await pg.setViewportSize({ width: 844, height: 390 });
+  await goLive(h, 'cycles');
+  await pickGo(h.a, { arena: 'cross', boosts: true });
+  const r = await liveRound(h, 1, async () => {
+    const i = await until(async () => { const a = await cy(h.a); const b = await cy(h.b); return a && b && a.layout ? [a, b] : null; }, 'both landscape grids');
+    assert(i[0].layout === 'l' && i[1].layout === 'l' && i[0].cell >= 7 && i[1].cell >= 7, `both phones play the landscape grid (cells ${i[0].cell} / ${i[1].cell} px)`);
+    await sleep(500);
+    await shot(h.a, 'cycles-phone-landscape-live-host-light');
+    await shot(h.b, 'cycles-phone-landscape-live-guest-light');
+    await h.b.keyboard.press('ArrowLeft');
+  });
+  assert(r.rw === 'a' || r.rw === 'b' || r.rw === 'd', `landscape round played (${r.rw})`);
+  await closeBoth(h);
+  for (const pg of [h.a, h.b]) await pg.setViewportSize({ width: 390, height: 844 });
 }
 
 // ══════════════════════════ Defuse ══════════════════════════
@@ -567,6 +836,7 @@ async function comeBack(h, pg, partner) {
 async function cyclesResilience(h) {
   console.log('\n# Light Cycles: a tab in the background, the host leaving mid-match');
   await goLive(h, 'cycles');
+  await pickGo(h.a);
   await until(async () => { const x = await cy(h.a); return x && x.phase === 'run' && x.round === 1 && x.sim.t < 8 ? x : null; }, 'round 1 riding', 15000, 25);
   for (const [who, pg, other] of [['Sydney', h.b, h.a], ['Emerson', h.a, h.b]]) {
     await hide(pg, true);
@@ -576,6 +846,9 @@ async function cyclesResilience(h) {
     const x = await cy(h.a);
     assert(x.paused && x.sim.t === t1, `${who}'s tab in the background: the ride stops (tick ${t1} → ${x.sim.t})`);
     await until(async () => (await cy(other)).paused, `${who}: the other device to show Paused`, 4000);
+    await sleep(150);
+    const stepped = await other.textContent('.cy-msg');
+    assert(stepped.includes(`${who} stepped away`), `${who}'s tab in the background: the other phone says why ("${stepped.trim()}")`);
     await hide(pg, false);
     await until(async () => { const y = await cy(h.a); return !y.paused && y.phase === 'count'; }, `${who} back: a countdown`, 4000);
     assert(true, `${who} back: a fresh countdown before riding again`);
@@ -648,6 +921,7 @@ async function bothLive(h, game) {
 async function droppedEvents(h) {
   console.log('\n# Dropped events (a third of room events lost)');
   await bothLive(h, 'cycles');
+  await pickGo(h.a);
   for (let n = 1; n <= 3; n++) {
     const r = await liveRound(h, n, async () => {
       await h.b.keyboard.press('ArrowLeft'); await sleep(90); await h.b.keyboard.press('ArrowDown'); await sleep(90); await h.b.keyboard.press('ArrowRight');
@@ -729,6 +1003,26 @@ async function withHarness(opts, fn) {
         await asPhones(h);
         await cyclesLocalPhone(h, 'dark');
         await defuseShots(h, 'phone-dark', { lobby: true, narrow: true });
+      });
+    }
+    if (only === 'all' || only === 'cyx') {
+      await withHarness({ port: PORT + 5, coarse: true }, async (h) => {
+        await asPhones(h);
+        await cyclesTouchAndReplay(h);
+        await cyclesLandscape(h);
+      });
+      await withHarness({ port: PORT + 6, device: 'Desktop Chrome' }, async (h) => {
+        await asLaptops(h);
+        await cyclesUnits(h);
+        await cyclesCapped(h);
+      });
+      await withHarness({ port: PORT + 7, coarse: true }, async (h) => {
+        await asPhones(h);
+        await cyclesLandscapeLive(h);
+      });
+      await withHarness({ port: PORT + 8, coarse: true, latency: 150, dropRate: 0.2 }, async (h) => {
+        await asPhones(h);
+        await cyclesBadNetwork(h, 'latency 150, 20% of events dropped');
       });
     }
     if (only === 'all' || only === 'drops') {
