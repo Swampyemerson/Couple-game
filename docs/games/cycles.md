@@ -2,7 +2,7 @@
 
 Entry `js/games/cycles.js` (the match, netcode, drawing), `js/games/cycles/sim.js` (the pure
 simulation), `js/games/cycles/css.js`. Tests: `tools/test/games/computer.test.js` (`phone`, `laptop`,
-`dark`, `drops` as before, plus `cyx` for arenas, power-ups, swipes, landscape, replay, capped match,
+`dark`, `drops` as before, plus `cyx` for arenas, power-ups, swipes, landscape (also mixed upright/sideways phones, a phone turned mid-round, 568x320 and 667x375), picker fit, records, replay, capped match,
 latency 150 + 20 % drops).
 
 ## Play
@@ -42,18 +42,29 @@ Enter also starts. The record line under the chips shows the rivalry (streak, lo
   zoomed 2.4x on the crash (the camera follows the rider who crashed), with a caption (squeezed by 1
   cell / ran into a wall of light / tangled in their own trail / hit a block / ran out of road /
   head-on), then the banner. A tap skips the replay. On one device a skip also shortens the pause.
-* **Banner stamps**: LONGEST RIDE! / MOST SHAVES! when a record falls (only when there was an earlier record).
+* **Banner stamps**: LONGEST RIDE! / MOST SHAVES! when a record falls. Only a record that stood before the match began
+  counts (a snapshot of `api.data()` taken at GO), so the first-ever match, or a ride beating one set a round ago in the
+  same match, claims nothing; the end card's "new record" line follows the same rule.
 * **Banner and caption placement**: the round banner is clamped inside the board (it sits in the half the crash is not
   in), and is smaller on the wide grid; the replay caption is centred with margins, never animated with a transform.
 
 ## Layouts
 
 `s` 49x49 square (computer), `p` 31x45 portrait (phone), `l` 41x27 wide (phone on its side; 7.5 px
-cells at 844x390, 5.5 px at 667x375 where the pads shrink to 46 px keys). Chosen by the screen shape (wider than
-tall and height <= 520 and width >= 480: `l`; wider than tall and width >= 700: `s`; otherwise `p`), re-read every
-round (a resize is checked twice, 120 ms and 570 ms later, because iOS can report the old size right after a turn). Live, the host agrees the round's layout (portrait wins, then
-`l`, then `s`) from its own pref and the guest's `pref` in presence, and puts it in the round config. A
-change applies from the next round.
+cells at 844x390, 6.75 px at 667x375, 5 px at 568x320, where the pads shrink to 44 px keys and the gaps tighten). Chosen
+by the screen shape (wider than tall and height <= 520 and width >= 480: `l`; wider than tall and width >= 700: `s`;
+otherwise `p`), re-read every round (a resize is checked twice, 120 ms and 570 ms later, because iOS can report the old
+size right after a turn). Live, the host agrees the round's layout from its own pref and the guest's `pref` in presence
+(same pref: that one; a phone on its side beats a portrait one, so neither gets a tiny board; otherwise portrait), and puts
+it in the round config. A change applies from the next round.
+
+**Mixed screens.** The agreed grid can be the wrong shape for one screen (an upright phone with the wide `l` grid, a phone
+on its side with `p`). That screen draws the grid turned a quarter (`qr`: 3 = anticlockwise, so you still start at the
+bottom; 1 = clockwise, so you start on the left), picks its pad layout by its own shape, and fills its own space. The turn
+is applied in `draw()` as a canvas transform (with the guest's 180 degrees on top), shadows keep falling down-right, and
+swipes, keys and pad buttons map screen direction to world direction with `(d - qr - 2*flip) & 3`. It is re-read when the
+phone is turned mid-round (the board redraws at once; the grid itself changes only next round). Example: host upright
+(390x844) and guest on its side (844x390): the `l` grid, 12 px cells on the host (a 27x41 board), 7.5 px on the guest.
 
 ## Netcode
 
@@ -70,6 +81,9 @@ change applies from the next round.
   arrives. The guest's display clock follows the confirmed tick (low-pass, +0.4 tick ahead for itself, the
   opponent drawn 1.4 ticks behind so it is always between two confirmed ticks). The host extrapolates
   its heads between ticks (a queued turn is drawn at once too). Heads move continuously at 60 Hz.
+  While a turn waits for its ack, every confirmed tick moves the predicted head by a cell or so; that jump is not drawn
+  as a pop: the guest's own head carries it as an offset that fades in about 80 ms (`stepBlend`), so the worst extra
+  step per frame at latency 150 is about 0.4 cell (it was 1.2 to 2.2). The trail and the log are untouched.
 * Phases: `pick` (host presence carries `md` = the live choice) -> `count` -> `run` -> `end` -> ... -> `over`.
   A host that re-mounts mid-match adopts the score, round and mode from the guest's `hm/hsc/hr/hmd` echo and skips the picker.
 * **Pause reasons**: `pz` 1 = the host stepped away (tab hidden), 2 = the guest did (left or hidden).

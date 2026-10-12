@@ -39,6 +39,7 @@ const SAND_S = 0.5;     // a puck squeezed between both mallets this long is res
 const SLOW_MS = 400;    // match-point slow motion (real ms at 0.5x)
 const REMOTE_LEAD = 0.1;  // s: how far past its newest sample the guest's mallet is extrapolated on the host
 const REMOTE_BLEND = 0.07; // s: a new sample's offset from that guess dies away this fast
+const STALL_MS = 1000;    // the HOG!/RESET stamp has the centre to itself this long before the serve countdown starts
 const CORRECT_RATE = 700; // u/s: the fastest a guest's puck display may close a correction
 
 registerGame({
@@ -141,7 +142,11 @@ registerGame({
     let pillarAt = -1e9;
     let mpAt = -1e9;
     let prevPhaseR = null;
+    let prevRender = 0;
+    let hintK = 1;               // the hint's fade (it steps aside for anything printed in the middle)
     let tableAt = -1e9;
+    let recs = readRecords(api.data()); // cached for the bands (refreshed a few times a second)
+    let recsAt = 0;
 
     // ── input ──
     // Every pointer belongs to a player. The first finger down on a half drives that half's mallet;
@@ -157,6 +162,7 @@ registerGame({
 
     // ── layout ──
     let cssW = 0; let cssH = 0; let dpr = 1; let s = 1; let ox = 0; let oy = 0; let view = 'up';
+    let band = null;            // the printed scoreboard bands in the space the table's aspect leaves free (null when it is tight)
     // up: 'a' defends the bottom. down: turned round for 'b'. side: sideways, 'a' defends the left.
     // sideb: sideways for 'b' (their goal on the left). Wide screens use the sideways tables.
     const sideways = () => view === 'side' || view === 'sideb';
@@ -188,6 +194,15 @@ registerGame({
       layer.width = cv.width; layer.height = cv.height;
       const rp = RAIL * s;
       Object.assign(slab.style, { left: `${ox - rp}px`, top: `${oy - rp}px`, width: `${VW * s + rp * 2}px`, height: `${VH * s + rp * 2}px`, borderRadius: `${Math.round(rp * 1.6)}px` });
+      // Free space past each end of the table: a scoreboard band goes there when it is roomy enough.
+      band = null;
+      if (!sideways()) {
+        const gap = oy - rp - 2; const bh = Math.min(76, gap - 20);
+        if (bh >= 46) { const bw = Math.min(VW * s + rp * 2, 560); band = { kind: 'h', w: bw, h: bh, x: Math.round(cssW / 2 - bw / 2), top: Math.round(gap / 2 - bh / 2 + 1), bot: Math.round(cssH - gap / 2 - bh / 2 - 1) }; }
+      } else {
+        const gap = ox - rp - 2; const bw = Math.min(104, gap - 12);
+        if (bw >= 46) { const bh = Math.min(VH * s + rp * 2, bw * 3.5); band = { kind: 'v', w: bw, h: bh, y: Math.round(cssH / 2 - bh / 2), left: Math.round(gap / 2 - bw / 2 + 1), right: Math.round(cssW - gap / 2 - bw / 2 - 1) }; }
+      }
       drawTable();
     }
     /** Set a canvas transform so drawing happens in table units. */
@@ -254,6 +269,112 @@ registerGame({
         const rot = sideways() ? ((w === 'a') === (view === 'side') ? -Math.PI / 2 : Math.PI / 2) : readRot(w);
         label(c, api.name(w).toUpperCase(), x, y, fs, T[w + 'Text'], rot);
       }
+      for (const w of ['a', 'b']) drawBandStatic(c, w);
+    }
+
+    // ── the scoreboard bands: printed cards in the room the table's aspect leaves on tall phones ──
+    // Portrait: one at each end of the table (the one-phone game turns the far one round to face its
+    // player). Landscape: one left and one right. Missing when there is less than ~50 px to spare.
+    function bandRect(w) {
+      if (!band) return null;
+      if (band.kind === 'h') {
+        const bottom = local ? w === 'a' : w === me;
+        const rot = local && !bottom ? Math.PI : 0;
+        return { x: band.x, y: bottom ? band.bot : band.top, w: band.w, h: band.h, rot, outer: bottom || rot ? 'down' : 'up', u: band.h / 66 };
+      }
+      const left = w === (view === 'side' ? 'a' : 'b');
+      return { x: left ? band.left : band.right, y: band.y, w: band.w, h: band.h, rot: 0, outer: left ? 'left' : 'right', u: band.w / 54 };
+    }
+    /** Move the origin to the band's own top-left, turned to face its reader. */
+    function bandFrame(c, g) {
+      c.translate(g.x + g.w / 2, g.y + g.h / 2); if (g.rot) c.rotate(g.rot); c.translate(-g.w / 2, -g.h / 2);
+    }
+    function drawBandStatic(c, w) {
+      const g = bandRect(w);
+      if (!g) return;
+      const { u } = g;
+      c.save(); bandFrame(c, g);
+      const r = 9 * u;
+      roundRect(c, 3 * u, 4 * u, g.w, g.h, r); c.fillStyle = T.edge; c.fill();
+      roundRect(c, 0, 0, g.w, g.h, r); c.fillStyle = T.card; c.fill();
+      c.save(); c.clip();
+      c.fillStyle = T[w + 'Soft'] || T.line; c.fillRect(0, 0, g.w, g.h);
+      // halftone, heaviest at the outer edge (the same fade the table prints toward each goal)
+      c.fillStyle = T[w]; c.globalAlpha = 0.24;
+      const vert = g.outer === 'left' || g.outer === 'right';
+      const step = 3.4 * u; const depth = (vert ? g.w : g.h) * 0.5; const along = vert ? g.h : g.w;
+      for (let d = step * 0.5, row = 0; d < depth; d += step * 0.87, row++) {
+        const rr = 1.2 * u * (1 - d / depth); const off = (row % 2) * step * 0.5;
+        for (let q = step * 0.5 + off; q < along; q += step) {
+          const a = g.outer === 'up' || g.outer === 'left' ? d : (vert ? g.w : g.h) - d;
+          c.beginPath(); if (vert) c.arc(a, q, rr, 0, Math.PI * 2); else c.arc(q, a, rr, 0, Math.PI * 2); c.fill();
+        }
+      }
+      c.globalAlpha = 1; c.restore();
+      roundRect(c, 0, 0, g.w, g.h, r); c.strokeStyle = T.ink; c.lineWidth = Math.max(2, 2.5); c.stroke();
+      c.restore();
+    }
+    function drawBandText(c, w, now) {
+      const g = bandRect(w);
+      if (!g) return;
+      const { u } = g;
+      const mpOn = score[w] === table.toWin - 1 && !winner;
+      const flash = !reduced && fx.flashWho === w ? Math.max(0, 1 - (now - fx.flashAt) / 300) : 0;
+      const num = String(score[w]);
+      const tag = `${table.name.toUpperCase()} · FIRST TO ${table.toWin}`;
+      const nameC = T[w + 'Text'];
+      const rallyOn = phase === 'play' && rally > 0;
+      c.save(); bandFrame(c, g);
+      c.lineJoin = 'round';
+      const chip = (str, x, y, size, maxW) => { // a printed flag
+        c.font = `900 ${size}px ${T.fontDisplay || 'system-ui'}`;
+        const tw = Math.min(maxW, c.measureText(str).width + size * 1.1); const th = size * 1.7;
+        const bob = reduced ? 0 : Math.sin(now / 260) * u * 0.6;
+        roundRect(c, x + u, y - th / 2 + u + bob, tw, th, th * 0.3); c.fillStyle = T.edge; c.fill();
+        roundRect(c, x, y - th / 2 + bob, tw, th, th * 0.3); c.fillStyle = T.hl; c.fill(); c.strokeStyle = T.ink; c.lineWidth = Math.max(1.5, u * 1.6); c.stroke();
+        text(c, str, x + tw / 2, y + bob + size * 0.04, size, T.ink, 0, null, 900, T.fontDisplay, tw - size * 0.5);
+      };
+      if (g.outer === 'up' || g.outer === 'down') {
+        const { w: bw, h: bh } = g;
+        text(c, num, 30 * u, bh / 2 + 2 * u, 46 * u * (1 + 0.3 * flash), T[w], 0, T.ink);
+        c.strokeStyle = T.ink; c.globalAlpha = 0.45; c.lineWidth = Math.max(1.2, u * 1.4); c.setLineDash([u * 4, u * 3]);
+        c.beginPath(); c.moveTo(58 * u, 11 * u); c.lineTo(58 * u, bh - 11 * u); c.stroke(); c.setLineDash([]); c.globalAlpha = 1;
+        const rw = 96 * u; const mx = 68 * u; const midW = Math.max(10, bw - mx - rw - 6 * u);
+        if ('letterSpacing' in c) c.letterSpacing = `${Math.round(2 * u)}px`;
+        text(c, api.name(w).toUpperCase(), mx, bh * 0.31, 14 * u, nameC, 0, null, 900, T.fontDisplay, midW, 'left');
+        if ('letterSpacing' in c) c.letterSpacing = '0px';
+        if (mpOn && phase !== 'over') chip('MATCH POINT', mx, bh * 0.68, 10 * u, midW);
+        else { c.globalAlpha = 0.7; text(c, tag, mx, bh * 0.68, 9 * u, T.ink, 0, null, 800, T.fontBody, midW, 'left'); c.globalAlpha = 1; }
+        // right: the rally counter and the rally to beat
+        const xr = bw - 13 * u;
+        const pop = reduced || !rallyOn ? 1 : 1 + 0.3 * Math.max(0, 1 - (now - rallyAt) / 200);
+        const rs = String(rally);
+        c.font = `900 ${24 * u}px ${T.fontDisplay || 'system-ui'}`;
+        const nw = c.measureText(rs).width;
+        c.globalAlpha = 0.65; text(c, 'RALLY', xr - nw * pop - 6 * u, bh * 0.33, 9 * u, T.ink, 0, null, 800, T.fontBody, 0, 'right'); c.globalAlpha = 1;
+        c.globalAlpha = rallyOn ? 1 : 0.4;
+        text(c, rs, xr, bh * 0.33, 24 * u * pop, rally >= 8 && rallyOn ? T.hl : T.ink, 0, rally >= 8 && rallyOn ? T.ink : null, 900, T.fontDisplay, 0, 'right');
+        c.globalAlpha = 0.75;
+        const best = recs.rallyBest ? `BEST ${recs.rallyBest}${recs.rallyWho ? ` · ${api.name(recs.rallyWho).toUpperCase()}` : ''}` : 'BEST RALLY: NONE YET';
+        text(c, best, xr, bh * 0.68, 9 * u, T.ink, 0, null, 800, T.fontBody, rw, 'right');
+        c.globalAlpha = 1;
+      } else {
+        const { w: bw, h: bh } = g;
+        const cxm = bw / 2;
+        if ('letterSpacing' in c) c.letterSpacing = `${Math.round(1.2 * u)}px`;
+        text(c, api.name(w).toUpperCase(), cxm, 14 * u, 9 * u, nameC, 0, null, 900, T.fontDisplay, bw - 8 * u);
+        if ('letterSpacing' in c) c.letterSpacing = '0px';
+        text(c, num, cxm, bh * 0.31, 40 * u * (1 + 0.3 * flash), T[w], 0, T.ink);
+        c.strokeStyle = T.ink; c.globalAlpha = 0.45; c.lineWidth = Math.max(1.2, u * 1.4); c.setLineDash([u * 4, u * 3]);
+        c.beginPath(); c.moveTo(8 * u, bh * 0.485); c.lineTo(bw - 8 * u, bh * 0.485); c.stroke(); c.setLineDash([]); c.globalAlpha = 1;
+        if (mpOn && phase !== 'over') { chip('MATCH', cxm - 18 * u, bh * 0.555, 8.5 * u, 36 * u); chip('POINT', cxm - 18 * u, bh * 0.555 + 14 * u, 8.5 * u, 36 * u); }
+        else { c.globalAlpha = 0.7; text(c, `FIRST TO ${table.toWin}`, cxm, bh * 0.57, 7.5 * u, T.ink, 0, null, 800, T.fontBody, bw - 8 * u); c.globalAlpha = 1; }
+        c.globalAlpha = 0.65; text(c, 'RALLY', cxm, bh * 0.72, 7.5 * u, T.ink, 0, null, 800, T.fontBody, bw - 8 * u); c.globalAlpha = rallyOn ? 1 : 0.4;
+        text(c, String(rally), cxm, bh * 0.81, 16 * u * (reduced || !rallyOn ? 1 : 1 + 0.3 * Math.max(0, 1 - (now - rallyAt) / 200)), rally >= 8 && rallyOn ? T.hl : T.ink, 0, rally >= 8 && rallyOn ? T.ink : null, 900, T.fontDisplay, bw - 8 * u);
+        c.globalAlpha = 0.7; text(c, recs.rallyBest ? `BEST ${recs.rallyBest}` : 'BEST -', cxm, bh * 0.915, 7.5 * u, T.ink, 0, null, 800, T.fontBody, bw - 8 * u);
+        c.globalAlpha = 1;
+      }
+      c.restore();
     }
     function label(c, str, x, y, size, color, rot) {
       c.save(); c.translate(x, y); c.rotate(rot);
@@ -300,7 +421,7 @@ registerGame({
       } else if (code === 2 || code === 3) { // HOG! / RESET
         snd.buzz();
         const who = extra === 0 ? 'a' : 'b';
-        addStamp(code === 2 ? 'HOG!' : 'RESET', code === 2 ? `${api.name(who)} sat on it` : 'puck squeezed', W / 2, H / 2, 'bad', 17, 1500, { both: true });
+        addStamp(code === 2 ? 'HOG!' : 'RESET', code === 2 ? `${api.name(who)} sat on it` : 'puck squeezed', W / 2, H / 2, 'bad', 17, STALL_MS, { both: true });
       } else if (code === 4) { // rally record
         snd.record();
         addStamp(`RALLY RECORD ${extra}`, 'longest ever', W / 2, H / 2 + (local && view === 'up' ? 0 : 24), 'good', 9, 1900, { both: true });
@@ -398,7 +519,7 @@ registerGame({
       if (kind === 'hog') endRally(lastHitter || half);
       rally = 0; lastHitter = null;
       const to = kind === 'hog' ? other(half) : Math.random() < 0.5 ? 'a' : 'b';
-      if (table.pucks === 1) startCount(to);
+      if (table.pucks === 1) { startCount(to); phaseEnd += STALL_MS; }
       else { pk.on = false; pk.back = now + 700; pk.serveTo = to; pk.sk = 0; }
     }
     function respawn(pk, now) {
@@ -943,11 +1064,11 @@ registerGame({
       disc(c, px0, py0, r * 0.62, null, i ? T.ink : T.card, Math.max(1, lw * 0.6));
       disc(c, px0, py0, r * 0.16, i ? T.ink : T.card);
     }
-    function text(c, str, x, y, size, fill, rot = 0, stroke = null, weight = 900, font = T.fontDisplay, maxW = 0) {
+    function text(c, str, x, y, size, fill, rot = 0, stroke = null, weight = 900, font = T.fontDisplay, maxW = 0, align = 'center') {
       c.save(); c.translate(x, y); c.rotate(rot);
       c.font = `${weight} ${size}px ${font || 'system-ui'}`;
       if (maxW) { const w = c.measureText(str).width; if (w > maxW) { size *= maxW / w; c.font = `${weight} ${size}px ${font || 'system-ui'}`; } }
-      c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.textAlign = align; c.textBaseline = 'middle';
       if (stroke) { c.lineJoin = 'round'; c.lineWidth = Math.max(2, size * 0.09); c.strokeStyle = stroke; c.strokeText(str, 0, 0); }
       c.fillStyle = fill; c.fillText(str, 0, 0);
       c.restore();
@@ -1039,7 +1160,10 @@ registerGame({
       const field = [Math.min(fx0, fx1), Math.min(fy0, fy1), Math.abs(fx1 - fx0), Math.abs(fy1 - fy0)];
       const [ccx, ccy] = toPx(W / 2, H / 2);
       const setupOn = phase === 'setup' || phase === 'wait';
+      if (now - recsAt > 400) { recsAt = now; recs = readRecords(api.data()); }
+      const dtR = Math.min(0.1, Math.max(0, (now - prevRender) / 1000)); prevRender = now;
       drawLive(c, now);
+      if (band && phase !== 'wait') { drawBandText(c, 'b', now); drawBandText(c, 'a', now); }
       // match point: the banner when the countdown starts, a small tag by the leader's score
       const mp = ['a', 'b'].filter((w) => score[w] === table.toWin - 1 && !winner);
       if (phase !== prevPhaseR) {
@@ -1050,10 +1174,12 @@ registerGame({
       const ss = Math.min(64, 15 * s);
       for (const w of ['a', 'b']) {
         const [x, y] = toPx(w === 'a' ? W - 14 : 14, w === 'a' ? H / 2 + 18 : H / 2 - 18);
-        c.globalAlpha = 0.9;
-        text(c, String(score[w]), x, y, ss, T[w], readRot(w), T.ink);
-        c.globalAlpha = 1;
-        if (mp.includes(w) && !setupOn) {
+        if (!band) {
+          c.globalAlpha = 0.9;
+          text(c, String(score[w]), x, y, ss, T[w], readRot(w), T.ink);
+          c.globalAlpha = 1;
+        }
+        if (mp.includes(w) && !setupOn && phase !== 'count') { // (the countdown has its own banner)
           const [mx, my] = toPx(w === 'a' ? W - 14 : 14, w === 'a' ? H / 2 + 32 : H / 2 - 32);
           const bob = reduced ? 0 : Math.sin(now / 260) * 0.8;
           sticker(c, 'MATCH POINT', mx, my + bob, Math.max(8, 3.1 * s), T.hl, readRot(w), 30 * s);
@@ -1116,73 +1242,84 @@ registerGame({
         drawPuck(c, pk._draw.x, pk._draw.y, i, heat, now);
         pk._draw = null;
       }
-      // countdown, readable from each player's side
+      // The middle of the table is one shared lane: the 3-2-1, the goal stamp, event stamps and the
+      // table / match-point banners stack there, each in its own slot, instead of landing on top of
+      // each other (or on the puck parked in the centre).
       const readers = local && view === 'up' ? ['a', 'b'] : [me];
-      if (phase === 'count' && (host || HS)) {
-        const left = host ? phaseEnd - now : HS.cd - (now - HS.recv);
+      const dual = !(local && view === 'up'); // one reader may use both sides of the puck; on a shared phone each keeps to their own half
+      const left = phase === 'count' ? (host ? phaseEnd - now : HS ? HS.cd - (now - HS.recv) : 1e9) : 1e9;
+      for (let i = stamps.length - 1; i >= 0; i--) if (now - stamps[i].t0 > stamps[i].dur) stamps.splice(i, 1);
+      const items = [];
+      const ssince = now - fx.stampAt;
+      if (fx.stampWho && ssince < GOAL_MS) {
+        items.push({ t: -8.5, b: 14.5, pref: 1, draw(x, y, rot, dn) {
+          const sc = reduced ? 1 : 1 + 0.35 * Math.max(0, 1 - ssince / 160);
+          c.globalAlpha = ssince > GOAL_MS - 200 ? (GOAL_MS - ssince) / 200 : 1;
+          text(c, 'GOAL', x, y, 17 * s * sc, T[fx.stampWho], rot - 0.08, T.ink);
+          text(c, api.name(fx.stampWho), x, y + dn * 12 * s, 5 * s, T.ink, rot - 0.08, T.card, 900);
+          c.globalAlpha = 1;
+        } });
+      }
+      if (phase === 'count' && left > 0 && left <= COUNT_MS) {
         const n = Math.max(1, Math.ceil(left / (COUNT_MS / 3)));
         const frac = 1 - ((left % (COUNT_MS / 3)) + COUNT_MS / 3) % (COUNT_MS / 3) / (COUNT_MS / 3);
         const pop = reduced ? 1 : 1 + 0.25 * Math.max(0, 1 - frac * 4);
-        if (left > 0 && left <= COUNT_MS) {
-          for (const w of readers) {
-            const rot = readRot(w);
-            const y = ccy + (sideways() ? -26 : 26) * s * (rot ? -1 : 1);
-            text(c, String(Math.min(3, n)), ccx, y, 22 * s * pop, T.hl, rot, T.ink);
-          }
-        }
+        items.push({ t: -8.5, b: 8.5, pref: 1, draw(x, y, rot) { text(c, String(Math.min(3, n)), x, y, 22 * s * pop, T.hl, rot, T.ink); } });
       }
-      // the table's name and the match-point banner while the first countdown runs
-      if (phase === 'count' || now - tableAt < 1700) {
-        const first = !goals && now - tableAt < 1900;
+      stamps.forEach((st, k) => {
+        if (!st.both) return;
+        const age = now - st.t0; const z = st.size;
+        items.push({ t: -0.6 * z, b: (st.sub ? 0.86 : 0.6) * z, pref: k % 2 ? -1 : 1, draw(x, y, rot, dn) {
+          const pop = reduced ? 1 : 1 + 0.4 * Math.max(0, 1 - age / 150); const sz = z * s * pop;
+          c.globalAlpha = age > st.dur - 250 ? (st.dur - age) / 250 : 1;
+          sticker(c, st.text, x, y, sz, colOf(st.col), rot - 0.07, 62 * s);
+          if (st.sub) text(c, st.sub, x, y + dn * sz * 0.66, Math.max(9, sz * 0.3), T.ink, rot - 0.07, T.card, 900, T.fontBody, 62 * s);
+          c.globalAlpha = 1;
+        } });
+      });
+      // the table's name (first countdown of a match) and the match-point banner, once the countdown proper is running
+      if (phase === 'count' && left <= COUNT_MS + 400) {
+        const first = !(host ? goals : HS ? HS.g || 0 : 0) && now - tableAt < 2600;
         if (first && table.id !== 'classic') {
-          for (const w of readers) {
-            const rot = readRot(w);
-            const dir = rot ? -1 : 1;
-            const y = sideways() ? ccy - 20 * s : ccy - 26 * s * dir;
-            sticker(c, table.name.toUpperCase(), ccx, y, 7 * s, T.hl, rot - 0.04, 60 * s);
-            text(c, table.blurb, ccx, y + dir * 6.6 * s, 2.6 * s, T.ink, rot - 0.04, T.card, 900, T.fontBody, 60 * s);
-          }
+          items.push({ t: -4, b: 9, pref: -1, draw(x, y, rot, dn) {
+            sticker(c, table.name.toUpperCase(), x, y, 7 * s, T.hl, rot - 0.04, 60 * s);
+            text(c, table.blurb, x, y + dn * 6.6 * s, 2.6 * s, T.ink, rot - 0.04, T.card, 900, T.fontBody, 60 * s);
+          } });
         }
-        if (mp.length && now - mpAt < 1800) {
+        if (mp.length) {
           const both = mp.length === 2;
-          for (const w of readers) {
-            const rot = readRot(w);
-            const dir = rot ? -1 : 1;
-            const y = sideways() ? ccy + 20 * s : ccy + 26 * s * dir;
-            sticker(c, both ? 'DOUBLE MATCH POINT' : 'MATCH POINT', ccx, y, 7 * s, both ? T.hl : T[mp[0]], rot + 0.03, 62 * s);
-            if (!both) text(c, api.name(mp[0]), ccx, y + dir * 6.2 * s, 3 * s, T.ink, rot + 0.03, T.card, 900, T.fontBody, 60 * s);
-          }
+          items.push({ t: -4, b: both ? 4 : 9, pref: -1, draw(x, y, rot, dn) {
+            sticker(c, both ? 'DOUBLE MATCH POINT' : 'MATCH POINT', x, y, 7 * s, both ? T.hl : T[mp[0]], rot + 0.03, 62 * s);
+            if (!both) text(c, api.name(mp[0]), x, y + dn * 6.2 * s, 3 * s, T.ink, rot + 0.03, T.card, 900, T.fontBody, 60 * s);
+          } });
         }
       }
-      // goal stamp
-      const ssince = now - fx.stampAt;
-      if (fx.stampWho && ssince < GOAL_MS) {
-        const sc = reduced ? 1 : 1 + 0.35 * Math.max(0, 1 - ssince / 160);
-        c.globalAlpha = ssince > GOAL_MS - 200 ? (GOAL_MS - ssince) / 200 : 1;
+      // slots: from 8 u off the centre spot outward (near = toward the reader), alternating sides when there is room
+      let eN = 8; let eF = 8;
+      for (const it of items) {
+        let side = it.pref;
+        if (!dual) side = 1; else if ((side === 1 ? eN : eF) > (side === 1 ? eF : eN) + 10) side = -side;
+        const hgt = it.b - it.t;
+        if (side === 1) { it.o = eN - it.t; eN += hgt + 2; } else { it.o = -eF - it.b; eF += hgt + 2; }
+      }
+      for (const it of items) {
         for (const w of readers) {
-          const rot = readRot(w);
-          const d = 26 * s * (rot ? -1 : 1);
-          const y = sideways() ? ccy : ccy + d;
-          text(c, 'GOAL', ccx, y, 17 * s * sc, T[fx.stampWho], rot - 0.08, T.ink);
-          text(c, api.name(fx.stampWho), ccx, y + (rot ? -1 : 1) * 12 * s, 5 * s, T.ink, rot - 0.08, T.card, 900);
+          const rot = readRot(w); const dn = rot ? -1 : 1;
+          it.draw(ccx, ccy + it.o * s * (sideways() ? -1 : 1) * dn, rot, dn);
         }
-        c.globalAlpha = 1;
       }
-      // stamps from events
-      for (let i = stamps.length - 1; i >= 0; i--) {
-        const st = stamps[i]; const age = now - st.t0;
-        if (age > st.dur) { stamps.splice(i, 1); continue; }
+      // other stamps (POST!) sit where they happened
+      for (const st of stamps) {
+        if (st.both) continue;
+        const age = now - st.t0;
         const pop = reduced ? 1 : 1 + 0.4 * Math.max(0, 1 - age / 150);
         c.globalAlpha = age > st.dur - 250 ? (st.dur - age) / 250 : 1;
-        const dd = st.size * 1.05; // two readers face each other: each gets the stamp on their side of the middle, not on top of each other
-        const copies = st.both && local && view === 'up' ? [[0, st.x, st.y + dd], [Math.PI, W - st.x, H - st.y - dd]] : [[st.rot, st.x, st.y]];
-        for (const [rot, x, y] of copies) {
-          const [sx, sy] = toPx(x, y); const sz = st.size * s * pop;
-          sticker(c, st.text, sx, sy, sz, colOf(st.col), rot - 0.07, 62 * s);
-          if (st.sub) text(c, st.sub, sx, sy + (rot ? -1 : 1) * sz * 0.66, Math.max(9, sz * 0.3), T.ink, rot - 0.07, T.card, 900, T.fontBody, 62 * s);
-        }
+        const [sx, sy] = toPx(st.x, st.y); const sz = st.size * s * pop;
+        sticker(c, st.text, sx, sy, sz, colOf(st.col), st.rot - 0.07, 62 * s);
+        if (st.sub) text(c, st.sub, sx, sy + (st.rot ? -1 : 1) * sz * 0.66, Math.max(9, sz * 0.3), T.ink, st.rot - 0.07, T.card, 900, T.fontBody, 62 * s);
         c.globalAlpha = 1;
       }
+      const centreBusy = items.length > 0 || stamps.length > 0 || pucksOn().some((p, i) => (host ? p.on && p.sk : G[i].on && G[i].sk));
       // match-point slow motion: a printed frame closes in
       if (ts < 0.98 && !reduced) {
         const a = Math.min(1, (1 - ts) * 2.2);
@@ -1192,7 +1329,8 @@ registerGame({
       }
       // hints stay until the first touch (or key press)
       if (!setupOn && phase !== 'over') {
-        const hintA = Math.min(1, (now - t0) / 500 + 0.0);
+        hintK += ((centreBusy ? 0 : 1) - hintK) * (1 - Math.exp(-dtR / (centreBusy ? 0.05 : 0.18)));
+        const hintA = Math.min(1, (now - t0) / 500) * hintK;
         if (!coarse && local) {
           for (const w of ['a', 'b']) {
             if (ctl[w].used) continue;

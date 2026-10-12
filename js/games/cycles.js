@@ -322,7 +322,7 @@ registerGame({
       board.classList.add('is-fit');
       board.style.width = cssW + 14 + 'px';
       // the countdown and GO stamps scale with a small board
-      root.style.setProperty('--cy-s', clamp(Math.round(Math.min(cssW, cssH) * 0.34), 52, 92) + 'px');
+      root.style.setProperty('--cy-s', clamp(Math.round(Math.min(cssW, cssH) * 0.3), 44, 92) + 'px');
       bgKey = '';
     }
     const modeLabel = () => `${ARENA_NAME[cfg && cfg.ar ? cfg.ar : matchAr] || ''}${md.bo ? ' + boosts' : ''}`;
@@ -1219,9 +1219,10 @@ registerGame({
         const y = qr === 0 ? (f[1] + 0.5) / sim.H : qr === 1 ? (f[0] + 0.5) / sim.W : 1 - (f[0] + 0.5) / sim.W;
         const want = (flip ? 1 - y : y) < 0.5 ? 0.76 : 0.24;
         // keep the whole banner inside the board, even on a short landscape board
-        const bh = board.clientHeight;
+        const bh = cssH; // the canvas, not the (taller) board around it
+        const c0 = (board.clientHeight - cssH) / 2 - 3; // where the canvas starts inside the board
         const sh = msgEl.firstElementChild ? msgEl.firstElementChild.offsetHeight : 0;
-        msgEl.style.top = Math.round(clamp(want * bh, sh / 2 + 6, Math.max(sh / 2 + 6, bh - sh / 2 - 6))) + 'px';
+        msgEl.style.top = Math.round(c0 + clamp(want * bh, sh / 2 + 6, Math.max(sh / 2 + 6, bh - sh / 2 - 6))) + 'px';
       } else msgEl.style.top = '';
     }
     function frame(now) {

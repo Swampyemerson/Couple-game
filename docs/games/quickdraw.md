@@ -9,7 +9,9 @@ plus a latency-200 run for the double foul and a 120 ms / 20 % loss run).
 1. **Picker** (every mount). The host (online) or the device (one phone / laptop) chooses a *duel pack* and a *series*,
    then GO. The guest sees "Emerson is picking…" and the host's live choice (chips are read-only; GO is hidden).
    The last choice is remembered (`qd_last`, e.g. `decoys:5`) and preselected. On a **rematch** (`api.gen > 0`) the picker
-   says "Same again?" and starts the last duel by itself after a 3 s countdown on the GO button; any tap on a chip cancels it.
+   says "Same again?" and starts the last duel by itself after a 3 s countdown on the GO button. The guest sees the same countdown
+   ("Same again? Starting in 3…", host presence `ac`), so the start never surprises anyone. The host can stop it with the **Pick again**
+   button (keeps the choice) or by tapping any chip; GO starts at once.
 2. **Round**: "Ready", then **Steady…**, then the signal. First valid shot after the signal wins the round. Firing before it
    is a foul; so is a "reaction" under 100 ms (a guess), stamped **JUMPED THE GUN**.
 3. **Verdict**: "Sydney by 9 ms". Under 15 ms is a **PHOTO FINISH** (stamp + side-by-side timing bars). Within 5 ms is a
@@ -32,7 +34,11 @@ A decoy round always ends with the real signal after it; decoys sit at least 650
 
 ### Series
 
-Best of 3, 5 (default), 9: first to 2, 3, 5. **Showdown**: first to 5, win by 2 (no cap, no Both barrels).
+Best of 3, 5 (default), 9: first to 2, 3, 5. **Showdown**: first to 5, win by 2 (no Both barrels). So a session can't run for ever,
+Showdown is capped: once 15 rounds have been decided without a winner, the next round is **SUDDEN DEATH** (sign, stamp, "SUDDEN DEATH" in
+the line). Whoever takes it wins the duel, even from behind (the winner's tally is lifted to one above the loser's, e.g. 8–9 becomes the
+final 9–8, and the end card says "won in sudden death"). A dead heat or a double foul in it just replays it. Past 6 points the notches
+turn into plain numbers so the chips never overflow.
 
 ### Both barrels
 
@@ -49,6 +55,9 @@ beat), gets quieter, and the screen darkens slightly as the wait drags on.
 ## Layouts
 
 One phone (portrait): FIRE pads at both ends, the top one upside down, the duel in between. Landscape phone: one pad each side.
+On one phone everything the bottom player reads is printed a second time upside down for the top player: the signal word, the verdict,
+the timing bars, the scene sign (BOTH BARRELS, MIXED · BELL, SUDDEN DEATH) and every stamp (PHOTO FINISH, NEW PB, JUMPED THE GUN…); the
+two stamps sit at 70 % and 30 % of the scene. Landscape phones only show the upright ones.
 Laptop one-device: A against L, pads side by side. Two devices: your own pad, or Space / click / tap anywhere.
 The scene is the flexible part (SVG, bottom-anchored, `min-height: 0`), so every size fits with no scrolling and pads ≥ 44 px.
 Tested: 375×667, 360×640, 320×568, 568×320, 844×390, 390×844 (phone) and 1280×600, 800×500, 1280×800 (laptop).
@@ -92,5 +101,13 @@ rivalry line: `3–2 · Emerson on a 2-duel streak · new PB 152 ms (Emerson)`. 
 
 ## Test hooks (`window.__qdTest`, only on a port)
 
-`state()` (phase, tally, verdict, cfg, kind, cue, rd, rtt), `recv()`, `timers()`, `start(pack, series)` (skip the picker),
+`state()` (phase, tally, verdict, cfg, kind, cue, rd, rtt), `recv()`, `timers()`, `start(pack, series, tally?)` (skip the picker; the tally lets a test start at 7–8 for sudden death),
 `force({kind, decoys, dw, delay, gap, both})` (override the next round's plan).
+
+## Tests
+
+`tools/test/games/live.test.js` (`GAME=quickdraw`): `quickdrawLive` (picker, fouls, latency-shifted verdicts, Both barrels, records, rematch
+countdown), `quickdrawPacks`, `quickdrawStreaks` (bounty, Showdown reaches the guest), `quickdrawLocal` (one phone, fit at six sizes, mirrored stamps),
+`quickdrawSudden` (Showdown cap), `quickdrawKeys` (laptop), `quickdrawLatency` (latency 200 double foul), `quickdrawLossy` (120 ms, 20 % loss),
+`quickdrawLeave` (the guest leaves in the picker and mid-round, the host re-mounts mid-duel and the tally, pack and series survive) and
+`quickdrawRematch` ("Pick again" stops the auto-start on both phones).

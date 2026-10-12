@@ -450,18 +450,52 @@ async function cyclesLandscape(h) {
 
 /** A small phone on its side (667×375) also gets the wide grid, with pads that leave room for it. */
 async function cyclesSmallLandscape(h) {
-  console.log('\n# Light Cycles: a small phone on its side (667×375)');
+  console.log('\n# Light Cycles: a small phone on its side (667×375, 568×320)');
   const pg = h.a;
-  await pg.setViewportSize({ width: 667, height: 375 });
-  await h.startLive(pg, 'cycles', 'local');
-  await pickGo(pg, { arena: 'cross' });
-  const i = await localRun(pg, 1);
-  const k = await pg.evaluate(() => Math.min(...[...document.querySelectorAll('.cy-key')].map((e) => { const b = e.getBoundingClientRect(); return Math.min(b.width, b.height); })));
-  assert(i.layout === 'l' && i.cell >= 5 && k >= 44, `667×375 plays the landscape grid (cell ${i.cell} px, smallest key ${Math.round(k)} px)`);
-  await shot(pg, 'cycles-phone-small-landscape-light');
-  await h.closeGame(pg);
+  for (const [w, hh, minCell] of [[667, 375, 5], [568, 320, 4.75]]) {
+    await pg.setViewportSize({ width: w, height: hh });
+    await h.startLive(pg, 'cycles', 'local');
+    // the picker keeps GO in view without scrolling
+    await until(() => visible(pg, '.cy-pick .cy-go'), 'the picker');
+    const pk = await pg.evaluate(() => { const r = document.getElementById('game-root'); const g = document.querySelector('.cy-go').getBoundingClientRect(); return { over: r.scrollHeight - r.clientHeight, goIn: g.bottom <= innerHeight && g.height >= 44 }; });
+    assert(pk.over <= 0 && pk.goIn, `${w}×${hh}: the picker fits with GO in view (overflow ${pk.over}px)`);
+    await pickGo(pg, { arena: 'cross' });
+    const i = await localRun(pg, 1);
+    const f = await pg.evaluate(() => {
+      const keys = [...document.querySelectorAll('.cy-key')].map((e) => e.getBoundingClientRect());
+      const pads = [...document.querySelectorAll('.cy-pad')].map((e) => e.getBoundingClientRect());
+      return { k: Math.min(...keys.map((b) => Math.min(b.width, b.height))), padsIn: pads.every((b) => b.left >= 0 && b.right <= innerWidth) && keys.every((b) => b.left >= 0 && b.right <= innerWidth), over: document.getElementById('game-root').scrollWidth - innerWidth };
+    });
+    assert(i.layout === 'l' && i.cell >= minCell && f.k >= 44, `${w}×${hh} plays the landscape grid (cell ${i.cell} px, smallest key ${Math.round(f.k)} px)`);
+    assert(f.padsIn && f.over <= 0, `${w}×${hh}: both pads sit fully on screen`);
+    // the GO stamp is in proportion to the small board
+    await until(() => visible(pg, '.cy-msg .is-go'), 'the GO stamp', 1500, 10);
+    await sleep(340); // the stamp has popped in and is still up
+    const go = await pg.evaluate(() => { const g = document.querySelector('.cy-msg .is-go'); const c = document.querySelector('.cy-board canvas').getBoundingClientRect(); if (!g) return null; const b = g.getBoundingClientRect(); return { w: b.width, h: b.height, cw: c.width, ch: c.height }; });
+    assert(go && go.h <= go.ch * 0.34 && go.w <= go.cw * 0.45, `${w}×${hh}: the GO stamp is in proportion to the board (${Math.round(go.w)}×${Math.round(go.h)} on ${Math.round(go.cw)}×${Math.round(go.ch)})`);
+    await shot(pg, `cycles-phone-small-landscape-${w}-light`);
+    await h.closeGame(pg);
+    await h.settle();
+  }
   await pg.setViewportSize({ width: 390, height: 844 });
   await h.settle();
+}
+
+/** The picker on the small upright phone and the laptop-sized windows: GO in view, nothing scrolls, even with a long record line. */
+async function cyclesPickerFit(h, sizes) {
+  console.log('\n# Light Cycles: the picker fits small screens');
+  const pg = h.a;
+  for (const [w, hh] of sizes) {
+    await pg.setViewportSize({ width: w, height: hh });
+    await h.startLive(pg, 'cycles', 'local');
+    await until(() => visible(pg, '.cy-pick .cy-go'), 'the picker');
+    await pg.evaluate(() => { document.querySelector('.cy-recs').textContent = 'Sydney is on a 12-match streak · longest ride 456 ticks · most close shaves 14'; });
+    await sleep(120);
+    const m = await pg.evaluate(() => { const r = document.getElementById('game-root'); const g = document.querySelector('.cy-go').getBoundingClientRect(); const chips = [...document.querySelectorAll('.cy-chip')].map((c) => c.getBoundingClientRect()); return { over: r.scrollHeight - r.clientHeight, goIn: g.bottom <= innerHeight && g.height >= 44, chip: Math.min(...chips.map((c) => Math.min(c.width, c.height))) }; });
+    assert(m.over <= 0 && m.goIn && m.chip >= 44, `${w}×${hh}: picker has no overflow (${m.over}px), GO in view, chips ≥ ${Math.round(m.chip)} px`);
+    await h.closeGame(pg);
+    await h.settle();
+  }
 }
 
 /** A capped match: nine rounds, 2–1. The end card must say what the score says. */
@@ -482,11 +516,13 @@ async function cyclesCapped(h) {
       assert(e.caption.length > 3, `draw caption: "${e.caption}"`);
       await sleep(500);
       assert(/DEAD HEAT/.test(await pg.textContent('.cy-msg')), 'a draw shows DEAD HEAT');
+      assert(!/LONGEST RIDE|MOST SHAVES/.test(await pg.textContent('.cy-msg')), 'the long draw does not claim a record in a first match');
       await shot(pg, 'cycles-laptop-deadheat-light');
     }
   }
   await until(() => visible(pg, '#game-root .gm-end'), 'the end card', 8000);
   const txt = await pg.textContent('#game-root .gm-end');
+  assert(!/new record/i.test(txt), 'the first match claims no new record');
   assert(/Emerson wins 2–1/.test(txt) && /9 rounds/.test(txt) && !/three times/.test(txt), `the card says 2–1 and why ("${txt.replace(/\s+/g, ' ').slice(0, 120)}")`);
   await shot(pg, 'cycles-laptop-capped-end-light');
   await h.closeGame(pg);
@@ -512,11 +548,26 @@ async function cyclesBadNetwork(h, tag) {
       }));
       assert(smooth.frames > 15 && smooth.mx.a < 1.3 && smooth.mx.b < 1.3, `round ${n}: heads glide between ticks (largest per-frame step: opponent ${smooth.mx.a.toFixed(2)}, own ${smooth.mx.b.toFixed(2)} cells over ${smooth.frames} frames)`);
       // the guest steers; its own head must turn at once, long before the host's log shows it
-      const t0 = Date.now();
-      const pend = await h.b.evaluate(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', code: 'ArrowLeft', bubbles: true })); return window.__cycles.info().pending; });
-      assert(pend.length === 1 && Date.now() - t0 < 60, `round ${n}: the guest's own turn is on screen at once (predicted)`);
+      // the turn shows in the same instant as the key; and while the host's log catches up with that turn (several ticks at this latency) its drawn head must not pop
+      const turn = h.b.evaluate(() => new Promise((res) => {
+        const H = window.__cycles;
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', code: 'ArrowLeft', bubbles: true }));
+        const pending = H.info().pending;
+        const T0 = performance.now(); let lt = T0; let last = null; let ex = 0; let frames = 0;
+        const loop = () => {
+          const now = performance.now(); const v = H.view('b'); const dt = now - lt; lt = now;
+          if (v && last && dt > 4) ex = Math.max(ex, Math.hypot(v.x - last[0], v.y - last[1]) - dt / H.info().tms); // beyond what steady riding covers
+          if (v) last = [v.x, v.y];
+          frames++;
+          if (now - T0 < 950 && !H.info().sim.done) requestAnimationFrame(loop); else res({ pending, ex, frames });
+        };
+        requestAnimationFrame(loop);
+      }));
       await sleep(250);
       await h.a.keyboard.press('a');
+      const tr = await turn;
+      assert(tr.pending.length === 1, `round ${n}: the guest's own turn is on screen at once (predicted)`);
+      assert(tr.frames > 12 && tr.ex < 0.75, `round ${n}: the guest's head does not pop when the host confirms its turn (worst extra step ${tr.ex.toFixed(2)} cells over ${tr.frames} frames)`);
     });
     assert(r.sim.a.len + r.sim.b.len > 8, `round ${n}: ridden (${r.sim.t} ticks, ${r.sim.a.sh + r.sim.b.sh} close shaves)`);
     assert(r.rw === 'a' || r.rw === 'b' || r.rw === 'd', `round ${n}: both devices agree on the result (${r.rw})`);
@@ -540,6 +591,134 @@ async function cyclesLandscapeLive(h) {
   assert(r.rw === 'a' || r.rw === 'b' || r.rw === 'd', `landscape round played (${r.rw})`);
   await closeBoth(h);
   for (const pg of [h.a, h.b]) await pg.setViewportSize({ width: 390, height: 844 });
+}
+
+/** Where one rider's ink sits on the canvas as drawn (CSS px): the screen's own truth about which way a bike is heading. */
+const inkBox = (pg, who) => pg.evaluate((w) => {
+  const cv = document.querySelector('.cy-board canvas');
+  const probe = document.createElement('i'); probe.style.color = `var(--p-${w})`; document.body.appendChild(probe);
+  const m = getComputedStyle(probe).color.match(/\d+(\.\d+)?/g).map(Number); probe.remove();
+  const W = cv.width; const H = cv.height; const d = cv.getContext('2d').getImageData(0, 0, W, H).data;
+  let x0 = 1e9; let y0 = 1e9; let x1 = -1; let y1 = -1;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4;
+      if (d[i + 3] > 200 && Math.abs(d[i] - m[0]) + Math.abs(d[i + 1] - m[1]) + Math.abs(d[i + 2] - m[2]) < 30) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    }
+  }
+  const k = W / cv.clientWidth;
+  return x1 < 0 ? null : { l: x0 / k, t: y0 / k, r: x1 / k, b: y1 / k };
+}, who);
+
+/** One phone upright, the other on its side: one agreed grid, each screen draws it so it fills, and steering follows each screen. */
+async function cyclesMixedLive(h) {
+  console.log('\n# Light Cycles, two phones, one upright (390×844) and one on its side (844×390)');
+  await h.a.setViewportSize({ width: 390, height: 844 });
+  await h.b.setViewportSize({ width: 844, height: 390 });
+  await goLive(h, 'cycles');
+  await pickGo(h.a);
+  const r = await liveRound(h, 1, async () => {
+    const i = await until(async () => { const a = await cy(h.a); const b = await cy(h.b); return a && b && a.layout && b.layout && a.cell && b.cell ? [a, b] : null; }, 'both grids');
+    assert(i[0].layout === i[1].layout && i[0].layout === 'l', `both phones play one grid, the wide one (${i[0].layout} / ${i[1].layout})`);
+    assert(i[0].qr === 3 && i[1].qr === 0, `the upright phone draws it turned a quarter, the one on its side upright (turns ${i[0].qr} / ${i[1].qr})`);
+    assert(i[0].cell >= 7 && i[1].cell >= 7, `both screens get a board with big cells (upright phone ${i[0].cell} px, phone on its side ${i[1].cell} px)`);
+    const fill = await h.a.evaluate(() => { const c = document.querySelector('.cy-board canvas').getBoundingClientRect(); return { w: c.width, h: c.height, vw: innerWidth }; });
+    assert(fill.h > fill.w && fill.w > fill.vw * 0.7, `the upright phone's board is tall and fills its width (${Math.round(fill.w)}×${Math.round(fill.h)})`);
+    // before any steering: each screen shows its own rider starting on the near side and riding on
+    const a0 = await inkBox(h.a, 'a'); const b0 = await inkBox(h.b, 'b');
+    await sleep(100);
+    const a1 = await inkBox(h.a, 'a'); const b1 = await inkBox(h.b, 'b');
+    assert(a1.t < a0.t - 0.5 && a1.b > i[0].cssH * 0.7, `Emerson (upright phone) starts low on his screen and rides up it (top ${a0.t.toFixed(0)} → ${a1.t.toFixed(0)})`);
+    assert(b1.r > b0.r + 0.5 && b1.l < i[1].cssW * 0.3, `Sydney (phone on its side) starts on the left of her screen and rides right (right edge ${b0.r.toFixed(0)} → ${b1.r.toFixed(0)})`);
+    // steering follows each screen: D on the upright phone is screen-right, Up on the other is screen-up
+    await h.a.keyboard.press('d');
+    await h.b.keyboard.press('ArrowUp');
+    await sleep(90);
+    const a2 = await inkBox(h.a, 'a'); const b2 = await inkBox(h.b, 'b');
+    await sleep(160);
+    const a3 = await inkBox(h.a, 'a'); const b3 = await inkBox(h.b, 'b');
+    assert(a3.r > a2.r + 2 * i[0].cell && Math.abs(a3.t - a2.t) < 1.5, `"right" on the upright phone rides right on that screen (right edge ${a2.r.toFixed(0)} → ${a3.r.toFixed(0)}, top steady)`);
+    assert(b3.t < b2.t - 2 * i[1].cell && Math.abs(b3.r - b2.r) < 1.5, `"up" on the phone on its side rides up that screen (top ${b2.t.toFixed(0)} → ${b3.t.toFixed(0)}, right edge steady)`);
+    await shot(h.a, 'cycles-phone-mixed-upright-light');
+    await shot(h.b, 'cycles-phone-mixed-landscape-light');
+  });
+  assert(r.rw === 'a' || r.rw === 'b' || r.rw === 'd', `mixed round played to the end (${r.rw})`);
+  await closeBoth(h);
+  for (const pg of [h.a, h.b]) await pg.setViewportSize({ width: 390, height: 844 });
+}
+
+/** A phone turned on its side in the middle of a live match: the same grid, redrawn to fill the new shape. */
+async function cyclesTurnedLive(h) {
+  console.log('\n# Light Cycles, live: a phone is turned on its side mid-round');
+  await goLive(h, 'cycles');
+  await pickGo(h.a);
+  await liveRound(h, 1, async () => {
+    const i = await until(async () => { const b = await cy(h.b); return b && b.layout === 'p' && b.cell ? b : null; }, 'the upright grid on the guest');
+    await h.b.setViewportSize({ width: 844, height: 390 });
+    const j = await until(async () => { const b = await cy(h.b); return b && b.qr === 1 && b.cssW > b.cssH ? b : null; }, 'the guest to turn the board', 4000, 30);
+    assert(j.layout === 'p' && j.cell >= 6, `turned on its side mid-round: the same grid is drawn wide, filling the screen (cell ${i.cell} → ${j.cell} px)`);
+    // Sydney starts on the left of her turned screen; up is up
+    const b0 = await inkBox(h.b, 'b');
+    await h.b.keyboard.press('ArrowUp');
+    await sleep(120);
+    const b1 = await inkBox(h.b, 'b');
+    await sleep(250);
+    const b2 = await inkBox(h.b, 'b');
+    assert(b0.l < j.cssW * 0.3 && b2.t < b1.t - 1.5 * j.cell && Math.abs(b2.r - b1.r) < 2, `"up" still rides up the turned screen (top ${b1.t.toFixed(0)} → ${b2.t.toFixed(0)})`);
+    await shot(h.b, 'cycles-phone-turned-live-guest-light');
+    await h.a.keyboard.press('a');
+  });
+  await closeBoth(h);
+  for (const pg of [h.a, h.b]) await pg.setViewportSize({ width: 390, height: 844 });
+}
+
+/** Records: a match's own first rides are not "new records"; beating a record that stood before the match is. */
+async function cyclesFirstMatch(h) {
+  console.log('\n# Light Cycles: the very first match claims no records');
+  const pg = h.a;
+  await pg.setViewportSize({ width: 390, height: 844 });
+  await h.startLive(pg, 'cycles', 'local');
+  await pickGo(pg);
+  for (let n = 1; n <= 3; n++) {
+    await localRun(pg, n);
+    await sleep([0, 600, 300][n - 1]); // Sydney rides on for a while, then turns for the side wall: each round a bit longer than the last
+    await pg.keyboard.press('ArrowLeft');
+    const e = await localEnd(pg, n);
+    assert(e.rw === 'a', `round ${n}: Emerson (got ${e.rw}, log ${e.log}, layout ${e.layout}, sim ${JSON.stringify(e.sim.a)})`);
+    assert(sameState(e.rc, []), `round ${n}: no record stamp in a first match (${JSON.stringify(e.rc)})`);
+    await pg.evaluate(() => window.__cycles.skip());
+    await until(async () => /takes round/.test(await pg.textContent('.cy-msg')) || (await visible(pg, '#game-root .gm-end')), 'the round banner', 3000, 30).catch(() => {});
+    assert(!/LONGEST RIDE|MOST SHAVES/.test(await pg.textContent('.cy-msg')), `round ${n}: the banner has no record stamp`);
+  }
+  await until(() => visible(pg, '#game-root .gm-end'), 'the end card', 8000);
+  const txt = await pg.textContent('#game-root .gm-end');
+  assert(/Emerson wins 3–0/.test(txt) && !/new record/i.test(txt), `the end card of a first match has no "new record" ("${txt.replace(/\s+/g, ' ').slice(0, 140)}")`);
+  const d = h.docs['gamedata/cycles'] || {};
+  assert(d.cy_long_n > 0, `the ride is still recorded (${d.cy_long_n} ticks)`);
+  await h.closeGame(pg);
+  await h.settle();
+}
+async function cyclesRecordBeaten(h) {
+  console.log('\n# Light Cycles: beating a record that stood before the match is celebrated');
+  const pg = h.a;
+  await until(() => (h.docs['gamedata/cycles'] || {}).cy_long_n === 3, 'the seeded record', 4000);
+  await h.startLive(pg, 'cycles', 'local');
+  await pickGo(pg);
+  let stamped = false;
+  for (let n = 1; n <= 3; n++) {
+    await localRun(pg, n);
+    await pg.keyboard.press('ArrowUp');
+    const e = await localEnd(pg, n);
+    if (n === 1) assert(e.rc.includes('long'), `round 1 beats the old record of 3 ticks and says so (${JSON.stringify(e.rc)})`);
+    await pg.evaluate(() => window.__cycles.skip());
+    await sleep(450);
+    if (n === 1) { stamped = /LONGEST RIDE/.test(await pg.textContent('.cy-msg')); assert(stamped, 'the round banner shows the LONGEST RIDE stamp'); }
+  }
+  await until(() => visible(pg, '#game-root .gm-end'), 'the end card', 8000);
+  const txt = await pg.textContent('#game-root .gm-end');
+  assert(/new record: longest ride/i.test(txt), `the end card names the record that was beaten ("${txt.replace(/\s+/g, ' ').slice(0, 160)}")`);
+  await h.closeGame(pg);
+  await h.settle();
 }
 
 // ══════════════════════════ Defuse ══════════════════════════
@@ -1044,6 +1223,18 @@ async function withHarness(opts, fn) {
       await withHarness({ port: PORT + 7, coarse: true }, async (h) => {
         await asPhones(h);
         await cyclesLandscapeLive(h);
+        await cyclesMixedLive(h);
+        await cyclesTurnedLive(h);
+      });
+      await withHarness({ port: PORT + 9, coarse: true }, async (h) => {
+        await asPhones(h);
+        await cyclesPickerFit(h, [[320, 568], [360, 640], [568, 320], [667, 375], [844, 390]]);
+        await cyclesFirstMatch(h);
+      });
+      await withHarness({ port: PORT + 10, device: 'Desktop Chrome', seedDocs: { 'gamedata/cycles': { cy_long_n: 3, cy_long_who: 'b' } } }, async (h) => {
+        await asLaptops(h);
+        await cyclesRecordBeaten(h);
+        await cyclesPickerFit(h, [[800, 500], [1280, 600], [1280, 800]]);
       });
       await withHarness({ port: PORT + 8, coarse: true, latency: 150, dropRate: 0.2 }, async (h) => {
         await asPhones(h);

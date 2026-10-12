@@ -289,7 +289,7 @@ registerGame({
     .g-qd .qd-gorow .qd-again { flex: 0 0 auto; min-height: 54px; padding: 0 14px; }
     .g-qd .qd-go[hidden], .g-qd .qd-again[hidden] { display: none; }
     @media (orientation: landscape) and (max-height: 520px) {
-      .g-qd .qd-setup-card { max-width: none; display: grid; grid-template-columns: 1.55fr 1fr; grid-template-areas: "packs series" "head go"; column-gap: 10px; row-gap: 4px; padding: 4px 8px; }
+      .g-qd .qd-setup-card { max-width: none; width: calc(100% - 6px); margin-left: 0; display: grid; grid-template-columns: 1.55fr 1fr; grid-template-areas: "packs series" "head go"; column-gap: 10px; row-gap: 4px; padding: 4px 8px; }
       .g-qd .qd-setup-head { grid-area: head; font-size: 0.95rem; align-self: center; }
       .g-qd .qd-opts { gap: 4px; }
       .g-qd .qd-packs { grid-area: packs; } .g-qd .qd-series { grid-area: series; grid-template-columns: repeat(2, 1fr); }
