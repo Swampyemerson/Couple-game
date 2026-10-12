@@ -180,7 +180,8 @@ async function wordDuelOnline(h, scheme, full) {
     await a.waitForTimeout(60);
     assert(await a.$('.g-wd-row.is-draft.shake'), 'invalid secret shakes the row');
     assert(/isn’t in the word list/.test(await toastText(a)), 'invalid secret shows a toast');
-    assert((await h.engine(a, id)).lists.a.length === 0, 'invalid secret is not played');
+    const eg = await h.engine(a, id); // (a's list may hold the rules move when a goes first: count secrets only)
+    assert([...eg.lists.a, ...eg.lists.b].filter((mv) => mv.secret !== undefined).length === 0, 'invalid secret is not played');
     for (let i = 0; i < 5; i++) await a.click('.g-wd-key[data-k="back"]');
   }
   await tapKeys(a, 'abbey');

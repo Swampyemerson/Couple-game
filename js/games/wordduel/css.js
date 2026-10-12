@@ -88,13 +88,13 @@ export const CSS = `
 .g-wd-head { min-width: 0; max-width: 100%; }
 .g-wd-strip { flex-wrap: wrap; max-width: 100%; row-gap: 2px; }
 .g-wd-row { position: relative; }
-.g-wd-row.is-dealt::before { content: 'Dealt'; position: absolute; left: -3px; top: -8px; z-index: 2; padding: 0 5px; font: 900 0.56rem/1.55 var(--g-font-body); letter-spacing: 0.12em; text-transform: uppercase; background: var(--g-ink); color: var(--g-bg); border-radius: 3px; transform: rotate(-3deg); pointer-events: none; }
+.g-wd-row.is-dealt::before { content: 'Dealt'; position: absolute; left: -3px; top: -12px; z-index: 2; padding: 0 5px; font: 900 0.52rem/1.35 var(--g-font-body); letter-spacing: 0.12em; text-transform: uppercase; background: var(--g-ink); color: var(--g-bg); border-radius: 3px; transform: rotate(-3deg); pointer-events: none; }
 .g-wd-area.is-scroll { align-items: flex-start; overflow-y: auto; overscroll-behavior: contain; }
 .g-wd-area.is-scroll > * { margin-block: auto; }
 
 /* pills + stamps */
 .g-wd-tags { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
-.g-wd-pill { display: inline-flex; align-items: center; min-height: 24px; padding: 0 9px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); font: 900 0.68rem/1 var(--g-font-body); letter-spacing: 0.1em; text-transform: uppercase; }
+.g-wd-pill { max-width: 100%; box-sizing: border-box; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-flex; align-items: center; min-height: 24px; padding: 0 9px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); font: 900 0.68rem/1 var(--g-font-body); letter-spacing: 0.1em; text-transform: uppercase; }
 .g-wd-pill.is-hl { background: var(--g-hl); color: var(--g-on-ink); }
 .g-wd-stamps { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 10px; }
 .g-wd-st { display: inline-block; padding: 3px 9px; border: 2.5px solid currentColor; border-radius: 6px; background: var(--g-card); font-family: var(--g-font-display); font-weight: 900; font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; transform: rotate(var(--r, -4deg)); animation: g-wd-stampin 0.34s cubic-bezier(0.2, 1.4, 0.4, 1) both; animation-delay: calc(var(--n, 0) * 140ms + 250ms); }
@@ -127,7 +127,9 @@ export const CSS = `
 .g-wd-wait { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; padding: 8px; }
 .g-wd-wait p { margin: 0; font-weight: 800; }
 .g-wd-score { display: flex; flex-direction: column; align-items: center; gap: 4px; }
-.g-wd-score-n { display: flex; align-items: baseline; gap: 10px; font-family: var(--g-font-display); font-weight: 900; font-size: 1.7rem; line-height: 1; }
+.g-wd-score-n { display: flex; align-items: baseline; gap: 8px; font-family: var(--g-font-display); font-weight: 900; font-size: 1.3rem; line-height: 1; }
+.g-wd-score-n small { font-family: var(--g-font-body); font-weight: 800; font-size: 0.78rem; }
+.g-wd-score-n .g-wd-dash { color: var(--g-muted); }
 .g-wd-score-n .p-a { color: var(--p-a-text); } .g-wd-score-n .p-b { color: var(--p-b-text); }
 .g-wd-score small { font-family: var(--g-font-body); font-weight: 800; font-size: 0.82rem; color: var(--g-muted); }
 .g-wd-dealtline { margin: 0; font-weight: 800; font-size: 0.82rem; color: var(--g-muted); }
@@ -152,6 +154,30 @@ export const CSS = `
 .g-wd-hold-layer .g-wd { display: flex; flex-direction: column; flex: 0 1 auto; justify-content: center; align-items: center; }
 .g-wd-hold-layer .g-wd-board { --t: clamp(26px, min(54px, calc((100vw - 60px) / 5), calc((100vh - 330px) / 6)), 54px); }
 .g-wd-hold-layer .g-wd-say { min-height: 2.7em; }
+
+/* short phones (portrait): squeeze the pick screen and the board so the keyboard stays on screen */
+@media (max-height: 700px) and (orientation: portrait) {
+  .g-wd-area { min-height: 110px; }
+  .g-wd-pick { gap: 6px; }
+  .g-wd-cap { display: none; }
+  .g-wd-pick .g-wd-board { --t: min(54px, calc((100cqw - 4 * var(--gap)) / 5)); }
+  .g-wd-head { gap: 3px; }
+  .g-wd-say { font-size: 0.92rem; line-height: 1.25; }
+  .g-wd-actions { gap: 8px; }
+  .g-wd-kb { gap: 5px; }
+}
+@media (max-height: 620px) and (orientation: portrait) {
+  .g-wd-area { min-height: 90px; }
+  .g-wd-pick { gap: 4px; }
+  .g-wd-pick .g-wd-board { --t: min(44px, calc((100cqw - 4 * var(--gap)) / 5)); }
+  .g-wd-kb { gap: 4px; }
+  .g-wd-kr { gap: 4px; }
+  .g-wd-score-n { font-size: 1.05rem; }
+  .g-wd-score { flex-direction: row; flex-wrap: wrap; justify-content: center; gap: 2px 10px; }
+  .g-wd-dealtline { display: none; }
+  .g-wd-chips { gap: 6px; }
+  .g-wd .g-wd-chip { font-size: 0.74rem; padding: 0 10px; }
+}
 
 /* landscape phones: board on the left, words and keys on the right, nothing below the fold */
 @media (orientation: landscape) and (max-height: 520px) {

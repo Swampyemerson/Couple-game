@@ -25,7 +25,8 @@ const RANK = { x: 1, y: 2, g: 3 };
 const WORDS_FOR = { g: 'right spot', y: 'in the word', x: 'not in it' };
 const KEY_CLASS = { g: 'm-g', y: 'is-hl', x: 'is-out' }; // kit .g-key states
 const CRACK = ['', 'Witchcraft.', 'Mind-reader.', 'Clean.', 'Solid.', 'Phew.', 'By a whisker.'];
-const POOL_NAME = { fair: 'Everyday words', love: 'Love letters', any: 'Any word' };
+const POOL_NAME = { fair: 'Everyday', love: 'Love letters', any: 'Any word' };
+const WAIT_MS = 20000; // how long the waiting phone waits before offering to set the rules itself
 const BACK_ICON = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M8.5 5H20a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H8.5L3 12z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/><path d="M11 9l6 6M17 9l-6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>';
 
 
@@ -185,7 +186,8 @@ registerGame({
     const pillsHTML = (s) => {
       const o = optsOf(s);
       if (!o) return '';
-      return `<div class="g-wd-tags"><span class="g-wd-pill is-hl">${POOL_NAME[o.pool]}</span>${o.hard ? '<span class="g-wd-pill">Hard</span>' : ''}${o.dealt ? '<span class="g-wd-pill">Dealt opener</span>' : ''}${o.bo3 ? `<span class="g-wd-pill">Best of 3</span>` : ''}</div>`;
+      const parts = [POOL_NAME[o.pool], o.hard ? 'Hard' : '', o.dealt ? 'Dealt' : '', o.bo3 ? 'Best of 3' : ''].filter(Boolean);
+      return `<div class="g-wd-tags"><span class="g-wd-pill is-hl">${parts.join(' · ')}</span></div>`;
     };
     function roundLine(s) {
       const n = s.round;
@@ -195,7 +197,7 @@ registerGame({
       return `Round ${n}. ${nm(a < b ? 'a' : 'b')} needs this one.`;
     }
     const scoreboardHTML = (s) => (s.v === 2 && s.opts.bo3 && s.rounds.length && !s.fin
-      ? `<div class="g-wd-score"><div class="g-wd-score-n"><span class="p-a">${s.wins.a}</span><small>${nm('a')} · ${nm('b')}</small><span class="p-b">${s.wins.b}</span></div><small>${roundLine(s)}</small></div>` : '');
+      ? `<div class="g-wd-score"><div class="g-wd-score-n"><small class="p-a">${nm('a')}</small><span class="p-a">${s.wins.a}</span><span class="g-wd-dash">–</span><span class="p-b">${s.wins.b}</span><small class="p-b">${nm('b')}</small></div><small>${roundLine(s)}</small></div>` : '');
     const ledgerText = () => ledgerOf(data(), (w) => api.name(w)).text;
 
     // keyboard: built once, then only classes and disabled flags change (keeps taps from dropping)
@@ -295,6 +297,12 @@ registerGame({
       const p = v ? other(v) : null;
       const o = optsOf(s);
       const roundTag = o && o.bo3 && !c.over ? `Round ${s.round}. ` : '';
+      // the last flip hasn't finished: don't announce the result (or switch to the recap) yet
+      const holding = (m === 'end' || m === 'recap') && !!(flip && Date.now() < flip.until);
+      if (m === 'waitrules') { if (!waitSince) { waitSince = Date.now(); later(() => { areaSig = ''; render(); }, WAIT_MS + 50); } } else waitSince = 0;
+      const waitReady = m === 'waitrules' && Date.now() - waitSince >= WAIT_MS;
+      const wantStatus = m === 'waitrules' ? `Waiting for ${api.name(c.first)} to set the rules…` : null;
+      if (wantStatus !== lastStatus) { lastStatus = wantStatus; api.setStatus(wantStatus); }
 
       // instruction line + strip
       if (m === 'blank') say('');
@@ -308,7 +316,8 @@ registerGame({
         else say(solvedBy(s, v)
           ? `Cracked it in ${s.guesses[v].length}! ${CRACK[Math.min(MAX, s.guesses[v].length)]} Now ${who(p)} is on your word…`
           : `Out of guesses. It was <b>${up(target(s, v))}</b>. ${who(p)} is still going…`);
-      } else if (m === 'recap') {
+      } else if (holding) say('Revealing…');
+      else if (m === 'recap') {
         const rv0 = roundView(s, s.rounds.length - 1);
         const rr = roundResult(rv0.secret, rv0.guesses);
         say(rr.winner ? `${who(rr.winner)} takes round ${s.rounds.length}. ${esc(rr.sub)}` : `Round ${s.rounds.length} is a draw. ${esc(rr.sub)}`);
@@ -318,7 +327,7 @@ registerGame({
       // main area
       if (m === 'pick' || m === 'picked') rerollChips(s, false);
       const stamps = m === 'end' ? stampsFor(s, data(), c.matchId, (w) => api.name(w)) : [];
-      const sig = JSON.stringify([m, v, s.rounds ? s.rounds.length : 0, s.guesses.a.length, s.guesses.b.length, !!s.secret.a, !!s.secret.b, flip && [flip.who, flip.row, flipping(flip.who)], win && [win.who, win.row], c.canMove, s.round || 0, s.v || 0, rulesDraft, chips, m === 'end' ? [ledgerText(), stamps.map((x) => x.label)] : 0]);
+      const sig = JSON.stringify([m, holding, waitReady, v, s.rounds ? s.rounds.length : 0, s.guesses.a.length, s.guesses.b.length, !!s.secret.a, !!s.secret.b, flip && [flip.who, flip.row, flipping(flip.who)], win && [win.who, win.row], c.canMove, s.round || 0, s.v || 0, rulesDraft, chips, m === 'end' ? [ledgerText(), stamps.map((x) => x.label)] : 0]);
       if (sig !== areaSig) {
         areaSig = sig;
         area.classList.toggle('is-scroll', m === 'rules' || m === 'waitrules' || m === 'pick' || m === 'picked');
@@ -327,7 +336,7 @@ registerGame({
           if (!rulesDraft) rulesDraft = setupFromString(data().last_setup) || { pool: DEFAULT_SETUP.pool, hard: false, dealt: false, bo3: false };
           area.innerHTML = rulesCardHTML();
         } else if (m === 'waitrules') {
-          area.innerHTML = `<div class="g-wd-wait"><span class="g-wd-stamp ${pcls(c.first)}">Rules</span><p>${who(c.first)} is choosing the house rules.</p></div>`;
+          area.innerHTML = `<div class="g-wd-wait"><span class="g-wd-stamp ${pcls(c.first)}">Rules</span><p>${who(c.first)} is choosing the house rules.</p>${waitReady ? '<button class="gm-btn gm-btn-ghost" data-act="selfrules">Set the rules yourself</button>' : ''}</div>`;
         } else if (m === 'pick') {
           const dl = dealtOf(s);
           area.innerHTML = `<div class="g-wd-pick">${pillsHTML(s)}${scoreboardHTML(s)}${dl ? `<p class="g-wd-dealtline">Row 1 is dealt to you both: <b>${up(dl)}</b></p>` : ''}<p class="g-wd-cap">Your secret word</p><div class="g-wd-board">${rowHTML(draft, null, { cls: ' is-draft', label: 'Your secret word' })}</div>${chips.length ? `<div class="g-wd-chips" role="group" aria-label="Suggestions">${chips.map((w) => `<button class="g-wd-chip" data-chip="${w}">${up(w)}</button>`).join('')}</div>` : ''}</div>`;
@@ -348,14 +357,15 @@ registerGame({
 
       // actions
       const stampSig = m === 'end' ? [ledgerText(), stamps.map((x) => x.label)] : 0;
-      const aSig = JSON.stringify([m, c.canMove, stampSig, s.v || 0, s.round || 0]);
+      const aSig = JSON.stringify([m, holding, c.canMove, stampSig, s.v || 0, s.round || 0]);
       if (aSig !== actSig) {
         actSig = aSig;
         if (m === 'rules') actions.innerHTML = `<button class="gm-btn gm-btn-big" data-act="play"${c.canMove ? '' : ' disabled'}>Play</button>`;
         else if (m === 'pick') {
           const dis = c.canMove ? '' : ' disabled';
           actions.innerHTML = `<button class="gm-btn gm-btn-ghost" data-act="surprise"${dis}>Surprise me</button><button class="gm-btn" data-act="lock"${dis}>Lock it in</button>`;
-        } else if (m === 'recap') actions.innerHTML = `<div class="g-wd-endx"><p class="g-wd-ledger">${esc(roundLine(s).replace(/<[^>]+>/g, ''))}</p></div><button class="gm-btn gm-btn-big" data-act="nextround">Round ${s.round}</button>`;
+        } else if (holding) actions.innerHTML = '';
+        else if (m === 'recap') actions.innerHTML = `<div class="g-wd-endx"><p class="g-wd-ledger">${esc(roundLine(s).replace(/<[^>]+>/g, ''))}</p></div><button class="gm-btn gm-btn-big" data-act="nextround">Round ${s.round}</button>`;
         else if (m === 'end') actions.innerHTML = `${endExtras(s, stamps)}<button class="gm-btn" data-g="rematch">Play again</button><button class="gm-btn gm-btn-ghost" data-g="close">Back to games</button>`;
         else actions.innerHTML = '';
       }
@@ -463,6 +473,7 @@ registerGame({
       if (!c || !c.canMove || modeOf(c) !== 'rules' || !rulesDraft) return;
       const r = api.move({ setup: { v: 2, ...rulesDraft } });
       if (!r.ok) { api.toast(r.error); return; }
+      sentSetup = { ...rulesDraft };
       setData({ last_setup: setupToString(rulesDraft) });
       api.sfx('place');
     }
@@ -512,6 +523,7 @@ registerGame({
       press(b.dataset.k);
     });
     area.addEventListener('click', (e) => {
+      if (e.target.closest('[data-act="selfrules"]')) { selfRules = true; areaSig = ''; actSig = ''; render(); return; }
       const rb = e.target.closest('button[data-rule]');
       if (rb && rulesDraft) {
         const [k, val] = rb.dataset.rule.split(':');
@@ -599,6 +611,11 @@ registerGame({
         const s = c.state;
         const dk = `${c.viewer}|${c.curtain}`;
         if (dk !== draftKey) { draftKey = dk; draft = ''; flip = null; win = null; }
+        // If two phones set rules at once, replay order decides (seat a first). Tell the loser.
+        if (sentSetup && s.v === 2 && c.viewer && c.mode === 'online') {
+          const same = Object.keys(sentSetup).every((k) => s.opts[k] === sentSetup[k]);
+          if (!same) { sentSetup = null; api.toast(`${api.name(other(c.me || c.viewer))} set the rules.`); }
+        }
         // Which guesses are new since the last update? (core's c.last follows replay order, which puts
         // seat a's moves first, so it can't be trusted to say who just moved.)
         const grew = [];

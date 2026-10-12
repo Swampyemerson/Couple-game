@@ -380,7 +380,7 @@ async function onlineDealtHard(h, scheme) {
   assert(e.state.v === 2 && eq(e.state.opts, { pool: 'fair', hard: true, dealt: true, bo3: false }) && /^[a-z]{5}$/.test(e.state.opener), `setup move applied: ${JSON.stringify(e.state.opts)}, opener ${e.state.opener}`);
   const lastSetup = (await dataOf(F)).last_setup;
   assert(lastSetup === 'fair:1:1:0', `the rules card remembers its last choice (${lastSetup})`);
-  for (const pg of [a, b]) assert(await pg.isVisible('.g-wd-key[data-k="q"]') && /Everyday words/i.test(await pg.textContent('.g-wd-tags')), 'both players get the keyboard and the pool stamp');
+  for (const pg of [a, b]) assert(await pg.isVisible('.g-wd-key[data-k="q"]') && /Everyday/i.test(await pg.textContent('.g-wd-tags')), 'both players get the keyboard and the pool stamp');
   assert(new RegExp(e.state.opener, 'i').test(await F.textContent('.g-wd-dealtline')), 'the pick screen shows the dealt opener');
   assert((await smallButtons(F)).length === 0, `the pick screen's buttons are all 44 px+ (${await smallButtons(F)})`);
   await snap(F, scheme, 'wd2-2-pick');
@@ -496,6 +496,81 @@ async function awayPhone(h, scheme) {
   await h.closeGame(b2);
 }
 
+// compact phones: everything on the pick and solve screens fits, with every toggle on
+async function compactFits(h, scheme) {
+  const R = await imp('js/games/wordduel/rules.js');
+  const { a, b } = h;
+  const id = await newOnline(h, a);
+  await h.openMatch(b, id);
+  await h.settle();
+  const first = (await h.engine(a, id)).first;
+  const P = { a, b };
+  await setRules(P[first], { pool: 'love', hard: true, dealt: true, bo3: true });
+  await P[first].tap('[data-act="play"]');
+  await h.settle();
+  const op = (await h.engine(a, id)).state.opener;
+  const love = R.lists().love.filter((w) => w !== op);
+  const fits = async (pg, mode, sizes) => {
+    for (const [w, hh] of sizes) {
+      await pg.setViewportSize({ width: w, height: hh });
+      await pg.waitForTimeout(250);
+      const g = await pg.evaluate(() => {
+        const q = (s) => document.querySelector(s);
+        const r = (el) => { if (!el) return null; const b2 = el.getBoundingClientRect(); return { t: Math.round(b2.top), b: Math.round(b2.bottom) }; };
+        const area = q('.g-wd-area');
+        const inside = (el) => { const x = r(el); const ar = r(area); return !x || (x.t >= ar.t - 1 && x.b <= ar.b + 1); };
+        const sc = [document.scrollingElement, q('#game-root'), q('.gm'), q('.g-wd')].filter(Boolean).map((e) => e.scrollHeight - e.clientHeight);
+        return { vh: innerHeight, kb: r(q('.g-wd-kb')), enter: r(q('.g-wd-key[data-k="enter"]')), row: inside(q('.g-wd-row.is-draft')), chips: [...document.querySelectorAll('.g-wd-chip')].every(inside), areaScroll: area.scrollHeight - area.clientHeight, scroll: Math.max(...sc) };
+      });
+      assert(g.kb && g.kb.b <= g.vh && g.enter.b <= g.vh && g.row && g.chips && g.areaScroll <= 1 && g.scroll <= 1, `${mode} at ${w}x${hh} with love + hard + dealt + bo3 fits (${JSON.stringify(g)})`);
+    }
+    await pg.setViewportSize({ width: 390, height: 664 });
+  };
+  const SZ = [[320, 568], [360, 640], [390, 664]];
+  await fits(a, 'pick (round 1)', SZ);
+  // round 1: both crack in two (opener + exact word), so round 2 opens with a scoreboard
+  const wa = love[0]; const wb = love[1];
+  await typeWord(a, wa, 120); await typeWord(b, wb, 120); await h.settle();
+  await fits(a, 'solve', [[320, 568]]);
+  await typeWord(a, wb, 150); await typeWord(b, wa, 150);
+  await h.settle(); await a.waitForTimeout(2000);
+  await a.tap('[data-act="nextround"]'); await b.tap('[data-act="nextround"]');
+  await fits(a, 'pick (round 2, scoreboard)', SZ);
+  await h.closeGame(a); await h.closeGame(b);
+}
+
+// the waiting phone can set the rules itself after a while; if both set at once, replay order decides
+async function waitFallback(h, scheme) {
+  const { a, b } = h;
+  const id = await newOnline(h, a);
+  await h.openMatch(b, id);
+  await h.settle();
+  const first = (await h.engine(a, id)).first;
+  const F = first === 'a' ? a : b;
+  const S = first === 'a' ? b : a;
+  assert(!(await S.isVisible('[data-act="selfrules"]')), 'the waiting phone shows no fallback button at first');
+  assert(/Waiting for .* to set the rules/.test(await S.textContent('.gm-status')) && !/Your turn/.test(await S.textContent('.gm-status')), `the status line says it is waiting (${await S.textContent('.gm-status')})`);
+  await S.waitForSelector('[data-act="selfrules"]', { timeout: 25000 });
+  assert(await S.evaluate(() => document.querySelector('[data-act="selfrules"]').getBoundingClientRect().height >= 44), 'after ~20 s: "Set the rules yourself" appears (44 px+)');
+  await S.tap('[data-act="selfrules"]');
+  await setRules(S, { pool: 'fair', hard: true, dealt: false, bo3: false });
+  await setRules(F, { pool: 'fair', hard: false, dealt: false, bo3: false });
+  await Promise.all([F.tap('[data-act="play"]'), S.tap('[data-act="play"]')]);
+  await h.settle(); await h.settle();
+  const ea = await h.engine(a, id); const eb = await h.engine(b, id);
+  assert(eq(ea.state, eb.state) && ea.state.v === 2, 'two simultaneous rules moves converge on one set of rules');
+  const winnerIsS = ea.state.opts.hard === true;
+  const seatA = a === S ? 'S' : 'F';
+  assert(winnerIsS === (seatA === 'S'), `the rules from seat a's phone win (${JSON.stringify(ea.state.opts)})`);
+  const loser = winnerIsS ? F : S;
+  const winnerName = winnerIsS ? (S === a ? 'Emerson' : 'Sydney') : (F === a ? 'Emerson' : 'Sydney');
+  assert(new RegExp(`${winnerName} set the rules`).test(await toastText(loser)), 'the phone whose rules lost is told');
+  for (const pg of [a, b]) assert(await pg.isVisible('.g-wd-key[data-k="q"]') && !(await pg.isVisible('[data-act="selfrules"]')), 'both phones carry on to picking; the fallback button is gone');
+  await typeWord(a, 'plumb', 120); await typeWord(b, 'grape', 120); await h.settle();
+  assert((await h.engine(a, id)).state.secret.a === 'plumb' && (await h.engine(a, id)).state.secret.b === 'grape', 'nobody is stuck: both secrets go in');
+  await h.closeGame(a); await h.closeGame(b);
+}
+
 // 2. online best of 3, to a set result
 async function onlineBo3(h, scheme) {
   const { a, b } = h;
@@ -511,7 +586,9 @@ async function onlineBo3(h, scheme) {
   const both = async (sa, sb) => { await typeWord(a, sa, 120); await typeWord(b, sb, 120); await h.settle(); };
   await both('abbey', 'crane');
   await typeWord(b, 'abbey', 200);
-  for (const g of MISSES) await typeWord(a, g, 120);
+  for (const g of MISSES.slice(0, 5)) await typeWord(a, g, 120);
+  await a.keyboard.type(MISSES[5]); await a.keyboard.press('Enter'); await a.waitForTimeout(250);
+  assert(/Revealing/.test(await sayOf(a)) && !(await a.isVisible('.g-wd-actions [data-act="nextround"]')), `the recap waits for the final flip (${await sayOf(a)})`);
   await h.settle(); await a.waitForTimeout(1800);
   let s = await ex();
   assert(s.rounds && s.rounds.length === 1 && s.rounds[0].w === 'b' && s.round === 2, `bo3: round 1 archived, b leads (${JSON.stringify(s)})`);
@@ -531,7 +608,9 @@ async function onlineBo3(h, scheme) {
   assert(/Winner takes it all/.test(await a.textContent('.g-wd-score')), 'round 3 at 1-1: "Winner takes it all"');
   await both('heart', 'river');
   await typeWord(a, 'river', 150);
-  await typeWord(b, 'crane', 120); await typeWord(b, 'heart', 150);
+  await typeWord(b, 'crane', 120);
+  await b.keyboard.type('heart'); await b.keyboard.press('Enter'); await b.waitForTimeout(250);
+  assert(/Revealing/.test(await sayOf(b)) && !(await b.isVisible('.g-wd-stamps')) && !(await b.isVisible('.g-wd-actions [data-g="rematch"]')), `the result line and stamps wait for the final flip (${await sayOf(b)})`);
   await h.settle(); await a.waitForTimeout(2600);
   s = await ex();
   const eng = await h.engine(a, id);
@@ -605,7 +684,9 @@ async function localFlows(h, scheme) {
   assert(/Sydney needs this one/.test(await a.textContent('.g-wd-score')), 'one phone: "Round 2. Sydney needs this one."');
   await typeWord(a, 'heart', 150);
   await reveal(a);
-  assert(!(await a.isVisible('.g-wd-actions [data-act="nextround"]')) && await a.isVisible('.g-wd-key[data-k="q"]'), 'the second picker goes straight to picking');
+  assert(await a.isVisible('.g-wd-actions [data-act="nextround"]') && /takes round 1/.test(await sayOf(a)), 'the second player sees the round recap once too (recap is per viewer)');
+  await a.tap('[data-act="nextround"]');
+  assert(await a.isVisible('.g-wd-key[data-k="q"]') && !(await a.isVisible('.g-wd-actions [data-act="nextround"]')), 'then goes on to picking');
   const E3 = await h.engine(a, id);
   assert(E3.state.rounds.length === 1 && E3.state.round === 2 && E3.state.secret.a === 'heart', 'one phone: round 2 is under way');
   await h.closeGame(a);
@@ -622,7 +703,14 @@ async function landscape(h, scheme) {
   await h.settle();
   await a.setViewportSize({ width: 390, height: 664 });
   await typeWord(a, 'plumb', 120); await typeWord(b, 'grape', 120); await h.settle();
-  await typeWord(a, 'crane', 1400);
+  const heatOf1 = () => a.evaluate(() => document.querySelector('.g-wd-strip .g-wd-hp').innerText.replace(/\s+/g, ' ').trim());
+  const h0 = await heatOf1();
+  await a.keyboard.type('crane'); await a.keyboard.press('Enter');
+  await a.waitForTimeout(200);
+  const hMid = await heatOf1();
+  await a.waitForTimeout(1400);
+  const h1 = await heatOf1();
+  assert(hMid === h0 && h1 !== h0, `B4: the heat meter waits for the flip (${h0} -> ${hMid} mid-flip -> ${h1})`);
   await a.keyboard.type('sle');
   for (const [w, hh] of [[667, 375], [844, 390], [390, 844], [360, 640]]) {
     await a.setViewportSize({ width: w, height: hh });
@@ -693,6 +781,8 @@ async function uiTests() {
       const want = (n) => !only.length || only.includes(n);
       if (want('online')) await onlineDealtHard(clean, scheme);
       if (want('away')) await awayPhone(clean, scheme);
+      if (light && want('compact')) await compactFits(clean, scheme);
+      if (light && want('wait')) await waitFallback(clean, scheme);
       if (light && want('bo3')) await onlineBo3(clean, scheme);
       if (want('local')) await localFlows(clean, scheme);
       if (light && want('land')) await landscape(clean, scheme);
