@@ -13,6 +13,7 @@ How the work ran:
 - **Spec and build:** a spec, then three Sonnet builders, one per game.
 - **Verification:** three independent Sonnet verifiers checked the builds, and the original builders then fixed what the verifiers found.
 - **Balance:** a Sonnet agent ran the bot self-play.
+- **Round 2,** at the coordinator's request: a Fable agent played all three builds and proposed the highest-impact missing additions. The builders added the best three per game, and a final independent Sonnet verifier checked everything on iPhone (real taps) and laptop, light and dark.
 
 ## User must-have: Ultimate Tic-Tac-Toe balance
 
@@ -72,6 +73,11 @@ The setup-move pattern is necessary because `core.js` always creates matches wit
 - **Last Light:** when only one or two big lines can still win, the plate names them ("Only the left column can still win it") and they are traced faintly on the board. When boards will decide, the plate says so before the end.
 - **Rivalry, streaks and records** live in the shared per-game data. A strip on the empty board shows the current state, for example "Sydney is on a 3-game streak · break it?". Each finished game gets a moment line drawn from a seeded pool of 65 lines across 13 situations, so both phones show the same one. Situations include a comeback, a photo finish, a won tiebreak, a new record and a broken streak.
 - Each match is counted exactly once, by the phone or phones that saw it end. The write is idempotent through `last_id`.
+- **Round 2:**
+  - A **match-point plate**, "Sydney is one board from the win", on both phones.
+  - A **"Denied!"** stamp when someone wins a board their partner needed for a line, with its own `deny` moment lines.
+  - A **series ledger** under the finale moment on both phones, e.g. "Series: Emerson 5 · Sydney 4 · Sydney on 2".
+  - In Wildcards, a "· Sydney still holds a wildcard" reminder on the plate.
 
 **Fixed**
 - Emerson's X marks drew in pink inside any board highlighted for Sydney. This was a CSS specificity clash, and the colour rules are now scoped to the mark itself.
@@ -92,6 +98,10 @@ The setup-move pattern is necessary because `core.js` always creates matches wit
 - A **"Blocked!"** stamp appears when a drop stops an immediate four.
 - **Moment lines** come from a pool of 30+, including near-miss lines such as "So close".
 - **Streaks and records:** fastest win, per-mode wins, draws counted, comebacks and a rivalry strip. Each match is counted exactly once. A PopOut "gift" win, where the loser popped four for the winner, doesn't count as a record.
+- **Round 2:**
+  - A **"Trap!"** stamp when a drop leaves two winning threats at once, with `trap` moment lines and trap counters in the strip.
+  - A **series ledger** under the finale moment on both phones.
+  - **Blockers mode:** three seeded grey stones sit on the floor of three non-centre columns. They fill a hole and never count toward a four.
 
 **Fixed**
 - Keyboard control now follows the focused column, and Tab previews the disc.
@@ -113,6 +123,10 @@ The setup-move pattern is necessary because `core.js` always creates matches wit
 - **Chain meter:** each box in a turn plays a rising pentatonic note, and a "Chain of N!" stamp appears from 3 boxes up. The partner sees it replay.
 - A **sacrifice callout**, "X gives up 2 to keep control", fires only in the unambiguous case.
 - **Records, streaks and moment lines**, with 51 lines in total. The longest-chain record waits for a previous record before calling itself "new".
+- **Round 2:**
+  - **Squeeze plates:** "Last safe line!", "No safe lines left — Emerson has to give" and "3 boxes on offer".
+  - The finale moment is now a yellow stamp with a **series ledger** under it.
+  - **Sweetheart heart race:** a strip line such as "Heart race: Sydney 3, Emerson 1", and a `heartSwing` moment when the heart decided a close game.
 
 **Fixed**
 - In landscape the board was clipped and the pill was off-screen. The board is now sized in JS and the layout is side by side with no scroll. Callout stamps sit in the side column, so they never cover the boxes.
@@ -143,5 +157,5 @@ The setup-move pattern is necessary because `core.js` always creates matches wit
 ## README games-table lines
 The board games share one row today: "Four in a Row · Dots & Boxes · Ultimate Tic-Tac-Toe | Take turns, versus | Either". If the coordinator wants per-game lines:
 - **Ultimate Tic-Tac-Toe**: nine boards; every move picks where your partner plays next. It is balanced with a tiebreak for the second player, and has Hot Boards and Wildcards modes.
-- **Four in a Row**: drop discs and line up four. Classic, Ghost Column and PopOut.
+- **Four in a Row**: drop discs and line up four. Classic, Ghost Column, PopOut and Blockers.
 - **Dots & Boxes**: close boxes and chain them. Quick, Classic and Big boards, plus Sweetheart (a heart box with a question for two) and Scramble.
