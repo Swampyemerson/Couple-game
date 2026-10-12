@@ -155,7 +155,24 @@ New suites:
 `live.test.js` gained a `GAME=hockey|quickdraw` filter. Only the cycles parts of `computer.test.js` changed; its runner gained one `cyx` group.
 
 ## Known issues
-KNOWN_ISSUES
+All the issues below are cosmetic or minor. None blocks play.
+
+- **Air Hockey.**
+  - The table keeps its fixed physics aspect. Tall phones fill the extra space with the scoreboard bands instead.
+  - On one phone, a record-breaking goal at match point stacks RALLY RECORD, GOAL and MATCH POINT, and they can just touch.
+  - The faded "Drag your mallet" hint can sit over the parked puck before the first touch.
+  - `api.finish` passes `score: {a, b}`, but core currently stores `null` (harmless).
+- **Quick Draw.**
+  - The landscape 568×320 scene is small (about 70 px).
+  - The handicap is not covered by the packet-loss test run, though its offsets travel in the reliable round message.
+  - When the guest fires first, the host now waits 250 ms for its own tap before deciding.
+  - Sudden death lifts the winner's tally to one above the loser's (e.g. 9–8).
+- **Light Cycles.**
+  - A grid change (rotating a phone) takes effect from the next round. The board redraws rotated at once.
+  - An upright phone paired with a laptop plays the portrait grid.
+  - On the guest's phone, its own predicted head still makes a small blended correction (about 0.4 cells) at 150 ms latency.
+  - "Pick an arena" appears in both the status line and the card heading.
+- **Not tested:** real iOS hardware and 120 Hz touch panels. Everything ran in Playwright with the iPhone 13 profile and synthetic touches.
 
 ## README games-table lines (for the coordinator)
 - **Air Hockey:** Fast hands, flat puck. Pick a table (Classic, Pillar, Twin Pucks, Shrinking Goals, Power Puck, Quick). Rallies, post shots, match-point slow-mo and records.
