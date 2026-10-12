@@ -31,6 +31,7 @@ Records live in the shared per-game data (`api.data()`) and are written only by 
   - at 6 s it shows **HOG!** and serves the puck from the centre to the other player;
   - a sandwiched puck resets after 0.5 s.
 - **There was no range of shot power.** A light flick already maxed out the puck. Now hit speed follows the mallet's real speed, measured over real frame time with a 40 ms low-pass: a push is a soft pass and a real flick is a slap shot.
+- **Skewed guest shots** (found in the final regression): the host kept extrapolating the guest's mallet with a stale sideways speed after the finger stopped, so the guest's first straight shot after a sideways move went off-angle into the wall. A repeated sample now zeroes the speed, and after 120 ms of silence the speed decays quickly (`REMOTE_STALE`).
 - **Uneven hit power** (found by the verifier): frame jitter caused double hits, and spiky host-side sampling of the guest's mallet gave guest hits random power. Fixed with mallet extrapolation and blending (`REMOTE_LEAD`, `REMOTE_BLEND`).
 
 ### New
@@ -69,6 +70,7 @@ Records live in the shared per-game data (`api.data()`) and are written only by 
   - "Too slow" showed when nobody fired;
   - the tally order was opposite to the chips;
   - the tally appeared twice, with a dead band above the scene.
+- **Double-foul window at high latency** (found in the final regression): clock-sync error at rtt around 400 ms could exceed the fixed 30 ms tie window. The window is now 30 ms plus 0.15 × rtt, capped at an extra 60 ms; it stays 30 ms on one phone.
 - **Slow verdicts.** The shooter waited about 4 s for an idle partner. The verdict now comes once the partner can no longer win, in under 1.7 s.
 - **Anticipation won.** A reaction under 100 ms is now a foul: **JUMPED THE GUN**.
 - **The timing was learnable.** The uniform 1.5–4.5 s delay is now a mixture: mostly short, some medium, an occasional long one up to 6 s. The tick is irregular and fades, and the screen darkens slowly while you wait.
