@@ -679,7 +679,7 @@ registerGame({
     .g-tower .gt-load { position: absolute; inset: 0; display: grid; place-items: center; background: var(--g-bg); color: var(--g-muted); font-weight: 800; letter-spacing: 0.02em; }
     .g-tower .gt-view:not([data-phase="load"]) .gt-load { display: none; }
     .g-tower .gt-note { position: absolute; left: 12px; right: 12px; bottom: 70px; margin: 0; text-align: center; font-size: 0.8rem; font-weight: 700; color: var(--g-muted); pointer-events: none; }
-    .g-tower .gt-view.has-pick .gt-note { bottom: auto; top: 112px; }
+    .g-tower .gt-view.has-pick .gt-note { bottom: auto; top: var(--gt-hud-b, 112px); } /* measureHud() sets --gt-hud-b: just under the HUD, whatever its height */
     /* full screen: keep the HUD clear of the notch and the home bar */
     .gm.is-immersive .g-tower .gt-hud { top: calc(10px + env(safe-area-inset-top, 0px)); left: calc(56px + env(safe-area-inset-left, 0px)); right: calc(56px + env(safe-area-inset-right, 0px)); }
     .gm.is-immersive .g-tower .gt-turn { bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
@@ -691,8 +691,11 @@ registerGame({
       .g-tower .gt-turn { left: auto; right: calc(14px + env(safe-area-inset-right, 0px)); transform: none; }
       .g-tower .gt-turn.is-go { animation-name: gt-bob-r; }
       .g-tower .gt-beat.is-hand, .gm.is-immersive .g-tower .gt-beat.is-hand { left: auto; right: calc(14px + env(safe-area-inset-right, 0px)); transform: none; }
-      .g-tower .gt-calls { right: calc(50% + 40px); left: env(safe-area-inset-left, 0px); }
-      .g-tower .gt-banner { max-width: 96%; }
+      .g-tower .gt-calls { right: calc(50% + 40px); left: max(12px, env(safe-area-inset-left, 0px)); align-items: flex-start; gap: 32px; }
+      .g-tower .gt-banner { max-width: 100%; padding: 6px 12px; transform-origin: left center; } /* pops from the left edge, so it can't overshoot it */
+      .g-tower .gt-banner b { font-size: 0.95rem; }
+      .g-tower .gt-banner span { font-size: 0.7rem; }
+      .g-tower .gt-stamp { transform-origin: left center; font-size: 1.05rem; padding: 5px 12px; }
       .g-tower .gt-note { left: auto; right: calc(14px + env(safe-area-inset-right, 0px)); max-width: 40%; text-align: right; }
       .g-tower .gt-pick, .gm.is-immersive .g-tower .gt-pick { left: auto; right: calc(12px + env(safe-area-inset-right, 0px)); bottom: calc(66px + env(safe-area-inset-bottom, 0px)); width: min(330px, 44%); }
       .g-tower .gt-panel, .gm.is-immersive .g-tower .gt-panel { left: auto; right: calc(12px + env(safe-area-inset-right, 0px)); bottom: calc(12px + env(safe-area-inset-bottom, 0px)); width: min(330px, 42%); transform: translate(0, 26px); padding: 8px 12px 10px; gap: 5px; }
@@ -1099,7 +1102,7 @@ registerGame({
       if (vis !== !ghostEl.hidden) ghostEl.hidden = !vis;
       if (vis && (x !== ghostX || y !== ghostYpx)) { ghostX = x; ghostYpx = y; ghostEl.style.transform = `translate(${x}px, ${y}px)`; }
     }
-    function measureHud() { hudBottom = hudEl.offsetTop + hudEl.offsetHeight + 4; callsEl.style.top = `${Math.round(hudBottom + 10)}px`; }
+    function measureHud() { hudBottom = hudEl.offsetTop + hudEl.offsetHeight + 4; callsEl.style.top = `${Math.round(hudBottom + 10)}px`; wrap.style.setProperty('--gt-hud-b', `${Math.round(hudBottom + 8)}px`); }
     /** Hide the ghost ring's dashes that sit above the bottom of the HUD (they would print over the numbers). */
     function cullDeco() {
       const d = model.deco;
@@ -1269,7 +1272,7 @@ registerGame({
       }
       { // everything that happened on this drop goes into ONE banner (records first), so nothing queues up behind anything
         const parts = []; // [title, sub, is-best]
-        const newBest = bestRef >= 3 && lv === bestRef + 1 && !bestHit;
+        const newBest = bestRef >= 1 && lv >= 3 && lv > bestRef && !bestHit; // same rule as the panel flag (recordRun): the first level past the old best, from level 3 up
         if (newBest) { bestHit = true; parts.push(['New best!', `${api.name(drop.who)} set the record`, true]); }
         if (drop.bonus) parts.push(['Landmark!', drop.grew ? `Level ${lv} bonus: it grew` : `Level ${lv} · already full size`, true]);
         if (drop.gift) parts.push(['Gift!', drop.grew ? 'It grew a little' : 'Already full size', false]);

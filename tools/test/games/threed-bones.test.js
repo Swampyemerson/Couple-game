@@ -1026,11 +1026,10 @@ async function leaveAtTheEnd(h, pg) {
   const m = g.moves[g.moves.length - 1];
   await pg.waitForSelector('.g-bones[data-phase="pick"]', { timeout: 20000 });
   await pg.tap(`.gb-tray[data-who="${m.who}"].is-picking .gb-col[data-col="${m.mv.col}"]`);
-  const idBefore = await pg.evaluate(() => window.__lastMatchId);
   await pg.click('#game-root [data-g="close"]'); // the winning move, then straight back: no finale
   const rec = await dataOf(pg);
-  const mid = await pg.evaluate(() => window.__lastMatchId);
-  ok(rec.last_id === mid && rec.games_n === before + 1, `bones records: leaving right after the last move still records the match (games ${before} → ${rec.games_n}, last_id ${rec.last_id === mid ? 'ok' : rec.last_id + ' vs ' + mid + ' (before the move ' + idBefore + ', sim ' + sim.id + ', ' + JSON.stringify(rec).slice(0, 160) + ')'})`);
+  // (games_n only goes up, so it can't be put back by a late sync of the previous game; last_id can)
+  ok(rec.games_n === before + 1 && (await logOf(pg)).some((x) => x.startsWith('records:')), `bones records: leaving right after the last move still records the match (games ${before} → ${rec.games_n})`);
 }
 
 // ── a lost WebGL context that never comes back must not freeze the game ──

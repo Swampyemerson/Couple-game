@@ -720,6 +720,28 @@ async function records(h, pg) {
   await shot(pg, 'tower-panel-zero-390.png');
   await endCard(pg);
   await h.closeGame(pg);
+
+  // an old best of 1 or 2 (in modes nothing above has touched): the NEW BEST banner and the panel flag agree
+  // (the banner comes on level 3, the first one past the old best that counts)
+  for (const [old, mode] of [[1, 'duet'], [2, 'windy']]) {
+    await pg.evaluate(([m, b]) => globalThis.claude.use('db').then((db) => db.doc('gamedata/tower').update({ [`h_${m}_best`]: b })), [mode, old]);
+    await h.wait(700);
+    await hook(pg);
+    await h.newLocalGame(pg, 'tower');
+    const idb = await pg.evaluate(() => window.__lastMatchId);
+    await armed(pg);
+    await pg.tap(`.gt-chip[data-mode="${mode}"]`);
+    await waitMoves(pg, idb, 1);
+    let nb = 1;
+    for (let l = 0; l < 3; l++) await dropAt(pg, idb, ++nb, 0);
+    await pg.waitForFunction(() => { const b = document.querySelector('.gt-banner'); return b.classList.contains('show') && /New best/i.test(b.textContent); }, null, { timeout: 4000 });
+    ok(true, `tower ghost: with an old best of ${old}, reaching 3 shows the NEW BEST banner`);
+    await dropAt(pg, idb, ++nb, 'miss');
+    await pg.waitForSelector('.gt-panel.show', { timeout: 6000 });
+    ok(await pg.isVisible('.gt-pn-flag') && new RegExp(`Old best ${old}\\b`).test(await pg.textContent('.gt-pn-flag') + ' ' + await pg.textContent('.gt-pn-best')), `tower panel: with an old best of ${old} the flag agrees with the banner`);
+    await endCard(pg);
+    await h.closeGame(pg);
+  }
 }
 
 // ── polish: banners, hand-off beat, ghost ring vs HUD, picker, notch ───
@@ -960,7 +982,8 @@ let failed = false;
     if (want('tall')) await tall(h, h.a);
     if (want('modes')) { await picker(h); await classicSkip(h, h.a); await modesUi(h, h.a); }
     if (want('polish')) { // (after modes: it seeds a Duet best that the duet record check must not see)
-      await landmark(h, h.a, 844, 390, 9, 'landscape-844'); // (records only ever go up, so the lower best is seeded first)
+      await landmark(h, h.a, 667, 375, 9, 'landscape-667'); // a small phone on its side: the widest banner (“New best! · Landmark!”)
+      await landmark(h, h.a, 844, 390, 11, 'landscape-844');
       await landmark(h, h.a, 390, 844, 11, 'portrait-390');
       await notch(h, h.a);
     }

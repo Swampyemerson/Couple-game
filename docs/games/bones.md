@@ -174,12 +174,17 @@ node tools/test/games/threed.test.js                # the older bones + tower fl
 ```
 
 What the new file covers: old-log replay against a copy of the original rules; every twist (setup move accepted only first and only
-from the starter, golden ×2, mirror order, blind's thrown-away first die, oracle = classic rules, Last Word with the soft and normal
-last die); the facts and commentary lines; the records maths; layout at 320 × 568, 360 × 740, 390 × 664, 430 × 932, 844 × 390 and
-667 × 375 (everything on screen, no scrolling, columns ≥ 44 px wide); full-column tap with `page.tap`; tap-to-skip; the end card
-arriving after the final smash; the picker, the partner's waiting text, the toast, the badge, golden / blind / oracle / mirror on two
-phones; the +N / −M previews matched against the real smash; stamps for a triple, a wipe and a comeback; Last Word on screen;
-four same-phone games for streaks, form and NEW BEST; a two-phone match recorded once and never again when reopened; dark mode.
+from the starter, golden ×2, the mirror rounds and how often a twin follows a die, blind's thrown-away first die, oracle = classic
+rules, Last Word with the soft and normal last die); the facts and commentary lines; the records maths; layout at 320 × 568,
+360 × 740, 390 × 664, 430 × 932, 844 × 390 and 667 × 375 (everything on screen, no scrolling, columns ≥ 44 px wide); **band text
+fits** (every label box inside the band, nothing cut off, labels not overlapping) in the first roll, the partner waiting on a twist,
+Oracle and Blind picks and waits, Last Word and the finale with streak, form strip and stamps, at all six sizes, plus the twist
+chips' text inside their boxes; full-column tap with `page.tap`; tap-to-skip; the end card arriving after the final smash and
+about 1.7 s after the recap; the picker, the partner's waiting text, the toast carrying the rule, the "Last time" tag, golden /
+blind / oracle / mirror on two phones; the +N / −M previews matched against the real smash; stamps for a triple, a wipe and a
+comeback, and the band text stepping aside under them; Last Word on screen ("Last die, no smash"); four same-phone games for streaks,
+form and NEW BEST; a match recorded when the last mover leaves at once; a two-phone match recorded once and never again when
+reopened; a lost WebGL context that never comes back (flat dice after about 3 s, 3D back on restore); dark mode.
 Long flows run with `reducedMotion: 'reduce'` so a whole game takes seconds. The room switches every CSS animation off in that mode
 (`animation: none !important`), so stamps are shown and taken down by script there.
 
