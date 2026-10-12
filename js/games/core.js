@@ -916,6 +916,7 @@ function openMatch(id) {
     toast, sfx, haptic, rand, randInt, rng, shuffled, tokens, audio, muted,
     three: loadThree,
     el: stage,
+    ...gameDataApi(def.id), // data() / setData(patch) / onData(fn): shared bests + records, same as live games
     /** With endDelay: 'manual', show the end card once your finale is done. */
     showEnd() { if (screen.showEnd) screen.showEnd(); },
   };
