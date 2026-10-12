@@ -62,6 +62,8 @@ export const DAILY_CAP = 5000;        // m: a Daily run that gets this far is a 
 export const HIT_STOP = 0.09;         // s the picture freezes on a crash
 export const FINALE_MS = 1700;        // ms of finale before the result card (was 2300)
 
+export const TRACK_V = 2;             // protocol / track version, sent in `start` (1 when absent: an older build). Gate new track content on M.trackV
+
 export const START_DELAY = 3500;      // ms between "start" and GO
 export const RESUME_DELAY = 3000;     // ms countdown after a pause
 

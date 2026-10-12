@@ -61,7 +61,7 @@ export function newRunner(lane = 0) {
     bufA: 0, bufT: 0,
     fin: -1, finLen: 0, done: 0,
     crashes: 0, stumbles: 0, combo: 0, comboT: 0, maxCombo: 0, passZ: -1e9, passClose: 0, closeCalls: 0, jumps: 0, rolls: 0, shields: 0, clips: 0, bonus: 0,
-    hitT: 0, hitOv: 0, hitY: 0, // what the last crash hit (telemetry)
+    inPit: 0, hitT: 0, hitOv: 0, hitY: 0, // inPit: dropped into a broken-bridge gap (falls on landing even if you never jump); hit*: what the last crash hit (telemetry)
     ignoreId: -1, ignoreT: 0,
     tandem: 0, zapT: 0, zapDir: 0, smashN: 0,
   };
@@ -212,7 +212,7 @@ export function respawn(r, track, z, lane) {
   r.vy = 0; r.grounded = 1; r.fastFall = 0; r.rollOnLand = 0; r.bufT = 0; r.zapT = 0;
   const l = lane != null ? lane : clearLane(track, r.z, r.lane);
   r.lane = l; r.laneFrom = l; r.x = r.xFrom = l * LANE_W; r.laneT = 1;
-  r.y = 0; r.sup = 0;
+  r.y = 0; r.sup = 0; r.inPit = 0;
   const g = overGap(track, r.x, r.z);
   if (g) r.z = g.z1 + 0.5;
   r.zPrev = r.z;
@@ -264,7 +264,7 @@ function collectIn(r, c, h) {
       if (it.k === I_MAGNET) r.magnetT = MAGNET_T;
       else if (it.k === I_SNEAKERS) r.sneakersT = SNEAKERS_T;
       else if (it.k === I_SHIELD) r.shield = 1;
-      ev(r, E_PICK, it.k * 100000 + key);
+      ev(r, E_PICK, it.k * 1000000 + key); // (key = chunk*1000 + slot: stays under 1e6 for 1,000 chunks)
     }
   }
 }
@@ -454,7 +454,9 @@ export function step(r, track, dry) {
     r.vy -= g * dt;
     if (r.vy < -40) r.vy = -40;
     r.y += r.vy * dt;
+    if (sup < -50 && r.y < -0.12) r.inPit = 1; // over a gap and sinking: the bridge is out
     if (r.vy <= 0 && r.y <= sup) {
+      if (r.inPit) { r.inPit = 0; crash(r, C_FALL, dry); return; } // sup snapped back to the far edge: you went in
       const impact = -r.vy;
       r.y = sup; r.vy = 0; r.grounded = 1; r.fastFall = 0; r.airT = 0;
       if (!dry) ev(r, E_LAND, impact);

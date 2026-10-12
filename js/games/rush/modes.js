@@ -334,7 +334,7 @@ export function createRules(G) {
   function onEvent(p, t, val) {
     const r = p.r;
     const v = G.view(p.w);
-    if (t === E_PICK && Math.floor(val / 100000) === I_BOX) {
+    if (t === E_PICK && Math.floor(val / 1000000) === I_BOX) {
       if (M.mode !== 'race') { if (M.mode === 'daily') { r.coins += 5; v && v.pop('+5', 'hl'); } return; }
       if (!p.weapon && p.weaponRoll <= 0) { p.weapon = rollWeapon(p); p.weaponRoll = 0.6; G.audio.play('box'); }
       else { r.coins += 5; v && v.pop('+5', 'hl'); }
@@ -387,6 +387,23 @@ export function createRules(G) {
       const rv = P(AB[wi]).revive; if (!rv) continue;
       const add = Math.min(ms, REVIVE_SLACK - (rv.slack || 0)); if (add <= 0) continue;
       rv.slack = (rv.slack || 0) + add; rv.until += add; rv.next += add;
+    }
+  }
+
+  /** Time that doesn't count: while the run is paused (a menu, the app in the background, the
+   *  partner away, the 3-2-1 after it) every timer on the shared clock waits too: revive windows
+   *  and the downed phone's own fallback, the next revive heart, a Brawl brace window and the
+   *  side-by-side clocks. Called instead of tick() with the shared-clock ms that went by. */
+  function hold(ms) {
+    if (!(ms > 0)) return;
+    for (let wi = 0; wi < 2; wi++) {
+      const p = P(AB[wi]);
+      if (p.revive) { p.revive.until += ms; p.revive.next += ms; }
+      if (p.downId && p.downAt) p.downAt += ms;
+      if (p.ddSeen) p.ddSeen += ms;
+      if (p.incoming) p.incoming.until += ms;
+      if (p.sideAt) p.sideAt += ms;
+      if (p.sideOff) p.sideOff += ms;
     }
   }
 
@@ -562,5 +579,5 @@ export function createRules(G) {
     return null;
   }
 
-  return { init, use, onLane, cheer, msg, onEvent, tick, simLost, verdict, rollWeapon, cap: BRAWL_CAP };
+  return { init, use, onLane, cheer, msg, onEvent, tick, hold, simLost, verdict, rollWeapon, cap: BRAWL_CAP };
 }

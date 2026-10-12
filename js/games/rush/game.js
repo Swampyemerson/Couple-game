@@ -2,7 +2,7 @@
 // the fixed-step loop, pause / resume protocol, partner re-mounts, finale, HUD, test hook.
 import {
   DT, LANE_W, SLIDE_TIME, STUMBLE_T, START_DELAY, RESUME_DELAY, RACE_LEN, BRAWL_CAP, MT_LEAD, CHUNK,
-  HEARTS, TEAM_HEARTS_MAX, HIT_STOP, FINALE_MS, REVIVE_WINDOW, baseSpeed,
+  HEARTS, TEAM_HEARTS_MAX, HIT_STOP, FINALE_MS, REVIVE_WINDOW, TRACK_V, baseSpeed,
 } from './tune.js';
 import { hash } from '../core.js';
 import { createTrack, trackHash, difficulty, O_MTRAIN, TUT_JUMP, TUT_ROLL } from './track.js';
@@ -117,7 +117,7 @@ export function createGame(el, api) {
     runMs: 0, steps: 0, lastNow: 0, alpha: 0,
     paused: false, reasons: new Set(), partnerPz: 0, resumeAt: 0, pauseShownAt: 0,
     result: null, endAt: 0, th: 4, goal: 100, goalIdx: 0, revives: 0, partnerFin: -1, partnerOut: -1,
-    startedWall: 0, firstRunWall: 0, epoch: 0, lastScore: 0,
+    startedWall: 0, firstRunWall: 0, epoch: 0, lastScore: 0, ruleAt: 0, day: '', trackV: 1,
   };
   if (!MODES.includes(M.lobbyMode)) M.lobbyMode = 'race';
 
@@ -166,7 +166,7 @@ export function createGame(el, api) {
       stats: { shoves: 0, slams: 0, inks: 0, hits: 0, revives: 0, dodges: 0 }, fly, hist: new Float64Array(HN * 7), histN: 0, histHead: 0,
       lastHorn: -1, outT: -1, lastGround: false, tut: 0, css: `var(--p-${w})`, hk: { gap: null, ban: 0 },
       // the partner's last in-match state, kept so a reloaded host can be handed its run back
-      snap: { ok: 0, ep: 0, z: 0, l: 0, h: 0, c: 0, rt: 0, fn: -1, th: 0, tg: 0 },
+      snap: { ok: 0, ep: 0, z: 0, l: 0, h: 0, c: 0, rt: 0, fn: -1, th: 0, tg: 0, o: 0 },
     };
   }
   const players = { a: mkPlayer('a'), b: mkPlayer('b') };
@@ -194,7 +194,7 @@ export function createGame(el, api) {
         if (!M.rejoin) M.rejoin = { sentAt: -1e9 };
       } else if (M.phase === 'finale') M.endAt = clock() + 600;
     }));
-    offs.push(link.on('start', (d) => { if (!isHost) beginMatch(d.mode, d.seed, d.at, d.len, d.cap); }));
+    offs.push(link.on('start', (d) => { if (!isHost) beginMatch(d.mode, d.seed, d.at, d.len, d.cap, d); }));
     offs.push(link.on('end', (d) => { if (!isHost && M.phase !== 'over') startFinale(d.res, d.at); }));
     offs.push(link.on('resume', (d) => { if (d && d.at > M.resumeAt && (M.phase === 'run' || M.phase === 'countdown')) M.resumeAt = d.at; }));
     offs.push(link.on('rejoin', (d) => { if (!d) return; if (!isHost && !d.fromGuest) applyRejoin(d); else if (isHost && d.fromGuest && (M.phase === 'lobby' || M.phase === 'loading')) applyRejoin(d); }));
@@ -362,22 +362,30 @@ export function createGame(el, api) {
       if (!partnerHere || !ps || ps.ph !== PH.lobby || !ps.sy) { hudToast(`Waiting for ${api.name(other(meW))}…`); return; }
     }
     const mode = M.lobbyMode;
-    const seed = mode === 'daily' ? dailySeed() : (dbg && dbg.seed) || ((Math.random() * 2147483646) | 0) + 1;
+    const today = dayKey(); // the host's calendar day is the match's day: seed, records and board all use it
+    const seed = mode === 'daily' ? dailySeed(today) : (dbg && dbg.seed) || ((Math.random() * 2147483646) | 0) + 1;
     const len = (dbg && dbg.raceLen) || RACE_LEN;
     const cap = (dbg && dbg.brawlCap) || BRAWL_CAP;
     const at = clock() + (live ? START_DELAY : 3000);
-    if (live) link.send('start', { mode, seed, at, len, cap });
-    beginMatch(mode, seed, at, len, cap);
+    const info = { day: today, v: TRACK_V, ep: epochOf(seed, at) };
+    if (live) link.send('start', { mode, seed, at, len, cap, ...info });
+    beginMatch(mode, seed, at, len, cap, info);
   }
 
-  function beginMatch(mode, seed, at, len, cap) {
+  /** Tells one match from the next (and from a stale presence of the last): Daily replays the same seed all day. */
+  const epochOf = (seed, at) => (hash('rush-ep', seed, Math.round(at)) % 99999) + 1;
+  /** info (the `start` / `rejoin` message): day (the host's calendar day, for Daily records), v (track / protocol version, 1 when absent), ep. */
+  function beginMatch(mode, seed, at, len, cap, info) {
     if (!ready3D) return;
+    info = info || {};
     M.mode = MODES.includes(mode) ? mode : 'race';
     M.seed = seed; M.startAt = at; M.len = len || RACE_LEN; M.cap = cap || BRAWL_CAP;
-    M.epoch = seed % 100000;
+    M.epoch = info.ep > 0 ? info.ep | 0 : epochOf(seed, at);
+    M.day = typeof info.day === 'string' && /^\d{4}-\d\d-\d\d$/.test(info.day) ? info.day : dayKey();
+    M.trackV = info.v > 0 ? info.v | 0 : 1;
     M.track = createTrack(seed);
     M.phase = 'countdown';
-    M.runMs = 0; M.steps = 0; M.lastNow = clock(); M.alpha = 0;
+    M.runMs = 0; M.steps = 0; M.lastNow = clock(); M.ruleAt = M.lastNow; M.alpha = 0;
     M.paused = false; M.reasons.clear(); M.resumeAt = 0; M.result = null; M.endAt = 0;
     M.startedWall = 0; M.firstRunWall = 0; M.partnerFin = -1; M.partnerOut = -1; M.rejoin = null;
     for (const w of AB) {
@@ -418,8 +426,8 @@ export function createGame(el, api) {
     // (link.latest() is already the re-mounted partner's lobby state here: use the last in-match snapshot)
     const s = players[other(meW)].snap;
     link.send('rejoin', {
-      mode: M.mode, seed: M.seed, startAt: M.startAt, len: M.len, cap: M.cap, th: M.th, goal: M.goal, goalIdx: M.goalIdx,
-      you: s.ok && s.ep === M.epoch ? { z: s.z, l: s.l, h: s.h, c: s.c, rt: s.rt, fn: s.fn } : null,
+      mode: M.mode, seed: M.seed, startAt: M.startAt, len: M.len, cap: M.cap, th: M.th, goal: M.goal, goalIdx: M.goalIdx, day: M.day, v: M.trackV, ep: M.epoch,
+      you: s.ok && s.ep === M.epoch ? { z: s.z, l: s.l, h: s.h, c: s.c, rt: s.rt, fn: s.fn, o: s.o } : null,
     });
   }
   let pendingRejoin = null;
@@ -427,7 +435,7 @@ export function createGame(el, api) {
     if (!d) return;
     if (!ready3D) { pendingRejoin = d; return; }
     // fromGuest: I'm a reloaded host; my old timeline is gone, so the match has no start anchor
-    beginMatch(d.mode, d.seed, d.fromGuest ? -Infinity : d.startAt, d.len, d.cap);
+    beginMatch(d.mode, d.seed, d.fromGuest ? -Infinity : d.startAt, d.len, d.cap, d);
     if (d.th > 0) M.th = d.th;
     if (d.goal > 0) M.goal = d.goal;
     M.goalIdx = d.goalIdx || 0;
@@ -438,6 +446,11 @@ export function createGame(el, api) {
       r.hearts = y.h; r.coins = y.c; r.t = y.rt; r.fin = y.fn; if (y.fn >= 0) { r.done = 1; r.invulnT = 1e9; }
       r.invulnT = Math.max(r.invulnT, 2);
       r.zPrev = r.z; r.speed = baseSpeed(r.t);
+      if (y.o) { // out of hearts when they dropped: still out (a Daily / Brawl runner stays down and spectates)
+        r.hearts = 0; r.out = 1; r.hold = 1; r.down = 1; r.downT = 2; r.cause = C_FORCED; r.speed = 0; r.invulnT = 0;
+        players[meW].outT = y.rt;
+      }
+      players[meW].lastMile = Math.floor(r.z / 500); // (no free milestone heart for a distance already run)
       const pp = players[meW].prev; pp.z = r.z; pp.x = r.x; pp.y = r.y; // draw it there from the first frame
       M.runMs = y.rt * 1000; M.steps = Math.floor(y.rt / DT);
     }
@@ -467,10 +480,27 @@ export function createGame(el, api) {
   }
   function toOver() {
     M.phase = 'over';
-    // the card gets this device's own bests line (the recorded result keeps the shared text)
-    const res = Object.assign({}, M.result);
-    if (M.pbText) res.sub = res.sub ? `${res.sub} · ${M.pbText}` : M.pbText;
-    try { api.finish(res); } catch (e) { console.error(e); }
+    // The result is shared (the engine broadcasts it, records it, and the partner's card can adopt it),
+    // so it stays neutral: this device's own line ("You: … · New best") goes on the card locally.
+    try { api.finish(Object.assign({}, M.result)); } catch (e) { console.error(e); }
+    youLine();
+  }
+  /** This device's bests line, added to the engine's end card (the card's own text is the shared result). */
+  function youLine(tries = 0) {
+    const text = M.pbText;
+    if (!text || dead) return;
+    const gm = root.closest('.gm');
+    const body = gm && gm.querySelector('.gm-end:not([hidden]) .gm-end-body');
+    if (!body) { if (tries < 8) timers.push(setTimeout(() => youLine(tries + 1), 150)); return; }
+    let p = body.querySelector('.rr-you');
+    if (!p) {
+      p = document.createElement('p');
+      p.className = 'gm-end-sub rr-you';
+      p.style.fontWeight = '800';
+      const sub = body.querySelector('.gm-end-sub');
+      if (sub) sub.after(p); else body.prepend(p);
+    }
+    p.textContent = text;
   }
 
   // ── bests, daily board, unlocks ──
@@ -497,7 +527,7 @@ export function createGame(el, api) {
       const newAny = dist > (d[anyM] | 0); const newMode = dist > (d[modeM] | 0);
       if (newAny) patch[anyM] = dist;
       if (newMode) patch[modeM] = dist;
-      if (M.mode === 'daily') { const k = `${w}_daily_${day()}`; if (dist > (d[k] | 0)) patch[k] = dist; }
+      if (M.mode === 'daily') { const k = `${w}_daily_${M.day || day()}`; if (dist > (d[k] | 0)) patch[k] = dist; }
       if (M.mode === 'race' && r.fin >= 0) { const k = `${w}_race_t`; if (!d[k] || r.fin < d[k]) patch[k] = Math.round(r.fin * 100) / 100; }
       if (r.closeCalls > (d[`${w}_cc`] | 0)) patch[`${w}_cc`] = r.closeCalls;
       if (r.maxCombo > (d[`${w}_combo`] | 0)) patch[`${w}_combo`] = r.maxCombo;
@@ -707,15 +737,15 @@ export function createGame(el, api) {
     if (ps && inMatch && ps.ep === M.epoch && ps.ph === PH.run) {
       // remember the partner's last in-match state (used if they re-mount as host)
       const sn = players[other(meW)].snap;
-      sn.ok = 1; sn.ep = ps.ep; sn.z = ps.z; sn.l = ps.l; sn.h = ps.h; sn.c = ps.c; sn.rt = ps.rt; sn.fn = ps.fn; sn.th = ps.th; sn.tg = ps.tg;
+      sn.ok = 1; sn.ep = ps.ep; sn.z = ps.z; sn.l = ps.l; sn.h = ps.h; sn.c = ps.c; sn.rt = ps.rt; sn.fn = ps.fn; sn.th = ps.th; sn.tg = ps.tg; sn.o = ps.f & F_OUT ? 1 : 0;
       if (M.rejoin) M.rejoin = null; // the host has the match back
     }
     if (M.rejoin && inMatch && link.synced && ps && link.age() < 1600 && ps.ph === PH.lobby && ps.sy && now - M.rejoin.sentAt > 2500) {
       M.rejoin.sentAt = now;
       const sn = players[other(meW)].snap;
       link.send('rejoin', {
-        fromGuest: 1, mode: M.mode, seed: M.seed, len: M.len, cap: M.cap, th: sn.th, goal: sn.tg, goalIdx: M.goalIdx,
-        you: sn.ok && sn.ep === M.epoch ? { z: sn.z, l: sn.l, h: sn.h, c: sn.c, rt: sn.rt, fn: sn.fn } : null,
+        fromGuest: 1, mode: M.mode, seed: M.seed, len: M.len, cap: M.cap, th: sn.th, goal: sn.tg, goalIdx: M.goalIdx, day: M.day, v: M.trackV, ep: M.epoch,
+        you: sn.ok && sn.ep === M.epoch ? { z: sn.z, l: sn.l, h: sn.h, c: sn.c, rt: sn.rt, fn: sn.fn, o: sn.o } : null,
       });
     }
     // observed reasons
@@ -826,8 +856,8 @@ export function createGame(el, api) {
           break;
         }
         case E_PICK: {
-          const k = Math.floor(val / 100000);
-          const it = coinAt(val % 100000);
+          const k = Math.floor(val / 1000000);
+          const it = coinAt(val % 1000000);
           if (it) fx.burst(it.x, it.y, it.z, P.hl, 12, 5);
           if (mine && k !== 4) { audio.play('pickup'); v.pop(k === 1 ? 'MAGNET' : k === 2 ? 'SUPER SNEAKERS' : 'SHIELD', 'hl'); }
           break;
@@ -992,11 +1022,15 @@ export function createGame(el, api) {
         for (let i = 0; i < AB.length; i++) { const z = players[AB[i]].rs.z; if (z < zmin) zmin = z; }
         if (zmin < Infinity) M.track.keepFrom(Math.floor((zmin - 40) / CHUNK) - 1);
       }
-      rules.tick(now, dt);
+      // rules run on the shared clock, so while the run is paused (menu, background, partner away,
+      // the resume 3-2-1) their timers wait too: revive windows, brace windows, the downed fallback
+      const dMs = now - M.ruleAt;
+      M.ruleAt = now;
+      if (isPaused(now)) { if (dMs > 0 && dMs < 600000) rules.hold(dMs); } else rules.tick(now, dt);
       deliver();
       const res = rules.verdict();
       if (res) endMatch(res);
-    } else if (M.phase === 'countdown') M.lastNow = now;
+    } else if (M.phase === 'countdown') { M.lastNow = now; M.ruleAt = now; }
     else if (M.phase === 'finale') { if (rules) rules.tick(now, dt); if (now >= M.endAt) toOver(); }
     if (frozen) { if (live && ready3D) publish(); return; }
     // render states
@@ -1439,6 +1473,7 @@ export function createGame(el, api) {
       start() { hostStart(); },
       trackHash: (seed, n) => trackHash(seed, n),
       dailySeed: (d) => dailySeed(d),
+      matchInfo: () => ({ day: M.day, trackV: M.trackV, epoch: M.epoch }),
       data: () => data(),
       setData: (patch) => setData(patch),
       settings,
