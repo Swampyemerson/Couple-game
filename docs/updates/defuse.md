@@ -96,6 +96,22 @@ browser group seeds old and garbage data and plays a round.
 - "New record!", near-miss lines (< 10 s left, two strikes), a sweet couple line on a zero-strike win, and a "Swap?" nudge after 3
   rounds with the same bomb holder.
 
+## Round 2 (10:20–11:00): keeping it fresh for a couple who learn fast
+
+A second Fable check ranked three ideas. Two shipped:
+- **Personal par and Par clock** (this answers "the clocks need tuning" with their own data). Each tier keeps a par: the average
+  seconds they *used* on wins, from 3 wins on (flat keys `parN_<tier>` and `parSum_<tier>`, halved at 20 wins so it tracks their
+  current form). The lobby shows "Par 2:40", and a playful nudge suggests the next tier after three clean wins in a row, or an
+  easier one after two booms in three rounds. The **Par clock** switch (shared with the partner) starts the bomb at par + 20 s, so
+  the clock tightens as they improve. The end card says "Under par by 24 s." Timed events that fall outside a shorter clock are
+  skipped. Old and garbage values read as "no par".
+- **Hush** (Expert and Bomb Squad, about half of rounds): once per round the manual goes blank for 8 s. The reader must remember
+  what they just read while the bomb stays live. It's drawn from its own seeded stream, so every existing round and pinned test
+  seed is unchanged. It never overlaps a surge or blackout and is never in the first or last 30 s. The manual's basics page
+  announces it.
+- Not shipped: **Chain ×2** (two bombs back to back, leftover time carries over). The builder hit a rate limit before it had
+  written code, and its partial edit was reverted. It's a good next step.
+
 ## Bugs fixed (found by the survey, reproduced)
 
 1. Silent freeze: when the partner backgrounded the app the bomb paused with nothing on screen and ignored taps. There is now a
@@ -119,7 +135,7 @@ browser group seeds old and garbage data and plays a round.
 
 ## Tests
 
-- `node tools/test/games/defuse.test.js all`: **ALL GOOD, 297 ok** (node, phone, wild, laptop, dark, layout, legacy), no page
+- `node tools/test/games/defuse.test.js all`: **ALL GOOD, 332 ok** (node, phone, wild, laptop, dark, layout, legacy), no page
   errors. It covers 7 unit files (classic 96, maze 326,453, morse 67, password 46,049, relay 27, switches 65, vent 36 assertions),
   round determinism, solving every module from the manual page's own data, full live rounds per tier on two iPhone-sized phones with
   real taps, the relay done on the manual device, the vent answered, a boom, the pause overlay, resume after the bomb closes, a
