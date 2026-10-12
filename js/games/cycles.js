@@ -1,100 +1,62 @@
 // Light Cycles: two bikes, two trails, one grid. Every wall and every trail is solid; the last one
 // riding takes the round, head-on into the same cell is a draw round, first to 3 rounds wins.
+// Pick an arena first (Classic, Pillars, Cross, Rings, Scatter, Rotate, Surprise me), optionally with
+// boost tokens. Design notes: docs/games/cycles.md. The pure simulation lives in cycles/sim.js.
 //
-// Live netcode. The host ('a') owns the simulation and steps it at a fixed tick (about 13 a second,
-// speeding up a little through each round). The guest sends every direction change as a 'turn'
-// event with a sequence number, and also lists its not-yet-received turns in its own presence, so
-// a dropped event is recovered from the next presence frame. The host applies at most one queued
+// Live netcode. The host ('a') owns the simulation and steps it at a fixed tick (about 13 a second;
+// non-classic arenas speed up from 78 to 50 ms over ~20 s). The guest sends every direction change as
+// a 'turn' event with a sequence number, and also lists its not-yet-received turns in its own presence,
+// so a dropped event is recovered from the next presence frame. The host applies at most one queued
 // turn per player per tick, appends it to the round's turn log, and publishes
-// { round, phase, tick, turn log, score, acks } in presence. Both sides rebuild the trails from the
-// fixed start positions plus the log with the same pure step(), so a dropped presence frame never
-// leaves a gap: the next one carries the whole log. The guest draws its own unconfirmed turn as a
-// small "intent" arrow at once, so steering feels instant.
+// { round config, phase, tick, turn log, score, acks } in presence. Both sides rebuild the trails from
+// the round config (arena, seed, start variant) plus the log with the same pure step(), so a dropped
+// presence frame never leaves a gap: the next one carries the whole log. The guest predicts its own
+// head (it turns at once, drawn as a predicted segment) and reconciles to the log; the host log is
+// always the truth. Heads are drawn between ticks (interpolated / extrapolated) for smooth motion.
 import { registerGame } from './core.js';
+import { CSS } from './cycles/css.js';
+import {
+  DX, DY, DIR, LAYOUTS, ARENAS, BOOST_TICKS, tickMs, newSim, okTurn, step, enc, decode, rebuild, summary,
+  arenaBlocks, isSymmetric, pathAt,
+} from './cycles/sim.js';
 
-const DX = [0, 1, 0, -1];
-const DY = [-1, 0, 1, 0];
-const DIR = ['up', 'right', 'down', 'left'];
-// s: computer (square, riders face off left/right). p: phone (portrait, riders face off bottom/top).
-// Both riders sit on the centre line, an even distance apart, so riding straight on meets head-on.
-const LAYOUTS = {
-  s: { W: 49, H: 49, a: [6, 24, 1], b: [42, 24, 3] },
-  p: { W: 31, H: 45, a: [15, 39, 0], b: [15, 5, 2] },
-};
 const WIN_AT = 3;
 const MAX_ROUNDS = 9;
 const COUNT_MS = 650;
-const END_MS = 1900;
-const tickMs = (t) => Math.max(70, 78 - 0.04 * t);
+const HOLD_MS = 320; // the crash itself, at full size
+const REPLAY_MS = 1200; // the slow replay, zoomed on the crash
+const BANNER_MS = 1500; // the round banner
+const END_TOTAL = HOLD_MS + REPLAY_MS + BANNER_MS;
+const REPLAY_TICKS = 16;
+const ZOOM = 2.4;
+const OPP_LAG = 1.4; // guest: how far behind the confirmed tick the opponent is drawn (smooth between frames)
+const BIAS = 0.4; // guest: its own clock runs this far ahead of the confirmed tick
 const KEYS = {
   KeyW: ['a', 0], KeyD: ['a', 1], KeyS: ['a', 2], KeyA: ['a', 3],
   ArrowUp: ['b', 0], ArrowRight: ['b', 1], ArrowDown: ['b', 2], ArrowLeft: ['b', 3],
 };
 const KEY_ALIAS = { w: 'KeyW', a: 'KeyA', s: 'KeyS', d: 'KeyD' };
+const ARENA_NAME = { classic: 'Classic', pillars: 'Pillars', cross: 'Cross', rings: 'Rings', scatter: 'Scatter', rotate: 'Rotate', surprise: 'Surprise me' };
+const ARENA_BLURB = {
+  classic: 'Open grid. Pure riding.',
+  pillars: 'Four blocks to weave around.',
+  cross: 'A walled plus with a few gaps.',
+  rings: 'Walls inside walls.',
+  scatter: 'Random blocks, the same for both.',
+  rotate: 'A different arena every round.',
+  surprise: 'We pick one for the whole match.',
+};
+const CHOICES = ['classic', 'pillars', 'cross', 'rings', 'scatter', 'rotate', 'surprise'];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-
-// ── pure simulation (shared by host, guest and the tests) ──────────────
-function newSim(L) {
-  const g = LAYOUTS[L];
-  const sim = { L, W: g.W, H: g.H, t: 0, occ: new Uint8Array(g.W * g.H), done: false, out: null };
-  for (const p of ['a', 'b']) {
-    const [x, y, d] = g[p];
-    sim[p] = { x, y, d, alive: true, path: [x, y], crash: null };
-    sim.occ[y * g.W + x] = 1;
-  }
-  return sim;
-}
-const okTurn = (cur, d) => d !== cur && d !== ((cur + 2) & 3);
-/** Advance one tick. turns = { a?: dir, b?: dir } (already validated). */
-function step(sim, turns) {
-  if (sim.done) return;
-  sim.t++;
-  const nx = {};
-  for (const p of ['a', 'b']) {
-    const c = sim[p];
-    if (turns && turns[p] != null) c.d = turns[p];
-    const x = c.x + DX[c.d];
-    const y = c.y + DY[c.d];
-    nx[p] = { x, y, hit: x < 0 || y < 0 || x >= sim.W || y >= sim.H || sim.occ[y * sim.W + x] !== 0 };
-  }
-  if (nx.a.x === nx.b.x && nx.a.y === nx.b.y) { nx.a.hit = true; nx.b.hit = true; }
-  for (const p of ['a', 'b']) {
-    const c = sim[p];
-    const n = nx[p];
-    if (n.hit) { c.alive = false; c.crash = [n.x, n.y]; } else {
-      c.x = n.x; c.y = n.y; c.path.push(n.x, n.y); sim.occ[n.y * sim.W + n.x] = 1;
-    }
-  }
-  if (!sim.a.alive || !sim.b.alive) { sim.done = true; sim.out = sim.a.alive ? 'a' : sim.b.alive ? 'b' : 'd'; }
-}
-const enc = (e) => e.t.toString(36) + (e.p === 'a' ? e.d : e.d + 4);
-function decode(s) {
-  if (!s) return [];
-  return s.split(',').filter(Boolean).map((x) => { const k = +x.slice(-1); return { t: parseInt(x.slice(0, -1), 36), p: k < 4 ? 'a' : 'b', d: k & 3 }; });
-}
-/** Rebuild a round from the start positions plus its turn log, up to tick T. */
-function rebuild(L, entries, T) {
-  const sim = newSim(L);
-  let i = 0;
-  while (sim.t < T && !sim.done) {
-    const t = sim.t + 1;
-    const turns = {};
-    while (i < entries.length && entries[i].t <= t) { if (entries[i].t === t) turns[entries[i].p] = entries[i].d; i++; }
-    step(sim, turns);
-  }
-  return sim;
-}
-function summary(sim) {
-  const one = (c) => { let h = 7; for (const v of c.path) h = (Math.imul(h, 31) + v) | 0; return { x: c.x, y: c.y, d: c.d, alive: c.alive, len: c.path.length / 2, hash: h, crash: c.crash }; };
-  return { L: sim.L, t: sim.t, done: sim.done, out: sim.out, a: one(sim.a), b: one(sim.b) };
-}
-
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const ARROW = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.5 L20.5 17.5 H3.5 Z" transform="rotate(${d * 90} 12 12)"/></svg>`;
+const BOLT = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.5 2 5 13.5h5.5L9.5 22 19 9.5h-5.8z"/></svg>';
+const SPIN = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4a8 8 0 1 0 7.6 5.5l-2 .8A5.8 5.8 0 1 1 12 6.2V9l5-4-5-4z"/></svg>';
 
 registerGame({
   id: 'cycles',
   title: 'Light Cycles',
-  blurb: 'Leave a wall of light behind you. Don’t hit anything.',
+  blurb: 'Leave a wall of light behind you. Pick an arena. Don’t hit anything.',
   kind: 'live',
   team: false,
   tags: ['silly', 'quick'],
@@ -103,116 +65,50 @@ registerGame({
   minutes: 3,
   howTo: [
     'Your bike never stops. Steer it; every wall and trail is solid.',
-    'Last one riding takes the round. Head-on is a draw.',
-    'First to 3 rounds wins.',
+    'Last one riding takes the round. Head-on is a draw. First to 3 rounds wins.',
+    'Pick an arena, and turn Boosts on for speed and jump tokens.',
     'Computer: W A S D or the arrow keys. Phone: swipe or use the pad.',
   ],
-  css: `
-.g-cycles { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 4px 0 2px; color: var(--g-ink); font-family: var(--g-font-body); -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
-@media (min-width: 760px) { .g-cycles { width: calc(100vw - 48px); max-width: 1180px; align-self: center; } }
-.g-cycles .cy-ready { margin: auto; font-weight: 800; color: var(--g-muted); }
-.g-cycles .cy-row { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; gap: 22px; }
-.g-cycles .cy-board { position: relative; flex: 1 1 auto; align-self: stretch; min-width: 0; min-height: 150px; touch-action: none; }
-.g-cycles .cy-board.is-fit { flex: none; }
-.g-cycles .cy-board canvas { position: absolute; left: 50%; top: 50%; display: block; background: var(--g-card); border: 2.5px solid var(--g-ink); border-radius: 8px; box-shadow: var(--g-shadow-lg, 6px 6px 0 var(--g-ink)); transform: translate(calc(-50% - 3px), calc(-50% - 3px)); touch-action: none; }
-.g-cycles .cy-msg { position: absolute; left: 50%; top: 50%; z-index: 2; transform: translate(-50%, -50%); pointer-events: none; text-align: center; }
-.g-cycles .cy-msg.is-up { top: 24%; }
-.g-cycles .cy-msg > span { display: inline-block; background: var(--g-card); color: var(--g-ink); border: 2.5px solid var(--g-ink); border-radius: 12px; box-shadow: var(--g-shadow, 3px 3px 0 var(--g-ink)); padding: 10px 16px; font-weight: 800; font-size: 1.02rem; line-height: 1.25; white-space: nowrap; animation: cy-pop 0.32s cubic-bezier(0.2, 1.5, 0.4, 1) both; }
-.g-cycles .cy-msg b { font-family: var(--g-font-display); font-weight: 400; }
-.g-cycles .cy-msg .w-a b { color: var(--p-a-text, var(--p-a)); } .g-cycles .cy-msg .w-b b { color: var(--p-b-text, var(--p-b)); }
-.g-cycles .cy-msg .is-num { display: grid; place-items: center; width: 92px; height: 92px; padding: 0; border-radius: 50%; background: var(--g-hl); color: var(--g-on-ink); font: 400 2.9rem/1 var(--g-font-display); box-shadow: var(--g-shadow-lg, 6px 6px 0 var(--g-ink)); }
-.g-cycles .cy-msg .is-go { width: auto; height: auto; padding: 14px 22px; border-radius: 16px; font-size: 2.4rem; transform: rotate(-4deg); }
-.g-cycles .cy-msg .w-d { background: var(--g-hl); color: var(--g-on-ink); }
-@keyframes cy-pop { from { transform: scale(0.55); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-.g-cycles .cy-msg .is-go { animation-name: cy-go; }
-@keyframes cy-go { from { transform: rotate(-4deg) scale(0.55); opacity: 0; } to { transform: rotate(-4deg) scale(1); opacity: 1; } }
-
-.g-cycles .cy-info { display: flex; align-items: center; justify-content: center; gap: 14px; min-height: 26px; }
-.g-cycles .cy-round { font: 800 0.72rem/1 var(--g-font-body); letter-spacing: 0.14em; text-transform: uppercase; color: var(--g-muted); min-width: 92px; text-align: center; }
-.g-cycles .cy-pips { display: flex; gap: 7px; }
-.g-cycles .cy-pips i { width: 14px; height: 14px; border: 2px solid var(--g-ink); border-radius: 3px; transform: rotate(45deg); background: var(--g-card); transition: background-color 0.2s; }
-.g-cycles .cy-pips.p-a i.on { background: var(--p-a); } .g-cycles .cy-pips.p-b i.on { background: var(--p-b); }
-
-/* touch pads */
-.g-cycles .cy-pad { display: flex; align-items: center; justify-content: center; gap: 12px; flex: none; }
-.g-cycles .cy-pad.is-rot { transform: rotate(180deg); }
-.g-cycles .cy-pad-name { font: 400 0.82rem/1 var(--g-font-display); writing-mode: vertical-rl; transform: rotate(180deg); }
-.g-cycles .cy-pad.p-a .cy-pad-name { color: var(--p-a-text, var(--p-a)); } .g-cycles .cy-pad.p-b .cy-pad-name { color: var(--p-b-text, var(--p-b)); }
-.g-cycles .cy-pad-keys { display: grid; grid-template-columns: repeat(3, 64px); grid-template-rows: repeat(2, 52px); gap: 7px; }
-.g-cycles .cy-pad.is-row .cy-pad-keys { grid-template-columns: repeat(4, 62px); grid-template-rows: 48px; }
-.g-cycles .cy-pad.is-side .cy-pad-keys { grid-template-columns: repeat(3, 58px); grid-template-rows: repeat(3, 54px); }
-.g-cycles .cy-key { display: grid; place-items: center; padding: 0; border: 2.5px solid var(--g-ink); border-radius: 11px; background: var(--p-a); color: var(--g-on-ink); box-shadow: 3px 3px 0 var(--g-edge, var(--g-ink)); touch-action: manipulation; cursor: pointer; transition: transform 0.06s, box-shadow 0.06s; }
-.g-cycles .p-b .cy-key { background: var(--p-b); }
-.g-cycles .cy-key svg { width: 24px; height: 24px; fill: currentColor; }
-.g-cycles .cy-key:active, .g-cycles .cy-key.is-down { transform: translate(3px, 3px); box-shadow: 0 0 0 var(--g-edge, var(--g-ink)); }
-.g-cycles .cy-key:focus-visible { outline: 3px solid var(--g-ink); outline-offset: 2px; }
-.g-cycles .cy-d0 { grid-column: 2; grid-row: 1; } .g-cycles .cy-d3 { grid-column: 1; grid-row: 2; }
-.g-cycles .cy-d2 { grid-column: 2; grid-row: 2; } .g-cycles .cy-d1 { grid-column: 3; grid-row: 2; }
-.g-cycles .is-row .cy-key { grid-row: 1; grid-column: auto; }
-.g-cycles .is-side .cy-d0 { grid-row: 1; } .g-cycles .is-side .cy-d3, .g-cycles .is-side .cy-d1 { grid-row: 2; } .g-cycles .is-side .cy-d2 { grid-row: 3; }
-
-/* keyboard legends */
-.g-cycles .cy-legend { flex: none; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 14px 14px 16px; background: var(--g-card); border: 2.5px solid var(--g-ink); border-radius: 12px; box-shadow: var(--g-shadow, 3px 3px 0 var(--g-ink)); }
-.g-cycles .cy-legend-name { font: 400 1.05rem/1.1 var(--g-font-display); max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.g-cycles .cy-legend.p-a .cy-legend-name { color: var(--p-a-text, var(--p-a)); } .g-cycles .cy-legend.p-b .cy-legend-name { color: var(--p-b-text, var(--p-b)); }
-.g-cycles .cy-legend-tag { font: 800 0.66rem/1.2 var(--g-font-body); letter-spacing: 0.14em; text-transform: uppercase; color: var(--g-muted); text-align: center; }
-.g-cycles .cy-caps { display: grid; grid-template-columns: repeat(3, 40px); grid-template-rows: repeat(2, 40px); gap: 5px; }
-.g-cycles .cy-caps kbd { display: grid; place-items: center; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-bg); color: var(--g-ink); box-shadow: 0 3px 0 var(--g-edge, var(--g-ink)); font: 800 1rem/1 var(--g-font-body); transition: transform 0.06s, box-shadow 0.06s, background-color 0.15s; }
-.g-cycles .cy-caps kbd svg { width: 15px; height: 15px; fill: currentColor; }
-.g-cycles .cy-caps kbd:nth-child(1) { grid-column: 2; grid-row: 1; } .g-cycles .cy-caps kbd:nth-child(2) { grid-column: 1; grid-row: 2; }
-.g-cycles .cy-caps kbd:nth-child(3) { grid-column: 2; grid-row: 2; } .g-cycles .cy-caps kbd:nth-child(4) { grid-column: 3; grid-row: 2; }
-.g-cycles .cy-caps kbd.is-down { transform: translateY(3px); box-shadow: 0 0 0 var(--g-edge, var(--g-ink)); }
-.g-cycles .cy-legend.p-a kbd.is-down { background: var(--p-a); color: var(--g-on-ink); } .g-cycles .cy-legend.p-b kbd.is-down { background: var(--p-b); color: var(--g-on-ink); }
-.g-cycles .cy-legend.is-them { align-self: center; min-width: 132px; }
-.g-cycles .cy-bike { width: 22px; height: 34px; border: 2.5px solid var(--g-ink); border-radius: 7px; background: linear-gradient(var(--g-hl) 0 58%, var(--g-ink) 58% 64%, transparent 64%); position: relative; }
-.g-cycles .cy-legend.p-a .cy-bike { background-color: var(--p-a); } .g-cycles .cy-legend.p-b .cy-bike { background-color: var(--p-b); }
-.g-cycles .cy-legends { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; }
-.g-cycles .cy-legends .cy-legend { flex-direction: row; padding: 10px 14px; gap: 14px; }
-.g-cycles .cy-legends .cy-caps { grid-template-columns: repeat(3, 34px); grid-template-rows: repeat(2, 34px); }
-.g-cycles .cy-or { font-weight: 800; color: var(--g-muted); }
-@media (max-height: 760px) { .g-cycles .cy-pad-keys { grid-template-rows: repeat(2, 46px); } .g-cycles .cy-pad.is-row .cy-pad-keys { grid-template-rows: 44px; } }
-/* a phone on its side: the pads move beside the board instead of above and below it */
-@media (orientation: landscape) and (max-height: 520px) {
-  .g-cycles[data-ui="live-touch"], .g-cycles[data-ui="local-touch-p"] { display: grid; grid-template-rows: minmax(0, 1fr) auto; column-gap: 16px; row-gap: 6px; padding: 2px 0; }
-  .g-cycles[data-ui="live-touch"] { grid-template-columns: minmax(0, 1fr) auto; }
-  .g-cycles[data-ui="live-touch"] > .cy-row { grid-area: 1 / 1; }
-  .g-cycles[data-ui="live-touch"] > .cy-info { grid-area: 2 / 1; }
-  .g-cycles[data-ui="live-touch"] > .cy-pad { grid-area: 1 / 2 / 3 / 3; align-self: center; }
-  .g-cycles[data-ui="local-touch-p"] { grid-template-columns: auto minmax(0, 1fr) auto; }
-  .g-cycles[data-ui="local-touch-p"] > .cy-pad.p-b { grid-area: 1 / 1 / 3 / 2; align-self: center; }
-  .g-cycles[data-ui="local-touch-p"] > .cy-row { grid-area: 1 / 2; }
-  .g-cycles[data-ui="local-touch-p"] > .cy-info { grid-area: 2 / 2; }
-  .g-cycles[data-ui="local-touch-p"] > .cy-pad.p-a { grid-area: 1 / 3 / 3 / 4; align-self: center; }
-  .g-cycles[data-ui="live-touch"] .cy-pad .cy-pad-keys, .g-cycles[data-ui="local-touch-p"] .cy-pad .cy-pad-keys { grid-template-columns: repeat(3, 56px); grid-template-rows: repeat(2, 54px); gap: 6px; }
-  .g-cycles[data-ui="live-touch"] .cy-pad .cy-d0, .g-cycles[data-ui="local-touch-p"] .cy-pad .cy-d0 { grid-column: 2; grid-row: 1; }
-  .g-cycles[data-ui="live-touch"] .cy-pad .cy-d3, .g-cycles[data-ui="local-touch-p"] .cy-pad .cy-d3 { grid-column: 1; grid-row: 2; }
-  .g-cycles[data-ui="live-touch"] .cy-pad .cy-d2, .g-cycles[data-ui="local-touch-p"] .cy-pad .cy-d2 { grid-column: 2; grid-row: 2; }
-  .g-cycles[data-ui="live-touch"] .cy-pad .cy-d1, .g-cycles[data-ui="local-touch-p"] .cy-pad .cy-d1 { grid-column: 3; grid-row: 2; }
-}
-@media (prefers-reduced-motion: reduce) { .g-cycles *, .g-cycles *::before { animation: none !important; transition: none !important; } }
-`,
+  css: CSS,
   mount(el, api) {
     const local = api.mode === 'local';
     const host = local || api.isHost;
     const me = local ? null : api.me;
-    const flip = me === 'b'; // the guest sees the board turned round, so their bike starts at the bottom
+    const flip = me === 'b'; // the guest sees the board turned round, so their bike starts at the bottom (or left)
     const mq = (q) => { try { return matchMedia(q).matches; } catch { return false; } };
     const touch = mq('(pointer: coarse)');
     const reduce = mq('(prefers-reduced-motion: reduce)');
-    const pref = window.innerWidth >= 700 && window.innerWidth >= window.innerHeight * 1.05 ? 's' : 'p';
+    // the grid that suits this screen: s square (computer), p portrait phone, l phone on its side
+    const prefNow = () => {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      if (w >= h * 1.05 && h <= 520 && w >= 480) return 'l'; // a phone on its side (also the small ones: 568x320, 667x375)
+      return w >= 700 && w >= h * 1.05 ? 's' : 'p';
+    };
+    let pref = prefNow();
+    // two screens, one grid: a phone on its side wins over a portrait one (the portrait phone then draws the wide grid turned a
+    // quarter, see `qr`), so the smaller screen never gets a tiny board; a computer with a portrait phone plays portrait
+    const pickLayout = (x, y) => (x === y ? x : x === 'l' || y === 'l' ? 'l' : 'p');
     const offs = [];
     const timers = new Set();
     let alive = true;
     let raf = 0;
+    const perf = () => performance.now();
 
     // ── match state: the host owns it, the guest mirrors the host's presence ──
     const mid = host ? Math.random().toString(36).slice(2, 9) : null;
-    let layout = local ? pref : null;
-    let phase = 'wait'; // wait | count | run | end | over
+    const saved = api.data() || {};
+    let md = { ar: CHOICES.includes(saved.cycles_last) ? saved.cycles_last : 'classic', bo: saved.cycles_boosts === true };
+    let matchAr = 'classic'; // the resolved choice for this match (a concrete arena, or 'rotate')
+    let rotOrder = ARENAS.slice();
+    let layout = null; // the layout the board is currently built for
+    let cfg = null; // this round's config (layout, arena, seed, boosts, start variant, speed curve)
+    let phase = 'pick'; // pick | count | run | end | over
     let round = 0;
     let cd = 0;
     let rw = null;
     let paused = false;
+    let pz = 0; // why: 1 the host stepped away, 2 the guest did
     let overRes = null; // the match result, also in presence so a guest never misses its end card
     let finT = 0;
     let score = { a: 0, b: 0 };
@@ -222,11 +118,17 @@ registerGame({
     let cdStart = 0;
     let acc = 0;
     let endAt = 0;
+    let endDue = 0;
     let goAt = 0;
     let crashAt = 0;
+    let skipped = false;
+    let skipAt = 0;
     let lastNow = 0;
-    let dirty = true;
-    const waitSince = performance.now();
+    let rc = []; // record stamps earned by the round just ridden
+    let lastDraw = false;
+    let startReq = 0;
+    let pickShown = false;
+    const mountedAt = perf();
     const queues = { a: [], b: [] };
     // host: guest turns received in order (rx) and processed (dn)
     let rxB = 0;
@@ -245,6 +147,15 @@ registerGame({
     let gRound = 0;
     let lastPh = null;
     let lastInfo = '';
+    let tdisp = 0; // guest: the display clock, in ticks
+    let seenTurns = 0;
+    // presentation
+    let evSeen = 0;
+    const fx = []; // sparks and rings
+    let lastShake = 0;
+    let bgCan = null;
+    let bgKey = '';
+    let capText = '';
     if (!host) { const s0 = api.partnerState(); if (s0 && s0.ph === 'over') staleMid = s0.mid; }
 
     el.innerHTML = '<div class="g-cycles"><p class="cy-ready">Getting the grid ready…</p></div>';
@@ -253,9 +164,13 @@ registerGame({
     let ctx = null;
     let board = null;
     let msgEl = null;
+    let rpEl = null;
     let cssW = 0;
     let cssH = 0;
     let cell = 8;
+    let gW = 0; // the grid's own size in px (cssW/cssH are the screen's: swapped when the board is turned a quarter)
+    let gH = 0;
+    let qr = 0; // how far this screen draws the agreed grid turned: 0 upright, 1 a quarter clockwise, 3 a quarter back
     let dpr = 1;
     let C = {};
     let msgKey = '';
@@ -273,7 +188,8 @@ registerGame({
         line: col(t.line, 'var(--g-line)'), hl: col(t.hl, 'var(--g-hl)'), bad: col(t.bad, 'var(--g-bad)'), muted: col(t.muted, 'var(--g-muted)'),
         edge: col('var(--g-edge, var(--g-ink))'), dark: !!t.dark,
       };
-      dirty = true;
+      bgKey = '';
+      if (pickShown) drawMinis();
     }
     readColors();
     const darkMq = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : null;
@@ -282,6 +198,39 @@ registerGame({
     const mo = new MutationObserver(onScheme);
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class'] });
     offs.push(() => mo.disconnect());
+
+    // ── sound: small WebAudio synths on top of the shared kit ──
+    const lastSnd = {};
+    function blip(name, freq, dur, type, vol, to, gap = 40) {
+      if (api.muted()) return;
+      const t0 = perf();
+      if (t0 - (lastSnd[name] || -1e9) < gap) return;
+      lastSnd[name] = t0;
+      try {
+        const ac = api.audio();
+        if (!ac) return;
+        const t = ac.currentTime + 0.002;
+        const o = ac.createOscillator();
+        const g = ac.createGain();
+        o.type = type;
+        o.frequency.setValueAtTime(freq, t);
+        if (to) o.frequency.exponentialRampToValueAtTime(to, t + dur);
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(vol, t + 0.005);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        o.connect(g).connect(ac.destination);
+        o.start(t);
+        o.stop(t + dur + 0.02);
+      } catch { /* no audio */ }
+    }
+    const cue = {
+      turn: () => blip('turn', 980, 0.03, 'square', 0.05, 640, 25),
+      turnThem: () => blip('turnT', 520, 0.03, 'square', 0.025, 380, 25),
+      shave: () => blip('shave', 1500, 0.07, 'triangle', 0.05, 2300, 90),
+      boost: () => blip('boost', 330, 0.22, 'sawtooth', 0.05, 1100, 120),
+      jump: () => blip('jump', 420, 0.16, 'sine', 0.09, 900, 120),
+      crash: () => blip('crash', 150, 0.34, 'sawtooth', 0.14, 38, 200),
+    };
 
     // ── DOM ──
     function padHTML(p, { rot = false, row = false, side = false } = {}) {
@@ -297,35 +246,52 @@ registerGame({
     function legendHTML(p, tag) {
       return `<div class="cy-legend p-${p}"><span class="cy-legend-name">${esc(api.name(p))}</span>${p === 'a' ? capsWASD() : capsArrows()}${tag ? `<span class="cy-legend-tag">${tag}</span>` : ''}</div>`;
     }
+    // Mixed screens: the grid is agreed once, but each screen may draw it turned a quarter so it fills that screen (a phone on
+    // its side showing the portrait grid, an upright phone showing the wide one). One device, one screen: never turned.
+    function qrFor() {
+      if (local || !layout || layout === 's' || pref === 's') return 0;
+      if (layout === 'l' && pref === 'p') return 3; // the wide grid turned anticlockwise: you still start at the bottom
+      if (layout === 'p' && pref === 'l') return 1; // the tall grid turned clockwise: you start on the left
+      return 0;
+    }
+    function teardownBoard() {
+      if (ro) { ro.disconnect(); ro = null; }
+      canvas = ctx = board = msgEl = rpEl = null;
+      bgCan = null; bgKey = '';
+    }
     function build() {
-      const g = LAYOUTS[layout];
-      const boardHTML = '<div class="cy-board"><canvas aria-label="Light Cycles grid" role="img"></canvas><div class="cy-msg" aria-live="polite"></div></div>';
+      teardownBoard();
+      pickShown = false;
+      qr = qrFor();
+      const vl = qr === 3 ? 'p' : qr === 1 ? 'l' : layout; // the layout of this screen: where the pads sit, how big the banners are
+      const wide = vl !== 'p';
+      const boardHTML = '<div class="cy-board"><canvas aria-label="Light Cycles grid" role="img"></canvas><div class="cy-rp"><span class="cy-rp-tag">REPLAY</span><span class="cy-rp-skip">tap to skip</span><span class="cy-rp-cap"></span></div><div class="cy-msg" aria-live="polite"></div></div>';
       const info = '<div class="cy-info"><span class="cy-pips p-a"></span><span class="cy-round"></span><span class="cy-pips p-b"></span></div>';
       let html;
-      root.dataset.ui = local ? `local-${touch ? 'touch' : 'keys'}-${layout}` : touch ? 'live-touch' : 'live-keys';
-      if (local && touch && layout === 'p') {
+      root.dataset.ui = local ? `local-${touch ? 'touch' : 'keys'}-${vl}` : touch ? 'live-touch' : 'live-keys';
+      if (local && touch && !wide) {
         html = `${padHTML('b', { rot: true, row: true })}<div class="cy-row">${boardHTML}</div>${info}${padHTML('a', { row: true })}`;
       } else if (local && touch) {
         html = `<div class="cy-row">${padHTML('a', { side: true })}${boardHTML}${padHTML('b', { side: true })}</div>${info}`;
-      } else if (local && layout === 's') {
-        const side = (p) => (g[p][0] < g.W / 2 ? 'starts left' : 'starts right');
-        html = `<div class="cy-row">${legendHTML('a', side('a'))}${boardHTML}${legendHTML('b', side('b'))}</div>${info}`;
+      } else if (local && wide) {
+        html = `<div class="cy-row">${legendHTML('a', 'starts left')}${boardHTML}${legendHTML('b', 'starts right')}</div>${info}`;
       } else if (local) {
         html = `<div class="cy-row">${boardHTML}</div>${info}<div class="cy-legends">${legendHTML('a', 'bottom')}${legendHTML('b', 'top')}</div>`;
       } else if (touch) {
-        html = `<div class="cy-row">${boardHTML}</div>${info}${padHTML(me, { row: layout === 'p' && window.innerHeight < 720 })}`;
+        html = `<div class="cy-row">${boardHTML}</div>${info}${padHTML(me, { row: !wide && window.innerHeight < 720 })}`;
       } else {
         // live on a computer: from your own side you always start on the left (or at the bottom)
         const them = api.other(me);
-        const [mine, theirs] = layout === 's' ? ['you start left', 'starts right'] : ['you start at the bottom', 'starts at the top'];
+        const [mine, theirs] = wide ? ['you start left', 'starts right'] : ['you start at the bottom', 'starts at the top'];
         html = `<div class="cy-row"><div class="cy-legend p-${me}"><span class="cy-legend-name">${esc(api.name(me))}</span>${capsWASD()}<span class="cy-or">or</span>${capsArrows()}<span class="cy-legend-tag">${mine}</span></div>${boardHTML}<div class="cy-legend is-them p-${them}"><span class="cy-legend-name">${esc(api.name(them))}</span><i class="cy-bike" aria-hidden="true"></i><span class="cy-legend-tag">${theirs}</span></div></div>${info}`;
       }
       root.innerHTML = html;
-      root.dataset.layout = layout;
+      root.dataset.layout = vl;
       canvas = root.querySelector('canvas');
       ctx = canvas.getContext('2d');
       board = root.querySelector('.cy-board');
       msgEl = root.querySelector('.cy-msg');
+      rpEl = root.querySelector('.cy-rp');
       msgKey = '';
       if (window.ResizeObserver) { ro = new window.ResizeObserver(fit); ro.observe(board.parentElement); }
       fit();
@@ -339,11 +305,15 @@ registerGame({
       const sides = [...row.children].filter((x) => x !== board);
       const gap = parseFloat(getComputedStyle(row).columnGap) || 0;
       const bw = row.clientWidth - sides.reduce((n, x) => n + x.offsetWidth + gap, 0) - 14;
-      const bh = row.clientHeight - 14;
-      const c = Math.max(3, Math.floor(Math.min(bw / g.W, bh / g.H) * 4) / 4);
+      const bh = row.clientHeight - 12;
+      const sw = qr & 1 ? g.H : g.W; // the board as this screen sees it, in cells
+      const sh = qr & 1 ? g.W : g.H;
+      const c = Math.max(3, Math.floor(Math.min(bw / sw, bh / sh) * 4) / 4);
       cell = c;
-      cssW = Math.round(c * g.W);
-      cssH = Math.round(c * g.H);
+      gW = Math.round(c * g.W);
+      gH = Math.round(c * g.H);
+      cssW = qr & 1 ? gH : gW;
+      cssH = qr & 1 ? gW : gH;
       dpr = Math.min(3, window.devicePixelRatio || 1);
       canvas.style.width = cssW + 'px';
       canvas.style.height = cssH + 'px';
@@ -351,19 +321,114 @@ registerGame({
       canvas.height = Math.round(cssH * dpr);
       board.classList.add('is-fit');
       board.style.width = cssW + 14 + 'px';
-      dirty = true;
+      // the countdown and GO stamps scale with a small board
+      root.style.setProperty('--cy-s', clamp(Math.round(Math.min(cssW, cssH) * 0.3), 44, 92) + 'px');
+      bgKey = '';
     }
+    const modeLabel = () => `${ARENA_NAME[cfg && cfg.ar ? cfg.ar : matchAr] || ''}${md.bo ? ' + boosts' : ''}`;
     function renderInfo() {
       const r = root.querySelector('.cy-round');
-      if (!r) return;
-      r.textContent = `Best of ${WIN_AT * 2 - 1}`;
+      if (r) {
+        const rot = matchAr === 'rotate' ? 'Rotate · ' : '';
+        r.textContent = round ? `Round ${round} · ${rot}${modeLabel()}` : `Best of ${WIN_AT * 2 - 1}`;
+      }
       for (const p of ['a', 'b']) {
         const pips = root.querySelector(`.cy-pips.p-${p}`);
-        pips.innerHTML = Array.from({ length: WIN_AT }, (_, i) => `<i class="${i < score[p] ? 'on' : ''}"></i>`).join('');
+        if (!pips) continue;
+        const had = pips.children.length ? pips.querySelectorAll('i.on').length : score[p];
+        pips.innerHTML = Array.from({ length: WIN_AT }, (_, i) => `<i class="${i < score[p] ? 'on' : ''}${i === score[p] - 1 && score[p] > had ? ' pulse' : ''}"></i>`).join('');
         pips.setAttribute('aria-label', `${api.name(p)}: ${score[p]} round${score[p] === 1 ? '' : 's'}`);
       }
       api.setScore(score);
-      api.setStatus(phase === 'wait' ? (local ? 'Get ready' : null) : `Round ${round} · first to ${WIN_AT}`);
+      api.setStatus(phase === 'pick' ? (host ? 'Pick an arena' : null) : `Round ${round} · ${modeLabel()} · first to ${WIN_AT}`);
+    }
+
+    // ── the picker ──
+    const recsLine = () => {
+      const d = api.data() || {};
+      const bits = [];
+      if ((d.cy_streak_len | 0) >= 2 && (d.cy_streak_who === 'a' || d.cy_streak_who === 'b')) bits.push(`${api.name(d.cy_streak_who)} is on a ${d.cy_streak_len | 0}-match streak`);
+      if (d.cy_long_n > 0) bits.push(`longest ride ${d.cy_long_n} ticks`);
+      if (d.cy_shaves_n > 0) bits.push(`most close shaves ${d.cy_shaves_n}`);
+      return bits.length ? bits.join(' · ') : 'First to 3 rounds takes the match.';
+    };
+    function showPicker() {
+      teardownBoard();
+      layout = null;
+      pickShown = true;
+      root.dataset.ui = 'pick';
+      root.dataset.layout = '';
+      const wideMini = pref !== 'p';
+      const chip = (id) => {
+        const art = ARENAS.includes(id)
+          ? `<canvas class="cy-mini${wideMini ? ' is-wide' : ''}" data-mini="${id}"></canvas>`
+          : `<span class="cy-glyph" aria-hidden="true">${id === 'rotate' ? SPIN : '?'}</span>`;
+        return `<button type="button" class="cy-chip" role="radio" aria-checked="${md.ar === id}" data-arena="${id}">${art}<span>${ARENA_NAME[id]}</span></button>`;
+      };
+      root.innerHTML = `<section class="cy-pick${host ? '' : ' is-ro'}" aria-label="Pick an arena">
+        <h2 class="cy-pick-t">${host ? 'Pick an arena' : `${esc(api.name('a'))} is picking…`}</h2>
+        <p class="cy-pick-sub"></p>
+        <div class="cy-chips" role="radiogroup" aria-label="Arena">${CHOICES.map(chip).join('')}
+          <button type="button" class="cy-chip cy-boost" role="switch" aria-checked="${md.bo}" data-boost="1"><span class="cy-glyph" aria-hidden="true">${BOLT}</span><span>Boosts</span><span class="cy-on"></span></button>
+        </div>
+        ${host ? '<button type="button" class="gm-btn gm-btn-big cy-go">GO</button>' : ''}
+        <p class="cy-recs">${esc(recsLine())}</p>
+      </section>`;
+      if (host) {
+        root.querySelectorAll('.cy-chip[data-arena]').forEach((b) => b.addEventListener('click', () => pickArena(b.dataset.arena)));
+        root.querySelector('.cy-boost').addEventListener('click', () => pickBoost(!md.bo));
+        root.querySelector('.cy-go').addEventListener('click', () => go());
+      }
+      paintPicker();
+      drawMinis();
+      renderInfo();
+    }
+    function paintPicker() {
+      root.querySelectorAll('.cy-chip[data-arena]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.arena === md.ar)));
+      const bo = root.querySelector('.cy-boost');
+      if (bo) { bo.setAttribute('aria-checked', String(md.bo)); bo.querySelector('.cy-on').textContent = md.bo ? 'ON' : 'OFF'; }
+      const sub = root.querySelector('.cy-pick-sub');
+      if (sub) sub.textContent = `${ARENA_BLURB[md.ar] || ''}${md.bo ? ' Boost and jump tokens on the grid.' : ''}`;
+    }
+    function drawMinis() {
+      root.querySelectorAll('canvas[data-mini]').forEach((cv) => {
+        const L = pref;
+        const { W, H, occ } = arenaBlocks(L, cv.dataset.mini, 7);
+        const k = 2;
+        cv.width = W * k; cv.height = H * k;
+        const g = cv.getContext('2d');
+        g.fillStyle = C.card; g.fillRect(0, 0, cv.width, cv.height);
+        g.fillStyle = C.ink;
+        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (occ[y * W + x] === 3) g.fillRect(x * k, y * k, k, k);
+        for (const p of ['a', 'b']) {
+          const [x, y] = LAYOUTS[L][p];
+          g.fillStyle = C[p];
+          g.fillRect((x - 1) * k, (y - 1) * k, k * 3, k * 3);
+        }
+      });
+    }
+    function pickArena(id) {
+      if (!host || phase !== 'pick' || !CHOICES.includes(id)) return;
+      md.ar = id;
+      api.sfx('tap');
+      paintPicker();
+      publish();
+    }
+    function pickBoost(on) {
+      if (!host || phase !== 'pick') return;
+      md.bo = !!on;
+      api.sfx('tap');
+      paintPicker();
+      publish();
+    }
+    function go(opts) {
+      if (!host || phase !== 'pick' || startReq) return;
+      if (opts) {
+        if (opts.ar && CHOICES.includes(opts.ar)) md.ar = opts.ar;
+        if (opts.boosts != null) md.bo = !!opts.boosts;
+      }
+      startReq = perf();
+      api.sfx('pop');
     }
 
     // ── input ──
@@ -374,6 +439,7 @@ registerGame({
         const q = queues[p];
         if (q.length >= 3 || !sim[p].alive) return;
         q.push({ seq: 0, d });
+        cue.turn();
       } else guestTurn(d);
     }
     function guestTurn(d) {
@@ -383,12 +449,12 @@ registerGame({
       const e = { seq: ++seq, r: round, d };
       pending.push(e);
       if (pending.length > 12) pending.shift();
+      cue.turn();
       api.send('turn', { m: hostMid, g: gid, s: e.seq, r: e.r, d });
       publishGuest();
-      dirty = true;
     }
-    // screen direction -> world direction for a player (rot: that player's pad/half is upside down)
-    const world = (d, rot) => (d + (rot ? 2 : 0) + (flip ? 2 : 0)) & 3;
+    // screen direction -> world direction for a player (rot: that player's pad is upside down)
+    const world = (d, rot) => (d + 4 - qr + (rot ? 2 : 0) + (flip ? 2 : 0)) & 3;
     function flash(sel) {
       const k = root.querySelector(sel);
       if (!k) return;
@@ -398,6 +464,10 @@ registerGame({
     }
     function onKey(e) {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (phase === 'pick') {
+        if (host && e.key === 'Enter' && !e.repeat && !(e.target && e.target.closest && e.target.closest('button'))) { e.preventDefault(); go(); }
+        return;
+      }
       const code = KEYS[e.code] ? e.code : KEY_ALIAS[String(e.key).toLowerCase()] || (KEYS[e.key] ? e.key : null);
       if (!code || !layout) return;
       if (phase !== 'over') e.preventDefault();
@@ -410,6 +480,7 @@ registerGame({
     offs.push(() => window.removeEventListener('keydown', onKey));
 
     let swipe = null;
+    let rootWired = false;
     function wireInputs() {
       const press = (b) => {
         const p = b.dataset.p;
@@ -417,13 +488,18 @@ registerGame({
         input(local ? p : me, d);
         api.haptic(8);
       };
-      root.addEventListener('pointerdown', (e) => {
-        const b = e.target.closest('.cy-key');
-        if (b) { e.preventDefault(); press(b); }
-      });
-      root.addEventListener('click', (e) => { const b = e.target.closest('.cy-key'); if (b && e.detail === 0) press(b); });
+      if (!rootWired) { // the root outlives every rebuild of the board: wire it once
+        rootWired = true;
+        root.addEventListener('pointerdown', (e) => {
+          const b = e.target.closest('.cy-key');
+          if (b) { e.preventDefault(); press(b); }
+        });
+        root.addEventListener('click', (e) => { const b = e.target.closest('.cy-key'); if (b && e.detail === 0) press(b); });
+      }
       board.addEventListener('pointerdown', (e) => {
-        swipe = { id: e.pointerId, x: e.clientX, y: e.clientY };
+        if (endStage(perf()) === 'hit' || endStage(perf()) === 'replay') { skipReplay(); return; }
+        const r = canvas.getBoundingClientRect();
+        swipe = { id: e.pointerId, x: e.clientX, y: e.clientY, top: e.clientY < r.top + r.height / 2, left: e.clientX < r.left + r.width / 2 };
         try { board.setPointerCapture(e.pointerId); } catch { /* ignore */ }
       });
       board.addEventListener('pointermove', (e) => {
@@ -431,12 +507,12 @@ registerGame({
         const dx = e.clientX - swipe.x;
         const dy = e.clientY - swipe.y;
         if (Math.hypot(dx, dy) < 18) return;
+        // the swipe follows the finger on screen
         const d = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 1 : 3) : (dy > 0 ? 2 : 0);
         swipe.x = e.clientX; swipe.y = e.clientY;
         if (!local) { input(me, world(d, false)); return; }
-        // one device: the half you swipe on is whose bike turns
-        const r = canvas.getBoundingClientRect();
-        if (layout === 'p') { const top = e.clientY < r.top + r.height / 2; input(top ? 'b' : 'a', world(d, top)); } else input(e.clientX < r.left + r.width / 2 ? 'a' : 'b', d);
+        // one device: the half you swipe on is whose bike turns (top half in portrait, left half on its side)
+        if (layout === 'p') input(swipe.top ? 'b' : 'a', d); else input(swipe.left ? 'a' : 'b', d);
       });
       const end = (e) => { if (swipe && e.pointerId === swipe.id) swipe = null; };
       board.addEventListener('pointerup', end);
@@ -449,19 +525,41 @@ registerGame({
       let lo = 0;
       let lg = encs.join(',');
       if (lg.length > 2600) { lo = Math.max(0, encs.length - 360); lg = encs.slice(lo).join(','); }
-      api.setPresence({ v: 1, mid, L: layout, r: round, ph: phase, cd, t: sim ? sim.t : 0, lg, lo, sc: [score.a, score.b], rw, g: curG, rx: rxB, dn: dnB, pz: paused ? 1 : 0, res: overRes });
+      api.setPresence({
+        v: 2, mid, ph: phase, r: round, cd, t: sim ? sim.t : 0, lg, lo, sc: [score.a, score.b], rw, cfg, md: { ar: phase === 'pick' ? md.ar : matchAr, bo: md.bo ? 1 : 0 },
+        g: curG, rx: rxB, dn: dnB, pz: paused ? pz || 1 : 0, res: overRes, rc,
+      });
+    }
+    function randSeed() { return Math.floor(Math.random() * 2147483647); }
+    function beginMatch(now) {
+      let ar = md.ar;
+      try { api.setData({ cycles_last: md.ar, cycles_boosts: !!md.bo }); } catch { /* ignore */ }
+      if (ar === 'surprise') ar = ARENAS[Math.floor(Math.random() * ARENAS.length)];
+      matchAr = ar;
+      base = { ...(api.data() || {}) };
+      rotOrder = ARENAS.slice().sort(() => Math.random() - 0.5);
+      startRound(now);
     }
     function startRound(now) {
       round++;
-      sim = newSim(layout);
+      const ar = matchAr === 'rotate' ? rotOrder[(round - 1) % rotOrder.length] : matchAr;
+      let L = pref;
+      if (!local) { const ps = api.partnerState(); const gp = ps && (ps.pref === 'p' || ps.pref === 's' || ps.pref === 'l') ? ps.pref : null; L = pickLayout(pref, gp || pref); }
+      // Classic keeps today's fixed starts; after a draw (and in every other arena) the start is a seeded, symmetric stagger
+      const sv = ar === 'classic' && !lastDraw ? 0 : 1 + Math.floor(Math.random() * 1000000);
+      cfg = { L, ar, sd: randSeed(), bo: md.bo ? 1 : 0, sv, rm: ar === 'classic' ? 'c' : 'r' };
+      lastDraw = false;
+      sim = newSim(cfg);
       entries = []; encs = [];
       queues.a = []; queues.b = [];
       dnB = rxB;
-      rw = null; crashAt = 0;
+      rw = null; crashAt = 0; skipped = false; rc = [];
+      evSeen = 0; fx.length = 0; capText = '';
+      acc = 0;
       phase = 'count'; cdStart = now; cd = 3;
+      if (layout !== L || !canvas) { layout = L; build(); }
       api.sfx('tick');
       publish(); renderInfo();
-      dirty = true;
     }
     function hostTick(now) {
       const turns = {};
@@ -476,17 +574,42 @@ registerGame({
         }
       }
       const t = sim.t + 1;
-      for (const p of ['a', 'b']) if (turns[p] != null) { const e = { t, p, d: turns[p] }; entries.push(e); encs.push(enc(e)); }
+      for (const p of ['a', 'b']) {
+        if (turns[p] == null) continue;
+        const e = { t, p, d: turns[p] };
+        entries.push(e); encs.push(enc(e));
+        if (!local && p !== me) cue.turnThem();
+      }
       step(sim, turns);
+      processEvents();
       if (sim.done) roundOver(now);
       publish();
-      dirty = true;
     }
+    // A record is only "new" if it beat one that stood before this match began: what the match itself set a round ago doesn't count.
+    let base = null;
+    function bump(patch, key, val, who, tag, label) {
+      const d = api.data() || {};
+      if (!base) base = { ...d };
+      const prev = +d[key] || 0;
+      if (val > prev) {
+        patch[key] = val;
+        if (who != null) patch[key.replace(/_n$/, '_who')] = who;
+        if ((+base[key] || 0) > 0) { rc.push(tag); matchRecs.push(label); }
+      }
+    }
+    const matchRecs = [];
     function roundOver(now) {
-      phase = 'end'; endAt = now; crashAt = now; rw = sim.out;
-      if (rw === 'a' || rw === 'b') score[rw]++;
-      api.sfx('hit'); api.haptic(40);
+      phase = 'end'; endAt = now; crashAt = now; endDue = now + END_TOTAL; rw = sim.out;
+      if (rw === 'a' || rw === 'b') score[rw]++; else lastDraw = true;
+      const patch = {};
+      const shaves = sim.a.sh + sim.b.sh;
+      const sw = sim.a.sh === sim.b.sh ? (rw === 'a' || rw === 'b' ? rw : 'd') : sim.a.sh > sim.b.sh ? 'a' : 'b';
+      bump(patch, 'cy_long_n', sim.t, rw === 'a' || rw === 'b' ? rw : 'd', 'long', `longest ride ${sim.t} ticks`);
+      bump(patch, 'cy_shaves_n', shaves, sw, 'shaves', `${shaves} close shaves in a round`);
+      if (Object.keys(patch).length) { try { api.setData(patch); } catch { /* ignore */ } }
+      cue.crash(); api.haptic(40);
       renderInfo();
+      shake();
     }
     function nextRound(now) {
       const done = score.a >= WIN_AT || score.b >= WIN_AT || round >= MAX_ROUNDS;
@@ -495,27 +618,49 @@ registerGame({
       const w = score.a > score.b ? 'a' : score.b > score.a ? 'b' : null;
       const hi = Math.max(score.a, score.b);
       const lo = Math.min(score.a, score.b);
+      const d = api.data() || {};
+      const patch = {};
+      const bits = [];
+      if (w) {
+        const o = w === 'a' ? 'b' : 'a';
+        const prevLen = d.cy_streak_who === o ? d.cy_streak_len | 0 : 0;
+        const n = d.cy_streak_who === w ? (d.cy_streak_len | 0) + 1 : 1;
+        patch.cy_streak_who = w; patch.cy_streak_len = n;
+        if (n > (d.cy_beststreak_n | 0)) { patch.cy_beststreak_n = n; patch.cy_beststreak_who = w; }
+        patch[`cy_wins_${w}_n`] = (d[`cy_wins_${w}_n`] | 0) + 1;
+        if (lo === 0 && hi >= WIN_AT) { patch[`cy_flawless_${w}_n`] = (d[`cy_flawless_${w}_n`] | 0) + 1; bits.push(`flawless ${hi}–0`); }
+        if (hi < WIN_AT) bits.unshift(`won on points after ${round} rounds`);
+        if (n >= 2) bits.unshift(`${api.name(w)} on a ${n}-match streak`);
+        else if (prevLen >= 2) bits.unshift(`${api.name(w)} ends ${api.name(o)}'s ${prevLen}-match streak`);
+        bits.push(...matchRecs.slice(-1).map((x) => `new record: ${x}`));
+        const wa = patch.cy_wins_a_n != null ? patch.cy_wins_a_n : d.cy_wins_a_n | 0;
+        const wb = patch.cy_wins_b_n != null ? patch.cy_wins_b_n : d.cy_wins_b_n | 0;
+        bits.push(wa === wb ? `matches level at ${wa}–${wb}` : `${api.name(wa > wb ? 'a' : 'b')} leads ${Math.max(wa, wb)}–${Math.min(wa, wb)}`);
+      } else { patch.cy_streak_who = ''; patch.cy_streak_len = 0; }
+      try { api.setData(patch); } catch { /* ignore */ }
       overRes = w
-        ? { winner: w, text: `${api.name(w)} wins ${hi}–${lo}`, sub: lo === 0 ? 'A clean sweep. Not a scratch on that bike.' : 'Last one riding, three times over.' }
-        : { winner: null, text: `Dead heat ${hi}–${lo}`, sub: 'Nine rounds and nobody blinked.' };
+        ? { winner: w, text: `${api.name(w)} wins ${hi}–${lo}`, sub: bits.slice(0, 3).join(' · ') }
+        : { winner: null, text: `Dead heat ${hi}–${lo}`, sub: `${round} rounds and nobody blinked.` };
       publish();
       api.finish(overRes);
     }
     /** Host, fresh mount: the guest remembers the match we were in the middle of. */
     function adoptMatch(ps) {
-      if (!ps || ps.v !== 1 || typeof ps.hm !== 'string' || ps.hm === mid || ps.hph === 'over' || !Array.isArray(ps.hsc)) return;
+      if (!ps || ps.v !== 2 || typeof ps.hm !== 'string' || ps.hm === mid || ps.hph === 'over' || !Array.isArray(ps.hsc)) return false;
       const a0 = Math.max(0, ps.hsc[0] | 0); const b0 = Math.max(0, ps.hsc[1] | 0);
-      if (!(a0 + b0) || a0 >= WIN_AT || b0 >= WIN_AT) return;
+      if (!(a0 + b0) || a0 >= WIN_AT || b0 >= WIN_AT) return false;
       score = { a: a0, b: b0 };
       // a round that was still being ridden is ridden again; a decided one counts
       round = Math.max(0, Math.min(MAX_ROUNDS - 1, (ps.hr | 0) - (ps.hph === 'end' ? 0 : 1)));
+      if (ps.hmd && (ARENAS.includes(ps.hmd.ar) || ps.hmd.ar === 'rotate')) { md = { ar: ps.hmd.ar, bo: !!ps.hmd.bo }; }
+      return true;
     }
     function recvB(m, g, s, r, d) {
       if (m !== mid || !g) return;
       if (g !== curG) { curG = g; rxB = 0; dnB = 0; bufB.clear(); gapSince = 0; queues.b = []; }
       if (!Number.isInteger(s) || s <= rxB || bufB.has(s) || !(d >= 0 && d <= 3)) return;
       bufB.set(s, { r, d });
-      if (!gapSince) gapSince = performance.now();
+      if (!gapSince) gapSince = perf();
       drainB();
     }
     function drainB() {
@@ -532,16 +677,19 @@ registerGame({
       if (moved) publish();
     }
     function hostUpdate(now, dt) {
-      if (phase === 'wait') {
-        if (!local) {
-          const ps = api.partnerState();
-          const gp = ps && (ps.pref === 'p' || ps.pref === 's') ? ps.pref : null;
-          if (!gp && now - waitSince < 1500) return;
-          layout = pref === 'p' || gp === 'p' ? 'p' : 's';
+      if (phase === 'pick') {
+        if (!pickShown) {
+          if (!local && now - mountedAt < 700 && !api.partnerState()) return;
+          if (!local && adoptMatch(api.partnerState())) { matchAr = md.ar; rotOrder = ARENAS.slice(); startRound(now); return; }
+          showPicker();
+          publish();
         }
-        if (!canvas) build();
-        if (!local) adoptMatch(api.partnerState());
-        startRound(now);
+        if (!local && now - mountedAt < 1500 && adoptMatch(api.partnerState())) { matchAr = md.ar; rotOrder = ARENAS.slice(); startRound(now); return; }
+        if (startReq) {
+          const ps = local ? null : api.partnerState();
+          const gp = ps && (ps.pref === 'p' || ps.pref === 's' || ps.pref === 'l') ? ps.pref : null;
+          if (local || gp || now - startReq > 1500) beginMatch(now);
+        }
         return;
       }
       if (bufB.size && gapSince && now - gapSince > 1200) { rxB = Math.min(...bufB.keys()) - 1; gapSince = 0; drainB(); }
@@ -552,49 +700,185 @@ registerGame({
       } else if (phase === 'run') {
         acc += dt;
         let n = 0;
-        while (phase === 'run' && acc >= tickMs(sim.t) && n < 4) { acc -= tickMs(sim.t); hostTick(now); n++; }
+        while (phase === 'run' && acc >= tickMs(cfg, sim.t) && n < 4) { acc -= tickMs(cfg, sim.t); hostTick(now); n++; }
         if (n >= 4) acc = 0;
-      } else if (phase === 'end' && now - endAt >= END_MS) nextRound(now);
+      } else if (phase === 'end' && now >= endDue) nextRound(now);
     }
 
     // ── guest ──
     // keep: the host's match as last seen, mirrored in our presence so a host that reloads or
     // reopens the game mid-match carries on from the same score instead of restarting.
-    let keep = null; // { mid, sc: [a, b], r, ph }
+    let keep = null; // { mid, sc: [a, b], r, ph, md }
     function publishGuest() {
       api.setPresence({
-        v: 1, pref, mid: hostMid, g: gid, q: pending.filter((p) => p.seq > gRx).slice(-12).map((p) => [p.seq, p.r, p.d]),
-        hid: document.hidden ? 1 : 0, ...(keep ? { hm: keep.mid, hsc: keep.sc, hr: keep.r, hph: keep.ph } : {}),
+        v: 2, pref, mid: hostMid, g: gid, q: pending.filter((p) => p.seq > gRx).slice(-12).map((p) => [p.seq, p.r, p.d]),
+        hid: document.hidden ? 1 : 0, ...(keep ? { hm: keep.mid, hsc: keep.sc, hr: keep.r, hph: keep.ph, hmd: keep.md } : {}),
       });
     }
     function onHost(s) {
-      if (!alive || !s || s.v !== 1 || !s.mid || !s.L || s.mid === staleMid) return;
+      if (!alive || !s || s.v !== 2 || !s.mid || s.mid === staleMid) return;
       if (s.mid !== hostMid) { hostMid = s.mid; seq = 0; pending = []; gRx = 0; gEntries = []; gRound = 0; lastPh = null; }
-      if (!layout) { layout = s.L; build(); }
-      if (s.r !== gRound) { gRound = s.r; gEntries = []; crashAt = 0; }
+      if (s.md && CHOICES.concat(['rotate']).includes(s.md.ar)) md = { ar: s.md.ar, bo: !!s.md.bo };
+      if (s.ph === 'pick') {
+        phase = 'pick'; round = 0; paused = false;
+        if (!pickShown) showPicker(); else paintPicker();
+        lastPh = 'pick';
+        return;
+      }
+      if (!s.cfg) return;
+      const now = perf();
+      if (s.r !== gRound) { gRound = s.r; gEntries = []; crashAt = 0; skipped = false; evSeen = 0; fx.length = 0; capText = ''; seenTurns = 0; tdisp = 0; pending = pending.filter((p) => p.r === s.r); }
+      cfg = s.cfg;
+      matchAr = md.ar;
+      if (!canvas || layout !== cfg.L) { layout = cfg.L; build(); }
       const part = decode(s.lg);
       if (!s.lo) gEntries = part; else part.forEach((e, i) => { gEntries[s.lo + i] = e; });
-      const now = performance.now();
+      const prevT = sim ? sim.t : 0;
       if (s.ph === 'count' && s.cd !== cd && !s.pz) api.sfx('tick');
       if (s.ph === 'run' && lastPh !== 'run') { goAt = now; api.sfx('pop'); }
-      phase = s.ph; round = s.r; cd = s.cd; rw = s.rw; paused = !!s.pz;
+      phase = s.ph; round = s.r; cd = s.cd; rw = s.rw; paused = !!s.pz; pz = s.pz | 0; rc = Array.isArray(s.rc) ? s.rc : [];
       lastPh = s.ph;
       const sc = Array.isArray(s.sc) ? s.sc : [0, 0];
       const infoKey = `${round}|${phase}|${sc[0]}|${sc[1]}`;
       score = { a: sc[0] | 0, b: sc[1] | 0 };
-      sim = rebuild(layout, gEntries.filter(Boolean), s.t | 0);
-      if (sim.done && !crashAt) { crashAt = now; api.sfx('hit'); api.haptic(40); }
+      sim = rebuild(cfg, gEntries.filter(Boolean), s.t | 0);
+      if (sim.t !== prevT || sim.t === 0) {
+        const err = sim.t + BIAS - tdisp;
+        tdisp = Math.abs(err) > 2.5 ? sim.t + BIAS : tdisp + err * 0.3;
+      }
+      processEvents();
+      const theirs = gEntries.filter((e) => e && e.p !== me).length;
+      if (theirs > seenTurns) { if (seenTurns || theirs === 1) cue.turnThem(); seenTurns = theirs; }
+      if (sim.done && !crashAt) { crashAt = now; cue.crash(); api.haptic(40); shake(); }
       const mine = s.g === gid; // acks are for this guest session only
       pending = pending.filter((p) => p.r === round && !(mine && p.seq <= (s.dn | 0)));
       if (mine && (s.rx | 0) !== gRx) { gRx = s.rx | 0; publishGuest(); }
       if (infoKey !== lastInfo) {
-        lastInfo = infoKey; renderInfo();
+        renderInfo();
+        lastInfo = infoKey;
         // a fresh host mount (new id, earlier round) hasn't picked our score up yet: keep reporting it
-        if (!keep || s.mid === keep.mid || round >= keep.r || s.ph === 'over') { keep = { mid: s.mid, sc: [score.a, score.b], r: round, ph: s.res ? 'over' : phase }; publishGuest(); }
+        if (!keep || s.mid === keep.mid || round >= keep.r || s.ph === 'over') { keep = { mid: s.mid, sc: [score.a, score.b], r: round, ph: s.res ? 'over' : phase, md: { ar: md.ar, bo: md.bo ? 1 : 0 } }; publishGuest(); }
       }
       // the engine's end-card event can drop: the host's presence carries the result as well
       if (s.ph === 'over' && s.res && !finT) { finT = setTimeout(() => { timers.delete(finT); api.finish(s.res); }, 1500); timers.add(finT); }
-      dirty = true;
+    }
+
+    // ── effects fed by the simulation (the same on every device) ──
+    function processEvents() {
+      if (!sim) return;
+      const now = perf();
+      for (; evSeen < sim.ev.length; evSeen++) {
+        const e = sim.ev[evSeen];
+        if (sim.t - e.t > 4) continue; // joined late: don't replay old sparks
+        const mineOrLocal = local || e.p === me;
+        if (e.k === 'shave') { fx.push({ k: 'spark', x: e.x, y: e.y, t0: now, p: e.p }); if (mineOrLocal) cue.shave(); } else if (e.k === 'pick') {
+          fx.push({ k: 'ring', x: e.x, y: e.y, t0: now, p: e.p, tk: e.tk });
+          if (mineOrLocal) (e.tk === 1 ? cue.boost : cue.jump)();
+        } else if (e.k === 'hop') { fx.push({ k: 'ring', x: e.x, y: e.y, t0: now, p: e.p, tk: 3 }); if (mineOrLocal) cue.jump(); }
+      }
+    }
+    function shake() {
+      if (reduce || !board) return;
+      const now = perf();
+      if (now - lastShake < 400) return;
+      lastShake = now;
+      board.classList.remove('is-shake');
+      void board.offsetWidth;
+      board.classList.add('is-shake');
+    }
+
+    // ── end of a round: the crash, a zoomed replay, then the banner ──
+    function endStage(now) {
+      if (!sim || !sim.done || !crashAt) return 'none';
+      const e = now - crashAt;
+      if (!skipped && e < HOLD_MS) return 'hit';
+      if (!skipped && e < HOLD_MS + REPLAY_MS) return 'replay';
+      return 'banner';
+    }
+    function skipReplay() {
+      if (skipped) return;
+      skipped = true; skipAt = perf();
+      if (local && phase === 'end') endDue = Math.min(endDue, skipAt + BANNER_MS);
+    }
+    function crashFocus() {
+      const loser = rw === 'a' ? 'b' : rw === 'b' ? 'a' : 'a';
+      const cr = sim[loser].crash || sim.a.crash || sim.b.crash || [0, 0];
+      return [clamp(cr[0], 0, sim.W - 1), clamp(cr[1], 0, sim.H - 1)];
+    }
+    function captionOf() {
+      const nm = (p) => esc(api.name(p));
+      if (rw === 'a' || rw === 'b') {
+        const lo = rw === 'a' ? 'b' : 'a';
+        const ck = sim[lo].ck;
+        if (ck === 'squeeze') return `${nm(lo)} squeezed by 1 cell`;
+        if (ck === 'trail') return `${nm(lo)} ran into a wall of light`;
+        if (ck === 'self') return `${nm(lo)} tangled in their own trail`;
+        if (ck === 'block') return `${nm(lo)} hit a block`;
+        return `${nm(lo)} ran out of road`;
+      }
+      return sim.a.ck === 'head' && sim.b.ck === 'head' && sim.a.crash && sim.b.crash && sim.a.crash[0] === sim.b.crash[0] && sim.a.crash[1] === sim.b.crash[1] ? 'Head-on, same cell' : 'Both riders crashed';
+    }
+
+    // ── per-frame rider views ──
+    function aheadFree(x, y, d, n) {
+      let ok = 0;
+      for (let k = 1; k <= n; k++) {
+        const X = x + DX[d] * k;
+        const Y = y + DY[d] * k;
+        if (X < 0 || Y < 0 || X >= sim.W || Y >= sim.H || sim.occ[Y * sim.W + X] !== 0) break;
+        ok = k;
+      }
+      return ok;
+    }
+    /** The head drawn `ext` cells past the last confirmed cell, heading d (the predicted segment). */
+    function extended(p, d, ext) {
+      const c = sim[p];
+      const base = pathAt(sim, p, sim.t);
+      const n = Math.min(ext, aheadFree(base.x, base.y, d, c.boost > 0 ? 2 : 1));
+      return { i: base.i, x: base.x + DX[d] * n, y: base.y + DY[d] * n, d };
+    }
+    /** Guest: its own head, turned at once on a pending turn, stepping on with the display clock. */
+    function ownRaw(running) {
+      const c = sim[me];
+      const d = pending.length && okTurn(c.d, pending[pending.length - 1].d) ? pending[pending.length - 1].d : c.d;
+      const ext = running ? clamp(tdisp - sim.t, 0, 1) * (c.boost > 0 ? 2 : 1) : 0;
+      return extended(me, d, ext);
+    }
+    /** Guest: when the host's log lands, the predicted head (turned early) and the confirmed one (a cell or two on) differ.
+     *  Rather than pop, the drawn head carries the difference as an offset that fades out in about 80 ms; the trail and the
+     *  log stay exactly the host's. */
+    const ob = { x: 0, y: 0, last: null, r: 0 };
+    function stepBlend(dt) {
+      const live = sim && sim[me].alive && !sim.done && phase === 'run' && !paused && cfg;
+      if (!live) { ob.x = 0; ob.y = 0; ob.last = null; return; }
+      const v = ownRaw(true);
+      if (ob.last && ob.r === round) {
+        const jx = v.x - ob.last[0];
+        const jy = v.y - ob.last[1];
+        const m = Math.hypot(jx, jy);
+        const move = (dt / tickMs(cfg, sim.t)) * (sim[me].boost > 0 ? 2 : 1); // what steady riding covers in this frame
+        if (m > move + 0.3 && m < 3.2) { const k = 1 - move / m; ob.x -= jx * k; ob.y -= jy * k; } else if (m >= 3.2) { ob.x = 0; ob.y = 0; }
+      } else { ob.x = 0; ob.y = 0; }
+      ob.last = [v.x, v.y]; ob.r = round;
+      const f = Math.exp(-dt / 38);
+      ob.x *= f; ob.y *= f;
+      if (Math.abs(ob.x) < 0.01 && Math.abs(ob.y) < 0.01) { ob.x = 0; ob.y = 0; }
+    }
+    function viewOf(p) {
+      const c = sim[p];
+      if (!c.alive || sim.done) return pathAt(sim, p, sim.t);
+      const running = phase === 'run' && !paused;
+      if (host) {
+        const q = queues[p].find((e) => !e.stale && okTurn(c.d, e.d));
+        const d = q ? q.d : c.d;
+        const ext = running ? clamp(acc / tickMs(cfg, sim.t), 0, 1) * (c.boost > 0 ? 2 : 1) : 0;
+        return extended(p, d, ext);
+      }
+      if (p === me) {
+        const v = ownRaw(running);
+        return running && (ob.x || ob.y) ? { ...v, x: v.x + ob.x, y: v.y + ob.y } : v;
+      }
+      return running ? pathAt(sim, p, clamp(tdisp - OPP_LAG, 0, sim.t)) : pathAt(sim, p, sim.t);
     }
 
     // ── drawing ──
@@ -606,12 +890,13 @@ registerGame({
       ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y);
       ctx.closePath();
     }
-    function trace(c) {
-      const pth = c.path;
+    function trace(c, v) {
+      const P = c.path;
+      const k = cell;
       ctx.beginPath();
-      ctx.moveTo((pth[0] + 0.5) * cell, (pth[1] + 0.5) * cell);
-      if (pth.length === 2) ctx.lineTo((pth[0] + 0.5) * cell + 0.01, (pth[1] + 0.5) * cell);
-      for (let i = 2; i < pth.length; i += 2) ctx.lineTo((pth[i] + 0.5) * cell, (pth[i + 1] + 0.5) * cell);
+      ctx.moveTo((P[0] + 0.5) * k, (P[1] + 0.5) * k);
+      for (let i = 1; i <= v.i; i++) ctx.lineTo((P[2 * i] + 0.5) * k, (P[2 * i + 1] + 0.5) * k);
+      ctx.lineTo((v.x + 0.5) * k + (v.i === 0 && v.x === P[0] && v.y === P[1] ? 0.01 : 0), (v.y + 0.5) * k);
     }
     function star(cx, cy, R, r, n, rot) {
       ctx.beginPath();
@@ -622,141 +907,323 @@ registerGame({
       }
       ctx.closePath();
     }
+    // the hard shadow falls down-right on screen, whichever way the board is turned
+    function shadowSign() {
+      const t = (qr + (flip ? 2 : 0)) & 3;
+      return [[1, 1], [1, -1], [-1, -1], [-1, 1]][t];
+    }
+    function drawBgVector(g2, c, W, H, S) {
+      // graph-paper grid, a heavier line every 8 cells from the centre
+      g2.lineWidth = 1;
+      g2.strokeStyle = C.line;
+      g2.globalAlpha = C.dark ? 0.55 : 0.75;
+      g2.beginPath();
+      for (let x = 1; x < W; x++) { const X = Math.round(x * c) + 0.5; g2.moveTo(X, 0); g2.lineTo(X, H * c); }
+      for (let y = 1; y < H; y++) { const Y = Math.round(y * c) + 0.5; g2.moveTo(0, Y); g2.lineTo(W * c, Y); }
+      g2.stroke();
+      // registration marks every 8 cells out from the centre, like a printed board
+      g2.globalAlpha = C.dark ? 0.7 : 0.45;
+      g2.strokeStyle = C.muted;
+      g2.lineWidth = Math.max(1, c * 0.12);
+      g2.beginPath();
+      const cx0 = (W - 1) / 2;
+      const cy0 = (H - 1) / 2;
+      const m = c * 0.42;
+      for (let x = cx0 % 8; x < W; x += 8) {
+        for (let y = cy0 % 8; y < H; y += 8) {
+          const X = (x + 0.5) * c;
+          const Y = (y + 0.5) * c;
+          g2.moveTo(X - m, Y); g2.lineTo(X + m, Y); g2.moveTo(X, Y - m); g2.lineTo(X, Y + m);
+        }
+      }
+      g2.stroke();
+      g2.globalAlpha = 1;
+      // arena blocks: printed ink squares with a paper rule inside, and the same hard shadow as the trails
+      const occ = S.occ;
+      const [ssx, ssy] = shadowSign();
+      const sh = Math.max(1, c * 0.2);
+      g2.fillStyle = C.edge;
+      g2.globalAlpha = C.dark ? 0.9 : 0.28;
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (occ[y * W + x] === 3) g2.fillRect(x * c + sh * ssx, y * c + sh * ssy, c, c);
+      g2.globalAlpha = 1;
+      g2.fillStyle = C.ink;
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (occ[y * W + x] === 3) g2.fillRect(x * c, y * c, c + 0.5, c + 0.5);
+      if (c >= 5) {
+        g2.strokeStyle = C.card;
+        g2.globalAlpha = 0.3;
+        g2.lineWidth = Math.max(1, c * 0.1);
+        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (occ[y * W + x] === 3) g2.strokeRect(x * c + c * 0.22, y * c + c * 0.22, c * 0.56, c * 0.56);
+        g2.globalAlpha = 1;
+      }
+    }
+    function drawToken(t, now, idx) {
+      const c = cell;
+      const x = (t.x + 0.5) * c;
+      const y = (t.y + 0.5) * c;
+      const pulse = reduce ? 1 : 1 + 0.09 * Math.sin(now / 170 + idx);
+      const R = Math.max(3.6, c * 0.82) * pulse;
+      ctx.lineWidth = Math.max(1.2, c * 0.14);
+      ctx.strokeStyle = C.ink;
+      ctx.fillStyle = C.edge; ctx.globalAlpha = C.dark ? 0.9 : 0.28;
+      const [tsx, tsy] = shadowSign();
+      ctx.beginPath(); ctx.arc(x + c * 0.15 * tsx, y + c * 0.15 * tsy, R, 0, 7); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = C.hl;
+      ctx.beginPath(); ctx.arc(x, y, R, 0, 7); ctx.fill(); ctx.stroke();
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.strokeStyle = C.ink; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.lineWidth = Math.max(1.2, c * 0.2);
+      const u = R * 0.42;
+      ctx.beginPath();
+      if (t.k === 1) {
+        // boost: two chevrons pointing along the ride
+        ctx.moveTo(-u * 1.05, -u); ctx.lineTo(-u * 0.1, 0); ctx.lineTo(-u * 1.05, u);
+        ctx.moveTo(u * 0.1, -u); ctx.lineTo(u * 1.05, 0); ctx.lineTo(u * 0.1, u);
+      } else {
+        // jump: a hop arc over a short bar
+        ctx.moveTo(-u * 1.1, u * 0.55); ctx.quadraticCurveTo(0, -u * 1.7, u * 1.1, u * 0.55);
+        ctx.moveTo(u * 0.5, -u * 0.1); ctx.lineTo(u * 1.1, u * 0.55); ctx.lineTo(u * 1.3, -u * 0.25);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+    function drawBike(p, v, now, live) {
+      const s = { alive: live, boost: sim[p].boost, jump: sim[p].jump };
+      const c = cell;
+      const ow = Math.max(1.2, c * 0.15);
+      ctx.save();
+      ctx.translate((v.x + 0.5) * c, (v.y + 0.5) * c);
+      if (s.alive && !reduce) {
+        // ink bleed: a flat halo of the rider's ink around the head
+        ctx.globalAlpha = 0.26;
+        ctx.fillStyle = C[p];
+        ctx.beginPath(); ctx.arc(0, 0, c * (1.25 + 0.12 * Math.sin(now / 90 + (p === 'a' ? 0 : 2))), 0, 7); ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      ctx.rotate((v.d * Math.PI) / 2);
+      const w = c * 1.05;
+      const l = c * 1.5;
+      if (s.alive && s.boost > 0) {
+        // speed lines behind a boosted rider
+        ctx.strokeStyle = C.hl; ctx.lineWidth = Math.max(1.2, c * 0.18); ctx.lineCap = 'round';
+        ctx.beginPath();
+        for (const sx of [-0.4, 0, 0.4]) { ctx.moveTo(sx * c, c * 0.9); ctx.lineTo(sx * c, c * (1.7 + 0.5 * Math.abs(sx * 2))); }
+        ctx.stroke();
+      }
+      ctx.lineWidth = ow * 1.1;
+      ctx.strokeStyle = C.ink;
+      ctx.fillStyle = s.alive ? C.hl : C.card;
+      rr(-w / 2, -l / 2 - c * 0.18, w, l, Math.min(w, l) * 0.32);
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = C[p];
+      rr(-w / 2 + ow * 0.6, l * 0.1 - c * 0.18, w - ow * 1.2, l * 0.26, 1);
+      ctx.fill();
+      if (s.alive && s.jump > 0) {
+        // a held jump: a paper ring around the bike
+        ctx.strokeStyle = C.ink; ctx.lineWidth = ow; ctx.setLineDash([c * 0.5, c * 0.4]);
+        ctx.beginPath(); ctx.arc(0, 0, c * 1.35, 0, 7); ctx.stroke(); ctx.setLineDash([]);
+      }
+      ctx.restore();
+    }
+    function drawBurst(cr, k) {
+      const g = LAYOUTS[sim.L];
+      const c = cell;
+      const ow = Math.max(1.2, c * 0.15);
+      const bx = (clamp(cr[0], 0, g.W - 1) + 0.5) * c;
+      const by = (clamp(cr[1], 0, g.H - 1) + 0.5) * c;
+      const R = Math.max(10, c * 2.3) * Math.max(0.2, k);
+      ctx.lineWidth = ow * 1.2;
+      ctx.strokeStyle = C.ink;
+      for (let i = 0; i < 8; i++) {
+        const a = (i * Math.PI) / 4 + 0.3;
+        ctx.beginPath();
+        ctx.moveTo(bx + Math.cos(a) * R * 1.15, by + Math.sin(a) * R * 1.15);
+        ctx.lineTo(bx + Math.cos(a) * R * 1.55, by + Math.sin(a) * R * 1.55);
+        ctx.stroke();
+      }
+      star(bx, by, R, R * 0.48, 9, 0.2);
+      ctx.fillStyle = C.hl; ctx.fill(); ctx.stroke();
+      star(bx, by, R * 0.55, R * 0.27, 7, 0.6);
+      ctx.fillStyle = C.bad; ctx.fill(); ctx.lineWidth = ow * 0.8; ctx.stroke();
+    }
+    const burstK = (age) => { if (reduce) return 1; const k0 = clamp(age / 380, 0, 1); return 1 + 2.2 * Math.pow(k0 - 1, 3) + 1.2 * Math.pow(k0 - 1, 2); };
+    function drawFx(now) {
+      const c = cell;
+      const ow = Math.max(1.2, c * 0.15);
+      for (let i = fx.length - 1; i >= 0; i--) {
+        const f = fx[i];
+        const age = now - f.t0;
+        const life = f.k === 'spark' ? 420 : 520;
+        if (age > life) { fx.splice(i, 1); continue; }
+        const u = age / life;
+        const x = (f.x + 0.5) * c;
+        const y = (f.y + 0.5) * c;
+        ctx.globalAlpha = 1 - u * u;
+        if (f.k === 'spark') {
+          const R = c * (0.9 + 1.5 * u);
+          ctx.strokeStyle = C.ink; ctx.lineWidth = ow;
+          ctx.fillStyle = C.hl;
+          star(x, y, R, R * 0.42, 5, u * 1.2);
+          ctx.fill(); ctx.stroke();
+        } else {
+          ctx.strokeStyle = f.tk === 1 ? C.hl : C.ink; ctx.lineWidth = ow * 1.6;
+          ctx.beginPath(); ctx.arc(x, y, c * (1 + 2.6 * u), 0, 7); ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+      }
+    }
     function draw(now) {
-      if (!ctx || !layout) return;
+      if (!ctx || !layout || !cfg) return;
       const g = LAYOUTS[layout];
       const c = cell;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.globalAlpha = 1;
       ctx.fillStyle = C.card;
       ctx.fillRect(0, 0, cssW, cssH);
-      if (flip) { ctx.translate(cssW, cssH); ctx.rotate(Math.PI); }
-      // graph-paper grid, a heavier line every 8 cells from the centre
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = C.line;
-      ctx.globalAlpha = C.dark ? 0.55 : 0.75;
-      ctx.beginPath();
-      for (let x = 1; x < g.W; x++) { const X = Math.round(x * c) + 0.5; ctx.moveTo(X, 0); ctx.lineTo(X, cssH); }
-      for (let y = 1; y < g.H; y++) { const Y = Math.round(y * c) + 0.5; ctx.moveTo(0, Y); ctx.lineTo(cssW, Y); }
-      ctx.stroke();
-      // registration marks every 8 cells out from the centre, like a printed board
-      ctx.globalAlpha = C.dark ? 0.7 : 0.45;
-      ctx.strokeStyle = C.muted;
-      ctx.lineWidth = Math.max(1, c * 0.12);
-      ctx.beginPath();
-      const cx0 = (g.W - 1) / 2;
-      const cy0 = (g.H - 1) / 2;
-      const m = c * 0.42;
-      for (let x = cx0 % 8; x < g.W; x += 8) {
-        for (let y = cy0 % 8; y < g.H; y += 8) {
-          const X = (x + 0.5) * c;
-          const Y = (y + 0.5) * c;
-          ctx.moveTo(X - m, Y); ctx.lineTo(X + m, Y); ctx.moveTo(X, Y - m); ctx.lineTo(X, Y + m);
-        }
-      }
-      ctx.stroke();
-      ctx.globalAlpha = 1;
       if (!sim) return;
+      // the end-of-round story: crash at full size, a zoomed replay, then the board again
+      const stage = endStage(now);
+      let zoom = 1;
+      let T = null; // fractional tick to show (replay), else the live view
+      const crashXY = crashFocus();
+      let fxy = crashXY;
+      let burstAge = stage === 'none' ? -1 : now - crashAt;
+      if (stage === 'replay') {
+        const u = clamp((now - crashAt - HOLD_MS) / REPLAY_MS, 0, 1);
+        zoom = reduce ? ZOOM : 1 + (ZOOM - 1) * (1 - Math.pow(1 - clamp(u / 0.16, 0, 1), 3));
+        const t0 = Math.max(0, sim.t - REPLAY_TICKS);
+        T = t0 + (sim.t - t0) * clamp((u - 0.08) / 0.7, 0, 1);
+        burstAge = u > 0.78 ? (u - 0.78) * REPLAY_MS : -1;
+        // the camera rides along with the rider who crashed, settling on the crash cell
+        const fv = pathAt(sim, rw === 'a' ? 'b' : 'a', T);
+        const k = clamp((u - 0.6) / 0.2, 0, 1);
+        fxy = [fv.x + (crashXY[0] - fv.x) * k, fv.y + (crashXY[1] - fv.y) * k];
+      } else if (stage === 'banner' && !reduce) {
+        const since = now - (skipped ? skipAt : crashAt + HOLD_MS + REPLAY_MS);
+        if (since < 260 && !skipped) zoom = ZOOM - (ZOOM - 1) * (1 - Math.pow(1 - since / 260, 3));
+        burstAge = 1e5;
+      } else if (stage === 'banner') burstAge = 1e5;
+      const zx = (fxy[0] + 0.5) * c;
+      const zy = (fxy[1] + 0.5) * c;
+      if (zoom !== 1) {
+        let sx = zx;
+        let sy = zy;
+        if (qr === 1) { sx = gH - zy; sy = zx; } else if (qr === 3) { sx = zy; sy = gW - zx; }
+        if (flip) { sx = cssW - sx; sy = cssH - sy; }
+        const hw = cssW / (2 * zoom);
+        const hh = cssH / (2 * zoom);
+        ctx.translate(cssW / 2, cssH / 2);
+        ctx.scale(zoom, zoom);
+        ctx.translate(-clamp(sx, hw, cssW - hw), -clamp(sy, hh, cssH - hh));
+      }
+      if (flip) { ctx.translate(cssW, cssH); ctx.rotate(Math.PI); }
+      if (qr === 1) { ctx.translate(gH, 0); ctx.rotate(Math.PI / 2); } else if (qr === 3) { ctx.translate(0, gW); ctx.rotate(-Math.PI / 2); }
+      // the board, cached unless zoomed (the cache is a raster)
+      const key = `${layout}|${cell}|${dpr}|${cfg.sd}|${cfg.ar}|${C.ink}|${C.line}|${C.card}|${C.muted}|${flip}|${qr}`;
+      if (zoom === 1) {
+        if (!bgCan || bgKey !== key) {
+          bgCan = bgCan || document.createElement('canvas');
+          bgCan.width = Math.round(gW * dpr); bgCan.height = Math.round(gH * dpr);
+          const b = bgCan.getContext('2d');
+          b.setTransform(dpr, 0, 0, dpr, 0, 0);
+          drawBgVector(b, c, g.W, g.H, sim);
+          bgKey = key;
+        }
+        ctx.drawImage(bgCan, 0, 0, gW, gH);
+      } else drawBgVector(ctx, c, g.W, g.H, sim);
+      const tShow = T == null ? sim.t : T;
+      // tokens still lying on the grid
+      if (sim.tl.length) {
+        sim.tl.forEach((t, i) => {
+          const pk = sim.pk.get(t.y * sim.W + t.x);
+          if (pk === undefined || pk > tShow) drawToken(t, now, i);
+        });
+      }
       const tw = Math.max(2.5, c * 0.6);
       const ow = Math.max(1.2, c * 0.15);
-      const sh = Math.max(1, c * 0.2) * (flip ? -1 : 1);
+      const [ssx, ssy] = shadowSign();
+      const sh = Math.max(1, c * 0.2);
+      const views = {};
+      for (const p of ['a', 'b']) views[p] = T == null ? viewOf(p) : pathAt(sim, p, T);
       ctx.lineJoin = 'miter';
       ctx.lineCap = 'square';
       // hard offset shadow, then an ink outline, then each rider's ink
       ctx.save();
-      ctx.translate(sh, sh);
+      ctx.translate(sh * ssx, sh * ssy);
       ctx.strokeStyle = C.edge;
       ctx.globalAlpha = C.dark ? 0.9 : 0.28;
       ctx.lineWidth = tw + ow * 2;
-      for (const p of ['a', 'b']) { trace(sim[p]); ctx.stroke(); }
+      for (const p of ['a', 'b']) { trace(sim[p], views[p]); ctx.stroke(); }
       ctx.restore();
       ctx.globalAlpha = 1;
       ctx.strokeStyle = C.ink;
       ctx.lineWidth = tw + ow * 2;
-      for (const p of ['a', 'b']) { trace(sim[p]); ctx.stroke(); }
+      for (const p of ['a', 'b']) { trace(sim[p], views[p]); ctx.stroke(); }
       ctx.lineWidth = tw;
-      for (const p of ['a', 'b']) { ctx.strokeStyle = C[p]; trace(sim[p]); ctx.stroke(); }
+      for (const p of ['a', 'b']) { ctx.strokeStyle = C[p]; trace(sim[p], views[p]); ctx.stroke(); }
       // heads: a bright, outlined bike with a band of its rider's ink
-      for (const p of ['a', 'b']) {
-        const s = sim[p];
-        ctx.save();
-        ctx.translate((s.x + 0.5) * c, (s.y + 0.5) * c);
-        ctx.rotate((s.d * Math.PI) / 2);
-        const w = c * 1.05;
-        const l = c * 1.5;
-        ctx.lineWidth = ow * 1.1;
-        ctx.strokeStyle = C.ink;
-        ctx.fillStyle = s.alive ? C.hl : C.card;
-        rr(-w / 2, -l / 2 - c * 0.18, w, l, Math.min(w, l) * 0.32);
-        ctx.fill(); ctx.stroke();
-        ctx.fillStyle = C[p];
-        rr(-w / 2 + ow * 0.6, l * 0.1 - c * 0.18, w - ow * 1.2, l * 0.26, 1);
-        ctx.fill();
-        ctx.restore();
-      }
-      // guest: show my unconfirmed turn right away
-      if (!host && pending.length && active() && sim[me].alive) {
-        const d = pending[pending.length - 1].d;
-        const s = sim[me];
-        const x = (s.x + DX[d] * 1.25 + 0.5) * c;
-        const y = (s.y + DY[d] * 1.25 + 0.5) * c;
-        ctx.save();
-        ctx.translate(x, y);
-        ctx.rotate((d * Math.PI) / 2);
-        const k = c * 0.95;
-        ctx.beginPath(); ctx.moveTo(0, -k * 0.75); ctx.lineTo(k * 0.7, k * 0.45); ctx.lineTo(-k * 0.7, k * 0.45); ctx.closePath();
-        ctx.fillStyle = C[me]; ctx.fill();
-        ctx.lineWidth = ow; ctx.strokeStyle = C.ink; ctx.stroke();
-        ctx.restore();
-      }
+      for (const p of ['a', 'b']) drawBike(p, views[p], now, sim[p].alive || (T != null && T < sim.t - 0.05));
+      if (T == null) drawFx(now);
       // crash bursts
-      if (sim.done && crashAt) {
-        const k0 = reduce ? 1 : Math.min(1, (now - crashAt) / 380);
-        const k = reduce ? 1 : 1 + 2.2 * Math.pow(k0 - 1, 3) + 1.2 * Math.pow(k0 - 1, 2);
+      if (sim.done && burstAge >= 0) {
         const seen = new Set();
+        ctx.lineJoin = 'miter';
         for (const p of ['a', 'b']) {
           const s = sim[p];
           if (s.alive || !s.crash) continue;
-          const key = s.crash.join(',');
-          if (seen.has(key)) continue;
-          seen.add(key);
-          const bx = (Math.max(0, Math.min(g.W - 1, s.crash[0])) + 0.5) * c;
-          const by = (Math.max(0, Math.min(g.H - 1, s.crash[1])) + 0.5) * c;
-          const R = Math.max(10, c * 2.3) * Math.max(0.2, k);
-          ctx.lineWidth = ow * 1.2;
-          ctx.strokeStyle = C.ink;
-          for (let i = 0; i < 8; i++) {
-            const a = (i * Math.PI) / 4 + 0.3;
-            ctx.beginPath();
-            ctx.moveTo(bx + Math.cos(a) * R * 1.15, by + Math.sin(a) * R * 1.15);
-            ctx.lineTo(bx + Math.cos(a) * R * 1.55, by + Math.sin(a) * R * 1.55);
-            ctx.stroke();
-          }
-          star(bx, by, R, R * 0.48, 9, 0.2);
-          ctx.fillStyle = C.hl; ctx.fill(); ctx.stroke();
-          star(bx, by, R * 0.55, R * 0.27, 7, 0.6);
-          ctx.fillStyle = C.bad; ctx.fill(); ctx.lineWidth = ow * 0.8; ctx.stroke();
+          const kk = s.crash.join(',');
+          if (seen.has(kk)) continue;
+          seen.add(kk);
+          drawBurst(s.crash, burstK(burstAge));
         }
       }
     }
+
     function syncMsg(now) {
       if (!msgEl) return;
       let html = '';
       let key = '';
-      if (paused) { key = 'pz'; html = '<span>Paused</span>'; } else if (phase === 'count') { key = 'c' + cd + round; html = `<span class="is-num">${cd || 3}</span>`; } else if (phase === 'run' && now - goAt < 600) { key = 'go' + round; html = '<span class="is-num is-go">GO</span>'; } else if ((phase === 'end' || phase === 'over') && sim) {
-        key = 'e' + round + rw;
-        if (rw === 'a' || rw === 'b') html = `<span class="w-${rw}"><b>${esc(api.name(rw))}</b> takes round ${round}</span>`;
-        else {
-          const ca = sim.a.crash;
-          const cb = sim.b.crash;
-          const head = ca && cb && ca[0] === cb[0] && ca[1] === cb[1];
-          html = `<span class="w-d">${head ? 'Head-on! Nobody scores.' : 'Double crash. Nobody scores.'}</span>`;
+      const stage = endStage(now);
+      if (phase === 'pick') { key = ''; } else if (paused) {
+        key = 'pz' + pz;
+        const who = local ? '' : api.name(pz === 1 ? 'a' : 'b');
+        html = `<span>${local || document.hidden && host && pz === 1 ? 'Paused' : `<b>${esc(who)}</b> stepped away`}</span>`;
+      } else if (phase === 'count') { key = 'c' + cd + round; html = `<span class="is-num">${cd || 3}</span>`; } else if (phase === 'run' && now - goAt < 600) { key = 'go' + round; html = '<span class="is-num is-go">GO</span>'; } else if ((phase === 'end' || phase === 'over') && sim && stage === 'banner') {
+        const shaves = sim.a.sh + sim.b.sh;
+        const stamps = rc.map((x) => `<i class="cy-stamp">${x === 'long' ? 'LONGEST RIDE!' : 'MOST SHAVES!'}</i>`).join('');
+        key = 'e' + round + rw + rc.join();
+        const small = `<small>Close shaves: ${shaves}${modeLabel() ? ` · ${esc(modeLabel())}` : ''}</small>`;
+        if (rw === 'a' || rw === 'b') html = `<span class="w-${rw}"><span class="cy-t"><b>${esc(api.name(rw))}</b> takes round ${round}</span>${small}${stamps}</span>`;
+        else html = `<span class="w-d is-heat"><span class="cy-t">DEAD HEAT</span><small>${esc(captionOf())}. Close shaves: ${shaves}. Fresh start next round.</small>${stamps}</span>`;
+      }
+      if (rpEl) {
+        const on = stage === 'replay';
+        if (on !== rpEl.classList.contains('is-on')) {
+          rpEl.classList.toggle('is-on', on);
+          if (on) {
+            const cap = rpEl.querySelector('.cy-rp-cap');
+            capText = captionOf();
+            cap.innerHTML = capText;
+            cap.style.animation = 'none'; void cap.offsetWidth; cap.style.animation = '';
+          }
         }
       }
       if (key === msgKey) return;
       msgKey = key;
       msgEl.innerHTML = html;
       msgEl.classList.toggle('is-up', key[0] === 'e');
+      if (key[0] === 'e' && sim && cell) {
+        // keep the banner off the crash: it sits in the half of the board the crash isn't in
+        const f = crashFocus();
+        const y = qr === 0 ? (f[1] + 0.5) / sim.H : qr === 1 ? (f[0] + 0.5) / sim.W : 1 - (f[0] + 0.5) / sim.W;
+        const want = (flip ? 1 - y : y) < 0.5 ? 0.76 : 0.24;
+        // keep the whole banner inside the board, even on a short landscape board
+        const bh = cssH; // the canvas, not the (taller) board around it
+        const c0 = (board.clientHeight - cssH) / 2 - 3; // where the canvas starts inside the board
+        const sh = msgEl.firstElementChild ? msgEl.firstElementChild.offsetHeight : 0;
+        msgEl.style.top = Math.round(c0 + clamp(want * bh, sh / 2 + 6, Math.max(sh / 2 + 6, bh - sh / 2 - 6))) + 'px';
+      } else msgEl.style.top = '';
     }
     function frame(now) {
       if (!alive) return;
@@ -764,31 +1231,58 @@ registerGame({
       const dt = Math.min(250, now - (lastNow || now));
       lastNow = now;
       if (host) hostUpdate(now, dt);
+      if (!host && sim && phase === 'run' && !paused && !sim.done) tdisp = Math.min(sim.t + 1, tdisp + dt / tickMs(cfg, Math.floor(tdisp)));
+      else if (!host && sim) tdisp = sim.t;
+      if (!host) stepBlend(dt);
       syncMsg(now);
-      if (dirty || (crashAt && now - crashAt < 450)) { draw(now); dirty = false; }
+      if (canvas) draw(now);
     }
 
     // ── pausing (host): the partner gone, or either tab in the background. Back: a fresh countdown ──
     let partnerAway = false;
     function syncPause() {
-      if (!host || phase === 'over' || phase === 'wait') return;
-      const want = document.hidden || (!local && (!api.partnerHere || partnerAway));
-      if (want && !paused) { paused = true; publish(); dirty = true; } else if (!want && paused) {
-        paused = false;
-        const now = performance.now();
-        if (phase === 'run' || phase === 'count') { phase = 'count'; cdStart = now; cd = 3; api.sfx('tick'); } else if (phase === 'end') endAt = now;
-        publish(); dirty = true;
+      if (!host || phase === 'over' || phase === 'wait' || phase === 'pick') return;
+      const gone = !local && (!api.partnerHere || partnerAway);
+      const want = document.hidden || gone;
+      if (want && !paused) { paused = true; pz = document.hidden ? 1 : 2; publish(); } else if (want && paused && pz !== (document.hidden ? 1 : 2)) { pz = document.hidden ? 1 : 2; publish(); } else if (!want && paused) {
+        paused = false; pz = 0;
+        const now = perf();
+        if (phase === 'run' || phase === 'count') { phase = 'count'; cdStart = now; cd = 3; acc = 0; api.sfx('tick'); } else if (phase === 'end') { endAt = now; crashAt = now; skipped = false; endDue = now + END_TOTAL; }
+        publish();
       }
     }
-    const onVis = () => { if (host) syncPause(); else publishGuest(); if (!document.hidden) { lastNow = 0; dirty = true; } };
+    const onVis = () => { if (host) syncPause(); else publishGuest(); if (!document.hidden) lastNow = 0; };
     document.addEventListener('visibilitychange', onVis);
     offs.push(() => document.removeEventListener('visibilitychange', onVis));
+    // a phone turned on its side: the next round gets the grid that fits (the host agrees it with the guest)
+    let rsT = 0;
+    const checkPref = () => {
+      const np = prefNow();
+      if (np === pref) return;
+      pref = np;
+      if (phase === 'pick' && pickShown) showPicker();
+      else if (!local && canvas && qrFor() !== qr) build(); // the grid stays, this screen draws it the way that fills it
+      if (!host) publishGuest();
+    };
+    const onResize = () => {
+      clearTimeout(rsT);
+      rsT = setTimeout(() => {
+        timers.delete(rsT);
+        checkPref();
+        // iOS can report the old size just after a turn: look once more
+        rsT = setTimeout(() => { timers.delete(rsT); checkPref(); }, 450);
+        timers.add(rsT);
+      }, 120);
+      timers.add(rsT);
+    };
+    window.addEventListener('resize', onResize);
+    offs.push(() => window.removeEventListener('resize', onResize));
 
     // ── wiring ──
     if (!local) {
       if (host) {
         offs.push(api.on('turn', (d) => { if (d) recvB(d.m, d.g, d.s, d.r, d.d); }));
-        offs.push(api.onPartnerState((s) => { if (s && s.v === 1 && !!s.hid !== partnerAway) { partnerAway = !!s.hid; syncPause(); } }));
+        offs.push(api.onPartnerState((s) => { if (s && s.v === 2 && !!s.hid !== partnerAway) { partnerAway = !!s.hid; syncPause(); } }));
         offs.push(api.onPartnerState((s) => { if (s && s.mid === mid && s.g && Array.isArray(s.q)) { if (s.g !== curG) recvB(mid, s.g, 0, 0, -1); for (const x of s.q) if (Array.isArray(x)) recvB(mid, s.g, x[0], x[1], x[2]); } }));
         offs.push(api.onPartnerHere(() => syncPause()));
       } else {
@@ -797,28 +1291,39 @@ registerGame({
         const s0 = api.partnerState();
         if (s0) onHost(s0);
       }
-    } else build();
+    }
 
     // test hook (automation only)
     const hook = {
       info: () => ({
-        mode: api.mode, host, me, flip, touch, layout, phase, round, cd, rw, paused, score: { ...score },
+        mode: api.mode, host, me, flip, touch, layout, pref, phase, round, cd, rw, paused, pz, score: { ...score }, md: { ...md }, matchAr, cfg,
         sim: sim && summary(sim),
-        rebuilt: host && sim ? summary(rebuild(layout, entries, sim.t)) : null,
+        rebuilt: host && sim && cfg ? summary(rebuild(cfg, entries, sim.t)) : null,
         log: host ? encs.join(',') : gEntries.filter(Boolean).map(enc).join(','),
         pending: pending.map((p) => p.d),
-        cell, cssW, cssH,
+        cell, cssW, cssH, qr, stage: endStage(perf()), skipped, rc: rc.slice(), caption: sim && sim.done ? captionOf() : '',
+        shaves: sim ? sim.a.sh + sim.b.sh : 0, tdisp, tms: cfg && sim ? tickMs(cfg, sim.t) : 0, picker: pickShown,
       }),
+      go: (o) => go(o),
+      view: (p) => (sim && cfg ? viewOf(p) : null),
+      skip: () => skipReplay(),
+      // pure helpers for the tests
+      make: (c) => { const s = newSim(c); return { ...summary(s), sym: isSymmetric(s.occ, s.W, s.H), blocks: s.occ.reduce((n, v) => n + (v === 3 ? 1 : 0), 0), st: s.st, toks: s.tl.map((t) => [t.x, t.y, t.k]) }; },
+      ramp: (c, t) => tickMs(c, t),
+      boostTicks: BOOST_TICKS,
+      lib: { newSim, step, rebuild, pathAt, okTurn },
     };
     if (navigator.webdriver) window.__cycles = hook;
 
+    if (host) phase = 'pick';
+    if (local) showPicker();
     raf = requestAnimationFrame(frame);
     return {
       destroy() {
         alive = false;
         cancelAnimationFrame(raf);
         timers.forEach((t) => clearTimeout(t));
-        if (ro) ro.disconnect();
+        teardownBoard();
         offs.forEach((f) => { try { f(); } catch { /* ignore */ } });
         if (window.__cycles === hook) delete window.__cycles;
       },
