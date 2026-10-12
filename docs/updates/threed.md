@@ -114,7 +114,7 @@ Each picker is a row of chips shown only to the starter. Playing a normal move s
 |---|---|
 | `node tools/test/games/threed.test.js` | ALL GOOD (105 ok) |
 | `node tools/test/games/threed-bones.test.js` | ALL GOOD (351 ok): layout at 6 sizes, band fit, twists, Last Word, records on 1 and 2 phones, leave-early recording, previews, celebrations, context loss, light, dark and reduced motion |
-| `node tools/test/games/threed-tower.test.js` | ALL GOOD (150+ ok): stray taps, HUD timing, modes, records, ghost cull, notch, tall finale, landmark layout at 390×844, 844×390 and 667×375, light, dark and reduced motion, 2D fallback |
+| `node tools/test/games/threed-tower.test.js` | ALL GOOD (161 ok): stray taps, HUD timing, modes, records, ghost cull, notch, tall finale, landmark layout at 390×844, 844×390 and 667×375, light, dark and reduced motion, 2D fallback |
 | `python3 tools/build_artifact.py` (all games) | builds, 107 modules |
 
 - The two new suites each start their own browsers. Set `PORT` to move them; bones uses PORT to PORT+4 and tower PORT to PORT+2.
