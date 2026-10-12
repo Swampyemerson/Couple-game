@@ -121,11 +121,17 @@ the general "meaningful new content, every verified bug fixed, more stimulating 
 
 | Command | Result |
 |---|---|
-| `node tools/test/games/words-duel.test.js` | ALL GOOD, light + dark (286 checks) |
+| `node tools/test/games/words-duel.test.js` | ALL GOOD, light + dark (296 checks) |
 | `node tools/test/games/words-agents.test.js` | ALL GOOD, light + dark (245 checks) |
-| `node tools/test/games/words.test.js` | ALL GOOD (updated for the rules cards; a flaky assert fixed) |
+| `node tools/test/games/words.test.js` | ALL GOOD (195 checks; updated for the rules cards, a flaky assert fixed) |
 | `node tools/test/all-games.test.js` | ALL GOOD |
-| `python3 tools/build_artifact.py --only=wordduel,agents` | builds |
+| `python3 tools/build_artifact.py --only=wordduel,agents` | builds (532 KB, 14 modules) |
+
+The final regression ran at 08:50 UTC on the pushed head. Verifiers also checked these by hand:
+- online with each player first, and one phone;
+- light and dark;
+- 320×568 through 390×844 portrait, and 667×375 and 844×390 landscape;
+- no page errors.
 
 ## Known issues and notes for the coordinator
 
@@ -138,8 +144,12 @@ the general "meaningful new content, every verified bug fixed, more stimulating 
 - **Small Double Agents layouts:**
   - Landscape cards are 36 px tall, a deliberate exception: picking is select-then-confirm, so a mis-tap never commits.
   - At 320×568 the last board row scrolls under the sticky dock.
-- **Waiting for the rules.** In a pristine Word Duel match the core status may briefly say "Your turn" to the waiting phone before the
-  game's status override applies.
+- **Word Duel, best of 3.** The core player chips (`score()`) show the new round tally before the final flip finishes. Core has no hook
+  to delay them.
+- **Word Duel at 568×320 landscape.** On the very smallest landscape screen (iPhone SE 1), the pick screen with every toggle on
+  overflows. Every other tested size fits.
+- **Waiting for the rules.** In a pristine Word Duel match the waiting phone sets the status to "Waiting for X to set the rules…", but
+  the hub's "your turn" badge may still show for it, since `next()` must stay `['a','b']` for old matches.
 
 ## README lines
 
