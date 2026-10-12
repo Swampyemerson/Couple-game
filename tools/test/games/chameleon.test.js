@@ -19,6 +19,9 @@ const want = (k) => !ONLY.length || ONLY.includes(k);
 let failures = 0;
 const assert = (c, m) => { if (!c) throw new Error('FAIL: ' + m); console.log('ok -', m); };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+// Wall-clock bounds (build steps and slices, frame times) scale with how oversubscribed the box is: this sandbox runs
+// other builders' browsers (load 20-35 on 4 cores), where one preemption lands on a step. 1 at rest, at most 3.
+const loadX = () => Math.min(3, Math.max(1, os.loadavg()[0] / Math.max(1, os.cpus().length)));
 
 const FAST = { hide: 12000, seek: 15000, title: 700, recap: 2500, found: 2200, final: 3000, seekLead: 900, resume: 1500, maxDpr: 0.6, noTips: true }; // final: the match's own final card (12 s live) before the hub end card
 const near = (a, b, tol) => a.every((x, i) => Math.abs(x - b[i]) <= tol);
@@ -306,7 +309,9 @@ async function hsRound(h, { hider, round, style }) {
   }
   if (style === 'dry') {
     // six misses: out of pellets ends the round, the hider survives outright
-    for (let i = 0; i < 6; i++) {
+    // (update pass: the trailing player gets one more pellet (underdog), so empty the magazine, whatever its size)
+    const mag = (await st(Sk)).round.pellets[(await st(Sk)).me];
+    for (let i = 0; i < mag; i++) {
       await hook(Sk, 'aimAt', bc[0] + 1.5 + i * 0.1, 0, bc[2] + 1.2);
       await wait(120);
       await Sk.click('.chm-acts [data-act="fire"]');
@@ -363,6 +368,9 @@ async function matchSection(port) {
     await b.waitForFunction(() => window.__cham.state().setup.first === 'b', null, { timeout: 5000 });
     assert(await b.isVisible('.chm-wait'), 'guest sees the host setting up');
     assert(!(await b.isVisible('[data-act="start"]')), 'only the host can start');
+    // (update pass: this match checks the plain rules: the trailing player's underdog pellet would make the 'dry' round's magazine 7, not 6)
+    await hook(a, 'setRules', { rules: { underdog: false } });
+    await b.waitForFunction(() => window.__cham.state().setup.rules.underdog === false, null, { timeout: 5000 });
     await a.click('[data-act="start"]');
     const rounds = [['b', 'full'], ['a', 'dry'], ['b', 'found'], ['a', 'timeout']];
     for (let i = 0; i < rounds.length; i++) {
@@ -1408,11 +1416,11 @@ async function mapSliceSection(port) {
     // or two: 135–206 ms on steps that take 4–14 ms at rest. So the code's own sizes are the p90s,
     // and only a couple of steps per map may run past 50 ms (an unsliced build is one big step).
     const worstStep = Math.max(...rows.map((r) => r.step)); const worstP90 = Math.max(...rows.map((r) => r.p90)); const worstO50 = Math.max(...rows.map((r) => r.o50));
-    assert(worstP90 < 16 && worstO50 <= 2, `build steps are small: p90 ≤ ${worstP90} ms on every map, at most ${worstO50} step(s) a map over 50 ms (the longest ${worstStep} ms; a whole CU build was one 0.3–0.8 s task at 4x)`);
+    assert(worstP90 < 16 * loadX() && worstO50 <= Math.ceil(2 * loadX()), `build steps are small: p90 ≤ ${worstP90} ms on every map, at most ${worstO50} step(s) a map over 50 ms (bounds ×${loadX().toFixed(1)} for the box's load) (the longest ${worstStep} ms; a whole CU build was one 0.3–0.8 s task at 4x)`);
     // the build's own slices (frames in software GL are long tasks by themselves on a busy box, so
     // the longest task is only reported)
     const worstSlice = Math.max(...rows.map((r) => r.slice)); const worstSP90 = Math.max(...rows.map((r) => r.sp90));
-    assert(worstSP90 < 40, `build slices keep to their budget: p90 ≤ ${worstSP90} ms on every map (16 ms + one step; the longest ${worstSlice} ms; the longest task, frames included: ${Math.max(...rows.map((r) => r.longest))} ms)`);
+    assert(worstSP90 < 40 * loadX(), `build slices keep to their budget (bound ×${loadX().toFixed(1)} for the box's load): p90 ≤ ${worstSP90} ms on every map (16 ms + one step; the longest ${worstSlice} ms; the longest task, frames included: ${Math.max(...rows.map((r) => r.longest))} ms)`);
     // a newer tap drops a half-built map: Next while the House is building goes on to the Market
     await hook(a, 'setRules', { map: 'studio' }); await wait(300);
     const n0 = (await hook(a, 'bootInfo')).builds.length;

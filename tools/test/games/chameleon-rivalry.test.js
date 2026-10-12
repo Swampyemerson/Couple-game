@@ -93,6 +93,19 @@ async function pureSection() {
   r = R.recordRound({}, { ...dry }, { ...base, portrait: () => { throw new Error('should not be asked'); } });
   assert(true, 'a ran-dry round never asks for a portrait');
 
+  // portrait packing: a busy skin still fits 3000 characters (coarse ladder), the live skin is never touched
+  const G = await mod('gallery.js');
+  const skin = (f) => { const d = new Uint8Array(128 * 128 * 4); for (let y = 0; y < 128; y++) for (let x = 0; x < 128; x++) { const c = f(x, y); const o = (y * 128 + x) * 4; d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = 255; } return d; };
+  const calm = skin((x, y) => (((x >> 4) + (y >> 4)) % 2 ? [214, 168, 96] : [92, 150, 190]));
+  const busy = skin((x, y) => { const k = ((x * 7919 + y * 104729) >>> 0) % 97; return [(k * 2) % 256, (k * 5) % 256, (k * 3) % 256]; });
+  const before = Buffer.from(busy).toString('base64');
+  const pc = G.packPortrait(calm); const pb = G.packPortrait(busy);
+  assert(pc.length > 0 && pc.length <= 3000 && Buffer.from(busy).toString('base64') === before, `portrait: a calm skin packs to ${pc.length} chars; packing never modifies the live skin`);
+  assert(pb.length > 0 && pb.length <= 3000, `portrait: a noisy skin falls back to a coarse blob that fits (${pb.length} chars)`);
+  const out = new Uint8Array(128 * 128 * 4);
+  assert(G.unpackPortrait(pc, out) && G.unpackPortrait(pb, out) && !G.unpackPortrait('AAAA', out) && !G.unpackPortrait('', out), 'portrait: both formats unpack, garbage is refused');
+  assert(Math.abs(out[0] - busy[0]) < 255 && out[3] === 255, 'portrait: unpacked pixels are opaque');
+
   // the Cup
   assert(R.cupOutcome({}, null) === null && R.cupOutcome({ cup_holder: 'a' }, null) === null, 'cup: a draw changes nothing');
   let o = R.cupOutcome({}, 'a');

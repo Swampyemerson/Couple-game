@@ -13,7 +13,7 @@ import { loadWear, saveWear, resolveWear, newUnlocks, packWear, unpackWear, ward
 import { clamp, dampAngle, wrapAngle, hexToRgb, cssColor, luminance, listeners, fmtTime, mixHex, esc, seeded, packQuat, unpackQuat } from './util.js';
 import { MAPS, mapArea, mapCacheInfo, mapBuildStats, mapJobsInfo, mixPlan, dailyPlan, dayKey, roomAt } from './maps.js';
 import { sanitizeSetup, sanitizeRules, applyPreset, stepRule, setRule, loadSaved, saveSetup, sizeScale, SPEED_MUL, CLIMB_MUL, tipsSeen, markTipsSeen, PRESETS, timeScale, hideScale, effSeconds, sprintMul, dbSpeed, OPTIONS, fmtRule, rulesFor } from './rules.js';
-import { TWIST_DECK, TWIST_CSS, FOG, DUSK, BOUNTY, UNDERDOG, SUDDEN, twistById, pickTwists, fogStep, fogMood, duskStep, duskMood, paletteFor, pickBounty, underdogOf, wagerPay, dailyTwistFor, twistChip, noteChip, suddenChip, inject, tagNextLine, twistRows, injectRows } from './twists.js';
+import { TWIST_CSS, DUSK, BOUNTY, UNDERDOG, SUDDEN, twistById, pickTwists, fogStep, fogMood, duskStep, duskMood, paletteFor, pickBounty, underdogOf, wagerPay, dailyTwistFor, twistChip, noteChip, suddenChip, inject, tagNextLine, twistRows, injectRows } from './twists.js';
 import { REVEAL } from './paint.js';
 // H: whisker shots, mercy chirp, notes on the skin, last-second drama
 import { createMoments, momentLines, noteLines } from './moments.js';
@@ -887,6 +887,7 @@ export function createGame(el, api) {
   /** Stickers for what this round brings (twist, underdog, sudden death), 1.1 s apart; hotseat shows them to whoever holds the phone. */
   function announceRound(round) {
     const m = S.match; if (!m) return;
+    const v0 = viewer(); if (!local && v0 && roleOf(v0) === 'seeker') return; // the seeker's blind card already carries them
     let i = 0;
     const pop = (text, cls, sub) => { const k = i++; later(() => { if (S.phase.round === round) hud.pop(text, cls, sub); }, 250 + k * 1100); };
     if (sdRound(round)) pop('SUDDEN DEATH', 'ink', m.mode === 'db' ? 'one more round decides it' : round === m.rounds - m.sd + 1 ? 'round 1 of 2 · 20 s to hide' : 'round 2 of 2 · points decide');
@@ -3890,8 +3891,10 @@ export function createGame(el, api) {
           }
           return h;
         }
-        case 'title': { const p = S.pendingTitle; if (!p || !m) return html; const h = inject(html, roundBanner(p.round)); return sdRound(p.round) ? h.replace(/Round \d+ of \d+/, 'SUDDEN DEATH') : h; }
-        case 'curtain': case 'blind': return m ? inject(html, roundBanner(S.phase.round)) : html;
+        case 'title': { const p = S.pendingTitle; if (!p || !m) return html; const h = inject(html, roundBanner(p.round), 'afterH2'); return sdRound(p.round) ? h.replace(/Round \d+ of \d+/, 'SUDDEN DEATH') : h; }
+        // up near the top of the card (a landscape phone shows only its first screenful): after the heading / the ticker line
+        case 'curtain': return m ? inject(html, roundBanner(S.phase.round), 'afterH2') : html;
+        case 'blind': return m ? inject(html, roundBanner(S.phase.round), 'afterP') : html;
         case 'recap': {
           if (!m || m.mode !== 'hs') return html;
           const nr = S.phase.round + 1; const tw = twistOfRound(nr);

@@ -11,6 +11,7 @@
 //   hotrules  hotseat: the dead rules are switched off (a head start is no wait), Today's hide picks a playable twist
 //   bounty    hotseat: a bounty spot (marker for both, tag within 3 m = seeker +15, far = nothing) + Dusk on one phone
 //   budget    hotseat on CU Boulder: draw calls with the bounty marker, Fog and Dusk (<= 80)
+//   hotcolours hotseat: Three colours locks the hider's phone only
 //   hotunder  hotseat: Underdog (+10 s to hide, +1 pellet, the sticker on the hand-over curtain)
 //   sudden    hotseat: a tie after the last round plays a sudden-death pair (20 s / 30 s clocks, title card, final card, sd_wins)
 //   streak    hotseat: the called-it streak pays 5 / 10 / 15, 'Streak broken' for the hider, a_callstreak
@@ -204,14 +205,15 @@ async function bugASection(port) {
     await hotSeek(a);
     await aimAtHider(a, 'b');
     const before = await hook(a, 'data');
+    // one timer set for ~220 ms before the buzzer (the old hotseat code had already called time 380 ms ahead of it)
     const left = await a.evaluate(() => new Promise((res) => {
-      const tick = () => { const s = window.__cham.state(); const l = s.phase.end - s.now; if (l <= 150) { window.__cham.action('fire'); res(l); } else setTimeout(tick, 4); };
-      tick();
+      const s0 = window.__cham.state();
+      setTimeout(() => { const s = window.__cham.state(); const l = s.phase.end - s.now; window.__cham.action('fire'); res(l); }, Math.max(0, s0.phase.end - s0.now - 220));
     }));
     await waitPhase(a, 'found', 6000).catch(() => {});
     const s = await st(a);
     assert(s.phase.name === 'found' && s.round.rec && s.round.rec.found, `hotseat: a tag fired ${Math.round(left)} ms before the buzzer is FOUND (phase ${s.phase.name})`);
-    assert(s.round.rec.ms >= 6700 && s.round.rec.ms <= 7000, `…at ${s.round.rec.ms} ms of a 7000 ms hunt, not the whole clock`);
+    assert(s.round.rec.ms >= 6600 && s.round.rec.ms <= 7000, `…at ${s.round.rec.ms} ms of a 7000 ms hunt, not the whole clock`);
     await waitPhase(a, 'recap', 8000);
     await wait(400);
     const d = await hook(a, 'data');
@@ -380,8 +382,7 @@ async function budgetSection(port) {
     // the same views without the marker
     await a.evaluate(() => window.__cham.twistInfo()); // (keep the page warm)
     assert(worst <= 80, `with the marker in view: ${worst} draw calls (budget 80; CU's worst without it is 68)`);
-    await waitPhase(a, 'time', 25000);
-    await waitPhase(a, 'recap', 8000);
+    await waitPhase(a, 'recap', 40000);
     await a.tap('[data-act="next"]');
     await waitPhase(a, 'curtain', 10000);
     await hotHide(a);
@@ -401,6 +402,27 @@ async function budgetSection(port) {
     assert(duskWorst <= 80 && duskWorst > 0, `Dusk on CU: ${duskWorst} draw calls at most`);
     h.assertNoErrors();
   } catch (e) { console.error(e.message.split('\n')[0], h.errors); failures++; await shot(a, 'budget-FAIL').catch(() => {}); } finally { await h.close(); }
+}
+
+async function hotColoursSection(port) {
+  console.log('\n# hotseat: Three colours (the hider\'s phone is locked, the seeker\'s hunt is not)');
+  const h = await launch({ port, only: ['chameleon'], who: ['a'] });
+  const a = h.a;
+  try {
+    await startHot(h, { rules: { rounds: 2, twists: 'every', underdog: false, sudden: false }, tune: { ...FAST, hide: 20000, twists: ['colours', null] } });
+    await a.tap('[data-act="curtain"]');
+    await waitPhase(a, 'hide');
+    await wait(500);
+    const t = await ti(a);
+    assert(t.twist === 'colours' && t.palette.length === 3 && t.lockOn && t.palLocked, `the hider's phone is locked to ${t.palette && t.palette.join(' ')}`);
+    assert(/3 colours/.test(await a.textContent('.chm-role')), 'the role pill says 3 colours');
+    await a.tap('.chm-acts [data-act="ready"]');
+    await waitPhase(a, 'curtain', 20000);
+    await hotSeek(a);
+    await waitPhase(a, 'recap', 30000);
+    assert(!(await ti(a)).lockOn, 'the lock is gone after the round');
+    h.assertNoErrors();
+  } catch (e) { console.error(e.message.split('\n')[0], h.errors); failures++; await shot(a, 'hotcolours-FAIL').catch(() => {}); } finally { await h.close(); }
 }
 
 async function suddenSection(port) {
@@ -664,8 +686,9 @@ async function underdogSection(port) {
     await waitPhase(a, 'hide', 20000); await waitPhase(b, 'hide', 8000);
     await wait(400);
     for (const p of [a, b]) { const x = await ti(p); assert(x.ud === 'a' && x.escapes.a === 2 && x.escapes.b === 1 && x.maxPellets === 6, 'round 2: Emerson hides as the underdog: 2 escapes (Sydney still 1), pellets unchanged'); }
-    const pops = await collectPops(b, 3000);
-    assert(/Underdog: \+1 escape/.test(pops), `the sticker shows on the other phone too ("${pops}")`);
+    const pops = await collectPops(a, 3000);
+    assert(/Underdog: \+1 escape/.test(pops), `the hider sees the sticker ("${pops}")`);
+    assert(/Underdog/.test(await b.evaluate(() => document.querySelector('.chm-blind').textContent)), "the seeker's blind card says it too");
     await camoHide(a);
     await a.tap('.chm-acts [data-act="ready"]');
     await waitPhase(b, 'seek', 30000);
@@ -797,8 +820,9 @@ async function shotsSection(port) {
   if (want('bugA')) sections.push(() => bugASection(PORT + 0));
   if (want('hotrules')) sections.push(() => hotRulesSection(PORT + 1));
   if (want('bounty')) sections.push(() => bountySection(PORT + 2));
-  if (want('budget')) sections.push(() => budgetSection(PORT + 13));
-  if (want('hotunder')) sections.push(() => hotUnderdogSection(PORT + 12));
+  if (want('budget')) sections.push(() => budgetSection(PORT + 8));
+  if (want('hotcolours')) sections.push(() => hotColoursSection(PORT + 6));
+  if (want('hotunder')) sections.push(() => hotUnderdogSection(PORT + 7));
   if (want('sudden')) sections.push(() => suddenSection(PORT + 3));
   if (want('streak')) sections.push(() => streakSection(PORT + 4));
   if (want('fog')) sections.push(() => fogSection(PORT + 5));

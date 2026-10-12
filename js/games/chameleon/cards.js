@@ -458,7 +458,8 @@ export const CARDS_CSS = `
 .chm-cup > span { display: flex; flex-direction: column; min-width: 0; }
 .chm-cup b { font-size: .8rem; font-weight: 900; text-transform: uppercase; letter-spacing: .08em; }
 .chm-cup small { font-size: .74rem; font-weight: 800; color: var(--g-muted); line-height: 1.2; }
-.chm-cup small .chm-name-a, .chm-cup small .chm-name-b { color: inherit; }
+.chm-cup small b { font-size: inherit; text-transform: none; letter-spacing: 0; }
+.chm-cup small .chm-name-a { color: var(--p-a); } .chm-cup small .chm-name-b { color: var(--p-b); }
 .chm-cupsvg { width: 30px; height: 30px; flex: none; fill: none; stroke: var(--g-ink); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .chm-cupsvg .f1 { fill: var(--g-hl); }
 .chm-h2h { display: flex; flex-direction: column; gap: 1px; font-size: .72rem; font-weight: 800; color: var(--g-muted); line-height: 1.3; }
