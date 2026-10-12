@@ -92,7 +92,6 @@ export function createExtras(C) {
   let mirror = false;    // Mirror: the world is drawn flipped and left / right swap (read by game.js)
   let night = false;     // the dark palette is on for this run
   let fog0 = null;       // the world's own fog distances, restored after Fog
-  let coinsMesh = null;  // the coin InstancedMesh (Blind coins clips its far end)
   let darkP = null;
   const uses = { a: 0, b: 0 };       // weapons fired this run
   const found = { a: null, b: null }; // the note each runner found this run { from, mine }
@@ -101,7 +100,7 @@ export function createExtras(C) {
   const notePop = { a: 0, b: 0 };
 
   // ── lobby block ──
-  let host = null; let ui = null; let sig = ''; let editing = null;
+  let host = null; let ui = null; let sig = ''; let editing = null; let flash = null; // flash: the chip's "Note saved" for a moment (the preview line is hidden on phones)
   const myW = () => (C.live ? C.meW : 'a');
   const noteOf = (w) => cleanNote(C.data()[`${w}_note`]);
   const bitsOf = (w, day) => C.data()[`${w}_dare_${day}`] | 0;
@@ -110,14 +109,22 @@ export function createExtras(C) {
   function build(slot) {
     slot.innerHTML = `<div class="rr-dares"><div class="rr-dares-h"><b>Today’s dares</b><span class="rr-dares-who"></span></div><ul class="rr-dares-l"></ul><div class="rr-dares-f"></div></div>
       <div class="rr-notes"></div>
-      <form class="rr-note-ed" hidden><input class="rr-note-in" type="text" maxlength="${NOTE_MAX}" autocomplete="off" autocapitalize="sentences" enterkeyhint="done" spellcheck="true" aria-label="Your note"><button class="rr-note-save" type="submit">Save</button></form>`;
+      <form class="rr-note-ed" hidden><input class="rr-note-in" type="text" autocomplete="off" autocapitalize="sentences" enterkeyhint="done" spellcheck="true" aria-label="Your note"><button class="rr-note-save" type="submit">Save</button><span class="rr-note-ct" aria-live="polite"></span><button class="rr-note-x" type="button">Cancel</button></form>`;
     ui = {
       who: slot.querySelector('.rr-dares-who'), list: slot.querySelector('.rr-dares-l'), foot: slot.querySelector('.rr-dares-f'),
-      notes: slot.querySelector('.rr-notes'), ed: slot.querySelector('.rr-note-ed'), inp: slot.querySelector('.rr-note-in'),
+      notes: slot.querySelector('.rr-notes'), ed: slot.querySelector('.rr-note-ed'), inp: slot.querySelector('.rr-note-in'), ct: slot.querySelector('.rr-note-ct'),
     };
     ui.ed.addEventListener('submit', (e) => { e.preventDefault(); saveNote(); });
     // (the game's key handler ignores typing in an input; nothing on the input itself is prevented, so iOS can place the caret and compose freely)
-    ui.inp.addEventListener('input', () => { /* nothing to do: read on save */ });
+    // the limit counts code points (an emoji is one), like cleanNote; a maxlength attribute would count UTF-16 units
+    const clip = (live) => {
+      const cps = Array.from(ui.inp.value);
+      if (cps.length > NOTE_MAX && !live) { ui.inp.value = cps.slice(0, NOTE_MAX).join(''); try { ui.inp.setSelectionRange(ui.inp.value.length, ui.inp.value.length); } catch { /* ignore */ } }
+      ui.ct.textContent = `${Math.min(cps.length, NOTE_MAX)}/${NOTE_MAX}`;
+    };
+    ui.inp.addEventListener('input', (e) => clip(e.isComposing));
+    ui.inp.addEventListener('compositionend', () => clip(false));
+    ui.ed.querySelector('.rr-note-x').addEventListener('click', () => closeNote());
     slot.addEventListener('click', (e) => {
       const b = e.target.closest && e.target.closest('[data-note]');
       if (!b) return;
@@ -128,6 +135,7 @@ export function createExtras(C) {
     if (editing === w) { closeNote(); return; }
     editing = w; sig = '';
     ui.inp.value = noteOf(w);
+    ui.ct.textContent = `${Array.from(ui.inp.value).length}/${NOTE_MAX}`;
     ui.inp.placeholder = `A line for ${C.name(other(w))} to find on the track`;
     ui.ed.hidden = false;
     ui.ed.dataset.w = w;
@@ -138,6 +146,8 @@ export function createExtras(C) {
     const w = editing; if (!w) return;
     const text = cleanNote(ui.inp.value);
     C.setData({ [`${w}_note`]: text });
+    flash = { w, text: text ? 'Note saved ✓' : 'Note cleared' };
+    C.later(() => { if (flash && flash.w === w) { flash = null; sig = ''; } }, 2600);
     closeNote();
   }
   const tick = (el, w, on) => { el.className = `rr-ck ${w}${on ? ' on' : ''}`; };
@@ -152,7 +162,7 @@ export function createExtras(C) {
     const sa = stampsOf('a', day); const sb = stampsOf('b', day);
     const me = myW();
     const authors = split ? ['a', 'b'] : [me];
-    const s = `${day}|${ba}|${bb}|${sa}|${sb}|${authors.map((w) => noteOf(w)).join('\n')}|${editing}|${C.name('a')}|${C.name('b')}`;
+    const s = `${day}|${ba}|${bb}|${sa}|${sb}|${authors.map((w) => noteOf(w)).join('\n')}|${editing}|${flash ? flash.w + flash.text : ''}|${C.name('a')}|${C.name('b')}`;
     if (s === sig) return;
     sig = s;
     // dares: one line each, a check circle per player
@@ -179,8 +189,11 @@ export function createExtras(C) {
       b.setAttribute('aria-expanded', editing === w ? 'true' : 'false');
       const ic = document.createElement('span'); ic.className = 'rr-note-ic'; ic.innerHTML = ENV; b.appendChild(ic);
       const tx = document.createElement('span'); tx.className = 'rr-note-tx';
-      const h = document.createElement('b'); h.textContent = `Note for ${C.name(other(w))}`; tx.appendChild(h);
-      const p = document.createElement('small'); const cur = noteOf(w); p.textContent = cur || 'Waits for them on the track'; tx.appendChild(p);
+      const h = document.createElement('b'); const cur = noteOf(w);
+      const fl = flash && flash.w === w ? flash.text : '';
+      h.textContent = fl || `Note for ${C.name(other(w))}${cur ? ' ✓' : ''}`; tx.appendChild(h);
+      if (fl) b.classList.add('saved');
+      const p = document.createElement('small'); p.textContent = cur || 'Waits for them on the track'; tx.appendChild(p);
       b.appendChild(tx); ui.notes.appendChild(b);
     }
     if (editing && !authors.includes(editing)) closeNote();
@@ -201,8 +214,7 @@ export function createExtras(C) {
       if (!darkP) darkP = makePalette(Object.assign({}, C.tokens(), { bg: '#141317', card: '#1f1e24', ink: '#f1ece2', muted: '#a39eaa', hl: '#ffe14d', good: '#3ccb7f', bad: '#ff6b78', a: '#3fa7f5', b: '#ff5cb8', dark: true }));
       wd.setPalette(darkP); night = true;
     } else if (night) { wd.setPalette(P); night = false; }
-    coinsMesh = null;
-    if (mod === 4) { try { const m = wd.warmList()[0]; if (m && m.isInstancedMesh) coinsMesh = m; } catch { /* ignore */ } }
+    wd.setCoinAhead(mod === 4 ? BLIND_M : Infinity); // Blind coins: both coin meshes (near and far) stop at 28 m
   }
 
   // ── the note card ──
@@ -267,14 +279,8 @@ export function createExtras(C) {
         if (r.evT[i] === E_BONUS) { const v = r.evV[i]; r.coins += v; r.bonus += v; r.evV[i] = v * 2; }
       }
     },
-    /** After world.syncView for a view at z: Blind coins hides the coins beyond 28 m (they're sorted by z, far ones last). */
-    afterSync(z) {
-      if (!coinsMesh) return;
-      const arr = coinsMesh.instanceMatrix.array; const lim = -(z + BLIND_M);
-      let n = coinsMesh.count;
-      while (n > 0 && arr[(n - 1) * 16 + 14] < lim) n--;
-      coinsMesh.count = n;
-    },
+    /** (Blind coins is world.setCoinAhead now, applied inside syncView; nothing to do after it.) */
+    afterSync() {},
     /** Called every unpaused frame in a run: counts lead changes (4 m apart, held 0.6 s) for the "swap the lead" dare. */
     tick(dt) {
       const a = C.players.a.rs; const b = C.players.b.rs;
@@ -338,12 +344,12 @@ export function createExtras(C) {
         done.forEach((dr, i) => C.later(() => { v.pop('DARE DONE', 'good', dr.s); C.audio.play('good'); }, 400 + i * 550));
         lines.push(`Dare done: ${done.map((x) => x.s).join(' · ')}`);
       }
-      if (v && found[w]) lines.push(`${C.split ? C.name(w) : 'You'} found ${found[w].from}’s note`);
+      if (v && found[w]) lines.push(`${C.split ? C.name(w) : 'You'} found ${found[w].mine ? `${found[w].from}’s note` : 'a love note'}`);
       return lines;
     },
     /** (Gold dust and Love hearts are fx.trailFx kinds 5 and 6 now: nothing to fake. game.js may drop its X.trail call.) */
     trail() { return false; },
-    debug() { return { mod, mirror, night, uses: { ...uses }, leads: lead.n, found: { a: found.a, b: found.b }, beatAt: { ...beatAt }, coinsMesh: !!coinsMesh }; },
+    debug() { return { mod, mirror, night, uses: { ...uses }, leads: lead.n, found: { a: found.a, b: found.b }, beatAt: { ...beatAt }, blind: mod === 4 }; },
   };
 
   function reachedNeon(seed, dist) {

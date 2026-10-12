@@ -358,19 +358,26 @@ export const CSS = `
 .g-rush .rr-note-tx { display: flex; flex-direction: column; min-width: 0; line-height: 1.15; font-family: var(--g-font-body); }
 .g-rush .rr-note-tx b { font-family: var(--g-font-display); font-size: 14px; font-weight: 900; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .g-rush .rr-note-tx small { font-size: 11px; font-weight: 800; color: var(--g-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.g-rush .rr-note-ed { display: flex; gap: 8px; pointer-events: auto; }
+/* while open the editor is a card pinned to the top of the screen: it stays on screen when the viewport shrinks for the keyboard
+   (a landscape phone's lobby sheet used to open it at the very bottom, under the iOS keyboard), and the input keeps its width */
+.g-rush .rr-note-ed { position: fixed; z-index: 40; left: max(10px, env(safe-area-inset-left, 0px)); right: max(10px, env(safe-area-inset-right, 0px)); top: var(--gm-corner-safe, calc(64px + env(safe-area-inset-top, 0px))); max-width: 440px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 8px; padding: 10px; border-radius: 16px; border: 2.5px solid var(--g-ink); background: var(--g-card); box-shadow: 4px 4px 0 var(--g-edge); pointer-events: auto; }
+/* landscape: between the floating back and menu buttons instead of under them */
+.g-rush.rr-short .rr-note-ed { top: max(8px, env(safe-area-inset-top, 0px)); left: max(66px, calc(env(safe-area-inset-left, 0px) + 66px)); right: max(66px, calc(env(safe-area-inset-right, 0px) + 66px)); }
+.g-rush .rr-note-ct { font: 800 12px/1 var(--g-font-body); color: var(--g-muted); padding-left: 4px; }
+.g-rush .rr-note-x { pointer-events: auto; min-width: 68px; min-height: 44px; padding: 0 12px; border: 0; background: none; color: var(--g-ink); font: 800 14px/1 var(--g-font-body); text-decoration: underline; }
+.g-rush .rr-note-chip.saved { background: color-mix(in srgb, var(--g-good) 28%, var(--g-card)); border-color: var(--g-good); }
 .g-rush .rr-note-ed[hidden] { display: none; }
 /* 16 px keeps iOS from zooming in on focus; user-select must be on for an input inside a user-select:none game */
 .g-rush .rr-note-in { flex: 1; min-width: 0; min-height: 44px; padding: 8px 12px; font: 700 16px/1.2 var(--g-font-body); color: var(--g-ink); background: var(--g-bg); border: 2px solid var(--g-ink); border-radius: 12px; -webkit-user-select: text; user-select: text; touch-action: manipulation; }
 .g-rush .rr-note-in::placeholder { color: var(--g-muted); font-weight: 600; }
 .g-rush .rr-note-save { pointer-events: auto; min-width: 68px; min-height: 44px; padding: 0 14px; border-radius: 12px; border: 2px solid var(--g-ink); background: var(--g-hl); color: var(--g-on-ink); font-family: var(--g-font-display); font-weight: 900; font-size: 15px; box-shadow: 2px 2px 0 var(--g-edge); }
 /* the partner's note, popped for 3 s when you grab the envelope */
-.g-rush .rr-lnote { position: absolute; left: 50%; top: 33%; z-index: 6; width: min(88%, 340px); display: none; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 16px; border: 2.5px solid var(--g-ink); background: var(--g-card); color: var(--g-ink); box-shadow: 4px 4px 0 var(--g-edge); transform: translateX(-50%); pointer-events: none; font-family: var(--g-font-body); }
+.g-rush .rr-lnote { position: absolute; left: 50%; top: 24.5%; z-index: 6; width: min(82%, 300px); display: none; align-items: center; gap: 8px; padding: 6px 11px; border-radius: 14px; border: 2px solid var(--g-ink); background: color-mix(in srgb, var(--g-card) 88%, transparent); color: var(--g-ink); box-shadow: 3px 3px 0 var(--g-edge); transform: translateX(-50%); pointer-events: none; font-family: var(--g-font-body); }
 .g-rush .rr-lnote.on { display: flex; animation: rr-lnote 3s ease-out forwards; }
-.g-rush .rr-lnote .rr-note-ic { color: var(--p-b); width: 30px; height: 30px; } .g-rush .rr-lnote .rr-note-ic svg { width: 30px; height: 30px; }
-.g-rush .rr-lnote-t { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.g-rush .rr-lnote-t b { font: 900 11px/1.1 var(--g-font-display); letter-spacing: .06em; text-transform: uppercase; color: var(--g-muted); }
-.g-rush .rr-lnote-t span { font-weight: 900; font-size: 17px; line-height: 1.2; overflow-wrap: anywhere; }
+.g-rush .rr-lnote .rr-note-ic { color: var(--p-b); width: 24px; height: 24px; } .g-rush .rr-lnote .rr-note-ic svg { width: 24px; height: 24px; }
+.g-rush .rr-lnote-t { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.g-rush .rr-lnote-t b { font: 900 10px/1.1 var(--g-font-display); letter-spacing: .06em; text-transform: uppercase; color: var(--g-muted); }
+.g-rush .rr-lnote-t span { font-weight: 900; font-size: 15px; line-height: 1.15; overflow-wrap: anywhere; }
 @keyframes rr-lnote { 0% { opacity: 0; transform: translate(-50%, 16px) scale(.8) rotate(-3deg); } 9% { opacity: 1; transform: translate(-50%, 0) scale(1.05) rotate(-1.5deg); } 15% { transform: translate(-50%, 0) scale(1) rotate(-1.5deg); } 88% { opacity: 1; transform: translate(-50%, 0) rotate(-1.5deg); } 100% { opacity: 0; transform: translate(-50%, -12px) rotate(-1.5deg); } }
 .g-rush.rr-short .rr-lnote { top: 24%; }
 /* landscape phone: the lobby sheet is already full, so the dares and notes move to the free column under the logo */

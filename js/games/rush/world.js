@@ -455,12 +455,17 @@ export function createWorld(THREE, P) {
     arr[o + 12] = x; arr[o + 13] = y; arr[o + 14] = z; arr[o + 15] = 1;
   }
 
+  let coinAhead = Infinity; // coins further than this ahead of the runner are left out of both coin meshes
+  /** Blind coins: only coins within `m` metres ahead are drawn (near and far mesh alike); Infinity = all of them. */
+  function setCoinAhead(m) { coinAhead = m > 0 ? m : Infinity; }
+
   /**
    * Lay out per-runner things for one view. v = { track, z (view runner z), r (runner whose
    * pickups count, may be null), time (s), fly: [{x,y,z,s}] flying coins }
    */
   function syncView(v) {
     const { track, z } = v;
+    const coinLim = z + coinAhead; // Blind coins (the Daily's twist) pulls this in; Infinity = off
     const r = v.r;
     const spin = v.time * 3.2;
     const c0 = Math.max(0, Math.floor((z - VIEW_BEHIND) / CHUNK));
@@ -483,7 +488,7 @@ export function createWorld(THREE, P) {
       for (let i = 0; i < cs.length && nc < COIN_MAX && nf < COIN_MAX; i++) {
         const cn = cs[i];
         if (cn.z < z - VIEW_BEHIND) continue;
-        if (cn.z > z + COIN_AHEAD) break; // sorted by z
+        if (cn.z > z + COIN_AHEAD || cn.z > coinLim) break; // sorted by z
         if (r && r.taken.has(base + i)) continue;
         const far = cn.z > z + COIN_LOD;
         const A = far ? fa : ca; const C = far ? fca : cca; const o3 = (far ? nf : nc) * 3;
@@ -618,7 +623,7 @@ export function createWorld(THREE, P) {
 
   return {
     scene, mat, matInst, matInstC, avatarMat, avatarMats, fade, U, T, P,
-    ensure, syncView, setShadows, follow, setPalette, setGates, setMarks, reset, setMood, setDistrict, setDistrictAt,
+    ensure, syncView, setCoinAhead, setShadows, follow, setPalette, setGates, setMarks, reset, setMood, setDistrict, setDistrictAt,
     chunkCount: () => byChunk.size,
     stats,
     /** Everything that can be drawn, for shader warm-up. */
