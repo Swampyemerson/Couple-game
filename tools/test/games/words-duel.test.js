@@ -362,8 +362,9 @@ async function onlineDealtHard(h, scheme) {
   await F.keyboard.type(e.state.opener); await F.keyboard.press('Enter'); await F.waitForTimeout(80);
   assert(/dealt opener/i.test(await toastText(F)), 'the dealt opener is refused as a secret');
   for (let i = 0; i < 5; i++) await F.keyboard.press('Backspace');
-  const secs = ['plumb', 'grape', 'crane', 'slate', 'river'].filter((w) => w !== e.state.opener);
-  const [sF, sS] = secs; // F's word (S cracks it), S's word (F cracks it)
+  // S's word must share letters with the opener, so hard mode has hints to enforce for F
+  const sS = ['plumb', 'grape', 'crane', 'slate', 'river', ...R.lists().common].find((w) => w !== e.state.opener && /[gy]/.test(R.scoreGuess(w, e.state.opener)));
+  const sF = ['plumb', 'grape', 'crane', 'slate', 'river'].find((w) => w !== e.state.opener && w !== sS); // F's word (S cracks it), S's word (F cracks it)
   await tapKeys(F, sF); await tapEnter(F);
   await typeWord(S, sS);
   await h.settle(); await h.settle();
@@ -401,10 +402,11 @@ async function onlineDealtHard(h, scheme) {
   const toastNow = await toastText(S); await S.waitForTimeout(200);
   assert((await h.engine(S, id)).state.guesses[first === 'a' ? 'b' : 'a'].length === 2, `the partner's wrong guess ${wrong} was played (toast: ${toastNow}; row ${await S.evaluate(() => document.querySelector('.g-wd-row.is-draft') && document.querySelector('.g-wd-row.is-draft').innerText.replace(/\\s/g, ''))}; say ${await sayOf(S)}; opener ${op}; target ${sF}; rejected ${JSON.stringify((await h.engine(S, id)).rejected)}; pending ${JSON.stringify((await h.engine(S, id)).lists)})`);
   await S.keyboard.type(sF); await S.keyboard.press('Enter');
-  await F.waitForTimeout(500);
+  const trace = [];
+  for (let i = 0; i < 9; i++) { await F.waitForTimeout(100); trace.push(await F.evaluate(() => [...document.querySelectorAll('.g-wd-colhead small')].map((x) => x.textContent).join('|'))); }
   await h.settle();
   const colHead = await F.evaluate(() => [...document.querySelectorAll('.g-wd-colhead small')].map((x) => x.textContent).join(' | '));
-  assert(!/cracked it in 3/.test(colHead) || e.over, `B4: the partner's crack isn't announced before its flip finishes (${colHead})`);
+  assert(trace.slice(0, 6).every((x) => !/cracked it in 3/.test(x)), `B4: the partner's crack isn't announced before its flip finishes (${trace.join(' ; ')})`);
   await F.waitForTimeout(2600);
   e = await h.engine(a, id);
   const eb = await h.engine(b, id);
@@ -428,12 +430,40 @@ async function onlineDealtHard(h, scheme) {
   assert((await smallButtons(a)).length === 0, `the end view's buttons are all 44 px+ (${await smallButtons(a)})`);
   await snap(a, scheme, 'wd2-4-end');
   await snap(b, scheme, 'wd2-4-end-b');
-  // reopening the finished match later never counts it again
-  await reloadInto(h, a, id);
-  await a.waitForTimeout(500);
-  const after = await dataOf(a);
-  assert(after.matches_n === 1 && after[wk] === 1 && after.recent_m === id, `records: reopening a recorded match does not count it again (${JSON.stringify(after)})`);
   await h.closeGame(a); await h.closeGame(b);
+}
+
+// the Agents verifier's repro: Sydney's phone is away while the match ends on another device, then opens it
+async function awayPhone(h, scheme) {
+  const { a, b } = h;
+  const b2 = await h.device('b');
+  await h.openGames(b2);
+  const id = await newOnline(h, a);
+  await h.openMatch(b2, id);
+  await h.settle();
+  const first = (await h.engine(a, id)).first;
+  const P = { a, b: b2 };
+  await setRules(P[first], { pool: 'fair', hard: false, dealt: false, bo3: false });
+  await P[first].tap('[data-act="play"]');
+  await h.settle();
+  await typeWord(a, 'plumb', 120); await typeWord(b2, 'grape', 120); await h.settle();
+  await typeWord(a, 'grape', 150); await typeWord(b2, 'plumb', 150);
+  await h.settle(); await a.waitForTimeout(2600);
+  const e = await h.engine(a, id);
+  assert(e.over, 'the match ended while the first Sydney phone was away');
+  await a.waitForSelector('#game-root .gm-end:not([hidden])', { timeout: 6000 });
+  await h.settle();
+  const before = await dataOf(a);
+  assert(before.recent_m && before.recent_m.split(',').includes(id), `the finishing phone recorded it (${JSON.stringify(before)})`);
+  await h.openGames(b);
+  await b.locator(`[data-g="open"][data-id="${id}"]`).first().click({ timeout: 8000 });
+  await b.waitForSelector('#game-root .gm');
+  await b.waitForTimeout(800);
+  const after = await dataOf(b);
+  assert(after.matches_n === before.matches_n && eq(after.recent_m, before.recent_m), `opening the finished match on the phone that was away does not count it again (${before.matches_n} -> ${after.matches_n})`);
+  await h.closeGame(b);
+  await h.closeGame(a);
+  await h.closeGame(b2);
 }
 
 // 2. online best of 3, to a set result
@@ -632,6 +662,7 @@ async function uiTests() {
       const only = (process.env.ONLY || '').split(',').filter(Boolean);
       const want = (n) => !only.length || only.includes(n);
       if (want('online')) await onlineDealtHard(clean, scheme);
+      if (want('away')) await awayPhone(clean, scheme);
       if (light && want('bo3')) await onlineBo3(clean, scheme);
       if (want('local')) await localFlows(clean, scheme);
       if (light && want('land')) await landscape(clean, scheme);

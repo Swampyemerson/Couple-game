@@ -78,7 +78,7 @@ registerGame({
     let ctx = null;
     let draft = '';
     let draftKey = '';
-    let prevMoves = null;
+    let seen = null; // { ri, a, b, moves }: the round and guess counts at the last update
     let flip = null; // { who, row, until } row that is revealing right now
     let win = null; // { who, row } row that bounces after a solve
     let areaSig = '';
@@ -595,11 +595,20 @@ registerGame({
         const s = c.state;
         const dk = `${c.viewer}|${c.curtain}`;
         if (dk !== draftKey) { draftKey = dk; draft = ''; flip = null; win = null; }
-        const justMoved = prevMoves != null && c.moves > prevMoves && c.last && c.last.move;
-        const ri = c.prev && c.prev.rounds ? c.prev.rounds.length : 0; // the round the newest move belonged to
+        // Which guesses are new since the last update? (core's c.last follows replay order, which puts
+        // seat a's moves first, so it can't be trusted to say who just moved.)
+        const grew = [];
+        const ri = s.rounds ? s.rounds.length : 0;
+        if (seen && c.moves > seen.moves) {
+          const rv = roundView(s, seen.ri);
+          for (const w of ['a', 'b']) {
+            const n = rv.guesses[w].length;
+            if (n > seen[w] && !(n === 1 && rv.opener && rv.guesses[w][0] === rv.opener)) grew.push({ w, row: n - 1, rv });
+          }
+        }
         if (c.mode === 'local') {
-          if (justMoved && c.last.move.guess !== undefined && c.curtain && !c.over) {
-            hold = { w: c.last.who, ri };
+          if (grew.length && c.curtain && !c.over) {
+            hold = { w: grew[grew.length - 1].w, ri: seen.ri };
             holdSave();
             showHold(c, hold, true);
           } else if (!c.curtain || c.over) {
@@ -610,21 +619,17 @@ registerGame({
             if (h && holdValid(c, h)) { hold = h; showHold(c, h, false); } else if (h) holdSave();
           }
         }
-        if (justMoved) {
-          const { who: w, move } = c.last;
-          if (move.guess !== undefined && c.viewer) {
-            const rv = roundView(s, ri);
-            const row = rv.guesses[w].length - 1;
-            const solved = rv.guesses[w].includes(rv.secret[other(w)]);
-            if (w === c.viewer) startFlip(w, row, solved, true);
-            else {
-              api.sfx('tick');
-              const mm = modeOf(c); // their rows only show full size once I'm done
-              if ((mm === 'done' || mm === 'end' || mm === 'recap') && !myFlip()) startFlip(w, row, solved, false);
-            }
-          } else if (move.secret !== undefined && c.viewer && w !== c.viewer) api.sfx('pop');
+        for (const { w, row, rv } of grew) {
+          if (!c.viewer) continue;
+          const solved = rv.guesses[w].includes(rv.secret[other(w)]);
+          if (w === c.viewer) startFlip(w, row, solved, true);
+          else {
+            api.sfx('tick');
+            const mm = modeOf(c); // their rows only show full size once I'm done
+            if ((mm === 'done' || mm === 'end' || mm === 'recap') && !myFlip()) startFlip(w, row, solved, false);
+          }
         }
-        prevMoves = c.moves;
+        if (seen && seen.ri === ri) { seen.a = s.guesses.a.length; seen.b = s.guesses.b.length; seen.moves = c.moves; } else seen = { ri, a: s.guesses.a.length, b: s.guesses.b.length, moves: c.moves };
         let restored = false;
         if (c.over) { draft = ''; draftSave(); maybeRecord(c); }
         else if (!draft && c.canMove) { const m = modeOf(c); if (m === 'pick' || m === 'solve') { draft = draftLoad(c); restored = !!draft; } }
