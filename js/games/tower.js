@@ -610,7 +610,7 @@ registerGame({
     .g-tower .gt-badge { padding: 1px 9px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-hl); color: var(--g-on-ink); font-size: 0.66rem; font-weight: 900; letter-spacing: 0.1em; text-transform: uppercase; }
     .g-tower .gt-bestline { font-size: 0.7rem; font-weight: 800; letter-spacing: 0.04em; color: var(--g-muted); }
     .g-tower .gt-ghost { position: absolute; left: 0; top: 0; padding: 1px 8px; border: 2px dashed var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); font-size: 0.68rem; font-weight: 900; letter-spacing: 0.04em; white-space: nowrap; pointer-events: none; will-change: transform; }
-    .g-tower .gt-calls { position: absolute; top: 110px; left: 0; right: 0; display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; }
+    .g-tower .gt-calls { position: absolute; top: 110px; left: 0; right: 0; display: flex; flex-direction: column; align-items: center; gap: 22px; pointer-events: none; }
     .g-tower .gt-stamp { display: none; padding: 7px 16px; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-hl); color: var(--g-on-ink); box-shadow: var(--g-shadow); font: 900 1.3rem/1.1 var(--g-font-display); letter-spacing: 0.05em; text-transform: uppercase; white-space: nowrap; pointer-events: none; opacity: 0; transform: rotate(-5deg); }
     .g-tower .gt-stamp.show { display: block; }
     .g-tower .gt-stamp.is-near { background: var(--g-card); color: var(--g-ink); }
@@ -804,7 +804,8 @@ registerGame({
     let ghostY = 0; let ghostHalf = 2; let ghostW = 64; let ghostOn = false; let ghostX = -1; let ghostYpx = -1;
     let bTimer = 0;
     let unData = null;
-    let bq = null;          // the one banner waiting for the current one to finish (older ones are stale)
+    let bq = null;          // the one banner waiting for a record to be read (older ones are stale)
+    let bShown = null;
     let bBusy = false;
     const ready = new Promise((r) => { readyRes = r; });
     const model = { blocks: [], pieces: [], slider: null, ring: null, deco: [], extras: EMPTY, cam: { y: CAM_LEAD, zoom: 1, viewH: 12, sx: 0, ox: 0 }, staticDirty: true, mode: 'classic', modeSet: false };
@@ -991,17 +992,22 @@ registerGame({
     // the callouts take no room once their animation has finished
     stampEl.addEventListener('animationend', () => stampEl.classList.remove('show'));
     bannerEl.addEventListener('animationend', () => bannerEl.classList.remove('show'));
-    /** A longer callout: milestones, records, gifts. A drop's callouts arrive merged into one banner. A record
-     *  (prio) interrupts whatever is showing and clears the queue; otherwise only the newest waiting banner is kept. */
+    /** A longer callout: milestones, records, gifts (a drop's callouts arrive merged into one). A newer banner replaces the
+     *  one on screen at once, except that a record (prio) is left alone for 1.2 s so it can be read. */
+    const KEEP_MS = 1200;
     function banner(title, sub, cls, prio) {
-      const it = { t: title, s: sub || '', c: cls || '', at: Date.now() };
-      if (prio) { clearTimeout(bTimer); bq = null; bBusy = false; showBanner(it); return; }
-      if (bBusy) { bq = it; return; }
+      const it = { t: title, s: sub || '', c: cls || '', at: Date.now(), prio: !!prio };
+      const age = bShown ? Date.now() - bShown.at : Infinity;
+      if (bBusy && bShown && bShown.prio && !prio && age < KEEP_MS) { // wait out the record, then show only the newest
+        bq = it; clearTimeout(bTimer); bTimer = setTimeout(nextBanner, KEEP_MS - age);
+        return;
+      }
+      clearTimeout(bTimer); bq = null;
       showBanner(it);
     }
     function showBanner(it) {
       if (dead) { bBusy = false; return; }
-      bBusy = true;
+      bBusy = true; bShown = it;
       bannerEl.querySelector('b').textContent = it.t;
       bannerEl.querySelector('span').textContent = it.s;
       bannerEl.className = `gt-banner ${it.c}`;
@@ -1011,7 +1017,7 @@ registerGame({
     }
     function nextBanner() {
       const it = bq; bq = null;
-      if (!it || dead || Date.now() - it.at > 2600) { bBusy = false; return; }
+      if (!it || dead || Date.now() - it.at > 2600) { bBusy = false; bShown = null; return; }
       showBanner(it);
     }
     /** The perfect chime climbs a semitone for every perfect in a row (up to an octave). */
@@ -1093,7 +1099,7 @@ registerGame({
       if (vis !== !ghostEl.hidden) ghostEl.hidden = !vis;
       if (vis && (x !== ghostX || y !== ghostYpx)) { ghostX = x; ghostYpx = y; ghostEl.style.transform = `translate(${x}px, ${y}px)`; }
     }
-    function measureHud() { hudBottom = hudEl.offsetTop + hudEl.offsetHeight + 4; callsEl.style.top = `${Math.round(hudBottom + 6)}px`; }
+    function measureHud() { hudBottom = hudEl.offsetTop + hudEl.offsetHeight + 4; callsEl.style.top = `${Math.round(hudBottom + 10)}px`; }
     /** Hide the ghost ring's dashes that sit above the bottom of the HUD (they would print over the numbers). */
     function cullDeco() {
       const d = model.deco;

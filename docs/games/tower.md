@@ -63,9 +63,12 @@ flags in the batch) lies flat in a gust and droops in a lull.
 ## Picking a mode
 
 Only the starter, before the first move, sees a 2x2 grid of mode chips (48 px tall, label + one-line hint) above the turn pill.
-Tapping a chip sends the setup move at once. The partner's phone toasts "Emerson picked Duet", shows the mode badge in the HUD
-and, meanwhile, the pill reads "Emerson is choosing a twist…". Just tapping the play surface skips the picker (classic). The last
-mode picked on this device is highlighted (`localStorage`, not auto-sent).
+Tapping a chip sends the setup move at once. The partner's phone toasts "Emerson picked Duet" (and fades it after about 1.5 s;
+the toast is engine chrome), shows the mode badge in the HUD and, meanwhile, the pill reads "Emerson is choosing a twist…".
+The starter gets no toast of their own (the badge and the vanishing picker say it). Just tapping the play surface skips the
+picker (classic). The picker hides in the same frame as the first drop tap, and a chip tapped after a drop is ignored quietly.
+A line under the chips says what the twists add ("Twists add gifts & golden landmark levels."). The last mode picked on this
+device is highlighted (`localStorage`, not auto-sent).
 
 ## Bug fixes (all in the view)
 
@@ -77,7 +80,16 @@ mode picked on this device is highlighted (`localStorage`, not auto-sent).
 4. **Tall tower finale.** The finale fits the tower between the HUD and the end panel (and re-fits when the window changes);
    the ink outline scales down (and crease lines drop out) when blocks are tiny on screen.
 5. **Resume.** Coming back from a hidden tab (and after a WebGL restore) the slider restarts from its edge behind a short 3-2-1.
-6. **Hand-off.** On one phone a ~600 ms "Sydney’s turn" beat comes before the next slider (not under reduced motion).
+6. **Hand-off.** On one phone a ~600 ms "Sydney’s turn" beat comes before the next slider. It is a pill at the bottom, where the
+   turn pill is (bottom right in landscape), so it never covers a stamp or a banner. Under reduced motion it is the same pill,
+   still, for 400 ms.
+7. **Callout layout.** The banner and the stamp live in one column just under the HUD (on the left in landscape), so they never
+   stack on each other, the HUD or the beat. All the callouts of one drop (record, landmark, gift, milestone;
+   at most two titles) arrive as ONE banner; NEW BEST is the headline and shows on the drop that set it. A newer banner replaces
+   the one on screen, except that a record is left alone for 1.2 s. The copy only claims growth when the drop grew
+   ("Gift! It grew a little" / "Gift! Already full size"; "Level 10 bonus: it grew" / "Level 10 · already full size").
+8. **Notched phones.** In landscape the panel respects the bottom and side safe-area insets, and the tower slides left (camera
+   `ox`) until the panel clears it. The HUD keeps clear of the side insets.
 
 ## Hall of Heights (records)
 
@@ -92,17 +104,22 @@ same `data / setData / onData`). Keys (flat; `_best` and `_n` keys are merged as
 | `perf_a_n`, `perf_b_n` | perfects per player |
 | `last_id` | the last match counted (idempotence) |
 
-Recorded once, at the finale, for a match that was still being played when this phone opened it. A match re-opened already over
-records nothing. Both phones record, and `last_id === matchId` stops a double count. Missing data never blocks the game.
+Recorded once, the moment the run is first seen over (`update`, not the finale, so leaving early still counts), for a match that
+was still being played when this phone opened it. A match re-opened already over records nothing. Both phones record, and
+`last_id === matchId` stops a double count. The "best before this run" used for NEW BEST and the ghost is never refreshed from a
+record that already includes this match, so both phones agree. Missing data never blocks the game. A run that ends at height 0
+still counts as a tower; its panel says "Timber, straight away. Shake it off and go again." instead of "Best Classic: 0" when
+there is no best yet.
 
 - **Ghost line.** A dashed ring at the mode's best height around the tower (16 thin boxes in the static batch, no extra draw
-  call), a "Best N" tag at the line and a "Best N" in the HUD. Passing it stamps **NEW BEST** (naming who placed the record
+  call; dashes whose screen position is above the bottom of the HUD are left out, in 3D and 2D), a "Best N" tag at the line
+  (hidden when it would sit under the HUD) and a "Best N" in the HUD. Passing it stamps **NEW BEST** (naming who placed the record
   block) and plays the win sound.
 - **Milestones** at 10, 25, 50, 75 and 100 get a banner with a couple-flavoured line.
 - **Near misses**: "So close!" when `tol < |o| <= 1.6 * tol`; "By a whisker!" when the kept size is under 0.25.
 - **Streak pitch**: the perfect chime climbs a semitone per perfect in a row (up to an octave); synthesised, respects mute.
 - **End panel**: the finale pulse, then a panel with the height, NEW BEST (and the old best), per-player perfects, the longest
-  streak, Rematch and Back. About 2 s later the engine's end card shows (`endDelay: 'manual'`, `api.showEnd()`); "See the tower"
+  streak, Rematch and Back ("Back" is short so it never wraps at 360 px). About 2 s later the engine's end card shows (`endDelay: 'manual'`, `api.showEnd()`); "See the tower"
   brings the panel back.
 
 ## Performance
@@ -117,5 +134,7 @@ Buffers are preallocated; nothing is allocated per frame.
 PORT=8924 node tools/test/games/threed.test.js          # the shared 3D suite (tower + bones)
 PORT=8920 node tools/test/games/threed-tower.test.js    # old-log replay, modes, bug fixes, records, panel, visuals
 ```
-`ONLY=stray,hud,modes,once,flat,tall,visuals,records` runs part of the tower suite. Ports used: `PORT`, `PORT+1` (reduced motion
+`ONLY=stray,hud,modes,once,flat,tall,visuals,records,polish` runs part of the tower suite (`polish`: merged banners, overlap
+checks in portrait and landscape, ghost ring vs the HUD, the notch). The "not ready" test holds the view not-ready with a hook
+(`window.__towerTest.hold`, a promise) instead of racing the loader. Ports used: `PORT`, `PORT+1` (reduced motion
 records run), `PORT+2` (dark run).

@@ -957,13 +957,13 @@ let failed = false;
     if (want('once')) await onlineOnce(h);
     if (want('flat')) await flat(h, h.b);
     if (want('visuals')) { await visuals(h, h.a, 390, 844, 'light-390'); await visuals(h, h.a, 844, 390, 'landscape-844'); }
-    if (want('polish')) {
-      await landmark(h, h.a, 390, 844, 11, 'portrait-390');
-      await landmark(h, h.a, 844, 390, 9, 'landscape-844');
-      await notch(h, h.a);
-    }
     if (want('tall')) await tall(h, h.a);
     if (want('modes')) { await picker(h); await classicSkip(h, h.a); await modesUi(h, h.a); }
+    if (want('polish')) { // (after modes: it seeds a Duet best that the duet record check must not see)
+      await landmark(h, h.a, 844, 390, 9, 'landscape-844'); // (records only ever go up, so the lower best is seeded first)
+      await landmark(h, h.a, 390, 844, 11, 'portrait-390');
+      await notch(h, h.a);
+    }
     h.assertNoErrors();
     ok(true, 'no page errors');
   } catch (e) {
