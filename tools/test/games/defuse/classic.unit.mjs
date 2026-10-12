@@ -7,8 +7,8 @@ const TIERS = {
   classic: { id: 'classic', label: 'Classic', secs: 300, mods: 4, twists: 0, level: 1, stages: 4, needy: false },
   chill: { id: 'chill', label: 'Rookie', secs: 360, mods: 3, twists: 0, level: 1, stages: 3, needy: false },
   normal: { id: 'normal', label: 'Agent', secs: 300, mods: 4, twists: 1, level: 2, stages: 4, needy: false },
-  spicy: { id: 'spicy', label: 'Expert', secs: 270, mods: 5, twists: 2, level: 3, stages: 5, needy: true },
-  wild: { id: 'wild', label: 'Bomb Squad', secs: 240, mods: 6, twists: 3, level: 4, stages: 5, needy: true },
+  spicy: { id: 'spicy', label: 'Expert', secs: 330, mods: 5, twists: 2, level: 3, stages: 5, needy: true },
+  wild: { id: 'wild', label: 'Bomb Squad', secs: 360, mods: 6, twists: 3, level: 4, stages: 5, needy: true },
 };
 const SEEDED = ['chill', 'normal', 'spicy', 'wild'];
 const ORD = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth'];

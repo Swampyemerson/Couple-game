@@ -29,7 +29,7 @@ function bomb(round) {
   const { T, twistRules: X } = round;
   const items = [];
   if (X.decoy) items.push(`<li data-twist="decoy" data-decoy-rule="${X.decoy.rule}"><span><b>Twin modules.</b> One kind of module appears twice, and only one of the pair is live. Ask your partner for both plate numbers. ${DECOY_RULES[X.decoy.rule]} Touching the other one is a strike.</span></li>`);
-  if (X.void) items.push('<li data-twist="void"><span><b>VOID stickers.</b> Ignore any serial number or indicator lamp that is stamped VOID. Only the unmarked ones count.</span></li>');
+  if (X.void) items.push('<li data-twist="void"><span><b>VOID stickers.</b> Ignore any serial number or indicator that is stamped VOID. Only the unmarked ones count.</span></li>');
   if (X.errata) items.push('<li data-twist="errata"><span><b>Correction slip.</b> One page of this guide has a slip taped to the top. Where the slip and the printed page disagree, the slip wins.</span></li>');
   if (X.surge) items.push(`<li data-twist="surge"><span><b>Surge.</b> Twice, the clock runs at <b>double speed</b> for ${SURGE_SECS} seconds. A SURGE sign shows on both screens.</span></li>`);
   if (X.blackout) items.push(`<li data-twist="blackout"><span><b>Blackout.</b> ${X.blackout.at.length > 1 ? 'Twice' : 'Once'}, the bomb goes dark. It warns for ${BLACKOUT.warn} seconds, then nothing can be touched for ${BLACKOUT.dur} seconds. The clock keeps running, so plan your next move while it is dark.</span></li>`);
@@ -55,7 +55,7 @@ export function basicsHTML(round) {
     <ol class="dx-rules">
       <li><span>The <b>serial number</b> is on the sticker. Its last character is always a digit.</span></li>
       <li><span>The <b>battery bay</b> holds zero to four batteries. Count every one.</span></li>
-      <li><span><b>Indicators</b> are small lamps with a three-letter label. An indicator counts as lit only when its lamp is on.</span></li>
+      <li><span><b>Indicators</b> are small lights with a three-letter label. An indicator counts as lit only when its light is on.</span></li>
       ${E.portPlate ? '<li data-basics="ports"><span>The <b>port plate</b> shows zero to three ports, each named: DVI, PS2, RJ45 or SERIAL. A port counts only if it is on the plate.</span></li>' : ''}
       ${plated ? '<li data-basics="plates"><span>Every module has a three-digit <b>plate number</b> in its corner. Your tabs are labelled with them.</span></li>' : ''}
       <li><span>Every module has a light in its corner. It turns green when that module is done.</span></li>

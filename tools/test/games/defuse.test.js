@@ -1006,10 +1006,10 @@ async function layoutRound(h, [w, hh]) {
   }
   // scroll the lobby down first (a tap on a Start button below the fold does this), then start: the round must open at the top
   for (const pg of [h.a, h.b]) await pg.evaluate(() => { const r = document.getElementById('game-root'); r.scrollTop = 400; window.scrollTo(0, 400); });
-  const seed = 'ly30';
+  const seed = 'ly62';
   const b = await startRound(h, h.a, h.b, seed, 'wild');
   await sleep(250);
-  assert(b.round.slots.map((s) => s.id).join() === 'relay,morse,maze,button,keypad,password,vent', `${tag}: the layout seed builds the expected wild round`);
+  assert(b.round.slots.map((s) => s.id).join() === 'morse,wires,relay,password,maze,switches,vent', `${tag}: the layout seed builds the expected wild round`);
 
   // V3: both screens open at the top, and the first heading is not hidden under the sticky bars
   assert(await rootTop(h.a) === 0 && await rootTop(h.b) === 0, `${tag}: bomb and manual both open scrolled to the top`);
@@ -1039,6 +1039,11 @@ async function layoutRound(h, [w, hh]) {
   // V4: the password module's controls on the bomb and its word list on the manual
   const pw = (await dx(h.a)).bomb.round.slots.findIndex((x) => x.id === 'password');
   await h.a.evaluate((i) => document.querySelector(`.dx-mod[data-slot="${i}"]`).scrollIntoView({ block: 'center' }), pw);
+  const wi = (await dx(h.a)).bomb.round.slots.findIndex((x) => x.id === 'wires');
+  await h.a.evaluate((i) => document.querySelector(`.dx-mod[data-slot="${i}"]`).scrollIntoView({ block: 'center' }), wi);
+  const hb = await h.a.evaluate((i) => [...document.querySelectorAll(`.dx-mod[data-slot="${i}"] .dx-wire .hb`)].map((e) => { const r = e.getBoundingClientRect(); return { w: Math.round(r.width * 100) / 100, h: Math.round(r.height * 100) / 100 }; }), wi);
+  console.log(`   ${tag}: wire hit rects ${JSON.stringify(hb)}`);
+  assert(hb.length >= 3 && hb.every((x) => x.h >= 44 && x.w >= 44), `${tag}: every wire's hit area is at least 44 px (smallest ${Math.min(...hb.map((x) => x.h))} px tall, ${Math.min(...hb.map((x) => x.w))} wide)`);
   const bt = await tapSizes(h.a, `.dx-mod[data-slot="${pw}"] .dx-pw-btn, .dx-mod[data-slot="${pw}"] .dx-pw-submit`);
   assert(bt.length === 11 && bt.every((x) => x.w >= 44 && x.h >= 44), `${tag}: the password roller buttons on the bomb are at least 44 px both ways (smallest ${Math.min(...bt.map((x) => x.w))} x ${Math.min(...bt.map((x) => x.h))})`);
   await h.b.evaluate(() => document.querySelector('.dx-index [data-page="password"]').click());
