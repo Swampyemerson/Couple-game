@@ -12,7 +12,7 @@ export function createLights(THREE, scene, U, P, cfg = {}, fog = { near: 120, fa
   const dark = !!P.dark;
   const NG = cfg.glows || 128; const NB = 24; const NBL = 96;
   const tmpM = new THREE.Matrix4(); const tmpQ = new THREE.Quaternion(); const tmpS = new THREE.Vector3(); const tmpP = new THREE.Vector3(); const tmpC = new THREE.Color();
-  const fogU = { uFogNear: { value: fog.near }, uFogFar: { value: fog.far } };
+  const fogU = fog.u || { uFogNear: { value: fog.near }, uFogFar: { value: fog.far } }; // (fog.u: shared with the world, which scales it for FOG)
 
   // ── glow sprites ──
   const quad = new THREE.PlaneGeometry(1, 1);
@@ -207,7 +207,7 @@ function smoothstep(a, b, x) { const t = Math.max(0, Math.min(1, (x - a) / (b - 
 export function makeDecalMaterial(THREE, dark, fog = { near: 120, far: 520 }, instanced = false) {
   const tint = dark ? 'vec3(0.62, 0.64, 0.74)' : 'vec3(0.5, 0.53, 0.64)';
   return new THREE.ShaderMaterial({
-    uniforms: { uFogNear: { value: fog.near }, uFogFar: { value: fog.far }, uK: { value: dark ? 0.55 : 1 } },
+    uniforms: { uFogNear: fog.u ? fog.u.uFogNear : { value: fog.near }, uFogFar: fog.u ? fog.u.uFogFar : { value: fog.far }, uK: { value: dark ? 0.55 : 1 } },
     vertexShader: instanced
       ? `uniform float uFogNear; uniform float uFogFar; varying vec2 vUv; varying float vK; varying float vF;
         void main(){ vUv = position.xz * 2.0; vec4 mv = modelViewMatrix * instanceMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * mv;

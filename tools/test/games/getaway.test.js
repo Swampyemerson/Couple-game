@@ -279,7 +279,10 @@ async function hpAgree(pr, pc, rw, tol) {
         assert(!C.isKiss(car(0, 0), car(2.1, 0), 4), 'kiss: not when they close faster than 3 m/s (that is a crash)');
         assert(!C.isKiss(car(0, 0), car(3.2, 0), 0.5), 'kiss: not when a car-width apart');
         assert(C.isKiss(car(0, 0), car(0, 4.9), 0.5) && !C.isKiss(car(0, 0), car(0, 5.4), 0.5), 'kiss: bumper to bumper counts, a bumper gap does not');
-        assert(!C.isKiss(car(0, 0), { x: 0, z: 2, y: 4, yaw: 0 }, 0.5), 'kiss: not across a bridge deck'); }
+        assert(!C.isKiss(car(0, 0), { x: 0, z: 2, y: 4, yaw: 0 }, 0.5), 'kiss: not across a bridge deck');
+        // a kiss needs the cars to have been apart (> 1 m gap) at some moment after the round: touching at the buzzer is not enough
+        assert(!C.isApart(car(0, 0), car(2.1, 0)) && !C.isApart(car(0, 0), car(0, 4.9)), 'kiss: cars touching or a hand apart are not "apart"');
+        assert(!C.isApart(car(0, 0), car(2.9, 0)) && C.isApart(car(0, 0), car(3.2, 0)) && C.isApart(car(0, 0), car(0, 6)), 'kiss: more than 1 m between the bodies is apart (3.0 m side by side, 5.6 m nose to tail)'); }
       // Daily streak
       { const d0 = R.dayNum(new Date(2026, 9, 12).getTime());
         assert(R.dayNum(new Date(2026, 9, 13, 0, 5).getTime()) === d0 + 1 && R.dayNum(new Date(2026, 9, 12, 23, 59).getTime()) === d0 && R.dayNum(new Date(2026, 2, 9, 0, 30).getTime()) - R.dayNum(new Date(2026, 2, 8, 23, 30).getTime()) === 1, 'streak: day numbers follow the local calendar date (a clock-change night included)');
@@ -670,7 +673,13 @@ async function hpAgree(pr, pc, rw, tol) {
         assert(d.chain.n >= n1 + 2, `Hot Pursuit: a PIT adds 2 (×${n1} → ×${d.chain.n})`);
         // ── the bumper kiss ──
         await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
+        // (a bust with the cars already touching is no kiss; they must part first, then touch gently)
         await a.evaluate(() => { const g = window.__getaway; g.teleport('b', -300, 42.1, Math.PI / 2, 0); g.teleport('a', -300, 40, Math.PI / 2, 0); g.endNow('busted', 'hp'); });
+        await wait(1200);
+        assert(!(await dl(a, 'a')).kissed, 'bumper kiss: not when the cars were touching at the buzzer and stayed there');
+        await a.evaluate(() => { const g = window.__getaway; g.teleport('b', -300, 46, Math.PI / 2, 0); g.teleport('a', -300, 40, Math.PI / 2, 0); });
+        await wait(400);
+        await a.evaluate(() => { const g = window.__getaway; g.teleport('b', -300, 42.1, Math.PI / 2, 0); g.teleport('a', -300, 40, Math.PI / 2, 0); });
         await until(a, () => window.__getaway.delight('a').kissed, null, 6000, 'the bumper kiss');
         d = await dl(a, 'a');
         assert(d.hearts >= 1 && /Bumper kiss/.test(d.hint), 'bumper kiss: a heart and "Bumper kiss" when two cars touch gently after the round');
@@ -779,9 +788,11 @@ async function hpAgree(pr, pc, rw, tol) {
       // ── a RELENTLESS chain on the cop's phone, then a bumper kiss at the end of the round ──
       assert((await hook(b, 'chainBump', 'b', 12)) === 12, 'the cop’s chain (×12) lives on her phone');
       assert((await dl2(a)).chain.n === 0, 'the runner’s phone has no chain (it is the cop’s own)');
-      await b.evaluate(() => window.__getaway.teleport('b', -100, 42.1, Math.PI / 2, 0));
+      await b.evaluate(() => window.__getaway.teleport('b', -100, 48, Math.PI / 2, 0));
       await wait(900);
       await hook(a, 'endNow', 'busted', 'hp');
+      await wait(500); // (apart at the buzzer, then touching gently: the kiss)
+      await b.evaluate(() => window.__getaway.teleport('b', -100, 42.1, Math.PI / 2, 0));
       await until(a, () => window.__getaway.delight('a').kissed, null, 8000, 'the kiss (runner’s phone)');
       await until(b, () => window.__getaway.delight('b').kissed, null, 8000, 'the kiss (cop’s phone)');
       console.log('ok - bumper kiss: the runner’s phone decides, both phones show it');
@@ -896,6 +907,7 @@ async function hpAgree(pr, pc, rw, tol) {
             return { heat, cam, hr, sh, cut, tg, ws, ch, mini, hpb, wsVis, chVis, W: window.innerWidth };
           });
           const col = Math.max(r.heat.r, r.cam.r, r.hr.r);
+          console.log('MEASURE', w, hh, JSON.stringify({ ws: r.ws, hpb: r.hpb, heat: r.heat, cam: r.cam }));
           assert(r.cam.t >= r.heat.b + 5 && r.hr.t >= r.heat.b + 5 && (r.hr.l >= r.cam.r + 4 || r.hr.t >= r.cam.b + 4), `${w}×${hh}: CAM (y ${r.cam.t}) and the horn sit under the heat panel (ends at ${r.heat.b}, plus its shadow), not on it`);
           assert(r.cam.b <= r.sh.t - 8 && r.hr.b <= r.sh.t - 8, `${w}×${hh}: CAM and the horn stay above the steering thumb (end at ${Math.max(r.cam.b, r.hr.b)}, the STEER zone's hint starts at ${r.sh.t})`);
           assert(!r.cut.length, `${w}×${hh}: every heat label fits beside "1888 m"${r.cut.length ? ` (cut: ${r.cut.join(', ')})` : ''}`);
@@ -2154,6 +2166,27 @@ async function engineUnits() {
         spells.push(maxSpell);
       }
       assert(Math.max(...spells) < 4, `${id}: an Easy AI cop chasing through traffic never sits still for long (longest ${spells.map((q) => q.toFixed(1)).join(' / ')} s, 25 s from spawns 0 and 1)`); }
+    // SAFEHOUSE rounds (practice): an unseen AI runner with the cop far heads for the house and lingers in its 25 m circle (the game needs 2 s unseen
+    // inside it); an AI cop that has lost the runner sometimes camps the house. Without a house neither goes there.
+    { const sp = e.spawns[0]; let house = null;
+      for (const s of e.spawns) for (const q of [s.runner, s.cop]) { const d = Math.hypot(q.x - sp.runner.x, q.z - sp.runner.z); if (d > 250 && d < 700 && (!house || Math.abs(d - 450) < Math.abs(house.d - 450))) house = { x: q.x, z: q.z, d }; }
+      const trial = (role, seed, safe) => {
+        const rn = C.newCar('runner'); const cp = C.newCar('cop'); C.placeCar(rn, sp.runner.x, sp.runner.z, sp.runner.yaw, geo); C.placeCar(cp, sp.cop.x, sp.cop.z, sp.cop.yaw, geo);
+        if (role === 'runner') { cp.x = sp.runner.x - 500; cp.z = sp.runner.z - 500; } // (the cop parked far away)
+        const me = role === 'runner' ? rn : cp; const you = role === 'runner' ? cp : rn;
+        const drv = createDriver(geo, role, { seed, level: 'hard' }); let acc = 0; let minD = 1e9; let inT = 0;
+        for (let t = 0; t < 60; t += DT) {
+          acc += DT;
+          if (acc >= 1 / 30) { acc -= 1 / 30; drv.update(1 / 30, me, you, { los: false, traffic: null, tT: 600 + t, oilLeft: 0, spikesLeft: 0, viewer: { x: 1e6, z: 1e6 }, esc: 0, heat: 180, safe }); }
+          C.stepCar(me, drv.out, DT, geo, role === 'runner' ? CAR.runner : CAR.cop, role === 'runner' ? NITRO.normal : NITRO.cop); me.ev.length = 0;
+          const d = Math.hypot(me.x - house.x, me.z - house.z); minD = Math.min(minD, d); if (d < 25) inT += DT;
+        }
+        return { minD, inT };
+      };
+      const runs = [1, 2, 3].map((sd) => trial('runner', sd, house)); const base = [1, 2, 3].map((sd) => trial('runner', sd, null));
+      assert(house && runs.filter((r) => r.inT >= 2).length >= 2 && base.every((r) => r.minD > 25), `${id}: a Hard AI runner, unseen with the cop far, drives to the safehouse and stays ${runs.map((r) => r.inT.toFixed(0)).join('/')} s in its circle (without one it never goes: ${base.map((r) => r.minD.toFixed(0)).join('/')} m)`);
+      const cops = [1, 2, 3].map((sd) => trial('cop', sd, house)); const cbase = [1, 2, 3].map((sd) => trial('cop', sd, null));
+      assert(cops.some((r) => r.minD < 40) && cbase.every((r) => r.minD > 40), `${id}: a Hard AI cop that lost the runner sometimes camps the safehouse (closest ${cops.map((r) => r.minD.toFixed(0)).join('/')} m; without one ${cbase.map((r) => r.minD.toFixed(0)).join('/')} m)`); }
   }
   // wrecks: a knocked car slides into a building and stops at its wall (not through it)
   { const geo = createGeo({ id: 'w', bounds: { x0: -500, z0: -500, x1: 500, z1: 500 }, roads: [{ name: 'a', kind: 'street', width: 10, pts: [[-400, 0], [400, 0]] }], solids: [{ kind: 'building', x: 0, z: 20, w: 40, d: 10, h: 8 }] });

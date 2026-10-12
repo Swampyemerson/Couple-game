@@ -101,6 +101,10 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
   const fogK = cfg.fogFar ? Math.min(1, cfg.fogFar / (sky.fogFar || 520)) : 1;
   const fogNear = (sky.fogNear || 120) * fogK; const fogFar = (sky.fogFar || 520) * fogK;
   scene.fog = new THREE.Fog(new THREE.Color().fromArray(fogC), fogNear, fogFar);
+  // the fog distances of everything that fogs itself in its own shader (puffs, skids, glows, beams, decals) share these two
+  // uniform objects, so setFogScale() moves them together with scene.fog (FOG twist)
+  const fogU = { uFogNear: { value: fogNear }, uFogFar: { value: fogFar } };
+  scene.userData.fogU = fogU;
   scene.background = null;
   const farScene = new THREE.Scene();
   const sunB = ((sky.sun && sky.sun.bearing) ?? 250) * Math.PI / 180; const sunE = ((sky.sun && sky.sun.elev) ?? 30) * Math.PI / 180;
@@ -144,7 +148,7 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
   }
 
   // ── light dressing + shadow map ──
-  const lights = createLights(THREE, scene, U, P, cfg, { near: fogNear, far: fogFar });
+  const lights = createLights(THREE, scene, U, P, cfg, { near: fogNear, far: fogFar, u: fogU });
   mats.lights = lights;
   const shadow = createShadow(THREE, U, cfg);
   // shadow casters live in their own small scene (a child of the world scene, so the main pass
@@ -489,7 +493,7 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
   onProgress(0.7, 'Welding it together…');
   stage = 'merge';
   const disposeSet = new Set();
-  const decalMat = decals ? makeDecalMaterial(THREE, dark, { near: fogNear, far: fogFar }) : null;
+  const decalMat = decals ? makeDecalMaterial(THREE, dark, { near: fogNear, far: fogFar, u: fogU }) : null;
   if (decalMat) allMats.add(decalMat);
   let ci = 0;
   for (const c of chunks.values()) {
@@ -607,7 +611,7 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
 
   // ── per frame ──
   const chunkList = [...chunks.values()];
-  const viewR = fogFar + 40;
+  let viewR = fogFar + 40; // (FOG shortens it with the fog: chunks past the haze aren't drawn)
   const decalR = Math.min(240, fogFar * 0.5); // baked shadows fade out with distance anyway: skip their draw calls far away
   const frustum = new THREE.Frustum(); const pm = new THREE.Matrix4(); const sph = new THREE.Sphere(); const fv = new THREE.Vector3(); const focus = new THREE.Vector3();
   function update(cam, dt, tSec) {
@@ -647,7 +651,16 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
 
   const totalTris = chunkList.reduce((a, c) => a + c.tris, 0) + seeList.reduce((a, s) => a + s.tris, 0);
   onProgress(1, 'Ready');
+  let fogScale = 1;
+  /** FOG twist: pull the whole render fog in (k < 1) or restore it (1): scene.fog plus every self-fogging shader. No draw call changes. */
+  function setFogScale(k) {
+    fogScale = k > 0 ? k : 1;
+    scene.fog.near = fogNear * fogScale; scene.fog.far = fogFar * fogScale;
+    fogU.uFogNear.value = scene.fog.near; fogU.uFogFar.value = scene.fog.far;
+    viewR = scene.fog.far + 40;
+  }
   return {
+    setFogScale, get fogScale() { return fogScale; },
     scene, farScene, casters, sky: skyMesh, mats, kit, chunks: chunkList, toon, breakSolid, update, preRender, fogC, skyTop, sunDir: lightDir, lights, shadow, tier,
     fogNear, fogFar, cfg,
     /** true when GPU-only geometry dropped its CPU copies: rebuild the world after a context loss */

@@ -21,7 +21,7 @@ import { MAPS } from './maps/index.js';
 import { liveryFor, liveryRows, checkUnlocks, LIVERIES } from './liveries.js';
 import { rulesFor, heatWith, twistFor, twistInfo, ptsFor, pickSafehouse } from './twists.js';
 import { recordRound, recordMatch, recordPair, pairWinner, pairPts, pairTarget, pairWhy, scoresFromHist, winnersByRound, remainingPoints, roundWinner, seriesAfter, seriesGrudge, seriesLine, recordsLine, fmtSec, dayKey, dayOfYear, DAILY, dailyText, dailyKey, dailyBoard, dailyRoleFor, dailyScoreOf, dailyTextOf, dailyBestKey, dayNum, dayNumFromKey, foldStreak, streakOf, streakView } from './records.js';
-import { wantedLevel, wantedStars, copRegen, chainNew, chainReset, chainStep, chainAdd, chainText, CHAIN, CHAIN_TIERS, aheadPoints, QUICK_DIST, isKiss } from './chase.js';
+import { wantedLevel, wantedStars, copRegen, chainNew, chainReset, chainStep, chainAdd, chainText, CHAIN, CHAIN_TIERS, aheadPoints, QUICK_DIST, isKiss, isApart } from './chase.js';
 
 const AB = ['a', 'b'];
 const PH = { loading: 0, lobby: 1, intro: 2, count: 3, chase: 4, result: 5, final: 6, wait: 7 };
@@ -572,6 +572,7 @@ export function createGame(el, api) {
   /** Back to the lobby. rematch: a 'Rematch!' card instead, while the host starts the next match on
    *  the loaded map (frame loop: autoStart) — no remount, no map rebuild. */
   function toLobby(rematch = false) {
+    setFog(1); // a FOG round quit mid-chase must not leave the lobby (or the next match) in the fog
     S.phase = 'lobby'; S.match = null; S.R = null; S.paused = false; S.ending = false; S.finalShown = false; S.finalDone = false; S.pauseCard = null; S.result = null;
     S.menu = false; S.appMenu = false; delReason('menu'); S.slowT = 0; S.stopT = 0; S.hitSlowT = 0;
     for (const w of AB) { const p = P2[w]; p.pad.auto = null; p.auto = false; }
@@ -835,8 +836,16 @@ export function createGame(el, api) {
   }
   const detach = (o) => { if (o && o.parent) o.parent.remove(o); };
   const clone = (o) => JSON.parse(JSON.stringify(o)); // room payloads arrive frozen
-  link.on('match', (d) => { if (!isHost && d && d.match) applyMatch(clone(d.match), clone(d.R)); });
-  link.on('round', (d) => { if (!isHost && d && S.match && d.R) { const c = clone(d); S.match.scores = c.scores || S.match.scores; S.match.hist = c.hist || S.match.hist; applyRound(c.R); } });
+  link.on('match', (d) => {
+    if (isHost || !d || !d.match) return;
+    // a relink re-sends the match as it stands: a guest that already has this match (same id) at this round or a later one keeps what it has
+    // (in the result phase it would restart the round and push a second hist entry); a new match id is a new match
+    if (S.match && S.match.id === d.match.id && S.R && d.R && d.R.idx <= S.R.idx) return;
+    applyMatch(clone(d.match), clone(d.R));
+  });
+  link.on('round', (d) => {
+    if (!isHost && d && S.match && d.R && !(S.R && d.R.idx <= S.R.idx)) { const c = clone(d); S.match.scores = c.scores || S.match.scores; S.match.hist = c.hist || S.match.hist; applyRound(c.R); }
+  });
 
   /** Pairs scoring on for this match (the Daily and a 'Per round' match score every round). */
   const pairsOn = () => !!S.match && S.match.rules.score !== 'rounds' && !S.match.daily;
@@ -846,7 +855,7 @@ export function createGame(el, api) {
     return { runner: gk === 1 ? CAR.runner : { ...CAR.runner, grip: CAR.runner.grip * gk }, cop: gk === 1 ? CAR.cop : { ...CAR.cop, grip: CAR.cop.grip * gk } };
   }
   /** FOG: the render fog pulled in (render-only; 1 restores the map's own). */
-  function setFog(k) { const f = world && world.scene && world.scene.fog; if (f && world.fogFar) { f.near = world.fogNear * (k || 1); f.far = world.fogFar * (k || 1); } }
+  function setFog(k) { if (world && world.setFogScale) world.setFogScale(k || 1); } // (scene.fog and every self-fogging shader: puffs, skids, glows, decals)
   function applyRound(R) {
     if (S.R && S.R.idx === R.idx && !S.R.over) return;
     S.R = { ...R, over: false, result: null, spikes: [], oils: [], seq: 0 };
@@ -1204,7 +1213,7 @@ export function createGame(el, api) {
   }
   link.on('emote', (d) => {
     if (!d || !EMOTE_OK.has(d.k) || !S.R) return;
-    if (d.k === 'KISS') { kissShow(); return; }
+    if (d.k === 'KISS') { if (d.i === S.R.idx) kissShow(); return; } // (a late one from the last round must not mark this one)
     if (d.k === 'CHAIN') { if (d.i >= 0 && d.n >= 10) (S.match.chains || (S.match.chains = {}))[d.i | 0] = Math.min(99, d.n | 0); return; }
     if (device.emotes === 'off') return;
     const o = other(me);
@@ -1257,8 +1266,9 @@ export function createGame(el, api) {
     const R = S.R; if (!R || !R.over || R.kissed || S.phase !== 'result' || performance.now() - (R.endWall || 0) > 3500) return;
     const rw = R.runner; if (live && !local(rw)) return; // the runner's device decides
     const o = other(rw); const a = P2[rw].car; const b = posOf(o); const bv = live ? P2[o].remote : P2[o].car;
+    if (!R.kissApart) { if (isApart(a, b)) R.kissApart = true; return; } // (cars already touching at the buzzer, boxed or hp busts: they must part first, then touch gently)
     if (!isKiss(a, b, Math.hypot(a.vx - bv.vx, a.vz - bv.vz))) return;
-    if (live) link.urgent('emote', { k: 'KISS' });
+    if (live) link.urgent('emote', { k: 'KISS', i: R.idx });
     kissShow();
   }
   // ── the cop's Hot Pursuit chain: close and in sight for 2.5 s +1, a spike hit +3, a PIT +2; each tier tops the boost up 25%. It lives on the cop's own device. ──
@@ -1468,7 +1478,7 @@ export function createGame(el, api) {
       for (const w of AB) {
         const p = P2[w]; if (!p.driver || !local(w)) continue;
         const o = posOf(other(w)); const role = roleOf(w);
-        const out = p.driver.update(aiDt, p.car, o, { los: p.los, traffic, tT, spikes: role === 'runner' ? visibleStrips(w, now) : null, spikesLeft: p.spikesLeft, oilLeft: p.oilLeft, hit: p.aiHit, viewer: ai() ? P2[human()].car : null, esc: P2[runnerW()].esc, heat: heatDist(), wanted: S.wLvl || 1 });
+        const out = p.driver.update(aiDt, p.car, o, { los: p.los, traffic, tT, spikes: role === 'runner' ? visibleStrips(w, now) : null, spikesLeft: p.spikesLeft, oilLeft: p.oilLeft, hit: p.aiHit, viewer: ai() ? P2[human()].car : null, esc: P2[runnerW()].esc, heat: heatDist(), wanted: S.wLvl || 1, safe: S.R.safe || null });
         p.aiHit = false;
         if (out.spike && role === 'cop') aiSpike(w, out.spike);
         if (out.oil && role === 'runner') dropOil(w);
@@ -2386,7 +2396,7 @@ export function createGame(el, api) {
   function tagFor(w, v) {
     const o = other(w); const oc = P2[o].car; const cam = cams[w].cam;
     if (!S.R || S.phase === 'intro' || S.phase === 'wait') { v.tag(0, 0, false); v.edgeArrow(0, 0, 0, false); return; }
-    if (!live && !otherVisible(w)) { v.tag(0, 0, false); v.edgeArrow(0, 0, 0, false); return; } // (practice: the AI runner's tag follows the radar rule)
+    if (!otherVisible(w)) { v.tag(0, 0, false); v.edgeArrow(0, 0, 0, false); return; } // (the cop's tag over the runner follows the radar rule, live too; the runner always sees the cop)
     vec.set(oc.x, oc.y + 2.4, oc.z).project(cam);
     const d = Math.hypot(oc.x - P2[w].car.x, oc.z - P2[w].car.z);
     const vw = W; const vh = H;

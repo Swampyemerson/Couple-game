@@ -27,9 +27,9 @@ export const AI_LEVELS = ['easy', 'normal', 'hard'];
 export const AI_LEVEL_LABELS = { easy: 'Easy', normal: 'Normal', hard: 'Hard' };
 // hold: how long the cop waits behind a stopped car before creeping round it (s)
 const LV = {
-  easy: { vK: 0.88, react: 0.25, pit: 0, ping: 6, nitro: 0.5, traffic: 1.25, cool: 2.4, hold: 2.6 },
-  normal: { vK: 0.95, react: 0.15, pit: 1, ping: 4, nitro: 0.8, traffic: 1, cool: 1.5, hold: 1.8 },
-  hard: { vK: 1.0, react: 0.08, pit: 2, ping: 2, nitro: 1, traffic: 0.85, cool: 0.8, hold: 1.2 },
+  easy: { vK: 0.88, react: 0.25, pit: 0, ping: 6, nitro: 0.5, traffic: 1.25, cool: 2.4, hold: 2.6, safe: 0.5, camp: 0.2 },
+  normal: { vK: 0.95, react: 0.15, pit: 1, ping: 4, nitro: 0.8, traffic: 1, cool: 1.5, hold: 1.8, safe: 0.8, camp: 0.4 },
+  hard: { vK: 1.0, react: 0.08, pit: 2, ping: 2, nitro: 1, traffic: 0.85, cool: 0.8, hold: 1.2, safe: 1, camp: 0.6 }, // (safe / camp: how often a runner heads for / a cop camps a SAFEHOUSE round's house)
 };
 // creep-round offsets across my path (m; + is right): the runner tries the verge side first, the
 // cop the oncoming lane
@@ -387,7 +387,9 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
 
   // ── decisions ──
   const pts = [];
-  function copPlan(car, k, dist) {
+  const locS = {};
+  function copPlan(car, k, dist, camp) {
+    if (camp) { G.locate(camp.x, camp.z, null, locS, 60, notBridge); if (locS.road >= 0 && routeTo(car, locS)) return true; } // (camping the safehouse: wait where the runner is trying to hide)
     // intercept: the earliest point on the runner's predicted route I can reach in time
     locateCar(k, loc2);
     if (loc2.road < 0) return false;
@@ -414,8 +416,10 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
     }
     return routeTo(car, goal);
   }
-  function runnerPlan(car, cop) {
+  function runnerPlan(car, cop, safe) {
     locateCar(car, loc); if (loc.road < 0) return false;
+    // a SAFEHOUSE round, unseen with the cop far: the last stretch goes straight to the house
+    if (safe && Math.hypot(safe.x - car.x, safe.z - car.z) < 150) { G.locate(safe.x, safe.z, null, locS, 60, notBridge); if (locS.road >= 0 && routeTo(car, locS)) { D.goal = { x: safe.x, z: safe.z }; return true; } }
     G.sourcesFor(loc, car.speed, srcs);
     // with the cop close, turning back means driving at it: keep going forward
     if (cop && Math.hypot(cop.x - car.x, cop.z - car.z) < 90 && srcs.length === 4) srcs.length = 2;
@@ -426,12 +430,14 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
     } else dOt.fill(60);
     // candidate escape nodes 6–28 s away
     const N = G.nodes.n; const cand = [];
+    const d0 = safe ? Math.hypot(safe.x - car.x, safe.z - car.z) : 0;
     for (let n = 0; n < N; n++) {
       const m = dMe[n]; if (!(m > 6 && m < 28)) continue;
       const c = dOt[n];
       let sc = Math.min(30, (Number.isFinite(c) ? c : 60) - m) * 1.0 + m * 0.35;
       if (G.nodes.degree[n] <= 1) sc -= 30; // dead end
       if (roads[G.nodes.road[n]].bridge) sc -= 3;
+      if (safe) { const dn = Math.hypot(G.nodes.x[n] - safe.x, G.nodes.z[n] - safe.z); sc += clamp((d0 - dn) * 0.05, -6, 14) + (dn < 70 ? 14 : 0); } // (bias the escape junction towards the safehouse)
       sc += rnd() * 4;
       cand.push([sc, n]);
     }
@@ -623,6 +629,13 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
     D.stats.trafMs = Math.max(D.stats.trafMs || 0, (typeof performance !== 'undefined' ? performance.now() : 0) - tq);
     // ── what to drive at ──
     D.replanT -= dt; D.goalT -= dt;
+    // SAFEHOUSE rounds: an unseen runner with the cop far heads for the house (some of the time); a cop that has lost the runner sometimes camps it
+    let safeGo = false; let campOn = false;
+    if (opts.safe && !los) {
+      if (role === 'runner' && dist > 130) { if (D.safeOk === undefined) D.safeOk = rnd() < lv.safe; safeGo = D.safeOk; }
+      else if (role === 'cop' && k) { if (D.campUntil === undefined) D.campUntil = -1; if (D.t > D.campUntil && D.t > (D.campNext || 0)) { D.campNext = D.t + 6; if (rnd() < lv.camp) D.campUntil = D.t + 14; } campOn = D.t < D.campUntil; }
+    }
+    if (safeGo !== !!D.safeWas || campOn !== !!D.campWas) { D.safeWas = safeGo; D.campWas = campOn; D.goalT = 0; D.replanT = Math.min(D.replanT, 0.1); }
     let tx = 0; let tz = 0; let vT = vMax; let direct = false; let brakeHard = false;
     let clear = false;
     if (role === 'cop' && k && los && dist < 38) {
@@ -642,11 +655,11 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
       const lost = D.route && (D.offRoute > 14 || D.routeLeft < 12);
       if (D.replanT <= 0 || !D.route || (lost && D.replanT < 0.6)) {
         let ok = false;
-        if (role === 'cop') ok = k ? copPlan(car, k, dist) : false;
+        if (role === 'cop') ok = k ? copPlan(car, k, dist, campOn ? opts.safe : null) : false;
         else {
           const sp = stripAhead(opts.spikes, 160);
           if (sp < 160 && D.route) { G.locate(car.x, car.z, car.yaw, loc, 60); if (loc.road >= 0) for (let q = G.adjStart[loc.b]; q < G.adjStart[loc.b + 1]; q++) penal.set(G.adj[q], D.t + 25); D.goalT = 0; }
-          if (!D.route || D.goalT <= 0 || D.routeLeft < 30 || (k && dist < 40 && D.replanT <= 0) || lost) { ok = runnerPlan(car, k); D.goalT = 7 + rnd() * 5; } else ok = true;
+          if (!D.route || D.goalT <= 0 || D.routeLeft < 30 || (k && dist < 40 && D.replanT <= 0) || lost) { ok = runnerPlan(car, k, safeGo ? opts.safe : null); D.goalT = 7 + rnd() * 5; } else ok = true;
         }
         D.fails = ok ? 0 : D.fails + 1;
         D.replanT = ok ? (role === 'cop' ? (dist < 150 ? 0.5 : 0.9) : 0.8) : Math.min(3, 0.5 * (1 + D.fails));
@@ -657,6 +670,7 @@ export function createDriver(geo, role, { seed = 1, level = 'normal', skill } = 
         // lane shift (overtaking) applied across the path direction
         if (D.laneShift) { const hx = tx - car.x; const hz = tz - car.z; const hl = Math.hypot(hx, hz) || 1; tx += (-hz / hl) * D.laneShift; tz += (hx / hl) * D.laneShift; }
         if (D.offRoute > 6) vT = Math.min(vT, 9 + 30 / D.offRoute); // getting back to the road: gently
+        if (safeGo) { const ds = Math.hypot(opts.safe.x - car.x, opts.safe.z - car.z); if (ds < 40) vT = Math.min(vT, ds < 20 ? 3 : 7); } // (slow in the house's circle: the game needs 2 s unseen inside 25 m)
         if (D.routeLeft < 30 && role === 'cop') vT = Math.min(vT, Math.max(k ? k.speed + 6 : 10, D.routeLeft * 0.8));
         // the runner ahead within 32 m (on my line, or across a corner I'm cutting): close at
         // +3..+14 m/s, tapering to +3 by 10 m, so the cop arrives on the quarter for a PIT instead

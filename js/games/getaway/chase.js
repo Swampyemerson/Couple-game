@@ -84,7 +84,7 @@ export function aheadPoints(geo, c, dists = QUICK_DIST, snap = 40) {
 }
 
 // ── the bumper kiss ──
-export const KISS = { speed: 3, grow: 0.3 };
+export const KISS = { speed: 3, grow: 0.3, gap: 1 }; // (gap: the cars must have been this far apart, in metres, at some moment after the round ended)
 const kA = { x: 0, z: 0, y: 0, yaw: 0, hl: 0, hw: 0 }; const kB = { x: 0, z: 0, y: 0, yaw: 0, hl: 0, hw: 0 }; const kCt = { pen: 0, nx: 0, nz: 0, px: 0, pz: 0, ia: 0, ib: 0 };
 /** Two cars touching gently: their bodies (a hand's width bigger each) overlap and they close at under 3 m/s. */
 export function isKiss(a, b, relSpeed) {
@@ -92,4 +92,11 @@ export function isKiss(a, b, relSpeed) {
   kA.x = a.x; kA.z = a.z; kA.y = a.y || 0; kA.yaw = a.yaw; kA.hl = CAR.hl + KISS.grow; kA.hw = CAR.hw + KISS.grow;
   kB.x = b.x; kB.z = b.z; kB.y = b.y || 0; kB.yaw = b.yaw; kB.hl = kA.hl; kB.hw = kA.hw;
   return carContact(kA, kB, kCt) > 0;
+}
+/** True while the two car bodies are more than gap metres apart (default KISS.gap): a kiss only counts once the cars have been
+ *  apart after the round ended, so a bust with the cars already touching can't fire it by itself. */
+export function isApart(a, b, gap = KISS.gap) {
+  kA.x = a.x; kA.z = a.z; kA.y = a.y || 0; kA.yaw = a.yaw; kA.hl = CAR.hl + gap / 2; kA.hw = CAR.hw + gap / 2; // (each body grows half the gap)
+  kB.x = b.x; kB.z = b.z; kB.y = b.y || 0; kB.yaw = b.yaw; kB.hl = kA.hl; kB.hw = kA.hw;
+  return !(carContact(kA, kB, kCt) > 0);
 }
