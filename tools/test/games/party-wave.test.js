@@ -795,6 +795,7 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
     const idF = await h.newOnlineGame(b, 'wave');
     await h.settle();
     const e00 = await h.engine(b, idF);
+    await h.closeGame(b); // nobody has the match open when it "finishes" (a saved match from before)
     const l1 = { a: [], b: [] };
     e00.state.rounds.forEach((Rd, r) => { l1[Rd.giver].push({ clue: `old ${r}` }); l1[other(Rd.giver)].push({ at: Math.max(0, Math.min(100, Rd.target + (r % 3 === 0 ? 0 : r % 3 === 1 ? 7 : 25))) }); });
     await b.evaluate(async ([mid, lists]) => {
@@ -803,13 +804,12 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
     }, [idF, l1]);
     await h.settle();
     const playsBefore = gd(h).plays;
-    await h.closeGame(b);
     await h.openMatch(a, idF);
     await a.waitForSelector('.wv-rows .wv-row:nth-child(8)', { timeout: 8000 });
     const fe = await h.engine(a, idF);
     assert(fe.over && fe.state.v === undefined && (await a.textContent('.wv-plaque b')).replace(/\s/g, '').endsWith('/32') && await a.$$eval('.wv-meter i', (x) => x.length) === 32, `a finished v1 match recaps as ${fe.result.score}/32, like before`);
     assert(await a.$$eval('.wv-medal', (x) => x.length) === 2 && await a.$$eval('.wv-row .tick', (x) => x.length) === 8, 'the v1 recap also has badges and target ticks');
-    assert(!(await a.$('.wv-stamps')) && (await a.textContent('.wv-recwrap')).trim() === '' && !/match together|NEW BEST|BULLSEYES/.test(await a.textContent('.wv-recwrap')), 'an old finished match shows no stamps, history line or streak (they would be made up)');
+    assert(!(await a.$('.wv-stamps')) && (await a.textContent('.wv-recwrap')).trim() === '' && !/match together|NEW BEST|BULLSEYES/.test(await a.textContent('.wv-recwrap')), `an old finished match shows no stamps, history line or streak (they would be made up): "${(await a.textContent('.wv-recwrap')).slice(0, 120)}"`);
     await h.settle();
     assert(gd(h).plays === playsBefore, 'opening a match that finished earlier writes no records');
     await h.closeGame(a);
