@@ -41,10 +41,14 @@ async function shot(p, name) { await p.screenshot({ path: path.join(SHOTS, name 
 async function selectMap(p, id) {
   for (let i = 0; i < 16; i++) {
     const cur = await p.evaluate(() => { const s = window.__cham.state(); return (s.setup && s.setup.map) || s.mapId; });
-    if (cur === id) { await p.waitForFunction((m) => window.__cham.state().mapId === m, id, { timeout: 30000 }); return true; }
+    if (cur === id) { await p.waitForFunction((m) => window.__cham.state().mapId === m, id, { timeout: 60000 }); return true; }
     const direct = await p.$(`[data-lobby="map"][data-v="${id}"]:not([disabled])`);
     if (direct && await direct.isVisible()) await direct.click();
-    else { const nx = await p.$('.chm-arrow[aria-label="Next map"]'); if (!nx) return false; await nx.click(); }
+    else {
+      // the shorter way round (ten maps: Next from the Living Room to CU Boulder is six taps, Previous four, and every tap on a loaded box is seconds)
+      const ids = await p.evaluate(() => window.__cham.mapIds()); const fwd = (ids.indexOf(id) - ids.indexOf(cur) + ids.length) % ids.length;
+      const nx = await p.$(`.chm-arrow[aria-label="${fwd <= ids.length / 2 ? 'Next' : 'Previous'} map"]`); if (!nx) return false; await nx.click();
+    }
     await wait(250);
   }
   return false;

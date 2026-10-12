@@ -314,7 +314,7 @@ async function hsRound(h, { hider, round, style }) {
     for (let i = 0; i < mag; i++) {
       await hook(Sk, 'aimAt', bc[0] + 1.5 + i * 0.1, 0, bc[2] + 1.2);
       await wait(120);
-      await Sk.click('.chm-acts [data-act="fire"]');
+      await hook(Sk, 'action', 'fire'); // (the button's actionability waits made six clicks last ~14 s of a 15 s hunt on a loaded box)
       await wait(220);
     }
     await waitPhase(Sk, 'time', 10000);
