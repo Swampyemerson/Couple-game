@@ -429,7 +429,7 @@ async function hockeyDrama(h) {
   const sub = await a.textContent('#game-root .gm-end .gm-end-sub');
   d = await hdata(a);
   assert(/7–0/.test(sub) && /Shutout/.test(sub), `rivalry line: "${sub}"`);
-  assert(d.hk_shutout_a_n === 1 && d.hk_streak_who === 'a' && d.hk_streak_n === 1, 'shutout and streak saved');
+  assert(d.hk_shutout_a_n === 1 && d.hk_streak_who === 'a' && d.hk_streak_len === 1, 'shutout and streak saved');
   await h.shot(a, `${SHOTS}/hockey-end-shutout-390.png`);
   await h.closeGame(a);
   // second match: Emerson comes back from 0-3 and extends the streak
@@ -440,7 +440,7 @@ async function hockeyDrama(h) {
   const sub2 = await a.textContent('#game-root .gm-end .gm-end-sub');
   d = await hdata(a);
   assert(/COMEBACK from 3 down/.test(sub2) && /2-match streak/.test(sub2), `comeback badge and streak in the rivalry line: "${sub2}"`);
-  assert(d.hk_comeback_a_n === 1 && d.hk_streak_n === 2 && d.hk_streak_best >= 2, 'comeback + streak saved');
+  assert(d.hk_comeback_a_n === 1 && d.hk_streak_len === 2 && d.hk_streak_best >= 2, 'comeback + streak saved');
   await h.shot(a, `${SHOTS}/hockey-end-comeback-390.png`);
   await h.closeGame(a);
 }
