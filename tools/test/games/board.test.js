@@ -663,9 +663,11 @@ async function rulesTests() {
     // 4. Hot Boards
     const hs = (seed) => step(seeded('a', seed), { setup: 2, mode: 'hot' });
     const h1 = hs(1); const h1b = hs(1);
-    ok(same(h1.hot, h1b.hot) && h1.hot.length === 2 && h1.hot[0] !== h1.hot[1] && h1.hot.every((x) => x >= 0 && x <= 8) && h1.hot[0] < h1.hot[1], 'hot: two different seeded hot boards, the same for the same seed');
+    const PAIRS = ['0,8', '1,7', '2,6', '3,5'];
+    ok(same(h1.hot, h1b.hot) && PAIRS.includes(h1.hot.join()), 'hot: the hot boards are one opposite pair through the centre (0&8, 1&7, 2&6 or 3&5), the same for the same seed');
     const variety = new Set(Array.from({ length: 40 }, (_, k) => hs(k).hot.join()));
-    ok(variety.size > 12, `hot: different seeds make different pairs (${variety.size} of 36 in 40 seeds)`);
+    ok([...variety].every((x) => PAIRS.includes(x)) && variety.size === 4, `hot: every seed gives one of the four pairs, and all four turn up (${[...variety].sort().join(' / ')} in 40 seeds)`);
+    ok(Array.from({ length: 40 }, (_, k) => hs(k)).every((x, k) => x.hot.join() === hs(k).hot.join()), 'hot: deterministic per seed');
     let hc = hs(2);
     const hotB = hc.hot[0]; const coldB = [0, 1, 2, 3, 4, 5, 6, 7, 8].find((x) => !hc.hot.includes(x));
     const win = (st, b, w, cells) => { const c = clone(st); cells.forEach((i) => { c.cells[b * 9 + i] = w; }); return c; };
@@ -1717,15 +1719,15 @@ async function uiTests(scheme, port) {
       ok(/picking a mode/i.test(await ps.textContent('.gu-plate')) && await ps.$$eval('.g-ult button', (bs) => bs.every((b) => b.disabled)), 'ultimate: the waiting partner sees "… is picking a mode…" and nothing is tappable');
       ok(await pf.$eval('.gu-mc[data-m="classic"]', (x) => x.classList.contains('is-hl')), 'ultimate: Classic is preselected');
       await pf.tap('.gu-mc[data-m="hot"]');
-      ok(await pf.$eval('.gu-mc[data-m="hot"]', (x) => x.classList.contains('is-hl') && x.getAttribute('aria-checked') === 'true') && /star boards/i.test(await pf.textContent('.gu-pick-d')), 'ultimate: choosing Hot Boards selects it and describes it in one line');
+      ok(await pf.$eval('.gu-mc[data-m="hot"]', (x) => x.classList.contains('is-hl') && x.getAttribute('aria-checked') === 'true') && /facing boards/i.test(await pf.textContent('.gu-pick-d')), 'ultimate: choosing Hot Boards selects it and describes it in one line');
       ok(await pf.evaluate(() => { try { return JSON.parse(localStorage.getItem('ju.games.data.v1') || '{}').ultimate.mode === 'hot'; } catch { return false; } }), 'ultimate: the choice is remembered in the game data (rematches start with it)');
       ok(moveCount(await h.engine(pf, id)) === 0, 'ultimate: picking a mode sends nothing yet');
       await pf.tap(SEL.ultimate([4, 0]));
       await pf.tap(SEL.ultimate([4, 0]));
       const [ea, eb] = await waitMoves(h, id, 1, [h.a, h.b]);
       ok(JSON.stringify(ea.lists[first]) === JSON.stringify([{ setup: 2, mode: 'hot' }, { b: 4, i: 0 }]) && ea.lists[second].length === 0, 'ultimate: tapping the board sends the setup move, then the mark');
-      ok(JSON.stringify(ea.state) === JSON.stringify(eb.state) && ea.state.v === 2 && ea.state.mode === 'hot' && ea.state.hot.length === 2 && ea.acts[0] === second, 'ultimate: both phones agree on the state (mode hot, two hot boards)');
-      for (const pg of [h.a, h.b]) ok(await pg.$$eval('.gu-sb.is-hot', (xs) => xs.length) === 2 && await pg.$$eval('.gu-hot svg', (xs) => xs.filter((x) => x.getBoundingClientRect().width > 0).length) === 2, 'ultimate: two hot boards wear a star on each phone');
+      ok(JSON.stringify(ea.state) === JSON.stringify(eb.state) && ea.state.v === 2 && ea.state.mode === 'hot' && ['0,8', '1,7', '2,6', '3,5'].includes(ea.state.hot.join()) && ea.acts[0] === second, 'ultimate: both phones agree on the state (mode hot, one opposite pair of hot boards)');
+      for (const pg of [h.a, h.b]) ok(JSON.stringify(await pg.$$eval('.gu-sb.is-hot', (xs) => xs.map((x) => Number(x.dataset.b)))) === JSON.stringify(ea.state.hot) && await pg.$$eval('.gu-sb.is-hot', (xs) => xs.length) === 2 && await pg.$$eval('.gu-hot svg', (xs) => xs.filter((x) => x.getBoundingClientRect().width > 0).length) === 2, 'ultimate: two hot boards wear a star on each phone');
       ok(!(await pf.isVisible('.gu-pick')) && !(await ps.isVisible('.gu-pick')) && /Hot Boards/.test(await ps.textContent('.gu-info')), 'ultimate: once play starts the picker is gone and a small Hot Boards label stays');
       for (const pg2 of [pf, ps]) ok(await pg2.isVisible('.gu-tie') && /Ties → /.test(await pg2.textContent('.gu-tie')) && (await pg2.textContent('.gu-tie')).includes(secondName), 'ultimate: the komi chip stays on both phones once play starts, naming the second mover');
       ok(!(await pf.$('.gu-steal')) && !/take that mark/i.test(await ps.textContent('.g-ult')), 'ultimate: no steal button and no "take that mark" any more');

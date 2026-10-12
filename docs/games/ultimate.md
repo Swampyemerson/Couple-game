@@ -28,9 +28,11 @@ ever behind, for the comeback moment), `hot` (Hot Boards), `wild` (`{a, b}` wild
 ## Modes
 
 - **classic**: the balanced v2 rules (komi, below).
-- **hot** (Hot Boards): two boards, picked from the match seed (`shuffled([0..8], seed|hot)`), are hot.
-  They wear a Riso star. A hot board counts 2 in the boards-won count (the `HOT` object in the file is the one place to change which boards are hot and what they weigh) (score chips, the count ending,
-  the result text); line rules are unchanged. Winning a hot board plays a small stamp.
+- **hot** (Hot Boards): one opposite pair through the centre, picked from the match seed
+  (`0&8`, `1&7`, `2&6` or `3&5`), is hot. Both wear a Riso star. A hot board counts 2 in the
+  boards-won count (score chips, the count ending, the result text, the komi tie-break); line rules
+  are unchanged. The `HOT` object in the file (`pick`, `weight`) is the one place to change which
+  boards are hot and what they weigh. Winning a hot board plays a small stamp.
 - **wild** (Wildcards): each player holds one wildcard. In the UI, tap your token to arm it, then
   tap a square in any open board. Refused (friendly message, nothing spent) when you already have a
   free move, when you aim at the board you were sent to, in other modes, or when it is already spent.
@@ -49,6 +51,11 @@ first mover winning clearly more often than the second:
 | **komi** | MCTS 20000 | 50.0 % | 50.0 % | 0 |
 | pie (steal) | MCTS 2500 | 44.7 % | 44.7 % | 10.7 % |
 | pie (steal) | MCTS 20000 | 38 % | 43 % | 19 % |
+
+Hot Boards (MCTS 2500, with komi, P1 minus P2): two random hot boards **+11.8 pp** (CI 4.9 to 18.6,
+N=800) put the first mover well ahead; one opposite pair through the centre **+1.0 pp** (CI −3.0 to
++5.0, N=2400) is level, so that is what ships. Plain komi pooled over its runs: −0.2 pp (CI −4.6 to
++4.2, N=2000).
 
 The stronger the players, the more draws and the bigger P1's edge, and the first mover's edge is
 mostly "ties and near-ties on the count go their way". Komi removes exactly that: v2 games have no

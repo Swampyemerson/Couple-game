@@ -8,11 +8,11 @@
 // Versions. A match with no setup move is the original game, replayed exactly as it always was.
 // New matches begin with { setup: 2, mode } (first mover only, before any mark, passes no turn):
 //   classic  the balanced rules (the BALANCE section: ties on boards go to the second mover)
-//   hot      two seeded boards are hot and count double in the boards-won count
+//   hot      two facing boards through the centre (seeded: 0&8, 1&7, 2&6 or 3&5) are hot, counting double
 //   wild     each player holds one wildcard: { b, i, wild: 1 } ignores the send, once
 // Other moves: { b, i } place a mark. { b, i, wild: 1 } is the Wildcards move.
 // Balance (v2): komi. A count ending that is tied on boards goes to the player who moved second.
-import { registerGame, gameDataApi, randInt, shuffled } from './core.js';
+import { registerGame, gameDataApi, randInt } from './core.js';
 
 const LINES = [[0, 1, 2], [3, 4, 5], [6, 7, 8], [0, 3, 6], [1, 4, 7], [2, 5, 8], [0, 4, 8], [2, 4, 6]];
 const NAMES = ['top-left', 'top', 'top-right', 'left', 'middle', 'right', 'bottom-left', 'bottom', 'bottom-right'];
@@ -34,9 +34,12 @@ function boardsWon(s) {
   return out;
 }
 // ── HOT BOARDS (v2 mode `hot`; the only two places to tune it) ──────────
+// one opposite pair through the centre: bot self-play put the two-random-boards version at +11.8 pp for
+// the first mover and this one at +1.0 pp (docs/games/ultimate.md)
+const HOT_PAIRS = [[0, 8], [1, 7], [2, 6], [3, 5]];
 const HOT = {
-  /** Which small boards are hot, from the match seed: an array of board indexes, stored in s.hot. */
-  pick: (seed) => shuffled([0, 1, 2, 3, 4, 5, 6, 7, 8], `${seed}|hot`).slice(0, 2).sort((x, y) => x - y),
+  /** Which small boards are hot, from the match seed: one opposite pair, stored in s.hot. */
+  pick: (seed) => HOT_PAIRS[randInt(HOT_PAIRS.length, seed, 'hot')].slice(),
   /** What winning small board `b` counts as in the boards-won count (score, count ending, tie-break). */
   weight: (s, b) => (s.hot && s.hot.includes(b) ? 2 : 1),
 };
@@ -45,7 +48,7 @@ const marksOf = (s) => { let n = 0; for (const c of s.cells) if (c) n++; return 
 // ── modes ──────────────────────────────────────────────────────────────
 const MODES = {
   classic: { name: 'Classic', blurb: 'Ties on boards go to the second mover.' },
-  hot: { name: 'Hot Boards', blurb: 'Two star boards count double if boards decide.' },
+  hot: { name: 'Hot Boards', blurb: 'Two facing boards through the centre count double.' },
   wild: { name: 'Wildcards', blurb: 'One wildcard each: ignore the send, once.' },
 };
 
