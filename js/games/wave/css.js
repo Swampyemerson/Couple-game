@@ -7,6 +7,7 @@ export const CSS = `
     .g-wave .wv-scr.dialscr { height: 100%; min-height: 330px; gap: 8px; }
     .g-wave .wv-head, .g-wave .wv-foot { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 8px; flex: none; }
     .g-wave .wv-main { flex: 1 1 0; min-height: 150px; width: 100%; display: flex; align-items: center; justify-content: center; }
+    .g-wave .wv-mid { width: 100%; flex: none; display: flex; flex-direction: column; align-items: center; }
     .g-wave .wv-foot { position: sticky; bottom: 0; z-index: 3; padding-top: 4px; background: var(--g-bg); }
     .g-wave .wv-top { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 34px; }
     .g-wave .wv-round { font-family: var(--g-font-display); font-weight: 900; font-size: 0.9rem; letter-spacing: 0.02em; text-transform: uppercase; white-space: nowrap; }
@@ -110,7 +111,7 @@ export const CSS = `
     .g-wave .wv-near { font-style: normal; font-weight: 900; font-size: 0.82rem; color: var(--g-ink); }
     .g-wave .wv-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
     .g-wave .wv-chip { padding: 1px 8px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-hl); color: var(--g-on-ink); font-weight: 900; font-size: 0.7rem; letter-spacing: 0.03em; }
-    .g-wave .wv-chip.jp { background: var(--g-ink); color: var(--g-hl); }
+    .g-wave .wv-chip.jp { background: var(--g-card); color: var(--g-ink); border-style: dashed; }
     .g-wave .wv-result.hide { visibility: hidden; }
     .g-wave .wv-result.anim .wv-pts { animation: wv-stamp 0.4s cubic-bezier(.2,1.6,.4,1) both; }
     .g-wave .wv-wait { display: flex; align-items: center; gap: 10px; font-weight: 800; color: var(--g-muted); text-align: center; }
@@ -130,7 +131,7 @@ export const CSS = `
     .g-wave .wv-lab { align-self: flex-start; margin: 2px 0 -4px; font-weight: 900; font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--g-muted); }
     .g-wave .wv-packs { width: 100%; display: flex; flex-wrap: wrap; gap: 6px; }
     .g-wave .wv-pack { min-height: 44px; padding: 0 12px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); font: inherit; font-weight: 800; font-size: 0.88rem; touch-action: manipulation; }
-    .g-wave .wv-pack[aria-checked="true"] { background: var(--g-ink); color: var(--g-bg); }
+    .g-wave .wv-pack[aria-checked="true"] { background: var(--g-hl); color: var(--g-on-ink); transform: translate(1px, 1px); }
     .g-wave .wv-sticky { position: sticky; bottom: 0; z-index: 3; width: 100%; margin-top: auto; padding: 6px 0 10px; background: var(--g-bg); }
     .g-wave .wv-start { width: 100%; min-height: 54px; font-size: 1rem; }
     .g-wave .wv-keep { width: 100%; display: flex; align-items: center; gap: 10px; padding: 6px 10px; border: 2px dashed var(--g-line); border-radius: 10px; font-size: 0.8rem; font-weight: 700; color: var(--g-muted); }
@@ -146,10 +147,10 @@ export const CSS = `
     .g-wave .wv-meter i { height: 10px; border: 1.5px solid var(--g-ink); border-radius: 2px; background: var(--g-card); }
     .g-wave .wv-meter i.on { background: var(--g-ink); }
     .g-wave .wv-stamps { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
-    .g-wave .wv-stamp { display: flex; flex-direction: column; align-items: center; padding: 4px 12px; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-ink); color: var(--g-hl); transform: rotate(-3deg); box-shadow: var(--g-shadow-sm); line-height: 1.1; }
+    .g-wave .wv-stamp { display: flex; flex-direction: column; align-items: center; padding: 4px 12px; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-hl); color: var(--g-on-ink); transform: rotate(-3deg); box-shadow: var(--g-shadow-sm); line-height: 1.1; }
     .g-wave .wv-stamp:nth-child(2n) { transform: rotate(2.5deg); }
     .g-wave .wv-stamp b { font-family: var(--g-font-display); font-weight: 900; font-size: 0.95rem; letter-spacing: 0.04em; }
-    .g-wave .wv-stamp small { font-weight: 800; font-size: 0.68rem; color: var(--g-bg); }
+    .g-wave .wv-stamp small { font-weight: 800; font-size: 0.68rem; color: var(--g-on-ink); }
     .g-wave .wv-medals { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
     .g-wave .wv-medal { display: flex; flex-direction: column; gap: 1px; padding: 8px 10px; border: 2px solid var(--g-ink); border-radius: 12px; box-shadow: var(--g-shadow-sm); min-width: 0; }
     .g-wave .wv-medal.a { background: var(--p-a-soft); } .g-wave .wv-medal.b { background: var(--p-b-soft); }
@@ -199,38 +200,46 @@ export const CSS = `
       .g-wave .wv-actions .gm-btn, .g-wave .wv-go { min-height: 48px; }
       .g-wave .wv-main { min-height: 120px; }
       .g-wave .wv-scr.flow { gap: 6px; }
-      .g-wave .wv-seth, .g-wave .wv-lab { display: none; }
+      .g-wave .wv-seth { display: none; }
       .g-wave .wv-mode { min-height: 44px; }
       .g-wave .wv-sticky { padding: 4px 0 6px; }
       .g-wave .wv-start { min-height: 48px; }
       .g-wave .wv-pitch { font-size: 0.8rem; }
       .g-wave .wv-packnote { font-size: 0.78rem; margin-top: -2px; }
     }
+    @media (max-height: 620px) and (orientation: portrait) { .g-wave .wv-lab { display: none; } } /* no room for the Cards label on a short phone */
     /* wide and short (landscape): the dial on the left, everything else on the right */
     @media (orientation: landscape) and (min-width: 600px) {
-      .g-wave .wv-scr.dialscr { max-width: 1000px; min-height: 0; display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; grid-template-areas: 'main head' 'main foot'; column-gap: 16px; align-items: stretch; }
+      /* head (top), mid (result) and foot (button) stack on the right, the dial takes the left; mid scrolls before anything can overlap */
+      .g-wave .wv-scr.dialscr { max-width: 1000px; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: 'main head' 'main mid' 'main foot'; gap: 3px 16px; align-items: stretch; }
       .g-wave .wv-head { grid-area: head; justify-content: flex-start; align-self: start; }
       .g-wave .wv-main { grid-area: main; min-height: 0; }
+      .g-wave .wv-mid { grid-area: mid; min-height: 0; overflow-y: auto; justify-content: center; }
       .g-wave .wv-foot { grid-area: foot; position: static; padding-top: 0; background: none; align-self: end; }
       .g-wave .wv-sub, .g-wave .wv-last, .g-wave .wv-rule { display: none; }
-      .g-wave .wv-scr.dialscr { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px 16px; }
-      .g-wave .wv-head, .g-wave .wv-foot { gap: 4px; }
-      .g-wave .wv-top { min-height: 30px; gap: 6px; }
+      .g-wave .wv-head, .g-wave .wv-foot { gap: 3px; }
+      .g-wave .wv-top { min-height: 28px; gap: 6px; }
       .g-wave .wv-round { font-size: 0.8rem; }
-      .g-wave .wv-tw span { font-size: 0.66rem; padding: 2px 8px; }
-      .g-wave .wv-team { padding: 2px 9px; font-size: 0.78rem; }
-      .g-wave .wv-pts { height: 40px; min-width: 50px; font-size: 1.2rem; }
+      .g-wave .wv-tw span { font-size: 0.64rem; padding: 1px 8px; }
+      .g-wave .wv-team { padding: 1px 9px; font-size: 0.78rem; }
+      .g-wave .wv-dvb { font-size: 0.68rem; gap: 5px; }
+      .g-wave .wv-dvb span { font-size: 0.62rem; padding: 0 7px; }
+      .g-wave .wv-pts { height: 38px; min-width: 48px; font-size: 1.15rem; }
       .g-wave .wv-result { gap: 8px; }
-      .g-wave .wv-result-txt > b { font-size: 0.92rem; }
-      .g-wave .wv-result-txt > span, .g-wave .wv-near { font-size: 0.74rem; }
-      .g-wave .wv-chips { margin-top: 1px; }
-      .g-wave .wv-chip { font-size: 0.62rem; padding: 0 6px; }
-      .g-wave .wv-actions .gm-btn, .g-wave .wv-go, .g-wave .wv-form .gm-btn, .g-wave .wv-input { min-height: 46px; height: auto; }
-      .g-wave .wv-input { height: 46px; }
-      .g-wave .wv-clue { margin-bottom: 6px; }
+      .g-wave .wv-result-txt > b { font-size: 0.9rem; }
+      .g-wave .wv-result-txt > span, .g-wave .wv-near { font-size: 0.72rem; }
+      .g-wave .wv-chips { margin-top: 1px; gap: 3px; align-items: center; }
+      .g-wave .wv-chip { font-size: 0.6rem; padding: 0 6px; }
+      .g-wave .wv-note { font-size: 0.7rem; line-height: 1.2; }
+      .g-wave .wv-actions .gm-btn, .g-wave .wv-go, .g-wave .wv-form .gm-btn { min-height: 44px; height: auto; }
+      .g-wave .wv-input { height: 44px; }
+      .g-wave .wv-clue { margin-bottom: 0; padding: 2px 12px 3px; }
+      .g-wave .wv-clue::after { display: none; }
+      .g-wave .wv-clue b { font-size: 0.98rem; }
       .g-wave .wv-modes { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
-      .g-wave .wv-scr.flow > .wv-seth, .g-wave .wv-lab { display: none; }
-      .g-wave .wv-scr.flow { gap: 6px; max-width: 860px; }
+      .g-wave .wv-scr.flow > .wv-seth { display: none; }
+      .g-wave .wv-lab { margin: 0 0 -2px; }
+      .g-wave .wv-scr.flow { gap: 5px; max-width: 860px; }
       .g-wave .wv-mode { min-height: 44px; }
       .g-wave .wv-packs { gap: 4px; }
       .g-wave .wv-pack { padding: 0 8px; font-size: 0.8rem; }

@@ -222,6 +222,7 @@ function rulesTests({ core, W, R, C, Rec, V }) {
   assert(nm({}, 5) === '1 off the bullseye!' && nm({}, 6) === '2 off the bullseye!' && nm({}, 4) === '' && nm({}, 7) === '', 'near the bullseye: "1 off the bullseye!"');
   assert(nm({}, 11) === 'Just missed 3 points' && nm({}, 10) === '' && nm({}, 18) === 'Just missed 2 points' && nm({}, 17) === '' && nm({}, 30) === '', 'just missed 3 / 2 points');
   assert(nm({ sure: true }, 11) === 'Just missed the 6!', 'a Sure that missed by a hair says so');
+  assert(nm({ sure: true }, 18) === '' && nm({ sure: true }, 19) === '' && nm({ sure: true }, 15) === '' && nm({ sure: true }, 12) === 'Just missed the 6!', 'a Sure that is a clear miss gets no "Just missed 2 points" nudge');
   assert(nm({ sure: true }, 5) === '' && nm({ sure: true }, 10) === '' && nm({ sure: true }, 0) === '', 'no near-miss nudge when Sure already paid its full 6');
 
   // ── records ──
@@ -327,6 +328,41 @@ async function dragDial(pg, v, cdp) {
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await pg.waitForTimeout(60);
 }
+// bounding boxes that must never intersect: [selector, rect] pairs of the elements present
+const overlaps = (pg, sels) => pg.evaluate((ss) => {
+  const rs = [];
+  for (const s of ss) { const e = document.querySelector(s); if (!e) continue; const q = e.getBoundingClientRect(); if (q.width && q.height) rs.push([s, q]); }
+  const bad = [];
+  for (let i = 0; i < rs.length; i++) for (let j = i + 1; j < rs.length; j++) {
+    const a = rs[i][1]; const b = rs[j][1];
+    if (a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5) bad.push(`${rs[i][0]} x ${rs[j][0]}`);
+  }
+  return bad;
+}, sels);
+const REVEAL_PARTS = ['.wv-top', '.wv-dvb', '.wv-clue', '.wv-result', '.wv-note', '.wv-go', '.wv-wait'];
+// WCAG contrast of every ink / highlight / card pairing the game uses, in the page's current theme
+const contrastReport = (pg) => pg.evaluate(() => {
+  const host = document.createElement('div');
+  host.className = 'g-wave';
+  host.style.cssText = 'position:fixed;left:0;top:0;width:300px;z-index:9;background:var(--g-bg)';
+  host.innerHTML = `<div class="wv-stamp"><b>NEW BEST</b><small>was 20</small></div><span class="wv-chip">+1 Edge</span><span class="wv-chip jp">Jackpot x2</span>
+    <div class="wv-dvb"><span>Déjà vu</span></div><button class="wv-pack" aria-checked="true">Cozy</button><button class="wv-pack" aria-checked="false">Other</button>
+    <button class="wv-mode" aria-checked="true"><b>Classic</b></button><button class="wv-mode" aria-checked="false"><b>Other</b></button>
+    <div class="wv-card"><div class="wv-end l"><span>Left pole</span></div><div class="wv-end r"><span>Right pole</span></div></div>
+    <div class="wv-tw"><span>One Word</span></div><div class="wv-plaque"><b>3</b><span>Rating</span></div>
+    <div class="wv-pts">+4</div><div class="wv-pts zero">0</div><span class="wv-row-pts">+1</span><span class="wv-row-pts zero">0</span>
+    <button class="wv-sure" aria-pressed="true">Sure<small>6 within 10</small></button><button class="wv-sure" aria-pressed="false">Sure<small>6 within 10</small></button>
+    <button class="wv-wg" aria-pressed="true">Bullseye<small>within 4</small></button><button class="wv-wg" aria-pressed="false">Close<small>within 10</small></button>
+    <div class="wv-medal a"><small class="p-a">Emerson</small><b>Poet</b><span>why</span></div><div class="wv-medal b"><small class="p-b">Sydney</small><b>Poet</b><span>why</span></div>`;
+  document.body.appendChild(host);
+  const rgb = (c) => { const m = c.match(/[\d.]+/g).map(Number); return { r: m[0], g: m[1], b: m[2], a: m[3] === undefined ? 1 : m[3] }; };
+  const lum = ({ r, g, b }) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+  const bgOf = (el) => { for (let e = el; e; e = e.parentElement) { const c = rgb(getComputedStyle(e).backgroundColor); if (c.a > 0.95) return c; } return rgb(getComputedStyle(document.body).backgroundColor); };
+  const sels = ['.wv-stamp b', '.wv-stamp small', '.wv-chip:not(.jp)', '.wv-chip.jp', '.wv-dvb span', '.wv-pack[aria-checked="true"]', '.wv-pack[aria-checked="false"]', '.wv-mode[aria-checked="true"] b', '.wv-mode[aria-checked="false"] b', '.wv-end.l span', '.wv-end.r span', '.wv-tw span', '.wv-plaque b', '.wv-plaque span', '.wv-pts:not(.zero)', '.wv-pts.zero', '.wv-row-pts:not(.zero)', '.wv-row-pts.zero', '.wv-sure[aria-pressed="true"]', '.wv-sure[aria-pressed="true"] small', '.wv-sure[aria-pressed="false"]', '.wv-wg[aria-pressed="true"]', '.wv-wg[aria-pressed="true"] small', '.wv-wg[aria-pressed="false"]', '.wv-medal.a b', '.wv-medal.a small', '.wv-medal.b b', '.wv-medal.b small'];
+  const out = sels.map((q) => { const el = host.querySelector(q); const cs = getComputedStyle(el); const f = rgb(cs.color); const b = bgOf(el); const [l1, l2] = [lum(f), lum(b)].sort((x, y) => y - x); return [q, Math.round(((l1 + 0.05) / (l2 + 0.05)) * 100) / 100]; });
+  host.remove();
+  return out;
+});
 async function reloadInto(h, pg, id) {
   await pg.reload();
   await pg.waitForFunction(() => !!document.querySelector('.tabbar'), null, { timeout: 15000 });
@@ -439,7 +475,7 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
       const r = await S1.F.evaluate(() => {
         const sc = document.querySelector('.wv-scroll'); const st = document.querySelector('.wv-sticky').getBoundingClientRect();
         const bad = [];
-        for (const e of document.querySelectorAll('.wv-mode, .wv-pack, .wv-pitch, .wv-packnote, .wv-start')) {
+        for (const e of document.querySelectorAll('.wv-mode, .wv-pack, .wv-lab, .wv-pitch, .wv-packnote, .wv-start')) {
           const q = e.getBoundingClientRect();
           const isStart = e.classList.contains('wv-start');
           if (q.top < 0 || q.bottom > innerHeight + 0.5 || (!isStart && q.bottom > st.top + 0.5)) bad.push(`${e.className.split(' ')[0]} ${e.textContent.trim().slice(0, 14)} [${Math.round(q.top)}..${Math.round(q.bottom)}] sticky ${Math.round(st.top)}`);
@@ -449,6 +485,8 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
       });
       assert(r.bad.length === 0 && r.noScroll, `setup ${w}x${hh}: all five modes, all seven packs, the notes and Start are visible and tappable without scrolling (${r.bad.join('; ')}${r.noScroll ? '' : ' scrolls'})`);
       await shot(S1.F, `setup-${w}x${hh}`);
+      const look = await S1.F.evaluate(() => [getComputedStyle(document.querySelector('.wv-mode[aria-checked="true"]')).backgroundColor, getComputedStyle(document.querySelector('.wv-pack[aria-checked="true"]')).backgroundColor]);
+      assert(look[0] === look[1], `setup ${w}x${hh}: the selected mode and the selected pack look alike (${look})`);
       assert(await visible(S1.S, '#game-root .wv-h'), `the waiting screen keeps its heading at ${w}x${hh}`);
     }
     for (const pg of [a, b]) await pg.setViewportSize({ width: 390, height: 664 });
@@ -640,15 +678,44 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
     await LS.tap('.wv-go');
     await h.settle();
     await LS.waitForSelector('.wv-result:not(.hide)');
-    for (const [w, hh] of sizes) {
+    for (const [w, hh] of [...sizes, [667, 375]]) {
       for (const pg of [a, b]) await pg.setViewportSize({ width: w, height: hh });
       await LS.waitForTimeout(350);
       const m = await inView(LS, ['.wv-dial', '.wv-card', '.wv-result', '.wv-go']);
       assert(m.bad.length === 0 && m.noScroll, `reveal ${w}x${hh}: the dial, the stamp and Next round are all in view (${m.bad}${m.noScroll ? '' : ' scrolls'})`);
+      const ov = await overlaps(LS, REVEAL_PARTS);
+      assert(ov.length === 0, `reveal ${w}x${hh}: the heading, clue, stamp and button do not overlap (${ov})`);
       await shot(LS, `reveal-${w}x${hh}`);
     }
     for (const pg of [a, b]) { await pg.setViewportSize({ width: 390, height: 664 }); await pg.emulateMedia({ colorScheme: 'light' }); }
     await h.closeGame(a); await h.closeGame(b);
+
+    // ════════ long pole labels stay within two lines ════════
+    console.log('# long pole labels');
+    for (const [pack, deal, what] of [['justus', [145, 139, 140, 141, 142, 143, 144], 'Only {a} finds it funny'], ['everyday', [179, 161, 162, 163, 164, 165, 166], 'Worth cancelling plans for']]) {
+      const P = await start(a, 'classic');
+      await P.F.evaluate(async ([mid, who, mv]) => {
+        const db = await window.claude.use('db');
+        const snap = await db.doc(`matches/${mid}`).get();
+        const list = JSON.parse(snap.data()[who] || '[]'); list.push(mv);
+        await db.doc(`matches/${mid}`).update({ [who]: JSON.stringify(list) });
+      }, [P.id, P.first, { setup: { v: 2, mode: 'classic', pack, deal } }]);
+      await h.settle();
+      await P.F.waitForSelector('.wv-input');
+      await P.F.tap('.wv-input'); await P.F.keyboard.type('long label'); await P.F.tap('.wv-form .gm-btn'); await h.settle();
+      await P.S.waitForSelector('.wv-dial.live');
+      for (const [w, hh] of [[390, 664], [375, 548], [844, 390]]) {
+        for (const pg of [a, b]) await pg.setViewportSize({ width: w, height: hh });
+        await P.S.waitForTimeout(300);
+        const lines = await P.S.$$eval('.wv-end span', (x) => x.map((e) => { const cs = getComputedStyle(e); const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.15; return Math.round((e.getBoundingClientRect().height / lh) * 10) / 10; }));
+        assert(lines.every((n) => n <= 2.1), `"${what}" (${pack}) at ${w}x${hh}: each pole is at most two lines (${lines})`);
+        const iv = await inView(P.S, ['.wv-dial', '.wv-card', '.wv-go']);
+        assert(iv.bad.length === 0, `and the dial, card and Lock are still in view (${iv.bad})`);
+        await shot(P.S, `poles-${pack}-${w}x${hh}`);
+      }
+      for (const pg of [a, b]) await pg.setViewportSize({ width: 390, height: 664 });
+      await h.closeGame(a); await h.closeGame(b);
+    }
 
     // ════════ a whole match: final reveal, end card, records written once, recap, rematch ════════
     console.log('# whole match (mixed)');
@@ -677,8 +744,15 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
         await m.GS.waitForSelector('.wv-result:not(.hide)', { timeout: 6000 });
         assert(await visible(m.GS, '.wv-go') && /see how you did/i.test(await m.GS.textContent('.wv-go')) && !(await visible(a, '#game-root .gm-end')) && !(await visible(b, '#game-root .gm-end')), 'the final reveal shows its stamp first; the end card has not cut in');
         assert(/Déjà vu/i.test(await m.GV.textContent('.wv-dvb')), 'the final reveal still carries the Déjà vu strip');
-        await m.GS.waitForTimeout(1200);
-        assert(!(await visible(m.GS, '#game-root .gm-end')), '1.2 s after the stamp the end card still waits for the reveal');
+        for (const [w, hh] of [[844, 390], [667, 375]]) {
+          for (const pg of [a, b]) await pg.setViewportSize({ width: w, height: hh });
+          await m.GS.waitForTimeout(300);
+          const ov = await overlaps(m.GS, REVEAL_PARTS); const iv = await inView(m.GS, ['.wv-go', '.wv-dial', '.wv-result']);
+          assert(ov.length === 0 && iv.bad.length === 0, `final reveal ${w}x${hh}: Déjà vu strip, clue, stamp and button do not overlap and are in view (${ov} ${iv.bad})`);
+        }
+        for (const pg of [a, b]) await pg.setViewportSize({ width: 390, height: 664 });
+        await m.GS.waitForTimeout(700);
+        assert(!(await visible(m.GS, '#game-root .gm-end')), '1 s after the stamp the end card still waits for the reveal');
         await m.GS.tap('.wv-go');
         await waitFor(() => visible(m.GS, '#game-root .gm-end'), 2500, 'end card after tapping');
         assert(true, 'tapping "See how you did" brings the end card in at once');
@@ -710,6 +784,15 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
     assert(!/NEW BEST/.test(await b.textContent('.wv-recwrap')) && /Your first match together/.test(await b.textContent('.wv-recs')) && /goes on the Mixed Bag board/.test(await b.textContent('.wv-recs')), 'the records strip of a first-ever score: no NEW BEST stamp (nothing to beat), the history line instead');
     assert(/^\d+\/\d+$/.test((await b.textContent('.wv-plaque b')).trim()) && (await b.textContent('.wv-plaque b')).includes(`/${eM.result.max}`), 'the plaque shows the score out of this match’s maximum');
     await shot(b, 'recap');
+    // every ink / highlight / card pairing is readable in both themes (WCAG AA, 4.5:1)
+    for (const scheme of ['light', 'dark']) {
+      await b.emulateMedia({ colorScheme: scheme });
+      await b.waitForTimeout(250);
+      const rep2 = await contrastReport(b);
+      const low = rep2.filter(([, r]) => r < 4.5);
+      assert(low.length === 0, `${scheme}: every stamp, chip, tile and badge pairing has contrast >= 4.5 (${low.map(([q, r]) => `${q} ${r}`).join('; ') || 'lowest ' + Math.min(...rep2.map((x) => x[1]))})`);
+    }
+    await b.emulateMedia({ colorScheme: 'light' });
     // rematch brings the setup back with the last choice preselected: "Same again"
     await b.tap('#game-root [data-g="rematch"]');
     await h.settle();
@@ -728,9 +811,10 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
     // ════════ same phone ════════
     console.log('# same phone');
     await a.emulateMedia({ reducedMotion: 'reduce' });
+    await a.setViewportSize({ width: 844, height: 390 }); // the whole same-phone match is played in landscape
     await h.newLocalGame(a, 'wave');
     const lid = await a.evaluate(() => window.__lastMatchId);
-    let curtains = 0; let picked = false;
+    let curtains = 0; let picked = false; let revealsChecked = 0; const seenReveal = new Set();
     for (let guard = 0; guard < 120; guard++) {
       const e = await h.engine(a, lid);
       if (e.over) break;
@@ -740,6 +824,12 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
         await a.tap('#game-root [data-g="reveal"]');
         await a.waitForTimeout(120);
         continue;
+      }
+      if (await visible(a, '.wv-result:not(.hide)') && !seenReveal.has(e.state.r)) {
+        seenReveal.add(e.state.r);
+        const ov = await overlaps(a, REVEAL_PARTS); const iv = await inView(a, ['.wv-go', '.wv-result', '.wv-note']);
+        assert(ov.length === 0 && iv.bad.length === 0, `same-phone landscape reveal ${e.state.r}: nothing overlaps, the button is in view (${ov} ${iv.bad})`);
+        revealsChecked++;
       }
       if (await visible(a, '.wv-start')) { await a.tap('.wv-mode[data-mode="oneword"]'); await a.tap('.wv-start'); picked = true; await a.waitForTimeout(150); continue; }
       if (await visible(a, '.wv-go') && !(await a.$('.wv-dial.live'))) { await a.click('.wv-go'); continue; }
@@ -755,11 +845,14 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
     }
     const eLoc = await h.engine(a, lid);
     assert(picked && eLoc.over && eLoc.state.mode === 'oneword' && eLoc.result.score >= eLoc.result.max - 12, `same-phone One Word match finished (${eLoc.result.score} of ${eLoc.result.max})`);
+    assert(revealsChecked >= 6, `same-phone landscape: ${revealsChecked} reveals (with the look-away note) checked for overlap`);
+    if (await visible(a, '.wv-result:not(.hide)')) { const ov = await overlaps(a, REVEAL_PARTS); assert(ov.length === 0, `same-phone landscape final reveal (Déjà vu): nothing overlaps (${ov})`); }
     assert(curtains === 9, `same-phone: a curtain at the start and after every clue (${curtains})`);
     await waitFor(() => visible(a, '#game-root .gm-end'), 9000, 'same-phone end card');
     await h.settle();
     assert(gd(h).plays === 2 && gd(h).lastRec === lid && gd(h).best_oneword === eLoc.state.score, `same-phone: the match is counted once (plays ${gd(h).plays}), best_oneword set`);
     await a.emulateMedia({ reducedMotion: 'no-preference' });
+    await a.setViewportSize({ width: 390, height: 664 });
     await h.closeGame(a);
 
     // ════════ v1 matches still open in the new UI ════════

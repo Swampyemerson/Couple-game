@@ -43,8 +43,7 @@ const labelFor = (Rd, d) => (Rd.sure && d > 10 ? 'Sure? Not this time' : d <= 4 
 
 // A miss that stung: nudge, never scold. d is how far off the guess was.
 export function nearMiss(Rd, d) {
-  if (Rd.sure && d <= 10) return ''; // Sure already paid its full 6
-  if (Rd.sure && d >= 11 && d <= 12) return 'Just missed the 6!';
+  if (Rd.sure) return d >= 11 && d <= 12 ? 'Just missed the 6!' : ''; // Sure either paid its full 6 or is a clear miss
   if (d >= 5 && d <= 6) return `${d - 4} off the bullseye!`;
   if (d >= 11 && d <= 12) return 'Just missed 3 points';
   if (d >= 18 && d <= 19) return 'Just missed 2 points';
@@ -123,11 +122,11 @@ export function createWaveView(el, api, env) {
     if (tw !== 'normal') return `<span>${esc(TWIST_INFO[tw].name)}</span>`;
     return '';
   };
-  const top = (s, ri = s.r, shown = null) => {
+  const top = (s, ri = s.r, shown = null, dvText = 'this card again') => {
     const i = Math.min(ri, nR(s) - 1);
     const Rd = s.rounds[i];
     // Déjà vu always has a strip of its own, whatever the twist and the screen size
-    const dv = Rd.dv ? '<div class="wv-dvb"><span>Déjà vu</span> this card again</div>' : '';
+    const dv = Rd.dv ? `<div class="wv-dvb"><span>Déjà vu</span> ${esc(dvText)}</div>` : '';
     return `<div class="wv-top"><span class="wv-round">Round ${i + 1}<i>/${nR(s)}</i></span><span class="wv-tw">${twistChip(s, Rd)}</span><span class="wv-team">Team <b>${shown == null ? scoreBefore(s, ri) : shown}</b></span></div>${dv}`;
   };
   const ruleLine = (s, Rd) => {
@@ -142,7 +141,12 @@ export function createWaveView(el, api, env) {
   };
   const ARROW_L = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3L5 8l5 5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const ARROW_R = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-  const fit = (t) => { const n = Math.max(...t.split(/[\s-]+/).map((w) => w.length)); return n >= 13 ? 'fxs' : n >= 11 ? 'fs' : n >= 9 ? 'fm' : ''; };
+  const fit = (t) => {
+    const n = Math.max(...t.split(/[\s-]+/).map((w) => w.length));
+    const byWord = n >= 13 ? 3 : n >= 11 ? 2 : n >= 9 ? 1 : 0;
+    const byLen = t.length >= 24 ? 3 : t.length >= 18 ? 2 : t.length >= 13 ? 1 : 0;
+    return ['', 'fm', 'fs', 'fxs'][Math.max(byWord, byLen)];
+  };
   const cardHTML = (c) => { const [l, r] = cardOf(env.CARDS, c).map(label); return `<div class="wv-card"><div class="wv-end l ${fit(l)}">${ARROW_L}<span>${l}</span></div><div class="wv-end r ${fit(r)}"><span>${r}</span>${ARROW_R}</div></div>`; };
   const dots = '<span class="wv-dots"><i></i><i></i><i></i></span>';
 
@@ -451,15 +455,17 @@ export function createWaveView(el, api, env) {
     const near = nearMiss(Rd, d);
     const bn = Rd.bn || [];
     const chips = [...bn.map((b) => `<span class="wv-chip">${bonusText[b]}</span>`), Rd.jp ? '<span class="wv-chip jp">Jackpot x2</span>' : '', Rd.sure ? `<span class="wv-chip">${Rd.base ? 'Sure: 6' : 'Sure: missed'}</span>` : ''].join('');
-    let dvLine = '';
-    if (Rd.dv && ri > 0) { const R0 = s.rounds[0]; const d0 = Math.abs(R0.at - R0.target); dvLine = `<span>Round 1 on this card: ${d0} off. This round: ${d} off${d < d0 ? `, ${d0 - d} closer` : ''}.</span>`; }
-    node.innerHTML = `<div class="wv-head">${top(s, ri, before)}${clueBubble(Rd)}</div>
+    let dvText;
+    if (Rd.dv && ri > 0) { const R0 = s.rounds[0]; const d0 = Math.abs(R0.at - R0.target); dvText = `round 1 on this card: ${d0} off. Now ${d}${d < d0 ? `, ${d0 - d} closer` : ''}.`; }
+    node.innerHTML = `<div class="wv-head">${top(s, ri, before, dvText)}${clueBubble(Rd)}</div>
       <div class="wv-main"></div>
-      <div class="wv-foot">
+      <div class="wv-mid">
         <div class="wv-result hide">
           <div class="wv-pts ${Rd.points ? '' : 'zero'} ${Rd.jp ? 'jp' : ''}">${Rd.points ? `+${Rd.points}` : '0'}</div>
-          <div class="wv-result-txt"><b>${esc(labelFor(Rd, d))}</b><span>${nm(guesser)} was ${d === 0 ? 'dead on' : `${d} off`}</span>${near ? `<em class="wv-near">${esc(near)}</em>` : ''}${dvLine}${chips ? `<div class="wv-chips">${chips}</div>` : ''}</div>
+          <div class="wv-result-txt"><b>${esc(labelFor(Rd, d))}</b><span>${nm(guesser)} was ${d === 0 ? 'dead on' : `${d} off`}</span>${near || chips ? `<div class="wv-chips">${near ? `<em class="wv-near">${esc(near)}</em>` : ''}${chips}</div>` : ''}</div>
         </div>
+      </div>
+      <div class="wv-foot">
         ${next ? `<button class="gm-btn wv-go" disabled>${final ? 'See how you did' : 'Next round: your clue'}</button>
           ${ctx.mode === 'local' && nextGiver && !final ? `<p class="wv-note">${esc(api.name(other(nextGiver)))}, look away. ${esc(api.name(nextGiver))} sees the next target.</p>` : ''}` : ''}
         ${waiting && nextGiver ? `<div class="wv-wait"><span>${nm(nextGiver)} is thinking of a clue</span> ${dots}</div>` : ''}

@@ -19,7 +19,7 @@ export const MODES = [
 export const MODE_IDS = MODES.map((m) => m.id);
 
 export const PACKS = [
-  { id: 'classic', name: 'Classic', pitch: 'The original deck' },
+  { id: 'classic', name: 'Classic', pitch: 'The original cards' },
   { id: 'justus', name: 'Just Us', pitch: 'Cards about the two of you' },
   { id: 'everyday', name: 'Everyday', pitch: 'Queues, coffee and Mondays' },
   { id: 'hottakes', name: 'Hot Takes', pitch: 'Opinions to argue over' },
