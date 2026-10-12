@@ -160,7 +160,9 @@ function denies(big, b, who) {
 function matchPoint(s) {
   if (s.end || !s.turn) return false;
   const w = s.turn;
-  const open = s.force !== null ? [s.force] : s.big.map((x, b) => (x ? -1 : b)).filter((b) => b >= 0);
+  const all = s.big.map((x, b) => (x ? -1 : b)).filter((b) => b >= 0);
+  // a free move reaches every open board, and so does an unspent wildcard
+  const open = s.force === null || (s.mode === 'wild' && s.wild && s.wild[w]) ? all : [s.force];
   return open.some((b) => !s.big[b] && LINES.some((L) => L.includes(b) && L.every((k) => k === b || s.big[k] === w)));
 }
 /** Did the newest move win a small board that the other player needed for a live big line? (`prev` = state before it.) */
@@ -176,7 +178,7 @@ function ledgerText(d, nm) {
   const y = d.wins_b_n | 0;
   if (!((d.games_n | 0) > 0)) return null;
   let t = `Series: ${nm('a')} ${x} · ${nm('b')} ${y}`;
-  if (d.draws_n) t += ` · ${d.draws_n} drawn`;
+  if (d.draws_n) t += ` · ${d.draws_n} ${d.draws_n === 1 ? 'draw' : 'draws'}`;
   if ((d.streak | 0) >= 2 && (d.streak_who === 'a' || d.streak_who === 'b')) t += ` · ${nm(d.streak_who)} on ${d.streak | 0}`;
   return t;
 }
@@ -438,6 +440,9 @@ registerGame({
   // ── view ──
   css: `
 .g-ult { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 4px 0 10px; margin-top: calc(var(--gu-lift, 0) * -1px); user-select: none; -webkit-user-select: none; touch-action: manipulation; }
+.g-ult.is-over .gu-wrap { width: min(100%, 600px, calc(100vh - 365px)); width: min(100%, 600px, calc(100dvh - 365px)); }
+.g-ult.is-over .gu-side { gap: 6px; }
+.g-ult.is-over .gu-moment { padding: 6px 12px; }
 .g-ult .gu-wrap { order: 1; position: relative; width: min(100%, 600px, calc(100vh - 345px)); width: min(100%, 600px, calc(100dvh - 345px)); min-width: 270px; flex: none; }
 .g-ult .gu-big { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; background: var(--g-ink); border: 2px solid var(--g-ink); border-radius: var(--g-radius); overflow: hidden; box-shadow: var(--g-shadow); }
 .g-ult .gu-sb { position: relative; background: var(--g-card); padding: 6px; transition: background-color 160ms; }
@@ -554,7 +559,7 @@ registerGame({
 /* phone on its side: board left, everything else right, no scrolling */
 @media (orientation: landscape) and (max-height: 560px) {
   .g-ult { flex-direction: row; align-items: center; justify-content: center; gap: 18px; padding: 0; }
-  .g-ult .gu-wrap { width: var(--gu-s, 220px); min-width: 0; }
+  .g-ult .gu-wrap, .g-ult.is-over .gu-wrap { width: var(--gu-s, 220px); min-width: 0; }
   .g-ult .gu-side { flex: 0 1 320px; width: auto; min-width: 210px; gap: 8px; }
   .g-ult .gu-plate { font-size: 0.88rem; }
   .g-ult .gu-pick-d, .g-ult .gu-strip, .g-ult .gu-light { font-size: 0.8rem; }
@@ -795,9 +800,9 @@ registerGame({
     function renderExtras(c) {
       const s = c.state;
       // Last Light
+      // once the game is over the plate and the moment line already say how it ended: no Last Light line
       let light = null;
-      if (c.over) light = s.end && s.end.why === 'count' ? (s.end.tie ? tieLight(s, api.name) : 'No big line left — boards decide') : null;
-      else {
+      if (!c.over) {
         light = lastLight(s);
         const tn = light && tieNote(s, api.name);
         if (tn) light += ` · ${tn}`;
@@ -864,6 +869,7 @@ registerGame({
     const setVar = (k, v) => { if (root.style.getPropertyValue(k) !== v) root.style.setProperty(k, v); };
     function fit() {
       const over = !!(ctx && ctx.over);
+      root.classList.toggle('is-over', over);
       if (!landscape()) { root.style.removeProperty('--gu-s'); setVar('--gu-lift', over ? '0' : '22'); return; }
       const lift = over ? 0 : 18;
       setVar('--gu-lift', String(lift));

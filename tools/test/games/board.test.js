@@ -61,6 +61,7 @@ const FOUR_DRAW = [2, 4, 5, 5, 6, 4, 6, 2, 0, 1, 3, 4, 4, 5, 3, 4, 6, 4, 0, 3, 1
 const TRAP_GAME = [2, 0, 3, 0, 4, 1, 5]; // the first mover forks on the bottom row at move 5 (open at both ends) and wins
 const FOUR_DIAG = [0, 1, 1, 2, 3, 2, 2, 3, 6, 3, 3]; // first mover wins on the ↗ diagonal
 const ULT_WIN = [[1, 3], [3, 1], [1, 6], [6, 1], [1, 0], [0, 6], [6, 6], [6, 2], [2, 6], [6, 3], [3, 6], [6, 7], [7, 3], [3, 7], [7, 0], [0, 4], [4, 4], [4, 7], [7, 6], [6, 4], [4, 5], [5, 1], [4, 3]];
+let ULT_COUNT = null; // a legal v2 log that ends on the boards count (last move kept apart), for the finale layout checks
 let ULT_MP = null; // a legal v2 log that stops with the player to move one board from the win
 let ULT_DENY = null; // a legal v2 log whose last move denies the other player a live big line
 let ULT_LL = null; // a legal v2 log that stops with only one or two big lines left (filled in by the ultimate rules tests)
@@ -848,18 +849,20 @@ async function rulesTests() {
       const mp = (big, turn, force) => ult.kit.matchPoint({ big: B(big), turn, force, end: null });
       ok(mp('aa.......', 'a', 2) && !mp('aa.......', 'a', 3) && !mp('aa.......', 'b', 2), 'match point: the player to move is one board from the win only when the board they are sent to completes a big line of theirs');
       ok(mp('aa.......', 'a', null) && mp('a...a....', 'a', null) && !mp('ab.......', 'a', null) && !mp('.........', 'a', null), 'match point: on a free move any open board counts; a blocked line does not; an empty big board has none');
+      const wmp = (mode, wild, force) => ult.kit.matchPoint({ big: B('aa.......'), turn: 'a', force, end: null, mode, wild });
+      ok(wmp('wild', { a: 1, b: 1 }, 3) === true && wmp('wild', { a: 0, b: 1 }, 3) === false && wmp('wild', { a: 1, b: 0 }, 3) === true && wmp('classic', undefined, 3) === false && wmp('hot', undefined, 3) === false && wmp('wild', { a: 1, b: 1 }, 2) === true, 'match point (wild): a held wildcard reaches any open board, so it counts like a free move; a spent one, or other modes, do not');
       ok(!ult.kit.matchPoint({ big: B('aa.......'), turn: 'a', force: 2, end: { why: 'line' } }) && mp('aad......', 'a', 2) === false, 'match point: nothing once the game is over, and a dead board in the line blocks it');
       const dn1 = ult.kit.deniedNow({ big: B('aa.......') }, { big: B('aab......'), last: 2 * 9 + 4 });
       ok(dn1 === true && ult.kit.deniedNow({ big: B('aa.......') }, { big: B('aaa......'), last: 2 * 9 + 4 }) === false && ult.kit.deniedNow({ big: B('ab.......') }, { big: B('abb......'), last: 2 * 9 + 4 }) === false && ult.kit.deniedNow({ big: B('aa.......') }, { big: B('aa.b.....'), last: 3 * 9 }) === false && ult.kit.deniedNow(null, { big: B('aab......'), last: 20 }) === false, 'denied: winning the third board of a line the other player held two of is a denial; completing your own line, blocking a line they only held one of, or any other board is not');
       ok(ult.kit.denies(B('b........'), 2, 'a') === false && ult.kit.denies(B('bba......'), 2, 'a') === true && ult.kit.denies(B('b.b......'), 1, 'a') === true && ult.kit.denies(B('b.b......'), 1, 'b') === false, 'denied: the helper works on any line through the board');
       // fixtures from real play, and the dn counter agrees with the view-only check on every move
       const rq = lcg(2026);
-      for (let g = 0; g < 4000 && !(ULT_MP && ULT_DENY); g++) {
+      for (let g = 0; g < 4000 && !(ULT_MP && ULT_DENY && ULT_COUNT); g++) {
         const first = g % 2 ? 'a' : 'b';
         let st = step(seeded(first, 500 + g), { setup: 2, mode: 'classic' });
         const lists = { a: [], b: [] };
         lists[first].push({ setup: 2, mode: 'classic' });
-        let n = 0; const exp = { a: 0, b: 0 };
+        let n = 0; const exp = { a: 0, b: 0 }; let countPre = null;
         while (ult.next(st).length && n < 90) {
           if (!ULT_MP && n > 8 && ult.kit.matchPoint(st)) ULT_MP = { first, seed: 500 + g, lists: clone(lists), who: st.turn };
           const legal = []; for (let bb = 0; bb < 9; bb++) { if (st.big[bb] || (st.force !== null && st.force !== bb)) continue; for (let i = 0; i < 9; i++) if (!st.cells[bb * 9 + i]) legal.push({ b: bb, i }); }
@@ -869,10 +872,13 @@ async function rulesTests() {
           const prevSt = st; const who = st.turn;
           st = step(st, m);
           lists[who].push(m); n++;
+          if (st.end && st.end.why === 'count') { const pre = clone(lists); pre[who].pop(); countPre = { pre, last: m, mover: who }; }
           if (ult.kit.deniedNow(prevSt, st)) { exp[who]++; if (!ULT_DENY && !st.end) { const pre = clone(lists); pre[who].pop(); ULT_DENY = { first, seed: 500 + g, lists: clone(lists), pre, last: m, mover: who }; } }
         }
         if (st.dn.a !== exp.a || st.dn.b !== exp.b) throw new Error(`FAIL: the dn counter disagrees with deniedNow in game ${g}`);
+        if (!ULT_COUNT && st.end && st.end.why === 'count' && countPre) ULT_COUNT = { first, seed: 500 + g, pre: countPre.pre, last: countPre.last, mover: countPre.mover, text: ult.result(st).sub };
       }
+      ok(!!ULT_COUNT, 'a real v2 game that ends on the boards count was found for the finale layout test');
       ok(!!ULT_MP && !!ULT_DENY, 'match point and denied: found real games with a match-point position and with a denying last move');
       ok(ult.kit.matchPoint(flowLists(ULT_MP)) && flowLists(ULT_MP).turn === ULT_MP.who, 'match point: the fixture really is a match-point position for the player to move');
       const dnState = flowLists(ULT_DENY);
@@ -883,7 +889,7 @@ async function rulesTests() {
       const dnLoser = clone(dnWin); dnLoser.end.who = other2(ULT_DENY.mover); dnLoser.dn = { a: 0, b: 0 }; dnLoser.dn[ULT_DENY.mover] = 1;
       ok(!ult.kit.momentKeys(dnLoser, { winner: other2(ULT_DENY.mover) }, { games_n: 3 }).keys.includes('deny'), 'moment: the other player gets no deny moment');
       const lg = (d) => ult.kit.ledgerText(d, (w) => (w === 'a' ? 'Emerson' : 'Sydney'));
-      ok(lg({ games_n: 9, wins_a_n: 5, wins_b_n: 4, streak: 2, streak_who: 'b' }) === 'Series: Emerson 5 · Sydney 4 · Sydney on 2' && lg({ games_n: 3, wins_a_n: 1, wins_b_n: 1, streak: 1, streak_who: 'b', draws_n: 1 }) === 'Series: Emerson 1 · Sydney 1 · 1 drawn' && lg({}) === null, 'ledger: "Series: Emerson 5 · Sydney 4 · Sydney on 2", streaks only from 2, draws only when there are some');
+      ok(lg({ games_n: 9, wins_a_n: 5, wins_b_n: 4, streak: 2, streak_who: 'b' }) === 'Series: Emerson 5 · Sydney 4 · Sydney on 2' && lg({ games_n: 3, wins_a_n: 1, wins_b_n: 1, streak: 1, streak_who: 'b', draws_n: 1 }) === 'Series: Emerson 1 · Sydney 1 · 1 draw' && lg({ games_n: 5, wins_a_n: 1, wins_b_n: 1, draws_n: 3 }) === 'Series: Emerson 1 · Sydney 1 · 3 draws' && lg({}) === null, 'ledger: "Series: Emerson 5 · Sydney 4 · Sydney on 2", streaks only from 2, "1 draw" / "3 draws" only when there are some');
     }
 
     // 6. Last Light
@@ -2080,10 +2086,42 @@ async function uiTests(scheme, port) {
       await h.closeGame(h.a); await h.closeGame(h.b);
     });
 
+    await section('ultimate v2 count finale: nothing scrolls after See the board on small phones, ledger stays', async () => {
+      await leave(h, h.a); await leave(h, h.b);
+      if (!ULT_COUNT) throw new Error('FAIL: no count-ending fixture from the rules tests');
+      const id = await h.newOnlineGame(h.a, 'ultimate');
+      await h.openMatch(h.b, id);
+      await waitMoves(h, id, 0, [h.a, h.b]);
+      const m = h.matches().find((x) => x.id === id);
+      const flip = m.first !== ULT_COUNT.first;
+      const L = flip ? { a: ULT_COUNT.pre.b, b: ULT_COUNT.pre.a } : ULT_COUNT.pre;
+      await h.a.evaluate(([mid, X]) => globalThis.claude.use('db').then((db) => db.doc('matches/' + mid).update({ a: JSON.stringify(X.a), b: JSON.stringify(X.b) })), [id, L]);
+      await waitMoves(h, id, ULT_COUNT.pre.a.length + ULT_COUNT.pre.b.length - 1, [h.a, h.b]);
+      await h.wait(300);
+      const mover = (await h.engine(h.a, id)).acts[0];
+      const mpg = mover === 'a' ? h.a : h.b;
+      await mpg.tap(SEL.ultimate([ULT_COUNT.last.b, ULT_COUNT.last.i])); await mpg.tap(SEL.ultimate([ULT_COUNT.last.b, ULT_COUNT.last.i]));
+      await h.a.waitForSelector('#game-root .gm-end', { state: 'visible', timeout: 6000 });
+      const e = await h.engine(h.a, id);
+      ok(e.over && e.state.end.why === 'count', `ultimate: the fixture finishes on the count (${e.state.end.a}–${e.state.end.b}${e.state.end.tie ? ', tie-break' : ''})`);
+      await seeBoard(h.a);
+      await h.settle();
+      ok(!(await h.a.$eval('.gu-ledger', (x) => x.hidden)) && !(await h.a.isVisible('.gu-light')), 'ultimate: after a count ending the ledger is visible and the Last Light line is gone (the plate says how it ended)');
+      for (const [w, hh] of [[360, 640], [375, 667], [390, 700], [360, 667], [1024, 600]]) {
+        await h.a.setViewportSize({ width: w, height: hh });
+        await h.wait(500);
+        const sc = await h.a.evaluate(() => { const gr = document.getElementById('game-root'); return [document.documentElement.scrollHeight, innerHeight, gr.scrollHeight, gr.clientHeight, document.querySelector('.gu-ledger').getBoundingClientRect().bottom]; });
+        ok(sc[0] <= sc[1] + 1 && sc[2] <= sc[3] + 1 && sc[4] <= hh, `ultimate ${w}x${hh}: a count finale after "See the board" does not scroll and the ledger is on screen (${sc.join('/')})`);
+        if (w === 360 && hh === 640) await shot(h.a, 'ultimate-light-360x640-count-end');
+      }
+      await h.a.setViewportSize({ width: 390, height: 844 });
+      await h.closeGame(h.a); await h.closeGame(h.b);
+    });
+
     await section('ultimate v2 finale ledger: same series line on both phones, matching the shared data', async () => {
       await leave(h, h.a); await leave(h, h.b);
       const nameOfW = (w) => (w === 'a' ? 'Emerson' : 'Sydney');
-      const expect = (d) => `Series: ${nameOfW('a')} ${d.wins_a_n | 0} · ${nameOfW('b')} ${d.wins_b_n | 0}${d.draws_n ? ` · ${d.draws_n} drawn` : ''}${(d.streak | 0) >= 2 ? ` · ${nameOfW(d.streak_who)} on ${d.streak}` : ''}`;
+      const expect = (d) => `Series: ${nameOfW('a')} ${d.wins_a_n | 0} · ${nameOfW('b')} ${d.wins_b_n | 0}${d.draws_n ? ` · ${d.draws_n} ${d.draws_n === 1 ? 'draw' : 'draws'}` : ''}${(d.streak | 0) >= 2 ? ` · ${nameOfW(d.streak_who)} on ${d.streak}` : ''}`;
       for (let round = 1; round <= 2; round++) {
         const id = await h.newOnlineGame(h.a, 'ultimate');
         await h.openMatch(h.b, id);
