@@ -99,7 +99,9 @@ Tested: 375×667, 360×640, 320×568, 568×320, 844×390, 390×844 (phone) and 1
   `void` and the host re-rounds.
 * **Reactions** are timed locally: signal frame painted → tap event timestamp. Latency never decides a duel.
 * A **foul** carries `rel` = the tap's shared-clock time relative to the real signal (negative = early; 0–100 for a guess).
-  Two fouls within 30 ms of each other are a **double foul**: re-round, no winner, no lag bias. Otherwise the earlier jump loses.
+  Two fouls within 30 ms of each other are a **double foul**: re-round, no winner, no lag bias. Online the window widens by 15 % of the
+  round trip (at most +60 ms, so 90 ms in all): the guest's shared clock is only accurate to within a few tens of ms on a line with uneven
+  delays (the latency-200 test saw two simultaneous taps read 36 ms apart at rtt 413 ms, which made the old fixed 30 ms flaky). Otherwise the earlier jump loses.
 * **Faster verdict**: once one valid reaction R is in and the other player can't beat it, the host decides. When the host fired first, the
   guest's shot may still be in flight, so its silence is given R + max(rtt, 40) + 250 ms. When the guest fired first the host's own taps
   are already known, so it only waits 250 ms for a slower host tap (it can't win, but it gives the verdict its gap: "Sydney by 80 ms").

@@ -15,8 +15,9 @@
 // clock, so Steady and the signal start at the same instant. A reaction is timed locally (from the
 // painted signal frame to the tap's event timestamp), so latency never decides a duel; a foul
 // carries `rel`, the tap's shared-clock time relative to the real signal. The host compares
-// those: two fouls within 30 ms are a re-round, otherwise the earlier jump loses. Once one valid
-// reaction R is in and the other player can't beat it any more, the host decides (about
+// those: two fouls within 30 ms are a re-round (online the window grows by 15 % of the round trip,
+// 90 ms at most, because the guest's clock is only known to within a few tens of ms on an uneven
+// line), otherwise the earlier jump loses. Once one valid reaction R is in and the other player can't beat it any more, the host decides (about
 // R + rtt + 250 ms) instead of waiting for the slow hand.
 import { registerGame } from './core.js';
 import { createNet } from './net.js';
@@ -25,6 +26,8 @@ const TIE_MS = 5;           // dead heat
 const PHOTO_MS = 15;        // closer than this is a photo finish
 const FALSE_START = 100;    // a "reaction" under this is a guess: a foul
 const DOUBLE_MS = 30;       // two fouls this close are a re-round
+const DOUBLE_SYNC = 0.15;   // ... online, widened by this share of the round trip: the guest's clock is only that exact
+const DOUBLE_SYNC_MAX = 60; // ... by at most this much
 const HC_MIN_GAP = 40;      // Gunslinger handicap: PBs at least this far apart switch it on
 const HC_CAP = 60;          // ... and the quicker hand's signal waits half that gap, at most this long
 const SLOWER_MS = 250;      // online: a guest's shot waits this long for the host's slower tap (it only gives the verdict its gap)
@@ -700,7 +703,8 @@ registerGame({
       if ((A && A.void) || (B && B.void)) why = 'void';
       else if (A && A.foul && B && B.foul) {
         const d = (A.rel ?? 0) - (B.rel ?? 0);
-        if (Math.abs(d) < DOUBLE_MS) why = 'dfoul'; else { why = 'fouls'; w = d < 0 ? 'b' : 'a'; } // the earlier jump loses
+        const slack = local ? 0 : Math.min(DOUBLE_SYNC_MAX, net.rtt * DOUBLE_SYNC); // clock-sync error on an uneven line
+        if (Math.abs(d) < DOUBLE_MS + slack) why = 'dfoul'; else { why = 'fouls'; w = d < 0 ? 'b' : 'a'; } // the earlier jump loses
       } else if (A && A.foul) { why = 'foul'; w = 'b'; } else if (B && B.foul) { why = 'foul'; w = 'a'; } else {
         const ra = rt(A); const rb = rt(B);
         // with a handicap each reaction is timed from the player's own (later) cue, so compare when they actually fired

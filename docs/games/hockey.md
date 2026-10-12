@@ -82,7 +82,12 @@ mid-match re-adopts the table and score.
 - **The guest's mallet on the host.** The host extrapolates the newest sample up to 100 ms and blends a
   new sample's offset away over ~70 ms (`REMOTE_LEAD`, `REMOTE_BLEND`), so the mallet moves at the
   guest's finger speed. Without it the host saw 0 ... 300 u/s spikes between samples and a soft guest
-  pass became a slap (test: `hockeyGuestMallet`).
+  pass became a slap (test: `hockeyGuestMallet`). The extrapolation only runs while the guest is
+  reporting: a finger that moves sends a sample every ~50 ms, so a mallet silent for `REMOTE_STALE`
+  (120 ms) is at rest and its speed dies away (60 ms constant), and a sample at the same spot as the
+  last one (the resting heartbeat) zeroes it at once. Before, a stale sideways speed left the host's
+  copy of a parked guest mallet ~1 u off-axis for half a second, so the first shot after a move
+  across the table left the mallet at an angle to the puck (test: the live guest shot).
 - **Guest puck correction (B2).** The guest draws each puck ahead of the host state by age + lead. A new
   state re-bases the displayed puck so nothing jumps (offset = shown - new trajectory); the offset
   then decays (about 60 ms time constant) at no more than 700 u/s. Only a reset (new puck epoch, a

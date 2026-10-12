@@ -164,6 +164,8 @@ async function hockeyLive(h, tag, quick = false) {
     await mouseTo(a, 90, 162, 4);
     await touch(b, [[2, 'down', 50, 22], [2, 'up', 50, 22]]);
     await h.settle();
+    // Sydney's mallet sits still on Emerson's phone too (the host's copy of it used to keep a stale sideways speed for a while, which skewed the first hit)
+    await a.waitForFunction(() => { const t = window.__hockeyTest.state().targets.b; return Math.abs(t.x - 50) < 0.3 && Math.abs(t.y - 22) < 0.6; }, null, { timeout: 3000 });
     await a.evaluate(() => window.__hockeyTest.place(50, 56, 0, 0));
     await h.settle();
     const hb0 = (await hk(a)).hits.b;
@@ -172,6 +174,7 @@ async function hockeyLive(h, tag, quick = false) {
     assert(true, 'the host registered the guest mallet hitting the puck');
     const after = await hk(a);
     assert(after.puck.vy > 30 || after.score.b === 1, `the guest's hit sent the puck toward Emerson's goal (vy ${after.puck.vy.toFixed(0)})`);
+    assert(after.score.b === 1 || Math.abs(after.puck.vx) < 0.25 * after.puck.vy, `... and straight on, not skewed (vx ${after.puck.vx.toFixed(0)})`);
     await a.waitForFunction(() => window.__hockeyTest.state().score.b === 1, null, { timeout: 7000 });
     await b.waitForFunction(() => window.__hockeyTest.state().score.b === 1, null, { timeout: 3000 });
     assert(true, "the guest's shot scores on both phones");
@@ -366,19 +369,20 @@ async function hockeyPower(h) {
   assert(fast > 245, `a real flick = slap shot (${Math.round(fast)} u/s)`);
   assert(fast > slow * 2.5, 'the shot range is wide: flick vs push is > 2.5x');
   // Touch jitter must not double a push: the finger moves steadily but 30 % of the frames bring no touch sample (like a
-  // 120 Hz screen over a 60 Hz digitiser), so the next sample is a double step. The mallet's hitting speed is low-passed,
+  // 120 Hz screen over a 60 Hz digitiser: single, isolated drops in a fixed pattern; random drops made a run of three in
+  // a row now and then, a triple step that was a real slap and failed the test about one run in twenty), so the next sample is a double step. The mallet's hitting speed is low-passed,
   // so the push stays near the finger's speed. Unsmoothed, a third of these pushes were slaps (median ~190, up to the 300 cap).
   const finger = 104; // u/s (about 350 px/s on a phone)
   const peaks = await a.evaluate(async (finger) => {
     const cv = document.querySelector('.g-hockey canvas'); const T = window.__hockeyTest; const frame = () => new Promise((r) => requestAnimationFrame(r));
     const send = (type, y) => { const [cx, cy] = T.toClient(50, y); cv.dispatchEvent(new PointerEvent(`pointer${type}`, { bubbles: true, cancelable: true, pointerId: 61, pointerType: 'touch', isPrimary: true, clientX: cx, clientY: cy, buttons: type === 'up' ? 0 : 1 })); };
-    const out = [];
+    const out = []; let tick = 0;
     for (let rep = 0; rep < 6; rep++) {
       let worst = 0; let y = 158; send('down', y); for (let i = 0; i < 30; i++) await frame();
       T.place(50, 118, 0, 0); let last = performance.now();
       while (y > 96) {
         await frame(); const now = performance.now(); const dt = (now - last) / 1000; last = now;
-        y -= finger * dt; if (Math.random() >= 0.3) send('move', y);
+        y -= finger * dt; if (![2, 5, 8].includes(tick++ % 10)) send('move', y);
         const p = T.state().puck; worst = Math.max(worst, Math.hypot(p.vx, p.vy));
       }
       send('up', y);

@@ -39,6 +39,7 @@ const SAND_S = 0.5;     // a puck squeezed between both mallets this long is res
 const SLOW_MS = 400;    // match-point slow motion (real ms at 0.5x)
 const REMOTE_LEAD = 0.1;  // s: how far past its newest sample the guest's mallet is extrapolated on the host
 const REMOTE_BLEND = 0.07; // s: a new sample's offset from that guess dies away this fast
+const REMOTE_STALE = 0.12; // s: a finger that moves reports every ~50 ms, so a guest mallet silent this long is at rest: its speed dies away
 const STALL_MS = 1000;    // the HOG!/RESET stamp has the centre to itself this long before the serve countdown starts
 const CORRECT_RATE = 700; // u/s: the fastest a guest's puck display may close a correction
 
@@ -869,7 +870,8 @@ registerGame({
       if (gs && !fresh && st.__t > gs.t) {
         const dts = clamp((st.__t - gs.t) / 1000, 0.012, 0.25);
         const vx = (x - gs.x) / dts; const vy = (y - gs.y) / dts;
-        gv = { x: gv.x * 0.35 + vx * 0.65, y: gv.y * 0.35 + vy * 0.65 };
+        if (x === gs.x && y === gs.y) gv = { x: 0, y: 0 }; // the same spot again (the resting heartbeat): it has stopped, no stale speed left to extrapolate
+        else gv = { x: gv.x * 0.35 + vx * 0.65, y: gv.y * 0.35 + vy * 0.65 };
       } else gv = { x: 0, y: 0 };
       if (st.sy) { const lag = net.now() - st.__t; if (lag >= 0 && lag < 1000) glag = glag ? glag * 0.85 + lag * 0.15 : lag; }
       // Carry on from where the shown target was and let the difference die away (never a jump of the mallet,
@@ -880,7 +882,7 @@ registerGame({
     function remoteTarget(now, dt) {
       if (!gs) return;
       const age = (now - gs.at) / 1000;
-      if (age > 0.25) { gv.x *= 0.8; gv.y *= 0.8; }
+      if (age > REMOTE_STALE) { const f = Math.exp(-dt / 0.06); gv.x *= f; gv.y *= f; }
       const e = Math.min(age, REMOTE_LEAD);
       const k = Math.exp(-dt / REMOTE_BLEND);
       goff.x *= k; goff.y *= k;
