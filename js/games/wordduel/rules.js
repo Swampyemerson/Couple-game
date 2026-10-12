@@ -241,7 +241,7 @@ export function init() {
 }
 export function next(s) {
   if (s.fin) return [];
-  if (!s.secret.a || !s.secret.b) return ['a', 'b'].filter((w) => !s.secret[w]);
+  if (!s.secret.a || !s.secret.b) return ['a', 'b'].filter((w) => !s.secret[w] && !(s.pend && s.pend[w])); // a parked secret waits for the rules
   return ['a', 'b'].filter((w) => !doneBy(s, w));
 }
 export function apply(s, who, mv) {

@@ -105,6 +105,8 @@ async function unitTests() {
   // a v2 secret that replays before the rules move (seat a is replayed first) is parked, not made legacy
   s = run([['a', { secret: 'grape', v: 2 }]]);
   assert(s.pend && s.pend.a === 'grape' && !s.secret.a && !s.v, 'parking: a v2 secret ahead of the rules is held back');
+  assert(eq(R.next(s), ['b']), 'parking: the parked player is not listed until the rules arrive, so their later moves wait their turn');
+  { const core2 = await imp('js/games/core.js'); const mk = (r) => ({ ...r, id: 'x', kind: 'turns', secret: true, title: 'x', blurb: '', howTo: [], css: '' }); const d = core2.derive(mk(NEW), { first: 'b', seed: 5, opts: {}, lists: { a: [{ secret: 'grape', v: 2 }, { guess: 'plumb' }], b: [{ setup: { v: 2, pool: 'fair' } }, { secret: 'plumb', v: 2 }] } }); assert(d.state.v === 2 && d.state.secret.a === 'grape' && d.state.secret.b === 'plumb' && d.state.guesses.a.length === 1 && !d.rejected.length, 'parking: derive() with seat a replayed first still ends up with the rules, both secrets and the guess'); }
   s = R.apply(clone(s), 'b', S({ pool: 'fair', hard: true }));
   assert(s.v === 2 && s.secret.a === 'grape' && !s.pend && s.opts.hard, 'parking: the rules move places it');
   s = run([['a', { secret: 'grape', v: 2 }], ['b', S({ pool: 'love' })], ['b', { secret: 'heart', v: 2 }]]);
@@ -286,6 +288,14 @@ const geometry = (pg) => pg.evaluate(() => {
   return { vh: innerHeight, vw: innerWidth, kb: r(q('.g-wd-kb')), enter: r(q('.g-wd-key[data-k="enter"]')), scroll: Math.max(...sc), hscroll: document.documentElement.scrollWidth > innerWidth };
 });
 
+async function setRules(pg, want) {
+  for (const k of ['hard', 'dealt', 'bo3']) {
+    const on = (await pg.getAttribute(`[data-rule="${k}"]`, 'aria-checked')) === 'true';
+    if (on !== !!want[k]) await pg.tap(`[data-rule="${k}"]`);
+  }
+  if (want.pool) await pg.tap(`[data-rule="pool:${want.pool}"]`);
+}
+
 // 1. online: rules card -> pick -> play with fair + hard + dealt; B3, B4, records and ledger
 async function onlineDealtHard(h, scheme) {
   const R = await imp('js/games/wordduel/rules.js');
@@ -304,8 +314,7 @@ async function onlineDealtHard(h, scheme) {
   assert(await F.evaluate(() => { const b = document.querySelector('.g-wd-actions [data-act="play"]').getBoundingClientRect(); return b.height >= 44 && b.bottom <= innerHeight; }), 'Play is a 44 px+ button inside the viewport');
   await snap(F, scheme, 'wd2-1-rules');
   await snap(S, scheme, 'wd2-1-wait');
-  await F.tap('[data-rule="hard"]');
-  await F.tap('[data-rule="dealt"]');
+  await setRules(F, { pool: 'fair', hard: true, dealt: true, bo3: false });
   assert(await F.getAttribute('[data-rule="hard"]', 'aria-checked') === 'true' && await F.getAttribute('[data-rule="dealt"]', 'aria-checked') === 'true', 'rules card toggles are switches');
   await F.tap('[data-act="play"]');
   await h.settle();
@@ -358,7 +367,9 @@ async function onlineDealtHard(h, scheme) {
   // S: a wrong guess, then the crack on row 3. F (done) must not see "cracked it in 3" before the flip ends
   const legal = (w) => { try { R.hardCheck(sF, [op], w); return true; } catch { return false; } };
   const wrong = [...MISSES, ...R.lists().common].find((w) => w !== op && w !== sF && legal(w));
-  await S.keyboard.type(wrong); await S.keyboard.press('Enter'); await S.waitForTimeout(260);
+  await S.keyboard.type(wrong); await S.keyboard.press('Enter'); await S.waitForTimeout(60);
+  const toastNow = await toastText(S); await S.waitForTimeout(200);
+  assert((await h.engine(S, id)).state.guesses[first === 'a' ? 'b' : 'a'].length === 2, `the partner's wrong guess ${wrong} was played (toast: ${toastNow}; row ${await S.evaluate(() => document.querySelector('.g-wd-row.is-draft') && document.querySelector('.g-wd-row.is-draft').innerText.replace(/\\s/g, ''))}; say ${await sayOf(S)}; opener ${op}; target ${sF}; rejected ${JSON.stringify((await h.engine(S, id)).rejected)}; pending ${JSON.stringify((await h.engine(S, id)).lists)})`);
   await S.keyboard.type(sF); await S.keyboard.press('Enter');
   await F.waitForTimeout(500);
   await h.settle();
@@ -367,7 +378,7 @@ async function onlineDealtHard(h, scheme) {
   await F.waitForTimeout(2600);
   e = await h.engine(a, id);
   const eb = await h.engine(b, id);
-  assert(e.over && eq(e.state, eb.state), `both phones agree on the finished duel (${eq(e.state, eb.state) ? '' : JSON.stringify(e.state) + ' vs ' + JSON.stringify(eb.state)})`);
+  assert(e.over && eq(e.state, eb.state), `both phones agree on the finished duel (over ${e.over}, acts ${JSON.stringify(e.acts)}/${JSON.stringify(eb.acts)}, ${JSON.stringify(e.state)} vs ${JSON.stringify(eb.state)})`);
   assert(e.result.winner === first && /Cracked it in 2 guesses, against 3\./.test(e.result.sub), `fewer guesses wins (${e.result.sub})`);
   for (const pg of [a, b]) await pg.waitForSelector('#game-root .gm-end:not([hidden])', { timeout: 6000 });
   await h.settle();
@@ -397,7 +408,7 @@ async function onlineBo3(h, scheme) {
   await h.settle();
   const first = (await h.engine(a, id)).first;
   const P = { a, b };
-  await P[first].tap('[data-rule="bo3"]');
+  await setRules(P[first], { pool: 'fair', hard: false, dealt: false, bo3: true });
   await P[first].tap('[data-act="play"]');
   await h.settle();
   const ex = async () => (await h.engine(a, id)).state;
@@ -407,7 +418,7 @@ async function onlineBo3(h, scheme) {
   for (const g of MISSES) await typeWord(a, g, 120);
   await h.settle(); await a.waitForTimeout(1800);
   let s = await ex();
-  assert(s.rounds.length === 1 && s.rounds[0].w === 'b' && s.round === 2, 'bo3: round 1 archived, b leads');
+  assert(s.rounds && s.rounds.length === 1 && s.rounds[0].w === 'b' && s.round === 2, `bo3: round 1 archived, b leads (${JSON.stringify(s)})`);
   for (const pg of [a, b]) assert(await pg.isVisible('.g-wd-actions [data-act="nextround"]'), 'bo3: both phones show the round recap');
   assert(/takes round 1/.test(await sayOf(a)), `recap says who took the round (${await sayOf(a)})`);
   await snap(a, scheme, 'wd2-5-recap');
@@ -450,7 +461,7 @@ async function localFlows(h, scheme) {
   assert(await a.isVisible('#game-root .gm-curtain'), 'one phone: curtain before the rules card');
   await reveal(a);
   assert(await a.isVisible('.g-wd-rules'), 'one phone: the rules card shows once, before the first pick');
-  await a.tap('[data-rule="bo3"]');
+  await setRules(a, { pool: 'fair', hard: false, dealt: false, bo3: true });
   await a.tap('[data-act="play"]');
   const id = await a.evaluate(() => window.__lastMatchId);
   await typeWord(a, 'plumb', 150);
@@ -462,7 +473,7 @@ async function localFlows(h, scheme) {
   await a.keyboard.type('grape'); await a.keyboard.press('Enter');
   await a.waitForTimeout(300);
   const E1 = await h.engine(a, id);
-  assert(E1.state.guesses.a.length === 2 && await a.isVisible('.g-wd-hold-layer'), 'B1: the finishing guess is committed at once and shown in the reveal');
+  assert(E1.state.guesses.a.length === 2 && await a.isVisible('.g-wd-hold-layer'), `B1: the finishing guess is committed at once and shown in the reveal (${JSON.stringify(E1.state.guesses)}, hold ${await a.isVisible('.g-wd-hold-layer')}, ${JSON.stringify(E1.acts)})`);
   await a.waitForTimeout(1600);
   await snap(a, scheme, 'wd2-7-local-hold');
   await a.tap('#game-root [data-g="close"]');
@@ -581,13 +592,16 @@ async function uiTests() {
     const light = scheme === 'light';
     const clean = await launch({ port: light ? 9120 : 9121, only: ['wordduel'], colorScheme: scheme, coarse: true });
     try {
-      await onlineDealtHard(clean, scheme);
-      if (light) await onlineBo3(clean, scheme);
-      await localFlows(clean, scheme);
-      if (light) await landscape(clean, scheme);
+      const only = (process.env.ONLY || '').split(',').filter(Boolean);
+      const want = (n) => !only.length || only.includes(n);
+      if (want('online')) await onlineDealtHard(clean, scheme);
+      if (light && want('bo3')) await onlineBo3(clean, scheme);
+      if (want('local')) await localFlows(clean, scheme);
+      if (light && want('land')) await landscape(clean, scheme);
       clean.assertNoErrors();
       console.log(`ok - no page errors (${scheme}, clean data)`);
     } catch (e) { fails++; console.error(e.message); await clean.shot(clean.a, path.join(SHOTS, `fail-${scheme}-a.png`)).catch(() => {}); await clean.shot(clean.b, path.join(SHOTS, `fail-${scheme}-b.png`)).catch(() => {}); console.error('errors:', clean.errors); } finally { await clean.close(); }
+    if (process.env.ONLY && !process.env.ONLY.includes('legacy')) continue;
     const seeded = await launch({ port: light ? 9122 : 9123, only: ['wordduel'], colorScheme: scheme, coarse: true, seedDocs: seed });
     try {
       await legacy(seeded, scheme, { legacy: legacyId });
