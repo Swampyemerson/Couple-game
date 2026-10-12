@@ -5,7 +5,7 @@
 //   hk_fast_ms / hk_fast_who          fastest goal from the serve, in ms (lower is better)
 //   hk_shutout_a_n / hk_shutout_b_n   matches won to nil
 //   hk_comeback_a_n / hk_comeback_b_n matches won after trailing by 3 or more
-//   hk_streak_who / hk_streak_n       the current win streak (matches), hk_streak_best the best ever
+//   hk_streak_who / hk_streak_len       the current win streak (matches), hk_streak_best the best ever
 //   hockey_last                       the last table played (preselected next time)
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 
@@ -15,7 +15,7 @@ export function readRecords(d) {
     rallyBest: num(d.hk_rally_best), rallyWho: d.hk_rally_who === 'a' || d.hk_rally_who === 'b' ? d.hk_rally_who : null,
     fastMs: num(d.hk_fast_ms) || null, fastWho: d.hk_fast_who === 'a' || d.hk_fast_who === 'b' ? d.hk_fast_who : null,
     streakWho: d.hk_streak_who === 'a' || d.hk_streak_who === 'b' ? d.hk_streak_who : null,
-    streakN: num(d.hk_streak_n), streakBest: num(d.hk_streak_best),
+    streakN: num(d.hk_streak_len), streakBest: num(d.hk_streak_best),
     shutout: { a: num(d.hk_shutout_a_n), b: num(d.hk_shutout_b_n) },
     comeback: { a: num(d.hk_comeback_a_n), b: num(d.hk_comeback_b_n) },
     last: typeof d.hockey_last === 'string' ? d.hockey_last : null,
@@ -44,7 +44,7 @@ export function matchResult(d, info) {
   const w = info.winner; const l = w === 'a' ? 'b' : 'a';
   const patch = {};
   const n = r.streakWho === w ? r.streakN + 1 : 1;
-  patch.hk_streak_who = w; patch.hk_streak_n = n;
+  patch.hk_streak_who = w; patch.hk_streak_len = n;
   const newStreakBest = n > r.streakBest && n >= 2;
   if (n > r.streakBest) patch.hk_streak_best = n;
   const shutout = info.score[l] === 0;

@@ -63,7 +63,7 @@ Written only by the deciding device (host online, the single phone locally).
 `hockey_last` last pick; `hk_rally_best` + `hk_rally_who` longest rally (alternating hits; who scored it);
 `hk_fast_ms` + `hk_fast_who` fastest goal from the serve in ms (lower is better, so no `_best`/`_n`
 suffix); `hk_shutout_a_n` / `hk_shutout_b_n` matches won to nil; `hk_comeback_a_n` / `hk_comeback_b_n`
-matches won after trailing by 3+; `hk_streak_who` + `hk_streak_n` current win streak and `hk_streak_best`.
+matches won after trailing by 3+; `hk_streak_who` + `hk_streak_len` current win streak and `hk_streak_best`.
 The picker shows rally / fastest goal / streak; the end card's `sub` is the rivalry line:
 `7–4 · Pillar table · COMEBACK from 3 down · Emerson on a 3-match streak (a new best)`.
 `api.finish({ winner, score: { a, b }, sub })`.

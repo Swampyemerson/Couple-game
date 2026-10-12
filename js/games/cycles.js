@@ -82,7 +82,8 @@ registerGame({
     const prefNow = () => {
       const w = window.innerWidth;
       const h = window.innerHeight;
-      return w >= 700 && w >= h * 1.05 ? (h <= 520 ? 'l' : 's') : 'p';
+      if (w >= h * 1.05 && h <= 520 && w >= 480) return 'l'; // a phone on its side (also the small ones: 568x320, 667x375)
+      return w >= 700 && w >= h * 1.05 ? 's' : 'p';
     };
     let pref = prefNow();
     const pickLayout = (x, y) => (x === 'p' || y === 'p' ? 'p' : x === 'l' || y === 'l' ? 'l' : 's');

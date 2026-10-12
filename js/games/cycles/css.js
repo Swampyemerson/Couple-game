@@ -118,6 +118,13 @@ export const CSS = `
   .g-cycles[data-ui*="touch"] .cy-pad .cy-d2 { grid-column: 2; grid-row: 2; }
   .g-cycles[data-ui*="touch"] .cy-pad .cy-d1 { grid-column: 3; grid-row: 2; }
 }
+/* a small phone on its side (667x375, 568x320): slimmer pads so the board keeps its size */
+@media (orientation: landscape) and (max-height: 520px) and (max-width: 760px) {
+  .g-cycles[data-ui*="touch"] { column-gap: 8px; }
+  .g-cycles[data-ui*="touch"] .cy-pad { gap: 6px; }
+  .g-cycles[data-ui*="touch"] .cy-pad .cy-pad-keys { grid-template-columns: repeat(3, 46px); grid-template-rows: repeat(2, 46px); gap: 5px; }
+  .g-cycles[data-ui*="touch"] .cy-pad-name { font-size: 0.7rem; }
+}
 @media (prefers-reduced-motion: reduce) { .g-cycles *, .g-cycles *::before { animation: none !important; transition: none !important; } }
 
 @media (orientation: landscape) and (max-height: 520px) {
@@ -125,11 +132,11 @@ export const CSS = `
   .g-cycles .cy-pick-t { flex: 1 1 100%; font-size: 1.05rem; }
   .g-cycles .cy-pick-sub { flex: 1 1 100%; }
   .g-cycles .cy-chips { flex: 1 1 100%; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; }
-  .g-cycles .cy-chip { min-height: 68px; font-size: 0.68rem; padding: 4px 2px 5px; gap: 4px; }
+  .g-cycles .cy-chip { min-height: 64px; font-size: 0.68rem; padding: 4px 2px 5px; gap: 4px; }
   .g-cycles .cy-mini { width: 30px; } .g-cycles .cy-mini.is-wide { width: 44px; }
   .g-cycles .cy-glyph { width: 30px; height: 44px; font-size: 1.4rem; }
   .g-cycles .cy-rp-skip { display: none; }
-  .g-cycles .cy-recs { flex: 1 1 auto; text-align: left; }
+  .g-cycles .cy-recs { flex: 1 1 0; min-width: 0; text-align: left; margin-left: 10px; }
   .g-cycles .cy-go { align-self: center; flex: 0 0 auto; width: 200px; }
 }
 `;
