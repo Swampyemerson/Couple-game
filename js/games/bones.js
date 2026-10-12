@@ -434,7 +434,7 @@ function dieView2D(host) {
 
 // ── records and rivalry (api.data) ────────────────────────────────────
 // Flat keys, numbers and strings only. *_best / *_n keys only ever go up, so a sync keeps the larger
-// value; everything else (streaks, form) is written once per match, guarded by last_id.
+// value; everything else (streaks, form) is written once per match, guarded by last_id and a per-match m_<id> marker.
 const LAST_TW = 'ju.bones.twist';
 function lastTwist() { try { const v = localStorage.getItem(LAST_TW); return TWIST_IDS.includes(v) ? v : ''; } catch { return ''; } }
 function saveTwist(id) { try { localStorage.setItem(LAST_TW, id); } catch { /* storage off */ } }
@@ -444,12 +444,14 @@ function saveTwist(id) { try { localStorage.setItem(LAST_TW, id); } catch { /* s
  * Both phones run it on the same match and the same data, so they write the same values; if the
  * partner already wrote this match (last_id), nothing is written and its flags are read back.
  */
+/** A per-match marker key: unlike last_id (a plain string a late sync can roll back), it is only ever added. */
+const doneKey = (id) => 'm_' + String(id).replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 40);
 function recordsFor(d, s, r, id) {
-  if (d.last_id === id) return { patch: null, flags: String(d.last_flags || ''), streak: { who: d.streak_who, len: Number(d.streak_len) || 0 }, form: String(d.form || '') };
+  if (d.last_id === id || d[doneKey(id)]) return { patch: null, flags: String(d.last_flags || ''), streak: { who: d.streak_who, len: Number(d.streak_len) || 0 }, form: String(d.form || '') };
   const sc = score(s);
   const w = r.winner;
   const prevGames = Number(d.games_n) || 0;
-  const patch = { last_id: id, games_n: prevGames + 1 };
+  const patch = { last_id: id, [doneKey(id)]: 1, games_n: prevGames + 1 };
   const flags = [];
   for (const p of ['a', 'b']) {
     const k = `best_${p}_best`;

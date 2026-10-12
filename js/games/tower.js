@@ -1060,8 +1060,11 @@ registerGame({
 
     // ── records (api.data) ──
     const bestKey = (m) => `h_${m}_best`;
+    // per-match marker: unlike last_id (a plain string a late sync can roll back), it is only ever added
+    const doneKey = (id) => 'm_' + String(id).replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 40);
+    const counted = (d, id) => d.last_id === String(id) || !!d[doneKey(id)];
     /** True when the stored records already include this very match (the other phone recorded it first). */
-    function ownRecord(c) { if (!dataOK || !c || c.matchId === undefined) return false; try { return (store.data() || {}).last_id === String(c.matchId); } catch { return false; } }
+    function ownRecord(c) { if (!dataOK || !c || c.matchId === undefined) return false; try { return counted(store.data() || {}, c.matchId); } catch { return false; } }
     function readBest(mode) { if (!dataOK) return 0; try { return num((store.data() || {})[bestKey(mode)]); } catch { return 0; } }
     function refreshBest(mode = model.mode) {
       if (bestFrozen) return;
@@ -1121,7 +1124,7 @@ registerGame({
       if (!dataOK || openedOver) return info;
       try {
         const d = store.data() || {};
-        if (d.last_id === c.matchId) return info; // the other phone already counted this one
+        if (counted(d, c.matchId)) return info; // the other phone already counted this one
         store.setData({
           [bestKey(mode)]: Math.max(num(d[bestKey(mode)]), h),
           streak_best: Math.max(num(d.streak_best), info.run),
@@ -1130,6 +1133,7 @@ registerGame({
           perf_a_n: num(d.perf_a_n) + info.pa,
           perf_b_n: num(d.perf_b_n) + info.pb,
           last_id: String(c.matchId),
+          [doneKey(c.matchId)]: 1,
         });
       } catch (err) { console.warn('[tower] records', err); }
       return info;
