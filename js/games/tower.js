@@ -395,7 +395,7 @@ function view3D(THREE, canvas, pal0) {
       const vh = m.cam.viewH; const vw = vh * (W / Hh);
       cam.left = -vw / 2; cam.right = vw / 2; cam.top = vh / 2; cam.bottom = -vh / 2;
       cam.updateProjectionMatrix();
-      const sx = m.cam.sx || 0;
+      const sx = (m.cam.sx || 0) + (m.cam.ox || 0);
       const tx = sx * Math.SQRT1_2; const tz = -sx * Math.SQRT1_2; const ty = m.cam.y;
       cam.position.set(tx + VIEW[0] * 60, ty + VIEW[1] * 60, tz + VIEW[2] * 60);
       cam.lookAt(tx, ty, tz);
@@ -413,7 +413,7 @@ function view3D(THREE, canvas, pal0) {
         stat.ensure(n);
         n = 0;
         for (let i = 0; i < blocks.length; i++) { const e = blocks[i]; if (!e.live) n = emit(stat, n, e); }
-        for (let i = 0; i < deco.length; i++) n = emit(stat, n, deco[i]);
+        for (let i = 0; i < deco.length; i++) if (!deco[i].off) n = emit(stat, n, deco[i]);
         stat.lineOn = lineOn;
         stat.commit(n);
         statN = n; statOut = out; statLine = lineOn; m.staticDirty = false;
@@ -504,7 +504,7 @@ function view2D(canvas, pal0) {
       g.setTransform(ratio, 0, 0, ratio, 0, 0);
       g.fillStyle = css(pal.bg);
       g.fillRect(0, 0, W, Hh);
-      sc = Hh / m.cam.viewH; camS = m.cam.y * COSP; sxo = m.cam.sx || 0;
+      sc = Hh / m.cam.viewH; camS = m.cam.y * COSP; sxo = (m.cam.sx || 0) + (m.cam.ox || 0);
       g.lineJoin = 'round';
       g.lineWidth = 1.6 * Math.min(1, Math.max(0.35, BH * sc * COSP / 9));
       g.strokeStyle = css(pal.ink);
@@ -518,7 +518,7 @@ function view2D(canvas, pal0) {
       g.fillStyle = css(pal.shadow);
       g.fill();
       const draw = (e) => { drawBox(e); if (e.rib) { syncRibbons(e); for (let k = 0; k < 3; k++) drawBox(e.rib[k]); } };
-      for (const e of m.deco || NONE) draw(e);
+      for (const e of m.deco || NONE) if (!e.off) draw(e);
       for (const e of m.blocks) draw(e);
       for (const e of m.pieces) draw(e);
       for (const e of m.extras || NONE) draw(e);
@@ -580,7 +580,7 @@ registerGame({
     'On your turn, tap (or press Space) to drop the sliding block.',
     'Whatever hangs over the edge gets sliced off. Miss completely and it’s over.',
     'Land it dead on for a perfect. Perfects in a row grow it back.',
-    'Whoever goes first can pick a twist: Duet, Windy or Hard Hat.',
+    'Whoever goes first can pick a twist (Duet, Windy, Hard Hat): gifts and landmark levels.',
   ],
   init, next, apply, result, score,
 
@@ -610,16 +610,19 @@ registerGame({
     .g-tower .gt-badge { padding: 1px 9px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-hl); color: var(--g-on-ink); font-size: 0.66rem; font-weight: 900; letter-spacing: 0.1em; text-transform: uppercase; }
     .g-tower .gt-bestline { font-size: 0.7rem; font-weight: 800; letter-spacing: 0.04em; color: var(--g-muted); }
     .g-tower .gt-ghost { position: absolute; left: 0; top: 0; padding: 1px 8px; border: 2px dashed var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); font-size: 0.68rem; font-weight: 900; letter-spacing: 0.04em; white-space: nowrap; pointer-events: none; will-change: transform; }
-    .g-tower .gt-stamp { position: absolute; top: 27%; left: 50%; padding: 7px 16px; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-hl); color: var(--g-on-ink); box-shadow: var(--g-shadow); font: 900 1.3rem/1.1 var(--g-font-display); letter-spacing: 0.05em; text-transform: uppercase; white-space: nowrap; pointer-events: none; opacity: 0; transform: translate(-50%, 0) rotate(-5deg); }
+    .g-tower .gt-calls { position: absolute; top: 110px; left: 0; right: 0; display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; }
+    .g-tower .gt-stamp { display: none; padding: 7px 16px; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-hl); color: var(--g-on-ink); box-shadow: var(--g-shadow); font: 900 1.3rem/1.1 var(--g-font-display); letter-spacing: 0.05em; text-transform: uppercase; white-space: nowrap; pointer-events: none; opacity: 0; transform: rotate(-5deg); }
+    .g-tower .gt-stamp.show { display: block; }
     .g-tower .gt-stamp.is-near { background: var(--g-card); color: var(--g-ink); }
     .g-tower .gt-stamp.show { animation: gt-stamp 1150ms cubic-bezier(.2, .9, .3, 1.25) both; }
     @keyframes gt-stamp {
-      0% { opacity: 0; transform: translate(-50%, 10px) rotate(-5deg) scale(.55); }
-      14% { opacity: 1; transform: translate(-50%, 0) rotate(-5deg) scale(1.1); }
-      24%, 78% { opacity: 1; transform: translate(-50%, 0) rotate(-5deg) scale(1); }
-      100% { opacity: 0; transform: translate(-50%, -12px) rotate(-5deg) scale(.96); }
+      0% { opacity: 0; transform: translateY(10px) rotate(-5deg) scale(.55); }
+      14% { opacity: 1; transform: rotate(-5deg) scale(1.1); }
+      24%, 78% { opacity: 1; transform: rotate(-5deg) scale(1); }
+      100% { opacity: 0; transform: translateY(-12px) rotate(-5deg) scale(.96); }
     }
-    .g-tower .gt-banner { position: absolute; top: 37%; left: 50%; display: flex; flex-direction: column; align-items: center; gap: 2px; max-width: 86%; padding: 8px 18px; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-card); color: var(--g-ink); box-shadow: var(--g-shadow); text-align: center; pointer-events: none; opacity: 0; transform: translate(-50%, 0) rotate(3deg); }
+    .g-tower .gt-banner { display: none; flex-direction: column; align-items: center; gap: 2px; max-width: 86%; padding: 8px 18px; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-card); color: var(--g-ink); box-shadow: var(--g-shadow); text-align: center; pointer-events: none; opacity: 0; transform: rotate(3deg); }
+    .g-tower .gt-banner.show { display: flex; }
     .g-tower .gt-banner b { font: 900 1.15rem/1.1 var(--g-font-display); letter-spacing: 0.04em; text-transform: uppercase; }
     .g-tower .gt-banner span { font-size: 0.8rem; font-weight: 800; color: var(--g-muted); }
     .g-tower .gt-banner span:empty { display: none; }
@@ -627,10 +630,10 @@ registerGame({
     .g-tower .gt-banner.is-best span { color: var(--g-on-ink); }
     .g-tower .gt-banner.show { animation: gt-banner 1900ms cubic-bezier(.2, .9, .3, 1.2) both; }
     @keyframes gt-banner {
-      0% { opacity: 0; transform: translate(-50%, 14px) rotate(3deg) scale(.6); }
-      12% { opacity: 1; transform: translate(-50%, 0) rotate(3deg) scale(1.08); }
-      20%, 82% { opacity: 1; transform: translate(-50%, 0) rotate(3deg) scale(1); }
-      100% { opacity: 0; transform: translate(-50%, -12px) rotate(3deg) scale(.96); }
+      0% { opacity: 0; transform: translateY(14px) rotate(3deg) scale(.6); }
+      12% { opacity: 1; transform: rotate(3deg) scale(1.08); }
+      20%, 82% { opacity: 1; transform: rotate(3deg) scale(1); }
+      100% { opacity: 0; transform: translateY(-12px) rotate(3deg) scale(.96); }
     }
     .g-tower .gt-turn { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); padding: 11px 18px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); box-shadow: var(--g-shadow); font-weight: 900; font-size: 0.95rem; white-space: nowrap; pointer-events: none; }
     .g-tower .gt-turn.p-a { background: var(--p-a); color: var(--g-on-ink); }
@@ -639,11 +642,17 @@ registerGame({
     @keyframes gt-bob { 0%, 100% { transform: translate(-50%, 0); } 50% { transform: translate(-50%, -3px); } }
     .g-tower .gt-beat { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); padding: 10px 22px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-hl); color: var(--g-on-ink); box-shadow: var(--g-shadow); font: 900 1.35rem/1.1 var(--g-font-display); letter-spacing: 0.03em; white-space: nowrap; pointer-events: none; animation: gt-beat 260ms cubic-bezier(.2, .9, .3, 1.3) both; }
     .g-tower .gt-beat.p-a { background: var(--p-a); } .g-tower .gt-beat.p-b { background: var(--p-b); }
+    /* the hand-off beat sits where the turn pill does (bottom), so it never covers a stamp or a banner */
+    .g-tower .gt-beat.is-hand { top: auto; left: 50%; bottom: 16px; padding: 11px 22px; font-size: 1.15rem; transform: translateX(-50%); animation: gt-beat-h 220ms ease-out both; }
+    .gm.is-immersive .g-tower .gt-beat.is-hand { bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+    .g-tower .gt-view[data-phase="beat"] .gt-turn { visibility: hidden; }
+    @keyframes gt-beat-h { 0% { opacity: 0; scale: .85; } 100% { opacity: 1; scale: 1; } }
     .g-tower .gt-beat.is-count { min-width: 84px; text-align: center; padding: 4px 24px; border-radius: 20px; font-size: 3rem; }
     @keyframes gt-beat { 0% { opacity: 0; transform: translate(-50%, -50%) scale(.6); } 100% { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
     .g-tower .gt-pick { position: absolute; left: 12px; right: 12px; bottom: 70px; max-width: 520px; margin: 0 auto; display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 2px solid var(--g-ink); border-radius: var(--g-radius, 10px); background: var(--g-card); box-shadow: var(--g-shadow); color: var(--g-ink); }
     .g-tower .gt-pick[hidden] { display: none; }
     .g-tower .gt-pick-h { margin: 0; font-size: 0.66rem; font-weight: 900; letter-spacing: 0.1em; text-transform: uppercase; color: var(--g-muted); }
+    .g-tower .gt-pick-f { margin: 0; font-size: 0.66rem; font-weight: 700; color: var(--g-muted); }
     .g-tower .gt-pick-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
     .g-tower .gt-chip { min-height: 48px; min-width: 0; padding: 5px 10px; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 1px; text-align: left; border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm, 6px); background: var(--g-bg); color: var(--g-ink); font: inherit; cursor: pointer; touch-action: manipulation; box-shadow: var(--g-shadow-sm, 2px 2px 0 var(--g-ink)); }
     .g-tower .gt-chip b { font-family: var(--g-font-display); font-weight: 900; font-size: 0.8rem; letter-spacing: 0.02em; }
@@ -672,7 +681,7 @@ registerGame({
     .g-tower .gt-note { position: absolute; left: 12px; right: 12px; bottom: 70px; margin: 0; text-align: center; font-size: 0.8rem; font-weight: 700; color: var(--g-muted); pointer-events: none; }
     .g-tower .gt-view.has-pick .gt-note { bottom: auto; top: 112px; }
     /* full screen: keep the HUD clear of the notch and the home bar */
-    .gm.is-immersive .g-tower .gt-hud { top: calc(10px + env(safe-area-inset-top, 0px)); }
+    .gm.is-immersive .g-tower .gt-hud { top: calc(10px + env(safe-area-inset-top, 0px)); left: calc(56px + env(safe-area-inset-left, 0px)); right: calc(56px + env(safe-area-inset-right, 0px)); }
     .gm.is-immersive .g-tower .gt-turn { bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
     .gm.is-immersive .g-tower .gt-note { bottom: calc(70px + env(safe-area-inset-bottom, 0px)); }
     .gm.is-immersive .g-tower .gt-pick { bottom: calc(70px + env(safe-area-inset-bottom, 0px)); }
@@ -681,9 +690,12 @@ registerGame({
     @media (orientation: landscape) and (max-height: 520px) {
       .g-tower .gt-turn { left: auto; right: calc(14px + env(safe-area-inset-right, 0px)); transform: none; }
       .g-tower .gt-turn.is-go { animation-name: gt-bob-r; }
+      .g-tower .gt-beat.is-hand, .gm.is-immersive .g-tower .gt-beat.is-hand { left: auto; right: calc(14px + env(safe-area-inset-right, 0px)); transform: none; }
+      .g-tower .gt-calls { right: calc(50% + 40px); left: env(safe-area-inset-left, 0px); }
+      .g-tower .gt-banner { max-width: 96%; }
       .g-tower .gt-note { left: auto; right: calc(14px + env(safe-area-inset-right, 0px)); max-width: 40%; text-align: right; }
       .g-tower .gt-pick, .gm.is-immersive .g-tower .gt-pick { left: auto; right: calc(12px + env(safe-area-inset-right, 0px)); bottom: calc(66px + env(safe-area-inset-bottom, 0px)); width: min(330px, 44%); }
-      .g-tower .gt-panel, .gm.is-immersive .g-tower .gt-panel { left: auto; right: calc(12px + env(safe-area-inset-right, 0px)); bottom: 12px; width: min(330px, 42%); transform: translate(0, 26px); padding: 8px 12px 10px; gap: 5px; }
+      .g-tower .gt-panel, .gm.is-immersive .g-tower .gt-panel { left: auto; right: calc(12px + env(safe-area-inset-right, 0px)); bottom: calc(12px + env(safe-area-inset-bottom, 0px)); width: min(330px, 42%); transform: translate(0, 26px); padding: 8px 12px 10px; gap: 5px; }
       .g-tower .gt-panel.show, .gm.is-immersive .g-tower .gt-panel.show { transform: none; }
       .g-tower .gt-pn-btns .gm-btn { white-space: nowrap; min-height: 44px; padding-inline: 8px; }
       .g-tower .gt-pn-big b { font-size: 1.8rem; }
@@ -692,7 +704,7 @@ registerGame({
     @media (prefers-reduced-motion: reduce) {
       .g-tower .gt-stamp.show { animation: gt-fade 1100ms linear both; }
       .g-tower .gt-banner.show { animation: gt-fade 1500ms linear both; }
-      .g-tower .gt-beat { animation: none; }
+      .g-tower .gt-beat, .g-tower .gt-beat.is-hand { animation: none; }
       .g-tower .gt-panel { transition: none; }
       .g-tower .gt-turn.is-go { animation: none; }
       @keyframes gt-fade { 0%, 100% { opacity: 0; } 8%, 80% { opacity: 1; } }
@@ -715,12 +727,15 @@ registerGame({
           <div class="gt-row gt-meta"><span class="gt-badge" hidden></span><span class="gt-bestline" hidden></span></div>
         </div>
         <div class="gt-ghost" hidden aria-hidden="true"></div>
-        <div class="gt-stamp" aria-hidden="true"></div>
-        <div class="gt-banner" aria-hidden="true"><b></b><span></span></div>
+        <div class="gt-calls" aria-hidden="true">
+          <div class="gt-banner"><b></b><span></span></div>
+          <div class="gt-stamp"></div>
+        </div>
         <div class="gt-beat" aria-live="polite" hidden></div>
         <div class="gt-pick" hidden>
           <p class="gt-pick-h">Pick a twist, or just drop to play classic</p>
           <div class="gt-pick-row">${MODE_IDS.map((m) => `<button type="button" class="gt-chip" data-mode="${m}"><b>${MODES[m].name}</b><span>${MODES[m].hint}</span></button>`).join('')}</div>
+          <p class="gt-pick-f">Twists add gifts &amp; golden landmark levels.</p>
         </div>
         <div class="gt-turn" aria-live="polite" hidden></div>
         <p class="gt-note" hidden></p>
@@ -729,7 +744,7 @@ registerGame({
           <div class="gt-pn-big"><b>0</b><span>high</span></div>
           <p class="gt-pn-best"></p>
           <div class="gt-pn-who"></div>
-          <div class="gt-pn-btns"><button type="button" class="gm-btn" data-g="rematch">Rematch</button><button type="button" class="gm-btn gm-btn-ghost" data-g="close">Back to games</button></div>
+          <div class="gt-pn-btns"><button type="button" class="gm-btn" data-g="rematch">Rematch</button><button type="button" class="gm-btn gm-btn-ghost" data-g="close">Back</button></div>
         </div>
         <div class="gt-load"><span>Stacking the blocks…</span></div>
       </div>
@@ -743,6 +758,8 @@ registerGame({
     const pickEl = $('.gt-pick');
     const ghostEl = $('.gt-ghost');
     const bannerEl = $('.gt-banner');
+    const stampEl = $('.gt-stamp');
+    const callsEl = $('.gt-calls');
     const panelEl = $('.gt-panel');
     const badgeEl = $('.gt-badge');
     const bestEl = $('.gt-bestline');
@@ -787,11 +804,11 @@ registerGame({
     let ghostY = 0; let ghostHalf = 2; let ghostW = 64; let ghostOn = false; let ghostX = -1; let ghostYpx = -1;
     let bTimer = 0;
     let unData = null;
-    const bq = [];
+    let bq = null;          // the one banner waiting for the current one to finish (older ones are stale)
     let bBusy = false;
     const ready = new Promise((r) => { readyRes = r; });
-    const model = { blocks: [], pieces: [], slider: null, ring: null, deco: [], extras: EMPTY, cam: { y: CAM_LEAD, zoom: 1, viewH: 12, sx: 0 }, staticDirty: true, mode: 'classic', modeSet: false };
-    const goal = { y: CAM_LEAD, zoom: 1 };
+    const model = { blocks: [], pieces: [], slider: null, ring: null, deco: [], extras: EMPTY, cam: { y: CAM_LEAD, zoom: 1, viewH: 12, sx: 0, ox: 0 }, staticDirty: true, mode: 'classic', modeSet: false };
+    const goal = { y: CAM_LEAD, zoom: 1, ox: 0 };
     const anims = new Set();
     const flagE = [{ tint: 'ink' }, { tint: 'hl' }, { tint: 'hl' }, { tint: 'hl' }].map((p) => ({ x: 0, y: 0, z: 0, w: 0.1, h: 0.1, d: 0.1, who: null, live: true, lift: 0, rx: 0, rz: 0, flash: 0, ...p }));
 
@@ -805,16 +822,16 @@ registerGame({
     const proj = [0, 0];
     function project(x, y, z) {
       const c = model.cam; const sc = cssH / c.viewH;
-      proj[0] = cssW / 2 + ((x - z) * Math.SQRT1_2 - (c.sx || 0)) * sc;
+      proj[0] = cssW / 2 + ((x - z) * Math.SQRT1_2 - (c.sx || 0) - (c.ox || 0)) * sc;
       proj[1] = cssH / 2 - ((-(x + z) * Math.SQRT1_2 * SINP + y * COSP) - c.y * COSP) * sc;
       return proj;
     }
     /** Top and bottom of the whole tower on screen (css px), for the fit check. */
     function towerExtent() {
       const n = model.blocks.length - 1; const top = Math.max(0, n) * BH;
-      let lo = Infinity; let hi = -Infinity;
-      for (const y of [-PED, top]) for (const x of [-BASE / 2, BASE / 2]) for (const z of [-BASE / 2, BASE / 2]) { const p = project(x, y, z); lo = Math.min(lo, p[1]); hi = Math.max(hi, p[1]); }
-      return { top: lo, bottom: hi, hud: hudBottom, h: cssH };
+      let lo = Infinity; let hi = -Infinity; let l = Infinity; let r = -Infinity;
+      for (const y of [-PED, top]) for (const x of [-BASE / 2, BASE / 2]) for (const z of [-BASE / 2, BASE / 2]) { const p = project(x, y, z); lo = Math.min(lo, p[1]); hi = Math.max(hi, p[1]); l = Math.min(l, p[0]); r = Math.max(r, p[0]); }
+      return { top: lo, bottom: hi, left: l, right: r, hud: hudBottom, h: cssH };
     }
 
     // ── loop ──
@@ -835,11 +852,13 @@ registerGame({
       const f = 1 - Math.exp(-dt * 4.5);
       c.y += (goal.y - c.y) * f;
       c.zoom += (goal.zoom - c.zoom) * f;
-      const camBusy = Math.abs(goal.y - c.y) > 0.002 || Math.abs(goal.zoom - c.zoom) > 0.0005;
-      if (!camBusy) { c.y = goal.y; c.zoom = goal.zoom; }
+      c.ox += (goal.ox - c.ox) * f;
+      const camBusy = Math.abs(goal.y - c.y) > 0.002 || Math.abs(goal.zoom - c.zoom) > 0.0005 || Math.abs(goal.ox - c.ox) > 0.002;
+      if (!camBusy) { c.y = goal.y; c.zoom = goal.zoom; c.ox = goal.ox; }
       c.viewH = baseViewH() * c.zoom;
       let calls = 0;
       if (view) {
+        cullDeco();
         calls = view.render(model);
         placeGhost();
         tunePerf(dt);
@@ -963,26 +982,37 @@ registerGame({
       tween(420, (k) => { model.cam.sx = Math.sin(k * 34) * (1 - k) * 0.14; }, lin).then(() => { model.cam.sx = 0; });
     }
     function stamp(text, cls = '') {
-      const st = $('.gt-stamp');
+      const st = stampEl;
       st.textContent = text;
       st.className = `gt-stamp ${cls}`;
       void st.offsetWidth;
       st.classList.add('show');
     }
-    function banner(title, sub, cls) { // a second, longer callout: milestones, records, gifts
-      bq.push([title, sub || '', cls || '']);
-      if (!bBusy) nextBanner();
+    // the callouts take no room once their animation has finished
+    stampEl.addEventListener('animationend', () => stampEl.classList.remove('show'));
+    bannerEl.addEventListener('animationend', () => bannerEl.classList.remove('show'));
+    /** A longer callout: milestones, records, gifts. A drop's callouts arrive merged into one banner. A record
+     *  (prio) interrupts whatever is showing and clears the queue; otherwise only the newest waiting banner is kept. */
+    function banner(title, sub, cls, prio) {
+      const it = { t: title, s: sub || '', c: cls || '', at: Date.now() };
+      if (prio) { clearTimeout(bTimer); bq = null; bBusy = false; showBanner(it); return; }
+      if (bBusy) { bq = it; return; }
+      showBanner(it);
     }
-    function nextBanner() {
-      const it = bq.shift();
-      if (!it || dead) { bBusy = false; return; }
+    function showBanner(it) {
+      if (dead) { bBusy = false; return; }
       bBusy = true;
-      bannerEl.querySelector('b').textContent = it[0];
-      bannerEl.querySelector('span').textContent = it[1];
-      bannerEl.className = `gt-banner ${it[2]}`;
+      bannerEl.querySelector('b').textContent = it.t;
+      bannerEl.querySelector('span').textContent = it.s;
+      bannerEl.className = `gt-banner ${it.c}`;
       void bannerEl.offsetWidth;
       bannerEl.classList.add('show');
       bTimer = setTimeout(nextBanner, reduced() ? 1500 : 1900);
+    }
+    function nextBanner() {
+      const it = bq; bq = null;
+      if (!it || dead || Date.now() - it.at > 2600) { bBusy = false; return; }
+      showBanner(it);
     }
     /** The perfect chime climbs a semitone for every perfect in a row (up to an octave). */
     function ding(streak) {
@@ -1021,9 +1051,12 @@ registerGame({
 
     // ── records (api.data) ──
     const bestKey = (m) => `h_${m}_best`;
+    /** True when the stored records already include this very match (the other phone recorded it first). */
+    function ownRecord(c) { if (!dataOK || !c || c.matchId === undefined) return false; try { return (store.data() || {}).last_id === String(c.matchId); } catch { return false; } }
     function readBest(mode) { if (!dataOK) return 0; try { return num((store.data() || {})[bestKey(mode)]); } catch { return 0; } }
     function refreshBest(mode = model.mode) {
       if (bestFrozen) return;
+      if (ctxNow && ownRecord(ctxNow)) return; // the other phone already counted this run: it is not the "best before"
       const b = readBest(mode);
       if (b !== bestRef) { bestRef = b; rebuildDeco(); kick(); }
     }
@@ -1060,7 +1093,18 @@ registerGame({
       if (vis !== !ghostEl.hidden) ghostEl.hidden = !vis;
       if (vis && (x !== ghostX || y !== ghostYpx)) { ghostX = x; ghostYpx = y; ghostEl.style.transform = `translate(${x}px, ${y}px)`; }
     }
-    function measureHud() { hudBottom = hudEl.offsetTop + hudEl.offsetHeight + 4; }
+    function measureHud() { hudBottom = hudEl.offsetTop + hudEl.offsetHeight + 4; callsEl.style.top = `${Math.round(hudBottom + 6)}px`; }
+    /** Hide the ghost ring's dashes that sit above the bottom of the HUD (they would print over the numbers). */
+    function cullDeco() {
+      const d = model.deco;
+      let changed = false;
+      for (let i = 0; i < d.length; i++) {
+        const e = d[i];
+        const off = project(e.x, e.y, e.z)[1] < hudBottom;
+        if (off !== !!e.off) { e.off = off; changed = true; }
+      }
+      if (changed) model.staticDirty = true;
+    }
     /** Tally the run once, at the finale of a match that was still being played when this phone opened it. */
     function recordRun(c) {
       const s = c.state; const mode = modeOf(s); const h = s.blocks.length - 1;
@@ -1098,9 +1142,12 @@ registerGame({
       refreshBest();
       rebuildDeco();
       if (was && ctxNow) {
-        const mine = ctxNow.mode === 'online' && ctxNow.first === ctxNow.me;
-        if (ctxNow.mode === 'online' && !mine) api.toast(`${api.name(ctxNow.first)} picked ${MODES[m].name}`);
-        else api.toast(m === 'classic' ? 'Classic it is' : `${MODES[m].name} it is`);
+        // the starter's own pick needs no toast (the badge and the vanishing picker say it); the partner is told, briefly
+        if (ctxNow.mode === 'online' && ctxNow.first !== ctxNow.me) {
+          const msg = `${api.name(ctxNow.first)} picked ${MODES[m].name}`;
+          api.toast(msg);
+          setTimeout(() => { if (!dead) document.querySelectorAll('.toast').forEach((t) => { if (t.textContent === msg) t.classList.remove('show'); }); }, 1500);
+        }
         log(`mode:${m}`);
       }
       return true;
@@ -1214,8 +1261,20 @@ registerGame({
         if (keep < 0.25) stamp('By a whisker!', 'is-near');
         else if (Math.abs(drop.o) <= 1.6 * perfectTol(size, sp.tol)) stamp('So close!', 'is-near');
       }
-      if (drop.gift) { banner('Gift!', 'It grew a little', ''); api.sfx('pop'); }
-      if (drop.bonus) { banner('Landmark!', `Level ${lv} bonus: it grew`, 'is-best'); if (!drop.gift) api.sfx('pop'); }
+      { // everything that happened on this drop goes into ONE banner (records first), so nothing queues up behind anything
+        const parts = []; // [title, sub, is-best]
+        const newBest = bestRef >= 3 && lv === bestRef + 1 && !bestHit;
+        if (newBest) { bestHit = true; parts.push(['New best!', `${api.name(drop.who)} set the record`, true]); }
+        if (drop.bonus) parts.push(['Landmark!', drop.grew ? `Level ${lv} bonus: it grew` : `Level ${lv} · already full size`, true]);
+        if (drop.gift) parts.push(['Gift!', drop.grew ? 'It grew a little' : 'Already full size', false]);
+        if (MILESTONES[lv]) parts.push([MILESTONES[lv][0], MILESTONES[lv][1], false]);
+        if (parts.length) {
+          const sub = (parts.find((q) => q[1]) || [])[1];
+          const cls = parts.some((q) => q[2]) ? 'is-best' : '';
+          banner(parts.slice(0, 2).map((q) => q[0]).join(' · '), sub, cls, newBest); // at most two titles, so it fits a narrow phone
+          if (newBest) api.sfx('win'); else if (drop.gift || drop.bonus) api.sfx('pop');
+        }
+      }
       if (e.w !== nb.w || e.d !== nb.d) { // growth: a streak, a gift or a landmark
         const w0 = e.w; const d0 = e.d;
         await tween(rm ? 0 : 280, (k) => { e.w = w0 + (nb.w - w0) * k; e.d = d0 + (nb.d - d0) * k; }, backOut);
@@ -1224,11 +1283,6 @@ registerGame({
       release(e);
       goal.y = camYFor(lv);
       setHeight(lv);
-      if (bestRef >= 3 && lv === bestRef + 1 && !bestHit) {
-        bestHit = true;
-        banner('New best!', `${api.name(drop.who)} set the record`, 'is-best');
-        api.sfx('win');
-      } else if (MILESTONES[lv]) banner(MILESTONES[lv][0], MILESTONES[lv][1], '');
       await wait(rm ? 40 : 170);
     }
 
@@ -1247,6 +1301,15 @@ registerGame({
       const landscape = matchMedia('(orientation: landscape) and (max-height: 520px)').matches;
       const sa = parseFloat(getComputedStyle(panelEl).bottom) || 14;
       fitTower(model.blocks.length - 1, landscape ? 20 : panelEl.offsetHeight + sa + 12);
+      // a phone on its side (maybe with a notch): slide the tower left until the panel at the right clears it
+      goal.ox = 0;
+      if (landscape) {
+        const sc = cssH / (baseViewH() * goal.zoom);
+        const half = (BASE / 2 + 0.25) * Math.SQRT2 * sc;
+        const room = panelEl.getBoundingClientRect().left - wrap.getBoundingClientRect().left - 8;
+        const shift = cssW / 2 + half - room;
+        if (shift > 0) goal.ox = Math.min(shift, Math.max(0, cssW / 2 - half - 8)) / sc;
+      }
       kick();
     }
     function paintPanel(info) {
@@ -1254,7 +1317,9 @@ registerGame({
       $('.gt-pn-flag').hidden = !info.newBest;
       $('.gt-pn-big b').textContent = String(info.h);
       $('.gt-pn-big span').textContent = info.h === 1 ? 'block high' : 'blocks high';
-      $('.gt-pn-best').textContent = info.newBest ? (info.prev ? `Old best ${info.prev}. You two beat it.` : 'First one on the board.') : `Best ${MODES[info.mode].name}: ${info.best}`;
+      $('.gt-pn-best').textContent = info.newBest ? (info.prev ? `Old best ${info.prev}. You two beat it.` : 'First one on the board.')
+        : info.best < 1 ? 'Timber, straight away. Shake it off and go again.'
+        : `Best ${MODES[info.mode].name}: ${info.best}`;
       const who = $('.gt-pn-who');
       who.innerHTML = '';
       const add = (cls, txt) => { const sp = document.createElement('span'); if (cls) { sp.className = cls; sp.appendChild(document.createElement('i')); } sp.appendChild(document.createTextNode(txt)); who.appendChild(sp); };
@@ -1268,7 +1333,7 @@ registerGame({
       phase('over');
       pickEl.hidden = true; wrap.classList.remove('has-pick');
       beatEl.hidden = true;
-      const info = runInfo = recordRun(c);
+      const info = runInfo || (runInfo = recordRun(c));
       const n = model.blocks.length - 1;
       paintPanel(info);
       panelEl.hidden = false;
@@ -1377,12 +1442,12 @@ registerGame({
       }
       if (c.canMove) {
         if (!slider) {
-          if (c.mode === 'local' && lastActor && lastActor !== c.actor && !reduced() && beatMoves !== c.moves) { // hand the phone over
+          if (c.mode === 'local' && lastActor && lastActor !== c.actor && beatMoves !== c.moves) { // hand the phone over (a still pill under reduced motion)
             beatMoves = c.moves;
             hud();
             phase('beat');
             updatePick();
-            await showBeat(`${api.name(c.actor)}’s turn`, 600, `p-${c.actor}`);
+            await showBeat(`${api.name(c.actor)}’s turn`, reduced() ? 400 : 600, `is-hand p-${c.actor}`);
             if (dead || ctxNow !== c) return; // something newer is queued
           }
           startSlider(s.blocks.length, c.actor);
@@ -1436,14 +1501,16 @@ registerGame({
       }
       measureHud();
     }
+    function hidePick() { if (!pickEl.hidden) { pickEl.hidden = true; wrap.classList.remove('has-pick'); } }
     function pickMode(m) {
       const c = ctxNow;
-      if (pickBusy || !c || !c.canMove || c.over) return;
+      if (pickBusy || pending || (slider && slider.frozen) || !c || !c.canMove || c.over || pickEl.hidden) return; // a drop is already on its way: ignore quietly
       pickBusy = true;
       api.sfx('tap');
       const r = api.move({ m });
       pickBusy = false;
       if (!r.ok) { api.toast(r.error); return; }
+      hidePick();
       lsSet(LS_LAST, m);
       log(`pick:${m}`);
     }
@@ -1467,10 +1534,12 @@ registerGame({
       pending = { n: c.moves + 1, who: c.actor };
       if (t) t.tapped = o;
       api.sfx('tap');
+      hidePick(); // the first drop settles the mode (classic): the picker goes at once
       const r = api.move({ o });
       if (!r.ok) {
         pending = null;
         if (slider) { slider.frozen = false; setArmed(true); }
+        updatePick();
         api.toast(r.error);
         return false;
       }
@@ -1516,7 +1585,7 @@ registerGame({
       measureHud();
       ghostW = 0;
       if (runInfo && !panelEl.hidden) refit();
-      if (view) { view.resize(cssW, cssH); model.staticDirty = true; model.cam.viewH = baseViewH() * model.cam.zoom; view.render(model); placeGhost(); }
+      if (view) { view.resize(cssW, cssH); model.staticDirty = true; model.cam.viewH = baseViewH() * model.cam.zoom; cullDeco(); view.render(model); placeGhost(); }
     });
     ro.observe(wrap);
     const rect = wrap.getBoundingClientRect();
@@ -1569,8 +1638,8 @@ registerGame({
       if (note) { const n = $('.gt-note'); n.textContent = note; n.hidden = false; }
       try { view.compile(); } catch (err) { console.warn('[tower] warm-up', err); }
       model.cam.viewH = baseViewH();
-      readyRes();
-      kick();
+      const hold = T() && T().hold; // test hook only: keep the view "not ready" until this promise settles
+      Promise.resolve(hold).then(() => { if (dead) return; readyRes(); kick(); });
     }
     function fallback(msg) {
       try { useView(view2D(canvas, pal), msg); wrap.dataset.gl = '2d'; } catch (err) {
@@ -1605,9 +1674,9 @@ registerGame({
         if (!c || !c.state) return;
         if (openedOver === null) openedOver = !!c.over;
         const t = T();
-        if (t && t.model !== model) t.model = model; // test hook only
+        if (t && t.model !== model) { t.model = model; t.project = (x, y, z) => project(x, y, z).slice(); t.hudBottom = () => hudBottom; } // test hook only
         refreshBest(modeOf(c.state));
-        if (c.over) bestFrozen = true;
+        if (c.over) { bestFrozen = true; if (!runInfo) runInfo = recordRun(c); } // counted the moment the run is known over, even if you leave before the finale
         enqueue(sync);
       },
       onEndClosed() { if (runInfo) panelEl.classList.add('show'); },

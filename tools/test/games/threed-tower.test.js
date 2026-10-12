@@ -374,14 +374,20 @@ async function stray(h, pg) {
   await h.closeGame(pg);
 }
 
-/** Before the 3D view is ready, nothing drops. */
+/** Before the 3D view is ready, nothing drops. A test hook holds the view not-ready, so this does not depend on timing. */
 async function notReady(h, pg) {
-  await hook(pg);
+  await pg.evaluate(() => { window.__towerTest = { log: [], hold: new Promise((r) => { window.__release = r; }) }; });
   await h.newLocalGame(pg, 'tower');
   const id = await pg.evaluate(() => window.__lastMatchId);
+  await pg.waitForSelector('.gt-view[data-phase="load"]', { timeout: 4000 });
   await pg.evaluate(() => { const v = document.querySelector('.gt-view'); for (let i = 0; i < 5; i++) v.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse', clientX: 120, clientY: 300 })); });
-  await h.wait(400);
-  ok(await movesOf(h, pg, id) === 0, 'tower: taps before the view is ready do nothing');
+  await pg.keyboard.press('Space');
+  await h.wait(700); // well past the 250 ms arming guard: only "not ready" can be what stops the drop
+  ok(await movesOf(h, pg, id) === 0 && await pg.getAttribute('.gt-view', 'data-phase') === 'load' && await pg.evaluate(() => !window.__towerTest.model || !window.__towerTest.model.slider), 'tower: taps and Space before the view is ready do nothing (held not-ready)');
+  await pg.evaluate(() => window.__release());
+  await armed(pg, 6000);
+  await dropAt(pg, id, 1, 0.2);
+  ok(true, 'tower: once ready, the slider starts and a drop works');
   await h.closeGame(pg);
 }
 
@@ -506,7 +512,18 @@ async function classicSkip(h, pg) {
   await armed(pg);
   ok(await pg.isVisible('.gt-pick'), 'tower classic: the starter sees the picker first');
   ok(await pg.$$eval('.gt-chip.is-last', (c) => c.length) === 0, 'tower classic: no chip is highlighted the first time');
-  await dropAt(pg, id, 1, 0.3);
+  // the picker goes in the same frame as the drop tap, and a chip tapped right after is ignored quietly
+  const gone = await pg.evaluate(() => {
+    window.__towerTest.next = 0.3;
+    document.querySelector('.gt-view').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse', clientX: 120, clientY: 300 }));
+    const hid = document.querySelector('.gt-pick').hidden;
+    document.querySelector('.gt-chip[data-mode="duet"]').click();
+    return hid;
+  });
+  ok(gone, 'tower classic: the picker disappears the instant the first drop is tapped');
+  await waitMoves(pg, id, 1);
+  await h.wait(500);
+  ok(await movesOf(h, pg, id) === 1 && (await h.engine(pg, id)).state.mode === undefined && await pg.$$eval('.toast', (t) => t.length) === 0, 'tower classic: a chip tapped after the drop is ignored (no setup move, no error toast)');
   await pg.waitForSelector('.gt-view[data-armed="1"]', { timeout: 6000 });
   ok(await pg.isHidden('.gt-pick') && await pg.isHidden('.gt-badge'), 'tower classic: just dropping skips the picker and shows no badge');
   const e = await h.engine(pg, id);
@@ -522,6 +539,8 @@ async function modesUi(h, pg) {
   await armed(pg);
   await pg.tap('.gt-chip[data-mode="hard"]');
   await waitMoves(pg, id, 1);
+  await h.wait(300);
+  ok(await pg.isHidden('.gt-pick') && await pg.$$eval('.toast', (t) => t.length) === 0, 'tower picker: the starter’s own pick gets no toast (the picker just goes)');
   let e = await h.engine(pg, id);
   ok(e.state.mode === 'hard' && e.state.blocks[0].w === 2.4, 'tower hard: the setup move rewrites the base to 2.4');
   await armed(pg);
@@ -660,6 +679,140 @@ async function records(h, pg) {
   await dropAt(pg, id4, 11, 'miss');
   await endCard(pg);
   await h.closeGame(pg);
+
+  // reduced motion still gets a short, still hand-off pill
+  await hook(pg);
+  await h.newLocalGame(pg, 'tower');
+  const id5 = await pg.evaluate(() => window.__lastMatchId);
+  await pg.evaluate(() => {
+    window.__beat = []; window.__bt0 = performance.now();
+    window.__beatT = setInterval(() => { const b = document.querySelector('.gt-beat'); if (b && !b.hidden) window.__beat.push({ t: performance.now() - window.__bt0, cls: b.className, anim: getComputedStyle(b).animationName, txt: b.textContent }); }, 20);
+  });
+  await dropAt(pg, id5, 1, 0.3);
+  await pg.waitForSelector('.gt-view[data-phase="slide"]', { timeout: 4000 });
+  const bs = await pg.evaluate(() => { clearInterval(window.__beatT); return window.__beat; });
+  const dur = bs.length ? bs[bs.length - 1].t - bs[0].t : 0;
+  ok(bs.length > 5 && dur >= 250 && dur <= 800 && bs.every((x) => x.anim === 'none' && /is-hand/.test(x.cls)), `tower reduced motion: a still hand-off pill shows for ~${Math.round(dur)} ms (“${bs[0] && bs[0].txt}”)`);
+  await dropAt(pg, id5, 2, 0.1);
+  await h.closeGame(pg);
+
+  // leaving the moment the tower topples still records it
+  const e0 = await localData(pg);
+  await hook(pg);
+  await h.newLocalGame(pg, 'tower');
+  const id6 = await pg.evaluate(() => window.__lastMatchId);
+  await dropAt(pg, id6, 1, 0); await dropAt(pg, id6, 2, 0); await dropAt(pg, id6, 3, 'miss');
+  await h.closeGame(pg);
+  const e1 = await localData(pg);
+  ok(e1.towers_n === e0.towers_n + 1 && e1.blocks_n === e0.blocks_n + 2, 'tower records: closing the game right after the topple still records the run');
+
+  // a run that ends at height 0, in a mode with no best yet: kind words, not “Best Duet: 0”
+  await hook(pg);
+  await h.newLocalGame(pg, 'tower');
+  const id7 = await pg.evaluate(() => window.__lastMatchId);
+  await armed(pg);
+  await pg.tap('.gt-chip[data-mode="duet"]');
+  await waitMoves(pg, id7, 1);
+  await dropAt(pg, id7, 2, 'miss');
+  await pg.waitForSelector('.gt-panel.show', { timeout: 6000 });
+  const z = await pg.textContent('.gt-pn-best');
+  ok(/Shake it off/.test(z) && !/: 0/.test(z) && await pg.isHidden('.gt-pn-flag'), `tower panel: a zero-height first run says “${z}”`);
+  await shot(pg, 'tower-panel-zero-390.png');
+  await endCard(pg);
+  await h.closeGame(pg);
+}
+
+// ── polish: banners, hand-off beat, ghost ring vs HUD, picker, notch ───
+/** Put records in the store (the page has to reload for the engine to read them). */
+async function seedData(h, pg, rec) {
+  await pg.evaluate((r) => { try { const k = 'ju.games.data.v1'; const d = JSON.parse(localStorage.getItem(k) || '{}'); d.tower = r; localStorage.setItem(k, JSON.stringify(d)); } catch { /* ignore */ } }, rec);
+  await pg.reload();
+  await h.wait(1200);
+}
+const rectsOf = (pg, sels) => pg.evaluate((ss) => Object.fromEntries(ss.map((q) => { const e = document.querySelector(q); const r = e && !e.hidden ? e.getBoundingClientRect() : null; return [q, r && { l: r.left, r: r.right, t: r.top, b: r.bottom }]; })), sels);
+const overlap = (p, q) => !!p && !!q && p.l < q.r && q.l < p.r && p.t < q.b && q.t < p.b;
+
+/** Level 10 in Duet (a landmark): one merged banner, a stamp and the hand-off beat that never cover each other; the ghost ring stays off the HUD. */
+async function landmark(h, pg, w, ht, best, name) {
+  await pg.setViewportSize({ width: w, height: ht });
+  await seedData(h, pg, { h_duet_best: best, h_classic_best: best });
+  await hook(pg);
+  await h.newLocalGame(pg, 'tower');
+  const id = await pg.evaluate(() => window.__lastMatchId);
+  await armed(pg);
+  await pg.tap('.gt-chip[data-mode="duet"]');
+  await waitMoves(pg, id, 1);
+  await armed(pg);
+  await h.wait(400);
+  // the ghost ring: no dash above the bottom of the HUD, and every visible one is on screen below it
+  const gr = await pg.evaluate(() => {
+    const t = window.__towerTest; const hb = t.hudBottom();
+    const d = t.model.deco;
+    return { n: d.length, off: d.filter((e) => e.off).length, bad: d.filter((e) => !e.off && t.project(e.x, e.y, e.z)[1] < hb).length, wrong: d.filter((e) => e.off && t.project(e.x, e.y, e.z)[1] >= hb).length, best: document.querySelector('.gt-bestline').textContent };
+  });
+  ok(gr.n === 16 && gr.bad === 0 && gr.wrong === 0 && gr.best === `Best ${best}`, `tower ghost ${name}: no ring dash prints over the HUD (${gr.off} of ${gr.n} hidden at the start)`);
+  await shot(pg, `tower-ghost-start-${name}.png`);
+  let n = 1;
+  for (const o of [0.3, 0, 0, 0, 0, 0, 0, 0, 0]) await dropAt(pg, id, ++n, o);
+  await armed(pg);
+  await pg.evaluate(() => { window.__towerTest.next = 0; });
+  await pg.click('.gt-view');
+  await waitMoves(pg, id, ++n);
+  const e = await h.engine(pg, id);
+  await pg.waitForSelector('.gt-banner.show', { timeout: 3000 });
+  await h.wait(120);
+  const t0 = await pg.evaluate(() => ({ b: document.querySelector('.gt-banner b').textContent, s: document.querySelector('.gt-banner span').textContent }));
+  ok(e.state.drop.landmark && e.state.drop.bonus && /Landmark/.test(t0.b), `tower banner ${name}: level 10 says “${t0.b}” (“${t0.s}”)`);
+  ok(/it grew/.test(t0.s) === !!e.state.drop.grew, `tower banner ${name}: it only claims growth when the block grew (grew=${e.state.drop.grew}: “${t0.s}”)`);
+  if (best === 9) ok(/^New best/.test(t0.b) && /set the record/.test(t0.s), `tower banner ${name}: a record at the landmark is the headline, in the same banner, with no queue delay`);
+  else ok(/Ten high/.test(t0.b), `tower banner ${name}: the landmark and the milestone share one banner`);
+  await pg.waitForSelector('.gt-beat.is-hand:not([hidden])', { timeout: 3000 });
+  const r = await rectsOf(pg, ['.gt-banner', '.gt-stamp', '.gt-beat', '.gt-hud', '.gt-view']);
+  const v = r['.gt-view'];
+  ok(r['.gt-banner'] && r['.gt-stamp'] && r['.gt-beat'], `tower overlap ${name}: banner, stamp and hand-off beat are all on screen together`);
+  ok(!overlap(r['.gt-banner'], r['.gt-stamp']) && !overlap(r['.gt-beat'], r['.gt-banner']) && !overlap(r['.gt-beat'], r['.gt-stamp']) && !overlap(r['.gt-hud'], r['.gt-banner']) && !overlap(r['.gt-hud'], r['.gt-stamp']), `tower overlap ${name}: …and none of them covers another or the HUD`);
+  ok(r['.gt-beat'].t > v.t + (v.b - v.t) * 0.6 && r['.gt-banner'].l >= v.l && r['.gt-banner'].r <= v.r && r['.gt-stamp'].l >= v.l && r['.gt-stamp'].r <= v.r, `tower overlap ${name}: the beat sits low by the turn pill; banner and stamp stay inside the screen`);
+  await shot(pg, `tower-landmark-${name}.png`);
+  await h.wait(500);
+  await dropAt(pg, id, ++n, 'miss');
+  await pg.waitForSelector('.gt-panel.show', { timeout: 8000 });
+  await endCard(pg);
+  await h.closeGame(pg);
+}
+
+/** A notched phone on its side: the panel clears the home bar and the insets, and the tower slides out from under it. */
+async function notch(h, pg) {
+  await pg.setViewportSize({ width: 844, height: 390 });
+  const cdp = await pg.context().newCDPSession(pg);
+  try { await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: 0, left: 47, right: 47, bottom: 21 } }); } catch (e) { console.log('skip - safe-area override unsupported:', e.message); return; }
+  try {
+    await hook(pg);
+    await h.newLocalGame(pg, 'tower');
+    const id = await pg.evaluate(() => window.__lastMatchId);
+    await armed(pg);
+    await pg.tap('.gt-chip[data-mode="duet"]');
+    await waitMoves(pg, id, 1);
+    let n = 1;
+    for (const o of [0.3, 0, 0, 0.2]) await dropAt(pg, id, ++n, o);
+    await dropAt(pg, id, ++n, 'miss');
+    await pg.waitForSelector('.gt-panel.show', { timeout: 10000 });
+    await h.wait(1800);
+    const m = await pg.evaluate(() => {
+      const pn = document.querySelector('.gt-panel').getBoundingClientRect();
+      const hud = document.querySelector('.gt-hud').getBoundingClientRect();
+      const e = window.__towerTest.extent();
+      return { pl: pn.left, pr: pn.right, pb: pn.bottom, vw: innerWidth, vh: innerHeight, tl: e.left, tr: e.right, tt: e.top, tb: e.bottom, hl: hud.left, hr: hud.right };
+    });
+    ok(m.pb <= m.vh - 21 + 0.5 && m.pr <= m.vw - 47 + 0.5, `tower notch: the panel stays inside the insets (bottom ${Math.round(m.pb)} ≤ ${m.vh - 21}, right ${Math.round(m.pr)} ≤ ${m.vw - 47})`);
+    ok(m.tr <= m.pl - 4 && m.tl >= 0 && m.tt >= 0 && m.tb <= m.vh, `tower notch: the tower is clear of the panel (right edge ${Math.round(m.tr)} < panel ${Math.round(m.pl)})`);
+    ok(m.hl >= 47 + 40, `tower notch: the HUD starts clear of the left inset (${Math.round(m.hl)})`);
+    await shot(pg, 'tower-notch-panel-844.png');
+    await endCard(pg);
+    await h.closeGame(pg);
+  } finally {
+    await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: 0, left: 0, right: 0, bottom: 0 } }).catch(() => {});
+    await pg.setViewportSize({ width: 390, height: 844 });
+  }
 }
 
 /** A 110-high tower: the finale fits between the HUD and the panel, and thin blocks lose their shimmer. */
@@ -727,7 +880,7 @@ async function visuals(h, pg, w, ht, name) {
   await pg.waitForSelector('.gt-panel.show', { timeout: 10000 });
   await h.wait(500);
   const pn = await pg.$eval('.gt-panel', (e) => { const r = e.getBoundingClientRect(); const v = document.querySelector('.gt-view').getBoundingClientRect(); return { l: r.left - v.left, r: r.right - v.left, t: r.top - v.top, b: r.bottom - v.top, vw: v.width, vh: v.height, btn: Array.from(e.querySelectorAll('.gm-btn')).map((x) => x.getBoundingClientRect().height) }; });
-  ok(pn.l >= 0 && pn.r <= pn.vw && pn.b <= pn.vh && pn.t >= 0 && pn.btn.every((x) => x >= 44), `tower ${name}: the end panel fits on screen (${Math.round(pn.t)}–${Math.round(pn.b)} of ${Math.round(pn.vh)})`);
+  ok(pn.l >= 0 && pn.r <= pn.vw && pn.b <= pn.vh && pn.t >= 0 && pn.btn.every((x) => x >= 44 && x < 54), `tower ${name}: the end panel fits (buttons one line) on screen (${Math.round(pn.t)}–${Math.round(pn.b)} of ${Math.round(pn.vh)})`);
   await shot(pg, `tower-${name}-panel.png`);
   await endCard(pg);
   await h.closeGame(pg);
@@ -775,6 +928,8 @@ async function onlineOnce(h) {
   await dropAt(b, id, 2, 0.02);
   await waitMoves(a, id, 2);
   await dropAt(a, id, 3, 'miss');
+  const early = await localData(a);
+  ok(early.towers_n === 1 && early.h_classic_best === 2 && await a.$('.gt-panel.show') === null, 'tower records: the run is written the moment it is over, before the finale (leaving early still counts)');
   await endCard(a); await endCard(b);
   await h.settle(); await h.wait(300);
   const da = await localData(a); const db = await localData(b);
@@ -802,6 +957,11 @@ let failed = false;
     if (want('once')) await onlineOnce(h);
     if (want('flat')) await flat(h, h.b);
     if (want('visuals')) { await visuals(h, h.a, 390, 844, 'light-390'); await visuals(h, h.a, 844, 390, 'landscape-844'); }
+    if (want('polish')) {
+      await landmark(h, h.a, 390, 844, 11, 'portrait-390');
+      await landmark(h, h.a, 844, 390, 9, 'landscape-844');
+      await notch(h, h.a);
+    }
     if (want('tall')) await tall(h, h.a);
     if (want('modes')) { await picker(h); await classicSkip(h, h.a); await modesUi(h, h.a); }
     h.assertNoErrors();
