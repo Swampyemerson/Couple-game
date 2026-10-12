@@ -29,20 +29,22 @@ between you.
 
 | Game | Kind | Best on |
 |---|---|---|
-| **Rail Rush**: 3D runner on the same track; Race, Brawl (shove each other) or Together | Live, versus/co-op | Phone |
-| **Blend & Seek**: paint yourself to vanish into a 3D room, then hunt each other | Live, versus | Either |
-| Four in a Row · Dots & Boxes · Ultimate Tic-Tac-Toe | Take turns, versus | Either |
-| Battleships | Take turns, hidden fleets | Either |
-| Knucklebones: dice duel with 3D dice | Take turns, versus | Either |
-| Word Duel: set each other's Wordle | Take turns, versus | Either |
-| Double Agents: co-op clue-giving spy game | Take turns, co-op | Either |
-| Doodle: draw and guess | Take turns, co-op | Phone |
-| Same Wave: one clue, one dial, how in sync are you? | Take turns, co-op | Either |
-| Tower Together: stack 3D blocks together | Take turns, co-op | Either |
-| Air Hockey · Quick Draw | Live, versus | Phone (one-phone mode too) |
-| Light Cycles | Live, versus | Computer (WASD vs arrows on one keyboard) |
-| **Getaway**: 3D car chase; one runs, one's the cop (PIT, spike strips, lose the heat), roles swap | Live, versus | Either |
-| Defuse: one has the bomb, the other the manual | Live, co-op, two devices | Bomb on a computer, manual on a phone |
+| **Rail Rush**: 3D runner through six districts on the same track; Race, Brawl, Together or the Daily with a twist, dares and love notes | Live, versus/co-op | Phone |
+| **Blend & Seek**: paint yourself to vanish into a 3D room, then hunt each other; twists, the Cup and ten rooms | Live, versus | Either |
+| **Getaway**: 3D car chase; one runs, one's the cop (PIT, spike strips, lose the heat). Rounds scored in pairs, wildcard twists, a running Series | Live, versus | Either |
+| Ultimate Tic-Tac-Toe: nine boards; every move picks where your partner plays next. Balanced with a tiebreak for the second player; Hot Boards and Wildcards modes | Take turns, versus | Either |
+| Four in a Row · Dots & Boxes: new modes, streaks and records | Take turns, versus | Either |
+| Battleships: hidden fleets; Classic, Salvo or Arsenal rules, named ships, stakes and a shared logbook | Take turns, versus | Either |
+| Knucklebones: dice duel with 3D dice; four twists, streaks and records | Take turns, versus | Either |
+| Word Duel: pick a secret word for them, crack theirs first. Fair Play or Love Letters words, hard mode, best of 3, streaks and record stamps | Take turns, versus | Either |
+| Double Agents: co-op spy clues. Difficulty, word packs (Us, Wanderlust, Mythic), mind melds, sudden death and a mission ledger | Take turns, co-op | Either |
+| Doodle: draw and guess. Five modes, new prompt packs, an Encore and a gallery that keeps score | Take turns, co-op | Phone |
+| Same Wave: one clue, one dial, five modes and new card packs. How in sync are you? | Take turns, co-op | Either |
+| Tower Together: stack 3D blocks together; Duet, Windy and Hard Hat modes, a best height to beat | Take turns, co-op | Either |
+| Air Hockey: pick a table (Classic, Pillar, Twin Pucks, Shrinking Goals, Power Puck, Quick); rallies, post shots, match-point slow-mo | Live, versus | Phone (one-phone mode too) |
+| Quick Draw: wait for it... DRAW! Duel packs, best of 3/5/9 or Showdown, a Both-barrels decider, streaks and an optional handicap | Live, versus | Phone (one-phone mode too) |
+| Light Cycles: pick an arena (Pillars, Cross, Rings, Scatter or Rotate), grab boosts, shave past walls and watch the crash replay | Live, versus | Computer (WASD vs arrows on one keyboard) |
+| Defuse: one has the bomb, the other a manual that rewrites itself every round. Ten module types, five tiers, twists, a personal par | Live, co-op, two devices | Bomb on a computer, manual on a phone |
 
 Head-to-head records, co-op best scores, rematches, and "your move" reminders on Home are
 built in. Starting a live game sends the other person an invite banner.
