@@ -7,10 +7,11 @@
 //
 // Versions. A match with no setup move is the original game, replayed exactly as it always was.
 // New matches begin with { setup: 2, mode } (first mover only, before any mark, passes no turn):
-//   classic  the balanced rules (the BALANCE section: the second player may take the opening mark)
+//   classic  the balanced rules (the BALANCE section: ties on boards go to the second mover)
 //   hot      two seeded boards are hot and count double in the boards-won count
 //   wild     each player holds one wildcard: { b, i, wild: 1 } ignores the send, once
-// Other moves: { b, i } place a mark, { steal: 1 } take the opening mark (v2 only).
+// Other moves: { b, i } place a mark. { b, i, wild: 1 } is the Wildcards move.
+// Balance (v2): komi. A count ending that is tied on boards goes to the player who moved second.
 import { registerGame, gameDataApi, randInt, shuffled } from './core.js';
 
 const LINES = [[0, 1, 2], [3, 4, 5], [6, 7, 8], [0, 3, 6], [1, 4, 7], [2, 5, 8], [0, 4, 8], [2, 4, 6]];
@@ -36,34 +37,21 @@ const marksOf = (s) => { let n = 0; for (const c of s.cells) if (c) n++; return 
 
 // ── modes ──────────────────────────────────────────────────────────────
 const MODES = {
-  classic: { name: 'Classic', blurb: 'The second player may take the first mark.' },
+  classic: { name: 'Classic', blurb: 'Ties on boards go to the second mover.' },
   hot: { name: 'Hot Boards', blurb: 'Two star boards count double if boards decide.' },
   wild: { name: 'Wildcards', blurb: 'One wildcard each: ignore the send, once.' },
 };
 
 // ── BALANCE (v2 only) ──────────────────────────────────────────────────
-// The first mover has a real edge in Ultimate, so v2 games use the pie rule: after the opener's
-// first mark the second player may play { steal: 1 } instead of a mark of their own. The mark
-// changes owner, the opener moves next, and the send rule is untouched: the force stays as set
-// by the stolen mark's cell. It's the second player's very first action, available once.
-// Everything balance-specific lives in this section; flip BALANCE.steal to switch it off.
-const BALANCE = { steal: true };
-function stealWhy(s, who) {
-  if (!BALANCE.steal || s.v !== 2) return 'Taking the opening mark isn’t part of this game';
-  if (s.end) return 'The game is over';
-  if (who !== s.turn) return 'Not your turn';
-  if (s.stl || marksOf(s) !== 1 || who === s.first) return 'Taking the opening mark is only for the second player’s first move';
-  return null;
-}
-const canSteal = (s, who) => !stealWhy(s, who);
-function applySteal(s, who) {
-  const err = stealWhy(s, who);
-  if (err) throw new Error(err);
-  s.cells[s.last] = who; // no line is possible with one mark, so there is nothing to re-check
-  s.stl = 1;
-  s.turn = s.first; // the opener moves next, sent by the stolen mark's cell exactly as before
-  return s;
-}
+// The first mover has a real edge in Ultimate (bot self-play: see docs/games/ultimate.md), so v2
+// games use komi: when the game ends on the count (no big line left for anyone) and boards won
+// are tied (hot boards weighed double in Hot Boards), the player who did NOT move first wins.
+// There are no draws in v2. s.first (set by the setup move) is the first mover. Legacy games keep
+// the old count rules, draws included. Flip BALANCE.komi to switch it off.
+const BALANCE = { komi: true };
+const secondMover = (s) => other(s.first);
+/** Does a tied count go to the second mover in this game? */
+const komiApplies = (s) => BALANCE.komi && s.v === 2 && (s.first === 'a' || s.first === 'b');
 
 // ── rules (pure, deterministic) ────────────────────────────────────────
 /** Why a move is illegal (a friendly message), or null when it's fine. `wild` skips the send rule. */
@@ -94,7 +82,6 @@ function applySetup(s, who, move) {
   s.v = 2;
   s.mode = move.mode;
   s.first = who;
-  s.stl = 0;
   s.lw = 0;
   s.down = { a: 0, b: 0 };
   if (move.mode === 'hot') s.hot = shuffled([0, 1, 2, 3, 4, 5, 6, 7, 8], `${s.seed}|hot`).slice(0, 2).sort((x, y) => x - y);
@@ -104,7 +91,6 @@ function applySetup(s, who, move) {
 
 function applyMove(s, who, move) {
   if (move && move.setup !== undefined) return applySetup(s, who, move);
-  if (s.v === 2 && move && move.steal) return applySteal(s, who);
   const b = move && move.b;
   const i = move && move.i;
   const wild = s.v === 2 && !!(move && move.wild);
@@ -129,7 +115,8 @@ function applyMove(s, who, move) {
   if (big) s.end = { why: 'line', who: big.who, line: big.line };
   else if (!canStillLine(s.big, 'a') && !canStillLine(s.big, 'b')) {
     const { a, b: bb } = boardsWon(s);
-    s.end = { why: 'count', who: a > bb ? 'a' : bb > a ? 'b' : null, a, b: bb };
+    if (a === bb && komiApplies(s)) s.end = { why: 'count', who: secondMover(s), a, b: bb, tie: 1 };
+    else s.end = { why: 'count', who: a > bb ? 'a' : bb > a ? 'b' : null, a, b: bb };
   }
   return s;
 }
@@ -149,6 +136,13 @@ function lastLight(s) {
   return `Only the ${live.map((n) => LINE_NAMES[n]).join(' and the ')} can still win it`;
 }
 
+/** "Tied on boards so far: ties go to Sydney" (v2 only, while boards are level). */
+function tieNote(s, nm) {
+  if (!komiApplies(s)) return null;
+  const w = boardsWon(s);
+  return w.a === w.b ? `Tied on boards so far: ties go to ${nm(secondMover(s))}` : null;
+}
+
 // ── records, rivalry and moment lines ──────────────────────────────────
 // Everything is derived from the finished match plus the game's shared data (see tally). Only
 // counters that go up use the _n / _best suffixes; streak fields reset and so have none.
@@ -161,7 +155,7 @@ const MOMENTS = {
     'Even Steven. Rematch?',
   ],
   record: [
-    'New record: won in {n} squares. {l}, that was quick.',
+    '{w} did it in {n} squares, a new record. {l} didn’t see it coming.',
     '{w} wins in only {n} squares, the fastest ever here.',
     'Fastest win yet, {n} squares. {l} blinked.',
     'A record finish: {n} squares. {w} is on fire.',
@@ -175,7 +169,7 @@ const MOMENTS = {
     '{l}’s {k}-game run ends, and {w} gets to gloat.',
   ],
   streakExt: [
-    '{w} makes it {k} in a row. Is {l} even trying?',
+    '{w} makes it {k} in a row. {l} is plotting revenge.',
     '{k} wins on the trot for {w}. Breakfast is on {l}.',
     'Streak: {k}. {w} is on a roll.',
     '{w} stays unbeaten, {k} in a row. {l}, revenge awaits.',
@@ -202,12 +196,12 @@ const MOMENTS = {
     'The star board did it. {w} reads the room.',
     'Those hot boards were {w}’s all along.',
   ],
-  stolen: [
-    '{w} took the opening mark and the whole game.',
-    'A cheeky steal, a sweet win. {w} had a plan.',
-    '{w} swiped the first mark and never looked back.',
-    'Stealing worked. {l} gifted the opening.',
-    'Best steal of the day goes to {w}.',
+  komi: [
+    'Dead level on boards, so the second seat takes it. {w} wins the tie-break.',
+    'Tied on boards. Going second pays off: {w} wins.',
+    '{w} wins the tie-break. {l} gets a rematch and a hug.',
+    'Level to the last board, and the tie goes to {w}.',
+    'All square on boards, so {w} takes it from the second seat.',
   ],
   rout: [
     'A clean sweep. {w} barely let {l} breathe.',
@@ -275,7 +269,7 @@ function momentKeys(s, res, d) {
   if (s.v === 2 && s.down && s.down[w] >= 2) keys.push('comeback');
   if (s.mode === 'wild' && s.lw && mover === w) keys.push('wild');
   if (s.mode === 'hot' && s.hot && (e.why === 'line' ? e.line.some((b) => s.hot.includes(b)) : s.big.some((x, b) => x === w && s.hot.includes(b)))) keys.push('hot');
-  if (s.stl && w !== s.first) keys.push('stolen');
+  if (e.tie) keys.push('komi');
   if (e.why === 'line' ? theirs === 0 : mine - theirs >= 3) keys.push('rout');
   if (e.why === 'count' && mine - theirs <= 1) keys.push('photo');
   if (!((d[`${mode}_${w}_n`]) | 0)) keys.push('firstMode');
@@ -364,7 +358,7 @@ registerGame({
     'Tap a square, tap again to place. Its spot sends your partner to the matching small board.',
     'Won or full board? Then they may play in any open board.',
     'Three in a row wins a small board; three small boards in a row wins the game. If no big line is left, most boards wins.',
-    'Second player: you may take over the first mark, once.',
+    'Tied on boards at the end? The player who went second wins.',
   ],
 
   // ── rules (pure, deterministic) ──
@@ -377,16 +371,17 @@ registerGame({
     const { a, b } = boardsWon(s);
     const hot = s.mode === 'hot' ? ', hot boards counting double' : '';
     if (e && e.why === 'line') return { winner: e.who, sub: 'Three boards in a row' };
+    if (e && e.tie) return { winner: e.who, sub: `Boards tied ${a}–${b} — ties go to the player who went second.` };
     if (e && e.who) return { winner: e.who, sub: `No big line was left, so boards won decide it${hot}: ${Math.max(a, b)} to ${Math.min(a, b)}` };
     return { winner: null, text: 'Stalemate', sub: `No big line was left and boards won are tied ${a}–${b}. It’s a draw.` };
   },
   /** Pure helpers, exposed for the tests. */
-  kit: { MODES, BALANCE, canSteal, liveLines, lastLight, momentKeys, tally, momentText, stripText, MOMENTS, STRIPS, marksOf },
+  kit: { MODES, BALANCE, secondMover, tieNote, liveLines, lastLight, momentKeys, tally, momentText, stripText, MOMENTS, STRIPS, marksOf },
 
   // ── view ──
   css: `
 .g-ult { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 4px 0 10px; margin-top: calc(var(--gu-lift, 0) * -1px); user-select: none; -webkit-user-select: none; touch-action: manipulation; }
-.g-ult .gu-wrap { position: relative; width: min(100%, 600px, calc(100vh - 330px)); width: min(100%, 600px, calc(100dvh - 330px)); min-width: 270px; flex: none; }
+.g-ult .gu-wrap { order: 1; position: relative; width: min(100%, 600px, calc(100vh - 345px)); width: min(100%, 600px, calc(100dvh - 345px)); min-width: 270px; flex: none; }
 .g-ult .gu-big { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; background: var(--g-ink); border: 2px solid var(--g-ink); border-radius: var(--g-radius); overflow: hidden; box-shadow: var(--g-shadow); }
 .g-ult .gu-sb { position: relative; background: var(--g-card); padding: 6px; transition: background-color 160ms; }
 .g-ult .gu-cells { display: grid; grid-template-columns: repeat(3, 1fr); transition: opacity 200ms; }
@@ -448,7 +443,7 @@ registerGame({
 .g-ult .gu-hot { display: none; position: absolute; top: 1px; right: 1px; z-index: 3; pointer-events: none; align-items: center; gap: 1px; }
 .g-ult .gu-sb.is-hot .gu-hot { display: flex; }
 .g-ult .gu-hot svg { width: 15px; height: 15px; overflow: visible; fill: var(--g-hl); stroke: var(--g-ink); stroke-width: 1.7; stroke-linejoin: round; }
-.g-ult .gu-hot b { display: none; font: 900 0.62rem/1 var(--g-font-display); color: var(--g-ink); background: var(--g-hl); border: 1.5px solid var(--g-ink); border-radius: 4px; padding: 1px 3px; transform: rotate(-6deg); }
+.g-ult .gu-hot b { display: none; font: 900 0.62rem/1 var(--g-font-display); color: var(--g-on-ink); background: var(--g-hl); border: 1.5px solid var(--g-ink); border-radius: 4px; padding: 1px 3px; transform: rotate(-6deg); }
 .g-ult .gu-sb.is-hot.is-won .gu-hot b { display: block; }
 .g-ult .gu-sb.is-hot.is-won .gu-hot svg { width: 20px; height: 20px; }
 .g-ult .gu-sb.is-stamp .gu-hot { animation: gu-stamp 640ms cubic-bezier(0.3, 1.8, 0.5, 1) both; }
@@ -463,7 +458,7 @@ registerGame({
   .g-ult .gu-sb.is-open .gu-c:not(:disabled):hover::before { background: color-mix(in srgb, var(--g-hl) 60%, transparent); }
 }
 
-.g-ult .gu-side { display: flex; flex-direction: column; align-items: center; gap: 10px; width: 100%; max-width: 600px; min-width: 0; }
+.g-ult .gu-side { order: 2; display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; max-width: 600px; min-width: 0; }
 .g-ult .gu-plate { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 16px 8px 10px; border-radius: 999px; background: var(--g-card); border: 2px solid var(--g-ink); box-shadow: var(--g-shadow); font: 900 0.95rem/1.2 var(--g-font-display); color: var(--g-ink); max-width: 100%; text-wrap: balance; }
 .g-ult .gu-plate.wait { color: var(--g-muted); border-color: var(--g-line); }
 .g-ult .gu-plate.pop { animation: gu-plate 260ms cubic-bezier(0.3, 1.5, 0.5, 1); }
@@ -477,7 +472,7 @@ registerGame({
 .g-ult .gu-chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
 .g-ult .gu-mc { min-height: 44px; padding: 6px 14px; cursor: pointer; font: 800 0.88rem/1.1 var(--g-font-body); touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 .g-ult .gu-mc:active { transform: translate(2px, 2px); }
-.g-ult .gu-mc:focus-visible, .g-ult .gu-tok:focus-visible, .g-ult .gu-steal:focus-visible { outline: 3px solid var(--p-a); outline-offset: 3px; }
+.g-ult .gu-mc:focus-visible, .g-ult .gu-tok:focus-visible { outline: 3px solid var(--p-a); outline-offset: 3px; }
 .g-ult .gu-pick-d, .g-ult .gu-strip, .g-ult .gu-light { margin: 0; text-align: center; font: 700 0.84rem/1.3 var(--g-font-body); color: var(--g-muted); text-wrap: balance; max-width: 34em; }
 .g-ult .gu-strip { color: var(--g-ink); }
 .g-ult .gu-info { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 8px; }
@@ -485,9 +480,13 @@ registerGame({
 .g-ult .gu-tok .gu-m { position: static; width: 18px; height: 18px; flex: none; }
 .g-ult .gu-tok.is-ready { box-shadow: var(--g-shadow-sm); }
 .g-ult .gu-tok.is-armed { background: var(--g-hl); color: var(--g-on-ink); }
-.g-ult .gu-tok.is-used { opacity: 0.5; border-style: dashed; box-shadow: none; }
+.g-ult .gu-tok.is-used { border-style: dashed; box-shadow: none; background: var(--g-bg); }
+.g-ult .gu-tok.is-used span { text-decoration: line-through; text-decoration-thickness: 2px; }
+.g-ult .gu-tok.is-used .gu-m { opacity: 0.45; }
+.g-ult .gu-nm-a { color: var(--p-a-text); }
+.g-ult .gu-nm-b { color: var(--p-b-text); }
+.g-ult .gu-tie { font-weight: 900; }
 .g-ult .gu-tok:disabled { cursor: default; }
-.g-ult .gu-steal { min-height: 44px; }
 .g-ult .gu-light { color: var(--g-ink); }
 .g-ult .gu-moment { margin: 2px 0 0; padding: 8px 14px; max-width: 100%; text-align: center; text-wrap: balance; font: 900 0.92rem/1.25 var(--g-font-display); color: var(--g-ink); background: var(--g-hl); color: var(--g-on-ink); border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); box-shadow: var(--g-shadow-sm); transform: rotate(-1.2deg); animation: gu-stampin 380ms cubic-bezier(0.3, 1.7, 0.5, 1) both; }
 @keyframes gu-stampin { from { transform: scale(1.4) rotate(-6deg); opacity: 0; } to { transform: rotate(-1.2deg); opacity: 1; } }
@@ -523,13 +522,14 @@ registerGame({
     for (const id of Object.keys(MODES)) html += `<button type="button" role="radio" class="g-chip gu-mc" data-m="${id}" aria-checked="false">${MODES[id].name}</button>`;
     html += '</div><p class="gu-pick-d"></p></div>';
     html += '<p class="gu-strip" hidden></p>';
-    html += '<div class="gu-info" hidden><span class="g-chip is-hl gu-modechip"></span><button type="button" class="gu-tok" data-w="a"></button><button type="button" class="gu-tok" data-w="b"></button></div>';
+    html += '<div class="gu-info" hidden><span class="g-chip gu-tie"></span><span class="g-chip is-hl gu-modechip"></span><button type="button" class="gu-tok" data-w="a"></button><button type="button" class="gu-tok" data-w="b"></button></div>';
     html += '</div>';
     html += '<div class="gu-plate" aria-live="polite"><span class="gu-chip"></span><span class="gu-plate-t"></span></div>';
-    html += '<button type="button" class="gm-btn gm-btn-ghost gu-steal" hidden>Take that mark</button>';
     html += '<p class="gu-light" hidden></p><p class="gu-moment" hidden></p>';
     html += '</div>';
-    root.innerHTML = html;
+    // the picker and wildcards come before the grid in tab order; CSS puts the board first on screen
+    const k = html.indexOf('<div class="gu-side">');
+    root.innerHTML = html.slice(k) + html.slice(0, k);
     el.appendChild(root);
     const $ = (s) => root.querySelector(s);
     const bigEl = $('.gu-big');
@@ -541,7 +541,6 @@ registerGame({
     const pickEl = $('.gu-pick');
     const stripEl = $('.gu-strip');
     const infoEl = $('.gu-info');
-    const stealBtn = $('.gu-steal');
     const lightEl = $('.gu-light');
     const momentEl = $('.gu-moment');
     const toks = [...root.querySelectorAll('.gu-tok')];
@@ -692,7 +691,7 @@ registerGame({
       modeBtns.forEach((btn) => { btn.disabled = !c.canMove; });
       toks.forEach((tk) => { tk.disabled = !(c.canMove && c.actor === tk.dataset.w); });
       stripEl.hidden = !fresh;
-      infoEl.hidden = !(s.v === 2 && !c.over && (s.mode === 'wild' || s.mode !== 'classic'));
+      infoEl.hidden = c.over || !(s.v === 2 || fresh);
       if (picking) {
         const m = effMode();
         modeBtns.forEach((btn) => {
@@ -705,6 +704,12 @@ registerGame({
       }
       if (fresh) stripEl.textContent = stripText(dat(), effMode(), api.name, c.matchId);
       if (!infoEl.hidden) {
+        // the komi, visible before it matters: ties on boards go to whoever moves second
+        const second = s.v === 2 ? secondMover(s) : other(c.first);
+        const tie = $('.gu-tie');
+        tie.innerHTML = 'Ties → <b class="gu-nm"></b>';
+        tie.lastChild.textContent = api.name(second);
+        tie.lastChild.className = `gu-nm gu-nm-${second}`;
         const chip = $('.gu-modechip');
         chip.hidden = s.mode !== 'hot';
         chip.textContent = 'Hot Boards · stars count double';
@@ -727,14 +732,14 @@ registerGame({
     }
     function renderExtras(c) {
       const s = c.state;
-      // pie rule button for the second player's first move
-      stealBtn.hidden = !(c.canMove && !c.over && canSteal(s, c.actor));
-      stealBtn.disabled = stealBtn.hidden;
-      if (!stealBtn.hidden) stealBtn.textContent = c.mode === 'local' ? `${api.name(c.actor)}: take that mark` : 'Take that mark';
       // Last Light
       let light = null;
-      if (c.over) light = s.end && s.end.why === 'count' ? 'No big line left — boards decide' : null;
-      else light = lastLight(s);
+      if (c.over) light = s.end && s.end.why === 'count' ? (s.end.tie ? `No big line left. Boards tied ${s.end.a}–${s.end.b}: ties go to ${api.name(s.end.who)}` : 'No big line left — boards decide') : null;
+      else {
+        light = lastLight(s);
+        const tn = light && tieNote(s, api.name);
+        if (tn) light += ` · ${tn}`;
+      }
       lightEl.hidden = !light;
       if (light) lightEl.textContent = light;
       // the moment (shared through the game data, so both phones read the same line)
@@ -759,6 +764,7 @@ registerGame({
         const { a, b } = boardsWon(s);
         who = e.who || null;
         if (e.why === 'line') text = `${api.name(e.who)} wins, three in a row`;
+        else if (e.tie) text = `Boards tied ${a}–${b}: ${api.name(e.who)} wins the tie-break`;
         else if (e.who) text = `${api.name(e.who)} wins on boards, ${Math.max(a, b)}–${Math.min(a, b)}`;
         else text = `Boards tied ${a}–${b}. A draw.`;
       } else if (!c.canMove) {
@@ -774,8 +780,6 @@ registerGame({
       } else {
         const where = s.force !== null ? `play in the ${NAMES[s.force]} board` : 'play in any open board';
         if (wildOn(s)) text = 'Wildcard: play in any open board';
-        else if (canSteal(s, who)) text = online ? `${api.name(s.first)} opened · ${where}, or take that mark` : `${api.name(who)}: ${where}, or take that mark`;
-        else if (c.last && c.last.move && c.last.move.steal) text = `${api.name(c.last.who)} took your mark · ${where}`;
         else text = online ? `Your turn · ${where}` : `${api.name(who)}: ${where}`;
       }
       const chip = $('.gu-chip');
@@ -787,19 +791,27 @@ registerGame({
     // Phone on its side: the chrome above leaves little height, so size the board from what's left
     // (the empty status line is reclaimed while playing). Portrait sizing is pure CSS.
     const landscape = () => { try { return matchMedia('(orientation: landscape) and (max-height: 560px)').matches; } catch { return false; } };
+    const setVar = (k, v) => { if (root.style.getPropertyValue(k) !== v) root.style.setProperty(k, v); };
     function fit() {
       const over = !!(ctx && ctx.over);
-      if (!landscape()) { root.style.removeProperty('--gu-s'); root.style.setProperty('--gu-lift', over ? '0' : '22'); return; }
+      if (!landscape()) { root.style.removeProperty('--gu-s'); setVar('--gu-lift', over ? '0' : '22'); return; }
       const lift = over ? 0 : 18;
-      root.style.setProperty('--gu-lift', String(lift));
+      setVar('--gu-lift', String(lift));
       const gm = el.closest('.gm');
       const pad = gm ? parseFloat(getComputedStyle(gm).paddingBottom) || 12 : 12;
       const top = el.getBoundingClientRect().top + window.scrollY;
       const avail = window.innerHeight - top - pad - 2 + lift;
       const wide = root.clientWidth - 250;
-      root.style.setProperty('--gu-s', `${Math.max(180, Math.floor(Math.min(avail, wide > 180 ? wide : avail)))}px`);
+      setVar('--gu-s', `${Math.max(180, Math.floor(Math.min(avail, wide > 180 ? wide : avail)))}px`);
     }
     window.addEventListener('resize', fit);
+    // the status line above the stage comes and goes (end card closed, result shown): measure again
+    let ro = null;
+    try {
+      const gm = el.closest('.gm');
+      const st = gm && gm.querySelector('.gm-status');
+      if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(() => fit()); ro.observe(el); if (st) ro.observe(st); }
+    } catch { ro = null; }
     const popPlate = () => { plate.classList.remove('pop'); void plate.offsetWidth; plate.classList.add('pop'); };
     const calm = { animate: false, newCell: -1, bigDelay: 0, finale: 0 };
 
@@ -880,7 +892,7 @@ registerGame({
       if (!whyAim(b, i) && !(sel && sel.b === b && sel.i === i)) { sel = { b, i, by: 'key' }; paint(calm); }
     });
 
-    // mode picker, steal and wildcard
+    // mode picker and wildcard
     root.addEventListener('click', (e) => {
       const mc = e.target.closest('.gu-mc');
       if (mc && ctx && ctx.canMove && unset(ctx)) {
@@ -888,13 +900,6 @@ registerGame({
         store.setData({ mode: chosen });
         api.sfx('tap');
         paint(calm);
-        return;
-      }
-      if (e.target.closest('.gu-steal')) {
-        if (!ctx || !ctx.canMove) return;
-        const r = api.move({ steal: 1 });
-        if (!r.ok) refuse(null, r.error);
-        else { api.sfx('flip'); api.haptic(20); }
         return;
       }
       const tk = e.target.closest('.gu-tok');
@@ -933,7 +938,7 @@ registerGame({
       if (t && t.closest && t.closest('input, textarea, select, [contenteditable="true"]')) return;
       const onCell = t && t.classList && t.classList.contains('gu-c') && root.contains(t);
       const otherButton = t && t.closest && t.closest('button, a') && !onCell;
-      if (otherButton) return; // a button of ours (mode chip, steal, wildcard) or the app's keeps its own Enter
+      if (otherButton) return; // a button of ours (mode chip, wildcard) or the app's keeps its own Enter
       const arrows = { ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [-1, 0], ArrowDown: [1, 0] };
       if (arrows[e.key]) {
         e.preventDefault();
@@ -1015,9 +1020,11 @@ registerGame({
         wasOver = c.over;
         if (justEnded) countMatch(c);
       },
+      onEndClosed() { fit(); later(fit, 60); later(fit, 250); },
       destroy() {
         document.removeEventListener('keydown', onKey);
         window.removeEventListener('resize', fit);
+        if (ro) ro.disconnect();
         if (offData) offData();
         for (const t of timers) clearTimeout(t);
         timers.clear();

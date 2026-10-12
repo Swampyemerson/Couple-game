@@ -306,7 +306,7 @@ registerGame({
 
   // ── view ──
   css: `
-.g-four { --g4-chrome: 345px; --g4-ar: ${(VW / VH).toFixed(4)}; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 10px; padding: 4px 0 10px; user-select: none; -webkit-user-select: none; touch-action: manipulation; min-height: 0; }
+.g-four { --g4-chrome: 360px; --g4-ar: ${(VW / VH).toFixed(4)}; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 10px; padding: 4px 0 10px; user-select: none; -webkit-user-select: none; touch-action: manipulation; min-height: 0; }
 .g-four .g4-bd { order: 0; display: flex; flex-direction: column; align-items: center; width: 100%; }
 .g-four .g4-side { display: contents; }
 .g-four .g4-top { order: 2; display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; }
@@ -418,7 +418,7 @@ registerGame({
 .g-four .g4-chip { flex: none; width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--g-ink); box-shadow: inset 0 0 0 4px color-mix(in srgb, var(--g-ink) 22%, transparent); }
 .g-four .g4-chip.none { background: transparent; border-style: dashed; box-shadow: none; }
 
-@media (max-height: 720px) and (orientation: portrait) { .g-four { --g4-chrome: 314px; } }
+@media (max-height: 720px) and (orientation: portrait) { .g-four { --g4-chrome: 342px; } .g-four .g4-riv-b { display: none; } }
 @media (orientation: landscape) and (min-width: 560px) {
   .g-four { --g4-chrome: 175px; flex-direction: row; align-items: center; justify-content: center; gap: 18px; padding: 0; }
   .g-four .g4-bd { width: auto; flex: none; }
