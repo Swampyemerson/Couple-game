@@ -150,12 +150,12 @@ Final regression, run one file or section at a time on the final tree (shared bo
 | `chameleon-paint2.test.js` (new, paint) | ALL GOOD, 166 ok |
 | `chameleon-rivalry.test.js` (new, records, the Cup, looks, cards) | ALL GOOD, 118 ok |
 | `chameleon-hunt.test.js` (new, whisker, mercy, note, drama) | ALL GOOD, 117 ok. The `note` section timed out once under load while a fixer was editing, then passed on rerun |
-| `chameleon-twists.test.js` (new, twists, underdog, sudden death, streak, bug A, hotseat rules) | TWISTS_RESULT |
+| `chameleon-twists.test.js` (new, twists, underdog, sudden death, streak, bug A, hotseat rules) | ALL GOOD, 156 ok |
 | `chameleon-maps.test.js ONLY=spawns,launderette,static,slices` | ALL GOOD, 248 ok |
 | `chameleon-cu.test.js ONLY=static,load` | ALL GOOD, 35 ok |
 | `chameleon.test.js`: `paintpro`, `paintjuice`, `netpolish`, `variety`, `maps` (all 10 maps), `camsweep`, `bigperf`, `uxward`, `robust`, `leaks`, `crawl`, `seekclimb`, `spectate`, `huntpaint`, `timing` | ALL GOOD |
 | `chameleon.test.js` `blendfair` | ALL GOOD on rerun (first run: a load timeout) |
-| `chameleon.test.js` `disconnect`, `hotseat`, `db` | OLD_RESULT |
+| `chameleon.test.js` `disconnect`, `hotseat`, `db` | ALL GOOD (11 / 14 / 11 ok), including host and guest reloads |
 | Earlier in the session (builders and fixers): `ux`, `uxland`, `uxfinal`, `uxrematch`, `settings`, `settings3`, `toggles`, `timinglive`, `bigmatch`, `finalqa`, `dark`, `desktop`, `mapcache`, `chameleon-maps` `pockets` and `browser` | ALL GOOD (some only on a second run under load) |
 
 Measured:
