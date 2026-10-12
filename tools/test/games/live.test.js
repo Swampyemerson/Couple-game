@@ -365,28 +365,30 @@ async function hockeyPower(h) {
   assert(med > slow && med <= fast + 5, `a medium swipe lands in between (${Math.round(med)} u/s; timing-dependent, so no absolute bound)`);
   assert(fast > 245, `a real flick = slap shot (${Math.round(fast)} u/s)`);
   assert(fast > slow * 2.5, 'the shot range is wide: flick vs push is > 2.5x');
-  // Frame jitter must not double a push: the mallet's speed is the finger's speed whatever the touch / frame cadence
-  // (30 % of the frames bring no touch sample, like a 120 Hz screen over a 60 Hz digitiser).
+  // Touch jitter must not double a push: the finger moves steadily but 30 % of the frames bring no touch sample (like a
+  // 120 Hz screen over a 60 Hz digitiser), so the next sample is a double step. The mallet's hitting speed is low-passed,
+  // so the push stays near the finger's speed. Unsmoothed, a third of these pushes were slaps (median ~190, up to the 300 cap).
   const finger = 104; // u/s (about 350 px/s on a phone)
-  const worst = await a.evaluate(async (finger) => {
+  const peaks = await a.evaluate(async (finger) => {
     const cv = document.querySelector('.g-hockey canvas'); const T = window.__hockeyTest; const frame = () => new Promise((r) => requestAnimationFrame(r));
     const send = (type, y) => { const [cx, cy] = T.toClient(50, y); cv.dispatchEvent(new PointerEvent(`pointer${type}`, { bubbles: true, cancelable: true, pointerId: 61, pointerType: 'touch', isPrimary: true, clientX: cx, clientY: cy, buttons: type === 'up' ? 0 : 1 })); };
-    let worst = 0;
-    for (let rep = 0; rep < 3; rep++) {
-      let y = 158; send('down', y); for (let i = 0; i < 30; i++) await frame();
+    const out = [];
+    for (let rep = 0; rep < 6; rep++) {
+      let worst = 0; let y = 158; send('down', y); for (let i = 0; i < 30; i++) await frame();
       T.place(50, 118, 0, 0); let last = performance.now();
       while (y > 96) {
         await frame(); const now = performance.now(); const dt = (now - last) / 1000; last = now;
-        if (Math.random() < 0.3) { y -= finger * dt * 0; } else { y -= finger * dt / 0.7; send('move', y); }
+        y -= finger * dt; if (Math.random() >= 0.3) send('move', y);
         const p = T.state().puck; worst = Math.max(worst, Math.hypot(p.vx, p.vy));
       }
       send('up', y);
       for (let i = 0; i < 20; i++) { await frame(); const p = T.state().puck; worst = Math.max(worst, Math.hypot(p.vx, p.vy)); }
-      T.place(50, 80, 0, 0);
+      T.place(50, 80, 0, 0); out.push(Math.round(worst));
     }
-    return worst;
+    return out;
   }, finger);
-  assert(worst < 175, `a ${finger} u/s push stays a soft pass under frame jitter (peak ${Math.round(worst)} u/s, was ~200)`);
+  const sorted = [...peaks].sort((x, y) => x - y); const median = (sorted[2] + sorted[3]) / 2; const worst = sorted[sorted.length - 1];
+  assert(median < 140 && worst < 220, `a ${finger} u/s push stays a soft pass under touch jitter (peaks ${peaks.join(' ')}; median ${median} < 140, worst ${worst} < 220)`);
   await h.closeGame(a);
 }
 
@@ -414,6 +416,44 @@ async function hockeyStall(h) {
   await a.waitForFunction(() => window.__hockeyTest.stamps().includes('RESET') || window.__hockeyTest.state().phase === 'count', null, { timeout: 4000 });
   assert(true, 'a puck sandwiched between the mallets is reset');
   await touch(a, [[71, 'up', 50, 90], [72, 'up', 50, 80]], 0);
+  await h.closeGame(a);
+}
+
+/** Nothing printed in the middle of the table may land on anything else, and the scoreboard bands come and go with the room. */
+async function hockeyOverlays(h) {
+  const { a } = h;
+  await h.startLive(a, 'hockey', 'local');
+  for (const [w, hh, want] of [[390, 844, 'h'], [430, 932, 'h'], [360, 640, null], [375, 667, null], [844, 390, 'v'], [390, 664, null]]) {
+    await a.setViewportSize({ width: w, height: hh }); await h.wait(300);
+    const st = await hk(a);
+    assert(st.band === want, `${w}x${hh}: scoreboard bands ${want ? `shown (${want})` : 'hidden when space is tight'} (band ${st.band})`);
+  }
+  await hkStart(a, 'classic');
+  const sample = (ms) => a.evaluate((ms) => new Promise((resolve) => {
+    const out = []; const t0 = performance.now(); let since = null;
+    const f = () => {
+      const s = window.__hockeyTest.state(); const now = performance.now();
+      if (s.centre.length) { if (since === null) since = now; } else since = null;
+      out.push({ ph: s.phase, c: s.centre, hint: s.hint, busyFor: since === null ? 0 : now - since, stamps: window.__hockeyTest.stamps() });
+      if (now - t0 < ms) requestAnimationFrame(f); else resolve(out);
+    };
+    f();
+  }), ms);
+  await hkPhase(a, 'play', 5000);
+  await a.evaluate(() => window.__hockeyTest.place(50, 130, 0, 0));
+  await hkPhase(a, 'count', 8000);
+  const hog = await sample(3300);
+  assert(hog.some((f) => f.c.includes('HOG!')), 'the HOG! stamp showed');
+  assert(hog.some((f) => f.c.includes('digit')), 'then the 3-2-1 showed');
+  assert(!hog.some((f) => f.c.includes('HOG!') && f.c.includes('digit')), 'HOG! and the 3-2-1 are never on screen together');
+  assert(!hog.some((f) => f.busyFor > 250 && f.hint > 0.2), 'the "Drag your mallet" hint steps aside while the middle is busy');
+  assert(hog[hog.length - 1].ph === 'play' && hog[hog.length - 1].hint > 0.9 || (await hk(a)).hint > 0.9, 'and comes back (nobody has touched yet)');
+  await a.evaluate(() => window.__hockeyTest.score('b'));
+  const goal = await sample(3200);
+  assert(goal.some((f) => f.c.includes('goal')) && goal.some((f) => f.c.includes('digit')), 'goal stamp, then the countdown');
+  assert(!goal.some((f) => f.c.includes('goal') && f.c.includes('digit')), 'the goal stamp and the 3-2-1 never overlap');
+  assert(!goal.some((f) => f.busyFor > 250 && f.hint > 0.2), 'the hint stays out of the way of the goal stamp and the countdown');
+  await a.setViewportSize({ width: 390, height: 664 });
   await h.closeGame(a);
 }
 
@@ -1199,6 +1239,7 @@ const want = (g) => GAME === 'all' || GAME === g;
       await hockeyLocalTouch(h);
       await hockeyPower(h);
       await hockeyStall(h);
+      await hockeyOverlays(h);
       await hockeyDrama(h);
       await hockeyTables(h, 'light', ['pillar', 'twin', 'shrink', 'power', 'quick']);
     }

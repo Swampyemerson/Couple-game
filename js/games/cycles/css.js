@@ -158,6 +158,7 @@ export const CSS = `
   .g-cycles .cy-chip { min-height: 56px; }
   .g-cycles .cy-mini { width: 26px; } .g-cycles .cy-mini.is-wide { width: 38px; }
   .g-cycles .cy-glyph { height: 34px; }
+  .g-cycles .cy-recs { margin-left: 18px; }
 }
 @media (orientation: landscape) and (max-height: 340px) {
   .g-cycles .cy-pick { padding: 4px 8px 6px; gap: 4px; }

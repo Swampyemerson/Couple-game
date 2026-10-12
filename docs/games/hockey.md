@@ -19,10 +19,35 @@ rivalry line). Tests: the hockey parts of `tools/test/games/live.test.js` (`GAME
   The mallet's speed is `distance / real frame time` (`rdt` in `simulate`/`guestUpdate`), not
   `distance / (substeps * DT)`: the substep count wobbles 1-2-3 between frames, which used to double a
   push now and then (a 100 u/s swipe randomly became a 200 u/s shot).
+  The mallet's *hitting* velocity is the frame's displacement over real time, low-passed (`smoothVel`,
+  `VEL_SMOOTH` = 40 ms): a 60 Hz digitiser under a 120 Hz screen (or any dropped touch sample) alternates
+  0x and 2x displacement frames, and unsmoothed a hit on a 2x frame was twice as hard as the finger
+  moved (a steady 104 u/s push gave a median ~190 u/s peak, often the 300 cap; now median ~118).
 - **Shot clock (stall breaker).** A puck that stays on one half (or crawls below 25 u/s) for 6 s gets a
   3-2-1 ring from 3 s. At 0: "HOG!" stamp, the puck goes back to the centre and is served to the
-  *other* player. A puck squeezed between both mallets for 0.5 s ("RESET") is served from the centre
+  *other* player (the stamp has the centre to itself for 1 s, then the 3-2-1 runs: `STALL_MS`). A puck squeezed between both mallets for 0.5 s ("RESET") is served from the centre
   to a random player. Per puck on Twin Pucks.
+
+## Layout: scoreboard bands and the centre lane
+- **Bands.** The physics aspect (100 x 170) never changes, so a tall phone (390x844 leaves ~160 px, 430x932
+  ~200 px) uses the spare space for two printed scoreboard cards, one past each goal end: big score
+  numeral in the player's ink, name, table name + "FIRST TO n" (swapped for a bobbing MATCH POINT flag
+  at match point), the live rally counter (yellow from 8) and the rally record to beat ("BEST 12 · SYDNEY",
+  from `hk_rally_best`/`hk_rally_who`). Online, your card is at the bottom and the opponent's at the top,
+  both upright for you; on one phone the far card is turned round to face its player. In landscape
+  (844x390) they are narrow vertical cards left and right of the table (left = the player defending
+  the left goal). They are drawn only when the free strip is at least ~66 px (portrait) / ~58 px
+  (landscape), so 360x640, 375x667 and 390x664 get the plain table, whose on-table score numerals
+  are hidden whenever a band shows. The bands sit inside the rig, which already clears the immersive
+  corner stickers and the safe areas. `drawBandStatic` prints the card and halftone into the cached
+  table layer; `drawBandText` draws the live text every frame.
+- **Centre lane.** Everything printed in the middle (GOAL stamp, 3-2-1, RALLY RECORD / FASTEST GOAL /
+  COMEBACK / HOG! / RESET stamps, the table-name and MATCH POINT banners) is a lane item with a height,
+  and `render` stacks them outward from the centre spot (never on the parked puck): one reader uses both
+  sides, a shared phone keeps each player's copy on their own half. Nothing overlaps by construction.
+  The "Drag your mallet" hint (and the keyboard legend) fades out (50 ms) while the lane, a POST!
+  stamp or a shot-clock ring is up, and fades back (180 ms) until the first touch.
+  Banners wait for the real countdown (`left <= COUNT_MS + 400`), so a HOG! stamp is never under them.
 
 ## Tables (the picker)
 Before each match the host (or the single phone) picks. The guest sees "Emerson is picking…" and the
@@ -79,4 +104,5 @@ The picker shows rally / fastest goal / streak; the end card's `sub` is the riva
 ## Testing
 `GAME=hockey PORT=9100 SHOTS=<dir> node tools/test/games/live.test.js`. `window.__hockeyTest` (dev
 server only): `state()`, `start(tableId)` (skip the picker), `pick(id)`, `score(w)`, `place(x,y,vx,vy,puckIndex)`,
-`setRally(n, who)`, `toClient(x,y)`, `stamps()`, `events()`, `goals()`.
+`setRally(n, who)`, `toClient(x,y)`, `stamps()`, `events()`, `goals()`. `state()` also reports `centre` (the
+lane items on screen this frame), `hint` (0..1 fade of the hint) and `band` (`'h'` / `'v'` / null).

@@ -19,7 +19,7 @@
 // (phase 'setup' + the chosen table), so a dropped message heals itself.
 import { registerGame } from './core.js';
 import { createNet } from './net.js';
-import { W, H, RM, RP, GH, POST_R, DT, SERVE_V, MALLET_MAX, HIT_WALL, HIT_PILLAR, HIT_FRAME, TABLES, TABLE_ORDER, tableOf, newEnv, setGoals, goalHalf, clampMallet, clampTarget, unsqueeze, trackHand, capToHand, stepPuck, clamp, r1, other } from './hockey/physics.js';
+import { W, H, RM, RP, GH, POST_R, DT, SERVE_V, MALLET_MAX, HIT_WALL, HIT_PILLAR, HIT_FRAME, TABLES, TABLE_ORDER, tableOf, newEnv, setGoals, goalHalf, clampMallet, clampTarget, unsqueeze, trackHand, smoothVel, capToHand, stepPuck, clamp, r1, other } from './hockey/physics.js';
 import { createSound } from './hockey/sound.js';
 import { SETUP_CSS, createSetup } from './hockey/setup.js';
 import { readRecords, rallyResult, fastResult, matchResult, rivalryLine } from './hockey/records.js';
@@ -143,6 +143,7 @@ registerGame({
     let mpAt = -1e9;
     let prevPhaseR = null;
     let prevRender = 0;
+    let centreNow = [];          // what the middle-of-the-table lane shows this frame (test hook)
     let hintK = 1;               // the hint's fade (it steps aside for anything printed in the middle)
     let tableAt = -1e9;
     let recs = readRecords(api.data()); // cached for the bands (refreshed a few times a second)
@@ -602,11 +603,12 @@ registerGame({
         const maxd = MALLET_MAX * rdt; const d = Math.hypot(dx, dy);
         if (d > maxd) { dx *= maxd / d; dy *= maxd / d; }
         m.dx = dx; m.dy = dy;
+        smoothVel(m, dx, dy, rdt);
       }
       for (let i = 1; i <= n; i++) {
         for (const m of ms) {
           const nx = m.sx + (m.dx * i) / n; const ny = m.sy + (m.dy * i) / n;
-          m.vx = ((nx - m.x) * n) / rdt; m.vy = ((ny - m.y) * n) / rdt; m.x = nx; m.y = ny;
+          m.vx = m.wvx; m.vy = m.wvy; m.x = nx; m.y = ny;
           clampMallet(m, env);
           capToHand(m);
           if (phase !== 'play') for (const P of parked) unsqueeze(P, m, env); // keep mallets off parked pucks
@@ -769,9 +771,10 @@ registerGame({
         let dx = phase === 'setup' ? 0 : m.tx - m.x; let dy = phase === 'setup' ? 0 : m.ty - m.y;
         const maxd = MALLET_MAX * rdt; const d = Math.hypot(dx, dy);
         if (d > maxd) { dx *= maxd / d; dy *= maxd / d; }
+        smoothVel(m, dx, dy, rdt);
         for (let i = 1; i <= n; i++) {
           const nx = m.sx + (dx * i) / n; const ny = m.sy + (dy * i) / n;
-          m.vx = ((nx - m.x) * n) / rdt; m.vy = ((ny - m.y) * n) / rdt; m.x = nx; m.y = ny;
+          m.vx = m.wvx; m.vy = m.wvy; m.x = nx; m.y = ny;
           clampMallet(m, env);
           capToHand(m);
           if (live) for (let j = 0; j < table.pucks; j++) { const g = G[j]; if (g.on) { const r = stepPuck(g.dp, [m, hostM], guestHit, true, env, ts); if (r.mask) bounceFx(r.mask & ~HIT_FRAME, g.dp); } }
@@ -1252,7 +1255,7 @@ registerGame({
       const items = [];
       const ssince = now - fx.stampAt;
       if (fx.stampWho && ssince < GOAL_MS) {
-        items.push({ t: -8.5, b: 14.5, pref: 1, draw(x, y, rot, dn) {
+        items.push({ name: 'goal', t: -8.5, b: 14.5, pref: 1, draw(x, y, rot, dn) {
           const sc = reduced ? 1 : 1 + 0.35 * Math.max(0, 1 - ssince / 160);
           c.globalAlpha = ssince > GOAL_MS - 200 ? (GOAL_MS - ssince) / 200 : 1;
           text(c, 'GOAL', x, y, 17 * s * sc, T[fx.stampWho], rot - 0.08, T.ink);
@@ -1264,12 +1267,12 @@ registerGame({
         const n = Math.max(1, Math.ceil(left / (COUNT_MS / 3)));
         const frac = 1 - ((left % (COUNT_MS / 3)) + COUNT_MS / 3) % (COUNT_MS / 3) / (COUNT_MS / 3);
         const pop = reduced ? 1 : 1 + 0.25 * Math.max(0, 1 - frac * 4);
-        items.push({ t: -8.5, b: 8.5, pref: 1, draw(x, y, rot) { text(c, String(Math.min(3, n)), x, y, 22 * s * pop, T.hl, rot, T.ink); } });
+        items.push({ name: 'digit', t: -8.5, b: 8.5, pref: 1, draw(x, y, rot) { text(c, String(Math.min(3, n)), x, y, 22 * s * pop, T.hl, rot, T.ink); } });
       }
       stamps.forEach((st, k) => {
         if (!st.both) return;
         const age = now - st.t0; const z = st.size;
-        items.push({ t: -0.6 * z, b: (st.sub ? 0.86 : 0.6) * z, pref: k % 2 ? -1 : 1, draw(x, y, rot, dn) {
+        items.push({ name: st.text, t: -0.6 * z, b: (st.sub ? 0.86 : 0.6) * z, pref: k % 2 ? -1 : 1, draw(x, y, rot, dn) {
           const pop = reduced ? 1 : 1 + 0.4 * Math.max(0, 1 - age / 150); const sz = z * s * pop;
           c.globalAlpha = age > st.dur - 250 ? (st.dur - age) / 250 : 1;
           sticker(c, st.text, x, y, sz, colOf(st.col), rot - 0.07, 62 * s);
@@ -1281,14 +1284,14 @@ registerGame({
       if (phase === 'count' && left <= COUNT_MS + 400) {
         const first = !(host ? goals : HS ? HS.g || 0 : 0) && now - tableAt < 2600;
         if (first && table.id !== 'classic') {
-          items.push({ t: -4, b: 9, pref: -1, draw(x, y, rot, dn) {
+          items.push({ name: 'intro', t: -4, b: 9, pref: -1, draw(x, y, rot, dn) {
             sticker(c, table.name.toUpperCase(), x, y, 7 * s, T.hl, rot - 0.04, 60 * s);
             text(c, table.blurb, x, y + dn * 6.6 * s, 2.6 * s, T.ink, rot - 0.04, T.card, 900, T.fontBody, 60 * s);
           } });
         }
         if (mp.length) {
           const both = mp.length === 2;
-          items.push({ t: -4, b: both ? 4 : 9, pref: -1, draw(x, y, rot, dn) {
+          items.push({ name: 'matchpoint', t: -4, b: both ? 4 : 9, pref: -1, draw(x, y, rot, dn) {
             sticker(c, both ? 'DOUBLE MATCH POINT' : 'MATCH POINT', x, y, 7 * s, both ? T.hl : T[mp[0]], rot + 0.03, 62 * s);
             if (!both) text(c, api.name(mp[0]), x, y + dn * 6.2 * s, 3 * s, T.ink, rot + 0.03, T.card, 900, T.fontBody, 60 * s);
           } });
@@ -1319,6 +1322,7 @@ registerGame({
         if (st.sub) text(c, st.sub, sx, sy + (st.rot ? -1 : 1) * sz * 0.66, Math.max(9, sz * 0.3), T.ink, st.rot - 0.07, T.card, 900, T.fontBody, 62 * s);
         c.globalAlpha = 1;
       }
+      centreNow = items.map((it) => it.name);
       const centreBusy = items.length > 0 || stamps.length > 0 || pucksOn().some((p, i) => (host ? p.on && p.sk : G[i].on && G[i].sk));
       // match-point slow motion: a printed frame closes in
       if (ts < 0.98 && !reduced) {
@@ -1450,7 +1454,7 @@ registerGame({
           goals: { a: env.ghA, b: env.ghB }, post: env.post, setup: setup.visible,
           mallets: { a: { x: M.a.x, y: M.a.y }, b: { x: M.b.x, y: M.b.y } },
           targets: { a: { x: M.a.tx, y: M.a.ty }, b: { x: M.b.tx, y: M.b.ty } },
-          rtt: net ? net.rtt : 0, lag: Math.round(glag), override: G.some((g) => !!g.ov),
+          centre: centreNow.slice(), hint: Math.round(hintK * 100) / 100, band: band ? band.kind : null, rtt: net ? net.rtt : 0, lag: Math.round(glag), override: G.some((g) => !!g.ov),
         }),
         start: (id = 'classic') => { if (host) startMatch(id); },
         pick: (id) => { if (host && phase === 'setup') { sel = id; if (TABLES[id]) applyTable(id); setup.select(id); publishSoon(); } },

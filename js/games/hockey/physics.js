@@ -146,6 +146,15 @@ export function trackHand(m, dt) {
   m.hand = Math.max(sp, m.hand * Math.exp(-dt / 0.1));
   m.ptx = m.tx; m.pty = m.ty;
 }
+/** The velocity a mallet hits with: the frame's displacement over real time, low-passed (about 40 ms). A phone
+ *  digitiser at 60 Hz under a 120 Hz screen (or any dropped touch sample) alternates 0x and 2x displacement
+ *  frames; raw, a hit on a 2x frame was twice as hard as the finger really moved. */
+export const VEL_SMOOTH = 0.04;
+export function smoothVel(m, dx, dy, rdt) {
+  const k = 1 - Math.exp(-rdt / VEL_SMOOTH);
+  m.wvx = (m.wvx || 0) + (dx / rdt - (m.wvx || 0)) * k;
+  m.wvy = (m.wvy || 0) + (dy / rdt - (m.wvy || 0)) * k;
+}
 /** A mallet hits only as hard as the hand behind it moves: when it snaps back after being
  *  pushed off the puck (pinned on a rail, or released at the serve) it nudges, not slams. */
 export function capToHand(m) {

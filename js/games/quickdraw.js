@@ -176,7 +176,7 @@ registerGame({
     .g-qd .qd-hat { transform-box: fill-box; transform-origin: 50% 80%; transition: transform 0.55s cubic-bezier(0.2, 0.7, 0.4, 1), opacity 0.55s; }
     .g-qd .qd-fig.is-hatless .qd-hat { transform: translate(-16px, -34px) rotate(-75deg); opacity: 0; }
     .g-qd .qd-kind { position: absolute; left: 6px; top: 5px; z-index: 2; padding: 1px 6px 0; font: 900 0.62rem/1.5 var(--g-font-body); letter-spacing: 0.1em; color: var(--g-on-ink); background: var(--g-hl); border: 2px solid var(--g-ink); border-radius: 4px; transform: rotate(-2deg); }
-    .g-qd .qd-kind.qd-top { left: auto; top: auto; right: 6px; bottom: 5px; transform: rotate(178deg); }
+    .g-qd .qd-kind.qd-top { left: auto; right: 6px; transform: rotate(178deg); }
     .g-qd .qd-kind[hidden] { display: none; }
     .g-qd .qd-flashout { position: absolute; inset: 0; z-index: 2; background: var(--g-white, #fff); opacity: 0; pointer-events: none; }
     .g-qd .qd-flashout.go { animation: qd-hitstop 0.2s ease-out both; }
@@ -238,6 +238,18 @@ registerGame({
     .g-qd.is-phone .qd-sig.is-draw .qd-word { font-size: clamp(1.8rem, 9vw, 2.6rem); }
     .g-qd.is-phone .qd-line, .g-qd.is-phone .qd-times { font-size: 0.8rem; }
     .g-qd.is-phone .qd-pad { flex-direction: row; gap: 10px; flex-wrap: wrap; align-content: center; }
+    /* small portrait phones: slimmer pads and signal panels, so the scene keeps a readable size */
+    @media (orientation: portrait) and (max-height: 700px) {
+      .g-qd.is-phone { grid-template-rows: minmax(56px, 0.56fr) minmax(0, 2fr) minmax(56px, 0.56fr); }
+      .g-qd.is-phone .qd-pad { min-height: 56px; padding: 4px 10px; }
+      .g-qd.is-phone .qd-pad-cta { font-size: clamp(1.25rem, 6vw, 1.7rem); }
+      .g-qd.is-phone .qd-mid { gap: 3px; }
+      .g-qd.is-phone .qd-word { font-size: clamp(1.15rem, 5.6vw, 1.7rem); border-width: 2px; padding: 0 10px; }
+      .g-qd.is-phone .qd-sig.is-draw .qd-word { font-size: clamp(1.5rem, 7.4vw, 2.2rem); margin-bottom: 2px; }
+      .g-qd.is-phone .qd-sig { gap: 0; }
+      .g-qd.is-phone .qd-line, .g-qd.is-phone .qd-times { font-size: 0.74rem; line-height: 1.2; min-height: 1.2em; }
+      .g-qd.is-phone .qd-kind { font-size: 0.56rem; top: 4px; }
+    }
     .g-qd.is-desk { max-width: 620px; width: 100%; margin: 0 auto; }
     .g-qd.is-desk .qd-pads { flex: 0 0 auto; height: clamp(76px, 24vh, 150px); }
     .g-qd.is-live .qd-pads { flex: 0 0 auto; height: clamp(88px, 22vh, 210px); max-width: 520px; width: 100%; margin: 0 auto; }
@@ -409,10 +421,16 @@ registerGame({
       stamping = true;
       const s = stamps.shift();
       const two = stampNodes.length > 1 && getComputedStyle(stampNodes[1]).display !== 'none'; // one phone, portrait: one for each player
+      // a small scene (a short phone) is mostly art: each player's stamp lands on their own pad instead
+      const onPads = two && sceneEl.offsetHeight < 200;
+      const midTop = onPads ? stampNodes[0].parentElement.getBoundingClientRect().top : 0;
       stampNodes.forEach((n, i) => {
         n.textContent = s.text;
         n.className = `qd-stamp${i ? ' qd-top' : ''}${s.cls ? ` ${s.cls}` : ''}`;
-        n.style.top = `${sceneEl.offsetTop + sceneEl.offsetHeight * (two ? (i ? 0.3 : 0.7) : 0.5)}px`;
+        if (onPads) {
+          const p = root.querySelector(`.qd-pad[data-w="${i ? 'b' : 'a'}"]`).getBoundingClientRect();
+          n.style.top = `${p.top + p.height / 2 - midTop}px`;
+        } else n.style.top = `${sceneEl.offsetTop + sceneEl.offsetHeight * (two ? (i ? 0.3 : 0.7) : 0.5)}px`;
       });
       void stampNodes[0].offsetWidth;
       stampNodes.forEach((n) => n.classList.add('go'));
