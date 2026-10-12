@@ -364,7 +364,7 @@ const CSS = `
 .g-fleet .fl-ship.is-ghost .fl-hull { fill: color-mix(in srgb, var(--ship) 28%, transparent); stroke-dasharray: 5 3; }
 .g-fleet .fl-ship.is-ghost .fl-deck { display: none; }
 .g-fleet .fl-scope { z-index: 1; }
-.g-fleet .fl-scope::after { content: ''; position: absolute; inset: 22% 8%; border: 1.5px dotted color-mix(in srgb, var(--g-ink) 30%, transparent); border-radius: 999px; }
+.g-fleet .fl-scope::after { content: ''; position: absolute; inset: 22% 8%; border: 1.5px dotted color-mix(in srgb, var(--g-ink) 38%, transparent); border-radius: 999px; }
 
 /* ── marks ── */
 .g-fleet .fl-mark { display: grid; place-items: center; z-index: 3; }
@@ -455,8 +455,8 @@ const CSS = `
 .g-fleet .fl-book tbody th { text-align: left; font-weight: 700; color: var(--g-muted); }
 .g-fleet .fl-book td { font: 900 .86rem/1.2 var(--g-font-body); white-space: nowrap; }
 .g-fleet .fl-new { display: inline-block; margin-left: 4px; padding: 1px 4px; border: 1.5px solid var(--g-ink); border-radius: 4px; background: var(--g-hl); color: var(--g-on-ink); font: 900 .58rem/1.2 var(--g-font-body); text-transform: uppercase; letter-spacing: .04em; vertical-align: 1px; }
-.g-fleet .fl-book-note { margin-top: 6px; font-size: .8rem; font-weight: 700; }
-.g-fleet .fl-captain { font-size: .8rem; font-weight: 700; padding-left: var(--gut); margin: -4px 0 10px; color: var(--g-ink); }
+.g-fleet .fl-book-note { padding-top: 6px; font-size: .8rem; font-weight: 700; }
+.g-fleet .fl-captain { font-size: .8rem; font-weight: 700; line-height: 1.35; padding: 0 0 8px var(--gut); color: var(--g-ink); }
 
 /* ── stamps ── */
 .g-fleet .fl-stamp { position: absolute; left: calc(50% + var(--gut) / 2); top: calc(50% + var(--gut) / 2); z-index: 6; pointer-events: none; padding: 7px 16px 9px; border: 3px solid var(--g-ink); border-radius: 6px; background: var(--g-hl); color: var(--g-on-ink); box-shadow: 4px 4px 0 var(--fl-edge); text-align: center; white-space: nowrap; font: 900 clamp(1.25rem, 6.4cqw, 1.9rem)/1.05 var(--g-font-display); text-transform: uppercase; letter-spacing: .03em; transform: translate(-50%, -50%) rotate(-8deg); animation: gfleet-stamp 1.9s cubic-bezier(.2, .9, .3, 1.2) both; }
@@ -468,13 +468,13 @@ const CSS = `
 .g-fleet .fl-place { display: grid; gap: 12px; justify-items: center; }
 .g-fleet .fl-main, .g-fleet .fl-aside { width: calc(var(--cell) * 8 + var(--gut)); max-width: 100%; }
 .g-fleet .fl-aside { padding-left: var(--gut); display: flex; flex-direction: column; gap: 12px; }
-.g-fleet .fl-hint { font-size: .84rem; color: var(--g-muted); padding-left: var(--gut); margin: -1px 0 10px; line-height: 1.35; }
+.g-fleet .fl-hint { font-size: .84rem; color: var(--g-muted); padding: 0 0 10px var(--gut); line-height: 1.35; }
 .g-fleet .fl-hint b { color: var(--g-ink); }
 .g-fleet .fl-rules { display: flex; gap: 6px; padding-left: var(--gut); margin: 2px 0 6px; }
 .g-fleet .fl-rule { flex: 1; min-height: 44px; padding: 0 8px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); font: 800 .84rem/1 var(--g-font-body); box-shadow: var(--g-shadow-sm); touch-action: manipulation; -webkit-appearance: none; appearance: none; }
 .g-fleet .fl-rule[aria-pressed="true"] { background: var(--g-hl); color: var(--g-on-ink); }
 .g-fleet .fl-rule:not(:disabled):active { transform: translate(2px, 2px); box-shadow: none; }
-.g-fleet .fl-rules-note { font-size: .8rem; line-height: 1.35; color: var(--g-muted); padding-left: var(--gut); margin: 0 0 8px; }
+.g-fleet .fl-rules-note { font-size: .8rem; line-height: 1.35; color: var(--g-muted); padding: 0 0 8px var(--gut); }
 .g-fleet .fl-rules-note b { color: var(--g-ink); }
 .g-fleet .is-edit .fl-ship { pointer-events: auto; cursor: grab; touch-action: none; -webkit-appearance: none; appearance: none; }
 .g-fleet .is-edit .fl-ship:focus-visible { outline: 3px solid var(--g-hl); outline-offset: 2px; }
@@ -490,7 +490,7 @@ const CSS = `
 .g-fleet .fl-dock-ship:focus-visible { outline: 3px solid var(--g-hl); outline-offset: 3px; }
 .g-fleet .fl-slot { border: 2px dashed var(--g-line); border-radius: 10px; }
 .g-fleet .fl-dock-done { width: 100%; min-height: var(--cell); display: grid; place-items: center; text-align: center; font: 700 .9rem/1.3 var(--g-font-body); color: var(--g-muted); border: 2px dashed var(--g-line); border-radius: var(--g-radius); padding: 8px; }
-.g-fleet .fl-named { font: 700 .8rem/1.3 var(--g-font-body); color: var(--g-muted); margin-top: -4px; }
+.g-fleet .fl-named { font: 700 .8rem/1.3 var(--g-font-body); color: var(--g-muted); }
 .g-fleet .fl-named b { color: var(--g-ink); }
 .g-fleet .fl-note { font-size: .84rem; font-weight: 800; color: var(--g-muted); }
 .g-fleet .fl-actions { display: flex; gap: 10px; }
@@ -870,6 +870,7 @@ registerGame({
       const foeRun = lastRunBy(shots, foe);
       const foeRunSet = new Set(foeRun);
       const lastFoe = foeRun.length ? foeRun[foeRun.length - 1] : -1;
+      if (weapon !== 'shot' && !(mode === 'arsenal' && s.kit && s.kit[v][weapon] > 0)) { weapon = 'shot'; armed = null; } // nothing left to fire
       const special = mode === 'arsenal' && weapon !== 'shot' && myTurn;
       const need = mode === 'salvo' ? salvoSize(s, v) : 0;
       if (!myTurn) { pick = []; armed = null; }
@@ -987,8 +988,7 @@ registerGame({
       } else if (pending) {
         status = `${mode === 'salvo' ? 'Salvo away' : 'Miss'}. Over to ${nm(foe)}`;
       } else if (myTurn) {
-        const who = c.mode === 'local' ? `${nm(v)}: ` : '';
-        if (mode === 'salvo') status = `${who}fire a salvo of ${need}`;
+        if (mode === 'salvo') status = c.mode === 'local' ? `${nm(v)}, fire a salvo of ${need}` : `Fire a salvo of ${need}`;
         else status = c.mode === 'local' ? (again ? `Hit! ${nm(v)} fires again` : `${nm(v)}’s shot`) : again ? 'Hit! Fire again' : 'Your shot';
         if (mode !== 'salvo' && afloat(s, foe) === 1) status += ' · one ship left';
       } else {
@@ -1092,6 +1092,9 @@ registerGame({
         stamp(tChart, hot, `${tailHits(s, v)} in a row${torpBonus}`, wait + 200);
         api.sfx('hit'); api.haptic(25);
         later(() => api.sfx('good'), wait + 220);
+      } else if (mineNew.some((x) => x.hit) && s.shots.findIndex((x) => x.hit) === s.shots.indexOf(mineNew.find((x) => x.hit))) {
+        stamp(tChart, 'First hit!', 'Drew first blood', wait + 200);
+        api.sfx('hit'); api.haptic(25);
       } else if (list.length) {
         const last = list[lastK];
         if (last.hit) { api.sfx('hit'); api.haptic(25); } else api.sfx(last.by === v ? 'pop' : 'tick');
@@ -1392,6 +1395,7 @@ registerGame({
         if (b && !b.disabled) { aim = { r: Number(b.dataset.r), c: Number(b.dataset.c) }; paintAim(true); } else if (!kbd) paintAim(false);
       }
     });
+    root.addEventListener('contextmenu', (e) => { if (press) e.preventDefault(); }); // Android's long-press menu would cancel the press
     root.addEventListener('pointerleave', () => { pressEnd(); if (!drag && view === 'place') showPreview(null); if (view === 'battle' && !kbd) paintAim(false); });
     root.addEventListener('pointerup', (e) => { pressEnd(); if (drag && e.pointerId === drag.id) endDrag(true); });
     root.addEventListener('pointercancel', (e) => { pressEnd(); if (drag && e.pointerId === drag.id) endDrag(false); });
@@ -1511,7 +1515,7 @@ registerGame({
           else if (seenViewer !== v && scans.length && scans[scans.length - 1].by !== v && scans[scans.length - 1].at >= (fresh[0] ?? shots.length)) freshScans = [scans.length - 1];
           battleStart = seenPhase === 'place' && s.phase === 'battle' && !shots.length;
           live = seenPhase != null && seenPhase !== 'over' && s.phase === 'over';
-          if (shots.length !== seenShots || seenViewer !== v) { pick = []; armed = null; weapon = 'shot'; }
+          if (shots.length !== seenShots || scans.length !== seenScans || seenViewer !== v) { pick = []; armed = null; weapon = 'shot'; }
           seenViewer = v;
           seenShots = shots.length;
           seenScans = scans.length;
