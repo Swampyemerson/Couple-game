@@ -499,6 +499,9 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         const va = await a.evaluate((ss) => ss.map((s) => window.__rush.trackHash(s, 120, 2)), seeds);
         const vb = await b.evaluate((ss) => ss.map((s) => window.__rush.trackHash(s, 120, 2)), seeds);
         assert(va.every((x, i) => x === vb[i]) && new Set(va).size === seeds.length && va.every((x, i) => x !== ha[i]), `track v2 layouts identical on both devices for ${seeds.length} seeds (120 chunks each), and not the v1 ones`);
+        // track version 2 shipped in the Oct 2026 update: frozen too (new content needs a v3)
+        const V2 = [472314843, 1039418647, 4252301279, 1354210408, 3329715006];
+        assert(va.every((x, i) => x === V2[i]), `track v2 layouts are frozen (${va.join(', ')})`);
         // fairness: a lane change begun just before a head-on is a clip (stumble), a square hit a crash
         const p2 = await a.evaluate(() => window.__rush.probe2());
         assert(p2.late.crashes === 0 && p2.late.clips === 1 && p2.late.stumbles === 1, `a swipe a step before a barrier clips it (stumble, bounce back), no heart lost (${JSON.stringify(p2.late)})`);
