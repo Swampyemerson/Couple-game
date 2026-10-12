@@ -161,7 +161,9 @@ robust, mapswitch, gfx, perf, stall, contacts, chasecontacts and shots, plus
 `getaway-boulder.test.js` and `getaway-santee.test.js`. The artifact builds (1.46 MB with
 `--only=getaway`). The bundler export/import rules hold.
 
-FINAL_RUN
+After the last polish commit (a9db81f) these sections were re-run on that HEAD and all passed:
+unit, practice, extras, extraslive, touch, live, wild, wildlive, resultfit and shots. The commit only
+changed CSS, HUD layout and wording, so the rest of the regression stands.
 
 ## Known issues
 
