@@ -72,12 +72,19 @@ const other = (w) => (w === 'a' ? 'b' : 'a');
 // stop at 300px however wide the screen was, which left a 26-character pole only ~108px of text. Now the card takes up to
 // 340px (the dial above keeps the size the view gives it), the end cells trade a little padding for room, the smallest
 // label size scales with the screen width (clamp) and the line breaks are balanced, so a long pole splits into two even
-// lines instead of one long line, a short one and an orphan word.
+// lines instead of one long line, a short one and an orphan word. In landscape the dial column is narrow, so the labels
+// ease down a size there.
 const FIT_CSS = `
     .g-wave .wv-dialbox { width: max(var(--dw, 0px), min(100%, 340px)) !important; }
     .g-wave .wv-end { gap: 3px; padding: 6px clamp(5px, 2vw, 8px); }
     .g-wave .wv-end span { text-wrap: balance; }
     .g-wave .wv-end.fxs { font-size: clamp(0.66rem, 3.1vw, 0.72rem); }
+    /* landscape: the dial column is only ~300px wide, so the card cannot grow; tighten the cells and ease the label sizes down a step */
+    @media (orientation: landscape) and (min-width: 600px) {
+      .g-wave .wv-end { padding: 5px 6px; }
+      .g-wave .wv-end svg { width: 11px; height: 11px; }
+      .g-wave .wv-end.fm { font-size: 0.84rem; } .g-wave .wv-end.fs { font-size: 0.76rem; } .g-wave .wv-end.fxs { font-size: 0.68rem; }
+    }
 `;
 
 registerGame({
