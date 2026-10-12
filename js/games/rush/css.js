@@ -8,6 +8,9 @@ export const CSS = `
   touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
   -webkit-tap-highlight-color: transparent; contain: layout paint; isolation: isolate; }
 .g-rush * { box-sizing: border-box; }
+/* text outlines: a 2 px key-plate outline plus a paper ring, so pops and numbers read on a night city or a dark tunnel in either theme */
+.g-rush { --rr-out: 2px 0 0 var(--g-edge), -2px 0 0 var(--g-edge), 0 2px 0 var(--g-edge), 0 -2px 0 var(--g-edge), 2px 2px 0 var(--g-edge), -2px -2px 0 var(--g-edge), 2px -2px 0 var(--g-edge), -2px 2px 0 var(--g-edge);
+  --rr-ring: 4px 0 0 var(--g-white), -4px 0 0 var(--g-white), 0 4px 0 var(--g-white), 0 -4px 0 var(--g-white), 3px 3px 0 var(--g-white), -3px -3px 0 var(--g-white), 3px -3px 0 var(--g-white), -3px 3px 0 var(--g-white); }
 .g-rush button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 .g-rush .rr-gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .g-rush .rr-gl canvas { display: block; width: 100% !important; height: 100% !important; outline: none; }
@@ -25,8 +28,14 @@ export const CSS = `
 .g-rush .rr-hud[data-side="full"] .rr-top, .g-rush .rr-hud[data-side="r"] .rr-top { padding-right: 58px; }
 .g-rush.rr-in-lobby .rr-hud, .g-rush.rr-in-lobby .rr-divider { display: none; }
 .g-rush.rr-split .rr-divider { position: absolute; z-index: 3; top: 0; bottom: 0; left: calc(50% - 2px); width: 4px; background: var(--g-ink); pointer-events: none; }
-.g-rush .rr-top { display: grid; grid-template-columns: 1fr auto 1fr; align-items: start; gap: 6px; }
-.g-rush .rr-left { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+/* hearts | distance | partner on the top row; the coins + power-up row spans the full width under them, so
+   five team hearts or three rings never push the distance out from under the menu sticker */
+.g-rush .rr-top { display: grid; grid-template-columns: 1fr auto 1fr; grid-template-rows: auto auto; align-items: start; column-gap: 6px; row-gap: 6px; }
+.g-rush .rr-left { display: contents; }
+.g-rush .rr-hearts { grid-area: 1 / 1; justify-self: start; }
+.g-rush .rr-dist { grid-area: 1 / 2; }
+.g-rush .rr-right { grid-area: 1 / 3; }
+.g-rush .rr-row2 { grid-area: 2 / 1 / 3 / 4; justify-self: start; }
 /* coins + power-up rings share one fixed-height row, so nothing below jumps when a power-up starts */
 .g-rush .rr-row2 { display: flex; align-items: center; gap: 6px; height: 34px; }
 .g-rush .rr-coins.bump { animation: rr-bump .2s ease-out; } .g-rush .rr-coins.bump2 { animation: rr-bump2 .2s ease-out; }
@@ -50,9 +59,10 @@ export const CSS = `
 /* under the menu sticker: --gm-corner-safe already includes the top safe area (notch / Dynamic Island) */
 .g-rush .rr-pause { position: absolute; top: calc(var(--gm-corner-safe, calc(64px + env(safe-area-inset-top, 0px))) + 4px); right: max(14px, calc(env(safe-area-inset-right, 0px) + 12px)); }
 .g-rush .rr-hud[data-side="l"] .rr-pause { right: 14px; }
-.g-rush .rr-icon-btn { pointer-events: auto; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--g-card); border: 2px solid var(--g-ink); box-shadow: 2px 2px 0 var(--g-edge); }
+.g-rush .rr-hud[data-side="full"] .rr-pause { right: max(10px, calc(env(safe-area-inset-right, 0px) + 10px)); }
+.g-rush .rr-icon-btn { pointer-events: auto; width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; background: var(--g-card); border: 2px solid var(--g-ink); box-shadow: 2px 2px 0 var(--g-edge); }
 .g-rush .rr-icon-btn:active { transform: translate(2px, 2px); box-shadow: 0 0 0 var(--g-edge); }
-.g-rush .rr-icon-btn svg { width: 20px; height: 20px; }
+.g-rush .rr-icon-btn svg { width: 22px; height: 22px; }
 .g-rush .rr-partner { font-size: 13px; height: 26px; gap: 6px; }
 .g-rush .rr-partner .rr-dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--g-ink); }
 .g-rush .rr-powers { display: flex; gap: 5px; }
@@ -68,34 +78,44 @@ export const CSS = `
 .g-rush .rr-bar .rr-mk { position: absolute; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; border: 2.5px solid var(--g-ink); display: grid; place-items: center; font-size: 11px; font-weight: 900; color: var(--g-on-ink); will-change: transform; left: 0; }
 .g-rush .rr-bar .rr-mk.me { z-index: 2; width: 26px; height: 26px; margin: -13px 0 0 -13px; }
 .g-rush .rr-bar .rr-flag { position: absolute; right: -6px; top: -16px; width: 18px; height: 26px; }
-.g-rush .rr-gap { margin-top: 8px; text-align: center; font-size: 14px; font-weight: 900; }
-.g-rush .rr-gap span { display: inline-block; padding: 3px 10px; border-radius: 999px; background: var(--g-card); border: 2px solid var(--g-ink); }
+.g-rush .rr-gap { margin: 8px 60px 0 6px; text-align: center; font-size: 14px; font-weight: 900; }
+.g-rush .rr-gap span { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: top; padding: 3px 10px; border-radius: 999px; background: var(--g-card); border: 2px solid var(--g-ink); }
 .g-rush .rr-goal { margin-top: 6px; font-size: 12px; font-weight: 900; text-align: center; }
 /* Together, while the partner is down: the reviver's prompt takes the coin-goal pill (top of the
    screen, off the track in front of the runner) with the seconds left */
-.g-rush .rr-gap.hot span { background: var(--g-bad); color: #fff; animation: rr-revp .7s ease-in-out infinite alternate; }
+.g-rush .rr-gap.hot span { background: var(--g-bad); color: var(--g-on-signal, #fff); animation: rr-revp .7s ease-in-out infinite alternate; }
 @keyframes rr-revp { to { transform: scale(1.06); } }
+
+/* rivalry & moments: the last heart rings, neck and neck pulses the gap pill, a district name is a small tag pop */
+.g-rush .rr-hearts.last { border-color: var(--g-bad); animation: rr-last 1s ease-out infinite; }
+.g-rush .rr-hearts.last .rr-heart:not(.off) { animation: rr-hb 1s ease-in-out infinite; transform-origin: 50% 60%; }
+@keyframes rr-last { 0% { box-shadow: 2px 2px 0 var(--g-edge), 0 0 0 0 var(--g-bad); } 70%, 100% { box-shadow: 2px 2px 0 var(--g-edge), 0 0 0 9px transparent; } }
+@keyframes rr-hb { 0%, 100% { transform: scale(1); } 12% { transform: scale(1.28); } 24% { transform: scale(1); } 36% { transform: scale(1.18); } 48% { transform: scale(1); } }
+.g-rush .rr-gap.neck span { border-color: var(--g-bad); animation: rr-neck .55s ease-in-out infinite alternate; }
+@keyframes rr-neck { from { transform: scale(1); box-shadow: 0 0 0 0 var(--g-bad); } to { transform: scale(1.07); box-shadow: 0 0 0 4px color-mix(in srgb, var(--g-bad) 35%, transparent); } }
+.g-rush .rr-pop.tag { font-size: 14px; letter-spacing: .1em; text-transform: uppercase; color: var(--g-ink); background: var(--g-card); border: 2px solid var(--g-ink); border-radius: 999px; padding: 6px 14px; width: max-content; justify-self: center; margin-top: 78px; text-shadow: none; box-shadow: 2px 2px 0 var(--g-edge); }
+.g-rush .rr-pop.tag::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background: var(--g-hl); border: 2px solid var(--g-ink); vertical-align: 1px; }
 
 /* center pops, combo, warnings */
 /* pops sit between the HUD and the horizon: never over the vanishing point, where obstacles appear */
 .g-rush .rr-pops { position: absolute; left: 0; right: 0; top: 22.5%; display: grid; place-items: center; pointer-events: none; }
-.g-rush .rr-pop { grid-area: 1 / 1; font-weight: 900; font-size: 27px; line-height: 1; text-align: center; color: var(--g-white); padding: 0 8px; opacity: 0;
-  text-shadow: 2px 0 0 var(--g-edge), -2px 0 0 var(--g-edge), 0 2px 0 var(--g-edge), 0 -2px 0 var(--g-edge), 2px 2px 0 var(--g-edge), -2px -2px 0 var(--g-edge), 2px -2px 0 var(--g-edge), -2px 2px 0 var(--g-edge), 3px 4px 0 var(--g-edge); }
+.g-rush .rr-pop { grid-area: 1 / 1; max-width: 100%; overflow-wrap: anywhere; font-weight: 900; font-size: 27px; line-height: 1; text-align: center; color: var(--g-white); padding: 0 8px; opacity: 0;
+  text-shadow: var(--rr-out), var(--rr-ring), 3px 5px 0 var(--g-edge); }
 .g-rush .rr-pop.go { animation: rr-pop 1.1s cubic-bezier(.2,1.4,.4,1) forwards; }
 .g-rush .rr-pop.hl { color: var(--g-hl); } .g-rush .rr-pop.bad { color: var(--g-bad); } .g-rush .rr-pop.good { color: var(--g-good); }
 .g-rush .rr-pop.pa { color: var(--p-a); } .g-rush .rr-pop.pb { color: var(--p-b); }
 .g-rush .rr-pop small { display: block; font-size: 15px; margin-top: 4px; }
 @keyframes rr-pop { 0% { opacity: 0; transform: scale(1.8) rotate(-8deg); } 14% { opacity: 1; transform: scale(.94) rotate(-3deg); } 24% { transform: scale(1.04) rotate(-3deg); } 78% { opacity: 1; transform: scale(1) rotate(-3deg) translateY(0); } 100% { opacity: 0; transform: scale(.96) rotate(-3deg) translateY(-18px); } }
-.g-rush .rr-combo { position: absolute; right: 10px; top: 42%; text-align: right; font-weight: 900; font-size: 26px; color: var(--g-hl); opacity: 0; transform-origin: right center;
-  text-shadow: 2px 0 0 var(--g-edge), -2px 0 0 var(--g-edge), 0 2px 0 var(--g-edge), 0 -2px 0 var(--g-edge), 2px 2px 0 var(--g-edge), -2px -2px 0 var(--g-edge), 3px 3px 0 var(--g-edge); }
-.g-rush .rr-combo small { display: block; font-size: 13px; color: var(--g-white); }
+.g-rush .rr-combo { position: absolute; right: calc(max(var(--rr-pad), env(safe-area-inset-right, 0px)) + 4px); max-width: 66%; top: 42%; text-align: right; font-weight: 900; font-size: 26px; color: var(--g-hl); opacity: 0; transform-origin: right center;
+  text-shadow: var(--rr-out), var(--rr-ring), 3px 5px 0 var(--g-edge); }
+.g-rush .rr-combo small { display: block; font-size: 13px; color: var(--g-white); overflow-wrap: anywhere; }
 .g-rush .rr-combo[data-t="2"] { font-size: 30px; } .g-rush .rr-combo[data-t="3"] { font-size: 34px; }
-.g-rush .rr-combo[data-t="4"], .g-rush .rr-combo[data-t="5"] { font-size: 38px; text-shadow: 2px 0 0 var(--g-edge), -2px 0 0 var(--g-edge), 0 2px 0 var(--g-edge), 0 -2px 0 var(--g-edge), 2px 2px 0 var(--g-edge), -2px -2px 0 var(--g-edge), 3px 3px 0 var(--g-edge), 0 0 18px var(--g-hl); }
+.g-rush .rr-combo[data-t="4"], .g-rush .rr-combo[data-t="5"] { font-size: 38px; text-shadow: var(--rr-out), var(--rr-ring), 3px 5px 0 var(--g-edge), 0 0 18px var(--g-hl); }
 .g-rush .rr-combo[data-t="5"] small { color: var(--g-hl); letter-spacing: .12em; }
 .g-rush .rr-combo.go { animation: rr-combo 1.4s ease-out forwards; } .g-rush .rr-combo.go2 { animation: rr-combo2 1.4s ease-out forwards; }
 @keyframes rr-combo { 0% { opacity: 0; transform: scale(1.6); } 12% { opacity: 1; transform: scale(1); } 75% { opacity: 1; } 100% { opacity: 0; transform: translateY(-10px); } }
 @keyframes rr-combo2 { 0% { opacity: 0; transform: scale(1.6); } 12% { opacity: 1; transform: scale(1); } 75% { opacity: 1; } 100% { opacity: 0; transform: translateY(-10px); } }
-.g-rush .rr-warn { position: absolute; top: 29.5%; left: 50%; width: 46px; height: 46px; margin-left: -23px; display: none; place-items: center; border-radius: 50%; background: var(--g-bad); border: 3px solid var(--g-ink); color: #fff; font-weight: 900; font-size: 26px; animation: rr-blink .35s steps(2) infinite; will-change: transform; }
+.g-rush .rr-warn { position: absolute; top: 29.5%; left: 50%; width: 46px; height: 46px; margin-left: -23px; display: none; place-items: center; border-radius: 50%; background: var(--g-bad); border: 3px solid var(--g-ink); color: var(--g-on-signal, #fff); font-weight: 900; font-size: 26px; animation: rr-blink .35s steps(2) infinite; will-change: transform; }
 .g-rush .rr-warn.on { display: grid; }
 @keyframes rr-blink { 50% { background: var(--g-hl); color: var(--g-ink); } }
 
@@ -127,20 +147,28 @@ export const CSS = `
 .g-rush .rr-flash.go { animation: rr-flash .35s ease-out; } .g-rush .rr-flash.go2 { animation: rr-flash2 .35s ease-out; }
 @keyframes rr-flash { 0% { opacity: .85; } 100% { opacity: 0; } }
 @keyframes rr-flash2 { 0% { opacity: .85; } 100% { opacity: 0; } }
-.g-rush .rr-banner { position: absolute; left: 50%; top: 58%; transform: translateX(-50%); min-width: 230px; max-width: 92%; padding: 10px 14px; border-radius: 14px; text-align: center; font-weight: 900; font-size: 15px;
+.g-rush .rr-banner { position: absolute; left: 50%; bottom: max(14px, env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); min-width: 0; width: max-content; max-width: min(92%, 330px); padding: 6px 12px 7px; border-radius: 14px; text-align: center; font-weight: 900; font-size: 13px; line-height: 1.2;
   background: var(--g-card); border: 2.5px solid var(--g-ink); box-shadow: 3px 3px 0 var(--g-edge); display: none; }
 .g-rush .rr-banner.on { display: block; }
-.g-rush .rr-banner b { display: block; font-size: 30px; font-variant-numeric: tabular-nums; }
-.g-rush .rr-banner small { display: block; font-size: 12px; color: var(--g-muted); }
+.g-rush .rr-banner b { display: block; font-size: 24px; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.g-rush .rr-banner small { display: block; font-size: 11px; color: var(--g-muted); }
+.g-rush.rr-buttons .rr-banner { bottom: calc(max(14px, env(safe-area-inset-bottom, 0px)) + 88px); }
 .g-rush .rr-tag { position: absolute; left: 0; top: 0; z-index: 3; pointer-events: none; padding: 2px 8px; border-radius: 8px; font-size: 12px; font-weight: 900; color: var(--g-on-ink); border: 2px solid var(--g-ink); white-space: nowrap; display: none; will-change: transform; }
 .g-rush .rr-tag::after { content: ''; position: absolute; left: 50%; bottom: -7px; margin-left: -5px; border: 5px solid transparent; border-top-color: var(--g-ink); border-bottom: 0; }
 .g-rush .rr-tag.rr-edge-r::after { left: auto; right: -7px; bottom: auto; top: 50%; margin: -5px 0 0; border: 5px solid transparent; border-left-color: var(--g-ink); border-right: 0; }
 .g-rush .rr-tag.rr-edge-l::after { left: -7px; bottom: auto; top: 50%; margin: -5px 0 0; border: 5px solid transparent; border-right-color: var(--g-ink); border-left: 0; }
 
 /* overlays */
-.g-rush .rr-ov { position: absolute; inset: 0; z-index: 8; display: none; place-items: center; padding: max(14px, env(safe-area-inset-top, 0px)) 14px max(14px, env(safe-area-inset-bottom, 0px)); }
+.g-rush .rr-ov { position: absolute; inset: 0; z-index: 8; display: none; place-items: center; padding: max(14px, env(safe-area-inset-top, 0px)) max(14px, env(safe-area-inset-right, 0px)) max(14px, env(safe-area-inset-bottom, 0px)) max(14px, env(safe-area-inset-left, 0px)); }
 .g-rush .rr-ov.on { display: grid; }
 .g-rush .rr-ov.dim { background: color-mix(in srgb, var(--g-bg) 72%, transparent); }
+/* card overlays start under the back / menu stickers and scroll when the card is taller than the screen (a landscape phone) */
+.g-rush .rr-ov-set, .g-rush .rr-ov-pause, .g-rush .rr-ov-msg { padding-top: var(--gm-corner-safe, calc(64px + env(safe-area-inset-top, 0px))); place-items: start center; overflow-y: auto; overflow-x: hidden; touch-action: pan-y; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+.g-rush .rr-ov-set > .rr-card, .g-rush .rr-ov-pause > .rr-card, .g-rush .rr-ov-msg > .rr-card { margin: auto; }
+/* Done stays in reach however long the card is */
+.g-rush .rr-ov-set .rr-done .rr-btn { width: 100%; }
+.g-rush .rr-ov-set .rr-done { position: sticky; bottom: 0; z-index: 1; margin: 0 -18px -18px; padding: 8px 18px 18px; background: var(--g-card); border-radius: 0 0 16px 16px; }
+.g-rush.rr-short .rr-ov-set .rr-done { margin: 0 -12px -12px; padding: 6px 12px 12px; }
 .g-rush .rr-card { width: min(100%, 380px); padding: 18px; border-radius: 18px; background: var(--g-card); border: 2.5px solid var(--g-ink); box-shadow: 5px 5px 0 var(--g-edge); text-align: center; display: flex; flex-direction: column; gap: 10px; font-family: var(--g-font-body); }
 .g-rush .rr-card h2 { margin: 0; font-family: var(--g-font-display); font-weight: 900; font-size: 26px; line-height: 1.05; }
 .g-rush .rr-card p { margin: 0; color: var(--g-muted); font-weight: 700; line-height: 1.35; }
@@ -199,7 +227,7 @@ export const CSS = `
 .g-rush .rr-mode.on .rr-daily-t .p-a, .g-rush .rr-mode.on .rr-daily-t .p-b { color: var(--g-on-ink); }
 .g-rush .rr-style { display: grid; grid-template-columns: 52px 1fr; align-items: start; gap: 8px; text-align: left; font-weight: 900; font-family: var(--g-font-display); }
 .g-rush .rr-chips { display: flex; flex-wrap: wrap; gap: 5px; }
-.g-rush .rr-chip-s { pointer-events: auto; padding: 5px 9px; border-radius: 999px; border: 2px solid var(--g-ink); font-weight: 900; font-size: 12px; background: var(--g-bg); display: flex; flex-direction: column; align-items: flex-start; line-height: 1.1; }
+.g-rush .rr-chip-s { pointer-events: auto; min-height: 44px; padding: 5px 11px; border-radius: 999px; border: 2px solid var(--g-ink); font-weight: 900; font-size: 12px; background: var(--g-bg); display: flex; flex-direction: column; align-items: flex-start; line-height: 1.1; }
 .g-rush .rr-chip-s.on { background: var(--g-hl); color: var(--g-on-ink); }
 .g-rush .rr-chip-s.locked { opacity: .55; border-style: dashed; cursor: default; }
 .g-rush .rr-chip-s small { font-weight: 700; font-size: 10px; font-family: var(--g-font-body); color: var(--g-muted); }
@@ -227,7 +255,7 @@ export const CSS = `
   text-shadow: 2px 0 0 var(--g-edge), -2px 0 0 var(--g-edge), 0 2px 0 var(--g-edge), 0 -2px 0 var(--g-edge), 2px 3px 0 var(--g-edge); }
 
 /* tutorial ghost hand */
-.g-rush .rr-tut { position: absolute; left: 0; right: 0; bottom: 18%; z-index: 6; display: none; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; }
+.g-rush .rr-tut { position: absolute; left: 0; right: 0; bottom: 44%; z-index: 6; display: none; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; }
 .g-rush .rr-tut.on { display: flex; }
 .g-rush .rr-tut .rr-cap { font-weight: 900; font-size: 17px; padding: 6px 14px; border-radius: 999px; background: var(--g-card); border: 2.5px solid var(--g-ink); box-shadow: 3px 3px 0 var(--g-edge); }
 .g-rush .rr-tut .rr-cap { transition: transform .15s cubic-bezier(.3,1.6,.5,1), background .15s; }
@@ -247,23 +275,139 @@ export const CSS = `
 /* settings toggles */
 .g-rush .rr-set { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; text-align: left; font-weight: 900; font-family: var(--g-font-display); }
 .g-rush .rr-seg { display: inline-flex; border: 2.5px solid var(--g-ink); border-radius: 12px; overflow: hidden; }
-.g-rush .rr-seg button { pointer-events: auto; padding: 8px 12px; font-weight: 900; font-size: 14px; min-height: 40px; }
+.g-rush .rr-seg button { pointer-events: auto; padding: 8px 12px; font-weight: 900; font-size: 14px; min-height: 44px; }
 .g-rush .rr-seg button.on { background: var(--g-ink); color: var(--g-card); }
 
-/* compact + landscape */
+/* compact + landscape (a phone on its side: 568x320 .. 844x390) */
 .g-rush.rr-short .rr-logo { font-size: 34px; }
-.g-rush.rr-short .rr-ov-lobby { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; align-content: center; align-items: center; }
+.g-rush.rr-short .rr-ov-lobby { grid-template-columns: minmax(0, .8fr) minmax(0, 1.25fr); grid-template-rows: minmax(0, 1fr); align-content: center; align-items: center; justify-items: center; column-gap: 12px;
+  padding-top: calc(max(14px, env(safe-area-inset-top, 0px)) + 36px); }
+.g-rush.rr-short .rr-ov-lobby > div:empty { display: none; }
+.g-rush.rr-short .rr-ov-lobby .rr-tagline { font-size: 12px; margin-top: 6px; }
+.g-rush.rr-short .rr-sheet { padding: 8px; gap: 6px; border-radius: 16px; max-height: 100%; overflow-y: auto; touch-action: pan-y; }
+.g-rush.rr-short .rr-modes { gap: 6px; }
+.g-rush.rr-short .rr-mode { padding: 6px 4px 6px; gap: 2px; border-radius: 12px; }
+.g-rush.rr-short .rr-mode svg { width: 26px; height: 26px; }
+.g-rush.rr-short .rr-mode b { font-size: 13px; }
+.g-rush.rr-short .rr-mode:not(.rr-daily) > span { display: none; }
+.g-rush.rr-short .rr-mode.rr-daily { padding: 5px 10px; }
+.g-rush.rr-short .rr-mode.rr-daily svg { width: 24px; height: 24px; }
+.g-rush.rr-short .rr-daily-t > span { display: block; font-size: 10px; }
+.g-rush.rr-short .rr-status { font-size: 12px; min-height: 0; }
+.g-rush.rr-short .rr-keys { font-size: 11px; gap: 6px; }
+.g-rush.rr-short .rr-keys div { padding: 4px 6px; }
+.g-rush.rr-short .rr-btn { min-height: 44px; padding: 8px 14px; font-size: 16px; }
+.g-rush.rr-short .rr-row .rr-btn.sq { width: 48px; }
+.g-rush.rr-short .rr-card { padding: 12px; gap: 6px; }
+.g-rush.rr-short .rr-card h2 { font-size: 20px; }
+.g-rush.rr-short .rr-set, .g-rush.rr-short .rr-style { gap: 6px; }
 .g-rush.rr-short .rr-dist { font-size: 26px; }
-/* landscape phone: race bar between the corner columns, gap pill tucked under it, so the HUD ends
-   around a quarter of the way down instead of sitting on the vanishing point */
+/* landscape phone: race bar between the corner columns, gap pill tucked in the top row right of the
+   distance and clear of the menu sticker, so the HUD ends around a quarter of the way down instead of
+   sitting on the vanishing point */
 .g-rush.rr-short .rr-bar { position: absolute; top: calc(max(var(--rr-pad), env(safe-area-inset-top, 0px)) + 52px); left: 30%; right: 30%; margin: 0; }
-.g-rush.rr-short .rr-gap { position: absolute; top: calc(max(var(--rr-pad), env(safe-area-inset-top, 0px)) + 8px); left: 62%; margin: 0; font-size: 13px; text-align: left; }
+.g-rush.rr-short .rr-gap { position: absolute; top: calc(max(var(--rr-pad), env(safe-area-inset-top, 0px)) + 8px); left: 60%; right: calc(max(var(--rr-pad), env(safe-area-inset-right, 0px)) + 58px); margin: 0; font-size: 13px; text-align: left; }
 .g-rush.rr-short .rr-pops { top: 20%; }
+.g-rush.rr-short .rr-tut { bottom: auto; top: 24%; }
+.g-rush.rr-short .rr-hand { height: 56px; transform: scale(.7); transform-origin: 50% 100%; }
+.g-rush.rr-short .rr-banner { left: max(14px, env(safe-area-inset-left, 0px)); transform: none; max-width: 36%; bottom: max(14px, env(safe-area-inset-bottom, 0px)); }
+.g-rush.rr-short.rr-buttons .rr-banner { bottom: calc(max(14px, env(safe-area-inset-bottom, 0px)) + 88px); }
 .g-rush.rr-narrow .rr-dist { font-size: 28px; }
 .g-rush.rr-narrow .rr-chip { font-size: 13px; height: 26px; }
 .g-rush.rr-narrow .rr-hearts { height: 26px; }
 .g-rush.rr-narrow .rr-heart { width: 15px; height: 14px; }
+.g-rush.rr-tiny .rr-dist { font-size: 24px; min-width: 3.4ch; }
+.g-rush.rr-tiny .rr-dist small { font-size: 13px; }
+.g-rush.rr-tiny .rr-hearts { padding: 0 5px; gap: 1px; }
+.g-rush.rr-tiny .rr-heart { width: 13px; height: 12px; }
+.g-rush.rr-tiny .rr-row2 { gap: 4px; }
+.g-rush.rr-tiny .rr-powers { gap: 3px; }
+.g-rush.rr-narrow .rr-pop { font-size: 23px; }
+.g-rush.rr-narrow .rr-combo { font-size: 22px; }
+.g-rush.rr-narrow .rr-combo[data-t="2"] { font-size: 24px; } .g-rush.rr-narrow .rr-combo[data-t="3"] { font-size: 26px; }
+.g-rush.rr-narrow .rr-combo[data-t="4"], .g-rush.rr-narrow .rr-combo[data-t="5"] { font-size: 28px; }
+.g-rush.rr-narrow .rr-combo small { font-size: 12px; }
+/* the Daily's twist, dares and love notes (extras.js) */
+.g-rush.rr-mirror .rr-gl { transform: scaleX(-1); } /* Mirror: only the picture flips (the HUD sits above it); extras.js swaps left / right */
+.g-rush:not(.rr-short) .rr-ov-lobby { grid-template-columns: minmax(0, 1fr); } /* (a long note or the input must never widen the sheet) */
+.g-rush .rr-ov-lobby .rr-sheet { max-width: 100%; min-width: 0; }
+.g-rush .rr-xtra { display: flex; flex-direction: column; gap: 8px; }
+.g-rush .rr-daily-t .rr-modl, .g-rush .rr-daily-t .rr-modt, .g-rush .rr-daily-t .rr-modb { display: block; font-style: normal; }
+.g-rush .rr-daily-t .rr-modl { font-weight: 900; font-size: 12px; font-family: var(--g-font-display); }
+.g-rush .rr-dares { padding: 8px 10px 7px; border-radius: 14px; border: 2px solid var(--g-ink); background: var(--g-bg); font-family: var(--g-font-body); }
+.g-rush .rr-dares-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.g-rush .rr-dares-h b { font-family: var(--g-font-display); font-size: 14px; font-weight: 900; }
+.g-rush .rr-dares-who { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 800; color: var(--g-muted); }
+.g-rush .rr-dares-l { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.g-rush .rr-dares-l li { display: flex; align-items: center; gap: 5px; min-height: 22px; font-size: 13px; font-weight: 800; line-height: 1.2; }
+.g-rush .rr-dares-l li span { margin-left: 3px; min-width: 0; }
+.g-rush .rr-dares-f { margin-top: 4px; font-size: 11px; font-weight: 800; color: var(--g-muted); line-height: 1.25; }
+.g-rush .rr-ck { flex: none; position: relative; display: inline-block; width: 17px; height: 17px; border-radius: 50%; border: 2px solid var(--p-a); }
+.g-rush .rr-ck.b { border-color: var(--p-b); }
+.g-rush .rr-ck.on.a { background: var(--p-a); } .g-rush .rr-ck.on.b { background: var(--p-b); }
+.g-rush .rr-ck.on::after { content: ''; position: absolute; left: 4.5px; top: 1px; width: 4px; height: 8px; border: solid var(--g-bg); border-width: 0 2.5px 2.5px 0; transform: rotate(45deg); }
+.g-rush .rr-ck.lg { width: 10px; height: 10px; border: 0; background: var(--p-a); } .g-rush .rr-ck.lg.b { background: var(--p-b); }
+.g-rush .rr-notes { display: flex; gap: 8px; }
+.g-rush .rr-note-chip { pointer-events: auto; flex: 1; min-width: 0; min-height: 48px; display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-radius: 14px; border: 2px solid var(--g-ink); background: var(--g-card); color: var(--g-ink); text-align: left; box-shadow: 2px 2px 0 var(--g-edge); }
+.g-rush .rr-note-chip.open { background: var(--g-hl); color: var(--g-on-ink); }
+.g-rush .rr-note-chip.open small { color: var(--g-on-ink); }
+.g-rush .rr-note-ic { flex: none; width: 26px; height: 26px; display: grid; place-items: center; color: var(--p-b); }
+.g-rush .rr-note-chip.a .rr-note-ic { color: var(--p-a); }
+.g-rush .rr-note-chip.open .rr-note-ic { color: var(--g-on-ink); }
+.g-rush .rr-note-ic svg { width: 26px; height: 26px; display: block; }
+.g-rush .rr-note-tx { display: flex; flex-direction: column; min-width: 0; line-height: 1.15; font-family: var(--g-font-body); }
+.g-rush .rr-note-tx b { font-family: var(--g-font-display); font-size: 14px; font-weight: 900; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.g-rush .rr-note-tx small { font-size: 11px; font-weight: 800; color: var(--g-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* while open the editor is a card pinned to the top of the screen: it stays on screen when the viewport shrinks for the keyboard
+   (a landscape phone's lobby sheet used to open it at the very bottom, under the iOS keyboard), and the input keeps its width */
+.g-rush .rr-note-ed { position: fixed; z-index: 40; left: max(8px, env(safe-area-inset-left, 0px)); right: max(8px, env(safe-area-inset-right, 0px)); top: var(--gm-corner-safe, calc(64px + env(safe-area-inset-top, 0px))); max-width: 440px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 8px; padding: 8px; border-radius: 16px; border: 2.5px solid var(--g-ink); background: var(--g-card); box-shadow: 4px 4px 0 var(--g-edge); pointer-events: auto; }
+/* landscape: between the floating back and menu buttons instead of under them */
+@media (min-width: 600px) { .g-rush.rr-short .rr-note-ed { top: max(8px, env(safe-area-inset-top, 0px)); left: max(66px, calc(env(safe-area-inset-left, 0px) + 66px)); right: max(66px, calc(env(safe-area-inset-right, 0px) + 66px)); } }
+.g-rush .rr-note-ct { font: 800 12px/1 var(--g-font-body); color: var(--g-muted); padding-left: 4px; }
+.g-rush .rr-note-x { pointer-events: auto; min-width: 68px; min-height: 44px; padding: 0 12px; border: 0; background: none; color: var(--g-ink); font: 800 14px/1 var(--g-font-body); text-decoration: underline; }
+.g-rush .rr-note-chip.saved { background: color-mix(in srgb, var(--g-good) 28%, var(--g-card)); border-color: var(--g-good); }
+.g-rush .rr-note-ed[hidden] { display: none; }
+/* 16 px keeps iOS from zooming in on focus; user-select must be on for an input inside a user-select:none game */
+.g-rush .rr-note-in { flex: 1; min-width: 0; min-height: 44px; padding: 8px 12px; font: 700 16px/1.2 var(--g-font-body); color: var(--g-ink); background: var(--g-bg); border: 2px solid var(--g-ink); border-radius: 12px; -webkit-user-select: text; user-select: text; touch-action: manipulation; }
+.g-rush .rr-note-in::placeholder { color: var(--g-muted); font-weight: 600; }
+.g-rush .rr-note-save { pointer-events: auto; min-width: 60px; min-height: 44px; padding: 0 14px; border-radius: 12px; border: 2px solid var(--g-ink); background: var(--g-hl); color: var(--g-on-ink); font-family: var(--g-font-display); font-weight: 900; font-size: 15px; box-shadow: 2px 2px 0 var(--g-edge); }
+/* the partner's note, popped for 3 s when you grab the envelope */
+.g-rush .rr-lnote { position: absolute; left: 50%; top: 24.5%; z-index: 6; width: min(82%, 300px); display: none; align-items: center; gap: 8px; padding: 6px 11px; border-radius: 14px; border: 2px solid var(--g-ink); background: color-mix(in srgb, var(--g-card) 88%, transparent); color: var(--g-ink); box-shadow: 3px 3px 0 var(--g-edge); transform: translateX(-50%); pointer-events: none; font-family: var(--g-font-body); }
+.g-rush .rr-lnote.on { display: flex; animation: rr-lnote 3s ease-out forwards; }
+.g-rush .rr-lnote .rr-note-ic { color: var(--p-b); width: 24px; height: 24px; } .g-rush .rr-lnote .rr-note-ic svg { width: 24px; height: 24px; }
+.g-rush .rr-lnote-t { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.g-rush .rr-lnote-t b { font: 900 10px/1.1 var(--g-font-display); letter-spacing: .06em; text-transform: uppercase; color: var(--g-muted); }
+.g-rush .rr-lnote-t span { font-weight: 900; font-size: 15px; line-height: 1.15; overflow-wrap: anywhere; }
+@keyframes rr-lnote { 0% { opacity: 0; transform: translate(-50%, 16px) scale(.8) rotate(-3deg); } 9% { opacity: 1; transform: translate(-50%, 0) scale(1.05) rotate(-1.5deg); } 15% { transform: translate(-50%, 0) scale(1) rotate(-1.5deg); } 88% { opacity: 1; transform: translate(-50%, 0) rotate(-1.5deg); } 100% { opacity: 0; transform: translate(-50%, -12px) rotate(-1.5deg); } }
+.g-rush.rr-short .rr-lnote { top: 17.5%; }
+@media (max-height: 640px) and (orientation: portrait) { .g-rush .rr-lnote { top: 22%; } }
+/* landscape phone: the lobby sheet is already full, so the dares and notes move to the free column under the logo */
+.g-rush.rr-short .rr-ov-lobby > .rr-head { align-self: start; }
+.g-rush.rr-short .rr-xtra { position: absolute; z-index: 2; left: max(14px, env(safe-area-inset-left, 0px)); bottom: max(12px, env(safe-area-inset-bottom, 0px)); width: calc(38% - 20px); gap: 6px; }
+.g-rush.rr-short .rr-dares { padding: 5px 8px 4px; }
+.g-rush.rr-short .rr-dares-h b { font-size: 13px; }
+.g-rush.rr-short .rr-dares-who { display: none; }
+.g-rush.rr-short .rr-dares-l { margin-top: 2px; gap: 0; }
+.g-rush.rr-short .rr-dares-l li { min-height: 20px; font-size: 12px; }
+.g-rush.rr-short .rr-dares-f { display: none; }
+.g-rush.rr-short .rr-daily-t .rr-modt, .g-rush.rr-short .rr-note-tx small { display: none; }
+.g-rush.rr-short .rr-note-chip { min-height: 44px; padding: 2px 10px; }
+.g-rush.rr-short .rr-note-in { font-size: 16px; }
+@media (max-height: 340px) { .g-rush.rr-short .rr-ov-lobby .rr-tagline { display: none; } }
+/* a short portrait phone (SE class): the dares and note still fit above Start */
+@media (max-height: 760px) and (orientation: portrait) {
+  .g-rush .rr-ov-lobby .rr-tagline { display: none; }
+  .g-rush .rr-ov-lobby .rr-logo { font-size: 42px; }
+  .g-rush .rr-ov-lobby .rr-sheet { gap: 7px; padding: 10px; }
+  .g-rush .rr-ov-lobby .rr-mode:not(.rr-daily) > span { display: none; }
+  .g-rush .rr-ov-lobby .rr-mode:not(.rr-daily) { padding: 7px 6px; }
+  .g-rush .rr-daily-t .rr-modt { display: none; }
+  .g-rush .rr-dares-f { display: none; }
+  .g-rush .rr-dares-l li { min-height: 20px; }
+  .g-rush .rr-note-tx small { display: none; }
+  .g-rush .rr-note-chip { min-height: 44px; }
+}
 @media (prefers-reduced-motion: reduce) {
-  .g-rush .rr-weapon.full, .g-rush .rr-runner-ico, .g-rush .rr-warn, .g-rush .rr-coins.bump, .g-rush .rr-coins.bump2, .g-rush .rr-gap.hot span { animation: none; }
+  .g-rush .rr-lnote.on, .g-rush .rr-weapon.full, .g-rush .rr-runner-ico, .g-rush .rr-warn, .g-rush .rr-coins.bump, .g-rush .rr-coins.bump2, .g-rush .rr-gap.hot span, .g-rush .rr-gap.neck span, .g-rush .rr-hearts.last, .g-rush .rr-hearts.last .rr-heart { animation: none; }
 }
 `;

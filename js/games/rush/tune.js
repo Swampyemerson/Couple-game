@@ -39,6 +39,10 @@ export const RAMP_L = 10;             // ramp length
 export const MT_K = 0.55;             // oncoming train speed as a fraction of yours
 export const MT_LEAD = 40;            // oncoming train starts moving when you're this far from the meeting point
 export const GAP_L = 4;               // broken-bridge gap length
+export const BARREL_K = 0.35;         // rolling barrel speed as a fraction of yours (track v2); like an oncoming train it is deterministic in runner space
+export const BARREL_LEAD = 45;        // a barrel starts rolling when you are this far (in your z) from where it meets you
+export const BARREL_D = 0.9;          // barrel diameter = height (m): under LOW_H, a normal jump clears it
+export const BARREL_HW = 0.95;        // barrel half length across the lane (m)
 
 export const STUMBLE_T = 0.9;
 export const CRASH_T = 1.6;           // time down before respawn
@@ -47,6 +51,7 @@ export const HEARTS = 3;
 export const TEAM_HEARTS = 4;
 export const TEAM_HEARTS_MAX = 5;
 export const MAGNET_T = 10;
+export const DOUBLE_T = 8;           // coin doubler (track v2): every coin pays x2 for this long
 export const SNEAKERS_T = 10;
 export const BOOST_T = 2.2;
 export const REVIVE_WINDOW = 7000;    // ms a downed partner can be revived (paused while the reviver is down)
@@ -61,6 +66,8 @@ export const BRAWL_CAP = 3000;        // m: tiebreak distance for Brawl
 export const DAILY_CAP = 5000;        // m: a Daily run that gets this far is a win on distance
 export const HIT_STOP = 0.09;         // s the picture freezes on a crash
 export const FINALE_MS = 1700;        // ms of finale before the result card (was 2300)
+
+export const TRACK_V = 2;             // protocol / track version, sent in `start` (1 when absent: an older build). Gate new track content on M.trackV
 
 export const START_DELAY = 3500;      // ms between "start" and GO
 export const RESUME_DELAY = 3000;     // ms countdown after a pause

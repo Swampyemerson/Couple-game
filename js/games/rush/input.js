@@ -80,6 +80,9 @@ export function createInput(surface, opts) {
     } else if (KEYS_ONE[e.code]) { who = opts.who; a = KEYS_ONE[e.code]; }
     if (!a) return;
     opts.onAny && opts.onAny();
+    // Enter / Space on a focused button or link is that control's own activation (a keyboard user
+    // pressing the pause or Done button): leave it alone, don't steal it for the game
+    if ((e.code === 'Enter' || e.code === 'NumpadEnter' || e.code === 'Space') && t && t.closest && t.closest('button, a, [role="button"], summary')) return;
     e.preventDefault();
     fire(who, a);
   });

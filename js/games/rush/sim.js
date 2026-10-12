@@ -3,10 +3,10 @@
 import {
   DT, LANE_W, LANE_TIME, GRAV, JUMP_V, SUPER_JUMP_V, HANG_V, HANG_G, FASTFALL_V, SLIDE_TIME,
   BUFFER_T, COYOTE_T, STAND_H, ROLL_H, HALF_D, HALF_W, STEP_UP, TRIP_TOL, CHUNK, LOW_H,
-  STUMBLE_T, CRASH_T, INVULN_T, HEARTS, MAGNET_T, SNEAKERS_T, LATE_DODGE_T, COMBO_TIERS, COMBO_BONUS, COMBO_T, MT_K, baseSpeed,
+  STUMBLE_T, CRASH_T, INVULN_T, HEARTS, MAGNET_T, SNEAKERS_T, DOUBLE_T, LATE_DODGE_T, COMBO_TIERS, COMBO_BONUS, COMBO_T, MT_K, BARREL_K, baseSpeed,
 } from './tune.js';
 import {
-  O_LOW, O_HIGH, O_TRAIN, O_RAMP, O_MTRAIN, O_BLOCK, I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX,
+  O_LOW, O_HIGH, O_TRAIN, O_RAMP, O_MTRAIN, O_BLOCK, O_BARREL, I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX, I_NOTE, I_DOUBLE,
   rampTop, createTrack,
 } from './track.js';
 
@@ -57,11 +57,12 @@ export function newRunner(lane = 0) {
     stumbleT: 0, bounceT: 0, bumpT: 0,
     down: 0, downT: 0, hold: 0, out: 0, cause: 0,
     invulnT: 0, hearts: HEARTS, coins: 0,
-    magnetT: 0, sneakersT: 0, shield: 0, boostT: 0,
+    magnetT: 0, sneakersT: 0, shield: 0, boostT: 0, dblT: 0, // dblT: coin doubler seconds left (track v2)
+    notes: 0, goldN: 0, branches: 0, // love notes found, fool's-gold coins taken, branches grabbed (track v2; run stats)
     bufA: 0, bufT: 0,
     fin: -1, finLen: 0, done: 0,
     crashes: 0, stumbles: 0, combo: 0, comboT: 0, maxCombo: 0, passZ: -1e9, passClose: 0, closeCalls: 0, jumps: 0, rolls: 0, shields: 0, clips: 0, bonus: 0,
-    hitT: 0, hitOv: 0, hitY: 0, // what the last crash hit (telemetry)
+    inPit: 0, hitT: 0, hitOv: 0, hitY: 0, // inPit: dropped into a broken-bridge gap (falls on landing even if you never jump); hit*: what the last crash hit (telemetry)
     ignoreId: -1, ignoreT: 0,
     tandem: 0, zapT: 0, zapDir: 0, smashN: 0,
   };
@@ -212,7 +213,7 @@ export function respawn(r, track, z, lane) {
   r.vy = 0; r.grounded = 1; r.fastFall = 0; r.rollOnLand = 0; r.bufT = 0; r.zapT = 0;
   const l = lane != null ? lane : clearLane(track, r.z, r.lane);
   r.lane = l; r.laneFrom = l; r.x = r.xFrom = l * LANE_W; r.laneT = 1;
-  r.y = 0; r.sup = 0;
+  r.y = 0; r.sup = 0; r.inPit = 0;
   const g = overGap(track, r.x, r.z);
   if (g) r.z = g.z1 + 0.5;
   r.zPrev = r.z;
@@ -249,7 +250,13 @@ function collectIn(r, c, h) {
     let hit;
     if (mag) hit = Math.abs(cn.x - r.x) < 3.4 * LANE_W / 2.6 && cn.y < r.y + 4.5 && cn.y > r.y - 2.5;
     else hit = dz < 0.9 && Math.abs(cn.x - r.x) < 1.0 && cn.y > r.y - 0.35 && cn.y < r.y + h + 0.45;
-    if (hit) { r.taken.add(key); r.coins++; ev(r, E_COIN, key); }
+    if (hit) {
+      r.taken.add(key);
+      const w = cn.v; // track v2: a coin's worth (3 fool's gold, 2 in a Golden Hundred); undefined = 1; a doubler doubles it
+      r.coins += w ? (r.dblT > 0 ? w * 2 : w) : (r.dblT > 0 ? 2 : 1);
+      if (w > 2 && cn.g !== undefined) { r.goldN++; if (cn.g) r.branches++; }
+      ev(r, E_COIN, key);
+    }
   }
   const items = c.items;
   for (let i = 0; i < items.length; i++) {
@@ -264,7 +271,9 @@ function collectIn(r, c, h) {
       if (it.k === I_MAGNET) r.magnetT = MAGNET_T;
       else if (it.k === I_SNEAKERS) r.sneakersT = SNEAKERS_T;
       else if (it.k === I_SHIELD) r.shield = 1;
-      ev(r, E_PICK, it.k * 100000 + key);
+      else if (it.k === I_DOUBLE) r.dblT = DOUBLE_T;
+      else if (it.k === I_NOTE) r.notes++;
+      ev(r, E_PICK, it.k * 1000000 + key); // (key = chunk*1000 + slot: stays under 1e6 for 1,000 chunks)
     }
   }
 }
@@ -282,11 +291,12 @@ function passed(r, o, ov, h, dry) {
     const clear = r.y + h <= o.b + 0.02 || r.y >= o.h - 0.02 || (o.walk && r.y >= o.h - STEP_UP);
     if (!clear) return; // a hit follows (crash / stumble / smash): not a dodge
     if (o.t === O_LOW) close = r.y < LOW_H + 0.3;
+    else if (o.t === O_BARREL) close = r.y < o.h + 0.3; // (a rolling barrel counts like a low barrier)
     else if (o.t === O_HIGH) close = r.slideT > 0 && r.slideAge * v < 1.5 + 0.04 * v;
   } else {
     if (r.laneFrom !== o.lane || r.laneAge * v > 30) return; // never lined up with it: nothing dodged
-    if (o.t !== O_TRAIN && o.t !== O_MTRAIN && o.t !== O_LOW && o.t !== O_HIGH && o.t !== O_BLOCK) return;
-    const rel = o.t === O_MTRAIN ? v * (1 + MT_K) : v; // an oncoming train closes faster
+    if (o.t !== O_TRAIN && o.t !== O_MTRAIN && o.t !== O_LOW && o.t !== O_HIGH && o.t !== O_BLOCK && o.t !== O_BARREL) return;
+    const rel = o.t === O_MTRAIN ? v * (1 + MT_K) : o.t === O_BARREL ? v * (1 + BARREL_K) : v; // an oncoming train or barrel closes faster
     close = r.laneAge * rel < 2.5 + 0.05 * rel;
   }
   if (o.z0 > r.passZ - 0.5 && o.z0 < r.passZ + 0.5) { // same row as the last dodge
@@ -343,7 +353,7 @@ function hit(r, o, frontal, ov, dry) {
     if (sh) { r.shield = 0; r.shields++; if (!dry) ev(r, E_SHIELD, 0); } else stumble(r, 1.3, dry);
     return;
   }
-  if (r.boostT > 0 && (o.t === O_LOW || o.t === O_HIGH)) {
+  if (r.boostT > 0 && (o.t === O_LOW || o.t === O_HIGH || o.t === O_BARREL)) {
     if (!dry) { r.smashed.add(o.id); r.smashN++; ev(r, E_SMASH, o.id); }
     else { r.ignoreId = o.id; r.ignoreT = 0.3; }
     return;
@@ -361,7 +371,7 @@ function hit(r, o, frontal, ov, dry) {
     stumble(r, 1, dry);
     return;
   }
-  if (o.t === O_LOW && r.y > LOW_H - TRIP_TOL) {
+  if ((o.t === O_LOW || o.t === O_BARREL) && r.y > o.h - TRIP_TOL) { // feet just clip the top: trip, not crash
     r.ignoreId = o.id; r.ignoreT = 0.4;
     stumble(r, 1, dry);
     if (!dry) ev(r, E_TRIP, 0);
@@ -388,6 +398,7 @@ export function step(r, track, dry) {
   r.zPrev = r.z;
   if (r.invulnT > 0) r.invulnT -= dt;
   if (r.magnetT > 0) r.magnetT -= dt;
+  if (r.dblT > 0) r.dblT -= dt;
   if (r.sneakersT > 0) r.sneakersT -= dt;
   if (r.boostT > 0) r.boostT -= dt;
   if (r.shoveT > 0) r.shoveT -= dt;
@@ -454,7 +465,9 @@ export function step(r, track, dry) {
     r.vy -= g * dt;
     if (r.vy < -40) r.vy = -40;
     r.y += r.vy * dt;
+    if (sup < -50 && r.y < -0.12) r.inPit = 1; // over a gap and sinking: the bridge is out
     if (r.vy <= 0 && r.y <= sup) {
+      if (r.inPit) { r.inPit = 0; crash(r, C_FALL, dry); return; } // sup snapped back to the far edge: you went in
       const impact = -r.vy;
       r.y = sup; r.vy = 0; r.grounded = 1; r.fastFall = 0; r.airT = 0;
       if (!dry) ev(r, E_LAND, impact);
@@ -490,8 +503,8 @@ export function step(r, track, dry) {
 /** Make a downed runner hold (wait for a verdict) or not. */
 export function setHold(r, on) { r.hold = on ? 1 : 0; }
 
-export const ITEM_KINDS = { I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX };
-export const OBS_KINDS = { O_LOW, O_HIGH, O_TRAIN, O_RAMP, O_MTRAIN, O_BLOCK };
+export const ITEM_KINDS = { I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX, I_NOTE, I_DOUBLE };
+export const OBS_KINDS = { O_LOW, O_HIGH, O_TRAIN, O_RAMP, O_MTRAIN, O_BLOCK, O_BARREL };
 
 // ── perfect-information bot: depth-first search over the real sim ──
 const BOT_EVERY = 12; // steps per decision (0.1 s)
@@ -583,9 +596,9 @@ export function createBot(track) {
 }
 
 /** Headless bot run for tests: how often does a perfect player get caught? */
-export function botRun(seed, chunks, { maxMs = 60000 } = {}) {
+export function botRun(seed, chunks, { maxMs = 60000, ver = 1 } = {}) {
   const t0 = performance.now();
-  const track = createTrack(seed);
+  const track = createTrack(seed, ver);
   const r = newRunner(0);
   r.hearts = 1e6;
   const bot = createBot(track);

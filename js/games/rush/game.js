@@ -2,10 +2,10 @@
 // the fixed-step loop, pause / resume protocol, partner re-mounts, finale, HUD, test hook.
 import {
   DT, LANE_W, SLIDE_TIME, STUMBLE_T, START_DELAY, RESUME_DELAY, RACE_LEN, BRAWL_CAP, MT_LEAD, CHUNK,
-  HEARTS, TEAM_HEARTS_MAX, HIT_STOP, FINALE_MS, REVIVE_WINDOW, baseSpeed,
+  HEARTS, TEAM_HEARTS_MAX, BARREL_LEAD, HIT_STOP, FINALE_MS, REVIVE_WINDOW, TRACK_V, DOUBLE_T, baseSpeed,
 } from './tune.js';
 import { hash } from '../core.js';
-import { createTrack, trackHash, difficulty, O_MTRAIN, TUT_JUMP, TUT_ROLL } from './track.js';
+import { createTrack, trackHash, difficulty, O_MTRAIN, O_BARREL, TUT_JUMP, TUT_ROLL } from './track.js';
 import {
   newRunner, step, act, createBot, botRun, crash, C_FORCED, C_FALL, C_SLAM, A_LEFT, A_RIGHT, A_UP, A_DOWN,
   E_JUMP, E_LAND, E_ROLL, E_LANE, E_COIN, E_PICK, E_STUMBLE, E_CRASH, E_RESPAWN, E_SHIELD,
@@ -18,6 +18,8 @@ import { createFx, createRig, createOverlay } from './fx.js';
 import { createAudio } from './audio.js';
 import { createInput, A_USE } from './input.js';
 import { createHud } from './hud.js';
+import { createRivalry, PICK_NAME } from './rivalry.js';
+import { createExtras } from './extras.js';
 import { createLink, emptyState } from './link.js';
 import { createRules, MODES, MODE_LABEL, fmtM } from './modes.js';
 
@@ -27,12 +29,13 @@ const F_RUN = 64; const F_OUT = 128; const F_BOOST = 256; const F_MAGNET = 512; 
 const WEAPON_IDX = [null, 'ink', 'block', 'zap', 'rocket', 'shield'];
 const PZ = { menu: 1, hidden: 2, gl: 3, gone: 4, stale: 5, sync: 6, tap: 7 };
 const PZ_ORDER = ['gl', 'tap', 'menu', 'hidden', 'sync', 'gone', 'stale'];
-const RULE_MSGS = ['atk', 'res', 'shove', 'fin', 'out', 'down', 'revive', 'missed', 'cheer'];
+const RULE_MSGS = ['atk', 'res', 'shove', 'fin', 'out', 'down', 'revive', 'missed', 'cheer', 'share'];
 const SKEY = 'rush.settings.v1';
 const TKEY = 'rush.tutorial.v1';
 const MKEY = 'rush.mode.v1';
 const MUTE = 'ju.games.mute';
 const HN = 150; // lag-compensation history (frames)
+const AWAY_MS = 20000; // partner away this long mid-match: the waiting card offers to end it
 // the combo ladder reads by tier, not by count: x2 Nice … x16 Legend (tiers pay at 3/5/8/12/16, see tune.js)
 const COMBO_AT = [2, 3, 5, 8, 12, 16];
 const COMBO_WORDS = ['Nice', 'Great', 'Slick', 'Wild', 'Unreal', 'Legend'];
@@ -52,6 +55,10 @@ const STYLES = [
   { key: 'hat', k: 1, name: 'Crown', how: 'Beat your partner’s best Daily run', test: (S) => S.beatDaily },
   { key: 'hat', k: 2, name: 'Halo', how: 'Revive your partner 3 times', test: (S) => S.revives >= 3 },
   { key: 'hat', k: 3, name: 'Party cone', how: '150 coins in one run', test: (S) => S.coins >= 150 },
+  { key: 'trail', k: 5, name: 'Gold dust', how: 'Grab 3 gold branches in one run', test: (S) => S.branches >= 3 },
+  { key: 'trail', k: 6, name: 'Love hearts', how: 'Find 5 love notes', test: (S) => S.notesTotal >= 5 },
+  { key: 'hat', k: 4, name: 'Lantern', how: 'Reach the Neon Market', test: (S) => S.neon },
+  { key: 'hat', k: 5, name: 'Trophy', how: '7 dare stamps in a week, or most stamps last week', test: (S) => S.trophy },
 ];
 const fmtT = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 const dayKey = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
@@ -117,7 +124,7 @@ export function createGame(el, api) {
     runMs: 0, steps: 0, lastNow: 0, alpha: 0,
     paused: false, reasons: new Set(), partnerPz: 0, resumeAt: 0, pauseShownAt: 0,
     result: null, endAt: 0, th: 4, goal: 100, goalIdx: 0, revives: 0, partnerFin: -1, partnerOut: -1,
-    startedWall: 0, firstRunWall: 0, epoch: 0, lastScore: 0,
+    startedWall: 0, firstRunWall: 0, epoch: 0, lastScore: 0, ruleAt: 0, day: '', trackV: 1, goneAt: 0,
   };
   if (!MODES.includes(M.lobbyMode)) M.lobbyMode = 'race';
 
@@ -137,16 +144,20 @@ export function createGame(el, api) {
       openSettings();
     },
     onSettingsDone: () => hud.settings(null),
+    onForfeit: () => forfeit(),
     keyHint: split ? (w) => (w === 'a' ? 'E' : 'Enter') : (coarse ? null : () => 'E'),
   });
   root.classList.toggle('rr-buttons', settings.scheme === 'buttons' && !split);
   function openSettings() {
     let snd = 'on';
     try { snd = JSON.parse(localStorage.getItem(MUTE) || 'false') ? 'off' : 'on'; } catch { /* ignore */ }
-    const w = meW || 'a';
-    const styles = STYLES.map((st) => ({ key: st.key, k: st.k, name: st.name, how: st.how || '', locked: !unlocked(w, st) }));
-    if (!unlocked(w, STYLES.find((x) => x.key === 'trail' && x.k === settings.trail) || STYLES[0])) settings.trail = 0;
-    if (!unlocked(w, STYLES.find((x) => x.key === 'hat' && x.k === settings.hat) || STYLES[0])) settings.hat = 0;
+    // live: this phone's runner. Split screen: one pick for both, worn by whoever has earned it
+    // (resolveWear), so a style is locked only when neither has it, and says if it's just one of them
+    const who = locals;
+    const has = (st) => who.filter((w) => unlocked(w, st));
+    const styles = STYLES.map((st) => ({ key: st.key, k: st.k, name: st.name, how: st.how || '', locked: !has(st).length, only: has(st).length && has(st).length < who.length ? api.name(has(st)[0]) : '' }));
+    if (!has(STYLES.find((x) => x.key === 'trail' && x.k === settings.trail) || STYLES[0]).length) settings.trail = 0;
+    if (!has(STYLES.find((x) => x.key === 'hat' && x.k === settings.hat) || STYLES[0]).length) settings.hat = 0;
     hud.settings({ scheme: settings.scheme, music: settings.music, sound: snd, trail: settings.trail, hat: settings.hat, styles });
   }
 
@@ -164,14 +175,21 @@ export function createGame(el, api) {
       rs: { x: (w === 'a' ? -1 : 1) * LANE_W, y: 0, z: 0, ground: 0, speed: 0, air: false, vy: 0, roll: false, rollT: 0, stumble: 0, down: false, downT: 0, win: false, idle: true, invuln: false, shield: false, t: 0, visible: true, laneX: (w === 'a' ? -1 : 1) * LANE_W, bump: 0, boost: false },
       prev: { z: 0, x: 0, y: 0 }, net: emptyState(), weapon: null, weaponRoll: 0, shoveCD: 0, revive: null, downId: 0, downAt: 0, pushOff: 0,
       stats: { shoves: 0, slams: 0, inks: 0, hits: 0, revives: 0, dodges: 0 }, fly, hist: new Float64Array(HN * 7), histN: 0, histHead: 0,
-      lastHorn: -1, outT: -1, lastGround: false, tut: 0, css: `var(--p-${w})`, hk: { gap: null, ban: 0 },
+      lastHorn: -1, lastRumble: -1, outT: -1, lastGround: false, tut: 0, css: `var(--p-${w})`, hk: { gap: null, ban: 0 },
       // the partner's last in-match state, kept so a reloaded host can be handed its run back
-      snap: { ok: 0, ep: 0, z: 0, l: 0, h: 0, c: 0, rt: 0, fn: -1, th: 0, tg: 0 },
+      snap: { ok: 0, ep: 0, z: 0, l: 0, h: 0, c: 0, rt: 0, fn: -1, th: 0, tg: 0, o: 0 },
     };
   }
   const players = { a: mkPlayer('a'), b: mkPlayer('b') };
   const locals = live ? [meW] : ['a', 'b'];
   const viewers = live ? [meW] : ['a', 'b'];
+  // the Daily's twist, dares, love notes (extras.js); world / P are read lazily (created in init3D)
+  const X = createExtras({
+    live, split, meW, M, players, root, other, audio, dbg, data, setData,
+    name: (w) => api.name(w), tokens: () => api.tokens(),
+    world: () => world, palette: () => P,
+    later: (fn, ms) => { timers.push(setTimeout(() => { if (!dead) fn(); }, ms)); },
+  });
 
   // ── net ──
   const link = live ? createLink(api, { delay: 100 }) : null;
@@ -194,11 +212,11 @@ export function createGame(el, api) {
         if (!M.rejoin) M.rejoin = { sentAt: -1e9 };
       } else if (M.phase === 'finale') M.endAt = clock() + 600;
     }));
-    offs.push(link.on('start', (d) => { if (!isHost) beginMatch(d.mode, d.seed, d.at, d.len, d.cap); }));
+    offs.push(link.on('start', (d) => { if (!isHost) beginMatch(d.mode, d.seed, d.at, d.len, d.cap, d); }));
     offs.push(link.on('end', (d) => { if (!isHost && M.phase !== 'over') startFinale(d.res, d.at); }));
     offs.push(link.on('resume', (d) => { if (d && d.at > M.resumeAt && (M.phase === 'run' || M.phase === 'countdown')) M.resumeAt = d.at; }));
     offs.push(link.on('rejoin', (d) => { if (!d) return; if (!isHost && !d.fromGuest) applyRejoin(d); else if (isHost && d.fromGuest && (M.phase === 'lobby' || M.phase === 'loading')) applyRejoin(d); }));
-    for (const t of RULE_MSGS) offs.push(link.on(t, (d, at) => { if (rules) rules.msg(t, d || {}, at, other(meW)); }));
+    for (const t of RULE_MSGS) offs.push(link.on(t, (d, at) => ruleMsg(t, d || {}, at, other(meW))));
   }
 
   // ── 3D ──
@@ -213,7 +231,7 @@ export function createGame(el, api) {
   K.tAnim = 0; K.lastTs = 0; K.lowFor = 0; K.checkT = 0; K.coolT = 0; K.hudT = 0; K.scoreT = 0; K.hitStop = 0; K.hitPend = 0; K.wind = 0;
   let frameN = 0;
   const perf = { dts: new Float32Array(600), work: new Float32Array(600), n: 0, calls: 0, tris: 0, maxCalls: 0, maxTris: 0, programs0: 0, scaleDowns: 0, scaleUps: 0 };
-  let rules = null;
+  let rules = null; let rival = null;
   const pal = { a: null, b: null, hl: null };
   const lobbyTrack = createTrack(1);
   let vec3 = null;
@@ -322,6 +340,7 @@ export function createGame(el, api) {
     if (overlay) overlay.resize(vw, H);
     root.classList.toggle('rr-short', H < 560 && W > H);
     root.classList.toggle('rr-narrow', vw < 370);
+    root.classList.toggle('rr-tiny', vw < 340);
   }
 
   function onLost(e) { e.preventDefault(); glLost = true; M.reasons.add('gl'); }
@@ -340,7 +359,7 @@ export function createGame(el, api) {
     M.phase = 'lobby';
     resolveWear();
     root.classList.add('rr-in-lobby');
-    M.track = null; M.result = null; M.ready = false; M.reasons.clear(); M.paused = false; M.resumeAt = 0; M.rejoin = null;
+    M.track = null; M.result = null; M.ready = false; M.reasons.clear(); M.paused = false; M.resumeAt = 0; M.rejoin = null; M.goneAt = 0;
     players.a.snap.ok = 0; players.b.snap.ok = 0;
     for (const w of AB) {
       const p = players[w];
@@ -348,6 +367,7 @@ export function createGame(el, api) {
       p.rs.z = 0; p.rs.x = p.rs.laneX = (w === 'a' ? -1 : 1) * LANE_W; p.rs.y = 0; p.rs.idle = true; p.rs.down = false; p.rs.win = false; p.rs.visible = true;
       if (p.rig) p.rig.snap();
     }
+    X.reset();
     if (world) { world.reset(); world.setGates([7]); }
     hud.finale(null); hud.count(''); hud.pause(null); countK = -1; pauseK = -1;
     for (const w of viewers) players[w].view && players[w].view.banner(null);
@@ -362,27 +382,36 @@ export function createGame(el, api) {
       if (!partnerHere || !ps || ps.ph !== PH.lobby || !ps.sy) { hudToast(`Waiting for ${api.name(other(meW))}…`); return; }
     }
     const mode = M.lobbyMode;
-    const seed = mode === 'daily' ? dailySeed() : (dbg && dbg.seed) || ((Math.random() * 2147483646) | 0) + 1;
+    const today = dayKey(); // the host's calendar day is the match's day: seed, records and board all use it
+    const seed = mode === 'daily' ? dailySeed(today) : (dbg && dbg.seed) || ((Math.random() * 2147483646) | 0) + 1;
     const len = (dbg && dbg.raceLen) || RACE_LEN;
     const cap = (dbg && dbg.brawlCap) || BRAWL_CAP;
     const at = clock() + (live ? START_DELAY : 3000);
-    if (live) link.send('start', { mode, seed, at, len, cap });
-    beginMatch(mode, seed, at, len, cap);
+    const info = { day: today, v: TRACK_V, ep: epochOf(seed, at), mod: X.modFor(mode, today) };
+    if (live) link.send('start', { mode, seed, at, len, cap, ...info });
+    beginMatch(mode, seed, at, len, cap, info);
   }
 
-  function beginMatch(mode, seed, at, len, cap) {
+  /** Tells one match from the next (and from a stale presence of the last): Daily replays the same seed all day. */
+  const epochOf = (seed, at) => (hash('rush-ep', seed, Math.round(at)) % 99999) + 1;
+  /** info (the `start` / `rejoin` message): day (the host's calendar day, for Daily records), v (track / protocol version, 1 when absent), ep. */
+  function beginMatch(mode, seed, at, len, cap, info) {
     if (!ready3D) return;
+    info = info || {};
     M.mode = MODES.includes(mode) ? mode : 'race';
     M.seed = seed; M.startAt = at; M.len = len || RACE_LEN; M.cap = cap || BRAWL_CAP;
-    M.epoch = seed % 100000;
-    M.track = createTrack(seed);
+    M.epoch = info.ep > 0 ? info.ep | 0 : epochOf(seed, at);
+    M.day = typeof info.day === 'string' && /^\d{4}-\d\d-\d\d$/.test(info.day) ? info.day : dayKey();
+    M.trackV = info.v > 0 ? info.v | 0 : 1;
+    const xo = X.begin(M.mode, info, M.trackV); // the day's twist (Daily): sets the scene, returns track options (Gold rush)
+    M.track = createTrack(seed, M.trackV, xo);
     M.phase = 'countdown';
-    M.runMs = 0; M.steps = 0; M.lastNow = clock(); M.alpha = 0;
+    M.runMs = 0; M.steps = 0; M.lastNow = clock(); M.ruleAt = M.lastNow; M.alpha = 0;
     M.paused = false; M.reasons.clear(); M.resumeAt = 0; M.result = null; M.endAt = 0;
-    M.startedWall = 0; M.firstRunWall = 0; M.partnerFin = -1; M.partnerOut = -1; M.rejoin = null;
+    M.startedWall = 0; M.firstRunWall = 0; M.partnerFin = -1; M.partnerOut = -1; M.rejoin = null; M.goneAt = 0;
     for (const w of AB) {
       const p = players[w];
-      p.outT = -1; p.lastHorn = -1; p.histN = 0; p.weapon = null; p.tut = 0; p.hk.gap = null; p.hk.ban = 0;
+      p.outT = -1; p.lastHorn = -1; p.lastRumble = -1; p.histN = 0; p.weapon = null; p.tut = 0; p.hk.gap = null; p.hk.ban = 0;
       for (const f of p.fly) f.on = false;
       if (p.local) {
         p.r = newRunner(w === 'a' ? -1 : 1);
@@ -394,6 +423,7 @@ export function createGame(el, api) {
     }
     rules = createRules(G);
     rules.init();
+    rival.reset();
     countK = -1; pauseK = -1;
     world.reset();
     world.setGates(M.mode === 'race' ? [7, M.len] : [7]);
@@ -418,8 +448,8 @@ export function createGame(el, api) {
     // (link.latest() is already the re-mounted partner's lobby state here: use the last in-match snapshot)
     const s = players[other(meW)].snap;
     link.send('rejoin', {
-      mode: M.mode, seed: M.seed, startAt: M.startAt, len: M.len, cap: M.cap, th: M.th, goal: M.goal, goalIdx: M.goalIdx,
-      you: s.ok && s.ep === M.epoch ? { z: s.z, l: s.l, h: s.h, c: s.c, rt: s.rt, fn: s.fn } : null,
+      mode: M.mode, seed: M.seed, startAt: M.startAt, len: M.len, cap: M.cap, th: M.th, goal: M.goal, goalIdx: M.goalIdx, day: M.day, v: M.trackV, ep: M.epoch, mod: X.mod,
+      you: s.ok && s.ep === M.epoch ? { z: s.z, l: s.l, h: s.h, c: s.c, rt: s.rt, fn: s.fn, o: s.o } : null,
     });
   }
   let pendingRejoin = null;
@@ -427,7 +457,7 @@ export function createGame(el, api) {
     if (!d) return;
     if (!ready3D) { pendingRejoin = d; return; }
     // fromGuest: I'm a reloaded host; my old timeline is gone, so the match has no start anchor
-    beginMatch(d.mode, d.seed, d.fromGuest ? -Infinity : d.startAt, d.len, d.cap);
+    beginMatch(d.mode, d.seed, d.fromGuest ? -Infinity : d.startAt, d.len, d.cap, d);
     if (d.th > 0) M.th = d.th;
     if (d.goal > 0) M.goal = d.goal;
     M.goalIdx = d.goalIdx || 0;
@@ -438,6 +468,11 @@ export function createGame(el, api) {
       r.hearts = y.h; r.coins = y.c; r.t = y.rt; r.fin = y.fn; if (y.fn >= 0) { r.done = 1; r.invulnT = 1e9; }
       r.invulnT = Math.max(r.invulnT, 2);
       r.zPrev = r.z; r.speed = baseSpeed(r.t);
+      if (y.o) { // out of hearts when they dropped: still out (a Daily / Brawl runner stays down and spectates)
+        r.hearts = 0; r.out = 1; r.hold = 1; r.down = 1; r.downT = 2; r.cause = C_FORCED; r.speed = 0; r.invulnT = 0;
+        players[meW].outT = y.rt;
+      }
+      players[meW].lastMile = Math.floor(r.z / 500); // (no free milestone heart for a distance already run)
       const pp = players[meW].prev; pp.z = r.z; pp.x = r.x; pp.y = r.y; // draw it there from the first frame
       M.runMs = y.rt * 1000; M.steps = Math.floor(y.rt / DT);
     }
@@ -446,14 +481,31 @@ export function createGame(el, api) {
     link.send('resume', { at: M.resumeAt });
   }
 
+  /** The partner has been away a while and the person still here chose to end it: a win for them
+   *  (Together: the run so far, as the team score). Either side may finish (core.js), so no host is needed. */
+  function forfeit() {
+    if (!live || M.phase !== 'run' || !M.goneAt) return;
+    const pn = api.name(other(meW)); const r = players[meW].r;
+    let res;
+    if (M.mode === 'tandem') {
+      const meters = Math.round(r ? r.z : 0); const coins = r ? r.coins : 0; const score = meters + coins;
+      res = { winner: null, team: true, score, text: `Team score ${score.toLocaleString('en-US')}`, sub: `${pn} left the run · ${meters.toLocaleString('en-US')} m · ${coins} coins`, forfeit: 1 };
+    } else res = { winner: meW, text: `${api.name(meW)} wins`, sub: `${pn} left the game`, forfeit: 1, za: Math.round(players.a.rs.z), zb: Math.round(players.b.rs.z) };
+    const at = clock() + FINALE_MS;
+    if (isHost) link.send('end', { res, at }); // (if they come back to a fresh page, the engine hands them the card)
+    M.reasons.clear(); M.paused = false; M.resumeAt = 0; M.goneAt = 0;
+    startFinale(res, at);
+  }
   function endMatch(res) {
     if (M.phase !== 'run') return;
+    rival.decorate(res); // the shared line (lead changes, team best) is written once, by the judge
     const at = clock() + FINALE_MS;
     if (live) link.send('end', { res, at });
     startFinale(res, at);
   }
   function startFinale(res, at) {
     M.result = res; M.endAt = at; M.phase = 'finale';
+    rival.finale(res);
     const w = res.winner;
     const v = viewers.map((x) => players[x].view);
     const cls = res.team ? 'team' : w ? 'p' + w : '';
@@ -467,10 +519,27 @@ export function createGame(el, api) {
   }
   function toOver() {
     M.phase = 'over';
-    // the card gets this device's own bests line (the recorded result keeps the shared text)
-    const res = Object.assign({}, M.result);
-    if (M.pbText) res.sub = res.sub ? `${res.sub} · ${M.pbText}` : M.pbText;
-    try { api.finish(res); } catch (e) { console.error(e); }
+    // The result is shared (the engine broadcasts it, records it, and the partner's card can adopt it),
+    // so it stays neutral: this device's own line ("You: … · New best") goes on the card locally.
+    try { api.finish(Object.assign({}, M.result)); } catch (e) { console.error(e); }
+    youLine();
+  }
+  /** This device's bests line, added to the engine's end card (the card's own text is the shared result). */
+  function youLine(tries = 0) {
+    const text = M.pbText;
+    if (!text || dead) return;
+    const gm = root.closest('.gm');
+    const body = gm && gm.querySelector('.gm-end:not([hidden]) .gm-end-body');
+    if (!body) { if (tries < 8) timers.push(setTimeout(() => youLine(tries + 1), 150)); return; }
+    let p = body.querySelector('.rr-you');
+    if (!p) {
+      p = document.createElement('p');
+      p.className = 'gm-end-sub rr-you';
+      p.style.fontWeight = '800';
+      const sub = body.querySelector('.gm-end-sub');
+      if (sub) sub.after(p); else body.prepend(p);
+    }
+    p.textContent = text;
   }
 
   // ── bests, daily board, unlocks ──
@@ -497,11 +566,11 @@ export function createGame(el, api) {
       const newAny = dist > (d[anyM] | 0); const newMode = dist > (d[modeM] | 0);
       if (newAny) patch[anyM] = dist;
       if (newMode) patch[modeM] = dist;
-      if (M.mode === 'daily') { const k = `${w}_daily_${day()}`; if (dist > (d[k] | 0)) patch[k] = dist; }
+      if (M.mode === 'daily') { const k = `${w}_daily_${M.day || day()}`; if (dist > (d[k] | 0)) patch[k] = dist; }
       if (M.mode === 'race' && r.fin >= 0) { const k = `${w}_race_t`; if (!d[k] || r.fin < d[k]) patch[k] = Math.round(r.fin * 100) / 100; }
       if (r.closeCalls > (d[`${w}_cc`] | 0)) patch[`${w}_cc`] = r.closeCalls;
       if (r.maxCombo > (d[`${w}_combo`] | 0)) patch[`${w}_combo`] = r.maxCombo;
-      const won = res.winner === w;
+      const won = res.winner === w && !res.forfeit; // (a win handed over by a quit doesn't count towards unlocks)
       const wins = (d[`${w}_wins`] | 0) + (won ? 1 : 0);
       if (won) patch[`${w}_wins`] = wins;
       const revives = (d[`${w}_rev`] | 0) + (p.stats.revives | 0);
@@ -510,6 +579,7 @@ export function createGame(el, api) {
       // unlocks
       const q = other(w);
       const S = { dist, closeCalls: r.closeCalls, maxCombo: r.maxCombo, coins: r.coins, wins, revives, beatDaily: M.mode === 'daily' && dist > (d[`${q}_daily_m`] | 0) && (d[`${q}_daily_m`] | 0) > 0 };
+      const xl = X.finale(w, S, patch, p, r, d, res); // dares, notes, stamps; fills the new unlock tests' inputs
       for (const st of STYLES) {
         if (!st.test || unlocked(w, st) || patch[`unlock_${w}_${st.key}${st.k}`]) continue;
         if (st.test(S)) { patch[`unlock_${w}_${st.key}${st.k}`] = 1; pops.push([w, st]); }
@@ -522,13 +592,15 @@ export function createGame(el, api) {
         if (M.mode === 'race' && r.fin >= 0) {
           const prevT = d[`${w}_race_t`];
           if (prevT && r.fin < prevT) { bits.push(`${who}: fastest yet (was ${fmtT(prevT)})`); p.view.pop('NEW BEST!', 'hl', fmtT(r.fin)); audio.play('good'); }
-          else if (prevT) bits.push(`${who}: best ${fmtT(prevT)}`);
+          else if (prevT) bits.push(`${who}: ${fmtT(r.fin)} · best ${fmtT(prevT)}`);
+          else bits.push(`${who}: finished in ${fmtT(r.fin)}`);
         } else if (M.mode === 'race' || M.mode === 'daily') {
           if (newMode && prevMode > 0) { bits.push(`${who}: new best ${fmtM(dist)} m`); p.view.pop('NEW BEST!', 'hl', `${fmtM(dist)} m`); audio.play('good'); }
           else if (M.mode === 'race') bits.push(`${who}: ${fmtM(dist)} m${prevMode ? ` · best ${fmtM(prevMode)} m` : ''}`);
           else if (prevMode) bits.push(`${who}: best ${fmtM(prevMode)} m`);
           if (theirs && (M.mode !== 'daily' || theirs !== Math.round(res.winner === q ? (q === 'a' ? res.za : res.zb) : -1))) bits.push(`${api.name(q)}’s best ${fmtM(theirs)} m`);
         }
+        if (xl.length) bits.push(...xl);
         if (bits.length) lines.push(bits.join(' · '));
       }
     }
@@ -556,6 +628,7 @@ export function createGame(el, api) {
     if (a === A_USE) { useWeapon(w); return; }
     if (M.phase !== 'run' || isPaused(clock())) return;
     if (p.r.down) { rules.cheer(p); return; } // down in Together: any input cheers your partner on
+    a = X.swap(a, A_LEFT, A_RIGHT); // Mirror: the picture is flipped, so the inputs are
     if (a === A_LEFT || a === A_RIGHT) rules.onLane(p, a === A_LEFT ? -1 : 1);
     act(p.r, a);
     tutorial.did(p, a);
@@ -563,7 +636,7 @@ export function createGame(el, api) {
   function useWeapon(w) {
     const p = players[w];
     if (!p || !p.local || !rules || M.phase !== 'run' || isPaused(clock())) return;
-    if (rules.use(p)) players[w].view && players[w].view.weapon(null, true);
+    if (rules.use(p)) { X.used(w); players[w].view && players[w].view.weapon(null, true); }
   }
 
   // ── G: what the rules see ──
@@ -628,6 +701,16 @@ export function createGame(el, api) {
       audio.play('heart');
     },
   };
+
+  // rivalry & moments (rivalry.js): pops from presence, districts, events, the last heart, shared power-ups
+  rival = createRivalry({
+    M, players, viewers, audio, other,
+    now: () => clock(),
+    send: (to, type, data) => G.send(to, type, data),
+    data, setData, haptic: (n) => api.haptic(n), fmtM,
+    zOf: (w) => { const v = G.judgeView(w); return v ? v.z : 0; },
+    bestKey: (w) => (M.mode === 'daily' ? `${w}_daily_m` : `${w}_race_m`),
+  });
 
   function shake(w, a) { const rg = players[w] && players[w].rig; if (rg) rg.shake(reducedMotion ? a * 0.25 : a); }
 
@@ -707,21 +790,23 @@ export function createGame(el, api) {
     if (ps && inMatch && ps.ep === M.epoch && ps.ph === PH.run) {
       // remember the partner's last in-match state (used if they re-mount as host)
       const sn = players[other(meW)].snap;
-      sn.ok = 1; sn.ep = ps.ep; sn.z = ps.z; sn.l = ps.l; sn.h = ps.h; sn.c = ps.c; sn.rt = ps.rt; sn.fn = ps.fn; sn.th = ps.th; sn.tg = ps.tg;
+      sn.ok = 1; sn.ep = ps.ep; sn.z = ps.z; sn.l = ps.l; sn.h = ps.h; sn.c = ps.c; sn.rt = ps.rt; sn.fn = ps.fn; sn.th = ps.th; sn.tg = ps.tg; sn.o = ps.f & F_OUT ? 1 : 0;
       if (M.rejoin) M.rejoin = null; // the host has the match back
     }
     if (M.rejoin && inMatch && link.synced && ps && link.age() < 1600 && ps.ph === PH.lobby && ps.sy && now - M.rejoin.sentAt > 2500) {
       M.rejoin.sentAt = now;
       const sn = players[other(meW)].snap;
       link.send('rejoin', {
-        fromGuest: 1, mode: M.mode, seed: M.seed, len: M.len, cap: M.cap, th: sn.th, goal: sn.tg, goalIdx: M.goalIdx,
-        you: sn.ok && sn.ep === M.epoch ? { z: sn.z, l: sn.l, h: sn.h, c: sn.c, rt: sn.rt, fn: sn.fn } : null,
+        fromGuest: 1, mode: M.mode, seed: M.seed, len: M.len, cap: M.cap, th: sn.th, goal: sn.tg, goalIdx: M.goalIdx, day: M.day, v: M.trackV, ep: M.epoch, mod: X.mod,
+        you: sn.ok && sn.ep === M.epoch ? { z: sn.z, l: sn.l, h: sn.h, c: sn.c, rt: sn.rt, fn: sn.fn, o: sn.o } : null,
       });
     }
     // observed reasons
     if (inMatch) {
       if (!partnerHere) M.reasons.add('gone'); else M.reasons.delete('gone');
       if (partnerHere && link.age() > 1600) M.reasons.add('stale'); else M.reasons.delete('stale');
+      // how long they've been away (left the game, or their connection is down): after 20 s the card offers to end the match
+      if (M.reasons.has('gone') || M.reasons.has('stale')) { if (!M.goneAt) M.goneAt = performance.now(); } else M.goneAt = 0;
       const pin = ps && (ps.ph === PH.countdown || ps.ph === PH.run || ps.ph === PH.finale) && ps.ep === M.epoch;
       if (now > M.startAt + 1500 && partnerHere && link.age() < 1600 && !pin) M.reasons.add('sync'); else M.reasons.delete('sync');
     }
@@ -793,6 +878,7 @@ export function createGame(el, api) {
       }
       else if (p.auto && r.down && M.mode === 'tandem' && M.steps % 48 === 0) rules.cheer(p);
       step(r, M.track, false);
+      X.afterStep(r);
       drain(p);
     }
   }
@@ -822,14 +908,16 @@ export function createGame(el, api) {
               if (f) { f.on = true; f.t = 0; f.fx = cn.x; f.fy = cn.y; f.fz = cn.z; f.x = cn.x; f.y = cn.y; f.z = cn.z; f.s = 1; }
             } else fx.coin(cn.x, cn.y, cn.z);
           }
-          if (mine) audio.play('coin', r.magnetT > 0);
+          if (mine) { if (cn && cn.v >= 3) audio.play('gold'); else audio.play('coin', r.magnetT > 0); }
           break;
         }
         case E_PICK: {
-          const k = Math.floor(val / 100000);
-          const it = coinAt(val % 100000);
+          const k = Math.floor(val / 1000000);
+          const it = coinAt(val % 1000000);
           if (it) fx.burst(it.x, it.y, it.z, P.hl, 12, 5);
-          if (mine && k !== 4) { audio.play('pickup'); v.pop(k === 1 ? 'MAGNET' : k === 2 ? 'SUPER SNEAKERS' : 'SHIELD', 'hl'); }
+          const shared = rival.onPick(p, k); // Together: a magnet / sneakers / doubler is mirrored to the partner
+          if (mine && PICK_NAME[k]) { audio.play('pickup'); v.pop(PICK_NAME[k], 'hl', shared); }
+          if (mine) X.onPick(p.w, k);
           break;
         }
         case E_STUMBLE: if (mine) { api.haptic(15); audio.play('stumble'); if (Math.random() < 0.4) v.pop('Oof', 'bad'); } shake(p.w, 0.28); fx.dust(r.x, r.y, r.z, 5, 1); break;
@@ -860,8 +948,12 @@ export function createGame(el, api) {
   function deliver() {
     while (queue.length) {
       const [type, data, at, from] = queue.shift();
-      rules.msg(type, data || {}, at, from);
+      ruleMsg(type, data || {}, at, from);
     }
+  }
+  /** Rule messages go to the mode rules; `share` (Together's mirrored power-ups) is the rivalry layer's. */
+  function ruleMsg(type, d, at, from) {
+    if (type === 'share') { if (rival) rival.onShare(d, at, from); } else if (rules) rules.msg(type, d, at, from);
   }
 
   // ── render states ──
@@ -992,11 +1084,15 @@ export function createGame(el, api) {
         for (let i = 0; i < AB.length; i++) { const z = players[AB[i]].rs.z; if (z < zmin) zmin = z; }
         if (zmin < Infinity) M.track.keepFrom(Math.floor((zmin - 40) / CHUNK) - 1);
       }
-      rules.tick(now, dt);
+      // rules run on the shared clock, so while the run is paused (menu, background, partner away,
+      // the resume 3-2-1) their timers wait too: revive windows, brace windows, the downed fallback
+      const dMs = now - M.ruleAt;
+      M.ruleAt = now;
+      if (isPaused(now)) { if (dMs > 0 && dMs < 600000) rules.hold(dMs); } else rules.tick(now, dt);
       deliver();
       const res = rules.verdict();
       if (res) endMatch(res);
-    } else if (M.phase === 'countdown') M.lastNow = now;
+    } else if (M.phase === 'countdown') { M.lastNow = now; M.ruleAt = now; }
     else if (M.phase === 'finale') { if (rules) rules.tick(now, dt); if (now >= M.endAt) toOver(); }
     if (frozen) { if (live && ready3D) publish(); return; }
     // render states
@@ -1045,6 +1141,8 @@ export function createGame(el, api) {
         }
       }
     }
+    if (M.phase === 'run' && !isPaused(now)) rival.tick(dt);
+    if (M.phase === 'run' && !isPaused(now)) X.tick(dt);
     tutorial.update();
     K.hudT += dt;
     updateHud(now, dt);
@@ -1061,6 +1159,17 @@ export function createGame(el, api) {
   }
 
   // ── HUD ──
+  /** Who's ahead, said plainly: "Sydney leads by 23 m" / "You lead by 23 m" (split screen has no "you": the name). gapM = partner − me. */
+  function leadText(gapM, p, q, short = false) {
+    const n = Math.abs(gapM);
+    if (gapM > 0) return `${short ? '' : q.name + ' '}leads by ${n} m`;
+    return split ? `${short ? '' : p.name + ' '}leads by ${n} m` : `${short ? 'you' : 'You'} lead by ${n} m`;
+  }
+  /** The gap pill when it's been close for a while: "Neck and neck · Sydney +2 m". */
+  function neckText(gapM, p, q) {
+    const n = Math.abs(gapM);
+    return n < 1 ? 'Neck and neck!' : `Neck and neck · ${gapM > 0 ? q.name : split ? p.name : 'you'} +${n} m`;
+  }
   function updateHud(now, dt) {
     const paused = isPaused(now);
     // countdowns: a numeric code per state, so the DOM (and the beep) only changes on a change
@@ -1072,7 +1181,7 @@ export function createGame(el, api) {
     else if (M.phase === 'run' && !paused && M.steps < 70 && M.runMs < 700) ck = 30;
     if (ck !== countK) {
       countK = ck;
-      if (ck >= 11 && ck <= 14) { hud.count(DIGITS[Math.min(3, ck - 10)], M.mode ? MODE_LABEL[M.mode] : ''); if (ck <= 13) audio.play('tick'); }
+      if (ck >= 11 && ck <= 14) { hud.count(DIGITS[Math.min(3, ck - 10)], M.mode ? MODE_LABEL[M.mode] + X.countLabel() : ''); if (ck <= 13) audio.play('tick'); }
       else if (ck >= 21 && ck <= 23) { hud.count(DIGITS[ck - 20], 'Get ready'); audio.play('tick'); }
       else if (ck === 30) { hud.count('RUN!'); audio.play('go'); }
       else hud.count('');
@@ -1081,7 +1190,8 @@ export function createGame(el, api) {
     let pk = 0;
     if ((M.phase === 'run' || M.phase === 'countdown') && M.paused) {
       const R = M.reasons;
-      pk = R.has('gl') ? 1 : R.has('tap') ? 2 : R.has('menu') ? 3 : R.has('gone') ? 4 : R.has('stale') ? 5 : R.has('sync') ? 6 : M.partnerPz ? 10 + M.partnerPz : 9;
+      const away = live && M.phase === 'run' && M.goneAt && performance.now() - M.goneAt > ((dbg && dbg.awayMs) || AWAY_MS) && (R.has('gone') || R.has('stale')) && !R.has('gl') && !R.has('tap') && !R.has('menu');
+      pk = R.has('gl') ? 1 : R.has('tap') ? 2 : R.has('menu') ? 3 : away ? (R.has('gone') ? 8 : 7) : R.has('gone') ? 4 : R.has('stale') ? 5 : R.has('sync') ? 6 : M.partnerPz ? 10 + M.partnerPz : 9;
     }
     audio.setPaused(pk > 0);
     if (pk !== pauseK) {
@@ -1094,6 +1204,7 @@ export function createGame(el, api) {
       else if (pk === 4) info = { title: `Waiting for ${pn}`, text: `${pn} left the game. The run picks up where you left off when they’re back.`, invite: true };
       else if (pk === 5) info = { title: `Waiting for ${pn}`, text: 'Their connection dropped. The run picks up where you left off when they’re back.' };
       else if (pk === 6) info = { title: `Getting ${pn} back in`, text: 'Syncing the run…' };
+      else if (pk === 7 || pk === 8) info = { title: `Waiting for ${pn}`, text: pk === 8 ? `${pn} left the game. You can keep waiting, or end the match here.` : `${pn} has been offline for a while. You can keep waiting, or end the match here.`, invite: pk === 8, end: M.mode === 'tandem' ? 'End the run' : 'End match · you win' };
       else if (pk > 10) { const z = pk - 10; info = { title: `${pn} paused`, text: z === PZ.hidden ? `${pn} switched apps. Hang tight.` : z === PZ.menu ? 'They’ll be right back.' : z >= PZ.gone ? 'Reconnecting…' : 'One moment…' }; }
       else if (pk === 9) info = { title: 'Paused', text: '' };
       hud.pause(info);
@@ -1108,6 +1219,7 @@ export function createGame(el, api) {
     let mag = 0;
     for (let i = 0; i < viewers.length; i++) { const r = players[viewers[i]].r; if (r && r.magnetT > 0 && !r.down) mag = 1; }
     audio.setMagnet(mag && M.phase === 'run' && !paused ? Math.max(0.01, clamp((sp - 8) / 22, 0, 1)) : 0);
+    audio.setHeart(M.phase === 'run' && !paused && rival.anyLow);
     for (let vi = 0; vi < viewers.length; vi++) {
       const w = viewers[vi];
       const p = players[w]; const v = p.view; const r = p.r;
@@ -1139,38 +1251,50 @@ export function createGame(el, api) {
       v.dist(Math.max(0, Math.floor(p.rs.z)));
       if (M.mode === 'race') {
         v.bar(true, clamp(p.rs.z / M.len, 0, 1), clamp(qs.z / M.len, 0, 1), p.css, q.css, p.name[0], q.name[0]);
-        if (hk.gap !== gapM) { hk.gap = gapM; v.gap(Math.abs(gapM) < 1 ? `${q.name} level with you` : `${q.name} ${gapM > 0 ? '+' : '−'}${Math.abs(gapM)} m`); }
+        const nk = rival.neck(w); const gk = gapM * 2 + (nk ? 1 : 0);
+        if (hk.gap !== gk) { hk.gap = gk; v.gap(nk ? neckText(gapM, p, q) : Math.abs(gapM) < 1 ? `${q.name} level with you` : leadText(gapM, p, q)); }
         v.weapon(p.weaponRoll > 0 ? WEAPON_IDX[1 + (Math.floor(K.tAnim * 12) % 5)] : p.weapon, true);
       } else if (M.mode === 'daily') {
         v.bar(false);
-        const k = (Math.abs(gapM) <= 2 ? 99999 : gapM) * 10 + qh;
-        if (hk.gap !== k) { hk.gap = k; v.gap(Math.abs(gapM) <= 2 ? `${q.name} level with you` : `${q.name} ${gapM > 0 ? '+' : '−'}${Math.abs(gapM)} m`); }
+        const nk = rival.neck(w);
+        const k = (Math.abs(gapM) <= 2 ? 99999 : gapM) * 20 + qh * 2 + (nk ? 1 : 0);
+        if (hk.gap !== k) { hk.gap = k; v.gap(nk ? neckText(gapM, p, q) : Math.abs(gapM) <= 2 ? `${q.name} level with you` : leadText(gapM, p, q)); }
       } else if (M.mode === 'brawl') {
         v.bar(false);
         const k = (Math.abs(gapM) <= 2 ? 99999 : gapM) * 10 + qh;
         if (hk.gap !== k) {
           hk.gap = k;
           const hs = `${'♥'.repeat(Math.max(0, qh))}${'♡'.repeat(Math.max(0, HEARTS - qh))}`;
-          v.gap(Math.abs(gapM) <= 2 ? `${q.name} ${hs} · side by side!` : `${q.name} ${hs} · ${gapM > 0 ? '+' : '−'}${Math.abs(gapM)} m`);
+          v.gap(Math.abs(gapM) <= 2 ? `${q.name} ${hs} · side by side!` : `${q.name} ${hs} · ${leadText(gapM, p, q, true)}`);
         }
       }
       v.partner('', q.css);
-      v.powers(r.magnetT / 10, r.sneakersT / 10, r.shield, r.boostT / 2.2);
+      v.powers(r.magnetT / 10, r.sneakersT / 10, r.shield, r.boostT / 2.2, r.dblT / DOUBLE_T);
+      v.clutch(rival.low(w));
+      v.neck(rival.neck(w));
       // oncoming train warning + horn
-      let warn = false; let warnLane = 0;
+      let warn = false; let warnLane = 0; let trainWarn = false; let bl = 0; let bn = 0;
       const ci = Math.floor(r.z / CHUNK);
       for (let c = ci; c <= ci + 1; c++) {
         const obs = M.track.chunk(c).obs;
         for (let oi = 0; oi < obs.length; oi++) {
           const o = obs[oi];
+          if (o.t === O_BARREL) { // a rolling barrel (track v2): "!" over its lane + a low rumble, once per barrel
+            if (r.z >= o.zm - BARREL_LEAD && r.z < o.zm - 6) {
+              warn = true; bl += o.lane; bn++;
+              if (p.lastRumble !== o.id) { p.lastRumble = o.id; audio.play('rumble'); }
+            }
+            continue;
+          }
           if (o.t !== O_MTRAIN) continue;
           if (r.z >= o.zm - MT_LEAD && r.z < o.zm + 1) {
-            warn = true; warnLane = o.lane;
+            warn = true; trainWarn = true; warnLane = o.lane;
             if (p.lastHorn !== o.id) { p.lastHorn = o.id; audio.play('horn'); }
           }
         }
       }
-      v.warn(warn && M.phase === 'run', warnLane * 230);
+      if (bn && !trainWarn) warnLane = bl / bn; // (a train's lane wins when both are close)
+      v.warn(warn && M.phase === 'run', warnLane * (X.mirror ? -230 : 230));
       // tandem banners
       if (M.mode === 'tandem' && M.phase === 'run') {
         if (r.down && p.downId) {
@@ -1187,6 +1311,8 @@ export function createGame(el, api) {
     void dt;
   }
   // partner name tag (live): after render, so the camera matrices are this frame's
+  /** hud.tag in a mirrored picture: the canvas is flipped, the HUD isn't. */
+  const tagM = (on, x, y, text, css, side, ghost) => hud.tag(on, X.mirror ? W - x : x, y, text, css, X.mirror ? -side : side, ghost);
   function updateTag() {
     if (live && players[meW].rig && vec3 && M.phase !== 'lobby') {
       const q = players[other(meW)];
@@ -1197,13 +1323,13 @@ export function createGame(el, api) {
         vec3.set(q.rs.x, q.rs.y + 2.75, -q.rs.z);
         vec3.project(cam);
         if (vec3.z < 1 && Math.abs(vec3.x) < 1.1 && vec3.y < 1 && vec3.y > -1) {
-          hud.tag(true, clamp((vec3.x * 0.5 + 0.5) * W, 44, W - 44), clamp((-vec3.y * 0.5 + 0.5) * H, 120, H - 40), q.name, q.css, 0);
+          tagM(true, clamp((vec3.x * 0.5 + 0.5) * W, 44, W - 44), clamp((-vec3.y * 0.5 + 0.5) * H, 120, H - 40), q.name, q.css, 0);
         } else if (vec3.z < 1 && Math.abs(dz) < 12) {
           // right beside me but outside a narrow portrait view: pin the tag to that edge, pointing at them
           const side = vec3.x > 0 ? 1 : -1;
           vec3.set(q.rs.x, q.rs.y + 1.1, -q.rs.z);
           vec3.project(cam);
-          hud.tag(true, side > 0 ? W - 10 : 10, clamp((-vec3.y * 0.5 + 0.5) * H, 150, H - 170), q.name, q.css, side);
+          tagM(true, side > 0 ? W - 10 : 10, clamp((-vec3.y * 0.5 + 0.5) * H, 150, H - 170), q.name, q.css, side);
         } else hud.tag(false);
       } else if (M.phase === 'run' && q.rs.visible && (dz >= 120 || dz <= -6) && Math.abs(dz) < 100000) {
         // ghost marker: they're out of sight, so pin a chip where they'd be (their lane, up at the
@@ -1214,8 +1340,13 @@ export function createGame(el, api) {
         if (dz > 0) {
           vec3.set(q.rs.x, 1.2, -(me.z + 140));
           vec3.project(cam);
-          hud.tag(true, clamp((vec3.x * 0.5 + 0.5) * W, 60, W - 60), clamp((-vec3.y * 0.5 + 0.5) * H, H * 0.3, H * 0.5), ghostText, q.css, 0, true);
-        } else hud.tag(true, clamp(W / 2 + (q.rs.x - me.x) * 34, 70, W - 70), H - 120, ghostText, q.css, 0, true);
+          tagM(true, clamp((vec3.x * 0.5 + 0.5) * W, 60, W - 60), clamp((-vec3.y * 0.5 + 0.5) * H, H * 0.3, H * 0.5), ghostText, q.css, 0, true);
+        } else if (M.mode === 'tandem') {
+          // behind me: down at my feet in portrait, along the bottom edge in landscape (there it sat on the runner's torso).
+          // (Race / Brawl / Daily already say it in the gap pill at the top)
+          const lands = H < 560 && W > H;
+          tagM(true, clamp(W / 2 + (q.rs.x - me.x) * 34, lands ? 130 : 70, W - (lands ? 130 : 70)), lands ? H - 30 : H - 120, ghostText, q.css, 0, true);
+        } else hud.tag(false);
       } else hud.tag(false);
     } else hud.tag(false);
   }
@@ -1236,10 +1367,11 @@ export function createGame(el, api) {
       if (!isHost) { const hm = fresh && ps.ph === PH.lobby ? MODES[ps.md] : null; if (hm) M.lobbyMode = hm; k = (k & ~0xff00) | ((MODES.indexOf(M.lobbyMode) + 1) << 8); }
       k |= (partnerHere ? 4 : 0) | (fresh && ps.ph === PH.lobby ? 8 : 0) | (fresh && ps.sy ? 16 : 0) | (fresh && ps.rd ? 32 : 0) | (link.synced ? 64 : 0) | (M.ready ? 128 : 0);
     }
+    X.lobbyTick(hud.ov.lobby, day());
     if (k === lobbyK && ov_lobbyOn()) return;
     lobbyK = k;
     const keys = split ? `<div><b>${esc(api.name('a'))}</b><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> · weapon <kbd>E</kbd></div><div><b>${esc(api.name('b'))}</b><kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> · weapon <kbd>Enter</kbd></div>` : '';
-    const daily = dailyText();
+    const daily = X.dailyTile(dailyText(), day());
     if (!live) { hud.lobby({ mode: M.lobbyMode, canPick: true, canStart: true, startLabel: 'Start', status: '', keys, daily }); return; }
     const pn = api.name(other(meW));
     if (isHost) {
@@ -1304,7 +1436,9 @@ export function createGame(el, api) {
       rg.update(dt, mode, tg, K.tAnim);
       viewArg.track = tr; viewArg.z = p.rs.z; viewArg.r = p.r; viewArg.time = K.tAnim; viewArg.boxes = M.mode === 'race' && M.phase !== 'lobby'; viewArg.fly = p.fly; viewArg.front = mode === 'lobby' || mode === 'finale';
       world.syncView(viewArg);
+      X.afterSync(viewArg.z); // Blind coins
       world.follow(rg.cam);
+      world.setDistrictAt(tr.seed, p.rs.z);
       // A runner between this camera and its own runner dissolves through a halftone screen
       // (the partner close behind you would otherwise fill a third of a phone screen).
       for (let k = 0; k < 2; k++) {
@@ -1318,7 +1452,7 @@ export function createGame(el, api) {
         }
         world.fade[w].value = f;
       }
-      if (split) { renderer.setViewport(i * vw, 0, vw, H); renderer.setScissor(i * vw, 0, vw, H); }
+      if (split) { const vx = X.mirror ? (nv - 1 - i) * vw : i * vw; renderer.setViewport(vx, 0, vw, H); renderer.setScissor(vx, 0, vw, H); }
       else renderer.setViewport(0, 0, W, H);
       if (draw) renderer.render(world.scene, rg.cam);
       const sk = mode === 'run' && !isPaused(now) ? Math.min(1, Math.max(0, (p.rs.speed - 18) / 12)) * 0.8 + (p.rs.boost ? 0.5 : 0) : 0;
@@ -1423,22 +1557,27 @@ export function createGame(el, api) {
       },
       input(w, a) { onAction(w || meW || 'a', { left: A_LEFT, right: A_RIGHT, up: A_UP, down: A_DOWN, use: A_USE }[a] || a); },
       auto(w, on) { const p = players[w || meW]; if (p) p.auto = on !== false; },
-      give(w, kind) { const p = players[w || meW]; if (!p || !p.r) return false; if (kind === 'shield') { p.r.shield = 1; return true; } if (kind === 'magnet') { p.r.magnetT = 10; return true; } p.weapon = kind; p.weaponRoll = 0; return true; },
+      give(w, kind) { const p = players[w || meW]; if (!p || !p.r) return false; if (kind === 'shield') { p.r.shield = 1; return true; } if (kind === 'magnet') { p.r.magnetT = 10; return true; } if (kind === 'sneakers') { p.r.sneakersT = 10; return true; } if (kind === 'double') { p.r.dblT = DOUBLE_T; return true; } p.weapon = kind; p.weaponRoll = 0; return true; },
       crash(w) { const p = players[w || meW]; if (p && p.r && !p.r.down) { p.r.invulnT = 0; p.r.shield = 0; crash(p.r, C_FORCED, false); drain(p); } },
       /** Queue a sim event on a local runner; the next step drains it through the real feedback path. */
       emit(w, kind, val) {
-        const p = players[w || meW]; const t = { bonus: E_BONUS, combo: E_COMBO, close: E_CLOSE }[kind];
+        const p = players[w || meW]; const t = { bonus: E_BONUS, combo: E_COMBO, close: E_CLOSE, pick: E_PICK }[kind];
         if (!p || !p.r || !t || p.r.evN >= p.r.evT.length) return false;
         p.r.evT[p.r.evN] = t; p.r.evV[p.r.evN] = val; p.r.evN++;
         return true;
       },
+      /** Put a local runner at distance z (rivalry tests: pass the partner, cross a best stripe). */
+      setZ(w, z) { const p = players[w || meW]; if (p && p.r) { p.r.z = p.r.zPrev = z; p.prev.z = z; } },
+      rivalry: () => rival.debug(),
       setHearts(w, n) { const p = players[w || meW]; if (p && p.r) p.r.hearts = n; },
       ghost(w, sec) { const p = players[w || meW]; if (p && p.r && !p.r.done) p.r.invulnT = sec; },
       teamHearts(n) { M.th = n; },
       mode(m) { if (isHost && M.phase === 'lobby') { M.lobbyMode = m; } },
       start() { hostStart(); },
-      trackHash: (seed, n) => trackHash(seed, n),
+      trackHash: (seed, n, ver) => trackHash(seed, n, ver || 1),
       dailySeed: (d) => dailySeed(d),
+      matchInfo: () => ({ day: M.day, trackV: M.trackV, epoch: M.epoch, mod: X.mod }),
+      extras: () => X.debug(),
       data: () => data(),
       setData: (patch) => setData(patch),
       settings,
@@ -1475,11 +1614,11 @@ export function createGame(el, api) {
         while (rc.z < 1200 && n < 120 * 90) { if (n % bot.every === 0) { const a = bot.decide(rc); if (a) act(rc, a); } step(rc, tr, false); rc.evN = 0; n++; if (rc.down) break; }
         return { late, none, early, combo: { max: rc.maxCombo, bonus: rc.bonus, coins: rc.coins, closeCalls: rc.closeCalls } };
       },
-      botRun: (seed, n) => botRun(seed, n),
+      botRun: (seed, n, o) => botRun(seed, n, o),
       inputStats: () => (input ? input.stats : null),
       get canvas() { return renderer ? renderer.domElement : null; },
       instances: () => liveGames,
-      get internals() { return { renderer, world, fx, overlay, players, THREE, M, audio }; },
+      get internals() { return { renderer, world, fx, overlay, players, THREE, M, audio, X }; },
     };
   }
 

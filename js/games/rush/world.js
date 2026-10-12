@@ -3,9 +3,10 @@
 // pooled oncoming trains, skyline and street. `syncView(view)` lays out the per-runner things
 // (collected coins, smashed barriers, oncoming train positions) right before rendering a view.
 import { rng } from '../core.js';
-import { CHUNK, LANE_W, CAR, ROOF, LOW_H, HIGH_B, HIGH_T } from './tune.js';
-import { O_LOW, O_HIGH, O_TRAIN, O_RAMP, O_MTRAIN, O_BLOCK, I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX, I_REVIVE, mtrainFront } from './track.js';
-import { GeoBuf, makeToon, makeUniforms, makeTemplates, blobTexture, mix, FX_PLAIN, FX_GLOW, FX_SKY } from './gfx.js';
+import { CHUNK, LANE_W, CAR, ROOF, LOW_H, HIGH_B, HIGH_T, BARREL_D, BARREL_LEAD } from './tune.js';
+import { O_LOW, O_HIGH, O_TRAIN, O_RAMP, O_MTRAIN, O_BLOCK, O_BARREL, I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX, I_REVIVE, I_NOTE, I_DOUBLE, mtrainFront, barrelFront, districtSeq, districtIn } from './track.js';
+import { GeoBuf, makeToon, makeUniforms, applyPaletteUniforms, makeTemplates, blobTexture, mix, FX_PLAIN, FX_GLOW, FX_SKY } from './gfx.js';
+import { makeBio, bioGate, bioScenery, bx, qz, qx, qu, stripes, windows } from './bio.js';
 
 // Sky dome: two theme inks printed as a halftone gradient (dots grow from the horizon up), so the
 // sky reads as Riso print rather than a CSS gradient. Its uniforms carry the colour script.
@@ -26,13 +27,20 @@ const POOL = 9;
 const COIN_MAX = 300;
 const ITEM_MAX = 16;
 const BAR_MAX = 40;
+const BARREL_MAX = 8;      // rolling barrels on screen at once
+const BARREL_R = BARREL_D / 2;
 const VIEW_AHEAD = 175;
 const COIN_AHEAD = 132;   // coins further out are lost in the fog anyway
+const COIN_LOD = 36;      // coins further than this ahead of the runner draw as a cheap 6-sided token (48 triangles instead of 156)
 const VIEW_BEHIND = 14;
 const SIDE_X = 4.35;      // parapet line
+// instance-colour tints of gold coins (they multiply the coin's vertex colours; > 1 brightens)
+const GOLD_T = [1.05, 0.8, 0.85];   // fool's gold: deeper, warmer than the plain coin
+const HUND_T = [1.0, 0.86, 1.4];   // Golden Hundred: paler, brighter
 
 export function createWorld(THREE, P) {
   const T = makeTemplates(THREE);
+  let BIO = makeBio(P); // per-district palettes (mixes of the theme palette: light and dark both follow the tokens)
   const U = makeUniforms(THREE, P);
   // Same shader, separate instances per object kind: three r128 recomputes program parameters
   // (and allocates) whenever one material alternates between plain and instanced draws.
@@ -88,7 +96,19 @@ export function createWorld(THREE, P) {
     b.add(T.box, 0, 0, 0, 0.12, 0.19, 0.34, 0, P.coinRim, FX_PLAIN, 0, ink);
   });
   // disc template is a Y-axis cylinder: rotate its axis to Z by swapping in the instance matrix (see writeCoin)
-  const coins = inst(coinGeo, COIN_MAX);
+  // Coins draw with the instance-colour material (the barrier blocks' program: no new shader): the
+  // per-instance colour multiplies the vertex colours, white for plain coins, a gold tint for fool's gold.
+  const coinFarGeo = freezeWith((b) => {
+    b.add(T.cyl6, 0, 0, 0, 0.84, 0.22, 0.84, 0, mix(P.coin, P.coinRim, 0.3), FX_GLOW, 0.05, ink);
+  });
+  const instColored = (geo) => {
+    const im = inst(geo, COIN_MAX, matInstC);
+    im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(COIN_MAX * 3).fill(1), 3);
+    im.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    return im;
+  };
+  const coins = instColored(coinGeo);
+  const coinsFar = instColored(coinFarGeo); // the same coins past COIN_LOD m: one more call, the same program
 
   const itemGeo = {};
   itemGeo[I_MAGNET] = freezeWith((b) => {
@@ -123,9 +143,33 @@ export function createWorld(THREE, P) {
     b.add(T.disc, 0, -1.05, 0, 2.2, 0.06, 2.2, 0, mix(P.hl, P.white, 0.3), FX_GLOW, 0.04, ink);
     b.add(T.cyl, 0, 2.6, 0, 0.32, 6.5, 0.32, 0, mix(P.b, P.white, 0.55), FX_GLOW, 0, ink);
   });
+  // Love note: a pink envelope with a heart seal (both faces), flap and stamp.
+  itemGeo[I_NOTE] = freezeWith((b) => {
+    const paper = mix(P.white, P.b, 0.12);
+    b.add(T.box, 0, 0, 0, 0.98, 0.68, 0.14, 0, paper, FX_PLAIN, 0.05, ink);
+    b.add(T.pen, 0, 0.1, 0.08, 0.96, 0.4, 1, 0, mix(P.b, P.white, 0.4), FX_PLAIN, 0, ink);
+    b.add(T.pen, 0, 0.1, -0.08, 0.96, 0.4, 1, Math.PI, mix(P.b, P.white, 0.4), FX_PLAIN, 0, ink);
+    for (const sz of [1, -1]) {
+      b.add(T.lowSphere, 0, -0.02, 0.1 * sz, 0.26, 0.26, 0.14, 0, P.b, FX_GLOW, 0.03, ink);
+      b.add(T.box, 0.34, 0.2, 0.075 * sz, 0.16, 0.2, 0.02, 0, P.hl, FX_PLAIN, 0, ink);
+    }
+  });
+  // Coin doubler: a gold-rimmed blue token with a big white 2 on both faces.
+  itemGeo[I_DOUBLE] = freezeWith((b) => {
+    b.add(T.discZ, 0, 0, 0, 1.0, 1.0, 0.2, 0, P.hl, FX_PLAIN, 0.05, ink);
+    b.add(T.discZ, 0, 0, 0, 0.8, 0.8, 0.26, 0, mix(P.a, P.white, 0.2), FX_GLOW, 0, ink);
+    for (const sz of [1, -1]) {
+      const z = 0.15 * sz; const m = sz;
+      b.add(T.box, 0, 0.2, z, 0.34, 0.08, 0.04, 0, P.white, FX_GLOW, 0, ink);
+      b.add(T.box, 0.13 * m, 0.1, z, 0.08, 0.2, 0.04, 0, P.white, FX_GLOW, 0, ink);
+      b.add(T.box, 0, 0, z, 0.34, 0.08, 0.04, 0, P.white, FX_GLOW, 0, ink);
+      b.add(T.box, -0.13 * m, -0.1, z, 0.08, 0.2, 0.04, 0, P.white, FX_GLOW, 0, ink);
+      b.add(T.box, 0, -0.2, z, 0.34, 0.08, 0.04, 0, P.white, FX_GLOW, 0, ink);
+    }
+  });
   // The revive halo should be drawn first-ish; it's opaque but smaller parts poke through. Fine for a glowing token.
   const items = {};
-  for (const k of [I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX, I_REVIVE]) items[k] = inst(itemGeo[k], ITEM_MAX);
+  for (const k of [I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX, I_REVIVE, I_NOTE, I_DOUBLE]) items[k] = inst(itemGeo[k], ITEM_MAX);
 
   const lowGeo = freezeWith((b) => {
     b.boxMM(-1.02, 0, -0.1, -0.84, LOW_H, 0.1, P.pole, FX_PLAIN, 0.035, ink, T);
@@ -148,6 +192,15 @@ export function createWorld(THREE, P) {
     b.boxMM(-1.2, 1.1, -0.4, 1.2, 1.25, 0.4, P.white, FX_PLAIN, 0.05, ink, T);
     b.boxMM(-0.25, 1.25, -0.1, 0.25, 1.6, 0.1, P.hl, FX_GLOW, 0.04, ink, T);
   });
+  // Rolling barrel (track v2): a red drum on its side (axis x), yellow hoops, pale staves that make the roll
+  // readable; ink outline like the other instanced obstacles. One InstancedMesh on the barrier program.
+  const barrelGeo = freezeWith((b) => {
+    const R = BARREL_D;
+    b.add(T.discX, 0, 0, 0, 1.7, R, R, 0, P.bad, FX_PLAIN, 0.04, ink);
+    for (const sx of [-1, 1]) b.add(T.discX, sx * 0.62, 0, 0, 0.2, R * 1.07, R * 1.07, 0, P.hl, FX_PLAIN, 0.03, ink);
+    b.add(T.staves, 0, 0, 0, 1.5, R * 1.03, R * 1.03, 0, P.white, FX_PLAIN, 0, ink);
+  });
+  const barrels = inst(barrelGeo, BARREL_MAX, matBar);
   const lows = inst(lowGeo, BAR_MAX, matBar);
   const highs = inst(highGeo, BAR_MAX, matBar);
   const blocks = inst(blockGeo, 8, matInstC);
@@ -278,16 +331,69 @@ export function createWorld(THREE, P) {
   const calm0 = new THREE.Color().fromArray(P.skyCalm[0]); const calm1 = new THREE.Color().fromArray(P.skyCalm[1]);
   const fast0 = new THREE.Color().fromArray(P.skyFast[0]); const fast1 = new THREE.Color().fromArray(P.skyFast[1]);
   let moodK = -1;
+  let moodE = 0;
   let sunFront = null;
+  // District sky tints (horizon + zenith per district, null for Downtown), blended on top of the
+  // calm/fast pair. Scratch colours: nothing is allocated when the view changes.
+  const SKY_K = 0.6;
+  const tintH = []; const tintT = [];
+  const streetCol = streetGeo.getAttribute('color');
+  const streetBase = new THREE.Color();
+  const skyTmp = [new THREE.Color(), new THREE.Color(), new THREE.Color()];
+  function buildTints() {
+    tintH.length = 0; tintT.length = 0;
+    for (const B of BIO) { tintH.push(B.sky ? new THREE.Color().fromArray(B.sky[0]) : null); tintT.push(B.sky ? new THREE.Color().fromArray(B.sky[1]) : null); }
+  }
+  buildTints();
+  let dA = 0; let dB = 0; let dQ = 0;
+  const tintOf = (out, base, tints, d) => { out.copy(base); if (tints[d]) out.lerp(tints[d], SKY_K); return out; };
+  function applySky() {
+    const e = moodE;
+    skyTmp[0].copy(calm0).lerp(fast0, e); // base horizon
+    skyTmp[1].copy(calm1).lerp(fast1, e); // base zenith
+    if (dA === 0 && dB === 0) { skyU.uHor.value.copy(skyTmp[0]); skyU.uTop.value.copy(skyTmp[1]); }
+    else {
+      const bl = dQ;
+      tintOf(skyU.uHor.value, skyTmp[0], tintH, dA); tintOf(skyTmp[2], skyTmp[0], tintH, dB); skyU.uHor.value.lerp(skyTmp[2], bl);
+      tintOf(skyU.uTop.value, skyTmp[1], tintT, dA); tintOf(skyTmp[2], skyTmp[1], tintT, dB); skyU.uTop.value.lerp(skyTmp[2], bl);
+    }
+    scene.fog.color.copy(skyU.uHor.value);
+    // the far street layer (water in the harbour) takes the district colour too
+    streetBase.fromArray(BIO[dA].street); skyTmp[2].fromArray(BIO[dB].street); streetBase.lerp(skyTmp[2], dQ);
+    const ca = streetCol.array;
+    for (let i = 0; i < streetCol.count; i++) { ca[i * 3] = streetBase.r; ca[i * 3 + 1] = streetBase.g; ca[i * 3 + 2] = streetBase.b; }
+    streetCol.needsUpdate = true;
+  }
   /** Colour script: 0 = strolling, 1 = flat out (sky and fog warm up together). */
   function setMood(k) {
     const q = Math.round(Math.max(0, Math.min(1, k)) * 64) / 64;
     if (q === moodK) return;
     moodK = q;
-    const e = q * q * (3 - 2 * q);
-    skyU.uHor.value.copy(calm0).lerp(fast0, e);
-    skyU.uTop.value.copy(calm1).lerp(fast1, e);
-    scene.fog.color.copy(skyU.uHor.value);
+    moodE = q * q * (3 - 2 * q);
+    applySky();
+  }
+  /**
+   * District sky / fog / far street for the view about to be drawn: district a blends into b by t
+   * (0..1), quantized to 1/32, uniforms and one tiny colour buffer only (no recompiles). Call it per
+   * view, right before rendering it (split screen: each view in its own district).
+   */
+  function setDistrict(a, b, t) {
+    const q = Math.round(Math.max(0, Math.min(1, t)) * 32) / 32;
+    a |= 0; b |= 0;
+    if (a === dA && b === dB && q === dQ) return;
+    dA = a; dB = b; dQ = q;
+    applySky();
+  }
+  const D_BLEND = 50; // metres either side of a zone boundary over which the sky changes
+  let dSeed = null; let dSeq = null;
+  /** setDistrict for a runner at track position z on `seed`'s track: blends over the 100 m around the zone boundary. */
+  function setDistrictAt(seed, z) {
+    if (seed !== dSeed || !dSeq) { dSeed = seed; dSeq = districtSeq(seed); }
+    const kf = Math.floor((z + D_BLEND) / CHUNK); const kb = Math.floor((z - D_BLEND) / CHUNK);
+    const a = districtIn(dSeq, kb < 0 ? 0 : kb); const b = districtIn(dSeq, kf < 0 ? 0 : kf);
+    let t = 0;
+    if (a !== b) { t = (z + D_BLEND - kf * CHUNK) / CHUNK; t = t * t * (3 - 2 * t); }
+    setDistrict(a, b, t);
   }
   setMood(0);
 
@@ -303,7 +409,7 @@ export function createWorld(THREE, P) {
     if (e.ci !== null) byChunk.delete(e.ci);
     const c = ci < 0 ? behindChunk(ci) : track.chunk(ci);
     e.buf.reset();
-    buildChunk(e.buf, c, T, P);
+    buildChunk(e.buf, c, T, P, BIO);
     e.buf.commit(140, 0, 4, -(c.z0 + CHUNK / 2));
     if (e.buf.nv > stats.maxV) stats.maxV = e.buf.nv;
     if (e.buf.ni > stats.maxI) stats.maxI = e.buf.ni;
@@ -349,33 +455,47 @@ export function createWorld(THREE, P) {
     arr[o + 12] = x; arr[o + 13] = y; arr[o + 14] = z; arr[o + 15] = 1;
   }
 
+  let coinAhead = Infinity; // coins further than this ahead of the runner are left out of both coin meshes
+  /** Blind coins: only coins within `m` metres ahead are drawn (near and far mesh alike); Infinity = all of them. */
+  function setCoinAhead(m) { coinAhead = m > 0 ? m : Infinity; }
+
   /**
    * Lay out per-runner things for one view. v = { track, z (view runner z), r (runner whose
    * pickups count, may be null), time (s), fly: [{x,y,z,s}] flying coins }
    */
   function syncView(v) {
     const { track, z } = v;
+    const coinLim = z + coinAhead; // Blind coins (the Daily's twist) pulls this in; Infinity = off
     const r = v.r;
     const spin = v.time * 3.2;
     const c0 = Math.max(0, Math.floor((z - VIEW_BEHIND) / CHUNK));
     const c1 = Math.floor((z + VIEW_AHEAD) / CHUNK);
     const ca = coins.instanceMatrix.array;
+    const cca = coins.instanceColor.array;
+    const fa = coinsFar.instanceMatrix.array;
+    const fca = coinsFar.instanceColor.array;
+    let nf = 0;
     if (sunFront !== !!v.front) { sunFront = !!v.front; U.uSun.value.set(-0.42, 0.8, sunFront ? -0.43 : 0.43).normalize(); }
     let nc = 0;
     const ic = itemCount;
     ic.fill(0);
-    let nl = 0; let nh = 0; let nm = 0;
-    const la = lows.instanceMatrix.array; const ha = highs.instanceMatrix.array;
+    let nl = 0; let nh = 0; let nm = 0; let nbr = 0;
+    const la = lows.instanceMatrix.array; const ha = highs.instanceMatrix.array; const bra = barrels.instanceMatrix.array;
     for (let ci = c0; ci <= c1; ci++) {
       const c = track.chunk(ci);
       const base = ci * 1000;
       const cs = c.coins;
-      for (let i = 0; i < cs.length && nc < COIN_MAX; i++) {
+      for (let i = 0; i < cs.length && nc < COIN_MAX && nf < COIN_MAX; i++) {
         const cn = cs[i];
         if (cn.z < z - VIEW_BEHIND) continue;
-        if (cn.z > z + COIN_AHEAD) break; // sorted by z
+        if (cn.z > z + COIN_AHEAD || cn.z > coinLim) break; // sorted by z
         if (r && r.taken.has(base + i)) continue;
-        WM[0] = cn.x; WM[1] = cn.y; WM[2] = -cn.z; WM[3] = 1; WM[4] = spin + cn.z * 0.05; WM[5] = Math.PI / 2; writeM(ca, nc++);
+        const far = cn.z > z + COIN_LOD;
+        const A = far ? fa : ca; const C = far ? fca : cca; const o3 = (far ? nf : nc) * 3;
+        const cv = cn.v; // track v2: 3 = fool's gold (big, gold), 2 = Golden Hundred (gold); undefined / 1 = plain
+        if (cv > 1) { const gd = cv > 2; C[o3] = gd ? GOLD_T[0] : HUND_T[0]; C[o3 + 1] = gd ? GOLD_T[1] : HUND_T[1]; C[o3 + 2] = gd ? GOLD_T[2] : HUND_T[2]; WM[3] = gd ? 1.4 : 1.12; }
+        else { C[o3] = 1; C[o3 + 1] = 1; C[o3 + 2] = 1; WM[3] = 1; }
+        WM[0] = cn.x; WM[1] = cn.y; WM[2] = -cn.z; WM[4] = spin + cn.z * 0.05; WM[5] = Math.PI / 2; writeM(A, far ? nf++ : nc++);
       }
       const its = c.items;
       for (let i = 0; i < its.length; i++) {
@@ -386,7 +506,7 @@ export function createWorld(THREE, P) {
         const m = items[it.k];
         if (ic[it.k] >= ITEM_MAX) continue;
         const bob = Math.sin(v.time * 3 + it.z) * 0.12;
-        WM[0] = it.x; WM[1] = it.y + bob; WM[2] = -it.z; WM[3] = it.k === I_BOX ? 1 : 1.05; WM[4] = spin * 0.7 + it.z; WM[5] = it.k === I_BOX ? 0.6 : 0; writeM(m.instanceMatrix.array, ic[it.k]++);
+        WM[0] = it.x; WM[1] = it.y + bob + (it.k === I_NOTE ? 0.3 : 0); WM[2] = -it.z; WM[3] = it.k === I_BOX ? 1 : it.k === I_NOTE ? 1.55 : it.k === I_DOUBLE ? 1.35 : 1.05; WM[4] = spin * 0.7 + it.z; WM[5] = it.k === I_BOX ? 0.6 : 0; writeM(m.instanceMatrix.array, ic[it.k]++);
       }
       const obs = c.obs;
       for (let oi = 0; oi < obs.length; oi++) {
@@ -396,6 +516,14 @@ export function createWorld(THREE, P) {
           if (r && r.smashN && r.smashed.has(o.id)) continue;
           if (o.t === O_LOW) { if (nl < BAR_MAX) { WM[0] = o.lane * LANE_W; WM[1] = 0; WM[2] = -(o.z0 + 0.25); WM[3] = 1; WM[4] = 0; WM[5] = 0; writeM(la, nl++); } }
           else if (nh < BAR_MAX) { WM[0] = o.lane * LANE_W; WM[1] = 0; WM[2] = -(o.z0 + 0.2); WM[3] = 1; WM[4] = 0; WM[5] = 0; writeM(ha, nh++); }
+        } else if (o.t === O_BARREL) {
+          // rolls toward you, deterministic in runner space like an oncoming train: it shows up BARREL_LEAD m before the
+          // meeting point (grows in over 5 m), spins by distance rolled, and is gone once it is behind the camera
+          const lead = o.zm - z;
+          if (nbr >= BARREL_MAX || lead > BARREL_LEAD || (r && r.smashN && r.smashed.has(o.id))) continue;
+          const f = barrelFront(o, z) + BARREL_R;
+          if (f < z - 12) continue;
+          WM[0] = o.lane * LANE_W; WM[1] = BARREL_R; WM[2] = -f; WM[3] = lead > BARREL_LEAD - 5 ? (BARREL_LEAD - lead) / 5 + 0.05 : 1; WM[4] = 0; WM[5] = -f / BARREL_R; writeM(bra, nbr++);
         } else if (o.t === O_MTRAIN && nm < mtrains.length) {
           const f = mtrainFront(o, z);
           const m = mtrains[nm++];
@@ -405,7 +533,7 @@ export function createWorld(THREE, P) {
         }
       }
     }
-    if (v.fly) for (let fi = 0; fi < v.fly.length; fi++) { const f = v.fly[fi]; if (nc < COIN_MAX && f.on) { WM[0] = f.x; WM[1] = f.y; WM[2] = -f.z; WM[3] = f.s; WM[4] = spin * 2; WM[5] = Math.PI / 2; writeM(ca, nc++); } }
+    if (v.fly) for (let fi = 0; fi < v.fly.length; fi++) { const f = v.fly[fi]; if (nc < COIN_MAX && f.on) { WM[0] = f.x; WM[1] = f.y; WM[2] = -f.z; WM[3] = f.s; WM[4] = spin * 2; WM[5] = Math.PI / 2; cca[nc * 3] = 1; cca[nc * 3 + 1] = 1; cca[nc * 3 + 2] = 1; writeM(ca, nc++); } }
     if (r) {
       for (let ti = 0; ti < r.tokens.length; ti++) {
         const tk = r.tokens[ti];
@@ -429,10 +557,12 @@ export function createWorld(THREE, P) {
       blocks.instanceMatrix.needsUpdate = true;
     } else blocks.count = 0;
     for (let i = nm; i < mtrains.length; i++) mtrains[i].visible = false;
-    coins.count = nc; coins.instanceMatrix.needsUpdate = true;
-    for (let k = 1; k <= 5; k++) { items[k].count = ic[k]; items[k].instanceMatrix.needsUpdate = true; }
+    coins.count = nc; coins.instanceMatrix.needsUpdate = true; coins.instanceColor.needsUpdate = true;
+    coinsFar.count = nf; coinsFar.instanceMatrix.needsUpdate = true; coinsFar.instanceColor.needsUpdate = true;
+    for (let k = 1; k <= 7; k++) { items[k].count = ic[k]; items[k].instanceMatrix.needsUpdate = true; }
     lows.count = nl; lows.instanceMatrix.needsUpdate = true;
     highs.count = nh; highs.instanceMatrix.needsUpdate = true;
+    barrels.count = nbr; barrels.instanceMatrix.needsUpdate = true;
   }
 
   /** Blob shadows: list of [x, groundY, z, size, strength]. */
@@ -482,22 +612,25 @@ export function createWorld(THREE, P) {
 
   function setPalette(P2) {
     // Rebuilding everything is simplest; palette changes are rare (theme switch).
+    P = P2; BIO = makeBio(P2); buildTints();
+    applyPaletteUniforms(U, P2);
     scene.background.fromArray(P2.bg);
-    scene.fog.color.fromArray(P2.fog);
+    calm0.fromArray(P2.skyCalm[0]); calm1.fromArray(P2.skyCalm[1]); fast0.fromArray(P2.skyFast[0]); fast1.fromArray(P2.skyFast[1]);
+    applySky();
     for (const p of pool) { p.ci = null; p.mesh.visible = false; }
     byChunk.clear();
   }
 
   return {
     scene, mat, matInst, matInstC, avatarMat, avatarMats, fade, U, T, P,
-    ensure, syncView, setShadows, follow, setPalette, setGates, setMarks, reset, setMood,
+    ensure, syncView, setCoinAhead, setShadows, follow, setPalette, setGates, setMarks, reset, setMood, setDistrict, setDistrictAt,
     chunkCount: () => byChunk.size,
     stats,
     /** Everything that can be drawn, for shader warm-up. */
-    warmList: () => [coins, lows, highs, blocks, gates, marks, shadows, street, skyline, dome, ...Object.values(items), mtrains[0], pool[0].mesh, ...banners, markMesh[0]],
+    warmList: () => [coins, coinsFar, lows, highs, barrels, blocks, gates, marks, shadows, street, skyline, dome, ...Object.values(items), mtrains[0], pool[0].mesh, ...banners, markMesh[0]],
     dispose() {
       for (const d of disposables) { try { d.dispose(); } catch { /* ignore */ } }
-      for (const m of [coins, lows, highs, blocks, gates, marks, ...Object.values(items)]) { try { m.dispose(); } catch { /* ignore */ } }
+      for (const m of [coins, coinsFar, lows, highs, barrels, blocks, gates, marks, ...Object.values(items)]) { try { m.dispose(); } catch { /* ignore */ } }
       try { shadows.dispose(); } catch { /* ignore */ }
       scene.clear();
     },
@@ -506,29 +639,12 @@ export function createWorld(THREE, P) {
 
 /** Scenery-only chunk behind the start line (seen in the lobby). */
 function behindChunk(ci) {
-  return { i: ci, z0: ci * CHUNK, z1: (ci + 1) * CHUNK, obs: [], gaps: [], coins: [], items: [], tunnel: null, path: [], scen: 777 + ci };
+  return { i: ci, z0: ci * CHUNK, z1: (ci + 1) * CHUNK, obs: [], gaps: [], coins: [], items: [], tunnel: null, path: [], scen: 777 + ci, bio: 0, bioNext: 0, zi: 0, zoneStart: false };
 }
 
 const hexOf = (c) => '#' + c.map((v) => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0')).join('');
 
-// ── builders (all coordinates: x, y, track distance d; world z = -d) ──
-function bx(b, T, x0, y0, d0, x1, y1, d1, rgb, fx, ol, ink) {
-  b.add(T.box, (x0 + x1) / 2, (y0 + y1) / 2, -(d0 + d1) / 2, Math.abs(x1 - x0), Math.abs(y1 - y0), Math.abs(d1 - d0), 0, rgb, fx, ol, ink);
-}
-/** Quad facing the runner (+z) centred at (x, y, d). */
-function qz(b, T, x, y, d, w, h, rgb, fx) { b.add(T.quad, x, y, -d, w, h, 1, 0, rgb, fx, 0, rgb); }
-/** Quad facing ±x (side = +1 faces +x) centred at (x, y, d), `len` along the track. */
-function qx(b, T, side, x, y, d, len, h, rgb, fx) { b.add(T.quad, x, y, -d, len, h, 1, side * Math.PI / 2, rgb, fx, 0, rgb); }
-/** Quad facing up centred at (x, y, d). */
-function qu(b, T, x, y, d, w, len, rgb) { b.add(T.quadUp, x, y, -d, w, 1, len, 0, rgb, FX_PLAIN, 0, rgb); }
-
-/** Diagonal stripes across a front face (local coords, z = face plane). */
-function stripes(b, T, x0, y0, x1, y1, z, rgb, n) {
-  const w = (x1 - x0) / n;
-  const h = y1 - y0;
-  for (let i = 0; i < n; i++) b.add(T.stripe, x0 + (i + 0.5) * w, (y0 + y1) / 2, z, w * 0.95, h, 1, 0, rgb, FX_PLAIN, 0, rgb);
-}
-
+// ── builders (bx / qz / qx / qu / stripes / windows live in bio.js; coordinates: x, y, track distance d; world z = -d) ──
 /** Intervals of [d0, d1] not covered by gaps that include lane l. */
 function openSpans(c, l, d0, d1, out) {
   out.length = 0;
@@ -549,7 +665,7 @@ function trainCars(b, x, d, n, liv, oncoming, T, P) {
   const under = mix(liv.body, [0.08, 0.08, 0.1], 0.6);
   const roof = mix(liv.body, P.white, 0.35);
   const door = mix(liv.body, P.ink, 0.25);
-  const win = P.dark ? P.lit : P.glass;
+  const win = P.dark ? P.warm : P.glass;
   const wfx = P.dark ? FX_GLOW : FX_PLAIN;
   for (let k = 0; k < n; k++) {
     const a = d + k * CAR + (k ? 0.2 : 0);
@@ -592,34 +708,9 @@ function trainCars(b, x, d, n, liv, oncoming, T, P) {
   if (oncoming) bx(b, T, x - 0.3, ROOF, d + 0.6, x + 0.3, ROOF + 0.25, d + 1.2, P.bad, FX_GLOW, 0.03, ink);
 }
 
-/** Windows on a facade. Facing ±x (side) along d, or facing +z across x. */
-function windows(b, T, r, P, facing, fixed, a0, a1, y0, y1, pat) {
-  const night = P.dark;
-  const lit = P.lit; const glass = P.glass;
-  const put = (u, v, w, h) => {
-    const on = night && r() < 0.42;
-    const col = on ? lit : glass;
-    const fx = on ? FX_GLOW : FX_PLAIN;
-    if (facing === 0) qz(b, T, u, v, fixed, w, h, col, fx);
-    else qx(b, T, facing, fixed, v, u, w, h, col, fx);
-  };
-  const span = a1 - a0;
-  if (span < 2.5 || y1 - y0 < 2) return;
-  if (pat === 0) {
-    for (let y = y0 + 1.1; y < y1 - 0.7; y += 3.2) put((a0 + a1) / 2, y, span - 1.2, 1.25);
-  } else if (pat === 1) {
-    const n = Math.max(1, Math.floor((span - 0.8) / 2.4));
-    const st = (span - 0.8) / n;
-    for (let i = 0; i < n; i++) put(a0 + 0.4 + (i + 0.5) * st, (y0 + 0.6 + y1 - 0.9) / 2, 0.95, y1 - y0 - 1.5);
-  } else {
-    const n = Math.max(1, Math.floor((span - 0.8) / 2.4));
-    const st = (span - 0.8) / n;
-    for (let y = y0 + 1.2; y < y1 - 0.8; y += 3.2) for (let i = 0; i < n; i++) put(a0 + 0.4 + (i + 0.5) * st, y, 1.15, 1.45);
-  }
-}
-
-function buildChunk(b, c, T, P) {
+function buildChunk(b, c, T, P, BIO) {
   const ink = P.outline;
+  const B = BIO[c.bio | 0] || BIO[0];
   const d0 = c.z0; const d1 = c.z1;
   const spans = [];
   const r = rng(c.scen);
@@ -631,8 +722,8 @@ function buildChunk(b, c, T, P) {
     const xl = l === -1 ? -SIDE_X : l * LANE_W - LANE_W / 2;
     const xr = l === 1 ? SIDE_X : l * LANE_W + LANE_W / 2;
     for (const [a, e] of spans) {
-      bx(b, T, xl, -1.5, a, xr, -0.12, e, P.deck, FX_PLAIN, 0, ink);
-      bx(b, T, l * LANE_W - 1.18, -0.12, a, l * LANE_W + 1.18, -0.03, e, P.bed, FX_PLAIN, 0, ink);
+      bx(b, T, xl, -1.5, a, xr, -0.12, e, B.deck, FX_PLAIN, 0, ink);
+      bx(b, T, l * LANE_W - 1.18, -0.12, a, l * LANE_W + 1.18, -0.03, e, B.bed, FX_PLAIN, 0, ink);
       for (let d = Math.ceil(a / 0.9) * 0.9 + 0.2; d < e - 0.2; d += 0.9) qu(b, T, l * LANE_W, -0.02, d, 2.05, 0.34, P.sleeper);
       for (const sx of [-0.72, 0.72]) bx(b, T, l * LANE_W + sx - 0.06, -0.03, a, l * LANE_W + sx + 0.06, 0.1, e, P.rail, FX_PLAIN, 0, ink);
     }
@@ -641,7 +732,7 @@ function buildChunk(b, c, T, P) {
       if (!(g.mask & (1 << (l + 1)))) continue;
       if (g.z0 > d0 + 1) {
         for (let k = 0; k < 4; k++) qu(b, T, l * LANE_W - 0.86 + k * 0.57, 0.0, g.z0 - 0.75, 0.29, 0.9, P.hl);
-        bx(b, T, xl + 0.2, -1.9, g.z0 - 0.5, xr - 0.2, -1.5, g.z0, P.deck, FX_PLAIN, 0.04, ink);
+        bx(b, T, xl + 0.2, -1.9, g.z0 - 0.5, xr - 0.2, -1.5, g.z0, B.deck, FX_PLAIN, 0.04, ink);
       }
     }
   }
@@ -662,7 +753,7 @@ function buildChunk(b, c, T, P) {
   // parapets
   for (const side of [-1, 1]) {
     openSpans(c, side, d0, d1, spans);
-    for (const [a, e] of spans) bx(b, T, side * SIDE_X - 0.16, -0.12, a, side * SIDE_X + 0.16, 0.8, e, P.parapet, FX_PLAIN, 0.04, ink);
+    for (const [a, e] of spans) bx(b, T, side * SIDE_X - 0.16, -0.12, a, side * SIDE_X + 0.16, 0.8, e, B.parapet, FX_PLAIN, 0.04, ink);
   }
   // signal masts every 50 m, alternating sides, one lamp lit (red / yellow / green)
   for (let d = Math.ceil((d0 - 20) / 50) * 50 + 20; d < d1; d += 50) {
@@ -695,7 +786,7 @@ function buildChunk(b, c, T, P) {
       for (let d = t0 + 4; d < t1; d += 9) qx(b, T, -side, side * 4.44, 4.85, d, 1.4, 0.3, P.lit, FX_GLOW);
     }
     bx(b, T, -4.95, 6.2, t0, 4.95, 6.8, t1, mix(wall, P.ink, 0.15), FX_PLAIN, 0, ink);
-    bx(b, T, -16, 6.8, t0 + 1, 16, 8.4, t1 - 1, mix(P.card, P.good, 0.42), FX_PLAIN, 0.08, ink);
+    bx(b, T, -16, 6.8, t0 + 1, 16, 8.4, t1 - 1, B.top, FX_PLAIN, 0.08, ink);
     for (const pd of [t0, t1]) {
       const f = pd === t0 ? -1 : 1;
       bx(b, T, -12, 6.0, pd - 0.5 * f - 0.5, 12, 11.5, pd - 0.5 * f + 0.5, P.portal, FX_PLAIN, 0.08, ink);
@@ -726,8 +817,10 @@ function buildChunk(b, c, T, P) {
     }
   }
 
-  // buildings (deterministic per chunk)
-  for (const side of [-1, 1]) {
+  // buildings (deterministic per chunk): Downtown here, the other districts in bio.js
+  const X = { b, T, P, B, r, c, d0, d1, ink, tun };
+  if (c.bio) bioScenery(X);
+  else for (const side of [-1, 1]) {
     let d = d0 + r() * 3;
     while (d < d1) {
       const w = 8 + Math.floor(r() * 10);
@@ -749,7 +842,7 @@ function buildChunk(b, c, T, P) {
         const sb = mix(col, P.ink, 0.3);
         bx(b, T, x0 - side * 0.15, -8, d + 0.6, x0 + side * 0.4, -4.6, de - 0.6, sb, FX_PLAIN, 0, ink);
         if (r() < 0.6) {
-          const aw = [P.a, P.b, P.hl, P.good][Math.floor(r() * 4)];
+          const aw = B.awn[Math.floor(r() * 4)];
           bx(b, T, x0 - side * 1.3, -4.7, d + 1, x0, -4.3, de - 1, aw, FX_PLAIN, 0.05, ink);
           for (let k = d + 1.5; k < de - 1.2; k += 1.6) qx(b, T, -side, x0 - side * 1.31, -4.5, k, 0.8, 0.4, P.white, FX_PLAIN);
         }
@@ -787,6 +880,7 @@ function buildChunk(b, c, T, P) {
       e = ee + 2 + r() * 6;
     }
   }
+  bioGate(X);
 }
 
 function buildSkyline(b, T, P) {

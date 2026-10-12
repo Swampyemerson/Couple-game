@@ -3,9 +3,9 @@
 // local, messages delivered directly) and two (messages over the reliable link).
 import {
   LANE_W, CHUNK, ROOF, BOOST_T, REVIVE_WINDOW, REVIVE_FIRST, REVIVE_EVERY, REVIVE_SLACK, CHEER_T, CHEER_K, CRASH_T,
-  TEAM_HEARTS, TEAM_HEARTS_MAX, BRAWL_CAP, DAILY_CAP, STEP_UP,
+  TEAM_HEARTS, TEAM_HEARTS_MAX, BRAWL_CAP, DAILY_CAP, STEP_UP, TRIP_TOL, BARREL_K, BARREL_LEAD,
 } from './tune.js';
-import { O_BLOCK, O_TRAIN, O_MTRAIN, O_RAMP, pathLane } from './track.js';
+import { O_BLOCK, O_TRAIN, O_MTRAIN, O_RAMP, O_BARREL, pathLane } from './track.js';
 import { crash, respawn, C_SLAM, E_PICK, E_CRASH, E_FINISH, E_TOKEN, E_BLOCK } from './sim.js';
 import { I_BOX } from './track.js';
 
@@ -36,6 +36,7 @@ export function wallAt(track, lane, z, y) {
     for (const o of track.chunk(c).obs) {
       if (o.lane !== lane || o.z1 < z - 1 || o.z0 > z + 1) continue;
       if ((o.t === O_TRAIN || o.t === O_MTRAIN || o.t === O_RAMP) && y < ROOF - STEP_UP) return true;
+      if (o.t === O_BARREL && y < o.h - TRIP_TOL) return true; // a rolling barrel: shoved into one on the ground is a slam
     }
   }
   return false;
@@ -46,7 +47,8 @@ function clearSpot(track, lane, z) {
   for (let c = ci - 1; c <= ci + 1; c++) {
     if (c < 0) continue;
     const ch = track.chunk(c);
-    for (const o of ch.obs) if (o.lane === lane && o.z1 > z - 6 && o.z0 < z + 6) return false;
+    // (a rolling barrel waits BARREL_K x BARREL_LEAD m past its footprint until it starts to roll: keep that clear too)
+    for (const o of ch.obs) if (o.lane === lane && (o.t === O_BARREL ? o.zm + BARREL_K * BARREL_LEAD + o.len : o.z1) > z - 6 && o.z0 < z + 6) return false;
     for (const g of ch.gaps) if ((g.mask & (1 << (lane + 1))) && g.z1 > z - 6 && g.z0 < z + 6) return false;
   }
   return true;
@@ -55,6 +57,9 @@ function clearSpot(track, lane, z) {
 export function createRules(G) {
   const { M } = G;
   let seq = 1;
+  // Ids (attacks, shoves, downs) are told apart across both devices by the judge's sets: even for
+  // 'a', odd for 'b', so two devices can never mint the same one (one device with both local runners can't clash with itself)
+  const nextId = () => { const id = seq; seq += 2; return id; };
   const pending = new Map(); // my attacks waiting for a result
   const missedIds = new Set();
   const revivedIds = new Set();
@@ -64,7 +69,7 @@ export function createRules(G) {
   const P = (w) => G.players[w];
 
   function init() {
-    seq = 1 + Math.floor(Math.random() * 1000) * 10;
+    seq = (1 + Math.floor(Math.random() * 1000) * 10) * 2 + (!P('a').local && P('b').local ? 1 : 0);
     pending.clear();
     missedIds.clear();
     revivedIds.clear();
@@ -103,7 +108,7 @@ export function createRules(G) {
     const q = P(other(p.w));
     const r = p.r;
     const qs = G.rs(q);
-    const id = seq++;
+    const id = nextId();
     const v = G.view(p.w);
     G.audio.play('weapon');
     if (kind === 'rocket') { r.boostT = BOOST_T; v && v.pop('ROCKET!', 'hl'); G.kick(p.w, 1); G.audio.play('power'); return true; }
@@ -154,7 +159,7 @@ export function createRules(G) {
     const qLane = Math.round(qs.x / LANE_W);
     if (Math.abs(qs.z - p.rs.z) > 2.0 || qLane !== to || Math.abs(qs.ground - (r.sup > -50 ? r.sup : 0)) > 1) return;
     if (p.sideT < SHOVE_SIDE_T && !twice) return;
-    const id = seq++;
+    const id = nextId();
     p.shoveCD = 1.2;
     p.av && p.av.lunge(dir);
     q.pushOff = dir * LANE_W * 0.55; // predicted push, corrected by their real state
@@ -225,7 +230,7 @@ export function createRules(G) {
       if (d.k === 'zap') {
         if (r.down || r.done) { reply('miss'); return; }
         if (r.shield) { r.shield = 0; v && v.pop('Blocked!', 'hl'); G.audio.play('shield'); reply('blocked'); return; }
-        r.zapT = 0.35; r.zapDir = d.id % 2 ? 1 : -1;
+        r.zapT = 0.35; r.zapDir = (d.id >> 1) % 2 ? 1 : -1;
         v && v.pop('ZAPPED!', 'hl', 'hold on'); v && v.flash();
         G.audio.play('zap');
         G.fx.burst(r.x, r.y + 2, r.z, G.pal.hl, 10, 4);
@@ -334,7 +339,7 @@ export function createRules(G) {
   function onEvent(p, t, val) {
     const r = p.r;
     const v = G.view(p.w);
-    if (t === E_PICK && Math.floor(val / 100000) === I_BOX) {
+    if (t === E_PICK && Math.floor(val / 1000000) === I_BOX) {
       if (M.mode !== 'race') { if (M.mode === 'daily') { r.coins += 5; v && v.pop('+5', 'hl'); } return; }
       if (!p.weapon && p.weaponRoll <= 0) { p.weapon = rollWeapon(p); p.weaponRoll = 0.6; G.audio.play('box'); }
       else { r.coins += 5; v && v.pop('+5', 'hl'); }
@@ -342,7 +347,7 @@ export function createRules(G) {
     }
     if (t === E_CRASH) {
       if (M.mode === 'tandem') {
-        const id = seq++;
+        const id = nextId();
         p.downId = id; p.downAt = G.now();
         G.send(other(p.w), 'down', { id, z: r.z });
       } else if (r.out) {
@@ -387,6 +392,23 @@ export function createRules(G) {
       const rv = P(AB[wi]).revive; if (!rv) continue;
       const add = Math.min(ms, REVIVE_SLACK - (rv.slack || 0)); if (add <= 0) continue;
       rv.slack = (rv.slack || 0) + add; rv.until += add; rv.next += add;
+    }
+  }
+
+  /** Time that doesn't count: while the run is paused (a menu, the app in the background, the
+   *  partner away, the 3-2-1 after it) every timer on the shared clock waits too: revive windows
+   *  and the downed phone's own fallback, the next revive heart, a Brawl brace window and the
+   *  side-by-side clocks. Called instead of tick() with the shared-clock ms that went by. */
+  function hold(ms) {
+    if (!(ms > 0)) return;
+    for (let wi = 0; wi < 2; wi++) {
+      const p = P(AB[wi]);
+      if (p.revive) { p.revive.until += ms; p.revive.next += ms; }
+      if (p.downId && p.downAt) p.downAt += ms;
+      if (p.ddSeen) p.ddSeen += ms;
+      if (p.incoming) p.incoming.until += ms;
+      if (p.sideAt) p.sideAt += ms;
+      if (p.sideOff) p.sideOff += ms;
     }
   }
 
@@ -468,18 +490,26 @@ export function createRules(G) {
           if (G.isJudge() && !missedIds.has(rv.id)) { missedIds.add(rv.id); M.th--; }
           G.view(w) && G.view(w).pop('Too late', 'bad', '−1 team heart');
         } else if (!r.down && now >= rv.next) {
-          rv.next = now + REVIVE_EVERY;
-          rv.n++;
-          const z = r.z + Math.max(24, r.speed * 1.5);
-          let lane = r.lane;
-          if (!clearSpot(G.track, lane, z)) {
-            const c = G.track.chunk(Math.floor(z / CHUNK));
-            lane = pathLane(c, z);
-            for (const l of [lane, -1, 0, 1]) if (clearSpot(G.track, l, z)) { lane = l; break; }
+          // A heart that's still ahead of me stays where it is: re-placing it 24 m further on every 2 s made it a
+          // carrot a page simulating slower than the clock (a loaded or old phone, under half speed) never caught
+          // (headless model: 0/144 grabs at 0.5x sim speed, 144/144 now). A fresh one comes once it's behind me
+          // (missed), checked every 250 ms instead of waiting out the 2 s.
+          const old = r.tokens.length ? r.tokens[0] : null;
+          if (old && old.alive && old.z > r.z - 1.2 && old.z - r.z < 60) rv.next = now + 250;
+          else {
+            rv.next = now + REVIVE_EVERY;
+            rv.n++;
+            const z = r.z + Math.max(24, r.speed * 1.5);
+            let lane = r.lane;
+            if (!clearSpot(G.track, lane, z)) {
+              const c = G.track.chunk(Math.floor(z / CHUNK));
+              lane = pathLane(c, z);
+              for (const l of [lane, -1, 0, 1]) if (clearSpot(G.track, l, z)) { lane = l; break; }
+            }
+            for (const tk of r.tokens) tk.alive = 0;
+            r.tokens.length = 0;
+            r.tokens.push({ id: rv.id * 10 + rv.n, x: lane * LANE_W, z, y: 1.2, alive: 1 });
           }
-          for (const tk of r.tokens) tk.alive = 0;
-          r.tokens.length = 0;
-          r.tokens.push({ id: rv.id * 10 + rv.n, x: lane * LANE_W, z, y: 1.2, alive: 1 });
         }
       }
       // tandem: my own down timer fallback (partner vanished)
@@ -524,7 +554,7 @@ export function createRules(G) {
       const photo = Lp.fin >= 0 && fmtT(W.fin) === fmtT(Lp.fin);
       const by = photo ? Math.max(0, Lp.fin - W.fin) : 0;
       const sub = why || (photo ? `Photo finish! ${km} km in ${fmtT(W.fin)} · ${ln} ${by < 0.005 ? 'level on the line' : `${by < 0.1 ? by.toFixed(2) : by.toFixed(1)} s behind`}`
-        : `${km} km in ${fmtT(W.fin)} · ${Lp.fin >= 0 ? `${fmtT(Lp.fin)} for ${ln}` : `${Math.max(0, Math.round(M.len - Lp.z))} m short`}`);
+        : `${km} km in ${fmtT(W.fin)} · ${Lp.fin >= 0 ? `${fmtT(Lp.fin)} for ${ln}` : `${fmtM(Math.max(0, Math.round(M.len - Lp.z)))} m short`}`);
       return { winner: w, text: `${nm[w]} wins the race`, sub, za: Math.round(A.z), zb: Math.round(B.z), ta: A.fin, tb: B.fin };
     }
     if (M.mode === 'brawl') {
@@ -562,5 +592,5 @@ export function createRules(G) {
     return null;
   }
 
-  return { init, use, onLane, cheer, msg, onEvent, tick, simLost, verdict, rollWeapon, cap: BRAWL_CAP };
+  return { init, use, onLane, cheer, msg, onEvent, tick, hold, simLost, verdict, rollWeapon, cap: BRAWL_CAP };
 }
