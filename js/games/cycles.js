@@ -1151,7 +1151,11 @@ registerGame({
         // keep the banner off the crash: it sits in the half of the board the crash isn't in
         const f = crashFocus();
         const y = (f[1] + 0.5) / sim.H;
-        msgEl.style.top = (flip ? 1 - y : y) < 0.5 ? '76%' : '24%';
+        const want = (flip ? 1 - y : y) < 0.5 ? 0.76 : 0.24;
+        // keep the whole banner inside the board, even on a short landscape board
+        const bh = board.clientHeight;
+        const sh = msgEl.firstElementChild ? msgEl.firstElementChild.offsetHeight : 0;
+        msgEl.style.top = Math.round(clamp(want * bh, sh / 2 + 6, Math.max(sh / 2 + 6, bh - sh / 2 - 6))) + 'px';
       } else msgEl.style.top = '';
     }
     function frame(now) {

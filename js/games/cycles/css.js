@@ -27,11 +27,19 @@ export const CSS = `
 .g-cycles .cy-board.is-shake { animation: cy-shake 0.34s linear; }
 @keyframes cy-shake { 0% { transform: translate(0, 0); } 15% { transform: translate(-4px, 2px); } 30% { transform: translate(4px, -3px); } 45% { transform: translate(-3px, -2px); } 60% { transform: translate(3px, 2px); } 80% { transform: translate(-1px, 1px); } 100% { transform: translate(0, 0); } }
 
+/* a short board (a phone on its side): a smaller banner */
+.g-cycles[data-layout="l"] .cy-msg > span { padding: 6px 12px; gap: 2px; font-size: 0.9rem; }
+.g-cycles[data-layout="l"] .cy-msg .is-heat .cy-t { font-size: 1.25rem; }
+.g-cycles[data-layout="l"] .cy-msg small { font-size: 0.66rem; }
+.g-cycles[data-layout="l"] .cy-msg .is-num { width: 70px; height: 70px; font-size: 2.2rem; }
+.g-cycles[data-layout="l"] .cy-msg .is-go { width: auto; height: auto; font-size: 1.8rem; padding: 8px 16px; }
+.g-cycles[data-layout="l"] .cy-stamp { font-size: 0.62rem; padding: 4px 6px 3px; }
+
 /* crash replay overlay */
 .g-cycles .cy-rp { position: absolute; inset: 0; z-index: 3; display: none; pointer-events: none; }
 .g-cycles .cy-rp.is-on { display: block; }
 .g-cycles .cy-rp-tag { position: absolute; left: 14px; top: 10px; font: 400 0.78rem/1 var(--g-font-display); letter-spacing: 0.06em; padding: 6px 9px 5px; background: var(--g-hl); color: var(--g-on-ink); border: 2px solid var(--g-ink); border-radius: 6px; box-shadow: var(--g-shadow-sm, 2px 2px 0 var(--g-ink)); transform: rotate(-3deg); }
-.g-cycles .cy-rp-cap { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); max-width: 92%; padding: 7px 12px; background: var(--g-card); color: var(--g-ink); border: 2.5px solid var(--g-ink); border-radius: 10px; box-shadow: var(--g-shadow-sm, 2px 2px 0 var(--g-ink)); font: 800 0.9rem/1.2 var(--g-font-body); text-align: center; animation: cy-pop 0.3s 0.5s cubic-bezier(0.2, 1.5, 0.4, 1) both; }
+.g-cycles .cy-rp-cap { position: absolute; left: 8px; right: 8px; bottom: 18px; width: max-content; margin: 0 auto; max-width: calc(100% - 16px); padding: 7px 12px; background: var(--g-card); color: var(--g-ink); border: 2.5px solid var(--g-ink); border-radius: 10px; box-shadow: var(--g-shadow-sm, 2px 2px 0 var(--g-ink)); font: 800 0.9rem/1.2 var(--g-font-body); text-align: center; animation: cy-pop 0.3s 0.5s cubic-bezier(0.2, 1.5, 0.4, 1) both; }
 .g-cycles .cy-rp-skip { position: absolute; right: 16px; top: 12px; font: 800 0.66rem/1 var(--g-font-body); letter-spacing: 0.12em; text-transform: uppercase; color: var(--g-ink); background: var(--g-card); border: 2px solid var(--g-ink); border-radius: 5px; padding: 4px 6px; opacity: 0.85; }
 
 /* pre-match arena picker */
