@@ -8,19 +8,294 @@ then hunts in first person with a handful of paint pellets.
 
 `kind: 'live'`, modes `live` (two devices) and `local` (one device, hotseat), phone + computer,
 versus, `immersive: true` (draws its own HUD with both scores). Entry: `js/games/chameleon.js`;
-modules in `js/games/chameleon/`; tests in `tools/test/games/chameleon.test.js`.
+modules in `js/games/chameleon/`; tests in `tools/test/games/chameleon.test.js` plus the v4 files
+`chameleon-twists / -hunt / -rivalry / -paint2 / -maps / -cu.test.js` (see "v4" below).
 
 ## Modes
 
 | Mode | Players | Rounds | Scoring |
 |---|---|---|---|
-| **Hide & Seek** | one hides, one seeks, roles swap | 2 / 4 / 6 (setting; each hides half) | the hider earns 1 point per second survived in the seek phase, +30 for surviving outright (timer runs out, or the seeker runs dry: paid for the seconds survived), + a blend bonus for a paint job that matched its surface; the seeker earns ½ point per second left when they tag (+10 per spare pellet in Classic). Highest total wins. |
-| **Double Blind** | both hide at once, then both hunt (1.1 m/s, no jumping) | best of 3 (ends early at 2) | first confirmed tag wins the round; a timeout or both players out of pellets is a void round. Two devices only. |
+| **Hide & Seek** | one hides, one seeks, roles swap | 2 / 4 / 6 (setting; each hides half) | the hider earns 1 point per second survived in the seek phase, +30 for surviving outright (timer runs out, or the seeker runs dry: paid for the seconds survived), + a blend bonus for a paint job that matched its surface; the seeker earns ½ point per second left when they tag (+10 per spare pellet in Classic), + the wager (5 / 10 / 15 for the 1st / 2nd / 3rd+ right call in a row). A round twist can add the Bounty spot (hider × 1.5 / seeker +15 within 3 m), a Mercy chirp costs the hider 10, and the trailing player gets the underdog boost. Highest total wins; a tie plays a sudden-death pair (20 s hide, 30 s hunt), still level is a draw. |
+| **Double Blind** | both hide at once, then both hunt (1.1 m/s, no jumping) | best of 3 (ends early at 2) | first confirmed tag wins the round; a timeout or both players out of pellets is a void round; tied after round 3 plays one sudden-death round (hunt ≤ 60 s). Two devices only. |
 
 The host picks mode, map, a preset (or any custom mix of settings, below) and who hides first on
 the start screen; the guest sees every change live (and their diorama backdrop switches with the
 host's map choice).
 
+
+## v4: twists, couple moments, rivalry, two new maps (Oct 2026 update)
+
+Asked for, after three play-through surveys: variety between rounds, comebacks, small moments a
+couple remembers, a rivalry that lasts across matches, a richer paint panel and more maps. New
+modules: `twists.js`, `moments.js`, `gallery.js` (plus new code in `records.js`, `cards.js`,
+`wardrobe.js`, `avatar.js`, `paint.js`, `hud.js`, `camo.js`, `sound.js`, `stage.js`, `fx.js`).
+Every new thing either works in hotseat and Double Blind or is hidden there; each is called out below.
+Nothing changes the camera solver, the netcode wire format of old messages or the meaning of any
+saved key (all new data is new keys with `| 0` defaults).
+
+### Round twists (`twists.js`, rule `twists`)
+
+New rules (`rules.js` OPTIONS, the **same value in all three presets** so old saved rules still
+resolve to their preset in `presetOf`; rows in the settings sheet):
+
+| Rule | Values | Presets | Meaning |
+|---|---|---|---|
+| `twists` | Off · Some rounds · Every round | Some | `some` = rounds / 2 (rounded, at least 1) twisted rounds, never round 1; a twist never repeats the previous round's |
+| `underdog` | on · off | on | catch-up boost (below) |
+| `sudden` | on · off | on | a tied match plays a sudden-death pair (below) |
+
+`pickTwists(seed, rounds, mode, local, mapId, freq)` gives `S.match.twists` (one id or `null` per
+round), seeded from the match id and carried in `matchInfo()`, so a rejoin snapshot has it and no
+`Math.random` is involved. `twistFor(i)` is 0-based; tests pin a deck with `__chamTune.twists`.
+A twist is announced on the round title card, the seeker's blind card, the hotseat hand-over
+curtain, the recap's "Next:" line, the role pill ("You hide - Dusk") and a sticker at hide start.
+The daily "Today" setups set `twists: 'off'` (the day's own twist is the only one); the old daily
+`TWISTS` (rule overlays) are untouched. Everything a twist changes is restored exactly at FOUND /
+TIME, a new round, the lobby and dispose.
+
+| Twist | Applies | What happens | Clock |
+|---|---|---|---|
+| **Fog rolls in** (`fog`) | maps > 160 m² (the dioramas fit inside the fog); both modes; hotseat ok | fog near and far scale from the map's play fog to 45 %; pellet range follows fog far, so it shrinks too: a hider comeback window | nothing for the first two thirds of the hunt, then 6 steps (`FOG`), each one `stage.setMood` (two numbers on the existing Fog) |
+| **Dusk** (`dusk`) | every map and mode; hotseat ok | hemi x 1 → 0.45, sun x 1 → 0.6, sky and fog colour 55 % toward `#2b2447`, scan glints up to 1.7× | 12 steps over the hunt (`DUSK`) |
+| **Three colours** (`colours`) | every map; DB locks both hiders; hotseat ok | the hider's paint is locked to 3 swatches taken from the room itself (`mapSwatches(map)`: area-weighted dominant colours of the map's atlas tiles × vertex colours, merged at ΔE < 9; `paletteFor` picks one of the 3 biggest surfaces then two seeded swatches ≥ ΔE 24 apart; deterministic from map data + match id + round. Launderette gets its aqua, the Living Room its sage) through the paint panel's `setPaletteLock`; Pick and Stamp are off | set at hide start, cleared at FOUND / TIME |
+| **Bounty spot** (`bounty`) | Hide & Seek only | a seeded floor spot 2.5–5 m (≥ 0.3 × the diagonal) from every spawn, marked for both players by one merged mesh (bold ring and dot, 3 m boundary band, a 3.1 m beacon pole with an ink cap) and a star sprite at 3.5 m: 2 draw calls. Candidates include a seeded scatter of clear floor points, so small maps vary between matches. Survive within 3 m of it (3-D, hider's final position): hider points × 1.5; tag within 3 m: seeker +15 | resolved in `roundOver`; marker cleared at the next round |
+
+`stage.setMood({hemi, sun, fogNear, fogFar, bg})` / `clearMood()` take absolute values and add no
+light, relink no shader and cost no draw call; `setBlendLights` re-runs at each step so the live camo
+meter shades with the lights as they are (camo % stays fair: both bodies share the lights).
+Fog and Dusk steps derive from `S.phase.end` and the hunt length, so both phones step together and
+a pause or rejoin re-derives the step. Measured: House fog 23.6 → 21.2 → 18.8 → 16.5 → 11.7 m, 31
+draw calls; CU Boulder 42 with the bounty marker (+2), 30 with Fog, 37 with Dusk; no new program
+linked.
+
+### Comebacks and drama
+
+- **Underdog.** At a round start (Hide & Seek, round 3 onward, not sudden death) the player behind by
+  ≥ 40 points (60 on XL maps; a single round is worth 36+, so a lower bar fired almost every round) gets +1 pellet when seeking (it counts as a spare for the +10) or +1
+  escape when hiding; in hotseat, which has no escapes, +10 s to hide instead. `m.ud = {r, w}` is
+  chosen by the host and carried in `matchInfo()`; a sticker "Underdog: +1 pellet / +1 escape /
+  +10 s to hide" shows on both phones and the title / blind / curtain card names it.
+- **Sudden death.** Hide & Seek tied after the last round: `m.sd = 2`, `m.rounds += 2` (so the recap
+  already says "Next round" and the pips grow). Each player hides once more on the same map, the
+  player who hid first hides first again, **20 s to hide, 30 s to hunt**, no twist, no underdog, other
+  rules as set; the pair's points decide, still level is a draw. Title card kicker "SUDDEN DEATH",
+  a "Sudden death" sticker on the final card; the host writes `${w}_sd_wins`. Double Blind tied after
+  three rounds (e.g. 1–1 with a void) plays one round, hunt ≤ 60 s. Tests pin the clocks with
+  `__chamTune.sdHide / sdSeek`.
+- **Called-it streak.** `m.cs = {a, b}` counts consecutive right wager calls per seeker (a wrong call
+  or no call resets it). A right call on a find pays `wager × min(3, run)`: 5 / 10 / 15 at the Classic wager 5
+  (10 / 20 / 30 at 10). A right call on a survived round pays the plain stake (as before this update) and
+  neither extends nor breaks the run. A wrong call after a run of ≥ 2 shows "STREAK BROKEN" to the hider; the CALLED
+  IT sticker adds "3 in a row". The host writes `${w}_callstreak` (best run).
+- **Whisker shots.** A miss whose pellet segment (`o` → landing in the `shot` message) passes within
+  0.35 m × size of any body part's bounding sphere (× 0.72, the tag assist's own factor) is a whisker;
+  the band starts where the tag assist ends. It is judged where tags are judged, on the victim's
+  device (hotseat: the one device), never in the shooter's `fire()`. Effect, after the pellet's
+  flight time: one splat 0.10 m × size plus three seeded droplets in the **seeker's ink** dabbed on
+  the hider's atlas (the existing `livePaint()` carries it to the seeker; hashes match), a whoosh
+  chord, "Missed by a whisker!" (`N cm off`) on both screens, a recap line, `${w}_whisker` += 1 for the
+  hider. Live: one reliable `whisk {id, by, w, cm}` tells the shooter. Double Blind: sticker and stat,
+  no stain (no sync path for a DB body's atlas). Measured on the Living Room (2.6 m, Large): offsets
+  0.45–0.8 m were whiskers (gaps 10–43 cm), ≥ 1.0 m were not.
+- **Mercy chirp** (two devices, Hide & Seek only). Once per hunt the hunted hider may tap "Mercy −10"
+  (139 × 44 px, top-centre under the role pill; bottom-centre in short landscape). The hider's device
+  measures the drawn 3-D distance and sends one reliable `mercy {band}`: hot < 3 m, warm < 7 m, cold.
+  The seeker gets a sticker, a 4 s hint and a chirp pattern per band. The host applies the cost in
+  `roundOver`: `min(10, rec.points)`, never below zero; recap "Sydney took pity: a hot ping (−10)";
+  `${w}_mercy` += 1.
+- **Note on the skin.** In the hide phase the hider can tap a "Note" chip (98 × 44, hidden while
+  painting) and type ≤ 40 characters. There is no forced confirm step (it would add a tap to every
+  round): the note rides along with whatever lock happens. `cleanNote()` is plain text only
+  (control, bidi and zero-width characters and `< > \`` become spaces; 40 code points; applied on
+  typing and on receipt; rendered with `textContent` / `esc()`). It travels as `note` in the meta of the
+  lock's paint blob and is kept **in memory only** on the seeker; the DOM never contains it before the
+  reveal (tested on `outerHTML` and `innerText`; the sheet is removed on close). Revealed at FOUND /
+  SURVIVED as a paper sticker projected over the body in the recap orbit and as "Note from X (R2)" on
+  the final card. Hotseat: typed before the curtain, never drawn until the end. `${w}_notes` += 1 per
+  round with a note.
+- **Last-second drama.** A tag with ≤ 2 s on the clock (`rec.buzz`): hit-stop 0.24 s (was 0.09),
+  shake 0.4, FOUND freeze 0.95 s (was 0.5), "AT THE BUZZER" sticker, `buzzer` chord. A survive with
+  the seeker ≤ 1.5 m away at the buzzer (`rec.close`, not for a seeker who ran dry): "SO CLOSE" and
+  `closeCall`. In hotseat the hunt is called at the buzzer itself, so both work there.
+  New chords in `sound.js`: `whisker mercyOut mercyHot mercyWarm mercyCold buzzer quick closeCall
+  ghost`. Jingle choice: found → buzzer > quick (< 10 s) > found; survived → closeCall > ghost
+  (blend ≥ 90) > survive.
+
+Round-record fields added (all optional): `whisker`, `mercy`, `mercyPts`, `note`, `buzz`, `close`,
+`streak`, `wagerPts`, `streakBroken`.
+
+### Rivalry (`records.js`, `cards.js`, `gallery.js`)
+
+- **The Cup.** A travelling trophy. When a Hide & Seek or Double Blind match ends with a winner the
+  host writes once (`recordMatch`, guarded by `S.finalRec`): the holder wins again → `cup_defences`
+  += 1; the other player wins → the cup passes, `${w}_cups` += 1, defences 0. Draws and abandoned
+  matches change nothing but `_matches`. The lobby shows "The Cup / Sydney holds it, defended 2×" (or
+  "Up for grabs"); the final card says "TAKES THE CUP" (+ "from X") or "DEFENDS THE CUP (N)". The
+  final-phase message carries `cup` and `unl` (looks the match unlocked), computed from the same
+  pre-match data, so a rejoining phone shows the same banner.
+- **Head-to-head.** "Emerson has found Sydney 7 times · Sydney has survived Emerson 5" in the lobby
+  and the recap; the numbers ride in the recap message (`rx.h2h`), so the guest never reads a stale doc.
+- **Tendencies.** `${w}_call_<zone>` counts a seeker's wager calls per zone, `${w}_found_<zone>` where
+  they found the hider (zones `floor furniture wall ceiling hang`). With ≥ 5 samples (calls first,
+  then finds) the hider's title card (hotseat: the hide curtain) shows "Emerson checks walls first
+  (6 of 9)". It reads counters only, nothing about the current round.
+- **Portrait gallery** (`gallery.js`). When a real survival beats `_surv_ms` (the first one included)
+  the lock's paint is saved as `${w}_portrait` (+ `_map`, `_ms`): the paint.js codec if ≤ 3000
+  characters, else a coarse ladder (64² / 16, 32² / 12, 16² / 8 colours, own tiny RLE). It is drawn as
+  the skin laid out as a flat chameleon on a **2D canvas** (cached by blob, no second WebGL context)
+  in the lobby (two framed thumbnails with the time) and at the top of the wardrobe. A ran-dry round
+  never saves one.
+- **New looks** (wardrobe slot `trim`, `packWear` bits 12–14; an old phone's value reads trim 0):
+  Gold crest (take the Cup), Tail stripe (dodge 3 whisker shots), Rosy cheeks (call streak 3), Neck
+  ribbon (leave a note). One vertex-coloured mesh each, +1 draw call while worn, no raycast. Fairness:
+  `avatar.setTrimVisible(false)` on a hiding hider (both players in Double Blind); drawn in lobby,
+  recap, final and on the seeker. Locked tiles now show the look in colour with a lock badge and
+  progress ("2 / 3").
+- Also: first-ever records are celebrated ("FIRST FIND", "FIRST SURVIVAL", "FIRST BLEND" at ≥ 50 %);
+  the six emotes are riso SVG stickers (same ids `lol how sneaky love again paint`, so old and new
+  phones interoperate); "Wide eyed" counts stares whatever the `sights` rule (the rule only gates the
+  hider's cue). In hotseat the settings sheet greys the rows in `LOCAL_DEAD` with "Two phones only:
+  <why>".
+
+### Paint panel (`paint.js`, `hud.js`, `camo.js`)
+
+- **Recent colours.** A colour row above the swatch row: five 44 × 44 chips, the last 5 distinct
+  brush colours (within 12 summed RGB of one already there does not add a chip), newest first. A tap
+  sets the brush colour and keeps the order; empty slots are dashed. Kept in `localStorage['chm.recent']`
+  (per viewer, never synced). At ≤ 380 px the round swatch hides (the ringed chip shows the colour).
+- **Pattern fill.** A sixth 44 × 44 chip cycles Solid → Stripes → Dots → Checker and arms Fill (the
+  Fill button's label shows the pattern; tapping Fill again does not cycle). Ink = brush colour; ground
+  = the next palette-lock colour, else the most recent differing strip colour (≥ 60 apart), else a
+  lighter / darker shade. `paint.fill(region, rgb, from, pat)` uses the same region tap, flood wave,
+  `snapshot()` undo and codec path (≤ 2 new colours, so the seeker's decode matches bit for bit). The
+  pattern is a pure function of the texel's body-local position: stripes 5 cm, dots 5 cm on an 8.5 cm
+  grid, checker 6 cm cubes (about 7 texels a band; ink share 52 / 27 / 49 % on the body).
+- **Palette lock.** `hud.setPaletteLock(['#rrggbb', …] | null, {label})` (1–5 colours). While locked
+  the row shows only the swatches, brush and Fill snap to the nearest one, Pick and Stamp are dimmed
+  (`aria-disabled`) with "Three colours: Pick is off this round". It is a hider-side UI rule, not
+  enforced on the network. Reads: `hud.paletteLock`, `hud.lockOn`.
+- **Meter stale (a real bug).** "Live camo meter 22 % half a second after a stamp that locked at 70 %"
+  was real as a display: the old number stayed up 0.9–1.5 s (wipe, settle, sliced re-score, 0.55 s
+  count-up). The score was right. `createMeter().stale(on)` now dims the number and tube while the
+  paint changed and the new score is not in.
+- Landscape pose-bar labels fit: tiles are `width:auto; min-width:50–56px` (≥ 7 px clear each side at
+  844 × 390; ≥ 4 px at 320 wide).
+
+### Two new maps
+
+| Map | Id | Class | Footprint | Sweep | Clock | Classic hunt / hide |
+|---|---|---|---|---|---|---|
+| **Spin Cycle Launderette** (`maps/launderette.js`) | `launderette` | M | 18 × 12 m, one floor, 216 m² | 34 s | `time: 1.1` (the entry's own) | 100 s / 65 s |
+| **Candy Works** (`maps/candy.js`) | `candy` | S | 10 × 8 m, one room | – | 1 | 90 s / 60 s |
+
+- **Launderette.** Calm: aqua / white checker floor, subway-tile walls, flat white washer tops, tiled
+  pillars, a washer wall of eight, an island of 10 washers, a dryer wall of 9 × 2 and a stacked-dryer
+  island. The machine fronts are painted textures (`washer`, `dryer`, 128 × 144 tiles), so a stamp
+  on one door lines up with the next pixel for pixel (stamp check 78 %). Busy: the lost-sock board,
+  the detergent shelf, the back room's box towers, four folding tables with towel piles, carts and a
+  rail of eight shirts with 0.2 m gaps (squeeze; shirts are `climb: false`). Climbs: dryer stacks,
+  vent duct, strip lights, shirt rail, hatch counter. 6 rooms / chunks (Wash wall, Dryer hall, Rail
+  corner, Folding tables, Lost socks, Back room, two doors and a service hatch for loops).
+  Clock: a greedy-vantage sweep (8 vantages, 52 m tour, 34 s) puts it next to the Greenhouse (49 s in
+  the same script), which is ×1; ×1.1 because 56 identical fronts make a seeker look twice.
+  The class is M (216 m², between the 80–120 m² dioramas and the 432 m² House class; the House also
+  has 216 m² of footprint but counts 432 with two floors); `mapPool` is unchanged (`S`, else `XL`), so
+  it mixes with the five big maps in Mix it up; the static test allows 160–420 m² for a non-XL map.
+- **Candy Works.** Pink candy-stripe back wall and mint checker floor (calm), jar shelves (every jar
+  a pile of sweets), lolly-swirl wallpaper, sprinkle rug, a chocolate conveyor, a lollipop forest
+  (pole colliders `climb: false`), chocolate fountain, three gumball machines, a crate staircase, a
+  candy-cane rail and a gumdrop chandelier to hang from. In `BASE_MAPS` (small pool), three hider and
+  three seeker spawns. Stamp check on its camo wall 88 %.
+- Budgets (iPhone 13 profile, third-person cameras): Launderette worst view 42 calls / 26 k
+  triangles over 224 views (p50 25, p95 41; whole map 15.7 k triangles, 162 colliders, atlas
+  824 / 1024 px); Candy Works 32 calls / 23.5 k over 64 views (atlas 480 / 1024). A hotseat round
+  uses 25–27 calls (Launderette) and 19–22 (Candy). Repeating painters draw a wrapped copy only when
+  a mark reaches a tile edge (`offs()`): longest atlas step 15 ms (Launderette), 35 ms (Candy; its
+  `lolly` wallpaper was 121 ms).
+- All three small dioramas now list **three hider and three seeker spawns** (they had one each, so
+  every hunt began on the same line). Adding two maps re-shuffles which map `dailyPlan` gives each
+  calendar day (both phones run the same build, so they still agree).
+
+### Bug fixes (letters from the survey digest)
+
+| | Fix |
+|---|---|
+| A | Hotseat called time 380 ms early (`pre = now >= end - DUR.lead`), so a tag in the last 380 ms was dropped and recorded as a survival. Hotseat now calls time at `ph.end` (live mode's `end + tagGrace()` with a grace of 0: the shooter is the judge). `fire()` already refuses at the buzzer. |
+| B | A seeker running dry is not a survival: `survived(rec)` = hider, not found, not `outOfPellets`. The round keeps its points and writes `${w}_dry`, but no `_surv`, `_surv_ms`, `_blend_surv`, `_surf_*`, `_ghost`, daily hide, portrait or hider streak step. |
+| C | `LOCAL_DEAD = ['escapes','huntPaint','heartbeat','sights','headStart']` and `rulesFor(rules, local)` in `rules.js`: `rules()` resolves through it in hotseat (no head-start wait, no escape count, no tell), the raw setup is kept for a later two-device rematch, the settings sheet greys the rows, and Today swaps a dead daily twist for the next playable one (`dailyTwistFor`). |
+| D | Double Blind has its own final story (`matchStory(…, 'db')`): a bar per round in the winner's ink (void dashed), "Rounds won: 0 / 2 / 1 void", "Fastest tag". Never "Best hide". |
+| E | Headline "Sydney wins 111–59" (DB "wins 2–0"; ties "All square 80–80" / "Perfectly matched"); "Best blend" is its own line, on the hub card too. |
+| F | "Best hide" means survived hides only, everywhere (lobby `_surv_ms` agrees); "Longest hide" (found, or seeker ran dry) appears only when it differs. |
+| G | Bests strip and daily line are wrapping flex rows with `gap`, no `·` text separators. |
+| H | Role pill hidden while a recap / final card is up. Landscape (`max-height: 520px`): the card docks right as a 46vw panel, stats row and score pills hidden, tally and the six reactions reachable above the pinned Next; the orbit camera frames the free left part (`C.frameX`, `setViewOffset`; not the camera solver). |
+| I | Landscape pose-bar labels (see Paint panel). |
+| J | Emotes are SVG stickers (see Rivalry). |
+| K | `.chm-step button` is 44 × 44 everywhere. |
+| L | Living Room seeker spawn (0.2, 3.3 on the toy-chest lid, y 0.55) → (−0.4, 3.3); Garden `spawnA` (−3.8, 4.0 on the flower-bed edge) → (−3.1, 4.0). New static `ONLY=spawns`: every spawn of every map placed as the game places it (`groundAt` + `pushOut`) at sizes 0.6 / 1 / 1.3 / 1.8 must land at its intended y, unpushed. |
+| M | Test hygiene: the cold map-load budget evicts the map first (it used to time a cache hit of 4–12 ms; now House 194 / 1130 ms, Museum 108 / 236 phone / laptop; budget 2000 ms, CU 2500); the House static build budget is a warm-up plus the minimum of three in CPU time (`process.cpuUsage`: 74 ms where a cold wall-clock build read 705); unused `MINE` removed; the match section's recap Next click no longer races the 2.5 s auto-advance. The Variety test seed became `'cu3'` because the Launderette joined the big pool. |
+
+### Fixes after verification
+
+Two Sonnet verifiers re-played everything (both players, hotseat and two phones, light / dark,
+portrait / landscape); two fixers then fixed:
+
+- **Host reload stretched the clock (pre-existing).** The shared clock is the host's net.js clock, so a
+  host reload restarted it near 0 and the guest's `now()` jumped back by the host's old uptime: the guest
+  then reported an inflated `remaining`, the host adopted it (hide 21 s left → 36 s; hunt 26 s → 45 s) and
+  `hunting` stayed false, so the seeker couldn't fire. `clockGuard()` (guests, from `hostTick`) spots a
+  jump of the shared clock (> 1 s against `performance.now()`) and shifts every held absolute time by it;
+  `S.awayHold` freezes the guest's remaining time while the host is away, as the host already did for a
+  guest reload. Measured after the fix: hide 21.5 s → 18.2 s, hunt 26.7 s → 22.3 s, `hunting` stays true.
+  The resync snapshot also carries the seeker's wager `call`, so a reloaded seeker keeps it.
+- **Layout:** at 320 px every paint control is clear of the camo meter (the meter's tube shrinks to the
+  room above the panel); reactions sit right under the recap / final headline, so they are never under the
+  pinned Next / See the board bar; pops stack in one lane below the hint (in cards, compact one-liners
+  outside the card text); the note is a line inside the portrait recap card (lettered over the body only
+  in landscape); round announcements are compact stickers high on the screen, never over I'm hidden; the
+  landscape hand-over curtains keep their button on screen (sticky foot, inline chips: 247–303 px of
+  342); pops are hidden under a curtain; settings size segments 46 px, segments and sliders 44 px tall.
+- **Rules:** Three colours now comes from the room; underdog from round 3 at a 40 / 60 point gap;
+  called-it multiplier on finds only; a bolder bounty marker and a bigger, seeded spot pool; Today's hide
+  on one phone swaps a dead twist to a seeded playable one (it was always Floor only).
+- **Gallery:** a corrupt saved portrait (bad blob or time) shows nothing instead of a black "0:00" tile.
+- **Tests:** load-proof bounds (paintpro averages with a loose max, netpolish +150 ms, showcase hide 240 s,
+  variety hide 15 s, the meter compare ± 2 %).
+
+### New `api.data()` keys
+
+All flat numbers or strings, `| 0` defaults, per-key last-writer-wins; `${w}` is `a` or `b`.
+
+| Key | Written by | Meaning |
+|---|---|---|
+| `cup_holder` ('a' / 'b'), `cup_defences`, `cup_day` | host, match end | who holds the Cup, consecutive wins by the holder, day of the last change |
+| `${w}_cups` | host, match end | times that player took the Cup |
+| `${w}_sd_wins` | host | sudden-death wins |
+| `${w}_callstreak` | host, `recordT` | best run of consecutive right wager calls |
+| `${w}_whisker` | the hider's device | near misses suffered, once per shot id |
+| `${w}_mercy`, `${w}_notes` | the hider's device | mercy chirps sent, notes left |
+| `${w}_dry` | records | rounds that ended with the seeker out of pellets |
+| `${w}_call_<zone>`, `${w}_found_<zone>` | records | wager calls and finds per zone (`floor furniture wall ceiling hang`) |
+| `${w}_portrait`, `${w}_portrait_map`, `${w}_portrait_ms` | records | best surviving hide's paint (≤ 3000 characters), its map and its time |
+| `unlock_${w}_trim1`…`trim4` | records | the four new looks |
+
+Net messages added: `whisk {id, by, w, cm}`, `mercy {band}`; the final and recap phase messages
+gained `cup`, `unl`, `sd`, `rx.h2h`; `note` rides in the lock blob's meta; `matchInfo()` gained
+`twists`, `ud`, `sd`, `cs`. Old phones ignore fields they do not know.
+
+### Tests
+
+| File (ports) | `ONLY=` sections |
+|---|---|
+| `chameleon-twists.test.js` (9600–9619) | unit, bugA, hotrules, hotcolours, hotunder, bounty, sudden, streak, fog, dusk, colours, underdog, dbsd, rows, budget, shots (139 assertions; draw calls asserted ≤ 80, fog / dusk restored exactly). Hooks: `twistInfo()`, `forceScores(a,b)`, `forceStreak(w,n)`, `forceTwists(arr)` |
+| `chameleon-hunt.test.js` (9660–9667) | units, whisker, whiskerhs, mercy, note, notehs, drama, dramahs, db, shots (~115 assertions; the seeker's DOM holds no note during the hunt; chips ≥ 44 px, on screen, clear of other controls in portrait / landscape / SE, light / dark) |
+| `chameleon-rivalry.test.js` (9620–9639) | pure (Node, 73+ asserts), hotseat, looks, live (a Double Blind match on two phones) |
+| `chameleon-paint2.test.js` (9640–9645) | chips, pattern, lock, sync (the seeker's `paintHash` equals the hider's), meter (every stale-able sample had `stale` on), poses |
+| `chameleon-maps.test.js` (9680–9699) | new: `spawns` (Node), `launderette`; `browser` now runs every map, Candy Works included; `mapslice` bounds scale with `loadX()` |
+
+`chameleon.test.js` changed where the update intentionally changed behaviour: `timingLocalSection`
+(hotseat has no head start), `ux` (20 / 15 wardrobe tiles, first find celebrated, ran-dry is no
+survival, recap 20 s) and every match that must be deterministic now sets `twists: 'off', underdog:
+false, sudden: false`; the two-device head-start tests are untouched.
 
 ## v3: the seeker climbs, the hider watches, paint while hunted, start timing
 
@@ -253,6 +528,8 @@ seeker walkover (59 s). `MAP_TIME_ID` now sets the **seek** scale per map (a map
 | Corner Market | 79 s | 1.25 | 115 s | 1.25 | 75 s |
 | The Whole House | 82 s | 1.5 | 135 s | 1.5 | 90 s |
 | Museum Night | 82 s | 1.5 | 135 s | 1.5 | 90 s |
+| Spin Cycle Launderette | 34 s | 1.1 (own `time`) | 100 s | 1.1 | 65 s |
+| Candy Works | – | 1 | 90 s | 1 | 60 s |
 | CU Boulder | 191 s | 3 | 270 s | 2 (cap) | 120 s |
 
 `hideScale = min(2, timeScale)` also scales the head start; the sprint stays
@@ -584,6 +861,9 @@ and is saved per device (`localStorage`, last used) for the next time that devic
 | Eye-blink glints | Off · On · Strong | On | On | Off |
 | Heartbeat hint | On · Off | Off | On | On |
 | Seeker minimap (big maps) | On · Off | On | On | Off |
+| Round twists | Off · Some rounds · Every round | Some | Some | Some |
+| Underdog boost | on · off | on | on | on |
+| Sudden death | on · off | on | on | on |
 
 "Hard" is hard for the **seeker** (masters of disguise). Any change shows **Custom**. Floor only:
 no Stick, Zip or Hang; the classic flat-on-the-wall pose still works but only slides sideways.
@@ -1495,9 +1775,19 @@ a lobby spot, a suggested camouflage wall and eyedropper probe points (all check
    brick wall, easels with canvases, leaning canvases, jar shelves, paint cans, plinths with
    sculptures, checker rug, drop cloth and a cloth pile, work table, apron rack, and (v2) a
    panelled ceiling. `room(b, { ceiling: { tile, color, rep } })` draws the downward face only.
-4. **The level designer's big maps** (`maps/`, 430–1770 m², multi-room, two floors, stairs,
-   ceilings): House, Market, CU Boulder, Greenhouse (see `maps/*.js`). They go through exactly the
-   same tests (spawns clear, camo wall, probes) plus the big-map match and perf sections.
+4. **Candy Works** (10 × 8 m, `maps/candy.js`, v4, in `BASE_MAPS`, small pool) — pink candy-stripe
+   and mint checker, jar shelves, lollipop forest, chocolate conveyor and fountain, gumball machines,
+   crate staircase, candy-cane rail and gumdrop chandelier. Three hider and three seeker spawns.
+5. **The level designer's big maps** (`maps/`, 216–1770 m² footprints, multi-room, ceilings, two
+   floors on most): House, Market, CU Boulder, Greenhouse, **Museum Night**. They go through exactly
+   the same tests (spawns clear, camo wall, probes) plus the big-map match and perf sections.
+6. **Spin Cycle Launderette** (`maps/launderette.js`, v4; size class M, 18 × 12 m, 216 m², one
+   floor) — the first map between the dioramas and the 432 m² House class: rows of identical
+   washers and dryers (painted fronts, perfect stamp alignment), a lost-sock wall, folding tables,
+   a shirt rail to squeeze between. Its own clock `time: 1.1`; see "Two new maps" in v4.
+
+The three small dioramas each list three hider and three seeker spawns, and the static
+`ONLY=spawns` test checks every spawn of every map at four sizes.
 
 ## Art
 
@@ -1610,3 +1900,31 @@ scaling, persistence), `v3house` / `v3cu` (full 2-round matches with the v3 sett
 - Phase-switch skew in tests is dominated by main-thread lateness on a loaded CI box; the
   shared clocks themselves agree within a few ms.
 - One device can't play Double Blind (it needs simultaneous hunting).
+
+Known limits of the v4 update:
+
+- Mercy chirp, Bounty spot, whisker stains in Double Blind: Mercy is two-device Hide & Seek only;
+  the Bounty spot is Hide & Seek only; DB whiskers show the sticker and count the stat but leave no
+  stain. `LOCAL_DEAD` rules (escapes, paint while hunted, heartbeat, sights, head start) do nothing
+  in hotseat and are forced off there.
+- A remount of one device mid-hunt forgets its moments state (Mercy could be offered again, the
+  whisker count restarts), and the note is not in the resync snapshot.
+- The note is an optional chip, not a mandatory confirm step; its sheet does not pause the hide clock.
+- Three colours is a hider-side UI rule, not enforced on the network. The pattern fill's ground is
+  the strip's previous colour, not the surface's second colour (not sampled).
+- The new trim looks are hidden on a hiding hider by design (visible on the seeker, lobby, recap, final).
+  The tendency line needs 5 wager calls or 5 finds by that seeker, so with the wager off it stays hidden.
+- The Launderette has no mezzanine (two flush skylights stand in). Candy Works is in `BASE_MAPS`, so
+  the static "extra map" section (160–420 m²) does not cover it; it is covered by spawns / slices /
+  pockets / browser / `ONLY=maps` / camsweep. Small-map spawn lists changed which spawn `pickSpawns`
+  returns for a given seed on Living / Garden / Studio, and `dailyPlan` re-shuffles which map each
+  calendar day gets.
+- `hud.js` still carries dead CSS that `CARDS_CSS` overrides (`.chm-bests i`, greyscale
+  `.chm-wt.locked > i`, emoji-sized `.chm-emote span`).
+- Test flakiness on a loaded box (load 20–40), none from the v4 code: `paintpro` asserts maxima of
+  wall-clock slices under 16 ms (`:2345`, `:2307`, `:2417`, `:2479`); proposed: assert averages
+  (< 8 ms) and keep a loose maximum (< 50 ms). `hotseat` / `variety` / `ux` can stop at "element is
+  not visible" right after a phase flip, `mapslice` is load-bound (its bounds scale with `loadX()`),
+  and the netpolish "guest seeker gets the tag juice no later than FOUND" bound measured 705 vs 493 ms once.
+  Sections that start a match with default rules now meet a random twist, the underdog pellet and
+  sudden death; pin them with `twists:'off', underdog:false, sudden:false`.

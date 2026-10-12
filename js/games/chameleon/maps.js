@@ -42,11 +42,13 @@ import { boxGeo, cylGeo, sphereGeo, latheGeo, createBuilder } from './geo.js';
 import { createAtlas, P } from './atlas.js';
 import { seeded } from './util.js';
 import { EXTRA_MAPS } from './maps/index.js';
+import { CANDY } from './maps/candy.js';
 
 const BASE_MAPS = [
   { id: 'living', name: 'Living Room', blurb: 'Rugs, stripes and a very full bookshelf.', build: (a) => living(a), size: 'S', rooms: 1, climbs: 3, info: { w: 10, d: 8, rooms: [{ name: 'Living room', x0: -5, z0: -4, x1: 5, z1: 4 }] } },
   { id: 'garden', name: 'Garden', blurb: 'Hedges, flower beds and a striped deck chair.', build: (a) => garden(a), size: 'S', rooms: 1, climbs: 1, info: { w: 12, d: 10, rooms: [{ name: 'Garden', x0: -6, z0: -5, x1: 6, z1: 5 }], overview: { y: 5.4, radius: 10.5 } } },
   { id: 'studio', name: 'Art Studio', blurb: 'Splatters, swatches and wet canvases.', build: (a) => studio(a), size: 'S', rooms: 1, climbs: 2, info: { w: 10, d: 8, rooms: [{ name: 'Studio', x0: -5, z0: -4, x1: 5, z1: 4 }] } },
+  CANDY,
 ];
 const seen = new Set();
 /** Every selectable map: the three originals, then the level designer's EXTRA_MAPS (bad entries skipped). */
@@ -369,9 +371,12 @@ function living(atlas) {
     // Spawns + spots
     b.spot('lobby', { x: -1.15, z: 1.25 });
     b.spot('hiderSpawn', { x: 0, z: 0.3, yaw: Math.PI });
-    b.spot('seekerSpawn', { x: 0.2, z: 3.3, yaw: Math.PI });
+    b.spot('seekerSpawn', { x: -0.4, z: 3.3, yaw: Math.PI }); // (was x 0.2: on the toy chest lid, y 0.55)
     b.spot('spawnA', { x: -3.6, z: 0.6, yaw: Math.PI / 2 });
     b.spot('spawnB', { x: 3.4, z: 0.6, yaw: -Math.PI / 2 });
+    // (v4) three of each: the random pick no longer starts every hunt at the same sofa-to-door line
+    b.spot('hiderSpawns', [{ x: 0, z: 0.3, yaw: Math.PI }, { x: -2.7, z: -1.7, yaw: 0 }, { x: 2.8, z: 0.3, yaw: -Math.PI / 2 }]);
+    b.spot('seekerSpawns', [{ x: -0.4, z: 3.3, yaw: Math.PI }, { x: -2.7, z: 2.8, yaw: Math.PI }, { x: 1.3, z: 2.3, yaw: Math.PI }]);
     b.spot('camo', { x: -3.15, z: -3.7, wallNormal: [0, 0, 1], y: 0.42, note: 'open stretch of the back wallpaper' });
     b.spot('rug', { x: -1.5, z: -0.45, yaw: 0 });
     yield 'probes for the';
@@ -565,8 +570,10 @@ function garden(atlas) {
     b.spot('lobby', { x: 0.6, z: 2.6 });
     b.spot('hiderSpawn', { x: 0, z: 1.8, yaw: Math.PI });
     b.spot('seekerSpawn', { x: 0, z: 4.3, yaw: Math.PI });
-    b.spot('spawnA', { x: -3.8, z: 4.0, yaw: Math.PI });
+    b.spot('spawnA', { x: -3.1, z: 4.0, yaw: Math.PI }); // (was x -3.8: on the flower bed border, y 0.24)
     b.spot('spawnB', { x: 3.6, z: 4.2, yaw: Math.PI });
+    b.spot('hiderSpawns', [{ x: 0, z: 1.8, yaw: Math.PI }, { x: -3.2, z: -2.2, yaw: 0 }, { x: 3.3, z: -1.2, yaw: Math.PI }]);
+    b.spot('seekerSpawns', [{ x: 0, z: 4.3, yaw: Math.PI }, { x: -3.2, z: 3.8, yaw: Math.PI }, { x: 3.6, z: 3.8, yaw: Math.PI }]);
     b.spot('camo', { x: -3.4, z: -3.95, wallNormal: [0, 0, 1], y: 0.45, note: 'front of the back hedge' });
     b.spot('rug', { x: -2.2, z: -0.2, yaw: 0.5 });
     b.probe('gate-beam', [0.3, 1.681, d / 2], [0, 1, 0], C.woodD);
@@ -716,6 +723,8 @@ function studio(atlas) {
     b.spot('seekerSpawn', { x: 0, z: 3.4, yaw: Math.PI });
     b.spot('spawnA', { x: -3.5, z: 2.2, yaw: Math.PI / 2 });
     b.spot('spawnB', { x: 3.2, z: 1.2, yaw: -Math.PI / 2 });
+    b.spot('hiderSpawns', [{ x: 0.3, z: 0.8, yaw: Math.PI }, { x: -3.2, z: -2.2, yaw: 0 }, { x: 1.8, z: -1.7, yaw: Math.PI }]);
+    b.spot('seekerSpawns', [{ x: 0, z: 3.4, yaw: Math.PI }, { x: -3.2, z: 2.3, yaw: Math.PI }, { x: 3.2, z: 1.2, yaw: Math.PI }]);
     b.spot('camo', { x: 1.6, z: -3.64, wallNormal: [0, 0, 1], y: 0.8, note: 'swatch wall' });
     b.spot('rug', { x: 1.6, z: 0.9, yaw: 0 });
     b.probe('plinth-white', [-0.3, 0.35, 2.851], [0, 0, 1], C.white);

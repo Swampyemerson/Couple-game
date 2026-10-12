@@ -2,6 +2,9 @@
 // offset shadow) to match the printed-diorama look. Every per-frame write is cached, so the
 // HUD costs nothing when values don't change.
 import { esc, fmtTime } from './util.js';
+// H: the Mercy / Note chips + the note sticker's CSS lives in moments.js
+import { MOMENTS_CSS } from './moments.js';
+import { PATTERNS } from './paint.js';
 
 const I = {
   paint: '<path d="M14 4l6 6-8.5 8.5a3 3 0 01-2.1.9H6v-3.4a3 3 0 01.9-2.1z"/><path d="M12 6l6 6"/>',
@@ -129,10 +132,36 @@ export const CSS = `
 .chm-seg i { display: block; border-radius: 50%; background: currentColor; }
 .chm-done { padding: 0 11px; height: 38px; white-space: nowrap; border-radius: 12px; border: 2.5px solid var(--g-ink); background: var(--chm-me); color: var(--g-on-ink); font: 900 0.85rem/1 var(--g-font-body); box-shadow: var(--g-shadow, 3px 3px 0 var(--g-edge)); cursor: pointer; display: flex; align-items: center; gap: 4px; }
 .chm-done .chm-ic { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+/* recent colours + the fill pattern: one row above the swatch / brush row (44 px chips) */
+.chm-pal { display: flex; align-items: center; justify-content: center; gap: 5px; padding: 4px 6px; max-width: 100%; flex-wrap: nowrap; }
+.chm-rc { width: 44px; height: 44px; flex: none; padding: 0; margin: 0; border-radius: 12px; border: 2.5px solid var(--g-ink); background: var(--g-card); color: var(--g-ink); cursor: pointer; touch-action: manipulation; overflow: hidden; position: relative; display: block; }
+.chm-rc.on { box-shadow: inset 0 0 0 3px var(--g-card), inset 0 0 0 5px var(--g-ink); }
+.chm-rc.empty { border-style: dashed; opacity: .45; background: transparent; pointer-events: none; }
+.chm-rc:active { transform: translate(1px, 1px); }
+.chm-rc[hidden] { display: none; }
+.chm-pat { margin-left: 5px; }
+@media (max-width: 340px) { .chm-pal { gap: 3px; padding: 3px 4px; } .chm-pat { margin-left: 3px; } }
+/* the camo meter keeps clear of the paint panel in portrait: its tube shrinks to the room between its top and the panel's top
+   (--chm-tools-top / --chm-h are measured in JS); on a 320 px phone it also rides up beside the title row so the colour chips and Soft stay free */
+@media (orientation: portrait) {
+  .chm.painting .chm-meter .cm-tube { height: clamp(44px, calc(var(--chm-h, 800px) - var(--chm-tools-top, 198px) - 184px - var(--chm-st) - 12px - 91px), 148px); }
+}
+@media (orientation: portrait) and (max-height: 700px) {
+  .chm.painting .chm-meter .cm-tube { height: clamp(44px, calc(var(--chm-h, 600px) - var(--chm-tools-top, 198px) - 184px - var(--chm-st) - 12px - 91px), 128px); }
+}
+@media (orientation: portrait) and (max-width: 340px) {
+  .chm.painting .chm-meter { top: calc(98px + var(--chm-st)); }
+  .chm.painting .chm-meter .cm-tube { height: clamp(44px, calc(var(--chm-h, 568px) - var(--chm-tools-top, 198px) - 98px - var(--chm-st) - 12px - 91px), 128px); }
+  .chm.painting .chm-hint { max-width: calc(100% - 136px); }
+}
+.chm-pat svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.chm-lockcap { flex: 1 1 0; min-width: 0; font: 900 .68rem/1.15 var(--g-font-body); text-transform: uppercase; letter-spacing: .03em; color: var(--g-ink); padding-left: 3px; }
+.chm-lockcap small { display: block; font-weight: 800; letter-spacing: 0; text-transform: none; opacity: .75; }
+.chm-tool[aria-disabled="true"] { opacity: .4; }
 
 /* poses */
 .chm-poses { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(118px + var(--chm-sb)); display: flex; gap: 6px; padding: 6px; }
-.chm.painting .chm-poses { bottom: calc(146px + var(--chm-sb)); }
+.chm.painting .chm-poses { bottom: calc(var(--chm-tools-top, 198px) + 8px); } /* (--chm-tools-top: the paint tools' height, measured: it grows when the swatch row wraps on a narrow phone) */
 .chm-pose { width: 52px; height: 58px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; border: 2px solid var(--g-ink); border-radius: 12px; background: var(--g-card); color: var(--g-ink); font: 900 0.58rem/1 var(--g-font-body); text-transform: uppercase; cursor: pointer; touch-action: manipulation; }
 .chm-pose svg { width: 30px; height: 30px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .chm-pose.on { background: var(--chm-me); color: var(--g-on-ink); }
@@ -241,6 +270,7 @@ export const CSS = `
   .chm-tool { padding: 6px 2px 5px; }
   .chm-tool .chm-ic { width: 22px; height: 22px; }
   .chm-opts { flex: none; }
+  .chm-pal { position: absolute; right: 66px; bottom: calc(100% + 6px); }
   .chm-poses, .chm.painting .chm-poses, .chm.acts3 .chm-poses, .chm.acts3.painting .chm-poses { left: calc(10px + var(--chm-sl)); transform: none; bottom: calc(84px + var(--chm-sb)); padding: 5px; gap: 5px; flex-direction: row; }
   .chm-sheetwrap { padding-left: calc(62px + var(--chm-sl)); padding-right: calc(62px + var(--chm-sr)); padding-top: calc(10px + var(--chm-st)); }
   .chm.acts3 .chm-acts { grid-template-columns: auto auto auto !important; gap: 8px 8px; }
@@ -381,8 +411,8 @@ export const CSS = `
 .chm-poses { flex-wrap: nowrap; max-width: calc(100% - 16px); }
 /* portrait with six action buttons: the pose bar becomes a column on the left, above the stick */
 .chm.acts3 .chm-poses { left: calc(10px + var(--chm-sl)); transform: none; bottom: calc(136px + var(--chm-sb)); flex-direction: column; padding: 5px; gap: 5px; }
-.chm.acts3 .chm-pose { width: 54px; height: 52px; }
-.chm.acts3.painting .chm-poses { left: 50%; transform: translateX(-50%); bottom: calc(146px + var(--chm-sb)); flex-direction: row; }
+.chm.acts3 .chm-pose { width: auto; min-width: 54px; height: 52px; padding: 0 5px; }
+.chm.acts3.painting .chm-poses { left: 50%; transform: translateX(-50%); bottom: calc(var(--chm-tools-top, 198px) + 8px); flex-direction: row; }
 /* …but a phone on its side keeps the bottom-left row (the column ran up under the back sticker) */
 @media (orientation: landscape) and (max-height: 520px) {
   .chm.acts3 .chm-poses, .chm.acts3.painting .chm-poses { left: calc(10px + var(--chm-sl)); transform: none; bottom: calc(84px + var(--chm-sb)); flex-direction: row; }
@@ -504,11 +534,23 @@ export const CSS = `
 .chm-emote.sent { animation: chm-squash .3s; border-color: var(--g-ink); }
 @keyframes chm-squash { 30% { transform: scale(1.25, .8); } 60% { transform: scale(.9, 1.15); } }
 .chm-pops { position: absolute; inset: 0; pointer-events: none; z-index: 6; }
-.chm-pop { position: absolute; left: 50%; top: 30%; transform: translate(-50%, -50%) rotate(-5deg); padding: 8px 18px 10px; font-family: var(--g-font-display); font-size: 1.7rem; font-weight: 900; letter-spacing: .02em; color: var(--g-on-ink); background: var(--g-hl); border: 3px solid var(--g-ink); border-radius: 14px; box-shadow: 5px 5px 0 var(--g-edge); white-space: nowrap; animation: chm-stamp .45s cubic-bezier(.2,1.6,.4,1), chm-popout .4s ease-in 1.5s forwards; }
-.chm-pop small { display: block; font-family: var(--g-font-body); font-size: .8rem; font-weight: 800; letter-spacing: 0; text-align: center; margin-top: 2px; }
+/* stickers stack in a lane (flex column, never on top of each other); the lane starts below the hint (portrait 140 px, landscape 104 px) */
+.chm-poplane { position: absolute; left: 0; right: 0; top: calc(196px + var(--chm-st)); display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; }
+.chm-pop { position: relative; flex: none; max-width: calc(100% - 16px); transform: rotate(-5deg); padding: 8px 18px 10px; font-family: var(--g-font-display); font-size: 1.7rem; font-weight: 900; letter-spacing: .02em; color: var(--g-on-ink); background: var(--g-hl); border: 3px solid var(--g-ink); border-radius: 14px; box-shadow: 5px 5px 0 var(--g-edge); white-space: nowrap; animation: chm-popin .45s cubic-bezier(.2,1.6,.4,1), chm-poplift .4s ease-in 1.5s forwards; }
+.chm-pop small { display: block; font-family: var(--g-font-body); font-size: .8rem; font-weight: 800; letter-spacing: 0; text-align: center; margin-top: 2px; white-space: normal; }
 .chm-pop.a { background: var(--p-a); } .chm-pop.b { background: var(--p-b); } .chm-pop.ink { background: var(--g-ink); color: var(--g-bg); }
-.chm-pop.low { top: 62%; } .chm-pop.mid { top: 46%; }
+@keyframes chm-popin { from { transform: rotate(-24deg) scale(2.2); opacity: 0; } to { transform: rotate(-5deg) scale(1); opacity: 1; } }
+@keyframes chm-poplift { to { opacity: 0; transform: translateY(-10px) rotate(-5deg) scale(.9); } }
 @keyframes chm-popout { to { opacity: 0; transform: translate(-50%, -60%) rotate(-5deg) scale(.9); } }
+/* the recap card covers the screen (portrait) or the right half (landscape): the stickers go in a compact lane in the strip above it / left of it, never on its text */
+.chm:has(.chm-recap) .chm-poplane, .chm:has(.chm-final) .chm-poplane { top: calc(64px + var(--chm-st)); gap: 4px; }
+.chm:has(.chm-recap) .chm-pop, .chm:has(.chm-final) .chm-pop { font-size: 1.05rem; padding: 3px 14px 4px; border-width: 2.5px; border-radius: 12px; box-shadow: 3px 3px 0 var(--g-edge); display: flex; align-items: baseline; gap: 8px; }
+.chm:has(.chm-recap) .chm-pop small, .chm:has(.chm-final) .chm-pop small { display: inline; margin: 0; font-size: .7rem; }
+.chm-over.chm-recap, .chm-over.chm-final { padding-top: calc(var(--chm-st) + 140px); }
+@media (orientation: landscape) and (max-height: 520px) {
+  .chm-poplane { top: calc(150px + var(--chm-st)); }
+  .chm:has(.chm-recap) .chm-poplane, .chm:has(.chm-final) .chm-poplane { top: calc(70px + var(--chm-st)); right: calc(min(46vw, 400px) + 82px + var(--chm-sr)); }
+}
 .chm-emo { position: absolute; width: 0; height: 0; pointer-events: none; z-index: 6; }
 .chm-emo i { position: absolute; left: 0; top: 0; transform: translate(-50%, -50%) rotate(var(--r, 0deg)); display: flex; flex-direction: column; align-items: center; padding: 6px 10px; border: 2.5px solid var(--g-ink); border-radius: 14px; background: var(--g-card); box-shadow: 4px 4px 0 var(--g-edge); font: 900 .7rem/1 var(--g-font-body); text-transform: uppercase; color: var(--g-ink); animation: chm-emoin .3s cubic-bezier(.2,1.6,.4,1), chm-popout .35s ease-in 1.6s forwards; }
 .chm-emo i span { font-size: 2rem; line-height: 1.1; } .chm-emo.mine i span { font-size: 1.3rem; } .chm-emo.mine i { padding: 4px 8px; box-shadow: 2px 2px 0 var(--g-edge); }
@@ -544,7 +586,7 @@ export const CSS = `
   .chm-final .chm-foot { gap: 6px; padding-top: 6px; }
 }
 /* a phone: the tall cards start below the hub's back / menu stickers instead of under them */
-@media (max-width: 560px) { .chm-over.chm-final, .chm-over.chm-recap { padding-top: calc(var(--gm-corner-safe, 64px) + 6px); } }
+/* (recap / final top padding: see the sticker lane above; it already clears the corner buttons) */
 .chm-tl { display: flex; flex-direction: column; gap: 4px; }
 .chm-tl-row { display: flex; align-items: center; gap: 6px; font-size: .72rem; font-weight: 900; }
 .chm-tl-n { width: 24px; text-align: right; color: var(--g-muted); }
@@ -592,9 +634,12 @@ export const CSS = `
 .chm-seg2 button { height: 44px; }
 .chm-opts { padding: 4px 6px; gap: 5px; }
 @media (max-width: 380px) { .chm-opts { flex-wrap: wrap; } .chm-seg button { min-width: 44px !important; padding: 0 5px !important; } }
+/* the colour row above shows the brush colour (ringed chip), so the round swatch makes room: size, hardness and Done now fit one row on a 375 px phone (Done used to wrap below) */
+@media (max-width: 380px) and (min-width: 341px) { .chm-opts { flex-wrap: nowrap; } .chm-opts .chm-swatch { display: none !important; } }
 /* type floor: 11 px on captions, pose labels, preset subtitles, size labels, map facts, the joystick hint */
 .chm-b em { font-size: .7rem; }
-.chm-pose { width: 56px; font-size: .68rem; }
+.chm-pose { width: auto; min-width: 56px; padding: 0 5px; font-size: .68rem; letter-spacing: -.01em; }
+@media (max-width: 340px) { .chm-poses { gap: 3px; padding: 5px; } .chm-pose { min-width: 52px; padding: 0 2px; } }
 .chm-phase { font-size: .7rem; }
 .chm-joyhint { font-size: .7rem; }
 .chm-presets small { font-size: .68rem; }
@@ -610,13 +655,59 @@ export const CSS = `
   .chm.minion .chm-hint { top: calc(104px + var(--chm-st)); }
   .chm.acts7 .chm-gear { top: calc(64px + var(--chm-st)); right: calc(12px + var(--chm-sr)); }
   .chm.posesup .chm-joyhint { display: none; }
-  .chm-pose { width: 50px; }
+  .chm-pose { width: auto; min-width: 50px; padding: 0 5px; }
   .chm-b.wide > span:first-child { height: 44px; } /* (was 40: under the 44 px tap floor) */
 }
 @media (prefers-reduced-motion: reduce) { .chm *, .chm *::before, .chm *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; } }
 @media (min-width: 900px) and (min-height: 600px) { .chm-sc { font-size: 1.1rem; padding: 6px 12px 6px 9px; } .chm-sc span { font-size: 0.82rem; } .chm-clock { min-width: 104px; } .chm-time { font-size: 1.8rem; } .chm-phase { font-size: 0.7rem; } .chm-sub { top: calc(78px + var(--chm-st)); font-size: 0.9rem; } .chm-gear { top: calc(116px + var(--chm-st)); } }
 @media (min-width: 700px) { .chm-b > span:first-child { width: 60px; height: 60px; } .chm-b.big > span:first-child { width: 78px; height: 78px; } .chm-title { font-size: 2.5rem; } }
+${MOMENTS_CSS}
 `;
+
+// ── paint panel helpers: recent colours, the fill pattern chip, the palette lock ──
+const RECENT_KEY = 'chm.recent'; // a per-viewer convenience (localStorage, try/catch): the last 5 colours, "r,g,b;r,g,b"
+const RECENT_N = 5;
+const rgbKey = (c) => `${c[0]},${c[1]},${c[2]}`;
+const rgbCss = (c) => `rgb(${c[0]},${c[1]},${c[2]})`;
+const nearRgb = (a, b, t = 12) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]) < t;
+/** '#rgb' / '#rrggbb' / [r,g,b] → [r,g,b] (0..255 ints) or null. */
+function parseColor(x) {
+  if (typeof x === 'string') {
+    const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(x.trim());
+    if (!m) return null;
+    let h = m[1]; if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+  if (x && x.length >= 3) {
+    const c = [Math.round(+x[0]), Math.round(+x[1]), Math.round(+x[2])];
+    return c.every((v) => v >= 0 && v <= 255) ? c : null;
+  }
+  return null;
+}
+function loadRecent() {
+  const out = [];
+  try {
+    const raw = localStorage.getItem(RECENT_KEY);
+    if (raw) for (const part of String(raw).split(';')) { const c = parseColor(part.split(',').map(Number)); if (c && out.length < RECENT_N && !out.some((o) => nearRgb(o, c))) out.push(c); }
+  } catch { /* private window / blocked storage: the strip just starts empty */ }
+  return out;
+}
+function saveRecent(list) { try { localStorage.setItem(RECENT_KEY, list.map(rgbKey).join(';')); } catch { /* ignore */ } }
+/** A second colour for a pattern when the painter has none: lighter than a dark colour, darker than a light one. */
+function shadeOf(c) {
+  const lum = 0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2];
+  return lum > 140 ? [Math.round(c[0] * 0.55), Math.round(c[1] * 0.55), Math.round(c[2] * 0.55)] : [Math.round(c[0] + (255 - c[0]) * 0.6), Math.round(c[1] + (255 - c[1]) * 0.6), Math.round(c[2] + (255 - c[2]) * 0.6)];
+}
+/** The pattern chip's face: the pattern in the real colours (ink c1 on ground c2). */
+function patGlyph(kind, c1, c2) {
+  const a = rgbCss(c1); const b = rgbCss(c2);
+  if (kind === 'stripes') return `<rect width="24" height="24" fill="${b}"/><g transform="rotate(35 12 12)" fill="${a}"><rect x="-8" y="-1" width="40" height="6"/><rect x="-8" y="11" width="40" height="6"/><rect x="-8" y="23" width="40" height="6"/></g>`;
+  if (kind === 'dots') return `<rect width="24" height="24" fill="${b}"/><g fill="${a}"><circle cx="6" cy="6" r="3.4"/><circle cx="18" cy="6" r="3.4"/><circle cx="12" cy="12" r="3.4"/><circle cx="6" cy="18" r="3.4"/><circle cx="18" cy="18" r="3.4"/></g>`;
+  if (kind === 'checker') return `<rect width="24" height="24" fill="${b}"/><g fill="${a}"><rect width="8" height="8"/><rect x="16" width="8" height="8"/><rect x="8" y="8" width="8" height="8"/><rect y="16" width="8" height="8"/><rect x="16" y="16" width="8" height="8"/></g>`;
+  return `<rect width="24" height="24" fill="${a}"/>`;
+}
+const PAT_BADGE = '<circle cx="19" cy="19" r="4.8" style="fill:var(--g-card);stroke:var(--g-ink)" stroke-width="1.4"/><path d="M19 16.6v4.8M16.6 19h4.8" style="stroke:var(--g-ink)" stroke-width="1.5" stroke-linecap="round"/>';
+const cap1 = (t) => t.charAt(0).toUpperCase() + t.slice(1);
 
 export function createHud(root, api) {
   const nm = (w) => esc(api.name(w));
@@ -636,6 +727,7 @@ export function createHud(root, api) {
       <div class="chm-mini chm-sticker" hidden><canvas width="208" height="208" aria-label="Map"></canvas></div>
       <div class="chm-tips chm-sticker" hidden role="note"></div>
       <div class="chm-tools" hidden>
+        <div class="chm-pal chm-sticker" role="group" aria-label="Colours">${[0, 1, 2, 3, 4].map((i) => `<button class="chm-rc empty" data-chip="${i}" aria-label="Recent colour ${i + 1}" tabindex="-1"></button>`).join('')}<button class="chm-rc chm-pat" data-pat="1" aria-label="Fill pattern: Solid"><svg viewBox="0 0 24 24" preserveAspectRatio="none" aria-hidden="true"></svg></button><span class="chm-lockcap" hidden></span></div>
         <div class="chm-opts chm-sticker">
           <span class="chm-swatch" aria-label="Current colour"></span>
           <div class="chm-seg" data-seg="size"><button data-size="0" aria-label="Small brush"><i style="width:6px;height:6px"></i></button><button data-size="1" aria-label="Medium brush"><i style="width:11px;height:11px"></i></button><button data-size="2" aria-label="Large brush"><i style="width:17px;height:17px"></i></button></div>
@@ -644,7 +736,7 @@ export function createHud(root, api) {
         </div>
         <div class="chm-trow">
           <button class="chm-tool" data-tool="brush">${icon('brush')}Brush</button>
-          <button class="chm-tool" data-tool="fill">${icon('fill')}Fill</button>
+          <button class="chm-tool" data-tool="fill">${icon('fill')}<span class="chm-fl">Fill</span></button>
           <button class="chm-tool" data-tool="pick">${icon('pick')}Pick</button>
           <button class="chm-tool" data-tool="stamp">${icon('stamp')}Stamp</button>
           <button class="chm-tool" data-act="undo">${icon('undo')}Undo</button>
@@ -657,7 +749,7 @@ export function createHud(root, api) {
       <div class="chm-legend chm-sticker"></div>
       <div class="chm-ripple"></div>
     </div>
-    <div class="chm-pops"></div>
+    <div class="chm-pops"><div class="chm-poplane"></div></div>
     <div class="chm-vig"></div>
     <div class="chm-flash"></div>
     <div class="chm-layer"></div>`);
@@ -669,10 +761,70 @@ export function createHud(root, api) {
     joy: $('.chm-joy'), knob: $('.chm-joy i'), joyhint: $('.chm-joyhint'), mini: $('.chm-mini'), miniCv: $('.chm-mini canvas'), tips: $('.chm-tips'),
     poses: $('.chm-poses'), tools: $('.chm-tools'), swatch: $('.chm-swatch'), acts: $('.chm-acts'),
     hint: $('.chm-hint'), legend: $('.chm-legend'), badge: $('.chm-badge'), here: $('.chm-here'), ripple: $('.chm-ripple'), vig: $('.chm-vig'), flash: $('.chm-flash'),
-    layer: $('.chm-layer'), pops: $('.chm-pops'),
+    layer: $('.chm-layer'), pops: $('.chm-pops'), lane: $('.chm-poplane'),
   };
   const cache = new Map();
   let hintTimer = 0;
+  // the paint panel: recent colours (last 5 distinct), the fill pattern, the palette lock (Three colours twist)
+  const PT = { recent: loadRecent(), cur: null, pat: 0, lock: null, label: '', ver: 1, shown: 0, cb: { color: null, pattern: null }, chips: [], patBtn: null, patSvg: null, fl: null, cap: null };
+  PT.chips = Array.from(root.querySelectorAll('.chm-rc[data-chip]')); PT.patBtn = root.querySelector('.chm-pat'); PT.patSvg = PT.patBtn.querySelector('svg');
+  PT.fl = root.querySelector('.chm-fl'); PT.cap = root.querySelector('.chm-lockcap');
+  /** Where a picked colour flies to: the round swatch, or (narrow phones hide it) the ringed chip. */
+  const swatchEl = () => (el.swatch.offsetWidth ? el.swatch : root.querySelector('.chm-pal .chm-rc.on') || el.chips || el.swatch);
+  const inLock = (c) => !!PT.lock && PT.lock.some((l) => nearRgb(l, c, 4));
+  const chipList = () => PT.lock || PT.recent;
+  /** The colour a pattern puts under its ink: the next lock colour, else the last other colour used, else a shade of the ink. */
+  function secondOf(c) {
+    if (PT.lock && PT.lock.length > 1) { let i = PT.lock.findIndex((l) => nearRgb(l, c, 4)); if (i < 0) i = 0; return PT.lock[(i + 1) % PT.lock.length]; }
+    if (!PT.lock) for (const r of PT.recent) if (!nearRgb(r, c, 60)) return r;
+    return shadeOf(c);
+  }
+  /** Redraw the chips, the pattern chip, the Fill label and the lock look; DOM writes only when something changed. */
+  function paintRender() {
+    if (PT.ver === PT.shown) return; // (nothing changed: no work, no garbage, every frame)
+    PT.shown = PT.ver;
+    const list = chipList(); const cur = PT.cur;
+    {
+      for (let i = 0; i < PT.chips.length; i++) {
+        const b = PT.chips[i]; const c = list[i];
+        if (!c) { b.hidden = !!PT.lock; b.classList.add('empty'); b.classList.remove('on'); b.style.background = ''; b.tabIndex = -1; b.setAttribute('aria-label', `Recent colour ${i + 1} (empty)`); continue; }
+        b.hidden = false; b.classList.remove('empty'); b.tabIndex = 0;
+        b.style.background = rgbCss(c);
+        b.classList.toggle('on', !!cur && nearRgb(c, cur, 4));
+        b.setAttribute('aria-label', PT.lock ? `${PT.label} colour ${i + 1}` : `Recent colour ${i + 1}`);
+      }
+      const locked = !!PT.lock;
+      for (const t of ['pick', 'stamp']) { const b = el.tools.querySelector(`[data-tool="${t}"]`); if (b) { if (locked) { b.setAttribute('aria-disabled', 'true'); b.title = `${PT.label}: ${cap1(t)} is off this round`; } else { b.removeAttribute('aria-disabled'); b.removeAttribute('title'); } } }
+      PT.cap.hidden = !locked || PT.lock.length > 3;
+      if (locked) PT.cap.innerHTML = `${esc(PT.label)}<small>Pick and Stamp are off</small>`;
+    }
+    const kind = PATTERNS[PT.pat]; const c1 = cur || [74, 132, 116]; const c2 = secondOf(c1);
+    {
+      PT.patSvg.innerHTML = patGlyph(kind, c1, c2) + PAT_BADGE;
+      PT.patBtn.setAttribute('aria-label', `Fill pattern: ${cap1(kind)}. Tap to change`);
+      PT.patBtn.title = `Fill pattern: ${cap1(kind)}`;
+      PT.fl.textContent = kind === 'solid' ? 'Fill' : cap1(kind);
+    }
+  }
+  /** The brush colour changed: a colour not on the strip goes in at the front (the strip keeps its order when you tap a chip). */
+  function paintObserve(rgb) {
+    const c = PT.cur;
+    if (c && c[0] === rgb[0] && c[1] === rgb[1] && c[2] === rgb[2]) return;
+    PT.cur = [rgb[0], rgb[1], rgb[2]]; PT.ver++;
+    if (PT.lock) return;
+    if (!PT.recent.some((r) => nearRgb(r, rgb))) {
+      PT.recent.unshift([rgb[0], rgb[1], rgb[2]]);
+      if (PT.recent.length > RECENT_N) PT.recent.length = RECENT_N;
+      saveRecent(PT.recent);
+    }
+  }
+  /** The nearest lock colour to rgb, or rgb itself when it is one (or nothing is locked). */
+  function lockSnap(rgb) {
+    if (!PT.lock || inLock(rgb)) return rgb;
+    let best = PT.lock[0]; let bd = 1e9;
+    for (const l of PT.lock) { const d = (l[0] - rgb[0]) ** 2 + (l[1] - rgb[1]) ** 2 + (l[2] - rgb[2]) ** 2; if (d < bd) { bd = d; best = l; } }
+    return [best[0], best[1], best[2]];
+  }
   // per-frame caches (numbers / identities only, so nothing is allocated when nothing changed)
   const N = { secs: -1, timed: null, hot: null, phase: null, sa: -1, sb: -1, role: null, roleMine: null, pipT: -1, pipD: -1, pelL: -1, pelM: -1, pelT: null, list: null, tool: null, size: -1, hard: null, r: -1, g: -1, bl: -1, legend: null, undo: null, parts: {} };
   const actBtn = new Map(); // act -> { btn, em, cd, label, disabled, cdOff, hl }
@@ -688,6 +840,27 @@ export function createHud(root, api) {
   };
   bodyFont();
 
+  el.chips = root.querySelector('.chm-pal');
+  // the paint tools' height (it grows when the swatch row wraps on a narrow phone): the pose bar sits just above it
+  if (typeof ResizeObserver !== 'undefined') {
+    let lastTop = -1; let lastH = -1;
+    new ResizeObserver(() => {
+      if (el.tools.hidden) return;
+      const r = el.tools.getBoundingClientRect(); const rr = root.getBoundingClientRect();
+      const d = Math.round(rr.bottom - r.top);
+      if (r.height && (d !== lastTop || Math.round(rr.height) !== lastH)) { lastTop = d; lastH = Math.round(rr.height); root.style.setProperty('--chm-tools-top', d + 'px'); root.style.setProperty('--chm-h', lastH + 'px'); }
+    }).observe(el.tools);
+  }
+  el.chips.addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b || !el.chips.contains(b)) return;
+    if (b.dataset.chip != null) {
+      const c = chipList()[+b.dataset.chip];
+      if (c && PT.cb.color) PT.cb.color([c[0], c[1], c[2]]);
+    } else if (b.dataset.pat != null) {
+      const k = hud.cyclePattern();
+      if (PT.cb.pattern) PT.cb.pattern(k);
+    }
+  });
   const hud = {
     el,
     show(parts) {
@@ -829,7 +1002,46 @@ export function createHud(root, api) {
         el.tools.querySelectorAll('[data-hard]').forEach((b) => b.classList.toggle('on', +b.dataset.hard === (hard ? 1 : 0)));
       }
       if (N.r !== rgb[0] || N.g !== rgb[1] || N.bl !== rgb[2]) { N.r = rgb[0]; N.g = rgb[1]; N.bl = rgb[2]; el.swatch.style.background = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`; }
+      paintObserve(rgb); paintRender();
+      // locked palette: a brush colour that isn't one of the swatches (a stale pick, a test hook) snaps to the nearest one
+      if (PT.lock && !inLock(rgb)) return lockSnap(rgb);
+      return null;
     },
+    /** Paint-panel callbacks set by game.js: color(rgb) = a chip was tapped, pattern(kind) = the pattern chip was tapped. */
+    paintCb: PT.cb,
+    /** Recent colours, newest first (copies). */
+    get recentColors() { return PT.recent.map((c) => c.slice()); },
+    /** The fill pattern now: 'solid' | 'stripes' | 'dots' | 'checker'. */
+    get pattern() { return PATTERNS[PT.pat]; },
+    /** { kind, rgb2 } for paint.fill (rgb2 = the ground under the brush colour), or null for a plain fill. */
+    fillPattern(rgb) { const kind = PATTERNS[PT.pat]; return kind === 'solid' ? null : { kind, rgb2: secondOf(rgb) }; },
+    /** Next fill pattern (the pattern chip). */
+    cyclePattern() { PT.pat = (PT.pat + 1) % PATTERNS.length; PT.ver++; paintRender(); return PATTERNS[PT.pat]; },
+    setPattern(k) { const i = PATTERNS.indexOf(k); if (i >= 0) { PT.pat = i; PT.ver++; paintRender(); } return PATTERNS[PT.pat]; },
+    /**
+     * Lock the hider's paint to a few colours (the Three colours twist): hexArray = ['#rrggbb', …]
+     * (or [r,g,b] triples), 1–5 colours; null / [] clears it. While locked the chips show only those
+     * swatches, the brush and fill snap to them, and Pick and Stamp are off (they say why when
+     * tapped: lockReason). Safe to call at any time (the panel need not be open); returns true when
+     * a lock is now active.
+     */
+    setPaletteLock(list, opts = null) {
+      const cols = [];
+      if (list && list.length) for (const x of list) { const c = parseColor(x); if (c && cols.length < RECENT_N && !cols.some((o) => nearRgb(o, c, 4))) cols.push(c); }
+      PT.lock = cols.length ? cols : null;
+      PT.label = PT.lock ? ((opts && opts.label) || (cols.length === 3 ? 'Three colours' : 'Limited palette')) : '';
+      PT.ver++;
+      if (PT.lock && PT.cur && !inLock(PT.cur)) { const c = lockSnap(PT.cur); PT.cur = c.slice(); if (PT.cb.color) PT.cb.color(c); }
+      paintRender();
+      return !!PT.lock;
+    },
+    /** The locked colours as hex strings, or null. */
+    get paletteLock() { return PT.lock ? PT.lock.map((c) => '#' + c.map((v) => v.toString(16).padStart(2, '0')).join('')) : null; },
+    get lockOn() { return !!PT.lock; },
+    /** Snap rgb into the lock (itself when nothing is locked). */
+    lockSnap,
+    /** Why a tool is off right now ("Three colours: Pick is off this round"). */
+    lockReason(what) { return `${PT.label || 'Palette lock'}: ${what} is off this round`; },
     stampEnabled(on) { if (N.stamp === on) return; N.stamp = on; const b = el.tools.querySelector('[data-tool="stamp"]'); if (b) { b.disabled = !on; b.hidden = !on; } },
     undoEnabled(on) { if (N.undo === on) return; N.undo = on; const b = el.tools.querySelector('[data-act="undo"]'); if (b) b.disabled = !on; },
     hint(text, ms = 2600) {
@@ -858,14 +1070,14 @@ export function createHud(root, api) {
       if (px !== N.hx || py !== N.hy) { N.hx = px; N.hy = py; el.here.style.transform = `translate(${px}px, ${py}px)`; }
       if (N.hereEdge !== edge) { N.hereEdge = edge; el.here.classList.toggle('edge', edge); }
     },
-    gulp() { el.swatch.classList.remove('gulp'); void el.swatch.offsetWidth; el.swatch.classList.add('gulp'); },
+    gulp() { const t = swatchEl(); t.classList.remove('gulp'); void t.offsetWidth; t.classList.add('gulp'); },
     /** A colour blob flying from (x,y) to the swatch. */
     fly(x, y, rgb) {
       const b = document.createElement('i');
       b.className = 'chm-blob';
       b.style.left = x + 'px'; b.style.top = y + 'px'; b.style.background = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
       root.appendChild(b);
-      const r1 = root.getBoundingClientRect(); const r2 = el.swatch.getBoundingClientRect();
+      const r1 = root.getBoundingClientRect(); const r2 = swatchEl().getBoundingClientRect();
       requestAnimationFrame(() => { b.style.transform = `translate(${r2.left + r2.width / 2 - r1.left - x}px, ${r2.top + r2.height / 2 - r1.top - y}px) scale(.6)`; b.style.opacity = '0.4'; });
       setTimeout(() => b.remove(), 460);
     },
@@ -873,9 +1085,9 @@ export function createHud(root, api) {
     /** A sticker pop ('NEW RECORD', 'UNLOCKED · Ruby eyes'): DOM only, removed after 2 s. */
     pop(text, cls = 'hl', sub = '') {
       const d = document.createElement('div');
-      d.className = `chm-pop ${cls} ${(N.popN = (N.popN | 0) + 1) % 2 ? '' : 'mid'}`; // alternate heights: two stickers 1.1 s apart never sit on each other
+      d.className = `chm-pop ${cls}`; // (they stack in the lane: two stickers never sit on each other)
       d.innerHTML = `${esc(text)}${sub ? `<small>${esc(sub)}</small>` : ''}`;
-      el.pops.appendChild(d);
+      el.lane.appendChild(d);
       setTimeout(() => d.remove(), 2000);
     },
     /** A reaction sticker: theirs lands big near the card at a random tilt, mine small and mirrored. */

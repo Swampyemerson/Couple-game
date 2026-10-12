@@ -18,6 +18,8 @@
 //            tile, builder calls recorded per section and replayed, chunks finished in steps) is
 //            byte-identical to a direct build: every vertex / index array, collider, blob, probe,
 //            spot and room; and the steps are small (the longest step per map, CPU-only here).
+//   spawns   (v4, bug L) every spawn of every map, BASE and EXTRA, stands at its intended y at Tiny..Huge.
+//   launderette (v4) the Spin Cycle Launderette: size class, clock, identical machines, rails, chunks.
 //   pockets  (maps pass) every map at Tiny / Large / Huge: crawl from every open contact with the
 //            real crawl code and require each reached contact to be in sight of somewhere ≥ 1 m
 //            away (no sealed nooks) and none to put the body's centre inside a prop or past the
@@ -37,8 +39,9 @@ let failures = 0;
 const assert = (c, m) => { if (!c) { failures++; console.log('FAIL -', m); return false; } console.log('ok -', m); return true; };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const MINE = ['house', 'market', 'greenhouse', 'museum'];
-const BUDGET = { tris: 120000, drawCalls: 80, buildMs: 400, atlas: 1024 };
+// coldMs: a synchronous cold build in the page (atlas painting included). Measured 100-350 ms at 1x on an idle box,
+// 2-3x that when the box is loaded: the budget is the catastrophe line, the sliced build (ONLY=mapslice) is the UX one.
+const BUDGET = { tris: 120000, drawCalls: 80, coldMs: 2000, atlas: 1024 };
 
 // ─────────────────────────────────────────────────────────────────────
 // static: fake atlas + fake THREE, real geo.js builder, flood fill mirroring world.js
@@ -83,23 +86,24 @@ async function loadModules() {
 }
 
 function buildStatic(M, entry) {
-  // median of three builds (the first one pays for JIT warm-up)
+  // CPU time (process.cpuUsage), not wall clock, so a busy box doesn't fail it; one warm-up build (the first
+  // pays for JIT: a cold House build ran 700 ms where a warm one is 130), then the MINIMUM of three: a pause or a preemption lands on one build, the
+  // map's own cost is what the minimum keeps (a budget that flakes under load tests the box)
   let atlas; let at; let out; const times = [];
-  for (let k = 0; k < 3; k++) {
+  for (let k = 0; k < 4; k++) {
     atlas = fakeAtlas();
-    const t0 = performance.now();
+    const t0 = process.cpuUsage(); // CPU time, not wall clock: the box runs other builders' browsers
     const fill = entry.build(atlas, M.maps.KIT);
     at = atlas.finish();
     const b = M.geo.createBuilder({ tiles: at.tiles, ink: [0.1, 0.1, 0.1] });
     M.maps.runFill(fill, b); // fills are generators (they yield between sections)
     out = b.finish(FAKE_THREE);
     if (M.maps.closeSlots) M.maps.closeSlots(out.colliders); // as buildMap does
-    times.push(performance.now() - t0);
+    if (k) { const d = process.cpuUsage(t0); times.push((d.user + d.system) / 1000); }
   }
-  times.sort((x, y) => x - y);
-  const t0 = 0; const t1 = 0; const t2 = times[1];
+  const t2 = Math.min(...times);
   // used tiles: every tile key referenced by geometry must exist (else silently white)
-  return { out, atlas: at, ms: t2 - t0, fillMs: t2 - t1, reqs: atlas.reqs };
+  return { out, atlas: at, ms: t2, fillMs: t2, reqs: atlas.reqs };
 }
 
 /** Collision queries with world.js semantics, accelerated by a 1 m bucket grid. */
@@ -290,7 +294,7 @@ async function staticSection() {
     assert(res.tris < BUDGET.tris, `${tag}: ${res.tris.toLocaleString()} triangles < ${BUDGET.tris.toLocaleString()}`);
     assert(!res.atlasDropped.length, `${tag}: every atlas tile fits in one 1024² page${res.atlasDropped.length ? ' (dropped ' + res.atlasDropped.join(', ') + ')' : ''}`);
     const nodeMs = entry.size === 'XL' ? 500 : 250;
-    assert(res.buildMsNode < nodeMs, `${tag}: geometry + colliders build in ${res.buildMsNode.toFixed(0)} ms (Node, median of 3, without painting the atlas; < ${nodeMs})`);
+    assert(res.buildMsNode < nodeMs, `${tag}: geometry + colliders build in ${res.buildMsNode.toFixed(0)} ms (Node CPU time, best of 3 after a warm-up build, without painting the atlas; < ${nodeMs})`);
     for (const s of res.spawnClear) {
       const floorOk = (entry.info.floors || [{ y: 0 }]).some((f) => Math.abs(f.y - s.ground) < 0.03) || Math.abs(s.ground - s.y) < 0.03;
       assert(s.clear >= 0.45 && Math.abs(s.ground - s.y) < 0.03 && floorOk, `${tag}: spawn ${s.k} (${s.x}, ${s.y}, ${s.z}) stands on its floor and is ${s.clear.toFixed(2)} m clear of props (≥ 0.45)`);
@@ -420,6 +424,42 @@ function pocketScan(M, entry, size) {
   return { seeds, states, sealed, inSolid, outside, overlap, ex, world, colliders: boxes, r };
 }
 
+
+// ─────────────────────────────────────────────────────────────────────
+// spawns (bug L): every spawn of every map (BASE and EXTRA) lands at its intended height at
+// every size: the ground the engine puts a body on at (x, z) is the spawn's y (default 0), so
+// nobody starts standing on a toy chest lid or a flower-bed border, and the push-out leaves the
+// spawn where it is. Same placement the game's checkMap and placeAt use (groundAt + pushOut).
+async function spawnsSection() {
+  console.log('\n# spawns (bug L): every spawn of every map stands on its intended floor at every size (Node)');
+  fakeDom();
+  const M = await loadModules();
+  const list = M.maps.MAPS.filter((m) => !MAPF.length || MAPF.includes(m.id));
+  assert(list.length >= 8, `${list.length} maps checked (${list.map((m) => m.id).join(', ')})`);
+  for (const entry of list) {
+    const at = fakeAtlas(); const fill = entry.build(at, M.maps.KIT); const tiles = at.finish().tiles;
+    const b = M.geo.createBuilder({ tiles, ink: [0.1, 0.1, 0.1] });
+    M.maps.runFill(fill, b);
+    const out = b.finish(FAKE_THREE); M.maps.closeSlots(out.colliders);
+    const W = M.world.createWorld({ colliders: out.colliders, bounds: M.maps.boundsOf(out.colliders, entry.info || {}) });
+    const sp = out.spots; const pts = [];
+    (sp.hiderSpawns && sp.hiderSpawns.length ? sp.hiderSpawns : [sp.hiderSpawn]).forEach((p, i) => p && pts.push(['hider' + i, p]));
+    (sp.seekerSpawns && sp.seekerSpawns.length ? sp.seekerSpawns : [sp.seekerSpawn]).forEach((p, i) => p && pts.push(['seeker' + i, p]));
+    for (const k of ['lobby', 'spawnA', 'spawnB', 'hiderSpawn', 'seekerSpawn']) if (sp[k]) pts.push([k, sp[k]]);
+    const bad = []; let n = 0;
+    for (const [k, p] of pts) {
+      for (const s of [0.6, 1, 1.3, 1.8]) {
+        n++;
+        const bd = { x: p.x, z: p.z, r: 0.24 * s, step: Math.max(0.2, 0.24 * s), head: 0.34 * s, y: 0 };
+        bd.y = W.groundAt(bd.x, bd.z, 0.2, (p.y || 0) + 0.5); const y0 = bd.y; W.pushOut(bd);
+        const moved = Math.hypot(bd.x - p.x, bd.z - p.z);
+        if (Math.abs(y0 - (p.y || 0)) > 0.03 || moved > 0.02) bad.push(`${k}@${s}: intended y ${p.y || 0}, ground ${y0.toFixed(2)}, pushed ${moved.toFixed(2)} m`);
+      }
+    }
+    assert(!bad.length, `${entry.id}: ${pts.length} spawns × 4 sizes (${n} placements) stand at their intended y and are not pushed${bad.length ? ' — ' + bad.join('; ') : ''}`);
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // slices (maps QA round 1): the sliced build is the same build. A Node canvas stand-in (every 2D
 // call accepted, getImageData zeros) lets the real atlas.js / maps.js run here.
@@ -463,6 +503,47 @@ async function slicesSection() {
     assert(a.h === b.h && a.n === b.n && a.meta === b.meta, `${entry.id}: the sliced build equals the direct build (${a.n} floats + ${D.m.colliders.length} colliders, hash ${a.h.toString(16)} vs ${b.h.toString(16)}${a.meta === b.meta ? '' : ', metadata differs'})`);
     console.log(`  ${entry.id}: ${S.steps} steps (direct ${D.steps}), longest ${S.maxMs.toFixed(1)} ms at ${S.maxAt}`);
   }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// launderette (v4): the Spin Cycle Launderette's own properties (Node): the size class and clock,
+// the rows of identical machines a stamp lines up on, the calm / busy contrast, chunks per room.
+async function launderetteSection() {
+  console.log('\n# launderette: size class, clock, identical machines, chunks (Node)');
+  fakeDom();
+  const M = await loadModules();
+  const rules = await import(pathToFileURL(path.join(ROOT, 'js/games/chameleon/rules.js')).href);
+  const entry = M.maps.MAPS.find((m) => m.id === 'launderette');
+  if (!assert(!!entry, 'the Spin Cycle Launderette is in MAPS')) return;
+  const area = M.maps.mapArea(entry);
+  assert(area > 120 && area < 430 && entry.size === 'M', `the in-between size: ${entry.info.w} × ${entry.info.d} m (${area} m² counting floors), size class ${entry.size} (the originals are 80-120 m², the next map is 432 m²)`);
+  assert(Number.isFinite(entry.time) && rules.timeScale(entry) === entry.time && entry.time > 1 && entry.time < 1.25, `its own clock scale ×${entry.time} (no rules.js entry): a Classic hunt of ${rules.effSeconds(90, rules.timeScale(entry))} s, hide ${rules.effSeconds(60, rules.hideScale(entry))} s`);
+  assert(M.maps.mapPool(entry) === 'XL', 'Mix it up files it with the big maps (a pool of one would be no mix)');
+  const at = fakeAtlas(); const fill = entry.build(at, M.maps.KIT); const tiles = at.finish().tiles;
+  const b = M.geo.createBuilder({ tiles, ink: [0.1, 0.1, 0.1] }); M.maps.runFill(fill, b);
+  const out = b.finish(FAKE_THREE);
+  const named = (n) => out.colliders.filter((c) => c.name === n);
+  // (before closeSlots: it stretches a prop's collider across a slot to its neighbour, which is the engine's business)
+  for (const [n, min] of [['washer', 18], ['dryer', 30]]) {
+    const L = named(n); const dims = (c) => [c.maxX - c.minX, c.maxY - c.minY, c.maxZ - c.minZ].map((v) => v.toFixed(2)).sort().join('x');
+    assert(L.length >= min && new Set(L.map(dims)).size === 1, `${L.length} identical ${n}s (one size, ${L.length ? dims(L[0]) : '-'}): a stamp on one lines up with the next`);
+  }
+  M.maps.closeSlots(out.colliders);
+  const tops = named('washer').filter((c) => Math.abs(c.maxY - 0.92) < 1e-6).length;
+  assert(tops === named('washer').length, 'every washer top is one flat 0.92 m surface (a calm place to sit)');
+  assert(named('shirt').length >= 8 && named('shirt').every((c) => c.climb === false), `${named('shirt').length} shirts on the rail, none of them a surface to stick to (the gaps between are the squeeze)`);
+  const shirts = named('shirt').sort((p, q) => p.minX - q.minX);
+  const gaps = shirts.slice(1).map((c, i) => c.minX - shirts[i].maxX);
+  assert(gaps.every((g) => g >= 0.179 && g <= 0.3), `the shirts hang ${Math.min(...gaps).toFixed(2)}-${Math.max(...gaps).toFixed(2)} m apart (a squeeze needs 0.18)`);
+  assert(named('perch:rail').length === 1 && named('perch:vent').length === 1 && out.colliders.some((c) => c.name === 'perch:lamp'), 'a rail, a vent duct and strip lights to perch on');
+  assert(named('sock-board').length === 1 && named('soap-shelf').length === 1, 'the busy zones exist: the lost-sock board and the detergent shelf');
+  // chunks as the game builds them (one per room, plus the structure between them)
+  const built = M.maps.buildMap(FAKE_THREE, 'launderette', { fresh: true });
+  assert(built.big && built.chunks.length >= 5 && built.chunks.length <= 12, `${built.chunks.length} chunks for ${entry.info.rooms.length} rooms (frustum-culled per room)`);
+  const tris = built.chunks.map((c) => c.geometry.index.array.length / 3);
+  assert(Math.max(...tris) < 0.6 * tris.reduce((x, y) => x + y, 0), `no chunk holds more than 60 % of the map (largest ${Math.max(...tris)} of ${tris.reduce((x, y) => x + y, 0)} tris)`);
+  assert(entry.info.rooms.every((r) => out.spots.hiderSpawns.concat(out.spots.seekerSpawns).some((p) => p.x >= r.x0 - 3 && p.x <= r.x1 + 3 && p.z >= r.z0 - 3 && p.z <= r.z1 + 3)), 'every room has a spawn within 3 m');
 }
 
 async function pocketsSection() {
@@ -511,16 +592,21 @@ async function waitPhase(p, name, timeout = 40000) { await p.waitForFunction((n)
 async function selectMap(p, id) {
   for (let i = 0; i < 16; i++) {
     const cur = await p.evaluate(() => { const s = window.__cham.state(); return (s.setup && s.setup.map) || s.mapId; });
-    if (cur === id) { await p.waitForFunction((m) => window.__cham.state().mapId === m, id, { timeout: 30000 }); return true; }
+    if (cur === id) { await p.waitForFunction((m) => window.__cham.state().mapId === m, id, { timeout: 60000 }); return true; }
     const direct = await p.$(`[data-lobby="map"][data-v="${id}"]:not([disabled])`);
     if (direct && await direct.isVisible()) await direct.click();
-    else { const nx = await p.$('.chm-arrow[aria-label="Next map"]'); if (!nx) return false; await nx.click(); }
+    else {
+      // the shorter way round (ten maps: Next from the Living Room to CU Boulder is six taps, Previous four, and every tap on a loaded box is seconds)
+      const ids = await p.evaluate(() => window.__cham.mapIds()); const fwd = (ids.indexOf(id) - ids.indexOf(cur) + ids.length) % ids.length;
+      const nx = await p.$(`.chm-arrow[aria-label="${fwd <= ids.length / 2 ? 'Next' : 'Previous'} map"]`); if (!nx) return false; await nx.click();
+    }
     await wait(250);
   }
   return false;
 }
 
-async function extraIds() { const M = await loadModules(); return M.extra.filter((m) => !MAPF.length || MAPF.includes(m.id)); }
+// every map after the three originals: EXTRA_MAPS plus any later small diorama (Candy Works lives in BASE_MAPS)
+async function extraIds() { const M = await loadModules(); return M.maps.MAPS.filter((m) => !['living', 'garden', 'studio'].includes(m.id)).filter((m) => !MAPF.length || MAPF.includes(m.id)); }
 
 async function browserSection(port, { device, viewport, label }) {
   const { launch } = require('../harness');
@@ -544,12 +630,22 @@ async function browserSection(port, { device, viewport, label }) {
       assert(!bad.length, `[${label}] ${e.id}: spawns clear of props in the engine (${Object.keys(r.spawns).length} checked)`);
       assert(!!r.camoWall, `[${label}] ${e.id}: the suggested camo spot has a wall to flatten against`);
       for (const p of r.probes) assert(p.got === p.want, `[${label}] ${e.id}: probe "${p.name}" albedo ${p.got} (want ${p.want})`);
-      // load time with the real atlas (paint patterns + build geometry + colliders + GPU objects):
-      // switch away and back, timing the switch
-      const ms = await a.evaluate((id) => { const h = window.__cham; h.setRules({ map: 'living' }); const t0 = performance.now(); h.setRules({ map: id }); return performance.now() - t0; }, e.id);
+      // load time with the real atlas (paint patterns + build geometry + colliders + GPU objects),
+      // COLD: selecting the map above built it and it is cached now, so a switch away and back is a
+      // cache hit (a few ms, whatever the map). Evict it first (the cache keeps three maps, never the
+      // two most recent: load the others until it is gone) and time the build the next player pays.
       const ws = await hook(a, 'worldStats');
-      console.log(`  ${e.id}: ${ws.tris} tris, ${ws.chunks} chunks, ${ws.boxes} colliders, atlas ${ws.atlasUsed}/${ws.atlasH}px, map switch ${ms.toFixed(0)} ms`);
-      assert(ms < BUDGET.buildMs, `[${label}] ${e.id}: map built and loaded in ${ms.toFixed(0)} ms (< ${BUDGET.buildMs})`);
+      const cold = await a.evaluate((id) => {
+        const h = window.__cham; const inCache = () => h.bootInfo().cache.some((c) => c.id === id);
+        const others = h.mapIds().filter((m) => m !== id);
+        for (let i = 0; i < others.length && inCache(); i++) h.useMap(others[i]);
+        const was = inCache();
+        const t0 = performance.now(); h.useMap(id); const ms = performance.now() - t0;
+        return { ms, evicted: !was };
+      }, e.id);
+      console.log(`  ${e.id}: ${ws.tris} tris, ${ws.chunks} chunks, ${ws.boxes} colliders, atlas ${ws.atlasUsed}/${ws.atlasH}px, cold map load ${cold.ms.toFixed(0)} ms${cold.evicted ? '' : ' (could not evict: a cache hit)'}`);
+      assert(cold.evicted, `[${label}] ${e.id}: the map was evicted before the load was timed (the number below is a cold build, not a cache hit)`);
+      assert(cold.ms < BUDGET.coldMs, `[${label}] ${e.id}: cold map load (build + atlas + colliders, one task) ${cold.ms.toFixed(0)} ms (< ${BUDGET.coldMs}; the lobby builds in slices, this is the worst case a synchronous caller pays)`);
     }
     // a quick round on each map: hide (walk + pose), seek (fire), recap
     for (const e of entries) {
@@ -658,6 +754,8 @@ if (require.main === module) {
   (async () => {
     try {
       if (want('static')) await staticSection();
+      if (want('spawns')) await spawnsSection();
+      if (want('launderette')) await launderetteSection();
       if (want('slices')) await slicesSection();
       if (want('pockets')) await pocketsSection();
       if (want('browser')) {

@@ -6,5 +6,6 @@ import { MARKET } from './market.js';
 import { CUBOULDER } from './cuboulder.js';
 import { GREENHOUSE } from './greenhouse.js';
 import { MUSEUM } from './museum.js';
+import { LAUNDERETTE } from './launderette.js';
 
-export const EXTRA_MAPS = [HOUSE, MARKET, CUBOULDER, GREENHOUSE, MUSEUM];
+export const EXTRA_MAPS = [HOUSE, MARKET, CUBOULDER, GREENHOUSE, MUSEUM, LAUNDERETTE];

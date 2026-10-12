@@ -55,6 +55,12 @@ export const OPTIONS = {
   wager: [0, 5, 10],
   // 'in their sights': the hider's vignette pulses when the seeker looks straight at them
   sights: [true, false],
+  // update pass: a twist (fog, dusk, three colours, a bounty spot) on about half the rounds, never the
+  // first one ('some'), on every round ('every'), or none; the player trailing by 25+ points gets +1
+  // pellet (seeking) / +1 escape (hiding); a tied Hide & Seek match plays a sudden-death pair
+  twists: ['off', 'some', 'every'],
+  underdog: [true, false],
+  sudden: [true, false],
 };
 export const SPEED_MUL = { slow: 0.85, normal: 1, fast: 1.2 };
 /** Seeker crawl speed relative to the hider's crawl (a hider crawls at 0.78 × walking). */
@@ -93,14 +99,34 @@ export const PRESETS = {
   // Easy used to be a seeker walkover (Huge + strong blinks + fast seeker + no escapes: 96 % found in
   // the Living Room, mean 4 s): now Huge and 8 pellets stay, but blinks are 'on', the seeker walks at
   // normal speed, the hider gets one escape and a 10 s head start, so the camouflage matters.
-  easy: { size: 'huge', rounds: 4, hide: 45, hideEnd: 'timer', countdown: 3, headStart: 10, grace: 0, seek: 120, pellets: 8, scans: 0, scanCd: 20, escapes: 1, seekSpeed: 'normal', heartbeat: false, blink: 'on', stamp: true, climb: true, seekClimb: true, climbSpeed: 'fast', huntPaint: 'off', minimap: true, seekScore: 'off', wager: 0, sights: true, blendBonus: 0 },
-  classic: { size: 'large', rounds: 4, hide: 60, hideEnd: 'timer', countdown: 3, headStart: 0, grace: 0, seek: 90, pellets: 6, scans: 0, scanCd: 20, escapes: 1, seekSpeed: 'normal', heartbeat: true, blink: 'on', stamp: true, climb: true, seekClimb: true, climbSpeed: 'normal', huntPaint: 'tell', minimap: true, seekScore: 'full', wager: 5, sights: true, blendBonus: 10 },
-  hard: { size: 'medium', rounds: 4, hide: 75, hideEnd: 'timer', countdown: 3, headStart: 0, grace: 5, seek: 90, pellets: 5, scans: 3, scanCd: 30, escapes: 2, seekSpeed: 'normal', heartbeat: true, blink: 'off', stamp: true, climb: true, seekClimb: true, climbSpeed: 'slow', huntPaint: 'on', minimap: false, seekScore: 'time', wager: 5, sights: false, blendBonus: 20 },
+  easy: { size: 'huge', rounds: 4, hide: 45, hideEnd: 'timer', countdown: 3, headStart: 10, grace: 0, seek: 120, pellets: 8, scans: 0, scanCd: 20, escapes: 1, seekSpeed: 'normal', heartbeat: false, blink: 'on', stamp: true, climb: true, seekClimb: true, climbSpeed: 'fast', huntPaint: 'off', minimap: true, seekScore: 'off', wager: 0, sights: true, blendBonus: 0, twists: 'some', underdog: true, sudden: true },
+  classic: { size: 'large', rounds: 4, hide: 60, hideEnd: 'timer', countdown: 3, headStart: 0, grace: 0, seek: 90, pellets: 6, scans: 0, scanCd: 20, escapes: 1, seekSpeed: 'normal', heartbeat: true, blink: 'on', stamp: true, climb: true, seekClimb: true, climbSpeed: 'normal', huntPaint: 'tell', minimap: true, seekScore: 'full', wager: 5, sights: true, blendBonus: 10, twists: 'some', underdog: true, sudden: true },
+  hard: { size: 'medium', rounds: 4, hide: 75, hideEnd: 'timer', countdown: 3, headStart: 0, grace: 5, seek: 90, pellets: 5, scans: 3, scanCd: 30, escapes: 2, seekSpeed: 'normal', heartbeat: true, blink: 'off', stamp: true, climb: true, seekClimb: true, climbSpeed: 'slow', huntPaint: 'on', minimap: false, seekScore: 'time', wager: 5, sights: false, blendBonus: 20, twists: 'some', underdog: true, sudden: true },
 };
 export const PRESET_IDS = ['easy', 'classic', 'hard'];
 export const PRESET_LABEL = { easy: 'Easy', classic: 'Classic', hard: 'Hard', custom: 'Custom' };
 export const PRESET_SUB = { easy: 'Big, blinky chameleons', classic: 'Fair for both', hard: 'Masters of disguise', custom: 'Your own mix' };
 export const RULE_KEYS = Object.keys(OPTIONS);
+
+/**
+ * Rule keys that do nothing on one phone (hotseat): there the hider hands the phone over and is
+ * out of the hunt, so scurries/zips (escapes), painting while hunted (huntPaint), the heartbeat and
+ * the in-their-sights cue (both are for the hunted hider's own screen) never happen, and a head
+ * start is only a wait (the seeker stays blindfolded while nobody can move). Verified in game.js:
+ * scurry()/zip() need !local, canPaint() needs !local, the heartbeat/sights cues are drawn only for
+ * the hunted hider's device, headStartOn() just blindfolds the one seeker. cards.js greys these
+ * rows in a hotseat settings sheet; rulesFor() neutralises them for the game.
+ */
+export const LOCAL_DEAD = ['escapes', 'huntPaint', 'heartbeat', 'sights', 'headStart'];
+const DEAD_VALUE = { escapes: 0, huntPaint: 'off', heartbeat: false, sights: false, headStart: 0 };
+const rulesForCache = new WeakMap();
+/** The rules the game plays by on this device: the same object on two devices, the hotseat-dead keys switched off on one. */
+export function rulesFor(rules, local) {
+  if (!local || !rules || typeof rules !== 'object') return rules;
+  let out = rulesForCache.get(rules);
+  if (!out) { out = { ...rules }; for (const k of LOCAL_DEAD) out[k] = DEAD_VALUE[k]; rulesForCache.set(rules, out); }
+  return out;
+}
 
 const same = (a, b) => a === b || (typeof a === 'number' && typeof b === 'number' && Math.abs(a - b) < 1e-9);
 
@@ -182,6 +208,7 @@ export function fmtRule(k, v) {
     case 'seekScore': return v === 'off' ? 'Off' : v === 'time' ? 'Time left' : 'Time + pellets';
     case 'blendBonus': return v === 0 ? 'Off' : v === 10 ? '+10 at 80 %' : '+20 at 90 %';
     case 'wager': return v === 0 ? 'Off' : `+${v}`;
+    case 'twists': return v === 'off' ? 'Off' : v === 'every' ? 'Every round' : 'Some rounds';
     case 'climbSpeed': return v === 'slow' ? 'Slow' : v === 'fast' ? 'Fast' : 'Normal';
     case 'hide': case 'seek': case 'scanCd': return v >= 60 && v % 60 === 0 ? `${v / 60} min` : v >= 60 ? `${Math.floor(v / 60)}:${String(v % 60).padStart(2, '0')}` : `${v} s`;
     case 'scans': return v === 0 ? 'Unlimited' : String(v);
