@@ -153,3 +153,11 @@ The new suites cover:
 | Doodle: draw and guess. Five modes, new prompt packs, an Encore and a gallery that keeps score | Take turns, co-op | Phone |
 | Same Wave: one clue, one dial, five modes and new card packs. How in sync are you? | Take turns, co-op | Either |
 ```
+
+## Round 2 (coordinator request, 10:20 UTC): not shipped
+
+A short second round was planned and started: a Fable content check proposed a Doodle "Home Sweet Home" prompt pack, a "Tonight's
+masterpiece" gallery keepsake and a "First try!" reveal ribbon, plus a Same Wave "Senses" card pack, a "Clue of the night" recap keepsake
+and a bullseye ring flourish. Both Sonnet builders were cut off mid-build by an API session limit, and the session's worker restarted
+afterwards, leaving no time to finish, test or verify before 11:30. The partial edits were **not** pushed (they were untested); this
+branch stays at the fully verified round-1 state above. The Fable content (both packs, ready to paste) is a good next step.
