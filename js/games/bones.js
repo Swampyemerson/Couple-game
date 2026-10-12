@@ -4,13 +4,45 @@
 //
 // Rules are pure: move = { col }. The roll for turn n is randInt(6, seed, 'roll', n) + 1, so both
 // phones always see the same die. The 3D tumble is view-only.
-import { registerGame, randInt } from './core.js';
+import { registerGame, randInt, gameDataApi } from './core.js';
 
 // ── rules ─────────────────────────────────────────────────────────────
 const ROWS = 3;
 const COLS = 3;
 const other = (w) => (w === 'a' ? 'b' : 'a');
 const rollFor = (seed, n) => randInt(6, seed, 'roll', n) + 1;
+
+// Twists. A match starts classic. The player who goes first may, before their first die, send one
+// setup move { tw: '<id>' } (it doesn't pass the turn); playing a die instead keeps the match
+// classic for good. Old logs never contain a setup move, so they replay exactly as they always did.
+//   golden: one seeded column is gilded for both players and scores double
+//   mirror: you each get the same dice, in a different order. Every four turns the starter rolls X then Y
+//           and the other player Y then X, so nobody can answer a die with its twin straight away
+//           (two turns in a row with the same die handed the second player 85% of the games)
+//   blind:  you pick a column before you see the roll (rules as classic; the view hides the die)
+//   oracle: both players see the next two rolls (rules as classic; the view shows them)
+// Every twist also plays the Last Word rule: if the starter fills their grid first, the other
+// player gets one last die, so both have placed the same number of dice. That last die lands
+// softly (it doesn't smash) except in Mirror Dice. Bot self-play: with a normal last die the
+// second player became the favourite (43-45% for the starter); the soft landing evens that out
+// (see docs/games/bones.md and `threed-bones.test.js --balance`).
+const TWISTS = {
+  classic: { name: 'Classic', hint: 'The original rules.' },
+  golden: { name: 'Golden Column', hint: 'One column scores double.' },
+  mirror: { name: 'Mirror Dice', hint: 'Same dice, different order.' },
+  blind: { name: 'Blind Draw', hint: 'Pick before you see the roll.' },
+  oracle: { name: 'Oracle', hint: 'See the next two rolls.' },
+};
+const TWIST_IDS = ['golden', 'mirror', 'blind', 'oracle'];
+const twisted = (s) => !!s.tw && s.tw !== 'classic';
+/** The die for turn n under this match's rules. */
+function rollAt(s, n) {
+  if (s.tw === 'mirror') { // starter X Y, other Y X, then the next pair of dice
+    const k = Math.floor(n / 4) * 2;
+    return rollFor(s.seed, n % 4 === 0 || n % 4 === 3 ? k : k + 1);
+  }
+  return rollFor(s.seed, n);
+}
 
 /** Column score: each value counts value × count × count (4,4 = 16; 4,4,4 = 36; 3,4 = 7). */
 function colScore(col) {
@@ -20,42 +52,92 @@ function colScore(col) {
   for (const v of Object.keys(c)) t += Number(v) * c[v] * c[v];
   return t;
 }
-const gridScore = (g) => g.reduce((t, col) => t + colScore(col), 0);
+/** What a column is worth, counting the gilded column of a Golden Column match (×2). */
+const colPts = (col, i, gold) => colScore(col) * (i === gold ? 2 : 1);
+const gridScore = (g, gold) => g.reduce((t, col, i) => t + colPts(col, i, gold), 0);
 const gridFull = (g) => g.every((col) => col.length >= ROWS);
 
 function init({ first, seed }) {
+  const turn = first === 'b' ? 'b' : 'a';
   return {
-    seed, turn: first === 'b' ? 'b' : 'a', n: 0, roll: rollFor(seed, 0),
+    seed, turn, n: 0, roll: rollFor(seed, 0),
     grids: { a: [[], [], []], b: [[], [], []] }, last: null, over: false,
+    // additive facts for commentary and records (never read by the rules)
+    first: turn, big: { pts: 0, who: null, n: -1 }, deficit: { a: 0, b: 0 }, wipes: { a: 0, b: 0 }, trips: { a: 0, b: 0 }, cb: { a: 0, b: 0 },
   };
 }
 function next(s) { return s.over ? [] : [s.turn]; }
+function setup(s, who, mv) {
+  if (s.n !== 0 || s.tw !== undefined) throw new Error('Twists are picked before the first die.');
+  if (typeof mv.tw !== 'string' || (mv.tw !== 'classic' && !TWIST_IDS.includes(mv.tw))) throw new Error('That twist isn’t in this version of the game.');
+  s.tw = mv.tw;
+  if (mv.tw === 'golden') s.gold = randInt(3, s.seed, 'gold');
+  // the starter has already watched the first die tumble: a blind match throws a fresh one that nobody has seen
+  if (mv.tw === 'blind') s.roll = randInt(6, s.seed, 'blind', 0) + 1;
+  return s;
+}
 function apply(s, who, mv) {
   if (s.over) throw new Error('The game is over.');
   if (who !== s.turn) throw new Error('Hold on, it’s not your turn.');
+  if (mv && typeof mv === 'object' && 'tw' in mv && !('col' in mv)) return setup(s, who, mv);
   const col = mv ? mv.col : undefined;
   if (!Number.isInteger(col) || col < 0 || col >= COLS) throw new Error('Pick one of your three columns.');
   const mine = s.grids[who][col];
   if (mine.length >= ROWS) throw new Error('That column is full. Pick another one.');
+  const opp = other(who);
+  const gold = s.gold;
+  const lead0 = gridScore(s.grids[who], gold) - gridScore(s.grids[opp], gold);
+  const mineWas = colPts(mine, col, gold);
   const value = s.roll;
   mine.push(value);
-  const opp = other(who);
   const before = s.grids[opp][col];
-  const after = before.filter((v) => v !== value);
+  const soft = s.final && s.tw !== 'mirror'; // the last word lands softly: no smash
+  const after = soft ? before : before.filter((v) => v !== value);
   s.grids[opp][col] = after;
-  s.last = { who, col, value, n: s.n, oppBefore: before.slice(), destroyed: before.length - after.length };
+  const pts = colPts(before, col, gold) - colPts(after, col, gold);
+  const gain = colPts(mine, col, gold) - mineWas;
+  const same = mine.filter((v) => v === value).length;
+  const destroyed = before.length - after.length;
+  s.last = { who, col, value, n: s.n, oppBefore: before.slice(), destroyed, pts, gain, triple: same === 3, wipe: destroyed === ROWS };
+  // facts for commentary and records
+  if (pts > s.big.pts) s.big = { pts, who, n: s.n };
+  if (destroyed === ROWS) s.wipes[who] += 1;
+  if (same === 3) s.trips[who] += 1;
+  const diff = gridScore(s.grids.a, gold) - gridScore(s.grids.b, gold);
+  s.deficit.a = Math.max(s.deficit.a, -diff);
+  s.deficit.b = Math.max(s.deficit.b, diff);
+  const lead1 = who === 'a' ? diff : -diff;
+  if (lead0 < 0 && lead1 > 0 && s.deficit[who] >= 15 && !s.cb[who]) { s.cb[who] = 1; s.last.comeback = true; }
   s.n += 1;
-  if (gridFull(s.grids.a) || gridFull(s.grids.b)) { s.over = true; s.roll = null; }
-  else { s.turn = opp; s.roll = rollFor(s.seed, s.n); }
+  let over;
+  if (!twisted(s) || s.lw === false) over = gridFull(s.grids.a) || gridFull(s.grids.b); // (s.lw === false: balance tests only)
+  else if (s.final) over = true; // the last word has been said
+  else if (gridFull(s.grids[who]) && who === s.first) { // the starter filled up first: the other player answers
+    s.final = true;
+    over = false;
+  } else over = gridFull(s.grids[who]);
+  if (over) { s.over = true; s.roll = null; } else { s.turn = opp; s.roll = rollAt(s, s.n); }
   return s;
 }
 function result(s) {
-  const a = gridScore(s.grids.a);
-  const b = gridScore(s.grids.b);
+  const a = gridScore(s.grids.a, s.gold);
+  const b = gridScore(s.grids.b, s.gold);
   if (a === b) return { winner: null, text: 'Dead even', sub: `${a} apiece. Rematch?` };
-  return { winner: a > b ? 'a' : 'b', sub: `${Math.max(a, b)} to ${Math.min(a, b)}.` };
+  const w = a > b ? 'a' : 'b';
+  const hi = Math.max(a, b);
+  const lo = Math.min(a, b);
+  const m = hi - lo;
+  const score = `${hi} to ${lo}.`;
+  const down = s.deficit ? s.deficit[w] : 0;
+  const bigPts = s.big ? s.big.pts : 0;
+  let line = score;
+  if (m <= 3) line = `${m === 1 ? 'Won by 1! ' : ''}${score} So close — rematch?`;
+  else if (down >= 15) line = `${score} Comeback from ${down} down.`;
+  else if (bigPts >= 20) line = `${score} Wiped ${bigPts} in one go.`;
+  else if (s.trips && s.trips[w] > 0) line = `${score} A triple stack paid off.`;
+  return { winner: w, sub: line };
 }
-function score(s) { return { a: gridScore(s.grids.a), b: gridScore(s.grids.b) }; }
+function score(s) { return { a: gridScore(s.grids.a, s.gold), b: gridScore(s.grids.b, s.gold) }; }
 
 // ── view helpers ──────────────────────────────────────────────────────
 const PIPS = {
@@ -63,7 +145,7 @@ const PIPS = {
   5: [[0, 0], [0, 2], [1, 1], [2, 0], [2, 2]], 6: [[0, 0], [1, 0], [2, 0], [0, 2], [1, 2], [2, 2]],
 };
 const pipHTML = (v) => (PIPS[v] || []).map(([r, c]) => `<i style="grid-area:${r + 1}/${c + 1}"></i>`).join('');
-const dieHTML = (v, cls = '', extra = '') => `<span class="gb-die ${cls}" data-v="${v}"${extra}>${pipHTML(v)}</span>`;
+const dieHTML = (v, cls = '', extra = '') => `<span class="gb-die ${cls}" data-v="${v}"${extra}>${v === '?' ? '<em class="gb-qm">?</em>' : pipHTML(v)}</span>`;
 const noop = () => {};
 const SLOW_3D_MS = 8000; // how long to wait for three.js before switching to flat dice
 const DEAD = { dead: true };
@@ -113,8 +195,12 @@ function dieView3D(THREE, canvas, pal0, onTick) {
   renderer.setPixelRatio(ratio);
   const scene = new THREE.Scene();
   const cam = new THREE.PerspectiveCamera(CAM_FOV, 1, 0.1, 60);
-  cam.position.set(0, CAM_TARGET_Y + CAM_DIST * Math.sin(CAM_EL), CAM_DIST * Math.cos(CAM_EL));
-  cam.lookAt(0, CAM_TARGET_Y, 0);
+  let dist = CAM_DIST;
+  function placeCam() {
+    cam.position.set(0, CAM_TARGET_Y + dist * Math.sin(CAM_EL), dist * Math.cos(CAM_EL));
+    cam.lookAt(0, CAM_TARGET_Y, 0);
+  }
+  placeCam();
   const amb = new THREE.AmbientLight(0xffffff, 0.5);
   const sun = new THREE.DirectionalLight(0xffffff, 0.62);
   sun.position.set(0.4, 1, 0.6);
@@ -174,7 +260,7 @@ function dieView3D(THREE, canvas, pal0, onTick) {
   setPalette(pal);
 
   function outline() { // ink outline thickness in world units at the die (≈ 2.2 CSS px)
-    const visH = 2 * CAM_DIST * Math.tan(CAM_FOV * Math.PI / 360);
+    const visH = 2 * dist * Math.tan(CAM_FOV * Math.PI / 360);
     return 2.2 * visH / H;
   }
   function pose(x, h, z) {
@@ -203,6 +289,8 @@ function dieView3D(THREE, canvas, pal0, onTick) {
       hull.scale.set(1 + 2 * o, 1 + 2 * o, 1 + 2 * o);
     },
     get ratio() { return ratio; },
+    /** Pull the camera back (k > 1) so the die is smaller in a tall band. */
+    setZoom(k) { dist = CAM_DIST * k; placeCam(); const o = outline(); hull.scale.set(1 + 2 * o, 1 + 2 * o, 1 + 2 * o); },
     setRatio(r) { ratio = r; renderer.setPixelRatio(r); renderer.setSize(W, H, false); },
     setPalette,
     compile() {
@@ -239,6 +327,8 @@ function dieView3D(THREE, canvas, pal0, onTick) {
       return new Promise((res) => { st.mode = 'hide'; st.t = 0; st.dur = calm ? 0.05 : 0.16; st.res = res; });
     },
     setInks(top, bot) { pal.topInk = top; pal.botInk = bot; },
+    /** Jump the current roll / hide to its end state on the next frame. */
+    fast() { if (st.mode === 'roll' || st.mode === 'hide') st.t = st.dur; },
     step(dt) {
       if (st.mode === 'roll') {
         st.t += dt;
@@ -301,6 +391,7 @@ function dieView2D(host) {
     kind: '2d',
     resize() {}, setRatio() {}, setPalette() {}, compile() {}, restore() {}, setInks() {},
     get ratio() { return 1; },
+    fast() { if (res) { clearInterval(timer); const v = host.querySelector('.gb-die'); const done = res; res = null; if (v) v.classList.add('landed'); done(); } },
     roll(value, who, yaw, calm) {
       clearInterval(timer);
       if (res) res();
@@ -332,6 +423,56 @@ function dieView2D(host) {
   };
 }
 
+// ── records and rivalry (api.data) ────────────────────────────────────
+// Flat keys, numbers and strings only. *_best / *_n keys only ever go up, so a sync keeps the larger
+// value; everything else (streaks, form) is written once per match, guarded by last_id.
+const LAST_TW = 'ju.bones.twist';
+function lastTwist() { try { const v = localStorage.getItem(LAST_TW); return TWIST_IDS.includes(v) ? v : ''; } catch { return ''; } }
+function saveTwist(id) { try { localStorage.setItem(LAST_TW, id); } catch { /* storage off */ } }
+
+/**
+ * Fold one finished match into the shared record. Pure: returns { patch, flags, streak, form }.
+ * Both phones run it on the same match and the same data, so they write the same values; if the
+ * partner already wrote this match (last_id), nothing is written and its flags are read back.
+ */
+function recordsFor(d, s, r, id) {
+  if (d.last_id === id) return { patch: null, flags: String(d.last_flags || ''), streak: { who: d.streak_who, len: Number(d.streak_len) || 0 }, form: String(d.form || '') };
+  const sc = score(s);
+  const w = r.winner;
+  const prevGames = Number(d.games_n) || 0;
+  const patch = { last_id: id, games_n: prevGames + 1 };
+  const flags = [];
+  for (const p of ['a', 'b']) {
+    const k = `best_${p}_best`;
+    const prev = Number(d[k]) || 0;
+    if (sc[p] > prev) { patch[k] = sc[p]; if (prev > 0) flags.push(`pb_${p}`); }
+  }
+  const smash = s.big ? s.big.pts : 0;
+  if (smash > (Number(d.smash_best) || 0)) { patch.smash_best = smash; patch.smash_who = s.big.who; if (Number(d.smash_best) > 0 && smash >= 10) flags.push('smash'); }
+  const down = w && s.deficit ? s.deficit[w] : 0;
+  if (down > (Number(d.comeback_best) || 0)) { patch.comeback_best = down; patch.comeback_who = w; if (Number(d.comeback_best) > 0 && down >= 10) flags.push('comeback'); }
+  const wipes = s.wipes ? s.wipes.a + s.wipes.b : 0;
+  if (wipes) patch.wipe_n = (Number(d.wipe_n) || 0) + wipes;
+  if (w) {
+    const len = d.streak_who === w ? (Number(d.streak_len) || 0) + 1 : 1;
+    patch.streak_who = w; patch.streak_len = len;
+    if (len > (Number(d.streak_len_best) || 0)) patch.streak_len_best = len;
+  } else { patch.streak_who = '-'; patch.streak_len = 0; patch.draw_n = (Number(d.draw_n) || 0) + 1; }
+  const form = (String(d.form || '') + (w || '-')).slice(-5);
+  patch.form = form;
+  const tw = s.tw || 'classic';
+  patch[`tw_${tw}_n`] = (Number(d[`tw_${tw}_n`]) || 0) + 1;
+  if (w) patch[`tw_${tw}_${w}_n`] = (Number(d[`tw_${tw}_${w}_n`]) || 0) + 1;
+  patch.last_flags = flags.join(',');
+  return { patch, flags: patch.last_flags, streak: { who: patch.streak_who, len: patch.streak_len }, form };
+}
+const formHTML = (form) => (form && form.length >= 2
+  ? `<span class="gb-form" role="img" aria-label="Last ${form.length} games">${[...form].map((ch) => `<i class="gb-fd ${ch === 'a' ? 'a' : ch === 'b' ? 'b' : 'd'}"></i>`).join('')}</span>` : '');
+function pickerHTML() {
+  const last = lastTwist();
+  return `<p class="gb-pk-head"><b>Twist the rules?</b> <span>Or just place a die.</span></p><div class="gb-pk-grid">${TWIST_IDS.map((id) => `<button type="button" class="gb-pk${id === last ? ' is-last' : ''}" data-tw="${id}"><b>${TWISTS[id].name}</b><span>${TWISTS[id].hint}</span></button>`).join('')}</div>`;
+}
+
 // ── the game ──────────────────────────────────────────────────────────
 registerGame({
   id: 'bones',
@@ -342,17 +483,18 @@ registerGame({
   tags: ['brainy', 'quick', '3d'],
   platforms: ['phone', 'computer'],
   minutes: 5,
-  endDelay: 1700,
+  endDelay: 'manual', // the finale calls api.showEnd() once the last smash has played
   howTo: [
     'You roll a die each turn. Tap one of your columns (or press 1–3) to place it.',
     'Matching dice in a column multiply: 4 + 4 scores 16, three 4s score 36.',
     'Your die knocks out every die of that value in their facing column.',
-    'It ends when a grid fills. Higher total wins.',
+    'It ends when a grid fills. Higher total wins. The starter can pick a twist first.',
   ],
   init, next, apply, result, score,
+  _test: { recordsFor, rollAt, colPts, TWISTS }, // for the tests
 
   css: `
-    .g-bones { --gb-die: 52px; --gb-gap: 7px; --gb-pad: 8px; --gb-band: 112px; --gb-side: 62px;
+    .g-bones { --gb-die: 52px; --gb-col: 52px; --gb-gap: 7px; --gb-pad: 8px; --gb-band: 112px; --gb-side: 62px;
       flex: 1; display: flex; flex-direction: column; justify-content: center; min-height: 0; padding: 4px 0 10px; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
     .g-bones .gb-board { width: 100%; max-width: 480px; margin: 0 auto; display: flex; flex-direction: column; gap: 10px; }
     .g-bones .gb-half { display: grid; grid-template-columns: var(--gb-side) auto var(--gb-side); justify-content: center; align-items: center; column-gap: 8px; row-gap: 6px; transition: opacity 0.4s, filter 0.4s; }
@@ -370,13 +512,13 @@ registerGame({
     .g-bones .gb-total { grid-column: 3; justify-self: start; font-family: var(--g-font-display); font-weight: 900; font-size: 1.85rem; line-height: 1; font-variant-numeric: tabular-nums; }
     .g-bones .gb-half.is-win .gb-total { animation: gb-win 0.7s cubic-bezier(.3, 1.6, .5, 1) both; background: var(--g-hl); color: var(--g-on-ink); border: 2px solid var(--g-ink); border-radius: 8px; padding: 4px 6px; box-shadow: var(--g-shadow); }
     .g-bones .gb-half.is-lose { opacity: 0.6; filter: grayscale(1); } /* the loser's half drops its inks: black plate only */
-    .g-bones .gb-tray { display: grid; grid-template-columns: repeat(3, var(--gb-die)); column-gap: var(--gb-gap); padding: var(--gb-pad); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow); }
+    .g-bones .gb-tray { display: grid; grid-template-columns: repeat(3, var(--gb-col)); column-gap: var(--gb-gap); padding: var(--gb-pad); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow); }
     .g-bones .gb-a .gb-tray { background: var(--p-a-soft); } .g-bones .gb-b .gb-tray { background: var(--p-b-soft); }
-    .g-bones .gb-scores { display: grid; grid-template-columns: repeat(3, var(--gb-die)); column-gap: var(--gb-gap); padding: 0 calc(var(--gb-pad) + 2px); }
+    .g-bones .gb-scores { display: grid; grid-template-columns: repeat(3, var(--gb-col)); column-gap: var(--gb-gap); padding: 0 calc(var(--gb-pad) + 2px); }
     .g-bones .gb-cs { justify-self: center; min-width: 34px; padding: 2px 8px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); font-weight: 900; font-size: 0.85rem; line-height: 1.3; text-align: center; font-variant-numeric: tabular-nums; }
     .g-bones .gb-cs.combo { background: var(--g-hl); color: var(--g-on-ink); }
     .g-bones .gb-cs.bump { animation: gb-bump 0.45s cubic-bezier(.3, 1.6, .5, 1); }
-    .g-bones .gb-col { position: relative; z-index: 0; display: flex; flex-direction: column; gap: var(--gb-gap); margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; opacity: 1; touch-action: manipulation; -webkit-tap-highlight-color: transparent; cursor: default; border-radius: calc(var(--gb-die) * 0.26); }
+    .g-bones .gb-col { position: relative; z-index: 0; display: flex; flex-direction: column; align-items: center; gap: var(--gb-gap); margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; opacity: 1; touch-action: manipulation; -webkit-tap-highlight-color: transparent; cursor: default; border-radius: calc(var(--gb-die) * 0.26); }
     .g-bones .gb-top .gb-col { flex-direction: column-reverse; }
     .g-bones .gb-col.can { cursor: pointer; }
     .g-bones .gb-col.can::before { content: ''; position: absolute; inset: -4px -2px; z-index: -1; border: 2px solid var(--g-ink); border-radius: calc(var(--gb-die) * 0.3); background: var(--g-hl); box-shadow: var(--g-shadow-sm); transition: transform 0.08s, box-shadow 0.08s; }
@@ -405,8 +547,8 @@ registerGame({
     .g-bones .gb-shard { position: absolute; left: 50%; top: 50%; width: 24%; height: 24%; background: var(--g-card); border: 2px solid var(--g-ink); border-radius: 3px; animation: gb-shard 0.46s ease-out both; pointer-events: none; }
     .g-bones .gb-bot .gb-die.shift { animation: gb-shift-b 0.28s ease-out both; }
     .g-bones .gb-top .gb-die.shift { animation: gb-shift-t 0.28s ease-out both; }
-    .g-bones .gb-band { position: relative; height: var(--gb-band); border: 2px solid var(--g-ink); border-radius: var(--g-radius); background: var(--g-card); box-shadow: var(--g-shadow); overflow: hidden; touch-action: none; }
-    .g-bones .gb-band canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+    .g-bones .gb-band { position: relative; height: var(--gb-band); border: 2px solid var(--g-ink); border-radius: var(--g-radius); background: var(--g-card); box-shadow: var(--g-shadow); touch-action: none; }
+    .g-bones .gb-band canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; border-radius: calc(var(--g-radius) - 2px); }
     .g-bones .gb-lab { position: absolute; top: 50%; transform: translateY(-50%); max-width: 31%; display: flex; flex-direction: column; gap: 4px; font-weight: 900; font-size: 0.86rem; line-height: 1.15; pointer-events: none; }
     .g-bones .gb-lab-l { left: 12px; align-items: flex-start; }
     .g-bones .gb-lab-r { right: 12px; align-items: flex-end; text-align: right; color: var(--g-muted); font-weight: 800; }
@@ -423,7 +565,83 @@ registerGame({
     .g-bones .gb-die2d .gb-die { box-shadow: var(--g-shadow); }
     .g-bones .gb-die2d.rolling .gb-die { animation: gb-tumble 0.8s cubic-bezier(.2, .7, .3, 1) both; }
     .g-bones .gb-die2d.from-top.rolling .gb-die { animation-name: gb-tumble-r; }
+    .g-bones.is-tight { padding: 2px 0 4px; }
+    .g-bones.is-tight .gb-board { gap: 6px; }
+    .g-bones.is-tight .gb-half { row-gap: 3px; }
+    .g-bones.is-tight .gb-cs { min-width: 30px; padding: 1px 7px; font-size: 0.75rem; line-height: 1.15; }
+    .g-bones .gb-board { position: relative; }
+    .g-bones .gb-half { position: relative; }
+    /* the gilded column of a Golden Column match */
+    .g-bones .gb-gild { position: absolute; inset: -4px -2px; z-index: -1; border: 2px solid var(--g-ink); border-radius: calc(var(--gb-die) * 0.3); background: var(--g-halftone) 0 0 / 5px 5px, var(--g-hl-soft); pointer-events: none; }
+    .g-bones .gb-col.gold.can .gb-gild { background: var(--g-halftone) 0 0 / 5px 5px; }
+    .g-bones .gb-cs { display: inline-flex; align-items: center; justify-content: center; gap: 3px; }
+    .g-bones .gb-cs.gold { background: var(--g-hl); color: var(--g-on-ink); }
+    .g-bones .gb-x2 { font-style: normal; font-size: 0.62rem; font-weight: 900; letter-spacing: 0.02em; }
+    .g-bones .gb-pv { padding: 0 4px; border: 1.5px solid currentColor; border-radius: 999px; background: var(--g-card); font-size: 0.7rem; font-weight: 900; line-height: 1.25; }
+    .g-bones .gb-cs.has-pv { padding-left: 5px; padding-right: 4px; gap: 2px; }
+    .g-bones.is-tight .gb-pv { padding: 0 3px; font-size: 0.66rem; }
+    .g-bones .gb-pv.up { color: var(--g-good); } .g-bones .gb-pv.dn { color: var(--g-bad); }
+    .g-bones .gb-qm { grid-area: 1 / 1 / 4 / 4; place-self: center; font: normal 900 calc(var(--gb-die) * 0.5) / 1 var(--g-font-display); color: var(--g-on-ink); }
+    /* twist picker: covers the opponent's (empty) half before the first die */
+    .g-bones .gb-picker { position: absolute; inset: -4px -2px; z-index: 4; display: flex; flex-direction: column; gap: 6px; padding: 8px; background: var(--g-card); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow); }
+    .g-bones .gb-picker[hidden] { display: none; }
+    .g-bones .gb-pk-head { margin: 0; font-size: 0.72rem; line-height: 1.2; color: var(--g-muted); font-weight: 700; }
+    .g-bones .gb-pk-head b { color: var(--g-ink); font-weight: 900; }
+    .g-bones .gb-pk-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: minmax(44px, 1fr); gap: 6px; }
+    .g-bones .gb-pk { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 1px; min-width: 0; min-height: 44px; margin: 0; padding: 3px 8px; border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); background: var(--g-card); box-shadow: var(--g-shadow-sm); color: var(--g-ink); font: inherit; text-align: left; touch-action: manipulation; -webkit-tap-highlight-color: transparent; cursor: pointer; }
+    .g-bones .gb-pk b { font-size: 0.8rem; font-weight: 900; line-height: 1.15; }
+    .g-bones .gb-pk span { font-size: 0.64rem; font-weight: 700; line-height: 1.15; color: var(--g-muted); }
+    .g-bones .gb-pk.is-last { background: var(--g-hl); color: var(--g-on-ink); }
+    .g-bones .gb-pk.is-last span { color: var(--g-on-ink); }
+    .g-bones.is-land .gb-picker { padding: 6px; gap: 4px; }
+    .g-bones.is-land .gb-pk-head span { display: none; }
+    .g-bones.is-land .gb-pk-grid { gap: 5px; }
+    .g-bones.is-land .gb-pk { padding: 3px 6px; overflow: hidden; }
+    .g-bones.is-land .gb-pk b { font-size: 0.72rem; }
+    .g-bones.is-land .gb-pk span { font-size: 0.58rem; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+    .g-bones .gb-pk:active { transform: translate(2px, 2px); box-shadow: 0 0 0 var(--g-edge); }
+    .g-bones .gb-pk:focus-visible { outline: 3px solid var(--g-ink); outline-offset: 2px; }
+    /* the band: twist badge, the mystery die, the oracle's next dice, stamps, final recap */
+    .g-bones .gb-badge { position: absolute; z-index: 2; left: 50%; top: 0; transform: translate(-50%, -50%); max-width: 44%; padding: 1px 8px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-hl); color: var(--g-on-ink); font-size: 0.6rem; font-weight: 900; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+    .g-bones .gb-badge[hidden], .g-bones .gb-q[hidden] { display: none; }
+    .g-bones .gb-q { position: absolute; left: 50%; top: 52%; width: calc(var(--gb-band) * 0.5); height: calc(var(--gb-band) * 0.5); transform: translate(-50%, -50%); display: grid; place-items: center; border: 2px solid var(--g-ink); border-radius: 22%; background: var(--g-card); box-shadow: var(--g-shadow); animation: gb-wobble 1.6s ease-in-out infinite; pointer-events: none; }
+    .g-bones .gb-q em { font: normal 900 calc(var(--gb-band) * 0.3) / 1 var(--g-font-display); color: var(--g-ink); }
+    .g-bones.is-land .gb-q { width: 64px; height: 64px; top: 50%; } .g-bones.is-land .gb-q em { font-size: 2rem; }
+    .g-bones .gb-nx { display: flex; align-items: center; gap: 4px; margin-top: 2px; }
+    .g-bones .gb-nx .gb-kick { font-style: normal; }
+    .g-bones .gb-nx .gb-die { position: relative; inset: auto; flex: none; width: 22px; height: 22px; padding: 2px; border-width: 1.5px; box-shadow: none; }
+    .g-bones .gb-nx .gb-die i { margin: 8%; }
+    .g-bones.is-tight .gb-lab-r > span:not(.gb-nx) { display: none; }
+    .g-bones .gb-stamp { position: absolute; z-index: 6; top: 50%; left: 50%; --rot: -5deg; max-width: 94%; padding: 6px 14px; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-hl); color: var(--g-on-ink); box-shadow: var(--g-shadow); font: 900 1.25rem / 1.1 var(--g-font-display); letter-spacing: 0.05em; text-align: center; text-transform: uppercase; pointer-events: none; opacity: 0; transform: translate(-50%, -50%) rotate(var(--rot)); }
+    .g-bones .gb-stamp.sm { top: 41%; --rot: 4deg; padding: 4px 10px; background: var(--g-card); color: var(--g-ink); font-size: 0.9rem; }
+    .g-bones .gb-stamp.show { animation: gb-stamp 1.15s cubic-bezier(.2, .9, .3, 1.25) both; }
+    .g-bones .gb-streak { font-size: 0.72rem; font-weight: 800; line-height: 1.15; color: var(--g-muted); }
+    .g-bones .gb-form { display: inline-flex; gap: 4px; margin-top: 4px; }
+    .g-bones .gb-fd { width: 12px; height: 12px; border: 2px solid var(--g-ink); border-radius: 50%; }
+    .g-bones .gb-fd.a { background: var(--p-a); } .g-bones .gb-fd.b { background: var(--p-b); }
+    .g-bones .gb-col.nope { animation: gb-nope 0.4s linear; }
+    .g-bones .gb-col.full.nope::before { content: ''; position: absolute; inset: -4px -2px; z-index: -1; border: 2px dashed var(--g-bad); border-radius: calc(var(--gb-die) * 0.3); }
+    /* landscape: the trays sit side by side with the band between them */
+    .g-bones.is-land .gb-board { max-width: 760px; flex-direction: row; align-items: center; justify-content: center; gap: 10px; }
+    .g-bones.is-land .gb-band { flex: 1 1 0; min-width: 120px; height: auto; align-self: stretch; }
+    .g-bones.is-land .gb-half { grid-template-columns: minmax(0, 1fr) auto; justify-content: center; row-gap: 4px; column-gap: 6px; }
+    .g-bones.is-land .gb-half .gb-name { grid-column: 1; grid-row: 1; flex-direction: row; align-items: center; justify-self: start; text-align: left; gap: 5px; font-size: 0.78rem; }
+    .g-bones.is-land .gb-half .gb-total { grid-column: 2; grid-row: 1; font-size: 1.5rem; justify-self: end; }
+    .g-bones.is-land .gb-half .gb-tray { grid-column: 1 / 3; grid-row: 2; justify-self: center; }
+    .g-bones.is-land .gb-half .gb-scores { grid-column: 1 / 3; grid-row: 3; justify-self: center; }
+    .g-bones.is-land .gb-mark { display: none; }
+    .g-bones.is-land .gb-half.is-turn .gb-nm { padding: 0 5px; border-radius: 4px; background: var(--g-hl); color: var(--g-on-ink); }
+    .g-bones.is-land .gb-lab { left: 8px; right: 8px; max-width: none; align-items: center; text-align: center; transform: none; }
+    .g-bones.is-land .gb-lab-l { top: 14px; align-items: center; }
+    .g-bones.is-land .gb-lab-r { top: auto; bottom: 8px; align-items: center; }
+    .g-bones.is-land .gb-band.is-final .gb-lab, .g-bones.is-land .gb-band.is-final .gb-lab-r { max-width: none; }
+    .g-bones.is-land .gb-arrow { transform: rotate(-90deg); }
+    .g-bones.is-land .gb-die2d { width: 64px; height: 64px; }
+    .g-bones.is-land .gb-lab-r .gb-big { font-size: 1.5rem; }
     @keyframes gb-hint { from { transform: scale(0.9); } to { transform: none; } }
+    @keyframes gb-wobble { 0%, 100% { transform: translate(-50%, -50%) rotate(-7deg); } 50% { transform: translate(-50%, -54%) rotate(7deg); } }
+    @keyframes gb-stamp { 0% { opacity: 0; transform: translate(-50%, -50%) scale(1.8) rotate(calc(var(--rot) - 8deg)); } 16% { opacity: 1; transform: translate(-50%, -50%) scale(1) rotate(var(--rot)); } 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -58%) scale(1) rotate(var(--rot)); } }
+    @keyframes gb-nope { 0%, 100% { transform: none; } 20% { transform: translateX(-5px); } 40% { transform: translateX(5px); } 60% { transform: translateX(-3px); } 80% { transform: translateX(3px); } }
     @keyframes gb-bump { 0% { transform: scale(1); } 40% { transform: scale(1.3); } 100% { transform: scale(1); } }
     @keyframes gb-win { 0% { transform: scale(0.6) rotate(-8deg); } 100% { transform: scale(1) rotate(-3deg); } }
     @keyframes gb-pulse { 0% { transform: scale(1); } 40% { transform: scale(1.14) rotate(-4deg); } 100% { transform: scale(1); } }
@@ -439,10 +657,13 @@ registerGame({
     @keyframes gb-tumble-r { 0% { transform: translate(150px, -6px) rotate(460deg); } 45% { transform: translate(36px, -16px) rotate(130deg); } 70% { transform: translate(6px, 0) rotate(22deg); } 86% { transform: translate(0, -4px) rotate(-4deg); } 100% { transform: none; } }
     @media (prefers-reduced-motion: reduce) {
       .g-bones .gb-col.can .gb-die.ghost, .g-bones .gb-die.threat::after { animation: none; }
-      .g-bones .gb-die.is-new, .g-bones .gb-die.shift, .g-bones .gb-die.pulse, .g-bones .gb-cs.bump, .g-bones .gb-die2d.rolling .gb-die, .g-bones .gb-die.crack { animation: none; }
+      .g-bones .gb-die.is-new, .g-bones .gb-die.shift, .g-bones .gb-die.pulse, .g-bones .gb-cs.bump, .g-bones .gb-die2d.rolling .gb-die, .g-bones .gb-die.crack, .g-bones .gb-col.nope { animation: none; }
       .g-bones .gb-die.pop { animation: gb-fade 0.15s linear both; }
       .g-bones .gb-shard { display: none; }
+      .g-bones .gb-q { animation: none; }
+      .g-bones .gb-stamp.show { animation: gb-stamp-fade 1.1s linear both; }
       @keyframes gb-fade { to { opacity: 0; } }
+      @keyframes gb-stamp-fade { 0%, 80% { opacity: 1; } 100% { opacity: 0; } }
     }
   `,
 
@@ -451,14 +672,18 @@ registerGame({
     threeP.catch(noop);
     el.innerHTML = `<div class="g-bones">
       <div class="gb-board">
-        <section class="gb-half gb-top"><div class="gb-scores"></div><div class="gb-name"></div><div class="gb-tray"></div><div class="gb-total">0</div></section>
+        <section class="gb-half gb-top"><div class="gb-scores"></div><div class="gb-name"></div><div class="gb-tray"></div><div class="gb-total">0</div><div class="gb-picker" hidden></div></section>
         <div class="gb-band" aria-live="polite">
           <canvas aria-hidden="true"></canvas>
           <div class="gb-die2d" hidden aria-hidden="true"></div>
+          <div class="gb-q" hidden aria-hidden="true"><em>?</em></div>
+          <div class="gb-badge" hidden></div>
           <div class="gb-lab gb-lab-l"></div>
           <div class="gb-lab gb-lab-r"></div>
         </div>
-        <section class="gb-half gb-bot"><div class="gb-name"></div><div class="gb-tray"></div><div class="gb-total">0</div><div class="gb-scores"></div></section>
+        <section class="gb-half gb-bot"><div class="gb-name"></div><div class="gb-tray"></div><div class="gb-total">0</div><div class="gb-scores"></div><div class="gb-picker" hidden></div></section>
+        <div class="gb-stamp" aria-hidden="true"></div>
+        <div class="gb-stamp sm" aria-hidden="true"></div>
       </div>
     </div>`;
     const $ = (s) => el.querySelector(s);
@@ -467,6 +692,10 @@ registerGame({
     const canvas = band.querySelector('canvas');
     const labL = $('.gb-lab-l');
     const labR = $('.gb-lab-r');
+    const badge = $('.gb-badge');
+    const qDie = $('.gb-q');
+    const stampBig = $('.gb-stamp:not(.sm)');
+    const stampSm = $('.gb-stamp.sm');
     const halves = { top: $('.gb-top'), bot: $('.gb-bot') };
     const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
     const coarse = () => matchMedia('(pointer: coarse)').matches;
@@ -479,6 +708,7 @@ registerGame({
     let dieN = -1;
     let picking = false;
     let finaleDone = false;
+    let openedOver = null; // was the match already finished when this view first saw it?
     let dv = null;
     let pal = readPalette(api);
     let raf = 0;
@@ -490,7 +720,8 @@ registerGame({
     let readyRes;
     const ready = new Promise((r) => { readyRes = r; });
     const T = () => (typeof window !== 'undefined' && window.__bonesTest) || null; // test hook only
-    const log = (ev) => { const t = T(); if (t) (t.log || (t.log = [])).push(ev); };
+    const log = (ev) => { const t = T(); if (t) { (t.log || (t.log = [])).push(ev); (t.at || (t.at = [])).push(performance.now()); } };
+    const sfx = (name) => { log(`sfx:${name}`); api.sfx(name); };
 
     function setSides() {
       halves.bot.classList.remove('gb-a', 'gb-b'); halves.top.classList.remove('gb-a', 'gb-b');
@@ -510,21 +741,75 @@ registerGame({
     labL.innerHTML = '<span class="gb-kick">Shaking the dice…</span>'; // until the first roll
 
     // ── layout: size dice to fit the stage ──
+    // The room scrolls (min-height content), so the stage can't tell us how much room there is:
+    // work it out from the viewport instead. Portrait stacks the trays with the band between;
+    // when that would make the dice small and a side-by-side board fits bigger ones, go landscape.
+    function stageRoom() {
+      const gm = el.closest('.gm');
+      const rt = el.closest('#game-root');
+      const vh = rt ? rt.clientHeight : window.innerHeight;
+      const top = el.getBoundingClientRect().top - (rt ? rt.getBoundingClientRect().top - rt.scrollTop : 0);
+      let padB = 12;
+      try { if (gm) padB = parseFloat(getComputedStyle(gm).paddingBottom) || 12; } catch { /* keep */ }
+      const W = Math.min(el.clientWidth || 360, 760);
+      const H = Math.max(160, vh - top - padB);
+      return { W, H };
+    }
+    const COLMIN = 44; // a column button is never narrower than this
+    const gapOf = (d) => (d < 48 ? 5 : 7);
+    const padOf = (d) => (d < 48 ? 6 : 8);
+    // `tight` squeezes the stage padding, board gap and score chips so small screens can have bigger dice
+    const SPACE = { loose: { pad: 14, gap: 10, row: 32, bandMin: 64 }, tight: { pad: 6, gap: 6, row: 23, bandMin: 58 } };
+    function fitPortrait(W, H, tight) {
+      const K = tight ? SPACE.tight : SPACE.loose;
+      const fixed = K.pad + 2 * K.gap + K.bandMin + 2 * K.row;
+      const side = Math.round(Math.max(54, Math.min(96, W * 0.19)));
+      let best = 0;
+      for (let d = 66; d >= 30; d--) {
+        const col = Math.max(COLMIN, d);
+        const gap = gapOf(d); const pad = padOf(d);
+        if (2 * side + 16 + 3 * col + 2 * gap + 2 * pad + 4 > W) continue;
+        if (fixed + 2 * (3 * d + 2 * gap + 2 * pad + 4) > H) continue;
+        best = d; break;
+      }
+      const d = best || 30;
+      const gap = gapOf(d); const pad = padOf(d);
+      const left = H - (fixed - K.bandMin + 2 * (3 * d + 2 * gap + 2 * pad + 4));
+      return { land: false, tight, die: d, col: Math.max(COLMIN, d), gap, pad, side, band: Math.round(Math.max(K.bandMin, Math.min(150, left))), fits: !!best };
+    }
+    function fitLand(W, H, tight) {
+      const K = tight ? SPACE.tight : SPACE.loose;
+      const head = tight ? 28 : 32; const foot = K.row; const bandMin = 128;
+      let best = 0;
+      for (let d = 60; d >= 30; d--) {
+        const col = Math.max(COLMIN, d);
+        const gap = gapOf(d); const pad = padOf(d);
+        if (2 * (3 * col + 2 * gap + 2 * pad + 4) + bandMin + 2 * K.gap > W) continue;
+        if (K.pad + head + foot + 3 * d + 2 * gap + 2 * pad + 4 + 8 > H) continue;
+        best = d; break;
+      }
+      const d = best || 30;
+      return { land: true, tight, die: d, col: Math.max(COLMIN, d), gap: gapOf(d), pad: padOf(d), side: 0, band: 0, fits: !!best };
+    }
     function layout() {
-      const W = Math.min(el.clientWidth || 360, 480);
-      const H = el.clientHeight || 600;
-      const side = Math.round(Math.max(64, Math.min(96, W * 0.19)));
-      const gap = 7; const pad = 8;
-      const bandH = Math.round(Math.max(92, Math.min(156, H * 0.2)));
-      const dieW = (W - 2 * side - 16 - 2 * pad - 2 * gap - 8) / 3;
-      const fixed = bandH + 2 * 28 + 2 * (2 * pad + 2 * gap + 4) + 2 * 10 + 22;
-      const dieH = (H - fixed) / 6;
-      const die = Math.floor(Math.max(36, Math.min(66, dieW, dieH)));
-      root.style.setProperty('--gb-die', `${die}px`);
-      root.style.setProperty('--gb-side', `${side}px`);
-      root.style.setProperty('--gb-band', `${bandH}px`);
+      const { W, H } = stageRoom();
+      const pw = Math.min(W, 480);
+      // the biggest dice that fit wins; side-by-side and squeezed layouts have to earn their place
+      const cands = [[fitPortrait(pw, H, false), 0], [fitPortrait(pw, H, true), 3], [fitLand(W, H, false), 8], [fitLand(W, H, true), 11]];
+      let L = null; let top = -1e9;
+      for (const [c, pen] of cands) { const v = c.fits ? c.die - pen : -1e6 + c.die; if (v > top) { top = v; L = c; } }
+      root.classList.toggle('is-land', L.land);
+      root.classList.toggle('is-tight', L.tight);
+      root.style.setProperty('--gb-die', `${L.die}px`);
+      root.style.setProperty('--gb-col', `${L.col}px`);
+      root.style.setProperty('--gb-gap', `${L.gap}px`);
+      root.style.setProperty('--gb-pad', `${L.pad}px`);
+      root.style.setProperty('--gb-side', `${L.side}px`);
+      root.style.setProperty('--gb-band', `${L.band}px`);
+      if (dv && dv.setZoom) dv.setZoom(L.land ? 1.75 : 1);
       if (dv) { dv.resize(band.clientWidth, band.clientHeight); renderNow(); }
     }
+    window.addEventListener('resize', layout);
     const ro = new ResizeObserver(() => layout());
     ro.observe(el);
     layout();
@@ -552,31 +837,39 @@ registerGame({
             if (sh) { cls.push('shift'); extra = ` style="--sh:${sh}"`; }
             inner = dieHTML(v, cls.join(' '), extra);
             if (o.doomed && o.doomed.stage === 'pop' && cls.includes('pop')) {
-              inner += [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([dx, dy], k) => `<b class="gb-shard" style="--dx:${dx * (18 + k * 3)}px;--dy:${dy * (16 + k * 4)}px;--r:${(k % 2 ? 1 : -1) * 120}deg"></b>`).join('');
+              const burst = o.doomed.big ? [[-1, -1], [1, -1], [-1, 1], [1, 1], [0, -1.7], [0, 1.7], [-1.7, 0], [1.7, 0]] : [[-1, -1], [1, -1], [-1, 1], [1, 1]];
+              inner += burst.map(([dx, dy], k) => `<b class="gb-shard" style="--dx:${dx * (18 + k * 3)}px;--dy:${dy * (16 + k * 4)}px;--r:${(k % 2 ? 1 : -1) * 120}deg"></b>`).join('');
             }
-          } else if (pick && r === col.length) inner = dieHTML(o.roll, 'ghost');
+          } else if (pick && r === col.length) inner = dieHTML(o.blind ? '?' : o.roll, 'ghost');
           slots += `<span class="gb-slot${v ? ' full' : ''}">${inner}</span>`;
         }
         const can = pick && col.length < ROWS;
-        const label = `Column ${ci + 1}: ${col.length ? col.join(', ') : 'empty'}. Scores ${colScore(col)}.${can ? ' Place your die here.' : ''}`;
-        return `<button type="button" class="gb-col${can ? ' can' : ''}" data-col="${ci}" aria-label="${label}"${can ? '' : ' disabled'}>${slots}</button>`;
+        const full = pick && !can;
+        const gilded = o.gold === ci;
+        const label = `${gilded ? 'Golden column ' : 'Column '}${ci + 1}: ${col.length ? col.join(', ') : 'empty'}. Scores ${colPts(col, ci, o.gold)}.${can ? ' Place your die here.' : full ? ' Full.' : ''}`;
+        // aria-disabled, not disabled: a tap on a full column still arrives, so it can say why nothing happened
+        return `<button type="button" class="gb-col${can ? ' can' : ''}${full ? ' full' : ''}${gilded ? ' gold' : ''}" data-col="${ci}" aria-label="${label}"${can ? '' : ' aria-disabled="true" tabindex="-1"'}>${gilded ? '<span class="gb-gild" aria-hidden="true"></span>' : ''}${slots}</button>`;
       }).join('');
     }
-    function scoresHTML(grid, bumpCol) {
+    function scoresHTML(grid, bumpCol, gold, pv) {
       return grid.map((col, ci) => {
         const combo = col.some((v) => col.indexOf(v) !== col.lastIndexOf(v));
-        return `<span class="gb-cs${combo ? ' combo' : ''}${bumpCol === ci ? ' bump' : ''}">${colScore(col)}</span>`;
+        const chip = pv && pv[ci] ? `<b class="gb-pv ${pv[ci] > 0 ? 'up' : 'dn'}">${pv[ci] > 0 ? '+' : '−'}${Math.abs(pv[ci])}</b>` : '';
+        return `<span class="gb-cs${combo ? ' combo' : ''}${gold === ci ? ' gold' : ''}${bumpCol === ci ? ' bump' : ''}${chip ? ' has-pv' : ''}"><span>${colPts(col, ci, gold)}</span>${gold === ci ? '<i class="gb-x2">×2</i>' : ''}${chip}</span>`;
       }).join('');
     }
     function draw(grids, o = {}) {
       const s = ctxNow && ctxNow.state;
+      const gold = s ? s.gold : undefined;
+      o.gold = gold;
       for (const [k, w] of [['top', topW], ['bot', bottom]]) {
         const h = halves[k];
         const tray = h.querySelector('.gb-tray');
         tray.innerHTML = trayHTML(w, grids[w], o);
         tray.classList.toggle('is-picking', o.pick === w);
-        h.querySelector('.gb-scores').innerHTML = scoresHTML(grids[w], o.bump && o.bump.who === w ? o.bump.col : -1);
-        h.querySelector('.gb-total').textContent = gridScore(grids[w]);
+        const pv = o.pv ? (o.pick === w ? o.pv.gain : o.pv.loss) : null;
+        h.querySelector('.gb-scores').innerHTML = scoresHTML(grids[w], o.bump && o.bump.who === w ? o.bump.col : -1, gold, pv);
+        h.querySelector('.gb-total').textContent = gridScore(grids[w], gold);
         h.classList.toggle('is-turn', !!s && !s.over && s.turn === w && !o.noTurn);
       }
     }
@@ -591,21 +884,44 @@ registerGame({
 
     // ── labels in the dice tray ──
     const whoLabel = (w) => (ctxNow && ctxNow.mode === 'online' && w === ctxNow.me ? 'You' : api.name(w));
+    const twOf = () => (ctxNow && ctxNow.state && ctxNow.state.tw) || '';
+    const isBlind = () => twOf() === 'blind';
+    const nextRolls = (s) => [rollAt(s, s.n + 1), rollAt(s, s.n + 2)];
+    function setBadge(s) {
+      const tw = s && s.tw;
+      const on = !!tw && tw !== 'classic' && TWISTS[tw];
+      badge.hidden = !on;
+      if (on) badge.textContent = TWISTS[tw].name;
+      root.dataset.tw = on ? tw : '';
+    }
+    function setMystery(on) {
+      qDie.hidden = !on;
+      band.classList.toggle('is-mystery', on);
+    }
     function setBand(mode, w, value) {
       const arrow = w === bottom ? 'down' : 'up';
       const nm = whoLabel(w);
+      const s = ctxNow && ctxNow.state;
       if (mode === 'over') {
         labL.innerHTML = '';
         labR.innerHTML = '';
         return;
       }
-      labL.innerHTML = `<span class="gb-kick">${nm === 'You' ? 'Your roll' : 'Rolling for'}</span><span class="gb-wn"></span><span class="gb-arrow ${arrow}" aria-hidden="true"></span>`;
+      const lastWord = !!(s && s.final);
+      const kick1 = lastWord ? 'Last word' : mode === 'mystery' ? (nm === 'You' ? 'Your pick' : 'Picking for') : nm === 'You' ? 'Your roll' : 'Rolling for';
+      labL.innerHTML = `<span class="gb-kick">${kick1}</span><span class="gb-wn"></span><span class="gb-arrow ${arrow}" aria-hidden="true"></span>`;
       labL.querySelector('.gb-wn').textContent = nm === 'You' ? '' : nm;
-      if (mode === 'rolling') labR.innerHTML = '';
-      else if (mode === 'pick') labR.innerHTML = `<b>Rolled ${value}</b><span>${coarse() ? 'Pick a column' : 'Pick a column, or press 1–3'}</span>`;
-      else labR.innerHTML = `<b>Rolled ${value}</b><span class="gb-wait"></span>`;
+      const nx = s && s.tw === 'oracle' && !s.over && !s.final ? `<span class="gb-nx"><i class="gb-kick">Next</i>${nextRolls(s).map((v) => dieHTML(v, 'mini')).join('')}</span>` : '';
+      const first = !!(s && s.n === 0 && s.tw === undefined);
+      if (mode === 'rolling') labR.innerHTML = nx;
+      else if (mode === 'mystery') labR.innerHTML = `<b>Blind draw</b><span class="gb-wait"></span>`;
+      else if (mode === 'pick') labR.innerHTML = `<b>Rolled ${value}</b><span>${coarse() ? 'Pick a column' : 'Pick a column, or press 1–3'}</span>${nx}`;
+      else labR.innerHTML = `<b>Rolled ${value}</b><span class="gb-wait"></span>${nx}`;
       const wt = labR.querySelector('.gb-wait');
-      if (wt) wt.textContent = `${api.name(w)} is choosing`;
+      if (wt) {
+        if (mode === 'mystery') wt.textContent = w === (ctxNow && ctxNow.actor) || (ctxNow && ctxNow.mode === 'local') ? 'Pick before you see it' : `${api.name(w)} is choosing blind`;
+        else wt.textContent = first ? `${api.name(w)} is choosing a twist…` : `${api.name(w)} is choosing`;
+      }
     }
 
     // ── loop for the 3D die ──
@@ -627,21 +943,47 @@ registerGame({
     }
     function kick() { if (!raf && !dead && !paused && !glLost && dv) raf = requestAnimationFrame(frame); }
     function renderNow() { if (dv && !paused && !glLost && !dead) dv.render(); }
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms)).then(() => { if (dead) throw DEAD; });
+    // Tap-to-skip: while a roll / placement plays out, a tap fast-forwards it to the settled board.
+    let skipping = false;
+    let animating = false;
+    const sleepers = new Set();
+    const sleep = (ms) => new Promise((r) => {
+      if (skipping) { r(); return; }
+      const done = () => { clearTimeout(t); sleepers.delete(done); r(); };
+      const t = setTimeout(done, ms);
+      sleepers.add(done);
+    }).then(() => { if (dead) throw DEAD; });
+    function skipNow() {
+      if (skipping) return;
+      skipping = true;
+      log('skip');
+      if (dv) dv.fast();
+      for (const f of [...sleepers]) f();
+      kick();
+    }
 
     async function roll(value, w, n) {
       dieN = n;
       log(`roll:${value}`);
+      setMystery(false);
       setBand('rolling', w);
       band.dataset.roll = '';
       const s = ctxNow.state;
       const yaw = (api.rand(s.seed, 'yaw', n) - 0.5) * 0.9;
-      const p = dv.roll(value, w === topW ? 'top' : 'bot', yaw, reduced());
+      const p = dv.roll(value, w === topW ? 'top' : 'bot', yaw, reduced() || skipping);
       kick();
       await p;
       if (dead) throw DEAD;
       band.dataset.roll = String(value);
-      api.sfx('flip');
+      sfx('flip');
+    }
+    function stamp(text, small) {
+      const e = small ? stampSm : stampBig;
+      e.textContent = text;
+      e.classList.remove('show');
+      void e.offsetWidth;
+      e.classList.add('show');
+      log(`stamp:${text}`);
     }
     async function place(L, pre, s) {
       const rm = reduced();
@@ -650,22 +992,23 @@ registerGame({
       mid[L.who][L.col].push(L.value);
       log('place');
       labR.innerHTML = `<b>Rolled ${L.value}</b><span>Column ${L.col + 1}</span>`;
-      const hidden = dv.hide(rm);
+      const hidden = dv.hide(rm || skipping);
       kick();
       draw(mid, { newAt: { who: L.who, col: L.col }, bump: { who: L.who, col: L.col } });
-      api.sfx('place');
+      sfx('place');
       api.haptic(10);
       await hidden;
       await sleep(rm ? 60 : 300);
       if (L.destroyed > 0) {
         draw(mid, { doomed: { who: opp, col: L.col, value: L.value, stage: 'crack' } });
         log('crack');
-        labR.innerHTML = `<b>Smash</b><span>${L.destroyed === 1 ? 'One die' : `${L.destroyed} dice`} knocked out</span>`;
-        api.sfx('hit');
+        labR.innerHTML = `<b>${L.wipe ? 'Wiped out' : 'Smash'}</b><span>${L.destroyed === 1 ? 'One die' : `${L.destroyed} dice`} knocked out</span>`;
+        sfx('hit');
         api.haptic(30);
         await sleep(rm ? 60 : 330);
-        draw(mid, { doomed: { who: opp, col: L.col, value: L.value, stage: 'pop' } });
-        api.sfx('pop');
+        draw(mid, { doomed: { who: opp, col: L.col, value: L.value, stage: 'pop', big: !!L.wipe } });
+        sfx('pop');
+        if (L.wipe) { stamp('Wiped out'); sfx('win'); log('wipe'); }
         await sleep(rm ? 120 : 420);
         const by = [];
         let gone = 0;
@@ -677,12 +1020,16 @@ registerGame({
       const combo = col.filter((v) => v === L.value).length > 1;
       if (combo) {
         draw(s.grids, { pulse: { who: L.who, col: L.col, value: L.value }, bump: { who: L.who, col: L.col } });
-        api.sfx('good');
+        if (L.triple && !L.wipe) { stamp(`Triple ${L.value}s · ${colPts(col, L.col, s.gold)}`); log('triple'); sfx('win'); } else sfx('good');
         await sleep(rm ? 40 : 420);
       } else {
         draw(s.grids);
         await sleep(rm ? 20 : 120);
       }
+      if (L.comeback) {
+        stamp('Comeback!', true); log('comeback'); sfx('good');
+        await sleep(rm ? 60 : 500);
+      } else if (L.wipe || L.triple) await sleep(rm ? 60 : 380);
     }
 
     // ── sync the view to the rules state ──
@@ -690,7 +1037,24 @@ registerGame({
     function enqueue(fn) {
       chain = chain.then(() => (dead ? null : fn())).catch((e) => { if (e !== DEAD) console.error('[bones]', e); });
     }
+    let seenTw = null; // the twist this view has already announced ('' = classic, null = nothing seen yet)
+    function announceTwist(c, s) {
+      const now = s.tw || '';
+      const prev = seenTw;
+      seenTw = now;
+      setBadge(s);
+      if (prev === null || prev === now) return; // first look, or nothing new
+      if (now === 'blind') dieN = -1; // the first die the starter watched was thrown away: roll the real one when it lands
+      if (now && now !== 'classic' && !(c.mode === 'online' && s.first === c.me)) {
+        const msg = `${whoLabel(s.first) === 'You' ? 'You' : api.name(s.first)} picked ${TWISTS[now].name}`;
+        api.toast(msg);
+        log(`picked:${now}`);
+        log(`toast:${msg}`);
+      }
+    }
     async function sync() {
+      animating = true;
+      showPicker(false);
       for (;;) {
         const c = ctxNow;
         if (dead || !c || !c.state) return;
@@ -699,6 +1063,7 @@ registerGame({
         const first = shownMoves < 0;
         const L = s.last;
         picking = false;
+        announceTwist(c, s);
         if (!L || c.moves < shownMoves) {
           draw(s.grids);
           shownMoves = c.moves;
@@ -719,48 +1084,127 @@ registerGame({
       }
       const c = ctxNow;
       const s = c.state;
+      announceTwist(c, s);
       await ready;
-      if (c.over) { finale(c); return; }
-      if (dieN !== s.n) await roll(s.roll, s.turn, s.n);
+      if (c.over) { await finale(c); return; }
+      if (dieN !== s.n && !isBlind()) await roll(s.roll, s.turn, s.n);
       if (ctxNow !== c && ctxNow.moves !== shownMoves) return; // a newer move is queued
       showIdle();
+    }
+    /** What picking a column here would do: your column's gain and their column's loss. */
+    function previews(s, actor) {
+      const gold = s.gold;
+      const opp = other(actor);
+      const soft = s.final && s.tw !== 'mirror';
+      const gain = [0, 0, 0]; const loss = [0, 0, 0];
+      for (let ci = 0; ci < COLS; ci++) {
+        const mine = s.grids[actor][ci];
+        if (mine.length >= ROWS) continue;
+        gain[ci] = colPts(mine.concat(s.roll), ci, gold) - colPts(mine, ci, gold);
+        if (!soft) {
+          const oc = s.grids[opp][ci];
+          loss[ci] = -(colPts(oc, ci, gold) - colPts(oc.filter((v) => v !== s.roll), ci, gold));
+        }
+      }
+      return { gain, loss };
+    }
+    function showPicker(on, actor) {
+      for (const k of ['top', 'bot']) {
+        const el2 = halves[k].querySelector('.gb-picker');
+        const target = on && halves[k].dataset.who === other(actor);
+        if (target && el2.hidden) el2.innerHTML = pickerHTML();
+        el2.hidden = !target;
+      }
+      root.classList.toggle('has-picker', !!on);
     }
     function showIdle() {
       const c = ctxNow;
       if (!c || !c.state || c.over) return;
       const s = c.state;
-      picking = !!c.canMove && dieN === s.n;
+      const blind = s.tw === 'blind';
+      setBadge(s);
+      picking = !!c.canMove && (blind || dieN === s.n);
       const actor = s.turn;
       let threat = null;
-      if (picking) {
+      let pv = null;
+      if (picking && !blind) {
         const cols = [0, 1, 2].filter((i) => s.grids[actor][i].length < ROWS);
-        threat = { who: other(actor), value: s.roll, cols };
+        const soft = s.final && s.tw !== 'mirror';
+        threat = soft ? null : { who: other(actor), value: s.roll, cols };
+        pv = previews(s, actor);
       }
-      draw(s.grids, picking ? { pick: actor, roll: s.roll, threat } : {});
-      setBand(picking ? 'pick' : 'wait', actor, s.roll);
+      draw(s.grids, picking ? { pick: actor, roll: s.roll, threat, pv, blind } : {});
+      if (blind) {
+        if (dv) { dv.hide(true); kick(); }
+        band.dataset.roll = '';
+        setMystery(true);
+        setBand('mystery', actor, 0);
+      } else setBand(picking ? 'pick' : 'wait', actor, s.roll);
+      showPicker(picking && s.n === 0 && s.tw === undefined, actor);
       root.dataset.phase = picking ? 'pick' : 'wait';
+      animating = false;
+      skipping = false;
     }
-    function finale(c) {
+    /** Records and rivalry: fold this match into the shared per-game data (once; both phones agree). */
+    let recap = null;
+    function recordMatch(c) {
+      const s = c.state;
+      if (recap) return;
+      try {
+        // turn games don't get data() on their api (live games do): the shared store is the same one
+        const store = typeof api.data === 'function' && typeof api.setData === 'function' ? api : gameDataApi('bones');
+        const r = c.result || result(s);
+        const rec = recordsFor(store.data() || {}, s, r, c.matchId);
+        if (rec.patch) store.setData(rec.patch);
+        recap = rec;
+        log(`records:${rec.flags || '-'}`);
+      } catch (err) { console.warn('[bones] records', err); }
+    }
+    const nameFor = (w) => (w === 'a' || w === 'b' ? (whoLabel(w) === 'You' ? 'You' : api.name(w)) : '');
+    async function finale(c) {
       const s = c.state;
       root.dataset.phase = 'over';
       draw(s.grids, { noTurn: true });
       setBand('over');
+      setMystery(false);
+      showPicker(false);
       dv.hide(true);
       kick();
-      if (finaleDone) return;
+      if (finaleDone) { animating = false; skipping = false; return; }
       finaleDone = true;
       log('finale');
       const r = c.result || result(s);
+      if (!openedOver) recordMatch(c); // an old finished match, reopened, never counts twice
       for (const [k, w] of [['top', topW], ['bot', bottom]]) {
         halves[k].classList.toggle('is-win', r.winner === w);
         halves[k].classList.toggle('is-lose', !!r.winner && r.winner !== w);
       }
-      const ta = gridScore(s.grids.a);
-      const tb = gridScore(s.grids.b);
+      const sc = score(s);
       band.classList.add('is-final');
-      labL.innerHTML = `<span class="gb-kick">Final</span><span class="gb-wn gb-big"></span>`;
+      const streakLine = recap && recap.streak && recap.streak.len >= 2 && (recap.streak.who === 'a' || recap.streak.who === 'b')
+        ? `${nameFor(recap.streak.who)} ${nameFor(recap.streak.who) === 'You' ? 'have' : 'has'} won ${recap.streak.len} straight` : '';
+      labL.innerHTML = `<span class="gb-kick">Final</span><span class="gb-wn gb-big"></span><span class="gb-streak"></span>`;
       labL.querySelector('.gb-wn').textContent = r.winner ? `${whoLabel(r.winner) === 'You' ? 'You win' : `${api.name(r.winner)} wins`}` : 'Dead even';
-      labR.innerHTML = r.winner ? `<span class="gb-kick">by</span><b class="gb-big">${Math.abs(ta - tb)}</b>` : `<b>${ta} apiece</b>`;
+      labL.querySelector('.gb-streak').textContent = streakLine;
+      labR.innerHTML = (r.winner ? `<span class="gb-kick">by</span><b class="gb-big">${Math.abs(sc.a - sc.b)}</b>` : `<b>${sc.a} apiece</b>`) + formHTML(recap && recap.form);
+      // the stamps: new records first
+      const flags = recap && recap.flags ? recap.flags.split(',').filter(Boolean) : [];
+      const lines = [];
+      for (const f of flags) {
+        if (f === 'pb_a' || f === 'pb_b') lines.push(`New best: ${sc[f.slice(3)]}${ctxNow.mode === 'online' && f.slice(3) === c.me ? '' : ` for ${api.name(f.slice(3))}`}`);
+        else if (f === 'smash') lines.push('Biggest smash ever');
+        else if (f === 'comeback') lines.push('Biggest comeback');
+      }
+      for (const text of lines.slice(0, 2)) {
+        stamp(text);
+        sfx('good');
+        await sleep(reduced() ? 150 : 1150);
+      }
+      // hold the end card until the final smash has landed and the banner has had its moment
+      await sleep(reduced() ? 150 : 900);
+      animating = false;
+      skipping = false;
+      api.showEnd();
     }
 
     // ── input ──
@@ -769,14 +1213,36 @@ registerGame({
       if (!picking || !c || !c.canMove || c.over) return;
       const g = c.state.grids[c.actor] && c.state.grids[c.actor][col];
       if (!g) return;
-      if (g.length >= ROWS) { api.toast('That column is full. Pick another one.'); api.sfx('bad'); return; }
+      if (g.length >= ROWS) {
+        api.toast('That column is full');
+        sfx('bad');
+        const b = root.querySelector(`.gb-tray.is-picking .gb-col[data-col="${col}"]`);
+        if (b) { b.classList.remove('nope'); void b.offsetWidth; b.classList.add('nope'); setTimeout(() => b.classList.remove('nope'), 420); }
+        log('full');
+        return;
+      }
       picking = false;
       root.dataset.phase = 'busy';
-      api.sfx('tap');
+      sfx('tap');
       const r = api.move({ col });
       if (!r.ok) { api.toast(r.error); showIdle(); }
     }
+    function sendTwist(id) {
+      const c = ctxNow;
+      if (!picking || !c || !c.canMove || c.over || !TWIST_IDS.includes(id)) return;
+      const s = c.state;
+      if (s.n !== 0 || s.tw !== undefined) return;
+      picking = false;
+      root.dataset.phase = 'busy';
+      sfx('tap');
+      saveTwist(id);
+      showPicker(false);
+      const r = api.move({ tw: id });
+      if (!r.ok) { api.toast(r.error); showIdle(); }
+    }
     function onClick(e) {
+      const pk = e.target.closest('.gb-pk');
+      if (pk && root.contains(pk)) { sendTwist(pk.dataset.tw); return; }
       const b = e.target.closest('.gb-col');
       if (!b || !root.contains(b)) return;
       const tray = b.closest('.gb-tray');
@@ -794,8 +1260,14 @@ registerGame({
       pick(Number(e.key) - 1);
     }
     let unlocked = false;
-    function onTouchEnd() { if (!unlocked) { unlocked = true; api.sfx('tick'); } } // iOS: unlock audio inside a gesture
+    function onTouchEnd() { if (!unlocked) { unlocked = true; sfx('tick'); } } // iOS: unlock audio inside a gesture
     function onBandTouch(e) { e.preventDefault(); }
+    // a tap anywhere on the stage (but a column) while dice are tumbling or smashing skips ahead
+    function onStageDown(e) {
+      if (!animating || picking || (e.target.closest && e.target.closest('.gb-col.can'))) return;
+      skipNow();
+    }
+    el.addEventListener('pointerdown', onStageDown);
     root.addEventListener('click', onClick);
     root.addEventListener('touchend', onTouchEnd);
     band.addEventListener('touchstart', onBandTouch, { passive: false });
@@ -840,6 +1312,7 @@ registerGame({
       clearTimeout(slowT);
       dv = v;
       setSides();
+      if (dv.setZoom) dv.setZoom(root.classList.contains('is-land') ? 1.75 : 1);
       dv.resize(band.clientWidth, band.clientHeight);
       try { dv.compile(); } catch (err) { console.warn('[bones] warm-up', err); }
       renderNow();
@@ -857,7 +1330,7 @@ registerGame({
     threeP.then((THREE) => {
       if (dead || dv) return;
       let v;
-      try { v = dieView3D(THREE, canvas, pal, () => api.sfx('tick')); } catch (err) {
+      try { v = dieView3D(THREE, canvas, pal, () => sfx('tick')); } catch (err) {
         console.warn('[bones] WebGL unavailable', err);
         fallback('3D dice aren’t available here, so these are flat ones.');
         return;
@@ -875,6 +1348,7 @@ registerGame({
       update(c) {
         ctxNow = c;
         if (!c || !c.state) return;
+        if (openedOver === null) openedOver = !!c.over;
         if (c.mode === 'online' && c.me && c.me !== bottom) { bottom = c.me; topW = other(bottom); setSides(); }
         enqueue(sync);
       },
@@ -889,6 +1363,8 @@ registerGame({
         document.removeEventListener('visibilitychange', onVis);
         document.removeEventListener('keydown', onKey);
         root.removeEventListener('click', onClick);
+        el.removeEventListener('pointerdown', onStageDown);
+        window.removeEventListener('resize', layout);
         root.removeEventListener('touchend', onTouchEnd);
         band.removeEventListener('touchstart', onBandTouch);
         band.removeEventListener('touchmove', onBandTouch);
