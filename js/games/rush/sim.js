@@ -3,10 +3,10 @@
 import {
   DT, LANE_W, LANE_TIME, GRAV, JUMP_V, SUPER_JUMP_V, HANG_V, HANG_G, FASTFALL_V, SLIDE_TIME,
   BUFFER_T, COYOTE_T, STAND_H, ROLL_H, HALF_D, HALF_W, STEP_UP, TRIP_TOL, CHUNK, LOW_H,
-  STUMBLE_T, CRASH_T, INVULN_T, HEARTS, MAGNET_T, SNEAKERS_T, DOUBLE_T, LATE_DODGE_T, COMBO_TIERS, COMBO_BONUS, COMBO_T, MT_K, baseSpeed,
+  STUMBLE_T, CRASH_T, INVULN_T, HEARTS, MAGNET_T, SNEAKERS_T, DOUBLE_T, LATE_DODGE_T, COMBO_TIERS, COMBO_BONUS, COMBO_T, MT_K, BARREL_K, baseSpeed,
 } from './tune.js';
 import {
-  O_LOW, O_HIGH, O_TRAIN, O_RAMP, O_MTRAIN, O_BLOCK, I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX, I_NOTE, I_DOUBLE,
+  O_LOW, O_HIGH, O_TRAIN, O_RAMP, O_MTRAIN, O_BLOCK, O_BARREL, I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX, I_NOTE, I_DOUBLE,
   rampTop, createTrack,
 } from './track.js';
 
@@ -291,11 +291,12 @@ function passed(r, o, ov, h, dry) {
     const clear = r.y + h <= o.b + 0.02 || r.y >= o.h - 0.02 || (o.walk && r.y >= o.h - STEP_UP);
     if (!clear) return; // a hit follows (crash / stumble / smash): not a dodge
     if (o.t === O_LOW) close = r.y < LOW_H + 0.3;
+    else if (o.t === O_BARREL) close = r.y < o.h + 0.3; // (a rolling barrel counts like a low barrier)
     else if (o.t === O_HIGH) close = r.slideT > 0 && r.slideAge * v < 1.5 + 0.04 * v;
   } else {
     if (r.laneFrom !== o.lane || r.laneAge * v > 30) return; // never lined up with it: nothing dodged
-    if (o.t !== O_TRAIN && o.t !== O_MTRAIN && o.t !== O_LOW && o.t !== O_HIGH && o.t !== O_BLOCK) return;
-    const rel = o.t === O_MTRAIN ? v * (1 + MT_K) : v; // an oncoming train closes faster
+    if (o.t !== O_TRAIN && o.t !== O_MTRAIN && o.t !== O_LOW && o.t !== O_HIGH && o.t !== O_BLOCK && o.t !== O_BARREL) return;
+    const rel = o.t === O_MTRAIN ? v * (1 + MT_K) : o.t === O_BARREL ? v * (1 + BARREL_K) : v; // an oncoming train or barrel closes faster
     close = r.laneAge * rel < 2.5 + 0.05 * rel;
   }
   if (o.z0 > r.passZ - 0.5 && o.z0 < r.passZ + 0.5) { // same row as the last dodge
@@ -352,7 +353,7 @@ function hit(r, o, frontal, ov, dry) {
     if (sh) { r.shield = 0; r.shields++; if (!dry) ev(r, E_SHIELD, 0); } else stumble(r, 1.3, dry);
     return;
   }
-  if (r.boostT > 0 && (o.t === O_LOW || o.t === O_HIGH)) {
+  if (r.boostT > 0 && (o.t === O_LOW || o.t === O_HIGH || o.t === O_BARREL)) {
     if (!dry) { r.smashed.add(o.id); r.smashN++; ev(r, E_SMASH, o.id); }
     else { r.ignoreId = o.id; r.ignoreT = 0.3; }
     return;
@@ -370,7 +371,7 @@ function hit(r, o, frontal, ov, dry) {
     stumble(r, 1, dry);
     return;
   }
-  if (o.t === O_LOW && r.y > LOW_H - TRIP_TOL) {
+  if ((o.t === O_LOW || o.t === O_BARREL) && r.y > o.h - TRIP_TOL) { // feet just clip the top: trip, not crash
     r.ignoreId = o.id; r.ignoreT = 0.4;
     stumble(r, 1, dry);
     if (!dry) ev(r, E_TRIP, 0);
@@ -503,7 +504,7 @@ export function step(r, track, dry) {
 export function setHold(r, on) { r.hold = on ? 1 : 0; }
 
 export const ITEM_KINDS = { I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX, I_NOTE, I_DOUBLE };
-export const OBS_KINDS = { O_LOW, O_HIGH, O_TRAIN, O_RAMP, O_MTRAIN, O_BLOCK };
+export const OBS_KINDS = { O_LOW, O_HIGH, O_TRAIN, O_RAMP, O_MTRAIN, O_BLOCK, O_BARREL };
 
 // ── perfect-information bot: depth-first search over the real sim ──
 const BOT_EVERY = 12; // steps per decision (0.1 s)

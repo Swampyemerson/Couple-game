@@ -134,6 +134,31 @@ lane lean and camera roll, landing dust and magnet trails were already there.
 - **Beat-their-best lines** (`world.setMarks`): in Race and Daily, a glowing stripe across the track
   with a printed banner at your partner's best distance ("SYDNEY'S BEST") and at yours ("YOUR
   BEST"), so every run has a line to cross.
+- **Rivalry & moments** (`js/games/rush/rivalry.js`, from presence, nothing sent but `share`): every pop is a
+  state machine that fires on a change, never per frame, and centre pops take turns (one at a time, at most
+  3 waiting). In Race and Daily: a lead change (the other runner 4 m+ ahead for 0.6 s, no sooner than 3 s
+  after the last pop) pops OVERTAKE! for the overtaker and "Sydney passed you" for the other; retaking it
+  within 10 s is REVENGE! ("they took it back" on the other side); a crash or a spectating partner is never
+  a pass; Brawl has none (side by side they'd mean nothing). Crossing the stripes: your own best pops
+  NEW BEST! live, your partner's best pops "You beat Sydney's best", and the partner crossing yours pops
+  "Sydney just beat your best · 1,980 m" on both phones (each phone computes its own two, from the bests
+  snapshotted at the start), all with a sting. Closer than 5 m for 3 s (past 150 m, so not the start
+  line) pulses the gap pill "Neck and neck · you +3 m" until they're 8 m apart. The host counts lead
+  changes (`M.leadChanges`, run stats `leadChanges`, `crossed`) and writes "4 lead changes" into the shared
+  result line, so both end cards read the same. A new district zone start pops its name as a small tag
+  with a chime and moves the music's key (`audio.setDistrict`: Downtown 0, Harbour +2, Greenway +5, Old Town
+  −2, Neon Market +3, Freight Yard −5 semitones, changed at bar lines, at most 3 a bar); `render()` calls
+  `world.setDistrictAt(seed, z)` per view. Track v2 events: "COIN RUSH!" 2 s of running before
+  `c.eventZ`, "GOLDEN HUNDRED · coins ×2" on entering its chunk; fool's-gold coins (`v ≥ 3`) have their
+  own chime. The last heart (not Together): a pulsing ring round the hearts and a heartbeat under the
+  music (twice a bar); 500 m on it pays "CLUTCH! +20 coins" once per heart lost (`stats.clutch`; Race gives
+  a heart back at every 500 m, so there it can't happen, by design). Together: a magnet, sneakers or coin
+  doubler picked up by one is sent as a reliable `share` event and runs on the partner for the same
+  duration (less the message's age), "Sydney shared a MAGNET"; one device does the same through the local
+  queue. Together's end card shares "New team best!" or "Team best 3,240 m" (key `team_best_m`, only goes
+  up; the judge reads the old value once and puts the line in the result both phones show). Unit test:
+  `rivalUnit()` in `rush.test.js` (the logic with a fake clock), section `rival` (two phones, light and
+  dark, plus one device).
 - **Ghost marker**: in live play the partner is a real runner on your track; when they're out of
   sight (≥ 120 m ahead, or behind the camera) the name tag becomes a chip in their lane: at the
   horizon with "Sydney ↑ 230 m", or down by your feet with "↓ 48 m" (gap quantized to 5 m, so the

@@ -286,6 +286,22 @@ function triangle(THREE, up) {
   return g;
 }
 
+/** Several indexed geometries as one (positions, normals, indices concatenated). */
+function mergeGeos(THREE, geos) {
+  const pos = []; const nrm = []; const idx = [];
+  for (const g of geos) {
+    const base = pos.length / 3;
+    pos.push(...g.getAttribute('position').array); nrm.push(...g.getAttribute('normal').array);
+    for (const i of g.index.array) idx.push(base + i);
+    g.dispose();
+  }
+  const m = new THREE.BufferGeometry();
+  m.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  m.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  m.setIndex(idx);
+  return m;
+}
+
 /** Build every template once. */
 export function makeTemplates(THREE) {
   const capsule = (r, len, seg = 8, rings = 3) => {
@@ -322,6 +338,9 @@ export function makeTemplates(THREE) {
     stripe: tpl(parallelogram(THREE), 'box'),
     stripeL: tpl(parallelogram(THREE, true), 'box'),
     discZ: tpl(new THREE.CylinderGeometry(0.5, 0.5, 1, 28, 1).rotateX(Math.PI / 2), 'smooth'),
+    // axis along x (a barrel lying on its side), and three narrow axial strips around it (staves: they make the roll readable)
+    discX: tpl(new THREE.CylinderGeometry(0.5, 0.5, 1, 12, 1).rotateZ(Math.PI / 2), 'smooth'),
+    staves: tpl(mergeGeos(THREE, [0, 1, 2].map((k) => new THREE.CylinderGeometry(0.5, 0.5, 1, 2, 1, true, k * 2.0944, 0.5).rotateZ(Math.PI / 2))), 'smooth'),
     sphere: tpl(new THREE.SphereGeometry(0.5, 14, 10), 'smooth'),
     sphere12: tpl(new THREE.SphereGeometry(0.5, 12, 8), 'smooth'),
     lowSphere: tpl(new THREE.SphereGeometry(0.5, 8, 6), 'smooth'),

@@ -5,7 +5,7 @@
 import { hash, rng } from '../core.js';
 import {
   CHUNK, CAR, RAMP_L, ROOF, TRAIN_HW, LOW_H, HIGH_B, HIGH_T, BAR_HW, MT_K, MT_LEAD, GAP_L,
-  LANE_W, LANE_TIME, V0, VMAX,
+  LANE_W, LANE_TIME, V0, VMAX, BARREL_K, BARREL_LEAD, BARREL_D, BARREL_HW,
 } from './tune.js';
 
 export const O_LOW = 1;
@@ -14,6 +14,7 @@ export const O_TRAIN = 3;
 export const O_RAMP = 4;
 export const O_MTRAIN = 5;
 export const O_BLOCK = 6;
+export const O_BARREL = 7;   // track v2: a rolling barrel (0.9 m, jump or swerve); static footprint [zm, zm + D/(1+K)] like an oncoming train's
 
 export const I_MAGNET = 1;
 export const I_SNEAKERS = 2;
@@ -38,6 +39,12 @@ const EVENT_GAP = 6;
 const DBL_P = 0.3;             // share of magnets that are doublers instead
 const NOTE_FIRST = 4;          // the love note sits in one of chunks 4..8
 const NOTE_SPAN = 5;
+// Rolling barrels (track v2, stream 'barrel'): from difficulty 0.3 (~500 m), a barrel - or a pair in
+// two lanes - rolls toward the runner. See placeBarrels.
+export const BARREL_DIFF = 0.3;
+const BARREL_P0 = 0.3;         // per-chunk chance at BARREL_DIFF …
+const BARREL_P1 = 0.2;         // … plus this per unit of difficulty beyond it
+const BARREL_PAIR = 0.6;       // share of placements that try a pair in two lanes (a single if no window fits two)
 
 /** Expected running speed at distance d, a little on the fast side (m/s). */
 export function designSpeed(d) {
@@ -63,6 +70,11 @@ export function mtrainFront(o, zr) {
   if (zr < o.zm - MT_LEAD) return o.zm + MT_K * MT_LEAD;
   return o.zm - MT_K * (zr - o.zm);
 }
+/** Rolling barrel: front z when the runner is at zr (the barrel rolls toward -z; it waits at its start until the runner is BARREL_LEAD away). */
+export function barrelFront(o, zr) {
+  if (zr < o.zm - BARREL_LEAD) return o.zm + BARREL_K * BARREL_LEAD;
+  return o.zm - BARREL_K * (zr - o.zm);
+}
 /** Surface height of a ramp at z. */
 export function rampTop(o, z) {
   const k = (z - o.z0) / (o.z1 - o.z0);
@@ -79,6 +91,7 @@ function makeObs(c, t, lane, z0, z1, extra) {
   if (t === O_LOW) { o.h = LOW_H; }
   else if (t === O_HIGH) { o.b = HIGH_B; o.h = HIGH_T; }
   else if (t === O_TRAIN || t === O_RAMP || t === O_MTRAIN) { o.h = ROOF; o.hw = TRAIN_HW; o.walk = true; }
+  else if (t === O_BARREL) { o.h = BARREL_D; o.hw = BARREL_HW; }
   if (extra) Object.assign(o, extra);
   c.obs.push(o);
   return o;
@@ -463,7 +476,7 @@ function pSlalom(X) {
 function laneClear(c, l, za, zb) {
   for (const o of c.obs) {
     if (o.lane !== l) continue;
-    const e = o.t === O_MTRAIN ? o.zm + MT_K * MT_LEAD + o.len : o.z1;
+    const e = o.t === O_MTRAIN ? o.zm + MT_K * MT_LEAD + o.len : o.t === O_BARREL ? o.zm + BARREL_K * BARREL_LEAD + o.len : o.z1;
     if (e >= za && o.z0 <= zb) return false;
   }
   for (const g of c.gaps) if (g.z1 >= za && g.z0 <= zb && (g.mask & (1 << (l + 1)))) return false;
@@ -525,6 +538,7 @@ export function noteChunk(seed) { return NOTE_FIRST + (hash(seed, 'note') % NOTE
 
 function v2Content(c, seed, opt) {
   const i = c.i;
+  placeBarrels(c, seed); // first: later placements (coins, notes, gold) see the barrels through laneClear
   for (const cn of c.coins) { cn.v = 1; cn.g = 0; }
   c.event = 0; c.eventZ = 0;
   const ev = c.tunnel ? 0 : eventOf(seed, i);
@@ -567,6 +581,65 @@ function placeRush(c, seed) {
         }
       }
       c.event = EV_RUSH; c.eventZ = zs;
+      return;
+    }
+  }
+}
+
+/**
+ * Rolling barrels: a barrel (or a pair in two lanes, forcing a jump or the third lane) rolls toward
+ * the runner. Its footprint is the static interval [zm, zm + D/(1+K)] like an oncoming train's, so it is
+ * the same on every device; it is 0.9 m tall (a normal jump clears it, a lane change dodges it) and
+ * can sit in the safe-path lane, where it is just a jumpable obstacle. Placed in a separate pass into
+ * a window that is clear in its lane (obstacles, gaps and items; the lane stays clear for the whole
+ * roll-in, BARREL_K x BARREL_LEAD m past the footprint, so it never rolls through anything) with the
+ * path lane constant around it (no lane change within 1.2 s before or 0.8 s after) and inside the
+ * chunk, so neighbouring chunks never interact with it.
+ */
+function placeBarrels(c, seed) {
+  if (c.i < 3 || c.diff < BARREL_DIFF) return;
+  const g = rng(hash(seed, 'barrel', c.i));
+  if (!(g() < BARREL_P0 + BARREL_P1 * (c.diff - BARREL_DIFF))) return;
+  const pair = g() < BARREL_PAIR;
+  const lane0 = Math.floor(g() * 3); // single: the lane tried first; pair: the lane left out first
+  const k0 = g();
+  const sec = (t) => t * c.vd;
+  const Lr = BARREL_D / (1 + BARREL_K);
+  const roll = BARREL_K * BARREL_LEAD + BARREL_D; // how far past the footprint the barrel waits before it rolls
+  const zmin = c.z0 + sec(1.2);
+  const zmax = Math.min(c.z1 - sec(0.8) - Lr, c.z1 - sec(0.3) - roll - 0.5);
+  const n = Math.floor((zmax - zmin) / 2) + 1;
+  if (n < 1) return;
+  const start = Math.floor(k0 * n);
+  const fits = (l, zb) => {
+    if (!laneClear(c, l, zb - sec(0.9), zb + roll + 0.5)) return false;
+    const x = l * LANE_W;
+    for (const it of c.items) if (it.z > zb - 4 && it.z < zb + Lr + 4 && Math.abs(it.x - x) < 1.4) return false;
+    return true;
+  };
+  for (let two = pair ? 1 : 0; two >= 0; two--) { // a pair if a window has two clear lanes, else a single
+    for (let t = 0; t < n; t++) {
+      const zb = zmin + 2 * ((start + t) % n);
+      let moved = false;
+      for (const [pz] of c.path) if (pz > zb - sec(1.2) && pz < zb + Lr + sec(0.8)) moved = true;
+      if (moved) continue;
+      let ls = null;
+      for (let a = 0; a < 3 && !ls; a++) {
+        const l = ((lane0 + a) % 3) - 1;
+        if (!two) { if (fits(l, zb)) ls = [l]; continue; }
+        const ol = others(l); // (the lane left out is l)
+        if (fits(ol[0], zb) && fits(ol[1], zb)) ls = ol;
+      }
+      if (!ls) continue;
+      const pl = pathLane(c, zb);
+      for (const l of ls) {
+        makeObs(c, O_BARREL, l, zb, zb + Lr, { zm: zb, len: BARREL_D, cars: 0 });
+        if (l === pl) { // coins arc over it
+          const x = l * LANE_W;
+          c.coins = c.coins.filter((cn) => !(cn.x > x - 1.3 && cn.x < x + 1.3 && cn.z > zb - 4.8 && cn.z < zb + Lr + 4.8));
+          coinArc(c, x, zb + Lr / 2, 9, 1.0, 1.25);
+        }
+      }
       return;
     }
   }

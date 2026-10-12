@@ -302,8 +302,6 @@ export function createExtras(C) {
       showNote(w, mine ? C.name(q) : '', text);
       C.audio.play('heart');
     },
-    /** Replaces the pickup pop's label for the kinds game.js doesn't know (returns '' to keep its own). */
-    pickLabel(kind) { return kind === 6 ? 'LOVE NOTE' : kind === 7 ? 'COIN DOUBLER' : ''; },
 
     /**
      * Finale for one local runner: judges the dares, counts notes, stamps, and fills S (the unlock tests' inputs).

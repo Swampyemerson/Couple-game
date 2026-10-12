@@ -3,9 +3,9 @@
 // local, messages delivered directly) and two (messages over the reliable link).
 import {
   LANE_W, CHUNK, ROOF, BOOST_T, REVIVE_WINDOW, REVIVE_FIRST, REVIVE_EVERY, REVIVE_SLACK, CHEER_T, CHEER_K, CRASH_T,
-  TEAM_HEARTS, TEAM_HEARTS_MAX, BRAWL_CAP, DAILY_CAP, STEP_UP,
+  TEAM_HEARTS, TEAM_HEARTS_MAX, BRAWL_CAP, DAILY_CAP, STEP_UP, TRIP_TOL, BARREL_K, BARREL_LEAD,
 } from './tune.js';
-import { O_BLOCK, O_TRAIN, O_MTRAIN, O_RAMP, pathLane } from './track.js';
+import { O_BLOCK, O_TRAIN, O_MTRAIN, O_RAMP, O_BARREL, pathLane } from './track.js';
 import { crash, respawn, C_SLAM, E_PICK, E_CRASH, E_FINISH, E_TOKEN, E_BLOCK } from './sim.js';
 import { I_BOX } from './track.js';
 
@@ -36,6 +36,7 @@ export function wallAt(track, lane, z, y) {
     for (const o of track.chunk(c).obs) {
       if (o.lane !== lane || o.z1 < z - 1 || o.z0 > z + 1) continue;
       if ((o.t === O_TRAIN || o.t === O_MTRAIN || o.t === O_RAMP) && y < ROOF - STEP_UP) return true;
+      if (o.t === O_BARREL && y < o.h - TRIP_TOL) return true; // a rolling barrel: shoved into one on the ground is a slam
     }
   }
   return false;
@@ -46,7 +47,8 @@ function clearSpot(track, lane, z) {
   for (let c = ci - 1; c <= ci + 1; c++) {
     if (c < 0) continue;
     const ch = track.chunk(c);
-    for (const o of ch.obs) if (o.lane === lane && o.z1 > z - 6 && o.z0 < z + 6) return false;
+    // (a rolling barrel waits BARREL_K x BARREL_LEAD m past its footprint until it starts to roll: keep that clear too)
+    for (const o of ch.obs) if (o.lane === lane && (o.t === O_BARREL ? o.zm + BARREL_K * BARREL_LEAD + o.len : o.z1) > z - 6 && o.z0 < z + 6) return false;
     for (const g of ch.gaps) if ((g.mask & (1 << (lane + 1))) && g.z1 > z - 6 && g.z0 < z + 6) return false;
   }
   return true;

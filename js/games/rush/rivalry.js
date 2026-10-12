@@ -17,6 +17,7 @@ export const REVENGE_T = 10;     // s: retaking the lead within this of losing i
 export const NECK_GAP = 5;       // m: closer than this…
 export const NECK_HOLD = 3;      // …for this long is neck and neck (stays on until the gap passes NECK_OFF)
 export const NECK_OFF = 8;
+export const NECK_FROM = 150;   // m: not at the start line, where everyone is level
 export const CLUTCH_M = 500;     // m survived on the last heart
 export const CLUTCH_COINS = 20;
 export const RUSH_WARN_S = 2;    // s of warning before a Coin Rush field
@@ -120,7 +121,7 @@ export function createRivalry(X) {
       return;
     }
     const ag = g < 0 ? -g : g;
-    if (ag < NECK_GAP) { s.neckT += dt; if (s.neckT >= NECK_HOLD) s.neck = true; }
+    if (ag < NECK_GAP && pz > NECK_FROM) { s.neckT += dt; if (s.neckT >= NECK_HOLD) s.neck = true; }
     else if (ag >= NECK_OFF) { s.neckT = 0; s.neck = false; }
     else if (!s.neck) s.neckT = 0;
     if (s.lead === 0) { if (cand) s.lead = cand; return; }

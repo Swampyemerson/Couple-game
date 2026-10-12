@@ -276,6 +276,149 @@ async function rulesUnit() {
   return out;
 }
 
+
+// Rivalry logic, headless (no browser): rivalry.js + tune/track copied into a scratch ESM package and driven
+// with fake runners, a fake clock and spies for pops and sounds.
+async function rivalUnit() {
+  const path = require('path');
+  const { pathToFileURL } = require('url');
+  const PKG = path.join(SHOTS, '..', 'rival-pkg');
+  const SRC = path.join(__dirname, '..', '..', '..', 'js', 'games');
+  fs.mkdirSync(path.join(PKG, 'rush'), { recursive: true });
+  fs.writeFileSync(path.join(PKG, 'package.json'), '{"type":"module"}');
+  const core = fs.readFileSync(path.join(SRC, 'core.js'), 'utf8');
+  fs.writeFileSync(path.join(PKG, 'core.js'), core.match(/export function hash[\s\S]*?\n}\n[\s\S]*?export function rng[\s\S]*?\n}\n/)[0]);
+  for (const f of ['tune.js', 'track.js', 'rivalry.js']) fs.writeFileSync(path.join(PKG, 'rush', f), fs.readFileSync(path.join(SRC, 'rush', f), 'utf8'));
+  const imp = (f) => import(pathToFileURL(path.join(PKG, 'rush', f)).href);
+  const [Rv, T] = await Promise.all([imp('rivalry.js'), imp('track.js')]);
+  const out = {};
+  const mk = (mode, opt = {}) => {
+    const log = { a: [], b: [] }; const snd = [];
+    const M = { mode, phase: 'run', seed: 7, track: opt.track || null, steps: 999 };
+    const players = {};
+    for (const w of ['a', 'b']) {
+      players[w] = { w, name: w === 'a' ? 'Emerson' : 'Sydney', local: true, stats: {}, r: { hearts: 3, coins: 0, bonus: 0, speed: 20, down: 0, out: 0, done: 0, z: 0, magnetT: 0, sneakersT: 0, dblT: 0 },
+        rs: { z: 0, down: false, idle: false, visible: true }, view: { pop: (t, c, sb) => log[w].push([t, c, sb]) } };
+    }
+    const data = Object.assign({}, opt.data || {}); const sent = [];
+    let now = 1000;
+    const X = { M, players, viewers: opt.viewers || ['a', 'b'], other: (w) => (w === 'a' ? 'b' : 'a'), audio: { play: (n) => snd.push(n), setDistrict: (i) => snd.push('key' + i) },
+      now: () => now, send: (to, t, d) => sent.push([to, t, d]), data: () => data, setData: (p) => Object.assign(data, p), haptic() {}, fmtM: (m) => Math.round(m).toLocaleString('en-US'),
+      zOf: (w) => players[w].rs.z, bestKey: (w) => `${w}_race_m` };
+    const rv = Rv.createRivalry(X);
+    rv.reset();
+    // advance sec seconds at 60 Hz; z(w) sets each runner's distance every tick
+    const run = (sec, f) => { for (let i = 0; i < Math.round(sec * 60); i++) { now += 1000 / 60; if (f) f(i); for (const w of ['a', 'b']) players[w].r.z = players[w].rs.z; rv.tick(1 / 60); } };
+    const set = (a, b) => { players.a.rs.z = a; players.b.rs.z = b; };
+    return { rv, M, players, log, snd, data, sent, run, set, X, tm: () => now };
+  };
+  // hysteresis: a lead of 4 m+ held 0.6 s is a change; a shorter one is nothing
+  {
+    const W = mk('race');
+    W.set(100, 90); W.run(1.2); // a leads (silently)
+    W.set(100, 110); W.run(0.4); W.set(100, 90); W.run(1.5); // b ahead for 0.4 s: a flicker
+    out.flick = W.log.a.length + W.log.b.length;
+    W.set(100, 110); W.run(0.5); out.early = W.log.a.length; W.run(0.3); // 0.5 s: not yet; 0.8 s: yes
+    out.pass = [W.log.a.map((x) => x[0]), W.log.b.map((x) => x[0]), W.rv.changes];
+    // retaking at once: held through the 3 s quiet, then REVENGE! (they passed me within 10 s)
+    W.set(100, 90); W.run(1.0); out.quiet = W.log.a.length; W.run(2.5);
+    out.revenge = [W.log.a.map((x) => x[0]).slice(-1)[0], W.log.b.map((x) => x[0]).slice(-1)[0], W.rv.changes];
+    // a lead change 15 s later is OVERTAKE!, not REVENGE!
+    W.set(100, 110); W.run(12); W.set(100, 90); W.run(4); out.late = W.log.a.map((x) => x[0]).slice(-1)[0];
+    out.m = W.M.leadChanges;
+  }
+  // Brawl and Together: no rivalry pops; a downed runner passed is not a pass
+  {
+    const W = mk('brawl'); W.set(100, 90); W.run(1.2); W.set(100, 140); W.run(5);
+    out.brawl = W.log.a.length + W.log.b.length + W.rv.changes;
+    const D = mk('race'); D.set(100, 90); D.run(1.2); D.players.a.r.down = 1; D.set(100, 140); D.run(3); D.players.a.r.down = 0; D.run(3);
+    out.downed = D.log.a.length + D.rv.changes;
+  }
+  // neck and neck: < 5 m for 3 s, off at 8 m
+  {
+    const W = mk('race'); W.set(100, 102); W.run(4.5); const start = W.rv.neck('a'); W.set(300, 302); W.run(2.5); const early = W.rv.neck('a'); W.run(0.8); const on = W.rv.neck('a');
+    W.set(300, 306); W.run(1); const hold = W.rv.neck('a'); W.set(300, 309); W.run(0.2); const off = W.rv.neck('a');
+    out.neck = [start, early, on, hold, off, W.log.a.length];
+  }
+  // the best stripes: mine 150, theirs 260 (a); crossing pops once each, both phones
+  {
+    const W = mk('race', { data: { a_race_m: 150, b_race_m: 260 } });
+    W.set(140, 140); W.run(1.2); W.set(155, 150); W.run(0.1); W.run(1.3); // a crosses 150 (NEW BEST!), b is just short
+    W.set(160, 155); W.run(0.1);
+    W.set(255, 240); W.run(0.1); W.set(265, 262); W.run(1.5);
+    out.stripes = [W.log.a.map((x) => x[0]), W.log.b.map((x) => x[0])];
+    out.stripeSub = W.log.a.find((x) => /just beat/.test(x[0])) || null;
+    const V = mk('race', { data: { a_race_m: 150, b_race_m: 260 } });
+    V.set(30, 30); V.run(1.2); V.set(200, 200); V.run(2); // a 170 m teleport: not a crossing
+    out.teleport = V.log.a.length + V.log.b.length;
+  }
+  // districts: a tag pop on entering a zone start, once; the music key follows
+  {
+    const W = mk('race');
+    W.set(290, 0); W.run(1.2); W.set(301, 0); W.run(0.2); W.set(298, 0); W.run(0.2); W.set(302, 0); W.run(0.2);
+    const names = W.log.a.filter((x) => x[1] === 'tag').map((x) => x[0]);
+    out.district = [names, W.snd.filter((x) => /^key/.test(x)).length >= 1, W.snd.filter((x) => x === 'district').length];
+    out.districtName = names[0] === T.DISTRICTS[T.districtAt(7, 301)].name;
+  }
+  // events: Coin Rush 2 s ahead of its field, Golden Hundred on entering its chunk; both once
+  {
+    const chunks = {};
+    for (let i = 0; i < 12; i++) chunks[i] = { i, z0: i * 100, event: i === 5 ? 1 : i === 8 ? 2 : 0, eventZ: i === 5 ? 530 : 800 };
+    const W = mk('race', { track: { ver: 2, chunk: (i) => chunks[i] || { i, z0: i * 100, event: 0, eventZ: 0 } } });
+    W.set(400, 0); W.run(1.2); W.set(450, 0); W.run(0.2); W.set(493, 0); W.run(1.5); W.set(500, 0); W.run(1); // 530 - 2 s * 20 m/s = 490
+    W.set(790, 0); W.run(0.2); W.set(805, 0); W.run(1.5); W.set(850, 0); W.run(1.5);
+    out.events = W.log.a.map((x) => x[0]);
+    const V = mk('race', { track: { ver: 1, chunk: () => ({ i: 0, z0: 0 }) } });
+    V.set(500, 0); V.run(2); out.ver1 = V.log.a.length;
+  }
+  // the last heart: CLUTCH! after 500 m, once per heart lost; never in Together
+  {
+    const W = mk('daily');
+    W.players.a.r.hearts = 1; W.set(10, 0); W.run(1.2);
+    W.set(300, 0); W.run(0.1); const early = W.log.a.length; W.set(520, 0); W.run(0.2);
+    W.set(900, 0); W.run(1.5); const once = W.log.a.filter((x) => x[0] === 'CLUTCH!').length;
+    W.players.a.r.hearts = 2; W.run(0.1); W.players.a.r.hearts = 1; W.set(1000, 0); W.run(0.2); W.set(1520, 0); W.run(0.2);
+    out.clutch = [early, once, W.log.a.filter((x) => x[0] === 'CLUTCH!').length, W.players.a.r.coins, W.players.a.stats.clutch, W.rv.low('a')];
+    const T2 = mk('tandem'); T2.players.a.r.hearts = 1; T2.set(10, 0); T2.run(1.2); T2.set(700, 0); T2.run(1);
+    out.clutchTandem = [T2.log.a.length, T2.rv.low('a')];
+  }
+  // pops take turns: three at once come one after another, in order
+  {
+    const W = mk('race', { data: { a_race_m: 50, b_race_m: 60 } });
+    W.data.a_race_m = 100; W.data.b_race_m = 200; W.rv.reset();
+    W.set(90, 90); W.run(1.2); W.set(105, 105); W.run(0.1); W.set(195, 195); W.run(0.1); W.set(205, 205); W.run(0.1); // both cross 100 at once, then 200
+    const t0 = W.log.a.length;
+    W.run(3);
+    out.turns = [t0, W.log.a.length];
+  }
+  // shared power-ups: the same duration less the message time; a shield is not shared
+  {
+    const W = mk('tandem'); W.run(1.2);
+    const sub = W.rv.onPick(W.players.a, T.I_MAGNET);
+    out.shareSent = [W.sent.length, W.sent[0] && W.sent[0][0], W.sent[0] && W.sent[0][2].k, sub];
+    W.rv.onShare({ k: T.I_MAGNET }, W.tm() - 120, 'a');
+    W.rv.onShare({ k: T.I_SNEAKERS }, W.tm(), 'a');
+    W.rv.onShare({ k: T.I_DOUBLE }, W.tm(), 'a');
+    out.shared = [+W.players.b.r.magnetT.toFixed(2), W.players.b.r.sneakersT, W.players.b.r.dblT, W.log.b.map((x) => x[0])];
+    W.rv.onPick(W.players.a, T.I_SHIELD); out.shieldSent = W.sent.length;
+    const R = mk('race'); R.rv.onPick(R.players.a, T.I_MAGNET); out.raceSent = R.sent.length;
+  }
+  // the shared end-card line
+  {
+    const W = mk('race'); W.set(100, 90); W.run(1.2); W.set(100, 140); W.run(1); W.set(200, 140); W.run(4);
+    const res = W.rv.decorate({ winner: 'a', text: 'x', sub: '1.5 km in 1:12' });
+    out.lead = [res.sub, res.lc];
+    const D = mk('daily'); const rd = D.rv.decorate({ winner: 'a', sub: 'Emerson 1,240 m · Sydney 980 m' }); out.leadNone = rd.sub;
+    const T1 = mk('tandem', { data: { team_best_m: 3240 } }); T1.set(2000, 2000);
+    const t1 = T1.rv.decorate({ team: true, sub: '2,000 m together · 100 coins' }); out.teamNew = [t1.sub, t1.tbNew || 0, t1.m];
+    T1.set(4000, 3000); const t2 = T1.rv.decorate({ team: true, sub: 'x' }); out.teamUp = [t2.sub, t2.tbNew, t2.m];
+    T1.rv.finale(t2); out.teamSaved = T1.data.team_best_m; out.teamPop = T1.log.a.map((x) => x[0]);
+    const T0 = mk('tandem', { data: {} }); T0.set(500, 500); out.teamFirst = T0.rv.decorate({ team: true, sub: 'y' }).sub;
+    const F = mk('race'); out.forfeit = F.rv.decorate({ winner: 'a', sub: 'z', forfeit: 1 }).sub;
+  }
+  return out;
+}
+
 async function swipe(pg, x0, y0, dx, dy) {
   const cdp = await pg.context().newCDPSession(pg);
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: x0, y: y0 }] });
@@ -1324,25 +1467,51 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
   //     Together's shared power-ups, the shared end-card lines (two phones, light and dark; then one device) ═══
   if (want('rival')) {
     const names = ['Downtown', 'Harbour', 'Greenway', 'Old Town', 'Neon Market', 'Freight Yard'];
+    {
+      const u = await rivalUnit();
+      if (process.env.RIVAL_UNIT) { console.log(JSON.stringify(u)); process.exit(0); }
+      assert(u.flick === 0 && u.early === 0, `rivalry: a lead held under 0.6 s (a 0.4 s flicker, 0.5 s) is not a lead change (${u.flick}, ${u.early})`);
+      assert(u.pass[0].join() === 'Sydney passed you' && u.pass[1].join() === 'OVERTAKE!' && u.pass[2] === 1, `rivalry: held 0.6 s → "Sydney passed you" for the one passed, OVERTAKE! for the overtaker, 1 counted (${u.pass.join(' / ')})`);
+      assert(u.quiet === 1 && u.revenge[0] === 'REVENGE!' && u.revenge[1] === 'Emerson passed you' && u.revenge[2] === 2, `rivalry: a retake inside the 3 s quiet waits for it, then REVENGE! (${u.quiet} pops before 3 s; ${u.revenge.join(' / ')})`);
+      assert(u.late === 'OVERTAKE!' && u.m === 4, `rivalry: a retake 15 s later is a plain OVERTAKE!, M.leadChanges counts them (${u.late}, ${u.m})`);
+      assert(u.brawl === 0 && u.downed === 0, `rivalry: no pops or counts in Brawl, nor for a pass of a downed runner (${u.brawl}, ${u.downed})`);
+      assert(u.neck.join() === 'false,false,true,true,false,0', `rivalry: neck and neck after 3 s under 5 m (not at the start line), held to 8 m, no pop (${u.neck.join()})`);
+      assert(u.stripes[0].join() === 'NEW BEST!,Sydney just beat your best,You beat Sydney’s best' && u.stripes[1].join() === 'You beat Emerson’s best,NEW BEST!,Emerson just beat your best', `rivalry: the stripes pop once each on both phones (${u.stripes[0].join(' | ')} / ${u.stripes[1].join(' | ')})`);
+      assert(u.stripeSub && u.stripeSub[2] === '150 m' && u.teleport === 0, `rivalry: the stripe pop carries the distance (${u.stripeSub && u.stripeSub[2]}); a 170 m jump is not a crossing (${u.teleport})`);
+      assert(u.district[0].length === 1 && u.districtName && u.district[1] && u.district[2] === 1, `districts: one tag pop on entering the zone (${u.district[0].join()}), one chime, the music key follows`);
+      assert(u.events.join() === 'COIN RUSH!,GOLDEN HUNDRED' && u.ver1 === 0, `events: COIN RUSH! ~2 s before its field and GOLDEN HUNDRED on entering, once each; none on track v1 (${u.events.join()})`);
+      assert(u.clutch[0] === 0 && u.clutch[1] === 1 && u.clutch[2] === 2 && u.clutch[3] === 40 && u.clutch[4] === 2 && u.clutch[5] === true, `clutch: +20 once per heart lost after 500 m on the last heart, counted as a stat (${u.clutch.join()})`);
+      assert(u.clutchTandem[0] === 0 && u.clutchTandem[1] === false, `clutch: none in Together (${u.clutchTandem.join()})`);
+      assert(u.turns[0] === 1 && u.turns[1] === 3, `pops take turns instead of piling up (${u.turns.join(' → ')})`);
+      assert(u.shareSent[0] === 1 && u.shareSent[1] === 'b' && u.shareSent[2] === 1 && /shared with Sydney/.test(u.shareSent[3]) && u.shieldSent === 1 && u.raceSent === 0, `share: a magnet picked in Together goes to the partner, a shield and a Race pickup do not (${u.shareSent.join()}, ${u.shieldSent}, ${u.raceSent})`);
+      assert(u.shared[0] > 9.8 && u.shared[0] < 10 && u.shared[1] === 10 && u.shared[2] === 8 && u.shared[3].length >= 1, `share: the same duration less the message time (${u.shared.join(' / ')})`);
+      assert(/2 lead changes$/.test(u.lead[0]) && u.lead[1] === 2 && u.leadNone === 'Emerson 1,240 m · Sydney 980 m' && u.forfeit === 'z', `end card: "${u.lead[0]}" (lead changes only when there were some, not on a forfeit)`);
+      assert(/New team best!$/.test(u.teamUp[0]) && u.teamUp[1] === 1 && u.teamUp[2] === 3500 && /Team best 3,240 m$/.test(u.teamNew[0]) && u.teamNew[1] === 0 && u.teamSaved === 3500 && u.teamPop[0] === 'NEW TEAM BEST!' && /Team best 500 m$/.test(u.teamFirst), `end card: team best "${u.teamUp[0]}" / "${u.teamNew[0]}", saved ${u.teamSaved}, first run "${u.teamFirst}"`);
+    }
     for (const scheme of ['light', 'dark']) {
       const h = await launch({ port: PORT(scheme === 'dark' ? 9 : 8), only: ['rush'], latency: 60, colorScheme: scheme, coarse: true });
       const { a, b } = h;
       const rshot = (pg, name) => shot(pg, `rival-${scheme}-${name}`);
       const has = (pg, re) => pg.evaluate((src) => window.__fb.pops.some((p) => new RegExp(src).test(p)), re.source);
       const count = (pg, re) => pg.evaluate((src) => window.__fb.pops.filter((p) => new RegExp(src).test(p)).length, re.source);
-      const waitPop = (pg, re, ms = 9000) => until(pg, (src) => window.__fb.pops.some((p) => new RegExp(src).test(p)), re.source, ms, `pop ${re}`);
+      const waitPop = (pg, re, ms = 20000) => until(pg, (src) => window.__fb.pops.some((p) => new RegExp(src).test(p)), re.source, ms, `pop ${re}`);
       // the pop is on screen (a pop lives 1.1 s and settles after ~0.3 s): screenshot it
       const popShot = async (pg, re, name, seen = []) => {
-        await until(pg, ([src, sn]) => { const e = [...document.querySelectorAll('.g-rush .rr-pop')].find((x) => new RegExp(src).test(x.textContent) && !sn.includes(x.textContent)); if (e) window.__ps = e.textContent; return !!e; }, [re.source, seen], 9000, `pop on screen ${re}`);
+        await until(pg, ([src, sn]) => { const e = [...document.querySelectorAll('.g-rush .rr-pop')].find((x) => new RegExp(src).test(x.textContent) && !sn.includes(x.textContent) && +getComputedStyle(x).opacity > 0.95); if (e) { window.__ps = e.textContent; e.dataset.shot = '1'; e.style.animationPlayState = 'paused'; document.querySelectorAll('.g-rush .rr-pop:not([data-shot])').forEach((x) => { x.style.visibility = 'hidden'; }); } return !!e; }, [re.source, seen], 20000, `pop on screen ${re}`);
         seen.push(await pg.evaluate(() => window.__ps));
-        await h.wait(320);
-        await rshot(pg, name);
+        await rshot(pg, name); // (frozen on its settled frame: a loaded machine takes seconds to shoot)
+        await pg.evaluate(() => document.querySelectorAll('.g-rush .rr-pop[data-shot]').forEach((x) => x.remove()));
       };
       const zOf = async (pg, w) => (await S(pg))[w].z;
       const tele = (pg, w, dz) => pg.evaluate(([x, d]) => { const s = window.__rush.state()[x]; window.__rush.setZ(x, s.z + d); }, [w, dz]);
       const ghost = (pg, w) => pg.evaluate((x) => window.__rush.ghost(x, 1e6), w);
       try {
         await openLivePair(h, { raceLen: 45000, seed: 7 });
+        // (screenshots: a pop plays three times slower and is frozen when seen, so a loaded machine's polling still catches it)
+        for (const pg of [a, b]) {
+          await pg.addStyleTag({ content: '.g-rush .rr-pop.go { animation-duration: 3.3s !important; }' });
+          await pg.evaluate(() => { const st = window.setTimeout; window.setTimeout = (fn, ms, ...x) => st(fn, ms === 1200 ? 30000 : ms, ...x); });
+        }
         // ── Race: stripes at 75 m (Emerson) and 110 m (Sydney), then passes, neck and neck, districts, events ──
         await a.evaluate(() => window.__rush.setData({ a_race_m: 75, b_race_m: 110 }));
         await until(b, () => window.__rush.data().b_race_m === 110, null, 8000, 'guest sees the bests');
@@ -1362,34 +1531,31 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         await h.wait(1500);
         // OVERTAKE!: a flicker of the lead (200 ms) is nothing; a held lead of 4 m or more for 0.6 s is a change
         await tele(a, 'a', 14);
-        await h.wait(4500); // (the lead settles: if they happened to be a few metres apart already, that was a change, counted below)
-        const any = /passed you|OVERTAKE|REVENGE/;
-        const flick0 = await count(a, any) + await count(b, any);
+        // (the lead settles on both phones: if they happened to be a few metres apart already, that was a change, counted by `base`)
+        await until(a, () => { const r = window.__rush.rivalry().a; return r.lead === 1 && r.candT === 0; }, null, 30000, 'Emerson leads on her phone');
+        await until(b, () => { const r = window.__rush.rivalry().b; return r.lead === -1 && r.candT === 0; }, null, 30000, 'Emerson leads on his phone');
+        await h.wait(3500); // (past the 3 s of quiet)
         const base = (await a.evaluate(() => window.__rush.rivalry())).changes;
         const n0 = { pass: await count(a, /^a:Sydney passed you$/), over: await count(b, /^b:OVERTAKE!$/), rev: await count(a, /^a:REVENGE!$/) };
-        await b.evaluate(() => { const s = window.__rush.state().b; window.__rush.setZ('b', s.z + 30); setTimeout(() => { const t = window.__rush.state().b; window.__rush.setZ('b', t.z - 30); }, 200); });
-        await h.wait(1600);
-        const flick1 = await count(a, any) + await count(b, any);
-        assert(flick1 === flick0, `a 0.2 s flicker of the lead is not a lead change (${flick0} → ${flick1} pops)`);
         await tele(b, 'b', 45);
-        await until(a, (n) => window.__fb.pops.filter((p) => p === 'a:Sydney passed you').length > n, n0.pass, 9000, 'Sydney passed you');
-        await until(b, (n) => window.__fb.pops.filter((p) => p === 'b:OVERTAKE!').length > n, n0.over, 9000, 'OVERTAKE!');
+        await until(a, (n) => window.__fb.pops.filter((p) => p === 'a:Sydney passed you').length > n, n0.pass, 25000, 'Sydney passed you');
+        await until(b, (n) => window.__fb.pops.filter((p) => p === 'b:OVERTAKE!').length > n, n0.over, 25000, 'OVERTAKE!');
         await Promise.all([popShot(a, /passed you/, 'passed'), popShot(b, /OVERTAKE/, 'overtake')]);
         // taken back at once: held through the 3 s of quiet, then REVENGE! (they passed me within 10 s) and "took it back"
         await tele(a, 'a', 90);
-        await until(a, (n) => window.__fb.pops.filter((p) => p === 'a:REVENGE!').length > n, n0.rev, 14000, 'REVENGE!');
+        await until(a, (n) => window.__fb.pops.filter((p) => p === 'a:REVENGE!').length > n, n0.rev, 30000, 'REVENGE!');
         await Promise.all([popShot(a, /REVENGE/, 'revenge'), popShot(b, /passed you/, 'revenge-theirs')]);
         assert((await count(a, /^a:Sydney passed you$/)) === n0.pass + 1 && (await count(b, /^b:OVERTAKE!$/)) === n0.over + 1 && (await count(a, /^a:REVENGE!$/)) === n0.rev + 1, 'one pop per lead change on each phone');
         const rl = await a.evaluate(() => window.__rush.rivalry());
         assert(rl.changes === base + 2, `the host counted the 2 lead changes (${base} + 2 = ${rl.changes})`);
         // neck and neck: closer than 5 m for 3 s pulses the gap pill, and it lets go once they pull 8 m apart
         await b.evaluate(() => { const s = window.__rush.state().a; window.__rush.setZ('b', s.z - 0.5); });
-        await until(a, () => { const g = document.querySelector('.g-rush .rr-gap'); return g && g.classList.contains('neck') && /^Neck and neck/.test(g.textContent); }, null, 12000, 'the gap pill pulses neck and neck');
+        await until(a, () => { const g = document.querySelector('.g-rush .rr-gap'); return g && g.classList.contains('neck') && /^Neck and neck/.test(g.textContent); }, null, 25000, 'the gap pill pulses neck and neck');
         await until(b, () => { const g = document.querySelector('.g-rush .rr-gap'); return g && g.classList.contains('neck'); }, null, 6000, 'and on the other phone');
         await rshot(a, 'neck');
         assert((await a.$eval('.g-rush .rr-gap span', (e) => { const r = e.getBoundingClientRect(); return r.height; })) > 14, 'the pill is readable');
-        await tele(b, 'b', 12);
-        await until(a, () => !document.querySelector('.g-rush .rr-gap').classList.contains('neck'), null, 8000, 'the pulse stops when they pull apart');
+        await tele(b, 'b', 30);
+        await until(a, () => !document.querySelector('.g-rush .rr-gap').classList.contains('neck'), null, 20000, 'the pulse stops when they pull apart');
         // districts: the next zone start (chunks 3, 7, 11… = 300 m + 400 m × n): a small tag pop and a chime
         for (const [pg, w] of [[a, 'a'], [b, 'b']]) {
           await pg.evaluate((x) => { const s = window.__rush.state()[x]; const nz = 300 + 400 * Math.ceil((s.z + 30 - 300) / 400); window.__rush.setZ(x, nz - 10); }, w);
@@ -1479,10 +1645,10 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         const pw = (pg, w, f) => pg.evaluate(([x, k]) => window.__rush.internals.players[x].r[k], [w, f]);
         // a magnet picked by Emerson runs on Sydney's phone for the same duration; so do sneakers and a doubler
         await a.evaluate(() => { window.__rush.give('a', 'magnet'); window.__rush.emit('a', 'pick', 1000000); });
+        await until(a, () => [...document.querySelectorAll('.g-rush .rr-pop small')].some((e) => /shared with Sydney/.test(e.textContent)), null, 6000, 'the picker is told it was shared');
         await until(b, () => window.__rush.internals.players.b.r.magnetT > 6, null, 6000, 'Sydney gets Emerson’s magnet');
         await waitPop(b, /^b:Emerson shared a MAGNET$/);
         await popShot(b, /shared a MAGNET/, 'share-magnet');
-        assert(/shared with Sydney/.test(await a.evaluate(() => [...document.querySelectorAll('.g-rush .rr-pop small')].map((e) => e.textContent).join('|'))), 'the picker is told it was shared');
         await a.evaluate(() => { window.__rush.give('a', 'sneakers'); window.__rush.emit('a', 'pick', 2000000); });
         await until(b, () => window.__rush.internals.players.b.r.sneakersT > 6, null, 6000, 'Sydney gets Emerson’s sneakers');
         await a.evaluate(() => { window.__rush.give('a', 'double'); window.__rush.emit('a', 'pick', 7000000); });

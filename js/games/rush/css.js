@@ -361,11 +361,19 @@ export const CSS = `
 .g-rush .rr-lnote-t span { font-weight: 900; font-size: 17px; line-height: 1.2; overflow-wrap: anywhere; }
 @keyframes rr-lnote { 0% { opacity: 0; transform: translate(-50%, 16px) scale(.8) rotate(-3deg); } 9% { opacity: 1; transform: translate(-50%, 0) scale(1.05) rotate(-1.5deg); } 15% { transform: translate(-50%, 0) scale(1) rotate(-1.5deg); } 88% { opacity: 1; transform: translate(-50%, 0) rotate(-1.5deg); } 100% { opacity: 0; transform: translate(-50%, -12px) rotate(-1.5deg); } }
 .g-rush.rr-short .rr-lnote { top: 24%; }
+/* landscape phone: the lobby sheet is already full, so the dares and notes move to the free column under the logo */
+.g-rush.rr-short .rr-ov-lobby > .rr-head { align-self: start; }
+.g-rush.rr-short .rr-xtra { position: absolute; z-index: 2; left: max(14px, env(safe-area-inset-left, 0px)); bottom: max(12px, env(safe-area-inset-bottom, 0px)); width: calc(38% - 20px); gap: 6px; }
+.g-rush.rr-short .rr-dares { padding: 5px 8px 4px; }
+.g-rush.rr-short .rr-dares-h b { font-size: 13px; }
+.g-rush.rr-short .rr-dares-who { display: none; }
+.g-rush.rr-short .rr-dares-l { margin-top: 2px; gap: 0; }
+.g-rush.rr-short .rr-dares-l li { min-height: 20px; font-size: 12px; }
+.g-rush.rr-short .rr-dares-f { display: none; }
 .g-rush.rr-short .rr-daily-t .rr-modt, .g-rush.rr-short .rr-note-tx small { display: none; }
 .g-rush.rr-short .rr-note-chip { min-height: 44px; padding: 2px 10px; }
-.g-rush.rr-short .rr-dares-l { margin-top: 2px; gap: 0; }
-.g-rush.rr-short .rr-dares-l li { min-height: 18px; }
-.g-rush.rr-short .rr-ov-lobby .rr-sheet > .rr-row { position: sticky; bottom: -8px; z-index: 2; padding: 4px 0 2px; background: var(--g-card); } /* Start stays in reach while the rest scrolls */
+.g-rush.rr-short .rr-note-in { font-size: 16px; }
+@media (max-height: 340px) { .g-rush.rr-short .rr-ov-lobby .rr-tagline { display: none; } }
 /* a short portrait phone (SE class): the dares and note still fit above Start */
 @media (max-height: 760px) and (orientation: portrait) {
   .g-rush .rr-ov-lobby .rr-tagline { display: none; }
@@ -379,10 +387,6 @@ export const CSS = `
   .g-rush .rr-note-tx small { display: none; }
   .g-rush .rr-note-chip { min-height: 44px; }
 }
-.g-rush.rr-short .rr-xtra { gap: 6px; }
-.g-rush.rr-short .rr-dares { padding: 5px 8px 4px; }
-.g-rush.rr-short .rr-dares-l li { min-height: 20px; font-size: 12px; }
-.g-rush.rr-short .rr-dares-f { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .g-rush .rr-lnote.on, .g-rush .rr-weapon.full, .g-rush .rr-runner-ico, .g-rush .rr-warn, .g-rush .rr-coins.bump, .g-rush .rr-coins.bump2, .g-rush .rr-gap.hot span, .g-rush .rr-gap.neck span, .g-rush .rr-hearts.last, .g-rush .rr-hearts.last .rr-heart { animation: none; }
 }

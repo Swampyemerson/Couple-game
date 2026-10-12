@@ -3,8 +3,8 @@
 // pooled oncoming trains, skyline and street. `syncView(view)` lays out the per-runner things
 // (collected coins, smashed barriers, oncoming train positions) right before rendering a view.
 import { rng } from '../core.js';
-import { CHUNK, LANE_W, CAR, ROOF, LOW_H, HIGH_B, HIGH_T } from './tune.js';
-import { O_LOW, O_HIGH, O_TRAIN, O_RAMP, O_MTRAIN, O_BLOCK, I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX, I_REVIVE, I_NOTE, I_DOUBLE, mtrainFront, districtSeq, districtIn } from './track.js';
+import { CHUNK, LANE_W, CAR, ROOF, LOW_H, HIGH_B, HIGH_T, BARREL_D, BARREL_LEAD } from './tune.js';
+import { O_LOW, O_HIGH, O_TRAIN, O_RAMP, O_MTRAIN, O_BLOCK, O_BARREL, I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX, I_REVIVE, I_NOTE, I_DOUBLE, mtrainFront, barrelFront, districtSeq, districtIn } from './track.js';
 import { GeoBuf, makeToon, makeUniforms, applyPaletteUniforms, makeTemplates, blobTexture, mix, FX_PLAIN, FX_GLOW, FX_SKY } from './gfx.js';
 import { makeBio, bioGate, bioScenery, bx, qz, qx, qu, stripes, windows } from './bio.js';
 
@@ -27,6 +27,8 @@ const POOL = 9;
 const COIN_MAX = 300;
 const ITEM_MAX = 16;
 const BAR_MAX = 40;
+const BARREL_MAX = 8;      // rolling barrels on screen at once
+const BARREL_R = BARREL_D / 2;
 const VIEW_AHEAD = 175;
 const COIN_AHEAD = 132;   // coins further out are lost in the fog anyway
 const COIN_LOD = 36;      // coins further than this ahead of the runner draw as a cheap 6-sided token (48 triangles instead of 156)
@@ -190,6 +192,15 @@ export function createWorld(THREE, P) {
     b.boxMM(-1.2, 1.1, -0.4, 1.2, 1.25, 0.4, P.white, FX_PLAIN, 0.05, ink, T);
     b.boxMM(-0.25, 1.25, -0.1, 0.25, 1.6, 0.1, P.hl, FX_GLOW, 0.04, ink, T);
   });
+  // Rolling barrel (track v2): a red drum on its side (axis x), yellow hoops, pale staves that make the roll
+  // readable; ink outline like the other instanced obstacles. One InstancedMesh on the barrier program.
+  const barrelGeo = freezeWith((b) => {
+    const R = BARREL_D;
+    b.add(T.discX, 0, 0, 0, 1.7, R, R, 0, P.bad, FX_PLAIN, 0.04, ink);
+    for (const sx of [-1, 1]) b.add(T.discX, sx * 0.62, 0, 0, 0.2, R * 1.07, R * 1.07, 0, P.hl, FX_PLAIN, 0.03, ink);
+    b.add(T.staves, 0, 0, 0, 1.5, R * 1.03, R * 1.03, 0, P.white, FX_PLAIN, 0, ink);
+  });
+  const barrels = inst(barrelGeo, BARREL_MAX, matBar);
   const lows = inst(lowGeo, BAR_MAX, matBar);
   const highs = inst(highGeo, BAR_MAX, matBar);
   const blocks = inst(blockGeo, 8, matInstC);
@@ -463,8 +474,8 @@ export function createWorld(THREE, P) {
     let nc = 0;
     const ic = itemCount;
     ic.fill(0);
-    let nl = 0; let nh = 0; let nm = 0;
-    const la = lows.instanceMatrix.array; const ha = highs.instanceMatrix.array;
+    let nl = 0; let nh = 0; let nm = 0; let nbr = 0;
+    const la = lows.instanceMatrix.array; const ha = highs.instanceMatrix.array; const bra = barrels.instanceMatrix.array;
     for (let ci = c0; ci <= c1; ci++) {
       const c = track.chunk(ci);
       const base = ci * 1000;
@@ -500,6 +511,14 @@ export function createWorld(THREE, P) {
           if (r && r.smashN && r.smashed.has(o.id)) continue;
           if (o.t === O_LOW) { if (nl < BAR_MAX) { WM[0] = o.lane * LANE_W; WM[1] = 0; WM[2] = -(o.z0 + 0.25); WM[3] = 1; WM[4] = 0; WM[5] = 0; writeM(la, nl++); } }
           else if (nh < BAR_MAX) { WM[0] = o.lane * LANE_W; WM[1] = 0; WM[2] = -(o.z0 + 0.2); WM[3] = 1; WM[4] = 0; WM[5] = 0; writeM(ha, nh++); }
+        } else if (o.t === O_BARREL) {
+          // rolls toward you, deterministic in runner space like an oncoming train: it shows up BARREL_LEAD m before the
+          // meeting point (grows in over 5 m), spins by distance rolled, and is gone once it is behind the camera
+          const lead = o.zm - z;
+          if (nbr >= BARREL_MAX || lead > BARREL_LEAD || (r && r.smashN && r.smashed.has(o.id))) continue;
+          const f = barrelFront(o, z) + BARREL_R;
+          if (f < z - 12) continue;
+          WM[0] = o.lane * LANE_W; WM[1] = BARREL_R; WM[2] = -f; WM[3] = lead > BARREL_LEAD - 5 ? (BARREL_LEAD - lead) / 5 + 0.05 : 1; WM[4] = 0; WM[5] = -f / BARREL_R; writeM(bra, nbr++);
         } else if (o.t === O_MTRAIN && nm < mtrains.length) {
           const f = mtrainFront(o, z);
           const m = mtrains[nm++];
@@ -538,6 +557,7 @@ export function createWorld(THREE, P) {
     for (let k = 1; k <= 7; k++) { items[k].count = ic[k]; items[k].instanceMatrix.needsUpdate = true; }
     lows.count = nl; lows.instanceMatrix.needsUpdate = true;
     highs.count = nh; highs.instanceMatrix.needsUpdate = true;
+    barrels.count = nbr; barrels.instanceMatrix.needsUpdate = true;
   }
 
   /** Blob shadows: list of [x, groundY, z, size, strength]. */
@@ -602,10 +622,10 @@ export function createWorld(THREE, P) {
     chunkCount: () => byChunk.size,
     stats,
     /** Everything that can be drawn, for shader warm-up. */
-    warmList: () => [coins, coinsFar, lows, highs, blocks, gates, marks, shadows, street, skyline, dome, ...Object.values(items), mtrains[0], pool[0].mesh, ...banners, markMesh[0]],
+    warmList: () => [coins, coinsFar, lows, highs, barrels, blocks, gates, marks, shadows, street, skyline, dome, ...Object.values(items), mtrains[0], pool[0].mesh, ...banners, markMesh[0]],
     dispose() {
       for (const d of disposables) { try { d.dispose(); } catch { /* ignore */ } }
-      for (const m of [coins, coinsFar, lows, highs, blocks, gates, marks, ...Object.values(items)]) { try { m.dispose(); } catch { /* ignore */ } }
+      for (const m of [coins, coinsFar, lows, highs, barrels, blocks, gates, marks, ...Object.values(items)]) { try { m.dispose(); } catch { /* ignore */ } }
       try { shadows.dispose(); } catch { /* ignore */ }
       scene.clear();
     },

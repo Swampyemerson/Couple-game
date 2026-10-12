@@ -39,6 +39,10 @@ export const RAMP_L = 10;             // ramp length
 export const MT_K = 0.55;             // oncoming train speed as a fraction of yours
 export const MT_LEAD = 40;            // oncoming train starts moving when you're this far from the meeting point
 export const GAP_L = 4;               // broken-bridge gap length
+export const BARREL_K = 0.35;         // rolling barrel speed as a fraction of yours (track v2); like an oncoming train it is deterministic in runner space
+export const BARREL_LEAD = 45;        // a barrel starts rolling when you are this far (in your z) from where it meets you
+export const BARREL_D = 0.9;          // barrel diameter = height (m): under LOW_H, a normal jump clears it
+export const BARREL_HW = 0.95;        // barrel half length across the lane (m)
 
 export const STUMBLE_T = 0.9;
 export const CRASH_T = 1.6;           // time down before respawn
