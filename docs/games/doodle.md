@@ -76,6 +76,8 @@ tier), `everything`. New decks live in `doodle/packs.js`; their order is frozen 
 matches): add a new deck at the END of `NEW_DECKS`, never edit or grow an existing tier. The test checks that
 no card shares a word with another card and that nothing fuzzy-matches another card.
 
+**Not built**: Encore (a 7th, unscored round where both draw the same Us prompt at once). It would change when every v2 match ends, so it is left as a follow-up.
+
 ## Records, rivalry, rotation
 
 Shared flat doc via `api.data / setData / onData` (turn games do not get these from the engine yet, so

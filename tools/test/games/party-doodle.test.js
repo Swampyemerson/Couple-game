@@ -961,6 +961,7 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
     assert(/Time/i.test(await b.textContent('.dd-stamp')) && /ran out of time/i.test(await b.textContent('.dd-note')), 'the next drawer sees that the round timed out');
     await closeGame(b);
     // v1: a drawing in progress at 0:00 locks and is sent; an empty paper gets the nudge and one short grace
+    await b.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('ju.doodle.draft.')).forEach((k) => localStorage.removeItem(k)));
     await openSeed(b, 'v1mid');
     await b.waitForSelector('.dd-next'); await b.tap('.dd-next'); await b.waitForSelector('.dd-pick');
     await b.clock.install();
