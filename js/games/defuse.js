@@ -15,10 +15,10 @@
 // input to the slot that owns it, gives each a host (strike / solve / clock / busy) and judges nothing itself.
 import { registerGame } from './core.js';
 import { CSS } from './defuse/css.js';
-import { REGISTRY, BY_ID, TIERS, TIER_ORDER, tierOf, buildRound, isScored, SURGE_SECS, BLACKOUT, GOLD_BONUS } from './defuse/round.js';
+import { REGISTRY, BY_ID, TIERS, TIER_ORDER, tierOf, buildRound, isScored, SURGE_SECS, BLACKOUT, GOLD_BONUS, HUSH_SECS } from './defuse/round.js';
 import { ctxOf, esc, fmt, cap } from './defuse/util.js';
 import { tabsOf, guideHTML } from './defuse/manual.js';
-import { readRecords, applyResult, dailyOf, dailySeed, dayKey, sameHolder, coupleLine, nextMedalHint, MEDAL_NAME } from './defuse/records.js';
+import { readRecords, applyResult, dailyOf, dailySeed, dayKey, sameHolder, parOf, suggestTier, coupleLine, nextMedalHint, MEDAL_NAME } from './defuse/records.js';
 
 const FINALE_MS = 1800;
 const RATE_STEP = 0.25;
@@ -29,18 +29,19 @@ const ENDED = new Set();
 // remembered between rematches on this device; the small bits also survive a page reload (sessionStorage)
 // saved: a bomb round in progress when this device closed the game, so reopening it resumes
 const SS_KEY = 'ju.defuse.memo.v2';
-const memo = { role: null, diff: 'normal', td: false, page: 'basics', drawer: null, saved: null };
+const memo = { role: null, diff: 'normal', td: false, pc: false, page: 'basics', drawer: null, saved: null };
 try {
   const o = JSON.parse(sessionStorage.getItem(SS_KEY) || 'null');
   if (o && typeof o === 'object') {
     if (o.role === 'bomb' || o.role === 'manual') memo.role = o.role;
     if (tierOf(o.diff)) memo.diff = o.diff;
     memo.td = !!o.td;
+    memo.pc = !!o.pc;
     if (typeof o.page === 'string') memo.page = o.page.slice(0, 20);
     if (typeof o.drawer === 'boolean') memo.drawer = o.drawer;
   }
 } catch { /* no storage */ }
-const keep = () => { try { sessionStorage.setItem(SS_KEY, JSON.stringify({ role: memo.role, diff: memo.diff, td: memo.td, page: memo.page, drawer: memo.drawer })); } catch { /* ignore */ } };
+const keep = () => { try { sessionStorage.setItem(SS_KEY, JSON.stringify({ role: memo.role, diff: memo.diff, td: memo.td, pc: memo.pc, page: memo.page, drawer: memo.drawer })); } catch { /* ignore */ } };
 
 const ICON_BOMB = '<svg viewBox="0 0 64 64" aria-hidden="true"><rect x="8" y="18" width="48" height="36" rx="8" class="f-card"/><rect x="15" y="25" width="22" height="11" rx="2" class="f-lcd"/><path d="M19 30.5h3M25 30.5h3M31 30.5h2" class="s-hl"/><circle cx="46" cy="30.5" r="5" class="f-bad"/><path d="M15 43c6 5 12-5 18 0s12-5 16 0" class="s-wire"/><path d="M32 18c0-6 4-9 9-9s7 3 8 0" class="s-ink"/><path d="M50 4l1.5 4M54 6l-3 3M55 11l-4-1" class="s-ink"/></svg>';
 const ICON_BOOK = '<svg viewBox="0 0 64 64" aria-hidden="true"><path d="M32 16c-7-5-15-6-24-5v38c9-1 17 0 24 5c7-5 15-6 24-5V11c-9-1-17 0-24 5z" class="f-card"/><path d="M32 16v38" class="s-ink"/><path d="M14 20c4-.5 8 0 12 2M14 27c4-.5 8 0 12 2M14 34c4-.5 8 0 12 2M38 22c4-2 8-2.5 12-2M38 29c4-2 8-2.5 12-2" class="s-muted"/><rect x="38" y="35" width="12" height="10" rx="2" class="f-hl"/></svg>';
@@ -97,7 +98,7 @@ registerGame({
     let raf = 0;
 
     // lobby state (mine), the partner's comes from presence
-    const L = { role: memo.role, diff: tierOf(memo.diff) ? memo.diff : 'normal', td: !!memo.td, dv: 0, dw: me, go: null, sw: null };
+    const L = { role: memo.role, diff: tierOf(memo.diff) ? memo.diff : 'normal', td: !!memo.td, pc: !!memo.pc, dv: 0, dw: me, go: null, sw: null };
     const P = () => { const s = api.partnerState(); return s && s.v === 2 ? s : null; };
     const seenGo = new Set();
     const seenSwap = new Set();
@@ -118,9 +119,9 @@ registerGame({
     const svOf = () => B.round.slots.map((s, i) => (s.decoy ? 'd' : BY_ID[s.id].needy ? 'n' : B.solved[i] ? '1' : '0')).join('');
     const rate = () => (B ? (B.round.twistRules.tax ? 1 : 1 + RATE_STEP * B.strikes) * (B.surge.left > 0 ? 2 : 1) : 1);
     function pub() {
-      const o = { v: 2, role: L.role, diff: L.diff, td: L.td ? 1 : 0, dv: L.dv, dw: L.dw, go: L.go, sw: L.sw, ph: phase === 'bomb' ? (B.over ? 'over' : 'play') : phase === 'manual' ? 'reading' : 'lobby', hid: document.hidden ? 1 : 0 };
+      const o = { v: 2, role: L.role, diff: L.diff, td: L.td ? 1 : 0, pc: L.pc ? 1 : 0, dv: L.dv, dw: L.dw, go: L.go, sw: L.sw, ph: phase === 'bomb' ? (B.over ? 'over' : 'play') : phase === 'manual' ? 'reading' : 'lobby', hid: document.hidden ? 1 : 0 };
       if (phase === 'bomb') {
-        Object.assign(o, { n: B.n, sd: B.seed, rd: B.tier, left: Math.round(B.left), rate: +rate().toFixed(3), st: B.strikes, sv: svOf(), sg: Math.ceil(B.surge.left / 1000), bo: B.dark.phase, vn: B.vent ? 1 : 0, pz: B.pz ? 1 : 0, pr: B.pr, res: B.res, win: B.win ? 1 : 0, fx: B.fx });
+        Object.assign(o, { n: B.n, sd: B.seed, rd: B.tier, left: Math.round(B.left), rate: +rate().toFixed(3), st: B.strikes, sv: svOf(), sg: Math.ceil(B.surge.left / 1000), hs: Math.ceil(B.hush.left / 1000), bo: B.dark.phase, vn: B.vent ? 1 : 0, pz: B.pz ? 1 : 0, pr: B.pr, res: B.res, win: B.win ? 1 : 0, fx: B.fx });
         if (B.relay) o.rs = B.relay.live;
       }
       if (phase === 'manual') { o.n = M.n; if (M.ra.length) o.ra = M.ra; }
@@ -128,7 +129,7 @@ registerGame({
     }
     function adoptDiff(s) {
       if (!s || !tierOf(s.diff) || !Number.isFinite(s.dv)) return false;
-      if (s.dv > L.dv || (s.dv === L.dv && String(s.dw) > String(L.dw))) { L.diff = s.diff; L.td = !!s.td; L.dv = s.dv; L.dw = s.dw; memo.diff = s.diff; memo.td = L.td; keep(); return true; }
+      if (s.dv > L.dv || (s.dv === L.dv && String(s.dw) > String(L.dw))) { L.diff = s.diff; L.td = !!s.td; L.pc = !!s.pc; L.dv = s.dv; L.dw = s.dw; memo.diff = s.diff; memo.td = L.td; memo.pc = L.pc; keep(); return true; }
       return false;
     }
 
@@ -150,9 +151,12 @@ registerGame({
         <p class="dx-hint"><i aria-hidden="true"></i>Bomb works best on a computer, Manual on a phone.</p>
         <div class="dx-tiers" role="radiogroup" aria-label="Difficulty">${TIER_ORDER.map((k) => `<button type="button" role="radio" aria-checked="false" data-diff="${k}"><b>${TIERS[k].label}</b><span class="c">${clockOf(k)}</span><span class="dx-pips" aria-hidden="true"><i></i><i></i><i></i></span></button>`).join('')}</div>
         <p class="dx-tierinfo"></p>
+        <p class="dx-par" hidden></p>
         <button type="button" class="dx-today" role="switch" aria-checked="false" data-act="today"><i aria-hidden="true"></i><span>Today’s bomb: the same bomb for both of you, today only</span></button>
+        <button type="button" class="dx-today dx-parclock" role="switch" aria-checked="false" aria-disabled="true" disabled data-act="parclock"><i aria-hidden="true"></i><span>Par clock: your own average plus 20 s, instead of the full clock</span></button>
         <div class="dx-rec"></div>
         <p class="dx-nudge" hidden></p>
+        <p class="dx-nudge dx-suggest" hidden></p>
         <p class="dx-lobby-status" aria-live="polite"></p>
         <div class="dx-lobby-actions"><button type="button" class="gm-btn gm-btn-ghost" data-act="swap">Swap roles</button><button type="button" class="gm-btn" data-act="start">Start</button></div>
       </section>`;
@@ -189,6 +193,13 @@ registerGame({
       }
       const sw = $('[data-act="swap"]');
       if (sw) sw.classList.toggle('is-nudged', !!h);
+      const par = parOf(D(), k);
+      const pe = $('.dx-par');
+      if (pe) { pe.hidden = !par; pe.textContent = par ? `Par ${clock(par.secs)}` : ''; }
+      const pcb = $('[data-act="parclock"]');
+      if (pcb) { pcb.disabled = !par; pcb.setAttribute('aria-disabled', String(!par)); pcb.setAttribute('aria-checked', String(!!par && L.pc)); }
+      const sg = $('.dx-suggest');
+      if (sg) { const t = suggestTier(r, k); sg.hidden = !t; sg.textContent = t ? t.text : ''; }
       for (const b of $$('.dx-tiers button')) {
         const m = r.medal[b.dataset.diff] | 0;
         b.querySelectorAll('.dx-pips i').forEach((p, i) => p.classList.toggle('on', i < m));
@@ -214,7 +225,7 @@ registerGame({
       const T = TIERS[L.diff];
       const info = $('.dx-tierinfo');
       if (info) info.textContent = `${T.label} · ${clockOf(L.diff)} · ${T.blurb}`;
-      const td = $('.dx-today');
+      const td = $('[data-act="today"]');
       if (td) td.setAttribute('aria-checked', String(L.td));
       updateRec();
       const ready = L.role && theirs && L.role !== theirs && here;
@@ -231,14 +242,15 @@ registerGame({
     function lobbyClick(e) {
       const role = e.target.closest('.dx-role');
       if (role) { L.role = role.dataset.role; memo.role = L.role; keep(); L.go = null; api.sfx('tap'); pub(); updateLobby(); return; }
-      const bump = (diff, td) => {
+      const bump = (diff, td, pc) => {
         const s = P();
-        L.dv = Math.max(L.dv, (s && s.dv) || 0) + 1; L.dw = me; L.diff = diff; L.td = td; memo.diff = diff; memo.td = td; keep();
+        L.dv = Math.max(L.dv, (s && s.dv) || 0) + 1; L.dw = me; L.diff = diff; L.td = td; L.pc = pc; memo.diff = diff; memo.td = td; memo.pc = pc; keep();
         api.sfx('tap'); pub(); updateLobby();
       };
       const d = e.target.closest('[data-diff]');
-      if (d) { bump(d.dataset.diff, L.td); return; }
-      if (e.target.closest('[data-act="today"]')) { bump(L.diff, !L.td); return; }
+      if (d) { bump(d.dataset.diff, L.td, L.pc); return; }
+      if (e.target.closest('[data-act="today"]')) { bump(L.diff, !L.td, L.pc); return; }
+      if (e.target.closest('[data-act="parclock"]')) { if (parOf(D(), L.diff)) bump(L.diff, L.td, !L.pc); return; }
       const act = e.target.closest('[data-act]');
       if (!act || act.disabled) return;
       const s = P();
@@ -262,13 +274,14 @@ registerGame({
     }
 
     // ── the bomb side ─────────────────────────────────────────────────────
-    function newBomb(seed, tier, daily) {
+    function newBomb(seed, tier, daily, startSecs) {
       const round = buildRound(seed, tier);
+      const start = startSecs > 0 ? Math.min(startSecs, round.T.secs) : round.T.secs;
       const k = round.slots.length;
       return {
-        n: token(), seed, tier: round.tier, daily, round, left: round.T.secs * 1000, strikes: 0,
+        n: token(), seed, tier: round.tier, daily, round, start, pc: start < round.T.secs, left: start * 1000, strikes: 0,
         solved: Array(k).fill(0), slotStrikes: Array(k).fill(0), ctl: Array(k).fill(null), host: [],
-        surge: { left: 0, fired: [] }, dark: { phase: 0, left: 0, fired: [] }, vent: false, ventAt: 0,
+        surge: { left: 0, fired: [] }, dark: { phase: 0, left: 0, fired: [] }, hush: { left: 0, fired: 0 }, vent: false, ventAt: 0,
         relay: null, pz: wantPause(), pr: pauseWhy(), over: false, win: false, res: null, fx: null, recorded: false, shownSecs: -1,
         decoyAt: -1e9, note: null, active: null, ventSlot: round.slots.findIndex((s) => BY_ID[s.id].needy), info: null,
       };
@@ -277,7 +290,12 @@ registerGame({
     function begin() {
       const date = L.td ? dayKey(Date.now()) : null;
       lobbySince = 0; partnerLobby = false;
-      B = newBomb(forced || (date ? dailySeed(date) : token()), L.diff, date);
+      const par = L.pc ? parOf(D(), L.diff) : null; // Par clock: the couple's own average plus 20 s, never more than the tier's clock
+      B = newBomb(forced || (date ? dailySeed(date) : token()), L.diff, date, par ? par.secs + 20 : 0);
+      if (B.pc) { // events scheduled before the shortened clock even starts never fire
+        const X = B.round.twistRules;
+        for (const key of ['surge', 'blackout']) if (X[key]) X[key].at.forEach((a, k) => { if (a > B.start) (key === 'surge' ? B.surge : B.dark).fired[k] = 1; });
+      }
       forced = null;
       memo.saved = null;
       phase = 'bomb';
@@ -292,7 +310,7 @@ registerGame({
       const gold = B.round.gold === i;
       return `<section class="dx-mod${gold ? ' is-gold' : ''}${p.needy ? ' is-needy' : ''}${p.remote ? ' is-remote' : ''}" data-mod="${s.id}" data-slot="${i}" aria-label="${esc(p.name)}"><header class="dx-mod-head"><span class="dx-mod-tag">${i + 1} · ${esc(p.name)}</span><span class="dx-mod-end">${gold ? '<span class="dx-goldtag">GOLD</span>' : ''}${s.plate ? `<span class="dx-plate" data-plate="${s.plate}" aria-label="Plate number ${s.plate}">${s.plate}</span>` : ''}<i class="dx-led" aria-hidden="true"></i></span></header><div class="dx-mod-body"></div></section>`;
     }
-    const flagsHTML = (extra) => `<div class="dx-flags"><span class="dx-flag is-pulse" data-flag="surge" hidden></span><span class="dx-flag is-pulse" data-flag="dark" hidden></span><span class="dx-flag is-pulse" data-flag="vent" hidden>VENT</span>${extra || ''}</div>`;
+    const flagsHTML = (extra) => `<div class="dx-flags"><span class="dx-flag is-pulse" data-flag="surge" hidden></span><span class="dx-flag is-pulse" data-flag="dark" hidden></span><span class="dx-flag is-pulse" data-flag="vent" hidden>VENT</span><span class="dx-flag" data-flag="hush" hidden></span>${extra || ''}</div>`;
     const strikesHTML = '<div class="dx-strikes" aria-label="Strikes: 0 of 3"><i></i><i></i><i></i></div>';
     /** A fresh screen starts at the top: the lobby's Start button sits below the fold on a phone, and the tap that pressed it scrolled the page. */
     function toTop() {
@@ -374,6 +392,7 @@ registerGame({
       set('surge', `SURGE x2 · ${sg}s`, sg > 0);
       set('dark', B.dark.phase === 1 ? 'GOING DARK' : 'BLACKOUT', B.dark.phase > 0);
       set('vent', null, B.vent);
+      set('hush', `HUSH · ${Math.ceil(B.hush.left / 1000)}s`, B.hush.left > 0);
       $$('.dx-surgetxt').forEach((t) => { t.textContent = B.note && B.note.until > performance.now() ? B.note.text : sg > 0 ? `x2 · ${sg}s` : ''; });
       $$('.dx-time').forEach((t) => t.classList.toggle('is-surge', sg > 0));
       const mods = $('.dx-mods');
@@ -452,7 +471,7 @@ registerGame({
     function endRound(win, res, fx) {
       memo.saved = null;
       B.over = true; B.win = win; B.res = res; B.fx = fx || null; B.active = null; B.vent = false;
-      B.surge.left = 0; B.dark.phase = 0;
+      B.surge.left = 0; B.dark.phase = 0; B.hush.left = 0;
       ENDED.add(B.n);
       api.sfx(win ? 'win' : 'hit'); api.haptic(win ? 30 : 220);
       finale(win ? 'win' : 'boom', res, fx);
@@ -466,13 +485,14 @@ registerGame({
       if (B.recorded) return null;
       B.recorded = true;
       const solved = B.round.slots.filter((s, i) => B.solved[i] && isScored(s)).map((s) => s.id);
-      const out = applyResult(D(), { tier: B.tier, T: B.round.T, win, secs, strikes: B.strikes, holder: me, reader: them, solved, name: B.round.name, daily: B.daily, at: Date.now() });
+      const out = applyResult(D(), { tier: B.tier, T: B.round.T, start: B.start, win, secs, strikes: B.strikes, holder: me, reader: them, solved, name: B.round.name, daily: B.daily, at: Date.now() });
       try { if (typeof api.setData === 'function') api.setData(out.patch); } catch (e) { console.error(e); }
       return out.info;
     }
     function win() {
       const secs = Math.max(0, Math.ceil(B.left / 1000));
       const T = B.round.T;
+      const par = parOf(D(), B.tier);
       const info = record(true, secs) || {};
       const flavour = B.strikes === 0 && secs > T.secs / 2 ? 'Not a single strike. Suspiciously smooth.'
         : B.strikes === 0 ? 'Clean hands, zero strikes.'
@@ -485,6 +505,7 @@ registerGame({
       if (info.medalUp) bits.push(`${MEDAL_NAME[info.medal]} medal earned.`);
       const hint = nextMedalHint(info.medal || 0);
       if (hint) bits.push(hint);
+      if (par) { const gap = par.secs - Math.max(0, B.start - secs); bits.push(gap > 0 ? `Under par by ${gap} s.` : gap < 0 ? `Over par by ${-gap} s.` : 'Right on par.'); }
       const tag = `${T.label} · ${B.round.edition}${B.daily ? ' · Today’s bomb' : ''}`;
       const fx = { ln: B.strikes === 0 ? coupleLine(B.n + B.seed) : '', md: info.medal || 0 };
       endRound(true, { team: true, score: secs, text: `Defused with ${fmt(B.left)} left`, sub: `${bits.join(' ')} (${tag})` }, fx);
@@ -500,6 +521,7 @@ registerGame({
     }
     function startEvent(kind) {
       if (kind === 'surge') { B.surge.left = SURGE_SECS * 1000; api.sfx('pop'); }
+      else if (kind === 'hush') { B.hush.left = HUSH_SECS * 1000; B.hush.fired = 1; api.sfx('tick'); }
       else { B.dark.phase = 1; B.dark.left = BLACKOUT.warn * 1000; api.sfx('tick'); cancelActive(); }
       paintFlags();
       pub();
@@ -513,11 +535,17 @@ registerGame({
           paintFlags(); pub();
         }
       }
-      if (B.surge.left > 0 || B.dark.phase || B.left < 30000) return; // never overlapping, never in the last 30 s
+      if (B.hush.left > 0) { // the manual is blank; the bomb stays fully live
+        const was = Math.ceil(B.hush.left / 1000);
+        B.hush.left -= dt;
+        if (B.hush.left <= 0) { B.hush.left = 0; paintFlags(); pub(); } else if (Math.ceil(B.hush.left / 1000) !== was) { paintFlags(); pub(); }
+      }
+      if (B.surge.left > 0 || B.dark.phase || B.hush.left > 0 || B.left < 30000) return; // never overlapping, never in the last 30 s
       const X = B.round.twistRules;
       const secs = B.left / 1000;
       if (X.surge) for (let k = 0; k < X.surge.at.length; k++) if (!B.surge.fired[k] && secs <= X.surge.at[k]) { B.surge.fired[k] = 1; startEvent('surge'); return; }
       if (X.blackout) for (let k = 0; k < X.blackout.at.length; k++) if (!B.dark.fired[k] && secs <= X.blackout.at[k]) { B.dark.fired[k] = 1; startEvent('blackout'); return; }
+      if (X.hush && !B.hush.fired && secs <= X.hush.at) startEvent('hush');
     }
     function cancelActive() {
       if (!B || B.active == null) return;
@@ -616,7 +644,7 @@ registerGame({
         </div>
         <div class="dx-mbody">
           <nav class="dx-index" role="tablist" aria-label="Field guide sections">${tabs.map(tab).join('')}</nav>
-          <article class="dx-page">${guideHTML(g)}</article>
+          <article class="dx-page">${guideHTML(g)}<div class="dx-hush" role="status" hidden><b>HUSH</b><span class="dx-hush-t"></span><em>Talk it through</em></div></article>
         </div>
         ${hasRelay ? '<div class="dx-drawer" data-drawer><button type="button" class="dx-drawer-head" data-act="drawer" aria-expanded="false"><span>Relay box</span><small>Tap to open or close</small></button><div class="dx-drawer-body"></div></div>' : ''}
       </div><div class="dx-fx"></div><div class="dx-pause" role="status" hidden><div><b>Paused</b><span></span></div></div>`;
@@ -625,7 +653,7 @@ registerGame({
       if (!s || typeof s.sd !== 'string' || !tierOf(s.rd)) return;
       phase = 'manual';
       const round = buildRound(s.sd, s.rd);
-      M = { n: s.n, round, left: s.left, rate: s.rate || 1, at: performance.now(), strikes: s.st | 0, solved: String(s.sv || ''), pz: !!s.pz, over: false, frozen: false, shown: '', ra: [], seq: 0, stamp: Date.now().toString(36), relay: null, sg: 0, bo: 0, vn: 0, rsKey: '' };
+      M = { n: s.n, round, left: s.left, rate: s.rate || 1, at: performance.now(), strikes: s.st | 0, solved: String(s.sv || ''), pz: !!s.pz, over: false, frozen: false, shown: '', ra: [], seq: 0, stamp: Date.now().toString(36), relay: null, sg: 0, hs: 0, bo: 0, vn: 0, rsKey: '' };
       root.className = 'g-defuse is-manual';
       root.innerHTML = manualHTML();
       toTop();
@@ -705,7 +733,12 @@ registerGame({
       if (sg && !M.sg) api.sfx('pop');
       if (vn && !M.vn) api.sfx('tick');
       if (bo && !M.bo) api.sfx('tick');
-      M.sg = sg; M.bo = bo; M.vn = vn;
+      const hs = Math.max(0, Math.min(HUSH_SECS, s.hs | 0));
+      if (hs && !M.hs) api.sfx('tick');
+      M.sg = sg; M.hs = hs; M.bo = bo; M.vn = vn;
+      const hw = $('.dx-manual-wrap'), hc = $('.dx-hush');
+      if (hw) hw.classList.toggle('is-hush', hs > 0);
+      if (hc) { hc.hidden = !(hs > 0); const ht = hc.querySelector('.dx-hush-t'); if (ht && hs > 0) ht.textContent = `${hs} s`; }
       const set = (name, text, on) => $$(`.dx-mbar [data-flag="${name}"]`).forEach((f) => { f.hidden = !on; if (on && text != null) f.textContent = text; });
       set('surge', `SURGE x2 · ${sg}s`, sg > 0);
       set('dark', bo === 1 ? 'GOING DARK' : 'BLACKOUT', bo > 0);
@@ -834,10 +867,11 @@ registerGame({
       if (!sv || !s || s.ph !== 'reading' || s.n !== sv.n || ENDED.has(sv.n) || Date.now() - sv.at > 30 * 60000) return false;
       memo.saved = null;
       lobbySince = 0; partnerLobby = false;
-      B = newBomb(sv.seed, sv.tier, sv.daily);
+      B = newBomb(sv.seed, sv.tier, sv.daily, sv.start);
       Object.assign(B, { n: sv.n, left: sv.left, strikes: sv.strikes, solved: sv.solved, slotStrikes: sv.slotStrikes });
       B.surge = { left: sv.surge.left, fired: sv.surge.fired };
       B.dark = { phase: 0, left: 0, fired: sv.dark.fired };
+      B.hush = { left: 0, fired: sv.hush ? 1 : 0 };
       L.role = 'bomb'; memo.role = 'bomb'; keep();
       phase = 'bomb';
       renderBomb(sv);
@@ -872,11 +906,11 @@ registerGame({
       info: () => ({
         phase, role: L.role, partnerRole: (P() || {}).role || null, diff: L.diff, tier: L.diff, today: L.td,
         bomb: B && {
-          n: B.n, seed: B.seed, tier: B.tier, diff: B.tier, daily: B.daily, left: B.left, strikes: B.strikes, solved: [...B.solved], over: B.over, win: B.win, res: B.res, fx: B.fx,
-          pz: B.pz, pr: B.pr, round: B.round, surge: B.surge.left, dark: B.dark.phase, vent: B.vent, relay: B.relay && B.relay.live, gold: B.round.gold, rate: rate(), slotStrikes: [...B.slotStrikes],
+          n: B.n, seed: B.seed, tier: B.tier, diff: B.tier, daily: B.daily, start: B.start, parClock: B.pc, left: B.left, strikes: B.strikes, solved: [...B.solved], over: B.over, win: B.win, res: B.res, fx: B.fx,
+          pz: B.pz, pr: B.pr, round: B.round, surge: B.surge.left, hush: B.hush.left, dark: B.dark.phase, vent: B.vent, relay: B.relay && B.relay.live, gold: B.round.gold, rate: rate(), slotStrikes: [...B.slotStrikes],
           slots: B.round.slots.map((s, i) => ({ id: s.id, plate: s.plate, decoy: s.decoy, solved: !!B.solved[i] })),
         },
-        manual: M && { n: M.n, strikes: M.strikes, solved: M.solved, over: M.over, shown: M.shown, tier: M.round.tier, seed: M.round.seed, sg: M.sg, bo: M.bo, vn: M.vn, relay: M.relay && M.relay.live, ra: M.ra },
+        manual: M && { n: M.n, strikes: M.strikes, solved: M.solved, over: M.over, shown: M.shown, tier: M.round.tier, seed: M.round.seed, sg: M.sg, hs: M.hs, bo: M.bo, vn: M.vn, relay: M.relay && M.relay.live, ra: M.ra },
       }),
       gen: (seed, tier) => buildRound(seed, tier || 'normal'),
       saveOf: (i) => (B && B.ctl[i] && B.ctl[i].save ? B.ctl[i].save() : null),
@@ -900,9 +934,9 @@ registerGame({
         alive = false;
         if (phase === 'bomb' && B && !B.over) {
           memo.saved = {
-            n: B.n, at: Date.now(), seed: B.seed, tier: B.tier, daily: B.daily, left: B.left, strikes: B.strikes, solved: [...B.solved], slotStrikes: [...B.slotStrikes],
+            n: B.n, at: Date.now(), seed: B.seed, tier: B.tier, daily: B.daily, start: B.start, left: B.left, strikes: B.strikes, solved: [...B.solved], slotStrikes: [...B.slotStrikes],
             slots: B.ctl.map((c) => { try { return c && c.save ? c.save() : null; } catch { return null; } }),
-            relay: B.relay ? { live: B.relay.live, seen: [...B.relay.seen] } : null, surge: { left: B.surge.left, fired: [...B.surge.fired] }, dark: { fired: [...B.dark.fired] },
+            relay: B.relay ? { live: B.relay.live, seen: [...B.relay.seen] } : null, surge: { left: B.surge.left, fired: [...B.surge.fired] }, dark: { fired: [...B.dark.fired] }, hush: B.hush.fired ? 1 : 0,
           };
         }
         cancelAnimationFrame(raf);

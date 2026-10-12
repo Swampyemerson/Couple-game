@@ -156,6 +156,27 @@ async function nodePart() {
   }
   assert(solved > 3000, `every module of every round has an answer (${solved} checked)`);
   assert(true, 'twists well-formed: decoy picks exactly one live twin, VOID differs from the serial, one slip per errata, surges and blackouts clear of the first and last 30 s and of each other, gold never on a twin');
+  // hush: its own stream, level 3 and up only, clear of surges and blackouts and of the first and last 30 s, listed in extras (never in twists)
+  {
+    let hushN = 0, hushRounds = 0;
+    for (const t of TKS) for (let i = 0; i < 300; i++) {
+      const r = buildRound('hu' + i, t);
+      const H = r.twistRules.hush;
+      if (r.twists.includes('hush') || !Array.isArray(r.extras) || r.extras.includes('hush') !== !!H) throw new Error(`FAIL: hush bookkeeping (${t} hu${i})`);
+      if (JSON.stringify(buildRound('hu' + i, t)) !== JSON.stringify(r)) throw new Error('FAIL: hush not deterministic');
+      if (t === 'spicy' || t === 'wild') hushRounds++;
+      if (!H) continue;
+      hushN++;
+      if (r.T.level < 3) throw new Error(`FAIL: hush below level 3 (${t} hu${i})`);
+      if (H.dur !== 8 || H.at > r.T.secs - 30 || H.at - 2 * H.dur < 30) throw new Error(`FAIL: hush at ${H.at} of ${r.T.secs} (${t} hu${i})`);
+      const X = r.twistRules;
+      for (const a of X.surge ? X.surge.at : []) if (!(H.at < a - 30 - 6 || H.at - 2 * H.dur > a + 6)) throw new Error(`FAIL: hush overlaps a surge (${t} hu${i}: ${H.at} vs ${a})`);
+      for (const a of X.blackout ? X.blackout.at : []) if (!(H.at < a - 12 - 6 || H.at - 2 * H.dur > a + 6)) throw new Error(`FAIL: hush overlaps a blackout (${t} hu${i}: ${H.at} vs ${a})`);
+      const page = MN.basicsHTML(r);
+      if (!/data-twist="hush"/.test(page) || !/Hush\./.test(page)) throw new Error('FAIL: basics page does not list hush');
+    }
+    assert(hushN > hushRounds * 0.3 && hushN < hushRounds * 0.7, `hush turns up in about half of the Expert and Bomb Squad rounds (${hushN} of ${hushRounds}), never below level 3, clear of surges, blackouts and the first and last 30 s`);
+  }
   const names = new Set(); for (let i = 0; i < 300; i++) names.add(nameOf('n' + i));
   assert(nameOf('abc') === nameOf('abc') && names.size > 250, `round names are seeded and varied (${names.size} of 300), e.g. ${nameOf('abc')}`);
   const ports = new Set(); for (let i = 0; i < 100; i++) { const r = buildRound('p' + i, 'normal'); r.E.ports.forEach((x) => ports.add(x)); if (!r.E.portPlate) throw new Error('FAIL: ports at level 2'); }
@@ -293,6 +314,37 @@ async function nodePart() {
   assert(RC.dayKey(Date.UTC(2026, 9, 12, 23, 59)) === '2026-10-12' && RC.dailySeed('2026-10-12') === 'day-2026-10-12', 'daily seed from the UTC date');
   assert(RC.COUPLE_LINES.length === 20 && RC.coupleLine('k') === RC.coupleLine('k') && RC.COUPLE_LINES.every((l) => !/[^\x20-\x7e’]/.test(l) || true), 'twenty couple lines, picked deterministically');
   assert(RC.nextMedalHint(0) && RC.nextMedalHint(1) && RC.nextMedalHint(2) && RC.nextMedalHint(3) === '', 'the end card names the next medal');
+  { // Personal par: seconds USED on wins, average from three wins, a tolerant read, and the tier nudges
+    let pd = {};
+    const win = (secs, extra = {}) => { const x = RC.applyResult(pd, { ...base, secs, ...extra }); pd = { ...pd, ...x.patch }; return x; };
+    win(200); win(180);
+    assert(pd.parN_normal === 2 && pd.parSum_normal === (T.secs - 200) + (T.secs - 180), `par: two wins give parN 2 and parSum ${pd.parSum_normal} (seconds used, not seconds left)`);
+    assert(RC.parOf(pd, 'normal') === null, 'par: null below three wins');
+    win(100);
+    const pr = RC.parOf(pd, 'normal');
+    assert(pr && pr.n === 3 && pr.secs === Math.round(((T.secs - 200) + (T.secs - 180) + (T.secs - 100)) / 3), `par: at three wins it is the average used (${pr && pr.secs} s)`);
+    assert(RC.parOf(pd, 'wild') === null && RC.parOf(pd, '__proto__') === null && RC.parOf(pd, 7) === null, 'par: another tier has none; odd tier names give null');
+    const boomed = RC.applyResult(pd, { ...base, win: false, secs: 0, strikes: 3 }).patch;
+    assert(!('parN_normal' in boomed) && !('parSum_normal' in boomed), 'par: a boom does not touch par');
+    const pcx = RC.applyResult({}, { ...base, secs: 100, start: 180 }).patch;
+    assert(pcx.parSum_normal === 80 && pcx.parN_normal === 1, 'par: on a par-clock round the seconds used count from the clock it started with (180 - 100 = 80)');
+    assert(RC.applyResult({}, { ...base, secs: 400, start: 0 }).patch.parSum_normal === 0, 'par: a gold-module bonus never makes seconds used negative');
+    let big = { parN_normal: 19, parSum_normal: 19 * 150 };
+    big = { ...big, ...RC.applyResult(big, { ...base, secs: T.secs - 150 }).patch };
+    assert(big.parN_normal === 10 && RC.parOf(big, 'normal').secs === 150, 'par: at twenty wins the history is halved (stays adaptive, same average)');
+    const junk = [undefined, null, 0, 5, 'x', [], {}, { parN_normal: 'many', parSum_normal: {} }, { parN_normal: -4, parSum_normal: -9 }, { parN_normal: 9e99, parSum_normal: Infinity }, { parN_normal: 3, parSum_normal: 99999 }, { parN: { normal: 4 }, parSum: { normal: 'z' } }, { parN: { normal: 4 }, parSum: { normal: 500 } }, { parN_normal: NaN, parSum_normal: NaN }, { log: 3, medal: 'x' }, { log: '[1,2' }];
+    let ok = 0;
+    for (const j of junk) { try { RC.parOf(j, 'normal'); RC.suggestTier(j, 'normal'); RC.suggestTier(RC.readRecords(j), 'spicy'); RC.suggestTier(j, 7); RC.suggestTier(j); RC.applyResult(j, base); ok++; } catch (e) { console.log('par fuzz threw on', JSON.stringify(j), e.message); } }
+    assert(ok === junk.length && RC.parOf({ parN: { normal: 4 }, parSum: { normal: 500 } }, 'normal').secs === 125, `par and suggestTier never throw on ${junk.length} odd shapes; nested data is read too`);
+    const L = (rows) => JSON.stringify(rows.map(([tier, w]) => ({ name: 'x', tier, win: w, holder: 'a', secs: w ? 100 : 0 })));
+    const sug = (log, medal, tier = 'normal') => RC.suggestTier({ log, ['medal_' + tier]: medal }, tier);
+    const up = sug(L([['normal', 0], ['normal', 1], ['normal', 1], ['normal', 1]]), 2);
+    assert(up && up.kind === 'up' && up.tier === 'spicy' && /Expert/.test(up.text), `suggestTier: three Agent wins with a silver medal suggests Expert ("${up && up.text}")`);
+    assert(!sug(L([['normal', 1], ['normal', 1], ['normal', 1]]), 1) && !sug(L([['normal', 1], ['normal', 0], ['normal', 1]]), 3) && !sug(L([['normal', 1], ['normal', 1], ['spicy', 1]]), 3) && !sug(L([['normal', 1], ['normal', 1]]), 3), 'suggestTier: no nudge without the medal, with a boom in between, from another tier, or with fewer than three rounds');
+    assert(!sug(L([['wild', 1], ['wild', 1], ['wild', 1]]), 3, 'wild') && sug(L([['chill', 1], ['chill', 1], ['chill', 1]]), 2, 'chill').tier === 'normal', 'suggestTier: nothing above Bomb Squad, Rookie goes to Agent');
+    const dn = sug(L([['spicy', 1], ['spicy', 0], ['spicy', 0]]), 0, 'spicy');
+    assert(dn && dn.kind === 'down' && dn.tier === 'normal' && !sug(L([['chill', 0], ['chill', 0], ['chill', 1]]), 0, 'chill') && !sug(L([['normal', 0], ['normal', 1], ['normal', 1]]), 0), 'suggestTier: two booms in the last three suggests one tier easier; never below Rookie');
+  }
 }
 
 // ══════════════════════════ helpers for the browser tests ══════════════════════════
@@ -837,6 +889,40 @@ async function commitRelay(h, R) {
   await h.b.tap('.dx-relay-commit');
 }
 /** A COMMIT sent while the bomb cannot take it (in a blackout, or in the background) is applied once the bomb is back, without another action on the manual. */
+// ══════════════════════════ hush: the manual goes blank ══════════════════════════
+async function hushRound(h) {
+  console.log('\n# Defuse: hush blanks the manual, the bomb stays live');
+  await goLive(h);
+  await pickRoles(h, h.a, h.b);
+  const seed = findSeed(RD, 'wild', (r) => r.twistRules.hush && !r.twists.includes('relay') && !r.twists.includes('decoy'), 'hs');
+  const b = await startRound(h, h.a, h.b, seed, 'wild');
+  const at = b.round.twistRules.hush.at;
+  assert(await h.b.evaluate(() => /Hush\./.test(document.querySelector('[data-this-bomb]').textContent)), 'the manual lists Hush on the basics page');
+  assert(await h.b.evaluate(() => !document.querySelector('.dx-manual-wrap').classList.contains('is-hush')), 'no cover before it starts');
+  let quick = -1, best = 1e9;
+  for (const [i, s] of b.round.slots.entries()) {
+    if (s.decoy || RD_BY[s.id].needy || s.id === 'relay') continue;
+    const acts = await h.a.evaluate((k) => window.__defuse.drive(k), i);
+    if (!acts.some((a) => a.act === 'hold') && acts.length < best) { best = acts.length; quick = i; }
+  }
+  assert(quick >= 0, `a quick module to tap during hush (slot ${quick}, ${best} taps)`);
+  await h.a.evaluate((ms) => window.__defuse.setLeft(ms), (at + 1) * 1000);
+  await until(() => h.b.evaluate(() => document.querySelector('.dx-manual-wrap').classList.contains('is-hush')), 'the cover on the manual', 4000);
+  assert(await visible(h.b, '.dx-hush') && /HUSH/.test(await h.b.textContent('.dx-hush')) && /Talk it through/.test(await h.b.textContent('.dx-hush')), 'hush: the printed panel is up ("HUSH · n s · Talk it through")');
+  assert(await h.b.evaluate(() => { const v = (e) => getComputedStyle(e).visibility; return v(document.querySelector('.dx-sec:not([hidden])')) === 'hidden' && v(document.querySelector('.dx-mbar')) === 'visible' && v(document.querySelector('.dx-index')) === 'visible'; }), 'the pages are covered; the clock bar and tabs stay');
+  assert(await h.b.evaluate(() => { const d = document.querySelector('.dx-bomb, .dx-side'); return !d && !document.querySelector('.dx-mods'); }), 'the manual DOM holds no bomb state during hush');
+  const flagOn = await h.a.evaluate(() => [...document.querySelectorAll('[data-flag="hush"]')].some((f) => !f.hidden && /HUSH/.test(f.textContent)));
+  assert(flagOn, 'the bomb shows a HUSH flag');
+  // the bomb stays live: a real tap still counts
+  await solveSlot(h, h.a, quick);
+  assert((await dx(h.a)).bomb.solved[quick], 'bomb taps still work during hush');
+  assert(await h.b.evaluate(() => document.querySelector('.dx-manual-wrap').classList.contains('is-hush')), 'and the cover is still up');
+  await until(() => h.b.evaluate(() => !document.querySelector('.dx-manual-wrap').classList.contains('is-hush')), 'the cover to clear', 9000);
+  assert(await h.b.evaluate(() => document.querySelector('.dx-hush').hidden && getComputedStyle(document.querySelector('.dx-sec:not([hidden])')).visibility === 'visible'), 'after about 8 s the guide is back');
+  await sleep(1200);
+  assert(!(await h.b.evaluate(() => document.querySelector('.dx-manual-wrap').classList.contains('is-hush'))) && (await dx(h.a)).bomb.hush === 0, 'and it fires only once');
+  noErrors(h, 'hush');
+}
 async function relayWhilePaused(h) {
   console.log('\n# Defuse: a relay COMMIT sent during a blackout or while the bomb is in the background');
   await goLive(h);
@@ -1175,6 +1261,37 @@ async function layoutGroup(h) {
 }
 
 // ══════════════════════════ older saved data, one device ══════════════════════════
+async function phonePar(h) {
+  console.log('\n# Personal par and the par clock');
+  await goLive(h);
+  await pickRoles(h, h.a, h.b);
+  const lob = () => h.a.evaluate(() => ({ par: (document.querySelector('.dx-par') || {}).textContent, hidden: document.querySelector('.dx-par').hidden, sw: document.querySelector('[data-act="parclock"]').getAttribute('aria-checked'), dis: document.querySelector('[data-act="parclock"]').disabled, sug: document.querySelector('.dx-suggest').hidden ? '' : document.querySelector('.dx-suggest').textContent }));
+  await h.b.click('.dx-tiers [data-diff="normal"]'); await h.settle();
+  let l = await lob();
+  assert(!l.hidden && l.par === 'Par 2:40' && !l.dis, `the lobby shows "${l.par}" under Agent and enables the Par clock switch`);
+  assert(/Three Agent wins in a row\. Try Expert\?/.test(l.sug), `the lobby nudges: "${l.sug}"`);
+  await h.b.click('.dx-tiers [data-diff="spicy"]'); await h.settle();
+  l = await lob();
+  assert(l.hidden && l.dis && l.sw === 'false' && !l.sug, 'a tier with no par hides it and disables the switch');
+  await h.b.click('.dx-tiers [data-diff="normal"]'); await h.settle();
+  await h.b.click('[data-act="parclock"]'); await h.settle();
+  assert(await h.a.evaluate(() => document.querySelector('[data-act="parclock"]').getAttribute('aria-checked')) === 'true', 'the Par clock switch reaches the other phone');
+  const b = await startRound(h, h.a, h.b, 'parseed', null);
+  assert(b.parClock && b.start === 180 && Math.abs(b.left - 180000) < 3000, `the bomb starts on the par clock: ${Math.round(b.left)} ms (par 160 + 20)`);
+  const mt = await h.b.evaluate(() => document.querySelector('.dx-time').textContent);
+  const [mm, ss] = mt.split(':').map(Number);
+  assert(Math.abs(mm * 60 + ss - 180) <= 4, `the manual's clock follows the bomb (${mt})`);
+  await h.a.evaluate(() => window.__defuse.setLeft(70000));
+  const plan = scored(b.round);
+  for (const { i } of plan) await solveSlot(h, h.a, i);
+  const won = await until(async () => { const x = await dx(h.a); return x.bomb.over ? x : null; }, 'the par-clock round to end', 40000);
+  const gap = +((/Under par by (\d+) s\./.exec(won.bomb.res.sub) || [])[1]);
+  assert(won.bomb.win && gap >= 30 && gap <= 50, `the end card says how it went against par: ${won.bomb.res.sub}`);
+  await endCards(h);
+  const g = gdata(h);
+  assert(g.parN_normal === 4 && g.parSum_normal === 480 + (160 - gap), `the par-clock win counts toward par (parN ${g.parN_normal}, parSum ${g.parSum_normal})`);
+  noErrors(h, 'phones, par');
+}
 async function legacy(h) {
   console.log('\n# Defuse: older and odd saved data, one device');
   await goLive(h);
@@ -1213,11 +1330,12 @@ async function withHarness(opts, fn) {
     if (only === 'all' || only === 'node') await nodePart();
     if (only === 'all' || only === 'phone') {
       await withHarness({ port: PORT, coarse: true }, async (h) => { await asPhones(h); await phoneNormal(h); await closeBoth(h); await phoneClassic(h); await closeBoth(h); await phoneDaily(h); });
+      await withHarness({ port: PORT + 9, coarse: true, seedDocs: { 'gamedata/defuse': { wins: 5, streak: 3, medal_normal: 2, parN_normal: 3, parSum_normal: 480, log: JSON.stringify([1, 2, 3].map((n) => ({ name: 'Sleepy Koala', tier: 'normal', win: 1, holder: 'a', secs: 120 }))) } } }, async (h) => { await asPhones(h); await phonePar(h); });
     }
     if (only === 'all' || only === 'wild') {
       await withHarness({ port: PORT + 1, coarse: true }, async (h) => { await asPhones(h); await phoneWild(h); await closeBoth(h); await phoneTwists(h); });
       await withHarness({ port: PORT + 6, coarse: true }, async (h) => { await asPhones(h); await tierSweep(h); });
-      await withHarness({ port: PORT + 8, coarse: true }, async (h) => { await asPhones(h); await relayWhilePaused(h); });
+      await withHarness({ port: PORT + 8, coarse: true }, async (h) => { await asPhones(h); await relayWhilePaused(h); await closeBoth(h); await hushRound(h); });
     }
     if (only === 'all' || only === 'laptop') {
       await withHarness({ port: PORT + 2, device: 'Desktop Chrome' }, async (h) => { await laptopRound(h, 'light'); });

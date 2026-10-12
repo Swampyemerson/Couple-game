@@ -1,7 +1,7 @@
 // Defuse: the field guide, as HTML strings built from a round. Pure (no DOM), so node can build and parse it in tests.
 // The manual device renders exactly this; the bomb holder never sees any of it.
 import { esc, fmt } from './util.js';
-import { BY_ID, DECOY_RULES, SURGE_SECS, GOLD_BONUS, BLACKOUT, TAX_SECS } from './round.js';
+import { BY_ID, DECOY_RULES, SURGE_SECS, GOLD_BONUS, BLACKOUT, TAX_SECS, HUSH_SECS } from './round.js';
 
 /**
  * The guide's page order and numbers. Pages follow the bomb: one per distinct module type, in the order its first module appears on
@@ -33,6 +33,7 @@ function bomb(round) {
   if (X.errata) items.push('<li data-twist="errata"><span><b>Correction slip.</b> One page of this guide has a slip taped to the top. Where the slip and the printed page disagree, the slip wins.</span></li>');
   if (X.surge) items.push(`<li data-twist="surge"><span><b>Surge.</b> Twice, the clock runs at <b>double speed</b> for ${SURGE_SECS} seconds. A SURGE sign shows on both screens.</span></li>`);
   if (X.blackout) items.push(`<li data-twist="blackout"><span><b>Blackout.</b> ${X.blackout.at.length > 1 ? 'Twice' : 'Once'}, the bomb goes dark. It warns for ${BLACKOUT.warn} seconds, then nothing can be touched for ${BLACKOUT.dur} seconds. The clock keeps running, so plan your next move while it is dark.</span></li>`);
+  if (X.hush) items.push(`<li data-twist="hush"><span><b>Hush.</b> Once, this guide goes blank for ${HUSH_SECS} seconds. Remember what you just read, and talk it through with your partner. The bomb stays live.</span></li>`);
   if (X.tax) items.push(`<li data-twist="tax"><span><b>Strike tax.</b> Every strike takes ${TAX_SECS} seconds off the clock. The clock does not speed up.</span></li>`);
   if (X.relay) items.push('<li data-twist="relay"><span><b>Role swap.</b> The Relay module is the other way round. Its controls are on <b>your</b> screen, in the Relay box at the bottom. Your partner holds its rule card. See the Relay page.</span></li>');
   if (X.vent) items.push('<li data-twist="vent"><span><b>Vent.</b> The Vent wakes up now and then with a question. A <b>VENT</b> sign lights in the top bar when it does: tell your partner straight away. See the Vent page. It is never finished and does not count as a module.</span></li>');

@@ -368,5 +368,14 @@ export const CSS = `
   .g-defuse .dx-tiers button { grid-column: span 10; }
   .g-defuse .dx-tiers button:nth-child(n+4) { grid-column: span 15; }
 }
+/* Hush: the guide pages go blank for a few seconds (printed panel; the clock bar, tabs and relay drawer stay) */
+.g-defuse .dx-flag[data-flag="hush"] { background: var(--g-ink); color: var(--g-bg); }
+.g-defuse .dx-hush { position: absolute; inset: 0; z-index: 2; display: grid; place-content: center; justify-items: center; gap: 6px; padding: 16px; text-align: center; background: var(--g-card); border-radius: inherit; }
+.g-defuse .dx-hush[hidden] { display: none; }
+.g-defuse .dx-hush b { font: 400 clamp(1.8rem, 8vw, 3rem)/1 var(--g-font-display); letter-spacing: 0.14em; }
+.g-defuse .dx-hush .dx-hush-t { font: 400 clamp(1.4rem, 6vw, 2rem)/1 var(--g-font-display); font-variant-numeric: tabular-nums; padding: 4px 14px 3px; border: 2.5px solid var(--g-ink); border-radius: 8px; background: var(--g-hl); color: var(--g-on-ink, var(--g-ink)); }
+.g-defuse .dx-hush em { font: 800 0.85rem/1.2 var(--g-font-body); font-style: normal; letter-spacing: 0.14em; text-transform: uppercase; color: var(--g-muted); }
+.g-defuse .is-hush .dx-page { min-height: 55vh; }
+.g-defuse .is-hush .dx-page > .dx-sec { visibility: hidden; }
 @media (prefers-reduced-motion: reduce) { .g-defuse .dx-flag.is-pulse { animation: none !important; } }
 `;

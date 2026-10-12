@@ -42,6 +42,8 @@ export const SURGE_SECS = 12;
 export const TAX_SECS = 30;
 export const BLACKOUT = { warn: 2, dur: 5 };
 export const GOLD_BONUS = 20;
+/** Hush: once, from level 3, the manual goes blank for this many seconds. */
+export const HUSH_SECS = 8;
 
 export const DECOY_RULES = {
   low: 'Use the module with the <b>lower</b> plate number.',
@@ -155,6 +157,26 @@ function schedule(seed, T, nSurge, nBlack) {
     pos -= span[k];
   });
   return out;
+}
+
+/**
+ * Hush (manual-side blackout): own stream, so it never shifts a twist, a schedule or a puzzle. Level 3 and up, about one round in two.
+ * Returns the "seconds left" at which it starts, or -1. Clear of surges and blackouts (with a margin for the clock running fast),
+ * and not in the first or last 30 s.
+ */
+function hushAt(seed, T, sched) {
+  if (T.level < 3) return -1;
+  const r = stream(seed, 'hush');
+  if (r() >= 0.5) return -1;
+  const busy = [];
+  for (const at of sched.surge) busy.push([at - 30 - 6, at + 6]);
+  for (const at of sched.blackout) busy.push([at - 12 - 6, at + 6]);
+  const lo = 30 + HUSH_SECS * 2, hi = T.secs - 30; // the hush covers [at - 16, at] of clock time at worst
+  for (let t = 0; t < 40; t++) {
+    const at = lo + int(r, hi - lo + 1);
+    if (busy.every(([a, b]) => at - HUSH_SECS * 2 > b || at < a)) return at;
+  }
+  return -1;
 }
 
 // ── the round ───────────────────────────────────────────────────────────
@@ -273,12 +295,15 @@ function assemble(seed, T, twists) {
   if (has('surge')) twistRules.surge = { at: sched.surge, dur: SURGE_SECS };
   if (has('blackout')) twistRules.blackout = { at: sched.blackout, warn: BLACKOUT.warn, dur: BLACKOUT.dur };
   if (has('tax') || T.id === 'wild') twistRules.tax = { secs: TAX_SECS };
+  const hush = hushAt(seed, T, sched);
+  const extras = [];
+  if (hush >= 0) { twistRules.hush = { at: hush, dur: HUSH_SECS }; extras.push('hush'); }
   if (relayOn) twistRules.relay = {};
   if (ventOn) twistRules.vent = {};
 
   const fp = hash('ed', T.id, JSON.stringify(ids.map((id) => book[id].R0)));
   const edition = T.id === 'classic' ? 'Ed. C-1' : `Ed. ${1 + (fp % 9)}${'ACDEFGHJKLMNPRTUVWXY'[(fp >>> 4) % 20]}-${(fp >>> 12) % 10}`;
-  return { seed, tier: T.id, T, E, slots, book, ids, twists: [...twists], twistRules, gold, name: nameOf(seed), edition };
+  return { seed, tier: T.id, T, E, slots, book, ids, twists: [...twists], extras, twistRules, gold, name: nameOf(seed), edition };
 }
 
 /** Does this slot count towards defusing the bomb? */

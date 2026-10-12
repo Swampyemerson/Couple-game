@@ -8,6 +8,7 @@
 //   manual_<w>_rounds / _strikes                   per person who read the manual
 //   mods_<id>                                      modules solved
 //   daily_<date>_<tier>_<w>                        Today's bomb: seconds left, 0 = boom (first attempt counts)
+//   parN_<tier> parSum_<tier>                      Personal par: wins and the summed seconds USED on them (halved at 20 wins)
 //   log                                            JSON string, the last 8 rounds
 // Every read tolerates a missing doc, {}, wrong types, and the nested shape a server round trip could produce.
 import { hash } from './util.js';
@@ -99,6 +100,15 @@ export function applyResult(d, o) {
     if (o.secs > prev.secs) { patch[`best_${tier}`] = o.secs; if (h) patch[`bestWho_${tier}`] = h; patch[`bestAt_${tier}`] = Math.floor((o.at || 0) / 1000); info.newRecord = prev.secs > 0; }
     if (o.strikes === 0) patch[`clean_${tier}`] = num(d, 'clean', tier) + 1;
   }
+  if (o.win) {
+    const full = (o.T && Number.isFinite(o.T.secs) ? o.T.secs : (TIERS[tier] || {}).secs) || 0;
+    const start = Number.isFinite(o.start) && o.start > 0 ? Math.min(o.start, full || o.start) : full;
+    const used = Math.max(0, Math.min(full, Math.round(start - nn(o.secs))));
+    let n = num(d, 'parN', tier) + 1;
+    let sum = num(d, 'parSum', tier) + used;
+    if (n >= 20) { n = Math.floor(n / 2); sum = Math.round(sum / 2); } // keep it adaptive: older wins fade
+    patch[`parN_${tier}`] = n; patch[`parSum_${tier}`] = sum;
+  }
   const medal = medalFor(o.win, o.strikes, o.secs, o.T);
   info.medal = Math.max(info.medalBefore, medal);
   info.medalUp = info.medal > info.medalBefore;
@@ -108,6 +118,42 @@ export function applyResult(d, o) {
   log.push({ name: o.name || '', tier, win: o.win ? 1 : 0, holder: h, secs: o.win ? o.secs : 0 });
   patch.log = JSON.stringify(log.slice(-8));
   return { patch, info };
+}
+
+/** Personal par on a tier: { secs, n } (average seconds used on wins), or null below 3 wins or on garbage. Never throws. */
+export function parOf(d, tier) {
+  try {
+    if (typeof tier !== 'string' || !Object.prototype.hasOwnProperty.call(TIERS, tier)) return null;
+    const T = TIERS[tier];
+    const n = Math.floor(num(d, 'parN', tier));
+    const sum = num(d, 'parSum', tier);
+    if (n < 3 || !(sum > 0)) return null;
+    const secs = Math.round(sum / n);
+    return secs >= 1 && secs <= T.secs + 60 ? { secs, n } : null;
+  } catch { return null; }
+}
+
+const LADDER = ['chill', 'normal', 'spicy', 'wild'];
+/**
+ * A nudge for the selected tier from recent rounds: { kind: 'up' | 'down', tier, text } or null. Takes readRecords() output or the raw data.
+ * Three wins in a row on this tier with a silver medal or better: try the next tier. Two booms in the last three rounds: one easier.
+ */
+export function suggestTier(records, tier = 'normal') {
+  try {
+    const r = isObj(records) && Array.isArray(records.log) && isObj(records.medal) ? records : readRecords(records);
+    const i = LADDER.indexOf(tier);
+    if (i < 0 || !Array.isArray(r.log)) return null;
+    const tail = r.log.slice(-3);
+    if (tail.length < 3) return null;
+    const label = (k) => TIERS[k].label;
+    if (tail.every((e) => e && e.win && e.tier === tier) && ((r.medal || {})[tier] | 0) >= 2 && i < LADDER.length - 1) {
+      return { kind: 'up', tier: LADDER[i + 1], text: `Three ${label(tier)} wins in a row. Try ${label(LADDER[i + 1])}?` };
+    }
+    if (tail.filter((e) => e && !e.win).length >= 2 && i > 0) {
+      return { kind: 'down', tier: LADDER[i - 1], text: `Two booms lately. ${label(LADDER[i - 1])} is a kind place to warm up.` };
+    }
+  } catch { /* fall through */ }
+  return null;
 }
 
 /** Same person has held the bomb the last `n` rounds in a row? Returns the holder or null. */

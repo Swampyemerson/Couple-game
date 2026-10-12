@@ -177,6 +177,7 @@ nested or dotted shapes. Written once, by the bomb device, when the round ends.
   hands)", one line), defused total, the last rounds as chips. Log entries from an unknown tier are dropped and their seconds are
   clamped to the tier's clock plus a minute. "New record!" and near-miss lines on the end card.
 * **Today's bomb**: a lobby switch. Seed `day-YYYY-MM-DD` (UTC date picked by the bomb device) plus the tier: the same bomb for both of you, today only. The holder's first attempt of the day is stored; the lobby shows "Today (Agent): Sydney 1:40 left, Emerson -".
+* **Personal par**: wins add `parN_<tier>` and `parSum_<tier>` (seconds used, from the clock the round started with; halved at 20 wins). `parOf` gives `{ secs, n }` from three wins. The lobby shows "Par 3:12" under the tier, a one-line nudge from `suggestTier` (three wins in a row with silver or better: next tier up; two booms in the last three: one easier), and a **Par clock** switch (presence `pc`, same counter as Today's bomb) that starts the bomb at par + 20 s, capped at the tier's clock. Medals and bests are unchanged; the end card says "Under par by 24 s." / "Over par by 9 s.".
 * **Couple delight**: a zero-strike win adds one of twenty sweet / playful lines to the stamp. After three rounds with the same bomb
   holder the lobby nudges "Swap?" (a nudge only).
 
