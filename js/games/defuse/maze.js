@@ -115,7 +115,7 @@ function pairs(w, m, from, to, orig) {
 }
 
 // ── manual drawing ────────────────────────────────────────────────────────
-const PAD = 14;
+const PAD = 16;
 const CELL = 22;
 const BOX = PAD + N * CELL + 4;
 
@@ -134,8 +134,8 @@ function mazeSVG(mz, i, mirror) {
   d += `M${PAD} ${PAD}H${PAD + N * CELL}M${left} ${PAD}V${PAD + N * CELL}`;
   const dots = Array.from({ length: CELLS }, (_, k) => `<circle cx="${X(k % N) + CELL / 2}" cy="${Y(Math.floor(k / N)) + CELL / 2}" r="1.1"/>`).join('');
   const rings = mz.m.map((k) => `<circle class="dx-mz-pr" cx="${X(k % N) + CELL / 2}" cy="${Y(Math.floor(k / N)) + CELL / 2}" r="6.2"/>`).join('');
-  const cl = Array.from({ length: N }, (_, c) => `<text x="${X(c) + CELL / 2}" y="9">${COLS[c]}</text>`).join('');
-  const rl = Array.from({ length: N }, (_, r) => `<text x="6.5" y="${Y(r) + CELL / 2 + 2.6}">${r + 1}</text>`).join('');
+  const cl = Array.from({ length: N }, (_, c) => `<text x="${X(c) + CELL / 2}" y="12.4">${COLS[c]}</text>`).join('');
+  const rl = Array.from({ length: N }, (_, r) => `<text x="8" y="${Y(r) + CELL / 2 + 4.2}">${r + 1}</text>`).join('');
   const mk = mz.m.map(name).join(',');
   return `<svg class="dx-mz-svg" viewBox="0 0 ${BOX} ${BOX}" role="img" aria-label="Maze ${i + 1}, rings at ${mz.m.map(name).join(' and ')}" data-maze="${i}" data-markers="${mk}" data-walls="${mz.w}"><g class="dx-mz-pd">${dots}</g><g class="dx-mz-pl">${cl}${rl}</g><path class="dx-mz-pw" d="${d}"/>${rings}</svg>`;
 }
@@ -152,8 +152,8 @@ const WORD = { U: 'up', D: 'down', L: 'left', R: 'right' };
 
 function bombHTML(S, mz) {
   const dots = Array.from({ length: CELLS }, (_, i) => `<circle cx="${cx(i)}" cy="${cy(i)}" r="1.9"/>`).join('');
-  const cl = Array.from({ length: N }, (_, c) => `<text x="${GO + c * GS + GS / 2}" y="10.5">${COLS[c]}</text>`).join('');
-  const rl = Array.from({ length: N }, (_, r) => `<text x="7.5" y="${GO + r * GS + GS / 2 + 3}">${r + 1}</text>`).join('');
+  const cl = Array.from({ length: N }, (_, c) => `<text x="${GO + c * GS + GS / 2}" y="12">${COLS[c]}</text>`).join('');
+  const rl = Array.from({ length: N }, (_, r) => `<text x="8" y="${GO + r * GS + GS / 2 + 4}">${r + 1}</text>`).join('');
   const rings = mz.m.map((i) => `<circle class="dx-mz-ring" cx="${cx(i)}" cy="${cy(i)}" r="8.6"/>`).join('');
   const gx = cx(S.g);
   const gy = cy(S.g);
@@ -174,7 +174,7 @@ const css = `
 .g-defuse .dx-mz { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 14px; padding-bottom: 5px; }
 .g-defuse .dx-mz-screen { width: min(100%, 232px); aspect-ratio: 1; padding: 4px; background: var(--dx-dark); border: 2.5px solid var(--g-ink); border-radius: 12px; box-shadow: inset 0 -5px 0 rgb(255 255 255 / 0.06), var(--g-shadow-sm, 2px 2px 0 var(--g-ink)); }
 .g-defuse .dx-mz-screen svg { display: block; width: 100%; height: 100%; overflow: visible; }
-.g-defuse .dx-mz-labels text { fill: #8d8a80; font: 800 8px/1 var(--g-font-body); text-anchor: middle; opacity: 0.85; }
+.g-defuse .dx-mz-labels text { fill: #8d8a80; font: 800 11px/1 var(--g-font-body); text-anchor: middle; opacity: 0.9; }
 .g-defuse .dx-mz-dots circle { fill: #77746b; }
 .g-defuse .dx-mz-trail circle { fill: #4d4a58; }
 .g-defuse .dx-mz-ring { fill: none; stroke: var(--dx-yellow); stroke-width: 2.4; }
@@ -202,7 +202,7 @@ const css = `
 .g-defuse .dx-mz-svg { display: block; width: 100%; height: auto; background: var(--g-card); }
 .g-defuse .dx-mz-pw { fill: none; stroke: var(--g-ink); stroke-width: 2.3; stroke-linecap: square; stroke-linejoin: miter; }
 .g-defuse .dx-mz-pd circle { fill: var(--g-muted); opacity: 0.55; }
-.g-defuse .dx-mz-pl text { fill: var(--g-muted); font: 800 7px/1 var(--g-font-body); text-anchor: middle; }
+.g-defuse .dx-mz-pl text { fill: var(--g-muted); font: 800 12px/1 var(--g-font-body); text-anchor: middle; }
 .g-defuse .dx-mz-pr { fill: var(--g-hl-soft, none); stroke: var(--g-ink); stroke-width: 2; }
 .g-defuse .dx-mz-flip { margin: 10px 0 0; padding: 10px 12px; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-hl-soft, var(--g-bg)); font-weight: 700; font-size: 0.98rem; }
 @media (max-width: 440px) { .g-defuse .dx-mz-book { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; } .g-defuse .dx-mz-fig { padding: 6px 6px 4px; } }

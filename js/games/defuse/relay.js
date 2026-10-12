@@ -285,7 +285,7 @@ export const RELAY = {
 .g-defuse .dx-relay-status { margin: 0; font: 800 0.74rem/1.3 var(--g-font-body); letter-spacing: 0.06em; text-transform: uppercase; color: var(--g-muted); text-align: center; }
 .g-defuse .dx-relay-card { position: relative; width: min(100%, 360px); min-width: min(300px, 100%); box-sizing: border-box; padding: 10px 12px 10px; background: var(--dx-white, #f8f5ec); color: var(--dx-dark, #18171d); border: 2.5px solid var(--dx-dark, #18171d); border-radius: 6px; box-shadow: 3px 3px 0 var(--g-edge, var(--g-ink)); font-size: 0.84rem; line-height: 1.35; text-align: left; transform: rotate(-0.6deg); }
 .g-defuse .dx-relay-card p { margin: 0 0 6px; }
-.g-defuse .dx-relay-card-tag { display: inline-block; margin: -2px 0 6px; padding: 3px 7px; background: var(--dx-dark, #18171d); color: var(--dx-yellow, #ffd21f); border-radius: 4px; font: 800 0.64rem/1 var(--g-font-body); letter-spacing: 0.16em; text-transform: uppercase; }
+.g-defuse .dx-relay-card-tag { display: inline-block; margin: -2px 0 6px; padding: 3px 7px; background: var(--dx-dark, #18171d); color: var(--dx-yellow, #ffd21f); border-radius: 4px; font: 800 0.7rem/1 var(--g-font-body); letter-spacing: 0.16em; text-transform: uppercase; }
 .g-defuse .dx-relay-chain { list-style: none; counter-reset: rc; margin: 0 0 6px; padding: 0; display: flex; flex-direction: column; gap: 5px; }
 .g-defuse .dx-relay-chain li { counter-increment: rc; display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 7px; align-items: start; padding-top: 5px; border-top: 1.5px dashed color-mix(in srgb, var(--dx-dark, #18171d) 40%, transparent); }
 .g-defuse .dx-relay-chain li:first-child { border-top: 0; padding-top: 0; }
@@ -295,7 +295,7 @@ export const RELAY = {
 .g-defuse .dx-relay-lamp { display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: var(--dx-dark, #18171d); border: 2.5px solid var(--g-ink); border-radius: 10px; color: var(--dx-white, #f8f5ec); }
 .g-defuse .dx-relay-lamp i { flex: none; width: 30px; height: 30px; border-radius: 50%; border: 3px solid var(--dx-white, #f8f5ec); background: var(--c); }
 .g-defuse .dx-relay-lamp span { display: flex; flex-direction: column; gap: 2px; }
-.g-defuse .dx-relay-lamp small { font: 800 0.62rem/1 var(--g-font-body); letter-spacing: 0.16em; text-transform: uppercase; color: #a8a498; }
+.g-defuse .dx-relay-lamp small { font: 800 0.7rem/1 var(--g-font-body); letter-spacing: 0.16em; text-transform: uppercase; color: #a8a498; }
 .g-defuse .dx-relay-lamp b { font: 400 1.2rem/1 var(--g-font-display); letter-spacing: 0.04em; }
 .g-defuse .dx-relay-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (min-width: 560px) { .g-defuse .dx-relay-row { grid-template-columns: repeat(4, 1fr); } }
@@ -305,7 +305,7 @@ export const RELAY = {
 .g-defuse .dx-relay-sw:focus-visible, .g-defuse .dx-relay-commit:focus-visible { outline: 3px solid var(--p-a); outline-offset: 3px; }
 .g-defuse .dx-relay-cap { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 50%; border: 3px solid var(--g-ink); background: var(--c); color: var(--dx-dark, #18171d); box-shadow: inset -4px -4px 0 rgb(0 0 0 / 0.14); }
 .g-defuse .dx-relay-cap b { font: 400 1.45rem/1 var(--g-font-display); }
-.g-defuse .dx-relay-sw small { font: 800 0.66rem/1 var(--g-font-body); letter-spacing: 0.12em; text-transform: uppercase; color: var(--g-muted); }
+.g-defuse .dx-relay-sw small { font: 800 0.7rem/1 var(--g-font-body); letter-spacing: 0.12em; text-transform: uppercase; color: var(--g-muted); }
 .g-defuse .dx-relay-lever { position: relative; width: 26px; height: 40px; border: 2.5px solid var(--g-ink); border-radius: 13px; background: var(--dx-dark, #18171d); }
 .g-defuse .dx-relay-lever i { position: absolute; left: 2px; right: 2px; bottom: 2px; height: 16px; border-radius: 50%; background: var(--dx-white, #f8f5ec); border: 2px solid var(--g-ink); transition: bottom 0.08s; }
 .g-defuse .dx-relay-sw.is-on .dx-relay-lever i { bottom: 18px; background: var(--dx-yellow, #ffd21f); }

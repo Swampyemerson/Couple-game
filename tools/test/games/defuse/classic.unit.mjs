@@ -95,7 +95,7 @@ export async function run({ assert }) {
   const stats = {};
   for (const t of Object.keys(TIERS)) {
     const T = TIERS[t];
-    const st = { wireIdx: {}, act: { tap: 0, hold: 0 }, col: {}, finalWire: 0, wireN: {}, rels: new Set(), conds: new Set() };
+    const st = { wirePos: {}, wireIdx: {}, act: { tap: 0, hold: 0 }, col: {}, finalWire: 0, wireN: {}, rels: new Set(), conds: new Set() };
     stats[t] = st;
     let bad = '';
     for (let i = 0; i < 1000; i++) {
@@ -118,6 +118,7 @@ export async function run({ assert }) {
         if (t === 'chill' && JSON.stringify(R).includes('green')) bad = 'green before level 3';
         if (E.ports === undefined && /port/.test(JSON.stringify(R.lists))) bad = 'ports in level 1 rules';
         st.wireIdx[A.wire] = (st.wireIdx[A.wire] || 0) + 1;
+        (st.wirePos[n] ??= {})[A.wire] = (st.wirePos[n][A.wire] || 0) + 1;
         if (A.rule === lst.length - 1) st.finalWire++;
       }
       {
@@ -175,6 +176,16 @@ export async function run({ assert }) {
     assert(st.finalWire / 1000 < 0.7, `${t}: the answer comes from an earlier rule most of the time (final rule ${(st.finalWire / 10).toFixed(0)}%)`);
     assert(st.act.tap >= 250 && st.act.hold >= 250, `${t}: button asks for both tap (${st.act.tap}) and hold (${st.act.hold})`);
     assert(Math.max(...Object.values(st.col)) / 1000 <= 0.45 && Object.keys(st.col).length >= 5, `${t}: keypad answers spread over columns (${JSON.stringify(st.col)})`);
+  }
+  {
+    // no single answer position dominates, and the last wire is not the favourite answer (it used to be 33-35%)
+    const agg = {};
+    for (const t of SEEDED) for (const n of Object.keys(stats[t].wirePos)) for (const [i, c] of Object.entries(stats[t].wirePos[n])) { (agg[n] ??= {})[i] = (agg[n][i] || 0) + c; }
+    const worst = Object.entries(agg).map(([n, o]) => { const tot = Object.values(o).reduce((a, b) => a + b, 0); return [+n, Math.max(...Object.values(o)) / tot, (o[n - 1] || 0) / tot]; });
+    for (const [n, top, last] of worst) {
+      assert(top <= (n === 3 ? 0.4 : 0.3), `${n} wires: no answer position above ${n === 3 ? 40 : 30}% (top ${(top * 100).toFixed(1)}%)`);
+      assert(last <= (n === 3 ? 0.4 : 0.3), `${n} wires: the last wire is not over-represented (${(last * 100).toFixed(1)}%)`);
+    }
   }
   assert(stats.spicy.rels.size >= 2 && stats.wild.rels.size >= 2, 'level 3+ buttons use more than one release variant');
   assert(['vowel', 'even'].every((c) => stats.chill.conds.has(c)) && stats.chill.conds.size === 2, 'level 1 sequence is picked by vowel or even only');
@@ -247,8 +258,8 @@ export async function run({ assert }) {
       if (k === 'odd' && !/is odd/.test(t)) return false;
       if (k === 'vowel' && !/has a vowel/.test(t)) return false;
       if (k === 'novowel' && !/has no vowel/.test(t)) return false;
-      if (k === 'unlit' && !/unlit/.test(t)) return false;
-      if (k === 'lit' && !/ lit /.test(t)) return false;
+      if (k === 'unlit' && !new RegExp(`the ${x} indicator is unlit`).test(t)) return false;
+      if (k === 'lit' && !new RegExp(`(the ${x} indicator is lit|a lit ${x} indicator)`).test(t)) return false; // the classic edition keeps its old words
       if (k === 'noport' && !/no \S+ port/.test(t)) return false;
     }
     const cut = li.attrs.cut;
@@ -336,17 +347,51 @@ export async function run({ assert }) {
     assert(textBad === 0, `${t}: every rule's text names the colours, numbers and positions its data attributes carry (${n} rules)`);
   }
 
-  // ── no unreachable rules in the seeded editions ──
+  // ── no unreachable or pointless rules in the seeded editions (judged by this file's own evaluator, on bombs the module never saw) ──
   {
-    let ok = true;
     const dead = (list) => list.some((q, i) => i > 0 && q.c !== 'true' && list.slice(0, i).some((p) => p.c.split(',').every((a) => q.c.split(',').includes(a))));
-    for (const t of SEEDED) for (let i = 0; i < 300; i++) {
+    let syntactic = true;
+    const sr = stream('semantic-test', 'bombs');
+    const NB = 1000;
+    const bombs = Array.from({ length: NB }, () => {
+      const vowel = sr() < 0.5; const pool = shuffle(sr, IND);
+      return { serial: (vowel ? 'A' : 'B') + 'CDFG' + int(sr, 10), batteries: int(sr, 5), indicators: [0, 1].map((i) => ({ label: pool[i], lit: sr() < 0.5 })), ports: shuffle(sr, PORTS).slice(0, int(sr, 4)) };
+    });
+    const faces = (cols, labs) => bombs.map((b) => ({ ...b, button: { color: pick(sr, cols), label: pick(sr, labs) } }));
+    const wireIdx = (a, w) => { const [k, x] = a.split(':'); const i = k === 'nth' ? +x - 1 : k === 'first' ? w.indexOf(x) : k === 'last' ? w.lastIndexOf(x) : w.length - 1; return i < 0 || i >= w.length ? w.length - 1 : i; };
+    const tally = { rules: 0, never: 0, finalUnreachable: 0, noop: 0, lists: 0 };
+    const check = (list, fs, ans) => {
+      const fire = list.map(() => 0); const change = list.map(() => 0);
+      for (const f of fs) {
+        const hit = list.map((q) => condHolds(q.c, f));
+        const i = hit.indexOf(true);
+        if (i < 0) continue;
+        fire[i]++;
+        const j = hit.indexOf(true, i + 1);
+        if (j >= 0 && ans(list[i].a, f) !== ans(list[j].a, f)) change[i]++;
+      }
+      tally.lists++;
+      list.forEach((q, i) => {
+        tally.rules++;
+        if (!fire[i]) tally[i === list.length - 1 ? 'finalUnreachable' : 'never']++;
+        else if (i < list.length - 1 && !change[i]) tally.noop++;
+      });
+    };
+    for (const t of SEEDED) for (let i = 0; i < 120; i++) {
       const T = TIERS[t];
       const W = WIRES.rules(stream('u' + i, 'rules', 'wires'), T);
-      for (const n of [3, 4, 5, 6]) if (dead(W.lists[n])) ok = false;
-      if (dead(BUTTON.rules(stream('u' + i, 'rules', 'button'), T).rules)) ok = false;
+      for (const n of [3, 4, 5, 6]) {
+        if (dead(W.lists[n])) syntactic = false;
+        const wr = stream('semantic-test', 'wires', n, t);
+        check(W.lists[n], bombs.map((b) => ({ ...b, wires: Array.from({ length: n }, () => pick(wr, W.pal)) })), (a, f) => wireIdx(a, f.wires));
+      }
+      const B = BUTTON.rules(stream('u' + i, 'rules', 'button'), T);
+      if (dead(B.rules)) syntactic = false;
+      check(B.rules, faces(B.colors, B.labels), (a) => a);
     }
-    assert(ok, 'no seeded rule is shadowed by an earlier one');
+    assert(syntactic, 'no seeded rule is shadowed by an earlier one (same atoms)');
+    assert(tally.never === 0 && tally.finalUnreachable === 0, `no seeded rule never fires and every closing "Otherwise" is reachable (${tally.rules} rules in ${tally.lists} lists: ${tally.never} never, ${tally.finalUnreachable} unreachable finals)`);
+    assert(tally.noop / tally.rules < 0.05, `fewer than 5% of seeded rules are no-ops, i.e. change nothing the rules below would not give (${tally.noop} of ${tally.rules})`);
   }
 
   // ── pages read aloud: plain sentences, rule numbers in order ──
@@ -364,23 +409,66 @@ export async function run({ assert }) {
     assert(ok, `${t}: rule sentences are short, start with If / Otherwise and end with a full stop`);
   }
   {
-    // level 3+ button: red-herring labels exist, and the page says exactly which release rule applies
-    const found = { herring: false, sum: false, any: false, last: false };
-    let herringBad = false; let relBad = false;
-    for (let i = 0; i < 300; i++) {
-      const R = BUTTON.rules(stream('h' + i, 'rules', 'button'), TIERS.spicy);
-      const pg = text(BUTTON.page(R, TIERS.spicy));
-      if (R.rules.some((q) => /label:(HOLD|PRESS)/.test(q.c))) {
-        found.herring = true;
-        if (!(R.rules.filter((q) => /label:HOLD/.test(q.c)).every((q) => q.a === 'tap') && R.rules.filter((q) => /label:PRESS/.test(q.c)).every((q) => q.a === 'hold'))) herringBad = true;
+    // level 3+ button: the words HOLD and PRESS are red herrings; each edition says "literal" or "inverted" per word (mostly inverted)
+    const found = { sum: false, any: false, last: false };
+    const seen = { HOLD: { tap: 0, hold: 0 }, PRESS: { tap: 0, hold: 0 } };
+    const editions = { HOLD: new Set(), PRESS: new Set() };
+    let relBad = false; let consistent = true;
+    for (const T of [TIERS.spicy, TIERS.wild]) for (let i = 0; i < 300; i++) {
+      const R = BUTTON.rules(stream('h' + i, 'rules', 'button'), T);
+      const pg = text(BUTTON.page(R, T));
+      const per = {};
+      for (const q of R.rules) {
+        const m = q.c.match(/label:(HOLD|PRESS)/);
+        if (!m) continue;
+        seen[m[1]][q.a]++;
+        if (per[m[1]] && per[m[1]] !== q.a) consistent = false; // one meaning per word within an edition
+        per[m[1]] = q.a;
       }
+      for (const w of Object.keys(per)) editions[w].add(per[w]);
       const says = { sum: /two seconds digits of the timer add up to the strip number/, any: /either seconds digit of the timer is the strip number/, last: /last digit of the timer matches the strip/ };
       found[R.rel] = true;
       if (!says[R.rel].test(pg) || Object.keys(says).some((k) => k !== R.rel && says[k].test(pg))) relBad = true;
     }
-    assert(!herringBad, 'HOLD says tap and PRESS says hold (red herrings)');
+    const inv = (seen.HOLD.tap + seen.PRESS.hold) / (seen.HOLD.tap + seen.HOLD.hold + seen.PRESS.tap + seen.PRESS.hold);
+    assert(consistent, 'within one edition HOLD (and PRESS) always means the same thing');
+    assert(['HOLD', 'PRESS'].every((w) => editions[w].has('tap') && editions[w].has('hold')), `HOLD and PRESS each say tap in some editions and hold in others (HOLD ${JSON.stringify(seen.HOLD)}, PRESS ${JSON.stringify(seen.PRESS)})`);
+    assert(inv > 0.55 && inv < 0.85, `about 70% of the HOLD/PRESS rules are inverted (${(inv * 100).toFixed(0)}%)`);
     assert(!relBad, 'the page spells out exactly which release rule applies');
-    assert(Object.values(found).every(Boolean), 'level 3 buttons show HOLD/PRESS red herrings and all three release rules');
+    assert(Object.values(found).every(Boolean), 'level 3 buttons show all three release rules');
+  }
+  {
+    // read aloud: the right article, number words for counts, "A, B and C" lists
+    let bad = '';
+    for (const t of Object.keys(TIERS)) for (let i = 0; i < 300 && !bad; i++) for (const id of Object.keys(MODS)) {
+      const T = TIERS[t];
+      const { M, R } = build(id, 'a' + i, T);
+      const pg = text(M.page(R, T));
+      const m = pg.match(/\b(a|an) ([A-Za-z0-9]+)/g) || [];
+      for (const x of m) {
+        const [art, w] = x.split(' ');
+        const vowelSound = /^(RJ|[aeiouAEIOU])/.test(w) && !/^(one|once|use)/i.test(w);
+        if ((art === 'an') !== vowelSound) bad = `"${x}" in ${id}/${t}`;
+      }
+      if (/\b\d+ or more batter/.test(pg)) bad = `digit count in ${id}/${t}`;
+      if (/lamp/i.test(pg)) bad = `"lamp" for an indicator in ${id}/${t}`;
+      if (/\b[A-F] and [A-F] and [A-F]/.test(pg)) bad = `column list in ${id}/${t}`;
+    }
+    assert(!bad, `wording: articles, number words, no "lamp" for indicators, "B, C and D" ${bad}`);
+    const W = text(KEYPAD.page(KEYPAD.rules(stream('wording', 'rules', 'keypad'), TIERS.wild), TIERS.wild));
+    assert(/columns? [A-F](, [A-F])* and [A-F] the other way|column [A-F] the other way/.test(W), 'reversed columns are listed as "B, C and D"');
+    assert(/an RJ45 port/.test(atomPorts()) && !/a RJ45/.test(atomPorts()), 'a port reads "an RJ45 port"');
+    function atomPorts() {
+      let all = '';
+      for (let i = 0; i < 400; i++) for (const t of ['normal', 'wild']) {
+        const W2 = WIRES.rules(stream('pt' + i, 'rules', 'wires'), TIERS[t]);
+        const B2 = BUTTON.rules(stream('pt' + i, 'rules', 'button'), TIERS[t]);
+        all += Object.values(W2.lists).flat().map((q) => q.t).join(' ') + B2.rules.map((q) => q.t).join(' ');
+      }
+      return all;
+    }
+    const kp = KEYPAD.mount ? KEYPAD : null;
+    void kp;
   }
   {
     // keypad: reversed columns are named in the text and marked on the column

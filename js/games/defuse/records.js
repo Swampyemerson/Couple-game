@@ -11,6 +11,7 @@
 //   log                                            JSON string, the last 8 rounds
 // Every read tolerates a missing doc, {}, wrong types, and the nested shape a server round trip could produce.
 import { hash } from './util.js';
+import { TIERS, tierOf } from './round.js';
 
 const isObj = (x) => x && typeof x === 'object' && !Array.isArray(x);
 const nn = (x) => (typeof x === 'number' && Number.isFinite(x) && x >= 0 ? x : 0);
@@ -64,7 +65,8 @@ export function readLog(d) {
   let v = rd(d, 'log');
   if (typeof v === 'string') { try { v = JSON.parse(v); } catch { v = null; } }
   if (!Array.isArray(v)) return [];
-  return v.filter(isObj).slice(-8).map((e) => ({ name: String(e.name || '').slice(0, 40), tier: String(e.tier || ''), win: e.win ? 1 : 0, holder: WHO(e.holder), secs: nn(e.secs) }));
+  // entries from an unknown tier are dropped; seconds are held to the tier's clock (plus a gold module's bonus and some slack)
+  return v.filter((e) => isObj(e) && tierOf(e.tier)).slice(-8).map((e) => ({ name: String(e.name || '').slice(0, 40), tier: e.tier, win: e.win ? 1 : 0, holder: WHO(e.holder), secs: Math.min(nn(e.secs), TIERS[e.tier].secs + 60) }));
 }
 export const dayKey = (ms) => new Date(ms).toISOString().slice(0, 10);
 export const dailySeed = (date) => 'day-' + date;

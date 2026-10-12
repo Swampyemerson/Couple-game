@@ -42,10 +42,10 @@ function bombHTML(S) {
 }
 
 const css = `
-.g-defuse .dx-pw { width: 100%; max-width: 330px; display: flex; flex-direction: column; align-items: stretch; gap: 14px; padding-bottom: 5px; }
-.g-defuse .dx-pw-cols { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; padding: 8px 6px 12px; background: var(--dx-dark); border: 2.5px solid var(--g-ink); border-radius: 12px; box-shadow: inset 0 -5px 0 rgb(255 255 255 / 0.06), var(--g-shadow-sm, 2px 2px 0 var(--g-ink)); }
-.g-defuse .dx-pw-col { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 0; }
-.g-defuse .dx-pw-btn { display: grid; place-items: center; min-width: 0; height: 46px; padding: 0; background: var(--dx-white); color: var(--dx-dark); border: 2.5px solid var(--g-ink); border-radius: 10px; box-shadow: 0 4px 0 var(--g-ink); transition: transform 0.06s, box-shadow 0.06s; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+.g-defuse .dx-pw { width: 100%; max-width: 340px; display: flex; flex-direction: column; align-items: stretch; gap: 14px; padding-bottom: 5px; }
+.g-defuse .dx-pw-cols { display: grid; grid-template-columns: repeat(5, minmax(44px, 1fr)); gap: 2px; padding: 6px 3px 10px; margin-inline: -6px; background: var(--dx-dark); border: 2.5px solid var(--g-ink); border-radius: 12px; box-shadow: inset 0 -5px 0 rgb(255 255 255 / 0.06), var(--g-shadow-sm, 2px 2px 0 var(--g-ink)); }
+.g-defuse .dx-pw-col { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 44px; }
+.g-defuse .dx-pw-btn { display: grid; place-items: center; min-width: 44px; height: 46px; padding: 0; background: var(--dx-white); color: var(--dx-dark); border: 2.5px solid var(--g-ink); border-radius: 10px; box-shadow: 0 4px 0 var(--g-ink); transition: transform 0.06s, box-shadow 0.06s; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
 .g-defuse .dx-pw-btn svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 3.6; stroke-linecap: round; stroke-linejoin: round; }
 .g-defuse .dx-pw-btn:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--g-ink); }
 .g-defuse .dx-pw-btn:focus-visible, .g-defuse .dx-pw-submit:focus-visible { outline: 3px solid var(--p-a); outline-offset: 3px; }
@@ -61,8 +61,8 @@ const css = `
 /* the manual's word list */
 .g-defuse .dx-pw-words { list-style: none; margin: 10px 0 4px; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
 .g-defuse .dx-pw-words li { margin: 0; }
-.g-defuse .dx-pw-w { position: relative; display: grid; place-items: center; min-height: 44px; background: var(--g-bg); border: 2px solid var(--g-ink); border-radius: 8px; box-shadow: var(--g-shadow-sm, 2px 2px 0 var(--g-ink)); cursor: pointer; font: 800 1.02rem/1 ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace; letter-spacing: 0.14em; text-indent: 0.14em; user-select: none; -webkit-user-select: none; }
-.g-defuse .dx-pw-w input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.g-defuse .dx-pw-w { position: relative; display: grid; place-items: center; min-height: 46px; background: var(--g-bg); border: 2px solid var(--g-ink); border-radius: 8px; box-shadow: var(--g-shadow-sm, 2px 2px 0 var(--g-ink)); cursor: pointer; font: 800 1.02rem/1 ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace; letter-spacing: 0.14em; text-indent: 0.14em; user-select: none; -webkit-user-select: none; }
+.g-defuse .dx-pw-w input { position: absolute; inset: -2px; width: calc(100% + 4px); height: calc(100% + 4px); margin: 0; opacity: 0; cursor: pointer; }
 .g-defuse .dx-pw-w:has(input:checked) { background: transparent; box-shadow: none; color: var(--g-muted); text-decoration: line-through; text-decoration-thickness: 2px; border-style: dashed; }
 .g-defuse .dx-pw-w:has(input:focus-visible) { outline: 3px solid var(--p-a); outline-offset: 2px; }
 .g-defuse .dx-pw-slip { margin: 10px 0 0; }

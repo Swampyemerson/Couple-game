@@ -75,6 +75,24 @@ export async function run({ assert }) {
   }
   assert(JSON.stringify(build(1, TIERS[1]).R) !== JSON.stringify(build(2, TIERS[1]).R), 'different seeds, different rules');
 
+  // wording and tables read aloud: no two colours with the same net effect, operations listed low switch first, plain words
+  {
+    let bad = '';
+    const asText = (html) => html.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ');
+    for (const T of TIERS) for (let seed = 0; seed < 1000 && !bad; seed++) {
+      const { R } = build('w' + seed, T);
+      const effects = R.cols.map((c) => [...R.map[c]].sort().join(' '));
+      if (new Set(effects).size !== effects.length) bad = `identical colour rows at level ${T.level} seed ${seed}: ${effects}`;
+      const lists = [...R.cols.map((c) => R.map[c]), ...R.mods.map((m) => m.ops)];
+      for (const ops of lists) { const ns = ops.map((o) => +o.slice(1)); if (ns.join() !== [...ns].sort((a, b) => a - b).join()) bad = `ops not sorted ${ops} at level ${T.level} seed ${seed}`; }
+      const txt = asText(SWITCHES.page(R, T));
+      if (/lamp/i.test(txt) || /\b\d+ or more batter/.test(txt) || /the indicator [A-Z]{3} is/.test(txt)) bad = `wording at level ${T.level} seed ${seed}`;
+      for (const m of txt.matchAll(/\b(a|an) ([A-Za-z0-9]+)/g)) if ((m[1] === 'an') !== /^(RJ|[aeiouAEIOU])/.test(m[2])) bad = `article "${m[0]}"`;
+      for (const m of txt.matchAll(/[Ff]lip (\d) and (\d)/g)) if (+m[1] > +m[2]) bad = `"${m[0]}" is not sorted`;
+    }
+    assert(!bad, `switches: tables have distinct rows, sorted operations, "the RDY indicator is lit", "two or more batteries", "an RJ45 port" ${bad}`);
+  }
+
   for (const T of TIERS) {
     const rulesSeen = new Set();
     const answers = {};
@@ -93,7 +111,7 @@ export async function run({ assert }) {
       if (R.forbid.length !== (T.level < 3 ? 0 : T.level === 3 ? 2 : 3)) { bad = `forbidden count at seed ${seed}`; break; }
       if (T.level === 1 && (R.rev || R.mods.length !== 1 || JSON.stringify(R).match(/"[ud]\d"/))) { bad = `level 1 must be flips only with one modifier (seed ${seed})`; break; }
       if (T.level >= 2 && R.mods.length < 2) { bad = `level ${T.level} needs 2+ steps (seed ${seed})`; break; }
-      if (new Set(R.cols.map((c) => R.map[c].join(' '))).size !== R.cols.length) { bad = `two colours do the same at seed ${seed}`; break; }
+      if (new Set(R.cols.map((c) => [...R.map[c]].sort().join(' '))).size !== R.cols.length) { bad = `two colours do the same at seed ${seed}`; break; }
       if (!R.cols.every((c) => R.map[c].length === 2 && new Set(R.map[c].map((o) => o.slice(1))).size === 2)) { bad = `colour ops at seed ${seed}`; break; }
       rulesSeen.add(JSON.stringify(R));
       // puzzle

@@ -57,6 +57,21 @@ export async function run({ assert }) {
   assert(RELAY.tab.length <= 9, 'relay: tab label is 9 chars or fewer');
   assert(typeof RELAY.card === 'function' && typeof RELAY.panel === 'function' && typeof RELAY.step === 'function' && typeof RELAY.init === 'function', 'relay: card, panel, step and init exist');
 
+  // wording read aloud: "indicator" for the edgework lamps, number words, the right article
+  {
+    let bad = '';
+    const asText = (html) => html.replace(/<[^>]*>/g, '').replace(/&#39;/g, "'").replace(/\s+/g, ' ');
+    for (let sd = 0; sd < 600 && !bad; sd++) {
+      const T = TIERS[sd % TIERS.length];
+      const { R } = build('wd-' + sd, T);
+      const txt = asText(RELAY.page(R, T));
+      for (const m of txt.matchAll(/\b(a|an) ([A-Za-z0-9]+)/g)) if ((m[1] === 'an') !== /^(RJ|[aeiouAEIOU])/.test(m[2])) bad = `article "${m[0]}"`;
+      if (/\b\d+ or more batter/.test(txt)) bad = 'digit count of batteries';
+      if (/\b[A-Z]{3} lamp|lamp on the bomb|dark [A-Z]{3}/.test(txt)) bad = 'lamp used for an indicator';
+      if (/\bRed\b|\bOrange\b|\bBlue\b/.test(txt.replace(/^.*?Say the colour/, ''))) bad = bad || 'capitalised colour in running text';
+    }
+    assert(!bad, 'relay: indicators are "the RDY indicator is lit / unlit", batteries in words, articles agree ' + bad);
+  }
   for (const T of TIERS) {
     const a = build('rel-det', T), b = build('rel-det', T);
     assert(JSON.stringify(a) === JSON.stringify(b), `relay: same seed builds the same round (${T.id})`);

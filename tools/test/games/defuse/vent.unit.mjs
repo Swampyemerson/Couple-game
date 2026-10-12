@@ -61,6 +61,21 @@ export async function run({ assert }) {
   assert(VENT.needy === true && VENT.id === 'vent' && !VENT.remote, 'vent: needy, id vent');
   assert(VENT.tab.length <= 9, 'vent: tab label is 9 chars or fewer');
 
+  // wording read aloud: "indicator" for the edgework lamps, number words, the right article
+  {
+    let bad = '';
+    const asText = (html) => html.replace(/<[^>]*>/g, '').replace(/&#39;/g, "'").replace(/\s+/g, ' ');
+    for (let sd = 0; sd < 600 && !bad; sd++) {
+      const T = TIERS[sd % TIERS.length];
+      const { R } = build('wd-' + sd, T);
+      const txt = asText(VENT.page(R, T));
+      for (const m of txt.matchAll(/\b(a|an) ([A-Za-z0-9]+)/g)) if ((m[1] === 'an') !== /^(RJ|[aeiouAEIOU])/.test(m[2])) bad = `article "${m[0]}"`;
+      if (/\b\d+ or more batter/.test(txt)) bad = 'digit count of batteries';
+      if (/\b[A-Z]{3} lamp|lamp on the bomb|dark [A-Z]{3}/.test(txt)) bad = 'lamp used for an indicator';
+      if (/\bRed\b|\bOrange\b|\bBlue\b/.test(txt.replace(/^.*?Say the colour/, ''))) bad = bad || 'capitalised colour in running text';
+    }
+    assert(!bad, 'vent: indicators are "the RDY indicator is lit / unlit", batteries in words, articles agree ' + bad);
+  }
   // determinism
   for (const T of TIERS) {
     const a = build('det-1', T), b = build('det-1', T);

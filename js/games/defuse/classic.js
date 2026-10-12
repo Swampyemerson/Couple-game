@@ -23,7 +23,7 @@ const HOLD_MS = 450;
 const ALL_TIERS = ['classic', 'chill', 'normal', 'spicy', 'wild'];
 const clone = (x) => JSON.parse(JSON.stringify(x));
 /** "an RJ45", "a DVI": the article for a port label as it is said aloud (only RJ45 starts with a vowel sound). */
-const an = (word) => `${/^(RJ|[AEIOU])/.test(word) ? 'an' : 'a'} ${word}`;
+const an = (word) => `${/^(RJ|[AEIOU])/i.test(word) ? 'an' : 'a'} ${word}`;
 /** "B", "B and C", "B, C and D" */
 const andList = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
 const lv = (T) => Math.max(1, Math.min(4, (T && T.level) | 0 || 1));
@@ -68,31 +68,37 @@ export function glyphSVG(id, cls = 'dx-glyph') {
 }
 
 // ── the rule language: one evaluator for conditions, one phrasing for the manual ────────
-/** x = { w: wire colours | null, b: { color, label } | null, K: ctxOf(E), E } */
-function atom(a, x) {
+/** x = { w: wire colours | null, b: { color, label } | null, K: ctxOf(E), E }. Each atom is compiled once into a function of x. */
+function compileAtom(a) {
   const p = a.split(':');
-  const { w, K } = x;
   switch (p[0]) {
-    case 'count': { const n = cnt(w, p[1]); return p[2] === '0' ? n === 0 : p[2] === '1' ? n === 1 : n >= 2; }
-    case 'firstis': return w[0] === p[1];
-    case 'lastis': return w[w.length - 1] === p[1];
-    case 'more': return cnt(w, p[1]) > cnt(w, p[2]);
-    case 'same': return w[0] === w[w.length - 1];
-    case 'even': return K.even;
-    case 'odd': return !K.even;
-    case 'vowel': return K.vowel;
-    case 'novowel': return !K.vowel;
-    case 'lit': return K.lit(p[1]);
-    case 'unlit': return K.has(p[1]) && !K.lit(p[1]);
-    case 'bat': return p[1] === '0' ? K.bat === 0 : K.bat >= parseInt(p[1], 10);
-    case 'port': return ((x.E && x.E.ports) || []).includes(p[1]);
-    case 'noport': return !((x.E && x.E.ports) || []).includes(p[1]);
-    case 'color': return x.b.color === p[1];
-    case 'label': return x.b.label === p[1];
-    default: return false;
+    case 'count': { const c = p[1]; return p[2] === '0' ? (x) => !x.w.includes(c) : p[2] === '1' ? (x) => cnt(x.w, c) === 1 : (x) => cnt(x.w, c) >= 2; }
+    case 'firstis': return (x) => x.w[0] === p[1];
+    case 'lastis': return (x) => x.w[x.w.length - 1] === p[1];
+    case 'more': return (x) => cnt(x.w, p[1]) > cnt(x.w, p[2]);
+    case 'same': return (x) => x.w[0] === x.w[x.w.length - 1];
+    case 'even': return (x) => x.K.even;
+    case 'odd': return (x) => !x.K.even;
+    case 'vowel': return (x) => x.K.vowel;
+    case 'novowel': return (x) => !x.K.vowel;
+    case 'lit': return (x) => x.K.lit(p[1]);
+    case 'unlit': return (x) => x.K.has(p[1]) && !x.K.lit(p[1]);
+    case 'bat': { const n = parseInt(p[1], 10); return p[1] === '0' ? (x) => x.K.bat === 0 : (x) => x.K.bat >= n; }
+    case 'port': return (x) => ((x.E && x.E.ports) || []).includes(p[1]);
+    case 'noport': return (x) => !((x.E && x.E.ports) || []).includes(p[1]);
+    case 'color': return (x) => x.b.color === p[1];
+    case 'label': return (x) => x.b.label === p[1];
+    default: return () => false;
   }
 }
-const holds = (spec, x) => spec === 'true' || spec.split(',').every((a) => atom(a, x));
+const specs = new Map();
+const holds = (spec, x) => {
+  if (spec === 'true') return true;
+  let fs = specs.get(spec);
+  if (!fs) specs.set(spec, (fs = spec.split(',').map(compileAtom)));
+  for (let i = 0; i < fs.length; i++) if (!fs[i](x)) return false;
+  return true;
+};
 
 function atomText(a) {
   const p = a.split(':');
@@ -176,11 +182,11 @@ function audit(list, xs, ans) {
   const fire = new Array(m).fill(0);
   const change = new Array(m).fill(0);
   for (const x of xs) {
-    const i = list.findIndex((q) => holds(q.c, x));
-    if (i < 0) continue;
-    fire[i]++;
-    const j = list.findIndex((q, k) => k > i && holds(q.c, x));
-    if (j >= 0 && ans(list[i].a, x) !== ans(list[j].a, x)) change[i]++;
+    let i = -1;
+    for (let k = 0; k < m; k++) {
+      if (!holds(list[k].c, x)) continue;
+      if (i < 0) { i = k; fire[k]++; } else { if (ans(list[i].a, x) !== ans(list[k].a, x)) change[i]++; break; }
+    }
   }
   return { fire, change };
 }
@@ -189,8 +195,10 @@ function listFaults(list, xs, ans) {
   const { fire, change } = audit(list, xs, ans);
   return list.reduce((n, _, i) => n + (fire[i] < MIN_FIRE || (i < list.length - 1 && change[i] < MIN_CHANGE) ? 1 : 0), 0);
 }
-/** Would this candidate (appended to the rules so far) be the first to apply often enough? */
-const reachable = (list, c, xs) => audit([...list, { c: c.c, a: c.a || 'tap' }], xs, () => 0).fire[list.length] >= MIN_FIRE;
+/** The bombs no rule so far applies to: the ones a new rule could still be the first for. */
+const unclaimed = (xs, c) => xs.filter((x) => !holds(c, x));
+/** Would a rule with this condition be the first to apply on enough of those bombs? */
+const reachable = (open, c) => { let n = 0; for (const x of open) if (holds(c, x) && ++n >= MIN_FIRE) return true; return false; };
 
 /** Draw one edgework atom. skip = kinds already used in this condition. Level 1 never reads indicators or ports. */
 function edgeAtom(r, L, skip = []) {
@@ -253,8 +261,10 @@ function wireCond(r, L, pal) {
   return r() < 0.5 ? { s: `${w.s},${e}`, g: w.g } : { s: `${e},${w.s}`, g: w.g };
 }
 /** Which wire (0 based) a cut action points at on these colours. */
+const acts = new Map();
 function wireOf(act, w) {
-  const a = act.split(':');
+  let a = acts.get(act);
+  if (!a) acts.set(act, (a = act.split(':')));
   const wire = a[0] === 'nth' ? +a[1] - 1 : a[0] === 'first' ? w.indexOf(a[1]) : a[0] === 'last' ? w.lastIndexOf(a[1]) : w.length - 1;
   return wire < 0 || wire >= w.length ? w.length - 1 : wire;
 }
@@ -268,13 +278,15 @@ function drawWireList(r, n, L, pal, xs) {
   const nCond = L === 1 ? 2 + (r() < 0.4 ? 1 : 0) : L === 2 ? 3 : L === 3 ? 3 + (r() < 0.5 ? 1 : 0) : 4;
   const list = [];
   const seen = new Set();
+  let open = xs;
   for (let guard = 0; list.length < nCond && guard < 120; guard++) {
     const c = wireCond(r, L, pal);
     if (seen.has(c.s) || shadowed(list, c.s)) continue;
     seen.add(c.s);
     const a = wireAction(r, n, c.g, 0.4);
-    if (!reachable(list, { c: c.s, a }, xs)) continue; // an earlier rule already takes (nearly) every bomb this one would
+    if (!reachable(open, c.s)) continue; // earlier rules already take (nearly) every bomb this one would
     list.push({ c: c.s, a });
+    open = unclaimed(open, c.s);
   }
   return list;
 }
@@ -303,8 +315,8 @@ function solveWires(S, E, R) {
   if (rule < 0) rule = list.length - 1;
   return { wire: wireOf(list[rule].a, w), rule };
 }
-/** Wires are 40 units apart with a hit box that runs halfway to each neighbour, so every wire is a 44 px target on a phone. */
-const WIRE_GAP = 40;
+/** Wires are 50 units apart with a hit box that runs halfway to each neighbour. The panel is rarely wider than 210 px, which draws a unit at 0.875 px, so every wire is still a 44 px target on a laptop or a phone held sideways. */
+const WIRE_GAP = 50;
 function wiresSVG(w) {
   const n = w.length;
   const H = Math.max(150, (n - 1) * WIRE_GAP + 64);
@@ -450,6 +462,7 @@ function genButtonRules(r, T) {
   for (let attempt = 0; attempt < 30 && bestFaults > 0; attempt++) {
     const rules = [];
     const seen = new Set();
+    let open = xs;
     for (let guard = 0; rules.length < nCond && guard < 120; guard++) {
       const k = pick(r, kinds);
       const parts = [];
@@ -461,8 +474,9 @@ function genButtonRules(r, T) {
       if (seen.has(c) || shadowed(rules, c)) continue;
       seen.add(c);
       const a = herring[label] || (r() < 0.5 ? 'tap' : 'hold');
-      if (!reachable(rules, { c, a }, xs)) continue;
+      if (!reachable(open, c)) continue;
       rules.push({ c, a });
+      open = unclaimed(open, c);
     }
     for (let t = 0; t < 4; t++) {
       const list = [...rules, { c: 'true', a: r() < 0.5 ? 'tap' : 'hold' }];
@@ -700,7 +714,7 @@ export const KEYPAD = {
     const A = solveKeypad(S, host.E, R);
     let at = host.saved && Number.isInteger(host.saved.keyAt) ? Math.max(0, Math.min(4, host.saved.keyAt)) : 0;
     let bad = null;
-    box.innerHTML = `<div class="dx-keys">${S.keys.map((k) => `<button type="button" class="dx-gkey" data-glyph="${k}" aria-label="Key with a ${k} symbol"><i class="dx-kled"></i>${glyphSVG(k)}</button>`).join('')}</div>`;
+    box.innerHTML = `<div class="dx-keys">${S.keys.map((k) => `<button type="button" class="dx-gkey" data-glyph="${k}" aria-label="Key with ${an(k)} symbol"><i class="dx-kled"></i>${glyphSVG(k)}</button>`).join('')}</div>`;
     const paint = () => box.querySelectorAll('.dx-gkey').forEach((b) => b.classList.toggle('is-ok', A.order.indexOf(b.dataset.glyph) < at));
     paint();
     function press(gl, btn) {

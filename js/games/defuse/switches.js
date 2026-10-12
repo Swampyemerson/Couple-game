@@ -142,9 +142,9 @@ export const SWITCHES = {
 .g-defuse .dx-mod[data-mod="switches"] .sx { width: 100%; display: flex; flex-direction: column; align-items: stretch; gap: 10px; }
 .g-defuse .dx-mod[data-mod="switches"] .sx button { touch-action: manipulation; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
 .g-defuse .dx-mod[data-mod="switches"] .sx-plate { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 10px; background: var(--dx-dark); border: 2.5px solid var(--g-ink); border-radius: 10px; box-shadow: inset 0 -4px 0 rgb(255 255 255 / 0.06); }
-.g-defuse .dx-mod[data-mod="switches"] .sx-plate .dx-tag { color: #8d8a80; }
+.g-defuse .dx-mod[data-mod="switches"] .sx-plate .dx-tag { color: #8d8a80; font-size: 0.7rem; }
 .g-defuse .dx-mod[data-mod="switches"] .sx-leds { display: flex; gap: 9px; }
-.g-defuse .dx-mod[data-mod="switches"] .sx-led { display: grid; place-items: center; width: 26px; height: 26px; border: 2.5px solid var(--g-ink); border-radius: 50%; background: #3a3842; color: var(--dx-dark); font: 900 0.62rem/1 var(--g-font-body); }
+.g-defuse .dx-mod[data-mod="switches"] .sx-led { display: grid; place-items: center; width: 26px; height: 26px; border: 2.5px solid var(--g-ink); border-radius: 50%; background: #3a3842; color: var(--dx-dark); font: 900 0.7rem/1 var(--g-font-body); }
 .g-defuse .dx-mod[data-mod="switches"] .sx-led[data-led-color="red"] { background: var(--dx-red); }
 .g-defuse .dx-mod[data-mod="switches"] .sx-led[data-led-color="blue"] { background: var(--dx-blue); color: var(--dx-white); }
 .g-defuse .dx-mod[data-mod="switches"] .sx-led[data-led-color="yellow"] { background: var(--dx-yellow); }
@@ -161,7 +161,7 @@ export const SWITCHES = {
 .g-defuse .dx-mod[data-mod="switches"] .sx-lever::after { content: ''; position: absolute; left: 6px; right: 6px; top: 50%; height: 3px; margin-top: -1.5px; border-radius: 2px; background: color-mix(in srgb, var(--dx-dark) 40%, transparent); }
 .g-defuse .dx-mod[data-mod="switches"] .sx-sw.is-down .sx-lever { transform: translateY(31px); }
 .g-defuse .dx-mod[data-mod="switches"] .sx-n { font: 400 1.05rem/1 var(--g-font-display); }
-.g-defuse .dx-mod[data-mod="switches"] .sx-pos { font: 800 0.56rem/1 var(--g-font-body); letter-spacing: 0.1em; color: var(--g-muted); }
+.g-defuse .dx-mod[data-mod="switches"] .sx-pos { font: 800 0.7rem/1 var(--g-font-body); letter-spacing: 0.1em; color: var(--g-muted); }
 .g-defuse .dx-mod[data-mod="switches"] .sx-set { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 54px; background: var(--dx-yellow); color: var(--dx-dark); border: 3px solid var(--g-ink); border-radius: 12px; box-shadow: 0 6px 0 var(--g-edge, var(--g-ink)); font: 400 1.3rem/1 var(--g-font-display); letter-spacing: 0.12em; transition: transform 0.06s, box-shadow 0.06s; }
 .g-defuse .dx-mod[data-mod="switches"] .sx-set:active { transform: translateY(5px); box-shadow: 0 1px 0 var(--g-edge, var(--g-ink)); }
 .g-defuse .dx-mod[data-mod="switches"] .sx-sw:focus-visible, .g-defuse .dx-mod[data-mod="switches"] .sx-set:focus-visible { outline: 3px solid var(--p-a); outline-offset: 3px; }

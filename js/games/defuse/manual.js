@@ -3,15 +3,25 @@
 import { esc, fmt } from './util.js';
 import { BY_ID, DECOY_RULES, SURGE_SECS, GOLD_BONUS, BLACKOUT, TAX_SECS } from './round.js';
 
-/** Tabs, in guide order: basics first, then one per distinct module type. big = the plate number (or "x2" for a twin pair). */
+/**
+ * The guide's page order and numbers. Pages follow the bomb: one per distinct module type, in the order its first module appears on
+ * the bomb, and its number is that module's number on the bomb (the "3 · Maze" tag), so "Module 3" means the same thing on both screens.
+ * A twin pair is listed once, under the number of its first module. Returns [{ id, n, idx: [slot indexes], p: page number }].
+ */
+export function orderOf(round) {
+  const seen = new Map();
+  round.slots.forEach((s, i) => { if (!seen.has(s.id)) seen.set(s.id, []); seen.get(s.id).push(i); });
+  return [...seen].map(([id, idx], k) => ({ id, idx, n: idx[0] + 1, p: k + 2 }));
+}
+
+/** Tabs, in guide order: basics first, then one per distinct module type. big = the plate number (or "x2" for a twin pair, or the module number when the bomb has no plates). n = the module's number on the bomb. */
 export function tabsOf(round) {
   const plated = round.T.twists > 0;
-  const tabs = [{ id: 'basics', big: '0', sm: 'Basics', gold: false, twin: false }];
-  round.ids.forEach((id, k) => {
-    const idx = round.slots.map((s, i) => (s.id === id ? i : -1)).filter((i) => i >= 0);
-    const twin = idx.length > 1;
-    tabs.push({ id, big: twin ? 'x2' : plated ? String(round.slots[idx[0]].plate) : String(k + 1), sm: BY_ID[id].tab || BY_ID[id].name, gold: idx.includes(round.gold), twin });
-  });
+  const tabs = [{ id: 'basics', big: '0', n: 0, sm: 'Basics', gold: false, twin: false }];
+  for (const o of orderOf(round)) {
+    const twin = o.idx.length > 1;
+    tabs.push({ id: o.id, n: o.n, big: twin ? 'x2' : plated ? String(round.slots[o.idx[0]].plate) : String(o.n), sm: BY_ID[o.id].tab || BY_ID[o.id].name, gold: o.idx.includes(round.gold), twin });
+  }
   return tabs;
 }
 
@@ -55,18 +65,24 @@ export function basicsHTML(round) {
     <p class="dx-note">${T.id === 'classic' ? 'The four modules can be done in any order. All four done: the bomb is safe.' : 'Modules can be done in any order. Every real module done: the bomb is safe.'}</p>`;
 }
 
-function section(id, n, title, body, p, round, tag) {
-  return `<section class="dx-sec" data-page="${id}"><div class="dx-run"><span>Defusal field guide · ${esc(round.edition)}</span><span>${esc(tag)}</span></div><h3><span class="n">${n}</span>${title}</h3>${body}<p class="dx-foot"><span>Read every rule in order. Stop at the first that applies.</span><span>p. ${p}</span></p></section>`;
+// Only the pages that really are a list of rules to try in order get the "stop at the first" reminder; step-by-step pages say so; the rest say nothing.
+const FOOT = { wires: 'Read every rule in order. Stop at the first that applies.', button: 'Read every rule in order. Stop at the first that applies.', maze: 'Work through the steps in order.', password: 'Work through the steps in order.', morse: 'Work through the steps in order.', switches: 'Work through the steps in order.', relay: 'Work through the steps in order.' };
+function section(id, n, title, body, p, round, tag, foot) {
+  return `<section class="dx-sec" data-page="${id}" data-n="${n}"><div class="dx-run"><span>Defusal field guide · ${esc(round.edition)}</span><span>${esc(tag)}</span></div><h3><span class="n">${n}</span>${title}</h3>${body}<p class="dx-foot"><span>${esc(foot || '')}</span><span>p. ${p}</span></p></section>`;
 }
-export function pageHTML(round, id, n) {
+export function pageHTML(round, id) {
   if (id === 'basics') return section('basics', '0', 'Reading the bomb', basicsHTML(round), 1, round, 'Start here');
+  const o = orderOf(round).find((x) => x.id === id);
+  const n = o.n;
   const b = round.book[id];
   const p = BY_ID[id];
   let body = p.page(b.R0, round.T);
   if (id === 'relay') body = body.replace('<div class="dx-relay-panel"></div>', '<p><button type="button" class="dx-openrelay" data-act="relay-open">Open the relay box</button></p>');
   const slip = b.note ? `<aside class="dx-slip" data-slip="${id}"><b class="dx-slip-tag">Correction slip</b>${b.note}</aside>` : '';
-  return section(id, String(n), esc(p.name), slip + body, n + 1, round, 'Module ' + n);
+  const plate = round.T.twists > 0 && o.idx.length === 1 ? ` · plate ${round.slots[o.idx[0]].plate}` : '';
+  const tag = o.idx.length > 1 ? `Modules ${o.idx.map((i) => i + 1).join(' and ')}` : 'Module ' + n + plate;
+  return section(id, String(n), esc(p.name), slip + body, o.p, round, tag, FOOT[id]);
 }
 export function guideHTML(round) {
-  return [pageHTML(round, 'basics', 0), ...round.ids.map((id, k) => pageHTML(round, id, k + 1))].join('');
+  return [pageHTML(round, 'basics'), ...orderOf(round).map((o) => pageHTML(round, o.id))].join('');
 }

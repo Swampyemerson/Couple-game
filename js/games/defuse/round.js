@@ -20,8 +20,8 @@ export const TIERS = {
   classic: { id: 'classic', label: 'Classic', secs: 300, mods: 4, twists: 0, level: 1, stages: 4, needy: false, blurb: 'The original four modules and the original guide.' },
   chill: { id: 'chill', label: 'Rookie', secs: 360, mods: 3, twists: 0, level: 1, stages: 3, needy: false, blurb: 'Three modules. The rules change every round.' },
   normal: { id: 'normal', label: 'Agent', secs: 300, mods: 4, twists: 1, level: 2, stages: 4, needy: false, blurb: 'Four modules and one twist.' },
-  spicy: { id: 'spicy', label: 'Expert', secs: 285, mods: 5, twists: 2, level: 3, stages: 5, needy: true, blurb: 'Five modules, a vent that wants attention, two twists.' },
-  wild: { id: 'wild', label: 'Bomb Squad', secs: 270, mods: 6, twists: 3, level: 4, stages: 5, needy: true, blurb: 'Six modules, a vent, three twists. Every strike costs half a minute.' },
+  spicy: { id: 'spicy', label: 'Expert', secs: 330, mods: 5, twists: 2, level: 3, stages: 5, needy: true, blurb: 'Five modules, a vent that wants attention, two twists.' },
+  wild: { id: 'wild', label: 'Bomb Squad', secs: 360, mods: 6, twists: 3, level: 4, stages: 5, needy: true, blurb: 'Six modules, a vent, three twists. Every strike costs half a minute.' },
 };
 /** Lobby order. Old saved keys (chill, normal, spicy) keep their meaning. */
 export const TIER_ORDER = ['chill', 'normal', 'spicy', 'wild', 'classic'];
@@ -79,7 +79,7 @@ const DIG = '0123456789';
 function serialOf(r, vowel) {
   const ch = [];
   for (let i = 0; i < 5; i++) ch.push(r() < 0.55 ? pick(r, CONS) : pick(r, DIG));
-  if (vowel) ch[int(r, 5)] = pick(r, 'AEIOU');
+  if (vowel) ch[int(r, 5)] = pick(r, 'AEU'); // never O or I: aloud they sound like 0 and 1
   ch.push(pick(r, DIG));
   return ch.join('');
 }
@@ -158,10 +158,25 @@ function schedule(seed, T, nSurge, nBlack) {
 }
 
 // ── the round ───────────────────────────────────────────────────────────
+const jsonOf = (x) => { try { return JSON.stringify(x); } catch { return undefined; } };
+/** How many extra puzzles the errata slot may draw to find one where the slip changes the answer. */
+export const ERRATA_TRIES = 12;
+
 export function buildRound(seed, tierKey) {
   seed = String(seed);
   const T = tierOf(tierKey) || TIERS.normal;
-  let { twists, reserve } = drawTwists(seed, T);
+  const { twists, reserve } = drawTwists(seed, T);
+  const first = assemble(seed, T, twists);
+  if (first) return first;
+  // nothing could carry a slip that changes this bomb's answer: swap in another twist and build again
+  const left = twists.filter((x) => x !== 'errata');
+  const sub = reserve.find((x) => !left.includes(x));
+  if (sub) left.push(sub);
+  return assemble(seed, T, left);
+}
+
+/** One build with a fixed twist list. Returns null when the errata twist is on but no module can carry a slip that matters. */
+function assemble(seed, T, twists) {
   const has = (id) => twists.includes(id);
   const relayOn = has('relay');
   const ventOn = T.needy ? !!BY_ID.vent : has('vent');
@@ -180,7 +195,7 @@ export function buildRound(seed, tierKey) {
   const order = T.id === 'classic' ? ents : shuffle(lr, ents);
   if (ventOn) order.push({ id: 'vent' });
 
-  // rules, errata
+  // rules
   const book = {};
   const ids = [...new Set(order.map((e) => e.id))].sort((a, b) => REGISTRY.indexOf(BY_ID[a]) - REGISTRY.indexOf(BY_ID[b]));
   const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -188,21 +203,6 @@ export function buildRound(seed, tierKey) {
     const p = BY_ID[id];
     const R0 = p.rules(stream(seed, 'rules', id), T);
     book[id] = { R0, R: R0, note: null };
-  }
-  let errataId = null;
-  const wantErrata = has('errata');
-  if (wantErrata) {
-    for (const id of shuffle(stream(seed, 'errata'), ids)) {
-      const p = BY_ID[id];
-      if (!p.errata) continue;
-      const er = p.errata(stream(seed, 'errata', id), clone(book[id].R0), T);
-      if (er && er.R && er.note) { book[id].R = er.R; book[id].note = er.note; errataId = id; break; }
-    }
-    if (!errataId) { // nothing could carry a slip: swap in another twist
-      twists = twists.filter((x) => x !== 'errata');
-      const sub = reserve.find((x) => !twists.includes(x));
-      if (sub) twists.push(sub);
-    }
   }
 
   // plates (every module gets one when the round has twists, so a twin doesn't give itself away)
@@ -224,8 +224,36 @@ export function buildRound(seed, tierKey) {
     slots[idx[1 - live]].decoy = true;
     decoy = { type: dupId, rule };
   }
+  // the puzzle's stream: attempt 0 is the original key, so rounds without a retry are unchanged; retries add a key
+  const genR = (s, k) => (k ? stream(seed, 'gen', s.id, s.dup ? 'twin' : 'main', 'try', k) : stream(seed, 'gen', s.id, s.dup ? 'twin' : 'main'));
+
+  // errata: the slip must change the answer on THIS bomb, or it is only noise. Draw the puzzle again (extra stream keys, so the
+  // round stays deterministic) until the slipped rule and the printed rule give different answers; if a module cannot, try the next.
+  let errataId = null;
+  if (has('errata')) {
+    for (const id of shuffle(stream(seed, 'errata'), ids)) {
+      const p = BY_ID[id];
+      if (!p.errata) continue;
+      const live = slots.find((s) => s.id === id && !s.decoy);
+      if (!live) continue;
+      const er = p.errata(stream(seed, 'errata', id), clone(book[id].R0), T);
+      if (!(er && er.R && er.note)) continue;
+      for (let k = 0; k < ERRATA_TRIES; k++) {
+        let S, a, b;
+        try {
+          S = p.gen(genR(live, k), E, er.R, T);
+          a = jsonOf(p.solve(S, E, er.R, T));
+          b = jsonOf(p.solve(S, E, book[id].R0, T));
+        } catch { continue; }
+        if (a !== undefined && b !== undefined && a !== b) { live.S = S; live.gk = k; break; }
+      }
+      if (live.S) { book[id].R = er.R; book[id].note = er.note; errataId = id; break; }
+    }
+    if (!errataId) return null;
+  }
   // puzzles
-  for (const s of slots) s.S = BY_ID[s.id].gen(stream(seed, 'gen', s.id, s.dup ? 'twin' : 'main'), E, book[s.id].R, T);
+  for (const s of slots) if (!s.S) s.S = BY_ID[s.id].gen(genR(s, 0), E, book[s.id].R, T);
+  for (const s of slots) delete s.gk;
 
   // golden module: about one round in twelve, never one of the twins (it would give the live one away)
   let gold = -1;
@@ -250,7 +278,7 @@ export function buildRound(seed, tierKey) {
 
   const fp = hash('ed', T.id, JSON.stringify(ids.map((id) => book[id].R0)));
   const edition = T.id === 'classic' ? 'Ed. C-1' : `Ed. ${1 + (fp % 9)}${'ACDEFGHJKLMNPRTUVWXY'[(fp >>> 4) % 20]}-${(fp >>> 12) % 10}`;
-  return { seed, tier: T.id, T, E, slots, book, ids, twists, twistRules, gold, name: nameOf(seed), edition };
+  return { seed, tier: T.id, T, E, slots, book, ids, twists: [...twists], twistRules, gold, name: nameOf(seed), edition };
 }
 
 /** Does this slot count towards defusing the bomb? */
