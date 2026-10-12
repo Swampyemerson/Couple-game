@@ -13,7 +13,7 @@ import { loadWear, saveWear, resolveWear, newUnlocks, packWear, unpackWear, ward
 import { clamp, dampAngle, wrapAngle, hexToRgb, cssColor, luminance, listeners, fmtTime, mixHex, esc, seeded, packQuat, unpackQuat } from './util.js';
 import { MAPS, mapArea, mapCacheInfo, mapBuildStats, mapJobsInfo, mixPlan, dailyPlan, dayKey, roomAt } from './maps.js';
 import { sanitizeSetup, sanitizeRules, applyPreset, stepRule, setRule, loadSaved, saveSetup, sizeScale, SPEED_MUL, CLIMB_MUL, tipsSeen, markTipsSeen, PRESETS, timeScale, hideScale, effSeconds, sprintMul, dbSpeed, OPTIONS, fmtRule, rulesFor } from './rules.js';
-import { TWIST_CSS, DUSK, BOUNTY, UNDERDOG, SUDDEN, twistById, pickTwists, fogStep, fogMood, duskStep, duskMood, paletteFor, pickBounty, underdogOf, wagerPay, dailyTwistFor, twistChip, noteChip, suddenChip, inject, tagNextLine, twistRows, injectRows } from './twists.js';
+import { TWIST_CSS, DUSK, BOUNTY, UNDERDOG, SUDDEN, twistById, pickTwists, fogStep, fogMood, duskStep, duskMood, paletteFor, mapSwatches, pickBounty, underdogOf, wagerPay, dailyTwistFor, twistChip, noteChip, suddenChip, inject, tagNextLine, twistRows, injectRows } from './twists.js';
 import { REVEAL } from './paint.js';
 // H: whisker shots, mercy chirp, notes on the skin, last-second drama
 import { createMoments, momentLines, noteLines } from './moments.js';
@@ -105,6 +105,8 @@ export function createGame(el, api) {
     helloEpoch: -1,
     setupVer: 0,
     partnerKeep: null,
+    awayHold: null, // guest: the clock left when the host dropped out (a host reload resyncs from it)
+    clkLast: null,
     actor: null, // local mode: who is holding the device
     curtainUp: false,
     ctxLost: false,
@@ -698,6 +700,7 @@ export function createGame(el, api) {
   }
   /** Called every frame and on a 200 ms timer: advances timed phases. */
   function hostTick() {
+    clockGuard();
     if (!isHost || !S.match || S.paused || S.boot !== 'ready') return;
     const t = now();
     const ph = S.phase;
@@ -749,6 +752,7 @@ export function createGame(el, api) {
     if (!p || p.seq <= S.phase.seq) return;
     adoptMatch(p);
     const prev = S.phase.name;
+    S.awayHold = null;
     S.phase = { name: p.name, seq: p.seq, round: p.round, at: p.at, end: p.at + (p.dur || 0), dur: p.dur || 0, data: p.data };
     if (isHost) S.hostSeq = Math.max(S.hostSeq, p.seq);
     S.pendingTitle = null;
@@ -804,6 +808,12 @@ export function createGame(el, api) {
   // Everything a twist needs derives from the match seed + the round number (twists.js), so both
   // phones build the same palette, the same bounty spot and the same moods without a message.
   const MOOD = { on: false, step: -1, id: null, log: [] }; // log: every step applied this round (tests)
+  /** The map's own colours for the Three colours twist (area-weighted, from the atlas and the geometry), else its probes. */
+  function roomSwatches() {
+    let sw = [];
+    try { sw = mapSwatches(stage.map); } catch (e) { console.error('chameleon swatches', e); }
+    return sw.length >= 3 ? sw : sw.concat(stage.map.probes || []);
+  }
   /** Clear last round's mood, then set up this round's twist and underdog. Runs once per round (resetRound). */
   function roundTwistSetup(round, h) {
     const m = S.match; if (!m || !stage) return;
@@ -812,7 +822,7 @@ export function createGame(el, api) {
     const tw = twistFor(round - 1);
     R.twist = tw; MOOD.log.length = 0;
     R.roundTag = sdRound(round) ? 'Sudden death' : tw ? twistById(tw).short : '';
-    if (tw === 'colours') { R.palette = paletteFor(m.id, round, stage.map.probes); R.palRgb = R.palette.map(hexToRgb); }
+    if (tw === 'colours') { R.palette = paletteFor(m.id, round, roomSwatches()); R.palRgb = R.palette.map(hexToRgb); }
     if (tw === 'bounty') { R.bounty = bountySpot(round); if (R.bounty) stage.fx.setBounty(R.bounty.x, R.bounty.y, R.bounty.z, theme.hl); }
     // underdog: the player trailing by the gap when the round began gets +1 pellet (seeking) or +1 escape (hiding)
     const ud = underdogFor(round); R.ud = ud;
@@ -1448,8 +1458,8 @@ export function createGame(el, api) {
   link.on('start', () => { /* guests can't start; ignored */ });
   link.on('out', (d) => { if (isHost && d) hostOut(d.w); });
   link.on('vis', (d) => { if (!isHost || !d) return; S.partnerHidden = !!d.hidden; if (d.hidden) addPause('hidden'); else removePause('hidden'); });
-  link.on('pause', (d) => { if (isHost || !d) return; S.paused = { reason: d.reason, remaining: d.remaining }; S.resumeAt = 0; S.phase.end = now() + d.remaining; });
-  link.on('resume', (d) => { if (isHost || !d) return; S.paused = null; S.resumeAt = d.at; S.phase.end = d.at + d.remaining; });
+  link.on('pause', (d) => { if (isHost || !d) return; S.awayHold = null; S.paused = { reason: d.reason, remaining: d.remaining }; S.resumeAt = 0; S.phase.end = now() + d.remaining; });
+  link.on('resume', (d) => { if (isHost || !d) return; S.awayHold = null; S.paused = null; S.resumeAt = d.at; S.phase.end = d.at + d.remaining; });
 
   // shots, scans, scurries
   // H: hunt interactions & couple moments (moments.js): the factory reads the game's closure through these getters
@@ -1507,11 +1517,13 @@ export function createGame(el, api) {
       else if (S.partnerKeep) pos[w] = S.partnerKeep;
       else if (rem.v > 0.5) pos[w] = [rem.x, rem.y, rem.z, rem.yaw, Math.round(rem.po), rem.wa, rem.q, rem.at];
     }
-    const remaining = S.paused ? S.paused.remaining : Math.max(0, S.phase.end - t);
+    const hold = !S.paused && S.awayHold && performance.now() - S.awayHold.t < 30000 ? S.awayHold : null; // a guest whose host dropped out: the clock stood still
+    const remaining = S.paused ? S.paused.remaining : hold ? hold.remaining : Math.max(0, S.phase.end - t);
     return {
       v: 1, setup: S.setup, match: S.match, hostSeq: Math.max(S.hostSeq, S.phase.seq),
       phase: { name: S.phase.name, seq: S.phase.seq, round: S.phase.round, dur: S.phase.dur, remaining, data: S.phase.data },
-      tex, pos, pellets: R.pellets, scurried: R.scurried, escapes: R.escapes, scansLeft: { a: Number.isFinite(R.scansLeft.a) ? R.scansLeft.a : -1, b: Number.isFinite(R.scansLeft.b) ? R.scansLeft.b : -1 }, scanIn: { a: Math.max(0, R.scanReady.a - t), b: Math.max(0, R.scanReady.b - t) }, seekElapsed: S.phase.name === 'seek' ? t - R.seekStart : 0,
+      tex, pos, pellets: R.pellets, scurried: R.scurried, escapes: R.escapes, scansLeft: { a: Number.isFinite(R.scansLeft.a) ? R.scansLeft.a : -1, b: Number.isFinite(R.scansLeft.b) ? R.scansLeft.b : -1 }, scanIn: { a: Math.max(0, R.scanReady.a - t), b: Math.max(0, R.scanReady.b - t) }, seekElapsed: S.phase.name === 'seek' ? (hold ? hold.el : t - R.seekStart) : 0,
+      call: { a: R.call.a || null, b: R.call.b || null },
     };
   }
   function sendSnap() { link.sendBlob('snap', JSON.stringify(snapshot())); S.partnerKeep = null; }
@@ -1537,6 +1549,8 @@ export function createGame(el, api) {
     if (s.scansLeft) for (const w of ['a', 'b']) R.scansLeft[w] = s.scansLeft[w] < 0 ? Infinity : s.scansLeft[w];
     if (s.scanIn) { R.scanReady.a = t + s.scanIn.a; R.scanReady.b = t + s.scanIn.b; }
     if (ph.name === 'seek') R.seekStart = t - (s.seekElapsed || 0);
+    if (s.call) for (const w of ['a', 'b']) if (!R.call[w] && typeof s.call[w] === 'string') R.call[w] = String(s.call[w]).slice(0, 12); // the wager call chosen on the blind card survives a reload
+    S.awayHold = null;
     if (S.match) api.setScore(S.match.scores);
     S.paused = { reason: 'away', remaining: ph.remaining };
     if (S.phase.name === 'hide' || S.phase.name === 'seek') applyPaletteLock(); // update pass: a rejoin keeps the Three colours lock
@@ -1544,7 +1558,22 @@ export function createGame(el, api) {
   }
 
   // ── pause / resume ────────────────────────────────────────────────
+  /** Guests: the host's clock restarts when the host reloads (the shared clock jumps), so every absolute time we hold
+   *  moves with it; the remaining time stays what it was. */
+  function clockGuard() {
+    if (local || isHost || !link) return;
+    const n = now(); const p = performance.now(); const l = S.clkLast;
+    S.clkLast = { n, p };
+    if (!l) return;
+    const d = (n - l.n) - (p - l.p);
+    if (Math.abs(d) < 1000) return;
+    S.phase.at += d; S.phase.end += d; if (S.resumeAt) S.resumeAt += d; R.seekStart += d; R.scanReady.a += d; R.scanReady.b += d;
+  }
   function addPause(reason) {
+    if (reason === 'away' && !isHost && !local && S.match && !S.paused && !S.pauseReasons.has('away')) {
+      const t = now();
+      S.awayHold = { remaining: Math.max(0, S.phase.end - Math.max(t, S.resumeAt)), el: S.phase.name === 'seek' ? t - R.seekStart : 0, t: performance.now() };
+    }
     S.pauseReasons.add(reason);
     if (reason === 'away' && !local && S.match && !S.partnerKeep && rem.v > 0.5) {
       S.partnerKeep = [rem.x, rem.y, rem.z, rem.yaw, Math.round(rem.po), rem.wa, rem.q, rem.at];
@@ -4317,6 +4346,8 @@ export function createGame(el, api) {
           calls: stage ? stage.renderer.info.render.calls : 0, tris: stage ? stage.renderer.info.render.triangles : 0,
         };
       },
+      /** Tests: the map's own colours (biggest surfaces first) and the Three colours palettes drawn from them for rounds 1..n. */
+      swatchInfo(n = 4) { const sw = mapSwatches(stage.map); return { sw, pals: Array.from({ length: n }, (_, i) => paletteFor(S.match ? S.match.id : 'x', i + 1, sw)) }; },
       /** Tests (host): set the match scores now (the next phase message carries them to the partner). */
       forceScores(a, b) { if (S.match) { S.match.scores.a = a; S.match.scores.b = b; } return S.match ? { ...S.match.scores } : null; },
       /** Tests: pin a round's twist / the deck on this device (the host's deck travels with the next phase message). */

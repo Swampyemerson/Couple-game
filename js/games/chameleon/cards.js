@@ -513,6 +513,12 @@ export const CARDS_CSS = `
 .chm-wt-svg .i1 { fill: var(--g-hl); } .chm-wt-svg .i2 { fill: var(--p-b); } .chm-wt-svg .i3 { stroke: var(--p-b); stroke-width: 7; } .chm-wt-svg .i4 { fill: var(--g-card); }
 .chm-wt-svg .i5 { fill: var(--p-b); stroke: none; opacity: .85; } .chm-wt-svg .i6 { fill: var(--g-ink); stroke: none; } .chm-wt-svg .i7 { stroke: var(--p-a); stroke-width: 6; }
 .chm-wardrobe h3 small { font-size: .62rem; letter-spacing: .04em; text-transform: none; font-weight: 800; margin-left: 4px; }
+/* reactions right under the headline (above the stats, lines, story and head-to-head), so they are on screen at scrollTop 0 and never sit under the pinned Next / See the board bar,
+   however long the card gets (small phones, extra lines in later rounds) */
+.chm-recap .chm-card > *, .chm-final .chm-card > * { order: 2; }
+.chm-recap .chm-card > .chm-kicker, .chm-recap .chm-card > h2, .chm-recap .chm-card > p:not(.chm-lines), .chm-final .chm-card > .chm-kicker, .chm-final .chm-card > h2, .chm-final .chm-card > p:first-of-type { order: 0; }
+.chm-recap .chm-card > .chm-emotes, .chm-final .chm-card > .chm-emotes { order: 1; }
+.chm-recap .chm-card > .chm-foot, .chm-final .chm-card > .chm-foot { order: 3; }
 /* recap / final: the role pill belongs to the hunt, not here (it sat on the chameleon's head in portrait) */
 .chm:has(.chm-recap) .chm-sub, .chm:has(.chm-final) .chm-sub { display: none; }
 /* a phone on its side: the recap and final cards dock to the right as a side panel, so the chameleon stays in view on the left
@@ -523,11 +529,7 @@ export const CARDS_CSS = `
   .chm-recap .chm-card h2, .chm-final .chm-card h2 { font-size: 1.2rem; }
   .chm-recap .chm-card p { font-size: .8rem; }
   .chm-recap .chm-stats { display: none; }
-  /* reactions right under the headline (above the lines, tally and head-to-head), so they are on screen without scrolling and clear of the pinned Next bar */
-  .chm-recap .chm-card > * { order: 2; }
-  .chm-recap .chm-card > .chm-kicker, .chm-recap .chm-card > h2, .chm-recap .chm-card > p:not(.chm-lines) { order: 0; }
-  .chm-recap .chm-card > .chm-emotes { order: 1; }
-  .chm-recap .chm-card > .chm-foot { order: 3; }
+
   .chm:has(.chm-recap) .chm-top, .chm:has(.chm-final) .chm-top { display: none; } /* the card's tally says it; the pills sat on top of the panel */
   .chm-recap .chm-h2h { gap: 0; line-height: 1.2; }
   .chm-recap .chm-tally { font-size: .95rem; }

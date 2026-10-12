@@ -86,19 +86,104 @@ export function duskMood(step, baseHemi, baseSun, bgHex) {
 }
 
 const dist2 = (a, b) => { const x = hexToRgb(a); const y = hexToRgb(b); return (x[0] - y[0]) ** 2 + (x[1] - y[1]) ** 2 + (x[2] - y[2]) ** 2; };
-/** Three seeded, well-separated swatches from the map's own colours (its probes), as '#rrggbb'. */
-export function paletteFor(seed, round, probes) {
-  const hexes = []; for (const p of probes || []) if (p && /^#[0-9a-f]{6}$/i.test(p.hex || '') && !hexes.some((h) => dist2(h, p.hex) < 600)) hexes.push(p.hex.toLowerCase());
-  const rnd = seeded(`palette:${seed}:${round}`);
-  const fallback = ['#d9534f', '#3b7ddd', '#e8c547', '#4b9f6a', '#8e6bbf', '#f2eadf'];
-  for (const f of fallback) { if (hexes.length >= 4) break; if (!hexes.some((h) => dist2(h, f) < 3000)) hexes.push(f); }
-  const out = [hexes.splice(rnd.int(hexes.length), 1)[0]];
-  while (out.length < 3 && hexes.length) {
-    // the next swatch: the leftover colour farthest from the ones chosen (ties by the seed)
-    let bi = 0; let bd = -1;
-    for (let i = 0; i < hexes.length; i++) { const d = Math.min(...out.map((o) => dist2(o, hexes[i]))) * (0.85 + 0.3 * rnd()); if (d > bd) { bd = d; bi = i; } }
-    out.push(hexes.splice(bi, 1)[0]);
+const hex2 = (r, g, b) => '#' + [r, g, b].map((v) => Math.max(0, Math.min(252, Math.round(v / 4) * 4)).toString(16).padStart(2, '0')).join('');
+/** sRGB hex -> CIE Lab (D65), for perceptual distances between swatches. */
+export function labOf(hex) {
+  const lin = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+  const [r, g, b] = hexToRgb(hex).map(lin);
+  const X = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047; const Y = 0.2126 * r + 0.7152 * g + 0.0722 * b; const Z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883;
+  const f = (t) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
+  const fx = f(X); const fy = f(Y); const fz = f(Z);
+  return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+}
+/** Perceptual distance (CIE76 ΔE) between two '#rrggbb' colours. */
+export function deltaE(a, b) { const x = labOf(a); const y = labOf(b); return Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]); }
+const chromaOf = (hex) => { const l = labOf(hex); return Math.hypot(l[1], l[2]); };
+
+const SWATCH_CACHE = new WeakMap();
+/**
+ * The colours a map is made of, biggest first: [{ hex, w }], w = surface area (m²) wearing that colour.
+ * Every triangle of the map's chunks (not the distant backdrop) contributes its area to the colours of
+ * its atlas tile (a few dominant texels, sampled at fixed points of the deterministic atlas) tinted by
+ * its vertex colour: the floor's checker gives both squares, a flat-coloured sofa its own colour.
+ * Pure function of the map data, so both phones get the same list. Cached per map object.
+ */
+export function mapSwatches(map) {
+  if (!map || !map.chunks || !map.atlas) return [];
+  if (SWATCH_CACHE.has(map)) return SWATCH_CACHE.get(map);
+  const A = map.atlas; const S = A.size; const H = A.height || S; const D = A.data;
+  const tileCols = new Map(); // tile key -> [{ r, g, b, f }] (f: share of the tile)
+  const colsOf = (px, py, pw, ph) => {
+    const key = (px * 4096 + py) * 4096 + pw * 64 + ph; let c = tileCols.get(key); if (c) return c;
+    const bins = new Map(); let n = 0; const G = 10;
+    for (let j = 0; j < G; j++) for (let i = 0; i < G; i++) {
+      const x = Math.min(S - 1, px + Math.floor(((i + 0.5) / G) * pw)); const y = Math.min(H - 1, py + Math.floor(((j + 0.5) / G) * ph)); const o = (y * S + x) * 4;
+      const r = D[o]; const g = D[o + 1]; const b = D[o + 2]; const k = (r >> 4) * 256 + (g >> 4) * 16 + (b >> 4);
+      let e = bins.get(k); if (!e) { e = { r: 0, g: 0, b: 0, c: 0 }; bins.set(k, e); }
+      e.r += r; e.g += g; e.b += b; e.c++; n++;
+    }
+    c = [...bins.values()].sort((x, y) => y.c - x.c || x.r - y.r).slice(0, 3).map((e) => ({ r: e.r / e.c, g: e.g / e.c, b: e.b / e.c, f: e.c / n }));
+    tileCols.set(key, c); return c;
+  };
+  const acc = new Map(); // quantised colour -> { r, g, b, w }
+  for (const ch of map.chunks) {
+    if (ch.backdrop) continue;
+    const g = ch.geometry; const P = g.attributes.position.array; const T = g.attributes.tile.array; const C = g.attributes.color.array; const IX = g.index.array;
+    for (let t = 0; t + 2 < ch.mainIndexCount; t += 3) {
+      const a = IX[t]; const b = IX[t + 1]; const c = IX[t + 2];
+      const ux = P[b * 3] - P[a * 3]; const uy = P[b * 3 + 1] - P[a * 3 + 1]; const uz = P[b * 3 + 2] - P[a * 3 + 2];
+      const vx = P[c * 3] - P[a * 3]; const vy = P[c * 3 + 1] - P[a * 3 + 1]; const vz = P[c * 3 + 2] - P[a * 3 + 2];
+      const area = 0.5 * Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
+      if (!(area > 1e-4)) continue;
+      const cr = C[a * 3]; const cg = C[a * 3 + 1]; const cb = C[a * 3 + 2];
+      const px = Math.round(T[a * 4] * S); const py = Math.round((1 - T[a * 4 + 1] - T[a * 4 + 3]) * H); const pw = Math.max(1, Math.round(T[a * 4 + 2] * S)); const ph = Math.max(1, Math.round(T[a * 4 + 3] * H));
+      for (const tc of colsOf(px, py, pw, ph)) {
+        const r = tc.r * cr; const gg = tc.g * cg; const bb = tc.b * cb; const k = (r >> 4) * 256 + (gg >> 4) * 16 + (bb >> 4);
+        const w = area * tc.f; let e = acc.get(k); if (!e) { e = { r: 0, g: 0, b: 0, w: 0 }; acc.set(k, e); }
+        e.r += r * w; e.g += gg * w; e.b += bb * w; e.w += w;
+      }
+    }
   }
+  // merge near-identical colours into the heavier one (ΔE < 9), keep the top 14
+  const list = [...acc.values()].filter((e) => e.w > 0).map((e) => ({ hex: hex2(e.r / e.w, e.g / e.w, e.b / e.w), w: e.w })).sort((x, y) => y.w - x.w || (x.hex < y.hex ? -1 : 1));
+  const out = [];
+  for (const e of list) { const m = out.find((o) => deltaE(o.hex, e.hex) < 9); if (m) m.w += e.w; else out.push({ ...e }); }
+  out.sort((x, y) => y.w - x.w || (x.hex < y.hex ? -1 : 1)); out.length = Math.min(out.length, 14);
+  SWATCH_CACHE.set(map, out);
+  return out;
+}
+
+/** Colour distance a swatch must keep from the others (ΔE, CIE76). */
+export const SWATCH_DE = 24;
+/**
+ * Three seeded, clearly different swatches from the map's own colours (`cands`: [{ hex, w? }] from
+ * mapSwatches, or a map's probes): the first is one of the room's three biggest surfaces, so there is
+ * always something to blend into; the others favour colours that are far from the chosen ones, sizeable
+ * and not grey. Every pair is at least SWATCH_DE apart (ΔE); when the room is short of colours the
+ * plain primaries fill in. '#rrggbb' strings, the same on both phones.
+ */
+export function paletteFor(seed, round, cands) {
+  const list = []; for (const p of cands || []) if (p && /^#[0-9a-f]{6}$/i.test(p.hex || '')) list.push({ hex: p.hex.toLowerCase(), w: p.w > 0 ? +p.w : 1 });
+  const rnd = seeded(`palette:${seed}:${round}`);
+  const out = [];
+  const top = list.slice().sort((x, y) => y.w - x.w).slice(0, 3);
+  if (top.length) out.push(top[rnd.int(top.length)].hex);
+  const wmax = Math.max(1e-6, ...list.map((c) => c.w));
+  const far = (h) => Math.min(...out.map((o) => deltaE(o, h)));
+  while (out.length < 3) {
+    let best = null; let bs = -1;
+    for (const c of list) {
+      if (out.includes(c.hex)) continue;
+      const d = far(c.hex); if (d < SWATCH_DE) continue;
+      if (c.w < wmax * 0.03) continue; // a speck of colour on one prop is not the room's
+      const sc = Math.min(d, 50) * Math.sqrt(c.w / wmax) * (0.2 + 0.8 * Math.min(1, chromaOf(c.hex) / 14)) * (0.4 + 1.2 * rnd()); // seeded: the room's characteristic colours take turns
+      if (sc > bs) { bs = sc; best = c; }
+    }
+    if (!best) break;
+    out.push(best.hex);
+  }
+  const fallback = ['#d9534f', '#3b7ddd', '#e8c547', '#4b9f6a', '#8e6bbf', '#f2eadf', '#2b2b33'];
+  for (let k = rnd.int(fallback.length), n = 0; out.length < 3 && n < fallback.length; n++, k = (k + 1) % fallback.length) if (!out.length || far(fallback[k]) >= SWATCH_DE) out.push(fallback[k]);
   return out;
 }
 
@@ -151,6 +236,18 @@ export const TWIST_CSS = `
 .chm .chm-twisttag { font-weight: 900; white-space: nowrap; }
 .chm .chm-twistrow { margin: 6px 0 0; }
 .chm .chm-twistrow .chm-seg2 button { min-height: 44px; }
+/* hand-over curtains: the main button is always on screen. It sticks to the foot of the card whenever the card has to scroll (chips, twist and underdog stickers make it tall), and a short landscape phone (iPhone 13: 342 px) also packs the stickers and the call chips into single lines. */
+.chm .chm-over[data-curtain] .chm-go { position: sticky; bottom: 0; z-index: 2; margin-top: auto; box-shadow: 0 0 0 8px var(--g-card), var(--g-shadow, 3px 3px 0 var(--g-edge)); }
+@media (max-height: 520px) and (orientation: landscape) {
+  .chm .chm-over[data-curtain] .chm-card { gap: 6px; padding: 8px 14px 10px; width: min(100%, 560px); }
+  .chm .chm-over[data-curtain] .chm-card h2 { font-size: 1.25rem; }
+  .chm .chm-over[data-curtain] .chm-card p { font-size: .84rem; line-height: 1.25; }
+  .chm .chm-over[data-curtain] .chm-twist { margin: 0; padding: 3px 10px; font-size: .74rem; transform: none; flex-wrap: nowrap; gap: 0 8px; box-shadow: none; }
+  .chm .chm-over[data-curtain] .chm-twist b { font-size: .8rem; white-space: nowrap; }
+  .chm .chm-over[data-curtain] .chm-twist[data-twist] span { display: none; }
+  .chm .chm-over[data-curtain] .chm-call { flex-direction: row; align-items: center; justify-content: center; flex-wrap: wrap; gap: 4px 10px; padding: 4px 8px; }
+  .chm .chm-over[data-curtain] .chm-call .chm-chips { gap: 6px; }
+}
 `;
 /** The announcement sticker. */
 export function twistChip(t, extra = '') {

@@ -586,7 +586,7 @@ export const CSS = `
   .chm-final .chm-foot { gap: 6px; padding-top: 6px; }
 }
 /* a phone: the tall cards start below the hub's back / menu stickers instead of under them */
-@media (max-width: 560px) { .chm-over.chm-final, .chm-over.chm-recap { padding-top: calc(var(--gm-corner-safe, 64px) + 6px); } }
+/* (recap / final top padding: see the sticker lane above; it already clears the corner buttons) */
 .chm-tl { display: flex; flex-direction: column; gap: 4px; }
 .chm-tl-row { display: flex; align-items: center; gap: 6px; font-size: .72rem; font-weight: 900; }
 .chm-tl-n { width: 24px; text-align: right; color: var(--g-muted); }
