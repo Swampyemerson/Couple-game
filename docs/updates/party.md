@@ -142,7 +142,10 @@ The new suites cover:
 - **Giver's Bet** travels inside the clue move (`{ clue, bet }`), not as a separate move. A separate move in a two-actor phase would not
   replay deterministically through `derive`, which consumes moves per actor in `next()` order.
 - **Online rematch** still needs the partner to accept, which is engine behaviour. "Same again" preselects the last mode and pack.
-KNOWN_EXTRA
+- Engine end card in landscape (667x375, 844x390) is taller than the viewport: Rematch sits at the fold and the card scrolls
+  (`.gm-end` has `overflow: auto`). Engine-owned, so not changed here.
+- Doodle's Encore end card once showed late after a reload mid-Encore (3 of ~30 verifier runs, never reproduced since); the view now
+  calls `api.showEnd()` on the over transition with idempotent retries, and a test covers reload-then-finish.
 
 ## README games-table lines
 
