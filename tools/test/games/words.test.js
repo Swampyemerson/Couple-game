@@ -158,6 +158,8 @@ async function snap(pg, scheme, name, sizes = [[390, 844], [360, 780]]) {
 }
 const tapKeys = async (pg, word) => { for (const ch of word) await pg.click(`.g-wd-key[data-k="${ch}"]`); };
 const tapEnter = (pg) => pg.click('.g-wd-key[data-k="enter"]');
+// Word Duel v2: the player who goes first sees the rules card; one tap on Play starts the duel.
+const wdPlay = async (h, id) => { const first = (await h.engine(h.a, id)).first; await h[first].click('.g-wd-actions [data-act="play"]'); await h.settle(); };
 // The hub re-renders when results sync, which can detach the card the harness just found: retry.
 async function retry(fn) { for (let n = 0; ; n++) { try { return await fn(); } catch (e) { if (n >= 2 || !/not attached|detached/i.test(e.message)) throw e; await new Promise((r) => setTimeout(r, 300)); } } }
 const newLocal = (h, pg, game) => retry(() => h.newLocalGame(pg, game));
@@ -170,6 +172,7 @@ async function wordDuelOnline(h, scheme, full) {
   const id = await newOnline(h, a, 'wordduel');
   await h.openMatch(b, id);
   await h.settle();
+  await wdPlay(h, id);
   assert(await a.isVisible('.g-wd-key[data-k="q"]'), 'word duel: keyboard shows for picking');
   if (full) {
     await tapKeys(a, 'qqqqq');
@@ -212,8 +215,8 @@ async function wordDuelOnline(h, scheme, full) {
     const keyE = await a.getAttribute('.g-wd-key[data-k="e"]', 'class');
     assert(/m-g/.test(keyE), 'keyboard colours E as right spot');
     // Sydney sees Emerson's progress as colour only
-    const minis = await b.$$eval('.g-wd-strip .g-wd-m', (ms) => ms.length);
-    const coloured = await b.$$eval('.g-wd-strip .g-wd-m[class*="m-"]', (ms) => ms.length);
+    const minis = await b.$$eval('.g-wd-strip .g-wd-minis .g-wd-m', (ms) => ms.length);
+    const coloured = await b.$$eval('.g-wd-strip .g-wd-minis .g-wd-m[class*="m-"]', (ms) => ms.length);
     assert(minis === 30 && coloured === 10, 'partner progress shows 2 colour-only rows');
     const bText = await b.evaluate(() => document.querySelector('#game-root').innerText.toUpperCase());
     assert(!bText.includes('SLATE') && !bText.includes('BRINE'), 'partner guesses stay hidden');
@@ -266,6 +269,7 @@ async function wordDuelLocal(h, scheme) {
   assert(await a.isVisible('#game-root .gm-curtain'), 'same phone: curtain before the first secret');
   await snap(a, scheme, 'wd-7-curtain', [[390, 844]]);
   await reveal(a);
+  await a.click('.g-wd-actions [data-act="play"]');
   await a.keyboard.type('plumb'); await a.keyboard.press('Enter');
   await reveal(a);
   await a.keyboard.type('grape'); await a.keyboard.press('Enter');
@@ -273,10 +277,10 @@ async function wordDuelLocal(h, scheme) {
   await a.keyboard.type('crane'); await a.keyboard.press('Enter'); await a.waitForTimeout(300);
   await a.keyboard.type('grape'); await a.keyboard.press('Enter');
   await a.waitForTimeout(1500);
-  assert(await a.isVisible('.g-wd-actions [data-act="commit"]'), 'same phone: the finishing guess reveals before passing the phone');
-  assert(await a.isHidden('#game-root .gm-curtain'), 'no curtain until you pass');
+  assert(await a.isVisible('.g-wd-hold-layer [data-act="holddone"]'), 'same phone: the finishing guess reveals before passing the phone');
+  assert((await h.engine(a, (await a.evaluate(() => window.__lastMatchId)))).state.guesses.a.length === 2, 'same phone: the finishing guess is already recorded');
   await snap(a, scheme, 'wd-8-local-pass');
-  await a.click('.g-wd-actions [data-act="commit"]');
+  await a.click('.g-wd-hold-layer [data-act="holddone"]');
   await a.waitForTimeout(80);
   assert(await a.isVisible('#game-root .gm-curtain'), 'curtain before Sydney solves');
   await reveal(a);
@@ -303,9 +307,16 @@ async function giveClue(pg, clue, n = 2) {
   await pg.click('.g-ag-form button[type="submit"]');
 }
 async function pickCard(pg, i, viaButton) {
+  await pg.waitForTimeout(420); // taps right after a move are ignored on purpose
   await pg.click(`.g-ag-card[data-i="${i}"]`);
   if (viaButton) await pg.click('.g-ag-dock [data-act="pick"]');
-  else await pg.click(`.g-ag-card[data-i="${i}"]`);
+  else { await pg.waitForTimeout(380); await pg.click(`.g-ag-card[data-i="${i}"]`); }
+}
+// v2: the first giver sees the mission briefing before the first clue; one tap on Play keeps the defaults.
+async function playRules(pg) {
+  await pg.waitForSelector('.g-ag-play');
+  await pg.click('.g-ag-play');
+  await pg.waitForSelector('.g-ag-input');
 }
 async function agentsOnline(h, scheme, full) {
   const { a, b } = h;
@@ -318,6 +329,9 @@ async function agentsOnline(h, scheme, full) {
   const G1 = s.giver;
   const R1 = G1 === 'a' ? 'b' : 'a';
   assert(G1 === e.first, 'agents: first player gives the first clue');
+  assert(await P[G1].isVisible('.g-ag-play') && /Waiting for/.test(await P[R1].textContent('.g-ag-rules')), 'agents: the first giver sees the briefing, the partner waits for the rules');
+  await playRules(P[G1]);
+  await h.settle();
   // key visibility
   const giverMarks = await P[G1].$$eval('.g-ag-card.k-G', (cs) => cs.map((c) => Number(c.dataset.i)));
   const wantG = [...s.key[G1]].map((r, i) => (r === 'G' ? i : -1)).filter((i) => i >= 0);
@@ -342,7 +356,7 @@ async function agentsOnline(h, scheme, full) {
     await P[R1].click('.g-ag-card[data-i="0"]', { force: true });
     await P[R1].click('.g-ag-card[data-i="0"]', { force: true });
     await P[R1].waitForTimeout(100);
-    assert((await h.engine(a, id)).lists.a.length + (await h.engine(a, id)).lists.b.length === 0, 'picking before the clue (out of turn) does nothing');
+    assert((await h.engine(a, id)).lists.a.length + (await h.engine(a, id)).lists.b.length === 1, 'picking before the clue (out of turn) does nothing (only the rules move so far)');
     await P[G1].fill('.g-ag-input', '');
   }
   await snap(P[G1], scheme, 'ag-2-clue');
@@ -386,14 +400,14 @@ async function agentsOnline(h, scheme, full) {
   assert(s.miss[R1].includes(bys) && s.phase === 'clue' && s.giver === G1, 'a bystander ends the turn');
   assert(await P[R1].$(`.g-ag-card[data-i="${bys}"] .g-ag-tag`), 'the bystander is marked on the board');
   // Turn 3: G1 clues, R1 finds all of G1's remaining agents (turn ends by itself)
-  await giveClue(P[G1], safeClue(s), 3);
+  await giveClue(P[G1], safeClue(s), Math.min(9, agentsOf(s, G1).length)); // n + 1 picks per turn: ask for them all
   await h.settle();
   s = (await h.engine(a, id)).state;
   for (const i of agentsOf(s, G1)) { await pickCard(P[R1], i, false); await h.settle(); }
   s = (await h.engine(a, id)).state;
   assert(s.giver === R1 && s.phase === 'clue' && s.turns === 3, 'all of a key’s agents found ends the turn');
   // Turn 4: R1 clues, G1 finds the rest
-  await giveClue(P[R1], safeClue(s), 4);
+  await giveClue(P[R1], safeClue(s), Math.min(9, agentsOf(s, R1).length));
   await h.settle();
   s = (await h.engine(a, id)).state;
   for (const i of agentsOf(s, R1)) { await pickCard(P[G1], i, false); await h.settle(); }
@@ -423,6 +437,7 @@ async function agentsLocal(h, scheme) {
   const id = await a.evaluate(() => window.__lastMatchId);
   assert(await a.isVisible('#game-root .gm-curtain'), 'same phone: curtain before the first clue');
   await reveal(a);
+  await playRules(a);
   let e = await h.engine(a, id);
   let s = e.state;
   const g = s.giver;
@@ -467,6 +482,7 @@ async function wordDuelRegressions(h) {
   const id = await newOnline(h, a, 'wordduel');
   await h.openMatch(b, id);
   await h.settle();
+  await wdPlay(h, id);
   await a.keyboard.type('cra');
   await reloadInto(h, a, id);
   assert(await draftOf(a) === 'CRA', 'word duel: reload keeps a half-typed secret word');
@@ -514,6 +530,8 @@ async function agentsRegressions(h) {
   let s = (await h.engine(a, id)).state;
   const G = P[s.giver];
   const R = P[s.giver === 'a' ? 'b' : 'a'];
+  await playRules(G);
+  await h.settle();
   for (const [w, hh] of [[360, 740], [390, 844]]) {
     await G.setViewportSize({ width: w, height: hh });
     await G.waitForTimeout(250);
@@ -541,7 +559,7 @@ async function agentsRegressions(h) {
   assert(await inkIs(R, '.g-ag-say .g-ag-who', s.giver === 'a' ? '--p-a-text' : '--p-b-text'), 'agents: names print in the text-safe ink');
   s = (await h.engine(a, id)).state;
   const k = [...s.key[s.giver]].indexOf('K');
-  await R.click(`.g-ag-card[data-i="${k}"]`); await R.click(`.g-ag-card[data-i="${k}"]`);
+  await R.click(`.g-ag-card[data-i="${k}"]`); await R.waitForTimeout(380); await R.click(`.g-ag-card[data-i="${k}"]`);
   await h.settle();
   await R.waitForSelector('#game-root .gm-end:not([hidden])', { timeout: 6000 });
   await R.click('#game-root [data-g="end-look"]');
