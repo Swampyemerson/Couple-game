@@ -35912,6 +35912,26 @@ const KIT = {
   dealFresh, POINTS, ROUNDS_V2,
 };
 
+// Fit overrides, appended after the base styles. The pick screen has to show all three cards without scrolling on
+// a short landscape phone (844x390: the app chrome leaves the game about 220px), whatever font the phone falls back to.
+// So there the Round / Team row and the Mixed Bag twist banner share one line, the cards tighten up, and the card word
+// scales with the screen (clamp) instead of being a fixed size that wraps to three lines in a wider fallback font.
+const FIT_CSS = `
+    .g-doodle .dd-scr.land .dd-pickhead { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 10px; }
+    .g-doodle .dd-scr.land .dd-pickhead .dd-top { display: contents; }
+    .g-doodle .dd-scr.land .dd-pickhead .dd-round { order: 0; }
+    .g-doodle .dd-scr.land .dd-pickhead .dd-twist { order: 1; flex: 1 1 0; width: auto; min-width: 0; }
+    .g-doodle .dd-scr.land .dd-pickhead .dd-team { order: 2; }
+    .g-doodle .dd-scr.land .dd-pickhead .dd-rungs { order: 3; flex: 1 0 100%; }
+    .g-doodle .dd-scr.land .dd-picks { gap: 10px; margin-top: 2px; }
+    .g-doodle .dd-scr.land .dd-pick { min-height: 76px; padding: 6px 10px 8px; gap: 4px; }
+    .g-doodle .dd-scr.land .dd-pick-main { gap: 2px; }
+    .g-doodle .dd-scr.land .dd-pick-word { font-size: clamp(1rem, 2.6vw, 1.2rem); }
+    .g-doodle .dd-scr.land .dd-pick-word.fm { font-size: clamp(0.95rem, 2.4vw, 1.08rem); }
+    .g-doodle .dd-scr.land .dd-pick-word.fs { font-size: clamp(0.88rem, 2.1vw, 0.98rem); }
+    .g-doodle .dd-scr.land .dd-tier { padding: 3px 0; }
+`;
+
 registerGame({
   id: 'doodle',
   title: 'Doodle',
@@ -35983,7 +36003,7 @@ registerGame({
   },
 
   // ── view (see doodle/view.js) ──
-  css: CSS,
+  css: CSS + FIT_CSS,
   mount(el, api) { return mountDoodle(el, api, KIT); },
 });
 
@@ -73727,6 +73747,26 @@ const RATINGS = [[30, 'Telepathic'], [25, 'Same wavelength'], [19, 'Pretty much 
 const ratingOf = (n) => RATINGS.find(([m]) => n >= m)[1];
 const other = (w) => (w === 'a' ? 'b' : 'a');
 
+// Fit overrides, appended after the base styles. A pole label (the two ends of the spectrum card) must wrap to at most
+// two lines on a small phone, whatever font the phone falls back to when the display font is not there. The card used to
+// stop at 300px however wide the screen was, which left a 26-character pole only ~108px of text. Now the card takes up to
+// 340px (the dial above keeps the size the view gives it), the end cells trade a little padding for room, the smallest
+// label size scales with the screen width (clamp) and the line breaks are balanced, so a long pole splits into two even
+// lines instead of one long line, a short one and an orphan word. In landscape the dial column is narrow, so the labels
+// ease down a size there.
+const FIT_CSS = `
+    .g-wave .wv-dialbox { width: max(var(--dw, 0px), min(100%, 340px)) !important; }
+    .g-wave .wv-end { gap: 3px; padding: 6px clamp(5px, 2vw, 8px); }
+    .g-wave .wv-end span { text-wrap: balance; }
+    .g-wave .wv-end.fxs { font-size: clamp(0.66rem, 3.1vw, 0.72rem); }
+    /* landscape: the dial column is only ~300px wide, so the card cannot grow; tighten the cells and ease the label sizes down a step */
+    @media (orientation: landscape) and (min-width: 600px) {
+      .g-wave .wv-end { padding: 5px 6px; }
+      .g-wave .wv-end svg { width: 11px; height: 11px; }
+      .g-wave .wv-end.fm { font-size: 0.84rem; } .g-wave .wv-end.fs { font-size: 0.76rem; } .g-wave .wv-end.fxs { font-size: 0.68rem; }
+    }
+`;
+
 registerGame({
   id: 'wave',
   title: 'Same Wave',
@@ -73795,7 +73835,7 @@ registerGame({
   },
 
   // ── view (see ./wave/view.js) ──
-  css: CSS,
+  css: CSS + FIT_CSS,
   mount(el, api) {
     return createWaveView(el, api, { CARDS, ratingOf });
   },
