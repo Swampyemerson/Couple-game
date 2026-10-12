@@ -135,6 +135,7 @@ registerGame({
     // ── lobby ───────────────────────────────────────────────────────────
     const clockOf = (k) => fmt(TIERS[k].secs * 1000);
     function renderLobby() {
+      toTop();
       root.className = 'g-defuse is-lobby';
       root.innerHTML = `<section class="dx-lobby">
         <header>
@@ -508,7 +509,7 @@ registerGame({
       if (B.dark.phase) {
         B.dark.left -= dt;
         if (B.dark.left <= 0) {
-          if (B.dark.phase === 1) { B.dark.phase = 2; B.dark.left = BLACKOUT.dur * 1000; cancelActive(); } else { B.dark.phase = 0; B.dark.left = 0; }
+          if (B.dark.phase === 1) { B.dark.phase = 2; B.dark.left = BLACKOUT.dur * 1000; cancelActive(); } else { B.dark.phase = 0; B.dark.left = 0; applyRelay((P() || {}).ra); }
           paintFlags(); pub();
         }
       }
@@ -816,6 +817,7 @@ registerGame({
       last = 0;
       updateBomb();
       pub();
+      if (!want) applyRelay((P() || {}).ra); // relay actions the manual sent while we were paused
     }
     const onVis = () => { last = 0; if (phase === 'bomb') syncBombPause(); pub(); };
     document.addEventListener('visibilitychange', onVis);

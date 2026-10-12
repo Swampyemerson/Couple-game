@@ -207,7 +207,7 @@ async function nodePart() {
       const tab = tabs.find((x) => x.id === id);
       const sec = secs.find((x) => x.startsWith(` data-page="${id}"`));
       const circle = +(/<span class="n">(\d+)<\/span>/.exec(sec) || [])[1];
-      const run = /<div class="dx-run"><span>[^<]*<\/span><span>([^<]*)<\/span>/.exec(sec)[1];
+      const run = /<div class="dx-run"><span>[^<]*<span class="dx-ed">[^<]*<\/span><\/span><span>([^<]*)<\/span>/.exec(sec)[1];
       if (tab.n !== k + 1 || circle !== k + 1 || !new RegExp(`^Modules? ${k + 1}\\b`).test(run)) throw new Error(`FAIL: ${id} is module ${k + 1} on the bomb but tab ${tab.n}, heading ${circle}, run-head "${run}" (${t} nb${i})`);
       if (!r.T.twists && tab.big !== String(k + 1)) throw new Error('FAIL: tab number without plates');
       numbered++;
@@ -820,7 +820,8 @@ async function solveVentOnce(h, vi) {
 
 
 // ══════════════════════════ every tier, a full winning round on two phones ══════════════════════════
-async function commitRelay(h, R) {
+/** Flip the relay's switches on the manual to the right setting (the bomb must be live to take them); does not press COMMIT. */
+async function setRelay(h, R) {
   const ri = R.slots.findIndex((s) => s.id === 'relay');
   const target = RD_BY.relay.solve(R.slots[ri].S, R.E, R.book.relay.R, R.T);
   const live = (await dx(h.a)).bomb.relay;
@@ -829,7 +830,58 @@ async function commitRelay(h, R) {
   if (!(await h.b.evaluate(() => document.querySelector('.dx-drawer').classList.contains('is-open')))) await h.b.tap('.dx-drawer .dx-drawer-head');
   for (const i of flips) { await h.b.tap(`.dx-relay-sw[data-i="${i}"]`); await sleep(120); }
   await until(async () => ((await dx(h.a)).bomb.relay.p & 15) === target.reduce((m, v, i) => m | (v << i), 0), 'the relay flips to reach the bomb', 4000);
+  return ri;
+}
+async function commitRelay(h, R) {
+  await setRelay(h, R);
   await h.b.tap('.dx-relay-commit');
+}
+/** A COMMIT sent while the bomb cannot take it (in a blackout, or in the background) is applied once the bomb is back, without another action on the manual. */
+async function relayWhilePaused(h) {
+  console.log('\n# Defuse: a relay COMMIT sent during a blackout or while the bomb is in the background');
+  await goLive(h);
+  await pickRoles(h, h.a, h.b);
+  const rel = async (ri) => { const x = (await dx(h.a)).bomb; return { solved: x.solved[ri], strikes: x.strikes, pz: x.pz, dark: x.dark, over: x.over }; };
+  // A: Bomb Squad with a blackout; the switches are set, COMMIT is pressed in the dark
+  let b = await startRound(h, h.a, h.b, 'rb3', 'wild');
+  let R = b.round;
+  assert(R.twists.includes('relay') && R.twists.includes('blackout'), `seed rb3 has a relay and a blackout (${R.twists.join('+')})`);
+  let ri = await setRelay(h, R);
+  await h.a.evaluate((ms) => window.__defuse.setLeft(ms), (R.twistRules.blackout.at[0] + 1) * 1000);
+  await until(async () => (await dx(h.a)).bomb.dark === 2, 'the dark', 6000);
+  await h.b.evaluate(() => document.querySelector('.dx-relay-commit').click());
+  await sleep(700);
+  let x = await rel(ri);
+  assert(x.dark === 2 && !x.solved && x.strikes === 0, 'blackout: the bomb is still dark and the relay is not solved yet (it cannot take the COMMIT in the dark)');
+  await until(async () => (await dx(h.a)).bomb.dark === 0, 'the light to come back', 8000);
+  await until(async () => (await rel(ri)).solved, 'the relay to solve after the light returned, with no further action on the manual', 2500, 50);
+  await sleep(1200);
+  x = await rel(ri);
+  assert(x.solved === 1 && x.strikes === 0 && !x.over, 'blackout: the COMMIT sent in the dark solved the relay once the light came back, no strike');
+  await h.a.evaluate(() => window.__defuse.setLeft(900));
+  await until(async () => (await dx(h.a)).bomb.over, 'the clock to run out', 6000);
+  await endCards(h);
+  await h.a.click('#game-root [data-g="rematch"]');
+  await until(async () => (await dx(h.a)).phase === 'lobby' && (await dx(h.b)).phase === 'lobby', 'lobby');
+
+  // B: the bomb goes to the background, the manual presses COMMIT, the bomb comes back
+  b = await startRound(h, h.a, h.b, 'ea2', 'wild');
+  R = b.round;
+  ri = await setRelay(h, R);
+  await hide(h.a, true);
+  await until(async () => (await dx(h.a)).bomb.pz, 'the bomb to pause in the background', 3000);
+  await h.b.evaluate(() => document.querySelector('.dx-relay-commit').click());
+  await sleep(900);
+  x = await rel(ri);
+  assert(x.pz && !x.solved && x.strikes === 0, 'background: the paused bomb has not taken the COMMIT yet');
+  await hide(h.a, false);
+  const t0 = Date.now();
+  await until(async () => (await rel(ri)).solved, 'the relay to solve soon after the bomb came back', 2500, 50);
+  assert(Date.now() - t0 < 2000, `background: the relay solves ${Date.now() - t0} ms after the bomb is back, with no further action on the manual`);
+  await sleep(1500);
+  x = await rel(ri);
+  assert(x.solved === 1 && x.strikes === 0 && !x.pz && !x.over, 'background: solved exactly once, no strike');
+  noErrors(h, 'relay while paused');
 }
 async function tierSweep(h) {
   console.log('\n# Defuse: a full winning round on every tier (Rookie and Expert here; Agent, Classic and Bomb Squad above)');
@@ -1065,6 +1117,15 @@ async function layoutRound(h, [w, hh]) {
   if (small.length) console.log('   small text:', JSON.stringify(small));
   assert(small.length === 0, `${tag}: no text under 11 px on the bomb or on any manual page`);
 
+  // the edition code in the manual never wraps onto two lines, on any page
+  for (const id of (await manualInfo(h.b)).tabs.map((t) => t.id)) {
+    await h.b.evaluate((p) => document.querySelector(`.dx-index [data-page="${p}"]`).click(), id);
+    await sleep(40);
+    const ed = await h.b.evaluate(() => [...document.querySelectorAll('.dx-sec:not([hidden]) .dx-ed')].map((e) => ({ lines: e.getClientRects().length, text: e.textContent })));
+    if (!ed.length || ed.some((e) => e.lines !== 1)) throw new Error(`FAIL: ${tag}: the edition code is on one line on page ${id} ${JSON.stringify(ed)}`);
+  }
+  assert(true, `${tag}: the edition code sits on one line on every manual page`);
+
   // V2: the relay box on the manual starts closed on a small screen and never buries the tabs or the COMMIT key
   const dr = await h.b.evaluate(() => { const d = document.querySelector('.dx-drawer'); return { open: d.classList.contains('is-open'), vh: innerHeight, vw: innerWidth }; });
   assert(dr.open === (dr.vw >= 760 && dr.vh >= 700), `${tag}: the relay drawer starts ${dr.open ? 'open' : 'closed'} (open only on a window at least 760 x 700)`);
@@ -1073,16 +1134,21 @@ async function layoutRound(h, [w, hh]) {
     d.classList.add('is-open'); // opened by hand here, so the remembered choice (a tap) does not leak into the next size
     const body = d.querySelector('.dx-drawer-body');
     const vh = innerHeight;
-    const first = document.querySelector('.dx-index [data-page]');
-    first.scrollIntoView({ block: 'nearest' });
-    const fr = first.getBoundingClientRect();
-    const hit = document.elementFromPoint(fr.left + fr.width / 2, fr.top + Math.min(fr.height / 2, 20));
+    // scrolled to the end (the tab strip is stuck below the clock), the tabs below the clock are not under the open drawer
+    const gr = document.getElementById('game-root');
+    gr.scrollTop = gr.scrollHeight; window.scrollTo(0, document.body.scrollHeight);
+    const barBottom = document.querySelector('.dx-mbar').getBoundingClientRect().bottom;
+    const shown = [...document.querySelectorAll('.dx-index [data-page]')].map((t) => t.getBoundingClientRect()).filter((r) => r.left >= 0 && r.right <= innerWidth && r.top >= barBottom - 1 && r.bottom <= vh).slice(0, 2);
+    const on = (r, y) => { const e = document.elementFromPoint(r.left + r.width / 2, y); return !!(e && e.closest('.dx-index')); };
+    const hit = shown.length >= 1 && shown.every((r) => on(r, r.top + 4) && on(r, r.bottom - 4));
     const commit = d.querySelector('.dx-relay-commit');
     commit.scrollIntoView({ block: 'nearest' });
     const cr = commit.getBoundingClientRect(), dbr = body.getBoundingClientRect();
-    return { bodyH: Math.round(dbr.height), vh, hit: !!(hit && hit.closest('.dx-index')), commitIn: cr.top >= dbr.top - 1 && cr.bottom <= dbr.bottom + 1 && cr.bottom <= vh + 1, commitH: cr.height };
+    return { bodyH: Math.round(dbr.height), vh, hit, commitIn: cr.top >= dbr.top - 1 && cr.bottom <= dbr.bottom + 1 && cr.bottom <= vh + 1, commitH: cr.height };
   });
   assert(op.bodyH <= op.vh * 0.45 + 1, `${tag}: the open relay drawer is at most 45 % of the window (${op.bodyH} of ${op.vh} px)`);
+  if (op.vh <= 500) assert(op.bodyH <= op.vh * 0.3 + 1, `${tag}: on a short window the open relay drawer is at most 30 % of it (${op.bodyH} of ${op.vh} px)`);
+  assert(op.hit, `${tag}: with the drawer open the manual's tabs on screen can still be tapped`);
   assert(op.commitIn && op.commitH >= 44, `${tag}: COMMIT can be scrolled fully into view inside the drawer`);
   await h.b.evaluate((open) => document.querySelector('.dx-drawer').classList.toggle('is-open', open), dr.open);
   await shot(h.a, `layout-${tag}-bomb`);
@@ -1091,8 +1157,14 @@ async function layoutRound(h, [w, hh]) {
   await h.a.evaluate(() => window.__defuse.setLeft(900));
   await until(async () => (await dx(h.a)).bomb.over, 'the clock to run out', 6000);
   await endCards(h);
+  // scroll the end screens down, then Rematch: the lobby must open at the top
+  for (const pg of [h.a, h.b]) await pg.evaluate(() => { const r = document.getElementById('game-root'); r.scrollTop = r.scrollHeight; window.scrollTo(0, document.body.scrollHeight); });
+  await sleep(100);
+  const endScrolled = (await rootTop(h.a)) + (await rootTop(h.b));
   await h.a.click('#game-root [data-g="rematch"]');
   await until(async () => (await dx(h.a)).phase === 'lobby' && (await dx(h.b)).phase === 'lobby', 'lobby again');
+  await sleep(200);
+  assert(await rootTop(h.a) === 0 && await rootTop(h.b) === 0, `${tag}: after a round and Rematch both lobbies open scrolled to the top (the end screens were scrolled ${endScrolled} px in all)`);
 }
 async function layoutGroup(h) {
   console.log('\n# Defuse layout: 390x844, 360x740, 844x390, 1280x800 (scroll, sticky clock, tap targets, text size, relay drawer)');
@@ -1145,6 +1217,7 @@ async function withHarness(opts, fn) {
     if (only === 'all' || only === 'wild') {
       await withHarness({ port: PORT + 1, coarse: true }, async (h) => { await asPhones(h); await phoneWild(h); await closeBoth(h); await phoneTwists(h); });
       await withHarness({ port: PORT + 6, coarse: true }, async (h) => { await asPhones(h); await tierSweep(h); });
+      await withHarness({ port: PORT + 8, coarse: true }, async (h) => { await asPhones(h); await relayWhilePaused(h); });
     }
     if (only === 'all' || only === 'laptop') {
       await withHarness({ port: PORT + 2, device: 'Desktop Chrome' }, async (h) => { await laptopRound(h, 'light'); });

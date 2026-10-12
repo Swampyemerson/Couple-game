@@ -293,6 +293,8 @@ export const CSS = `
 .g-defuse .dx-drawer-head small { font: 800 0.7rem/1 var(--g-font-body); letter-spacing: 0.1em; text-transform: uppercase; color: var(--g-muted); }
 .g-defuse .dx-drawer-body { max-height: min(45vh, 520px); overflow: auto; padding: 0 12px 12px; }
 .g-defuse .dx-drawer:not(.is-open) .dx-drawer-body { display: none; }
+.g-defuse .dx-ed { white-space: nowrap; }
+@media (max-height: 500px) { .g-defuse .dx-drawer-body { max-height: 30vh; } }
 .g-defuse .dx-drawer.is-done .dx-drawer-head { color: var(--g-good); }
 .g-defuse .dx-drawer .dx-relay-box { margin-top: 0; padding: 8px; gap: 8px; }
 .g-defuse .dx-drawer .dx-relay-lamp { padding: 4px 10px; }

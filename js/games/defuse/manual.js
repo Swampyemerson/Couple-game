@@ -39,7 +39,7 @@ function bomb(round) {
   if (round.gold >= 0) items.push(`<li data-twist="gold"><span><b>Gold module.</b> One module has a gold plate (it is marked gold in your tabs too). Solve it without a single strike on it and the bomb gives you <b>${GOLD_BONUS} extra seconds</b>.</span></li>`);
   return `<div class="dx-thisbomb" data-this-bomb>
     <h4>This bomb</h4>
-    <p class="dx-bomb-head" data-edition="${esc(round.edition)}"><b>${esc(round.name)}</b> · ${esc(T.label)} · ${fmt(T.secs * 1000)} · ${esc(round.edition)}</p>
+    <p class="dx-bomb-head" data-edition="${esc(round.edition)}"><b>${esc(round.name)}</b> · ${esc(T.label)} · ${fmt(T.secs * 1000)} · <span class="dx-ed">${esc(round.edition)}</span></p>
     ${items.length ? `<ol class="dx-rules">${items.join('')}</ol>` : '<p>Nothing unusual on this bomb. Every module counts.</p>'}
     <p>Check that your partner reads out the same name (<b>${esc(round.name)}</b>) from the serial sticker. If not, you are reading the wrong guide.</p>
   </div>`;
@@ -68,7 +68,7 @@ export function basicsHTML(round) {
 // Only the pages that really are a list of rules to try in order get the "stop at the first" reminder; step-by-step pages say so; the rest say nothing.
 const FOOT = { wires: 'Read every rule in order. Stop at the first that applies.', button: 'Read every rule in order. Stop at the first that applies.', maze: 'Work through the steps in order.', password: 'Work through the steps in order.', morse: 'Work through the steps in order.', switches: 'Work through the steps in order.', relay: 'Work through the steps in order.' };
 function section(id, n, title, body, p, round, tag, foot) {
-  return `<section class="dx-sec" data-page="${id}" data-n="${n}"><div class="dx-run"><span>Defusal field guide · ${esc(round.edition)}</span><span>${esc(tag)}</span></div><h3><span class="n">${n}</span>${title}</h3>${body}<p class="dx-foot"><span>${esc(foot || '')}</span><span>p. ${p}</span></p></section>`;
+  return `<section class="dx-sec" data-page="${id}" data-n="${n}"><div class="dx-run"><span>Defusal field guide · <span class="dx-ed">${esc(round.edition)}</span></span><span>${esc(tag)}</span></div><h3><span class="n">${n}</span>${title}</h3>${body}<p class="dx-foot"><span>${esc(foot || '')}</span><span>p. ${p}</span></p></section>`;
 }
 export function pageHTML(round, id) {
   if (id === 'basics') return section('basics', '0', 'Reading the bomb', basicsHTML(round), 1, round, 'Start here');
