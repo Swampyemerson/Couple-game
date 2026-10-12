@@ -120,7 +120,7 @@ The setup-move pattern is necessary because `core.js` always creates matches wit
 - The duplicated status text is gone, including after "See the board".
 
 ## Test results
-- `node tools/test/games/board.test.js`: **529 passed, 0 failed** (light and dark, two phones; up from 113 checks before the update). `node tools/test/all-games.test.js`: ALL GOOD.
+- `node tools/test/games/board.test.js`: **533 passed, 0 failed** (light and dark, two phones; up from 113 checks before the update). `node tools/test/all-games.test.js`: ALL GOOD.
 - Build: `python3 tools/build_artifact.py --only=ultimate|four|dots` succeeds for each game.
 - The independent verifiers used real `page.tap()` on the iPhone 13 profile. They covered one device and two devices, light and dark, at 390 and 360 portrait and 844×390 and 667×375 landscape. All three found no blocking issues, and every issue they did find was fixed: four in Ultimate, four in Four in a Row and four in Dots & Boxes. Their scripts and screenshots are in the session scratchpad.
 - The verifiers saw no console or page errors in any run.

@@ -43,6 +43,8 @@ const HOT = {
   /** What winning small board `b` counts as in the boards-won count (score, count ending, tie-break). */
   weight: (s, b) => (s.hot && s.hot.includes(b) ? 2 : 1),
 };
+/** ", hot boards counting double" in Hot Boards, else nothing (plain counts can differ from hot-weighted ones). */
+const hotClause = (s) => (s.mode === 'hot' ? ', hot boards counting double' : '');
 const marksOf = (s) => { let n = 0; for (const c of s.cells) if (c) n++; return n; };
 
 // ── modes ──────────────────────────────────────────────────────────────
@@ -150,8 +152,12 @@ function lastLight(s) {
 function tieNote(s, nm) {
   if (!komiApplies(s)) return null;
   const w = boardsWon(s);
-  return w.a === w.b ? `Tied on boards so far: ties go to ${nm(secondMover(s))}` : null;
+  return w.a === w.b ? `Tied on boards so far${hotClause(s)}: ties go to ${nm(secondMover(s))}` : null;
 }
+
+/** Finale texts for a count ending decided by the tie-break (plate, and the Last Light line). */
+const tiePlate = (s, nm) => `Boards tied ${s.end.a}–${s.end.b}${hotClause(s)}: ${nm(s.end.who)} wins the tie-break`;
+const tieLight = (s, nm) => `No big line left. Boards tied ${s.end.a}–${s.end.b}${hotClause(s)}: ties go to ${nm(s.end.who)}`;
 
 // ── records, rivalry and moment lines ──────────────────────────────────
 // Everything is derived from the finished match plus the game's shared data (see tally). Only
@@ -278,8 +284,8 @@ function momentKeys(s, res, d) {
   if (sw >= 2) keys.push('streakExt');
   if (s.v === 2 && s.down && s.down[w] >= 2) keys.push('comeback');
   if (s.mode === 'wild' && s.lw && mover === w) keys.push('wild');
+  if (e.tie) keys.push('komi'); // decided by the tie-break: that is the story, not the hot boards
   if (s.mode === 'hot' && s.hot && (e.why === 'line' ? e.line.some((b) => s.hot.includes(b)) : s.big.some((x, b) => x === w && s.hot.includes(b)))) keys.push('hot');
-  if (e.tie) keys.push('komi');
   if (e.why === 'line' ? theirs === 0 : mine - theirs >= 3) keys.push('rout');
   if (e.why === 'count' && mine - theirs <= 1) keys.push('photo');
   if (!((d[`${mode}_${w}_n`]) | 0)) keys.push('firstMode');
@@ -379,14 +385,14 @@ registerGame({
   result(s) {
     const e = s.end;
     const { a, b } = boardsWon(s);
-    const hot = s.mode === 'hot' ? ', hot boards counting double' : '';
+    const hot = hotClause(s);
     if (e && e.why === 'line') return { winner: e.who, sub: 'Three boards in a row' };
-    if (e && e.tie) return { winner: e.who, sub: `Boards tied ${a}–${b} — ties go to the player who went second.` };
+    if (e && e.tie) return { winner: e.who, sub: `Boards tied ${a}–${b}${hot} — ties go to the player who went second.` };
     if (e && e.who) return { winner: e.who, sub: `No big line was left, so boards won decide it${hot}: ${Math.max(a, b)} to ${Math.min(a, b)}` };
     return { winner: null, text: 'Stalemate', sub: `No big line was left and boards won are tied ${a}–${b}. It’s a draw.` };
   },
   /** Pure helpers, exposed for the tests. */
-  kit: { MODES, BALANCE, secondMover, tieNote, liveLines, lastLight, momentKeys, tally, momentText, stripText, MOMENTS, STRIPS, marksOf },
+  kit: { MODES, BALANCE, secondMover, tieNote, tiePlate, tieLight, liveLines, lastLight, momentKeys, tally, momentText, stripText, MOMENTS, STRIPS, marksOf },
 
   // ── view ──
   css: `
@@ -744,7 +750,7 @@ registerGame({
       const s = c.state;
       // Last Light
       let light = null;
-      if (c.over) light = s.end && s.end.why === 'count' ? (s.end.tie ? `No big line left. Boards tied ${s.end.a}–${s.end.b}: ties go to ${api.name(s.end.who)}` : 'No big line left — boards decide') : null;
+      if (c.over) light = s.end && s.end.why === 'count' ? (s.end.tie ? tieLight(s, api.name) : 'No big line left — boards decide') : null;
       else {
         light = lastLight(s);
         const tn = light && tieNote(s, api.name);
@@ -774,7 +780,7 @@ registerGame({
         const { a, b } = boardsWon(s);
         who = e.who || null;
         if (e.why === 'line') text = `${api.name(e.who)} wins, three in a row`;
-        else if (e.tie) text = `Boards tied ${a}–${b}: ${api.name(e.who)} wins the tie-break`;
+        else if (e.tie) text = tiePlate(s, api.name);
         else if (e.who) text = `${api.name(e.who)} wins on boards, ${Math.max(a, b)}–${Math.min(a, b)}`;
         else text = `Boards tied ${a}–${b}. A draw.`;
       } else if (!c.canMove) {

@@ -729,6 +729,11 @@ async function rulesTests() {
     ok(komiGame('a', 'hot', [0, 2]).end.who === 'a' && !komiGame('a', 'hot', [0, 2]).end.tie && komiGame('a', 'hot', [1, 3]).end.who === 'b', 'komi: only an exact tie is decided by it, a lead still wins');
     const rk = ult.result(komiGame('a', 'classic'));
     ok(rk.winner === 'b' && rk.sub === 'Boards tied 4–4 — ties go to the player who went second.' && !('text' in rk), 'komi: the result says the tie went to the player who went second');
+    const rkh = ult.result(kh); const nmE = (w) => (w === 'a' ? 'Emerson' : 'Sydney');
+    ok(rkh.sub === 'Boards tied 5–5, hot boards counting double — ties go to the player who went second.' && ult.kit.tiePlate(kh, nmE) === 'Boards tied 5–5, hot boards counting double: Sydney wins the tie-break' && ult.kit.tieLight(kh, nmE) === 'No big line left. Boards tied 5–5, hot boards counting double: ties go to Sydney', 'komi (hot): the result, the plate and the Last Light line all say the tie was on hot-weighted boards');
+    ok(ult.kit.tiePlate(komiGame('a', 'classic'), nmE) === 'Boards tied 4–4: Sydney wins the tie-break' && ult.kit.tieLight(komiGame('a', 'classic'), nmE) === 'No big line left. Boards tied 4–4: ties go to Sydney' && !/hot/.test(rk.sub), 'komi (classic): no hot clause in a plain tie');
+    const hotTie = clone(kh); hotTie.big = hotTie.big.map((x) => x); hotTie.hot = [0, 1];
+    ok(ult.kit.momentKeys(hotTie, ult.result(hotTie), {}).keys[0] === 'komi' && ult.kit.momentKeys(hotTie, ult.result(hotTie), {}).keys.indexOf('komi') < ult.kit.momentKeys(hotTie, ult.result(hotTie), {}).keys.indexOf('hot'), 'moment: a hot game decided by the tie-break gets the komi moment, not the hot one');
     const legacyTie = step(crafted(bigC, 8, near, 'b', seeded('a', 3)), { b: 8, i: 6 });
     ok(legacyTie.end.who === null && !legacyTie.end.tie && ult.result(legacyTie).winner === null && ult.result(legacyTie).text === 'Stalemate' && legacyTie.v === undefined, 'komi: a legacy (no setup) game tied on the count is still a draw, untouched');
     ok(errOf(() => step(flow(step(seeded('a', 2), { setup: 2, mode: 'classic' }), mv([[6, 2]])), { steal: 1 })) === 'Pick a square', 'the pie rule is gone: { steal: 1 } is rejected like any bad move, in v2 too');
@@ -736,6 +741,7 @@ async function rulesTests() {
     const lvl = step(seeded('a', 2), { setup: 2, mode: 'classic' }); lvl.big = ['a', 'b', null, null, null, null, null, null, null];
     const up = clone(lvl); up.big[2] = 'a';
     ok(tn(lvl) === 'Tied on boards so far: ties go to Sydney' && tn(up) === null && tn(Object.assign(seeded('a', 2), { big: lvl.big })) === null && ult.kit.secondMover(lvl) === 'b', 'komi: the tie note names the second mover while boards are level, and only in v2');
+    ok(/^Tied on boards so far, hot boards counting double: ties go to Sydney$/.test(tn(Object.assign(clone(lvl), { mode: 'hot', hot: [5, 6] }))), 'komi (hot): the in-play tie note carries the hot clause too');
 
     // 6. Last Light
     const bigs = (arr) => arr.map((x) => (x === '.' ? null : x));
