@@ -50,9 +50,9 @@ a draw in one place never shifts another. Both devices build the identical round
 
 ### Edgework
 
-Serial (6 characters, the last is a digit; vowels A E I O U), 0 to 4 batteries, two indicators from `RDY PWR AUX LNK SYS CLR IGN MSA`
+Serial (6 characters, the last is a digit; any vowel is A, E or U), 0 to 4 batteries, two indicators from `RDY PWR AUX LNK SYS CLR IGN MSA`
 (Classic uses the first five), and from level 2 (Agent) and up a **port plate** with 0 to 3 of `DVI PS2 RJ45 SERIAL`.
-The VOID twist adds a second serial stamped VOID and an extra crossed-out lamp.
+The VOID twist adds a second serial stamped VOID and an extra indicator stamped VOID.
 
 ### Tiers
 
@@ -74,7 +74,7 @@ relay and a twin each take one of the tier's draws, so a bomb has at most seven 
 | twist | kind | what |
 |---|---|---|
 | Twin modules (decoy) | red herring | One module type appears twice. Every module has a stamped 3-digit plate. The manual's rule 1 says which plate is live (lower / higher / even last digit / odd last digit / shares a digit with the serial). Touching the other one is a strike (debounced 0.7 s). |
-| VOID sticker | red herring | A second serial stamped VOID and a crossed-out lamp. The manual says to ignore VOID. |
+| VOID sticker | red herring | A second serial stamped VOID and an indicator stamped VOID. The manual says to ignore VOID. |
 | Correction slip (errata) | red herring | One module page has a taped slip at the top that changes one rule. |
 | Surge | time | Twice, the clock runs x2 for 12 s. Banner and countdown on both clocks. Never in the first or last 30 s. |
 | Strike tax | time | Each strike takes 30 s off the clock and does **not** also speed it up. |
