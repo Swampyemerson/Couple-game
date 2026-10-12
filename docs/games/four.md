@@ -12,7 +12,7 @@ Tapping the board without touching the picker plays the selected mode.
 | id | name | rules |
 |---|---|---|
 | `classic` | Classic | The original game. |
-| `ghost` | Ghost Column | A seeded non-centre column (0, 1, 2, 4, 5 or 6) holds at most 3 discs. Drawn as a torn-paper cap with a ghost. A drop into the full capped column is refused ("The ghost has that column…"). The game is a draw when no legal drop remains (39 discs). |
+| `ghost` | Ghost Column | A seeded non-centre column (0, 1, 2, 4, 5 or 6) holds at most 3 discs. Drawn as a torn-paper cap with a ghost. A drop into the full capped column is refused ("The ghost has that column…"). The game is a draw when no legal drop remains (39 discs; the result says "No drops left", not "Board full"). |
 | `pop` | PopOut | On your turn you may instead pop one of YOUR discs out of the bottom row; the column slips down one. After a pop, fours are checked for both colours. Both lined up: the popper wins. Only the other side's four: they win. A hundred moves with no four is a draw (PopOut can cycle). |
 
 `big` (8 × 7) was not built: the board geometry is shared constants, so it was not cheap.
@@ -52,7 +52,8 @@ same inputs. `api.data()` is not on the turn-game `api` in core, so the game use
 Keys: `games_n`, `draws_n`, `wins_a_n` / `wins_b_n`, `<mode>_a_n` / `<mode>_b_n`, `streak_who` + `streak`
 (reset on a draw, so no `_n`/`_best` suffix), `streak_best` + `streak_best_who`, `quick_best` (= 100 − the
 winner's moves, so bigger is faster) + `quick_best_who`, `comeback_a_n` / `comeback_b_n` (winner blocked 2+
-fours), `mode` (last chosen), `last_id`, and `p_streak`, `p_streak_who`, `p_quick`, `p_mw` — the records as
+fours; a PopOut "gift" win, where the loser's own pop made the winner's four, never counts as a fastest
+win or gets the record / rout moment lines), `mode` (last chosen), `last_id`, and `p_streak`, `p_streak_who`, `p_quick`, `p_mw` — the records as
 they stood before the last match, so the phone that counts second still picks the same moment line.
 
 ## Words
@@ -68,12 +69,15 @@ they stood before the last match, so the phone that counts second still picks th
 ## Input and layout
 
 - Keyboard: the columns are one roving tab stop; Tab onto them previews a disc over the focused column,
-  arrows move focus and disc, Enter / Space drops the focused column, 1–7 jump, Esc puts the disc away,
-  P toggles popping. Taps on a disabled board land on a guard layer: the plate pulses and a toast says whose
+  arrows move focus and disc, Enter / Space drops the focused column, 1–7 jump, P toggles popping.
+  Esc puts a lifted disc away (a capture-phase listener that calls `preventDefault`, because core closes the
+  game on an unhandled Esc); with nothing lifted it closes the game as before. Taps on a disabled board land on a guard layer: the plate pulses and a toast says whose
   turn it is (nothing is played).
 - PopOut shows "Drop a disc / Pop one out" (44 px) for the player to move; poppable bottom discs get a
   dashed ring, the aimed one a solid ring.
-- Portrait: board, plate, then the picker / strip below it (the board does not jump when they go away).
+- Portrait: board, plate, then the picker / strip below it (the board does not jump when they go away). The
+  board size is budgeted (`--g4-chrome`) for the tallest state under it (picker + strip + one-line mode
+  description) so nothing scrolls down to 360 × 560; under 720 px high the strip's flavour line is dropped.
 - Landscape (≥ 560 px wide): board left, picker / plate / pop buttons right. In short windows
   (≤ 560 px high) the lift row above the board is cropped away (the landing ring and column tint show where
   the disc will go), so a 844 × 390 phone has a ~237 px board with ~32 px columns and no scrolling. 44 px

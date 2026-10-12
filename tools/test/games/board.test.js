@@ -179,7 +179,7 @@ async function rulesTests() {
         x = step(x, { col: pick[Math.floor(rnd() * pick.length)] });
         if (x.cols[x.ghost].length > 3) throw new Error('FAIL: ghost: the cap broke');
       }
-      if (!x.win) { drawn++; if (x.n !== 39 || !x.draw || four.result(x).winner !== null || four.result(x).text !== 'Board full') throw new Error('FAIL: ghost: a full board must be a draw after 39 discs'); }
+      if (!x.win) { drawn++; if (x.n !== 39 || !x.draw || four.result(x).winner !== null || four.result(x).text !== 'No drops left') throw new Error('FAIL: ghost: a full board must be a draw after 39 discs, saying so accurately'); }
     }
     ok(drawn === 3, 'ghost: with no legal drop left the game ends in a draw after 39 discs');
     const wc = [0, 1, 2, 3, 4, 5, 6].filter((c) => c !== gc);
@@ -468,6 +468,7 @@ async function rulesTests() {
     ok(/Sydney/.test(lines({ streak: 3, streakWho: 'b', chain: 9, mw: 3 }, { winner: 'a' })) && /3/.test(lines({ streak: 3, streakWho: 'b', chain: 9, mw: 3 }, { winner: 'a' })), 'breaking a streak names the streak');
     ok(lines(null, { winner: null }) === lines(null, { winner: null }) && dInfo.MOMENTS.draw.includes(lines(null, { winner: null })), 'a draw gets a draw line, the same one on both phones');
     ok(/6/.test(lines({ streak: 0, streakWho: '', chain: 3, mw: 2 }, { winner: 'a' }, { ...lead, best: { n: 6, who: 'a' } })), 'a new chain record names the chain');
+    ok(dInfo.MOMENTS.chainFirst.map((t) => t.replace('{n}', '6')).includes(lines({ streak: 0, streakWho: '', chain: 0, mw: 0 }, { winner: 'a' }, { ...lead, best: { n: 6, who: 'a' } })) && !/record|longest|frame/i.test(dInfo.MOMENTS.chainFirst.join()), 'with nothing on the books yet, a long chain is a first, not a record');
     ok(dInfo.MOMENTS.comeback.some((t) => t.includes('{W}')) && /Emerson|Sydney/.test(lines(null, { winner: 'b' }, { ...lead, pts: { a: 7, b: 9 }, behind: { a: 0, b: 5 } })), 'a comeback line names the winner');
     ok(!/[{}]/.test(['win', 'rout', 'photo', 'draw'].map((k) => dInfo.MOMENTS[k].map((t) => t.replace(/\{\w+\}/g, 'x')).join()).join()), 'no stray placeholders');
     const s1 = dInfo.pickStrip({}, nm, 'm1');
@@ -544,7 +545,7 @@ async function rulesTests() {
     ok(d.rejected.length === 1 && /top-left/.test(d.rejected[0].error), 'engine replay drops a move in the wrong board');
   });
 
-  await section('ultimate v2: legacy replay, setup move, steal, Hot Boards, Wildcards, Last Light', () => {
+  await section('ultimate v2: legacy replay, setup move, komi, Hot Boards, Wildcards, Last Light', () => {
     const mv = (pairs) => pairs.map(([b, i]) => ({ b, i }));
     // the original rules, copied verbatim from before v2: legacy logs must replay exactly like this
     const LINES0 = [[0, 1, 2], [3, 4, 5], [6, 7, 8], [0, 3, 6], [1, 4, 7], [2, 5, 8], [0, 4, 8], [2, 4, 6]];
@@ -617,7 +618,7 @@ async function rulesTests() {
       if (x.end) { legacyEnds++; if (!same(ult.result(y), refResult(x))) legacyOk = false; }
     }
     ok(legacyOk && legacyErrs && legacyEnds > 150, `legacy: 250 random logs (with junk and illegal moves) match the original rules move for move: states, errors, scores and results (${legacyEnds} finished)`);
-    ok(errOf(() => ult.apply(seeded('a', 1), 'a', { steal: 1 })) === 'Pick a square' && errOf(() => ult.apply(flow(seeded('a', 1), mv([[4, 4]])), 'b', { steal: 1 })) === 'Pick a square', 'legacy: { steal: 1 } is not a thing without a setup move (plain "Pick a square", like any bad move)');
+    ok(errOf(() => ult.apply(seeded('a', 1), 'a', { steal: 1 })) === 'Pick a square' && errOf(() => ult.apply(flow(seeded('a', 1), mv([[4, 4]])), 'b', { steal: 1 })) === 'Pick a square', 'legacy: { steal: 1 } is just a bad move (plain "Pick a square"), the pie rule never shipped');
     ok(ult.apply(flow(seeded('a', 1), mv([[4, 4]])), 'b', { b: 4, i: 3, wild: 1 }).cells[39] === 'b' && !ult.apply(flow(seeded('a', 1), mv([[4, 4]])), 'b', { b: 4, i: 3, wild: 1 }).wild, 'legacy: an extra wild flag is ignored, as every unknown field always was');
 
     // 2. the setup move
@@ -637,44 +638,27 @@ async function rulesTests() {
     const dv = core.derive(ult, { first: 'a', seed: 4, lists: { a: [{ setup: 2, mode: 'hot' }, { b: 4, i: 0 }], b: [{ setup: 2, mode: 'wild' }, { b: 0, i: 5 }] } });
     ok(dv.state.mode === 'hot' && dv.rejected.length === 1 && dv.rejected[0].who === 'b' && dv.count === 3 && dv.state.cells[5] === 'b', 'engine replay: a setup from the second player is dropped, the rest plays on');
 
-    // 3. the steal (pie rule)
-    const k0 = flow(step(seeded('a', 2), { setup: 2, mode: 'classic' }), mv([[6, 2]])); // a opens: board 6, square 2 -> b is sent to board 2
-    ok(k0.force === 2 && ult.kit.canSteal(k0, 'b') && !ult.kit.canSteal(k0, 'a'), 'steal: available to the second player right after the opener\'s first mark, and only to them');
-    const k1 = step(k0, { steal: 1 });
-    ok(k1.cells[6 * 9 + 2] === 'b' && k1.turn === 'a' && k1.force === 2 && k1.last === 56 && ult.next(k1)[0] === 'a' && k1.stl === 1, 'steal: the mark changes owner, the opener moves next, the send rule stays (board 2)');
-    ok(/top-right/.test(errOf(() => step(k1, { b: 4, i: 4 })) || '') && step(k1, { b: 2, i: 4 }).force === 4, 'steal: the opener is sent to the stolen mark\'s board, and play carries on from there');
-    ok(errOf(() => step(k1, { steal: 1 }, 'a')) !== null && errOf(() => step(k1, { steal: 1 }, 'b')) !== null, 'steal: only once');
-    ok(errOf(() => step(k0, { steal: 1 }, 'a')) !== null, 'steal: the opener cannot steal their own mark');
-    const k2 = step(k0, { b: 2, i: 4 });
-    ok(errOf(() => step(flow(k2, mv([[4, 0]])), { steal: 1 })) !== null && errOf(() => step(k2, { steal: 1 })) !== null, 'steal: not after the second player played a mark of their own');
-    ok(errOf(() => step(step(seeded('a', 2), { setup: 2, mode: 'classic' }), { steal: 1 })) !== null, 'steal: not before the opener has played');
-    ok(['hot', 'wild'].every((m) => ult.kit.canSteal(flow(step(seeded('a', 2), { setup: 2, mode: m }), mv([[1, 1]])), 'b')), 'steal: every v2 mode includes it');
-    ok(errOf(() => step(flow(step(seeded('a', 2), { setup: 2, mode: 'classic' }), mv([[6, 2]])), { steal: 1 }, 'a')) !== null, 'steal: wrong player rejected');
-    ok(same(ult.kit.BALANCE, { steal: true }), 'the BALANCE section is isolated and on');
-    // stealing never changes who may play where: random v2 games, steal at move 2 half the time, send rule always holds
+    // 3. random v2 games: send rule always holds, every game ends, and v2 has no draws
     const rb = lcg(5);
-    let sendOk = true; let stole = 0; let finished = 0;
-    for (let g = 0; g < 200; g++) {
+    let sendOk = true; let finished = 0; let noDraw = true; let ties = 0;
+    for (let g = 0; g < 300; g++) {
       let st = step(seeded(g % 2 ? 'a' : 'b', g), { setup: 2, mode: ['classic', 'hot', 'wild'][g % 3] });
       let n = 0;
       while (ult.next(st).length) {
         const w = st.turn;
-        let m;
-        if (n === 1 && g % 2 === 0) { m = { steal: 1 }; stole++; } else {
-          const legal = []; for (let bb = 0; bb < 9; bb++) { if (st.big[bb] || (st.force !== null && st.force !== bb)) continue; for (let i = 0; i < 9; i++) if (!st.cells[bb * 9 + i]) legal.push({ b: bb, i }); }
-          m = legal[Math.floor(rb() * legal.length)];
-          if (st.mode === 'wild' && st.force !== null && st.wild[w] && rb() < 0.2) { const free = []; for (let bb = 0; bb < 9; bb++) { if (st.big[bb] || bb === st.force) continue; for (let i = 0; i < 9; i++) if (!st.cells[bb * 9 + i]) free.push({ b: bb, i, wild: 1 }); } if (free.length) m = free[Math.floor(rb() * free.length)]; }
-        }
-        const before = st;
+        const legal = []; for (let bb = 0; bb < 9; bb++) { if (st.big[bb] || (st.force !== null && st.force !== bb)) continue; for (let i = 0; i < 9; i++) if (!st.cells[bb * 9 + i]) legal.push({ b: bb, i }); }
+        let m = legal[Math.floor(rb() * legal.length)];
+        if (st.mode === 'wild' && st.force !== null && st.wild[w] && rb() < 0.2) { const free = []; for (let bb = 0; bb < 9; bb++) { if (st.big[bb] || bb === st.force) continue; for (let i = 0; i < 9; i++) if (!st.cells[bb * 9 + i]) free.push({ b: bb, i, wild: 1 }); } if (free.length) m = free[Math.floor(rb() * free.length)]; }
         st = step(st, m, w);
         n++;
-        if (!m.steal && !st.end && st.force !== (st.big[m.i] ? null : m.i)) sendOk = false;
-        if (m.steal && (st.force !== before.force || st.turn !== before.first)) sendOk = false;
+        if (!st.end && st.force !== (st.big[m.i] ? null : m.i)) sendOk = false;
         if (n > 90) throw new Error('FAIL: ultimate v2: game never ends');
       }
+      if (!st.end || !st.end.who || !ult.result(st).winner) noDraw = false;
+      if (st.end && st.end.tie) { ties++; if (st.end.who === st.first) noDraw = false; }
       finished++;
     }
-    ok(sendOk && stole === 100 && finished === 200, '200 random v2 games across all modes (100 with a steal, wildcards thrown in): the send rule holds on every move and all finish');
+    ok(sendOk && noDraw && finished === 300, `300 random v2 games across all modes (wildcards thrown in): the send rule holds on every move, every game ends with a winner, never a draw (${ties} ended tied on boards)`);
 
     // 4. Hot Boards
     const hs = (seed) => step(seeded('a', seed), { setup: 2, mode: 'hot' });
@@ -725,6 +709,31 @@ async function rulesTests() {
     ok(/closed|already won|full/i.test(errOf(() => step({ ...w2, big: w2.big.map((x, i) => (i === 7 ? 'a' : x)), turn: 'b', force: 4 }, { b: 7, i: 0, wild: 1 })) || ''), 'wild: it cannot go into a won board');
     ok(/no wildcards/i.test(errOf(() => step(flow(step(seeded('a', 1), { setup: 2, mode: 'classic' }), mv([[4, 0]])), { b: 5, i: 5, wild: 1 })) || '') && /no wildcards/i.test(errOf(() => step(flow(hs(1), mv([[4, 0]])), { b: 5, i: 5, wild: 1 })) || ''), 'wild: classic and hot have no wildcards');
     ok(w2.lw === 1 && step(w2, { b: 5, i: 0 }).lw === 0, 'wild: the state remembers when the last move was a wildcard');
+
+    // 5b. komi: a count ending tied on boards goes to the player who moved second (v2 only)
+    const komiGame = (first, mode, hotPair) => {
+      let st = crafted(bigC, 8, near, 'b', step(seeded(first, 3), { setup: 2, mode }));
+      if (hotPair) st.hot = hotPair;
+      return step(st, { b: 8, i: 6 });
+    };
+    ok(same(ult.kit.BALANCE, { komi: true }), 'the BALANCE section is isolated and on (komi)');
+    ok(ult.howTo.length <= 4 && ult.howTo.some((l) => /Tied on boards at the end\? The player who went second wins\./.test(l)), 'howTo: at most four lines, one of them states the tie rule');
+    for (const mode of ['classic', 'wild']) {
+      const ka = komiGame('a', mode); const kb2 = komiGame('b', mode);
+      ok(ka.end.why === 'count' && ka.end.a === 4 && ka.end.b === 4 && ka.end.tie === 1 && ka.end.who === 'b' && ult.result(ka).winner === 'b' && kb2.end.who === 'a' && ult.result(kb2).winner === 'a' && ult.next(ka).length === 0, `komi (${mode}): tied 4–4 on the count, the player who went second wins (b when a opened, a when b opened)`);
+    }
+    const kh = komiGame('a', 'hot', [0, 1]); // a has hot board 0, b has hot board 1: 5–5 weighted
+    ok(kh.end.a === 5 && kh.end.b === 5 && kh.end.tie === 1 && kh.end.who === 'b' && komiGame('b', 'hot', [0, 1]).end.who === 'a', 'komi (hot): a weighted tie (5–5) goes to the second mover as well');
+    ok(komiGame('a', 'hot', [0, 2]).end.who === 'a' && !komiGame('a', 'hot', [0, 2]).end.tie && komiGame('a', 'hot', [1, 3]).end.who === 'b', 'komi: only an exact tie is decided by it, a lead still wins');
+    const rk = ult.result(komiGame('a', 'classic'));
+    ok(rk.winner === 'b' && rk.sub === 'Boards tied 4–4 — ties go to the player who went second.' && !('text' in rk), 'komi: the result says the tie went to the player who went second');
+    const legacyTie = step(crafted(bigC, 8, near, 'b', seeded('a', 3)), { b: 8, i: 6 });
+    ok(legacyTie.end.who === null && !legacyTie.end.tie && ult.result(legacyTie).winner === null && ult.result(legacyTie).text === 'Stalemate' && legacyTie.v === undefined, 'komi: a legacy (no setup) game tied on the count is still a draw, untouched');
+    ok(errOf(() => step(flow(step(seeded('a', 2), { setup: 2, mode: 'classic' }), mv([[6, 2]])), { steal: 1 })) === 'Pick a square', 'the pie rule is gone: { steal: 1 } is rejected like any bad move, in v2 too');
+    const tn = (st) => ult.kit.tieNote(st, (w) => (w === 'a' ? 'Emerson' : 'Sydney'));
+    const lvl = step(seeded('a', 2), { setup: 2, mode: 'classic' }); lvl.big = ['a', 'b', null, null, null, null, null, null, null];
+    const up = clone(lvl); up.big[2] = 'a';
+    ok(tn(lvl) === 'Tied on boards so far: ties go to Sydney' && tn(up) === null && tn(Object.assign(seeded('a', 2), { big: lvl.big })) === null && ult.kit.secondMover(lvl) === 'b', 'komi: the tie note names the second mover while boards are level, and only in v2');
 
     // 6. Last Light
     const bigs = (arr) => arr.map((x) => (x === '.' ? null : x));
@@ -781,14 +790,13 @@ async function rulesTests() {
     ok(ult.kit.momentKeys(wonB, resB, {}).keys.includes('firstMode') && !ult.kit.momentKeys(wonB, resB, { classic_b_n: 2 }).keys.includes('firstMode'), 'moment: a first win in a mode is noted');
     const draw = seeded('a', 1); draw.big = bigs(['a', 'b', 'a', 'b', 'a', 'b', 'b', 'a', 'd']); draw.end = { why: 'count', who: null, a: 4, b: 4 };
     ok(ult.kit.tally({ streak: 2, streak_who: 'a' }, draw, { winner: null }, 'm3').draws_n === 1 && !('streak' in ult.kit.tally({ streak: 2, streak_who: 'a' }, draw, { winner: null }, 'm3')) && ult.kit.momentKeys(draw, { winner: null }, {}).keys[0] === 'draw', 'records: a draw is counted, leaves the streak alone, and has its own moment');
-    // comeback + wild + hot + stolen situations from real play
+    // comeback + komi + wild + hot situations from real play
     const cb = fin('a', 'classic', mv([[0, 0]]));
     cb.down = { a: 2, b: 0 };
     cb.end = { why: 'line', who: 'a', line: [0, 1, 2] }; cb.big = bigs(['a', 'a', 'a', 'b', 'b', '.', '.', '.', '.']);
     ok(ult.kit.momentKeys(cb, { winner: 'a' }, { games_n: 3, classic_a_n: 1 }).keys.includes('comeback') && ult.kit.tally({}, cb, { winner: 'a' }, 'x').comeback_n === 1, 'moment: a win after trailing by 2+ boards is a comeback');
-    const stolen = step(flow(step(seeded('a', 7), { setup: 2, mode: 'classic' }), mv([[4, 4]])), { steal: 1 });
-    stolen.end = { why: 'line', who: 'b', line: [0, 1, 2] }; stolen.big = bigs(['b', 'b', 'b', 'a', '.', '.', '.', '.', '.']);
-    ok(ult.kit.momentKeys(stolen, { winner: 'b' }, { games_n: 3, classic_b_n: 2 }).keys.includes('stolen'), 'moment: the stealer winning is a "stolen" moment');
+    const tieWin = komiGame('a', 'classic');
+    ok(ult.kit.momentKeys(tieWin, ult.result(tieWin), { games_n: 3, classic_b_n: 2 }).keys.includes('komi') && !ult.kit.momentKeys(tieWin, ult.result(tieWin), {}).keys.includes('stolen'), 'moment: winning on the tie-break is a komi moment');
     const wildWin = step(flow(ws(8), mv([[4, 0]])), { b: 5, i: 5, wild: 1 });
     wildWin.end = { why: 'line', who: 'b', line: [0, 1, 2] };
     ok(ult.kit.momentKeys(wildWin, { winner: 'b' }, { games_n: 3, wild_b_n: 1 }).keys.includes('wild'), 'moment: winning with the wildcard move is a wildcard moment');
@@ -1007,6 +1015,40 @@ async function uiTests(scheme, port) {
         if (w === 844) await shot(pg, `four-${scheme}-844x390`);
         await h.closeGame(pg);
       }
+      await pg.setViewportSize({ width: 390, height: 844 });
+    });
+
+    // ── Four: small portrait phones, picker / pop buttons / strip, nothing scrolls ──
+    await section(`four small portrait (${scheme})`, async () => {
+      await leave(h, h.a); await leave(h, h.b);
+      const pg = h.a;
+      const fits = async (label, wantDesc) => {
+        const m = await pg.evaluate(() => {
+          const gr = document.querySelector('#game-root');
+          const kids = [...document.querySelectorAll('.g-four *')].filter((e) => e.getClientRects().length && !e.closest('[hidden]'));
+          const d = document.querySelector('.g4-mdesc');
+          return { over: gr.scrollHeight - gr.clientHeight, ih: innerHeight, bottom: Math.max(...kids.map((e) => e.getBoundingClientRect().bottom)), sw: gr.scrollWidth - innerWidth, descH: d && !d.hidden ? d.getBoundingClientRect().height : 0, edge: document.querySelector('.g4-edge').getBoundingClientRect().bottom };
+        });
+        ok(m.over <= 0 && m.sw <= 0 && m.bottom <= m.ih - 8 && m.edge < m.ih, `four (${scheme}): ${label}: nothing scrolls and the board shadow is not clipped (over ${m.over}px, content ends ${Math.round(m.bottom)} of ${m.ih})`);
+        if (wantDesc) ok(m.descH > 0 && m.descH < 24, `four (${scheme}): ${label}: a one-line mode description shows (${Math.round(m.descH)}px)`);
+      };
+      for (const [w, ht] of [[390, 664], [360, 640], [360, 560]]) {
+        await pg.setViewportSize({ width: w, height: ht });
+        await h.newLocalGame(pg, 'four');
+        await pg.waitForTimeout(350);
+        await fits(`${w}x${ht} picker and strip`, true);
+        await pg.click('.g4-mc[data-mode="pop"]');
+        await fits(`${w}x${ht} PopOut picked`, true);
+        await pg.tap(SEL.four(0));
+        await pg.tap(SEL.four(0));
+        await pg.waitForTimeout(800);
+        ok(await pg.isVisible('.g4-acts') && await pg.isVisible('.g4-label'), `four (${scheme}): ${w}x${ht} the Drop / Pop buttons and the mode label show`);
+        await fits(`${w}x${ht} Drop / Pop buttons and mode label`, false);
+        await h.closeGame(pg);
+      }
+      await h.newLocalGame(pg, 'four');
+      await pg.click('.g4-mc[data-mode="classic"]'); // leave the remembered mode as it was
+      await h.closeGame(pg);
       await pg.setViewportSize({ width: 390, height: 844 });
     });
 
@@ -1272,6 +1314,37 @@ async function uiTests(scheme, port) {
       await shot(pg, `dots-${scheme}-844x390-play`);
       await pg.setViewportSize({ width: 390, height: 844 });
       await h.closeGame(pg);
+      // a chain stamp in landscape stays beside the board, off the boxes
+      await pg.setViewportSize({ width: 844, height: 390 });
+      await h.newLocalGame(pg, 'dots');
+      for (const k of ['h-0-0', 'h-0-1', 'h-0-2', 'h-1-0', 'h-1-1', 'h-1-2', 'v-0-0', 'v-0-1', 'v-0-2', 'v-0-3']) await pg.click(SEL.dots(k));
+      await pg.waitForFunction(() => { const p = document.querySelector('.g-dots .gd-pop'); return p && !p.hidden && /Chain of 3/.test(p.textContent); }, null, { timeout: 4000 });
+      const pr = await pg.evaluate(() => { const p = document.querySelector('.g-dots .gd-pop').getBoundingClientRect(); const w = document.querySelector('.g-dots .gd-wrap').getBoundingClientRect(); return { px: p.left, pr: p.right, wr: w.right, pt: p.top, pb: p.bottom, ih: innerHeight, lines: Math.round(p.height / 20) }; });
+      ok(pr.px >= pr.wr - 1 && pr.pt >= 0 && pr.pb <= pr.ih && pr.lines <= 3, `dots (${scheme}) 844×390: the chain stamp sits beside the board, not over it`);
+      await shot(pg, `dots-${scheme}-844x390-chain`);
+      await pg.setViewportSize({ width: 390, height: 844 });
+      await h.closeGame(pg);
+      // the end view: the plate steps aside for the status line, and nothing scrolls
+      for (const [w, ht] of [[844, 390], [667, 375]]) {
+        await pg.setViewportSize({ width: w, height: ht });
+        await h.newLocalGame(pg, 'dots');
+        await pg.tap('.g-dots .gd-mode[data-mode="quick"]');
+        const keys = [];
+        for (let r = 0; r < 4; r++) for (let c = 0; c < 3; c++) keys.push(`h-${r}-${c}`);
+        for (let r = 0; r < 3; r++) for (let c = 0; c < 4; c++) keys.push(`v-${r}-${c}`);
+        for (const k of keys) await pg.click(SEL.dots(k));
+        await seeBoard(pg);
+        await h.wait(300);
+        const e = await pg.evaluate(() => ({ plate: getComputedStyle(document.querySelector('.g-dots .gd-plate')).display, status: document.querySelector('.gm-status').textContent.trim(), page: document.scrollingElement.scrollHeight - innerHeight, game: document.querySelector('#game-root').scrollHeight - document.querySelector('#game-root').clientHeight, root: (() => { const r = document.querySelector('.g-dots'); return r.scrollHeight - r.clientHeight; })(), wrap: document.querySelector('.gd-wrap').getBoundingClientRect().width }));
+        ok(e.plate === 'none' && /win|draw|all/i.test(e.status), `dots (${scheme}) ${w}×${ht}: after "see the board" the result is said once (status line), not twice`);
+        ok(e.page <= 1 && e.game <= 1 && e.root <= 1, `dots (${scheme}) ${w}×${ht}: the end view does not scroll (board ${Math.round(e.wrap)}px)`);
+        await shot(pg, `dots-${scheme}-${w}x${ht}-endview`);
+        await h.closeGame(pg);
+      }
+      await pg.setViewportSize({ width: 390, height: 844 });
+      await h.newLocalGame(pg, 'dots');
+      await dotsPickClassic(pg);
+      await h.closeGame(pg);
     });
 
     await section(`dots records and rivalry strip (${scheme})`, async () => {
@@ -1471,6 +1544,15 @@ async function uiTests(scheme, port) {
       e = await eng(id);
       ok(e.state.cols[tabbed + 2].length === 1, 'four: Enter then drops where the arrows put it');
       await h.closeGame(pg);
+      // Escape puts a lifted disc away first; with nothing lifted it leaves the game as before
+      await h.newLocalGame(pg, 'four');
+      await pg.keyboard.press('7');
+      ok(await pg.$eval('.g4-lift', (x) => x.classList.contains('on')), 'four: key 7 lifts a disc');
+      await pg.keyboard.press('Escape');
+      ok(await pg.isVisible('#game-root .gm') && !(await pg.$eval('.g4-lift', (x) => x.classList.contains('on'))), 'four: Escape puts a lifted disc away and stays in the game');
+      await pg.keyboard.press('Escape');
+      await pg.waitForSelector('#game-root .gm', { state: 'hidden', timeout: 3000 });
+      ok(!(await pg.isVisible('#game-root .gm')), 'four: Escape with nothing lifted closes the game');
       // Blocked!
       await h.newLocalGame(pg, 'four');
       id = await localId(pg);
@@ -1613,7 +1695,7 @@ async function uiTests(scheme, port) {
     });
 
     // ── Ultimate v2 UI (light only) ──
-    await section('ultimate v2 online: picker, setup + move, steal, hot stars, both phones agree', async () => {
+    await section('ultimate v2 online: picker, setup + move, komi chip, hot stars, both phones agree', async () => {
       await leave(h, h.a); await leave(h, h.b);
       const id = await h.newOnlineGame(h.a, 'ultimate');
       await h.openMatch(h.b, id);
@@ -1623,6 +1705,13 @@ async function uiTests(scheme, port) {
       const ps = first === 'a' ? h.b : h.a;
       const second = first === 'a' ? 'b' : 'a';
       ok(await pf.isVisible('.gu-pick') && !(await ps.isVisible('.gu-pick')), 'ultimate: the mode picker shows to the first mover only');
+      const secondName = second === 'a' ? 'Emerson' : 'Sydney';
+      for (const pg2 of [pf, ps]) {
+        const tie0 = (await pg2.textContent('.gu-tie')).replace(/\s+/g, ' ').trim();
+        ok(await pg2.isVisible('.gu-tie') && tie0 === `Ties → ${secondName}` && await pg2.$eval('.gu-tie .gu-nm', (x) => x.classList.contains('gu-nm-' + (x.textContent === 'Emerson' ? 'a' : 'b'))), `ultimate: before the first move both phones show the komi chip "${tie0}" (the second mover)`);
+      }
+      const tab0 = await pf.evaluate(() => { const ks = [...document.querySelectorAll('.g-ult button, .g-ult [tabindex="0"]')].filter((x) => x.tabIndex >= 0 && !x.disabled); const ci = ks.findIndex((x) => x.classList.contains('gu-c')); const mi = ks.findIndex((x) => x.classList.contains('gu-mc')); return { ci, mi }; });
+      ok(tab0.mi >= 0 && tab0.ci > tab0.mi, 'ultimate: for the first mover the mode chips come before the grid in tab order');
       const heights = await pf.$$eval('.gu-mc', (xs) => xs.map((x) => x.getBoundingClientRect().height));
       ok(heights.length === 3 && heights.every((x) => x >= 44), `ultimate: three mode chips, each at least 44px tall (${heights.map(Math.round).join('/')})`);
       ok(/picking a mode/i.test(await ps.textContent('.gu-plate')) && await ps.$$eval('.g-ult button', (bs) => bs.every((b) => b.disabled)), 'ultimate: the waiting partner sees "… is picking a mode…" and nothing is tappable');
@@ -1638,15 +1727,9 @@ async function uiTests(scheme, port) {
       ok(JSON.stringify(ea.state) === JSON.stringify(eb.state) && ea.state.v === 2 && ea.state.mode === 'hot' && ea.state.hot.length === 2 && ea.acts[0] === second, 'ultimate: both phones agree on the state (mode hot, two hot boards)');
       for (const pg of [h.a, h.b]) ok(await pg.$$eval('.gu-sb.is-hot', (xs) => xs.length) === 2 && await pg.$$eval('.gu-hot svg', (xs) => xs.filter((x) => x.getBoundingClientRect().width > 0).length) === 2, 'ultimate: two hot boards wear a star on each phone');
       ok(!(await pf.isVisible('.gu-pick')) && !(await ps.isVisible('.gu-pick')) && /Hot Boards/.test(await ps.textContent('.gu-info')), 'ultimate: once play starts the picker is gone and a small Hot Boards label stays');
-      // the pie rule
-      ok(await ps.isVisible('.gu-steal') && !(await pf.isVisible('.gu-steal')), 'ultimate: the second player (only) gets the take-that-mark button');
-      ok((await ps.$eval('.gu-steal', (x) => x.getBoundingClientRect().height)) >= 44, 'ultimate: the steal button is at least 44px tall');
-      ok(/take that mark/i.test(await ps.textContent('.gu-plate')), 'ultimate: the plate says you may take that mark');
-      await ps.tap('.gu-steal');
-      const [sa, sb] = await waitMoves(h, id, 2, [h.a, h.b]);
-      ok(JSON.stringify(sa.lists[second]) === JSON.stringify([{ steal: 1 }]) && sa.state.cells[36] === second && sa.acts[0] === first && sa.state.force === 0 && JSON.stringify(sa.state) === JSON.stringify(sb.state), 'ultimate: stealing flips the mark, the opener moves next, still sent to board 0, both phones agree');
-      ok(!(await ps.isVisible('.gu-steal')) && !(await pf.isVisible('.gu-steal')) && /took your mark/i.test(await pf.textContent('.gu-plate')), 'ultimate: the opener is told, and the button is gone');
-      await shot(pf, 'ultimate-light-hot-after-steal');
+      for (const pg2 of [pf, ps]) ok(await pg2.isVisible('.gu-tie') && /Ties → /.test(await pg2.textContent('.gu-tie')) && (await pg2.textContent('.gu-tie')).includes(secondName), 'ultimate: the komi chip stays on both phones once play starts, naming the second mover');
+      ok(!(await pf.$('.gu-steal')) && !/take that mark/i.test(await ps.textContent('.g-ult')), 'ultimate: no steal button and no "take that mark" any more');
+      await shot(pf, 'ultimate-light-hot-komi');
       await h.closeGame(h.a); await h.closeGame(h.b);
 
       // tapping the board without touching the picker plays the default (classic)
@@ -1694,6 +1777,14 @@ async function uiTests(scheme, port) {
       const doc = h.docs['gamedata/ultimate'] || {};
       ok(doc.last_id === id && (doc.games_n | 0) === before + 1 && doc.streak >= 1 && /^[a-zA-Z]+\.\d+\.\d+$/.test(doc.last_moment), `ultimate: the match was counted once, by whichever phone saw it end (games_n ${before} → ${doc.games_n})`);
       await shot(h.a, 'ultimate-light-390-moment');
+      for (const [w, hh] of [[844, 390], [667, 375]]) {
+        await h.a.setViewportSize({ width: w, height: hh });
+        await h.wait(500);
+        const sc = await h.a.evaluate(() => { const gr = document.getElementById('game-root'); return [document.documentElement.scrollHeight, innerHeight, gr.scrollHeight, gr.clientHeight]; });
+        ok(sc[0] <= sc[1] + 1 && sc[2] <= sc[3] + 1, `ultimate ${w}x${hh}: after "See the board" the page still does not scroll (${sc.join('/')})`);
+        if (w === 844) await shot(h.a, 'ultimate-light-844x390-after-end');
+      }
+      await h.a.setViewportSize({ width: 390, height: 844 });
       await h.closeGame(h.a); await h.closeGame(h.b);
     });
 
@@ -1716,18 +1807,21 @@ async function uiTests(scheme, port) {
       await h.closeGame(h.a);
     });
 
-    await section('ultimate v2 same phone: wildcard, bug fixes (ink colour, Tab + Enter, free-move ring, ghost)', async () => {
+    await section('ultimate v2 same phone: wildcard, bug fixes (ink colour, Tab + Enter, free-move ring, ghost, komi chip)', async () => {
       await leave(h, h.a); await leave(h, h.b);
       const pg = h.a;
-      // ink: an X inside a board lit for Sydney stays blue
-      await h.newLocalGame(pg, 'ultimate');
-      let id = await localId(pg);
+      // who moves first on a same-phone match alternates between games, so read it
+      const startLocal = async () => { await h.newLocalGame(pg, 'ultimate'); const id = await localId(pg); const F = (await h.engine(pg, id)).acts[0]; return { id, F, S: F === 'a' ? 'b' : 'a' }; };
+      const nameOfW = (w) => (w === 'a' ? 'Emerson' : 'Sydney');
       const ink = (v) => pg.evaluate((c) => { const d = document.createElement('i'); d.style.color = `var(--p-${c})`; document.querySelector('.g-ult').appendChild(d); const r = getComputedStyle(d).color; d.remove(); return r; }, v);
+      // ink: a first-mover mark inside a board lit for the second player keeps its own colour
+      let { id, F, S } = await startLocal();
+      ok(/^Ties → /.test((await pg.textContent('.gu-tie')).trim()) && (await pg.textContent('.gu-tie .gu-nm')) === nameOfW(S), `ultimate: the komi chip names the second mover (${nameOfW(S)}) before the first move`);
       await pg.tap(SEL.ultimate([0, 0])); await pg.tap(SEL.ultimate([0, 0]));
-      await pg.waitForSelector('.gu-sb[data-b="0"].is-open.gu-b', { timeout: 4000 }).catch(() => {});
-      ok(await pg.$eval('.gu-sb[data-b="0"]', (x) => x.classList.contains('is-open') && x.classList.contains('gu-b')), 'ultimate: board 0 is lit for Sydney');
-      const stroke = await pg.$eval('.gu-sb[data-b="0"] .gu-m.gu-a .gu-col', (x) => getComputedStyle(x).stroke);
-      ok(stroke === await ink('a') && stroke !== await ink('b'), 'ultimate: an X inside a board lit for Sydney is drawn in Emerson\'s blue ink, not pink');
+      await pg.waitForSelector(`.gu-sb[data-b="0"].is-open.gu-${S}`, { timeout: 4000 }).catch(() => {});
+      ok(await pg.$eval('.gu-sb[data-b="0"]', (x, w) => x.classList.contains('is-open') && x.classList.contains('gu-' + w), S), `ultimate: board 0 is lit for ${nameOfW(S)}`);
+      const stroke = await pg.$eval(`.gu-sb[data-b="0"] .gu-m.gu-${F} .gu-col`, (x) => getComputedStyle(x).stroke);
+      ok(stroke === await ink(F) && stroke !== await ink(S), `ultimate: ${nameOfW(F)}'s mark inside a board lit for ${nameOfW(S)} is drawn in ${nameOfW(F)}'s own ink`);
       // the lit board is a ring, not nine
       ok(await pg.$$eval('.gu-sb.is-open', (xs) => xs.length) === 1 && await pg.$eval('.gu-sb[data-b="0"]', (x) => getComputedStyle(x, '::before').animationName !== 'none'), 'ultimate: a forced board gets the full breathing ring');
       // roving tabindex + Tab, Enter
@@ -1740,7 +1834,7 @@ async function uiTests(scheme, port) {
       ok(foc.b === 0, 'ultimate: Tab lands inside the board you were sent to');
       await pg.keyboard.press('Enter');
       let e = await h.engine(pg, id);
-      ok(moveCount(e) === 2 && e.state.cells[foc.b * 9 + foc.i] === 'b', `ultimate: Tab then Enter places the focused cell (board ${foc.b}, square ${foc.i}), not some other default`);
+      ok(moveCount(e) === 2 && e.state.cells[foc.b * 9 + foc.i] === S, `ultimate: Tab then Enter places the focused cell (board ${foc.b}, square ${foc.i}), not some other default`);
       await pg.keyboard.press('ArrowRight');
       const moved = await pg.evaluate(() => ({ b: Number(document.activeElement.dataset.b), i: Number(document.activeElement.dataset.i), cur: document.activeElement.classList.contains('is-cur') }));
       ok(moved.b === e.state.force && moved.cur, 'ultimate: arrows keep working from the keyboard cursor (inside the board you are sent to)');
@@ -1752,38 +1846,37 @@ async function uiTests(scheme, port) {
       await h.closeGame(pg);
 
       // free-move highlight is a whisper
-      await h.newLocalGame(pg, 'ultimate');
+      ({ id, F, S } = await startLocal());
       ok(await pg.$$eval('.gu-sb.is-open.is-free', (xs) => xs.length) === 9 && await pg.$$eval('.gu-sb.is-open.is-free', (xs) => xs.every((x) => getComputedStyle(x, '::before').animationName === 'none')), 'ultimate: on a free move all nine boards get the quiet treatment (no breathing rings)');
       // ghost is outline only
       await pg.tap(SEL.ultimate([4, 4]));
-      const gh = await pg.$eval(SEL.ultimate([4, 4]) + ' .ghost', (x) => ({ op: getComputedStyle(x).opacity, ink: getComputedStyle(x.querySelector('.gu-ink')).strokeWidth, col: getComputedStyle(x.querySelector('.gu-col')).stroke }));
-      ok(gh.op === '1' && gh.col !== await ink('a'), 'ultimate: the ghost is a full-strength outline with a pale core, not a washed-out copy of the mark');
+      const gh = await pg.$eval(SEL.ultimate([4, 4]) + ' .ghost', (x) => ({ op: getComputedStyle(x).opacity, col: getComputedStyle(x.querySelector('.gu-col')).stroke }));
+      ok(gh.op === '1' && gh.col !== await ink(F), 'ultimate: the ghost is a full-strength outline with a pale core, not a washed-out copy of the mark');
       await shot(pg, 'ultimate-light-390-ghost');
       await h.closeGame(pg);
 
       // Wildcards
-      await h.newLocalGame(pg, 'ultimate');
-      id = await localId(pg);
+      ({ id, F, S } = await startLocal());
       await pg.tap('.gu-mc[data-m="wild"]');
-      await pg.tap(SEL.ultimate([4, 4])); await pg.tap(SEL.ultimate([4, 4])); // a plays; b is sent to board 4
+      await pg.tap(SEL.ultimate([4, 4])); await pg.tap(SEL.ultimate([4, 4])); // F plays; S is sent to board 4
       e = await h.engine(pg, id);
       ok(e.state.mode === 'wild' && e.state.force === 4 && await pg.$$eval('.gu-tok', (xs) => xs.filter((x) => !x.hidden).length) === 2, 'ultimate: Wildcards shows a wildcard token for each player');
-      ok((await pg.$eval('.gu-tok[data-w="b"]', (x) => x.getBoundingClientRect().height)) >= 44 && await pg.$eval('.gu-tok[data-w="b"]', (x) => !x.disabled) && await pg.$eval('.gu-tok[data-w="a"]', (x) => x.disabled), 'ultimate: only the player to move can use theirs, and it is at least 44px tall');
-      await pg.tap('.gu-steal');
-      e = await h.engine(pg, id);
-      ok(e.state.cells[40] === 'b' && e.acts[0] === 'a' && moveCount(e) === 2, 'ultimate: (same phone) the second player may take the opening mark with the button');
-      // a is now sent to board 4 as a stolen-mark owner... a plays on; b gets a normal turn with the wildcard
-      await pg.tap(SEL.ultimate([4, 0])); await pg.tap(SEL.ultimate([4, 0])); // a plays; b is sent to board 0
-      await pg.tap('.gu-tok[data-w="b"]');
-      ok(await pg.$eval('.gu-tok[data-w="b"]', (x) => x.classList.contains('is-armed')) && await pg.$$eval('.gu-sb.is-open', (xs) => xs.length) > 1, 'ultimate: arming the wildcard opens every board');
+      ok((await pg.$eval(`.gu-tok[data-w="${S}"]`, (x) => x.getBoundingClientRect().height)) >= 44 && await pg.$eval(`.gu-tok[data-w="${S}"]`, (x) => !x.disabled) && await pg.$eval(`.gu-tok[data-w="${F}"]`, (x) => x.disabled), 'ultimate: only the player to move can use theirs, and it is at least 44px tall');
+      ok(/Ties → /.test(await pg.textContent('.gu-tie')), 'ultimate: the komi chip stays during a Wildcards game');
+      await pg.tap(SEL.ultimate([4, 0])); await pg.tap(SEL.ultimate([4, 0])); // S obeys; F is sent to board 0
+      await pg.tap(SEL.ultimate([0, 4])); await pg.tap(SEL.ultimate([0, 4])); // F obeys; S is sent to board 4
+      await pg.tap(`.gu-tok[data-w="${S}"]`);
+      ok(await pg.$eval(`.gu-tok[data-w="${S}"]`, (x) => x.classList.contains('is-armed')) && await pg.$$eval('.gu-sb.is-open', (xs) => xs.length) > 1, 'ultimate: arming the wildcard opens every board');
       await pg.tap(SEL.ultimate([7, 7])); await pg.tap(SEL.ultimate([7, 7]));
       e = await h.engine(pg, id);
-      const lastMove = e.lists.b[e.lists.b.length - 1];
-      ok(lastMove.wild === 1 && lastMove.b === 7 && e.state.cells[7 * 9 + 7] === 'b' && e.state.wild.b === 0 && e.state.force === 7, 'ultimate: a wildcard move is recorded and the send rule carries on from there');
-      await pg.tap(SEL.ultimate([7, 0])); await pg.tap(SEL.ultimate([7, 0])); // a obeys; b sent to board 0
-      await pg.tap('.gu-tok[data-w="b"]');
+      const lastMove = e.lists[S][e.lists[S].length - 1];
+      ok(lastMove.wild === 1 && lastMove.b === 7 && e.state.cells[7 * 9 + 7] === S && e.state.wild[S] === 0 && e.state.force === 7, 'ultimate: a wildcard move is recorded and the send rule carries on from there');
+      await pg.tap(SEL.ultimate([7, 0])); await pg.tap(SEL.ultimate([7, 0])); // F obeys; S sent to board 0
+      await pg.tap(`.gu-tok[data-w="${S}"]`);
       ok(await toastSays(pg, /used your wildcard/i), 'ultimate: trying a second wildcard gets a friendly refusal');
-      ok(!(await pg.$eval('.gu-tok[data-w="b"]', (x) => x.classList.contains('is-armed'))), 'ultimate: and it does not arm');
+      ok(!(await pg.$eval(`.gu-tok[data-w="${S}"]`, (x) => x.classList.contains('is-armed'))), 'ultimate: and it does not arm');
+      // a used token stays readable: struck through at full strength (no opacity wash)
+      ok(await pg.$eval(`.gu-tok[data-w="${S}"]`, (x) => x.classList.contains('is-used') && getComputedStyle(x).opacity === '1' && getComputedStyle(x.querySelector('span')).textDecorationLine.includes('line-through')), 'ultimate: a used wildcard token is struck through, not faded');
       await shot(pg, 'ultimate-light-390-wild');
       await h.closeGame(pg);
     });

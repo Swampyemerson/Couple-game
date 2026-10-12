@@ -211,6 +211,11 @@ const MOMENTS = {
     'That sneaky sacrifice, {W}? Straight out of the pro handbook.',
     '{W} played the long game. {L} will be hearing about it.',
   ],
+  chainFirst: [
+    'First chain on the books: {n} boxes in one turn.',
+    '{n} boxes in one turn. That is the bar to beat.',
+    'A {n}-box chain to open the books.',
+  ],
   chainRecord: [
     'A {n}-box chain: a new record for the two of you!',
     'A {n}-box chain. Longest ever. Frame the board.',
@@ -279,7 +284,7 @@ function pickMoment(s, an, result, before, nameOf, seed) {
   if (!w) return pick('draw');
   const margin = Math.abs(an.pts.a - an.pts.b);
   if (an.sacs.some((x) => x.who === w)) return pick('deal');
-  if (before && an.best.n >= 4 && an.best.n > before.chain) { vars.n = an.best.n; return pick('chainRecord'); }
+  if (before && an.best.n >= 4 && an.best.n > before.chain) { vars.n = an.best.n; return pick(before.chain > 0 ? 'chainRecord' : 'chainFirst'); }
   if (an.behind[w] >= Math.max(3, Math.round(total * 0.2))) return pick('comeback');
   if (before && before.streakWho === other(w) && before.streak >= 2) { vars.n = before.streak; return pick('broke'); }
   if (before && before.streakWho === w && before.streak + 1 >= 3) { vars.n = before.streak + 1; return pick('streak'); }
@@ -425,7 +430,9 @@ registerGame({
 .g-dots .gd-hit.is-drawn { cursor: default; }
 .g-dots.is-locked .gd-hit { pointer-events: none; cursor: default; }
 .g-dots .gd-pop { position: absolute; left: 50%; top: -14px; z-index: 3; max-width: 88%; padding: 8px 16px; transform: translateX(-50%) rotate(-3deg); background: var(--g-hl); color: var(--g-on-ink); border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); box-shadow: var(--g-shadow); font: 900 1.05rem/1.15 var(--g-font-display); text-align: center; text-wrap: balance; pointer-events: none; }
-.g-dots.is-land .gd-pop { top: 6px; }
+.g-dots .gd-side { position: relative; }
+.g-dots.is-land .gd-pop { top: auto; bottom: 100%; margin-bottom: 6px; width: max-content; max-width: 100%; padding: 6px 12px; font-size: 0.92rem; }
+.g-dots.is-looked .gd-plate { display: none; }
 .g-dots .gd-pop[hidden] { display: none; }
 .g-dots .gd-pop.in { animation: gd-popin 360ms cubic-bezier(0.3, 1.6, 0.5, 1) both; }
 @keyframes gd-popin { from { transform: translateX(-50%) rotate(-3deg) scale(0.6); opacity: 0; } to { transform: translateX(-50%) rotate(-3deg); opacity: 1; } }
@@ -545,10 +552,13 @@ registerGame({
       const land = W > (H0 - 26) * 1.2;
       const H = H0 - (land ? 14 : 26);
       root.classList.toggle('is-land', land);
+      // in landscape the stamp lives beside the board, not over it
+      const host = land ? side : wrap;
+      if (pop.parentNode !== host) host.appendChild(pop);
       let size;
       if (land) size = Math.min(H, W - 230 - 18, 620);
       else size = Math.min(W, 540, H - side.offsetHeight - 12);
-      size = Math.max(Math.floor(size), 190);
+      size = Math.max(Math.floor(size), land ? 140 : 190);
       root.style.setProperty('--gd-s', `${size}px`);
     }
     let ro = null;
@@ -1012,6 +1022,11 @@ registerGame({
           }
           if (prev != null) popPlate();
         }
+      },
+      onEndClosed() {
+        // the stage's own status line now carries the result and the Rematch button, so the plate steps aside
+        root.classList.add('is-looked');
+        fit();
       },
       destroy() {
         for (const t of timers) clearTimeout(t);
