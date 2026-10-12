@@ -46,7 +46,7 @@ The turn-game `api` has no `data()`, so the game imports `gameDataApi` from core
 Flat keys: `missions_n wins_n burned_n caught_n cold_n sudden_n escape_n meld_n rookie_wins_n agent_wins_n spy_wins_n
 pack_<p>_n spare_best close_best streak streak_best clue_best a_clue_best b_clue_best lastm lastb recent_m last_setup`.
 
-- Recorded once per match. `recent_m` (comma-joined, newest 20 match ids) is checked before recording and appended on
+- Recorded once per match. `recent_m` (comma-joined, newest 60 match ids) is checked before recording and appended on
   record. A phone records when it watched the match end during this mount, or when the match is v2 and its id is not in
   `recent_m`. A finished v1 match opened later from the hub is never recorded. Counters are absolute values from the data
   snapshot (two phones writing the same match write the same numbers).

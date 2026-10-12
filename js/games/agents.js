@@ -293,6 +293,11 @@ function matchStats(s) {
 }
 
 // ── records (api.data): flat numbers, bests only rise ──
+// Ids of recently recorded matches (comma-joined, newest last). Core keeps the newest 25 finished online
+// matches and local ones forever, so the memory is generous.
+const RECENT_CAP = 60;
+const recentIds = (str) => String(str || '').split(',').filter(Boolean);
+const pushRecent = (str, id) => [...recentIds(str).filter((x) => x !== id), id].slice(-RECENT_CAP).join(',');
 const MILESTONES = [10, 25, 50];
 /** The patch that records a finished mission, computed from a data snapshot `d`. Also returns the stamps earned. */
 function recordPatch(d, s, matchId) {
@@ -612,7 +617,7 @@ registerGame({
   endLookLabel: 'See the board',
   init, next, apply, result,
   // exposed for tests
-  _test: { makeKeys, pickWords, NOUNS, LAYOUT, TOKENS, TOTAL, BREAKS, cleanClue, cleanClue2: (s, x) => checkClue(s.words, s.found, x), PACKS, PACK_BREAKS, packWords: (seed, pack) => packWords(seed, pack, NOUNS), LEVELS, matchStats, recordPatch, isMeld },
+  _test: { makeKeys, pickWords, NOUNS, LAYOUT, TOKENS, TOTAL, BREAKS, cleanClue, cleanClue2: (s, x) => checkClue(s.words, s.found, x), PACKS, PACK_BREAKS, packWords: (seed, pack) => packWords(seed, pack, NOUNS), LEVELS, matchStats, recordPatch, isMeld, recentIds, pushRecent, RECENT_CAP },
 
   mount(el, api) {
     el.innerHTML = `<div class="g-agents">
@@ -823,10 +828,9 @@ registerGame({
     function maybeRecord(c, watched) {
       if (!c.over || !c.matchId) return;
       const d = safeData();
-      const ids = String(d.recent_m || '').split(',').filter(Boolean);
-      if (ids.includes(c.matchId)) return;
+      if (recentIds(d.recent_m).includes(c.matchId)) return;
       if (!watched && c.state.v !== 2) return;
-      try { store.setData({ ...recordPatch(d, c.state, c.matchId), recent_m: [...ids, c.matchId].slice(-20).join(',') }); } catch { /* records are a bonus */ }
+      try { store.setData({ ...recordPatch(d, c.state, c.matchId), recent_m: pushRecent(d.recent_m, c.matchId) }); } catch { /* records are a bonus */ }
     }
 
     // ── the rules card (first giver, before the first clue) ──

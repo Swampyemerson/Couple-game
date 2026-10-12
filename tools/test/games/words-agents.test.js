@@ -239,6 +239,13 @@ async function unitTests() {
   // records
   const rp = T.recordPatch({}, run([['a', S()]]), 'm1');
   assert(rp.missions_n === 1 && rp.streak === 0 && rp.lastm === 'm1' && rp.pack_classic_n === 1, 'recordPatch: a first mission');
+  // the recently-recorded memory holds well over core's 25 kept finished matches
+  let ids = '';
+  for (let k = 0; k < 30; k++) ids = T.pushRecent(ids, `m${k}`);
+  assert(T.RECENT_CAP >= 60 && T.recentIds(ids).length === 30 && T.recentIds(ids).includes('m0') && T.recentIds(ids).includes('m29'), 'recent ids: 30 prior matches are all remembered (the 26th-oldest is not forgotten)');
+  for (let k = 30; k < 90; k++) ids = T.pushRecent(ids, `m${k}`);
+  assert(T.recentIds(ids).length === T.RECENT_CAP && T.recentIds(ids).at(-1) === 'm89' && !T.recentIds(ids).includes('m29') && T.recentIds(ids).includes('m30'), 'recent ids: capped at 60, newest kept');
+  assert(T.pushRecent('a,b', 'a') === 'b,a', 'recent ids: re-adding an id moves it to the end, no duplicates');
   // a won mission on the last token, a streak, bests that only rise, milestones, idempotence
   const won = (turns, sd) => { const w = run([['a', S({ level: 'rookie' })]]); w.over = 'win'; w.turns = turns; w.found = Array(25).fill('a').fill(null, 15); if (sd) w.sd = [{ by: 'a', i: 0, r: 'G' }]; return w; };
   let d1 = {};
