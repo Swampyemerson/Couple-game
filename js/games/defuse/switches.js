@@ -135,7 +135,7 @@ export const SWITCHES = {
   css: `
 .g-defuse .dx-mod[data-mod="switches"] { --sx-orange: #f08a24; --sx-purple: #8a5ad8; --sx-white: var(--dx-white); --sx-black: var(--dx-black); --sx-teal: #17a8a4; }
 .g-defuse .dx-mod[data-mod="switches"] .sx { width: 100%; display: flex; flex-direction: column; align-items: stretch; gap: 10px; }
-.g-defuse .dx-mod[data-mod="switches"] .sx button { font: inherit; color: inherit; touch-action: manipulation; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+.g-defuse .dx-mod[data-mod="switches"] .sx button { touch-action: manipulation; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
 .g-defuse .dx-mod[data-mod="switches"] .sx-plate { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 10px; background: var(--dx-dark); border: 2.5px solid var(--g-ink); border-radius: 10px; box-shadow: inset 0 -4px 0 rgb(255 255 255 / 0.06); }
 .g-defuse .dx-mod[data-mod="switches"] .sx-plate .dx-tag { color: #8d8a80; }
 .g-defuse .dx-mod[data-mod="switches"] .sx-leds { display: flex; gap: 9px; }

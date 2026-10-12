@@ -72,7 +72,7 @@ export const MORSE = {
   css: `
 .g-defuse .dx-mod[data-mod="morse"] { --mx-off: color-mix(in srgb, var(--dx-yellow) 12%, var(--dx-dark)); }
 .g-defuse .dx-mod[data-mod="morse"] .mx { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 9px; }
-.g-defuse .dx-mod[data-mod="morse"] .mx button { font: inherit; color: inherit; touch-action: manipulation; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+.g-defuse .dx-mod[data-mod="morse"] .mx button { touch-action: manipulation; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
 .g-defuse .dx-mod[data-mod="morse"] .mx-lamp { position: relative; width: 124px; height: 124px; padding: 0; background: none; border: 0; border-radius: 50%; }
 .g-defuse .dx-mod[data-mod="morse"] .mx-lamp svg { display: block; width: 100%; height: 100%; overflow: visible; }
 .g-defuse .dx-mod[data-mod="morse"] .mx-shd { fill: var(--g-edge, var(--g-ink)); }
