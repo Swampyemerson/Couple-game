@@ -201,7 +201,9 @@ function wave() {
     P(`M${cx - r} ${cy}A${r} ${r} 0 0 1 ${cx + r} ${cy}`, 'n', 'k', 2.6) +
     R(14, cy, 132, 12, 'k', 'n', 0, 3) +
     L(`M${cx} ${cy}L${f1(nx)} ${f1(ny)}`, 'k', 4.2) + C(cx, cy, 8, 'y', 'k', 2.6) +
-    C(14, cy - 8, 5, 'a', 'k', 2) + C(146, cy - 8, 5, 'b', 'k', 2));
+    C(14, cy - 8, 5, 'a', 'k', 2) + C(146, cy - 8, 5, 'b', 'k', 2) +
+    // a jackpot star in the corner: the new modes hide surprises
+    P('M136 14l3.4 8.6 9.2.5-7.2 5.8 2.5 8.9-7.9-5-7.9 5 2.5-8.9-7.2-5.8 9.2-.5Z', 'y', 'k', 2));
 }
 
 function hockey() {
