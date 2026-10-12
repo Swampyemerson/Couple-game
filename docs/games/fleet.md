@@ -13,8 +13,22 @@ invalidates a fleet that is already placed on screen.
 | Set | Turn | Extras |
 |---|---|---|
 | Classic (default) | One shot. A hit fires again; a miss passes. | — |
-| Salvo | One shot per ship you still have afloat, aimed first and fired together. Then the turn passes, hit or miss. | Losing ships shrinks your salvo. |
+| Salvo | One shot per ship you still have afloat, aimed first and fired together. Then the turn passes, hit or miss. | Losing ships shrinks your salvo. The first player opens with 3 ranging shots. Equal salvos: if the first player sinks the last ship, the other side still fires one answer with the ships it had as that salvo flew; sinking everything back is a draw. |
 | Arsenal | Classic. | Kit: 1 sonar + 1 torpedo each. Sonar pings a 3×3 and counts the ship squares you haven't hit yet; it's free (you still shoot). Torpedo fires three squares in a line; any hit fires again. Losing a ship gives you +1 sonar (max 3). Three hits in a row earn +1 torpedo (max 2). |
+
+### Balance (bot self-play, 6,000 games per row)
+
+The bot hunts on a checkerboard and finishes ships it has hit; Salvo bots pick their squares one by one with the
+same policy; Arsenal bots use their kit at random moments. The engine also alternates who starts from match to match.
+
+| Rule set | First player wins | Second | Draws | Turns | Shots |
+|---|---|---|---|---|---|
+| Classic | 52.5% | 47.5% | – | 42.1 | 65.1 |
+| Salvo as first drafted (5-shot opening, game ends on the last sink) | 66.8% | 33.1% | – | 24.5 | 67.8 |
+| Salvo as shipped (3-shot opening + equal salvos) | 51.9% | 46.1% | 1.9% | 25.1 | 68.9 |
+| Arsenal | 52.8% | 47.2% | – | 38.3 | 67.1 |
+
+Opening-salvo sizes tried with equal salvos: 2 → 45.6 / 52.2, 3 → 51.9 / 46.1, 5 → 64.8 / 33.1 (first / second, %).
 
 ## Moves and saved matches
 
@@ -23,7 +37,7 @@ invalidates a fleet that is already placed on screen.
 | `{ fleet: [{ r, c, len, dir }] ×5 }` | placement | your hidden fleet (unchanged since v1) |
 | `{ rules: 'classic' \| 'salvo' \| 'arsenal' }` | placement, before any fleet is hidden | the rule set. The first one applied wins; later ones are rejected and skipped |
 | `{ r, c }` | battle, Classic / Arsenal | one shot (unchanged since v1) |
-| `{ salvo: [[r, c], …] }` | battle, Salvo | exactly `min(ships afloat, squares left)` distinct new squares |
+| `{ salvo: [[r, c], …] }` | battle, Salvo | exactly the salvo size (3 for the opening, the answer size for an answering salvo, else ships afloat; never more than the squares left) of distinct new squares |
 | `{ sonar: [r, c] }` | battle, Arsenal | ping centred on (r, c) |
 | `{ torp: [r, c, 'h' \| 'v'] }` | battle, Arsenal | torpedo centred on (r, c); squares already fired at are skipped |
 

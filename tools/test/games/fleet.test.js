@@ -120,17 +120,27 @@ async function rulesTests() {
   // ── Salvo
   let sv = def.apply(def.apply(def.apply(copy(s0), 'a', { rules: 'salvo' }), 'a', { fleet: good }), 'b', { fleet: good2 });
   assert(sv.phase === 'battle' && sv.turn === 'a', 'Salvo battle starts with the first player');
-  rejects(sv, 'a', { r: 0, c: 0 }, /pick 5 squares/i, 'a single shot in Salvo');
-  rejects(sv, 'a', { salvo: [[0, 0], [1, 0], [2, 2]] }, /salvo is 5 shots/i, 'a salvo of the wrong size');
-  rejects(sv, 'a', { salvo: [[0, 0], [0, 0], [1, 1], [2, 2], [3, 3]] }, /twice/i, 'a salvo with a repeat square');
-  rejects(sv, 'a', { salvo: [[0, 0], [1, 1], [2, 2], [3, 3], [8, 8]] }, /off the chart/i, 'a salvo off the chart');
-  sv = def.apply(sv, 'a', { salvo: [[0, 0], [1, 0], [7, 7], [6, 6], [5, 5]] }); // sinks b's 2-ship (A1-A2), hits 5,5
-  assert(sv.shots.length === 5 && sv.turn === 'b' && sv.shots[1].sunk === 3 && sv.shots[4].hit === 1, 'a salvo fires all five, sinks and hits, then passes the turn (even after hits)');
+  rejects(sv, 'a', { r: 0, c: 0 }, /pick 3 squares/i, 'a single shot in Salvo');
+  rejects(sv, 'a', { salvo: [[0, 0], [1, 0], [2, 2], [3, 3], [4, 4]] }, /salvo is 3 shots/i, 'a five-shot opening (the first player opens with three ranging shots)');
+  rejects(sv, 'a', { salvo: [[0, 0], [0, 0], [1, 1]] }, /twice/i, 'a salvo with a repeat square');
+  rejects(sv, 'a', { salvo: [[0, 0], [1, 1], [8, 8]] }, /off the chart/i, 'a salvo off the chart');
+  sv = def.apply(sv, 'a', { salvo: [[0, 0], [1, 0], [5, 5]] }); // sinks b's 2-ship (A1-A2), hits F6
+  assert(sv.shots.length === 3 && sv.turn === 'b' && sv.shots[1].sunk === 3 && sv.shots[2].hit === 1, 'the opening salvo fires, sinks and hits, then passes the turn (even after hits)');
   rejects(sv, 'b', { salvo: [[0, 0], [0, 1], [0, 2], [0, 3], [7, 7]] }, /salvo is 4 shots/i, 'a five-shot salvo from a player who just lost a ship');
   sv = def.apply(sv, 'b', { salvo: [[0, 0], [0, 1], [0, 2], [0, 3]] }); // sinks a's 4-ship
   assert(sv.turn === 'a' && def.score(sv).a === 4, 'Salvo: losing a ship...');
   rejects(sv, 'a', { salvo: [[3, 0], [3, 1], [3, 2], [3, 3], [3, 4]] }, /salvo is 4 shots/i, '...means one shot fewer next salvo');
   rejects(sv, 'a', { salvo: [[0, 0], [3, 1], [3, 2], [3, 3]] }, /already fired at A1/i, 'a salvo at a square already fired at');
+  // equal salvos: the first player sinks the last ship, the other side answers with the ships it had
+  const eqA = [{ rules: 'salvo' }, { fleet: good }, { salvo: [[0, 0], [1, 0], [0, 7]] }, { salvo: [[1, 7], [2, 7], [3, 7], [7, 0]] }, { salvo: [[7, 1], [7, 2], [3, 3]] }, { salvo: [[3, 4], [3, 5], [0, 4]] }, { salvo: [[5, 5], [1, 1]] }, { salvo: [[2, 3], [2, 4]] }, { salvo: [[4, 4]] }, { salvo: [[5, 6]] }];
+  const eqB = [{ fleet: good2 }, { salvo: [[0, 0], [0, 1], [0, 2], [0, 3]] }, { salvo: [[2, 0], [2, 1], [2, 2]] }, { salvo: [[4, 0], [5, 0]] }, { salvo: [[6, 0]] }, { salvo: [[7, 6]] }, { salvo: [[7, 7]] }, { salvo: [[5, 7]] }];
+  const eq = core.derive(def, { first: 'a', seed: 2, lists: { a: eqA, b: eqB } });
+  assert(!eq.rejected.length && eq.state.phase === 'battle' && eq.state.final === 1 && sameFleet(eq.acts, ['b']) && def.score(eq.state).b === 0, 'Salvo: sinking the last ship first leaves the other side one answering salvo');
+  const draw = core.derive(def, { first: 'a', seed: 2, lists: { a: eqA, b: [...eqB, { salvo: [[6, 7]] }] } });
+  assert(draw.over && draw.result.winner === null && /same round/.test(draw.result.sub), 'Salvo: an answer that sinks everything back is a draw');
+  const won = core.derive(def, { first: 'a', seed: 2, lists: { a: eqA, b: [...eqB, { salvo: [[4, 4]] }] } });
+  assert(won.over && won.result.winner === 'a', 'Salvo: an answer that misses leaves the first player the winner');
+  rejects(eq.state, 'b', { salvo: [[4, 4], [3, 3]] }, /salvo is 1 shot/i, 'an answering salvo bigger than the ships it had');
 
   // ── Arsenal
   let ar = def.apply(def.apply(def.apply(copy(s0), 'b', { rules: 'arsenal' }), 'a', { fleet: good }), 'b', { fleet: good2 });
@@ -794,7 +804,8 @@ async function landscape(h) {
 function salvoPick(st, w, hits) {
   const foeFleet = st.fleets[other(w)];
   const shot = new Set(st.shots.filter((x) => x.by === w).map((x) => x.r * N + x.c));
-  const need = Math.min(5 - st.shots.filter((x) => x.by === other(w) && x.sunk >= 0).length, 64 - shot.size);
+  const opening = w === st.first && !st.shots.some((x) => x.by === w); // the first player opens with 3
+  const need = Math.min(st.final && w !== st.first ? st.final : opening ? 3 : 5 - st.shots.filter((x) => x.by === other(w) && x.sunk >= 0).length, 64 - shot.size);
   const ship = foeFleet.flatMap(cellsOf).filter(([r, c]) => !shot.has(r * N + c));
   const occ = new Set(foeFleet.flatMap(cellsOf).map(([r, c]) => r * N + c));
   const water = [];
@@ -830,7 +841,7 @@ async function salvoOnline(h, scheme) {
     await shooter.waitForSelector('.g-fleet .fl-target.is-live');
     if (n % 2 === 0) { await checkNoLeak(h, a, id, 'a', `salvo ${n}, Emerson`); await checkNoLeak(h, b, id, 'b', `salvo ${n}, Sydney`); }
     const cells = salvoPick(e.state, w, w === 'a' ? 3 : 2);
-    if (cells.length < 5) smaller = true;
+    if (cells.length < 5 && e.state.shots.some((x) => x.by === w) && !e.state.final) smaller = true;
     if (n === 0) {
       assert(await shooter.$eval('.g-fleet [data-fl="salvo-fire"]', (x) => x.disabled), `[salvo ${scheme}] Fire waits for a full salvo`);
       await shooter.tap(cellSel(...cells[0]));
@@ -841,8 +852,8 @@ async function salvoOnline(h, scheme) {
     if (n === 0) {
       const spare = [...Array(64).keys()].map((i) => [Math.floor(i / 8), i % 8]).find(([r, c]) => !cells.some(([x, y]) => x === r && y === c));
       await shooter.tap(cellSel(...spare));
-      assert(await shooter.$$eval('.g-fleet .fl-cell.is-pick', (x) => x.length) === cells.length, `[salvo ${scheme}] a sixth square is refused`);
-      assert(/5\s*\/5 aimed/.test(await shooter.textContent('.g-fleet .fl-fire-n')), `[salvo ${scheme}] the counter reads 5/5`);
+      assert(await shooter.$$eval('.g-fleet .fl-cell.is-pick', (x) => x.length) === cells.length, `[salvo ${scheme}] one square too many is refused`);
+      assert(cells.length === 3 && /3\s*\/3 aimed/.test(await shooter.textContent('.g-fleet .fl-fire-n')), `[salvo ${scheme}] the opening salvo is three ranging shots: the counter reads 3/3`);
       await shotsAt(h, { [w]: shooter }, `${scheme}-salvo-aim`);
     }
     await shooter.tap('.g-fleet [data-fl="salvo-fire"]');
@@ -850,7 +861,8 @@ async function salvoOnline(h, scheme) {
     await waitSynced(h, id, total);
     const e2 = await h.engine(a, id);
     const fired = e2.state.shots.length - e.state.shots.length;
-    if (fired !== cells.length && !e2.over) throw new Error(`FAIL: salvo fired ${fired} of ${cells.length}`);
+    if (fired !== cells.length && !e2.over && !e2.state.final) throw new Error(`FAIL: salvo fired ${fired} of ${cells.length}`);
+    if (e2.state.final && !e.state.final) console.log(`ok - [salvo ${scheme}] the last ship sank first: ${other(w) === 'a' ? 'Emerson' : 'Sydney'} gets one answering salvo of ${e2.state.final}`);
     if (!e2.over && e2.acts[0] === w) throw new Error('FAIL: the turn did not pass after a salvo');
     if (n === 1) { await h.wait(900); await shotsAt(h, pages, `${scheme}-salvo-battle`); }
   }
@@ -862,7 +874,7 @@ async function salvoOnline(h, scheme) {
   await b.click('#game-root [data-g="end-look"]');
   await h.wait(400);
   const bookTxt = await a.textContent('.g-fleet .fl-book');
-  assert(/Fewest shots to win · Salvo/.test(bookTxt) && /New/.test(bookTxt), `[salvo ${scheme}] the logbook shows the Salvo record, marked New`);
+  assert(/Fewest shots to win · Salvo/.test(bookTxt) && (!ea.result.winner || /New/.test(bookTxt)), `[salvo ${scheme}] the logbook shows the Salvo record${ea.result.winner ? ', marked New' : ' (a draw)'}`);
   await shotsAt(h, pages, `${scheme}-salvo-logbook`, { bottom: true });
   await h.closeGame(a);
   await h.closeGame(b);
@@ -889,12 +901,12 @@ async function salvoLocal(h) {
   await pg.tap('.g-fleet [data-fl="salvo-fire"]');
   await h.wait(120);
   assert(!(await pg.isVisible('#game-root .gm-curtain')), '[salvo same phone] no curtain the instant the salvo is fired');
-  assert(await pg.$$eval('.g-fleet .fl-target .fl-mark', (x) => x.length) === 5 && /pass the phone/i.test(await pg.textContent('.g-fleet .fl-log')), '[salvo same phone] all five shots land on screen, then "pass the phone"');
+  assert(await pg.$$eval('.g-fleet .fl-target .fl-mark', (x) => x.length) === cells.length && /pass the phone/i.test(await pg.textContent('.g-fleet .fl-log')), `[salvo same phone] all ${cells.length} shots land on screen, then "pass the phone"`);
   assert(movesOf(await h.engine(pg, id)) === movesOf(e), '[salvo same phone] the salvo is played after it is shown, not before');
   for (let t = 0; t < 120; t++) { if (movesOf(await h.engine(pg, id)) > movesOf(e)) break; await h.wait(40); }
   await h.wait(80);
   const e2 = await h.engine(pg, id);
-  assert(e2.state.shots.length === 5 && e2.acts[0] === other(w) && await pg.isVisible('#game-root .gm-curtain'), '[salvo same phone] then it is played and the curtain comes down for the other player');
+  assert(e2.state.shots.length === cells.length && e2.acts[0] === other(w) && await pg.isVisible('#game-root .gm-curtain'), '[salvo same phone] then it is played and the curtain comes down for the other player');
   await h.closeGame(pg);
 }
 

@@ -8,7 +8,9 @@
 //  - While nobody has hidden a fleet yet, either player may send { rules: 'classic' | 'salvo' |
 //    'arsenal' }. The first one applied wins; later ones are rejected. Fleets are the same in all.
 //  - Salvo: { salvo: [[r, c], …] } fires one shot per ship you still have afloat, all at once,
-//    then the turn passes.
+//    then the turn passes. The first player opens with 3 ranging shots. Equal salvos: if the first
+//    player sinks the last ship, the other side still fires its answer (with the ships it had as
+//    that salvo flew), and sinking everything back makes it a draw.
 //  - Arsenal: Classic plus a kit. { sonar: [r, c] } counts the ship squares you haven't hit yet
 //    in the 3×3 around a square; it's free (you still shoot). { torp: [r, c, 'h' | 'v'] } fires
 //    the three squares centred there; any hit fires again. Everyone starts with 1 sonar and
@@ -34,7 +36,7 @@ const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
 const MODES = {
   classic: { name: 'Classic', line: 'One shot a turn. A hit fires again.' },
-  salvo: { name: 'Salvo', line: 'Fire one shot per ship you have afloat, all at once. Then it’s their go.' },
+  salvo: { name: 'Salvo', line: 'Fire one shot per ship you have afloat, all at once, then it’s their go. The opening salvo is 3 ranging shots. Sink their last ship first and they still get one answer.' },
   arsenal: { name: 'Arsenal', line: 'Classic plus sonar pings and torpedoes. Lose a ship, gain a ping. Three hits in a row earn a torpedo.' },
 };
 const MODE_KEYS = Object.keys(MODES);
@@ -93,7 +95,12 @@ function tailHits(s, w) {
 }
 const firedBy = (s, w) => new Set(s.shots.filter((x) => x.by === w).map((x) => x.r * N + x.c));
 /** How many shots `w` must fire in a salvo right now. */
-const salvoSize = (s, w) => Math.min(afloat(s, w), N * N - firedBy(s, w).size);
+// Salvo balance (bot self-play, docs/games/fleet.md): the first player opens with 3 ranging shots,
+// and a last answer flies with the ships its side had when the winning salvo was fired.
+const SALVO_OPEN = 3;
+const salvoSize = (s, w) => Math.min(
+  s.final && w !== s.first ? s.final : w === s.first && !s.shots.some((x) => x.by === w) ? SALVO_OPEN : afloat(s, w),
+  N * N - firedBy(s, w).size);
 /** The squares a torpedo centred on (r, c) covers. */
 const torpCells = (r, c, dir) => [-1, 0, 1].map((k) => (dir === 'v' ? [r + k, c] : [r, c + k])).filter(([rr, cc]) => onChart(rr, cc));
 /** The squares a sonar ping centred on (r, c) covers. */
@@ -163,7 +170,12 @@ const rules = {
         if (seen.has(p[0] * N + p[1])) throw new Error(`${coord(p[0], p[1])} is in that salvo twice.`);
         seen.add(p[0] * N + p[1]);
       }
+      const answer = afloat(s, foe); // their firepower while this salvo is in the air
       for (const [r, c] of mv.salvo) { fireAt(s, who, r, c); if (s.phase !== 'battle') break; }
+      // Equal salvos: when the first player sinks the last ship, the other side still fires its
+      // answer, with the ships it had as the salvo flew. Sink everything back and it's a draw.
+      if (s.final) { if (s.phase === 'over') s.winner = null; else { s.phase = 'over'; s.winner = s.first; } return s; }
+      if (s.phase === 'over' && who === s.first) { s.phase = 'battle'; s.winner = null; s.final = answer; }
       if (s.phase === 'battle') s.turn = foe;
       return s;
     }
@@ -207,7 +219,7 @@ const rules = {
   },
   result(s) {
     const w = s.winner;
-    if (!w) return { winner: null };
+    if (!w) return { winner: null, sub: s.phase === 'over' ? 'Both fleets went down in the same round of salvos.' : undefined };
     const mine = s.shots.filter((x) => x.by === w);
     const hits = mine.filter((x) => x.hit).length;
     const left = afloat(s, w);
@@ -460,7 +472,7 @@ const CSS = `
 
 /* ── stamps ── */
 .g-fleet .fl-stamp { position: absolute; left: calc(50% + var(--gut) / 2); top: calc(50% + var(--gut) / 2); z-index: 6; pointer-events: none; padding: 7px 16px 9px; border: 3px solid var(--g-ink); border-radius: 6px; background: var(--g-hl); color: var(--g-on-ink); box-shadow: 4px 4px 0 var(--fl-edge); text-align: center; white-space: nowrap; font: 900 clamp(1.25rem, 6.4cqw, 1.9rem)/1.05 var(--g-font-display); text-transform: uppercase; letter-spacing: .03em; transform: translate(-50%, -50%) rotate(-8deg); animation: gfleet-stamp 1.9s cubic-bezier(.2, .9, .3, 1.2) both; }
-.g-fleet .fl-stamp small { display: block; margin-top: 5px; font: 800 max(.72rem, .4em)/1 var(--g-font-body); letter-spacing: .06em; }
+.g-fleet .fl-stamp small { display: block; margin-top: 5px; max-width: 72cqw; margin-inline: auto; white-space: normal; font: 800 max(.72rem, .4em)/1.2 var(--g-font-body); letter-spacing: .06em; }
 .g-fleet .fl-stamp.is-bad { background: var(--g-bad); color: var(--g-on-ink); }
 .g-fleet .is-mini .fl-stamp { font-size: .9rem; padding: 4px 8px 5px; border-width: 2px; box-shadow: 2px 2px 0 var(--fl-edge); }
 
@@ -677,19 +689,19 @@ registerGame({
     // write the same values.
     const readBook = () => { try { return book.data() || {}; } catch { return {}; } };
     function logRecords(S, matchId, live) {
-      if (!S || S.phase !== 'over' || !S.winner || booked === matchId) return;
+      if (!S || S.phase !== 'over' || booked === matchId) return;
       booked = matchId;
       const B = readBook();
-      const w = S.winner;
+      const w = S.winner; // null after a Salvo draw: hit streaks still count, wins don't
       const patch = {};
       const fs = `${w}_fs_${modeOf(S)}`;
-      const fsVal = 1000 - statsOf(S, w).shots;
-      if (!(B[`${fs}_best`] >= fsVal)) { patch[`${fs}_best`] = fsVal; patch[`${fs}_id`] = matchId; }
+      const fsVal = w ? 1000 - statsOf(S, w).shots : 0;
+      if (w && !(B[`${fs}_best`] >= fsVal)) { patch[`${fs}_best`] = fsVal; patch[`${fs}_id`] = matchId; }
       for (const p of ['a', 'b']) {
         const run = statsOf(S, p).run;
         if (run > 0 && !(B[`${p}_run_best`] >= run)) { patch[`${p}_run_best`] = run; patch[`${p}_run_id`] = matchId; }
       }
-      if (live) { // win streaks only count games that ended while someone watched (not old ones reopened)
+      if (live && w) { // win streaks only count games that ended while someone watched (not old ones reopened)
         const [pw, pn, pid] = String(B.streak || '').split(':');
         if (pid !== matchId) {
           const n = pw === w ? (Number(pn) || 0) + 1 : 1;
@@ -983,16 +995,16 @@ registerGame({
       let pill = '';
       let status;
       if (over) {
-        pill = s.winner === v ? 'All sunk' : 'Fleet lost';
-        status = `${nm(s.winner)} sank the whole fleet`;
+        pill = !s.winner ? 'Draw' : s.winner === v ? 'All sunk' : 'Fleet lost';
+        status = s.winner ? `${nm(s.winner)} sank the whole fleet` : 'Both fleets sunk';
       } else if (pending) {
         status = `${mode === 'salvo' ? 'Salvo away' : 'Miss'}. Over to ${nm(foe)}`;
       } else if (myTurn) {
-        if (mode === 'salvo') status = c.mode === 'local' ? `${nm(v)}, fire a salvo of ${need}` : `Fire a salvo of ${need}`;
+        if (mode === 'salvo') status = s.final ? `Last salvo! Sink ${afloat(s, foe) === 1 ? 'it' : 'them all'} to draw` : c.mode === 'local' ? `${nm(v)}, fire a salvo of ${need}` : `Fire a salvo of ${need}`;
         else status = c.mode === 'local' ? (again ? `Hit! ${nm(v)} fires again` : `${nm(v)}’s shot`) : again ? 'Hit! Fire again' : 'Your shot';
         if (mode !== 'salvo' && afloat(s, foe) === 1) status += ' · one ship left';
       } else {
-        status = `${nm(foe)} is taking aim…`;
+        status = s.final ? `${nm(foe)} gets one last salvo…` : `${nm(foe)} is taking aim…`;
       }
       api.setStatus(status);
       if (!pill && mode !== 'classic') pill = MODES[mode].name;
@@ -1080,7 +1092,8 @@ registerGame({
         const x = sunkMine[sunkMine.length - 1];
         const foe = foeOf(v);
         const left = afloat(s, foe);
-        stamp(tChart, sunkMine.length > 1 ? 'Double sink!' : 'Sunk!', over ? 'That’s the whole fleet' : `The ${shipName(s, foe, x.sunk)}${left === 1 ? ' · one to go' : ''}${torpBonus}`, wait + 280);
+        const finalWait = s.final && s.phase === 'battle';
+        stamp(tChart, finalWait ? 'All sunk!' : sunkMine.length > 1 ? 'Double sink!' : 'Sunk!', over ? 'That’s the whole fleet' : finalWait ? `${nm(foe)} gets one last salvo` : `The ${shipName(s, foe, x.sunk)}${left === 1 ? ' · one to go' : ''}${torpBonus}`, wait + 280);
         api.sfx('hit'); api.haptic(40);
         later(() => api.sfx('good'), wait + 300);
       } else if (sunkTheirs.length) {
@@ -1099,6 +1112,7 @@ registerGame({
         const last = list[lastK];
         if (last.hit) { api.sfx('hit'); api.haptic(25); } else api.sfx(last.by === v ? 'pop' : 'tick');
       }
+      if (s.final && s.phase === 'battle' && s.turn === v && theirsNew.length) stamp(tChart, 'Last salvo!', 'Sink them all to draw', wait + 1300);
       const scans = s.scans || [];
       for (const k of freshScans) {
         const x = scans[k];
