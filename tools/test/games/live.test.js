@@ -471,24 +471,35 @@ async function run(port, colorScheme, body, opts = {}) {
   }
 }
 
+// GAME=hockey or GAME=quickdraw runs only that game's suites (default: both).
+const GAME = process.env.GAME || 'all';
+const want = (g) => GAME === 'all' || GAME === g;
 (async () => {
   await run(PORT, 'light', async (h) => {
-    await hockeyLive(h, 'light');
-    await hockeyRematchAndLeave(h);
-    await hockeyLocalTouch(h);
-    await quickdrawLive(h, 'light');
-    await quickdrawLocal(h, 'light');
+    if (want('hockey')) {
+      await hockeyLive(h, 'light');
+      await hockeyRematchAndLeave(h);
+      await hockeyLocalTouch(h);
+    }
+    if (want('quickdraw')) {
+      await quickdrawLive(h, 'light');
+      await quickdrawLocal(h, 'light');
+    }
   }, { coarse: true });
   await run(PORT + 1, 'dark', async (h) => {
-    await hockeyLive(h, 'dark', true);
-    await h.closeGame(h.a); await h.closeGame(h.b);
-    await quickdrawLiveFast(h, 'dark');
-    await quickdrawLocal(h, 'dark');
+    if (want('hockey')) {
+      await hockeyLive(h, 'dark', true);
+      await h.closeGame(h.a); await h.closeGame(h.b);
+    }
+    if (want('quickdraw')) {
+      await quickdrawLiveFast(h, 'dark');
+      await quickdrawLocal(h, 'dark');
+    }
   }, { coarse: true });
   await run(PORT + 2, 'dark', async (h) => {
     await laptop(h, h.a);
-    await hockeyKeys(h, h.a, 'dark');
-    await quickdrawKeys(h, h.a, 'dark');
+    if (want('hockey')) await hockeyKeys(h, h.a, 'dark');
+    if (want('quickdraw')) await quickdrawKeys(h, h.a, 'dark');
   }, { fine: true, device: 'Desktop Chrome', who: ['a'] });
   console.log(fails ? `\n${fails} SUITE(S) FAILED` : '\nALL GOOD');
   process.exitCode = fails ? 1 : 0;
