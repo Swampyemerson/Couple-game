@@ -1488,7 +1488,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
       assert(/2 lead changes$/.test(u.lead[0]) && u.lead[1] === 2 && u.leadNone === 'Emerson 1,240 m · Sydney 980 m' && u.forfeit === 'z', `end card: "${u.lead[0]}" (lead changes only when there were some, not on a forfeit)`);
       assert(/New team best!$/.test(u.teamUp[0]) && u.teamUp[1] === 1 && u.teamUp[2] === 3500 && /Team best 3,240 m$/.test(u.teamNew[0]) && u.teamNew[1] === 0 && u.teamSaved === 3500 && u.teamPop[0] === 'NEW TEAM BEST!' && /Team best 500 m$/.test(u.teamFirst), `end card: team best "${u.teamUp[0]}" / "${u.teamNew[0]}", saved ${u.teamSaved}, first run "${u.teamFirst}"`);
     }
-    for (const scheme of ['light', 'dark']) {
+    for (const scheme of (process.env.RIVAL_SCHEME ? [process.env.RIVAL_SCHEME] : ['light', 'dark'])) {
       const h = await launch({ port: PORT(scheme === 'dark' ? 9 : 8), only: ['rush'], latency: 60, colorScheme: scheme, coarse: true });
       const { a, b } = h;
       const rshot = (pg, name) => shot(pg, `rival-${scheme}-${name}`);
@@ -1539,7 +1539,11 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         const n0 = { pass: await count(a, /^a:Sydney passed you$/), over: await count(b, /^b:OVERTAKE!$/), rev: await count(a, /^a:REVENGE!$/) };
         await tele(b, 'b', 45);
         await until(a, (n) => window.__fb.pops.filter((p) => p === 'a:Sydney passed you').length > n, n0.pass, 25000, 'Sydney passed you');
-        await until(b, (n) => window.__fb.pops.filter((p) => p === 'b:OVERTAKE!').length > n, n0.over, 25000, 'OVERTAKE!');
+        await until(b, (n) => window.__fb.pops.filter((p) => p === 'b:OVERTAKE!').length > n, n0.over, 25000, 'OVERTAKE!').catch(async (e) => {
+          const dbg = async (pg) => pg.evaluate(() => { const r = window.__rush.rivalry(); const f = (x) => ({ lead: x.lead, cand: x.cand, candT: +x.candT.toFixed(2), lastAt: +x.lastAt.toFixed(1), q: x.q.length, free: +x.free.toFixed(1) }); return { T: +r.T.toFixed(1), changes: r.changes, a: f(r.a), b: f(r.b), pops: window.__fb.pops.slice(-8) }; });
+          console.log('   rivalry a:', JSON.stringify(await dbg(a)), '\n   rivalry b:', JSON.stringify(await dbg(b)));
+          throw e;
+        });
         await Promise.all([popShot(a, /passed you/, 'passed'), popShot(b, /OVERTAKE/, 'overtake')]);
         // taken back at once: held through the 3 s of quiet, then REVENGE! (they passed me within 10 s) and "took it back"
         await tele(a, 'a', 90);
