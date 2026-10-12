@@ -765,7 +765,7 @@ async function landmark(h, pg, w, ht, best, name) {
   ok(e.state.drop.landmark && e.state.drop.bonus && /Landmark/.test(t0.b), `tower banner ${name}: level 10 says “${t0.b}” (“${t0.s}”)`);
   ok(/it grew/.test(t0.s) === !!e.state.drop.grew, `tower banner ${name}: it only claims growth when the block grew (grew=${e.state.drop.grew}: “${t0.s}”)`);
   if (best === 9) ok(/^New best/.test(t0.b) && /set the record/.test(t0.s), `tower banner ${name}: a record at the landmark is the headline, in the same banner, with no queue delay`);
-  else ok(/Ten high/.test(t0.b), `tower banner ${name}: the landmark and the milestone share one banner`);
+  else ok(e.state.drop.gift ? /^Landmark! · Gift!$/.test(t0.b) : /^Landmark! · Ten high$/.test(t0.b), `tower banner ${name}: everything that happened on the drop shares ONE banner (“${t0.b}”)`);
   await pg.waitForSelector('.gt-beat.is-hand:not([hidden])', { timeout: 3000 });
   const r = await rectsOf(pg, ['.gt-banner', '.gt-stamp', '.gt-beat', '.gt-hud', '.gt-view']);
   const v = r['.gt-view'];
