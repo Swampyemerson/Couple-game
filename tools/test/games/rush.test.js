@@ -1429,9 +1429,9 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
       const bl = await a.evaluate(() => {
         const I = window.__rush.internals; const m = I.world.warmList()[0]; const z = I.players.a.rs.z; const arr = m.instanceMatrix.array; let far = 0;
         for (let i = 0; i < m.count; i++) if (-arr[i * 16 + 14] > z + 28.6) far++;
-        return { n: m.count, far, z };
+        return { n: m.count, far, z, lod: I.world.warmList()[1].count };
       });
-      assert(bl.far === 0 && bl.n > 0, `Blind coins: ${bl.n} coins drawn, none past 28 m (${bl.far})`);
+      assert(bl.far === 0 && bl.n > 0 && bl.lod === 0, `Blind coins: ${bl.n} coins drawn, none past 28 m (${bl.far}), far-LOD coins ${bl.lod}`);
       await finish(); await back();
       // 3 Night: the dark world on a light phone, then the light one back
       await twist(3);
