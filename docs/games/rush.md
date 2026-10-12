@@ -2,9 +2,16 @@
 
 Three-lane endless runner for two, on one seeded track, live on two phones or split screen on one
 computer. Entry `js/games/rush.js`; modules in `js/games/rush/`. Test: `tools/test/games/rush.test.js`
-(run in two halves: `ONLY=gen,split,leak,drop,dark` and `ONLY=race,brawl,tandem,pause,daily`; the
-`gen` half also asserts the clip grace, combo tiers and the Daily seed; `race` the ghost marker,
-bests and an unlock's persistence across a re-mount; `daily` a whole Daily run and today's board).
+(run in three parts: `ONLY=gen,split,leak,drop,dark`, then `ONLY=race,brawl,tandem,pause,daily`, then
+`ONLY=rival,loop,rejoin`; `heap` and `seam` run on their own. `gen` also asserts the clip grace, combo
+tiers, the Daily seed, that **track v1 hashes never change** (five seeds, so saved and older-build
+matches regenerate the same track), that v2 hashes are identical on both phones, and a perfect bot clean
+on v1 and on v2 (500 chunks × 5 seeds each); `dark` that a rolling barrel ahead shows the "!" and rumbles
+once; `race` the ghost marker, bests, that a new match runs on track v2, and an unlock's persistence
+across a re-mount; `daily` a whole Daily run, today's board and the forfeit offer; `rival` (the logic in
+`rivalUnit()` with a fake clock, then two phones in light and dark plus one device) overtake / revenge /
+best stripes / neck and neck / clutch / shared power-ups / team best; `loop` the Daily twist, dares and
+stamps, the love-note input and pickup, and the new unlocks; `rejoin` a partner re-mounting mid-match).
 Every run section (split, race, brawl, tandem, daily) also spies the feedback layer and asserts crash
 sounds, music ducks and CRASH!/FELL!/SLAMMED! pops equal the local runners' real crashes (one pop per
 crash: a Brawl slam shows only the mode's "SLAMMED! by …"); `split`
@@ -112,8 +119,37 @@ lane lean and camera roll, landing dust and magnet trails were already there.
   the footprint you must avoid is the static interval `[zm, zm + L/(1+k)]` on every device.
 - Pickups: magnet (10 s), sneakers (10 s), shield; Race adds weapon-box rows across all lanes;
   Tandem adds revive tokens at run time.
+- **Track version.** `TRACK_V = 2` (tune.js). The host sends `v` in `start` (and `rejoin`); a start without
+  it (an older build) is **v1**, and `M.trackV` decides everything below. Version 1 is frozen: its output is
+  byte for byte what it always was (the `gen` test pins `trackHash(seed, 40)` for seeds 1, 42, 1337, 98765,
+  2024 to 3136954854, 4253233196, 2072935168, 4028480087, 2286558484), so a saved or older-build match
+  never changes. Everything in the next list is gated on `ver >= 2`, draws from its own stream
+  `rng(hash(seed, '<stream>', i))` (never the main chunk stream, so v2 chunks keep the v1 skeleton), and
+  enters `chunkSig` / `trackHash` only for v2.
+- **Track v2 content**:
+  - *Rolling barrels* (`O_BARREL`, stream `barrel`, difficulty ≥ 0.3, about 500 m): 0.9 m drums that start
+    to roll once you are `BARREL_LEAD` = 45 m away and then come at `BARREL_K` = 0.35 × your speed
+    (deterministic in runner space like an oncoming train: `barrelFront`, static footprint
+    `[zm, zm + D/(1+K)]`, and the generator keeps the roll-in clear of anything else). Jump (a low barrier
+    to the sim: feet just clipping the top is a trip, not a crash) or swerve; a pair in two lanes forces a
+    jump or the third lane (60 % of placements try a pair). A rumble sound and the "!" over the barrel's
+    lane (`game.js` warning loop, once per barrel; an oncoming train's lane wins when both are close).
+  - *Fool's-gold branches* (stream `gold`, chunks 3+, p 0.35): a clear window of ≥ 18 m in a lane off
+    the safe path gets 5 coins worth 3 each (`coin.v = 3`, drawn 1.4×, own chime). Never over gaps,
+    trains or narrow bridges.
+  - *Events* (stream `event`, chunks 4+, p 0.08, ≥ 6 chunks apart, never in a tunnel): **Coin Rush**, a
+    30 m field of coins in every clear lane ("COIN RUSH!" pops 2 s before `c.eventZ`), or **Golden
+    Hundred**, every coin in the chunk pays ×2 (tinted gold; a pop on entering it).
+  - *Love note* (`I_NOTE` = 6, stream `note`): once a run, in one of chunks 4–8, on the safe path; an
+    envelope in the pickup instancing.
+  - *Coin doubler* (`I_DOUBLE` = 7, stream `dbl`): about 30 % of magnets are doublers instead; every coin
+    pays ×2 for `DOUBLE_T` = 8 s, with its own ring in the power-up row.
+  - The Daily's Gold rush twist passes `{ goldP: 0.7 }` to `createTrack` (a superset of the normal day's branches).
+- **Pickup events** carry `E_PICK = kind × 1,000,000 + chunk × 1000 + slot` (the old encoding broke past
+  chunk 100); the decoder splits on 1e6. Kinds 4 (box) and 6 (note) pop nothing of their own
+  (`PICK_NAME` is empty there; extras shows the note card), 7 pops "COIN DOUBLER".
 - Verified by a perfect-information bot (depth-first search over the real sim, 2 s horizon): no crash
-  in 500 chunks × 5 seeds (test). With a goal lane (a revive heart within 70 m, a Brawl shove) the
+  in 500 chunks × 5 seeds on track v1 and again on v2 (test). With a goal lane (a revive heart within 70 m, a Brawl shove) the
   search tries the move towards it before the last plan's hint, and in the goal lane holds it before
   a planned move away (hint-first, a feasible 'stay' won and the bot ran past the heart: split-screen
   Together on autopilot showed 0 revives).
@@ -126,7 +162,11 @@ lane lean and camera roll, landing dust and magnet trails were already there.
   writing different keys never clobber each other. Numeric `*_m / *_best / *_pb / *_n` keys only go
   up when merging a snapshot. Keys: `<w>_<mode>_m` (best distance), `<w>_any_m`, `<w>_race_t`
   (fastest finish, s), `<w>_daily_<YYYY-MM-DD>` (today's board), `<w>_cc`, `<w>_combo`, `<w>_wins`,
-  `<w>_rev`, `<w>_runs`, `unlock_<w>_<trail|hat><k>`.
+  `<w>_rev`, `<w>_runs`, `unlock_<w>_<trail|hat><k>`; added with the update: `<w>_dare_<YYYY-MM-DD>` (the
+  day's dares, a bitmask, bits only added), `<w>_stamps_<ISOweek>_n` (one stamp per new dare), `<w>_note` (the
+  love note for the partner, ≤ 60 chars, user content), `<w>_notes_n` (notes found, only up) and
+  `team_best_m` (Together's best, only up). The core.js merge protects only the `_m|_best|_pb|_n` suffixes,
+  so the dare bitmask is a read-modify-write.
 - **Death card**: the finale is 1.7 s (`FINALE_MS`, was 2.3), then the engine's card with
   *Rematch* as the big button. Each device adds its own line to the sub ("You: 1,240 m · best
   1,980 m · Sydney's best 2,100 m", "New best" / "fastest 2 km yet"); a new best also pops "NEW
@@ -156,9 +196,10 @@ lane lean and camera roll, landing dust and magnet trails were already there.
   doubler picked up by one is sent as a reliable `share` event and runs on the partner for the same
   duration (less the message's age), "Sydney shared a MAGNET"; one device does the same through the local
   queue. Together's end card shares "New team best!" or "Team best 3,240 m" (key `team_best_m`, only goes
-  up; the judge reads the old value once and puts the line in the result both phones show). Unit test:
-  `rivalUnit()` in `rush.test.js` (the logic with a fake clock), section `rival` (two phones, light and
-  dark, plus one device).
+  up; the judge reads the old value once and puts the line in the result both phones show). The `share`
+  message is `{ k }` (the pickup kind) on the same reliable channel as `atk` / `res` / `revive`, so it
+  survives a re-mount. Unit test: `rivalUnit()` in `rush.test.js` (the logic with a fake clock), section
+  `rival` (two phones, light and dark, plus one device; part three).
 - **Ghost marker**: in live play the partner is a real runner on your track; when they're out of
   sight (≥ 120 m ahead, or behind the camera) the name tag becomes a chip in their lane: at the
   horizon with "Sydney ↑ 230 m", or down by your feet with "↓ 48 m" (gap quantized to 5 m, so the
@@ -199,8 +240,7 @@ lane lean and camera roll, landing dust and magnet trails were already there.
 - **Love notes**: the lobby's "Note for <partner>" chip opens a one-line input (60 chars, 16 px, `<w>_note` in the shared
   data). The envelope item (kind 6, track v2) pops the partner's note for 3 s (or a line from `NOTE_LINES`); the end card says
   "You found Sydney’s note". All note text is user content: `textContent` only.
-- **Unlocks** (`STYLES` appended): trails Gold dust (3 gold branches in a run; looks come from `fx.burst` until fx has its own
-  kind) and Love hearts (`<w>_notes_n` ≥ 5), hats Lantern (reach the Neon Market) and Trophy (7 stamps in a week, or more
+- **Unlocks** (`STYLES` appended): trails Gold dust (3 gold branches in a run) and Love hearts (`<w>_notes_n` ≥ 5), both `fx.trailFx` kinds (5, 6), hats Lantern (reach the Neon Market) and Trophy (7 stamps in a week, or more
   stamps than your partner last week).
 
 ## Modes
@@ -226,7 +266,9 @@ lane lean and camera roll, landing dust and magnet trails were already there.
 - **Daily** — see above: same seed all day, 3 hearts each, furthest wins.
 - **Tandem** (co-op) — 4 shared hearts, a shared coin goal (100, 250, 450…, each +1 heart, max 5).
   A crash puts you *down*: your camera follows your partner, who gets a glowing revive heart 24–45 m
-  ahead after 1 s and every 2 s after (`REVIVE_FIRST`, `REVIVE_EVERY`) for 7 s (`REVIVE_WINDOW`; it
+  ahead after 1 s and every 2 s after (`REVIVE_FIRST`, `REVIVE_EVERY`), a new one only once the last is
+  behind you (a heart still ahead stays put: on a slow page the old schedule dropped a second heart on
+  top of it), for 7 s (`REVIVE_WINDOW`; it
   was 10 s with a heart every 3 s, mostly dead time; 6 s cost more hearts than 7 because the third
   heart, spawned at +5 s, was still ahead when the window closed). Grab one and they're back beside you for
   free; miss and the team loses a heart. The countdown waits while the reviver is down, and gets
@@ -260,14 +302,17 @@ lane lean and camera roll, landing dust and magnet trails were already there.
   Measured start skew in the harness: 8–12 ms at 80 ms latency on a heavily loaded machine.
 - Message budget (~40/s per device, `h.warnings` in the harness): presence 20/s in a match and
   10/s in the lobby, plus the pings above and a few reliable events. The tests assert no warnings.
-- Start: host sends `start {mode, seed, at: now+3500}`. Both count down to `at` and accumulate
+- Start: host sends `start {mode, seed, at: now+3500, len, cap, th, goal, goalIdx, day, v, ep, mod}`: `v` the
+  track version (absent = 1), `day` the Daily's local date key (so a match started before midnight keeps its
+  day), `ep` an epoch that tells two matches on the same seed apart (a Daily rematch used to reuse the
+  last one's `seed % 100000`), `mod` the Daily's twist of the day. `rejoin` carries the same fields. Both count down to `at` and accumulate
   *run time* only while running; the sim steps to `floor(runTime / dt)`. The effective start is `at`
   on both (skew = clock error).
 - Each device publishes its runner at 20/s: `z x y lane speed pose flags hearts coins runTime fin`
   plus lobby/pause fields and the worn style (`tr`, `ht`). The partner is drawn from an allocation-free interpolation buffer fed by
   `net.onRemote` (same algorithm as `net.remote`, `delay = 100 ms`), with `z` dead-reckoned to *now*
   (forward motion is very predictable) and `x/y/pose` interpolated, pose weights eased (no pops).
-- Reliable events: own small channel (same retry/ack/in-order scheme as `net.send`) that also
+- Reliable events (`atk res shove fin out down revive missed cheer share`): own small channel (same retry/ack/in-order scheme as `net.send`) that also
   **re-addresses per partner instance**, so a partner who re-mounts mid-match isn't stuck behind
   sequence numbers its new instance never saw. Budget: 20 presence/s + a few events/s + pings.
 - Partner instances: every stream carries the sender's instance id. When it changes (a reload, or
@@ -294,7 +339,10 @@ lane lean and camera roll, landing dust and magnet trails were already there.
   publishes and sends it; both keep the later. Snapping to a 400 ms grid means two phones that
   unpause a moment apart pick the same instant without waiting for messages (test: Δ 0 ms).
   Run time excludes pauses, so pauses can't change a result. The engine's "stepped away" card is
-  off (`ownsPauseUI`); Rush's own card offers "Invite them back" when the partner left the game.
+  off (`ownsPauseUI`); Rush's own card offers "Invite them back" when the partner left the game, and
+  after the partner has been gone 20 s mid-match (`AWAY_MS`; `__RUSH_DEBUG.awayMs` in tests) an "End
+  match" button that forfeits: Race / Brawl / Daily go to the one still here ("Emerson wins · Sydney left
+  the game", not counted towards unlocks), Together keeps its team score.
 - **Partner re-mount mid-match** (they left and came back, reloaded, or the app restarted): each
   device keeps a snapshot of the partner's last *in-match* state (by the time a new instance is
   noticed, the latest presence is already its lobby state). If the *guest* re-mounts, the host
@@ -310,13 +358,19 @@ lane lean and camera roll, landing dust and magnet trails were already there.
 
 Immersive: the engine shows two 44 px stickers (back, menu) in the top corners; the HUD keeps clear
 of them (the pause button sits at `var(--gm-corner-safe)`, which includes the notch / Dynamic
-Island inset). Top: hearts, then coins and power-up rings in one fixed-height row (so nothing
-jumps when a power-up starts), distance; under the menu sticker: my pause button (pauses both phones
-in live play). Race: a bar with both runners and the finish, plus a gap pill ("Sydney +23 m").
+Island inset). Top row: hearts, distance, the partner chip; under the hearts, one fixed-height row of coins
+and power-up rings (so nothing jumps when a power-up starts) that spans the full width, so five team
+hearts plus a magnet, sneakers and doubler ring at 390 px never push the distance under the menu
+sticker (`.rr-left` is `display: contents` in a two-row grid; below 370 px `rr-narrow` shrinks the
+numbers, below 340 px `rr-tiny` shrinks them again: checked at 390 / 360 / 320); under the menu sticker:
+my pause button (pauses both phones in live play). Race: a bar with both runners and the finish, plus a gap pill ("Sydney +23 m", "Sydney level with you",
+"Neck and neck · you +3 m"; Brawl adds the partner's hearts, "Sydney ♥♥♡ · side by side!"; Together the
+coin goal, "63 / 100 coins together", which turns into the red revive prompt "Grab the ♥ for Sydney · 5"
+for the reviver).
 Pops ("Close call!", "MAGNET") sit between the HUD and the horizon, never on the vanishing point
 where obstacles appear, and at least 16 px under the race bar and the gap / coin-goal pill where
 those reach the middle of the view (a "−1 team heart" landed on "2 / 100 coins together"); the
-oncoming-train "!" sits above the far track, under the pops. Both are placed by measuring once
+oncoming-train and rolling-barrel "!" (over the lane it comes down) sits above the far track, under the pops. Both are placed by measuring once
 after a resize or the bar / pill showing or hiding (on the next pop or warning), never per frame.
 A race whose two finish times read the same to the second shows "Photo finish! 0.4 km in 0:27 · Sydney 0.3 s behind" instead of
 two identical times. Landscape phones put the

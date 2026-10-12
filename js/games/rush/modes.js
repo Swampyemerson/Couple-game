@@ -554,7 +554,7 @@ export function createRules(G) {
       const photo = Lp.fin >= 0 && fmtT(W.fin) === fmtT(Lp.fin);
       const by = photo ? Math.max(0, Lp.fin - W.fin) : 0;
       const sub = why || (photo ? `Photo finish! ${km} km in ${fmtT(W.fin)} · ${ln} ${by < 0.005 ? 'level on the line' : `${by < 0.1 ? by.toFixed(2) : by.toFixed(1)} s behind`}`
-        : `${km} km in ${fmtT(W.fin)} · ${Lp.fin >= 0 ? `${fmtT(Lp.fin)} for ${ln}` : `${Math.max(0, Math.round(M.len - Lp.z))} m short`}`);
+        : `${km} km in ${fmtT(W.fin)} · ${Lp.fin >= 0 ? `${fmtT(Lp.fin)} for ${ln}` : `${fmtM(Math.max(0, Math.round(M.len - Lp.z)))} m short`}`);
       return { winner: w, text: `${nm[w]} wins the race`, sub, za: Math.round(A.z), zb: Math.round(B.z), ta: A.fin, tb: B.fin };
     }
     if (M.mode === 'brawl') {

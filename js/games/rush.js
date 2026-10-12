@@ -23,6 +23,7 @@ registerGame({
     'Race: first to 1.5 km wins, a heart back every 500 m. Grab boxes to ink, block or zap each other.',
     'Brawl: run side by side a beat, then swipe into them to shove (or double-swipe). Jump or roll to dodge.',
     'Together: share hearts and grab the glowing heart to revive your partner. Down? Tap to cheer them on.',
+    'Daily: one track a day with a twist, three dares and love notes to find. Watch for barrels rolling at you.',
   ],
   css: CSS,
   endDelay: 0,

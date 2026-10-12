@@ -8,7 +8,7 @@
 // `loop` (two phones + one computer): the Daily's twist of the day (Mirror flips the canvas not the HUD and swaps left / right, Double
 // ladder, Fog, Blind coins, Night, Gold rush: same on both phones, restored in the lobby), three dares a day with checks and weekly
 // stamps, the love-note input (44 px chip, 16 px, keys reach it, 60 chars, text only) and note pickup, and the new unlocks.
-// (the author runs two halves: ONLY=gen,split,leak,drop,dark and ONLY=race,brawl,tandem,pause,daily,rival)
+// (run in three parts: ONLY=gen,split,leak,drop,dark, then ONLY=race,brawl,tandem,pause,daily, then ONLY=rival,loop,rejoin)
 const fs = require('fs');
 const { launch } = require('../harness');
 
@@ -493,6 +493,12 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         const ha = await a.evaluate((ss) => ss.map((s) => window.__rush.trackHash(s, 40)), seeds);
         const hb = await b.evaluate((ss) => ss.map((s) => window.__rush.trackHash(s, 40)), seeds);
         assert(ha.every((x, i) => x === hb[i]) && new Set(ha).size === seeds.length, `track layouts identical on both devices for ${seeds.length} seeds (40 chunks each)`);
+        // track version 1 is frozen: saved and older-build matches regenerate the same track for ever
+        const V1 = [3136954854, 4253233196, 2072935168, 4028480087, 2286558484];
+        assert(ha.every((x, i) => x === V1[i]), `track v1 layouts are frozen (${ha.join(', ')} for seeds ${seeds.join(', ')})`);
+        const va = await a.evaluate((ss) => ss.map((s) => window.__rush.trackHash(s, 120, 2)), seeds);
+        const vb = await b.evaluate((ss) => ss.map((s) => window.__rush.trackHash(s, 120, 2)), seeds);
+        assert(va.every((x, i) => x === vb[i]) && new Set(va).size === seeds.length && va.every((x, i) => x !== ha[i]), `track v2 layouts identical on both devices for ${seeds.length} seeds (120 chunks each), and not the v1 ones`);
         // fairness: a lane change begun just before a head-on is a clip (stumble), a square hit a crash
         const p2 = await a.evaluate(() => window.__rush.probe2());
         assert(p2.late.crashes === 0 && p2.late.clips === 1 && p2.late.stumbles === 1, `a swipe a step before a barrier clips it (stumble, bounce back), no heart lost (${JSON.stringify(p2.late)})`);
@@ -520,6 +526,10 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         const bots = await a.evaluate((ss) => ss.map((s) => window.__rush.botRun(s, 500)), [11, 22, 33, 44, 55]);
         for (const r of bots) console.log(`   bot seed ${r.seed}: ${r.chunks} chunks, ${(r.z / 1000).toFixed(1)} km, crashes ${r.crashes}, stumbles ${r.stumbles}, ${r.ms} ms`);
         assert(bots.every((r) => r.chunks >= 500 && r.crashes === 0 && r.fails.length === 0), 'perfect-information bot never gets caught in 500 chunks × 5 seeds');
+        // the same on track v2 (rolling barrels, branches, Coin Rush, Golden Hundred)
+        const bots2 = await a.evaluate((ss) => ss.map((s) => window.__rush.botRun(s, 500, { ver: 2 })), [11, 22, 33, 44, 55]);
+        for (const r of bots2) console.log(`   bot v2 seed ${r.seed}: ${r.chunks} chunks, ${(r.z / 1000).toFixed(1)} km, crashes ${r.crashes}, stumbles ${r.stumbles}, ${r.ms} ms`);
+        assert(bots2.every((r) => r.chunks >= 500 && r.crashes === 0 && r.fails.length === 0), 'perfect-information bot never gets caught on track v2 either (500 chunks × 5 seeds)');
       }
 
       if (want('race')) {
@@ -532,6 +542,8 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
         console.log('ok - guest sees the host pick the mode live');
         await pickAndStart(h, 'race');
         await waitRun(a); await waitRun(b);
+        const tv = [await a.evaluate(() => window.__rush.matchInfo().trackV), await b.evaluate(() => window.__rush.matchInfo().trackV)];
+        assert(tv[0] === 2 && tv[1] === 2, `a new match runs on track v2 on both phones (${tv.join(', ')})`);
         await spyFeedback(a); await spyFeedback(b);
         // milestone for an unlock: Emerson racks up 15 close calls this run (set early: a short race
         // on a loaded machine can be over before the later steps)
@@ -1030,7 +1042,7 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
     const h = await launch({ port: PORT(3), only: ['rush'], latency: 60, colorScheme: 'dark', coarse: true });
     const { a, b } = h;
     try {
-      await openLivePair(h);
+      await openLivePair(h, { seed: 7 }); // (seed 7: a lone rolling barrel at 640 m, no train near it)
       await h.wait(600);
       await shot(a, 'phone-dark-start');
       await pickAndStart(h, 'race');
@@ -1040,6 +1052,32 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
       await h.wait(2200);
       await shot(a, 'phone-dark-run');
       assert((await hotGapContrast(a)) >= 4.5, 'the revive prompt (dark) reads at 4.5:1 or better');
+      // a rolling barrel ahead: the "!" over its lane and one rumble (not the train horn), per barrel
+      const bw = await a.evaluate(async () => {
+        const I = window.__rush.internals; const p = I.players.a; const au = I.audio;
+        const plays = {};
+        const p0 = au.play; au.play = function (n, x) { plays[n] = (plays[n] || 0) + 1; return p0.call(this, n, x); };
+        let bar = null;
+        for (let c = 6; c < 80 && !bar; c++) {
+          const ob = I.M.track.chunk(c).obs;
+          const o = ob.find((x) => x.t === 7);
+          if (o && !ob.some((x) => x.t === 5) && !I.M.track.chunk(c - 1).obs.some((x) => x.t === 5)) bar = o;
+        }
+        if (!bar) return { err: 'no barrel in the first 80 chunks' };
+        const warn = document.querySelector('.g-rush .rr-warn');
+        const before = warn.classList.contains('on');
+        window.__rush.ghost('a', 1e6);
+        p.r.z = p.r.zPrev = bar.zm - 52;
+        let on = 0; let first = -1;
+        for (let i = 0; i < 60; i++) {
+          await new Promise((r) => setTimeout(r, 100));
+          if (warn.classList.contains('on')) { on++; if (first < 0) first = i; }
+          if (p.r.z > bar.zm - 7 && i > 5) break;
+        }
+        au.play = p0;
+        return { before, on, first, rumble: plays.rumble || 0, horn: plays.horn || 0, lane: bar.lane, z: Math.round(p.r.z - bar.zm) };
+      });
+      assert(!bw.err && !bw.before && bw.on >= 3 && bw.rumble === 1 && bw.horn === 0, `a barrel ahead shows the "!" warning and rumbles once (${JSON.stringify(bw)})`);
       // ink the leader. Whoever leads is read again before each throw (the bots swap the lead), and a
       // throw that can't land (the leader changed hands, or was down when it arrived) is thrown again
       let inked = null;

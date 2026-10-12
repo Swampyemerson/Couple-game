@@ -24,6 +24,7 @@ export const RUSH_WARN_S = 2;    // s of warning before a Coin Rush field
 const POP_T = 1.15;              // s a centre pop stays up (the next one waits its turn)
 
 /** Pop names of the pickups a runner can grab (the box is the weapon roll; the note is the loop builder's). */
+// (kind 4 = coin box: no pop of its own; 6 = love note: extras shows the note card instead of a pop; 7 = the track-v2 coin doubler)
 export const PICK_NAME = ['', 'MAGNET', 'SUPER SNEAKERS', 'SHIELD', '', '', '', 'COIN DOUBLER'];
 const SHARED = { [I_MAGNET]: MAGNET_T, [I_SNEAKERS]: SNEAKERS_T, [I_DOUBLE]: DOUBLE_T };
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);

@@ -1124,7 +1124,7 @@ export function createGame(el, api) {
       const tr = p.local ? wear[AB[i]].tr : p.net.tr;
       const ht = p.local ? wear[AB[i]].ht : p.net.ht;
       if (p.av) p.av.setHat(ht);
-      if (tr && M.phase === 'run' && p.rs.speed > 6 && !p.rs.down && p.rs.visible) { if (tr < 5 || !X.trail(fx, tr, p.rs.x, p.rs.y, p.rs.z, frameN)) fx.trailFx(tr, p.rs.x, p.rs.y, p.rs.z, P[AB[i]], frameN); }
+      if (tr && M.phase === 'run' && p.rs.speed > 6 && !p.rs.down && p.rs.visible) fx.trailFx(tr, p.rs.x, p.rs.y, p.rs.z, P[AB[i]], frameN);
       // distance milestones every 500 m; in a Race each one gives a lost heart back (Daily is the
       // survival mode: no regen there)
       if (p.local && p.r && M.phase === 'run') {
