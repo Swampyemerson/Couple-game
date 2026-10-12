@@ -127,6 +127,47 @@ export function createFx(THREE, scene, { gradientMap }) {
   const glintMat = own(new THREE.SpriteMaterial({ map: glintTex, color: 0xffd23f, transparent: true, depthWrite: false }));
   const glints = [];
   for (let i = 0; i < 10; i++) { const s = new THREE.Sprite(glintMat); s.visible = false; s.scale.setScalar(0.22); s.renderOrder = 3; scene.add(s); glints.push(s); }
+  // Dusk: the scan's glints are brighter and bigger in the dark (game.js sets the sprites' sizes
+  // every frame before update(), which scales the visible ones by this, so it never compounds)
+  let glintBoost = 1;
+  const glintWhite = new THREE.Color(1, 1, 1);
+  function setGlintBoost(k) {
+    if (k === glintBoost) return;
+    glintBoost = k;
+    glintMat.color.set(0xffd23f);
+    if (k > 1) glintMat.color.lerp(glintWhite, Math.min(0.6, (k - 1) * 0.8));
+  }
+
+  // ── bounty spot (twist): a flat marker ring on the floor, a 3 m boundary ring and a star over it.
+  // One merged mesh + one sprite = 2 draw calls, only while the twist is on. ──
+  const mergeGeo = (parts) => {
+    const g = new THREE.BufferGeometry(); const pos = []; const idx = []; let off = 0;
+    for (const pg of parts) {
+      const pa = pg.attributes.position.array; for (let i = 0; i < pa.length; i++) pos.push(pa[i]);
+      if (pg.index) { const ia = pg.index.array; for (let i = 0; i < ia.length; i++) idx.push(ia[i] + off); } else for (let i = 0; i < pa.length / 3; i++) idx.push(off + i);
+      off += pa.length / 3; pg.dispose();
+    }
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    return g;
+  };
+  const bGeo = own(mergeGeo([new THREE.RingGeometry(0.34, 0.5, 32), new THREE.CircleGeometry(0.1, 12), new THREE.RingGeometry(2.94, 3.0, 72)]));
+  bGeo.rotateX(-Math.PI / 2);
+  const bMat = own(new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.8, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
+  const bountyRing = new THREE.Mesh(bGeo, bMat);
+  bountyRing.visible = false; bountyRing.frustumCulled = false; bountyRing.renderOrder = 2;
+  scene.add(bountyRing);
+  const bStarMat = own(new THREE.SpriteMaterial({ map: glintTex, color: 0xffd23f, transparent: true, depthWrite: false }));
+  const bountyStar = new THREE.Sprite(bStarMat);
+  bountyStar.visible = false; bountyStar.renderOrder = 3; scene.add(bountyStar);
+  const bounty = { on: false, x: 0, y: 0, z: 0 };
+  /** Mark the bounty spot at the floor point (x, y, z); `color` is any CSS colour (the highlight ink). */
+  function setBounty(x, y, z, color) {
+    bounty.on = true; bounty.x = x; bounty.y = y; bounty.z = z;
+    if (color) { bMat.color.set(color); bStarMat.color.set(color); }
+    bountyRing.position.set(x, y + 0.02, z); bountyRing.visible = true; bountyStar.visible = true;
+  }
+  function clearBounty() { bounty.on = false; bountyRing.visible = false; bountyStar.visible = false; }
 
   // ── tongue (tongue-zip): one stretched cylinder from the mouth to the target ──
   const tongueGeo = own(new THREE.CylinderGeometry(0.018, 0.012, 1, 8, 1));
@@ -308,6 +349,13 @@ export function createFx(THREE, scene, { gradientMap }) {
     if (anyT) trail.instanceMatrix.needsUpdate = true;
     updateTongue(now);
     updatePop(now);
+    if (glintBoost !== 1) for (let i = 0; i < glints.length; i++) if (glints[i].visible) glints[i].scale.multiplyScalar(glintBoost);
+    if (bounty.on) {
+      const k = 0.5 + 0.5 * Math.sin(now * 3);
+      bountyStar.position.set(bounty.x, bounty.y + 1.15 + 0.08 * Math.sin(now * 2), bounty.z);
+      bountyStar.scale.setScalar(0.34 + 0.12 * k); bStarMat.rotation = now * 0.6;
+      bountyRing.scale.set(1, 1, 1); bMat.opacity = 0.6 + 0.3 * k;
+    }
     // recap ring pulse
     if (ring.visible) { const s = (0.45 + Math.sin(now * 4) * 0.04) * (ring.userData.size || 1); ring.scale.setScalar(s); hlMat.opacity = 0.65 + Math.sin(now * 4) * 0.25; }
   }
@@ -323,17 +371,19 @@ export function createFx(THREE, scene, { gradientMap }) {
     ring.visible = false;
     for (const g of glints) g.visible = false;
     tg.on = false; tongue.visible = false; tip.visible = false; pr.on = false; popRing.visible = false;
+    clearBounty(); setGlintBoost(1);
   }
 
   return {
-    splat, pellet, burst, trailDot, setPath, setCursor, pulseCursor, update, clearRound, shootTongue, pop,
+    splat, pellet, burst, trailDot, setPath, setCursor, pulseCursor, update, clearRound, shootTongue, pop, setGlintBoost, setBounty, clearBounty,
+    get bountyOn() { return bounty.on; },
     glints, ring, hlMat, trailMat, pathMat,
     get tongueOn() { return tg.on; },
     get splatCount() { return sp.filter((s) => s.on).length; },
     get trailCount() { return tr.filter((t) => t.on).length; },
-    objects: [splats, pellets, confetti, trail, path, cursor, ring, tongue, tip, popRing, ...glints],
+    objects: [splats, pellets, confetti, trail, path, cursor, ring, tongue, tip, popRing, bountyRing, bountyStar, ...glints],
     dispose() {
-      for (const o of [splats, pellets, confetti, trail, path, cursor, ring, tongue, tip, popRing, ...glints]) scene.remove(o);
+      for (const o of [splats, pellets, confetti, trail, path, cursor, ring, tongue, tip, popRing, bountyRing, bountyStar, ...glints]) scene.remove(o);
       splats.dispose(); pellets.dispose(); confetti.dispose(); trail.dispose(); path.dispose();
       disposables.forEach((d) => d.dispose());
     },

@@ -138,6 +138,20 @@ export function createSound() {
     stepTap: () => noise(0.04, { vol: stepVol, freq: 900 * stepPitch, q: 1.2 }),
     stepTup: () => { noise(0.045, { vol: stepVol * 1.1, freq: 420 * stepPitch, q: 0.9, type: 'lowpass' }); tone(170 * stepPitch, 110, 0.04, { vol: stepVol * 0.5 }); },
     warn: () => { tone(500, 500, 0.08, { type: 'square', vol: 0.07 }); tone(500, 500, 0.08, { type: 'square', vol: 0.07, at: 0.14 }); },
+    // couple moments (moments.js): a near miss, the mercy chirp (out / hot / warm / cold), and the last-second chords
+    whisker: () => { noise(0.3, { vol: 0.2, freq: 500, q: 0.8, sweep: 7 }); tone(1900, 700, 0.14, { type: 'triangle', vol: 0.09, at: 0.02 }); tone(520, 330, 0.12, { vol: 0.07, at: 0.2 }); },
+    mercyOut: () => { tone(880, 1175, 0.1, { type: 'triangle', vol: 0.11 }); tone(1175, 1175, 0.16, { type: 'sine', vol: 0.07, at: 0.1 }); },
+    mercyHot: () => { for (let i = 0; i < 4; i++) tone(1568, 1568, 0.07, { type: 'triangle', vol: 0.13, at: i * 0.09 }); },
+    mercyWarm: () => { for (let i = 0; i < 2; i++) tone(1047, 1047, 0.1, { type: 'triangle', vol: 0.12, at: i * 0.2 }); },
+    mercyCold: () => tone(587, 440, 0.4, { type: 'sine', vol: 0.12 }),
+    // a tag in the last two seconds: a horn stab over the usual tag chord
+    buzzer: () => { noise(0.1, { vol: 0.3, freq: 200, q: 0.5, type: 'lowpass' }); tone(196, 196, 0.5, { type: 'sawtooth', vol: 0.1 }); tone(247, 247, 0.5, { type: 'sawtooth', vol: 0.08 }); [784, 988, 1175].forEach((f, i) => tone(f, f, 0.18, { type: 'triangle', vol: 0.13, at: 0.12 + i * 0.07 })); },
+    // a find under ten seconds: a quick bright run
+    quick: () => { noise(0.06, { vol: 0.26, freq: 300, q: 0.5, type: 'lowpass' }); [659, 784, 988, 1319, 1568].forEach((f, i) => tone(f, f * 1.01, 0.12, { type: 'triangle', vol: 0.14, at: 0.03 + i * 0.045 })); },
+    // survived with the seeker breathing down their neck: a held, unresolved chord that finally lets go
+    closeCall: () => { [330, 392, 466].forEach((f) => tone(f, f, 0.5, { type: 'triangle', vol: 0.1 })); [494, 622, 740].forEach((f, i) => tone(f, f, 0.3, { type: 'triangle', vol: 0.1, at: 0.45 + i * 0.03 })); },
+    // a Ghost-grade hide that lasted: a shimmering open fifth with a high sparkle
+    ghost: () => { [262, 392, 523].forEach((f, i) => tone(f, f * 1.004, 0.55, { type: 'sine', vol: 0.11, at: i * 0.05 })); for (let i = 0; i < 6; i++) tone(1568 + i * 220, 1568 + i * 220, 0.08, { type: 'sine', vol: 0.05, at: 0.2 + i * 0.07 }); },
   };
 
   return {

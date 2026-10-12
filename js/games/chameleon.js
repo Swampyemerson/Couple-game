@@ -2,6 +2,7 @@
 // Entry point: the game lives in ./chameleon/ (see docs/games/chameleon.md).
 import { registerGame } from './core.js';
 import { CSS } from './chameleon/hud.js';
+import { CARDS_CSS } from './chameleon/cards.js';
 import { createGame } from './chameleon/game.js';
 
 registerGame({
@@ -24,6 +25,7 @@ registerGame({
   ],
   endDelay: 600,
   css: `${CSS}
+${CARDS_CSS}
 .gm[data-game="chameleon"] { max-width: none; }
 .gm[data-game="chameleon"] .gm-stage { min-height: 0; }
 `,

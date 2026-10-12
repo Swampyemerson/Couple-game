@@ -67,7 +67,8 @@ function legGeo(side) {
   return leg;
 }
 
-function tailGeo() {
+/** The tail's centre line (smoothed): shared by the skin geometry and the wardrobe's tail stripe. */
+function tailPts() {
   const pts = [];
   const N = 40;
   // back, then curling down into a spiral under itself
@@ -86,7 +87,11 @@ function tailGeo() {
   }
   // smooth the joint
   for (let pass = 0; pass < 2; pass++) for (let k = 1; k < pts.length - 1; k++) for (let a = 0; a < 3; a++) pts[k][a] = (pts[k - 1][a] + pts[k][a] * 2 + pts[k + 1][a]) / 4;
-  return tubeGeo(pts, (t) => 0.072 * (1 - t) + 0.016, { radial: 10, capEnd: true, capStart: false });
+  return pts;
+}
+const tailR = (t) => 0.072 * (1 - t) + 0.016;
+function tailGeo() {
+  return tubeGeo(tailPts(), tailR, { radial: 10, capEnd: true, capStart: false });
 }
 
 function bodyGeo() {
@@ -216,6 +221,51 @@ function rasterise(parts) {
   return { part, lpos, lnrm, list: Int32Array.from(list) };
 }
 
+// Wardrobe "trim" looks (wardrobe.js, slot `trim`): a gold crest, a striped tail, rosy cheeks, a neck
+// ribbon. Each is ONE vertex-coloured mesh (one draw call while worn) merged from primitives, built
+// once in the kit. They are drawn on a chameleon that isn't hiding (see setTrimVisible).
+const TRIM_COL = { gold: [1, 0.82, 0.24], goldD: [0.86, 0.6, 0.1], pink: [0.96, 0.26, 0.55], rose: [1, 0.55, 0.7], blue: [0.18, 0.36, 0.92], yellow: [1, 0.86, 0.25] };
+function mergeColoured(parts) {
+  const pos = []; const nrm = []; const col = []; const idx = [];
+  for (const { g, at = [0, 0, 0], c } of parts) {
+    const o = pos.length / 3;
+    for (let i = 0; i < g.pos.length; i += 3) { pos.push(g.pos[i] + at[0], g.pos[i + 1] + at[1], g.pos[i + 2] + at[2]); nrm.push(g.nrm[i], g.nrm[i + 1], g.nrm[i + 2]); col.push(c[0], c[1], c[2]); }
+    for (const k of g.idx) idx.push(k + o);
+  }
+  return { pos, nrm, col, idx };
+}
+function trimParts() {
+  const out = [null, null, null, null, null]; // index = wardrobe trim k; { parent: 'head' | 'tail', m: merged }
+  // 1 Gold crest: three cones along the head's crest, the middle one tallest
+  out[1] = { parent: 'head', m: mergeColoured([
+    { g: cylGeo(0, 0.026, 0.085, { radial: 8 }), at: [0, 0.2, -0.015], c: TRIM_COL.gold },
+    { g: cylGeo(0, 0.03, 0.115, { radial: 8 }), at: [0, 0.215, 0.05], c: TRIM_COL.goldD },
+    { g: cylGeo(0, 0.026, 0.085, { radial: 8 }), at: [0, 0.2, 0.115], c: TRIM_COL.gold },
+  ]) };
+  // 2 Tail stripe: three bands wrapped round the curl
+  const pts = tailPts(); const bands = [];
+  [[10, 13, 'pink'], [17, 20, 'yellow'], [24, 27, 'pink'], [31, 34, 'yellow']].forEach(([k0, k1, cn]) => {
+    const seg = pts.slice(k0, k1 + 1);
+    bands.push({ g: tubeGeo(seg, (t) => tailR((k0 + t * (k1 - k0)) / 40) + 0.007, { radial: 10, capEnd: false, capStart: false }), c: TRIM_COL[cn] });
+  });
+  out[2] = { parent: 'tail', m: mergeColoured(bands) };
+  // 3 Rosy cheeks: a flat pink disc on each side of the face (proud of the skin so they read from across a room)
+  out[3] = { parent: 'head', m: mergeColoured([
+    { g: sphereGeo(0.022, 0.04, 0.046, { w: 12, h: 8, metres: false }), at: [0.13, 0.0, 0.115], c: TRIM_COL.rose },
+    { g: sphereGeo(0.022, 0.04, 0.046, { w: 12, h: 8, metres: false }), at: [-0.13, 0.0, 0.115], c: TRIM_COL.rose },
+    { g: sphereGeo(0.014, 0.022, 0.026, { w: 8, h: 6, metres: false }), at: [0.14, 0.0, 0.115], c: TRIM_COL.pink },
+    { g: sphereGeo(0.014, 0.022, 0.026, { w: 8, h: 6, metres: false }), at: [-0.14, 0.0, 0.115], c: TRIM_COL.pink },
+  ]) };
+  // 4 Neck ribbon: a pink band round the neck with a yellow bow on top
+  const ring = []; for (let i = 0; i <= 24; i++) { const a = (i / 24) * Math.PI * 2; ring.push([Math.sin(a) * 0.118, 0.045 + Math.cos(a) * 0.098, 0.015]); }
+  out[4] = { parent: 'head', m: mergeColoured([
+    { g: tubeGeo(ring, () => 0.017, { radial: 8, capEnd: false, capStart: false }), c: TRIM_COL.pink },
+    { g: sphereGeo(0.034, 0.02, 0.022, { w: 8, h: 6, metres: false }), at: [0.034, 0.152, 0.015], c: TRIM_COL.yellow },
+    { g: sphereGeo(0.034, 0.02, 0.022, { w: 8, h: 6, metres: false }), at: [-0.034, 0.152, 0.015], c: TRIM_COL.yellow },
+  ]) };
+  return out;
+}
+
 /** Shared geometry + texel map (built once, used by both avatars). */
 export function createKit(THREE) {
   const raw = [
@@ -253,6 +303,16 @@ export function createKit(THREE) {
   const bow = sphereGeo(0.05, 0.022, 0.018, { w: 10, h: 5, metres: false });
   const brush = cylGeo(0.008, 0.012, 0.09, { radial: 8 });
   const charmGeos = [null, toBuffer(THREE, sphereGeo(0.03, 0.028, 0.03, { w: 10, h: 6, metres: false })), toBuffer(THREE, bow), toBuffer(THREE, brush)];
+  const trimGeos = trimParts().map((tp) => {
+    if (!tp) return null;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(tp.m.pos, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(tp.m.nrm, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(tp.m.col, 3));
+    geo.setIndex(tp.m.idx);
+    geo.computeBoundingSphere();
+    return { geo, parent: tp.parent };
+  });
   const blobGeo = new THREE.PlaneGeometry(1, 1);
   blobGeo.rotateX(-Math.PI / 2);
   const bc = document.createElement('canvas'); bc.width = bc.height = 64;
@@ -262,8 +322,8 @@ export function createKit(THREE) {
   bg.fillStyle = gr; bg.fillRect(0, 0, 64, 64);
   const blobTex = new THREE.CanvasTexture(bc);
   return {
-    geos, texels, eyeGeo, blobGeo, blobTex, charmGeos,
-    dispose() { geos.forEach((g) => g.dispose()); eyeGeo.dispose(); blobGeo.dispose(); blobTex.dispose(); charmGeos.forEach((g) => g && g.dispose()); },
+    geos, texels, eyeGeo, blobGeo, blobTex, charmGeos, trimGeos,
+    dispose() { geos.forEach((g) => g.dispose()); eyeGeo.dispose(); blobGeo.dispose(); blobTex.dispose(); charmGeos.forEach((g) => g && g.dispose()); trimGeos.forEach((t) => t && t.geo.dispose()); },
   };
 }
 
@@ -326,8 +386,13 @@ export function createAvatar(THREE, kit, { gradientMap, texture }) {
   const charm = new THREE.Mesh(kit.charmGeos ? kit.charmGeos[1] : kit.blobGeo, charmMat);
   charm.visible = false; charm.raycast = () => {};
   charm.position.set(0, -0.09, -0.19); piv.tail.add(charm);
-  const wear = { eye: 0, shape: 0, charm: 0, twitch: 0 };
-  const fadeMats = [mat, eyeMat, charmMat]; let fadeA = 1;
+  // wardrobe trim (crest / tail stripe / cheeks / ribbon): one vertex-coloured mesh on the head or the tail
+  const trimMat = new THREE.MeshToonMaterial({ vertexColors: true, gradientMap });
+  const trim = new THREE.Mesh(kit.trimGeos && kit.trimGeos[1] ? kit.trimGeos[1].geo : kit.blobGeo, trimMat);
+  trim.visible = false; trim.raycast = () => {}; piv.head.add(trim);
+  let trimOn = true;
+  const wear = { eye: 0, shape: 0, charm: 0, twitch: 0, trim: 0 };
+  const fadeMats = [mat, eyeMat, charmMat, trimMat]; let fadeA = 1;
   for (const [k, i] of [['legFL', 6], ['legFR', 7], ['legBL', 8], ['legBR', 9]]) { const m = mk(i); piv[k].add(m); meshes.push(m); }
   // order meshes by part index for the paint system
   meshes.sort((a, b) => a.userData.part - b.userData.part);
@@ -461,7 +526,10 @@ export function createAvatar(THREE, kit, { gradientMap, texture }) {
     eyeWorld(i, out) { return eyes[i].turret.getWorldPosition(out); },
     /** Wardrobe: { eye, shape, charm, twitch } small ints (wardrobe.js); eyeRgb = iris colour or null. */
     setWardrobe(wr, eyeRgb) {
-      wear.eye = wr.eye | 0; wear.shape = wr.shape | 0; wear.charm = wr.charm | 0; wear.twitch = wr.twitch | 0;
+      wear.eye = wr.eye | 0; wear.shape = wr.shape | 0; wear.charm = wr.charm | 0; wear.twitch = wr.twitch | 0; wear.trim = wr.trim | 0;
+      const tg = kit.trimGeos && kit.trimGeos[wear.trim];
+      if (tg) { trim.geometry = tg.geo; const par = tg.parent === 'tail' ? piv.tail : piv.head; if (trim.parent !== par) par.add(trim); }
+      trim.visible = !!tg && trimOn;
       const col = eyeGeo.getAttribute('color'); const arr = col.array;
       for (let i = 0; i < arr.length; i += 3) {
         const white = eyeCol0[i] > 0.9; // ring vertices (the pupil stays dark)
@@ -475,8 +543,12 @@ export function createAvatar(THREE, kit, { gradientMap, texture }) {
       if (kit.charmGeos && kit.charmGeos[wear.charm]) charm.geometry = kit.charmGeos[wear.charm];
       charmMat.color.set(wear.charm === 1 ? 0xffd23f : wear.charm === 2 ? 0xf0428b : 0x2f5bea);
     },
+    /** The trim look is drawn only while this chameleon isn't a hiding hider (a stripe or a crest would give a camouflaged hider away). */
+    setTrimVisible(v) { trimOn = !!v; trim.visible = trimOn && wear.trim > 0 && !!(kit.trimGeos && kit.trimGeos[wear.trim]); },
+    get trimOn() { return trimOn; },
+    get trimDrawn() { return trim.visible; },
     get wear() { return wear; },
-    dispose() { mat.dispose(); eyeMat.dispose(); blobMat.dispose(); hullMat.dispose(); eyeGeo.dispose(); charmMat.dispose(); },
+    dispose() { mat.dispose(); eyeMat.dispose(); blobMat.dispose(); hullMat.dispose(); eyeGeo.dispose(); charmMat.dispose(); trimMat.dispose(); },
     lerpPose: lerp,
   };
 }

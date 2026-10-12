@@ -7,12 +7,16 @@ import { createHud } from './hud.js';
 import { createControls } from './controls.js';
 import { POSES, REGION_OF_PART, REGION_NAMES, REGIONS } from './avatar.js';
 import { loadingCard, errorCard, lobbyCard, titleCard, blindCard, headCard, curtainCard, recapCard, pauseCard, ctxCard, tipsHtml, finalCard, EMOTES, CALLS } from './cards.js';
-import { recordRound, recordMatch, bestsStrip, dailyLine, recapLines, matchStory } from './records.js';
+import { packPortrait } from './gallery.js';
+import { recordRound, recordMatch, cupOutcome, bestsStrip, dailyLine, recapLines, matchStory, h2hNumbers, headToHead, tendencyLine } from './records.js';
 import { loadWear, saveWear, resolveWear, newUnlocks, packWear, unpackWear, wardrobeSheet, EYE_RGB, SLOT_LABEL } from './wardrobe.js';
 import { clamp, dampAngle, wrapAngle, hexToRgb, cssColor, luminance, listeners, fmtTime, mixHex, esc, seeded, packQuat, unpackQuat } from './util.js';
 import { MAPS, mapArea, mapCacheInfo, mapBuildStats, mapJobsInfo, mixPlan, dailyPlan, dayKey, roomAt } from './maps.js';
-import { sanitizeSetup, sanitizeRules, applyPreset, stepRule, setRule, loadSaved, saveSetup, sizeScale, SPEED_MUL, CLIMB_MUL, tipsSeen, markTipsSeen, PRESETS, timeScale, hideScale, effSeconds, sprintMul, dbSpeed, OPTIONS, fmtRule } from './rules.js';
+import { sanitizeSetup, sanitizeRules, applyPreset, stepRule, setRule, loadSaved, saveSetup, sizeScale, SPEED_MUL, CLIMB_MUL, tipsSeen, markTipsSeen, PRESETS, timeScale, hideScale, effSeconds, sprintMul, dbSpeed, OPTIONS, fmtRule, rulesFor } from './rules.js';
+import { TWIST_DECK, TWIST_CSS, FOG, DUSK, BOUNTY, UNDERDOG, SUDDEN, twistById, pickTwists, fogStep, fogMood, duskStep, duskMood, paletteFor, pickBounty, underdogOf, wagerPay, dailyTwistFor, twistChip, noteChip, suddenChip, inject, tagNextLine, twistRows, injectRows } from './twists.js';
 import { REVEAL } from './paint.js';
+// H: whisker shots, mercy chirp, notes on the skin, last-second drama
+import { createMoments, momentLines, noteLines } from './moments.js';
 import { createBlendJob, startBlend, stepBlend, scoreBlend, createMeter, startErrorMap, stepErrorMap, setBlendLights, blendDiag, dropBackdrop, releaseBackdrop, blendProbe, stampSampler, BLEND } from './camo.js';
 import { mkBody, sizeBody, resetBody, headingYaw, attachBody, detachBody, freeStep, crawlStep, inputOnSurface, bodyQuat, quatUpY, spotKind, surfaceKind, accelStep, coyoteJump, shortHop, JUMP } from './move.js';
 import { SQUEEZE_R } from './world.js';
@@ -61,6 +65,7 @@ export function createGame(el, api) {
   view.style.cssText = 'position:absolute;inset:0';
   const surface = root.querySelector('.chm-surface');
   const hud = createHud(root, api);
+  { const ts = document.createElement('style'); ts.textContent = TWIST_CSS; root.appendChild(ts); } // update pass: the twist stickers' styles (twists.js)
   hud.layer('loading', loadingCard('Mixing paints…', 0.1));
   const snd = createSound();
 
@@ -122,6 +127,8 @@ export function createGame(el, api) {
       actQ: null, actAt: 0, actMoveAt: 0, actStill: false, ticker: '', emoteAt: 0, emoteN: 0, halfShown: false,
       // final QA: the seeker spawn a head-start hider's device picked (its lock spot stays private)
       remSS: null,
+      // update pass: this round's twist id, the Three colours palette (hex + rgb), the bounty spot, the underdog
+      twist: null, palette: null, palRgb: null, bounty: null, ud: null, roundTag: '', palLocked: false,
     };
   }
 
@@ -146,6 +153,14 @@ export function createGame(el, api) {
       const wr = resolveWear(d, w, picks);
       stage.av[w].setWardrobe(wr, EYE_RGB[wr.eye] || null);
     }
+    applyTrim();
+  }
+  /** R: trim looks (crest, tail stripe, cheeks, ribbon) show on a chameleon that isn't a hiding hider: a stripe on a camouflaged hider would give the spot away. */
+  function applyTrim() {
+    if (!stage) return;
+    const ph = S.phase.name; const m = S.match;
+    const hiding = !!m && (ph === 'hide' || ph === 'lock' || ph === 'seek');
+    for (const w of ['a', 'b']) stage.av[w].setTrimVisible(!(hiding && (m.mode === 'db' || hiderOf(S.phase.round) === w)));
   }
   function sendWear() { if (local || !link.ready || !me) return; link.send('wear', { w: me, wr: packWear(resolveWear(data(), me, wearPicks[me])) }); }
 
@@ -188,14 +203,25 @@ export function createGame(el, api) {
   // ── roles + rules ──
   const mode = () => (S.match ? S.match.mode : S.setup.mode);
   /** The rules in force: the match's (both devices agree via the phase protocol), else the lobby's. */
-  const rules = () => (S.match && S.match.rules ? S.match.rules : S.setup.rules);
+  // (one phone: the rules that do nothing there are switched off, rules.js LOCAL_DEAD)
+  const rules = () => rulesFor(S.match && S.match.rules ? S.match.rules : S.setup.rules, local);
   const sizeS = () => sizeScale(rules().size);
   const curMapEntry = () => MAPS.find((m) => m.id === (S.match ? S.match.map : S.setup.map)) || MAPS[0];
   const mapTime = () => timeScale(curMapEntry());
   const mapHideTime = () => hideScale(curMapEntry());
   /** Hide clock (0 = untimed: the hunt starts when the hider taps Ready). */
-  const hideMs = () => (rules().hideEnd === 'ready' ? 0 : TUNE.hide || effSeconds(rules().hide, mapHideTime()) * 1000);
-  const seekMs = () => TUNE.seek || effSeconds(rules().seek, mapTime()) * 1000;
+  // update pass: a sudden-death round is a quick one (20 s hide, 30 s hunt; Double Blind caps the hunt at 60 s)
+  const sdRound = (r = S.phase.round) => { const m = S.match; return !!(m && m.sd && r > m.rounds - m.sd); };
+  const hideMs = (r = S.phase.round) => {
+    if (sdRound(r)) return TUNE.sdHide || SUDDEN.hide;
+    if (rules().hideEnd === 'ready') return 0;
+    // hotseat has no escape to hand the trailing hider, so the underdog gets ten more seconds to hide
+    return (TUNE.hide || effSeconds(rules().hide, mapHideTime()) * 1000) + (local && underdogFor(r) === hiderOf(r) && hiderOf(r) ? UNDERDOG.hotseatHideMs : 0);
+  };
+  const seekMs = () => {
+    const base = TUNE.seek || effSeconds(rules().seek, mapTime()) * 1000;
+    return sdRound() ? (mode() === 'db' ? Math.min(base, SUDDEN.dbSeek) : TUNE.sdSeek || SUDDEN.seek) : base;
+  };
   /** The hider's head start (seeker blindfolded, hider still free to move): Hide & Seek only, scales with the map. */
   const headStartMs = () => (mode() === 'hs' ? effSeconds(rules().headStart, mapHideTime()) * 1000 : 0);
   /** 3-2-1 before the hunt (tests shorten it with __chamTune.seekLead unless they ask for the real one). */
@@ -424,7 +450,7 @@ export function createGame(el, api) {
   let prefetching = null; // the map id being prefetched
   function prefetchNext(p, delay) {
     if (!S.match || !S.match.maps || !(p.round < S.match.rounds)) return;
-    const nid = S.match.maps[p.round % S.match.maps.length];
+    const nid = mapIdFor(p.round + 1);
     const mid = S.match.id;
     later(() => {
       if (!stage || S.destroyed || !S.match || S.match.id !== mid || stage.map.id === nid || prefetching === nid) return;
@@ -446,7 +472,17 @@ export function createGame(el, api) {
   }
 
   // ── host director ─────────────────────────────────────────────────
-  function matchInfo() { const m = S.match; return m ? { id: m.id, mode: m.mode, map: m.map, first: m.first, rounds: m.rounds, hist: m.hist, rules: m.rules, maps: m.maps || null, daily: m.daily || null } : null; }
+  // twists: the seeded round deck; sd: sudden-death rounds appended (m.rounds already counts them); ud: this round's underdog
+  // { r, w }; cs: each seeker's current run of right wager calls
+  function matchInfo() { const m = S.match; return m ? { id: m.id, mode: m.mode, map: m.map, first: m.first, rounds: m.rounds, hist: m.hist, rules: m.rules, maps: m.maps || null, daily: m.daily || null, twists: m.twists || null, sd: m.sd | 0, ud: m.ud ? { ...m.ud } : null, cs: m.cs ? { ...m.cs } : null } : null; }
+  /** The twist id of round index i (0-based, as S.match.twists is), or null. */
+  function twistFor(i) { const m = S.match; return m && m.twists && m.twists[i] ? m.twists[i] : null; }
+  /** …by round number (1-based). */
+  const twistOfRound = (r) => twistById(twistFor(r - 1));
+  /** The map of round r: Mix it up's plan (the last map carries on through a sudden-death pair), else the match's. */
+  function mapIdFor(r) { const m = S.match; const plan = m && m.maps; return plan && plan.length ? plan[Math.max(0, Math.min(r, plan.length) - 1)] : m ? m.map : S.setup.map; }
+  /** The underdog of round r (the player trailing by the gap when it began), or null. */
+  function underdogFor(r) { const m = S.match; return m && m.ud && m.ud.r === r ? m.ud.w : null; }
   function enter(name, { round, dur = 0, data = null, at = null } = {}, lead = DUR.lead) {
     if (!isHost) return;
     if (!local && lead > 0) lead = Math.max(lead, name === 'found' || name === 'time' ? foundLeadFor() : leadFor());
@@ -465,6 +501,9 @@ export function createGame(el, api) {
     // hide" carries its day key so the rounds count on today's board
     S.match.maps = st.mix ? mixPlan(TUNE.mixSeed || S.match.id, st.map, S.match.rounds, st.mode === 'hs' ? 2 : 1) : null; // (tests may pin the seed)
     S.match.daily = st.daily || null;
+    // update pass: the seeded twist deck (one id or null per round), the sudden-death count and the wager streaks
+    S.match.twists = Array.isArray(TUNE.twists) ? TUNE.twists.slice(0, S.match.rounds) : pickTwists(S.match.id, S.match.rounds, st.mode, local, S.match.maps || S.match.map, st.rules.twists); // (tests pin the deck)
+    S.match.sd = 0; S.match.ud = null; S.match.cs = { a: 0, b: 0 };
     applySize();
     startRound(1);
   }
@@ -491,16 +530,19 @@ export function createGame(el, api) {
   function startRound(r, at = null) {
     // Mix it up: this round's map (the recap preloaded it, so this is a scene swap)
     const plan = S.match.maps;
-    if (plan && plan.length) { const id = plan[(r - 1) % plan.length]; if (MAP_IDS.includes(id)) S.match.map = id; }
+    if (plan && plan.length) { const id = mapIdFor(r); if (MAP_IDS.includes(id)) S.match.map = id; }
     // the spawns index this map's lists: a lobby switch still queued for the next frame (or the
     // round's mixed map) is loaded first
     if (stage.map.id !== S.match.map) loadMap(S.match.map);
+    // update pass: the underdog of this round (the player trailing by 25+ points; not in a sudden-death round)
+    const um = S.match;
+    um.ud = um.mode === 'hs' && um.rules.underdog && r > 1 && !sdRound(r) ? (() => { const w = underdogOf(um.scores, curMapEntry().size === 'XL'); return w ? { r, w } : null; })() : null;
     const spawn = pickSpawns(r);
     if (local) enter('curtain', { round: r, data: { kind: 'hide', who: hiderOfRound(r), spawn }, at }, 0);
     else {
       // round 1 gets the full title + map orbit; later rounds a short one (the recap already said who hides next)
       const lead = r > 1 ? Math.min(DUR.title, DUR.title2) : DUR.title;
-      enter('hide', { round: r, dur: hideMs(), at: at != null ? at + lead : null, data: { spawn } }, lead);
+      enter('hide', { round: r, dur: hideMs(r), at: at != null ? at + lead : null, data: { spawn } }, lead);
     }
   }
   /** Seeker spawn for the hunt: random among the ones ≥ 6 m from where the hider ended up. */
@@ -553,7 +595,14 @@ export function createGame(el, api) {
       // + the blend bonus (rules.blendBonus) for a paint job that matched its surface at the lock
       const blend = Number.isFinite(R.blend[h]) ? R.blend[h] : -1;
       const blendPts = blendPointsFor(blend, m.rules);
-      const points = Math.floor(ms / 1000) + (res.found ? 0 : BONUS) + blendPts;
+      let points = Math.floor(ms / 1000) + (res.found ? 0 : BONUS) + blendPts;
+      // bounty spot (twist): surviving within 3 m of it pays the hider ×1.5 (judged from where the hider ended up)
+      let bounty = null;
+      if (R.bounty && R.twist === 'bounty') {
+        const hp = hiderPos(h); const bd = hp ? Math.hypot(hp.x - R.bounty.x, hp.y - R.bounty.y, hp.z - R.bounty.z) : Infinity;
+        bounty = { x: R.bounty.x, y: R.bounty.y, z: R.bounty.z, d: Math.round(bd * 10) / 10, who: null, pts: 0 };
+        if (bd <= BOUNTY.r && !res.found) { const np = Math.round(points * BOUNTY.mult); bounty.who = 'hider'; bounty.pts = np - points; points = np; }
+      }
       m.scores[h] += points;
       // the seeker banks points too (rules.seekScore): ½ pt per second left on the clock when
       // they tag, plus 10 per unused pellet with 'full'. A 12 s find on a 90 s clock reads +39.
@@ -564,16 +613,31 @@ export function createGame(el, api) {
         if (ss === 'full') { spare = clamp(R.pellets[sk], 0, R.maxPellets); seekPoints += 10 * spare; }
         m.scores[sk] += seekPoints;
       }
+      // …and tagging the hider within 3 m of it pays the seeker +15
+      if (bounty && res.found && bounty.d <= BOUNTY.r) { bounty.who = 'seeker'; bounty.pts = BOUNTY.tag; seekPoints += BOUNTY.tag; m.scores[sk] += BOUNTY.tag; }
       rec = { round: r, hider: h, seeker: sk, found: !!res.found, ms, points, seekPoints, spare, blend, blendPts, outOfPellets: !!res.out, p: res.p || null, surf: spotOf(h) };
+      if (bounty) rec.bounty = bounty;
+      if (R.twist) rec.twist = R.twist;
       // the seeker's wager (rules.wager): a right call on where they hid pays the stake ('CALLED IT')
       const wg = (m.rules && m.rules.wager) | 0; const call = R.call[sk];
-      if (wg && call) { const zone = hideZone(h, rec.surf); rec.call = call; rec.zone = zone; if (call === zone) { rec.called = true; rec.wagerPts = wg; m.scores[sk] += wg; } }
+      rec.zone = hideZone(h, rec.surf); // R: where they were (tendencies + the wager)
+      // called-it streak: the stake × min(3, the seeker's run of right calls in a row); a wrong call or none ends the run
+      if (!m.cs) m.cs = { a: 0, b: 0 };
+      if (wg && call) {
+        rec.call = call;
+        if (call === rec.zone) { m.cs[sk] = (m.cs[sk] | 0) + 1; rec.called = true; rec.streak = m.cs[sk]; rec.wagerPts = wagerPay(wg, m.cs[sk]); m.scores[sk] += rec.wagerPts; }
+        else { if ((m.cs[sk] | 0) >= 2) rec.streakBroken = m.cs[sk] | 0; m.cs[sk] = 0; }
+      } else m.cs[sk] = 0;
       rec.passes = R.passes; rec.closest = Number.isFinite(R.closest) ? Math.round(R.closest * 10) / 10 : null; rec.stared = R.stared; rec.under = R.under;
     } else {
       const wnr = res.found ? res.by : null;
       if (wnr) m.scores[wnr] += 1;
       rec = { round: r, winner: wnr, victim: res.found ? res.victim : null, found: !!res.found, ms: Math.round(elapsed), p: res.p || null, hider: res.found ? res.victim : null, seeker: wnr, surf: res.found ? spotOf(res.victim) : null };
     }
+    MO.decorate(rec, res); // H: whiskers, mercy (-10), the note, AT THE BUZZER / SO CLOSE flags
+    // sudden death: a tied Hide & Seek match plays one more pair, a tied Double Blind one more round
+    // (m.rounds grows now, so both phones' pips, the recap's 'See who won' and Next line already know)
+    if (!m.sd && r === m.rounds && m.rules && m.rules.sudden && m.scores.a === m.scores.b) { m.sd = m.mode === 'hs' ? SUDDEN.rounds : SUDDEN.dbRounds; m.rounds += m.sd; rec.sdNext = true; }
     m.hist = [...m.hist, rec];
     enter(res.found ? 'found' : 'time', { dur: DUR.found, data: rec, at: res.at ?? null }, local ? 0 : DUR.foundLead);
   }
@@ -595,12 +659,14 @@ export function createGame(el, api) {
   function recordNow(rec) {
     const d = { ...data() }; const m = S.match;
     const extra = { mode: m.mode, map: m.map, names: { a: api.name('a'), b: api.name('b') }, closest: R.closest, passes: R.passes, strokes: R.strokes, stared: R.stared, called: !!rec.called, daily: m.daily || null };
+    // R: the best-hide portrait (the hider's quantised skin as the codec sends it; only asked for when it beats their best)
+    if (m.mode === 'hs' && rec.hider && stage && stage.paints[rec.hider]) extra.portrait = () => { const pt = stage.paints[rec.hider]; pt.encode(); return packPortrait(pt.data); };
     const r1 = recordRound(d, rec, extra);
     Object.assign(d, r1.patch);
     const patch = { ...r1.patch }; const unlocks = [];
     for (const w of ['a', 'b']) { const u = newUnlocks(d, w); Object.assign(patch, u.patch); Object.assign(d, u.patch); for (const q of u.pops) unlocks.push({ w, key: q.st.key, k: q.st.k, name: q.st.name }); }
     setData(patch);
-    return { records: r1.records, unlocks };
+    return { records: r1.records, unlocks, h2h: m.mode === 'hs' ? h2hNumbers(d) : null };
   }
   function hostFound(by, victim, T, p) {
     if (!isHost || S.phase.name !== 'seek' || R.foundSent) return;
@@ -609,6 +675,14 @@ export function createGame(el, api) {
     // Double Blind: earliest confirmed tag within a short window wins
     if (!R.tagWindow) { R.tagWindow = { by, victim, T, p }; later(() => { const t = R.tagWindow; if (t) roundOver({ found: true, ...t }); }, TAG_WINDOW); }
     else if (T < R.tagWindow.T) R.tagWindow = { by, victim, T, p };
+  }
+  /** R: what the match end adds to the final card (computed once by the host, carried to both phones): the Cup and the looks it unlocks. */
+  function finalExtras(winner) {
+    const d = { ...data() }; const cup = cupOutcome(d, winner);
+    Object.assign(d, recordMatch(d, winner, dayKey()));
+    const unl = [];
+    for (const w of ['a', 'b']) { const u = newUnlocks(d, w); for (const q of u.pops) unl.push({ w, key: q.st.key, k: q.st.k, name: q.st.name }); }
+    return { cup, unl };
   }
   function hostNext(at = null) {
     if (!isHost || S.phase.name !== 'recap' || R.nexting) return;
@@ -619,7 +693,7 @@ export function createGame(el, api) {
     else {
       const a = m.scores.a; const b = m.scores.b;
       const winner = a > b ? 'a' : b > a ? 'b' : null;
-      enter('final', { data: { winner, a, b }, at });
+      enter('final', { data: { winner, a, b, sd: m.sd | 0, ...finalExtras(winner) }, at });
     }
   }
   /** Called every frame and on a 200 ms timer: advances timed phases. */
@@ -632,10 +706,13 @@ export function createGame(el, api) {
     if (S.queue.length) return;
     if (ph.name === 'hide' && ph.dur && pre) endHide(ph.end);
     else if (ph.name === 'lock' && t >= ph.end) lockDone();
-    else if (ph.name === 'seek' && local && pre) roundOver({ found: false, at: ph.end });
+    // hotseat: time is called at the buzzer itself, not 380 ms ahead of it (bug A: a tag fired in that
+    // window used to be dropped and the round recorded as a survival); fire() stops at the buzzer, so
+    // every tag that counts has already ended the round by then
+    else if (ph.name === 'seek' && local && t >= ph.end) roundOver({ found: false });
     // live: a tag fired before the buzzer is still being confirmed for a moment after it
     else if (ph.name === 'seek' && !local && t >= ph.end + tagGrace()) roundOver({ found: false });
-    else if ((ph.name === 'found' || ph.name === 'time') && pre && !R.toRecap) { R.toRecap = true; enter('recap', { dur: DUR.recap, data: { ...ph.data, rx: recordNow(ph.data || {}) }, at: ph.end }); }
+    else if ((ph.name === 'found' || ph.name === 'time') && pre && !R.toRecap) { R.toRecap = true; recordT(ph.data); enter('recap', { dur: DUR.recap, data: { ...ph.data, rx: recordNow(ph.data || {}) }, at: ph.end }); }
     else if (ph.name === 'recap' && pre) hostNext(ph.end);
   }
 
@@ -656,7 +733,7 @@ export function createGame(el, api) {
   function adoptMatch(p) {
     if (!p.m) return;
     if (!S.match || S.match.id !== p.m.id) S.match = { ...p.m, scores: { ...(p.sc || { a: 0, b: 0 }) }, rules: sanitizeRules(p.m.rules) };
-    else { S.match.hist = p.m.hist; S.match.scores = { ...(p.sc || S.match.scores) }; S.match.rounds = p.m.rounds; if (p.m.rules) S.match.rules = sanitizeRules(p.m.rules); if (MAP_IDS.includes(p.m.map)) S.match.map = p.m.map; S.match.maps = p.m.maps || null; }
+    else { S.match.hist = p.m.hist; S.match.scores = { ...(p.sc || S.match.scores) }; S.match.rounds = p.m.rounds; if (p.m.rules) S.match.rules = sanitizeRules(p.m.rules); if (MAP_IDS.includes(p.m.map)) S.match.map = p.m.map; S.match.maps = p.m.maps || null; S.match.twists = p.m.twists || null; S.match.sd = p.m.sd | 0; S.match.ud = p.m.ud || null; S.match.cs = p.m.cs || S.match.cs || { a: 0, b: 0 }; }
     if (stage && stage.map && stage.map.id !== S.match.map) { loadMap(S.match.map); stage.compile(); }
     applySize();
     api.setScore(S.match.scores);
@@ -675,6 +752,7 @@ export function createGame(el, api) {
     S.phase = { name: p.name, seq: p.seq, round: p.round, at: p.at, end: p.at + (p.dur || 0), dur: p.dur || 0, data: p.data };
     if (isHost) S.hostSeq = Math.max(S.hostSeq, p.seq);
     S.pendingTitle = null;
+    applyTrim();
     const nw = now();
     stats.phaseLog.push({ name: p.name, seq: p.seq, wall: performance.timeOrigin + performance.now(), at: p.at, now: nw, late: nw - p.at, clock: nw - (performance.timeOrigin + performance.now()) });
     if (stats.phaseLog.length > 80) stats.phaseLog.shift();
@@ -719,6 +797,136 @@ export function createGame(el, api) {
     posesOpen = false;
     C.yaw = body[h || viewer() || 'a'].yaw + Math.PI; C.pitch = 0.32; C.dist = 2.3;
     P.rgb = [74, 132, 116];
+    roundTwistSetup(round, h);
+  }
+
+  // ── round twists + the underdog overlay (twists.js) ───────────────
+  // Everything a twist needs derives from the match seed + the round number (twists.js), so both
+  // phones build the same palette, the same bounty spot and the same moods without a message.
+  const MOOD = { on: false, step: -1, id: null, log: [] }; // log: every step applied this round (tests)
+  /** Clear last round's mood, then set up this round's twist and underdog. Runs once per round (resetRound). */
+  function roundTwistSetup(round, h) {
+    const m = S.match; if (!m || !stage) return;
+    clearMoodNow();
+    if (hud.setPaletteLock) hud.setPaletteLock(null);
+    const tw = twistFor(round - 1);
+    R.twist = tw; MOOD.log.length = 0;
+    R.roundTag = sdRound(round) ? 'Sudden death' : tw ? twistById(tw).short : '';
+    if (tw === 'colours') { R.palette = paletteFor(m.id, round, stage.map.probes); R.palRgb = R.palette.map(hexToRgb); }
+    if (tw === 'bounty') { R.bounty = bountySpot(round); if (R.bounty) stage.fx.setBounty(R.bounty.x, R.bounty.y, R.bounty.z, theme.hl); }
+    // underdog: the player trailing by the gap when the round began gets +1 pellet (seeking) or +1 escape (hiding)
+    const ud = underdogFor(round); R.ud = ud;
+    if (ud && h) {
+      if (ud === other(h)) { R.maxPellets += 1; R.pellets.a = R.maxPellets; R.pellets.b = R.maxPellets; }
+      else if (!local) R.escapes[h] += 1;
+    }
+  }
+  /** Where a hider ended up (its own body, or the partner's published state). */
+  function hiderPos(w) {
+    if (controlsOf(w)) return body[w];
+    if (rem.v > 0.5) return rem;
+    return remHint.set ? remHint : null;
+  }
+  /** The bounty spot of a round: a seeded floor point the map's own data points at, away from every spawn, with room to stand. */
+  function bountySpot(round) {
+    const mp = stage.map; const sp = mp.spots; const W = stage.world; const SOLID = (bx) => bx.climb !== false;
+    const floors = ((mp.info && mp.info.floors) || []).map((f) => +f.y || 0); if (!floors.length) floors.push(0);
+    const floorBelow = (y) => { let f = floors[0]; for (const fy of floors) if (y >= fy - 0.3) f = fy; return f; };
+    const cands = [];
+    const add = (x, z, yHint) => {
+      if (!W.inside(x, z)) return;
+      const gy = W.groundAt(x, z, 0.2, yHint + 0.5);
+      const bb = { x, y: gy, z, r: 0.24, step: 0.24, head: 0.34 };
+      W.pushOut(bb);
+      if (Math.hypot(bb.x - x, bb.z - z) > 0.05 || W.boxAt(x, gy + 0.28, z, 0.05, SOLID)) return;
+      if (cands.some((c) => Math.hypot(c.x - x, c.z - z) < 0.8)) return;
+      cands.push({ x, y: gy, z });
+    };
+    for (const k of ['lobby', 'camo', 'rug']) if (sp[k]) add(sp[k].x, sp[k].z, floorBelow(sp[k].y || 0));
+    for (const p of mp.probes || []) {
+      const [px, py, pz] = p.point; const [nx, ny, nz] = p.normal || [0, 1, 0];
+      if (ny < -0.5) continue;
+      const off = Math.abs(ny) < 0.5 ? 0.7 : 0; // a wall probe: the floor in front of it
+      add(px + nx * off, pz + nz * off, floorBelow(py));
+    }
+    for (const r of mp.rooms || []) add((r.x0 + r.x1) / 2, (r.z0 + r.z1) / 2, floors[r.floor || 0] || 0);
+    const avoid = (sp.hiderSpawns || []).concat(sp.seekerSpawns || []);
+    const inf = mp.info || {}; const minD = clamp(Math.hypot(inf.w || 10, inf.d || 8) * 0.3, 2.5, 5);
+    const c = pickBounty(S.match.id, round, cands, avoid, minD);
+    return c ? { x: c.x, y: c.y, z: c.z } : null;
+  }
+  /** Fog rolls in / Dusk: the mood follows the hunt's clock in a few steps (never per frame), both phones the same. */
+  function moodTick(t) {
+    if (!stage) return;
+    const tw = R.twist;
+    const active = (tw === 'fog' || tw === 'dusk') && S.match && S.phase.name === 'seek' && hunting(t);
+    if (!active) { if (MOOD.on) clearMoodNow(); return; }
+    const d = S.phase.data; const hunt = d && d.hunt ? d.hunt : S.phase.dur || 1;
+    const left = S.paused ? S.paused.remaining : Math.max(0, S.phase.end - Math.max(t, S.resumeAt));
+    const frac = clamp(1 - left / hunt, 0, 1);
+    const step = tw === 'fog' ? fogStep(frac) : duskStep(frac);
+    if (step === MOOD.step && MOOD.id === tw) return;
+    MOOD.step = step; MOOD.id = tw;
+    if (!step) { clearMoodNow(); MOOD.step = 0; MOOD.id = tw; return; }
+    if (tw === 'fog') stage.setMood(fogMood(stage.playFog(), step));
+    else {
+      stage.setMood(duskMood(step, stage.baseHemi, stage.baseSun, theme.bg));
+      stage.fx.setGlintBoost(1 + (DUSK.glint - 1) * (step / DUSK.steps));
+    }
+    MOOD.on = true;
+    if (MOOD.log.length < 40) MOOD.log.push({ id: tw, step, fogFar: stage.scene.fog.far, hemi: stage.hemi.intensity, at: Math.round(t) });
+    setBlendLights(stage.hemi, stage.sun); // the live camo meter shades with the lights as they are now
+  }
+  /** Put the lights, fog and sky back exactly (round end, a new round, leaving). */
+  function clearMoodNow() {
+    if (!stage) return;
+    if (MOOD.on || stage.moodOn) { stage.clearMood(); setBlendLights(stage.hemi, stage.sun); }
+    stage.fx.setGlintBoost(1);
+    MOOD.on = false; MOOD.step = -1; MOOD.id = null;
+  }
+  /** Stickers for what this round brings (twist, underdog, sudden death), 1.1 s apart; hotseat shows them to whoever holds the phone. */
+  function announceRound(round) {
+    const m = S.match; if (!m) return;
+    let i = 0;
+    const pop = (text, cls, sub) => { const k = i++; later(() => { if (S.phase.round === round) hud.pop(text, cls, sub); }, 250 + k * 1100); };
+    if (sdRound(round)) pop('SUDDEN DEATH', 'ink', m.mode === 'db' ? 'one more round decides it' : round === m.rounds - m.sd + 1 ? 'round 1 of 2 · 20 s to hide' : 'round 2 of 2 · points decide');
+    const tw = twistOfRound(round); if (tw) pop(tw.label, 'hl', tw.short === 'Bounty' ? `survive or tag within ${BOUNTY.r} m of the ring` : tw.short === '3 colours' ? 'only these three colours' : tw.short === 'Fog' ? 'it thickens near the end' : 'the light is fading');
+    const ud = underdogFor(round);
+    if (ud) { const h = hiderOf(round); pop(`Underdog: ${underdogText(round)}`, ud, `${api.name(ud)} is catching up`); void h; }
+  }
+  /** Three colours: the hider's device locks its brush to the round's swatches (the paint panel's chips follow hud.setPaletteLock). */
+  function applyPaletteLock() {
+    if (!R.palette || !R.palRgb) return;
+    const v = viewer(); const role = v ? roleOf(v) : null;
+    if (role !== 'hider' && role !== 'both') return;
+    if (hud.setPaletteLock) hud.setPaletteLock(R.palette.slice());
+    P.rgb = R.palRgb[0].slice();
+    R.palLocked = true;
+  }
+  /** Recap stickers for the update pass: the bounty paying out, a broken streak (shown to the hider who broke it). */
+  function recapExtras(rec, rx) {
+    if (!rec) return;
+    let k = rx ? (rx.records || []).length + (rx.unlocks || []).length + (rec.called ? 1 : 0) : 0;
+    if (rec.bounty && rec.bounty.who) {
+      const kk = k++; const who = rec.bounty.who === 'hider' ? rec.hider : rec.seeker;
+      later(() => { hud.pop('BOUNTY', who, `+${rec.bounty.pts} for ${api.name(who)}`); snd.play('good'); }, 900 + kk * 1100);
+    }
+    if (rec.streakBroken && (local || me === rec.hider)) {
+      const kk = k++;
+      later(() => { hud.pop('STREAK BROKEN', rec.hider, `${api.name(rec.seeker)}’s ${rec.streakBroken} in a row ended`); snd.play('warn'); }, 900 + kk * 1100);
+    }
+  }
+  /** Host, once per round: the called-it streak record (the best run of right wager calls). */
+  function recordT(rec) {
+    if (!isHost || !rec || !rec.seeker || !(rec.streak > 0)) return;
+    const k = `${rec.seeker}_callstreak`;
+    if (rec.streak > (data()[k] | 0)) setData({ [k]: rec.streak });
+  }
+  /** What the underdog of round r gets, as a few words ('+1 pellet'). */
+  function underdogText(r) {
+    const ud = underdogFor(r); const h = hiderOf(r); if (!ud || !h) return '';
+    if (ud !== h) return '+1 pellet';
+    return local ? `+${UNDERDOG.hotseatHideMs / 1000} s to hide` : '+1 escape';
   }
 
   function onEnter(p, prev) {
@@ -728,7 +936,7 @@ export function createGame(el, api) {
     switch (name) {
       case 'lobby':
         S.match = null; S.actor = null;
-        if (stage) { setLivery('a', 'lobby'); setLivery('b', 'lobby'); placeLobby(); stage.fx.clearRound(); }
+        if (stage) { setLivery('a', 'lobby'); setLivery('b', 'lobby'); placeLobby(); stage.fx.clearRound(); clearMoodNow(); if (hud.setPaletteLock) hud.setPaletteLock(null); }
         break;
       case 'curtain':
         resetRound(p.round, p.data);
@@ -748,6 +956,7 @@ export function createGame(el, api) {
           if (rules().climb && !tipsSeen() && !TUNE.noTips) U.tips = true;
         }
         prefetchNext(p, 1500); // Mix it up: the next round's map, if it's a new one (maps QA round 1)
+        announceRound(p.round); applyPaletteLock(); // update pass: the twist / underdog / sudden-death stickers, the Three colours lock
         break;
       }
       case 'lock':
@@ -783,10 +992,11 @@ export function createGame(el, api) {
         const rec = p.data || {};
         R.rec = rec;
         if (R.juiceT) { clearTimeout(R.juiceT); R.juiceT = 0; tagJuice(); } // a tag's juice still waiting for its pellet: never after the stamp
-        C.freezeUntil = tSec + 0.5;
+        C.freezeUntil = tSec + (name === 'found' && rec.buzz != null ? 0.95 : 0.5); // H: a longer hit-stop for a tag at the buzzer
         C.whip = 0; C.fSide = 0;
         hud.hint(null); // a lingering "Left thumb moves…" never sits over the stamp
         snd.ambience('off');
+        clearMoodNow(); if (hud.setPaletteLock) hud.setPaletteLock(null); // update pass: the fog / dusk end with the round, exactly
         exitPaint(true);
         prefetchNext(p, 700); // Mix it up's next map, after the freeze (maps QA round 1)
         // a Double Blind void (both seekers dry, or the clock) has no victim: confetti between the two
@@ -802,7 +1012,7 @@ export function createGame(el, api) {
         hud.flash();
         const vv = v || winInk;
         const iWon = local ? true : (mode() === 'db' ? rec.winner === me : (name === 'found' ? roleOf(me) === 'seeker' : roleOf(me) === 'hider'));
-        snd.play(name === 'found' ? (iWon ? 'found' : 'sad') : (iWon ? 'survive' : 'sad'));
+        snd.play(MO.jingle(name, rec, iWon)); MO.drama(name, rec); // H: variable jingles + the buzzer / close-call stickers
         later(() => snd.play('confetti'), 120);
         api.haptic(60);
         void vv;
@@ -831,11 +1041,12 @@ export function createGame(el, api) {
         const rx = (p.data && p.data.rx) || null;
         if (rx) {
           let i = 0;
-          for (const r of rx.records || []) { const k = i++; S.matchRecords.push(r); later(() => { hud.pop('NEW RECORD', 'hl', r.text); snd.play('survive'); }, 900 + k * 1100); }
+          for (const r of rx.records || []) { const k = i++; S.matchRecords.push(r); later(() => { hud.pop(r.title || 'NEW RECORD', 'hl', r.text); snd.play('survive'); }, 900 + k * 1100); }
           for (const u of rx.unlocks || []) { const k = i++; S.matchUnlocks.push({ w: u.w, name: u.name, slot: (SLOT_LABEL[u.key] || '').toLowerCase() }); later(() => { hud.pop('UNLOCKED', 'ink', `${api.name(u.w)}: ${u.name} ${(SLOT_LABEL[u.key] || '').toLowerCase()}`); snd.play('unlock'); }, 900 + k * 1100); }
           const rc = R.rec; // captured: the round may have moved on by the time the sticker fires
-          if (rc && rc.called) { const k = i++; later(() => { hud.pop('CALLED IT', rc.seeker || 'hl', `+${rc.wagerPts} for ${api.name(rc.seeker)}`); snd.play('good'); }, 900 + k * 1100); }
+          if (rc && rc.called) { const k = i++; later(() => { hud.pop('CALLED IT', rc.seeker || 'hl', `+${rc.wagerPts} for ${api.name(rc.seeker)}${rc.streak > 1 ? ` · ${rc.streak} in a row` : ''}`); snd.play('good'); }, 900 + k * 1100); }
         }
+        recapExtras(R.rec, rx);
         break;
       }
       case 'final': {
@@ -845,8 +1056,15 @@ export function createGame(el, api) {
         if (S.match) nextFirst = S.match.mode === 'hs' ? other(S.match.first) : S.match.first;
         // the match's own final card first (round timeline, best hide, fastest find, records); 'See the
         // board' on either phone, or 12 s, hands over to the hub's end card (which carries Rematch)
-        if (isHost && !S.finalRec) { S.finalRec = true; setData(recordMatch(data(), d.winner)); }
+        if (isHost && !S.finalRec) {
+          S.finalRec = true;
+          const dd = { ...data() }; const mp = recordMatch(dd, d.winner, dayKey()); Object.assign(dd, mp);
+          for (const w of ['a', 'b']) Object.assign(mp, newUnlocks(dd, w).patch); // R: the Cup (and what it unlocks) is written once, here
+          setData(mp);
+        }
+        for (const u of d.unl || []) { S.matchUnlocks.push({ w: u.w, name: u.name, slot: (SLOT_LABEL[u.key] || '').toLowerCase() }); later(() => { hud.pop('UNLOCKED', 'ink', `${api.name(u.w)}: ${u.name} ${(SLOT_LABEL[u.key] || '').toLowerCase()}`); snd.play('unlock'); }, 700); }
         S.vote = { a: null, b: null }; S.crowned = 0; S.voteVer++;
+        if (isHost && d.sd && d.winner) { const k = `${d.winner}_sd_wins`; setData({ [k]: (data()[k] | 0) + 1 }); } // sudden death decided it
         later(autoFinish, DUR.final);
         break;
       }
@@ -879,12 +1097,12 @@ export function createGame(el, api) {
     S.finished = true;
     const d = S.phase.data || {};
     const sc = `${d.a}–${d.b}`;
-    const text = d.winner ? `${api.name(d.winner)} blends best` : 'Perfectly matched';
+    const text = d.winner ? `${api.name(d.winner)} wins ${Math.max(d.a, d.b)}–${Math.min(d.a, d.b)}` : mode() === 'db' ? 'Perfectly matched' : `All square ${d.a}–${d.b}`;
     const sub = mode() === 'db' ? `Rounds won ${sc}` : `Points ${sc} · ${api.name('a')} vs ${api.name('b')}`;
     api.finish({ winner: d.winner, text, sub });
   }
   /** A confirmed tag on my screen: a 90 ms hit-stop, a hard shake, a white flash, the pitched-up splat; the ambience cuts for 0.4 s. */
-  function tagJuice() { C.freezeUntil = Math.max(C.freezeUntil, tSec + 0.09); C.shake = 0.25; hud.flash(); snd.play('tag'); snd.duck(400); stats.juiceAt = now(); }
+  function tagJuice() { const big = MO.buzzNear(); C.freezeUntil = Math.max(C.freezeUntil, tSec + (big ? 0.24 : 0.09)); C.shake = big ? 0.4 : 0.25; hud.flash(); snd.play('tag'); snd.duck(400); stats.juiceAt = now(); }
   /** The seeker's wager chip (blind card, or the hotseat's hand-over curtain). */
   function setCall(k) {
     if (!rules().wager || mode() !== 'hs' || !CALLS.some((c) => c[0] === k)) return;
@@ -1057,6 +1275,7 @@ export function createGame(el, api) {
     if (CAMO.w !== v || CAMO.round !== round) { CAMO.w = v; CAMO.round = round; CAMO.ver = -1; CAMO.sig.fill(NaN); CAMO.surfSig.fill(NaN); CAMO.job.on = false; m.reset(); }
     m.tick(tSec);
     const p = stage.paints[v];
+    m.stale(m.value >= 0 && (CAMO.job.on || p.revealing || !!P.last || p.version !== CAMO.ver)); // paint changed, score not in yet: dim the old number (was: 22 % shown 0.5 s after a stamp that scores 70 %)
     if (CAMO.job.on) {
       CAMO.slices++;
       const ts = performance.now();
@@ -1113,6 +1332,7 @@ export function createGame(el, api) {
     p.flush();
     const t1 = performance.now();
     R.paintSum[w] = enc.sum; R.paintOk[w] = true;
+    const note = MO.noteForLock(w); // H: the optional note on the skin (revealed only at FOUND / SURVIVED)
     if (controlsOf(w)) { try { const c = camoCached(w); R.blend[w] = c != null ? c : blendOf(w); stats.blendCached = c != null; } catch (e) { R.blend[w] = -1; console.warn('blend', e); } }
     stats.lastPaint = { w, bytes: enc.bytes, b64: enc.b64.length, chunks: Math.ceil(enc.b64.length / 3200), encMs: t1 - t0, blendMs: performance.now() - t1 };
     if (!local) {
@@ -1122,7 +1342,7 @@ export function createGame(el, api) {
       // presence goes public just before the hunt (it was held on the seeker's phone all through the
       // blindfold). The host still learns the fair seeker spawn (ss: what pickSeekSpawn makes of it).
       const priv = mode() === 'hs' && !hunting() && (S.phase.name === 'seek' || headStartMs() > 0);
-      link.sendBlob('paint', enc.b64, { w, sum: enc.sum, round: R.round, pos: priv ? null : posArr(b), ss: priv ? pickSeekSpawn() : null, blend: R.blend[w] });
+      link.sendBlob('paint', enc.b64, { w, sum: enc.sum, round: R.round, pos: priv ? null : posArr(b), ss: priv ? pickSeekSpawn() : null, blend: R.blend[w], note });
     }
   }
   /** Paint while hunted (or during the head start): the same quantised blob as the lock, at most
@@ -1178,6 +1398,7 @@ export function createGame(el, api) {
     if (!meta || !stage) return;
     const w = meta.w;
     if (w === me) return;
+    if (meta.note) MO.noteIn(w, meta.note); // H: kept in memory, never drawn before the reveal
     if (meta.live) { livePaintIn(w, b64, meta); return; }
     const sum = stage.paints[w].decode(b64);
     stage.paints[w].flush();
@@ -1230,6 +1451,11 @@ export function createGame(el, api) {
   link.on('resume', (d) => { if (isHost || !d) return; S.paused = null; S.resumeAt = d.at; S.phase.end = d.at + d.remaining; });
 
   // shots, scans, scurries
+  // H: hunt interactions & couple moments (moments.js): the factory reads the game's closure through these getters
+  const MO = createMoments({ api, local, me, link, hud, snd, root, S, R, L, getStage: () => stage, getTheme: () => theme, mode: () => mode(), now: () => now(), later: (fn, ms) => later(fn, ms),
+    hint: (t, ms) => hint(t, ms), data: () => data(), setData: (p) => setData(p), hiderOf: (r) => hiderOf(r), hunting: () => hunting(), sizeS: () => sizeS(), frozen: () => frozen(), paintOn: () => P.on });
+  link.on('whisk', (d) => MO.onWhisk(d));
+  link.on('mercy', (d) => MO.onMercy(d));
   link.on('shot', (d) => onShot(d));
   link.on('tagres', (d) => onTagRes(d));
   link.on('scan', (d) => { if (d) { glint(other(d.by), d.at, d.by); if (typeof d.left === 'number') R.scansLeft[d.by] = d.left < 0 ? Infinity : d.left; R.scanReady[d.by] = d.at - 140 + scanCdMs(); } });
@@ -1419,7 +1645,7 @@ export function createGame(el, api) {
       link.send('shot', msg);
       hint('Hit!', 700); // the victim's confirmation follows in ~1 RTT ("They slipped away!" if it fails): don't announce the wait
     } else {
-      if (!local) link.send('shot', msg);
+      if (!local) link.send('shot', msg); else MO.judgeMiss(msg); // H: a hotseat near miss is judged here (one device judges both)
       if (R.pellets[w] === 0) later(() => sendOut(w), 600);
     }
   }
@@ -1455,6 +1681,7 @@ export function createGame(el, api) {
       const go = () => { if (stage && S.phase.name === 'seek') stage.fx.pellet(from, to, ink, tSec, () => { if (d.hit) { stage.fx.splat(to.x, to.y, to.z, d.n[0], d.n[1], d.n[2], ink, 0.26, tSec); snd.play('splat'); } }); };
       stats.shotLag = Math.round(lag);
       if (lag > 16) later(go, lag); else go();
+      MO.judgeMiss(d); // H: whisker shots (only the victim's device judges)
       return;
     }
     stage.fx.pellet(from, to, ink, tSec, null);
@@ -1851,6 +2078,7 @@ export function createGame(el, api) {
   const paintGestures = {
     begin(x, y) {
       if (!P.on || P.tool !== 'brush') return false;
+      if (hud.lockOn) P.rgb = hud.lockSnap(P.rgb); // Three colours: the brush only ever paints the locked swatches
       if (P.texelDirtyAt) refreshTexels();
       const hit = pickOwn(x, y);
       if (!hit) return false;
@@ -1908,10 +2136,12 @@ export function createGame(el, api) {
         if (!hit) { hint('Tap a part of your body to fill it'); return; }
         const region = REGION_NAMES[REGION_OF_PART[hit.object.userData.part]];
         const p = stage.paints[viewer()];
-        p.snapshot(); p.fill(region, P.rgb, [hit.point.x, hit.point.y, hit.point.z]); // floods out from the finger
+        if (hud.lockOn) P.rgb = hud.lockSnap(P.rgb);
+        const pat = hud.fillPattern(P.rgb); // Solid / Stripes / Dots / Checker: the colour on the one before it
+        p.snapshot(); p.fill(region, P.rgb, [hit.point.x, hit.point.y, hit.point.z], pat); // floods out from the finger
         PFX.fillAt = now(); PFX.fillW = viewer(); PFX.fillParts = REGIONS[region]; PFX.fills++;
         snd.play('fill'); api.haptic(10); act('fill');
-        hint(`Filled your ${region}`, 1000);
+        hint(pat ? `Filled your ${region}: ${pat.kind}` : `Filled your ${region}`, 1000);
       } else if (P.tool === 'pick') {
         pickColorAt(x, y);
       }
@@ -1980,7 +2210,11 @@ export function createGame(el, api) {
     const l = Math.hypot(vx, vy, vz) || 1; vx /= l; vy /= l; vz /= l;
     stage.paints[v].dab(x, y, z, vx, vy, vz, BRUSH[P.size] * body[v].s, P.rgb, P.hard, 0.45);
   }
+  // paint panel (hud.js): a recent-colour / locked-swatch chip sets the brush colour; the pattern chip arms Fill
+  hud.paintCb.color = (rgb) => { if (!P.on || S.destroyed) return; P.rgb = rgb; if (P.tool === 'pick') P.tool = 'brush'; snd.play('ui'); api.haptic(6); };
+  hud.paintCb.pattern = (kind) => { if (!P.on || S.destroyed) return; P.tool = 'fill'; snd.play('ui'); hint(kind === 'solid' ? 'Fill: solid colour. Tap a body part' : `Fill: ${kind}, your colour on the one before it. Tap a body part`, 1900); };
   function pickColorAt(x, y) {
+    if (hud.lockOn) { hint(hud.lockReason('Pick'), 1600); snd.play('warn'); return null; }
     const [W, H] = stage.size;
     stage.setRayFromScreen(x, y, W, H);
     const objs = [stage.mapMesh];
@@ -2000,6 +2234,7 @@ export function createGame(el, api) {
     if (!canPaint() || !v) return;
     const b = body[v];
     if (!rules().stamp) { hint('The stamp is off in these rules — paint by hand', 1600); snd.play('warn'); return; }
+    if (hud.lockOn) { hint(hud.lockReason('Stamp'), 1600); snd.play('warn'); return; }
     refreshTexels();
     let hit = null;
     if (b.at) {
@@ -2130,7 +2365,7 @@ export function createGame(el, api) {
       case 'size': if (P.on) { P.size = (P.size + 1) % 3; snd.play('ui'); brushPreview(); } break;
       case 'hardness': if (P.on) { P.hard = !P.hard; snd.play('ui'); brushPreview(); } break;
       case 'fill': if (P.on) { P.tool = 'fill'; snd.play('ui'); hint('Tap a body part to fill it', 1500); } break;
-      case 'pick': if (P.on) { P.tool = 'pick'; snd.play('ui'); hint('Tap anything to drink its colour', 1500); } break;
+      case 'pick': if (P.on) { if (hud.lockOn) { hint(hud.lockReason('Pick'), 1600); snd.play('warn'); break; } P.tool = 'pick'; snd.play('ui'); hint('Tap anything to drink its colour', 1500); } break;
       case 'stamp': doStamp(); break;
       case 'undo': if (P.on && v && stage.paints[v].undo(true)) snd.play('undo'); break; // dissolves back (paint.js REVEAL.undo)
       case 'xray': camoXray(); break; // the camo meter: where do I show?
@@ -2193,7 +2428,10 @@ export function createGame(el, api) {
    *  rounds; derived from the day key alone, so both phones agree (maps.js dailyPlan). */
   function dailySetup(day) {
     const pl = dailyPlan(/^\d{4}-\d{2}-\d{2}$/.test(day || '') ? day : dayKey());
-    return { ...S.setup, mode: 'hs', map: pl.map, first: pl.first, mix: false, daily: pl.day, rules: sanitizeRules({ ...PRESETS.classic, size: pl.size, rounds: pl.rounds, ...pl.twist.rules }) };
+    // one phone can't play a head start / paint-while-hunted twist: the next one that works (twists.js dailyTwistFor);
+    // the day's own twist is the only twist of Today's hide (the round deck is off), so both boards stay comparable
+    const tw = dailyTwistFor(pl, local);
+    return { ...S.setup, mode: 'hs', map: pl.map, first: pl.first, mix: false, daily: pl.day, rules: sanitizeRules({ ...PRESETS.classic, size: pl.size, rounds: pl.rounds, ...tw.rules, twists: 'off' }) };
   }
   /** Host: validate, apply, remember and share a lobby change. */
   function commitSetup(next, k) {
@@ -2310,6 +2548,7 @@ export function createGame(el, api) {
       if (C.spect !== 'eyes' && (P.on || S.phase.name !== 'seek' || !hunting(t) || local)) C.spect = 'eyes';
       U.spect = C.spect;
       hostTick();
+      moodTick(t); // update pass: Fog rolls in / Dusk follow the hunt's clock
       if (R.tagWindow && S.phase.name !== 'seek') R.tagWindow = null;
       simulate(dt, t);
       network(t);
@@ -2797,7 +3036,7 @@ export function createGame(el, api) {
       const ps = stage.av[sk].root.position; const phd = stage.av[hd].root.position;
       const sz = stage.av[hd].st.size;
       const d = Math.hypot(ps.x - phd.x, ps.y - phd.y, ps.z - phd.z); // 3-D (a ceiling hider 2.2 m up is not a 0.1 m closest call)
-      R.nearD = d;
+      R.nearD = d; MO.huntTick(t, d); // H: how close was the seeker when the clock hit zero
       if (d < R.closest) R.closest = d;
       // a walk-past needs line of sight within 1.5 m (one collider ray, ≤ 7/s while that close)
       if (!R.near && d < 1.5 && tSec > R.losNext) {
@@ -2808,7 +3047,7 @@ export function createGame(el, api) {
       if (R.near && d > 2.0) R.near = false;
       // "in their sights": the seeker's view ray passes within 0.45 × size of the hider's body centre with a
       // clear line of sight (both phones know both positions; the cue plays only for the hunted hider)
-      if (rules().sights && mode() === 'hs' && tSec > R.stareAt + 1) {
+      if (mode() === 'hs' && tSec > R.stareAt + 1) { // R: counted whatever the cue setting (it feeds the Wide eyed look); only the cue needs `sights`
         const skB = controlsOf(sk) ? body[sk] : null;
         const yaw = skB ? (C.climbV && v === sk ? C.vYaw : skB.yaw + skB.lookYaw) : rem.yaw + rem.ly; const pit = skB ? skB.lookPitch : rem.lp;
         const cp = Math.cos(pit); const dx = Math.sin(yaw) * cp; const dy = Math.sin(pit); const dz = Math.cos(yaw) * cp;
@@ -2821,7 +3060,7 @@ export function createGame(el, api) {
             const L = Math.hypot(hx, hy, hz) || 1;
             if (!stage.world.raycast(ex, ey, ez, hx / L, hy / L, hz / L, Math.max(0, L - 0.2), null, true)) {
               R.stared++; R.stareAt = tSec;
-              if (v === hd && !local && U.spect === 'eyes' && !P.on) { root.classList.remove('sights'); void root.offsetWidth; root.classList.add('sights'); snd.play('warn'); }
+              if (rules().sights && v === hd && !local && U.spect === 'eyes' && !P.on) { root.classList.remove('sights'); void root.offsetWidth; root.classList.add('sights'); snd.play('warn'); }
             }
           }
         }
@@ -3134,7 +3373,7 @@ export function createGame(el, api) {
   }
   function applyFraming() {
     const cam = stage.camera;
-    let oy = 0;
+    let oy = 0; let ox = 0;
     if (C.frameCard) {
       if (tSec > C.cardCheck) {
         C.cardCheck = tSec + 0.4;
@@ -3143,13 +3382,17 @@ export function createGame(el, api) {
         const topUi = 96;
         const bottom = r && r.top > rr.top + 120 ? r.top - rr.top : rr.height;
         C.frameY = (topUi + bottom) / 2;
+        // R: a card docked at the right (landscape recap / final) leaves the left part of the screen for the body
+        C.frameX = r && r.left > rr.left + rr.width * 0.3 ? (r.left - rr.left) / 2 : SW / 2;
       }
       const H = SH;
       oy = Math.round(H / 2 - (C.frameY || H / 2));
+      ox = Math.round(SW / 2 - (C.frameX || SW / 2));
     }
     C.oy = C.oy == null ? oy : C.oy + (oy - C.oy) * 0.2;
-    if (Math.abs(C.oy) < 0.5) { if (cam.view && cam.view.enabled) cam.clearViewOffset(); }
-    else cam.setViewOffset(SW, SH, 0, C.oy, SW, SH);
+    C.ox = C.ox == null ? ox : C.ox + (ox - C.ox) * 0.2;
+    if (Math.abs(C.oy) < 0.5 && Math.abs(C.ox) < 0.5) { if (cam.view && cam.view.enabled) cam.clearViewOffset(); }
+    else cam.setViewOffset(SW, SH, C.ox, C.oy, SW, SH);
   }
   /** Centre of a body (what cameras look at): contact point + half a body along the normal. */
   function bodyCentre(w, out) {
@@ -3514,6 +3757,7 @@ export function createGame(el, api) {
     if (U.minion !== showParts.mini) { U.minion = showParts.mini; root.classList.toggle('minion', showParts.mini); }
     if (U.posesup !== showParts.poses) { U.posesup = showParts.poses; root.classList.toggle('posesup', showParts.poses); }
     hud.show(showParts);
+    MO.ui(ph, role, inGame); // H: Mercy / Note chips + the revealed note over the body in the recap
     if (list.length) hud.actions(list);
     if (showParts.top) {
       const untimed = ph === 'hide' && !S.phase.dur;
@@ -3528,6 +3772,7 @@ export function createGame(el, api) {
       if (hot && rem2 > 0) { const sN = Math.ceil(rem2 / 1000); if (sN !== U.tick) { U.tick = sN; snd.play('beep'); } }
       hud.scores(m.scores.a, m.scores.b);
       hud.pips(m.rounds, Math.max(0, S.phase.round - 1));
+      const roundTag = R.roundTag;
       let rtext = '';
       if (role === 'hider') rtext = local ? ROLE_L.hides[v] : ROLE_L.youHide;
       else if (role === 'seeker') rtext = local ? ROLE_L.seeks[v] : ROLE_L.youSeek;
@@ -3535,6 +3780,10 @@ export function createGame(el, api) {
       else if (m.mode === 'hs' && S.phase.round) rtext = ROLE_L.hides[hiderOf(S.phase.round)];
       // spectating: the role pill says which view you're in (highlighted)
       if (inGame && U.spect !== 'eyes' && v) rtext = U.spect === 'watch' ? (other(v) === 'a' ? BADGE.watch : BADGE.watchB) : BADGE.free;
+      else if (rtext && inGame && roundTag) { // the round's twist rides on the role pill (memoised: no string built per frame)
+        if (U.rtBase !== rtext || U.rtTag !== roundTag) { U.rtBase = rtext; U.rtTag = roundTag; U.rtOut = `${rtext} · ${roundTag}`; }
+        rtext = U.rtOut;
+      }
       hud.role(rtext, !!role);
     }
     if (showParts.gear && v) {
@@ -3544,7 +3793,7 @@ export function createGame(el, api) {
     if (showParts.poses && v) { hud.poseList(poseBar(v)); hud.poseOn(body[v].pose); }
     if (showParts.mini && v) { const b = body[v]; hud.miniDraw(b.x, b.z, C.climbV ? C.vYaw : b.yaw + b.lookYaw, v === 'a' ? theme.a : theme.b, b.y); }
     hud.tips(U.tips && inGame && ph === 'hide' && !P.on ? (U.tipsHtml || (U.tipsHtml = tipsHtml(mouse))) : null);
-    if (showParts.tools && v) { hud.tool(P.tool, P.size, P.hard, P.rgb); hud.undoEnabled(stage.paints[v].canUndo); hud.stampEnabled(rules().stamp); }
+    if (showParts.tools && v) { const lk = hud.tool(P.tool, P.size, P.hard, P.rgb); if (lk) P.rgb = lk; hud.undoEnabled(stage.paints[v].canUndo); hud.stampEnabled(rules().stamp); }
     if (showParts.legend) hud.legend(legendRows(ph, role, hunt, hiderHead, sp));
     // the hider's spectator views: a badge and a "you're here" marker over their own body
     if (inGame && sp !== 'eyes' && v) {
@@ -3617,7 +3866,38 @@ export function createGame(el, api) {
     live.recap = root.querySelector('.chm-ring');
     if (kind === 'lock' && S.match) hud.drops(paletteOf(hiderOf(S.phase.round) || 'a'));
   }
-  function buildLayer(kind, t, v, role) {
+  /** Update pass: the twist / underdog / sudden-death stickers and the three new rule rows ride on the cards cards.js builds. */
+  function buildLayer(kind, t, v, role) { return tweakLayer(kind, buildLayerBase(kind, t, v, role)); }
+  function roundBanner(round) {
+    const m = S.match; if (!m) return '';
+    let h = '';
+    if (sdRound(round)) h += suddenChip('Sudden death', m.mode === 'db' ? 'Level after three rounds. One more round decides it.' : `Level after ${m.rounds - m.sd} rounds. A quick pair decides it: ${SUDDEN.hide / 1000} s to hide, ${SUDDEN.seek / 1000} s to hunt.`);
+    const tw = twistOfRound(round); if (tw) h += twistChip(tw);
+    const ud = underdogFor(round); if (ud) h += noteChip('underdog', 'Underdog', `${api.name(ud)} is behind: ${underdogText(round)}`);
+    return h;
+  }
+  function tweakLayer(kind, html) {
+    const m = S.match;
+    try {
+      switch (kind) {
+        case 'lobby': return injectRows(html, twistRows(S.setup.rules, S.setup.mode === 'hs', isHost));
+        case 'title': { const p = S.pendingTitle; if (!p || !m) return html; const h = inject(html, roundBanner(p.round)); return sdRound(p.round) ? h.replace(/Round \d+ of \d+/, 'SUDDEN DEATH') : h; }
+        case 'curtain': case 'blind': return m ? inject(html, roundBanner(S.phase.round)) : html;
+        case 'recap': {
+          if (!m || m.mode !== 'hs') return html;
+          const nr = S.phase.round + 1; const tw = twistOfRound(nr);
+          const parts = []; if (sdRound(nr)) parts.push('<b class="chm-twisttag">SUDDEN DEATH</b>'); if (tw) parts.push(`<b class="chm-twisttag">Twist: ${esc(tw.label)}</b>`);
+          return tagNextLine(html, parts.join(' · '));
+        }
+        case 'final': {
+          const d = S.phase.data || {};
+          return m && d.sd ? inject(html, suddenChip('Sudden death', d.winner ? `${api.name(d.winner)} took it` : 'Still level after sudden death: a draw'), 'afterH2') : html;
+        }
+        default: return html;
+      }
+    } catch (e) { console.error('chameleon card', kind, e); return html; }
+  }
+  function buildLayerBase(kind, t, v, role) {
     const m = S.match;
     switch (kind) {
       case 'ctx': return ctxCard();
@@ -3629,10 +3909,10 @@ export function createGame(el, api) {
         let start = null;
         if (!local && hd === me && p.data && p.data.spawn && stage && stage.map) { const H = stage.map.spots.hiderSpawns; const sp = H[p.data.spawn.hs] || H[0]; if (sp) start = roomAt(stage.map, sp.x, sp.y || 0, sp.z); }
         if (!local && m && m.mode === 'db' && p.data && p.data.spawn && stage && stage.map) { const all = stage.map.spots.hiderSpawns.concat(stage.map.spots.seekerSpawns); const sp = all[me === 'a' ? p.data.spawn.da : p.data.spawn.db]; if (sp) start = roomAt(stage.map, sp.x, sp.y || 0, sp.z); }
-        return titleCard(api, { round: p.round, rounds: m ? m.rounds : 4, mode: m ? m.mode : 'hs', hider: hd, youHide: !local && hd === me, youSeek: !local && hd && hd !== me, map: m ? m.map : S.setup.map, start, mixed: !!(m && m.maps) });
+        return titleCard(api, { round: p.round, rounds: m ? m.rounds : 4, mode: m ? m.mode : 'hs', hider: hd, youHide: !local && hd === me, youSeek: !local && hd && hd !== me, map: m ? m.map : S.setup.map, start, mixed: !!(m && m.maps), intel: hd && (local || hd === me) ? tendencyLine(api, data(), other(hd)) : '' });
       }
       case 'count': { const d = S.phase.data || {}; return `<div class="chm-over solid"><div class="chm-card chm-sticker"><div class="chm-kicker">${esc(api.name(d.who))}, get ready</div><div class="chm-big" data-live="seek-count">3</div><p>Find them before the timer runs out.</p></div></div>`; }
-      case 'curtain': { const d = S.phase.data || {}; return curtainCard(api, { kind: d.kind, who: d.who, wager: mode() === 'hs' ? rules().wager : 0, call: d.who ? R.call[d.who] : null, climbs: curMapEntry().climbs || 1 }); }
+      case 'curtain': { const d = S.phase.data || {}; return curtainCard(api, { kind: d.kind, who: d.who, wager: mode() === 'hs' ? rules().wager : 0, call: d.who ? R.call[d.who] : null, climbs: curMapEntry().climbs || 1, intel: d.kind === 'hide' && d.who ? tendencyLine(api, data(), other(d.who)) : '' }); }
       case 'lock': return blindLock();
       case 'blind': return blindCard(api, { hider: hiderOf(S.phase.round), ms: S.phase.dur ? Math.max(0, S.phase.end - t) : Math.max(0, t - S.phase.at), pellets: R.maxPellets, mode: mode(), scanCd: rules().scanCd, scans: rules().scans, untimed: !S.phase.dur, climb: seekerClimbs(), wager: mode() === 'hs' ? rules().wager : 0, call: v ? R.call[v] : null, climbs: curMapEntry().climbs || 1, ticker: R.ticker });
       case 'head': return headCard(api, { hider: hiderOf(S.phase.round), ms: Math.max(0, huntAt() - t) });
@@ -3652,15 +3932,17 @@ export function createGame(el, api) {
         const isLast = S.phase.round >= m.rounds || (m.mode === 'db' && (m.scores.a >= 2 || m.scores.b >= 2));
         const rx = R.rec.rx || {};
         const lines = recapLines(api, data(), R.rec, { mode: m.mode, passes: R.passes, under: R.under, stared: R.stared, called: !!R.rec.called, calledWhat: R.rec.called ? (CALLS.find((c) => c[0] === R.rec.call) || [])[1] : '' }, rx.records || []);
-        const nextId = m.maps && m.maps.length ? m.maps[S.phase.round % m.maps.length] : m.map;
+        lines.unshift(...momentLines(api, R.rec)); // H: whiskers + mercy for this round
+        const nextId = m.maps && m.maps.length ? mapIdFor(S.phase.round + 1) : m.map;
         const next = !isLast && m.mode === 'hs' ? { hider: hiderOfRound(S.phase.round + 1), map: (MAPS.find((x) => x.id === nextId) || curMapEntry()).name, mixed: !!(m.maps && nextId !== m.map) } : null;
-        return recapCard(api, { rec: R.rec, mode: m.mode, scores: m.scores, round: S.phase.round, rounds: m.rounds, isLast, canNext: true, stats: st, lines, next, autoMs: Math.max(0, S.phase.end - t) });
+        return recapCard(api, { rec: R.rec, mode: m.mode, scores: m.scores, round: S.phase.round, rounds: m.rounds, isLast, canNext: true, stats: st, lines, next, autoMs: Math.max(0, S.phase.end - t), h2h: m.mode === 'hs' && rx.h2h ? headToHead(api, data(), rx.h2h) : '' });
       }
       case 'final': {
         const d = S.phase.data || {};
-        const story = matchStory(api, m.hist || [], curMapEntry().name);
+        const story = matchStory(api, m.hist || [], curMapEntry().name, m.mode);
+        story.lines.push(...noteLines(api, m.hist)); // H: the notes people left on their skins
         const vote = m.mode === 'hs' ? { rounds: (m.hist || []).filter((h) => h && h.hider), votes: S.vote, crowned: S.crowned, local } : null;
-        return finalCard(api, { winner: d.winner, a: d.a, b: d.b, mode: m.mode, story, records: S.matchRecords, unlocks: S.matchUnlocks, firstNext: m.mode === 'hs' ? nextFirst || other(m.first) : null, vote });
+        return finalCard(api, { winner: d.winner, a: d.a, b: d.b, mode: m.mode, story, records: S.matchRecords, unlocks: S.matchUnlocks, firstNext: m.mode === 'hs' ? nextFirst || other(m.first) : null, vote, cup: d.cup || null });
       }
       case 'locking': return '<div class="chm-stamp ink">Locked in<small>Sealing your paint… <b data-live="seek-count"></b></small></div>';
       default: return '';
@@ -3968,6 +4250,11 @@ export function createGame(el, api) {
       listenerCount() { return L.count + (controls ? controls.listenerCount : 0); },
       action,
       setPaint(o) { Object.assign(P, o); },
+      /** Paint panel (P): the palette lock (Three colours twist), recent colours, fill pattern, as the HUD sees them. */
+      /** Colour histogram of w's skin over the mapped texels: [{ hex, n }] biggest first (tests: pattern fills, palette lock). */
+      paintColors(w) { const p = stage.paints[w || viewer()]; p.settle(); const m = new Map(); for (let k = 0; k < p.list.length; k++) { const o = p.list[k] * 4; const key = (p.data[o] << 16) | (p.data[o + 1] << 8) | p.data[o + 2]; m.set(key, (m.get(key) || 0) + 1); } return [...m].map(([key, n]) => ({ hex: '#' + key.toString(16).padStart(6, '0'), n })).sort((a, b) => b.n - a.n); },
+      setPaletteLock(list) { return hud.setPaletteLock(list); },
+      paintUi() { return { lock: hud.paletteLock, recent: hud.recentColors, pattern: hud.pattern, rgb: P.rgb.slice(), tool: P.tool, fillLabel: hud.el.tools.querySelector('.chm-fl').textContent, meterStale: !!(CAMO.meter && CAMO.meter.isStale) }; },
       stampNow() { doStamp(); },
       lockPaintNow(w) { lockPaint(w); return stage.paints[w].hash(); },
       /** Paint perf probe: texels tested by dabs so far, the last blob, the codec timings of one lock. */
@@ -3997,12 +4284,31 @@ export function createGame(el, api) {
       timing() { return { hide: hideMs(), seek: seekMs(), head: headStartMs(), countdown: countdownMs(), grace: graceMs(), scale: mapTime(), hideScale: mapHideTime() }; },
       // polish: records / wardrobe / wager / ticker / emotes
       data() { return { ...data() }; },
+      seedData(patch) { setData(patch); return { ...data() }; }, // R: tests seed the shared doc (records, the Cup)
+      trimDrawn() { return { a: stage.av.a.trimDrawn, b: stage.av.b.trimDrawn, wear: { a: stage.av.a.wear.trim, b: stage.av.b.wear.trim } }; },
       /** Final card stickers on demand (the worst case is a first match: four unlocks + records). */
       finalExtras(recs = [], unls = []) { S.matchRecords.push(...recs); S.matchUnlocks.push(...unls); S.voteVer++; },
+      moments() { return { ...MO.debug(), freezeLeft: Math.max(0, C.freezeUntil - tSec) }; },
       polish() { return { stared: R.stared, call: { ...R.call }, ticker: R.ticker, strokes: { ...R.strokes }, passes: R.passes, under: R.under, closest: R.closest, nearD: R.nearD, music, wear: { a: { ...stage.av.a.wear }, b: { ...stage.av.b.wear } }, picks: wearPicks, records: S.matchRecords.slice(), unlocks: S.matchUnlocks.slice(), finished: S.finished }; },
       setCall(k) { setCall(k); return { ...R.call }; },
       emote(k) { sendEmote(k, null); },
       finish() { finishMatch(); },
+      /** Update pass: this round's twist, its numbers and the match's twist deck / sudden-death / streak state. */
+      twistInfo() {
+        const m = S.match;
+        return {
+          twist: R.twist, palette: R.palette, bounty: R.bounty, ud: R.ud, roundTag: R.roundTag, palLocked: R.palLocked, lockOn: hud.lockOn,
+          twists: m ? m.twists : null, sd: m ? m.sd | 0 : 0, rounds: m ? m.rounds : 0, cs: m && m.cs ? { ...m.cs } : null, mud: m && m.ud ? { ...m.ud } : null,
+          maxPellets: R.maxPellets, pellets: { ...R.pellets }, escapes: { ...R.escapes }, hideMs: hideMs(), seekMs: seekMs(),
+          mood: stage ? { log: MOOD.log.slice(), on: MOOD.on, step: MOOD.step, id: MOOD.id, stage: stage.moodOn, fogNear: stage.scene.fog.near, fogFar: stage.scene.fog.far, camFar: stage.camera.far, hemi: stage.hemi.intensity, sun: stage.sun.intensity, bg: stage.scene.background.getHexString(), fogColor: stage.scene.fog.color.getHexString(), baseHemi: stage.baseHemi, baseSun: stage.baseSun, glint: stage.fx.glints[0].material.color.getHexString(), bounty: stage.fx.bountyOn } : null,
+          calls: stage ? stage.renderer.info.render.calls : 0, tris: stage ? stage.renderer.info.render.triangles : 0,
+        };
+      },
+      /** Tests (host): set the match scores now (the next phase message carries them to the partner). */
+      forceScores(a, b) { if (S.match) { S.match.scores.a = a; S.match.scores.b = b; } return S.match ? { ...S.match.scores } : null; },
+      /** Tests: pin a round's twist / the deck on this device (the host's deck travels with the next phase message). */
+      forceStreak(w, n) { if (S.match) { if (!S.match.cs) S.match.cs = { a: 0, b: 0 }; S.match.cs[w] = n | 0; } return S.match ? { ...S.match.cs } : null; },
+      forceTwists(arr) { if (S.match) S.match.twists = arr; return S.match ? S.match.twists : null; },
       dur: DUR,
     };
     window.__cham = hook;
@@ -4028,6 +4334,7 @@ export function createGame(el, api) {
       hud.destroy();
       link.destroy();
       snd.destroy();
+      MO.destroy();
       if (stage) {
         const gone = () => { if (testing) window.__chamGL = (window.__chamGL || 1) - 1; };
         // a rematch remounts at once: park the stage for the new mount (stage.js), else dispose

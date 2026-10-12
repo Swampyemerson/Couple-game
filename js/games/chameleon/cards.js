@@ -1,7 +1,7 @@
 // Overlay cards for Blend & Seek: pure HTML builders (state in, markup out).
 import { esc, fmtTime } from './util.js';
 import { MAPS, mapPool, dailyPlan, dayKey } from './maps.js';
-import { SIZES, OPTIONS, PRESET_LABEL, PRESET_SUB, fmtRule, timeScale, hideScale, effSeconds } from './rules.js';
+import { SIZES, OPTIONS, PRESET_LABEL, PRESET_SUB, fmtRule, timeScale, hideScale, effSeconds, LOCAL_DEAD } from './rules.js';
 
 const nameSpan = (api, w) => `<b class="chm-name-${w}">${esc(api.name(w))}</b>`;
 
@@ -164,10 +164,16 @@ function timeRow(label, hint, rules, k, canEdit, off = false) {
   return `<div class="chm-set chm-set-time${off ? ' off' : ''}"><span><b>${label}</b>${hint ? `<small>${hint}</small>` : ''}</span>${stepper(rules, k, ed)}<input type="range" class="chm-range" data-range="${k}" min="0" max="${opts.length - 1}" step="1" value="${i}" aria-label="${label}" ${ed ? '' : 'disabled'}></div>`;
 }
 const row = (label, hint, control) => `<div class="chm-set"><span><b>${label}</b>${hint ? `<small>${hint}</small>` : ''}</span>${control}</div>`;
+/** A rule row that may do nothing on one phone (LOCAL_DEAD): greyed out and disabled with the reason, not offered as if it worked. */
+const rowK = (local, k, label, hint, control) => (local && LOCAL_DEAD.includes(k)
+  ? `<div class="chm-set dead" data-dead="${k}"><span><b>${label}</b><small>Two phones only: ${DEAD_WHY[k] || 'nothing happens on one phone'}</small></span>${control}</div>`
+  : row(label, hint, control));
+const DEAD_WHY = { escapes: 'a hotseat hider hands the phone over', huntPaint: 'the hider isn’t holding the phone', heartbeat: 'it plays on the hunted hider’s own screen', sights: 'it plays on the hunted hider’s own screen', headStart: 'it would only be a wait' };
 
 /** The full settings sheet: host edits, the guest watches it change live. */
 export function settingsSheet(api, { canEdit, local, setup, waitingFor, music = 'on' }) {
   const r = setup.rules; const hs = setup.mode === 'hs';
+  const ed = (k) => canEdit && !(local && LOCAL_DEAD.includes(k)); // rules that do nothing on one phone are shown but locked
   const musicSeg = `<div class="chm-seg2" role="radiogroup">${[['on', 'On'], ['hunt', 'Hunt only'], ['off', 'Off']].map(([v, label]) => `<button class="${music === v ? 'on' : ''}" data-music="${v}" role="radio" aria-checked="${music === v}">${label}</button>`).join('')}</div>`;
   return `<div class="chm-sheetwrap" role="dialog" aria-label="Game settings"><div class="chm-sheet chm-sticker" data-scroll>
     <div class="chm-sheethead"><h2>Game settings</h2><button class="chm-done" data-act="settings">Done</button></div>
@@ -183,7 +189,7 @@ export function settingsSheet(api, { canEdit, local, setup, waitingFor, music = 
     ${row('Paint pellets', hs ? 'Per hunt' : 'Each (one fewer in Double Blind)', stepper(r, 'pellets', canEdit))}
     ${row('Chirp scans', 'Per hunt', stepper(r, 'scans', canEdit))}
     ${row('Scan cooldown', '', stepper(r, 'scanCd', canEdit))}
-    ${row('Escapes', 'Scurries or tongue-zips while hunted', stepper(r, 'escapes', canEdit))}
+    ${rowK(local, 'escapes', 'Escapes', 'Scurries or tongue-zips while hunted', stepper(r, 'escapes', ed('escapes')))}
     ${row('Seeker speed', '', seg(r, 'seekSpeed', [['slow', 'Slow'], ['normal', 'Normal'], ['fast', 'Fast']], canEdit))}
     ${hs ? row('Seeker scores', r.seekScore === 'off' ? 'Only the hider scores (1 pt per second hidden)' : r.seekScore === 'time' ? '½ pt per second left on the clock when they tag' : '½ pt per second left, +10 per unused pellet', seg(r, 'seekScore', [['off', 'Off'], ['time', 'Time left'], ['full', 'Time + pellets']], canEdit)) : ''}
     ${hs ? row('Seeker wager', r.wager ? `Blindfolded, the seeker calls floor, furniture, wall or ceiling: +${r.wager} if right` : 'No call during the hide', seg(r, 'wager', [[0, 'Off'], [5, '+5'], [10, '+10']], canEdit)) : ''}
@@ -193,7 +199,7 @@ export function settingsSheet(api, { canEdit, local, setup, waitingFor, music = 
     ${row('Hide ends', r.hideEnd === 'ready' ? 'No clock: the hunt starts when the hider taps Ready' : 'When the clock runs out, or early on Ready', seg(r, 'hideEnd', [['timer', 'Timer'], ['ready', 'On Ready']], canEdit))}
     ${timeRow('Hide time', r.hideEnd === 'ready' ? 'No limit while “On Ready”' : effHint(setup, 'hide'), r, 'hide', canEdit, r.hideEnd === 'ready')}
     ${row('Countdown', 'Before the hunt starts', seg(r, 'countdown', [[0, 'Off'], [3, '3 s'], [5, '5 s'], [10, '10 s']], canEdit))}
-    ${hs ? row('Head start', effHint(setup, 'headStart') || 'Seeker stays blindfolded, the hider can still move', stepper(r, 'headStart', canEdit)) : ''}
+    ${hs ? rowK(local, 'headStart', 'Head start', effHint(setup, 'headStart') || 'Seeker stays blindfolded, the hider can still move', stepper(r, 'headStart', ed('headStart'))) : ''}
     ${row('Grace period', 'The seeker can’t fire for the first seconds', stepper(r, 'grace', canEdit))}
     ${timeRow('Seek time', effHint(setup, 'seek'), r, 'seek', canEdit)}
     </div>
@@ -204,10 +210,13 @@ export function settingsSheet(api, { canEdit, local, setup, waitingFor, music = 
     ${hs && r.climb && r.seekClimb ? row('Seeker climb speed', 'On walls and ceilings', seg(r, 'climbSpeed', [['slow', 'Slow'], ['normal', 'Normal'], ['fast', 'Fast']], canEdit)) : ''}
     ${row('Stamp tool', 'Copy the surface onto your skin', seg(r, 'stamp', [[true, 'Allowed'], [false, 'Off']], canEdit))}
     ${hs ? row('Blend bonus', 'Your paint job is scored against the surface behind you at the lock', seg(r, 'blendBonus', [[0, 'Off'], [10, '+10 at 80 %'], [20, '+20 at 90 %']], canEdit)) : ''}
-    ${hs ? row('Paint while hunted', r.huntPaint === 'tell' ? 'Fresh paint glints for a seeker close by' : r.huntPaint === 'on' ? 'Repaint any time, silently' : 'Paint locks when the hunt starts', seg(r, 'huntPaint', [['off', 'Off'], ['on', 'On'], ['tell', 'Shows']], canEdit)) : ''}
+    ${hs ? rowK(local, 'huntPaint', 'Paint while hunted', r.huntPaint === 'tell' ? 'Fresh paint glints for a seeker close by' : r.huntPaint === 'on' ? 'Repaint any time, silently' : 'Paint locks when the hunt starts', seg(r, 'huntPaint', [['off', 'Off'], ['on', 'On'], ['tell', 'Shows']], ed('huntPaint'))) : ''}
     ${row('Eye-blink glints', 'Blinks sparkle for the seeker', seg(r, 'blink', [['off', 'Off'], ['on', 'On'], ['strong', 'Strong']], canEdit))}
-    ${row('Heartbeat hint', 'Hider feels the seeker close by', seg(r, 'heartbeat', [[true, 'On'], [false, 'Off']], canEdit))}
-    ${row('In-their-sights cue', 'Hider feels the seeker staring right at them', seg(r, 'sights', [[true, 'On'], [false, 'Off']], canEdit))}
+    ${rowK(local, 'heartbeat', 'Heartbeat hint', 'Hider feels the seeker close by', seg(r, 'heartbeat', [[true, 'On'], [false, 'Off']], ed('heartbeat')))}
+    ${rowK(local, 'sights', 'In-their-sights cue', 'Hider feels the seeker staring right at them', seg(r, 'sights', [[true, 'On'], [false, 'Off']], ed('sights')))}
+    ${r.twists !== undefined ? row('Round twists', r.twists === 'off' ? 'Every round plays the same' : r.twists === 'every' ? 'A surprise on every round' : 'A surprise on about half the rounds, never the first', seg(r, 'twists', [['off', 'Off'], ['some', 'Some'], ['every', 'Every']], canEdit)) : ''}
+    ${hs && r.underdog !== undefined ? row('Underdog boost', 'The player 25+ points behind gets one extra pellet or escape', seg(r, 'underdog', [[true, 'On'], [false, 'Off']], canEdit)) : ''}
+    ${r.sudden !== undefined ? row('Sudden death', hs ? 'A tied match plays one more quick hide each' : 'A tied match plays one more round', seg(r, 'sudden', [[true, 'On'], [false, 'Off']], canEdit)) : ''}
     ${row('Music', 'This phone only: a soft pad while hiding, a pulse that quickens in the hunt', musicSeg)}
     ${row('Seeker minimap', 'On the bigger maps', seg(r, 'minimap', [[true, 'On'], [false, 'Off']], canEdit))}
     ${hs ? row('Hides first', '', `<div class="chm-chips">${['a', 'b'].map((w) => `<button class="chm-chip p${w} ${setup.first === w ? 'on' : ''}" data-lobby="first" data-v="${w}" ${canEdit ? '' : 'disabled'}><i></i>${esc(api.name(w))}</button>`).join('')}</div>`) : ''}
@@ -242,7 +251,7 @@ export const SURF_HEAD = {
 };
 export const SURF_SHORT = { ceiling: 'on the ceiling', under: 'upside down', hang: 'hanging', hangHigh: 'hanging from the ceiling', wall: 'up the wall', flat: 'on the wall', perch: 'perched', squeeze: 'squeezed in a gap', corner: 'in the corner' };
 
-export function titleCard(api, { round, rounds, mode, hider, youHide, youSeek, map, start = null, mixed = false }) {
+export function titleCard(api, { round, rounds, mode, hider, youHide, youSeek, map, start = null, mixed = false, intel = '', twist = null }) {
   const m = MAPS.find((x) => x.id === map);
   const line = mode === 'db'
     ? 'Both of you hide. Then hunt each other — slowly.'
@@ -254,6 +263,8 @@ export function titleCard(api, { round, rounds, mode, hider, youHide, youSeek, m
     <p>${line}</p>
     ${you ? `<p>${you}</p>` : ''}
     ${start ? `<p class="chm-start">You start in the <b>${esc(start)}</b></p>` : ''}
+    ${twist ? `<p class="chm-twistline" data-twist="${esc(twist.id || '')}"><b>${esc(twist.label)}</b>${twist.sub ? ` ${esc(twist.sub)}` : ''}</p>` : ''}
+    ${intel ? `<p class="chm-intel" data-intel="1">${intel}</p>` : ''}
   </div></div>`;
 }
 
@@ -264,12 +275,13 @@ export function callChips({ wager, call, climbs = 1, locked = false }) {
   const list = CALLS.filter(([k]) => k !== 'hang' || climbs >= 2);
   return `<div class="chm-call"><h3>Call the hide · +${wager}</h3><div class="chm-chips">${list.map(([k, label]) => `<button class="chm-chip ${call === k ? 'on' : ''}" data-call="${k}" ${locked ? 'disabled' : ''}>${label}</button>`).join('')}</div></div>`;
 }
-export function blindCard(api, { hider, ms, pellets, mode, scanCd = 30, scans = 0, untimed = false, climb = false, wager = 0, call = null, climbs = 1, ticker = '' }) {
+export function blindCard(api, { hider, ms, pellets, mode, scanCd = 30, scans = 0, untimed = false, climb = false, wager = 0, call = null, climbs = 1, ticker = '', twist = null }) {
   return `<div class="chm-over chm-blind solid"><div class="chm-card chm-sticker">
     <div class="chm-kicker">Eyes shut</div>
     <div class="chm-big" data-live="blind-time">${fmtTime(ms)}</div>
     <div class="chm-drops" aria-hidden="true"><i></i><i></i><i></i></div>
     <p class="chm-ticker" data-live="ticker">${ticker || `${esc(api.name(hider))} is looking for a spot…`}</p>
+    ${twist ? `<p class="chm-twistline" data-twist="${esc(twist.id || '')}"><b>${esc(twist.label)}</b>${twist.sub ? ` ${esc(twist.sub)}` : ''}</p>` : ''}
     ${callChips({ wager, call, climbs })}
     <p>${nameSpan(api, hider)} is painting themselves to match the room.${untimed ? ' No clock this time: the hunt starts when they tap <b>Ready</b>.' : ''}</p>
     <p>You get <b>${pellets} paint pellets</b> and ${scans ? `<b>${scans} chirp scan${scans === 1 ? '' : 's'}</b>` : 'a <b>chirp scan</b>'} (every ${scanCd} s) that makes their eyes glint — even on the ceiling. Look up!${climb ? ' You can climb too: <b>Stick</b> to walls, crawl onto ceilings, <b>Zip</b> up.' : ''}${mode === 'hs' ? ' Every second they survive scores for them.' : ''}</p>
@@ -286,7 +298,7 @@ export function headCard(api, { hider, ms }) {
   </div></div>`;
 }
 
-export function curtainCard(api, { kind, who, wager = 0, call = null, climbs = 1 }) {
+export function curtainCard(api, { kind, who, wager = 0, call = null, climbs = 1, intel = '' }) {
   const other = api.other(who);
   const kicker = kind === 'hide' ? `${esc(api.name(other))}, look away` : 'Hider, hand it over';
   const body = kind === 'hide'
@@ -297,18 +309,31 @@ export function curtainCard(api, { kind, who, wager = 0, call = null, climbs = 1
     <div class="chm-kicker">${kicker}</div>
     <h2 class="chm-name-${who}">${esc(api.name(who))}</h2>
     <p>${body}</p>
+    ${kind === 'hide' && intel ? `<p class="chm-intel" data-intel="1">${intel}</p>` : ''}
     ${kind === 'seek' ? callChips({ wager, call, climbs }) : ''}
     <button class="chm-go" data-act="curtain">${btn}</button>
   </div></div>`;
 }
 
-export const EMOTES = [['lol', '😂', 'LOL'], ['how', '😤', 'HOW'], ['sneaky', '👀', 'Sneaky'], ['love', '❤️', ''], ['again', '🔁', 'Again!'], ['paint', '🎨', 'Nice!']];
+// Reaction stickers: riso SVGs (ink outline, token fills) instead of colour emoji. The ids and their
+// meanings are unchanged (an older phone sends/receives the same `emote` message ids), only the art is new.
+const ES = (body) => `<svg class="chm-es" viewBox="0 0 32 32" aria-hidden="true">${body}</svg>`;
+export const EMOTES = [
+  ['lol', ES('<circle class="f1" cx="16" cy="16" r="12.5"/><path class="k" d="M9.5 12.5l3.6 2.4-3.6 2.4M22.5 12.5l-3.6 2.4 3.6 2.4"/><path class="k f4" d="M9.5 19.5q6.5 9 13 0z"/>'), 'LOL'],
+  ['how', ES('<circle class="f2" cx="16" cy="17" r="12"/><path class="k" d="M8.5 11.5l5.5 2.6M23.5 11.5l-5.5 2.6"/><circle class="ik" cx="12" cy="17" r="1.7"/><circle class="ik" cx="20" cy="17" r="1.7"/><path class="k" d="M12 23.5h8"/><path class="k" d="M5 8q-1.5-3 1-5M27 8q1.5-3-1-5"/>'), 'HOW'],
+  ['sneaky', ES('<ellipse class="f4 k" cx="10" cy="16" rx="6.5" ry="8"/><ellipse class="f4 k" cx="22" cy="16" rx="6.5" ry="8"/><circle class="ik" cx="12.8" cy="17" r="3"/><circle class="ik" cx="24.8" cy="17" r="3"/><path class="k" d="M3.5 6.5l9 2M28.5 6.5l-9 2"/>'), 'Sneaky'],
+  ['love', ES('<path class="f2 k" d="M16 27.5C3.5 18.5 4.5 7.5 10.8 7.5c3.2 0 5.2 2.6 5.2 4 0-1.4 2-4 5.2-4 6.3 0 7.3 11-5.2 20z"/><path class="k" d="M9 12.5q1-2 3-1.8"/>'), ''],
+  ['again', ES('<path class="k" d="M25 12.5A10 10 0 1 0 26 20"/><path class="k f3" d="M26.5 4.5v9h-9z"/>'), 'Again!'],
+  ['paint', ES('<path class="f4 k" d="M16 4C8 4 3 9.5 3 16c0 7.5 6 12 11 12 3.5 0 3.5-3 2.2-5-1-1.8.8-3.8 3.8-3.8H24c3.3 0 5-1.8 5-4.2C29 9 23.5 4 16 4z"/><circle class="f2 k" cx="10" cy="13.5" r="2.4"/><circle class="f1 k" cx="16.5" cy="9.5" r="2.4"/><circle class="f3 k" cx="22.5" cy="13" r="2.4"/>'), 'Nice!'],
+];
 export function emoteRow() {
   return `<div class="chm-emotes" role="group" aria-label="React">${EMOTES.map(([k, e, l]) => `<button class="chm-emote" data-emote="${k}" aria-label="${esc(l || k)}"><span>${e}</span>${l ? `<em>${esc(l)}</em>` : ''}</button>`).join('')}</div>`;
 }
 /** Grade word for a blend score (camo %). */
+/** The trophy (ink outline, token fills). */
+export const CUP_SVG = '<svg class="chm-cupsvg" viewBox="0 0 24 24" aria-hidden="true"><path class="f1 k" d="M7 3h10v6.2a5 5 0 01-10 0z"/><path class="k" d="M7 5H4v1.8A3.2 3.2 0 007.2 10M17 5h3v1.8A3.2 3.2 0 0116.8 10"/><path class="k" d="M12 14.2V18M8.5 21h7M9.5 18h5"/></svg>';
 export const blendWord = (b) => (b >= 90 ? 'Ghost' : b >= 75 ? 'Sneaky' : b >= 50 ? 'Spotted' : 'Sore thumb');
-export function recapCard(api, { rec, mode, scores, round, rounds, isLast, canNext, stats, lines = [], next = null, autoMs = 0, emotes = true }) {
+export function recapCard(api, { rec, mode, scores, round, rounds, isLast, canNext, stats, lines = [], next = null, autoMs = 0, emotes = true, h2h = '' }) {
   const hider = rec.hider;
   let head; let sub;
   if (mode === 'db') {
@@ -328,9 +353,10 @@ export function recapCard(api, { rec, mode, scores, round, rounds, isLast, canNe
     </div>
     ${lines.length ? `<p class="chm-lines">${lines.map((l) => `<span>${l}</span>`).join('')}</p>` : ''}
     <div class="chm-tally"><span><i style="background:var(--p-a)"></i>${esc(api.name('a'))} ${scores.a}</span><span><i style="background:var(--p-b)"></i>${esc(api.name('b'))} ${scores.b}</span></div>
+    ${h2h || ''}
     ${emotes ? emoteRow() : ''}
     <div class="chm-foot">
-    ${next ? `<p class="chm-nextline">Next: ${nameSpan(api, next.hider)} hides · ${nameSpan(api, api.other(next.hider))} seeks · ${next.mixed ? `<b class="chm-newmap">new map: ${esc(next.map)}</b>` : esc(next.map)}</p>` : ''}
+    ${next ? `<p class="chm-nextline">Next: ${nameSpan(api, next.hider)} hides · ${nameSpan(api, api.other(next.hider))} seeks · ${next.mixed ? `<b class="chm-newmap">new map: ${esc(next.map)}</b>` : esc(next.map)}${next.twist ? ` · <b class="chm-nexttwist">${esc(next.twist.label)}</b>` : ''}</p>` : ''}
     ${canNext ? `<button class="chm-go me chm-ring" data-act="next" style="--k:1">${isLast ? 'See who won' : 'Next round'}<small data-live="recap-time">${autoMs ? Math.ceil(autoMs / 1000) : ''}</small></button>` : '<p class="chm-wait">Next round starts in a moment…</p>'}
     </div>
   </div></div>`;
@@ -389,16 +415,21 @@ export function finalStickers(api, records = [], unlocks = [], max = 2) {
   const n = rest.reduce((t, x) => t + (x.un || 1), 0);
   return all.slice(0, max).map(tag).concat(`<span class="more" title="${esc(label)}" aria-label="${esc(label)}">+${n} ${rest.every((x) => x.un) ? 'unlocked' : 'more'}</span>`);
 }
-export function finalCard(api, { winner, a, b, mode, story, records = [], unlocks = [], firstNext = null, vote = null }) {
-  const head = mode === 'db' ? (winner ? `${esc(api.name(winner))} wins ${a}–${b}` : 'Perfectly matched') : winner ? `${esc(api.name(winner))} blends best` : 'Perfectly matched';
+export function finalCard(api, { winner, a, b, mode, story, records = [], unlocks = [], firstNext = null, vote = null, cup = null, extra = '' }) {
+  const hi = Math.max(a, b); const lo = Math.min(a, b);
+  const head = winner ? `${esc(api.name(winner))} wins ${hi}–${lo}` : mode === 'db' ? 'Perfectly matched' : `All square ${a}–${b}`;
   const sub = mode === 'db' ? 'Rounds won' : `${esc(api.name('a'))} ${a} · ${b} ${esc(api.name('b'))}`;
   const recs = finalStickers(api, records, unlocks);
+  // the Cup: only a match with a winner moves it (draws and abandoned matches change nothing)
+  const cupBan = cup && winner ? `<div class="chm-cupban ${cup.kind}" data-cup="${cup.kind}" role="status">${CUP_SVG}<span><b>${cup.kind === 'take' ? 'TAKES THE CUP' : `DEFENDS THE CUP (${cup.n})`}</b><small>${esc(api.name(winner))}${cup.kind === 'take' && cup.from ? ` from ${esc(api.name(cup.from))}` : ''}</small></span></div>` : '';
   return `<div class="chm-over chm-final bottom"><div class="chm-card chm-sticker" data-scroll>
     <div class="chm-kicker">Final</div>
     <h2 class="${winner ? `chm-name-${winner}` : ''}">${head}</h2>
     <p>${sub}</p>
+    ${cupBan}
     ${story.bars ? `<div class="chm-tl">${story.bars}</div>` : ''}
     ${story.lines.length ? `<div class="chm-story">${story.lines.join('')}</div>` : ''}
+    ${extra || ''}
     ${recs.length ? `<div class="chm-recs">${recs.join('')}</div>` : ''}
     ${vote ? voteRow(api, vote) : ''}
     ${emoteRow()}
@@ -408,3 +439,88 @@ export function finalCard(api, { winner, a, b, mode, story, records = [], unlock
     </div>
   </div></div>`;
 }
+
+// ── styles for the cards in this file (appended after hud.js's CSS by chameleon.js, so they win ties) ──
+export const CARDS_CSS = `
+/* R: records, rivalry and cards. Riso tokens only; text separators are gaps, never dots. */
+.chm-step button { width: 44px; min-width: 44px; height: 44px; }
+.chm-step output { line-height: 44px; }
+.chm-set.dead { opacity: .5; }
+.chm-set.dead .chm-step, .chm-set.dead .chm-seg2 { pointer-events: none; }
+.chm-set.dead b::after { content: 'two phones'; margin-left: 6px; padding: 1px 6px; border: 1.5px solid var(--g-line); border-radius: 999px; font-size: .56rem; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; color: var(--g-muted); vertical-align: 2px; }
+/* bests strip + daily line: a wrapping row, the gap is the separator */
+.chm-bests { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 2px 14px; }
+.chm-bests i { display: none; }
+.chm-daily-k { text-transform: uppercase; letter-spacing: .08em; color: var(--g-ink); }
+/* the lobby's rivalry block: the Cup, the head-to-head, the portraits */
+.chm-rivalry { display: flex; flex-direction: column; gap: 6px; padding: 7px 9px; border: 2px solid var(--g-ink); border-radius: 12px; background: var(--g-card); box-shadow: 3px 3px 0 var(--g-edge); text-align: left; }
+.chm-cup { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.chm-cup > span { display: flex; flex-direction: column; min-width: 0; }
+.chm-cup b { font-size: .8rem; font-weight: 900; text-transform: uppercase; letter-spacing: .08em; }
+.chm-cup small { font-size: .74rem; font-weight: 800; color: var(--g-muted); line-height: 1.2; }
+.chm-cup small .chm-name-a, .chm-cup small .chm-name-b { color: inherit; }
+.chm-cupsvg { width: 30px; height: 30px; flex: none; fill: none; stroke: var(--g-ink); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.chm-cupsvg .f1 { fill: var(--g-hl); }
+.chm-h2h { display: flex; flex-direction: column; gap: 1px; font-size: .72rem; font-weight: 800; color: var(--g-muted); line-height: 1.3; }
+.chm-h2h p { display: flex; flex-wrap: wrap; gap: 0 12px; margin: 0; color: inherit; font-weight: inherit; }
+.chm-h2h b { color: var(--g-ink); }
+.chm-gallery { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.chm-port { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 6px 3px; border: 2px solid var(--g-ink); border-radius: 10px; background: var(--g-bg); font-size: .62rem; font-weight: 900; color: var(--g-ink); }
+.chm-port.pa { box-shadow: 2px 2px 0 var(--p-a); } .chm-port.pb { box-shadow: 2px 2px 0 var(--p-b); }
+.chm-port img { width: 72px; height: auto; display: block; image-rendering: auto; }
+.chm-port figcaption { white-space: nowrap; line-height: 1.1; } .chm-port figcaption em { font-style: normal; color: var(--g-muted); }
+.chm-port-big { align-self: center; } .chm-port-big img { width: 120px; }
+.chm-port-ph { display: block; width: 72px; height: 43px; border-radius: 8px; background-image: var(--g-halftone); background-size: 5px 5px; }
+.chm-recap .chm-h2h { align-items: center; text-align: center; }
+/* the final card: Cup banner, story lines */
+.chm-cupban { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 6px 12px; border: 2.5px solid var(--g-ink); border-radius: 12px; background: var(--g-hl); color: var(--g-on-ink); box-shadow: 3px 3px 0 var(--g-edge); transform: rotate(-1.5deg); align-self: center; }
+.chm-cupban > span { display: flex; flex-direction: column; align-items: flex-start; text-align: left; }
+.chm-cupban b { font-family: var(--g-font-display); font-size: 1.05rem; font-weight: 900; letter-spacing: .02em; line-height: 1.1; }
+.chm-cupban small { font-size: .7rem; font-weight: 800; }
+.chm-cupban .chm-cupsvg { stroke: var(--g-on-ink); } .chm-cupban .chm-cupsvg .f1 { fill: var(--g-card); }
+.chm-cupban.take { background: var(--p-b); color: var(--g-on-ink); }
+.chm-story { align-items: center; }
+.chm-rw { display: flex; flex-wrap: wrap; justify-content: center; gap: 0 12px; } .chm-rw em { font-style: normal; color: var(--g-muted); }
+.chm-story .chm-bb { color: var(--g-ink); }
+.chm-story .chm-bb::before { content: 'Best blend'; display: none; }
+.chm-tl-bar i.void { background: transparent; border: 2px dashed var(--g-line); }
+/* reaction stickers: riso SVG (ink outline, token fills) */
+.chm-es { width: 100%; height: 100%; display: block; overflow: visible; fill: none; stroke: var(--g-ink); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.chm-es .f1 { fill: var(--g-hl); } .chm-es .f2 { fill: var(--p-b); } .chm-es .f3 { fill: var(--p-a); } .chm-es .f4 { fill: var(--g-card); }
+.chm-es .ik { fill: var(--g-ink); stroke: none; }
+.chm-emote span { display: block; width: 26px; height: 26px; font-size: 0; }
+.chm-emo i span { display: block; width: 46px; height: 46px; font-size: 0; }
+.chm-emo.mine i span { width: 30px; height: 30px; }
+/* wardrobe: locked tiles show the look in colour, with a lock badge and progress */
+.chm-wt { position: relative; }
+.chm-wt.locked { background-image: none; border-style: solid; }
+.chm-wt.locked > i, .chm-wt.locked > svg.chm-wt-svg { filter: none; opacity: 1; }
+.chm-wt.locked b { color: var(--g-ink); }
+.chm-wt-lock { position: absolute; top: 4px; right: 4px; width: 18px; height: 18px; padding: 2px; border-radius: 50%; background: var(--g-ink); fill: none; stroke: var(--g-bg); stroke-width: 1.6; stroke-linecap: round; box-sizing: border-box; }
+.chm-prog { text-decoration: none; font: 900 .62rem/1 var(--g-font-body); padding: 2px 7px; border: 1.5px solid var(--g-ink); border-radius: 999px; background: var(--g-hl); color: var(--g-on-ink); font-variant-numeric: tabular-nums; }
+.chm-wt-svg { display: block; width: 40px; height: 40px; fill: none; stroke: var(--g-ink); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.chm-wt-svg .i1 { fill: var(--g-hl); } .chm-wt-svg .i2 { fill: var(--p-b); } .chm-wt-svg .i3 { stroke: var(--p-b); stroke-width: 7; } .chm-wt-svg .i4 { fill: var(--g-card); }
+.chm-wt-svg .i5 { fill: var(--p-b); stroke: none; opacity: .85; } .chm-wt-svg .i6 { fill: var(--g-ink); stroke: none; } .chm-wt-svg .i7 { stroke: var(--p-a); stroke-width: 6; }
+.chm-wardrobe h3 small { font-size: .62rem; letter-spacing: .04em; text-transform: none; font-weight: 800; margin-left: 4px; }
+/* recap / final: the role pill belongs to the hunt, not here (it sat on the chameleon's head in portrait) */
+.chm:has(.chm-recap) .chm-sub, .chm:has(.chm-final) .chm-sub { display: none; }
+/* a phone on its side: the recap and final cards dock to the right as a side panel, so the chameleon stays in view on the left
+   (game.js frames the orbit camera on the free part of the screen); the tally and the reactions scroll with it, Next stays pinned */
+@media (orientation: landscape) and (max-height: 520px) {
+  .chm-over.chm-recap, .chm-over.chm-final { place-items: stretch end; align-items: stretch; padding: calc(8px + var(--chm-st)) calc(72px + var(--chm-sr)) calc(8px + var(--chm-sb)) 10px; }
+  .chm-recap .chm-card, .chm-final .chm-card { width: min(46vw, 400px); height: 100%; max-height: 100%; padding: 8px 12px 0; gap: 6px; }
+  .chm-recap .chm-card h2, .chm-final .chm-card h2 { font-size: 1.2rem; }
+  .chm-recap .chm-card p { font-size: .8rem; }
+  .chm-recap .chm-stats { display: none; }
+  .chm:has(.chm-recap) .chm-top, .chm:has(.chm-final) .chm-top { display: none; } /* the card's tally says it; the pills sat on top of the panel */
+  .chm-recap .chm-h2h { gap: 0; line-height: 1.2; }
+  .chm-recap .chm-tally { font-size: .95rem; }
+  .chm-recap .chm-h2h, .chm-final .chm-story { font-size: .66rem; }
+  .chm-recap .chm-foot, .chm-final .chm-foot { padding-top: 6px; padding-bottom: 8px; gap: 4px; }
+  .chm-recap .chm-nextline, .chm-final .chm-nextline { font-size: .68rem; }
+  .chm-cupban b { font-size: .9rem; }
+}
+.chm-intel { color: var(--g-ink); font-weight: 800; }
+.chm-twistline { padding: 4px 10px; border: 2px solid var(--g-ink); border-radius: 10px; background: var(--g-hl); color: var(--g-on-ink); align-self: center; }
+.chm-twistline b { color: var(--g-on-ink); }
+`;

@@ -13,6 +13,9 @@ const UNDO_MAX = 24;
  *  out from the finger; an undo dissolves back in a speckle. */
 export const REVEAL = { stamp: { dur: 0.36, band: 0.22, glow: 0.65 }, fill: { dur: 0.28, band: 0.3, glow: 0.4 }, undo: { dur: 0.22, band: 0.45, glow: 0.3 } };
 const BLACK = [0, 0, 0];
+/** Fill patterns, in the order the paint panel cycles them; PAT: band / cell / grid spacing and dot radius (grid units), in local metres. */
+export const PATTERNS = ['solid', 'stripes', 'dots', 'checker'];
+const PAT = { band: 0.05, cell: 0.06, grid: 0.085, dot: 0.3 };
 
 export function createPaint(THREE, kit) {
   const data = new Uint8Array(N * 4).fill(255);
@@ -210,23 +213,53 @@ export function createPaint(THREE, kit) {
   /**
    * Fill one region ('body' | 'head' | 'tail' | 'legs') or 'all'. from = [x,y,z] (world, the
    * finger's hit): the colour floods out from there over 0.28 s instead of appearing at once.
+   * pat = { kind: 'stripes' | 'dots' | 'checker', rgb2 } fills a pattern instead of one flat
+   * colour: rgb is the pattern's ink, rgb2 the ground. The pattern is a function of the texel's
+   * body-local position (patHit), so it is the same on every pose and size, goes through the same
+   * wave / undo / quantise / codec path as a flat fill, and both phones end up with the same pixels.
    */
-  function fill(region, rgb, from = null) {
+  function fill(region, rgb, from = null, pat = null) {
     settle();
     const parts = region === 'all' ? null : REGIONS[region];
+    const kind = pat && pat.kind && pat.kind !== 'solid' ? pat.kind : null;
+    const g = kind && pat.rgb2 ? pat.rgb2 : rgb;
     let rn = 0;
     for (let k = 0; k < list.length; k++) {
       const i = list[k];
       if (parts && !parts.includes(part[i])) continue;
       const o = i * 4;
+      const c = kind && !patHit(kind, i) ? g : rgb;
       if (from) {
-        tgt[o] = rgb[0]; tgt[o + 1] = rgb[1]; tgt[o + 2] = rgb[2]; rtmp[rn++] = i;
+        tgt[o] = c[0]; tgt[o + 1] = c[1]; tgt[o + 2] = c[2]; rtmp[rn++] = i;
         const dx = wpos[i * 3] - from[0]; const dy = wpos[i * 3 + 1] - from[1]; const dz = wpos[i * 3 + 2] - from[2];
         rkey[i] = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      } else { data[o] = rgb[0]; data[o + 1] = rgb[1]; data[o + 2] = rgb[2]; }
+      } else { data[o] = c[0]; data[o + 1] = c[1]; data[o + 2] = c[2]; }
     }
     if (!parts) for (let i = 0; i < N; i++) if (part[i] < 0) { const o = i * 4; data[o] = rgb[0]; data[o + 1] = rgb[1]; data[o + 2] = rgb[2]; }
     if (rn) beginReveal(rn, 'fill', REVEAL.fill.dur, REVEAL.fill.band, REVEAL.fill.glow); else touch();
+  }
+
+  /**
+   * Does texel i show the pattern's ink (true) or its ground (false)? Everything is in the part's
+   * LOCAL metres (lpos / lnrm), so a pattern is baked into the body and never shifts with the pose.
+   * Sizes are chosen to read at hunt distance: a band is ~5 cm (≈ 7 texels on the body), a dot
+   * ~6 cm across on an 8.5 cm grid, a checker square 6 cm.
+   */
+  function patHit(kind, i) {
+    const x = lpos[i * 3]; const y = lpos[i * 3 + 1]; const z = lpos[i * 3 + 2];
+    if (kind === 'stripes') {
+      // bands across the body and head (along z), rings down the legs (y), diagonal rings on the tail
+      const pt = part[i]; const a = pt === 0 || (pt >= 1 && pt <= 4) ? z : pt >= 6 ? y : y * 0.7 + z * 0.7;
+      return (Math.floor(a / PAT.band) & 1) === 0;
+    }
+    if (kind === 'checker') return ((Math.floor(x / PAT.cell) + Math.floor(y / PAT.cell) + Math.floor(z / PAT.cell)) & 1) === 0;
+    // dots: a staggered grid on the plane the texel faces most (box mapping), so they stay round
+    const nx = Math.abs(lnrm[i * 3]); const ny = Math.abs(lnrm[i * 3 + 1]); const nz = Math.abs(lnrm[i * 3 + 2]);
+    let u; let v;
+    if (nx >= ny && nx >= nz) { u = y; v = z; } else if (ny >= nz) { u = x; v = z; } else { u = x; v = y; }
+    const rv = v / PAT.grid; const row = Math.floor(rv);
+    const fu = (u / PAT.grid + (row & 1) * 0.5) % 1; const du = (fu < 0 ? fu + 1 : fu) - 0.5; const dv = rv - row - 0.5;
+    return du * du + dv * dv < PAT.dot * PAT.dot;
   }
 
   /** Paint texels whose (world) normal points along `dir` with rgb (used for seeker bellies). */

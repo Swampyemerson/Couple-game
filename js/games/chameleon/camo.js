@@ -682,6 +682,9 @@ const METER_CSS = `
 .chm-meter .cm-cap { font: 900 0.56rem/1 var(--g-font-body); letter-spacing: .1em; text-transform: uppercase; color: var(--g-muted, var(--g-ink)); }
 .chm-meter .cm-num { font: 900 1.12rem/1 var(--g-font-display); font-variant-numeric: tabular-nums; color: var(--g-ink); display: inline-block; }
 .chm-meter .cm-num small { font-size: 0.55em; margin-left: 1px; }
+/* the paint changed and the new score isn't in yet: the old number is dimmed (it used to sit there as if current for the wipe + scoring + count-up, ~1 s) */
+.chm-meter .cm-num, .chm-meter .cm-fill { transition: opacity .12s; }
+.chm-meter.stale .cm-num, .chm-meter.stale .cm-fill { opacity: .4; }
 .chm-meter .cm-num.bump { animation: cm-bump .32s ease-out; }
 .chm-meter .cm-tube { position: relative; width: 22px; height: 148px; border: 2.5px solid var(--g-ink); border-radius: 12px; overflow: hidden; background: var(--g-halftone) 0 0 / 5px 5px, var(--g-bg); }
 .chm-meter .cm-fill { position: absolute; left: 0; right: 0; bottom: 0; height: 100%; transform-origin: 50% 100%; transform: scaleY(0); transition: transform .55s cubic-bezier(.34,1.45,.64,1), background-color .3s; background: var(--g-bad); }
@@ -730,7 +733,7 @@ export function createMeter(host, { play = () => {} } = {}) {
   const $ = (s) => el.querySelector(s);
   const num = $('.cm-num'); const fill = $('.cm-fill'); const word = $('.cm-word'); const pop = $('.cm-pop');
   const star = $('.cm-star'); const starLine = $('.cm-starline'); const chk = $('.cm-chkt'); const tube = $('.cm-tube');
-  const M = { shown: false, target: -1, from: 0, val: -1, shownVal: -2, t0: 0, tNow: 0, grade: -1, first: true, bonusAt: -1, bonusPts: 0, bonusOn: false, sounds: 0, pops: 0, inv: false, xray: false, lastPop: '' };
+  const M = { shown: false, target: -1, from: 0, val: -1, shownVal: -2, t0: 0, tNow: 0, grade: -1, first: true, bonusAt: -1, bonusPts: 0, bonusOn: false, sounds: 0, pops: 0, inv: false, xray: false, lastPop: '', stale: false };
   const DUR = 0.55;
   function writeNum(v) {
     if (v === M.shownVal) return;
@@ -745,6 +748,9 @@ export function createMeter(host, { play = () => {} } = {}) {
     el,
     get value() { return M.target; },
     get shown() { return M.shown; },
+    /** The shown score is out of date (paint changed, a wipe or a re-score is running): dim it until the new one lands. */
+    stale(on) { if (on === M.stale) return; M.stale = on; el.classList.toggle('stale', on); if (on) el.setAttribute('aria-busy', 'true'); else el.removeAttribute('aria-busy'); },
+    get isStale() { return M.stale; },
     get stats() { return { target: M.target, grade: M.grade, sounds: M.sounds, pops: M.pops, lastPop: M.lastPop, bonusOn: M.bonusOn, inv: M.inv, xray: M.xray, check: chk.textContent, text: num.textContent, word: word.textContent }; },
     /** The x-ray is showing (bad = texels that show): the Check pill hatches ("Shows") or goes green ("Clear"). */
     xray(on, bad = 0) {

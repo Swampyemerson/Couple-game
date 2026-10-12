@@ -60,8 +60,9 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
   // skin read brighter than the surface it copies). The ground colour is a warm, light bounce so
   // ceilings and undersides (which only get the darkest toon step of the sun) don't go muddy;
   // bodies share these lights and the ramp, so a stamp still matches what the seeker sees.
-  const hemi = new THREE.HemisphereLight(0xfffaf0, 0xefe3d0, 0.56);
-  const sun = new THREE.DirectionalLight(0xfff1dc, 0.52);
+  const BASE_HEMI = 0.56; const BASE_SUN = 0.52;
+  const hemi = new THREE.HemisphereLight(0xfffaf0, 0xefe3d0, BASE_HEMI);
+  const sun = new THREE.DirectionalLight(0xfff1dc, BASE_SUN);
   sun.position.set(-3.2, 8, 4.6);
   scene.add(hemi, sun, sun.target);
 
@@ -189,6 +190,38 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
     // chunks past the fog are skipped by cullChunks(); the far plane only has to reach the backdrop
     fogCull = far + 2;
     camera.far = Math.max(far + 6, backdropReach + 10); camera.updateProjectionMatrix();
+    if (mood && (mood.fogNear != null || mood.fogFar != null)) applyMood(); // a mood in force keeps its fog through a view switch
+  }
+  /** The fog 'play' view uses on the loaded map ({ near, far }), for the Fog twist to scale from. */
+  function playFog() { return map && map.big ? { near: 11, far: 26 } : { near: 13, far: 30 }; }
+
+  // ── moods (update pass: Fog rolls in, Dusk) ──
+  // A mood is a handful of numbers on objects that already exist: the two light intensities, the
+  // fog's near/far and the background/fog colour. No light is added and nothing is relinked (the
+  // fog type and the light count are what the programs key on), so a mood costs no draw call and
+  // no compile. clearMood() puts back exactly what the stage had: the lights' base intensities,
+  // the theme's background and the current view's fog.
+  let mood = null; let themeBg = theme.bg;
+  function applyMood() {
+    if (!mood) return;
+    if (mood.hemi != null) hemi.intensity = mood.hemi;
+    if (mood.sun != null) sun.intensity = mood.sun;
+    if (mood.bg) { bg.set(mood.bg); scene.fog.color.set(mood.bg); }
+    if (mood.fogNear != null) scene.fog.near = mood.fogNear;
+    if (mood.fogFar != null) { scene.fog.far = mood.fogFar; fogCull = mood.fogFar + 2; }
+  }
+  /** { hemi, sun, fogNear, fogFar, bg } (any may be null/absent = unchanged): absolute values. */
+  function setMood(m) {
+    if (!m) { clearMood(); return; }
+    mood = { hemi: null, sun: null, fogNear: null, fogFar: null, bg: null, ...m };
+    applyMood();
+  }
+  function clearMood() {
+    if (!mood) return;
+    mood = null;
+    hemi.intensity = BASE_HEMI; sun.intensity = BASE_SUN;
+    bg.set(themeBg); scene.fog.color.set(themeBg);
+    const k = viewKind; viewKind = ''; if (map) setView(k || 'play'); // the current view's own fog
   }
   /** Per frame: hide map chunks entirely inside the fog (cheap: one sphere test per chunk), and
    *  count the ones the camera actually draws (fog + frustum) for perf(). A chunk a test hid
@@ -414,8 +447,10 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
   }
 
   function setTheme(t) {
+    themeBg = t.bg;
     bg.set(t.bg);
     scene.fog.color.set(t.bg);
+    if (mood && mood.bg) applyMood();
   }
 
   function compile() {
@@ -476,6 +511,7 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
   }
   /** Rematch (maps pass): leave the canvas, keep the renderer, programs and uploaded maps. */
   function park() {
+    clearMood();
     canvas.remove();
     canvas.style.visibility = '';
     unloadMap();
@@ -494,6 +530,7 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
     get map() { return map; }, get world() { return world; }, get mapMesh() { return mapMesh; }, mapMeshes, isMap,
     get size() { return [W, H]; }, get dpr() { return baseDpr * dynScale; }, get scale() { return dynScale; },
     loadMap, unloadMap, prepare, prefetch, resize, setScale, setTheme, compile, warm, park, adopt, setView, maxDpr,
+    setMood, clearMood, playFog, get moodOn() { return !!mood; }, baseHemi: BASE_HEMI, baseSun: BASE_SUN,
     ray, setRayFromScreen, pick, pickMap, albedoAtHit, surfaceOf, blobAt,
     render() { cullChunks(); renderer.render(scene, camera); },
     get backdrops() { return backMeshes.length; },
