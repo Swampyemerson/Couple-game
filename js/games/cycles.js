@@ -1188,15 +1188,21 @@ registerGame({
     offs.push(() => document.removeEventListener('visibilitychange', onVis));
     // a phone turned on its side: the next round gets the grid that fits (the host agrees it with the guest)
     let rsT = 0;
+    const checkPref = () => {
+      const np = prefNow();
+      if (np === pref) return;
+      pref = np;
+      if (phase === 'pick' && pickShown) showPicker();
+      if (!host) publishGuest();
+    };
     const onResize = () => {
       clearTimeout(rsT);
       rsT = setTimeout(() => {
         timers.delete(rsT);
-        const np = prefNow();
-        if (np === pref) return;
-        pref = np;
-        if (phase === 'pick' && pickShown) showPicker();
-        if (!host) publishGuest();
+        checkPref();
+        // iOS can report the old size just after a turn: look once more
+        rsT = setTimeout(() => { timers.delete(rsT); checkPref(); }, 450);
+        timers.add(rsT);
       }, 120);
       timers.add(rsT);
     };

@@ -429,12 +429,36 @@ async function cyclesLandscape(h) {
   assert(land.over <= 1 && land.pads && land.board, `board and both pads on screen (overflow ${land.over}px)`);
   await sleep(500);
   await shot(pg, 'cycles-phone-landscape-run-light');
+  // the replay caption and the round banner stay inside a short board
+  await until(async () => (await cy(pg)).stage === 'replay', 'the replay on the landscape board', 15000, 30);
+  await sleep(700);
+  const inside = (sel) => pg.evaluate((q) => { const c = document.querySelector('.cy-board canvas').getBoundingClientRect(); const e = document.querySelector(q); if (!e) return null; const b = e.getBoundingClientRect(); return b.left >= c.left - 1 && b.right <= c.right + 1 && b.top >= c.top - 1 && b.bottom <= c.bottom + 1; }, sel);
+  assert(await inside('.cy-rp-cap') === true, 'landscape: the replay caption sits inside the board');
+  await until(async () => (await cy(pg)).stage === 'banner', 'the banner on the landscape board', 4000, 30);
+  await sleep(600);
+  assert(await inside('.cy-msg > span') === true, 'landscape: the round banner sits inside the board');
   // a rotate mid-match: the grid changes from the next round
   await pg.setViewportSize({ width: 390, height: 844 });
   await sleep(400);
   const e = await localEnd(pg, 1);
   const n = await localRun(pg, 2);
   assert(e.layout === 'l' && n.layout === 'p' && n.cell >= 7, `turned upright mid-match: round 1 stays landscape, round 2 gets the portrait grid (${e.layout} → ${n.layout}, ${n.cell} px)`);
+  await h.closeGame(pg);
+  await pg.setViewportSize({ width: 390, height: 844 });
+  await h.settle();
+}
+
+/** A small phone on its side (667×375) also gets the wide grid, with pads that leave room for it. */
+async function cyclesSmallLandscape(h) {
+  console.log('\n# Light Cycles: a small phone on its side (667×375)');
+  const pg = h.a;
+  await pg.setViewportSize({ width: 667, height: 375 });
+  await h.startLive(pg, 'cycles', 'local');
+  await pickGo(pg, { arena: 'cross' });
+  const i = await localRun(pg, 1);
+  const k = await pg.evaluate(() => Math.min(...[...document.querySelectorAll('.cy-key')].map((e) => { const b = e.getBoundingClientRect(); return Math.min(b.width, b.height); })));
+  assert(i.layout === 'l' && i.cell >= 5 && k >= 44, `667×375 plays the landscape grid (cell ${i.cell} px, smallest key ${Math.round(k)} px)`);
+  await shot(pg, 'cycles-phone-small-landscape-light');
   await h.closeGame(pg);
   await pg.setViewportSize({ width: 390, height: 844 });
   await h.settle();
@@ -1010,6 +1034,7 @@ async function withHarness(opts, fn) {
         await asPhones(h);
         await cyclesTouchAndReplay(h);
         await cyclesLandscape(h);
+        await cyclesSmallLandscape(h);
       });
       await withHarness({ port: PORT + 6, device: 'Desktop Chrome' }, async (h) => {
         await asLaptops(h);

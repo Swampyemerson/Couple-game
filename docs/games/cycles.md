@@ -43,12 +43,15 @@ Enter also starts. The record line under the chips shows the rivalry (streak, lo
   cell / ran into a wall of light / tangled in their own trail / hit a block / ran out of road /
   head-on), then the banner. A tap skips the replay. On one device a skip also shortens the pause.
 * **Banner stamps**: LONGEST RIDE! / MOST SHAVES! when a record falls (only when there was an earlier record).
+* **Banner and caption placement**: the round banner is clamped inside the board (it sits in the half the crash is not
+  in), and is smaller on the wide grid; the replay caption is centred with margins, never animated with a transform.
 
 ## Layouts
 
 `s` 49x49 square (computer), `p` 31x45 portrait (phone), `l` 41x27 wide (phone on its side; 7.5 px
-cells at 844x390). Chosen by the screen shape (width >= 700 and wider than tall: `l` if height <= 520, else
-`s`; otherwise `p`), re-read every round. Live, the host agrees the round's layout (portrait wins, then
+cells at 844x390, 5.5 px at 667x375 where the pads shrink to 46 px keys). Chosen by the screen shape (wider than
+tall and height <= 520 and width >= 480: `l`; wider than tall and width >= 700: `s`; otherwise `p`), re-read every
+round (a resize is checked twice, 120 ms and 570 ms later, because iOS can report the old size right after a turn). Live, the host agrees the round's layout (portrait wins, then
 `l`, then `s`) from its own pref and the guest's `pref` in presence, and puts it in the round config. A
 change applies from the next round.
 

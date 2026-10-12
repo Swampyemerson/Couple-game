@@ -35,7 +35,7 @@ const SERIES = {
   '3': { win: 2, by: 1, name: 'Best of 3' },
   '5': { win: 3, by: 1, name: 'Best of 5' },
   '9': { win: 5, by: 1, name: 'Best of 9' },
-  sd: { win: 5, by: 2, name: 'Showdown' },
+  sd: { win: 5, by: 2, cap: 15, name: 'Showdown' },   // after `cap` decided rounds the next one is sudden death
 };
 const PACKS = {
   classic: { name: 'Classic', desc: 'Wait for DRAW. Fire first.' },
@@ -59,6 +59,8 @@ const pickOf = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const seriesOf = (cfg) => SERIES[cfg && cfg.s] || SERIES['5'];
 const isWin = (t, cfg) => { const S = seriesOf(cfg); return (t.a >= S.win && t.a - t.b >= S.by) || (t.b >= S.win && t.b - t.a >= S.by); };
 const winnerOf = (t) => (t.a > t.b ? 'a' : 'b');
+/** Showdown only: the cap is reached without a winner, so the next round decides. */
+const suddenOf = (t, cfg) => { const S = seriesOf(cfg); return !!S.cap && t.a + t.b >= S.cap && !isWin(t, cfg); };
 /** The real signal's time (ms after the round's `at`). */
 const drawAt = (rd) => rd.delay + (rd.gap || 0);
 /** Everything that happens on screen after `at`, the same on both devices. */
@@ -174,10 +176,12 @@ registerGame({
     .g-qd .qd-hat { transform-box: fill-box; transform-origin: 50% 80%; transition: transform 0.55s cubic-bezier(0.2, 0.7, 0.4, 1), opacity 0.55s; }
     .g-qd .qd-fig.is-hatless .qd-hat { transform: translate(-16px, -34px) rotate(-75deg); opacity: 0; }
     .g-qd .qd-kind { position: absolute; left: 6px; top: 5px; z-index: 2; padding: 1px 6px 0; font: 900 0.62rem/1.5 var(--g-font-body); letter-spacing: 0.1em; color: var(--g-on-ink); background: var(--g-hl); border: 2px solid var(--g-ink); border-radius: 4px; transform: rotate(-2deg); }
+    .g-qd .qd-kind.qd-top { left: auto; top: auto; right: 6px; bottom: 5px; transform: rotate(178deg); }
     .g-qd .qd-kind[hidden] { display: none; }
     .g-qd .qd-flashout { position: absolute; inset: 0; z-index: 2; background: var(--g-white, #fff); opacity: 0; pointer-events: none; }
     .g-qd .qd-flashout.go { animation: qd-hitstop 0.2s ease-out both; }
-    .g-qd .qd-stamp { position: absolute; left: 50%; z-index: 4; margin: 0; padding: 4px 12px 2px; white-space: nowrap; font-family: var(--g-font-display); font-weight: 900; font-size: clamp(1.05rem, 5.4vw, 1.7rem); line-height: 1.2; letter-spacing: 0.03em; color: var(--g-on-ink); background: var(--g-hl); border: 3px solid var(--g-ink); border-radius: 8px; box-shadow: var(--g-shadow); pointer-events: none; opacity: 0; transform: translate(-50%, -50%) rotate(-7deg); }
+    .g-qd .qd-stamp { --sr: -7deg; position: absolute; left: 50%; z-index: 4; margin: 0; padding: 4px 12px 2px; white-space: nowrap; font-family: var(--g-font-display); font-weight: 900; font-size: clamp(1.05rem, 5.4vw, 1.7rem); line-height: 1.2; letter-spacing: 0.03em; color: var(--g-on-ink); background: var(--g-hl); border: 3px solid var(--g-ink); border-radius: 8px; box-shadow: var(--g-shadow); pointer-events: none; opacity: 0; transform: translate(-50%, -50%) rotate(var(--sr)); }
+    .g-qd .qd-stamp.qd-top { --sr: 173deg; }
     .g-qd .qd-stamp.is-bad { background: var(--g-bad); color: var(--g-white, #fff); }
     .g-qd .qd-stamp.is-good { background: var(--g-good); color: var(--g-white, #fff); }
     .g-qd .qd-stamp.is-a { background: var(--p-a); } .g-qd .qd-stamp.is-b { background: var(--p-b); }
@@ -208,6 +212,7 @@ registerGame({
     .g-qd .qd-notches i { width: 10px; height: 22px; border: 2px solid var(--g-ink); border-radius: 2px; background: var(--g-card); transform: skewX(-14deg); }
     .g-qd .qd-notches[data-w="a"] i.on { background: var(--p-a); }
     .g-qd .qd-notches[data-w="b"] i.on { background: var(--p-b); }
+    .g-qd .qd-notches.num { font-weight: 900; font-size: 1.25rem; line-height: 1; font-variant-numeric: tabular-nums; }
     .g-qd .qd-notches i.on.new { animation: qd-pop 0.3s cubic-bezier(0.2, 1.6, 0.4, 1) both; }
 
     .g-qd .qd-pads { display: flex; gap: 12px; flex: 1 1 0; min-height: 0; }
@@ -246,7 +251,7 @@ registerGame({
       .g-qd.is-phone .qd-pad { flex-direction: column; flex-wrap: nowrap; }
       .g-qd.is-phone .qd-pad.qd-top { transform: none; box-shadow: var(--g-shadow-lg, var(--g-shadow)); }
       .g-qd.is-phone .qd-pad.qd-top.is-press { transform: translate(4px, 4px); box-shadow: 0 0 0 var(--g-edge, var(--g-ink)); }
-      .g-qd.is-phone .qd-sig.qd-top { display: none; }
+      .g-qd.is-phone .qd-sig.qd-top, .g-qd .qd-stamp.qd-top, .g-qd .qd-kind.qd-top { display: none; }
       .g-qd.is-live { flex-direction: row; align-items: stretch; }
       .g-qd.is-live .qd-mid { flex: 1.6; min-width: 0; }
       .g-qd.is-live .qd-pads { flex: 1; height: auto; max-width: none; margin: 0; }
@@ -279,19 +284,21 @@ registerGame({
     .g-qd .qd-setup.is-locked .qd-opt[aria-pressed="true"]:active { transform: translate(2px, 2px); box-shadow: none; }
     .g-qd .qd-pack-desc { margin: 0; font-weight: 700; font-size: 0.82rem; line-height: 1.25; color: var(--g-ink); min-height: 2.5em; }
     .g-qd .qd-setup-note { margin: 0; font-weight: 700; font-size: 0.72rem; line-height: 1.25; color: var(--g-muted); }
-    .g-qd .qd-go { min-height: 54px; }
-    .g-qd .qd-go[hidden] { display: none; }
+    .g-qd .qd-gorow { display: flex; gap: 8px; align-items: stretch; }
+    .g-qd .qd-gorow .qd-go { flex: 1 1 0; min-height: 54px; }
+    .g-qd .qd-gorow .qd-again { flex: 0 0 auto; min-height: 54px; padding: 0 14px; }
+    .g-qd .qd-go[hidden], .g-qd .qd-again[hidden] { display: none; }
     @media (orientation: landscape) and (max-height: 520px) {
       .g-qd .qd-setup-card { max-width: none; display: grid; grid-template-columns: 1.55fr 1fr; grid-template-areas: "packs series" "head go"; column-gap: 10px; row-gap: 4px; padding: 4px 8px; }
       .g-qd .qd-setup-head { grid-area: head; font-size: 0.95rem; align-self: center; }
       .g-qd .qd-opts { gap: 4px; }
       .g-qd .qd-packs { grid-area: packs; } .g-qd .qd-series { grid-area: series; grid-template-columns: repeat(2, 1fr); }
-      .g-qd .qd-pack-desc, .g-qd .qd-setup-note { display: none; } .g-qd .qd-go { grid-area: go; min-height: 44px; height: 44px; }
+      .g-qd .qd-pack-desc, .g-qd .qd-setup-note { display: none; } .g-qd .qd-gorow { grid-area: go; } .g-qd .qd-gorow .qd-go, .g-qd .qd-gorow .qd-again { min-height: 44px; height: 44px; }
       .g-qd .qd-opt { min-height: 44px; } .g-qd .qd-opt small { display: none; }
     }
     @keyframes qd-pop { from { transform: scale(1.5) rotate(-3deg); opacity: 0; } to { opacity: 1; } }
     @keyframes qd-breathe { 50% { opacity: 0.55; } }
-    @keyframes qd-stamp { 0% { opacity: 0; transform: translate(-50%, -50%) rotate(-7deg) scale(1.9); } 14% { opacity: 1; transform: translate(-50%, -50%) rotate(-7deg) scale(1); } 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -62%) rotate(-7deg) scale(1); } }
+    @keyframes qd-stamp { 0% { opacity: 0; transform: translate(-50%, -50%) rotate(var(--sr)) scale(1.9); } 14% { opacity: 1; transform: translate(-50%, -50%) rotate(var(--sr)) scale(1); } 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -62%) rotate(var(--sr)) scale(1); } }
     @keyframes qd-hitstop { 0% { opacity: 0.85; } 100% { opacity: 0; } }
     @keyframes qd-muzzle { 0% { transform: scale(0.4); opacity: 1; } 40% { transform: scale(1.15); opacity: 1; } 100% { opacity: 0; } }
     @keyframes qd-smoke { 0% { opacity: 0; transform: translate(-3px, 2px) scale(0.5); } 25% { opacity: 1; } 100% { opacity: 0; transform: translate(7px, -9px) scale(1.5); } }
@@ -324,16 +331,17 @@ registerGame({
         ${layout === 'live' && !coarse ? '<span class="qd-pad-hint"><kbd>Space</kbd> or click</span>' : ''}
       </button>`;
     const sig = (flip) => `<div class="qd-sig${flip ? ' qd-top' : ''}" aria-live="${flip ? 'off' : 'assertive'}"><div class="qd-word"></div><div class="qd-line"></div><div class="qd-times"></div></div>`;
-    const scene = `<div class="qd-scene"><span class="qd-kind" hidden></span>${SCENE('a', 'b')}<div class="qd-flashout"></div></div>`;
+    const scene = `<div class="qd-scene"><span class="qd-kind" hidden></span>${layout === 'phone' ? '<span class="qd-kind qd-top" hidden></span>' : ''}${SCENE('a', 'b')}<div class="qd-flashout"></div></div>`;
     const tally = `<div class="qd-tally"><span class="qd-who t-a">${N('a')} <span class="qd-notches" data-w="a" aria-hidden="true"></span></span><span class="qd-to"></span><span class="qd-who t-b"><span class="qd-notches" data-w="b" aria-hidden="true"></span> ${N('b')}</span></div>`;
-    const stampEl = '<p class="qd-stamp" aria-hidden="true"></p>';
+    // one phone: the stamp is printed twice, the second upside down for the player at the top
+    const stampEl = `<p class="qd-stamp" aria-hidden="true"></p>${layout === 'phone' ? '<p class="qd-stamp qd-top" aria-hidden="true"></p>' : ''}`;
     const setupEl = `<div class="qd-setup" role="group" aria-label="Duel setup"><div class="qd-setup-card">
         <p class="qd-setup-head"></p>
         <div class="qd-opts qd-packs" role="group" aria-label="Duel pack">${PACK_ORDER.map((p) => `<button type="button" class="qd-opt" data-pack="${p}" aria-pressed="false"><b>${PACKS[p].name}</b></button>`).join('')}</div>
         <p class="qd-pack-desc"></p>
         <div class="qd-opts qd-series" role="group" aria-label="Series">${Object.keys(SERIES).map((s) => `<button type="button" class="qd-opt" data-series="${s}" aria-pressed="false"><b>${s === 'sd' ? 'Showdown' : `Best of ${s}`}</b>${s === 'sd' ? '<small>first to 5, by 2</small>' : `<small>first to ${SERIES[s].win}</small>`}</button>`).join('')}</div>
         <p class="qd-setup-note">Tied at match point? Both barrels: two draws, fire on the second.</p>
-        <button type="button" class="gm-btn gm-btn-big qd-go">GO</button>
+        <div class="qd-gorow"><button type="button" class="gm-btn qd-again" hidden>Pick again</button><button type="button" class="gm-btn gm-btn-big qd-go">GO</button></div>
       </div></div>`;
     if (layout === 'phone') {
       el.innerHTML = `<div class="g-qd is-phone" data-phase="setup" data-kind="classic" data-cue=""><div class="qd-dim"></div>${pad('b', true)}<div class="qd-mid">${sig(true)}${scene}${sig(false)}${stampEl}</div>${pad('a', false)}${setupEl}</div>`;
@@ -350,7 +358,7 @@ registerGame({
     const lantern = $1('.qd-lantern');
     const bellEl = $1('.qd-bell');
     const sceneEl = $1('.qd-scene');
-    const stampNode = $1('.qd-stamp');
+    const stampNodes = $$('.qd-stamp');
     const setup = $1('.qd-setup');
 
     // ── timers (all tracked, all cleared in destroy) ──
@@ -397,14 +405,17 @@ registerGame({
     const stamps = [];
     let stamping = false;
     function nextStamp() {
-      if (!stamps.length) { stamping = false; stampNode.classList.remove('go'); return; }
+      if (!stamps.length) { stamping = false; stampNodes.forEach((n) => n.classList.remove('go')); return; }
       stamping = true;
       const s = stamps.shift();
-      stampNode.textContent = s.text;
-      stampNode.className = `qd-stamp${s.cls ? ` ${s.cls}` : ''}`;
-      stampNode.style.top = `${sceneEl.offsetTop + sceneEl.offsetHeight / 2}px`;
-      void stampNode.offsetWidth;
-      stampNode.classList.add('go');
+      const two = stampNodes.length > 1 && getComputedStyle(stampNodes[1]).display !== 'none'; // one phone, portrait: one for each player
+      stampNodes.forEach((n, i) => {
+        n.textContent = s.text;
+        n.className = `qd-stamp${i ? ' qd-top' : ''}${s.cls ? ` ${s.cls}` : ''}`;
+        n.style.top = `${sceneEl.offsetTop + sceneEl.offsetHeight * (two ? (i ? 0.3 : 0.7) : 0.5)}px`;
+      });
+      void stampNodes[0].offsetWidth;
+      stampNodes.forEach((n) => n.classList.add('go'));
       if (s.snd) s.snd();
       later(nextStamp, s.ms || 950);
     }
@@ -447,6 +458,7 @@ registerGame({
       cur.tStart = performance.now();
       paint();
       if (rd.both) stamp('BOTH BARRELS', 'is-bad', () => api.sfx('flip'), 1300);
+      else if (rd.sd) stamp('SUDDEN DEATH', 'is-bad', () => api.sfx('flip'), 1300);
       // the tension builds: the room darkens a little and the clock gets quieter
       const total = Math.max(300, cur.D - net.now());
       dimTo(0, 0); void dim.offsetWidth; dimTo(0.2, total);
@@ -561,12 +573,13 @@ registerGame({
         }
       }
       const lead = local ? 700 : Math.min(1600, Math.max(900, net.rtt * 1.5 + 600));
-      const rd = { hk: key, r, at: Math.round(net.now() + lead), delay: Math.round(delay), gap: both ? Math.round(rnd(700, 1400)) : 0, both: both ? 1 : 0, kind, decoys, dw, cfg, t: tl, mp: matchPointOf(tl) };
+      const rd = { hk: key, r, at: Math.round(net.now() + lead), delay: Math.round(delay), gap: both ? Math.round(rnd(700, 1400)) : 0, both: both ? 1 : 0, sd: suddenOf(tl, cfg) ? 1 : 0, kind, decoys, dw, cfg, t: tl, mp: matchPointOf(tl) };
       if (forced) { Object.assign(rd, forced); forced = null; }
       return rd;
     }
     /** Whoever would win the duel by taking this round. */
     function matchPointOf(t) {
+      if (suddenOf(t, cfg)) return 'ab';
       return ['a', 'b'].filter((x) => isWin({ ...t, [x]: t[x] + 1 }, cfg)).join('');
     }
     function refStart() {
@@ -629,9 +642,11 @@ registerGame({
       const ra = rt(A); const rb = rt(B);
       const v = { hk: key, r, w, why, a: A, b: B, kind: R.rd.kind, both: R.rd.both, tally: { ...tl }, pb: [] };
       if (why === 'time' && ra != null && rb != null) { v.diff = Math.round(Math.abs(ra - rb)); v.photo = v.diff < PHOTO_MS; }
-      if (w) v.tally[w]++;
+      const sd = suddenOf(tl, cfg); // the Showdown cap: whoever takes this round takes the duel
+      if (w) { v.tally[w]++; if (sd) v.tally[w] = Math.max(v.tally[w], v.tally[other(w)] + 1); }
+      if (sd) v.sd = 1;
       recordRound(v, ra, rb);
-      if (isWin(v.tally, cfg)) v.res = finalResult(v);
+      if (isWin(v.tally, cfg) || (sd && w)) v.res = finalResult(v);
       if (!local) net.send('verdict', v);
       applyVerdict(v);
       publish();
@@ -664,6 +679,7 @@ registerGame({
       if (c > (Number(d.qd_streak_best) || 0)) { patch.qd_streak_best = c; patch.qd_streak_best_who = w; }
       saveData(patch);
       const parts = [`${v.tally[w]}–${v.tally[l]}`];
+      if (v.sd) parts.push('won in sudden death');
       if (bounty) parts.push(`Bounty claimed! ${api.name(l)}'s ${prevN}-duel streak ends`);
       else if (c >= 2) parts.push(`${api.name(w)} on a ${c}-duel streak`);
       const pbs = ['a', 'b'].filter((x) => duel.pb[x] != null).sort((x, y) => duel.pb[x] - duel.pb[y]);
@@ -723,7 +739,7 @@ registerGame({
       if (paused || phase === 'over') return;
       paused = true;
       endRound(); cur = null;
-      cancel(autoT); autoT = 0;
+      cancel(autoT); autoT = 0; autoLeft = 0;
       if (ref) { if (R && !R.decided) { cancel(R.armed); cancel(R.safety); R = null; } cancel(nextT); nextT = 0; }
       phase = 'paused';
       dimTo(0, 0);
@@ -749,21 +765,30 @@ registerGame({
     let autoT = 0; let autoLeft = 0;
     let heard = ref;           // the guest has seen the host's choice at least once
     const goBtn = $1('.qd-go');
+    const againBtn = $1('.qd-again');
     function renderSetup() {
       setup.hidden = started;
       root.classList.toggle('is-setup', !started);
       setup.classList.toggle('is-locked', !ref);
-      $1('.qd-setup-head').innerHTML = ref ? (autoLeft ? 'Same again?' : local ? 'Pick your duel' : 'Pick the duel') : `${N(other(me))} is picking…`;
+      $1('.qd-setup-head').innerHTML = ref ? (autoLeft ? 'Same again?' : local ? 'Pick your duel' : 'Pick the duel') : autoLeft ? `Same again? Starting in ${autoLeft}…` : `${N(other(me))} is picking…`;
       for (const b of setup.querySelectorAll('[data-pack]')) { b.setAttribute('aria-pressed', String(heard && b.dataset.pack === pick.p)); b.setAttribute('aria-disabled', String(!ref)); }
       for (const b of setup.querySelectorAll('[data-series]')) { b.setAttribute('aria-pressed', String(heard && b.dataset.series === pick.s)); b.setAttribute('aria-disabled', String(!ref)); }
       $1('.qd-pack-desc').textContent = heard ? PACKS[pick.p].desc : '';
       goBtn.hidden = !ref;
       goBtn.textContent = autoLeft ? `GO · ${autoLeft}` : 'GO';
+      againBtn.hidden = !(ref && autoLeft);
     }
     function setPick(patch) {
       if (!ref || started) return;
       cancel(autoT); autoT = 0; autoLeft = 0;
       pick = { ...pick, ...patch };
+      renderSetup();
+      publish();
+    }
+    /** "Pick again": stop the rematch countdown and keep the choice on screen. */
+    function stopAuto() {
+      if (!autoLeft) return;
+      cancel(autoT); autoT = 0; autoLeft = 0;
       renderSetup();
       publish();
     }
@@ -789,9 +814,11 @@ registerGame({
       const step = () => {
         if (autoLeft <= 1) { autoLeft = 0; autoT = 0; startDuel(); return; }
         autoLeft--; renderSetup();
+        publish();
         autoT = later(step, 1000);
       };
       renderSetup();
+      publish();
       autoT = later(step, 1000);
     }
 
@@ -803,7 +830,7 @@ registerGame({
       if (ref) {
         api.setPresence({
           k: key, n: ++n, r: R ? R.r : seq, ph: paused ? 'paused' : !started ? 'setup' : R && !R.decided ? 'steady' : phase === 'over' ? 'over' : phase === 'intro' ? 'intro' : 'result',
-          rd: R && !R.decided ? R.rd : null, tally: tl, v: verdict, cfg: started ? cfg : null, pk: started ? null : pick, away: document.hidden ? 1 : 0,
+          rd: R && !R.decided ? R.rd : null, tally: tl, v: verdict, cfg: started ? cfg : null, pk: started ? null : pick, ac: started ? 0 : autoLeft, away: document.hidden ? 1 : 0,
         });
       } else {
         // ht/hc: the host's duel as we know it, so a host that reloads or reopens picks it back up
@@ -839,7 +866,7 @@ registerGame({
       if (!adoptHost(S.k)) return;
       const away = !!S.away;
       if (away !== partnerAway) { partnerAway = away; checkPause(); }
-      if (S.ph === 'setup' && S.pk && !started) { pick = { p: PACKS[S.pk.p] ? S.pk.p : 'classic', s: SERIES[S.pk.s] ? S.pk.s : '5' }; heard = true; renderSetup(); }
+      if (S.ph === 'setup' && S.pk && !started) { pick = { p: PACKS[S.pk.p] ? S.pk.p : 'classic', s: SERIES[S.pk.s] ? S.pk.s : '5' }; heard = true; autoLeft = S.ac | 0; renderSetup(); }
       if (S.cfg && !started) leaveSetup(S.cfg);
       if (S.v && S.v.hk === hostKey) applyVerdict(S.v);
       else takeTally(S.tally);
@@ -906,12 +933,13 @@ registerGame({
       const S = seriesOf(cfg);
       switch (phase) {
         case 'setup': return { word: '', line: '', cls: '' };
-        case 'intro': return { word: 'Ready', line: rd && rd.both ? 'BOTH BARRELS' : `${S.name} · ${PACKS[cfg.p].name}`, cls: '' };
+        case 'intro': return { word: 'Ready', line: rd && rd.both ? 'BOTH BARRELS' : rd && rd.sd ? 'SUDDEN DEATH' : `${S.name} · ${PACKS[cfg.p].name}`, cls: '' };
         case 'steady': {
           const kind = rd.kind;
           const mp = rd.mp ? `MATCH POINT · ` : '';
           let line = rd.both ? 'Fire on the SECOND draw' : KIND_HINT[kind] || `Round ${roundNo()}`;
-          if (mp) line = rd.both ? 'MATCH POINT · the SECOND draw' : `${mp}${KIND_HINT[kind] || `Round ${roundNo()}`}`;
+          if (rd.sd) line = `SUDDEN DEATH · ${KIND_HINT[kind] || 'next hit wins'}`;
+          else if (mp) line = rd.both ? 'MATCH POINT · the SECOND draw' : `${mp}${KIND_HINT[kind] || `Round ${roundNo()}`}`;
           if (cur.cue === 'first') return { word: realWord(kind), line: 'One…', cls: 'is-draw' };
           if (cur.cue === 'decoy') {
             if (kind === 'decoys') return { word: DECOY_WORDS[cur.cueI % DECOY_WORDS.length], line, cls: 'is-draw' };
@@ -944,7 +972,7 @@ registerGame({
           else if (v.why === 'fouls') line = `Both jumped. ${N(l)} jumped first.`;
           else if (v.why === 'foul') line = `${N(l)} ${jumped(l)}`;
           else line = v.diff != null ? `${N(v.w)} by ${v.diff} ms` : `${N(v.w)} takes the round`;
-          if (v.res) line = `${N(v.w)} wins the duel!${v.why === 'time' && v.diff != null ? ` (by ${v.diff} ms)` : ''}`;
+          if (v.res) line = `${N(v.w)} wins the duel${v.sd ? ' in sudden death' : ''}!${v.why === 'time' && v.diff != null ? ` (by ${v.diff} ms)` : ''}`;
           const word = v.w ? 'BANG!' : v.why === 'tie' ? 'Dead heat' : v.why === 'none' ? 'Nobody fired' : v.why === 'dfoul' ? 'Double foul' : 'Again';
           return { word, line, cls: v.w ? `is-bang p-${v.w}` : '', times: timesHTML(v) };
         }
@@ -955,6 +983,8 @@ registerGame({
       const count = Math.max(S.win, tl.a, tl.b);
       for (const nEl of $$('.qd-notches')) {
         const w = nEl.dataset.w;
+        if (count > 6) { nEl.classList.add('num'); nEl.textContent = String(tl[w]); continue; } // a long Showdown: just the number
+        nEl.classList.remove('num');
         if (nEl.children.length !== count) nEl.innerHTML = '<i></i>'.repeat(count);
         [...nEl.children].forEach((i, k) => i.classList.toggle('on', k < tl[w]));
       }
@@ -970,13 +1000,14 @@ registerGame({
         s.querySelector('.qd-times').innerHTML = st.times || '';
       }
       renderNotches();
-      if (prevTally) for (const nEl of $$('.qd-notches')) { const w = nEl.dataset.w; [...nEl.children].forEach((i, k) => i.classList.toggle('new', k < tl[w] && k >= prevTally[w])); }
-      const to = $1('.qd-to'); if (to) to.textContent = seriesOf(cfg).by > 1 ? 'first to 5, by 2' : `first to ${seriesOf(cfg).win}`;
-      const kindEl = $1('.qd-kind');
+      if (prevTally) for (const nEl of $$('.qd-notches:not(.num)')) { const w = nEl.dataset.w; [...nEl.children].forEach((i, k) => i.classList.toggle('new', k < tl[w] && k >= prevTally[w])); }
+      const to = $1('.qd-to'); if (to) to.textContent = suddenOf(tl, cfg) ? 'sudden death' : seriesOf(cfg).by > 1 ? 'first to 5, by 2' : `first to ${seriesOf(cfg).win}`;
       const rd = cur && cur.rd;
-      const showSign = rd && (phase === 'steady' || phase === 'draw') && (cfg.p !== 'classic' || rd.both);
-      kindEl.hidden = !showSign;
-      if (showSign) kindEl.textContent = rd.both ? 'BOTH BARRELS' : `${cfg.p === 'mixed' ? 'MIXED · ' : ''}${KIND_SIGN[rd.kind]}`;
+      const showSign = rd && (phase === 'steady' || phase === 'draw') && (cfg.p !== 'classic' || rd.both || rd.sd);
+      for (const kindEl of $$('.qd-kind')) {
+        kindEl.hidden = !showSign;
+        if (showSign) kindEl.textContent = rd.both ? 'BOTH BARRELS' : rd.sd ? 'SUDDEN DEATH' : `${cfg.p === 'mixed' ? 'MIXED · ' : ''}${KIND_SIGN[rd.kind]}`;
+      }
       for (const p of $$('.qd-pad')) {
         const w = p.dataset.w;
         const armed = (phase === 'steady' || phase === 'draw') && cur && !cur.res[w];
@@ -1010,6 +1041,7 @@ registerGame({
     on(setup, 'click', (e) => {
       const b = e.target.closest('button'); if (!b) return;
       if (b.classList.contains('qd-go')) { startDuel(); return; }
+      if (b.classList.contains('qd-again')) { stopAuto(); return; }
       if (b.dataset.pack) setPick({ p: b.dataset.pack });
       else if (b.dataset.series) setPick({ s: b.dataset.series });
     });
@@ -1063,7 +1095,7 @@ registerGame({
         timers: () => timers.size + rafs.size,
         recv: () => recvLog.slice(),
         /** Skip the picker: start a duel right away (host / one device). */
-        start: (p = 'classic', s = '5') => startDuel(p, s),
+        start: (p = 'classic', s = '5', t = null) => { if (t && ref && !started) { tl = { a: t.a | 0, b: t.b | 0 }; api.setScore(tl); } startDuel(p, s); },
         /** Override the next round's plan (e.g. { kind: 'decoys', decoys: [900], dw: [0], delay: 2600 }). */
         force: (o) => { forced = o; },
       };

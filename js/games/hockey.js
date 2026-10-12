@@ -37,6 +37,8 @@ const HOG_S = 6;        // seconds a puck may sit on one half (or crawl) before 
 const HOG_WARN = 3;     // the 3-2-1 ring starts here
 const SAND_S = 0.5;     // a puck squeezed between both mallets this long is reset
 const SLOW_MS = 400;    // match-point slow motion (real ms at 0.5x)
+const REMOTE_LEAD = 0.1;  // s: how far past its newest sample the guest's mallet is extrapolated on the host
+const REMOTE_BLEND = 0.07; // s: a new sample's offset from that guess dies away this fast
 const CORRECT_RATE = 700; // u/s: the fastest a guest's puck display may close a correction
 
 registerGame({
@@ -121,6 +123,7 @@ registerGame({
     let winner = null;
     let result = null;
     let acc = 0;
+    let macc = 0;               // real seconds since the mallets last stepped
     let pausedFor = null;       // { phase, left }: what to resume after a pause
     const lastHitAt = { a: 0, b: 0 };
     // the drama
@@ -452,15 +455,16 @@ registerGame({
       if (phase === 'play') for (const pk of pucksOn()) if (!pk.on && pk.back && now >= pk.back) respawn(pk, now);
       // slow motion eases back
       if (now < slowUntil) ts = 0.5; else if (ts < 1) ts = Math.min(1, ts + dt / 0.12);
-      acc += dt;
+      acc += dt; macc += dt;
       let n = Math.floor(acc / DT);
       if (n > 14) { n = 14; acc = 0; } else acc -= n * DT;
       if (!n) return;
+      const rdt = clamp(macc, DT, 0.1); macc = 0; // real time since the mallets last moved: their speed is dx / rdt, whatever n came out as
       const ms = [M.a, M.b];
       const frozen = phase === 'paused' || phase === 'over';
       const parked = pucksOn().filter((p) => p.on);
       for (const m of ms) {
-        trackHand(m, n * DT);
+        trackHand(m, rdt);
         // While a puck is parked, it's an obstacle: aim beside it, never into it. (Pushing
         // the mallet out every step would give it a fake speed that slams the puck at the serve.)
         if (phase !== 'play') {
@@ -474,14 +478,14 @@ registerGame({
         }
         m.sx = m.x; m.sy = m.y;
         let dx = frozen ? 0 : m.tx - m.x; let dy = frozen ? 0 : m.ty - m.y;
-        const maxd = MALLET_MAX * n * DT; const d = Math.hypot(dx, dy);
+        const maxd = MALLET_MAX * rdt; const d = Math.hypot(dx, dy);
         if (d > maxd) { dx *= maxd / d; dy *= maxd / d; }
         m.dx = dx; m.dy = dy;
       }
       for (let i = 1; i <= n; i++) {
         for (const m of ms) {
           const nx = m.sx + (m.dx * i) / n; const ny = m.sy + (m.dy * i) / n;
-          m.vx = (nx - m.x) / DT; m.vy = (ny - m.y) / DT; m.x = nx; m.y = ny;
+          m.vx = ((nx - m.x) * n) / rdt; m.vy = ((ny - m.y) * n) / rdt; m.x = nx; m.y = ny;
           clampMallet(m, env);
           capToHand(m);
           if (phase !== 'play') for (const P of parked) unsqueeze(P, m, env); // keep mallets off parked pucks
@@ -632,20 +636,21 @@ registerGame({
         clampMallet(hostM, env);
         M.a.x = hostM.x; M.a.y = hostM.y;
       }
-      acc += dt;
+      acc += dt; macc += dt;
       let n = Math.floor(acc / DT);
       if (n > 14) { n = 14; acc = 0; } else acc -= n * DT;
       const m = M[me];
       const live = S && S.ph === 'play' && !hostAway;
       if (n) {
-        trackHand(m, n * DT);
+        const rdt = clamp(macc, DT, 0.1); macc = 0;
+        trackHand(m, rdt);
         m.sx = m.x; m.sy = m.y;
         let dx = phase === 'setup' ? 0 : m.tx - m.x; let dy = phase === 'setup' ? 0 : m.ty - m.y;
-        const maxd = MALLET_MAX * n * DT; const d = Math.hypot(dx, dy);
+        const maxd = MALLET_MAX * rdt; const d = Math.hypot(dx, dy);
         if (d > maxd) { dx *= maxd / d; dy *= maxd / d; }
         for (let i = 1; i <= n; i++) {
           const nx = m.sx + (dx * i) / n; const ny = m.sy + (dy * i) / n;
-          m.vx = (nx - m.x) / DT; m.vy = (ny - m.y) / DT; m.x = nx; m.y = ny;
+          m.vx = ((nx - m.x) * n) / rdt; m.vy = ((ny - m.y) * n) / rdt; m.x = nx; m.y = ny;
           clampMallet(m, env);
           capToHand(m);
           if (live) for (let j = 0; j < table.pucks; j++) { const g = G[j]; if (g.on) { const r = stepPuck(g.dp, [m, hostM], guestHit, true, env, ts); if (r.mask) bounceFx(r.mask & ~HIT_FRAME, g.dp); } }
@@ -667,6 +672,7 @@ registerGame({
     let lastHv = 0;
     let gs = null;              // guest mallet sample on the host { x, y, t, at }
     let gv = { x: 0, y: 0 };
+    const goff = { x: 0, y: 0 };  // the shown guest mallet target minus the newest sample: decays to 0
     let gk = null; let gn = -1;
     let glag = 0;
     let partnerAway = false;    // partner's tab is hidden
@@ -742,14 +748,19 @@ registerGame({
         gv = { x: gv.x * 0.35 + vx * 0.65, y: gv.y * 0.35 + vy * 0.65 };
       } else gv = { x: 0, y: 0 };
       if (st.sy) { const lag = net.now() - st.__t; if (lag >= 0 && lag < 1000) glag = glag ? glag * 0.85 + lag * 0.15 : lag; }
+      // Carry on from where the shown target was and let the difference die away (never a jump of the mallet,
+      // so its speed at a hit is the guest's finger speed, not the catch-up between two samples).
+      if (gs && !fresh) { const ex = M.b.tx - x; const ey = M.b.ty - y; if (ex * ex + ey * ey < 900) { goff.x = ex; goff.y = ey; } else { goff.x = 0; goff.y = 0; } } else { goff.x = 0; goff.y = 0; }
       gs = { x, y, t: st.__t, at: now };
     }
-    function remoteTarget(now) {
+    function remoteTarget(now, dt) {
       if (!gs) return;
       const age = (now - gs.at) / 1000;
       if (age > 0.25) { gv.x *= 0.8; gv.y *= 0.8; }
-      const e = Math.min(age, 0.05);
-      const [x, y] = clampTarget('b', gs.x + gv.x * e, gs.y + gv.y * e, env);
+      const e = Math.min(age, REMOTE_LEAD);
+      const k = Math.exp(-dt / REMOTE_BLEND);
+      goff.x *= k; goff.y *= k;
+      const [x, y] = clampTarget('b', gs.x + gv.x * e + goff.x, gs.y + gv.y * e + goff.y, env);
       M.b.tx = x; M.b.ty = y;
     }
 
@@ -1228,7 +1239,7 @@ registerGame({
       keyDrive(dt);
       glideDrive(dt);
       if (host) {
-        if (!local) remoteTarget(now);
+        if (!local) remoteTarget(now, dt);
         simulate(dt, now);
         if (!local) lastHv = Math.max(lastHv * 0.9, 0);
       } else guestUpdate(dt, now);

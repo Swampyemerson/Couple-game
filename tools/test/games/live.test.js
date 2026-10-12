@@ -839,6 +839,123 @@ async function quickdrawLossy(h) {
   await h.closeGame(a); await h.closeGame(b);
 }
 
+// Quick Draw: either phone leaves mid-duel and comes back (picker, mid-round, host re-mount, Showdown cap).
+async function qdRejoin(h, from, to) {
+  await from.click('#game-root [data-g="invite-again"]');
+  await h.settle();
+  await to.click('#gm-invite [data-g="invite-yes"]');
+}
+async function quickdrawLeave(h, tag) {
+  const { a, b } = h;
+  await joinLive(h, 'quickdraw');
+  const n0 = results(h, 'quickdraw').length;
+  // 1. Sydney drops out while Emerson is still picking; when she is back she sees his choice, and GO starts both.
+  await a.waitForSelector('.g-qd .qd-setup');
+  await qdPick(a, 'bell', '3');
+  await qdPressed(b, 'data-pack', 'bell');
+  await h.closeGame(b);
+  await a.waitForFunction(() => window.__qdTest.state().paused, null, { timeout: 4000 });
+  await qdRejoin(h, a, b);
+  await b.waitForFunction(() => window.__qdTest && document.querySelector('.g-qd .qd-setup:not([hidden])'), null, { timeout: 6000 });
+  await qdPressed(b, 'data-pack', 'bell'); await qdPressed(b, 'data-series', '3');
+  assert(/Emerson is picking/.test(await b.textContent('.qd-setup-head')), 'guest came back during the picker: the host\'s choice (Bell, best of 3) is shown again');
+  await qdPick(a, 'classic', '3');
+  await qdPressed(b, 'data-pack', 'classic');
+  await qdGo(a);
+  // 2. Sydney drops out mid-round: the round is voided and the host waits. She rejoins: a fresh round.
+  await qdPhase(a, 'steady');
+  await h.closeGame(b);
+  await a.waitForFunction(() => window.__qdTest.state().phase === 'paused', null, { timeout: 4000 });
+  await h.wait(5000);
+  assert((await qd(a)).phase === 'paused' && !(await qd(a)).verdict, 'partner gone: the round is voided and the duel waits (no verdict, no stray DRAW)');
+  await qdRejoin(h, a, b);
+  await b.waitForFunction(() => { const p = document.querySelector('.g-qd')?.dataset.phase; return p === 'draw' || p === 'steady'; }, null, { timeout: 8000 });
+  const shot = qdPhase(b, 'draw', 9000).then(() => h.shot(b, `${SHOTS}/qd-${tag}-live-draw-360-b.png`));
+  await Promise.all([qdFireAt(a, 'draw', 120), qdFireAt(b, 'draw', 260), shot]);
+  await verdictFor(a, 1);
+  await verdictFor(b, 1);
+  await h.wait(400);
+  await h.shot(a, `${SHOTS}/qd-${tag}-live-result-390-a.png`);
+  // 3. The host (Emerson) leaves mid-duel and comes back: the duel carries on from the same tally and pack.
+  const t1 = (await qd(b)).tally;
+  assert(t1.a === 1 && t1.b === 0, `Emerson is up 1-0 (${t1.a}-${t1.b})`);
+  await h.closeGame(a);
+  await b.waitForFunction(() => window.__qdTest.state().phase === 'paused', null, { timeout: 4000 });
+  assert((await qd(b)).paused, 'host gone: the guest waits too');
+  await qdRejoin(h, b, a);
+  await a.waitForFunction(() => window.__qdTest, null, { timeout: 6000 });
+  await h.settle(); await h.settle();
+  const [ta, tb] = [await qd(a), await qd(b)];
+  assert(ta.tally.a === t1.a && ta.tally.b === t1.b && tb.tally.a === t1.a && tb.tally.b === t1.b, `host left and came back: the tally is still ${t1.a}-${t1.b} on both`);
+  assert(ta.started && ta.cfg.s === '3' && ta.cfg.p === 'classic', `...and the duel's pack and series survive the re-mount (${ta.cfg.p}:${ta.cfg.s})`);
+  assert(!(await a.isVisible('.g-qd .qd-setup')), 'the returning host skips the picker');
+  await qdPhase(b, 'steady'); await qdPhase(a, 'steady');
+  await qdFireAt(b, 'steady', 100);
+  await verdictFor(a, 1);
+  await a.waitForFunction(() => document.querySelector('#game-root .gm-end:not([hidden])'), null, { timeout: 6000 });
+  await b.waitForFunction(() => document.querySelector('#game-root .gm-end:not([hidden])'), null, { timeout: 6000 });
+  assert(/Emerson/.test(await endHead(b)) && /Emerson/.test(await endHead(a)), `${tag}: duel over after the re-mount, end card on both`);
+  await h.settle();
+  assert(results(h, 'quickdraw').length === n0 + 1, 'and the duel is recorded once');
+  await h.shot(a, `${SHOTS}/qd-${tag}-live-end-390-a.png`);
+  await h.shot(b, `${SHOTS}/qd-${tag}-live-end-360-b.png`);
+  await h.closeGame(a); await h.closeGame(b);
+}
+
+// Quick Draw: a rematch starts the last duel by itself after 3 s, visibly, and "Pick again" stops it.
+async function quickdrawRematch(h, tag) {
+  const { a, b } = h;
+  await joinLive(h, 'quickdraw');
+  await qdPick(a, 'decoys', '3'); await qdGo(a);
+  await qdFoulRounds(h, a, b, 2);
+  await a.waitForFunction(() => document.querySelector('#game-root .gm-end:not([hidden])'), null, { timeout: 6000 });
+  await b.waitForFunction(() => document.querySelector('#game-root .gm-end:not([hidden])'), null, { timeout: 6000 });
+  await a.click('#game-root [data-g="rematch"]');
+  await h.settle();
+  await a.waitForSelector('.g-qd .qd-setup:not([hidden])'); await b.waitForSelector('.g-qd .qd-setup:not([hidden])');
+  await qdPressed(a, 'data-pack', 'decoys'); await qdPressed(a, 'data-series', '3');
+  await b.waitForFunction(() => /Same again/.test(document.querySelector('.qd-setup-head')?.textContent || ''), null, { timeout: 3000 });
+  const [ha, hb] = [await a.textContent('.qd-setup-head'), await b.textContent('.qd-setup-head')];
+  assert(/Same again/.test(ha) && /Starting in \d/.test(hb) && await a.isVisible('.qd-again') && !(await b.isVisible('.qd-again')), `the host sees the countdown with a "Pick again" button, the guest sees it too ("${hb.trim()}")`);
+  const btn = await a.evaluate(() => { const r = document.querySelector('.qd-again').getBoundingClientRect(); const g = document.querySelector('.qd-go').getBoundingClientRect(); return { h: r.height, w: r.width, gh: g.height }; });
+  assert(btn.h >= 44 && btn.w >= 44 && btn.gh >= 44, `"Pick again" and GO are big enough (${Math.round(btn.w)}x${Math.round(btn.h)}, GO ${Math.round(btn.gh)} px)`);
+  await h.shot(a, `${SHOTS}/qd-${tag}-live-rematch-390-a.png`);
+  await h.shot(b, `${SHOTS}/qd-${tag}-live-rematch-360-b.png`);
+  await qdTap(a, '.qd-again');
+  await h.wait(3800);
+  assert((await qd(a)).phase === 'setup' && (await qd(b)).phase === 'setup' && !(await qd(a)).started, 'Pick again: nothing starts by itself any more, on either phone');
+  assert(/is picking/.test(await b.textContent('.qd-setup-head')) && /Pick the duel/.test(await a.textContent('.qd-setup-head')) && !(await a.isVisible('.qd-again')), 'the countdown is gone from both screens, the choice is kept');
+  await qdPressed(a, 'data-pack', 'decoys'); await qdPressed(a, 'data-series', '3');
+  await qdGo(a);
+  await qdPhase(b, 'steady');
+  await h.closeGame(a); await h.closeGame(b);
+}
+
+// Quick Draw, Showdown: after 15 decided rounds the next one is sudden death (one phone, laptop-free).
+async function quickdrawSudden(h, tag) {
+  const { a } = h;
+  await h.startLive(a, 'quickdraw', 'local');
+  await a.waitForFunction(() => window.__qdTest, null, { timeout: 4000 });
+  const n0 = results(h, 'quickdraw').length;
+  await a.evaluate(() => window.__qdTest.start('classic', 'sd', { a: 7, b: 8 }));   // 15 rounds in, nobody is two ahead
+  await qdPhase(a, 'steady');
+  const rd = (await qd(a)).rd;
+  assert(rd.sd === 1 && (await qd(a)).cfg.s === 'sd', 'Showdown at 7-8 after 15 rounds: the next round is sudden death');
+  const t = await qdText(a);
+  assert(/SUDDEN DEATH/.test(t.line) && /SUDDEN DEATH/.test(await a.textContent('.qd-kind:not(.qd-top)')), `it says so ("${t.line}") and on the sign`);
+  await h.wait(250);
+  assert(/SUDDEN DEATH/.test(await a.textContent('.qd-stamp')), 'and stamps SUDDEN DEATH');
+  await h.shot(a, `${SHOTS}/qd-${tag}-local-sudden-390.png`);
+  await qdFireAt(a, 'draw', 130, { w: ['a'] });   // Emerson was behind: his hit takes the duel
+  const v = await verdictFor(a, 1);
+  assert(v.w === 'a' && v.res && v.sd === 1 && v.tally.a > v.tally.b, `whoever hits first takes the duel, even from behind (${v.tally.a}-${v.tally.b})`);
+  await a.waitForFunction(() => document.querySelector('#game-root .gm-end:not([hidden])'), null, { timeout: 5000 });
+  assert(/Emerson/.test(await endHead(a)) && /sudden death/.test(await a.textContent('#game-root .gm-end .gm-end-sub')), 'the end card says Emerson won in sudden death');
+  await h.settle();
+  assert(results(h, 'quickdraw').length === n0 + 1, 'recorded once');
+  await h.closeGame(a);
+}
+
 // ── 4. Quick Draw, one phone ──────────────────────────────────────────
 async function quickdrawLocal(h, tag) {
   const { a } = h;
@@ -881,6 +998,8 @@ async function quickdrawLocal(h, tag) {
   await h.wait(700);
   t = await qdText(a);
   assert(await a.isVisible('.qd-bars') && /PHOTO FINISH/.test(await a.textContent('.qd-stamp')) && t.line === `Emerson by ${v.diff} ms`, 'photo finish: stamp and a side-by-side timing bar');
+  const stamps = await a.evaluate(() => [...document.querySelectorAll('.qd-stamp')].map((e) => { const r = e.getBoundingClientRect(); const m = new DOMMatrix(getComputedStyle(e).transform); return { text: e.textContent, cx: r.left + r.width / 2, cy: r.top + r.height / 2, up: m.a > 0, inside: r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight, op: +getComputedStyle(e).opacity }; }));
+  assert(stamps.length === 2 && stamps.every((x) => x.text === 'PHOTO FINISH' && x.inside && x.op > 0.1) && stamps.filter((x) => x.up).length === 1 && stamps[1].cy < stamps[0].cy - 20, `one phone: the stamp is printed twice, the top copy upside down and above (${stamps.map((x) => `${x.text} ${x.up ? 'upright' : 'flipped'}@${Math.round(x.cy)} in:${x.inside} op:${x.op.toFixed(2)}`).join(' / ')})`);
   await h.shot(a, `${SHOTS}/qd-${tag}-local-photo-390.png`);
   // Round 3: Emerson fires 40 ms after DRAW: that's a guess, not a reaction, so it's a foul.
   await qdFireAt(a, 'draw', 40, { w: ['a'] });
@@ -1053,6 +1172,7 @@ const want = (g) => GAME === 'all' || GAME === g;
       await quickdrawPacks(h, 'dark');
       await quickdrawStreaks(h, 'dark');
       await quickdrawLocal(h, 'dark');
+      await quickdrawSudden(h, 'dark');
     }
   }, { coarse: true });
   await run(PORT + 2, 'dark', async (h) => {
@@ -1061,6 +1181,9 @@ const want = (g) => GAME === 'all' || GAME === g;
     if (want('quickdraw')) await quickdrawKeys(h, h.a, 'dark');
   }, { fine: true, device: 'Desktop Chrome', who: ['a'] });
   if (want('quickdraw')) await run(PORT + 3, 'light', quickdrawLatency, { coarse: true, latency: 200 });
+  if (want('quickdraw')) {
+    await run(PORT + 5, 'dark', async (h) => { await quickdrawLeave(h, 'dark'); await quickdrawRematch(h, 'dark'); }, { coarse: true });
+  }
   if (want('quickdraw')) await run(PORT + 4, 'light', quickdrawLossy, { coarse: true, latency: 120, dropRate: 0.2 });
   if (want('hockey')) {
     await run(PORT + 4, 'light', async (h) => {
