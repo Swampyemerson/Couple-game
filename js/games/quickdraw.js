@@ -249,6 +249,7 @@ registerGame({
       .g-qd.is-phone .qd-sig { gap: 0; }
       .g-qd.is-phone .qd-line, .g-qd.is-phone .qd-times { font-size: 0.74rem; line-height: 1.2; min-height: 1.2em; }
       .g-qd.is-phone .qd-kind { font-size: 0.56rem; top: 4px; }
+      .g-qd.is-phone .qd-sig.is-bang .qd-word { text-shadow: 2px 2px 0 var(--g-edge, var(--g-ink)); }
     }
     .g-qd.is-desk { max-width: 620px; width: 100%; margin: 0 auto; }
     .g-qd.is-desk .qd-pads { flex: 0 0 auto; height: clamp(76px, 24vh, 150px); }
