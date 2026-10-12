@@ -86,7 +86,6 @@ export const CSS = `
 .g-rush .rr-pop { grid-area: 1 / 1; max-width: 100%; overflow-wrap: anywhere; font-weight: 900; font-size: 27px; line-height: 1; text-align: center; color: var(--g-white); padding: 0 8px; opacity: 0;
   text-shadow: var(--rr-out), var(--rr-ring), 3px 5px 0 var(--g-edge); }
 .g-rush .rr-pop.go { animation: rr-pop 1.1s cubic-bezier(.2,1.4,.4,1) forwards; }
-.g-rush .rr-pop:not(:last-child) { margin-top: -62px; }
 .g-rush .rr-pop.hl { color: var(--g-hl); } .g-rush .rr-pop.bad { color: var(--g-bad); } .g-rush .rr-pop.good { color: var(--g-good); }
 .g-rush .rr-pop.pa { color: var(--p-a); } .g-rush .rr-pop.pb { color: var(--p-b); }
 .g-rush .rr-pop small { display: block; font-size: 15px; margin-top: 4px; }

@@ -4,7 +4,7 @@
 // (collected coins, smashed barriers, oncoming train positions) right before rendering a view.
 import { rng } from '../core.js';
 import { CHUNK, LANE_W, CAR, ROOF, LOW_H, HIGH_B, HIGH_T } from './tune.js';
-import { O_LOW, O_HIGH, O_TRAIN, O_RAMP, O_MTRAIN, O_BLOCK, I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX, I_REVIVE, mtrainFront, districtSeq, districtIn } from './track.js';
+import { O_LOW, O_HIGH, O_TRAIN, O_RAMP, O_MTRAIN, O_BLOCK, I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX, I_REVIVE, I_NOTE, I_DOUBLE, mtrainFront, districtSeq, districtIn } from './track.js';
 import { GeoBuf, makeToon, makeUniforms, applyPaletteUniforms, makeTemplates, blobTexture, mix, FX_PLAIN, FX_GLOW, FX_SKY } from './gfx.js';
 import { makeBio, bioGate, bioScenery, bx, qz, qx, qu, stripes, windows } from './bio.js';
 
@@ -31,6 +31,9 @@ const VIEW_AHEAD = 175;
 const COIN_AHEAD = 132;   // coins further out are lost in the fog anyway
 const VIEW_BEHIND = 14;
 const SIDE_X = 4.35;      // parapet line
+// instance-colour tints of gold coins (they multiply the coin's vertex colours; > 1 brightens)
+const GOLD_T = [1.0, 0.72, 0.9];   // fool's gold: deeper, warmer than the plain coin
+const HUND_T = [1.0, 0.86, 1.4];   // Golden Hundred: paler, brighter
 
 export function createWorld(THREE, P) {
   const T = makeTemplates(THREE);
@@ -90,7 +93,11 @@ export function createWorld(THREE, P) {
     b.add(T.box, 0, 0, 0, 0.12, 0.19, 0.34, 0, P.coinRim, FX_PLAIN, 0, ink);
   });
   // disc template is a Y-axis cylinder: rotate its axis to Z by swapping in the instance matrix (see writeCoin)
-  const coins = inst(coinGeo, COIN_MAX);
+  // Coins draw with the instance-colour material (the barrier blocks' program: no new shader): the
+  // per-instance colour multiplies the vertex colours, white for plain coins, a gold tint for fool's gold.
+  const coins = inst(coinGeo, COIN_MAX, matInstC);
+  coins.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(COIN_MAX * 3).fill(1), 3);
+  coins.instanceColor.setUsage(THREE.DynamicDrawUsage);
 
   const itemGeo = {};
   itemGeo[I_MAGNET] = freezeWith((b) => {
@@ -125,9 +132,33 @@ export function createWorld(THREE, P) {
     b.add(T.disc, 0, -1.05, 0, 2.2, 0.06, 2.2, 0, mix(P.hl, P.white, 0.3), FX_GLOW, 0.04, ink);
     b.add(T.cyl, 0, 2.6, 0, 0.32, 6.5, 0.32, 0, mix(P.b, P.white, 0.55), FX_GLOW, 0, ink);
   });
+  // Love note: a pink envelope with a heart seal (both faces), flap and stamp.
+  itemGeo[I_NOTE] = freezeWith((b) => {
+    const paper = mix(P.white, P.b, 0.12);
+    b.add(T.box, 0, 0, 0, 0.98, 0.68, 0.14, 0, paper, FX_PLAIN, 0.05, ink);
+    b.add(T.pen, 0, 0.1, 0.08, 0.96, 0.4, 1, 0, mix(P.b, P.white, 0.4), FX_PLAIN, 0, ink);
+    b.add(T.pen, 0, 0.1, -0.08, 0.96, 0.4, 1, Math.PI, mix(P.b, P.white, 0.4), FX_PLAIN, 0, ink);
+    for (const sz of [1, -1]) {
+      b.add(T.sphere, 0, -0.02, 0.1 * sz, 0.26, 0.26, 0.14, 0, P.b, FX_GLOW, 0.03, ink);
+      b.add(T.box, 0.34, 0.2, 0.075 * sz, 0.16, 0.2, 0.02, 0, P.hl, FX_PLAIN, 0, ink);
+    }
+  });
+  // Coin doubler: a gold-rimmed blue token with a big white 2 on both faces.
+  itemGeo[I_DOUBLE] = freezeWith((b) => {
+    b.add(T.discZ, 0, 0, 0, 1.0, 1.0, 0.2, 0, P.hl, FX_PLAIN, 0.05, ink);
+    b.add(T.discZ, 0, 0, 0, 0.8, 0.8, 0.26, 0, mix(P.a, P.white, 0.2), FX_GLOW, 0, ink);
+    for (const sz of [1, -1]) {
+      const z = 0.15 * sz; const m = sz;
+      b.add(T.box, 0, 0.2, z, 0.34, 0.08, 0.04, 0, P.white, FX_GLOW, 0, ink);
+      b.add(T.box, 0.13 * m, 0.1, z, 0.08, 0.2, 0.04, 0, P.white, FX_GLOW, 0, ink);
+      b.add(T.box, 0, 0, z, 0.34, 0.08, 0.04, 0, P.white, FX_GLOW, 0, ink);
+      b.add(T.box, -0.13 * m, -0.1, z, 0.08, 0.2, 0.04, 0, P.white, FX_GLOW, 0, ink);
+      b.add(T.box, 0, -0.2, z, 0.34, 0.08, 0.04, 0, P.white, FX_GLOW, 0, ink);
+    }
+  });
   // The revive halo should be drawn first-ish; it's opaque but smaller parts poke through. Fine for a glowing token.
   const items = {};
-  for (const k of [I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX, I_REVIVE]) items[k] = inst(itemGeo[k], ITEM_MAX);
+  for (const k of [I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX, I_REVIVE, I_NOTE, I_DOUBLE]) items[k] = inst(itemGeo[k], ITEM_MAX);
 
   const lowGeo = freezeWith((b) => {
     b.boxMM(-1.02, 0, -0.1, -0.84, LOW_H, 0.1, P.pole, FX_PLAIN, 0.035, ink, T);
@@ -415,6 +446,7 @@ export function createWorld(THREE, P) {
     const c0 = Math.max(0, Math.floor((z - VIEW_BEHIND) / CHUNK));
     const c1 = Math.floor((z + VIEW_AHEAD) / CHUNK);
     const ca = coins.instanceMatrix.array;
+    const cca = coins.instanceColor.array;
     if (sunFront !== !!v.front) { sunFront = !!v.front; U.uSun.value.set(-0.42, 0.8, sunFront ? -0.43 : 0.43).normalize(); }
     let nc = 0;
     const ic = itemCount;
@@ -430,7 +462,10 @@ export function createWorld(THREE, P) {
         if (cn.z < z - VIEW_BEHIND) continue;
         if (cn.z > z + COIN_AHEAD) break; // sorted by z
         if (r && r.taken.has(base + i)) continue;
-        WM[0] = cn.x; WM[1] = cn.y; WM[2] = -cn.z; WM[3] = 1; WM[4] = spin + cn.z * 0.05; WM[5] = Math.PI / 2; writeM(ca, nc++);
+        const cv = cn.v; // track v2: 3 = fool's gold (big, gold), 2 = Golden Hundred (gold); undefined / 1 = plain
+        if (cv > 1) { const gd = cv > 2; cca[nc * 3] = gd ? GOLD_T[0] : HUND_T[0]; cca[nc * 3 + 1] = gd ? GOLD_T[1] : HUND_T[1]; cca[nc * 3 + 2] = gd ? GOLD_T[2] : HUND_T[2]; WM[3] = gd ? 1.4 : 1.12; }
+        else { cca[nc * 3] = 1; cca[nc * 3 + 1] = 1; cca[nc * 3 + 2] = 1; WM[3] = 1; }
+        WM[0] = cn.x; WM[1] = cn.y; WM[2] = -cn.z; WM[4] = spin + cn.z * 0.05; WM[5] = Math.PI / 2; writeM(ca, nc++);
       }
       const its = c.items;
       for (let i = 0; i < its.length; i++) {
@@ -441,7 +476,7 @@ export function createWorld(THREE, P) {
         const m = items[it.k];
         if (ic[it.k] >= ITEM_MAX) continue;
         const bob = Math.sin(v.time * 3 + it.z) * 0.12;
-        WM[0] = it.x; WM[1] = it.y + bob; WM[2] = -it.z; WM[3] = it.k === I_BOX ? 1 : 1.05; WM[4] = spin * 0.7 + it.z; WM[5] = it.k === I_BOX ? 0.6 : 0; writeM(m.instanceMatrix.array, ic[it.k]++);
+        WM[0] = it.x; WM[1] = it.y + bob; WM[2] = -it.z; WM[3] = it.k === I_BOX ? 1 : it.k === I_NOTE ? 1.3 : it.k === I_DOUBLE ? 1.2 : 1.05; WM[4] = spin * 0.7 + it.z; WM[5] = it.k === I_BOX ? 0.6 : 0; writeM(m.instanceMatrix.array, ic[it.k]++);
       }
       const obs = c.obs;
       for (let oi = 0; oi < obs.length; oi++) {
@@ -460,7 +495,7 @@ export function createWorld(THREE, P) {
         }
       }
     }
-    if (v.fly) for (let fi = 0; fi < v.fly.length; fi++) { const f = v.fly[fi]; if (nc < COIN_MAX && f.on) { WM[0] = f.x; WM[1] = f.y; WM[2] = -f.z; WM[3] = f.s; WM[4] = spin * 2; WM[5] = Math.PI / 2; writeM(ca, nc++); } }
+    if (v.fly) for (let fi = 0; fi < v.fly.length; fi++) { const f = v.fly[fi]; if (nc < COIN_MAX && f.on) { WM[0] = f.x; WM[1] = f.y; WM[2] = -f.z; WM[3] = f.s; WM[4] = spin * 2; WM[5] = Math.PI / 2; cca[nc * 3] = 1; cca[nc * 3 + 1] = 1; cca[nc * 3 + 2] = 1; writeM(ca, nc++); } }
     if (r) {
       for (let ti = 0; ti < r.tokens.length; ti++) {
         const tk = r.tokens[ti];
@@ -484,8 +519,8 @@ export function createWorld(THREE, P) {
       blocks.instanceMatrix.needsUpdate = true;
     } else blocks.count = 0;
     for (let i = nm; i < mtrains.length; i++) mtrains[i].visible = false;
-    coins.count = nc; coins.instanceMatrix.needsUpdate = true;
-    for (let k = 1; k <= 5; k++) { items[k].count = ic[k]; items[k].instanceMatrix.needsUpdate = true; }
+    coins.count = nc; coins.instanceMatrix.needsUpdate = true; coins.instanceColor.needsUpdate = true;
+    for (let k = 1; k <= 7; k++) { items[k].count = ic[k]; items[k].instanceMatrix.needsUpdate = true; }
     lows.count = nl; lows.instanceMatrix.needsUpdate = true;
     highs.count = nh; highs.instanceMatrix.needsUpdate = true;
   }

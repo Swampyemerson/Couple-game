@@ -20,6 +20,24 @@ export const I_SNEAKERS = 2;
 export const I_SHIELD = 3;
 export const I_BOX = 4;
 export const I_REVIVE = 5;
+export const I_NOTE = 6;     // track v2: the love-note envelope (once a run, chunks 4-8)
+export const I_DOUBLE = 7;   // track v2: coin doubler (a converted magnet)
+
+// Track v2 content (everything below is gated on ver >= 2; ver 1 output is byte for byte what it
+// always was). Each piece draws from its own stream rng(hash(seed, '<stream>', i)).
+export const EV_RUSH = 1;      // Coin Rush: a dense field of coins in every clear lane
+export const EV_HUNDRED = 2;   // Golden Hundred: every coin in the chunk pays 2x
+export const RUSH_LEN = 30;    // m of Coin Rush field
+const RUSH_ROWS = 8;           // rows of coins (one per clear lane each): at most 24 coins
+export const GOLD_V = 3;       // coin.v of a fool's-gold coin
+export const GOLD_N = 5;       // coins in a fool's-gold branch
+export const GOLD_LEN = 18;    // m a branch window spans
+const GOLD_P = 0.35;           // per-chunk chance of a branch (chunks 3+)
+const EVENT_P = 0.08;          // per-chunk chance of an event (chunks 4+), at least EVENT_GAP chunks apart
+const EVENT_GAP = 6;
+const DBL_P = 0.3;             // share of magnets that are doublers instead
+const NOTE_FIRST = 4;          // the love note sits in one of chunks 4..8
+const NOTE_SPAN = 5;
 
 /** Expected running speed at distance d, a little on the fast side (m/s). */
 export function designSpeed(d) {
@@ -108,8 +126,12 @@ function tagDistrict(c, seed) {
   c.zoneStart = isZoneStart(c.i);
 }
 
-/** Build chunk i for a seed. */
-export function genChunk(seed, i) {
+/**
+ * Build chunk i for a seed. `ver` is the match's track version (default 1: today's output exactly);
+ * ver >= 2 adds fool's-gold branches, events, the love note and doublers (see v2Content).
+ * `opt.goldP` overrides the branch chance (Daily "Gold rush" doubles it); both devices must agree on it.
+ */
+export function genChunk(seed, i, ver = 1, opt = null) {
   const z0 = i * CHUNK;
   const z1 = z0 + CHUNK;
   const c = {
@@ -136,6 +158,7 @@ export function genChunk(seed, i) {
     c.obs.sort((a, b) => a.z0 - b.z0);
     c.coins.sort((a, b) => a.z - b.z);
     c.path.push([z1, sOut]);
+    if (ver >= 2) { for (const cn of c.coins) { cn.v = 1; cn.g = 0; } c.event = 0; c.eventZ = 0; }
     tagDistrict(c, seed);
     return c;
   }
@@ -171,6 +194,7 @@ export function genChunk(seed, i) {
   c.path.push([z1, sOut]);
 
   placeItems(c, r, X);
+  if (ver >= 2) v2Content(c, seed, opt);
   c.obs.sort((a, b) => a.z0 - b.z0);
   c.coins.sort((a, b) => a.z - b.z);
   tagDistrict(c, seed);
@@ -470,25 +494,149 @@ function placeItems(c, r, X) {
   void X;
 }
 
+// ── track v2 content ──
+/** True if any gap (any lane, bridges included) touches [za, zb]. */
+function anyGap(c, za, zb) {
+  for (const g of c.gaps) if (g.z1 >= za && g.z0 <= zb) return true;
+  return false;
+}
+/** True if a coin already sits in lane l within [za, zb]. */
+function coinIn(c, l, za, zb) {
+  const x = l * LANE_W;
+  for (const cn of c.coins) if (cn.z >= za && cn.z <= zb && cn.x > x - 1.3 && cn.x < x + 1.3) return true;
+  return false;
+}
+/** The event raw roll for chunk i (its own stream). */
+function eventRaw(seed, i) { return i >= 4 && rng(hash(seed, 'event', i))() < EVENT_P; }
+/**
+ * Event of chunk i (0 none, EV_RUSH, EV_HUNDRED): a pure function of (seed, i) with no event raw
+ * roll in the EVENT_GAP-1 chunks before it, so events are at least EVENT_GAP chunks apart.
+ * (A Coin Rush that finds no clear window simply doesn't happen; it still spaces its neighbours.)
+ */
+export function eventOf(seed, i) {
+  if (!eventRaw(seed, i)) return 0;
+  for (let j = i - EVENT_GAP + 1; j < i; j++) if (j >= 4 && eventRaw(seed, j)) return 0;
+  const g = rng(hash(seed, 'event', i));
+  g();
+  return g() < 0.6 ? EV_RUSH : EV_HUNDRED;
+}
+/** The chunk (4..8) that carries the love note. */
+export function noteChunk(seed) { return NOTE_FIRST + (hash(seed, 'note') % NOTE_SPAN); }
+
+function v2Content(c, seed, opt) {
+  const i = c.i;
+  for (const cn of c.coins) { cn.v = 1; cn.g = 0; }
+  c.event = 0; c.eventZ = 0;
+  const ev = c.tunnel ? 0 : eventOf(seed, i);
+  if (ev === EV_RUSH) placeRush(c, seed);
+  if (ev && !c.event) { c.event = EV_HUNDRED; c.eventZ = c.z0; } // (no clear window for a Coin Rush: a Golden Hundred instead)
+  if (i >= 3 && c.event !== EV_HUNDRED) placeGold(c, seed, opt && opt.goldP > 0 ? opt.goldP : GOLD_P);
+  if (i === noteChunk(seed)) placeNote(c, seed);
+  const dg = rng(hash(seed, 'dbl', i));
+  for (const it of c.items) if (it.k === I_MAGNET && dg() < DBL_P) it.k = I_DOUBLE;
+  if (c.event === EV_HUNDRED) for (const cn of c.coins) cn.v *= 2;
+  c.items.sort((a, b) => a.z - b.z);
+}
+
+/**
+ * Coin Rush: RUSH_ROWS rows of coins over a stretch (RUSH_LEN m, shrinking to 24 / 18 m if the chunk
+ * is busy) in every lane that is clear over it, never across a gap. The track is busy enough that
+ * all three lanes are almost never clear for 24 m, so in practice it is a two-lane carpet beside
+ * (and around) the path coins.
+ */
+function placeRush(c, seed) {
+  const g = rng(hash(seed, 'event', c.i));
+  g(); g();
+  const k0 = g();
+  for (const len of [RUSH_LEN, 24, 18]) {
+    const n = Math.floor((CHUNK - 14 - len) / 2) + 1; // candidate starts, 2 m apart
+    const k1 = Math.floor(k0 * n);
+    for (let t = 0; t < n; t++) {
+      const zs = c.z0 + 6 + 2 * ((k1 + t) % n);
+      const za = zs - 1.5;
+      const zb = zs + len + 1.5;
+      if (anyGap(c, zs - 4, zs + len + 4)) continue;
+      const lanes = [];
+      for (let l = -1; l <= 1; l++) if (laneClear(c, l, za, zb)) lanes.push(l);
+      if (lanes.length < 2) continue;
+      const step = len / RUSH_ROWS;
+      for (const l of lanes) {
+        for (let k = 0; k < RUSH_ROWS; k++) {
+          const z = zs + k * step;
+          if (!coinIn(c, l, z - 1.4, z + 1.4)) c.coins.push({ x: l * LANE_W, z, y: 1.0, v: 1, g: 0 });
+        }
+      }
+      c.event = EV_RUSH; c.eventZ = zs;
+      return;
+    }
+  }
+}
+
+/** Fool's gold: GOLD_N coins worth GOLD_V each along a non-path lane, in a window clear of everything. */
+function placeGold(c, seed, p) {
+  const g = rng(hash(seed, 'gold', c.i));
+  if (!(g() < p)) return;
+  const rl = g() < 0.5 ? 0 : 1;
+  const n = Math.floor((CHUNK - 16 - GOLD_LEN) / 2) + 1; // candidate starts, 2 m apart
+  const k0 = Math.floor(g() * n);
+  for (let t = 0; t < n; t++) {
+    const zs = c.z0 + 8 + 2 * ((k0 + t) % n);
+    const za = zs - 2;
+    const zb = zs + GOLD_LEN + 2;
+    if (anyGap(c, zs - 4, zb + 4)) continue;
+    // a non-path lane that stays non-path (and clear) over the whole window and the lane changes around it
+    const os = others(pathLane(c, zs));
+    for (let k = 0; k < 2; k++) {
+      const l = os[(k + rl) % 2];
+      if (pathLane(c, za - 4) === l || pathLane(c, zb + 4) === l) continue;
+      let off = true;
+      for (const [pz, pl] of c.path) if (pz >= za - 4 && pz <= zb + 4 && pl === l) off = false;
+      if (!off || !laneClear(c, l, za, zb) || coinIn(c, l, za, zb)) continue;
+      if (c.items.some((it) => it.z > za && it.z < zb && Math.abs(it.x - l * LANE_W) < 1.4)) continue;
+      for (let j = 0; j < GOLD_N; j++) c.coins.push({ x: l * LANE_W, z: zs + (j * GOLD_LEN) / (GOLD_N - 1), y: 1.0, v: GOLD_V, g: j === 2 ? 1 : 0 });
+      return;
+    }
+  }
+}
+
+/** The love note: on the safe path in a clear stretch (no gap nearby), 4 m from other items; margins relax if the chunk is busy. */
+function placeNote(c, seed) {
+  const g = rng(hash(seed, 'notez', c.i));
+  const n = 20;
+  const k0 = Math.floor(g() * n);
+  for (const m of [7, 4.5, 3]) {
+    for (let t = 0; t < n; t++) {
+      const z = c.z0 + 8 + 4 * ((k0 + t) % n);
+      const l = pathLane(c, z);
+      if (pathLane(c, z - m) !== l || pathLane(c, z + m) !== l) continue;
+      if (!laneClear(c, l, z - m, z + m) || anyGap(c, z - m - 2, z + m + 2)) continue;
+      if (c.items.some((it) => Math.abs(it.z - z) < 4)) continue;
+      c.items.push({ k: I_NOTE, x: l * LANE_W, z, y: 1.15 });
+      return;
+    }
+  }
+}
+
 /** Stable text fingerprint of a chunk's gameplay layout (for determinism checks). */
-export function chunkSig(c) {
+export function chunkSig(c, ver = 1) {
   const f = (v) => Math.round(v * 1000);
   const o = c.obs.map((x) => [x.t, x.lane, f(x.z0), f(x.z1), x.cars, x.liv].join(',')).join(';');
   const g = c.gaps.map((x) => [f(x.z0), f(x.z1), x.mask].join(',')).join(';');
-  const k = c.coins.map((x) => [f(x.x), f(x.z), f(x.y)].join(',')).join(';');
+  const v2 = ver >= 2;
+  const k = c.coins.map((x) => (v2 ? [f(x.x), f(x.z), f(x.y), x.v, x.g] : [f(x.x), f(x.z), f(x.y)]).join(',')).join(';');
   const it = c.items.map((x) => [x.k, f(x.x), f(x.z)].join(',')).join(';');
-  return `${c.i}|${o}|${g}|${k}|${it}|${c.tunnel ? c.tunnel.map(f).join(',') : ''}`;
+  return `${c.i}|${o}|${g}|${k}|${it}|${c.tunnel ? c.tunnel.map(f).join(',') : ''}${v2 ? `|${c.event},${f(c.eventZ)}` : ''}`;
 }
 
-/** Chunk cache for one seed. */
-export function createTrack(seed) {
+/** Chunk cache for one seed (ver = the match's track version, opt = genChunk's options). */
+export function createTrack(seed, ver = 1, opt = null) {
   const cache = new Map();
   return {
-    seed,
+    seed, ver,
     chunk(i) {
       if (i < 0) i = 0;
       let c = cache.get(i);
-      if (!c) { c = genChunk(seed, i); cache.set(i, c); }
+      if (!c) { c = genChunk(seed, i, ver, opt); cache.set(i, c); }
       return c;
     },
     /** Drop chunks before index i (keeps memory flat on long runs). */
@@ -497,9 +645,9 @@ export function createTrack(seed) {
   };
 }
 
-/** Hash of the first n chunks' layouts. */
-export function trackHash(seed, n) {
+/** Hash of the first n chunks' layouts (ver 1 = today's hash exactly). */
+export function trackHash(seed, n, ver = 1) {
   let h = 0;
-  for (let i = 0; i < n; i++) h = hash(h, chunkSig(genChunk(seed, i)));
+  for (let i = 0; i < n; i++) h = hash(h, chunkSig(genChunk(seed, i, ver), ver));
   return h;
 }

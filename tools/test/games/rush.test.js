@@ -4,7 +4,7 @@
 // heap growth, seamlessness (late lobby, partner / host re-mounts mid-race, 30 s in the
 // background, a much slower partner), and screenshots in light and dark.
 //   node tools/test/games/rush.test.js            (ONLY=gen,race,... to run some sections)
-// Sections: gen race brawl tandem pause daily | split leak | drop | dark | heap | seam. Ports 8960-8969.
+// Sections: gen race brawl tandem pause daily | split leak | drop | dark | heap | seam | rejoin. Ports 8960-8969.
 // (the author runs two halves: ONLY=gen,split,leak,drop,dark and ONLY=race,brawl,tandem,pause,daily)
 const fs = require('fs');
 const { launch } = require('../harness');
@@ -1094,6 +1094,30 @@ async function waitRun(pg) { await until(pg, () => window.__rush.state().phase =
       await shot(h.a, 'fail-seam-a').catch(() => {}); await shot(h.b, 'fail-seam-b').catch(() => {});
       console.error('errors:', h.errors.slice(0, 8));
     } finally { await h.close(); }
+  }
+
+  // ═══ a Daily runner who was out of hearts and re-mounts is still out (it used to come back alive with 0 hearts) ═══
+  if (want('rejoin')) {
+    const h = await launch({ port: PORT(7), only: ['rush'], latency: 40, coarse: true });
+    const { a, b } = h;
+    try {
+      await openLivePair(h, { raceLen: 20000 });
+      await pickAndStart(h, 'daily');
+      await waitRun(a); await waitRun(b);
+      await a.evaluate(() => window.__rush.auto('a', true));
+      await b.evaluate(() => { window.__rush.auto('b', false); window.__rush.setHearts('b', 1); window.__rush.crash('b'); });
+      await until(a, () => window.__rush.state().b.out, null, 8000, 'host sees the guest out');
+      await h.wait(1500);
+      await b.click('#game-root [data-g="close"]');
+      await until(a, () => window.__rush.state().paused && window.__rush.state().reasons.includes('gone'), null, 8000, 'host pauses when the guest leaves');
+      await h.wait(1000);
+      await h.startLive(b, 'rush', 'live');
+      await until(b, () => window.__rush && window.__rush.state().phase === 'run', null, 30000, 'guest is put back into the run');
+      await h.wait(3500);
+      const sb = await S(b); const sa = await S(a);
+      assert(sb.b.out && sb.b.down && sb.b.hearts === 0 && sa.b.out, `the guest comes back still out of hearts (out ${sb.b.out}, down ${sb.b.down}, hearts ${sb.b.hearts}; the host still sees it out: ${sa.b.out})`);
+      h.assertNoErrors();
+    } catch (e) { console.error(e.message); fails++; await shot(h.a, 'fail-rejoin-a').catch(() => {}); } finally { await h.close(); }
   }
 
   if (fails) { console.log(`\n${fails} FAILED`); process.exitCode = 1; } else console.log('\nALL GOOD');

@@ -47,6 +47,7 @@ export const HEARTS = 3;
 export const TEAM_HEARTS = 4;
 export const TEAM_HEARTS_MAX = 5;
 export const MAGNET_T = 10;
+export const DOUBLE_T = 8;           // coin doubler (track v2): every coin pays x2 for this long
 export const SNEAKERS_T = 10;
 export const BOOST_T = 2.2;
 export const REVIVE_WINDOW = 7000;    // ms a downed partner can be revived (paused while the reviver is down)

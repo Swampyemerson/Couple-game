@@ -3,10 +3,10 @@
 import {
   DT, LANE_W, LANE_TIME, GRAV, JUMP_V, SUPER_JUMP_V, HANG_V, HANG_G, FASTFALL_V, SLIDE_TIME,
   BUFFER_T, COYOTE_T, STAND_H, ROLL_H, HALF_D, HALF_W, STEP_UP, TRIP_TOL, CHUNK, LOW_H,
-  STUMBLE_T, CRASH_T, INVULN_T, HEARTS, MAGNET_T, SNEAKERS_T, LATE_DODGE_T, COMBO_TIERS, COMBO_BONUS, COMBO_T, MT_K, baseSpeed,
+  STUMBLE_T, CRASH_T, INVULN_T, HEARTS, MAGNET_T, SNEAKERS_T, DOUBLE_T, LATE_DODGE_T, COMBO_TIERS, COMBO_BONUS, COMBO_T, MT_K, baseSpeed,
 } from './tune.js';
 import {
-  O_LOW, O_HIGH, O_TRAIN, O_RAMP, O_MTRAIN, O_BLOCK, I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX,
+  O_LOW, O_HIGH, O_TRAIN, O_RAMP, O_MTRAIN, O_BLOCK, I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX, I_NOTE, I_DOUBLE,
   rampTop, createTrack,
 } from './track.js';
 
@@ -57,7 +57,8 @@ export function newRunner(lane = 0) {
     stumbleT: 0, bounceT: 0, bumpT: 0,
     down: 0, downT: 0, hold: 0, out: 0, cause: 0,
     invulnT: 0, hearts: HEARTS, coins: 0,
-    magnetT: 0, sneakersT: 0, shield: 0, boostT: 0,
+    magnetT: 0, sneakersT: 0, shield: 0, boostT: 0, dblT: 0, // dblT: coin doubler seconds left (track v2)
+    notes: 0, goldN: 0, branches: 0, // love notes found, fool's-gold coins taken, branches grabbed (track v2; run stats)
     bufA: 0, bufT: 0,
     fin: -1, finLen: 0, done: 0,
     crashes: 0, stumbles: 0, combo: 0, comboT: 0, maxCombo: 0, passZ: -1e9, passClose: 0, closeCalls: 0, jumps: 0, rolls: 0, shields: 0, clips: 0, bonus: 0,
@@ -249,7 +250,13 @@ function collectIn(r, c, h) {
     let hit;
     if (mag) hit = Math.abs(cn.x - r.x) < 3.4 * LANE_W / 2.6 && cn.y < r.y + 4.5 && cn.y > r.y - 2.5;
     else hit = dz < 0.9 && Math.abs(cn.x - r.x) < 1.0 && cn.y > r.y - 0.35 && cn.y < r.y + h + 0.45;
-    if (hit) { r.taken.add(key); r.coins++; ev(r, E_COIN, key); }
+    if (hit) {
+      r.taken.add(key);
+      const w = cn.v; // track v2: a coin's worth (3 fool's gold, 2 in a Golden Hundred); undefined = 1; a doubler doubles it
+      r.coins += w ? (r.dblT > 0 ? w * 2 : w) : (r.dblT > 0 ? 2 : 1);
+      if (w > 2 && cn.g !== undefined) { r.goldN++; if (cn.g) r.branches++; }
+      ev(r, E_COIN, key);
+    }
   }
   const items = c.items;
   for (let i = 0; i < items.length; i++) {
@@ -264,6 +271,8 @@ function collectIn(r, c, h) {
       if (it.k === I_MAGNET) r.magnetT = MAGNET_T;
       else if (it.k === I_SNEAKERS) r.sneakersT = SNEAKERS_T;
       else if (it.k === I_SHIELD) r.shield = 1;
+      else if (it.k === I_DOUBLE) r.dblT = DOUBLE_T;
+      else if (it.k === I_NOTE) r.notes++;
       ev(r, E_PICK, it.k * 1000000 + key); // (key = chunk*1000 + slot: stays under 1e6 for 1,000 chunks)
     }
   }
@@ -388,6 +397,7 @@ export function step(r, track, dry) {
   r.zPrev = r.z;
   if (r.invulnT > 0) r.invulnT -= dt;
   if (r.magnetT > 0) r.magnetT -= dt;
+  if (r.dblT > 0) r.dblT -= dt;
   if (r.sneakersT > 0) r.sneakersT -= dt;
   if (r.boostT > 0) r.boostT -= dt;
   if (r.shoveT > 0) r.shoveT -= dt;
@@ -492,7 +502,7 @@ export function step(r, track, dry) {
 /** Make a downed runner hold (wait for a verdict) or not. */
 export function setHold(r, on) { r.hold = on ? 1 : 0; }
 
-export const ITEM_KINDS = { I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX };
+export const ITEM_KINDS = { I_MAGNET, I_SNEAKERS, I_SHIELD, I_BOX, I_NOTE, I_DOUBLE };
 export const OBS_KINDS = { O_LOW, O_HIGH, O_TRAIN, O_RAMP, O_MTRAIN, O_BLOCK };
 
 // ── perfect-information bot: depth-first search over the real sim ──
@@ -585,9 +595,9 @@ export function createBot(track) {
 }
 
 /** Headless bot run for tests: how often does a perfect player get caught? */
-export function botRun(seed, chunks, { maxMs = 60000 } = {}) {
+export function botRun(seed, chunks, { maxMs = 60000, ver = 1 } = {}) {
   const t0 = performance.now();
-  const track = createTrack(seed);
+  const track = createTrack(seed, ver);
   const r = newRunner(0);
   r.hearts = 1e6;
   const bot = createBot(track);
