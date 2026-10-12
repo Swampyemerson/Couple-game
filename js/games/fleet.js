@@ -5,8 +5,10 @@
 //
 // Rule sets live in the move log, so every match saved before they existed replays unchanged:
 //  - No { rules } move = Classic: one { r, c } shot a turn. A hit fires again; a miss passes.
-//  - While nobody has hidden a fleet yet, either player may send { rules: 'classic' | 'salvo' |
-//    'arsenal' }. The first one applied wins; later ones are rejected. Fleets are the same in all.
+//  - Before they hide their own fleet, either player may send { rules: 'classic' | 'salvo' |
+//    'arsenal' }. The first one applied wins; later ones are rejected. Every set uses the same
+//    fleet, so a pick that lands after the other player placed never invalidates their fleet. The
+//    check is on the sender's own fleet only, so replay order between the two never changes it.
 //  - Salvo: { salvo: [[r, c], …] } fires one shot per ship you still have afloat, all at once,
 //    then the turn passes. The first player opens with 3 ranging shots. Equal salvos: if the first
 //    player sinks the last ship, the other side still fires its answer (with the ships it had as
@@ -16,6 +18,8 @@
 //    the three squares centred there; any hit fires again. Everyone starts with 1 sonar and
 //    1 torpedo. Losing a ship gives you +1 sonar (max 3); three hits in a row earn +1 torpedo
 //    (max 2).
+//  - Stakes: { stake: key } (same window as { rules }) says what the winner gets. Shown on the
+//    end card; it never changes the play.
 //
 // View: only ctx.viewer's own fleet is drawn. Enemy ships reach the DOM only once sunk (or when
 // the game is over); before that the target chart shows nothing but your own shots and pings.
@@ -40,6 +44,17 @@ const MODES = {
   arsenal: { name: 'Arsenal', line: 'Classic plus sonar pings and torpedoes. Lose a ship, gain a ping. Three hits in a row earn a torpedo.' },
 };
 const MODE_KEYS = Object.keys(MODES);
+// Stakes: what the winner gets. Optional, set like the rules (before anyone hides a fleet).
+const STAKES = {
+  brag: 'bragging rights',
+  coffee: 'coffee, made by the loser',
+  dishes: 'a night off dishes',
+  movie: 'picking the movie',
+  rub: 'a back rub',
+  breakfast: 'breakfast in bed',
+  dessert: 'dessert of their choice',
+  date: 'planning the next date',
+};
 const modeOf = (s) => (s && s.mode) || 'classic';
 const KIT_MAX = { sonar: 3, torp: 2 };
 
@@ -138,10 +153,18 @@ const rules = {
   apply(s, who, mv) {
     if (!mv || typeof mv !== 'object') throw new Error('That move doesn’t make sense.');
     if (s.phase === 'place') {
+      if (has(mv, 'stake')) {
+        if (!has(STAKES, mv.stake)) throw new Error('Those stakes don’t exist.');
+        if (s.stake) throw new Error(`The stakes are already set: ${STAKES[s.stake]}.`);
+        if (s.fleets[who]) throw new Error('Too late to set the stakes: your fleet is already hidden.');
+        s.stake = mv.stake;
+        s.stakeBy = who;
+        return s;
+      }
       if (has(mv, 'rules')) {
         if (!MODE_KEYS.includes(mv.rules)) throw new Error('Those rules don’t exist.');
         if (s.mode) throw new Error(`The rules are already set: ${MODES[s.mode].name}.`);
-        if (s.fleets.a || s.fleets.b) throw new Error('Too late to change the rules: a fleet is already hidden.');
+        if (s.fleets[who]) throw new Error('Too late to change the rules: your fleet is already hidden.');
         s.mode = mv.rules;
         s.modeBy = who;
         if (mv.rules === 'arsenal') s.kit = { a: { sonar: 1, torp: 1 }, b: { sonar: 1, torp: 1 } };
@@ -219,7 +242,8 @@ const rules = {
   },
   result(s) {
     const w = s.winner;
-    if (!w) return { winner: null, sub: s.phase === 'over' ? 'Both fleets went down in the same round of salvos.' : undefined };
+    const prize = s.stake && STAKES[s.stake];
+    if (!w) return { winner: null, sub: s.phase === 'over' ? `Both fleets went down in the same round of salvos.${prize ? ` ${cap(prize)} is still up for grabs.` : ''}` : undefined };
     const mine = s.shots.filter((x) => x.by === w);
     const hits = mine.filter((x) => x.hit).length;
     const left = afloat(s, w);
@@ -229,7 +253,7 @@ const rules = {
     const close = need <= 3 ? ` Photo finish: the other fleet was ${need === 1 ? 'one hit' : `${need} hits`} from winning.` : '';
     return {
       winner: w,
-      sub: `Sank all five in ${mine.length} shots (${Math.round((hits / Math.max(1, mine.length)) * 100)}% on target)${left === SIZES.length ? ' without losing a ship.' : `, with ${left} ${left === 1 ? 'ship' : 'ships'} still afloat.`}${close}`,
+      sub: `Sank all five in ${mine.length} shots (${Math.round((hits / Math.max(1, mine.length)) * 100)}% on target)${left === SIZES.length ? ' without losing a ship.' : `, with ${left} ${left === 1 ? 'ship' : 'ships'} still afloat.`}${close}${prize ? ` Winner gets: ${prize}.` : ''}`,
     };
   },
   score(s) {
@@ -488,6 +512,9 @@ const CSS = `
 .g-fleet .fl-rule:not(:disabled):active { transform: translate(2px, 2px); box-shadow: none; }
 .g-fleet .fl-rules-note { font-size: .8rem; line-height: 1.35; color: var(--g-muted); padding: 0 0 8px var(--gut); }
 .g-fleet .fl-rules-note b { color: var(--g-ink); }
+.g-fleet .fl-stakes { padding: 0 0 8px var(--gut); }
+.g-fleet .fl-stake { display: flex; align-items: center; gap: 8px; font: 800 .8rem/1 var(--g-font-body); color: var(--g-muted); white-space: nowrap; }
+.g-fleet .fl-stake select { flex: 1; min-width: 0; min-height: 44px; padding: 0 12px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); font: 800 16px/1.1 var(--g-font-body); box-shadow: var(--g-shadow-sm); touch-action: manipulation; }
 .g-fleet .is-edit .fl-ship { pointer-events: auto; cursor: grab; touch-action: none; -webkit-appearance: none; appearance: none; }
 .g-fleet .is-edit .fl-ship:focus-visible { outline: 3px solid var(--g-hl); outline-offset: 2px; }
 .g-fleet .is-edit .fl-cell { cursor: pointer; }
@@ -751,6 +778,7 @@ registerGame({
             ${row('Longest win streak', wsBest)}
           </tbody>
         </table>
+        ${S.stake && S.winner ? `<p class="fl-book-note">${esc(nm(S.winner))} won ${esc(STAKES[S.stake])}.</p>` : ''}
         ${s ? `<p class="fl-book-note">${esc(nm(s.w))} has won ${s.n === 1 ? 'the last game' : `${s.n} in a row`}.</p>` : ''}
       </section>`;
     }
@@ -779,13 +807,23 @@ registerGame({
 
     function rulesHTML(s) {
       const mode = modeOf(s);
-      const open = !s.mode && !s.fleets.a && !s.fleets.b && ctx.canMove;
+      const open = !s.mode && !s.fleets[V] && ctx.canMove;
       if (open) {
         return `<div class="fl-rules" role="group" aria-label="Rules">${MODE_KEYS.map((k) => `<button type="button" class="fl-rule" data-rules="${k}" aria-pressed="${k === mode}">${MODES[k].name}</button>`).join('')}</div>
           <p class="fl-rules-note">${esc(MODES[mode].line)} Pick before a fleet is hidden.</p>`;
       }
       const by = s.mode && s.modeBy ? (ctx.mode === 'online' && s.modeBy === V ? ' (your pick)' : ` (${esc(nm(s.modeBy))}’s pick)`) : '';
       return `<p class="fl-rules-note"><b>${MODES[mode].name} rules${by}.</b> ${esc(MODES[mode].line)}</p>`;
+    }
+    function stakesHTML(s) {
+      if (s.stake) {
+        const by = s.stakeBy ? (ctx.mode === 'online' && s.stakeBy === V ? ' (your idea)' : ` (${esc(nm(s.stakeBy))}’s idea)`) : '';
+        return `<p class="fl-rules-note fl-stake-set"><b>Playing for ${esc(STAKES[s.stake])}${by}.</b></p>`;
+      }
+      if (s.fleets[V] || !ctx.canMove) return '';
+      return `<div class="fl-stakes"><label class="fl-stake"><span>Play for</span><select data-stake>
+        <option value="">just the glory</option>${Object.entries(STAKES).map(([k, t]) => `<option value="${k}">${esc(t)}</option>`).join('')}
+      </select></label></div>`;
     }
 
     function paintPlace() {
@@ -817,6 +855,7 @@ registerGame({
         <div class="fl-main">
           <header class="fl-head"><h2 class="fl-h p-${v}"><span class="fl-sw"></span>${ctx.mode === 'local' ? `${esc(nm(v))}’s fleet` : 'Your fleet'}</h2><span class="fl-pill${placed === SIZES.length ? '' : ' is-quiet'}">${placed}/5 at sea</span></header>
           ${rulesHTML(s)}
+          ${stakesHTML(s)}
           ${captainsLine(s)}
           <p class="fl-hint">${hint}</p>
           ${chartHTML({ cls: 'fl-home-chart is-edit', cells, layer: `${ships}<div class="fl-preview" hidden></div>` })}
@@ -848,7 +887,7 @@ registerGame({
       root.innerHTML = `<div class="fl-wait">
         <header class="fl-head"><h2 class="fl-h p-${v}"><span class="fl-sw"></span>Your fleet</h2><span class="fl-pill">Ready</span></header>
         <div class="fl-home">${chartHTML({ cls: 'fl-home-chart', cells, layer: ships })}</div>
-        <div class="fl-note-card"><b>Fleet in position</b><span>Waiting for ${esc(nm(foe))} to hide theirs. ${s.first === v ? 'You fire first.' : `${esc(nm(foe))} fires first.`}</span><span>${MODES[modeOf(s)].name} rules.</span></div>
+        <div class="fl-note-card"><b>Fleet in position</b><span>Waiting for ${esc(nm(foe))} to hide theirs. ${s.first === v ? 'You fire first.' : `${esc(nm(foe))} fires first.`}</span><span>${MODES[modeOf(s)].name} rules.${s.stake ? ` Playing for ${esc(STAKES[s.stake])}.` : ''}</span></div>
       </div>`;
       api.setStatus(`Waiting for ${nm(foe)} to hide their fleet…`);
     }
@@ -1051,6 +1090,7 @@ registerGame({
           <div class="fl-roster">${roster}</div>
           <p class="fl-count">${left === 0 ? 'All five sunk' : left === 1 ? 'One ship left!' : `${left} of 5 still afloat`}</p>
           ${s.kit ? `<p class="fl-kit">Their kit: ${kitLine(foe)}</p>` : ''}
+          ${s.stake ? `<p class="fl-kit">Playing for ${esc(STAKES[s.stake])}</p>` : ''}
         </section>
         ${over ? logbookHTML(s, c.matchId) : ''}
       </div>`;
@@ -1219,6 +1259,11 @@ registerGame({
     }
 
     // ── placement actions ──
+    function chooseStake(k) {
+      if (!k || !ctx || !ctx.canMove || view !== 'place' || ctx.state.stake) return;
+      const res = api.move({ stake: k });
+      if (res.ok) api.sfx('good'); else bad(res.error);
+    }
     function chooseRules(k) {
       if (!ctx || !ctx.canMove || view !== 'place' || ctx.state.mode) return;
       const res = api.move({ rules: k });
@@ -1409,6 +1454,7 @@ registerGame({
         if (b && !b.disabled) { aim = { r: Number(b.dataset.r), c: Number(b.dataset.c) }; paintAim(true); } else if (!kbd) paintAim(false);
       }
     });
+    root.addEventListener('change', (e) => { const sel2 = e.target.closest && e.target.closest('select[data-stake]'); if (sel2) chooseStake(sel2.value); });
     root.addEventListener('contextmenu', (e) => { if (press) e.preventDefault(); }); // Android's long-press menu would cancel the press
     root.addEventListener('pointerleave', () => { pressEnd(); if (!drag && view === 'place') showPreview(null); if (view === 'battle' && !kbd) paintAim(false); });
     root.addEventListener('pointerup', (e) => { pressEnd(); if (drag && e.pointerId === drag.id) endDrag(true); });
@@ -1556,6 +1602,8 @@ registerGame({
     };
   },
 });
+
+function cap(t) { return t.charAt(0).toUpperCase() + t.slice(1); }
 
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));

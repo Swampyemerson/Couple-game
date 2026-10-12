@@ -10,7 +10,7 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { launch, ROOT } = require('../harness');
 
-const SHOTS = process.env.SHOTS || '/tmp/claude-0/-home-user-Couple-game/0bac2931-fb3f-54c3-8279-c15850ed70e8/scratchpad/fleet';
+const SHOTS = process.env.SHOTS || path.join(require('os').tmpdir(), 'fleet-shots');
 fs.mkdirSync(SHOTS, { recursive: true });
 const assert = (c, m) => { if (!c) throw new Error('FAIL: ' + m); console.log('ok -', m); };
 const N = 8;
@@ -103,19 +103,32 @@ async function rulesTests() {
   assert(gd.result.winner === 'b' && gd.result.sub.startsWith(GOLDEN.sub), 'an old classic match has the same winner and result line');
   assert(gd.state.mode === undefined && !gd.state.kit && !gd.state.scans, 'an old match carries no rule-set fields');
 
-  // ── rule sets: { rules } before any fleet is hidden
+  // ── rule sets: { rules } before you hide your own fleet
   let r0 = def.apply(copy(s0), 'b', { rules: 'salvo' });
   assert(r0.mode === 'salvo' && r0.modeBy === 'b' && sameFleet(def.next(r0), ['a', 'b']), 'either player can pick the rules first; placement stays open to both');
   rejects(r0, 'a', { rules: 'arsenal' }, /already set: Salvo/i, 'a second rules pick');
   rejects(s0, 'a', { rules: 'chess' }, /don.t exist/i, 'unknown rules');
   rejects(s1, 'a', { rules: 'salvo' }, /battle|off the chart/i, 'a rules pick during the battle');
   const sa = def.apply(copy(s0), 'a', { fleet: good });
-  rejects(sa, 'b', { rules: 'salvo' }, /too late/i, 'a rules pick after a fleet is hidden');
-  // replay order decides a race the same way on both phones: the first player's moves go first
-  const race = core.derive(def, { first: 'a', seed: 1, lists: { a: [{ fleet: good }], b: [{ rules: 'salvo' }, { fleet: good2 }] } });
-  assert(race.state.phase === 'battle' && !race.state.mode && race.rejected.length === 1, 'a pick that loses the race to a hidden fleet is dropped and the match stays Classic');
+  rejects(sa, 'a', { rules: 'salvo' }, /too late/i, 'picking the rules after you hide your own fleet');
+  assert(def.apply(copy(sa), 'b', { rules: 'salvo' }).mode === 'salvo', 'the other player can still pick after you place (every set uses the same fleet, so your placement is safe)');
+  // the lock is on your own fleet, so replay order between the two players never changes the result:
+  // the key regression is the first player being 'b', so b's stake + fleet replay before a's pick
+  const order1 = core.derive(def, { first: 'b', seed: 1, lists: { a: [{ rules: 'salvo' }, { fleet: good }], b: [{ stake: 'rub' }, { fleet: good2 }] } });
+  const order2 = core.derive(def, { first: 'a', seed: 1, lists: { a: [{ rules: 'salvo' }, { fleet: good }], b: [{ stake: 'rub' }, { fleet: good2 }] } });
+  assert(order1.state.mode === 'salvo' && order1.state.stake === 'rub' && !order1.rejected.length, 'the first player being b does not drop a’s rules pick (the determinism bug)');
+  assert(order2.state.mode === 'salvo' && order2.state.stake === 'rub' && !order2.rejected.length, 'the first player being a reaches the same mode and stake');
   const race2 = core.derive(def, { first: 'b', seed: 1, lists: { a: [{ rules: 'arsenal' }, { fleet: good }], b: [{ rules: 'salvo' }, { fleet: good2 }] } });
-  assert(race2.state.mode === 'salvo' && race2.rejected.length === 1, 'two picks at once: the first player’s pick wins on every phone');
+  assert(race2.state.mode === 'salvo' && race2.rejected.length === 1, 'two picks at once: the first one in replay wins on every phone, the other is rejected');
+
+  // ── stakes
+  const st0 = def.apply(copy(s0), 'b', { stake: 'rub' });
+  assert(st0.stake === 'rub' && st0.stakeBy === 'b' && sameFleet(def.next(st0), ['a', 'b']), 'either player can set the stakes before a fleet is hidden');
+  rejects(st0, 'a', { stake: 'movie' }, /already set: a back rub/i, 'a second stakes pick');
+  rejects(s0, 'a', { stake: 'money' }, /don.t exist/i, 'unknown stakes');
+  rejects(sa, 'a', { stake: 'rub' }, /too late/i, 'stakes after you hide your own fleet');
+  const gst = core.derive(def, { first: 'b', seed: 12345, lists: { a: GOLDEN.lists.a, b: [{ stake: 'breakfast' }, ...GOLDEN.lists.b] } });
+  assert(gst.result.winner === 'b' && gst.result.sub.startsWith(GOLDEN.sub) && gst.result.sub.endsWith('Winner gets: breakfast in bed.'), 'the end card names what the winner gets');
 
   // ── Salvo
   let sv = def.apply(def.apply(def.apply(copy(s0), 'a', { rules: 'salvo' }), 'a', { fleet: good }), 'b', { fleet: good2 });
@@ -827,9 +840,14 @@ async function salvoOnline(h, scheme) {
   await waitSynced(h, id, 1);
   await b.waitForFunction(() => /Salvo rules \(Emerson’s pick\)/.test(document.querySelector('#game-root .fl-rules-note')?.textContent || ''), null, { timeout: 5000 });
   assert(await b.$$eval('.g-fleet .fl-rule', (x) => x.length) === 0 && /Salvo rules \(your pick\)/.test(await a.textContent('.g-fleet .fl-rules-note')), `[salvo ${scheme}] Emerson picks Salvo; both phones show it and the choice is closed`);
+  // Sydney sets the stakes
+  await b.selectOption('.g-fleet select[data-stake]', 'rub');
+  await waitSynced(h, id, 2);
+  await a.waitForFunction(() => /Playing for a back rub \(Sydney’s idea\)/.test(document.querySelector('#game-root .fl-stake-set')?.textContent || ''), null, { timeout: 5000 });
+  assert(!(await a.$('.g-fleet select[data-stake]')) && /Playing for a back rub \(your idea\)/.test(await b.textContent('.g-fleet .fl-stake-set')), `[salvo ${scheme}] Sydney sets the stakes; both phones show them and the choice is closed`);
   await shotsAt(h, { a, b }, `${scheme}-salvo-placement`);
   for (const pg of [b, a]) { await pg.click('.g-fleet [data-fl="shuffle"]'); await pg.click('.g-fleet [data-fl="ready"]'); }
-  let total = 3;
+  let total = 4;
   await waitSynced(h, id, total);
   const pages = { a, b };
   let smaller = false;
@@ -870,10 +888,13 @@ async function salvoOnline(h, scheme) {
   assert(ea.over && eb.over && sameFleet(ea.state, eb.state) && ea.state.mode === 'salvo', `[salvo ${scheme}] the salvo battle ends; both phones agree (${ea.result.winner} wins)`);
   assert(smaller, `[salvo ${scheme}] a player who lost ships fired smaller salvos`);
   await h.wait(2300);
+  const sub = await a.textContent('#game-root .gm-end .gm-end-sub');
+  assert(ea.result.winner ? /Winner gets: a back rub\./.test(sub) : /back rub is still up for grabs/i.test(sub), `[salvo ${scheme}] the end card says who won the back rub`);
   await a.click('#game-root [data-g="end-look"]');
   await b.click('#game-root [data-g="end-look"]');
   await h.wait(400);
   const bookTxt = await a.textContent('.g-fleet .fl-book');
+  assert(!ea.result.winner || bookTxt.includes(`${ea.result.winner === 'a' ? 'Emerson' : 'Sydney'} won a back rub.`), `[salvo ${scheme}] the logbook remembers who won the stakes`);
   assert(/Fewest shots to win · Salvo/.test(bookTxt) && (!ea.result.winner || /New/.test(bookTxt)), `[salvo ${scheme}] the logbook shows the Salvo record${ea.result.winner ? ', marked New' : ' (a draw)'}`);
   await shotsAt(h, pages, `${scheme}-salvo-logbook`, { bottom: true });
   await h.closeGame(a);
