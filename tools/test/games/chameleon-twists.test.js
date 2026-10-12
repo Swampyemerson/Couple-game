@@ -10,6 +10,8 @@
 //   bugA      hotseat: a tag fired 150 ms before the buzzer is FOUND and recorded as a find, not a survival
 //   hotrules  hotseat: the dead rules are switched off (a head start is no wait), Today's hide picks a playable twist
 //   bounty    hotseat: a bounty spot (marker for both, tag within 3 m = seeker +15, far = nothing) + Dusk on one phone
+//   budget    hotseat on CU Boulder: draw calls with the bounty marker, Fog and Dusk (<= 80)
+//   hotunder  hotseat: Underdog (+10 s to hide, +1 pellet, the sticker on the hand-over curtain)
 //   sudden    hotseat: a tie after the last round plays a sudden-death pair (20 s / 30 s clocks, title card, final card, sd_wins)
 //   streak    hotseat: the called-it streak pays 5 / 10 / 15, 'Streak broken' for the hider, a_callstreak
 //   fog       two phones, House: Fog rolls in (≤ 6 steps over the last third, pellet range follows, restored exactly, draw calls)
@@ -60,11 +62,12 @@ async function startMatch(h, { map = 'living', first = 'b', rules = {}, mode = n
   await a.tap('[data-act="start"]');
 }
 /** One device: a hotseat match. */
-async function startHot(h, { map = 'living', first = 'b', rules = {}, tune = FAST } = {}) {
+async function startHot(h, { map = 'living', first = 'b', rules = {}, tune = FAST, onLobby = null } = {}) {
   const a = h.a;
   await arm(a, tune);
   await h.startLive(a, 'chameleon', 'local');
   await waitReady(a);
+  if (onLobby) await onLobby(a);
   await hook(a, 'setRules', { map, first, rules });
   await a.tap('[data-act="start"]');
   await waitPhase(a, 'curtain');
@@ -92,10 +95,16 @@ async function camoHide(p) {
   await wait(150);
   return hook(p, 'setPose', 'wall');
 }
-/** Seeker stands 2.4 m from the hider and aims; fires at once or `msBefore` ms before the buzzer. */
+/** The seeker stands ~2.4 m from the hider on a side with nothing in the way, and aims. */
 async function aimAtHider(p, hider) {
   const bc = await hook(p, 'bodyCenter', hider);
-  await hook(p, 'teleport', bc[0] + 0.3, bc[2] + 2.4, Math.PI);
+  let pick = [0.3, 2.4];
+  for (const [ox, oz] of [[0.3, 2.4], [-0.3, -2.4], [2.4, 0.3], [-2.4, -0.3], [1.7, 1.7], [-1.7, 1.7], [1.7, -1.7], [-1.7, -1.7], [0.3, 1.4], [-1.4, 0.3]]) {
+    const sx = bc[0] + ox; const sz = bc[2] + oz; const d = Math.hypot(ox, oz);
+    const hit = await hook(p, 'surfaceAt', sx, 0.45, sz, -ox / d, 0, -oz / d, d - 0.2);
+    if (!hit) { pick = [ox, oz]; break; }
+  }
+  await hook(p, 'teleport', bc[0] + pick[0], bc[2] + pick[1], Math.atan2(-pick[0], -pick[1]), 0);
   await hook(p, 'aimAt', ...(await hook(p, 'bodyCenter', hider)));
   await wait(200);
 }
@@ -225,7 +234,15 @@ async function hotRulesSection(port) {
   const h = await launch({ port, only: ['chameleon'], who: ['a'] });
   const a = h.a;
   try {
-    await startHot(h, { rules: { rounds: 2, headStart: 10, escapes: 3, huntPaint: 'on', heartbeat: true, sights: true, grace: 0, twists: 'off', underdog: false }, tune: { ...FAST, seekLead: 600 } });
+    const U = (f) => import(pathToFileURL(path.join(ROOT, 'js/games/chameleon', f)).href);
+    const T = await U('twists.js'); const M = await U('maps.js');
+    await startHot(h, { rules: { rounds: 2, headStart: 10, escapes: 3, huntPaint: 'on', heartbeat: true, sights: true, grace: 0, twists: 'off', underdog: false }, tune: { ...FAST, seekLead: 600 }, onLobby: async (pg) => {
+      // Today's hide on one phone names the twist it will really play
+      const pl = M.dailyPlan(M.dayKey()); const tw = T.dailyTwistFor(pl, true);
+      await wait(600);
+      const txt = await pg.textContent('.chm-today');
+      assert(txt.includes(tw.label), `the Today button says "${tw.label}" on one phone${tw.id !== pl.twist.id ? ` (not "${pl.twist.label}", which needs two phones)` : ''}`);
+    } });
     const rules = (await st(a)).rules;
     assert(rules.headStart === 0 && rules.escapes === 0 && rules.huntPaint === 'off' && rules.heartbeat === false && rules.sights === false, 'in force on one phone: no head start, no escapes, no paint while hunted, no heartbeat, no sights cue');
     const tm = await hook(a, 'timing');
@@ -255,7 +272,6 @@ async function bountySection(port) {
       await hook(a, 'teleport', t.bounty.x, t.bounty.z, 0, t.bounty.y);
       await wait(250);
     });
-    assert(/Bounty/.test(await a.textContent('[data-curtain="seek"]').catch(() => '') || 'Bounty') || true, 'curtain');
     const cur = await a.evaluate(() => document.querySelector('[data-curtain="seek"]').textContent);
     assert(/Bounty spot/i.test(cur), 'the hand-over curtain announces the twist');
     await hotSeek(a);
@@ -266,14 +282,14 @@ async function bountySection(port) {
     assert(rec.found && rec.bounty && rec.bounty.who === 'seeker' && rec.bounty.pts === 15 && rec.seekPoints === 15, `tagged within 3 m of the spot: seeker +${rec.seekPoints}`);
     assert((await st(a)).match.scores.a === 15, 'the +15 is in the seeker\'s score');
     await waitPhase(a, 'recap', 8000);
-    assert(await a.evaluate(() => [...document.querySelectorAll('.chm-pop')].some((x) => /BOUNTY/.test(x.textContent))) || true, 'bounty sticker');
+    assert(/BOUNTY/.test(await collectPops(a, 6500)), 'the BOUNTY sticker pops in the recap');
     // round 2 (a hides): the hider survives right on the spot: ×1.5
     await a.tap('[data-act="next"]');
     await waitPhase(a, 'curtain', 10000);
     let t2 = null;
     await hotHide(a, async () => {
       t2 = await ti(a);
-      assert(t2.twist === 'bounty' && JSON.stringify(t2.bounty) !== JSON.stringify((await ti(a)).bounty) === false, 'round 2: a Bounty round again');
+      assert(t2.twist === 'bounty' && t2.bounty, 'round 2: a Bounty round again (its own spot)');
       await hook(a, 'teleport', t2.bounty.x + 1.0, t2.bounty.z, 0, t2.bounty.y);
       await wait(250);
     });
@@ -299,6 +315,92 @@ async function bountySection(port) {
     assert(!m2.on && m2.hemi === 0.56 && m2.sun === 0.52 && m2.glint === 'ffd23f' && m2.bg === m2.fogColor, 'at the round\'s end the lights, sky and glints are back exactly');
     h.assertNoErrors();
   } catch (e) { console.error(e.message, h.errors); failures++; await shot(a, 'bounty-FAIL').catch(() => {}); } finally { await h.close(); }
+}
+
+async function hotUnderdogSection(port) {
+  console.log('\n# hotseat: Underdog (+10 s to hide, +1 pellet), and not in a sudden-death round');
+  const h = await launch({ port, only: ['chameleon'], who: ['a'] });
+  const a = h.a;
+  try {
+    await startHot(h, { rules: { rounds: 4, seekScore: 'off', wager: 0, blendBonus: 0, twists: 'off', underdog: true, sudden: false, pellets: 6 }, tune: { ...FAST, seek: 7000, hide: 9000 } });
+    await hotHide(a, async () => { assert((await st(a)).phase.dur === 9000 && !(await ti(a)).ud, 'round 1: 9 s to hide, nobody is behind'); });
+    await hotSeek(a);
+    await waitPhase(a, 'time', 20000); // Sydney survives: 37 points
+    await waitPhase(a, 'recap', 8000);
+    await a.tap('[data-act="next"]');
+    await waitPhase(a, 'curtain', 10000);
+    // round 2: Emerson hides, 37 points behind: ten more seconds
+    await a.tap('[data-act="curtain"]');
+    await waitPhase(a, 'hide');
+    let t = await ti(a);
+    assert(t.ud === 'a' && (await st(a)).phase.dur === 19000 && t.escapes.a === (await st(a)).rules.escapes, `round 2: the underdog hider gets 10 s more (${(await st(a)).phase.dur / 1000} s), and no escape (there are none on one phone)`);
+    assert(/\+10 s to hide/.test((await collectPops(a, 2500)) + ''), 'the sticker says so');
+    await camoHide(a);
+    await a.tap('.chm-acts [data-act="ready"]');
+    await waitPhase(a, 'curtain', 20000);
+    await hotSeek(a);
+    await aimAtHider(a, 'a');
+    await hook(a, 'action', 'fire');
+    await waitPhase(a, 'found', 6000);
+    await waitPhase(a, 'recap', 8000);
+    await a.tap('[data-act="next"]');
+    await waitPhase(a, 'curtain', 10000);
+    // round 3: Sydney hides, Emerson (still behind) seeks with a 7th pellet
+    await a.tap('[data-act="curtain"]');
+    await waitPhase(a, 'hide');
+    t = await ti(a);
+    assert(t.ud === 'a' && t.maxPellets === 7 && t.pellets.a === 7, `round 3: the underdog seeker has ${t.pellets.a} pellets (6 + 1)`);
+    await camoHide(a);
+    await a.tap('.chm-acts [data-act="ready"]');
+    await waitPhase(a, 'curtain', 20000);
+    const cur = await a.textContent('[data-curtain="seek"]');
+    assert(/Underdog/.test(cur) && /\+1 pellet/.test(cur), 'the hand-over curtain announces it');
+    h.assertNoErrors();
+  } catch (e) { console.error(e.message.split('\n')[0], h.errors); failures++; await shot(a, 'hotunder-FAIL').catch(() => {}); } finally { await h.close(); }
+}
+
+async function budgetSection(port) {
+  console.log('\n# draw calls on CU Boulder (the heaviest map): Fog / Dusk / the bounty marker stay within 80');
+  const h = await launch({ port, only: ['chameleon'], who: ['a'] });
+  const a = h.a;
+  try {
+    await startHot(h, { map: 'cuboulder', rules: { rounds: 4, seekScore: 'off', wager: 0, blendBonus: 0, underdog: false, sudden: false, twists: 'every' }, tune: { ...FAST, hide: 20000, seek: 16000, twists: ['bounty', 'fog', 'dusk', 'bounty'], noWarm: true } });
+    const calls = async (n = 6) => { let m = 0; for (let i = 0; i < n; i++) { await wait(180); m = Math.max(m, (await ti(a)).calls); } return m; };
+    let t = null;
+    await hotHide(a, async () => { t = await ti(a); });
+    assert(t.twist === 'bounty' && t.bounty && t.mood.bounty, `CU round 1: bounty marker up at ${t.bounty && [t.bounty.x, t.bounty.z].map((x) => x.toFixed(1))}`);
+    await hotSeek(a);
+    // stand the seeker on the spot, then look at it from a few sides: the marker is in view
+    let worst = 0; let worstOff = 0;
+    for (const [dx, dz] of [[0, 3], [3, 0], [0, -3], [-3, 0]]) {
+      await hook(a, 'teleport', t.bounty.x + dx, t.bounty.z + dz, Math.atan2(-dx, -dz), t.bounty.y);
+      await hook(a, 'aimAt', t.bounty.x, t.bounty.y + 0.6, t.bounty.z);
+      worst = Math.max(worst, await calls());
+    }
+    // the same views without the marker
+    await a.evaluate(() => window.__cham.twistInfo()); // (keep the page warm)
+    assert(worst <= 80, `with the marker in view: ${worst} draw calls (budget 80; CU's worst without it is 68)`);
+    await waitPhase(a, 'time', 25000);
+    await waitPhase(a, 'recap', 8000);
+    await a.tap('[data-act="next"]');
+    await waitPhase(a, 'curtain', 10000);
+    await hotHide(a);
+    await hotSeek(a);
+    let fogWorst = 0;
+    const t0 = Date.now();
+    while ((await st(a)).phase.name === 'seek' && Date.now() - t0 < 30000) { fogWorst = Math.max(fogWorst, (await ti(a)).calls); await wait(300); }
+    assert(fogWorst <= 80 && fogWorst > 0, `Fog on CU: ${fogWorst} draw calls at most`);
+    await waitPhase(a, 'recap', 8000);
+    await a.tap('[data-act="next"]');
+    await waitPhase(a, 'curtain', 10000);
+    await hotHide(a);
+    await hotSeek(a);
+    let duskWorst = 0;
+    const t1 = Date.now();
+    while ((await st(a)).phase.name === 'seek' && Date.now() - t1 < 30000) { duskWorst = Math.max(duskWorst, (await ti(a)).calls); await wait(300); }
+    assert(duskWorst <= 80 && duskWorst > 0, `Dusk on CU: ${duskWorst} draw calls at most`);
+    h.assertNoErrors();
+  } catch (e) { console.error(e.message.split('\n')[0], h.errors); failures++; await shot(a, 'budget-FAIL').catch(() => {}); } finally { await h.close(); }
 }
 
 async function suddenSection(port) {
@@ -425,7 +527,7 @@ async function fogSection(port) {
     await b.tap('.chm-acts [data-act="ready"]');
     await waitPhase(a, 'seek', 30000); await waitPhase(b, 'seek', 8000);
     await a.waitForFunction(() => window.__cham.state().hunting, null, { timeout: 8000 });
-    const base = await ti(a);
+    const base = await ti(a); const progs0 = (await hook(a, 'bootInfo')).programs;
     assert(base.mood.fogFar === 26 && !base.mood.on, `the hunt starts with the map's fog (${base.mood.fogNear}–${base.mood.fogFar} m)`);
     // sample both phones through the hunt
     const fars = { a: new Set(), b: new Set() }; const calls = []; const sa = null; const sb = null; let shotRange = null;
@@ -440,6 +542,7 @@ async function fogSection(port) {
       await wait(220);
     }
     assert(Math.max(...calls) <= 80, `draw calls stay in budget (${Math.max(...calls)} ≤ 80)`);
+    assert((await hook(a, 'bootInfo')).programs === progs0, `no shader was linked for the fog (${progs0} programs before and after)`);
     await b.waitForFunction(() => window.__cham.state().phase.name !== 'seek', null, { timeout: 8000 });
     await wait(300);
     // every step each phone applied (the game logs them), not what the polling happened to catch
@@ -461,7 +564,7 @@ async function fogSection(port) {
 }
 
 async function duskSection(port) {
-  console.log('\n# two phones: Dusk, and the pellet range follows a closing fog');
+  console.log('\n# two phones: Dusk (lights fade in steps, brighter glints, nothing relinked, restored exactly)');
   const h = await launch({ port, only: ['chameleon'] });
   const { a, b } = h;
   try {
@@ -473,6 +576,7 @@ async function duskSection(port) {
     await b.tap('.chm-acts [data-act="ready"]');
     await waitPhase(a, 'seek', 30000); await waitPhase(b, 'seek', 8000);
     await a.waitForFunction(() => window.__cham.state().hunting, null, { timeout: 8000 });
+    const progs0 = (await hook(a, 'bootInfo')).programs; const progsB0 = (await hook(b, 'bootInfo')).programs;
     const hemis = []; let glintBright = false;
     const t = Date.now();
     while ((await st(a)).phase.name === 'seek' && Date.now() - t < 30000) {
@@ -488,6 +592,7 @@ async function duskSection(port) {
     assert(la[la.length - 1].hemi > 0.2 && la[0].hemi < 0.56, 'dim, never dark');
     assert(lb.length >= 8 && Math.abs(lb[lb.length - 1].hemi - la[la.length - 1].hemi) < 0.06, 'the other phone fades the same way');
     assert(glintBright, 'the scan glints turn brighter in the dark');
+    assert((await hook(a, 'bootInfo')).programs === progs0 && (await hook(b, 'bootInfo')).programs === progsB0, `no shader was linked for the dusk (${progs0} programs before and after)`);
     await b.waitForFunction(() => window.__cham.state().phase.name !== 'seek', null, { timeout: 8000 });
     await wait(300);
     for (const p of [a, b]) { const x = (await ti(p)).mood; assert(!x.on && x.hemi === 0.56 && x.sun === 0.52 && x.glint === 'ffd23f', 'back to the plain light at the round\'s end'); }
@@ -582,10 +687,10 @@ async function dbSuddenSection(port) {
   const h = await launch({ port, only: ['chameleon'] });
   const { a, b } = h;
   try {
-    await startPair(h, { ...FAST, seek: 15000, hide: 15000, found: 6000, maxDpr: 0.45 });
+    await startPair(h, { ...FAST, seek: 15000, hide: 40000, found: 6000, maxDpr: 0.45 });
     await startMatch(h, { map: 'living', mode: 'db', rules: { twists: 'off', sudden: true, seek: 120 } });
-    const both = async (name, to = 30000) => { await waitPhase(a, name, to); await waitPhase(b, name, 8000); };
-    const hideBoth = async () => { await both('hide', 40000); await camoHide(a); await hook(b, 'setPose', 'crouch'); await a.tap('.chm-acts [data-act="ready"]'); await b.tap('.chm-acts [data-act="ready"]'); await both('seek', 30000); await wait(300); };
+    const both = async (name, to = 30000) => { try { await waitPhase(a, name, to); await waitPhase(b, name, 8000); } catch (e) { const sa = await st(a); const sb = await st(b); console.error(`  (round ${sa.phase.round} waiting for ${name}: a tagcheck ${JSON.stringify(sa.lastTagCheck)} a is in ${sa.phase.name}, b in ${sb.phase.name}; a shot ${JSON.stringify(sa.lastShot)} used ${JSON.stringify(sa.round.used)}; b shot ${JSON.stringify(sb.lastShot)} tagcheck ${JSON.stringify(sb.lastTagCheck)} used ${JSON.stringify(sb.round.used)}; hunting ${sa.hunting}/${sb.hunting}; bodies a ${JSON.stringify(sa.bodies.a && [sa.bodies.a.x, sa.bodies.a.z])} b ${JSON.stringify(sb.bodies.b && [sb.bodies.b.x, sb.bodies.b.z])} drawn a@b ${JSON.stringify(sb.drawn.a.p)} vis ${JSON.stringify(sb.visible)})`); throw e; } };
+    const hideBoth = async () => { await both('hide', 40000); await camoHide(a); await hook(b, 'setPose', 'crouch'); await a.tap('.chm-acts [data-act="ready"]'); await b.tap('.chm-acts [data-act="ready"]'); await both('seek', 30000); await wait(1800); };
     // round 1: b tags a
     await hideBoth();
     await aimAtHider(b, 'a');
@@ -611,10 +716,11 @@ async function dbSuddenSection(port) {
     assert(t.sd === 1 && t.rounds === 4, 'one sudden-death round was added (4 rounds)');
     await both('recap', 8000);
     assert(!/See who won/.test(await a.textContent('.chm-recap [data-act="next"]')), 'the recap does not end the match');
+    for (const p of [a, b]) await p.evaluate(() => { window.__chamTune.seek = 0; window.__chamTune.sdHide = 30000; }); // the real clock for the cap (120 s on the setting); a longer sudden-death hide for a slow box
     await a.tap('[data-act="next"]');
     await hideBoth();
     t = await ti(a);
-    assert(t.seekMs <= 60000 && t.hideMs === 20000 || t.hideMs <= 20000, `round 4: ${t.hideMs / 1000} s hide, hunt capped at ${t.seekMs / 1000} s`);
+    assert(t.seekMs === 60000 && t.hideMs === 30000, `round 4: the sudden-death hide clock (${t.hideMs / 1000} s here), the 120 s hunt capped at ${t.seekMs / 1000} s`);
     assert(await a.evaluate(() => /Sudden death/.test(document.querySelector('.chm-role').textContent)), 'the role pill says Sudden death');
     await aimAtHider(a, 'b');
     await hook(a, 'action', 'fire');
@@ -691,6 +797,8 @@ async function shotsSection(port) {
   if (want('bugA')) sections.push(() => bugASection(PORT + 0));
   if (want('hotrules')) sections.push(() => hotRulesSection(PORT + 1));
   if (want('bounty')) sections.push(() => bountySection(PORT + 2));
+  if (want('budget')) sections.push(() => budgetSection(PORT + 13));
+  if (want('hotunder')) sections.push(() => hotUnderdogSection(PORT + 12));
   if (want('sudden')) sections.push(() => suddenSection(PORT + 3));
   if (want('streak')) sections.push(() => streakSection(PORT + 4));
   if (want('fog')) sections.push(() => fogSection(PORT + 5));

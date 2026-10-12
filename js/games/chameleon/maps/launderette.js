@@ -36,7 +36,8 @@ const C = {
   purple: '#7d5bc4', brown: '#8c5a3c', card: '#d2a46a', lime: '#b5d94a', teal: '#2f8f8f', sky: '#8fb3c9',
 };
 
-const wrap = (w, h, fn) => { for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) fn(ox * w, oy * h); };
+// tile-wrap offsets for a mark at v with reach r: the other copies only matter near a tile edge
+const offs = (v, size, r) => (v < r ? [0, size] : v > size - r ? [-size, 0] : [0]);
 
 /** A front-loading washer face (not repeating): control strip, drawer, knobs, a big porthole. */
 const washerFront = () => (g, w, h) => {
@@ -75,12 +76,15 @@ const dryerFront = () => (g, w, h) => {
 /** The lost-sock board: cork covered in odd socks, pegs and tags (repeats, drawn wrapped). */
 const socksTile = () => (g, w, h, r) => {
   g.fillStyle = '#d9b98a'; g.fillRect(0, 0, w, h);
-  for (let i = 0; i < 220; i++) { g.fillStyle = i % 2 ? '#c9a574' : '#e8cca1'; wrap(w, h, (ox, oy) => { g.fillRect(ox + r() * w, oy + r() * h, 2 + r() * 3, 2 + r() * 2); }); }
+  for (let i = 0; i < 220; i++) {
+    g.fillStyle = i % 2 ? '#c9a574' : '#e8cca1'; const x = r() * w; const y = r() * h; const sw = 2 + r() * 3; const sh = 2 + r() * 2;
+    for (const oy of offs(y, h, 6)) for (const ox of offs(x, w, 6)) g.fillRect(ox + x, oy + y, sw, sh);
+  }
   const cols = [C.red, C.blue, C.yellow, C.green, C.pink, C.purple, C.orange, C.teal, '#ffffff', C.navy, C.lime, C.coral];
   for (let i = 0; i < 34; i++) {
     const x = r() * w; const y = r() * h; const a = (r() - 0.5) * 2.2; const c = cols[i % cols.length]; const c2 = cols[(i * 5 + 3) % cols.length];
     const kind = i % 3; const s = 0.8 + r() * 0.5;
-    wrap(w, h, (ox, oy) => {
+    for (const oy of offs(y, h, 40)) for (const ox of offs(x, w, 40)) {
       g.save(); g.translate(x + ox, y + oy); g.rotate(a); g.scale(s, s);
       g.fillStyle = c; g.fillRect(-7, -22, 14, 26); // leg
       g.beginPath(); g.ellipse(2, 7, 15, 8, 0.1, 0, Math.PI * 2); g.fill(); // foot
@@ -91,10 +95,10 @@ const socksTile = () => (g, w, h, r) => {
       else { for (let k = 0; k < 5; k++) { g.beginPath(); g.arc(-3 + (k % 2) * 7, -17 + k * 5, 2, 0, Math.PI * 2); g.fill(); } } // spots
       g.fillStyle = '#b08a4c'; g.fillRect(-2, -24, 4, 6); // peg
       g.restore();
-    });
+    }
   }
   g.fillStyle = '#fffbe8';
-  for (let i = 0; i < 5; i++) wrap(w, h, (ox, oy) => { g.fillRect(ox + r() * w, oy + r() * h, 12, 8); });
+  for (let i = 0; i < 5; i++) { const x = r() * w; const y = r() * h; for (const oy of offs(y, h, 12)) for (const ox of offs(x, w, 12)) g.fillRect(ox + x, oy + y, 12, 8); }
 };
 
 function build(atlas) {
@@ -130,6 +134,7 @@ function build(atlas) {
   atlas.add('signDry', Q.sign({ bg: C.coral, fg: '#ffffff', text: 'DRYERS', sub: '50p for 10 min', border: '#a8402f' }), { w: 240, h: 80, repeat: false });
   atlas.add('poster1', Q.pic({ kind: 'wave', cols: [C.sky, C.blue, '#ffffff', C.yellow] }), { size: 'M', repeat: false });
   atlas.add('poster2', Q.pic({ kind: 'still', cols: [C.coral, C.yellow, C.green, C.aqua] }), { size: 'M', repeat: false });
+  atlas.add('skylight', P.window({ sky: '#bfe4f2', cloud: '#ffffff', frame: '#f7fbfa', hill: '#cfeaf5' }), { size: 'M', repeat: false });
   atlas.add('label', P.label({ bg: '#ffffff', band: C.coral, text: C.ink }), { size: 'S', repeat: false });
 
   return function* fill(b) {
@@ -387,6 +392,12 @@ function build(atlas) {
     });
     // a poster by the folding tables
     picture(b, 3.08, 1.8, 4.2, 0.9, 0.7, 'x+', 'poster1', { frame: C.aquaD, depth: 0.02 });
+
+    // two skylights in the ceiling (a painted sky, flush: nothing to cling to, a lit patch to read the room by)
+    for (const [x0, z0, x1, z1] of [[4.2, 2.6, 6.8, 3.6], [-6.8, 3.2, -4.0, 4.0]]) {
+      b.add(boxGeo(x1 - x0, 0.01, z1 - z0, { fit: true, faces: ['ny'] }), { at: [(x0 + x1) / 2, CEIL - 0.006, (z0 + z1) / 2], tile: 'skylight', rep: 1, color: '#ffffff', outline: false });
+      for (const [ax0, az0, ax1, az1] of [[x0 - 0.06, z0 - 0.06, x1 + 0.06, z0], [x0 - 0.06, z1, x1 + 0.06, z1 + 0.06], [x0 - 0.06, z0, x0, z1], [x1, z0, x1 + 0.06, z1]]) aabb(b, ax0, CEIL - 0.04, az0, ax1, CEIL - 0.004, az1, { color: C.steel, outline: false });
+    }
 
     yield 'spots';
     // ── spots ──

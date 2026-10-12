@@ -1538,6 +1538,7 @@ export function createGame(el, api) {
     if (ph.name === 'seek') R.seekStart = t - (s.seekElapsed || 0);
     if (S.match) api.setScore(S.match.scores);
     S.paused = { reason: 'away', remaining: ph.remaining };
+    if (S.phase.name === 'hide' || S.phase.name === 'seek') applyPaletteLock(); // update pass: a rejoin keeps the Three colours lock
     if (isHost) { S.pauseReasons.delete('away'); maybeResume(); }
   }
 
@@ -3880,7 +3881,15 @@ export function createGame(el, api) {
     const m = S.match;
     try {
       switch (kind) {
-        case 'lobby': return injectRows(html, twistRows(S.setup.rules, S.setup.mode === 'hs', isHost));
+        case 'lobby': {
+          let h = injectRows(html, twistRows(S.setup.rules, S.setup.mode === 'hs', isHost));
+          // Today's hide on one phone plays the next twist that works there (dailySetup): say so on its button too
+          if (local) {
+            const pl = dailyPlan(dayKey()); const tw = dailyTwistFor(pl, true); const i = h.indexOf('chm-today');
+            if (tw && pl.twist && tw.id !== pl.twist.id && i >= 0) { const j = h.indexOf(esc(pl.twist.label), i); if (j >= 0 && j - i < 400) h = h.slice(0, j) + esc(tw.label) + h.slice(j + esc(pl.twist.label).length); }
+          }
+          return h;
+        }
         case 'title': { const p = S.pendingTitle; if (!p || !m) return html; const h = inject(html, roundBanner(p.round)); return sdRound(p.round) ? h.replace(/Round \d+ of \d+/, 'SUDDEN DEATH') : h; }
         case 'curtain': case 'blind': return m ? inject(html, roundBanner(S.phase.round)) : html;
         case 'recap': {

@@ -21,7 +21,8 @@ const SHOTS = process.env.SHOTS || path.join(os.tmpdir(), 'chameleon-cu-shots');
 const PORT = Number(process.env.PORT) || 8990;
 const ONLY = (process.env.ONLY || '').split(',').filter(Boolean);
 const want = (k) => !ONLY.length || ONLY.includes(k);
-const BUDGET = { tris: 120000, drawCalls: 80, buildMs: 400 };
+// coldMs: the worst case a synchronous cold build may take in the page (CU measured 0.3-0.8 s at 1x, more on a loaded box)
+const BUDGET = { tris: 120000, drawCalls: 80, coldMs: 2500 };
 const ID = 'cuboulder';
 let failures = 0;
 const assert = (c, m) => { if (!c) { failures++; console.log('FAIL -', m); return false; } console.log('ok -', m); return true; };
@@ -92,9 +93,18 @@ async function loadSection(port, { device, viewport, label }) {
     if (r.spawnsHuge) { const bh = Object.entries(r.spawnsHuge).filter(([, d]) => d > 0.02); assert(!bh.length, `[${label}] spawns clear at the largest size${bh.length ? ': ' + bh.map(([k]) => k).join(', ') : ''}`); }
     assert(!!r.camoWall, `[${label}] the camo spot has a sandstone wall to flatten against`);
     for (const p of r.probes) assert(p.got === p.want, `[${label}] probe "${p.name}" albedo ${p.got} (want ${p.want})`);
-    // build time with the real atlas: load another map, then time a fresh load of this one
-    const ms = await a.evaluate((id) => { window.__cham.checkMap('living'); const t0 = performance.now(); window.__cham.checkMap(id); return performance.now() - t0; }, ID);
-    assert(ms < BUDGET.buildMs, `[${label}] map + atlas built in ${ms.toFixed(0)} ms (< ${BUDGET.buildMs})`);
+    // build time with the real atlas, COLD: the map is cached from the picks above (loading 'living' and then
+    // this one again was a cache hit, a few ms). Load the other maps until this one is evicted (the cache keeps
+    // three, never the two most recent), then time the load.
+    const cold = await a.evaluate((id) => {
+      const h = window.__cham; const inCache = () => h.bootInfo().cache.some((c) => c.id === id);
+      const others = h.mapIds().filter((m) => m !== id);
+      for (let i = 0; i < others.length && inCache(); i++) h.useMap(others[i]);
+      const was = inCache(); const t0 = performance.now(); h.useMap(id);
+      return { ms: performance.now() - t0, evicted: !was };
+    }, ID);
+    assert(cold.evicted, `[${label}] the map was evicted before it was timed (a cold build, not a cache hit)`);
+    assert(cold.ms < BUDGET.coldMs, `[${label}] cold map + atlas build ${cold.ms.toFixed(0)} ms (< ${BUDGET.coldMs}; one synchronous task: the lobby builds in slices)`);
     await wait(300);
     h.assertNoErrors();
     assert(!warns.length, `[${label}] no atlas-full / bad-map warnings${warns.length ? ': ' + warns.join(' | ') : ''}`);

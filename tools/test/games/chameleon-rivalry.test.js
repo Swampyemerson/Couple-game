@@ -33,7 +33,7 @@ const hook = (p, fn, ...args) => p.evaluate(([f, a]) => window.__cham[f](...a), 
 async function waitReady(p) { await p.waitForFunction(() => window.__cham && window.__cham.ready, null, { timeout: 60000 }); }
 async function waitPhase(p, name, timeout = 40000) { await p.waitForFunction((n) => window.__cham && window.__cham.state().phase.name === n, name, { timeout }); }
 async function waitLinked(p) { await p.waitForFunction(() => window.__cham && window.__cham.ready && window.__cham.state().linkReady, null, { timeout: 40000 }); }
-async function shot(p, name) { await p.screenshot({ path: path.join(SHOTS, name + '.png') }); }
+async function shot(p, name) { await p.screenshot({ path: path.join(SHOTS, (process.env.SCHEME === 'dark' ? 'dark-' : '') + name + '.png') }); }
 const mod = (f) => import(pathToFileURL(path.join(__dirname, '../../../js/games/chameleon', f)).href);
 const api = { name: (w) => (w === 'a' ? 'Emerson' : 'Sydney'), other: (w) => (w === 'a' ? 'b' : 'a') };
 const text = (html) => String(html).replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
@@ -227,7 +227,7 @@ async function hotRound(a, { tag, call = 'wall' }) {
 
 async function hotseatSection(port) {
   console.log('\n# hotseat: lobby rivalry block, greyed rules, a 2-round match (iPhone)');
-  const h = await launch({ port, only: ['chameleon'], who: ['a'], device: 'iPhone 13' });
+  const h = await launch({ port, only: ['chameleon'], who: ['a'], device: 'iPhone 13', colorScheme: process.env.SCHEME || 'light' });
   const a = h.a;
   try {
     await arm(a, { ...LONG, title: 5000, recap: 60000 });

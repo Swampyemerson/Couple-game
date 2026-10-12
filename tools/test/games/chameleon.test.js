@@ -2551,7 +2551,8 @@ async function timingLocalSection(port) {
     await waitReady(a);
     await hook(a, 'setRules', { map: 'living', first: 'b', rules: { hide: 10, countdown: 5, headStart: 5, grace: 3, seek: 20, rounds: 2 } });
     const tm = await hook(a, 'timing');
-    assert(tm.hide === 10000 && tm.seek === 20000 && tm.head === 5000 && tm.countdown === 5000 && tm.grace === 3000, `timing: ${JSON.stringify(tm)}`);
+    // (update pass, bug C: a head start on one phone was only a wait — nobody can move while the seeker holds the phone — so rules.js LOCAL_DEAD switches it off there)
+    assert(tm.hide === 10000 && tm.seek === 20000 && tm.head === 0 && tm.countdown === 5000 && tm.grace === 3000, `timing: ${JSON.stringify(tm)}`);
     await a.tap('[data-act="start"]');
     await a.tap('[data-act="curtain"]');
     await waitPhase(a, 'hide');
@@ -2568,12 +2569,7 @@ async function timingLocalSection(port) {
     const cd = (Date.now() - c0) / 1000;
     assert(cd > 4 && cd < 6.5, `the countdown lasted ${cd.toFixed(1)} s`);
     s = await st(a);
-    assert(s.phase.dur === 25000 && s.blind && /^head-/.test(s.layer), 'seek phase = 5 s head start + 20 s; the seeker is blindfolded');
-    assert(await a.evaluate(() => getComputedStyle(document.querySelector('.chm canvas')).visibility) === 'hidden', 'canvas hidden under the blindfold');
-    await hook(a, 'action', 'fire');
-    assert((await st(a)).round.pellets.a === (await st(a)).rules.pellets, 'no firing while blindfolded');
-    const clk = (await a.textContent('.chm-phase')).trim();
-    assert(/Head start/i.test(clk), `the clock reads "${clk}"`);
+    assert(s.phase.dur === 20000 && !s.blind && !/^head-/.test(s.layer), 'seek phase = the 20 s hunt: one phone ignores the 5 s head start (no blindfold wait)');
     await a.waitForFunction(() => window.__cham.state().hunting, null, { timeout: 8000 });
     s = await st(a);
     assert(!s.blind && await a.$eval('.chm-acts [data-act="fire"]', (x) => x.disabled), 'hunt on: Fire is disabled during the grace period');
@@ -2586,7 +2582,7 @@ async function timingLocalSection(port) {
     // no shots: the hider survives the 20 s hunt (head start doesn't score)
     await waitPhase(a, 'time', 30000);
     s = await st(a);
-    assert(s.round.rec && s.round.rec.points === 20 + 30, `survived: ${s.round.rec.points} points (20 s of hunt + 30, the head start doesn't count)`);
+    assert(s.round.rec && s.round.rec.points === 20 + 30, `survived: ${s.round.rec.points} points (20 s of hunt + 30)`);
     // spectating is a two-device thing
     assert(await hook(a, 'view', 'free') === 'eyes', 'one device: no spectator views');
     // round 2 (this device's rules changed mid-match): On Ready, a 10 s countdown, no head start, no grace
@@ -3720,12 +3716,12 @@ async function uxFinalSection(port) {
       await a.setViewportSize({ width: w, height: hh }); await wait(500);
       await a.evaluate(() => { document.querySelector('.chm-final .chm-card').scrollTop = 0; });
       const g0 = await finalGeom(a);
-      console.log(`  ${w}×${hh}: card ${g0.top}–${g0.bottom} (scroll ${g0.sh} / ${g0.ch}), See the board ${g0.btn.join('–')}, stickers ${JSON.stringify(g0.stickers)} of ${pol.records.length} records + ${pol.unlocks.length} unlocks`);
+      console.log(`  ${w}×${hh}: card ${g0.top}–${g0.bottom} (scroll ${g0.sh} / ${g0.ch}), See the board ${g0.btn.join('–')}, stickers ${JSON.stringify(g0.stickers)} labels ${JSON.stringify(g0.labels)} of ${pol.records.length} records + ${pol.unlocks.length} unlocks`);
       assert(g0.bottom <= g0.vh && g0.btn[1] <= g0.vh && g0.btnTop, `${w}×${hh}: See the board is on screen and on top before any scroll (${g0.btn.join('–')} of ${g0.vh})`);
       assert(!g0.corner, `${w}×${hh}: the hub's back / menu stickers clear the card (card top ${g0.top})`);
       const rowsN = new Set(g0.chips.map((q) => q[1])).size;
       assert(g0.chips.length < 2 || (rowsN <= Math.ceil(g0.chips.length / 2) && !g0.chips.some((q) => q[2])), `${w}×${hh}: vote chips sit two to a row (${g0.chips.length} chips in ${rowsN} rows), none clipped`);
-      assert(g0.stickers.length <= 3 && (g0.stickers.length < 3 || !/^\+/.test(g0.stickers[2]) || /^\+\d+ (unlocked|more)$/.test(g0.stickers[2])) && !g0.labels.includes('0:05') && g0.labels.includes('Sydney: Found in 0:04') && (g0.labels.match(/Gold/g) || []).length === 1, `${w}×${hh}: ${pol.records.length} records + ${pol.unlocks.length} unlocks fold into ≤ 3 stickers, a record beaten twice shows once (${g0.stickers.join(' | ')})`);
+      assert(g0.stickers.length <= 3 && (g0.stickers.length < 3 || !/^\+/.test(g0.stickers[2]) || /^\+\d+ (unlocked|more)$/.test(g0.stickers[2])) && !g0.labels.includes('0:05') && g0.labels.includes('Sydney: Found in 0:04') && (g0.labels.match(/Gold eyes/g) || []).length === 1, `${w}×${hh}: ${pol.records.length} records + ${pol.unlocks.length} unlocks fold into ≤ 3 stickers, a record beaten twice shows once (${g0.stickers.join(' | ')})`);
       if (g0.sh > g0.ch + 1) {
         await touchDrag(a, g0.x, g0.y, -240);
         const g1 = await finalGeom(a);
@@ -3777,7 +3773,7 @@ async function uxRematchLiveSection(port) {
   const { a, b } = h;
   try {
     await startPair(h, { ...FAST, hide: 6000, seek: 3000, recap: 900, found: 700, final: 600000, title: 300, maxDpr: 0.45 });
-    await startMatch(h, { map: 'living', first: 'b', rules: { rounds: 2 } });
+    await startMatch(h, { map: 'living', first: 'b', rules: { rounds: 2, sudden: false, twists: 'off', underdog: false } });
     // both rounds run out the clocks (Ready skips the hide)
     for (let r = 1; r <= 2; r++) {
       const hider = r === 1 ? b : a;
@@ -3825,7 +3821,7 @@ async function uxWardrobeSection(port) {
         const sh = document.querySelector('.chm-wardrobe'); const sr = sh.getBoundingClientRect();
         return { rows, sh: sh.scrollHeight, ch: sh.clientHeight, x: sr.left + sr.width / 2, y: sr.top + sr.height * 0.6 };
       });
-      assert(m.rows.length === 4 && m.rows.every((r) => r.row >= r.tile && !r.cut && !r.clip), `${w}×${hh}: every wardrobe row is as tall as its tiles (${m.rows.map((r) => `${r.row}/${r.tile}`).join(', ')} px), nothing clipped`);
+      assert(m.rows.length === 5 && m.rows.every((r) => r.row >= r.tile && !r.cut && !r.clip), `${w}×${hh}: every wardrobe row is as tall as its tiles (${m.rows.map((r) => `${r.row}/${r.tile}`).join(', ')} px), nothing clipped`);
       if (m.sh > m.ch + 1) {
         await a.evaluate(() => { document.querySelector('.chm-wardrobe').scrollTop = 0; });
         await touchDrag(a, m.x, m.y, -220);

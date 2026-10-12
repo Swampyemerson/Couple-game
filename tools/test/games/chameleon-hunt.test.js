@@ -18,7 +18,7 @@ const assert = (c, m) => { if (!c) throw new Error('FAIL: ' + m); console.log('o
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const FAST = { hide: 12000, seek: 15000, title: 700, recap: 2500, found: 2200, final: 3000, seekLead: 900, resume: 1500, maxDpr: 0.6, noTips: true };
-const SLOW = { ...FAST, hide: 90000, seek: 60000, recap: 7000, maxDpr: 0.45 };
+const SLOW = { ...FAST, hide: 90000, seek: 60000, recap: 10000, maxDpr: 0.45 };
 
 async function arm(page, tune = FAST) { await page.evaluate((t) => { window.__chamTest = true; window.__chamTune = t; }, tune); }
 const st = (p) => p.evaluate(() => window.__cham && window.__cham.state());
@@ -216,7 +216,7 @@ async function mercySection(port) {
   const h = await launch({ port, only: ['chameleon'] });
   const { a, b } = h;
   try {
-    await startPair(h, { ...SLOW, seek: 9000 });
+    await startPair(h, { ...SLOW, seek: 16000 });
     await startMatch(h, { rules: { grace: 0, headStart: 0, rounds: 4 } });
     const { H, S } = await huntReady(h);
     assert(!(await S.isVisible('.chm-mo-mercy')), 'the seeker has no Mercy chip');
@@ -248,8 +248,10 @@ async function mercySection(port) {
     assert(rec.mercy === 'hot' && rec.mercyPts === 10 && rec.points === base - 10, `survived: ${rec.ms} ms → ${base} − 10 = ${rec.points} points (mercy ${rec.mercy})`);
     const sc = (await st(S)).match.scores;
     assert(sc.b === rec.points && (await st(H)).match.scores.b === rec.points, `the score carries the cost (Sydney ${sc.b})`);
-    await wait(500);
-    for (const p of [S, H]) assert(/took pity/.test(await p.evaluate(() => document.querySelector('.chm-recap .chm-lines')?.textContent || '')), 'the recap says "took pity"');
+    for (const p of [S, H]) {
+      const ok = await p.waitForFunction(() => /took pity/.test(document.querySelector('.chm-recap .chm-lines')?.textContent || ''), null, { timeout: 5000 }).then(() => true, () => false);
+      assert(ok, 'the recap says "took pity"');
+    }
     // round 2: Emerson hides, Sydney seeks from ~5 m (warm); a quick tag: the cost never takes the round below zero
     for (const p of [a, b]) await p.evaluate(() => { window.__chamTune.seek = 40000; });
     await a.waitForFunction(() => window.__cham.state().phase.round === 2 && window.__cham.state().phase.name === 'hide', null, { timeout: 40000 });

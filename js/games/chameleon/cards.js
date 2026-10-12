@@ -418,7 +418,7 @@ export function finalStickers(api, records = [], unlocks = [], max = 2) {
 export function finalCard(api, { winner, a, b, mode, story, records = [], unlocks = [], firstNext = null, vote = null, cup = null, extra = '' }) {
   const hi = Math.max(a, b); const lo = Math.min(a, b);
   const head = winner ? `${esc(api.name(winner))} wins ${hi}–${lo}` : mode === 'db' ? 'Perfectly matched' : `All square ${a}–${b}`;
-  const sub = mode === 'db' ? 'Rounds won' : `${esc(api.name('a'))} ${a} · ${b} ${esc(api.name('b'))}`;
+  const sub = mode === 'db' ? 'Double Blind' : `${esc(api.name('a'))} ${a} · ${b} ${esc(api.name('b'))}`;
   const recs = finalStickers(api, records, unlocks);
   // the Cup: only a match with a winner moves it (draws and abandoned matches change nothing)
   const cupBan = cup && winner ? `<div class="chm-cupban ${cup.kind}" data-cup="${cup.kind}" role="status">${CUP_SVG}<span><b>${cup.kind === 'take' ? 'TAKES THE CUP' : `DEFENDS THE CUP (${cup.n})`}</b><small>${esc(api.name(winner))}${cup.kind === 'take' && cup.from ? ` from ${esc(api.name(cup.from))}` : ''}</small></span></div>` : '';

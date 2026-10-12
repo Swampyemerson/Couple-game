@@ -741,7 +741,7 @@ export function createHud(root, api) {
   const cache = new Map();
   let hintTimer = 0;
   // the paint panel: recent colours (last 5 distinct), the fill pattern, the palette lock (Three colours twist)
-  const PT = { recent: loadRecent(), cur: null, pat: 0, lock: null, label: '', key: '', patKey: '', cb: { color: null, pattern: null }, chips: [], patBtn: null, patSvg: null, fl: null, cap: null };
+  const PT = { recent: loadRecent(), cur: null, pat: 0, lock: null, label: '', ver: 1, shown: 0, cb: { color: null, pattern: null }, chips: [], patBtn: null, patSvg: null, fl: null, cap: null };
   PT.chips = Array.from(root.querySelectorAll('.chm-rc[data-chip]')); PT.patBtn = root.querySelector('.chm-pat'); PT.patSvg = PT.patBtn.querySelector('svg');
   PT.fl = root.querySelector('.chm-fl'); PT.cap = root.querySelector('.chm-lockcap');
   /** Where a picked colour flies to: the round swatch, or (narrow phones hide it) the ringed chip. */
@@ -756,10 +756,10 @@ export function createHud(root, api) {
   }
   /** Redraw the chips, the pattern chip, the Fill label and the lock look; DOM writes only when something changed. */
   function paintRender() {
+    if (PT.ver === PT.shown) return; // (nothing changed: no work, no garbage, every frame)
+    PT.shown = PT.ver;
     const list = chipList(); const cur = PT.cur;
-    let key = PT.lock ? 'L' : 'R'; for (const c of list) key += '|' + rgbKey(c); if (cur) key += '#' + rgbKey(cur);
-    if (key !== PT.key) {
-      PT.key = key;
+    {
       for (let i = 0; i < PT.chips.length; i++) {
         const b = PT.chips[i]; const c = list[i];
         if (!c) { b.hidden = !!PT.lock; b.classList.add('empty'); b.classList.remove('on'); b.style.background = ''; b.tabIndex = -1; b.setAttribute('aria-label', `Recent colour ${i + 1} (empty)`); continue; }
@@ -774,9 +774,7 @@ export function createHud(root, api) {
       if (locked) PT.cap.innerHTML = `${esc(PT.label)}<small>Pick and Stamp are off</small>`;
     }
     const kind = PATTERNS[PT.pat]; const c1 = cur || [74, 132, 116]; const c2 = secondOf(c1);
-    const pk = kind + rgbKey(c1) + '/' + rgbKey(c2);
-    if (pk !== PT.patKey) {
-      PT.patKey = pk;
+    {
       PT.patSvg.innerHTML = patGlyph(kind, c1, c2) + PAT_BADGE;
       PT.patBtn.setAttribute('aria-label', `Fill pattern: ${cap1(kind)}. Tap to change`);
       PT.patBtn.title = `Fill pattern: ${cap1(kind)}`;
@@ -787,7 +785,7 @@ export function createHud(root, api) {
   function paintObserve(rgb) {
     const c = PT.cur;
     if (c && c[0] === rgb[0] && c[1] === rgb[1] && c[2] === rgb[2]) return;
-    PT.cur = [rgb[0], rgb[1], rgb[2]];
+    PT.cur = [rgb[0], rgb[1], rgb[2]]; PT.ver++;
     if (PT.lock) return;
     if (!PT.recent.some((r) => nearRgb(r, rgb))) {
       PT.recent.unshift([rgb[0], rgb[1], rgb[2]]);
@@ -993,8 +991,8 @@ export function createHud(root, api) {
     /** { kind, rgb2 } for paint.fill (rgb2 = the ground under the brush colour), or null for a plain fill. */
     fillPattern(rgb) { const kind = PATTERNS[PT.pat]; return kind === 'solid' ? null : { kind, rgb2: secondOf(rgb) }; },
     /** Next fill pattern (the pattern chip). */
-    cyclePattern() { PT.pat = (PT.pat + 1) % PATTERNS.length; paintRender(); return PATTERNS[PT.pat]; },
-    setPattern(k) { const i = PATTERNS.indexOf(k); if (i >= 0) { PT.pat = i; paintRender(); } return PATTERNS[PT.pat]; },
+    cyclePattern() { PT.pat = (PT.pat + 1) % PATTERNS.length; PT.ver++; paintRender(); return PATTERNS[PT.pat]; },
+    setPattern(k) { const i = PATTERNS.indexOf(k); if (i >= 0) { PT.pat = i; PT.ver++; paintRender(); } return PATTERNS[PT.pat]; },
     /**
      * Lock the hider's paint to a few colours (the Three colours twist): hexArray = ['#rrggbb', …]
      * (or [r,g,b] triples), 1–5 colours; null / [] clears it. While locked the chips show only those
@@ -1007,7 +1005,7 @@ export function createHud(root, api) {
       if (list && list.length) for (const x of list) { const c = parseColor(x); if (c && cols.length < RECENT_N && !cols.some((o) => nearRgb(o, c, 4))) cols.push(c); }
       PT.lock = cols.length ? cols : null;
       PT.label = PT.lock ? ((opts && opts.label) || (cols.length === 3 ? 'Three colours' : 'Limited palette')) : '';
-      PT.key = ''; PT.patKey = '';
+      PT.ver++;
       if (PT.lock && PT.cur && !inLock(PT.cur)) { const c = lockSnap(PT.cur); PT.cur = c.slice(); if (PT.cb.color) PT.cb.color(c); }
       paintRender();
       return !!PT.lock;

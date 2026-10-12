@@ -225,7 +225,7 @@ export function createMoments(env) {
 
   // ── mercy chirp ────────────────────────────────────────────────────────────────────────────────
   function canMercy() {
-    return !local && env.mode() === 'hs' && S.phase.name === 'seek' && env.hiderOf(S.phase.round) === me && env.hunting() && !M.mercy && !R.foundSent;
+    return !local && env.mode() === 'hs' && S.phase.name === 'seek' && env.hiderOf(S.phase.round) === me && env.hunting() && env.now() < S.phase.end && !M.mercy && !R.foundSent;
   }
   function mercyTap() {
     sync();
@@ -243,7 +243,7 @@ export function createMoments(env) {
   /** The seeker's side: a hot / warm / cold ping. */
   function onMercy(d) {
     sync();
-    if (!d || !BAND_OK[d.band] || S.phase.name !== 'seek' || env.mode() !== 'hs' || M.mercy) return;
+    if (!d || !BAND_OK[d.band] || S.phase.name !== 'seek' || env.mode() !== 'hs' || M.mercy || R.foundSent) return;
     M.mercy = 1; M.mercyBand = d.band;
     const hider = env.hiderOf(S.phase.round);
     const v = local ? null : me;

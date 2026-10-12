@@ -7,7 +7,7 @@
 //   overhead: a candy-cane rail and a gumdrop chandelier to hang from, a plank ceiling
 //
 // Small maps had one hider and one seeker spawn: this one lists three of each.
-import { boxGeo, cylGeo, sphereGeo, latheGeo } from '../geo.js';
+import { boxGeo, cylGeo, sphereGeo } from '../geo.js';
 import { P } from '../atlas.js';
 import { seeded } from '../util.js';
 import { Q } from './patterns.js';
@@ -18,34 +18,39 @@ const C = {
   red: '#e2493b', yellow: '#f2c14e', orange: '#f28c38', purple: '#8e63c9', blue: '#4f86d9', lime: '#b5d94a', white: '#ffffff', steel: '#b8c2c8',
 };
 
+// tile-wrap offsets for a mark at v with reach r: the other copies only matter near an edge (9 copies of every mark
+// made these painters 3-4x dearer than they need to be: the wallpaper alone was a 120 ms step on a busy box)
+const offs = (v, size, r) => (v < r ? [0, size] : v > size - r ? [-size, 0] : [0]);
+
 /** A swirl lollipop face (not repeating): a spiral of two colours. */
 const swirl = (a, b) => (g, w, h) => {
   g.fillStyle = a; g.fillRect(0, 0, w, h);
   g.strokeStyle = b; g.lineWidth = w * 0.11; g.lineCap = 'round'; g.beginPath();
   const cx = w / 2; const cy = h / 2;
-  for (let t = 0; t < 4.4 * Math.PI * 2; t += 0.12) { const rr = (t / (4.4 * Math.PI * 2)) * w * 0.45; const x = cx + Math.cos(t) * rr; const y = cy + Math.sin(t) * rr; if (t === 0) g.moveTo(x, y); else g.lineTo(x, y); }
+  for (let t = 0; t < 4.4 * Math.PI * 2; t += 0.25) { const rr = (t / (4.4 * Math.PI * 2)) * w * 0.45; const x = cx + Math.cos(t) * rr; const y = cy + Math.sin(t) * rr; if (t === 0) g.moveTo(x, y); else g.lineTo(x, y); }
   g.stroke();
 };
-/** Sprinkles on pale icing (repeats): short coloured capsules at random angles, drawn wrapped. */
+/** Sprinkles on pale icing (repeats): short coloured capsules at random angles, wrapped across the tile edges. */
 const sprinkles = () => (g, w, h, r) => {
   g.fillStyle = '#fbe9f0'; g.fillRect(0, 0, w, h);
   const cols = [C.red, C.yellow, C.blue, C.mintD, C.purple, C.orange, '#ffffff', C.rose];
   g.lineCap = 'round'; g.lineWidth = 3;
   for (let i = 0; i < 150; i++) {
     const x = r() * w; const y = r() * h; const a = r() * Math.PI; const dx = Math.cos(a) * 5; const dy = Math.sin(a) * 5; g.strokeStyle = cols[i % cols.length];
-    for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) { g.beginPath(); g.moveTo(x + ox * w - dx, y + oy * h - dy); g.lineTo(x + ox * w + dx, y + oy * h + dy); g.stroke(); }
+    for (const oy of offs(y, h, 8)) for (const ox of offs(x, w, 8)) { g.beginPath(); g.moveTo(x + ox - dx, y + oy - dy); g.lineTo(x + ox + dx, y + oy + dy); g.stroke(); }
   }
 };
-/** Lolly wallpaper (repeats): pastel field with small swirl discs. */
+/** Lolly wallpaper (repeats): pastel field with small swirl discs (wrapped across the tile edges). */
 const lolly = () => (g, w, h) => {
   g.fillStyle = '#fdeaf2'; g.fillRect(0, 0, w, h);
   const discs = [[0.25, 0.25, C.rose, '#ffffff'], [0.75, 0.75, C.mintD, '#ffffff'], [0.75, 0.25, C.yellow, C.orange], [0.25, 0.75, C.purple, '#e7d8f7']];
+  const R = w * 0.14;
   for (const [fx, fy, a, b] of discs) {
-    for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
-      const cx = fx * w + ox * w; const cy = fy * h + oy * h; const R = w * 0.14;
+    for (const oy of offs(fy * h, h, R + 2)) for (const ox of offs(fx * w, w, R + 2)) {
+      const cx = fx * w + ox; const cy = fy * h + oy;
       g.fillStyle = a; g.beginPath(); g.arc(cx, cy, R, 0, Math.PI * 2); g.fill();
       g.strokeStyle = b; g.lineWidth = 3; g.beginPath();
-      for (let t = 0; t < 14; t += 0.2) { const rr = (t / 14) * R * 0.9; const x = cx + Math.cos(t) * rr; const y = cy + Math.sin(t) * rr; if (t === 0) g.moveTo(x, y); else g.lineTo(x, y); }
+      for (let t = 0; t < 14; t += 0.45) { const rr = (t / 14) * R * 0.9; const x = cx + Math.cos(t) * rr; const y = cy + Math.sin(t) * rr; if (t === 0) g.moveTo(x, y); else g.lineTo(x, y); }
       g.stroke();
     }
   }
