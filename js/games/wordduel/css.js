@@ -88,7 +88,10 @@ export const CSS = `
 .g-wd-head { min-width: 0; max-width: 100%; }
 .g-wd-strip { flex-wrap: wrap; max-width: 100%; row-gap: 2px; }
 .g-wd-row { position: relative; }
-.g-wd-row.is-dealt::before { content: 'Dealt'; position: absolute; left: -3px; top: -12px; z-index: 2; padding: 0 5px; font: 900 0.52rem/1.35 var(--g-font-body); letter-spacing: 0.12em; text-transform: uppercase; background: var(--g-ink); color: var(--g-bg); border-radius: 3px; transform: rotate(-3deg); pointer-events: none; }
+.g-wd-row.is-dealt { margin-top: 11px; }
+.g-wd-board:has(.is-dealt) { --t: min(62px, calc((100cqw - 4 * var(--gap)) / 5), calc((100cqh - 5 * var(--gap) - 12px) / 6)); }
+.g-wd-col .g-wd-board:has(.is-dealt) { --t: min(44px, calc((50cqw - 6px - 4 * var(--gap)) / 5), calc((100cqh - 74px - 6 * var(--gap) - 12px) / 7)); }
+.g-wd-row.is-dealt::before { content: 'Dealt'; position: absolute; left: -3px; top: -11px; z-index: 2; padding: 0 5px; font: 900 0.52rem/1.35 var(--g-font-body); letter-spacing: 0.12em; text-transform: uppercase; background: var(--g-ink); color: var(--g-bg); border-radius: 3px; transform: rotate(-3deg); pointer-events: none; }
 .g-wd-area.is-scroll { align-items: flex-start; overflow-y: auto; overscroll-behavior: contain; }
 .g-wd-area.is-scroll > * { margin-block: auto; }
 
@@ -193,8 +196,25 @@ export const CSS = `
   .g-wd-pick .g-wd-board { --t: min(46px, calc((100cqw - 4 * var(--gap)) / 5)); }
   .g-wd-col .g-wd-board { --t: min(30px, calc((50cqw - 6px - 4 * var(--gap)) / 5), calc((100cqh - 60px - 6 * var(--gap)) / 7)); }
   .g-wd-endx { gap: 4px; }
+  .g-wd-rules { gap: 6px; }
+  .g-wd-rules h2 { display: none; }
+  .g-wd-rules-grid { grid-template-columns: repeat(3, 1fr); }
+  .g-wd .g-wd-tog { flex-direction: column; align-items: flex-start; justify-content: center; gap: 3px; padding: 4px 8px; }
+  .g-wd .g-wd-tog small, .g-wd .g-wd-seg small { display: none; }
+  .g-wd-pick .g-wd-tags { margin: 0; }
   .g-wd-hold-layer { padding-top: calc(56px + env(safe-area-inset-top, 0px)); }
   .g-wd-hold-layer .g-wd-board { --t: clamp(20px, min(44px, calc((100vh - 190px) / 6)), 44px); }
+}
+@media (orientation: landscape) and (max-height: 350px) {
+  .g-wd-say { display: none; }
+  .g-wd-head { gap: 0; }
+  .g-wd .g-wd-key.g-key { height: 30px; }
+  .g-wd-kb { gap: 3px; }
+  .g-wd-kr { gap: 3px; }
+  .g-wd-pick { gap: 3px; }
+  .g-wd-pick .g-wd-board { --t: min(36px, calc((100cqw - 4 * var(--gap)) / 5)); }
+  .g-wd-score { flex-direction: row; gap: 8px; }
+  .g-wd-dealtline { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .g-wd-st, .g-wd-row.inked .g-wd-tile { animation-duration: 1ms !important; animation-delay: 0s !important; }

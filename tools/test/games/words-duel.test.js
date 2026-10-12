@@ -347,6 +347,8 @@ async function playVisible(pg, sizes) {
     await pg.waitForTimeout(200);
     const r = await pg.evaluate(() => { const b = document.querySelector('.g-wd-actions [data-act="play"]').getBoundingClientRect(); return { t: b.top, b: b.bottom, h: b.height, vh: innerHeight, scroll: document.scrollingElement.scrollHeight - document.scrollingElement.clientHeight }; });
     assert(r.t >= 0 && r.b <= r.vh && r.h >= 44 && r.scroll <= 1, `${w}x${hh}: Play is fully visible without scrolling (${JSON.stringify(r)})`);
+    const cut = await pg.evaluate(() => { const ar = document.querySelector('.g-wd-area').getBoundingClientRect(); return [...document.querySelectorAll('[data-rule]')].filter((b) => { const x = b.getBoundingClientRect(); return x.top < ar.top - 1 || x.bottom > ar.bottom + 1; }).map((b) => b.dataset.rule); });
+    assert(cut.length === 0, `${w}x${hh}: every rules option is visible without scrolling the card (cut: ${cut})`);
   }
   await pg.setViewportSize({ width: 390, height: 664 });
   await pg.waitForTimeout(150);
@@ -364,7 +366,7 @@ async function onlineDealtHard(h, scheme) {
   const S = first === 'a' ? b : a;
   const FN = first === 'a' ? 'Emerson' : 'Sydney';
   assert(await F.isVisible('.g-wd-actions [data-act="play"]') && await F.isVisible('.g-wd-rules'), 'online: the first player sees the rules card with a big Play button');
-  assert(new RegExp(`Waiting for ${FN} to set the rules`).test(await sayOf(S)) && !(await S.isVisible('.g-wd-rules')) && !(await S.isVisible('.g-wd-kb')), 'online: the other player waits for the rules (no card, no keyboard)');
+  assert(new RegExp(`Waiting for ${FN} to set the rules`).test(await S.textContent('.gm-status')) && !/Waiting for/.test(await sayOf(S)) && !(await S.isVisible('.g-wd-rules')) && !(await S.isVisible('.g-wd-kb')), 'online: the other player waits for the rules (no card, no keyboard)');
   assert(eq((await h.engine(a, id)).acts, ['a', 'b']), 'online: next() stays both players while pristine');
   assert(await F.getAttribute('[data-rule="pool:fair"]', 'aria-pressed') === 'true', 'rules card defaults to everyday words');
   assert(await F.evaluate(() => { const b = document.querySelector('.g-wd-actions [data-act="play"]').getBoundingClientRect(); return b.height >= 44 && b.bottom <= innerHeight; }), 'Play is a 44 px+ button inside the viewport');
@@ -532,6 +534,11 @@ async function compactFits(h, scheme) {
   const wa = love[0]; const wb = love[1];
   await typeWord(a, wa, 120); await typeWord(b, wb, 120); await h.settle();
   await fits(a, 'solve', [[320, 568]]);
+  await a.setViewportSize({ width: 320, height: 568 });
+  await a.waitForTimeout(250);
+  const gap = await a.evaluate(() => document.querySelector('.g-wd-row.is-dealt').getBoundingClientRect().top - document.querySelector('.g-wd-strip').getBoundingClientRect().bottom);
+  assert(gap >= 8, `the DEALT tag has room above row 1, clear of the heat strip (${Math.round(gap)} px)`);
+  await a.setViewportSize({ width: 390, height: 664 });
   await typeWord(a, wb, 150); await typeWord(b, wa, 150);
   await h.settle(); await a.waitForTimeout(2000);
   await a.tap('[data-act="nextround"]'); await b.tap('[data-act="nextround"]');
@@ -598,6 +605,8 @@ async function onlineBo3(h, scheme) {
   assert((await a.textContent('.gm-p-b [data-score="b"]')) === '1', 'bo3: the player chips show round wins');
   await a.tap('[data-act="nextround"]'); await b.tap('[data-act="nextround"]');
   assert(/(Sydney|Emerson) needs this one/.test(await a.textContent('.g-wd-score')), `the scoreboard says who needs the round (${await a.textContent('.g-wd-score')})`);
+  await reloadInto(h, a, id);
+  assert(await a.isVisible('.g-wd-score') && !(await a.isVisible('.g-wd-actions [data-act="nextround"]')), 'reopening after dismissing the recap does not show it again');
   await both('plumb', 'grape');
   await typeWord(a, 'grape', 200);
   for (const g of MISSES) await typeWord(b, g, 120);

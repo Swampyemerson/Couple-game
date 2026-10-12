@@ -87,7 +87,9 @@ registerGame({
     let rulesDraft = null; // the rules card's current choices
     let chips = []; // love-letter suggestions
     let chipKey = '';
-    const recapSeen = { a: 0, b: 0 }; // best of 3: rounds whose recap each player has dismissed (one phone shares this)
+    const RECAP = 'ju.wordduel.recap.';
+    const recapSeen = { a: 0, b: 0 }; // best of 3: rounds whose recap each player has dismissed (kept per match on this device)
+    let recapLoaded = '';
     let selfRules = false; // the waiting phone chose to set the rules itself
     let waitSince = 0; // when the waiting view first showed (for the "Set the rules yourself" fallback)
     let sentSetup = null; // the rules this phone sent (to tell it if another setup won)
@@ -122,6 +124,7 @@ registerGame({
       if (!v) return 'blank';
       const s = c.state;
       if (isPristine(s)) return v === (c.mode === 'online' ? c.first : v) || selfRules ? 'rules' : 'waitrules';
+      if (c.matchId && recapLoaded !== c.matchId) { recapLoaded = c.matchId; try { const r = JSON.parse(localStorage.getItem(RECAP + c.matchId) || 'null'); if (r) { recapSeen.a = Number(r.a) || 0; recapSeen.b = Number(r.b) || 0; } } catch { /* storage may be blocked */ } }
       if (s.v === 2 && s.opts.bo3 && s.rounds.length && !s.secret[v] && !(s.secret.a && s.secret.b) && recapSeen[v] < s.rounds.length) return 'recap';
       if (!s.secret.a || !s.secret.b) return s.secret[v] ? 'picked' : 'pick';
       return doneBy(s, v) ? 'done' : 'solve';
@@ -307,7 +310,7 @@ registerGame({
       // instruction line + strip
       if (m === 'blank') say('');
       else if (m === 'rules') say('House rules. One tap and you’re playing.');
-      else if (m === 'waitrules') say(`Waiting for ${who(c.first)} to set the rules…`);
+      else if (m === 'waitrules') say(''); // the status line above already says so
       else if (m === 'pick') say(`Pick a secret word for ${who(p)} to crack.`);
       else if (m === 'picked') say(`Your word is locked in. The race starts when ${who(p)} picks theirs.`);
       else if (m === 'solve') say(`${roundTag}Crack ${who(p)}’s word. Guess ${s.guesses[v].length + 1} of ${MAX}.`);
@@ -557,7 +560,7 @@ registerGame({
         draftSave();
       } else if (act === 'lock') submit();
       else if (act === 'play') playRules();
-      else if (act === 'nextround') { recapSeen[ctx.viewer] = ctx.state.rounds.length; areaSig = ''; actSig = ''; render(); }
+      else if (act === 'nextround') { recapSeen[ctx.viewer] = ctx.state.rounds.length; try { localStorage.setItem(RECAP + ctx.matchId, JSON.stringify(recapSeen)); } catch { /* storage may be blocked */ } areaSig = ''; actSig = ''; render(); }
       b.blur();
     });
     // physical keyboard on laptops

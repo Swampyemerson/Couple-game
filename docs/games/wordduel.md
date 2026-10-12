@@ -36,6 +36,11 @@ phone). The other phone shows "Waiting for X to set the rules…". `next()` stay
 Replay applies seat a's moves first, so a v2 secret that reaches the log before the rules move is parked and
 `next()` leaves that player out until the rules land; this keeps both phones' states identical.
 
+**Waiting-phone fallback.** If the non-first phone is still waiting after 20 s it shows "Set the rules yourself", which
+opens the rules card there (the button is gone once `state.v === 2`). If both phones send a setup, replay order decides
+(seat a's move is applied first, the other is dropped), and the phone whose rules lost gets a toast "X set the rules."
+Any v2 secret it had already sent under the losing rules is parked or dropped, so that player simply picks again.
+
 ### Setup options (validated; unknown keys or values throw)
 
 - `pool`: `'fair'` (default, secret must be in ANSWERS), `'love'` (secret must be in the Love Letters list,
@@ -49,11 +54,21 @@ Replay applies seat a's moves first, so a v2 secret that reaches the log before 
   each phone shows the round recap, then the scoreboard ("Round 2. Sydney needs this one."). The player chips show
   round wins (`score()`).
 
+### Known limits
+
+- In a best of 3 the core player chips (`score()`) show the new round tally as soon as the round's last guess lands,
+  before that guess's flip finishes. Core gives games no hook to delay the chips. The game's own say line, recap and
+  stamps do wait for the flip ("Revealing…").
+- On very short landscape screens (about 568×320) the pick screen with every toggle on does not fit without
+  scrolling: the shared chrome leaves under 130 px for the game. Everything else is tested at 667×375 and 844×390.
+
 ## One phone
 
 The curtain hides each player's board. A guess is committed the moment it is sent; a player's finishing guess is
 shown in a reveal that sits above the curtain (`.g-wd-hold-layer`) until "Done, pass to X". A localStorage flag
 (`ju.wordduel.hold.<matchId>`) keeps that reveal if the player backs out and returns, so the guess can't be retaken.
+In a best of 3 each player sees the round recap once; that is remembered in `ju.wordduel.recap.<matchId>` so reopening
+does not show it again.
 
 ## Records (`api.data` keys, flat)
 
@@ -76,7 +91,7 @@ LAST-DITCH CRACK, HELD OUT, IN SYNC (both solved on the same row), GREAT MINDS (
 ```
 node tools/test/games/words-duel.test.js            # rules + records unit tests, then the UI on two phones and one phone
 UNIT=1 node tools/test/games/words-duel.test.js     # rules and records only (no browser)
-ONLY=online,bo3,local,land,away,legacy node tools/test/games/words-duel.test.js   # pick UI scenarios
+ONLY=online,away,compact,wait,bo3,local,land,legacy node tools/test/games/words-duel.test.js   # pick UI scenarios
 node tools/test/games/words.test.js                 # the older shared flows (Word Duel and Double Agents)
 ```
 Build check: `python3 tools/build_artifact.py --out <scratch>/x.html --only=wordduel`.
