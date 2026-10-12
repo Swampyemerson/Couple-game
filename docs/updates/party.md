@@ -108,8 +108,8 @@ Evidence:
 | `node tools/test/games/party-doodle.test.js` (new) | ALL GOOD, 512 checks: rules 354, browser 158 |
 | `node tools/test/games/party-wave.test.js` (new) | ALL GOOD, 327 checks |
 | `QUICK=1 node tools/test/games/party.test.js` | ALL GOOD, 234 checks; existing flows now pick Classic on the setup screen |
-| `QUICK=1 node tools/test/all-games.test.js` | RESULT_ALLGAMES |
-| `QUICK=1 node tools/test/smoke.test.js` | RESULT_SMOKE |
+| `QUICK=1 node tools/test/all-games.test.js` | ALL GOOD (35 checks) |
+| `QUICK=1 node tools/test/smoke.test.js` | ALL GOOD (22 checks) |
 | `python3 tools/build_artifact.py` (full) | builds, 116 modules |
 
 The new suites cover:
