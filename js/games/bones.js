@@ -479,7 +479,7 @@ const formHTML = (form) => (form && form.length >= 2
   ? `<span class="gb-form" role="img" aria-label="Last ${form.length} games">${[...form].map((ch) => `<i class="gb-fd ${ch === 'a' ? 'a' : ch === 'b' ? 'b' : 'd'}"></i>`).join('')}</span>` : '');
 function pickerHTML() {
   const last = lastTwist();
-  return `<p class="gb-pk-head"><b>Twist the rules?</b> <span>Or just place a die.</span></p><div class="gb-pk-grid">${TWIST_IDS.map((id) => `<button type="button" class="gb-pk${id === last ? ' is-last' : ''}" data-tw="${id}"><b>${TWISTS[id].name}</b><span>${TWISTS[id].hint}</span></button>`).join('')}</div>`;
+  return `<p class="gb-pk-head"><b>Twist the rules?</b> <span>Or just place a die.</span></p><div class="gb-pk-grid">${TWIST_IDS.map((id) => `<button type="button" class="gb-pk${id === last ? ' is-last' : ''}" data-tw="${id}"><b><span class="gb-nl">${TWISTS[id].name}</span><span class="gb-ns">${TWISTS[id].name.split(' ')[0]}</span></b><span>${TWISTS[id].hint}</span></button>`).join('')}</div>`;
 }
 
 // ── the game ──────────────────────────────────────────────────────────
@@ -616,14 +616,16 @@ registerGame({
     .g-bones .gb-pk-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: minmax(44px, 1fr); gap: 6px; }
     .g-bones .gb-pk { position: relative; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 1px; min-width: 0; min-height: 44px; margin: 0; padding: 2px 8px; border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); background: var(--g-card); box-shadow: var(--g-shadow-sm); color: var(--g-ink); font: inherit; text-align: left; touch-action: manipulation; -webkit-tap-highlight-color: transparent; cursor: pointer; }
     .g-bones .gb-pk b { font-size: 0.8rem; font-weight: 900; line-height: 1.15; }
-    .g-bones .gb-pk span { font-size: 0.7rem; font-weight: 700; line-height: 1.1; color: var(--g-muted); }
+    .g-bones .gb-pk > span { font-size: 0.7rem; font-weight: 700; line-height: 1.1; color: var(--g-muted); }
     .g-bones .gb-pk.is-last::after { content: 'Last time'; position: absolute; top: -9px; right: 6px; padding: 0 6px; border: 1.5px solid var(--g-ink); border-radius: 999px; background: var(--g-hl); color: var(--g-on-ink); font-size: 0.58rem; font-weight: 900; letter-spacing: 0.06em; line-height: 1.3; text-transform: uppercase; pointer-events: none; }
     .g-bones.is-land .gb-picker { padding: 6px; gap: 4px; }
     .g-bones.is-land .gb-pk-head span { display: none; }
     .g-bones.is-land .gb-pk-grid { gap: 5px; }
     .g-bones.is-land .gb-pk { padding: 3px 6px; overflow: hidden; }
-    .g-bones.is-land .gb-pk b { font-size: 0.72rem; }
-    .g-bones.is-land .gb-pk span { font-size: 0.7rem; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+    .g-bones.is-land .gb-pk b { font-size: 0.72rem; white-space: nowrap; }
+    .g-bones .gb-pk .gb-ns { display: none; }
+    .g-bones.is-land .gb-pk .gb-nl { display: none; } .g-bones.is-land .gb-pk .gb-ns { display: inline; } /* narrow chips: "Golden", not "Golden Column" */
+    .g-bones.is-land .gb-pk > span { font-size: 0.64rem; line-height: 1.08; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; }
     .g-bones .gb-pk:active { transform: translate(2px, 2px); box-shadow: 0 0 0 var(--g-edge); }
     .g-bones .gb-pk:focus-visible { outline: 3px solid var(--g-ink); outline-offset: 2px; }
     /* the band: twist badge, the mystery die, the oracle's next dice, stamps, final recap */

@@ -786,7 +786,7 @@ async function onlineTwists(h) {
   ok((await S.$eval('.gb-picker:not([hidden])', (e) => e.closest('.gb-half').dataset.who)) === other(sw), 'bones twist: the picker covers the opponent’s empty half, not the starter’s own tray');
   ok((await O.$$eval('.gb-picker:not([hidden])', (x) => x.length)) === 0, 'bones twist: the partner sees no picker');
   ok(/Picking a twist/i.test(await O.textContent('.gb-band')) && new RegExp(nm(sw)).test(await O.textContent('.gb-band')), `bones twist: …and is told “${nm(sw)}” is “Picking a twist…” (one short line, so it fits the band)`);
-  const pkFit = await S.$$eval('.gb-picker:not([hidden]) .gb-pk', (x) => x.map((e) => ({ fs: parseFloat(getComputedStyle(e.querySelector('span')).fontSize), over: e.scrollHeight > e.clientHeight + 1, out: e.getBoundingClientRect().bottom > innerHeight })));
+  const pkFit = await S.$$eval('.gb-picker:not([hidden]) .gb-pk', (x) => x.map((e) => ({ fs: parseFloat(getComputedStyle(e.querySelector(':scope > span')).fontSize), over: e.scrollHeight > e.clientHeight + 1, out: e.getBoundingClientRect().bottom > innerHeight })));
   ok(pkFit.every((x) => x.fs >= 11.19 && !x.over && !x.out), `bones twist: the chip hints are at least 0.7rem (${pkFit[0].fs}px) and nothing spills out of a chip`);
   ok((await S.$$eval('.gb-pk.is-last', (x) => x.length)) === 0, 'bones twist: nothing is preselected on a first match');
   await shot(S, 'bones-light-390-picker.png');
