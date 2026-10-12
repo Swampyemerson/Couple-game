@@ -42,7 +42,7 @@ export function wallAt(track, lane, z, y) {
   return false;
 }
 
-export function clearSpot(track, lane, z) {
+function clearSpot(track, lane, z) {
   const ci = Math.floor(z / CHUNK);
   for (let c = ci - 1; c <= ci + 1; c++) {
     if (c < 0) continue;
@@ -490,18 +490,26 @@ export function createRules(G) {
           if (G.isJudge() && !missedIds.has(rv.id)) { missedIds.add(rv.id); M.th--; }
           G.view(w) && G.view(w).pop('Too late', 'bad', '−1 team heart');
         } else if (!r.down && now >= rv.next) {
-          rv.next = now + REVIVE_EVERY;
-          rv.n++;
-          const z = r.z + Math.max(24, r.speed * 1.5);
-          let lane = r.lane;
-          if (!clearSpot(G.track, lane, z)) {
-            const c = G.track.chunk(Math.floor(z / CHUNK));
-            lane = pathLane(c, z);
-            for (const l of [lane, -1, 0, 1]) if (clearSpot(G.track, l, z)) { lane = l; break; }
+          // A heart that's still ahead of me stays where it is: re-placing it 24 m further on every 2 s made it a
+          // carrot a page simulating slower than the clock (a loaded or old phone, under half speed) never caught
+          // (headless model: 0/144 grabs at 0.5x sim speed, 144/144 now). A fresh one comes once it's behind me
+          // (missed), checked every 250 ms instead of waiting out the 2 s.
+          const old = r.tokens.length ? r.tokens[0] : null;
+          if (old && old.alive && old.z > r.z - 1.2 && old.z - r.z < 60) rv.next = now + 250;
+          else {
+            rv.next = now + REVIVE_EVERY;
+            rv.n++;
+            const z = r.z + Math.max(24, r.speed * 1.5);
+            let lane = r.lane;
+            if (!clearSpot(G.track, lane, z)) {
+              const c = G.track.chunk(Math.floor(z / CHUNK));
+              lane = pathLane(c, z);
+              for (const l of [lane, -1, 0, 1]) if (clearSpot(G.track, l, z)) { lane = l; break; }
+            }
+            for (const tk of r.tokens) tk.alive = 0;
+            r.tokens.length = 0;
+            r.tokens.push({ id: rv.id * 10 + rv.n, x: lane * LANE_W, z, y: 1.2, alive: 1 });
           }
-          for (const tk of r.tokens) tk.alive = 0;
-          r.tokens.length = 0;
-          r.tokens.push({ id: rv.id * 10 + rv.n, x: lane * LANE_W, z, y: 1.2, alive: 1 });
         }
       }
       // tandem: my own down timer fallback (partner vanished)

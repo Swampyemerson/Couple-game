@@ -43,7 +43,7 @@ export function createRivalry(X) {
     clz: -1, clDone: false, clutches: 0, free: 0, q: [],
   });
   const st = { a: mkView(), b: mkView() };
-  const R = { T: 0, changes: 0, seq: null, heart: false, key: 0, mode: 0 };
+  const R = { T: 0, dt: 0, changes: 0, seq: null, heart: false, key: 0, mode: 0 }; // (doubles live in object fields: V8 boxes one per argument)
 
   const pop = (w, text, cls, sub) => { const v = players[w] && players[w].view; if (v) v.pop(text, cls, sub); };
   /** A pop (with its sound) for view w. Centre pops stack on one spot, so they take turns: if one is still on screen the next waits (at most 3 wait, none longer than 4 s). */
@@ -84,23 +84,22 @@ export function createRivalry(X) {
 
   // ── per frame (run, not paused) ──
   function tick(dt) {
-    R.T += dt;
+    R.T += dt; R.dt = dt;
     let maxZ = 0;
     for (let vi = 0; vi < viewers.length; vi++) {
       const w = viewers[vi];
       const p = players[w]; const r = p.r;
       if (!r || !p.view) continue;
       const s = st[w]; const q = players[X.other(w)];
-      const pz = p.rs.z; const qz = q.rs.z;
-      if (pz > maxZ) maxZ = pz;
+      if (p.rs.z > maxZ) maxZ = p.rs.z;
       if (R.T > 1) {
         if (s.q.length) flush(w, s);
-        if (R.mode) { rivalry(w, p, q, s, pz, qz, dt); bests(w, p, q, s, pz, qz); }
-        district(w, s, pz);
-        events(w, r, s, pz);
+        if (R.mode) { rivalry(w, p, q, s); bests(w, p, q, s); }
+        district(w, s, p);
+        events(w, r, s, p);
         clutch(w, p, r, s);
       }
-      s.pz = pz; s.qz = qz;
+      s.pz = p.rs.z; s.qz = q.rs.z;
     }
     // music key follows the district of the front viewer (shifts at a bar line, see audio.js)
     if (R.seq) {
@@ -109,10 +108,10 @@ export function createRivalry(X) {
     }
   }
 
-  function rivalry(w, p, q, s, pz, qz, dt) {
-    const r = p.r;
-    const g = qz - pz; // > 0: they're ahead
-    const live = !r.down && !r.out && !r.done && !q.rs.down && !q.rs.idle && q.rs.visible && qz > 0;
+  function rivalry(w, p, q, s) {
+    const r = p.r; const pz = p.rs.z; const dt = R.dt;
+    const g = q.rs.z - pz; // > 0: they're ahead
+    const live = !r.down && !r.out && !r.done && !q.rs.down && !q.rs.idle && q.rs.visible && q.rs.z > 0;
     const cand = g >= PASS_GAP ? -1 : g <= -PASS_GAP ? 1 : 0;
     if (!live) {
       // a crash or a spectating partner isn't a pass: follow the lead quietly, no pop, no count
@@ -145,7 +144,8 @@ export function createRivalry(X) {
   }
 
   /** The stripes: crossing my own best, their best, and them crossing mine (both phones pop). */
-  function bests(w, p, q, s, pz, qz) {
+  function bests(w, p, q, s) {
+    const pz = p.rs.z; const qz = q.rs.z;
     const step = pz - s.pz; const qstep = qz - s.qz;
     if (!s.fMine && s.pz >= 0 && s.pz < s.mine && pz >= s.mine && step < 60) {
       s.fMine = true; p.stats.crossed++;
@@ -165,8 +165,8 @@ export function createRivalry(X) {
   }
 
   /** "HARBOUR" tag on the first chunk of a new district zone. */
-  function district(w, s, pz) {
-    const ci = Math.floor(pz / CHUNK);
+  function district(w, s, p) {
+    const ci = Math.floor(p.rs.z / CHUNK);
     if (ci === s.dci) return;
     const was = s.dci; s.dci = ci;
     if (was < 0 || ci !== was + 1 || !isZoneStart(ci) || s.zone === ci) return;
@@ -177,9 +177,10 @@ export function createRivalry(X) {
   }
 
   /** Track v2 events: Coin Rush ~2 s before its field, Golden Hundred on entering its chunk. */
-  function events(w, r, s, pz) {
+  function events(w, r, s, p) {
     const tr = M.track;
     if (!tr || tr.ver < 2) return;
+    const pz = p.rs.z;
     const ci = Math.floor(pz / CHUNK);
     for (let k = 0; k < 2; k++) {
       const c = tr.chunk(ci + k);
