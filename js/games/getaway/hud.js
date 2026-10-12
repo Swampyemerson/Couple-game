@@ -454,7 +454,7 @@ export function lobbyCard(api, o) {
     : `<div class="gtw-lrow"><h3>Runs first</h3><div class="gtw-chips">${['a', 'b'].map((w) => `<button class="gtw-chip p${w} ${first === w ? 'on' : ''}" data-l="first" data-v="${w}" ${canEdit ? '' : 'disabled'}><i></i>${esc(api.name(w))}</button>`).join('')}</div></div>`;
   const quickOn = r.rounds === 2 && r.roundTime === 60;
   const facts = daily
-    ? `<div class="gtw-daily"><p><b>${esc(o.daily.title)}</b></p><p>${esc(o.daily.how)}</p>${o.daily.board.length ? `<ul>${o.daily.board.map((x) => `<li class="p${x.w}"><i></i>${esc(x.name)}${x.verb ? ' ' + esc(x.verb) + ':' : ''} <b>${esc(x.text)}</b></li>`).join('')}</ul>` : '<p class="gtw-tapon">Nobody has run it yet today.</p>'}${(o.daily.lines || []).map((t) => `<p class="gtw-tapon">${esc(t)}</p>`).join('')}${o.daily.note ? `<p class="gtw-tapon">${esc(o.daily.note)}</p>` : ''}</div>`
+    ? `<div class="gtw-daily"><p><b>${esc(o.daily.title)}</b></p><p>${esc(o.daily.how)}</p>${o.daily.board.length ? `<ul>${o.daily.board.map((x) => `<li class="p${x.w}"><i></i>${esc(x.name)}${x.verb ? ' ' + esc(x.verb) + ':' : ''} <b>${esc(x.text)}</b></li>`).join('')}</ul>` : `<p class="gtw-tapon">Nobody has ${o.daily.role === 'cop' ? 'chased' : 'run'} it yet today.</p>`}${(o.daily.lines || []).map((t) => `<p class="gtw-tapon">${esc(t)}</p>`).join('')}${o.daily.note ? `<p class="gtw-tapon">${esc(o.daily.note)}</p>` : ''}</div>`
     : `<div class="gtw-factsrow"><p class="gtw-facts">${r.rounds} rounds${r.score === 'rounds' ? '' : ' · scored in pairs'} · ${fmt('roundTime', r.roundTime)} each · ${r.spikes ? `${r.spikes} spike strip${r.spikes === 1 ? '' : 's'}` : 'no spikes'} · traffic ${r.traffic}${r.tiebreak === 'sudden' ? ' · sudden death' : ''}${r.wildcards === 'on' ? ' · wildcards' : ''}</p>${canEdit ? (quickOn ? '<button class="gtw-chip" data-l="standard">Standard</button>' : '<button class="gtw-chip" data-l="quick">Quick chase</button>') : ''}</div>`;
   const series = !daily && !ai && o.series ? `<p class="gtw-series">${esc(o.series)}</p>` : '';
   const recs = !daily && o.records && o.records.length ? `<p class="gtw-records"><span>${ai ? 'Your practice' : 'Records'}</span>${o.records.map((x) => `${esc(x.t)} <b class="gtw-name-${x.w}">${esc(x.name)}</b> ${esc(x.v)}`).join(' · ')}</p>` : '';
@@ -553,7 +553,7 @@ export function introCard(api, { map, round, rounds, runner, me, landmark, round
 }
 
 const takes = (n) => (n === 'You' ? 'take' : 'takes');
-export function resultCard(api, { outcome, reason, runner, stats, scores, next, local, me, ran, unlocks, lines, head, queue, d, wait, daily, adv, split = false, pair = null, twist = null, pts = 1 }) {
+export function resultCard(api, { outcome, reason, runner, stats, scores, next, local, me, ran, unlocks, lines, head, queue, d, wait, daily, adv, split = false, pair = null, twist = null, pts = 1, short = false }) {
   const busted = outcome === 'busted';
   const big = head || (busted ? (reason === 'water' ? 'SPLASH!' : 'BUSTED!') : 'ESCAPED!');
   const why = {
@@ -575,15 +575,25 @@ export function resultCard(api, { outcome, reason, runner, stats, scores, next, 
     pairHtml = pair.winner ? `<p class="gtw-pair done"><b>PAIR</b> ${nameB(api, pair.winner)} ${takes(api.name(pair.winner))} the ${pair.pts > 1 ? `${pair.pts} points` : 'point'} · ${esc(pair.why)}</p>` : '<p class="gtw-pair done"><b>PAIR</b> Dead level: no point</p>';
   }
   const tag = twist || pts > 1 ? `<small class="gtw-twtag">${esc([twist ? twist.name : '', pts > 1 && !(twist && twist.id === 'double') ? '×2' : ''].filter(Boolean).join(' · '))}</small>` : '';
-  const recs = (lines || []).slice(0, 2).map((l) => `<p class="gtw-rec ${l.hot ? 'hot' : ''}">${l.rec ? '<b>NEW</b> ' : ''}${esc(l.t)}</p>`).join('');
-  return `<div class="gtw-card gtw-st gtw-result" data-l="skip" role="button" aria-label="Continue">${tag}<div class="gtw-big ${tone}${big.length > 10 ? ' long' : ''}">${esc(big)}</div>
-    <p>${why} ${nameB(api, winner)} ${takes(api.name(winner))} the round${local ? '' : youWon ? ' — nice driving' : ''}.</p>${pairHtml}
-    ${daily ? `<p class="gtw-rec hot">${esc(daily)}</p>` : ''}
-    <div class="gtw-stats">${t ? `<div><b>${t}</b><small>On the run</small></div>` : ''}<div><b>${Math.round((st.top || 0) * 3.6)}</b><small>Top km/h</small></div><div><b>${st.near || 0}</b><small>Near misses</small></div><div><b>${st.pits || 0}</b><small>PITs</small></div>${t ? '' : `<div><b>${st.spikes || 0}</b><small>Spikes hit</small></div>`}</div>
+  // what the card has to say, most important first: the pair / half-time line (or the Daily score) > a NEW record > an unlock > the rest.
+  // A short landscape phone (667×375, two columns) has room for three of them (measured: a card with three is ~230 px of 350); everything shows elsewhere.
+  const ls = (lines || []).slice(0, 2);
+  const items = [];
+  if (pairHtml) items.push({ k: 'pair', pri: 0 });
+  if (daily) items.push({ k: 'daily', pri: 0 });
+  ls.forEach((l, i) => items.push({ k: `l${i}`, pri: l.rec ? 1 : 3 }));
+  if (unlocks && unlocks.length) items.push({ k: 'unlock', pri: 2 });
+  const keep = new Set(items.map((it, i) => ({ it, i })).sort((x, y) => x.it.pri - y.it.pri || x.i - y.i).slice(0, short ? 3 : 99).map((x) => x.it.k));
+  const recs = ls.map((l, i) => (keep.has(`l${i}`) ? `<p class="gtw-rec ${l.hot ? 'hot' : ''}">${l.rec ? '<b>NEW</b> ' : ''}${esc(l.t)}</p>` : '')).join('');
+  // (two columns on a short landscape phone, see css: .gtw-rl the verdict, .gtw-rr the numbers, .gtw-rf the way on; plain flow elsewhere)
+  return `<div class="gtw-card gtw-st gtw-result" data-l="skip" role="button" aria-label="Continue"><div class="gtw-rl">${tag}<div class="gtw-big ${tone}${big.length > 10 ? ' long' : ''}">${esc(big)}</div>
+    <p>${why} ${nameB(api, winner)} ${takes(api.name(winner))} the round${local ? '' : youWon ? ' — nice driving' : ''}.</p>${keep.has('pair') ? pairHtml : ''}
+    ${daily ? `<p class="gtw-rec hot">${esc(daily)}</p>` : ''}</div>
+    <div class="gtw-rr"><div class="gtw-stats">${t ? `<div><b>${t}</b><small>On the run</small></div>` : ''}<div><b>${Math.round((st.top || 0) * 3.6)}</b><small>Top km/h</small></div><div><b>${st.near || 0}</b><small>Near misses</small></div><div><b>${st.pits || 0}</b><small>PITs</small></div>${t ? '' : `<div><b>${st.spikes || 0}</b><small>Spikes hit</small></div>`}</div>
     ${recs}
     ${daily ? '' : `<div class="gtw-score"><span><i style="background:var(--p-a)"></i>${esc(api.name('a'))} ${scores.a}</span><span><i style="background:var(--p-b)"></i>${esc(api.name('b'))} ${scores.b}</span></div>`}
-    ${unlocks && unlocks.length ? `<p class="gtw-unlock"><b>UNLOCKED</b> ${unlocks.map((u) => `${esc(u.name)} (${u.kind === 'cop' ? 'cruiser' : 'runner'})`).join(', ')} — pick it in Settings</p>` : ''}
-    <p>${esc(next)}</p><p class="gtw-tapon">${esc(wait || 'Tap to continue')}</p>${adv && adv.total > 0 ? `<i class="gtw-adv" aria-hidden="true" style="animation-duration:${Math.round(adv.total)}ms;animation-delay:${-Math.round(adv.total - adv.left)}ms"></i>` : ''}</div>`;
+    ${unlocks && unlocks.length && keep.has('unlock') ? `<p class="gtw-unlock"><b>UNLOCKED</b> ${unlocks.map((u) => `${esc(u.name)} (${u.kind === 'cop' ? 'cruiser' : 'runner'})`).join(', ')} — pick it in Settings</p>` : ''}</div>
+    <div class="gtw-rf"><p>${esc(next)}</p><p class="gtw-tapon">${esc(wait || 'Tap to continue')}</p></div>${adv && adv.total > 0 ? `<i class="gtw-adv" aria-hidden="true" style="animation-duration:${Math.round(adv.total)}ms;animation-delay:${-Math.round(adv.total - adv.left)}ms"></i>` : ''}</div>`;
 }
 
 /** The match card: round by round, the two of you side by side, the MVP. Tap to go on. */

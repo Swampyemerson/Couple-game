@@ -3,7 +3,7 @@
 // person's keys. Couple modes (live, split) use `<w>_<key>`; practice and the Daily chase use
 // `ai_<w>_<key>`, so AI rounds never pollute the couple's records. Daily chase scores are
 // `<w>_daily_<YYYY-MM-DD>` (seconds survived; a heat escape scores 120 + the seconds left) and
-// `<w>_daily_best`.
+// `<w>_daily_best`. Cop days (even days of the year) use `<w>_dailycop_<date>` and `<w>_dailycop_best` (seconds left at the bust).
 //
 // Keys: busts, escapes, heats (heat escapes), pits (career), pits_r (most PITs in a round),
 // fastbust (fastest bust, s), heatesc (fastest heat escape, s), top (km/h), topboost (km/h on
@@ -124,9 +124,21 @@ export const DAILY = { roundTime: 120, heat: 0 }; // one 2:00 round as the runne
  *  in overtime) tops out at roundTime - 1, so it can never tie or beat an escape. */
 export const dailyScore = (outcome, reason, t, roundTime = DAILY.roundTime) => (outcome === 'escaped' ? (reason === 'heat' ? roundTime + Math.max(0, Math.round(roundTime - t)) : roundTime) : Math.min(roundTime - 1, Math.max(0, Math.round(t))));
 export const dailyText = (score, roundTime = DAILY.roundTime) => (score > roundTime ? `lost them, +${score - roundTime}` : score >= roundTime ? `${fmtSec(roundTime)} (escaped)` : fmtSec(score));
-export const dailyKey = (w, day = dayKey()) => `${w}_daily_${day}`;
+// Cop days: every even day-of-year the Daily flips, you are the COP vs a Hard AI runner (same 2:00, map, spawn
+// and traffic for both phones). The score is the seconds left on the clock when you bust them (0 = they got
+// away); any bust scores at least 1, so even an overtime bust beats an escape. Own keys, the runner ones keep their meaning.
+/** The Daily's role for a day of the year: even days are cop days. */
+export const dailyRoleFor = (day = dayOfYear()) => (day % 2 === 0 ? 'cop' : 'runner');
+export const copDailyScore = (outcome, t, roundTime = DAILY.roundTime) => (outcome === 'busted' ? Math.min(roundTime, Math.max(1, Math.round(roundTime - t))) : 0);
+export const copDailyText = (score) => (score > 0 ? `Bust at ${fmtSec(score)} left` : 'They got away');
+/** The Daily score of a finished round for the role that played it. */
+export const dailyScoreOf = (role, outcome, reason, t, roundTime = DAILY.roundTime) => (role === 'cop' ? copDailyScore(outcome, t, roundTime) : dailyScore(outcome, reason, t, roundTime));
+export const dailyTextOf = (role, score, roundTime = DAILY.roundTime) => (role === 'cop' ? copDailyText(score) : dailyText(score, roundTime));
+/** Runner days: `<w>_daily_<date>` / `<w>_daily_best`; cop days: `<w>_dailycop_<date>` / `<w>_dailycop_best`. */
+export const dailyKey = (w, day = dayKey(), role = 'runner') => (role === 'cop' ? `${w}_dailycop_${day}` : `${w}_daily_${day}`);
+export const dailyBestKey = (w, role = 'runner') => (role === 'cop' ? `${w}_dailycop_best` : `${w}_daily_best`);
 /** Today's two scores: { a, b } (0 = not played). */
-export function dailyBoard(data, day = dayKey()) { return { a: num(data, dailyKey('a', day)), b: num(data, dailyKey('b', day)) }; }
+export function dailyBoard(data, day = dayKey(), role = 'runner') { return { a: num(data, dailyKey('a', day, role)), b: num(data, dailyKey('b', day, role)) }; }
 
 // ── Daily streak: days in a row with a Daily chase played ──
 /** The day number (whole days since 1970, by the local calendar date): consecutive dates differ by 1. */
@@ -205,7 +217,8 @@ export function scoresFromHist(hist, mode = 'pairs', total = 0) {
 export function remainingPoints(m) {
   const played = m.hist.length; if (played >= m.rounds) return 0;
   const wild = (m.rules || {}).wildcards !== 'off' && !m.daily;
-  const ptsAtFuture = (i) => ptsFor(twistFor(m.seed, i, { wild }));
+  const nPairs = Math.ceil(m.rounds / 2);
+  const ptsAtFuture = (i) => ptsFor(twistFor(m.seed, i, { wild, pairs: nPairs }));
   const pairs = (m.rules || {}).score !== 'rounds' && !m.daily;
   const at = (i) => (i < played ? m.hist[i].pts || 1 : ptsAtFuture(i));
   let tot = 0;

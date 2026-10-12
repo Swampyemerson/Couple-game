@@ -174,6 +174,15 @@ async function hpAgree(pr, pc, rw, tol) {
       }
       assert(R.dailyScore('busted', 'hp', 45.4, rt) === 45 && R.dailyScore('busted', 'water', 0, rt) === 0, 'Daily: an ordinary bust still scores the seconds survived');
       assert(R.dailyScore('escaped', 'heat', 80, rt) === 160 && R.dailyText(160, rt) === 'lost them, +40' && R.dailyText(120, rt) === '2:00 (escaped)', 'Daily: escapes and saved scores keep their scores and wording');
+      // Daily cop days (even days of the year): the cop's score is the seconds left at the bust; 0 if they escape
+      assert(R.dailyRoleFor(2) === 'cop' && R.dailyRoleFor(3) === 'runner' && R.dailyRoleFor(366) === 'cop' && R.dailyRoleFor(R.dayOfYear(new Date(2026, 9, 12, 12).getTime())) === 'runner', 'Daily role: even days of the year are cop days (12 Oct 2026 is day 285: a runner day)');
+      assert(R.copDailyScore('busted', 72, rt) === 48 && R.copDailyScore('busted', 71.6, rt) === 48 && R.copDailyScore('busted', 0, rt) === 120 && R.copDailyScore('escaped', 120, rt) === 0 && R.copDailyScore('busted', 119.9, rt) === 1, 'cop Daily: a bust after 1:12 scores 48 s left; an escape scores 0');
+      for (const t of [119.6, 120, 125, 200]) assert(R.copDailyScore('busted', t, rt) >= 1 && R.copDailyScore('busted', t, rt) > R.copDailyScore('escaped', t, rt), `cop Daily: an overtime bust (${t} s) still beats an escape`);
+      assert(R.copDailyText(48) === 'Bust at 0:48 left' && R.copDailyText(0) === 'They got away' && R.dailyTextOf('cop', 48) === 'Bust at 0:48 left' && R.dailyTextOf('runner', 72) === '1:12', 'cop Daily: "Bust at 0:48 left"; runner days keep their text');
+      assert(R.dailyScoreOf('cop', 'busted', 'hp', 72, rt) === 48 && R.dailyScoreOf('runner', 'busted', 'hp', 72, rt) === 72 && R.dailyScoreOf('runner', 'busted', 'hp', 500, rt) === rt - 1, 'dailyScoreOf picks the role; the runner bust cap still holds');
+      assert(R.dailyKey('a', '2026-10-12') === 'a_daily_2026-10-12' && R.dailyKey('a', '2026-10-12', 'cop') === 'a_dailycop_2026-10-12' && R.dailyBestKey('b') === 'b_daily_best' && R.dailyBestKey('b', 'cop') === 'b_dailycop_best', 'Daily keys: runner keys unchanged, cop keys <w>_dailycop_<date> / _best');
+      { const data = { 'a_daily_2026-10-12': 72, 'b_dailycop_2026-10-12': 48 };
+        assert(R.dailyBoard(data, '2026-10-12').a === 72 && R.dailyBoard(data, '2026-10-12').b === 0 && R.dailyBoard(data, '2026-10-12', 'cop').b === 48 && R.dailyBoard(data, '2026-10-12', 'cop').a === 0, 'Daily boards are per role'); }
       // B2 a splash is a bust for the cop but never the fastest-bust mark
       const dry = R.recordRound({}, 'a', '', { role: 'cop', won: true, outcome: 'busted', reason: 'hp', t: 20, pits: 1 }, 'b');
       const wet = R.recordRound({}, 'a', '', { role: 'cop', won: true, outcome: 'busted', reason: 'water', t: 8, pits: 0 }, 'b');
@@ -293,7 +302,11 @@ async function hpAgree(pr, pc, rw, tol) {
         const how = H.howToCard({ touch: true }); const howK = H.howToCard({ touch: false });
         assert(/SPIKE lays a strip on the road ahead/.test(how) && /Hot Pursuit/.test(how) && /Wanted/.test(how) && /E<\/b> spike strip ahead/.test(howK), 'how to play: the cop quick drop, Hot Pursuit and Wanted are explained');
         const lob = H.lobbyCard(api, { maps: [{ id: 'dockside', name: 'Dockside' }], setup: { map: 'dockside', first: 'a', rules: {} }, canEdit: true, local: true, localMode: 'daily', practiceRole: 'runner', aiLevel: 'normal', me: 'a', daily: { mapId: 'dockside', title: 'Today: Dockside', short: 's', how: 'h', board: [{ w: 'b', name: 'Sydney', verb: 'ran today', text: '1:12' }], lines: ['Your best ever: 1:48', 'Streak: Emerson Day 3 · Sydney Day 1 ✓'], note: '' } });
-        assert(/Sydney ran today: <b>1:12<\/b>/.test(lob) && /Your best ever: 1:48/.test(lob) && /Streak: Emerson Day 3/.test(lob), 'Daily panel: "Sydney ran today: 1:12", your best ever and both streaks'); }
+        assert(/Sydney ran today: <b>1:12<\/b>/.test(lob) && /Your best ever: 1:48/.test(lob) && /Streak: Emerson Day 3/.test(lob), 'Daily panel: "Sydney ran today: 1:12", your best ever and both streaks');
+        const lobC = H.lobbyCard(api, { maps: [{ id: 'dockside', name: 'Dockside' }], setup: { map: 'dockside', first: 'a', rules: {} }, canEdit: true, local: true, localMode: 'daily', practiceRole: 'runner', aiLevel: 'normal', me: 'a', daily: { mapId: 'dockside', role: 'cop', title: 'Today: Dockside · you’re the cop', short: 's', how: 'Cop day: one 2:00 chase', board: [{ w: 'b', name: 'Sydney', verb: 'chased today', text: 'Bust at 0:48 left' }], lines: ['Your best ever as the cop: Bust at 1:02 left'], note: '' } });
+        assert(/Sydney chased today: <b>Bust at 0:48 left<\/b>/.test(lobC) && /Your best ever as the cop/.test(lobC) && /you’re the cop/.test(lobC), 'Daily panel on a cop day: "Sydney chased today: Bust at 0:48 left"');
+        const lobE = H.lobbyCard(api, { maps: [{ id: 'dockside', name: 'Dockside' }], setup: { map: 'dockside', first: 'a', rules: {} }, canEdit: true, local: true, localMode: 'daily', practiceRole: 'runner', aiLevel: 'normal', me: 'a', daily: { mapId: 'dockside', role: 'cop', title: 't', short: 's', how: 'h', board: [], lines: [], note: '' } });
+        assert(/Nobody has chased it yet today/.test(lobE), 'Daily panel on a cop day: nobody has chased it yet'); }
     }
     // ── content A: wildcard rounds, pairs scoring, the sudden-death decider, the Series, liveries ──
     {
@@ -303,13 +316,19 @@ async function hpAgree(pr, pc, rw, tol) {
       const H = await import(url('hud.js'));
       const L = await import(url('liveries.js'));
       // A1 the picker: round 0 and the decider are plain; no repeats until the list is used up; the same on every call
+      // (one twist per PAIR: rounds 2k and 2k+1 share it; pair 0 is plain in a 2+ pair match; a one-pair match gets a wildcard)
       for (const seed of [1, 7, 123456, 2147483000, 424242]) {
-        const seq = []; for (let i = 0; i < 9; i++) seq.push(T.twistFor(seed, i));
-        assert(seq[0] === '' && T.twistFor(seed, 4, { sd: true }) === '' && T.twistFor(seed, 3, { wild: false }) === '', `twists (seed ${seed}): round 0, the decider and wildcards-off are plain`);
-        assert(new Set(seq.slice(1, 8)).size === 7 && seq.slice(1, 8).every((x) => T.twistInfo(x)) && seq[8] === seq[1], `twists (seed ${seed}): rounds 1-7 are all different, then the list starts over`);
-        assert(JSON.stringify(seq) === JSON.stringify(Array.from({ length: 9 }, (_, i) => T.twistFor(seed, i))), `twists (seed ${seed}): the same on a second call`);
+        const seq = []; for (let i = 0; i < 18; i++) seq.push(T.twistFor(seed, i));
+        assert(seq[0] === '' && seq[1] === '' && T.twistFor(seed, 4, { sd: true }) === '' && T.twistFor(seed, 3, { wild: false }) === '', `twists (seed ${seed}): pair 0, the decider and wildcards-off are plain`);
+        assert(seq.every((x, i) => i % 2 === 1 || seq[i + 1] === x), `twists (seed ${seed}): both rounds of a pair share one twist`);
+        const pairsSeq = seq.filter((x, i) => i % 2 === 0).slice(1, 8);
+        assert(new Set(pairsSeq).size === 7 && pairsSeq.every((x) => T.twistInfo(x)) && seq[16] === seq[2], `twists (seed ${seed}): pairs 1-7 are all different (no repeats), then the list starts over`);
+        assert(JSON.stringify(seq) === JSON.stringify(Array.from({ length: 18 }, (_, i) => T.twistFor(seed, i))), `twists (seed ${seed}): the same on a second call`);
+        const q = [0, 1].map((i) => T.twistFor(seed, i, { pairs: 1 }));
+        assert(q[0] && q[0] === q[1] && T.twistInfo(q[0]) && q[0] !== 'double' && T.twistFor(seed, 2, { sd: true, pairs: 1 }) === '' && T.twistFor(seed, 0, { pairs: 1, wild: false }) === '', `twists (seed ${seed}): a one-pair match (Quick chase) gets a wildcard on its pair, never DOUBLE OR NOTHING`);
       }
-      assert(new Set([1, 2, 3, 4, 5, 6, 7, 8].map((sd) => T.twistFor(sd, 1))).size >= 4, 'twists: different seeds start on different twists');
+      assert(new Set([1, 2, 3, 4, 5, 6, 7, 8].map((sd) => T.twistFor(sd, 2))).size >= 4, 'twists: different seeds start on different twists');
+      assert(new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((sd) => T.twistFor(sd, 0, { pairs: 1 }))).size >= 3, 'twists: a Quick chase is not always the same wildcard');
       // the overlay
       const base = Rules.DEFAULTS;
       const eff = (tw, sd) => T.rulesFor(base, tw, sd);
@@ -359,9 +378,9 @@ async function hpAgree(pr, pc, rw, tol) {
       // the match ends early once the points left can't change the winner
       const mk = (hist, rounds, o) => ({ rounds, seed: 5, hist, rules: { score: 'pairs', wildcards: 'off' }, ...(o || {}) });
       assert(R.remainingPoints(mk([], 6)) === 3 && R.remainingPoints(mk([e('a')], 6)) === 3 && R.remainingPoints(mk([e('a'), b('b', 1)], 6)) === 2 && R.remainingPoints(mk([], 4, { rules: { score: 'rounds', wildcards: 'off' } })) === 4, 'points remaining: a pair counts once, a half-played pair still counts');
-      const dbl = (() => { for (let seed = 1; seed < 200; seed++) for (let i = 1; i < 6; i++) if (T.twistFor(seed, i) === 'double') return { seed, i }; return null; })();
+      const dbl = (() => { for (let seed = 1; seed < 200; seed++) for (let i = 2; i < 6; i += 2) if (T.twistFor(seed, i) === 'double') return { seed, i }; return null; })();
       const mw = { rounds: 6, seed: dbl.seed, hist: [], rules: { score: 'pairs', wildcards: 'on' } };
-      const futurePts = (() => { let t = 0; for (let p = 0; p < 3; p++) t += Math.max(T.ptsFor(T.twistFor(dbl.seed, p * 2)), T.ptsFor(T.twistFor(dbl.seed, p * 2 + 1))); return t; })();
+      const futurePts = (() => { let t = 0; for (let p = 0; p < 3; p++) t += Math.max(T.ptsFor(T.twistFor(dbl.seed, p * 2, { pairs: 3 })), T.ptsFor(T.twistFor(dbl.seed, p * 2 + 1, { pairs: 3 }))); return t; })();
       assert(R.remainingPoints(mw) === futurePts && futurePts >= 4, `points remaining count DOUBLE OR NOTHING rounds ahead (${futurePts} for seed ${dbl.seed})`);
       // pair targets and wording
       const tg = R.pairTarget(h('a', 'busted', 'hp', 72000));
@@ -665,7 +684,7 @@ async function hpAgree(pr, pc, rw, tol) {
       const h = await launch({ port: PORT + 8, only: ['getaway'], who: ['a'], coarse: true });
       const { a } = h;
       try {
-        await arm(a, { ...FAST, intro: 900, result: 4000 });
+        await arm(a, { ...FAST, intro: 900, result: 4000, dailyRole: 'runner' }); // (a runner day whatever the date)
         await h.startLive(a, 'getaway', 'local');
         await ready(a);
         await hook(a, 'setLocalMode', 'daily');
@@ -688,6 +707,49 @@ async function hpAgree(pr, pc, rw, tol) {
         await shot(a, 'extras-daily-result');
         h.assertNoErrors();
       } catch (e) { fails++; console.error(e.message); await shot(h.a, 'extras-daily-fail').catch(() => {}); } finally { await h.close(); }
+    }
+    {
+      // ── Daily cop day: you chase the Hard AI runner; the score is the seconds left at the bust ──
+      const h = await launch({ port: PORT + 8, only: ['getaway'], who: ['a'], coarse: true });
+      const { a } = h;
+      try {
+        await arm(a, { ...FAST, intro: 900, result: 4000, final: 900, dailyRole: 'cop' }); // (TUNE.dailyRole: a cop day whatever the date)
+        await h.startLive(a, 'getaway', 'local');
+        await ready(a);
+        await hook(a, 'setLocalMode', 'daily');
+        const day = await a.evaluate(() => { const d = new Date(); return { n: Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000), key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }; });
+        const panel = () => a.evaluate(() => (document.querySelector('.g-gtw .gtw-daily') || {}).textContent || '');
+        await until(a, () => /Streak:/.test((document.querySelector('.g-gtw .gtw-daily') || {}).textContent || ''), null, 8000, 'the cop-day Daily panel');
+        let t = (await panel()).replace(/\s+/g, ' ').trim();
+        assert(/you’re the cop/.test(t) && /Cop day/.test(t) && /Nobody has chased it yet today/.test(t), `cop-day panel, fresh: "${t}"`);
+        const dm = await hook(a, 'daily');
+        assert(dm.role === 'cop' && /cop day/i.test(dm.short), `the Daily hook reports the role (${dm.role})`);
+        await hook(a, 'saveData', { [`b_dailycop_${day.key}`]: 48, a_dailycop_best: 50, a_daily_best: 100, a_daily_streak: 2, a_daily_streak_best: 2, a_daily_last: day.n - 1 });
+        await until(a, () => /chased today/.test((document.querySelector('.g-gtw .gtw-daily') || {}).textContent || ''), null, 8000, 'the seeded cop board');
+        t = (await panel()).replace(/\s+/g, ' ').trim();
+        assert(/Sydney chased today: Bust at 0:48 left/.test(t) && /Your best ever as the cop: Bust at 0:50 left/.test(t) && !/ran today/.test(t) && /Streak: Emerson Day 3/.test(t), `cop-day panel: "${t}"`);
+        await shot(a, 'extras-dailycop-panel');
+        await a.tap('.g-gtw [data-l="start"]');
+        await phase(a, 'chase', 25000);
+        let s = await st(a);
+        assert(s.a.role === 'cop' && s.match.daily === day.key && s.match.dr === 'cop' && s.match.hist.length === 0, 'cop day: you are the cop against the Hard AI runner');
+        await until(a, () => /Beat Sydney: bust them with more than 0:48 left/.test(document.querySelector('.g-gtw').textContent), null, 5000, 'the "Beat Sydney" hint');
+        await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
+        await wait(2500);
+        await hook(a, 'endNow', 'busted', 'hp'); // the forced bust, ~2.5 s into the 2:00
+        await until(a, () => /Daily chase: Bust at/.test((document.querySelector('.g-gtw .gtw-card') || {}).textContent || ''), null, 8000, 'the cop-day result card');
+        const card = await a.evaluate(() => document.querySelector('.g-gtw .gtw-card').textContent.replace(/\s+/g, ' '));
+        const sv = await hook(a, 'savedData');
+        const sc = sv[`a_dailycop_${day.key}`];
+        assert(sc >= 100 && sc <= 119 && sv.a_dailycop_best === sc && sv.a_daily_best === 100 && !(`a_daily_${day.key}` in sv), `cop day: seconds left saved under a_dailycop_ (${sc}), the runner keys untouched (a_daily_best ${sv.a_daily_best})`);
+        assert(new RegExp(`Bust at 1:${String(sc - 60).padStart(2, '0')} left`).test(card) && /You beat Sydney’s bust with 0:48 left today/.test(card), `cop day: the result card says "Bust at 1:${String(sc - 60).padStart(2, '0')} left" and "You beat Sydney’s bust with 0:48 left today"`);
+        assert(/Daily streak: Day 3/.test(card) && sv.a_daily_streak === 3 && sv.a_daily_last === day.n, 'cop day: the streak counts a cop-day Daily too (Day 3)');
+        await shot(a, 'extras-dailycop-result');
+        await until(a, () => window.__getaway.state().phase === 'final', null, 15000, 'final');
+        s = await st(a);
+        assert(s.result && s.result.winner === null && new RegExp(`^Daily chase: Bust at 1:${String(sc - 60).padStart(2, '0')} left`).test(s.result.text) && /Today: .*Emerson Bust at/.test(s.result.sub), `cop day: the final text ("${s.result.text}", "${s.result.sub}")`);
+        h.assertNoErrors();
+      } catch (e) { fails++; console.error(e.message); await shot(h.a, 'extras-dailycop-fail').catch(() => {}); } finally { await h.close(); }
     }
   }
 
@@ -1204,8 +1266,8 @@ async function hpAgree(pr, pc, rw, tol) {
     const h = await launch({ port: PORT + 10, only: ['getaway'], who: ['a'], coarse: true });
     const { a } = h;
     try {
-      // rounds 1-3 are forced to SAFEHOUSE, DOUBLE OR NOTHING and FOG so the script is the same every time; the AI runs first
-      await arm(a, { ...FAST, rounds: 4, intro: 1500, heatT: 60, rules: { wildcards: 'on', score: 'pairs' }, tw: { 1: 'safe', 2: 'double', 3: 'fog' } });
+      // pairs 1-3 are forced to SAFEHOUSE, FOG and DOUBLE OR NOTHING (pair 0 is plain) so the script is the same every time; the AI runs first
+      await arm(a, { ...FAST, rounds: 8, intro: 1500, heatT: 60, rules: { wildcards: 'on', score: 'pairs' }, tw: { 1: 'safe', 2: 'fog', 3: 'double' } }); // (TUNE.tw is keyed by PAIR: one twist per pair)
       await h.startLive(a, 'getaway', 'local');
       await ready(a);
       await hook(a, 'setLocalMode', 'ai', 'cop');
@@ -1220,17 +1282,36 @@ async function hpAgree(pr, pc, rw, tol) {
       s = await st(a);
       const halfTxt = await a.evaluate(() => (document.querySelector('.g-gtw .gtw-pair') || {}).textContent || '');
       assert(s.match.scores.a === 0 && s.match.scores.b === 0 && /HALF TIME/.test(halfTxt) && /bust them before/.test(halfTxt) === false && /Your turn to run: survive past/.test(halfTxt), `pairs: no point after the first half; the card says "${halfTxt}"`);
-      // round 1: SAFEHOUSE, you run
+      // round 1 (the plain pair's second half): you run, and drop out at once, so the AI's longer run takes the pair
       await until(a, () => window.__getaway.state().R.idx === 1, null, 12000, 'round 2');
+      await phase(a, 'chase', 25000);
+      s = await st(a);
+      assert(s.R.tw === '' && s.a.role === 'runner' && s.R.target, 'round 2 is plain too: the same job, you run');
+      await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
+      await hook(a, 'endNow', 'busted', 'hp');
+      await until(a, () => window.__getaway.state().R.idx === 2, null, 12000, 'round 3');
+      s = await st(a);
+      assert(s.match.scores.a === 0 && s.match.scores.b === 1, `pairs: you were busted sooner than the AI, so the pair's point is the AI's (${JSON.stringify(s.match.scores)})`);
+      // round 2: SAFEHOUSE (the pair's first half), you are the cop
+      await phase(a, 'intro', 8000);
+      const introTxt0 = await a.evaluate(() => (document.querySelector('.g-gtw .gtw-intro') || {}).textContent || '');
+      s = await st(a);
+      const safeName = s.R.safe && s.R.safe.name;
+      assert(s.R.tw === 'safe' && safeName && /SAFEHOUSE/i.test(introTxt0) && introTxt0.includes(safeName), `round 3 is a SAFEHOUSE round: the intro names ${safeName}`);
+      await phase(a, 'chase', 25000);
+      await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
+      await wait(600);
+      await hook(a, 'endNow', 'busted', 'hp');
+      // round 3: the same SAFEHOUSE (the pair shares it), you run
+      await until(a, () => window.__getaway.state().R.idx === 3, null, 12000, 'round 4');
       await phase(a, 'intro', 8000);
       const introTxt = await a.evaluate(() => (document.querySelector('.g-gtw .gtw-intro') || {}).textContent || '');
       s = await st(a);
-      assert(s.R.tw === 'safe' && s.R.safe && /SAFEHOUSE/i.test(introTxt) && introTxt.includes(s.R.safe.name) && /Half time/.test(introTxt), `round 2 is a SAFEHOUSE round: the intro names ${s.R.safe && s.R.safe.name} and the half-time target`);
+      assert(s.R.tw === 'safe' && s.R.safe && s.R.safe.name === safeName && /SAFEHOUSE/i.test(introTxt) && introTxt.includes(safeName) && /Half time/.test(introTxt), `round 4 repeats the twist and the safehouse (${s.R.safe && s.R.safe.name}), with the half-time target on its intro`);
       await shot(a, 'wild-intro-safehouse');
       await phase(a, 'chase', 25000);
       s = await st(a);
       assert(s.a.role === 'runner' && (await a.evaluate(() => /SAFEHOUSE|HOME/.test((document.querySelector('.g-gtw .gtw-twrow') || {}).textContent || ''))), 'the HUD shows the SAFEHOUSE chip with its distance');
-      const sh = s.R.safe;
       await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
       // park the cop out of sight of the safehouse (inside the heat range, so only the safehouse can end it), then drive the runner in
       // (placeCar nudges a car onto a legal spot, so each candidate is tried until the game itself says there is no line of sight)
@@ -1250,32 +1331,46 @@ async function hpAgree(pr, pc, rw, tol) {
       await until(a, () => { const R = window.__getaway.state().R; return R && R.over; }, null, 8000, 'round over');
       s = await st(a);
       assert(s.R.result.outcome === 'escaped' && s.R.result.reason === 'safe', `ESCAPED by reaching the safehouse unseen (${s.R.result.reason}, ${(s.R.result.ran / 1000).toFixed(1)} s)`);
-      assert(s.match.scores.a === 1 && s.match.scores.b === 0, `pairs: you escaped, the AI was busted: the pair's one point is yours (${JSON.stringify(s.match.scores)})`);
+      assert(s.match.scores.a === 1 && s.match.scores.b === 1, `pairs: you escaped, the AI was busted: this pair's point is yours (${JSON.stringify(s.match.scores)})`);
       await until(a, () => /PAIR/.test((document.querySelector('.g-gtw .gtw-pair') || {}).textContent || ''), null, 6000, 'the pair line on the result card');
       console.log('ok - the result card names the pair winner');
       await shot(a, 'wild-safe-result');
-      // round 2: DOUBLE OR NOTHING (the AI runs and escapes)
-      await until(a, () => window.__getaway.state().R.idx === 2, null, 12000, 'round 3');
+      // pair 2: FOG on both rounds (the AI runs first)
+      await until(a, () => window.__getaway.state().R.idx === 4, null, 12000, 'round 5');
       await phase(a, 'chase', 25000);
       s = await st(a);
-      assert(s.R.tw === 'double' && s.R.pts === 2, 'round 3 is DOUBLE OR NOTHING, worth 2');
+      let wf = await a.evaluate(() => { const w = window.__getaway.internals.world; return { near: w.scene.fog.near, far: w.scene.fog.far, base: w.fogFar }; });
+      assert(s.R.tw === 'fog' && s.R.eff.radar === 'off' && s.R.heat === 98 && Math.abs(wf.far - wf.base * 0.55) < 0.5, `FOG: radar off, heat ${s.R.heat} m (Dockside's 140 × 0.7), the render fog pulled in (${wf.far.toFixed(0)} of ${wf.base.toFixed(0)} m)`);
+      await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
+      await wait(1500);
+      await hook(a, 'endNow', 'busted', 'hp');
+      await until(a, () => window.__getaway.state().R.idx === 5, null, 12000, 'round 6');
+      await phase(a, 'chase', 25000);
+      s = await st(a);
+      wf = await a.evaluate(() => { const w = window.__getaway.internals.world; return { far: w.scene.fog.far, base: w.fogFar }; });
+      const tgt = await a.evaluate(() => (document.querySelector('.g-gtw .gtw-twrow') || {}).textContent || '');
+      assert(s.R.tw === 'fog' && Math.abs(wf.far - wf.base * 0.55) < 0.5 && /Beat/.test(tgt) && /FOG/.test(tgt), `round 6 is FOG too, with its target on the HUD ("${tgt}")`);
+      await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
+      await hook(a, 'endNow', 'busted', 'hp');
+      // pair 3: DOUBLE OR NOTHING on both rounds, worth 2 (the AI escapes in the first, you are busted in the second)
+      await until(a, () => window.__getaway.state().R.idx === 6, null, 12000, 'round 7');
+      await phase(a, 'chase', 25000);
+      s = await st(a);
+      const fogBack = await a.evaluate(() => { const w = window.__getaway.internals.world; return Math.abs(w.scene.fog.far - w.fogFar) < 0.5; });
+      assert(fogBack, 'the fog is restored after the pair');
+      assert(s.R.tw === 'double' && s.R.pts === 2, 'round 7 is DOUBLE OR NOTHING, worth 2');
       assert(await a.evaluate(() => /×2/.test(document.querySelector('.g-gtw .gtw-twrow').textContent) && !!document.querySelector('.g-gtw .gtw-pips i.x2')), 'the HUD shows ×2 on the chip and on the pip');
       await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
       await hook(a, 'endNow', 'escaped', 'time');
-      await until(a, () => window.__getaway.state().R.idx === 3, null, 12000, 'round 4');
+      await until(a, () => window.__getaway.state().R.idx === 7, null, 12000, 'round 8');
       await phase(a, 'chase', 25000);
       s = await st(a);
-      const wf = await a.evaluate(() => { const w = window.__getaway.internals.world; return { near: w.scene.fog.near, far: w.scene.fog.far, base: w.fogFar }; });
-      assert(s.R.tw === 'fog' && s.R.eff.radar === 'off' && s.R.heat === 98 && Math.abs(wf.far - wf.base * 0.55) < 0.5, `FOG: radar off, heat ${s.R.heat} m (Dockside's 140 × 0.7), the render fog pulled in (${wf.far.toFixed(0)} of ${wf.base.toFixed(0)} m)`);
-      const tgt = await a.evaluate(() => (document.querySelector('.g-gtw .gtw-twrow') || {}).textContent || '');
-      assert(/Escape to match/.test(tgt) && /FOG/.test(tgt), `the second half shows its target on the HUD ("${tgt}")`);
+      assert(s.R.tw === 'double' && s.R.pts === 2, 'round 8 is DOUBLE OR NOTHING as well: the whole pair is worth 2');
       await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
       await hook(a, 'endNow', 'busted', 'hp');
       await until(a, () => window.__getaway.state().phase === 'final', null, 15000, 'final');
       s = await st(a);
-      assert(s.match.scores.a === 1 && s.match.scores.b === 2 && s.match.hist.length === 4 && s.match.hist[1].tw === 'safe' && s.match.hist[2].pts === 2, `the double pair is worth 2: the AI's escape beat your bust, ${JSON.stringify(s.match.scores)}`);
-      const fogBack = await a.evaluate(() => { const w = window.__getaway.internals.world; return Math.abs(w.scene.fog.far - w.fogFar) < 0.5; });
-      assert(fogBack, 'the fog is restored after the round');
+      assert(s.match.scores.a === 1 && s.match.scores.b === 4 && s.match.hist.length === 8 && s.match.hist[2].tw === 'safe' && s.match.hist[3].tw === 'safe' && s.match.hist[6].pts === 2 && s.match.hist[7].pts === 2, `the double pair is worth 2: the AI's escape beat your bust, ${JSON.stringify(s.match.scores)}`);
       const d = await hook(a, 'data');
       assert(!('series_n' in d) && (d.ai_a_pairs | 0) === 1 && (d.ai_a_safe | 0) === 1, `practice never writes the series; practice counters: pairs ${d.ai_a_pairs}, safehouses ${d.ai_a_safe}`);
       h.assertNoErrors();
@@ -1297,35 +1392,40 @@ async function hpAgree(pr, pc, rw, tol) {
       await waitOver(h, 0);
       sa = await st(a); sb = await st(b);
       assert(sa.match.scores.a === 0 && sa.match.scores.b === 0 && sb.match.scores.a === 0 && sb.match.scores.b === 0, 'live: no point after the first half, on both phones');
+      // round 2 (index 1) is the second half of the plain pair: the same plain job, the half-time target to beat on both phones
       await until(a, () => window.__getaway.state().R.idx === 1, null, 15000, 'round 2 (host)');
       await until(b, () => window.__getaway.state().R.idx === 1, null, 15000, 'round 2 (guest)');
       sa = await st(a); sb = await st(b);
-      assert(sa.R.tw && sa.R.tw === sb.R.tw && sa.R.pts === sb.R.pts && JSON.stringify(sa.R.safe) === JSON.stringify(sb.R.safe) && JSON.stringify(sa.R.eff) === JSON.stringify(sb.R.eff) && sa.R.heat === sb.R.heat, `live: both phones play the same wildcard in round 2 (${sa.R.tw}${sa.R.safe ? ' at ' + sa.R.safe.name : ''}, heat ${sa.R.heat} m)`);
-      assert(JSON.stringify(sa.R.target) === JSON.stringify(sb.R.target) && sa.R.target && /^Beat /.test(sa.R.target.hudRun), `live: and the same half-time target (${sa.R.target && sa.R.target.hudRun})`);
-      const tw1 = sa.R.tw; const pts1 = sa.R.pts;
+      assert(sa.R.tw === '' && sb.R.tw === '' && sa.R.pts === 1, 'live: pair 0 is plain on both rounds');
+      assert(JSON.stringify(sa.R.target) === JSON.stringify(sb.R.target) && sa.R.target && /^Beat /.test(sa.R.target.hudRun), `live: and the same half-time target on both phones (${sa.R.target && sa.R.target.hudRun})`);
       await phase(a, 'chase', 25000); await phase(b, 'chase', 25000);
       await hook(a, 'hold', 'a', { hand: true }); await hook(b, 'hold', 'b', { hand: true });
       // Sydney (the runner) escapes on the clock: an escape beats a bust, so the pair is hers
       await hook(a, 'shortenRound', 1200);
       await waitOver(h, 1, 30000);
       sa = await st(a); sb = await st(b);
-      const want1 = pts1;
-      assert(sa.match.scores.b === want1 && sb.match.scores.b === want1 && sa.match.scores.a === 0 && sb.match.scores.a === 0, `live: exactly one pair awarded after the second round (${want1} point${want1 > 1 ? 's' : ''} to Sydney, ${tw1}), the same on both phones`);
-      // finish the match: two more rounds, then the series
+      assert(sa.match.scores.b === 1 && sb.match.scores.b === 1 && sa.match.scores.a === 0 && sb.match.scores.a === 0, "live: exactly one point awarded after the pair's second round, the same on both phones");
+      // pair 1 (rounds 3 and 4): ONE wildcard, the same on both phones and on both of its rounds
       await until(a, () => window.__getaway.state().R.idx === 2, null, 15000, 'round 3');
       await until(b, () => window.__getaway.state().R.idx === 2, null, 15000, 'round 3 (guest)');
       sa = await st(a); sb = await st(b);
-      assert(sa.R.tw === sb.R.tw && sa.R.tw !== tw1 && sa.R.tw !== '', `live: round 3's wildcard (${sa.R.tw}) differs from round 2's (${tw1}) on both phones`);
+      assert(sa.R.tw && sa.R.tw === sb.R.tw && sa.R.pts === sb.R.pts && JSON.stringify(sa.R.safe) === JSON.stringify(sb.R.safe) && JSON.stringify(sa.R.eff) === JSON.stringify(sb.R.eff) && sa.R.heat === sb.R.heat, `live: both phones play the same wildcard in round 3 (${sa.R.tw}${sa.R.safe ? ' at ' + sa.R.safe.name : ''}, heat ${sa.R.heat} m)`);
+      const tw1 = sa.R.tw; const pts1 = sa.R.pts; const safe1 = JSON.stringify(sa.R.safe);
       await phase(a, 'chase', 25000); await phase(b, 'chase', 25000);
       await hook(a, 'hold', 'a', { hand: true }); await hook(b, 'hold', 'b', { hand: true });
-      await hook(a, 'endNow', 'busted', 'hp');
+      await hook(a, 'endNow', 'busted', 'hp'); // Emerson runs and is busted
       await waitOver(h, 2);
-      await until(a, () => window.__getaway.state().R.idx === 3 || window.__getaway.state().phase === 'final', null, 15000, 'round 4 or the end');
-      let s2 = await st(a);
-      if (s2.phase !== 'final') {
-        await phase(a, 'chase', 25000); await phase(b, 'chase', 25000);
-        await hook(b, 'endNow', 'busted', 'hp');
-      }
+      await until(a, () => window.__getaway.state().R.idx === 3, null, 15000, 'round 4');
+      await until(b, () => window.__getaway.state().R.idx === 3, null, 15000, 'round 4 (guest)');
+      sa = await st(a); sb = await st(b);
+      assert(sa.R.tw === tw1 && sb.R.tw === tw1 && sa.R.pts === pts1 && JSON.stringify(sa.R.safe) === safe1 && JSON.stringify(sb.R.safe) === safe1, `live: round 4 repeats round 3's wildcard (${tw1}${sa.R.safe ? ' at ' + sa.R.safe.name : ''}, worth ${pts1}), the same landmark, on both phones`);
+      assert(JSON.stringify(sa.R.target) === JSON.stringify(sb.R.target) && sa.R.target && /^Beat /.test(sa.R.target.hudRun), 'live: and the half-time target');
+      await phase(a, 'chase', 25000); await phase(b, 'chase', 25000);
+      await hook(a, 'hold', 'a', { hand: true }); await hook(b, 'hold', 'b', { hand: true });
+      await hook(a, 'shortenRound', 1200);
+      await waitOver(h, 3, 30000);
+      sa = await st(a); sb = await st(b);
+      assert(sa.match.scores.b === 1 + pts1 && sb.match.scores.b === 1 + pts1 && sa.match.scores.a === 0, `live: Sydney's escape beat the bust: the whole pair (${pts1} point${pts1 > 1 ? 's' : ''}) is hers on both phones (${JSON.stringify(sa.match.scores)})`);
       for (const p of [a, b]) await until(p, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 25000, 'end card');
       sa = await st(a); sb = await st(b);
       assert(sa.result && sb.result && sa.result.winner === sb.result.winner && JSON.stringify(sa.match.scores) === JSON.stringify(sb.match.scores), `live: the same final on both phones (${sa.result.text})`);
@@ -1344,7 +1444,7 @@ async function hpAgree(pr, pc, rw, tol) {
     const { a } = h;
     try {
       await a.setViewportSize({ width: 1280, height: 800 });
-      await arm(a, { ...FAST, rounds: 2, intro: 1200, rules: { wildcards: 'on', score: 'pairs' }, tw: { 1: 'rain' } });
+      await arm(a, { ...FAST, rounds: 2, intro: 1200, rules: { wildcards: 'on', score: 'pairs' }, tw: { 0: 'rain' } });
       await h.startLive(a, 'getaway', 'local');
       await ready(a);
       await a.click('.g-gtw [data-l="lmode"][data-v="split"]');
@@ -1789,6 +1889,52 @@ async function hpAgree(pr, pc, rw, tol) {
       }
     }
     console.log('   screenshots in', SHOTS);
+  }
+
+  // ═══ resultfit: the result card carrying the most news (a record, an unlock, the pair line, a twist) fits a short landscape phone without scrolling ═══
+  if (want('resultfit')) {
+    for (const [w, hh] of [[667, 375], [844, 390], [926, 428]]) {
+      const h = await launch({ port: PORT + 7, only: ['getaway'], who: ['a'], coarse: true });
+      const { a } = h;
+      try {
+        await a.setViewportSize({ width: w, height: hh });
+        await arm(a, { ...FAST, rounds: 4, intro: 1000, result: 120000, maxDpr: 0.6, heatT: 60, rules: { wildcards: 'on', score: 'pairs' }, tw: { 0: 'rain' } });
+        await h.startLive(a, 'getaway', 'local');
+        await ready(a);
+        await hook(a, 'setLocalMode', 'ai', 'runner');
+        await hook(a, 'drawHold', true);
+        await a.tap('.g-gtw [data-l="start"]');
+        await phase(a, 'chase', 25000);
+        await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
+        await wait(800);
+        await hook(a, 'endNow', 'escaped', 'time');
+        await phase(a, 'result', 10000);
+        await until(a, () => !!document.querySelector('.g-gtw .gtw-result'), null, 10000, 'the result card');
+        const worst = { lines: [{ t: 'Fastest getaway yet: 1:41 (was 1:58)', hot: true, rec: true }, { t: '3 rounds in a row', hot: true }], unlocks: [{ name: 'Racing stripe', kind: 'runner' }, { name: 'Highway patrol', kind: 'cop' }] };
+        const fit = () => a.evaluate(() => {
+          const c = document.querySelector('.g-gtw .gtw-result'); const o = c.closest('.gtw-over'); const r = c.getBoundingClientRect(); const R = o.getBoundingClientRect();
+          return { sh: c.scrollHeight, ch: c.clientHeight, top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height), vh: window.innerHeight, oscroll: o.scrollHeight - o.clientHeight, lines: c.querySelectorAll('.gtw-rec, .gtw-pair, .gtw-unlock').length, short: document.querySelector('.g-gtw').classList.contains('short'), txt: c.textContent.replace(/\s+/g, ' ').slice(0, 220) };
+        });
+        // (1) half time: a record, an unlock and the pair line all at once
+        await hook(a, 'showResult', worst);
+        let f = await fit();
+        assert(f.sh <= f.ch + 1 && f.oscroll <= 1 && f.top >= 0 && f.bottom <= f.vh, `${w}×${hh} half time: the card fits without scrolling (card ${f.h} px of ${f.vh}, scroll ${f.sh}/${f.ch}, ${f.lines} news lines)`);
+        if (f.short) assert(f.lines <= 3 && /HALF TIME/.test(f.txt) && /Fastest getaway/.test(f.txt) && /UNLOCKED/.test(f.txt) && !/3 rounds/.test(f.txt), `${w}×${hh}: short landscape keeps the three most important lines (half time, the NEW record, the unlock; not '3 rounds in a row'): "${f.txt}"`);
+        else assert(f.lines >= 4, `${w}×${hh}: a roomier phone still shows everything (${f.lines} lines)`);
+        await shot(a, `resultfit-${w}x${hh}-half`);
+        // (2) the pair decided, worth 2, an unlock and a record; no half time any more
+        await hook(a, 'showResult', { ...worst, pair: { done: true, winner: 'b', why: 'a getaway beats the clock', pts: 2 } });
+        f = await fit();
+        assert(f.sh <= f.ch + 1 && f.oscroll <= 1 && f.top >= 0 && f.bottom <= f.vh, `${w}×${hh} pair decided: fits without scrolling (card ${f.h} px of ${f.vh}, scroll ${f.sh}/${f.ch})`);
+        await shot(a, `resultfit-${w}x${hh}-pair`);
+        // (3) no pair line: the record and the unlock
+        await hook(a, 'showResult', { ...worst, pair: null });
+        f = await fit();
+        assert(f.sh <= f.ch + 1 && f.oscroll <= 1 && f.top >= 0 && f.bottom <= f.vh, `${w}×${hh} record + unlock: fits without scrolling (card ${f.h} px of ${f.vh})`);
+        if (f.short) assert(/Fastest getaway/.test(f.txt) && /UNLOCKED/.test(f.txt) && /3 rounds/.test(f.txt), `${w}×${hh}: without a pair line the record, the unlock and the streak all fit`);
+        h.assertNoErrors();
+      } catch (e) { fails++; console.error(e.message); await shot(h.a, `resultfit-${w}x${hh}-fail`).catch(() => {}); } finally { await h.close(); }
+    }
   }
 
   // ═══ stall: one phone's main thread hitches for 1.2 s mid-chase next to the partner (ENGINE):

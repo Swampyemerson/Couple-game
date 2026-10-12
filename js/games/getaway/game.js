@@ -20,7 +20,7 @@ import { createDriver, AI_LEVELS, AI_LEVEL_LABELS } from './ai.js';
 import { MAPS } from './maps/index.js';
 import { liveryFor, liveryRows, checkUnlocks, LIVERIES } from './liveries.js';
 import { rulesFor, heatWith, twistFor, twistInfo, ptsFor, pickSafehouse } from './twists.js';
-import { recordRound, recordMatch, recordPair, pairWinner, pairPts, pairTarget, pairWhy, scoresFromHist, winnersByRound, remainingPoints, roundWinner, seriesAfter, seriesGrudge, seriesLine, recordsLine, fmtSec, dayKey, dayOfYear, DAILY, dailyScore, dailyText, dailyKey, dailyBoard, dayNum, dayNumFromKey, foldStreak, streakOf, streakView } from './records.js';
+import { recordRound, recordMatch, recordPair, pairWinner, pairPts, pairTarget, pairWhy, scoresFromHist, winnersByRound, remainingPoints, roundWinner, seriesAfter, seriesGrudge, seriesLine, recordsLine, fmtSec, dayKey, dayOfYear, DAILY, dailyText, dailyKey, dailyBoard, dailyRoleFor, dailyScoreOf, dailyTextOf, dailyBestKey, dayNum, dayNumFromKey, foldStreak, streakOf, streakView } from './records.js';
 import { wantedLevel, wantedStars, copRegen, chainNew, chainReset, chainStep, chainAdd, chainText, CHAIN, CHAIN_TIERS, aheadPoints, QUICK_DIST, isKiss } from './chase.js';
 
 const AB = ['a', 'b'];
@@ -544,7 +544,9 @@ export function createGame(el, api) {
     renderer.setPixelRatio(Math.min(baseDpr * scale, TUNE.maxDpr || 9));
     renderer.setSize(W, H, false);
     root.classList.toggle('portrait', H > W);
+    const wasShort = root.classList.contains('short');
     root.classList.toggle('short', H < 520 && W > H);
+    if (wasShort !== root.classList.contains('short') && S.phase === 'result') showResultCard(); // (the result card lays out differently)
     if (fx) fx.setSpeedLines(0, W / H);
   }
   function onLost(e) {
@@ -618,15 +620,16 @@ export function createGame(el, api) {
   /** The lobby's Daily chase panel: today's map, the rules, today's board. */
   function dailyInfo() {
     const id = dailyMap(); const m = MAPS.find((x) => x.id === id) || {};
-    const b = dailyBoard(gdata()); const rt = DAILY.roundTime;
-    const board = AB.filter((w) => b[w] > 0).sort((x, y) => b[y] - b[x]).map((w) => ({ w, name: api.name(w), verb: 'ran today', text: dailyText(b[w], rt) }));
+    const dr = dailyRole(); const cop = dr === 'cop';
+    const b = dailyBoard(gdata(), dayKey(), dr); const rt = DAILY.roundTime;
+    const board = AB.filter((w) => b[w] > 0).sort((x, y) => b[y] - b[x]).map((w) => ({ w, name: api.name(w), verb: cop ? 'chased today' : 'ran today', text: dailyTextOf(dr, b[w], rt) }));
     // Daily 2.0: your best ever, and the streak (days in a row; a gap is just 'Day 1' again)
-    const d0 = gdata(); const dn = dayNum(); const lines = []; const best = d0[`${owner}_daily_best`] | 0;
-    if (best > 0) lines.push(`Your best ever: ${dailyText(best, rt)}`);
+    const d0 = gdata(); const dn = dayNum(); const lines = []; const best = d0[dailyBestKey(owner, dr)] | 0;
+    if (best > 0) lines.push(`Your best ever${cop ? ' as the cop' : ''}: ${dailyTextOf(dr, best, rt)}`);
     const sv = AB.map((w) => ({ w, ...streakView(d0, w, dn) }));
     lines.push(`Streak: ${sv.map((x) => `${api.name(x.w)} Day ${x.day}${x.played ? ' ✓' : ''}`).join(' · ')}`);
     if (sv.some((x) => x.best >= 2)) lines.push(`Best streak: ${sv.filter((x) => x.best >= 1).map((x) => `${api.name(x.w)} ${x.best}`).join(' · ')}`);
-    return { mapId: id, title: `Today: ${m.name || 'Dockside'}`, short: `Today: ${m.name || 'Dockside'}, same start for both of you.`, how: 'One 2:00 run as the runner vs a Hard AI cop. Survive, or lose the heat for a bonus. Your best try today counts.', board, lines, note: '' };
+    return { mapId: id, title: `Today: ${m.name || 'Dockside'}${cop ? ' · you’re the cop' : ''}`, short: cop ? `Today: ${m.name || 'Dockside'}, cop day: bust the Hard AI runner.` : `Today: ${m.name || 'Dockside'}, same start for both of you.`, role: dr, how: cop ? 'Cop day: one 2:00 chase as the cop vs a Hard AI runner. Bust them: the seconds left on the clock are your score. Your best try today counts.' : 'One 2:00 run as the runner vs a Hard AI cop. Survive, or lose the heat for a bonus. Your best try today counts.', board, lines, note: '' };
   }
   /** The bottom sheet: settings or the how-to-play card (lobby and pause menu). */
   function renderSheet() {
@@ -765,12 +768,13 @@ export function createGame(el, api) {
     }
     S.rematchCard = false;
     // the Daily chase: today's map, start and seed for both of you; one 2:00 round as the runner vs a Hard AI cop
-    const first = daily ? human() : ai() ? (S.practiceRole === 'runner' ? human() : aiW) : S.setup.first;
+    const dr = daily ? dailyRole() : '';
+    const first = daily ? (dr === 'cop' ? aiW : human()) : ai() ? (S.practiceRole === 'runner' ? human() : aiW) : S.setup.first;
     const seed = daily ? (strHash('getaway-daily:' + dayKey()) % 2147483646) + 1 : ((Math.random() * 2147483646) | 0) + 1;
     const rules0 = daily ? { ...DEFAULTS, roundTime: DAILY.roundTime, rounds: 1, tiebreak: 'time', score: 'rounds', wildcards: 'off' } : { ...S.setup.rules, ...(TUNE.rules || {}) };
     // (a grudge match: the series ledger as it stood when this match began; it travels in `match` so both phones agree)
     const grudge = daily || ai() ? '' : seriesGrudge(gdata());
-    const match = { id: Math.random().toString(36).slice(2, 9), map: mapId, rules: rules0, first, seed, rounds: daily ? 1 : TUNE.rounds || S.setup.rules.rounds, scores: { a: 0, b: 0 }, hist: [], mode: S.localMode, daily: daily ? dayKey() : null, aiLevel: daily ? 'hard' : device.aiLevel, grudge };
+    const match = { id: Math.random().toString(36).slice(2, 9), map: mapId, rules: rules0, first, seed, rounds: daily ? 1 : TUNE.rounds || S.setup.rules.rounds, scores: { a: 0, b: 0 }, hist: [], mode: S.localMode, daily: daily ? dayKey() : null, dr, aiLevel: daily ? 'hard' : device.aiLevel, grudge };
     const R = nextRound(match, 0, null, lead);
     if (live) link.urgent('match', { match, R });
     applyMatch(match, R);
@@ -780,6 +784,10 @@ export function createGame(el, api) {
    *  device (graphics tier, phone or laptop): both scores go on one board, so both of you must race
    *  the same map, start and traffic. Low graphics draws the same map with less detail; the roads,
    *  solids and traffic (everything the chase touches) are the same at every tier. */
+  /** Today's Daily role: even days of the year are cop days (you chase a Hard AI runner), odd days runner days. Seeded by the date, so
+   *  both phones agree. TUNE.dailyRole forces it (tests). The match carries it (`match.dr`) once started. */
+  const dailyRole = (day = dayOfYear()) => TUNE.dailyRole || dailyRoleFor(day);
+  const dailyRoleNow = () => (S.match && S.match.daily && S.match.dr) || dailyRole();
   function dailyMap(day = dayOfYear()) {
     const real = MAPS.filter((m) => !m.stub);
     return real[day % real.length].id;
@@ -791,10 +799,12 @@ export function createGame(el, api) {
     const runner = sd ? sd.runner : idx % 2 === 0 ? match.first : other(match.first);
     const at = clock() + lead;
     // the wildcard (twists.js): from (seed, idx) alone; round 0 and the decider are plain. A safehouse needs a spot to drive to.
-    let tw = twistFor(match.seed, idx, { sd: !!sd, wild: match.rules.wildcards !== 'off' && !match.daily });
-    if (TUNE.tw && TUNE.tw[idx] != null && !sd && idx > 0) tw = TUNE.tw[idx]; // (tests)
+    // (one twist per PAIR: rounds 2k and 2k+1 share it, the spawn and the safehouse; TUNE.tw is keyed by pair index)
+    const pair = idx >> 1;
+    let tw = twistFor(match.seed, idx, { sd: !!sd, wild: match.rules.wildcards !== 'off' && !match.daily, pairs: Math.ceil(match.rounds / 2) });
+    if (TUNE.tw && TUNE.tw[pair] != null && !sd) tw = TUNE.tw[pair]; // (tests)
     let safe = null;
-    if (tw === 'safe') { safe = safehouseFor(match, idx, spawns[sp]); if (!safe) tw = ''; }
+    if (tw === 'safe') { safe = safehouseFor(match, pair, spawns[sp]); if (!safe) tw = ''; }
     // the intro card only when it tells you something new: round 0, a new start spot, the decider, a wildcard
     const moved = idx === 0 || !!sd || !!tw || Math.floor(idx / 2) !== Math.floor((idx - 1) / 2);
     const intro = !moved ? 0 : TUNE.intro != null ? TUNE.intro : idx === 0 ? FLOW.intro : FLOW.introMove;
@@ -805,12 +815,12 @@ export function createGame(el, api) {
     if (safe) R.safe = safe;
     return R;
   }
-  /** The safehouse for round idx: a landmark with a road to drive to (3865 Moorhead / 8524 Boulder Way first), or null. */
-  function safehouseFor(match, idx, spawn) {
+  /** The safehouse for pair `pair` (both its rounds name the same one): a landmark with a road to drive to (3865 Moorhead / 8524 Boulder Way first), or null. */
+  function safehouseFor(match, pair, spawn) {
     const entry = MAPS.find((m) => m.id === match.map); const o = {};
     if (!entry || !geo || S.mapId !== match.map || !entry.landmarks) return null;
-    const used = match.hist.map((h) => h.sn).filter(Boolean);
-    return pickSafehouse(entry.landmarks, spawn, (x, z) => { const d = geo.nearestRoad(x, z, o, 110, (r) => !r.bridge); return o.road >= 0 ? { x: o.px, z: o.pz, d } : null; }, match.seed, idx, used);
+    const used = match.hist.filter((h, i) => (i >> 1) < pair).map((h) => h.sn).filter(Boolean); // (earlier pairs' only)
+    return pickSafehouse(entry.landmarks, spawn, (x, z) => { const d = geo.nearestRoad(x, z, o, 110, (r) => !r.bridge); return o.road >= 0 ? { x: o.px, z: o.pz, d } : null; }, match.seed, pair, used);
   }
   /** What travels of a round (match / round / the relink re-send): everything both phones must agree on. */
   const wireR = (R) => ({ idx: R.idx, runner: R.runner, spawn: R.spawn, at: R.at, t0: R.t0, endAt: R.endAt, intro: R.intro, sd: R.sd, tw: R.tw || '', pts: R.pts || 1, safe: R.safe || null });
@@ -942,16 +952,18 @@ export function createGame(el, api) {
       const r = recordRound(gdata(), pw, ns, ev, ns ? null : other(pw));
       gset(r.patch);
       if (role === 'cop' && p.chain.best >= 10) { (S.match.chains || (S.match.chains = {}))[R.idx] = p.chain.best; if (live) link.urgent('emote', { k: 'CHAIN', i: R.idx, n: p.chain.best }); } // (RELENTLESS: the match card's MVP knows on both phones)
-      if (S.match.daily && role === 'runner') { // today's Daily chase score (the best of today's tries)
-        const sc0 = dailyScore(res.outcome, res.reason, res.ran / 1000, S.match.rules.roundTime); const dk = dailyKey(pw, S.match.daily);
+      if (S.match.daily && role === dailyRoleNow()) { // today's Daily chase score (the best of today's tries; a runner day or a cop day)
+        const dr = dailyRoleNow(); const rt = S.match.rules.roundTime;
+        const sc0 = dailyScoreOf(dr, res.outcome, res.reason, res.ran / 1000, rt); const dk = dailyKey(pw, S.match.daily, dr);
         const prev = gdata()[dk] | 0; const patch = {};
         if (sc0 > prev) patch[dk] = sc0;
-        if (sc0 > (gdata()[`${pw}_daily_best`] | 0)) patch[`${pw}_daily_best`] = sc0;
+        if (sc0 > (gdata()[dailyBestKey(pw, dr)] | 0)) patch[dailyBestKey(pw, dr)] = sc0;
         const so = streakOf(gdata(), pw); const sf = foldStreak(so, dayNumFromKey(S.match.daily)); // Daily streak: consecutive days, Day 1 after a gap
         if (sf.changed) { patch[`${pw}_daily_streak`] = sf.streak; patch[`${pw}_daily_streak_best`] = sf.best; patch[`${pw}_daily_last`] = sf.last; lines.push({ t: `Daily streak: Day ${sf.streak}${sf.streak > 1 && sf.streak > so.best ? ' (your best)' : ''}`, hot: sf.streak >= 2 }); }
         gset(patch);
-        const rv = dailyRival(); if (rv) lines.push({ t: sc0 > rv.score ? `You beat ${rv.name}’s ${dailyText(rv.score)} today` : sc0 === rv.score ? `Level with ${rv.name} today` : `${rv.name} still leads today: ${dailyText(rv.score)}`, hot: sc0 > rv.score });
-        else if (prev) lines.push({ t: sc0 > prev ? `Your best today (was ${dailyText(prev)})` : `Your best today: ${dailyText(prev)}`, hot: sc0 > prev, rec: sc0 > prev });
+        const ph = (x) => dailyPhrase(dr, x, rt);
+        const rv = dailyRival(); if (rv) lines.push({ t: sc0 > rv.score ? `You beat ${rv.name}’s ${ph(rv.score)} today` : sc0 === rv.score ? `Level with ${rv.name} today` : `${rv.name} still leads today: ${ph(rv.score)}`, hot: sc0 > rv.score });
+        else if (prev) lines.push({ t: sc0 > prev ? `Your best today (was ${ph(prev)})` : `Your best today: ${ph(prev)}`, hot: sc0 > prev, rec: sc0 > prev });
       }
       const who = split() ? `${nameOf(w)}: ` : '';
       if (r.news.length) { lines.push({ t: who + r.news[0].text, hot: true, rec: true }); newRec = newRec || r.news[0]; }
@@ -983,7 +995,7 @@ export function createGame(el, api) {
     const res = R.result; const I = S.resultInfo;
     const wait = S.skipMe ? (live && !S.skipThem ? `Waiting for ${api.name(other(me))}…` : 'Starting…') : live && S.skipThem ? `${api.name(other(me))} is ready · tap to go` : 'Tap to continue';
     const adv = R.advAt ? { total: R.advAt - R.endWall, left: Math.max(0, R.advAt - performance.now()) } : null; // the auto-advance bar
-    hud.card(resultCard({ name: nameOf }, { adv, outcome: res.outcome, reason: res.reason, runner: R.runner, stats: res.stats, scores: S.match.scores, next: I.next, local: !live, me: human(), ran: res.ran, unlocks: I.unlocks, lines: I.lines, head: !split() && human() !== R.runner && res.reason === 'heat' ? 'LOST THEM' : !split() && human() !== R.runner && res.reason === 'safe' ? 'THEY’RE SAFE' : I.head, pair: I.pair, twist: twistInfo(R.tw), pts: R.pts || 1, queue: !!res.queue, d: res.d, wait, ai: ai() || !!S.match.daily, daily: S.match.daily ? dailyLine(res) : '', split: split() }), 'dim');
+    hud.card(resultCard({ name: nameOf }, { adv, outcome: res.outcome, reason: res.reason, runner: R.runner, stats: res.stats, scores: S.match.scores, next: I.next, local: !live, me: human(), ran: res.ran, unlocks: I.unlocks, lines: I.lines, head: !split() && human() !== R.runner && res.reason === 'heat' ? 'LOST THEM' : !split() && human() !== R.runner && res.reason === 'safe' ? 'THEY’RE SAFE' : I.head, pair: I.pair, twist: twistInfo(R.tw), pts: R.pts || 1, queue: !!res.queue, d: res.d, wait, ai: ai() || !!S.match.daily, daily: S.match.daily ? dailyLine(res) : '', split: split(), short: root.classList.contains('short') }), 'dim');
   }
   /** Tap on the result card: practice / split goes on at once; live when both phones have tapped. */
   function skipResult() {
@@ -1052,7 +1064,7 @@ export function createGame(el, api) {
     let res;
     const tb = fin.sd && fin.winner ? ' in sudden death' : fin.tie && fin.winner ? ' on the tiebreak' : '';
     const tbSub = fin.sd ? 'Decided by sudden death' : `Tiebreak: ${typeof fin.tbWhy === 'string' && fin.tbWhy ? fin.tbWhy : 'longest time on the run'}`;
-    if (daily) { const h = S.match.hist[0] || {}; const sc0 = dailyScore(h.outcome, h.reason, (h.ran || 0) / 1000, S.match.rules.roundTime); res = { winner: null, text: `Daily chase: ${dailyText(sc0, S.match.rules.roundTime)}`, sub: dailyBoardText(), record: false }; }
+    if (daily) { const h = S.match.hist[0] || {}; const sc0 = dailyScoreOf(dailyRoleNow(), h.outcome, h.reason, (h.ran || 0) / 1000, S.match.rules.roundTime); res = { winner: null, text: `Daily chase: ${dailyTextOf(dailyRoleNow(), sc0, S.match.rules.roundTime)}`, sub: dailyBoardText(), record: false }; }
     else if (ai()) res = { winner: null, text: fin.winner === human() ? `You beat the ${aiLabel()} AI${tb}, ${sc}` : fin.winner ? `The AI won${tb}, ${sc}` : `Practice: ${sc}`, sub: [tb ? tbSub : `vs ${aiLabel()} AI`, sum.line].filter(Boolean).join(' · '), record: false };
     else res = { winner: fin.winner, text: fin.winner ? (tb ? `${api.name(fin.winner)} wins${tb}, ${sc}` : `${api.name(fin.winner)} wins ${Math.max(fin.scores.a, fin.scores.b)}–${Math.min(fin.scores.a, fin.scores.b)}`) : `All square, ${sc}`, sub: [tb ? tbSub : 'Getaway', sum.line].filter(Boolean).join(' · '), score: { a: fin.scores.a, b: fin.scores.b } };
     S.result = res;
@@ -1107,17 +1119,19 @@ export function createGame(el, api) {
     return { T, mvp, line: mvp ? mvp.t : '' };
   }
   function dailyLine(res) {
-    const sc0 = dailyScore(res.outcome, res.reason, res.ran / 1000, S.match.rules.roundTime);
-    return `Daily chase: ${dailyText(sc0, S.match.rules.roundTime)}`;
+    const dr = dailyRoleNow(); const rt = S.match.rules.roundTime;
+    return `Daily chase: ${dailyTextOf(dr, dailyScoreOf(dr, res.outcome, res.reason, res.ran / 1000, rt), rt)}`;
   }
-  /** The partner's Daily chase score today, for the line to beat ({ name, score } or null). */
+  /** A Daily score inside a sentence: '1:12' (runner days) or 'bust with 0:48 left' (cop days). */
+  function dailyPhrase(role, score, rt = DAILY.roundTime) { return role === 'cop' ? (score > 0 ? `bust with ${fmtSec(score)} left` : 'no bust') : dailyText(score, rt); }
+  /** The partner's Daily chase score today (in today's role), for the line to beat ({ name, score } or null). */
   function dailyRival() {
-    const b = dailyBoard(gdata(), S.match && S.match.daily || dayKey()); const q = other(owner);
+    const b = dailyBoard(gdata(), S.match && S.match.daily || dayKey(), dailyRoleNow()); const q = other(owner);
     return b[q] > 0 ? { name: api.name(q), score: b[q] } : null;
   }
   function dailyBoardText() {
-    const b = dailyBoard(gdata()); const rt = DAILY.roundTime;
-    const bits = AB.filter((w) => b[w] > 0).map((w) => `${api.name(w)} ${dailyText(b[w], rt)}`);
+    const dr = dailyRoleNow(); const b = dailyBoard(gdata(), S.match && S.match.daily || dayKey(), dr); const rt = DAILY.roundTime;
+    const bits = AB.filter((w) => b[w] > 0).map((w) => `${api.name(w)} ${dailyTextOf(dr, b[w], rt)}`);
     return bits.length ? `Today: ${bits.join(' · ')}` : 'Today’s board is empty';
   }
 
@@ -1989,7 +2003,7 @@ export function createGame(el, api) {
       if (ph === 'chase') {
         hud.card(null);
         const db = daily() ? dailyRival() : null;
-        for (const w of viewers()) { const v = H0().view(w); v.count('GO'); later(() => v.count(''), 700); v.hint(db ? `Beat ${db.name}: ${dailyText(db.score, S.match.rules.roundTime)}` : R.tw && twistInfo(R.tw) ? twistHint(w) : R.sd ? (roleOf(w) === 'cop' ? 'Sudden death! Bust them and it’s yours.' : 'Sudden death! Survive 0:45 and it’s yours.') : roleOf(w) === 'cop' ? (rules().spikes ? (coarse ? 'Bust them! SPIKE drops a strip ahead, or tap the map.' : 'Bust them! E drops a strip ahead, M picks a spot.') : 'Bust them! Get alongside and PIT their back corner.') : 'Go! Lose the cop or survive the clock.', 3200); }
+        for (const w of viewers()) { const v = H0().view(w); v.count('GO'); later(() => v.count(''), 700); v.hint(db ? (dailyRoleNow() === 'cop' ? `Beat ${db.name}: bust them with more than ${fmtSec(db.score)} left` : `Beat ${db.name}: ${dailyText(db.score, S.match.rules.roundTime)}`) : R.tw && twistInfo(R.tw) ? twistHint(w) : R.sd ? (roleOf(w) === 'cop' ? 'Sudden death! Bust them and it’s yours.' : 'Sudden death! Survive 0:45 and it’s yours.') : roleOf(w) === 'cop' ? (rules().spikes ? (coarse ? 'Bust them! SPIKE drops a strip ahead, or tap the map.' : 'Bust them! E drops a strip ahead, M picks a spot.') : 'Bust them! Get alongside and PIT their back corner.') : 'Go! Lose the cop or survive the clock.', 3200); }
         audio.beep(true);
       }
       void prev;
@@ -2283,7 +2297,7 @@ export function createGame(el, api) {
       const left = R.over && R.result ? Math.max(0, R.endAt - R.result.at) : S.phase === 'chase' ? R.endAt - now : R.endAt - R.t0;
       v.clock(S.paused && S.pausedAt > R.t0 ? R.endAt - S.pausedAt : left, daily() ? 'Daily chase' : R.sd ? 'Sudden death' : `Round ${R.idx + 1}/${S.match.rounds}`, S.phase === 'chase' && left < 15000);
       // the Daily chase: the partner's time today is the line to beat
-      if (S.dailyRv && !S.dailyPassed && S.phase === 'chase' && !R.over && S.dailyRv.score < S.match.rules.roundTime && (now - R.t0) / 1000 >= S.dailyRv.score) { S.dailyPassed = true; v.stamp(`PASSED ${S.dailyRv.name.toUpperCase()}!`, 'good sm'); audio.win(); }
+      if (S.dailyRv && dailyRoleNow() === 'runner' && !S.dailyPassed && S.phase === 'chase' && !R.over && S.dailyRv.score < S.match.rules.roundTime && (now - R.t0) / 1000 >= S.dailyRv.score) { S.dailyPassed = true; v.stamp(`PASSED ${S.dailyRv.name.toUpperCase()}!`, 'good sm'); audio.win(); }
       // heat meter
       const rp = P2[R.runner];
       const d = Math.hypot(posOf('a').x - posOf('b').x, posOf('a').z - posOf('b').z);
@@ -2615,7 +2629,7 @@ export function createGame(el, api) {
         const car = (w) => { const c = P2[w].car; return { x: c.x, z: c.z, y: c.y, yaw: c.yaw, speed: c.speed, vf: c.vf, hp: c.hp, flat: c.flat, spinT: c.spinT, nitro: c.nitro, level: c.level, surf: c.surf, water: c.water, top: c.topSpeed, role: roleOf(w), esc: P2[w].esc, los: P2[w].los, spikesLeft: P2[w].spikesLeft, oilLeft: P2[w].oilLeft, stats: { ...P2[w].stats } }; };
         return {
           phase: S.phase, paused: S.paused, resumeAt: S.resumeAt, reasons: S.reasons, setup: S.setup, setupVer: S.setupVer, mapId: S.mapId, loading: S.loading,
-          match: S.match && { scores: { ...S.match.scores }, hist: S.match.hist.slice(), rounds: S.match.rounds, map: S.match.map, rules: S.match.rules, seed: S.match.seed, grudge: S.match.grudge || '' },
+          match: S.match && { scores: { ...S.match.scores }, hist: S.match.hist.slice(), rounds: S.match.rounds, map: S.match.map, rules: S.match.rules, seed: S.match.seed, grudge: S.match.grudge || '', daily: S.match.daily || null, dr: S.match.dr || '' },
           R: R && { idx: R.idx, spawn: R.spawn, runner: R.runner, at: R.at, t0: R.t0, endAt: R.endAt, over: R.over, result: R.result, tw: R.tw || '', pts: R.pts || 1, safe: R.safe || null, target: R.target || null, sd: R.sd, heat: heatDist(), eff: { radar: R.rules.radar, spikes: R.rules.spikes, nitro: R.rules.nitro, fog: R.rules.fog, gripK: R.rules.gripK, oils: R.rules.oils }, spikes: R.spikes.map((s) => ({ id: s.id, x: s.x, z: s.z, yaw: s.yaw, gone: s.gone, at: s.at })), oils: R.oils.length },
           a: car('a'), b: car('b'), now: clock(), simT: S.simT, dbgEnd: S.dbgEnd || null, rtt: link.rtt, linked: link.ready, result: S.result || null, localMode: S.localMode, me: human(),
           partnerSeen: live ? { ...P2[other(me)].remote, shown: { ...P2[other(me)].shown } } : null, sent: link.sent,
@@ -2672,7 +2686,7 @@ export function createGame(el, api) {
       navReady() { return geo && geo.navReady(); },
       maps() { return MAPS.map((m) => ({ id: m.id, name: m.name, stub: !!m.stub })); },
       /** Today's Daily chase map on this device, and the lobby's Daily panel text (tests: the same on every tier). */
-      daily() { const d = dailyInfo(); return { map: dailyMap(), day: dayOfYear(), tier: gfx && gfx.tier, short: d.short, note: d.note }; },
+      daily() { const d = dailyInfo(); return { map: dailyMap(), day: dayOfYear(), role: dailyRole(), tier: gfx && gfx.tier, short: d.short, note: d.note, title: d.title, how: d.how, lines: d.lines, board: d.board }; },
       openMap() { openMap(human()); }, closeMap() { closeMap(); },
       mapTap(x, z) { return placeSpike(human(), x, z); },
       landmarks() { return (S.mapEntry && S.mapEntry.landmarks) || []; },
@@ -2682,6 +2696,8 @@ export function createGame(el, api) {
       /** Screenshot tests: on = the game runs (clock, phases, cars, HUD) but draws nothing, so the canvas
        *  keeps its last picture: software GL spends 1–3 s a frame, which starved clicks and timers. */
       drawHold(on) { S.drawHold = !!on; },
+      /** Tests: put more news on the result card (lines, unlocks, the pair line) and draw it again. */
+      showResult(info) { if (S.resultInfo) { Object.assign(S.resultInfo, info || {}); showResultCard(); } return !!S.resultInfo; },
       loseContext(noRestore) { const ext = renderer.getContext().getExtension('WEBGL_lose_context'); if (ext) { ext.loseContext(); if (!noRestore) setTimeout(() => ext.restoreContext(), 400); return true; } return false; },
       /** The next n map loads throw (error-card tests). */
       failLoad(n = 1) { S.failLoads = n; },

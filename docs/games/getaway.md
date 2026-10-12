@@ -123,9 +123,14 @@ is ready").
   on both phones ("Beat 1:12" / "Bust by 1:12"); after it the card names the pair ("PAIR Sydney takes the point ·
   survived longer"). The pips group pairs and show the pair's winner on both its rounds. Sudden death is a single
   round worth 1. The lobby facts line reads "4 rounds · scored in pairs". The Daily chase plays `score: 'rounds'`.
-- **Wildcard rounds** (rule `wildcards`, default `on`). `R.tw` is a twist id from `twistFor(seed, idx)`: a seeded
-  shuffle of the seven twists, round k gets `order[(k-1) % 7]` (no repeats in a match; round 0 and the decider are
-  plain). The round reads its rules through `rules()` = `rulesFor(match.rules, R.tw, R.sd)` (stored on `S.R.rules`):
+- **Wildcard rounds** (rule `wildcards`, default `on`). **One twist per pair**: pairs scoring compares the same job
+  across the two rounds of a pair, so both rounds share the twist (and the safehouse landmark, as they share the spawn).
+  `R.tw` is a twist id from `twistFor(seed, idx, { pairs })`: a seeded shuffle of the seven twists, pair p (= floor(idx / 2))
+  gets `order[(p-1) % 7]` (no repeats across pairs; pair 0 and the decider are plain). A **one-pair match** (the Quick
+  chase, 2 rounds) has no plain pair to spare, so its pair gets the first twist of the shuffle that isn't DOUBLE OR NOTHING
+  (that would decide nothing), so a Quick chase isn't always plain. Under score `rounds` the twist is per pair too (both
+  rounds of a DOUBLE OR NOTHING pair are worth 2 each). Both rounds' intro cards show the twist. `TUNE.tw` (tests) is keyed
+  by pair index and may also set pair 0. The round reads its rules through `rules()` = `rulesFor(match.rules, R.tw, R.sd)` (stored on `S.R.rules`):
   EAGLE EYE (radar always, heat +40 m) · FOG (radar off, heat ×0.7, render fog × 0.55: `scene.fog` near/far, restored
   at the round's end) · SPIKE RAIN (cop 6 strips, runner sees them all) · BIG TANK (runner nitro big, cop boost
   recharge ×1.5 via `S.copK`) · SLICK STREETS (both cars' lateral grip × 0.88 via `S.cp`, runner 2 oil slicks) ·
@@ -135,7 +140,8 @@ is ready").
   runner ignores the safehouse; the AI cop's strips come from the round's rules).
 - **SAFEHOUSE**: `pickSafehouse` (host, in `nextRound`) takes a landmark with a road within 110 m, 200-800 m from the
   runner's spawn (widening to 120-1300 m), snapped to the road; 3865 Moorhead (Boulder) and 8524 Boulder Way (Santee) win
-  when within 140-1100 m (a safehouse is drawn once a match, so "the first time" is always). It travels in `R.safe`
+  when within 140-1100 m (a safehouse landmark is drawn once per pair, never reused by a later pair, so "the first time" is always; both rounds of
+  its pair name the same one, `pickSafehouse` is keyed by the pair index). It travels in `R.safe`
   `{x, z, name, home}` (in `match`, `round` and the relink re-send: `wireR`), so both phones agree; if no landmark fits
   the round is plain. The runner's device ends the round `escaped / 'safe'` when within 25 m and unseen (no line of
   sight, or under cover) for 2 s (`p.hideT`); reaching it spotted adds +35% to the escape meter once. Stamps SAFEHOUSE! /
@@ -143,6 +149,14 @@ is ready").
   its 25 m circle (pinned to the minimap's edge when off it); in 3D a column of glowing green puffs rises from it (the
   existing puff system: no draw call). `recordRound` counts 'safe' as an escape (+ `<w>_safe`) but never as "losing the heat"
   (no `heats`, no fastest-getaway mark, nothing towards Rally).
+- **The result card on a short landscape phone** (`.g-gtw.short`: 667×375, 844×390, 926×428). With a pair line, a NEW record
+  and an unlock the card used to scroll. `resultCard` now wraps its content in `.gtw-rl` (verdict, pair / half-time line),
+  `.gtw-rr` (stats row, record lines, score, unlock) and `.gtw-rf` (next, tap to continue), which are `display: contents`
+  everywhere (the plain column) and a two-column grid on a short phone, with a smaller stats row. It also keeps at most
+  **three** news items there, by priority: pair / half-time line (or the Daily score) > NEW record > unlock > other lines
+  (`short` is passed from `root.classList`; the card is redrawn if a rotation flips it). Measured: ~187-230 px of the 350+
+  available, no scroll. The `resultfit` test section draws the worst case through the `showResult(info)` hook at those three
+  sizes and checks `scrollHeight <= clientHeight` (screenshots `resultfit-<w>x<h>-half / -pair`).
 - **Sudden death** (decider): the player who did **not** run first runs (the first runner already had the opening move),
   the cop keeps **1** spike strip (0 if the match has none), heat ×0.75, 0:45, always plain, worth 1.
 - **The Series** (live and split only; never practice or the Daily): `series_a`, `series_b` (matches won), `series_d`
@@ -176,6 +190,17 @@ is ready").
   card never shows 0:19 beside 0:20). `<w>_daily_<date>` keeps your best try today, `<w>_daily_best` your
   best ever. The lobby panel lists today's two scores; the chase opens with "Beat Sydney: 1:12" and
   stamps PASSED SYDNEY! at that second.
+  **Cop days**: on even days of the year (`dailyRoleFor(dayOfYear())`, the day number that also picks the map) the Daily
+  flips: you are the cop against a Hard AI runner, same 2:00, map, spawn, traffic and rules (no chain, no Wanted). Score =
+  the seconds left on the clock when you bust them (`copDailyScore`: clamp(round(120 - t), 1, 120), so even an overtime bust
+  beats an escape; 0 = they got away, nothing saved), shown as "Bust at 0:48 left" (`copDailyText`). Keys `<w>_dailycop_<date>`
+  (best today) and `<w>_dailycop_best`; the runner keys keep their meaning on runner days. The role travels in `match.dr`
+  (the date seeds map, spawn and traffic, the day number the role: both phones agree), `TUNE.dailyRole` forces it in tests.
+  The Daily panel says "Today: Boulder · you're the cop" with "Sydney chased today: Bust at 0:48 left" and "Your best ever as
+  the cop: …"; the line to beat is "Beat Sydney: bust them with more than 0:48 left" (no PASSED stamp on cop days); the result
+  card says "You beat Sydney's bust with 0:48 left today"; the final card and the board text follow the role. The streak
+  counts any Daily day, either role (the streak keys are shared). `dailyScore`'s runner cap (a bust never reaches 120) is
+  unchanged.
 - **Quick chase** (a chip by the facts line, host): 2 rounds of 1:00, 2 spike strips, sudden death
   if level — a whole match in under 4 minutes.
 
@@ -244,14 +269,14 @@ The pure logic lives in `chase.js` (Node-testable: `wantedLevel`, `copRegen`, `c
   numbers by the local calendar date): playing the Daily on the day after the last one adds 1, the same day again changes
   nothing, anything else is Day 1 again with no fuss (the panel just says "Day 1"); the result card says "Daily streak: Day 3"
   (hot, and "(your best)", from Day 2). Keys: `<w>_daily_streak`, `<w>_daily_streak_best`, `<w>_daily_last` (the day
-  number), written by the phone that played, next to the existing `<w>_daily_<date>` and `<w>_daily_best`. Cop days (a Daily
-  where you bust a Hard AI runner) are not built.
+  number), written by the phone that played, next to the existing `<w>_daily_<date>` and `<w>_daily_best` (or, on a cop day,
+  `<w>_dailycop_<date>` / `_best`: see Records, the Daily chase). The streak counts a Daily of either role.
 - **Netcode and budget.** Nothing new on the wire: the chain, Wanted and the quick drop use the existing clock, `spike` and
   `spikehit` / `hit` messages; hearts, the kiss and the RELENTLESS note ride on `emote` (≤ 1 per 4 s per player, 1 kiss and
   1 chain note per round). The live test asserts no message-budget warnings.
 - **Tests.** `unit`: Wanted thresholds, `copRegen` (20 s / 14 s / ×1.5, and on the road), the chain's timing, tiers, ends and
   spike / PIT points, `chain_r` records, `aheadPoints` on Dockside, `isKiss`, the streak fold and panel, the how-to and Daily
-  panel text. `extras` (one phone, port PORT + 8): Wanted stars and sticker on the runner's phone, the cop's recharge, quick
+  panel text. `extras` (one phone, port PORT + 8; the Daily blocks force `TUNE.dailyRole`: a runner day, then a cop day with a forced bust through `endNow`: panel text, `a_dailycop_<date>` / `_best`, the rival line, the streak, the final text): Wanted stars and sticker on the runner's phone, the cop's recharge, quick
   drop by a real tap and by E (62 m, 90 m, a hint when nothing fits, "No spike strips left"), the chain (a ×3 tier-up's
   tank jump, spike +3, PIT +2), the bumper kiss, and the Daily panel / streak saved. `extraslive` (two phones, port PORT + 1):
   the heart on both screens, the kiss, RELENTLESS on both match cards, no budget warnings. `touch` also measures the Wanted
@@ -818,7 +843,7 @@ traffic (≤ 15% off road), and started nose-in against a building it backs out 
 
 ## Tests (`node tools/test/games/getaway.test.js`, ports 8930–8939)
 
-The older sections run with `rules: { wildcards: 'off', score: 'rounds' }` in `FAST` (the classic flow); `TUNE.tw = { idx: id }` forces a round's twist and `TUNE.rules` overlays the match rules (tests only).
+The older sections run with `rules: { wildcards: 'off', score: 'rounds' }` in `FAST` (the classic flow); `TUNE.tw = { pair: id }` forces a pair's twist (keyed by pair index; `TUNE.dailyRole = 'cop' | 'runner'` forces the Daily's role) and `TUNE.rules` overlays the match rules (tests only).
 
 `gfx`: the packed vertex layout on every map (no float32 normals / colours / uvs left, every vertex
 buffer 4-byte aligned, ≤ 32 B/vertex on the GPU with indices), the caster scene and the 512² phone shadow map, no shadow pass in the lobby,
@@ -839,7 +864,7 @@ slider, iOS edge, scripted PIT → boxed bust, role swap, spike rules and effect
 escape, heat escape, water bust, final) · `live` (two phones at 80 ms: settings sync, read-only
 guest sheet, shared timeline, same spawn, roles, traffic determinism across devices, remote car
 accuracy, boxed bust, swaps, spikes over the network, clock and heat escapes, splash, tiebreak
-final, one recorded result, rematch, message budget) · `wild` (practice with the new defaults: forced SAFEHOUSE / DOUBLE OR NOTHING / FOG rounds, half time, a safehouse escape, the pair's point, ×2 pairs, the fog and its restore, practice never writes the series) · `wildlive` (two phones: the same wildcard, safehouse, rules and half-time target on both, one pair awarded after the second round, the series written once) · `wildsplit` (split screen: both views' chips, one pair, the series) · `lossy` (150 ms, 25% loss) · `split`
+final, one recorded result, rematch, message budget) · `wild` (practice, 8 rounds with the new defaults: pair 0 plain, then forced SAFEHOUSE / FOG / DOUBLE OR NOTHING pairs, each twist on both of its rounds, the same safehouse on both, half time, a safehouse escape, the pair's point, a ×2 pair, the fog and its restore, practice never writes the series) · `wildlive` (two phones: pair 0 plain, then one wildcard, safehouse, rules and half-time target the same on both phones and on both rounds, one pair awarded after each second round, the series written once) · `resultfit` (the result card's worst case fits 667×375 / 844×390 / 926×428 without scrolling) · `wildsplit` (split screen: both views' chips, one pair, the series) · `lossy` (150 ms, 25% loss) · `split`
 (laptop split screen by keyboard) · `robust` (hidden-page pause shifts the clock, no shader
 compiles in play, GL context loss and restore, clean close) · `mapswitch` (switch maps repeatedly
 and render) · `perf` (every playable map on phone and laptop: draw calls, triangles, build blocks;

@@ -366,4 +366,17 @@ export const CSS = `
 .g-gtw.short .gtw-pair { padding: 3px 8px; font-size: .76rem !important; }
 .g-gtw.short .gtw-result .gtw-stats b { font-size: .9rem; } .g-gtw.short .gtw-result .gtw-stats div { padding: 3px 2px; }
 .g-gtw.short .gtw-result .gtw-big { font-size: 2rem; } .g-gtw.short .gtw-result .gtw-big.long { font-size: 1.6rem; }
+/* the result card, in columns on a short landscape phone (667×375, 844×390): the verdict left, the numbers right, the way on along the bottom.
+   Everywhere else the wrappers vanish and it is the plain column. hud.js resultCard keeps the two most important lines there. */
+.gtw-result .gtw-rl, .gtw-result .gtw-rr, .gtw-result .gtw-rf { display: contents; }
+.g-gtw.short .gtw-result { width: min(100%, 640px); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px 14px; padding: 8px 12px; align-items: center; overflow: hidden; }
+.g-gtw.short .gtw-result .gtw-rl, .g-gtw.short .gtw-result .gtw-rr { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.g-gtw.short .gtw-result .gtw-rf { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.g-gtw.short .gtw-result p { font-size: .8rem; line-height: 1.25; }
+.g-gtw.short .gtw-result .gtw-rec, .g-gtw.short .gtw-result .gtw-pair { font-size: .76rem !important; padding: 3px 7px; }
+.g-gtw.short .gtw-result .gtw-stats { gap: 4px; } .g-gtw.short .gtw-result .gtw-stats small { font-size: .56rem; letter-spacing: .04em; }
+.g-gtw.short .gtw-result .gtw-stats div { padding: 2px 1px; gap: 0; } .g-gtw.short .gtw-result .gtw-stats b { font-size: .86rem; }
+.g-gtw.short .gtw-result .gtw-score span { font-size: .9rem; }
+.g-gtw.short .gtw-result .gtw-unlock { font-size: .76rem !important; }
+.g-gtw.short .gtw-result .gtw-rf p { margin: 0; font-size: .74rem; }
 `;

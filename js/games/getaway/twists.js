@@ -1,6 +1,9 @@
 // Getaway wildcard rounds ("twists"): pure, deterministic helpers shared by both phones and the Node
 // unit tests. A twist is picked from (match.seed, round idx) alone, so the host's R only has to carry
-// its id; round 0 and the sudden-death decider are always plain. rulesFor() is the one place a twist
+// its id. The twist belongs to a PAIR of rounds (rounds 2k and 2k+1 share it, as they share the spawn and
+// the safehouse landmark, so pairs scoring compares the same job): pair 0 is plain when the match has
+// two or more pairs, a one-pair match (Quick chase) gets a wildcard on its pair, and the sudden-death
+// decider is always plain. rulesFor() is the one place a twist
 // changes the rules: the round reads its rules through it (game.js rules()).
 //
 // Effective-rules extras (all optional, absent = neutral): heatAdd (m) · heatK · fog (render fog
@@ -24,17 +27,23 @@ function rng(seed) {
   let a = (seed | 0) >>> 0;
   return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
-/** The match's twist order: a seeded shuffle of every twist id. Round k (k ≥ 1) gets order[(k - 1) % n]: no repeats until the list runs out. */
+/** The match's twist order: a seeded shuffle of every twist id. Pair p (p ≥ 1) gets order[(p - 1) % n]: no repeats until the list runs out. */
 export function twistOrder(seed) {
   const ids = TWISTS.map((t) => t.id); const r = rng((seed | 0) ^ 0x5bd1e995);
   for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); const t = ids[i]; ids[i] = ids[j]; ids[j] = t; }
   return ids;
 }
-/** The twist id of round idx ('' = plain). opts: { sd, wild (false = wildcards off) }. */
+/**
+ * The twist id of round idx ('' = plain). It is chosen per pair, p = floor(idx / 2): both rounds of a pair get the
+ * same one (also under score 'rounds'; then both rounds of a DOUBLE OR NOTHING pair are worth 2). opts: { sd (the
+ * decider: plain), wild (false = wildcards off), pairs (how many pairs the match has: 1 = a Quick chase, whose one
+ * pair gets a wildcard, never DOUBLE OR NOTHING since that would decide nothing; omitted = 2 or more) }.
+ */
 export function twistFor(seed, idx, opts = {}) {
-  if (opts.wild === false || opts.sd || !(idx >= 1)) return '';
-  const o = twistOrder(seed);
-  return o[(idx - 1) % o.length];
+  if (opts.wild === false || opts.sd || !(idx >= 0)) return '';
+  const o = twistOrder(seed); const p = idx >> 1;
+  if (opts.pairs === 1) return o.filter((id) => id !== 'double')[0];
+  return p === 0 ? '' : o[(p - 1) % o.length];
 }
 /** What a round is worth: 2 for DOUBLE OR NOTHING, else 1. */
 export const ptsFor = (tw) => (tw === 'double' ? 2 : 1);
@@ -66,7 +75,7 @@ export const heatWith = (h, r) => Math.round(((h || 0) + (r.heatAdd || 0)) * (r.
  * already taken this match. A home landmark (3865 Moorhead / 8524 Boulder Way) wins when it is
  * within reach. Returns { x, z, name, home } or null.
  */
-export function pickSafehouse(lms, spawn, snap, seed, idx, used = []) {
+export function pickSafehouse(lms, spawn, snap, seed, idx, used = []) { // (idx: the PAIR's index, so both rounds of a pair name the same landmark)
   const rs = spawn && spawn.runner ? spawn.runner : { x: 0, z: 0 };
   const cand = [];
   for (const l of lms || []) {
