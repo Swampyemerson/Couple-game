@@ -119,7 +119,7 @@ browser group seeds old and garbage data and plays a round.
 
 ## Tests
 
-- `node tools/test/games/defuse.test.js all`: **ALL GOOD, 277 ok** (node, phone, wild, laptop, dark, layout, legacy), no page
+- `node tools/test/games/defuse.test.js all`: **ALL GOOD, 297 ok** (node, phone, wild, laptop, dark, layout, legacy), no page
   errors. It covers 7 unit files (classic 96, maze 326,453, morse 67, password 46,049, relay 27, switches 65, vent 36 assertions),
   round determinism, solving every module from the manual page's own data, full live rounds per tier on two iPhone-sized phones with
   real taps, the relay done on the manual device, the vent answered, a boom, the pause overlay, resume after the bomb closes, a
@@ -130,7 +130,16 @@ browser group seeds old and garbage data and plays a round.
 - `node tools/test/all-games.test.js`: ALL GOOD. The full build (`tools/build_artifact.py`) succeeds, 119 modules.
 - Independent verify passes: two in round 1 (devices/netcode and rules/gameplay), then a second-round re-check.
 
-VERIFY3_PLACEHOLDER
+Second-round verifier (fresh agent, after the fixes): confirmed every fix. It won full Rookie, Agent, Expert and Bomb Squad
+rounds reading the rules **only from the manual's DOM** (no solver), on phones (light and dark), a 844×390 landscape phone, and a
+laptop bomb with a phone manual. It answered the vent, committed the relay from the manual, and applied correction slips for maze,
+password and switches. Edge cases checked: a strike while the button is held, surge plus tax, a decoy tapped during a blackout,
+the vent during a blackout, a bomb reload with an unacknowledged relay commit, Today's bomb played twice, 20+ rematches, and tier
+changes. It found three more problems, all now fixed with regression tests that fail on the old code:
+- relay actions sent while the bomb was paused or dark were applied only on the manual's next tap;
+- the lobby kept its scroll position after a rematch;
+- an open relay drawer on a landscape phone left about 55 px for the guide. It is now capped at 30vh when the screen is under
+  500 px tall, and the edition code no longer wraps.
 
 ## Known issues
 
