@@ -765,28 +765,29 @@ async function rowsSection(port) {
   console.log('\n# two phones: the new rows in the settings sheet');
   const h = await launch({ port, only: ['chameleon'] });
   const { a, b } = h;
+  const SEL = '.chm-sheet [data-k="twists"], .chm-sheet [data-k="underdog"], .chm-sheet [data-k="sudden"]';
   try {
     await startPair(h);
     await a.tap('[data-act="settings"]');
-    await a.waitForSelector('[data-twistrows]');
-    const rows = await a.evaluate(() => ({ n: document.querySelectorAll('[data-twistrows] .chm-set').length, small: [...document.querySelectorAll('[data-twistrows] button')].filter((x) => { const r = x.getBoundingClientRect(); return r.height < 43.5 || r.width < 43.5; }).length, txt: document.querySelector('[data-twistrows]').textContent }));
-    assert(rows.n === 3 && /Round twists/.test(rows.txt) && /Underdog/.test(rows.txt) && /Sudden death/.test(rows.txt), 'three rows: Round twists, Underdog boost, Sudden death');
+    await a.waitForSelector('.chm-sheet [data-k="twists"]');
+    const rows = await a.evaluate((sel) => ({ n: new Set([...document.querySelectorAll(sel)].map((x) => x.dataset.k)).size, dup: document.querySelectorAll('.chm-sheet [data-k="twists"][data-v="every"]').length, small: [...document.querySelectorAll(sel)].filter((x) => { const r = x.getBoundingClientRect(); return r.height < 43.5 || r.width < 43.5; }).length }), SEL);
+    assert(rows.n === 3 && rows.dup === 1, 'three rows (Round twists, Underdog boost, Sudden death), each once');
     assert(rows.small === 0, 'every button in them is at least 44 × 44');
     assert((await st(a)).setup.rules.twists === 'some', 'default: some rounds');
-    await a.tap('[data-twistrows] [data-k="twists"][data-v="every"]');
+    await a.tap('.chm-sheet [data-k="twists"][data-v="every"]');
     await b.waitForFunction(() => window.__cham.state().setup.rules.twists === 'every', null, { timeout: 5000 });
     assert((await st(a)).setup.rules.preset === 'custom', 'changing it makes the setup Custom');
-    await a.tap('[data-twistrows] [data-k="sudden"][data-v="false"]');
-    await a.tap('[data-twistrows] [data-k="underdog"][data-v="false"]');
+    await a.tap('.chm-sheet [data-k="sudden"][data-v="false"]');
+    await a.tap('.chm-sheet [data-k="underdog"][data-v="false"]');
     await b.waitForFunction(() => { const r = window.__cham.state().setup.rules; return r.sudden === false && r.underdog === false; }, null, { timeout: 5000 });
     await a.tap('.chm-sheet [data-lobby="preset"][data-v="classic"]');
     const r2 = (await st(a)).setup.rules;
     assert(r2.twists === 'some' && r2.underdog === true && r2.sudden === true && r2.preset === 'classic', 'Classic brings the defaults back');
     await b.tap('[data-act="settings"]');
-    await b.waitForSelector('[data-twistrows]');
-    assert(await b.evaluate(() => [...document.querySelectorAll('[data-twistrows] button')].every((x) => x.disabled)), 'the guest sees the rows read-only');
+    await b.waitForSelector('.chm-sheet [data-k="twists"]');
+    assert(await b.evaluate((sel) => [...document.querySelectorAll(sel)].every((x) => x.disabled), SEL), 'the guest sees the rows read-only');
     h.assertNoErrors();
-  } catch (e) { console.error(e.message.split('\n')[0], h.errors); failures++; await shot(a, 'rows-FAIL-a').catch(() => {}); console.error(JSON.stringify(await a.evaluate(() => ({ sheet: !!document.querySelector('.chm-sheet'), rows: !!document.querySelector('[data-twistrows]'), btn: (() => { const b = document.querySelector('[data-twistrows] [data-k="sudden"][data-v="false"]'); if (!b) return null; const r = b.getBoundingClientRect(); return [r.x, r.y, r.width, r.height, getComputedStyle(b).visibility, getComputedStyle(b).display]; })(), layer: window.__cham.state().layer })).catch(() => null))); } finally { await h.close(); }
+  } catch (e) { console.error(e.message.split('\n')[0], h.errors); failures++; await shot(a, 'rows-FAIL-a').catch(() => {}); } finally { await h.close(); }
 }
 
 async function shotsSection(port) {

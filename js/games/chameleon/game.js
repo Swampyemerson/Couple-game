@@ -3883,7 +3883,8 @@ export function createGame(el, api) {
     try {
       switch (kind) {
         case 'lobby': {
-          let h = injectRows(html, twistRows(S.setup.rules, S.setup.mode === 'hs', isHost));
+          // (cards.js builds the three rows itself now; twistRows is the fallback if it ever doesn't)
+          let h = html.includes('data-k="twists"') ? html : injectRows(html, twistRows(S.setup.rules, S.setup.mode === 'hs', isHost));
           // Today's hide on one phone plays the next twist that works there (dailySetup): say so on its button too
           if (local) {
             const pl = dailyPlan(dayKey()); const tw = dailyTwistFor(pl, true); const i = h.indexOf('chm-today');
