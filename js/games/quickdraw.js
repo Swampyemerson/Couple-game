@@ -295,7 +295,7 @@ registerGame({
     .g-qd .qd-setup { position: absolute; inset: 0; z-index: 6; display: flex; align-items: center; justify-content: center; background: var(--g-bg); overflow: auto; }
     .g-qd .qd-setup[hidden] { display: none; }
     .g-qd[data-phase="setup"] > :not(.qd-setup), .g-qd.is-setup > :not(.qd-setup) { visibility: hidden; }
-    .g-qd .qd-setup-card { width: 100%; max-width: 480px; display: flex; flex-direction: column; gap: 8px; padding: 10px; margin: auto; background: var(--g-card); border: 2.5px solid var(--g-ink); border-radius: 14px; box-shadow: var(--g-shadow); }
+    .g-qd .qd-setup-card { width: calc(100% - 6px); max-width: 480px; display: flex; flex-direction: column; gap: 8px; padding: 10px; margin: auto auto auto 2px; background: var(--g-card); border: 2.5px solid var(--g-ink); border-radius: 14px; box-shadow: var(--g-shadow); }
     .g-qd .qd-setup-head { margin: 0; font-family: var(--g-font-display); font-weight: 900; font-size: 1.15rem; line-height: 1.15; }
     .g-qd .qd-opts { display: grid; gap: 6px; }
     .g-qd .qd-packs { grid-template-columns: repeat(3, 1fr); }

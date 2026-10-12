@@ -149,7 +149,7 @@ export const CSS = `
   .g-cycles .cy-mini { width: 30px; } .g-cycles .cy-mini.is-wide { width: 44px; }
   .g-cycles .cy-glyph { width: 30px; height: 44px; font-size: 1.4rem; }
   .g-cycles .cy-rp-skip { display: none; }
-  .g-cycles .cy-recs { flex: 1 1 0; min-width: 0; text-align: left; margin-left: 10px; }
+  .g-cycles .cy-recs { flex: 1 1 0; min-width: 0; text-align: left; margin-left: 16px; }
   .g-cycles .cy-go { align-self: center; flex: 0 0 auto; width: 200px; }
 }
 /* a very short screen (667x375, 568x320): the host's status line already says "Pick an arena", so the picker drops its title and blurb */
@@ -158,7 +158,7 @@ export const CSS = `
   .g-cycles .cy-chip { min-height: 56px; }
   .g-cycles .cy-mini { width: 26px; } .g-cycles .cy-mini.is-wide { width: 38px; }
   .g-cycles .cy-glyph { height: 34px; }
-  .g-cycles .cy-recs { margin-left: 18px; }
+  .g-cycles .cy-recs { margin-left: 22px; }
 }
 @media (orientation: landscape) and (max-height: 340px) {
   .g-cycles .cy-pick { padding: 4px 8px 6px; gap: 4px; }
