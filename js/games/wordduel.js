@@ -627,8 +627,8 @@ registerGame({
         prevMoves = c.moves;
         let restored = false;
         if (c.over) { draft = ''; draftSave(); maybeRecord(c); }
-        wasOver = c.over;
         else if (!draft && c.canMove) { const m = modeOf(c); if (m === 'pick' || m === 'solve') { draft = draftLoad(c); restored = !!draft; } }
+        wasOver = c.over;
         render();
         if (restored) paintDraft();
       },
