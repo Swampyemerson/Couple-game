@@ -19,7 +19,7 @@ export const CSS = `
     .g-wave .wv-tw span { display: inline-block; max-width: 100%; padding: 3px 10px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-hl); color: var(--g-on-ink); font-weight: 900; font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
     .g-wave .wv-tw span.dv { background: var(--g-ink); color: var(--g-bg); }
     .g-wave .wv-dvb { display: flex; align-items: center; justify-content: center; gap: 6px; font-weight: 800; font-size: 0.76rem; color: var(--g-muted); }
-    .g-wave .wv-dvb span { padding: 1px 9px; border-radius: 999px; background: var(--g-ink); color: var(--g-bg); font-weight: 900; font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .g-wave .wv-dvb span { flex: none; white-space: nowrap; padding: 1px 9px; border-radius: 999px; background: var(--g-ink); color: var(--g-bg); font-weight: 900; font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase; }
     .g-wave .wv-rule { margin: 0; max-width: 34em; text-align: center; color: var(--g-muted); font-weight: 800; font-size: 0.8rem; line-height: 1.3; }
     .g-wave .wv-rule b { color: var(--g-ink); font-weight: 900; }
     .g-wave .wv-h { font-family: var(--g-font-display); font-weight: 900; font-size: 1.25rem; line-height: 1.15; margin: 0; text-align: center; }
@@ -230,7 +230,7 @@ export const CSS = `
       .g-wave .wv-result-txt > span, .g-wave .wv-near { font-size: 0.72rem; }
       .g-wave .wv-chips { margin-top: 1px; gap: 3px; align-items: center; }
       .g-wave .wv-chip { font-size: 0.6rem; padding: 0 6px; }
-      .g-wave .wv-note { font-size: 0.7rem; line-height: 1.2; }
+      .g-wave .wv-note { font-size: 0.7rem; line-height: 1.2; margin-top: 4px; } /* clear of the button's hard shadow */
       .g-wave .wv-actions .gm-btn, .g-wave .wv-go, .g-wave .wv-form .gm-btn { min-height: 44px; height: auto; }
       .g-wave .wv-input { height: 44px; }
       .g-wave .wv-clue { margin-bottom: 0; padding: 2px 12px 3px; }
@@ -239,13 +239,13 @@ export const CSS = `
       .g-wave .wv-modes { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
       .g-wave .wv-scr.flow > .wv-seth { display: none; }
       .g-wave .wv-lab { margin: 0 0 -2px; }
-      .g-wave .wv-scr.flow { gap: 5px; max-width: 860px; }
+      .g-wave .wv-scr.flow { gap: 3px; max-width: 860px; }
       .g-wave .wv-mode { min-height: 44px; }
       .g-wave .wv-packs { gap: 4px; }
       .g-wave .wv-pack { padding: 0 8px; font-size: 0.8rem; }
       .g-wave .wv-pitch { min-height: 0; }
-      .g-wave .wv-sticky { padding: 4px 0 6px; }
-      .g-wave .wv-start { min-height: 46px; }
+      .g-wave .wv-sticky { padding: 3px 0 4px; }
+      .g-wave .wv-start { min-height: 44px; }
     }
 
     @keyframes wv-pop { 0% { transform: scale(0.7); opacity: 0; } 70% { transform: scale(1.06); opacity: 1; } 100% { transform: scale(1); } }

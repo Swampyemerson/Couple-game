@@ -106,7 +106,7 @@ Evidence:
 | Suite | Result |
 |---|---|
 | `node tools/test/games/party-doodle.test.js` (new) | ALL GOOD, 528 checks: rules 354, browser 174 |
-| `node tools/test/games/party-wave.test.js` (new) | ALL GOOD, 327 checks |
+| `node tools/test/games/party-wave.test.js` (new) | ALL GOOD, 334 checks |
 | `QUICK=1 node tools/test/games/party.test.js` | ALL GOOD, 234 checks; existing flows now pick Classic on the setup screen |
 | `QUICK=1 node tools/test/all-games.test.js` | ALL GOOD (35 checks) |
 | `QUICK=1 node tools/test/smoke.test.js` | ALL GOOD (22 checks) |

@@ -469,7 +469,7 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
     const packNames = await S1.F.$$eval('.wv-pack', (x) => x.map((e) => e.textContent));
     assert(packNames.join() === 'Classic,Just Us,Everyday,Hot Takes,Future Us,Everything,Cozy', `seven packs: ${packNames}`);
     // every mode tile and pack chip is on screen and tappable at first view, at the three sizes
-    for (const [w, hh] of [[390, 664], [375, 548], [844, 390]]) {
+    for (const [w, hh] of [[390, 664], [375, 548], [844, 390], [667, 375]]) {
       for (const pg of [a, b]) await pg.setViewportSize({ width: w, height: hh });
       await S1.F.waitForTimeout(350);
       const r = await S1.F.evaluate(() => {
@@ -749,6 +749,9 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
           await m.GS.waitForTimeout(300);
           const ov = await overlaps(m.GS, REVEAL_PARTS); const iv = await inView(m.GS, ['.wv-go', '.wv-dial', '.wv-result']);
           assert(ov.length === 0 && iv.bad.length === 0, `final reveal ${w}x${hh}: Déjà vu strip, clue, stamp and button do not overlap and are in view (${ov} ${iv.bad})`);
+          const pill = await m.GS.$eval('.wv-dvb span', (e) => [e.getClientRects().length, Math.round(e.getBoundingClientRect().height), e.parentElement.textContent.length]);
+          assert(pill[0] === 1 && pill[1] <= 24, `final reveal ${w}x${hh}: the Déjà vu pill stays one line beside a ${pill[2]}-character sentence (height ${pill[1]})`);
+          assert(/Now \d+(: \d+ closer)?\.$/.test((await m.GS.textContent('.wv-dvb')).trim()), 'the Déjà vu comparison reads "Now 5: 18 closer."');
         }
         for (const pg of [a, b]) await pg.setViewportSize({ width: 390, height: 664 });
         await m.GS.waitForTimeout(700);

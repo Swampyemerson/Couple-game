@@ -456,7 +456,7 @@ export function createWaveView(el, api, env) {
     const bn = Rd.bn || [];
     const chips = [...bn.map((b) => `<span class="wv-chip">${bonusText[b]}</span>`), Rd.jp ? '<span class="wv-chip jp">Jackpot x2</span>' : '', Rd.sure ? `<span class="wv-chip">${Rd.base ? 'Sure: 6' : 'Sure: missed'}</span>` : ''].join('');
     let dvText;
-    if (Rd.dv && ri > 0) { const R0 = s.rounds[0]; const d0 = Math.abs(R0.at - R0.target); dvText = `round 1 on this card: ${d0} off. Now ${d}${d < d0 ? `, ${d0 - d} closer` : ''}.`; }
+    if (Rd.dv && ri > 0) { const R0 = s.rounds[0]; const d0 = Math.abs(R0.at - R0.target); dvText = `round 1 on this card: ${d0} off. Now ${d}${d < d0 ? `: ${d0 - d} closer` : ''}.`; }
     node.innerHTML = `<div class="wv-head">${top(s, ri, before, dvText)}${clueBubble(Rd)}</div>
       <div class="wv-main"></div>
       <div class="wv-mid">
