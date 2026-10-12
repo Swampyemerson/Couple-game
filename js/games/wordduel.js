@@ -12,7 +12,7 @@ import { registerGame, gameDataApi } from './core.js';
 import { CSS } from './wordduel/css.js';
 import {
   MAX, other, lists, scoreGuess, target, solvedBy, doneBy, tally, init, next, apply, result, score,
-  heatNow, roundView, roundResult, DEFAULT_SETUP,
+  heatOf, roundView, roundResult, DEFAULT_SETUP,
 } from './wordduel/rules.js';
 import { recordMatch, stampsFor, ledgerOf, setupToString, setupFromString } from './wordduel/records.js';
 
@@ -86,7 +86,11 @@ registerGame({
     let rulesDraft = null; // the rules card's current choices
     let chips = []; // love-letter suggestions
     let chipKey = '';
-    let recapSeen = 0; // best of 3: rounds whose recap this phone has already dismissed
+    const recapSeen = { a: 0, b: 0 }; // best of 3: rounds whose recap each player has dismissed (one phone shares this)
+    let selfRules = false; // the waiting phone chose to set the rules itself
+    let waitSince = 0; // when the waiting view first showed (for the "Set the rules yourself" fallback)
+    let sentSetup = null; // the rules this phone sent (to tell it if another setup won)
+    let lastStatus = null;
     let hold = null; // one phone: { w, ri } a finished player's reveal that must be dismissed
     let holdEl = null;
     const timers = new Set();
@@ -116,8 +120,8 @@ registerGame({
       const v = c.viewer;
       if (!v) return 'blank';
       const s = c.state;
-      if (isPristine(s)) return v === (c.mode === 'online' ? c.first : v) ? 'rules' : 'waitrules';
-      if (s.v === 2 && s.opts.bo3 && s.rounds.length && !s.secret[v] && !(s.secret.a && s.secret.b) && recapSeen < s.rounds.length) return 'recap';
+      if (isPristine(s)) return v === (c.mode === 'online' ? c.first : v) || selfRules ? 'rules' : 'waitrules';
+      if (s.v === 2 && s.opts.bo3 && s.rounds.length && !s.secret[v] && !(s.secret.a && s.secret.b) && recapSeen[v] < s.rounds.length) return 'recap';
       if (!s.secret.a || !s.secret.b) return s.secret[v] ? 'picked' : 'pick';
       return doneBy(s, v) ? 'done' : 'solve';
     }
@@ -160,7 +164,7 @@ registerGame({
       return `<span class="g-wd-minis" role="img" aria-label="${nm(who_)} has used ${s.guesses[who_].length} of ${MAX} guesses">${h}</span>`;
     }
     function heatHTML(s, v) {
-      const one = (w) => { const h = heatNow(s, w); return `<span class="g-wd-hp" role="img" aria-label="${nm(w)}: ${h.g} greens, ${h.y} yellows"><b class="g-wd-who ${pcls(w)}">${initial(w)}</b><i class="g-wd-m m-g"></i>${h.g}<i class="g-wd-m m-y"></i>${h.y}</span>`; };
+      const one = (w) => { const t0 = target(s, w); const h = t0 ? heatOf(t0, flipping(w) ? s.guesses[w].slice(0, flip.row) : s.guesses[w]) : { g: 0, y: 0 }; return `<span class="g-wd-hp" role="img" aria-label="${nm(w)}: ${h.g} greens, ${h.y} yellows"><b class="g-wd-who ${pcls(w)}">${initial(w)}</b><i class="g-wd-m m-g"></i>${h.g}<i class="g-wd-m m-y"></i>${h.y}</span>`; };
       return `<span class="g-wd-heat"><span class="g-wd-hl">Heat</span>${one(v)}${one(other(v))}</span>`;
     }
     const flipping = (w) => !!(flip && flip.who === w && Date.now() < flip.until);
@@ -541,7 +545,7 @@ registerGame({
         draftSave();
       } else if (act === 'lock') submit();
       else if (act === 'play') playRules();
-      else if (act === 'nextround') { recapSeen = ctx.state.rounds.length; areaSig = ''; actSig = ''; render(); }
+      else if (act === 'nextround') { recapSeen[ctx.viewer] = ctx.state.rounds.length; areaSig = ''; actSig = ''; render(); }
       b.blur();
     });
     // physical keyboard on laptops

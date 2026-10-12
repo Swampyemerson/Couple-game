@@ -134,7 +134,7 @@ export function hardCheck(secret, prior, g) {
     for (const c of Object.keys(need)) {
       let have = 0;
       for (let i = 0; i < 5; i++) if (g[i] === c) have++;
-      if (have < need[c]) throw new Error(`Hard mode: use the ${c.toUpperCase()}.`);
+      if (have < need[c]) throw new Error(need[c] === 2 ? `Hard mode: use both ${c.toUpperCase()}s.` : need[c] > 2 ? `Hard mode: use all ${need[c]} ${c.toUpperCase()}s.` : `Hard mode: use the ${c.toUpperCase()}.`);
     }
   }
 }
@@ -241,7 +241,13 @@ export function init() {
 }
 export function next(s) {
   if (s.fin) return [];
-  if (!s.secret.a || !s.secret.b) return ['a', 'b'].filter((w) => !s.secret[w] && !(s.pend && s.pend[w])); // a parked secret waits for the rules
+  if (!s.secret.a || !s.secret.b) {
+    const need = ['a', 'b'].filter((w) => !s.secret[w]);
+    // A parked secret waits for the rules: leave that seat out so its later moves aren't consumed
+    // first. If every seat still to move is parked, list them all so the rules move can be sent.
+    const free = need.filter((w) => !(s.pend && s.pend[w]));
+    return free.length ? free : need;
+  }
   return ['a', 'b'].filter((w) => !doneBy(s, w));
 }
 export function apply(s, who, mv) {
@@ -259,6 +265,12 @@ export function apply(s, who, mv) {
       return s;
     }
     placeSecret(s, who, w);
+    if (s.pend) {
+      // A plain (legacy) secret arrived while a v2 one was parked: no rules are coming, so this
+      // match is classic and the parked word is just a secret.
+      for (const q of ['a', 'b']) if (s.pend[q] && !s.secret[q]) s.secret[q] = s.pend[q];
+      delete s.pend;
+    }
     return s;
   }
   if (mv.guess === undefined) throw new Error('You’ve already picked your word.');
@@ -295,7 +307,7 @@ export function result(s) {
   const sc = `${Math.max(a, b)} to ${Math.min(a, b)}`;
   if (a === b) return { winner: null, text: 'Set drawn', sub: `${a} round${a === 1 ? '' : 's'} each after ${n} rounds. Nobody blinked.` };
   const w = a > b ? 'a' : 'b';
-  return { winner: w, sub: `Takes the set, ${sc}, over ${n} round${n === 1 ? '' : 's'}.` };
+  return { winner: w, sub: `${sc} over ${n} round${n === 1 ? '' : 's'}.` };
 }
 
 /** Player-chip scores: round wins in a best-of-3 (nothing otherwise). */

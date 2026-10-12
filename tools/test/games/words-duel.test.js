@@ -115,6 +115,25 @@ async function unitTests() {
   assert(s.secret.a === 'grape' && s.secret.b === 'crane' && s.guesses.a.length === 1, 'parking: with a dealt opener the opener lands once both words are in');
   assert(run([['a', S({})], ['a', { secret: 'grape', v: 2 }]]).secret.a === 'grape', 'a v2 secret after the rules is just a secret');
 
+  // hardening: a parked secret can never end the match without rules
+  {
+    const core3 = await imp('js/games/core.js');
+    const mk = (r) => ({ ...r, id: 'x', kind: 'turns', secret: true, title: 'x', blurb: '', howTo: [], css: '' });
+    const dv = (lists) => core3.derive(mk(NEW), { first: 'b', seed: 5, opts: {}, lists });
+    // a v2 secret first, then the other seat plays a plain legacy secret: the match is classic
+    let d = dv({ a: [{ secret: 'grape', v: 2 }, { guess: 'plumb' }], b: [{ secret: 'plumb' }, { guess: 'grape' }] });
+    assert(!d.state.v && !d.state.pend && d.state.secret.a === 'grape' && d.state.secret.b === 'plumb' && d.over && d.result.winner === null && d.rejected.length === 0, `parking: a legacy secret turns the parked one into a plain secret, classic rules, nobody stuck (${JSON.stringify(d.rejected)})`);
+    d = dv({ a: [{ secret: 'grape', v: 2 }], b: [{ secret: 'slate' }] });
+    assert(!d.over && !d.state.v && d.state.secret.a === 'grape' && d.state.secret.b === 'slate' && eq(R.next(d.state), ['a', 'b']), 'parking: a parked secret plus a legacy secret is a classic match in progress (repro 1)');
+    // both seats parked: b's setup (the next move in its list) must still be applied
+    d = dv({ a: [{ secret: 'grape', v: 2 }], b: [{ secret: 'plumb', v: 2 }, { setup: { v: 2, pool: 'fair' } }] });
+    assert(d.state.v === 2 && d.state.secret.a === 'grape' && d.state.secret.b === 'plumb' && !d.state.pend && !d.over, `parking: with both secrets parked the setup still lands (${JSON.stringify(d.state)}, rejected ${JSON.stringify(d.rejected)})`);
+    const both = run([['a', { secret: 'grape', v: 2 }], ['b', { secret: 'plumb', v: 2 }]]);
+    assert(R.next(both).length > 0 && both.pend.a && both.pend.b, 'parking: both parked is never "over" (next lists a seat that can send the rules)');
+    // and nothing is ever over while a pend exists
+    for (const only of ['a', 'b']) { const one = run([[only, { secret: 'grape', v: 2 }]]); assert(R.next(one).length > 0, `parking: ${only} parked alone is not over`); }
+  }
+
   // ── pools ──
   assert(love.length >= 50 && love.every((w) => common.includes(w)), `love list: ${love.length} words, all in the common list`);
   const uncommon = [...valid].find((w) => !common.includes(w));
@@ -136,6 +155,7 @@ async function unitTests() {
   assert(run([['a', S({ pool: 'any' })], ['a', { secret: 'abbey' }], ['b', { secret: 'crane' }], ['a', { guess: 'brine' }], ['a', { guess: 'slate' }]]).guesses.a.length === 2, 'normal mode ignores hard-mode constraints');
   // a repeated letter: BOBBY vs ABBEY
   assert(eq(R.heatOf('crane', ['brine']), { g: 3, y: 0 }), 'heat: BRINE against CRANE is 3 greens');
+  throws(() => run([['a', S({ pool: 'any', hard: true })], ['a', { secret: 'abbey' }], ['b', { secret: 'nylon' }], ['a', { guess: 'ennui' }], ['a', { guess: 'slate' }]]), /Hard mode: use both Ns\./, 'hard: two revealed copies need two (use both Ns)');
 
   // ── dealt opener ──
   s = run([['a', S({ dealt: true })]]);
@@ -202,11 +222,11 @@ async function unitTests() {
   throws(() => R.apply(clone(m), 'a', S({})), /already set/, 'bo3: setup stays locked');
   // round 2: b wins again -> set over 2-0
   m = run([...bo, ...round('abbey', 'crane', ['abbey'], ['pound', 'misty', 'jumbo', 'fight', 'lunch', 'slate']), ...round('plumb', 'grape', ['plumb'], ['pound', 'misty', 'jumbo', 'fight', 'lunch', 'slate'])]);
-  assert(m.fin && eq(R.next(m), []) && R.result(m).winner === 'b' && /2 to 0/.test(R.result(m).sub), `bo3: first to two takes the set (${R.result(m).sub})`);
+  assert(m.fin && eq(R.next(m), []) && R.result(m).winner === 'b' && /^2 to 0 over 2 rounds/.test(R.result(m).sub), `bo3: first to two takes the set (${R.result(m).sub})`);
   // a comeback: b wins 1, a wins 2 and 3
   const win = (w, secA, secB) => (w === 'b' ? round(secA, secB, [secA], ['pound', 'misty', 'jumbo', 'fight', 'lunch', 'slate']) : round(secA, secB, ['pound', 'misty', 'jumbo', 'fight', 'lunch', 'slate'], [secB]));
   m = run([...bo, ...win('b', 'abbey', 'crane'), ...win('a', 'plumb', 'grape'), ...win('a', 'heart', 'river')]);
-  assert(m.fin && R.result(m).winner === 'a' && m.rounds.length === 3 && /2 to 1/.test(R.result(m).sub), 'bo3: a comeback goes to three rounds');
+  assert(m.fin && R.result(m).winner === 'a' && m.rounds.length === 3 && /^2 to 1 over 3 rounds/.test(R.result(m).sub), 'bo3: a comeback goes to three rounds');
   // a drawn round gives nobody the point; 1-1 after 3 plays a 4th; 4th level = draw
   const drawR = (secA, secB) => round(secA, secB, [secA], [secB]); // both crack in 1: dead heat
   m = run([...bo, ...win('b', 'abbey', 'crane'), ...win('a', 'plumb', 'grape'), ...drawR('heart', 'river')]);
@@ -238,8 +258,8 @@ async function unitTests() {
   assert(reopened && reopened.matches_n === 2 && reopened.recent_m === 'm1,m9', 'records: a v2 match this phone never recorded counts once when opened');
   let dz = { ...data, ...reopened };
   assert(Rec.recordMatch(dz, fin(['crane'], ['abbey']), 'm1', false) === null && Rec.recordMatch(dz, fin(['crane'], ['abbey']), 'm9', false) === null, 'records: opening m1 then m9 again later does not count either twice');
-  for (let k = 0; k < 25; k++) dz = { ...dz, ...Rec.recordMatch(dz, fin(['crane'], ['abbey']), `r${k}`) };
-  assert(Rec.recentOf(dz).length === 20 && Rec.recentOf(dz)[19] === 'r24' && !Rec.recentOf(dz).includes('m1'), 'records: recent_m keeps the last 20 ids');
+  for (let k = 0; k < 65; k++) dz = { ...dz, ...Rec.recordMatch(dz, fin(['crane'], ['abbey']), `r${k}`) };
+  assert(Rec.recentOf(dz).length === 60 && Rec.recentOf(dz)[59] === 'r64' && !Rec.recentOf(dz).includes('m1'), 'records: recent_m keeps the last 60 ids (core keeps 25 finished online matches)');
   p = Rec.recordMatch(data, fin(['crane'], ['pound', 'misty', 'jumbo', 'fight', 'lunch', 'oxbow']), 'm2');
   assert(p.a_wins_n === 2 && p.a_streak === 2 && p.a_streak_best === 2 && p.a_two_n === 2 && p.a_fast_pb === 7 && p.pbm === 'm2', 'records: streak, mind-reader count and a personal best');
   data = { ...data, ...p };
@@ -262,6 +282,16 @@ async function unitTests() {
   m = run([...bo, ...win('b', 'abbey', 'crane'), ...win('a', 'plumb', 'grape'), ...win('a', 'heart', 'river')]);
   p = Rec.recordMatch({}, m, 'set1');
   assert(p.sets_n === 1 && p.comeback_n === 1 && p.a_wins_n === 1 && p.matches_n === 1, 'records: a best-of-3 comeback counts a set and a comeback');
+
+  // a first-ever bo3 set (crack in 3, then in 2) is not a "new record"
+  m = run([...bo, ...round('abbey', 'crane', ['abbey'], ['slate', 'pound', 'crane']), ...round('plumb', 'grape', ['plumb'], ['slate', 'grape'])]);
+  p = Rec.recordMatch({}, m, 'first');
+  assert(p.a_fast_pb === 6 && !p.pbm, 'records: no NEW RECORD on the first match, even when a later round beat an earlier one');
+  p = Rec.recordMatch({ a_fast_pb: 5 }, m, 'second');
+  assert(p.pbm === 'second' && p.a_fast_pb === 6, 'records: a real personal best (6 > 5) still sets pbm');
+  p = Rec.recordMatch({ a_fast_pb: 6 }, m, 'third');
+  assert(!p.pbm && p.a_fast_pb === undefined, 'records: equalling the best is not a record');
+  assert(Rec.stampsFor(duelState(['crane'], ['crane'], 'crane', 'crane'), { recent_m: 'x', matches_n: 10 }, 'x', (w) => w)[0].label === 'Great minds', 'stamps: the rare ones come first (Great minds survives the cap)');
 
   // size budget: the entry file stays modest now the lists live in their own file
   const fsz = fs.statSync(path.join(ROOT, 'js/games/wordduel.js')).size;

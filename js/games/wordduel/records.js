@@ -8,7 +8,7 @@
 //   a_two_n b_two_n              cracks in 2 or fewer ("mind-reader")
 //   a_lastditch_n b_lastditch_n  cracks on the 6th and last guess
 //   a_held_n b_held_n            their word held out (the partner never cracked it)
-//   recent_m                     the last 20 recorded match ids, comma-joined (record once per match)
+//   recent_m                     the last 60 recorded match ids, comma-joined (record once per match)
 //   lastm                        match id of the last recorded match
 //   pbm                          match id of the last match that beat a personal best
 //   last_setup                   the rules card's last choice, 'pool:hard:dealt:bo3'
@@ -29,7 +29,7 @@ export function cracked(r, p) {
   return t && r.gs[p].includes(t) ? r.gs[p].length : null;
 }
 
-export const RECENT = 20;
+export const RECENT = 60;
 export const recentOf = (data) => String(data.recent_m || '').split(',').filter(Boolean);
 
 /** The patch that records one finished match, or null when it must not be counted.
@@ -61,8 +61,8 @@ export function recordMatch(data, s, matchId, seen = true) {
       const n = cracked(r, q);
       if (n === null) { inc(`${other(q)}_held_n`); continue; }
       const key = `${q}_fast_pb`;
-      const prev = p[key] !== undefined ? p[key] : num(data[key]);
-      if (8 - n > prev) { p[key] = 8 - n; if (prev > 0) pb = true; }
+      const before = num(data[key]); // only the best from before this match counts as a record
+      if (8 - n > Math.max(before, p[key] || 0)) { p[key] = 8 - n; if (before > 0) pb = true; }
       if (n <= 2) inc(`${q}_two_n`);
       if (n === MAX) inc(`${q}_lastditch_n`);
     }
@@ -77,6 +77,7 @@ export function stampsFor(s, data, matchId, name) {
   const out = [];
   const rounds = roundsOf(s);
   const recorded = recentOf(data).includes(matchId);
+  if (rounds.some((r) => r.sec.a && r.sec.a === r.sec.b)) out.push({ label: 'Great minds', who: 'hl' });
   if (recorded && data.pbm === matchId) out.push({ label: 'New record', who: 'hl' });
   const res = result(s);
   if (recorded && (res.winner === 'a' || res.winner === 'b')) {
@@ -93,8 +94,7 @@ export function stampsFor(s, data, matchId, name) {
   }
   for (const o of ['a', 'b']) if (rounds.some((r) => cracked(r, other(o)) === null)) out.push({ label: 'Held out', who: o });
   if (rounds.some((r) => { const x = cracked(r, 'a'); return x !== null && x === cracked(r, 'b'); })) out.push({ label: 'In sync', who: 'hl' });
-  if (rounds.some((r) => r.sec.a && r.sec.a === r.sec.b)) out.push({ label: 'Great minds', who: 'hl' });
-  return out.slice(0, 5);
+  return out.slice(0, 5); // rarest first, so the common ones are what gets cut
 }
 
 /** "E 12 – 9 S · Sydney ×3 streak", or '' before the first recorded duel. */
