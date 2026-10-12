@@ -23,13 +23,17 @@ classic; `'classic'` is also accepted). Old logs never contain a setup move.
 | id | Name | Rule |
 |---|---|---|
 | `golden` | Golden Column | Column `randInt(3, seed, 'gold')` is gilded for **both** players: its column score counts ×2 (`state.gold`). |
-| `mirror` | Mirror Dice | You each get the same dice, in a different order: every four turns the starter rolls X then Y and the other player Y then X. |
+| `mirror` | Mirror Dice | You both draw from the same dice, dealt in a different order. A round is five dice each: the starter takes them in order, the other player starts two places along (3 4 5 1 2). Nobody is handed the twin of the die that was just played against them. |
 | `blind` | Blind Draw | Rules as classic, but you pick a column before you see the roll. The view shows a "?" die and the die tumbles in as it lands. The first die (which the starter already saw) is thrown away and replaced by `randInt(6, seed, 'blind', 0) + 1`. |
 | `oracle` | Oracle | Rules as classic. Both players see the next two rolls in the band. |
 
 The spec asked for Mirror to hand both players the *same die in each pair of turns*. Simulation says that is a second-player win
-(see Balance): the second player can always answer a die with its twin straight away. The shipped pattern (X Y / Y X) keeps the
-"same dice" idea and removes the immediate answer.
+(see Balance): the second player can always answer a die with its twin straight away. The first replacement (X Y / Y X every four
+turns) still gave the starter an immediate twin of the die the other player had just rolled (turns 1 and 2 share Y), and the two
+players' dice differed in about 41 % of games. The shipped pattern is a round of five dice each; the other player starts two places
+along. It is not an exact copy, and the copy is only exact when a match ends on a round boundary: a match ends part-way through a
+round in about three matches of four, so the last die or two can differ. What it does promise: both players draw from the same
+dice, and the chance that you get the twin of the die just played is the same 1 in 6 as in a normal game (it was 37 % before).
 
 ### Last Word (every non-classic twist)
 
@@ -57,10 +61,10 @@ can't see.
 | oracle | greedy | on | 45.1 % | 52.5 % | 2.4 % | 23.0 |
 | blind | random | off | 54.0 % | 44.2 % | 1.9 % | 20.9 |
 | blind | random | on | 47.3 % | 50.9 % | 1.8 % | 21.5 |
-| mirror (X Y / Y X) | random | off | 55.3 % | 43.0 % | 1.7 % | 25.1 |
-| mirror (X Y / Y X) | random | on | 44.2 % | 53.5 % | 2.3 % | 25.6 |
-| mirror (X Y / Y X) | greedy | off | 67.0 % | 30.6 % | 2.3 % | 38.6 |
-| mirror (X Y / Y X) | greedy | on | 51.1 % | 46.1 % | 2.8 % | 39.2 |
+| mirror (5-dice round) | random | off | 63.2 % | 35.1 % | 1.8 % | 24.0 |
+| mirror (5-dice round) | random | on | 50.6 % | 47.0 % | 2.4 % | 24.7 |
+| mirror (5-dice round) | greedy | off | 68.5 % | 29.2 % | 2.3 % | 31.4 |
+| mirror (5-dice round) | greedy | on | 51.9 % | 45.4 % | 2.8 % | 32.3 |
 
 What the numbers say:
 
@@ -68,11 +72,29 @@ What the numbers say:
   either way.
 - **The Last Word rule is needed, but a smashing last die over-corrects.** With a normal last die the starter wins only 44–45 % in
   Golden, Oracle and Blind (greedy bots 43–44 %). The soft landing brings that to 46–48 %, within the noise of how luck-heavy the
-  game is. Mirror keeps the normal last die: its pattern favours the starter (67 % greedy without Last Word) and a normal last die
-  brings it to 51 %.
-- **Mirror with the same die in consecutive turns** (the original idea) gave the second player 82–85 % of the games, with random and
-  greedy bots alike. The X Y / Y X order replaced it. Mirror games run long with greedy play (about 39 dice).
+  game is. Mirror keeps the normal last die: its pattern favours the starter (63–69 % without Last Word) and a normal last die
+  brings it to 51–52 %.
+- **Mirror with the same die in consecutive turns** (the original idea) gave the second player 85 % of the games, with random and
+  greedy bots alike. Mirror games run long with greedy play (about 32 dice).
 - Draws are about 2 %.
+
+### Mirror Dice: which pattern
+
+Last Word on, normal last die, 16 000 games per row (6 000 for the original-spec and classic-stream rows; random and greedy bots, starter alternates seats). "twin" is how often a die
+equals the one rolled on the turn before; "dice differ" is how often the two players' dice multisets differ at the end.
+`node tools/test/games/threed-bones.test.js --balance` prints the shipped row; the others were measured with a scratch copy of the rules.
+
+| pattern (other player's order) | random: starter / other | greedy: starter / other | twin | dice differ |
+|---|---|---|---|---|
+| same die in turns n and n+1 (original spec) | 14 % / 85 % | 13 % / 86 % | 60 % | never |
+| X Y / Y X, four turns (shipped before) | 44.3 % / 52.9 % | 51.4 % / 45.3 % | 37.5 % | 41 % |
+| round of four, other starts two along | 43.5 % / 53.9 % | 44.8 % / 52.5 % | 16.8 % | 72 % |
+| **round of five, other starts two along (shipped)** | **51.0 % / 46.5 %** | **51.8 % / 45.3 %** | **16.7 %** | 72 % |
+| plain classic stream, for scale | 44.5 % / 53.6 % | 42.6 % / 55.1 % | 16.5 % | always |
+
+A grid of rounds of 3 to 9 dice with every legal shift (4 000 games each) showed the shipped one is the closest to even for both
+bots at once; most patterns swing 10 to 25 points one way. The trade-off is the copy: the earlier pattern was an exact copy more
+often (59 % against 28 % of matches), but it handed the starter a twin of the other player's die more than a third of the time.
 
 ## Facts kept in state (additive, commentary and records only)
 
@@ -85,9 +107,10 @@ down, a 20+ point wipe, a triple stack, or just the score. `winner` is never aff
 
 ## Records and rivalry (`api.data`)
 
-Written once per match when the finale runs on a match that was **not** already over when this phone first opened it. Both phones
-compute the same values from the same state; `last_id` makes it idempotent. If the partner got there first, the flags are read back
-from `last_flags`.
+Written once per match, from `update()`, on the first state in which the match is over and that was **not** already over when this
+phone first opened it. That is before any animation, so a mover who taps the winning move and leaves at once still records the
+match. Both phones compute the same values from the same state; `last_id` makes it idempotent. If the partner got there first, the
+flags are read back from `last_flags`. Re-opening a finished match never records it again.
 
 | key | meaning |
 |---|---|
@@ -104,9 +127,11 @@ from `last_flags`.
 `*_best` and `*_n` only ever go up (the data layer keeps the maximum when syncing). NEW BEST flags need an earlier record to beat, so
 the first game only sets baselines. Everything is optional: with no `api.data` or no data the game plays normally.
 
-The in-game finale shows "Emerson has won 3 straight", the form strip (blue and pink ink dots, hollow for a draw) and up to two
-stamps ("New best: 71", "Biggest smash ever", "Biggest comeback"), then the engine's end card (`endDelay: 'manual'`, shown when the
-final smash and these stamps are done).
+The in-game finale shows "Emerson has won 3 straight", the form strip (blue and pink ink dots, hollow for a draw) in the band, and
+up to two stamps ("New best: 71", "Biggest smash ever", "Biggest comeback") parked over the trays, not over the band. The engine's
+end card (`endDelay: 'manual'`) is held until the recap has been on screen for about 1.7 s (the whole finale from the last move
+stays well inside core's 8 s safety net). `result().sub` stays a pure function of the state, so the streak and records aren't in
+the end card's own text; they are in the band, which stays readable behind the card and after "See the board".
 
 ## Feedback and delight
 
@@ -119,9 +144,21 @@ final smash and these stamps are done).
 - **Tap to skip**: a tap anywhere on the stage (but a pickable column) while a roll or placement plays out fast-forwards it. It never
   places a die.
 - **Twist picker**: the starter, before the first die, gets a 2 × 2 grid of chips (≥ 44 px, label plus one-line hint) over the
-  opponent's empty half. The last twist you picked is highlighted (`localStorage` `ju.bones.twist`) but never sent for you.
-  The partner sees "Emerson is choosing a twist…", then a toast "Emerson picked Golden Column". The twist shows as a badge on the band
-  for the whole match.
+  opponent's empty half. The last twist you picked is tagged (`localStorage` `ju.bones.twist`) but never sent for you.
+  The partner sees "Picking a twist…" next to "Rolling for Emerson", then a toast with the rule: "Emerson picked Golden Column. One
+  column scores double." On a shared phone the toast is only the rule ("Golden Column: One column scores double."): whoever tapped
+  doesn't need telling what they picked. The twist shows as a badge on the band for the whole match. The chip you picked last time
+  wears a small "Last time" tag (not a solid plate that looks selected); chip hints are at least 0.7 rem.
+- **Last Word** is explained where it shows: the band says "Last word" and "Last die, no smash" ("One last die" in Mirror, where
+  it does smash), so a soft die doesn't look broken.
+- **Band text fits.** The band is only about 58 px tall on a 390 × 664 phone. Band copy is one short line per side ("Picking a twist…",
+  "Choosing…", "Pick a column"); on a short band the "Final" kicker goes and the form dots shrink, and the test asserts every label
+  box lies inside the band at all six sizes and in every state.
+- **Stamps and the band.** A mid-board stamp (Triple, Wiped out, Comeback) sits over the band, so the band's text fades out while it
+  shows and comes back after. Finale stamps sit over the trays instead.
+- **WebGL context lost.** The frame loop stops while the context is lost, which would leave a roll waiting for ever. After 3 s the
+  3D view is parked, pending rolls are settled and play goes on with the flat dice; if the context is restored later the 3D view
+  comes back.
 - **Layout**: dice are sized from the viewport, not the content, so the board fits without scrolling at 320 × 568 up to 430 × 932
   portrait and 667 × 375 / 844 × 390 landscape (trays side by side with the band between). Column buttons are at least 44 px wide
   even when the die is narrower. Down to 320 × 568 the dice are 37 px.

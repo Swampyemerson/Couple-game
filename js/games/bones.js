@@ -16,9 +16,13 @@ const rollFor = (seed, n) => randInt(6, seed, 'roll', n) + 1;
 // setup move { tw: '<id>' } (it doesn't pass the turn); playing a die instead keeps the match
 // classic for good. Old logs never contain a setup move, so they replay exactly as they always did.
 //   golden: one seeded column is gilded for both players and scores double
-//   mirror: you each get the same dice, in a different order. Every four turns the starter rolls X then Y
-//           and the other player Y then X, so nobody can answer a die with its twin straight away
-//           (two turns in a row with the same die handed the second player 85% of the games)
+//   mirror: you both draw from the same dice, dealt in a different order. A round is five dice each: the
+//           starter takes them in order and the other player starts two places along (3 4 5 1 2), so nobody
+//           is handed the twin of the die just played against them. It is not an exact copy: a match ends
+//           part-way through a round in about three matches of four, so the last die or two can differ.
+//           (The same die in two turns running gave the second player 85% of the games; X Y / Y X, which
+//           still had a twin right after Y, was 44% starter wins with random bots and 51% with greedy.
+//           The five-dice round: 51% and 52%. See docs/games/bones.md.)
 //   blind:  you pick a column before you see the roll (rules as classic; the view hides the die)
 //   oracle: both players see the next two rolls (rules as classic; the view shows them)
 // Every twist also plays the Last Word rule: if the starter fills their grid first, the other
@@ -37,9 +41,9 @@ const TWIST_IDS = ['golden', 'mirror', 'blind', 'oracle'];
 const twisted = (s) => !!s.tw && s.tw !== 'classic';
 /** The die for turn n under this match's rules. */
 function rollAt(s, n) {
-  if (s.tw === 'mirror') { // starter X Y, other Y X, then the next pair of dice
-    const k = Math.floor(n / 4) * 2;
-    return rollFor(s.seed, n % 4 === 0 || n % 4 === 3 ? k : k + 1);
+  if (s.tw === 'mirror') { // the starter (even turns) takes a round's five dice in order; the other player starts two along
+    const i = (n >> 1) % 5;
+    return rollFor(s.seed, Math.floor(n / 10) * 5 + (n % 2 ? (i + 2) % 5 : i));
   }
   return rollFor(s.seed, n);
 }
@@ -329,6 +333,11 @@ function dieView3D(THREE, canvas, pal0, onTick) {
     setInks(top, bot) { pal.topInk = top; pal.botInk = bot; },
     /** Jump the current roll / hide to its end state on the next frame. */
     fast() { if (st.mode === 'roll' || st.mode === 'hide') st.t = st.dur; },
+    /** The GL context is gone for good: settle whatever was waiting on a frame (nothing will draw it). */
+    abort() {
+      const r = st.res; st.res = null; st.mode = 'idle'; st.scale = 1;
+      if (r) r();
+    },
     step(dt) {
       if (st.mode === 'roll') {
         st.t += dt;
@@ -549,7 +558,11 @@ registerGame({
     .g-bones .gb-top .gb-die.shift { animation: gb-shift-t 0.28s ease-out both; }
     .g-bones .gb-band { position: relative; height: var(--gb-band); border: 2px solid var(--g-ink); border-radius: var(--g-radius); background: var(--g-card); box-shadow: var(--g-shadow); touch-action: none; }
     .g-bones .gb-band canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; border-radius: calc(var(--g-radius) - 2px); }
-    .g-bones .gb-lab { position: absolute; top: 50%; transform: translateY(-50%); max-width: 31%; display: flex; flex-direction: column; gap: 4px; font-weight: 900; font-size: 0.86rem; line-height: 1.15; pointer-events: none; }
+    .g-bones .gb-lab { position: absolute; top: 50%; transform: translateY(-50%); max-width: 36%; display: flex; flex-direction: column; gap: 4px; font-weight: 900; font-size: 0.86rem; line-height: 1.15; pointer-events: none; transition: opacity 0.12s; }
+    .g-bones .gb-lab > * { max-width: 100%; }
+    .g-bones .gb-lab .gb-hint, .g-bones .gb-lab .gb-streak, .g-bones .gb-lab .gb-wn, .g-bones .gb-lab .gb-kick { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .g-bones .gb-hint { font-size: 0.72rem; font-weight: 800; }
+    .g-bones .gb-band.is-stamped .gb-lab { opacity: 0; } /* a stamp on the board is covering the band text: hide it for the moment */
     .g-bones .gb-lab-l { left: 12px; align-items: flex-start; }
     .g-bones .gb-lab-r { right: 12px; align-items: flex-end; text-align: right; color: var(--g-muted); font-weight: 800; }
     .g-bones .gb-kick { font-size: 0.62rem; font-weight: 900; letter-spacing: 0.14em; text-transform: uppercase; color: var(--g-muted); }
@@ -558,9 +571,21 @@ registerGame({
     .g-bones .gb-arrow.up { border-bottom: 9px solid var(--g-ink); }
     .g-bones .gb-lab-r b { color: var(--g-ink); }
     .g-bones .gb-big { font-family: var(--g-font-display); font-weight: 900; font-size: 1.3rem; line-height: 1.05; color: var(--g-ink); }
-    .g-bones .gb-lab-r .gb-big { font-size: 1.9rem; }
     .g-bones .gb-band.is-final .gb-lab { max-width: 60%; }
-    .g-bones .gb-band.is-final .gb-lab-r { max-width: 34%; }
+    .g-bones .gb-band.is-final .gb-lab-r { max-width: 36%; }
+    .g-bones .gb-by { display: flex; align-items: baseline; gap: 5px; }
+    .g-bones .gb-by .gb-big { font-size: 1.7rem; }
+    /* a short band (small phones): one line of kicker-free text each side, so nothing spills out of it */
+    .g-bones.is-short .gb-lab { font-size: 0.8rem; gap: 2px; }
+    .g-bones.is-short .gb-kick { font-size: 0.58rem; }
+    .g-bones.is-short .gb-hint { font-size: 0.7rem; }
+    .g-bones.is-short .gb-band.is-final .gb-lab > .gb-kick { display: none; }
+    .g-bones.is-short .gb-big { font-size: 1.1rem; }
+    .g-bones.is-short .gb-by .gb-big { font-size: 1.5rem; }
+    .g-bones.is-short .gb-streak { font-size: 0.68rem; }
+    .g-bones.is-short .gb-form { margin-top: 2px; gap: 3px; }
+    .g-bones.is-short .gb-fd { width: 7px; height: 7px; border-width: 1.5px; }
+    .g-bones.is-short .gb-nx { margin-top: 0; }
     .g-bones .gb-die2d { position: absolute; left: 50%; top: 50%; width: calc(var(--gb-band) * 0.52); height: calc(var(--gb-band) * 0.52); transform: translate(-50%, -50%); }
     .g-bones .gb-die2d .gb-die { box-shadow: var(--g-shadow); }
     .g-bones .gb-die2d.rolling .gb-die { animation: gb-tumble 0.8s cubic-bezier(.2, .7, .3, 1) both; }
@@ -589,17 +614,16 @@ registerGame({
     .g-bones .gb-pk-head { margin: 0; font-size: 0.72rem; line-height: 1.2; color: var(--g-muted); font-weight: 700; }
     .g-bones .gb-pk-head b { color: var(--g-ink); font-weight: 900; }
     .g-bones .gb-pk-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: minmax(44px, 1fr); gap: 6px; }
-    .g-bones .gb-pk { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 1px; min-width: 0; min-height: 44px; margin: 0; padding: 3px 8px; border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); background: var(--g-card); box-shadow: var(--g-shadow-sm); color: var(--g-ink); font: inherit; text-align: left; touch-action: manipulation; -webkit-tap-highlight-color: transparent; cursor: pointer; }
+    .g-bones .gb-pk { position: relative; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 1px; min-width: 0; min-height: 44px; margin: 0; padding: 2px 8px; border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); background: var(--g-card); box-shadow: var(--g-shadow-sm); color: var(--g-ink); font: inherit; text-align: left; touch-action: manipulation; -webkit-tap-highlight-color: transparent; cursor: pointer; }
     .g-bones .gb-pk b { font-size: 0.8rem; font-weight: 900; line-height: 1.15; }
-    .g-bones .gb-pk span { font-size: 0.64rem; font-weight: 700; line-height: 1.15; color: var(--g-muted); }
-    .g-bones .gb-pk.is-last { background: var(--g-hl); color: var(--g-on-ink); }
-    .g-bones .gb-pk.is-last span { color: var(--g-on-ink); }
+    .g-bones .gb-pk span { font-size: 0.7rem; font-weight: 700; line-height: 1.1; color: var(--g-muted); }
+    .g-bones .gb-pk.is-last::after { content: 'Last time'; position: absolute; top: -9px; right: 6px; padding: 0 6px; border: 1.5px solid var(--g-ink); border-radius: 999px; background: var(--g-hl); color: var(--g-on-ink); font-size: 0.58rem; font-weight: 900; letter-spacing: 0.06em; line-height: 1.3; text-transform: uppercase; pointer-events: none; }
     .g-bones.is-land .gb-picker { padding: 6px; gap: 4px; }
     .g-bones.is-land .gb-pk-head span { display: none; }
     .g-bones.is-land .gb-pk-grid { gap: 5px; }
     .g-bones.is-land .gb-pk { padding: 3px 6px; overflow: hidden; }
     .g-bones.is-land .gb-pk b { font-size: 0.72rem; }
-    .g-bones.is-land .gb-pk span { font-size: 0.58rem; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+    .g-bones.is-land .gb-pk span { font-size: 0.7rem; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
     .g-bones .gb-pk:active { transform: translate(2px, 2px); box-shadow: 0 0 0 var(--g-edge); }
     .g-bones .gb-pk:focus-visible { outline: 3px solid var(--g-ink); outline-offset: 2px; }
     /* the band: twist badge, the mystery die, the oracle's next dice, stamps, final recap */
@@ -638,7 +662,8 @@ registerGame({
     .g-bones.is-land .gb-band.is-final .gb-lab, .g-bones.is-land .gb-band.is-final .gb-lab-r { max-width: none; }
     .g-bones.is-land .gb-arrow { transform: rotate(-90deg); }
     .g-bones.is-land .gb-die2d { width: 64px; height: 64px; }
-    .g-bones.is-land .gb-lab-r .gb-big { font-size: 1.5rem; }
+    .g-bones.is-land .gb-by .gb-big { font-size: 1.5rem; }
+    .g-bones.is-land .gb-hint, .g-bones.is-land .gb-streak, .g-bones.is-land .gb-wn { white-space: normal; }
     @keyframes gb-hint { from { transform: scale(0.9); } to { transform: none; } }
     @keyframes gb-wobble { 0%, 100% { transform: translate(-50%, -50%) rotate(-7deg); } 50% { transform: translate(-50%, -54%) rotate(7deg); } }
     @keyframes gb-stamp { 0% { opacity: 0; transform: translate(-50%, -50%) scale(1.8) rotate(calc(var(--rot) - 8deg)); } 16% { opacity: 1; transform: translate(-50%, -50%) scale(1) rotate(var(--rot)); } 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -58%) scale(1) rotate(var(--rot)); } }
@@ -694,6 +719,7 @@ registerGame({
     const labR = $('.gb-lab-r');
     const badge = $('.gb-badge');
     const qDie = $('.gb-q');
+    const board = $('.gb-board');
     const stampBig = $('.gb-stamp:not(.sm)');
     const stampSm = $('.gb-stamp.sm');
     const halves = { top: $('.gb-top'), bot: $('.gb-bot') };
@@ -800,6 +826,7 @@ registerGame({
       for (const [c, pen] of cands) { const v = c.fits ? c.die - pen : -1e6 + c.die; if (v > top) { top = v; L = c; } }
       root.classList.toggle('is-land', L.land);
       root.classList.toggle('is-tight', L.tight);
+      root.classList.toggle('is-short', !L.land && L.band < 84);
       root.style.setProperty('--gb-die', `${L.die}px`);
       root.style.setProperty('--gb-col', `${L.col}px`);
       root.style.setProperty('--gb-gap', `${L.gap}px`);
@@ -913,14 +940,16 @@ registerGame({
       labL.querySelector('.gb-wn').textContent = nm === 'You' ? '' : nm;
       const nx = s && s.tw === 'oracle' && !s.over && !s.final ? `<span class="gb-nx"><i class="gb-kick">Next</i>${nextRolls(s).map((v) => dieHTML(v, 'mini')).join('')}</span>` : '';
       const first = !!(s && s.n === 0 && s.tw === undefined);
+      // one short line under the headline: the band is only ~58 px tall on a small phone
+      const lwHint = s && s.tw === 'mirror' ? 'One last die' : 'Last die, no smash';
       if (mode === 'rolling') labR.innerHTML = nx;
       else if (mode === 'mystery') labR.innerHTML = `<b>Blind draw</b><span class="gb-wait gb-hint"></span>`;
-      else if (mode === 'pick') labR.innerHTML = `<b>Rolled ${value}</b><span class="gb-hint">${coarse() ? 'Pick a column' : 'Pick a column, or press 1–3'}</span>${nx}`;
+      else if (mode === 'pick') labR.innerHTML = `<b>Rolled ${value}</b><span class="gb-hint">${lastWord ? lwHint : coarse() ? 'Pick a column' : 'Pick a column (1–3)'}</span>${nx}`;
       else labR.innerHTML = `<b>Rolled ${value}</b><span class="gb-wait gb-hint"></span>${nx}`;
       const wt = labR.querySelector('.gb-wait');
       if (wt) {
-        if (mode === 'mystery') wt.textContent = w === (ctxNow && ctxNow.actor) || (ctxNow && ctxNow.mode === 'local') ? 'Pick before you see it' : `${api.name(w)} is choosing blind`;
-        else wt.textContent = first ? `${api.name(w)} is choosing a twist…` : `${api.name(w)} is choosing`;
+        if (mode === 'mystery') wt.textContent = w === (ctxNow && ctxNow.actor) || (ctxNow && ctxNow.mode === 'local') ? 'Pick blind' : 'Choosing blind';
+        else wt.textContent = lastWord ? lwHint : first ? 'Picking a twist…' : 'Choosing…';
       }
     }
 
@@ -977,10 +1006,28 @@ registerGame({
       band.dataset.roll = String(value);
       sfx('flip');
     }
-    function stamp(text, small) {
+    let bandT = 0;
+    /** Ink a stamp on the board. `on` = 'top' / 'bot' parks it over that tray (the finale, so the recap in the band
+     *  stays readable); without it the stamp sits mid-board over the band and its text fades out for a moment. */
+    function stamp(text, small, on) {
       const e = small ? stampSm : stampBig;
       e.textContent = text;
       e.classList.remove('show');
+      e.style.left = ''; e.style.maxWidth = '';
+      if (on) {
+        const br = board.getBoundingClientRect();
+        const tr = halves[on].querySelector('.gb-tray').getBoundingClientRect();
+        e.style.top = `${Math.round(tr.top + tr.height / 2 - br.top)}px`;
+        if (root.classList.contains('is-land')) { // side-by-side trays: stay over this tray, wrapping if need be
+          e.style.left = `${Math.round(tr.left + tr.width / 2 - br.left)}px`;
+          e.style.maxWidth = `${Math.round(tr.width)}px`;
+        }
+      } else {
+        e.style.top = '';
+        band.classList.add('is-stamped');
+        clearTimeout(bandT);
+        bandT = setTimeout(() => band.classList.remove('is-stamped'), reduced() ? 1300 : 1150);
+      }
       void e.offsetWidth;
       e.classList.add('show');
       clearTimeout(e._t);
@@ -1048,7 +1095,9 @@ registerGame({
       if (prev === null || prev === now) return; // first look, or nothing new
       if (now === 'blind') dieN = -1; // the first die the starter watched was thrown away: roll the real one when it lands
       if (now && now !== 'classic' && !(c.mode === 'online' && s.first === c.me)) {
-        const msg = `${whoLabel(s.first) === 'You' ? 'You' : api.name(s.first)} picked ${TWISTS[now].name}`;
+        // online: the partner is told who picked what and how it plays. Same phone: whoever tapped knows what they
+        // picked, so the toast is just the rule for the person next to them.
+        const msg = c.mode === 'local' ? `${TWISTS[now].name}: ${TWISTS[now].hint}` : `${api.name(s.first)} picked ${TWISTS[now].name}. ${TWISTS[now].hint}`;
         api.toast(msg);
         log(`picked:${now}`);
         log(`toast:${msg}`);
@@ -1146,6 +1195,7 @@ registerGame({
       root.dataset.phase = picking ? 'pick' : 'wait';
       animating = false;
       skipping = false;
+      if (dv3 && !$('.gb-die2d').querySelector('.gb-die')) redrawDie(); // flat dice standing in for a lost 3D view
     }
     /** Records and rivalry: fold this match into the shared per-game data (once; both phones agree). */
     let recap = null;
@@ -1176,7 +1226,6 @@ registerGame({
       finaleDone = true;
       log('finale');
       const r = c.result || result(s);
-      if (!openedOver) recordMatch(c); // an old finished match, reopened, never counts twice
       for (const [k, w] of [['top', topW], ['bot', bottom]]) {
         halves[k].classList.toggle('is-win', r.winner === w);
         halves[k].classList.toggle('is-lose', !!r.winner && r.winner !== w);
@@ -1185,11 +1234,12 @@ registerGame({
       band.classList.add('is-final');
       const streakLine = recap && recap.streak && recap.streak.len >= 2 && (recap.streak.who === 'a' || recap.streak.who === 'b')
         ? `${nameFor(recap.streak.who)} ${nameFor(recap.streak.who) === 'You' ? 'have' : 'has'} won ${recap.streak.len} straight` : '';
+      const nmW = r.winner ? (whoLabel(r.winner) === 'You' ? 'You win' : `${api.name(r.winner)} wins`) : 'Dead even';
       labL.innerHTML = `<span class="gb-kick">Final</span><span class="gb-wn gb-big"></span><span class="gb-streak"></span>`;
-      labL.querySelector('.gb-wn').textContent = r.winner ? `${whoLabel(r.winner) === 'You' ? 'You win' : `${api.name(r.winner)} wins`}` : 'Dead even';
+      labL.querySelector('.gb-wn').textContent = nmW;
       labL.querySelector('.gb-streak').textContent = streakLine;
-      labR.innerHTML = (r.winner ? `<span class="gb-kick">by</span><b class="gb-big">${Math.abs(sc.a - sc.b)}</b>` : `<b>${sc.a} apiece</b>`) + formHTML(recap && recap.form);
-      // the stamps: new records first
+      labR.innerHTML = (r.winner ? `<span class="gb-by"><span class="gb-kick">by</span><b class="gb-big">${Math.abs(sc.a - sc.b)}</b></span>` : `<b>${sc.a} apiece</b>`) + formHTML(recap && recap.form);
+      // new records get a stamp each (over the trays: the recap in the band stays readable), then the end card
       const flags = recap && recap.flags ? recap.flags.split(',').filter(Boolean) : [];
       const lines = [];
       for (const f of flags) {
@@ -1197,13 +1247,14 @@ registerGame({
         else if (f === 'smash') lines.push('Biggest smash ever');
         else if (f === 'comeback') lines.push('Biggest comeback');
       }
-      for (const text of lines.slice(0, 2)) {
-        stamp(text);
-        sfx('good');
-        await sleep(reduced() ? 150 : 1150);
+      if (lines[0]) { stamp(lines[0], false, 'top'); sfx('good'); }
+      if (lines[1]) {
+        await sleep(reduced() ? 100 : 450);
+        stamp(lines[1], true, 'bot'); sfx('good');
       }
-      // hold the end card until the final smash has landed and the banner has had its moment
-      await sleep(reduced() ? 150 : 900);
+      // The band's recap (winner, streak, form) and the stamps get ~1.7 s before the end card covers them.
+      // Total from the last move stays well under core's 8 s safety net.
+      await sleep(reduced() ? 250 : lines[1] ? 1250 : 1700);
       animating = false;
       skipping = false;
       api.showEnd();
@@ -1291,22 +1342,63 @@ registerGame({
       else { lastT = 0; renderNow(); kick(); }
     }
     document.addEventListener('visibilitychange', onVis);
+    // A lost context stops every frame, so a roll or a hide that is waiting for its last frame would wait for ever.
+    // Give the browser a moment to restore it; if it doesn't, play on with the flat dice (and go back to 3D if it
+    // does come back later).
+    const GL_GRACE_MS = 3000;
+    let lostT = 0;
+    let dv3 = null; // the 3D view, parked while flat dice are standing in for it
+    /** Put the current die (if one is showing) back on whichever view is live. */
+    function redrawDie() {
+      const c = ctxNow;
+      const s = c && c.state;
+      if (!dv || !s || s.over || animating || isBlind() || dieN !== s.n) return;
+      const yaw = (api.rand(s.seed, 'yaw', s.n) - 0.5) * 0.9;
+      dv.roll(s.roll, s.turn === topW ? 'top' : 'bot', yaw, true);
+      kick();
+    }
+    function glToFlat() {
+      if (dead || !dv || dv.kind !== '3d' || !glLost) return;
+      log('gl-flat');
+      dv3 = dv;
+      try { dv3.abort(); } catch (err) { console.warn('[bones] abort', err); }
+      canvas.hidden = true;
+      band.dataset.gl = '2d';
+      dv = dieView2D($('.gb-die2d'));
+      glLost = false;
+      setSides();
+      redrawDie();
+    }
     function onLost(e) {
       e.preventDefault();
       glLost = true;
       if (raf) cancelAnimationFrame(raf);
       raf = 0;
       band.dataset.gl = 'lost';
+      clearTimeout(lostT);
+      lostT = setTimeout(glToFlat, (T() && T().glGraceMs) || GL_GRACE_MS);
     }
     function onRestored() {
+      clearTimeout(lostT);
       setTimeout(() => { // three.js re-creates its GL state in its own listener first
-        if (dead || !dv) return;
-        try { dv.restore(); } catch (err) { console.warn('[bones] restore', err); }
+        if (dead) return;
+        if (dv3) { // back from flat dice
+          try { dv3.restore(); } catch (err) { console.warn('[bones] restore', err); dv3 = null; return; }
+          try { dv.dispose(); } catch { /* ignore */ }
+          $('.gb-die2d').hidden = true;
+          dv = dv3; dv3 = null;
+          canvas.hidden = false;
+          setSides();
+          dv.resize(band.clientWidth, band.clientHeight);
+        } else if (dv) {
+          try { dv.restore(); } catch (err) { console.warn('[bones] restore', err); }
+        } else return;
         glLost = false;
         band.dataset.gl = 'ok';
         log('restored');
         lastT = 0;
         renderNow();
+        redrawDie();
         kick();
       }, 0);
     }
@@ -1351,12 +1443,17 @@ registerGame({
         ctxNow = c;
         if (!c || !c.state) return;
         if (openedOver === null) openedOver = !!c.over;
+        // The match just ended on this phone: write the records now, before any animation, so a mover who
+        // leaves during the finale still counts it (idempotent per match via last_id).
+        if (c.over && !openedOver && !recap) recordMatch(c);
         if (c.mode === 'online' && c.me && c.me !== bottom) { bottom = c.me; topW = other(bottom); setSides(); }
         enqueue(sync);
       },
       destroy() {
         dead = true;
         clearTimeout(slowT);
+        clearTimeout(lostT);
+        clearTimeout(bandT);
         if (raf) cancelAnimationFrame(raf);
         raf = 0;
         ro.disconnect();
@@ -1373,7 +1470,8 @@ registerGame({
         canvas.removeEventListener('webglcontextlost', onLost, false);
         canvas.removeEventListener('webglcontextrestored', onRestored, false);
         if (dv) { try { dv.dispose(); } catch (err) { console.warn('[bones] dispose', err); } }
-        dv = null;
+        if (dv3) { try { dv3.dispose(); } catch { /* ignore */ } }
+        dv = dv3 = null;
       },
     };
   },

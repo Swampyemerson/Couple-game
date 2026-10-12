@@ -195,13 +195,21 @@ async function twistRules() {
   // mirror
   const m0 = step(B.init({ first: 'a', seed: 4242, opts: {} }), 'a', { tw: 'mirror' });
   let ms = m0; const rolls = [];
-  for (let i = 0; i < 12; i++) { rolls.push(ms.roll); ms = step(ms, ms.turn, { col: i % 3 }); }
+  for (let i = 0; i < 16; i++) { rolls.push(ms.roll); ms = step(ms, ms.turn, { col: i % 3 }); }
   const rf = (k) => core.randInt(6, 4242, 'roll', k) + 1;
-  const want = (i) => { const k = Math.floor(i / 4) * 2; return i % 4 === 0 || i % 4 === 3 ? rf(k) : rf(k + 1); };
-  ok(rolls.every((v, i) => v === want(i)) && rolls[0] === rf(0), 'bones mirror: every four turns the starter gets X then Y and the other player Y then X');
-  const startersDice = rolls.filter((_, i) => i % 2 === 0).slice(0, 4); const otherDice = rolls.filter((_, i) => i % 2 === 1).slice(0, 4);
-  ok([0, 1].every((blk) => [startersDice[2 * blk], startersDice[2 * blk + 1]].sort().join() === [otherDice[2 * blk], otherDice[2 * blk + 1]].sort().join()), 'bones mirror: …so both players get exactly the same dice, and never the twin of the die just played');
-  ok(new Set(rolls).size > 2 && rolls[1] !== undefined, 'bones mirror: …and the dice still vary');
+  // a round is five dice each: the starter takes them in order, the other player starts two places along
+  const slot = (i) => { const j = (i >> 1) % 5; return Math.floor(i / 10) * 5 + (i % 2 ? (j + 2) % 5 : j); };
+  ok(rolls.every((v, i) => v === rf(slot(i))) && rolls[0] === rf(0) && m0.roll === rf(0), 'bones mirror: the starter takes a round’s five dice in order and the other player starts two places along');
+  ok([0, 1].every((rd) => [0, 2, 4, 6, 8].map((i) => slot(10 * rd + i)).sort().join() === [1, 3, 5, 7, 9].map((i) => slot(10 * rd + i)).sort().join()), 'bones mirror: …so over a round both players get exactly the same five dice');
+  ok(Array.from({ length: 80 }, (_, i) => slot(i) !== slot(i + 1)).every(Boolean), 'bones mirror: …and nobody is ever handed the very same slot straight after it was played');
+  ok(new Set(rolls).size > 2, 'bones mirror: …and the dice still vary');
+  // how often the die you get is the twin of the one just played against you: chance (1 in 6), not the 37% of the old X Y / Y X
+  let twins = 0; let pairs = 0;
+  for (let g = 0; g < 300; g++) {
+    let x = step(B.init({ first: g % 2 ? 'a' : 'b', seed: 91000 + g, opts: {} }), g % 2 ? 'a' : 'b', { tw: 'mirror' }); let prev = null;
+    for (let i = 0; i < 16; i++) { if (prev !== null) { pairs++; if (prev === x.roll) twins++; } prev = x.roll; x = step(x, x.turn, { col: i % 3 }); }
+  }
+  ok(twins / pairs < 0.22, `bones mirror: the next die matches the one just played ${(100 * twins / pairs).toFixed(1)}% of the time (chance is 16.7%)`);
 
   // blind
   const bl = step(B.init({ first: 'a', seed: 4242, opts: {} }), 'a', { tw: 'blind' });
@@ -390,6 +398,31 @@ const logOf = (pg) => pg.evaluate(() => window.__bonesTest.log.slice());
 
 // ── layout at every size ──────────────────────────────────────────────
 const VIEWPORTS = [[320, 568], [360, 740], [390, 664], [430, 932], [844, 390], [667, 375]];
+/** Everything written in the band (both labels and every line in them) lies inside the band's box, nothing is cut off
+ *  by an ellipsis, and the two labels don't run into each other. */
+async function bandFit(pg, what) {
+  const m = await pg.evaluate(() => {
+    const band = document.querySelector('.gb-band');
+    const B = band.getBoundingClientRect();
+    const inside = (r) => r.left >= B.left - 0.5 && r.right <= B.right + 0.5 && r.top >= B.top - 0.5 && r.bottom <= B.bottom + 0.5;
+    const bad = [];
+    const labs = [...band.querySelectorAll('.gb-lab')];
+    const boxes = [];
+    for (const l of labs) {
+      const r = l.getBoundingClientRect();
+      if (r.width && r.height) boxes.push(r);
+      if (r.width && !inside(r)) bad.push(`label box ${Math.round(r.left - B.left)},${Math.round(r.top - B.top)} ${Math.round(r.width)}x${Math.round(r.height)} in a ${Math.round(B.width)}x${Math.round(B.height)} band`);
+      for (const e of l.querySelectorAll('*')) {
+        const q = e.getBoundingClientRect();
+        if (q.width && q.height && !inside(q)) bad.push(`"${(e.textContent || '').trim().slice(0, 24)}" (${e.className}) spills out of the band`);
+        if (getComputedStyle(e).textOverflow === 'ellipsis' && e.scrollWidth > e.clientWidth + 1) bad.push(`"${(e.textContent || '').trim().slice(0, 24)}" is cut off`);
+      }
+    }
+    if (boxes.length === 2 && !(boxes[0].right <= boxes[1].left || boxes[1].right <= boxes[0].left || boxes[0].bottom <= boxes[1].top || boxes[1].bottom <= boxes[0].top)) bad.push('the two labels overlap');
+    return { bad, text: band.innerText.replace(/\s+/g, ' ').trim(), size: `${Math.round(B.width)}x${Math.round(B.height)}` };
+  });
+  ok(!m.bad.length, `bones band fits (${what}, band ${m.size}): "${m.text.slice(0, 60)}"${m.bad.length ? ' PROBLEMS: ' + m.bad.join('; ') : ''}`);
+}
 async function layoutTests(h, pg, tag) {
   for (const [w, hh] of VIEWPORTS) {
     await pg.setViewportSize({ width: w, height: hh });
@@ -422,6 +455,7 @@ async function layoutTests(h, pg, tag) {
       return !!(hit && hit.closest('.gb-col.can'));
     });
     ok(tap, `bones layout ${label}: the bottom of a column is not covered by anything`);
+    await bandFit(pg, `${label} ${tag}, first roll`);
     await h.closeGame(pg);
   }
 }
@@ -534,7 +568,7 @@ async function finaleTiming(h, pg) {
   const crack = snap.log.lastIndexOf('crack');
   ok(crack > snap.log.lastIndexOf('roll:' + g.s.last.value) - 1 && crack >= 0, 'bones: the final move was a smash (cracked and popped before the card)');
   const msAfter = snap.t - snap.at[iFin];
-  ok(msAfter >= 400, `bones: the end card follows the finale banner by ${Math.round(msAfter)} ms (not on a fixed timer)`);
+  ok(msAfter >= 1500 && msAfter < 6500, `bones: the end card follows the finale banner by ${Math.round(msAfter)} ms (long enough to read the recap, well inside core’s 8 s net)`);
   await h.closeGame(pg);
 }
 
@@ -585,13 +619,21 @@ async function celebrations(h, pg) {
     const vis = await pg.$eval(kind === 'comeback' ? '.gb-stamp.sm' : '.gb-stamp:not(.sm)', (e) => ({ op: Number(getComputedStyle(e).opacity), an: getComputedStyle(e).animationName, dur: getComputedStyle(e).animationDuration, cls: e.className }));
     ok(vis.op > 0.3, `bones celebration: …and it is visible (${kind}: ${JSON.stringify(vis)})`);
     ok((await logOf(pg)).includes('sfx:win') || kind === 'comeback', `bones celebration: …with its sound`);
+    if (kind !== 'comeback') {
+      // the stamp sits over the band: its text steps aside while the stamp shows, and comes back after
+      const during = await pg.evaluate(() => ({ cls: document.querySelector('.gb-band').classList.contains('is-stamped'), ops: [...document.querySelectorAll('.gb-lab')].map((e) => Number(getComputedStyle(e).opacity)) }));
+      ok(during.cls && during.ops.every((o) => o < 0.1), `bones celebration: …and the band text steps aside while the ${kind} stamp covers it (${during.ops.join('/')})`);
+      await pg.waitForFunction(() => !document.querySelector('.gb-band').classList.contains('is-stamped'), null, { timeout: 4000 });
+      await pg.waitForTimeout(250);
+      ok((await pg.$$eval('.gb-lab', (x) => x.map((e) => Number(getComputedStyle(e).opacity)))).every((o) => o === 1), 'bones celebration: …and it is back once the stamp is gone');
+    }
     await h.closeGame(pg);
   }
 }
 
 // ── Last Word ─────────────────────────────────────────────────────────
-async function lastWord(h, pg) {
-  await pg.setViewportSize({ width: 390, height: 844 });
+async function lastWord(h, pg, w = 390, hh = 844) {
+  await pg.setViewportSize({ width: w, height: hh });
   await hook(pg);
   const sim = await newLocalSim(h, pg, (first, seed) => { const x = flagsOf(seed, first, { tw: 'golden' }).g.s; return x.final === true && x.n >= 14 && x.n <= 26; }, 77);
   const { g } = flagsOf(sim.seed, sim.first, { tw: 'golden' });
@@ -604,9 +646,12 @@ async function lastWord(h, pg) {
   const mid = await h.engine(pg, id);
   ok(mid.state.final === true && !mid.over && mid.state.grids[found.first].every((c) => c.length === 3), 'bones last word: the starter filled their grid and the game is still on');
   ok(/last word/i.test(await pg.textContent('.gb-lab-l')), 'bones last word: the band says “Last word”');
+  ok(/no smash/i.test(await pg.textContent('.gb-lab-r')), 'bones last word: …and explains it (“Last die, no smash”), so a soft die doesn’t look broken');
+  await bandFit(pg, `${w}×${hh} Last Word`);
+  ok((await logOf(pg)).includes('toast:Golden Column: One column scores double.') && !(await logOf(pg)).some((x) => /picked/.test(x) && x.startsWith('toast:')), 'bones twist: on one phone the toast is just the rule (nobody is told what they picked themselves)');
   ok(!(await pg.$('.gb-die.threat')), 'bones last word: and no threat outlines (the last die lands softly)');
   ok((await pg.$$eval('.gb-tray.is-picking .gb-pv.dn', (x) => x.length)) === 0, 'bones last word: …and no −M preview chips');
-  await shot(pg, 'bones-light-390-lastword.png');
+  if (w === 390 && hh === 844) await shot(pg, 'bones-light-390-lastword.png');
   await pg.tap(`.gb-tray[data-who="${g.moves[n - 1].who}"].is-picking .gb-col[data-col="${g.moves[n - 1].mv.col}"]`); // the last word
   await endCard(pg, 12000);
   const e = await h.engine(pg, id);
@@ -740,7 +785,9 @@ async function onlineTwists(h) {
   ok(pk.every((x) => /\./.test(x.t) && x.t.length > 18), 'bones twist: …each with a label and a one-line hint');
   ok((await S.$eval('.gb-picker:not([hidden])', (e) => e.closest('.gb-half').dataset.who)) === other(sw), 'bones twist: the picker covers the opponent’s empty half, not the starter’s own tray');
   ok((await O.$$eval('.gb-picker:not([hidden])', (x) => x.length)) === 0, 'bones twist: the partner sees no picker');
-  ok(new RegExp(`${nm(sw)} is choosing a twist`, 'i').test(await O.textContent('.gb-band')), `bones twist: …and is told “${nm(sw)} is choosing a twist…”`);
+  ok(/Picking a twist/i.test(await O.textContent('.gb-band')) && new RegExp(nm(sw)).test(await O.textContent('.gb-band')), `bones twist: …and is told “${nm(sw)}” is “Picking a twist…” (one short line, so it fits the band)`);
+  const pkFit = await S.$$eval('.gb-picker:not([hidden]) .gb-pk', (x) => x.map((e) => ({ fs: parseFloat(getComputedStyle(e.querySelector('span')).fontSize), over: e.scrollHeight > e.clientHeight + 1, out: e.getBoundingClientRect().bottom > innerHeight })));
+  ok(pkFit.every((x) => x.fs >= 11.19 && !x.over && !x.out), `bones twist: the chip hints are at least 0.7rem (${pkFit[0].fs}px) and nothing spills out of a chip`);
   ok((await S.$$eval('.gb-pk.is-last', (x) => x.length)) === 0, 'bones twist: nothing is preselected on a first match');
   await shot(S, 'bones-light-390-picker.png');
   await S.tap('.gb-pk[data-tw="golden"]');
@@ -752,7 +799,7 @@ async function onlineTwists(h) {
     ok(/Golden Column/.test(await P[w].textContent('.gb-badge')), `bones twist: ${nm(w)}’s phone shows the Golden Column badge`);
   }
   await O.waitForFunction(() => window.__bonesTest.log.includes('picked:golden'), null, { timeout: 5000 });
-  ok((await O.evaluate(() => window.__bonesTest.log)).includes(`toast:${nm(sw)} picked Golden Column`) && !(await S.evaluate(() => window.__bonesTest.log)).some((x) => x.startsWith('toast:')), `bones twist: the partner is told “${nm(sw)} picked Golden Column” (the picker isn’t)`);
+  ok((await O.evaluate(() => window.__bonesTest.log)).includes(`toast:${nm(sw)} picked Golden Column. One column scores double.`) && !(await S.evaluate(() => window.__bonesTest.log)).some((x) => x.startsWith('toast:')), `bones twist: the partner is told “${nm(sw)} picked Golden Column. One column scores double.” so they know the rule (the picker isn’t told anything)`);
   ok((await S.$$eval('.gb-picker:not([hidden])', (x) => x.length)) === 0, 'bones twist: the picker is gone once a twist is chosen');
   for (const w of ['a', 'b']) {
     const gold = await P[w].$$eval('.gb-col.gold', (x) => x.map((e) => e.dataset.col));
@@ -784,7 +831,11 @@ async function onlineTwists(h) {
   ({ id, sw, S, O } = await start());
   const had = await S.$$eval('.gb-pk.is-last', (x) => x.map((e) => e.dataset.tw));
   const first1 = sw;
-  ok(had.length === 0 || had[0] === 'golden', 'bones twist: the chip you picked last time is highlighted (only on your own phone), never auto-sent');
+  ok(had.length === 0 || had[0] === 'golden', 'bones twist: the chip you picked last time is marked (only on your own phone), never auto-sent');
+  if (had.length) {
+    const lastChip = await S.$eval('.gb-pk.is-last', (e) => ({ tag: getComputedStyle(e, '::after').content, bg: getComputedStyle(e).backgroundColor, other: getComputedStyle(e.parentElement.querySelector('.gb-pk:not(.is-last)')).backgroundColor }));
+    ok(/Last time/.test(lastChip.tag) && lastChip.bg === lastChip.other, 'bones twist: …with a “Last time” tag, not a solid plate that looks selected');
+  }
   s = await stateOf(id);
   ok(s.n === 0 && s.tw === undefined, 'bones twist: …nothing was sent');
   await S.tap(`.gb-tray[data-who="${sw}"] .gb-col[data-col="1"]`);
@@ -881,6 +932,145 @@ async function tour(h, pg, w, hh, tag) {
   ok(true, `bones: screenshots for ${tag}`);
 }
 
+// ── the band's text fits in every state, on every screen ──────────────
+// Online, so the partner's "waiting" copy is on screen too: the partner waiting for the twist, an Oracle queue, a Blind pick.
+async function bandStates(h) {
+  const P = { a: h.a, b: h.b };
+  for (const p of [h.a, h.b]) await hook(p);
+  let seq = 1;
+  const both = async (id, n) => { await waitMoves(h.a, id, n); await waitMoves(h.b, id, n); };
+  for (const [w, hh] of VIEWPORTS) {
+    const tag = `${w}×${hh}`;
+    for (const p of [h.a, h.b]) await p.setViewportSize({ width: w, height: hh });
+    for (const tw of ['oracle', 'blind']) {
+      const f = findR(() => true, seq); seq = Math.round(f.r / 0.0377) + 1;
+      const id = await withRandom(h.a, f.r, () => h.newOnlineGame(h.a, 'bones'));
+      await h.openMatch(h.b, id);
+      const sw = (await h.engine(h.a, id)).first;
+      const S = P[sw]; const O = P[other(sw)];
+      await S.waitForSelector('.g-bones[data-phase="pick"]', { timeout: 15000 });
+      await O.waitForSelector('.g-bones[data-phase="wait"]', { timeout: 15000 });
+      await h.wait(350);
+      if (tw === 'oracle') {
+        await bandFit(O, `${tag} partner waiting on the twist`);
+        await bandFit(S, `${tag} starter, picker open`);
+        const chips = await S.$$eval('.gb-picker:not([hidden]) .gb-pk', (x) => { const pr = document.querySelector('.gb-picker:not([hidden])').getBoundingClientRect(); return x.map((e) => { const r = e.getBoundingClientRect(); return { h: r.height, over: e.scrollHeight > e.clientHeight + 1 || [...e.children].some((c) => c.getBoundingClientRect().bottom > r.bottom + 0.5 || c.getBoundingClientRect().top < r.top - 0.5), outside: r.bottom > pr.bottom + 0.5 || r.right > pr.right + 0.5 || r.bottom > innerHeight }; }); });
+        ok(chips.length === 4 && chips.every((c) => c.h >= 44 && !c.over && !c.outside), `bones picker ${tag}: four chips, each ≥ 44 px, with their text inside (${chips.map((c) => Math.round(c.h)).join(', ')})`);
+        if ((w === 390 && hh === 664) || (w === 320 && hh === 568)) { await shot(O, `bones-wait-twist-${w}x${hh}.png`); await shot(S, `bones-picker-${w}x${hh}.png`); }
+      }
+      await S.tap(`.gb-pk[data-tw="${tw}"]`);
+      await both(id, 1);
+      await S.waitForSelector('.g-bones[data-phase="pick"]', { timeout: 15000 });
+      await O.waitForSelector('.g-bones[data-phase="wait"]', { timeout: 15000 });
+      await h.wait(500);
+      await bandFit(S, `${tag} ${tw}: starter picks a column`);
+      await bandFit(O, `${tag} ${tw}: partner waits`);
+      if (tw === 'oracle' && ((w === 390 && hh === 664) || (w === 320 && hh === 568))) await shot(O, `bones-oracle-wait-${w}x${hh}.png`);
+      const e = await h.engine(h.a, id);
+      await S.tap(`.gb-tray[data-who="${sw}"] .gb-col[data-col="${pickSmash(e.state, sw)}"]`);
+      await both(id, 2);
+      await O.waitForSelector('.g-bones[data-phase="pick"]', { timeout: 15000 });
+      await S.waitForSelector('.g-bones[data-phase="wait"]', { timeout: 15000 });
+      await h.wait(400);
+      await bandFit(O, `${tag} ${tw}: second player picks`);
+      await bandFit(S, `${tag} ${tw}: starter waits`);
+      await h.closeGame(h.a); await h.closeGame(h.b);
+    }
+  }
+}
+
+// ── the finale: recap in the band fits, stamps stay off it, the card waits ──
+async function finaleFit(h, pg) {
+  for (const [w, hh] of VIEWPORTS) {
+    const tag = `${w}×${hh}`;
+    // a record to beat and a winning streak to extend (the data is read at load, so reload after seeding)
+    const seed = { games_n: 6, best_a_best: 5, best_b_best: 500, smash_best: 5, comeback_best: 500, streak_who: 'a', streak_len: 3, streak_len_best: 3, form: 'aabaa', last_id: 'seeded' };
+    h.docs['gamedata/bones'] = { ...seed }; // the shared copy too, or the first snapshot would put the earlier games back
+    await pg.evaluate((d) => { try { localStorage.setItem('ju.games.data.v1', JSON.stringify({ bones: d })); } catch { /* */ } }, seed);
+    await pg.reload();
+    await pg.waitForSelector('.tabbar', { timeout: 15000 });
+    await pg.setViewportSize({ width: w, height: hh });
+    await hook(pg);
+    const sim = await newLocalSim(h, pg, (first, seed) => { const x = playGame(B, seed, first, pickSmash).s; return B.result(x).winner === 'a' && x.big.pts >= 10 && x.n <= 22; }, 1 + VIEWPORTS.findIndex((v) => v[0] === w && v[1] === hh) * 300);
+    const g = playGame(B, sim.seed, sim.first, pickSmash);
+    await playSim(h, pg, sim.id, g.moves);
+    await pg.waitForSelector('.gb-band.is-final', { timeout: 12000 });
+    await bandFit(pg, `${tag} finale, just in`);
+    await pg.waitForFunction(() => window.__bonesTest.log.some((x) => x.startsWith('stamp:')), null, { timeout: 8000 });
+    await h.wait(300);
+    const st = await pg.evaluate(() => {
+      const B = document.querySelector('.gb-band').getBoundingClientRect();
+      return [...document.querySelectorAll('.gb-stamp')].filter((e) => e.classList.contains('show')).map((e) => { const r = e.getBoundingClientRect(); return { t: e.textContent, hit: !(r.right <= B.left || r.left >= B.right || r.bottom <= B.top || r.top >= B.bottom), op: Number(getComputedStyle(e).opacity), inside: r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight }; });
+    });
+    ok(st.length >= 1 && st.every((x) => !x.hit && x.inside), `bones finale ${tag}: the record stamps (${st.map((x) => x.t).join(' / ')}) sit on the trays, clear of the band text`);
+    await bandFit(pg, `${tag} finale, while stamping`);
+    const txt = await pg.textContent('.gb-band');
+    ok(/won 4 straight/.test(txt) && /(wins|win)/.test(txt) && (await pg.$$eval('.gb-form .gb-fd', (x) => x.length)) === 5, `bones finale ${tag}: the band carries the winner, “Emerson has won 4 straight” and the form strip (${txt.replace(/\s+/g, ' ').trim().slice(0, 70)})`);
+    if ((w === 390 && hh === 664) || (w === 320 && hh === 568) || (w === 844 && hh === 390)) await shot(pg, `bones-finale-${tag}.png`);
+    await endCard(pg, 12000);
+    await pg.click('#game-root [data-g="end-look"]');
+    await h.wait(300);
+    await bandFit(pg, `${tag} finale, “See the board”`);
+    await h.closeGame(pg);
+  }
+}
+
+// ── the match is recorded even if the last mover leaves at once ───────
+async function leaveAtTheEnd(h, pg) {
+  await pg.setViewportSize({ width: 390, height: 844 });
+  await hook(pg);
+  const before = (await dataOf(pg)).games_n || 0;
+  const sim = await newLocalSim(h, pg, (first, seed) => { const x = playGame(B, seed, first, pickSmash).s; return x.n >= 12 && x.n <= 22; }, 900);
+  const g = playGame(B, sim.seed, sim.first, pickSmash);
+  await playSim(h, pg, sim.id, g.moves, g.moves.length - 1);
+  const m = g.moves[g.moves.length - 1];
+  await pg.waitForSelector('.g-bones[data-phase="pick"]', { timeout: 20000 });
+  await pg.tap(`.gb-tray[data-who="${m.who}"].is-picking .gb-col[data-col="${m.mv.col}"]`);
+  await pg.click('#game-root [data-g="close"]'); // the winning move, then straight back: no finale
+  const rec = await dataOf(pg);
+  ok(rec.last_id === sim.id && rec.games_n === before + 1, `bones records: leaving right after the last move still records the match (games ${before} → ${rec.games_n}, last_id ${rec.last_id === sim.id ? 'ok' : rec.last_id})`);
+}
+
+// ── a lost WebGL context that never comes back must not freeze the game ──
+async function lostContext(h, pg) {
+  await pg.setViewportSize({ width: 390, height: 844 });
+  await hook(pg);
+  await h.newLocalGame(pg, 'bones');
+  const id = await pg.evaluate(() => window.__lastMatchId);
+  await pg.waitForSelector('.g-bones[data-phase="pick"]', { timeout: 15000 });
+  await pg.evaluate(() => { const c = document.querySelector('.gb-band canvas'); window.__lose = (c.getContext('webgl2') || c.getContext('webgl')).getExtension('WEBGL_lose_context'); window.__lose.loseContext(); });
+  await pg.waitForSelector('.gb-band[data-gl="lost"]', { timeout: 4000 });
+  let e = await h.engine(pg, id);
+  await pg.tap(`.gb-tray[data-who="${e.acts[0]}"] .gb-col[data-col="0"]`); // the next die has nothing to tumble on
+  await waitMoves(pg, id, 1);
+  const t0 = Date.now();
+  await pg.waitForSelector('.gb-band[data-gl="2d"]', { timeout: 7000 });
+  ok(Date.now() - t0 > 1000, `bones context lost: waits for the browser to restore it (${Date.now() - t0} ms of grace) before giving up on 3D`);
+  await pg.waitForSelector('.g-bones[data-phase="pick"]', { timeout: 8000 });
+  e = await h.engine(pg, id);
+  const die = await pg.$eval('.gb-die2d .gb-die', (d) => Number(d.dataset.v)).catch(() => 0);
+  ok(die === e.state.roll && (await pg.isVisible('.gb-die2d')) && !(await pg.isVisible('.gb-band canvas')), `bones context lost: play continues with flat dice, showing the current roll (${die})`);
+  for (let k = 2; k <= 4; k++) {
+    e = await h.engine(pg, id);
+    await pg.tap(`.gb-tray[data-who="${e.acts[0]}"] .gb-col[data-col="${k % 3}"]`);
+    await waitMoves(pg, id, k);
+    await pg.waitForSelector('.g-bones[data-phase="pick"]', { timeout: 8000 });
+  }
+  e = await h.engine(pg, id);
+  ok((await pg.$eval('.gb-die2d .gb-die', (d) => Number(d.dataset.v))) === e.state.roll, 'bones context lost: …and each new die still shows on the flat view');
+  await shot(pg, 'bones-gl-lost-flat.png');
+  await pg.evaluate(() => window.__lose.restoreContext());
+  await pg.waitForFunction(() => window.__bonesTest.log.includes('restored'), null, { timeout: 5000 });
+  ok((await pg.getAttribute('.gb-band', 'data-gl')) === 'ok' && (await pg.isVisible('.gb-band canvas')) && !(await pg.isVisible('.gb-die2d')), 'bones context lost: when the context comes back the 3D view is back too');
+  const f0 = await pg.evaluate(() => window.__bonesTest.frames || 0);
+  e = await h.engine(pg, id);
+  await pg.tap(`.gb-tray[data-who="${e.acts[0]}"] .gb-col[data-col="0"]`);
+  await waitMoves(pg, id, 5);
+  await pg.waitForSelector('.g-bones[data-phase="pick"]', { timeout: 8000 });
+  ok((await pg.evaluate(() => window.__bonesTest.frames || 0)) > f0 + 10, 'bones context lost: …and the next die tumbles in 3D again');
+  await h.closeGame(pg);
+}
+
 // ── main ──────────────────────────────────────────────────────────────
 // Bot self-play: how often does whoever goes first win? (Last Word on / off)
 async function balance() {
@@ -956,18 +1146,24 @@ async function balance() {
     await fullColumn(h, h.a);
     await tapToSkip(h, h.a);
     await finaleTiming(h, h.a);
+    await lostContext(h, h.a);
     await onlineTwists(h);
+    await bandStates(h);
   });
   // long flows with reduced motion, so a whole game takes seconds
   if (!failed) {
     failed = await group('reduced', { port: PORT + 2, reducedMotion: 'reduce' }, async (q) => {
       await celebrations(q, q.a);
       await lastWord(q, q.a);
+      await lastWord(q, q.a, 320, 568);
+      await lastWord(q, q.a, 390, 664);
+      await lastWord(q, q.a, 844, 390);
+      await finaleFit(q, q.a);
       await tour(q, q.a, 844, 390, 'light-844x390');
       await tour(q, q.a, 390, 844, 'light-390x844');
     });
   }
-  if (!failed) failed = await group('records', { port: PORT + 3, reducedMotion: 'reduce' }, async (r) => { await recordsFlow(r, r.a); });
+  if (!failed) failed = await group('records', { port: PORT + 3, reducedMotion: 'reduce' }, async (r) => { await recordsFlow(r, r.a); await leaveAtTheEnd(r, r.a); });
   if (!failed) failed = await group('online-records', { port: PORT + 4, reducedMotion: 'reduce' }, async (r) => { await onlineRecords(r); });
   if (!failed) {
     failed = await group('dark', { port: PORT + 1, colorScheme: 'dark', reducedMotion: 'reduce' }, async (d) => {
