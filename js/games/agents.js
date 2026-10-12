@@ -282,8 +282,8 @@ function result(s) {
 // ── derived facts (read-only: records, stamps, the debrief) ──
 const turnDone = (s, k) => k < s.log.length - 1 || !!s.over || s.phase !== 'guess';
 const agentPicks = (t) => t.picks.filter((p) => p.r === 'G').length;
-/** Mind meld: the guesser found exactly n agents, no bystander, and the turn is over. */
-const isMeld = (t, done) => done && t.picks.length === t.n && agentPicks(t) === t.n;
+/** Mind meld: a clue for 2+ cards where the guesser found exactly n agents, no bystander, and the turn is over. */
+const isMeld = (t, done) => done && t.n >= 2 && t.picks.length === t.n && agentPicks(t) === t.n;
 function matchStats(s) {
   const clues = s.log.map((t, k) => ({ k, by: t.by, clue: t.clue, n: t.n, got: agentPicks(t), meld: isMeld(t, turnDone(s, k)) }));
   const best = { a: 0, b: 0 };
@@ -392,6 +392,12 @@ const css = `
 .g-ag-step button:active { background: var(--g-hl-soft); }
 .g-ag-step output { min-width: 22px; display: grid; place-items: center; font-family: var(--g-font-display); font-weight: 900; font-size: 1.1rem; }
 .g-ag-form .gm-btn { min-height: 48px; padding: 0 14px; }
+@media (max-width: 380px) {
+  .g-ag-form { flex-wrap: wrap; }
+  .g-ag-input { flex: 1 1 100%; }
+  .g-ag-form .g-ag-step { flex: none; }
+  .g-ag-form .gm-btn { flex: 1 1 0; min-width: 0; padding: 0 8px; }
+}
 
 /* board: printed word cards, every word set at one size; long words break onto two lines */
 .g-ag-body { display: flex; flex-direction: column; gap: 12px; }
@@ -539,7 +545,7 @@ const css = `
 @media (orientation: landscape) and (max-height: 500px) {
   .g-agents { gap: 4px; }
   .g-ag-top { flex-direction: row; justify-content: space-between; align-items: center; gap: 12px; }
-  .g-ag-say { min-height: 0; flex: 1 1 auto; text-align: left; font-size: 0.8rem; line-height: 1.2; }
+  .g-ag-say { min-height: 0; flex: 1 1 auto; text-align: center; font-size: 0.8rem; line-height: 1.2; }
   .g-ag-meta { flex: none; gap: 10px; font-size: 0.72rem; }
   .g-ag-banner { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   .g-ag-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, 36%); grid-template-rows: auto auto minmax(0, 1fr); gap: 6px 12px; align-items: start; }
@@ -551,11 +557,15 @@ const css = `
   .g-ag-side { grid-column: 2; grid-row: 3; max-height: 100px; overflow-y: auto; padding: 0; }
   .g-ag-side h3 { margin-bottom: 4px; }
   .g-ag-log li { padding: 4px 8px; }
-  .g-ag-grid { --gap: 4px; }
-  .g-ag-card { height: clamp(30px, calc((100dvh - 215px) / 5), 48px); padding-bottom: 4px; }
+  .g-ag-grid { --gap: 3px; }
+  .g-ag-card { height: clamp(36px, calc((100dvh - 205px) / 5), 48px); padding-bottom: 4px; }
   .g-ag-card::before { bottom: 3px; }
   .g-ag-card .g-ag-ico { display: none; }
   .g-ag-paper { padding: 4px 8px 5px 12px; }
+  .g-ag-form { flex-wrap: wrap; }
+  .g-ag-input { flex: 1 1 100%; }
+  .g-ag-form .g-ag-step { flex: none; }
+  .g-ag-form .gm-btn { flex: 1 1 0; min-width: 0; }
   .g-ag-form .gm-btn, .g-ag-input { min-height: 44px; height: 44px; }
   .g-ag-acts .gm-btn { min-height: 44px; }
   .g-ag-end .gm-btn { min-height: 44px; }
@@ -857,7 +867,7 @@ registerGame({
       const last = !c.over && !sudden && !pristine(s) && left <= 1;
       let text = '';
       if (role === 'setup') text = 'Set the rules, then give the first clue.';
-      else if (role === 'await-setup') text = `${who(g)} is setting the rules…`;
+      else if (role === 'await-setup') text = ''; // the briefing card says it once
       else if (role === 'give') text = `Your clue: one word and a number for your <b>green</b> agents (${agentsLeft(s, g)} left).`;
       else if (role === 'await-clue') text = `${who(g)} is thinking of a clue…`;
       else if (role === 'guess') text = t.picks.length ? 'Nice. Keep going, or end the turn.' : `Tap the words you think are ${who(g)}’s agents.`;
@@ -876,13 +886,13 @@ registerGame({
         tokEl.innerHTML = '<span class="g-ag-tok sudden"></span><span>Sudden death</span>';
         tokEl.setAttribute('aria-label', 'Sudden death');
       } else {
-        tokEl.innerHTML = Array.from({ length: T }, (_, i) => `<span class="g-ag-tok${i < s.turns - (turnNow ? 1 : 0) ? ' used' : i === s.turns - 1 && turnNow ? ' now' : ''}${last && i === T - 1 ? ' last' : ''}"></span>`).join('') + `<span>${left} turn${left === 1 ? '' : 's'} left</span>`;
+        tokEl.innerHTML = Array.from({ length: T }, (_, i) => `<span class="g-ag-tok${i < s.turns - (turnNow ? 1 : 0) ? ' used' : i === s.turns - 1 && turnNow ? ' now' : ''}${last && i === T - 1 ? ' last' : ''}"></span>`).join('') + (c.over && s.over === 'win' ? '' : `<span>${left} turn${left === 1 ? '' : 's'} left</span>`);
         tokEl.setAttribute('aria-label', `${left} of ${T} turns left`);
       }
       countEl.innerHTML = `Agents <b>${foundCount(s)}</b>/${TOTAL}`;
       // mind meld: the clue slip prints in gold for the turn that just ended
       const lastIdx = s.log.length - 1;
-      const meldNow = lastIdx >= 0 && (s.phase === 'clue' || s.over) && isMeld(s.log[lastIdx], turnDone(s, lastIdx)) && !(s.over === 'burned');
+      const meldNow = lastIdx >= 0 && (s.over ? s.over === 'win' : s.phase === 'clue') && isMeld(s.log[lastIdx], turnDone(s, lastIdx));
       bannerEl.hidden = !meldNow;
       if (meldNow) { const n = s.log[lastIdx].n; bannerEl.innerHTML = `<span class="g-ag-stamp k-gold" style="--r:-2deg">Mind meld</span> ${NUMWORD[n] || n} for ${NUMWORD[n] ? NUMWORD[n].toLowerCase() : n}.`; }
     }
@@ -1043,7 +1053,13 @@ registerGame({
         if (roleOf(ctx) === 'give') api.toast('You give the clue this turn. Type it above.');
         return;
       }
-      if (stamp() < lockUntil) return; // right after a move: a stray second tap, not a new choice
+      if (stamp() < lockUntil) { // right after a move: a stray second tap, not a new choice (but show it was felt)
+        b.classList.remove('thunk');
+        void b.offsetWidth;
+        b.classList.add('thunk');
+        later(() => b.classList.remove('thunk'), 380);
+        return;
+      }
       if (sel === i) {
         if (stamp() - selAt < 350) return; // a double-tap selects; it never commits
         pick(i);

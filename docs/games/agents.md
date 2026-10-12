@@ -29,15 +29,15 @@ these fields.
   kitty/kitten, bunny/rabbit, mom/mum/mother, ...), the board word plus a real ending (RING: RINGS, RINGER, RINGING) and
   dropped-e or doubled-letter forms (DANCING/DANCE, CHEESY/CHEESE, RUNNING/RUN). A word merely sitting inside another is
   only blocked when the shorter one has 6+ letters (FLOWER in SUNFLOWER). SPACE/SPA, TEAM/TEA, BEER/BEE, VOWEL/VOW,
-  MAPLE/MAP, NIGHT/KNIGHT, PLANET/PLANE, MOTHER/MOTH, CAVES/CAFE, HATES/HAT, NEWS/NEW and AT, SEA, EAR are fine.
+  MAPLE/MAP, NIGHT/KNIGHT, PLANET/PLANE, MOTHER(S)/MOTH, FATHERS, LETTERS, PENNY/PEN, SUNNY/SUN, CAVES/CAFE, HATES/HAT, NEWS/NEW and AT, SEA, EAR are fine (a short list of look-alikes is checked after singularising).
   Errors read "Too close to WATCH (same word family)."
 - **Pick limit.** At most `n + 1` agents per turn; the turn then ends by itself. The slip shows "picks left".
 - **Sudden death** (when `sudden` is on). When the turns run out with agents left, `phase: 'sudden'`: no clues. One picker
   at a time (`s.picker`, starting with whoever would have guessed next) picks on the partner's key. An agent keeps the
   mission alive and passes the pick to the partner (unless the partner has nothing left on your key to find). A bystander or
   assassin ends it: `over: 'caught'`. Finding all 15 is a win ("Escaped"). Picks are logged in `s.sd`.
-- **Mind meld.** A finished turn where the guesser found exactly `n` agents and no bystander. Derived, never stored.
-- **Packs.** A themed board is 15 pack words plus 10 everyday nouns, no word inside another, deterministic per seed.
+- **Mind meld.** A finished turn for a clue of 2 or more cards where the guesser found exactly `n` agents and no bystander. Derived, never stored. The banner shows for the latest turn mid-game and on a won end view only.
+- **Packs.** A themed board is 15 pack words plus 10 everyday nouns, no word inside another and no alias/plural pair (never DONUT and DOUGHNUT together), deterministic per seed.
   NOUNS is frozen (changing it re-deals every old match).
 
 ## Records (`gamedata/agents` through the engine's per-game data)
@@ -62,7 +62,10 @@ pack_<p>_n spare_best close_best streak streak_best clue_best a_clue_best b_clue
 
 The action dock (End turn / My key / Pick) is sticky at the bottom so it stays on screen at 360x640, where all five board
 rows fit above it. The rules card's Play button is a sticky bar. Landscape phones (`orientation: landscape` and height
-at most 500 px) put the board on the left and the slip, actions and history on the right. A second tap on a
+at most 500 px) put the board on the left and the slip, actions and history on the right. The clue field takes a full row
+(stepper and Send below it) there and at widths of 380 px or less. Landscape cards are only 36 px tall so all five rows fit
+above the fold: a deliberate exception to the 44 px rule, because picking is select-then-confirm (the Pick button
+confirms) so a mis-tap never commits a pick. A second tap on a
 selected card within 350 ms does not confirm; taps are ignored for 400 ms after any move.
 
 ## Tests

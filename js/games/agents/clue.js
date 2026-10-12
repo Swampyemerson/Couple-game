@@ -70,7 +70,7 @@ function inflectedBases(c) {
 }
 const INFLECTIONS = new Set(['s', 'es', 'ed', 'er', 'ers', 'ing', 'y', 'ly']);
 // Words that merely look like word + ending (MOTHER is not MOTH + ER).
-const NOT_DERIVED = new Set(['mother', 'father', 'brother', 'sister', 'daughter', 'other', 'another', 'together', 'whether', 'rather', 'either', 'neither', 'water', 'butter', 'letter', 'number', 'paper', 'power', 'tiger', 'finger', 'dinner', 'summer', 'winter', 'silver', 'river', 'flower', 'tower', 'shower', 'powder', 'order', 'border', 'leader', 'hunger', 'anger', 'danger', 'ginger', 'wonder', 'thunder', 'monster', 'master', 'sweater', 'weather', 'feather']);
+const NOT_DERIVED = new Set(['mother', 'father', 'brother', 'sister', 'daughter', 'other', 'another', 'together', 'whether', 'rather', 'either', 'neither', 'water', 'butter', 'letter', 'number', 'paper', 'power', 'tiger', 'finger', 'dinner', 'summer', 'winter', 'silver', 'river', 'flower', 'tower', 'shower', 'powder', 'order', 'border', 'leader', 'hunger', 'anger', 'danger', 'ginger', 'wonder', 'thunder', 'monster', 'master', 'sweater', 'weather', 'feather', 'penny', 'apply', 'caper', 'cower', 'homer', 'waver', 'sunny']);
 const endingOk = (base, ending) => (ending === 'es' ? /(s|x|z|ch|sh)$/.test(base) : INFLECTIONS.has(ending));
 function sameFamily(clue, word, derived) {
   const sw = stems(word);
@@ -79,10 +79,13 @@ function sameFamily(clue, word, derived) {
   return false;
 }
 
+/** True when two words are the same word in disguise (plural, spelling variant, alias): used to keep both off one board. */
+export const related = (a, b) => a === b || sameFamily(a, b, false) || sameFamily(b, a, false);
+
 /** Why a (normalised) clue is too close to a board word, or '' if it is fine. */
 export function tooClose(clue, word) {
   if (clue === word) return 'is on the board';
-  const derived = !NOT_PLURAL.has(clue) && !NOT_DERIVED.has(clue);
+  const derived = !NOT_PLURAL.has(clue) && ![...singulars(clue)].some((x) => NOT_DERIVED.has(x)); // MOTHERS is no more MOTH + ERS than MOTHER is
   if (sameFamily(clue, word, derived)) return 'same word family';
   // RING -> RINGER, RINGED, RINGING: the board word plus a real ending (MAPLE, SPACE, BEER, VOWEL are fine)
   if (derived && word.length >= 3 && clue.startsWith(word) && endingOk(word, clue.slice(word.length))) return 'part of the same word';

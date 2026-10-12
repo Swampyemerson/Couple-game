@@ -4,6 +4,7 @@
 // contains another. Pack words of 7+ letters need an entry in PACK_BREAKS (the card splits
 // them onto two lines; the main BREAKS map in agents.js covers the words it already knows).
 import { shuffled } from '../core.js';
+import { related } from './clue.js';
 
 const RAW = {
   us: `kiss hug date ring vow heart candle rose dinner movie couch pillow sunset letter photo song dance picnic beach
@@ -48,7 +49,7 @@ scep-ter ser-pent mino-taur pe-gasus cen-taur chi-mera ec-lipse
 /** 25 board words for a themed deal: 15 from the pack, 10 everyday nouns, no word inside another. */
 export function packWords(seed, pack, NOUNS) {
   const out = [];
-  const fits = (w) => !out.some((o) => o.includes(w) || w.includes(o));
+  const fits = (w) => !out.some((o) => o.includes(w) || w.includes(o) || related(o, w)); // DONUT and DOUGHNUT never share a board
   for (const w of shuffled(PACKS[pack] || [], `${seed}:pack:${pack}`)) {
     if (out.length === 15) break;
     if (fits(w)) out.push(w);

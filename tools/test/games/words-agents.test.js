@@ -112,6 +112,13 @@ async function unitTests() {
       if (!ok) { packOk = false; console.log('bad pack board', pk, seed, ws); }
     }
   }
+  const { related } = await import(pathToFileURL(path.join(ROOT, 'js/games/agents/clue.js')).href);
+  let aliasOk = true;
+  for (const pk of ['us', 'travel', 'mythic']) for (let seed = 1; seed <= 200; seed++) {
+    const ws = T.packWords(seed * 7919, pk);
+    if (ws.some((w, i) => ws.some((o, j) => i < j && related(w, o)))) { aliasOk = false; console.log('related pair on', pk, seed, ws); }
+  }
+  assert(aliasOk && related('donut', 'doughnut') && related('rings', 'ring') && !related('moth', 'mother'), 'pack boards never hold both DONUT and DOUGHNUT (or a word and its plural): 600 boards');
   assert(packOk, 'themed boards: 25 unique words, none inside another, ≥15 from the pack, deterministic, breaks present (180 boards)');
 
   // ── clue checker v2 ──
@@ -133,6 +140,11 @@ async function unitTests() {
   for (const c of ['dancing', 'dancer', 'danced', 'cheesy', 'running', 'rings', 'ringer', 'ringing', 'spas', 'flowers']) bad(fb, c);
   bad(fb, 'sunflower', /Too close to FLOWER/);
   good(fb, 'seahorse');
+  // fix round 2: NOT_DERIVED applies after singularising; more look-alikes
+  const fc = board(['moth', 'fat', 'let', 'pen', 'cap', 'cow', 'home', 'wave', 'sun', 'app']);
+  const keepc = new Set(['moth', 'fat', 'let', 'pen', 'cap', 'cow', 'home', 'wave', 'sun', 'app']);
+  fc.words = fc.words.map((w, i) => (i >= 10 && keepc.has(w) ? `zz${i}` : w));
+  for (const c of ['mothers', 'fathers', 'letters', 'penny', 'caper', 'cower', 'homer', 'waver', 'sunny', 'apply', 'mother']) good(fc, c);
   assert(T.cleanClue2(clone(fb), 'sea') === 'sea', 'short fragments stay allowed');
   // the old checker still blocks what it always did, on v1 states
   const st1 = mk(ag, 'a', 3); st1.words = ['doughnut', 'cactus', ...st1.words.slice(2).map((w) => (w === 'donut' || w === 'cacti' ? 'zz' : w))];
@@ -212,6 +224,10 @@ async function unitTests() {
   assert(T.matchStats(m).melds === 0, 'meld is not claimed until the turn ends');
   m = ag.apply(m, 'b', { stop: true });
   assert(T.matchStats(m).melds === 1 && T.matchStats(m).top[0].got === 2, 'exactly n agents, then stop: a mind meld');
+  let m1 = run([['a', { clue: 'qwerty', n: 1 }]]);
+  m1 = ag.apply(m1, 'b', { pick: ga(m1, 'a')[0] });
+  m1 = ag.apply(m1, 'b', { stop: true });
+  assert(T.matchStats(m1).melds === 0, 'one for one is not a mind meld (a clue for two or more cards is required)');
   let m2 = run([['a', { clue: 'qwerty', n: 2 }]]);
   m2 = ag.apply(m2, 'b', { pick: ga(m2, 'a')[0] });
   m2 = ag.apply(m2, 'b', { stop: true });
@@ -285,7 +301,7 @@ async function v2Online(h, scheme) {
   const g = s.giver;
   const r = g === 'a' ? 'b' : 'a';
   assert(await G.isVisible('.g-ag-play') && !(await G.isVisible('.g-ag-grid .g-ag-card')), 'rules card: the first giver sees the briefing, not the board');
-  assert(/Waiting for/.test(await R.textContent('.g-ag-rules')) && !(await R.isVisible('.g-ag-play')), 'rules card: the partner waits for the rules');
+  assert(/Waiting for/.test(await R.textContent('.g-ag-rules')) && !(await R.isVisible('.g-ag-play')) && (await R.textContent('.g-ag-say')).trim() === '', 'rules card: the partner waits for the rules, said once');
   assert(/No missions logged/.test(await G.textContent('.g-ag-ledger')), 'rules card: empty ledger invites the first mission');
   assert(await G.getAttribute('[data-lv="agent"]', 'aria-pressed') === 'true' && await G.getAttribute('[data-pk="classic"]', 'aria-pressed') === 'true', 'rules card: defaults are Agent / Classic');
   const boxes = await G.$$eval('.g-ag-rules button', (bs) => bs.map((x) => x.getBoundingClientRect().height));
@@ -310,6 +326,13 @@ async function v2Online(h, scheme) {
   assert((await G.$$('.g-ag-tokens .g-ag-tok')).length === 7 && (await R.$$('.g-ag-tokens .g-ag-tok')).length === 7, 'the spy level shows 7 tokens');
   assert((await G.$$('.g-ag-card.k-G')).length === 9 && (await R.$$('.g-ag-card')).length === 25, 'then the board shows (giver sees their key)');
   const small = (pg) => pg.evaluate(() => [...document.querySelectorAll('.g-agents button, .g-agents input, .g-agents .gm-btn')].filter((e) => e.offsetParent !== null && !e.classList.contains('g-ag-card')).map((e) => { const r = e.getBoundingClientRect(); return { n: (e.textContent || e.className).trim().slice(0, 14), w: r.width, h: r.height }; }).filter((x) => x.w < 43.5 || x.h < 43.5));
+  for (const [w, hh] of [[667, 375], [844, 390], [320, 568]]) {
+    await G.setViewportSize({ width: w, height: hh });
+    await G.waitForTimeout(250);
+    const f = await G.evaluate(() => { const i = document.querySelector('.g-ag-input').getBoundingClientRect(); const bs = [...document.querySelectorAll('.g-ag-form button')].map((b) => b.getBoundingClientRect()); return { iw: i.width, minw: Math.min(...bs.map((b) => b.width)), minh: Math.min(...bs.map((b) => b.height)), right: Math.max(i.right, ...bs.map((b) => b.right)), vw: innerWidth, bottom: Math.max(...bs.map((b) => b.bottom)), vh: innerHeight }; });
+    assert(f.iw >= 160 && f.minw >= 43.5 && f.minh >= 43.5 && f.right <= f.vw, `clue form ${w}x${hh}: the input is ${Math.round(f.iw)}px wide (>= 160), buttons stay 44px`);
+  }
+  await G.setViewportSize({ width: 390, height: 844 });
   assert(!(await small(G)).length, `tap targets: every control on the clue form is at least 44px ${JSON.stringify(await small(G))}`);
   // checker v2 through the UI: a plural of a board word is refused with a specific message
   await giveClue(G, `${s.words[0]}s`, 1);
@@ -344,6 +367,8 @@ async function v2Online(h, scheme) {
     await R.waitForTimeout(300);
     const L = await R.evaluate(() => { const cs = [...document.querySelectorAll('.g-ag-card')].map((c) => c.getBoundingClientRect()); const pk = document.querySelector('[data-act="pick"]').getBoundingClientRect(); return { last: Math.max(...cs.map((c) => c.bottom)), right: Math.max(...cs.map((c) => c.right)), pickB: pk.bottom, pickR: pk.right, ih: innerHeight, iw: innerWidth, sw: document.documentElement.scrollWidth, rsw: document.querySelector('#game-root').scrollWidth, rcw: document.querySelector('#game-root').clientWidth, slip: document.querySelector('.g-ag-slip').getBoundingClientRect() }; });
     assert(L.last <= L.ih && L.pickB <= L.ih && L.pickR <= L.iw && L.sw <= L.iw && L.rsw <= L.rcw + 1 && L.slip.bottom <= L.ih, `landscape ${w}x${hh}: board, slip and Pick are inside the viewport, no sideways scroll (${JSON.stringify({ last: Math.round(L.last), pickB: Math.round(L.pickB), ih: L.ih })})`);
+    const ch = await R.evaluate(() => Math.min(...[...document.querySelectorAll('.g-ag-card')].map((c) => c.getBoundingClientRect().height)));
+    assert(ch >= 35.5, `landscape ${w}x${hh}: cards are at least 36px tall (${Math.round(ch)})`);
     if (w === 844) await snap(R, scheme, 'v2-2-guess-landscape', [[844, 390]]);
   }
   for (const pg of [G, R]) await pg.setViewportSize({ width: 360, height: 640 });
@@ -368,6 +393,7 @@ async function v2Online(h, scheme) {
   await pickCard(G, kill, false);
   await G.waitForSelector('#game-root .gm-end:not([hidden])', { timeout: 6000 });
   await G.click('#game-root [data-g="end-look"]');
+  assert(!(await G.isVisible('.g-ag-banner')), 'the mind meld banner is not shown on a burned end view');
   assert(await G.isVisible('.g-ag-debrief .g-ag-epi') && (await G.textContent('.g-ag-debrief .g-ag-epi')).length > 10, 'the result view has an epilogue line');
   assert(/MIND MELD/.test(await G.textContent('.g-ag-stamps')), 'the result view stamps the mind meld');
   assert((await G.$$('.g-ag-best .g-ag-paper')).length >= 1, 'the best clue is printed as a slip');
