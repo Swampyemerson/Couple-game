@@ -408,7 +408,7 @@ async function regressions(h, pages) {
   const rules = await loadRules();
   rulesTests(rules);
 
-  const h = await launch({ port: 8932, only: ['doodle', 'wave'] });
+  const h = await launch({ port: +process.env.PORT || 8770 + Math.floor(Math.random() * 500), only: ['doodle', 'wave'] });
   const { a, b } = h;
   const pages = { a, b };
   if (!QUICK) for (const pg of [a, b]) await useCachedFonts(pg);
