@@ -131,6 +131,9 @@ function wireActText(a) {
 const btnActText = (a) => `${a} it`;
 const wireWord = (a) => (a.startsWith('nth:') ? ORD[+a.slice(4) - 1] : a.startsWith('first:') ? 'first' : 'last');
 
+/** A rule none can reach: an earlier rule's conditions are all among its conditions. */
+const shadowed = (rules, spec) => { const mine = spec.split(','); return rules.some((q) => q.c.split(',').every((a) => mine.includes(a))); };
+
 /** Draw one edgework atom. skip = kinds already used in this condition. Level 1 never reads indicators or ports. */
 function edgeAtom(r, L, skip = []) {
   const kinds = (L === 1 ? ['par', 'vow', 'bat'] : ['par', 'vow', 'bat', 'ind', 'port']).filter((k) => !skip.includes(k));
@@ -197,7 +200,7 @@ function genWireList(r, n, L, pal) {
   const seen = new Set();
   for (let guard = 0; list.length < nCond && guard < 80; guard++) {
     const c = wireCond(r, L, pal);
-    if (seen.has(c.s)) continue;
+    if (seen.has(c.s) || shadowed(list, c.s)) continue;
     seen.add(c.s);
     const a = c.g.length && r() < 0.5 ? `${r() < 0.5 ? 'first' : 'last'}:${pick(r, c.g)}` : r() < 0.15 ? 'end' : `nth:${1 + int(r, n)}`;
     list.push({ c: c.s, a });
@@ -269,11 +272,12 @@ export const WIRES = {
   errata(r, R, T) {
     if (R.ed === 'classic') return null;
     const n = 3 + int(r, 4);
-    const i = int(r, R.lists[n].length);
+    const i = int(r, R.lists[n].length - 1); // a rule people actually reach, not the "otherwise"
     const old = R.lists[n][i].a;
     const p = old.split(':');
+    const single = p.length > 1 && R.lists[n][i].c.includes(`count:${p[1]}:1`); // then first and last X are the same wire
     let a;
-    if (p[0] === 'nth') { const ks = [1, 2, 3, 4, 5, 6].filter((k) => k <= n && k !== +p[1]); a = `nth:${pick(r, ks)}`; } else if (p[0] === 'first') a = `last:${p[1]}`;
+    if (p[0] === 'nth' || single) { const ks = [1, 2, 3, 4, 5, 6].filter((k) => k <= n && k !== (p[0] === 'nth' ? +p[1] : 0)); a = `nth:${pick(r, ks)}`; } else if (p[0] === 'first') a = `last:${p[1]}`;
     else if (p[0] === 'last') a = `first:${p[1]}`;
     else a = `nth:${1 + int(r, n - 1)}`;
     const R2 = clone(R);
@@ -362,14 +366,14 @@ function genButtonRules(r, T) {
     if (k === 'label' || k === 'cl' || k === 'le') { label = pick(r, labels); parts.push(`label:${label}`); }
     if (k === 'edge' || k === 'ce' || k === 'le') parts.push(edgeAtom(r, L).s);
     const c = parts.join(',');
-    if (seen.has(c)) continue;
+    if (seen.has(c) || shadowed(rules, c)) continue;
     seen.add(c);
     // HOLD and PRESS are red herrings: the word says one thing, the rule does the opposite
     const a = label === 'HOLD' ? 'tap' : label === 'PRESS' ? 'hold' : r() < 0.5 ? 'tap' : 'hold';
     rules.push({ c, a });
   }
   rules.push({ c: 'true', a: r() < 0.5 ? 'tap' : 'hold' });
-  if (rules.every((q) => q.a === rules[0].a)) rules[int(r, rules.length - 1)].a = rules[0].a === 'tap' ? 'hold' : 'tap';
+  if (rules.every((q) => q.a === rules[0].a)) { const f = rules[rules.length - 1]; f.a = f.a === 'tap' ? 'hold' : 'tap'; } // the final rule has no label, so the HOLD/PRESS herrings stay intact
   return { colors, labels, rules: btnRuleTexts(rules) };
 }
 function solveButton(S, E, R) {

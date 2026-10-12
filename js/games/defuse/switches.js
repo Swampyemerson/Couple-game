@@ -93,6 +93,38 @@ function target(S, E, R) {
 }
 const clean = (s, R) => R.forbid.every((f) => !f.every(([k, v]) => s[k] === v));
 
+/** A puzzle (start row + LEDs) whose answer is clean and differs from the start, searched in a fixed order. */
+function findPuzzle(R, E) {
+  const opts = ['off', ...R.cols];
+  const total = opts.length ** R.leds;
+  for (let sw = 0; sw < 32; sw++) {
+    const row = [0, 1, 2, 3, 4].map((i) => (sw >> i) & 1);
+    for (let k = 1; k < total; k++) {
+      const leds = Array.from({ length: R.leds }, (_, i) => opts[Math.floor(k / opts.length ** i) % opts.length]);
+      if (leds.every((c) => c === 'off')) continue;
+      const S = { sw: row, leds };
+      const a = target(S, E, R);
+      if (a.join('') !== row.join('') && clean(a, R)) return S;
+    }
+  }
+  return null;
+}
+/** Every combination of edgework facts the conditions can look at has at least one valid puzzle. */
+function everyEdgeworkSolvable(R) {
+  const conds = [R.rev, ...R.mods.map((m) => m.c)].filter(Boolean);
+  const lits = conds.filter((c) => c.startsWith('lit:')).map((c) => c.slice(4));
+  const ports = conds.filter((c) => c.startsWith('port:')).map((c) => c.slice(5));
+  const has = (re) => conds.some((c) => re.test(c));
+  const both = [0, 1];
+  const one = [0];
+  // only vary the facts a condition can look at
+  for (const vowel of has(/^(no)?vowel$/) ? both : one) for (const odd of has(/^(even|odd)$/) ? both : one) for (const bat of has(/^bat/) ? [0, 1, 2, 3, 4] : one) for (const li of lits.length ? both : one) for (const pt of ports.length ? both : one) {
+    const E = { serial: (vowel ? 'A' : 'B') + 'BCDF' + (odd ? '1' : '2'), batteries: bat, indicators: lits.map((label) => ({ label, lit: !!li })), ports: pt ? ports : [] };
+    if (!findPuzzle(R, E)) return false;
+  }
+  return true;
+}
+
 export const SWITCHES = {
   id: 'switches',
   name: 'Breaker panel',
@@ -162,12 +194,18 @@ export const SWITCHES = {
       while (k === j) k = 1 + int(r, N);
       mods.push({ c: (r() < 0.5 ? 'up:' : 'dn:') + j, ops: [kind(r, lv) + k] });
     }
-    const forbid = [];
     const nForbid = lv < 3 ? 0 : lv === 3 ? 2 : 3;
-    while (forbid.length < nForbid) {
-      const [a, b] = sample(r, [0, 1, 2, 3, 4], 2).sort();
-      const f = [[a, int(r, 2)], [b, int(r, 2)]];
-      if (!forbid.some((g) => g[0][0] === a && g[1][0] === b)) forbid.push(f);
+    let forbid = [];
+    // Safety checks must never contradict the answer: keep drawing until, for every kind of edgework
+    // the conditions can see, some puzzle still has a clean answer.
+    for (let tries = 0; nForbid && tries < 60; tries++) {
+      forbid = [];
+      while (forbid.length < nForbid) {
+        const [a, b] = sample(r, [0, 1, 2, 3, 4], 2).sort();
+        const f = [[a, int(r, 2)], [b, int(r, 2)]];
+        if (!forbid.some((g) => g[0][0] === a && g[1][0] === b)) forbid.push(f);
+      }
+      if (everyEdgeworkSolvable({ leds, cols, map, rev, mods, forbid })) break;
     }
     return { leds, cols, map, rev, mods, forbid };
   },
@@ -178,9 +216,17 @@ export const SWITCHES = {
     const c = R.cols[int(r, R.cols.length)];
     const others = R.cols.filter((x) => x !== c).map((x) => R.map[x].join(' '));
     let ops;
-    do { ops = opsFor(r, lv, 2); } while (ops.join(' ') === R.map[c].join(' ') || others.includes(ops.join(' ')));
+    let R2;
+    for (let tries = 0; tries < 40; tries++) {
+      ops = opsFor(r, lv, 2);
+      if (ops.join(' ') === R.map[c].join(' ') || others.includes(ops.join(' '))) continue;
+      R2 = { ...R, map: { ...R.map, [c]: ops } };
+      if (everyEdgeworkSolvable(R2)) break;
+      R2 = null;
+    }
+    if (!R2) return null;
     return {
-      R: { ...R, map: { ...R.map, [c]: ops } },
+      R: R2,
       note: `<span data-errata="map" data-led-color="${c}" data-ops="${ops.join(' ')}">A <b>${c}</b> LED now means: ${opsText(ops)}.</span>`,
     };
   },
@@ -218,7 +264,7 @@ export const SWITCHES = {
       if (a.join('') === sw.join('') || !clean(a, R)) continue;
       return S;
     }
-    return last;
+    return findPuzzle(R, E) || last;
   },
 
   solve(S, E, R) { return target(S, E, R); },
