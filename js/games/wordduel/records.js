@@ -8,7 +8,8 @@
 //   a_two_n b_two_n              cracks in 2 or fewer ("mind-reader")
 //   a_lastditch_n b_lastditch_n  cracks on the 6th and last guess
 //   a_held_n b_held_n            their word held out (the partner never cracked it)
-//   lastm                        match id of the last recorded match (record once per match)
+//   recent_m                     the last 20 recorded match ids, comma-joined (record once per match)
+//   lastm                        match id of the last recorded match
 //   pbm                          match id of the last match that beat a personal best
 //   last_setup                   the rules card's last choice, 'pool:hard:dealt:bo3'
 import { MAX, other, result } from './rules.js';
@@ -28,11 +29,18 @@ export function cracked(r, p) {
   return t && r.gs[p].includes(t) ? r.gs[p].length : null;
 }
 
-/** The patch that records one finished match, or null when it's already recorded. */
-export function recordMatch(data, s, matchId) {
-  if (!s || !matchId || data.lastm === matchId) return null;
+export const RECENT = 20;
+export const recentOf = (data) => String(data.recent_m || '').split(',').filter(Boolean);
+
+/** The patch that records one finished match, or null when it must not be counted.
+ *  `seen` = this phone watched the match end (the move that finished it landed during this
+ *  mount). A finished match merely opened later (seen = false) counts only if it is v2 and its id
+ *  isn't in recent_m: legacy v1 matches are never recorded on reopen. */
+export function recordMatch(data, s, matchId, seen = true) {
+  if (!s || !matchId || recentOf(data).includes(matchId)) return null;
+  if (!seen && s.v !== 2) return null;
   const res = result(s);
-  const p = { lastm: matchId };
+  const p = { lastm: matchId, recent_m: [...recentOf(data), matchId].slice(-RECENT).join(',') };
   const inc = (k, by = 1) => { p[k] = (p[k] !== undefined ? p[k] : num(data[k])) + by; };
   inc('matches_n');
   const rounds = roundsOf(s);
@@ -68,7 +76,7 @@ export function recordMatch(data, s, matchId) {
 export function stampsFor(s, data, matchId, name) {
   const out = [];
   const rounds = roundsOf(s);
-  const recorded = data.lastm === matchId;
+  const recorded = recentOf(data).includes(matchId);
   if (recorded && data.pbm === matchId) out.push({ label: 'New record', who: 'hl' });
   const res = result(s);
   if (recorded && (res.winner === 'a' || res.winner === 'b')) {

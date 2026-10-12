@@ -157,8 +157,8 @@ function enterSudden(s) {
   s.sd = [];
 }
 function applySetup(s, who, mv) {
-  if (who !== s.giver) throw new Error('The first player sets the rules.');
   if (s.v || s.log.length) throw new Error('The rules are already set.');
+  if (who !== s.giver) throw new Error('The first player sets the rules.');
   const o = mv.setup;
   if (!o || typeof o !== 'object' || Array.isArray(o)) throw new Error('Those rules didn’t make sense.');
   for (const k of Object.keys(o)) if (!['v', 'level', 'pack', 'sudden'].includes(k)) throw new Error(`Unknown rule “${k}”.`);
@@ -362,8 +362,8 @@ const css = `
 .g-agents { --gap: 6px; --ag-on-good: var(--g-white); flex: 1; min-height: 0; width: 100%; display: flex; flex-direction: column; gap: 10px; color: var(--g-ink); font-family: var(--g-font-body); touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .g-agents { --ag-on-good: var(--g-on-ink); } }
 :root[data-theme="dark"] .g-agents { --ag-on-good: var(--g-on-ink); }
-.g-ag-top { display: flex; flex-direction: column; align-items: center; gap: 6px; }
-.g-ag-say { margin: 0; min-height: 1.35em; text-align: center; font-weight: 800; font-size: 0.98rem; line-height: 1.35; text-wrap: balance; }
+.g-ag-top { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.g-ag-say { margin: 0; min-height: 1.3em; text-align: center; font-weight: 800; font-size: 0.92rem; line-height: 1.3; text-wrap: balance; }
 .g-ag-who { font-weight: 900; } .g-ag-who.p-a { color: var(--p-a-text); } .g-ag-who.p-b { color: var(--p-b-text); }
 .g-ag-meta { display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap; font-size: 0.8rem; font-weight: 800; color: var(--g-muted); }
 .g-ag-tokens { display: flex; align-items: center; gap: 4px; }
@@ -388,7 +388,7 @@ const css = `
 .g-ag-input:focus { outline: 3px solid var(--g-hl); outline-offset: 1px; }
 .g-ag-input.shake { animation: g-ag-shake 0.4s ease; }
 .g-ag-step { flex-shrink: 0; display: flex; align-items: stretch; border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); background: var(--g-card); box-shadow: var(--g-shadow); overflow: hidden; }
-.g-ag-step button { width: 34px; min-height: 44px; color: var(--g-ink); font-weight: 900; font-size: 1.25rem; background: transparent; touch-action: manipulation; }
+.g-ag-step button { width: 44px; min-height: 44px; color: var(--g-ink); font-weight: 900; font-size: 1.25rem; background: transparent; touch-action: manipulation; }
 .g-ag-step button:active { background: var(--g-hl-soft); }
 .g-ag-step output { min-width: 22px; display: grid; place-items: center; font-family: var(--g-font-display); font-weight: 900; font-size: 1.1rem; }
 .g-ag-form .gm-btn { min-height: 48px; padding: 0 14px; }
@@ -398,7 +398,7 @@ const css = `
 .g-ag-main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .g-ag-wrap { container-type: inline-size; width: 100%; }
 .g-ag-grid { --gap: clamp(4px, 1.2cqw, 10px); --fs: 12px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--gap); }
-.g-ag-card { --cw: calc((100cqw - 4 * var(--gap)) / 5); --face: var(--g-card); --ink: var(--g-ink); position: relative; height: clamp(46px, min(calc(var(--cw) * 0.8), calc((100dvh - 330px) / 5)), 96px); min-width: 0; padding: 0 1px 9px; box-sizing: border-box; display: grid; place-items: center; overflow: hidden; border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); background-color: var(--face); color: var(--ink); box-shadow: var(--g-shadow); font-family: var(--g-font-body); font-weight: 900; text-transform: uppercase; cursor: default; transition: transform 0.12s ease; }
+.g-ag-card { --cw: calc((100cqw - 4 * var(--gap)) / 5); --face: var(--g-card); --ink: var(--g-ink); position: relative; height: clamp(44px, min(calc(var(--cw) * 0.8), calc((100dvh - 395px) / 5)), 96px); min-width: 0; padding: 0 4px 9px; box-sizing: border-box; display: grid; place-items: center; overflow: hidden; border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); background-color: var(--face); color: var(--ink); box-shadow: var(--g-shadow); font-family: var(--g-font-body); font-weight: 900; text-transform: uppercase; cursor: default; transition: transform 0.12s ease; }
 .g-ag-card::before { content: ''; position: absolute; left: 34%; right: 34%; bottom: 6px; height: 2px; border-radius: 1px; background: var(--g-line); }
 .g-ag-word { position: relative; z-index: 1; max-width: 100%; display: block; text-align: center; font-size: var(--fs); line-height: 1.02; letter-spacing: 0; white-space: nowrap; }
 .g-ag-word .hy { display: none; }
@@ -430,7 +430,12 @@ const css = `
 .g-ag-dock.is-over { position: static; padding-bottom: 0; }
 .g-ag-dock:empty { display: none; }
 .g-ag-acts { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 10px; }
-.g-ag-acts.one { grid-template-columns: minmax(0, 1fr); }
+.g-ag-acts.three { grid-template-columns: minmax(0, 0.9fr) minmax(0, 0.8fr) minmax(0, 1.5fr); gap: 8px; }
+.g-ag-acts.two { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.5fr); gap: 8px; }
+.g-ag-acts .gm-btn { font-size: 0.88rem; }
+.g-ag-acts.three .gm-btn, .g-ag-acts.two .gm-btn { padding: 6px 4px; }
+.g-ag-mine[aria-pressed="true"] { background: var(--g-ink); color: var(--g-bg); }
+.g-ag-clhead { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .g-ag-acts .gm-btn { min-height: 48px; padding: 8px 10px; min-width: 0; }
 .g-ag-acts .gm-btn span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .g-ag-row { display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap; }
@@ -439,7 +444,7 @@ const css = `
 .g-ag-legend .lg-g { border-color: var(--g-good); background: linear-gradient(135deg, var(--g-good) 50%, transparent 50%); }
 .g-ag-legend .lg-k { background: var(--g-card) repeating-linear-gradient(135deg, transparent 0 2px, color-mix(in srgb, var(--g-ink) 30%, transparent) 2px 3px); }
 .g-ag-toggle { display: inline-flex; border: 2px solid var(--g-ink); border-radius: 999px; overflow: hidden; background: var(--g-card); box-shadow: var(--g-shadow-sm); }
-.g-ag-toggle button { min-height: 40px; padding: 0 16px; font-weight: 800; font-size: 0.9rem; color: var(--g-ink); background: transparent; touch-action: manipulation; }
+.g-ag-toggle button { min-height: 44px; padding: 0 16px; font-weight: 800; font-size: 0.9rem; color: var(--g-ink); background: transparent; touch-action: manipulation; }
 .g-ag-toggle button + button { border-left: 2px solid var(--g-ink); }
 .g-ag-toggle button[aria-pressed="true"] { background: var(--g-ink); color: var(--g-bg); }
 .g-ag-end { width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -478,7 +483,12 @@ const css = `
 .g-ag-seg button small { font-size: 0.68rem; font-weight: 700; line-height: 1.15; color: var(--g-muted); }
 .g-ag-seg button[aria-pressed="true"] { background: var(--g-ink); color: var(--g-bg); box-shadow: var(--g-shadow-sm); }
 .g-ag-seg button[aria-pressed="true"] small { color: inherit; opacity: 0.85; }
-.g-ag-play { margin-top: 2px; }
+.g-ag-playbar { position: sticky; bottom: 0; z-index: 5; box-sizing: border-box; width: 100%; max-width: 480px; margin: 0 auto; padding: 8px 0 max(6px, env(safe-area-inset-bottom)); background: var(--g-bg); }
+@media (max-height: 700px) {
+  .g-ag-card-rules { gap: 8px; padding: 10px; }
+  .g-ag-h { display: none; }
+  .g-ag-seg button { min-height: 44px; }
+}
 .g-ag-ledger { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 12px; font-size: 0.76rem; font-weight: 800; color: var(--g-muted); text-align: center; }
 .g-ag-ledger b { color: var(--g-ink); }
 .g-ag-banner { margin: 0; display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 900; font-size: 0.9rem; }
@@ -502,7 +512,7 @@ const css = `
 .g-ag-log li.meld { border-color: var(--g-ink); }
 .g-ag-melded { font: 900 0.62rem var(--g-font-display); letter-spacing: 0.06em; text-transform: uppercase; border: 2px solid currentColor; border-radius: 4px; padding: 1px 5px; transform: rotate(-3deg); }
 .g-ag-log li.g-ag-sd { border-color: var(--g-bad); }
-.g-ag-left { display: block; font-size: 0.7rem; font-weight: 800; color: var(--g-muted); }
+.g-ag-left { display: inline; font-size: 0.68rem; text-transform: none; letter-spacing: 0; font-weight: 800; color: var(--g-muted); }
 .g-ag-tok.sudden { width: 18px; height: 18px; background: var(--g-bad); border-color: var(--g-ink); }
 .g-ag-tok.last { background: var(--g-bad); border-color: var(--g-ink); }
 @keyframes g-ag-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.4); } }
@@ -605,6 +615,7 @@ registerGame({
     let keyView = null; // game over: whose key to show
     let num = 2; // clue number draft
     let prevMoves = null;
+    let prevOver; // was the match over at the previous update (undefined before the first)
     let anim = null; // { i, kind } newest pick to animate
     let slipSig = '';
     let rulesSig = '';
@@ -695,7 +706,7 @@ registerGame({
       const spans = [...grid.querySelectorAll('.g-ag-word')];
       if (!spans.length) return;
       const card = spans[0].parentElement;
-      const avail = card.clientWidth - 3;
+      const avail = card.clientWidth - 9;
       const availH = card.clientHeight - 16;
       if (avail < 20 || availH < 16) return;
       meter = meter || document.createElement('canvas').getContext('2d');
@@ -769,11 +780,15 @@ registerGame({
     }
     // Records: once per match, on the phone that watched it end. Counters are absolute values from
     // the data snapshot, so two phones recording the same match write the same numbers.
-    function maybeRecord(c) {
+    // `watched`: this phone saw the match end during this mount. Anything else (a finished match opened
+    // later from the hub) only counts if it is a v2 match nobody recorded; v1 matches never count on reopen.
+    function maybeRecord(c, watched) {
       if (!c.over || !c.matchId) return;
       const d = safeData();
-      if (d.lastm === c.matchId) return;
-      try { store.setData(recordPatch(d, c.state, c.matchId)); } catch { /* records are a bonus */ }
+      const ids = String(d.recent_m || '').split(',').filter(Boolean);
+      if (ids.includes(c.matchId)) return;
+      if (!watched && c.state.v !== 2) return;
+      try { store.setData({ ...recordPatch(d, c.state, c.matchId), recent_m: [...ids, c.matchId].slice(-20).join(',') }); } catch { /* records are a bonus */ }
     }
 
     // ── the rules card (first giver, before the first clue) ──
@@ -797,10 +812,9 @@ registerGame({
         <h2 class="g-ag-h">Mission briefing</h2>
         <div class="g-ag-opt"><span class="g-label">Difficulty</span><div class="g-ag-seg s3" role="group" aria-label="Difficulty">${lv}</div></div>
         <div class="g-ag-opt"><span class="g-label">Word pack</span><div class="g-ag-seg s2" role="group" aria-label="Word pack">${pk}</div></div>
-        <div class="g-ag-opt"><span class="g-label">Sudden death</span><div class="g-ag-seg s2" role="group" aria-label="Sudden death"><button type="button" data-sd="1" aria-pressed="${draft.sudden}"><b>On</b><small>Out of turns: one pick at a time</small></button><button type="button" data-sd="0" aria-pressed="${!draft.sudden}"><b>Off</b><small>Out of turns: mission over</small></button></div></div>
+        <div class="g-ag-opt"><span class="g-label">Sudden death</span><div class="g-ag-seg s2" role="group" aria-label="Sudden death"><button type="button" data-sd="1" aria-pressed="${draft.sudden}"><b>On</b><small>No clues, one pick each</small></button><button type="button" data-sd="0" aria-pressed="${!draft.sudden}"><b>Off</b><small>Out of turns: mission over</small></button></div></div>
         ${ledgerHTML()}
-        <button class="gm-btn gm-btn-big g-ag-play" type="button" data-act="play"${c.canMove ? '' : ' disabled'}>Play</button>
-      </div>`;
+      </div><div class="g-ag-playbar"><button class="gm-btn gm-btn-big g-ag-play" type="button" data-act="play"${c.canMove ? '' : ' disabled'}>Play</button></div>`;
     }
 
     function renderTop() {
@@ -865,7 +879,7 @@ registerGame({
         </form>`;
           if (d) slip.querySelector('.g-ag-input').value = d.t;
         } else if (t && s.phase === 'guess' && role !== 'blank' && role !== 'over') {
-          slip.innerHTML = `<div class="g-ag-paper${fresh ? ' fresh' : ''}"><div class="g-ag-cluebox"><small>${nm(t.by)}’s clue</small><span class="g-ag-clueword" style="--len:${t.clue.length}">${esc(t.clue)}</span>${s.v === 2 ? '<span class="g-ag-left"></span>' : ''}</div><span class="g-ag-num" aria-label="${t.n} cards">${t.n}</span></div>`;
+          slip.innerHTML = `<div class="g-ag-paper${fresh ? ' fresh' : ''}"><div class="g-ag-cluebox"><span class="g-ag-clhead"><small>${nm(t.by)}’s clue</small>${s.v === 2 ? '<span class="g-ag-left"></span>' : ''}</span><span class="g-ag-clueword" style="--len:${t.clue.length}">${esc(t.clue)}</span></div><span class="g-ag-num" aria-label="${t.n} cards">${t.n}</span></div>`;
         } else slip.innerHTML = '';
       }
       const lf = slip.querySelector('.g-ag-left');
@@ -877,18 +891,19 @@ registerGame({
       const s = c.state;
       const role = roleOf(c);
       const t = curTurn(s);
-      const mine = `<div class="g-ag-toggle"><button data-act="mine" aria-pressed="${showMine}">Show my key</button></div>`;
+      const mineBtn = `<button class="gm-btn gm-btn-ghost g-ag-mine" data-act="mine" aria-pressed="${showMine}" aria-label="Show my key"><span>My key</span></button>`;
+      const mine = `<div class="g-ag-row">${mineBtn}</div>`;
       const legend = (whose) => `<div class="g-ag-legend" aria-hidden="true"><span><i class="lg-g"></i>${whose} agents</span><span><i class="lg-k"></i>assassins</span></div>`;
       const pickBtn = sel != null ? `<button class="gm-btn" data-act="pick"><span>Pick ${up(s.words[sel])}</span></button>` : '<button class="gm-btn" data-act="pick" disabled><span>Tap a word</span></button>';
       let h = '';
       if (role === 'guess' && c.canMove) {
-        h = `<div class="g-ag-acts"><button class="gm-btn gm-btn-ghost" data-act="stop"${t.picks.length ? '' : ' disabled'}>End turn</button>${pickBtn}</div><div class="g-ag-row">${mine}${showMine ? legend('your') : ''}</div>`;
+        h = `${showMine ? legend('your') : ''}<div class="g-ag-acts three"><button class="gm-btn gm-btn-ghost" data-act="stop"${t.picks.length ? '' : ' disabled'}>End turn</button>${mineBtn}${pickBtn}</div>`;
       } else if (role === 'sudden' && c.canMove) {
-        h = `<div class="g-ag-acts one">${pickBtn}</div><div class="g-ag-row">${mine}${showMine ? legend('your') : ''}</div>`;
+        h = `${showMine ? legend('your') : ''}<div class="g-ag-acts two">${mineBtn}${pickBtn}</div>`;
       } else if (role === 'give' || role === 'watch' || role === 'sudden-watch') {
         h = legend('your');
       } else if (role === 'await-clue' || role === 'guess' || role === 'sudden') {
-        h = `<div class="g-ag-row">${mine}${showMine ? legend('your') : ''}</div>`;
+        h = `${mine}${showMine ? legend('your') : ''}`;
       } else if (role === 'over') {
         const k = shownKey(c);
         h = `${debriefHTML(c)}<div class="g-ag-toggle" role="group" aria-label="Show a key">${['a', 'b'].map((w) => `<button data-act="key" data-w="${w}" aria-pressed="${k === w}">${nm(w)}’s key</button>`).join('')}</div>
@@ -1036,7 +1051,9 @@ registerGame({
         anim = null;
         if (!guessing(c) || !c.canMove) sel = null;
         if (sel != null && !pickable(c, sel)) sel = null;
-        if (c.over) { draftSet(c, ''); maybeRecord(c); }
+        const watched = prevOver === false && !!c.over && prevMoves != null && c.moves > prevMoves;
+        prevOver = !!c.over;
+        if (c.over) { draftSet(c, ''); maybeRecord(c, watched); }
         if (prevMoves != null && c.moves > prevMoves && c.last && c.last.move && c.last.move.pick !== undefined && c.viewer !== undefined) {
           const i = c.last.move.pick;
           const kind = s.found[i] ? 'reveal' : s.hit === i ? 'reveal' : 'thunk';

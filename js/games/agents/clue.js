@@ -28,14 +28,17 @@ const GROUPS = [
 const GROUP_OF = new Map();
 for (const g of GROUPS) for (const w of g) { const set = GROUP_OF.get(w) || new Set(); for (const x of g) set.add(x); GROUP_OF.set(w, set); }
 
+// Words that end in s but are not plurals of a shorter word (NEWS is not NEW + S).
+const NOT_PLURAL = new Set(['news', 'lens', 'series', 'species', 'always', 'perhaps', 'christmas', 'bonus', 'chaos', 'bias', 'atlas', 'canvas', 'gas']);
 /** Possible singular forms of a word (itself included). */
 function singulars(x) {
   const out = new Set([x]);
   if (IRREG[x]) out.add(IRREG[x]);
+  if (NOT_PLURAL.has(x)) return out;
   if (x.length > 3 && x.endsWith('ies')) out.add(`${x.slice(0, -3)}y`);
-  if (x.length > 4 && x.endsWith('ves')) { out.add(`${x.slice(0, -3)}f`); out.add(`${x.slice(0, -3)}fe`); }
-  if (x.length > 4 && x.endsWith('es')) out.add(x.slice(0, -2));
-  if (x.length > 3 && x.endsWith('s') && !x.endsWith('ss')) out.add(x.slice(0, -1));
+  // -es only after s, x, z, ch, sh (BOXES, WATCHES), never HATES -> HAT
+  if (x.length > 4 && /(s|x|z|ch|sh)es$/.test(x)) out.add(x.slice(0, -2));
+  if (x.length > 3 && x.endsWith('s') && !/(ss|us|is)$/.test(x)) out.add(x.slice(0, -1));
   return out;
 }
 /** Everything a word can stand for: its singulars, their aliases, and the singulars of those. */
@@ -49,20 +52,43 @@ function stems(x) {
   }
   // pajamas / pyjamas: the group is written singular, so also look up the singular of each alias
   for (const s of [...out]) for (const t of singulars(s)) if (t.length >= 2) out.add(t);
-  // and ones whose group entry is plural-looking (telly -> tv): cover aliases of the new singulars
   for (const s of [...out]) { const g = GROUP_OF.get(s); if (g) for (const a of g) out.add(a); }
   return out;
 }
-const sameFamily = (a, b) => { const sb = stems(b); for (const s of stems(a)) if (sb.has(s)) return true; return false; };
+/** A clue's bases once an ending is peeled off: DANCING / DANCER / DANCED -> DANCE, CHEESY -> CHEESE, RUNNING -> RUN. */
+function inflectedBases(c) {
+  const out = new Set();
+  for (const suf of ['ing', 'ers', 'er', 'ed', 'ly', 'y']) {
+    if (!c.endsWith(suf)) continue;
+    const base = c.slice(0, -suf.length);
+    if (base.length < 3) continue;
+    out.add(base);
+    out.add(`${base}e`); // dropped e
+    if (/([^aeiou])\1$/.test(base)) out.add(base.slice(0, -1)); // doubled consonant
+  }
+  return out;
+}
+const INFLECTIONS = new Set(['s', 'es', 'ed', 'er', 'ers', 'ing', 'y', 'ly']);
+// Words that merely look like word + ending (MOTHER is not MOTH + ER).
+const NOT_DERIVED = new Set(['mother', 'father', 'brother', 'sister', 'daughter', 'other', 'another', 'together', 'whether', 'rather', 'either', 'neither', 'water', 'butter', 'letter', 'number', 'paper', 'power', 'tiger', 'finger', 'dinner', 'summer', 'winter', 'silver', 'river', 'flower', 'tower', 'shower', 'powder', 'order', 'border', 'leader', 'hunger', 'anger', 'danger', 'ginger', 'wonder', 'thunder', 'monster', 'master', 'sweater', 'weather', 'feather']);
+const endingOk = (base, ending) => (ending === 'es' ? /(s|x|z|ch|sh)$/.test(base) : INFLECTIONS.has(ending));
+function sameFamily(clue, word, derived) {
+  const sw = stems(word);
+  for (const s of stems(clue)) if (sw.has(s)) return true;
+  if (derived) for (const b of inflectedBases(clue)) for (const s of stems(b)) if (sw.has(s)) return true;
+  return false;
+}
 
 /** Why a (normalised) clue is too close to a board word, or '' if it is fine. */
 export function tooClose(clue, word) {
   if (clue === word) return 'is on the board';
-  if (sameFamily(clue, word)) return 'same word family';
+  const derived = !NOT_PLURAL.has(clue) && !NOT_DERIVED.has(clue);
+  if (sameFamily(clue, word, derived)) return 'same word family';
+  // RING -> RINGER, RINGED, RINGING: the board word plus a real ending (MAPLE, SPACE, BEER, VOWEL are fine)
+  if (derived && word.length >= 3 && clue.startsWith(word) && endingOk(word, clue.slice(word.length))) return 'part of the same word';
+  // a long word sitting inside another (FLOWER in SUNFLOWER); short fragments (AT, SEA, EAR, NIGHT) are fine
   const [sh, lo] = clue.length <= word.length ? [clue, word] : [word, clue];
-  if (sh.length >= 4 && lo.includes(sh)) return 'part of the same word';
-  // RING -> RINGER, RINGED: the board word plus up to three more letters
-  if (word.length >= 3 && clue.startsWith(word) && clue.length - word.length <= 3) return 'part of the same word';
+  if (sh.length >= 6 && lo.includes(sh)) return 'part of the same word';
   return '';
 }
 

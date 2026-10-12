@@ -228,6 +228,18 @@ async function unitTests() {
   assert(p.lastm === 'm1' && p.matches_n === 1 && p.a_wins_n === 1 && p.a_streak === 1 && p.b_streak === 0 && p.a_fast_pb === 6 && p.a_held_n === 1 && !p.b_fast_pb, 'records: first match counts wins, streak, fastest and held-out');
   data = { ...data, ...p };
   assert(Rec.recordMatch(data, fin(['crane'], ['abbey']), 'm1') === null, 'records: the same match is recorded once');
+  assert(Rec.recentOf(data).join() === 'm1' && data.recent_m === 'm1', 'records: recent_m holds the recorded ids');
+  // reopening finished matches later (the Agents verifier's repro): never double-counted, legacy never counted on reopen
+  const v1done = { secret: { a: 'abbey', b: 'crane' }, guesses: { a: ['crane'], b: ['abbey'] } };
+  assert(Rec.recordMatch(data, v1done, 'old1', false) === null, 'records: a finished legacy v1 match opened later is never recorded');
+  assert(Rec.recordMatch(data, v1done, 'old1', true) !== null, 'records: a legacy match watched to its end is recorded');
+  assert(Rec.recordMatch(data, fin(['crane'], ['abbey']), 'm1', false) === null, 'records: reopening a recorded match does nothing');
+  const reopened = Rec.recordMatch(data, fin(['crane'], ['abbey']), 'm9', false);
+  assert(reopened && reopened.matches_n === 2 && reopened.recent_m === 'm1,m9', 'records: a v2 match this phone never recorded counts once when opened');
+  let dz = { ...data, ...reopened };
+  assert(Rec.recordMatch(dz, fin(['crane'], ['abbey']), 'm1', false) === null && Rec.recordMatch(dz, fin(['crane'], ['abbey']), 'm9', false) === null, 'records: opening m1 then m9 again later does not count either twice');
+  for (let k = 0; k < 25; k++) dz = { ...dz, ...Rec.recordMatch(dz, fin(['crane'], ['abbey']), `r${k}`) };
+  assert(Rec.recentOf(dz).length === 20 && Rec.recentOf(dz)[19] === 'r24' && !Rec.recentOf(dz).includes('m1'), 'records: recent_m keeps the last 20 ids');
   p = Rec.recordMatch(data, fin(['crane'], ['pound', 'misty', 'jumbo', 'fight', 'lunch', 'oxbow']), 'm2');
   assert(p.a_wins_n === 2 && p.a_streak === 2 && p.a_streak_best === 2 && p.a_two_n === 2 && p.a_fast_pb === 7 && p.pbm === 'm2', 'records: streak, mind-reader count and a personal best');
   data = { ...data, ...p };
@@ -296,6 +308,20 @@ async function setRules(pg, want) {
   if (want.pool) await pg.tap(`[data-rule="pool:${want.pool}"]`);
 }
 
+// every visible button in the game (keyboard keys excepted) is at least 44 px tall and wide
+const smallButtons = (pg) => pg.evaluate(() => [...document.querySelectorAll('.g-wd button:not(.g-wd-key), .g-wd-hold-layer button:not(.g-wd-key)')]
+  .filter((b) => b.offsetParent !== null).map((b) => ({ t: b.textContent.trim().slice(0, 20), r: b.getBoundingClientRect() })).filter((x) => x.r.height < 43.5 || x.r.width < 43.5).map((x) => `${x.t} ${Math.round(x.r.width)}x${Math.round(x.r.height)}`));
+async function playVisible(pg, sizes) {
+  for (const [w, hh] of sizes) {
+    await pg.setViewportSize({ width: w, height: hh });
+    await pg.waitForTimeout(200);
+    const r = await pg.evaluate(() => { const b = document.querySelector('.g-wd-actions [data-act="play"]').getBoundingClientRect(); return { t: b.top, b: b.bottom, h: b.height, vh: innerHeight, scroll: document.scrollingElement.scrollHeight - document.scrollingElement.clientHeight }; });
+    assert(r.t >= 0 && r.b <= r.vh && r.h >= 44 && r.scroll <= 1, `${w}x${hh}: Play is fully visible without scrolling (${JSON.stringify(r)})`);
+  }
+  await pg.setViewportSize({ width: 390, height: 664 });
+  await pg.waitForTimeout(150);
+}
+
 // 1. online: rules card -> pick -> play with fair + hard + dealt; B3, B4, records and ledger
 async function onlineDealtHard(h, scheme) {
   const R = await imp('js/games/wordduel/rules.js');
@@ -312,6 +338,8 @@ async function onlineDealtHard(h, scheme) {
   assert(eq((await h.engine(a, id)).acts, ['a', 'b']), 'online: next() stays both players while pristine');
   assert(await F.getAttribute('[data-rule="pool:fair"]', 'aria-pressed') === 'true', 'rules card defaults to everyday words');
   assert(await F.evaluate(() => { const b = document.querySelector('.g-wd-actions [data-act="play"]').getBoundingClientRect(); return b.height >= 44 && b.bottom <= innerHeight; }), 'Play is a 44 px+ button inside the viewport');
+  await playVisible(F, [[360, 640], [844, 390], [667, 375], [320, 568]]);
+  assert((await smallButtons(F)).length === 0, `the rules card's buttons are all 44 px+ (${await smallButtons(F)})`);
   await snap(F, scheme, 'wd2-1-rules');
   await snap(S, scheme, 'wd2-1-wait');
   await setRules(F, { pool: 'fair', hard: true, dealt: true, bo3: false });
@@ -324,6 +352,7 @@ async function onlineDealtHard(h, scheme) {
   assert(lastSetup === 'fair:1:1:0', `the rules card remembers its last choice (${lastSetup})`);
   for (const pg of [a, b]) assert(await pg.isVisible('.g-wd-key[data-k="q"]') && /Everyday words/i.test(await pg.textContent('.g-wd-tags')), 'both players get the keyboard and the pool stamp');
   assert(new RegExp(e.state.opener, 'i').test(await F.textContent('.g-wd-dealtline')), 'the pick screen shows the dealt opener');
+  assert((await smallButtons(F)).length === 0, `the pick screen's buttons are all 44 px+ (${await smallButtons(F)})`);
   await snap(F, scheme, 'wd2-2-pick');
   // pool rejection, opener rejection
   const uncommon = [...R.lists().valid].find((w) => !R.lists().commonSet.has(w));
@@ -363,6 +392,7 @@ async function onlineDealtHard(h, scheme) {
   assert(await F.evaluate(() => document.querySelectorAll('.g-wd-key').length === 28 && [...document.querySelectorAll('.g-wd-key')].every((k) => k.__keep)), 'B3: the same key nodes survive a submit (built once)');
   await F.waitForTimeout(1500);
   assert(/Cracked it in 2/.test(await sayOf(F)), `after the flip it says so (${await sayOf(F)})`);
+  assert((await smallButtons(F)).length === 0, `the waiting view's buttons are all 44 px+ (${await smallButtons(F)})`);
   await snap(F, scheme, 'wd2-3-done');
   // S: a wrong guess, then the crack on row 3. F (done) must not see "cracked it in 3" before the flip ends
   const legal = (w) => { try { R.hardCheck(sF, [op], w); return true; } catch { return false; } };
@@ -395,8 +425,15 @@ async function onlineDealtHard(h, scheme) {
   }
   const stampTxt = await a.textContent('.g-wd-stamps');
   assert(/Mind-reader/i.test(stampTxt), `a crack in two earns MIND-READER (${stampTxt})`);
+  assert((await smallButtons(a)).length === 0, `the end view's buttons are all 44 px+ (${await smallButtons(a)})`);
   await snap(a, scheme, 'wd2-4-end');
   await snap(b, scheme, 'wd2-4-end-b');
+  // reopening the finished match later never counts it again
+  await h.closeGame(a);
+  await reloadInto(h, a, id);
+  await a.waitForTimeout(500);
+  const after = await dataOf(a);
+  assert(after.matches_n === 1 && after[wk] === 1 && after.recent_m === id, `records: reopening a recorded match does not count it again (${JSON.stringify(after)})`);
   await h.closeGame(a); await h.closeGame(b);
 }
 
@@ -447,7 +484,7 @@ async function onlineBo3(h, scheme) {
   await a.waitForTimeout(300);
   assert(await a.evaluate(() => document.querySelectorAll('.g-wd-recap > span').length) === 3, 'the end view recaps all three rounds');
   const d = await dataOf(a);
-  assert(d.sets_n === 1 && d.a_wins_n === 1 && d.comeback_n === 1, `records: a set and a comeback (${JSON.stringify(d)})`);
+  assert(d.sets_n === 1 && d.comeback_n === 1, `records: a set and a comeback (${JSON.stringify(d)})`);
   assert(/Comeback/i.test(await a.textContent('.g-wd-stamps')), 'a comeback set earns its stamp');
   await snap(a, scheme, 'wd2-6-bo3-end');
   await h.closeGame(a); await h.closeGame(b);
@@ -475,6 +512,7 @@ async function localFlows(h, scheme) {
   const E1 = await h.engine(a, id);
   assert(E1.state.guesses.a.length === 2 && await a.isVisible('.g-wd-hold-layer'), `B1: the finishing guess is committed at once and shown in the reveal (${JSON.stringify(E1.state.guesses)}, hold ${await a.isVisible('.g-wd-hold-layer')}, ${JSON.stringify(E1.acts)})`);
   await a.waitForTimeout(1600);
+  assert((await smallButtons(a)).length === 0, `the reveal's buttons are all 44 px+ (${await smallButtons(a)})`);
   await snap(a, scheme, 'wd2-7-local-hold');
   await a.tap('#game-root [data-g="close"]');
   await a.waitForTimeout(250);

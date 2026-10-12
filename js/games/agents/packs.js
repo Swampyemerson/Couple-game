@@ -33,16 +33,16 @@ export const PACKS = { us: clean(RAW.us), travel: clean(RAW.travel), mythic: cle
 
 export const PACK_INFO = {
   classic: { name: 'Classic', blurb: 'Everyday nouns' },
-  us: { name: 'Us', blurb: 'Date nights and sofa days' },
-  travel: { name: 'Wanderlust', blurb: 'Ports, trails and souvenirs' },
-  mythic: { name: 'Mythic', blurb: 'Dragons, quests and crowns' },
+  us: { name: 'Us', blurb: 'Date night' },
+  travel: { name: 'Wanderlust', blurb: 'Ports and trails' },
+  mythic: { name: 'Mythic', blurb: 'Dragons, quests' },
 };
 export const PACK_IDS = ['classic', 'us', 'travel', 'mythic'];
 
 // Where a long pack word breaks on a narrow card (words already in agents.js BREAKS are not repeated).
 export const PACK_BREAKS = new Map(`
 sun-rise prom-ise morn-ing gon-dola lug-gage gal-lery sou-venir jour-nal cus-toms sun-burn grif-fin pro-phet
-scep-ter ser-pent mino-taur peg-asus cen-taur chi-mera ec-lipse
+scep-ter ser-pent mino-taur pe-gasus cen-taur chi-mera ec-lipse
 `.trim().split(/\s+/).map((x) => [x.replace('-', ''), x.split('-')]));
 
 /** 25 board words for a themed deal: 15 from the pack, 10 everyday nouns, no word inside another. */

@@ -581,9 +581,10 @@ registerGame({
     };
     document.addEventListener('paste', onPaste);
 
+    let wasOver = null; // was the match over at the previous update of this mount? (null = first one)
     function maybeRecord(c) {
-      if (!c.over || !c.matchId) return;
-      const p = recordMatch(data(), c.state, c.matchId);
+      if (!c.over || !c.matchId || wasOver === true) return;
+      const p = recordMatch(data(), c.state, c.matchId, wasOver === false);
       if (p) setData(p);
     }
     const offData = typeof dataApi.onData === 'function' ? dataApi.onData(() => { if (ctx && ctx.over) render(); }) : null;
@@ -626,6 +627,7 @@ registerGame({
         prevMoves = c.moves;
         let restored = false;
         if (c.over) { draft = ''; draftSave(); maybeRecord(c); }
+        wasOver = c.over;
         else if (!draft && c.canMove) { const m = modeOf(c); if (m === 'pick' || m === 'solve') { draft = draftLoad(c); restored = !!draft; } }
         render();
         if (restored) paintDraft();
