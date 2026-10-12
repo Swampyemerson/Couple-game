@@ -24,11 +24,13 @@ these fields.
 
 ## v2 rules
 
-- **Clue checker.** Refuses a board word, its plural or singular (cactus/cacti, wolf/wolves, die/dice, -s/-es/-ies/-ves,
-  both directions) and true spelling variants and diminutives (donut/doughnut, grey/gray, pyjamas/pajamas, kitty/kitten,
-  bunny/rabbit, mom/mum, ...). Substring blocking only applies when the shorter word has 4+ letters, plus "board word +
-  up to 3 letters" (RING blocks RINGS, RINGER). AT, AN, SEA, EAR, CAT/CATALOG are fine. Errors read
-  "Too close to WATCH (same word family)."
+- **Clue checker.** Refuses a board word, its plural or singular (cactus/cacti, wolf/wolves, die/dice, -s, -es after
+  s/x/z/ch/sh, -ies, both directions), true spelling variants and diminutives (donut/doughnut, grey/gray, pyjamas/pajamas,
+  kitty/kitten, bunny/rabbit, mom/mum/mother, ...), the board word plus a real ending (RING: RINGS, RINGER, RINGING) and
+  dropped-e or doubled-letter forms (DANCING/DANCE, CHEESY/CHEESE, RUNNING/RUN). A word merely sitting inside another is
+  only blocked when the shorter one has 6+ letters (FLOWER in SUNFLOWER). SPACE/SPA, TEAM/TEA, BEER/BEE, VOWEL/VOW,
+  MAPLE/MAP, NIGHT/KNIGHT, PLANET/PLANE, MOTHER/MOTH, CAVES/CAFE, HATES/HAT, NEWS/NEW and AT, SEA, EAR are fine.
+  Errors read "Too close to WATCH (same word family)."
 - **Pick limit.** At most `n + 1` agents per turn; the turn then ends by itself. The slip shows "picks left".
 - **Sudden death** (when `sudden` is on). When the turns run out with agents left, `phase: 'sudden'`: no clues. One picker
   at a time (`s.picker`, starting with whoever would have guessed next) picks on the partner's key. An agent keeps the
@@ -42,10 +44,12 @@ these fields.
 
 The turn-game `api` has no `data()`, so the game imports `gameDataApi` from core and uses it directly.
 Flat keys: `missions_n wins_n burned_n caught_n cold_n sudden_n escape_n meld_n rookie_wins_n agent_wins_n spy_wins_n
-pack_<p>_n spare_best close_best streak streak_best clue_best a_clue_best b_clue_best lastm lastb last_setup`.
+pack_<p>_n spare_best close_best streak streak_best clue_best a_clue_best b_clue_best lastm lastb recent_m last_setup`.
 
-- Recorded once per match: skipped when `lastm` equals the match id; counters are absolute values from the data snapshot
-  (two phones writing the same match write the same numbers).
+- Recorded once per match. `recent_m` (comma-joined, newest 20 match ids) is checked before recording and appended on
+  record. A phone records when it watched the match end during this mount, or when the match is v2 and its id is not in
+  `recent_m`. A finished v1 match opened later from the hub is never recorded. Counters are absolute values from the data
+  snapshot (two phones writing the same match write the same numbers).
 - `spare_best`: most turns to spare on a win. `close_best`: most agents found on a loss ("closest call"). The core
   end card still says "Best team score 0" (a team result's score is not what it counts); our own ledger separates wins
   and losses.
@@ -56,7 +60,9 @@ pack_<p>_n spare_best close_best streak streak_best clue_best a_clue_best b_clue
 
 ## Layout notes
 
-The action dock (Pick / End turn) is sticky at the bottom so it stays on screen at 360x640. A second tap on a
+The action dock (End turn / My key / Pick) is sticky at the bottom so it stays on screen at 360x640, where all five board
+rows fit above it. The rules card's Play button is a sticky bar. Landscape phones (`orientation: landscape` and height
+at most 500 px) put the board on the left and the slip, actions and history on the right. A second tap on a
 selected card within 350 ms does not confirm; taps are ignored for 400 ms after any move.
 
 ## Tests

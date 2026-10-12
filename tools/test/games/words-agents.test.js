@@ -82,6 +82,7 @@ async function unitTests() {
   for (const [lv, n] of [['rookie', 11], ['agent', 9], ['spy', 7]]) assert(run([['b', S({ level: lv })]], 'b').tokens === n, `tier ${lv} has ${n} tokens`);
   throws(() => run([['b', S()]], 'a'), /first player/, 'setup from the other player is rejected');
   throws(() => run([['a', S()], ['a', S()]]), /already set/, 'a second setup is rejected');
+  throws(() => run([['a', S()], ['b', S()]]), /already set/, 'a second setup from the partner also says the rules are already set');
   throws(() => run([['a', { setup: { v: 1 } }]]), /version/, 'setup v must be 2');
   throws(() => run([['a', { setup: {} }]]), /version/, 'setup needs v');
   throws(() => run([['a', S({ level: 'god' })]]), /rookie, agent or spy/, 'unknown level throws');
@@ -123,7 +124,16 @@ async function unitTests() {
   throws(() => T.cleanClue2(clone(b), 'watch'), /WATCH is on the board/, 'the exact board word reads "is on the board"');
   throws(() => T.cleanClue2(clone(b), 'cacti'), /Too close to CACTUS \(same word family\)/, 'the message names the word and why');
   for (const c of ['at', 'an', 'cr', 'sea', 'ear', 'qwerty', 'catalog', 'tick']) good(b, c);
-  bad(b, 'horse', /Too close to SEAHORSE/);
+  bad(b, 'seahorses', /Too close to SEAHORSE/);
+  // fix round 1: no false rejects, stem collisions gone, dropped-e inflections blocked
+  const fb = board(['spa', 'tea', 'bee', 'vow', 'map', 'knight', 'hero', 'plane', 'ring', 'moth', 'cafe', 'hat', 'bat', 'jam', 'new', 'dance', 'cheese', 'run', 'flower']);
+  const keep = new Set(['spa', 'tea', 'bee', 'vow', 'map', 'knight', 'hero', 'plane', 'ring', 'moth', 'cafe', 'hat', 'bat', 'jam', 'new', 'dance', 'cheese', 'run', 'flower']);
+  fb.words = fb.words.map((w, i) => (i >= 19 && keep.has(w) ? `zz${i}` : w));
+  for (const c of ['space', 'spark', 'team', 'teach', 'beer', 'vowel', 'maple', 'night', 'heron', 'planet', 'string', 'mother', 'caves', 'hates', 'bates', 'james', 'news', 'mapped2'.slice(0, 5)]) good(fb, c);
+  for (const c of ['dancing', 'dancer', 'danced', 'cheesy', 'running', 'rings', 'ringer', 'ringing', 'spas', 'flowers']) bad(fb, c);
+  bad(fb, 'sunflower', /Too close to FLOWER/);
+  good(fb, 'seahorse');
+  assert(T.cleanClue2(clone(fb), 'sea') === 'sea', 'short fragments stay allowed');
   // the old checker still blocks what it always did, on v1 states
   const st1 = mk(ag, 'a', 3); st1.words = ['doughnut', 'cactus', ...st1.words.slice(2).map((w) => (w === 'donut' || w === 'cacti' ? 'zz' : w))];
   throws(() => T.cleanClue(clone(st1), `${st1.words[5]}s`), /Too close/, 'v1 checker unchanged (plural of a board word)');
@@ -281,6 +291,13 @@ async function v2Online(h, scheme) {
   const boxes = await G.$$eval('.g-ag-rules button', (bs) => bs.map((x) => x.getBoundingClientRect().height));
   assert(boxes.every((x) => x >= 44), `rules card: every control is at least 44px tall (${Math.min(...boxes)})`);
   await snap(G, scheme, 'v2-1-rules');
+  for (const [w, hh] of [[360, 640], [320, 568], [844, 390]]) {
+    await G.setViewportSize({ width: w, height: hh });
+    await G.waitForTimeout(250);
+    const pb = await G.evaluate(() => { const e = document.querySelector('.g-ag-play').getBoundingClientRect(); return { b: e.bottom, t: e.top, ih: innerHeight, h: e.height }; });
+    assert(pb.b <= pb.ih && pb.t >= 0 && pb.h >= 44, `rules card ${w}x${hh}: the Play button is fully in view (bottom ${Math.round(pb.b)} of ${pb.ih})`);
+  }
+  await G.setViewportSize({ width: 390, height: 844 });
   await G.tap('[data-pk="mythic"]');
   await G.tap('[data-lv="spy"]');
   assert(await G.getAttribute('[data-pk="mythic"]', 'aria-pressed') === 'true' && await G.getAttribute('[data-lv="spy"]', 'aria-pressed') === 'true', 'rules card: pack and level selections stick');
@@ -292,6 +309,8 @@ async function v2Online(h, scheme) {
   assert(eq(await stateOf(h, b, id), s), 'both phones derive the same v2 state');
   assert((await G.$$('.g-ag-tokens .g-ag-tok')).length === 7 && (await R.$$('.g-ag-tokens .g-ag-tok')).length === 7, 'the spy level shows 7 tokens');
   assert((await G.$$('.g-ag-card.k-G')).length === 9 && (await R.$$('.g-ag-card')).length === 25, 'then the board shows (giver sees their key)');
+  const small = (pg) => pg.evaluate(() => [...document.querySelectorAll('.g-agents button, .g-agents input, .g-agents .gm-btn')].filter((e) => e.offsetParent !== null && !e.classList.contains('g-ag-card')).map((e) => { const r = e.getBoundingClientRect(); return { n: (e.textContent || e.className).trim().slice(0, 14), w: r.width, h: r.height }; }).filter((x) => x.w < 43.5 || x.h < 43.5));
+  assert(!(await small(G)).length, `tap targets: every control on the clue form is at least 44px ${JSON.stringify(await small(G))}`);
   // checker v2 through the UI: a plural of a board word is refused with a specific message
   await giveClue(G, `${s.words[0]}s`, 1);
   await G.waitForTimeout(80);
@@ -310,12 +329,25 @@ async function v2Online(h, scheme) {
   await R.click(`.g-ag-card[data-i="${todo[0]}"]`);
   await h.settle();
   assert((await stateOf(h, a, id)).found[todo[0]] === r, 'a deliberate second tap confirms the pick');
+  assert(!(await small(R)).length, `tap targets: every control in the guess view is at least 44px ${JSON.stringify(await small(R))}`);
   // 360x640: the primary actions stay inside the viewport
   for (const pg of [G, R]) await pg.setViewportSize({ width: 360, height: 640 });
   await R.waitForTimeout(250);
   const dockBox = await R.evaluate(() => { const bx = (sel) => { const e = document.querySelector(sel); if (!e) return null; const q = e.getBoundingClientRect(); return { t: q.top, b: q.bottom }; }; return { ih: innerHeight, pick: bx('.g-ag-dock [data-act="pick"]'), stop: bx('.g-ag-dock [data-act="stop"]') }; });
   assert(dockBox.pick && dockBox.stop && dockBox.pick.b <= dockBox.ih && dockBox.stop.b <= dockBox.ih && dockBox.pick.t >= 0, `360x640: Pick and End turn are fully in view (bottom ${Math.round(dockBox.pick.b)} of ${dockBox.ih})`);
+  const rows = await R.evaluate(() => { const cs = [...document.querySelectorAll('.g-ag-card')].map((c) => c.getBoundingClientRect()); return { last: Math.max(...cs.map((c) => c.bottom)), dock: document.querySelector('.g-ag-dock').getBoundingClientRect().top }; });
+  assert(rows.last <= rows.dock + 1, `360x640: all five board rows sit above the dock (${Math.round(rows.last)} <= ${Math.round(rows.dock)})`);
   await snap(R, scheme, 'v2-2-guess-360', [[360, 640]]);
+  // landscape phone: the whole board and the Pick button fit, no sideways scroll
+  for (const [w, hh] of [[844, 390], [667, 375]]) {
+    for (const pg of [G, R]) await pg.setViewportSize({ width: w, height: hh });
+    await R.waitForTimeout(300);
+    const L = await R.evaluate(() => { const cs = [...document.querySelectorAll('.g-ag-card')].map((c) => c.getBoundingClientRect()); const pk = document.querySelector('[data-act="pick"]').getBoundingClientRect(); return { last: Math.max(...cs.map((c) => c.bottom)), right: Math.max(...cs.map((c) => c.right)), pickB: pk.bottom, pickR: pk.right, ih: innerHeight, iw: innerWidth, sw: document.documentElement.scrollWidth, rsw: document.querySelector('#game-root').scrollWidth, rcw: document.querySelector('#game-root').clientWidth, slip: document.querySelector('.g-ag-slip').getBoundingClientRect() }; });
+    assert(L.last <= L.ih && L.pickB <= L.ih && L.pickR <= L.iw && L.sw <= L.iw && L.rsw <= L.rcw + 1 && L.slip.bottom <= L.ih, `landscape ${w}x${hh}: board, slip and Pick are inside the viewport, no sideways scroll (${JSON.stringify({ last: Math.round(L.last), pickB: Math.round(L.pickB), ih: L.ih })})`);
+    if (w === 844) await snap(R, scheme, 'v2-2-guess-landscape', [[844, 390]]);
+  }
+  for (const pg of [G, R]) await pg.setViewportSize({ width: 360, height: 640 });
+  await R.waitForTimeout(250);
   for (const pg of [G, R]) await pg.setViewportSize({ width: 390, height: 844 });
   await pickCard(R, todo[1], true);
   await h.settle();
@@ -407,6 +439,45 @@ async function suddenOnline(h, scheme) {
   await h.closeGame(P[pk]).catch(() => {});
 }
 
+const missionsOf = async (pg) => pg.evaluate(() => { try { return Number(JSON.parse(localStorage.getItem('ju.games.data.v1') || '{}').agents?.missions_n) || 0; } catch { return -1; } });
+async function recordsReopen(h, scheme) {
+  const { a, b } = h;
+  // finished matches only show in the hub while their end is "unseen": make them unseen again on demand
+  const unsee = async (pg) => {
+    if (await pg.isVisible('#game-root [data-g="close"]')) await h.closeGame(pg).catch(() => {});
+    await pg.evaluate(() => localStorage.setItem('ju.games.seenEnd.v1', '{}'));
+    await pg.reload();
+    await pg.waitForFunction(() => !!document.querySelector('.tabbar'), null, { timeout: 15000 });
+    await pg.waitForTimeout(500);
+  };
+  await unsee(a);
+  await unsee(b);
+  const base = await missionsOf(a);
+  // a finished v1 match opened from the hub is never counted
+  await h.openMatch(a, 'legacy2');
+  await a.waitForTimeout(800);
+  assert(await missionsOf(a) === base, 'records: opening a finished legacy v1 match does not count it');
+  // a finished v2 match nobody recorded counts once, however often it is reopened, on either phone
+  await unsee(a);
+  await h.openMatch(a, 'v2done');
+  await a.waitForTimeout(800);
+  assert(await missionsOf(a) === base + 1, 'records: a finished v2 match nobody recorded counts once');
+  await unsee(a);
+  await h.openMatch(a, 'v2done');
+  await a.waitForTimeout(600);
+  await h.settle();
+  await unsee(b);
+  await h.openMatch(b, 'v2done');
+  await b.waitForTimeout(800);
+  assert(await missionsOf(a) === base + 1 && await missionsOf(b) === base + 1, `records: reopening it (either phone) does not count it again (${await missionsOf(a)}, ${await missionsOf(b)})`);
+  // an earlier match, reopened after newer ones were recorded, neither reverts nor double counts
+  await unsee(b);
+  await h.openMatch(b, 'legacy1');
+  await b.waitForTimeout(600);
+  assert(await missionsOf(b) === base + 1, 'records: reopening an older match later changes nothing');
+  await h.closeGame(b).catch(() => {});
+}
+
 async function legacySeeded(h, scheme) {
   const { a, b } = h;
   const seed = 31;
@@ -444,7 +515,12 @@ function assert0(c, m) { if (!c) throw new Error('FAIL: ' + m); }
     const words = AG.pickWords(seed);
     const clue = ['qwerty', 'zigzag', 'jumble'].find((c) => words.every((w) => !w.includes(c) && !c.includes(w)));
     const agent = [...keys.a].indexOf('G');
-    const seedDocs = { 'matches/legacy1': { game: 'agents', first: 'a', seed, by: 'a', created: Date.now(), opts: {}, a: JSON.stringify([{ clue, n: 2 }]), b: JSON.stringify([{ pick: agent }]), ua: 1, ub: 1 } };
+    const kill = [...keys.a].indexOf('K');
+    const base = { game: 'agents', first: 'a', seed, by: 'a', created: Date.now(), opts: {}, ua: 1, ub: 1 };
+    const seedDocs = {
+      'matches/legacy2': { ...base, a: JSON.stringify([{ clue, n: 2 }]), b: JSON.stringify([{ pick: kill }]) },
+      'matches/v2done': { ...base, a: JSON.stringify([{ setup: { v: 2 } }, { clue, n: 2 }]), b: JSON.stringify([{ pick: kill }]) },
+      'matches/legacy1': { game: 'agents', first: 'a', seed, by: 'a', created: Date.now(), opts: {}, a: JSON.stringify([{ clue, n: 2 }]), b: JSON.stringify([{ pick: agent }]), ua: 1, ub: 1 } };
     for (const scheme of (process.env.SCHEME ? [process.env.SCHEME] : ['light', 'dark'])) {
       const full = scheme === 'light';
       const h = await launch({ port: scheme === 'light' ? 9170 : 9171, only: ['agents'], colorScheme: scheme, coarse: true, seedDocs });
@@ -452,6 +528,7 @@ function assert0(c, m) { if (!c) throw new Error('FAIL: ' + m); }
         await v2Online(h, scheme);
         if (full) await suddenOnline(h, scheme);
         await legacySeeded(h, scheme);
+        await recordsReopen(h, scheme);
         h.assertNoErrors();
         console.log(`ok - no page errors (${scheme})`);
       } catch (e) {

@@ -534,6 +534,34 @@ const css = `
   .g-ag-acts, .g-ag-end { max-width: 460px; }
 }
 
+
+/* landscape phones: board on the left, slip / actions / history on the right, all inside the short viewport */
+@media (orientation: landscape) and (max-height: 500px) {
+  .g-agents { gap: 4px; }
+  .g-ag-top { flex-direction: row; justify-content: space-between; align-items: center; gap: 12px; }
+  .g-ag-say { min-height: 0; flex: 1 1 auto; text-align: left; font-size: 0.8rem; line-height: 1.2; }
+  .g-ag-meta { flex: none; gap: 10px; font-size: 0.72rem; }
+  .g-ag-banner { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .g-ag-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, 36%); grid-template-rows: auto auto minmax(0, 1fr); gap: 6px 12px; align-items: start; }
+  .g-ag-main { display: contents; }
+  .g-ag-rules { grid-column: 1 / -1; grid-row: 1; }
+  .g-ag-wrap { grid-column: 1; grid-row: 1 / span 3; }
+  .g-ag-slip { grid-column: 2; grid-row: 1; justify-content: stretch; }
+  .g-ag-dock, .g-ag-dock.is-over { grid-column: 2; grid-row: 2; position: static; padding: 0; gap: 6px; }
+  .g-ag-side { grid-column: 2; grid-row: 3; max-height: 100px; overflow-y: auto; padding: 0; }
+  .g-ag-side h3 { margin-bottom: 4px; }
+  .g-ag-log li { padding: 4px 8px; }
+  .g-ag-grid { --gap: 4px; }
+  .g-ag-card { height: clamp(30px, calc((100dvh - 215px) / 5), 48px); padding-bottom: 4px; }
+  .g-ag-card::before { bottom: 3px; }
+  .g-ag-card .g-ag-ico { display: none; }
+  .g-ag-paper { padding: 4px 8px 5px 12px; }
+  .g-ag-form .gm-btn, .g-ag-input { min-height: 44px; height: 44px; }
+  .g-ag-acts .gm-btn { min-height: 44px; }
+  .g-ag-end .gm-btn { min-height: 44px; }
+  .g-ag-card-rules { gap: 6px; padding: 8px 10px; }
+}
+
 /* motion */
 @keyframes g-ag-flip { 0% { transform: rotateY(0); } 50% { transform: rotateY(90deg); } 100% { transform: rotateY(0); } }
 @keyframes g-ag-face { 0%, 49% { background-color: var(--g-card); background-image: none; color: var(--g-ink); } 50%, 100% { background-color: var(--face); color: var(--ink); } }
@@ -707,7 +735,7 @@ registerGame({
       if (!spans.length) return;
       const card = spans[0].parentElement;
       const avail = card.clientWidth - 9;
-      const availH = card.clientHeight - 16;
+      const availH = card.clientHeight - parseFloat(getComputedStyle(card).paddingBottom) - 7;
       if (avail < 20 || availH < 16) return;
       meter = meter || document.createElement('canvas').getContext('2d');
       const cs = getComputedStyle(spans[0]);

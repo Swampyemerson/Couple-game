@@ -288,7 +288,7 @@ async function snap(pg, scheme, name, size) {
 }
 async function reloadInto(h, pg, id) {
   await pg.reload();
-  await pg.waitForFunction(() => !!document.querySelector('.tabbar'), null, { timeout: 15000 });
+  try { await pg.waitForFunction(() => !!document.querySelector('.tabbar'), null, { timeout: 15000 }); } catch (e) { await pg.screenshot({ path: path.join(SHOTS, 'reload-fail.png') }); throw new Error('reload: no tab bar after reloading: ' + (await pg.evaluate(() => document.body.innerText.slice(0, 200)))); }
   await pg.waitForTimeout(300);
   await h.openMatch(pg, id);
   await pg.waitForTimeout(400);
@@ -429,7 +429,6 @@ async function onlineDealtHard(h, scheme) {
   await snap(a, scheme, 'wd2-4-end');
   await snap(b, scheme, 'wd2-4-end-b');
   // reopening the finished match later never counts it again
-  await h.closeGame(a);
   await reloadInto(h, a, id);
   await a.waitForTimeout(500);
   const after = await dataOf(a);
@@ -638,7 +637,7 @@ async function uiTests() {
       if (light && want('land')) await landscape(clean, scheme);
       clean.assertNoErrors();
       console.log(`ok - no page errors (${scheme}, clean data)`);
-    } catch (e) { fails++; console.error(e.message); await clean.shot(clean.a, path.join(SHOTS, `fail-${scheme}-a.png`)).catch(() => {}); await clean.shot(clean.b, path.join(SHOTS, `fail-${scheme}-b.png`)).catch(() => {}); console.error('errors:', clean.errors); } finally { await clean.close(); }
+    } catch (e) { fails++; console.error(e.message, (e.stack || "").split("\n").slice(1, 4).join("\n")); await clean.shot(clean.a, path.join(SHOTS, `fail-${scheme}-a.png`)).catch(() => {}); await clean.shot(clean.b, path.join(SHOTS, `fail-${scheme}-b.png`)).catch(() => {}); console.error('errors:', clean.errors); } finally { await clean.close(); }
     if (process.env.ONLY && !process.env.ONLY.includes('legacy')) continue;
     const seeded = await launch({ port: light ? 9122 : 9123, only: ['wordduel'], colorScheme: scheme, coarse: true, seedDocs: seed });
     try {
