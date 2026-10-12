@@ -1110,6 +1110,224 @@ async function quickdrawLocal(h, tag) {
   await h.closeGame(a);
 }
 
+// ── Quick Draw: Gunslinger handicap ───────────────────────────────────
+/** One phone: fire each half `ms[w]` after ITS OWN signal showed (waits for the cue, then times it in the page). */
+function qdFireOwn(pg, ms) {
+  return pg.evaluate((ms) => new Promise((resolve) => {
+    const root = document.querySelector('.g-qd');
+    const down = (w, i) => { const p = root.querySelector(`.qd-pad[data-w="${w}"]`); const r = p.getBoundingClientRect(); p.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 20 + i, pointerType: 'touch', clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 })); };
+    const pending = new Set(Object.keys(ms));
+    const poll = () => {
+      const t0 = window.__qdTest.state().t0 || {};
+      for (const w of [...pending]) if (t0[w] != null) { pending.delete(w); setTimeout(() => down(w, w === 'a' ? 0 : 1), Math.max(0, ms[w] - (performance.now() - t0[w]))); }
+      if (pending.size) requestAnimationFrame(poll); else resolve();
+    };
+    poll();
+  }), ms);
+}
+/** One phone: the first frame on which any half has its signal: what each half shows, and the paint times. */
+const qdSplit = (pg) => pg.evaluate(() => new Promise((resolve) => {
+  const word = (sel) => document.querySelector(sel).querySelector('.qd-word').textContent.trim();
+  const poll = () => {
+    const s = window.__qdTest.state();
+    if (s.t0 && Object.keys(s.t0).length) resolve({ t0: s.t0, bottom: word('.qd-sig:not(.qd-top)'), top: word('.qd-sig.qd-top'), lit: document.querySelector('.g-qd').dataset.lit || '' });
+    else requestAnimationFrame(poll);
+  };
+  poll();
+}));
+async function quickdrawHandicapLocal(h, tag) {
+  const { a } = h;
+  await h.startLive(a, 'quickdraw', 'local');
+  await a.waitForFunction(() => window.__qdTest, null, { timeout: 4000 });
+  await a.setViewportSize({ width: 360, height: 640 }); await h.wait(250);
+  // the picker: an optional chip, off by default, remembered
+  assert(await a.isVisible('.g-qd [data-hcap]') && (await qd(a)).pick.h === false, 'handicap: the picker has a Gunslinger handicap chip, off by default');
+  assert((await a.evaluate(() => document.querySelector('.g-qd [data-hcap]').getBoundingClientRect().height)) >= 44, 'handicap chip is >= 44 px tall');
+  await qdTap(a, '.g-qd [data-hcap]');
+  assert(await a.evaluate(() => document.querySelector('.g-qd [data-hcap]').getAttribute('aria-pressed')) === 'true', 'tapping the chip switches the handicap on');
+  // the offset is half the PB gap, at least 20 and at most 60 ms, for the quicker player; under a 40 ms gap there is none
+  for (const [pa, pb, want] of [[140, 260, /^Emerson's signal shows 60 ms later$/], [200, 240, /^Emerson's signal shows 20 ms later$/], [200, 239, /evenly matched/], [300, 200, /^Sydney's signal shows 50 ms later$/], [260, 140, /^Sydney's signal shows 60 ms later$/]]) {
+    await a.evaluate(([x, y]) => window.__qdTest.pbs(x, y), [pa, pb]);
+    const txt = await a.textContent('.g-qd [data-hcap] small');
+    assert(want.test(txt), `PBs ${pa}/${pb} ms: the chip says "${txt}"`);
+  }
+  const exp = { w: 'a', o: 60 };
+  for (const [w, hh] of [[375, 667], [360, 640], [320, 568], [568, 320], [844, 390], [390, 844]]) { await a.setViewportSize({ width: w, height: hh }); await h.wait(200); await qdFit(a, `phone ${w}x${hh} picker with the handicap chip`); }
+  await a.setViewportSize({ width: 320, height: 568 }); await h.wait(200);
+  await h.shot(a, `${SHOTS}/qd-${tag}-hcap-picker-320.png`);
+  await a.setViewportSize({ width: 360, height: 640 }); await h.wait(200);
+  await a.evaluate(() => window.__qdTest.pbs(140, 260));   // (set just before GO: a sync from the shared doc could overwrite it)
+  await h.wait(400);
+  await qdPick(a, 'classic', '5'); await qdGo(a);
+  await qdPhase(a, 'steady');
+  let s = await qd(a);
+  assert(JSON.stringify(s.cfg.h) === JSON.stringify(exp || 0), `GO takes the handicap from the personal bests: ${JSON.stringify(s.cfg.h)} (expected ${JSON.stringify(exp || 0)})`);
+  assert((await qdData(a)).qd_hcap === true, 'the choice is remembered in api.data (qd_hcap)');
+  await h.closeGame(a);
+  // a handicapped duel: Emerson (the quicker hand) waits 60 ms for his signal
+  await h.startLive(a, 'quickdraw', 'local');
+  await a.waitForFunction(() => window.__qdTest, null, { timeout: 4000 });
+  assert(await a.evaluate(() => document.querySelector('.g-qd [data-hcap]').getAttribute('aria-pressed')) === 'true', 'the handicap choice is preselected next time');
+  await a.evaluate(() => window.__qdTest.pbs(999, 999));   // so this duel's raw reactions are the new PBs
+  await a.evaluate(() => window.__qdTest.start('classic', '5', null, { w: 'a', o: 150 }  /* far past the real 60 ms cap: the jitter of a busy test machine can't flip the outcome */));
+  await qdPhase(a, 'steady');
+  s = await qd(a);
+  assert(s.cfg.h && s.cfg.h.w === 'a' && s.cfg.h.o === 150 && s.rd.ho.a === 150 && s.rd.ho.b === 0, `one phone: the round carries the offsets ${JSON.stringify(s.rd.ho)}`);
+  const tags = await a.evaluate(() => [...document.querySelectorAll('.qd-hc')].map((e) => ({ w: e.dataset.w, txt: e.textContent.trim(), vis: !e.hidden && e.getBoundingClientRect().width > 0 })));
+  assert(tags.filter((x) => x.vis).length === 1 && tags.find((x) => x.vis).w === 'a' && tags.find((x) => x.vis).txt === 'handicap +150 ms', `a "handicap +150 ms" tag sits by Emerson's name (${JSON.stringify(tags)})`);
+  await qdFit(a, 'phone 360x640 steady with the handicap tag');
+  const split = await qdSplit(a);
+  assert(split.top === 'DRAW!' && split.bottom !== 'DRAW!' && split.lit === '', `the two halves show DRAW at different moments: Sydney's half has it, Emerson's still says "${split.bottom}"`);
+  await h.wait(250);
+  s = await qd(a);
+  const gapMs = s.t0.a - s.t0.b;
+  assert(gapMs >= 125 && gapMs <= 180 && (await qdText(a)).word === 'DRAW!', `Emerson's DRAW follows Sydney's by ${Math.round(gapMs)} ms (handicap 150)`);
+  assert((await qd(a)).phase === 'draw', 'one phone: the round is still live');
+  // Emerson fires 160 ms after HIS signal, Sydney 230 ms after hers: Emerson was quicker on the raw clock, but the handicap flips it.
+  await qdFireOwn(a, { a: 160, b: 230 });
+  let v = await verdictFor(a, 1);
+  const ra = v.a.reaction; const rb = v.b.reaction;
+  assert(v.why === 'time' && v.ho.a === 150 && v.w === (ra + 150 < rb ? 'a' : 'b') && v.diff === Math.round(Math.abs(ra + 150 - rb)) && v.w === 'b', `reactions stay raw (${ra} / ${rb} ms), the verdict adds the handicap: ${v.w} by ${v.diff} ms`);
+  await h.wait(250);
+  let t = await qdText(a);
+  assert(new RegExp(`^Sydney by ${v.diff} ms \\(Emerson's 150 ms handicap counted\\)$`).test(t.line) && /\+150/.test(t.times), `the verdict says so: "${t.line}" / "${t.times}"`);
+  let d = await qdData(a);
+  assert(d.qd_pb_a_ms === Math.round(ra) && d.qd_pb_b_ms === Math.round(rb), `records keep the raw reaction from the cue each player saw, not the adjusted time (PB ${d.qd_pb_a_ms}/${d.qd_pb_b_ms}, shots ${Math.round(ra)}/${Math.round(rb)})`);
+  await h.shot(a, `${SHOTS}/qd-${tag}-hcap-verdict-360.png`);
+  // Round 2: the quicker hand beats the handicap anyway.
+  await qdPhase(a, 'steady');
+  await qdFireOwn(a, { a: 130, b: 400 });
+  v = await verdictFor(a, 2);
+  assert(v.w === 'a' && v.why === 'time', `round 2: Emerson wins even with the handicap (${v.a.reaction} / ${v.b.reaction})`);
+  await h.wait(250);
+  t = await qdText(a);
+  assert(new RegExp(`^Emerson by ${v.diff} ms \\(with 150 ms handicap\\)$`).test(t.line), `"${t.line}"`);
+  // Round 3: Emerson fires after Sydney's signal but before his own: still Steady for him, so a foul.
+  await qdPhase(a, 'steady');
+  await a.evaluate(() => new Promise((resolve) => {
+    const poll = () => { const s = window.__qdTest.state(); if (s.t0 && s.t0.b != null) { setTimeout(() => { const p = document.querySelector('.qd-pad[data-w="a"]'); const r = p.getBoundingClientRect(); p.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 31, pointerType: 'touch', clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 })); resolve(); }, 12); } else requestAnimationFrame(poll); };
+    poll();
+  }));
+  v = await verdictFor(a, 3);
+  assert(v.w === 'b' && v.why === 'foul' && v.a.foul, "firing in the handicap gap (Sydney's signal is up, his isn't) is a foul");
+  await h.wait(250);
+  t = await qdText(a);
+  assert(t.line === 'Emerson jumped early', `"${t.line}"`);
+  await h.closeGame(a);
+  // The other way round, in a different pack: Sydney is quicker, and the bell rings once (at the later cue)
+  await h.startLive(a, 'quickdraw', 'local');
+  await a.waitForFunction(() => window.__qdTest, null, { timeout: 4000 });
+  await a.evaluate(() => { window.__qdTest.force({ kind: 'bell', decoys: [900], dw: [0], delay: 2800 }); window.__qdTest.start('bell', '3', null, { w: 'b', o: 30 }); });
+  await qdPhase(a, 'steady');
+  const sp = await qdSplit(a);
+  assert(sp.bottom === 'DING!' && sp.top !== 'DING!', `handicap +30 for Sydney: Emerson's half rings first, Sydney's still says "${sp.top}"`);
+  await qdFireOwn(a, { a: 240, b: 200 });
+  v = await verdictFor(a, 1);
+  assert(v.why === 'time' && v.ho.b === 30 && v.w === (v.a.reaction < v.b.reaction + 30 ? 'a' : 'b'), `bell pack with a handicap decides on the adjusted times (${v.a.reaction} vs ${v.b.reaction}+30)`);
+  await h.closeGame(a);
+  // leave the handicap off for every later test
+  await h.startLive(a, 'quickdraw', 'local');
+  await a.waitForFunction(() => window.__qdTest, null, { timeout: 4000 });
+  await qdTap(a, '.g-qd [data-hcap]');
+  assert(await a.evaluate(() => document.querySelector('.g-qd [data-hcap]').getAttribute('aria-pressed')) === 'false', 'the chip switches the handicap off again');
+  await a.evaluate(() => window.__qdTest.start('classic', '5', null, false));
+  assert((await qdData(a)).qd_hcap === false && (await qd(a)).cfg.h === 0, 'off: classic timing, nothing remembered but "off"');
+  await h.closeGame(a);
+}
+async function quickdrawHandicapLive(h, tag) {
+  const { a, b } = h;
+  await joinLive(h, 'quickdraw');
+  // the host's chip reaches the guest, who can't change it
+  await qdTap(a, '.g-qd [data-hcap]');
+  await b.waitForFunction(() => document.querySelector('.g-qd [data-hcap]')?.getAttribute('aria-pressed') === 'true', null, { timeout: 4000 });
+  assert(true, 'live: the guest sees the host switch the handicap on');
+  await b.evaluate(() => document.querySelector('.g-qd [data-hcap]').click());   // (it is aria-disabled for the guest)
+  await h.wait(300);
+  assert(await a.evaluate(() => document.querySelector('.g-qd [data-hcap]').getAttribute('aria-pressed')) === 'true', "the guest's tap on the chip changes nothing (the host decides)");
+  await a.evaluate(() => window.__qdTest.pbs(999, 999));   // so the first round's raw reactions become the PBs
+  // Emerson is the quicker hand: his signal shows 150 ms late
+  await a.evaluate(() => window.__qdTest.start('classic', '5', null, { w: 'a', o: 150 } /* far past the real cap, so test-machine jitter can't flip the outcome */));
+  await qdPhase(a, 'steady'); await qdPhase(b, 'steady');
+  const [sa, sb] = [await qd(a), await qd(b)];
+  assert(JSON.stringify(sa.rd.ho) === '{"a":150,"b":0}' && JSON.stringify(sb.rd.ho) === '{"a":150,"b":0}' && sb.cfg.h && sb.cfg.h.w === 'a', `the host sends the offsets in the round: ${JSON.stringify(sb.rd.ho)}`);
+  for (const [pg, who] of [[a, 'Emerson'], [b, 'Sydney']]) {
+    const tag2 = await pg.evaluate(() => [...document.querySelectorAll('.qd-hc')].filter((e) => !e.hidden && e.getBoundingClientRect().width > 0).map((e) => `${e.dataset.w}:${e.textContent.trim()}`));
+    assert(tag2.length === 1 && tag2[0] === 'a:handicap +150 ms', `${who}'s screen: "handicap +150 ms" by Emerson's name (${tag2})`);
+  }
+  await qdFit(b, 'live guest with the handicap tag'); await qdFit(a, 'live host with the handicap tag');
+  // each device shows its own player's cue at shared (at + delay + own offset)
+  const shared = (pg) => qdCue(pg, 'real').then(() => pg.evaluate(() => { const s = window.__qdTest.state(); const me = document.querySelector('.qd-pad').dataset.w; return { t: s.t0[me] + (s.now - performance.now()), want: s.rd.at + s.rd.delay + (s.rd.ho[me] | 0), me }; }));
+  const firing = Promise.all([qdFireOwnLive(a, 160), qdFireOwnLive(b, 230)]);   // armed now: each fires N ms after its own DRAW shows
+  const cues = await Promise.all([shared(a), shared(b)]);
+  for (const c of cues) assert(Math.abs(c.t - c.want) < 45, `${c.me === 'a' ? 'Emerson' : 'Sydney'}'s DRAW shows ${Math.round(c.t - c.want)} ms from its planned shared time (own cue, offset ${c.me === 'a' ? 150 : 0})`);
+  // Emerson fires 160 ms after HIS cue (150 ms late: 310 ms after the nominal DRAW), Sydney 230 ms after hers. Emerson was quicker raw; Sydney fired first.
+  await firing;
+  let v = await verdictFor(a, 1); await verdictFor(b, 1);
+  assert(v.why === 'time' && v.ho.a === 150 && v.w === (v.a.reaction + 150 < v.b.reaction ? 'a' : 'b') && v.w === 'b' && v.a.reaction < v.b.reaction, `live verdict on the adjusted times (${v.a.reaction} + 150 vs ${v.b.reaction}): ${v.w} by ${v.diff} ms, though Emerson's raw time was quicker`);
+  await h.wait(300);
+  for (const [pg, who] of [[a, 'Emerson'], [b, 'Sydney']]) {
+    const t = await qdText(pg);
+    assert(t.line === `Sydney by ${v.diff} ms (Emerson's 150 ms handicap counted)` && /\+150/.test(t.times), `${who}'s screen: "${t.line}" / "${t.times}"`);
+  }
+  const d = await qdData(a);
+  assert(d.qd_pb_a_ms === Math.round(v.a.reaction) && d.qd_pb_b_ms === Math.round(v.b.reaction), `PBs keep each raw reaction (${d.qd_pb_a_ms}/${d.qd_pb_b_ms} vs shots ${Math.round(v.a.reaction)}/${Math.round(v.b.reaction)})`);
+  // Emerson fires 20 ms after the nominal DRAW, before his own (late) cue: a foul, so Sydney takes the round
+  await qdPhase(a, 'steady'); await qdPhase(b, 'steady');
+  await a.evaluate(() => { const s = window.__qdTest.state(); const wait = s.rd.at + s.rd.delay + 20 - s.now; setTimeout(() => { const p = document.querySelector('.qd-pad'); const r = p.getBoundingClientRect(); p.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 9, pointerType: 'touch', clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 })); }, wait); });
+  v = await verdictFor(a, 2); await verdictFor(b, 2);
+  assert(v.w === 'b' && v.why === 'foul' && v.a.foul && v.a.rel > 0, `Emerson's early shot (rel ${v.a.rel} ms) before his late cue is a foul`);
+  await h.wait(300);
+  assert((await qdText(b)).line === 'Emerson jumped early', 'and Sydney sees it: "Emerson jumped early"');
+  await h.closeGame(a); await h.closeGame(b);
+  // switch it off again for later tests (the host's data is shared with every mount on this device)
+  await h.startLive(a, 'quickdraw', 'local');
+  await a.waitForFunction(() => window.__qdTest, null, { timeout: 4000 });
+  await a.evaluate(() => window.__qdTest.start('classic', '3', null, false));
+  assert((await qdData(a)).qd_hcap === false, 'live: handicap off again');
+  await h.closeGame(a);
+}
+/** Live: fire `ms` after this device's own DRAW shows. */
+const qdFireOwnLive = (pg, ms) => pg.evaluate((ms) => new Promise((resolve) => {
+  const poll = () => {
+    const s = window.__qdTest.state(); const me = document.querySelector('.qd-pad').dataset.w;
+    if (s.t0 && s.t0[me] != null) { setTimeout(() => { const p = document.querySelector('.qd-pad'); const r = p.getBoundingClientRect(); p.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 11, pointerType: 'touch', clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 })); }, Math.max(0, ms - (performance.now() - s.t0[me]))); resolve(); } else requestAnimationFrame(poll);
+  };
+  poll();
+}), ms);
+
+/** The smallest phones: the scene keeps a readable size, and the scene signs and stamps stay off the art. */
+async function quickdrawSmallPhone(h, tag) {
+  const { a } = h;
+  await h.startLive(a, 'quickdraw', 'local');
+  await a.waitForFunction(() => window.__qdTest, null, { timeout: 4000 });
+  let first = true;
+  for (const [w, hh, minScene] of [[320, 568, 110], [360, 640, 150]]) {
+    if (!first) { await h.closeGame(a); await h.startLive(a, 'quickdraw', 'local'); await a.waitForFunction(() => window.__qdTest, null, { timeout: 4000 }); }
+    first = false;
+    await a.setViewportSize({ width: w, height: hh }); await h.wait(250);
+    await a.evaluate(() => window.__qdTest.start('mixed', '5', { a: 2, b: 2 }));   // a Both barrels round: the signs are up
+    await qdPhase(a, 'steady'); await h.wait(700);
+    const m = await a.evaluate(() => {
+      const box = (e) => { const b = e.getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom, w: b.width, h: b.height }; };
+      return { scene: box(document.querySelector('.qd-scene')), art: [...document.querySelectorAll('.qd-fig, .qd-cactus')].map(box), signs: [...document.querySelectorAll('.qd-kind')].filter((e) => !e.hidden).map((e) => ({ ...box(e), txt: e.textContent })) };
+    });
+    const hit = (p, q) => p.l < q.r && p.r > q.l && p.t < q.b && p.b > q.t;
+    assert(m.scene.h >= minScene, `${w}x${hh}: the scene stays ${Math.round(m.scene.h)} px tall during Steady (>= ${minScene})`);
+    assert(m.signs.length === 2 && m.signs.every((x) => x.l >= m.scene.l && x.r <= m.scene.r && x.t >= m.scene.t && x.b <= m.scene.b && !m.art.some((q) => hit(x, q))), `${w}x${hh}: both copies of the scene sign sit in the sky, clear of the art (${m.signs.map((x) => x.txt).join(' / ')})`);
+    await h.shot(a, `${SHOTS}/qd-${tag}-small-sign-${w}.png`);
+    await qdFireAt(a, 'draw', 130, { w: ['a', 'b'], lag: 9 });
+    const v = await verdictFor(a, 1);
+    await h.wait(350);
+    const st = await a.evaluate(() => {
+      const box = (e) => { const b = e.getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom, op: +getComputedStyle(e).opacity, txt: e.textContent }; };
+      return { scene: box(document.querySelector('.qd-scene')), stamps: [...document.querySelectorAll('.qd-stamp')].map(box), pads: [...document.querySelectorAll('.qd-pad')].map(box), vw: innerWidth, vh: innerHeight };
+    });
+    assert(st.stamps.length === 2 && st.stamps.every((x) => x.op > 0.1 && x.l >= 0 && x.r <= st.vw && x.t >= 0 && x.b <= st.vh && !hit(x, st.scene)), `${w}x${hh}: both stamps (${st.stamps[0].txt}) are on screen and off the scene art (${v.diff} ms)`);
+    await h.shot(a, `${SHOTS}/qd-${tag}-small-stamp-${w}.png`);
+  }
+  await h.closeGame(a);
+}
+
 // ── 5. One laptop, keyboard ───────────────────────────────────────────
 async function laptop(h, pg) {
   await pg.setViewportSize({ width: 1280, height: 800 });
@@ -1246,6 +1464,9 @@ const want = (g) => GAME === 'all' || GAME === g;
     if (want('quickdraw')) {
       await quickdrawLive(h, 'light');
       await quickdrawLocal(h, 'light');
+      await quickdrawSmallPhone(h, 'light');
+      await quickdrawHandicapLocal(h, 'light');
+      await quickdrawHandicapLive(h, 'light');
     }
   }, { coarse: true });
   await run(PORT + 1, 'dark', async (h) => {
@@ -1259,6 +1480,7 @@ const want = (g) => GAME === 'all' || GAME === g;
       await quickdrawPacks(h, 'dark');
       await quickdrawStreaks(h, 'dark');
       await quickdrawLocal(h, 'dark');
+      await quickdrawSmallPhone(h, 'dark');
       await quickdrawSudden(h, 'dark');
     }
   }, { coarse: true });

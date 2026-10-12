@@ -27,6 +27,7 @@ const FALSE_START = 100;    // a "reaction" under this is a guess: a foul
 const DOUBLE_MS = 30;       // two fouls this close are a re-round
 const HC_MIN_GAP = 40;      // Gunslinger handicap: PBs at least this far apart switch it on
 const HC_CAP = 60;          // ... and the quicker hand's signal waits half that gap, at most this long
+const SLOWER_MS = 250;      // online: a guest's shot waits this long for the host's slower tap (it only gives the verdict its gap)
 const LATE_MS = 450;        // one phone: time for the slower hand to register after the first shot
 const SLOW_MS = 4000;       // no shot this long after the signal: too slow
 const RESULT_MS = 2600;     // verdict on screen before the next round
@@ -216,7 +217,7 @@ registerGame({
 
     .g-qd .qd-tally { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-weight: 800; flex: 0 0 auto; }
     .g-qd .qd-who { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0 8px; min-width: 0; }
-    .g-qd .qd-hc { display: inline-block; padding: 0 6px; font: 900 0.6rem/1.5 var(--g-font-body); letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; color: var(--g-ink); background: var(--g-hl-soft, var(--g-card)); border: 1.5px solid var(--g-ink); border-radius: 999px; }
+    .g-qd .qd-hc { display: inline-block; padding: 0 6px; font: 900 0.6rem/1.5 var(--g-font-body); letter-spacing: 0.02em; white-space: nowrap; color: var(--g-ink); background: var(--g-hl-soft, var(--g-card)); border: 1.5px solid var(--g-ink); border-radius: 999px; }
     .g-qd .qd-who .qd-hc { flex-basis: auto; }
     .g-qd .qd-hc[hidden] { display: none; }
     .g-qd .qd-hc-n { font-size: 0.78em; font-weight: 800; color: var(--g-muted); }
@@ -319,12 +320,21 @@ registerGame({
     .g-qd .qd-gorow .qd-again { flex: 0 0 auto; min-height: 54px; padding: 0 14px; }
     .g-qd .qd-go[hidden], .g-qd .qd-again[hidden] { display: none; }
     @media (orientation: landscape) and (max-height: 520px) {
-      .g-qd .qd-setup-card { max-width: none; width: calc(100% - 6px); margin-left: 0; display: grid; grid-template-columns: 1.55fr 1fr; grid-template-areas: "packs series" "head go"; column-gap: 10px; row-gap: 4px; padding: 4px 8px; }
-      .g-qd .qd-setup-head { grid-area: head; font-size: 0.95rem; align-self: center; }
+      .g-qd .qd-setup-card { max-width: none; width: calc(100% - 6px); margin-left: 0; display: grid; grid-template-columns: 1.55fr 1fr; grid-template-areas: "packs series" "hand go"; column-gap: 10px; row-gap: 4px; padding: 4px 8px; }
+      .g-qd .qd-setup-head { display: none; font-size: 0.95rem; align-self: center; }   /* no room: the guest gets it where GO would be */
+      .g-qd .qd-setup.is-locked .qd-setup-head { display: block; grid-area: go; }
+      .g-qd .qd-hand { grid-area: hand; }
       .g-qd .qd-opts { gap: 4px; }
       .g-qd .qd-packs { grid-area: packs; } .g-qd .qd-series { grid-area: series; grid-template-columns: repeat(2, 1fr); }
       .g-qd .qd-pack-desc, .g-qd .qd-setup-note { display: none; } .g-qd .qd-gorow { grid-area: go; } .g-qd .qd-gorow .qd-go, .g-qd .qd-gorow .qd-again { min-height: 44px; height: 44px; }
       .g-qd .qd-opt { min-height: 44px; } .g-qd .qd-opt small { display: none; }
+    }
+    @media (orientation: portrait) and (max-height: 700px) {
+      .g-qd .qd-setup-card { gap: 6px; padding: 8px; }
+      .g-qd .qd-setup-head { font-size: 1.05rem; }
+      .g-qd .qd-pack-desc { min-height: 2.3em; font-size: 0.78rem; }
+      .g-qd .qd-opt, .g-qd .qd-hand .qd-opt { min-height: 44px; }
+      .g-qd .qd-gorow .qd-go, .g-qd .qd-gorow .qd-again { min-height: 48px; }
     }
     @keyframes qd-pop { from { transform: scale(1.5) rotate(-3deg); opacity: 0; } to { opacity: 1; } }
     @keyframes qd-breathe { 50% { opacity: 0.55; } }
@@ -673,8 +683,9 @@ registerGame({
         const ho = R.rd.ho || {};
         const own = R.t0 && R.t0[local ? w : me];
         const nominal = own != null ? own - (ho[local ? w : me] | 0) : performance.now() - got.reaction - (ho[w] | 0);
-        // the host sees its own taps at once; the guest's arrive about rtt/2 late
-        const extra = local ? LATE_MS : w === 'b' ? TIE_MS : Math.max(net.rtt, 40) + 250;
+        // the host sees its own taps at once, so a guest's shot only waits for a slower host tap (it can't win, but it gives the gap);
+        // the guest's taps arrive about rtt/2 late, so the host's shot waits for those too
+        const extra = local ? LATE_MS : w === 'b' ? SLOWER_MS : Math.max(net.rtt, 40) + 250;
         R.armed = later(() => refDecide(r), nominal + (ho[w] | 0) + got.reaction + extra - performance.now());
       }
     }
@@ -838,7 +849,7 @@ registerGame({
       hb.hidden = layout === 'desk'; // one keyboard shows one shared signal: nothing to delay for one player
       chip.setAttribute('aria-pressed', String(heard && !!pick.h)); chip.setAttribute('aria-disabled', String(!ref));
       const pv = handicapFrom(dataOf());
-      chip.querySelector('small').textContent = heard && pick.h ? (pv ? `${api.name(pv.w)}'s signal shows ${pv.o} ms later` : 'needs both best times first') : 'the quicker draw waits a beat';
+      chip.querySelector('small').textContent = heard && pick.h ? (pv ? `${api.name(pv.w)}'s signal shows ${pv.o} ms later` : typeof dataOf().qd_pb_a_ms === 'number' && typeof dataOf().qd_pb_b_ms === 'number' ? 'evenly matched: no handicap needed' : 'needs both best times first') : 'the quicker draw waits a beat';
       goBtn.hidden = !ref;
       goBtn.textContent = autoLeft ? `GO · ${autoLeft}` : 'GO';
       againBtn.hidden = !(ref && autoLeft);
@@ -1185,6 +1196,8 @@ registerGame({
         start: (p = 'classic', s = '5', t = null, h = false) => { if (t && ref && !started) { tl = { a: t.a | 0, b: t.b | 0 }; api.setScore(tl); } startDuel(p, s, h); },
         /** Override the next round's plan (e.g. { kind: 'decoys', decoys: [900], dw: [0], delay: 2600 }). */
         force: (o) => { forced = o; },
+        /** Set both personal bests (and refresh the picker's handicap preview). */
+        pbs: (a, b) => { saveData({ qd_pb_a_ms: a, qd_pb_b_ms: b }); renderSetup(); },
       };
     }
 
