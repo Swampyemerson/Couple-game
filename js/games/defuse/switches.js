@@ -12,7 +12,7 @@
 // Conditions are codes: vowel, novowel, even, odd, batmore (more batteries than lit LEDs), bat0, bat2,
 // lit:XYZ (indicator lit), port:RJ45, led:red (a lit LED of that colour), up:3 / dn:3 (switch 3 is up /
 // down at this point of the chain).
-import { ctxOf, int, shuffle, sample, swatch } from './util.js';
+import { ctxOf, int, sample, swatch } from './util.js';
 
 const N = 5;
 const COLS = ['red', 'blue', 'yellow', 'green'];
