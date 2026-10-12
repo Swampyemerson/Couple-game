@@ -67,6 +67,19 @@ const RATINGS = [[30, 'Telepathic'], [25, 'Same wavelength'], [19, 'Pretty much 
 const ratingOf = (n) => RATINGS.find(([m]) => n >= m)[1];
 const other = (w) => (w === 'a' ? 'b' : 'a');
 
+// Fit overrides, appended after the base styles. A pole label (the two ends of the spectrum card) must wrap to at most
+// two lines on a small phone, whatever font the phone falls back to when the display font is not there. The card used to
+// stop at 300px however wide the screen was, which left a 26-character pole only ~108px of text. Now the card takes up to
+// 340px (the dial above keeps the size the view gives it), the end cells trade a little padding for room, the smallest
+// label size scales with the screen width (clamp) and the line breaks are balanced, so a long pole splits into two even
+// lines instead of one long line, a short one and an orphan word.
+const FIT_CSS = `
+    .g-wave .wv-dialbox { width: max(var(--dw, 0px), min(100%, 340px)) !important; }
+    .g-wave .wv-end { gap: 3px; padding: 6px clamp(5px, 2vw, 8px); }
+    .g-wave .wv-end span { text-wrap: balance; }
+    .g-wave .wv-end.fxs { font-size: clamp(0.66rem, 3.1vw, 0.72rem); }
+`;
+
 registerGame({
   id: 'wave',
   title: 'Same Wave',
@@ -135,7 +148,7 @@ registerGame({
   },
 
   // ── view (see ./wave/view.js) ──
-  css: CSS,
+  css: CSS + FIT_CSS,
   mount(el, api) {
     return createWaveView(el, api, { CARDS, ratingOf });
   },
