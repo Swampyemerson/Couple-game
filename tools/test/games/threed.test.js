@@ -212,11 +212,11 @@ async function towerOnline(h) {
       await h.closeGame(them);
       closed = true;
     }
-    await me.waitForSelector('.gt-view[data-phase="slide"]', { timeout: 12000 });
+    await me.waitForSelector('.gt-view[data-armed="1"]', { timeout: 12000 });
     if (!closed) {
       await them.waitForSelector('.gt-view[data-phase="wait"]', { timeout: 12000 });
       const pill = await them.textContent('.gt-turn');
-      ok(pill.includes(`${await nameOf(them, who)}’s turn`), `tower online: the other phone says “${pill}”`);
+      ok(pill.includes(`${await nameOf(them, who)}’s turn`) || (n === 0 && pill.includes(`${await nameOf(them, who)} is choosing a twist`)), `tower online: the other phone says “${pill}”`);
     }
     if (n === 0) {
       await them.click('.gt-view');
@@ -374,7 +374,7 @@ async function towerLocal(h, pg, { shots = null } = {}) {
   for (; n < 12; n++) {
     const e = await h.engine(pg, id);
     if (e.over) break;
-    await pg.waitForSelector('.gt-view[data-phase="slide"]', { timeout: 12000 });
+    await pg.waitForSelector('.gt-view[data-armed="1"]', { timeout: 12000 });
     const pill = await pg.textContent('.gt-turn');
     if (n < 2) ok(pill.startsWith(await nameOf(pg, e.acts[0])), `tower local: the pill names the player (“${pill}”)`);
     if (shots) {
@@ -498,7 +498,7 @@ async function glHygiene(h, pg) {
   await pg.evaluate(() => window.__lose.restoreContext());
   await pg.waitForFunction(() => window.__towerTest.log.includes('restored'), null, { timeout: 4000 });
   const m0 = await movesOf(h, pg, ids.tower);
-  await pg.waitForSelector('.gt-view[data-phase="slide"]');
+  await pg.waitForSelector('.gt-view[data-armed="1"]', { timeout: 8000 });
   await pg.evaluate(() => { window.__towerTest.next = 0.2; });
   await pg.click('.gt-view');
   await waitMoves(pg, ids.tower, m0 + 1);
@@ -537,7 +537,7 @@ async function fallback2D(h, pg) {
     window.__towerTest = { log: [] };
   });
   await h.newLocalGame(pg, 'tower');
-  await pg.waitForSelector('.gt-view[data-gl="2d"][data-phase="slide"]', { timeout: 8000 });
+  await pg.waitForSelector('.gt-view[data-gl="2d"][data-armed="1"]', { timeout: 8000 });
   const id = await pg.evaluate(() => window.__lastMatchId);
   ok(await pg.isVisible('.gt-note'), 'tower: without WebGL it says so and draws a flat version');
   await pg.evaluate(() => { window.__towerTest.next = 0.3; });
