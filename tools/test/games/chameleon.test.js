@@ -369,7 +369,7 @@ async function matchSection(port) {
     assert(await b.isVisible('.chm-wait'), 'guest sees the host setting up');
     assert(!(await b.isVisible('[data-act="start"]')), 'only the host can start');
     // (update pass: this match checks the plain rules: the trailing player's underdog pellet would make the 'dry' round's magazine 7, not 6)
-    await hook(a, 'setRules', { rules: { underdog: false } });
+    await hook(a, 'setRules', { rules: { underdog: false, twists: 'off' } }); // (and no round twists: Three colours would switch the Stamp off mid-match)
     await b.waitForFunction(() => window.__cham.state().setup.rules.underdog === false, null, { timeout: 5000 });
     await a.click('[data-act="start"]');
     const rounds = [['b', 'full'], ['a', 'dry'], ['b', 'found'], ['a', 'timeout']];
@@ -504,6 +504,8 @@ async function doubleBlindSection(port) {
     await startPair(h, { ...FAST, maxDpr: 0.45 });
     await a.click('[data-lobby="mode"][data-v="db"]');
     await b.waitForFunction(() => window.__cham.state().setup.mode === 'db', null, { timeout: 5000 });
+    await hook(a, 'setRules', { rules: { twists: 'off' } }); // (update pass: this round checks the plain rules)
+    await b.waitForFunction(() => window.__cham.state().setup.rules.twists === 'off', null, { timeout: 5000 });
     await a.click('[data-act="start"]');
     await waitPhase(a, 'hide', 20000); await waitPhase(b, 'hide', 5000);
     let sa = await st(a); let sb = await st(b);
@@ -541,7 +543,7 @@ async function doubleBlindSection(port) {
     h.assertNoErrors();
     // round 2: a void round, both seekers run dry (final QA: posOf(null) threw in 'time' on both
     // phones, skipping the flash, the sound and the confetti, and the round recorded the whole clock)
-    await a.click('[data-act="next"]');
+    await hook(a, 'action', 'next'); // (the card's auto-advance can beat a real click's actionability wait on a loaded box)
     await waitPhase(a, 'hide', 20000); await waitPhase(b, 'hide', 5000);
     await a.click('.chm-acts [data-act="ready"]'); await b.click('.chm-acts [data-act="ready"]');
     await waitPhase(a, 'seek', 20000); await waitPhase(b, 'seek', 5000);
@@ -1088,7 +1090,7 @@ async function bigMatchSection(port) {
     await waitPhase(a, 'found', 8000);
     assert((await st(a)).round.rec.found, 'tagged on the big map');
     await waitPhase(a, 'recap', 8000);
-    await a.click('[data-act="next"]');
+    await hook(a, 'action', 'next'); // (the card's auto-advance can beat a real click's actionability wait on a loaded box)
     // round 2: Emerson hides, Sydney fires three misses → out of pellets
     await waitPhase(a, 'hide', 20000);
     await camoOr(a);

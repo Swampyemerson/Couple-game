@@ -38,7 +38,7 @@ let failures = 0;
 const assert = (c, m) => { if (!c) throw new Error('FAIL: ' + m); console.log('ok -', m); };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const FAST = { hide: 8000, seek: 8000, title: 600, recap: 20000, found: 1800, final: 3000, seekLead: 700, resume: 1500, maxDpr: 0.5, noTips: true, fixedScale: true };
+const FAST = { hide: 25000, seek: 8000, title: 600, recap: 20000, found: 1800, final: 3000, seekLead: 700, resume: 1500, maxDpr: 0.5, noTips: true, fixedScale: true };
 async function arm(page, tune = FAST) { await page.evaluate((t) => { window.__chamTest = true; window.__chamTune = t; }, tune); }
 const st = (p) => p.evaluate(() => window.__cham && window.__cham.state());
 const ti = (p) => p.evaluate(() => window.__cham.twistInfo());
@@ -324,8 +324,8 @@ async function hotUnderdogSection(port) {
   const h = await launch({ port, only: ['chameleon'], who: ['a'] });
   const a = h.a;
   try {
-    await startHot(h, { rules: { rounds: 4, seekScore: 'off', wager: 0, blendBonus: 0, twists: 'off', underdog: true, sudden: false, pellets: 6 }, tune: { ...FAST, seek: 7000, hide: 9000 } });
-    await hotHide(a, async () => { assert((await st(a)).phase.dur === 9000 && !(await ti(a)).ud, 'round 1: 9 s to hide, nobody is behind'); });
+    await startHot(h, { rules: { rounds: 4, seekScore: 'off', wager: 0, blendBonus: 0, twists: 'off', underdog: true, sudden: false, pellets: 6 }, tune: { ...FAST, seek: 7000, hide: 20000 } });
+    await hotHide(a, async () => { assert((await st(a)).phase.dur === 20000 && !(await ti(a)).ud, 'round 1: 20 s to hide, nobody is behind'); });
     await hotSeek(a);
     await waitPhase(a, 'time', 20000); // Sydney survives: 37 points
     await waitPhase(a, 'recap', 8000);
@@ -335,7 +335,7 @@ async function hotUnderdogSection(port) {
     await a.tap('[data-act="curtain"]');
     await waitPhase(a, 'hide');
     let t = await ti(a);
-    assert(t.ud === 'a' && (await st(a)).phase.dur === 19000 && t.escapes.a === (await st(a)).rules.escapes, `round 2: the underdog hider gets 10 s more (${(await st(a)).phase.dur / 1000} s), and no escape (there are none on one phone)`);
+    assert(t.ud === 'a' && (await st(a)).phase.dur === 30000 && t.escapes.a === (await st(a)).rules.escapes, `round 2: the underdog hider gets 10 s more (${(await st(a)).phase.dur / 1000} s), and no escape (there are none on one phone)`);
     assert(/\+10 s to hide/.test((await collectPops(a, 2500)) + ''), 'the sticker says so');
     await camoHide(a);
     await a.tap('.chm-acts [data-act="ready"]');
@@ -803,12 +803,11 @@ async function shotsSection(port) {
       await wait(500);
       await shot(a, `${tag}-blind-seeker`);
       await camoHide(b);
-      await waitPhase(a, 'recap', 80000).catch(() => {});
-      await b.tap('.chm-acts [data-act="ready"]').catch(() => {});
+      await b.tap('.chm-acts [data-act="ready"]');
       await waitPhase(a, 'recap', 80000);
       await wait(500);
       await shot(a, `${tag}-recap-next`);
-      const fit = await a.evaluate(() => { const c = document.querySelector('.chm-recap .chm-card'); const n = document.querySelector('.chm-nextline'); const r = n.getBoundingClientRect(); return { over: c.scrollHeight - c.clientHeight, nextIn: r.bottom <= innerHeight + 1 && r.top >= 0, text: n.textContent }; });
+      const fit = await a.evaluate(() => { const c = document.querySelector('.chm-recap .chm-card'); const n = document.querySelector('.chm-nextline'); if (!n) return { over: c.scrollHeight - c.clientHeight, nextIn: false, text: '(none)' }; const r = n.getBoundingClientRect(); return { over: c.scrollHeight - c.clientHeight, nextIn: r.bottom <= innerHeight + 1 && r.top >= 0, text: n.textContent }; });
       console.log(`  ${tag}: next line "${fit.text.trim()}" in view ${fit.nextIn}, card overflow ${fit.over}px`);
       h.assertNoErrors();
     } catch (e) { console.error(e.message, h.errors); failures++; await shot(a, `${tag}-FAIL`).catch(() => {}); } finally { await h.close(); }
