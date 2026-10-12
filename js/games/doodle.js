@@ -379,7 +379,15 @@ function buildV2(s, st) {
   // Golden Frame: in about one match of three, one round after the first pays double.
   let gold = -1;
   if (rand(seed, 'doodle2', 'gold') < 1 / 3) { gold = 1 + randInt(ROUNDS_V2 - 1, seed, 'doodle2', 'goldr'); rounds[gold].gold = true; }
-  return { first, seed, v: 2, mode, pack, r: 0, phase: 'draw', score: 0, rung: 0, gold, rounds };
+  const state = { first, seed, v: 2, mode, pack, r: 0, phase: 'draw', score: 0, rung: 0, gold, rounds };
+  // Encore (opt-in): after the last scored round both draw one more Us card at the same time. It is
+  // never one of the cards dealt in this match and it scores nothing.
+  if (st.encore === true) {
+    const dealt = new Set(rounds.flatMap((R) => R.choices));
+    const pool = PACK_IDX.us.flat().filter((i) => !dealt.has(i));
+    state.enc = { prompt: shuffled(pool, `${seed}:doodle2:encore`)[0], a: null, b: null };
+  }
+  return state;
 }
 function checkDeal(deal, pack) {
   if (!Array.isArray(deal) || deal.length !== ROUNDS_V2 * 3) throw new Error('That deal has the wrong number of cards.');
@@ -399,6 +407,7 @@ function applySetup(s, who, st) {
   if (!MODE_LIST.includes(st.mode)) throw new Error('Unknown game mode.');
   if (!PACK_LIST.includes(st.pack)) throw new Error('Unknown card pack.');
   if (st.deal !== undefined) checkDeal(st.deal, st.pack);
+  if (st.encore !== undefined && typeof st.encore !== 'boolean') throw new Error('The Encore setting must be on or off.');
   return buildV2(s, st);
 }
 
@@ -416,9 +425,27 @@ function finishV2(s, base) {
   if (s.mode === 'ladder' && s.rounds[s.r]) s.rounds[s.r].tier = s.rung;
 }
 
+// The Encore: both players draw the same card at once, in either order. Nothing is scored.
+function applyEncore(s, who, mv) {
+  if (typeof mv.encore !== 'string') throw new Error('Draw the Encore card.');
+  if (s.enc[who] !== null) throw new Error('You already sent your Encore drawing.');
+  if (mv.timeUp === true) {
+    if (mv.encore) throw new Error('A time-up Encore has no drawing.');
+    s.enc[who] = '';
+    return s;
+  }
+  const err = drawingError(mv.encore);
+  if (err) throw new Error(err);
+  s.enc[who] = mv.encore;
+  return s;
+}
+
 function applyV2(s, who, mv) {
-  if (s.r >= s.rounds.length) throw new Error('The game is over.');
   if (!mv || typeof mv !== 'object') throw new Error('That move makes no sense.');
+  if (s.r >= s.rounds.length) {
+    if (s.enc && (s.enc.a === null || s.enc.b === null)) return applyEncore(s, who, mv);
+    throw new Error('The game is over.');
+  }
   const R = s.rounds[s.r];
   const kind = kindOf(s, R);
   if (s.phase === 'draw') {
@@ -514,7 +541,7 @@ registerGame({
     return { first, seed, r: 0, phase: 'draw', score: 0, rounds };
   },
   next(s) {
-    if (s.r >= (s.v === 2 ? s.rounds.length : ROUNDS)) return [];
+    if (s.r >= (s.v === 2 ? s.rounds.length : ROUNDS)) return s.v === 2 && s.enc ? ['a', 'b'].filter((w) => s.enc[w] === null) : [];
     const d = s.rounds[s.r].drawer;
     return [s.phase === 'draw' ? d : other(d)];
   },

@@ -61,7 +61,36 @@ function enc(strokes) {
 }
 const stroke = (dt, n = 4) => ({ c: 0, s: 0, gap: 5, pts: Array.from({ length: n }, (_, i) => [20 + i * 10, 30 + i * 5, i ? dt : 0]) });
 
+
+// Every text / background pair Doodle's stylesheet declares (and the surfaces its text sits on) reads at 4.5:1 or better in both themes.
+function contrastTests() {
+  console.log('# doodle contrast (light and dark)');
+  const games = fs.readFileSync(path.join(ROOT, 'games.css'), 'utf8');
+  const css = fs.readFileSync(path.join(ROOT, 'js/games/doodle/css.js'), 'utf8');
+  const toks = (block) => { const o = {}; for (const m of block.matchAll(/(--[a-z0-9-]+)\s*:\s*(#[0-9a-fA-F]{6})/g)) o[m[1]] = m[2]; return o; };
+  const light = toks(games.slice(games.indexOf(':root {'), games.indexOf('@media (prefers-color-scheme: dark)')));
+  const darkBlock = games.slice(games.indexOf(':root[data-theme="dark"]'));
+  const dark = { ...light, ...toks(darkBlock.slice(0, darkBlock.indexOf('}'))) };
+  const lum = (hex) => { const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)); return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; };
+  const ratio = (a, b) => { const x = lum(a); const y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  const pairs = [];
+  for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const body = m[2];
+    const bg = body.match(/(?:^|;|\s)background(?:-color)?:\s*var\((--[a-z0-9-]+)\)\s*(?:;|$)/); const fg = body.match(/(?:^|[;\s])color:\s*var\((--[a-z0-9-]+)\)/);
+    if (bg && fg) pairs.push([m[1].trim().replace(/\s+/g, ' '), bg[1], fg[1]]);
+  }
+  // surfaces whose text colour comes from another rule
+  const surfaces = [['--g-card', '--g-muted'], ['--g-bg', '--g-muted'], ['--p-a-soft', '--g-muted'], ['--p-b-soft', '--g-muted'], ['--g-card', '--g-ink'], ['--g-bg', '--g-ink'], ['--p-a-soft', '--g-ink'], ['--p-b-soft', '--g-ink'], ['--g-hl', '--g-on-ink'], ['--g-card', '--g-good'], ['--g-bg', '--g-good'], ['--g-card', '--g-bad'], ['--g-bg', '--g-bad'], ['--g-bg', '--p-a-text'], ['--g-bg', '--p-b-text'], ['--g-card', '--p-a-text'], ['--g-card', '--p-b-text'], ['--g-ink', '--g-card'], ['--p-a', '--g-on-ink'], ['--p-b', '--g-on-ink']].map(([b, f]) => [`surface ${b} / ${f}`, b, f]);
+  const low = [];
+  for (const [sel, bg, fg] of [...pairs, ...surfaces]) for (const [name, T] of [['light', light], ['dark', dark]]) { if (T[bg] && T[fg] && ratio(T[bg], T[fg]) < 4.5) low.push(`${name} ${ratio(T[bg], T[fg]).toFixed(2)} ${sel.slice(0, 60)} (${bg} on ${fg})`); }
+  assert(pairs.length >= 20 && Object.keys(dark).length > 10, `contrast: found ${pairs.length} declared text/background pairs and the tokens of both themes`);
+  assert(low.length === 0, `contrast: every declared pair and text surface is at least 4.5:1 in light and dark (${low.join('; ') || 'ok'})`);
+  // the pairing that fails in dark: yellow text on the key colour (ink turns cream on black stock)
+  assert(!pairs.some(([, bg, fg]) => bg === '--g-ink' && fg === '--g-hl') && !/background:\s*var\(--g-ink\);[^}]*color:\s*var\(--g-hl\)/.test(css), 'contrast: no yellow-on-ink pairing (it is yellow on cream in dark mode)');
+}
+
 // ── pure rules ──────────────────────────────────────────────────────────
+const tierOfEarly = (d) => d.poolTier;
 function rulesTests({ core, doodle, records, packs, D }) {
   const step = (s, who, mv) => D.apply(clone(s), who, clone(mv));
   const throws = (fn, re, msg) => {
@@ -69,6 +98,8 @@ function rulesTests({ core, doodle, records, packs, D }) {
     assert(false, `${msg}: should have thrown`);
   };
   const { PROMPTS, POOL, guessMatches, guessMatchesV2, nearMiss, halfSplit, dealFresh, dealFor } = doodle;
+
+  contrastTests();
 
   // ═══ v1 is pinned ═══
   console.log('# doodle v1 pinning');
@@ -332,6 +363,47 @@ function rulesTests({ core, doodle, records, packs, D }) {
   const dv = core.derive(D, { first: 'a', seed: 5, lists });
   assert(dv.over && dv.rejected.length === 0 && dv.state.v === 2 && dv.result.score === dv.state.score && dv.result.score >= 18, `a v2 match replays through the engine (score ${dv.result.score})`);
 
+  // ═══ Encore ═══
+  console.log('# doodle encore');
+  const encSetup = (seed, encore = true, pack = 'classic') => step(fresh(seed), 'a', { setup: { v: 2, mode: 'classic', pack, ...(encore === null ? {} : { encore }) } });
+  const usAll = new Set(doodle.packIndices('us').flat());
+  let encOk = true;
+  for (let seed = 1; seed <= 120; seed++) {
+    const x = encSetup(seed, true, seed % 2 ? 'us' : 'everything');
+    const dealt = new Set(x.rounds.flatMap((R) => R.choices));
+    if (!x.enc || !usAll.has(x.enc.prompt) || dealt.has(x.enc.prompt) || x.enc.a !== null || x.enc.b !== null) encOk = false;
+  }
+  assert(encOk, 'encore: the Encore card is always an Us card that was not dealt in the match');
+  assert(JSON.stringify(encSetup(9).enc) === JSON.stringify(encSetup(9).enc) && !encSetup(9, false).enc && !encSetup(9, null).enc, 'encore: seeded; absent or false means no Encore');
+  throws(() => encSetup(9, 'yes'), /on or off/i, 'encore: a non-boolean setting is refused');
+  const playScored = (x) => { for (let r = 0; r < 6; r++) { x = draw(x, 2); x = say(x, ans(x).show); } return x; };
+  const noEnc = playScored(encSetup(9, false));
+  let ex = playScored(encSetup(9, true));
+  assert(ex.r === 6 && JSON.stringify(D.next(ex)) === '["a","b"]' && D.next(noEnc).length === 0, 'encore: after the last scored round both players are asked to draw, without it the match is over');
+  const dd2 = core.derive(D, { first: 'a', seed: 9, lists: { a: [{ setup: { v: 2, mode: 'classic', pack: 'classic', encore: true } }], b: [] } });
+  assert(!dd2.over && dd2.state.v === 2 && dd2.state.enc, 'encore: the setup move with encore: true replays through the engine');
+  const encA = enc([stroke(10, 5)]); const encB = enc([{ ...stroke(12, 6), c: 2 }]);
+  const ab = step(step(ex, 'a', { encore: encA }), 'b', { encore: encB });
+  const ba = step(step(ex, 'b', { encore: encB }), 'a', { encore: encA });
+  assert(JSON.stringify(ab) === JSON.stringify(ba) && ab.enc.a === encA && ab.enc.b === encB, 'encore: the two drawings can arrive in either order and the state is identical');
+  assert(JSON.stringify(D.next(step(ex, 'a', { encore: encA }))) === '["b"]' && JSON.stringify(D.next(step(ex, 'b', { encore: encB }))) === '["a"]' && D.next(ab).length === 0, 'encore: next() lists only who still has to draw, then the match ends');
+  assert(JSON.stringify(D.result(ab)) === JSON.stringify(D.result(noEnc)) && D.result(ab).score === 30, 'encore: the result (score, rating, sub-line) ignores the Encore');
+  throws(() => step(ex, 'a', { encore: 5 }), /Encore card/i, 'encore: a non-string drawing is refused');
+  throws(() => step(ex, 'a', { guess: 'x' }), /Encore card/i, 'encore: no guessing, only the Encore drawing');
+  throws(() => step(ex, 'a', { encore: 'AB$#' }), /scrambled/i, 'encore: a malformed drawing is refused');
+  throws(() => step(ex, 'a', { encore: '' }), /draw something/i, 'encore: an empty drawing without timeUp is refused');
+  throws(() => step(ex, 'a', { encore: encA, timeUp: true }), /./, 'encore: time-up with a drawing makes no sense');
+  throws(() => step(step(ex, 'a', { encore: encA }), 'a', { encore: encA }), /already sent/i, 'encore: one drawing each');
+  throws(() => step(ab, 'a', { encore: encA }), /game is over/i, 'encore: nothing after both are in');
+  throws(() => step(encSetup(9), 'a', { encore: encA }), /./, 'encore: not before the scored rounds are done');
+  const blank = step(step(ex, 'b', { encore: '', timeUp: true }), 'a', { encore: encA });
+  assert(blank.enc.b === '' && D.next(blank).length === 0, 'encore: a time-up blank counts as that player\'s drawing');
+  const lastLists = (() => { const l = { a: [{ setup: { v: 2, mode: 'classic', pack: 'classic', encore: true } }], b: [] }; let x = encSetup(9); for (let r = 0; r < 6; r++) { const dr = x.rounds[r].drawer; const m1 = { prompt: 2, strokes: TINY }; l[dr].push(m1); x = step(x, dr, m1); const m2 = { guess: POOL[x.rounds[r].choices[2]].show }; l[other(dr)].push(m2); x = step(x, other(dr), m2); } return l; })();
+  const half1 = core.derive(D, { first: 'a', seed: 9, lists: { a: [...lastLists.a, { encore: encA }], b: lastLists.b } });
+  const fullEnc = core.derive(D, { first: 'a', seed: 9, lists: { a: [...lastLists.a, { encore: encA }], b: [...lastLists.b, { encore: encB }] } });
+  assert(!half1.over && JSON.stringify(half1.acts) === '["b"]' && fullEnc.over && fullEnc.rejected.length === 0 && fullEnc.result.score === 30, 'encore: through the engine the match is over only when both drawings are in');
+  assert(JSON.stringify(records.summarize(ab, tierOfEarly(doodle))) === JSON.stringify(records.summarize(noEnc, tierOfEarly(doodle))), 'encore: records count it as a normal match (the summary ignores the Encore)');
+
   // ═══ the matcher ═══
   console.log('# doodle v2 matching');
   const by = (show) => POOL.find((p) => p.show === show);
@@ -516,11 +588,11 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
   const { POOL } = doodle;
   const clone2 = (x) => JSON.parse(JSON.stringify(x));
   // ── scripted matches for seeding ──
-  const script = ({ seed, first = 'a', mode = 'classic', pack = 'classic', deal = null, plan = null, rounds = 6 }) => {
+  const script = ({ seed, first = 'a', mode = 'classic', pack = 'classic', deal = null, plan = null, rounds = 6, encore = false }) => {
     const lists = { a: [], b: [] };
     let st = D.init({ first, seed }); st.seed = seed;
     const push = (w, mv) => { lists[w].push(mv); st = D.apply(clone2(st), w, clone2(mv)); };
-    push(first, { setup: { v: 2, mode, pack, ...(deal ? { deal } : {}) } });
+    push(first, { setup: { v: 2, mode, pack, ...(deal ? { deal } : {}), ...(encore ? { encore: true } : {}) } });
     for (let r = 0; r < Math.min(rounds, plan ? plan.length : 0); r++) {
       const R = st.rounds[r]; const dr = R.drawer; const gr = other(dr);
       const [pick, how] = plan[r];
@@ -547,6 +619,7 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
   // fresh v2 matches (setup done, round 0 waiting for the drawer 'a'), for the twist and clock tests
   const setupOnly = (mode, ok) => { for (let seed = 700; seed < 1400; seed++) { const m = script({ seed, mode, pack: 'classic', plan: [] }); if (ok(m.state)) return { ...m, seed, first: 'a' }; } throw new Error('no seed for ' + mode); };
   const mxOne = setupOnly('mixed', (x) => x.rounds[0].twist === 'oneline' && x.gold < 0);
+  const encM = script({ seed: 4321, first: 'a', mode: 'classic', pack: 'classic', encore: true, plan: [[2, 1], [2, 1], [1, 1], [0, 1], [2, 1], [2, 1]] });
   const mxLay = setupOnly('mixed', (x) => x.rounds[0].twist === 'halfhalf' && x.gold < 0);
   const mxSprint = setupOnly('mixed', (x) => x.rounds[0].twist === 'sprint' && x.gold < 0);
   const clk1 = setupOnly('classic', (x) => x.gold < 0);
@@ -554,6 +627,7 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
   const seedDocs = {
     // an earlier match's records are already in the shared doc: they must never show on any other match
     'gamedata/doodle': { lastRec: 'old-match', plays: 7, best_classic: 12, hitStreakBest: 8, perfects: 0, drawings: 9, rc_mode: 'classic', rc_score: 12, rc_prev: 0, rc_new: 1, rc_mile: 10, rc_perfect: 1, rc_gold: 1, rc_streak: 8, rc_plays: 7, a_guessRounds: 20, a_guessPts: 58, b_guessRounds: 20, b_guessPts: 62 },
+    'matches/enc2': doc({ ...encM, seed: 4321, first: 'a' }),
     'matches/mxlay': doc(mxLay), 'matches/mxone': doc(mxOne), 'matches/mxsprint': doc(mxSprint), 'matches/clk1': doc(clk1), 'matches/clk2': doc({ ...clk2, seed: clk2.seed + 1 }),
     'matches/fin2g': doc({ ...finished, seed: goldSeed, first: 'a' }),
     'matches/near2': doc({ ...near, seed: NEAR_SEED, first: 'a' }),
@@ -668,7 +742,7 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
       for (const [w, hh, name] of SIZES) {
         await FP.setViewportSize({ width: w, height: hh }); await FP.waitForTimeout(250);
         assert(await inView(FP, '.dd-start') && await noSideScroll(FP), `setup ${w}x${hh} ${scheme}: the Start button is in view without scrolling`);
-        const tap44 = await FP.$$eval('.dd-mode, .dd-pack, .dd-start', (xs) => xs.every((x) => x.getBoundingClientRect().height >= 44));
+        const tap44 = await FP.$$eval('.dd-mode, .dd-pack, .dd-toggle, .dd-start', (xs) => xs.every((x) => x.getBoundingClientRect().height >= 44));
         assert(tap44, `setup ${w}x${hh}: every tap target is at least 44 px tall`);
         if (scheme === 'light' || name === 'portrait') await FP.screenshot({ path: `${SHOTS}/setup-${name}-${scheme}.png` });
       }
@@ -1063,7 +1137,7 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
       const plays0 = (h.docs['gamedata/doodle'] || {}).plays || 0;
       await h.newLocalGame(a, 'doodle');
       const lid = await a.evaluate(() => window.__lastMatchId);
-      let curtains = 0; const lw = {};
+      let curtains = 0; const lw = {}; let encN = 0;
       for (let guard = 0; guard < 90; guard++) {
         const e = await h.engine(a, lid);
         if (e.over) break;
@@ -1071,8 +1145,9 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
         if (await visible(a, '.dd-next')) { await a.tap('.dd-next'); continue; }
         if (await visible(a, '.dd-start')) {
           assert(await visible(a, '.dd-mode') && !(await visible(a, '.dd-waiting')), 'same phone: the first player sees the setup screen after the curtain');
-          await a.tap('.dd-mode[data-m="ladder"]'); await a.tap('.dd-pack[data-p="creatures"]'); await a.tap('.dd-start'); await a.waitForTimeout(200); continue;
+          await a.tap('.dd-mode[data-m="ladder"]'); await a.tap('.dd-pack[data-p="creatures"]'); await a.tap('.dd-toggle'); await a.tap('.dd-start'); await a.waitForTimeout(200); continue;
         }
+        if (await visible(a, '.dd-send') && e.state.r >= 6) { await touchDraw(a, cdps.a, PICS[encN++ % 2]); await a.tap('.dd-send'); await a.waitForTimeout(250); continue; }
         if (await visible(a, '.dd-pick')) {
           await a.tap('.dd-pick'); await a.waitForSelector('.dd-paper.can-draw canvas');
           lw[e.state.r] = await wordOf(a);
@@ -1085,10 +1160,9 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
       const le = await h.engine(a, lid);
       const lmax = 25 + (le.state.gold >= 1 ? [2, 3, 5, 5, 5, 5][le.state.gold] : 0);
       assert(le.over && le.state.mode === 'ladder' && le.state.score === lmax, `same phone Ladder: six first-try hits climb to ${lmax} (got ${le.state.score})`);
-      assert(curtains === 7, `same phone: the curtain at the start and after every drawing (${curtains})`);
-      await waitFor(() => visible(a, '.dd-next'), 4000, 'last reveal');
-      await a.tap('.dd-next');
-      await waitFor(() => visible(a, '#game-root .gm-end'), 4000, 'end card after the tap');
+      assert(curtains === 9 && encN === 2, `same phone with an Encore: a curtain at the start, after each of the six drawings, and one before each Encore drawing (${curtains} curtains, ${encN} Encore drawings)`);
+      assert(le.state.enc && le.state.enc.a && le.state.enc.b && le.result.score === lmax, 'same phone: both Encore drawings are in and the Encore adds no points');
+      await waitFor(() => visible(a, '#game-root .gm-end'), 4000, 'end card after the Encore');
       await h.settle();
       const after = await a.evaluate(() => window.__ddWrites);
       const dbDoc = h.docs['gamedata/doodle'];
@@ -1096,6 +1170,62 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
       await closeGame(a);
     }
 
+
+    // ════ 7. Encore, two phones: reveal, both draw at once, wait, reload, the pair in the gallery ════
+    console.log('# doodle Encore (two phones)');
+    {
+      const reloadInto2 = async (pg, mid) => { await pg.reload(); await pg.waitForFunction(() => !!document.querySelector('.tabbar'), null, { timeout: 15000 }); await pg.waitForTimeout(300); await h.openMatch(pg, mid); await pg.waitForTimeout(500); };
+      await openSeed(a, 'enc2'); await openSeed(b, 'enc2');
+      const est = (await h.engine(a, 'enc2')).state;
+      assert(est.enc && est.r === 6 && JSON.stringify((await h.engine(a, 'enc2')).acts) === '["a","b"]', 'encore seed: six rounds done, both players asked to draw');
+      await a.waitForSelector('.dd-next'); await b.waitForSelector('.dd-next');
+      assert(/On to the Encore/.test(await a.textContent('.dd-next')) && /On to the Encore/.test(await b.textContent('.dd-next')), 'encore: both players see the last result first, with "On to the Encore"');
+      assert(!(await a.$('.dd-wall')) && !(await visible(a, '#game-root .gm-end')), 'encore: no gallery and no end card yet');
+      for (const [w, hh] of [[375, 548], [844, 390], [390, 664]]) { await a.setViewportSize({ width: w, height: hh }); await a.waitForTimeout(300); assert(await inView(a, '.dd-next') && await noSideScroll(a), `encore reveal ${w}x${hh}: the next button is in view`); }
+      await a.tap('.dd-next'); await b.tap('.dd-next');
+      await a.waitForSelector('.dd-paper.can-draw canvas'); await b.waitForSelector('.dd-paper.can-draw canvas');
+      const cardWord = POOL[est.enc.prompt].show;
+      assert(/Encore/.test(await a.textContent('.dd-word small')) && (await wordOf(a)).toLowerCase() === cardWord && (await wordOf(b)).toLowerCase() === cardWord, `encore: both phones draw the same card at once (${cardWord})`);
+      for (const [w, hh, name] of [[390, 664, 'portrait'], [375, 548, 'small'], [844, 390, 'landscape']]) {
+        await a.setViewportSize({ width: w, height: hh }); await a.waitForTimeout(350);
+        assert(await inView(a, '.dd-paper') && await inView(a, '.dd-send') && await inView(a, '.dd-timer') && await inView(a, '.dd-swatch[data-c="3"]') && await noSideScroll(a), `encore draw ${w}x${hh}: paper, timer, tools and Send are in view`);
+        if (name !== 'portrait') await a.screenshot({ path: `${SHOTS}/encore-draw-${name}.png` });
+      }
+      await a.setViewportSize({ width: 390, height: 664 }); await a.waitForTimeout(250);
+      await touchDraw(a, cdps.a, PICS[0]); await a.tap('.dd-send'); await h.settle();
+      let eg = await h.engine(a, 'enc2');
+      assert(eg.state.enc.a && eg.state.enc.b === null && JSON.stringify(eg.acts) === '["b"]' && !eg.over, 'encore: Emerson’s drawing is in, the match waits for Sydney');
+      await a.waitForSelector('.dd-waiting');
+      assert(/is still drawing/.test(await a.textContent('.dd-wait-name')) && !(await a.$('.dd-wall')) && !(await a.$('.dd-encore')), 'encore: Emerson waits and sees nothing of the other drawing');
+      assert(await visible(b, '.dd-send') && !(await b.$('.dd-wall')), 'encore: Sydney is still drawing, no peeking');
+      // reload mid-encore restores the unsent drawing
+      await touchDraw(b, cdps.b, PICS[1]);
+      const inkBefore = await inkPixels(b);
+      await reloadInto2(b, 'enc2');
+      await b.waitForSelector('.dd-paper.can-draw canvas', { timeout: 6000 });
+      assert((await wordOf(b)).toLowerCase() === cardWord && await inkPixels(b) > 300 && !(await b.$eval('[data-a="undo"]', (x) => x.disabled)), `encore: reload mid-encore restores the card and the unsent drawing (${inkBefore} -> ${await inkPixels(b)} px)`);
+      const bSecs = await b.$eval('.dd-secs', (x) => { const [m, ss] = x.textContent.split(':').map(Number); return m * 60 + ss; });
+      assert(bSecs <= 74 && bSecs > 30, `encore: the clock kept running through the reload (${bSecs}s left)`);
+      await b.tap('.dd-send');
+      await waitFor(async () => (await visible(a, '#game-root .gm-end')) && (await visible(b, '#game-root .gm-end')), 9000, 'end cards after both Encore drawings');
+      eg = await h.engine(a, 'enc2');
+      assert(eg.over && eg.state.enc.a && eg.state.enc.b && eg.result.score === est.score && !/encore/i.test(eg.result.sub) && eg.result.text === (await h.engine(b, 'enc2')).result.text, 'encore: the end card follows the second drawing at once; score, rating and sub-line ignore the Encore');
+      await a.tap('#game-root [data-g="end-look"]'); await b.tap('#game-root [data-g="end-look"]');
+      await a.waitForSelector('.dd-encore'); await b.waitForSelector('.dd-encore');
+      assert((await a.textContent('.dd-encore-title')).toLowerCase() === cardWord && await a.$$eval('.dd-encore canvas', (xs) => xs.length) === 2 && await a.$$eval('.dd-encpin', (xs) => xs.length) === 2, 'encore gallery: one double frame titled with the card, both drawings, a pin button on each');
+      await a.waitForTimeout(2800);
+      assert(await inkPixels(a, '.dd-encore-pic[data-w="a"] canvas') > 50 && await inkPixels(a, '.dd-encore-pic[data-w="b"] canvas') > 50, 'encore gallery: both drawings are painted');
+      for (const [w, hh, name] of [[375, 548, 'small'], [844, 390, 'landscape'], [390, 664, 'portrait']]) {
+        await a.setViewportSize({ width: w, height: hh }); await a.waitForTimeout(350);
+        await a.$eval('.dd-encore', (x) => x.scrollIntoView({ block: 'center' })); await a.waitForTimeout(150);
+        const fits = await a.evaluate(() => { const e = document.querySelector('.dd-encore').getBoundingClientRect(); return e.left >= 0 && e.right <= innerWidth && [...document.querySelectorAll('.dd-encpin')].every((b) => { const r = b.getBoundingClientRect(); return r.left >= e.left && r.right <= e.right && r.height >= 44; }); });
+        assert(fits && await noSideScroll(a), `encore gallery ${w}x${hh}: the double frame and its pin buttons fit`);
+        if (name !== 'small') await a.screenshot({ path: `${SHOTS}/encore-gallery-${name}.png` });
+      }
+      await a.tap('.dd-encpin[data-w="b"]'); await a.waitForTimeout(300);
+      assert(/Unpin/.test(await a.textContent('.dd-encpin[data-w="b"]')) && (await a.evaluate(() => JSON.parse(localStorage.getItem('ju.games.data.v1') || '{}').doodle || {})).pin === 'enc2:eb', 'encore gallery: pinning one of the two drawings stores it on the fridge');
+      await closeGame(a); await closeGame(b);
+    }
     h.assertNoErrors();
   } catch (e) {
     await h.shot(a, `${SHOTS}/fail-a.png`).catch(() => {});

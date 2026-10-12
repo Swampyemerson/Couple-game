@@ -239,6 +239,20 @@ export const CSS = `
     .g-doodle .dd-frame-gold { position: absolute; z-index: 1; top: -10px; left: -6px; padding: 2px 8px; border: 2px solid var(--g-ink); border-radius: 6px; background: var(--g-hl); color: var(--g-on-ink); font-weight: 900; font-size: 0.66rem; letter-spacing: 0.08em; text-transform: uppercase; box-shadow: var(--g-shadow-sm); transform: rotate(-6deg); }
     .g-doodle .dd-pin { align-self: stretch; min-height: 48px; }
 
+    /* Encore: the toggle on the setup screen, the pair in the gallery */
+    .g-doodle .dd-toggle { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 6px 12px; text-align: left; color: var(--g-ink); background: var(--g-card); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow-sm); font-weight: 700; font-size: 0.8rem; touch-action: manipulation; }
+    .g-doodle .dd-toggle b { font-family: var(--g-font-display); font-weight: 900; font-size: 0.9rem; margin-right: 4px; }
+    .g-doodle .dd-toggle i { flex: none; position: relative; width: 38px; height: 22px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); }
+    .g-doodle .dd-toggle i::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--g-ink); }
+    .g-doodle .dd-toggle[aria-checked="true"] i { background: var(--g-hl); }
+    .g-doodle .dd-toggle[aria-checked="true"] i::after { left: 18px; background: var(--g-on-ink); }
+    .g-doodle .dd-encore { width: 100%; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 10px 10px; background: var(--g-card); border: 2px solid var(--g-ink); border-radius: 6px; box-shadow: var(--g-shadow); }
+    .g-doodle .dd-encore-title { font-family: var(--g-font-display); font-weight: 900; font-size: 1.1rem; text-align: center; overflow-wrap: anywhere; }
+    .g-doodle .dd-encore-pair { width: 100%; display: flex; justify-content: center; gap: 14px; }
+    .g-doodle .dd-encore-cell { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; }
+    .g-doodle .dd-encore-pic canvas { display: block; border: 2px solid var(--g-line); border-radius: 3px; background: var(--g-card); }
+    .g-doodle .dd-encpin { min-height: 44px; padding: 6px 10px; font-size: 0.8rem; }
+
     @keyframes dd-shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(3px); } }
     @keyframes dd-pop { 0% { transform: scale(0.6); opacity: 0; } 70% { transform: scale(1.08); opacity: 1; } 100% { transform: scale(1); } }
     @keyframes dd-stamp { 0% { transform: translate(-50%, -50%) rotate(-9deg) scale(2.4); opacity: 0; } 100% { transform: translate(-50%, -50%) rotate(-9deg) scale(1); opacity: 1; } }

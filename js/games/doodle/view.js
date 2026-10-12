@@ -155,7 +155,9 @@ export function mountDoodle(el, api, K) {
   const v2 = () => !!ctx && ctx.state.v === 2;
   const nRounds = () => ctx.state.rounds.length;
   const kindOf = (s, R) => (s.v === 2 ? K.kindOf(s, R) : 'normal');
-  const secsFor = (s, R) => (s.v === 2 ? K.drawSecondsFor(K.kindOf(s, R)) : DRAW_SECONDS);
+  const secsFor = (s, R) => (s.v === 2 && R ? K.drawSecondsFor(K.kindOf(s, R)) : DRAW_SECONDS);
+  // true during the Encore: every scored round is done, both players still have a drawing to send
+  const inEncore = (s) => !!s.enc && s.r >= s.rounds.length;
 
   // Drafts survive a reload on this device: the drawing in progress (with its clock) and a
   // half-typed guess. One slot per match.
@@ -282,7 +284,7 @@ export function mountDoodle(el, api, K) {
     const d = data();
     const lastMode = MODE_LIST.includes(d.lastMode) ? d.lastMode : null;
     const lastPack = PACK_LIST.includes(d.lastPack) ? d.lastPack : null;
-    const sel = vs.setup || (vs.setup = { mode: lastMode || 'classic', pack: lastPack || 'classic' });
+    const sel = vs.setup || (vs.setup = { mode: lastMode || 'classic', pack: lastPack || 'classic', encore: d.lastEncore === 1 });
     const pinned = typeof d.pin_s === 'string' && d.pin_s ? decode(d.pin_s) : null;
     node.classList.add('dd-setup');
     node.innerHTML = `<div class="dd-head dd-sethead"><h2 class="dd-h">Set up the game</h2>${pinned && pinned.length ? `<div class="dd-fridge" role="img" aria-label="On the fridge: ${esc(cap(String(d.pin_t || 'our favourite')))}${d.pin_by === 'a' || d.pin_by === 'b' ? ` by ${esc(api.name(d.pin_by))}` : ''}"><div class="dd-fridge-pic"></div></div>` : ''}</div>
@@ -290,25 +292,28 @@ export function mountDoodle(el, api, K) {
         <div class="dd-modes" role="radiogroup" aria-label="Mode">${MODE_LIST.map((m) => `<button class="dd-mode" role="radio" data-m="${m}" aria-checked="false"><b>${esc(MODE_INFO[m].title)}</b><span>${esc(MODE_INFO[m].pitch)}</span></button>`).join('')}</div></div>
       <div class="dd-sec"><span class="g-label">Which cards</span>
         <div class="dd-packs" role="radiogroup" aria-label="Cards">${PACK_LIST.map((p) => `<button class="dd-pack" role="radio" data-p="${p}" aria-checked="false" title="${esc(PACK_INFO[p].pitch)}">${esc(PACK_INFO[p].title)}</button>`).join('')}</div></div>
+      <button class="dd-toggle" role="switch" aria-checked="false" type="button"><i aria-hidden="true"></i><span><b>Encore</b> One last card you both draw at once</span></button>
       <div class="dd-setup-foot"><button class="gm-btn gm-btn-big dd-start"></button></div>`;
     const startBtn = node.querySelector('.dd-start');
     const paint = () => {
       node.querySelectorAll('.dd-mode').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.m === sel.mode)));
       node.querySelectorAll('.dd-pack').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.p === sel.pack)));
-      const same = lastMode && lastPack && sel.mode === lastMode && sel.pack === lastPack;
-      startBtn.innerHTML = `${same ? 'Same again' : 'Start'}<small>${esc(MODE_INFO[sel.mode].title)} · ${esc(PACK_INFO[sel.pack].title)}</small>`;
+      node.querySelector('.dd-toggle').setAttribute('aria-checked', String(!!sel.encore));
+      const same = lastMode && lastPack && sel.mode === lastMode && sel.pack === lastPack && !!sel.encore === (d.lastEncore === 1);
+      startBtn.innerHTML = `${same ? 'Same again' : 'Start'}<small>${esc(MODE_INFO[sel.mode].title)} · ${esc(PACK_INFO[sel.pack].title)}${sel.encore ? ' · Encore' : ''}</small>`;
       startBtn.disabled = !ctx.canMove || !!vs.setupSent;
     };
     node.querySelector('.dd-modes').addEventListener('click', (e) => { const b = e.target.closest('.dd-mode'); if (b) { sel.mode = b.dataset.m; api.sfx('tap'); paint(); } });
+    node.querySelector('.dd-toggle').addEventListener('click', () => { sel.encore = !sel.encore; api.sfx('tap'); paint(); });
     node.querySelector('.dd-packs').addEventListener('click', (e) => { const b = e.target.closest('.dd-pack'); if (b) { sel.pack = b.dataset.p; api.sfx('tap'); paint(); } });
     startBtn.addEventListener('click', () => {
       if (!ctx.canMove || vs.setupSent) return;
       const fresh = K.dealFresh(sel.pack, decodeSeen(data().seen));
       vs.setupSent = true; paint();
-      const res = api.move({ setup: { v: 2, mode: sel.mode, pack: sel.pack, deal: fresh.deal } });
+      const res = api.move({ setup: { v: 2, mode: sel.mode, pack: sel.pack, deal: fresh.deal, ...(sel.encore ? { encore: true } : {}) } });
       if (!res.ok) { vs.setupSent = false; api.toast(res.error); api.sfx('bad'); paint(); return; }
       api.sfx('flip');
-      setData({ lastMode: sel.mode, lastPack: sel.pack, seen: encodeSeen(fresh.seen) });
+      setData({ lastMode: sel.mode, lastPack: sel.pack, lastEncore: sel.encore ? 1 : 0, seen: encodeSeen(fresh.seen) });
     });
     let fridge = null;
     if (pinned && pinned.length) {
@@ -356,15 +361,17 @@ export function mountDoodle(el, api, K) {
   }
 
   function drawScreen(node) {
-    const s = ctx.state; const R = s.rounds[s.r];
+    const s = ctx.state;
+    const E = inEncore(s);
+    const R = E ? null : s.rounds[s.r];
     const D = vs.draft;
-    const kind = kindOf(s, R);
+    const kind = E ? 'normal' : kindOf(s, R);
     const secs = D.secs || secsFor(s, R);
-    const word = PROMPTS[R.choices[D.pick]].show;
+    const word = E ? PROMPTS[s.enc.prompt].show : PROMPTS[R.choices[D.pick]].show;
     node.innerHTML = `<div class="dd-head"><div class="dd-top">
-          <span class="dd-word"><small>Round ${s.r + 1} of ${s.rounds.length} · draw</small>${esc(cap(word))}</span>
+          <span class="dd-word"><small>${E ? 'Encore · you both draw this' : `Round ${s.r + 1} of ${s.rounds.length} · draw`}</small>${esc(cap(word))}</span>
           <span class="dd-timer" role="timer" aria-label="Time left"><svg viewBox="0 0 26 26"><circle class="dd-ring-bg" cx="13" cy="13" r="9.5"/><circle class="dd-ring" cx="13" cy="13" r="9.5" stroke-dasharray="59.7" stroke-dashoffset="0"/></svg><span class="dd-secs">${fmtClock(secs)}</span></span>
-        </div>${twistBanner(s, R)}</div>
+        </div>${E ? '' : twistBanner(s, R)}</div>
         <div class="dd-ph"></div>
         <div class="dd-foot">
         <div class="dd-tools">
@@ -433,7 +440,8 @@ export function mountDoodle(el, api, K) {
       if (D.sent || !ctx.canMove) return false;
       if (active) endStroke();
       let mv;
-      if (D.strokes.length) mv = { prompt: D.pick, strokes: encode(D.strokes) };
+      if (E) mv = D.strokes.length ? { encore: encode(D.strokes) } : { encore: '', timeUp: true };
+      else if (D.strokes.length) mv = { prompt: D.pick, strokes: encode(D.strokes) };
       else if (s.v === 2) mv = { prompt: D.pick, timeUp: true };
       else return false;
       const res = api.move(mv);
@@ -749,7 +757,8 @@ export function mountDoodle(el, api, K) {
     const strokes = decode(R.strokes) || [];
     const b = resultBlock(R, ctx.viewer, s);
     const nextDrawer = s.rounds[s.r] ? s.rounds[s.r].drawer : null;
-    const last = s.r >= s.rounds.length;
+    const encoreNext = inEncore(s) && !ctx.over;
+    const last = s.r >= s.rounds.length && !encoreNext;
     node.innerHTML = `<div class="dd-head">${top({ ...s, r: ri })}</div>
       <div class="dd-ph"></div>
       <div class="dd-foot">
@@ -758,7 +767,7 @@ export function mountDoodle(el, api, K) {
         ${b.extras.length ? `<p class="dd-bonus">${b.extras.map(esc).join(' · ')}</p>` : ''}
         ${b.gold}
         ${b.chips ? `<div class="dd-glist">${b.chips}</div>` : ''}
-        ${next ? `<div class="dd-stick"><button class="gm-btn dd-next">${last ? 'See the gallery' : 'Your turn to draw'}</button>
+        ${next ? `<div class="dd-stick"><button class="gm-btn dd-next">${encoreNext ? 'On to the Encore' : last ? 'See the gallery' : 'Your turn to draw'}</button>
           ${ctx.mode === 'local' && nextDrawer ? `<p class="dd-note">${esc(api.name(other(nextDrawer)))}, look away while ${esc(api.name(nextDrawer))} picks.</p>` : ''}</div>` : ''}
         ${waiting ? `<div class="dd-waiting">${PENCIL}<div class="dd-wait-name">${nm(nextDrawer)} is drawing</div><p class="dd-sub">Your turn to guess is next.</p></div>` : ''}
       </div>`;
@@ -775,6 +784,15 @@ export function mountDoodle(el, api, K) {
     }
     if (R.points > 0) api.sfx(R.x2 ? 'win' : 'good'); else api.sfx('bad');
     return { p, minPaper: 130, redraw() { p.paper.all(strokes); } };
+  }
+
+  function encWaitScreen(node) {
+    const s = ctx.state;
+    const me2 = ctx.viewer || ctx.me;
+    const them = other(me2);
+    node.innerHTML = `<div class="dd-head"><div class="dd-top"><span class="dd-round">Encore</span><span class="dd-team">Team <b>${s.score}</b></span></div></div>
+      <div class="dd-waiting">${PENCIL}<div class="dd-wait-name">${nm(them)} is still drawing</div><p class="dd-sub">Your Encore drawing is in. Both drawings appear together.</p></div>`;
+    return {};
   }
 
   function waitDrawScreen(node) {
@@ -892,6 +910,8 @@ export function mountDoodle(el, api, K) {
           <span class="dd-frame-pts ${R.points ? '' : 'zero'}">${R.points ? `+${R.points}` : R.timeUp ? 'time up' : R.gaveUp ? 'pass' : 'missed'}</span>
           ${R.gold ? '<span class="dd-frame-gold">Golden</span>' : ''}
         </button>`).join('')}</div>
+      ${s.enc ? `<div class="dd-encore"><span class="dd-gal-kicker">Encore</span><b class="dd-encore-title">${esc(cap(PROMPTS[s.enc.prompt].show))}</b>
+        <div class="dd-encore-pair">${['a', 'b'].map((w) => `<div class="dd-encore-cell"><div class="dd-encore-pic" data-w="${w}"><canvas></canvas></div><span class="dd-frame-meta">by ${nm(w)}${s.enc[w] === '' ? ' · out of time' : ''}</span>${s.enc[w] ? `<button class="gm-btn gm-btn-ghost dd-encpin" data-w="${w}" type="button">Pin to the fridge</button>` : ''}</div>`).join('')}</div></div>` : ''}
       <div class="dd-gal-actions"><button class="gm-btn" data-g="rematch">Play again</button><button class="gm-btn gm-btn-ghost" data-g="close">Back to games</button></div>`;
     const stripEl = node.querySelector('.dd-strip');
     const historyEl = node.querySelector('.dd-history');
@@ -928,7 +948,30 @@ export function mountDoodle(el, api, K) {
         if (players[i] && !players[i].done) players[i].redraw(); else pp.all(drawings[i]);
       });
     };
+    // the Encore pair: two drawings of the same card side by side in one double frame
+    const encPapers = {}; const encDraw = {};
+    if (s.enc) {
+      for (const w of ['a', 'b']) {
+        encPapers[w] = new Paper(node.querySelector(`.dd-encore-pic[data-w="${w}"] canvas`), inks);
+        encDraw[w] = decode(s.enc[w]) || [];
+      }
+    }
+    const paintPins = () => node.querySelectorAll('.dd-encpin').forEach((b) => { const on = data().pin === `${ctx.matchId}:e${b.dataset.w}`; b.textContent = on ? 'Unpin' : 'Pin to the fridge'; b.setAttribute('aria-pressed', String(on)); });
+    node.querySelectorAll('.dd-encpin').forEach((b) => b.addEventListener('click', () => {
+      const w = b.dataset.w; const id = `${ctx.matchId}:e${w}`;
+      if (data().pin === id) setData({ pin: '', pin_s: '', pin_t: '', pin_by: '' });
+      else if (s.enc[w].length > 8000) { api.toast('That one is too detailed to pin.'); return; }
+      else { setData({ pin: id, pin_s: s.enc[w], pin_t: PROMPTS[s.enc.prompt].show, pin_by: w }); api.sfx('pop'); }
+      paintPins();
+    }));
+    dataSubs.add(paintPins); paintPins();
+    const encLayout = () => {
+      if (!s.enc) return;
+      const size = Math.floor(Math.max(110, (Math.min(node.clientWidth, 560) - 8 - 44 - 14) / 2));
+      for (const w of ['a', 'b']) { if (Math.abs(encPapers[w].size - size) >= 1) { encPapers[w].fit(size); encPapers[w].all(encDraw[w]); } }
+    };
     layout();
+    encLayout();
     // The drawings sketch themselves once, as soon as the gallery is actually in view
     // (the end card sits on top of it at first).
     const timers = [];
@@ -958,11 +1001,11 @@ export function mountDoodle(el, api, K) {
       const f = e.target.closest('.dd-frame');
       if (f) openLightbox(Number(f.dataset.i));
     });
-    const redraw = () => papers.forEach((pp, i) => {
+    const redraw = () => { if (s.enc) for (const w of ['a', 'b']) encPapers[w].all(encDraw[w]); papers.forEach((pp, i) => {
       if (waiting[i]) return;
       if (players[i] && !players[i].done) players[i].redraw(); else pp.all(drawings[i]);
-    });
-    return { layout, redraw, destroy() { dataSubs.delete(paintStrip); timers.forEach(clearTimeout); if (mo) mo.disconnect(); players.forEach((pl) => pl && pl.stop()); } };
+    }); };
+    return { layout() { layout(); encLayout(); }, redraw, destroy() { dataSubs.delete(paintStrip); dataSubs.delete(paintPins); timers.forEach(clearTimeout); if (mo) mo.disconnect(); players.forEach((pl) => pl && pl.stop()); } };
   }
 
   // ── records: the one device that ended the match writes it, once ──
@@ -986,7 +1029,7 @@ export function mountDoodle(el, api, K) {
     const v = c.viewer;
     if (c.over) {
       const lastR = s.rounds.length - 1;
-      if (vs.wasOver === false && !vs.ack[lastR]) {
+      if (vs.wasOver === false && !vs.ack[lastR] && !s.enc) {
         // we watched the last guess land: show it first, then the gallery
         setScreen(`reveal:${lastR}`, (n) => revealScreen(n, lastR, { next: true }));
         return;
@@ -999,6 +1042,20 @@ export function mountDoodle(el, api, K) {
     if (!s.v && c.moves === 0) {
       if (v === s.first && c.canMove) setScreen('setup', setupScreen);
       else setScreen('setupwait', setupWaitScreen);
+      return;
+    }
+    if (inEncore(s)) {
+      const lastR = s.rounds.length - 1;
+      // already sent: wait for the partner (online); locally the curtain handles the hand-over
+      if (!c.canMove) { setScreen('encwait', encWaitScreen); return; }
+      if ((!vs.draft || vs.draft.r !== s.r)) restoreDrawing();
+      if (!vs.draft && !vs.ack[lastR]) { setScreen(`reveal:${lastR}`, (n) => revealScreen(n, lastR, { next: true })); return; }
+      if (!vs.draft || vs.draft.r !== s.r) {
+        const now = performance.now();
+        vs.draft = { r: s.r, pick: 0, strokes: [], hist: [], started: now, deadline: now + DRAW_SECONDS * 1000, lastEnd: now, sent: false, secs: DRAW_SECONDS };
+        saveDrawing();
+      }
+      setScreen(`encore:${s.r}`, drawScreen);
       return;
     }
     const R = s.rounds[s.r];
@@ -1046,6 +1103,7 @@ export function mountDoodle(el, api, K) {
       render();
       if (vs.wasOver === null || !c.over) vs.wasOver = c.over;
       if (c.over) draftPut('', null);
+      if (c.over && c.state.enc && vs.wasOver === false && scr && scr.key === 'gallery' && !vs.encEnd) { vs.encEnd = true; api.showEnd(); }
       const lastR = c.state.rounds.length - 1;
       if (c.over && scr && scr.key === `reveal:${lastR}`) {
         // the last result gets a proper moment; a tap on the button skips ahead

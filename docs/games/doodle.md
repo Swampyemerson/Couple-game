@@ -75,7 +75,7 @@ tier), `everything`. New decks live in `doodle/packs.js`; their order is frozen 
 matches): add a new deck at the END of `NEW_DECKS`, never edit or grow an existing tier. The test checks that
 no card shares a word with another card and that nothing fuzzy-matches another card.
 
-**Not built**: Encore (a 7th, unscored round where both draw the same Us prompt at once). It would change when every v2 match ends, so it is left as a follow-up.
+**Encore (opt-in)**: the setup move can carry `encore: true` (a switch on the setup screen, remembered as `lastEncore`). Absent or false = no Encore, so every other v2 match is unchanged. With it, `s.enc = { prompt, a: null, b: null }` where `prompt` is a seeded Us-pack card that was not dealt in the match. After the last scored round `next()` returns both players until each has sent `{ encore: strokes }` (or `{ encore: '', timeUp: true }`); the two moves are order independent, a second one from the same player throws, and the match ends when both are in. Nothing is scored: `result()`, the rating, the sub-line and the records ignore it (a normal match). View: both players see the last round's result first ("On to the Encore"), draw the same card at the same time (draft and clock survive a reload), the first to finish waits and sees nothing of the other drawing; in one-phone mode the curtain separates them. The gallery gets one double frame titled with the card, both drawings side by side and a "Pin to the fridge" button on each (`pin = matchId:ea` / `matchId:eb`). The end card follows the second drawing at once (`api.showEnd()`).
 
 ## Records, rivalry, rotation
 
