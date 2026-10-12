@@ -149,7 +149,7 @@ registerGame({
         <p class="dx-hint"><i aria-hidden="true"></i>Bomb works best on a computer, Manual on a phone.</p>
         <div class="dx-tiers" role="radiogroup" aria-label="Difficulty">${TIER_ORDER.map((k) => `<button type="button" role="radio" aria-checked="false" data-diff="${k}"><b>${TIERS[k].label}</b><span class="c">${clockOf(k)}</span><span class="dx-pips" aria-hidden="true"><i></i><i></i><i></i></span></button>`).join('')}</div>
         <p class="dx-tierinfo"></p>
-        <button type="button" class="dx-today" role="switch" aria-checked="false" data-act="today"><i aria-hidden="true"></i><span>Today’s bomb: the same bomb for everyone, today only</span></button>
+        <button type="button" class="dx-today" role="switch" aria-checked="false" data-act="today"><i aria-hidden="true"></i><span>Today’s bomb: the same bomb for both of you, today only</span></button>
         <div class="dx-rec"></div>
         <p class="dx-nudge" hidden></p>
         <p class="dx-lobby-status" aria-live="polite"></p>
@@ -172,8 +172,6 @@ registerGame({
         row.push(`<span>Defused <b>${r.wins}</b></span>`);
       }
       let html = row.length ? `<div class="row">${row.join('')}</div>` : '';
-      const bh = r.best[k];
-      if (bh.secs && bh.who) html += `<div class="row"><span>Best bomb hand on ${esc(T.label)}: <b>${esc(api.name(bh.who))} ${clock(bh.secs)}</b></span></div>`;
       if (L.td) {
         const date = dayKey(Date.now());
         const d = D();
@@ -295,6 +293,10 @@ registerGame({
     }
     const flagsHTML = (extra) => `<div class="dx-flags"><span class="dx-flag is-pulse" data-flag="surge" hidden></span><span class="dx-flag is-pulse" data-flag="dark" hidden></span><span class="dx-flag is-pulse" data-flag="vent" hidden>VENT</span>${extra || ''}</div>`;
     const strikesHTML = '<div class="dx-strikes" aria-label="Strikes: 0 of 3"><i></i><i></i><i></i></div>';
+    /** A fresh screen starts at the top: the lobby's Start button sits below the fold on a phone, and the tap that pressed it scrolled the page. */
+    function toTop() {
+      try { const gr = document.getElementById('game-root'); if (gr) gr.scrollTop = 0; window.scrollTo(0, 0); } catch { /* ignore */ }
+    }
     function renderBomb(sv) {
       const g = B.round;
       const E = g.E;
@@ -306,6 +308,7 @@ registerGame({
         <aside class="dx-side">
           <div class="dx-lcd"><span class="dx-tag">Time left</span><span class="dx-time" role="timer">${fmt(B.left)}</span><span class="dx-surgetxt"></span></div>
           ${strikesHTML}
+          ${flagsHTML()}
           <div class="dx-sticker"><span class="dx-tag">Serial no.</span><span class="dx-serial">${E.serial}</span><span class="dx-edition">Manual: <b>${esc(g.name)}</b></span></div>
           ${E.void ? `<div class="dx-sticker is-void"><span class="dx-tag">Serial no.</span><span class="dx-serial">${E.void}</span><span class="dx-void-stamp">VOID</span></div>` : ''}
           <div class="dx-bay"><span class="dx-tag">Batteries</span><div class="dx-bats" aria-label="${E.batteries} batteries">${E.batteries ? batterySVG.repeat(E.batteries) : '<span class="dx-none">Empty bay</span>'}</div></div>
@@ -316,6 +319,7 @@ registerGame({
       </div><div class="dx-fx"></div><div class="dx-pause" role="status" hidden><div><b>Paused</b><span></span></div></div>`;
       mountSlots(sv || null);
       updateBomb();
+      toTop();
     }
     function hostFor(i, saved) {
       const slot = B.round.slots[i];
@@ -600,7 +604,7 @@ registerGame({
     function manualHTML() {
       const g = M.round;
       const tabs = tabsOf(g);
-      const tab = (t) => `<button type="button" role="tab" data-page="${t.id}" aria-selected="false" class="${t.gold ? 'is-gold' : ''}${t.twin ? ' is-twin' : ''}" aria-label="${esc(t.sm)}${t.id === 'basics' ? '' : ', plate ' + t.big}${t.gold ? ', gold module' : ''}"><span class="big">${t.big}</span><span class="sm">${esc(t.sm)}</span></button>`;
+      const tab = (t) => `<button type="button" role="tab" data-page="${t.id}" data-n="${t.n}" aria-selected="false" class="${t.gold ? 'is-gold' : ''}${t.twin ? ' is-twin' : ''}" aria-label="${esc(t.sm)}${t.id === 'basics' ? '' : ', plate ' + t.big}${t.gold ? ', gold module' : ''}"><span class="big">${t.big}</span><span class="sm">${esc(t.sm)}</span></button>`;
       const hasRelay = g.slots.some((s) => s.id === 'relay');
       return `<div class="dx-manual-wrap">
         <div class="dx-mbar">
@@ -623,6 +627,7 @@ registerGame({
       M = { n: s.n, round, left: s.left, rate: s.rate || 1, at: performance.now(), strikes: s.st | 0, solved: String(s.sv || ''), pz: !!s.pz, over: false, frozen: false, shown: '', ra: [], seq: 0, stamp: Date.now().toString(36), relay: null, sg: 0, bo: 0, vn: 0, rsKey: '' };
       root.className = 'g-defuse is-manual';
       root.innerHTML = manualHTML();
+      toTop();
       mountRelayPanel();
       const ids = ['basics', ...round.ids];
       showPage(ids.includes(memo.page) ? memo.page : 'basics', true);
@@ -647,12 +652,12 @@ registerGame({
       M.relay = { i, live: p.init(slot.S), ctl: null };
       try { M.relay.ctl = p.panel(body, slot.S, M.round.book.relay.R, host2); } catch (e) { console.error(e); }
       if (M.relay.ctl && M.relay.ctl.render) M.relay.ctl.render(M.relay.live);
-      setDrawer(memo.drawer == null ? window.innerWidth >= 760 : memo.drawer);
+      setDrawer(memo.drawer == null ? window.innerWidth >= 760 && window.innerHeight >= 700 : memo.drawer, false); // the default is not remembered, only a tap is
     }
-    function setDrawer(open) {
+    function setDrawer(open, remember = true) {
       const d = $('.dx-drawer');
       if (!d) return;
-      memo.drawer = open; keep();
+      if (remember) { memo.drawer = open; keep(); }
       d.classList.toggle('is-open', open);
       d.querySelector('.dx-drawer-head').setAttribute('aria-expanded', String(open));
     }
@@ -720,7 +725,7 @@ registerGame({
       const pz = $('.dx-pause');
       if (pz) {
         pz.hidden = !(M.pz && !M.over);
-        if (!pz.hidden) pz.querySelector('span').textContent = s.pr === 'lobby' ? 'The bomb is paused while you are not in the round.' : `The bomb is paused. ${api.name(them)} ${s.pr === 'bg' ? 'has the game in the background' : 'stepped away'}.`;
+        if (!pz.hidden) pz.querySelector('span').textContent = s.pr === 'lobby' ? 'The bomb is paused while you are not in the round.' : `The bomb is paused. ${api.name(them)} ${s.pr === 'bg' || s.pr === 'me' ? 'has the game in the background' : 'stepped away'}.`;
       }
       watchBarSoon();
       if (s.ph === 'over' && !M.over) manualOver(s.res, !!s.win, s.fx);

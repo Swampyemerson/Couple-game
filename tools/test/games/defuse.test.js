@@ -1,5 +1,5 @@
 // Defuse: node unit tests (every plugin's tools/test/games/defuse/*.unit.mjs, then round-level tests), then the browser tests.
-//   node tools/test/games/defuse.test.js [node|phone|wild|laptop|dark|legacy|all]    (SHOTS=/dir for screenshots, PORT=9100 uses PORT..PORT+9)
+//   node tools/test/games/defuse.test.js [node|phone|wild|laptop|dark|layout|legacy|all]    (SHOTS=/dir for screenshots, PORT=9100 uses PORT..PORT+9)
 //
 // Browser: two simulated devices share a fake live room. Phones are 390×844 with coarse pointers and real page.tap(); the
 // laptop bomb is 1280×800 with no touch. Rounds are driven through window.__defuse (info / gen / drive / force / setLeft),
@@ -47,7 +47,7 @@ async function nodePart() {
   const { buildRound, TIERS, BY_ID, REGISTRY, CLASSIC_IDS, isScored, decoyLive, nameOf } = RD;
   const TKS = Object.keys(TIERS);
   assert(TKS.join() === 'classic,chill,normal,spicy,wild' && REGISTRY.length === 10, 'five tiers and ten modules');
-  assert(TIERS.chill.secs === 360 && TIERS.normal.secs === 300 && TIERS.wild.secs === 270 && TIERS.chill.label === 'Rookie' && TIERS.normal.label === 'Agent' && TIERS.spicy.label === 'Expert' && TIERS.wild.label === 'Bomb Squad', 'tier labels and clocks');
+  assert(TIERS.chill.secs === 360 && TIERS.normal.secs === 300 && TIERS.spicy.secs === 330 && TIERS.wild.secs === 360 && TIERS.classic.secs === 300 && TIERS.chill.label === 'Rookie' && TIERS.normal.label === 'Agent' && TIERS.spicy.label === 'Expert' && TIERS.wild.label === 'Bomb Squad', 'tier labels and clocks: Rookie 6:00, Agent 5:00, Expert 5:30, Bomb Squad 6:00, Classic 5:00');
 
   // determinism: the manual device rebuilds the identical round from { seed, tier }
   let n = 0;
@@ -162,7 +162,8 @@ async function nodePart() {
   assert(ports.size === 4 && !buildRound('p', 'chill').E.portPlate, 'edgework: ports from level 2 up');
   let vowelOk = true; const vs = new Set();
   for (let i = 0; i < 300; i++) { const e = buildRound('q' + i, 'chill').E; if (/[AEIOU]/.test(e.serial)) [...e.serial].forEach((c) => /[AEIOU]/.test(c) && vs.add(c)); if (!/^[A-Z0-9]{5}\d$/.test(e.serial)) vowelOk = false; }
-  assert(vowelOk && vs.size === 5, 'serials end in a digit and use all five vowels');
+  for (const t of ['normal', 'wild']) for (let i = 0; i < 300; i++) { const e = buildRound('q' + i, t).E; for (const x of [e.serial, e.void].filter(Boolean)) { if (/[IO]/.test(x)) vowelOk = false; if (/[AEU]/.test(x)) [...x].forEach((c) => /[AEU]/.test(c) && vs.add(c)); } }
+  assert(vowelOk && vs.size === 3 && [...vs].sort().join('') === 'AEU', 'serials end in a digit; the only vowels are A, E and U (O and I sound like 0 and 1 aloud), VOID serials too');
 
   // the field guide, built from a round
   let pages = 0;
@@ -189,7 +190,57 @@ async function nodePart() {
   }
   assert(pages === 500, 'the field guide builds for 100 seeds x 5 tiers: tab per page, edition and name printed, one slip on top of its page, the decoy rule is rule 1, every twist is listed');
   const rr = buildRound('t', 'wild');
-  assert(MN.tabsOf(rr)[1].big === String(rr.slots.find((s) => s.id === rr.ids[0]).plate) || rr.slots.filter((s) => s.id === rr.ids[0]).length > 1, 'manual tabs carry the plate number');
+  assert(MN.tabsOf(rr)[1].big === String(rr.slots.find((s) => s.id === MN.tabsOf(rr)[1].id).plate) || rr.slots.filter((s) => s.id === MN.tabsOf(rr)[1].id).length > 1, 'manual tabs carry the plate number');
+
+  // F3: the module number on the bomb ("3 · Maze") is the manual's tab number, page heading number and run-head "Module 3"
+  let numbered = 0;
+  for (const t of TKS) for (let i = 0; i < 200; i++) {
+    const r = buildRound('nb' + i, t);
+    const html = MN.guideHTML(r);
+    const tabs = MN.tabsOf(r);
+    const secs = html.split('<section class="dx-sec"').slice(1);
+    const order = [];
+    r.slots.forEach((s, k) => { if (!order.includes(s.id)) order.push(s.id); });
+    if (tabs.slice(1).map((x) => x.id).join() !== order.join()) throw new Error(`FAIL: manual tabs are not in bomb order (${t} nb${i})`);
+    for (const id of order) {
+      const k = r.slots.findIndex((s) => s.id === id); // the number printed on the bomb's tag is k + 1
+      const tab = tabs.find((x) => x.id === id);
+      const sec = secs.find((x) => x.startsWith(` data-page="${id}"`));
+      const circle = +(/<span class="n">(\d+)<\/span>/.exec(sec) || [])[1];
+      const run = /<div class="dx-run"><span>[^<]*<\/span><span>([^<]*)<\/span>/.exec(sec)[1];
+      if (tab.n !== k + 1 || circle !== k + 1 || !new RegExp(`^Modules? ${k + 1}\\b`).test(run)) throw new Error(`FAIL: ${id} is module ${k + 1} on the bomb but tab ${tab.n}, heading ${circle}, run-head "${run}" (${t} nb${i})`);
+      if (!r.T.twists && tab.big !== String(k + 1)) throw new Error('FAIL: tab number without plates');
+      numbered++;
+    }
+  }
+  assert(numbered > 4000, `bomb tag number = manual tab number = page heading number = run-head "Module n" for every module type (${numbered} checked, 200 seeds x 5 tiers); tabs and pages follow the bomb's order`);
+  // F4: the "stop at the first" footer only on pages that are ordered rule lists
+  { const r = buildRound('foot', 'classic'); const html = MN.guideHTML(r);
+    const foot = (id) => (html.split('<section class="dx-sec"').find((x) => x.startsWith(` data-page="${id}"`)).match(/class="dx-foot"><span>([^<]*)<\/span>/) || [])[1];
+    assert(/Stop at the first/.test(foot('wires')) && /Stop at the first/.test(foot('button')) && foot('keypad') === '' && foot('sequence') === '' && foot('basics') === '', 'F4: only the wires and button pages carry "Read every rule in order. Stop at the first that applies."');
+    let other = 0;
+    for (let i = 0; i < 60; i++) for (const t of ['normal', 'wild']) { const g = MN.guideHTML(buildRound('ft' + i, t)); for (const sec of g.split('<section class="dx-sec"').slice(1)) { const id = /data-page="(\w+)"/.exec(sec)[1]; const m = /class="dx-foot"><span>([^<]*)<\/span>/.exec(sec)[1]; if (!['wires', 'button'].includes(id) && /Stop at the first/.test(m)) throw new Error('FAIL: footer on ' + id); other++; } }
+    assert(other > 400, 'F4: no other page says "Stop at the first that applies" (' + other + ' pages checked)'); }
+
+  // F1: the correction slip has to matter on THIS bomb. Over 500 seeds per tier, the errata module's answer under the slipped
+  // rules differs from its answer under the printed rules in at least 95 % of errata rounds; rounds stay deterministic.
+  {
+    let rounds = 0, differ = 0, mods = new Set();
+    for (const t of ['normal', 'spicy', 'wild']) for (let i = 0; i < 500; i++) {
+      const r = buildRound('er' + i, t);
+      if (JSON.stringify(r) !== JSON.stringify(buildRound('er' + i, t))) throw new Error('FAIL: errata round is not deterministic');
+      const X = r.twistRules.errata;
+      if (!X) continue;
+      const b = r.book[X.id];
+      const live = r.slots.find((s) => s.id === X.id && !s.decoy);
+      const a = JSON.stringify(BY_ID[X.id].solve(live.S, r.E, b.R, r.T));
+      const c = JSON.stringify(BY_ID[X.id].solve(live.S, r.E, b.R0, r.T));
+      rounds++; mods.add(X.id);
+      if (a !== c) differ++;
+    }
+    assert(rounds > 200 && differ / rounds >= 0.95, `F1: the slip changes the errata module's answer in ${differ} of ${rounds} errata rounds (${(100 * differ / rounds).toFixed(1)} %, need 95 %); slips turn up on ${mods.size} module types`);
+  }
+
 
   // presence stays small even with a relay round and the longest text
   let worst = 0;
@@ -233,6 +284,11 @@ async function nodePart() {
   for (let i = 0; i < 11; i++) { const x = RC.applyResult(dd, { ...base, name: 'N' + i, holder: i < 4 ? 'a' : 'b' }); dd = { ...dd, ...x.patch }; }
   const lg = RC.readLog(dd);
   assert(lg.length === 8 && lg[7].name === 'N10' && lg[0].name === 'N3' && typeof dd.log === 'string', 'the round log keeps the last 8');
+  { // V6: the log drops entries from an unknown tier and holds seconds to the tier's clock
+    const bad = JSON.stringify([{ name: 'Old', tier: 'nightmare', win: 1, secs: 50 }, { name: 'Odd', tier: 5, win: 1, secs: 50 }, { name: 'Big', tier: 'normal', win: 1, holder: 'a', secs: 99999 }, { name: 'Neg', tier: 'wild', win: 1, secs: -5 }, { name: 'Ok', tier: 'spicy', win: 0, secs: 0 }, 'x', null]);
+    const l2 = RC.readLog({ log: bad });
+    assert(l2.length === 3 && l2.map((e) => e.name).join() === 'Big,Neg,Ok' && l2[0].secs === TIERS.normal.secs + 60 && l2[1].secs === 0, 'V6: the round log drops unknown tiers and clamps the seconds to the tier clock');
+  }
   assert(RC.sameHolder(lg, 3) === 'b' && RC.sameHolder(lg.slice(0, 3), 3) === null && RC.sameHolder([], 3) === null, 'swap nudge: three rounds with the same holder');
   assert(RC.dayKey(Date.UTC(2026, 9, 12, 23, 59)) === '2026-10-12' && RC.dailySeed('2026-10-12') === 'day-2026-10-12', 'daily seed from the UTC date');
   assert(RC.COUPLE_LINES.length === 20 && RC.coupleLine('k') === RC.coupleLine('k') && RC.COUPLE_LINES.every((l) => !/[^\x20-\x7e’]/.test(l) || true), 'twenty couple lines, picked deterministically');
@@ -652,7 +708,7 @@ async function phoneWild(h) {
   const seed = findSeed(RD, 'wild', (r) => r.twists.includes('relay') && r.twists.includes('surge') && !r.twists.includes('blackout') && !r.twists.includes('decoy') && r.slots.some((s) => s.id === 'wires'), 'wl');
   const b = await startRound(h, h.a, h.b, seed, 'wild');
   const R = b.round;
-  assert(R.slots.length === 7 && R.slots[6].id === 'vent' && Math.abs(b.left - 270000) < 3000, `Bomb Squad: 4:30, seven slots with the vent last (${R.slots.map((s) => s.id).join(', ')}; twists ${R.twists.join('+')})`);
+  assert(R.slots.length === 7 && R.slots[6].id === 'vent' && Math.abs(b.left - 360000) < 3000, `Bomb Squad: 6:00, seven slots with the vent last (${R.slots.map((s) => s.id).join(', ')}; twists ${R.twists.join('+')})`);
   assert(await h.a.evaluate(() => document.querySelector('.dx-mod[data-mod="vent"]').classList.contains('is-needy') && !!document.querySelector('.dx-mod[data-mod="relay"] .dx-relay-card')), 'the bomb shows the vent in its own strip and the relay’s rule card in the relay slot');
   const M = await manualInfo(h.b);
   assert(M.twists.includes('relay') && M.twists.includes('tax') && M.twists.includes('surge') && M.tabs.length === R.ids.length + 1 && M.tabs.some((t) => t.id === 'relay') && M.tabs.some((t) => t.id === 'vent'), 'the manual lists this round’s twists and has a page for the relay and the vent');
@@ -707,9 +763,9 @@ async function phoneWild(h) {
   const strip = await h.b.evaluate(() => { const s = document.querySelector('.dx-index'); const a = document.querySelector('.dx-index [aria-selected="true"]'); const r = s.getBoundingClientRect(), q = a.getBoundingClientRect(); return { scroll: s.scrollWidth > s.clientWidth, visible: q.left >= r.left - 1 && q.right <= r.right + 1, sticky: getComputedStyle(s).position === 'sticky', top: Math.round(s.getBoundingClientRect().top) }; });
   assert(strip.scroll && strip.visible && strip.sticky, 'eight tabs scroll sideways in a sticky strip and the open one stays in view');
   await h.b.tap('.dx-index [data-page="basics"]');
-  await h.b.evaluate(() => window.scrollTo(0, 400)); await sleep(150);
+  await h.b.evaluate(() => { window.scrollTo(0, 400); document.getElementById('game-root').scrollTop = 400; }); await sleep(150);
   const stuck = await h.b.evaluate(() => { const s = document.querySelector('.dx-index').getBoundingClientRect(); const m = document.querySelector('.dx-mbar').getBoundingClientRect(); return { stripTop: Math.round(s.top), barBottom: Math.round(m.bottom), barTop: Math.round(m.top) }; });
-  assert(stuck.stripTop < 120 && stuck.barBottom - stuck.barTop < 90, `after scrolling the clock and the tabs stay on screen (bar ${stuck.barBottom - stuck.barTop} px high)`);
+  assert(stuck.stripTop < 120 && stuck.barBottom - stuck.barTop < 90, `after scrolling the clock and the tabs stay on screen (bar ${stuck.barBottom - stuck.barTop} px high; ${JSON.stringify(stuck)})`);
   await h.b.evaluate(() => window.scrollTo(0, 1200)); await sleep(150);
   await h.b.tap('.dx-index [data-page="maze"]'); await sleep(250);
   const top = await h.b.evaluate(() => ({ page: document.querySelector('.dx-page').getBoundingClientRect().top, bar: document.querySelector('.dx-mbar').getBoundingClientRect().bottom }));
@@ -912,6 +968,135 @@ async function laptopRound(h, scheme) {
   noErrors(h, 'laptop ' + scheme);
 }
 
+// ══════════════════════════ layout: screens, tap targets and text sizes at four viewports ══════════════════════════
+const SIZES = [[390, 844], [360, 740], [844, 390], [1280, 800]];
+/** Text smaller than 11 px, by element, excluding invisible text. Returns [{ sel, fs, text }]. */
+const smallText = (pg) => pg.evaluate(() => {
+  const out = [];
+  const root = document.getElementById('game-root');
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const seen = new Set();
+  let n;
+  while ((n = w.nextNode())) {
+    if (!n.textContent.trim()) continue;
+    const p = n.parentElement;
+    const cs = getComputedStyle(p);
+    const r = p.getBoundingClientRect();
+    if (!r.width || !r.height || cs.visibility === 'hidden' || cs.display === 'none' || p.closest('[hidden]') || cs.fontSize === '0px') continue;
+    const fs = parseFloat(cs.fontSize);
+    if (fs >= 10.95) continue;
+    const sel = (p.closest('[class]') ? p.closest('[class]').getAttribute('class') : p.tagName) + (p.tagName === 'text' ? ' <text>' : '');
+    if (seen.has(sel)) continue;
+    seen.add(sel);
+    out.push({ sel, fs: +fs.toFixed(2), text: n.textContent.trim().slice(0, 20) });
+  }
+  return out;
+});
+const tapSizes = (pg, sel) => pg.evaluate((s) => [...document.querySelectorAll(s)].filter((e) => e.getClientRects().length).map((e) => { const r = e.getBoundingClientRect(); return { w: Math.round(r.width * 10) / 10, h: Math.round(r.height * 10) / 10 }; }), sel);
+const rootTop = (pg) => pg.evaluate(() => document.getElementById('game-root').scrollTop + window.scrollY);
+
+async function layoutRound(h, [w, hh]) {
+  const tag = `${w}x${hh}`;
+  for (const pg of [h.a, h.b]) await pg.setViewportSize({ width: w, height: hh });
+  await sleep(150);
+  // the lobby: Start can be reached without hunting for it, and a tap on it must not leave the next screen scrolled
+  if (w <= 760 && hh >= 800) {
+    const st = await h.b.evaluate(() => { const b = document.querySelector('[data-act="start"]'); const r = b.getBoundingClientRect(); return { bottom: r.bottom, h: r.height, vh: innerHeight, sticky: getComputedStyle(b.closest('.dx-lobby-actions')).position }; });
+    assert(st.bottom <= st.vh && st.h >= 44, `${tag}: the lobby's Start button is on screen without scrolling (bottom ${Math.round(st.bottom)} of ${st.vh}, ${Math.round(st.h)} px tall)`);
+  }
+  // scroll the lobby down first (a tap on a Start button below the fold does this), then start: the round must open at the top
+  for (const pg of [h.a, h.b]) await pg.evaluate(() => { const r = document.getElementById('game-root'); r.scrollTop = 400; window.scrollTo(0, 400); });
+  const seed = 'ly30';
+  const b = await startRound(h, h.a, h.b, seed, 'wild');
+  await sleep(250);
+  assert(b.round.slots.map((s) => s.id).join() === 'relay,morse,maze,button,keypad,password,vent', `${tag}: the layout seed builds the expected wild round`);
+
+  // V3: both screens open at the top, and the first heading is not hidden under the sticky bars
+  assert(await rootTop(h.a) === 0 && await rootTop(h.b) === 0, `${tag}: bomb and manual both open scrolled to the top`);
+  const head = await h.b.evaluate(() => { const bar = document.querySelector('.dx-mbar').getBoundingClientRect(); const idx = document.querySelector('.dx-index').getBoundingClientRect(); const hd = document.querySelector('.dx-sec:not([hidden]) .dx-run').getBoundingClientRect(); return { bar: bar.bottom, idx: idx.bottom, run: hd.top, flow: getComputedStyle(document.querySelector('.dx-index')).position }; });
+  assert(head.run >= head.bar - 1 && (head.flow !== 'sticky' || head.run >= head.idx - 1 || w >= 760), `${tag}: the page heading starts below the sticky bars (bars end ${Math.round(Math.max(head.bar, head.idx))}, heading at ${Math.round(head.run)})`);
+
+  // V1: the clock, strikes and flags never scroll out of sight
+  await h.a.evaluate(() => { const r = document.getElementById('game-root'); r.scrollTop = r.scrollHeight; window.scrollTo(0, document.body.scrollHeight); });
+  await sleep(150);
+  const clk = await h.a.evaluate(() => {
+    const vh = innerHeight;
+    const inView = (e) => { if (!e) return false; const r = e.getBoundingClientRect(); return r.width > 0 && r.top >= -1 && r.bottom <= vh + 1; };
+    const side = document.querySelector('.dx-side');
+    const lcd = [...document.querySelectorAll('.dx-time')].find((e) => e.getClientRects().length);
+    const strikes = [...document.querySelectorAll('.dx-strikes')].find((e) => e.getClientRects().length);
+    const sideBox = side.getBoundingClientRect();
+    const vent = document.querySelector('.dx-side [data-flag="vent"]');
+    let flagIn = null;
+    if (getComputedStyle(side).position === 'sticky') { vent.hidden = false; flagIn = inView(vent) || inView(document.querySelector('.dx-side .dx-flags')); vent.hidden = true; }
+    else { const tv = document.querySelector('.dx-topbar [data-flag="vent"]'); tv.hidden = false; flagIn = inView(tv); tv.hidden = true; }
+    return { clock: inView(lcd), strikes: inView(strikes), sideH: Math.round(sideBox.height), sticky: getComputedStyle(side).position === 'sticky', vh, flagIn };
+  });
+  assert(clk.clock && clk.strikes && clk.flagIn, `${tag}: scrolled to the bottom, the clock, strikes and the VENT flag are still on screen (${clk.sticky ? 'sticky side panel ' + clk.sideH + ' px' : 'sticky top bar'})`);
+  if (clk.sticky) assert(clk.sideH <= clk.vh - 8, `${tag}: the side panel fits the window (${clk.sideH} of ${clk.vh} px)`);
+  await h.a.evaluate(() => { const r = document.getElementById('game-root'); r.scrollTop = 0; window.scrollTo(0, 0); });
+
+  // V4: the password module's controls on the bomb and its word list on the manual
+  const pw = (await dx(h.a)).bomb.round.slots.findIndex((x) => x.id === 'password');
+  await h.a.evaluate((i) => document.querySelector(`.dx-mod[data-slot="${i}"]`).scrollIntoView({ block: 'center' }), pw);
+  const bt = await tapSizes(h.a, `.dx-mod[data-slot="${pw}"] .dx-pw-btn, .dx-mod[data-slot="${pw}"] .dx-pw-submit`);
+  assert(bt.length === 11 && bt.every((x) => x.w >= 44 && x.h >= 44), `${tag}: the password roller buttons on the bomb are at least 44 px both ways (smallest ${Math.min(...bt.map((x) => x.w))} x ${Math.min(...bt.map((x) => x.h))})`);
+  await h.b.evaluate(() => document.querySelector('.dx-index [data-page="password"]').click());
+  await sleep(150);
+  const wr = await tapSizes(h.b, '.dx-sec:not([hidden]) .dx-pw-w, .dx-sec:not([hidden]) .dx-pw-w input');
+  assert(wr.length >= 40 && wr.every((x) => x.h >= 44 && x.w >= 44), `${tag}: the manual's word rows (and their checkboxes) are at least 44 px (smallest ${Math.min(...wr.map((x) => x.h))} px tall)`);
+  const tabs = await tapSizes(h.b, '.dx-index [data-page]');
+  assert(tabs.every((x) => x.h >= 44 && x.w >= 44), `${tag}: manual tabs are at least 44 px`);
+  assert(await noSideScroll(h.a) && await noSideScroll(h.b), `${tag}: no side scroll on either device`);
+
+  // V5: no text under 11 px (computed) in the bomb or any manual page
+  const small = [];
+  small.push(...(await smallText(h.a)).map((x) => ({ ...x, dev: 'bomb' })));
+  for (const id of (await manualInfo(h.b)).tabs.map((t) => t.id)) {
+    await h.b.evaluate((p) => document.querySelector(`.dx-index [data-page="${p}"]`).click(), id);
+    await sleep(60);
+    small.push(...(await smallText(h.b)).map((x) => ({ ...x, dev: 'manual ' + id })));
+  }
+  if (small.length) console.log('   small text:', JSON.stringify(small));
+  assert(small.length === 0, `${tag}: no text under 11 px on the bomb or on any manual page`);
+
+  // V2: the relay box on the manual starts closed on a small screen and never buries the tabs or the COMMIT key
+  const dr = await h.b.evaluate(() => { const d = document.querySelector('.dx-drawer'); return { open: d.classList.contains('is-open'), vh: innerHeight, vw: innerWidth }; });
+  assert(dr.open === (dr.vw >= 760 && dr.vh >= 700), `${tag}: the relay drawer starts ${dr.open ? 'open' : 'closed'} (open only on a window at least 760 x 700)`);
+  const op = await h.b.evaluate(() => {
+    const d = document.querySelector('.dx-drawer');
+    d.classList.add('is-open'); // opened by hand here, so the remembered choice (a tap) does not leak into the next size
+    const body = d.querySelector('.dx-drawer-body');
+    const vh = innerHeight;
+    const first = document.querySelector('.dx-index [data-page]');
+    first.scrollIntoView({ block: 'nearest' });
+    const fr = first.getBoundingClientRect();
+    const hit = document.elementFromPoint(fr.left + fr.width / 2, fr.top + Math.min(fr.height / 2, 20));
+    const commit = d.querySelector('.dx-relay-commit');
+    commit.scrollIntoView({ block: 'nearest' });
+    const cr = commit.getBoundingClientRect(), dbr = body.getBoundingClientRect();
+    return { bodyH: Math.round(dbr.height), vh, hit: !!(hit && hit.closest('.dx-index')), commitIn: cr.top >= dbr.top - 1 && cr.bottom <= dbr.bottom + 1 && cr.bottom <= vh + 1, commitH: cr.height };
+  });
+  assert(op.bodyH <= op.vh * 0.45 + 1, `${tag}: the open relay drawer is at most 45 % of the window (${op.bodyH} of ${op.vh} px)`);
+  assert(op.commitIn && op.commitH >= 44, `${tag}: COMMIT can be scrolled fully into view inside the drawer`);
+  await h.b.evaluate((open) => document.querySelector('.dx-drawer').classList.toggle('is-open', open), dr.open);
+  await shot(h.a, `layout-${tag}-bomb`);
+  await shot(h.b, `layout-${tag}-manual`);
+  // end this round (boom) and go back to the lobby for the next size
+  await h.a.evaluate(() => window.__defuse.setLeft(900));
+  await until(async () => (await dx(h.a)).bomb.over, 'the clock to run out', 6000);
+  await endCards(h);
+  await h.a.click('#game-root [data-g="rematch"]');
+  await until(async () => (await dx(h.a)).phase === 'lobby' && (await dx(h.b)).phase === 'lobby', 'lobby again');
+}
+async function layoutGroup(h) {
+  console.log('\n# Defuse layout: 390x844, 360x740, 844x390, 1280x800 (scroll, sticky clock, tap targets, text size, relay drawer)');
+  await goLive(h);
+  await pickRoles(h, h.a, h.b);
+  for (const sz of SIZES) await layoutRound(h, sz);
+  noErrors(h, 'layout');
+}
+
 // ══════════════════════════ older saved data, one device ══════════════════════════
 async function legacy(h) {
   console.log('\n# Defuse: older and odd saved data, one device');
@@ -962,6 +1147,9 @@ async function withHarness(opts, fn) {
     if (only === 'all' || only === 'dark') {
       await withHarness({ port: PORT + 3, device: 'Desktop Chrome', colorScheme: 'dark' }, async (h) => { await laptopRound(h, 'dark'); });
       await withHarness({ port: PORT + 4, colorScheme: 'dark', coarse: true }, async (h) => { await asPhones(h); await goLive(h); await pickRoles(h, h.a, h.b); await shot(h.a, 'phone-lobby-dark'); const b = await startRound(h, h.a, h.b, 'darkseed', 'normal'); await shot(h.a, 'phone-bomb-dark', { fullPage: true }); await shot(h.b, 'phone-manual-dark'); await h.b.tap(`.dx-index [data-page="${b.round.ids[0]}"]`); await shot(h.b, 'phone-manual-page-dark'); noErrors(h, 'phones, dark'); });
+    }
+    if (only === 'all' || only === 'layout') {
+      await withHarness({ port: PORT + 7, coarse: true }, async (h) => { await layoutGroup(h); });
     }
     if (only === 'all' || only === 'legacy') {
       await withHarness({ port: PORT + 5, coarse: true, seedDocs: { 'gamedata/defuse': { wins: 7, streak: 2, best: { normal: 100 }, medal: 'weird', log: '{{', mods: 4 } } }, async (h) => { await asPhones(h); await legacy(h); });

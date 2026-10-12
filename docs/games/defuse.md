@@ -61,10 +61,11 @@ The VOID twist adds a second serial stamped VOID and an extra crossed-out lamp.
 | `classic` | Classic | 5:00 | wires, button, keypad, sequence, fixed order | 0 | today's game and today's guide text, for regression |
 | `chill` | Rookie | 6:00 | 3 | 0 | seeded rules, simpler templates (level 1) |
 | `normal` | Agent | 5:00 | 4 | 1 | default (level 2) |
-| `spicy` | Expert | 4:45 | 5 + vent | 2 | level 3 |
-| `wild` | Bomb Squad | 4:30 | 6 + vent | 3 | level 4, tax always on |
+| `spicy` | Expert | 5:30 | 5 + vent | 2 | level 3 |
+| `wild` | Bomb Squad | 6:00 | 6 + vent | 3 | level 4, tax always on |
 
-The keys `chill`, `normal`, `spicy` keep their old meaning in memory and presence. Every non-Classic tier draws at least one classic
+Expert and Bomb Squad have more modules, a vent and more twists than Agent, so their clocks are longer (a load estimate put the old
+4:30 / 4:00 clocks at 119 % and 150 % of the time a careful pair needs). The keys `chill`, `normal`, `spicy` keep their old meaning in memory and presence. Every non-Classic tier draws at least one classic
 module and at least one new one; no duplicates except through the Twin twist. Slots are shuffled; the vent is always last. The
 relay and a twin each take one of the tier's draws, so a bomb has at most seven slots.
 
@@ -86,6 +87,14 @@ or the first/last 30 s.
 
 **Golden module**: about one round in twelve (not Classic) one non-twin, non-needy module is gold: gold plate on the bomb, gold
 tab on the manual. Solve it without a strike on that module for +20 s.
+
+**Correction slip (errata).** A slip only appears when it changes this bomb's answer. After the errata module's puzzle is built, the
+round compares its answer under the slipped rules with its answer under the printed rules; if they agree it draws the puzzle again
+(up to 12 times, with extra stream keys `gen|<id>|main|try|<k>`, so the round stays deterministic and a round without a retry is
+unchanged). If a module cannot make the slip matter, the next module is tried; if none can, the slip is swapped for another twist.
+Node test: over 500 seeds per tier at least 95 % of errata rounds (in practice all) have differing answers.
+
+**Serials** use only the vowels A, E and U (O and I sound like 0 and 1 when read aloud). The manual's vowel rule is unchanged.
 
 The manual's basics page lists this round's twists in a "This bomb" box (the decoy rule first). The bomb holder is never told
 about red herrings.
@@ -134,16 +143,25 @@ manual restores role, tier and page from `sessionStorage` and rejoins the round.
 
 ## UI notes
 
-* Bomb on a laptop: side panel (clock, strikes, serial, name, batteries, indicators, ports) plus a grid of 3 columns (3, 5, 6 modules)
-  or 2 columns (4 modules); the vent is a full-width strip. Bomb on a phone: one column, with a **sticky top bar** (clock, strikes,
-  SURGE / VENT / BLACKOUT flags) because the hold-button depends on the timer digit.
+* Bomb on a laptop (1100 px and up): side panel (clock, strikes, SURGE / VENT / BLACKOUT flags, serial, name, batteries, indicators,
+  ports) that is **sticky** beside a grid of 3 columns (3, 5, 6 modules) or 2 columns (4 modules); the vent is a full-width strip, so
+  the clock never scrolls out of view. Bomb on a phone or a landscape phone / tablet (under 1100 px): one or two columns with a **sticky
+  top bar** (clock, strikes, flags) because the hold-button depends on the timer digit.
+* Every screen starts at the top: the lobby's Start tap scrolls the page on a phone, and the manual and the bomb reset it when they open.
 * Manual on a phone: sticky clock bar and a sticky, horizontally scrolling tab strip (Basics pinned first, each tab is the module's
-  plate number with its short name under it; twin types show "x2" so the plate rule still has to be used). Switching tabs scrolls the
-  page back to the top. The relay box is a sticky, collapsible drawer at the bottom. A VENT lamp lights when the vent wakes so the
+  plate number with its short name under it, or the module number on a bomb without plates; twin types show "x2" so the plate rule still has to be used). Switching tabs scrolls the
+  page back to the top. The relay box is a sticky, collapsible drawer at the bottom, closed by default unless the window is at least 760 px wide and 700 px
+  tall (a landscape phone would lose its tabs under it), and capped at 45 % of the height with its own scroll. A VENT lamp lights when the vent wakes so the
   reader can nag.
 * Input is routed to the module that owns the target. A module that acts on pointerdown never gets the click that follows it.
   Non-primary buttons are ignored.
 * Light and dark come from tokens; reduced motion is respected; every control is at least 44 px.
+
+**Numbering.** Every module on the bomb is tagged with its slot number ("3 · Maze"). The manual's tabs and pages follow the bomb's order
+(first appearance of each module type), and a page's heading number and run-head ("Module 3", or "Modules 2 and 5" for a twin pair,
+plus the plate number) are that slot number, so "Module 3" means the same thing on both screens. Tabs carry `data-n`. The footer
+"Read every rule in order. Stop at the first that applies." appears only on the wires and button pages; step-by-step pages say "Work
+through the steps in order."; the others have no footer line.
 
 ## Records, medals and fun
 
@@ -155,10 +173,10 @@ nested or dotted shapes. Written once, by the bomb device, when the round ends.
 
 * **Medals** per tier, no locks: 1 defuse, 2 zero strikes, 3 zero strikes with more than half the clock left. Pips on the tier buttons;
   the end card names the next medal.
-* **Records strip** in the lobby: streak, best on the selected tier ("Best bomb hand on Agent: Sydney 2:10"), defused total, the
-  last rounds as chips. "New record!" and near-miss lines on the end card.
-* **Today's bomb**: a lobby switch. Seed `day-YYYY-MM-DD` (UTC date picked by the bomb device) plus the tier, so you both get the same
-  bomb today. The holder's first attempt of the day is stored; the lobby shows "Today (Agent): Sydney 1:40 left, Emerson -".
+* **Records strip** in the lobby: streak, best on the selected tier with who held the bomb ("Best on Agent: 2:10 left (Sydney's
+  hands)", one line), defused total, the last rounds as chips. Log entries from an unknown tier are dropped and their seconds are
+  clamped to the tier's clock plus a minute. "New record!" and near-miss lines on the end card.
+* **Today's bomb**: a lobby switch. Seed `day-YYYY-MM-DD` (UTC date picked by the bomb device) plus the tier: the same bomb for both of you, today only. The holder's first attempt of the day is stored; the lobby shows "Today (Agent): Sydney 1:40 left, Emerson -".
 * **Couple delight**: a zero-strike win adds one of twenty sweet / playful lines to the stamp. After three rounds with the same bomb
   holder the lobby nudges "Swap?" (a nudge only).
 
@@ -172,7 +190,8 @@ node tools/test/games/computer.test.js phone                                    
 * **node**: runs every `tools/test/games/defuse/*.unit.mjs`, then round-level tests: determinism (200 seeds x 5 tiers, JSON-equal on
   rebuild), tier module and twist counts, classic is fixed, rules vary between seeds, every module solvable, decoy / VOID / slip /
   schedule / gold / name checks, the manual builds for every round (slip on top, decoy rule first, every twist listed), presence size,
-  and the records functions with older and odd shapes.
+  the errata slip changes the answer (500 seeds x 3 tiers), bomb tag number = tab number = page number for every module type
+  (200 seeds x 5 tiers), the footer rule, serial vowels, and the records functions with older and odd shapes.
 * **phone** (9100): lobby, a full Agent round with a decoy, records, the Classic guide solved from the manual's own DOM, a boom,
   Today's bomb, the pause overlay on both devices, resume after the bomb closes and reopens.
 * **wild** (9101, 9107): Bomb Squad with the relay done on the manual, tax, surge, the vent answered, 360 px layouts and tap sizes;
