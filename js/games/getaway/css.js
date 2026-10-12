@@ -31,7 +31,7 @@ export const CSS = `
 .gtw-role { padding: 4px 10px; border-radius: 999px; font: 900 0.72rem/1 var(--g-font-body); letter-spacing: .12em; text-transform: uppercase; border: 2px solid var(--g-ink); background: var(--g-ink); color: var(--g-bg); }
 .gtw-role.runner { background: var(--me); color: var(--g-on-ink); }
 .gtw-role.cop { background: linear-gradient(90deg, #e2333f 50%, #2f6bff 50%); color: #fff; text-shadow: 0 1px 0 #0008; }
-.gtw-bar { width: 154px; padding: 4px 6px 5px; } /* (wide enough for 'On their tail' beside a 4-digit distance) */
+.gtw-bar { width: 162px; padding: 4px 6px 5px; } /* (wide enough for 'On their tail' beside a 4-digit distance) */
 .gtw-bar small { display: flex; justify-content: space-between; align-items: baseline; gap: 4px; white-space: nowrap; font: 900 0.7rem/1 var(--g-font-body); letter-spacing: .03em; text-transform: uppercase; color: var(--g-muted); margin-bottom: 3px; }
 .gtw-bar small b { color: var(--g-ink); flex: none; } .gtw-bar small span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .gtw-heat small b { font-size: .85rem; letter-spacing: .02em; font-variant-numeric: tabular-nums; } /* the distance: the number both roles watch */
@@ -220,6 +220,11 @@ export const CSS = `
 @media (min-width: 760px) { .gtw-lobby .gtw-card { width: min(100%, 720px); display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; text-align: left; } .gtw-lobby .col { display: flex; flex-direction: column; gap: 10px; } }
 .g-gtw.short .gtw-lobby .gtw-card { width: min(100%, 760px); display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; text-align: left; }
 .g-gtw.short .gtw-lobby .col { display: flex; flex-direction: column; gap: 8px; }
+/* the title row spans the card, clear of the two corner stickers (it is what sits under them); the columns start below it */
+.gtw-head { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+@media (min-width: 760px) { .gtw-lobby .gtw-head { grid-column: 1 / -1; } }
+.g-gtw.short .gtw-lobby .gtw-head { grid-column: 1 / -1; flex-direction: row; justify-content: center; gap: 12px; padding: 0 calc(var(--gm-corner-w, 64px) - 8px); min-height: 40px; }
+.g-gtw.short .gtw-lobby .gtw-head .gtw-tagline { font-size: .76rem; line-height: 1.2; max-width: 420px; }
 /* v2: pause button, loading, errors, lobby status, sheets, how-to */
 .gtw-pausebtn { pointer-events: auto !important; width: 48px; min-height: 44px; padding: 0; display: grid; place-items: center; color: var(--g-ink); cursor: pointer; touch-action: manipulation; }
 .gtw-pausebtn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: round; }
@@ -290,6 +295,7 @@ export const CSS = `
 @keyframes gtw-adv { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 .gtw-rec { font-size: .84rem !important; color: var(--g-ink) !important; }
 .gtw-rec.hot { background: var(--g-hl); border: 2px solid var(--g-ink); border-radius: 10px; padding: 5px 8px; color: var(--g-on-ink, var(--g-ink)) !important; }
+.gtw-card p.gtw-rec.hot b, .gtw-card p.gtw-rec.hot { color: var(--g-on-ink, var(--g-ink)) !important; } /* (text on the yellow plate is the black overprint in both themes: .gtw-card p b would make the NEW label cream on yellow in dark) */
 .gtw-rec b { font-family: var(--g-font-display); letter-spacing: .06em; }
 .gtw-final { width: min(100%, 460px); }
 .gtw-rounds { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 6px; }
@@ -325,4 +331,99 @@ export const CSS = `
 .g-gtw.touch.portrait .gtw-ctl [data-tap="horn"] { top: calc(var(--cs) + 128px); }
 .g-gtw.touch.short .gtw-ctl [data-tap="horn"] { top: calc(var(--cs) + 126px); left: calc(74px + var(--sl)); }
 .gtw-tag.emote { font-size: .95rem; padding: 5px 9px; background: var(--g-card); color: var(--g-ink); border-radius: 12px; }
+/* Hot Pursuit chain chip (the cop), the Wanted sticker on the heat panel, hearts floating over cars */
+.gtw-chain { padding: 3px 8px; border-radius: 8px; border: 2px solid var(--g-ink); background: var(--g-ink); color: var(--g-bg); font: 900 .72rem/1 var(--g-font-body); letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; box-shadow: 2px 2px 0 var(--g-hl); }
+.gtw-chain.pop { animation: gtw-chainpop .35s ease-out; }
+.gtw-chain.warn { animation: gtw-chainblink .45s steps(2) infinite; }
+@keyframes gtw-chainpop { 0% { transform: scale(1.35); } 100% { transform: scale(1); } }
+@keyframes gtw-chainblink { 50% { opacity: .35; } }
+.gtw-heat { position: relative; }
+.gtw-wstar { position: absolute; left: calc(100% + 8px); top: 50%; transform: translateY(-50%); white-space: nowrap; padding: 2px 5px; border-radius: 8px; border: 2px solid var(--g-ink); background: var(--g-hl); color: var(--g-on-ink); font: 900 .62rem/1 var(--g-font-body); font-style: normal; letter-spacing: .04em; box-shadow: 2px 2px 0 var(--g-edge); }
+.gtw-hearts { position: absolute; inset: 0; pointer-events: none; z-index: 4; } /* (over the controls, under the map, cards and sheets) */
+.gtw-hearts i { position: absolute; left: 0; top: 0; width: 40px; height: 40px; filter: drop-shadow(2px 2px 0 var(--g-edge)); will-change: transform; }
+.gtw-hearts i b { display: block; width: 100%; height: 100%; background: var(--hc, var(--g-bad)); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z'/%3E%3C/svg%3E") center / contain no-repeat; }
+/* wildcard rounds, pairs, the series */
+.gtw-twrow { position: absolute; left: 50%; top: calc(var(--st) + 66px); transform: translateX(-50%); display: flex; gap: 5px; flex-wrap: wrap; justify-content: center; max-width: calc(100% - 150px); pointer-events: none; }
+.gtw-view.l .gtw-twrow, .gtw-view.r .gtw-twrow { top: 66px; max-width: calc(100% - 16px); }
+.gtw-twrow span { padding: 3px 9px; border-radius: 999px; border: 2px solid var(--g-ink); background: var(--g-hl); color: var(--g-on-ink); font: 900 .66rem/1.15 var(--g-font-body); letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; box-shadow: 2px 2px 0 var(--g-edge); }
+.gtw-twrow span.tg { background: var(--g-card); color: var(--g-ink); }
+.gtw-twrow span.safe { background: #3ddc84; }
+.gtw-twrow span.fog { background: #cfd6dd; }
+.gtw-twrow span.double { background: var(--g-bad); color: #fff; }
+.gtw-pips i.x2 { width: 11px; border-radius: 4px; }
+.gtw-pips i.half { opacity: .55; } .gtw-pips i.lv { background: var(--g-muted); }
+.gtw-pips i.pe { margin-right: 4px; }
+.gtw-intro .gtw-twist { border: 2.5px solid var(--g-ink); border-radius: 12px; padding: 7px 10px; background: var(--g-hl); color: var(--g-on-ink); display: flex; flex-direction: column; gap: 2px; box-shadow: var(--g-shadow-sm, 2px 2px 0 var(--g-edge)); }
+.gtw-intro .gtw-twist b { font-family: var(--g-font-display); font-weight: 900; letter-spacing: .06em; font-size: 1.02rem; }
+.gtw-intro .gtw-twist span { font-size: .82rem; font-weight: 800; } .gtw-intro .gtw-twist span b { font: inherit; letter-spacing: 0; }
+.gtw-intro .gtw-twist.safe { background: #3ddc84; } .gtw-intro .gtw-twist.double { background: var(--g-bad); color: #fff; }
+.gtw-ribbon { align-self: center; padding: 4px 12px; border: 2.5px solid var(--g-ink); border-radius: 999px; background: var(--g-bad); color: #fff; font: 900 .74rem/1.2 var(--g-font-display); letter-spacing: .12em; text-transform: uppercase; box-shadow: var(--g-shadow-sm, 2px 2px 0 var(--g-edge)); transform: rotate(-2deg); }
+.gtw-ribbons { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
+.gtw-ribbons span { padding: 3px 11px; border: 2.5px solid var(--g-ink); border-radius: 999px; background: var(--g-hl); color: var(--g-on-ink); font: 900 .76rem/1.2 var(--g-font-display); letter-spacing: .1em; box-shadow: var(--g-shadow-sm, 2px 2px 0 var(--g-edge)); }
+.gtw-half { font-size: .84rem !important; font-weight: 800 !important; }
+.gtw-pair { border: 2px dashed var(--g-ink); border-radius: 10px; padding: 5px 8px; font-size: .84rem !important; font-weight: 700 !important; } .gtw-pair b { font-family: var(--g-font-display); letter-spacing: .08em; margin-right: 4px; }
+.gtw-pair.done { border-style: solid; background: var(--g-hl-soft, transparent); }
+.gtw-twtag { font-size: .7rem; font-weight: 900; letter-spacing: .14em; text-transform: uppercase; color: var(--g-muted); }
+.gtw-series { font-size: .8rem !important; font-weight: 800 !important; text-align: left; }
+.gtw-rounds li.lv { box-shadow: inset 0 -5px 0 var(--g-muted); }
+.gtw-rounds small.tw { color: var(--g-ink); letter-spacing: .06em; }
+/* portrait phone: the left column (role, car, heat) and the minimap leave only a gap of ~85 px under the clock, so the chips sit lower, in the clear
+   band between the HONK button and the speed readout (they wrap to two short lines there: 'SPIKE RAIN' / 'BUST THEM TO WIN') */
+.g-gtw.portrait .gtw-view.full .gtw-twrow { left: calc(74px + var(--sl)); right: auto; top: calc(var(--cs) + 136px); transform: none; max-width: calc(100% - 190px - var(--sl) - var(--sr)); justify-content: center; }
+/* short landscape phones: the chips sit below the hint; the result card gets tighter */
+.g-gtw.short .gtw-twrow { top: calc(var(--st) + 112px); }
+.g-gtw.short .gtw-pair { padding: 3px 8px; font-size: .76rem !important; }
+.g-gtw.short .gtw-result .gtw-stats b { font-size: .9rem; } .g-gtw.short .gtw-result .gtw-stats div { padding: 3px 2px; }
+.g-gtw.short .gtw-result .gtw-big { font-size: 2rem; } .g-gtw.short .gtw-result .gtw-big.long { font-size: 1.6rem; }
+/* the result card, in columns on a short landscape phone (667×375, 844×390): the verdict left, the numbers right, the way on along the bottom.
+   Everywhere else the wrappers vanish and it is the plain column. hud.js resultCard keeps the two most important lines there. */
+.gtw-result .gtw-rl, .gtw-result .gtw-rr, .gtw-result .gtw-rf { display: contents; }
+.g-gtw.short .gtw-result { width: min(100%, 640px); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px 14px; padding: 8px 12px; align-items: center; overflow: hidden; }
+.g-gtw.short .gtw-result .gtw-rl, .g-gtw.short .gtw-result .gtw-rr { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.g-gtw.short .gtw-result .gtw-rf { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.g-gtw.short .gtw-result p { font-size: .8rem; line-height: 1.25; }
+.g-gtw.short .gtw-result .gtw-rec, .g-gtw.short .gtw-result .gtw-pair { font-size: .76rem !important; padding: 3px 7px; }
+.g-gtw.short .gtw-result .gtw-stats { gap: 4px; } .g-gtw.short .gtw-result .gtw-stats small { font-size: .56rem; letter-spacing: .04em; }
+.g-gtw.short .gtw-result .gtw-stats div { padding: 2px 1px; gap: 0; } .g-gtw.short .gtw-result .gtw-stats b { font-size: .86rem; }
+.g-gtw.short .gtw-result .gtw-score span { font-size: .9rem; }
+.g-gtw.short .gtw-result .gtw-unlock { font-size: .76rem !important; }
+.g-gtw.short .gtw-result .gtw-rf p { margin: 0; font-size: .74rem; }
+/* the match card: in pairs the rounds sit by pair; the wrappers vanish except on a short landscape phone, which gets two columns (844×390, 667×375) */
+.gtw-final .gtw-fh, .gtw-final .gtw-fl, .gtw-final .gtw-fr, .gtw-final .gtw-ff { display: contents; }
+.gtw-rounds.pairs { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 6px; }
+.gtw-pg { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.gtw-pg small { font: 900 .62rem/1 var(--g-font-body); letter-spacing: .12em; color: var(--g-muted); text-align: left; }
+.gtw-pg ol { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr; gap: 5px; }
+.gtw-pg li { border: 2px solid var(--g-ink); border-radius: 10px; padding: 5px 6px; display: flex; flex-direction: column; gap: 2px; background: var(--g-bg); text-align: left; }
+.gtw-pg li.wa { box-shadow: inset 0 -5px 0 var(--p-a); } .gtw-pg li.wb { box-shadow: inset 0 -5px 0 var(--p-b); } .gtw-pg li.lv { box-shadow: inset 0 -5px 0 var(--g-muted); } .gtw-pg li.tbd { opacity: .4; }
+.gtw-pg li small { font-size: .62rem; font-weight: 800; letter-spacing: 0; color: var(--g-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gtw-pg li small.tw { color: var(--g-ink); letter-spacing: .06em; }
+.gtw-pg li b { font: 900 .78rem/1.1 var(--g-font-body); }
+.g-gtw.short .gtw-final { width: min(100%, 700px); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto 1fr auto; gap: 5px 14px; padding: 8px 12px; align-items: start; overflow: hidden; }
+.g-gtw.short .gtw-final .gtw-fh { display: flex; flex-direction: column; gap: 3px; grid-column: 1; grid-row: 1; }
+.g-gtw.short .gtw-final .gtw-fl { display: block; grid-column: 1; grid-row: 2; min-width: 0; }
+.g-gtw.short .gtw-final .gtw-fr { display: flex; flex-direction: column; gap: 5px; grid-column: 2; grid-row: 1 / span 2; min-width: 0; }
+.g-gtw.short .gtw-final .gtw-ff { display: flex; flex-direction: column; gap: 2px; grid-column: 1 / -1; grid-row: 3; }
+.g-gtw.short .gtw-final .gtw-ff p { margin: 0; }
+/* sits below the corner stickers: bottom-aligned, and never taller than the room under them (it scrolls past that, never up under them) */
+.g-gtw.short .gtw-final { align-self: end; max-height: calc(100% - var(--cs) + 12px + var(--st)); }
+.g-gtw.short .gtw-final h2 { font-size: 1.3rem; }
+.g-gtw.short .gtw-final .gtw-ribbons span { font-size: .66rem; padding: 2px 9px; }
+.g-gtw.short .gtw-final .gtw-rounds { gap: 4px; grid-template-columns: repeat(auto-fit, minmax(76px, 1fr)); }
+.g-gtw.short .gtw-final .gtw-rounds.pairs { grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); }
+.g-gtw.short .gtw-final .gtw-rounds li { padding: 3px 4px; gap: 1px; } .g-gtw.short .gtw-final .gtw-pg ol { gap: 3px; } .g-gtw.short .gtw-final .gtw-pg li { padding: 3px 5px; }
+.g-gtw.short .gtw-final .gtw-rounds b, .g-gtw.short .gtw-final .gtw-pg li b { font-size: .7rem; } .g-gtw.short .gtw-final .gtw-rounds small { font-size: .56rem; }
+.g-gtw.short .gtw-final .gtw-cols { gap: 6px; } .g-gtw.short .gtw-final .gtw-cols > div { padding: 4px 7px; }
+.g-gtw.short .gtw-final .gtw-cols h4 { margin: 0 0 2px; font-size: .84rem; } .g-gtw.short .gtw-final .gtw-cols dl { font-size: .68rem; gap: 0 6px; }
+.g-gtw.short .gtw-final .gtw-series, .g-gtw.short .gtw-final .gtw-mvp { font-size: .74rem !important; padding: 3px 8px; } .g-gtw.short .gtw-final .gtw-series { padding: 0; }
+.g-gtw.short .gtw-final .gtw-mvp { margin: 0; }
+/* the Daily panel in the lobby, on a short landscape phone: tighter, so its last line clears the card's bottom edge */
+.g-gtw.short .gtw-lobby .gtw-daily { padding: 5px 8px; gap: 2px; } .g-gtw.short .gtw-lobby .gtw-daily p { font-size: .76rem; line-height: 1.2; } .g-gtw.short .gtw-lobby .gtw-daily ul { gap: 1px; font-size: .78rem; }
+.g-gtw.short .gtw-lobby .gtw-daily .gtw-tapon { font-size: .68rem !important; }
+/* the intro card, on a short landscape phone: compact, and never taller than the space under the top HUD (scores + clock end ~58 px down) */
+.g-gtw.short .gtw-intro { gap: 4px; padding: 7px 12px; max-height: calc(100% - 52px - var(--st)); }
+.g-gtw.short .gtw-intro h2 { font-size: 1.35rem; } .g-gtw.short .gtw-intro p { font-size: .8rem; line-height: 1.2; }
+.g-gtw.short .gtw-intro .gtw-roles { gap: 6px; } .g-gtw.short .gtw-intro .gtw-roles > div { padding: 4px 6px; gap: 0; } .g-gtw.short .gtw-intro .gtw-roles b { font-size: .88rem; } .g-gtw.short .gtw-intro .gtw-roles p { font-size: .74rem; }
+.g-gtw.short .gtw-intro .gtw-twist { padding: 4px 8px; } .g-gtw.short .gtw-intro .gtw-twist b { font-size: .9rem; } .g-gtw.short .gtw-intro .gtw-twist span { font-size: .76rem; }
+.g-gtw.short .gtw-intro .gtw-tip, .g-gtw.short .gtw-intro .gtw-half { font-size: .74rem !important; }
 `;

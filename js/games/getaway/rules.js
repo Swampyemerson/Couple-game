@@ -4,6 +4,7 @@
 export const OPTIONS = {
   roundTime: [60, 90, 120, 150, 180, 240],
   rounds: [2, 4, 6, 8],
+  score: ['pairs', 'rounds'],
   spikes: [0, 1, 2, 3, 4, 5, 6],
   traffic: ['off', 'light', 'normal'],
   nitro: ['off', 'normal', 'big'],
@@ -13,25 +14,28 @@ export const OPTIONS = {
   camera: ['near', 'far'],
   spikeSee: ['near', 'always'],
   tiebreak: ['sudden', 'time'],
+  wildcards: ['off', 'on'],
 };
 export const DEFAULTS = {
-  roundTime: 150, rounds: 4, spikes: 3, traffic: 'normal', nitro: 'normal', damage: 1,
-  radar: 'los', heat: 180, camera: 'near', spikeSee: 'near', tiebreak: 'sudden',
+  roundTime: 150, rounds: 4, score: 'pairs', spikes: 3, traffic: 'normal', nitro: 'normal', damage: 1,
+  radar: 'los', heat: 180, camera: 'near', spikeSee: 'near', tiebreak: 'sudden', wildcards: 'on',
 };
 export const KEYS = Object.keys(OPTIONS);
 
 export const LABELS = {
-  roundTime: 'Round time', rounds: 'Rounds', spikes: 'Spike strips (cop)', traffic: 'Traffic',
+  roundTime: 'Round time', rounds: 'Rounds', score: 'Scoring', spikes: 'Spike strips (cop)', traffic: 'Traffic',
   nitro: 'Runner nitro', damage: 'Damage', radar: 'Cop radar', heat: 'Lose the heat at',
-  camera: 'Camera', spikeSee: 'Runner sees spikes', tiebreak: 'Level after the last round',
+  camera: 'Camera', spikeSee: 'Runner sees spikes', tiebreak: 'Level after the last round', wildcards: 'Wildcard rounds',
 };
 export const HINTS = {
   roundTime: 'Survive this long to escape', rounds: 'Roles swap every round',
+  score: 'Pairs: two rounds, one start; the better race wins the point',
   spikes: 'Tap the map to drop one ahead', traffic: 'Civilian cars on the roads',
   nitro: 'Boost tank, recharges', damage: 'How hard crashes hit',
   radar: 'When the cop sees the runner on the map', heat: 'Out of sight this far for 7 s',
   camera: 'Default chase camera (C switches)', spikeSee: 'Red marks on the runner’s map',
   tiebreak: 'A 0:45 decider, or the longest run wins',
+  wildcards: 'One surprise rule in most rounds after the first',
 };
 
 export function fmt(k, v) {
@@ -44,6 +48,7 @@ export function fmt(k, v) {
     case 'radar': return { always: 'Always', los: 'Line of sight', off: 'Off' }[v];
     case 'spikeSee': return { near: 'Within 120 m', always: 'Always' }[v];
     case 'tiebreak': return { sudden: 'Sudden death', time: 'Longest run' }[v];
+    case 'score': return { pairs: 'In pairs', rounds: 'Every round' }[v];
     default: return String(v).charAt(0).toUpperCase() + String(v).slice(1);
   }
 }

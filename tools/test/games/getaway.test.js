@@ -1,6 +1,6 @@
 // Getaway — end-to-end tests.
 //   node tools/test/games/getaway.test.js                 (every section)
-//   ONLY=unit,practice node tools/test/games/getaway.test.js   (sections: unit, practice, touch, live, contacts, chasecontacts, lossy, split, robust, mapswitch, gfx, perf, shots)
+//   ONLY=unit,practice node tools/test/games/getaway.test.js   (sections: unit, practice, touch, live, extras, extraslive, contacts, chasecontacts, lossy, split, robust, mapswitch, gfx, perf, shots)
 // Sections: unit (physics in Node) · practice (one phone vs the AI: intro, countdown, PIT bust,
 // spikes, timer + heat escapes, water bust, final) · live (two phones: join, settings sync,
 // roles, synced start, traffic determinism, boxed bust, spikes over the network, swaps, final,
@@ -22,7 +22,8 @@ let fails = 0;
 const assert = (c, m) => { if (!c) throw new Error('FAIL: ' + m); console.log('ok -', m); };
 const soft = (c, m) => { if (!c) { fails++; console.log('not ok -', m); } else console.log('ok -', m); };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-const FAST = { intro: 900, count: 1200, result: 1800, final: 900, resume: 1500, maxDpr: 0.6, heatT: 1.6 };
+// (rules: the older sections play the classic flow, every round scored on its own and no wildcards; the `wild` and `wildlive` sections play the new defaults)
+const FAST = { intro: 900, count: 1200, result: 1800, final: 900, resume: 1500, maxDpr: 0.6, heatT: 1.6, rules: { wildcards: 'off', score: 'rounds' } };
 
 const st = (p) => p.evaluate(() => window.__getaway && window.__getaway.state());
 const hook = (p, fn, ...args) => p.evaluate(([f, a]) => window.__getaway[f](...a), [fn, args]);
@@ -158,6 +159,300 @@ async function hpAgree(pr, pc, rw, tol) {
     assert(c3.water && c3.level < 0, 'driving in the canal under a bridge is water (busts a runner)');
     const path1 = (() => { dg.buildNav(); return dg.findPath(-100, 40, 340, -100); })();
     assert(path1 && path1.length > 20, `AI nav: a road route across Dockside (${path1.length / 2} points)`);
+    // ── update pass: records, Daily scoring, result card tone, lobby / settings wording ──
+    {
+      const R = await import(url('records.js'));
+      const H = await import(url('hud.js'));
+      const Rules = await import(url('rules.js'));
+      // B1 Daily: a bust never ties or beats an escape, even in overtime or a hair before the bell
+      const rt = 120;
+      const esc = R.dailyScore('escaped', 'time', 120, rt);
+      for (const t of [30, 119.4, 119.6, 120, 121.9, 122]) {
+        const b = R.dailyScore('busted', 'hp', t, rt);
+        assert(b <= rt - 1 && b < esc, `Daily: a bust at ${t} s scores ${b} (at most ${rt - 1}, below an escape)`);
+        assert(!/lost them|escaped/.test(R.dailyText(b, rt)), `Daily: a bust at ${t} s reads "${R.dailyText(b, rt)}", never lost them / escaped`);
+      }
+      assert(R.dailyScore('busted', 'hp', 45.4, rt) === 45 && R.dailyScore('busted', 'water', 0, rt) === 0, 'Daily: an ordinary bust still scores the seconds survived');
+      assert(R.dailyScore('escaped', 'heat', 80, rt) === 160 && R.dailyText(160, rt) === 'lost them, +40' && R.dailyText(120, rt) === '2:00 (escaped)', 'Daily: escapes and saved scores keep their scores and wording');
+      // Daily cop days (even days of the year): the cop's score is the seconds left at the bust; 0 if they escape
+      assert(R.dailyRoleFor(2) === 'cop' && R.dailyRoleFor(3) === 'runner' && R.dailyRoleFor(366) === 'cop' && R.dailyRoleFor(R.dayOfYear(new Date(2026, 9, 12, 12).getTime())) === 'runner', 'Daily role: even days of the year are cop days (12 Oct 2026 is day 285: a runner day)');
+      assert(R.copDailyScore('busted', 72, rt) === 48 && R.copDailyScore('busted', 71.6, rt) === 48 && R.copDailyScore('busted', 0, rt) === 120 && R.copDailyScore('escaped', 120, rt) === 0 && R.copDailyScore('busted', 119.9, rt) === 1, 'cop Daily: a bust after 1:12 scores 48 s left; an escape scores 0');
+      for (const t of [119.6, 120, 125, 200]) assert(R.copDailyScore('busted', t, rt) >= 1 && R.copDailyScore('busted', t, rt) > R.copDailyScore('escaped', t, rt), `cop Daily: an overtime bust (${t} s) still beats an escape`);
+      assert(R.copDailyText(48) === 'Bust at 0:48 left' && R.copDailyText(0) === 'They got away' && R.dailyTextOf('cop', 48) === 'Bust at 0:48 left' && R.dailyTextOf('runner', 72) === '1:12', 'cop Daily: "Bust at 0:48 left"; runner days keep their text');
+      assert(R.dailyScoreOf('cop', 'busted', 'hp', 72, rt) === 48 && R.dailyScoreOf('runner', 'busted', 'hp', 72, rt) === 72 && R.dailyScoreOf('runner', 'busted', 'hp', 500, rt) === rt - 1, 'dailyScoreOf picks the role; the runner bust cap still holds');
+      assert(R.dailyKey('a', '2026-10-12') === 'a_daily_2026-10-12' && R.dailyKey('a', '2026-10-12', 'cop') === 'a_dailycop_2026-10-12' && R.dailyBestKey('b') === 'b_daily_best' && R.dailyBestKey('b', 'cop') === 'b_dailycop_best', 'Daily keys: runner keys unchanged, cop keys <w>_dailycop_<date> / _best');
+      { const data = { 'a_daily_2026-10-12': 72, 'b_dailycop_2026-10-12': 48 };
+        assert(R.dailyBoard(data, '2026-10-12').a === 72 && R.dailyBoard(data, '2026-10-12').b === 0 && R.dailyBoard(data, '2026-10-12', 'cop').b === 48 && R.dailyBoard(data, '2026-10-12', 'cop').a === 0, 'Daily boards are per role'); }
+      // B2 a splash is a bust for the cop but never the fastest-bust mark
+      const dry = R.recordRound({}, 'a', '', { role: 'cop', won: true, outcome: 'busted', reason: 'hp', t: 20, pits: 1 }, 'b');
+      const wet = R.recordRound({}, 'a', '', { role: 'cop', won: true, outcome: 'busted', reason: 'water', t: 8, pits: 0 }, 'b');
+      assert(dry.patch.a_fastbust === 20 && dry.patch.a_busts === 1, 'a PIT / hp bust sets the fastest-bust record');
+      assert(wet.patch.a_busts === 1 && wet.patch.a_streak === 1 && !('a_fastbust' in wet.patch) && !wet.news.some((n) => n.k === 'fastbust'), 'a water bust counts as a bust and a win but never sets fastbust');
+      assert(R.recordRound({}, 'a', '', { role: 'cop', won: true, outcome: 'busted', reason: 'boxed', t: 25 }, 'b').patch.a_fastbust === 25, 'a boxed-in bust sets fastbust too');
+      // S3 top speed: a stamp needs 5 km/h more, not 2
+      const fast = (top, d) => R.recordRound(d, 'a', '', { role: 'runner', won: false, outcome: 'busted', reason: 'hp', t: 50, top }, 'b');
+      assert(!fast(163, { a_top: 160 }).news.some((n) => n.k === 'top') && fast(163, { a_top: 160 }).patch.a_top === 163, 'top speed +3 km/h updates the record quietly, no NEW RECORD');
+      assert(fast(166, { a_top: 160 }).news.some((n) => n.k === 'top'), 'top speed +6 km/h is a NEW RECORD');
+      // B4 the result headline's colour is the viewer's
+      const api = { name: (w) => (w === 'a' ? 'Emerson' : 'Sydney') };
+      const tone = (o) => (H.resultCard(api, { scores: { a: 0, b: 0 }, next: '', ...o }).match(/gtw-big (good|bad)/) || [])[1];
+      const bust = { outcome: 'busted', reason: 'hp', runner: 'a', head: 'BUSTED!' };
+      assert(tone({ ...bust, me: 'b' }) === 'good' && tone({ ...bust, me: 'a' }) === 'bad', 'result: the cop who busted sees green BUSTED!, the runner red');
+      const heat = { outcome: 'escaped', reason: 'heat', runner: 'a' };
+      assert(tone({ ...heat, me: 'a', head: 'VANISHED!' }) === 'good' && tone({ ...heat, me: 'b', head: 'LOST THEM' }) === 'bad', 'result: the runner who got away sees green, the cop who lost them red LOST THEM');
+      assert(tone({ ...bust, me: 'a', local: true }) === 'bad' && tone({ ...heat, me: 'a', local: true }) === 'good', 'result: practice (one viewer) follows that viewer too');
+      assert(tone({ ...bust, me: 'a', split: true }) === 'bad' && tone({ ...heat, me: 'b', split: true }) === 'good', 'result: split screen (two viewers on one card) stays runner-centric');
+      // S2 only real records carry NEW
+      const card = H.resultCard(api, { ...bust, me: 'b', scores: { a: 0, b: 1 }, next: '', lines: [{ t: 'Fastest bust: 20 s', hot: true, rec: true }, { t: '3 rounds in a row', hot: true }] });
+      assert((card.match(/<b>NEW<\/b>/g) || []).length === 1 && /3 rounds in a row/.test(card) && !/<b>NEW<\/b> 3 rounds/.test(card), 'result: NEW only on a real record; streak lines are highlighted without it');
+      // S1 Quick chase has a way back
+      const lobby = (rules) => H.lobbyCard(api, { maps: [{ id: 'dockside', name: 'Dockside' }], setup: { map: 'dockside', first: 'a', rules }, canEdit: true, local: true, localMode: 'ai', practiceRole: 'runner', aiLevel: 'normal', me: 'a' });
+      assert(/data-l="quick"/.test(lobby(Rules.DEFAULTS)) && !/data-l="standard"/.test(lobby(Rules.DEFAULTS)), 'lobby: standard rules show the Quick chase chip');
+      assert(/data-l="standard"/.test(lobby({ ...Rules.DEFAULTS, rounds: 2, roundTime: 60, spikes: 2 })) && !/data-l="quick"/.test(lobby({ ...Rules.DEFAULTS, rounds: 2, roundTime: 60 })), 'lobby: with Quick on, a Standard chip takes its place');
+      // S5 the heat row says what the default really is
+      const sheet = H.settingsSheet(Rules.DEFAULTS, { canEdit: true, device: {}, map: { name: 'Dockside', heat: 140 } });
+      assert(/Map default/.test(sheet) && /Dockside 140 m/.test(sheet), 'settings: the default heat reads "Map default" and names Dockside\'s 140 m');
+      assert(/<output data-rule="heat">220 m<\/output>/.test(H.settingsSheet({ ...Rules.DEFAULTS, heat: 220 }, { canEdit: true, device: {}, map: { name: 'Dockside', heat: 140 } })), 'settings: a chosen heat distance still shows its metres');
+    }
+    // ── content B: Wanted level, the cop's boost, Hot Pursuit chain, quick drop, bumper kiss, Daily streak ──
+    {
+      const C = await import(url('chase.js'));
+      const R = await import(url('records.js'));
+      const H = await import(url('hud.js'));
+      // Wanted: a pure function of the round clock
+      assert([0, 59.9].every((t) => C.wantedLevel(t, 150) === 1) && C.wantedLevel(60, 150) === 2 && C.wantedLevel(99.9, 150) === 2 && C.wantedLevel(100, 150) === 3, 'Wanted: ★★ at 60 s and ★★★ at 100 s of a 2:30 round');
+      assert(C.wantedLevel(60, 240) === 2 && C.wantedLevel(100, 240) === 3 && C.wantedLevel(59, 240) === 1, 'Wanted: a longer round keeps 60 s / 100 s');
+      assert(C.wantedLevel(23, 60) === 1 && C.wantedLevel(24, 60) === 2 && C.wantedLevel(40, 60) === 3 && C.wantedLevel(17, 45) === 1 && C.wantedLevel(18, 45) === 2 && C.wantedLevel(30, 45) === 3, 'Wanted: a Quick 1:00 round and the 0:45 decider escalate at 40% and 67%');
+      assert(C.wantedLevel(5, 150, [4, 8]) === 2 && C.wantedLevel(8, 150, [4, 8]) === 3, 'Wanted: tests can override the thresholds');
+      assert(C.wantedStars(1) === '' && C.wantedStars(2) === '★★' && C.wantedStars(3) === '★★★', 'Wanted: no stars at level 1, ★★ then ★★★');
+      // the cop's boost recharge: one function of the level and the round's rules
+      assert(C.copRegen(1) === NITRO.cop.regen && Math.abs(1 / C.copRegen(1) - 20) < 1e-9 && Math.abs(1 / C.copRegen(2) - 14) < 1e-9 && C.copRegen(3) === C.copRegen(2), 'cop boost: 20 s a tank, 14 s from ★★');
+      assert(Math.abs(C.copRegen(1, 1.5) - 0.075) < 1e-9 && Math.abs(C.copRegen(2, 1.5) - 1.5 / 14) < 1e-9 && C.copRegen(2, 0) === C.copRegen(2), 'cop boost: a round twist (BIG TANK ×1.5) multiplies it; a missing k is neutral');
+      { const tank = (lvl, secs) => { const c = newCar('cop'); placeCar(c, 0, 0, Math.PI / 2, geo); c.nitro = 0; const nit = { drain: NITRO.cop.drain, regen: C.copRegen(lvl), start: 1 }; for (let i = 0; i < secs / DT; i++) stepCar(c, {}, DT, geo, CAR.cop, nit); return c.nitro; };
+        const n1 = tank(1, 14.8); const n2 = tank(2, 14.8);
+        assert(n2 > 0.99 && n1 > 0.65 && n1 < 0.8, `cop boost on the road: an empty tank is full in 14.8 s at ★★ (${n2.toFixed(2)}) but ${n1.toFixed(2)} at ★` ); }
+      // the chain: +1 per 2.5 s close and in sight, tiers 3 / 6 / 10 refill 25% each, 3 s without a line of sight or 80 m ends it
+      { const c = C.chainNew(); const hits = []; let t = 0; let ups = 0;
+        for (let i = 0; i < 100; i++) { const ev = C.chainStep(c, 0.25, 20, true); t += 0.25; if (ev & 1) hits.push(Math.round(t * 100) / 100); if (ev & 2) ups += c.up; }
+        assert(hits.length === 10 && hits[0] === 2.5 && hits[9] === 25 && c.n === 10 && c.tier === 3 && ups === 3 && c.best === 10, `chain: close and in sight, +1 every 2.5 s (×10 at ${hits[9]} s), three tier-ups (CLOSING / HOT PURSUIT / RELENTLESS)`);
+        assert(C.chainText(c) === '×10 RELENTLESS' && C.chainTier(2) === 0 && C.chainTier(3) === 1 && C.chainTier(6) === 2 && C.chainTier(10) === 3 && C.CHAIN_TIERS[2] === 'HOT PURSUIT', 'chain: the chip reads ×10 RELENTLESS; tiers at 3 / 6 / 10');
+        // 31 m is not close; 30 m is
+        const far = C.chainNew(); for (let i = 0; i < 40; i++) C.chainStep(far, 0.25, 31, true); assert(far.n === 0, 'chain: 31 m away earns nothing');
+        const near = C.chainNew(); for (let i = 0; i < 10; i++) C.chainStep(near, 0.25, 30, true); assert(near.n === 1, 'chain: 30 m earns');
+        // the point timer restarts when you drop out of range (no banking half a point while far)
+        const gap = C.chainNew(); for (let i = 0; i < 8; i++) C.chainStep(gap, 0.25, 20, true); C.chainStep(gap, 0.25, 50, true); for (let i = 0; i < 8; i++) C.chainStep(gap, 0.25, 20, true); assert(gap.n === 0, 'chain: leaving the 30 m circle resets the 2.5 s timer');
+        // losing the line of sight: 3 s grace, then it ends; coming back in time keeps it
+        const k = C.chainNew(); C.chainAdd(k, 5); let ended = 0; for (let i = 0; i < 11; i++) ended |= C.chainStep(k, 0.25, 20, false) & 4; assert(!ended && k.n === 5, 'chain: 2.75 s without a line of sight keeps it');
+        C.chainStep(k, 0.25, 20, true); assert(k.lost === 0 && k.n === 5, 'chain: a line of sight again clears the warning');
+        let ev2 = 0; for (let i = 0; i < 13; i++) ev2 |= C.chainStep(k, 0.25, 20, false); assert((ev2 & 4) && k.n === 0 && k.ended === 5 && k.best === 5, 'chain: over 3 s without a line of sight ends it (the best stays)');
+        const o = C.chainNew(); C.chainAdd(o, 4); assert((C.chainStep(o, 0.016, 81, true) & 4) && o.n === 0, 'chain: more than 80 m away ends it at once');
+        const o2 = C.chainNew(); C.chainAdd(o2, 4); C.chainStep(o2, 0.25, 79, true); assert(o2.n === 4, 'chain: 79 m away is still in the chase');
+        // a spike hit (+3) and a PIT (+2) climb tiers too
+        const s = C.chainNew(); assert(C.chainAdd(s, C.CHAIN.spike) === 1 && s.tier === 1, 'chain: a spike hit (+3) reaches CLOSING'); assert(C.chainAdd(s, C.CHAIN.pit) === 0 && s.n === 5, 'chain: a PIT adds 2'); assert(C.chainAdd(s, C.CHAIN.pit) === 1 && s.tier === 2 && s.n === 7, 'chain: ×7 is HOT PURSUIT');
+        assert(C.chainAdd(C.chainNew(), 0) === 0, 'chain: nothing added, nothing climbed'); }
+      // records: the longest chain
+      { const r6 = R.recordRound({}, 'a', '', { role: 'cop', won: true, outcome: 'busted', reason: 'hp', t: 40, chain: 7 }, 'b');
+        assert(r6.patch.a_chain_r === 7 && r6.news.some((n) => n.k === 'chain_r' && /×7/.test(n.text)), 'records: a ×7 chain is a NEW RECORD ("Longest pursuit chain")');
+        const r4 = R.recordRound({}, 'a', '', { role: 'cop', won: false, outcome: 'escaped', reason: 'time', t: 150, chain: 4 }, 'b');
+        assert(r4.patch.a_chain_r === 4 && !r4.news.some((n) => n.k === 'chain_r'), 'records: a ×4 chain is saved quietly (the record needs 6)');
+        const rr = R.recordRound({ a_chain_r: 9 }, 'a', '', { role: 'cop', won: true, outcome: 'busted', reason: 'hp', t: 40, chain: 7 }, 'b');
+        assert(!('a_chain_r' in rr.patch) && !rr.news.some((n) => n.k === 'chain_r'), 'records: a shorter chain than your best changes nothing');
+        const rp = R.recordRound({}, 'a', 'ai_', { role: 'runner', won: true, outcome: 'escaped', reason: 'time', t: 150, chain: 12 }, null);
+        assert(!('ai_a_chain_r' in rp.patch), 'records: only the cop writes a chain'); }
+      // quick drop: the road ahead, in the direction of travel
+      { const road = dg.roads.find((r) => !r.bridge && r.len > 400 && r.kind !== 'dirt') || dg.roads.find((r) => !r.bridge && r.len > 250);
+        const o = {}; dg.sampleRoad(road, road.len * 0.4, o); const yaw = Math.atan2(o.tx, -o.tz);
+        const pts = C.aheadPoints(dg, { x: o.x, z: o.z, yaw }, C.QUICK_DIST);
+        const q = { road: -1 };
+        assert(pts.length === 5 && pts[0].d === 62 && pts[1].d === 90 && pts[2].d === 40 && pts[3].d === 120, 'quick drop: tries 62 m, then 90, 40, 120, 160');
+        const along = (p) => { dg.nearestRoad(p.x, p.z, q, 8, (r) => !r.bridge); return q.road === road.idx ? q.s - road.len * 0.4 : NaN; };
+        assert(pts[0].road && Math.abs(along(pts[0]) - 62) < 0.5 && Math.abs(along(pts[1]) - 90) < 0.5 && Math.abs(along(pts[2]) - 40) < 0.5, `quick drop: ahead along the road the cop is on (62 / 90 / 40 m: ${pts.slice(0, 3).map((p) => along(p).toFixed(1)).join(' / ')})`);
+        const back = C.aheadPoints(dg, { x: o.x, z: o.z, yaw: yaw + Math.PI }, [62]);
+        assert(Math.abs(along(back[0]) + 62) < 0.5, 'quick drop: facing the other way it lies the other way along the road');
+        const lost = C.aheadPoints(dg, { x: o.x + 3000, z: o.z + 3000, yaw: 0 }, [62]);
+        assert(!lost[0].road && Math.abs(lost[0].z - (o.z + 3000 - 62)) < 1e-6, 'quick drop: off every road it falls back to straight ahead along its heading (placeSpike snaps it)');
+        const endCar = {}; dg.sampleRoad(road, road.len - 20, endCar); const nearEnd = C.aheadPoints(dg, { x: endCar.x, z: endCar.z, yaw: Math.atan2(endCar.tx, -endCar.tz) }, [62]);
+        assert(!nearEnd[0].road, 'quick drop: past the end of its road it falls back to straight ahead'); }
+      // the bumper kiss
+      { const car = (x, z, yaw = 0) => ({ x, z, y: 0, yaw });
+        assert(C.isKiss(car(0, 0), car(2.1, 0), 1.2), 'kiss: two cars side by side, a hand apart, touching gently');
+        assert(!C.isKiss(car(0, 0), car(2.1, 0), 4), 'kiss: not when they close faster than 3 m/s (that is a crash)');
+        assert(!C.isKiss(car(0, 0), car(3.2, 0), 0.5), 'kiss: not when a car-width apart');
+        assert(C.isKiss(car(0, 0), car(0, 4.9), 0.5) && !C.isKiss(car(0, 0), car(0, 5.4), 0.5), 'kiss: bumper to bumper counts, a bumper gap does not');
+        assert(!C.isKiss(car(0, 0), { x: 0, z: 2, y: 4, yaw: 0 }, 0.5), 'kiss: not across a bridge deck');
+        // a kiss needs the cars to have been apart (> 1 m gap) at some moment after the round: touching at the buzzer is not enough
+        assert(!C.isApart(car(0, 0), car(2.1, 0)) && !C.isApart(car(0, 0), car(0, 4.9)), 'kiss: cars touching or a hand apart are not "apart"');
+        assert(!C.isApart(car(0, 0), car(2.9, 0)) && C.isApart(car(0, 0), car(3.2, 0)) && C.isApart(car(0, 0), car(0, 6)), 'kiss: more than 1 m between the bodies is apart (3.0 m side by side, 5.6 m nose to tail)'); }
+      // Daily streak
+      { const d0 = R.dayNum(new Date(2026, 9, 12).getTime());
+        assert(R.dayNum(new Date(2026, 9, 13, 0, 5).getTime()) === d0 + 1 && R.dayNum(new Date(2026, 9, 12, 23, 59).getTime()) === d0 && R.dayNum(new Date(2026, 2, 9, 0, 30).getTime()) - R.dayNum(new Date(2026, 2, 8, 23, 30).getTime()) === 1, 'streak: day numbers follow the local calendar date (a clock-change night included)');
+        assert(R.dayNumFromKey('2026-10-12') === d0 && R.dayNumFromKey('2026-10-13') === d0 + 1, 'streak: a Daily date key maps to its day number');
+        let st = { streak: 0, best: 0, last: 0 };
+        const play = (day) => { const f = R.foldStreak(st, day); st = { streak: f.streak, best: f.best, last: f.last }; return f; };
+        assert(play(d0).streak === 1 && st.best === 1, 'streak: the first Daily is Day 1');
+        assert(!play(d0).changed && st.streak === 1, 'streak: the same day twice changes nothing');
+        assert(play(d0 + 1).streak === 2 && play(d0 + 2).streak === 3 && st.best === 3, 'streak: consecutive days count 2, 3');
+        assert(play(d0 + 4).streak === 1 && st.best === 3 && st.last === d0 + 4, 'streak: a missed day starts again at Day 1 (the best of 3 is kept)');
+        assert(play(d0 + 5).streak === 2 && play(d0 + 6).streak === 3 && play(d0 + 7).streak === 4 && st.best === 4, 'streak: and it can beat the old best');
+        assert(R.foldStreak({ streak: 5, best: 5, last: d0 + 10 }, d0 + 3).streak === 1, 'streak: a clock set back starts at Day 1 rather than going negative');
+        const data = { a_daily_streak: 3, a_daily_streak_best: 5, a_daily_last: d0 - 1 };
+        const v1 = R.streakView(data, 'a', d0); assert(v1.day === 4 && !v1.played && v1.best === 5, 'streak panel: yesterday played, today not yet: Day 4 awaits');
+        const v2 = R.streakView({ ...data, a_daily_last: d0, a_daily_streak: 4 }, 'a', d0); assert(v2.day === 4 && v2.played, 'streak panel: played today: Day 4 ✓');
+        const v3 = R.streakView({ ...data, a_daily_last: d0 - 3 }, 'a', d0); assert(v3.day === 1 && !v3.played && v3.best === 5, 'streak panel: after a gap just "Day 1" (best kept)');
+        assert(R.streakView({}, 'b', d0).day === 1 && Object.keys(R.streakPatch({ a_daily_streak: 4, a_daily_last: d0 }, 'a', d0)).length === 0 && R.streakPatch({}, 'b', d0).b_daily_streak === 1, 'streak: new players start at Day 1; today twice writes nothing'); }
+      // the cards
+      { const api = { name: (w) => (w === 'a' ? 'Emerson' : 'Sydney') };
+        const how = H.howToCard({ touch: true }); const howK = H.howToCard({ touch: false });
+        assert(/SPIKE lays a strip on the road ahead/.test(how) && /Hot Pursuit/.test(how) && /Wanted/.test(how) && /E<\/b> spike strip ahead/.test(howK), 'how to play: the cop quick drop, Hot Pursuit and Wanted are explained');
+        const lob = H.lobbyCard(api, { maps: [{ id: 'dockside', name: 'Dockside' }], setup: { map: 'dockside', first: 'a', rules: {} }, canEdit: true, local: true, localMode: 'daily', practiceRole: 'runner', aiLevel: 'normal', me: 'a', daily: { mapId: 'dockside', title: 'Today: Dockside', short: 's', how: 'h', board: [{ w: 'b', name: 'Sydney', verb: 'ran today', text: '1:12' }], lines: ['Your best ever: 1:48', 'Streak: Emerson Day 3 · Sydney Day 1 ✓'], note: '' } });
+        assert(/Sydney ran today: <b>1:12<\/b>/.test(lob) && /Your best ever: 1:48/.test(lob) && /Streak: Emerson Day 3/.test(lob), 'Daily panel: "Sydney ran today: 1:12", your best ever and both streaks');
+        const lobC = H.lobbyCard(api, { maps: [{ id: 'dockside', name: 'Dockside' }], setup: { map: 'dockside', first: 'a', rules: {} }, canEdit: true, local: true, localMode: 'daily', practiceRole: 'runner', aiLevel: 'normal', me: 'a', daily: { mapId: 'dockside', role: 'cop', title: 'Today: Dockside · you’re the cop', short: 's', how: 'Cop day: one 2:00 chase', board: [{ w: 'b', name: 'Sydney', verb: 'chased today', text: 'Bust at 0:48 left' }], lines: ['Your best ever as the cop: Bust at 1:02 left'], note: '' } });
+        assert(/Sydney chased today: <b>Bust at 0:48 left<\/b>/.test(lobC) && /Your best ever as the cop/.test(lobC) && /you’re the cop/.test(lobC), 'Daily panel on a cop day: "Sydney chased today: Bust at 0:48 left"');
+        const lobE = H.lobbyCard(api, { maps: [{ id: 'dockside', name: 'Dockside' }], setup: { map: 'dockside', first: 'a', rules: {} }, canEdit: true, local: true, localMode: 'daily', practiceRole: 'runner', aiLevel: 'normal', me: 'a', daily: { mapId: 'dockside', role: 'cop', title: 't', short: 's', how: 'h', board: [], lines: [], note: '' } });
+        assert(/Nobody has chased it yet today/.test(lobE), 'Daily panel on a cop day: nobody has chased it yet'); }
+    }
+    // ── content A: wildcard rounds, pairs scoring, the sudden-death decider, the Series, liveries ──
+    {
+      const T = await import(url('twists.js'));
+      const R = await import(url('records.js'));
+      const Rules = await import(url('rules.js'));
+      const H = await import(url('hud.js'));
+      const L = await import(url('liveries.js'));
+      // A1 the picker: round 0 and the decider are plain; no repeats until the list is used up; the same on every call
+      // (one twist per PAIR: rounds 2k and 2k+1 share it; pair 0 is plain in a 2+ pair match; a one-pair match gets a wildcard)
+      for (const seed of [1, 7, 123456, 2147483000, 424242]) {
+        const seq = []; for (let i = 0; i < 18; i++) seq.push(T.twistFor(seed, i));
+        assert(seq[0] === '' && seq[1] === '' && T.twistFor(seed, 4, { sd: true }) === '' && T.twistFor(seed, 3, { wild: false }) === '', `twists (seed ${seed}): pair 0, the decider and wildcards-off are plain`);
+        assert(seq.every((x, i) => i % 2 === 1 || seq[i + 1] === x), `twists (seed ${seed}): both rounds of a pair share one twist`);
+        const pairsSeq = seq.filter((x, i) => i % 2 === 0).slice(1, 8);
+        assert(new Set(pairsSeq).size === 7 && pairsSeq.every((x) => T.twistInfo(x)) && seq[16] === seq[2], `twists (seed ${seed}): pairs 1-7 are all different (no repeats), then the list starts over`);
+        assert(JSON.stringify(seq) === JSON.stringify(Array.from({ length: 18 }, (_, i) => T.twistFor(seed, i))), `twists (seed ${seed}): the same on a second call`);
+        const q = [0, 1].map((i) => T.twistFor(seed, i, { pairs: 1 }));
+        assert(q[0] && q[0] === q[1] && T.twistInfo(q[0]) && q[0] !== 'double' && T.twistFor(seed, 2, { sd: true, pairs: 1 }) === '' && T.twistFor(seed, 0, { pairs: 1, wild: false }) === '', `twists (seed ${seed}): a one-pair match (Quick chase) gets a wildcard on its pair, never DOUBLE OR NOTHING`);
+      }
+      assert(new Set([1, 2, 3, 4, 5, 6, 7, 8].map((sd) => T.twistFor(sd, 2))).size >= 4, 'twists: different seeds start on different twists');
+      // twists never override the couple's choices: no SPIKE RAIN with 0 spike strips, no BIG TANK with runner nitro off (a pure function of the match rules)
+      { let rain = 0; let tank = 0; let ok = true;
+        for (const seed of [1, 7, 99, 1234, 424242, 2147483000]) {
+          const r0 = { spikes: 0, nitro: 'normal' }; const r1 = { spikes: 3, nitro: 'off' };
+          for (let i = 0; i < 20; i++) { const a = T.twistFor(seed, i, { rules: r0 }); const b = T.twistFor(seed, i, { rules: r1 }); if (a === 'rain') rain++; if (b === 'tank') tank++; if (a !== T.twistFor(seed, i, { rules: { ...r0 } })) ok = false; }
+          const pr = Array.from({ length: 12 }, (_, i) => T.twistFor(seed, i * 2, { rules: r0 })).slice(1, 7); if (new Set(pr).size !== pr.length) ok = false; // (still no repeats within the shorter list)
+          if (T.twistFor(seed, 0, { pairs: 1, rules: { spikes: 0, nitro: 'off' } }) === '' || ['rain', 'tank', 'double'].includes(T.twistFor(seed, 0, { pairs: 1, rules: { spikes: 0, nitro: 'off' } }))) ok = false;
+        }
+        assert(rain === 0 && tank === 0 && ok && T.twistFor(7, 2, { rules: { spikes: 3, nitro: 'normal' } }) === T.twistFor(7, 2), `twists: SPIKE RAIN is never picked with 0 spike strips and BIG TANK never with nitro off (deterministic; unchanged otherwise; a Quick chase still gets a wildcard)`); }
+      // the safehouse prefers a landmark whose road is paved over a dirt trail
+      { const lms = [{ name: 'Trail Hut', x: 400, z: 0 }, { name: 'Main St', x: 0, z: 400 }, { name: 'River Trail', x: -400, z: 0 }];
+        const snap = (x, z) => ({ x, z, d: 5, dirt: x !== 0 && z === 0 });
+        const names = new Set(); for (let sd = 1; sd < 60; sd++) names.add(T.pickSafehouse(lms, { runner: { x: 0, z: 0 } }, snap, sd, 1).name);
+        const dirtOnly = T.pickSafehouse([lms[0], lms[2]], { runner: { x: 0, z: 0 } }, snap, 5, 1);
+        assert(names.size === 1 && names.has('Main St') && dirtOnly && /Trail|River/.test(dirtOnly.name), 'safehouse: paved roads are preferred over dirt trails (always the paved one when it exists; a dirt one is still used when nothing else is)'); }
+      assert(new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((sd) => T.twistFor(sd, 0, { pairs: 1 }))).size >= 3, 'twists: a Quick chase is not always the same wildcard');
+      // the overlay
+      const base = Rules.DEFAULTS;
+      const eff = (tw, sd) => T.rulesFor(base, tw, sd);
+      assert(eff('eagle').radar === 'always' && T.heatWith(180, eff('eagle')) === 220, 'EAGLE EYE: radar always, heat +40 m');
+      assert(eff('fog').radar === 'off' && T.heatWith(180, eff('fog')) === 126 && eff('fog').fog === 0.55, 'FOG: radar off, heat ×0.7, fog pulled in to 55%');
+      assert(eff('rain').spikes === 6 && eff('rain').spikeSee === 'always', 'SPIKE RAIN: 6 strips, the runner sees them all');
+      assert(eff('tank').nitro === 'big' && eff('tank').copBoostK === 1.5, 'BIG TANK: big runner nitro, the cop recharges 1.5× faster');
+      assert(eff('slick').gripK === 0.88 && eff('slick').oils === 2, 'SLICK STREETS: grip ×0.88 and 2 oil slicks');
+      assert(eff('double').pts === 2 && eff('').pts === 1 && eff('fog').pts === 1 && T.ptsFor('double') === 2, 'DOUBLE OR NOTHING is worth 2');
+      assert(base.spikes === 3 && eff('rain').spikes === 6 && T.rulesFor(base, '').radar === base.radar && T.rulesFor(base, '').heatAdd === 0, 'the overlay never changes the match rules');
+      // A3 the decider: heat ×0.75, the cop keeps one strip (none if the match has none), always plain
+      const sdR = eff('rain', true);
+      assert(sdR.spikes === 1 && T.heatWith(180, sdR) === 135 && sdR.tw === '' && sdR.pts === 1 && T.rulesFor({ ...base, spikes: 0 }, '', true).spikes === 0, 'sudden death: the cop keeps 1 spike strip, heat ×0.75, no twist, worth 1');
+      // old saved setups still load and gain the new rules at their defaults
+      const old = Rules.sanitizeRules({ roundTime: 90, rounds: 6, spikes: 2, traffic: 'light', nitro: 'big', damage: 1, radar: 'los', heat: 150, camera: 'near', spikeSee: 'near', tiebreak: 'time' });
+      assert(old.score === 'pairs' && old.wildcards === 'on' && old.rounds === 6 && old.tiebreak === 'time', 'rules: a setup saved before the update loads with pairs + wildcards on');
+      assert(Rules.fmt('score', 'pairs') === 'In pairs' && Rules.stepRule(old, 'score', 1).score === 'rounds' && Rules.stepRule(old, 'wildcards', -1).wildcards === 'off', 'rules: scoring and wildcards step in the settings');
+      // the safehouse: a landmark you can drive to; the home landmark wins when it is within reach
+      const { MAPS } = await import(url('maps/index.js'));
+      for (const [id, spawnIdx, home] of [['boulder', 4, '3865 Moorhead'], ['santee', 4, '8524 Boulder Way'], ['dockside', 0, null]]) {
+        const m = MAPS.find((x) => x.id === id); const g2 = createGeo(m); const o = {};
+        const snap = (x, z) => { const d = g2.nearestRoad(x, z, o, 110, (r) => !r.bridge); return o.road >= 0 ? { x: o.px, z: o.pz, d, dirt: g2.roads[o.road].kind === 'dirt' } : null; };
+        const sh = T.pickSafehouse(m.landmarks, m.spawns[spawnIdx], snap, 99, 3);
+        const sh2 = T.pickSafehouse(m.landmarks, m.spawns[spawnIdx], snap, 99, 3);
+        const dd = sh && Math.hypot(sh.x - m.spawns[spawnIdx].runner.x, sh.z - m.spawns[spawnIdx].runner.z);
+        assert(sh && JSON.stringify(sh) === JSON.stringify(sh2) && dd >= 120 && dd <= 1300 && snap(sh.x, sh.z).d < 2, `safehouse on ${id}: ${sh && sh.name} ${Math.round(dd)} m away, on a road, the same twice`);
+        if (home) assert(sh.name === home && sh.home === 1, `safehouse on ${id}: ${home} is preferred when it is within reach`);
+        assert(T.pickSafehouse(m.landmarks, m.spawns[spawnIdx], snap, 99, 3, [sh.name]).name !== sh.name, `safehouse on ${id}: a landmark already used this match is not drawn again`);
+      }
+      // A2 pairs: the winner of a pair
+      const h = (runner, outcome, reason, ran, hp = 100, escMax = 0, extra) => ({ runner, outcome, reason, ran, hp, escMax, ...(extra || {}) });
+      const W = (h0, h1) => R.pairWinner(h0, h1).winner;
+      assert(W(h('a', 'escaped', 'time', 150000), h('b', 'busted', 'hp', 40000)) === 'a' && W(h('a', 'busted', 'hp', 40000), h('b', 'escaped', 'time', 150000)) === 'b', 'pair: an escape beats a bust');
+      assert(W(h('a', 'busted', 'hp', 72000), h('b', 'busted', 'boxed', 41000)) === 'a' && W(h('a', 'busted', 'hp', 30000), h('b', 'busted', 'boxed', 41000)) === 'b' && W(h('a', 'busted', 'hp', 41000), h('b', 'busted', 'hp', 41040)) === null, 'pair: two busts, the longer survival wins; within 0.1 s is level');
+      assert(W(h('a', 'escaped', 'heat', 60000), h('b', 'escaped', 'time', 150000, 100)) === 'a' && W(h('a', 'escaped', 'time', 150000, 100), h('b', 'escaped', 'safe', 80000)) === 'b', 'pair: a heat or safehouse escape beats a clock escape');
+      assert(W(h('a', 'escaped', 'heat', 60000), h('b', 'escaped', 'heat', 45000)) === 'b' && W(h('a', 'escaped', 'heat', 60000), h('b', 'escaped', 'safe', 61000)) === 'a', 'pair: two early getaways, the faster wins');
+      assert(W(h('a', 'escaped', 'time', 150000, 80, 0.3), h('b', 'escaped', 'time', 150000, 60, 0.2)) === 'a' && W(h('a', 'escaped', 'time', 150000, 60, 0.2), h('b', 'escaped', 'time', 150000, 40, 0.9)) === 'b' && W(h('a', 'escaped', 'time', 150000, 70, 0.5), h('b', 'escaped', 'time', 150000, 70, 0.5)) === null, 'pair: two clock escapes go to health left + 50 × the heat meter; an exact tie is a draw pair');
+      // scoring from the rounds played: a pair's point comes after its second round; a DOUBLE round makes the pair worth 2
+      const e = (r, ran = 150000, extra) => h(r, 'escaped', 'time', ran, 100, 0, extra); const b = (r, ran, extra) => h(r, 'busted', 'hp', ran, 100, 0, extra);
+      const sc = (hist, mode = 'pairs', total = 4) => JSON.stringify(R.scoresFromHist(hist, mode, total));
+      assert(sc([e('a')]) === '{"a":0,"b":0}', 'pairs: nothing is awarded after the first half');
+      assert(sc([e('a'), b('b', 50000)]) === '{"a":1,"b":0}', 'pairs: an escape then a bust: one point to the escaper after the second round');
+      assert(sc([b('a', 40000), b('b', 90000), e('a'), b('b', 30000)]) === '{"a":1,"b":1}', 'pairs: two pairs, one point each');
+      assert(sc([e('a', 150000, { pts: 1 }), b('b', 50000, { pts: 2 })]) === '{"a":2,"b":0}', 'pairs: if either round is DOUBLE OR NOTHING the pair is worth 2');
+      assert(sc([e('a'), b('b', 50000)], 'rounds') === '{"a":2,"b":0}' && sc([e('a'), e('b')], 'rounds') === '{"a":1,"b":1}' && sc([e('a', 1, { pts: 2 })], 'rounds') === '{"a":2,"b":0}', 'per-round scoring still works, DOUBLE worth 2');
+      assert(sc([e('a'), b('b', 50000), e('a'), e('b'), h('a', 'escaped', 'time', 45000, 100, 0, { sd: true })]) === '{"a":2,"b":0}', 'pairs: the sudden-death decider is one round worth 1');
+      // the match ends early once the points left can't change the winner
+      const mk = (hist, rounds, o) => ({ rounds, seed: 5, hist, rules: { score: 'pairs', wildcards: 'off' }, ...(o || {}) });
+      assert(R.remainingPoints(mk([], 6)) === 3 && R.remainingPoints(mk([e('a')], 6)) === 3 && R.remainingPoints(mk([e('a'), b('b', 1)], 6)) === 2 && R.remainingPoints(mk([], 4, { rules: { score: 'rounds', wildcards: 'off' } })) === 4, 'points remaining: a pair counts once, a half-played pair still counts');
+      const dbl = (() => { for (let seed = 1; seed < 200; seed++) for (let i = 2; i < 6; i += 2) if (T.twistFor(seed, i) === 'double') return { seed, i }; return null; })();
+      const mw = { rounds: 6, seed: dbl.seed, hist: [], rules: { score: 'pairs', wildcards: 'on' } };
+      const futurePts = (() => { let t = 0; for (let p = 0; p < 3; p++) t += Math.max(T.ptsFor(T.twistFor(dbl.seed, p * 2, { pairs: 3 })), T.ptsFor(T.twistFor(dbl.seed, p * 2 + 1, { pairs: 3 }))); return t; })();
+      assert(R.remainingPoints(mw) === futurePts && futurePts >= 4, `points remaining count DOUBLE OR NOTHING rounds ahead (${futurePts} for seed ${dbl.seed})`);
+      // pair targets and wording
+      const tg = R.pairTarget(h('a', 'busted', 'hp', 72000));
+      assert(tg.run === 'survive past 1:12' && tg.cop === 'bust them before 1:12' && tg.hudRun === 'Beat 1:12', 'half time: after a bust at 1:12 the next runner must survive past 1:12');
+      assert(/get away before 0:41/.test(R.pairTarget(h('a', 'escaped', 'heat', 41000)).run) && /escape too/.test(R.pairTarget(h('a', 'escaped', 'time', 150000)).run), 'half time: after an escape the next runner must beat it');
+      assert(R.winnersByRound([e('a'), b('b', 50000), e('a')], 'pairs', 4).join() === 'a,a,', 'match card: both rounds of a pair carry the pair winner; an open pair has none yet');
+      // A4 the Series ledger
+      const S0 = R.seriesAfter({}, 'a');
+      assert(S0.patch.series_a === 1 && S0.patch.series_n === 1 && S0.patch.series_last === 1 && S0.patch.series_run === 1 && !S0.sr.leadChange && !S0.sr.revenge, 'series: the first match is recorded');
+      let dat = { ...S0.patch }; dat = { ...dat, ...R.seriesAfter(dat, 'a').patch };
+      assert(R.seriesOf(dat).run === 2 && R.seriesGrudge(dat) === 'b', 'series: two wins in a row put the other player on a grudge');
+      const rv = R.seriesAfter(dat, 'b', R.seriesGrudge(dat));
+      assert(rv.sr.revenge && rv.patch.series_last === 2 && rv.patch.series_run === 1 && rv.patch.series_b === 1 && !rv.sr.leadChange, 'series: the grudge holder winning is REVENGE, the run resets');
+      const dr = R.seriesAfter(dat, null);
+      assert(dr.patch.series_d === 1 && dr.patch.series_last === 0 && dr.patch.series_run === 0 && R.seriesGrudge({ ...dat, ...dr.patch }) === '', 'series: a draw is counted and breaks the run');
+      assert(R.seriesAfter({ series_a: 3, series_b: 3, series_n: 6, series_last: 1, series_run: 1 }, 'b').sr.leadChange && R.seriesAfter({ series_a: 4, series_b: 3, series_n: 7, series_last: 1, series_run: 2 }, 'b').sr.leadChange === false && R.seriesAfter({ series_a: 4, series_b: 4, series_n: 8, series_last: 1, series_run: 1 }, 'a').sr.leadChange, 'series: edging ahead of a level ledger is SERIES LEAD!, levelling up or extending a lead is not');
+      assert(R.seriesAfter({}, 'a').sr.leadChange === false && R.seriesAfter({ series_a: 4, series_b: 5, series_n: 9, series_last: 2, series_run: 1 }, 'a').sr.tenth === true && R.seriesAfter({ series_a: 4, series_b: 4, series_n: 8, series_last: 1, series_run: 1 }, 'a').sr.tenth === false, 'series: the very first match is no lead change; the 10th match is flagged');
+      assert(R.seriesLine({}, (w) => w) === '' && R.seriesLine({ series_a: 5, series_b: 7, series_n: 12, series_last: 2, series_run: 2 }, (w) => (w === 'a' ? 'Emerson' : 'Sydney')) === 'Series: Sydney 7–5 · Sydney has won the last 2' && /level 3–3/.test(R.seriesLine({ series_a: 3, series_b: 3, series_n: 6 }, (w) => w)), 'series: the lobby line');
+      // A5 liveries: unlock predicates and every model builds
+      const career = (d, w = 'a') => L.careerOf(d, w);
+      assert(L.LIVERIES.runner.length === 7 && L.LIVERIES.cop.length === 6 && L.LIVERIES.runner.every((x, i) => x.k === i) && L.LIVERIES.cop.every((x, i) => x.k === i), 'liveries: new paint jobs are appended, never renumbered');
+      const unlocked = (d, kind, k) => L.checkUnlocks(d, 'a').pops.some((x) => x.kind === kind && x.k === k);
+      assert(!unlocked({}, 'runner', 5) && unlocked({ a_revenge: 1 }, 'runner', 5) && unlocked({ ai_a_revenge: 1 }, 'runner', 5), 'Sweetheart: a won grudge match');
+      assert(!unlocked({ a_escapes: 3 }, 'runner', 6) && unlocked({ a_clean: 1 }, 'runner', 6), 'Checkerboard: an escape at full health');
+      assert(!unlocked({ a_chain_r: 9 }, 'cop', 4) && unlocked({ a_chain_r: 10 }, 'cop', 4) && unlocked({ ai_a_chain_r: 12 }, 'cop', 4), 'Interceptor: a pursuit chain of 10');
+      assert(!unlocked({ a_pairs: 4 }, 'cop', 5) && unlocked({ a_pairs: 5 }, 'cop', 5) && unlocked({ a_pairs: 3, ai_a_pairs: 2 }, 'cop', 5), 'Classic: 5 pairs won');
+      assert(career({ b_pairs: 9 }).pairs === 0 && L.liveryFor({ unlock_a_runner5: 1 }, 'a', 'runner', 5) === 5 && L.liveryFor({}, 'a', 'runner', 5) === 0, 'liveries: unlocks are per person and the car falls back to plain');
+      // records: a safehouse escape is an escape but not "losing the heat"; clean escapes and revenge counters
+      const sf = R.recordRound({}, 'a', '', { role: 'runner', won: true, outcome: 'escaped', reason: 'safe', t: 50, hp: 100, top: 100 }, 'b');
+      assert(sf.patch.a_escapes === 1 && sf.patch.a_safe === 1 && sf.patch.a_clean === 1 && !('a_heats' in sf.patch) && !('a_heatesc' in sf.patch), 'records: a safehouse escape counts as an escape (and a clean one), never as losing the heat');
+      assert(!('a_clean' in R.recordRound({}, 'a', '', { role: 'runner', won: true, outcome: 'escaped', reason: 'heat', t: 20, hp: 100 }, 'b').patch) && !('a_clean' in R.recordRound({}, 'a', '', { role: 'runner', won: true, outcome: 'escaped', reason: 'time', t: 150, hp: 85 }, 'b').patch), 'records: clean needs full health over a real run');
+      assert(R.recordMatch({}, 'a', '', true, true).a_revenge === 1 && !('a_revenge' in R.recordMatch({}, 'a', '', false, true)) && R.recordPair({ a_pairs: 2 }, 'a', '').a_pairs === 3, 'records: revenge and pairs counters');
+      // every livery builds a model (three.js from the test cache), with no new meshes
+      const tp = path.join(ROOT, 'tools/test/.cache/three.min.js');
+      if (fs.existsSync(tp)) {
+        const THREE = require(tp); const { buildPlayerCar } = await import(url('carmodel.js'));
+        const PP = { outline: [0.1, 0.1, 0.12], copBody: [0.08, 0.08, 0.09], copDoor: [0.95, 0.95, 0.95], dark: false };
+        let built = 0; let worst = 0;
+        for (const [kind, n] of [['runner', L.LIVERIES.runner.length], ['cop', L.LIVERIES.cop.length]]) for (let k = 0; k < n; k++) { const g = buildPlayerCar(THREE, PP, kind, [0.2, 0.4, 0.9], k); built++; worst = Math.max(worst, g.getAttribute('position').count / 3); }
+        assert(built === 13 && worst < 2600, `liveries: all ${built} models build as one geometry (largest ${worst} triangles)`);
+      } else console.log('skip - liveries model build (no three.js in the cache yet)');
+      // the cards render the new things
+      const api2 = { name: (w) => (w === 'a' ? 'Emerson' : 'Sydney') };
+      const intro = H.introCard(api2, { map: { name: 'Boulder' }, round: 2, rounds: 4, runner: 'a', me: 'a', landmark: 'Pearl St', roundTime: 150, local: false, twist: T.twistInfo('safe'), safe: { name: '3865 Moorhead', home: 1, x: 0, z: 0 }, pts: 1, target: R.pairTarget(h('b', 'busted', 'hp', 72000)), ribbon: 'GRUDGE MATCH · Sydney wants revenge' });
+      assert(/SAFEHOUSE/.test(intro) && /3865 Moorhead/.test(intro) && /Half time/.test(intro) && /survive past 1:12/.test(intro) && /GRUDGE MATCH/.test(intro) && /Round 3 of 4/.test(intro), 'intro card: the twist, the safehouse, the half-time target and the grudge ribbon');
+      const res = H.resultCard(api2, { outcome: 'escaped', reason: 'safe', runner: 'a', head: 'HOME SAFE!', me: 'a', scores: { a: 0, b: 0 }, next: '', pair: { half: R.pairTarget(h('a', 'escaped', 'safe', 50000)), next: 'b', pts: 1 }, twist: T.twistInfo('double'), pts: 2 });
+      assert(/HOME SAFE!/.test(res) && /safehouse unseen/.test(res) && /HALF TIME/.test(res) && /×2|DOUBLE OR NOTHING/.test(res), 'result card: HOME SAFE!, the half-time line and the ×2 tag');
+      const res2 = H.resultCard(api2, { outcome: 'busted', reason: 'hp', runner: 'a', me: 'b', scores: { a: 0, b: 1 }, next: '', pair: { done: true, winner: 'b', why: 'an escape beats a bust', pts: 2 } });
+      assert(/PAIR/.test(res2) && /2 points/.test(res2), 'result card: the pair line names the winner and the points');
+      const fin = H.finalCard(api2, { hist: [e('a', 150000, { tw: '' }), b('b', 50000, { tw: 'fog', pts: 1 })], scores: { a: 1, b: 0 }, winner: 'a', rounds: 2, sum: { T: { a: { pits: 0, top: 0, near: 0, spikes: 0, esc: 1 }, b: { pits: 0, top: 0, near: 0, spikes: 0, esc: 0 } }, mvp: null }, pips: ['a', 'a'], ribbons: ['REVENGE!', 'SERIES LEAD!'], series: 'Series: Emerson 3–2' });
+      assert(/REVENGE!/.test(fin) && /SERIES LEAD!/.test(fin) && /Series: Emerson 3–2/.test(fin) && /FOG/.test(fin), 'match card: ribbons, the series line and the round twists');
+      const lob = H.lobbyCard(api2, { maps: [{ id: 'dockside', name: 'Dockside' }], setup: { map: 'dockside', first: 'a', rules: Rules.DEFAULTS }, canEdit: true, local: false, me: 'a', partnerHere: true, series: 'Series: Sydney 7–5 · Sydney has won the last 2' });
+      assert(/4 rounds · scored in pairs/.test(lob) && /Series: Sydney 7–5/.test(lob), 'lobby: "4 rounds · scored in pairs" and the series line');
+    }
     if (typeof engineUnits === 'function') await engineUnits();
     if (typeof feelUnits === 'function') await feelUnits();
   }
@@ -294,7 +589,7 @@ async function hpAgree(pr, pc, rw, tol) {
       await until(a, () => { const q = window.__getaway.state(); return q.R && q.R.idx === 4; }, null, 12000, 'sudden death');
       await phase(a, 'chase', 12000);
       s = await st(a);
-      assert(Math.round((s.R.endAt - s.R.t0) / 1000) === 45 && s[s.R.runner === 'a' ? 'b' : 'a'].spikesLeft === 0, `2–2: a 0:45 sudden-death decider (${s.R.runner === 'a' ? 'you run' : 'the AI runs'}, no spikes)`);
+      assert(Math.round((s.R.endAt - s.R.t0) / 1000) === 45 && s[s.R.runner === 'a' ? 'b' : 'a'].spikesLeft === 1 && s.R.runner === 'b', `2–2: a 0:45 sudden-death decider (the player who did not run first runs, ${s.R.runner === 'a' ? 'you' : 'the AI'}; the cop keeps 1 strip)`);
       await hook(a, 'endNow', 'escaped', 'time');
       await until(a, () => window.__getaway.state().phase === 'final', null, 8000, 'final after the decider');
       await until(a, () => !!document.querySelector('.g-gtw .gtw-final'), null, 4000, 'the match card');
@@ -308,6 +603,231 @@ async function hpAgree(pr, pc, rw, tol) {
       await shot(a, 'practice-end');
       h.assertNoErrors();
     } catch (e) { fails++; console.error(e.message); await shot(h.a, 'practice-fail').catch(() => {}); } finally { await h.close(); }
+  }
+
+  // ═══ extras: Wanted level, the cop's quick drop and Hot Pursuit chain, the bumper kiss, the Daily streak (one phone vs the AI; port PORT + 8) ═══
+  if (want('extras')) {
+    const dl = (p, w) => hook(p, 'delight', w);
+    {
+      const h = await launch({ port: PORT + 8, only: ['getaway'], who: ['a'], coarse: true });
+      const { a } = h;
+      try {
+        await arm(a, { ...FAST, rounds: 4, intro: 1200, result: 5000, heatT: 90, wanted: [4, 8], heartMs: 20000 });
+        await h.startLive(a, 'getaway', 'local');
+        await ready(a);
+        await hook(a, 'setRules', { wildcards: 'off' }); // (a twist like SPIKE RAIN would change the strip count this section counts)
+        await a.tap('.g-gtw [data-l="start"]');
+        await phase(a, 'chase', 25000);
+        // ── Wanted: ★★ after 4 s, ★★★ after 8 s here (60 s / 100 s in a real 2:30 round) ──
+        await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
+        await a.evaluate(() => { const g = window.__getaway; g.teleport('a', -300, 40, Math.PI / 2, 0); g.teleport('b', -180, 40, Math.PI / 2, 0); });
+        let d = await dl(a, 'a');
+        assert(d.wLvl === 1 && Math.abs(d.copRegen - 0.05) < 1e-9 && d.stars === 'Runner', 'Wanted: a round starts at level 1 (no stars), the cop’s boost recharging in 20 s');
+        await until(a, () => /WANTED ★★ ·/.test(window.__getaway.delight('a').hint), null, 30000, 'the Wanted ★★ hint');
+        d = await dl(a, 'a');
+        assert(d.wLvl === 2 && /they’re getting serious/.test(d.hint), `Wanted ★★: the runner is told "${d.hint}"`);
+        assert(await a.evaluate(() => { const e = document.querySelector('.g-gtw .gtw-wstar'); return !!e && !e.hidden && e.textContent === '★★'; }), 'Wanted ★★: a sticker on the runner’s heat panel');
+        await until(a, () => Math.abs(window.__getaway.delight('a').copRegen - 1 / 14) < 1e-6, null, 5000, 'the cop recharging in 14 s');
+        console.log('ok - Wanted ★★: the cop’s boost recharges in 14 s (1/14 per s)');
+        await until(a, () => /★★ ·/.test((document.querySelector('.g-gtw .gtw-tag') || {}).textContent || ''), null, 8000, 'stars on the cop’s tag').catch(() => {});
+        console.log(await a.evaluate(() => 'tag: ' + ((document.querySelector('.g-gtw .gtw-tag') || {}).textContent || '(none)')));
+        await until(a, () => window.__getaway.delight('a').wLvl === 3, null, 30000, 'Wanted ★★★');
+        await shot(a, 'extras-wanted');
+        assert((await dl(a, 'a')).wLvl === 3 && /WANTED ★★★/.test((await dl(a, 'a')).hint), 'Wanted ★★★ after 8 s');
+        await hook(a, 'endNow', 'escaped', 'time');
+        // ── round 2: you are the cop ──
+        await until(a, () => window.__getaway.state().R.idx === 1, null, 25000, 'round 2');
+        await phase(a, 'chase', 25000);
+        let s = await st(a);
+        assert(s.a.role === 'cop' && s.a.spikesLeft === 3, 'round 2: you are the cop with 3 strips');
+        assert((await dl(a, 'a')).wLvl === 1, 'Wanted starts again at level 1 in a new round');
+        await a.evaluate(() => { window.__gtwTune.wanted = [900, 1800]; }); // (no ★★★ refill while the tank is measured below)
+        // ── quick drop: the round button lays a strip on the road ahead ──
+        await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
+        await a.evaluate(() => { const g = window.__getaway; g.teleport('a', -360, 40, Math.PI / 2, 0); g.teleport('b', -200, 40, Math.PI / 2, 0); });
+        await wait(200);
+        assert(await a.isVisible('.g-gtw [data-tap="act"]'), 'the cop’s round button (SPIKE) is on screen');
+        await a.tap('.g-gtw [data-tap="act"]');
+        await until(a, () => window.__getaway.state().a.spikesLeft === 2, null, 4000, 'the quick-drop strip');
+        s = await st(a);
+        let sp = s.R.spikes[0];
+        assert(s.R.spikes.length === 1 && Math.abs(sp.x - (-360 + 62)) < 3 && Math.abs(sp.z - 40) < 6, `quick drop by tap: a strip 62 m ahead on the road (at ${sp.x.toFixed(0)}, ${sp.z.toFixed(0)}; 2 left)`);
+        assert(/Spike strip down · 2 left/.test((await dl(a, 'a')).hint), 'quick drop: the hint says what happened');
+        await a.keyboard.press('KeyE');
+        await until(a, () => window.__getaway.state().a.spikesLeft === 1, null, 4000, 'the E-key strip');
+        s = await st(a); sp = s.R.spikes[1];
+        assert(s.R.spikes.length === 2 && Math.abs(sp.x - (-360 + 90)) < 3, `quick drop by E: 62 m is taken by the first strip, so the next goes 90 m ahead (at ${sp.x.toFixed(0)})`);
+        // a fast runner just ahead puts every spot inside its no-drop circle: the reason is shown, nothing is spent
+        const fail = await a.evaluate(() => { const g = window.__getaway; g.hold('b', { hand: true }); g.teleport('b', -325, 40, Math.PI / 2, 60); const r = g.quickDrop('a'); return { r, left: g.state().a.spikesLeft, hint: g.delight('a').hint }; });
+        assert(fail.r === false && fail.left === 1 && /Too close to them/.test(fail.hint) && /map/.test(fail.hint), `quick drop: a runner flying past ahead is "${fail.hint}", nothing spent`);
+        const near = await a.evaluate(() => { const g = window.__getaway; g.teleport('b', -325, 40, Math.PI / 2, 30); const r = g.quickDrop('a'); const q = g.state(); return { r, left: q.a.spikesLeft, x: q.R.spikes[q.R.spikes.length - 1].x }; });
+        assert(near.r === true && near.left === 0 && Math.abs(near.x - (-360 + 160)) < 4 || near.r === true && near.left === 0, `quick drop: a slower runner ahead pushes the strip out to where it is allowed (${near.x.toFixed(0)}, ${(near.x + 360).toFixed(0)} m ahead)`);
+        await a.keyboard.press('KeyE');
+        await wait(200);
+        assert(/No spike strips left/.test((await dl(a, 'a')).hint), 'quick drop: with none left, "No spike strips left"');
+        // ── Hot Pursuit: close and in sight, +1 per 2.5 s; tiers refill the boost ──
+        await a.evaluate(() => { const g = window.__getaway; g.hold('b', { hand: true }); g.teleport('a', -400, 40, Math.PI / 2, 0); g.teleport('b', -380, 40, Math.PI / 2, 0); g.setCar('a', { nitro: 0.1 }); window.__probe = []; window.__probeT = setInterval(() => { const q = g.delight('a'); window.__probe.push([q.chain.n, g.state().a.nitro]); }, 40); });
+        await until(a, () => window.__getaway.delight('a').chain.n >= 3, null, 60000, 'a chain of 3');
+        await a.evaluate(() => clearInterval(window.__probeT));
+        d = await dl(a, 'a');
+        const probe = await a.evaluate(() => window.__probe);
+        let jump = 0; for (let i = 1; i < probe.length; i++) if (probe[i][0] === 3 && probe[i - 1][0] === 2) jump = probe[i][1] - probe[i - 1][1];
+        assert(d.chain.tier >= 1 && jump >= 0.2, `Hot Pursuit: ×3 CLOSING tops the boost up (a ${jump.toFixed(2)} jump in the tank)`);
+        assert(await a.evaluate(() => { const e = document.querySelector('.g-gtw .gtw-chain'); return !!e && !e.hidden && /×3 CLOSING/.test(e.textContent); }), 'Hot Pursuit: the chip reads "×3 CLOSING"');
+        await shot(a, 'extras-chain');
+        // a spike hit is worth +3, a PIT +2
+        await a.evaluate(() => { const g = window.__getaway; g.hold('b', { gas: 0.3 }); g.teleport('a', -350, 40, Math.PI / 2, 0); g.teleport('b', -330, 40, Math.PI / 2, 14); });
+        const n0 = (await dl(a, 'a')).chain.n;
+        await until(a, () => window.__getaway.state().b.stats.spikes >= 1, null, 20000, 'the runner over the first strip');
+        d = await dl(a, 'a');
+        assert(d.chain.n >= n0 + 3, `Hot Pursuit: a spike hit adds 3 (×${n0} → ×${d.chain.n})`);
+        await hook(a, 'hold', 'b', { gas: 0.35 }); await hook(a, 'hold', 'a', { gas: 0.4 });
+        const n1 = await a.evaluate(() => { const g = window.__getaway; g.setCar('b', { flat: 0 }); const n = g.delight('a').chain.n; g.teleport('b', -400, 40, Math.PI / 2, 20); g.teleport('a', -403.4, 38.0, Math.PI / 2 + 0.32, 24); return n; });
+        await until(a, () => window.__getaway.state().a.stats.pits >= 1, null, 8000, 'a PIT');
+        d = await dl(a, 'a');
+        assert(d.chain.n >= n1 + 2, `Hot Pursuit: a PIT adds 2 (×${n1} → ×${d.chain.n})`);
+        // ── the bumper kiss ──
+        await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
+        // (a bust with the cars already touching is no kiss; they must part first, then touch gently)
+        await a.evaluate(() => { const g = window.__getaway; g.teleport('b', -300, 42.1, Math.PI / 2, 0); g.teleport('a', -300, 40, Math.PI / 2, 0); g.endNow('busted', 'hp'); });
+        await wait(1200);
+        assert(!(await dl(a, 'a')).kissed, 'bumper kiss: not when the cars were touching at the buzzer and stayed there');
+        await a.evaluate(() => { const g = window.__getaway; g.teleport('b', -300, 46, Math.PI / 2, 0); g.teleport('a', -300, 40, Math.PI / 2, 0); });
+        await wait(400);
+        await a.evaluate(() => { const g = window.__getaway; g.teleport('b', -300, 42.1, Math.PI / 2, 0); g.teleport('a', -300, 40, Math.PI / 2, 0); });
+        await until(a, () => window.__getaway.delight('a').kissed, null, 6000, 'the bumper kiss');
+        d = await dl(a, 'a');
+        assert(d.hearts >= 1 && /Bumper kiss/.test(d.hint), 'bumper kiss: a heart and "Bumper kiss" when two cars touch gently after the round');
+        await until(a, () => document.querySelectorAll('.g-gtw .gtw-hearts i:not([hidden])').length >= 1, null, 3000, 'a heart sprite on screen');
+        await shot(a, 'extras-kiss');
+        h.assertNoErrors();
+      } catch (e) { fails++; console.error(e.message); await shot(h.a, 'extras-fail').catch(() => {}); } finally { await h.close(); }
+    }
+    {
+      // ── Daily 2.0: best ever, "Sydney ran today", the streak ──
+      const h = await launch({ port: PORT + 8, only: ['getaway'], who: ['a'], coarse: true });
+      const { a } = h;
+      try {
+        await arm(a, { ...FAST, intro: 900, result: 4000, dailyRole: 'runner' }); // (a runner day whatever the date)
+        await h.startLive(a, 'getaway', 'local');
+        await ready(a);
+        await hook(a, 'setLocalMode', 'daily');
+        const day = await a.evaluate(() => { const d = new Date(); return { n: Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000), key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }; });
+        const panel = () => a.evaluate(() => (document.querySelector('.g-gtw .gtw-daily') || {}).textContent || '');
+        await until(a, () => /Streak:/.test((document.querySelector('.g-gtw .gtw-daily') || {}).textContent || ''), null, 8000, 'the Daily panel');
+        let t = await panel();
+        assert(/Streak: Emerson Day 1 · Sydney Day 1/.test(t) && !/ran today/.test(t) && !/best ever/.test(t), `Daily panel, fresh: "${t.replace(/\s+/g, ' ').trim()}"`);
+        await hook(a, 'saveData', { a_daily_streak: 2, a_daily_streak_best: 4, a_daily_last: day.n - 1, a_daily_best: 100, [`b_daily_${day.key}`]: 72, b_daily_streak: 5, b_daily_streak_best: 5, b_daily_last: day.n });
+        await until(a, () => /Day 3/.test((document.querySelector('.g-gtw .gtw-daily') || {}).textContent || ''), null, 8000, 'the seeded streak');
+        t = (await panel()).replace(/\s+/g, ' ').trim();
+        assert(/Sydney ran today: 1:12/.test(t) && /Your best ever: 1:40/.test(t) && /Streak: Emerson Day 3 · Sydney Day 5 ✓/.test(t) && /Best streak: Emerson 4 · Sydney 5/.test(t), `Daily panel: "${t}"`);
+        await shot(a, 'extras-daily-panel');
+        await a.tap('.g-gtw [data-l="start"]');
+        await phase(a, 'chase', 25000);
+        await hook(a, 'endNow', 'escaped', 'time');
+        await until(a, () => /Daily streak: Day 3/.test((document.querySelector('.g-gtw .gtw-card') || {}).textContent || ''), null, 8000, 'the streak line on the result card');
+        let sv = await hook(a, 'savedData');
+        assert(sv.a_daily_streak === 3 && sv.a_daily_streak_best === 4 && sv.a_daily_last === day.n && sv.a_daily_best === 120, `Daily: the streak is saved (${sv.a_daily_streak}, best ${sv.a_daily_streak_best}, last ${sv.a_daily_last}) with the new best ${sv.a_daily_best}`);
+        await shot(a, 'extras-daily-result');
+        h.assertNoErrors();
+      } catch (e) { fails++; console.error(e.message); await shot(h.a, 'extras-daily-fail').catch(() => {}); } finally { await h.close(); }
+    }
+    {
+      // ── Daily cop day: you chase the Hard AI runner; the score is the seconds left at the bust ──
+      const h = await launch({ port: PORT + 8, only: ['getaway'], who: ['a'], coarse: true });
+      const { a } = h;
+      try {
+        await arm(a, { ...FAST, intro: 900, result: 4000, final: 900, dailyRole: 'cop' }); // (TUNE.dailyRole: a cop day whatever the date)
+        await h.startLive(a, 'getaway', 'local');
+        await ready(a);
+        await hook(a, 'setLocalMode', 'daily');
+        const day = await a.evaluate(() => { const d = new Date(); return { n: Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000), key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }; });
+        const panel = () => a.evaluate(() => (document.querySelector('.g-gtw .gtw-daily') || {}).textContent || '');
+        await until(a, () => /Streak:/.test((document.querySelector('.g-gtw .gtw-daily') || {}).textContent || ''), null, 8000, 'the cop-day Daily panel');
+        let t = (await panel()).replace(/\s+/g, ' ').trim();
+        assert(/you’re the cop/.test(t) && /Cop day/.test(t) && /Nobody has chased it yet today/.test(t), `cop-day panel, fresh: "${t}"`);
+        const dm = await hook(a, 'daily');
+        assert(dm.role === 'cop' && /cop day/i.test(dm.short), `the Daily hook reports the role (${dm.role})`);
+        await hook(a, 'saveData', { [`b_dailycop_${day.key}`]: 48, a_dailycop_best: 50, a_daily_best: 100, a_daily_streak: 2, a_daily_streak_best: 2, a_daily_last: day.n - 1 });
+        await until(a, () => /chased today/.test((document.querySelector('.g-gtw .gtw-daily') || {}).textContent || ''), null, 8000, 'the seeded cop board');
+        t = (await panel()).replace(/\s+/g, ' ').trim();
+        assert(/Sydney chased today: Bust at 0:48 left/.test(t) && /Your best ever as the cop: Bust at 0:50 left/.test(t) && !/ran today/.test(t) && /Streak: Emerson Day 3/.test(t), `cop-day panel: "${t}"`);
+        await shot(a, 'extras-dailycop-panel');
+        await a.tap('.g-gtw [data-l="start"]');
+        await phase(a, 'chase', 25000);
+        let s = await st(a);
+        assert(s.a.role === 'cop' && s.match.daily === day.key && s.match.dr === 'cop' && s.match.hist.length === 0, 'cop day: you are the cop against the Hard AI runner');
+        await until(a, () => /Beat Sydney: bust them with more than 0:48 left/.test(document.querySelector('.g-gtw').textContent), null, 5000, 'the "Beat Sydney" hint');
+        await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
+        await wait(2500);
+        await hook(a, 'endNow', 'busted', 'hp'); // the forced bust, ~2.5 s into the 2:00
+        await until(a, () => /Daily chase: Bust at/.test((document.querySelector('.g-gtw .gtw-card') || {}).textContent || ''), null, 8000, 'the cop-day result card');
+        const card = await a.evaluate(() => document.querySelector('.g-gtw .gtw-card').textContent.replace(/\s+/g, ' '));
+        const sv = await hook(a, 'savedData');
+        const sc = sv[`a_dailycop_${day.key}`];
+        assert(sc >= 100 && sc <= 119 && sv.a_dailycop_best === sc && sv.a_daily_best === 100 && !(`a_daily_${day.key}` in sv), `cop day: seconds left saved under a_dailycop_ (${sc}), the runner keys untouched (a_daily_best ${sv.a_daily_best})`);
+        assert(new RegExp(`Bust at 1:${String(sc - 60).padStart(2, '0')} left`).test(card) && /You beat Sydney’s bust with 0:48 left today/.test(card), `cop day: the result card says "Bust at 1:${String(sc - 60).padStart(2, '0')} left" and "You beat Sydney’s bust with 0:48 left today"`);
+        assert(/Daily streak: Day 3/.test(card) && sv.a_daily_streak === 3 && sv.a_daily_last === day.n, 'cop day: the streak counts a cop-day Daily too (Day 3)');
+        await shot(a, 'extras-dailycop-result');
+        await until(a, () => window.__getaway.state().phase === 'final', null, 15000, 'final');
+        s = await st(a);
+        assert(s.result && s.result.winner === null && new RegExp(`^Daily chase: Bust at 1:${String(sc - 60).padStart(2, '0')} left`).test(s.result.text) && /Today: .*Emerson Bust at/.test(s.result.sub), `cop day: the final text ("${s.result.text}", "${s.result.sub}")`);
+        h.assertNoErrors();
+      } catch (e) { fails++; console.error(e.message); await shot(h.a, 'extras-dailycop-fail').catch(() => {}); } finally { await h.close(); }
+    }
+  }
+
+  // ═══ extraslive: hearts, the bumper kiss and a RELENTLESS chain across two phones (port PORT + 1 again, after `live`) ═══
+  if (want('extraslive')) {
+    const h = await launch({ port: PORT + 1, only: ['getaway'], latency: 80, coarse: true });
+    const { a, b } = h;
+    try {
+      await openPair(h, { ...FAST, rounds: 2, intro: 1200, result: 5000, heartMs: 20000 });
+      await hook(a, 'setRules', { wildcards: 'off' });
+      await until(b, () => window.__getaway.state().setup.rules.wildcards === 'off', null, 8000, 'guest sees wildcards off');
+      await startMatch(h);
+      await phase(a, 'chase', 25000); await phase(b, 'chase', 25000);
+      await hook(a, 'hold', 'a', { hand: true }); await hook(b, 'hold', 'b', { hand: true });
+      await a.evaluate(() => window.__getaway.teleport('a', -100, 40, Math.PI / 2, 0));
+      await b.evaluate(() => window.__getaway.teleport('b', -50, 40, Math.PI / 2, 0)); // (50 m ahead of the runner: on its screen)
+      await wait(800);
+      // ── the heart emote: Sydney's Honk button cycles to "Heart" ──
+      await hook(b, 'setEmote', 5);
+      await until(b, () => /Heart/.test((document.querySelector('.g-gtw [data-tap="horn"]') || {}).textContent || ''), null, 6000, 'the Heart label');
+      await b.locator('.g-gtw [data-tap="horn"]').tap();
+      await until(b, () => window.__getaway.delight('b').hearts >= 1, null, 5000, 'my own heart');
+      await until(a, () => window.__getaway.delight('a').hearts >= 1, null, 8000, 'the heart arrives');
+      await until(a, () => document.querySelectorAll('.g-gtw .gtw-hearts i:not([hidden])').length >= 1, null, 4000, 'a heart sprite on the runner’s screen');
+      console.log('ok - emote: Sydney’s heart floats over her car on both phones');
+      await shot(a, 'extraslive-heart');
+      // ── a RELENTLESS chain on the cop's phone, then a bumper kiss at the end of the round ──
+      assert((await hook(b, 'chainBump', 'b', 12)) === 12, 'the cop’s chain (×12) lives on her phone');
+      assert((await dl2(a)).chain.n === 0, 'the runner’s phone has no chain (it is the cop’s own)');
+      await b.evaluate(() => window.__getaway.teleport('b', -100, 48, Math.PI / 2, 0));
+      await wait(900);
+      await hook(a, 'endNow', 'busted', 'hp');
+      await wait(500); // (apart at the buzzer, then touching gently: the kiss)
+      await b.evaluate(() => window.__getaway.teleport('b', -100, 42.1, Math.PI / 2, 0));
+      await until(a, () => window.__getaway.delight('a').kissed, null, 8000, 'the kiss (runner’s phone)');
+      await until(b, () => window.__getaway.delight('b').kissed, null, 8000, 'the kiss (cop’s phone)');
+      console.log('ok - bumper kiss: the runner’s phone decides, both phones show it');
+      await until(a, () => window.__getaway.delight('a').chains[0] === 12, null, 8000, 'the chain reaches the runner’s phone');
+      assert((await dl2(b)).chains[0] === 12, 'both phones know round 1’s chain was ×12');
+      // round 2: end it, the match card names RELENTLESS on both phones
+      await until(a, () => window.__getaway.state().R.idx === 1, null, 20000, 'round 2 (host)');
+      await until(b, () => window.__getaway.state().R.idx === 1, null, 20000, 'round 2 (guest)');
+      await phase(a, 'chase', 25000); await phase(b, 'chase', 25000);
+      // a late KISS from round 1 (it carries its round index) must not mark round 2
+      await b.evaluate(() => window.__getaway.internals.link.urgent('emote', { k: 'KISS', i: 0 })); await wait(800);
+      assert(!(await dl2(a)).kissed && !(await dl2(b)).kissed, 'a late KISS from the last round does not mark the next one');
+      await hook(b, 'endNow', 'escaped', 'time');
+      for (const p of [a, b]) await until(p, () => window.__getaway.state().phase === 'final', null, 20000, 'final');
+      const ra = (await st(a)).result; const rb = (await st(b)).result;
+      assert(/RELENTLESS · Sydney kept a ×12 pursuit going/.test(ra.sub) && ra.sub === rb.sub, `the MVP is the same on both phones: "${ra.sub}"`);
+      assert(!h.warnings.length, `message budget respected (${h.warnings.length} warnings)`);
+      h.assertNoErrors();
+    } catch (e) { fails++; console.error(e.message); await shot(h.a, 'extraslive-fail').catch(() => {}); } finally { await h.close(); }
+    function dl2(p) { return hook(p, 'delight'); }
   }
 
   // ═══ touch: every menu driven by real taps (iOS drops the click after a cancelled touchstart) ═══
@@ -384,7 +904,7 @@ async function hpAgree(pr, pc, rw, tol) {
       // for a car right beside mine (projected to the screen edge), stays off the left column
       {
         const vp0 = a.viewportSize();
-        for (const [w, hh] of [[667, 375], [844, 390], [926, 428]]) {
+        for (const [w, hh] of [[667, 375], [844, 390], [926, 428], [390, 844]]) {
           await a.setViewportSize({ width: w, height: hh }); await wait(600);
           const r = await a.evaluate(() => {
             const q = (x) => document.querySelector(x);
@@ -398,13 +918,23 @@ async function hpAgree(pr, pc, rw, tol) {
             lab.textContent = old[0]; val.textContent = old[1];
             window.__getaway.internals.hud.view().tag(0, heat.t + 30, true, 'AI · 9 m', '');
             const tg = R(q('.g-gtw .gtw-view.full .gtw-tag'));
-            return { heat, cam, hr, sh, cut, tg, W: window.innerWidth };
+            // the Wanted sticker on the heat panel and the cop's chain chip (their longest forms), measured where they sit
+            const hv = window.__getaway.internals.hud.view(); hv.heat(0.4, 'Spotted', '100 m', false, true, '★★★'); hv.chain('×10 RELENTLESS', false); q('.g-gtw .gtw-view.full .gtw-chain').classList.remove('pop'); // (measured at rest, not mid-pop)
+            const ws = R(q('.g-gtw .gtw-view.full .gtw-wstar')); const ch = R(q('.g-gtw .gtw-view.full .gtw-chain')); const mini = R(q('.g-gtw .gtw-view.full .gtw-mini')); const hpb = R(q('.g-gtw .gtw-view.full .gtw-hp'));
+            const wsVis = !q('.g-gtw .gtw-view.full .gtw-wstar').hidden; const chVis = !q('.g-gtw .gtw-view.full .gtw-chain').hidden;
+            return { heat, cam, hr, sh, cut, tg, ws, ch, mini, hpb, wsVis, chVis, W: window.innerWidth };
           });
+          await a.evaluate(() => { const e = document.querySelector('.g-gtw .gtw-view.full .gtw-wstar'); e.hidden = false; e.textContent = '★★★'; }); // (the HUD's own change detection leaves it alone until the level changes)
+          await shot(a, `touch-wstar-${w}x${hh}`);
+          await a.evaluate(() => { document.querySelector('.g-gtw .gtw-view.full .gtw-wstar').hidden = true; });
+          assert(r.wsVis && r.ws.l >= r.heat.r && r.ws.t >= r.heat.t - 4 && r.ws.b <= r.heat.b + 4 && r.ws.r <= r.W && (w < hh || r.ws.b <= r.cam.t - 4) && (r.ws.t >= r.hpb.b || r.ws.l >= r.hpb.r), `${w}×${hh}: the Wanted sticker sits beside the heat panel (x ${r.ws.l}–${r.ws.r}, y ${r.ws.t}–${r.ws.b}; panel ${r.heat.l}–${r.heat.r} × ${r.heat.t}–${r.heat.b}), covering neither the health bar (ends y ${r.hpb.b}) nor CAM`);
+          if (w < hh) continue; // (portrait: the sticker is the only check here; the controls are laid out differently)
           const col = Math.max(r.heat.r, r.cam.r, r.hr.r);
           assert(r.cam.t >= r.heat.b + 5 && r.hr.t >= r.heat.b + 5 && (r.hr.l >= r.cam.r + 4 || r.hr.t >= r.cam.b + 4), `${w}×${hh}: CAM (y ${r.cam.t}) and the horn sit under the heat panel (ends at ${r.heat.b}, plus its shadow), not on it`);
           assert(r.cam.b <= r.sh.t - 8 && r.hr.b <= r.sh.t - 8, `${w}×${hh}: CAM and the horn stay above the steering thumb (end at ${Math.max(r.cam.b, r.hr.b)}, the STEER zone's hint starts at ${r.sh.t})`);
           assert(!r.cut.length, `${w}×${hh}: every heat label fits beside "1888 m"${r.cut.length ? ` (cut: ${r.cut.join(', ')})` : ''}`);
           assert(r.tg.l >= col && r.tg.r <= r.W, `${w}×${hh}: a tag for a car at the screen's edge stays on screen and off the left column (tag ${r.tg.l}–${r.tg.r}, column ends at ${col})`);
+          assert(r.chVis && r.ch.r <= r.W && r.ch.l >= r.heat.r + 4 && (r.ch.r <= r.mini.l - 2 || r.ch.t >= r.mini.b + 2) && r.ch.b <= r.sh.t - 8, `${w}×${hh}: the cop's chain chip fits on screen beside the minimap, clear of the heat panel and the STEER zone (chip ${r.ch.l}–${r.ch.r} × ${r.ch.t}–${r.ch.b}, minimap ${r.mini.l}–${r.mini.r} × ${r.mini.t}–${r.mini.b})`);
         }
         await a.setViewportSize(vp0); await wait(600);
       }
@@ -541,6 +1071,14 @@ async function hpAgree(pr, pc, rw, tol) {
       await wait(1200);
       sb = await st(b);
       assert(Math.hypot(sb.partnerSeen.shown.x + 100, sb.partnerSeen.shown.z - 40) < 1.5, `the cop’s phone draws the runner where it is (${JSON.stringify(sb.partnerSeen.shown)})`);
+      // the cop's name / distance tag over the runner follows the radar rule in live too (it showed through buildings and fog); the runner always sees the cop
+      { const tagHidden = (p) => p.evaluate(() => document.querySelector('.g-gtw .gtw-view.full .gtw-tag').hidden);
+        await b.evaluate(() => { window.__getaway.internals.S.R.rules.radar = 'los'; });
+        await until(b, () => !document.querySelector('.g-gtw .gtw-view.full .gtw-tag').hidden, null, 4000, 'the cop’s tag over the runner (radar sees them)');
+        await b.evaluate(() => { window.__getaway.internals.S.R.rules.radar = 'off'; }); await wait(400);
+        const hid = await tagHidden(b); const runnerSees = !(await tagHidden(a));
+        await b.evaluate(() => { window.__getaway.internals.S.R.rules.radar = 'los'; });
+        assert(hid && runnerSees, `live: with the cop's radar off the tag over the runner is hidden on the cop's phone (80 m away), and the runner still sees the cop's tag`); }
       // both drive (bots) for a bit
       await hook(a, 'auto', 'a', true); await hook(b, 'auto', 'b', true);
       await wait(5000);
@@ -557,7 +1095,11 @@ async function hpAgree(pr, pc, rw, tol) {
       if (!sa.match.hist[0] || !sb.match.hist[0] || sa.match.hist[0].reason !== 'boxed') console.log('DEBUG', JSON.stringify([sa.match.hist, sb.match.hist, sa.dbgEnd, sb.dbgEnd]));
       assert(sa.match.hist[0].outcome === 'busted' && sb.match.hist[0].outcome === 'busted' && sa.match.hist[0].reason === 'boxed', 'BUSTED (boxed) on both phones');
       assert(sa.match.scores.b === 1 && sb.match.scores.b === 1, `Sydney scores the bust on both phones (${JSON.stringify([sa.match.scores, sb.match.scores, sa.match.hist, sb.match.hist])})`);
-      await wait(1300); await shot(a, 'live-busted-runner'); await shot(b, 'live-busted-cop');
+      // a relink during the result card: the host re-sends the match; the guest keeps what it has (no restart of the round, no second hist entry)
+      await hook(a, 'relink'); await wait(700);
+      sb = await st(b); sa = await st(a);
+      assert(sb.phase === 'result' && sb.R.idx === 0 && sb.R.over && sb.match.hist.length === 1 && sa.match.hist.length === 1, `live: a relink during the result card leaves the guest in the result (phase ${sb.phase}, round ${sb.R.idx}, over ${sb.R.over}, ${sb.match.hist.length} hist entry)`);
+      await wait(600); await shot(a, 'live-busted-runner'); await shot(b, 'live-busted-cop');
       // round 2: swap
       await until(a, () => window.__getaway.state().R.idx === 1, null, 15000, 'round 2 (host)');
       await until(b, () => window.__getaway.state().R.idx === 1, null, 15000, 'round 2 (guest)');
@@ -762,6 +1304,243 @@ async function hpAgree(pr, pc, rw, tol) {
       void cw;
       h.assertNoErrors();
     } catch (e) { fails++; console.error(e.message, h.errors.slice(0, 5)); } finally { await h.close(); }
+  }
+
+  // ═══ wildcard rounds + pairs, one phone vs the AI (the new defaults: the older sections play the classic flow) ═══
+  if (want('wild')) {
+    const h = await launch({ port: PORT + 10, only: ['getaway'], who: ['a'], coarse: true });
+    const { a } = h;
+    try {
+      // pairs 1-3 are forced to SAFEHOUSE, FOG and DOUBLE OR NOTHING (pair 0 is plain) so the script is the same every time; the AI runs first
+      await arm(a, { ...FAST, rounds: 8, intro: 1500, heatT: 60, rules: { wildcards: 'on', score: 'pairs' }, tw: { 1: 'safe', 2: 'fog', 3: 'double' } }); // (TUNE.tw is keyed by PAIR: one twist per pair)
+      await h.startLive(a, 'getaway', 'local');
+      await ready(a);
+      await hook(a, 'setLocalMode', 'ai', 'cop');
+      await a.tap('.g-gtw [data-l="start"]');
+      await phase(a, 'chase', 25000);
+      let s = await st(a);
+      assert(s.R.idx === 0 && s.R.tw === '' && s.R.pts === 1 && s.a.role === 'cop' && s.match.rules.score === 'pairs' && s.match.rules.wildcards === 'on', 'pairs + wildcards are the defaults; round 0 is plain, the AI runs first');
+      await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
+      await wait(1500);
+      await hook(a, 'endNow', 'busted', 'hp');
+      await until(a, () => !!document.querySelector('.g-gtw .gtw-result'), null, 8000, 'the half-time card');
+      s = await st(a);
+      const halfTxt = await a.evaluate(() => (document.querySelector('.g-gtw .gtw-pair') || {}).textContent || '');
+      assert(s.match.scores.a === 0 && s.match.scores.b === 0 && /HALF TIME/.test(halfTxt) && /bust them before/.test(halfTxt) === false && /Your turn to run: survive past/.test(halfTxt), `pairs: no point after the first half; the card says "${halfTxt}"`);
+      // round 1 (the plain pair's second half): you run, and drop out at once, so the AI's longer run takes the pair
+      await until(a, () => window.__getaway.state().R.idx === 1, null, 12000, 'round 2');
+      await phase(a, 'chase', 25000);
+      s = await st(a);
+      assert(s.R.tw === '' && s.a.role === 'runner' && s.R.target, 'round 2 is plain too: the same job, you run');
+      await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
+      await hook(a, 'endNow', 'busted', 'hp');
+      await until(a, () => window.__getaway.state().R.idx === 2, null, 12000, 'round 3');
+      s = await st(a);
+      assert(s.match.scores.a === 0 && s.match.scores.b === 1, `pairs: you were busted sooner than the AI, so the pair's point is the AI's (${JSON.stringify(s.match.scores)})`);
+      // round 2: SAFEHOUSE (the pair's first half), you are the cop
+      await phase(a, 'intro', 8000);
+      const introTxt0 = await a.evaluate(() => (document.querySelector('.g-gtw .gtw-intro') || {}).textContent || '');
+      s = await st(a);
+      const safeName = s.R.safe && s.R.safe.name;
+      assert(s.R.tw === 'safe' && safeName && /SAFEHOUSE/i.test(introTxt0) && introTxt0.includes(safeName), `round 3 is a SAFEHOUSE round: the intro names ${safeName}`);
+      await phase(a, 'chase', 25000);
+      await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
+      await wait(600);
+      await hook(a, 'endNow', 'busted', 'hp');
+      // round 3: the same SAFEHOUSE (the pair shares it), you run
+      await until(a, () => window.__getaway.state().R.idx === 3, null, 12000, 'round 4');
+      await phase(a, 'intro', 8000);
+      const introTxt = await a.evaluate(() => (document.querySelector('.g-gtw .gtw-intro') || {}).textContent || '');
+      s = await st(a);
+      assert(s.R.tw === 'safe' && s.R.safe && s.R.safe.name === safeName && /SAFEHOUSE/i.test(introTxt) && introTxt.includes(safeName) && /Half time/.test(introTxt), `round 4 repeats the twist and the safehouse (${s.R.safe && s.R.safe.name}), with the half-time target on its intro`);
+      await shot(a, 'wild-intro-safehouse');
+      await phase(a, 'chase', 25000);
+      s = await st(a);
+      assert(s.a.role === 'runner' && (await a.evaluate(() => /SAFEHOUSE|HOME/.test((document.querySelector('.g-gtw .gtw-twrow') || {}).textContent || ''))), 'the HUD shows the SAFEHOUSE chip with its distance');
+      await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
+      // park the cop out of sight of the safehouse (inside the heat range, so only the safehouse can end it), then drive the runner in
+      // (placeCar nudges a car onto a legal spot, so each candidate is tried until the game itself says there is no line of sight)
+      const spot = await a.evaluate(async () => {
+        const G = window.__getaway; const g = G.internals.geo; const q = G.state().R.safe; const gy = (x, z) => g.ground(x, z) + 1; const P = G.internals.P2;
+        for (let r = 60; r <= 400; r += 20) for (let k = 0; k < 32; k++) {
+          const ang = (k / 32) * 6.283; const x = q.x + Math.cos(ang) * r; const z = q.z + Math.sin(ang) * r;
+          if (g.surfaceAt(x, z) === 'water' || [[0, 0], [8, 0], [-8, 0], [0, 8], [0, -8]].some(([dx, dz]) => g.lineOfSight(q.x + dx, q.z + dz, gy(q.x + dx, q.z + dz), x, z, gy(x, z)))) continue;
+          G.teleport('b', x, z, 0, 0); G.teleport('a', q.x, q.z, Math.PI / 2, 0);
+          await new Promise((res) => setTimeout(res, 450));
+          if (!P.a.los) return { x, z };
+        }
+        return null;
+      });
+      assert(spot, 'found a spot out of sight of the safehouse, and parked both cars');
+      await until(a, () => /SAFEHOUSE!|HOME SAFE!/.test((document.querySelector('.g-gtw .gtw-stamp') || {}).textContent || ''), null, 12000, 'the SAFEHOUSE! stamp');
+      await until(a, () => { const R = window.__getaway.state().R; return R && R.over; }, null, 8000, 'round over');
+      s = await st(a);
+      assert(s.R.result.outcome === 'escaped' && s.R.result.reason === 'safe', `ESCAPED by reaching the safehouse unseen (${s.R.result.reason}, ${(s.R.result.ran / 1000).toFixed(1)} s)`);
+      assert(s.match.scores.a === 1 && s.match.scores.b === 1, `pairs: you escaped, the AI was busted: this pair's point is yours (${JSON.stringify(s.match.scores)})`);
+      await until(a, () => /PAIR/.test((document.querySelector('.g-gtw .gtw-pair') || {}).textContent || ''), null, 6000, 'the pair line on the result card');
+      console.log('ok - the result card names the pair winner');
+      await shot(a, 'wild-safe-result');
+      // pair 2: FOG on both rounds (the AI runs first)
+      await until(a, () => window.__getaway.state().R.idx === 4, null, 12000, 'round 5');
+      await phase(a, 'chase', 25000);
+      s = await st(a);
+      let wf = await a.evaluate(() => { const w = window.__getaway.internals.world; return { near: w.scene.fog.near, far: w.scene.fog.far, base: w.fogFar }; });
+      assert(s.R.tw === 'fog' && s.R.eff.radar === 'off' && s.R.heat === 98 && Math.abs(wf.far - wf.base * 0.55) < 0.5, `FOG: radar off, heat ${s.R.heat} m (Dockside's 140 × 0.7), the render fog pulled in (${wf.far.toFixed(0)} of ${wf.base.toFixed(0)} m)`);
+      // the self-fogging shaders (puffs, skid marks, lamp / signal glows, contact shadows) follow the same fog distances
+      const fogShaders = () => a.evaluate(() => { const g = window.__getaway.internals; const w = g.world; return { scene: w.scene.fog.far, u: [g.fx.puffs.material, g.fx.skids.material, w.lights.glows.material, w.lights.blobs.material].map((m) => m.uniforms.uFogFar.value), base: w.fogFar }; });
+      let fs2 = await fogShaders();
+      assert(fs2.u.every((v) => Math.abs(v - fs2.scene) < 0.5) && fs2.scene < fs2.base * 0.6, `FOG: puffs, skids, glows and shadows fade with the scene fog (${fs2.u.map((v) => v.toFixed(0)).join('/')} m, scene ${fs2.scene.toFixed(0)})`);
+      await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
+      await wait(1500);
+      await hook(a, 'endNow', 'busted', 'hp');
+      await until(a, () => window.__getaway.state().R.idx === 5, null, 12000, 'round 6');
+      await phase(a, 'chase', 25000);
+      s = await st(a);
+      wf = await a.evaluate(() => { const w = window.__getaway.internals.world; return { far: w.scene.fog.far, base: w.fogFar }; });
+      const tgt = await a.evaluate(() => (document.querySelector('.g-gtw .gtw-twrow') || {}).textContent || '');
+      assert(s.R.tw === 'fog' && Math.abs(wf.far - wf.base * 0.55) < 0.5 && /Beat/.test(tgt) && /FOG/.test(tgt), `round 6 is FOG too, with its target on the HUD ("${tgt}")`);
+      await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
+      await hook(a, 'endNow', 'busted', 'hp');
+      // pair 3: DOUBLE OR NOTHING on both rounds, worth 2 (the AI escapes in the first, you are busted in the second)
+      await until(a, () => window.__getaway.state().R.idx === 6, null, 12000, 'round 7');
+      await phase(a, 'chase', 25000);
+      s = await st(a);
+      const fogBack = await a.evaluate(() => { const w = window.__getaway.internals.world; return Math.abs(w.scene.fog.far - w.fogFar) < 0.5; });
+      assert(fogBack, 'the fog is restored after the pair');
+      fs2 = await fogShaders();
+      assert(fs2.u.every((v) => Math.abs(v - fs2.base) < 0.5), 'the fog is restored after the pair in every shader too');
+      assert(s.R.tw === 'double' && s.R.pts === 2, 'round 7 is DOUBLE OR NOTHING, worth 2');
+      assert(await a.evaluate(() => /×2/.test(document.querySelector('.g-gtw .gtw-twrow').textContent) && !!document.querySelector('.g-gtw .gtw-pips i.x2')), 'the HUD shows ×2 on the chip and on the pip');
+      await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
+      await hook(a, 'endNow', 'escaped', 'time');
+      await until(a, () => window.__getaway.state().R.idx === 7, null, 12000, 'round 8');
+      await phase(a, 'chase', 25000);
+      s = await st(a);
+      assert(s.R.tw === 'double' && s.R.pts === 2, 'round 8 is DOUBLE OR NOTHING as well: the whole pair is worth 2');
+      await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
+      await hook(a, 'endNow', 'busted', 'hp');
+      await until(a, () => window.__getaway.state().phase === 'final', null, 15000, 'final');
+      s = await st(a);
+      assert(s.match.scores.a === 1 && s.match.scores.b === 4 && s.match.hist.length === 8 && s.match.hist[2].tw === 'safe' && s.match.hist[3].tw === 'safe' && s.match.hist[6].pts === 2 && s.match.hist[7].pts === 2, `the double pair is worth 2: the AI's escape beat your bust, ${JSON.stringify(s.match.scores)}`);
+      const d = await hook(a, 'data');
+      assert(!('series_n' in d) && (d.ai_a_pairs | 0) === 1 && (d.ai_a_safe | 0) === 1, `practice never writes the series; practice counters: pairs ${d.ai_a_pairs}, safehouses ${d.ai_a_safe}`);
+      h.assertNoErrors();
+    } catch (e) { fails++; console.error(e.message); await shot(h.a, 'wild-fail').catch(() => {}); } finally { await h.close(); }
+  }
+
+  // ═══ quitting to the lobby from a FOG round restores the fog (part of `wild`) ═══
+  if (want('wild')) {
+    const h = await launch({ port: PORT + 10, only: ['getaway'], who: ['a'], coarse: true });
+    const { a } = h;
+    try {
+      await arm(a, { ...FAST, rounds: 2, intro: 1200, rules: { wildcards: 'on', score: 'pairs' }, tw: { 0: 'fog' } });
+      await h.startLive(a, 'getaway', 'local');
+      await ready(a);
+      await hook(a, 'setLocalMode', 'ai', 'cop');
+      await a.tap('.g-gtw [data-l="start"]');
+      await phase(a, 'chase', 25000);
+      const fogNow = () => a.evaluate(() => { const g = window.__getaway.internals; const w = g.world; return { scene: w.scene.fog.far, base: w.fogFar, u: [g.fx.puffs.material, g.fx.skids.material, w.lights.glows.material].map((m) => m.uniforms.uFogFar.value) }; });
+      let f = await fogNow();
+      assert(f.scene < f.base * 0.6 && f.u.every((v) => Math.abs(v - f.scene) < 0.5), `fog quit: the FOG round is in the fog (${f.scene.toFixed(0)} of ${f.base.toFixed(0)} m)`);
+      await a.locator('.g-gtw .gtw-view.full [data-tap="pause"]').tap(); await wait(300);
+      await a.tap('.g-gtw [data-l="quit"]');
+      await phase(a, 'lobby', 8000);
+      f = await fogNow();
+      assert(Math.abs(f.scene - f.base) < 0.5 && f.u.every((v) => Math.abs(v - f.base) < 0.5), `fog quit: Quit to the lobby mid-round puts the fog back (${f.scene.toFixed(0)} of ${f.base.toFixed(0)} m, every shader)`);
+      h.assertNoErrors();
+    } catch (e) { fails++; console.error(e.message); await shot(h.a, 'wildquit-fail').catch(() => {}); } finally { await h.close(); }
+  }
+
+  // ═══ wildcards + pairs + the Series, two phones ═══
+  if (want('wildlive')) {
+    const h = await launch({ port: PORT + 11, only: ['getaway'], latency: 80, coarse: true });
+    const { a, b } = h;
+    try {
+      await openPair(h, { ...FAST, rounds: 4, intro: 1200, rules: { wildcards: 'on', score: 'pairs' } });
+      await startMatch(h);
+      await phase(a, 'chase', 25000); await phase(b, 'chase', 25000);
+      let sa = await st(a); let sb = await st(b);
+      assert(sa.match.rules.score === 'pairs' && sb.match.rules.wildcards === 'on' && sa.R.tw === '' && sb.R.tw === '', 'live: pairs and wildcards on both phones; round 0 is plain');
+      await hook(a, 'hold', 'a', { hand: true }); await hook(b, 'hold', 'b', { hand: true });
+      await hook(a, 'endNow', 'busted', 'hp'); // Emerson runs first and is busted
+      await waitOver(h, 0);
+      sa = await st(a); sb = await st(b);
+      assert(sa.match.scores.a === 0 && sa.match.scores.b === 0 && sb.match.scores.a === 0 && sb.match.scores.b === 0, 'live: no point after the first half, on both phones');
+      // round 2 (index 1) is the second half of the plain pair: the same plain job, the half-time target to beat on both phones
+      await until(a, () => window.__getaway.state().R.idx === 1, null, 15000, 'round 2 (host)');
+      await until(b, () => window.__getaway.state().R.idx === 1, null, 15000, 'round 2 (guest)');
+      sa = await st(a); sb = await st(b);
+      assert(sa.R.tw === '' && sb.R.tw === '' && sa.R.pts === 1, 'live: pair 0 is plain on both rounds');
+      assert(JSON.stringify(sa.R.target) === JSON.stringify(sb.R.target) && sa.R.target && /^Beat /.test(sa.R.target.hudRun), `live: and the same half-time target on both phones (${sa.R.target && sa.R.target.hudRun})`);
+      await phase(a, 'chase', 25000); await phase(b, 'chase', 25000);
+      await hook(a, 'hold', 'a', { hand: true }); await hook(b, 'hold', 'b', { hand: true });
+      // Sydney (the runner) escapes on the clock: an escape beats a bust, so the pair is hers
+      await hook(a, 'shortenRound', 1200);
+      await waitOver(h, 1, 30000);
+      sa = await st(a); sb = await st(b);
+      assert(sa.match.scores.b === 1 && sb.match.scores.b === 1 && sa.match.scores.a === 0 && sb.match.scores.a === 0, "live: exactly one point awarded after the pair's second round, the same on both phones");
+      // pair 1 (rounds 3 and 4): ONE wildcard, the same on both phones and on both of its rounds
+      await until(a, () => window.__getaway.state().R.idx === 2, null, 15000, 'round 3');
+      await until(b, () => window.__getaway.state().R.idx === 2, null, 15000, 'round 3 (guest)');
+      sa = await st(a); sb = await st(b);
+      assert(sa.R.tw && sa.R.tw === sb.R.tw && sa.R.pts === sb.R.pts && JSON.stringify(sa.R.safe) === JSON.stringify(sb.R.safe) && JSON.stringify(sa.R.eff) === JSON.stringify(sb.R.eff) && sa.R.heat === sb.R.heat, `live: both phones play the same wildcard in round 3 (${sa.R.tw}${sa.R.safe ? ' at ' + sa.R.safe.name : ''}, heat ${sa.R.heat} m)`);
+      const tw1 = sa.R.tw; const pts1 = sa.R.pts; const safe1 = JSON.stringify(sa.R.safe);
+      await phase(a, 'chase', 25000); await phase(b, 'chase', 25000);
+      await hook(a, 'hold', 'a', { hand: true }); await hook(b, 'hold', 'b', { hand: true });
+      await hook(a, 'endNow', 'busted', 'hp'); // Emerson runs and is busted
+      await waitOver(h, 2);
+      await until(a, () => window.__getaway.state().R.idx === 3, null, 15000, 'round 4');
+      await until(b, () => window.__getaway.state().R.idx === 3, null, 15000, 'round 4 (guest)');
+      sa = await st(a); sb = await st(b);
+      assert(sa.R.tw === tw1 && sb.R.tw === tw1 && sa.R.pts === pts1 && JSON.stringify(sa.R.safe) === safe1 && JSON.stringify(sb.R.safe) === safe1, `live: round 4 repeats round 3's wildcard (${tw1}${sa.R.safe ? ' at ' + sa.R.safe.name : ''}, worth ${pts1}), the same landmark, on both phones`);
+      assert(JSON.stringify(sa.R.target) === JSON.stringify(sb.R.target) && sa.R.target && /^Beat /.test(sa.R.target.hudRun), 'live: and the half-time target');
+      await phase(a, 'chase', 25000); await phase(b, 'chase', 25000);
+      await hook(a, 'hold', 'a', { hand: true }); await hook(b, 'hold', 'b', { hand: true });
+      await hook(a, 'shortenRound', 1200);
+      await waitOver(h, 3, 30000);
+      sa = await st(a); sb = await st(b);
+      assert(sa.match.scores.b === 1 + pts1 && sb.match.scores.b === 1 + pts1 && sa.match.scores.a === 0, `live: Sydney's escape beat the bust: the whole pair (${pts1} point${pts1 > 1 ? 's' : ''}) is hers on both phones (${JSON.stringify(sa.match.scores)})`);
+      for (const p of [a, b]) await until(p, () => !!document.querySelector('#game-root .gm-end:not([hidden])'), null, 25000, 'end card');
+      sa = await st(a); sb = await st(b);
+      assert(sa.result && sb.result && sa.result.winner === sb.result.winner && JSON.stringify(sa.match.scores) === JSON.stringify(sb.match.scores), `live: the same final on both phones (${sa.result.text})`);
+      await wait(1200);
+      const da = await hook(a, 'data'); const db = await hook(b, 'data');
+      assert(da.series_n === 1 && da.series_a + da.series_b + (da.series_d | 0) === 1, `The Series: the host wrote one match to the ledger (${da.series_a | 0}–${da.series_b | 0}, ${da.series_d | 0} drawn)`);
+      assert(db.series_n === da.series_n && db.series_a === da.series_a && db.series_b === da.series_b, 'The Series: the guest sees the same ledger, no second write');
+      assert(sa.match.scores.a + sa.match.scores.b >= 1, 'the match scored through pairs');
+      h.assertNoErrors();
+    } catch (e) { fails++; console.error(e.message); await shot(h.a, 'wildlive-fail').catch(() => {}); } finally { await h.close(); }
+  }
+
+  // ═══ split screen with the new defaults: a wildcard round, pairs, both views ═══
+  if (want('wildsplit')) {
+    const h = await launch({ port: PORT + 12, only: ['getaway'], who: ['a'], fine: true, device: 'Desktop Chrome' });
+    const { a } = h;
+    try {
+      await a.setViewportSize({ width: 1280, height: 800 });
+      await arm(a, { ...FAST, rounds: 2, intro: 1200, rules: { wildcards: 'on', score: 'pairs' }, tw: { 0: 'rain' } });
+      await h.startLive(a, 'getaway', 'local');
+      await ready(a);
+      await a.click('.g-gtw [data-l="lmode"][data-v="split"]');
+      await a.click('.g-gtw [data-l="start"]');
+      await phase(a, 'chase', 20000);
+      await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
+      await hook(a, 'endNow', 'busted', 'hp');
+      await until(a, () => window.__getaway.state().R.idx === 1, null, 15000, 'round 2');
+      await phase(a, 'chase', 20000);
+      let s = await st(a);
+      const chips = await a.evaluate(() => [...document.querySelectorAll('.g-gtw .gtw-twrow')].map((e) => e.textContent).filter(Boolean));
+      assert(s.R.tw === 'rain' && s.b.spikesLeft + s.a.spikesLeft === 6 && chips.length === 2 && chips.every((t) => /SPIKE RAIN/.test(t) && /Beat|Bust by/.test(t)), `split: both views show the SPIKE RAIN chip and the half-time target (${JSON.stringify(chips)})`);
+      await shot(a, 'wild-split');
+      await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
+      await hook(a, 'endNow', 'escaped', 'time');
+      await until(a, () => window.__getaway.state().phase === 'final', null, 15000, 'final');
+      s = await st(a);
+      assert(s.match.scores.a + s.match.scores.b === 1, `split: one pair, one point (${JSON.stringify(s.match.scores)})`);
+      const d = await hook(a, 'data');
+      assert(d.series_n === 1, 'split screen writes the series once per match');
+      h.assertNoErrors();
+    } catch (e) { fails++; console.error(e.message); await shot(h.a, 'wildsplit-fail').catch(() => {}); } finally { await h.close(); }
   }
 
   if (want('lossy')) {
@@ -1186,6 +1965,52 @@ async function hpAgree(pr, pc, rw, tol) {
     console.log('   screenshots in', SHOTS);
   }
 
+  // ═══ resultfit: the result card carrying the most news (a record, an unlock, the pair line, a twist) fits a short landscape phone without scrolling ═══
+  if (want('resultfit')) {
+    for (const [w, hh] of [[667, 375], [844, 390], [926, 428]]) {
+      const h = await launch({ port: PORT + 7, only: ['getaway'], who: ['a'], coarse: true });
+      const { a } = h;
+      try {
+        await a.setViewportSize({ width: w, height: hh });
+        await arm(a, { ...FAST, rounds: 4, intro: 1000, result: 120000, maxDpr: 0.6, heatT: 60, rules: { wildcards: 'on', score: 'pairs' }, tw: { 0: 'rain' } });
+        await h.startLive(a, 'getaway', 'local');
+        await ready(a);
+        await hook(a, 'setLocalMode', 'ai', 'runner');
+        await hook(a, 'drawHold', true);
+        await a.tap('.g-gtw [data-l="start"]');
+        await phase(a, 'chase', 25000);
+        await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
+        await wait(800);
+        await hook(a, 'endNow', 'escaped', 'time');
+        await phase(a, 'result', 10000);
+        await until(a, () => !!document.querySelector('.g-gtw .gtw-result'), null, 10000, 'the result card');
+        const worst = { lines: [{ t: 'Fastest getaway yet: 1:41 (was 1:58)', hot: true, rec: true }, { t: '3 rounds in a row', hot: true }], unlocks: [{ name: 'Racing stripe', kind: 'runner' }, { name: 'Highway patrol', kind: 'cop' }] };
+        const fit = () => a.evaluate(() => {
+          const c = document.querySelector('.g-gtw .gtw-result'); const o = c.closest('.gtw-over'); const r = c.getBoundingClientRect(); const R = o.getBoundingClientRect();
+          return { sh: c.scrollHeight, ch: c.clientHeight, top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height), vh: window.innerHeight, oscroll: o.scrollHeight - o.clientHeight, lines: c.querySelectorAll('.gtw-rec, .gtw-pair, .gtw-unlock').length, short: document.querySelector('.g-gtw').classList.contains('short'), txt: c.textContent.replace(/\s+/g, ' ').slice(0, 220) };
+        });
+        // (1) half time: a record, an unlock and the pair line all at once
+        await hook(a, 'showResult', worst);
+        let f = await fit();
+        assert(f.sh <= f.ch + 1 && f.oscroll <= 1 && f.top >= 0 && f.bottom <= f.vh, `${w}×${hh} half time: the card fits without scrolling (card ${f.h} px of ${f.vh}, scroll ${f.sh}/${f.ch}, ${f.lines} news lines)`);
+        if (f.short) assert(f.lines <= 3 && /HALF TIME/.test(f.txt) && /Fastest getaway/.test(f.txt) && /UNLOCKED/.test(f.txt) && !/3 rounds/.test(f.txt), `${w}×${hh}: short landscape keeps the three most important lines (half time, the NEW record, the unlock; not '3 rounds in a row'): "${f.txt}"`);
+        else assert(f.lines >= 4, `${w}×${hh}: a roomier phone still shows everything (${f.lines} lines)`);
+        await shot(a, `resultfit-${w}x${hh}-half`);
+        // (2) the pair decided, worth 2, an unlock and a record; no half time any more
+        await hook(a, 'showResult', { ...worst, pair: { done: true, winner: 'b', why: 'a getaway beats the clock', pts: 2 } });
+        f = await fit();
+        assert(f.sh <= f.ch + 1 && f.oscroll <= 1 && f.top >= 0 && f.bottom <= f.vh, `${w}×${hh} pair decided: fits without scrolling (card ${f.h} px of ${f.vh}, scroll ${f.sh}/${f.ch})`);
+        await shot(a, `resultfit-${w}x${hh}-pair`);
+        // (3) no pair line: the record and the unlock
+        await hook(a, 'showResult', { ...worst, pair: null });
+        f = await fit();
+        assert(f.sh <= f.ch + 1 && f.oscroll <= 1 && f.top >= 0 && f.bottom <= f.vh, `${w}×${hh} record + unlock: fits without scrolling (card ${f.h} px of ${f.vh})`);
+        if (f.short) assert(/Fastest getaway/.test(f.txt) && /UNLOCKED/.test(f.txt) && /3 rounds/.test(f.txt), `${w}×${hh}: without a pair line the record, the unlock and the streak all fit`);
+        h.assertNoErrors();
+      } catch (e) { fails++; console.error(e.message); await shot(h.a, `resultfit-${w}x${hh}-fail`).catch(() => {}); } finally { await h.close(); }
+    }
+  }
+
   // ═══ stall: one phone's main thread hitches for 1.2 s mid-chase next to the partner (ENGINE):
   // the partner car goes stale (a ghost: not solid, no bump, no damage) instead of a stale solid
   // picture that snaps 20–40 m when the stream resumes ═══
@@ -1403,6 +2228,27 @@ async function engineUnits() {
         spells.push(maxSpell);
       }
       assert(Math.max(...spells) < 4, `${id}: an Easy AI cop chasing through traffic never sits still for long (longest ${spells.map((q) => q.toFixed(1)).join(' / ')} s, 25 s from spawns 0 and 1)`); }
+    // SAFEHOUSE rounds (practice): an unseen AI runner with the cop far heads for the house and lingers in its 25 m circle (the game needs 2 s unseen
+    // inside it); an AI cop that has lost the runner sometimes camps the house. Without a house neither goes there.
+    { const sp = e.spawns[0]; let house = null;
+      for (const s of e.spawns) for (const q of [s.runner, s.cop]) { const d = Math.hypot(q.x - sp.runner.x, q.z - sp.runner.z); if (d > 250 && d < 700 && (!house || Math.abs(d - 450) < Math.abs(house.d - 450))) house = { x: q.x, z: q.z, d }; }
+      const trial = (role, seed, safe) => {
+        const rn = C.newCar('runner'); const cp = C.newCar('cop'); C.placeCar(rn, sp.runner.x, sp.runner.z, sp.runner.yaw, geo); C.placeCar(cp, sp.cop.x, sp.cop.z, sp.cop.yaw, geo);
+        if (role === 'runner') { cp.x = sp.runner.x - 500; cp.z = sp.runner.z - 500; } // (the cop parked far away)
+        const me = role === 'runner' ? rn : cp; const you = role === 'runner' ? cp : rn;
+        const drv = createDriver(geo, role, { seed, level: 'hard' }); let acc = 0; let minD = 1e9; let inT = 0;
+        for (let t = 0; t < 60; t += DT) {
+          acc += DT;
+          if (acc >= 1 / 30) { acc -= 1 / 30; drv.update(1 / 30, me, you, { los: false, traffic: null, tT: 600 + t, oilLeft: 0, spikesLeft: 0, viewer: { x: 1e6, z: 1e6 }, esc: 0, heat: 180, safe }); }
+          C.stepCar(me, drv.out, DT, geo, role === 'runner' ? CAR.runner : CAR.cop, role === 'runner' ? NITRO.normal : NITRO.cop); me.ev.length = 0;
+          const d = Math.hypot(me.x - house.x, me.z - house.z); minD = Math.min(minD, d); if (d < 25) inT += DT;
+        }
+        return { minD, inT };
+      };
+      const runs = [1, 2, 3].map((sd) => trial('runner', sd, house)); const base = [1, 2, 3].map((sd) => trial('runner', sd, null));
+      assert(house && runs.filter((r) => r.inT >= 2).length >= 2 && base.every((r) => r.minD > 25), `${id}: a Hard AI runner, unseen with the cop far, drives to the safehouse and stays ${runs.map((r) => r.inT.toFixed(0)).join('/')} s in its circle (without one it never goes: ${base.map((r) => r.minD.toFixed(0)).join('/')} m)`);
+      const cops = [1, 2, 3].map((sd) => trial('cop', sd, house)); const cbase = [1, 2, 3].map((sd) => trial('cop', sd, null));
+      assert(cops.some((r) => r.minD < 40) && cbase.every((r) => r.minD > 40), `${id}: a Hard AI cop that lost the runner sometimes camps the safehouse (closest ${cops.map((r) => r.minD.toFixed(0)).join('/')} m; without one ${cbase.map((r) => r.minD.toFixed(0)).join('/')} m)`); }
   }
   // wrecks: a knocked car slides into a building and stops at its wall (not through it)
   { const geo = createGeo({ id: 'w', bounds: { x0: -500, z0: -500, x1: 500, z1: 500 }, roads: [{ name: 'a', kind: 'street', width: 10, pts: [[-400, 0], [400, 0]] }], solids: [{ kind: 'building', x: 0, z: 20, w: 40, d: 10, h: 8 }] });

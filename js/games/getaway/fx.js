@@ -55,7 +55,9 @@ export function createFx(THREE, scene, P, U, mats) {
   puffs.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(NP * 3).fill(1), 3);
   puffs.frustumCulled = false; puffs.count = 0; puffs.renderOrder = 10;
   scene.add(puffs);
+  const fogU = scene.userData && scene.userData.fogU; // the world's shared fog distances (FOG twist scales them)
   if (scene.fog) { fogC.copy(scene.fog.color); puffMat.uniforms.uFogNear.value = scene.fog.near; puffMat.uniforms.uFogFar.value = scene.fog.far; }
+  if (fogU) { puffMat.uniforms.uFogNear = fogU.uFogNear; puffMat.uniforms.uFogFar = fogU.uFogFar; }
   const pp = new Float32Array(NP * 12); // x y z vx vy vz life max size grow r g  (+b in a side array)
   const pbC = new Float32Array(NP); const pE = new Uint8Array(NP); const pS = new Float32Array(NP);
   let np = 0;
@@ -128,6 +130,7 @@ export function createFx(THREE, scene, P, U, mats) {
     transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -6, fog: false,
   });
   if (scene.fog) { kMat.uniforms.uFogNear.value = scene.fog.near; kMat.uniforms.uFogFar.value = scene.fog.far; }
+  if (fogU) { kMat.uniforms.uFogNear = fogU.uFogNear; kMat.uniforms.uFogFar = fogU.uFogFar; }
   const skids = new THREE.Mesh(kGeo, kMat);
   skids.frustumCulled = false; skids.renderOrder = 3;
   scene.add(skids);
