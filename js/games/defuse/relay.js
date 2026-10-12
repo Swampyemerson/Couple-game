@@ -15,13 +15,15 @@
 //   live = { p: bitmask (bit i = relay i is ON), x: wrong commits, d: 1 once solved, h: 1 after a wrong commit
 //            until the next flip (a commit with nothing changed since is ignored) }
 //   actions: { t: 'flip', i } | { t: 'commit' }
-import { int, pick, sample, shuffle, esc, ctxOf } from './util.js';
+import { int, pick, sample, shuffle, esc, ctxOf, NUM } from './util.js';
 
 const COLS = ['red', 'blue', 'yellow', 'green', 'white', 'orange'];
 const LABELS = ['RDY', 'PWR', 'AUX', 'LNK', 'SYS', 'CLR', 'IGN', 'MSA'];
 const PORTS = ['DVI', 'PS2', 'RJ45', 'SERIAL'];
 const POS = { '0': 'the leftmost relay', '3': 'the rightmost relay', '0,3': 'the two outer relays (leftmost and rightmost)', '1,2': 'the two middle relays', '0,1': 'the left two relays', '2,3': 'the right two relays' };
 const cap = (s) => s[0].toUpperCase() + s.slice(1);
+/** "an RJ45", "an orange", "a DVI": the article as it is said aloud. */
+const an = (word) => `${/^(RJ|[AEIOU])/i.test(word) ? 'an' : 'a'} ${word}`;
 const bits = (a) => a.reduce((m, v, i) => m | (v ? 1 << i : 0), 0);
 
 function condTrue(w, S, E, K) {
@@ -59,17 +61,19 @@ function targetOf(S, E, R) {
 }
 
 const dot = (c) => `<i class="dx-relay-dot" style="--c: var(--dx-${c}, ${c === 'orange' ? '#f08a24' : c})"></i>`;
-const colList = (list) => list.split(',').map((c) => `${dot(c)}<b>${cap(c)}</b>`).join(' or ');
+const colList = (list) => list.split(',').map((c) => `${dot(c)}<b>${c}</b>`).join(' or ');
+/** "a red or blue cap", "an orange cap": the article follows the first colour named. */
+const capOf = (list) => `${an(list.split(',')[0]).split(' ')[0]} ${colList(list)} cap`;
 function condText(w) {
   const [k, v] = w.split(':');
   switch (k) {
     case 'lamp': return `the lamp is ${colList(v)}`;
-    case 'bat': return `the bomb has ${v} or more batteries`;
+    case 'bat': return `the bomb has ${NUM[+v]} or more batteries`;
     case 'serial-even': return 'the last digit of the serial is even';
     case 'serial-odd': return 'the last digit of the serial is odd';
     case 'vowel': return 'the serial has a vowel in it';
-    case 'lit': return `the ${v} lamp on the bomb is lit`;
-    case 'port': return `the bomb has a ${v} port`;
+    case 'lit': return `the ${v} indicator is lit`;
+    case 'port': return `the bomb has ${an(v)} port`;
     default: return '';
   }
 }
@@ -80,8 +84,8 @@ function selText(s) {
     case 'odd': return 'every relay with an <b>odd</b> number';
     case 'gt': return `every relay with a number <b>above ${v}</b>`;
     case 'lt': return `every relay with a number <b>below ${v}</b>`;
-    case 'col': return `every relay with a ${colList(v)} cap`;
-    case 'notcol': return `every relay that does <b>not</b> have a ${colList(v)} cap`;
+    case 'col': return `every relay with ${capOf(v)}`;
+    case 'notcol': return `every relay that does <b>not</b> have ${capOf(v)}`;
     case 'pos': return POS[v] || '';
     default: return '';
   }

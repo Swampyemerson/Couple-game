@@ -11,7 +11,7 @@
 //     | even | odd | vowel | novowel | lit:LABEL | unlit:LABEL | bat:0 | bat:N+ | port:P | noport:P | color:C | label:L
 //   wire actions:   nth:K (1 based) | first:C | last:C | end          button actions: tap | hold
 // Pure: no DOM at import time, no imports besides ./util.js, no randomness except the seeded r passed in.
-import { int, pick, shuffle, sample, cap, esc, cnt, ORD, NUM, swatch, ctxOf } from './util.js';
+import { int, pick, shuffle, sample, cap, esc, cnt, ORD, NUM, swatch, ctxOf, rngOf } from './util.js';
 
 const WIRE_COLORS = ['red', 'blue', 'yellow', 'white', 'black'];
 const BTN_COLORS = ['red', 'blue', 'yellow', 'white'];
@@ -22,6 +22,10 @@ const PORT_POOL = ['DVI', 'PS2', 'RJ45', 'SERIAL'];
 const HOLD_MS = 450;
 const ALL_TIERS = ['classic', 'chill', 'normal', 'spicy', 'wild'];
 const clone = (x) => JSON.parse(JSON.stringify(x));
+/** "an RJ45", "a DVI": the article for a port label as it is said aloud (only RJ45 starts with a vowel sound). */
+const an = (word) => `${/^(RJ|[AEIOU])/.test(word) ? 'an' : 'a'} ${word}`;
+/** "B", "B and C", "B, C and D" */
+const andList = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
 const lv = (T) => Math.max(1, Math.min(4, (T && T.level) | 0 || 1));
 
 // ── 30 original glyphs (24×24, stroked) ─────────────────────────────────────────
@@ -102,10 +106,10 @@ function atomText(a) {
     case 'odd': return 'the last digit of the serial number is odd';
     case 'vowel': return 'the serial number has a vowel';
     case 'novowel': return 'the serial number has no vowel';
-    case 'lit': return `there is a lit ${p[1]} indicator`;
-    case 'unlit': return `there is an unlit ${p[1]} indicator`;
+    case 'lit': return `the ${p[1]} indicator is lit`;
+    case 'unlit': return `the ${p[1]} indicator is unlit`;
     case 'bat': return p[1] === '0' ? 'the bomb has no batteries' : `the bomb has ${NUM[parseInt(p[1], 10)]} or more batteries`;
-    case 'port': return `the bomb has a ${p[1]} port`;
+    case 'port': return `the bomb has ${an(p[1])} port`;
     case 'noport': return `the bomb has no ${p[1]} port`;
     case 'color': return `the button is ${p[1]}`;
     case 'label': return `the button says ${p[1]}`;
@@ -133,6 +137,60 @@ const wireWord = (a) => (a.startsWith('nth:') ? ORD[+a.slice(4) - 1] : a.startsW
 
 /** A rule none can reach: an earlier rule's conditions are all among its conditions. */
 const shadowed = (rules, spec) => { const mine = spec.split(','); return rules.some((q) => q.c.split(',').every((a) => mine.includes(a))); };
+
+// ── semantic checks: run a rule list over fixed pseudo-random bombs ─────────────────────────
+// The syntactic check above only sees "this rule repeats an earlier rule's atoms". It cannot see that "serial is odd" after
+// "serial is even" leaves nothing for the rules below to do. So every seeded list is also run over SIM_N fixed bombs (the
+// same bombs for every call: a private generator, not the round's stream) and must pass two tests:
+//   reachable   each rule is the first to apply on at least MIN_FIRE of them (and so is the closing "Otherwise")
+//   not a no-op each rule changes the answer, compared with what the rules below it would have given, on >= MIN_CHANGE
+const SIM_N = 400;
+const MIN_FIRE = 5;
+const MIN_CHANGE = 3;
+let simEdge = null;
+function simEdges() {
+  if (simEdge) return simEdge;
+  const r = rngOf('defuse|classic|sim|edge');
+  simEdge = Array.from({ length: SIM_N }, () => {
+    const vowel = r() < 0.5;
+    const pool = shuffle(r, IND_POOL);
+    const E = { serial: `${vowel ? 'A' : 'B'}CDFG${int(r, 10)}`, batteries: int(r, 5), indicators: [0, 1].map((i) => ({ label: pool[i], lit: r() < 0.5 })), ports: sample(r, PORT_POOL, int(r, 4)) };
+    return { E, K: ctxOf(E) };
+  });
+  return simEdge;
+}
+const simCache = new Map();
+function simWires(n, pal) {
+  const key = `w|${n}|${pal.join()}`;
+  if (!simCache.has(key)) { const r = rngOf(`defuse|classic|sim|${key}`); simCache.set(key, simEdges().map(({ E, K }) => ({ w: Array.from({ length: n }, () => pick(r, pal)), K, E }))); }
+  return simCache.get(key);
+}
+function simButtons(colors, labels) {
+  const key = `b|${colors.join()}|${labels.join()}`;
+  if (!simCache.has(key)) { const r = rngOf(`defuse|classic|sim|${key}`); simCache.set(key, simEdges().map(({ E, K }) => ({ w: null, b: { color: pick(r, colors), label: pick(r, labels) }, K, E }))); }
+  return simCache.get(key);
+}
+/** For each rule: how often it is the first to apply (fire) and how often it gives another answer than the next rule that applies (change). */
+function audit(list, xs, ans) {
+  const m = list.length;
+  const fire = new Array(m).fill(0);
+  const change = new Array(m).fill(0);
+  for (const x of xs) {
+    const i = list.findIndex((q) => holds(q.c, x));
+    if (i < 0) continue;
+    fire[i]++;
+    const j = list.findIndex((q, k) => k > i && holds(q.c, x));
+    if (j >= 0 && ans(list[i].a, x) !== ans(list[j].a, x)) change[i]++;
+  }
+  return { fire, change };
+}
+/** How many rules of a finished list never fire (or the final one never does) or change nothing. */
+function listFaults(list, xs, ans) {
+  const { fire, change } = audit(list, xs, ans);
+  return list.reduce((n, _, i) => n + (fire[i] < MIN_FIRE || (i < list.length - 1 && change[i] < MIN_CHANGE) ? 1 : 0), 0);
+}
+/** Would this candidate (appended to the rules so far) be the first to apply often enough? */
+const reachable = (list, c, xs) => audit([...list, { c: c.c, a: c.a || 'tap' }], xs, () => 0).fire[list.length] >= MIN_FIRE;
 
 /** Draw one edgework atom. skip = kinds already used in this condition. Level 1 never reads indicators or ports. */
 function edgeAtom(r, L, skip = []) {
@@ -194,19 +252,47 @@ function wireCond(r, L, pal) {
   const e = edgeAtom(r, L).s;
   return r() < 0.5 ? { s: `${w.s},${e}`, g: w.g } : { s: `${e},${w.s}`, g: w.g };
 }
-function genWireList(r, n, L, pal) {
+/** Which wire (0 based) a cut action points at on these colours. */
+function wireOf(act, w) {
+  const a = act.split(':');
+  const wire = a[0] === 'nth' ? +a[1] - 1 : a[0] === 'first' ? w.indexOf(a[1]) : a[0] === 'last' ? w.lastIndexOf(a[1]) : w.length - 1;
+  return wire < 0 || wire >= w.length ? w.length - 1 : wire;
+}
+/** A cut: mostly a position, chosen evenly over the wires; sometimes a colour that the condition guarantees is there. */
+function wireAction(r, n, g, pColor) {
+  if (g.length && r() < pColor) return `${r() < 0.5 ? 'first' : 'last'}:${pick(r, g)}`;
+  const k = 1 + int(r, n);
+  return k === n && r() < 0.5 ? 'end' : `nth:${k}`; // "the last wire" and "the fifth wire" are the same cut on a five-wire bomb
+}
+function drawWireList(r, n, L, pal, xs) {
   const nCond = L === 1 ? 2 + (r() < 0.4 ? 1 : 0) : L === 2 ? 3 : L === 3 ? 3 + (r() < 0.5 ? 1 : 0) : 4;
   const list = [];
   const seen = new Set();
-  for (let guard = 0; list.length < nCond && guard < 80; guard++) {
+  for (let guard = 0; list.length < nCond && guard < 120; guard++) {
     const c = wireCond(r, L, pal);
     if (seen.has(c.s) || shadowed(list, c.s)) continue;
     seen.add(c.s);
-    const a = c.g.length && r() < 0.5 ? `${r() < 0.5 ? 'first' : 'last'}:${pick(r, c.g)}` : r() < 0.15 ? 'end' : `nth:${1 + int(r, n)}`;
+    const a = wireAction(r, n, c.g, 0.4);
+    if (!reachable(list, { c: c.s, a }, xs)) continue; // an earlier rule already takes (nearly) every bomb this one would
     list.push({ c: c.s, a });
   }
-  list.push({ c: 'true', a: r() < 0.3 ? 'end' : `nth:${1 + int(r, n)}` });
-  return list.map((x, i) => ({ ...x, t: ruleText(i, i === list.length - 1, x.c, wireActText(x.a)) }));
+  return list;
+}
+function genWireList(r, n, L, pal) {
+  const xs = simWires(n, pal);
+  const ans = (a, x) => wireOf(a, x.w);
+  let best = null;
+  let bestFaults = 1e9;
+  for (let attempt = 0; attempt < 24 && bestFaults > 0; attempt++) {
+    const head = drawWireList(r, n, L, pal, xs);
+    for (let t = 0; t < 6; t++) {
+      const list = [...head, { c: 'true', a: wireAction(r, n, [], 0) }];
+      const faults = listFaults(list, xs, ans);
+      if (faults < bestFaults) { best = list; bestFaults = faults; }
+      if (!faults) break;
+    }
+  }
+  return best.map((x, i) => ({ ...x, t: ruleText(i, i === best.length - 1, x.c, wireActText(x.a)) }));
 }
 function solveWires(S, E, R) {
   const K = ctxOf(E);
@@ -215,10 +301,7 @@ function solveWires(S, E, R) {
   const x = { w, K, E };
   let rule = list.findIndex((q) => holds(q.c, x));
   if (rule < 0) rule = list.length - 1;
-  const a = list[rule].a.split(':');
-  let wire = a[0] === 'nth' ? +a[1] - 1 : a[0] === 'first' ? w.indexOf(a[1]) : a[0] === 'last' ? w.lastIndexOf(a[1]) : w.length - 1;
-  if (wire < 0 || wire >= w.length) wire = w.length - 1;
-  return { wire, rule };
+  return { wire: wireOf(list[rule].a, w), rule };
 }
 /** Wires are 40 units apart with a hit box that runs halfway to each neighbour, so every wire is a 44 px target on a phone. */
 const WIRE_GAP = 40;
@@ -356,25 +439,40 @@ function genButtonRules(r, T) {
   const nCond = L === 1 ? 3 : L === 2 ? 4 : L === 3 ? 4 + (r() < 0.5 ? 1 : 0) : 5;
   const kinds = ['color', 'color', 'color', 'label', 'label', 'label', 'edge', 'edge'];
   if (L >= 2) kinds.push('cl', 'ce', 'le');
-  const rules = [];
-  const seen = new Set();
-  for (let guard = 0; rules.length < nCond && guard < 100; guard++) {
-    const k = pick(r, kinds);
-    const parts = [];
-    let label = null;
-    if (k === 'color' || k === 'cl' || k === 'ce') parts.push(`color:${pick(r, colors)}`);
-    if (k === 'label' || k === 'cl' || k === 'le') { label = pick(r, labels); parts.push(`label:${label}`); }
-    if (k === 'edge' || k === 'ce' || k === 'le') parts.push(edgeAtom(r, L).s);
-    const c = parts.join(',');
-    if (seen.has(c) || shadowed(rules, c)) continue;
-    seen.add(c);
-    // HOLD and PRESS are red herrings: the word says one thing, the rule does the opposite
-    const a = label === 'HOLD' ? 'tap' : label === 'PRESS' ? 'hold' : r() < 0.5 ? 'tap' : 'hold';
-    rules.push({ c, a });
+  // The words HOLD and PRESS on the button are red herrings. For each word this bomb's manual either says what it
+  // means (literal) or the opposite (inverted, the usual case), so nobody can learn "HOLD means tap" once and for all.
+  const inverted = { HOLD: r() < 0.7, PRESS: r() < 0.7 };
+  const herring = { HOLD: inverted.HOLD ? 'tap' : 'hold', PRESS: inverted.PRESS ? 'hold' : 'tap' };
+  const xs = simButtons(colors, labels);
+  const ans = (a) => a;
+  let best = null;
+  let bestFaults = 1e9;
+  for (let attempt = 0; attempt < 30 && bestFaults > 0; attempt++) {
+    const rules = [];
+    const seen = new Set();
+    for (let guard = 0; rules.length < nCond && guard < 120; guard++) {
+      const k = pick(r, kinds);
+      const parts = [];
+      let label = null;
+      if (k === 'color' || k === 'cl' || k === 'ce') parts.push(`color:${pick(r, colors)}`);
+      if (k === 'label' || k === 'cl' || k === 'le') { label = pick(r, labels); parts.push(`label:${label}`); }
+      if (k === 'edge' || k === 'ce' || k === 'le') parts.push(edgeAtom(r, L).s);
+      const c = parts.join(',');
+      if (seen.has(c) || shadowed(rules, c)) continue;
+      seen.add(c);
+      const a = herring[label] || (r() < 0.5 ? 'tap' : 'hold');
+      if (!reachable(rules, { c, a }, xs)) continue;
+      rules.push({ c, a });
+    }
+    for (let t = 0; t < 4; t++) {
+      const list = [...rules, { c: 'true', a: r() < 0.5 ? 'tap' : 'hold' }];
+      if (list.every((q) => q.a === list[0].a)) { const f = list[list.length - 1]; f.a = f.a === 'tap' ? 'hold' : 'tap'; } // both answers must occur; the closing rule names no label, so the herrings stay intact
+      const faults = listFaults(list, xs, ans);
+      if (faults < bestFaults) { best = list; bestFaults = faults; }
+      if (!faults) break;
+    }
   }
-  rules.push({ c: 'true', a: r() < 0.5 ? 'tap' : 'hold' });
-  if (rules.every((q) => q.a === rules[0].a)) { const f = rules[rules.length - 1]; f.a = f.a === 'tap' ? 'hold' : 'tap'; } // the final rule has no label, so the HOLD/PRESS herrings stay intact
-  return { colors, labels, rules: btnRuleTexts(rules) };
+  return { colors, labels, rules: btnRuleTexts(best) };
 }
 function solveButton(S, E, R) {
   const x = { w: null, b: S, K: ctxOf(E), E };
@@ -575,7 +673,7 @@ export const KEYPAD = {
   page(R) {
     const ups = R.names.split('').filter((_, i) => R.up[i]);
     const dir = ups.length
-      ? ` Read column${ups.length > 1 ? 's' : ''} ${ups.join(' and ')} the other way, from <b>bottom to top</b>; the arrow marks ${ups.length > 1 ? 'them' : 'it'}. All other columns read from top to bottom.`
+      ? ` Read column${ups.length > 1 ? 's' : ''} ${andList(ups)} the other way, from <b>bottom to top</b>; the arrow marks ${ups.length > 1 ? 'them' : 'it'}. All other columns read from top to bottom.`
       : '';
     const arrow = '<svg class="dx-kp-arr" viewBox="0 0 10 12" aria-label="read from the bottom up" role="img"><path d="M5 11V2M1.5 5.5L5 2l3.5 3.5"/></svg>';
     return `<p class="dx-intro">The keypad has four keys, each marked with a symbol. Exactly one column below holds all four. Press the keys in the order they appear in that column, ${ups.length ? 'normally ' : ''}from top to bottom.${dir}</p>
@@ -661,13 +759,13 @@ function genMaps(r) {
 const seqSentence = (cond) => {
   const p = cond.split(':');
   return p[0] === 'vowel' ? 'the serial number contains a vowel (A, E, I, O or U)' : p[0] === 'even' ? 'the last digit of the serial number is even'
-    : p[0] === 'lit' ? `there is a lit ${p[1]} indicator` : atomText(cond);
+    : atomText(cond);
 };
 const seqTitles = (cond) => {
   const p = cond.split(':');
   if (p[0] === 'vowel') return ['Serial has a vowel', 'No vowel in the serial'];
   if (p[0] === 'even') return ['Last digit of the serial is even', 'Last digit of the serial is odd'];
-  if (p[0] === 'lit') return [`A lit ${p[1]} indicator`, `No lit ${p[1]} indicator`];
+  if (p[0] === 'lit') return [`The ${p[1]} indicator is lit`, `The ${p[1]} indicator is not lit, or is not on the bomb`];
   const n = parseInt(p[1], 10);
   return [`${cap(NUM[n])} or more batteries`, `Fewer than ${NUM[n]} batteries`];
 };

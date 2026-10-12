@@ -15,13 +15,15 @@
 //   save() -> { i, e, on, c }  i = index of the NEXT activation to wake (the current one, when on, is i - 1),
 //                              e = elapsed ms (frozen while busy), on = 1 while awake, c = ms left on its countdown
 //   drive(S, E, R, live): pass the controller's save() as `live`; while awake it returns the right key.
-import { int, pick, sample, shuffle, esc, ctxOf } from './util.js';
+import { int, pick, sample, shuffle, esc, ctxOf, NUM } from './util.js';
 
 const POOL = ['VENT GAS', 'DUMP CORE', 'SEAL HATCH', 'COOL LOOP', 'FLUSH LINE', 'BOOST FAN'];
 const LABELS = ['RDY', 'PWR', 'AUX', 'LNK', 'SYS', 'CLR', 'IGN', 'MSA'];
 const PORTS = ['DVI', 'PS2', 'RJ45', 'SERIAL'];
 const READ_KINDS = ['gt', 'lt', 'even', 'odd', 'mul3', 'tens', 'dsum'];
 const ACTS = 12;
+/** "an RJ45", "a DVI": the article for a port label as it is said aloud. */
+const an = (word) => `${/^(RJ|[AEIOU])/.test(word) ? 'an' : 'a'} ${word}`;
 
 function readTest(c, n) {
   const [k, v] = c.split(':');
@@ -72,13 +74,13 @@ function readText(c) {
 function edgeText(c) {
   const [k, v] = c.split(':');
   switch (k) {
-    case 'lit': return `the ${v} lamp is lit`;
-    case 'unlit': return `the bomb has a dark ${v} lamp`;
-    case 'bat': return `the bomb has ${v} or more batteries`;
+    case 'lit': return `the ${v} indicator is lit`;
+    case 'unlit': return `the ${v} indicator is unlit`;
+    case 'bat': return `the bomb has ${NUM[+v]} or more batteries`;
     case 'serial-even': return 'the last digit of the serial is even';
     case 'serial-odd': return 'the last digit of the serial is odd';
     case 'vowel': return 'the serial has a vowel in it';
-    case 'port': return `there is a ${v} port`;
+    case 'port': return `the bomb has ${an(v)} port`;
     default: return '';
   }
 }

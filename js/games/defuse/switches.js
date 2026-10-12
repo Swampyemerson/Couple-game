@@ -12,7 +12,7 @@
 // Conditions are codes: vowel, novowel, even, odd, batmore (more batteries than lit LEDs), bat0, bat2,
 // lit:XYZ (indicator lit), port:RJ45, led:red (a lit LED of that colour), up:3 / dn:3 (switch 3 is up /
 // down at this point of the chain).
-import { ctxOf, int, sample, swatch } from './util.js';
+import { ctxOf, int, sample, swatch, NUM } from './util.js';
 
 const N = 5;
 const COLS = ['red', 'blue', 'yellow', 'green'];
@@ -20,6 +20,8 @@ const CAPS = ['orange', 'purple', 'white', 'black', 'teal'];
 const INDS = ['RDY', 'PWR', 'AUX', 'LNK', 'SYS', 'CLR', 'IGN', 'MSA'];
 const PORTS = ['DVI', 'PS2', 'RJ45', 'SERIAL'];
 
+/** "an RJ45", "a DVI": the article for a port label as it is said aloud. */
+const an = (word) => `${/^(RJ|[AEIOU])/.test(word) ? 'an' : 'a'} ${word}`;
 const lvOf = (T) => Math.max(1, Math.min(4, ((T && T.level) | 0) || 1));
 
 /** Does condition c hold? s = the row right now, leds = this bomb's LEDs. */
@@ -51,9 +53,9 @@ function condText(c) {
     case 'odd': return 'the last digit of the serial number is odd';
     case 'batmore': return 'there are more batteries than lit LEDs';
     case 'bat0': return 'there are no batteries';
-    case 'bat2': return 'there are 2 or more batteries';
-    case 'lit': return `the indicator ${v} is lit`;
-    case 'port': return `there is a ${v} port`;
+    case 'bat2': return `there are ${NUM[2]} or more batteries`;
+    case 'lit': return `the ${v} indicator is lit`;
+    case 'port': return `the bomb has ${an(v)} port`;
     case 'led': return `a ${v} LED is lit`;
     case 'up': return `switch ${v} is up right now`;
     case 'dn': return `switch ${v} is down right now`;
@@ -78,9 +80,12 @@ function kind(r, lv) {
   const x = r();
   return x < 0.55 ? 'f' : x < 0.78 ? 'u' : 'd';
 }
+/** k operations on k different switches, listed from the lowest switch up ("Flip 3 and 5", never "Flip 5 and 3"). Operations on different switches do not interact, so the order is only for reading. */
 function opsFor(r, lv, k) {
-  return sample(r, [1, 2, 3, 4, 5], k).map((n) => kind(r, lv) + n);
+  return sample(r, [1, 2, 3, 4, 5], k).sort((a, b) => a - b).map((n) => kind(r, lv) + n);
 }
+/** What a list of operations does, whatever order it is written in: the colour rows of a table must all differ in this. */
+const effectOf = (ops) => ops.slice().sort().join(' ');
 
 /** The row the bomb needs. */
 function target(S, E, R) {
@@ -172,13 +177,18 @@ export const SWITCHES = {
     const cols = sample(r, COLS, lv === 1 ? 3 : 4);
     const leds = lv === 1 ? 2 : 3;
     // LED table: each colour touches two different switches; the first switches are all different
-    const firsts = sample(r, [0, 1, 2, 3, 4], cols.length);
-    const map = {};
-    cols.forEach((c, i) => {
-      let b = int(r, N);
-      while (b === firsts[i]) b = int(r, N);
-      map[c] = [firsts[i], b].map((k) => kind(r, lv) + (k + 1));
-    });
+    // and no two colours may end up doing the same thing (it would look like a misprint): draw again until all differ
+    let map = {};
+    for (let tries = 0; tries < 200; tries++) {
+      const firsts = sample(r, [0, 1, 2, 3, 4], cols.length);
+      map = {};
+      cols.forEach((c, i) => {
+        let b = int(r, N);
+        while (b === firsts[i]) b = int(r, N);
+        map[c] = [firsts[i], b].sort((x, y) => x - y).map((k) => kind(r, lv) + (k + 1));
+      });
+      if (new Set(cols.map((c) => effectOf(map[c]))).size === cols.length) break;
+    }
     // conditions drawn from distinct families
     const fams = [['vowel', 'novowel'], ['even', 'odd'], ['batmore', 'bat0', 'bat2'], INDS.map((l) => 'lit:' + l)];
     if (lv >= 2) fams.push(PORTS.map((p) => 'port:' + p), cols.map((c) => 'led:' + c));
@@ -214,12 +224,12 @@ export const SWITCHES = {
   errata(r, R, T) {
     const lv = lvOf(T);
     const c = R.cols[int(r, R.cols.length)];
-    const others = R.cols.filter((x) => x !== c).map((x) => R.map[x].join(' '));
+    const others = R.cols.filter((x) => x !== c).map((x) => effectOf(R.map[x]));
     let ops;
     let R2;
     for (let tries = 0; tries < 40; tries++) {
       ops = opsFor(r, lv, 2);
-      if (ops.join(' ') === R.map[c].join(' ') || others.includes(ops.join(' '))) continue;
+      if (effectOf(ops) === effectOf(R.map[c]) || others.includes(effectOf(ops))) continue;
       R2 = { ...R, map: { ...R.map, [c]: ops } };
       if (everyEdgeworkSolvable(R2)) break;
       R2 = null;
