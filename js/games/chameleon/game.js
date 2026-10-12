@@ -4343,6 +4343,8 @@ export function createGame(el, api) {
       L.clear();
       cleanup.forEach((f) => { try { f(); } catch { /* ignore */ } });
       if (controls) controls.destroy();
+      if (hud.setPaletteLock) hud.setPaletteLock(null); // update pass: the Three colours lock lives in the HUD closure
+      clearMoodNow(); // (a parked stage must not keep a Fog / Dusk mood)
       hud.destroy();
       link.destroy();
       snd.destroy();
