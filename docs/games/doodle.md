@@ -43,7 +43,7 @@ Cards show what they pay. The card pool is the 282 v1 prompts (same indices) fol
 | Mode | Rules |
 |---|---|
 | `classic` | Pick 1 of 3 cards, Stakes points. |
-| `halfhalf` Half & Half | The guesser first sees the first part of the drawing (the first stroke at which the cumulative drawing time reaches half of the total, at least one stroke; `halfSplit`). One early call `{ guess, early: true }` pays tier points + 2 (Easy 4, Medium 5, Tricky 7). `{ rest: true }` ("Show me the rest") plays the remainder, then exactly two guesses paying the 2nd / 3rd values. A wrong early call also continues with the rest and two more guesses. A plain guess first counts as skipping the early call. |
+| `halfhalf` Half & Half | The guesser first sees the first part of the drawing (the first stroke at which the cumulative drawing time reaches half of the total, at least one and never the whole drawing; a one-stroke drawing shows the first part of its points instead; `halfPlan` / `halfSplit`). One early call `{ guess, early: true }` pays tier points + 2 (Easy 4, Medium 5, Tricky 7). `{ rest: true }` ("Show me the rest") plays the remainder, then exactly two guesses paying the 2nd / 3rd values. A wrong early call also continues with the rest and two more guesses. A plain guess first counts as skipping the early call. After tapping "I know it!" there is a "Never mind, show me the rest" way back. |
 | `ladder` Ladder | No choice. Tier = the rung: starts at Easy, a hit climbs one (max Tricky), a miss (or time-up, or give up) drops one, never below Easy. `prompt` must equal the rung. |
 | `invisible` Invisible Ink | Each stroke fades on the drawer's canvas about 600 ms after it ends (view only). 60 s timer. +1 on any hit. The guesser sees the full replay. |
 | `mixed` Mixed Bag | A seeded twist per round from normal, halfhalf, invisible, sprint (35 s, +1 on a hit), oneline (exactly one stroke, +1 on a hit). Shown to both players. |
@@ -62,8 +62,7 @@ twists and a golden round): 85 % Mind readers, 68 % Gallery-worthy, 50 % Fridge-
 anything Modern art, probably, 0 Pure mystery. `endDelay` is `'manual'`: the last reveal stays on screen
 until the player taps "See the gallery" (or about 4 s) and then `api.showEnd()` shows the end card.
 
-**Matcher (`guessMatchesV2`)**: v1's rules plus: a typo is never forgiven when the guess is itself an exact
-word of another card in the whole pool, and a side alternate that is another card's own name does not count
+**Matcher (`guessMatchesV2`)**: an alternate listed for a card always matches as written. v1's plural / singular and typo rules apply on top, except: a typo is never forgiven when the guess is itself a word (any form) of another card in the whole pool, and a plural/singular variant does not match when it is another card's own name
 (horse for house, clown for crown, trainer for train, car for playing cards, toaster for burnt toast,
 butterfly for butterflies in your stomach). Exact matches are unchanged. `nearMiss` drives the "So close!"
 label on wrong guesses (one edit away, or a whole word of a multi-word answer); it never scores and never

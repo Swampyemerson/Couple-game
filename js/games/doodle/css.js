@@ -167,6 +167,7 @@ export const CSS = `
     .g-doodle .dd-scr.land .dd-picks { flex-direction: row; }
     .g-doodle .dd-scr.land .dd-head .dd-sub, .g-doodle .dd-scr.land .dd-picks ~ .dd-note { display: none; }
     .g-doodle .dd-scr.land .dd-head .dd-h { font-size: 1.15rem; margin: 0; }
+    .g-doodle .dd-scr.land .dd-pickhead .dd-h { display: none; }
     .g-doodle .dd-scr.land .dd-pick { flex-direction: column; align-items: flex-start; min-height: 84px; padding: 8px 10px; gap: 6px; flex: 1; min-width: 0; }
     .g-doodle .dd-scr.land .dd-modes { grid-template-columns: repeat(3, 1fr); }
     .g-doodle .dd-scr.land .dd-mode:last-child { grid-column: auto; }

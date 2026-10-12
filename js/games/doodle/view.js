@@ -235,8 +235,9 @@ export function mountDoodle(el, api, K) {
     box.querySelectorAll('.dd-stamp').forEach((st) => { st.style.fontSize = `${Math.round(Math.max(11, Math.min(36, (size * 0.86 - 22) / (st.textContent.trim().length * 0.95 + 0.8))))}px`; });
   }
   function fitPaper(s) {
-    if (!s || !s.p) return;
+    if (!s) return;
     applyLand(s);
+    if (!s.p) return;
     const w = scroller.clientWidth - 8;
     let size;
     if (s.el.classList.contains('land')) {
@@ -334,7 +335,7 @@ export function mountDoodle(el, api, K) {
     const secs = secsFor(s, R);
     const cards = (ladder ? [R.tier] : [0, 1, 2]).map((i) => ({ i, pi: R.choices[i] }));
     const rung = ladder ? `<div class="dd-rungs" aria-label="Rung ${R.tier + 1} of 3">${[0, 1, 2].map((i) => `<i class="${i < R.tier ? 'done' : i === R.tier ? 'now' : ''}">${TIER_NAMES[i]}</i>`).join('')}</div>` : '';
-    node.innerHTML = `<div class="dd-head">${top(s)}${twistBanner(s, R)}
+    node.innerHTML = `<div class="dd-head dd-pickhead">${top(s)}${twistBanner(s, R)}
         <h2 class="dd-h">${ladder ? 'Your card on the ladder' : 'Pick something to draw'}</h2>
         <p class="dd-sub">${nm(guesser)} has to guess it. You get ${secs} seconds.</p>${rung}</div>
       <div class="dd-picks">${cards.map(({ i, pi }) => `<button class="dd-pick" data-i="${i}">
