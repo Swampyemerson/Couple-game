@@ -9,6 +9,12 @@
 //   a_lastditch_n b_lastditch_n  cracks on the 6th and last guess
 //   a_held_n b_held_n            their word held out (the partner never cracked it)
 //   recent_m                     the last 60 recorded match ids, comma-joined (record once per match)
+//   last_w                       who won the last recorded duel: 'a' | 'b' | 'd' (a draw)
+//   a_revenge_n b_revenge_n      wins right after losing the previous duel
+//   a_snap_n b_snap_n            wins that ended the partner's streak of 3 or more
+//   snapm                        '<matchId>:<length>' of the last match that snapped a streak
+//   revm                         match id of the last revenge win
+//   a_used b_used                each player's last 40 secret words as 'word:n' (n = guesses it took, 7 = held out)
 //   lastm                        match id of the last recorded match
 //   pbm                          match id of the last match that beat a personal best
 //   last_setup                   the rules card's last choice, 'pool:hard:dealt:bo3'
@@ -30,6 +36,11 @@ export function cracked(r, p) {
 }
 
 export const RECENT = 60;
+export const USED = 40;
+/** A player's secret-word history as [{ w, n }], oldest first. */
+export function usedOf(data, who) {
+  return String(data[`${who}_used`] || '').split(',').filter(Boolean).map((x) => { const [w, n] = x.split(':'); return { w, n: Number(n) || 7 }; });
+}
 export const recentOf = (data) => String(data.recent_m || '').split(',').filter(Boolean);
 
 /** The patch that records one finished match, or null when it must not be counted.
@@ -53,8 +64,13 @@ export function recordMatch(data, s, matchId, seen = true) {
     p[`${w}_streak`] = st;
     p[`${w}_streak_best`] = Math.max(num(data[`${w}_streak_best`]), st);
     p[`${other(w)}_streak`] = 0;
+    // derived from the snapshot BEFORE this patch
+    if (data.last_w === other(w)) { inc(`${w}_revenge_n`); p.revm = matchId; }
+    const broke = num(data[`${other(w)}_streak`]);
+    if (broke >= 3) { inc(`${w}_snap_n`); p.snapm = `${matchId}:${broke}`; }
     if (bo3 && rounds.length && rounds[0].w === other(w)) inc('comeback_n');
   } else inc('draws_n');
+  p.last_w = w === 'a' || w === 'b' ? w : 'd';
   let pb = false;
   for (const r of rounds) {
     for (const q of ['a', 'b']) {
@@ -68,6 +84,10 @@ export function recordMatch(data, s, matchId, seen = true) {
     }
   }
   if (pb) p.pbm = matchId;
+  for (const q of ['a', 'b']) {
+    const add = rounds.map((r) => `${r.sec[q]}:${cracked(r, other(q)) ?? 7}`).filter((x) => !x.startsWith('null:'));
+    p[`${q}_used`] = [...String(data[`${q}_used`] || '').split(',').filter(Boolean), ...add].slice(-USED).join(',');
+  }
   return p;
 }
 
@@ -79,6 +99,17 @@ export function stampsFor(s, data, matchId, name) {
   const recorded = recentOf(data).includes(matchId);
   if (rounds.some((r) => r.sec.a && r.sec.a === r.sec.b)) out.push({ label: 'Great minds', who: 'hl' });
   if (recorded && data.pbm === matchId) out.push({ label: 'New record', who: 'hl' });
+  const winner = result(s).winner;
+  if (recorded && (winner === 'a' || winner === 'b')) {
+    if (data.revm === matchId) out.push({ label: 'Revenge', who: winner });
+    if (String(data.snapm || '').startsWith(`${matchId}:`)) out.push({ label: 'Streak snapped', who: winner });
+  }
+  {
+    // a secret this match that either player had used before it
+    const before = (q) => { const h = usedOf(data, q).map((x) => x.w); return recorded ? h.slice(0, Math.max(0, h.length - rounds.length)) : h; };
+    const seenBefore = new Set([...before('a'), ...before('b')]);
+    if (rounds.some((r) => seenBefore.has(r.sec.a) || seenBefore.has(r.sec.b))) out.push({ label: 'Déjà vu', who: 'hl' });
+  }
   const res = result(s);
   if (recorded && (res.winner === 'a' || res.winner === 'b')) {
     const st = num(data[`${res.winner}_streak`]);
@@ -97,16 +128,19 @@ export function stampsFor(s, data, matchId, name) {
   return out.slice(0, 5); // rarest first, so the common ones are what gets cut
 }
 
-/** "E 12 – 9 S · Sydney ×3 streak", or '' before the first recorded duel. */
+/** "E 12 – 9 S · Sydney ×3 streak", or '' before the first recorded duel. `context` is one more
+ *  sentence: what is on the line right now. */
 export function ledgerOf(data, name) {
   const a = num(data.a_wins_n);
   const b = num(data.b_wins_n);
   const d = num(data.draws_n);
-  if (a + b + d === 0) return { text: '', parts: null };
+  if (a + b + d === 0) return { text: '', context: '', parts: null };
   const ini = (w) => String(name(w) || w).trim().charAt(0).toUpperCase();
   let streak = '';
-  for (const w of ['a', 'b']) if (num(data[`${w}_streak`]) >= 2) streak = `${name(w)} ×${data[`${w}_streak`]} streak`;
-  return { text: `${ini('a')} ${a} – ${b} ${ini('b')}${streak ? ` · ${streak}` : ''}`, parts: { a, b, d, streak } };
+  let hot = null;
+  for (const w of ['a', 'b']) if (num(data[`${w}_streak`]) >= 2) { streak = `${name(w)} ×${data[`${w}_streak`]} streak`; hot = w; }
+  const context = hot ? `${name(hot)}’s ×${data[`${hot}_streak`]} streak is on the line.` : a === b ? `All square at ${a}–${b}.` : `${name(a > b ? 'a' : 'b')} leads by ${Math.abs(a - b)}.`;
+  return { text: `${ini('a')} ${a} – ${b} ${ini('b')}${streak ? ` · ${streak}` : ''}`, context, parts: { a, b, d, streak } };
 }
 
 /** The rules card's last choice as a compact string, and back. */

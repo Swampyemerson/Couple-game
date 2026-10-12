@@ -14,7 +14,7 @@ import {
   MAX, other, lists, scoreGuess, target, solvedBy, doneBy, tally, init, next, apply, result, score,
   heatOf, roundView, roundResult, DEFAULT_SETUP,
 } from './wordduel/rules.js';
-import { recordMatch, stampsFor, ledgerOf, setupToString, setupFromString } from './wordduel/records.js';
+import { recordMatch, stampsFor, ledgerOf, setupToString, setupFromString, usedOf, recentOf } from './wordduel/records.js';
 
 const norm = (x) => (typeof x === 'string' ? x.trim().toLowerCase() : '');
 const esc = (x) => String(x ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
@@ -202,6 +202,21 @@ registerGame({
     const scoreboardHTML = (s) => (s.v === 2 && s.opts.bo3 && s.rounds.length && !s.fin
       ? `<div class="g-wd-score"><div class="g-wd-score-n"><small class="p-a">${nm('a')}</small><span class="p-a">${s.wins.a}</span><span class="g-wd-dash">–</span><span class="p-b">${s.wins.b}</span><small class="p-b">${nm('b')}</small></div><small>${roundLine(s)}</small></div>` : '');
     const ledgerText = () => ledgerOf(data(), (w) => api.name(w)).text;
+    const ledgerLine = () => { const l = ledgerOf(data(), (w) => api.name(w)); return l.text ? `<span>${esc(l.text)}</span><span class="g-wd-ledgerline">${esc(l.context)}</span>` : ''; };
+    // "Déjà vu": a hint under the typed secret when it has been used before (v2 only, only the picker sees it)
+    function hintText(c) {
+      const s = c.state;
+      if (!c.viewer || s.v !== 2 || modeOf(c) !== 'pick' || draft.length !== 5) return '';
+      const d = data();
+      const v = c.viewer;
+      const p = other(v);
+      const mine = usedOf(d, v).filter((x) => x.w === draft);
+      if (mine.length) { const x = mine[mine.length - 1]; return `You picked ${up(draft)} before. ${nm(p)} ${x.n >= 7 ? 'never cracked it' : `cracked it in ${x.n}`}.`; }
+      const theirs = usedOf(d, p).filter((x) => x.w === draft);
+      if (theirs.length) return `${nm(p)} used ${up(draft)} on you ${theirs.length === 1 ? 'once' : `${theirs.length} times`}. Bold.`;
+      return '';
+    }
+    function paintHint() { const h = area.querySelector('.g-wd-hint'); if (h && ctx) h.innerHTML = hintText(ctx); }
 
     // keyboard: built once, then only classes and disabled flags change (keeps taps from dropping)
     const keyEls = {};
@@ -237,17 +252,22 @@ registerGame({
 
     // ── paint ──
     function say(html) { sayEl.innerHTML = html; }
-    function endSay(s) {
+    function snapLine(w, matchId) {
+      const d = data();
+      const [mid, len] = String(d.snapm || '').split(':');
+      return mid && mid === matchId && recentOf(d).includes(matchId) ? ` ${who(w)} ends ${nm(other(w))}’s run of ${esc(len)}.` : '';
+    }
+    function endSay(s, matchId) {
       if (!s.v) {
         const na = tally(s, 'a');
         const nb = tally(s, 'b');
         const fmt = (n) => (n > MAX ? 'missed' : `${n}`);
         if (na === nb) return na > MAX ? 'Neither word was cracked.' : `Dead heat: both in ${na}.`;
         const w = na < nb ? 'a' : 'b';
-        return `${who(w)} wins, ${fmt(Math.min(na, nb))} to ${fmt(Math.max(na, nb))}.`;
+        return `${who(w)} wins, ${fmt(Math.min(na, nb))} to ${fmt(Math.max(na, nb))}.${snapLine(w, matchId)}`;
       }
       const r = result(s);
-      if (r.winner) return `${who(r.winner)} ${s.opts.bo3 ? 'takes the set' : 'wins'}. ${esc(r.sub)}`;
+      if (r.winner) return `${who(r.winner)} ${s.opts.bo3 ? 'takes the set' : 'wins'}. ${esc(r.sub)}${snapLine(r.winner, matchId)}`;
       return `${esc(r.text)}. ${esc(r.sub)}`;
     }
     function stripFor(c, m) {
@@ -255,10 +275,10 @@ registerGame({
       const v = c.viewer;
       if (m === 'pick') {
         const p = other(v);
-        return c.mode === 'online' ? (s.secret[p] ? `<span>${who(p)} has picked</span>` : `<span>${who(p)} is picking…</span>`) : '';
+        return (c.mode === 'online' ? (s.secret[p] ? `<span>${who(p)} has picked</span>` : `<span>${who(p)} is picking…</span>`) : '') + ledgerLine();
       }
       if (m === 'recap') return `<span>${nm('a')} <b>${s.wins.a}</b> – <b>${s.wins.b}</b> ${nm('b')}</span>`;
-      if (m === 'rules' || m === 'waitrules') return ledgerText() ? `<span>${esc(ledgerText())}</span>` : '';
+      if (m === 'rules' || m === 'waitrules') return ledgerLine();
       if (m === 'solve') return `${who(other(v))}${minisHTML(other(v), s)}${heatHTML(s, v)}`;
       if (m === 'done') return heatHTML(s, v);
       return '';
@@ -324,7 +344,7 @@ registerGame({
         const rv0 = roundView(s, s.rounds.length - 1);
         const rr = roundResult(rv0.secret, rv0.guesses);
         say(rr.winner ? `${who(rr.winner)} takes round ${s.rounds.length}. ${esc(rr.sub)}` : `Round ${s.rounds.length} is a draw. ${esc(rr.sub)}`);
-      } else if (m === 'end') say(endSay(s));
+      } else if (m === 'end') say(endSay(s, c.matchId));
       stripEl.innerHTML = m === 'blank' || m === 'end' ? '' : stripFor(c, m);
 
       // main area
@@ -342,7 +362,7 @@ registerGame({
           area.innerHTML = `<div class="g-wd-wait"><span class="g-wd-stamp ${pcls(c.first)}">Rules</span><p>${who(c.first)} is choosing the house rules.</p>${waitReady ? '<button class="gm-btn gm-btn-ghost" data-act="selfrules">Set the rules yourself</button>' : ''}</div>`;
         } else if (m === 'pick') {
           const dl = dealtOf(s);
-          area.innerHTML = `<div class="g-wd-pick">${pillsHTML(s)}${scoreboardHTML(s)}${dl ? `<p class="g-wd-dealtline">Row 1 is dealt to you both: <b>${up(dl)}</b></p>` : ''}<p class="g-wd-cap">Your secret word</p><div class="g-wd-board">${rowHTML(draft, null, { cls: ' is-draft', label: 'Your secret word' })}</div>${chips.length ? `<div class="g-wd-chips" role="group" aria-label="Suggestions">${chips.map((w) => `<button class="g-wd-chip" data-chip="${w}">${up(w)}</button>`).join('')}</div>` : ''}</div>`;
+          area.innerHTML = `<div class="g-wd-pick">${pillsHTML(s)}${scoreboardHTML(s)}${dl ? `<p class="g-wd-dealtline">Row 1 is dealt to you both: <b>${up(dl)}</b></p>` : ''}<p class="g-wd-cap">Your secret word</p><div class="g-wd-board">${rowHTML(draft, null, { cls: ' is-draft', label: 'Your secret word' })}</div><p class="g-wd-hint"></p>${chips.length ? `<div class="g-wd-chips" role="group" aria-label="Suggestions">${chips.map((w) => `<button class="g-wd-chip" data-chip="${w}">${up(w)}</button>`).join('')}</div>` : ''}</div>`;
         } else if (m === 'picked') {
           area.innerHTML = `<div class="g-wd-pick">${pillsHTML(s)}${scoreboardHTML(s)}<p class="g-wd-cap">${nm(p)} has to crack</p><div class="g-wd-board">${rowHTML(s.secret[v], null, { label: `Your word ${up(s.secret[v])}` })}</div><span class="g-wd-stamp ${pcls(v)}">Locked in</span></div>`;
         } else if (m === 'solve') {
@@ -357,6 +377,8 @@ registerGame({
           area.innerHTML = `<div class="g-wd-duo">${columnHTML(first, cur(s), { blind: false, showTarget: true })}${columnHTML(other(first), cur(s), { blind: false, showTarget: true })}</div>`;
         }
       }
+
+      paintHint();
 
       // actions
       const stampSig = m === 'end' ? [ledgerText(), stamps.map((x) => x.label)] : 0;
@@ -399,6 +421,7 @@ registerGame({
         t.classList.remove('pop');
         if (ch && (popAll || i === draft.length - 1) && !reduced()) { void t.offsetWidth; t.classList.add('pop'); }
       });
+      paintHint();
     }
     function shake() {
       const row = draftRowEl();

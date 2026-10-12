@@ -293,6 +293,39 @@ async function unitTests() {
   assert(!p.pbm && p.a_fast_pb === undefined, 'records: equalling the best is not a record');
   assert(Rec.stampsFor(duelState(['crane'], ['crane'], 'crane', 'crane'), { recent_m: 'x', matches_n: 10 }, 'x', (w) => w)[0].label === 'Great minds', 'stamps: the rare ones come first (Great minds survives the cap)');
 
+  // revenge, streak snapped, last_w
+  {
+    const snap = { b_streak: 4, last_w: 'b', a_wins_n: 1, b_wins_n: 5 };
+    const win = fin(['crane'], ['pound', 'misty', 'jumbo', 'fight', 'lunch', 'oxbow']); // a wins
+    const pr = Rec.recordMatch(snap, win, 'rv1');
+    assert(pr.a_snap_n === 1 && pr.a_revenge_n === 1 && pr.snapm === 'rv1:4' && pr.revm === 'rv1' && pr.last_w === 'a' && pr.b_streak === 0 && pr.a_streak === 1, `records: ends a streak of 4 and avenges the last loss (${JSON.stringify(pr)})`);
+    const after = { ...snap, ...pr };
+    const labels = Rec.stampsFor(win, after, 'rv1', (w) => w).map((x) => x.label);
+    assert(labels.includes('Revenge') && labels.includes('Streak snapped'), `stamps: REVENGE and STREAK SNAPPED (${labels})`);
+    assert(Rec.stampsFor(win, after, 'rv1', (w) => w).find((x) => x.label === 'Revenge').who === 'a', 'stamps: both inked for the winner');
+    assert(eq(Rec.recordMatch(snap, win, 'rv1'), pr) && Rec.recordMatch(after, win, 'rv1') === null, 'records: recording from the same snapshot is idempotent, and a recorded match is skipped');
+    const dr = Rec.recordMatch(snap, fin(['crane'], ['abbey']), 'dr1');
+    assert(dr.last_w === 'd' && dr.a_snap_n === undefined && dr.a_revenge_n === undefined && !Rec.stampsFor(fin(['crane'], ['abbey']), { ...snap, ...dr }, 'dr1', (w) => w).some((x) => /Revenge|snapped/.test(x.label)), 'records: a draw sets last_w d and earns neither stamp');
+    const norev = Rec.recordMatch({ b_streak: 2, last_w: 'a' }, win, 'nr1');
+    assert(norev.a_revenge_n === undefined && norev.a_snap_n === undefined, 'records: no revenge when the winner also won last time, no snap under 3');
+    const L = (d) => Rec.ledgerOf(d, (w) => (w === 'a' ? 'Emerson' : 'Sydney')).context;
+    assert(L({ a_wins_n: 7, b_wins_n: 7 }) === 'All square at 7–7.' && L({ a_wins_n: 10, b_wins_n: 7 }) === 'Emerson leads by 3.' && L({ a_wins_n: 3, b_wins_n: 7, b_streak: 4 }) === 'Sydney’s ×4 streak is on the line.', 'ledger: context sentences');
+  }
+  // deja vu: secret-word memory
+  {
+    const st1 = duelState(['pound', 'misty', 'heart'], ['crane'], 'heart', 'abbey'); // b cracked HEART? (b's guesses on a's word)
+    st1.guesses = { a: ['crane'], b: ['pound', 'misty', 'heart'] }; st1.secret = { a: 'heart', b: 'crane' };
+    const p1 = Rec.recordMatch({}, st1, 'dv1');
+    assert(p1.a_used === 'heart:3' && p1.b_used === 'crane:1', `deja vu: each player's secret and what it took (${p1.a_used}, ${p1.b_used})`);
+    const d1 = { ...p1 };
+    const st2 = { ...duelState(['crane'], ['crane']), secret: { a: 'plumb', b: 'heart' }, guesses: { a: ['heart'], b: ['plumb'] } };
+    assert(Rec.stampsFor(st2, d1, 'dv2', (w) => w).some((x) => x.label === 'Déjà vu'), 'deja vu: a secret from either history gets the stamp');
+    const rec2 = { ...d1, ...Rec.recordMatch(d1, st2, 'dv2') };
+    assert(Rec.stampsFor(st2, rec2, 'dv2', (w) => w).some((x) => x.label === 'Déjà vu') && !Rec.stampsFor(st1, p1, 'dv1', (w) => w).some((x) => x.label === 'Déjà vu'), 'deja vu: still stamped once recorded (this match’s own entries are not "before"); a first match has none');
+    let h = {}; for (let k = 0; k < 45; k++) h = { ...h, ...Rec.recordMatch(h, { ...duelState(['crane'], ['abbey']), secret: { a: `w${k}`.padEnd(5, 'x'), b: 'crane' }, guesses: { a: ['crane'], b: ['abbey'] } }, `u${k}`) };
+    assert(Rec.usedOf(h, 'a').length === 40 && Rec.usedOf(h, 'a')[39].w === 'w44xx', 'deja vu: only the last 40 secrets are kept');
+  }
+
   // size budget: the entry file stays modest now the lists live in their own file
   const fsz = fs.statSync(path.join(ROOT, 'js/games/wordduel.js')).size;
   assert(fsz < 110 * 1024, `wordduel.js is ${(fsz / 1024).toFixed(1)} KB`);
@@ -759,6 +792,7 @@ async function legacy(h, scheme, ids) {
   const strip = await F.textContent('.g-wd-strip');
   assert(/E 12 – 10 S · Sydney ×4 streak/.test(strip), `the rules card carries the ledger strip, with the legacy match just finished counted (${strip})`);
   assert(await F.getAttribute('[data-rule="pool:love"]', 'aria-pressed') === 'true' && await F.getAttribute('[data-rule="hard"]', 'aria-checked') === 'true', 'the rules card remembers the last choice');
+  assert(/Sydney’s ×4 streak is on the line\./.test(strip), `the ledger carries a context sentence (${strip})`);
   await snap(F, scheme, 'wd2-11-rules-ledger');
   await F.tap('[data-act="play"]');
   await h.settle();
@@ -773,13 +807,53 @@ async function legacy(h, scheme, ids) {
   await h.settle();
   assert(Object.values((await h.engine(a, id)).state.secret).some((x) => R.lists().loveSet.has(x)), 'a Surprise me pick locks in');
   await h.closeGame(a); await h.closeGame(b);
+  await snapRevenge(h, scheme);
+}
+
+// revenge + streak snapped + deja vu hints, from the seeded data (Sydney on a x4 run, she won last)
+async function snapRevenge(h, scheme) {
+  const { a, b } = h;
+  const id = await newOnline(h, a);
+  await h.openMatch(b, id);
+  await h.settle();
+  const first = (await h.engine(a, id)).first;
+  await ({ a, b })[first].tap('[data-act="play"]');
+  await h.settle();
+  const hint = (pg) => pg.evaluate(() => document.querySelector('.g-wd-hint').innerText);
+  await a.keyboard.type('heart'); await a.waitForTimeout(80);
+  assert(/You picked HEART before\. Sydney cracked it in 3\./.test(await hint(a)), `deja vu: your own earlier word (${await hint(a)})`);
+  for (let i = 0; i < 5; i++) await a.keyboard.press('Backspace');
+  await a.keyboard.type('bride'); await a.waitForTimeout(80);
+  assert(/Sydney used BRIDE on you once\. Bold\./.test(await hint(a)), `deja vu: the partner's earlier word (${await hint(a)})`);
+  await a.keyboard.press('Enter');
+  await b.keyboard.type('heart'); await b.waitForTimeout(80);
+  assert(/You picked HEART before\. Emerson cracked it in 5\./.test(await hint(b)), `deja vu for the other seat (${await hint(b)})`);
+  assert(!(await a.isVisible('.g-wd-hint')) || (await hint(a)) === '', 'the hint goes away once you have picked');
+  await b.keyboard.press('Enter');
+  await h.settle();
+  // Emerson cracks HEART in 1; Sydney needs 2: Emerson wins and ends the x4 run, and it's revenge
+  await a.keyboard.type('heart'); await a.keyboard.press('Enter');
+  await a.waitForTimeout(300);
+  await typeWord(b, 'slate', 200); await typeWord(b, 'bride', 200);
+  await h.settle(); await a.waitForTimeout(2600);
+  await a.waitForSelector('#game-root .gm-end:not([hidden])', { timeout: 6000 });
+  await a.click('#game-root [data-g="end-look"]');
+  await a.waitForTimeout(400);
+  const say = await sayOf(a);
+  const stampTxt = await a.textContent('.g-wd-stamps');
+  assert(/Emerson ends Sydney’s run of 4\./.test(say), `the end line names the snapped run (${say})`);
+  assert(/Streak snapped/i.test(stampTxt) && /Revenge/i.test(stampTxt) && /Déjà vu/i.test(stampTxt), `stamps: revenge, streak snapped, deja vu (${stampTxt})`);
+  const d = await dataOf(a);
+  assert(d.a_snap_n === 1 && d.a_revenge_n === 1 && d.last_w === 'a' && /heart:1/.test(d.b_used) && /bride:2/.test(d.a_used), `records: snap, revenge, last_w and the word memory (${JSON.stringify(d)})`);
+  await snap(a, scheme, 'wd2-12-revenge');
+  await h.closeGame(a); await h.closeGame(b);
 }
 
 async function uiTests() {
   const now = Date.now();
   const legacyId = 'seedlegacy01';
   const seed = {
-    'gamedata/wordduel': { a_wins_n: 12, b_wins_n: 9, matches_n: 21, b_streak: 3, b_streak_best: 3, last_setup: 'love:1:0:0' },
+    'gamedata/wordduel': { a_wins_n: 12, b_wins_n: 9, matches_n: 21, b_streak: 3, b_streak_best: 3, last_setup: 'love:1:0:0', last_w: 'b', a_used: 'heart:3', b_used: 'heart:5,bride:2' },
     [`matches/${legacyId}`]: { game: 'wordduel', first: 'a', seed: 4242, by: 'a', created: now - 60000, opts: {}, a: JSON.stringify([{ secret: 'abbey' }, { guess: 'slate' }]), b: JSON.stringify([{ secret: 'crane' }]), ua: 0, ub: 0 },
   };
   for (const scheme of ['light', 'dark']) {

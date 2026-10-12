@@ -75,16 +75,19 @@ does not show it again.
 `a_wins_n b_wins_n draws_n matches_n sets_n comeback_n`, `a_streak b_streak` (reset) with
 `a_streak_best b_streak_best`, `a_fast_pb b_fast_pb` (8 - fewest guesses), `a_two_n b_two_n` (cracks in 2 or
 fewer), `a_lastditch_n b_lastditch_n` (crack on guess 6), `a_held_n b_held_n` (their word held out),
-`recent_m` (last 60 recorded match ids, comma-joined), `lastm`, `pbm` (match that beat a personal best),
+`last_w` (`a`, `b` or `d` for a draw: who won the last recorded duel), `a_revenge_n b_revenge_n` (a win right after losing the previous duel), `a_snap_n b_snap_n` (a win that ended the partner's streak of 3 or more), `snapm` (`<matchId>:<length>` of the last snap), `revm` (match id of the last revenge), `a_used b_used` (each player's last 40 secret words as `word:n`, comma-joined, n = guesses it took, 7 = held out; appended at record time), `recent_m` (last 60 recorded match ids, comma-joined), `lastm`, `pbm` (match that beat a personal best),
 `last_setup` (`pool:hard:dealt:bo3`, e.g. `love:1:0:1`, what the rules card defaults to).
 
 Idempotence: counters are written as absolute values computed from the data snapshot. A match is recorded when this
 phone watched it end during the current mount, or (v2 only) when a finished match is opened and its id is not in
 `recent_m`. Legacy v1 matches are never recorded on reopen.
 
-The ledger strip (`E 12 – 9 S · Sydney ×3 streak`) shows on the rules card and the end view. Stamps on the end view:
+The ledger strip (`E 12 – 9 S · Sydney ×3 streak`) shows on the rules card, the pick screen (hidden on short screens) and the end view. The rules card and pick screen add one context sentence: "All square at 7–7.", "Emerson leads by 3." or "Sydney’s ×4 streak is on the line." (streak of 2+).
+
+Déjà vu hint: on the v2 pick screen, once the typed five letters match a word in either history, a quiet line shows under the draft ("You picked HEART before. Sydney cracked it in 3." / "Sydney used HEART on you once. Bold."). Only the picker sees it, never a v1 match, never under the one-phone curtain. Stamps on the end view:
 NEW RECORD, N IN A ROW (3+), COMEBACK, DUEL NUMBER 10/25/50/100, MIND-READER (crack in 2 or fewer),
-LAST-DITCH CRACK, HELD OUT, IN SYNC (both solved on the same row), GREAT MINDS (same secret).
+REVENGE (derived from `last_w` before the patch), STREAK SNAPPED (the end line adds "Sydney ends Emerson’s run of 4."),
+DÉJÀ VU (a secret this match is in either player's word memory from before it), LAST-DITCH CRACK, HELD OUT, IN SYNC (both solved on the same row), GREAT MINDS (same secret).
 
 ## Tests
 
