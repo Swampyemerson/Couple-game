@@ -14,6 +14,7 @@ Tapping the board without touching the picker plays the selected mode.
 | `classic` | Classic | The original game. |
 | `ghost` | Ghost Column | A seeded non-centre column (0, 1, 2, 4, 5 or 6) holds at most 3 discs. Drawn as a torn-paper cap with a ghost. A drop into the full capped column is refused ("The ghost has that column…"). The game is a draw when no legal drop remains (39 discs; the result says "No drops left", not "Board full"). |
 | `pop` | PopOut | On your turn you may instead pop one of YOUR discs out of the bottom row; the column slips down one. After a pop, fours are checked for both colours. Both lined up: the popper wins. Only the other side's four: they win. A hundred moves with no four is a draw (PopOut can cycle). |
+| `blockers` | Blockers | Three seeded neutral stones (cell value `'x'`, `s.stones` = their columns, from `shuffled(non-centre columns, seed + ':stones')`) sit on the floor of three different non-centre columns at setup. They take up a hole, never belong to either side, and never count toward a line. A full board (39 discs) is a draw. No popping. |
 
 `big` (8 × 7) was not built: the board geometry is shared constants, so it was not cheap.
 
@@ -53,7 +54,7 @@ Keys: `games_n`, `draws_n`, `wins_a_n` / `wins_b_n`, `<mode>_a_n` / `<mode>_b_n`
 (reset on a draw, so no `_n`/`_best` suffix), `streak_best` + `streak_best_who`, `quick_best` (= 100 − the
 winner's moves, so bigger is faster) + `quick_best_who`, `comeback_a_n` / `comeback_b_n` (winner blocked 2+
 fours; a PopOut "gift" win, where the loser's own pop made the winner's four, never counts as a fastest
-win or gets the record / rout moment lines), `mode` (last chosen), `last_id`, and `p_streak`, `p_streak_who`, `p_quick`, `p_mw` — the records as
+win or gets the record / rout moment lines), `mode` (last chosen), `trap_a_n` / `trap_b_n`, `last_id`, and `p_streak`, `p_streak_who`, `p_quick`, `p_mw`, `p_wa`, `p_wb`, `p_dr` — the records as
 they stood before the last match, so the phone that counts second still picks the same moment line.
 
 ## Words
@@ -68,6 +69,14 @@ they stood before the last match, so the phone that counts second still picks th
 
 ## Input and layout
 
+- **Trap!** stamp when a drop leaves its player two or more different winning drops (from a position with fewer)
+  and the other side has no winning drop of its own. Derived from the board (previous and current state), so both
+  phones show it; v2 states also count it (`s.tr`). `trap_a_n` / `trap_b_n` in the shared data, and a `trap` moment
+  line ranked right after `record`.
+- **Series ledger** in the finale, under the moment line, identical on both phones: "Series: Emerson 5 · Sydney 4 ·
+  1 draw · Sydney on 2" (records before + this match; a phone that did not watch it end uses the books when
+  `last_id` is this match). The rivalry tally on the empty board shows on both phones (the waiting phone sees the
+  tally and a generic flavour line).
 - Keyboard: the columns are one roving tab stop; Tab onto them previews a disc over the focused column,
   arrows move focus and disc, Enter / Space drops the focused column, 1–7 jump, P toggles popping.
   Esc puts a lifted disc away (a capture-phase listener that calls `preventDefault`, because core closes the

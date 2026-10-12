@@ -198,6 +198,27 @@ function analyze(s) {
   return { steps, runs, pts, behind, best, sacs: steps.filter((x) => x.sac) };
 }
 
+/** The squeeze: free lines that hand nothing over, and boxes waiting to be taken (walking every chain). */
+function tension(s) {
+  const { N, B } = dimOf(s);
+  let safe = 0;
+  for (const [l, r, c] of linesOf(N)) {
+    if (drawn(s, l, r, c)) continue;
+    if (boxesBeside(s, l, r, c).every(([br, bc]) => sidesOf(s, br, bc) < 2)) safe++;
+  }
+  const t = { n: s.n, h: s.h.slice(), v: s.v.slice(), boxes: s.boxes.slice() };
+  let offer = 0;
+  for (let guard = 0; guard < 200; guard++) {
+    let bi = -1;
+    for (let i = 0; i < B * B && bi < 0; i++) if (!t.boxes[i] && sidesOf(t, Math.floor(i / B), i % B) === 3) bi = i;
+    if (bi < 0) break;
+    const [l, r, c] = edgesOf(Math.floor(bi / B), bi % B).find(([ll, rr, cc]) => !drawn(t, ll, rr, cc));
+    (l === 'h' ? t.h : t.v)[idxOf(N, B, l, r, c)] = 'x';
+    for (const [br, bc] of boxesBeside(t, l, r, c)) if (!t.boxes[br * B + bc] && complete(t, br, bc)) { t.boxes[br * B + bc] = 'x'; offer++; }
+  }
+  return { safe, offer, left: linesTotal(s) - linesDrawn(s) };
+}
+
 // ── what we say at the end, and at the start ──
 const MOMENTS = {
   draw: [
@@ -210,6 +231,11 @@ const MOMENTS = {
     '{W} gave up two boxes on purpose to keep control. Ruthless, but romantic.',
     'That sneaky sacrifice, {W}? Straight out of the pro handbook.',
     '{W} played the long game. {L} will be hearing about it.',
+  ],
+  heartSwing: [
+    '{W} took the heart and the game. It was worth 2, and {W} needed it.',
+    'The heart decided it: {W} by {m}.',
+    'One heart box, one tiny margin. {L} will guard hearts next time.',
   ],
   chainFirst: [
     'First chain on the books: {n} boxes in one turn.',
@@ -269,6 +295,8 @@ const STRIP = {
   streak: ['{W} is on a {n}-game streak · break it?', '{n} in a row for {W}. Your move, {L}.', '{W} has won {n} straight. Time to fight back?'],
   last: ['{W} won last time. Rematch energy?', 'Last game went to {W}. {L}, thoughts?', '{W} leads by a nose. Level it up?'],
   level: ['All square: {a} wins each. Decider?', 'Dead level at {a} apiece. Who blinks?', 'Even Steven, {a} to {a}. Make it count.'],
+  heartLead: ['{W} has closed {wx} to {L}’s {y}. Steal one back?', 'Heart race: {W} {x}, {L} {y}.', '{W} leads the hearts, {x} to {y}. Go get one, {L}.'],
+  heartLevel: ['Hearts level at {x} each. Who takes the next one?', 'Heart count: {x} apiece. Tidy.', 'Neck and neck on hearts, {x} all.'],
   draws: ['{d} Someone has to blink.', '{d} Nobody has cracked yet.', '{d} Time to break the deadlock?'],
   series: ['{A} {x}, {B} {y}. {d}', 'Series: {A} {x} · {B} {y}. {d}', 'The score so far: {A} {x}, {B} {y}. {d}'],
 };
@@ -284,6 +312,7 @@ function pickMoment(s, an, result, before, nameOf, seed) {
   if (!w) return pick('draw');
   const margin = Math.abs(an.pts.a - an.pts.b);
   if (an.sacs.some((x) => x.who === w)) return pick('deal');
+  if (s.heart != null && s.boxes[s.heart] === w && margin <= 2) { vars.m = margin; return pick('heartSwing'); }
   if (before && an.best.n >= 4 && an.best.n > before.chain) { vars.n = an.best.n; return pick(before.chain > 0 ? 'chainRecord' : 'chainFirst'); }
   if (an.behind[w] >= Math.max(3, Math.round(total * 0.2))) return pick('comeback');
   if (before && before.streakWho === other(w) && before.streak >= 2) { vars.n = before.streak; return pick('broke'); }
@@ -294,11 +323,23 @@ function pickMoment(s, an, result, before, nameOf, seed) {
   if (an.best.n >= 5 && an.best.who === w) { vars.n = an.best.n; return pick('chain'); }
   return pick('win');
 }
-function pickStrip(d, nameOf, seed) {
+function pickStrip(d, nameOf, seed, mode) {
   const num = (k) => (typeof d[k] === 'number' ? d[k] : 0);
   const games = num('games_n');
   const vars = { a: num('w_a_n'), b: num('w_b_n'), A: nameOf('a'), B: nameOf('b'), x: num('w_a_n'), y: num('w_b_n') };
   const pick = (sit) => fill(STRIP[sit][randInt(STRIP[sit].length, seed, 'strip', sit)], vars);
+  const ha = num('hearts_a_n');
+  const hb = num('hearts_b_n');
+  if (mode === 'sweet' && ha + hb > 0) {
+    const lead = ha === hb ? '' : ha > hb ? 'a' : 'b';
+    vars.x = lead === 'b' ? hb : ha;
+    vars.y = lead === 'b' ? ha : hb;
+    vars.wx = `${vars.x} heart${vars.x === 1 ? '' : 's'}`;
+    if (!lead) return pick('heartLevel');
+    vars.W = nameOf(lead);
+    vars.L = nameOf(other(lead));
+    return pick('heartLead');
+  }
   if (!games) return pick('first');
   const sw = d.streak_who === 'a' || d.streak_who === 'b' ? d.streak_who : '';
   const n = num('streak');
@@ -342,7 +383,7 @@ registerGame({
   platforms: ['phone', 'computer'],
   minutes: 8,
   endDelay: 2400,
-  dotsInfo: { MODES, MODE_IDS, MOMENTS, STRIP, PROMPTS, analyze, pickMoment, pickStrip }, // for the tests
+  dotsInfo: { MODES, MODE_IDS, MOMENTS, STRIP, PROMPTS, analyze, tension, pickMoment, pickStrip }, // for the tests
   howTo: [
     'Take turns drawing a line between two dots.',
     'Tap a gap to pick it, tap again to draw it.',
@@ -458,7 +499,10 @@ registerGame({
 @keyframes gd-plate { from { transform: scale(0.9); } to { transform: none; } }
 .g-dots .gd-chip { flex: none; width: 22px; height: 22px; border-radius: 5px; border: 2px solid var(--g-ink); }
 .g-dots .gd-chip.none { background: transparent; border-style: dashed; }
-.g-dots .gd-m { margin: 0; text-align: center; font: 800 0.88rem/1.3 var(--g-font-body); color: var(--g-ink); text-wrap: balance; }
+.g-dots .gd-m { margin: 2px 0 0; padding: 8px 14px; max-width: 100%; text-align: center; text-wrap: balance; font: 900 0.92rem/1.25 var(--g-font-display); background: var(--g-hl); color: var(--g-on-ink); border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); box-shadow: var(--g-shadow-sm); transform: rotate(-1.2deg); animation: gd-stampin 380ms cubic-bezier(0.3, 1.7, 0.5, 1) both; }
+@keyframes gd-stampin { from { transform: scale(1.4) rotate(-6deg); opacity: 0; } to { transform: rotate(-1.2deg); opacity: 1; } }
+.g-dots .gd-ledger { margin: 0; text-align: center; font: 800 0.8rem/1.3 var(--g-font-body); color: var(--g-ink); text-wrap: balance; }
+.g-dots .gd-ledger[hidden] { display: none; }
 .gm[data-game="dots"] .gm-status:empty { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .g-dots * { animation: none !important; transition: none !important; }
@@ -491,6 +535,7 @@ registerGame({
         <div class="gd-card" hidden><div class="gd-card-k"></div><div class="gd-card-t"></div><div class="gd-card-b"></div></div>
         <div class="gd-plate" aria-live="polite"><span class="gd-chip"></span><span class="gd-plate-t"></span></div>
         <p class="gd-m" hidden></p>
+        <p class="gd-ledger" hidden></p>
       </div>`;
     el.appendChild(root);
     const $ = (s) => root.querySelector(s);
@@ -514,6 +559,7 @@ registerGame({
     const card = $('.gd-card');
     const plate = $('.gd-plate');
     const momentEl = $('.gd-m');
+    const ledgerEl = $('.gd-ledger');
     const D = typeof api.data === 'function' ? api : gameDataApi('dots');
     const initial = (w) => (String(api.name(w) || w).trim()[0] || w).toUpperCase();
 
@@ -537,6 +583,7 @@ registerGame({
     let view = null; // the state that is drawn (a preview while a mode is being picked)
     let an = null;
     let momentText = '';
+    let ledgerText = '';
     let momentOn = false;
     let cardReady = true;
     let popTimer = 0;
@@ -745,7 +792,7 @@ registerGame({
       const c = ctx;
       const on = !!c && !c.over && c.state.order.length === 0;
       strip.hidden = !on;
-      if (on) strip.textContent = pickStrip(dget(), api.name, c.matchId);
+      if (on) strip.textContent = pickStrip(dget(), api.name, c.matchId, c.state.ver ? c.state.mode : selMode);
     }
 
     function renderCard() {
@@ -772,6 +819,14 @@ registerGame({
       let wait = false;
       let extra = false;
       const run = an && an.steps.length ? an.steps[an.steps.length - 1].run : 0;
+      const tz = !c.over && !pickingNow(c) && !waitingPick(c) && c.acts[0] ? tension(s) : null;
+      const mover = c.acts[0] ? api.name(c.acts[0]) : '';
+      let squeeze = ''; // the mover's squeeze, if any: boxes to take, the last safe line, or none
+      if (tz && tz.left > 0) {
+        if (tz.offer) squeeze = tz.offer === 1 ? '1 box on offer' : `${tz.offer} boxes on offer`;
+        else if (tz.safe === 1) squeeze = 'Last safe line!';
+        else if (tz.safe === 0) squeeze = `No safe lines left — ${mover} has to give`;
+      }
       if (c.over) {
         const p = points(s);
         who = c.result && c.result.winner;
@@ -785,6 +840,7 @@ registerGame({
         who = c.acts[0] || null;
         wait = true;
         text = c.last && c.last.who === who && s.got ? `${api.name(who)} has ${run === 1 ? 'a box' : `${run} boxes`} and goes again` : `${api.name(who)}’s turn`;
+        if (squeeze) text = tz.offer || tz.safe === 0 ? (tz.safe === 0 && !tz.offer ? squeeze : `${squeeze} for ${mover}`) : `${squeeze} ${mover}’s move`;
       } else if (sel && (sel.by === 'tap' || sel.by === 'key')) {
         text = sel.by === 'key' ? 'Press Enter again to draw it' : 'Tap it again to draw it';
       } else if (sel && sel.by === 'peek') {
@@ -795,10 +851,11 @@ registerGame({
         extra = true;
         const lead = run >= 3 ? `Chain of ${run}!` : run === 2 ? 'Two boxes!' : 'Box!';
         text = online ? `${lead} Go again` : `${lead} ${api.name(who)}, go again`;
+        if (squeeze) text = tz.offer ? `${lead} ${squeeze.replace(' on offer', ' more on offer')}, go again` : squeeze;
       } else if (pickingNow(c)) {
         text = online ? 'Your turn · pick a mode, then a line' : `${api.name(who)}, pick a mode, then a line`;
       } else {
-        text = online ? 'Your turn · draw a line' : `${api.name(who)}, draw a line`;
+        text = squeeze || (online ? 'Your turn · draw a line' : `${api.name(who)}, draw a line`);
       }
       $('.gd-chip').className = `gd-chip ${who ? 'gd-' + who : 'none'}`;
       plate.classList.toggle('wait', wait);
@@ -806,6 +863,8 @@ registerGame({
       $('.gd-plate-t').textContent = text;
       momentEl.hidden = !(c.over && momentOn && momentText);
       momentEl.textContent = momentText;
+      ledgerEl.hidden = !(c.over && momentOn && ledgerText);
+      ledgerEl.textContent = ledgerText;
     }
     const popPlate = () => { plate.classList.remove('pop'); void plate.offsetWidth; plate.classList.add('pop'); };
 
@@ -937,8 +996,19 @@ registerGame({
         patch[`w_${w}_n`] = num(`w_${w}_n`) + 1;
         if (margin > num('margin_best')) { patch.margin_best = margin; patch.margin_best_who = w; }
       }
+      if (mode === 'sweet' && s.heart != null && s.boxes[s.heart]) patch[`hearts_${s.boxes[s.heart]}_n`] = num(`hearts_${s.boxes[s.heart]}_n`) + 1;
       if (an.best.n > num('chain_best')) { patch.chain_best = an.best.n; patch.chain_best_who = an.best.who; }
       dset(patch);
+    }
+    function ledgerNow(c) {
+      // the series after this match: only once it has been counted, so both phones print the same line
+      const d = dget();
+      if (d.last_id !== c.matchId) return '';
+      const num = (k) => (typeof d[k] === 'number' ? d[k] : 0);
+      let t = `Series: ${api.name('a')} ${num('w_a_n')} · ${api.name('b')} ${num('w_b_n')}`;
+      if (num('draws_n')) t += ` · ${num('draws_n')} draw${num('draws_n') === 1 ? '' : 's'}`;
+      if ((d.streak_who === 'a' || d.streak_who === 'b') && num('streak') >= 2) t += ` · ${api.name(d.streak_who)} on ${num('streak')}`;
+      return t;
     }
     function momentNow(c) {
       const d = dget();
@@ -958,7 +1028,7 @@ registerGame({
     }
 
     api.setStatus(''); // the plate says it all; the stage's status line stays empty (and hidden) while playing
-    const offData = (() => { try { return D.onData(() => { renderStrip(); }); } catch { return null; } })();
+    const offData = (() => { try { return D.onData(() => { renderStrip(); if (ctx && ctx.over) { const l = ledgerNow(ctx); if (l !== ledgerText) { ledgerText = l; renderPlate(); } } }); } catch { return null; } })();
 
     const inst = {
       update(c) {
@@ -998,9 +1068,11 @@ registerGame({
         // the end: count it once, find the line to say
         momentOn = false;
         momentText = '';
+        ledgerText = '';
         if (c.over) {
           if (prevOver === false) tally(c);
           momentText = momentNow(c);
+          ledgerText = ledgerNow(c);
         }
         const wait = boxDelay.size ? Math.max(...boxDelay.values()) + 420 : 0;
         if (c.over) {

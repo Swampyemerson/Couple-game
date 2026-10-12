@@ -75,6 +75,10 @@ first line a `Quick`/`Big`/... chip labels the mode (hidden for Classic).
 - **Sacrifice call-out** (only when unambiguous): in a turn that has already taken a box, a line that
   closes nothing but leaves exactly one two-box pair sharing one undrawn side, while a capturable box
   was on offer. "<name> gives up 2 to keep control". It does not claim the count that follows.
+- **Squeeze text** (view-only, `tension(s)`): the plate counts free lines that give nothing away. At
+  exactly one it says "Last safe line!" (on both phones); at none, "No safe lines left — <mover> has to
+  give"; when the mover has boxes to take, "N boxes on offer" (every 3-sided box is walked along its
+  chain). In an extra turn it reads "Chain of 3! 1 more on offer, go again".
 - **One status text**: the plate carries all text; the stage's own status line stays empty and is hidden
   (it comes back with the result and the Rematch button after the end card is dismissed).
 - **Layout**: the board is sized in JS to what the stage leaves. Landscape (stage wider than 1.2x its
@@ -101,14 +105,16 @@ the transition from not-over to over writes `last_id: matchId` along with the to
 | `streak_best`, `streak_best_who` | longest ever |
 | `chain_best`, `chain_best_who` | most boxes in one turn |
 | `margin_best`, `margin_best_who` | biggest margin in points |
+| `hearts_a_n`, `hearts_b_n` | Sweetheart boxes closed by each player |
 | `p_g`, `p_streak`, `p_streak_who`, `p_chain`, `p_margin`, `p_mw` | the records as they were just before `last_id`, so both phones tell the same moment line |
 
 (Keys ending `_n`, `_best`, `_m`, `_pb` merge as "keep the larger"; the resetting `streak` does not.)
 
-The **rivalry strip** shows above the picker on an empty board ("Sydney is on a 3-game streak · break
-it?", "First game of Dots & Boxes. Be gentle.", a series line...). The **moment line** shows under the
-plate when a match ends, picked deterministically from `state.seed` (so both phones agree) in this
-order: draw, sacrifice by the winner, new chain record (only when an earlier chain exists to beat; the first game says "first chain on the books"), comeback (winner trailed by at least 20 % of
+In Sweetheart the strip tells the heart race ("Heart race: Sydney 3, Emerson 1.") once any heart has been closed. The **rivalry strip** shows above the picker on an empty board ("Sydney is on a 3-game streak · break
+it?", "First game of Dots & Boxes. Be gentle.", a series line...). The **moment** shows as a yellow, rotated, ink-outlined stamp (like Ultimate's) with a ledger line
+under it, "Series: Emerson 5 · Sydney 4 · 2 draws · Sydney on 2", built from the stored records after
+the match was counted so both phones print the same text. The moment is picked when a match ends, picked deterministically from `state.seed` (so both phones agree) in this
+order: draw, sacrifice by the winner, heart swing (Sweetheart, margin of 2 or less and the winner closed the heart), new chain record (only when an earlier chain exists to beat; the first game says "first chain on the books"), comeback (winner trailed by at least 20 % of
 the points), streak broken, streak extended (3+), first win in a mode, rout, photo finish, big chain,
 plain win. 40+ lines in `MOMENTS`/`STRIP`, none shaming. Situations that need the records are only used
 when the match was counted (otherwise only what the match itself shows).

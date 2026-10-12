@@ -58,14 +58,18 @@ function run(def, first, moves, from) {
 
 // Sequences found offline (role-relative: the first mover starts).
 const FOUR_DRAW = [2, 4, 5, 5, 6, 4, 6, 2, 0, 1, 3, 4, 4, 5, 3, 4, 6, 4, 0, 3, 1, 5, 2, 1, 2, 1, 1, 1, 0, 0, 2, 6, 6, 3, 6, 3, 0, 0, 3, 2, 5, 5];
+const TRAP_GAME = [2, 0, 3, 0, 4, 1, 5]; // the first mover forks on the bottom row at move 5 (open at both ends) and wins
 const FOUR_DIAG = [0, 1, 1, 2, 3, 2, 2, 3, 6, 3, 3]; // first mover wins on the ↗ diagonal
 const ULT_WIN = [[1, 3], [3, 1], [1, 6], [6, 1], [1, 0], [0, 6], [6, 6], [6, 2], [2, 6], [6, 3], [3, 6], [6, 7], [7, 3], [3, 7], [7, 0], [0, 4], [4, 4], [4, 7], [7, 6], [6, 4], [4, 5], [5, 1], [4, 3]];
+let ULT_MP = null; // a legal v2 log that stops with the player to move one board from the win
+let ULT_DENY = null; // a legal v2 log whose last move denies the other player a live big line
 let ULT_LL = null; // a legal v2 log that stops with only one or two big lines left (filled in by the ultimate rules tests)
 const DOT_KEYS = [];
 for (let r = 0; r < 5; r++) for (let c = 0; c < 4; c++) DOT_KEYS.push(`h-${r}-${c}`);
 for (let r = 0; r < 4; r++) for (let c = 0; c < 5; c++) DOT_KEYS.push(`v-${r}-${c}`);
 const dotMove = (k) => { const [l, r, c] = k.split('-'); return { l, r: Number(r), c: Number(c) }; };
 
+let DOTS_SAFE = null; // a quick-mode position with exactly one safe line left (built in rulesTests, replayed in the UI)
 async function rulesTests() {
   const { core, dir } = await loadRules();
   const four = core.gameById('four');
@@ -233,6 +237,55 @@ async function rulesTests() {
       if (x.cols.reduce((n, c) => n + c.length, 0) !== drops - popped || x.n !== drops + popped) throw new Error('FAIL: pop: disc count does not balance');
     }
     ok(true, 'pop: 200 random PopOut games all end within 100 moves and the disc count balances');
+
+    // 5. traps (a drop that leaves two winning drops) and Blockers
+    s = withSetup('classic');
+    for (const col of [2, 0, 3, 0]) s = step(s, { col });
+    ok(s.tr.a === 0 && s.tr.b === 0, 'trap: two in the bottom row is not yet a trap');
+    s = step(s, { col: 4 });
+    ok(s.tr.a === 1 && s.tr.b === 0 && !s.win, 'trap: three in a row with both ends open leaves two winning drops, counted for the mover');
+    s = step(s, { col: 1 });
+    ok(s.tr.a === 1 && s.tr.b === 0, 'trap: …and only once');
+    s = step(s, { col: 5 });
+    ok(s.win && s.win.who === 'a', 'trap: the other end wins');
+    // a v1 (legacy) state has no counters at all, and a v2 state from before they existed does not break
+    let old = withSetup('classic');
+    delete old.tr;
+    for (const col of [2, 0, 3, 0, 4]) old = step(old, { col });
+    ok(old.tr === undefined && !old.win, 'trap: matches saved before the counter existed play on');
+    const stonesOf = (seed) => withSetup('blockers', seed).stones;
+    const combos = new Set();
+    for (let seed = 1; seed <= 80; seed++) {
+      const b = withSetup('blockers', seed);
+      const st = b.stones;
+      if (st.length !== 3 || new Set(st).size !== 3 || st.includes(3) || st.some((c) => c < 0 || c > 6) || JSON.stringify(st) !== JSON.stringify([...st].sort((x, y) => x - y))) throw new Error('FAIL: blockers: three distinct, sorted, non-centre columns, saw ' + JSON.stringify(st));
+      if (b.cols.some((c, i) => JSON.stringify(c) !== JSON.stringify(st.includes(i) ? ['x'] : []))) throw new Error('FAIL: blockers: one stone on the floor of each chosen column');
+      if (JSON.stringify(stonesOf(seed)) !== JSON.stringify(st)) throw new Error('FAIL: blockers: same seed, same stones');
+      combos.add(st.join(''));
+    }
+    ok(combos.size >= 6 && withSetup('blockers', 5).turn === 'a' && withSetup('blockers', 5).n === 0, `blockers: three seeded non-centre stones, deterministic per seed (${combos.size} layouts in 80 seeds), no turn passed`);
+    // a four cannot pass through a stone; the same row with a disc there is a win
+    const blk = (mid) => { const b = withSetup('blockers', 5); b.stones = [2, 0, 1]; b.cols = [['a'], ['a'], [mid], ['a'], [], [], []]; return b; };
+    ok(!step(blk('x'), { col: 4 }).win && step(blk('a'), { col: 4 }).win, 'blockers: a stone never counts toward a line');
+    const sc = withSetup('blockers', 9);
+    const stc = sc.stones[0];
+    let col6 = sc;
+    for (let i = 0; i < 5; i++) col6 = step(col6, { col: stc });
+    ok(col6.cols[stc].length === 6 && errOf(() => step(col6, { col: stc })) === 'That column is full', 'blockers: a stone takes up a hole (five discs fill its column)');
+    ok(errOf(() => step(withSetup('blockers', 9), { pop: 0 })) !== null, 'blockers: no popping');
+    let bd = 0;
+    for (let g = 0; g < 400 && bd < 3; g++) {
+      let x = withSetup('blockers', 700 + g);
+      while (four.next(x).length) {
+        const legal = [0, 1, 2, 3, 4, 5, 6].filter((c) => errOf(() => step(x, { col: c })) === null);
+        if (!legal.length) throw new Error('FAIL: blockers: a running game must have a legal drop');
+        const quiet = legal.filter((c) => !step(x, { col: c }).win);
+        const pick = quiet.length ? quiet : legal;
+        x = step(x, { col: pick[Math.floor(rnd() * pick.length)] });
+      }
+      if (!x.win) { bd++; if (x.n !== 39 || x.draw !== 'full' || four.result(x).winner !== null) throw new Error('FAIL: blockers: a full board is a draw after 39 discs'); }
+    }
+    ok(bd === 3, 'blockers: a full board is a draw after 39 discs');
   });
 
   await section('dots rules', () => {
@@ -478,6 +531,49 @@ async function rulesTests() {
     void w;
   });
 
+  await section('dots: squeeze counts, hearts, ledger lines', () => {
+    const t0 = dInfo.tension(dSeeded('a', 1));
+    ok(t0.safe === 40 && t0.offer === 0 && t0.left === 40, 'an empty board has 40 safe lines and nothing on offer');
+    const row = run(dots, 'a', ['h-0-0', 'h-0-1', 'h-0-2', 'h-1-0', 'h-1-1', 'h-1-2', 'v-0-0'].map(dotMove));
+    ok(dInfo.tension(row).offer === 3, 'a three-box row on offer counts all three boxes (the chain is walked)');
+    const dealt = run(dots, 'a', ['v-0-1', 'v-0-3'].map(dotMove), row);
+    ok(dInfo.tension(dealt).offer === 2, 'the handed-over pair counts two');
+    const lone = run(dots, 'a', ['h-0-0', 'h-1-0', 'v-0-0'].map(dotMove));
+    ok(dInfo.tension(lone).offer === 1 && dInfo.tension(lone).safe === 36, 'one box on offer, and the line that takes it is no longer safe');
+    // a position with exactly one safe line left, found by playing only safe lines
+    const safeKeys = (s) => dFree(s).filter((k) => { const s2 = dots.apply(clone(s), s.turn, dotMove(k)); return s2.got === 0 && dInfo.tension(s2).offer === 0; });
+    let found = null;
+    for (let seed = 1; seed < 400 && !found; seed++) {
+      const rnd = lcg(seed);
+      let s = dSetup(dSeeded('a', 1), 'a', 'quick');
+      const moves = [{ role: 'a', move: { setup: 2, mode: 'quick' } }];
+      for (;;) {
+        const sk = safeKeys(s);
+        if (sk.length === 1) { found = { moves, last: sk[0], s }; break; }
+        if (!sk.length) break;
+        const k = sk[Math.floor(rnd() * sk.length)];
+        const who = dots.next(s)[0];
+        moves.push({ role: who, move: dotMove(k) });
+        s = dots.apply(clone(s), who, dotMove(k));
+      }
+    }
+    ok(found && dInfo.tension(found.s).safe === 1 && dInfo.tension(found.s).offer === 0, `found a 3×3 position with exactly one safe line (${found && found.moves.length - 1} lines in)`);
+    const after = dots.apply(clone(found.s), found.s.turn, dotMove(found.last));
+    ok(dInfo.tension(after).safe === 0 && dInfo.tension(after).offer === 0 && dInfo.tension(after).left > 0, 'drawing it leaves no safe lines, and the next player has to give');
+    DOTS_SAFE = { moves: found.moves, last: found.last };
+    // hearts
+    const nm = (w) => (w === 'a' ? 'Emerson' : 'Sydney');
+    const lead = dInfo.pickStrip({ games_n: 3, hearts_a_n: 1, hearts_b_n: 3 }, nm, 'k', 'sweet');
+    ok(/Sydney/.test(lead) && /3/.test(lead) && /1/.test(lead), `the Sweetheart strip tells the heart race ("${lead}")`);
+    ok(/2/.test(dInfo.pickStrip({ games_n: 4, hearts_a_n: 2, hearts_b_n: 2 }, nm, 'k', 'sweet')) && !/heart/i.test(dInfo.pickStrip({ games_n: 4, hearts_a_n: 2, hearts_b_n: 2, w_a_n: 2, w_b_n: 2 }, nm, 'k', 'classic')), 'level hearts say so, and only in Sweetheart');
+    const hs = { heart: 3, boxes: [], n: 5 };
+    hs.boxes[3] = 'a';
+    const fake = { steps: [], runs: [], pts: { a: 9, b: 8 }, behind: { a: 0, b: 0 }, best: { n: 1, who: null }, sacs: [] };
+    const hm = dInfo.pickMoment(hs, fake, { winner: 'a' }, null, nm, 5);
+    ok(dInfo.MOMENTS.heartSwing.map((t) => t.replace(/\{W\}/g, 'Emerson').replace(/\{L\}/g, 'Sydney').replace('{m}', '1')).includes(hm), `a one-point win that hinged on the heart says so ("${hm}")`);
+    ok(!dInfo.MOMENTS.heartSwing.includes(dInfo.pickMoment({ ...hs, boxes: Object.assign([], { 3: 'b' }) }, fake, { winner: 'a' }, null, nm, 5)), 'if the loser closed the heart it is not a heart swing');
+  });
+
   await section('ultimate rules', () => {
     const mv = (pairs) => pairs.map(([b, i]) => ({ b, i }));
     let s = run(ult, 'a', mv([[4, 0]]));
@@ -583,6 +679,9 @@ async function rulesTests() {
     const seeded = (first, seed) => { const s = ult.init({ first, seed, opts: {} }); s.seed = seed; return s; };
     const step = (s, m, who) => ult.apply(clone(s), who || s.turn, clone(m));
     const flow = (s, seq) => seq.reduce((st, m) => step(st, m), s);
+    const other2 = (w) => (w === 'a' ? 'b' : 'a');
+    // replay a role-relative fixture log ({ first, seed, lists }) into a state, move by move in turn order
+    const flowLists = (fx) => { let st = seeded(fx.first, fx.seed); const used = { a: 0, b: 0 }; for (let g = 0; g < 400; g++) { const w = st.end ? null : st.turn; if (!w || used[w] >= fx.lists[w].length) break; st = step(st, fx.lists[w][used[w]++]); } return st; };
 
     // 1. legacy: no setup move, same states and results as the original rules
     let a = ref.init('b'); let b = seeded('b', 11);
@@ -742,6 +841,50 @@ async function rulesTests() {
     const up = clone(lvl); up.big[2] = 'a';
     ok(tn(lvl) === 'Tied on boards so far: ties go to Sydney' && tn(up) === null && tn(Object.assign(seeded('a', 2), { big: lvl.big })) === null && ult.kit.secondMover(lvl) === 'b', 'komi: the tie note names the second mover while boards are level, and only in v2');
     ok(/^Tied on boards so far, hot boards counting double: ties go to Sydney$/.test(tn(Object.assign(clone(lvl), { mode: 'hot', hot: [5, 6] }))), 'komi (hot): the in-play tie note carries the hot clause too');
+
+    // 5c. Match point, Denied!, series ledger (view-only helpers) and the dn counter
+    {
+      const B = (str) => [...str].map((x) => (x === '.' ? null : x));
+      const mp = (big, turn, force) => ult.kit.matchPoint({ big: B(big), turn, force, end: null });
+      ok(mp('aa.......', 'a', 2) && !mp('aa.......', 'a', 3) && !mp('aa.......', 'b', 2), 'match point: the player to move is one board from the win only when the board they are sent to completes a big line of theirs');
+      ok(mp('aa.......', 'a', null) && mp('a...a....', 'a', null) && !mp('ab.......', 'a', null) && !mp('.........', 'a', null), 'match point: on a free move any open board counts; a blocked line does not; an empty big board has none');
+      ok(!ult.kit.matchPoint({ big: B('aa.......'), turn: 'a', force: 2, end: { why: 'line' } }) && mp('aad......', 'a', 2) === false, 'match point: nothing once the game is over, and a dead board in the line blocks it');
+      const dn1 = ult.kit.deniedNow({ big: B('aa.......') }, { big: B('aab......'), last: 2 * 9 + 4 });
+      ok(dn1 === true && ult.kit.deniedNow({ big: B('aa.......') }, { big: B('aaa......'), last: 2 * 9 + 4 }) === false && ult.kit.deniedNow({ big: B('ab.......') }, { big: B('abb......'), last: 2 * 9 + 4 }) === false && ult.kit.deniedNow({ big: B('aa.......') }, { big: B('aa.b.....'), last: 3 * 9 }) === false && ult.kit.deniedNow(null, { big: B('aab......'), last: 20 }) === false, 'denied: winning the third board of a line the other player held two of is a denial; completing your own line, blocking a line they only held one of, or any other board is not');
+      ok(ult.kit.denies(B('b........'), 2, 'a') === false && ult.kit.denies(B('bba......'), 2, 'a') === true && ult.kit.denies(B('b.b......'), 1, 'a') === true && ult.kit.denies(B('b.b......'), 1, 'b') === false, 'denied: the helper works on any line through the board');
+      // fixtures from real play, and the dn counter agrees with the view-only check on every move
+      const rq = lcg(2026);
+      for (let g = 0; g < 4000 && !(ULT_MP && ULT_DENY); g++) {
+        const first = g % 2 ? 'a' : 'b';
+        let st = step(seeded(first, 500 + g), { setup: 2, mode: 'classic' });
+        const lists = { a: [], b: [] };
+        lists[first].push({ setup: 2, mode: 'classic' });
+        let n = 0; const exp = { a: 0, b: 0 };
+        while (ult.next(st).length && n < 90) {
+          if (!ULT_MP && n > 8 && ult.kit.matchPoint(st)) ULT_MP = { first, seed: 500 + g, lists: clone(lists), who: st.turn };
+          const legal = []; for (let bb = 0; bb < 9; bb++) { if (st.big[bb] || (st.force !== null && st.force !== bb)) continue; for (let i = 0; i < 9; i++) if (!st.cells[bb * 9 + i]) legal.push({ b: bb, i }); }
+          // lean towards winning a small board, so denials and match points turn up
+          const win = legal.filter((m) => { const t = clone(st); try { return ult.apply(t, t.turn, m).big[m.b] === st.turn; } catch { return false; } });
+          const m = win.length && rq() < 0.6 ? win[Math.floor(rq() * win.length)] : legal[Math.floor(rq() * legal.length)];
+          const prevSt = st; const who = st.turn;
+          st = step(st, m);
+          lists[who].push(m); n++;
+          if (ult.kit.deniedNow(prevSt, st)) { exp[who]++; if (!ULT_DENY && !st.end) { const pre = clone(lists); pre[who].pop(); ULT_DENY = { first, seed: 500 + g, lists: clone(lists), pre, last: m, mover: who }; } }
+        }
+        if (st.dn.a !== exp.a || st.dn.b !== exp.b) throw new Error(`FAIL: the dn counter disagrees with deniedNow in game ${g}`);
+      }
+      ok(!!ULT_MP && !!ULT_DENY, 'match point and denied: found real games with a match-point position and with a denying last move');
+      ok(ult.kit.matchPoint(flowLists(ULT_MP)) && flowLists(ULT_MP).turn === ULT_MP.who, 'match point: the fixture really is a match-point position for the player to move');
+      const dnState = flowLists(ULT_DENY);
+      ok(dnState.dn[ULT_DENY.mover] >= 1 && ult.kit.deniedNow(flowLists(ULT_DENY.pre), dnState), 'denied: the fixture log ends on a denial, and the dn counter saw it');
+      const dnWin = clone(dnState); dnWin.end = { why: 'line', who: ULT_DENY.mover, line: [0, 1, 2] }; dnWin.down = { a: 2, b: 2 };
+      const dk = ult.kit.momentKeys(dnWin, { winner: ULT_DENY.mover }, { games_n: 3 }).keys;
+      ok(dk.includes('deny') && dk.includes('comeback') && dk.indexOf('comeback') < dk.indexOf('deny') && ult.kit.MOMENTS.deny.length >= 4, 'moment: a winner who denied a line gets the deny moment, right after comeback');
+      const dnLoser = clone(dnWin); dnLoser.end.who = other2(ULT_DENY.mover); dnLoser.dn = { a: 0, b: 0 }; dnLoser.dn[ULT_DENY.mover] = 1;
+      ok(!ult.kit.momentKeys(dnLoser, { winner: other2(ULT_DENY.mover) }, { games_n: 3 }).keys.includes('deny'), 'moment: the other player gets no deny moment');
+      const lg = (d) => ult.kit.ledgerText(d, (w) => (w === 'a' ? 'Emerson' : 'Sydney'));
+      ok(lg({ games_n: 9, wins_a_n: 5, wins_b_n: 4, streak: 2, streak_who: 'b' }) === 'Series: Emerson 5 · Sydney 4 · Sydney on 2' && lg({ games_n: 3, wins_a_n: 1, wins_b_n: 1, streak: 1, streak_who: 'b', draws_n: 1 }) === 'Series: Emerson 1 · Sydney 1 · 1 drawn' && lg({}) === null, 'ledger: "Series: Emerson 5 · Sydney 4 · Sydney on 2", streaks only from 2, draws only when there are some');
+    }
 
     // 6. Last Light
     const bigs = (arr) => arr.map((x) => (x === '.' ? null : x));
@@ -955,7 +1098,7 @@ async function uiTests(scheme, port) {
       while (!prev.over) {
         const actor = prev.acts[0];
         const pg = page[actor];
-        const sel = SEL.four(FOUR_DIAG[n]);
+        const sel = SEL.four(TRAP_GAME[n]);
         await pg.tap(sel);
         if (n === 6) { await pg.waitForTimeout(450); await shot(h.a, `four-${scheme}-390-mid`); await shot(h.b, `four-${scheme}-360-mid`); }
         if (moveCount(await h.engine(pg, id)) !== n) throw new Error('FAIL: four: the first tap must only lift the disc, not play');
@@ -967,6 +1110,10 @@ async function uiTests(scheme, port) {
         if (n === 1) {
           const m = h.matches().find((x) => x.id === id);
           ok(JSON.stringify(m[first][0]) === '{"setup":2,"mode":"classic"}' && ea.state.v === 2 && ea.state.mode === 'classic', `four (${scheme}): the first tap-and-drop sends the setup move, then the disc`);
+        }
+        if (n === 5) {
+          for (const pg2 of [h.a, h.b]) await pg2.waitForSelector('.g4-stamp', { timeout: 3500 });
+          ok(/trap/i.test(await h.a.textContent('.g4-stamp')) && /trap/i.test(await h.b.textContent('.g4-stamp')) && ea.state.tr[first] === 1, `four (${scheme}): a double threat stamps "Trap!" on both phones`);
         }
         if (n === 3) {
           const waiting = page[ea.acts[0] === 'a' ? 'b' : 'a'];
@@ -985,13 +1132,13 @@ async function uiTests(scheme, port) {
       ok(recs.length === before + 1 && recs[recs.length - 1].winner === first, `four (${scheme}): one result recorded with the right winner`);
       // the books: both phones watched it end, it was counted once
       const gd = h.docs['gamedata/four'] || {};
-      ok(gd.games_n === 1 && gd.last_id === id && gd.streak === 1 && gd.streak_who === first && gd[`wins_${first}_n`] === 1 && gd[`classic_${first}_n`] === 1 && gd.quick_best === 100 - 6 && gd.quick_best_who === first, `four (${scheme}): both phones saw it end and the records were counted once (${JSON.stringify(gd)})`);
+      ok(gd.games_n === 1 && gd.last_id === id && gd.streak === 1 && gd.streak_who === first && gd[`wins_${first}_n`] === 1 && gd[`classic_${first}_n`] === 1 && gd.quick_best === 100 - 4 && gd.quick_best_who === first && gd[`trap_${first}_n`] === 1, `four (${scheme}): both phones saw it end and the records were counted once (${JSON.stringify(gd)})`);
       await seeBoard(h.a);
       await seeBoard(h.b);
       await h.wait(400);
       const ma = await h.a.textContent('.g4-moment');
       const mb = await h.b.textContent('.g4-moment');
-      ok(ma.length > 4 && ma === mb && await h.a.isVisible('.g4-moment'), `four (${scheme}): both phones show the same moment line ("${ma}")`);
+      ok(ma.length > 4 && ma === mb && /trap|fork|threats? at once|double threat|blocked one/i.test(ma) && await h.a.isVisible('.g4-moment'), `four (${scheme}): both phones show the same moment line ("${ma}")`);
       await shot(h.a, `four-${scheme}-390-end`);
       await shot(h.b, `four-${scheme}-360-end`);
       await h.closeGame(h.a);
@@ -1026,6 +1173,45 @@ async function uiTests(scheme, port) {
       await pg.setViewportSize({ width: 390, height: 844 });
     });
 
+    // ── Four: the series strip shows on both phones, and the finale repeats it as a ledger ──
+    await section(`four ledger online (${scheme})`, async () => {
+      await leave(h, h.a); await leave(h, h.b);
+      const other = (w) => (w === 'a' ? 'b' : 'a');
+      const nm = { a: 'Emerson', b: 'Sydney' };
+      const id = await h.newOnlineGame(h.a, 'four');
+      await h.openMatch(h.b, id);
+      await waitMoves(h, id, 0, [h.a, h.b]);
+      const first = h.matches().find((m) => m.id === id).first;
+      const page = { a: h.a, b: h.b };
+      const P2 = page[other(first)];
+      const tally = /Emerson \d+ · Sydney \d+/;
+      ok(await page[first].isVisible('.g4-riv') && await P2.isVisible('.g4-riv') && tally.test(await P2.textContent('.g4-riv')) && await P2.textContent('.g4-riv') === await page[first].textContent('.g4-riv'), `four (${scheme}): the waiting phone sees the same series tally as the first mover (${await P2.textContent('.g4-riv')})`);
+      const before = h.docs['gamedata/four'] || {};
+      let n = 0;
+      let prev = await h.engine(h.a, id);
+      while (!prev.over) {
+        const pg = page[prev.acts[0]];
+        await pg.tap(SEL.four([0, 1, 0, 1, 0, 1, 0][n]));
+        await pg.tap(SEL.four([0, 1, 0, 1, 0, 1, 0][n]));
+        n++;
+        [prev] = await waitMoves(h, id, n, [h.a, h.b]);
+      }
+      await h.a.waitForSelector('#game-root .gm-end', { state: 'visible', timeout: 6000 });
+      await h.b.waitForSelector('#game-root .gm-end', { state: 'visible', timeout: 6000 });
+      await h.settle();
+      await seeBoard(h.a);
+      await seeBoard(h.b);
+      await h.wait(500);
+      const gd = h.docs['gamedata/four'] || {};
+      const want = `Series: Emerson ${gd.wins_a_n || 0} · Sydney ${gd.wins_b_n || 0}${gd.draws_n ? ` · ${gd.draws_n} draw${gd.draws_n === 1 ? '' : 's'}` : ''}${gd.streak >= 2 ? ` · ${nm[gd.streak_who]} on ${gd.streak}` : ''}`;
+      const la = await h.a.textContent('.g4-ledger');
+      const lb = await h.b.textContent('.g4-ledger');
+      ok(gd.last_id === id && gd.games_n === before.games_n + 1, `four (${scheme}): the match was counted once`);
+      ok(la === want && lb === want && await h.a.isVisible('.g4-ledger') && await h.b.isVisible('.g4-ledger'), `four (${scheme}): both phones show the ledger under the moment, equal to the books ("${la}")`);
+      await shot(h.a, `four-${scheme}-390-ledger`);
+      await h.closeGame(h.a); await h.closeGame(h.b);
+    });
+
     // ── Four: small portrait phones, picker / pop buttons / strip, nothing scrolls ──
     await section(`four small portrait (${scheme})`, async () => {
       await leave(h, h.a); await leave(h, h.b);
@@ -1038,6 +1224,7 @@ async function uiTests(scheme, port) {
           return { over: gr.scrollHeight - gr.clientHeight, ih: innerHeight, bottom: Math.max(...kids.map((e) => e.getBoundingClientRect().bottom)), sw: gr.scrollWidth - innerWidth, descH: d && !d.hidden ? d.getBoundingClientRect().height : 0, edge: document.querySelector('.g4-edge').getBoundingClientRect().bottom };
         });
         ok(m.over <= 0 && m.sw <= 0 && m.bottom <= m.ih - 8 && m.edge < m.ih, `four (${scheme}): ${label}: nothing scrolls and the board shadow is not clipped (over ${m.over}px, content ends ${Math.round(m.bottom)} of ${m.ih})`);
+        if (wantDesc) ok(await pg.$$eval('.g4-mc', (bs) => new Set(bs.map((b) => Math.round(b.getBoundingClientRect().top))).size === 1 && bs.length === 4), `four (${scheme}): ${label}: the four mode chips sit on one row`);
         if (wantDesc) ok(m.descH > 0 && m.descH < 24, `four (${scheme}): ${label}: a one-line mode description shows (${Math.round(m.descH)}px)`);
       };
       for (const [w, ht] of [[390, 664], [360, 640], [360, 560]]) {
@@ -1069,10 +1256,12 @@ async function uiTests(scheme, port) {
       let extras = 0;
       let doubles = 0;
       let momentP = null;
+      let ledgerP = null;
       const { id: dotsId, final } = await onlineGame(h, 'dots', scheme, (s) => order.find((k) => !s.order.includes(k)), {
         midAt: 22,
         check: (before, after, actor) => {
           if (after.over && !momentP) momentP = Promise.all([h.a, h.b].map((p) => p.waitForSelector('.g-dots .gd-m:not([hidden])', { timeout: 7000 }).then(() => p.textContent('.g-dots .gd-m')))).catch(() => null);
+          if (after.over && !ledgerP) ledgerP = Promise.all([h.a, h.b].map((p) => p.waitForSelector('.g-dots .gd-ledger:not([hidden])', { timeout: 7000 }).then(() => p.textContent('.g-dots .gd-ledger')))).catch(() => null);
           const closed = after.state.boxes.filter(Boolean).length - before.state.boxes.filter(Boolean).length;
           if (closed && !after.over) { extras++; if (after.acts[0] !== actor) throw new Error('FAIL: dots: closing a box must give another turn'); }
           if (!closed && !after.over && after.acts[0] === actor) throw new Error('FAIL: dots: turn must pass when no box closes');
@@ -1085,6 +1274,9 @@ async function uiTests(scheme, port) {
       const mm = await momentP;
       ok(mm && mm[0] && mm[0] === mm[1], `dots (${scheme}): both phones close with the same moment line ("${mm && mm[0]}")`);
       const gd = h.docs['gamedata/dots'] || {};
+      const lg = await ledgerP;
+      const wantLedger = `Series: Emerson ${gd.w_a_n || 0} · Sydney ${gd.w_b_n || 0}${gd.draws_n ? ` · ${gd.draws_n} draw${gd.draws_n === 1 ? '' : 's'}` : ''}`;
+      ok(lg && lg[0] === lg[1] && lg[0] === wantLedger, `dots (${scheme}): both phones print the same series ledger, matching the stored records ("${lg && lg[0]}")`);
       const dw = final.result.winner;
       ok(gd.games_n === 1 && gd.last_id === dotsId && (dw ? gd.streak === 1 && gd.streak_who === dw && gd.classic_a_n + gd.classic_b_n === 1 : gd.draws_n === 1), `dots (${scheme}): both phones saw it end, but it was counted once`);
     });
@@ -1391,6 +1583,87 @@ async function uiTests(scheme, port) {
       await leave(h, pg);
     });
 
+    await section(`dots squeeze: last safe line, then none left (${scheme})`, async () => {
+      await leave(h, h.a); await leave(h, h.b);
+      const id = await h.newOnlineGame(h.a, 'dots');
+      await h.openMatch(h.b, id);
+      await waitMoves(h, id, 0, [h.a, h.b]);
+      const first = h.matches().find((m) => m.id === id).first;
+      const lists = { a: [], b: [] };
+      for (const { role, move } of DOTS_SAFE.moves) lists[role === 'a' ? first : first === 'a' ? 'b' : 'a'].push(move);
+      await h.a.evaluate(([mid, L]) => globalThis.claude.use('db').then((db) => db.doc('matches/' + mid).update({ a: JSON.stringify(L.a), b: JSON.stringify(L.b) })), [id, lists]);
+      const n = DOTS_SAFE.moves.length - 1;
+      await waitMoves(h, id, n, [h.a, h.b]);
+      await h.wait(300);
+      const e = await h.engine(h.a, id);
+      const mv = e.acts[0] === 'a' ? h.a : h.b;
+      const wt = e.acts[0] === 'a' ? h.b : h.a;
+      const plate = (pg) => pg.textContent('.g-dots .gd-plate-t');
+      ok(/Last safe line!/.test(await plate(mv)) && /Last safe line!/.test(await plate(wt)), `dots (${scheme}): both phones say "Last safe line!" ("${await plate(mv)}" / "${await plate(wt)}")`);
+      await shot(mv, `dots-${scheme}-390-lastsafe`);
+      await dotsPlay(id, DOTS_SAFE.last, n + 1);
+      await h.wait(300);
+      const e2 = await h.engine(h.a, id);
+      const nm = e2.acts[0] === 'a' ? 'Emerson' : 'Sydney';
+      for (const pg of [h.a, h.b]) {
+        const t = await plate(pg);
+        ok(t.includes('No safe lines left') && t.includes(nm + ' has to give'), `dots (${scheme}): and with none left the plate says who has to give ("${t}")`);
+      }
+      await shot(h.b, `dots-${scheme}-360-nosafe`);
+      // a box on offer
+      await leave(h, h.a); await leave(h, h.b);
+      const id2 = await h.newOnlineGame(h.a, 'dots');
+      await h.openMatch(h.b, id2);
+      await waitMoves(h, id2, 0, [h.a, h.b]);
+      let k = 0;
+      for (const key of ['h-0-0', 'h-0-1', 'h-0-2', 'h-1-0', 'h-1-1', 'h-1-2', 'v-0-0']) await dotsPlay(id2, key, ++k);
+      for (const pg of [h.a, h.b]) ok(/3 boxes on offer/.test(await plate(pg)), `dots (${scheme}): a three-box row says "3 boxes on offer" on both phones ("${await plate(pg)}")`);
+      await leave(h, h.a); await leave(h, h.b);
+    });
+
+    await section('dots hearts: tally, strip and ledger over two Sweetheart matches', async () => {
+      if (scheme !== 'light') return;
+      await leave(h, h.a); await leave(h, h.b);
+      const pg = h.a;
+      const before = clone(h.docs['gamedata/dots'] || {});
+      const playSweet = async (seed) => {
+        await h.newLocalGame(pg, 'dots');
+        const id = await localId(pg);
+        await pg.tap('.g-dots .gd-mode[data-mode="sweet"]');
+        const rnd = lcg(seed);
+        const keys = [...DOT_KEYS];
+        for (let i = keys.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [keys[i], keys[j]] = [keys[j], keys[i]]; }
+        for (const kk of keys) await pg.click(SEL.dots(kk));
+        const e = await h.engine(pg, id);
+        await pg.waitForSelector('#game-root .gm-end', { state: 'visible', timeout: 6000 });
+        await pg.waitForSelector('.g-dots .gd-ledger:not([hidden])', { timeout: 4000 });
+        const gd = h.docs['gamedata/dots'] || {};
+        const ledger = await pg.textContent('.g-dots .gd-ledger');
+        const stamp = await pg.textContent('.g-dots .gd-m');
+        await h.settle();
+        await h.closeGame(pg);
+        return { e, ledger, stamp, gd: clone(h.docs['gamedata/dots'] || {}) };
+      };
+      const g1 = await playSweet(21);
+      const g2 = await playSweet(22);
+      const hearts = (g) => (g.hearts_a_n || 0) + (g.hearts_b_n || 0);
+      ok(hearts(g1.gd) === hearts(before) + 1 && hearts(g2.gd) === hearts(before) + 2, `dots: each Sweetheart match counts its heart once (hearts_a_n ${g2.gd.hearts_a_n || 0}, hearts_b_n ${g2.gd.hearts_b_n || 0})`);
+      const closer = (g) => g.e.state.boxes[g.e.state.heart];
+      ok((g2.gd[`hearts_${closer(g2)}_n`] || 0) === (g1.gd[`hearts_${closer(g2)}_n`] || 0) + 1, 'the heart goes to whoever closed it');
+      const want = (gd) => `Series: Emerson ${gd.w_a_n || 0} · Sydney ${gd.w_b_n || 0}${gd.draws_n ? ` · ${gd.draws_n} draw${gd.draws_n === 1 ? '' : 's'}` : ''}${(gd.streak_who === 'a' || gd.streak_who === 'b') && gd.streak >= 2 ? ` · ${gd.streak_who === 'a' ? 'Emerson' : 'Sydney'} on ${gd.streak}` : ''}`;
+      ok(g1.ledger === want(g1.gd) && g2.ledger === want(g2.gd), `dots: the ledger under the stamp matches the stored records ("${g2.ledger}")`);
+      ok(g2.stamp && g2.stamp.length > 10, `dots: and the moment stamp reads "${g2.stamp}"`);
+      await h.newLocalGame(pg, 'dots');
+      await pg.tap('.g-dots .gd-mode[data-mode="sweet"]');
+      const strip = await pg.textContent('.g-dots .gd-strip');
+      const ha = g2.gd.hearts_a_n || 0;
+      const hb = g2.gd.hearts_b_n || 0;
+      ok(/heart/i.test(strip) && strip.includes(String(Math.max(ha, hb))) && strip.includes(String(Math.min(ha, hb))), `dots: the Sweetheart strip tells the heart race ("${strip}")`);
+      await shot(pg, 'dots-light-390-heartstrip');
+      await dotsPickClassic(pg);
+      await leave(h, pg);
+    });
+
     // ── Ultimate ──
     await section(`ultimate online (${scheme})`, async () => {
       await leave(h, h.a); await leave(h, h.b);
@@ -1474,9 +1747,9 @@ async function uiTests(scheme, port) {
       const eng = async (id) => h.engine(pg, id);
       // the draw played earlier is in the books and on the empty board
       let gd = h.docs['gamedata/four'] || {};
-      ok(gd.draws_n === 1 && gd.games_n === 2 && gd.streak === 0 && gd.streak_who === '', `four: the draw was counted and ended the streak (${JSON.stringify(gd)})`);
+      ok(gd.draws_n === 1 && gd.games_n === 3 && gd.streak === 0 && gd.streak_who === '', `four: the draw was counted and ended the streak (${JSON.stringify(gd)})`);
       await h.newLocalGame(pg, 'four');
-      ok(/(Emerson 1 · Sydney 0|Emerson 0 · Sydney 1) · 1 draw/.test(await pg.textContent('.g4-riv')), 'four: the rivalry strip shows the tally with the draw');
+      ok(/Emerson \d+ · Sydney \d+ · 1 draw/.test(await pg.textContent('.g4-riv')), 'four: the rivalry strip shows the tally with the draw');
       await shot(pg, 'four-light-390-rivalry');
       // Ghost Column
       await pg.click('.g4-mc[data-mode="ghost"]');
@@ -1533,6 +1806,17 @@ async function uiTests(scheme, port) {
       e = await eng(id);
       ok(e.state.cols[1].length === 0 && e.state.n === 3 && moveCount(e) === 3 && e.state.turn !== X && await pg.$eval('.g4-act[data-act="drop"]', (b) => b.getAttribute('aria-pressed') === 'true'), 'four: a pop removes your bottom disc, passes the turn and goes back to dropping');
       await h.closeGame(pg);
+      // Blockers: three stones on the floor
+      await h.newLocalGame(pg, 'four');
+      await pg.click('.g4-mc[data-mode="blockers"]');
+      ok(await pg.$$eval('.g4-capg .g4-st-body', (xs) => xs.length) === 3 && /stones/i.test(await pg.textContent('.g4-mdesc')), 'four: picking Blockers previews the three stones and describes the mode');
+      id = await localId(pg);
+      await tapTwice(3);
+      await pg.waitForTimeout(500);
+      e = await eng(id);
+      ok(e.state.mode === 'blockers' && e.state.stones.length === 3 && await pg.$$eval('.g4-discs .g4-x', (xs) => xs.length) === 3 && /Blockers/.test(await pg.textContent('.g4-label')), 'four: the stones are on the board and the label says Blockers');
+      await shot(pg, 'four-light-390-blockers');
+      await h.closeGame(pg);
       // keyboard: Tab previews the focused column, Enter drops it, arrows start from it
       await h.newLocalGame(pg, 'four');
       await pg.click('.g4-mc[data-mode="classic"]');
@@ -1586,7 +1870,7 @@ async function uiTests(scheme, port) {
       }
       gd = h.docs['gamedata/four'] || {};
       const wantStreak = winners[0] === winners[1] ? 2 : 1;
-      ok(gd.games_n === 4 && gd.streak === wantStreak && gd.streak_who === winners[1] && (gd.wins_a_n || 0) + (gd.wins_b_n || 0) + gd.draws_n === gd.games_n, `four: streaks and totals add up (${JSON.stringify(gd)})`);
+      ok(gd.games_n === 5 && gd.streak === wantStreak && gd.streak_who === winners[1] && (gd.wins_a_n || 0) + (gd.wins_b_n || 0) + gd.draws_n === gd.games_n, `four: streaks and totals add up (${JSON.stringify(gd)})`);
       await h.newLocalGame(pg, 'four');
       const riv = await pg.textContent('.g4-riv');
       ok(/Emerson \d+ · Sydney \d+ · 1 draw/.test(riv), `four: the strip carries the all-time tally and the draw ("${riv}")`);
@@ -1796,6 +2080,87 @@ async function uiTests(scheme, port) {
       await h.closeGame(h.a); await h.closeGame(h.b);
     });
 
+    await section('ultimate v2 finale ledger: same series line on both phones, matching the shared data', async () => {
+      await leave(h, h.a); await leave(h, h.b);
+      const nameOfW = (w) => (w === 'a' ? 'Emerson' : 'Sydney');
+      const expect = (d) => `Series: ${nameOfW('a')} ${d.wins_a_n | 0} · ${nameOfW('b')} ${d.wins_b_n | 0}${d.draws_n ? ` · ${d.draws_n} drawn` : ''}${(d.streak | 0) >= 2 ? ` · ${nameOfW(d.streak_who)} on ${d.streak}` : ''}`;
+      for (let round = 1; round <= 2; round++) {
+        const id = await h.newOnlineGame(h.a, 'ultimate');
+        await h.openMatch(h.b, id);
+        await waitMoves(h, id, 0, [h.a, h.b]);
+        const first = h.matches().find((m) => m.id === id).first;
+        const second = first === 'a' ? 'b' : 'a';
+        const lists = { a: [], b: [] };
+        lists[first].push({ setup: 2, mode: 'classic' });
+        ULT_WIN.slice(0, -1).forEach(([b, i], n) => lists[n % 2 ? second : first].push({ b, i }));
+        await h.a.evaluate(([mid, L]) => globalThis.claude.use('db').then((db) => db.doc('matches/' + mid).update({ a: JSON.stringify(L.a), b: JSON.stringify(L.b) })), [id, lists]);
+        await waitMoves(h, id, ULT_WIN.length - 1, [h.a, h.b]);
+        await h.wait(200);
+        const last = ULT_WIN[ULT_WIN.length - 1];
+        const mover = (await h.engine(h.a, id)).acts[0];
+        const mpg = mover === 'a' ? h.a : h.b;
+        await mpg.tap(SEL.ultimate(last)); await mpg.tap(SEL.ultimate(last));
+        await waitMoves(h, id, ULT_WIN.length, [h.a, h.b]);
+        await h.a.waitForSelector('#game-root .gm-end', { state: 'visible', timeout: 6000 });
+        await h.b.waitForSelector('#game-root .gm-end', { state: 'visible', timeout: 6000 });
+        await seeBoard(h.a); await seeBoard(h.b);
+        await h.settle();
+        const doc = h.docs['gamedata/ultimate'] || {};
+        const la = (await h.a.textContent('.gu-ledger')).trim();
+        const lb = (await h.b.textContent('.gu-ledger')).trim();
+        ok(doc.last_id === id && la === lb && la === expect(doc) && !(await h.a.$eval('.gu-ledger', (x) => x.hidden)), `ultimate: finale ${round}: both phones show "${la}", exactly what the shared data says`);
+        if (round === 2) { ok((doc.games_n | 0) >= 2 && (doc.wins_a_n | 0) + (doc.wins_b_n | 0) >= 2, 'ultimate: the ledger moved on after the second match'); await shot(h.a, 'ultimate-light-390-ledger'); }
+        await h.closeGame(h.a); await h.closeGame(h.b);
+      }
+    });
+
+    await section('ultimate: match point plate and the Denied! stamp, on both phones', async () => {
+      await leave(h, h.a); await leave(h, h.b);
+      if (!ULT_MP || !ULT_DENY) throw new Error('FAIL: no match point / denied fixtures from the rules tests');
+      const nameOfW = (w) => (w === 'a' ? 'Emerson' : 'Sydney');
+      const inject = async (id, fx, lists0) => {
+        const m = h.matches().find((x) => x.id === id);
+        const flip = m.first !== fx.first;
+        const L = flip ? { a: lists0.b, b: lists0.a } : lists0;
+        await h.a.evaluate(([mid, X]) => globalThis.claude.use('db').then((db) => db.doc('matches/' + mid).update({ a: JSON.stringify(X.a), b: JSON.stringify(X.b) })), [id, L]);
+        return flip;
+      };
+      let id = await h.newOnlineGame(h.a, 'ultimate');
+      await h.openMatch(h.b, id);
+      await waitMoves(h, id, 0, [h.a, h.b]);
+      let flip = await inject(id, ULT_MP, ULT_MP.lists);
+      const total = ULT_MP.lists.a.length + ULT_MP.lists.b.length - 1;
+      await waitMoves(h, id, total, [h.a, h.b]);
+      await h.wait(300);
+      const mover = (await h.engine(h.a, id)).acts[0];
+      for (const pg of [h.a, h.b]) {
+        const t = await pg.textContent('.gu-plate');
+        ok(t.includes(`${nameOfW(mover)} is one board from the win`), `ultimate: the plate says "${t.trim()}" on both phones`);
+      }
+      await shot(h.a, 'ultimate-light-390-matchpoint');
+      await h.closeGame(h.a); await h.closeGame(h.b);
+
+      id = await h.newOnlineGame(h.a, 'ultimate');
+      await h.openMatch(h.b, id);
+      await waitMoves(h, id, 0, [h.a, h.b]);
+      flip = await inject(id, ULT_DENY, ULT_DENY.pre);
+      const pre = ULT_DENY.pre.a.length + ULT_DENY.pre.b.length - 1;
+      await waitMoves(h, id, pre, [h.a, h.b]);
+      await h.wait(300);
+      ok(!(await h.a.isVisible('.gu-deny')) && !(await h.b.isVisible('.gu-deny')), 'ultimate: no Denied! stamp while nothing was denied (loading a game does not replay one)');
+      const mv2 = ULT_DENY.last;
+      const mp2 = (await h.engine(h.a, id)).acts[0] === 'a' ? h.a : h.b;
+      await mp2.tap(SEL.ultimate([mv2.b, mv2.i])); await mp2.tap(SEL.ultimate([mv2.b, mv2.i]));
+      const seenOn = [];
+      for (const pg of [h.a, h.b]) { await pg.waitForSelector('.gu-deny', { state: 'visible', timeout: 4000 }).then(() => seenOn.push(true)).catch(() => seenOn.push(false)); }
+      ok(seenOn.every(Boolean), 'ultimate: the Denied! stamp shows on both phones when a player takes the board the other needed for a line');
+      ok((await h.a.textContent('.gu-deny')).trim() === 'Denied!', 'ultimate: and it says Denied!');
+      await shot(h.a, 'ultimate-light-390-denied');
+      await h.wait(2300);
+      ok(!(await h.a.isVisible('.gu-deny')) && !(await h.b.isVisible('.gu-deny')), 'ultimate: the stamp goes away by itself after a moment');
+      await h.closeGame(h.a); await h.closeGame(h.b);
+    });
+
     await section('ultimate: Last Light names the lines left and draws them', async () => {
       await leave(h, h.a); await leave(h, h.b);
       if (!ULT_LL) throw new Error('FAIL: no Last Light log from the rules tests');
@@ -1872,6 +2237,7 @@ async function uiTests(scheme, port) {
       ok((await pg.$eval(`.gu-tok[data-w="${S}"]`, (x) => x.getBoundingClientRect().height)) >= 44 && await pg.$eval(`.gu-tok[data-w="${S}"]`, (x) => !x.disabled) && await pg.$eval(`.gu-tok[data-w="${F}"]`, (x) => x.disabled), 'ultimate: only the player to move can use theirs, and it is at least 44px tall');
       ok(/Ties → /.test(await pg.textContent('.gu-tie')), 'ultimate: the komi chip stays during a Wildcards game');
       await pg.tap(SEL.ultimate([4, 0])); await pg.tap(SEL.ultimate([4, 0])); // S obeys; F is sent to board 0
+      ok((await pg.textContent('.gu-plate')).includes(`${nameOfW(S)} still holds a wildcard`), `ultimate: while ${nameOfW(S)}'s wildcard is unspent, the mover's plate says so`);
       await pg.tap(SEL.ultimate([0, 4])); await pg.tap(SEL.ultimate([0, 4])); // F obeys; S is sent to board 4
       await pg.tap(`.gu-tok[data-w="${S}"]`);
       ok(await pg.$eval(`.gu-tok[data-w="${S}"]`, (x) => x.classList.contains('is-armed')) && await pg.$$eval('.gu-sb.is-open', (xs) => xs.length) > 1, 'ultimate: arming the wildcard opens every board');
@@ -1879,6 +2245,7 @@ async function uiTests(scheme, port) {
       e = await h.engine(pg, id);
       const lastMove = e.lists[S][e.lists[S].length - 1];
       ok(lastMove.wild === 1 && lastMove.b === 7 && e.state.cells[7 * 9 + 7] === S && e.state.wild[S] === 0 && e.state.force === 7, 'ultimate: a wildcard move is recorded and the send rule carries on from there');
+      ok(!/still holds a wildcard/.test(await pg.textContent('.gu-plate')), 'ultimate: right after the wildcard is used the tell is gone');
       await pg.tap(SEL.ultimate([7, 0])); await pg.tap(SEL.ultimate([7, 0])); // F obeys; S sent to board 0
       await pg.tap(`.gu-tok[data-w="${S}"]`);
       ok(await toastSays(pg, /used your wildcard/i), 'ultimate: trying a second wildcard gets a friendly refusal');

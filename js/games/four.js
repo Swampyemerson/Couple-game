@@ -6,7 +6,8 @@
 //   classic  the original rules
 //   ghost    Ghost Column: a seeded non-centre column is capped at three discs
 //   pop      PopOut: instead of dropping, pop one of your own bottom-row discs out
-import { registerGame, randInt, gameDataApi } from './core.js';
+//   blockers Blockers: three seeded neutral stones ('x') sit on the floor; they fill space but never make a line
+import { registerGame, randInt, shuffled, gameDataApi } from './core.js';
 
 const COLS = 7;
 const ROWS = 6;
@@ -17,17 +18,35 @@ const MODES = {
   classic: { name: 'Classic', desc: 'The original. First to line up four.' },
   ghost: { name: 'Ghost Column', desc: 'A ghost caps one column at three discs.' },
   pop: { name: 'PopOut', desc: 'Or pop your own bottom disc out.' },
+  blockers: { name: 'Blockers', desc: 'Three stones sit on the floor. Nobody owns them.' },
 };
-const MODE_IDS = ['classic', 'ghost', 'pop'];
+const MODE_IDS = ['classic', 'ghost', 'pop', 'blockers'];
+const CHIP_NAMES = { classic: 'Classic', ghost: 'Ghost', pop: 'PopOut', blockers: 'Blockers' }; // short, so four chips fit one row at 360 px
 const isMode = (m) => typeof m === 'string' && Object.prototype.hasOwnProperty.call(MODES, m);
 const GHOST_COLS = [0, 1, 2, 4, 5, 6];
 const GHOST_CAP = 3;
 const POP_MOVES = 100; // PopOut can go round forever: a hundred moves with no four is a draw
 const ghostFor = (seed) => GHOST_COLS[randInt(GHOST_COLS.length, seed, 'ghost')];
+const STONES = 3;
+/** Blockers: three distinct non-centre columns, sorted, from the match seed. */
+const stonesFor = (seed) => shuffled(GHOST_COLS, `${seed}:stones`).slice(0, STONES).sort((p, q) => p - q);
+/** How many holes the board has in this match. */
+const slotsOf = (s) => COLS * ROWS - (s.v === 2 && s.mode === 'ghost' ? ROWS - GHOST_CAP : 0) - (s.stones ? s.stones.length : 0);
 const modeOf = (s) => (s && s.v === 2 && isMode(s.mode) ? s.mode : 'classic');
 const capOf = (s, c) => (s.v === 2 && s.mode === 'ghost' && s.ghost === c ? GHOST_CAP : ROWS);
 const canDrop = (s) => s.cols.some((stack, c) => stack.length < capOf(s, c));
 const canPop = (s, w) => s.cols.some((stack) => stack[0] === w);
+/** How many different drops would win right now for `who` (the cell itself is not read, so this works before and after a drop). */
+function dropWins(s, who) {
+  let n = 0;
+  for (let c = 0; c < COLS; c++) {
+    const r = s.cols[c].length;
+    if (r < capOf(s, c) && runsThrough(s.cols, c, r, who).length) n++;
+  }
+  return n;
+}
+/** A drop that leaves its player two or more winning drops (a fork), from a position that had fewer, with nothing for the other side to win with at once. */
+const setTrap = (before, after, who) => dropWins(after, who) >= 2 && dropWins(before, who) < 2 && dropWins(after, other(who)) === 0;
 
 /** Every line of four or more through (c, r) for `who`. r counts up from the bottom. The cell itself is not read. */
 function runsThrough(cols, c, r, who) {
@@ -101,6 +120,7 @@ const MOMENTS = {
   record: ['New fastest win: {m} moves. Somebody’s showing off.', '{w} did it in {m} moves. A new record, and a little smug.', 'A record {m}-move win. {l} will be wanting a rematch.'],
   broke: ['{w} breaks {l}’s streak. Rude. Impressive.', '{l}’s winning run stops here. Lovingly, {w} stepped on it.', 'Streak over. {w} ended it, and is very calm about it.'],
   streak: ['{w} is on a {k}-game streak.', '{k} in a row for {w}. Someone should say something.', '{k} straight for {w}. Breakfast is on {l}.'],
+  trap: ['{w} set a trap {l} couldn’t escape.', 'Two threats at once. {l} could only watch.', 'A fork! {w} saw it coming. Probably.', '{w} built a double threat and cashed it in.', '{l} blocked one. {w} took the other.'],
   comeback: ['{w} blocked {b} sneaky fours and still won.', '{w} blocked it, blocked it, then struck.', 'Escape artist: {w} dodged {b} threats on the way.'],
   photo: ['Won on the very last squares. {l} was a disc from a draw.', 'Photo finish. The board was nearly full.'],
   firstmode: ['First win in {mode} for {w}.', '{w} takes the first {mode} game in this house. History.'],
@@ -132,10 +152,11 @@ function momentFor(s, first, name, st) {
   const pre = st || null;
   const order = [];
   if (!win.gift && pre && pre.quick > 0 && wm < 100 - pre.quick) order.push('record');
+  if (s.tr && s.tr[w] > 0 && !win.gift) order.push('trap');
   if (pre && pre.who === l && pre.streak >= 2) order.push('broke');
   if (pre && pre.who === w && pre.streak + 1 >= 3) order.push('streak');
   if (s.bl && s.bl[w] >= 2) order.push('comeback');
-  if (!win.pop && s.n >= 36 && mode !== 'pop') order.push('photo');
+  if (!win.pop && s.n >= slotsOf(s) - 6 && mode !== 'pop') order.push('photo');
   if (pre && pre.mw === 0 && mode !== 'classic') order.push('firstmode');
   if (wm <= 7 && !win.gift) order.push('rout');
   if (closeCalls(s, l) > 0) order.push('close');
@@ -159,8 +180,21 @@ function rivalry(d, name, mode, seed) {
   if (mode !== 'classic' && !inMode) flavour = `First game in ${MODES[mode].name}!`;
   else if ((d.streak || 0) >= 2 && d.streak_who) flavour = `${name(d.streak_who)} is on a ${d.streak}-game streak · break it?`;
   else if (d.quick_best && d.quick_best_who) flavour = `Fastest win: ${100 - d.quick_best} moves, ${name(d.quick_best_who)}.`;
+  else if ((d.trap_a_n || 0) + (d.trap_b_n || 0) >= 2) flavour = `Traps set: ${name('a')} ${d.trap_a_n || 0} · ${name('b')} ${d.trap_b_n || 0}`;
   else if (dr && !wa && !wb) flavour = 'Perfectly even so far.';
   return [tally, flavour];
+}
+
+/** The series line under the moment: totals and the streak after this match. `st` = records before it, or `post` = records after it. */
+function ledgerLine(name, st, s, post) {
+  let wa; let wb; let dr; let k; let who;
+  if (post) { wa = post.wins_a_n || 0; wb = post.wins_b_n || 0; dr = post.draws_n || 0; k = post.streak || 0; who = post.streak_who || ''; }
+  else {
+    const w = s.win ? s.win.who : null;
+    wa = st.wa + (w === 'a' ? 1 : 0); wb = st.wb + (w === 'b' ? 1 : 0); dr = st.dr + (w ? 0 : 1);
+    k = w ? (st.who === w ? st.streak + 1 : 1) : 0; who = w || '';
+  }
+  return `Series: ${name('a')} ${wa} · ${name('b')} ${wb}${dr ? ` · ${dr} draw${dr === 1 ? '' : 's'}` : ''}${k >= 2 && who ? ` · ${name(who)} on ${k}` : ''}`;
 }
 
 // ── geometry (SVG user units) ──
@@ -203,6 +237,7 @@ function capSvg(c) {
     <g transform="translate(${gx} ${gy})"><path class="g4-ghost-body" d="M-28 30V-6a28 28 0 0 1 56 0V30l-9.3-8-9.4 8-9.3-8-9.4 8-9.3-8z"/><circle class="g4-ghost-eye" cx="-10" cy="-5" r="5"/><circle class="g4-ghost-eye" cx="10" cy="-5" r="5"/></g>
     <text class="g4-cap-t" x="${gx}" y="${TOP + P + 207}" text-anchor="middle">MAX 3</text>`;
 }
+const STONE_INNER = `<circle class="g4-st-body" r="${DISC}"/><path class="g4-st-crack" d="M8 -6L14 2L6 8L12 18"/><path class="g4-st-crack" d="M-20 -14A28 28 0 0 1 -4 -24"/>`;
 const DISC_INNER = `<circle class="g4-d-body" r="${DISC}"/><circle class="g4-d-ring" r="27"/><circle class="g4-d-groove" r="22"/><circle class="g4-d-dot" r="9"/>`;
 const SVGNS = 'http://www.w3.org/2000/svg';
 const svgEl = (tag, cls) => { const e = document.createElementNS(SVGNS, tag); if (cls) e.setAttribute('class', cls); return e; };
@@ -220,7 +255,9 @@ function applyMove(s, who, move) {
     s.mode = move.mode;
     s.mv = { a: 0, b: 0 };
     s.bl = { a: 0, b: 0 };
+    s.tr = { a: 0, b: 0 };
     if (move.mode === 'ghost') s.ghost = ghostFor(s.seed);
+    if (move.mode === 'blockers') { s.stones = stonesFor(s.seed); for (const c of s.stones) s.cols[c].push('x'); }
     return s;
   }
   if (move && move.pop !== undefined) {
@@ -250,6 +287,7 @@ function applyMove(s, who, move) {
   if (s.cols[col].length >= capOf(s, col)) throw new Error(s.cols[col].length >= ROWS ? 'That column is full' : 'The ghost has that column. Three discs, no more');
   const r = s.cols[col].length;
   const blocked = s.v === 2 && runsThrough(s.cols, col, r, other(who)).length > 0; // would they have won in that hole?
+  const before = s.v === 2 ? clone(s) : null;
   s.cols[col].push(who);
   s.n++;
   const runs = runsThrough(s.cols, col, r, who);
@@ -257,6 +295,7 @@ function applyMove(s, who, move) {
   if (s.v === 2) {
     s.mv[who]++;
     if (blocked && !s.win) s.bl[who]++;
+    if (s.tr && !s.win && setTrap(before, s, who)) s.tr[who]++;
   }
   s.turn = other(who);
   if (s.v === 2 && !s.win) {
@@ -398,8 +437,8 @@ registerGame({
 
 .g-four .g4-riv { display: flex; flex-direction: column; align-items: center; gap: 2px; max-width: 100%; text-align: center; font: 800 0.86rem/1.25 var(--g-font-body); color: var(--g-ink); text-wrap: balance; }
 .g-four .g4-riv .g4-riv-b { color: var(--g-muted); font-weight: 700; }
-.g-four .g4-modes { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; max-width: 100%; }
-.g-four .g4-mc { min-height: 44px; padding: 6px 15px; font-size: 0.88rem; cursor: pointer; box-shadow: var(--g-shadow-sm); touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+.g-four .g4-modes { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; max-width: 100%; }
+.g-four .g4-mc { min-height: 44px; padding: 6px 10px; font-size: 0.85rem; cursor: pointer; box-shadow: var(--g-shadow-sm); touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 .g-four .g4-mc:active { transform: translate(2px, 2px); box-shadow: none; }
 .g-four .g4-mc:focus-visible, .g-four .g4-act:focus-visible { outline: 3px solid var(--g-ink); outline-offset: 2px; }
 .g-four .g4-mdesc { margin: 0; max-width: 34ch; text-align: center; font: 600 0.82rem/1.3 var(--g-font-body); color: var(--g-muted); text-wrap: balance; }
@@ -407,6 +446,11 @@ registerGame({
 .g-four .g4-acts { display: flex; gap: 8px; }
 .g-four .g4-act { min-height: 44px; min-width: 96px; justify-content: center; font-size: 0.9rem; cursor: pointer; box-shadow: var(--g-shadow-sm); touch-action: manipulation; }
 .g-four .g4-moment { margin: 0; max-width: min(100%, 34ch); padding: 8px 14px; border: 2px solid var(--g-ink); border-radius: var(--g-radius); background: var(--g-hl); color: var(--g-on-ink); box-shadow: var(--g-shadow); font: 900 0.9rem/1.25 var(--g-font-display); text-align: center; text-wrap: balance; transform: rotate(-1.5deg); opacity: 0; }
+.g-four .g4-ledger { margin: 0; font: 800 0.8rem/1.3 var(--g-font-body); color: var(--g-muted); text-align: center; text-wrap: balance; opacity: 0; }
+.g-four .g4-ledger.show { opacity: 1; transition: opacity 400ms; }
+.g-four .g4-st-body { fill: color-mix(in srgb, var(--g-ink) 38%, var(--g-card)); stroke: var(--g-ink); stroke-width: 2px; vector-effect: non-scaling-stroke; }
+.g-four .g4-st-ring { fill: none; stroke: var(--g-ink); stroke-width: 4; stroke-dasharray: 5 7; opacity: 0.5; }
+.g-four .g4-st-crack { fill: none; stroke: var(--g-ink); stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; opacity: 0.6; }
 .g-four .g4-moment.show { animation: g4-moment 420ms cubic-bezier(0.3, 1.5, 0.5, 1) both; }
 @keyframes g4-moment { from { transform: rotate(-1.5deg) scale(1.5); opacity: 0; } to { transform: rotate(-1.5deg); opacity: 1; } }
 .g-four [hidden] { display: none !important; }
@@ -428,7 +472,7 @@ registerGame({
 }
 @media (prefers-reduced-motion: reduce) {
   .g-four *, .g-four .g4-lift.on .g4-bob { animation: none !important; transition: none !important; }
-  .g-four .g4-moment.show { opacity: 1; }
+  .g-four .g4-moment.show, .g-four .g4-ledger.show { opacity: 1; }
 }
 `,
 
@@ -467,7 +511,7 @@ registerGame({
         <div class="g4-top">
           <div class="g4-riv" hidden><span class="g4-riv-a"></span><span class="g4-riv-b"></span></div>
           <div class="g4-modes" role="radiogroup" aria-label="Mode" hidden>
-            ${MODE_IDS.map((m) => `<button type="button" class="g-chip g4-mc" role="radio" data-mode="${m}" aria-checked="false">${MODES[m].name}</button>`).join('')}
+            ${MODE_IDS.map((m) => `<button type="button" class="g-chip g4-mc" role="radio" data-mode="${m}" aria-checked="false" title="${MODES[m].name}">${CHIP_NAMES[m]}</button>`).join('')}
           </div>
           <p class="g4-mdesc" hidden></p>
           <span class="g-chip is-hl g4-label" hidden></span>
@@ -479,6 +523,7 @@ registerGame({
             <button type="button" class="g-chip g4-act" data-act="pop" aria-pressed="false">Pop one out</button>
           </div>
           <p class="g4-moment" aria-live="polite" hidden></p>
+          <p class="g4-ledger" hidden></p>
         </div>
       </div>`;
     el.appendChild(root);
@@ -502,6 +547,7 @@ registerGame({
     const labelEl = $('.g4-label');
     const actsEl = $('.g4-acts');
     const momentEl = $('.g4-moment');
+    const ledgerEl = $('.g4-ledger');
     const buttons = [...root.querySelectorAll('.g4-col')];
     const rings = [...root.querySelectorAll('.g4-popring')];
     const nums = [...root.querySelectorAll('.g4-nums span')];
@@ -550,12 +596,14 @@ registerGame({
       const s = ctx.state;
       let g = null;
       let preview = false;
+      let stones = null;
       if (s.v === 2 && s.mode === 'ghost') g = s.ghost;
-      else if (ctx.moves === 0 && selMode === 'ghost' && ctx.canMove) { g = ghostFor(s.seed); preview = true; }
-      const key = g == null ? '' : `${g}${preview ? 'p' : ''}`;
+      else if (ctx.moves === 0 && ctx.canMove && selMode === 'ghost') { g = ghostFor(s.seed); preview = true; }
+      else if (ctx.moves === 0 && ctx.canMove && selMode === 'blockers') { stones = stonesFor(s.seed); preview = true; }
+      const key = stones ? `s${stones.join('')}` : g == null ? '' : `${g}${preview ? 'p' : ''}`;
       if (key === capKey) return;
       capKey = key;
-      capG.innerHTML = g == null ? '' : capSvg(g);
+      capG.innerHTML = stones ? stones.map((c) => `<g transform="translate(${cx(c)} ${cy(0)})">${STONE_INNER}</g>`).join('') : g == null ? '' : capSvg(g);
       capG.setAttribute('class', `g4-capg${preview ? ' preview' : ''}`);
     }
 
@@ -564,7 +612,7 @@ registerGame({
       g.dataset.who = who;
       g.setAttribute('transform', `translate(${cx(x)} ${cy(y)})`);
       const f = svgEl('g', 'g4-fall');
-      f.innerHTML = DISC_INNER;
+      f.innerHTML = who === 'x' ? STONE_INNER : DISC_INNER;
       if (cls) {
         if (dy != null) f.style.setProperty('--dy', `${dy}px`);
         if (ms) f.style.animationDuration = `${ms}ms`;
@@ -722,7 +770,7 @@ registerGame({
       if (!c) return;
       const empty = c.moves === 0 && !c.over;
       const picking = empty && c.canMove;
-      const [t1, t2] = rivalry(store.data(), api.name, modeNow(), c.matchId || c.state.seed);
+      const [t1, t2] = rivalry(store.data(), api.name, picking ? modeNow() : 'classic', c.matchId || c.state.seed);
       rivEl.hidden = !empty;
       $('.g4-riv-a').textContent = t1;
       $('.g4-riv-b').textContent = t2;
@@ -905,10 +953,11 @@ registerGame({
       const w = s.win ? s.win.who : null;
       const mode = modeOf(s);
       if (d.last_id === c.matchId) { // the other phone counted it first: read what it saw before
-        return { streak: d.p_streak || 0, who: d.p_streak_who || '', quick: d.p_quick || 0, mw: d.p_mw || 0 };
+        return { streak: d.p_streak || 0, who: d.p_streak_who || '', quick: d.p_quick || 0, mw: d.p_mw || 0, wa: d.p_wa || 0, wb: d.p_wb || 0, dr: d.p_dr || 0 };
       }
-      const pre = { streak: d.streak || 0, who: d.streak_who || '', quick: d.quick_best || 0, mw: w ? d[`${mode}_${w}_n`] || 0 : 0 };
-      const patch = { last_id: c.matchId, games_n: (d.games_n || 0) + 1, p_streak: pre.streak, p_streak_who: pre.who, p_quick: pre.quick, p_mw: pre.mw };
+      const pre = { streak: d.streak || 0, who: d.streak_who || '', quick: d.quick_best || 0, mw: w ? d[`${mode}_${w}_n`] || 0 : 0, wa: d.wins_a_n || 0, wb: d.wins_b_n || 0, dr: d.draws_n || 0 };
+      const patch = { last_id: c.matchId, games_n: (d.games_n || 0) + 1, p_streak: pre.streak, p_streak_who: pre.who, p_quick: pre.quick, p_mw: pre.mw, p_wa: pre.wa, p_wb: pre.wb, p_dr: pre.dr };
+      if (s.tr) for (const q of ['a', 'b']) if (s.tr[q] > 0) patch[`trap_${q}_n`] = (d[`trap_${q}_n`] || 0) + s.tr[q];
       if (!w) {
         patch.draws_n = (d.draws_n || 0) + 1;
         patch.streak = 0;
@@ -956,8 +1005,14 @@ registerGame({
           }, landMs);
           // dropped into the hole the other side needed: stamp it
           const won = c.state.win && c.state.win.who === c.last.who;
+          let blockedAt = 0;
           if (!won && c.prev && runsThrough(c.state.cols, col, row, other(c.last.who)).length) {
-            later(() => { stamp('Blocked!', col, row); api.sfx('hit'); }, landMs + 60);
+            blockedAt = landMs + 60;
+            later(() => { stamp('Blocked!', col, row); api.sfx('hit'); }, blockedAt);
+          }
+          // two ways to win at once, and the other side has nothing to win with: a trap
+          if (!won && c.prev && setTrap(c.prev, c.state, c.last.who)) {
+            later(() => { stamp('Trap!', col, 3); api.sfx('good'); }, blockedAt ? blockedAt + 600 : landMs + 60);
           }
         } else if (animate && isPop) {
           const ms = reduced() ? 0 : 420;
@@ -990,11 +1045,20 @@ registerGame({
             momentEl.hidden = !text;
             momentEl.classList.remove('show');
             if (text) later(() => momentEl.classList.add('show'), animate ? landMs + 1000 : 0);
+            // the series line: the same on both phones (records before + this match, or the books after it)
+            const dd = store.data();
+            const ledger = st ? ledgerLine(api.name, st, c.state) : dd.last_id === c.matchId ? ledgerLine(api.name, null, c.state, dd) : '';
+            ledgerEl.textContent = ledger;
+            ledgerEl.hidden = !ledger;
+            ledgerEl.classList.remove('show');
+            if (ledger) later(() => ledgerEl.classList.add('show'), animate ? landMs + 1250 : 0);
           }
         } else if (momentFor0) {
           momentFor0 = '';
           momentEl.hidden = true;
           momentEl.classList.remove('show');
+          ledgerEl.hidden = true;
+          ledgerEl.classList.remove('show');
         }
       },
       destroy() {

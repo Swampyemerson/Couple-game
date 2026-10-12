@@ -96,6 +96,7 @@ function applySetup(s, who, move) {
   s.first = who;
   s.lw = 0;
   s.down = { a: 0, b: 0 };
+  s.dn = { a: 0, b: 0 }; // how many times each player denied the other a live big line
   if (move.mode === 'hot') s.hot = HOT.pick(s.seed);
   if (move.mode === 'wild') s.wild = { a: 1, b: 1 };
   return s;
@@ -122,6 +123,7 @@ function applyMove(s, who, move) {
     const w = boardsWon(s);
     s.down.a = Math.max(s.down.a, w.b - w.a);
     s.down.b = Math.max(s.down.b, w.a - w.b);
+    if (s.big[b] === who && denies(s.big, b, who) && s.dn) s.dn[who]++;
   }
   const big = lineOf(s.big);
   if (big) s.end = { why: 'line', who: big.who, line: big.line };
@@ -146,6 +148,37 @@ function lastLight(s) {
   const live = liveLines(s.big);
   if (!live.length || live.length > 2) return null;
   return `Only the ${live.map((n) => LINE_NAMES[n]).join(' and the ')} can still win it`;
+}
+
+// ── Match point and Denied! (view-only helpers, derived from the big board) ──
+/** Winning small board `b` for `who` (already marked in `big`) took the third cell of a line the other player held two of. */
+function denies(big, b, who) {
+  const o = other(who);
+  return LINES.some((L) => L.includes(b) && L.every((k) => k === b || big[k] === o));
+}
+/** The player to move is one board from winning: taking the board they're sent to (any open board on a free move) would complete a big line. */
+function matchPoint(s) {
+  if (s.end || !s.turn) return false;
+  const w = s.turn;
+  const open = s.force !== null ? [s.force] : s.big.map((x, b) => (x ? -1 : b)).filter((b) => b >= 0);
+  return open.some((b) => !s.big[b] && LINES.some((L) => L.includes(b) && L.every((k) => k === b || s.big[k] === w)));
+}
+/** Did the newest move win a small board that the other player needed for a live big line? (`prev` = state before it.) */
+function deniedNow(prev, s) {
+  if (!prev || s.last == null) return false;
+  const b = Math.floor(s.last / 9);
+  const who = s.big[b];
+  return (who === 'a' || who === 'b') && !prev.big[b] && denies(s.big, b, who);
+}
+/** "Series: Emerson 5 · Sydney 4 · Sydney on 2" from the game data. */
+function ledgerText(d, nm) {
+  const x = d.wins_a_n | 0;
+  const y = d.wins_b_n | 0;
+  if (!((d.games_n | 0) > 0)) return null;
+  let t = `Series: ${nm('a')} ${x} · ${nm('b')} ${y}`;
+  if (d.draws_n) t += ` · ${d.draws_n} drawn`;
+  if ((d.streak | 0) >= 2 && (d.streak_who === 'a' || d.streak_who === 'b')) t += ` · ${nm(d.streak_who)} on ${d.streak | 0}`;
+  return t;
 }
 
 /** "Tied on boards so far: ties go to Sydney" (v2 only, while boards are level). */
@@ -197,6 +230,13 @@ const MOMENTS = {
     '{l} had it, then {w} turned it around.',
     '{w} fought back from {d} down. Heroic.',
     'Never count {w} out. That was {d} boards behind.',
+  ],
+  deny: [
+    '{w} denied the line, then took it.',
+    '{l} was one board from a line. {w} had other ideas.',
+    '{w} blocked the big line, then took the game. Sneaky.',
+    'A well-timed block by {w} turned the whole game.',
+    'The block of the day goes to {w}.',
   ],
   wild: [
     '{w} saved the wildcard for exactly this.',
@@ -283,6 +323,7 @@ function momentKeys(s, res, d) {
   if (d.streak_who === l && (d.streak | 0) >= 2) keys.push('streakBreak');
   if (sw >= 2) keys.push('streakExt');
   if (s.v === 2 && s.down && s.down[w] >= 2) keys.push('comeback');
+  if (s.v === 2 && s.dn && s.dn[w] > 0) keys.push('deny');
   if (s.mode === 'wild' && s.lw && mover === w) keys.push('wild');
   if (e.tie) keys.push('komi'); // decided by the tie-break: that is the story, not the hot boards
   if (s.mode === 'hot' && s.hot && (e.why === 'line' ? e.line.some((b) => s.hot.includes(b)) : s.big.some((x, b) => x === w && s.hot.includes(b)))) keys.push('hot');
@@ -392,7 +433,7 @@ registerGame({
     return { winner: null, text: 'Stalemate', sub: `No big line was left and boards won are tied ${a}–${b}. It’s a draw.` };
   },
   /** Pure helpers, exposed for the tests. */
-  kit: { MODES, BALANCE, secondMover, tieNote, tiePlate, tieLight, liveLines, lastLight, momentKeys, tally, momentText, stripText, MOMENTS, STRIPS, marksOf },
+  kit: { MODES, BALANCE, secondMover, tieNote, denies, matchPoint, deniedNow, ledgerText, tiePlate, tieLight, liveLines, lastLight, momentKeys, tally, momentText, stripText, MOMENTS, STRIPS, marksOf },
 
   // ── view ──
   css: `
@@ -504,7 +545,10 @@ registerGame({
 .g-ult .gu-tie { font-weight: 900; }
 .g-ult .gu-tok:disabled { cursor: default; }
 .g-ult .gu-light { color: var(--g-ink); }
-.g-ult .gu-moment { margin: 2px 0 0; padding: 8px 14px; max-width: 100%; text-align: center; text-wrap: balance; font: 900 0.92rem/1.25 var(--g-font-display); color: var(--g-ink); background: var(--g-hl); color: var(--g-on-ink); border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); box-shadow: var(--g-shadow-sm); transform: rotate(-1.2deg); animation: gu-stampin 380ms cubic-bezier(0.3, 1.7, 0.5, 1) both; }
+.g-ult .gu-moment, .g-ult .gu-deny { margin: 2px 0 0; padding: 8px 14px; max-width: 100%; text-align: center; text-wrap: balance; font: 900 0.92rem/1.25 var(--g-font-display); color: var(--g-ink); background: var(--g-hl); color: var(--g-on-ink); border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); box-shadow: var(--g-shadow-sm); transform: rotate(-1.2deg); animation: gu-stampin 380ms cubic-bezier(0.3, 1.7, 0.5, 1) both; }
+.g-ult .gu-deny { position: absolute; left: 50%; top: 42%; z-index: 6; pointer-events: none; margin: 0; max-width: none; white-space: nowrap; font-size: 1.3rem; padding: 10px 20px; transform: translate(-50%, -50%) rotate(-7deg); animation: gu-denyin 360ms cubic-bezier(0.3, 1.7, 0.5, 1) both; }
+@keyframes gu-denyin { from { transform: translate(-50%, -50%) scale(1.7) rotate(-15deg); opacity: 0; } to { transform: translate(-50%, -50%) rotate(-7deg); opacity: 1; } }
+.g-ult .gu-ledger { margin: 0; text-align: center; font: 800 0.82rem/1.3 var(--g-font-body); color: var(--g-ink); text-wrap: balance; max-width: 34em; }
 @keyframes gu-stampin { from { transform: scale(1.4) rotate(-6deg); opacity: 0; } to { transform: rotate(-1.2deg); opacity: 1; } }
 
 /* phone on its side: board left, everything else right, no scrolling */
@@ -531,7 +575,7 @@ registerGame({
       for (let i = 0; i < 9; i++) html += `<button type="button" class="gu-c" data-b="${b}" data-i="${i}" tabindex="-1"></button>`;
       html += `</div><svg class="gu-bm" viewBox="0 0 100 100" aria-hidden="true"></svg><span class="gu-hot" aria-hidden="true">${STAR}<b>×2</b></span></div>`;
     }
-    html += '</div><svg class="gu-live" viewBox="0 0 300 300" aria-hidden="true"></svg><svg class="gu-strike" viewBox="0 0 300 300" aria-hidden="true"></svg></div>';
+    html += '</div><svg class="gu-live" viewBox="0 0 300 300" aria-hidden="true"></svg><svg class="gu-strike" viewBox="0 0 300 300" aria-hidden="true"></svg><p class="gu-deny" hidden>Denied!</p></div>';
     html += '<div class="gu-side">';
     html += '<div class="gu-top">';
     html += '<div class="gu-pick" hidden><div class="gu-chips" role="radiogroup" aria-label="Game mode">';
@@ -541,7 +585,7 @@ registerGame({
     html += '<div class="gu-info" hidden><span class="g-chip gu-tie"></span><span class="g-chip is-hl gu-modechip"></span><button type="button" class="gu-tok" data-w="a"></button><button type="button" class="gu-tok" data-w="b"></button></div>';
     html += '</div>';
     html += '<div class="gu-plate" aria-live="polite"><span class="gu-chip"></span><span class="gu-plate-t"></span></div>';
-    html += '<p class="gu-light" hidden></p><p class="gu-moment" hidden></p>';
+    html += '<p class="gu-light" hidden></p><p class="gu-moment" hidden></p><p class="gu-ledger" hidden></p>';
     html += '</div>';
     // the picker and wildcards come before the grid in tab order; CSS puts the board first on screen
     const k = html.indexOf('<div class="gu-side">');
@@ -559,6 +603,8 @@ registerGame({
     const infoEl = $('.gu-info');
     const lightEl = $('.gu-light');
     const momentEl = $('.gu-moment');
+    const ledgerEl = $('.gu-ledger');
+    const denyEl = $('.gu-deny');
     const toks = [...root.querySelectorAll('.gu-tok')];
     const modeBtns = [...root.querySelectorAll('.gu-mc')];
 
@@ -766,6 +812,11 @@ registerGame({
       }
       momentEl.hidden = !moment;
       if (moment && momentEl.textContent !== moment) momentEl.textContent = moment;
+      // the series ledger, from the data the tally wrote (both phones read the same numbers)
+      let ledger = null;
+      if (c.over) { const d = dat(); if (d.last_id === c.matchId) ledger = ledgerText(d, api.name); }
+      ledgerEl.hidden = !ledger;
+      if (ledger && ledgerEl.textContent !== ledger) ledgerEl.textContent = ledger;
     }
 
     function renderPlate(pv, target) {
@@ -786,7 +837,7 @@ registerGame({
       } else if (!c.canMove) {
         who = c.acts[0] || null;
         wait = true;
-        text = unset(c) && online ? `${api.name(who)} is picking a mode…` : `${api.name(who)}’s turn`;
+        text = unset(c) && online ? `${api.name(who)} is picking a mode…` : matchPoint(s) ? `${api.name(who)} is one board from the win` : `${api.name(who)}’s turn`;
       } else if (sel && pv) {
         const act = sel.by === 'tap' ? 'Tap again' : sel.by === 'hover' ? 'Click' : 'Press Enter';
         const opp = api.name(other(who));
@@ -796,7 +847,10 @@ registerGame({
       } else {
         const where = s.force !== null ? `play in the ${NAMES[s.force]} board` : 'play in any open board';
         if (wildOn(s)) text = 'Wildcard: play in any open board';
-        else text = online ? `Your turn · ${where}` : `${api.name(who)}: ${where}`;
+        else {
+          text = matchPoint(s) ? `${api.name(who)} is one board from the win · ${where}` : online ? `Your turn · ${where}` : `${api.name(who)}: ${where}`;
+          if (s.mode === 'wild' && s.wild && s.wild[other(who)]) text += ` · ${api.name(other(who))} still holds a wildcard`;
+        }
       }
       const chip = $('.gu-chip');
       chip.className = `gu-chip ${who ? 'gu-' + who : 'none'}`;
@@ -1022,6 +1076,13 @@ registerGame({
           later(() => rg.classList.remove('is-stamp'), 1200);
         }
         paint(fresh);
+        // Denied!: this move won a small board the other player needed for a live big line
+        if (moved) denyEl.hidden = true;
+        if (isMark && prev != null && c.moves === prev + 1 && deniedNow(c.prev, c.state)) {
+          denyEl.hidden = false;
+          later(() => { denyEl.hidden = true; }, 1500);
+          later(() => api.sfx('hit'), 120);
+        }
         if (animate) {
           api.sfx('place');
           api.haptic(14);
