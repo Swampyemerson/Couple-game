@@ -129,11 +129,22 @@ final smash and these stamps are done).
 ## Tests
 
 ```
-node tools/test/games/threed-bones.test.js          # rules in Node, records maths, then the phone UI (PORT=8900 uses 8900-8902)
+node tools/test/games/threed-bones.test.js          # rules in Node, records maths, then the phone UI (PORT=8900 uses 8900-8904)
+ONLY=reduced node tools/test/games/threed-bones.test.js   # one group: light, reduced, records, online-records, dark
 node tools/test/games/threed-bones.test.js --unit   # rules and records only
 node tools/test/games/threed-bones.test.js --balance
 node tools/test/games/threed.test.js                # the older bones + tower flows
 ```
+
+What the new file covers: old-log replay against a copy of the original rules; every twist (setup move accepted only first and only
+from the starter, golden ×2, mirror order, blind's thrown-away first die, oracle = classic rules, Last Word with the soft and normal
+last die); the facts and commentary lines; the records maths; layout at 320 × 568, 360 × 740, 390 × 664, 430 × 932, 844 × 390 and
+667 × 375 (everything on screen, no scrolling, columns ≥ 44 px wide); full-column tap with `page.tap`; tap-to-skip; the end card
+arriving after the final smash; the picker, the partner's waiting text, the toast, the badge, golden / blind / oracle / mirror on two
+phones; the +N / −M previews matched against the real smash; stamps for a triple, a wipe and a comeback; Last Word on screen;
+four same-phone games for streaks, form and NEW BEST; a two-phone match recorded once and never again when reopened; dark mode.
+Long flows run with `reducedMotion: 'reduce'` so a whole game takes seconds. The room switches every CSS animation off in that mode
+(`animation: none !important`), so stamps are shown and taken down by script there.
 
 The page exposes `window.__bonesTest` (a log of `roll:`, `place`, `crack`, `stamp:`, `sfx:`, `records:` events, plus frame and draw-call
 counters) for the tests; nothing depends on it.

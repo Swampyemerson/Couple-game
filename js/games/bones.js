@@ -579,6 +579,7 @@ registerGame({
     .g-bones .gb-x2 { font-style: normal; font-size: 0.62rem; font-weight: 900; letter-spacing: 0.02em; }
     .g-bones .gb-pv { padding: 0 4px; border: 1.5px solid currentColor; border-radius: 999px; background: var(--g-card); font-size: 0.7rem; font-weight: 900; line-height: 1.25; }
     .g-bones .gb-cs.has-pv { padding-left: 5px; padding-right: 4px; gap: 2px; }
+    .g-bones .gb-cs.has-pv .gb-x2 { display: none; } /* the gilded plate already says it, and the preview needs the room */
     .g-bones.is-tight .gb-pv { padding: 0 3px; font-size: 0.66rem; }
     .g-bones .gb-pv.up { color: var(--g-good); } .g-bones .gb-pv.dn { color: var(--g-bad); }
     .g-bones .gb-qm { grid-area: 1 / 1 / 4 / 4; place-self: center; font: normal 900 calc(var(--gb-die) * 0.5) / 1 var(--g-font-display); color: var(--g-on-ink); }
@@ -611,8 +612,8 @@ registerGame({
     .g-bones .gb-nx .gb-kick { font-style: normal; }
     .g-bones .gb-nx .gb-die { position: relative; inset: auto; flex: none; width: 22px; height: 22px; padding: 2px; border-width: 1.5px; box-shadow: none; }
     .g-bones .gb-nx .gb-die i { margin: 8%; }
-    .g-bones.is-tight .gb-lab-r > span:not(.gb-nx) { display: none; }
-    .g-bones .gb-stamp { position: absolute; z-index: 6; top: 50%; left: 50%; --rot: -5deg; max-width: 94%; padding: 6px 14px; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-hl); color: var(--g-on-ink); box-shadow: var(--g-shadow); font: 900 1.25rem / 1.1 var(--g-font-display); letter-spacing: 0.05em; text-align: center; text-transform: uppercase; pointer-events: none; opacity: 0; transform: translate(-50%, -50%) rotate(var(--rot)); }
+    .g-bones[data-tw="oracle"].is-tight .gb-lab-r > .gb-hint { display: none; } /* room for the next-dice queue */
+    .g-bones .gb-stamp { position: absolute; z-index: 6; top: 50%; left: 50%; --rot: -5deg; width: max-content; max-width: 94%; padding: 6px 14px; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-hl); color: var(--g-on-ink); box-shadow: var(--g-shadow); font: 900 1.25rem / 1.1 var(--g-font-display); letter-spacing: 0.05em; text-align: center; text-transform: uppercase; pointer-events: none; opacity: 0; transform: translate(-50%, -50%) rotate(var(--rot)); }
     .g-bones .gb-stamp.sm { top: 41%; --rot: 4deg; padding: 4px 10px; background: var(--g-card); color: var(--g-ink); font-size: 0.9rem; }
     .g-bones .gb-stamp.show { animation: gb-stamp 1.15s cubic-bezier(.2, .9, .3, 1.25) both; }
     .g-bones .gb-streak { font-size: 0.72rem; font-weight: 800; line-height: 1.15; color: var(--g-muted); }
@@ -661,9 +662,8 @@ registerGame({
       .g-bones .gb-die.pop { animation: gb-fade 0.15s linear both; }
       .g-bones .gb-shard { display: none; }
       .g-bones .gb-q { animation: none; }
-      .g-bones .gb-stamp.show { animation: gb-stamp-fade 1.1s linear both; }
+      .g-bones .gb-stamp.show { opacity: 1; } /* the room switches every animation off: JS takes the stamp down again */
       @keyframes gb-fade { to { opacity: 0; } }
-      @keyframes gb-stamp-fade { 0%, 80% { opacity: 1; } 100% { opacity: 0; } }
     }
   `,
 
@@ -914,9 +914,9 @@ registerGame({
       const nx = s && s.tw === 'oracle' && !s.over && !s.final ? `<span class="gb-nx"><i class="gb-kick">Next</i>${nextRolls(s).map((v) => dieHTML(v, 'mini')).join('')}</span>` : '';
       const first = !!(s && s.n === 0 && s.tw === undefined);
       if (mode === 'rolling') labR.innerHTML = nx;
-      else if (mode === 'mystery') labR.innerHTML = `<b>Blind draw</b><span class="gb-wait"></span>`;
-      else if (mode === 'pick') labR.innerHTML = `<b>Rolled ${value}</b><span>${coarse() ? 'Pick a column' : 'Pick a column, or press 1–3'}</span>${nx}`;
-      else labR.innerHTML = `<b>Rolled ${value}</b><span class="gb-wait"></span>${nx}`;
+      else if (mode === 'mystery') labR.innerHTML = `<b>Blind draw</b><span class="gb-wait gb-hint"></span>`;
+      else if (mode === 'pick') labR.innerHTML = `<b>Rolled ${value}</b><span class="gb-hint">${coarse() ? 'Pick a column' : 'Pick a column, or press 1–3'}</span>${nx}`;
+      else labR.innerHTML = `<b>Rolled ${value}</b><span class="gb-wait gb-hint"></span>${nx}`;
       const wt = labR.querySelector('.gb-wait');
       if (wt) {
         if (mode === 'mystery') wt.textContent = w === (ctxNow && ctxNow.actor) || (ctxNow && ctxNow.mode === 'local') ? 'Pick before you see it' : `${api.name(w)} is choosing blind`;
@@ -983,6 +983,8 @@ registerGame({
       e.classList.remove('show');
       void e.offsetWidth;
       e.classList.add('show');
+      clearTimeout(e._t);
+      if (reduced()) e._t = setTimeout(() => e.classList.remove('show'), 1300);
       log(`stamp:${text}`);
     }
     async function place(L, pre, s) {
