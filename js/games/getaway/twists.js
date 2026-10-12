@@ -28,20 +28,24 @@ function rng(seed) {
   return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
 /** The match's twist order: a seeded shuffle of every twist id. Pair p (p ≥ 1) gets order[(p - 1) % n]: no repeats until the list runs out. */
-export function twistOrder(seed) {
+export function twistOrder(seed, rules = null) {
   const ids = TWISTS.map((t) => t.id); const r = rng((seed | 0) ^ 0x5bd1e995);
   for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); const t = ids[i]; ids[i] = ids[j]; ids[j] = t; }
-  return ids;
+  return rules ? ids.filter((id) => !twistClashes(id, rules)) : ids;
 }
+/** A twist that would override what the couple chose in the match rules: SPIKE RAIN when the spike strips are 0, BIG TANK when the runner's nitro is off.
+ *  (The picker leaves them out of the shuffle, a pure function of the match rules, so both phones agree.) */
+export const twistClashes = (id, rules) => !!rules && ((id === 'rain' && rules.spikes != null && !(+rules.spikes > 0)) || (id === 'tank' && rules.nitro === 'off'));
 /**
  * The twist id of round idx ('' = plain). It is chosen per pair, p = floor(idx / 2): both rounds of a pair get the
  * same one (also under score 'rounds'; then both rounds of a DOUBLE OR NOTHING pair are worth 2). opts: { sd (the
  * decider: plain), wild (false = wildcards off), pairs (how many pairs the match has: 1 = a Quick chase, whose one
- * pair gets a wildcard, never DOUBLE OR NOTHING since that would decide nothing; omitted = 2 or more) }.
+ * pair gets a wildcard, never DOUBLE OR NOTHING since that would decide nothing; omitted = 2 or more), rules (the match rules: the
+ * twists that would override them are left out, see twistClashes) }.
  */
 export function twistFor(seed, idx, opts = {}) {
   if (opts.wild === false || opts.sd || !(idx >= 0)) return '';
-  const o = twistOrder(seed); const p = idx >> 1;
+  const o = twistOrder(seed, opts.rules); const p = idx >> 1;
   if (opts.pairs === 1) return o.filter((id) => id !== 'double')[0];
   return p === 0 ? '' : o[(p - 1) % o.length];
 }
@@ -70,8 +74,8 @@ export const heatWith = (h, r) => Math.round(((h || 0) + (r.heatAdd || 0)) * (r.
 
 /**
  * The safehouse of a round: a landmark the runner can drive to, snapped to the road beside it.
- * lms: the map's landmarks; spawn: { runner: {x, z} }; snap(x, z) -> { x, z, d } | null (nearest
- * drivable road point and how far off it was); seed/idx pick among the candidates; used: names
+ * lms: the map's landmarks; spawn: { runner: {x, z} }; snap(x, z) -> { x, z, d, dirt? } | null (nearest
+ * drivable road point, how far off it was, and whether that road is a dirt trail: paved ones are preferred); seed/idx pick among the candidates; used: names
  * already taken this match. A home landmark (3865 Moorhead / 8524 Boulder Way) wins when it is
  * within reach. Returns { x, z, name, home } or null.
  */
@@ -84,10 +88,12 @@ export function pickSafehouse(lms, spawn, snap, seed, idx, used = []) { // (idx:
     const d = Math.hypot(s.x - rs.x, s.z - rs.z);
     cand.push({ l, s, d });
   }
+  // a landmark whose nearest road is paved beats one that snaps to a dirt trail (when any exist in the pool): the runner has to be able to drive there
+  const paved = (a) => { const q = a.filter((c) => !c.s.dirt); return q.length ? q : a; };
   const homes = cand.filter((c) => c.l.home && c.d >= 140 && c.d <= 1100);
-  let pool = homes;
-  if (!pool.length) pool = cand.filter((c) => c.d >= 200 && c.d <= 800);
-  if (!pool.length) pool = cand.filter((c) => c.d >= 120 && c.d <= 1300);
+  let pool = paved(homes);
+  if (!pool.length) pool = paved(cand.filter((c) => c.d >= 200 && c.d <= 800));
+  if (!pool.length) pool = paved(cand.filter((c) => c.d >= 120 && c.d <= 1300));
   if (!pool.length) return null;
   const k = Math.floor(rng((seed | 0) * 31 + idx * 7919 + 17)() * pool.length);
   const c = pool[Math.min(pool.length - 1, k)];

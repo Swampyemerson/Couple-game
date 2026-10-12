@@ -331,6 +331,21 @@ async function hpAgree(pr, pc, rw, tol) {
         assert(q[0] && q[0] === q[1] && T.twistInfo(q[0]) && q[0] !== 'double' && T.twistFor(seed, 2, { sd: true, pairs: 1 }) === '' && T.twistFor(seed, 0, { pairs: 1, wild: false }) === '', `twists (seed ${seed}): a one-pair match (Quick chase) gets a wildcard on its pair, never DOUBLE OR NOTHING`);
       }
       assert(new Set([1, 2, 3, 4, 5, 6, 7, 8].map((sd) => T.twistFor(sd, 2))).size >= 4, 'twists: different seeds start on different twists');
+      // twists never override the couple's choices: no SPIKE RAIN with 0 spike strips, no BIG TANK with runner nitro off (a pure function of the match rules)
+      { let rain = 0; let tank = 0; let ok = true;
+        for (const seed of [1, 7, 99, 1234, 424242, 2147483000]) {
+          const r0 = { spikes: 0, nitro: 'normal' }; const r1 = { spikes: 3, nitro: 'off' };
+          for (let i = 0; i < 20; i++) { const a = T.twistFor(seed, i, { rules: r0 }); const b = T.twistFor(seed, i, { rules: r1 }); if (a === 'rain') rain++; if (b === 'tank') tank++; if (a !== T.twistFor(seed, i, { rules: { ...r0 } })) ok = false; }
+          const pr = Array.from({ length: 12 }, (_, i) => T.twistFor(seed, i * 2, { rules: r0 })).slice(1, 7); if (new Set(pr).size !== pr.length) ok = false; // (still no repeats within the shorter list)
+          if (T.twistFor(seed, 0, { pairs: 1, rules: { spikes: 0, nitro: 'off' } }) === '' || ['rain', 'tank', 'double'].includes(T.twistFor(seed, 0, { pairs: 1, rules: { spikes: 0, nitro: 'off' } }))) ok = false;
+        }
+        assert(rain === 0 && tank === 0 && ok && T.twistFor(7, 2, { rules: { spikes: 3, nitro: 'normal' } }) === T.twistFor(7, 2), `twists: SPIKE RAIN is never picked with 0 spike strips and BIG TANK never with nitro off (deterministic; unchanged otherwise; a Quick chase still gets a wildcard)`); }
+      // the safehouse prefers a landmark whose road is paved over a dirt trail
+      { const lms = [{ name: 'Trail Hut', x: 400, z: 0 }, { name: 'Main St', x: 0, z: 400 }, { name: 'River Trail', x: -400, z: 0 }];
+        const snap = (x, z) => ({ x, z, d: 5, dirt: x !== 0 && z === 0 });
+        const names = new Set(); for (let sd = 1; sd < 60; sd++) names.add(T.pickSafehouse(lms, { runner: { x: 0, z: 0 } }, snap, sd, 1).name);
+        const dirtOnly = T.pickSafehouse([lms[0], lms[2]], { runner: { x: 0, z: 0 } }, snap, 5, 1);
+        assert(names.size === 1 && names.has('Main St') && dirtOnly && /Trail|River/.test(dirtOnly.name), 'safehouse: paved roads are preferred over dirt trails (always the paved one when it exists; a dirt one is still used when nothing else is)'); }
       assert(new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((sd) => T.twistFor(sd, 0, { pairs: 1 }))).size >= 3, 'twists: a Quick chase is not always the same wildcard');
       // the overlay
       const base = Rules.DEFAULTS;
@@ -353,7 +368,7 @@ async function hpAgree(pr, pc, rw, tol) {
       const { MAPS } = await import(url('maps/index.js'));
       for (const [id, spawnIdx, home] of [['boulder', 4, '3865 Moorhead'], ['santee', 4, '8524 Boulder Way'], ['dockside', 0, null]]) {
         const m = MAPS.find((x) => x.id === id); const g2 = createGeo(m); const o = {};
-        const snap = (x, z) => { const d = g2.nearestRoad(x, z, o, 110, (r) => !r.bridge); return o.road >= 0 ? { x: o.px, z: o.pz, d } : null; };
+        const snap = (x, z) => { const d = g2.nearestRoad(x, z, o, 110, (r) => !r.bridge); return o.road >= 0 ? { x: o.px, z: o.pz, d, dirt: g2.roads[o.road].kind === 'dirt' } : null; };
         const sh = T.pickSafehouse(m.landmarks, m.spawns[spawnIdx], snap, 99, 3);
         const sh2 = T.pickSafehouse(m.landmarks, m.spawns[spawnIdx], snap, 99, 3);
         const dd = sh && Math.hypot(sh.x - m.spawns[spawnIdx].runner.x, sh.z - m.spawns[spawnIdx].runner.z);
@@ -802,6 +817,9 @@ async function hpAgree(pr, pc, rw, tol) {
       await until(a, () => window.__getaway.state().R.idx === 1, null, 20000, 'round 2 (host)');
       await until(b, () => window.__getaway.state().R.idx === 1, null, 20000, 'round 2 (guest)');
       await phase(a, 'chase', 25000); await phase(b, 'chase', 25000);
+      // a late KISS from round 1 (it carries its round index) must not mark round 2
+      await b.evaluate(() => window.__getaway.internals.link.urgent('emote', { k: 'KISS', i: 0 })); await wait(800);
+      assert(!(await dl2(a)).kissed && !(await dl2(b)).kissed, 'a late KISS from the last round does not mark the next one');
       await hook(b, 'endNow', 'escaped', 'time');
       for (const p of [a, b]) await until(p, () => window.__getaway.state().phase === 'final', null, 20000, 'final');
       const ra = (await st(a)).result; const rb = (await st(b)).result;
@@ -886,7 +904,7 @@ async function hpAgree(pr, pc, rw, tol) {
       // for a car right beside mine (projected to the screen edge), stays off the left column
       {
         const vp0 = a.viewportSize();
-        for (const [w, hh] of [[667, 375], [844, 390], [926, 428]]) {
+        for (const [w, hh] of [[667, 375], [844, 390], [926, 428], [390, 844]]) {
           await a.setViewportSize({ width: w, height: hh }); await wait(600);
           const r = await a.evaluate(() => {
             const q = (x) => document.querySelector(x);
@@ -906,13 +924,16 @@ async function hpAgree(pr, pc, rw, tol) {
             const wsVis = !q('.g-gtw .gtw-view.full .gtw-wstar').hidden; const chVis = !q('.g-gtw .gtw-view.full .gtw-chain').hidden;
             return { heat, cam, hr, sh, cut, tg, ws, ch, mini, hpb, wsVis, chVis, W: window.innerWidth };
           });
+          await a.evaluate(() => { const e = document.querySelector('.g-gtw .gtw-view.full .gtw-wstar'); e.hidden = false; e.textContent = '★★★'; }); // (the HUD's own change detection leaves it alone until the level changes)
+          await shot(a, `touch-wstar-${w}x${hh}`);
+          await a.evaluate(() => { document.querySelector('.g-gtw .gtw-view.full .gtw-wstar').hidden = true; });
+          assert(r.wsVis && r.ws.l >= r.heat.r && r.ws.t >= r.heat.t - 4 && r.ws.b <= r.heat.b + 4 && r.ws.r <= r.W && (w < hh || r.ws.b <= r.cam.t - 4) && (r.ws.t >= r.hpb.b || r.ws.l >= r.hpb.r), `${w}×${hh}: the Wanted sticker sits beside the heat panel (x ${r.ws.l}–${r.ws.r}, y ${r.ws.t}–${r.ws.b}; panel ${r.heat.l}–${r.heat.r} × ${r.heat.t}–${r.heat.b}), covering neither the health bar (ends y ${r.hpb.b}) nor CAM`);
+          if (w < hh) continue; // (portrait: the sticker is the only check here; the controls are laid out differently)
           const col = Math.max(r.heat.r, r.cam.r, r.hr.r);
-          console.log('MEASURE', w, hh, JSON.stringify({ ws: r.ws, hpb: r.hpb, heat: r.heat, cam: r.cam }));
           assert(r.cam.t >= r.heat.b + 5 && r.hr.t >= r.heat.b + 5 && (r.hr.l >= r.cam.r + 4 || r.hr.t >= r.cam.b + 4), `${w}×${hh}: CAM (y ${r.cam.t}) and the horn sit under the heat panel (ends at ${r.heat.b}, plus its shadow), not on it`);
           assert(r.cam.b <= r.sh.t - 8 && r.hr.b <= r.sh.t - 8, `${w}×${hh}: CAM and the horn stay above the steering thumb (end at ${Math.max(r.cam.b, r.hr.b)}, the STEER zone's hint starts at ${r.sh.t})`);
           assert(!r.cut.length, `${w}×${hh}: every heat label fits beside "1888 m"${r.cut.length ? ` (cut: ${r.cut.join(', ')})` : ''}`);
           assert(r.tg.l >= col && r.tg.r <= r.W, `${w}×${hh}: a tag for a car at the screen's edge stays on screen and off the left column (tag ${r.tg.l}–${r.tg.r}, column ends at ${col})`);
-          assert(r.wsVis && r.ws.b <= r.heat.t + 6 && r.ws.t >= r.hpb.b - 12 && r.ws.r <= r.heat.r + 2 && r.ws.b <= r.cam.t - 4, `${w}×${hh}: the Wanted sticker sits on the heat panel's top edge (${r.ws.t}–${r.ws.b}, panel from ${r.heat.t}), clear of CAM`);
           assert(r.chVis && r.ch.r <= r.W && r.ch.l >= r.heat.r + 4 && (r.ch.r <= r.mini.l - 2 || r.ch.t >= r.mini.b + 2) && r.ch.b <= r.sh.t - 8, `${w}×${hh}: the cop's chain chip fits on screen beside the minimap, clear of the heat panel and the STEER zone (chip ${r.ch.l}–${r.ch.r} × ${r.ch.t}–${r.ch.b}, minimap ${r.mini.l}–${r.mini.r} × ${r.mini.t}–${r.mini.b})`);
         }
         await a.setViewportSize(vp0); await wait(600);
@@ -1050,6 +1071,14 @@ async function hpAgree(pr, pc, rw, tol) {
       await wait(1200);
       sb = await st(b);
       assert(Math.hypot(sb.partnerSeen.shown.x + 100, sb.partnerSeen.shown.z - 40) < 1.5, `the cop’s phone draws the runner where it is (${JSON.stringify(sb.partnerSeen.shown)})`);
+      // the cop's name / distance tag over the runner follows the radar rule in live too (it showed through buildings and fog); the runner always sees the cop
+      { const tagHidden = (p) => p.evaluate(() => document.querySelector('.g-gtw .gtw-view.full .gtw-tag').hidden);
+        await b.evaluate(() => { window.__getaway.internals.S.R.rules.radar = 'los'; });
+        await until(b, () => !document.querySelector('.g-gtw .gtw-view.full .gtw-tag').hidden, null, 4000, 'the cop’s tag over the runner (radar sees them)');
+        await b.evaluate(() => { window.__getaway.internals.S.R.rules.radar = 'off'; }); await wait(400);
+        const hid = await tagHidden(b); const runnerSees = !(await tagHidden(a));
+        await b.evaluate(() => { window.__getaway.internals.S.R.rules.radar = 'los'; });
+        assert(hid && runnerSees, `live: with the cop's radar off the tag over the runner is hidden on the cop's phone (80 m away), and the runner still sees the cop's tag`); }
       // both drive (bots) for a bit
       await hook(a, 'auto', 'a', true); await hook(b, 'auto', 'b', true);
       await wait(5000);
@@ -1066,7 +1095,11 @@ async function hpAgree(pr, pc, rw, tol) {
       if (!sa.match.hist[0] || !sb.match.hist[0] || sa.match.hist[0].reason !== 'boxed') console.log('DEBUG', JSON.stringify([sa.match.hist, sb.match.hist, sa.dbgEnd, sb.dbgEnd]));
       assert(sa.match.hist[0].outcome === 'busted' && sb.match.hist[0].outcome === 'busted' && sa.match.hist[0].reason === 'boxed', 'BUSTED (boxed) on both phones');
       assert(sa.match.scores.b === 1 && sb.match.scores.b === 1, `Sydney scores the bust on both phones (${JSON.stringify([sa.match.scores, sb.match.scores, sa.match.hist, sb.match.hist])})`);
-      await wait(1300); await shot(a, 'live-busted-runner'); await shot(b, 'live-busted-cop');
+      // a relink during the result card: the host re-sends the match; the guest keeps what it has (no restart of the round, no second hist entry)
+      await hook(a, 'relink'); await wait(700);
+      sb = await st(b); sa = await st(a);
+      assert(sb.phase === 'result' && sb.R.idx === 0 && sb.R.over && sb.match.hist.length === 1 && sa.match.hist.length === 1, `live: a relink during the result card leaves the guest in the result (phase ${sb.phase}, round ${sb.R.idx}, over ${sb.R.over}, ${sb.match.hist.length} hist entry)`);
+      await wait(600); await shot(a, 'live-busted-runner'); await shot(b, 'live-busted-cop');
       // round 2: swap
       await until(a, () => window.__getaway.state().R.idx === 1, null, 15000, 'round 2 (host)');
       await until(b, () => window.__getaway.state().R.idx === 1, null, 15000, 'round 2 (guest)');
@@ -1353,6 +1386,10 @@ async function hpAgree(pr, pc, rw, tol) {
       s = await st(a);
       let wf = await a.evaluate(() => { const w = window.__getaway.internals.world; return { near: w.scene.fog.near, far: w.scene.fog.far, base: w.fogFar }; });
       assert(s.R.tw === 'fog' && s.R.eff.radar === 'off' && s.R.heat === 98 && Math.abs(wf.far - wf.base * 0.55) < 0.5, `FOG: radar off, heat ${s.R.heat} m (Dockside's 140 × 0.7), the render fog pulled in (${wf.far.toFixed(0)} of ${wf.base.toFixed(0)} m)`);
+      // the self-fogging shaders (puffs, skid marks, lamp / signal glows, contact shadows) follow the same fog distances
+      const fogShaders = () => a.evaluate(() => { const g = window.__getaway.internals; const w = g.world; return { scene: w.scene.fog.far, u: [g.fx.puffs.material, g.fx.skids.material, w.lights.glows.material, w.lights.blobs.material].map((m) => m.uniforms.uFogFar.value), base: w.fogFar }; });
+      let fs2 = await fogShaders();
+      assert(fs2.u.every((v) => Math.abs(v - fs2.scene) < 0.5) && fs2.scene < fs2.base * 0.6, `FOG: puffs, skids, glows and shadows fade with the scene fog (${fs2.u.map((v) => v.toFixed(0)).join('/')} m, scene ${fs2.scene.toFixed(0)})`);
       await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
       await wait(1500);
       await hook(a, 'endNow', 'busted', 'hp');
@@ -1370,6 +1407,8 @@ async function hpAgree(pr, pc, rw, tol) {
       s = await st(a);
       const fogBack = await a.evaluate(() => { const w = window.__getaway.internals.world; return Math.abs(w.scene.fog.far - w.fogFar) < 0.5; });
       assert(fogBack, 'the fog is restored after the pair');
+      fs2 = await fogShaders();
+      assert(fs2.u.every((v) => Math.abs(v - fs2.base) < 0.5), 'the fog is restored after the pair in every shader too');
       assert(s.R.tw === 'double' && s.R.pts === 2, 'round 7 is DOUBLE OR NOTHING, worth 2');
       assert(await a.evaluate(() => /×2/.test(document.querySelector('.g-gtw .gtw-twrow').textContent) && !!document.querySelector('.g-gtw .gtw-pips i.x2')), 'the HUD shows ×2 on the chip and on the pip');
       await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
@@ -1387,6 +1426,29 @@ async function hpAgree(pr, pc, rw, tol) {
       assert(!('series_n' in d) && (d.ai_a_pairs | 0) === 1 && (d.ai_a_safe | 0) === 1, `practice never writes the series; practice counters: pairs ${d.ai_a_pairs}, safehouses ${d.ai_a_safe}`);
       h.assertNoErrors();
     } catch (e) { fails++; console.error(e.message); await shot(h.a, 'wild-fail').catch(() => {}); } finally { await h.close(); }
+  }
+
+  // ═══ quitting to the lobby from a FOG round restores the fog (part of `wild`) ═══
+  if (want('wild')) {
+    const h = await launch({ port: PORT + 10, only: ['getaway'], who: ['a'], coarse: true });
+    const { a } = h;
+    try {
+      await arm(a, { ...FAST, rounds: 2, intro: 1200, rules: { wildcards: 'on', score: 'pairs' }, tw: { 0: 'fog' } });
+      await h.startLive(a, 'getaway', 'local');
+      await ready(a);
+      await hook(a, 'setLocalMode', 'ai', 'cop');
+      await a.tap('.g-gtw [data-l="start"]');
+      await phase(a, 'chase', 25000);
+      const fogNow = () => a.evaluate(() => { const g = window.__getaway.internals; const w = g.world; return { scene: w.scene.fog.far, base: w.fogFar, u: [g.fx.puffs.material, g.fx.skids.material, w.lights.glows.material].map((m) => m.uniforms.uFogFar.value) }; });
+      let f = await fogNow();
+      assert(f.scene < f.base * 0.6 && f.u.every((v) => Math.abs(v - f.scene) < 0.5), `fog quit: the FOG round is in the fog (${f.scene.toFixed(0)} of ${f.base.toFixed(0)} m)`);
+      await a.locator('.g-gtw .gtw-view.full [data-tap="pause"]').tap(); await wait(300);
+      await a.tap('.g-gtw [data-l="quit"]');
+      await phase(a, 'lobby', 8000);
+      f = await fogNow();
+      assert(Math.abs(f.scene - f.base) < 0.5 && f.u.every((v) => Math.abs(v - f.base) < 0.5), `fog quit: Quit to the lobby mid-round puts the fog back (${f.scene.toFixed(0)} of ${f.base.toFixed(0)} m, every shader)`);
+      h.assertNoErrors();
+    } catch (e) { fails++; console.error(e.message); await shot(h.a, 'wildquit-fail').catch(() => {}); } finally { await h.close(); }
   }
 
   // ═══ wildcards + pairs + the Series, two phones ═══

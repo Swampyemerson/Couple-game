@@ -218,7 +218,7 @@ export function remainingPoints(m) {
   const played = m.hist.length; if (played >= m.rounds) return 0;
   const wild = (m.rules || {}).wildcards !== 'off' && !m.daily;
   const nPairs = Math.ceil(m.rounds / 2);
-  const ptsAtFuture = (i) => ptsFor(twistFor(m.seed, i, { wild, pairs: nPairs }));
+  const ptsAtFuture = (i) => ptsFor(twistFor(m.seed, i, { wild, pairs: nPairs, rules: m.rules }));
   const pairs = (m.rules || {}).score !== 'rounds' && !m.daily;
   const at = (i) => (i < played ? m.hist[i].pts || 1 : ptsAtFuture(i));
   let tot = 0;

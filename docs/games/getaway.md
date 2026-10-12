@@ -106,6 +106,10 @@ is ready").
   the host starts round 0 as soon as both phones are back (frame loop `autoStart`, 15 s timeout to
   the lobby). It falls back to a remount when the partner isn't linked or the graphics are down.
   Was 12–14 s of map rebuild plus Start and Ready; now tap → GO is the 0.7 s lead + intro + count.
+- **Netcode notes**: the cop's name / distance tag over the runner follows the cop's radar rule in live too (hidden through buildings and
+  fog; the runner always sees the cop's tag). A relink re-sends `match` with the current round; a guest that already has that match id at that
+  round or a later one ignores it (it used to restart a round that had ended and push a second `hist` entry); a new match id is a new match,
+  and a stale `round` message (idx ≤ the current one) is ignored too.
 
 ## Pairs, wildcard rounds, the decider, the Series (twists.js, records.js)
 
@@ -131,15 +135,20 @@ is ready").
   (that would decide nothing), so a Quick chase isn't always plain. Under score `rounds` the twist is per pair too (both
   rounds of a DOUBLE OR NOTHING pair are worth 2 each). Both rounds' intro cards show the twist. `TUNE.tw` (tests) is keyed
   by pair index and may also set pair 0. The round reads its rules through `rules()` = `rulesFor(match.rules, R.tw, R.sd)` (stored on `S.R.rules`):
-  EAGLE EYE (radar always, heat +40 m) · FOG (radar off, heat ×0.7, render fog × 0.55: `scene.fog` near/far, restored
-  at the round's end) · SPIKE RAIN (cop 6 strips, runner sees them all) · BIG TANK (runner nitro big, cop boost
-  recharge ×1.5 via `S.copK`) · SLICK STREETS (both cars' lateral grip × 0.88 via `S.cp`, runner 2 oil slicks) ·
+  EAGLE EYE (radar always, heat +40 m) · FOG (radar off, heat ×0.7, render fog × 0.55 through `world.setFogScale(k)`: `scene.fog` plus the shared `uFogNear/uFogFar` uniforms of
+  the self-fogging shaders (puffs, skid marks, lamp / signal glows, beams, contact shadows and baked decals), and the chunk-hide distance; no draw
+  call changes. Restored at the round's end and in `toLobby`, so Quit to the lobby mid-round never leaves the fog) · SPIKE RAIN (cop 6 strips, runner sees them all; never picked when the match's spike strips are 0) · BIG TANK (runner nitro big, cop boost
+  recharge ×1.5 via `S.copK`; never picked when the runner's nitro is off: `twistFor(…, { rules })` leaves the clashing twists out of the
+  shuffle, a pure function of the match rules, so both phones agree) · SLICK STREETS (both cars' lateral grip × 0.88 via `S.cp`, runner 2 oil slicks) ·
   SAFEHOUSE · DOUBLE OR NOTHING (`R.pts = 2`). A wildcard round always gets the 2 s intro card (the twist's name and
   rule, and the safehouse's name), "ROUND 3 OF 4 · FOG" in its header; during the chase a chip sits under the clock
   (`.gtw-twrow`), the result card and the match card carry the twist's name. Practice vs the AI plays every twist (the AI
-  runner ignores the safehouse; the AI cop's strips come from the round's rules).
+  cop's strips come from the round's rules). In a SAFEHOUSE round an AI runner that is unseen with the cop more than 130 m away
+  biases its escape junction towards the house, takes the last 150 m straight to it and slows to a crawl inside the circle (the game needs
+  2 s unseen within 25 m); an AI cop that has lost the runner sometimes camps the house for 14 s (`opts.safe`, `LV.safe` / `LV.camp`:
+  Easy .5 / .2, Normal .8 / .4, Hard 1 / .6).
 - **SAFEHOUSE**: `pickSafehouse` (host, in `nextRound`) takes a landmark with a road within 110 m, 200-800 m from the
-  runner's spawn (widening to 120-1300 m), snapped to the road; 3865 Moorhead (Boulder) and 8524 Boulder Way (Santee) win
+  runner's spawn (widening to 120-1300 m), snapped to the road (a landmark whose nearest road is paved beats one that snaps to a dirt trail, e.g. Santee's River / Weston Trail, when any exist in the pool); 3865 Moorhead (Boulder) and 8524 Boulder Way (Santee) win
   when within 140-1100 m (a safehouse landmark is drawn once per pair, never reused by a later pair, so "the first time" is always; both rounds of
   its pair name the same one, `pickSafehouse` is keyed by the pair index). It travels in `R.safe`
   `{x, z, name, home}` (in `match`, `round` and the relink re-send: `wireR`), so both phones agree; if no landmark fits
@@ -254,7 +263,7 @@ The pure logic lives in `chase.js` (Node-testable: `wantedLevel`, `copRegen`, `c
   (`copRegen(level, k)`, one function: `k` is the round rules' `copBoostK`, which BIG TANK sets to 1.5, so ★★ under BIG TANK
   is ≈ 9.3 s; `S.copK` is read once a round); ★★★: the cop's tank refills fully once, the human cop's last-seen ping stays 3 s
   longer (15 s) and the AI cop's radar pings come 40% sooner (`opts.wanted`, ai.js). Shown as ★★ on the cop's role chip and
-  on the cop's tag ("Sydney ★★ · 82 m") and as a sticker on the heat panel's top edge; a hint on each rise ("WANTED ★★ ·
+  on the cop's tag ("Sydney ★★ · 82 m") and as a sticker beside the heat panel (to its right, clear of the health bar above it); a hint on each rise ("WANTED ★★ ·
   they're getting serious" for the runner, "boost recharges faster" for the cop). The Daily has no Wanted level (its score
   stays comparable with older bests). Driving physics are untouched. `TUNE.wanted = [t2, t3]` overrides the thresholds (tests).
 - **Delight.** The Honk button now cycles six lines per role (HONK, Catch me! / Pull over!, lol, Too slow! / Got you!, Nice
@@ -262,7 +271,8 @@ The pure logic lives in `chase.js` (Node-testable: `wantedLevel`, `copRegen`, `c
   DOM sprite per viewer, `hud.hearts`, drawn above the controls and under the cards: no draw call) with a few glowing puffs
   in the sender's ink (the existing puff system). The **bumper kiss**: after the round (the 3.5 s the cars coast) two cars
   that touch gently (bodies a hand's width bigger overlap, closing under 3 m/s: `isKiss`) trade a heart once a round and a
-  "Bumper kiss" line is added to the result card. The runner's device decides (live) and sends `emote {k: 'KISS'}`; the
+  "Bumper kiss" line is added to the result card. Only if the cars were apart (a gap over 1 m, `isApart`) at some moment after the round ended, so a bust with the cars already touching
+  is no kiss. The runner's device decides (live) and sends `emote {k: 'KISS', i: round idx}` (a mismatch is dropped, like CHAIN); the
   other phone draws its own heart between the cars. Emotes off mutes hearts from the partner but not the kiss.
 - **Daily 2.0.** The lobby's Daily panel lists today's board as "Sydney ran today: 1:12", "Your best ever: 1:48"
   (`<w>_daily_best`) and "Streak: Emerson Day 3 ✓ · Sydney Day 5" plus "Best streak: …". The streak (`foldStreak`, day
@@ -280,7 +290,11 @@ The pure logic lives in `chase.js` (Node-testable: `wantedLevel`, `copRegen`, `c
   drop by a real tap and by E (62 m, 90 m, a hint when nothing fits, "No spike strips left"), the chain (a ×3 tier-up's
   tank jump, spike +3, PIT +2), the bumper kiss, and the Daily panel / streak saved. `extraslive` (two phones, port PORT + 1):
   the heart on both screens, the kiss, RELENTLESS on both match cards, no budget warnings. `touch` also measures the Wanted
-  sticker and the chain chip at 667×375, 844×390 and 926×428.
+  sticker and the chain chip at 667×375, 844×390 and 926×428 (and the sticker at 390×844), checking the sticker covers neither the health bar nor CAM.
+  Review fixes: `unit` also covers `isApart`, the twist picker's exclusions (`rules`), the paved-safehouse preference and the AI safehouse
+  runner / camping cop on all three maps; `wild` checks every self-fogging shader follows the FOG distance and that Quit to the lobby
+  restores it; `live` checks the cop's tag is radar-gated and that a relink during the result card leaves the guest alone; `extraslive` that
+  a late KISS doesn't mark the next round.
 
 ## Driving model (js/games/getaway/car.js, tune.js)
 

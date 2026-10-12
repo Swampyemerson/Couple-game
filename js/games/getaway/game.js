@@ -802,7 +802,7 @@ export function createGame(el, api) {
     // the wildcard (twists.js): from (seed, idx) alone; round 0 and the decider are plain. A safehouse needs a spot to drive to.
     // (one twist per PAIR: rounds 2k and 2k+1 share it, the spawn and the safehouse; TUNE.tw is keyed by pair index)
     const pair = idx >> 1;
-    let tw = twistFor(match.seed, idx, { sd: !!sd, wild: match.rules.wildcards !== 'off' && !match.daily, pairs: Math.ceil(match.rounds / 2) });
+    let tw = twistFor(match.seed, idx, { sd: !!sd, wild: match.rules.wildcards !== 'off' && !match.daily, pairs: Math.ceil(match.rounds / 2), rules: match.rules });
     if (TUNE.tw && TUNE.tw[pair] != null && !sd) tw = TUNE.tw[pair]; // (tests)
     let safe = null;
     if (tw === 'safe') { safe = safehouseFor(match, pair, spawns[sp]); if (!safe) tw = ''; }
@@ -821,7 +821,7 @@ export function createGame(el, api) {
     const entry = MAPS.find((m) => m.id === match.map); const o = {};
     if (!entry || !geo || S.mapId !== match.map || !entry.landmarks) return null;
     const used = match.hist.filter((h, i) => (i >> 1) < pair).map((h) => h.sn).filter(Boolean); // (earlier pairs' only)
-    return pickSafehouse(entry.landmarks, spawn, (x, z) => { const d = geo.nearestRoad(x, z, o, 110, (r) => !r.bridge); return o.road >= 0 ? { x: o.px, z: o.pz, d } : null; }, match.seed, pair, used);
+    return pickSafehouse(entry.landmarks, spawn, (x, z) => { const d = geo.nearestRoad(x, z, o, 110, (r) => !r.bridge); return o.road >= 0 ? { x: o.px, z: o.pz, d, dirt: geo.roads[o.road].kind === 'dirt' } : null; }, match.seed, pair, used);
   }
   /** What travels of a round (match / round / the relink re-send): everything both phones must agree on. */
   const wireR = (R) => ({ idx: R.idx, runner: R.runner, spawn: R.spawn, at: R.at, t0: R.t0, endAt: R.endAt, intro: R.intro, sd: R.sd, tw: R.tw || '', pts: R.pts || 1, safe: R.safe || null });
@@ -2678,6 +2678,8 @@ export function createGame(el, api) {
       /** Delight + chase extras: the Wanted level, the cop's chain, hearts in the air, the bumper kiss. */
       delight(w) { const p = P2[w || human()]; return { wLvl: S.wLvl || 1, copK: S.copK || 1, copRegen: copNit.regen, chain: { n: p.chain.n, tier: p.chain.tier, best: p.chain.best, lost: p.chain.lost }, hearts: (S.hearts || []).length, kissed: !!(S.R && S.R.kissed), chains: S.match && S.match.chains ? { ...S.match.chains } : {}, hint: H0().view(w || human()).els.hint.textContent, stars: H0().view(w || human()).els.role.textContent }; },
       kissCheck() { kissCheck(); },
+      /** Tests: what the host does when the partner (re)links: re-send the lobby setup or the current match and round. */
+      relink() { onLinked(); },
       /** Tests: add points to a local cop's chain; make the next emote the n-th line (the 4 s limiter off). */
       chainBump(w, pts) { chainBump(w || human(), pts, 'TEST'); return P2[w || human()].chain.n; },
       setEmote(n) { S.emoteK = n; S.emoteT = 0; },
@@ -2714,7 +2716,7 @@ export function createGame(el, api) {
       ui() { return { sheet: S.sheet, menu: !!S.menu, loadFail: S.loadFail, glStuck: !!S.glStuck, loading: S.loading, tier: gfx && gfx.tier, card: hud.over.hidden ? null : (hud.over.querySelector('h2') || {}).textContent || hud.over.className, device: { ...device } }; },
       worldStats() { return world ? { ...world.stats, chunks: world.chunks.length, visible: world.chunks.filter((c) => c.group.visible).length, broken: world.brokenCount() } : null; },
       inputStats: () => ({ ...inputStats }),
-      internals: { P2, S, hud, get geo() { return geo; }, get world() { return world; }, get renderer() { return renderer; }, get carViews() { return carViews; }, link },
+      internals: { P2, S, hud, get geo() { return geo; }, get world() { return world; }, get renderer() { return renderer; }, get fx() { return fx; }, get carViews() { return carViews; }, link },
       /** Render a fixed view and count draw calls / triangles (perf budgets per map). */
       measureView(x, z, yaw, mode = 'near') {
         const cr = cams[human()]; const cam = cr.cam; const md = CAM[mode];
