@@ -8,6 +8,10 @@
 //   ynm      – yes / maybe / no; only MUTUAL yes/maybe items are ever revealed
 //   lovelang – love language quiz, scored per person
 
+import { QUIZ_PACKS } from './content/quiz.js';
+import { SPICY_PACKS } from './content/spicy.js';
+import { PICKS_PACKS } from './content/picks.js';
+
 export const CATEGORIES = [
   { id: 'quiz', title: 'How Well Do You Know Me?', blurb: 'Answer for yourself, then guess for them. Scores are kept.' },
   { id: 'thisorthat', title: 'This or That', blurb: 'Quick picks. See how in sync you are.' },
@@ -25,7 +29,7 @@ export const SPICY_CATEGORIES = [
   { id: 'spicytalk', title: 'Pillow Talk', blurb: 'Say it in writing first.' },
 ];
 
-export const PACKS = [
+const BASE_PACKS = [
   // ───────────────────────── HOW WELL DO YOU KNOW ME ─────────────────────────
   {
     id: 'quiz-basics', type: 'quiz', cat: 'quiz', emoji: '🧩', title: 'The Basics',
@@ -454,6 +458,8 @@ export const PACKS = [
     ],
   },
 ];
+
+export const PACKS = [...BASE_PACKS, ...QUIZ_PACKS, ...PICKS_PACKS, ...SPICY_PACKS];
 
 // ───────────────────────── DAILY QUESTIONS ─────────────────────────
 // One per day, both answer, answers stay hidden until you've both answered.
