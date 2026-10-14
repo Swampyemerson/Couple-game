@@ -112,6 +112,44 @@ their v2 rules with an opening **setup move**, `{ setup: { v: 2, ... } }`.
   Stamps: NEW RECORD, streaks, ON THE LAST TOKEN and mission milestones. The result view adds an epilogue line ("Debrief over coffee.
   You two are terrifying.") and the two best clues as slips. The header says "Last call." on the final token.
 
+## Round 2 (14 Oct): rivalry memory and record chasing
+
+The first round-2 attempt on 12 Oct was cut off by a rate limit. It was finished on 14 Oct after merging the latest coordinator branch:
+1. A Fable check reviewed the earlier additions (no privacy leak or tone issue) and proposed what to add.
+2. Sonnet builders built them.
+3. Independent Sonnet verifiers played both games on two iPhone profiles with real taps, in light and dark, portrait and landscape.
+4. The issues they found were fixed.
+
+All of it is records, copy and UI only. Move meanings are unchanged and the v1 replay checks still pass.
+
+### Word Duel
+- **REVENGE** stamp when you beat the person who won the last duel. **STREAK SNAPPED** when you end their run of 3 or more, with the line
+  "Sydney ends Emerson's run of 4."
+- **Rivalry context** on the rules card and pick screen: "All square at 7–7.", "Emerson leads by 3.", "Sydney's ×4 streak is on the line."
+- **Déjà vu.**
+  - The game remembers each player's last 40 secret words and how they went.
+  - Typing one again shows a gentle hint, only to the picker and never under the one-phone curtain: "You picked HEART before. Sydney
+    cracked it in 3." or "Sydney used HEART on you once. Bold."
+  - The end view gets a DÉJÀ VU stamp.
+- **Fixes from verification:**
+  - Stamps based on history now show only on the latest recorded duel, so reopening an older duel no longer shows wrong stamps.
+  - A fresh phone with empty shared data no longer records a duel it only reopened, so it can't overwrite streaks.
+- **Data API.** The game now uses core's native `api.data/setData/onData`.
+
+### Double Agents
+- **The record clue is remembered by name.** The briefing shows "Record clue: OCEAN for 4 (Sydney, Wanderlust)." The result view's clue
+  slips get RECORD / EQUALS THE RECORD overprints. The streak line reads "Three missions unbeaten. Keep it clean."
+- **NOT ONE WRONG TAP** stamp and a spotless count for a win with no bystander picked, including sudden-death escapes.
+- **Record in reach.** The clue slip tells both players when a clue can set or equal the record ("Crack all 4 and it's a new record.",
+  "Find 4 for a new record."). It only shows when it is still reachable, and disappears after a wrong tap.
+- **Record stamps now say what they are:** NEW RECORD (clue), MOST TURNS SPARE, STREAK RECORD, CLOSEST CALL YET. None is awarded for a
+  first-ever value.
+- **Fixes from verification:**
+  - The guesser prompt is one line ("Tap Emerson's agents."), so all five rows stay above the dock at 360×640 in every state.
+  - The landscape mind-meld chip is no longer clipped.
+  - The same fresh-device record guard as Word Duel.
+- **Data API.** The game now uses core's native `api.data/setData/onData`.
+
 ## User must-haves
 
 None of the plan's named must-haves (Ultimate balance, the Battleships cheat, Defuse) are in this unit. Each of our games still got
@@ -137,13 +175,13 @@ The final regression ran at 08:50 UTC on the pushed head. Verifiers also checked
 
 - **Core end card for co-op games.** It shows "Best team score N", built from `score`. That counts a loss as a best, and shows "0" after
   a zero-agent loss. Double Agents now keeps wins and losses apart in its own records. The card itself needs a core change.
-- **Turn games have no data API.** The turn-game `api` lacks `data()/setData()/onData()`; only live games get them. Both games import
-  `gameDataApi` from core instead. Adding them to the turn `api` would be cleaner.
 - **The core "Rematch or leave" status pill is 32 px tall**, under the 44 px rule.
 - **`h.closeGame()` in the harness hangs** when no close button is visible, because the click has no timeout. Our tests guard it.
 - **Small Double Agents layouts:**
   - Landscape cards are 36 px tall, a deliberate exception: picking is select-then-confirm, so a mis-tap never commits.
-  - At 320×568 the last board row scrolls under the sticky dock.
+  - At 320×568 the last board row can scroll under the sticky dock.
+- **Legacy matches and records.** A legacy v1 Double Agents match watched to its end is recorded, so it shows stamps and record lines
+  like a v2 match. That is intended.
 - **Word Duel, best of 3.** The core player chips (`score()`) show the new round tally before the final flip finishes. Core has no hook
   to delay them.
 - **Word Duel at 568×320 landscape.** On the very smallest landscape screen (iPhone SE 1), the pick screen with every toggle on
