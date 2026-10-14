@@ -377,5 +377,12 @@ export const CSS = `
 .g-defuse .dx-hush em { font: 800 0.85rem/1.2 var(--g-font-body); font-style: normal; letter-spacing: 0.14em; text-transform: uppercase; color: var(--g-muted); }
 .g-defuse .is-hush .dx-page { min-height: 55vh; }
 .g-defuse .is-hush .dx-page > .dx-sec { visibility: hidden; }
+/* Chain x2: which bomb of two this is (bomb side panel or top bar, and the manual bar), the lobby switch, the NEXT BOMB stamp */
+.g-defuse .dx-chain { display: inline-block; padding: 4px 9px 3px; border: 2px solid var(--g-ink); border-radius: 6px; background: var(--g-hl); color: var(--g-on-ink, var(--g-ink)); font: 900 0.72rem/1.15 var(--g-font-body); letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; }
+.g-defuse .dx-chain[data-chain="2"] { background: var(--g-ink); color: var(--g-bg); }
+.g-defuse .dx-side .dx-chain { display: block; text-align: center; margin: 0 0 8px; }
+@media (max-width: 1099px) { .g-defuse .dx-side .dx-chain { display: none; } }
+.g-defuse .dx-today:disabled { opacity: 0.5; }
+.g-defuse .dx-stamp.is-chain b { font-size: clamp(2rem, 9.5vw, 3.4rem); }
 @media (prefers-reduced-motion: reduce) { .g-defuse .dx-flag.is-pulse { animation: none !important; } }
 `;

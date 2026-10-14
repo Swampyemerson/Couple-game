@@ -115,8 +115,24 @@ A second Fable check ranked three ideas. Two shipped:
   - surges or blackouts could land in the first 30 s of a short clock;
   - the end card offered a gold medal that a shortened clock makes impossible.
   The Par clock is also ignored on Today's bomb, so daily times stay comparable.
-- Not shipped: **Chain ×2** (two bombs back to back, leftover time carries over). The builder hit a rate limit before it had
-  written code, and its partial edit was reverted. It's a good next step.
+- Round 3: **Chain ×2** (a short campaign: defusing bomb 1 is only halfway, the time left over is the stake).
+  - A lobby switch, shared like Today's bomb and Par clock (presence `ch`, same version counter), remembered, off and disabled on Classic.
+  - Defuse bomb 1 and nothing is recorded or finished: a NEXT BOMB stamp (the finale stamp style, about 2 s) shows on both devices, then
+    bomb 2 starts on the same tier with a new round id, the seed `<bomb 1 seed>|next` (so Today's bomb agrees across devices and days),
+    strikes back to 0 and a clock of `min(tier clock, seconds left + half the tier clock)`. Surge, blackout and hush events that fall
+    before that shorter clock's start, or in its first 30 s, never fire (the same helper the par clock uses).
+  - The manual follows by itself: bomb 1 keeps publishing `ph: 'play'` (never `over`, `res` or `win`), and bomb 2 is just a new round id.
+    Both devices show "Bomb 1 of 2" / "Bomb 2 of 2" (side panel or top bar, and the manual bar).
+  - Par applies to bomb 1's start only; bomb 2 never uses it, and chain runs never touch `parN` / `parSum`. A chain win counts as a win
+    and for the tier medal (zero strikes across both bombs; gold means more than half of bomb 2's own start clock), but not for
+    `best_<tier>`. New flat keys: `chain_<tier>` (best seconds left after bomb 2), `chainWins`, `chainRuns`. Today's bomb stores a chain
+    time under `daily_<date>_<tier>x2_<a|b>`. The lobby strip shows "Best chain on Agent: 2:10".
+  - The end card names the chain ("Chain: Frosty Dolphin → Sleepy Koala"); a boom on bomb 1 is a normal boom ("bomb 1 of 2").
+  - Resume: `memo.saved` carries the chain stage, bomb 1's edition name, the carried seconds, and the strikes and modules of bomb 1. A
+    close during the NEXT BOMB interlude saves bomb 2 already, so reopening lands on bomb 2.
+  - Tests: node (seed, clock, records incl. garbage) and a browser `chain` group (two phones with real taps: switch, Classic, interlude,
+    carried clock, manual follows, exactly one result, boom on bomb 2, boom on bomb 1, closes in the interlude and mid-bomb-2, Today's
+    bomb; a laptop bomb with a phone manual, light and dark).
 
 ## Bugs fixed (found by the survey, reproduced)
 

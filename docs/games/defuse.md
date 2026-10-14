@@ -117,7 +117,7 @@ attributes so tests solve from the page. `mount(box, S, R, host)` judges and cal
 
 ## Netcode
 
-Presence `v: 2`. In the lobby each device publishes role, the shared tier (`diff`, plus `td` for Today's bomb; last writer wins by
+Presence `v: 2`. In the lobby each device publishes role, the shared tier (`diff`, plus `td` for Today's bomb, `pc` Par clock and `ch` Chain ×2; last writer wins by
 the `dv`/`dw` counter, ties to `b`), a swap token and a start token. The bomb device is authoritative:
 
 | field | meaning |
@@ -129,6 +129,7 @@ the `dv`/`dw` counter, ties to `b`), a swap token and a start token. The bomb de
 | `rs` | relay live state |
 | `pz` `pr` | paused and why (`gone` `bg` `lobby` `me`) |
 | `res` `win` `fx` | result, win flag, finale extras (couple line, medal) |
+| `cs` `ci` | Chain ×2: which bomb (1 or 2), and 1 during the NEXT BOMB interlude (the round stays `play`; `res` and `win` stay empty) |
 
 The manual publishes `ra`: its last 8 relay actions with unique ids. The bomb applies new ids through `RELAY.step` (authoritative)
 and publishes `rs`. The manual rebuilds the round from `{ sd, rd }`. Presence stays under 3.5 KB (about 0.8 KB in practice).
@@ -167,7 +168,7 @@ through the steps in order."; the others have no footer line.
 
 Per-game data (`api.data()` / `api.setData(patch)`) only stores flat keys with number / string / boolean values, so records are:
 `wins booms streak bestStreak`, `best_<tier>` (seconds left) with `bestWho_<tier>` and `bestAt_<tier>`, `medal_<tier>` (0 to 3, never
-goes down), `clean_<tier>`, `holder_<a|b>_wins|booms|clean`, `manual_<a|b>_rounds|strikes`, `mods_<id>`, `daily_<date>_<tier>_<a|b>`
+goes down), `clean_<tier>`, `holder_<a|b>_wins|booms|clean`, `manual_<a|b>_rounds|strikes`, `mods_<id>`, `chain_<tier>` `chainWins` `chainRuns`, `daily_<date>_<tier>_<a|b>`
 (seconds left, 0 = boom) and `log` (JSON string, last 8 rounds). Reads accept a missing doc, `{}`, wrong types, a bare-number best, and
 nested or dotted shapes. Written once, by the bomb device, when the round ends.
 
@@ -178,6 +179,17 @@ nested or dotted shapes. Written once, by the bomb device, when the round ends.
   clamped to the tier's clock plus a minute. "New record!" and near-miss lines on the end card.
 * **Today's bomb**: a lobby switch. Seed `day-YYYY-MM-DD` (UTC date picked by the bomb device) plus the tier: the same bomb for both of you, today only. The holder's first attempt of the day is stored; the lobby shows "Today (Agent): Sydney 1:40 left, Emerson -".
 * **Personal par**: wins add `parN_<tier>` and `parSum_<tier>` (seconds used, from the clock the round started with; halved at 20 wins). `parOf` gives `{ secs, n }` from three wins. The lobby shows "Par 3:12" under the tier, a one-line nudge from `suggestTier` (three wins in a row with silver or better: next tier up; two booms in the last three: one easier), and a **Par clock** switch (presence `pc`, same counter as Today's bomb) that starts the bomb at par + 20 s, capped at the tier's clock. Medals and bests are unchanged; the end card says "Under par by 24 s." / "Over par by 9 s.".
+* **Chain ×2**: a lobby switch (presence `ch`, same counter as the others, remembered, off and disabled on Classic). Defusing bomb 1 does not
+  record or finish: a "NEXT BOMB" stamp plays for 2 s (`B.inter`: the clock stops, input is ignored, presence stays `ph: 'play'` with
+  `ci: 1`), then bomb 2 starts on the bomb device: same tier, `B.chain = 2`, a new round id, seed `chainSeed(seed)` = `seed + '|next'`
+  (pure, so both devices and both days agree), strikes 0, clock `chainClock(T, left)` = `min(T.secs, left + T.secs / 2)`, timed events before or
+  in the first 30 s of that clock pre-marked fired (`premark()`, shared with the par clock). The manual re-enters on the new round id. Par
+  applies to bomb 1's start only. Records (`applyResult` with `chain: true`, once, after bomb 2 or on a boom): `chain_<tier>` (best seconds
+  left after bomb 2), `chainWins`, `chainRuns`; wins, streak, medal (zero strikes across both bombs; gold uses bomb 2's own start clock),
+  holder and manual stats and `mods_` count as usual, but `best_<tier>` and `parN` / `parSum` are not touched, and Today's bomb keeps chain times
+  under `daily_<date>_<tier>x2_<w>`. Results keep `{ team: true, score, text, sub }`; `sub` has "Chain: <edition 1> → <edition 2>", a boom on bomb 1 says
+  "bomb 1 of 2". `memo.saved` carries `chain`, `ch1` (bomb 1's edition name), `carry`, `ps` (strikes) and `pso` (solved modules); a close during the
+  interlude saves bomb 2 as a fresh start (`fresh`, `from` = bomb 1's round id) so reopening lands on bomb 2. The lobby strip shows "Best chain on Agent: 2:10".
 * **Couple delight**: a zero-strike win adds one of twenty sweet / playful lines to the stamp. After three rounds with the same bomb
   holder the lobby nudges "Swap?" (a nudge only).
 
@@ -197,9 +209,12 @@ node tools/test/games/computer.test.js phone                                    
   Today's bomb, the pause overlay on both devices, resume after the bomb closes and reopens.
 * **wild** (9101, 9107): Bomb Squad with the relay done on the manual, tax, surge, the vent answered, 360 px layouts and tap sizes;
   blackout, golden module, couple line, swap nudge, a reloading manual; Rookie and Expert full rounds.
+* **chain** (PORT+10 to +12): two phones with real taps (switch, shared, off on Classic; interlude; bomb 2 with the carried clock; the manual
+  follows; exactly one result; a boom on bomb 2 and on bomb 1; closes in the interlude and mid-bomb-2; Today's bomb + Chain), then a laptop
+  bomb with a phone manual, light and dark.
 * **laptop / dark** (9102 to 9105): laptop bomb with a phone manual, light and dark, screenshots.
 * **legacy** (9106): older nested data and an invalid log, plus the one-device card.
 
 Test hooks (only when `navigator.webdriver`): `window.__defuse.info()` (phase, role, round, slot states, clock, flags),
-`gen(seed, tier)`, `drive(slot)` (the module's `drive()` list scoped to that slot), `force(seed)` (the next round's seed),
+`gen(seed, tier)`, `forceWin()` (solve every module and win), `drive(slot)` (the module's `drive()` list scoped to that slot), `force(seed)` (the next round's seed),
 `setLeft(ms)`, `saveOf(slot)`, `records()`.
