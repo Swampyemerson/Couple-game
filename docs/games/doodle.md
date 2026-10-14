@@ -70,8 +70,7 @@ reveals the answer.
 
 ## Packs
 
-`classic` (the original 282), `us`, `kitchen`, `outabout`, `creatures`, `home` (Home Sweet Home: rooms, chores and little dramas; the last deck, so the earlier deck indices did not move) (new, 29 to 36 cards each, 8+ per
-tier), `everything` (grows with each new deck; v2 matches freeze their `deal`, so saved matches are unaffected). New decks live in `doodle/packs.js`; their order is frozen (indices are stored in saved
+`classic` (the original 282), `us`, `kitchen`, `outabout`, `creatures` and `home` (Home Sweet Home: rooms, chores and little dramas) are the playable decks; the five new ones have 29 to 36 cards each, 8+ per tier. `everything` is all of them together and grows with each new deck (v2 matches freeze their `deal`, so saved matches are unaffected). New decks live in `doodle/packs.js`; their order is frozen (indices are stored in saved
 matches): add a new deck at the END of `NEW_DECKS`, never edit or grow an existing tier. The test checks that
 a card's words only match another card through a word both cards list on purpose (shared head nouns such as "umbrella" are deliberate and are only ever compared against the round's own card), that no two cards in one deck list the same word, and that nothing matches another card by accident (typo, plural of another word).
 
@@ -125,8 +124,11 @@ sent.
 
 Portrait stacks head / paper / foot. When the stage is wider than tall (`width >= 1.25 x height`, height
 < 640 px) the paper moves to the left at full height and the controls sit on the right, so Send, Guess,
-Give up and "I know it!" never need scrolling at 390 x 664, 375 x 548 or 844 x 390. The setup screen keeps
-its Start button in a sticky footer.
+Give up and "I know it!" never need scrolling at 390 x 664, 375 x 548 or 844 x 390. The setup screen shows every control on
+the first view with no scrolling at those three sizes: name-only mode tiles (the selected mode's pitch is the line above
+Start), short pack chips (`chip` in `PACK_INFO`: "Creatures", "Home"; the full title is in the chip's title, its
+aria-label and the Start button's label), the Encore switch, and a slim sticky footer. On short screens the heading and
+section labels are hidden; in landscape the modes and the packs are one row each and the pitch sits left of Start.
 
 ## Testing
 

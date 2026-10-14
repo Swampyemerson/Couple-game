@@ -729,10 +729,10 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
           const f = document.querySelector(`.dd-frame[data-i="${i}"]`);
           const r = picks[0].getBoundingClientRect(); const wl = document.querySelector('.dd-wall').getBoundingClientRect();
           const hit = (o) => { const q = o.getBoundingClientRect(); return !(r.right <= q.left || r.left >= q.right || r.bottom <= q.top || r.top >= q.bottom); };
-          return { n: picks.length, own: picks[0].closest('.dd-frame') === f, inside: r.left >= 0 && r.right <= innerWidth && r.left >= wl.left - 1 && r.right <= wl.right + 1, overlap: [...f.querySelectorAll('.dd-frame-pts, .dd-frame-gold')].some(hit), text: picks[0].textContent.trim() };
+          return { n: picks.length, own: picks[0].closest('.dd-frame') === f, inside: r.left >= 0 && r.right <= innerWidth && r.left >= wl.left - 1 && r.right <= wl.right + 1, overlap: [...f.querySelectorAll('.dd-frame-pts, .dd-frame-gold')].some(hit), clear: r.top >= f.querySelector('.dd-frame-meta').getBoundingClientRect().bottom,  text: picks[0].textContent.trim() };
         }, mpx.i);
         assert(fit.n === 1 && fit.own && fit.text === 'Tonight’s pick', `masterpiece ${w}x${hh}: exactly one "Tonight’s pick" ribbon, on the winning frame (round ${mpx.i + 1})`);
-        assert(fit.inside && !fit.overlap, `masterpiece ${w}x${hh}: the ribbon stays on the screen and does not touch the points sticker or the golden stamp`);
+        assert(fit.inside && !fit.overlap && fit.clear, `masterpiece ${w}x${hh}: the ribbon stays on the screen, clear of the points sticker, the golden stamp and the by-line text`);
         assert(await noSideScroll(a), `masterpiece ${w}x${hh}: no sideways scrolling`);
       }
       for (const scheme of ['light', 'dark']) {
@@ -807,7 +807,12 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
     assert(/picking the game/i.test(await OP.textContent('.dd-wait-name')) && !(await OP.$('.dd-mode')), 'the second player waits while the first sets up (no setup screen for them)');
     await FP.waitForSelector('.dd-start');
     assert(await FP.$$eval('.dd-mode', (xs) => xs.length) === 5 && await FP.$$eval('.dd-pack', (xs) => xs.length) === 7, 'setup: five modes and seven packs');
-    assert(await FP.$$eval('.dd-mode span', (xs) => xs.every((x) => x.textContent.trim().length > 10)), 'setup: every mode has a one-line pitch');
+    {
+      const pitches = [];
+      for (const m of ['classic', 'halfhalf', 'ladder', 'invisible', 'mixed']) { await FP.tap(`.dd-mode[data-m="${m}"]`); pitches.push((await FP.textContent('.dd-pitch')).trim()); }
+      await FP.tap('.dd-mode[data-m="classic"]');
+      assert(pitches.every((t) => t.length > 10) && new Set(pitches).size === 5, 'setup: the selected mode shows its own one-line pitch above Start');
+    }
     assert(await FP.$eval('.dd-mode[data-m="classic"]', (x) => x.getAttribute('aria-checked')) === 'true' && await FP.$eval('.dd-pack[data-p="classic"]', (x) => x.getAttribute('aria-checked')) === 'true' && /^Start/.test(await FP.textContent('.dd-start')), 'setup: Classic / Classic preselected on a first match, the button says Start');
     for (const scheme of ['light', 'dark']) {
       await FP.emulateMedia({ colorScheme: scheme }); await OP.emulateMedia({ colorScheme: scheme });
@@ -816,7 +821,13 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
         assert(await inView(FP, '.dd-start') && await noSideScroll(FP), `setup ${w}x${hh} ${scheme}: the Start button is in view without scrolling`);
         const tap44 = await FP.$$eval('.dd-mode, .dd-pack, .dd-toggle, .dd-start', (xs) => xs.every((x) => x.getBoundingClientRect().height >= 44));
         assert(tap44, `setup ${w}x${hh}: every tap target is at least 44 px tall`);
-        assert(await FP.evaluate(() => { const c = document.querySelector('.dd-pack[data-p="home"]').getBoundingClientRect(); const sc = document.querySelector('.dd-scroll').getBoundingClientRect(); return c.width > 40 && c.left >= sc.left - 1 && c.right <= sc.right + 1; }), `setup ${w}x${hh} ${scheme}: the Home Sweet Home chip sits inside the screen`);
+        await FP.evaluate(() => { document.querySelector('.dd-scroll').scrollTop = 0; });
+        const bad = await FP.evaluate(() => [...document.querySelectorAll('.dd-pack, .dd-toggle, .dd-start')].filter((el) => {
+          const r = el.getBoundingClientRect(); const inside = r.width > 40 && r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight;
+          const t = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+          return !(inside && (t === el || el.contains(t)));
+        }).map((el) => el.dataset.p || el.className));
+        assert(bad.length === 0 && await FP.$$eval('.dd-pack', (xs) => xs.length) === 7, `setup ${w}x${hh} ${scheme}: all 7 pack chips, the Encore switch and Start are fully inside the screen and tappable without scrolling${bad.length ? ' (not: ' + bad.join() + ')' : ''}`);
         if (scheme === 'light' || name === 'portrait') await FP.screenshot({ path: `${SHOTS}/setup-${name}-${scheme}.png` });
       }
     }

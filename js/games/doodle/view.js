@@ -289,11 +289,11 @@ export function mountDoodle(el, api, K) {
     node.classList.add('dd-setup');
     node.innerHTML = `<div class="dd-head dd-sethead"><h2 class="dd-h">Set up the game</h2>${pinned && pinned.length ? `<div class="dd-fridge" role="img" aria-label="On the fridge: ${esc(cap(String(d.pin_t || 'our favourite')))}${d.pin_by === 'a' || d.pin_by === 'b' ? ` by ${esc(api.name(d.pin_by))}` : ''}"><div class="dd-fridge-pic"></div></div>` : ''}</div>
       <div class="dd-sec"><span class="g-label">How to play</span>
-        <div class="dd-modes" role="radiogroup" aria-label="Mode">${MODE_LIST.map((m) => `<button class="dd-mode" role="radio" data-m="${m}" aria-checked="false"><b>${esc(MODE_INFO[m].title)}</b><span>${esc(MODE_INFO[m].pitch)}</span></button>`).join('')}</div></div>
+        <div class="dd-modes" role="radiogroup" aria-label="Mode">${MODE_LIST.map((m) => `<button class="dd-mode" role="radio" data-m="${m}" aria-checked="false" title="${esc(MODE_INFO[m].pitch)}"><b>${esc(MODE_INFO[m].title)}</b></button>`).join('')}</div></div>
       <div class="dd-sec"><span class="g-label">Which cards</span>
-        <div class="dd-packs" role="radiogroup" aria-label="Cards">${PACK_LIST.map((p) => `<button class="dd-pack" role="radio" data-p="${p}" aria-checked="false" title="${esc(PACK_INFO[p].pitch)}">${esc(PACK_INFO[p].title)}</button>`).join('')}</div></div>
-      <button class="dd-toggle" role="switch" aria-checked="false" type="button"><i aria-hidden="true"></i><span><b>Encore</b> One last card you both draw at once</span></button>
-      <div class="dd-setup-foot"><button class="gm-btn gm-btn-big dd-start"></button></div>`;
+        <div class="dd-packs" role="radiogroup" aria-label="Cards">${PACK_LIST.map((p) => `<button class="dd-pack" role="radio" data-p="${p}" aria-checked="false" title="${esc(`${PACK_INFO[p].title}: ${PACK_INFO[p].pitch}`)}" aria-label="${esc(PACK_INFO[p].title)}">${esc(PACK_INFO[p].chip || PACK_INFO[p].title)}</button>`).join('')}</div></div>
+      <button class="dd-toggle" role="switch" aria-checked="false" type="button"><i aria-hidden="true"></i><span><b>Encore</b> One last card you both draw</span></button>
+      <div class="dd-setup-foot"><p class="dd-pitch" aria-live="polite"></p><button class="gm-btn gm-btn-big dd-start"></button></div>`;
     const startBtn = node.querySelector('.dd-start');
     const paint = () => {
       node.querySelectorAll('.dd-mode').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.m === sel.mode)));
@@ -301,6 +301,7 @@ export function mountDoodle(el, api, K) {
       node.querySelector('.dd-toggle').setAttribute('aria-checked', String(!!sel.encore));
       const same = lastMode && lastPack && sel.mode === lastMode && sel.pack === lastPack && !!sel.encore === (d.lastEncore === 1);
       startBtn.innerHTML = `${same ? 'Same again' : 'Start'}<small>${esc(MODE_INFO[sel.mode].title)} · ${esc(PACK_INFO[sel.pack].title)}${sel.encore ? ' · Encore' : ''}</small>`;
+      node.querySelector('.dd-pitch').textContent = MODE_INFO[sel.mode].pitch;
       startBtn.disabled = !ctx.canMove || !!vs.setupSent;
     };
     node.querySelector('.dd-modes').addEventListener('click', (e) => { const b = e.target.closest('.dd-mode'); if (b) { sel.mode = b.dataset.m; api.sfx('tap'); paint(); } });
@@ -907,7 +908,7 @@ export function mountDoodle(el, api, K) {
       <div class="dd-badges">${['a', 'b'].map((w) => `<div class="dd-badge2 p-${w}-b"><span class="dd-badge2-who">${esc(api.name(w))}</span><b>${esc(badges[w].title)}</b><span>${esc(badges[w].line)}</span></div>`).join('')}</div>
       <p class="dd-history" hidden></p>
       <p class="dd-chase" hidden></p>
-      <div class="dd-wall">${s.rounds.map((R, i) => `<button class="dd-frame${R.gold ? ' gold' : ''}" data-i="${i}" style="--tilt:${tilts[i % tilts.length]}deg" aria-label="Round ${i + 1}: ${esc(PROMPTS[R.choices[R.pick]].show)} by ${esc(api.name(R.drawer))}${R.gold ? ', golden frame' : ''}">
+      <div class="dd-wall">${s.rounds.map((R, i) => `<button class="dd-frame${R.gold ? ' gold' : ''}${mp && mp.i === i ? ' pick' : ''}" data-i="${i}" style="--tilt:${tilts[i % tilts.length]}deg" aria-label="Round ${i + 1}: ${esc(PROMPTS[R.choices[R.pick]].show)} by ${esc(api.name(R.drawer))}${R.gold ? ', golden frame' : ''}">
           <canvas></canvas>
           <span class="dd-frame-title">${esc(cap(PROMPTS[R.choices[R.pick]].show))}</span>
           <span class="dd-frame-meta">by ${nm(R.drawer)}${R.gold ? ' · golden' : ''}${is2 && s.mode === 'mixed' && R.twist && R.twist !== 'normal' ? ` · ${esc(TWIST_INFO[R.twist].title)}` : ''}</span>
