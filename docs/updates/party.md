@@ -105,8 +105,8 @@ Evidence:
 
 | Suite | Result |
 |---|---|
-| `node tools/test/games/party-doodle.test.js` (new) | ALL GOOD, 528 checks: rules 354, browser 174 |
-| `node tools/test/games/party-wave.test.js` (new) | ALL GOOD, 334 checks |
+| `node tools/test/games/party-doodle.test.js` (new) | ALL GOOD, 560 checks (after round 2) |
+| `node tools/test/games/party-wave.test.js` (new) | ALL GOOD, 352 checks (after round 2) |
 | `QUICK=1 node tools/test/games/party.test.js` | ALL GOOD, 234 checks; existing flows now pick Classic on the setup screen |
 | `QUICK=1 node tools/test/all-games.test.js` | ALL GOOD (35 checks) |
 | `QUICK=1 node tools/test/smoke.test.js` | ALL GOOD (22 checks) |
@@ -154,10 +154,37 @@ The new suites cover:
 | Same Wave: one clue, one dial, five modes and new card packs. How in sync are you? | Take turns, co-op | Either |
 ```
 
-## Round 2 (coordinator request, 10:20 UTC): not shipped
+## Round 2 (finished 14 Oct, after Emerson's "finish up")
 
-A short second round was planned and started: a Fable content check proposed a Doodle "Home Sweet Home" prompt pack, a "Tonight's
-masterpiece" gallery keepsake and a "First try!" reveal ribbon, plus a Same Wave "Senses" card pack, a "Clue of the night" recap keepsake
-and a bullseye ring flourish. Both Sonnet builders were cut off mid-build by an API session limit, and the session's worker restarted
-afterwards, leaving no time to finish, test or verify before 11:30. The partial edits were **not** pushed (they were untested); this
-branch stays at the fully verified round-1 state above. The Fable content (both packs, ready to paste) is a good next step.
+The first attempt on 12 Oct was cut off by an API session limit and nothing untested was pushed. It was finished on 14 Oct with Sonnet
+builders, then checked by an independent Sonnet verifier on an iPhone profile with real taps, then a fix round. The Fable content check
+picked these four items.
+
+**Doodle**
+- **Home Sweet Home pack**: 33 prompts (12 Easy, 11 Medium, 10 Tricky), such as houseplant, record player, mowing the lawn, tangled
+  christmas lights, lost sock, power cut and locked out. It is appended last to the decks (pool indices 412..444), so earlier indices
+  don't move. The verifier's fair guesses were added as alternates ("take out the trash", "hit snooze", "spring clean" and so on). Across
+  96,600 simulated rounds no Home card accepted another card's answer.
+- **Tonight's masterpiece**: the gallery names the best round of the match under the plaque, for example "Tonight's masterpiece: Creaky
+  floorboard by Emerson, guessed first try", or "called early from half a drawing". That frame gets a small "Tonight's pick" ribbon.
+  Ties go to fewer guesses, then the harder card, then the earlier round. When nothing scored it reads "No masterpiece tonight. Next
+  time." It works on old v1 matches too, because it only reads the rounds and is not a record.
+- **Setup screen fix** (found by the verifier): at 375x548 and 844x390 some pack chips and the Encore switch were hidden under the
+  sticky Start. Mode tiles are now name-only with the selected mode's pitch on one line, and pack chips use short labels (the full name
+  is in the Start label and the aria-label). Every chip, the Encore switch and Start are visible and tappable without scrolling at
+  390x664, 375x548 and 844x390, which a strict test asserts.
+
+**Same Wave**
+- **Senses pack**: 20 cards, such as Smells like a bakery to Smells like a gym bag, Whisper to Megaphone, Sweater weather to Sunscreen
+  weather, and Emerson's playlist to Sydney's playlist. It is appended last (indices 218..237), and Cozy includes it. Eight pack chips
+  fit the setup screen at 390x664, 375x548, 667x375 and 844x390.
+- **Clue of the night**: the recap names the closest guess of the match, for example "Clue of the night: "Clue number 6" by Sydney on
+  Feels like a warm bath to Feels like a cold shower, dead on". That row gets a star chip with its own style. Ties go to more points,
+  then the earlier round. It works on old v1 matches too, and still writes or fabricates no records.
+
+Both verifiers found no blockers. Old v1 matches still replay with the same prompts, cards and scores.
+
+Not merged here: the coordinator asked for `origin/claude/relaxed-dijkstra-2cy8al` to be merged into this branch first. The permission
+check blocked that merge, so it was not done. That branch changes only `js/games/doodle.js` and `js/games/wave.js` (plus core and other
+games), and round 2 touches neither file, so the merge should be clean. The `gameDataApi` fallback stays: it is used only when
+`api.data` is missing.

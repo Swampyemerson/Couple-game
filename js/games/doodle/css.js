@@ -143,7 +143,7 @@ export const CSS = `
     .g-doodle .dd-plaque b { font-family: var(--g-font-display); font-size: 2rem; font-weight: 900; line-height: 1; }
     .g-doodle .dd-plaque b small { font-size: 1rem; }
     .g-doodle .dd-plaque span { font-family: var(--g-font-display); font-weight: 900; font-size: 1.05rem; line-height: 1.1; max-width: 12em; }
-    .g-doodle .dd-wall { width: 100%; display: grid; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); gap: 20px 14px; padding: 16px 12px 6px; box-sizing: border-box; }
+    .g-doodle .dd-wall { width: 100%; display: grid; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); gap: 20px 14px; padding: 16px 12px 14px; box-sizing: border-box; }
     .g-doodle .dd-frame { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 0; padding: 8px 8px 10px; text-align: left; background: var(--g-card); color: var(--g-ink); border: 2px solid var(--g-ink); border-radius: 6px; box-shadow: var(--g-shadow); touch-action: manipulation; transform: rotate(var(--tilt, 0deg)); transition: transform 0.15s ease; }
     .g-doodle .dd-frame:active { transform: rotate(0deg) translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge, var(--g-ink)); }
     .g-doodle .dd-frame canvas { display: block; border: 2px solid var(--g-line); border-radius: 3px; background: var(--g-card); }
@@ -184,24 +184,34 @@ export const CSS = `
     .g-doodle .dd-scr.land .dd-head .dd-h { font-size: 1.15rem; margin: 0; }
     .g-doodle .dd-scr.land .dd-pickhead .dd-h { display: none; }
     .g-doodle .dd-scr.land .dd-pick { flex-direction: column; align-items: flex-start; min-height: 84px; padding: 8px 10px; gap: 6px; flex: 1; min-width: 0; }
-    .g-doodle .dd-scr.land .dd-modes { grid-template-columns: repeat(3, 1fr); }
-    .g-doodle .dd-scr.land .dd-mode:last-child { grid-column: auto; }
 
     /* setup */
     .g-doodle .dd-sec { width: 100%; display: flex; flex-direction: column; gap: 6px; }
-    .g-doodle .dd-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-    .g-doodle .dd-mode:last-child { grid-column: 1 / -1; }
+    .g-doodle .dd-modes { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+    .g-doodle .dd-mode { grid-column: span 2; }
+    .g-doodle .dd-mode:nth-child(n+4) { grid-column: span 3; }
     .g-doodle .dd-setup .dd-h { font-size: 1.25rem; margin: 0; }
     .g-doodle .dd-setup .dd-sub { font-size: 0.88rem; }
     .g-doodle .dd-setup { gap: 6px; }
-    .g-doodle .dd-mode { display: flex; flex-direction: column; align-items: flex-start; gap: 0; width: 100%; min-height: 50px; padding: 6px 10px; text-align: left; background: var(--g-card); color: var(--g-ink); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow-sm); touch-action: manipulation; }
+    .g-doodle .dd-mode { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; width: 100%; min-height: 44px; padding: 4px 6px; text-align: center; background: var(--g-card); color: var(--g-ink); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow-sm); touch-action: manipulation; }
     .g-doodle .dd-mode b { font-family: var(--g-font-display); font-weight: 900; font-size: 0.95rem; line-height: 1.15; }
-    .g-doodle .dd-mode span { font-weight: 700; font-size: 0.78rem; line-height: 1.2; }
     .g-doodle .dd-mode[aria-checked="true"], .g-doodle .dd-pack[aria-checked="true"] { background: var(--g-hl); color: var(--g-on-ink); box-shadow: var(--g-shadow); transform: translate(-1px, -1px); }
     .g-doodle .dd-packs { display: flex; flex-wrap: wrap; gap: 6px; }
     .g-doodle .dd-pack { min-height: 44px; padding: 0 12px; font-weight: 800; font-size: 0.9rem; color: var(--g-ink); background: var(--g-card); border: 2px solid var(--g-ink); border-radius: 999px; box-shadow: var(--g-shadow-sm); touch-action: manipulation; }
     .g-doodle .dd-packnote { text-align: left; font-size: 0.82rem; }
-    .g-doodle .dd-setup-foot { position: sticky; bottom: 0; z-index: 2; width: 100%; margin-top: auto; padding: 8px 0 2px; background: var(--g-bg); }
+    .g-doodle .dd-setup-foot { position: sticky; bottom: 0; z-index: 2; width: 100%; margin-top: auto; padding: 6px 0 2px; background: var(--g-bg); display: flex; flex-direction: column; gap: 4px; }
+    .g-doodle .dd-pitch { margin: 0; text-align: center; font-weight: 700; font-size: 0.8rem; line-height: 1.25; color: var(--g-muted); }
+    /* short screens: no heading or section labels, every control on the first view */
+    .g-doodle .dd-setup.short .dd-sethead, .g-doodle .dd-setup.short .g-label { display: none; }
+    .g-doodle .dd-setup.land .dd-modes { display: flex; }
+    .g-doodle .dd-setup.land .dd-mode, .g-doodle .dd-setup.land .dd-mode:nth-child(n+4) { flex: 1 1 auto; width: auto; padding: 4px 8px; }
+    .g-doodle .dd-setup.land .dd-packs { flex-wrap: nowrap; }
+    .g-doodle .dd-setup.land .dd-pack { flex: 1 1 auto; padding: 0 6px; font-size: 0.8rem; white-space: nowrap; }
+    .g-doodle .dd-setup.land .dd-setup-foot { flex-direction: row; align-items: center; gap: 12px; }
+    .g-doodle .dd-setup.land .dd-pitch { flex: 1 1 0; min-width: 0; text-align: left; }
+    .g-doodle .dd-setup.land .dd-start { flex: 0 0 46%; width: 46%; }
+    .g-doodle .dd-setup.short .dd-start { min-height: 46px; padding: 4px 12px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+    .g-doodle .dd-setup.short .dd-start small { display: inline; }
     .g-doodle .dd-start small { display: block; font-size: 0.72rem; font-weight: 800; opacity: 0.85; }
     .g-doodle .dd-sethead { position: relative; }
     .g-doodle .dd-fridge { position: absolute; right: 2px; top: 0; }
@@ -256,6 +266,7 @@ export const CSS = `
 
     /* Encore: the toggle on the setup screen, the pair in the gallery */
     .g-doodle .dd-toggle { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 6px 12px; text-align: left; color: var(--g-ink); background: var(--g-card); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow-sm); font-weight: 700; font-size: 0.8rem; touch-action: manipulation; }
+    .g-doodle .dd-toggle span { min-width: 0; }
     .g-doodle .dd-toggle b { font-family: var(--g-font-display); font-weight: 900; font-size: 0.9rem; margin-right: 4px; }
     .g-doodle .dd-toggle i { flex: none; position: relative; width: 38px; height: 22px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); }
     .g-doodle .dd-toggle i::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--g-ink); }
@@ -267,6 +278,10 @@ export const CSS = `
     .g-doodle .dd-encore-cell { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; }
     .g-doodle .dd-encore-pic canvas { display: block; border: 2px solid var(--g-line); border-radius: 3px; background: var(--g-card); }
     .g-doodle .dd-encpin { min-height: 44px; padding: 6px 10px; font-size: 0.8rem; }
+
+    .g-doodle .dd-masterpiece { margin: 0; text-align: center; font-weight: 800; font-size: 0.92rem; }
+    .g-doodle .dd-frame.pick { padding-bottom: 20px; }
+    .g-doodle .dd-frame-pick { position: absolute; z-index: 1; bottom: -10px; right: 6px; padding: 2px 8px; border: 2px solid var(--g-ink); border-radius: 6px; background: var(--g-hl); color: var(--g-on-ink); font-weight: 900; font-size: 0.66rem; letter-spacing: 0.06em; text-transform: uppercase; box-shadow: var(--g-shadow-sm); transform: rotate(-4deg); }
 
     @keyframes dd-shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(3px); } }
     @keyframes dd-pop { 0% { transform: scale(0.6); opacity: 0; } 70% { transform: scale(1.08); opacity: 1; } 100% { transform: scale(1); } }

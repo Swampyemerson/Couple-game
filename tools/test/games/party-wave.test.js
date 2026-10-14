@@ -91,12 +91,12 @@ function rulesTests({ core, W, R, C, Rec, V }) {
   // ── packs and cards ──
   console.log('# packs');
   const NEW = C.NEW_CARDS;
-  for (const id of ['justus', 'everyday', 'hottakes', 'future']) assert(R.poolFor(id).length >= 16, `pack ${id} has ${R.poolFor(id).length} cards (>= 16)`);
+  for (const id of ['justus', 'everyday', 'hottakes', 'future', 'senses']) assert(R.poolFor(id).length >= 16, `pack ${id} has ${R.poolFor(id).length} cards (>= 16)`);
   assert(R.poolFor('classic').length === 139 && R.poolFor('everything').length === 139 + NEW.length, 'classic is the 139 original cards, everything is all of them');
   assert(NEW.every((c) => Array.isArray(c) && c.length === 2 && c.every((t) => typeof t === 'string' && t.length > 2 && t.length < 40)) && new Set(NEW.map((c) => c.join('|'))).size === NEW.length, 'every new card has two poles and none repeats');
   assert(NEW.every((c) => c[0] !== c[1]) && NEW.every((c) => !/^\s|\s$/.test(c[0] + c[1])), 'poles differ, no stray spaces');
   const gtxt = (i) => C.NEW_CARDS[i - 139].join(' / ');
-  assert(NEW.length === 79 && gtxt(154) === 'Says “I love you” out loud / Shows it by doing things' && gtxt(170) === 'Double espresso / Gentle herbal tea' && gtxt(174) === 'Never leaves the seat / Up and down all flight' && gtxt(198) === 'Saw it coming / Never saw it coming' && gtxt(207) === 'Rocking-chair hobby / Adventure-trip hobby' && gtxt(211) === 'Peaceful garden project / Noisy garage project', 'the six reworked cards are real spectra at the same indices (79 new cards)');
+  assert(NEW.length === 99 && C.RANGES.senses.join() === '218,238' && gtxt(218) === 'Smells like a bakery / Smells like a gym bag' && gtxt(237) === 'Pastel / Neon' && R.poolFor('senses').length === 20 && R.poolFor('cozy').includes(230) && R.PACK_IDS.join() === 'classic,justus,everyday,hottakes,future,senses,everything,cozy' && gtxt(154) === 'Says “I love you” out loud / Shows it by doing things' && gtxt(170) === 'Double espresso / Gentle herbal tea' && gtxt(174) === 'Never leaves the seat / Up and down all flight' && gtxt(198) === 'Saw it coming / Never saw it coming' && gtxt(207) === 'Rocking-chair hobby / Adventure-trip hobby' && gtxt(211) === 'Peaceful garden project / Noisy garage project', 'the six reworked cards keep their indices; Senses is appended last (218..237, 99 new cards, in cozy too)');
   const cozy = R.poolFor('cozy');
   assert(C.COZY_OUT.length === 5 && C.COZY_OUT.join() === '64,111,112,120,130' && cozy.length === R.poolFor('everything').length - 5 && C.COZY_OUT.every((i) => !cozy.includes(i)), 'cozy is everything minus the five suggestive cards, listed explicitly');
   for (const id of R.PACK_IDS) {
@@ -107,6 +107,13 @@ function rulesTests({ core, W, R, C, Rec, V }) {
     }
     assert(true, `pack ${id}: every deal is seven distinct cards from the pack`);
   }
+
+  const sn = v2('a', 7, 'classic', 'senses');
+  assert(sn.v === 2 && sn.pack === 'senses' && sn.rounds.length === 8 && new Set(sn.rounds.slice(0, 7).map((r) => r.card)).size === 7 && sn.rounds.every((r) => r.card >= 218 && r.card <= 237), `{setup:{v:2,mode:'classic',pack:'senses'}} is accepted and deals only indices 218..237 (${sn.rounds.map((r) => r.card)})`);
+  const snd = v2('b', 9, 'bet', 'senses', [218, 219, 220, 221, 222, 223, 237]);
+  assert(snd.rounds.slice(0, 7).map((r) => r.card).join() === '218,219,220,221,222,223,237', 'a frozen deal inside the Senses range is kept');
+  let snBad = ''; try { v2('a', 7, 'classic', 'senses', [217, 219, 220, 221, 222, 223, 237]); } catch { snBad = 'rejected'; }
+  assert(snBad === 'rejected', 'a deal card outside the Senses range is rejected for the senses pack');
 
   // ── targets, edge rounds, Déjà vu, jackpot ──
   console.log('# targets');
@@ -272,6 +279,12 @@ function rulesTests({ core, W, R, C, Rec, V }) {
   assert(lb.a.name && lb.b.name && ['Clue Poet', 'Dead heat', 'Economist', 'Dial Whisperer', 'Wave Rider', 'Edge Walker', 'Fortune Teller'].includes(lb.a.name), `a dead-level match still gets a kind badge (${lb.a.name} / ${lb.b.name})`);
   const names2 = Object.values(Rec.BADGES);
   assert(['Fortune Teller', 'Edge Walker', 'Economist', 'Clue Poet', 'Dial Whisperer'].every((n) => names2.includes(n)), 'the five badges exist');
+  // clue of the night
+  const cn = (pts) => Rec.clueOfNight(pts.map(([target, at, points, clue]) => ({ target, at, points, clue })));
+  assert(cn([[50, 56, 3, 'a'], [20, 21, 4, 'b'], [70, 70, 4, 'c'], [80, 80, 4, 'd']]).round.clue === 'c' && cn([[50, 56, 3, 'a'], [20, 21, 4, 'b'], [70, 70, 4, 'c'], [80, 80, 4, 'd']]).i === 2, 'clue of the night: the smallest miss wins, then the earliest');
+  assert(cn([[50, 52, 3, 'a'], [20, 22, 4, 'b']]).round.clue === 'b', 'clue of the night: equal misses, the one that paid more');
+  assert(cn([[50, 52, 4, 'a'], [20, 22, 4, 'b']]).round.clue === 'a' && cn([[50, 52, 4, 'a'], [20, 22, 4, 'b']]).d === 2, 'clue of the night: still level, the earliest');
+  assert(Rec.clueOfNight([{ target: 5, at: null, points: null }]) === null && Rec.clueOfNight([]) === null, 'clue of the night: nothing before a guess');
   // rotation
   const pl = R.poolFor('justus');
   let data = {};
@@ -300,8 +313,8 @@ function rulesTests({ core, W, R, C, Rec, V }) {
   const big = Rec.encodeSeen(Array.from({ length: 2000 }, (_, i) => 100000 + i));
   assert(big.length <= 3000 && Rec.parseSeen({ seen: big }).length > 100, 'the seen list is capped at 3000 characters, keeping the newest');
   const fullPool = R.poolFor('everything');
-  const d1x = Rec.pickDeal(fullPool, { seen: fullPool.slice(0, 215).map((x) => x.toString(36)).join('.') }, Math.random, 7);
-  assert(d1x.deal.length === 7 && new Set(d1x.deal).size === 7 && fullPool.slice(215).every((x) => d1x.deal.includes(x)), 'a nearly used-up pool deals its stragglers first');
+  const d1x = Rec.pickDeal(fullPool, { seen: fullPool.slice(0, fullPool.length - 3).map((x) => x.toString(36)).join('.') }, Math.random, 7);
+  assert(d1x.deal.length === 7 && new Set(d1x.deal).size === 7 && fullPool.slice(fullPool.length - 3).every((x) => d1x.deal.includes(x)), 'a nearly used-up pool deals its stragglers first');
 }
 
 // ── browser helpers ─────────────────────────────────────────────────────
@@ -350,6 +363,7 @@ const contrastReport = (pg) => pg.evaluate(() => {
     <button class="wv-mode" aria-checked="true"><b>Classic</b></button><button class="wv-mode" aria-checked="false"><b>Other</b></button>
     <div class="wv-card"><div class="wv-end l"><span>Left pole</span></div><div class="wv-end r"><span>Right pole</span></div></div>
     <div class="wv-tw"><span>One Word</span></div><div class="wv-plaque"><b>3</b><span>Rating</span></div>
+    <p class="wv-con">Clue of the night: “sauna” by Emerson on <span class="pp">Cold ↔ Hot</span>, dead on</p><span class="wv-chip star"><svg viewBox="0 0 16 16" width="10" height="10"><path d="M8 1l2 4.6 5 .4-3.8 3.3 1.2 4.9L8 11.6 3.6 14.2l1.2-4.9L1 6l5-.4Z" /></svg> Clue of the night</span>
     <div class="wv-pts">+4</div><div class="wv-pts zero">0</div><span class="wv-row-pts">+1</span><span class="wv-row-pts zero">0</span>
     <button class="wv-sure" aria-pressed="true">Sure<small>6 within 10</small></button><button class="wv-sure" aria-pressed="false">Sure<small>6 within 10</small></button>
     <button class="wv-wg" aria-pressed="true">Bullseye<small>within 4</small></button><button class="wv-wg" aria-pressed="false">Close<small>within 10</small></button>
@@ -358,7 +372,7 @@ const contrastReport = (pg) => pg.evaluate(() => {
   const rgb = (c) => { const m = c.match(/[\d.]+/g).map(Number); return { r: m[0], g: m[1], b: m[2], a: m[3] === undefined ? 1 : m[3] }; };
   const lum = ({ r, g, b }) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
   const bgOf = (el) => { for (let e = el; e; e = e.parentElement) { const c = rgb(getComputedStyle(e).backgroundColor); if (c.a > 0.95) return c; } return rgb(getComputedStyle(document.body).backgroundColor); };
-  const sels = ['.wv-stamp b', '.wv-stamp small', '.wv-chip:not(.jp)', '.wv-chip.jp', '.wv-dvb span', '.wv-pack[aria-checked="true"]', '.wv-pack[aria-checked="false"]', '.wv-mode[aria-checked="true"] b', '.wv-mode[aria-checked="false"] b', '.wv-end.l span', '.wv-end.r span', '.wv-tw span', '.wv-plaque b', '.wv-plaque span', '.wv-pts:not(.zero)', '.wv-pts.zero', '.wv-row-pts:not(.zero)', '.wv-row-pts.zero', '.wv-sure[aria-pressed="true"]', '.wv-sure[aria-pressed="true"] small', '.wv-sure[aria-pressed="false"]', '.wv-wg[aria-pressed="true"]', '.wv-wg[aria-pressed="true"] small', '.wv-wg[aria-pressed="false"]', '.wv-medal.a b', '.wv-medal.a small', '.wv-medal.b b', '.wv-medal.b small'];
+  const sels = ['.wv-stamp b', '.wv-stamp small', '.wv-chip:not(.jp)', '.wv-chip.jp', '.wv-chip.star', '.wv-con', '.wv-dvb span', '.wv-pack[aria-checked="true"]', '.wv-pack[aria-checked="false"]', '.wv-mode[aria-checked="true"] b', '.wv-mode[aria-checked="false"] b', '.wv-end.l span', '.wv-end.r span', '.wv-tw span', '.wv-plaque b', '.wv-plaque span', '.wv-pts:not(.zero)', '.wv-pts.zero', '.wv-row-pts:not(.zero)', '.wv-row-pts.zero', '.wv-sure[aria-pressed="true"]', '.wv-sure[aria-pressed="true"] small', '.wv-sure[aria-pressed="false"]', '.wv-wg[aria-pressed="true"]', '.wv-wg[aria-pressed="true"] small', '.wv-wg[aria-pressed="false"]', '.wv-medal.a b', '.wv-medal.a small', '.wv-medal.b b', '.wv-medal.b small'];
   const out = sels.map((q) => { const el = host.querySelector(q); const cs = getComputedStyle(el); const f = rgb(cs.color); const b = bgOf(el); const [l1, l2] = [lum(f), lum(b)].sort((x, y) => y - x); return [q, Math.round(((l1 + 0.05) / (l2 + 0.05)) * 100) / 100]; });
   host.remove();
   return out;
@@ -467,7 +481,7 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
     const modeNames = await S1.F.$$eval('.wv-mode b', (x) => x.map((e) => e.textContent));
     assert(modeNames.join() === 'Classic,Giver’s Bet,Double Down,One Word,Mixed Bag', `five mode cards: ${modeNames}`);
     const packNames = await S1.F.$$eval('.wv-pack', (x) => x.map((e) => e.textContent));
-    assert(packNames.join() === 'Classic,Just Us,Everyday,Hot Takes,Future Us,Everything,Cozy', `seven packs: ${packNames}`);
+    assert(packNames.join() === 'Classic,Just Us,Everyday,Hot Takes,Future Us,Senses,Everything,Cozy', `eight packs: ${packNames}`);
     // every mode tile and pack chip is on screen and tappable at first view, at the three sizes
     for (const [w, hh] of [[390, 664], [375, 548], [844, 390], [667, 375]]) {
       for (const pg of [a, b]) await pg.setViewportSize({ width: w, height: hh });
@@ -483,7 +497,7 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
         }
         return { bad, noScroll: sc.scrollHeight <= sc.clientHeight + 1 };
       });
-      assert(r.bad.length === 0 && r.noScroll, `setup ${w}x${hh}: all five modes, all seven packs, the notes and Start are visible and tappable without scrolling (${r.bad.join('; ')}${r.noScroll ? '' : ' scrolls'})`);
+      assert(r.bad.length === 0 && r.noScroll, `setup ${w}x${hh}: all five modes, all eight packs, the notes and Start are visible and tappable without scrolling (${r.bad.join('; ')}${r.noScroll ? '' : ' scrolls'})`);
       await shot(S1.F, `setup-${w}x${hh}`);
       const look = await S1.F.evaluate(() => [getComputedStyle(document.querySelector('.wv-mode[aria-checked="true"]')).backgroundColor, getComputedStyle(document.querySelector('.wv-pack[aria-checked="true"]')).backgroundColor]);
       assert(look[0] === look[1], `setup ${w}x${hh}: the selected mode and the selected pack look alike (${look})`);
@@ -783,10 +797,44 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
     assert(await b.$$eval('.wv-medal', (x) => x.length) === 2, 'the recap has one badge per person');
     const medal = await b.$$eval('.wv-medal b', (x) => x.map((e) => e.textContent));
     assert(medal.every((t) => ['Fortune Teller', 'Edge Walker', 'Economist', 'Clue Poet', 'Dial Whisperer', 'Dead heat', 'Wave Rider'].includes(t)), `badges: ${medal}`);
+    const cnx = L.Rec.clueOfNight(eM.state.rounds);
+    const cnLine = (cnx.d === 0 ? 'dead on' : `${cnx.d} off`);
+    for (const pg of [a, b]) {
+      await pg.waitForSelector('.wv-con');
+      const t = await pg.textContent('.wv-con');
+      assert(t.includes(`“${cnx.round.clue}”`) && t.includes(cnLine) && t.startsWith('Clue of the night') && t.includes(cnx.round.giver === 'a' ? 'Emerson' : 'Sydney'), `the recap names the clue of the night on ${pg.__who}: "${t}"`);
+      assert(await pg.$$eval('.wv-chip.star', (x) => x.length) === 1 && await pg.$eval('.wv-row:nth-child(' + (cnx.i + 1) + ') .wv-chip.star', (x) => !!x), `exactly one row (${cnx.i + 1}) carries the Clue of the night star on ${pg.__who}`);
+      assert(!(await pg.$eval('.wv-recs', (x) => x.contains(document.querySelector('.wv-con')))), 'the keepsake sits outside the records section');
+    }
     assert(await b.$$eval('.wv-row .wv-mini .tick', (x) => x.length) === 8, 'every recap row marks the exact target tick');
     assert(!/NEW BEST/.test(await b.textContent('.wv-recwrap')) && /Your first match together/.test(await b.textContent('.wv-recs')) && /goes on the Mixed Bag board/.test(await b.textContent('.wv-recs')), 'the records strip of a first-ever score: no NEW BEST stamp (nothing to beat), the history line instead');
     assert(/^\d+\/\d+$/.test((await b.textContent('.wv-plaque b')).trim()) && (await b.textContent('.wv-plaque b')).includes(`/${eM.result.max}`), 'the plaque shows the score out of this match’s maximum');
     await shot(b, 'recap');
+    // the keepsake line and its star chip never overlap the plaque, the meter, the records or the rows, on both phones' sizes
+    for (const [w, hh] of [[390, 664], [844, 390]]) {
+      await b.setViewportSize({ width: w, height: hh });
+      await b.waitForTimeout(350);
+      const ov = await overlaps(b, ['.wv-plaque', '.wv-meter', '.wv-con', '.wv-recwrap', '.wv-medals']);
+      const rowOv = await b.evaluate(() => {
+        const star = document.querySelector('.wv-chip.star'); const row = star.closest('.wv-row'); const bad = [];
+        const q = star.getBoundingClientRect(); const rr = row.getBoundingClientRect();
+        if (q.left < rr.left - 0.5 || q.right > rr.right + 0.5) bad.push('star chip leaves its row');
+        if (star.parentElement.lastElementChild !== star) bad.push('the star chip is not the last chip');
+        const other = [...row.querySelectorAll('.wv-chip:not(.star)')].find((c) => !c.classList.contains('jp'));
+        if (other && getComputedStyle(other).backgroundColor === getComputedStyle(star).backgroundColor) bad.push('the star chip looks like the other chips');
+        for (const sel of ['.wv-row-card', '.wv-row-pts', '.wv-mini']) { const e = row.querySelector(sel); if (!e) continue; const z = e.getBoundingClientRect(); if (q.left < z.right - 0.5 && z.left < q.right - 0.5 && q.top < z.bottom - 0.5 && z.top < q.bottom - 0.5) bad.push(`star x ${sel}`); }
+        const conEl = document.querySelector('.wv-con'); const con = conEl.getBoundingClientRect();
+        const pp = conEl.querySelector('.pp').getBoundingClientRect();
+        if (innerWidth >= 600 && pp.height > parseFloat(getComputedStyle(conEl).lineHeight) * 1.5) bad.push('the pole pair wraps onto two lines');
+        if (con.left < -0.5 || con.right > innerWidth + 0.5) bad.push('keepsake line leaves the screen');
+        if (document.documentElement.scrollWidth > innerWidth + 1) bad.push('horizontal scroll');
+        return bad;
+      });
+      assert(ov.length === 0 && rowOv.length === 0, `recap ${w}x${hh}: the Clue of the night line and star chip overlap nothing (${ov.concat(rowOv).join('; ')})`);
+      await shot(b, `recap-${w}x${hh}`);
+    }
+    await b.setViewportSize({ width: 390, height: 664 });
+    await b.waitForTimeout(200);
     // every ink / highlight / card pairing is readable in both themes (WCAG AA, 4.5:1)
     for (const scheme of ['light', 'dark']) {
       await b.emulateMedia({ colorScheme: scheme });
@@ -905,6 +953,7 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
     const fe = await h.engine(a, idF);
     assert(fe.over && fe.state.v === undefined && (await a.textContent('.wv-plaque b')).replace(/\s/g, '').endsWith('/32') && await a.$$eval('.wv-meter i', (x) => x.length) === 32, `a finished v1 match recaps as ${fe.result.score}/32, like before`);
     assert(await a.$$eval('.wv-medal', (x) => x.length) === 2 && await a.$$eval('.wv-row .tick', (x) => x.length) === 8, 'the v1 recap also has badges and target ticks');
+    assert(/^Clue of the night: “old \d”/.test(await a.textContent('.wv-con')) && await a.$$eval('.wv-chip.star', (x) => x.length) === 1, 'an old finished match still gets its Clue of the night (it is read from the rounds, not from records)');
     assert(!(await a.$('.wv-stamps')) && (await a.textContent('.wv-recwrap')).trim() === '' && !/match together|NEW BEST|BULLSEYES/.test(await a.textContent('.wv-recwrap')), `an old finished match shows no stamps, history line or streak (they would be made up): "${(await a.textContent('.wv-recwrap')).slice(0, 120)}"`);
     await h.settle();
     assert(gd(h).plays === playsBefore, 'opening a match that finished earlier writes no records');
