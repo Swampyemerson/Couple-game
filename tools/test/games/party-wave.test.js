@@ -108,6 +108,13 @@ function rulesTests({ core, W, R, C, Rec, V }) {
     assert(true, `pack ${id}: every deal is seven distinct cards from the pack`);
   }
 
+  const sn = v2('a', 7, 'classic', 'senses');
+  assert(sn.v === 2 && sn.pack === 'senses' && sn.rounds.length === 8 && new Set(sn.rounds.slice(0, 7).map((r) => r.card)).size === 7 && sn.rounds.every((r) => r.card >= 218 && r.card <= 237), `{setup:{v:2,mode:'classic',pack:'senses'}} is accepted and deals only indices 218..237 (${sn.rounds.map((r) => r.card)})`);
+  const snd = v2('b', 9, 'bet', 'senses', [218, 219, 220, 221, 222, 223, 237]);
+  assert(snd.rounds.slice(0, 7).map((r) => r.card).join() === '218,219,220,221,222,223,237', 'a frozen deal inside the Senses range is kept');
+  let snBad = ''; try { v2('a', 7, 'classic', 'senses', [217, 219, 220, 221, 222, 223, 237]); } catch { snBad = 'rejected'; }
+  assert(snBad === 'rejected', 'a deal card outside the Senses range is rejected for the senses pack');
+
   // ── targets, edge rounds, Déjà vu, jackpot ──
   console.log('# targets');
   let jp = 0; const N = 1500;
@@ -356,6 +363,7 @@ const contrastReport = (pg) => pg.evaluate(() => {
     <button class="wv-mode" aria-checked="true"><b>Classic</b></button><button class="wv-mode" aria-checked="false"><b>Other</b></button>
     <div class="wv-card"><div class="wv-end l"><span>Left pole</span></div><div class="wv-end r"><span>Right pole</span></div></div>
     <div class="wv-tw"><span>One Word</span></div><div class="wv-plaque"><b>3</b><span>Rating</span></div>
+    <p class="wv-con">Clue of the night: “sauna” by Emerson on Cold ↔ Hot, dead on</p><span class="wv-chip star"><svg viewBox="0 0 16 16" width="10" height="10"><path d="M8 1l2 4.6 5 .4-3.8 3.3 1.2 4.9L8 11.6 3.6 14.2l1.2-4.9L1 6l5-.4Z" fill="currentColor"/></svg> Clue of the night</span>
     <div class="wv-pts">+4</div><div class="wv-pts zero">0</div><span class="wv-row-pts">+1</span><span class="wv-row-pts zero">0</span>
     <button class="wv-sure" aria-pressed="true">Sure<small>6 within 10</small></button><button class="wv-sure" aria-pressed="false">Sure<small>6 within 10</small></button>
     <button class="wv-wg" aria-pressed="true">Bullseye<small>within 4</small></button><button class="wv-wg" aria-pressed="false">Close<small>within 10</small></button>
@@ -364,7 +372,7 @@ const contrastReport = (pg) => pg.evaluate(() => {
   const rgb = (c) => { const m = c.match(/[\d.]+/g).map(Number); return { r: m[0], g: m[1], b: m[2], a: m[3] === undefined ? 1 : m[3] }; };
   const lum = ({ r, g, b }) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
   const bgOf = (el) => { for (let e = el; e; e = e.parentElement) { const c = rgb(getComputedStyle(e).backgroundColor); if (c.a > 0.95) return c; } return rgb(getComputedStyle(document.body).backgroundColor); };
-  const sels = ['.wv-stamp b', '.wv-stamp small', '.wv-chip:not(.jp)', '.wv-chip.jp', '.wv-dvb span', '.wv-pack[aria-checked="true"]', '.wv-pack[aria-checked="false"]', '.wv-mode[aria-checked="true"] b', '.wv-mode[aria-checked="false"] b', '.wv-end.l span', '.wv-end.r span', '.wv-tw span', '.wv-plaque b', '.wv-plaque span', '.wv-pts:not(.zero)', '.wv-pts.zero', '.wv-row-pts:not(.zero)', '.wv-row-pts.zero', '.wv-sure[aria-pressed="true"]', '.wv-sure[aria-pressed="true"] small', '.wv-sure[aria-pressed="false"]', '.wv-wg[aria-pressed="true"]', '.wv-wg[aria-pressed="true"] small', '.wv-wg[aria-pressed="false"]', '.wv-medal.a b', '.wv-medal.a small', '.wv-medal.b b', '.wv-medal.b small'];
+  const sels = ['.wv-stamp b', '.wv-stamp small', '.wv-chip:not(.jp)', '.wv-chip.jp', '.wv-chip.star', '.wv-con', '.wv-dvb span', '.wv-pack[aria-checked="true"]', '.wv-pack[aria-checked="false"]', '.wv-mode[aria-checked="true"] b', '.wv-mode[aria-checked="false"] b', '.wv-end.l span', '.wv-end.r span', '.wv-tw span', '.wv-plaque b', '.wv-plaque span', '.wv-pts:not(.zero)', '.wv-pts.zero', '.wv-row-pts:not(.zero)', '.wv-row-pts.zero', '.wv-sure[aria-pressed="true"]', '.wv-sure[aria-pressed="true"] small', '.wv-sure[aria-pressed="false"]', '.wv-wg[aria-pressed="true"]', '.wv-wg[aria-pressed="true"] small', '.wv-wg[aria-pressed="false"]', '.wv-medal.a b', '.wv-medal.a small', '.wv-medal.b b', '.wv-medal.b small'];
   const out = sels.map((q) => { const el = host.querySelector(q); const cs = getComputedStyle(el); const f = rgb(cs.color); const b = bgOf(el); const [l1, l2] = [lum(f), lum(b)].sort((x, y) => y - x); return [q, Math.round(((l1 + 0.05) / (l2 + 0.05)) * 100) / 100]; });
   host.remove();
   return out;
@@ -489,7 +497,7 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
         }
         return { bad, noScroll: sc.scrollHeight <= sc.clientHeight + 1 };
       });
-      assert(r.bad.length === 0 && r.noScroll, `setup ${w}x${hh}: all five modes, all seven packs, the notes and Start are visible and tappable without scrolling (${r.bad.join('; ')}${r.noScroll ? '' : ' scrolls'})`);
+      assert(r.bad.length === 0 && r.noScroll, `setup ${w}x${hh}: all five modes, all eight packs, the notes and Start are visible and tappable without scrolling (${r.bad.join('; ')}${r.noScroll ? '' : ' scrolls'})`);
       await shot(S1.F, `setup-${w}x${hh}`);
       const look = await S1.F.evaluate(() => [getComputedStyle(document.querySelector('.wv-mode[aria-checked="true"]')).backgroundColor, getComputedStyle(document.querySelector('.wv-pack[aria-checked="true"]')).backgroundColor]);
       assert(look[0] === look[1], `setup ${w}x${hh}: the selected mode and the selected pack look alike (${look})`);
@@ -528,9 +536,6 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
     await round(S1.id, 0, { off: 2, clue: 'sauna' });
     e1 = await h.engine(a, S1.id);
     const R0 = e1.state.rounds[0];
-    const gsPage = pages[R0.giver === 'a' ? 'b' : 'a'];
-    await gsPage.waitForSelector('.wv-result:not(.hide)');
-    assert(await gsPage.$$eval('.wv-ring', (x) => x.length) === 1, 'within the bullseye (2 off): one ring');
     assert(R0.points === (4 + 1 + (R0.edge ? 1 : 0)) * (R0.jp ? 2 : 1) && R0.bn.includes('ow'), `One Word: 2 off scores the bullseye plus 1 (${R0.points})`);
     await h.closeGame(a); await h.closeGame(b);
 
@@ -564,10 +569,6 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
         assert((await h.engine(a, S.id)).state.rounds[1].points === 0, 'Double Down: Sure and a miss pays 0');
       } else {
         const m = await round(S.id, 0, { off: 0 });
-        await m.GS.waitForSelector('.wv-result:not(.hide)');
-        assert(await m.GS.$$eval('.wv-ring', (x) => x.length) === 2 && /Dead centre!/.test(await m.GS.textContent('.wv-chips')), 'dead centre: two rings from the needle tip and the "Dead centre!" label');
-        const ringBox = await m.GS.evaluate(() => { const r = document.querySelector('.wv-ring').getBoundingClientRect(); const d = document.querySelector('.wv-dialbox').getBoundingClientRect(); return [r.left >= d.left - 2 && r.right <= d.right + 2 && r.top >= d.top - 12]; });
-        assert(ringBox[0], 'the rings stay inside the dial box');
         const e2 = await h.engine(a, S.id);
         assert(e2.state.rounds[0].points >= 4 && (await h.engine(b, S.id)).state.score === e2.state.score, `${mode}: round 1 scores and both phones agree`);
         if (mode === 'mixed') {
@@ -809,6 +810,26 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
     assert(!/NEW BEST/.test(await b.textContent('.wv-recwrap')) && /Your first match together/.test(await b.textContent('.wv-recs')) && /goes on the Mixed Bag board/.test(await b.textContent('.wv-recs')), 'the records strip of a first-ever score: no NEW BEST stamp (nothing to beat), the history line instead');
     assert(/^\d+\/\d+$/.test((await b.textContent('.wv-plaque b')).trim()) && (await b.textContent('.wv-plaque b')).includes(`/${eM.result.max}`), 'the plaque shows the score out of this match’s maximum');
     await shot(b, 'recap');
+    // the keepsake line and its star chip never overlap the plaque, the meter, the records or the rows, on both phones' sizes
+    for (const [w, hh] of [[390, 664], [844, 390]]) {
+      await b.setViewportSize({ width: w, height: hh });
+      await b.waitForTimeout(350);
+      const ov = await overlaps(b, ['.wv-plaque', '.wv-meter', '.wv-con', '.wv-recwrap', '.wv-medals']);
+      const rowOv = await b.evaluate(() => {
+        const star = document.querySelector('.wv-chip.star'); const row = star.closest('.wv-row'); const bad = [];
+        const q = star.getBoundingClientRect(); const rr = row.getBoundingClientRect();
+        if (q.left < rr.left - 0.5 || q.right > rr.right + 0.5) bad.push('star chip leaves its row');
+        for (const sel of ['.wv-row-card', '.wv-row-pts', '.wv-mini']) { const e = row.querySelector(sel); if (!e) continue; const z = e.getBoundingClientRect(); if (q.left < z.right - 0.5 && z.left < q.right - 0.5 && q.top < z.bottom - 0.5 && z.top < q.bottom - 0.5) bad.push(`star x ${sel}`); }
+        const con = document.querySelector('.wv-con').getBoundingClientRect();
+        if (con.left < -0.5 || con.right > innerWidth + 0.5) bad.push('keepsake line leaves the screen');
+        if (document.documentElement.scrollWidth > innerWidth + 1) bad.push('horizontal scroll');
+        return bad;
+      });
+      assert(ov.length === 0 && rowOv.length === 0, `recap ${w}x${hh}: the Clue of the night line and star chip overlap nothing (${ov.concat(rowOv).join('; ')})`);
+      await shot(b, `recap-${w}x${hh}`);
+    }
+    await b.setViewportSize({ width: 390, height: 664 });
+    await b.waitForTimeout(200);
     // every ink / highlight / card pairing is readable in both themes (WCAG AA, 4.5:1)
     for (const scheme of ['light', 'dark']) {
       await b.emulateMedia({ colorScheme: scheme });
@@ -854,7 +875,6 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
         seenReveal.add(e.state.r);
         const ov = await overlaps(a, REVEAL_PARTS); const iv = await inView(a, ['.wv-go', '.wv-result', '.wv-note']);
         assert(ov.length === 0 && iv.bad.length === 0, `same-phone landscape reveal ${e.state.r}: nothing overlaps, the button is in view (${ov} ${iv.bad})`);
-        assert((await a.$$eval('.wv-ring', (x) => x.length)) === 0 && /Dead centre!/.test(await a.textContent('.wv-chips')), 'reduced motion: the Dead centre! text only, no rings');
         revealsChecked++;
       }
       if (await visible(a, '.wv-start')) { await a.tap('.wv-mode[data-mode="oneword"]'); await a.tap('.wv-start'); picked = true; await a.waitForTimeout(150); continue; }

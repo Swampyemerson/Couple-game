@@ -86,7 +86,6 @@ marked seen the moment the setup move is sent.
 * **Final reveal**: `endDelay: 'manual'`. The last reveal waits for "See how you did" (or about 3.5 s after the stamp), then the recap and the end
   card (`api.showEnd()`).
 * **Clue of the night** (recap keepsake, view only): `clueOfNight(rounds)` in `records.js` picks the round that came closest (smallest miss, then more points, then the earliest). A line under the plaque names it ("Clue of the night: “…” by Emerson on Cold ↔ Hot, dead on") and its row gets a star chip. It is a pure read of the rounds, so it also shows on old finished v1/v2 matches (the records section does not).
-* **Reveal flourish**: after the stamp lands, a dead-centre dial gets two expanding rings from the needle tip, "Dead centre!" and the win sound; within the bullseye (4) gets one ring. Reduced motion shows the text only. No haptics.
 * **Recap**: score out of this match's max, rating, meter, stamps, history line, chase line, one badge each, a row per round with the exact target tick.
 
 ## Records (`gamedata/wave`, flat, per-key last writer wins)

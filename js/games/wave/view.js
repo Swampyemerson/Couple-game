@@ -454,7 +454,6 @@ export function createWaveView(el, api, env) {
     const before = scoreBefore(s, ri);
     const near = nearMiss(Rd, d);
     const bn = Rd.bn || [];
-    const deadTag = d === 0 ? '<em class="wv-near">Dead centre!</em>' : '';
     const chips = [...bn.map((b) => `<span class="wv-chip">${bonusText[b]}</span>`), Rd.jp ? '<span class="wv-chip jp">Jackpot x2</span>' : '', Rd.sure ? `<span class="wv-chip">${Rd.base ? 'Sure: 6' : 'Sure: missed'}</span>` : ''].join('');
     let dvText;
     if (Rd.dv && ri > 0) { const R0 = s.rounds[0]; const d0 = Math.abs(R0.at - R0.target); dvText = `round 1 on this card: ${d0} off. Now ${d}${d < d0 ? `: ${d0 - d} closer` : ''}.`; }
@@ -463,7 +462,7 @@ export function createWaveView(el, api, env) {
       <div class="wv-mid">
         <div class="wv-result hide">
           <div class="wv-pts ${Rd.points ? '' : 'zero'} ${Rd.jp ? 'jp' : ''}">${Rd.points ? `+${Rd.points}` : '0'}</div>
-          <div class="wv-result-txt"><b>${esc(labelFor(Rd, d))}</b><span>${nm(guesser)} was ${d === 0 ? 'dead on' : `${d} off`}</span>${near || chips || deadTag ? `<div class="wv-chips">${deadTag}${near ? `<em class="wv-near">${esc(near)}</em>` : ''}${chips}</div>` : ''}</div>
+          <div class="wv-result-txt"><b>${esc(labelFor(Rd, d))}</b><span>${nm(guesser)} was ${d === 0 ? 'dead on' : `${d} off`}</span>${near || chips ? `<div class="wv-chips">${near ? `<em class="wv-near">${esc(near)}</em>` : ''}${chips}</div>` : ''}</div>
         </div>
       </div>
       <div class="wv-foot">
@@ -485,19 +484,9 @@ export function createWaveView(el, api, env) {
       res.classList.remove('hide');
       if (!reduced()) res.classList.add('anim');
       if (Rd.jp && Rd.points) D.box.querySelector('.wv-needle').classList.add('jp');
-      if (!replay) { api.sfx(Rd.jp && Rd.points || d === 0 ? 'win' : Rd.points >= 3 ? 'good' : Rd.points ? 'pop' : 'bad'); api.haptic(Rd.points ? 25 : 60); }
+      if (!replay) { api.sfx(Rd.jp && Rd.points ? 'win' : Rd.points >= 3 ? 'good' : Rd.points ? 'pop' : 'bad'); api.haptic(Rd.points ? 25 : 60); }
       team.querySelector('b').textContent = String(before + Rd.points);
       if (Rd.points && !reduced()) team.classList.add('bump');
-      // a flourish for a near-perfect dial: two rings from the needle tip on dead centre, one within the bullseye (motion only)
-      if (!replay && !reduced() && d <= 4) {
-        const svg = D.svg; const [tx, ty] = pt(Rd.at, R - 11);
-        for (let k = 0; k < (d === 0 ? 2 : 1); k++) {
-          const ring = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-          ring.setAttribute('class', 'wv-ring'); ring.setAttribute('cx', f1(tx)); ring.setAttribute('cy', f1(ty)); ring.setAttribute('r', '4');
-          ring.style.animationDelay = `${k * 0.22}s`;
-          svg.insertBefore(ring, svg.querySelector('.wv-plinth'));
-        }
-      }
       if (final && !vs.toRecap) vs.toRecap = setTimeout(finish, 3500);
     };
     if (replay) { D.setLid(-180); D.setZone(1); showResult(); } else {

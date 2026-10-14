@@ -163,7 +163,6 @@ export const CSS = `
     .g-wave .wv-recs p.dim { color: var(--g-muted); }
     .g-wave .wv-con { margin: 2px 0 0; max-width: 34em; text-align: center; font-weight: 800; font-size: 0.86rem; line-height: 1.3; overflow-wrap: anywhere; }
     .g-wave .wv-chip.star { display: inline-flex; align-items: center; gap: 3px; }
-    .g-wave .wv-ring { fill: none; stroke: var(--g-ink); stroke-width: 2.4; pointer-events: none; transform-box: fill-box; transform-origin: center; animation: wv-ringout 0.9s ease-out both; }
     .g-wave .wv-rows { width: 100%; display: flex; flex-direction: column; gap: 10px; }
     .g-wave .wv-row { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; align-items: center; padding: 10px 12px; border: 2px solid var(--g-ink); border-radius: 12px; background: var(--g-card); box-shadow: var(--g-shadow); }
     .g-wave .wv-row.jp { outline: 3px dashed var(--g-ink); outline-offset: 2px; }
@@ -251,7 +250,6 @@ export const CSS = `
       .g-wave .wv-start { min-height: 44px; }
     }
 
-    @keyframes wv-ringout { 0% { transform: scale(0.6); opacity: 0.95; } 100% { transform: scale(3.6); opacity: 0; } }
     @keyframes wv-pop { 0% { transform: scale(0.7); opacity: 0; } 70% { transform: scale(1.06); opacity: 1; } 100% { transform: scale(1); } }
     @keyframes wv-stamp { 0% { transform: rotate(-4deg) scale(2.2); opacity: 0; } 100% { transform: rotate(-4deg) scale(1); opacity: 1; } }
     @keyframes wv-bump { 0% { transform: scale(1); } 40% { transform: scale(1.5); } 100% { transform: scale(1); } }
