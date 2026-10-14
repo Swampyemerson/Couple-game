@@ -9,6 +9,8 @@
 //   mods_<id>                                      modules solved
 //   daily_<date>_<tier>_<w>                        Today's bomb: seconds left, 0 = boom (first attempt counts)
 //   parN_<tier> parSum_<tier>                      Personal par: wins and the summed seconds USED on them (halved at 20 wins)
+//   chain_<tier> chainWins chainRuns               Chain x2: best seconds left after bomb 2, chains won, chains started (a chain win also
+//                                                  counts as a normal win / medal; it never touches best_<tier> or par)
 //   log                                            JSON string, the last 8 rounds
 // Every read tolerates a missing doc, {}, wrong types, and the nested shape a server round trip could produce.
 import { hash } from './util.js';
@@ -35,6 +37,14 @@ export function medalFor(win, strikes, secs, T) {
   if (strikes > 0) return 1;
   return secs * 2 > T.secs ? 3 : 2;
 }
+/** Chain x2: bomb 2's seed is a pure function of bomb 1's seed, so both devices (and both days, on Today's bomb) agree. */
+export const chainSeed = (seed) => String(seed) + '|next';
+/** Chain x2 is offered on every tier except Classic (its fixed guide would make the second bomb a repeat). */
+export const chainOk = (tier) => typeof tier === 'string' && tier !== 'classic' && Object.prototype.hasOwnProperty.call(TIERS, tier);
+/** The clock bomb 2 starts with: what bomb 1 had left plus half the tier's clock, never more than the tier's clock. */
+export const chainClock = (T, leftSecs) => Math.min(T.secs, Math.max(0, Math.ceil(Number(leftSecs) || 0)) + Math.floor(T.secs / 2));
+/** Today's bomb keeps chain results apart from single-bomb results, so the daily times stay comparable. */
+export const dailyTier = (tier, chain) => (chain ? tier + 'x2' : tier);
 export const MEDAL_NAME = ['No medal yet', 'Bronze', 'Silver', 'Gold'];
 export function nextMedalHint(medal) {
   return medal < 1 ? 'First medal: defuse it.' : medal === 1 ? 'Next medal: defuse it with zero strikes.' : medal === 2 ? 'Gold medal: zero strikes and more than half the clock left.' : '';
@@ -50,11 +60,12 @@ export function bestOf(d, tier) {
   return { secs, who, at };
 }
 export function readRecords(d) {
-  const r = { wins: num(d, 'wins'), booms: num(d, 'booms'), streak: num(d, 'streak'), bestStreak: num(d, 'bestStreak'), best: {}, medal: {}, clean: {}, holder: { a: {}, b: {} }, manual: { a: {}, b: {} }, log: readLog(d) };
+  const r = { wins: num(d, 'wins'), booms: num(d, 'booms'), streak: num(d, 'streak'), bestStreak: num(d, 'bestStreak'), best: {}, medal: {}, clean: {}, holder: { a: {}, b: {} }, manual: { a: {}, b: {} }, chain: { wins: Math.floor(num(d, 'chainWins')), runs: Math.floor(num(d, 'chainRuns')), best: {} }, log: readLog(d) };
   for (const t of ['classic', 'chill', 'normal', 'spicy', 'wild']) {
     r.best[t] = bestOf(d, t);
     r.medal[t] = Math.min(3, num(d, 'medal', t) | 0);
     r.clean[t] = num(d, 'clean', t);
+    r.chain.best[t] = Math.min(num(d, 'chain', t), TIERS[t].secs + 60); // held to the tier's clock plus a gold module's bonus and some slack
   }
   for (const w of ['a', 'b']) {
     r.holder[w] = { wins: num(d, 'holder', w, 'wins'), booms: num(d, 'holder', w, 'booms'), clean: num(d, 'holder', w, 'clean') };
@@ -76,12 +87,15 @@ export const dailyOf = (d, date, tier, w) => { const v = rd(d, 'daily', date, ti
 /**
  * One finished round in, one flat patch out. o = { tier, T, win, secs, strikes, holder, reader, solved: [moduleIds], name, daily?: dateKey, at }
  * Returns { patch, info }; info drives the end card (new record, medal ups).
+ * Chain x2: o.chain = true on the round that ends a chain run (bomb 2 won or boomed, or a boom on bomb 1). Then o.strikes is the run's
+ * total, o.start is bomb 2's own start clock (the gold medal's "half the clock" uses it), and the single-bomb best and par are left alone.
  */
 export function applyResult(d, o) {
   const tier = o.tier;
   const patch = { v: 1 };
   const prev = bestOf(d, tier);
-  const info = { prevBest: prev.secs, newRecord: false, firstWin: false, medalBefore: Math.min(3, num(d, 'medal', tier) | 0), medal: 0, medalUp: false, streak: 0, secs: o.secs };
+  const chain = !!o.chain;
+  const info = { prevBest: prev.secs, newRecord: false, firstWin: false, newChainRecord: false, firstChain: false, medalBefore: Math.min(3, num(d, 'medal', tier) | 0), medal: 0, medalUp: false, streak: 0, secs: o.secs };
   patch.wins = num(d, 'wins') + (o.win ? 1 : 0);
   patch.booms = num(d, 'booms') + (o.win ? 0 : 1);
   info.streak = o.win ? num(d, 'streak') + 1 : 0;
@@ -94,13 +108,24 @@ export function applyResult(d, o) {
   }
   const m = WHO(o.reader);
   if (m) { patch[`manual_${m}_rounds`] = num(d, 'manual', m, 'rounds') + 1; patch[`manual_${m}_strikes`] = num(d, 'manual', m, 'strikes') + (o.strikes | 0); }
-  for (const id of o.solved || []) patch[`mods_${id}`] = num(d, 'mods', id) + 1;
-  if (o.win) {
-    info.firstWin = !prev.secs && !num(d, 'wins');
-    if (o.secs > prev.secs) { patch[`best_${tier}`] = o.secs; if (h) patch[`bestWho_${tier}`] = h; patch[`bestAt_${tier}`] = Math.floor((o.at || 0) / 1000); info.newRecord = prev.secs > 0; }
-    if (o.strikes === 0) patch[`clean_${tier}`] = num(d, 'clean', tier) + 1;
+  const mods = Object.create(null);
+  for (const id of o.solved || []) mods[id] = chain ? (mods[id] || 0) + 1 : 1; // a chain run solves modules on two bombs
+  for (const id of Object.keys(mods)) patch[`mods_${id}`] = num(d, 'mods', id) + mods[id];
+  if (chain) {
+    patch.chainRuns = Math.floor(num(d, 'chainRuns')) + 1;
+    if (o.win) {
+      const cb = num(d, 'chain', tier);
+      patch.chainWins = Math.floor(num(d, 'chainWins')) + 1;
+      info.firstChain = !cb && !num(d, 'chainWins');
+      if (o.secs > cb) { patch[`chain_${tier}`] = o.secs; info.newChainRecord = cb > 0; }
+    }
   }
   if (o.win) {
+    info.firstWin = !prev.secs && !num(d, 'wins');
+    if (!chain && o.secs > prev.secs) { patch[`best_${tier}`] = o.secs; if (h) patch[`bestWho_${tier}`] = h; patch[`bestAt_${tier}`] = Math.floor((o.at || 0) / 1000); info.newRecord = prev.secs > 0; }
+    if (o.strikes === 0) patch[`clean_${tier}`] = num(d, 'clean', tier) + 1;
+  }
+  if (o.win && !chain) {
     const full = (o.T && Number.isFinite(o.T.secs) ? o.T.secs : (TIERS[tier] || {}).secs) || 0;
     const start = Number.isFinite(o.start) && o.start > 0 ? Math.min(o.start, full || o.start) : full;
     const used = Math.max(0, Math.min(full, Math.round(start - nn(o.secs))));
@@ -109,11 +134,12 @@ export function applyResult(d, o) {
     if (n >= 20) { n = Math.floor(n / 2); sum = Math.round(sum / 2); } // keep it adaptive: older wins fade
     patch[`parN_${tier}`] = n; patch[`parSum_${tier}`] = sum;
   }
-  const medal = medalFor(o.win, o.strikes, o.secs, o.T);
+  const medal = medalFor(o.win, o.strikes, o.secs, chain && Number.isFinite(o.start) && o.start > 0 ? { secs: o.start } : o.T);
   info.medal = Math.max(info.medalBefore, medal);
   info.medalUp = info.medal > info.medalBefore;
   if (info.medalUp) patch[`medal_${tier}`] = info.medal;
-  if (o.daily && h && dailyOf(d, o.daily, tier, h) === null) patch[`daily_${o.daily}_${tier}_${h}`] = o.win ? o.secs : 0;
+  const dt = dailyTier(tier, chain);
+  if (o.daily && h && dailyOf(d, o.daily, dt, h) === null) patch[`daily_${o.daily}_${dt}_${h}`] = o.win ? o.secs : 0;
   const log = readLog(d);
   log.push({ name: o.name || '', tier, win: o.win ? 1 : 0, holder: h, secs: o.win ? o.secs : 0 });
   patch.log = JSON.stringify(log.slice(-8));

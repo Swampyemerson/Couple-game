@@ -18,18 +18,19 @@ import { CSS } from './defuse/css.js';
 import { REGISTRY, BY_ID, TIERS, TIER_ORDER, tierOf, buildRound, isScored, SURGE_SECS, BLACKOUT, GOLD_BONUS, HUSH_SECS } from './defuse/round.js';
 import { ctxOf, esc, fmt, cap } from './defuse/util.js';
 import { tabsOf, guideHTML } from './defuse/manual.js';
-import { readRecords, applyResult, dailyOf, dailySeed, dayKey, sameHolder, parOf, suggestTier, coupleLine, nextMedalHint, MEDAL_NAME } from './defuse/records.js';
+import { readRecords, applyResult, dailyOf, dailySeed, dayKey, sameHolder, parOf, suggestTier, coupleLine, nextMedalHint, MEDAL_NAME, chainSeed, chainOk, chainClock, dailyTier } from './defuse/records.js';
 
 const FINALE_MS = 1800;
 const RATE_STEP = 0.25;
 const DECOY_GAP = 700;
+const CHAIN_MS = 2000; // the NEXT BOMB stamp, then bomb 2
 
 const ENDED = new Set();
 
 // remembered between rematches on this device; the small bits also survive a page reload (sessionStorage)
 // saved: a bomb round in progress when this device closed the game, so reopening it resumes
 const SS_KEY = 'ju.defuse.memo.v2';
-const memo = { role: null, diff: 'normal', td: false, pc: false, page: 'basics', drawer: null, saved: null };
+const memo = { role: null, diff: 'normal', td: false, pc: false, ch: false, page: 'basics', drawer: null, saved: null };
 try {
   const o = JSON.parse(sessionStorage.getItem(SS_KEY) || 'null');
   if (o && typeof o === 'object') {
@@ -37,11 +38,12 @@ try {
     if (tierOf(o.diff)) memo.diff = o.diff;
     memo.td = !!o.td;
     memo.pc = !!o.pc;
+    memo.ch = !!o.ch && o.diff !== 'classic';
     if (typeof o.page === 'string') memo.page = o.page.slice(0, 20);
     if (typeof o.drawer === 'boolean') memo.drawer = o.drawer;
   }
 } catch { /* no storage */ }
-const keep = () => { try { sessionStorage.setItem(SS_KEY, JSON.stringify({ role: memo.role, diff: memo.diff, td: memo.td, pc: memo.pc, page: memo.page, drawer: memo.drawer })); } catch { /* ignore */ } };
+const keep = () => { try { sessionStorage.setItem(SS_KEY, JSON.stringify({ role: memo.role, diff: memo.diff, td: memo.td, pc: memo.pc, ch: memo.ch, page: memo.page, drawer: memo.drawer })); } catch { /* ignore */ } };
 
 const ICON_BOMB = '<svg viewBox="0 0 64 64" aria-hidden="true"><rect x="8" y="18" width="48" height="36" rx="8" class="f-card"/><rect x="15" y="25" width="22" height="11" rx="2" class="f-lcd"/><path d="M19 30.5h3M25 30.5h3M31 30.5h2" class="s-hl"/><circle cx="46" cy="30.5" r="5" class="f-bad"/><path d="M15 43c6 5 12-5 18 0s12-5 16 0" class="s-wire"/><path d="M32 18c0-6 4-9 9-9s7 3 8 0" class="s-ink"/><path d="M50 4l1.5 4M54 6l-3 3M55 11l-4-1" class="s-ink"/></svg>';
 const ICON_BOOK = '<svg viewBox="0 0 64 64" aria-hidden="true"><path d="M32 16c-7-5-15-6-24-5v38c9-1 17 0 24 5c7-5 15-6 24-5V11c-9-1-17 0-24 5z" class="f-card"/><path d="M32 16v38" class="s-ink"/><path d="M14 20c4-.5 8 0 12 2M14 27c4-.5 8 0 12 2M14 34c4-.5 8 0 12 2M38 22c4-2 8-2.5 12-2M38 29c4-2 8-2.5 12-2" class="s-muted"/><rect x="38" y="35" width="12" height="10" rx="2" class="f-hl"/></svg>';
@@ -98,7 +100,7 @@ registerGame({
     let raf = 0;
 
     // lobby state (mine), the partner's comes from presence
-    const L = { role: memo.role, diff: tierOf(memo.diff) ? memo.diff : 'normal', td: !!memo.td, pc: !!memo.pc, dv: 0, dw: me, go: null, sw: null };
+    const L = { role: memo.role, diff: tierOf(memo.diff) ? memo.diff : 'normal', td: !!memo.td, pc: !!memo.pc, ch: !!memo.ch && memo.diff !== 'classic', dv: 0, dw: me, go: null, sw: null };
     const P = () => { const s = api.partnerState(); return s && s.v === 2 ? s : null; };
     const seenGo = new Set();
     const seenSwap = new Set();
@@ -119,9 +121,10 @@ registerGame({
     const svOf = () => B.round.slots.map((s, i) => (s.decoy ? 'd' : BY_ID[s.id].needy ? 'n' : B.solved[i] ? '1' : '0')).join('');
     const rate = () => (B ? (B.round.twistRules.tax ? 1 : 1 + RATE_STEP * B.strikes) * (B.surge.left > 0 ? 2 : 1) : 1);
     function pub() {
-      const o = { v: 2, role: L.role, diff: L.diff, td: L.td ? 1 : 0, pc: L.pc ? 1 : 0, dv: L.dv, dw: L.dw, go: L.go, sw: L.sw, ph: phase === 'bomb' ? (B.over ? 'over' : 'play') : phase === 'manual' ? 'reading' : 'lobby', hid: document.hidden ? 1 : 0 };
+      const o = { v: 2, role: L.role, diff: L.diff, td: L.td ? 1 : 0, pc: L.pc ? 1 : 0, ch: L.ch ? 1 : 0, dv: L.dv, dw: L.dw, go: L.go, sw: L.sw, ph: phase === 'bomb' ? (B.over ? 'over' : 'play') : phase === 'manual' ? 'reading' : 'lobby', hid: document.hidden ? 1 : 0 };
       if (phase === 'bomb') {
         Object.assign(o, { n: B.n, sd: B.seed, rd: B.tier, left: Math.round(B.left), rate: +rate().toFixed(3), st: B.strikes, sv: svOf(), sg: Math.ceil(B.surge.left / 1000), hs: Math.ceil(B.hush.left / 1000), bo: B.dark.phase, vn: B.vent ? 1 : 0, pz: B.pz ? 1 : 0, pr: B.pr, res: B.res, win: B.win ? 1 : 0, fx: B.fx });
+        if (B.chain) { o.cs = B.chain; if (B.inter) o.ci = 1; } // Chain x2: which bomb this is, and the NEXT BOMB interlude (the round stays 'play' until bomb 2 ends)
         if (B.relay) o.rs = B.relay.live;
       }
       if (phase === 'manual') { o.n = M.n; if (M.ra.length) o.ra = M.ra; }
@@ -129,7 +132,7 @@ registerGame({
     }
     function adoptDiff(s) {
       if (!s || !tierOf(s.diff) || !Number.isFinite(s.dv)) return false;
-      if (s.dv > L.dv || (s.dv === L.dv && String(s.dw) > String(L.dw))) { L.diff = s.diff; L.td = !!s.td; L.pc = !!s.pc; L.dv = s.dv; L.dw = s.dw; memo.diff = s.diff; memo.td = L.td; memo.pc = L.pc; keep(); return true; }
+      if (s.dv > L.dv || (s.dv === L.dv && String(s.dw) > String(L.dw))) { L.diff = s.diff; L.td = !!s.td; L.pc = !!s.pc; L.ch = !!s.ch && s.diff !== 'classic'; L.dv = s.dv; L.dw = s.dw; memo.diff = s.diff; memo.td = L.td; memo.pc = L.pc; memo.ch = L.ch; keep(); return true; }
       return false;
     }
 
@@ -154,6 +157,7 @@ registerGame({
         <p class="dx-par" hidden></p>
         <button type="button" class="dx-today" role="switch" aria-checked="false" data-act="today"><i aria-hidden="true"></i><span>Today’s bomb: the same bomb for both of you, today only</span></button>
         <button type="button" class="dx-today dx-parclock" role="switch" aria-checked="false" aria-disabled="true" disabled data-act="parclock"><i aria-hidden="true"></i><span>Par clock: your own average plus 20 s, instead of the full clock</span></button>
+        <button type="button" class="dx-today dx-chainsw" role="switch" aria-checked="false" data-act="chain"><i aria-hidden="true"></i><span>Chain ×2: two bombs back to back. Time left over carries into the second.</span></button>
         <div class="dx-rec"></div>
         <p class="dx-nudge" hidden></p>
         <p class="dx-nudge dx-suggest" hidden></p>
@@ -163,6 +167,7 @@ registerGame({
       updateLobby();
     }
     const clock = (s) => fmt(s * 1000);
+    const chainOn = () => !!L.ch && chainOk(L.diff);
     function updateRec() {
       const box = $('.dx-rec');
       if (!box) return;
@@ -176,12 +181,14 @@ registerGame({
         if (b.secs) row.push(`<span>Best on ${esc(T.label)}: <b>${clock(b.secs)}</b> left${b.who ? ` (${esc(api.name(b.who))}’s hands)` : ''}</span>`);
         row.push(`<span>Defused <b>${r.wins}</b></span>`);
       }
+      if (r.chain.best[k] > 0) row.push(`<span>Best chain on ${esc(T.label)}: <b>${clock(r.chain.best[k])}</b></span>`);
       let html = row.length ? `<div class="row">${row.join('')}</div>` : '';
       if (L.td) {
         const date = dayKey(Date.now());
         const d = D();
-        const bit = (w) => { const v = dailyOf(d, date, k, w); return `${esc(api.name(w))} ${v === null ? '—' : v === 0 ? 'boom' : clock(v) + ' left'}`; };
-        html += `<div class="row"><span>Today (${esc(T.label)}): <b>${bit('a')}</b> · <b>${bit('b')}</b></span></div>`;
+        const dk = dailyTier(k, chainOn());
+        const bit = (w) => { const v = dailyOf(d, date, dk, w); return `${esc(api.name(w))} ${v === null ? '—' : v === 0 ? 'boom' : clock(v) + ' left'}`; };
+        html += `<div class="row"><span>Today (${esc(T.label)}${chainOn() ? ' ×2' : ''}): <b>${bit('a')}</b> · <b>${bit('b')}</b></span></div>`;
       }
       if (r.log.length) html += `<div class="log" aria-label="Recent rounds">${[...r.log].reverse().map((e) => `<span class="${e.win ? 'win' : ''}">${esc(e.name)} · ${esc((tierOf(e.tier) || { label: e.tier }).label)} · ${e.win ? clock(e.secs) : 'boom'}</span>`).join('')}</div>`;
       box.innerHTML = html;
@@ -198,6 +205,8 @@ registerGame({
       if (pe) { pe.hidden = !par; pe.textContent = par ? `Par ${clock(par.secs)}` : ''; }
       const pcb = $('[data-act="parclock"]');
       if (pcb) { const ok = !!par && !L.td; pcb.disabled = !ok; pcb.setAttribute('aria-disabled', String(!ok)); pcb.setAttribute('aria-checked', String(ok && L.pc)); }
+      const chb = $('[data-act="chain"]');
+      if (chb) { const ok = chainOk(L.diff); chb.disabled = !ok; chb.setAttribute('aria-disabled', String(!ok)); chb.setAttribute('aria-checked', String(ok && L.ch)); }
       const sg = $('.dx-suggest');
       if (sg) { const t = suggestTier(r, k); sg.hidden = !t; sg.textContent = t ? t.text : ''; }
       for (const b of $$('.dx-tiers button')) {
@@ -242,15 +251,17 @@ registerGame({
     function lobbyClick(e) {
       const role = e.target.closest('.dx-role');
       if (role) { L.role = role.dataset.role; memo.role = L.role; keep(); L.go = null; api.sfx('tap'); pub(); updateLobby(); return; }
-      const bump = (diff, td, pc) => {
+      const bump = (diff, td, pc, ch) => {
         const s = P();
-        L.dv = Math.max(L.dv, (s && s.dv) || 0) + 1; L.dw = me; L.diff = diff; L.td = td; L.pc = pc; memo.diff = diff; memo.td = td; memo.pc = pc; keep();
+        ch = !!ch && chainOk(diff); // Chain x2 is off on Classic
+        L.dv = Math.max(L.dv, (s && s.dv) || 0) + 1; L.dw = me; L.diff = diff; L.td = td; L.pc = pc; L.ch = ch; memo.diff = diff; memo.td = td; memo.pc = pc; memo.ch = ch; keep();
         api.sfx('tap'); pub(); updateLobby();
       };
       const d = e.target.closest('[data-diff]');
-      if (d) { bump(d.dataset.diff, L.td, L.pc); return; }
-      if (e.target.closest('[data-act="today"]')) { bump(L.diff, !L.td, L.pc); return; }
-      if (e.target.closest('[data-act="parclock"]')) { if (parOf(D(), L.diff)) bump(L.diff, L.td, !L.pc); return; }
+      if (d) { bump(d.dataset.diff, L.td, L.pc, L.ch); return; }
+      if (e.target.closest('[data-act="today"]')) { bump(L.diff, !L.td, L.pc, L.ch); return; }
+      if (e.target.closest('[data-act="parclock"]')) { if (parOf(D(), L.diff)) bump(L.diff, L.td, !L.pc, L.ch); return; }
+      if (e.target.closest('[data-act="chain"]')) { if (chainOk(L.diff)) bump(L.diff, L.td, L.pc, !L.ch); return; }
       const act = e.target.closest('[data-act]');
       if (!act || act.disabled) return;
       const s = P();
@@ -284,7 +295,16 @@ registerGame({
         surge: { left: 0, fired: [] }, dark: { phase: 0, left: 0, fired: [] }, hush: { left: 0, fired: 0 }, vent: false, ventAt: 0,
         relay: null, pz: wantPause(), pr: pauseWhy(), over: false, win: false, res: null, fx: null, recorded: false, shownSecs: -1,
         decoyAt: -1e9, note: null, active: null, ventSlot: round.slots.findIndex((s) => BY_ID[s.id].needy), info: null,
+        chain: 0, ch1: '', carry: 0, prevStrikes: 0, prevSolved: [], inter: false, nextSv: null, // Chain x2: 0 off, 1 or 2 which bomb; bomb 1's edition name, the seconds it left, its strikes and solved modules
       };
+    }
+    /** Timed events scheduled before, or in the first 30 s of, a shortened clock (par clock, or bomb 2's carried clock) never fire. */
+    function premark(b) {
+      if (!b.pc) return;
+      const X = b.round.twistRules;
+      const early = (a) => a > b.start - 30;
+      for (const key of ['surge', 'blackout']) if (X[key]) X[key].at.forEach((a, k) => { if (early(a)) (key === 'surge' ? b.surge : b.dark).fired[k] = 1; });
+      if (X.hush && early(X.hush.at)) b.hush.fired = 1;
     }
     let forced = null; // test hook: the next round's seed
     function begin() {
@@ -292,12 +312,8 @@ registerGame({
       lobbySince = 0; partnerLobby = false;
       const par = L.pc && !date ? parOf(D(), L.diff) : null; // Par clock: the couple's own average plus 20 s, never more than the tier's clock (not on Today's bomb, so days stay comparable)
       B = newBomb(forced || (date ? dailySeed(date) : token()), L.diff, date, par ? par.secs + 20 : 0);
-      if (B.pc) { // events scheduled before, or in the first 30 s of, the shortened clock never fire
-        const X = B.round.twistRules;
-        const early = (a) => a > B.start - 30;
-        for (const key of ['surge', 'blackout']) if (X[key]) X[key].at.forEach((a, k) => { if (early(a)) (key === 'surge' ? B.surge : B.dark).fired[k] = 1; });
-        if (X.hush && early(X.hush.at)) B.hush.fired = 1;
-      }
+      premark(B);
+      if (chainOn()) B.chain = 1; // Chain x2: this is bomb 1 of 2
       forced = null;
       memo.saved = null;
       phase = 'bomb';
@@ -314,6 +330,7 @@ registerGame({
     }
     const flagsHTML = (extra) => `<div class="dx-flags"><span class="dx-flag is-pulse" data-flag="surge" hidden></span><span class="dx-flag is-pulse" data-flag="dark" hidden></span><span class="dx-flag is-pulse" data-flag="vent" hidden>VENT</span><span class="dx-flag" data-flag="hush" hidden></span>${extra || ''}</div>`;
     const strikesHTML = '<div class="dx-strikes" aria-label="Strikes: 0 of 3"><i></i><i></i><i></i></div>';
+    const chainHTML = (n) => (n ? `<span class="dx-chain" data-chain="${n}" role="status">Bomb ${n} of 2</span>` : '');
     /** A fresh screen starts at the top: the lobby's Start button sits below the fold on a phone, and the tap that pressed it scrolled the page. */
     function toTop() {
       try { const gr = document.getElementById('game-root'); if (gr) gr.scrollTop = 0; window.scrollTo(0, 0); } catch { /* ignore */ }
@@ -323,12 +340,13 @@ registerGame({
       const E = g.E;
       const k = g.slots.filter((s) => !BY_ID[s.id].needy).length;
       root.className = 'g-defuse is-bomb';
-      root.innerHTML = `<div class="dx-topbar" aria-label="Clock and strikes"><div class="dx-lcd"><span class="dx-time" role="timer">${fmt(B.left)}</span><span class="dx-surgetxt"></span></div>${strikesHTML}${flagsHTML()}</div>
+      root.innerHTML = `<div class="dx-topbar" aria-label="Clock and strikes"><div class="dx-lcd"><span class="dx-time" role="timer">${fmt(B.left)}</span><span class="dx-surgetxt"></span></div>${strikesHTML}${chainHTML(B.chain)}${flagsHTML()}</div>
       <div class="dx-bomb" aria-label="The bomb">
         <i class="dx-screw"></i><i class="dx-screw"></i><i class="dx-screw"></i><i class="dx-screw"></i>
         <aside class="dx-side">
           <div class="dx-lcd"><span class="dx-tag">Time left</span><span class="dx-time" role="timer">${fmt(B.left)}</span><span class="dx-surgetxt"></span></div>
           ${strikesHTML}
+          ${chainHTML(B.chain)}
           ${flagsHTML()}
           <div class="dx-sticker"><span class="dx-tag">Serial no.</span><span class="dx-serial">${E.serial}</span><span class="dx-edition">Manual: <b>${esc(g.name)}</b></span></div>
           ${E.void ? `<div class="dx-sticker is-void"><span class="dx-tag">Serial no.</span><span class="dx-serial">${E.void}</span><span class="dx-void-stamp">VOID</span></div>` : ''}
@@ -347,13 +365,14 @@ registerGame({
       const p = BY_ID[slot.id];
       const E = B.round.E;
       const dead = slot.decoy;
+      const mine = B; // a module left over from an earlier bomb (Chain x2) can never act on the next one
       return {
         E, K: ctxOf(E), T: B.round.T, saved: saved || null,
         strikes: () => B.strikes,
         left: () => B.left,
-        busy: () => dead || !B || B.over || B.pz || B.dark.phase === 2 || !!B.solved[i],
-        solve: () => { if (!dead && !p.needy) solveSlot(i); },
-        strike: (why) => { if (!dead) strikeSlot(i, why); },
+        busy: () => dead || B !== mine || B.over || B.inter || B.pz || B.dark.phase === 2 || !!B.solved[i],
+        solve: () => { if (!dead && !p.needy && B === mine) solveSlot(i); },
+        strike: (why) => { if (!dead && B === mine) strikeSlot(i, why); },
         sfx: (n) => { if (!dead) api.sfx(n); },
         haptic: (ms) => api.haptic(ms),
         later: (fn, ms) => later(fn, ms),
@@ -406,7 +425,7 @@ registerGame({
       if (x) { x.classList.remove('is-bad'); void x.offsetWidth; x.classList.add('is-bad'); later(() => x.classList.remove('is-bad'), 700); }
     }
     function strikeSlot(i, why) {
-      if (!B || B.over) return;
+      if (!B || B.over || B.inter) return;
       B.strikes++;
       B.slotStrikes[i]++;
       const tax = B.round.twistRules.tax;
@@ -418,7 +437,7 @@ registerGame({
       if (B.strikes >= 3) lose('strikes'); else if (B.left <= 0) lose('time');
     }
     function solveSlot(i) {
-      if (!B || B.over || B.solved[i]) return;
+      if (!B || B.over || B.inter || B.solved[i]) return;
       B.solved[i] = 1;
       api.sfx('good'); api.haptic(20);
       if (B.round.gold === i && B.slotStrikes[i] === 0) {
@@ -431,7 +450,7 @@ registerGame({
       if (B.round.slots.every((s, j) => !isScored(s) || B.solved[j])) win();
     }
     function decoyTouch(i) {
-      if (B.over || B.pz || B.dark.phase === 2) return;
+      if (B.over || B.inter || B.pz || B.dark.phase === 2) return;
       const now = performance.now();
       if (now - B.decoyAt < DECOY_GAP) return;
       B.decoyAt = now;
@@ -439,7 +458,7 @@ registerGame({
     }
     function applyRelay(list) {
       const R = B && B.relay;
-      if (!R || !Array.isArray(list) || B.over || B.pz || B.dark.phase === 2) return;
+      if (!R || !Array.isArray(list) || B.over || B.inter || B.pz || B.dark.phase === 2) return;
       const slot = B.round.slots[R.i];
       if (B.solved[R.i]) return;
       const p = BY_ID.relay;
@@ -461,7 +480,9 @@ registerGame({
     function finale(kind, res, fx) {
       const fxEl = $('.dx-fx');
       if (!fxEl) return;
-      if (kind === 'win') {
+      if (kind === 'chain') {
+        fxEl.innerHTML = `<div class="dx-stamp is-chain" role="status"><b>NEXT BOMB</b><span>Bomb 1 of 2 · defused</span>${res ? `<small>${esc(res)}</small>` : ''}</div>`;
+      } else if (kind === 'win') {
         const md = fx && fx.md ? fx.md : 0;
         fxEl.innerHTML = `<div class="dx-stamp" role="status"><b>DEFUSED</b><span>${esc(res && res.text ? res.text.replace(/^Defused /, '') : '')}</span>${fx && fx.ln ? `<small>${esc(fx.ln)}</small>` : ''}${md ? `<div class="dx-medal" aria-label="${MEDAL_NAME[md]} medal">${[1, 2, 3].map((n) => `<i class="${n <= md ? 'on' : ''}"></i>`).join('')}</div>` : ''}</div>`;
       } else {
@@ -487,39 +508,66 @@ registerGame({
       if (B.recorded) return null;
       B.recorded = true;
       const solved = B.round.slots.filter((s, i) => B.solved[i] && isScored(s)).map((s) => s.id);
-      const out = applyResult(D(), { tier: B.tier, T: B.round.T, start: B.start, win, secs, strikes: B.strikes, holder: me, reader: them, solved, name: B.round.name, daily: B.daily, at: Date.now() });
+      const chain = B.chain > 0; // Chain x2: one record for the whole run, with both bombs' strikes and modules
+      const out = applyResult(D(), { tier: B.tier, T: B.round.T, start: B.start, win, secs, strikes: B.strikes + B.prevStrikes, holder: me, reader: them, solved: [...B.prevSolved, ...solved], name: B.chain === 2 ? `${B.ch1} → ${B.round.name}` : B.round.name, daily: B.daily, at: Date.now(), chain });
       try { if (typeof api.setData === 'function') api.setData(out.patch); } catch (e) { console.error(e); }
       return out.info;
     }
+    /** Chain x2, bomb 1 defused: no record, no finish. Stamp NEXT BOMB, then bomb 2 on the same tier with the carried clock. */
+    function chainAdvance() {
+      const T = B.round.T;
+      const carry = Math.max(0, Math.ceil(B.left / 1000));
+      const start = chainClock(T, carry);
+      const sv = {
+        fresh: true, n: token(), at: Date.now(), from: B.n, seed: chainSeed(B.seed), tier: B.tier, daily: B.daily, start, left: start * 1000, strikes: 0,
+        chain: 2, ch1: B.round.name, carry, ps: B.strikes + B.prevStrikes,
+        pso: [...B.prevSolved, ...B.round.slots.filter((s, i) => B.solved[i] && isScored(s)).map((s) => s.id)],
+      };
+      cancelActive();
+      B.inter = true; B.nextSv = sv; B.vent = false; B.surge.left = 0; B.dark.phase = 0; B.hush.left = 0; B.active = null;
+      api.sfx('win'); api.haptic(30);
+      finale('chain', `Bomb 2 starts on ${fmt(start * 1000)}`);
+      updateBomb();
+      pub();
+      const from = B;
+      later(() => { if (alive && phase === 'bomb' && B === from && B.inter) startBomb(sv); }, CHAIN_MS);
+    }
     function win() {
+      if (B.chain === 1) { chainAdvance(); return; }
       const secs = Math.max(0, Math.ceil(B.left / 1000));
       const T = B.round.T;
-      const par = parOf(D(), B.tier);
+      const par = B.chain ? null : parOf(D(), B.tier);
       const info = record(true, secs) || {};
-      const flavour = B.strikes === 0 && secs > T.secs / 2 ? 'Not a single strike. Suspiciously smooth.'
-        : B.strikes === 0 ? 'Clean hands, zero strikes.'
+      const sk = B.strikes + B.prevStrikes; // a chain counts both bombs
+      const flavour = sk === 0 && secs > (B.chain ? B.start : T.secs) / 2 ? 'Not a single strike. Suspiciously smooth.'
+        : sk === 0 ? 'Clean hands, zero strikes.'
           : secs < 30 ? 'Cut it close. Very close.'
-            : B.strikes === 2 ? 'Two strikes and a lot of nerve.' : 'One strike, no regrets.';
+            : sk === 2 ? 'Two strikes and a lot of nerve.' : sk > 2 ? 'Strikes aplenty and still standing.' : 'One strike, no regrets.';
       const bits = [flavour];
       if (secs < 10) bits.push('Under ten seconds. Your hearts would like a word.');
-      if (info.newRecord) bits.push(`New record for ${T.label}!`);
-      else if (info.firstWin) bits.push(`First ${T.label} defuse!`);
+      if (info.newChainRecord) bits.push(`New chain record for ${T.label}!`);
+      else if (info.firstChain) bits.push(`First ${T.label} chain!`);
+      else if (info.newRecord) bits.push(`New record for ${T.label}!`);
+      else if (info.firstWin && !B.chain) bits.push(`First ${T.label} defuse!`);
       if (info.medalUp) bits.push(`${MEDAL_NAME[info.medal]} medal earned.`);
-      const hint = B.pc && (info.medal || 0) === 2 ? '' : nextMedalHint(info.medal || 0); // gold needs the full clock
+      const hint = B.pc && !B.chain && (info.medal || 0) === 2 ? '' : nextMedalHint(info.medal || 0); // gold needs the full clock (on bomb 2 it needs half of its own start clock)
       if (hint) bits.push(hint);
       if (par) { const gap = par.secs - Math.max(0, B.start - secs); bits.push(gap > 0 ? `Under par by ${gap} s.` : gap < 0 ? `Over par by ${-gap} s.` : 'Right on par.'); }
-      const tag = `${T.label} · ${B.round.edition}${B.daily ? ' · Today’s bomb' : ''}`;
-      const fx = { ln: B.strikes === 0 ? coupleLine(B.n + B.seed) : '', md: info.medal || 0 };
-      endRound(true, { team: true, score: secs, text: `Defused with ${fmt(B.left)} left`, sub: `${bits.join(' ')} (${tag})` }, fx);
+      const tag = `${T.label} · ${B.chain ? `Chain: ${B.ch1} → ${B.round.name} · ` : ''}${B.round.edition}${B.daily ? ' · Today’s bomb' : ''}`;
+      const clean = B.strikes + B.prevStrikes === 0;
+      const fx = { ln: clean ? coupleLine(B.n + B.seed) : '', md: info.medal || 0 };
+      endRound(true, { team: true, score: secs, text: `Defused with ${fmt(B.left)} left${B.chain ? ' (Chain ×2)' : ''}`, sub: `${bits.join(' ')} (${tag})` }, fx);
     }
     function lose(why) {
       const T = B.round.T;
       record(false, 0);
       const left = B.round.slots.filter((s, i) => isScored(s) && !B.solved[i]).length;
       const bits = [why === 'time' ? 'The clock hit zero mid-sentence.' : 'Three strikes. The bomb had opinions.'];
+      if (B.chain === 1) bits.push('Down on bomb 1 of 2.');
+      else if (B.chain === 2) bits.push('Bomb 1 was defused, but bomb 2 of 2 went off.');
       if (left === 1) bits.push('One module away from safe.');
       else if (B.strikes === 2 && why === 'time') bits.push('Two strikes and out of time. Brutal.');
-      endRound(false, { team: true, text: 'Boom.', sub: `${bits.join(' ')} (${T.label} · ${B.round.edition}${B.daily ? ' · Today’s bomb' : ''})` }, null);
+      endRound(false, { team: true, text: 'Boom.', sub: `${bits.join(' ')} (${T.label} · ${B.chain === 2 ? `Chain: ${B.ch1} → ${B.round.name} · ` : B.chain ? 'Chain ×2 · ' : ''}${B.round.edition}${B.daily ? ' · Today’s bomb' : ''})` }, null);
     }
     function startEvent(kind) {
       if (kind === 'surge') { B.surge.left = SURGE_SECS * 1000; api.sfx('pop'); }
@@ -560,13 +608,13 @@ registerGame({
       if (!B.over) {
         const lg = lobbySince && now - lobbySince > 1500;
         if (lg !== partnerLobby) { partnerLobby = lg; syncBombPause(); }
-        if (!B.pz) {
+        if (!B.pz && !B.inter) {
           B.left -= dt * rate();
           if (B.left <= 0) { B.left = 0; lose('time'); }
           else tickEvents(dt);
         }
         if (B.note && B.note.until < now) { B.note = null; paintFlags(); }
-        if (!B.over) {
+        if (!B.over && !B.inter) {
           for (const c of B.ctl) if (c && c.frame) c.frame(now, dt);
           if (B.ventSlot >= 0 && now - B.ventAt > 200) {
             B.ventAt = now;
@@ -581,7 +629,7 @@ registerGame({
         B.shownSecs = secs;
         $$('.dx-time').forEach((t) => { t.textContent = fmt(B.left); });
         $$('.dx-bomb, .dx-topbar').forEach((x) => x.classList.toggle('is-hurry', secs <= 30));
-        if (!B.over && !B.pz && secs <= 30 && secs > 0) api.sfx('tick');
+        if (!B.over && !B.inter && !B.pz && secs <= 30 && secs > 0) api.sfx('tick');
         paintFlags();
         pub();
       }
@@ -590,7 +638,7 @@ registerGame({
     const slotOf = (e) => { const x = e.target && e.target.closest && e.target.closest('.dx-mod[data-slot]'); return x ? +x.dataset.slot : null; };
     const isDecoy = (i) => B.round.slots[i].decoy;
     function bombClick(e) {
-      if (!B || B.over) return;
+      if (!B || B.over || B.inter) return;
       const i = slotOf(e);
       if (i == null) return;
       if (isDecoy(i)) { decoyTouch(i); return; }
@@ -601,7 +649,7 @@ registerGame({
       if (c && c.click) c.click(e);
     }
     function bombDown(e) {
-      if (phase !== 'bomb' || !B || B.over || e.button > 0) return;
+      if (phase !== 'bomb' || !B || B.over || B.inter || e.button > 0) return;
       const i = slotOf(e);
       if (i == null || isDecoy(i)) return;
       B.active = i;
@@ -617,7 +665,7 @@ registerGame({
       if (c && c.up) c.up(e, cancel);
     }
     function bombKey(e) {
-      if (phase !== 'bomb' || !B || B.over) return;
+      if (phase !== 'bomb' || !B || B.over || B.inter) return;
       const i = slotOf(e);
       if (i == null) return;
       if (isDecoy(i)) { if (e.type === 'keydown' && (e.key === 'Enter' || e.key === ' ')) decoyTouch(i); return; }
@@ -625,7 +673,7 @@ registerGame({
       if (c && c.key) c.key(e);
     }
     function globalKey(e) { // Y / N for the vent from anywhere on a laptop
-      if (phase !== 'bomb' || !B || B.over || B.ventSlot < 0 || root.contains(e.target)) return;
+      if (phase !== 'bomb' || !B || B.over || B.inter || B.ventSlot < 0 || root.contains(e.target)) return;
       const c = B.ctl[B.ventSlot];
       if (c && c.key) c.key(e);
     }
@@ -641,6 +689,7 @@ registerGame({
         <div class="dx-mbar">
           <div class="dx-lcd"><span class="dx-time" role="timer">${fmt(M.left)}</span><span class="dx-surgetxt"></span></div>
           <div class="dx-strikes" aria-label="Strikes: 0 of 3"><span class="dx-tag">Strikes</span><i></i><i></i><i></i></div>
+          ${chainHTML(M.chain)}
           ${flagsHTML()}
           <div class="dx-lamps">${g.slots.map((s, i) => (BY_ID[s.id].needy ? '' : `<span class="dx-lamp" data-slot="${i}" data-mod="${s.id}" title="${esc(lampName(s))}"><i></i>${esc(lampName(s))}</span>`)).join('')}</div>
         </div>
@@ -655,7 +704,7 @@ registerGame({
       if (!s || typeof s.sd !== 'string' || !tierOf(s.rd)) return;
       phase = 'manual';
       const round = buildRound(s.sd, s.rd);
-      M = { n: s.n, round, left: s.left, rate: s.rate || 1, at: performance.now(), strikes: s.st | 0, solved: String(s.sv || ''), pz: !!s.pz, over: false, frozen: false, shown: '', ra: [], seq: 0, stamp: Date.now().toString(36), relay: null, sg: 0, hs: 0, bo: 0, vn: 0, rsKey: '' };
+      M = { n: s.n, round, left: s.left, rate: s.rate || 1, at: performance.now(), strikes: s.st | 0, solved: String(s.sv || ''), pz: !!s.pz, over: false, frozen: false, shown: '', ra: [], seq: 0, stamp: Date.now().toString(36), relay: null, sg: 0, hs: 0, bo: 0, vn: 0, rsKey: '', chain: s.cs === 1 || s.cs === 2 ? s.cs : 0, ci: 0 };
       root.className = 'g-defuse is-manual';
       root.innerHTML = manualHTML();
       toTop();
@@ -764,6 +813,7 @@ registerGame({
         if (!pz.hidden) pz.querySelector('span').textContent = s.pr === 'lobby' ? 'The bomb is paused while you are not in the round.' : `The bomb is paused. ${api.name(them)} ${s.pr === 'bg' || s.pr === 'me' ? 'has the game in the background' : 'stepped away'}.`;
       }
       watchBarSoon();
+      if (s.ci && !M.ci && !M.over) { M.ci = 1; api.sfx('win'); finale('chain', ''); } // bomb 1 of a chain is defused: the NEXT BOMB stamp, then bomb 2 arrives as a new round
       if (s.ph === 'over' && !M.over) manualOver(s.res, !!s.win, s.fx);
     }
     function watchBarSoon() { const bar = $('.dx-mbar'); if (bar) root.style.setProperty('--dx-mbar-h', bar.offsetHeight + 'px'); }
@@ -866,20 +916,32 @@ registerGame({
     /** This device closed the game mid-round with the bomb, and the manual is still reading it: carry on. */
     function resumeBomb(s) {
       const sv = memo.saved;
-      if (!sv || !s || s.ph !== 'reading' || s.n !== sv.n || ENDED.has(sv.n) || Date.now() - sv.at > 30 * 60000) return false;
+      // a close during the NEXT BOMB interlude saved bomb 2 already; the manual is still reading bomb 1 (sv.from)
+      if (!sv || !s || s.ph !== 'reading' || (s.n !== sv.n && s.n !== sv.from) || ENDED.has(sv.n) || Date.now() - sv.at > 30 * 60000) return false;
       memo.saved = null;
       lobbySince = 0; partnerLobby = false;
-      B = newBomb(sv.seed, sv.tier, sv.daily, sv.start);
-      Object.assign(B, { n: sv.n, left: sv.left, strikes: sv.strikes, solved: sv.solved, slotStrikes: sv.slotStrikes });
-      B.surge = { left: sv.surge.left, fired: sv.surge.fired };
-      B.dark = { phase: 0, left: 0, fired: sv.dark.fired };
-      B.hush = { left: 0, fired: sv.hush ? 1 : 0 };
       L.role = 'bomb'; memo.role = 'bomb'; keep();
-      phase = 'bomb';
-      renderBomb(sv);
-      api.setStatus('You have the bomb');
-      pub();
+      startBomb(sv);
       return true;
+    }
+    /** Put a bomb on screen from a saved description: a resumed round, or bomb 2 of a chain (sv.fresh). */
+    function startBomb(sv) {
+      const old = B;
+      if (old) { cancelActive(); for (const c of old.ctl) if (c && c.destroy) { try { c.destroy(); } catch { /* ignore */ } } ENDED.add(old.n); }
+      B = newBomb(sv.seed, sv.tier, sv.daily, sv.start);
+      Object.assign(B, { n: sv.n, chain: sv.chain | 0, ch1: String(sv.ch1 || '').slice(0, 40), carry: sv.carry | 0, prevStrikes: Math.min(3, sv.ps | 0), prevSolved: Array.isArray(sv.pso) ? sv.pso.filter((x) => typeof x === 'string').slice(0, 14) : [] });
+      if (sv.fresh) premark(B);
+      else {
+        Object.assign(B, { left: sv.left, strikes: sv.strikes, solved: sv.solved, slotStrikes: sv.slotStrikes });
+        B.surge = { left: sv.surge.left, fired: sv.surge.fired };
+        B.dark = { phase: 0, left: 0, fired: sv.dark.fired };
+        B.hush = { left: 0, fired: sv.hush ? 1 : 0 };
+      }
+      phase = 'bomb';
+      renderBomb(sv.fresh ? null : sv);
+      api.setStatus(B.chain ? `You have the bomb · bomb ${B.chain} of 2` : 'You have the bomb');
+      if (sv.fresh) api.sfx('place');
+      pub();
     }
     let last = 0;
     function frame(now) {
@@ -906,13 +968,13 @@ registerGame({
     const scope = (sel, slot) => (/^\.dx-mod\[data-mod="[a-z]+"\]/.test(sel) ? sel.replace(/^\.dx-mod\[data-mod="[a-z]+"\]/, `.dx-mod[data-slot="${slot}"]`) : `.dx-mod[data-slot="${slot}"] ${sel}`);
     const hook = {
       info: () => ({
-        phase, role: L.role, partnerRole: (P() || {}).role || null, diff: L.diff, tier: L.diff, today: L.td,
+        phase, role: L.role, partnerRole: (P() || {}).role || null, diff: L.diff, tier: L.diff, today: L.td, chain: L.ch,
         bomb: B && {
-          n: B.n, seed: B.seed, tier: B.tier, diff: B.tier, daily: B.daily, start: B.start, parClock: B.pc, left: B.left, strikes: B.strikes, solved: [...B.solved], over: B.over, win: B.win, res: B.res, fx: B.fx,
+          n: B.n, seed: B.seed, tier: B.tier, diff: B.tier, daily: B.daily, start: B.start, parClock: B.pc, left: B.left, strikes: B.strikes, solved: [...B.solved], over: B.over, win: B.win, res: B.res, fx: B.fx, chain: B.chain, inter: B.inter, ch1: B.ch1, carry: B.carry, prevStrikes: B.prevStrikes, prevSolved: [...B.prevSolved],
           pz: B.pz, pr: B.pr, round: B.round, surge: B.surge.left, hush: B.hush.left, dark: B.dark.phase, vent: B.vent, relay: B.relay && B.relay.live, gold: B.round.gold, rate: rate(), slotStrikes: [...B.slotStrikes],
           slots: B.round.slots.map((s, i) => ({ id: s.id, plate: s.plate, decoy: s.decoy, solved: !!B.solved[i] })),
         },
-        manual: M && { n: M.n, strikes: M.strikes, solved: M.solved, over: M.over, shown: M.shown, tier: M.round.tier, seed: M.round.seed, sg: M.sg, hs: M.hs, bo: M.bo, vn: M.vn, relay: M.relay && M.relay.live, ra: M.ra },
+        manual: M && { n: M.n, chain: M.chain, inter: M.ci, strikes: M.strikes, solved: M.solved, over: M.over, shown: M.shown, tier: M.round.tier, seed: M.round.seed, sg: M.sg, hs: M.hs, bo: M.bo, vn: M.vn, relay: M.relay && M.relay.live, ra: M.ra },
       }),
       gen: (seed, tier) => buildRound(seed, tier || 'normal'),
       saveOf: (i) => (B && B.ctl[i] && B.ctl[i].save ? B.ctl[i].save() : null),
@@ -925,6 +987,7 @@ registerGame({
         return p.drive(s.S, B.round.E, B.round.book[s.id].R, live).map((a) => ({ ...a, sel: scope(a.sel, i) }));
       },
       force: (seed) => { forced = seed; },
+      forceWin: () => { if (B && !B.over && !B.inter) { B.round.slots.forEach((x, i) => { if (isScored(x)) B.solved[i] = 1; }); updateBomb(); win(); } },
       setLeft: (ms) => { if (B && !B.over) { B.left = ms; pub(); } },
       records: () => readRecords(D()),
       presenceBytes: () => jlen(api.partnerState()),
@@ -934,9 +997,11 @@ registerGame({
     return {
       destroy() {
         alive = false;
-        if (phase === 'bomb' && B && !B.over) {
+        if (phase === 'bomb' && B && !B.over && B.inter && B.nextSv) memo.saved = { ...B.nextSv, at: Date.now() }; // closed during NEXT BOMB: reopen on bomb 2
+        else if (phase === 'bomb' && B && !B.over) {
           memo.saved = {
             n: B.n, at: Date.now(), seed: B.seed, tier: B.tier, daily: B.daily, start: B.start, left: B.left, strikes: B.strikes, solved: [...B.solved], slotStrikes: [...B.slotStrikes],
+            chain: B.chain, ch1: B.ch1, carry: B.carry, ps: B.prevStrikes, pso: [...B.prevSolved],
             slots: B.ctl.map((c) => { try { return c && c.save ? c.save() : null; } catch { return null; } }),
             relay: B.relay ? { live: B.relay.live, seen: [...B.relay.seen] } : null, surge: { left: B.surge.left, fired: [...B.surge.fired] }, dark: { fired: [...B.dark.fired] }, hush: B.hush.fired ? 1 : 0,
           };

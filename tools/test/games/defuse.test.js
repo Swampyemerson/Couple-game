@@ -1,5 +1,5 @@
 // Defuse: node unit tests (every plugin's tools/test/games/defuse/*.unit.mjs, then round-level tests), then the browser tests.
-//   node tools/test/games/defuse.test.js [node|phone|wild|laptop|dark|layout|legacy|all]    (SHOTS=/dir for screenshots, PORT=9100 uses PORT..PORT+9)
+//   node tools/test/games/defuse.test.js [node|phone|wild|laptop|dark|layout|legacy|chain|all]    (SHOTS=/dir for screenshots, PORT=9100 uses PORT..PORT+12; SHOTS_CHAIN=/dir for the chain screenshots)
 //
 // Browser: two simulated devices share a fake live room. Phones are 390×844 with coarse pointers and real page.tap(); the
 // laptop bomb is 1280×800 with no touch. Rounds are driven through window.__defuse (info / gen / drive / force / setLeft),
@@ -345,6 +345,46 @@ async function nodePart() {
     const dn = sug(L([['spicy', 1], ['spicy', 0], ['spicy', 0]]), 0, 'spicy');
     assert(dn && dn.kind === 'down' && dn.tier === 'normal' && !sug(L([['chill', 0], ['chill', 0], ['chill', 1]]), 0, 'chill') && !sug(L([['normal', 0], ['normal', 1], ['normal', 1]]), 0), 'suggestTier: two booms in the last three suggests one tier easier; never below Rookie');
   }
+  // Chain x2: bomb 2's seed is a pure function of bomb 1's, the carried clock, and the records
+  {
+    assert(RC.chainSeed('abc') === 'abc|next' && RC.chainSeed('day-2026-10-12') === 'day-2026-10-12|next' && RC.chainSeed(RC.chainSeed('x')) === 'x|next|next', 'chain: bomb 2’s seed is bomb 1’s seed + "|next", for random seeds and for Today’s bomb');
+    let same = 0, diff = 0;
+    for (let i = 0; i < 200; i++) for (const t of ['chill', 'normal', 'spicy', 'wild']) {
+      const a = JSON.stringify(buildRound(RC.chainSeed('ch' + i), t));
+      if (a !== JSON.stringify(buildRound(RC.chainSeed('ch' + i), t))) throw new Error('FAIL: chain round not deterministic');
+      if (a === JSON.stringify(buildRound('ch' + i, t))) same++; else diff++;
+    }
+    const e1 = new Set(), e2 = new Set();
+    for (let i = 0; i < 200; i++) { e1.add(buildRound('ch' + i, 'normal').name); e2.add(buildRound(RC.chainSeed('ch' + i), 'normal').name); }
+    assert(same === 0 && diff === 800 && e2.size > 100, `chain: bomb 2 is a deterministic, different bomb for every seed (800 rounds, ${e2.size} distinct edition names)`);
+    const T = TIERS.normal;
+    assert(RC.chainClock(T, 100) === 250 && RC.chainClock(T, 200) === 300 && RC.chainClock(T, 0) === 150 && RC.chainClock(T, 149.2) === 300 && RC.chainClock(TIERS.spicy, 100) === 265 && RC.chainClock(T, NaN) === 150 && RC.chainClock(T, -5) === 150, 'chain: the carried clock is min(tier clock, seconds left + half the tier clock)');
+    assert(RC.chainOk('normal') && RC.chainOk('chill') && RC.chainOk('spicy') && RC.chainOk('wild') && !RC.chainOk('classic') && !RC.chainOk('bogus') && !RC.chainOk(undefined) && !RC.chainOk('__proto__'), 'chain: every tier but Classic');
+    assert(RC.dailyTier('normal', true) === 'normalx2' && RC.dailyTier('normal', false) === 'normal', 'chain: Today’s bomb keeps chain times apart from single-bomb times');
+    const base = { tier: 'normal', T, win: true, secs: 220, start: 270, strikes: 0, holder: 'a', reader: 'b', solved: ['wires', 'maze', 'wires'], name: 'Frosty Dolphin → Sleepy Koala', at: 1700000000000, chain: true };
+    for (const bad of [undefined, null, 5, 'x', [], {}, { chain_normal: 'x', chainWins: 'many', chainRuns: NaN, best: 'x' }, { chain: 'x' }, { chain: { normal: 'q' }, chainWins: {} }]) {
+      const r = RC.readRecords(bad);
+      assert(r.chain && r.chain.wins === 0 && r.chain.runs === 0 && r.chain.best.normal === 0 && r.chain.best.wild === 0, `chain: records read tolerates ${JSON.stringify(bad)}`);
+      const o = RC.applyResult(bad, base);
+      assert(o.patch.chainWins === 1 && o.patch.chainRuns === 1 && o.patch.chain_normal === 220 && o.info.firstChain && !o.info.newChainRecord && Object.values(o.patch).every((v) => ['number', 'string', 'boolean'].includes(typeof v)), `chain: first chain win on ${JSON.stringify(bad)}`);
+    }
+    let o = RC.applyResult({}, base);
+    assert(!('best_normal' in o.patch) && !('parN_normal' in o.patch) && !('parSum_normal' in o.patch) && o.patch.wins === 1 && o.patch.streak === 1 && o.patch.holder_a_wins === 1 && o.patch.mods_wires === 2 && o.patch.mods_maze === 1 && o.patch.clean_normal === 1, 'chain: a chain win counts as a win, never touches the single-bomb best or par, counts modules from both bombs');
+    assert(o.patch.medal_normal === 3 && RC.applyResult({}, { ...base, secs: 136, start: 270 }).patch.medal_normal === 3 && RC.applyResult({}, { ...base, secs: 135, start: 270 }).patch.medal_normal === 2 && RC.applyResult({}, { ...base, secs: 200, start: 270, strikes: 1 }).patch.medal_normal === 1, 'chain: medals as usual; gold means more than half of bomb 2’s own start clock');
+    const d = { chain_normal: 200, chainWins: 3, chainRuns: 5, wins: 9 };
+    o = RC.applyResult(d, { ...base, secs: 230 });
+    assert(o.patch.chain_normal === 230 && o.patch.chainWins === 4 && o.patch.chainRuns === 6 && o.info.newChainRecord && !o.info.firstChain, 'chain: a better chain beats the chain best and counts');
+    o = RC.applyResult(d, { ...base, secs: 100 });
+    assert(!('chain_normal' in o.patch) && o.patch.chainWins === 4 && o.patch.chainRuns === 6 && !o.info.newChainRecord, 'chain: a slower chain keeps the chain best');
+    o = RC.applyResult(d, { ...base, win: false, secs: 0, strikes: 3 });
+    assert(!('chain_normal' in o.patch) && !('chainWins' in o.patch) && o.patch.chainRuns === 6 && o.patch.booms === 1 && o.patch.streak === 0, 'chain: a boom counts a run, not a win, and resets the streak');
+    o = RC.applyResult({}, { ...base, daily: '2026-10-12' });
+    assert(o.patch['daily_2026-10-12_normalx2_a'] === 220 && !('daily_2026-10-12_normal_a' in o.patch), 'chain: Today’s bomb stores a chain time under its own key');
+    assert(RC.readRecords({ chain: { normal: 130 }, chainWins: 2 }).chain.best.normal === 130 && RC.readRecords({ 'chain.normal': 95 }).chain.best.normal === 95 && RC.readRecords({ chain_normal: 99999 }).chain.best.normal === TIERS.normal.secs + 60, 'chain: the best reads from flat, dotted and nested data and is held to the tier clock');
+    const nochain = RC.applyResult({}, { ...base, chain: false });
+    assert(!('chainRuns' in nochain.patch) && nochain.patch.best_normal === 220 && nochain.patch.parN_normal === 1, 'chain: a normal round writes no chain keys and updates best and par as before');
+  }
+
 }
 
 // ══════════════════════════ helpers for the browser tests ══════════════════════════
@@ -1308,6 +1348,251 @@ async function legacy(h) {
   noErrors(h, 'legacy data');
 }
 
+// ══════════════════════════ Chain ×2: two bombs back to back ══════════════════════════
+const CHAIN_SHOTS = process.env.SHOTS_CHAIN || path.join(SHOTS, 'chain');
+const cshot = async (pg, name, opts) => { fs.mkdirSync(CHAIN_SHOTS, { recursive: true }); await pg.screenshot({ path: path.join(CHAIN_SHOTS, name + '.png'), ...opts }); console.log('   shot', name); };
+const fmtS = (secs) => `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+let RC_CHAIN = null;
+const chainState = (pg) => pg.evaluate(() => {
+  const i = window.__defuse && window.__defuse.info();
+  return i && { phase: i.phase, chain: i.chain, b: i.bomb && { n: i.bomb.n, chain: i.bomb.chain, inter: i.bomb.inter, over: i.bomb.over, seed: i.bomb.seed, start: i.bomb.start, left: i.bomb.left, strikes: i.bomb.strikes, solved: i.bomb.solved, carry: i.bomb.carry, ch1: i.bomb.ch1, prevStrikes: i.bomb.prevStrikes, round: { name: i.bomb.round.name, edition: i.bomb.round.edition, slots: i.bomb.round.slots, ids: i.bomb.round.ids, twists: i.bomb.round.twists, E: i.bomb.round.E } }, m: i.manual && { n: i.manual.n, chain: i.manual.chain, inter: i.manual.inter, over: i.manual.over } };
+});
+const chipText = (pg, sel = '.dx-chain') => pg.evaluate((s) => [...document.querySelectorAll(s)].filter((e) => e.getClientRects().length).map((e) => e.textContent.trim()), sel);
+const bombPresence = (h) => { for (const m of Object.values(h.roomState)) for (const p of m.values()) { const x = p.presence && p.presence.s; if (x && x.v === 2 && x.role === 'bomb') return x; } return {}; };
+/** A seed for a chain: bomb 1 = seed, bomb 2 = seed|next, both easy to drive with taps (no blackout, relay or vent); bomb 2 optionally has a decoy twin. */
+function chainSeeds(tier, bomb2Decoy, prefix) {
+  const easy = (r) => !r.twists.includes('blackout') && !r.twists.includes('relay') && !r.twists.includes('vent') && !r.slots.some((s) => RD_BY[s.id].needy || s.id === 'relay');
+  for (let i = 0; i < 20000; i++) {
+    const seed = prefix + i;
+    const r1 = RD.buildRound(seed, tier);
+    if (!easy(r1)) continue;
+    const r2 = RD.buildRound(RC_CHAIN.chainSeed(seed), tier);
+    if (easy(r2) && (!bomb2Decoy || r2.twists.includes('decoy')) && r1.name !== r2.name) return seed;
+  }
+  throw new Error('no chain seeds');
+}
+/** Solve every real module of the bomb on `pg` except the last, then do the last one's taps without waiting (the caller catches the interlude). */
+async function winBomb1Quick(h, pg, opts) {
+  const plan = scored((await dx(pg)).bomb.round);
+  for (const { i } of plan.slice(0, -1)) await solveSlot(h, pg, i, opts);
+  await exec(pg, await pg.evaluate((k) => window.__defuse.drive(k), plan[plan.length - 1].i), opts);
+}
+const waitInterlude = (pg) => until(async () => { const x = await chainState(pg); return x && x.b && x.b.inter ? x : null; }, 'the NEXT BOMB interlude', 6000, 15);
+const waitBomb2 = (pg, ms = 6000) => until(async () => { const x = await chainState(pg); return x && x.b && x.b.chain === 2 && !x.b.inter ? x : null; }, 'bomb 2', ms, 30);
+
+async function phoneChain(h) {
+  console.log('\n# Chain ×2 on two phones');
+  await goLive(h);
+  const seedA = chainSeeds('normal', false, 'chA');
+  const seedB = chainSeeds('normal', true, 'chB');
+  const date = new Date().toISOString().slice(0, 10);
+  await pickRoles(h, h.a, h.b);
+  const sw = (pg) => pg.evaluate(() => { const e = document.querySelector('[data-act="chain"]'); const r = e.getBoundingClientRect(); return { on: e.getAttribute('aria-checked'), dis: e.disabled, h: r.height, txt: e.textContent.trim() }; });
+  const s0 = await sw(h.a);
+  assert(!s0.dis && s0.on === 'false' && s0.h >= 44 && /Chain ×2/.test(s0.txt), 'lobby: a "Chain ×2" switch, off by default, at least 44 px tall');
+  await h.b.tap('.dx-tiers [data-diff="normal"]'); await h.settle();
+  await h.b.tap('[data-act="chain"]'); await h.settle();
+  assert((await sw(h.b)).on === 'true' && (await sw(h.a)).on === 'true', 'the Chain switch (tapped on one phone) reaches the other phone');
+  await h.a.tap('.dx-tiers [data-diff="classic"]'); await h.settle();
+  assert((await sw(h.a)).dis && (await sw(h.a)).on === 'false' && (await sw(h.b)).dis && (await sw(h.b)).on === 'false', 'Classic: the switch is disabled and shown off on both phones');
+  await cshot(h.b, 'chain-lobby-classic-light');
+  await h.b.tap('[data-act="chain"]', { force: true, timeout: 1500 }).catch(() => {});
+  await h.settle();
+  assert((await sw(h.a)).on === 'false' && (await dx(h.a)).chain === false, 'tapping the disabled switch does nothing');
+  await h.a.tap('.dx-tiers [data-diff="normal"]'); await h.settle();
+  assert((await sw(h.a)).on === 'false' && !(await sw(h.a)).dis, 'back on Agent the switch is enabled again, and still off');
+  await h.a.tap('[data-act="chain"]'); await h.settle();
+  assert((await sw(h.b)).on === 'true' && (await dx(h.b)).chain === true, 'Chain on again (tapped on the bomb phone this time) and the manual phone follows');
+  await cshot(h.b, 'chain-lobby-on-light');
+
+  // ── run 1: a clean chain ──
+  const r1 = RD.buildRound(seedA, 'normal'), r2 = RD.buildRound(RC_CHAIN.chainSeed(seedA), 'normal');
+  const g0 = { ...gdata(h) };
+  const b1 = await startRound(h, h.a, h.b, seedA, 'normal', { bombStarts: true });
+  assert(b1.seed === seedA && b1.chain === 1 && b1.round.name === r1.name && Math.abs(b1.left - 300000) < 3000, `chain: bomb 1 is Agent on 5:00 (${r1.name})`);
+  assert((await chipText(h.a)).join() === 'Bomb 1 of 2' && (await chipText(h.b)).join() === 'Bomb 1 of 2', 'both phones say "Bomb 1 of 2"');
+  assert((await dx(h.b)).manual.chain === 1 && (await manualInfo(h.b)).edition === r1.edition, 'the manual holds bomb 1’s guide');
+  await cshot(h.a, 'chain-phone-bomb1-light'); await cshot(h.b, 'chain-phone-manual1-light');
+  await h.a.evaluate(() => window.__defuse.setLeft(120000));
+  await winBomb1Quick(h, h.a);
+  const mid = await waitInterlude(h.a);
+  const pres = bombPresence(h);
+  await Promise.all([cshot(h.a, 'chain-phone-interlude-bomb-light'), cshot(h.b, 'chain-phone-interlude-manual-light')]);
+  assert(mid.b.chain === 1 && !mid.b.over && !pres.res && pres.ph === 'play' && !pres.win && pres.cs === 1, 'chain (' + JSON.stringify({ ph: pres.ph, res: pres.res, win: pres.win, cs: pres.cs, ci: pres.ci, n: pres.n }) + '): after bomb 1 the round is not over: the presence still says "play", with no result and no win');
+  const stamp = await h.a.evaluate(() => (document.querySelector('.dx-fx .dx-stamp') || {}).textContent || '');
+  assert(/NEXT BOMB/.test(stamp) && /Bomb 1 of 2/i.test(stamp), `chain: the NEXT BOMB stamp shows on the bomb ("${stamp.trim()}")`);
+  const carry = Math.ceil(mid.b.left / 1000);
+  assert(carry > 60 && carry <= 120, `bomb 1 had ${carry} s left`);
+  assert(results(h).length === 0 && (await dx(h.b)).manual && !(await dx(h.b)).manual.over, 'nothing is recorded or finished during the interlude');
+  await until(() => visible(h.b, '.dx-fx .dx-stamp'), 'the stamp on the manual', 1500, 20);
+  assert(/NEXT BOMB/.test(await h.b.textContent('.dx-fx')), 'the manual phone shows the NEXT BOMB stamp too');
+  const s2 = await waitBomb2(h.a);
+  const want = Math.min(RD.TIERS.normal.secs, carry + RD.TIERS.normal.secs / 2);
+  assert(s2.b.seed === RC_CHAIN.chainSeed(seedA) && s2.b.chain === 2 && s2.b.round.name === r2.name && s2.b.strikes === 0 && !s2.b.solved.some(Boolean), `chain: bomb 2 is a new round (${r2.name}) from seed + "|next", strikes back to 0`);
+  assert(s2.b.start === want && s2.b.carry === carry && Math.abs(s2.b.left / 1000 - want) <= 1.5, `chain: bomb 2’s clock is the carried ${want} s (${carry} left + 150), reads ${(s2.b.left / 1000).toFixed(1)}`);
+  assert((await chipText(h.a)).join() === 'Bomb 2 of 2', 'the bomb phone says "Bomb 2 of 2"');
+  await until(async () => { const x = await chainState(h.b); return x && x.m && x.m.n === s2.b.n; }, 'the manual to follow to bomb 2', 4000);
+  assert((await dx(h.b)).manual.chain === 2 && (await manualInfo(h.b)).edition === r2.edition && (await h.b.textContent('.dx-page')).includes(r2.name) && (await chipText(h.b)).join() === 'Bomb 2 of 2', `the manual followed on its own: bomb 2’s edition (${r2.name}) and "Bomb 2 of 2"`);
+  const mt = secsOf(await h.b.textContent('.dx-mbar .dx-time'));
+  assert(Math.abs(mt - want) <= 4, `the manual’s clock shows the carried clock (${mt} s)`);
+  assert(results(h).length === 0 && gdata(h).wins === g0.wins, 'still nothing recorded');
+  await cshot(h.a, 'chain-phone-bomb2-light'); await cshot(h.b, 'chain-phone-manual2-light');
+  await h.a.evaluate(() => window.__defuse.setLeft(200000));
+  for (const { i } of scored(s2.b.round)) await solveSlot(h, h.a, i);
+  const won = await until(async () => { const x = await dx(h.a); return x.bomb.over ? x : null; }, 'bomb 2 to be defused', 10000);
+  assert(won.bomb.win && won.bomb.res.team && /Defused with/.test(won.bomb.res.text) && /Chain/.test(won.bomb.res.text) && won.bomb.res.score >= 150 && won.bomb.res.score <= 200, `chain: bomb 2 defused: "${won.bomb.res.text}"`);
+  assert(won.bomb.res.sub.includes(`Chain: ${r1.name} → ${r2.name}`), 'the result names both editions: ' + won.bomb.res.sub);
+  await endCards(h);
+  await until(() => results(h).length >= 1, 'the chain recorded', 4000);
+  await sleep(2200); await h.settle();
+  const g = gdata(h);
+  assert(results(h).length === 1 && results(h)[0].winner === 'team' && results(h)[0].score === won.bomb.res.score, 'exactly one result recorded for the whole chain, with the seconds left after bomb 2');
+  assert(g.wins === (g0.wins | 0) + 1 && g.chainWins === 1 && g.chainRuns === 1 && g.chain_normal === won.bomb.res.score && !('best_normal' in g) && !('parN_normal' in g) && g.medal_normal === 3, `records: one win, chainWins 1, chainRuns 1, chain_normal ${g.chain_normal}; no single-bomb best or par; gold medal`);
+  assert(JSON.parse(g.log).length === 1 && JSON.parse(g.log)[0].name === `${r1.name} → ${r2.name}`, 'the round log names both editions');
+  await cshot(h.a, 'chain-phone-defused-bomb-light'); await cshot(h.b, 'chain-phone-defused-manual-light');
+
+  // rematch: the switch is remembered, the strip shows the best chain
+  await h.a.click('#game-root [data-g="rematch"]');
+  await until(async () => { const x = await dx(h.a); const y = await dx(h.b); return x && y && x.phase === 'lobby' && y.phase === 'lobby'; }, 'the rematch lobby');
+  const rec = (await h.a.textContent('.dx-rec')).replace(/\s+/g, ' ');
+  assert(rec.includes(`Best chain on Agent: ${fmtS(g.chain_normal)}`) && !/Best on Agent/.test(rec), `the lobby strip says "Best chain on Agent: ${fmtS(g.chain_normal)}" (${rec.slice(0, 90)})`);
+  assert((await sw(h.a)).on === 'true' && (await sw(h.b)).on === 'true', 'Chain is remembered for the next round');
+  await cshot(h.a, 'chain-phone-lobby-records-light');
+
+  // ── run 2: bomb 2 goes off by strikes: exactly one boom result ──
+  const r2b = RD.buildRound(RC_CHAIN.chainSeed(seedB), 'normal');
+  const rb = await startRound(h, h.a, h.b, seedB, 'normal', { bombStarts: true });
+  await h.a.evaluate(() => window.__defuse.setLeft(90000));
+  for (const { i } of scored(rb.round)) await solveSlot(h, h.a, i);
+  const bb = (await waitBomb2(h.a, 8000)).b;
+  assert(bb.round.name === r2b.name && bb.carry <= 90 && bb.carry > 40 && bb.start === bb.carry + 150, `run 2: bomb 2 starts on ${bb.carry} + 150 = ${bb.start} s`);
+  const decoyI = bb.round.slots.findIndex((s) => s.decoy);
+  for (let k = 0; k < 3; k++) {
+    await h.a.locator(`.dx-mod[data-slot="${decoyI}"] .dx-mod-body`).evaluate((e) => e.scrollIntoView({ block: 'center' }));
+    const box = await h.a.locator(`.dx-mod[data-slot="${decoyI}"] .dx-mod-head`).boundingBox();
+    await h.a.touchscreen.tap(box.x + 20, box.y + box.height / 2);
+    await sleep(850);
+  }
+  const lost = await until(async () => { const x = await dx(h.a); return x.bomb.over ? x : null; }, 'bomb 2 to go off', 6000);
+  assert(!lost.bomb.win && lost.bomb.strikes === 3 && lost.bomb.res.score == null && /bomb 2 of 2/.test(lost.bomb.res.sub) && lost.bomb.res.sub.includes(`Chain: ${RD.buildRound(seedB, 'normal').name} → ${r2b.name}`), 'bomb 2 boomed by three strikes: ' + lost.bomb.res.sub);
+  await until(async () => (await dx(h.b)).manual.over, 'the manual to see the boom');
+  await endCards(h);
+  await until(() => results(h).length >= 2, 'the boom recorded', 4000);
+  await sleep(2200); await h.settle();
+  const g2 = gdata(h);
+  assert(results(h).length === 2 && results(h)[1].winner === 'team' && results(h)[1].score == null, 'exactly one boom result for the second run');
+  assert(g2.booms === (g.booms | 0) + 1 && g2.chainRuns === 2 && g2.chainWins === 1 && g2.chain_normal === g.chain_normal && g2.streak === 0 && g2.wins === g.wins, 'records: booms +1, chainRuns 2, chainWins still 1, chain best kept, streak 0');
+  await cshot(h.a, 'chain-phone-boom-bomb-light');
+
+  // ── run 3: a boom on bomb 1 is a normal boom ──
+  await h.a.click('#game-root [data-g="rematch"]');
+  await until(async () => (await dx(h.a)).phase === 'lobby' && (await dx(h.b)).phase === 'lobby', 'lobby');
+  await startRound(h, h.a, h.b, seedA, 'normal', { bombStarts: true });
+  await h.a.evaluate(() => window.__defuse.setLeft(900));
+  const l3 = await until(async () => { const x = await dx(h.a); return x.bomb.over ? x : null; }, 'bomb 1 to run out', 6000);
+  assert(!l3.bomb.win && l3.bomb.chain === 1 && /bomb 1 of 2/.test(l3.bomb.res.sub), 'a boom on bomb 1 ends the run: ' + l3.bomb.res.sub);
+  await endCards(h);
+  await until(() => results(h).length >= 3, 'the boom recorded', 4000);
+  await sleep(2400); await h.settle();
+  const g3 = gdata(h);
+  assert(results(h).length === 3 && (await dx(h.a)).bomb.chain === 1 && g3.booms === g2.booms + 1 && g3.chainRuns === 3 && g3.chainWins === 1, 'records: a third result, chainRuns 3, and bomb 2 never started');
+
+  // ── run 4: the bomb phone closes during the NEXT BOMB interlude and reopens on bomb 2; then closes again mid-bomb-2 ──
+  await h.a.click('#game-root [data-g="rematch"]');
+  await until(async () => (await dx(h.a)).phase === 'lobby' && (await dx(h.b)).phase === 'lobby', 'lobby');
+  const rd = await startRound(h, h.a, h.b, seedA, 'normal', { bombStarts: true });
+  const closer = h.a.evaluate(() => new Promise((res) => { const t = setInterval(() => { const i = window.__defuse && window.__defuse.info(); if (i && i.bomb && i.bomb.inter) { clearInterval(t); document.querySelector('#game-root [data-g="close"]').click(); res(i.bomb.n); } }, 8); }));
+  await h.a.evaluate(() => window.__defuse.setLeft(100000));
+  await winBomb1Quick(h, h.a);
+  assert(await closer === rd.n, 'run 4: the bomb phone closed the game during the NEXT BOMB interlude (bomb 1’s round id)');
+  await h.settle(); await h.settle();
+  assert(results(h).length === 3, 'closing during the interlude records nothing');
+  await comeBack(h, h.a, h.b);
+  const back = await until(async () => { const x = await chainState(h.a); return x && x.b && !x.b.inter ? x : null; }, 'the bomb phone to come back', 8000);
+  assert(back.b.chain === 2 && back.b.seed === RC_CHAIN.chainSeed(seedA) && back.b.n !== rd.n && back.b.carry > 60 && back.b.carry <= 100 && back.b.start === back.b.carry + 150 && back.b.solved.every((v) => !v) && back.b.prevStrikes === 0 && back.b.ch1 === r1.name, `the interlude close still ends on bomb 2 (${back.b.round.name}, start ${back.b.start} s)`);
+  await until(async () => { const x = await chainState(h.b); return x && x.m && x.m.n === back.b.n && x.m.chain === 2; }, 'the manual to follow', 5000);
+  assert((await chipText(h.a)).join() === 'Bomb 2 of 2' && (await chipText(h.b)).join() === 'Bomb 2 of 2', 'both phones say "Bomb 2 of 2"');
+  const plan4 = scored(back.b.round);
+  await solveSlot(h, h.a, plan4[0].i);
+  await h.closeGame(h.a);
+  await h.settle(); await h.settle();
+  await comeBack(h, h.a, h.b);
+  const back2 = await until(async () => { const x = await chainState(h.a); return x && x.b && x.b.chain === 2 ? x : null; }, 'the bomb back on bomb 2', 8000);
+  assert(back2.b.n === back.b.n && back2.b.solved[plan4[0].i] === 1 && back2.b.seed === back.b.seed && back2.b.ch1 === back.b.ch1 && (await chipText(h.a)).join() === 'Bomb 2 of 2', 'a close and reopen in the middle of bomb 2 stays on bomb 2 (same round, the solved module is still solved)');
+  assert((await dx(h.b)).manual.n === back.b.n && (await dx(h.b)).manual.chain === 2, 'the manual is still on bomb 2');
+  await h.a.evaluate(() => window.__defuse.setLeft(900));
+  await until(async () => (await dx(h.a)).bomb.over, 'the clock to run out', 6000);
+  await endCards(h);
+  await until(() => results(h).length >= 4, 'recorded', 4000);
+  await sleep(2200); await h.settle();
+  assert(results(h).length === 4 && gdata(h).chainRuns === 4, 'the resumed chain recorded exactly once');
+
+  // ── run 5: Today's bomb + Chain: bomb 2 is today's seed + "|next"; its time is kept under its own daily key ──
+  await h.a.click('#game-root [data-g="rematch"]');
+  await until(async () => (await dx(h.a)).phase === 'lobby' && (await dx(h.b)).phase === 'lobby', 'lobby');
+  await h.b.tap('[data-act="today"]'); await h.settle();
+  const bt = await startRound(h, h.a, h.b, null, null, { bombStarts: true });
+  assert(bt.seed === 'day-' + date && bt.chain === 1 && bt.daily === date, 'Today’s bomb + Chain: bomb 1 is the day’s bomb');
+  await h.a.evaluate(() => window.__defuse.forceWin());
+  const t2 = await waitBomb2(h.a, 6000);
+  assert(t2.b.seed === 'day-' + date + '|next' && JSON.stringify(RD.buildRound('day-' + date + '|next', 'normal').name) === JSON.stringify(t2.b.round.name), 'bomb 2 of Today’s bomb is the day’s seed + "|next", and node builds the same bomb');
+  await until(async () => (await manualInfo(h.b)).edition === t2.b.round.edition && (await dx(h.b)).manual.n === t2.b.n, 'the manual on the same edition', 4000);
+  await h.a.evaluate(() => window.__defuse.setLeft(900));
+  await until(async () => (await dx(h.a)).bomb.over, 'the clock to run out', 6000);
+  await endCards(h);
+  await until(() => results(h).length >= 5, 'recorded', 4000);
+  await sleep(1800); await h.settle();
+  const g5 = gdata(h);
+  assert(results(h).length === 5 && g5[`daily_${date}_normalx2_a`] === 0 && !(`daily_${date}_normal_a` in g5), 'a chain time on Today’s bomb is stored under its own key (daily_<date>_normalx2_a)');
+  await h.a.click('#game-root [data-g="rematch"]');
+  await until(async () => (await dx(h.a)).phase === 'lobby', 'lobby');
+  assert(/Today \(Agent ×2\)/.test(await h.a.textContent('.dx-rec')), 'the lobby’s Today line says Agent ×2 when Chain is on');
+  noErrors(h, 'phones, chain');
+}
+
+// ══════════════════════════ Chain ×2: laptop bomb + phone manual, light and dark ══════════════════════════
+async function chainLaptop(h, scheme) {
+  console.log(`\n# Chain ×2: laptop bomb, phone manual (${scheme})`);
+  await asLaptopPhone(h);
+  await goLive(h);
+  await pickRoles(h, h.a, h.b);
+  const seed = chainSeeds('normal', false, 'cl' + scheme[0]);
+  const r1 = RD.buildRound(seed, 'normal'), r2 = RD.buildRound(RC_CHAIN.chainSeed(seed), 'normal');
+  await h.b.click('.dx-tiers [data-diff="normal"]'); await h.settle();
+  await h.b.click('[data-act="chain"]'); await h.settle();
+  assert(await h.a.evaluate(() => document.querySelector('[data-act="chain"]').getAttribute('aria-checked')) === 'true', `${scheme}: the Chain switch reaches the laptop`);
+  await cshot(h.b, `chain-laptop-${scheme}-lobby-phone`); await cshot(h.a, `chain-laptop-${scheme}-lobby`);
+  const b1 = await startRound(h, h.a, h.b, seed, 'normal', { bombStarts: false });
+  assert(await visible(h.a, '.dx-side .dx-chain') && !(await visible(h.a, '.dx-topbar')) && (await chipText(h.a)).join() === 'Bomb 1 of 2' && (await chipText(h.b)).join() === 'Bomb 1 of 2', `${scheme}: "Bomb 1 of 2" in the laptop’s side panel and on the phone manual`);
+  await cshot(h.a, `chain-laptop-${scheme}-bomb1`, { fullPage: true }); await cshot(h.b, `chain-laptop-${scheme}-manual1`);
+  await h.a.evaluate(() => window.__defuse.setLeft(150000));
+  await winBomb1Quick(h, h.a, { touch: false });
+  await waitInterlude(h.a);
+  await Promise.all([cshot(h.a, `chain-laptop-${scheme}-interlude`), cshot(h.b, `chain-laptop-${scheme}-interlude-phone`)]);
+  const s2 = await waitBomb2(h.a);
+  await until(async () => { const x = await chainState(h.b); return x && x.m && x.m.n === s2.b.n; }, 'the phone manual to follow', 4000);
+  assert(s2.b.round.name === r2.name && (await manualInfo(h.b)).edition === r2.edition && (await chipText(h.a)).join() === 'Bomb 2 of 2' && (await chipText(h.b)).join() === 'Bomb 2 of 2', `${scheme}: bomb 2 (${r2.name}) on both devices, "Bomb 2 of 2"`);
+  assert(await noSideScroll(h.a) && await noSideScroll(h.b), `${scheme}: no side scroll on either device`);
+  const small = [...(await smallText(h.a)), ...(await smallText(h.b))].filter((x) => /dx-chain/.test(x.sel));
+  assert(small.length === 0, `${scheme}: the chain label is at least 11 px`);
+  await sleep(300);
+  await cshot(h.a, `chain-laptop-${scheme}-bomb2`, { fullPage: true }); await cshot(h.b, `chain-laptop-${scheme}-manual2`);
+  const done = scored(s2.b.round);
+  for (const { i } of done.slice(0, 2)) await solveSlot(h, h.a, i, { touch: false });
+  await h.a.evaluate(() => window.__defuse.setLeft(1200));
+  await until(async () => (await dx(h.a)).bomb.over, 'the clock to run out', 6000);
+  await sleep(700);
+  await endCards(h);
+  await sleep(400);
+  await cshot(h.a, `chain-laptop-${scheme}-end`); await cshot(h.b, `chain-laptop-${scheme}-end-phone`);
+  await until(() => results(h).length >= 1, 'the boom recorded', 4000);
+  await sleep(2200); await h.settle();
+  const x = gdata(h);
+  assert(results(h).length === 1 && x.booms === 1 && x.chainRuns === 1 && !x.chainWins, `${scheme}: bomb 2 boomed on the clock, recorded once`);
+  await closeBoth(h);
+  noErrors(h, 'chain laptop ' + scheme);
+}
+
 // ══════════════════════════ run ══════════════════════════
 async function withHarness(opts, fn) {
   const h = await launch({ only: ['defuse'], ...opts });
@@ -1327,6 +1612,7 @@ async function withHarness(opts, fn) {
   try {
     RD = await imp('js/games/defuse/round.js');
     RD_BY = RD.BY_ID;
+    RC_CHAIN = await imp('js/games/defuse/records.js');
     if (only === 'all' || only === 'node') await nodePart();
     if (only === 'all' || only === 'phone') {
       await withHarness({ port: PORT, coarse: true }, async (h) => { await asPhones(h); await phoneNormal(h); await closeBoth(h); await phoneClassic(h); await closeBoth(h); await phoneDaily(h); });
@@ -1349,6 +1635,11 @@ async function withHarness(opts, fn) {
     }
     if (only === 'all' || only === 'legacy') {
       await withHarness({ port: PORT + 5, coarse: true, seedDocs: { 'gamedata/defuse': { wins: 7, streak: 2, best: { normal: 100 }, medal: 'weird', log: '{{', mods: 4 } } }, async (h) => { await asPhones(h); await legacy(h); });
+    }
+    if (only === 'all' || only === 'chain') {
+      await withHarness({ port: PORT + 10, coarse: true }, async (h) => { await asPhones(h); await phoneChain(h); });
+      await withHarness({ port: PORT + 11, device: 'Desktop Chrome' }, async (h) => { await chainLaptop(h, 'light'); });
+      await withHarness({ port: PORT + 12, device: 'Desktop Chrome', colorScheme: 'dark' }, async (h) => { await chainLaptop(h, 'dark'); });
     }
     console.log('\nALL GOOD. Screenshots in', SHOTS);
   } catch (e) {
