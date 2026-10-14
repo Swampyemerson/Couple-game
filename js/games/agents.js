@@ -27,7 +27,7 @@
 // giver's key: agent = found (stays green, keep guessing); bystander = marked on the giver's
 // key and the turn ends; assassin = mission lost. Givers alternate, except that someone with
 // no agents left to find never gives the clue. Win by finding all 15 before the tokens run out.
-import { registerGame, shuffled, gameDataApi } from './core.js';
+import { registerGame, shuffled } from './core.js';
 import { checkClue } from './agents/clue.js';
 import { PACK_IDS, PACK_INFO, PACK_BREAKS, PACKS, packWords } from './agents/packs.js';
 
@@ -284,6 +284,8 @@ const turnDone = (s, k) => k < s.log.length - 1 || !!s.over || s.phase !== 'gues
 const agentPicks = (t) => t.picks.filter((p) => p.r === 'G').length;
 /** Mind meld: a clue for 2+ cards where the guesser found exactly n agents, no bystander, and the turn is over. */
 const isMeld = (t, done) => done && t.n >= 2 && t.picks.length === t.n && agentPicks(t) === t.n;
+/** Spotless: a win (sudden-death escapes included) without a single bystander tapped. Derived from state. */
+const isSpotless = (s) => s.over === 'win' && !s.log.some((t) => t.picks.some((p) => p.r === 'N')) && !(s.sd || []).some((p) => p.r === 'N');
 function matchStats(s) {
   const clues = s.log.map((t, k) => ({ k, by: t.by, clue: t.clue, n: t.n, got: agentPicks(t), meld: isMeld(t, turnDone(s, k)) }));
   const best = { a: 0, b: 0 };
@@ -306,6 +308,15 @@ const parseClue = (str) => { const [clue, got, by, pack, mid] = String(str || ''
 /** The ledger line for the standing record clue, e.g. "Record clue: OCEAN for 4 (Sydney, Wanderlust)." */
 const recordClueText = (d, nameOf) => { const r = parseClue(d.best_clue); return r ? `Record clue: ${r.clue.toUpperCase()} for ${r.got} (${nameOf(r.by)}, ${(PACK_INFO[r.pack] || PACK_INFO.classic).name}).` : ''; };
 const streakLine = (n) => (n >= 2 ? `${NUMWORD[n] || n} missions unbeaten. Keep it clean.` : '');
+/** "Record in reach" slip line (v2, guess phase). Reads the shared record; never writes it. */
+function recLine(s, best) {
+  const t = curTurn(s);
+  const b = Number(best) || 0;
+  if (s.v !== 2 || s.over || s.phase !== 'guess' || !t || t.picks.some((p) => p.r === 'N')) return '';
+  if (t.n > b && b >= 2) return `Crack all ${t.n} and it’s a new record.`;
+  if (t.n === b && t.n >= 3) return `All ${t.n} would equal the record.`;
+  return '';
+}
 /** The patch that records a finished mission, computed from a data snapshot `d`. Also returns the stamps earned. */
 function recordPatch(d, s, matchId) {
   const g = (k) => Number(d[k]) || 0;
@@ -333,6 +344,7 @@ function recordPatch(d, s, matchId) {
     if (st.spare > g('spare_best')) { p.spare_best = st.spare; badges.push('record'); }
     if (!s.sd && st.spare === 0) badges.push('last');
     if (s.sd) badges.push('escape');
+    if (isSpotless(s)) { p.spotless_n = g('spotless_n') + 1; badges.push('spotless'); }
   } else {
     p.streak = 0;
     const n = foundCount(s);
@@ -414,6 +426,10 @@ const css = `
   .g-ag-form .g-ag-step { flex: none; }
   .g-ag-form .gm-btn { flex: 1 1 0; min-width: 0; padding: 0 8px; }
 }
+
+.g-ag-rec { margin-top: 1px; font-size: 0.68rem; font-weight: 800; line-height: 1.15; color: var(--g-ink); text-wrap: balance; }
+.g-agents.has-rec .g-ag-card { height: clamp(44px, min(calc(var(--cw) * 0.8), calc((100dvh - 410px) / 5)), 96px); }
+.g-ag-rec[hidden] { display: none; }
 
 /* board: printed word cards, every word set at one size; long words break onto two lines */
 .g-ag-body { display: flex; flex-direction: column; gap: 12px; }
@@ -576,7 +592,7 @@ const css = `
   .g-ag-side h3 { margin-bottom: 4px; }
   .g-ag-log li { padding: 4px 8px; }
   .g-ag-grid { --gap: 3px; }
-  .g-ag-card { height: clamp(36px, calc((100dvh - 205px) / 5), 48px); padding-bottom: 4px; }
+  .g-ag-card, .g-agents.has-rec .g-ag-card { height: clamp(36px, calc((100dvh - 205px) / 5), 48px); padding-bottom: 4px; }
   .g-ag-card::before { bottom: 3px; }
   .g-ag-card .g-ag-ico { display: none; }
   .g-ag-paper { padding: 4px 8px 5px 12px; }
@@ -630,7 +646,7 @@ registerGame({
   endLookLabel: 'See the board',
   init, next, apply, result,
   // exposed for tests
-  _test: { makeKeys, pickWords, NOUNS, LAYOUT, TOKENS, TOTAL, BREAKS, cleanClue, cleanClue2: (s, x) => checkClue(s.words, s.found, x), PACKS, PACK_BREAKS, packWords: (seed, pack) => packWords(seed, pack, NOUNS), LEVELS, matchStats, recordPatch, isMeld, recordClueText, streakLine, parseClue, recentIds, pushRecent, RECENT_CAP },
+  _test: { isSpotless, recLine, makeKeys, pickWords, NOUNS, LAYOUT, TOKENS, TOTAL, BREAKS, cleanClue, cleanClue2: (s, x) => checkClue(s.words, s.found, x), PACKS, PACK_BREAKS, packWords: (seed, pack) => packWords(seed, pack, NOUNS), LEVELS, matchStats, recordPatch, isMeld, recordClueText, streakLine, parseClue, recentIds, pushRecent, RECENT_CAP },
 
   mount(el, api) {
     el.innerHTML = `<div class="g-agents">
@@ -661,8 +677,6 @@ registerGame({
     const dock = q('.g-ag-dock');
     const logEl = q('.g-ag-log');
 
-    // the turn-game api has no data(): use the engine's per-game shared records directly
-    const store = typeof api.data === 'function' ? api : gameDataApi('agents');
     let ctx = null;
     let sel = null; // selected card index (guesser)
     let selAt = 0; // when it was selected (a double-tap must not confirm)
@@ -683,7 +697,7 @@ registerGame({
     const ini = (w) => esc((api.name(w) || w).trim().charAt(0).toUpperCase());
     const who = (w) => `<span class="g-ag-who p-${w}">${nm(w)}</span>`;
     const stamp = () => Date.now();
-    function safeData() { try { return store.data() || {}; } catch { return {}; } }
+    function safeData() { try { return api.data() || {}; } catch { return {}; } }
 
     // A half-typed clue survives a reload (this device only).
     const DRAFT = 'ju.agents.draft.';
@@ -796,6 +810,7 @@ registerGame({
       if (g('spare_best')) bits.push(`best: <b>${g('spare_best')}</b> turn${g('spare_best') === 1 ? '' : 's'} to spare`);
       else if (g('close_best')) bits.push(`closest call: <b>${g('close_best')}</b>/${TOTAL}`);
       if (g('meld_n')) bits.push(`<b>${g('meld_n')}</b> mind meld${g('meld_n') === 1 ? '' : 's'}`);
+      if (g('spotless_n')) bits.push(`<b>${g('spotless_n')}</b> spotless`);
       const lines = [`<div class="g-ag-ledger">${bits.map((b) => `<span>${b}</span>`).join('')}</div>`];
       const rc = recordClueText(d, (w) => api.name(w));
       if (rc) lines.push(`<div class="g-ag-ledger"><span>${esc(rc)}</span></div>`);
@@ -807,6 +822,7 @@ registerGame({
       if (b === 'tie') return ['EQUALS THE RECORD', 'rec'];
       if (b === 'last') return ['ON THE LAST TOKEN', 'bad'];
       if (b === 'escape') return ['SUDDEN-DEATH ESCAPE', 'good'];
+      if (b === 'spotless') return ['NOT ONE WRONG TAP', 'good'];
       let m = /^row(\d+)$/.exec(b);
       if (m) return [`${m[1]} IN A ROW`, 'a'];
       m = /^meld(\d+)$/.exec(b);
@@ -822,6 +838,7 @@ registerGame({
       const set = new Set();
       if (s.over === 'win' && !s.sd && st.spare === 0) set.add('last');
       if (s.over === 'win' && s.sd) set.add('escape');
+      if (isSpotless(s)) set.add('spotless');
       if (st.melds) set.add(`meld${st.melds}`);
       if (d.lastm === c.matchId && d.lastb) for (const b of String(d.lastb).split(',')) if (b) set.add(b);
       return [...set].map(STAMP_TEXT).filter(Boolean);
@@ -850,7 +867,7 @@ registerGame({
       const d = safeData();
       if (recentIds(d.recent_m).includes(c.matchId)) return;
       if (!watched && c.state.v !== 2) return;
-      try { store.setData({ ...recordPatch(d, c.state, c.matchId), recent_m: pushRecent(d.recent_m, c.matchId) }); } catch { /* records are a bonus */ }
+      try { api.setData({ ...recordPatch(d, c.state, c.matchId), recent_m: pushRecent(d.recent_m, c.matchId) }); } catch { /* records are a bonus */ }
     }
 
     // ── the rules card (first giver, before the first clue) ──
@@ -941,11 +958,20 @@ registerGame({
         </form>`;
           if (d) slip.querySelector('.g-ag-input').value = d.t;
         } else if (t && s.phase === 'guess' && role !== 'blank' && role !== 'over') {
-          slip.innerHTML = `<div class="g-ag-paper${fresh ? ' fresh' : ''}"><div class="g-ag-cluebox"><span class="g-ag-clhead"><small>${nm(t.by)}’s clue</small>${s.v === 2 ? '<span class="g-ag-left"></span>' : ''}</span><span class="g-ag-clueword" style="--len:${t.clue.length}">${esc(t.clue)}</span></div><span class="g-ag-num" aria-label="${t.n} cards">${t.n}</span></div>`;
+          slip.innerHTML = `<div class="g-ag-paper${fresh ? ' fresh' : ''}"><div class="g-ag-cluebox"><span class="g-ag-clhead"><small>${nm(t.by)}’s clue</small>${s.v === 2 ? '<span class="g-ag-left"></span>' : ''}</span><span class="g-ag-clueword" style="--len:${t.clue.length}">${esc(t.clue)}</span>${s.v === 2 ? '<span class="g-ag-rec" hidden></span>' : ''}</div><span class="g-ag-num" aria-label="${t.n} cards">${t.n}</span></div>`;
         } else slip.innerHTML = '';
       }
       const lf = slip.querySelector('.g-ag-left');
       if (lf && t) { const k = Math.max(0, t.n + 1 - agentPicks(t)); lf.textContent = `${k} pick${k === 1 ? '' : 's'} left`; }
+      syncRec();
+    }
+    // the record-in-reach line: shown only while it applies, read from the shared data
+    function syncRec() {
+      if (!ctx) return;
+      const rec = slip.querySelector('.g-ag-rec');
+      const text = rec ? recLine(ctx.state, safeData().clue_best) : '';
+      if (rec) { rec.textContent = text; rec.hidden = !text; }
+      root.classList.toggle('has-rec', !!text);
     }
 
     function renderDock() {
@@ -1050,7 +1076,7 @@ registerGame({
         const r = api.move({ setup: { v: 2, level: draft.level, pack: draft.pack, sudden: draft.sudden } });
         if (!r.ok) { api.toast(r.error); api.sfx('bad'); return; }
         lockUntil = stamp() + 400;
-        try { store.setData({ last_setup: `${draft.level}|${draft.pack}|${draft.sudden ? 1 : 0}` }); } catch { /* optional */ }
+        try { api.setData({ last_setup: `${draft.level}|${draft.pack}|${draft.sudden ? 1 : 0}` }); } catch { /* optional */ }
         api.sfx('place');
         return;
       } else return;
@@ -1108,7 +1134,7 @@ registerGame({
       } else if (act === 'mine') { showMine = !showMine; api.sfx('flip'); renderGrid(); renderDock(); }
       else if (act === 'key') { keyView = b.dataset.w; api.sfx('flip'); renderGrid(); renderDock(); }
     });
-    const offData = typeof store.onData === 'function' ? store.onData(() => { if (ctx) { rulesSig = ''; renderRules(); if (ctx.over) renderDock(); } }) : null;
+    const offData = api.onData(() => { if (ctx) { rulesSig = ''; renderRules(); syncRec(); if (ctx.over) renderDock(); } });
 
     return {
       update(c) {
