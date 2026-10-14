@@ -125,11 +125,11 @@ export function targetChip(target, elapsedMs, role) {
   const T = ts || fmtSec(at / 1000);
   if (kind === 'bust') {
     if (past) return { t: run ? 'Pair is yours' : 'Bust them anyway', hot: false, past: true, stamp: run ? `PAST ${T}!` : `THEY’RE PAST ${T}`, good: run };
-    const s = fmtSec(Math.ceil(Math.max(0, left) / 1000));
+    const s = fmtSec(Math.max(0, left) / 1000); // (rounded like the target's own label, so they agree at the start)
     return { t: run ? `Beat ${T} · ${s} to go` : `Bust by ${T} · ${s} left`, hot: left <= TARGET_HOT, past: false, stamp: '', good: false };
   }
   if (past) return { t: run ? 'Too slow now' : 'Pair is yours', hot: false, past: true, stamp: run ? `TOO SLOW · ${T} GONE` : 'THEY’RE TOO SLOW', good: !run };
-  const s = fmtSec(Math.ceil(Math.max(0, left) / 1000));
+  const s = fmtSec(Math.max(0, left) / 1000); // (rounded like the target's own label, so they agree at the start)
   return { t: run ? `Escape by ${T} · ${s} to go` : `Stop them by ${T} · ${s} left`, hot: left <= TARGET_HOT, past: false, stamp: '', good: false };
 }
 
