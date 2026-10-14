@@ -193,6 +193,21 @@ p { margin: 0; }
 .bubble.p-a .who { background: var(--p-a); }
 .bubble.p-b .who { background: var(--p-b); }
 .bubble .txt { white-space: pre-wrap; word-break: break-word; font-size: 1rem; line-height: 1.4; }
+/* pick + guess daily */
+.daily .opts .opt { min-height: 52px; touch-action: manipulation; }
+.daily .btn.is-off { opacity: 0.55; }
+.dguess { margin-top: 6px; color: var(--muted); font-weight: 700; }
+.dreveal { display: flex; flex-direction: column; gap: 10px; padding: 14px; color: var(--text); background: var(--card); border: 2px solid var(--text); border-radius: 12px; box-shadow: var(--shadow); }
+.dreveal.fresh { animation: pop 0.35s ease-out both; }
+.dr-head { font-family: var(--g-font-display); font-weight: 900; font-size: 1.3rem; line-height: 1.15; }
+.dr-row { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px 10px; padding: 10px 12px; background: var(--ps, var(--card)); border: 2px solid var(--text); border-radius: 10px; }
+.dr-who { padding: 3px 7px 2px; font-size: 0.66rem; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--g-on-ink); background: var(--pi, var(--g-hl)); border-radius: 4px; }
+.dr-pick { font-weight: 800; line-height: 1.3; word-break: break-word; }
+.dr-row .mark { grid-column: 1 / -1; justify-self: start; margin-left: 0; }
+.dr-verdict { font-weight: 800; }
+.dreveal.both-right .dr-verdict { align-self: flex-start; padding: 3px 8px; color: var(--g-on-ink); background: var(--g-hl); border-radius: 4px; }
+.dtally { margin: 0; font-weight: 700; }
+.dtally > span:first-child { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
 
 /* section labels with a printed rule */
 .section { display: flex; align-items: center; gap: 8px; margin: 4px 0 0; font-family: var(--g-font-body); font-weight: 800; font-size: 0.74rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text); }
@@ -954,6 +969,756 @@ const CONFIG = {
 return { CONFIG };
 })();
 
+// ── js/content/quiz.js ──
+__M['js/content/quiz.js'] = (() => {
+'use strict';
+// Extra question packs (quiz). Same shape as PACKS in js/content.js; appended after the base packs.
+const QUIZ_PACKS = [
+  {
+    id: 'quiz2-kid', type: 'quiz', cat: 'quiz', emoji: '🧸', title: 'Little You',
+    blurb: 'Who were you before all this? Guess the mini version.',
+    items: [
+      { q: 'As a kid, you were the one who…', o: ['Got sent to the principal’s office', 'Read under the covers with a flashlight', 'Turned every couch into a fort', 'Ran a tiny business (lemonade, slime, candy)'] },
+      { q: 'Your go-to recess move?', o: ['Four square / tetherball domination', 'Swings, as high as humanly possible', 'Make-believe with very serious rules', 'Hiding out in the library'] },
+      { q: 'The lunchbox staple?', o: ['Dunkaroos and a Capri Sun', 'PB&J, crusts cut off', 'Leftovers that made the cafeteria stare', 'School pizza, every single day'] },
+      { q: 'Your childhood nemesis was…', o: ['A sibling', 'The kid who copied my homework', 'Bedtime', 'Vegetables'] },
+      { q: 'Your childhood bedroom walls had…', o: ['Band or movie posters', 'Glow-in-the-dark stars', 'Sports stuff and trophies', 'My own drawings taped up everywhere'] },
+      { q: 'The toy you’d still rescue from a fire?', o: ['A beat-up stuffed animal', 'A Game Boy / Nintendo', 'A bin of LEGO', 'A blanket that had a name'] },
+      { q: 'How did you get in trouble most?', o: ['Talking back', 'Sneaking snacks', 'Fighting with a sibling or cousin', 'Never, I was an angel (lie)'] },
+      { q: 'At sleepovers you were…', o: ['First one asleep', 'Up till 4am telling ghost stories', 'Calling home to get picked up', 'The prank mastermind'] },
+      { q: 'Saturday mornings as a kid meant…', o: ['Cartoons in pajamas', 'Sports practice or a game', 'Chores before anything fun', 'Video games until someone yelled'] },
+      { q: 'Which school subject did you secretly love?', o: ['Math', 'Art', 'Science', 'PE'] },
+    ],
+  },
+  {
+    id: 'quiz2-money', type: 'quiz', cat: 'quiz', emoji: '💸', title: 'Money Moves',
+    blurb: 'Saver, spender, or “treat yourself” philosopher?',
+    items: [
+      { q: 'Payday hits. First move?', o: ['Straight into savings', 'A little treat, I earned it', 'Pay bills, stare at what’s left', 'Already spent it in my head'] },
+      { q: 'How often do you open your bank app?', o: ['Daily, I know every cent', 'Once a week', 'Only when something feels off', 'I’m scared to open it'] },
+      { q: 'The splurge you never regret?', o: ['Really good food', 'Concert or event tickets', 'Clothes and shoes', 'Tech and gadgets'] },
+      { q: 'Your online shopping cart right now is…', o: ['Empty, I checked out', 'Full and aging like fine wine', 'Abandoned on purpose', 'Several carts across several sites'] },
+      { q: 'Where does your money quietly leak?', o: ['Delivery fees', 'Coffee runs', 'Subscriptions I forgot I have', 'Impulse buys at the checkout'] },
+      { q: 'A surprise $5,000 lands in your account. It goes to…', o: ['A trip, booked by dinner', 'Investing it', 'Paying something off', 'One really nice thing'] },
+      { q: 'Discount behavior?', o: ['Extreme couponer energy', 'Only if the app reminds me', 'Full price, like a champion', 'Always asking for the student discount'] },
+      { q: 'Money as a couple, ideally?', o: ['Fully joint, what’s mine is yours', 'Split everything 50/50', 'Split by who earns what', 'Shared pot for bills, separate fun money'] },
+      { q: 'What do you refuse to pay extra for?', o: ['Checked bags', 'Name-brand groceries', 'Guac', 'Seat selection'] },
+      { q: 'Your money personality is basically…', o: ['Spreadsheet goblin', 'Generous to a fault', '“Future me will deal with it”', 'Cheap until it’s for someone I love'] },
+    ],
+  },
+  {
+    id: 'quiz2-travel', type: 'quiz', cat: 'quiz', emoji: '🧳', title: 'Travel Style',
+    blurb: 'Airport habits, road trip roles, vacation mode.',
+    items: [
+      { q: 'You get to the airport…', o: ['Three hours early, minimum', 'Exactly when the app says', 'Sprinting to the gate', 'Late enough to make it interesting'] },
+      { q: 'Packing style?', o: ['A week ahead, with a list', 'Night before, total chaos', 'Morning of, forgot socks', 'Carry-on only, ruthless'] },
+      { q: 'Road trip bathroom-break policy?', o: ['Stop whenever anyone asks', 'Only when the gas tank says so', 'Hold it, we’re making great time', 'Every rest stop, I love them'] },
+      { q: 'First thing you do in a new city?', o: ['Hunt down the best local food', 'Wander with no map', 'Find the hotel pool', 'Nap'] },
+      { q: 'Gas station stop, you’re grabbing…', o: ['Beef jerky', 'A giant fountain drink', 'Candy for the whole car', 'Just the bathroom, let’s go'] },
+      { q: 'Vacation photos: you’re…', o: ['Taking 400 of them', 'Only scenery, no faces', 'Posing for every shot', 'Forgetting my phone exists'] },
+      { q: 'Dream way to get around on a trip?', o: ['A convertible on a coast road', 'A Vespa through tiny villages', 'A sailboat between islands', 'Private jet, obviously'] },
+      { q: 'The travel disaster you’d handle worst?', o: ['Lost luggage', 'A missed connection', 'Food poisoning abroad', 'A hotel bed with mystery stains'] },
+      { q: 'Souvenir you always come home with?', o: ['A magnet', 'A hoodie or shirt', 'Local snacks', 'Something totally random'] },
+      { q: 'Spontaneous weekend, no planning. You’d head to…', o: ['Desert and red rocks', 'Vegas lights', 'A snowy mountain town', 'A beach with good tacos'] },
+    ],
+  },
+  {
+    id: 'quiz2-peeves', type: 'quiz', cat: 'quiz', emoji: '😤', title: 'Pet Peeves',
+    blurb: 'What makes them twitch? Guess right and avoid it forever.',
+    items: [
+      { q: 'Which one makes you twitch the most?', o: ['Someone reading over my shoulder', 'Keyboard click sounds on a phone', 'Videos on speaker in public', 'People stopping dead at the top of an escalator'] },
+      { q: 'Worst thing another driver can do?', o: ['No turn signal', 'Camp in the left lane', 'Tailgate', 'No thank-you wave when I let them in'] },
+      { q: 'Restaurant crime?', o: ['Clearing plates while I’m still eating', 'Asking “still working on that?”', 'Sticky menus', 'Water with no ice'] },
+      { q: 'Text that makes your blood boil?', o: ['“We need to talk”', 'A single “?”', 'Replying to everything except my question', 'Left on read for hours'] },
+      { q: 'Most annoying roommate habit?', o: ['Empty carton put back in the fridge', 'Hair in the drain', 'Borrowing without asking', 'Thermostat wars'] },
+      { q: 'Grocery store nemesis?', o: ['Cart parked across the whole aisle', '30 items in the express lane', 'Self-checkout “unexpected item”', 'Someone counting out exact change in pennies'] },
+      { q: 'Social media sin?', o: ['Vague-posting for attention', 'A photo of every meal', 'Twenty-part stories', 'Tagging me in ugly photos'] },
+      { q: 'At the movie theater, the worst is…', o: ['Phone screens lighting up', 'Talkers', 'Seat kickers', 'Crinkly wrappers at the big moment'] },
+      { q: 'Word or phrase you can’t stand?', o: ['“Moist”', '“It is what it is”', '“Per my last email”', '“No offense, but…”'] },
+      { q: 'Tiny household thing that ruins your day?', o: ['A lid not fully closed', 'Cabinet doors left open', 'The one missing sock', 'A charger that only works at an angle'] },
+    ],
+  },
+  {
+    id: 'quiz2-dilemmas', type: 'quiz', cat: 'quiz', emoji: '🤔', title: 'What Would You Do?',
+    blurb: 'Little everyday dilemmas. No wrong answers (mostly).',
+    items: [
+      { q: 'The cashier gives you $20 too much in change. You…', o: ['Hand it back on the spot', 'Notice in the car and go back in', 'Keep it, the universe provides', 'Keep it only if they were rude'] },
+      { q: 'A friend’s new partner is clearly bad news. You…', o: ['Tell them straight up', 'Drop very heavy hints', 'Stay quiet and wait it out', 'Vent about it to my partner nonstop'] },
+      { q: 'You scrape a parked car. Nobody saw.', o: ['Leave a note with my number', 'Wait around for the owner', 'Drive off, carry the guilt forever', 'Inspect it first, then decide'] },
+      { q: 'A friend asks what you think of their very bad haircut.', o: ['Brutal honesty', '“It’ll grow on me”', 'An enthusiastic lie', 'Compliment their shoes instead'] },
+      { q: 'You stumble on your birthday present hidden early.', o: ['Peek, obviously', 'Cover my eyes and back away', 'Peek, then act shocked later', 'Tell them to find a better hiding spot'] },
+      { q: 'A free trial charges tomorrow and you forgot to cancel.', o: ['Cancel right now, from bed', 'Set a reminder and forget again', 'Pay and pretend I meant to', 'Binge it hard for one last night'] },
+      { q: 'Last slice of pizza, three people, nobody’s moving.', o: ['Take it, zero shame', 'Offer it around first', 'Cut it into three tiny pieces', 'Stare at it until someone cracks'] },
+      { q: 'The group chat is roasting someone you like.', o: ['Defend them', 'Go silent', 'Change the subject with a meme', 'Laugh, then feel bad'] },
+      { q: 'Your favorite celebrity sits next to you on a plane.', o: ['Play it cool the whole flight', 'Ask for a selfie immediately', 'One question, then leave them alone', 'Text everyone I know under the tray table'] },
+      { q: 'The couple at the next table is fighting about something ridiculous.', o: ['Eavesdrop shamelessly', 'Narrate it quietly to my date', 'Pick a side in my head', 'Look away and give them privacy'] },
+    ],
+  },
+  {
+    id: 'quiz2-home', type: 'quiz', cat: 'quiz', emoji: '🏡', title: 'The Dream Home',
+    blurb: 'Design the house in your head. Can they picture it?',
+    items: [
+      { q: 'Who or what greets you at the front door?', o: ['A big dog losing its mind', 'A smart lock and a robot vacuum', 'A porch swing and wind chimes', 'A shoes-off sign and a candy bowl'] },
+      { q: 'The ridiculous luxury you’d build in?', o: ['A slide instead of stairs', 'An indoor hammock net', 'A cereal bar with dispensers', 'A soundproof scream room'] },
+      { q: 'Your dream bed?', o: ['A giant California king', 'A canopy bed', 'A hammock, honestly', 'Cloud-soft, with ten pillows'] },
+      { q: 'Decor vibe?', o: ['Clean minimalist', 'Warm and earthy, all wood and linen', 'Maximalist, color on every wall', 'Whatever’s comfiest'] },
+      { q: 'Non-bedroom room you can’t live without?', o: ['A huge laundry room (yes, really)', 'A home gym', 'An office or studio', 'A mudroom for muddy dogs and boots'] },
+      { q: 'The view from your window?', o: ['Ocean', 'Mountains', 'City skyline', 'Trees and nothing else'] },
+      { q: 'Bathroom splurge?', o: ['A steam shower', 'A huge soaking tub', 'Heated floors', 'A bidet, don’t judge'] },
+      { q: 'How many plants live there?', o: ['Zero, they all die', 'A few tough survivors', 'A full jungle', 'Fake ones, maximum effect'] },
+      { q: 'Living room centerpiece?', o: ['A fireplace', 'A couch big enough for everyone', 'A massive TV', 'A record player and walls of vinyl'] },
+      { q: 'Neighbors?', o: ['Nearest one is a mile away', 'Friendly cul-de-sac', 'Apartment buzz, I love it', 'Our best friends next door'] },
+    ],
+  },
+  {
+    id: 'quiz2-social', type: 'quiz', cat: 'quiz', emoji: '🔋', title: 'Friends & Social Battery',
+    blurb: 'Party animal or Irish goodbye? Let’s find out.',
+    items: [
+      { q: 'At a party, where do you end up?', o: ['Kitchen, by the snacks', 'Petting the host’s dog', 'Middle of the dance floor', 'Deep talk out on the porch'] },
+      { q: 'Plans get canceled last minute. You feel…', o: ['Pure relief', 'Low-key annoyed', 'Bummed, I was excited', 'Relieved, but I’ll say I’m bummed'] },
+      { q: 'Friends call you when they need…', o: ['Real advice', 'An alibi', 'A ride at 2am', 'Someone to hype the outfit'] },
+      { q: 'How long can you socialize before needing a recharge?', o: ['An hour, tops', 'An afternoon', 'All weekend', 'I recharge BY being social'] },
+      { q: 'Ideal hangout size?', o: ['Just one friend', '3–4 people', 'A dinner party of eight', 'The more the merrier'] },
+      { q: 'A friend texts “can you talk?” You…', o: ['Call immediately', 'Text back “what’s up”', 'Panic about what I did', 'Reply three hours later'] },
+      { q: 'A stranger starts chatting with you in line. You…', o: ['Love it, new friend', 'Polite, short answers', 'Suddenly very busy on my phone', 'Somehow learn their whole life story'] },
+      { q: 'How do you keep up with friends?', o: ['A group chat that never sleeps', 'Long phone calls', 'Memes as proof of life', 'Months of silence, then pick up like nothing happened'] },
+      { q: 'Your role on a group trip?', o: ['Booked it all, made a spreadsheet', 'Sends everyone Venmo requests after', 'Finds the best bar every night', 'Just happy to be included'] },
+      { q: 'You’re the friend who…', o: ['Gives real advice', 'Hypes everyone up', 'Drives everyone home', 'Remembers every birthday'] },
+    ],
+  },
+  {
+    id: 'quiz2-pop', type: 'quiz', cat: 'quiz', emoji: '🎧', title: 'Pop Culture Taste',
+    blurb: 'Music, shows, games. Do they really know your taste?',
+    items: [
+      { q: 'Your Spotify Wrapped is embarrassing because of…', o: ['One song played 900 times', 'Sad songs, only sad songs', 'Middle-school throwbacks', 'Hours of lo-fi study beats'] },
+      { q: 'Go-to music in the car?', o: ['Hip-hop / rap', 'Country', 'Pop hits', 'Indie / alternative'] },
+      { q: 'The concert you’d drop everything for?', o: ['A huge pop superstar', 'A rap headliner', 'A three-day festival', 'A tiny band in a dive bar'] },
+      { q: 'Show genre you binge?', o: ['True crime docs', 'Reality dating shows', 'Prestige drama', 'Anime'] },
+      { q: 'Your kind of video game?', o: ['Cozy (Stardew, Animal Crossing)', 'Shooters', 'Party games with friends, lots of yelling', 'Story games that make me cry'] },
+      { q: 'Celebrity crush type?', o: ['Rugged and bearded', 'Pretty and polished', 'Funny beats everything', 'Mysterious villain energy'] },
+      { q: 'Reading habit?', o: ['A book every night', 'Audiobooks at 2x speed', 'BookTok impulse buys I never open', 'Last book was assigned in school'] },
+      { q: 'Which music era is yours?', o: ['70s & 80s classics', '90s / 2000s', '2010s', 'Whatever dropped this week'] },
+      { q: 'You’d crush it as a contestant on…', o: ['Survivor', 'The Great British Bake Off', 'Love Island', 'Jeopardy!'] },
+      { q: 'You could quote word-for-word…', o: ['A Disney classic', 'A 2000s comedy', 'Star Wars / Marvel', 'Mean Girls'] },
+    ],
+  },
+  {
+    id: 'quiz2-lazy', type: 'quiz', cat: 'quiz', emoji: '🛋️', title: 'The Perfect Lazy Day',
+    blurb: 'Zero plans, zero pants. How do they do nothing?',
+    items: [
+      { q: 'Lazy day outfit?', o: ['Oversized hoodie and that’s it', 'A matching sweatsuit', 'Yesterday’s pajamas', 'Underwear, door locked'] },
+      { q: 'When do you finally get out of bed?', o: ['Still before 9', 'Around 11', 'Sometime after noon', 'Who said anything about leaving the bed?'] },
+      { q: 'Lazy day food plan?', o: ['Delivery, more than once', 'Grazing on snacks, no real meals', 'A big homemade brunch', 'Leftovers straight from the container'] },
+      { q: 'Main screen activity?', o: ['Binge a whole season', 'Video games for hours', 'Doomscrolling', 'A themed movie marathon'] },
+      { q: 'Couch position?', o: ['Full horizontal stretch', 'Blanket burrito', 'Head in your lap', 'Upside down, legs over the back'] },
+      { q: 'How productive does a lazy day get?', o: ['Zero, that’s the point', 'One load of laundry, I’m a hero', 'Accidentally clean the whole place', 'Plan to do stuff, do none of it'] },
+      { q: 'Perfect lazy day weather?', o: ['Rainy and gray', 'Snowing outside', 'Sunny, windows open', 'A full thunderstorm'] },
+      { q: 'Phone status on a lazy day?', o: ['Do Not Disturb, all day', 'Glued to my hand', 'Lost in the couch cushions', 'Charging across the room on purpose'] },
+      { q: 'Is leaving the house allowed?', o: ['Absolutely not', 'Only for a drive-thru', 'A short walk, max', 'Only to sit in a hot tub'] },
+      { q: 'The background noise?', o: ['Rain sounds', 'A comfort show I’m not watching', 'A chill playlist', 'Nothing but the fridge humming'] },
+    ],
+  },
+  {
+    id: 'quiz2-stress', type: 'quiz', cat: 'quiz', emoji: '🌪️', title: 'Conflict & Stress',
+    blurb: 'How they fight, cope and come back. Useful intel.',
+    items: [
+      { q: 'When we disagree, you’d rather…', o: ['Settle it right now', 'Cool off for an hour first', 'Crack a joke to break the tension', 'Agree fast, process later'] },
+      { q: 'Under stress, your eating goes…', o: ['Everything in sight', 'Forget to eat at all', 'Only crunchy things', 'Stress-baking for everyone'] },
+      { q: 'Your tell that you’re stressed?', o: ['Super quiet', 'Short, snappy answers', 'Cleaning like a maniac', 'Saying “I’m fine” a lot'] },
+      { q: 'What actually helps when you’re overwhelmed?', o: ['A hug, no words', 'Someone making a plan with me', 'Being left alone for a bit', 'Getting distracted with something dumb'] },
+      { q: 'In an argument you tend to…', o: ['Bring receipts', 'Get emotional first, logical later', 'Shut down', 'Over-explain everything'] },
+      { q: 'How fast do you forgive?', o: ['Instantly, I forget why I was mad', 'Same day', 'After a real apology', 'Forgiven, never forgotten'] },
+      { q: 'Big deadline tomorrow, nothing done. You…', o: ['Pull an all-nighter', 'Panic, then nap', 'Ask for an extension', 'Calmly crush it, pressure is my fuel'] },
+      { q: 'You lose your keys right before leaving. You…', o: ['Calmly retrace my steps', 'Tear the whole place apart', 'Blame whoever touched them last', 'Find them in my hand'] },
+      { q: 'Who do you vent to first?', o: ['My partner', 'Mom or family', 'My best friend', 'My notes app / journal'] },
+      { q: 'How do you say sorry?', o: ['Big heartfelt words', 'A gesture, like snacks or a favor', 'A long hug', '“My bad,” and we move on'] },
+    ],
+  },
+  {
+    id: 'quiz2-hidden', type: 'quiz', cat: 'quiz', emoji: '🕵️', title: 'Hidden Sides',
+    blurb: 'Secret talents, guilty pleasures, the stuff behind closed doors.',
+    items: [
+      { q: 'Party trick you could pull out right now?', o: ['A flawless impression of someone', 'A weird double-jointed thing', 'Solving a Rubik’s cube', 'Naming a song in three notes'] },
+      { q: 'Guilty pleasure you’d least want people to know about?', o: ['Reality TV marathons', 'Fan fiction', 'Kids’ cereal at midnight', 'Rewatching the same YouTube videos'] },
+      { q: 'Alone in the car, you…', o: ['Perform a full concert, with choreography', 'Rehearse arguments I’ll never have', 'Talk to myself like a podcast host', 'Sit in the driveway for 20 minutes'] },
+      { q: 'Skill you’d learn if nobody could judge you?', o: ['Pole dancing', 'Opera singing', 'Competitive yo-yo', 'Ventriloquism'] },
+      { q: 'You’re secretly way too competitive about…', o: ['Board games', 'Who gets ready fastest', 'Wordle and daily puzzles', 'Literally everything'] },
+      { q: 'Your soft side comes out for…', o: ['Baby animals', 'Sad movie endings', 'Old couples holding hands', 'Proposal videos'] },
+      { q: 'The internet rabbit hole you fall into?', o: ['Unsolved mysteries', 'House tours', 'Cooking videos I’ll never make', 'Weird history facts'] },
+      { q: 'Something you’re oddly good at?', o: ['Building IKEA furniture without the manual', 'Remembering everyone’s coffee order', 'Guessing prices on game shows', 'Calling plot twists early'] },
+      { q: 'Secret food habit?', o: ['Eating chips with chopsticks', 'Dinner standing at the counter', 'Saving the best bite for last', 'Eating the frosting first'] },
+      { q: 'Your secret identity would be…', o: ['A spy', 'An underground DJ', 'An anonymous famous author', 'A masked vigilante'] },
+    ],
+  },
+  {
+    id: 'quiz2-gifts', type: 'quiz', cat: 'quiz', emoji: '🎁', title: 'Gifts & Giving',
+    blurb: 'How they shop, wrap and react. Take notes.',
+    items: [
+      { q: 'Your gift shopping timeline?', o: ['Bought months ahead', 'About a week before', 'Night before, panic mode', 'Day of, gas station flowers'] },
+      { q: 'Wrapping style?', o: ['Crisp corners and real ribbon', 'Gift bag and tissue paper', 'Newspaper or a grocery bag', 'Unwrapped, “here you go”'] },
+      { q: 'Gift you secretly hate getting?', o: ['Gift cards', 'Clothes in the wrong size', 'Candles', 'A “funny” gift that’s just clutter'] },
+      { q: 'Opening a gift in front of people, you…', o: ['Give a big reaction', 'Get awkward and weird', 'Peel the tape carefully to save the paper', 'Rip it apart in two seconds'] },
+      { q: 'Surprise or wishlist?', o: ['Surprise me, always', 'Wishlist, I want what I want', 'Wishlist plus one surprise', 'Cash is the best gift, fight me'] },
+      { q: 'Best kind of gift to get you?', o: ['An experience (tickets, a class)', 'Something handmade', 'The thing I mentioned once months ago', 'A fancy version of something I use daily'] },
+      { q: 'Your gift-giving signature?', o: ['Thoughtful and sentimental', 'Gag gifts', 'Practical, they’ll actually use it', 'Wildly over budget'] },
+      { q: 'A gift totally flops. You…', o: ['Return it quietly', 'Use it once out of guilt', 'Regift it', 'Keep it in a closet forever'] },
+      { q: 'Holiday gift exchange format?', o: ['White elephant chaos', 'Secret Santa', 'Everyone buys for everyone', 'No gifts, just food'] },
+      { q: 'Flowers?', o: ['Yes, always', 'A plant that won’t die, please', 'I’d rather have snacks', 'Only one specific kind'] },
+    ],
+  },
+  {
+    id: 'quiz2-risk', type: 'quiz', cat: 'quiz', emoji: '🪂', title: 'Risk & Adventure',
+    blurb: 'Daredevil or designated bag holder?',
+    items: [
+      { q: 'Roller coasters?', o: ['Front row, hands up', 'Back row, eyes shut', 'Only the medium ones', 'I’ll hold the bags'] },
+      { q: 'Highest you’d jump into water from?', o: ['A dock', 'A 10-foot rock', 'A cliff, no hesitation', 'I’m taking the trail back down'] },
+      { q: 'Something strange on the menu?', o: ['Order it immediately', 'Try a bite of yours', 'Google it first', 'Chicken tenders, thanks'] },
+      { q: 'The trail sign says “Experts only.”', o: ['Challenge accepted', 'Go a little way, then turn back', 'Turn around right there', 'Send you first'] },
+      { q: 'At a haunted house attraction you’re…', o: ['Leading the group', 'In the middle, clutching someone', 'Laughing at the actors', 'Waiting in the parking lot'] },
+      { q: 'Empty highway, nobody around. Your speed?', o: ['Exactly the limit', '5 over, respectable', 'Let’s just say “fast”', 'Cruise control, I don’t even think about it'] },
+      { q: 'Someone offers you a seat on a rocket to space.', o: ['Tomorrow, sign me up', 'Once it’s a little safer', 'Only a quick loop and back', 'Never leaving Earth'] },
+      { q: 'The big life risk you’d actually take?', o: ['Quit to start a business', 'Move across the world', 'Go all-in on a passion', 'None, I like stability'] },
+      { q: 'Wildlife encounter you want?', o: ['Swim with sharks', 'Pet a big cat', 'See a bear from a safe distance', 'Absolutely none'] },
+      { q: 'On the ski slopes, you’re…', o: ['Hitting double blacks', 'Cruising the blues', 'Bunny hill for life', 'In the lodge with hot chocolate'] },
+    ],
+  },
+  {
+    id: 'quiz2-holidays', type: 'quiz', cat: 'quiz', emoji: '🎄', title: 'Holidays & Traditions',
+    blurb: 'Decorations, costumes, family roles. Who’s the holiday person?',
+    items: [
+      { q: 'Your holiday travel mood?', o: ['Love the airport chaos', 'Road trip with holiday music', 'Stay put, everyone comes to me', 'Hide from all of it'] },
+      { q: 'Christmas decorations go up…', o: ['November 1st', 'The day after Thanksgiving', 'Mid-December', 'Whenever someone else does it'] },
+      { q: 'Halloween costume philosophy?', o: ['Go all out, homemade', 'Couples costume, always', 'Last-minute cat ears', 'Skip the costume, eat the candy'] },
+      { q: 'The holiday movie you rewatch every year?', o: ['Elf', 'Home Alone', 'Hocus Pocus', 'The Grinch'] },
+      { q: 'Ideal New Year’s Eve?', o: ['Big party at midnight', 'Cozy at home, asleep by 11', 'Fancy dinner out', 'Anywhere with fireworks'] },
+      { q: 'The holiday smell that hits hardest?', o: ['A fresh-cut pine tree', 'Cinnamon and cookies baking', 'Fireplace smoke', 'Turkey roasting all day'] },
+      { q: 'Your role at family holidays?', o: ['The cook', 'The entertainer', 'Hiding in another room', 'Dish duty'] },
+      { q: 'Matching family pajamas?', o: ['Yes, every year', 'Only ironically', 'Under protest', 'Never'] },
+      { q: 'Valentine’s Day?', o: ['Love it, go big', 'A small sweet gesture', 'Overrated, but I’ll play along', 'The day-after candy sale is the real holiday'] },
+      { q: 'Holiday treat you guard with your life?', o: ['Pumpkin pie', 'Christmas cookies', 'Candy corn (yes, really)', 'Peppermint bark'] },
+    ],
+  },
+];
+
+return { QUIZ_PACKS };
+})();
+
+// ── js/content/spicy.js ──
+__M['js/content/spicy.js'] = (() => {
+'use strict';
+// Extra question packs (spicy). Same shape as PACKS in js/content.js; appended after the base packs.
+const SPICY_PACKS = [
+  // ───────────────────────── SPICY QUIZZES ─────────────────────────
+  {
+    id: 'spicy2-quiz-fantasy', type: 'quiz', cat: 'spicyquiz', spicy: true, emoji: '🌌', title: 'Fantasy Land',
+    blurb: 'The movies that play in your head. Guess theirs.',
+    items: [
+      { q: 'Pick the setting for your most-replayed fantasy:', o: ['A rainy cabin with a crackling fireplace', 'A hotel suite overlooking city lights', 'A secluded beach at golden hour', 'A locked office after everyone’s gone home'] },
+      { q: 'In your fantasies, who makes the first move?', o: ['I do, and I don’t ask twice', 'You do, completely out of nowhere', 'Nobody, we just collide', 'It starts as a dare that goes way too far'] },
+      { q: 'The fantasy plot you’d actually want to act out:', o: ['Strangers at a bar who “just met”', 'Snowed in with absolutely nothing to do', 'A massage that gets very unprofessional', 'A 24-hour do-not-disturb sign'] },
+      { q: 'How detailed do your daydreams about us get?', o: ['Full screenplay, lighting and all', 'A few very vivid highlights', 'Mostly a feeling, not a plot', 'Embarrassingly detailed. Don’t ask.'] },
+      { q: 'Dream-sequence outfit for me:', o: ['A button-down, half undone', 'Just a towel, still dripping', 'Something lacy you picked out', 'A costume we’d never wear in public'] },
+      { q: 'When does your mind wander to us the most?', o: ['In the shower', 'Lying in bed before sleep', 'During a painfully boring lecture or meeting', 'Driving with the music up'] },
+      { q: 'The fantasy living rent-free in your head is mostly about…', o: ['Being completely worshipped', 'Taking total control', 'Something forbidden and sneaky', 'Pure, ridiculous stamina'] },
+      { q: 'If a fantasy came true tonight, how would it start?', o: ['A note on the door telling me what to wear', 'A blindfold handed over without a word', 'You already waiting in bed', 'A text that just says “come here”'] },
+      { q: 'Saying fantasies out loud feels…', o: ['Amazing, it’s half the fun', 'Way easier over text', 'Possible after a drink or two', 'Unnecessary, I’d rather just show you'] },
+      { q: 'Soundtrack for the fantasy:', o: ['Slow R&B', 'Rain and thunder', 'Total silence except us', 'Something with a filthy bassline'] },
+    ],
+  },
+  {
+    id: 'spicy2-quiz-power', type: 'quiz', cat: 'spicyquiz', spicy: true, emoji: '🔐', title: 'Power Play',
+    blurb: 'Who holds the reins, and how tight.',
+    items: [
+      { q: 'Who holds the reins on your ideal night?', o: ['Me, start to finish', 'You, start to finish', 'We swap halfway through', 'We wrestle for it, playfully'] },
+      { q: 'The most tempting order to hear:', o: ['“Don’t move.”', '“Look at me.”', '“Ask nicely.”', '“Not yet.”'] },
+      { q: 'Restraint of choice:', o: ['A silk scarf or tie', 'Real metal handcuffs', 'Just your hands pinning my wrists', 'Rope, done properly'] },
+      { q: 'Begging is…', o: ['Best when I make you do it', 'Best when you make me do it', 'Hot either way, depends on the night', 'Only fun if it’s half joking'] },
+      { q: 'Best kind of safeword setup?', o: ['Something silly like “pineapple”', 'Traffic lights: green, yellow, red', 'A tap-out signal for when hands are busy', 'Constant check-ins, no codes'] },
+      { q: 'Spanking intensity:', o: ['A playful little swat', 'Firm enough to feel tomorrow', 'Build it up slowly', 'Hands off the butt, thanks'] },
+      { q: 'Being in control is hot because…', o: ['Watching you squirm', 'Deciding when you get what you want', 'Hearing you say please', 'Taking care of you completely'] },
+      { q: 'Giving up control is hot because…', o: ['I don’t have to think at all', 'The anticipation of not knowing', 'Being told I’m doing so well', 'Feeling completely wanted'] },
+      { q: 'Pick a title for the night:', o: ['Boss', 'Sir / Ma’am', 'Your Majesty', 'Just my name, said firmly'] },
+      { q: 'Being kept on the edge:', o: ['Torture me, I love it', 'I’d rather do it to you', 'A little, then sweet mercy', 'Requires patience I don’t have'] },
+    ],
+  },
+  {
+    id: 'spicy2-quiz-foreplay', type: 'quiz', cat: 'spicyquiz', spicy: true, emoji: '🪶', title: 'Warm-Up Act',
+    blurb: 'Everything before the main event.',
+    items: [
+      { q: 'How long should foreplay last, ideally?', o: ['Five very hot minutes', 'Twenty minutes, minimum', 'Until someone begs', 'It started this morning over text'] },
+      { q: 'Where should the first kiss of the night land?', o: ['Lips, obviously', 'Collarbone', 'Right behind the ear', 'Wrist, then work up'] },
+      { q: 'Hands or mouth?', o: ['Hands, they’re more precise', 'Mouth, always', 'Both at once', 'Mouth, with hands holding me down'] },
+      { q: 'Undressing strategy you love most:', o: ['One slow piece at a time', 'Ripped off in a hurry', 'Only halfway, no time', 'Clothes stay on as long as possible'] },
+      { q: 'Best foreplay prop already in the house:', o: ['Massage oil', 'An ice cube', 'A makeup brush', 'A silk tie'] },
+      { q: 'Which tease gets you the most?', o: ['Breath on my neck', 'Fingers tracing just above the waistband', 'Kisses that stop right before the good part', 'Being told what’s coming later'] },
+      { q: 'Favorite thing your mouth does that isn’t kissing lips:', o: ['Neck nibbling', 'Kissing down the stomach', 'Tugging an earlobe with teeth', 'Going down and taking my sweet time'] },
+      { q: 'Grinding on the couch fully clothed:', o: ['Underrated, I love it', 'Feels like high school, in a good way', 'Fine as a warm-up', 'Take the clothes off already'] },
+      { q: 'Talk during foreplay should be…', o: ['Whispered and filthy', 'Praise and compliments', 'Quiet, let the breathing talk', 'Instructions, so you get it right'] },
+      { q: 'The signal that foreplay is officially over:', o: ['I grab you and pull you in', 'I start yanking off what’s left', 'I say “now”', 'You can tell from my face'] },
+    ],
+  },
+  {
+    id: 'spicy2-quiz-sexting', type: 'quiz', cat: 'spicyquiz', spicy: true, emoji: '📱', title: 'Sext Appeal',
+    blurb: 'Texting, teasing, and the art of the slow burn.',
+    items: [
+      { q: 'Best time of day to get a dirty text?', o: ['Right when I wake up', 'Mid-afternoon slump', 'When I’m out with friends', 'Late at night in bed'] },
+      { q: 'Your sexting style:', o: ['Poetic slow burn', 'Straight to the filthy point', 'Emojis doing the heavy lifting', 'Voice memos, not texts'] },
+      { q: 'The emoji that does the most damage:', o: ['🍑', '💦', '😈', '👅'] },
+      { q: 'The kind of pic that gets you going most:', o: ['A tease where nothing actually shows', 'A mirror pic in something new', 'Full send, no notes', 'A close-up that makes me guess'] },
+      { q: 'A text that would make you leave work early:', o: ['“I’m home and not wearing anything.”', '“I need you. Now.”', 'A photo of the bed with something laid out on it', '“Guess what I bought today.”'] },
+      { q: 'Boulder-to-Santee sexting works best as…', o: ['A slow build all day', 'A FaceTime that gets out of hand', 'Long detailed messages before bed', 'Voice notes on the drive home'] },
+      { q: 'Biggest sexting nightmare?', o: ['Sending it to the wrong chat', 'Someone glancing at my lock screen', 'A typo killing the mood', 'Autocorrect making it way weirder'] },
+      { q: 'A spicy text lands while you’re in public. You…', o: ['Flip the phone face-down and blush', 'Reply even spicier', 'Leave you on read to torture you', 'Step outside to answer properly'] },
+      { q: 'Your in-person tease move:', o: ['Whispering something filthy at dinner', 'A hand creeping up the thigh during a movie', 'A long look, then walking away', 'Brushing past closer than necessary'] },
+      { q: 'How long can you be teased before you crack?', o: ['About ninety seconds', 'An hour, if it’s good', 'All day, and then watch out', 'I don’t crack, I retaliate'] },
+    ],
+  },
+  {
+    id: 'spicy2-quiz-positions', type: 'quiz', cat: 'spicyquiz', spicy: true, emoji: '🌀', title: 'Angles & Tempo',
+    blurb: 'Speed, depth, furniture. The technical round.',
+    items: [
+      { q: 'Your tempo of choice:', o: ['Slow enough to feel everything', 'Steady and deep', 'Fast and desperate', 'Slow, then suddenly not'] },
+      { q: 'Which one goes on the Mount Rushmore of positions?', o: ['Legs-over-the-shoulders missionary', 'Reverse cowgirl', 'Standing against the wall', 'Lotus, wrapped up face to face'] },
+      { q: 'Ideal number of position changes in one session:', o: ['Zero, why mess with perfection', 'Two or three', 'We tour the whole menu', 'However many until we fall off the bed'] },
+      { q: 'Best furniture that isn’t the bed:', o: ['Kitchen counter', 'The arm of the couch', 'A sturdy desk chair', 'Bathroom sink, facing the mirror'] },
+      { q: 'Eye contact during?', o: ['Constant, it’s intense', 'Only at the very end', 'Eyes closed, lost in it', 'I like watching other things'] },
+      { q: 'A pillow under the hips is…', o: ['A total game changer', 'Untested, but intrigued', 'Overrated', 'Wait, that’s what the pillow is for?'] },
+      { q: 'Standing positions:', o: ['Hot, but my legs give out', 'Yes, against a wall, please', 'Only in the shower', 'Too much cardio'] },
+      { q: 'Which pace change hits hardest?', o: ['Suddenly slowing down to tease', 'Speeding up without warning', 'A full stop, then starting again', 'Long, slow strokes near the end'] },
+      { q: 'Position you’re most curious to try:', o: ['Something from a Kama Sutra deck', 'Hanging upside down off the bed', 'Wheelbarrow, purely for the comedy', 'Anything involving a chair'] },
+      { q: 'Who usually calls the next position?', o: ['Me, with zero subtlety', 'You, and I follow', 'We just kind of roll into it', 'Whoever has more energy left'] },
+    ],
+  },
+  {
+    id: 'spicy2-quiz-aftercare', type: 'quiz', cat: 'spicyquiz', spicy: true, emoji: '🧸', title: 'Afterglow',
+    blurb: 'Aftercare, snacks, and sleepy pillow talk.',
+    items: [
+      { q: 'First thing you want right after?', o: ['A long cuddle', 'Water, immediately', 'A shower together', 'Snacks. All of them.'] },
+      { q: 'Best post-sex snack:', o: ['Cold pizza', 'Ice cream straight from the carton', 'Fruit, because we’re classy', 'Whatever’s closest to the bed'] },
+      { q: 'Talk afterward is usually…', o: ['Giggly and goofy', 'Deep and emotional', 'A full performance review', 'Silent and blissed out'] },
+      { q: 'After an intense or rough session, you need…', o: ['To be held tight', 'To hear I was amazing', 'A warm bath and a blanket', 'A quick nap, then more'] },
+      { q: 'Cuddle formation after:', o: ['Wrapped around you from behind', 'You wrapped around me', 'Head on chest, listening to the heartbeat', 'Sprawled across you like a starfish'] },
+      { q: 'How fast do you get sleepy after?', o: ['Out in under five minutes', 'Wide awake and chatty', 'Hungry before sleepy', 'Depends how good it was'] },
+      { q: 'Best thing to hear afterward:', o: ['“That was the best one yet.”', '“You’re incredible.”', '“I love you,” in a sleepy voice', '“Again in an hour?”'] },
+      { q: 'Marks show up the next day. You…', o: ['Admire them proudly', 'Want them kissed better', 'Hide them under a hoodie', 'Text a pic of them as evidence'] },
+      { q: 'Ideal morning after a big night:', o: ['Breakfast in bed', 'Lazy shower together', 'Sleeping until noon, tangled up', 'Replaying it all over coffee'] },
+      { q: 'What makes you feel most cared for after?', o: ['Being tucked in', 'Soft kisses everywhere', 'You checking in on how it felt', 'Getting to steal your hoodie'] },
+    ],
+  },
+  {
+    id: 'spicy2-quiz-firsts', type: 'quiz', cat: 'spicyquiz', spicy: true, emoji: '🎞️', title: 'Our First Time',
+    blurb: 'Memory lane, the R-rated version.',
+    items: [
+      { q: 'The first time we hooked up, you were mostly…', o: ['Nervous and a little shaky', 'Confident, I had a plan', 'Completely caught off guard', 'Trying way too hard to be smooth'] },
+      { q: 'What do you remember most about it?', o: ['How you looked at me', 'How awkward the start was', 'How good “finally” felt', 'Something funny that happened'] },
+      { q: 'Who really made the first move?', o: ['Me, obviously', 'You, obviously', 'Mutual and messy', 'Still arguing about this'] },
+      { q: 'How long had you wanted it before it happened?', o: ['Since the first time I saw you', 'A few weeks of building tension', 'It caught me totally by surprise', 'Way longer than I’ll admit'] },
+      { q: 'Rate that first time out of ten:', o: ['Ten, no notes', 'A solid seven, we’ve leveled up', 'A nervous four, but adorable', 'Unratable, too many butterflies'] },
+      { q: 'From first kiss to first time, it took…', o: ['That same night', 'A few dates', 'Weeks', 'Embarrassingly little time'] },
+      { q: 'Right before, you were thinking…', o: ['“Is this really happening?”', '“Please don’t be weird.”', '“Finally.”', 'Absolutely nothing, just vibes'] },
+      { q: 'First thing you noticed about my body up close:', o: ['My eyes', 'My hands', 'My smile', 'Something I won’t type here'] },
+      { q: 'Afterward, you felt…', o: ['Giddy for days', 'Instantly attached', 'Like I needed to tell my best friend', 'Already planning the next time'] },
+      { q: 'If we could redo it, you’d change…', o: ['Nothing, it was perfect', 'The location', 'How nervous we were', 'Make it last way longer'] },
+    ],
+  },
+  {
+    id: 'spicy2-quiz-public', type: 'quiz', cat: 'spicyquiz', spicy: true, emoji: '🕶️', title: 'Risky Business',
+    blurb: 'Out in the world versus behind a locked door.',
+    items: [
+      { q: 'Your PDA limit:', o: ['Holding hands, that’s it', 'Kissing anywhere, I don’t care', 'Hands wandering under the table', 'Whatever we can get away with'] },
+      { q: 'The thrill of almost getting caught?', o: ['My heart can’t take it', 'A little, like a locked bathroom', 'The riskier, the hotter', 'Give me a locked door and a loud fan'] },
+      { q: 'Sneakiest spot to steal a heated make-out:', o: ['A dark movie theater', 'The back of a concert crowd', 'A fitting room', 'A parked car at a scenic overlook'] },
+      { q: 'At a family dinner, you’d secretly…', o: ['Squeeze my thigh under the table', 'Whisper something filthy while passing the salt', 'Pull me into the pantry for ten seconds', 'Behave perfectly, then unleash at home'] },
+      { q: 'Skipping underwear on a date night:', o: ['Yes, and I tell you halfway through dinner', 'Yes, and you find out later', 'Only in jeans, for safety', 'Never, way too drafty'] },
+      { q: 'Private is better because…', o: ['I can be as loud as I want', 'No time limit', 'I can fully let go', 'Public isn’t better, it’s just faster'] },
+      { q: 'Mile-high club?', o: ['Bucket list', 'Too cramped, I’ll pass', 'A make-out under a blanket counts', 'Only on a private jet, someday'] },
+      { q: 'Hotel walls are thin. You…', o: ['Don’t care, let them hear', 'Bite a pillow', 'Turn the TV way up', 'Make staying quiet a challenge'] },
+      { q: 'A quick flash of something in the car:', o: ['Love when you do that', 'Only when we’re parked', 'Gives me a heart attack', 'Save it for the bedroom'] },
+      { q: 'Sneaking off for a minute at a party is…', o: ['The best part of the party', 'Hot if it’s quick', 'Only okay at our own place', 'Too stressful, I’m watching the door'] },
+    ],
+  },
+  {
+    id: 'spicy2-quiz-toys', type: 'quiz', cat: 'spicyquiz', spicy: true, emoji: '🧰', title: 'Toy Box',
+    blurb: 'Gadgets, props, and who gets the remote.',
+    items: [
+      { q: 'First thing you’d add to the collection:', o: ['A wand vibrator', 'A couples vibrator', 'A restraint kit', 'A blindfold and feather set'] },
+      { q: 'Who should hold the remote?', o: ['Me, give it here', 'You, I like surprises', 'We take turns', 'It “accidentally” goes under the bed'] },
+      { q: 'Where does the toy stash live?', o: ['Nightstand drawer, no shame', 'A locked box', 'A shoebox under the bed', 'Inside a hollowed-out fake book'] },
+      { q: 'Best prop that isn’t technically a toy:', o: ['A leather belt', 'A body-safe massage candle', 'A wooden hairbrush for spanking', 'A scarf as a blindfold'] },
+      { q: 'Shopping for toys together:', o: ['In a real store, holding hands', 'Online, giggling at the reviews', 'You surprise me', 'I surprise you'] },
+      { q: 'Vibrator setting:', o: ['Low and steady', 'Pulsing patterns', 'Max power, immediately', 'You choose and don’t tell me'] },
+      { q: 'Pick a messy add-on:', o: ['Warming massage oil', 'Chocolate body paint', 'Flavored lube', 'All three, and new sheets'] },
+      { q: 'A toy during a quickie?', o: ['Yes, it speeds everything up', 'No, toys are for long nights', 'Only if you’re holding it', 'Only if it’s small and quiet'] },
+      { q: 'Most intriguing thing in an adult store:', o: ['Nipple clamps', 'A spreader bar', 'Kegel balls', 'A sex swing that hangs on the door'] },
+      { q: 'Toys feel like…', o: ['A fun upgrade for both of us', 'Competition (I’ll still win)', 'Something I use more solo', 'A whole new world to explore'] },
+    ],
+  },
+  {
+    id: 'spicy2-quiz-deepend', type: 'quiz', cat: 'spicyquiz', spicy: true, emoji: '🖤', title: 'The Deep End',
+    blurb: 'Super freaky. Answer honestly; it’s just you two.',
+    items: [
+      { q: 'Your freakiest unspoken desire leans toward…', o: ['Being completely used for your pleasure', 'Making you completely mine', 'An audience (strictly fantasy)', 'Pushing every limit we have'] },
+      { q: 'Which of these is hottest to you?', o: ['A hand on the throat, light', 'A light slap on the face', 'A hand over my mouth', 'None, keep it soft'] },
+      { q: 'Marking me as yours looks like…', o: ['Hickeys where everyone can see', 'Bite marks only we know about', 'Writing on me in body-safe marker', 'Me wearing your collar or necklace'] },
+      { q: 'Dream number of rounds in one night:', o: ['Two', 'Three', 'Until sunrise', 'Until one of us actually passes out'] },
+      { q: 'Praise or degradation?', o: ['Pure praise', 'A little dirty name-calling', 'Heavy filth, in-scene only', 'Both, back to back'] },
+      { q: 'Collars and leashes?', o: ['Yes, I’d wear it', 'Yes, I’d hold it', 'Curious enough to try once', 'Hard pass'] },
+      { q: 'Recording us, just for us:', o: ['Yes, I want to watch it back', 'Audio only', 'Only if we delete it right after', 'Never, phones leave the room'] },
+      { q: 'Where would you want me to finish?', o: ['Inside', 'All over my chest', 'In my mouth', 'Wherever you want, I’m not picky'] },
+      { q: 'Your stance on butt stuff:', o: ['Already a fan', 'Curious, go slow', 'Giving only', 'Exit only, thank you'] },
+      { q: 'A full 24-hour “use me” day:', o: ['Sign me up', 'Only if I’m the one in charge', 'Half a day, I need snacks', 'Love the idea, terrified of the reality'] },
+    ],
+  },
+
+  // ───────────────────────── DESIRE MATCH ─────────────────────────
+  {
+    id: 'spicy2-desire-deep', type: 'ynm', cat: 'desire', spicy: true, emoji: '🖤', title: 'Desire Match: Deep End',
+    blurb: 'The kinkiest list yet. Only mutual yes/maybe shows up, so be brave.',
+    items: [
+      'Being told what to wear for a whole day', 'Being kept naked while you stay dressed', 'Overstimulation (keep going after I finish)',
+      'Asking permission before I’m allowed to finish', 'Saying exactly what I want, word for word, before I get it', 'Nipple torture, gentle to intense', 'Spit play',
+      'A light slap on the face (talk first)', 'Wax play with body-safe candles', 'Shaving or grooming each other',
+      'Spread-eagle, all four limbs restrained', 'Degrading dirty talk (in-scene only)', 'Using a title like Sir or Ma’am',
+      'Wearing something revealing out, just for your eyes', 'Orgasm denial that lasts for days',
+      'Sensory deprivation (blindfold + headphones)', 'Being used purely for your pleasure', 'Back-to-back rounds with no break',
+      'Getting really messy (squirting, sweat, all of it)', 'Strap-on play', 'Rimming', 'Deep throat', 'Face-sitting',
+      'Being woken up by your mouth on me', 'Watching each other touch ourselves', 'Impact toys (paddle, flogger, crop)',
+      'A rope harness', 'Finishing on each other',
+    ],
+  },
+  {
+    id: 'spicy2-desire-roleplay', type: 'ynm', cat: 'desire', spicy: true, emoji: '🎭', title: 'Desire Match: Scenarios',
+    blurb: 'Characters, costumes, and storylines. Mutual yes/maybe only.',
+    items: [
+      'Strangers who meet on a delayed flight', 'Boss and new hire, after hours', 'Rival coworkers who finally snap',
+      'Doctor’s check-up that gets thorough', 'A personal trainer who gets hands-on', 'Masseuse with no professional boundaries',
+      'A room-service delivery that never leaves', 'Vampire and willing victim', 'Captured spy “interrogation” (safeword ready)',
+      'Royalty and the royal guard', 'Famous celebrity and an adoring fan', 'Photographer and model at a private shoot',
+      'Exes hooking up “one last time”', 'Neighbors who keep running into each other', 'Roommates who finally cross the line',
+      'A cop pulling over a very flirty driver', 'Mechanic in the garage after closing', 'Lifeguard and a swimmer who needs “rescuing”',
+      'A mysterious stranger on a dirty phone call', 'Pretend first date that ends in bed', 'Full costumes, no breaking character',
+      'Staying in character all night', 'Accents during role-play', 'Writing a script together beforehand',
+      'Talking through a threesome fantasy during sex (just talk)', 'Pretending it’s our last night on earth',
+    ],
+  },
+
+  // ───────────────────────── SPICY PICKS ─────────────────────────
+  {
+    id: 'spicy2-tot', type: 'pick', cat: 'spicyplay', spicy: true, emoji: '🍒', title: 'This or That: Freaky',
+    items: [
+      ['Slow burn all evening', 'Three quick rounds'], ['Silk', 'Leather'], ['Kissed slow', 'Kissed hungry'], ['Sheets on', 'Sheets kicked off the bed'],
+      ['Washing machine on spin cycle', 'Couch'], ['Hotel suite', 'Tent under the stars'],
+      ['Fingers', 'Tongue'], ['Collar', 'Cuffs'], ['Hair down', 'Hair in a fist'], ['Candlelight', 'Neon glow'],
+      ['Sweatpants that come off fast', 'Lingerie that takes forever'], ['Loud', 'The quiet game'],
+      ['Front-row seat to a strip tease', 'Starring in one'], ['Bare hand', 'Paddle'], ['Hot wax', 'Ice cubes'],
+      ['Finish together', 'Take turns finishing'],
+    ],
+  },
+  {
+    id: 'spicy2-wyr-unhinged', type: 'pick', cat: 'spicyplay', spicy: true, emoji: '🫦', title: 'Would You Rather: Unhinged',
+    items: [
+      ['Be at my mercy for an hour', 'Have me at yours for an hour'],
+      ['Only use your mouth for a whole night', 'Only use your hands for a whole night'],
+      ['A surprise lap dance at a random time every week', 'A standing Friday “anything goes” night'],
+      ['Need permission for every orgasm for a week', 'Be the one granting permission'],
+      ['Eat dessert off my body', 'Be the dessert'],
+      ['Be blindfolded and guess what’s touching you', 'Watch every second of it in a mirror'],
+      ['Hear exactly what I fantasize about', 'Watch me act it out'],
+      ['Get woken up for it at 3am', 'Get kept up until 3am'],
+      ['Do it in every room of the house in one day', 'Same bed for a month, but every time is incredible'],
+      ['Never wear underwear around me again', 'Never wear pants around me again'],
+      ['Let me pick every position for a month', 'Pick every position for me for a month'],
+      ['Only communicate in moans for a night', 'Only communicate in instructions for a night'],
+      ['Make me finish three times', 'Finish three times yourself'],
+      ['Get spanked every time you lose a game', 'Spank me every time I lose one'],
+    ],
+  },
+  {
+    id: 'spicy2-wyr-fantasy', type: 'pick', cat: 'spicyplay', spicy: true, emoji: '🎰', title: 'Would You Rather: Fantasy Edition',
+    items: [
+      ['A Vegas suite with a stripper pole', 'A cabin with a hot tub and no neighbors'],
+      ['Pretend we just met tonight', 'Pretend it’s our last night together'],
+      ['Be seduced slowly over a whole dinner', 'Get ambushed the second you walk in the door'],
+      ['Act out your fantasy, scripted by me', 'Act out mine, scripted by you'],
+      ['Narrate a fantasy about someone watching us', 'Keep it just us, even in fantasies'],
+      ['A private beach at sunset', 'A glass shower with a mountain view'],
+      ['A mirror on the ceiling', 'A swing in the doorway'],
+      ['Be worshipped head to toe', 'Do the worshipping'],
+      ['Be dressed up as anyone you want', 'Dress me up as anyone you want'],
+      ['Recreate a scene from a steamy movie', 'Write our own scene and film it (just for us)'],
+      ['A code word that means “bedroom, now”', 'A secret signal that means “bathroom, two minutes”'],
+      ['Stay completely silent the whole time', 'Narrate everything you’re doing'],
+      ['A no-limits night (safewords still on)', 'A night where only one thing is allowed, done perfectly'],
+      ['Hear me describe it over the phone', 'Have me whisper it in a crowded room'],
+    ],
+  },
+  {
+    id: 'spicy2-who', type: 'who', cat: 'spicyplay', spicy: true, emoji: '👀', title: 'Most Likely To: After Hours',
+    items: [
+      'Want to try something from the Deep End', 'Be the first to use the safeword', 'Lose a teasing contest on purpose',
+      'Buy a toy without telling the other', 'Bite a little too hard', 'Moan the other’s name way too loud',
+      'Send a voice note that can’t be played in public', 'Beg first', 'Get bossy in bed', 'Request a very specific outfit',
+      'Want round three', 'Forget the curtains are open', 'Drag the other into the shower', 'Crack up laughing mid-role-play',
+      'Write a fantasy down in full detail', 'Have a secret soft spot for praise', 'Start something before the alarm goes off',
+      'Get distracted by the other during finals week',
+    ],
+  },
+  {
+    id: 'spicy2-nhie', type: 'nhie', cat: 'spicyplay', spicy: true, emoji: '🫢', title: 'Never Have I Ever: Deep End',
+    items: [
+      'Touched myself thinking about my partner', 'Bought lingerie just to be seen in it', 'Sent a pic from a public restroom',
+      'Been spanked hard enough to leave a mark', 'Used a safeword', 'Bitten a pillow to stay quiet', 'Fantasized about my partner mid-workout',
+      'Done it somewhere with a view', 'Done it more than three times in one day', 'Looked up a how-to for a position',
+      'Been edged until I begged', 'Hidden a toy somewhere ridiculous', 'Had a sex dream and tried it in real life the next day',
+      'Sent a spicy text to the wrong person', 'Gotten a knock on the wall from the neighbors', 'Read erotica on my phone in public',
+      'Taken a spicy photo I never sent',
+    ],
+  },
+];
+
+return { SPICY_PACKS };
+})();
+
+// ── js/content/picks.js ──
+__M['js/content/picks.js'] = (() => {
+'use strict';
+// Extra question packs (picks). Same shape as PACKS in js/content.js; appended after the base packs.
+const PICKS_PACKS = [
+  // ───────────────────────── THIS OR THAT ─────────────────────────
+  {
+    id: 'picks2-tot-food', type: 'pick', cat: 'thisorthat', emoji: '🍟', title: 'Food Fights',
+    blurb: 'Snack-based relationship tests. Choose carefully.',
+    items: [
+      ['Ranch', 'Blue cheese'], ['Crunchy peanut butter', 'Smooth peanut butter'], ['Thin crust', 'Deep dish'],
+      ['Tacos', 'Burritos'], ['Fries', 'Tater tots'], ['In-N-Out', 'Shake Shack'],
+      ['Corner brownie piece', 'Middle brownie piece'], ['Sour candy', 'Chocolate candy'],
+      ['Mac and cheese from the box', 'Fancy baked mac'], ['Breakfast for dinner', 'Cold pizza for breakfast'],
+      ['Ketchup', 'Mustard'], ['Cilantro on everything', 'Cilantro tastes like soap'],
+      ['Carne asada fries', 'California burrito'], ['Spicy ramen', 'Pho'], ['Butter popcorn', 'Kettle corn'],
+      ['Cake', 'Pie'], ['Steak medium rare', 'Steak well done'], ['Sparkling water', 'Soda'],
+      ['Ice cream in a cone', 'Ice cream in a cup'], ['Same order every time', 'Something new every time'],
+    ],
+  },
+  {
+    id: 'picks2-tot-home', type: 'pick', cat: 'thisorthat', emoji: '🛋️', title: 'Home Life',
+    blurb: 'Future roommates, settle this now.',
+    items: [
+      ['Made bed', 'Unmade bed, who cares'], ['Candles everywhere', 'Plants everywhere'],
+      ['Fold laundry right away', 'Live out of the clean pile'], ['Shoes off at the door', 'Shoes on inside'],
+      ['Fan on all night', 'Total silence'], ['Weighted blanket', 'Fluffy duvet'], ['Couch nap', 'Bed nap'],
+      ['Clean on Saturday morning', 'Panic-clean before guests'], ['Minimalist', 'Cozy clutter'],
+      ['Strict grocery list', 'Wander every aisle'], ['Meal prep on Sunday', 'Decide dinner at 7pm'],
+      ['Hosting', 'Being the guest'], ['Natural light', 'Blackout curtains'],
+      ['TV in the bedroom', 'Bedroom is a screen-free zone'], ['Bubble bath', 'Rain shower'],
+      ['Left side of the bed', 'Right side of the bed'], ['Build the IKEA furniture together', 'Pay someone to do it'],
+      ['Loading the dishwasher like Tetris', 'Throwing it all in and praying'],
+    ],
+  },
+  {
+    id: 'picks2-tot-throwback', type: 'pick', cat: 'thisorthat', emoji: '📼', title: 'Throwback',
+    blurb: 'Childhood loyalties run deep.',
+    items: [
+      ['Disney Channel', 'Nickelodeon'], ['Club Penguin', 'Webkinz'], ['Wii Sports', 'Mario Kart'],
+      ['Silly Bandz', 'Rainbow Loom'], ['Lunchables', 'Uncrustables'], ['High School Musical', 'Camp Rock'],
+      ['Hannah Montana', 'iCarly'], ['Scholastic book fair', 'Field day'], ['Gushers', 'Fruit by the Foot'],
+      ['Pokémon cards', 'Beyblades'], ['Gel pens', 'Scented markers'], ['Sleepovers', 'Summer camp'],
+      ['Heelys', 'Light-up sneakers'], ['Vine', 'Musical.ly'], ['Shrek', 'Toy Story'],
+      ['Recess', 'Pizza Friday'], ['DS', 'PSP'], ['Hiding in the clothing racks at the store', 'Riding on the shopping cart'],
+    ],
+  },
+  {
+    id: 'picks2-tot-online', type: 'pick', cat: 'thisorthat', emoji: '📱', title: 'Extremely Online',
+    blurb: 'Your screen time says a lot about you.',
+    items: [
+      ['iPhone', 'Android'], ['Dark mode', 'Light mode'], ['Zero unread notifications', '4,382 unread emails'],
+      ['TikTok', 'Instagram Reels'], ['Spotify', 'Apple Music'], ['YouTube rabbit hole', 'Wikipedia rabbit hole'],
+      ['Read receipts on', 'Read receipts off'], ['Like every post', 'Silent lurker'], ['AirPods', 'Over-ear headphones'],
+      ['Group chat chaos', 'One-on-one DMs'], ['Memes', 'Reaction GIFs'], ['Mac', 'PC'],
+      ['Phone face down', 'Phone face up'], ['"lol"', '"LMAO"'], ['3 tabs open', '97 tabs open'],
+      ['Reply instantly', 'Reply in 3–5 business days'], ['Photo dump', 'One perfect pic'],
+      ['Battery percentage showing', 'Living in blissful ignorance'],
+    ],
+  },
+  {
+    id: 'picks2-tot-holidays', type: 'pick', cat: 'thisorthat', emoji: '🎃', title: 'Seasons & Holidays',
+    blurb: 'Every holiday, every season, one of you is wrong.',
+    items: [
+      ['Fall leaves changing', 'Spring flowers blooming'], ['Pumpkin spice', 'Peppermint mocha'], ['Real Christmas tree', 'Fake tree'],
+      ['Thanksgiving turkey', 'Thanksgiving sides'], ['Scary costume', 'Funny costume'],
+      ['Presents on Christmas Eve', 'Presents Christmas morning'],
+      ['Christmas in the snow (Boulder)', 'Christmas in flip-flops (Santee)'],
+      ['Ugly sweater party', 'Fancy holiday party'], ['Carving pumpkins', 'Painting pumpkins'],
+      ['Fancy Valentine’s dinner', 'Anti-Valentine’s takeout'], ['Hot cocoa', 'Apple cider'],
+      ['Thunderstorm', 'First snowfall'], ['One big birthday party', 'A whole birthday week'],
+      ['Haunted house', 'Pumpkin patch'], ['Christmas music in November', 'Not one song before Thanksgiving'],
+      ['Gingerbread house', 'Decorating cookies'], ['Easter candy', 'Halloween candy'],
+      ['New Year’s resolutions', 'No resolutions, just vibes'], ['Fourth of July fireworks', 'New Year’s Eve fireworks'],
+    ],
+  },
+
+  // ───────────────────────── WOULD YOU RATHER ─────────────────────────
+  {
+    id: 'picks2-wyr-dilemmas', type: 'pick', cat: 'wyr', emoji: '😵‍💫', title: 'Impossible Dilemmas',
+    blurb: 'There is no right answer. Pick anyway.',
+    items: [
+      ['Have your browser history read at your funeral', 'Have your camera roll shown at your wedding'],
+      ['Know every secret your friends have', 'Have all your friends know one secret of yours'],
+      ['Lose every memory from before age 18', 'Lose every memory from the last year'],
+      ['Give up cheese forever', 'Give up bread forever'],
+      ['Always be slightly too hot', 'Always be slightly too cold'],
+      ['Have a popcorn kernel stuck in your teeth forever', 'Have a pebble in your shoe forever'],
+      ['Win every argument but nobody likes you for it', 'Lose every argument but everyone adores you'],
+      ['Look awful in every photo forever', 'Sound awful on every recording forever'],
+      ['Only eat food you cooked yourself', 'Never cook again but only eat gas station food'],
+      ['Have your parents read your group chats for a day', 'Have your coworkers read your search history'],
+      ['Turn bright red every time you lie', 'Hear a ding every time someone lies to you'],
+      ['Sit 10 hours on a flight next to a screaming baby', 'Sit through a 3-hour meeting that could have been an email'],
+      ['Never use GPS again', 'Never use a calendar app again'],
+      ['Find out every gift you’ve gotten was re-gifted', 'Find out every compliment was sarcastic'],
+      ['Narrate your own life out loud', 'Have a stranger narrate it for you'],
+      ['A free house, but you can never leave the state', 'Rent forever, but live anywhere'],
+    ],
+  },
+  {
+    id: 'picks2-wyr-powers', type: 'pick', cat: 'wyr', emoji: '🦸', title: 'Superpowers, With a Catch',
+    blurb: 'Great power. Terrible fine print.',
+    items: [
+      ['Fly, but only as fast as you can walk', 'Teleport, but only to places you’ve already been'],
+      ['Be invisible, but only while holding your breath', 'Read minds, but only thoughts about sandwiches'],
+      ['Super strength you can’t control around doorknobs', 'Super speed, but you’re hungry like a hummingbird'],
+      ['Teleport anywhere, but you arrive naked', 'Teleport anywhere, but you arrive soaking wet'],
+      ['Breathe underwater, but only in public pools', 'Talk to fish, but they’re all extremely rude'],
+      ['Never need sleep, but you’re always a little cranky', 'Sleep 4 hours and feel amazing, but snore like a leaf blower'],
+      ['See 10 seconds into the future', 'See the entire past of any object you touch'],
+      ['Heal anyone except yourself', 'Never get sick, but sneeze constantly'],
+      ['Control the weather, but only in a 5-foot radius', 'Control any TV remote within 50 feet'],
+      ['Play any instrument perfectly, but only at full volume', 'Sing perfectly, but only in a cartoon voice'],
+      ['Shapeshift, but only into birds', 'Clone yourself, but the clone only has your worst habits'],
+      ['Know the answer to any question, but only after it stops mattering', 'Always win trivia, but forget everything else'],
+      ['Summon any food, but it’s always lukewarm', 'Unlimited money, but only in quarters'],
+      ['Never get lost, but you have to say every direction out loud', 'Find anything you lose, but only by shouting its name'],
+      ['X-ray vision you can’t turn off', 'Super hearing you can’t turn off'],
+      ['A pet dragon the size of a cat', 'A pet cat the size of a dragon'],
+    ],
+  },
+  {
+    id: 'picks2-wyr-gross', type: 'pick', cat: 'wyr', emoji: '🤢', title: 'Gross-Out',
+    blurb: 'Not before dinner. Or maybe right before dinner.',
+    items: [
+      ['Drink a cup of pickle juice', 'Eat a spoonful of mayo'],
+      ['Lick a subway pole', 'Lick a movie theater floor'],
+      ['Wear the same socks for a week', 'Share a toothbrush with a stranger'],
+      ['Always smell faintly of onions', 'Always smell faintly of wet dog'],
+      ['Find half a worm in your apple', 'Find a hair in every meal'],
+      ['Sweat ranch dressing', 'Cry hot sauce'],
+      ['Pop a stranger’s pimple', 'Clip a stranger’s toenails'],
+      ['Eat a granola bar with bugs baked in', 'Eat a sandwich someone dropped in a parking lot'],
+      ['Never brush your teeth again', 'Never wash your hair again'],
+      ['Use a gas station bathroom with no soap', 'Use a festival porta-potty on day three'],
+      ['Burp every time you laugh', 'Fart every time you sneeze'],
+      ['Always have slightly sticky fingers', 'Always have one damp sock'],
+      ['Eat a raw onion like an apple', 'Drink a glass of olive oil'],
+      ['Clean up after a carsick dog', 'Unclog a hair-filled shower drain'],
+      ['Swim in a pool of Jell-O', 'Swim in a pool of baked beans'],
+      ['Chew someone else’s gum', 'Wear someone else’s retainer'],
+    ],
+  },
+  {
+    id: 'picks2-wyr-timeluck', type: 'pick', cat: 'wyr', emoji: '⏳', title: 'Time Travel & Luck',
+    blurb: 'Rewrite history or just win the lottery.',
+    items: [
+      ['Visit the dinosaurs for a day', 'Visit 200 years in the future for a day'],
+      ['Redo high school knowing what you know now', 'Skip ahead 5 years and miss everything in between'],
+      ['Meet your 10-year-old self', 'Meet your 80-year-old self'],
+      ['Win $1 million today', 'Get $1,000 every week for life'],
+      ['Find $20 in every pocket you check', 'Never hit a red light again'],
+      ['Always win coin flips', 'Always pick the fastest checkout line'],
+      ['Always find the perfect parking spot', 'Always get perfect weather for your plans'],
+      ['Go back and buy Bitcoin in 2010', 'Go back and stop your most embarrassing moment'],
+      ['Live in the 1920s', 'Live in the 1980s'],
+      ['A time machine that only goes to Tuesdays', 'A time machine that only goes back exactly one year'],
+      ['$50,000 for you alone', '$20,000 each for both of us'],
+      ['Win the lottery but everyone knows', 'Win half as much completely secretly'],
+      ['Know the winning lottery numbers once', 'Know the result of every sports game for a year'],
+      ['Get a do-over on one past decision', 'Get a 1-minute sneak peek of your life at 50'],
+      ['Every vending machine drops two', 'Every drive-thru throws in free fries'],
+      ['Watch the moon landing live', 'Watch the first-ever concert of your favorite artist'],
+    ],
+  },
+
+  // ───────────────────────── WHO'S MORE LIKELY ─────────────────────────
+  {
+    id: 'picks2-who-home', type: 'who', cat: 'who', emoji: '🧺', title: 'Domestic Disasters',
+    blurb: 'Who’s the real roommate from hell?',
+    items: [
+      'Leave a wet towel on the bed', 'Leave exactly one square of toilet paper on the roll',
+      'Start a load of laundry and forget it for two days', 'Kill a houseplant by loving it too much',
+      'Argue with a self-checkout machine', 'Buy gear for a hobby they’ll try exactly once',
+      'Eat cereal for dinner three nights in a row', 'Hide a delivery box so the other doesn’t see it',
+      'Rearrange the furniture at midnight', 'Leave a cabinet open for someone to walk into',
+      'Fall asleep with the TV still on', 'Microwave something that should never be microwaved',
+      'Scroll for 45 minutes picking a show, then watch nothing', 'Save 14 recipes and order pizza anyway',
+      'Lock themselves out of the house', 'Steal every blanket in their sleep', 'Give the vacuum a name',
+      'Have full conversations with a pet',
+    ],
+  },
+  {
+    id: 'picks2-who-future', type: 'who', cat: 'who', emoji: '🔭', title: 'Fast Forward',
+    blurb: 'Predict the next 50 years. No pressure.',
+    items: [
+      'Become a 5am-run person', 'Run for local office', 'Write a book', 'Start a podcast nobody asked for',
+      'Own 40 houseplants', 'Have a midlife crisis involving a motorcycle', 'Be the loudest parent at a kids’ soccer game',
+      'Learn a third language', 'Retire early', 'Get really, really into golf', 'Start a YouTube channel',
+      'Become a wine snob', 'Have a Costco membership before 25', 'Throw the best Halloween party on the block',
+      'Cry at a stranger’s graduation', 'Own a boat', 'Still be gaming at 70', 'Become a regular at a diner where they know the order',
+    ],
+  },
+  {
+    id: 'picks2-who-public', type: 'who', cat: 'who', emoji: '🎭', title: 'Out in Public',
+    blurb: 'Social situations, rated by your partner.',
+    items: [
+      'Wave back at someone who was waving at someone else', 'Have a 20-minute heart-to-heart with an Uber driver',
+      'Send food back at a restaurant', 'Get remembered by name at a coffee shop',
+      'Trip on flat ground and pretend it was on purpose', 'Leave a party without saying goodbye',
+      'Say "you too" when the server says "enjoy your meal"', 'Get pulled on stage at a show',
+      'Pet a stranger’s dog without asking first', 'Hold the door way too long for someone far away',
+      'Start a dance circle at a wedding', 'Overtip out of pure guilt', 'Correct someone’s grammar out loud',
+      'Walk straight into a glass door', 'Spot a celebrity and completely fail to play it cool',
+      'Ask to speak to the manager', 'Get a free dessert on charm alone', 'Make friends with the whole table next to us',
+    ],
+  },
+
+  // ───────────────────────── NEVER HAVE I EVER ─────────────────────────
+  {
+    id: 'picks2-nhie-mischief', type: 'nhie', cat: 'nhie', emoji: '😇', title: 'Petty Mischief',
+    blurb: 'Small sins, big confessions.',
+    items: [
+      'Eaten grapes at the grocery store before paying', 'Left a text on read for days on purpose',
+      'Sung in the shower loud enough for the neighbors', 'Blamed a fart on a pet', 'Kept a library book for over a year',
+      'Grabbed a fistful of sauce packets "for later"', 'Pretended to read a book for class',
+      'Laughed at a completely wrong moment at a serious event', 'Snuck snacks into a movie theater',
+      'Walked into the wrong bathroom', 'Opened a present early and re-wrapped it',
+      'Pretended to be asleep to get out of a conversation', 'Used someone else’s streaming login',
+      'Cut my own bangs at 2am', 'Snuck into a hotel pool I wasn’t staying at', 'Eaten an entire pizza by myself',
+      'Called a teacher "Mom"', 'Actually read the terms and conditions',
+    ],
+  },
+  {
+    id: 'picks2-nhie-brave', type: 'nhie', cat: 'nhie', emoji: '🪂', title: 'Brave or Dumb',
+    blurb: 'Stories you either brag about or bury.',
+    items: [
+      'Gotten a speeding ticket', 'Been on TV', 'Ridden a mechanical bull', 'Gone to a concert alone',
+      'Eaten something that was still moving', 'Gotten stitches', 'Been stuck in an elevator',
+      'Swum with sharks or stingrays', 'Slept outside without a tent', 'Driven more than 10 hours in one day',
+      'Seen a ghost (or sworn I did)', 'Gotten food poisoning on vacation', 'Met a celebrity',
+      'Hiked a fourteener', 'Tried surfing', 'Cried at a commercial', 'Fainted', 'Won a raffle',
+    ],
+  },
+];
+
+return { PICKS_PACKS };
+})();
+
 // ── js/content.js ──
 __M['js/content.js'] = (() => {
 'use strict';
@@ -966,6 +1731,10 @@ __M['js/content.js'] = (() => {
 //   open     – written answers, revealed side by side
 //   ynm      – yes / maybe / no; only MUTUAL yes/maybe items are ever revealed
 //   lovelang – love language quiz, scored per person
+
+const { QUIZ_PACKS } = __M['js/content/quiz.js'];
+const { SPICY_PACKS } = __M['js/content/spicy.js'];
+const { PICKS_PACKS } = __M['js/content/picks.js'];
 
 const CATEGORIES = [
   { id: 'quiz', title: 'How Well Do You Know Me?', blurb: 'Answer for yourself, then guess for them. Scores are kept.' },
@@ -984,7 +1753,7 @@ const SPICY_CATEGORIES = [
   { id: 'spicytalk', title: 'Pillow Talk', blurb: 'Say it in writing first.' },
 ];
 
-const PACKS = [
+const BASE_PACKS = [
   // ───────────────────────── HOW WELL DO YOU KNOW ME ─────────────────────────
   {
     id: 'quiz-basics', type: 'quiz', cat: 'quiz', emoji: '🧩', title: 'The Basics',
@@ -1414,6 +2183,8 @@ const PACKS = [
   },
 ];
 
+const PACKS = [...BASE_PACKS, ...QUIZ_PACKS, ...PICKS_PACKS, ...SPICY_PACKS];
+
 // ───────────────────────── DAILY QUESTIONS ─────────────────────────
 // One per day, both answer, answers stay hidden until you've both answered.
 const DAILY = [
@@ -1544,6 +2315,32 @@ const TRUTHS = {
     'What’s something you’ve pretended to like for me?',
     'What’s a secret talent you’ve never shown me?',
     'What’s the pettiest thing you’ve ever been mad about?',
+    'What’s something I taught you that you still use?',
+    'Which of my friends do you secretly like the most?',
+    'What’s a text from me you’ve reread more than once?',
+    'What did you think the first time you heard my laugh?',
+    'What’s one thing you were nervous to tell me early on?',
+    'Describe me to a stranger in 10 seconds. Go.',
+    'What’s a smell that instantly reminds you of me?',
+    'What’s one food you’d only ever share with me?',
+    'What’s the dumbest argument we’ve had that you still think you won?',
+    'What’s something you do differently now because of me?',
+    'What’s your most irrational fear?',
+    'What’s a childhood memory you’ve never told me?',
+    'Which celebrity do you think I look most like?',
+    'What’s the best gift I’ve given you, and why?',
+    'What were you totally wrong about when you first met me?',
+    'What’s your favorite way I say your name?',
+    'What’s a little routine of ours you never want to lose?',
+    'Who in your family do you think likes me the most?',
+    'What’s something you bought just because it reminded you of me?',
+    'When do you feel most at home with me?',
+    'What’s a dream you had about me that you never mentioned?',
+    'What’s one bucket-list thing you want me there for?',
+    'What’s the most embarrassing song in your recently played? Play it.',
+    'When did I make a bad day better without even trying?',
+    'What would you miss most if we spent a month apart?',
+    'What’s something you’re weirdly competitive about?',
   ],
   flirty: [
     'What’s the most attractive thing I do without realizing it?',
@@ -1562,6 +2359,31 @@ const TRUTHS = {
     'If you could kiss me anywhere in the world, where?',
     'What’s the moment you thought "wow, they’re hot"?',
     'What’s the most jealous you’ve been over me?',
+    'What’s the first thing you’d do if I showed up at your door right now?',
+    'What’s a look I give you that you can’t resist?',
+    'What’s the best kiss we’ve ever had? Set the scene.',
+    'Which moment of ours do you replay in your head the most?',
+    'What would you wear if you wanted me staring at you all night?',
+    'What song do you want playing during our next slow kiss?',
+    'When were you the most distracted by me?',
+    'Who flirted first? Be honest.',
+    'What’s the boldest thing you’ve thought about doing on a date with me?',
+    'What’s my best angle? Prove it.',
+    'What’s a pet name you secretly want me to call you?',
+    'When did you last check me out without me noticing?',
+    'What’s your favorite thing about waking up next to me?',
+    'What do you think about when you can’t sleep and I’m not there?',
+    'Which of my voices is hottest: sleepy, serious, or excited?',
+    'What’s a move I do that totally works on you?',
+    'If we met for the first time tonight at a party, how would you hit on me?',
+    'Rate my flirting skills out of 10 and justify the score.',
+    'Have you ever rehearsed a kiss or a line before seeing me?',
+    'What’s the longest you’ve wanted to kiss me but had to wait?',
+    'What’s a sweet nothing you want me to whisper more often?',
+    'Which photo of me would you keep as your lock screen forever?',
+    'Hands, eyes, or smile: which of mine gets you first?',
+    'Describe our perfect lazy morning in bed (keep it PG-13).',
+    'What’s the most romantic thing you’d do if nobody could ever find out?',
   ],
   spicy: [
     'What’s your wildest fantasy involving me?',
@@ -1580,6 +2402,31 @@ const TRUTHS = {
     'What’s your favorite thing I do with my hands?',
     'Describe our hottest memory like you’re telling a story.',
     'What’s the one thing I could text you that would make you come home immediately?',
+    'What’s the hottest thing you’ve imagined me saying to you during sex?',
+    'Where on my body do you want to spend more time?',
+    'What’s something we’ve done once that you want on repeat?',
+    'What’s your favorite thing to watch me do when I’m turned on?',
+    'What position do you want to try that we haven’t yet?',
+    'What’s your biggest turn-off, so I never do it?',
+    'Have you touched yourself thinking about me? When was the last time?',
+    'What’s one dirty word you love hearing from me?',
+    'What’s the dirtiest text you’ve ever drafted for me and deleted?',
+    'What’s a fantasy you think I’d say yes to?',
+    'Where do you love having my mouth the most?',
+    'Where’s the most inappropriate place you’ve wanted me?',
+    'Do you like being told what to do in bed? How much?',
+    'What’s the best orgasm you’ve had with me? Describe it.',
+    'What’s one thing you want me to do more slowly?',
+    'What are you thinking about right before you finish?',
+    'What’s your favorite thing I wear to bed, or don’t?',
+    'Which toy do you want us to buy next?',
+    'What’s a kink you’d want to try just once, for science?',
+    'Would you rather be woken up with my mouth or my hands?',
+    'How long do you think you’d last if I teased you without stopping?',
+    'What’s the hottest thing about how I kiss you when we’re alone?',
+    'Morning sex or middle-of-the-night sex: which do you think about more?',
+    'What could I whisper to you in public that only you’d understand?',
+    'What’s something you want me to beg for?',
   ],
 };
 
@@ -1601,6 +2448,31 @@ const DARES = {
     'Text a friend something nice about me right now.',
     'Let me post anything (nice) on your story.',
     'Do 10 push-ups while saying something you love about me each time.',
+    'Do a dramatic movie-trailer voiceover about our relationship.',
+    'Draw my portrait in 60 seconds with your non-dominant hand.',
+    'Let me give you a new nickname you have to answer to for the rest of the night.',
+    'Tell me three things you love about me like a sports commentator.',
+    'Speak only in song lyrics for the next 2 minutes.',
+    'Make me a trophy out of things in this room and present it with a speech.',
+    'Do your best runway walk across the room.',
+    'Show me the most embarrassing photo of yourself on your phone.',
+    'Leave me a sweet voice memo I can save for a bad day.',
+    'Act out your morning routine in fast-forward.',
+    'Invent a secret handshake with me. We have to use it all week.',
+    'Hug me for one full minute without letting go.',
+    'Let me draw a tiny heart anywhere on your hand in pen.',
+    'Do a 30-second stand-up set about my habits.',
+    'Teach me a dance move, then do it together.',
+    'Fake-propose to me using the closest snack as the ring.',
+    'Plan our next date out loud in 60 seconds, with details.',
+    'Recreate a famous movie scene with me. I pick the scene.',
+    'Let me queue the next 3 songs on your music app.',
+    'Narrate everything I do for the next minute like a nature documentary.',
+    'Make me a drink or snack and serve it like a fancy waiter.',
+    'Give a 30-second toast as if it’s our 50th anniversary.',
+    'Balance a spoon on your nose until it falls, then kiss my cheek.',
+    'Make me laugh in 30 seconds. Fail, and you owe me a back scratch.',
+    'Write my name on your arm in your fanciest cursive.',
   ],
   flirty: [
     'Kiss me somewhere other than my lips.',
@@ -1619,6 +2491,31 @@ const DARES = {
     'Dance for me for 30 seconds.',
     'Tell me, in detail, what you love about my lips.',
     'Take a cute selfie with me that you have to make your lock screen.',
+    'Give me a forehead kiss and say something sweet without laughing.',
+    'Scratch my back for 2 minutes, wherever I point.',
+    'Kiss each of my knuckles slowly.',
+    'Hold my face and tell me I’m cute. Make it convincing.',
+    'Give me a slow-motion wink, then blow me a kiss.',
+    'Hum a love song softly into my ear.',
+    'Lean in like you’re going to kiss me and stop an inch away. Hold it for 10 seconds.',
+    'Nuzzle into my neck and stay there for 20 seconds.',
+    'Pick any part of me, give it a compliment, then a kiss.',
+    'Sit facing me, knees touching, and tell me what you want to do after this game.',
+    'Give me an Eskimo kiss, a butterfly kiss, then a real one.',
+    'Massage my hands for 2 minutes.',
+    'Write a flirty note and hide it somewhere I’ll find it later.',
+    'Strike your most seductive model pose. I take the photo.',
+    'Kiss my wrist, then my shoulder, then my cheek, slowly.',
+    'Play with my hair while telling me your favorite memory of us.',
+    'Bite your lip and look at me like you mean it.',
+    'Lie down with me and whisper three things you like about my body.',
+    'Let me sit between your legs for the next two rounds.',
+    'Tell me what you’d do if we were stuck alone in an elevator for 5 minutes.',
+    'Kiss me so I can taste your drink.',
+    'Tickle me for 10 seconds, then kiss it better.',
+    'Hold my hand and don’t let go until your next turn.',
+    'Read a flirty text you once sent me out loud, in your sexiest voice.',
+    'Pretend we just met at a bar and buy me an imaginary drink.',
   ],
   spicy: [
     'Take off one piece of clothing (your choice).',
@@ -1637,6 +2534,32 @@ const DARES = {
     'Give me a massage, shirt off.',
     'Pick any object in the room and use it creatively on me for one minute.',
     'Let me be in charge of your next dare.',
+    'Kiss me everywhere my clothes cover, over the clothes.',
+    'Straddle me for the next round. No sitting anywhere else.',
+    'Lick a slow line from my collarbone to my ear.',
+    'Strip to your underwear and stay that way for 3 rounds.',
+    'Let me blindfold you for the next 2 rounds.',
+    'Get me as turned on as you can in 60 seconds using only your voice.',
+    'Go down on me for one minute. Timer on.',
+    'Moan my name once, like you mean it.',
+    'Pick a position and hold me in it, clothes on, for 30 seconds.',
+    'Run an ice cube over me anywhere you want for 30 seconds.',
+    'Pin my wrists above my head and kiss me until I beg.',
+    'Touch yourself for 60 seconds while I watch.',
+    'Text me the dirtiest thing you can think of, then read it to me out loud.',
+    'Let me pick one piece of your clothing to take off and keep for the night.',
+    'Kiss your way down my stomach and stop at the waistband.',
+    'Spank me three times. I choose how hard.',
+    'Pose for one spicy photo that only I get to keep.',
+    'Pull my hair gently and whisper what you want.',
+    'Touch me anywhere except where I want it most, for one full minute.',
+    'Bite my inner thigh, then kiss it better.',
+    'Drizzle something sweet on me and lick it off.',
+    'Use only your hands to make me moan in under 2 minutes.',
+    'Get on top and stay there until the end of the next round.',
+    'Undress me completely, one item per minute.',
+    'Whisper your favorite fantasy, then act out the first 30 seconds of it.',
+    'Make me say “please” before you kiss me again.',
   ],
 };
 
@@ -75397,11 +76320,190 @@ registerGame({
 return {  };
 })();
 
+// ── js/content/daily.js ──
+__M['js/content/daily.js'] = (() => {
+'use strict';
+// Question of the day, second edition (used from 2026-10-15 on; earlier days keep the original DAILY list).
+// Objects { q, o: [4 options] } are pick + guess days: you pick yours AND guess your partner's.
+// Strings are free-text days (about 1 in 4 days). Answers save the item's index, so only ever APPEND here:
+// never edit, remove or reorder an item that has shipped.
+const DAILY2 = [
+  { q: 'A day off just appeared out of nowhere. First move?', o: ['Back to bed, no apologies', 'Drive somewhere with no destination', 'Finally attack the to-do list', 'Text you to come over immediately'] },
+  { q: 'Pick a candle scent for our place:', o: ['Cedar and campfire', 'Vanilla bakery', 'Salty ocean air', 'Clean laundry'] },
+  { q: 'You’re on a cooking show. You get sent home for…', o: ['Raw chicken, somehow', 'Crying into the soup', 'Arguing with a judge', 'Gorgeous plating, zero salt'] },
+  'What’s something you saw today that you wish I’d seen too?',
+  { q: 'Which animal are you in the first ten minutes after waking up?', o: ['A grumpy cat', 'A sloth', 'A golden retriever, sadly', 'A raccoon raiding the pantry'] },
+  { q: 'In the group chat you’re the one who…', o: ['Sends memes at 3am', 'Leaves everyone on read', 'Actually makes the plans', 'Writes the voice-of-reason paragraph'] },
+  { q: 'Best use of a rainy afternoon together?', o: ['Blanket fort and a movie', 'Puddle walk, no umbrella', 'Baking something too ambitious', 'A nap pile'] },
+  'Write me a two-sentence love story about us, starring something from this week.',
+  { q: 'Which tiny thing from me would make your whole day?', o: ['A random “thinking of you” text', 'A forehead kiss', 'Saving you the last bite', 'A playlist made just for you'] },
+  { q: 'If you were a houseplant, you’d be…', o: ['A cactus: low maintenance, a little prickly', 'A sunflower: needs constant attention', 'A fern: thrives in the bathroom', 'A fake plant: completely unbothered'] },
+  { q: 'Pick our couple Halloween costume:', o: ['Salt and pepper shakers', 'Gomez and Morticia', 'A shark and its victim', 'Two ghosts in bedsheets'] },
+  'What’s a word you love the sound of?',
+  { q: 'On a road trip, your job is…', o: ['DJ with absolute control', 'Snack distributor', 'Navigator who gets us lost', 'Asleep in the passenger seat'] },
+  { q: 'How long could you last with no phone?', o: ['A week, easy', 'A weekend', 'One afternoon', 'This question is making me sweat'] },
+  { q: 'The most satisfying sound in the world:', o: ['Ice cracking in a drink', 'A perfect keyboard click', 'Rain on a tin roof', 'Peeling the film off something new'] },
+  'What’s a browser tab you’ve had open way too long, and why?',
+  { q: 'Lottery money hits your account. First purchase?', o: ['A house with a view', 'Two plane tickets, one is yours', 'Paying off every debt that day', 'Something ridiculous, like a llama'] },
+  { q: 'What are we naming the boat?', o: ['Unsinkable II', 'Seas the Day', 'Knot Today', 'Our last names smushed together'] },
+  { q: 'The perfect number of weekend plans:', o: ['Zero. Let it happen.', 'One fun thing', 'A packed itinerary', 'Plans I’ll cancel on Friday night'] },
+  'What’s a tiny win from today that nobody else noticed?',
+  { q: 'One night in any era. Where are you?', o: ['A 1920s speakeasy', 'A 70s roller disco', 'A medieval feast', 'A 2000s mall at peak glitter'] },
+  { q: 'Only one condiment for the rest of your life:', o: ['Ranch', 'Hot sauce', 'Ketchup', 'Garlic aioli'] },
+  { q: 'The first thing you do when you get home:', o: ['Change into comfy clothes', 'Open the fridge and stare', 'Flop face-first onto the bed', 'Find you for a hug'] },
+  'Describe your current mood as a weather report.',
+  { q: 'We’re cast in a heist movie. Your role?', o: ['The mastermind', 'The hacker in a hoodie', 'The getaway driver', 'The one who trips the alarm'] },
+  { q: 'The potluck dish you’d bring:', o: ['Homemade mac and cheese', 'A store-bought cake in disguise', 'Chips and one killer dip', 'Good vibes and a fork'] },
+  { q: 'Our reality show would be called…', o: ['Keeping Up With Us', 'Love Is Blind (Without Glasses)', 'The Real Couple of Boulder', 'Who Ate My Leftovers?'] },
+  'What’s the most random thing in your camera roll right now? Explain it.',
+  { q: 'How do you eat a cookie?', o: ['Dunked in milk', 'Warm off the tray', 'As raw dough, before it’s a cookie', 'Frozen, weirdly'] },
+  { q: 'A wizard offers you one magic item. You take…', o: ['A bag that never runs out of snacks', 'A door that opens anywhere', 'A mirror that shows next year', 'A pen that writes the perfect text'] },
+  { q: 'Which game brings out your worst side?', o: ['Monopoly', 'Uno', 'Mario Kart (it counts)', 'Catan'] },
+  'What’s something you were wrong about, and you’re glad you were?',
+  { q: 'Dream date, but it has to be one of these:', o: ['An aquarium after hours', 'A hot spring under the stars', 'A tiny candlelit Italian place', 'A night market full of street food'] },
+  { q: 'Your most likely impulse buy:', o: ['Candy at the checkout', 'Clothes I don’t need', 'A gadget I’ll use twice', 'Another plant'] },
+  { q: 'Pick one weather to live in forever:', o: ['Crisp and sunny, 65°', 'Warm and breezy beach day', 'Snowy and cozy', 'Thunderstorms on repeat'] },
+  'Name three things within arm’s reach. They’re now your heist crew. Who does what?',
+  { q: 'The Sorting Hat puts you in…', o: ['Gryffindor', 'Hufflepuff', 'Ravenclaw', 'Slytherin'] },
+  { q: 'If you were a font you’d be…', o: ['Comic Sans, unapologetic', 'Times New Roman, reliable', 'Fancy wedding cursive', 'All-caps Impact'] },
+  { q: 'A spider shows up in the room. You…', o: ['Gently relocate it outside', 'Shoe. No mercy.', 'Leave the room forever', 'Yell for me'] },
+  'If you only had six words to say to me today, what are they?',
+  { q: 'When you’re sick you turn into…', o: ['A baby who needs soup and attention', 'A hermit, leave me alone', 'In denial, still going to class or work', 'Dramatic, drafting my will'] },
+  { q: 'The long-drive playlist starts with…', o: ['Throwback 2000s pop', 'Sad indie', 'Country with the windows down', 'A podcast, actually'] },
+  { q: 'Hide-and-seek, right now. Where are you hiding?', o: ['Behind the shower curtain', 'Under the bed', 'In plain sight, frozen', 'Outside. I’m gone.'] },
+  'What’s a scene from a movie or show you could rewatch a hundred times?',
+  { q: 'Which kind of tired are you, most days?', o: ['Sleepy tired', 'Social tired', 'Brain-fried tired', 'Not tired, just cozy'] },
+  { q: 'The best part of any vacation:', o: ['The planning and countdown', 'The very first day', 'The food', 'Coming home to my own bed'] },
+  { q: 'You go viral. What for?', o: ['A genius invention', 'A recipe everyone copies', 'A legendary dance move', 'Being the nicest person online'] },
+  'Teach me one thing in one sentence that I probably don’t know.',
+  { q: 'The ideal birthday:', o: ['Big party with everyone', 'Quiet dinner, just us', 'A surprise I know nothing about', 'Pretend it isn’t happening'] },
+  { q: 'Best way to be woken up?', o: ['Kisses', 'Breakfast smells from the kitchen', 'Slowly, with the blinds opening', 'Don’t. Let me sleep.'] },
+  { q: 'If we redid our first date, we’d go…', o: ['Ice skating', 'To an escape room', 'To a cooking class', 'To a diner for midnight pancakes'] },
+  'Invent a holiday just for us. What’s it called, and how do we celebrate?',
+  { q: 'You’d win a gold medal in…', o: ['Competitive parallel parking', 'Lyric recall', 'Finding what everyone else lost', 'Napping anywhere'] },
+  { q: 'Fries, ideally:', o: ['Crispy shoestring', 'Thick steak fries', 'Curly, obviously', 'Loaded with everything'] },
+  { q: 'Which mythical creature should be our pet?', o: ['A tiny dragon', 'A unicorn with an attitude', 'A phoenix that sets off the smoke alarm', 'A loyal griffin'] },
+  'What’s a sound that instantly relaxes you?',
+  { q: 'Snow day! The plan is…', o: ['Snowball war, no prisoners', 'Pajamas and a movie marathon', 'An ambitious snowman', 'Hibernate until it melts'] },
+  { q: 'If you taught a class, it would be…', o: ['Professional Napping', 'Advanced Snack Pairing', 'How to Win Any Argument', 'Being Adorable 101'] },
+  { q: 'When would a surprise kiss from me hit hardest?', o: ['In the grocery store aisle', 'At a red light', 'In the rain', 'Right in the middle of your sentence'] },
+  'If you could leave a note for me to find a year from now, what would it say?',
+  { q: 'The vibe of our dream home:', o: ['Cozy mountain cabin', 'Clean and modern', 'Plants-everywhere jungle', 'Breezy beach cottage'] },
+  { q: 'When you’re hangry, you get…', o: ['Silent and deadly', 'Annoyed by everyone', 'Weirdly emotional', 'I don’t get hangry (lie)'] },
+  { q: 'Which would make the best tradition for us?', o: ['Pancakes every Sunday', 'A yearly camping trip', 'Ugly sweater photos', 'A yearly letter to our future selves'] },
+  'What’s been the best five minutes of your day so far?',
+  { q: 'How competitive are you, honestly?', o: ['Not at all, it’s just a game', 'Friendly, until I’m losing', 'I keep score in my head', 'I will flip the board'] },
+  { q: 'If you could wear one outfit every day, it’d be…', o: ['Sweatpants and a giant hoodie', 'Jeans and a good tee', 'Something dressy, always', 'A robe like a retired king'] },
+  { q: 'Your move for leaving a party:', o: ['“I have an early morning”', 'The silent vanish', '“The dog needs me”', 'I never leave. I close the place.'] },
+  'What’s something you’re weirdly good at remembering?',
+  { q: 'Which would you put in our home?', o: ['A secret room behind a bookshelf', 'A sunroom full of plants', 'A walk-in closet', 'A ball pit for adults'] },
+  { q: 'How long until we actually pick something to watch?', o: ['Two minutes', 'Twenty minutes', 'We end up rewatching something', 'We never pick, we just scroll'] },
+  { q: 'If you were a kitchen appliance you’d be…', o: ['A blender: loud and chaotic', 'A slow cooker: worth the wait', 'A toaster: simple and reliable', 'An air fryer: suddenly everyone’s obsessed'] },
+  'Pitch me a date idea in exactly one sentence.',
+  { q: 'Who narrates the documentary of your life?', o: ['Morgan Freeman', 'David Attenborough', 'A sports commentator', 'A gossip podcast host'] },
+  { q: 'Pick a little luxury for tonight:', o: ['A long hot bath', 'Fancy takeout', 'A nap with no alarm', 'An hour where nobody needs me'] },
+  { q: 'Which job would you be secretly great at?', o: ['Detective', 'Kindergarten teacher', 'Wedding planner', 'Professional food critic'] },
+  'Build your perfect sandwich. Every layer, in order.',
+  { q: 'The correct number of throw pillows:', o: ['Two, functional', 'Five, decorative', 'Enough to build a fort', 'Zero, they end up on the floor'] },
+  { q: 'An hour alone in a bookstore. You…', o: ['Read the first page of 40 books', 'Go straight to one section', 'Mostly hang out in the café', 'Leave with way too many'] },
+  { q: 'Which dance move is most “you”?', o: ['The shoulder shimmy', 'The sprinkler', 'A shy little sway', 'Full choreography, I know it all'] },
+  'What’s a compliment you’d like to give yourself today?',
+  { q: 'When do you feel the most attractive?', o: ['Fresh out of the shower', 'Dressed up for a night out', 'Right after a workout', 'When you look at me a certain way'] },
+  { q: 'When you’re into someone, you show it by…', o: ['Teasing them nonstop', 'Doing them little favors', 'Staring like a weirdo', 'Just telling them'] },
+  { q: 'Pick a cozy drink:', o: ['Hot chocolate, too many marshmallows', 'Chai', 'Hot apple cider', 'Warm milk with honey'] },
+  'If you could press pause on one moment from today, which one?',
+  { q: 'Today’s forecast for us:', o: ['Sunny with a high of flirty', 'Partly clingy', 'Light drizzle of bickering', 'Heat wave'] },
+  { q: 'Everyone’s safe. You grab one thing on the way out:', o: ['My phone', 'Photos and keepsakes', 'My laptop', 'The snacks'] },
+  { q: 'A free weekend in Colorado. You choose…', o: ['Hiking a fourteener', 'Soaking in a hot spring', 'Pearl Street and a brewery', 'Skiing until my legs quit'] },
+  'Give me one smell, one sound and one taste from your day.',
+  { q: 'A perfect San Diego day starts with…', o: ['Seals and tide pools in La Jolla', 'Tacos, then a Padres game', 'Cowles Mountain at sunrise', 'Wandering Balboa Park'] },
+  { q: 'Sleeping on a hot night, you’re…', o: ['Fan on max, no blanket', 'Under a blanket anyway, it’s a safety thing', 'One leg out', 'AC at 64 and a heavy comforter'] },
+  { q: 'A couple of drinks in, you become…', o: ['The hugger', 'The philosopher', 'The DJ', 'The one ordering pizza'] },
+  'What’s something you’d love to get better at, with me as your coach?',
+  { q: 'Best place for a good cry?', o: ['The shower', 'The car', 'Into your shoulder', 'I don’t cry (I do)'] },
+  { q: 'How long would you last at a silent retreat?', o: ['The whole week', 'A day, max', 'An hour', 'Kicked out at breakfast'] },
+  { q: 'The best part of waking up next to me:', o: ['Tangled legs and no alarm', 'Your sleepy voice', 'Stealing the warm spot', 'Your bedhead'] },
+  'Write a one-line review of our last date, with a star rating.',
+  { q: 'If you were a sandwich, you’d be…', o: ['Grilled cheese: simple comfort', 'A club: layered and complicated', 'PB&J: a classic', 'A banh mi: a little spicy'] },
+  { q: 'Someone throws you a surprise party. You…', o: ['Am genuinely shocked and teary', 'Knew. I always know.', 'Want to hide behind the cake', 'Become the life of it immediately'] },
+  { q: 'Which would you rather learn together?', o: ['Salsa dancing', 'A new language', 'Pottery', 'Surfing'] },
+  'If this week were a chapter of a book, what’s the chapter title?',
+  { q: 'Your warning label says…', o: ['May overthink without notice', 'Requires snacks every two hours', 'Hugs may last longer than expected', 'Sarcasm included at no extra cost'] },
+  { q: 'The best holiday, no contest:', o: ['Christmas', 'Halloween', 'Thanksgiving', 'New Year’s Eve'] },
+  { q: 'The ideal date-night budget:', o: ['Free, we’re creative', 'Under $30', 'Treat ourselves', 'Don’t look at the receipt'] },
+  'Who made your day a little better recently, and how?',
+  { q: 'Which would you rather get in the mail?', o: ['A postcard from somewhere far', 'A mystery box of snacks from another country', 'A pressed flower', 'A check, honestly'] },
+  { q: 'The best Sunday-night activity:', o: ['Meal prep like an adult', 'Face masks and a show', 'Spiraling about Monday', 'An early bedtime'] },
+  { q: 'Which would you love me to do more often?', o: ['Play with your hair', 'Plan surprise dates', 'Send voice memos', 'Hype you up in public'] },
+  'What’s something kind you could do for future-you tonight?',
+  { q: 'Which “first” of ours would you relive tonight?', o: ['Our first date', 'Our first kiss', 'The first “I love you”', 'Our first trip together'] },
+  { q: 'Unlimited for life, pick one:', o: ['Free gas', 'Free concert tickets', 'Free massages', 'Free books'] },
+  { q: 'Waiting for food at a restaurant, you…', o: ['Demolish the bread basket', 'People-watch and invent their backstories', 'Scroll your phone', 'Stare at the kitchen door'] },
+  'What’s the last thing that gave you goosebumps?',
+  { q: 'Best way to celebrate a win:', o: ['A fancy dinner', 'A dance party in the kitchen', 'Tell absolutely everyone', 'Quietly smug, then a nap'] },
+  { q: 'Which cartoon character are you most like?', o: ['SpongeBob', 'Squidward', 'Winnie the Pooh', 'Shrek'] },
+  { q: 'Cuddling when it’s hot out:', o: ['Always, sweat and all', 'Pinkies touching, that’s it', 'Only under the AC', 'Absolutely not, love you though'] },
+  'What’s a dumb argument you’d happily have with me again?',
+  { q: 'A whole free day. Pick one:', o: ['Thrift store crawl', 'Spa day', 'Long hike', 'Video game marathon'] },
+  { q: 'Your worst little habit:', o: ['Leaving cups everywhere', 'Doom-scrolling in bed', 'Biting my nails', 'Starting things and not finishing'] },
+  { q: 'How do you load a dishwasher?', o: ['Tetris perfection', 'Throw it in and pray', 'Rinse everything first (so, washing it)', 'What dishwasher? I hand wash'] },
+  'If you could get one text from anyone in history, who sends it and what does it say?',
+  { q: 'Which would you most want to see in person?', o: ['A total solar eclipse', 'Whales breaching', 'A volcano erupting (from far away)', 'A rocket launch'] },
+  { q: 'When I ask “what do you want for dinner?”, you usually say…', o: ['“I don’t care” (I care)', 'A very specific craving', '“Whatever you want”', 'Veto, veto, veto'] },
+  { q: 'Which rom-com cliché are we most likely to live out?', o: ['Kissing in the rain', 'Running through an airport', 'A grand gesture in front of strangers', 'Showing up in matching outfits by accident'] },
+  'What’s one thing you want to remember about this year?',
+  { q: 'A free plane ticket leaves in three hours. You…', o: ['Go. Packing is optional.', 'Go, but only if you come', 'Panic, then go', 'Decline. I had plans (a nap).'] },
+  { q: 'Your love-note style:', o: ['Long and poetic', 'Short and funny', 'Mostly doodles', 'A sticky note on the mirror'] },
+  { q: 'This month, we should do more of…', o: ['Real, planned dates', 'Cooking together', 'Getting outside', 'Staying in bed late'] },
+  'What’s a little thing I did lately that made you fall for me a bit more?',
+  { q: 'Eggs, your way:', o: ['Soft scrambled', 'Over easy', 'Hard boiled', 'No eggs for me'] },
+  { q: 'Which flirting move works best on you?', o: ['Long eye contact', 'Being teased', 'A sincere compliment', 'Laughing at my jokes'] },
+  { q: 'A robot butler can only do one thing:', o: ['All the laundry, folded', 'Cook every meal', 'Answer my emails', 'Back scratches on demand'] },
+  'What’s something you’re curious about right now?',
+  { q: 'Your villain origin story:', o: ['Someone ate my leftovers', 'Slow Wi-Fi', 'Being told to “smile more”', 'One group project too many'] },
+  { q: 'What snaps you out of a bad mood fastest?', o: ['Food', 'A good cry', 'Some time alone', 'Being made to laugh'] },
+  { q: 'Your nap style:', o: ['20-minute power nap', 'Accidentally three hours', 'Can’t nap, never could', 'Couch nap with the TV on'] },
+  'Describe your dream Saturday with me using only emojis.',
+  { q: 'The emoji you overuse:', o: ['😂', '🥺', '💀', '❤️'] },
+  { q: 'Your shopping style:', o: ['In and out with a list', 'Wander every aisle', 'Online only, at 1am', 'Add to cart, never buy'] },
+  { q: 'Which scares you more?', o: ['A haunted house', 'Deep open ocean', 'Speaking in front of a crowd', 'A clown knocking on the door'] },
+  'What’s a compliment about me you’ve never said out loud?',
+  { q: 'As a little kid, you wanted to be…', o: ['An astronaut', 'A vet', 'A pop star', 'Something oddly specific, like a garbage truck driver'] },
+  { q: 'The best time of day:', o: ['Golden hour', 'Midnight', 'Quiet early morning', 'Lunchtime, obviously'] },
+  { q: 'Never again, pick one:', o: ['Folding a fitted sheet', 'Untangling cords', 'Scraping ice off a windshield', 'Waiting on hold'] },
+  'What’s the coziest moment you’ve had this week?',
+  { q: 'Best snack pairing:', o: ['Fries dipped in a milkshake', 'Popcorn with M&Ms', 'Apples and peanut butter', 'Pizza crust in ranch'] },
+  { q: 'In our band, you play…', o: ['Lead vocals', 'Drums', 'Bass, chilling in the back', 'Tambourine, with confidence'] },
+  { q: 'Someone compliments you. You…', o: ['Say thank you like a normal person', 'Deflect with a joke', 'Compliment them right back', 'Turn red and leave'] },
+  'If you had to rename yourself, what would you pick?',
+  { q: 'Pick our cozy night in:', o: ['Candles and a jigsaw puzzle', 'Fuzzy socks and a scary movie', 'Takeout and a long talk', 'Bubble bath and music'] },
+  { q: 'How much sleep do you actually need?', o: ['Six hours and I’m fine', 'Eight, non-negotiable', 'Ten, don’t judge', 'However many until noon'] },
+  { q: 'How do you feel about surprises?', o: ['Love them', 'Only good ones', 'Hate them, tell me everything', 'Love giving them, hate getting them'] },
+  'What’s one thing you want to try for the first time with me?',
+  { q: 'Someone hands you the mic at a wedding. You…', o: ['Give a heartfelt toast', 'Roast the couple', 'Start a conga line', 'Pass it immediately'] },
+  { q: 'What do you think about weirdly often?', o: ['Something embarrassing from years ago', 'What our future looks like', 'A random fact I learned once', 'A meal I had on vacation'] },
+  { q: 'Under the stars with me, you’d rather…', o: ['Slow dance', 'Make wishes', 'Talk until sunrise', 'Fall asleep on a blanket'] },
+  'What could I whisper to you right now that would make you blush?',
+  { q: 'I text you “come here.” You…', o: ['Am already on my way', 'Ask why, suspiciously', 'Reply “no, YOU come here”', 'Pretend to be busy, then show up'] },
+  { q: 'The best part of hugging me:', o: ['How warm you are', 'How you smell', 'Hearing your heartbeat', 'Not being the first to let go'] },
+  { q: 'What do you notice first when I walk into a room?', o: ['Your smile', 'Your eyes', 'What you’re wearing', 'Whether you brought snacks'] },
+  'What’s a song lyric that sums up your week?',
+  { q: 'After a trip, how soon do you want the next one?', o: ['Booking it on the flight home', 'A few months', 'A year, I need to recover', 'Home is the trip'] },
+  { q: 'Our secret signal for “let’s leave this party” should be…', o: ['A tug on the ear', 'A code word, like “pineapple”', 'One very long stare', 'Just walking out, hand in hand'] },
+  { q: 'Most important trait in a best friend:', o: ['Loyalty', 'Humor', 'Honesty, even when it stings', 'Down for anything'] },
+  'Where’s a place you’d love to fall asleep next to me?',
+  { q: 'A cheap date this week. Which one?', o: ['A sunset picnic', 'Thrift-store outfit challenge', 'Cooking a dish from a random country', 'Driving around ranking houses'] },
+];
+
+return { DAILY2 };
+})();
+
 // ── js/app.js ──
 __M['js/app.js'] = (() => {
 'use strict';
 const { CONFIG } = __M['js/config.js'];
 const { PACKS, CATEGORIES, SPICY_CATEGORIES, DAILY, TRUTHS, DARES, TOD_LEVELS, DATES, DATE_CATS, LOVE_LANGS } = __M['js/content.js'];
+const { DAILY2 } = __M['js/content/daily.js'];
 const { Store, randomId } = __M['js/store.js'];
 const { initGames, gamesHubHTML, gamesHomeHTML, gamesWaitingCount, gamesIdentityChanged, GAMES } = __M['js/games/core.js'];
 
@@ -75440,9 +76542,63 @@ const pad = (n) => String(n).padStart(2, '0');
 const dkey = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const addDays = (key, n) => { const [y, m, d] = key.split('-').map(Number); return dkey(new Date(y, m - 1, d + n)); };
 const dayNum = (key) => { const [y, m, d] = key.split('-').map(Number); return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(2025, 0, 1)) / 864e5); };
-const gcd = (a, b) => (b ? gcd(b, a % b) : a);
-const STEP = [37, 41, 43, 47, 53].find((s) => gcd(s, DAILY.length) === 1) || 1;
-const dailyQ = (key) => DAILY[(((dayNum(key) * STEP) % DAILY.length) + DAILY.length) % DAILY.length];
+// ── question of the day ──
+// Days before DAILY2_FROM keep the original free-text list with its original day → question
+// mapping, frozen here (the first 100 questions, step 37), so an answer saved on one of those days
+// always shows next to the question it answered, even if DAILY grows later. From DAILY2_FROM on,
+// three days in four are pick + guess (you pick yours and guess your partner's) and every fourth
+// day is free text. New answers carry their DAILY2 index, so they never lose their question either.
+// Answer shapes: 'text' (original list, also what older app versions write on any day),
+// { i, m, g } (pick + guess) and { i, t } (free text from DAILY2).
+const DAILY2_FROM = '2026-10-15';
+const LEGACY_N = Math.min(100, DAILY.length);
+const LEGACY_STEP = 37;
+const legacyQ = (key) => DAILY[(((dayNum(key) * LEGACY_STEP) % LEGACY_N) + LEGACY_N) % LEGACY_N];
+const D2_MC = DAILY2.flatMap((x, i) => (typeof x === 'object' ? [i] : []));
+const D2_TXT = DAILY2.flatMap((x, i) => (typeof x === 'string' ? [i] : []));
+const LEGACY_ITEM = (key) => ({ kind: 'legacy', id: 'legacy', q: legacyQ(key) });
+function d2Item(i) {
+  const x = DAILY2[i];
+  if (typeof x === 'string') return { kind: 'text', id: 'text:' + i, i, q: x };
+  if (x && typeof x === 'object' && Array.isArray(x.o)) return { kind: 'mc', id: 'mc:' + i, i, q: x.q, o: x.o };
+  return null;
+}
+// The question shown for a day nobody has answered yet.
+function dayItem(key) {
+  if (key < DAILY2_FROM || !D2_MC.length) return LEGACY_ITEM(key);
+  const n = dayNum(key) - dayNum(DAILY2_FROM);
+  const fourth = Math.floor(n / 4);
+  if (n % 4 === 3 && D2_TXT.length) return d2Item(D2_TXT[fourth % D2_TXT.length]);
+  return d2Item(D2_MC[(n - fourth) % D2_MC.length]);
+}
+// The question a saved answer was given against (null: no answer, or one this version can't read).
+function ansItem(key, v) {
+  if (typeof v === 'string') return LEGACY_ITEM(key);
+  if (v && typeof v === 'object' && Number.isInteger(v.i)) {
+    const it = d2Item(v.i);
+    if (it && (it.kind === 'mc' ? Number.isInteger(v.m) && Number.isInteger(v.g) : typeof v.t === 'string')) return it;
+  }
+  return null;
+}
+const itemById = (key, id) => (id === 'legacy' ? LEGACY_ITEM(key) : d2Item(Number(String(id).split(':')[1])));
+const dailyOf = (who, key) => store.person(who).daily?.[key];
+// Today's (or any day's) question: whatever one of you already answered, else the day's own.
+const dailyItem = (key) => ansItem(key, dailyOf(me(), key)) || ansItem(key, dailyOf(them(), key)) || dayItem(key);
+// Guesses on pick + guess days you both answered: how often each of you read the other right.
+function dailyTally() {
+  const t = { a: 0, b: 0, n: 0 };
+  const A = store.person('a').daily || {}; const B = store.person('b').daily || {};
+  for (const k of Object.keys(A)) {
+    const x = A[k]; const y = B[k];
+    if (!x || !y || typeof x !== 'object' || typeof y !== 'object' || x.i !== y.i) continue;
+    const it = ansItem(k, x);
+    if (!it || it.kind !== 'mc' || !ansItem(k, y)) continue;
+    t.n++;
+    if (x.g === y.m) t.a++;
+    if (y.g === x.m) t.b++;
+  }
+  return t;
+}
 const prettyDate = (key) => { const [y, m, d] = key.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }); };
 const shuffle = (arr) => { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 const me = () => store.me;
@@ -75738,32 +76894,93 @@ function daysTogether() {
 }
 
 function dailyCard(key, { compact = false } = {}) {
-  const q = dailyQ(key);
-  const mine = store.person(me()).daily?.[key];
-  const theirs = store.person(them()).daily?.[key];
+  const it = dailyItem(key);
+  const mine = dailyOf(me(), key);
+  const theirs = dailyOf(them(), key);
+  const mc = it.kind === 'mc';
+  const hint = `<p class="tiny muted">${theirs ? `${N(them())} already answered. Answer to unlock it.` : `Answers stay hidden until you’ve both answered.`}</p>`;
   let inner;
   if (!mine) {
-    inner = `<textarea class="input" rows="3" data-draft="daily-${key}" placeholder="Your answer…"></textarea>
-      <div class="daily-act"><button class="btn" data-act="saveDaily" data-key="${key}">Lock it in</button>
-      <p class="tiny muted">${theirs ? `${N(them())} already answered. Answer to unlock it.` : `Answers stay hidden until you’ve both answered.`}</p></div>`;
+    if (mc) {
+      const t = (session.dpick && session.dpick[key]) || {};
+      const opts = (k) => it.o.map((o, i) => `<button class="opt ${t[k] === i ? 'sel' : ''}" data-act="dailyPick" data-key="${key}" data-k="${k}" data-v="${i}" aria-pressed="${t[k] === i}">${esc(o)}</button>`).join('');
+      const ready = t.m !== undefined && t.g !== undefined;
+      inner = `<div class="label">Your answer</div><div class="opts p-${me()}">${opts('m')}</div>
+        <div class="label">Your guess for ${N(them())}</div><div class="opts guess p-${them()}">${opts('g')}</div>
+        <div class="daily-act"><button class="btn ${ready ? '' : 'is-off'}" data-act="saveDaily" data-key="${key}" data-item="${it.id}">Lock it in</button>${hint}</div>`;
+    } else {
+      inner = `<textarea class="input" rows="3" data-draft="daily-${key}" placeholder="Your answer…"></textarea>
+      <div class="daily-act"><button class="btn" data-act="saveDaily" data-key="${key}" data-item="${it.id}">Lock it in</button>${hint}</div>`;
+    }
   } else if (!theirs) {
-    inner = `${bubble(me(), mine)}
+    inner = `${dailyAnswer(key, me(), mine, it)}
       <div class="locked">${icon('lock')}Waiting on ${N(them())}…</div>
       <button class="btn ghost small" data-act="nudge" data-text="${esc(`Answer today's question on ${CONFIG.appName} 👀`)}">Nudge ${N(them())}</button>`;
   } else {
-    inner = bubble(me(), mine) + bubble(them(), theirs);
+    const mi = ansItem(key, mine); const ti = ansItem(key, theirs);
+    inner = mc && mi && ti && mi.id === ti.id ? dailyReveal(key, it, mine, theirs) : dailyAnswer(key, me(), mine, it) + dailyAnswer(key, them(), theirs, it);
   }
-  return `<div class="card daily ${compact ? 'compact' : ''}">
-    <div class="eyebrow">${key === dkey() ? (compact ? 'Today' : 'Question of the day') : key === addDays(dkey(), -1) ? 'Yesterday' : prettyDate(key)}</div>
-    <h2 class="q">${esc(q)}</h2>
+  const tally = !compact && mc ? dailyTallyLine() : '';
+  return `<div class="card daily ${compact ? 'compact' : ''} ${mc ? 'is-mc' : ''}" data-day="${key}">
+    <div class="eyebrow">${key === dkey() ? (compact ? 'Today' : (mc ? 'Question of the day · pick + guess' : 'Question of the day')) : key === addDays(dkey(), -1) ? 'Yesterday' : prettyDate(key)}</div>
+    <h2 class="q">${esc(it.q)}</h2>
     ${inner}
+    ${tally}
   </div>`;
 }
 
-function bubble(who, text) {
+// One person's answer on its own (before the reveal, or when the two of you answered different
+// questions: an older app version on one phone). Names the question when it isn't the card's.
+function dailyAnswer(key, who, v, cardItem) {
+  const it = ansItem(key, v);
+  const note = it && it.id !== cardItem.id ? `<div class="tiny muted">On “${esc(it.q)}”</div>` : '';
+  if (it && it.kind === 'mc') {
+    return `<div class="bubble p-${who} ${who === me() ? 'mine' : 'theirs'}">
+      <div class="who">${N(who)}</div>${note}
+      <div class="txt"><b>${esc(it.o[v.m])}</b></div>
+      <div class="tiny dguess">Guessed ${who === me() ? N(them()) : 'you'} would say “${esc(it.o[v.g])}”</div>
+    </div>`;
+  }
+  const text = typeof v === 'string' ? v : v && typeof v.t === 'string' ? v.t : '';
+  return bubble(who, text || '(answered in a newer version of the app)', note);
+}
+
+// Both answered the same pick + guess question.
+function dailyReveal(key, it, mine, theirs) {
+  // the reveal pops in once per page load, not on every re-render
+  session.dshown = session.dshown || new Set();
+  const fresh = !session.dshown.has(key); session.dshown.add(key);
+  const same = mine.m === theirs.m;
+  const theyGotMe = theirs.g === mine.m; const iGotThem = mine.g === theirs.m;
+  const o = (i) => `“${esc(it.o[i])}”`;
+  const head = same ? `You both picked ${o(mine.m)}` : `${N(me())} picked ${o(mine.m)}, ${N(them())} picked ${o(theirs.m)}`;
+  const verdict = theyGotMe && iGotThem ? 'Mind readers. You both guessed right.'
+    : theyGotMe ? `${N(them())} guessed you right.`
+      : iGotThem ? `You guessed ${N(them())} right.`
+        : 'Nobody guessed right today. Study up.';
+  const row = (who, v, guesser, right, guess) => `<div class="dr-row p-${who}">
+      <div class="dr-who">${N(who)}</div>
+      <div class="dr-pick">${o(v.m)}</div>
+      <span class="mark ${right ? 'ok' : 'no'}">${right ? `${guesser} guessed it ✓` : `${guesser} guessed ${o(guess)} ✗`}</span>
+    </div>`;
+  return `<div class="dreveal ${theyGotMe && iGotThem ? 'both-right' : ''} ${fresh ? 'fresh' : ''}">
+    <div class="dr-head">${head}</div>
+    ${row(me(), mine, N(them()), theyGotMe, theirs.g)}
+    ${row(them(), theirs, 'You', iGotThem, mine.g)}
+    <div class="dr-verdict">${verdict}</div>
+  </div>`;
+}
+
+function dailyTallyLine() {
+  const t = dailyTally();
+  if (!t.n) return '';
+  return `<p class="dtally tiny"><span>Daily guesses</span> <b class="ink-a">${N('a')} ${t.a}</b> · <b class="ink-b">${N('b')} ${t.b}</b> <span class="muted">of ${t.n}</span></p>`;
+}
+
+function bubble(who, text, note = '') {
   const skipped = text === SKIPPED;
   return `<div class="bubble p-${who} ${who === me() ? 'mine' : 'theirs'}">
-    <div class="who">${N(who)}</div>
+    <div class="who">${N(who)}</div>${note}
     <div class="txt ${skipped ? 'muted' : ''}">${skipped ? 'skipped' : esc(text)}</div>
   </div>`;
 }
@@ -76296,6 +77513,7 @@ function viewHistory() {
   if (!keys.has(y)) sorted.splice(1, 0, y);
   return `${topbar('Past questions')}
   <div class="screen">
+    ${dailyTallyLine()}
     ${sorted.map((k) => dailyCard(k, { compact: true })).join('')}
   </div>`;
 }
@@ -76401,12 +77619,33 @@ const actions = {
     session.drafts.synclink = '';
     await doImport(m[1]);
   },
+  dailyPick: (d) => {
+    if (dailyOf(me(), d.key)) return;
+    session.dpick = session.dpick || {};
+    const t = (session.dpick[d.key] = session.dpick[d.key] || {});
+    t[d.k] = Number(d.v);
+    render();
+  },
   saveDaily: (d, el) => {
-    // Read the field itself: on iOS the last autocorrected word can land after the input event.
-    const box = el.closest('.daily')?.querySelector(`[data-draft="daily-${d.key}"]`);
-    const v = ((box ? box.value : session.drafts['daily-' + d.key]) || '').trim();
-    if (!v) return toast('Write something first.');
-    store.setMine(['daily', d.key], v.slice(0, 2000));
+    if (dailyOf(me(), d.key)) return; // a second tap on the same button
+    // Save against the question that was on screen (data-item), not whatever the day maps to now.
+    const it = (d.item && itemById(d.key, d.item)) || dailyItem(d.key);
+    if (!it) return;
+    let value;
+    if (it.kind === 'mc') {
+      const t = (session.dpick && session.dpick[d.key]) || {};
+      if (t.m === undefined) return toast('Pick your answer first.');
+      if (t.g === undefined) return toast(`Now guess ${store.name(them())}’s answer.`);
+      value = { i: it.i, m: t.m, g: t.g };
+      delete session.dpick[d.key];
+    } else {
+      // Read the field itself: on iOS the last autocorrected word can land after the input event.
+      const box = el.closest('.daily')?.querySelector(`[data-draft="daily-${d.key}"]`);
+      const v = ((box ? box.value : session.drafts['daily-' + d.key]) || '').trim();
+      if (!v) return toast('Write something first.');
+      value = it.kind === 'legacy' ? v.slice(0, 2000) : { i: it.i, t: v.slice(0, 2000) };
+    }
+    store.setMine(['daily', d.key], value);
     delete session.drafts['daily-' + d.key];
     const theirs = store.person(them()).daily?.[d.key];
     toast(theirs ? 'Unlocked!' : `Locked in. Waiting on ${store.name(them())}.`);
