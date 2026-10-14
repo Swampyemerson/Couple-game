@@ -159,13 +159,13 @@ the general "meaningful new content, every verified bug fixed, more stimulating 
 
 | Command | Result |
 |---|---|
-| `node tools/test/games/words-duel.test.js` | ALL GOOD, light + dark (296 checks) |
-| `node tools/test/games/words-agents.test.js` | ALL GOOD, light + dark (245 checks) |
+| `node tools/test/games/words-duel.test.js` | ALL GOOD, light + dark (326 checks) |
+| `node tools/test/games/words-agents.test.js` | ALL GOOD, light + dark (397 checks) |
 | `node tools/test/games/words.test.js` | ALL GOOD (195 checks; updated for the rules cards, a flaky assert fixed) |
 | `node tools/test/all-games.test.js` | ALL GOOD |
-| `python3 tools/build_artifact.py --only=wordduel,agents` | builds (532 KB, 14 modules) |
+| `python3 tools/build_artifact.py --only=wordduel,agents` | builds (544 KB, 17 modules) |
 
-The final regression ran at 08:50 UTC on the pushed head. Verifiers also checked these by hand:
+The final regression ran on 14 Oct at 06:28 UTC on the pushed round-2 head. Verifiers also checked these by hand:
 - online with each player first, and one phone;
 - light and dark;
 - 320×568 through 390×844 portrait, and 667×375 and 844×390 landscape;
