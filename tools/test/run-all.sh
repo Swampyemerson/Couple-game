@@ -8,7 +8,7 @@ cd "$(dirname "$0")/../.." || exit 1
 export SHOTS="${SHOTS:-$(mktemp -d)}"
 export QUICK=1
 filter="${1:-}"
-files=(tools/test/smoke.test.js tools/test/net.test.js tools/test/app.test.js tools/test/migrate.test.js tools/test/all-games.test.js tools/test/games/*.test.js)
+files=(tools/test/smoke.test.js tools/test/net.test.js tools/test/app.test.js tools/test/migrate.test.js tools/test/daily.test.js tools/test/all-games.test.js tools/test/games/*.test.js)
 declare -a results
 fail=0
 for f in "${files[@]}"; do
