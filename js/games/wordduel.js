@@ -8,7 +8,7 @@
 //
 // Files: wordduel/rules.js (pure rules, v1 + v2), wordduel/records.js (ledger + stamps),
 // wordduel/css.js, wordduel/lists.js (the word lists, ~100 KB of letters).
-import { registerGame, gameDataApi } from './core.js';
+import { registerGame } from './core.js';
 import { CSS } from './wordduel/css.js';
 import {
   MAX, other, lists, scoreGuess, target, solvedBy, doneBy, tally, init, next, apply, result, score,
@@ -72,9 +72,8 @@ registerGame({
     const kb = root.querySelector('.g-wd-kb');
     const gm = el.closest('.gm');
 
-    const dataApi = typeof api.data === 'function' ? api : gameDataApi('wordduel');
-    const data = () => { try { return dataApi.data() || {}; } catch { return {}; } };
-    const setData = (p) => { try { dataApi.setData(p); } catch { /* records are a bonus */ } };
+    const data = () => { try { return api.data() || {}; } catch { return {}; } };
+    const setData = (p) => { try { api.setData(p); } catch { /* records are a bonus */ } };
 
     let ctx = null;
     let draft = '';
@@ -629,7 +628,7 @@ registerGame({
       const p = recordMatch(data(), c.state, c.matchId, wasOver === false);
       if (p) setData(p);
     }
-    const offData = typeof dataApi.onData === 'function' ? dataApi.onData(() => { if (ctx && ctx.over) render(); }) : null;
+    const offData = typeof api.onData === 'function' ? api.onData(() => { if (ctx && ctx.over) render(); }) : null;
 
     return {
       update(c) {
