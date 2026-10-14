@@ -143,7 +143,7 @@ export const CSS = `
     .g-doodle .dd-plaque b { font-family: var(--g-font-display); font-size: 2rem; font-weight: 900; line-height: 1; }
     .g-doodle .dd-plaque b small { font-size: 1rem; }
     .g-doodle .dd-plaque span { font-family: var(--g-font-display); font-weight: 900; font-size: 1.05rem; line-height: 1.1; max-width: 12em; }
-    .g-doodle .dd-wall { width: 100%; display: grid; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); gap: 20px 14px; padding: 16px 12px 6px; box-sizing: border-box; }
+    .g-doodle .dd-wall { width: 100%; display: grid; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); gap: 20px 14px; padding: 16px 12px 14px; box-sizing: border-box; }
     .g-doodle .dd-frame { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 0; padding: 8px 8px 10px; text-align: left; background: var(--g-card); color: var(--g-ink); border: 2px solid var(--g-ink); border-radius: 6px; box-shadow: var(--g-shadow); touch-action: manipulation; transform: rotate(var(--tilt, 0deg)); transition: transform 0.15s ease; }
     .g-doodle .dd-frame:active { transform: rotate(0deg) translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge, var(--g-ink)); }
     .g-doodle .dd-frame canvas { display: block; border: 2px solid var(--g-line); border-radius: 3px; background: var(--g-card); }
