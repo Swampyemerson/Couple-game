@@ -133,6 +133,14 @@ A second Fable check ranked three ideas. Two shipped:
   - Tests: node (seed, clock, records incl. garbage) and a browser `chain` group (two phones with real taps: switch, Classic, interlude,
     carried clock, manual follows, exactly one result, boom on bomb 2, boom on bomb 1, closes in the interlude and mid-bomb-2, Today's
     bomb; a laptop bomb with a phone manual, light and dark).
+  - Independent verify, with a laptop bomb (real mouse clicks) and a phone manual (real taps), light and dark, from both players
+    and on two phones: no defects. The password module was solved from the manual's own DOM in both bombs. The carried clock was
+    exact in every run. The interlude never showed an end card or recorded anything, and every chain recorded exactly one result.
+    Edge cases all passed: a reload or close at 0, 0.7 and 1.7 s into the interlude, the manual backgrounded or leaving during it,
+    a vent awake at the solve (no stale strike), Chain with Today's bomb, Chain with Par clock (par untouched), and rematches.
+    One known quirk, by design: chain scores also count in the engine's tier-blind "Best team score"; the lobby strip keeps
+    best and best chain apart.
+  - Test results: `defuse.test.js all` ALL GOOD (422 ok), `computer.test.js all` ALL GOOD (229 ok).
 
 ## Bugs fixed (found by the survey, reproduced)
 
