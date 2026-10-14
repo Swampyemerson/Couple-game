@@ -165,6 +165,45 @@ After the last polish commit (a9db81f) these sections were re-run on that HEAD a
 unit, practice, extras, extraslive, touch, live, wild, wildlive, resultfit and shots. The commit only
 changed CSS, HUD layout and wording, so the rest of the regression stands.
 
+## Round 2 (finished 14 Oct)
+
+The coordinator asked for a second round. A Fable pass picked the three highest-impact items. The
+builders were cut off by an API usage limit on 12 Oct, so the work was finished and verified on 14 Oct:
+
+- **Live pair target.** In a pair's second round the chip under the clock counts down to the first
+  half's time ("Beat 1:00 · 0:12 to go" / "Bust by 1:00 · 0:12 left") and turns red for the last
+  10 s. Crossing it stamps each phone once, in its own words: "PAST 1:00!" / "THEY'RE PAST 1:00", or
+  after an early escape "TOO SLOW · 1:00 GONE" / "THEY'RE TOO SLOW". The stamps follow `pairWinner`
+  exactly. No new messages.
+- **Pair headers on the match card**: "PAIR 1 · Emerson · an escape beats a bust", "PAIR 2 · level".
+  They wrap to two lines on phones.
+- **Home drive-by** on Boulder (3865 Moorhead) and Santee (8524 Boulder Way):
+  - Passing home at 50 km/h or more scores +2 once a round: "Drove past home!" for the runner,
+    "Patrolled home" on the cop's chain.
+  - The home icon pulses on the minimap.
+  - The HOMEBODY MVP needs 2+ drive-bys as the runner.
+  - New key `<ns><w>_homeby` (a flat number).
+  - Nothing on Dockside, in SAFEHOUSE rounds, or for the AI.
+  - The map files are untouched.
+
+Verified by an independent Sonnet verifier on iPhone profiles with real taps (live two-phone, practice
+on Boulder, Santee and Dockside, light and dark): no functional issues. Its three polish notes (clipped
+pair headers, a one-second mismatch between the countdown and its label, the hot chip's dark-mode
+contrast) are fixed. Known nit: at 390×844 the cop's longest chip ("Stop them by 0:18 · 0:16 left")
+sits right against the HONK button without overlapping it.
+
+Tests: a new `homeby` section (all three maps); the live target in `wildlive`; unit tests for
+`targetChip`, `homeDriveBy` and `pairHead`. These all passed on the round-2 code:
+- the getaway.test.js sections unit, practice, extras, extraslive, touch, live, wild, wildlive,
+  wildsplit, resultfit, homeby, lossy, split, robust and perf;
+- `getaway-boulder.test.js` and `getaway-santee.test.js`.
+
+After the polish fixes, unit, wildlive, resultfit, wild and touch were re-run and passed. Perf
+worst case is unchanged at 51 draw calls and 137k triangles in view.
+
+Not done: merging `origin/claude/relaxed-dijkstra-2cy8al` into this branch, as the coordinator asked.
+The session's permission check blocked that merge, so it is left to the coordinator.
+
 ## Known issues
 
 - At 667×375 the lobby card's top corners just touch the corner stickers. No text is under them,
