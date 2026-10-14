@@ -108,7 +108,7 @@ export const CSS = `
 /* ledger + heat */
 .g-wd-ledger { margin: 0; text-align: center; font-weight: 900; font-size: 0.8rem; letter-spacing: 0.04em; color: var(--g-muted); }
 .g-wd-ledger:empty { display: none; }
-.g-wd-hint { margin: 0; text-align: center; font-weight: 800; font-size: 0.8rem; line-height: 1.25; color: var(--g-muted); text-wrap: balance; }
+.g-wd-hint { margin: 4px 0 0; text-align: center; font-weight: 800; font-size: 0.8rem; line-height: 1.25; color: var(--g-muted); text-wrap: balance; }
 .g-wd-hint:empty { display: none; }
 .g-wd-ledgerline { flex-basis: 100%; text-align: center; font-weight: 700; font-size: 0.74rem; }
 @media (max-height: 700px) { .g-wd[data-mode="pick"] .g-wd-ledgerline { display: none; } }

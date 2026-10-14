@@ -25,6 +25,7 @@ async function unitTests() {
   const ag = core.gameById('agents');
   const T = ag._test;
   AG = T;
+  AGG = ag;
   const v1 = makeV1(core.shuffled, T.NOUNS);
   const mk = (def, first, seed) => { const s = def.init({ first, seed }); s.seed = seed; return s; };
   const run = (moves, first = 'a', seed = 7) => { let s = mk(ag, first, seed); for (const [w, m] of moves) s = ag.apply(clone(s), w, clone(m)); return s; };
@@ -262,8 +263,10 @@ async function unitTests() {
   assert(pw.wins_n === 1 && pw.streak === 1 && pw.rookie_wins_n === 1 && pw.pack_classic_n === 1 && !('spare_best' in pw) && pw.lastb.includes('last'), 'recordPatch: a win on the very last token earns the stamp, no spare');
   d1 = { ...d1, ...pw };
   pw = T.recordPatch(d1, won(6), 'w2');
-  assert(pw.streak === 2 && pw.streak_best === 2 && pw.spare_best === 5 && pw.wins_n === 2 && /record/.test(pw.lastb) && /row2/.test(pw.lastb), 'recordPatch: a streak and a spare best are records');
+  assert(pw.streak === 2 && pw.streak_best === 2 && pw.spare_best === 5 && pw.wins_n === 2 && /streakbest/.test(pw.lastb) && /row2/.test(pw.lastb) && !/(^|,)record/.test(pw.lastb) && !/sparebest/.test(pw.lastb), 'recordPatch: a streak record is labelled by its source; the first-ever spare best earns no stamp');
   d1 = { ...d1, ...pw };
+  const pw3 = T.recordPatch(d1, won(3), 'w2b');
+  assert(pw3.spare_best === 8 && /sparebest/.test(pw3.lastb) && !/(^|,)record/.test(pw3.lastb), 'recordPatch: beating a standing spare best stamps MOST TURNS SPARE, not NEW RECORD');
   assert(!('spare_best' in T.recordPatch(d1, won(9), 'w3')) && T.recordPatch(d1, won(9), 'w3').missions_n === 3, 'recordPatch: a lower spare never lowers the best');
   assert(eq(T.recordPatch(d1, won(9), 'w3'), T.recordPatch(d1, won(9), 'w3')), 'recordPatch: the same snapshot gives the same numbers (two phones agree)');
   const lost = run([['a', S()]]); lost.over = 'burned'; lost.hit = 0; lost.found = Array(25).fill(null).fill('a', 0, 12);
@@ -271,10 +274,39 @@ async function unitTests() {
   assert(pw.streak === 0 && pw.burned_n === 1 && pw.close_best === 12 && pw.missions_n === 3, 'recordPatch: a loss resets the streak and sets the closest call');
   pw = T.recordPatch({ missions_n: 9 }, won(8, true), 'w5');
   assert(pw.missions_n === 10 && pw.escape_n === 1 && pw.sudden_n === 1 && /ms10/.test(pw.lastb) && /escape/.test(pw.lastb), 'recordPatch: sudden-death escapes and the 10th mission milestone');
+  // SPOTLESS: a win with no bystander tap anywhere in the log (sudden-death escapes included)
+  const cleanWin = won(8); cleanWin.log = [{ by: 'a', clue: 'qwerty', n: 2, picks: [{ i: 0, r: 'G' }, { i: 1, r: 'G' }] }];
+  const dirtyWin = won(8); dirtyWin.log = [{ by: 'a', clue: 'qwerty', n: 2, picks: [{ i: 0, r: 'G' }, { i: 2, r: 'N' }] }, { by: 'b', clue: 'zigzag', n: 1, picks: [{ i: 1, r: 'G' }] }];
+  const sp = T.recordPatch({ spotless_n: 1 }, cleanWin, 'm1');
+  assert(sp.spotless_n === 2 && sp.lastb.split(',').includes('spotless'), 'recordPatch: a win with no bystander picks counts spotless (absolute counter) and earns the badge');
+  assert(T.recordPatch({}, cleanWin, 'm1').spotless_n === 1 && eq(T.recordPatch({ spotless_n: 1 }, cleanWin, 'm1'), sp), 'recordPatch: spotless_n starts at 1 and is idempotent for one snapshot');
+  const sd0 = T.recordPatch({}, dirtyWin, 'm1');
+  assert(!('spotless_n' in sd0) && !sd0.lastb.includes('spotless') && !T.isSpotless(dirtyWin), 'recordPatch: the same win with one bystander pick is not spotless');
+  const sdWin = won(8, true); sdWin.log = cleanWin.log;
+  assert(T.isSpotless(sdWin) && T.recordPatch({}, sdWin, 'm1').lastb.includes('spotless'), 'spotless: a clean sudden-death escape counts');
+  const sdDirty = won(8, true); sdDirty.log = cleanWin.log; sdDirty.sd = [{ by: 'a', i: 0, r: 'G' }, { by: 'b', i: 3, r: 'N' }];
+  assert(!T.isSpotless(sdDirty), 'spotless: a bystander in sudden death spoils it');
+  assert(!T.isSpotless({ ...cleanWin, over: 'burned' }) && !('spotless_n' in T.recordPatch({}, { ...cleanWin, over: 'burned', hit: 20 }, 'm1')), 'spotless: a loss is never spotless');
+  // reopen guard: a fresh device (empty data snapshot) never records a reopened match; a watched one always does
+  const v2s = won(8); v2s.v = 2; const v1s = won(8); delete v1s.v;
+  assert(!T.shouldRecord({}, v2s, 'r1', false) && !T.shouldRecord({ missions_n: 0 }, v2s, 'r1', false) && T.shouldRecord({ missions_n: 3 }, v2s, 'r1', false), 'records: a reopened match records only when the data snapshot is not empty');
+  assert(T.shouldRecord({}, v2s, 'r1', true) && T.shouldRecord({}, v1s, 'r1', true) && !T.shouldRecord({ missions_n: 3 }, v1s, 'r1', false), 'records: watched-live always records (v1 too); a reopened v1 never does');
+  assert(!T.shouldRecord({ missions_n: 3, recent_m: 'x,r1' }, v2s, 'r1', true) && !T.shouldRecord({ missions_n: 3 }, v2s, '', true), 'records: an already recorded match is never written twice');
+  // record-in-reach line
+  const keyFor = (left) => ({ a: Array.from({ length: 25 }, (_, i) => (i < left ? 'G' : 'N')).join(''), b: 'N'.repeat(25) });
+  const rl = (v, n, best, picks = [], left = 9) => T.recLine({ v, over: null, phase: 'guess', key: keyFor(left), found: Array(25).fill(null), log: [{ by: 'a', clue: 'x', n, picks }] }, best);
+  assert(rl(2, 4, 3) === 'Crack all 4 and it’s a new record.' && rl(2, 3, 2) === 'Crack all 3 and it’s a new record.', 'record line: a clue above the record (of 2+)');
+  assert(rl(2, 3, 3) === 'All 3 would equal the record.' && rl(2, 4, 4) === 'All 4 would equal the record.', 'record line: a clue equal to the record (3+)');
+  assert(rl(2, 2, 3) === '' && rl(2, 2, 2) === '' && rl(2, 2, 1) === '' && rl(2, 3, 0) === '' && rl(2, 3, undefined) === '', 'record line: nothing for smaller clues, a record of 1 or no record');
+  assert(rl(2, 9, 3) === 'Find 4 for a new record.' && rl(2, 5, 3) === 'Find 4 for a new record.' && rl(2, 4, 3) === 'Crack all 4 and it’s a new record.', 'record line: a big clue asks for the record count, not all of it');
+  assert(rl(2, 9, 3, [], 3) === 'Find 3 to equal the record.' && rl(2, 9, 3, [], 2) === '' && rl(2, 9, 2, [], 2) === '' && rl(2, 3, 3, [], 3) === 'All 3 would equal the record.' && rl(2, 3, 3, [], 2) === '', 'record line: never promises what the giver\'s remaining agents cannot deliver');
+  assert(rl(2, 4, 3, [], 3) === 'Find 3 to equal the record.' && rl(2, 4, 3, [], 4) === 'Crack all 4 and it’s a new record.', 'record line: 3 agents left under a clue of 4 can only equal the record');
+  assert(rl(undefined, 4, 3) === '' && rl(2, 4, 3, [{ i: 1, r: 'N' }]) === '' && rl(2, 4, 3, [{ i: 1, r: 'G' }]) !== '', 'record line: v2 only, gone after a bystander pick');
 }
 
 // ── browser flows ────────────────────────────────────────────────────────
 let AG = null;
+let AGG = null; // the registered game definition (init / apply / next)
 const keyIdx = (st, w, ch) => [...st.key[w]].map((c, i) => (c === ch && !st.found[i] && !st.miss[w].includes(i) ? i : -1)).filter((i) => i >= 0);
 function safeClue(state) {
   const live = state.words.filter((w, i) => !state.found[i]);
@@ -546,6 +578,170 @@ async function legacySeeded(h, scheme) {
   await h.closeGame(a).catch(() => {});
 }
 
+// A seeded v2 match that was won with only agent picks: opening it from the hub records the mission as spotless.
+function spotlessMoves(seed) {
+  const c = (x) => JSON.parse(JSON.stringify(x));
+  let st = AGG.init({ first: 'a', seed }); st.seed = seed;
+  const lists = { a: [], b: [] };
+  const used = new Set();
+  const play = (w, mv) => { st = AGG.apply(c(st), w, c(mv)); lists[w].push(mv); };
+  play('a', { setup: { v: 2 } });
+  while (!st.over) {
+    const g = st.giver;
+    const r = g === 'a' ? 'b' : 'a';
+    const mine = keyIdx(st, g, 'G');
+    const live = st.words.filter((w, i) => !st.found[i]);
+    const word = ['qwerty', 'zigzag', 'jumble', 'velvet', 'whimsy', 'gizmo', 'fjord', 'quartz'].find((x) => !used.has(x) && live.every((w) => !w.includes(x) && !x.includes(w)));
+    used.add(word);
+    play(g, { clue: word, n: Math.min(9, mine.length) });
+    for (const i of mine) { if (st.over || st.phase !== 'guess') break; play(r, { pick: i }); }
+  }
+  return { lists, state: st };
+}
+
+async function spotlessReopen(h, scheme) {
+  const { a } = h;
+  const sm = spotlessMoves(31);
+  assert(sm.state.over === 'win' && AG.isSpotless(sm.state), 'spotless fixture: a clean win with only agent picks');
+  if (await a.isVisible('#game-root [data-g="close"]')) await h.closeGame(a).catch(() => {});
+  await a.evaluate(() => localStorage.setItem('ju.games.seenEnd.v1', '{}'));
+  await a.reload();
+  await a.waitForFunction(() => !!document.querySelector('.tabbar'), null, { timeout: 15000 });
+  await a.waitForTimeout(500);
+  await h.openMatch(a, 'spotless1');
+  await a.waitForSelector('#game-root .gm-end:not([hidden])', { timeout: 8000 });
+  await a.click('#game-root [data-g="end-look"]');
+  await a.waitForSelector('.g-ag-debrief .g-ag-stamps', { timeout: 5000 });
+  await a.waitForTimeout(500);
+  assert(/NOT ONE WRONG TAP/i.test(await a.textContent('.g-ag-stamps')), 'spotless: the result view stamps NOT ONE WRONG TAP');
+  assert(await a.evaluate(() => { const e = [...document.querySelectorAll('.g-ag-stamp')].find((x) => /wrong tap/i.test(x.textContent)); return !!e && e.classList.contains('k-good'); }), 'spotless: the stamp is in the good ink');
+  assert(/<b>1<\/b> spotless/.test(await a.innerHTML('.g-ag-debrief .g-ag-ledger')), 'spotless: the ledger counts "1 spotless"');
+  await a.setViewportSize({ width: 844, height: 390 });
+  await a.waitForTimeout(250);
+  const chip = await a.evaluate(() => { const e = document.querySelector('.g-ag-banner .g-ag-stamp'); if (!e) return null; const r = e.getBoundingClientRect(); return { l: r.left, r: r.right }; });
+  assert(!chip || chip.l >= 0, `landscape result view: the banner's mind meld chip is not pushed off the left edge (${chip && Math.round(chip.l)})`);
+  await a.setViewportSize({ width: 390, height: 844 });
+  await snap(a, scheme, 'v2-8-spotless');
+  await h.closeGame(a).catch(() => {});
+}
+
+async function fit(pg, w, hh, who) {
+    await pg.setViewportSize({ width: w, height: hh });
+    await pg.waitForTimeout(300);
+    const L = await pg.evaluate(() => {
+      const bx = (sel) => { const e = document.querySelector(sel); return e ? e.getBoundingClientRect() : null; };
+      const cards = [...document.querySelectorAll('.g-ag-card')].map((c) => c.getBoundingClientRect());
+      const rec = bx('.g-ag-rec');
+      const pick = bx('.g-ag-dock [data-act="pick"]');
+      return { last: Math.max(...cards.map((c) => c.bottom)), minH: Math.min(...cards.map((c) => c.height)), dockTop: bx('.g-ag-dock') && bx('.g-ag-dock').top, dockB: bx('.g-ag-dock') && bx('.g-ag-dock').bottom, pickB: pick && pick.bottom, ih: innerHeight, iw: innerWidth, sw: document.documentElement.scrollWidth, rsw: document.querySelector('#game-root').scrollWidth, rcw: document.querySelector('#game-root').clientWidth, recB: rec && rec.bottom, recR: rec && rec.right, recH: rec && rec.height, recVisible: !!rec && !document.querySelector('.g-ag-rec').hidden, slipB: bx('.g-ag-slip').bottom, sayH: bx('.g-ag-say').height };
+    });
+    const tag = `${who} ${w}x${hh}`;
+    if (w === 360 && /guesser/.test(who)) assert(L.sayH < 20 * 1.45, `${tag}: the top prompt stays on one line (${Math.round(L.sayH)}px)`);
+    assert(L.recVisible && L.recB <= L.ih && L.recR <= L.iw && L.recH < 40, `record line ${tag}: visible inside the viewport on at most two lines (${Math.round(L.recH)}px)`);
+    assert(L.last <= L.ih && L.slipB <= L.ih && L.dockB <= L.ih + 1 && (L.pickB == null || L.pickB <= L.ih) && L.sw <= L.iw && L.rsw <= L.rcw + 1, `record line ${tag}: board, slip and dock stay in view, no sideways scroll`);
+    if (w === 360) assert(L.last <= L.dockTop + 1 && L.minH >= 43.5, `record line ${tag}: five board rows still sit above the dock (${Math.round(L.last)} <= ${Math.round(L.dockTop)}), cards ${Math.round(L.minH)}px`);
+    else assert(L.minH >= 35.5, `record line ${tag}: cards stay at least 36px (${Math.round(L.minH)})`);
+    return L;
+  }
+
+// "Record in reach": a clue above / equal to the shared clue_best (seeded at 3) prints a line on the slip.
+async function recordLine(h, scheme) {
+  const { a, b } = h;
+  const P = { a, b };
+  const id = await newOnline(h, a, 'agents');
+  await h.openMatch(b, id);
+  await h.settle();
+  let s = await stateOf(h, a, id);
+  const G = P[s.giver];
+  const R = P[s.giver === 'a' ? 'b' : 'a'];
+  const g = s.giver;
+  const r = g === 'a' ? 'b' : 'a';
+  await G.tap('.g-ag-play');
+  await h.settle();
+  s = await stateOf(h, a, id);
+  assert(s.v === 2, 'record line: v2 match');
+  const slipText = (pg) => pg.textContent('.g-ag-slip');
+  // n = 4 > clue_best 3
+  await giveClue(G, safeClue(s), 4);
+  await h.settle();
+  for (const [pg, who] of [[G, 'giver'], [R, 'guesser']]) {
+    assert(/Crack all 4 and it’s a new record\./.test(await slipText(pg)), `record line: n=4 over the record of 3 shows on the ${who}'s slip`);
+    assert(/picks? left/.test(await slipText(pg)) && (await slipText(pg)).indexOf('picks left') < (await slipText(pg)).indexOf('Crack all'), `record line: it follows the picks-left text (${who})`);
+  }
+  // layout: 360x640 and landscape, the line pushes neither the board nor the dock out of view
+  for (const pg of [G, R]) for (const [w, hh] of [[360, 640], [844, 390], [667, 375]]) await fit(pg, w, hh, pg === G ? 'giver' : 'guesser');
+  await snap(R, scheme, 'v2-9-record-line-360', [[360, 640]]);
+  await snap(R, scheme, 'v2-9-record-line-landscape', [[844, 390]]);
+  for (const pg of [G, R]) await pg.setViewportSize({ width: 390, height: 844 });
+  await R.waitForTimeout(250);
+  // a bystander ends the turn: the line is gone on both phones
+  const by = keyIdx(s, g, 'N')[0];
+  await pickCard(R, by, false);
+  await h.settle();
+  for (const pg of [G, R]) assert(!/new record|equal the record/.test(await pg.textContent('.g-agents')), 'record line: gone once a bystander was picked (turn over)');
+  s = await stateOf(h, a, id);
+  assert(s.giver === r && s.phase === 'clue', 'record line: the bystander ended the turn');
+  // n = 2 (no record in reach)
+  await giveClue(R, safeClue(s), 2);
+  await h.settle();
+  assert(/picks? left/.test(await slipText(G)) && !/new record|equal the record/.test(await slipText(G)) && !/new record|equal the record/.test(await slipText(R)), 'record line: a clue of 2 shows no line');
+  assert(await G.evaluate(() => !document.querySelector('.g-agents').classList.contains('has-rec')), 'record line: no reserved space without a line');
+  // finish this turn with one agent, then n = 3 equals the record
+  s = await stateOf(h, a, id);
+  await pickCard(G, keyIdx(s, r, 'G')[0], false);
+  await h.settle();
+  await G.waitForTimeout(450);
+  await G.click('.g-ag-dock [data-act="stop"]');
+  await h.settle();
+  s = await stateOf(h, a, id);
+  assert(s.giver === g && s.phase === 'clue', 'record line: turn passed back');
+  await giveClue(G, safeClue(s), 3);
+  await h.settle();
+  for (const pg of [G, R]) assert(/All 3 would equal the record\./.test(await slipText(pg)), 'record line: n=3 equal to the record of 3 shows "All 3 would equal the record."');
+  // agent picks keep it on screen
+  s = await stateOf(h, a, id);
+  await pickCard(R, keyIdx(s, g, 'G')[0], false);
+  await h.settle();
+  assert(/would equal the record/.test(await slipText(R)), 'record line: still shown after an agent pick');
+  // the game never wrote to the shared record
+  assert((h.docs['gamedata/agents'] || {}).clue_best === 3 && !('missions_n' in (h.docs['gamedata/agents'] || {})), 'record line: reading the record never writes it');
+  await h.closeGame(G).catch(() => {});
+  await h.closeGame(R).catch(() => {});
+}
+
+// Seeded v2 matches with one clue of 4 given and nothing picked: Emerson (long name) or Sydney is the giver.
+function rlDocs() {
+  const docs = { 'gamedata/agents': { clue_best: 3 } };
+  for (const [mid, first] of [['rlE', 'a'], ['rlS', 'b']]) {
+    const seed = 53;
+    let st = AGG.init({ first, seed }); st.seed = seed;
+    st = AGG.apply(JSON.parse(JSON.stringify(st)), first, { setup: { v: 2 } });
+    const clue = safeClue(st);
+    docs[`matches/${mid}`] = { game: 'agents', first, seed, by: first, created: Date.now(), opts: {}, a: JSON.stringify(first === 'a' ? [{ setup: { v: 2 } }, { clue, n: 4 }] : []), b: JSON.stringify(first === 'b' ? [{ setup: { v: 2 } }, { clue, n: 4 }] : []), ua: 1, ub: 1 };
+  }
+  return docs;
+}
+
+// The guesser's first look at a clue before any pick (long-name giver and short-name giver), record line showing.
+async function prePickFit(h, scheme) {
+  for (const [mid, giver] of [['rlE', 'a'], ['rlS', 'b']]) {
+    const R = giver === 'a' ? h.b : h.a;
+    const G = giver === 'a' ? h.a : h.b;
+    await h.openMatch(R, mid);
+    await h.openMatch(G, mid);
+    await h.settle();
+    const st = await stateOf(h, h.a, mid);
+    assert(st.giver === giver && st.phase === 'guess' && st.log[0].picks.length === 0, `pre-pick ${mid}: ${giver === 'a' ? 'Emerson' : 'Sydney'} gave the clue, nothing picked yet`);
+    assert(/new record/.test(await R.textContent('.g-ag-slip')), `pre-pick ${mid}: the record line shows`);
+    await fit(R, 360, 640, `pre-pick guesser (${mid})`);
+    await fit(G, 360, 640, `pre-pick giver (${mid})`);
+    await fit(R, 320, 568, `pre-pick guesser small (${mid})`).catch((e) => { throw e; });
+    for (const pg of [G, R]) await pg.setViewportSize({ width: 390, height: 844 });
+    await h.closeGame(G).catch(() => {});
+    await h.closeGame(R).catch(() => {});
+  }
+}
+
 function agentsLeftT(st, w) { let n = 0; for (let i = 0; i < 25; i++) if (st.key[w][i] === 'G' && !st.found[i]) n++; return n; }
 function assert0(c, m) { if (!c) throw new Error('FAIL: ' + m); }
 
@@ -564,6 +760,8 @@ function assert0(c, m) { if (!c) throw new Error('FAIL: ' + m); }
       'matches/legacy2': { ...base, a: JSON.stringify([{ clue, n: 2 }]), b: JSON.stringify([{ pick: kill }]) },
       'matches/v2done': { ...base, a: JSON.stringify([{ setup: { v: 2 } }, { clue, n: 2 }]), b: JSON.stringify([{ pick: kill }]) },
       'matches/legacy1': { game: 'agents', first: 'a', seed, by: 'a', created: Date.now(), opts: {}, a: JSON.stringify([{ clue, n: 2 }]), b: JSON.stringify([{ pick: agent }]), ua: 1, ub: 1 } };
+    const sm = spotlessMoves(31);
+    seedDocs['matches/spotless1'] = { ...base, a: JSON.stringify(sm.lists.a), b: JSON.stringify(sm.lists.b) };
     for (const scheme of (process.env.SCHEME ? [process.env.SCHEME] : ['light', 'dark'])) {
       const full = scheme === 'light';
       const h = await launch({ port: scheme === 'light' ? 9170 : 9171, only: ['agents'], colorScheme: scheme, coarse: true, seedDocs });
@@ -572,6 +770,7 @@ function assert0(c, m) { if (!c) throw new Error('FAIL: ' + m); }
         if (full) await suddenOnline(h, scheme);
         await legacySeeded(h, scheme);
         await recordsReopen(h, scheme);
+        await spotlessReopen(h, scheme);
         h.assertNoErrors();
         console.log(`ok - no page errors (${scheme})`);
       } catch (e) {
@@ -581,6 +780,20 @@ function assert0(c, m) { if (!c) throw new Error('FAIL: ' + m); }
         await h.shot(h.b, path.join(SHOTS, `fail-${scheme}-b.png`)).catch(() => {});
         console.error('errors:', h.errors);
       } finally { await h.close(); }
+      // a second world: the shared record already holds a clue of 3
+      const h2 = await launch({ port: scheme === 'light' ? 9172 : 9173, only: ['agents'], colorScheme: scheme, coarse: true, seedDocs: rlDocs() });
+      try {
+        await prePickFit(h2, scheme);
+        await recordLine(h2, scheme);
+        h2.assertNoErrors();
+        console.log(`ok - no page errors, record line (${scheme})`);
+      } catch (e) {
+        fails++;
+        console.error(e.stack || e.message);
+        await h2.shot(h2.a, path.join(SHOTS, `fail-rl-${scheme}-a.png`)).catch(() => {});
+        await h2.shot(h2.b, path.join(SHOTS, `fail-rl-${scheme}-b.png`)).catch(() => {});
+        console.error('errors:', h2.errors);
+      } finally { await h2.close(); }
     }
   }
   console.log(fails ? `\n${fails} FAILED` : `\nALL GOOD (screenshots in ${SHOTS})`);

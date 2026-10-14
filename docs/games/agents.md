@@ -31,7 +31,7 @@ these fields.
   only blocked when the shorter one has 6+ letters (FLOWER in SUNFLOWER). SPACE/SPA, TEAM/TEA, BEER/BEE, VOWEL/VOW,
   MAPLE/MAP, NIGHT/KNIGHT, PLANET/PLANE, MOTHER(S)/MOTH, FATHERS, LETTERS, PENNY/PEN, SUNNY/SUN, CAVES/CAFE, HATES/HAT, NEWS/NEW and AT, SEA, EAR are fine (a short list of look-alikes is checked after singularising).
   Errors read "Too close to WATCH (same word family)."
-- **Pick limit.** At most `n + 1` agents per turn; the turn then ends by itself. The slip shows "picks left".
+- **Pick limit.** At most `n + 1` agents per turn; the turn then ends by itself. The slip shows "picks left". The guesser's zero-pick prompt ("Tap Emerson’s agents.") stays on one line at 360 px, or the fifth board row would sit under the dock.
 - **Sudden death** (when `sudden` is on). When the turns run out with agents left, `phase: 'sudden'`: no clues. One picker
   at a time (`s.picker`, starting with whoever would have guessed next) picks on the partner's key. An agent keeps the
   mission alive and passes the pick to the partner (unless the partner has nothing left on your key to find). A bystander or
@@ -42,8 +42,8 @@ these fields.
 
 ## Records (`gamedata/agents` through the engine's per-game data)
 
-The turn-game `api` has no `data()`, so the game imports `gameDataApi` from core and uses it directly.
-Flat keys: `missions_n wins_n burned_n caught_n cold_n sudden_n escape_n meld_n rookie_wins_n agent_wins_n spy_wins_n
+The game uses the turn-game `api.data()` / `api.setData(patch)` / `api.onData(fn)` directly (core provides them natively).
+Flat keys: `missions_n wins_n burned_n caught_n cold_n sudden_n escape_n meld_n spotless_n rookie_wins_n agent_wins_n spy_wins_n
 pack_<p>_n spare_best close_best streak streak_best clue_best a_clue_best b_clue_best lastm lastb recent_m last_setup best_clue a_best_clue b_best_clue`.
 
 - Recorded once per match. `recent_m` (comma-joined, newest 60 match ids) is checked before recording and appended on
@@ -58,7 +58,11 @@ pack_<p>_n spare_best close_best streak streak_best clue_best a_clue_best b_clue
   ties a standing record of 3 or more adds the `tie` badge (stamp "EQUALS THE RECORD") and leaves `best_clue` as it was.
   The rules card shows "Record clue: OCEAN for 4 (Sydney, Wanderlust)." and, on a streak of 2+, "Three missions
   unbeaten. Keep it clean."; the result view's best-clue slip gets a RECORD or EQUALS THE RECORD overprint.
-- `lastb` holds the stamps earned by the last match (`record`, `rowN`, `last`, `escape`, `meldK`, `msN`) so both phones
+- **Spotless.** A win (sudden-death escapes included) where no pick in `s.log[*].picks` or `s.sd` is a bystander (`r === 'N'`). Derived from state (`isSpotless`); a win adds the absolute counter `spotless_n` and the `spotless` badge in `lastb`. The result view stamps "NOT ONE WRONG TAP" (good ink) and the ledger shows "<b>2</b> spotless".
+- **Record in reach** (v2 only; reads `clue_best`, never writes). In the guess phase the clue slip of both players gets a line after the picks-left text: `n > clue_best` (`clue_best >= 2`) reads "Crack all 4 and it’s a new record." when `n === clue_best + 1`, or "Find 4 for a new record." for a bigger clue; `n === clue_best` (`>= 3`) reads "All 3 would equal the record."; a bigger clue whose giver can only reach the record reads "Find 3 to equal the record.". Each needs enough reach: the giver's unfound agents plus those this turn already found (a clue of 9 with 2 agents left shows nothing). It disappears once a bystander is in the turn's picks (the turn ends) or the turn is over. Layout: the line is one 0.68rem row inside the slip; while it shows, `.g-agents.has-rec` trims the portrait card height formula by 15 px so the five board rows and the dock stay inside 360x640 (landscape is unchanged: the right column has room).
+- Stamps are labelled by source: `record` = NEW RECORD (a clue record, only with a previous best), `tie` = EQUALS THE RECORD, `sparebest` = MOST TURNS SPARE, `streakbest` = STREAK RECORD, `closebest` = CLOSEST CALL YET. Nothing is stamped as a record on a first-ever value. Older saved `lastb` values with `record` still read NEW RECORD.
+- **Reopen guard.** A finished v2 match opened later from the hub is recorded only when the data snapshot is not empty (`missions_n > 0`), so a fresh device can't overwrite the shared records; a match watched live always records (`shouldRecord`).
+- `lastb` holds the stamps earned by the last match (`record`, `sparebest`, `streakbest`, `closebest`, `rowN`, `last`, `escape`, `spotless`, `meldK`, `msN`) so both phones
   show the same stamps. `last_setup` (`agent|us|1`) is the rules card's remembered choice.
 - The ledger strip shows on the rules card and on the result view; stamps, an epilogue line and the two best clues
   appear on the result view.

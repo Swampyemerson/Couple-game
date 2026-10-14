@@ -80,7 +80,11 @@ fewer), `a_lastditch_n b_lastditch_n` (crack on guess 6), `a_held_n b_held_n` (t
 
 Idempotence: counters are written as absolute values computed from the data snapshot. A match is recorded when this
 phone watched it end during the current mount, or (v2 only) when a finished match is opened and its id is not in
-`recent_m`. Legacy v1 matches are never recorded on reopen.
+`recent_m`. Legacy v1 matches are never recorded on reopen, and no match is recorded on reopen while the shared data is
+still empty (`matches_n` is 0 or missing): a fresh phone must not overwrite the ledger before its snapshot arrives.
+
+Stamps built from shared data (Déjà vu, N in a row, Duel number, New record, Revenge, Streak snapped, and the "ends X's run" suffix)
+show only for the newest recorded match (`lastm`); an older match reopened shows just the stamps its own state proves.
 
 The ledger strip (`E 12 – 9 S · Sydney ×3 streak`) shows on the rules card, the pick screen (hidden on short screens) and the end view. The rules card and pick screen add one context sentence: "All square at 7–7.", "Emerson leads by 3." or "Sydney’s ×4 streak is on the line." (streak of 2+).
 
