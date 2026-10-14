@@ -313,10 +313,17 @@ function recLine(s, best) {
   const t = curTurn(s);
   const b = Number(best) || 0;
   if (s.v !== 2 || s.over || s.phase !== 'guess' || !t || t.picks.some((p) => p.r === 'N')) return '';
-  if (t.n > b && b >= 2) return `Crack all ${t.n} and it’s a new record.`;
-  if (t.n === b && t.n >= 3) return `All ${t.n} would equal the record.`;
+  // what the clue can still reach: its giver's unfound agents plus the ones this turn already found
+  const reach = agentsLeft(s, t.by) + agentPicks(t);
+  const found = agentPicks(t);
+  if (t.n > b && b >= 2 && reach >= b + 1 && found < b + 1) return t.n === b + 1 ? `Crack all ${t.n} and it’s a new record.` : `Find ${b + 1} for a new record.`;
+  if (t.n === b && b >= 3 && reach >= b) return `All ${t.n} would equal the record.`;
+  if (t.n > b && b >= 3 && reach === b) return `Find ${b} to equal the record.`;
   return '';
 }
+/** Should a finished match be written to the records? `watched`: this phone saw it end live. A reopened match is
+ *  only counted when it is v2, and only when the data snapshot is not empty (a fresh device must never overwrite). */
+const shouldRecord = (d, s, matchId, watched) => !!matchId && !recentIds(d.recent_m).includes(matchId) && (watched || (s.v === 2 && (Number(d.missions_n) || 0) > 0));
 /** The patch that records a finished mission, computed from a data snapshot `d`. Also returns the stamps earned. */
 function recordPatch(d, s, matchId) {
   const g = (k) => Number(d[k]) || 0;
@@ -332,16 +339,16 @@ function recordPatch(d, s, matchId) {
   if (clueBest > g('clue_best')) {
     p.clue_best = clueBest;
     p.best_clue = fmtClue(st.bestOf[st.best.a >= st.best.b ? 'a' : 'b'], st.pack, matchId);
-    if (g('clue_best') > 0 && clueBest >= 3) badges.push('record');
+    if (g('clue_best') > 0 && clueBest >= 3) badges.push('record'); // a clue record: NEW RECORD
   } else if (clueBest === g('clue_best') && clueBest >= 3) badges.push('tie');
   if (win) {
     p.wins_n = g('wins_n') + 1;
     p[`${st.tier}_wins_n`] = g(`${st.tier}_wins_n`) + 1;
     p.streak = g('streak') + 1;
-    if (p.streak > g('streak_best')) { p.streak_best = p.streak; if (p.streak > 1) badges.push('record'); }
+    if (p.streak > g('streak_best')) { p.streak_best = p.streak; if (p.streak > 1) badges.push('streakbest'); }
     if (p.streak >= 2) badges.push(`row${p.streak}`);
     if (s.sd) p.escape_n = g('escape_n') + 1;
-    if (st.spare > g('spare_best')) { p.spare_best = st.spare; badges.push('record'); }
+    if (st.spare > g('spare_best')) { p.spare_best = st.spare; if (g('spare_best') > 0) badges.push('sparebest'); }
     if (!s.sd && st.spare === 0) badges.push('last');
     if (s.sd) badges.push('escape');
     if (isSpotless(s)) { p.spotless_n = g('spotless_n') + 1; badges.push('spotless'); }
@@ -351,7 +358,7 @@ function recordPatch(d, s, matchId) {
     if (s.over === 'burned') p.burned_n = g('burned_n') + 1;
     else if (s.over === 'caught') p.caught_n = g('caught_n') + 1;
     else p.cold_n = g('cold_n') + 1;
-    if (n > g('close_best')) { p.close_best = n; if (g('close_best') > 0) badges.push('record'); }
+    if (n > g('close_best')) { p.close_best = n; if (g('close_best') > 0) badges.push('closebest'); }
   }
   if (st.melds) badges.push(`meld${st.melds}`);
   if (MILESTONES.includes(p.missions_n)) badges.push(`ms${p.missions_n}`);
@@ -392,6 +399,8 @@ const css = `
 :root[data-theme="dark"] .g-agents { --ag-on-good: var(--g-on-ink); }
 .g-ag-top { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .g-ag-say { margin: 0; min-height: 1.3em; text-align: center; font-weight: 800; font-size: 0.92rem; line-height: 1.3; text-wrap: balance; }
+.g-ag-say.one { white-space: nowrap; }
+@media (max-width: 380px) { .g-ag-say.one { overflow: hidden; text-overflow: ellipsis; } }
 .g-ag-who { font-weight: 900; } .g-ag-who.p-a { color: var(--p-a-text); } .g-ag-who.p-b { color: var(--p-b-text); }
 .g-ag-meta { display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap; font-size: 0.8rem; font-weight: 800; color: var(--g-muted); }
 .g-ag-tokens { display: flex; align-items: center; gap: 4px; }
@@ -581,7 +590,8 @@ const css = `
   .g-ag-top { flex-direction: row; justify-content: space-between; align-items: center; gap: 12px; }
   .g-ag-say { min-height: 0; flex: 1 1 auto; text-align: center; font-size: 0.8rem; line-height: 1.2; }
   .g-ag-meta { flex: none; gap: 10px; font-size: 0.72rem; }
-  .g-ag-banner { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .g-ag-banner { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); justify-content: flex-start; }
+  .g-ag-banner .g-ag-stamp { transform: none; }
   .g-ag-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, 36%); grid-template-rows: auto auto minmax(0, 1fr); gap: 6px 12px; align-items: start; }
   .g-ag-main { display: contents; }
   .g-ag-rules { grid-column: 1 / -1; grid-row: 1; }
@@ -646,7 +656,7 @@ registerGame({
   endLookLabel: 'See the board',
   init, next, apply, result,
   // exposed for tests
-  _test: { isSpotless, recLine, makeKeys, pickWords, NOUNS, LAYOUT, TOKENS, TOTAL, BREAKS, cleanClue, cleanClue2: (s, x) => checkClue(s.words, s.found, x), PACKS, PACK_BREAKS, packWords: (seed, pack) => packWords(seed, pack, NOUNS), LEVELS, matchStats, recordPatch, isMeld, recordClueText, streakLine, parseClue, recentIds, pushRecent, RECENT_CAP },
+  _test: { isSpotless, recLine, shouldRecord, makeKeys, pickWords, NOUNS, LAYOUT, TOKENS, TOTAL, BREAKS, cleanClue, cleanClue2: (s, x) => checkClue(s.words, s.found, x), PACKS, PACK_BREAKS, packWords: (seed, pack) => packWords(seed, pack, NOUNS), LEVELS, matchStats, recordPatch, isMeld, recordClueText, streakLine, parseClue, recentIds, pushRecent, RECENT_CAP },
 
   mount(el, api) {
     el.innerHTML = `<div class="g-agents">
@@ -820,6 +830,9 @@ registerGame({
     const STAMP_TEXT = (b) => {
       if (b === 'record') return ['NEW RECORD', 'rec'];
       if (b === 'tie') return ['EQUALS THE RECORD', 'rec'];
+      if (b === 'sparebest') return ['MOST TURNS SPARE', 'rec'];
+      if (b === 'streakbest') return ['STREAK RECORD', 'rec'];
+      if (b === 'closebest') return ['CLOSEST CALL YET', 'rec'];
       if (b === 'last') return ['ON THE LAST TOKEN', 'bad'];
       if (b === 'escape') return ['SUDDEN-DEATH ESCAPE', 'good'];
       if (b === 'spotless') return ['NOT ONE WRONG TAP', 'good'];
@@ -865,8 +878,7 @@ registerGame({
     function maybeRecord(c, watched) {
       if (!c.over || !c.matchId) return;
       const d = safeData();
-      if (recentIds(d.recent_m).includes(c.matchId)) return;
-      if (!watched && c.state.v !== 2) return;
+      if (!shouldRecord(d, c.state, c.matchId, watched)) return;
       try { api.setData({ ...recordPatch(d, c.state, c.matchId), recent_m: pushRecent(d.recent_m, c.matchId) }); } catch { /* records are a bonus */ }
     }
 
@@ -911,7 +923,7 @@ registerGame({
       else if (role === 'await-setup') text = ''; // the briefing card says it once
       else if (role === 'give') text = `Your clue: one word and a number for your <b>green</b> agents (${agentsLeft(s, g)} left).`;
       else if (role === 'await-clue') text = `${who(g)} is thinking of a clue…`;
-      else if (role === 'guess') text = t.picks.length ? 'Nice. Keep going, or end the turn.' : `Tap the words you think are ${who(g)}’s agents.`;
+      else if (role === 'guess') text = t.picks.length ? 'Nice. Keep going, or end the turn.' : `Tap ${who(g)}’s agents.`;
       else if (role === 'watch') text = `${who(other(g))} is guessing your clue…`;
       else if (role === 'sudden') text = `<b>Sudden death: no clues, no mistakes.</b> Find ${who(other(s.picker))}’s agents.`;
       else if (role === 'sudden-watch') text = `<b>Sudden death.</b> ${who(s.picker)} is picking from your key…`;
@@ -921,6 +933,7 @@ registerGame({
             : s.over === 'caught' ? `Caught in sudden death. ${up(s.words[s.hit])} was ${s.sd[s.sd.length - 1].r === 'K' ? 'an assassin' : 'a bystander'}.`
               : 'Out of time. The trail went cold.';
       }
+      sayEl.classList.toggle('one', role === 'guess');
       sayEl.innerHTML = (last && (role === 'give' || role === 'guess' || role === 'watch' || role === 'await-clue') ? '<b class="g-ag-last">Last call.</b> ' : '') + text;
       const turnNow = s.phase === 'guess' && !s.over;
       if (sudden || (c.over && s.sd)) {
