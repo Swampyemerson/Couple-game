@@ -50,6 +50,7 @@ export function recordRound(data, w, ns, ev, partner) {
       if (B && v >= (B.min || 0) && (!B.step || !was || Math.abs(v - was) >= B.step)) news.push({ k, label: B.label, val: v, was, text: was ? `${B.label} yet: ${B.fmt(v)} (was ${B.fmt(was)})` : `${B.label}: ${B.fmt(v)}` });
     }
   };
+  if (ev.homeby > 0) add('homeby', ev.homeby | 0); // (home drive-bys, either role: additive)
   const touched = [];
   if (ev.role === 'runner') {
     add('runs');
@@ -229,9 +230,10 @@ export function remainingPoints(m) {
 /** The second half of a pair: what each role needs to beat the first half (h0). { run, cop } sentences; { hudRun, hudCop } short chips. */
 export function pairTarget(h0) {
   const t = fmtSec((h0.ran || 0) / 1000);
-  if (h0.outcome === 'busted') return { run: `survive past ${t}`, cop: `bust them before ${t}`, hudRun: `Beat ${t}`, hudCop: `Bust by ${t}` };
-  if (early(h0)) return { run: `get away before ${t}`, cop: `stop them escaping before ${t}`, hudRun: `Escape by ${t}`, hudCop: `Stop them by ${t}` };
-  return { run: 'escape too (lose the heat to win it outright)', cop: 'bust them and the pair is yours', hudRun: 'Escape to match', hudCop: 'Bust them to win' };
+  // kind / at (ms) / t: what the live chip needs (chase.js targetChip). 'bust': outlast `at`. 'early': get away before `at`. 'clock': nothing to cross.
+  if (h0.outcome === 'busted') return { kind: 'bust', at: h0.ran || 0, t, run: `survive past ${t}`, cop: `bust them before ${t}`, hudRun: `Beat ${t}`, hudCop: `Bust by ${t}` };
+  if (early(h0)) return { kind: 'early', at: h0.ran || 0, t, run: `get away before ${t}`, cop: `stop them escaping before ${t}`, hudRun: `Escape by ${t}`, hudCop: `Stop them by ${t}` };
+  return { kind: 'clock', at: 0, t, run: 'escape too (lose the heat to win it outright)', cop: 'bust them and the pair is yours', hudRun: 'Escape to match', hudCop: 'Bust them to win' };
 }
 /** The words for how a pair was won. */
 export function pairWhy(why) { return why === 'level' ? 'dead level' : why; }

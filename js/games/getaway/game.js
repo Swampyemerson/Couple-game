@@ -21,7 +21,7 @@ import { MAPS } from './maps/index.js';
 import { liveryFor, liveryRows, checkUnlocks, LIVERIES } from './liveries.js';
 import { rulesFor, heatWith, twistFor, twistInfo, ptsFor, pickSafehouse } from './twists.js';
 import { recordRound, recordMatch, recordPair, pairWinner, pairPts, pairTarget, pairWhy, scoresFromHist, winnersByRound, remainingPoints, roundWinner, seriesAfter, seriesGrudge, seriesLine, recordsLine, fmtSec, dayKey, dayOfYear, DAILY, dailyText, dailyKey, dailyBoard, dailyRoleFor, dailyScoreOf, dailyTextOf, dailyBestKey, dayNum, dayNumFromKey, foldStreak, streakOf, streakView } from './records.js';
-import { wantedLevel, wantedStars, copRegen, chainNew, chainReset, chainStep, chainAdd, chainText, CHAIN, CHAIN_TIERS, aheadPoints, QUICK_DIST, isKiss, isApart } from './chase.js';
+import { wantedLevel, wantedStars, copRegen, chainNew, chainReset, chainStep, chainAdd, chainText, CHAIN, CHAIN_TIERS, aheadPoints, QUICK_DIST, isKiss, isApart, homeDriveBy, HOME_BY, targetChip } from './chase.js';
 
 const AB = ['a', 'b'];
 const PH = { loading: 0, lobby: 1, intro: 2, count: 3, chase: 4, result: 5, final: 6, wait: 7 };
@@ -876,7 +876,8 @@ export function createGame(el, api) {
       placeCar(c, s.x, s.z, s.yaw, geo);
       c.nitro = role === 'runner' ? NITRO[rules0.nitro].start : NITRO.cop.start;
       p.car = c; p.esc = 0; p.escPeak = 0; p.escPeakT = 0; p.escMax = 0; p.seenT = 0; p.cover = false; p.stopT = 0; p.oilLeft = role === 'runner' ? rules0.oils : 0; p.spikesLeft = role === 'cop' ? rules0.spikes : 0; p.hideT = 0; p.safeBonus = false; p.safeHint = false;
-      p.stats = { top: 0, near: 0, pits: 0, spikes: 0, hits: 0, topBoost: 0 };
+      p.stats = { top: 0, near: 0, pits: 0, spikes: 0, hits: 0, topBoost: 0, homeby: 0 };
+      p.homeQ = 0; p.homePulseAt = -1e9;
       p.spikeHit.clear(); p.oilHit.clear(); p.nearIds.clear(); p.hpSeen = 100; p.lastSeen = null; p.los = true; p.shown.init = false; p.corr = null;
       chainReset(p.chain); p.wFilled = false; p.style = null;
       p.prevRL[0] = NaN; p.prevRR[0] = NaN;
@@ -907,7 +908,7 @@ export function createGame(el, api) {
     const st = P2[rw].stats; const cs = P2[other(rw)].stats;
     const rc = posOf(rw); const cc = posOf(other(rw));
     // (local modes count a PIT on both cars' stats; live each device counts its own: never sum them)
-    const res = { idx: R.idx, outcome, reason, at: clock(), stats: { top: Math.max(st.top, P2[rw].car.topSpeed), near: st.near, pits: Math.max(cs.pits, st.pits), spikes: st.spikes }, ran: Math.max(0, clock() - R.t0), hp: Math.round(Math.max(0, P2[rw].car.hp)), escMax: Math.round(P2[rw].escMax * 100) / 100, d: Math.round(Math.hypot(rc.x - cc.x, rc.z - cc.z)), ...(extra || {}) };
+    const res = { idx: R.idx, outcome, reason, at: clock(), stats: { top: Math.max(st.top, P2[rw].car.topSpeed), near: st.near, pits: Math.max(cs.pits, st.pits), spikes: st.spikes, homeby: st.homeby | 0 }, ran: Math.max(0, clock() - R.t0), hp: Math.round(Math.max(0, P2[rw].car.hp)), escMax: Math.round(P2[rw].escMax * 100) / 100, d: Math.round(Math.hypot(rc.x - cc.x, rc.z - cc.z)), ...(extra || {}) };
     if (live) link.urgent('end', res);
     applyEnd(res);
   }
@@ -920,7 +921,7 @@ export function createGame(el, api) {
     R.over = true; R.result = res; S.phase = 'result'; R.endWall = performance.now(); S.skipMe = false; S.skipThem = false; S.final15 = false;
     const winner = res.outcome === 'busted' ? other(R.runner) : R.runner;
     const st = res.stats || {};
-    S.match.hist.push({ runner: R.runner, outcome: res.outcome, reason: res.reason, ran: res.ran, hp: +res.hp || 0, escMax: +res.escMax || 0, pits: st.pits | 0, top: +st.top || 0, near: st.near | 0, spikes: st.spikes | 0, sd: !!R.sd, tw: R.tw || '', pts: R.pts || 1, sn: R.safe ? R.safe.name : '' });
+    S.match.hist.push({ runner: R.runner, outcome: res.outcome, reason: res.reason, ran: res.ran, hp: +res.hp || 0, escMax: +res.escMax || 0, pits: st.pits | 0, top: +st.top || 0, near: st.near | 0, spikes: st.spikes | 0, hb: st.homeby | 0, sd: !!R.sd, tw: R.tw || '', pts: R.pts || 1, sn: R.safe ? R.safe.name : '' });
     // the score is recomputed from the rounds played (pairs: a pair's point comes after its second round)
     S.match.scores = scoresFromHist(S.match.hist, pairsOn() ? 'pairs' : 'rounds', S.match.rounds);
     api.setScore(S.match.scores);
@@ -956,7 +957,7 @@ export function createGame(el, api) {
     for (const w of recPeople()) {
       const role = w === R.runner ? 'runner' : 'cop';
       const p = P2[w];
-      const ev = { role, won: winner === w, outcome: res.outcome, reason: res.reason, t: res.ran / 1000, pits: role === 'cop' ? (live ? p.stats.pits : st.pits) : 0, top: role === 'runner' ? (+st.top || p.stats.top) * 3.6 : 0, topBoost: p.stats.topBoost, near: role === 'runner' ? st.near | 0 : 0, chain: role === 'cop' ? p.chain.best : 0, hp: role === 'runner' ? res.hp : 0 };
+      const ev = { role, won: winner === w, outcome: res.outcome, reason: res.reason, t: res.ran / 1000, pits: role === 'cop' ? (live ? p.stats.pits : st.pits) : 0, top: role === 'runner' ? (+st.top || p.stats.top) * 3.6 : 0, topBoost: p.stats.topBoost, near: role === 'runner' ? st.near | 0 : 0, chain: role === 'cop' ? p.chain.best : 0, hp: role === 'runner' ? res.hp : 0, homeby: p.stats.homeby | 0 };
       const pw = personOf(w);
       const r = recordRound(gdata(), pw, ns, ev, ns ? null : other(pw));
       gset(r.patch);
@@ -1098,10 +1099,10 @@ export function createGame(el, api) {
   const aiLabel = () => (AI_LEVEL_LABELS[S.match && S.match.aiLevel] || AI_LEVEL_LABELS[device.aiLevel] || 'Normal');
   /** Per-person match totals and the MVP line (finalCard, and the app card's sub line). */
   function matchSummary() {
-    const m = S.match; const T = { a: { pits: 0, top: 0, near: 0, ran: 0, spikes: 0, esc: 0, heat: 0, busts: 0, pitted: 0 }, b: { pits: 0, top: 0, near: 0, ran: 0, spikes: 0, esc: 0, heat: 0, busts: 0, pitted: 0 } };
+    const m = S.match; const T = { a: { pits: 0, top: 0, near: 0, ran: 0, spikes: 0, esc: 0, heat: 0, busts: 0, pitted: 0, home: 0 }, b: { pits: 0, top: 0, near: 0, ran: 0, spikes: 0, esc: 0, heat: 0, busts: 0, pitted: 0, home: 0 } };
     for (const h of m.hist) {
       const r = T[h.runner]; const c = T[other(h.runner)];
-      r.top = Math.max(r.top, Math.round((h.top || 0) * 3.6)); r.near += h.near | 0; r.ran += h.outcome === 'escaped' ? 0 : (h.ran || 0); r.pitted += h.pits | 0;
+      r.top = Math.max(r.top, Math.round((h.top || 0) * 3.6)); r.near += h.near | 0; r.ran += h.outcome === 'escaped' ? 0 : (h.ran || 0); r.pitted += h.pits | 0; r.home += h.hb | 0; // (the runner's drive-bys ride the round result, so both phones agree; the cop's are in its own records only)
       if (h.outcome === 'escaped') { r.esc++; if (h.reason === 'heat') r.heat++; if (h.reason === 'safe') r.safe = (r.safe | 0) + 1; } else if (h.reason !== 'quit') c.busts++;
       c.pits += h.pits | 0; c.spikes += h.spikes | 0;
     }
@@ -1121,6 +1122,7 @@ export function createGame(el, api) {
       const runs = m.hist.filter((h) => h.runner === w).length;
       if (runs >= 1 && t.esc === runs && t.pitted === 0) cands.push({ w, s: 30 + t.esc, t: `UNTOUCHABLE · ${n} ${n === 'You' ? 'were' : 'was'} never PITted` });
       if (t.near >= 5) cands.push({ w, s: 20 + t.near, t: `THREAD THE NEEDLE · ${n}: ${t.near} near misses` });
+      if (t.home >= 2) cands.push({ w, s: 5 + t.home, t: `HOMEBODY · ${n} drove past home ${t.home} times` });
       if (t.top >= 160) cands.push({ w, s: 10 + t.top / 100, t: `LEAD FOOT · ${n} hit ${t.top} km/h` });
     }
     cands.sort((x, y) => y.s - x.s);
@@ -1300,6 +1302,20 @@ export function createGame(el, api) {
       const ev = chainStep(p.chain, dt, Math.hypot(o.x - c.x, o.z - c.z), p.los);
       if (ev & 1) chainNote(w, p.chain.up, '', 1);
       if ((ev & 4) && p.chain.ended >= 3 && isViewer(w)) H0().view(w).hint(`Chain over · ×${p.chain.ended}`, 1100);
+    }
+  }
+  // ── the home drive-by: past the home landmark (3865 Moorhead / 8524 Boulder Way) at 50 km/h or more, once per round, on a map with a home and in a round that isn't a SAFEHOUSE one.
+  //    The runner's +2 goes on the style chain, the cop's on its Hot Pursuit chain; each phone scores its own car (no message). ──
+  function homeFrame() {
+    const R = S.R; if (!R || R.over || R.safe || S.phase !== 'chase') return;
+    const L = S.mapEntry && S.mapEntry.landmarks; const hm = L && L.find((l) => l.home); if (!hm) return;
+    for (const w of AB) {
+      if (!local(w) || (ai() && w === aiW)) continue;
+      const p = P2[w]; const c = p.car;
+      const was = p.homeQ; p.homeQ = homeDriveBy(was, Math.hypot(c.x - hm.x, c.z - hm.z), c.speed);
+      if (p.homeQ !== 2 || p.stats.homeby > 0) continue; // (the entry edge, and only the first time this round)
+      if (roleOf(w) === 'runner') { p.stats.homeby++; p.homePulseAt = clock(); addStyle(w, HOME_BY.pts, '+2 Drove past home!'); }
+      else if (!daily()) { p.stats.homeby++; p.homePulseAt = clock(); chainBump(w, HOME_BY.pts, 'Patrolled home'); }
     }
   }
   // ── Wanted level: ★★ after 60 s on the run, ★★★ after 100 s (shorter rounds sooner), a pure function of the round clock ──
@@ -2238,7 +2254,7 @@ export function createGame(el, api) {
       if (lm.far && !full) continue;
       let lx = lm.x; let lz = lm.z;
       if (lm.far) { const B = geo.bounds; lx = clamp(lx, B.x0 + 30, B.x1 - 30); lz = clamp(lz, B.z0 + 30, B.z1 - 30); }
-      const [x, y] = toPx(lx, lz); hud.drawLandmark(g, x, y, lm, dpr * (full ? 1 : 0.8)); if (full) { g.font = `800 ${11 * dpr}px system-ui, sans-serif`; g.fillStyle = P.dark ? '#eee' : '#1b1a20'; g.strokeStyle = P.dark ? '#000' : '#fff'; g.lineWidth = 3 * dpr; const nm = lm.far ? lm.name + ' →' : lm.name; g.strokeText(nm, x + 9 * dpr, y + 4 * dpr); g.fillText(nm, x + 9 * dpr, y + 4 * dpr); } }
+      const [x, y] = toPx(lx, lz); hud.drawLandmark(g, x, y, lm, dpr * (full ? 1 : 0.8), lm.home ? Math.max(0, 1 - (now - P2[w].homePulseAt) / (HOME_BY.pulse * 1000)) : 0); if (full) { g.font = `800 ${11 * dpr}px system-ui, sans-serif`; g.fillStyle = P.dark ? '#eee' : '#1b1a20'; g.strokeStyle = P.dark ? '#000' : '#fff'; g.lineWidth = 3 * dpr; const nm = lm.far ? lm.name + ' →' : lm.name; g.strokeText(nm, x + 9 * dpr, y + 4 * dpr); g.fillText(nm, x + 9 * dpr, y + 4 * dpr); } }
     if (!R) return;
     if (R.safe && !R.over) drawSafehouse(g, toPx, dpr, k, full);
     const myRole = roleOf(w); const o = other(w);
@@ -2328,6 +2344,7 @@ export function createGame(el, api) {
       v.clock(S.paused && S.pausedAt > R.t0 ? R.endAt - S.pausedAt : left, daily() ? 'Daily chase' : R.sd ? 'Sudden death' : `Round ${R.idx + 1}/${S.match.rounds}`, S.phase === 'chase' && left < 15000);
       // the Daily chase: the partner's time today is the line to beat
       if (S.dailyRv && dailyRoleNow() === 'runner' && !S.dailyPassed && S.phase === 'chase' && !R.over && S.dailyRv.score < S.match.rules.roundTime && (now - R.t0) / 1000 >= S.dailyRv.score) { S.dailyPassed = true; v.stamp(`PASSED ${S.dailyRv.name.toUpperCase()}!`, 'good sm'); audio.win(); }
+      targetStamp(w, v, R);
       // heat meter
       const rp = P2[R.runner];
       const d = Math.hypot(posOf('a').x - posOf('b').x, posOf('a').z - posOf('b').z);
@@ -2377,11 +2394,19 @@ export function createGame(el, api) {
       S.pauseCard = null; S.pauseKey = -1;
     }
   }
+  /** The round clock the pair target reads: since the chase began (R.t0 moves on a pause; a paused round holds still). */
+  const tgElapsed = (R) => (S.phase === 'chase' ? Math.max(0, (S.paused && S.pausedAt > R.t0 ? S.pausedAt : clock()) - R.t0) : 0);
+  /** The one-shot stamp when the clock passes the first half's time (per viewer, so a split screen shows each its own words). */
+  function targetStamp(w, v, R) {
+    if (!R.target || R.over || S.phase !== 'chase' || (R.tgS && R.tgS[w])) return;
+    const k = targetChip(R.target, tgElapsed(R), roleOf(w)); if (!k.stamp) return;
+    (R.tgS || (R.tgS = {}))[w] = true; v.stamp(k.stamp, (k.good ? 'good' : 'bad') + ' sm'); if (k.good) audio.win();
+  }
   /** The small chips under the clock: the round's wildcard (with the safehouse's distance) and the half-time target to beat. */
   function twistChips(w, c, R) {
     const out = []; const t = twistInfo(R.tw);
     if (t) out.push({ t: R.tw === 'safe' && R.safe ? `${R.safe.home ? 'HOME' : 'SAFEHOUSE'} ${metres(Math.hypot(c.x - R.safe.x, c.z - R.safe.z))}` : t.chip, c: `tw ${R.tw}` });
-    if (R.target) out.push({ t: roleOf(w) === 'cop' ? R.target.hudCop : R.target.hudRun, c: 'tg' });
+    if (R.target) { const k = targetChip(R.target, tgElapsed(R), roleOf(w)); out.push({ t: k.t, c: k.hot ? 'tg hot' : 'tg' }); }
     return out;
   }
   /** The round pips: who each round counts for (a finished pair shows its winner on both), 'now', ×2 for a DOUBLE OR NOTHING round, a gap after each pair. */
@@ -2495,7 +2520,7 @@ export function createGame(el, api) {
         traffic.stepWrecks(dtReal, carsOfViewers());
         updateLos(dtReal);
         runnerChecks(dtReal * tsK, now);
-        wantedFrame(now); chainFrame(dtReal * tsK);
+        wantedFrame(now); chainFrame(dtReal * tsK); homeFrame();
         S.stopTT = tT;
       }
       copFallback(now);

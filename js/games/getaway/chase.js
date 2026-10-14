@@ -3,6 +3,7 @@
 // recharge, the cop's Hot Pursuit chain, the cop's quick-drop spots and the bumper kiss.
 import { CAR } from './tune.js';
 import { carContact } from './car.js';
+import { fmtSec } from './records.js';
 
 // ── Wanted level ──
 /** Seconds on the run at which the chase turns ★★ and ★★★ (a 2:30 round: 60 s and 100 s; shorter
@@ -99,4 +100,47 @@ export function isApart(a, b, gap = KISS.gap) {
   kA.x = a.x; kA.z = a.z; kA.y = a.y || 0; kA.yaw = a.yaw; kA.hl = CAR.hl + gap / 2; kA.hw = CAR.hw + gap / 2; // (each body grows half the gap)
   kB.x = b.x; kB.z = b.z; kB.y = b.y || 0; kB.yaw = b.yaw; kB.hl = kA.hl; kB.hw = kA.hw;
   return !(carContact(kA, kB, kCt) > 0);
+}
+
+// ── The live pair target (the second round of a pair) ──
+/** How long before the target the chip goes hot (ms). */
+export const TARGET_HOT = 10000;
+/**
+ * The chip under the clock in a pair's second round, and the moment the clock passes the first half's time.
+ * target: records.pairTarget(first half); elapsedMs: the round clock since the chase began; role: 'runner' | 'cop'.
+ * Returns { t, hot, past, stamp, good }. `past` is true once the round has lasted a tenth of a second longer than
+ * the first half (that is when pairWinner's comparison, in tenths, tips). `stamp` is the one-shot crossing text
+ * ('' when the crossing decides nothing, as for a first half that escaped on the clock) and `good` whether it is
+ * good news for this role. TRUE to pairWinner: after a BUST at T the runner who outlasts T has the pair (an escape
+ * or a longer survival both beat it); after an EARLY escape at T (heat / safehouse) a runner who has not got away
+ * by T has lost the pair (a later getaway, a clock escape or a bust all lose to it).
+ */
+export function targetChip(target, elapsedMs, role) {
+  const run = role !== 'cop';
+  if (!target) return { t: '', hot: false, past: false, stamp: '', good: false };
+  const { kind, at = 0, t: ts } = target;
+  if (kind !== 'bust' && kind !== 'early') return { t: run ? target.hudRun : target.hudCop, hot: false, past: false, stamp: '', good: false };
+  const left = at - (elapsedMs || 0);
+  const past = left <= -100; // (pairWinner compares in tenths of a second)
+  const T = ts || fmtSec(at / 1000);
+  if (kind === 'bust') {
+    if (past) return { t: run ? 'Pair is yours' : 'Bust them anyway', hot: false, past: true, stamp: run ? `PAST ${T}!` : `THEY’RE PAST ${T}`, good: run };
+    const s = fmtSec(Math.ceil(Math.max(0, left) / 1000));
+    return { t: run ? `Beat ${T} · ${s} to go` : `Bust by ${T} · ${s} left`, hot: left <= TARGET_HOT, past: false, stamp: '', good: false };
+  }
+  if (past) return { t: run ? 'Too slow now' : 'Pair is yours', hot: false, past: true, stamp: run ? `TOO SLOW · ${T} GONE` : 'THEY’RE TOO SLOW', good: !run };
+  const s = fmtSec(Math.ceil(Math.max(0, left) / 1000));
+  return { t: run ? `Escape by ${T} · ${s} to go` : `Stop them by ${T} · ${s} left`, hot: left <= TARGET_HOT, past: false, stamp: '', good: false };
+}
+
+// ── the home drive-by ──
+/** Within r metres of the home landmark at kmh km/h or more: once per round, +2 for either role. */
+export const HOME_BY = { r: 35, kmh: 50, pts: 2, pulse: 1.5 };
+/**
+ * The entry edge of a drive-by. was: this helper's last return was truthy; d: metres from home; speed: m/s.
+ * Returns 0 (not qualifying), 1 (qualifying, already was: no new event) or 2 (the moment it starts to qualify).
+ */
+export function homeDriveBy(was, d, speed) {
+  if (!(d <= HOME_BY.r) || !(Math.abs(speed) * 3.6 >= HOME_BY.kmh)) return 0;
+  return was ? 1 : 2;
 }
