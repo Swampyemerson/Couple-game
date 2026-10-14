@@ -347,9 +347,10 @@ export const CSS = `
 .gtw-view.l .gtw-twrow, .gtw-view.r .gtw-twrow { top: 66px; max-width: calc(100% - 16px); }
 .gtw-twrow span { padding: 3px 9px; border-radius: 999px; border: 2px solid var(--g-ink); background: var(--g-hl); color: var(--g-on-ink); font: 900 .66rem/1.15 var(--g-font-body); letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; box-shadow: 2px 2px 0 var(--g-edge); }
 .gtw-twrow span.tg { background: var(--g-card); color: var(--g-ink); }
+.gtw-twrow span.tg.hot { background: var(--g-bad); color: var(--g-on-signal); }
 .gtw-twrow span.safe { background: #3ddc84; }
 .gtw-twrow span.fog { background: #cfd6dd; }
-.gtw-twrow span.double { background: var(--g-bad); color: #fff; }
+.gtw-twrow span.double { background: var(--g-bad); color: var(--g-on-signal); }
 .gtw-pips i.x2 { width: 11px; border-radius: 4px; }
 .gtw-pips i.half { opacity: .55; } .gtw-pips i.lv { background: var(--g-muted); }
 .gtw-pips i.pe { margin-right: 4px; }
@@ -392,7 +393,7 @@ export const CSS = `
 .gtw-final .gtw-fh, .gtw-final .gtw-fl, .gtw-final .gtw-fr, .gtw-final .gtw-ff { display: contents; }
 .gtw-rounds.pairs { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 6px; }
 .gtw-pg { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.gtw-pg small { font: 900 .62rem/1 var(--g-font-body); letter-spacing: .12em; color: var(--g-muted); text-align: left; }
+.gtw-pg small { font: 900 .62rem/1.2 var(--g-font-body); letter-spacing: .04em; color: var(--g-muted); text-align: left; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .gtw-pg ol { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr; gap: 5px; }
 .gtw-pg li { border: 2px solid var(--g-ink); border-radius: 10px; padding: 5px 6px; display: flex; flex-direction: column; gap: 2px; background: var(--g-bg); text-align: left; }
 .gtw-pg li.wa { box-shadow: inset 0 -5px 0 var(--p-a); } .gtw-pg li.wb { box-shadow: inset 0 -5px 0 var(--p-b); } .gtw-pg li.lv { box-shadow: inset 0 -5px 0 var(--g-muted); } .gtw-pg li.tbd { opacity: .4; }

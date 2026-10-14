@@ -176,6 +176,26 @@ is ready").
   `match.grudge`) sees a GRUDGE MATCH ribbon on round 0's intro; if they win it the stamp and the match card say REVENGE!
   (`<w>_revenge` counter). Edging ahead of a series that wasn't led by you gives SERIES LEAD!; every 10th match MATCH 10.
 
+### The live pair target, pair headers, the home drive-by (round 2)
+
+- **Live pair target** (chase.js `targetChip`, records.js `pairTarget` now returns `kind` and `at`). In the
+  second round of a pair the chip under the clock counts down to the first half's time: "Beat 1:00 · 0:12 to go"
+  for the runner, "Bust by 1:00 · 0:12 left" for the cop (after an early escape: "Escape by 1:00" / "Stop them by
+  1:00"). It turns red for the last 10 s. When the clock passes the first half's time by a tenth of a second (the
+  resolution `pairWinner` compares) each viewer gets one stamp in its own words: "PAST 1:00!" / "THEY'RE PAST
+  1:00" after a bust, "TOO SLOW · 1:00 GONE" / "THEY'RE TOO SLOW" after an early escape. The chip then reads "Pair
+  is yours" / "Bust them anyway". A first half that escaped on the clock has nothing to cross: the chip stays
+  static and there is no stamp. It reads R.t0 and the shared history only (no message), and a pause holds it.
+- **Pair headers** on the match card: "PAIR 1 · Emerson · an escape beats a bust", "PAIR 2 · level" (hud.js
+  `pairHead`, from `pairWinner`; one line with an ellipsis).
+- **Home drive-by** (game.js `homeFrame`, chase.js `homeDriveBy`). On a map with a home landmark (Boulder's
+  3865 Moorhead, Santee's 8524 Boulder Way; Dockside has none), in a round that isn't a SAFEHOUSE one, passing
+  within 35 m of home at 50 km/h or more scores once per round: the runner gets "+2 Drove past home!" on the style
+  chain, the cop "Patrolled home" (+2) on its Hot Pursuit chain. The home icon pulses on the minimap for 1.5 s.
+  Each phone scores its own car (no message); the AI doesn't. Records: `<ns><w>_homeby` (flat, additive). MVP
+  HOMEBODY for 2+ runner drive-bys in a match. Tests: section `homeby` (all three maps), unit (`homeDriveBy`,
+  `targetChip`, `pairHead`), and the live target in `wildlive`.
+
 ## Records, the Daily chase, quick matches (records.js)
 
 - **Records** go to the shared game data (`api.setData`, numbers only, each phone writes only its

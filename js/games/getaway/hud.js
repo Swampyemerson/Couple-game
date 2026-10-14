@@ -2,7 +2,7 @@
 // full map (tap a road to drop a spike strip), and the overlay cards. Every setter diffs against
 // its last value, so a frame touches the DOM only when something visibly changed.
 import { OPTIONS, DEFAULTS, LABELS, HINTS, fmt, KEYS } from './rules.js';
-import { fmtSec } from './records.js';
+import { fmtSec, pairWinner } from './records.js';
 import { twistInfo } from './twists.js';
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -83,8 +83,12 @@ export function makeMapImage(geo, map, P, maxPx = 1400) {
 }
 
 /** Landmark marker on a 2D context. */
-function drawLandmark(g, x, y, lm, s = 1) {
+function drawLandmark(g, x, y, lm, s = 1, pulse = 0) {
   if (lm.home) {
+    if (pulse > 0) { // a home drive-by: a ring that swells and fades over the pulse (pulse 1 → 0)
+      const q = 1 - pulse; g.save(); g.beginPath(); g.arc(x, y, (9 + 20 * q) * s, 0, Math.PI * 2); g.lineWidth = 3 * s; g.strokeStyle = `rgba(255,95,162,${(0.85 * pulse).toFixed(3)})`; g.stroke(); g.restore();
+      s *= 1 + 0.35 * Math.sin(q * Math.PI);
+    }
     g.save(); g.translate(x, y); g.scale(s, s);
     g.beginPath(); g.moveTo(0, -9); g.lineTo(9, -1); g.lineTo(6, -1); g.lineTo(6, 7); g.lineTo(-6, 7); g.lineTo(-6, -1); g.lineTo(-9, -1); g.closePath();
     g.fillStyle = '#ff5fa2'; g.fill(); g.lineWidth = 2; g.strokeStyle = '#1b1a20'; g.stroke();
@@ -622,6 +626,12 @@ export function resultCard(api, { outcome, reason, runner, stats, scores, next, 
 }
 
 /** The match card: round by round, the two of you side by side, the MVP. Tap to go on. */
+/** A pair's header on the match card: 'PAIR 1 · Emerson · an escape beats a bust', 'PAIR 2 · level'; just 'PAIR n' until both rounds are in. */
+export function pairHead(api, n, h0, h1) {
+  if (!h0 || !h1 || h0.sd || h1.sd) return `PAIR ${n}`;
+  const pw = pairWinner(h0, h1);
+  return pw.winner ? `PAIR ${n} · ${api.name(pw.winner)} · ${pw.why}` : `PAIR ${n} · ${pw.why}`;
+}
 export function finalCard(api, { hist, scores, winner, rounds, sum, daily, dailySub, ai, tb, pips = null, ribbons = null, series = '', pairs = false }) {
   const pip = (h, i) => {
     if (!h) return `<li class="tbd"><small>R${i + 1}</small><b>–</b></li>`;
@@ -635,7 +645,7 @@ export function finalCard(api, { hist, scores, winner, rounds, sum, daily, daily
   // scored in pairs: the rounds sit by pair (PAIR 1 / PAIR 2: two rounds each, a sudden-death decider on its own), so the card reads as the points it is
   let roundsHtml = `<ol class="gtw-rounds">${list.join('')}</ol>`;
   if (pairs) {
-    const grp = []; for (let g = 0; g * 2 < nR; g++) grp.push(`<div class="gtw-pg"><small>${g * 2 >= rounds ? 'SUDDEN DEATH' : `PAIR ${g + 1}`}</small><ol>${list.slice(g * 2, g * 2 + 2).join('')}</ol></div>`);
+    const grp = []; for (let g = 0; g * 2 < nR; g++) grp.push(`<div class="gtw-pg"><small>${g * 2 >= rounds ? 'SUDDEN DEATH' : esc(pairHead(api, g + 1, hist[g * 2], hist[g * 2 + 1]))}</small><ol>${list.slice(g * 2, g * 2 + 2).join('')}</ol></div>`);
     roundsHtml = `<div class="gtw-rounds pairs">${grp.join('')}</div>`;
   }
   const T = sum.T; const col = (w) => `<div class="p${w}"><h4>${nameB(api, w)}</h4><dl><dt>PITs</dt><dd>${T[w].pits}</dd><dt>Top km/h</dt><dd>${T[w].top || '–'}</dd><dt>Near misses</dt><dd>${T[w].near}</dd><dt>Spikes landed</dt><dd>${T[w].spikes}</dd><dt>Escapes</dt><dd>${T[w].esc}</dd></dl></div>`;

@@ -244,6 +244,12 @@ async function hpAgree(pr, pc, rw, tol) {
         // losing the line of sight: 3 s grace, then it ends; coming back in time keeps it
         const k = C.chainNew(); C.chainAdd(k, 5); let ended = 0; for (let i = 0; i < 11; i++) ended |= C.chainStep(k, 0.25, 20, false) & 4; assert(!ended && k.n === 5, 'chain: 2.75 s without a line of sight keeps it');
         C.chainStep(k, 0.25, 20, true); assert(k.lost === 0 && k.n === 5, 'chain: a line of sight again clears the warning');
+        // the home drive-by: an entry edge inside 35 m at 50 km/h (13.9 m/s), either direction of travel
+        assert(C.homeDriveBy(0, 20, 20) === 2 && C.homeDriveBy(2, 20, 20) === 1 && C.homeDriveBy(1, 20, 20) === 1, 'homeDriveBy: 2 on the entry edge, 1 while it holds');
+        assert(C.homeDriveBy(0, 35, 14) === 2 && C.homeDriveBy(0, 35.01, 20) === 0 && C.homeDriveBy(0, 20, 13.8) === 0 && C.homeDriveBy(0, 20, 50 / 3.6) === 2, 'homeDriveBy: 35 m and 50 km/h are inside, 35.01 m or 49.7 km/h are not');
+        assert(C.homeDriveBy(1, 60, 30) === 0 && C.homeDriveBy(0, 20, -20) === 2 && C.homeDriveBy(0, NaN, 20) === 0 && C.homeDriveBy(0, 20, NaN) === 0, 'homeDriveBy: leaving resets the edge, reversing fast counts, junk never fires');
+        { const rr = R.recordRound({ a_homeby: 3 }, 'a', '', { role: 'cop', won: false, outcome: 'escaped', reason: 'time', t: 100, homeby: 1 }, 'b'); assert(rr.patch.a_homeby === 4, 'records: a drive-by adds to <w>_homeby'); }
+        { const rr = R.recordRound({}, 'b', 'ai_', { role: 'runner', won: true, outcome: 'escaped', reason: 'time', t: 100, top: 90 }, null); assert(!('ai_b_homeby' in rr.patch), 'records: no drive-by, no _homeby key'); }
         let ev2 = 0; for (let i = 0; i < 13; i++) ev2 |= C.chainStep(k, 0.25, 20, false); assert((ev2 & 4) && k.n === 0 && k.ended === 5 && k.best === 5, 'chain: over 3 s without a line of sight ends it (the best stays)');
         const o = C.chainNew(); C.chainAdd(o, 4); assert((C.chainStep(o, 0.016, 81, true) & 4) && o.n === 0, 'chain: more than 80 m away ends it at once');
         const o2 = C.chainNew(); C.chainAdd(o2, 4); C.chainStep(o2, 0.25, 79, true); assert(o2.n === 4, 'chain: 79 m away is still in the chase');
@@ -404,6 +410,39 @@ async function hpAgree(pr, pc, rw, tol) {
       const tg = R.pairTarget(h('a', 'busted', 'hp', 72000));
       assert(tg.run === 'survive past 1:12' && tg.cop === 'bust them before 1:12' && tg.hudRun === 'Beat 1:12', 'half time: after a bust at 1:12 the next runner must survive past 1:12');
       assert(/get away before 0:41/.test(R.pairTarget(h('a', 'escaped', 'heat', 41000)).run) && /escape too/.test(R.pairTarget(h('a', 'escaped', 'time', 150000)).run), 'half time: after an escape the next runner must beat it');
+      // the live pair target chip (chase.js targetChip): runner / cop, before / after, the hot window, each kind, and TRUE to pairWinner
+      {
+        const CC = await import(url('chase.js'));
+        const tb = R.pairTarget(h('a', 'busted', 'hp', 60000)); const te = R.pairTarget(h('a', 'escaped', 'heat', 60000)); const tc = R.pairTarget(h('a', 'escaped', 'time', 150000));
+        assert(tb.kind === 'bust' && tb.at === 60000 && te.kind === 'early' && te.at === 60000 && tc.kind === 'clock', 'pairTarget: kind and at (ms) for a bust, an early escape and a clock escape');
+        let k = CC.targetChip(tb, 48000, 'runner');
+        assert(k.t === 'Beat 1:00 · 0:12 to go' && !k.hot && !k.past && !k.stamp, 'targetChip: runner before a bust target reads "Beat 1:00 · 0:12 to go"');
+        k = CC.targetChip(tb, 48000, 'cop'); assert(k.t === 'Bust by 1:00 · 0:12 left' && !k.hot, 'targetChip: cop reads "Bust by 1:00 · 0:12 left"');
+        assert(!CC.targetChip(tb, 49999, 'runner').hot && CC.targetChip(tb, 50000, 'runner').hot && CC.targetChip(tb, 50000, 'cop').t === 'Bust by 1:00 · 0:10 left' && CC.targetChip(tb, 59900, 'cop').hot, 'targetChip: hot for the last 10 s before the target only');
+        assert(!CC.targetChip(tb, 60050, 'runner').past && CC.targetChip(tb, 60100, 'runner').past, 'targetChip: past once the clock is a tenth beyond (pairWinner compares tenths)');
+        k = CC.targetChip(tb, 61000, 'runner'); assert(k.stamp === 'PAST 1:00!' && k.good && k.t === 'Pair is yours' && !k.hot, 'targetChip: runner past a bust target stamps "PAST 1:00!" (good)');
+        k = CC.targetChip(tb, 61000, 'cop'); assert(k.stamp === 'THEY’RE PAST 1:00' && !k.good && k.t === 'Bust them anyway', 'targetChip: cop past a bust target stamps "THEY’RE PAST 1:00" (bad)');
+        k = CC.targetChip(te, 50000, 'runner'); assert(k.t === 'Escape by 1:00 · 0:10 to go' && k.hot, 'targetChip: early-escape target, runner side');
+        k = CC.targetChip(te, 50000, 'cop'); assert(k.t === 'Stop them by 1:00 · 0:10 left', 'targetChip: early-escape target, cop side');
+        assert(CC.targetChip(te, 61000, 'runner').stamp === 'TOO SLOW · 1:00 GONE' && !CC.targetChip(te, 61000, 'runner').good && CC.targetChip(te, 61000, 'cop').stamp === 'THEY’RE TOO SLOW' && CC.targetChip(te, 61000, 'cop').good, 'targetChip: past an early-escape target the runner is too slow (bad), the cop is good');
+        for (const t of [0, 100000, 200000]) { const kr = CC.targetChip(tc, t, 'runner'); const kc = CC.targetChip(tc, t, 'cop'); assert(kr.t === 'Escape to match' && kc.t === 'Bust them to win' && !kr.hot && !kr.stamp && !kc.stamp && !kr.past, 'targetChip: a clock escape has nothing to cross (static chip, no stamp)'); }
+        assert(CC.targetChip(null, 5, 'runner').t === '', 'targetChip: no target, no chip');
+        // true to pairWinner: whatever happens after the crossing, the pair goes the way the stamp says
+        const afters = [e('b', 150000), h('b', 'escaped', 'heat', 90000), h('b', 'escaped', 'safe', 61000), b('b', 61000), b('b', 120000)];
+        for (const a1 of afters) {
+          assert(R.pairWinner(b('a', 60000), a1).winner === 'b', `pairWinner: after a bust at 1:00 a runner who outlasts it wins the pair (${a1.outcome} ${a1.reason} ${a1.ran})`);
+          assert(R.pairWinner(h('a', 'escaped', 'heat', 60000), a1).winner === 'a', `pairWinner: after an early escape at 1:00 a runner not away by 1:00 loses the pair (${a1.outcome} ${a1.reason} ${a1.ran})`);
+        }
+      }
+      // the match card names each pair
+      {
+        const api3 = { name: (w) => (w === 'a' ? 'Emerson' : 'Sydney') }; const you = { name: (w) => (w === 'a' ? 'You' : 'Sydney') };
+        assert(H.pairHead(api3, 1, e('a'), b('b', 50000)) === 'PAIR 1 · Emerson · an escape beats a bust' && H.pairHead(you, 1, e('a'), b('b', 50000)) === 'PAIR 1 · You · an escape beats a bust', 'match card: "PAIR 1 · Emerson · an escape beats a bust", and "You" in practice');
+        assert(H.pairHead(api3, 2, b('a', 50000), b('b', 50000)) === 'PAIR 2 · level' && H.pairHead(api3, 2, b('a', 50000), null) === 'PAIR 2', 'match card: a level pair reads "PAIR 2 · level"; an open pair just "PAIR 2"');
+        const sm = { T: { a: { pits: 0, top: 0, near: 0, spikes: 0, esc: 1 }, b: { pits: 0, top: 0, near: 0, spikes: 0, esc: 0 } }, mvp: null };
+        const f4 = H.finalCard(api3, { hist: [e('a'), b('b', 50000), b('a', 50000), b('b', 50000)], scores: { a: 1, b: 0 }, winner: 'a', rounds: 4, sum: sm, pips: ['a', 'a', null, null], pairs: true });
+        assert(/<small>PAIR 1 · Emerson · an escape beats a bust<\/small>/.test(f4) && /<small>PAIR 2 · level<\/small>/.test(f4), 'finalCard: the pair headers carry the winner and why');
+      }
       assert(R.winnersByRound([e('a'), b('b', 50000), e('a')], 'pairs', 4).join() === 'a,a,', 'match card: both rounds of a pair carry the pair winner; an open pair has none yet');
       // A4 the Series ledger
       const S0 = R.seriesAfter({}, 'a');
@@ -1462,6 +1501,7 @@ async function hpAgree(pr, pc, rw, tol) {
       let sa = await st(a); let sb = await st(b);
       assert(sa.match.rules.score === 'pairs' && sb.match.rules.wildcards === 'on' && sa.R.tw === '' && sb.R.tw === '', 'live: pairs and wildcards on both phones; round 0 is plain');
       await hook(a, 'hold', 'a', { hand: true }); await hook(b, 'hold', 'b', { hand: true });
+      await wait(3000); // (a first half that lasts ~3 s: the second half's target is soon crossed)
       await hook(a, 'endNow', 'busted', 'hp'); // Emerson runs first and is busted
       await waitOver(h, 0);
       sa = await st(a); sb = await st(b);
@@ -1472,8 +1512,17 @@ async function hpAgree(pr, pc, rw, tol) {
       sa = await st(a); sb = await st(b);
       assert(sa.R.tw === '' && sb.R.tw === '' && sa.R.pts === 1, 'live: pair 0 is plain on both rounds');
       assert(JSON.stringify(sa.R.target) === JSON.stringify(sb.R.target) && sa.R.target && /^Beat /.test(sa.R.target.hudRun), `live: and the same half-time target on both phones (${sa.R.target && sa.R.target.hudRun})`);
+      // the live target: record every stamp that appears on each phone, then watch the clock pass the first half's time
+      for (const p of [a, b]) await p.evaluate(() => { window.__tgSt = []; new MutationObserver((ms) => { for (const m of ms) for (const n of m.addedNodes) if (/PAST|TOO SLOW/.test(n.textContent || '')) window.__tgSt.push(n.textContent); }).observe(document.body, { childList: true, subtree: true, characterData: true }); });
       await phase(a, 'chase', 25000); await phase(b, 'chase', 25000);
       await hook(a, 'hold', 'a', { hand: true }); await hook(b, 'hold', 'b', { hand: true });
+      if (process.env.DBG) { await wait(3000); console.log(JSON.stringify(await a.evaluate(() => { const q = window.__getaway.state(); return { r: q.reasons, p: q.paused, pa: q.pausedAt, resumeAt: q.resumeAt }; })), JSON.stringify(await b.evaluate(() => { const q = window.__getaway.state(); return { r: q.reasons, p: q.paused }; }))); }
+for (const p of [a, b]) await until(p, () => window.__tgSt.length > 0, null, 12000, 'the PAST stamp');
+      await wait(2000);
+      const stA = await a.evaluate(() => window.__tgSt); const stB = await b.evaluate(() => window.__tgSt);
+      assert(stA.length === 1 && /^THEY’RE PAST 0:0\d$/.test(stA[0]) && stB.length === 1 && /^PAST 0:0\d!$/.test(stB[0]), `live: passing the first half's time stamps once on each phone, in each role's words (cop "${stA[0]}", runner "${stB[0]}")`);
+      const chipA = await a.evaluate(() => document.querySelector('.g-gtw .gtw-twrow .tg').textContent); const chipB = await b.evaluate(() => document.querySelector('.g-gtw .gtw-twrow .tg').textContent);
+      assert(/bust them anyway/i.test(chipA) && /pair is yours/i.test(chipB), `live: and the chip changes to match (cop "${chipA}", runner "${chipB}")`);
       // Sydney (the runner) escapes on the clock: an escape beats a bust, so the pair is hers
       await hook(a, 'shortenRound', 1200);
       await waitOver(h, 1, 30000);
@@ -1963,6 +2012,64 @@ async function hpAgree(pr, pc, rw, tol) {
       }
     }
     console.log('   screenshots in', SHOTS);
+  }
+
+  // ═══ homeby: the home drive-by (+2 past 3865 Moorhead / 8524 Boulder Way at 50 km/h, once a round; nothing on Dockside) + the intro orbit shows the map ═══
+  if (want('homeby')) {
+    for (const id of ['boulder', 'santee', 'dockside']) {
+      const h = await launch({ port: PORT + 8, only: ['getaway'], who: ['a'], coarse: true });
+      const { a } = h;
+      try {
+        await arm(a, { ...FAST, rounds: 4, intro: 120000, heatT: 90, wanted: [900, 1800], rules: { wildcards: 'off', score: 'rounds' } });
+        await h.startLive(a, 'getaway', 'local');
+        await ready(a);
+        await hook(a, 'setSetup', { map: id });
+        await until(a, (m) => window.__getaway.state().mapId === m, id, 90000, 'the map ' + id);
+        await a.tap('.g-gtw [data-l="start"]', { timeout: 60000 });
+        await phase(a, 'intro', 90000);
+        await wait(500);
+        await hook(a, 'drawHold', true);
+        const t = await a.evaluate(() => { window.__getaway.drawHold(false); return performance.now(); });
+        await a.waitForFunction((t0) => { const f = window.__gtwFrames || []; let n = 0; for (let i = f.length - 1; i >= 0 && f[i] > t0; i--) n++; return n >= 2; }, t, { timeout: 90000, polling: 50 });
+        await hook(a, 'drawHold', true);
+        await shot(a, `homeby-intro-${id}`);
+        await a.evaluate(() => { const g = window.__getaway; const R = g.internals.S.R; const now = g.clock(); const left = R.at + R.intro - now; if (left > 0) { R.t0 -= left; R.endAt -= left; R.intro = Math.max(0, now - R.at); } });
+        await phase(a, 'chase', 30000);
+        const s0 = await st(a);
+        assert(s0.a.role === 'runner' && !s0.R.safe, `${id}: practice round 1, you run, no safehouse`);
+        const home = (await hook(a, 'landmarks')).find((l) => l.home);
+        await hook(a, 'hold', 'a', { hand: true }); await hook(a, 'hold', 'b', { hand: true });
+        const hint = () => a.evaluate(() => window.__getaway.delight('a').hint || '');
+        const pass = async (where, speed, dz = 0, gas = 1) => {
+          const at = home || { x: s0.a.x, z: s0.a.z };
+          await a.evaluate(([x, z, v]) => { const g = window.__getaway; g.teleport('a', x, z, Math.PI / 2, v[0]); g.hold('a', { gas: v[1] }); g.teleport('b', x - 400, z - 400, 0, 0); }, [at.x + where, at.z + dz, [speed, gas]]);
+          await wait(450);
+        };
+        // (the house itself may stand east of the pin: try a ring of spots until one is clear ground)
+        const ring = [[15, 0], [-15, 0], [0, 15], [0, -15], [22, 14], [-22, -14], [28, 0], [-28, 0]];
+        const firstPass = async () => { for (const [dx, dz] of ring) { await pass(dx, 22, dz); if ((await st(a)).a.stats.homeby > 0) return; await pass(500, 25); } };
+        // too slow: 30 km/h inside the circle, coasting, earns nothing (with the gas held it would pass 50 km/h within the half second)
+        await pass(15, 8, 0, 0);
+        assert(!/Drove past home/.test(await hint()) && (await st(a)).a.stats.homeby === 0, `${id}: 30 km/h past home earns nothing`);
+        await pass(500, 25);
+        await firstPass();
+        const h1 = await hint();
+        const n1 = (await st(a)).a.stats.homeby;
+        if (home) {
+          assert(/\+2 Drove past home!/.test(h1) && n1 === 1, `${id}: past home at 80 km/h: "${h1}"`);
+          await a.evaluate(() => { window.__getaway.internals.hud.view('a').hint('(cleared)', 100); }); // (the hint text stays after it fades: replace it)
+          await pass(500, 25); await pass(ring[0][0], 22, ring[0][1]);
+          assert(!/Drove past home/.test(await hint()) && (await st(a)).a.stats.homeby === 1, `${id}: a second pass in the same round scores nothing`);
+          await hook(a, 'endNow', 'escaped', 'time');
+          await until(a, () => window.__getaway.state().phase === 'result', null, 10000, 'the result');
+          const dd = await hook(a, 'data');
+          assert(dd.a_homeby === 1 || dd.ai_a_homeby === 1, `${id}: the round is recorded (a_homeby ${dd.a_homeby}, ai_a_homeby ${dd.ai_a_homeby})`);
+        } else {
+          assert(!/Drove past home/.test(h1) && n1 === 0, `${id}: no home landmark, no drive-by (a no-op)`);
+        }
+        h.assertNoErrors();
+      } catch (e) { fails++; console.error(e.message, h.errors.slice(0, 3)); await shot(h.a, `homeby-${id}-fail`).catch(() => {}); } finally { await h.close(); }
+    }
   }
 
   // ═══ resultfit: the result card carrying the most news (a record, an unlock, the pair line, a twist) fits a short landscape phone without scrolling ═══
