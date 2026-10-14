@@ -162,7 +162,9 @@ export const CSS = `
     .g-wave .wv-recs p b { font-weight: 900; }
     .g-wave .wv-recs p.dim { color: var(--g-muted); }
     .g-wave .wv-con { margin: 2px 0 0; max-width: 34em; text-align: center; font-weight: 800; font-size: 0.86rem; line-height: 1.3; overflow-wrap: anywhere; }
-    .g-wave .wv-chip.star { display: inline-flex; align-items: center; gap: 3px; }
+    .g-wave .wv-chip.star { display: inline-flex; align-items: center; gap: 4px; background: var(--g-card); color: var(--g-ink); }
+    .g-wave .wv-chip.star svg { flex: none; fill: var(--g-hl); stroke: var(--g-ink); stroke-width: 1.4; stroke-linejoin: round; }
+    .g-wave .wv-con .pp { display: inline-block; max-width: 100%; }
     .g-wave .wv-rows { width: 100%; display: flex; flex-direction: column; gap: 10px; }
     .g-wave .wv-row { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; align-items: center; padding: 10px 12px; border: 2px solid var(--g-ink); border-radius: 12px; background: var(--g-card); box-shadow: var(--g-shadow); }
     .g-wave .wv-row.jp { outline: 3px dashed var(--g-ink); outline-offset: 2px; }

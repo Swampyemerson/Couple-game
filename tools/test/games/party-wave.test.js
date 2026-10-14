@@ -363,7 +363,7 @@ const contrastReport = (pg) => pg.evaluate(() => {
     <button class="wv-mode" aria-checked="true"><b>Classic</b></button><button class="wv-mode" aria-checked="false"><b>Other</b></button>
     <div class="wv-card"><div class="wv-end l"><span>Left pole</span></div><div class="wv-end r"><span>Right pole</span></div></div>
     <div class="wv-tw"><span>One Word</span></div><div class="wv-plaque"><b>3</b><span>Rating</span></div>
-    <p class="wv-con">Clue of the night: “sauna” by Emerson on Cold ↔ Hot, dead on</p><span class="wv-chip star"><svg viewBox="0 0 16 16" width="10" height="10"><path d="M8 1l2 4.6 5 .4-3.8 3.3 1.2 4.9L8 11.6 3.6 14.2l1.2-4.9L1 6l5-.4Z" fill="currentColor"/></svg> Clue of the night</span>
+    <p class="wv-con">Clue of the night: “sauna” by Emerson on <span class="pp">Cold ↔ Hot</span>, dead on</p><span class="wv-chip star"><svg viewBox="0 0 16 16" width="10" height="10"><path d="M8 1l2 4.6 5 .4-3.8 3.3 1.2 4.9L8 11.6 3.6 14.2l1.2-4.9L1 6l5-.4Z" /></svg> Clue of the night</span>
     <div class="wv-pts">+4</div><div class="wv-pts zero">0</div><span class="wv-row-pts">+1</span><span class="wv-row-pts zero">0</span>
     <button class="wv-sure" aria-pressed="true">Sure<small>6 within 10</small></button><button class="wv-sure" aria-pressed="false">Sure<small>6 within 10</small></button>
     <button class="wv-wg" aria-pressed="true">Bullseye<small>within 4</small></button><button class="wv-wg" aria-pressed="false">Close<small>within 10</small></button>
@@ -819,8 +819,13 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
         const star = document.querySelector('.wv-chip.star'); const row = star.closest('.wv-row'); const bad = [];
         const q = star.getBoundingClientRect(); const rr = row.getBoundingClientRect();
         if (q.left < rr.left - 0.5 || q.right > rr.right + 0.5) bad.push('star chip leaves its row');
+        if (star.parentElement.lastElementChild !== star) bad.push('the star chip is not the last chip');
+        const other = [...row.querySelectorAll('.wv-chip:not(.star)')].find((c) => !c.classList.contains('jp'));
+        if (other && getComputedStyle(other).backgroundColor === getComputedStyle(star).backgroundColor) bad.push('the star chip looks like the other chips');
         for (const sel of ['.wv-row-card', '.wv-row-pts', '.wv-mini']) { const e = row.querySelector(sel); if (!e) continue; const z = e.getBoundingClientRect(); if (q.left < z.right - 0.5 && z.left < q.right - 0.5 && q.top < z.bottom - 0.5 && z.top < q.bottom - 0.5) bad.push(`star x ${sel}`); }
-        const con = document.querySelector('.wv-con').getBoundingClientRect();
+        const conEl = document.querySelector('.wv-con'); const con = conEl.getBoundingClientRect();
+        const pp = conEl.querySelector('.pp').getBoundingClientRect();
+        if (innerWidth >= 600 && pp.height > parseFloat(getComputedStyle(conEl).lineHeight) * 1.5) bad.push('the pole pair wraps onto two lines');
         if (con.left < -0.5 || con.right > innerWidth + 0.5) bad.push('keepsake line leaves the screen');
         if (document.documentElement.scrollWidth > innerWidth + 1) bad.push('horizontal scroll');
         return bad;

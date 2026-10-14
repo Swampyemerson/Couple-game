@@ -563,7 +563,7 @@ export function createWaveView(el, api, env) {
     const badges = badgesOf(s, names);
     // a keepsake read straight from the rounds (no records involved, so it is true for any finished match)
     const con = clueOfNight(s.rounds);
-    const conLine = con ? `<p class="wv-con" data-round="${con.i + 1}">Clue of the night: “${esc(con.round.clue)}” by ${nm(con.round.giver)} on ${label(cardOf(env.CARDS, con.round.card)[0])} ↔ ${label(cardOf(env.CARDS, con.round.card)[1])}, ${con.d === 0 ? 'dead on' : `${con.d} off`}</p>` : '';
+    const conLine = con ? `<p class="wv-con" data-round="${con.i + 1}">Clue of the night: “${esc(con.round.clue)}” by ${nm(con.round.giver)} on <span class="pp">${label(cardOf(env.CARDS, con.round.card)[0])} ↔ ${label(cardOf(env.CARDS, con.round.card)[1])}</span>, ${con.d === 0 ? 'dead on' : `${con.d} off`}</p>` : '';
     const seg = (cls, a, b) => { const l = Math.max(0, a); const r = Math.min(100, b); return r > l ? `<span class="${cls}" style="left:${l}%;width:${r - l}%"></span>` : ''; };
     node.innerHTML = `<div class="wv-rhead">
         <span class="wv-kicker">Same Wave${isV2(s) ? ` · ${esc(MODES.find((m) => m.id === s.mode).name)}` : ''}</span>
@@ -576,8 +576,8 @@ export function createWaveView(el, api, env) {
       <div class="wv-rows">${s.rounds.map((Rd, i) => {
     const d = Math.abs(Rd.at - Rd.target);
     const bn = Rd.bn || [];
-    const star = con && con.i === i ? '<span class="wv-chip star"><svg viewBox="0 0 16 16" aria-hidden="true" width="10" height="10"><path d="M8 1l2 4.6 5 .4-3.8 3.3 1.2 4.9L8 11.6 3.6 14.2l1.2-4.9L1 6l5-.4Z" fill="currentColor"/></svg> Clue of the night</span>' : '';
-    const tags = [star, Rd.jp ? '<span class="wv-chip jp">Jackpot x2</span>' : '', Rd.dv ? '<span class="wv-chip">Déjà vu</span>' : '', ...(isV2(s) && Rd.tw !== 'normal' ? [`<span class="wv-chip">${esc(TWIST_INFO[Rd.tw].name)}</span>`] : []), ...bn.map((b) => `<span class="wv-chip">${bonusText[b]}</span>`)].join('');
+    const star = con && con.i === i ? '<span class="wv-chip star"><svg viewBox="0 0 16 16" aria-hidden="true" width="10" height="10"><path d="M8 1l2 4.6 5 .4-3.8 3.3 1.2 4.9L8 11.6 3.6 14.2l1.2-4.9L1 6l5-.4Z" /></svg> Clue of the night</span>' : '';
+    const tags = [Rd.jp ? '<span class="wv-chip jp">Jackpot x2</span>' : '', Rd.dv ? '<span class="wv-chip">Déjà vu</span>' : '', ...(isV2(s) && Rd.tw !== 'normal' ? [`<span class="wv-chip">${esc(TWIST_INFO[Rd.tw].name)}</span>`] : []), ...bn.map((b) => `<span class="wv-chip">${bonusText[b]}</span>`), star].join('');
     return `<div class="wv-row ${Rd.jp ? 'jp' : ''} ${anim ? 'anim' : ''}" style="animation-delay:${i * 70}ms">
             <span class="wv-row-card">${i + 1}. ${label(cardOf(env.CARDS, Rd.card)[0])} ↔ ${label(cardOf(env.CARDS, Rd.card)[1])}</span>
             <span class="wv-row-pts ${Rd.points ? '' : 'zero'}">${Rd.points ? `+${Rd.points}` : '0'}</span>
