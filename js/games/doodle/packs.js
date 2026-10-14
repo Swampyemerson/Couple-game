@@ -172,12 +172,55 @@ export const CREATURES = [
   ],
 ];
 
+export const HOME = [
+  [
+    'houseplant|potted plant|house plant|plant',
+    'doormat|welcome mat|mat',
+    'bookshelf|bookcase|shelf of books|shelves',
+    'lamp|desk lamp|table lamp|reading lamp',
+    'rug|carpet|area rug',
+    'jigsaw puzzle|puzzle|puzzle piece|jigsaw',
+    'board game|boardgame|game night',
+    'record player|turntable|vinyl|record',
+    'fireplace|fire place|hearth|chimney',
+    'bird feeder|birdfeeder|feeder',
+    'stairs|staircase|steps',
+    'watering can|watering the plants|watering plants',
+  ],
+  [
+    'knitting|knitting needles|knit|crochet',
+    'spring cleaning|deep clean|big clean|cleaning day|cleaning',
+    'mowing the lawn|lawn mower|lawnmower|mowing|cutting the grass',
+    'taking out the trash|taking out the bins|bin day|trash day|garbage night|taking the bins out',
+    'making the bed|make the bed|changing the sheets|fresh sheets|bed sheets',
+    'ironing|ironing board|iron|ironing a shirt',
+    'face mask|sheet mask|skincare|skin care|face mask night',
+    'moving boxes|moving day|packing boxes|cardboard boxes|moving house',
+    'hanging a picture|hanging a frame|crooked picture|picture frame|wall frame',
+    'baking bread|sourdough|bread|loaf of bread|homemade bread',
+    'tangled christmas lights|christmas lights|fairy lights|string lights|untangling lights',
+  ],
+  [
+    'lost sock|missing sock|odd socks|where did the other sock go|one sock',
+    'stubbed toe|stubbing your toe|stubbed my toe|toe',
+    'wifi password|the wifi password|password',
+    'creaky floorboard|creaky floor|squeaky floorboard|squeaky floor',
+    'doorbell at dinner|unexpected guest|surprise visitor|someone at the door|doorbell',
+    'power cut|power outage|blackout|the lights went out|no power',
+    'hitting snooze|snooze button|snooze|overslept|oversleeping|sleeping in',
+    'noisy neighbours|noisy neighbors|loud neighbours|loud neighbors|banging on the wall',
+    'phone charger|lost charger|charger|charging cable|where is the charger',
+    'locked out|locked out of the house|locked outside',
+  ],
+];
+
 // Order = index order after the 282 v1 prompts. Append new decks at the END only.
 export const NEW_DECKS = [
   { id: 'us', tiers: US },
   { id: 'kitchen', tiers: KITCHEN },
   { id: 'outabout', tiers: OUTABOUT },
   { id: 'creatures', tiers: CREATURES },
+  { id: 'home', tiers: HOME },
 ];
 
 export const MODE_LIST = ['classic', 'halfhalf', 'ladder', 'invisible', 'mixed'];
@@ -188,13 +231,14 @@ export const MODE_INFO = {
   invisible: { title: 'Invisible Ink', pitch: 'Your lines fade as you draw. +1 per hit.' },
   mixed: { title: 'Mixed Bag', pitch: 'A fresh twist every round.' },
 };
-export const PACK_LIST = ['classic', 'us', 'kitchen', 'outabout', 'creatures', 'everything'];
+export const PACK_LIST = ['classic', 'us', 'kitchen', 'outabout', 'creatures', 'home', 'everything'];
 export const PACK_INFO = {
   classic: { title: 'Classic', pitch: 'The original 282 cards.' },
   us: { title: 'Us', pitch: 'Couple moments.' },
   kitchen: { title: 'Kitchen', pitch: 'Cooking, snacking, spilling.' },
   outabout: { title: 'Out & About', pitch: 'Trips, trails and travel.' },
   creatures: { title: 'Creatures & Weather', pitch: 'Animals, skies and storms.' },
+  home: { title: 'Home Sweet Home', pitch: 'Rooms, chores and little dramas.' },
   everything: { title: 'Everything', pitch: 'Every card in one deck.' },
 };
 export const TWIST_LIST = ['normal', 'halfhalf', 'invisible', 'sprint', 'oneline'];

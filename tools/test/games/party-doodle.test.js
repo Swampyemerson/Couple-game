@@ -146,7 +146,7 @@ function rulesTests({ core, doodle, records, packs, D }) {
   }
   assert(JSON.stringify(setup(5, 'mixed', 'everything')) === JSON.stringify(setup(5, 'mixed', 'everything')), 'a v2 deal is deterministic from the seed, mode and pack');
   assert(setup(5, 'classic', 'us').rounds.every((R) => R.choices.every((i, k) => doodle.poolTier(i) === k)), 'each round offers one Easy, one Medium, one Tricky');
-  for (const pack of ['classic', 'us', 'kitchen', 'outabout', 'creatures', 'everything']) {
+  for (const pack of ['classic', 'us', 'kitchen', 'outabout', 'creatures', 'home', 'everything']) {
     const x = setup(77, 'classic', pack);
     const all = x.rounds.flatMap((R) => R.choices);
     assert(new Set(all).size === 18, `pack ${pack}: 18 different cards in a match`);
@@ -418,7 +418,7 @@ function rulesTests({ core, doodle, records, packs, D }) {
   }
   // content checks
   const newPacks = packs.NEW_DECKS;
-  assert(newPacks.map((d) => d.id).join() === 'us,kitchen,outabout,creatures', 'new decks are in the frozen order');
+  assert(newPacks.map((d) => d.id).join() === 'us,kitchen,outabout,creatures,home', 'new decks are in the frozen order (home last)');
   for (const d of newPacks) {
     assert(d.tiers.length === 3 && d.tiers.every((t) => t.length >= 8) && d.tiers.flat().length >= 24, `pack ${d.id}: at least 8 per tier and 24 in all (${d.tiers.map((t) => t.length)})`);
   }
@@ -484,6 +484,20 @@ function rulesTests({ core, doodle, records, packs, D }) {
   const enc3 = records.encodeSeen(Array.from({ length: 2000 }, (_, i) => 5000 + i));
   assert(enc3.length <= 3000 && records.decodeSeen(enc3).at(-1) === 6999 && records.decodeSeen('7y.7x') .join() === '286,285', 'seen list: base36, capped at 3000 chars (oldest dropped)');
   assert(records.decodeSeen(null).length === 0 && records.decodeSeen('zz.!!.5').join() === '1295,5', 'seen list: garbage is ignored');
+
+  // Tonight's masterpiece
+  const rd = (points, guesses, tier, extra = {}) => ({ drawer: 'a', points, guesses: Array.from({ length: guesses }, (_, k) => `g${k}`), tier, strokes: 'AAAAAAA', ...extra });
+  const mp = (rounds) => records.masterpieceOf(rounds, () => 0);
+  assert(mp([rd(2, 1, 0), rd(5, 2, 2), rd(3, 1, 1)]).i === 1, 'masterpiece: the most points wins');
+  assert(mp([rd(3, 2, 1), rd(3, 1, 1), rd(3, 3, 1)]).i === 1, 'masterpiece: a points tie goes to the fewest guesses');
+  assert(mp([rd(3, 1, 0), rd(3, 1, 2), rd(3, 1, 1)]).i === 1, 'masterpiece: then the higher tier');
+  assert(mp([rd(3, 1, 1), rd(3, 1, 1)]).i === 0, 'masterpiece: then the earliest round');
+  assert(mp([rd(4, 1, 0, { early: 'hit' }), rd(4, 2, 0)]).i === 0 && mp([rd(4, 1, 0, { early: 'hit' })]).how === 'early', 'masterpiece: an early call counts as one guess');
+  assert(mp([rd(0, 3, 2), rd(0, 3, 1, { gaveUp: true })]) === null && mp([]) === null, 'masterpiece: nothing scored, no masterpiece');
+  assert(mp([rd(5, 1, 2, { strokes: '' }), rd(1, 3, 0)]).i === 1, 'masterpiece: a blank (time-up) round is never the masterpiece');
+  assert(records.masterpieceHow(mp([rd(3, 1, 1)])) === 'guessed first try' && records.masterpieceHow(mp([rd(2, 2, 1)])) === 'guessed on the 2nd try' && records.masterpieceHow(mp([rd(4, 1, 0, { early: 'hit' })])) === 'called early from half a drawing', 'masterpiece: how it was guessed, in words');
+  const mpState = records.masterpieceOf(core.derive(D, { first: 'a', seed: 777, lists: clone(V1_MATCHES[1].lists) }).state.rounds, doodle.poolTier);
+  assert(mpState && mpState.i === 0 && mpState.how === 'first', 'masterpiece works on an old v1 match (first of six equal 3-point rounds)');
 
   // records
   const tierOf = doodle.poolTier;
@@ -633,7 +647,7 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
     'matches/fin2g': doc({ ...finished, seed: goldSeed, first: 'a' }),
     'matches/near2': doc({ ...near, seed: NEAR_SEED, first: 'a' }),
     'matches/v1mid': doc(v1mid),
-    'matches/v1done': doc(v1done),
+    'matches/v1done': doc(v1done), 'matches/v1zero': doc({ first: V1_MATCHES[2].first, seed: V1_MATCHES[2].seed, lists: V1_MATCHES[2].lists }),
   };
   assert(finishedG.v === 2 && finishedG.r === 6 && finishedG.gold >= 1 && finishedG.rounds[finishedG.gold].points === (finishedG.rounds[finishedG.gold].base * 2), `seeded finished v2 match has a golden round (round ${finishedG.gold + 1}) that paid double`);
 
@@ -679,7 +693,12 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
     await a.waitForSelector('.dd-wall .dd-frame:nth-child(6)');
     assert(/9\s*\/18/.test(await a.textContent('.dd-plaque')) && (await a.$$eval('.dd-frame', (xs) => xs.length)) === 6 && !(await a.$('.dd-frame.gold')), 'an old finished match opens as a 6-drawing gallery scored out of 18');
     assert(await a.$$eval('.dd-badge2', (xs) => xs.length) === 2 && !(await visible(a, '.dd-strip')) && !(await visible(a, '.dd-history')), 'v1 gallery: two title badges, no records strip for a match that never recorded');
+    assert(/Tonight’s masterpiece: “Camping” by (Emerson|Sydney), guessed first try/.test((await a.textContent('.dd-masterpiece')).replace(/\s+/g, ' ')) && await a.$$eval('.dd-frame-pick', (xs) => xs.length) === 1 && await a.$eval('.dd-frame-pick', (x) => x.closest('.dd-frame').dataset.i) === '4', 'old v1 match: the masterpiece line and its single "Tonight’s pick" ribbon (a Medium first-try beats an Easy one)');
     await a.waitForTimeout(600); await closeGame(a);
+    await openSeed(a, 'v1zero');
+    await a.waitForSelector('.dd-wall .dd-frame:nth-child(6)');
+    assert(/No masterpiece tonight\. Next time\./.test(await a.textContent('.dd-masterpiece')) && !(await a.$('.dd-frame-pick')), 'nothing scored: "No masterpiece tonight. Next time." and no ribbon');
+    await closeGame(a);
 
     await openSeed(a, 'fin2g');
     await a.waitForSelector('.dd-wall .dd-frame:nth-child(6)');
@@ -751,7 +770,7 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
     await OP.waitForSelector('.dd-waiting');
     assert(/picking the game/i.test(await OP.textContent('.dd-wait-name')) && !(await OP.$('.dd-mode')), 'the second player waits while the first sets up (no setup screen for them)');
     await FP.waitForSelector('.dd-start');
-    assert(await FP.$$eval('.dd-mode', (xs) => xs.length) === 5 && await FP.$$eval('.dd-pack', (xs) => xs.length) === 6, 'setup: five modes and six packs');
+    assert(await FP.$$eval('.dd-mode', (xs) => xs.length) === 5 && await FP.$$eval('.dd-pack', (xs) => xs.length) === 7, 'setup: five modes and seven packs');
     assert(await FP.$$eval('.dd-mode span', (xs) => xs.every((x) => x.textContent.trim().length > 10)), 'setup: every mode has a one-line pitch');
     assert(await FP.$eval('.dd-mode[data-m="classic"]', (x) => x.getAttribute('aria-checked')) === 'true' && await FP.$eval('.dd-pack[data-p="classic"]', (x) => x.getAttribute('aria-checked')) === 'true' && /^Start/.test(await FP.textContent('.dd-start')), 'setup: Classic / Classic preselected on a first match, the button says Start');
     for (const scheme of ['light', 'dark']) {
@@ -873,6 +892,8 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
       await guessText(O, w0); await h.settle();
       let es = (await h.engine(a, mid)).state;
       assert(es.rounds[0].points === 4 && es.rounds[0].early === 'hit', 'halfhalf: a right early call on an Easy card pays 4');
+      await O.waitForSelector('.dd-ribbon');
+      assert(/Early call!/.test(await O.textContent('.dd-ribbon')), 'reveal: an early call gets an "Early call!" ribbon under the stamp');
       // round 2: the other player draws a Medium card; the guesser takes the rest, misses once, then hits
       const w1 = await pickAndDraw(O, cdps[other(first)], 1, 1);
       await F.waitForSelector('.dd-half:not([hidden])');
@@ -1008,6 +1029,7 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
         assert(noSliver, `reveal ${w}x${hh}: nothing is cut off behind the sticky next button`);
         const stampFits = await b.evaluate(() => { const s = document.querySelector('.dd-stamp').getBoundingClientRect(); const p = document.querySelector('.dd-paper').getBoundingClientRect(); return s.left >= p.left - 1 && s.right <= p.right + 1 && s.top >= p.top - 1 && s.bottom <= p.bottom + 1; });
         assert(stampFits, `reveal ${w}x${hh}: the stamp sits inside the paper`);
+        assert(/First try!/.test(await b.textContent('.dd-ribbon')) && await b.evaluate(() => { const r = document.querySelector('.dd-ribbon').getBoundingClientRect(); const p = document.querySelector('.dd-paper').getBoundingClientRect(); const s = document.querySelector('.dd-stamp').getBoundingClientRect(); return r.left >= p.left - 1 && r.right <= p.right + 1 && r.bottom <= p.bottom + 1 && r.top >= s.bottom - 2; }), `reveal ${w}x${hh}: the "First try!" ribbon sits inside the paper, under the stamp`);
         if (name !== 'portrait') await b.screenshot({ path: `${SHOTS}/reveal-${name}.png` });
       }
       await b.setViewportSize({ width: 390, height: 664 });
@@ -1048,6 +1070,10 @@ async function uiTests({ assert, SHOTS, rules, launch }) {
       await waitFor(async () => (await visible(a, '.dd-strip')) && (await visible(b, '.dd-strip')), 6000, 'records strip on both phones');
       const stripA = (await a.textContent('.dd-strip')).replace(/\s+/g, ' '); const stripB = (await b.textContent('.dd-strip')).replace(/\s+/g, ' ');
       assert(stripA === stripB && /New best/i.test(stripA) && /30[^,]*, was 12|was 12/.test(stripA) && /10 drawings/.test(stripA) && /Perfect match/.test(stripA) && /6 in a row/.test(stripA) && !/On the board/.test(stripA), `records strip (same on both phones): ${stripA}`);
+      const expI = fin.state.gold >= 1 ? fin.state.gold : 0;
+      const mpA = (await a.textContent('.dd-masterpiece')).replace(/\s+/g, ' '); const mpB = (await b.textContent('.dd-masterpiece')).replace(/\s+/g, ' ');
+      assert(mpA === mpB && /^Tonight’s masterpiece: “.+” by (Emerson|Sydney), guessed first try$/.test(mpA) && await a.$$eval('.dd-frame-pick', (xs) => xs.map((x) => x.closest('.dd-frame').dataset.i).join()) === String(expI) && await b.$$eval('.dd-frame-pick', (xs) => xs.length) === 1, `masterpiece on both phones: ${mpA} (ribbon on round ${expI + 1})`);
+      assert(await a.evaluate(() => { const p = document.querySelector('.dd-frame-pick').getBoundingClientRect(); const s = document.querySelector('.dd-frame-pick').closest('.dd-frame').querySelector('.dd-frame-pts').getBoundingClientRect(); return p.right <= s.left || p.left >= s.right || p.bottom <= s.top || p.top >= s.bottom; }), 'the ribbon does not overlap the points sticker');
       const histA = await a.textContent('.dd-history'); const histB = await b.textContent('.dd-history');
       assert(histA === histB && /8th match together\. A new Classic best: \d+, up from 12/.test(histA), `history line: "${histA}"`);
       const dd = await a.evaluate(() => JSON.parse(localStorage.getItem('ju.games.data.v1') || '{}').doodle);

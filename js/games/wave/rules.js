@@ -24,6 +24,7 @@ export const PACKS = [
   { id: 'everyday', name: 'Everyday', pitch: 'Queues, coffee and Mondays' },
   { id: 'hottakes', name: 'Hot Takes', pitch: 'Opinions to argue over' },
   { id: 'future', name: 'Future Us', pitch: 'Dreams and plans' },
+  { id: 'senses', name: 'Senses', pitch: 'Sounds, smells, textures, vibes' },
   { id: 'everything', name: 'Everything', pitch: 'Every card in the box' },
   { id: 'cozy', name: 'Cozy', pitch: 'Everything, minus the spicy cards' },
 ];

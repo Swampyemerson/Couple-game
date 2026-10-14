@@ -32,7 +32,7 @@ and Sydney (`b`) share one score. Entry `js/games/wave.js`; helpers in `js/games
 * The view handles both versions: round count, maximum score and twists come from the state.
 * `result()` for v2 adds `max`; ratings are percentage bands of the maximum (the v1 bands as fractions of 32).
 
-Card indices: 0..138 are the classic deck; `NEW_CARDS[i]` is index `139 + i` (Just Us 22, Everyday 20, Hot Takes 19, Future Us 18).
+Card indices: 0..138 are the classic cards; `NEW_CARDS[i]` is index `139 + i` (Just Us 22, Everyday 20, Hot Takes 19, Future Us 18, Senses 20 = 99 new). New packs are only ever appended at the end of `NEW_CARDS` and the `RANGES` loop, because saved v2 matches freeze their deal by index.
 
 ## Rules (v2)
 
@@ -64,8 +64,8 @@ Max score per match (`maxOf`): per round `(sure ? 6 : 4) + oneword + edge + bet`
 
 ### Packs
 
-`classic` (139), `justus` (22), `everyday` (20), `hottakes` (19), `future` (18), `everything` (all 218), `cozy` (everything minus the suggestive
-cards, indices 64, 111, 112, 120, 130 in `COZY_OUT`). Every new card is a real spectrum between two poles. `{a}` / `{b}` become the names.
+`classic` (139), `justus` (22), `everyday` (20), `hottakes` (19), `future` (18), `senses` (20: sounds, smells, textures, vibes; indices 218..237), `everything` (all 238), `cozy` (everything minus the suggestive
+cards, indices 64, 111, 112, 120, 130 in `COZY_OUT`; Senses is in it). The setup shows eight pack chips and still fits 390x664, 375x548, 667x375 and 844x390 without scrolling. Every new card is a real spectrum between two poles. `{a}` / `{b}` become the names.
 
 ### Rotation
 
@@ -85,6 +85,8 @@ marked seen the moment the setup move is sent.
   tap on Lock can't skip it). Near-miss lines: "1 off the bullseye!" (5 off; "2 off" at 6), "Just missed 3 points" (11–12), "Just missed 2 points" (18–19).
 * **Final reveal**: `endDelay: 'manual'`. The last reveal waits for "See how you did" (or about 3.5 s after the stamp), then the recap and the end
   card (`api.showEnd()`).
+* **Clue of the night** (recap keepsake, view only): `clueOfNight(rounds)` in `records.js` picks the round that came closest (smallest miss, then more points, then the earliest). A line under the plaque names it ("Clue of the night: “…” by Emerson on Cold ↔ Hot, dead on") and its row gets a star chip. It is a pure read of the rounds, so it also shows on old finished v1/v2 matches (the records section does not).
+* **Reveal flourish**: after the stamp lands, a dead-centre dial gets two expanding rings from the needle tip, "Dead centre!" and the win sound; within the bullseye (4) gets one ring. Reduced motion shows the text only. No haptics.
 * **Recap**: score out of this match's max, rating, meter, stamps, history line, chase line, one badge each, a row per round with the exact target tick.
 
 ## Records (`gamedata/wave`, flat, per-key last writer wins)

@@ -91,12 +91,12 @@ function rulesTests({ core, W, R, C, Rec, V }) {
   // ── packs and cards ──
   console.log('# packs');
   const NEW = C.NEW_CARDS;
-  for (const id of ['justus', 'everyday', 'hottakes', 'future']) assert(R.poolFor(id).length >= 16, `pack ${id} has ${R.poolFor(id).length} cards (>= 16)`);
+  for (const id of ['justus', 'everyday', 'hottakes', 'future', 'senses']) assert(R.poolFor(id).length >= 16, `pack ${id} has ${R.poolFor(id).length} cards (>= 16)`);
   assert(R.poolFor('classic').length === 139 && R.poolFor('everything').length === 139 + NEW.length, 'classic is the 139 original cards, everything is all of them');
   assert(NEW.every((c) => Array.isArray(c) && c.length === 2 && c.every((t) => typeof t === 'string' && t.length > 2 && t.length < 40)) && new Set(NEW.map((c) => c.join('|'))).size === NEW.length, 'every new card has two poles and none repeats');
   assert(NEW.every((c) => c[0] !== c[1]) && NEW.every((c) => !/^\s|\s$/.test(c[0] + c[1])), 'poles differ, no stray spaces');
   const gtxt = (i) => C.NEW_CARDS[i - 139].join(' / ');
-  assert(NEW.length === 79 && gtxt(154) === 'Says “I love you” out loud / Shows it by doing things' && gtxt(170) === 'Double espresso / Gentle herbal tea' && gtxt(174) === 'Never leaves the seat / Up and down all flight' && gtxt(198) === 'Saw it coming / Never saw it coming' && gtxt(207) === 'Rocking-chair hobby / Adventure-trip hobby' && gtxt(211) === 'Peaceful garden project / Noisy garage project', 'the six reworked cards are real spectra at the same indices (79 new cards)');
+  assert(NEW.length === 99 && C.RANGES.senses.join() === '218,238' && gtxt(218) === 'Smells like a bakery / Smells like a gym bag' && gtxt(237) === 'Pastel / Neon' && R.poolFor('senses').length === 20 && R.poolFor('cozy').includes(230) && R.PACK_IDS.join() === 'classic,justus,everyday,hottakes,future,senses,everything,cozy' && gtxt(154) === 'Says “I love you” out loud / Shows it by doing things' && gtxt(170) === 'Double espresso / Gentle herbal tea' && gtxt(174) === 'Never leaves the seat / Up and down all flight' && gtxt(198) === 'Saw it coming / Never saw it coming' && gtxt(207) === 'Rocking-chair hobby / Adventure-trip hobby' && gtxt(211) === 'Peaceful garden project / Noisy garage project', 'the six reworked cards keep their indices; Senses is appended last (218..237, 99 new cards, in cozy too)');
   const cozy = R.poolFor('cozy');
   assert(C.COZY_OUT.length === 5 && C.COZY_OUT.join() === '64,111,112,120,130' && cozy.length === R.poolFor('everything').length - 5 && C.COZY_OUT.every((i) => !cozy.includes(i)), 'cozy is everything minus the five suggestive cards, listed explicitly');
   for (const id of R.PACK_IDS) {
@@ -272,6 +272,12 @@ function rulesTests({ core, W, R, C, Rec, V }) {
   assert(lb.a.name && lb.b.name && ['Clue Poet', 'Dead heat', 'Economist', 'Dial Whisperer', 'Wave Rider', 'Edge Walker', 'Fortune Teller'].includes(lb.a.name), `a dead-level match still gets a kind badge (${lb.a.name} / ${lb.b.name})`);
   const names2 = Object.values(Rec.BADGES);
   assert(['Fortune Teller', 'Edge Walker', 'Economist', 'Clue Poet', 'Dial Whisperer'].every((n) => names2.includes(n)), 'the five badges exist');
+  // clue of the night
+  const cn = (pts) => Rec.clueOfNight(pts.map(([target, at, points, clue]) => ({ target, at, points, clue })));
+  assert(cn([[50, 56, 3, 'a'], [20, 21, 4, 'b'], [70, 70, 4, 'c'], [80, 80, 4, 'd']]).round.clue === 'c' && cn([[50, 56, 3, 'a'], [20, 21, 4, 'b'], [70, 70, 4, 'c'], [80, 80, 4, 'd']]).i === 2, 'clue of the night: the smallest miss wins, then the earliest');
+  assert(cn([[50, 52, 3, 'a'], [20, 22, 4, 'b']]).round.clue === 'b', 'clue of the night: equal misses, the one that paid more');
+  assert(cn([[50, 52, 4, 'a'], [20, 22, 4, 'b']]).round.clue === 'a' && cn([[50, 52, 4, 'a'], [20, 22, 4, 'b']]).d === 2, 'clue of the night: still level, the earliest');
+  assert(Rec.clueOfNight([{ target: 5, at: null, points: null }]) === null && Rec.clueOfNight([]) === null, 'clue of the night: nothing before a guess');
   // rotation
   const pl = R.poolFor('justus');
   let data = {};
@@ -300,8 +306,8 @@ function rulesTests({ core, W, R, C, Rec, V }) {
   const big = Rec.encodeSeen(Array.from({ length: 2000 }, (_, i) => 100000 + i));
   assert(big.length <= 3000 && Rec.parseSeen({ seen: big }).length > 100, 'the seen list is capped at 3000 characters, keeping the newest');
   const fullPool = R.poolFor('everything');
-  const d1x = Rec.pickDeal(fullPool, { seen: fullPool.slice(0, 215).map((x) => x.toString(36)).join('.') }, Math.random, 7);
-  assert(d1x.deal.length === 7 && new Set(d1x.deal).size === 7 && fullPool.slice(215).every((x) => d1x.deal.includes(x)), 'a nearly used-up pool deals its stragglers first');
+  const d1x = Rec.pickDeal(fullPool, { seen: fullPool.slice(0, fullPool.length - 3).map((x) => x.toString(36)).join('.') }, Math.random, 7);
+  assert(d1x.deal.length === 7 && new Set(d1x.deal).size === 7 && fullPool.slice(fullPool.length - 3).every((x) => d1x.deal.includes(x)), 'a nearly used-up pool deals its stragglers first');
 }
 
 // ── browser helpers ─────────────────────────────────────────────────────
@@ -467,7 +473,7 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
     const modeNames = await S1.F.$$eval('.wv-mode b', (x) => x.map((e) => e.textContent));
     assert(modeNames.join() === 'Classic,Giver’s Bet,Double Down,One Word,Mixed Bag', `five mode cards: ${modeNames}`);
     const packNames = await S1.F.$$eval('.wv-pack', (x) => x.map((e) => e.textContent));
-    assert(packNames.join() === 'Classic,Just Us,Everyday,Hot Takes,Future Us,Everything,Cozy', `seven packs: ${packNames}`);
+    assert(packNames.join() === 'Classic,Just Us,Everyday,Hot Takes,Future Us,Senses,Everything,Cozy', `eight packs: ${packNames}`);
     // every mode tile and pack chip is on screen and tappable at first view, at the three sizes
     for (const [w, hh] of [[390, 664], [375, 548], [844, 390], [667, 375]]) {
       for (const pg of [a, b]) await pg.setViewportSize({ width: w, height: hh });
@@ -522,6 +528,9 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
     await round(S1.id, 0, { off: 2, clue: 'sauna' });
     e1 = await h.engine(a, S1.id);
     const R0 = e1.state.rounds[0];
+    const gsPage = pages[R0.giver === 'a' ? 'b' : 'a'];
+    await gsPage.waitForSelector('.wv-result:not(.hide)');
+    assert(await gsPage.$$eval('.wv-ring', (x) => x.length) === 1, 'within the bullseye (2 off): one ring');
     assert(R0.points === (4 + 1 + (R0.edge ? 1 : 0)) * (R0.jp ? 2 : 1) && R0.bn.includes('ow'), `One Word: 2 off scores the bullseye plus 1 (${R0.points})`);
     await h.closeGame(a); await h.closeGame(b);
 
@@ -555,6 +564,10 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
         assert((await h.engine(a, S.id)).state.rounds[1].points === 0, 'Double Down: Sure and a miss pays 0');
       } else {
         const m = await round(S.id, 0, { off: 0 });
+        await m.GS.waitForSelector('.wv-result:not(.hide)');
+        assert(await m.GS.$$eval('.wv-ring', (x) => x.length) === 2 && /Dead centre!/.test(await m.GS.textContent('.wv-chips')), 'dead centre: two rings from the needle tip and the "Dead centre!" label');
+        const ringBox = await m.GS.evaluate(() => { const r = document.querySelector('.wv-ring').getBoundingClientRect(); const d = document.querySelector('.wv-dialbox').getBoundingClientRect(); return [r.left >= d.left - 2 && r.right <= d.right + 2 && r.top >= d.top - 12]; });
+        assert(ringBox[0], 'the rings stay inside the dial box');
         const e2 = await h.engine(a, S.id);
         assert(e2.state.rounds[0].points >= 4 && (await h.engine(b, S.id)).state.score === e2.state.score, `${mode}: round 1 scores and both phones agree`);
         if (mode === 'mixed') {
@@ -783,6 +796,15 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
     assert(await b.$$eval('.wv-medal', (x) => x.length) === 2, 'the recap has one badge per person');
     const medal = await b.$$eval('.wv-medal b', (x) => x.map((e) => e.textContent));
     assert(medal.every((t) => ['Fortune Teller', 'Edge Walker', 'Economist', 'Clue Poet', 'Dial Whisperer', 'Dead heat', 'Wave Rider'].includes(t)), `badges: ${medal}`);
+    const cnx = L.Rec.clueOfNight(eM.state.rounds);
+    const cnLine = (cnx.d === 0 ? 'dead on' : `${cnx.d} off`);
+    for (const pg of [a, b]) {
+      await pg.waitForSelector('.wv-con');
+      const t = await pg.textContent('.wv-con');
+      assert(t.includes(`“${cnx.round.clue}”`) && t.includes(cnLine) && t.startsWith('Clue of the night') && t.includes(cnx.round.giver === 'a' ? 'Emerson' : 'Sydney'), `the recap names the clue of the night on ${pg.__who}: "${t}"`);
+      assert(await pg.$$eval('.wv-chip.star', (x) => x.length) === 1 && await pg.$eval('.wv-row:nth-child(' + (cnx.i + 1) + ') .wv-chip.star', (x) => !!x), `exactly one row (${cnx.i + 1}) carries the Clue of the night star on ${pg.__who}`);
+      assert(!(await pg.$eval('.wv-recs', (x) => x.contains(document.querySelector('.wv-con')))), 'the keepsake sits outside the records section');
+    }
     assert(await b.$$eval('.wv-row .wv-mini .tick', (x) => x.length) === 8, 'every recap row marks the exact target tick');
     assert(!/NEW BEST/.test(await b.textContent('.wv-recwrap')) && /Your first match together/.test(await b.textContent('.wv-recs')) && /goes on the Mixed Bag board/.test(await b.textContent('.wv-recs')), 'the records strip of a first-ever score: no NEW BEST stamp (nothing to beat), the history line instead');
     assert(/^\d+\/\d+$/.test((await b.textContent('.wv-plaque b')).trim()) && (await b.textContent('.wv-plaque b')).includes(`/${eM.result.max}`), 'the plaque shows the score out of this match’s maximum');
@@ -832,6 +854,7 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
         seenReveal.add(e.state.r);
         const ov = await overlaps(a, REVEAL_PARTS); const iv = await inView(a, ['.wv-go', '.wv-result', '.wv-note']);
         assert(ov.length === 0 && iv.bad.length === 0, `same-phone landscape reveal ${e.state.r}: nothing overlaps, the button is in view (${ov} ${iv.bad})`);
+        assert((await a.$$eval('.wv-ring', (x) => x.length)) === 0 && /Dead centre!/.test(await a.textContent('.wv-chips')), 'reduced motion: the Dead centre! text only, no rings');
         revealsChecked++;
       }
       if (await visible(a, '.wv-start')) { await a.tap('.wv-mode[data-mode="oneword"]'); await a.tap('.wv-start'); picked = true; await a.waitForTimeout(150); continue; }
@@ -905,6 +928,7 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
     const fe = await h.engine(a, idF);
     assert(fe.over && fe.state.v === undefined && (await a.textContent('.wv-plaque b')).replace(/\s/g, '').endsWith('/32') && await a.$$eval('.wv-meter i', (x) => x.length) === 32, `a finished v1 match recaps as ${fe.result.score}/32, like before`);
     assert(await a.$$eval('.wv-medal', (x) => x.length) === 2 && await a.$$eval('.wv-row .tick', (x) => x.length) === 8, 'the v1 recap also has badges and target ticks');
+    assert(/^Clue of the night: “old \d”/.test(await a.textContent('.wv-con')) && await a.$$eval('.wv-chip.star', (x) => x.length) === 1, 'an old finished match still gets its Clue of the night (it is read from the rounds, not from records)');
     assert(!(await a.$('.wv-stamps')) && (await a.textContent('.wv-recwrap')).trim() === '' && !/match together|NEW BEST|BULLSEYES/.test(await a.textContent('.wv-recwrap')), `an old finished match shows no stamps, history line or streak (they would be made up): "${(await a.textContent('.wv-recwrap')).slice(0, 120)}"`);
     await h.settle();
     assert(gd(h).plays === playsBefore, 'opening a match that finished earlier writes no records');

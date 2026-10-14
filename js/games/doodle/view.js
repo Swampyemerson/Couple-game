@@ -2,7 +2,7 @@
 // Rules live in ../doodle.js and are passed in as K (so there are no import cycles).
 import { gameDataApi } from '../core.js';
 import { MODE_INFO, PACK_INFO, TWIST_INFO, MODE_LIST, PACK_LIST } from './packs.js';
-import { summarize, recordPatch, badgesOf, historyLine, chaseLine, stampsOf, encodeSeen, decodeSeen } from './records.js';
+import { masterpieceOf, masterpieceHow, summarize, recordPatch, badgesOf, historyLine, chaseLine, stampsOf, encodeSeen, decodeSeen } from './records.js';
 
 const WIDTHS = [2.6, 7.5]; // in grid units (the grid is 256 wide)
 const REPLAY_CAP = 20000; // ms
@@ -748,8 +748,9 @@ export function mountDoodle(el, api, K) {
     const gold = R.gold
       ? (R.x2 ? '<div class="dd-goldbar">Golden Frame. Double points!</div>' : '<div class="dd-goldbar">That was the Golden Frame round. A hit would have paid double.</div>')
       : '';
+    const ribbon = R.points > 0 ? (R.early === 'hit' ? 'Early call!' : R.guesses.length === 1 ? 'First try!' : '') : '';
     const stamp = R.points > 0 ? `<div class="dd-stamp good anim">+${R.points}</div>` : `<div class="dd-stamp bad anim">${R.timeUp ? 'Time’s up' : R.gaveUp ? 'Pass' : 'Missed'}</div>`;
-    return { word, chips, line, extras, gold, stamp };
+    return { word, chips, line, extras, gold, stamp, ribbon };
   }
 
   function revealScreen(node, ri, { next = false, waiting = false } = {}) {
@@ -774,6 +775,7 @@ export function mountDoodle(el, api, K) {
     const p = makePaper(node.querySelector('.dd-ph'));
     if (R.gold) p.box.classList.add('gold');
     p.box.insertAdjacentHTML('beforeend', reduced() ? b.stamp.replace(' anim', '') : b.stamp);
+    if (b.ribbon) p.box.insertAdjacentHTML('beforeend', `<div class="dd-ribbon${reduced() ? '' : ' anim'}">${b.ribbon}</div>`);
     if (next) {
       node.querySelector('.dd-next').addEventListener('click', () => {
         vs.ack[ri] = true; api.sfx('tap');
@@ -782,7 +784,7 @@ export function mountDoodle(el, api, K) {
         if (last) api.showEnd();
       });
     }
-    if (R.points > 0) api.sfx(R.x2 ? 'win' : 'good'); else api.sfx('bad');
+    if (R.points > 0) api.sfx(R.x2 || b.ribbon ? 'win' : 'good'); else api.sfx('bad'); // sound only: no vibration
     return { p, minPaper: 130, redraw() { p.paper.all(strokes); } };
   }
 
@@ -896,10 +898,12 @@ export function mountDoodle(el, api, K) {
     const badges = badgesOf(sum);
     const tilts = [-1.6, 1.2, 0.9, -1.1, -0.7, 1.5, -0.9];
     const modeName = is2 ? MODE_INFO[s.mode].title : 'Classic';
+    const mp = masterpieceOf(s.rounds, tierOf);
     node.innerHTML = `<div class="dd-gal-head">
         <span class="dd-gal-kicker">The gallery${is2 ? ` · ${esc(modeName)}` : ''}</span>
         <div class="dd-plaque"><b>${s.score}<small>/${max}</small></b><span>${esc(ctx.result ? ctx.result.text : '')}</span></div>
         <p class="dd-gal-hint">${got} of ${n} guessed. Tap a drawing to watch it again.</p>
+        <p class="dd-masterpiece">${mp ? `Tonight’s masterpiece: “${esc(cap(PROMPTS[s.rounds[mp.i].choices[s.rounds[mp.i].pick]].show))}” by ${nm(mp.drawer)}, ${masterpieceHow(mp)}` : 'No masterpiece tonight. Next time.'}</p>
       </div>
       <div class="dd-strip" hidden></div>
       <div class="dd-badges">${['a', 'b'].map((w) => `<div class="dd-badge2 p-${w}-b"><span class="dd-badge2-who">${esc(api.name(w))}</span><b>${esc(badges[w].title)}</b><span>${esc(badges[w].line)}</span></div>`).join('')}</div>
@@ -911,6 +915,7 @@ export function mountDoodle(el, api, K) {
           <span class="dd-frame-meta">by ${nm(R.drawer)}${R.gold ? ' · golden' : ''}${is2 && s.mode === 'mixed' && R.twist && R.twist !== 'normal' ? ` · ${esc(TWIST_INFO[R.twist].title)}` : ''}</span>
           <span class="dd-frame-pts ${R.points ? '' : 'zero'}">${R.points ? `+${R.points}` : R.timeUp ? 'time up' : R.gaveUp ? 'pass' : 'missed'}</span>
           ${R.gold ? '<span class="dd-frame-gold">Golden</span>' : ''}
+          ${mp && mp.i === i ? '<span class="dd-frame-pick">Tonight’s pick</span>' : ''}
         </button>`).join('')}</div>
       ${s.enc ? `<div class="dd-encore"><span class="dd-gal-kicker">Encore</span><b class="dd-encore-title">${esc(cap(PROMPTS[s.enc.prompt].show))}</b>
         <div class="dd-encore-pair">${['a', 'b'].map((w) => `<div class="dd-encore-cell"><div class="dd-encore-pic" data-w="${w}"><canvas></canvas></div><span class="dd-frame-meta">by ${nm(w)}${s.enc[w] === '' ? ' · out of time' : ''}</span>${s.enc[w] ? `<button class="gm-btn gm-btn-ghost dd-encpin" data-w="${w}" type="button">Pin to the fridge</button>` : ''}</div>`).join('')}</div></div>` : ''}

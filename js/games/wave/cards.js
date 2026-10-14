@@ -95,13 +95,37 @@ export const FUTURE = [
   ['Surprise we’d plan', 'Surprise we’d dread'],
 ];
 
-export const NEW_CARDS = [...JUSTUS, ...EVERYDAY, ...HOTTAKES, ...FUTURE];
+export const SENSES = [
+  ['Smells like a bakery', 'Smells like a gym bag'],
+  ['Sounds like rain on a roof', 'Sounds like a car alarm'],
+  ['Feels like a warm bath', 'Feels like a cold shower'],
+  ['Tastes like a holiday', 'Tastes like a Tuesday'],
+  ['Golden-hour glow', 'Fluorescent office light'],
+  ['Whisper', 'Megaphone'],
+  ['Candle-lit', 'Stadium-lit'],
+  ['Slippers energy', 'Stilettos energy'],
+  ['Background music', 'Turn it up'],
+  ['Acoustic version', 'Remix'],
+  ['Sunday-morning pace', 'Last-call pace'],
+  ['Sweater weather', 'Sunscreen weather'],
+  ['Hot chocolate mood', 'Iced coffee mood'],
+  ['{a}’s playlist', '{b}’s playlist'],
+  ['{a}’s perfect temperature', '{b}’s perfect temperature'],
+  ['Nap-inducing', 'Keeps you up all night'],
+  ['Smooth jazz', 'Heavy metal'],
+  ['Fresh laundry smell', 'Wet dog smell'],
+  ['Silky', 'Sticky'],
+  ['Pastel', 'Neon'],
+];
+
+// Appended last: indices 218..237. Never reorder the arrays above (saved v2 matches freeze their deals by index).
+export const NEW_CARDS = [...JUSTUS, ...EVERYDAY, ...HOTTAKES, ...FUTURE, ...SENSES];
 
 // [first global index, one past the last] for each new pack.
 export const RANGES = (() => {
   let at = BASE_CARDS;
   const out = {};
-  for (const [id, list] of [['justus', JUSTUS], ['everyday', EVERYDAY], ['hottakes', HOTTAKES], ['future', FUTURE]]) {
+  for (const [id, list] of [['justus', JUSTUS], ['everyday', EVERYDAY], ['hottakes', HOTTAKES], ['future', FUTURE], ['senses', SENSES]]) {
     out[id] = [at, at + list.length];
     at += list.length;
   }

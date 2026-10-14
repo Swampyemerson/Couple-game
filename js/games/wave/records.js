@@ -29,6 +29,20 @@ export function statsOf(s) {
   return { st, rows, minD, bulls: rows.filter((r) => r.bull).length };
 }
 
+/**
+ * The round that came closest: smallest miss, then more points, then the earliest. A pure read of the rounds, so it
+ * works on any finished match (v1 or v2). Returns { i, round, d } or null.
+ */
+export function clueOfNight(rounds) {
+  let best = null;
+  rounds.forEach((Rd, i) => {
+    if (Rd.at == null) return;
+    const d = Math.abs(Rd.at - Rd.target);
+    if (!best || d < best.d || (d === best.d && Rd.points > best.round.points)) best = { i, round: Rd, d };
+  });
+  return best;
+}
+
 export const BADGES = {
   fortune: 'Fortune Teller',
   edge: 'Edge Walker',

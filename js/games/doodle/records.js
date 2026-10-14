@@ -152,3 +152,20 @@ export function stampsOf(d, modeTitle) {
   if (st >= 3) out.push({ id: 'streak', text: `${st} in a row`, sub: st >= bs ? 'Your longest run yet' : `Longest run ${bs}` });
   return out;
 }
+
+// Tonight's masterpiece: the round with the most points; ties go to the fewest guesses (an early call
+// is one guess), then the higher tier, then the earliest round. Null when nothing scored.
+export function masterpieceOf(rounds, tierOf) {
+  let best = null;
+  rounds.forEach((R, i) => {
+    if (!(R.points > 0) || !R.strokes) return;
+    const tier = R.tier != null ? R.tier : (tierOf && R.pick != null ? tierOf(R.choices[R.pick]) : 0);
+    const cand = { i, points: R.points, guesses: R.guesses.length, tier };
+    if (!best || cand.points > best.points || (cand.points === best.points && (cand.guesses < best.guesses || (cand.guesses === best.guesses && cand.tier > best.tier)))) best = cand;
+  });
+  if (!best) return null;
+  const R = rounds[best.i];
+  const how = R.early === 'hit' ? 'early' : best.guesses === 1 ? 'first' : 'nth';
+  return { i: best.i, drawer: R.drawer, points: best.points, guesses: best.guesses, how };
+}
+export const masterpieceHow = (m) => (m.how === 'early' ? 'called early from half a drawing' : m.how === 'first' ? 'guessed first try' : `guessed on the ${ordinal(m.guesses)} try`);
