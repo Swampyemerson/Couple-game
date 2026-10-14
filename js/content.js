@@ -670,7 +670,7 @@ export const TRUTHS = {
     'Have you ever had a dream about us? Describe it.',
     'What sound do I make that drives you crazy?',
     'What’s something new you want to try in bed?',
-    'What’s the most turned on you’ve been around me in public?',
+    'Where’s the most public place you’ve wanted me badly enough to almost say something?',
     'What’s the sexiest thing I’ve ever said to you?',
     'If you could control me for 10 minutes, what would you have me do?',
     'What’s one thing you’ve been too shy to ask for?',
