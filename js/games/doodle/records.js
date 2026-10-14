@@ -155,11 +155,11 @@ export function stampsOf(d, modeTitle) {
 
 // Tonight's masterpiece: the round with the most points; ties go to the fewest guesses (an early call
 // is one guess), then the higher tier, then the earliest round. Null when nothing scored.
-export function masterpieceOf(rounds, tierOf) {
+export function masterpieceOf(rounds) {
   let best = null;
   rounds.forEach((R, i) => {
     if (!(R.points > 0) || !R.strokes) return;
-    const tier = R.tier != null ? R.tier : (tierOf && R.pick != null ? tierOf(R.choices[R.pick]) : 0);
+    const tier = R.tier != null ? R.tier : (R.pick || 0); // v1 rounds have no tier: the picked slot is the tier
     const cand = { i, points: R.points, guesses: R.guesses.length, tier };
     if (!best || cand.points > best.points || (cand.points === best.points && (cand.guesses < best.guesses || (cand.guesses === best.guesses && cand.tier > best.tier)))) best = cand;
   });

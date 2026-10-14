@@ -748,9 +748,8 @@ export function mountDoodle(el, api, K) {
     const gold = R.gold
       ? (R.x2 ? '<div class="dd-goldbar">Golden Frame. Double points!</div>' : '<div class="dd-goldbar">That was the Golden Frame round. A hit would have paid double.</div>')
       : '';
-    const ribbon = R.points > 0 ? (R.early === 'hit' ? 'Early call!' : R.guesses.length === 1 ? 'First try!' : '') : '';
     const stamp = R.points > 0 ? `<div class="dd-stamp good anim">+${R.points}</div>` : `<div class="dd-stamp bad anim">${R.timeUp ? 'Time’s up' : R.gaveUp ? 'Pass' : 'Missed'}</div>`;
-    return { word, chips, line, extras, gold, stamp, ribbon };
+    return { word, chips, line, extras, gold, stamp };
   }
 
   function revealScreen(node, ri, { next = false, waiting = false } = {}) {
@@ -775,7 +774,6 @@ export function mountDoodle(el, api, K) {
     const p = makePaper(node.querySelector('.dd-ph'));
     if (R.gold) p.box.classList.add('gold');
     p.box.insertAdjacentHTML('beforeend', reduced() ? b.stamp.replace(' anim', '') : b.stamp);
-    if (b.ribbon) p.box.insertAdjacentHTML('beforeend', `<div class="dd-ribbon${reduced() ? '' : ' anim'}">${b.ribbon}</div>`);
     if (next) {
       node.querySelector('.dd-next').addEventListener('click', () => {
         vs.ack[ri] = true; api.sfx('tap');
@@ -784,7 +782,7 @@ export function mountDoodle(el, api, K) {
         if (last) api.showEnd();
       });
     }
-    if (R.points > 0) api.sfx(R.x2 || b.ribbon ? 'win' : 'good'); else api.sfx('bad'); // sound only: no vibration
+    if (R.points > 0) api.sfx(R.x2 ? 'win' : 'good'); else api.sfx('bad');
     return { p, minPaper: 130, redraw() { p.paper.all(strokes); } };
   }
 
@@ -898,7 +896,7 @@ export function mountDoodle(el, api, K) {
     const badges = badgesOf(sum);
     const tilts = [-1.6, 1.2, 0.9, -1.1, -0.7, 1.5, -0.9];
     const modeName = is2 ? MODE_INFO[s.mode].title : 'Classic';
-    const mp = masterpieceOf(s.rounds, tierOf);
+    const mp = masterpieceOf(s.rounds);
     node.innerHTML = `<div class="dd-gal-head">
         <span class="dd-gal-kicker">The gallery${is2 ? ` · ${esc(modeName)}` : ''}</span>
         <div class="dd-plaque"><b>${s.score}<small>/${max}</small></b><span>${esc(ctx.result ? ctx.result.text : '')}</span></div>

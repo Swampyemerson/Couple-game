@@ -271,10 +271,6 @@ export const CSS = `
     .g-doodle .dd-masterpiece { margin: 0; text-align: center; font-weight: 800; font-size: 0.92rem; }
     .g-doodle .dd-frame-pick { position: absolute; z-index: 1; bottom: -10px; right: 6px; padding: 2px 8px; border: 2px solid var(--g-ink); border-radius: 6px; background: var(--g-hl); color: var(--g-on-ink); font-weight: 900; font-size: 0.66rem; letter-spacing: 0.06em; text-transform: uppercase; box-shadow: var(--g-shadow-sm); transform: rotate(-4deg); }
 
-    .g-doodle .dd-ribbon { position: absolute; left: 50%; bottom: 8px; padding: 2px 10px; border: 2px solid var(--g-ink); border-radius: 6px; background: var(--g-hl); color: var(--g-on-ink); font-family: var(--g-font-display); font-weight: 900; font-size: max(11px, calc(var(--pw, 300) * 0.055px)); letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; box-shadow: var(--g-shadow-sm); transform: translateX(-50%) rotate(-3deg); pointer-events: none; }
-    .g-doodle .dd-ribbon.anim { animation: dd-ribbon 0.4s 0.3s cubic-bezier(.2,1.5,.4,1) both; }
-    @keyframes dd-ribbon { from { transform: translateX(-50%) rotate(-3deg) scale(0.3); opacity: 0; } to { transform: translateX(-50%) rotate(-3deg) scale(1); opacity: 1; } }
-
     @keyframes dd-shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(3px); } }
     @keyframes dd-pop { 0% { transform: scale(0.6); opacity: 0; } 70% { transform: scale(1.08); opacity: 1; } 100% { transform: scale(1); } }
     @keyframes dd-stamp { 0% { transform: translate(-50%, -50%) rotate(-9deg) scale(2.4); opacity: 0; } 100% { transform: translate(-50%, -50%) rotate(-9deg) scale(1); opacity: 1; } }
