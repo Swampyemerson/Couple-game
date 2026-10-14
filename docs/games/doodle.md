@@ -70,10 +70,20 @@ reveals the answer.
 
 ## Packs
 
-`classic` (the original 282), `us`, `kitchen`, `outabout`, `creatures` (new, 29 to 36 cards each, 8+ per
-tier), `everything`. New decks live in `doodle/packs.js`; their order is frozen (indices are stored in saved
+`classic` (the original 282), `us`, `kitchen`, `outabout`, `creatures`, `home` (Home Sweet Home: rooms, chores and little dramas; the last deck, so the earlier deck indices did not move) (new, 29 to 36 cards each, 8+ per
+tier), `everything` (grows with each new deck; v2 matches freeze their `deal`, so saved matches are unaffected). New decks live in `doodle/packs.js`; their order is frozen (indices are stored in saved
 matches): add a new deck at the END of `NEW_DECKS`, never edit or grow an existing tier. The test checks that
 a card's words only match another card through a word both cards list on purpose (shared head nouns such as "umbrella" are deliberate and are only ever compared against the round's own card), that no two cards in one deck list the same word, and that nothing matches another card by accident (typo, plural of another word).
+
+## Tonight's masterpiece
+
+A view-only keepsake in the gallery, for v1 and v2 matches alike (a pure read of `s.rounds`, nothing is stored).
+`masterpieceOf(rounds)` in `records.js` picks the scored round with a drawing and the most points; ties go to
+the fewest guesses (an early call counts as 1), then the higher tier (v1 rounds have no `tier`: the picked slot
+is the tier), then the earliest round. The gallery shows `Tonight’s masterpiece: “<prompt>” by <Name>, guessed
+first try` (or `on the 2nd / 3rd try`, `called early from half a drawing`) under the plaque, and that frame gets a
+small "Tonight’s pick" ribbon (`.dd-frame-pick`, bottom right, clear of the points sticker and the golden stamp).
+With no scored round: `No masterpiece tonight. Next time.` and no ribbon.
 
 ## Encore (opt-in)
 
