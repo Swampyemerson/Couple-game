@@ -319,11 +319,24 @@ async function unitTests() {
     assert(p1.a_used === 'heart:3' && p1.b_used === 'crane:1', `deja vu: each player's secret and what it took (${p1.a_used}, ${p1.b_used})`);
     const d1 = { ...p1 };
     const st2 = { ...duelState(['crane'], ['crane']), secret: { a: 'plumb', b: 'heart' }, guesses: { a: ['heart'], b: ['plumb'] } };
-    assert(Rec.stampsFor(st2, d1, 'dv2', (w) => w).some((x) => x.label === 'Déjà vu'), 'deja vu: a secret from either history gets the stamp');
     const rec2 = { ...d1, ...Rec.recordMatch(d1, st2, 'dv2') };
     assert(Rec.stampsFor(st2, rec2, 'dv2', (w) => w).some((x) => x.label === 'Déjà vu') && !Rec.stampsFor(st1, p1, 'dv1', (w) => w).some((x) => x.label === 'Déjà vu'), 'deja vu: still stamped once recorded (this match’s own entries are not "before"); a first match has none');
     let h = {}; for (let k = 0; k < 45; k++) h = { ...h, ...Rec.recordMatch(h, { ...duelState(['crane'], ['abbey']), secret: { a: `w${k}`.padEnd(5, 'x'), b: 'crane' }, guesses: { a: ['crane'], b: ['abbey'] } }, `u${k}`) };
     assert(Rec.usedOf(h, 'a').length === 40 && Rec.usedOf(h, 'a')[39].w === 'w44xx', 'deja vu: only the last 40 secrets are kept');
+  }
+
+  // reopened older matches: shared-data stamps belong to the newest recorded match only
+  {
+    const win = (sa, sb) => ({ ...duelState(['crane'], ['crane']), secret: { a: sa, b: sb }, guesses: { a: [sb], b: ['pound', 'misty', 'jumbo', 'fight', 'lunch', 'oxbow'] } }); // a wins
+    const lose = (sa, sb) => ({ ...duelState(['crane'], ['crane']), secret: { a: sa, b: sb }, guesses: { b: [sa], a: ['pound', 'misty', 'jumbo', 'fight', 'lunch', 'oxbow'] } }); // b wins
+    const m1 = win('heart', 'crane'); const m2 = lose('heart', 'bride'); const m3 = win('plumb', 'bride');
+    let d = {}; d = { ...d, ...Rec.recordMatch(d, m1, 'M1') }; d = { ...d, ...Rec.recordMatch(d, m2, 'M2') }; d = { ...d, ...Rec.recordMatch(d, m3, 'M3') };
+    const L = (st, id) => Rec.stampsFor(st, d, id, (w) => w).map((x) => x.label);
+    assert(!L(m1, 'M1').some((x) => /Déjà vu|Revenge|snapped|in a row|Duel number|New record/.test(x)), `stamps: the first duel reopened shows no later ledger stamps (${L(m1, 'M1')})`);
+    assert(!L(m2, 'M2').some((x) => /Revenge|Déjà vu/.test(x)) && L(m3, 'M3').includes('Revenge') && L(m3, 'M3').includes('Déjà vu'), `stamps: only the newest recorded duel carries Revenge and Déjà vu (${L(m2, 'M2')} / ${L(m3, 'M3')})`);
+    // a reopened finished match on a phone whose shared data is still empty must not record
+    assert(Rec.recordMatch({}, m1, 'R1', false) === null && Rec.recordMatch({ matches_n: 0 }, m1, 'R1', false) === null, 'records: a reopened match records nothing against an empty snapshot');
+    assert(Rec.recordMatch({ matches_n: 3, recent_m: 'q' }, m1, 'R1', false) !== null && Rec.recordMatch({}, m1, 'R1', true) !== null, 'records: a reopened match records once data exists; one watched live always records');
   }
 
   // size budget: the entry file stays modest now the lists live in their own file

@@ -50,6 +50,9 @@ export const recentOf = (data) => String(data.recent_m || '').split(',').filter(
 export function recordMatch(data, s, matchId, seen = true) {
   if (!s || !matchId || recentOf(data).includes(matchId)) return null;
   if (!seen && s.v !== 2) return null;
+  // a reopened match on a phone whose shared data hasn't arrived yet (empty) must not record: the patch
+  // would overwrite plain keys (streaks, last_w, recent_m, *_used) with values built from nothing
+  if (!seen && !(num(data.matches_n) > 0)) return null;
   const res = result(s);
   const p = { lastm: matchId, recent_m: [...recentOf(data), matchId].slice(-RECENT).join(',') };
   const inc = (k, by = 1) => { p[k] = (p[k] !== undefined ? p[k] : num(data[k])) + by; };
@@ -96,27 +99,29 @@ export function recordMatch(data, s, matchId, seen = true) {
 export function stampsFor(s, data, matchId, name) {
   const out = [];
   const rounds = roundsOf(s);
-  const recorded = recentOf(data).includes(matchId);
+  // Stamps read from the shared data describe the ledger as of the newest recorded match, so an
+  // older finished match that is reopened shows only the stamps its own state can prove.
+  const latest = recentOf(data).includes(matchId) && data.lastm === matchId;
   if (rounds.some((r) => r.sec.a && r.sec.a === r.sec.b)) out.push({ label: 'Great minds', who: 'hl' });
-  if (recorded && data.pbm === matchId) out.push({ label: 'New record', who: 'hl' });
-  const winner = result(s).winner;
-  if (recorded && (winner === 'a' || winner === 'b')) {
+  if (latest && data.pbm === matchId) out.push({ label: 'New record', who: 'hl' });
+  const res = result(s);
+  const winner = res.winner;
+  if (latest && (winner === 'a' || winner === 'b')) {
     if (data.revm === matchId) out.push({ label: 'Revenge', who: winner });
     if (String(data.snapm || '').startsWith(`${matchId}:`)) out.push({ label: 'Streak snapped', who: winner });
   }
-  {
+  if (latest) {
     // a secret this match that either player had used before it
-    const before = (q) => { const h = usedOf(data, q).map((x) => x.w); return recorded ? h.slice(0, Math.max(0, h.length - rounds.length)) : h; };
+    const before = (q) => { const h = usedOf(data, q).map((x) => x.w); return h.slice(0, Math.max(0, h.length - rounds.length)); };
     const seenBefore = new Set([...before('a'), ...before('b')]);
     if (rounds.some((r) => seenBefore.has(r.sec.a) || seenBefore.has(r.sec.b))) out.push({ label: 'Déjà vu', who: 'hl' });
   }
-  const res = result(s);
-  if (recorded && (res.winner === 'a' || res.winner === 'b')) {
-    const st = num(data[`${res.winner}_streak`]);
-    if (st >= 3) out.push({ label: `${st} in a row`, who: res.winner });
-    if (s.v === 2 && s.opts.bo3 && rounds.length && rounds[0].w === other(res.winner)) out.push({ label: 'Comeback', who: res.winner });
+  if (latest && (winner === 'a' || winner === 'b')) {
+    const st = num(data[`${winner}_streak`]);
+    if (st >= 3) out.push({ label: `${st} in a row`, who: winner });
   }
-  if (recorded && MILESTONES.includes(num(data.matches_n))) out.push({ label: `Duel number ${data.matches_n}`, who: 'hl' });
+  if (s.v === 2 && s.opts.bo3 && (winner === 'a' || winner === 'b') && rounds.length && rounds[0].w === other(winner) && recentOf(data).includes(matchId)) out.push({ label: 'Comeback', who: winner });
+  if (latest && MILESTONES.includes(num(data.matches_n))) out.push({ label: `Duel number ${data.matches_n}`, who: 'hl' });
   let fastest = null;
   for (const r of rounds) for (const q of ['a', 'b']) { const n = cracked(r, q); if (n !== null && (!fastest || n < fastest.n)) fastest = { n, q }; }
   if (fastest && fastest.n <= 2) out.push({ label: 'Mind-reader', who: fastest.q });

@@ -254,7 +254,7 @@ registerGame({
     function snapLine(w, matchId) {
       const d = data();
       const [mid, len] = String(d.snapm || '').split(':');
-      return mid && mid === matchId && recentOf(d).includes(matchId) ? ` ${who(w)} ends ${nm(other(w))}’s run of ${esc(len)}.` : '';
+      return mid && mid === matchId && d.lastm === matchId && recentOf(d).includes(matchId) ? ` ${who(w)} ends ${nm(other(w))}’s run of ${esc(len)}.` : '';
     }
     function endSay(s, matchId) {
       if (!s.v) {
@@ -628,7 +628,7 @@ registerGame({
       const p = recordMatch(data(), c.state, c.matchId, wasOver === false);
       if (p) setData(p);
     }
-    const offData = typeof api.onData === 'function' ? api.onData(() => { if (ctx && ctx.over) render(); }) : null;
+    const offData = typeof api.onData === 'function' ? api.onData(() => { if (ctx && ctx.over) render(); else if (ctx) paintHint(); }) : null;
 
     return {
       update(c) {
