@@ -42,8 +42,8 @@ these fields.
 
 ## Records (`gamedata/agents` through the engine's per-game data)
 
-The turn-game `api` has no `data()`, so the game imports `gameDataApi` from core and uses it directly.
-Flat keys: `missions_n wins_n burned_n caught_n cold_n sudden_n escape_n meld_n rookie_wins_n agent_wins_n spy_wins_n
+The game uses the turn-game `api.data()` / `api.setData(patch)` / `api.onData(fn)` directly (core provides them natively).
+Flat keys: `missions_n wins_n burned_n caught_n cold_n sudden_n escape_n meld_n spotless_n rookie_wins_n agent_wins_n spy_wins_n
 pack_<p>_n spare_best close_best streak streak_best clue_best a_clue_best b_clue_best lastm lastb recent_m last_setup best_clue a_best_clue b_best_clue`.
 
 - Recorded once per match. `recent_m` (comma-joined, newest 60 match ids) is checked before recording and appended on
@@ -58,7 +58,9 @@ pack_<p>_n spare_best close_best streak streak_best clue_best a_clue_best b_clue
   ties a standing record of 3 or more adds the `tie` badge (stamp "EQUALS THE RECORD") and leaves `best_clue` as it was.
   The rules card shows "Record clue: OCEAN for 4 (Sydney, Wanderlust)." and, on a streak of 2+, "Three missions
   unbeaten. Keep it clean."; the result view's best-clue slip gets a RECORD or EQUALS THE RECORD overprint.
-- `lastb` holds the stamps earned by the last match (`record`, `rowN`, `last`, `escape`, `meldK`, `msN`) so both phones
+- **Spotless.** A win (sudden-death escapes included) where no pick in `s.log[*].picks` or `s.sd` is a bystander (`r === 'N'`). Derived from state (`isSpotless`); a win adds the absolute counter `spotless_n` and the `spotless` badge in `lastb`. The result view stamps "NOT ONE WRONG TAP" (good ink) and the ledger shows "<b>2</b> spotless".
+- **Record in reach** (v2 only; reads `clue_best`, never writes). In the guess phase the clue slip of both players gets a line after the picks-left text: `n > clue_best` with `clue_best >= 2` reads "Crack all 4 and it’s a new record."; `n === clue_best` with `n >= 3` reads "All 3 would equal the record.". It disappears once a bystander is in the turn's picks (the turn ends) or the turn is over. Layout: the line is one 0.68rem row inside the slip; while it shows, `.g-agents.has-rec` trims the portrait card height formula by 15 px so the five board rows and the dock stay inside 360x640 (landscape is unchanged: the right column has room).
+- `lastb` holds the stamps earned by the last match (`record`, `rowN`, `last`, `escape`, `spotless`, `meldK`, `msN`) so both phones
   show the same stamps. `last_setup` (`agent|us|1`) is the rules card's remembered choice.
 - The ledger strip shows on the rules card and on the result view; stamps, an epilogue line and the two best clues
   appear on the result view.

@@ -592,6 +592,11 @@ async function spotlessReopen(h, scheme) {
   const { a } = h;
   const sm = spotlessMoves(31);
   assert(sm.state.over === 'win' && AG.isSpotless(sm.state), 'spotless fixture: a clean win with only agent picks');
+  if (await a.isVisible('#game-root [data-g="close"]')) await h.closeGame(a).catch(() => {});
+  await a.evaluate(() => localStorage.setItem('ju.games.seenEnd.v1', '{}'));
+  await a.reload();
+  await a.waitForFunction(() => !!document.querySelector('.tabbar'), null, { timeout: 15000 });
+  await a.waitForTimeout(500);
   await h.openMatch(a, 'spotless1');
   await a.waitForSelector('#game-root .gm-end:not([hidden])', { timeout: 8000 });
   await a.click('#game-root [data-g="end-look"]');
