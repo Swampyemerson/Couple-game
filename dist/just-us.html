@@ -2394,7 +2394,7 @@ const TRUTHS = {
     'Have you ever had a dream about us? Describe it.',
     'What sound do I make that drives you crazy?',
     'What’s something new you want to try in bed?',
-    'What’s the most turned on you’ve been around me in public?',
+    'Where’s the most public place you’ve wanted me badly enough to almost say something?',
     'What’s the sexiest thing I’ve ever said to you?',
     'If you could control me for 10 minutes, what would you have me do?',
     'What’s one thing you’ve been too shy to ask for?',
@@ -34823,12 +34823,55 @@ const CREATURES = [
   ],
 ];
 
+const HOME = [
+  [
+    'houseplant|potted plant|house plant|plant|pot plant|indoor plant',
+    'doormat|welcome mat|mat',
+    'bookshelf|bookcase|shelf of books|shelves',
+    'lamp|desk lamp|table lamp|reading lamp|floor lamp|bedside lamp',
+    'rug|carpet|area rug',
+    'jigsaw puzzle|puzzle|puzzle piece|jigsaw|doing a puzzle',
+    'board game|boardgame|game night',
+    'record player|turntable|vinyl|record|vinyl record',
+    'fireplace|fire place|hearth|chimney',
+    'bird feeder|birdfeeder|feeder',
+    'stairs|staircase|steps|stairway',
+    'watering can|watering the plants|watering plants',
+  ],
+  [
+    'knitting|knitting needles|knit|crochet',
+    'spring cleaning|deep clean|big clean|cleaning day|cleaning|spring clean|cleaning the house|house cleaning',
+    'mowing the lawn|lawn mower|lawnmower|mowing|cutting the grass|mow the lawn|mowing the grass',
+    'taking out the trash|taking out the bins|bin day|trash day|garbage night|taking the bins out|taking the trash out|take out the trash|taking out the garbage|garbage|trash|rubbish',
+    'making the bed|make the bed|changing the sheets|fresh sheets|bed sheets|making my bed',
+    'ironing|ironing board|iron|ironing a shirt|ironing clothes',
+    'face mask|sheet mask|skincare|skin care|face mask night',
+    'moving boxes|moving day|packing boxes|cardboard boxes|moving house|moving home|moving out|boxes',
+    'hanging a picture|hanging a frame|crooked picture|picture frame|wall frame|hang a picture|picture on the wall',
+    'baking bread|sourdough|bread|loaf of bread|homemade bread|bake bread|making bread',
+    'tangled christmas lights|christmas lights|fairy lights|string lights|untangling lights|tangled lights|xmas lights',
+  ],
+  [
+    'lost sock|missing sock|odd socks|where did the other sock go|one sock',
+    'stubbed toe|stubbing your toe|stubbed my toe|toe|stub toe|stubbing toe',
+    'wifi password|the wifi password|password|wifi code',
+    'creaky floorboard|creaky floor|squeaky floorboard|squeaky floor',
+    'doorbell at dinner|unexpected guest|surprise visitor|someone at the door|doorbell|doorbell ringing',
+    'power cut|power outage|blackout|the lights went out|no power|power failure',
+    'hitting snooze|snooze button|snooze|overslept|oversleeping|sleeping in|hit snooze|hitting the snooze button|snoozing',
+    'noisy neighbours|noisy neighbors|loud neighbours|loud neighbors|banging on the wall|neighbours|neighbors',
+    'phone charger|lost charger|charger|charging cable|where is the charger|phone cable',
+    'locked out|locked out of the house|locked outside|locked out of my house|keys inside',
+  ],
+];
+
 // Order = index order after the 282 v1 prompts. Append new decks at the END only.
 const NEW_DECKS = [
   { id: 'us', tiers: US },
   { id: 'kitchen', tiers: KITCHEN },
   { id: 'outabout', tiers: OUTABOUT },
   { id: 'creatures', tiers: CREATURES },
+  { id: 'home', tiers: HOME },
 ];
 
 const MODE_LIST = ['classic', 'halfhalf', 'ladder', 'invisible', 'mixed'];
@@ -34839,13 +34882,14 @@ const MODE_INFO = {
   invisible: { title: 'Invisible Ink', pitch: 'Your lines fade as you draw. +1 per hit.' },
   mixed: { title: 'Mixed Bag', pitch: 'A fresh twist every round.' },
 };
-const PACK_LIST = ['classic', 'us', 'kitchen', 'outabout', 'creatures', 'everything'];
+const PACK_LIST = ['classic', 'us', 'kitchen', 'outabout', 'creatures', 'home', 'everything'];
 const PACK_INFO = {
   classic: { title: 'Classic', pitch: 'The original 282 cards.' },
   us: { title: 'Us', pitch: 'Couple moments.' },
   kitchen: { title: 'Kitchen', pitch: 'Cooking, snacking, spilling.' },
   outabout: { title: 'Out & About', pitch: 'Trips, trails and travel.' },
-  creatures: { title: 'Creatures & Weather', pitch: 'Animals, skies and storms.' },
+  creatures: { title: 'Creatures & Weather', chip: 'Creatures', pitch: 'Animals, skies and storms.' },
+  home: { title: 'Home Sweet Home', chip: 'Home', pitch: 'Rooms, chores and little dramas.' },
   everything: { title: 'Everything', pitch: 'Every card in one deck.' },
 };
 const TWIST_LIST = ['normal', 'halfhalf', 'invisible', 'sprint', 'oneline'];
@@ -34857,7 +34901,7 @@ const TWIST_INFO = {
   oneline: { title: 'One line', pitch: 'Lift your finger once. +1 on a hit.' },
 };
 
-return { US, KITCHEN, OUTABOUT, CREATURES, NEW_DECKS, MODE_LIST, MODE_INFO, PACK_LIST, PACK_INFO, TWIST_LIST, TWIST_INFO };
+return { US, KITCHEN, OUTABOUT, CREATURES, HOME, NEW_DECKS, MODE_LIST, MODE_INFO, PACK_LIST, PACK_INFO, TWIST_LIST, TWIST_INFO };
 })();
 
 // ── js/games/doodle/records.js ──
@@ -35018,7 +35062,24 @@ function stampsOf(d, modeTitle) {
   return out;
 }
 
-return { MILESTONES, encodeSeen, decodeSeen, summarize, recordPatch, badgesOf, ordinal, historyLine, chaseLine, stampsOf };
+// Tonight's masterpiece: the round with the most points; ties go to the fewest guesses (an early call
+// is one guess), then the higher tier, then the earliest round. Null when nothing scored.
+function masterpieceOf(rounds) {
+  let best = null;
+  rounds.forEach((R, i) => {
+    if (!(R.points > 0) || !R.strokes) return;
+    const tier = R.tier != null ? R.tier : (R.pick || 0); // v1 rounds have no tier: the picked slot is the tier
+    const cand = { i, points: R.points, guesses: R.guesses.length, tier };
+    if (!best || cand.points > best.points || (cand.points === best.points && (cand.guesses < best.guesses || (cand.guesses === best.guesses && cand.tier > best.tier)))) best = cand;
+  });
+  if (!best) return null;
+  const R = rounds[best.i];
+  const how = R.early === 'hit' ? 'early' : best.guesses === 1 ? 'first' : 'nth';
+  return { i: best.i, drawer: R.drawer, points: best.points, guesses: best.guesses, how };
+}
+const masterpieceHow = (m) => (m.how === 'early' ? 'called early from half a drawing' : m.how === 'first' ? 'guessed first try' : `guessed on the ${ordinal(m.guesses)} try`);
+
+return { MILESTONES, encodeSeen, decodeSeen, summarize, recordPatch, badgesOf, ordinal, historyLine, chaseLine, stampsOf, masterpieceOf, masterpieceHow };
 })();
 
 // ── js/games/doodle/view.js ──
@@ -35028,7 +35089,7 @@ __M['js/games/doodle/view.js'] = (() => {
 // Rules live in ../doodle.js and are passed in as K (so there are no import cycles).
 const { gameDataApi } = __M['js/games/core.js'];
 const { MODE_INFO, PACK_INFO, TWIST_INFO, MODE_LIST, PACK_LIST } = __M['js/games/doodle/packs.js'];
-const { summarize, recordPatch, badgesOf, historyLine, chaseLine, stampsOf, encodeSeen, decodeSeen } = __M['js/games/doodle/records.js'];
+const { masterpieceOf, masterpieceHow, summarize, recordPatch, badgesOf, historyLine, chaseLine, stampsOf, encodeSeen, decodeSeen } = __M['js/games/doodle/records.js'];
 
 const WIDTHS = [2.6, 7.5]; // in grid units (the grid is 256 wide)
 const REPLAY_CAP = 20000; // ms
@@ -35315,11 +35376,11 @@ function mountDoodle(el, api, K) {
     node.classList.add('dd-setup');
     node.innerHTML = `<div class="dd-head dd-sethead"><h2 class="dd-h">Set up the game</h2>${pinned && pinned.length ? `<div class="dd-fridge" role="img" aria-label="On the fridge: ${esc(cap(String(d.pin_t || 'our favourite')))}${d.pin_by === 'a' || d.pin_by === 'b' ? ` by ${esc(api.name(d.pin_by))}` : ''}"><div class="dd-fridge-pic"></div></div>` : ''}</div>
       <div class="dd-sec"><span class="g-label">How to play</span>
-        <div class="dd-modes" role="radiogroup" aria-label="Mode">${MODE_LIST.map((m) => `<button class="dd-mode" role="radio" data-m="${m}" aria-checked="false"><b>${esc(MODE_INFO[m].title)}</b><span>${esc(MODE_INFO[m].pitch)}</span></button>`).join('')}</div></div>
+        <div class="dd-modes" role="radiogroup" aria-label="Mode">${MODE_LIST.map((m) => `<button class="dd-mode" role="radio" data-m="${m}" aria-checked="false" title="${esc(MODE_INFO[m].pitch)}"><b>${esc(MODE_INFO[m].title)}</b></button>`).join('')}</div></div>
       <div class="dd-sec"><span class="g-label">Which cards</span>
-        <div class="dd-packs" role="radiogroup" aria-label="Cards">${PACK_LIST.map((p) => `<button class="dd-pack" role="radio" data-p="${p}" aria-checked="false" title="${esc(PACK_INFO[p].pitch)}">${esc(PACK_INFO[p].title)}</button>`).join('')}</div></div>
-      <button class="dd-toggle" role="switch" aria-checked="false" type="button"><i aria-hidden="true"></i><span><b>Encore</b> One last card you both draw at once</span></button>
-      <div class="dd-setup-foot"><button class="gm-btn gm-btn-big dd-start"></button></div>`;
+        <div class="dd-packs" role="radiogroup" aria-label="Cards">${PACK_LIST.map((p) => `<button class="dd-pack" role="radio" data-p="${p}" aria-checked="false" title="${esc(`${PACK_INFO[p].title}: ${PACK_INFO[p].pitch}`)}" aria-label="${esc(PACK_INFO[p].title)}">${esc(PACK_INFO[p].chip || PACK_INFO[p].title)}</button>`).join('')}</div></div>
+      <button class="dd-toggle" role="switch" aria-checked="false" type="button"><i aria-hidden="true"></i><span><b>Encore</b> One last card you both draw</span></button>
+      <div class="dd-setup-foot"><p class="dd-pitch" aria-live="polite"></p><button class="gm-btn gm-btn-big dd-start"></button></div>`;
     const startBtn = node.querySelector('.dd-start');
     const paint = () => {
       node.querySelectorAll('.dd-mode').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.m === sel.mode)));
@@ -35327,6 +35388,7 @@ function mountDoodle(el, api, K) {
       node.querySelector('.dd-toggle').setAttribute('aria-checked', String(!!sel.encore));
       const same = lastMode && lastPack && sel.mode === lastMode && sel.pack === lastPack && !!sel.encore === (d.lastEncore === 1);
       startBtn.innerHTML = `${same ? 'Same again' : 'Start'}<small>${esc(MODE_INFO[sel.mode].title)} · ${esc(PACK_INFO[sel.pack].title)}${sel.encore ? ' · Encore' : ''}</small>`;
+      node.querySelector('.dd-pitch').textContent = MODE_INFO[sel.mode].pitch;
       startBtn.disabled = !ctx.canMove || !!vs.setupSent;
     };
     node.querySelector('.dd-modes').addEventListener('click', (e) => { const b = e.target.closest('.dd-mode'); if (b) { sel.mode = b.dataset.m; api.sfx('tap'); paint(); } });
@@ -35922,21 +35984,24 @@ function mountDoodle(el, api, K) {
     const badges = badgesOf(sum);
     const tilts = [-1.6, 1.2, 0.9, -1.1, -0.7, 1.5, -0.9];
     const modeName = is2 ? MODE_INFO[s.mode].title : 'Classic';
+    const mp = masterpieceOf(s.rounds);
     node.innerHTML = `<div class="dd-gal-head">
         <span class="dd-gal-kicker">The gallery${is2 ? ` · ${esc(modeName)}` : ''}</span>
         <div class="dd-plaque"><b>${s.score}<small>/${max}</small></b><span>${esc(ctx.result ? ctx.result.text : '')}</span></div>
         <p class="dd-gal-hint">${got} of ${n} guessed. Tap a drawing to watch it again.</p>
+        <p class="dd-masterpiece">${mp ? `Tonight’s masterpiece: “${esc(cap(PROMPTS[s.rounds[mp.i].choices[s.rounds[mp.i].pick]].show))}” by ${nm(mp.drawer)}, ${masterpieceHow(mp)}` : 'No masterpiece tonight. Next time.'}</p>
       </div>
       <div class="dd-strip" hidden></div>
       <div class="dd-badges">${['a', 'b'].map((w) => `<div class="dd-badge2 p-${w}-b"><span class="dd-badge2-who">${esc(api.name(w))}</span><b>${esc(badges[w].title)}</b><span>${esc(badges[w].line)}</span></div>`).join('')}</div>
       <p class="dd-history" hidden></p>
       <p class="dd-chase" hidden></p>
-      <div class="dd-wall">${s.rounds.map((R, i) => `<button class="dd-frame${R.gold ? ' gold' : ''}" data-i="${i}" style="--tilt:${tilts[i % tilts.length]}deg" aria-label="Round ${i + 1}: ${esc(PROMPTS[R.choices[R.pick]].show)} by ${esc(api.name(R.drawer))}${R.gold ? ', golden frame' : ''}">
+      <div class="dd-wall">${s.rounds.map((R, i) => `<button class="dd-frame${R.gold ? ' gold' : ''}${mp && mp.i === i ? ' pick' : ''}" data-i="${i}" style="--tilt:${tilts[i % tilts.length]}deg" aria-label="Round ${i + 1}: ${esc(PROMPTS[R.choices[R.pick]].show)} by ${esc(api.name(R.drawer))}${R.gold ? ', golden frame' : ''}">
           <canvas></canvas>
           <span class="dd-frame-title">${esc(cap(PROMPTS[R.choices[R.pick]].show))}</span>
           <span class="dd-frame-meta">by ${nm(R.drawer)}${R.gold ? ' · golden' : ''}${is2 && s.mode === 'mixed' && R.twist && R.twist !== 'normal' ? ` · ${esc(TWIST_INFO[R.twist].title)}` : ''}</span>
           <span class="dd-frame-pts ${R.points ? '' : 'zero'}">${R.points ? `+${R.points}` : R.timeUp ? 'time up' : R.gaveUp ? 'pass' : 'missed'}</span>
           ${R.gold ? '<span class="dd-frame-gold">Golden</span>' : ''}
+          ${mp && mp.i === i ? '<span class="dd-frame-pick">Tonight’s pick</span>' : ''}
         </button>`).join('')}</div>
       ${s.enc ? `<div class="dd-encore"><span class="dd-gal-kicker">Encore</span><b class="dd-encore-title">${esc(cap(PROMPTS[s.enc.prompt].show))}</b>
         <div class="dd-encore-pair">${['a', 'b'].map((w) => `<div class="dd-encore-cell"><div class="dd-encore-pic" data-w="${w}"><canvas></canvas></div><span class="dd-frame-meta">by ${nm(w)}${s.enc[w] === '' ? ' · out of time' : ''}</span>${s.enc[w] ? `<button class="gm-btn gm-btn-ghost dd-encpin" data-w="${w}" type="button">Pin to the fridge</button>` : ''}</div>`).join('')}</div></div>` : ''}
@@ -36314,7 +36379,7 @@ const CSS = `
     .g-doodle .dd-plaque b { font-family: var(--g-font-display); font-size: 2rem; font-weight: 900; line-height: 1; }
     .g-doodle .dd-plaque b small { font-size: 1rem; }
     .g-doodle .dd-plaque span { font-family: var(--g-font-display); font-weight: 900; font-size: 1.05rem; line-height: 1.1; max-width: 12em; }
-    .g-doodle .dd-wall { width: 100%; display: grid; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); gap: 20px 14px; padding: 16px 12px 6px; box-sizing: border-box; }
+    .g-doodle .dd-wall { width: 100%; display: grid; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); gap: 20px 14px; padding: 16px 12px 14px; box-sizing: border-box; }
     .g-doodle .dd-frame { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 0; padding: 8px 8px 10px; text-align: left; background: var(--g-card); color: var(--g-ink); border: 2px solid var(--g-ink); border-radius: 6px; box-shadow: var(--g-shadow); touch-action: manipulation; transform: rotate(var(--tilt, 0deg)); transition: transform 0.15s ease; }
     .g-doodle .dd-frame:active { transform: rotate(0deg) translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge, var(--g-ink)); }
     .g-doodle .dd-frame canvas { display: block; border: 2px solid var(--g-line); border-radius: 3px; background: var(--g-card); }
@@ -36355,24 +36420,34 @@ const CSS = `
     .g-doodle .dd-scr.land .dd-head .dd-h { font-size: 1.15rem; margin: 0; }
     .g-doodle .dd-scr.land .dd-pickhead .dd-h { display: none; }
     .g-doodle .dd-scr.land .dd-pick { flex-direction: column; align-items: flex-start; min-height: 84px; padding: 8px 10px; gap: 6px; flex: 1; min-width: 0; }
-    .g-doodle .dd-scr.land .dd-modes { grid-template-columns: repeat(3, 1fr); }
-    .g-doodle .dd-scr.land .dd-mode:last-child { grid-column: auto; }
 
     /* setup */
     .g-doodle .dd-sec { width: 100%; display: flex; flex-direction: column; gap: 6px; }
-    .g-doodle .dd-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-    .g-doodle .dd-mode:last-child { grid-column: 1 / -1; }
+    .g-doodle .dd-modes { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+    .g-doodle .dd-mode { grid-column: span 2; }
+    .g-doodle .dd-mode:nth-child(n+4) { grid-column: span 3; }
     .g-doodle .dd-setup .dd-h { font-size: 1.25rem; margin: 0; }
     .g-doodle .dd-setup .dd-sub { font-size: 0.88rem; }
     .g-doodle .dd-setup { gap: 6px; }
-    .g-doodle .dd-mode { display: flex; flex-direction: column; align-items: flex-start; gap: 0; width: 100%; min-height: 50px; padding: 6px 10px; text-align: left; background: var(--g-card); color: var(--g-ink); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow-sm); touch-action: manipulation; }
+    .g-doodle .dd-mode { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; width: 100%; min-height: 44px; padding: 4px 6px; text-align: center; background: var(--g-card); color: var(--g-ink); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow-sm); touch-action: manipulation; }
     .g-doodle .dd-mode b { font-family: var(--g-font-display); font-weight: 900; font-size: 0.95rem; line-height: 1.15; }
-    .g-doodle .dd-mode span { font-weight: 700; font-size: 0.78rem; line-height: 1.2; }
     .g-doodle .dd-mode[aria-checked="true"], .g-doodle .dd-pack[aria-checked="true"] { background: var(--g-hl); color: var(--g-on-ink); box-shadow: var(--g-shadow); transform: translate(-1px, -1px); }
     .g-doodle .dd-packs { display: flex; flex-wrap: wrap; gap: 6px; }
     .g-doodle .dd-pack { min-height: 44px; padding: 0 12px; font-weight: 800; font-size: 0.9rem; color: var(--g-ink); background: var(--g-card); border: 2px solid var(--g-ink); border-radius: 999px; box-shadow: var(--g-shadow-sm); touch-action: manipulation; }
     .g-doodle .dd-packnote { text-align: left; font-size: 0.82rem; }
-    .g-doodle .dd-setup-foot { position: sticky; bottom: 0; z-index: 2; width: 100%; margin-top: auto; padding: 8px 0 2px; background: var(--g-bg); }
+    .g-doodle .dd-setup-foot { position: sticky; bottom: 0; z-index: 2; width: 100%; margin-top: auto; padding: 6px 0 2px; background: var(--g-bg); display: flex; flex-direction: column; gap: 4px; }
+    .g-doodle .dd-pitch { margin: 0; text-align: center; font-weight: 700; font-size: 0.8rem; line-height: 1.25; color: var(--g-muted); }
+    /* short screens: no heading or section labels, every control on the first view */
+    .g-doodle .dd-setup.short .dd-sethead, .g-doodle .dd-setup.short .g-label { display: none; }
+    .g-doodle .dd-setup.land .dd-modes { display: flex; }
+    .g-doodle .dd-setup.land .dd-mode, .g-doodle .dd-setup.land .dd-mode:nth-child(n+4) { flex: 1 1 auto; width: auto; padding: 4px 8px; }
+    .g-doodle .dd-setup.land .dd-packs { flex-wrap: nowrap; }
+    .g-doodle .dd-setup.land .dd-pack { flex: 1 1 auto; padding: 0 6px; font-size: 0.8rem; white-space: nowrap; }
+    .g-doodle .dd-setup.land .dd-setup-foot { flex-direction: row; align-items: center; gap: 12px; }
+    .g-doodle .dd-setup.land .dd-pitch { flex: 1 1 0; min-width: 0; text-align: left; }
+    .g-doodle .dd-setup.land .dd-start { flex: 0 0 46%; width: 46%; }
+    .g-doodle .dd-setup.short .dd-start { min-height: 46px; padding: 4px 12px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+    .g-doodle .dd-setup.short .dd-start small { display: inline; }
     .g-doodle .dd-start small { display: block; font-size: 0.72rem; font-weight: 800; opacity: 0.85; }
     .g-doodle .dd-sethead { position: relative; }
     .g-doodle .dd-fridge { position: absolute; right: 2px; top: 0; }
@@ -36427,6 +36502,7 @@ const CSS = `
 
     /* Encore: the toggle on the setup screen, the pair in the gallery */
     .g-doodle .dd-toggle { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 6px 12px; text-align: left; color: var(--g-ink); background: var(--g-card); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow-sm); font-weight: 700; font-size: 0.8rem; touch-action: manipulation; }
+    .g-doodle .dd-toggle span { min-width: 0; }
     .g-doodle .dd-toggle b { font-family: var(--g-font-display); font-weight: 900; font-size: 0.9rem; margin-right: 4px; }
     .g-doodle .dd-toggle i { flex: none; position: relative; width: 38px; height: 22px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); }
     .g-doodle .dd-toggle i::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--g-ink); }
@@ -36438,6 +36514,10 @@ const CSS = `
     .g-doodle .dd-encore-cell { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; }
     .g-doodle .dd-encore-pic canvas { display: block; border: 2px solid var(--g-line); border-radius: 3px; background: var(--g-card); }
     .g-doodle .dd-encpin { min-height: 44px; padding: 6px 10px; font-size: 0.8rem; }
+
+    .g-doodle .dd-masterpiece { margin: 0; text-align: center; font-weight: 800; font-size: 0.92rem; }
+    .g-doodle .dd-frame.pick { padding-bottom: 20px; }
+    .g-doodle .dd-frame-pick { position: absolute; z-index: 1; bottom: -10px; right: 6px; padding: 2px 8px; border: 2px solid var(--g-ink); border-radius: 6px; background: var(--g-hl); color: var(--g-on-ink); font-weight: 900; font-size: 0.66rem; letter-spacing: 0.06em; text-transform: uppercase; box-shadow: var(--g-shadow-sm); transform: rotate(-4deg); }
 
     @keyframes dd-shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(3px); } }
     @keyframes dd-pop { 0% { transform: scale(0.6); opacity: 0; } 70% { transform: scale(1.08); opacity: 1; } 100% { transform: scale(1); } }
@@ -73476,13 +73556,37 @@ const FUTURE = [
   ['Surprise we’d plan', 'Surprise we’d dread'],
 ];
 
-const NEW_CARDS = [...JUSTUS, ...EVERYDAY, ...HOTTAKES, ...FUTURE];
+const SENSES = [
+  ['Smells like a bakery', 'Smells like a gym bag'],
+  ['Sounds like rain on a roof', 'Sounds like a car alarm'],
+  ['Feels like a warm bath', 'Feels like a cold shower'],
+  ['Tastes like a holiday', 'Tastes like a Tuesday'],
+  ['Golden-hour glow', 'Fluorescent office light'],
+  ['Whisper', 'Megaphone'],
+  ['Candle-lit', 'Stadium-lit'],
+  ['Slippers energy', 'Stilettos energy'],
+  ['Background music', 'Turn it up'],
+  ['Acoustic version', 'Remix'],
+  ['Sunday-morning pace', 'Last-call pace'],
+  ['Sweater weather', 'Sunscreen weather'],
+  ['Hot chocolate mood', 'Iced coffee mood'],
+  ['{a}’s playlist', '{b}’s playlist'],
+  ['{a}’s perfect temperature', '{b}’s perfect temperature'],
+  ['Nap-inducing', 'Keeps you up all night'],
+  ['Smooth jazz', 'Heavy metal'],
+  ['Fresh laundry smell', 'Wet dog smell'],
+  ['Silky', 'Sticky'],
+  ['Pastel', 'Neon'],
+];
+
+// Appended last: indices 218..237. Never reorder the arrays above (saved v2 matches freeze their deals by index).
+const NEW_CARDS = [...JUSTUS, ...EVERYDAY, ...HOTTAKES, ...FUTURE, ...SENSES];
 
 // [first global index, one past the last] for each new pack.
 const RANGES = (() => {
   let at = BASE_CARDS;
   const out = {};
-  for (const [id, list] of [['justus', JUSTUS], ['everyday', EVERYDAY], ['hottakes', HOTTAKES], ['future', FUTURE]]) {
+  for (const [id, list] of [['justus', JUSTUS], ['everyday', EVERYDAY], ['hottakes', HOTTAKES], ['future', FUTURE], ['senses', SENSES]]) {
     out[id] = [at, at + list.length];
     at += list.length;
   }
@@ -73494,7 +73598,7 @@ const RANGES = (() => {
 // 120 Tame date / Wild date, 130 Unsexy / Sexy.
 const COZY_OUT = [64, 111, 112, 120, 130];
 
-return { BASE_CARDS, JUSTUS, EVERYDAY, HOTTAKES, FUTURE, NEW_CARDS, RANGES, COZY_OUT };
+return { BASE_CARDS, JUSTUS, EVERYDAY, HOTTAKES, FUTURE, SENSES, NEW_CARDS, RANGES, COZY_OUT };
 })();
 
 // ── js/games/wave/rules.js ──
@@ -73526,6 +73630,7 @@ const PACKS = [
   { id: 'everyday', name: 'Everyday', pitch: 'Queues, coffee and Mondays' },
   { id: 'hottakes', name: 'Hot Takes', pitch: 'Opinions to argue over' },
   { id: 'future', name: 'Future Us', pitch: 'Dreams and plans' },
+  { id: 'senses', name: 'Senses', pitch: 'Sounds, smells, textures, vibes' },
   { id: 'everything', name: 'Everything', pitch: 'Every card in the box' },
   { id: 'cozy', name: 'Cozy', pitch: 'Everything, minus the spicy cards' },
 ];
@@ -73851,6 +73956,10 @@ const CSS = `
     .g-wave .wv-recs p { margin: 0; font-weight: 700; font-size: 0.84rem; line-height: 1.35; }
     .g-wave .wv-recs p b { font-weight: 900; }
     .g-wave .wv-recs p.dim { color: var(--g-muted); }
+    .g-wave .wv-con { margin: 2px 0 0; max-width: 34em; text-align: center; font-weight: 800; font-size: 0.86rem; line-height: 1.3; overflow-wrap: anywhere; }
+    .g-wave .wv-chip.star { display: inline-flex; align-items: center; gap: 4px; background: var(--g-card); color: var(--g-ink); }
+    .g-wave .wv-chip.star svg { flex: none; fill: var(--g-hl); stroke: var(--g-ink); stroke-width: 1.4; stroke-linejoin: round; }
+    .g-wave .wv-con .pp { display: inline-block; max-width: 100%; }
     .g-wave .wv-rows { width: 100%; display: flex; flex-direction: column; gap: 10px; }
     .g-wave .wv-row { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; align-items: center; padding: 10px 12px; border: 2px solid var(--g-ink); border-radius: 12px; background: var(--g-card); box-shadow: var(--g-shadow); }
     .g-wave .wv-row.jp { outline: 3px dashed var(--g-ink); outline-offset: 2px; }
@@ -73931,8 +74040,8 @@ const CSS = `
       .g-wave .wv-lab { margin: 0 0 -2px; }
       .g-wave .wv-scr.flow { gap: 3px; max-width: 860px; }
       .g-wave .wv-mode { min-height: 44px; }
-      .g-wave .wv-packs { gap: 4px; }
-      .g-wave .wv-pack { padding: 0 8px; font-size: 0.8rem; }
+      .g-wave .wv-packs { gap: 3px; }
+      .g-wave .wv-pack { padding: 0 6px; font-size: 0.76rem; }
       .g-wave .wv-pitch { min-height: 0; }
       .g-wave .wv-sticky { padding: 3px 0 4px; }
       .g-wave .wv-start { min-height: 44px; }
@@ -73983,6 +74092,20 @@ function statsOf(s) {
     rows.push({ i, giver: g, guesser: h, d, points: Rd.points, clue: Rd.clue || '', card: Rd.card, bull: d <= 4, dead: d === 0, edge: bn.includes('edge'), jp: !!Rd.jp });
   }
   return { st, rows, minD, bulls: rows.filter((r) => r.bull).length };
+}
+
+/**
+ * The round that came closest: smallest miss, then more points, then the earliest. A pure read of the rounds, so it
+ * works on any finished match (v1 or v2). Returns { i, round, d } or null.
+ */
+function clueOfNight(rounds) {
+  let best = null;
+  rounds.forEach((Rd, i) => {
+    if (Rd.at == null) return;
+    const d = Math.abs(Rd.at - Rd.target);
+    if (!best || d < best.d || (d === best.d && Rd.points > best.round.points)) best = { i, round: Rd, d };
+  });
+  return best;
 }
 
 const BADGES = {
@@ -74144,7 +74267,7 @@ function pickDeal(pool, data, rnd, len) {
   return { deal, seen: encodeSeen([...keep, ...deal]) };
 }
 
-return { MILESTONES, SEEN_CAP, statsOf, BADGES, badgesOf, recordPatch, tally, stampsOf, historyLine, chaseLine, parseSeen, encodeSeen, pickDeal };
+return { MILESTONES, SEEN_CAP, statsOf, clueOfNight, BADGES, badgesOf, recordPatch, tally, stampsOf, historyLine, chaseLine, parseSeen, encodeSeen, pickDeal };
 })();
 
 // ── js/games/wave/view.js ──
@@ -74154,7 +74277,7 @@ __M['js/games/wave/view.js'] = (() => {
 const { gameDataApi } = __M['js/games/core.js'];
 const { MODES, MODE_IDS, PACKS, PACK_IDS, TWIST_INFO, BETS, DEAL_LEN, MAX_CLUE, poolFor, maxOf } = __M['js/games/wave/rules.js'];
 const { BASE_CARDS, NEW_CARDS } = __M['js/games/wave/cards.js'];
-const { badgesOf, recordPatch, stampsOf, historyLine, chaseLine, pickDeal } = __M['js/games/wave/records.js'];
+const { clueOfNight, badgesOf, recordPatch, stampsOf, historyLine, chaseLine, pickDeal } = __M['js/games/wave/records.js'];
 
 // ── dial geometry (SVG user units) ──
 const CX = 120; const CY = 128; const R = 108;
@@ -74713,18 +74836,23 @@ function createWaveView(el, api, env) {
     const text = rating || (ctx.result && ctx.result.text) || '';
     const names = { a: api.name('a'), b: api.name('b') };
     const badges = badgesOf(s, names);
+    // a keepsake read straight from the rounds (no records involved, so it is true for any finished match)
+    const con = clueOfNight(s.rounds);
+    const conLine = con ? `<p class="wv-con" data-round="${con.i + 1}">Clue of the night: “${esc(con.round.clue)}” by ${nm(con.round.giver)} on <span class="pp">${label(cardOf(env.CARDS, con.round.card)[0])} ↔ ${label(cardOf(env.CARDS, con.round.card)[1])}</span>, ${con.d === 0 ? 'dead on' : `${con.d} off`}</p>` : '';
     const seg = (cls, a, b) => { const l = Math.max(0, a); const r = Math.min(100, b); return r > l ? `<span class="${cls}" style="left:${l}%;width:${r - l}%"></span>` : ''; };
     node.innerHTML = `<div class="wv-rhead">
         <span class="wv-kicker">Same Wave${isV2(s) ? ` · ${esc(MODES.find((m) => m.id === s.mode).name)}` : ''}</span>
         <div class="wv-plaque"><b>${s.score}<small>/${mx}</small></b><span>${esc(text)}</span></div>
         <div class="wv-meter" aria-hidden="true" style="--n:${mx}">${Array.from({ length: mx }, (_, i) => `<i class="${i < s.score ? 'on' : ''}"></i>`).join('')}</div>
+        ${conLine}
       </div>
       <div class="wv-recwrap" style="width:100%;display:flex;flex-direction:column;gap:8px;align-items:center">${recsHTML()}</div>
       <div class="wv-medals">${['a', 'b'].map((w) => `<div class="wv-medal ${w}"><small class="p-${w}">${esc(names[w])}</small><b>${esc(badges[w].name)}</b><span>${esc(badges[w].why)}</span></div>`).join('')}</div>
       <div class="wv-rows">${s.rounds.map((Rd, i) => {
     const d = Math.abs(Rd.at - Rd.target);
     const bn = Rd.bn || [];
-    const tags = [Rd.jp ? '<span class="wv-chip jp">Jackpot x2</span>' : '', Rd.dv ? '<span class="wv-chip">Déjà vu</span>' : '', ...(isV2(s) && Rd.tw !== 'normal' ? [`<span class="wv-chip">${esc(TWIST_INFO[Rd.tw].name)}</span>`] : []), ...bn.map((b) => `<span class="wv-chip">${bonusText[b]}</span>`)].join('');
+    const star = con && con.i === i ? '<span class="wv-chip star"><svg viewBox="0 0 16 16" aria-hidden="true" width="10" height="10"><path d="M8 1l2 4.6 5 .4-3.8 3.3 1.2 4.9L8 11.6 3.6 14.2l1.2-4.9L1 6l5-.4Z" /></svg> Clue of the night</span>' : '';
+    const tags = [Rd.jp ? '<span class="wv-chip jp">Jackpot x2</span>' : '', Rd.dv ? '<span class="wv-chip">Déjà vu</span>' : '', ...(isV2(s) && Rd.tw !== 'normal' ? [`<span class="wv-chip">${esc(TWIST_INFO[Rd.tw].name)}</span>`] : []), ...bn.map((b) => `<span class="wv-chip">${bonusText[b]}</span>`), star].join('');
     return `<div class="wv-row ${Rd.jp ? 'jp' : ''} ${anim ? 'anim' : ''}" style="animation-delay:${i * 70}ms">
             <span class="wv-row-card">${i + 1}. ${label(cardOf(env.CARDS, Rd.card)[0])} ↔ ${label(cardOf(env.CARDS, Rd.card)[1])}</span>
             <span class="wv-row-pts ${Rd.points ? '' : 'zero'}">${Rd.points ? `+${Rd.points}` : '0'}</span>
