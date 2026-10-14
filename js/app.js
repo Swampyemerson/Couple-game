@@ -2,6 +2,7 @@ import { CONFIG } from './config.js';
 import {
   PACKS, CATEGORIES, SPICY_CATEGORIES, DAILY, TRUTHS, DARES, TOD_LEVELS, DATES, DATE_CATS, LOVE_LANGS,
 } from './content.js';
+import { DAILY2 } from './content/daily.js';
 import { Store, randomId } from './store.js';
 import { initGames, gamesHubHTML, gamesHomeHTML, gamesWaitingCount, gamesIdentityChanged, GAMES } from './games/core.js';
 import './games/index.js';
@@ -41,9 +42,63 @@ const pad = (n) => String(n).padStart(2, '0');
 const dkey = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const addDays = (key, n) => { const [y, m, d] = key.split('-').map(Number); return dkey(new Date(y, m - 1, d + n)); };
 const dayNum = (key) => { const [y, m, d] = key.split('-').map(Number); return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(2025, 0, 1)) / 864e5); };
-const gcd = (a, b) => (b ? gcd(b, a % b) : a);
-const STEP = [37, 41, 43, 47, 53].find((s) => gcd(s, DAILY.length) === 1) || 1;
-const dailyQ = (key) => DAILY[(((dayNum(key) * STEP) % DAILY.length) + DAILY.length) % DAILY.length];
+// ── question of the day ──
+// Days before DAILY2_FROM keep the original free-text list with its original day → question
+// mapping, frozen here (the first 100 questions, step 37), so an answer saved on one of those days
+// always shows next to the question it answered, even if DAILY grows later. From DAILY2_FROM on,
+// three days in four are pick + guess (you pick yours and guess your partner's) and every fourth
+// day is free text. New answers carry their DAILY2 index, so they never lose their question either.
+// Answer shapes: 'text' (original list, also what older app versions write on any day),
+// { i, m, g } (pick + guess) and { i, t } (free text from DAILY2).
+const DAILY2_FROM = '2026-10-15';
+const LEGACY_N = Math.min(100, DAILY.length);
+const LEGACY_STEP = 37;
+const legacyQ = (key) => DAILY[(((dayNum(key) * LEGACY_STEP) % LEGACY_N) + LEGACY_N) % LEGACY_N];
+const D2_MC = DAILY2.flatMap((x, i) => (typeof x === 'object' ? [i] : []));
+const D2_TXT = DAILY2.flatMap((x, i) => (typeof x === 'string' ? [i] : []));
+const LEGACY_ITEM = (key) => ({ kind: 'legacy', id: 'legacy', q: legacyQ(key) });
+function d2Item(i) {
+  const x = DAILY2[i];
+  if (typeof x === 'string') return { kind: 'text', id: 'text:' + i, i, q: x };
+  if (x && typeof x === 'object' && Array.isArray(x.o)) return { kind: 'mc', id: 'mc:' + i, i, q: x.q, o: x.o };
+  return null;
+}
+// The question shown for a day nobody has answered yet.
+function dayItem(key) {
+  if (key < DAILY2_FROM || !D2_MC.length) return LEGACY_ITEM(key);
+  const n = dayNum(key) - dayNum(DAILY2_FROM);
+  const fourth = Math.floor(n / 4);
+  if (n % 4 === 3 && D2_TXT.length) return d2Item(D2_TXT[fourth % D2_TXT.length]);
+  return d2Item(D2_MC[(n - fourth) % D2_MC.length]);
+}
+// The question a saved answer was given against (null: no answer, or one this version can't read).
+function ansItem(key, v) {
+  if (typeof v === 'string') return LEGACY_ITEM(key);
+  if (v && typeof v === 'object' && Number.isInteger(v.i)) {
+    const it = d2Item(v.i);
+    if (it && (it.kind === 'mc' ? Number.isInteger(v.m) && Number.isInteger(v.g) : typeof v.t === 'string')) return it;
+  }
+  return null;
+}
+const itemById = (key, id) => (id === 'legacy' ? LEGACY_ITEM(key) : d2Item(Number(String(id).split(':')[1])));
+const dailyOf = (who, key) => store.person(who).daily?.[key];
+// Today's (or any day's) question: whatever one of you already answered, else the day's own.
+const dailyItem = (key) => ansItem(key, dailyOf(me(), key)) || ansItem(key, dailyOf(them(), key)) || dayItem(key);
+// Guesses on pick + guess days you both answered: how often each of you read the other right.
+function dailyTally() {
+  const t = { a: 0, b: 0, n: 0 };
+  const A = store.person('a').daily || {}; const B = store.person('b').daily || {};
+  for (const k of Object.keys(A)) {
+    const x = A[k]; const y = B[k];
+    if (!x || !y || typeof x !== 'object' || typeof y !== 'object' || x.i !== y.i) continue;
+    const it = ansItem(k, x);
+    if (!it || it.kind !== 'mc' || !ansItem(k, y)) continue;
+    t.n++;
+    if (x.g === y.m) t.a++;
+    if (y.g === x.m) t.b++;
+  }
+  return t;
+}
 const prettyDate = (key) => { const [y, m, d] = key.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }); };
 const shuffle = (arr) => { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 const me = () => store.me;
@@ -339,32 +394,93 @@ function daysTogether() {
 }
 
 function dailyCard(key, { compact = false } = {}) {
-  const q = dailyQ(key);
-  const mine = store.person(me()).daily?.[key];
-  const theirs = store.person(them()).daily?.[key];
+  const it = dailyItem(key);
+  const mine = dailyOf(me(), key);
+  const theirs = dailyOf(them(), key);
+  const mc = it.kind === 'mc';
+  const hint = `<p class="tiny muted">${theirs ? `${N(them())} already answered. Answer to unlock it.` : `Answers stay hidden until you’ve both answered.`}</p>`;
   let inner;
   if (!mine) {
-    inner = `<textarea class="input" rows="3" data-draft="daily-${key}" placeholder="Your answer…"></textarea>
-      <div class="daily-act"><button class="btn" data-act="saveDaily" data-key="${key}">Lock it in</button>
-      <p class="tiny muted">${theirs ? `${N(them())} already answered. Answer to unlock it.` : `Answers stay hidden until you’ve both answered.`}</p></div>`;
+    if (mc) {
+      const t = (session.dpick && session.dpick[key]) || {};
+      const opts = (k) => it.o.map((o, i) => `<button class="opt ${t[k] === i ? 'sel' : ''}" data-act="dailyPick" data-key="${key}" data-k="${k}" data-v="${i}" aria-pressed="${t[k] === i}">${esc(o)}</button>`).join('');
+      const ready = t.m !== undefined && t.g !== undefined;
+      inner = `<div class="label">Your answer</div><div class="opts p-${me()}">${opts('m')}</div>
+        <div class="label">Your guess for ${N(them())}</div><div class="opts guess p-${them()}">${opts('g')}</div>
+        <div class="daily-act"><button class="btn ${ready ? '' : 'is-off'}" data-act="saveDaily" data-key="${key}" data-item="${it.id}">Lock it in</button>${hint}</div>`;
+    } else {
+      inner = `<textarea class="input" rows="3" data-draft="daily-${key}" placeholder="Your answer…"></textarea>
+      <div class="daily-act"><button class="btn" data-act="saveDaily" data-key="${key}" data-item="${it.id}">Lock it in</button>${hint}</div>`;
+    }
   } else if (!theirs) {
-    inner = `${bubble(me(), mine)}
+    inner = `${dailyAnswer(key, me(), mine, it)}
       <div class="locked">${icon('lock')}Waiting on ${N(them())}…</div>
       <button class="btn ghost small" data-act="nudge" data-text="${esc(`Answer today's question on ${CONFIG.appName} 👀`)}">Nudge ${N(them())}</button>`;
   } else {
-    inner = bubble(me(), mine) + bubble(them(), theirs);
+    const mi = ansItem(key, mine); const ti = ansItem(key, theirs);
+    inner = mc && mi && ti && mi.id === ti.id ? dailyReveal(key, it, mine, theirs) : dailyAnswer(key, me(), mine, it) + dailyAnswer(key, them(), theirs, it);
   }
-  return `<div class="card daily ${compact ? 'compact' : ''}">
-    <div class="eyebrow">${key === dkey() ? (compact ? 'Today' : 'Question of the day') : key === addDays(dkey(), -1) ? 'Yesterday' : prettyDate(key)}</div>
-    <h2 class="q">${esc(q)}</h2>
+  const tally = !compact && mc ? dailyTallyLine() : '';
+  return `<div class="card daily ${compact ? 'compact' : ''} ${mc ? 'is-mc' : ''}" data-day="${key}">
+    <div class="eyebrow">${key === dkey() ? (compact ? 'Today' : (mc ? 'Question of the day · pick + guess' : 'Question of the day')) : key === addDays(dkey(), -1) ? 'Yesterday' : prettyDate(key)}</div>
+    <h2 class="q">${esc(it.q)}</h2>
     ${inner}
+    ${tally}
   </div>`;
 }
 
-function bubble(who, text) {
+// One person's answer on its own (before the reveal, or when the two of you answered different
+// questions: an older app version on one phone). Names the question when it isn't the card's.
+function dailyAnswer(key, who, v, cardItem) {
+  const it = ansItem(key, v);
+  const note = it && it.id !== cardItem.id ? `<div class="tiny muted">On “${esc(it.q)}”</div>` : '';
+  if (it && it.kind === 'mc') {
+    return `<div class="bubble p-${who} ${who === me() ? 'mine' : 'theirs'}">
+      <div class="who">${N(who)}</div>${note}
+      <div class="txt"><b>${esc(it.o[v.m])}</b></div>
+      <div class="tiny dguess">Guessed ${who === me() ? N(them()) : 'you'} would say “${esc(it.o[v.g])}”</div>
+    </div>`;
+  }
+  const text = typeof v === 'string' ? v : v && typeof v.t === 'string' ? v.t : '';
+  return bubble(who, text || '(answered in a newer version of the app)', note);
+}
+
+// Both answered the same pick + guess question.
+function dailyReveal(key, it, mine, theirs) {
+  // the reveal pops in once per page load, not on every re-render
+  session.dshown = session.dshown || new Set();
+  const fresh = !session.dshown.has(key); session.dshown.add(key);
+  const same = mine.m === theirs.m;
+  const theyGotMe = theirs.g === mine.m; const iGotThem = mine.g === theirs.m;
+  const o = (i) => `“${esc(it.o[i])}”`;
+  const head = same ? `You both picked ${o(mine.m)}` : `${N(me())} picked ${o(mine.m)}, ${N(them())} picked ${o(theirs.m)}`;
+  const verdict = theyGotMe && iGotThem ? 'Mind readers. You both guessed right.'
+    : theyGotMe ? `${N(them())} guessed you right.`
+      : iGotThem ? `You guessed ${N(them())} right.`
+        : 'Nobody guessed right today. Study up.';
+  const row = (who, v, guesser, right, guess) => `<div class="dr-row p-${who}">
+      <div class="dr-who">${N(who)}</div>
+      <div class="dr-pick">${o(v.m)}</div>
+      <span class="mark ${right ? 'ok' : 'no'}">${right ? `${guesser} guessed it ✓` : `${guesser} guessed ${o(guess)} ✗`}</span>
+    </div>`;
+  return `<div class="dreveal ${theyGotMe && iGotThem ? 'both-right' : ''} ${fresh ? 'fresh' : ''}">
+    <div class="dr-head">${head}</div>
+    ${row(me(), mine, N(them()), theyGotMe, theirs.g)}
+    ${row(them(), theirs, 'You', iGotThem, mine.g)}
+    <div class="dr-verdict">${verdict}</div>
+  </div>`;
+}
+
+function dailyTallyLine() {
+  const t = dailyTally();
+  if (!t.n) return '';
+  return `<p class="dtally tiny"><span>Daily guesses</span> <b class="ink-a">${N('a')} ${t.a}</b> · <b class="ink-b">${N('b')} ${t.b}</b> <span class="muted">of ${t.n}</span></p>`;
+}
+
+function bubble(who, text, note = '') {
   const skipped = text === SKIPPED;
   return `<div class="bubble p-${who} ${who === me() ? 'mine' : 'theirs'}">
-    <div class="who">${N(who)}</div>
+    <div class="who">${N(who)}</div>${note}
     <div class="txt ${skipped ? 'muted' : ''}">${skipped ? 'skipped' : esc(text)}</div>
   </div>`;
 }
@@ -897,6 +1013,7 @@ function viewHistory() {
   if (!keys.has(y)) sorted.splice(1, 0, y);
   return `${topbar('Past questions')}
   <div class="screen">
+    ${dailyTallyLine()}
     ${sorted.map((k) => dailyCard(k, { compact: true })).join('')}
   </div>`;
 }
@@ -1002,12 +1119,33 @@ const actions = {
     session.drafts.synclink = '';
     await doImport(m[1]);
   },
+  dailyPick: (d) => {
+    if (dailyOf(me(), d.key)) return;
+    session.dpick = session.dpick || {};
+    const t = (session.dpick[d.key] = session.dpick[d.key] || {});
+    t[d.k] = Number(d.v);
+    render();
+  },
   saveDaily: (d, el) => {
-    // Read the field itself: on iOS the last autocorrected word can land after the input event.
-    const box = el.closest('.daily')?.querySelector(`[data-draft="daily-${d.key}"]`);
-    const v = ((box ? box.value : session.drafts['daily-' + d.key]) || '').trim();
-    if (!v) return toast('Write something first.');
-    store.setMine(['daily', d.key], v.slice(0, 2000));
+    if (dailyOf(me(), d.key)) return; // a second tap on the same button
+    // Save against the question that was on screen (data-item), not whatever the day maps to now.
+    const it = (d.item && itemById(d.key, d.item)) || dailyItem(d.key);
+    if (!it) return;
+    let value;
+    if (it.kind === 'mc') {
+      const t = (session.dpick && session.dpick[d.key]) || {};
+      if (t.m === undefined) return toast('Pick your answer first.');
+      if (t.g === undefined) return toast(`Now guess ${store.name(them())}’s answer.`);
+      value = { i: it.i, m: t.m, g: t.g };
+      delete session.dpick[d.key];
+    } else {
+      // Read the field itself: on iOS the last autocorrected word can land after the input event.
+      const box = el.closest('.daily')?.querySelector(`[data-draft="daily-${d.key}"]`);
+      const v = ((box ? box.value : session.drafts['daily-' + d.key]) || '').trim();
+      if (!v) return toast('Write something first.');
+      value = it.kind === 'legacy' ? v.slice(0, 2000) : { i: it.i, t: v.slice(0, 2000) };
+    }
+    store.setMine(['daily', d.key], value);
     delete session.drafts['daily-' + d.key];
     const theirs = store.person(them()).daily?.[d.key];
     toast(theirs ? 'Unlocked!' : `Locked in. Waiting on ${store.name(them())}.`);

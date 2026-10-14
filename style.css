@@ -188,6 +188,21 @@ p { margin: 0; }
 .bubble.p-a .who { background: var(--p-a); }
 .bubble.p-b .who { background: var(--p-b); }
 .bubble .txt { white-space: pre-wrap; word-break: break-word; font-size: 1rem; line-height: 1.4; }
+/* pick + guess daily */
+.daily .opts .opt { min-height: 52px; touch-action: manipulation; }
+.daily .btn.is-off { opacity: 0.55; }
+.dguess { margin-top: 6px; color: var(--muted); font-weight: 700; }
+.dreveal { display: flex; flex-direction: column; gap: 10px; padding: 14px; color: var(--text); background: var(--card); border: 2px solid var(--text); border-radius: 12px; box-shadow: var(--shadow); }
+.dreveal.fresh { animation: pop 0.35s ease-out both; }
+.dr-head { font-family: var(--g-font-display); font-weight: 900; font-size: 1.3rem; line-height: 1.15; }
+.dr-row { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px 10px; padding: 10px 12px; background: var(--ps, var(--card)); border: 2px solid var(--text); border-radius: 10px; }
+.dr-who { padding: 3px 7px 2px; font-size: 0.66rem; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--g-on-ink); background: var(--pi, var(--g-hl)); border-radius: 4px; }
+.dr-pick { font-weight: 800; line-height: 1.3; word-break: break-word; }
+.dr-row .mark { grid-column: 1 / -1; justify-self: start; margin-left: 0; }
+.dr-verdict { font-weight: 800; }
+.dreveal.both-right .dr-verdict { align-self: flex-start; padding: 3px 8px; color: var(--g-on-ink); background: var(--g-hl); border-radius: 4px; }
+.dtally { margin: 0; font-weight: 700; }
+.dtally > span:first-child { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
 
 /* section labels with a printed rule */
 .section { display: flex; align-items: center; gap: 8px; margin: 4px 0 0; font-family: var(--g-font-body); font-weight: 800; font-size: 0.74rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text); }

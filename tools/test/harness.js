@@ -33,6 +33,15 @@ function ensureThree() {
   return out;
 }
 
+// Moves the page's clock to another day (same time of day; timers and performance.now untouched).
+const SHIFT_DAY = (day) => {
+  const R = Date; const [y, m, d] = day.split('-').map(Number); const n = new R();
+  const off = new R(y, m - 1, d, n.getHours(), n.getMinutes(), n.getSeconds(), n.getMilliseconds()) - n;
+  function D(...a) { if (!new.target) return new D().toString(); return a.length ? new R(...a) : new R(R.now() + off); }
+  D.prototype = R.prototype; D.now = () => R.now() + off; D.UTC = R.UTC; D.parse = R.parse;
+  globalThis.Date = D;
+};
+
 // Runs inside each page before the app. Talks to Node through exposed bindings.
 const RUNTIME = (cfg) => `
 (() => {
@@ -191,6 +200,7 @@ async function launch(opts = {}) {
     fine = false, // true = a laptop: no touch, (pointer: fine)
     reducedMotion = 'no-preference', // or 'reduce'
     coldCache = false, // true = every db subscription first sees an empty cache view (fromCache), then the server
+    today = null, // 'YYYY-MM-DD': the pages' clock reads this day (same time of day, still ticking)
   } = opts;
   // `only`: game file names to bundle (e.g. ['four', 'dots']). Builds to a private file so
   // parallel test runs, and other people's half-finished games, can't break yours.
@@ -245,6 +255,7 @@ async function launch(opts = {}) {
   async function player(w, { identified = true, uid = 'u_' + w, viewport = null } = {}) {
     const ctx = await browser.newContext({ ...devices[device], hasTouch: !fine, colorScheme, reducedMotion, ...(viewport ? { viewport } : {}) });
     await ctx.addInitScript(RUNTIME({ who: w, uid, coarse, identified, coldCache }));
+    if (today) await ctx.addInitScript(SHIFT_DAY, today);
     await ctx.route(/three\.js\/r128\/three\.min\.js/, (r) => r.fulfill({ path: three, contentType: 'text/javascript' }));
     await ctx.route(/fonts\.(googleapis|gstatic)\.com/, (r) => r.abort());
     const pg = await ctx.newPage();

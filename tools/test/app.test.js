@@ -30,7 +30,9 @@ const tapTwice = (pg, sel, gap) => pg.evaluate(([s, g]) => new Promise((r) => {
 const closeIfOpen = (pg) => pg.click('#game-root [data-g="close"]', { timeout: 1500 }).catch(() => {});
 const answers = (h, w, pack) => ((h.docs[`people/${w}`] || {}).packs || {})[pack]?.ans || {};
 const daily = (h, w) => Object.assign({}, ...Object.entries(h.docs).filter(([k]) => k.startsWith(`people/${w}/daily/`)).map(([, v]) => v.d || {}));
-const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+// The daily tests type an answer, so they run on a free-text day (pick + guess days: daily.test.js).
+const TEXT_DAY = '2026-10-14';
+const today = () => TEXT_DAY;
 
 // Two tiny games, injected into the bundle for the engine tests.
 const TEST_GAMES = `
@@ -141,7 +143,7 @@ const SECTIONS = {
 
   // ── question packs, the daily question, the bucket list, the date ──
   async packs() {
-    const h = await launch({ port: BASE, only: [] });
+    const h = await launch({ port: BASE, only: [], today: TEXT_DAY });
     const { a, b } = h;
     try {
       await press(a, 'openPack', { id: 'tot-everyday' });
@@ -227,7 +229,7 @@ const SECTIONS = {
 
   // ── one person, two devices, writing at the same moment ──
   async devices() {
-    const h = await launch({ port: BASE + 1, only: [], who: ['a'], latency: 150 });
+    const h = await launch({ port: BASE + 1, only: [], who: ['a'], latency: 150, today: TEXT_DAY });
     try {
       const a = h.a; const a2 = await h.device('a');
       await a.fill('textarea[data-draft^="daily-"]', 'from the phone');
@@ -245,7 +247,7 @@ const SECTIONS = {
 
   // ── a stale device reopens on a cold cache ──
   async cold() {
-    const h = await launch({ port: BASE + 2, only: [], who: ['a'], coldCache: true });
+    const h = await launch({ port: BASE + 2, only: [], who: ['a'], coldCache: true, today: TEXT_DAY });
     try {
       const a = h.a; const a2 = await h.device('a');
       await a2.waitForTimeout(800);

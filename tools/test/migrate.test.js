@@ -21,7 +21,7 @@ const old = (w, n) => ({
 
 (async () => {
   const seedDocs = { 'people/a': old('a', 0), 'people/b': old('b', 1) };
-  const h = await launch({ port: Number(process.env.PORT || 8792), only: [], seedDocs, coarse: true });
+  const h = await launch({ port: Number(process.env.PORT || 8792), only: [], seedDocs, coarse: true, today: '2026-10-14' /* a free-text day */ });
   const { a, b } = h;
   const packsOf = (w) => Object.keys((h.docs[`people/${w}`] || {}).packs || {}).sort().join(',');
   try {
