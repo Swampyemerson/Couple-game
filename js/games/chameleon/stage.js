@@ -64,8 +64,8 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
   // cool and its ground bounce warm, so lit faces read warm and the shade sides lean cool; the ramp has
   // four steps now (0.40 → 0.88). Peak on a lit face = hemi 0.56 + sun 0.50 × 0.88 = 1.0 (nothing clips).
   const BASE_HEMI = 0.56; const BASE_SUN = 0.50;
-  const hemi = new THREE.HemisphereLight(0xf3f7ff, 0xf3e1c3, BASE_HEMI);
-  const sun = new THREE.DirectionalLight(0xffeccf, BASE_SUN);
+  const hemi = new THREE.HemisphereLight(0xf9faff, 0xf2e0c4, BASE_HEMI);
+  const sun = new THREE.DirectionalLight(0xffe3bf, BASE_SUN);
   sun.position.set(-3.2, 8, 4.6);
   scene.add(hemi, sun, sun.target);
 

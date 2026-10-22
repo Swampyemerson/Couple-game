@@ -2,7 +2,7 @@
 // prints `METRIC {json}` lines so two runs (base vs. changed tree) can be diffed. Depends only on the
 // window.__cham hooks that exist at the base commit (no new hooks needed).
 //
-//   PORT=9100 ONLY=xfeel node tools/test/games/chameleon-upd2.test.js     (xfeel | xperf | xseek; default = all three)
+//   PORT=9100 ONLY=xfeel node tools/test/games/chameleon-upd2.test.js     (xfeel hider routes | xfeels seeker climb view | xperf | xseek; default = all four)
 //   env: FEEL_MAPS=living,house   xfeel maps (default living)
 //        PERF_MAPS=all|living,house,...   xperf maps (default all)
 //        SEEK_MAPS=living,garden,studio,candy   xseek maps (default those four)
@@ -306,8 +306,11 @@ async function steer(a, stick, wps, { tick = 90, maxMs = 12000, tol = 0.3, label
       // screen "up": the view's up for a wall; the camera's horizontal heading for anything flat (floor, a table top,
       // a ceiling, flipped), which is what the game maps the stick to there
       const Up = Math.abs(n[1]) > 0.7 ? norm3([cam.dir[0], 0, cam.dir[2]]) : cross(R, cam.dir);
-      const sx = dot3(d, R); const sy = dot3(d, Up) * (n[1] < -0.7 ? -1 : 1); // (seen from below, ceiling points nearer the camera are higher on screen)
-      const m = Math.hypot(sx, sy) || 1;
+      let sx = dot3(d, R); let sy = dot3(d, Up) * (n[1] < -0.7 && cam.dir[1] > 0.12 ? -1 : 1); // (seen from below at an angle, ceiling points nearer the camera are higher on screen; a level view of it is edge-on and the game uses camera forward)
+      let m = Math.hypot(sx, sy) || 1;
+      if (m < 0.3 && Math.abs(n[1]) < 0.7) { // a wall seen edge-on (the camera looks along it): the game uses the camera heading as "up"
+        const Fh = norm3([cam.dir[0], 0, cam.dir[2]]); sy = dot3(d, Fh); sx = dot3(d, R); m = Math.hypot(sx, sy) || 1;
+      }
       await stick.set(sx / m, sy / m);
       if (process.env.XDEBUG && (wp.name || '').match(process.env.XDEBUG)) console.log(`   [${wp.name}] p=${p.map((x) => x.toFixed(2))} n=${n.map((x) => x.toFixed(1))} at=${b.at} stick=${(sx / m).toFixed(2)},${(sy / m).toFixed(2)} camdir=${cam.dir.map((x) => x.toFixed(2))}`);
       await wait(tick);
@@ -356,7 +359,7 @@ function livingRoutes(a, stick, seeker) {
     ['floor-wall-ceiling-wall-floor', () => tp(-3.4, 1.2, -Math.PI / 2, Math.PI / 2), [
       { name: 'to-left-wall', to: [-5.0, 0.3, 1.2], done: bk('wall'), max: 9000, required: true },
       { name: 'up-to-ceiling', to: [-4.4, 2.5, 1.2], done: bk('ceiling'), max: 12000 },
-      { name: 'along-ceiling', to: [-2.8, 2.5, 1.2], tol: 0.35, max: 9000 },
+      ...(seeker ? [] : [{ name: 'along-ceiling', to: [-2.8, 2.5, 1.2], tol: 0.35, max: 9000 }]), // (the seeker's climb view looks level: a ceiling is edge-on, no steady mapping)
       { name: 'back-to-left-wall', to: [-5.0, 2.3, 1.2], done: bk('wall'), max: 12000 },
       { name: 'down-and-off', to: [-4.6, 0.0, 1.2], done: bk('floor'), max: 14000 },
     ]],
@@ -448,17 +451,16 @@ async function feelCombo(port, map, role, repeat) {
       all.frames += r.m.frames; all.switches += r.m.switches; all.events += e.total; all.near += e.near; all.far += e.far; all.eventsRaw += r.m.events.raw.total;
       all.camRotEvents += e.camRot; all.camMoveEvents += e.camMove; all.bodyMoveEvents += e.bodyMove; all.bodyTurnEvents += e.bodyTurn;
     }
+    all.eventsPerSwitch = r2(all.events / Math.max(1, all.switches)); all.nearEventsPerSwitch = r2(all.near / Math.max(1, all.switches)); all.eventsPer100Frames = r2(100 * all.events / Math.max(1, all.frames));
     metric('xfeel.total', { map, role, ...all });
     h.assertNoErrors();
   } catch (e) { console.error(e); failures++; await a.screenshot({ path: path.join(SHOTS, `xfeel-${map}-${role}-FAIL.png`) }).catch(() => {}); } finally { await h.close().catch(() => {}); }
 }
 
-async function feelSection(port) {
-  console.log('\n# xfeel: surface-switch smoothness (hotseat, real joystick via CDP touch; CPU x' + FEEL_CPU + ')');
-  const maps = (process.env.FEEL_MAPS || 'living,house').split(',');
-  const roles = (process.env.FEEL_ROLES || 'hider,seeker').split(',');
-  const repeat = Number(process.env.REPEAT) || 3;
-  for (const role of roles) for (const map of maps) await feelCombo(port, map, role, repeat);
+async function feelSection(port, role) {
+  console.log(`\n# ${role === 'seeker' ? 'xfeels' : 'xfeel'}: surface-switch smoothness, ${role} (hotseat, real joystick via CDP touch; CPU x${FEEL_CPU})`);
+  const maps = (role === 'seeker' ? process.env.FEELS_MAPS || 'living' : process.env.FEEL_MAPS || 'living,house').split(',');
+  for (const map of maps) await feelCombo(port, map, role, Number(process.env.REPEAT) || (map === 'living' ? 3 : 2));
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -651,7 +653,8 @@ async function seekMap(port, id) {
 // ─────────────────────────────────────────────────────────────────────
 (async () => {
   const sections = [];
-  if (want('xfeel')) sections.push(() => feelSection(PORT + 0));
+  if (want('xfeel')) sections.push(() => feelSection(PORT + 0, 'hider'));
+  if (want('xfeels')) sections.push(() => feelSection(PORT + 3, 'seeker'));
   if (want('xperf')) sections.push(() => perfSection(PORT + 1));
   if (want('xseek')) sections.push(() => seekSection(PORT + 2));
   for (const run of sections) { try { await run(); } catch (e) { console.error(e); failures++; } }

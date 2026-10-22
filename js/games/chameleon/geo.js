@@ -241,9 +241,9 @@ function rotMatrix(rx, ry, rz) {
  */
 export const BACKDROP = -1;
 // baked lighting (vertex colours only ever darken): contact occlusion on floors and at the foot of walls
-export const AO_REACH = 0.42; // m: how far a prop's occlusion reaches over the floor
-export const AO_FLOOR = 0.26; // darkening at a prop's edge (× its weight)
-export const AO_MIN = 0.7;    // no vertex is darkened below this fraction of its colour
+export const AO_REACH = 0.5;  // m: how far a prop's occlusion reaches over the floor
+export const AO_FLOOR = 0.34; // darkening at a prop's edge (× its weight)
+export const AO_MIN = 0.66;   // no vertex is darkened below this fraction of its colour
 export const AO_WALL = 0.2;   // darkening at the very foot of a wall
 export const AO_WALL_H = 0.3; // m above the wall's base where it fades out
 export function createBuilder({ tiles, ink = [0.11, 0.1, 0.13], chunker = null }) {

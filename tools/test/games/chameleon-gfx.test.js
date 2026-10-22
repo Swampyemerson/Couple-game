@@ -86,8 +86,7 @@ async function staticSection() {
     rows.push({ id: entry.id, tris: out.triCount, verts: out.vertexCount, chunks: out.chunks.length, colliders: out.colliders.length, tiles: fin.reqs.length, atlasUsed: fin.used, ms: Math.round(ms) });
     assert(!fin.dropped.length, `${entry.id}: every atlas tile fits (${fin.reqs.length} tiles, ${fin.used}px of 1024 used)`);
     assert(out.vertexCount <= (small ? 100000 : 160000), `${entry.id}: ${out.vertexCount.toLocaleString()} vertices (≤ ${small ? '100k' : '160k'})`);
-    // vertex colours are the baked lighting: AO only darkens (every channel ≤ the tint it started from is
-    // checked in the map test); here: no channel NaN or out of 0..1, and no vertex darker than AO_MIN × its tint
+    // vertex colours are the baked lighting: no channel NaN or out of 0..1
     let bad = 0; let darkest = 1;
     for (const ch of out.chunks) {
       const C = ch.geometry.color.array;
@@ -96,6 +95,26 @@ async function staticSection() {
     }
     assert(bad === 0, `${entry.id}: every vertex colour channel is within 0..1`);
     void darkest;
+  }
+  // the baked lighting on a synthetic room: a subdivided floor with a box on it, and a wall
+  {
+    const { boxGeo, createBuilder, AO_MIN, AO_WALL } = M.geo;
+    const tiles = { white: [0, 0, 0.1, 0.1] };
+    const b = createBuilder({ tiles, ink: [0, 0, 0] });
+    b.add(boxGeo(4, 0.1, 4, { faces: ['py'], cell: 0.4 }), { at: [0, -0.05, 0], color: '#ffffff', outline: false, ao: 'floor' });
+    b.add(boxGeo(1, 0.5, 1), { at: [0, 0.25, 0], color: '#ffffff', collide: true });
+    b.add(boxGeo(4, 2, 0.1, { cuts: [0.3] }), { at: [0, 1, -2], color: '#ffffff', outline: false, ao: 'wall', aoBase: 0 });
+    const out = b.finish(FAKE_THREE); const P = out.chunks[0].geometry.position.array; const C = out.chunks[0].geometry.color.array;
+    let floorMin = 1; let floorFar = 0; let wallFoot = 1; let wallHigh = 1; let nFloor = 0;
+    for (let i = 0; i < P.length / 3; i++) {
+      const x = P[i * 3]; const y = P[i * 3 + 1]; const z = P[i * 3 + 2]; const c = C[i * 3];
+      if (c > 0.01 && Math.abs(y) < 1e-6 && z > -1.9 && (Math.abs(x) > 0.51 || Math.abs(z) > 0.51)) { nFloor++; floorMin = Math.min(floorMin, c); if (Math.hypot(x, z) > 1.9) floorFar = Math.max(floorFar, c); }
+      if (z < -1.9 && Math.abs(y) < 1e-6) wallFoot = Math.min(wallFoot, c);
+      if (z < -1.9 && y > 0.5) wallHigh = Math.min(wallHigh, c);
+    }
+    assert(nFloor >= 100 && floorMin >= AO_MIN - 1e-6 && floorMin < 0.97, `AO: a floor round a box is darkened (${floorMin.toFixed(2)}) but never below AO_MIN ${AO_MIN} (${nFloor} floor vertices)`);
+    assert(floorFar === 1, 'AO: floor vertices far from every prop keep their colour');
+    assert(Math.abs(wallFoot - (1 - AO_WALL)) < 1e-6 && wallHigh === 1, `AO: the foot of a wall darkens by ${AO_WALL} (${wallFoot.toFixed(2)}) and the wall above 0.3 m is untouched`);
   }
   console.log('  ' + JSON.stringify(rows));
   if (process.env.JSON) fs.writeFileSync(process.env.JSON + '.static.json', JSON.stringify(rows, null, 1));

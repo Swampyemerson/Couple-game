@@ -88,7 +88,7 @@ function room(b, { w, d, h = 2.5, front = 0.7, t = 0.16, floorTile, floorRep = 1
   // walls: back (-z), left (-x), right (+x), front (+z, low)
   const W = walls || {};
   const wall = (cfg, at, sw, sh, sd, axis) => {
-    b.add(boxGeo(sw, sh, sd, { cuts: [0.3] }), { at, color: cfg.color || '#ffffff', tile: cfg.tile, rep: cfg.rep || 1, uvOff: cfg.uvOff, outline: axis === 'front', collide: { wall: true, name: axis }, ao: 'wall', aoBase: 0 });
+    b.add(boxGeo(sw, sh, sd, { cuts: axis === 'front' ? null : [0.3] }), { at, color: cfg.color || '#ffffff', tile: cfg.tile, rep: cfg.rep || 1, uvOff: cfg.uvOff, outline: axis === 'front', collide: { wall: true, name: axis }, ao: axis === 'front' ? undefined : 'wall', aoBase: 0 });
     // a crisp ink cap along the top edge instead of a full hull (cheap)
     if (axis !== 'front') b.add(boxGeo(sw + 0.002, 0.03, sd + 0.002, { faces: ['py', 'px', 'nx', 'pz', 'nz'] }), { at: [at[0], sh - 0.015, at[2]], color: W.cap || '#3a2f2a', outline: false });
   };
@@ -866,7 +866,7 @@ function studio(atlas) {
       const n = 14;
       for (let i = 0; i < n; i++) {
         const t = i / (n - 1); const x = -4.6 + t * 9.2; const sag = Math.sin(t * Math.PI) * 0.25;
-        b.add(cylGeo(0.0, 0.1, 0.2, { radial: 3 }), { at: [x, 2.42 - sag - 0.1, bz], rot: [0, 0, Math.PI], color: all[(i + (bz > 0 ? 3 : 0)) % all.length], outline: false });
+        b.add(cylGeo(0.0, 0.07, 0.15, { radial: 3 }), { at: [x, 2.42 - sag - 0.075, bz], rot: [0, 0, Math.PI], color: all[(i + (bz > 0 ? 3 : 0)) % all.length], outline: false });
       }
     }
 

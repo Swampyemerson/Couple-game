@@ -29,6 +29,8 @@ export function dims(s = 1) {
 }
 
 const CELL = 1.5;
+/** How far ahead (× the body radius) a face counts as the body's nose touching it: a concave transfer fires then. */
+const LOOK_R = 0.85;
 
 export function createWorld(map) {
   const boxes = map.colliders;
@@ -79,9 +81,12 @@ export function createWorld(map) {
     return n;
   }
 
-  const rOf = (body) => (body.sq ? SQUEEZE_R : body.r);
-  const stepOf = (body) => (body.sq ? 0.12 : body.step || STEP);
-  const headOf = (body) => (body.sq ? SQUEEZE_H : body.head || HEAD);
+  // the squeeze profile is one tiny shape at every size, but never bigger than 0.9 × the body itself
+  // (a micro body, r 0.077 / head 0.109, would otherwise squeeze into something larger than it stands)
+  const sOf = (body) => (body.s > 0 ? body.s : 1);
+  const rOf = (body) => (body.sq ? Math.min(SQUEEZE_R, 0.24 * sOf(body) * 0.9) : body.r);
+  const headOf = (body) => (body.sq ? Math.min(SQUEEZE_H, HEAD * sOf(body) * 0.9) : body.head || HEAD);
+  const stepOf = (body) => (body.sq ? Math.min(0.12, headOf(body) * 0.8) : body.step || STEP);
 
   function pushOut(body) {
     let moved = false;
@@ -405,16 +410,16 @@ export function createWorld(map) {
     const dist = sp * dt;
     // 1. concave: a face ahead, facing us → climb onto it. Two feelers: one at belly height,
     //    one just above the surface (catches skirting boards, sills, shelf lips)
-    const look = dist + r * 0.85;
+    const look = dist + r * LOOK_R;
     let H = null; let solid = false;
     for (let k = 0; k < 2; k++) {
       const h = k === 0 ? 0.035 : Math.min(0.6 * r, 0.16);
       const ox = body.x + nx * h; const oy = body.y + ny * h; const oz = body.z + nz * h;
       const G = raycast(ox, oy, oz, dx, dy, dz, k === 0 ? Math.min(look, dist + 0.06) : look, null, true);
       // a non-climbable face (invisible guards, glass) is a solid stop, never a new surface
-      if (G && G.box && G.box.climb === false && G.t < dist + r * 0.85) { solid = true; blkN = true; blkS = -1; blkX = G.nx; blkY = G.ny; blkZ = G.nz; break; }
+      if (G && G.box && G.box.climb === false && G.t < dist + r * LOOK_R) { solid = true; blkN = true; blkS = -1; blkX = G.nx; blkY = G.ny; blkZ = G.nz; break; }
       if (G && G.nx * dx + G.ny * dy + G.nz * dz < -0.5 && !vetoed(body, G.nx, G.ny, G.nz, ox0, oy0, oz0) && okContact(G, clear, r)) { H = G; break; }
-      if (G && G.t < dist + r * 0.85 && !blkN && G.nx * nx + G.ny * ny + G.nz * nz < 0.5) { blkN = true; blkS = -1; blkX = G.nx; blkY = G.ny; blkZ = G.nz; }
+      if (G && G.t < dist + r * LOOK_R && !blkN && G.nx * nx + G.ny * ny + G.nz * nz < 0.5) { blkN = true; blkS = -1; blkX = G.nx; blkY = G.ny; blkZ = G.nz; }
     }
     if (solid) return 3;
     if (H) {

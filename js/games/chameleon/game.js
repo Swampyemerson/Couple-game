@@ -2062,8 +2062,12 @@ export function createGame(el, api) {
   const PAINT_CAM_TRY = [[0, 0.32], [0.45, 0.32], [-0.45, 0.32], [0, 0.8], [0.9, 0.32], [-0.9, 0.32]];
   const PAINT_CAM_RAYS = 12;
   const camPts = new Float64Array(9);
+  /** Paint camera distance scale for body size s: 0.5 + 0.5 s from Large down to Medium (unchanged for s ≥ 1), closer to s
+   *  below that (a micro body filled a quarter of the screen height); never nearer than PAINT_MIN_D (the near plane / zoom floor). */
+  const paintK = (s) => (s >= 1 ? 0.5 + 0.5 * s : 0.25 + 0.75 * s);
+  const PAINT_MIN_D = 0.4;
   function framePaintCam(v) {
-    const b = body[v]; const k2 = 0.5 + 0.5 * b.s; const pd = C.paintDist * k2; const y0 = C.paintYaw;
+    const b = body[v]; const k2 = paintK(b.s); const pd = Math.max(PAINT_MIN_D, C.paintDist * k2); const y0 = C.paintYaw;
     const ms = stage.av[v].meshes;
     bodyCentre(v, tv3); const cx = tv3.x; const cy = tv3.y; const cz = tv3.z;
     camPts[0] = cx; camPts[1] = cy; camPts[2] = cz;
@@ -3202,7 +3206,7 @@ export function createGame(el, api) {
     } else if (P.on && v) {
       const b = body[v];
       bodyCentre(v, lookWant);
-      const cp = Math.cos(C.paintPitch); const pd = C.paintDist * (0.5 + 0.5 * b.s);
+      const cp = Math.cos(C.paintPitch); const pd = Math.max(PAINT_MIN_D, C.paintDist * paintK(b.s));
       camWant.set(lookWant.x + Math.sin(C.paintYaw) * cp * pd, lookWant.y + Math.sin(C.paintPitch) * pd, lookWant.z + Math.cos(C.paintYaw) * cp * pd);
       floorCam(camWant);
       rate = 14;
@@ -3351,6 +3355,7 @@ export function createGame(el, api) {
   }
   const revC = { x: 0, y: 0, z: 0 };
   const tvS = [0, 0];
+  const RIG_TURN = 8; // rad/s: the fastest the follow rig swings the camera round the body to a new solver pick
   /**
    * The third-person follow rig (hider orbit, seeker climb view). `look` (the point the camera orbits / aims
    * at, from the drawn body) goes through a critically damped spring (smoothT ≈ the time to catch up: no lag
@@ -3367,8 +3372,27 @@ export function createGame(el, api) {
     if (rest) { spring3Snap(C.pv, look.x, look.y, look.z); C.co[0] = ox; C.co[1] = oy; C.co[2] = oz; }
     else {
       spring3Step(C.pv, look.x, look.y, look.z, smoothT, dt);
-      const k = 1 - Math.exp(-(Math.hypot(ox, oy, oz) < Math.hypot(C.co[0], C.co[1], C.co[2]) ? 40 : 10) * dt);
-      C.co[0] += (ox - C.co[0]) * k; C.co[1] += (oy - C.co[1]) * k; C.co[2] += (oz - C.co[2]) * k;
+      // the solver's offset eases by direction (10/s: a swing to another candidate is a quick glide, never a cut) and
+      // by length (pulled in at 40/s: the camera guard has already kept it out of the wall; out at 10/s)
+      const lw = Math.hypot(ox, oy, oz) || 1e-6; const lc = Math.hypot(C.co[0], C.co[1], C.co[2]) || 1e-6;
+      const kd = 1 - Math.exp(-10 * dt); const kl = 1 - Math.exp(-(lw < lc ? 40 : 10) * dt);
+      // direction: turn the current unit vector toward the wanted one by a fraction of the angle between them, about their
+      // common axis (about the vertical when they're opposite: the camera swings round the body, never through it), at most
+      // RIG_TURN rad/s
+      let ax = C.co[0] / lc; let ay = C.co[1] / lc; let az = C.co[2] / lc; const bx = ox / lw; const by = oy / lw; const bz = oz / lw;
+      let cx = ay * bz - az * by; let cy = az * bx - ax * bz; let cz = ax * by - ay * bx;
+      const sn = Math.hypot(cx, cy, cz); const cs = ax * bx + ay * by + az * bz;
+      const ang = Math.atan2(sn, cs);
+      if (ang > 1e-4) {
+        if (sn < 1e-3) { cx = Math.abs(ay) > 0.9 ? 1 : 0; cy = Math.abs(ay) > 0.9 ? 0 : 1; cz = 0; } else { cx /= sn; cy /= sn; cz /= sn; }
+        const st = Math.min(ang * kd, RIG_TURN * dt); const c1 = Math.cos(st); const s1 = Math.sin(st);
+        // Rodrigues: a·cos + (k × a)·sin + k (k·a)(1 − cos)
+        const kxa = cy * az - cz * ay; const kya = cz * ax - cx * az; const kza = cx * ay - cy * ax; const kd2 = (cx * ax + cy * ay + cz * az) * (1 - c1);
+        const nx2 = ax * c1 + kxa * s1 + cx * kd2; const ny2 = ay * c1 + kya * s1 + cy * kd2; const nz2 = az * c1 + kza * s1 + cz * kd2;
+        const nl = Math.hypot(nx2, ny2, nz2) || 1; ax = nx2 / nl; ay = ny2 / nl; az = nz2 / nl;
+      }
+      const l2 = lc + (lw - lc) * kl;
+      C.co[0] = ax * l2; C.co[1] = ay * l2; C.co[2] = az * l2;
     }
     want.set(piv.x + (C.pv.x - look.x) + C.co[0], piv.y + (C.pv.y - look.y) + C.co[1], piv.z + (C.pv.z - look.z) + C.co[2]);
     look.set(C.pv.x, C.pv.y, C.pv.z);

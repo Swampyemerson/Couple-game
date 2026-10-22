@@ -242,7 +242,7 @@ export function runCrawl(mods, map, start, opts = {}) {
     const dJump = Math.hypot(dc[0] - prevDc[0], dc[1] - prevDc[1], dc[2] - prevDc[2]);
     const fJump = Math.hypot(feet[0] - prevFeet[0], feet[1] - prevFeet[1], feet[2] - prevFeet[2]);
     // jump = more than twice the walking step (+2 cm)
-    if (dJump > 2 * expected + 0.02) M.drawnJumps++;
+    if (dJump > 2 * expected + 0.02) { M.drawnJumps++; if (opts.trace) opts.trace.push(['dj', +t.toFixed(3), +dJump.toFixed(3), 'res', res, 'sim', +b.x.toFixed(3), +b.y.toFixed(3), +b.z.toFixed(3), 'dc', +dc[0].toFixed(3), +dc[1].toFixed(3), +dc[2].toFixed(3), 'prev', +prevDc[0].toFixed(3), +prevDc[1].toFixed(3), +prevDc[2].toFixed(3)]); }
     if (dJump > M.maxDrawnJump) M.maxDrawnJump = dJump / Math.max(ddt, 1e-3) * (1 / 60); // normalised to a 60 Hz frame
     if (fJump > M.maxDrawnFeetJump) M.maxDrawnFeetJump = fJump / Math.max(ddt, 1e-3) * (1 / 60);
     if (stickMag > 0.3 && dJump > 0.3 * expected && camProj(cam, prevDc[0], prevDc[1], prevDc[2], PA) && camProj(cam, dc[0], dc[1], dc[2], PB)) {
