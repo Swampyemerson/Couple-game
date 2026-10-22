@@ -139,6 +139,22 @@ export function puckSprite(T, i, s, dpr) {
   return { shadow, body };
 }
 
+/** The speed lines behind a fast puck as one sprite, so the loop only moves and stretches an element (no canvas redraw).
+ *  Drawn pointing left from its right edge: the head of the lines is at (w - pad, h / 2). `hot` = the Power Puck's fatter key plate.
+ *  Returns { cv, w, h, ox, oy, max } in css px: (ox, oy) is the start point inside the sprite, `max` the length of its longest line. */
+export function linesSprite(T, s, dpr, hot) {
+  const r = RP * s; const max = r * 7.5; const lw = Math.max(1.5, s * 0.45) + (hot ? s * 0.4 : 0);
+  const pad = Math.ceil(lw / 2 + 1); const hh = Math.ceil(r * 0.62 + lw / 2 + 1);
+  const w = Math.ceil(max + pad * 2); const h = hh * 2;
+  const cv = mk(w * dpr, h * dpr); const c = cv.getContext('2d');
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.strokeStyle = T.ink; c.lineWidth = lw; c.lineCap = 'round';
+  c.beginPath();
+  for (const [o, f] of [[-0.62, 0.6], [0, 1], [0.62, 0.75]]) { c.moveTo(w - pad, hh + o * r); c.lineTo(w - pad - max * f, hh + o * r); }
+  c.stroke();
+  return { cv, w, h, ox: w - pad, oy: hh, max };
+}
+
 /** The goal splat: a blot of the scorer's ink with droplets, a halftone halo and a key outline. Drawn big, scaled in. */
 export function splatSprite(T, who, s, dpr) {
   const R = 20 * s; const rnd = rng(who === 'a' ? 11 : 29);

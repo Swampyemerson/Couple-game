@@ -391,7 +391,7 @@ const shot = async (pg, name) => { if (SHOTS) await pg.screenshot({ path: `${SHO
 const inView = (pg, sels) => pg.evaluate((ss) => {
   const vh = innerHeight; const vw = innerWidth;
   const sc = document.querySelector('.wv-scroll');
-  const out = { vh, noScroll: sc.scrollHeight <= sc.clientHeight + 1, bad: [] };
+  const out = { vh, noScroll: sc.scrollHeight <= sc.clientHeight + 1, sh: `${sc.scrollHeight}/${sc.clientHeight}`, bad: [] };
   for (const s of ss) {
     const e = document.querySelector(s);
     if (!e) { out.bad.push(`${s} missing`); continue; }
@@ -674,7 +674,7 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
         for (const pg of [a, b]) await pg.setViewportSize({ width: w, height: hh });
         await LS.waitForTimeout(350);
         let m = await inView(LS, ['.wv-dial', '.wv-card', '.wv-go']);
-        assert(m.bad.length === 0 && m.noScroll, `${scheme} ${w}x${hh}: the guess screen shows the dial, its card and Lock it in without scrolling (${m.bad}${m.noScroll ? '' : ' scrolls'})`);
+        assert(m.bad.length === 0 && m.noScroll, `${scheme} ${w}x${hh}: the guess screen shows the dial, its card and Lock it in without scrolling (${m.bad}${m.noScroll ? '' : ' scrolls ' + m.sh})`);
         const dw = await LS.$eval('.wv-dial', (d) => d.getBoundingClientRect().width);
         assert(dw >= 125, `${scheme} ${w}x${hh}: the dial is still a usable size (${Math.round(dw)} px)`);
         await shot(LS, `${scheme}-${w}x${hh}-guess`);

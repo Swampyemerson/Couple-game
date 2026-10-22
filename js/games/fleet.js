@@ -1556,6 +1556,8 @@ registerGame({
       active = i;
       if (sel === i || sel < 0) sel = nextUnplaced(d, i + 1);
       fx = { drop: i };
+      hoverKey = '';
+      showPreview(null); // the screen used to be rebuilt after a placement, which put the hover preview away
       api.sfx(how === 'turn' ? 'flip' : 'place');
       api.haptic(12);
       render();

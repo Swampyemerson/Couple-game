@@ -239,7 +239,12 @@ registerGame({
 
     .g-qd .qd-sig { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 2px; justify-content: center; flex: 0 0 auto; }
     .g-qd .qd-word { font-family: var(--g-font-display); font-weight: 900; font-size: clamp(1.7rem, 8.5vw, 2.7rem); line-height: 1.1; letter-spacing: 0.01em; padding: 0 12px; border: 3px solid transparent; border-radius: 10px; min-height: 1.15em; text-shadow: var(--g-misreg); }
-    .g-qd .qd-ms { display: inline-block; min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; }
+    .g-qd .qd-ms { position: relative; display: inline-block; min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; }
+    .g-qd .qd-ms.rolling { -webkit-text-fill-color: transparent; }
+    .g-qd .qd-roll { position: absolute; right: 0; top: 0; bottom: 0; display: flex; overflow: hidden; -webkit-text-fill-color: currentcolor; text-shadow: none; }
+    .g-qd .qd-col { display: block; overflow: hidden; }
+    .g-qd .qd-col b { display: block; font-weight: inherit; will-change: transform; }
+    .g-qd .qd-col b::before { content: var(--s); white-space: pre; display: block; }
     .g-qd .qd-sig.is-steady .qd-word { color: var(--g-muted); animation: qd-breathe 1.2s ease-in-out infinite; }
     .g-qd .qd-sig.is-cue .qd-word { color: var(--g-muted); animation: none; }
     .g-qd .qd-sig.is-draw .qd-word { background: var(--qd-paper), var(--g-hl); color: var(--g-on-ink); border-color: var(--g-ink); box-shadow: var(--g-shadow-lg, var(--g-shadow)); transform: rotate(-3deg) scale(var(--qd-ds)); transform-origin: 50% 0; animation: qd-slam 0.24s cubic-bezier(0.2, 1.3, 0.4, 1) both; }   /* the signal is the steady word scaled up: nothing around it ever moves */
@@ -1091,22 +1096,34 @@ registerGame({
     };
 
     // ── paint ──
-    let countTok = 0;
-    /** The ms readouts run up to their number. One shared loop; a text node is only written when the number changes. */
+    /** The ms readouts roll up to their number like an odometer. The real text is already the final number (and stays selectable for
+     *  tests and screen readers); while it rolls it is made see-through and an overlay of digit reels (generated content, so no extra
+     *  text) is moved with a transform animation: no text is rewritten per frame, so no layout runs. */
     function countUp() {
       if (calm()) return;
-      const els = $$('.qd-ms').filter((e) => Number.isFinite(Number(e.dataset.v)));
-      if (!els.length) return;
-      const tok = ++countTok; let t0 = 0;
-      for (const e of els) e.textContent = '0';
-      const step = (t) => {
-        if (tok !== countTok) return;
-        if (!t0) t0 = t;
-        const k = Math.min(1, (t - t0) / 340);
-        for (const e of els) { const v = String(Math.round(Number(e.dataset.v) * (1 - (1 - k) ** 3))); if (e.textContent !== v) e.textContent = v; }
-        if (k < 1) onFrame(step);
-      };
-      onFrame(step);
+      for (const e of $$('.qd-ms')) {
+        const sv = e.dataset.v; const v = Number(sv);
+        if (!Number.isFinite(v) || e.__r === sv || !e.animate) continue;
+        e.__r = sv;
+        const ds = String(Math.round(v)).split('');
+        const roll = document.createElement('span'); roll.className = 'qd-roll'; roll.setAttribute('aria-hidden', 'true');
+        const anims = [];
+        ds.forEach((ch, i) => {
+          const cyc = ds.length - 1 - i;                  // the last digit spins the most
+          const lines = 10 * (cyc + 1);
+          const col = document.createElement('i'); col.className = 'qd-col';
+          const reel = document.createElement('b');
+          reel.style.setProperty('--s', `"${Array.from({ length: lines }, (_, k) => k % 10).join('\\A ')}"`);
+          col.appendChild(reel); roll.appendChild(col);
+          anims.push([reel, (10 * cyc + Number(ch)) / lines * 100]);
+        });
+        e.appendChild(roll); e.classList.add('rolling');
+        let left = anims.length;
+        for (const [reel, pct] of anims) {
+          const an = reel.animate([{ transform: 'translateY(0)' }, { transform: `translateY(${-pct}%)` }], { duration: 360, easing: 'cubic-bezier(0.16, 0.8, 0.25, 1)', fill: 'forwards' });
+          an.onfinish = () => { if (--left === 0) { roll.remove(); e.classList.remove('rolling'); } };
+        }
+      }
     }
     const hoOf = (v, x) => (v && v.ho ? v.ho[x] | 0 : 0);
     const plus = (o) => (o ? ` <span class="qd-hc-n">+${o}</span>` : '');

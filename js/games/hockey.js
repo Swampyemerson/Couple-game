@@ -23,7 +23,7 @@ import { W, H, RM, RP, GH, POST_R, DT, SERVE_V, MALLET_MAX, HIT_WALL, HIT_PILLAR
 import { createSound } from './hockey/sound.js';
 import { SETUP_CSS, createSetup } from './hockey/setup.js';
 import { readRecords, rallyResult, fastResult, matchResult, rivalryLine } from './hockey/records.js';
-import { grainTile, paintGrain, dots, dotRings, centreMark, malletSprite, puckSprite, splatSprite } from './hockey/art.js';
+import { grainTile, paintGrain, dots, dotRings, centreMark, malletSprite, puckSprite, splatSprite, linesSprite } from './hockey/art.js';
 
 const RAIL = 5;         // rail thickness (drawn outside the play field)
 const GOAL_MS = 1150;   // goal celebration before the countdown
@@ -82,10 +82,12 @@ registerGame({
     .g-hockey.is-local canvas { cursor: grab; }
     /* three layers: the printed table (drawn on resize / theme change only), the scoreboard text (repainted when it changes), the live sprites */
     .g-hockey .hk-tbl, .g-hockey .hk-hud { pointer-events: none; }
-    .g-hockey .hk-tbl { z-index: 1; } .g-hockey .hk-hud { z-index: 2; } .g-hockey .hk-live { z-index: 3; }
+    .g-hockey .hk-tbl { z-index: 1; } .g-hockey .hk-hud { z-index: 2; } .g-hockey .hk-live { z-index: 8; }
+    /* the mallets, pucks and speed lines are small cached sprites moved by transform alone (the compositor, no canvas redraw); the live canvas only holds stickers and overlays */
+    .g-hockey canvas.hk-sp { position: absolute; left: 0; top: 0; inset: auto; width: auto; height: auto; pointer-events: none; will-change: transform; transform-origin: 0 0; visibility: hidden; cursor: none; }
     .g-hockey .hk-flash, .g-hockey .hk-slowf { position: absolute; pointer-events: none; opacity: 0; }
     .g-hockey .hk-flash { z-index: 2; }
-    .g-hockey .hk-slowf { z-index: 4; box-sizing: border-box; border: 0 solid var(--g-ink); will-change: opacity; }
+    .g-hockey .hk-slowf { z-index: 9; box-sizing: border-box; border: 0 solid var(--g-ink); will-change: opacity; }
     ${SETUP_CSS}
   `,
   mount(el, api) {
@@ -112,6 +114,8 @@ registerGame({
     const tc = tb.getContext('2d');
     const hd = root.querySelector('.hk-hud');         // scoreboard text: repainted only when a number changes
     const hc = hd.getContext('2d');
+    const mkSp = (z) => { const e = document.createElement('canvas'); e.className = 'hk-sp'; e.setAttribute('aria-hidden', 'true'); e.style.zIndex = String(z); e.vis = false; e.tf = ''; e.ctx = e.getContext('2d'); rig.insertBefore(e, rig.querySelector('.hk-flash')); return e; };
+    const SP = { sl: [mkSp(3), mkSp(3)], mb: mkSp(4), ma: mkSp(4), ps: [mkSp(5), mkSp(5)], pb: [mkSp(6), mkSp(6)] }; // speed lines, the two mallets, the pucks' shadows and bodies
     const flashEl = root.querySelector('.hk-flash');  // goal flash: an opacity animation on the compositor
     const slowEl = root.querySelector('.hk-slowf');   // match-point slow-mo frame
     const readTokens = () => {
@@ -171,6 +175,7 @@ registerGame({
     let prevPhaseR = null;
     let prevRender = 0;
     const centreNow = [];        // what the middle-of-the-table lane shows this frame (test hook)
+    let liveV = 0;               // bumps when the always-there parts of the live layer (goal mouths, Pillar) must repaint
     let hudV = 1;                // bumps when the printed scoreboard must repaint (layout, theme, table)
     let alpha = 1;               // how far into the next physics step the clock is: the draw blends the last two steps by it
     let stopUntil = 0;           // hit-stop (host / one phone): the sim holds until this time
@@ -252,7 +257,7 @@ registerGame({
         if (bw >= 46) { const bh = Math.min(VH * s + rp * 2, bw * 3.5); band = { kind: 'v', w: bw, h: bh, y: Math.round(cssH / 2 - bh / 2), left: Math.round(gap / 2 - bw / 2 + 1), right: Math.round(cssW - gap / 2 - bw / 2 - 1) }; }
       }
       buildSprites();
-      hudV++;
+      hudV++; liveV++;
       drawTable();
     }
     /** Set a canvas transform so drawing happens in table units. */
@@ -1219,37 +1224,99 @@ registerGame({
       if (fill) { c.fillStyle = fill; c.fill(); }
       if (stroke) { c.strokeStyle = stroke; c.lineWidth = lw; c.stroke(); }
     }
-    const spr = { m: {}, p: [], s: {} };   // sprites, rebuilt with the table (resize, theme)
+    const spr = { m: {}, p: [], s: {}, l: [null, null], hot: [false, false] };   // sprites, rebuilt with the table (resize, theme)
+    /** Copy a cached sprite into its element (size in css px; the pixels are at the canvas ratio). */
+    function bind(e, sp, w, h) {
+      e.width = sp.cv.width; e.height = sp.cv.height;
+      e.style.width = `${w}px`; e.style.height = `${h}px`;
+      e.ctx.drawImage(sp.cv, 0, 0);
+      e.tf = '';
+    }
     function buildSprites() {
       spr.m.a = malletSprite(T, 'a', s, dpr); spr.m.b = malletSprite(T, 'b', s, dpr);
       spr.p[0] = puckSprite(T, 0, s, dpr); spr.p[1] = puckSprite(T, 1, s, dpr);
       spr.s.a = splatSprite(T, 'a', s, dpr); spr.s.b = splatSprite(T, 'b', s, dpr);
+      bind(SP.ma, spr.m.a, spr.m.a.half * 2, spr.m.a.half * 2); bind(SP.mb, spr.m.b, spr.m.b.half * 2, spr.m.b.half * 2);
+      for (let i = 0; i < 2; i++) {
+        bind(SP.ps[i], spr.p[i].shadow, spr.p[i].shadow.half * 2, spr.p[i].shadow.half * 2); bind(SP.pb[i], spr.p[i].body, spr.p[i].body.half * 2, spr.p[i].body.half * 2);
+        spr.hot[i] = false; setLines(i, false);
+      }
     }
-    function drawMallet(w, now) {
-      const m = M[w]; const sp = spr.m[w];
+    /** The speed lines come in two prints (plain, and the Power Puck's fatter key plate); swapping is a one-off small redraw. */
+    function setLines(i, hot) {
+      const k = hot ? 1 : 0;
+      if (spr.l[k] === null || spr.l[k].dpr !== dpr || spr.l[k].s !== s || spr.l[k].T !== T) { spr.l[k] = linesSprite(T, s, dpr, hot); spr.l[k].dpr = dpr; spr.l[k].s = s; spr.l[k].T = T; }
+      const sp = spr.l[k];
+      bind(SP.sl[i], sp, sp.w, sp.h);
+      spr.hot[i] = hot;
+    }
+    const q8 = (v) => Math.round(v * 8) / 8;
+    const q64 = (v) => Math.round(v * 64) / 64;
+    /** Show / hide a sprite element and set its transform (written only when it changed: nothing for a puck that sits still). */
+    function put(e, vis, tf) {
+      if (vis !== e.vis) { e.vis = vis; e.style.visibility = vis ? 'visible' : 'hidden'; }
+      if (vis && tf !== e.tf) { e.tf = tf; e.style.transform = tf; }
+    }
+    function placeMallet(w, now) {
+      const m = M[w]; const sp = spr.m[w]; const h = sp.half;
       const X = projX(m.rx, m.ry); const Y = projY(m.rx, m.ry);
       const k = reduced ? 0 : Math.max(0, 1 - (now - pressAt[w]) / 170);
-      const h = sp.half * (1 + 0.16 * k * k); // a finger just came down: the mallet pops up and settles
-      cx.drawImage(sp.cv, X - h, Y - h, h * 2, h * 2);
+      const pop = 1 + 0.16 * k * k; // a finger just came down: the mallet pops up and settles
+      put(w === 'a' ? SP.ma : SP.mb, true, k > 0.001 ? `translate(${q8(X)}px, ${q8(Y)}px) scale(${q64(pop)}) translate(${-h}px, ${-h}px)` : `translate(${q8(X - h)}px, ${q8(Y - h)}px)`);
     }
     function heatColour(h, now) {
       const pulse = 0.5 + 0.5 * Math.sin(now / (170 - 110 * h));
       return { col: h > 0.55 ? T.bad : T.hl, a: reduced ? 0.8 : 0.45 + 0.55 * pulse };
     }
-    function drawPuck(i, pk, heat, now) {
-      const c = cx; const sp = spr.p[i]; const h = sp.body.half;
+    /** The puck: its hard shadow stays put while the body squashes along the hit normal and springs back. */
+    function placePuck(i, pk, show, now) {
+      const sp = spr.p[i]; const h = sp.body.half;
+      if (!show) { put(SP.ps[i], false, ''); put(SP.pb[i], false, ''); return; }
       const X = projX(pk.rx, pk.ry); const Y = projY(pk.rx, pk.ry);
-      c.drawImage(sp.shadow.cv, X - h, Y - h, h * 2, h * 2);
-      if (heat > 0.05) { const hc = heatColour(heat, now); c.globalAlpha = hc.a; disc(c, X, Y, RP * s * (1.25 + 0.35 * heat), null, hc.col, Math.max(2, s * (0.5 + 0.9 * heat))); c.globalAlpha = 1; }
+      put(SP.ps[i], true, `translate(${q8(X - h)}px, ${q8(Y - h)}px)`);
       const age = now - sqAt[i];
-      const k = age < 130 ? sqA[i] * (1 - age / 130) * (1 - age / 130) : 0; // squash along the hit normal, then spring back
+      const k = age < 130 ? sqA[i] * (1 - age / 130) * (1 - age / 130) : 0;
       if (k > 0.03) {
         const nx = sqNx[i]; const ny = sqNy[i];
         const ang = view === 'up' ? Math.atan2(ny, nx) : view === 'down' ? Math.atan2(-ny, -nx) : view === 'sideb' ? Math.atan2(-nx, ny) : Math.atan2(nx, -ny);
-        c.save(); c.translate(X, Y); c.rotate(ang); c.scale(1 - 0.3 * k, 1 + 0.2 * k);
-        c.drawImage(sp.body.cv, -h, -h, h * 2, h * 2);
-        c.restore();
-      } else c.drawImage(sp.body.cv, X - h, Y - h, h * 2, h * 2);
+        put(SP.pb[i], true, `translate(${q8(X)}px, ${q8(Y)}px) rotate(${q64(ang)}rad) scale(${q64(1 - 0.3 * k)}, ${q64(1 + 0.2 * k)}) translate(${-h}px, ${-h}px)`);
+      } else put(SP.pb[i], true, `translate(${q8(X - h)}px, ${q8(Y - h)}px)`);
+    }
+    /** Comic-book speed lines behind a fast puck: the cached sprite, turned and stretched to the puck's speed. */
+    function placeLines(i, pk, tr, heat, show) {
+      const e = SP.sl[i];
+      if (!show || tr.n < 4) { put(e, false, ''); return; }
+      const hx = projX(pk.rx, pk.ry); const hy = projY(pk.rx, pk.ry);
+      const dx0 = hx - projX(tr.x[0], tr.y[0]); const dy0 = hy - projY(tr.x[0], tr.y[0]);
+      const len = Math.hypot(dx0, dy0); const r = RP * s;
+      if (len < r * 0.9) { put(e, false, ''); return; }
+      const dx = dx0 / len; const dy = dy0 / len;
+      const hot = heat > 0.05;
+      if (hot !== spr.hot[i]) setLines(i, hot);
+      const sp = spr.l[hot ? 1 : 0];
+      const L = Math.min(len * 1.3, r * (4.5 + 3 * heat));
+      put(e, true, `translate(${q8(hx - dx * r * 1.25)}px, ${q8(hy - dy * r * 1.25)}px) rotate(${q64(Math.atan2(dy, dx))}rad) scale(${q64(L / sp.max)}, 1) translate(${-sp.ox}px, ${-sp.oy}px)`);
+    }
+    /** The Power Puck's heat halo and pulsing hot plate go on the live canvas (they pulse every frame anyway). */
+    function drawHeat(c, i, pk, heat, now) {
+      const X = projX(pk.rx, pk.ry); const Y = projY(pk.rx, pk.ry);
+      const hc = heatColour(heat, now);
+      c.globalAlpha = hc.a; disc(c, X, Y, RP * s * (1.25 + 0.35 * heat), null, hc.col, Math.max(2, s * (0.5 + 0.9 * heat))); c.globalAlpha = 1;
+      const tr = trails[i];
+      const hx = X; const hy = Y;
+      const dx0 = hx - projX(tr.x[0], tr.y[0]); const dy0 = hy - projY(tr.x[0], tr.y[0]);
+      const len = Math.hypot(dx0, dy0); const r = RP * s;
+      if (tr.n < 4 || len < r * 0.9) return;
+      const dx = dx0 / len; const dy = dy0 / len; const nx = -dy; const ny = dx;
+      const L = Math.min(len * 1.3, r * (4.5 + 3 * heat));
+      c.strokeStyle = hc.col; c.globalAlpha = hc.a; c.lineWidth = Math.max(1, s * 0.25); c.lineCap = 'round';
+      c.beginPath();
+      for (let k = 0; k < 3; k++) {
+        const o = SL[k][0]; const f = SL[k][1];
+        const sx = hx - dx * r * 1.25 + nx * o * r; const sy = hy - dy * r * 1.25 + ny * o * r;
+        c.moveTo(sx, sy); c.lineTo(sx - dx * L * f, sy - dy * L * f);
+      }
+      c.stroke(); c.globalAlpha = 1;
     }
     let misOn = false;          // print a text with its pink and blue plates a hair off register
     function text(c, str, x, y, size, fill, rot = 0, stroke = null, weight = 900, font = T.fontDisplay, maxW = 0, align = 'center') {
@@ -1291,42 +1358,22 @@ registerGame({
       c.globalAlpha = 1;
     }
 
-    // Comic-book speed lines behind a fast puck: crisp ink strokes, no blur. On the Power Puck the
-    // lines heat up (yellow, then red) and pulse.
     const SL = [[-0.62, 0.6], [0, 1], [0.62, 0.75]];
-    function speedLines(c, pk, tr, heat, now) {
-      const hx = projX(pk.rx, pk.ry); const hy = projY(pk.rx, pk.ry);
-      const ox0 = projX(tr.x[0], tr.y[0]); const oy0 = projY(tr.x[0], tr.y[0]);
-      let dx = hx - ox0; let dy = hy - oy0;
-      const len = Math.hypot(dx, dy);
-      if (len < RP * s * 0.9) return;
-      dx /= len; dy /= len;
-      const nx = -dy; const ny = dx; const r = RP * s;
-      const L = Math.min(len * 1.3, r * (4.5 + 3 * heat));
-      c.lineCap = 'round';
-      const hot = heat > 0.05 ? heatColour(heat, now) : null;
-      for (let pass = 0; pass < (hot ? 2 : 1); pass++) {
-        c.strokeStyle = pass ? hot.col : T.ink; c.globalAlpha = pass ? hot.a : 1;
-        c.lineWidth = pass ? Math.max(1, s * 0.25) : Math.max(1.5, s * 0.45) + (hot ? s * 0.4 : 0);
-        c.beginPath();
-        for (let q = 0; q < 3; q++) {
-          const o = SL[q][0]; const f = SL[q][1];
-          const sx = hx - dx * r * 1.25 + nx * o * r; const sy = hy - dy * r * 1.25 + ny * o * r;
-          c.moveTo(sx, sy); c.lineTo(sx - dx * L * f, sy - dy * L * f);
-        }
-        c.stroke();
-      }
-      c.globalAlpha = 1;
-    }
     /** goal mouths (they can shrink) and the Pillar, drawn in table units over the printed table */
-    function drawLive(c, now, dt) {
+    function stepGoals(dt) { // the drawn goal mouths glide to the real ones; a change repaints the live layer
+      for (const w of RD2) {
+        const target = w === 'a' ? env.ghA : env.ghB;
+        if (gd[w] === target) continue;
+        gd[w] += (target - gd[w]) * (reduced ? 1 : 1 - Math.exp(-dt * 8));
+        if (Math.abs(target - gd[w]) < 0.02) gd[w] = target;
+        liveV++;
+      }
+    }
+    function drawLive(c, now) {
       tableT(c);
       const inkW = px(2.5);
       for (let q = 0; q < 2; q++) {
         const w = q ? 'a' : 'b'; const y0 = q ? H : 0;
-        const target = q ? env.ghA : env.ghB;
-        gd[w] += (target - gd[w]) * (reduced ? 1 : 1 - Math.exp(-dt * 8));
-        if (Math.abs(target - gd[w]) < 0.02) gd[w] = target;
         const gh = gd[w];
         const outer = q ? H + RAIL : -RAIL;
         c.fillStyle = T.edge; c.fillRect(W / 2 - gh, q ? H : -RAIL - 0.5, gh * 2, RAIL + 0.5);
@@ -1412,25 +1459,12 @@ registerGame({
     }
     const easeBack = (t) => { const c1 = 1.70158; const u = t - 1; return 1 + (c1 + 1) * u * u * u + c1 * u * u; };
 
-    function render(now, dt) {
-      const c = cx;
-      c.setTransform(dpr, 0, 0, dpr, 0, 0);
-      c.clearRect(0, 0, cssW, cssH);
-      prepRender();
+    let liveOn = false;         // the live layer holds overlays right now
+    let liveDrawn = -1;         // liveV when it was last painted
+    /** Everything on the live canvas that is not a sprite: stickers, stamps, the 3-2-1, rings, hints, the pause veil. Painted only while something is up. */
+    function overlays(c, now, dtR, mp, since, setupOn) {
       const fx0 = FX; const fy0 = FY; const fw = FW; const fh = FH;
       const ccx = projX(W / 2, H / 2); const ccy = projY(W / 2, H / 2);
-      const setupOn = phase === 'setup' || phase === 'wait';
-      if (now - recsAt > 400) { recsAt = now; recs = readRecords(api.data()); }
-      const dtR = Math.min(0.1, Math.max(0, (now - prevRender) / 1000)); prevRender = now;
-      drawLive(c, now, dt);
-      paintHud(now);
-      // match point: the banner when the countdown starts, a small tag by the leader's score
-      const mp = mpList; mp.length = 0;
-      for (const w of RD2) if (score[w] === table.toWin - 1 && !winner) mp.push(w);
-      if (phase !== prevPhaseR) {
-        if (phase === 'count' && mp.length) { mpAt = now; snd.matchPoint(); }
-        prevPhaseR = phase;
-      }
       for (const w of RD2) {
         if (mp.includes(w) && !setupOn && phase !== 'count') { // (the countdown has its own banner)
           const [mx, my] = toPx(w === 'a' ? W - 14 : 14, w === 'a' ? H / 2 + 32 : H / 2 - 32);
@@ -1439,7 +1473,6 @@ registerGame({
         }
       }
       // the goal: an ink splat in the scorer's colour blots in at the goal mouth (the flash is a DOM opacity animation)
-      const since = Math.max(0, now - fx.flashAt);
       if (fx.flashWho && since < GOAL_MS) {
         const sp = spr.s[fx.flashWho];
         const grow = reduced ? 1 : since < 240 ? easeBack(since / 240) : 1;
@@ -1477,32 +1510,14 @@ registerGame({
         text(c, String(Math.max(1, Math.ceil(sk / 1000))), nx, ny + (i ? s * 12 : 0), 15 * s, T.bad, readRot(half), T.ink);
         c.globalAlpha = 1;
       }
-      // trails and speed lines, then mallets, then the pucks on top
-      for (let i = 0; i < table.pucks; i++) {
-        const pk = host ? PK[i] : G[i];
-        const tr = trails[i];
-        if (!pk.on) { tr.n = 0; continue; }
-        if (phase === 'play') {
-          if (tr.n < 5) { tr.x[tr.n] = pk.rx; tr.y[tr.n] = pk.ry; tr.n++; } else { for (let k = 0; k < 4; k++) { tr.x[k] = tr.x[k + 1]; tr.y[k] = tr.y[k + 1]; } tr.x[4] = pk.rx; tr.y[4] = pk.ry; }
-        } else if (phase !== 'paused') tr.n = 0;
-        pk.show = (phase !== 'goal' || since < 120) && (phase === 'play' || phase === 'count' || phase === 'setup' || (pk.ry > 0 && pk.ry < H)) && phase !== 'wait';
-        const heat = env.power && phase === 'play' ? heatOf(rally) : 0;
-        if (pk.show && tr.n > 3) speedLines(c, pk, tr, heat, now);
-      }
-      drawMallet('b', now); drawMallet('a', now);
-      for (let i = 0; i < table.pucks; i++) {
-        const pk = host ? PK[i] : G[i];
-        if (!pk.on || !pk.show) continue;
-        drawPuck(i, pk, env.power && phase === 'play' ? heatOf(rally) : 0, now);
-        pk.show = false;
-      }
+      // the Power Puck's heat halo
+      if (env.power && phase === 'play' && heatOf(rally) > 0.05) for (let i = 0; i < table.pucks; i++) { const pk = host ? PK[i] : G[i]; if (pk.on && pk.show) drawHeat(c, i, pk, heatOf(rally), now); }
       // The middle of the table is one shared lane: the 3-2-1, the goal stamp, event stamps and the
       // table / match-point banners stack there, each in its own slot, instead of landing on top of
       // each other (or on the puck parked in the centre).
       const readers = local && view === 'up' ? RD2 : RD1;
       const dual = !(local && view === 'up'); // one reader may use both sides of the puck; on a shared phone each keeps to their own half
       const left = phase === 'count' ? (host ? phaseEnd - now : HS ? HS.cd - (now - HS.recv) : 1e9) : 1e9;
-      for (let i = stamps.length - 1; i >= 0; i--) if (now - stamps[i].t0 > stamps[i].dur) stamps.splice(i, 1);
       const items = laneItems; items.length = 0;
       const ssince = Math.max(0, now - fx.stampAt);
       if (fx.stampWho && ssince < GOAL_MS) {
@@ -1578,9 +1593,6 @@ registerGame({
       centreNow.length = 0; for (const it of items) centreNow.push(it.name);
       let centreBusy = items.length > 0 || stamps.length > 0;
       if (!centreBusy) for (let i = 0; i < table.pucks; i++) if (host ? PK[i].on && PK[i].sk : G[i].on && G[i].sk) { centreBusy = true; break; }
-      // match-point slow motion: a printed frame closes in (a DOM border; only its opacity moves)
-      const slowO = ts < 0.98 && !reduced ? 0.22 * Math.min(1, (1 - ts) * 2.2) : 0;
-      if (Math.abs(slowO - slowShown) > 0.004) { slowShown = slowO; slowEl.style.opacity = String(Math.round(slowO * 1000) / 1000); }
       // hints stay until the first touch (or key press)
       if (!setupOn && phase !== 'over') {
         hintK += ((centreBusy ? 0 : 1) - hintK) * (1 - Math.exp(-dtR / (centreBusy ? 0.05 : 0.18)));
@@ -1608,6 +1620,56 @@ registerGame({
         c.globalAlpha = 0.86; c.fillStyle = T.card; c.fillRect(fx0, fy0, fw, fh); c.globalAlpha = 1;
         for (const w of readers) text(c, 'Paused', ccx, ccy + (readRot(w) ? -1 : 1) * 10 * s, 9 * s, T.ink, readRot(w), null, 900);
       }
+    }
+
+    function render(now, dt) {
+      prepRender();
+      const setupOn = phase === 'setup' || phase === 'wait';
+      if (now - recsAt > 400) { recsAt = now; recs = readRecords(api.data()); }
+      const dtR = Math.min(0.1, Math.max(0, (now - prevRender) / 1000)); prevRender = now;
+      stepGoals(dt);
+      paintHud(now);
+      // match point: the banner when the countdown starts, a small tag by the leader's score
+      const mp = mpList; mp.length = 0;
+      for (const w of RD2) if (score[w] === table.toWin - 1 && !winner) mp.push(w);
+      if (phase !== prevPhaseR) {
+        if (phase === 'count' && mp.length) { mpAt = now; snd.matchPoint(); }
+        prevPhaseR = phase;
+      }
+      for (let i = stamps.length - 1; i >= 0; i--) if (now - stamps[i].t0 > stamps[i].dur) stamps.splice(i, 1);
+      const since = Math.max(0, now - fx.flashAt);
+      // the sprites: trails, speed lines, mallets and pucks are moved by transform only
+      const heat = env.power && phase === 'play' ? heatOf(rally) : 0;
+      let clockOn = false;
+      for (let i = 0; i < 2; i++) {
+        const pk = i < table.pucks ? (host ? PK[i] : G[i]) : null;
+        const tr = trails[i];
+        if (!pk || !pk.on) { tr.n = 0; if (pk) pk.show = false; placeLines(i, pk, tr, 0, false); placePuck(i, pk, false, now); continue; }
+        if (phase === 'play') {
+          if (tr.n < 5) { tr.x[tr.n] = pk.rx; tr.y[tr.n] = pk.ry; tr.n++; } else { for (let k = 0; k < 4; k++) { tr.x[k] = tr.x[k + 1]; tr.y[k] = tr.y[k + 1]; } tr.x[4] = pk.rx; tr.y[4] = pk.ry; }
+        } else if (phase !== 'paused') tr.n = 0;
+        pk.show = (phase !== 'goal' || since < 120) && (phase === 'play' || phase === 'count' || phase === 'setup' || (pk.ry > 0 && pk.ry < H)) && phase !== 'wait';
+        placeLines(i, pk, tr, heat, pk.show);
+        placePuck(i, pk, pk.show, now);
+        if (pk.sk && phase === 'play') clockOn = true;
+      }
+      placeMallet('b', now); placeMallet('a', now);
+      // does the live canvas have anything to say? (it keeps its pixels between frames, so a quiet rally uploads nothing)
+      const hintOn = !setupOn && phase !== 'over' && (local ? !(ctl.a.used && ctl.b.used) : !ctl[me].used);
+      const need = (fx.flashWho !== null && since < GOAL_MS) || phase === 'count' || phase === 'paused' || (!host && hostAway) || stamps.length > 0
+        || (rally >= 4 && phase === 'play') || heat > 0.05 || clockOn || (mp.length > 0 && !setupOn) || hintOn
+        || (env.post && !reduced && now - pillarAt < 260);
+      if (need || liveOn || liveDrawn !== liveV) {
+        const c = cx;
+        c.setTransform(dpr, 0, 0, dpr, 0, 0);
+        c.clearRect(0, 0, cssW, cssH);
+        drawLive(c, now);
+        if (need) overlays(c, now, dtR, mp, since, setupOn); else { centreNow.length = 0; hintK += (1 - hintK) * (1 - Math.exp(-dtR / 0.18)); }
+        liveOn = need; liveDrawn = liveV;
+      } else { centreNow.length = 0; hintK += (1 - hintK) * (1 - Math.exp(-dtR / 0.18)); }
+      // match-point slow motion: a printed frame closes in (a DOM border; only its opacity moves)
+      const slowO = ts < 0.98 && !reduced ? 0.22 * Math.min(1, (1 - ts) * 2.2) : 0;
+      if (Math.abs(slowO - slowShown) > 0.004) { slowShown = slowO; slowEl.style.opacity = String(Math.round(slowO * 1000) / 1000); }
       // screen shake (on the whole rig, compositor-only): a decaying wobble, a few px, never longer than a quarter second
       const sk = Math.max(0, now - shakeAt);
       if (!reduced && sk < shakeDur) {
@@ -1634,13 +1696,13 @@ registerGame({
       if (wN < 40) return;
       const avg = wSum / wN; const mx = wMax;
       wN = 0; wSum = 0; wMax = 0;
-      if (avg > 24 && mx > 42 && qi < QUALITY.length - 1 && now - qAt > 2000 && now - t0 > 1500) { qi++; qAt = now; layout(); }
+      if (avg > 21 && mx > 40 && qi < QUALITY.length - 1 && now - qAt > 2000 && now - t0 > 1500) { qi++; qAt = now; layout(); }
     }
     const themeSig = (t) => `${t.ink}|${t.card}|${t.a}|${t.b}|${t.hl}|${t.bg}|${t.edge}|${t.aSoft}|${t.bSoft}|${t.line}|${t.dark}`;
     function applyTheme() {
       const nt = readTokens();
       if (themeSig(nt) === themeSig(T)) return;
-      T = nt; hudV++; buildSprites(); drawTable();
+      T = nt; hudV++; liveV++; buildSprites(); drawTable();
     }
     function frame(t) {
       if (dead) return;

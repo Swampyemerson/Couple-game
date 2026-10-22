@@ -207,6 +207,13 @@ registerGame({
     let layerVer = 0;
     let lyAr = ''; let lySd = -1; let lyL = ''; let lyRound = -1;
     let lyS = 1; // device pixels per CSS pixel in the layers
+    // partial repaint: a frame restores only the rectangles where something moved (last frame's and this frame's) from the layers
+    const RECT_MAX = 48;
+    const RC = new Float64Array(RECT_MAX * 4); // this frame's moving things, as grid-pixel rectangles x0 y0 x1 y1
+    const RP = new Float64Array(RECT_MAX * 4); // last frame's
+    let rcN = 0; let rpN = 0; let rcOver = false; let rpOver = false;
+    let needFull = true; // the whole canvas must be painted (resized, new round, theme, replay, back from the background)
+    let cRhas = false; let cR0 = 0; let cR1 = 0; let cR2 = 0; let cR3 = 0; // the part of the layers a tick just changed (grid px)
     const ci = { a: 0, b: 0 }; // path points already stroked into the layers
     let dirt = false; let dX0 = 0; let dY0 = 0; let dX1 = 0; let dY1 = 0;
     const inkPat = { a: null, b: null };
@@ -322,6 +329,7 @@ registerGame({
     function teardownBoard() {
       if (ro) { ro.disconnect(); ro = null; }
       canvas = ctx = board = msgEl = rpEl = null;
+      needFull = true;
       bgCan = shCan = cbCan = trCan = null; bgG = shG = cbG = trG = null; layerVer = 0;
       vvReady = false;
     }
@@ -386,6 +394,7 @@ registerGame({
       canvas.style.height = cssH + 'px';
       canvas.width = Math.round(cssW * dpr);
       canvas.height = Math.round(cssH * dpr);
+      needFull = true;
       board.classList.add('is-fit');
       board.style.width = cssW + 14 + 'px';
       // the countdown and GO stamps scale with a small board
@@ -1095,14 +1104,51 @@ registerGame({
     // cb: bg + sh, the back of the board; only a small dirty rectangle of it is repainted when a tick adds trail.
     // tr: the trails' outline and ink on a transparent layer, stroked segment by segment as the riders move on.
     function ensureCanvases() {
-      const W = Math.max(1, Math.round(gW * dpr));
-      const H = Math.max(1, Math.round(gH * dpr));
+      // the layers are the grid at the screen canvas's own pixel density, so a layer pixel is exactly one canvas pixel (a quarter turn swaps the axes)
+      const W = Math.max(1, qr & 1 ? canvas.height : canvas.width);
+      const H = Math.max(1, qr & 1 ? canvas.width : canvas.height);
       if (!bgCan) {
         bgCan = document.createElement('canvas'); shCan = document.createElement('canvas'); cbCan = document.createElement('canvas'); trCan = document.createElement('canvas');
         bgG = bgCan.getContext('2d'); shG = shCan.getContext('2d'); cbG = cbCan.getContext('2d'); trG = trCan.getContext('2d');
       }
       for (const cv of [bgCan, shCan, cbCan, trCan]) if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
       lyS = W / gW;
+    }
+    /** Copy one grid-pixel rectangle of a layer onto the screen canvas, on whole canvas pixels so repeated blits leave no seams. */
+    function blit(layer, x0, y0, x1, y1) {
+      const sx = Math.max(0, Math.floor(x0 * lyS));
+      const sy = Math.max(0, Math.floor(y0 * lyS));
+      const ex = Math.min(layer.width, Math.ceil(x1 * lyS));
+      const ey = Math.min(layer.height, Math.ceil(y1 * lyS));
+      if (ex <= sx || ey <= sy) return;
+      ctx.drawImage(layer, sx, sy, ex - sx, ey - sy, sx / lyS, sy / lyS, (ex - sx) / lyS, (ey - sy) / lyS);
+    }
+    function restoreFrom(layer) {
+      for (let i = 0; i < rpN; i++) blit(layer, RP[4 * i], RP[4 * i + 1], RP[4 * i + 2], RP[4 * i + 3]);
+      for (let i = 0; i < rcN; i++) blit(layer, RC[4 * i], RC[4 * i + 1], RC[4 * i + 2], RC[4 * i + 3]);
+      if (cRhas) blit(layer, cR0, cR1, cR2, cR3);
+    }
+    function addRect(x0, y0, x1, y1) {
+      if (rcN >= RECT_MAX) { rcOver = true; return; }
+      const o = rcN * 4;
+      RC[o] = x0; RC[o + 1] = y0; RC[o + 2] = x1; RC[o + 3] = y1;
+      rcN++;
+    }
+    /** Everything the frame draws on top of the layers, as rectangles: per rider the growing segment and the bike, the tokens, the effects. */
+    function collectMoving() {
+      const c = cell;
+      rcN = 0; rcOver = false;
+      const padB = c * 2.8 + 3; // halo, speed lines, jump ring
+      for (let n = 0; n < 2; n++) {
+        const o = n * 6;
+        const hx = LS[o + 2];
+        const hy = LS[o + 3];
+        addRect(Math.min(LS[o], hx) - padB, Math.min(LS[o + 1], hy) - padB, Math.max(LS[o], hx) + padB, Math.max(LS[o + 1], hy) + padB);
+      }
+      const padT = c * 1.3 + 3;
+      for (let i = 0; i < sim.tl.length; i++) { const t = sim.tl[i]; const x = (t.x + 0.5) * c; const y = (t.y + 0.5) * c; addRect(x - padT, y - padT, x + padT, y + padT); }
+      const padF = c * 4 + 3;
+      for (let i = 0; i < fx.length; i++) { const f = fx[i]; const x = (f.x + 0.5) * c; const y = (f.y + 0.5) * c; addRect(x - padF, y - padF, x + padF, y + padF); }
     }
     function paintBg() {
       const g = LAYOUTS[layout];
@@ -1221,6 +1267,7 @@ registerGame({
       dirt = false;
       const W = cbCan.width;
       const H = cbCan.height;
+      cRhas = true; cR0 = dX0; cR1 = dY0; cR2 = dX1; cR3 = dY1;
       const x0 = Math.max(0, Math.floor(dX0 * lyS));
       const y0 = Math.max(0, Math.floor(dY0 * lyS));
       const x1 = Math.min(W, Math.ceil(dX1 * lyS));
@@ -1404,9 +1451,9 @@ registerGame({
       if (!ctx || !layout || !cfg) return;
       const g = LAYOUTS[layout];
       const c = cell;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.setTransform(canvas.width / cssW, 0, 0, canvas.height / cssH, 0, 0); // the canvas's own pixel density, so layer pixels map 1:1
       ctx.globalAlpha = 1;
-      if (!sim || !vvReady) { ctx.fillStyle = C.card; ctx.fillRect(0, 0, cssW, cssH); return; }
+      if (!sim || !vvReady) { ctx.fillStyle = C.card; ctx.fillRect(0, 0, cssW, cssH); needFull = true; return; }
       // the end-of-round story: crash at full size, a zoomed replay, then the board again
       const stage = endStage(now);
       let zoom = 1;
@@ -1448,12 +1495,18 @@ registerGame({
       if (flip) { ctx.translate(cssW, cssH); ctx.rotate(Math.PI); }
       if (qr === 1) { ctx.translate(gH, 0); ctx.rotate(Math.PI / 2); } else if (qr === 3) { ctx.translate(0, gW); ctx.rotate(-Math.PI / 2); }
       const tShow = T == null ? sim.t : T;
+      let partial = false;
       if (fast) {
-        syncLayers();
+        const fresh = syncLayers();
+        cRhas = false;
         for (let n = 0; n < 2; n++) commit(PL[n], vv[PL[n]].i);
         flushDirty();
-        ctx.drawImage(cbCan, 0, 0, gW, gH);
-      } else drawBgVector(ctx, c, g.W, g.H, sim);
+        liveSegs();
+        collectMoving();
+        // a still frame needs only the places where something moved (last frame's and this frame's), restored from the layers
+        partial = !needFull && !fresh && !rcOver && !rpOver && stage === 'none';
+        if (partial) restoreFrom(cbCan); else ctx.drawImage(cbCan, 0, 0, gW, gH);
+      } else { drawBgVector(ctx, c, g.W, g.H, sim); needFull = true; }
       // tokens still lying on the grid
       if (sim.tl.length) {
         for (let i = 0; i < sim.tl.length; i++) {
@@ -1470,7 +1523,6 @@ registerGame({
       if (T != null) { pathAt(sim, 'a', T, tv.a); pathAt(sim, 'b', T, tv.b); views = tv; }
       ctx.lineJoin = 'miter';
       if (fast) {
-        liveSegs();
         // the growing end of each trail, in the same three passes as the layers (shadow under the stroked trail, ink over it)
         ctx.lineCap = 'butt';
         ctx.lineWidth = tw + ow * 2;
@@ -1478,7 +1530,7 @@ registerGame({
         ctx.strokeStyle = C.edge;
         for (let n = 0; n < 2; n++) strokeLive(n, tw / 2 + ow, sh * sg[0], sh * sg[1]);
         ctx.globalAlpha = 1;
-        ctx.drawImage(trCan, 0, 0, gW, gH);
+        if (partial) restoreFrom(trCan); else ctx.drawImage(trCan, 0, 0, gW, gH);
         ctx.strokeStyle = C.ink;
         for (let n = 0; n < 2; n++) strokeLive(n, tw / 2 + ow, 0, 0);
         ctx.lineWidth = tw;
@@ -1512,6 +1564,7 @@ registerGame({
         if (ca) drawBurst(ca, burstK(burstAge), burstAge);
         if (cb && !(ca && ca[0] === cb[0] && ca[1] === cb[1])) drawBurst(cb, burstK(burstAge), burstAge);
       }
+      if (fast) { RP.set(RC.subarray(0, rcN * 4)); rpN = rcN; rpOver = rcOver; needFull = false; }
     }
 
     // the banner in the middle of the board; only rebuilt when what it says changes (no strings built per frame)
@@ -1603,7 +1656,7 @@ registerGame({
         publish();
       }
     }
-    const onVis = () => { if (host) syncPause(); else publishGuest(); if (!document.hidden) lastNow = 0; };
+    const onVis = () => { if (host) syncPause(); else publishGuest(); if (!document.hidden) { lastNow = 0; needFull = true; } };
     document.addEventListener('visibilitychange', onVis);
     offs.push(() => document.removeEventListener('visibilitychange', onVis));
     // a phone turned on its side: the next round gets the grid that fits (the host agrees it with the guest)
