@@ -307,10 +307,11 @@ async function steer(a, stick, wps, { tick = 90, maxMs = 12000, tol = 0.3, label
       // a ceiling, flipped), which is what the game maps the stick to there
       const Up = Math.abs(n[1]) > 0.7 ? norm3([cam.dir[0], 0, cam.dir[2]]) : cross(R, cam.dir);
       let sx = dot3(d, R); let sy = dot3(d, Up) * (n[1] < -0.7 && cam.dir[1] > 0.12 ? -1 : 1); // (seen from below at an angle, ceiling points nearer the camera are higher on screen; a level view of it is edge-on and the game uses camera forward)
-      let m = Math.hypot(sx, sy) || 1;
+      let m = Math.hypot(sx, sy);
       if (m < 0.3 && Math.abs(n[1]) < 0.7) { // a wall seen edge-on (the camera looks along it): the game uses the camera heading as "up"
-        const Fh = norm3([cam.dir[0], 0, cam.dir[2]]); sy = dot3(d, Fh); sx = dot3(d, R); m = Math.hypot(sx, sy) || 1;
+        const Fh = norm3([cam.dir[0], 0, cam.dir[2]]); sy = dot3(d, Fh); sx = dot3(d, R); m = Math.hypot(sx, sy);
       }
+      m = m || 1;
       await stick.set(sx / m, sy / m);
       if (process.env.XDEBUG && (wp.name || '').match(process.env.XDEBUG)) console.log(`   [${wp.name}] p=${p.map((x) => x.toFixed(2))} n=${n.map((x) => x.toFixed(1))} at=${b.at} stick=${(sx / m).toFixed(2)},${(sy / m).toFixed(2)} camdir=${cam.dir.map((x) => x.toFixed(2))}`);
       await wait(tick);
@@ -363,11 +364,12 @@ function livingRoutes(a, stick, seeker) {
       { name: 'back-to-left-wall', to: [-5.0, 2.3, 1.2], done: bk('wall'), max: 12000 },
       { name: 'down-and-off', to: [-4.6, 0.0, 1.2], done: bk('floor'), max: 14000 },
     ]],
-    // wall → wall concave corner (right wall to the back wall), a little way along the back wall
-    ['wall-wall-corner', on(4.995, 1.5, -0.6, -1, 0, 0, 0, 0, -1, -Math.PI / 4), [
+    // wall → wall concave corner (right wall to the back wall), a little way along the back wall (hider only: the seeker's
+    // over-the-shoulder view looks along the wall and the stick has no steady meaning there)
+    ...(seeker ? [] : [['wall-wall-corner', on(4.995, 1.5, -0.6, -1, 0, 0, 0, 0, -1, -Math.PI / 4), [
       { name: 'to-corner-and-back-wall', to: [4.0, 1.5, -3.99], done: (b) => b.at && b.nz > 0.9, max: 16000, required: true },
       { name: 'past-corner', to: [3.6, 1.5, -3.99], tol: 0.25, max: 3500 },
-    ]],
+    ]]]),
   ];
   if (!seeker) {
     // convex edge wrap: table top → edge → side (→ underside, if the surface lets it)
@@ -606,11 +608,18 @@ async function seekMap(port, id) {
       const res = { map: id, pose, hiderAt: [r2(hbody.x), r2(hbody.y), r2(hbody.z)], hiderOnSurface: !!hbody.at, wallNormal: [r2(nx), r2(nz)], views: [] };
       void hb;
       for (const d of [3, 6]) {
-        // free run from the hider along the normal (the room can be short)
-        const H = await hook(a, 'surfaceAt', hbody.x, hbody.y + 0.3, hbody.z, nx, 0, nz, d + 1);
-        const free = H ? Math.max(0.8, H.t - 0.5) : d + 1;
-        const dd = Math.min(d, free);
-        await hook(a, 'teleport', hbody.x + nx * dd, hbody.z + nz * dd, 0, hbody.y);
+        // stand d m from the hider along the wall normal; if something is in the way (the room is short, a prop), fan out
+        // to the side (+-20, 40, 60 deg off the normal) and take the first direction with d m of free floor; else the closest possible
+        let pick = null;
+        for (const deg of [0, 20, -20, 40, -40, 60, -60]) {
+          const t = deg * Math.PI / 180; const ux = nx * Math.cos(t) - nz * Math.sin(t); const uz = nx * Math.sin(t) + nz * Math.cos(t);
+          const H = await hook(a, 'surfaceAt', hbody.x, hbody.y + 0.3, hbody.z, ux, 0, uz, d + 1);
+          const free = H ? H.t - 0.5 : d + 1;
+          if (!pick || free > pick.free) pick = { deg, ux, uz, free };
+          if (free >= d) break;
+        }
+        const dd = Math.min(d, Math.max(0.8, pick.free));
+        await hook(a, 'teleport', hbody.x + pick.ux * dd, hbody.z + pick.uz * dd, 0, hbody.y);
         const bc = await hook(a, 'bodyCenter', 'b');
         await hook(a, 'aimAt', ...bc);
         await wait(700);
@@ -642,7 +651,7 @@ async function seekMap(port, id) {
           const dist = cam.position.distanceTo(bc);
           return { w: maxX - minX, h: maxY - minY, area: (maxX - minX) * (maxY - minY), screenW: cv.width, screenH: cv.height, verts: nv, behind, dist, fov: cam.fov };
         });
-        res.views.push({ wantM: d, ...(m.err ? m : { distM: r2(m.dist), clipped: dd < d, wPx: r1(m.w), hPx: r1(m.h), areaPx2: Math.round(m.area), areaPctScreen: r2(100 * m.area / (m.screenW * m.screenH)), heightPctScreen: r2(100 * m.h / m.screenH), fovDeg: r1(m.fov), screen: [Math.round(m.screenW), Math.round(m.screenH)], verts: m.verts }) });
+        res.views.push({ wantM: d, ...(m.err ? m : { distM: r2(m.dist), offNormalDeg: pick.deg, clipped: dd < d, wPx: r1(m.w), hPx: r1(m.h), areaPx2: Math.round(m.area), areaPctScreen: r2(100 * m.area / (m.screenW * m.screenH)), heightPctScreen: r2(100 * m.h / m.screenH), fovDeg: r1(m.fov), screen: [Math.round(m.screenW), Math.round(m.screenH)], verts: m.verts }) });
       }
       metric('xseek.map', res);
     }

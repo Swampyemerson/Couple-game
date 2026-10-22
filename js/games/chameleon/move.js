@@ -13,7 +13,7 @@ export function mkBody() {
     cnx: 0, cnz: 0, pushT: 0, zip: null, stillT: 0,
     // crawl bookkeeping: surface-session id (bumped on every attach / detach / reset), and the face just left
     // (normal vn, heading vf) that world.crawl won't re-enter for vt seconds unless the motion reverses
-    sid: 0, vnx: 0, vny: 0, vnz: 0, vfx: 0, vfy: 0, vfz: 0, vt: 0,
+    sid: 0, vnx: 0, vny: 0, vnz: 0, vfx: 0, vfy: 0, vfz: 0, vt: 0, wt: 0, wtr: 0,
     // walking feel: the smoothed (accelerated) velocity, last grounded / jumped times, held jump
     svx: 0, svz: 0, wasMoving: false, groundT: -1e9, jumpT: -1e9, jumpHeld: false,
   };
@@ -29,7 +29,7 @@ export function sizeBody(b, s) {
 export function resetBody(b) {
   b.at = false; b.nx = 0; b.ny = 1; b.nz = 0; b.box = null; b.sq = false; b.kx = 0; b.kz = 0; b.lockY = false; b.cnx = 0; b.cnz = 0; b.pushT = 0; b.zip = null; b.vy = 0;
   b.fx = Math.sin(b.yaw); b.fy = 0; b.fz = Math.cos(b.yaw); b.wallN = null; b.stillT = 0;
-  b.svx = 0; b.svz = 0; b.wasMoving = false; b.jumpHeld = false; b.sid++; b.vt = 0;
+  b.svx = 0; b.svz = 0; b.wasMoving = false; b.jumpHeld = false; b.sid++; b.vt = 0; b.wt = 0; b.wtr = 0;
 }
 
 /** Heading yaw of a body (for first-person views and legacy fields). */
@@ -53,7 +53,7 @@ export function surfaceKind(b) {
 /** Stick to a face. Heading: (hx,hy,hz) projected onto it (default: world up / old heading). */
 export function attachBody(world, b, x, y, z, nx, ny, nz, box, hx, hy, hz) {
   b.at = true; b.x = x; b.y = y; b.z = z; b.nx = nx; b.ny = ny; b.nz = nz; b.box = box || null;
-  b.vy = 0; b.kx = 0; b.kz = 0; b.sq = false; b.cnx = 0; b.cnz = 0; b.onGround = false; b.sid++; b.vt = 0;
+  b.vy = 0; b.kx = 0; b.kz = 0; b.sq = false; b.cnx = 0; b.cnz = 0; b.onGround = false; b.sid++; b.vt = 0; b.wt = 0; b.wtr = 0;
   if (hx == null) { hx = b.fx; hy = b.fy; hz = b.fz; if (Math.abs(ny) < 0.7) { hx = 0; hy = 1; hz = 0; } }
   world.reHead(b, hx, hy, hz);
   b.wa = Math.abs(ny) < 0.7 ? Math.atan2(nx, nz) : b.wa;
@@ -67,7 +67,7 @@ export function attachBody(world, b, x, y, z, nx, ny, nz, box, hx, hy, hz) {
 export function detachBody(world, b, push = 0.6, lift = 0) {
   const nx = b.nx; const ny = b.ny; const nz = b.nz;
   const yaw = headingYaw(b);
-  b.at = false; b.box = null; b.cnx = 0; b.cnz = 0; b.lockY = false; b.sid++; b.vt = 0;
+  b.at = false; b.box = null; b.cnx = 0; b.cnz = 0; b.lockY = false; b.sid++; b.vt = 0; b.wt = 0; b.wtr = 0;
   if (ny < 0.7) {
     // contact point → feet position
     if (ny < -0.7) b.y -= b.head + 0.03; // under a ceiling: feet go below it
@@ -224,7 +224,7 @@ export function surfaceVel(b, fs, mx, my, proj, F, R, dt, out) {
   const mag = Math.min(1, Math.hypot(mx, my));
   fs.cmx = mx; fs.cmy = my; fs.cmag = mag; fs.age += dt;
   inputOnSurface(b, mx, my, proj, F, R, out);
-  if (mag < 0.05) { fs.lock = false; return out; }
+  if (mag < 0.05) { fs.lock = false; b.wt = 0; b.wtr = 0; return out; }
   if (!fs.lock) return out;
   // the locked heading, kept tangent to the surface we are on now
   const nx = b.nx; const ny = b.ny; const nz = b.nz;
@@ -250,7 +250,7 @@ export function surfaceVel(b, fs, mx, my, proj, F, R, dt, out) {
   let want = A > lim ? 1 : 0;
   if (!want && fs.age > LOCK.maxS && ml > 1e-4 && (out[0] * ux + out[1] * uy + out[2] * uz) / ml > LOCK.agree) want = 1;
   if (want) fs.blend = Math.min(1, fs.blend + dt / LOCK.blendS); else fs.blend = Math.max(0, fs.blend - dt / 0.15);
-  if (fs.blend >= 1) { fs.lock = false; return out; }
+  if (fs.blend >= 1) { fs.lock = false; b.wt = 0; b.wtr = 0; return out; }
   if (ml > 1e-4) {
     const k = sstep(fs.blend);
     ux = ux * (1 - k) + (out[0] / ml) * k; uy = uy * (1 - k) + (out[1] / ml) * k; uz = uz * (1 - k) + (out[2] / ml) * k;

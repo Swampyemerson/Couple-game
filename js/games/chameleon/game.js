@@ -182,7 +182,7 @@ export function createGame(el, api) {
     // the third-person look target eases for 0.4 s after a stick / let-go (no 0.3 m dip at the attach)
     lkX: 0, lkY: 0, lkZ: 0, lkAt: false, lkUntil: 0,
     // the follow rig (cameras(): hider orbit + seeker climb view): pivot spring, the solver's eased offset, the auto-pitch spring
-    pv: mkSpring3(), pvKey: '', pvAt: -10, co: [0, 0, 0], pitchV: 0,
+    lookAt: -10, gd: 0, gdAt: -10, pv: mkSpring3(), pvKey: '', pvAt: -10, co: [0, 0, 0], pitchV: 0,
     // final QA: the body a close camera looks past fades (cameras()); the FOUND framing's swing off the seeker's line
     fade: { a: 1, b: 1 }, fadeW: null, fadeFrame: false, fadeFire: false, fadeTx: 0, fadeTy: 0, fadeTz: 0, fSide: 0,
     // the "You" sticker keeps clear of the role pill (hereMarker)
@@ -2723,7 +2723,7 @@ export function createGame(el, api) {
           if (role === 'hider') { b.lookYaw = clamp(wrapAngle(b.lookYaw), -1.9, 1.9); b.lookPitch = clamp(b.lookPitch, -1.2, 1.2); }
         } else {
           C.yaw -= lk[0] * sens; C.pitch = clamp(C.pitch + lk[1] * sens * 0.8, -1.05, 1.2);
-          if (lk[0] || lk[1]) { C.autoUntil = 0; C.pitchV = 0; }
+          if (lk[0] || lk[1]) { C.autoUntil = 0; C.pitchV = 0; C.lookAt = tSec; }
         }
         if (mode2 === 'move') {
           const sizeMul = 0.85 + 0.15 * b.s;
@@ -3142,6 +3142,7 @@ export function createGame(el, api) {
 
   function cameras(dt, t) {
     const cam = stage.camera;
+    camFrame++;
     const ph = S.phase.name; const v = viewer();
     const role = v ? roleOf(v) : null;
     let snap = false; let overview = false; let climbCam = false; let rigid = false;
@@ -3262,6 +3263,13 @@ export function createGame(el, api) {
       if (C.autoUntil > tSec) { spring1(C.pitch, C.pitchV, C.autoPitch, 0.4, dt, tvS); C.pitch = tvS[0]; C.pitchV = tvS[1]; }
       else if (!b.at && C.pitch < 0.05) { spring1(C.pitch, C.pitchV, 0.32, 0.6, dt, tvS); C.pitch = tvS[0]; C.pitchV = tvS[1]; }
       else C.pitchV = 0;
+      // stuck to a wall with the camera round the back of it (a wrap onto a table's far side, a corner turned): the view swings
+      // round to the open side at up to 2.4 rad/s, in a steady glide, instead of the want flipping across the body; not while the
+      // player is turning the view themselves
+      if (b.at && Math.abs(b.ny) < 0.7 && tSec - C.lookAt > 0.6) {
+        const df = wrapAngle(Math.atan2(b.nx, b.nz) - C.yaw);
+        if (Math.abs(df) > 1.15) C.yaw = wrapAngle(C.yaw + Math.sign(df) * Math.min(Math.abs(df) - 1.15, 2.4 * dt));
+      }
       const dist = C.dist * (0.55 + 0.45 * b.s);
       const cp = Math.cos(C.pitch);
       camWant.set(lookWant.x + Math.sin(C.yaw) * cp * dist, lookWant.y + Math.sin(C.pitch) * dist, lookWant.z + Math.cos(C.yaw) * cp * dist);
@@ -3328,7 +3336,10 @@ export function createGame(el, api) {
       let ex = camPos.x - CS.px; let ey = camPos.y - CS.py; let ez = camPos.z - CS.pz; const el = Math.hypot(ex, ey, ez);
       if (el > 1e-3 && el < CS.d * 1.5 + 0.5) {
         ex /= el; ey /= el; ez /= el;
-        camRad = CS.rad; const r = camReach(CS.px, CS.py, CS.pz, ex, ey, ez, el); camRad = CAM_R;
+        camRad = CS.rad; let r = camReach(CS.px, CS.py, CS.pz, ex, ey, ez, el); camRad = CAM_R;
+        // an occluder that appears across the whole view at once (a wrap onto the far side of a table: the old spot is now behind
+        // the plank) pulls the camera in at no more than GUARD_V m/s, not by 2.8 m in one frame; in a wall's own approach (≤ 3 m/s) nothing differs
+        if (rigid) { if (camFrame - C.gdAt <= 1) r = Math.min(el, Math.max(r, C.gd - GUARD_V * dt)); C.gd = Math.min(r, el); C.gdAt = camFrame; }
         if (r < el - 0.005) camPos.set(CS.px + ex * r, CS.py + ey * r, CS.pz + ez * r);
       }
     }
@@ -3355,27 +3366,29 @@ export function createGame(el, api) {
   }
   const revC = { x: 0, y: 0, z: 0 };
   const tvS = [0, 0];
-  const RIG_TURN = 8; // rad/s: the fastest the follow rig swings the camera round the body to a new solver pick
+  let camFrame = 0; // cameras() calls so far (a follow rig that skipped a frame restarts from rest)
+  const GUARD_V = 9; // m/s: the fastest the camera guard pulls a camera in towards its pivot
+  const RIG_TURN = 5; // rad/s: the fastest the follow rig swings the camera round the body to a new solver pick
   /**
    * The third-person follow rig (hider orbit, seeker climb view). `look` (the point the camera orbits / aims
    * at, from the drawn body) goes through a critically damped spring (smoothT ≈ the time to catch up: no lag
    * on a still body, no overshoot, speed carried across frames); the camera is that sprung point plus the
-   * solver's offset from `piv` (where solveCam cast from), which eases: IN at once (a wall pulled it close:
-   * 40/s), OUT over ~0.3 s (10/s), so an occlusion fix never pops. Rewrites `want` (absolute camera spot) and
-   * `look` (the sprung point); `piv` is untouched (camGuard sweeps from it). A different rig, or a gap of
-   * 0.25 s, restarts from rest (view switches ride their own whip, cameras()).
+   * solver's offset from `piv` (where solveCam cast from), which eases: IN quickly (a wall pulled it close:
+   * 14/s; the camera guard has already put the real camera clear), OUT over ~0.3 s (10/s), so an occlusion fix never pops. Rewrites `want` (absolute camera spot) and
+   * `look` (the sprung point); `piv` is untouched (camGuard sweeps from it). A different rig, or a skipped
+   * frame, restarts from rest (view switches ride their own whip, cameras()).
    */
   function followRig(key, piv, look, want, smoothT, dt) {
     const ox = want.x - piv.x; const oy = want.y - piv.y; const oz = want.z - piv.z;
-    const rest = C.pvKey !== key || tSec - C.pvAt > 0.25 || !C.pv.init || Math.hypot(look.x - C.pv.x, look.y - C.pv.y, look.z - C.pv.z) > 2.5;
-    C.pvKey = key; C.pvAt = tSec;
+    const rest = C.pvKey !== key || camFrame - C.pvAt > 1 || !C.pv.init || Math.hypot(look.x - C.pv.x, look.y - C.pv.y, look.z - C.pv.z) > 2.5;
+    C.pvKey = key; C.pvAt = camFrame;
     if (rest) { spring3Snap(C.pv, look.x, look.y, look.z); C.co[0] = ox; C.co[1] = oy; C.co[2] = oz; }
     else {
       spring3Step(C.pv, look.x, look.y, look.z, smoothT, dt);
       // the solver's offset eases by direction (10/s: a swing to another candidate is a quick glide, never a cut) and
-      // by length (pulled in at 40/s: the camera guard has already kept it out of the wall; out at 10/s)
+      // by length (pulled in at 14/s: the camera guard has already put it clear of the wall; out at 10/s)
       const lw = Math.hypot(ox, oy, oz) || 1e-6; const lc = Math.hypot(C.co[0], C.co[1], C.co[2]) || 1e-6;
-      const kd = 1 - Math.exp(-10 * dt); const kl = 1 - Math.exp(-(lw < lc ? 40 : 10) * dt);
+      const kd = 1 - Math.exp(-10 * dt); const kl = 1 - Math.exp(-(lw < lc ? 14 : 10) * dt);
       // direction: turn the current unit vector toward the wanted one by a fraction of the angle between them, about their
       // common axis (about the vertical when they're opposite: the camera swings round the body, never through it), at most
       // RIG_TURN rad/s
