@@ -2541,8 +2541,11 @@ export function createGame(el, api) {
     const w0 = performance.now();
     const now = clock();
     const sdt = framePacer.feed(dtReal); // (the delta the simulation, the camera and the effects advance by)
-    if (!rclock || Math.abs(now - rclock) > 60) rclock = now; else { rclock += sdt * 1000; rclock += (now - rclock) * Math.min(1, sdt * 3); }
+    // (a frame past 100 ms is not display jitter: the render clock is the real one then, and the partner's picture advances by the real time, not the clamped one)
+    const longFrame = wallDt > 0.1;
+    if (!rclock || longFrame || Math.abs(now - rclock) > 60) rclock = now; else { rclock += sdt * 1000; rclock += (now - rclock) * Math.min(1, sdt * 3); }
     rShift = (rclock - now) / 1000;
+    const rdt = longFrame ? Math.min(0.5, wallDt) : sdt;
     if (!vec) { vec = new THREE.Vector3(); dm = new THREE.Object3D(); tc = new THREE.Color(); }
     // pause bookkeeping
     if (isHost || !live) hostPauseCheck(now); else guestPauseCheck(now);
@@ -2554,7 +2557,7 @@ export function createGame(el, api) {
       if (S.autoStart && S.phase === 'lobby' && hostStart(FLOW.rematchLead, true)) S.autoStart = 0;
       else if (performance.now() - S.rematchAt > 15000) { S.rematchCard = false; S.autoStart = 0; renderLobby(true); }
     }
-    updateRemote(sdt);
+    updateRemote(rdt);
     // slow motion after a PIT; a hard hit's quarter second at half speed; the hit-stop itself
     // (60–90 ms with the simulation held while the frame still draws: the frame of impact lands)
     let tsK = 1;

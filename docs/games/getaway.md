@@ -458,6 +458,17 @@ effects and the partner's picture; the 125 ms clamp and the slow-frame rule (> 5
 pulled to the net clock at 3/s) the partner's car is drawn at, so rAF callback jitter does not
 reach it. Input is read in `simStep` from the state the pointer / key handlers left before the
 frame (nothing is sampled after the step or applied a frame later).
+Measured on a virtual display (the game's rAF replaced by a 60 / 90 / 120 Hz grid with 0.5–2 ms
+timestamp jitter and dropped frames, nothing drawn, the bot driving; metrics against the display
+grid, i.e. what the eye sees; the old loop vs this one): the drawn car's speed per frame had a
+coefficient of variation of 32–35% at 60 and 90 Hz and 70% at 120 Hz (1, 2 or 3 steps a frame; some
+phases of a perfectly regular 60 Hz were smooth by luck), now 0.3–4%; the camera's position jerk
+(median) fell from 1.3k–170k m/s³ to 70–190, its yaw jerk from 22–800 to 2–9 rad/s³. The live
+partner's drawn car (guest, 80 ms link, regular grid, ±1–2 ms callback jitter): apparent-speed CoV
+24% → 3.5% at 60 Hz and 68% → 6.7% at 120 Hz, position jerk 25k → 450 m/s³. Input to the first
+drawn frame is unchanged in kind (the pointer handler writes the pad, the first step of the next
+frame reads it) but the picture is one step behind the state: +8 ms (the cost of interpolating
+instead of extrapolating).
 
 **Camera.** A chase camera behind and above (near: 7.4 m back, 2.9 m up; far: 12.5 m, 5.6 m; ×1.3
 in portrait), easing towards the direction of travel while sliding so drifts read (the blend fades
@@ -760,8 +771,8 @@ side and cool anti-sun side, a wide halo, self-shadowed cumulus (one shade tap t
 a riso halftone in the shade, high cirrus streaks, drifting; at night a moon with maria and halo,
 two sizes of twinkling coloured stars (high tier), a faint milky band and a warm city glow on
 the horizon. Tiers: **low** keeps the old cost (no detail, no sky clouds) plus the tint; **mid**
-(phones) gets everything above except the second star layer and the third cloud octave; **high**
-all of it. The extra fragment cost is a few noise taps per pixel on road, grass and walls inside
+(phones) gets everything above except the cirrus, the second star layer and the third cloud octave;
+**high** all of it. The extra fragment cost is a few noise taps per pixel on road, grass and walls inside
 ~48 m (distance-gated, so it vanishes where it couldn't be seen), the sky's cloud pair, and one
 `dFdx/dFdy` pair; the vertex layout is unchanged.
 

@@ -373,6 +373,7 @@ vec3 gRoad( vec3 c, float lane, float dist, vec3 N, vec3 V, bool paved, inout ve
     a *= 1.0 + gNear * ( 0.075 * ( g1 - 0.5 ) + 0.05 * ( g2 - 0.5 ) );
     a += gNear * 0.045 * step( 0.955, g1 ) * ( 0.4 + g2 );
   }
+  float gP2 = 0.0;
   if ( lane != 0.0 ) {
     float lf = fract( abs( lane ) );
     float s1 = ( lf - 0.27 ) * 7.0; float s2 = ( lf - 0.73 ) * 7.0; float o = ( lf - 0.5 ) * 5.0;
@@ -381,28 +382,34 @@ vec3 gRoad( vec3 c, float lane, float dist, vec3 N, vec3 V, bool paved, inout ve
     a *= 1.0 - 0.09 * tr * wk;                                   // rubber in the wheel paths
     a *= 1.0 - 0.1 * wk / ( 1.0 + o * o * o * o );               // oil drips between them
     a += 0.022 * ( 1.0 - gFar ) * smoothstep( 0.9, 1.0, abs( lf - 0.5 ) * 2.0 ); // dusty lane edges
-    add += gEnv( reflect( V, N ) ) * tr * 0.04 * ( 1.0 - gFar ) * ( 1.0 - uNight * 0.4 ); // polished tracks
+    gP2 = tr * 0.04 * ( 1.0 - gFar ) * ( 1.0 - uNight * 0.4 ); // polished tracks (their reflection is added below, with the sheen)
   }
   vec2 pq = p / 9.0; float ph = gHash( floor( pq ) );
   if ( ph > 0.9 ) { vec2 f = fract( pq ); float w = gPx / 9.0; a *= 1.0 - 0.1 * gBd( f.x, 0.1, 0.82, w ) * gBd( f.y, 0.12, 0.66, w ) * ( 1.0 - gFar * 0.6 ); }
   vec2 pr = p / 15.0; float ph2 = gHash( floor( pr ) + 17.0 );
   if ( ph2 > 0.92 ) { vec2 f = fract( pr ); float w = gPx / 15.0; a *= 1.0 + 0.07 * gBd( f.x, 0.2, 0.6, w ) * gBd( f.y, 0.1, 0.9, w ) * ( 1.0 - gFar * 0.6 ); }
   if ( gNear > 0.0 ) {
-    float cn = gNoise( p * 0.85 + 11.0 );
     float cm = smoothstep( 0.62, 0.8, gNoise( p * 0.11 + 5.0 ) );
-    float line = 1.0 - smoothstep( 0.0, 0.005 + gPx * 0.7, abs( cn - 0.5 ) );
-    a *= 1.0 - 0.2 * line * cm * gNear;
+    if ( cm > 0.0 ) { // cracks only in the cracked zones
+      float cn = gNoise( p * 0.85 + 11.0 );
+      float line = 1.0 - smoothstep( 0.0, 0.005 + gPx * 0.7, abs( cn - 0.5 ) );
+      a *= 1.0 - 0.2 * line * cm * gNear;
+    }
   }
   if ( uNight > 0.5 ) {
     if ( gFar < 0.95 ) {
       float pd = smoothstep( 0.68, 0.76, gNoise( p * 0.33 + 9.0 ) + 0.12 * ( n2 - 0.5 ) ) * ( 1.0 - gFar ) * ( 1.0 - mark );
-      float fr = pow( 1.0 - clamp( -V.y, 0.0, 1.0 ), 4.0 );
+      float fr = 1.0 - clamp( -V.y, 0.0, 1.0 ); fr *= fr; fr *= fr;
       a *= 1.0 - 0.4 * pd;
       add += gEnv( reflect( V, vec3( 0.0, 1.0, 0.0 ) ) ) * pd * ( 0.18 + 0.7 * fr );
     }
-  } else {
-    add += uSunCol * pow( max( dot( reflect( V, N ), uSun ), 0.0 ), 24.0 ) * 0.06 * ( 1.0 - mark ) * ( 1.0 - gFar );
+  } else if ( gFar < 0.95 ) {
+    vec3 gRf = reflect( V, N );
+    float sd = max( dot( gRf, uSun ), 0.0 ); float s2 = sd * sd; float s4 = s2 * s2; float s8 = s4 * s4; float s16 = s8 * s8;
+    add += uSunCol * ( s16 * s8 ) * 0.06 * ( 1.0 - mark ) * ( 1.0 - gFar );
+    add += gEnv( gRf ) * gP2;
   }
+  if ( uNight > 0.5 && gP2 > 0.0 ) add += gEnv( reflect( V, N ) ) * gP2;
   if ( mark > 0.0 ) {
     // worn paint: faded stretches, chips, a little asphalt showing through
     float wn = gNoise( p * 1.6 ) * 0.6 + gNoise( p * 0.2 + 3.0 ) * 0.5;
@@ -470,15 +477,14 @@ vec3 gMaterial( vec3 c, float k, vec3 N, vec3 V, float dist, inout vec3 add ) {
     float slab = gHash( floor( cl ) + 3.0 );
     float fadeJ = 1.0 - smoothstep( 0.15, 0.5, w.x );
     vec3 o = c * ( 0.95 + 0.08 * gNoise( vWPos.xz * 0.7 + vWPos.y ) ) * ( 0.97 + 0.05 * slab );
-    if ( wall ) { float st = smoothstep( 0.5, 0.9, gNoise( vec2( u * 1.7, v * 0.25 ) + 8.0 ) ); o *= 1.0 - 0.1 * st * ( 1.0 - gFar ); }
-    else o *= 1.0 + 0.03 * ( gNoise( vWPos.xz * 9.0 ) - 0.5 ) * ( 1.0 - gFar );
+    if ( wall && gFar < 0.9 ) { float st = smoothstep( 0.5, 0.9, gNoise( vec2( u * 1.7, v * 0.25 ) + 8.0 ) ); o *= 1.0 - 0.1 * st * ( 1.0 - gFar ); }
     return o * ( 1.0 - 0.17 * jn * fadeJ * ( 1.0 - gFar * 0.5 ) );
   }
   if ( k == 18.0 ) {
     float n1 = gNoise( vWPos.xz * 0.055 ); float n2 = gNoise( vWPos.xz * 0.29 );
     float n3 = gFar < 0.99 ? gNoise( vWPos.xz * 1.6 ) : 0.5;
     vec3 g = c * ( 0.86 + 0.2 * n2 + 0.12 * ( n3 - 0.5 ) * ( 1.0 - gFar ) );
-    float lush = smoothstep( 0.35, 0.7, gNoise( vWPos.xz * 0.021 + 5.0 ) );
+    float lush = smoothstep( 0.62, 0.38, n1 );
     g = mix( g * vec3( 1.04, 1.02, 0.84 ), g * vec3( 0.92, 1.03, 0.95 ), lush * 0.7 );               // dry and lush patches
     g = mix( g, g * vec3( 1.14, 1.07, 0.8 ), smoothstep( 0.58, 0.85, n1 ) * 0.45 );
     float nr = 1.0 - smoothstep( 8.0, 26.0, dist );
@@ -486,7 +492,7 @@ vec3 gMaterial( vec3 c, float k, vec3 N, vec3 V, float dist, inout vec3 add ) {
       float bl = gHash( floor( vWPos.xz * 26.0 ) );
       g *= 1.0 + nr * 0.1 * ( bl - 0.5 );                                                          // blades
       float fl = gHash( floor( vWPos.xz * 4.0 ) + 11.0 );
-      g = mix( g, fl > 0.5 ? vec3( 0.98, 0.95, 0.72 ) : vec3( 0.95, 0.78, 0.9 ), nr * step( 0.985, fl ) * step( 0.72, gHash( floor( vWPos.xz * 26.0 ) ) ) * lush );
+      if ( fl > 0.985 && bl > 0.72 ) g = mix( g, fl > 0.992 ? vec3( 0.98, 0.95, 0.72 ) : vec3( 0.95, 0.78, 0.9 ), nr * lush );   // a few flowers
     }
     return g;
   }
@@ -537,8 +543,7 @@ vec3 gMaterial( vec3 c, float k, vec3 N, vec3 V, float dist, inout vec3 add ) {
     float tone = gNoise( vWPos.xz * 0.16 + vWPos.y * 0.2 );
     vec3 lf = c * ( 0.78 + 0.34 * n * ( 1.0 - gFar * 0.6 ) ) * ( 0.85 + 0.15 * clamp( N.y + 0.5, 0.0, 1.0 ) );
     lf *= mix( vec3( 0.88, 0.98, 0.9 ), vec3( 1.1, 1.08, 0.82 ), smoothstep( 0.3, 0.7, tone ) );  // some branches yellower
-    float dap = 1.0 - smoothstep( 20.0, 70.0, dist );
-    lf *= 1.0 + dap * 0.14 * ( gHash( floor( vWPos.xz * 3.0 + vWPos.y * 3.0 ) ) - 0.5 );             // leaf clumps
+    if ( dist < 70.0 ) lf *= 1.0 + ( 1.0 - smoothstep( 20.0, 70.0, dist ) ) * 0.14 * ( gHash( floor( vWPos.xz * 3.0 + vWPos.y * 3.0 ) ) - 0.5 ); // leaf clumps
     return lf;
   }
   if ( k == 29.0 ) { return gRoad( c, 0.0, dist, N, V, false, add ); }
@@ -662,7 +667,7 @@ if ( gLit ) {
   gTint = mix( uFill, uKey, gWarm );
 #ifndef GTW_LOW
   if ( gc != 5.0 ) { // a soft sky rim on edges facing away
-    float gRm = pow( 1.0 - clamp( dot( -gV, gN ), 0.0, 1.0 ), 3.0 ) * ( 1.0 - smoothstep( 25.0, 100.0, gDist ) ) * ( 1.0 - smoothstep( 0.5, 0.85, abs( gN.y ) ) );
+    float gRm = 1.0 - clamp( dot( -gV, gN ), 0.0, 1.0 ); gRm = gRm * gRm * gRm * ( 1.0 - smoothstep( 25.0, 100.0, gDist ) ) * ( 1.0 - smoothstep( 0.5, 0.85, abs( gN.y ) ) );
     gAdd += uSkyHor * gRm * ( 0.1 + 0.05 * uNight );
   }
 #endif
@@ -1074,7 +1079,7 @@ export function* mergeSteps(THREE, group, mats, inkRGB, disposeSet, pre = null) 
  * side, a Mie-like halo and a soft sun disc (no ring), two cloud layers (drifting, self-shadowed
  * cumulus with a halftone shade, high cirrus streaks) and at night a moon with maria and a halo,
  * twinkling coloured stars in two sizes, a faint milky band and a warm city glow on the horizon.
- * Tiers: low = gradient + glow only; mid = clouds (2 octaves, one shade tap) + cirrus; high = 3 octaves + stars' 2nd layer.
+ * Tiers: low = gradient + glow only; mid = clouds (2 octaves, one shade tap); high = 3 octaves + cirrus + stars' 2nd layer.
  * opts: { sunCol, clouds (0..1), tier }. mesh.userData.tick(t).
  */
 export function makeSky(THREE, top, horizon, sunDir, dark, opts = {}) {
@@ -1121,23 +1126,26 @@ export function makeSky(THREE, top, horizon, sunDir, dark, opts = {}) {
         c = mix(c, c * vec3(1.08, 0.98, 0.86) + uSunCol * 0.035, sunSide * sunSide * hb * 0.8 * day);
         c = mix(c, c * vec3(0.93, 0.98, 1.06), (1.0 - sunSide) * (1.0 - sunSide) * hb * 0.7 * day);
         // halo
-        c += uSunCol * (pow(sp, 3.0) * 0.06 + pow(sp, 10.0) * 0.13 + pow(sp, 64.0) * 0.34) * day;
+        float sp2 = sp * sp; float sp4 = sp2 * sp2; float sp8 = sp4 * sp4; float sp16 = sp8 * sp8; float sp64 = sp16 * sp16; sp64 *= sp64;
+        c += uSunCol * (sp2 * sp * 0.06 + sp8 * sp2 * 0.13 + sp64 * 0.34) * day;
         #ifndef SKY_LOW
-        // cirrus: long thin streaks high up
+        #ifdef SKY_HI
+        // cirrus: long thin streaks high up (high tier)
         if (h > 0.08) {
           vec2 cu = d.xz / (h + 0.45) * vec2(0.6, 1.3) + vec2(uTime * 0.012, 0.0);
           float ci = smoothstep(0.58, 0.97, n2(vec2(cu.x * 1.1, cu.y * 3.2)) * 0.65 + n2(cu * vec2(2.4, 6.0) + 5.0) * 0.35);
-          c = mix(c, mix(vec3(1.0), uHor, 0.35) + uSunCol * pow(sp, 6.0) * 0.2, ci * 0.14 * smoothstep(0.08, 0.4, h) * (1.0 - 0.7 * uNight));
+          c = mix(c, mix(vec3(1.0), uHor, 0.35) + uSunCol * sp4 * sp2 * 0.2, ci * 0.14 * smoothstep(0.08, 0.4, h) * (1.0 - 0.7 * uNight));
         }
+        #endif
         // cumulus: projected on a high plane, drifting; density toward the sun shades it
         if (h > 0.0 && uCloud > 0.0) {
           vec2 uv = d.xz / (h + 0.09) * 0.9 + vec2(uTime * 0.006, uTime * 0.002);
           float n = cloudN(uv);
           float cov = smoothstep(0.62 - uCloud * 0.2, 0.86 - uCloud * 0.12, n) * smoothstep(0.015, 0.2, h);
           if (cov > 0.002) {
-            float ns = cloudN(uv + normalize(saz + vec2(1e-4)) * 0.07);
+            float ns = n2((uv + saz * 0.07) * 1.3) * 0.62 + n2((uv + saz * 0.07) * 3.1 + 7.0) * 0.33;
             float lit = clamp(0.55 + (n - ns) * 3.4, 0.0, 1.0);
-            vec3 body = vec3(1.0, 0.985, 0.95) + uSunCol * pow(sp, 5.0) * 0.22;
+            vec3 body = vec3(1.0, 0.985, 0.95) + uSunCol * sp4 * sp * 0.22;
             vec3 shade = mix(uHor * 0.86, uTop * 0.8, 0.45);
             vec3 cc = mix(shade, body, lit);
             cc *= 1.0 - 0.14 * smoothstep(0.7, 1.0, n);
@@ -1145,7 +1153,7 @@ export function makeSky(THREE, top, horizon, sunDir, dark, opts = {}) {
             vec2 fp = mat2(0.9, -0.43, 0.43, 0.9) * (gl_FragCoord.xy / 5.0);
             float dots = 1.0 - smoothstep(0.14 + 0.26 * (1.0 - lit) - 0.12, 0.14 + 0.26 * (1.0 - lit) + 0.12, length(fract(fp) - 0.5));
             cc = mix(cc, cc * 0.93, dots * (1.0 - lit) * 0.4);
-            cc += uSunCol * pow(sp, 6.0) * 0.3 * (1.0 - cov) * 4.0 * cov;
+            cc += uSunCol * sp4 * sp2 * 1.2 * (1.0 - cov) * cov;
             if (uNight > 0.5) cc = mix(uTop * 1.6, uHor * 0.9, 0.5) * (0.8 + 0.4 * lit) + uSunCol * pow(sp, 12.0) * 0.25 + vec3(0.9, 0.5, 0.25) * 0.05 * (1.0 - smoothstep(0.0, 0.35, h));
             c = mix(c, cc, cov * (0.86 - 0.44 * uNight));
           }
