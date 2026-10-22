@@ -2853,6 +2853,9 @@ export function createGame(el, api) {
     if (on) { C.vYaw = wrapAngle(b.yaw + b.lookYaw); b.lookYaw = 0; }
     else { b.yaw = C.vYaw; b.lookYaw = 0; b.fx = Math.sin(b.yaw); b.fy = 0; b.fz = Math.cos(b.yaw); }
     C.climbV = on;
+    // first person ↔ the over-the-shoulder climb view: whip the camera across (the same eased glide as the eyes / watch switch)
+    // instead of cutting from the eye to a spot ~2 m behind the body
+    C.vsAt = tSec; C.vsPend = true;
   }
   /** History for tag confirmation (the victim checks the shooter's view against its true path). */
   function recordHist(w, b, t) {
