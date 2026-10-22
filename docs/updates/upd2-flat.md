@@ -303,3 +303,12 @@ background limit after `board.test.js`):
 | defuse.test.js, flat-defuse.test.js | PASS |
 | flat-hockey.test.js, flat-quickdraw.test.js | PASS |
 | flat-cycles.test.js | first run failed its own guard ("measured 0.8 s of pure riding", needs 1.2 s) because the box was loaded; PASS 39/39 on rerun |
+| live.test.js (hockey, quickdraw, cycles) | first full run: one hockey wait timed out (the real-mouse shot; the hockey builder saw the same on the original). Second full run: hockey and cycles passed, one quickdraw layout check failed ("360x640: both stamps (BOTH BARRELS) are on screen", 22 ms after the shot). Third run, `GAME=quickdraw`: PASS (ALL GOOD). All three are timing-sensitive checks on a box running several browsers |
+| computer.test.js (cycles, defuse) | first full run: one cycles timing check failed (a turn on the phone-on-its-side registered a moment late). Rerun: PASS, 229 ok |
+| threed.test.js (another unit's game, run because games.css is shared) | PASS |
+
+`threed-bones`, `threed-tower`, `chameleon` and `getaway` were still running at push time. They belong to other units, and their games
+only see this unit's `games.css` additions (grain on the room background and panels). The coordinator's regression run covers them.
+
+Every flat game test file has a passing run on the final code. The failures above were one-off timing failures under heavy load.
+Each passed when rerun, and none touches rules or saved data.
