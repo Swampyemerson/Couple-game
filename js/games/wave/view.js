@@ -195,8 +195,8 @@ export function createWaveView(el, api, env) {
       <g class="wv-zone" clip-path="url(#${id}c)">${BANDS.map(([, p]) => `<path class="wv-zb${p}" d=""${p < 4 ? ` fill="url(#${id}s${p})"` : ''}/>`).join('')}</g></svg>`;
     const labelsSvg = zone == null ? '' : `<g class="wv-zlabels">${[2, 3, 4, 3, 2].map(() => '<text></text>').join('')}</g>`;
     const lidHtml = lid ? `<div class="wv-lidclip"><div class="wv-lidrot"><svg class="wv-lay" ${VB} aria-hidden="true"><defs><pattern id="${id}h" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(40)"><line x1="0" y1="0" x2="0" y2="8" class="wv-hatch"/></pattern></defs><path class="wv-lid-face" d="${FACE}"/><path d="${FACE}" fill="url(#${id}h)"/></svg></div></div>` : '';
-    const needleHtml = needle ? `<div class="wv-nl sh"><svg class="wv-lay" ${VB} aria-hidden="true"><path class="wv-needle-shadow" d="${NEEDLE}"/></svg></div>
-      <div class="wv-nl n"><svg class="wv-lay" ${VB} aria-hidden="true"><path class="wv-needle ${needle.who}${needle.gold ? ' jp' : ''}" d="${NEEDLE}"/></svg></div>` : '';
+    const needleHtml = needle ? `<div class="wv-nl sh"><svg class="wv-lay" viewBox="108 -4 24 132" aria-hidden="true"><path class="wv-needle-shadow" d="${NEEDLE}"/></svg></div>
+      <div class="wv-nl n"><svg class="wv-lay" viewBox="108 -4 24 132" aria-hidden="true"><path class="wv-needle ${needle.who}${needle.gold ? ' jp' : ''}" d="${NEEDLE}"/></svg></div>` : '';
     host.innerHTML = `<div class="wv-dialbox"><div class="wv-dial${jp ? ' jp' : ''}" aria-label="Dial"><svg class="wv-svg" ${VB} aria-hidden="true">
       <path class="wv-shadow" d="${FACE}" transform="translate(4 4)"/>
       <rect class="wv-plinth-shadow" x="8" y="${CY + 2}" width="232" height="16" rx="4"/>
@@ -223,12 +223,12 @@ export function createWaveView(el, api, env) {
     const nlNeedle = box.querySelector('.wv-nl.n');
     const lidEl = box.querySelector('.wv-lidrot');
     const lidClip = box.querySelector('.wv-lidclip');
-    // 3 user units to the right and down, as a share of the layer box (the shadow is lit from a fixed side)
+    // 3 user units to the right and down, as a share of the needle box (24 wide, 132 tall) (the shadow is lit from a fixed side)
     const setNeedle = (v) => {
       if (!nlNeedle) return;
       const a = Math.round((v - 50) * 180) / 100;
       nlNeedle.style.transform = `rotate(${a}deg)`;
-      nlShadow.style.transform = `translate(1.25%, 1.92%) rotate(${a}deg)`;
+      nlShadow.style.transform = `translate(12.5%, 2.27%) rotate(${a}deg)`;
     };
     const zPaths = [...box.querySelectorAll('.wv-zone path')];
     const zTexts = [...box.querySelectorAll('.wv-zlabels text')];

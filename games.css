@@ -37,7 +37,7 @@
   --g-grain-size: 180px 180px;
   --g-halftone-a: radial-gradient(circle, color-mix(in srgb, var(--p-a) 55%, transparent) 1px, transparent 1.5px);
   --g-halftone-b: radial-gradient(circle, color-mix(in srgb, var(--p-b) 55%, transparent) 1px, transparent 1.5px);
-  --g-misreg: 1.5px 1px 0 color-mix(in srgb, var(--p-b) 75%, transparent), -1px -0.5px 0 color-mix(in srgb, var(--p-a) 65%, transparent);
+  --g-misreg: 1.25px 1px 0 color-mix(in srgb, var(--p-b) 62%, transparent), -0.75px -0.5px 0 color-mix(in srgb, var(--p-a) 52%, transparent);
   --g-ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
   --g-ease-spring: cubic-bezier(0.3, 1.5, 0.5, 1);
   --g-ease-snap: cubic-bezier(0.5, 0, 0.2, 1.4);

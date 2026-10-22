@@ -391,7 +391,7 @@ const shot = async (pg, name) => { if (SHOTS) await pg.screenshot({ path: `${SHO
 const inView = (pg, sels) => pg.evaluate((ss) => {
   const vh = innerHeight; const vw = innerWidth;
   const sc = document.querySelector('.wv-scroll');
-  const out = { vh, noScroll: sc.scrollHeight <= sc.clientHeight + 1, sh: `${sc.scrollHeight}/${sc.clientHeight}`, bad: [] };
+  const out = { vh, noScroll: sc.scrollHeight <= sc.clientHeight + 1, sh: `${sc.scrollHeight}/${sc.clientHeight} ` + [...sc.querySelectorAll('*')].filter((e) => e.getBoundingClientRect().bottom > sc.getBoundingClientRect().bottom + 0.5).map((e) => e.className + ':' + Math.round(e.getBoundingClientRect().bottom)).join(' '), bad: [] };
   for (const s of ss) {
     const e = document.querySelector(s);
     if (!e) { out.bad.push(`${s} missing`); continue; }

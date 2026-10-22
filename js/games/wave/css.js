@@ -39,6 +39,10 @@ export const CSS = `
     .g-wave .wv-nl, .g-wave .wv-lidrot { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform-origin: 50% 84.615%; will-change: transform; pointer-events: none; }
     .g-wave .wv-lidclip { position: absolute; left: 0; top: 0; width: 100%; height: 84.615%; overflow: hidden; pointer-events: none; }
     .g-wave .wv-lidrot { height: 118.18%; }
+    /* the needle layers are a narrow box from the top of the dial down to the hub (24 x 132 of the dial's 240 x 156 units), turned about its
+       bottom middle: a full-size box turned that far would reach below the dial and make the screen scroll. The needle is drawn in it with
+       overflow visible, so nothing is cut. */
+    .g-wave .wv-nl { left: 45%; width: 10%; height: 84.615%; transform-origin: 50% 100%; }
     /* paper tooth on the face, cut to the half disc */
     .g-wave .wv-grainface { position: absolute; left: 0; top: 0; width: 100%; height: 84.615%; overflow: hidden; pointer-events: none; clip-path: ellipse(45% 81.82% at 50% 100%); background: var(--g-grain) 0 0 / var(--g-grain-size); }
     .g-wave .wv-dial.thump { animation: wv-thump 0.3s var(--g-ease-out); }
