@@ -48,9 +48,7 @@ const PARTNER_DELAY = 130; // ms: the partner's mallet is read this far behind t
 const PARTNER_LEAD = 100; // (the follower below takes ~40 ms of it back)
 const FOLLOW_TAU = 0.04; // s  // ms: ... and drawn this far ahead of that along its (also interpolated) velocity, so it is not a whole delay behind the puck
 const HARD_HIT = 120;     // impact speed (u/s) of a hit that gets hit-stop and a shake
-const STOP_MS = 50;       // hit-stop: 50 ms at HARD_HIT, up to STOP_MAX for the hardest
-const STOP_MAX = 80;
-const GOAL_STOP = 80;     // the freeze on a goal
+const STOP_MAX = 80;      // longest hold a guest honours from a host's streamed hz (hosts no longer send one)
 const DPR_MAX = 2;        // canvas pixel ratio cap (a 3x phone draws 2.25x fewer pixels)
 const QUALITY = [1, 0.8, 0.64, 0.5]; // dynamic resolution steps
 
@@ -181,7 +179,6 @@ registerGame({
     let hudV = 1;                // bumps when the printed scoreboard must repaint (layout, theme, table)
     let alpha = 1;               // how far into the next physics step the clock is: the draw blends the last two steps by it
     let stopUntil = 0;           // hit-stop (host / one phone): the sim holds until this time
-    let lastStopAt = -1e9;
     let gStop = 0;               // the same on the guest, from its own hits and the host's hz
     let hostFreezes = false;     // the host streams hz, so it freezes too (an older host never does: then the guest never holds either)
     let shakeAt = -1e9; let shakeAmp = 0; let shakeDur = 1; let shakeX = 0; let shakeY = 0;
@@ -490,15 +487,11 @@ registerGame({
       else { const d = Math.hypot(p.vx, p.vy) || 1; nx = p.vx / d; ny = p.vy / d; }
       squash(p.i, nx, ny, clamp(sp / 170, 0.3, 1));
     }
-    /** A hard mallet hit: a short hit-stop and a shake. The host / one phone freezes its sim (and streams hz so the guest freezes too). */
+    /** A hard mallet hit: a shake. No hit-stop: freezing the sim let a mallet still chasing the pointer catch up in one
+     *  step after the pause, overtake the puck it had just struck and knock it back (a real shot stopped scoring), and a
+     *  frozen host clock drifts from the guest. stopUntil / gStop stay in place (always 0) so an older guest's hz handling is unchanged. */
     function hardHit(imp) {
       if (reduced || extrap || imp < HARD_HIT) return;
-      const now = performance.now();
-      if (now - lastStopAt > 320) {
-        lastStopAt = now;
-        const ms = STOP_MS + clamp((imp - HARD_HIT) * 0.3, 0, STOP_MAX - STOP_MS);
-        if (host) stopUntil = now + ms; else if (hostFreezes) gStop = now + ms;
-      }
       shake(1.6 + clamp((imp - HARD_HIT) / 90, 0, 1.4), 170);
     }
     /** wall / Pillar sounds for a puck step's bounce mask (the goal frame is the host's POST event). */
@@ -517,7 +510,6 @@ registerGame({
       fx.splatX = clamp(gx === undefined ? W / 2 : gx, 18, W - 18); fx.splatY = scorer === 'a' ? 0 : H;
       shake(4.5, 240);
       if (!reduced) {
-        if (host) stopUntil = Math.max(stopUntil, now + GOAL_STOP); else if (hostFreezes) gStop = Math.max(gStop, now + GOAL_STOP);
         flashEl.style.background = T[scorer];
         if (flashEl.animate) { if (flashAnim) flashAnim.cancel(); flashAnim = flashEl.animate([{ opacity: 0.5 }, { opacity: 0 }], { duration: 650, easing: 'ease-out' }); } else flashEl.style.opacity = '0';
       }
@@ -894,7 +886,11 @@ registerGame({
           Object.assign(g.dp, ext, { i });
           // Blend, never snap: only a reset (new epoch / phase change) or a huge error jumps. The picture keeps its position AND its
           // velocity across the new state; the spring then walks the difference out (so the puck never kinks or jumps).
-          if (prev && prev.ph === 'play' && wasOn && Math.hypot(ex, ey) < 160) { g.ox = ex; g.oy = ey; g.ovx = svx - ext.vx; g.ovy = svy - ext.vy; } else { g.ox = 0; g.oy = 0; g.ovx = 0; g.ovy = 0; g.rx = ext.x; g.ry = ext.y; trails[i].n = 0; }
+          if (prev && prev.ph === 'play' && wasOn && Math.hypot(ex, ey) < 160) {
+            g.ox = ex; g.oy = ey; g.ovx = svx - ext.vx; g.ovy = svy - ext.vy;
+            const v0 = Math.hypot(g.ovx, g.ovy); // after a bounce the mismatch can be ~600 u/s: start no faster than the cap
+            if (v0 > CORRECT_RATE) { g.ovx *= CORRECT_RATE / v0; g.ovy *= CORRECT_RATE / v0; }
+          } else { g.ox = 0; g.oy = 0; g.ovx = 0; g.ovy = 0; g.rx = ext.x; g.ry = ext.y; trails[i].n = 0; }
         } else {
           Object.assign(g.dp, { x: a[0], y: a[1], px: a[0], py: a[1], vx: 0, vy: 0, i });
           g.ox = 0; g.oy = 0; g.ovx = 0; g.ovy = 0; g.ov = null; g.rx = a[0]; g.ry = a[1];
@@ -967,7 +963,10 @@ registerGame({
           if (Math.abs(g.ox) + Math.abs(g.oy) + Math.abs(g.ovx) + Math.abs(g.ovy) < 0.02) { g.ox = 0; g.oy = 0; g.ovx = 0; g.ovy = 0; continue; }
           let j = g.ovx + CORRECT_W * g.ox; const nx = (g.ox + j * dt) * e; const nvx = (g.ovx - j * CORRECT_W * dt) * e;
           j = g.ovy + CORRECT_W * g.oy; const ny = (g.oy + j * dt) * e; const nvy = (g.ovy - j * CORRECT_W * dt) * e;
-          g.ox = nx; g.oy = ny; g.ovx = nvx; g.ovy = nvy;
+          // the correction never moves the picture more than CORRECT_RATE·dt in one frame (the old step limit): no visible jump
+          const mx = nx - g.ox; const my = ny - g.oy; const mm = Math.hypot(mx, my); const lim = CORRECT_RATE * dt;
+          if (mm > lim) { g.ox += (mx / mm) * lim; g.oy += (my / mm) * lim; } else { g.ox = nx; g.oy = ny; }
+          g.ovx = nvx; g.ovy = nvy;
           const sp = Math.hypot(g.ovx, g.ovy);
           if (sp > CORRECT_RATE) { g.ovx *= CORRECT_RATE / sp; g.ovy *= CORRECT_RATE / sp; }
         }
@@ -1120,8 +1119,10 @@ registerGame({
     // ── input handlers ──
     // The table's top-left on screen is cached: layout() sets it (ResizeObserver) and a new finger refreshes it. Reading the
     // rect on every pointermove forced a layout each time; the shake offset is subtracted, so a moving rig doesn't shift the aim.
-    let cvL = 0; let cvT = 0;
-    function readRect() { const r = rig.getBoundingClientRect(); cvL = r.left - shakeX; cvT = r.top - shakeY; }
+    // A hovering mouse has no press to refresh it, and the table can move on screen without resizing (chrome above it
+    // reflowing, a banner going away), so the hover path re-reads it when the cached copy is over 250 ms old.
+    let cvL = 0; let cvT = 0; let rectAt = -1e9;
+    function readRect() { const r = rig.getBoundingClientRect(); cvL = r.left - shakeX; cvT = r.top - shakeY; rectAt = performance.now(); }
     function canonFromEvent(e) {
       return fromPx(e.clientX - cvL, e.clientY - cvT);
     }
@@ -1162,7 +1163,10 @@ registerGame({
         if (c.q[0] === e.pointerId) aim(who, e);
         return;
       }
-      if (!local && e.pointerType === 'mouse' && phase !== 'setup') aim(me, e); // on a computer the mouse just drives your mallet
+      if (!local && e.pointerType === 'mouse' && phase !== 'setup') { // on a computer the mouse just drives your mallet
+        if (performance.now() - rectAt > 250) readRect();
+        aim(me, e);
+      }
     }
     function onUp(e) {
       const who = ptrs.get(e.pointerId);

@@ -188,7 +188,8 @@ async function hockeyLive(h, tag, quick = false) {
     await b.waitForFunction(() => window.__hockeyTest.state().score.b === 1, null, { timeout: 3000 });
     assert(true, "the guest's shot scores on both phones");
     const chips = async (pg) => pg.evaluate(() => [...document.querySelectorAll('#game-root [data-score]')].map((e) => e.textContent).join('-'));
-    assert(await chips(a) === '1-1' && await chips(b) === '1-1', 'score chips agree: 1-1');
+    const [ca, cb] = [await chips(a), await chips(b)];
+    assert(ca === '1-1' && cb === '1-1', `score chips agree: 1-1 (host ${ca}, guest ${cb})`);
   }
   // Fast-forward to 7 with the test hook (host only).
   const before = results(h, 'hockey').length;

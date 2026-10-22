@@ -93,14 +93,14 @@ async function juiceTest(h) {
   await pg.evaluate(() => window.__hockeyTest.hit(220));
   await pg.waitForTimeout(40);
   const s = await st(pg);
-  assert(s.render.held, 'a hard hit holds the sim for a moment (hit-stop)');
+  assert(!s.render.held, 'a hard hit never holds the sim (a hit-stop let the chasing mallet overtake the puck it had just hit)');
   let maxShake = 0;
   for (let i = 0; i < 8; i++) { const sh = await pg.evaluate(() => window.__hockeyTest.shakeNow()); maxShake = Math.max(maxShake, Math.hypot(sh.x, sh.y)); await pg.waitForTimeout(16); }
   assert(maxShake > 0.3 && maxShake < 8, `a hard hit shakes the table a few px (${maxShake.toFixed(1)} px)`);
   await pg.waitForTimeout(500);
   const rest = await pg.evaluate(() => window.__hockeyTest.shakeNow());
   assert(rest.x === 0 && rest.y === 0, 'the shake is over inside half a second');
-  assert(!(await st(pg)).render.held, 'and the hit-stop has ended');
+  assert(!(await st(pg)).render.held, 'and the sim is still running');
   // a goal: ink splat sprite is drawn, flash animation runs
   await pg.evaluate(() => window.__hockeyTest.score('a'));
   await pg.waitForTimeout(250);

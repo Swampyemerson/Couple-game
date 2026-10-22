@@ -150,7 +150,24 @@ Every game keeps its rules, move encodings, setup options, records and saved dat
   - The guest's puck correction is a critically damped spring of about 140 ms.
   - Authority and message formats are unchanged.
   - Under 80 ms latency and 10% loss, puck kinks on the guest's view fell from 35–51 to 22–40 per run. The run-to-run spread is wide.
-- **Juice:** hit-stop of 50–80 ms and a 1.6–4.5 px shake on hard hits and goals, puck squash, a mallet pop, and an ink-splat goal.
+- **Juice:** a 1.6–4.5 px shake on hard hits and goals, puck squash, a mallet pop, and an ink-splat goal.
+- **Hit-stop removed (after the merge).** The builder had added a 50–80 ms hit-stop that paused the authoritative simulation and was
+  mirrored to the guest. The coordinator's merged run of `live.test.js` failed every time on the host's real-mouse shot, and the
+  original code passed 2/2. The cause was the pause itself:
+  - the mallet's own clock kept running during the pause;
+  - when the pause ended, the mallet, still chasing the pointer, covered the whole pause in one step;
+  - it overtook the puck it had just struck (max puck speed 300) and knocked it back, so the shot never scored.
+
+  Pausing physics in a networked game also drifts the host's clock from the guest's. Hard hits now only shake, and the sim never holds.
+  `flat-hockey.test.js` now asserts that it never holds.
+- **Guest puck correction capped again (found at the same time).** The new spring-based correction capped its velocity only after
+  each step. It also started from the full speed mismatch when a host state landed, which after a bounce can be ~600 u/s, so one
+  frame could move the guest's puck far. Under 120 ms latency and 20% loss the worst jump was 17.8–35.8 u, against 11.4–12.3 u for
+  the original (limit 25). The spring keeps its smooth start, but the correction is now capped at `CORRECT_RATE` (700 u/s), as in
+  the original. Four runs after the fix: 11.9–16.5 u, all passing.
+- **Mouse aim fix (found at the same time).** The table's screen position is cached so pointer moves don't force layout. A hovering
+  mouse (laptop play) had no press to refresh that cache, so after the table moved on screen without resizing, the mouse aimed at a
+  stale spot. The hover path now re-reads the position when the cached copy is over 250 ms old.
 - Tests: `live.test.js` with `GAME=hockey` (162) and the new `flat-hockey.test.js` (24). One existing assert now needs more than 100 measured guest frames instead of 200, because the loaded test box measures fewer frames; it is a jump check, not a frame count.
 
 ### Quick Draw (real time)
