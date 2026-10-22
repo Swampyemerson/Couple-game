@@ -764,7 +764,7 @@ function assert0(c, m) { if (!c) throw new Error('FAIL: ' + m); }
     seedDocs['matches/spotless1'] = { ...base, a: JSON.stringify(sm.lists.a), b: JSON.stringify(sm.lists.b) };
     for (const scheme of (process.env.SCHEME ? [process.env.SCHEME] : ['light', 'dark'])) {
       const full = scheme === 'light';
-      const h = await launch({ port: scheme === 'light' ? 9170 : 9171, only: ['agents'], colorScheme: scheme, coarse: true, seedDocs });
+      const h = await launch({ port: scheme === 'light' ? 9140 : 9141, only: ['agents'], colorScheme: scheme, coarse: true, seedDocs });
       try {
         await v2Online(h, scheme);
         if (full) await suddenOnline(h, scheme);
@@ -781,7 +781,7 @@ function assert0(c, m) { if (!c) throw new Error('FAIL: ' + m); }
         console.error('errors:', h.errors);
       } finally { await h.close(); }
       // a second world: the shared record already holds a clue of 3
-      const h2 = await launch({ port: scheme === 'light' ? 9172 : 9173, only: ['agents'], colorScheme: scheme, coarse: true, seedDocs: rlDocs() });
+      const h2 = await launch({ port: scheme === 'light' ? 9142 : 9143, only: ['agents'], colorScheme: scheme, coarse: true, seedDocs: rlDocs() });
       try {
         await prePickFit(h2, scheme);
         await recordLine(h2, scheme);

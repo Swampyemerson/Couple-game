@@ -13,10 +13,16 @@
 // presence frame never leaves a gap: the next one carries the whole log. The guest predicts its own
 // head (it turns at once, drawn as a predicted segment) and reconciles to the log; the host log is
 // always the truth. Heads are drawn between ticks (interpolated / extrapolated) for smooth motion.
+//
+// Rendering (flat unit). The sim steps at its fixed tick and the picture is interpolated between ticks, so it is the
+// same at 60 and 120 Hz. Trails live in persistent offscreen layers: a tick only strokes its new segments (and patches a
+// small dirty rectangle of the composite); each frame is two drawImage calls plus the segment still growing from the last
+// whole cell to the head, the heads and the effects. The guest runs a smoothed estimate of the host's clock and blends every
+// correction (a late presence frame, a turn that lands a cell off the prediction) away over ~100 ms instead of snapping.
 import { registerGame } from './core.js';
 import { CSS } from './cycles/css.js';
 import {
-  DX, DY, DIR, LAYOUTS, ARENAS, BOOST_TICKS, tickMs, newSim, okTurn, step, enc, decode, rebuild, summary,
+  DX, DY, DIR, LAYOUTS, ARENAS, BOOST_TICKS, tickMs, newSim, okTurn, step, enc, decode, rebuild, advance, summary,
   arenaBlocks, isSymmetric, pathAt,
 } from './cycles/sim.js';
 
@@ -29,8 +35,14 @@ const BANNER_MS = 1500; // the round banner
 const END_TOTAL = HOLD_MS + REPLAY_MS + BANNER_MS;
 const REPLAY_TICKS = 16;
 const ZOOM = 2.4;
-const OPP_LAG = 1.4; // guest: how far behind the confirmed tick the opponent is drawn (smooth between frames)
-const BIAS = 0.4; // guest: its own clock runs this far ahead of the confirmed tick
+const MAX_DT = 50; // ms: the drawing's clamp: a longer frame is a hitch, not motion to animate through
+const OWN_AHEAD = 0.55; // guest: its own head is drawn this many ticks past the last confirmed one
+const OPP_GAP = 1.45; // guest: the opponent is drawn this many ticks behind its own clock (entity interpolation)
+const EXT_CAP = 1.6; // ticks a head may run on past the confirmed cell while the next presence frame is late
+const TAU_BLEND = 42; // ms: a correction fades with this time constant (about 100 ms to vanish)
+const BLEND_RATE = 0.014; // cells per ms: the fastest a correction may fade (a 3-cell one takes about 200 ms)
+const PL = ['a', 'b'];
+const SHADOW_SIGN = [[1, 1], [1, -1], [-1, -1], [-1, 1]];
 const KEYS = {
   KeyW: ['a', 0], KeyD: ['a', 1], KeyS: ['a', 2], KeyA: ['a', 3],
   ArrowUp: ['b', 0], ArrowRight: ['b', 1], ArrowDown: ['b', 2], ArrowLeft: ['b', 3],
@@ -49,6 +61,27 @@ const ARENA_BLURB = {
 const CHOICES = ['classic', 'pillars', 'cross', 'rings', 'scatter', 'rotate', 'surprise'];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+// Paper tooth: one small deterministic noise mask, shared by every board; tinted with the theme's ink when a board is painted.
+let grainMask = null;
+function getGrainMask() {
+  if (grainMask) return grainMask;
+  const n = 96;
+  const cv = document.createElement('canvas');
+  cv.width = n; cv.height = n;
+  const g = cv.getContext('2d');
+  const im = g.createImageData(n, n);
+  // alpha = v^2.4 * 255 for a uniform v, from a 1024-step table (a pow() per pixel is a visible hitch on a slow phone)
+  const lut = new Uint8Array(1024);
+  for (let i = 0; i < 1024; i++) lut[i] = Math.floor(Math.pow((i + 0.5) / 1024, 2.4) * 255);
+  let r = 0x2545f491;
+  for (let i = 0; i < n * n; i++) {
+    r = (Math.imul(r, 1664525) + 1013904223) >>> 0;
+    im.data[i * 4 + 3] = lut[r >>> 22];
+  }
+  g.putImageData(im, 0, 0);
+  grainMask = cv;
+  return cv;
+}
 const ARROW = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.5 L20.5 17.5 H3.5 Z" transform="rotate(${d * 90} 12 12)"/></svg>`;
 const BOLT = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.5 2 5 13.5h5.5L9.5 22 19 9.5h-5.8z"/></svg>';
 const SPIN = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4a8 8 0 1 0 7.6 5.5l-2 .8A5.8 5.8 0 1 1 12 6.2V9l5-4-5-4z"/></svg>';
@@ -77,7 +110,7 @@ registerGame({
     const flip = me === 'b'; // the guest sees the board turned round, so their bike starts at the bottom (or left)
     const mq = (q) => { try { return matchMedia(q).matches; } catch { return false; } };
     const touch = mq('(pointer: coarse)');
-    const reduce = mq('(prefers-reduced-motion: reduce)');
+    let reduce = mq('(prefers-reduced-motion: reduce)');
     // the grid that suits this screen: s square (computer), p portrait phone, l phone on its side
     const prefNow = () => {
       const w = window.innerWidth;
@@ -90,6 +123,11 @@ registerGame({
     // quarter, see `qr`), so the smaller screen never gets a tiny board; a computer with a portrait phone plays portrait
     const pickLayout = (x, y) => (x === y ? x : x === 'l' || y === 'l' ? 'l' : 'p');
     const offs = [];
+    try {
+      const rm = matchMedia('(prefers-reduced-motion: reduce)');
+      const onRm = () => { reduce = rm.matches; };
+      if (rm.addEventListener) { rm.addEventListener('change', onRm); offs.push(() => rm.removeEventListener('change', onRm)); }
+    } catch { /* no matchMedia */ }
     const timers = new Set();
     let alive = true;
     let raf = 0;
@@ -147,15 +185,54 @@ registerGame({
     let gRound = 0;
     let lastPh = null;
     let lastInfo = '';
-    let tdisp = 0; // guest: the display clock, in ticks
+    let tdisp = 0; // guest: the display clock, in ticks (smoothed estimate of the host's clock, a little ahead of the confirmed tick)
+    let clkOff = null; // guest: mean (arrival time - host time of that tick), ms: where the host's clock sits on ours
+    let clkN = 0;
+    let clkSeen = -1;
+    let cum = [0]; // host time (ms since the first tick) at which tick k happened
     let seenTurns = 0;
+    let gSim = null; // guest: the sim carried from one presence frame to the next
+    let gSimCfg = null;
+    let gSimRound = -1;
+    let gSimI = 0;
+    let gSimLast = null;
+    const sameCfg = (x, y) => !!x && !!y && x.L === y.L && x.ar === y.ar && x.sd === y.sd && x.bo === y.bo && x.sv === y.sv && x.rm === y.rm;
+    const sameEntry = (x, y) => !!x && !!y && x.t === y.t && x.p === y.p && x.d === y.d;
     // presentation
     let evSeen = 0;
     const fx = []; // sparks and rings
     let lastShake = 0;
-    let bgCan = null;
-    let bgKey = '';
     let capText = '';
+    // render layers: bg (paper, grid, blocks), sh (trail shadow mask), cb (bg + shadow, the back of the board), tr (outline + ink)
+    let bgCan = null; let shCan = null; let cbCan = null; let trCan = null;
+    let bgG = null; let shG = null; let cbG = null; let trG = null;
+    let bgVer = 1;
+    let layerVer = 0;
+    let lyAr = ''; let lySd = -1; let lyL = ''; let lyRound = -1;
+    let lyS = 1; // device pixels per CSS pixel in the layers
+    let lyStep = 0; let lyHold = false; let lyBlank = false; // repaint steps still owed, a board just built, the trail layers known to be empty
+    // partial repaint: a frame restores only the rectangles where something moved (last frame's and this frame's) from the layers
+    const RECT_MAX = 48;
+    const RC = new Float64Array(RECT_MAX * 4); // this frame's moving things, as grid-pixel rectangles x0 y0 x1 y1
+    const RP = new Float64Array(RECT_MAX * 4); // last frame's
+    let rcN = 0; let rpN = 0; let rcOver = false; let rpOver = false;
+    let needFull = true; // the whole canvas must be painted (resized, new round, theme, replay, back from the background)
+    let cRhas = false; let cR0 = 0; let cR1 = 0; let cR2 = 0; let cR3 = 0; // the part of the layers a tick just changed (grid px)
+    const ci = { a: 0, b: 0 }; // path points already stroked into the layers
+    let dirt = false; let dX0 = 0; let dY0 = 0; let dX1 = 0; let dY1 = 0;
+    const inkPat = { a: null, b: null };
+    let inkVer = -1; let inkS = 0;
+    let dprScale = 1;
+    let slowEma = 16.7;
+    let slowFor = 0;
+    let posPending = false;
+    let boardH = 0;
+    const mkView = () => ({ i: 0, x: 0, y: 0, d: 0 });
+    const rv = { a: mkView(), b: mkView() }; // raw rider views (where the sim says, interpolated)
+    const vv = { a: mkView(), b: mkView() }; // drawn views: raw plus the fading correction
+    const bl = { a: { x: 0, y: 0, lx: 0, ly: 0, has: false, r: -1 }, b: { x: 0, y: 0, lx: 0, ly: 0, has: false, r: -1 } };
+    let vvReady = false;
+    const LS = new Float64Array(20); // this frame's growing segments, per rider: start x y, corner x y, head x y, end heading x y, start heading x y
     if (!host) { const s0 = api.partnerState(); if (s0 && s0.ph === 'over') staleMid = s0.mid; }
 
     el.innerHTML = '<div class="g-cycles"><p class="cy-ready">Getting the grid ready…</p></div>';
@@ -183,12 +260,16 @@ registerGame({
     function readColors() {
       const t = api.tokens();
       const col = (v, fb) => { probe.style.color = ''; probe.style.color = v || fb; return getComputedStyle(probe).color || v || fb; };
+      const was = C;
       C = {
         a: col(t.a, 'var(--p-a)'), b: col(t.b, 'var(--p-b)'), ink: col(t.ink, 'var(--g-ink)'), card: col(t.card, 'var(--g-card)'),
         line: col(t.line, 'var(--g-line)'), hl: col(t.hl, 'var(--g-hl)'), bad: col(t.bad, 'var(--g-bad)'), muted: col(t.muted, 'var(--g-muted)'),
         edge: col('var(--g-edge, var(--g-ink))'), dark: !!t.dark,
       };
-      bgKey = '';
+      let same = !!was.ink && was.dark === C.dark;
+      for (const k in C) if (was[k] !== C[k]) same = false;
+      if (same) return; // the observer also fires for class changes that are not a theme change
+      bgVer++;
       if (pickShown) drawMinis();
     }
     readColors();
@@ -257,7 +338,9 @@ registerGame({
     function teardownBoard() {
       if (ro) { ro.disconnect(); ro = null; }
       canvas = ctx = board = msgEl = rpEl = null;
-      bgCan = null; bgKey = '';
+      needFull = true;
+      bgCan = shCan = cbCan = trCan = null; bgG = shG = cbG = trG = null; layerVer = 0; inkVer = -1; lyStep = 0; lyBlank = false;
+      vvReady = false;
     }
     function build() {
       teardownBoard();
@@ -293,6 +376,7 @@ registerGame({
       msgEl = root.querySelector('.cy-msg');
       rpEl = root.querySelector('.cy-rp');
       msgKey = '';
+      lyHold = true;
       if (window.ResizeObserver) { ro = new window.ResizeObserver(fit); ro.observe(board.parentElement); }
       fit();
       wireInputs();
@@ -306,24 +390,31 @@ registerGame({
       const gap = parseFloat(getComputedStyle(row).columnGap) || 0;
       const bw = row.clientWidth - sides.reduce((n, x) => n + x.offsetWidth + gap, 0) - 14;
       const bh = row.clientHeight - 12;
+      boardH = board.clientHeight; // read before anything below is written
       const sw = qr & 1 ? g.H : g.W; // the board as this screen sees it, in cells
       const sh = qr & 1 ? g.W : g.H;
       const c = Math.max(3, Math.floor(Math.min(bw / sw, bh / sh) * 4) / 4);
+      const oldCell = cell;
       cell = c;
       gW = Math.round(c * g.W);
       gH = Math.round(c * g.H);
       cssW = qr & 1 ? gH : gW;
       cssH = qr & 1 ? gW : gH;
-      dpr = Math.min(3, window.devicePixelRatio || 1);
+      dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1) * dprScale); // never above 2; the governor in frame() lowers it on a slow device
       canvas.style.width = cssW + 'px';
       canvas.style.height = cssH + 'px';
-      canvas.width = Math.round(cssW * dpr);
-      canvas.height = Math.round(cssH * dpr);
+      const pw = Math.round(cssW * dpr);
+      const ph = Math.round(cssH * dpr);
       board.classList.add('is-fit');
       board.style.width = cssW + 14 + 'px';
       // the countdown and GO stamps scale with a small board
       root.style.setProperty('--cy-s', clamp(Math.round(Math.min(cssW, cssH) * 0.3), 44, 92) + 'px');
-      bgKey = '';
+      // a resize observer fires once after the build with nothing changed: writing canvas.width would clear and reallocate it, and repaint every layer
+      if (canvas.width === pw && canvas.height === ph && oldCell === c) return;
+      canvas.width = pw;
+      canvas.height = ph;
+      needFull = true;
+      bgVer++;
     }
     const modeLabel = () => `${ARENA_NAME[cfg && cfg.ar ? cfg.ar : matchAr] || ''}${md.bo ? ' + boosts' : ''}`;
     function renderInfo() {
@@ -440,7 +531,14 @@ registerGame({
         if (q.length >= 3 || !sim[p].alive) return;
         q.push({ seq: 0, d });
         cue.turn();
+        turnFx(p);
       } else guestTurn(d);
+    }
+    /** A small ink ring at the head the instant a turn is taken: the input is felt before the next tick shows it. */
+    function turnFx(p) {
+      if (reduce || !vvReady) return;
+      const v = vv[p];
+      fx.push({ k: 'tap', x: v.x, y: v.y, t0: perf(), p });
     }
     function guestTurn(d) {
       if (!hostMid || !sim[me].alive) return;
@@ -450,18 +548,19 @@ registerGame({
       pending.push(e);
       if (pending.length > 12) pending.shift();
       cue.turn();
+      turnFx(me);
       api.send('turn', { m: hostMid, g: gid, s: e.seq, r: e.r, d });
       publishGuest();
     }
     // screen direction -> world direction for a player (rot: that player's pad is upside down)
     const world = (d, rot) => (d + 4 - qr + (rot ? 2 : 0) + (flip ? 2 : 0)) & 3;
-    function flash(sel) {
-      const k = root.querySelector(sel);
+    function flashEl(k, ms = 120) {
       if (!k) return;
       k.classList.add('is-down');
-      const t = setTimeout(() => { timers.delete(t); k.classList.remove('is-down'); }, 120);
+      const t = setTimeout(() => { timers.delete(t); k.classList.remove('is-down'); }, ms);
       timers.add(t);
     }
+    const flash = (sel) => flashEl(root.querySelector(sel));
     function onKey(e) {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (phase === 'pick') {
@@ -492,7 +591,7 @@ registerGame({
         rootWired = true;
         root.addEventListener('pointerdown', (e) => {
           const b = e.target.closest('.cy-key');
-          if (b) { e.preventDefault(); press(b); }
+          if (b) { e.preventDefault(); flashEl(b, 130); press(b); } // pressed in this very frame, then the turn
         });
         root.addEventListener('click', (e) => { const b = e.target.closest('.cy-key'); if (b && e.detail === 0) press(b); });
       }
@@ -506,7 +605,7 @@ registerGame({
         if (!swipe || e.pointerId !== swipe.id) return;
         const dx = e.clientX - swipe.x;
         const dy = e.clientY - swipe.y;
-        if (Math.hypot(dx, dy) < 18) return;
+        if (Math.hypot(dx, dy) < 14) return;
         // the swipe follows the finger on screen
         const d = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 1 : 3) : (dy > 0 ? 2 : 0);
         swipe.x = e.clientX; swipe.y = e.clientY;
@@ -717,7 +816,7 @@ registerGame({
     }
     function onHost(s) {
       if (!alive || !s || s.v !== 2 || !s.mid || s.mid === staleMid) return;
-      if (s.mid !== hostMid) { hostMid = s.mid; seq = 0; pending = []; gRx = 0; gEntries = []; gRound = 0; lastPh = null; }
+      if (s.mid !== hostMid) { hostMid = s.mid; seq = 0; pending = []; gRx = 0; gEntries = []; gRound = 0; lastPh = null; gSim = null; }
       if (s.md && CHOICES.concat(['rotate']).includes(s.md.ar)) md = { ar: s.md.ar, bo: !!s.md.bo };
       if (s.ph === 'pick') {
         phase = 'pick'; round = 0; paused = false;
@@ -727,25 +826,33 @@ registerGame({
       }
       if (!s.cfg) return;
       const now = perf();
-      if (s.r !== gRound) { gRound = s.r; gEntries = []; crashAt = 0; skipped = false; evSeen = 0; fx.length = 0; capText = ''; seenTurns = 0; tdisp = 0; pending = pending.filter((p) => p.r === s.r); }
+      if (s.r !== gRound) { gRound = s.r; gEntries = []; crashAt = 0; skipped = false; evSeen = 0; fx.length = 0; capText = ''; seenTurns = 0; tdisp = 0; clkReset(); gSim = null; pending = pending.filter((p) => p.r === s.r); }
       cfg = s.cfg;
       matchAr = md.ar;
       if (!canvas || layout !== cfg.L) { layout = cfg.L; build(); }
       const part = decode(s.lg);
       if (!s.lo) gEntries = part; else part.forEach((e, i) => { gEntries[s.lo + i] = e; });
-      const prevT = sim ? sim.t : 0;
       if (s.ph === 'count' && s.cd !== cd && !s.pz) api.sfx('tick');
-      if (s.ph === 'run' && lastPh !== 'run') { goAt = now; api.sfx('pop'); }
+      if (s.ph === 'run' && lastPh !== 'run') { goAt = now; clkReset(); api.sfx('pop'); }
       phase = s.ph; round = s.r; cd = s.cd; rw = s.rw; paused = !!s.pz; pz = s.pz | 0; rc = Array.isArray(s.rc) ? s.rc : [];
       lastPh = s.ph;
       const sc = Array.isArray(s.sc) ? s.sc : [0, 0];
       const infoKey = `${round}|${phase}|${sc[0]}|${sc[1]}`;
       score = { a: sc[0] | 0, b: sc[1] | 0 };
-      sim = rebuild(cfg, gEntries.filter(Boolean), s.t | 0);
-      if (sim.t !== prevT || sim.t === 0) {
-        const err = sim.t + BIAS - tdisp;
-        tdisp = Math.abs(err) > 2.5 ? sim.t + BIAS : tdisp + err * 0.3;
+      // carry the sim on from where the last presence frame left it (the host's log only ever grows); a new round, a changed
+      // config or a log that no longer starts the same way is rebuilt from scratch
+      const ents = gEntries.filter(Boolean);
+      const T = s.t | 0;
+      if (gSim && gSimRound === s.r && sameCfg(gSimCfg, cfg) && T >= gSim.t && gSimI <= ents.length && (gSimI === 0 || sameEntry(ents[gSimI - 1], gSimLast))) {
+        gSimI = advance(gSim, ents, T, gSimI);
+      } else {
+        gSim = newSim(cfg); gSimCfg = cfg; gSimRound = s.r;
+        gSimI = advance(gSim, ents, T, 0);
       }
+      gSimLast = gSimI ? ents[gSimI - 1] : null;
+      sim = gSim;
+      if (s.ph === 'run' && !s.pz && sim.t > 0 && sim.t !== clkSeen) clkSample(now);
+      clkSeen = sim.t;
       processEvents();
       const theirs = gEntries.filter((e) => e && e.p !== me).length;
       if (theirs > seenTurns) { if (seenTurns || theirs === 1) cue.turnThem(); seenTurns = theirs; }
@@ -777,14 +884,16 @@ registerGame({
         } else if (e.k === 'hop') { fx.push({ k: 'ring', x: e.x, y: e.y, t0: now, p: e.p, tk: 3 }); if (mineOrLocal) cue.jump(); }
       }
     }
+    const SHAKE = [
+      { transform: 'translate(0,0)' }, { transform: 'translate(-3px,1.5px)', offset: 0.18 }, { transform: 'translate(3px,-2px)', offset: 0.38 },
+      { transform: 'translate(-2px,-1.5px)', offset: 0.58 }, { transform: 'translate(1.5px,1px)', offset: 0.8 }, { transform: 'translate(0,0)' },
+    ];
     function shake() {
       if (reduce || !board) return;
       const now = perf();
       if (now - lastShake < 400) return;
       lastShake = now;
-      board.classList.remove('is-shake');
-      void board.offsetWidth;
-      board.classList.add('is-shake');
+      if (board.animate) { try { board.animate(SHAKE, { duration: 260, easing: 'linear' }); } catch { /* no animation */ } } // transform only: no layout, no reflow trick
     }
 
     // ── end of a round: the crash, a zoomed replay, then the banner ──
@@ -800,10 +909,13 @@ registerGame({
       skipped = true; skipAt = perf();
       if (local && phase === 'end') endDue = Math.min(endDue, skipAt + BANNER_MS);
     }
-    function crashFocus() {
+    const CF = [0, 0];
+    const CFXY = [0, 0];
+    function crashFocus() { // returns a shared pair: read it before the next call
       const loser = rw === 'a' ? 'b' : rw === 'b' ? 'a' : 'a';
-      const cr = sim[loser].crash || sim.a.crash || sim.b.crash || [0, 0];
-      return [clamp(cr[0], 0, sim.W - 1), clamp(cr[1], 0, sim.H - 1)];
+      const cr = sim[loser].crash || sim.a.crash || sim.b.crash || CF;
+      CFXY[0] = clamp(cr[0], 0, sim.W - 1); CFXY[1] = clamp(cr[1], 0, sim.H - 1);
+      return CFXY;
     }
     function captionOf() {
       const nm = (p) => esc(api.name(p));
@@ -819,6 +931,36 @@ registerGame({
       return sim.a.ck === 'head' && sim.b.ck === 'head' && sim.a.crash && sim.b.crash && sim.a.crash[0] === sim.b.crash[0] && sim.a.crash[1] === sim.b.crash[1] ? 'Head-on, same cell' : 'Both riders crashed';
     }
 
+    // ── the guest's clock ──
+    // Presence frames arrive late and unevenly. The guest keeps the mean offset between the host's tick times and its own
+    // arrival times, reads "where the host is now" off that, and moves its display clock toward it by speeding up or slowing
+    // down a little (never a step), so heads keep a steady pace however the frames arrive.
+    function clkReset() { clkOff = null; clkN = 0; clkSeen = -1; cum = [0]; }
+    function cumTo(k) { while (cum.length <= k) { const j = cum.length - 1; cum.push(cum[j] + tickMs(cfg, j)); } }
+    function clkSample(now) {
+      cumTo(sim.t);
+      const smp = now - cum[sim.t];
+      clkN++;
+      clkOff = clkOff == null ? smp : clkOff + (smp - clkOff) * Math.max(0.07, 1 / clkN);
+    }
+    function hostTicksAt(ms) {
+      if (ms <= 0) return 0;
+      cumTo(sim.t);
+      let k = sim.t;
+      if (ms >= cum[k]) return k + (ms - cum[k]) / tickMs(cfg, k);
+      while (k > 0 && cum[k] > ms) k--;
+      return k + (ms - cum[k]) / tickMs(cfg, k);
+    }
+    function stepClock(now, dt) {
+      if (!sim || !cfg) return;
+      if (phase === 'run' && !paused && !sim.done && clkOff != null) {
+        const tgt = hostTicksAt(now - clkOff) + OWN_AHEAD;
+        const e = tgt - tdisp;
+        if (Math.abs(e) > 4 || tdisp < sim.t) tdisp = Math.max(tgt, sim.t);
+        else tdisp += (dt / tickMs(cfg, sim.t)) * clamp(1 + 0.5 * e, 0.3, 2);
+      } else tdisp = sim.t;
+    }
+
     // ── per-frame rider views ──
     function aheadFree(x, y, d, n) {
       let ok = 0;
@@ -830,55 +972,70 @@ registerGame({
       }
       return ok;
     }
-    /** The head drawn `ext` cells past the last confirmed cell, heading d (the predicted segment). */
-    function extended(p, d, ext) {
+    /** The head drawn `ext` cells past the last confirmed cell, heading d (the predicted segment). Fills o. */
+    function extended(o, p, d, ext) {
       const c = sim[p];
-      const base = pathAt(sim, p, sim.t);
-      const n = Math.min(ext, aheadFree(base.x, base.y, d, c.boost > 0 ? 2 : 1));
-      return { i: base.i, x: base.x + DX[d] * n, y: base.y + DY[d] * n, d };
+      pathAt(sim, p, sim.t, o);
+      const n = Math.min(ext, aheadFree(o.x, o.y, d, c.boost > 0 ? 2 : 1));
+      o.x += DX[d] * n; o.y += DY[d] * n; o.d = d;
+      return o;
     }
     /** Guest: its own head, turned at once on a pending turn, stepping on with the display clock. */
-    function ownRaw(running) {
+    function ownRaw(o, running) {
       const c = sim[me];
       const d = pending.length && okTurn(c.d, pending[pending.length - 1].d) ? pending[pending.length - 1].d : c.d;
-      const ext = running ? clamp(tdisp - sim.t, 0, 1) * (c.boost > 0 ? 2 : 1) : 0;
-      return extended(me, d, ext);
+      const ext = running ? clamp(tdisp - sim.t, 0, EXT_CAP) * (c.boost > 0 ? 2 : 1) : 0;
+      return extended(o, me, d, ext);
     }
-    /** Guest: when the host's log lands, the predicted head (turned early) and the confirmed one (a cell or two on) differ.
-     *  Rather than pop, the drawn head carries the difference as an offset that fades out in about 80 ms; the trail and the
-     *  log stay exactly the host's. */
-    const ob = { x: 0, y: 0, last: null, r: 0 };
-    function stepBlend(dt) {
-      const live = sim && sim[me].alive && !sim.done && phase === 'run' && !paused && cfg;
-      if (!live) { ob.x = 0; ob.y = 0; ob.last = null; return; }
-      const v = ownRaw(true);
-      if (ob.last && ob.r === round) {
-        const jx = v.x - ob.last[0];
-        const jy = v.y - ob.last[1];
-        const m = Math.hypot(jx, jy);
-        const move = (dt / tickMs(cfg, sim.t)) * (sim[me].boost > 0 ? 2 : 1); // what steady riding covers in this frame
-        if (m > move + 0.3 && m < 3.2) { const k = 1 - move / m; ob.x -= jx * k; ob.y -= jy * k; } else if (m >= 3.2) { ob.x = 0; ob.y = 0; }
-      } else { ob.x = 0; ob.y = 0; }
-      ob.last = [v.x, v.y]; ob.r = round;
-      const f = Math.exp(-dt / 38);
-      ob.x *= f; ob.y *= f;
-      if (Math.abs(ob.x) < 0.01 && Math.abs(ob.y) < 0.01) { ob.x = 0; ob.y = 0; }
-    }
-    function viewOf(p) {
+    /** Where the sim says rider p is right now. Fills rv[p]. */
+    function rawView(p) {
+      const o = rv[p];
       const c = sim[p];
-      if (!c.alive || sim.done) return pathAt(sim, p, sim.t);
+      if (!c.alive || sim.done) return pathAt(sim, p, sim.t, o);
       const running = phase === 'run' && !paused;
       if (host) {
-        const q = queues[p].find((e) => !e.stale && okTurn(c.d, e.d));
-        const d = q ? q.d : c.d;
+        const q = queues[p];
+        let d = c.d;
+        for (let i = 0; i < q.length; i++) if (!q[i].stale && okTurn(c.d, q[i].d)) { d = q[i].d; break; }
         const ext = running ? clamp(acc / tickMs(cfg, sim.t), 0, 1) * (c.boost > 0 ? 2 : 1) : 0;
-        return extended(p, d, ext);
+        return extended(o, p, d, ext);
       }
-      if (p === me) {
-        const v = ownRaw(running);
-        return running && (ob.x || ob.y) ? { ...v, x: v.x + ob.x, y: v.y + ob.y } : v;
+      if (p === me) return ownRaw(o, running);
+      if (!running) return pathAt(sim, p, sim.t, o);
+      // the opponent: entity interpolation, a little behind the clock, between cells the log already confirms; if a frame is
+      // late the head runs on briefly (capped), and the correction when it lands is blended away
+      const T = tdisp - OPP_GAP;
+      if (T < sim.t) return pathAt(sim, p, Math.max(0, T), o);
+      return extended(o, p, c.d, Math.min(T - sim.t, 1) * (c.boost > 0 ? 2 : 1));
+    }
+    /** Every drawn head = the sim's head + a correction that fades out (a late frame, a turn the prediction missed by a cell):
+     *  the jump beyond what steady riding covers in this frame is moved into the offset, which then decays in ~100 ms. */
+    function updateViews(dt) {
+      if (!sim || !cfg) { vvReady = false; return; }
+      for (let n = 0; n < 2; n++) {
+        const p = PL[n];
+        const r = rawView(p);
+        const b = bl[p];
+        const o = vv[p];
+        if (phase === 'pick') { b.x = 0; b.y = 0; b.has = false; }
+        if (b.has && b.r === round) {
+          const jx = r.x - b.lx;
+          const jy = r.y - b.ly;
+          const m = Math.hypot(jx, jy);
+          const move = (dt / tickMs(cfg, sim.t)) * (sim[p].boost > 0 ? 2 : 1); // what steady riding covers in this frame
+          if (m > move + 0.3 && m < 3.2) { const k = 1 - move / m; b.x -= jx * k; b.y -= jy * k; } else if (m >= 3.2) { b.x = 0; b.y = 0; }
+        } else { b.x = 0; b.y = 0; }
+        b.lx = r.x; b.ly = r.y; b.has = true; b.r = round;
+        if (b.x || b.y) {
+          // fade out exponentially, but never faster than BLEND_RATE cells a millisecond, so a long frame doesn't turn the fade into a pop
+          const mag = Math.hypot(b.x, b.y);
+          const f = reduce ? 0 : 1 - Math.min(mag * (1 - Math.exp(-dt / TAU_BLEND)), BLEND_RATE * dt) / mag;
+          b.x *= f; b.y *= f;
+          if (Math.abs(b.x) < 0.01 && Math.abs(b.y) < 0.01) { b.x = 0; b.y = 0; }
+        }
+        o.i = r.i; o.d = r.d; o.x = r.x + b.x; o.y = r.y + b.y;
       }
-      return running ? pathAt(sim, p, clamp(tdisp - OPP_LAG, 0, sim.t)) : pathAt(sim, p, sim.t);
+      vvReady = true;
     }
 
     // ── drawing ──
@@ -908,10 +1065,7 @@ registerGame({
       ctx.closePath();
     }
     // the hard shadow falls down-right on screen, whichever way the board is turned
-    function shadowSign() {
-      const t = (qr + (flip ? 2 : 0)) & 3;
-      return [[1, 1], [1, -1], [-1, -1], [-1, 1]][t];
-    }
+    const shadowSign = () => SHADOW_SIGN[(qr + (flip ? 2 : 0)) & 3];
     function drawBgVector(g2, c, W, H, S) {
       // graph-paper grid, a heavier line every 8 cells from the centre
       g2.lineWidth = 1;
@@ -940,8 +1094,13 @@ registerGame({
       g2.globalAlpha = 1;
       // arena blocks: printed ink squares with a paper rule inside, and the same hard shadow as the trails
       const occ = S.occ;
-      const [ssx, ssy] = shadowSign();
+      const sg = shadowSign();
+      const ssx = sg[0];
+      const ssy = sg[1];
       const sh = Math.max(1, c * 0.2);
+      let any = false;
+      for (let i = 0; i < occ.length; i++) if (occ[i] === 3) { any = true; break; }
+      if (!any) return;
       g2.fillStyle = C.edge;
       g2.globalAlpha = C.dark ? 0.9 : 0.28;
       for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (occ[y * W + x] === 3) g2.fillRect(x * c + sh * ssx, y * c + sh * ssy, c, c);
@@ -956,6 +1115,270 @@ registerGame({
         g2.globalAlpha = 1;
       }
     }
+
+    // ── the persistent layers ──
+    // bg: paper tooth, grid, registration marks, blocks. sh: the trails' shadow, opaque (so overlaps never double up).
+    // cb: bg + sh, the back of the board; only a small dirty rectangle of it is repainted when a tick adds trail.
+    // tr: the trails' outline and ink on a transparent layer, stroked segment by segment as the riders move on.
+    function ensureCanvases() {
+      // the layers are the grid at the screen canvas's own pixel density, so a layer pixel is exactly one canvas pixel (a quarter turn swaps the axes)
+      const W = Math.max(1, qr & 1 ? canvas.height : canvas.width);
+      const H = Math.max(1, qr & 1 ? canvas.width : canvas.height);
+      if (!bgCan) {
+        bgCan = document.createElement('canvas'); shCan = document.createElement('canvas'); cbCan = document.createElement('canvas'); trCan = document.createElement('canvas');
+        bgG = bgCan.getContext('2d'); shG = shCan.getContext('2d'); cbG = cbCan.getContext('2d'); trG = trCan.getContext('2d');
+      }
+      let sized = false;
+      for (const cv of [bgCan, shCan, cbCan, trCan]) if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; sized = true; }
+      lyS = W / gW;
+      return sized; // freshly sized canvases are blank
+    }
+    /** Copy one grid-pixel rectangle of a layer onto the screen canvas, on whole canvas pixels so repeated blits leave no seams. */
+    function blit(layer, x0, y0, x1, y1) {
+      const sx = Math.max(0, Math.floor(x0 * lyS));
+      const sy = Math.max(0, Math.floor(y0 * lyS));
+      const ex = Math.min(layer.width, Math.ceil(x1 * lyS));
+      const ey = Math.min(layer.height, Math.ceil(y1 * lyS));
+      if (ex <= sx || ey <= sy) return;
+      ctx.drawImage(layer, sx, sy, ex - sx, ey - sy, sx / lyS, sy / lyS, (ex - sx) / lyS, (ey - sy) / lyS);
+    }
+    function restoreFrom(layer) {
+      for (let i = 0; i < rpN; i++) {
+        const o = 4 * i;
+        // a rectangle that did not move (a token) is restored once, as this frame's
+        if (i < rcN && RP[o] === RC[o] && RP[o + 1] === RC[o + 1] && RP[o + 2] === RC[o + 2] && RP[o + 3] === RC[o + 3]) continue;
+        blit(layer, RP[o], RP[o + 1], RP[o + 2], RP[o + 3]);
+      }
+      for (let i = 0; i < rcN; i++) blit(layer, RC[4 * i], RC[4 * i + 1], RC[4 * i + 2], RC[4 * i + 3]);
+      if (cRhas) blit(layer, cR0, cR1, cR2, cR3);
+    }
+    function addRect(x0, y0, x1, y1) {
+      if (rcN >= RECT_MAX) { rcOver = true; return; }
+      const o = rcN * 4;
+      RC[o] = x0; RC[o + 1] = y0; RC[o + 2] = x1; RC[o + 3] = y1;
+      rcN++;
+    }
+    /** Everything the frame draws on top of the layers, as rectangles: per rider the growing segment and the bike, the tokens, the effects. */
+    function collectMoving() {
+      const c = cell;
+      rcN = 0; rcOver = false;
+      const padB = c * 2.8 + 3; // halo, speed lines, jump ring
+      for (let n = 0; n < 2; n++) {
+        const o = n * 10;
+        const hx = LS[o + 4];
+        const hy = LS[o + 5];
+        addRect(Math.min(LS[o], hx) - padB, Math.min(LS[o + 1], hy) - padB, Math.max(LS[o], hx) + padB, Math.max(LS[o + 1], hy) + padB);
+      }
+      const padT = c * 1.3 + 3;
+      for (let i = 0; i < sim.tl.length; i++) { const t = sim.tl[i]; const x = (t.x + 0.5) * c; const y = (t.y + 0.5) * c; addRect(x - padT, y - padT, x + padT, y + padT); }
+      const padF = c * 4 + 3;
+      for (let i = 0; i < fx.length; i++) { const f = fx[i]; const x = (f.x + 0.5) * c; const y = (f.y + 0.5) * c; addRect(x - padF, y - padF, x + padF, y + padF); }
+    }
+    function paintBg() {
+      const g = LAYOUTS[layout];
+      bgG.setTransform(lyS, 0, 0, lyS, 0, 0);
+      bgG.globalAlpha = 1;
+      bgG.fillStyle = C.card;
+      bgG.fillRect(0, 0, gW, gH);
+      drawBgVector(bgG, cell, g.W, g.H, sim);
+      // paper tooth, at device resolution, over everything on the board
+      grainOver(bgG, bgCan.width, bgCan.height);
+    }
+    let tintCan = null; let tintVer = -1;
+    /** The shared noise mask tinted with the theme's ink (rebuilt when the theme changes), laid over a whole canvas at device resolution. */
+    function tintTile() {
+      if (tintCan && tintVer === bgVer) return;
+      const m = getGrainMask();
+      tintCan = document.createElement('canvas');
+      tintCan.width = m.width; tintCan.height = m.height;
+      const tg = tintCan.getContext('2d');
+      tg.fillStyle = C.ink; tg.fillRect(0, 0, m.width, m.height);
+      tg.globalCompositeOperation = 'destination-in';
+      tg.drawImage(m, 0, 0);
+      tintVer = bgVer;
+    }
+    function grainOver(g, W, H) {
+      try {
+        tintTile();
+        g.setTransform(1, 0, 0, 1, 0, 0);
+        g.globalAlpha = C.dark ? 0.2 : 0.3;
+        g.fillStyle = g.createPattern(tintCan, 'repeat');
+        g.fillRect(0, 0, W, H);
+        g.globalAlpha = 1;
+      } catch { /* no pattern: a flat board */ }
+    }
+    /** Halftone ink: each rider's colour with a staggered dot screen, so a trail reads as printed rather than filled. */
+    function makeInk() {
+      if (inkVer === bgVer && inkS === lyS && inkPat.a && inkPat.b) return; // the patterns belong to the colours and the pixel density, not to the round
+      inkVer = bgVer; inkS = lyS;
+      inkPat.a = inkPat.b = null;
+      try {
+        const T = Math.max(4, Math.round(3.6 * lyS));
+        for (const p of PL) {
+          const tile = document.createElement('canvas');
+          tile.width = T; tile.height = T;
+          const g = tile.getContext('2d');
+          g.fillStyle = C[p]; g.fillRect(0, 0, T, T);
+          g.fillStyle = C.ink; g.globalAlpha = 0.24;
+          g.beginPath(); g.arc(T / 2, T / 2, T * 0.2, 0, 7); g.fill();
+          g.globalAlpha = 0.16;
+          g.beginPath(); g.arc(0, 0, T * 0.13, 0, 7); g.arc(T, 0, T * 0.13, 0, 7); g.arc(0, T, T * 0.13, 0, 7); g.arc(T, T, T * 0.13, 0, 7); g.fill();
+          const pat = trG.createPattern(tile, 'repeat');
+          if (pat.setTransform && typeof DOMMatrix === 'function') { pat.setTransform(new DOMMatrix([1 / lyS, 0, 0, 1 / lyS, 0, 0])); inkPat[p] = pat; }
+        }
+      } catch { inkPat.a = inkPat.b = null; }
+    }
+    function resetTrails(blank) {
+      if (!blank) {
+        shG.setTransform(1, 0, 0, 1, 0, 0); shG.clearRect(0, 0, shCan.width, shCan.height);
+        trG.setTransform(1, 0, 0, 1, 0, 0); trG.clearRect(0, 0, trCan.width, trCan.height);
+      }
+      cbG.setTransform(1, 0, 0, 1, 0, 0); cbG.globalAlpha = 1; cbG.drawImage(bgCan, 0, 0);
+      ci.a = 0; ci.b = 0; dirt = false;
+    }
+    /** Brings the layers up to date with the grid and the round. Returns 0 when they were, 1 when they have just been repainted, and
+     *  -1 when they are not ready yet. Before the first tick (the countdown) the repaint is spread over a few frames, one step
+     *  each (paper and grid, then the trail layers, then the back of the board), so no single frame carries all of it; the screen
+     *  shows the empty card meanwhile. Once riders are moving it is done in one go. */
+    function syncLayers() {
+      const stale = layerVer !== bgVer || !bgCan || lyAr !== cfg.ar || lySd !== cfg.sd || lyL !== cfg.L;
+      const trStale = lyRound !== round || ci.a > sim.a.path.length / 2 - 1 || ci.b > sim.b.path.length / 2 - 1;
+      if (!stale && !trStale && lyStep === 0) return 0;
+      const calm = phase === 'count' && sim.t === 0 && !paused;
+      if (calm && lyHold) { lyHold = false; return -1; } // the frame that built the board does no painting
+      lyHold = false;
+      if (stale) {
+        lyBlank = ensureCanvases() || lyBlank;
+        paintBg();
+        layerVer = bgVer; lyAr = cfg.ar; lySd = cfg.sd; lyL = cfg.L; lyRound = -1;
+        lyStep = 1;
+        if (calm) return -1;
+      }
+      if (lyStep === 1) {
+        makeInk();
+        if (!lyBlank) {
+          shG.setTransform(1, 0, 0, 1, 0, 0); shG.clearRect(0, 0, shCan.width, shCan.height);
+          trG.setTransform(1, 0, 0, 1, 0, 0); trG.clearRect(0, 0, trCan.width, trCan.height);
+        }
+        lyBlank = false;
+        lyStep = 2;
+        if (calm) return -1;
+      } else if (lyStep === 0) { // only the trails are stale (the same arena again): clear them now, copy the back next frame
+        makeInk();
+        shG.setTransform(1, 0, 0, 1, 0, 0); shG.clearRect(0, 0, shCan.width, shCan.height);
+        trG.setTransform(1, 0, 0, 1, 0, 0); trG.clearRect(0, 0, trCan.width, trCan.height);
+        lyStep = 2;
+        if (calm) return -1;
+      }
+      resetTrails(true);
+      lyRound = round; lyStep = 0;
+      return 1;
+    }
+    /** Stroke rider p's path from the last stroked point up to point `upto` into the layers. */
+    function commit(p, upto) {
+      const P = sim[p].path;
+      const last = P.length / 2 - 1;
+      if (upto > last) upto = last;
+      const i0 = ci[p];
+      if (upto <= i0) return;
+      const k = cell;
+      const tw = Math.max(2.5, k * 0.6);
+      const ow = Math.max(1.2, k * 0.15);
+      const hw = tw / 2;
+      const E = hw + ow;
+      const sg = shadowSign();
+      const sh = Math.max(1, k * 0.2);
+      const mr = reduce ? 0 : Math.min(0.7, k * 0.07);
+      // heading of the first and last segment in this batch, to square off the ends
+      const fx0 = Math.sign(P[2 * i0 + 2] - P[2 * i0]);
+      const fy0 = Math.sign(P[2 * i0 + 3] - P[2 * i0 + 1]);
+      const lx0 = Math.sign(P[2 * upto] - P[2 * upto - 2]);
+      const ly0 = Math.sign(P[2 * upto + 1] - P[2 * upto - 1]);
+      let minX = 1e9; let minY = 1e9; let maxX = -1e9; let maxY = -1e9;
+      for (let i = i0; i <= upto; i++) {
+        const X = (P[2 * i] + 0.5) * k; const Y = (P[2 * i + 1] + 0.5) * k;
+        if (X < minX) minX = X; if (X > maxX) maxX = X; if (Y < minY) minY = Y; if (Y > maxY) maxY = Y;
+      }
+      // shadow (opaque; the board composite applies its alpha)
+      shG.setTransform(lyS, 0, 0, lyS, 0, 0);
+      shG.lineJoin = 'miter'; shG.lineCap = 'square'; shG.lineWidth = tw + ow * 2; shG.strokeStyle = C.edge;
+      shG.beginPath();
+      shG.moveTo((P[2 * i0] + 0.5) * k + sh * sg[0], (P[2 * i0 + 1] + 0.5) * k + sh * sg[1]);
+      for (let i = i0 + 1; i <= upto; i++) shG.lineTo((P[2 * i] + 0.5) * k + sh * sg[0], (P[2 * i + 1] + 0.5) * k + sh * sg[1]);
+      shG.stroke();
+      // outline: butt at the start of a batch (the stroke before it already squared its end), square at the very start of a trail
+      trG.setTransform(lyS, 0, 0, lyS, 0, 0);
+      trG.lineJoin = 'miter'; trG.lineCap = 'butt'; trG.lineWidth = tw + ow * 2; trG.strokeStyle = C.ink;
+      trG.beginPath();
+      const s0 = i0 === 0 ? E : 0;
+      trG.moveTo((P[2 * i0] + 0.5) * k - fx0 * s0, (P[2 * i0 + 1] + 0.5) * k - fy0 * s0);
+      for (let i = i0 + 1; i < upto; i++) trG.lineTo((P[2 * i] + 0.5) * k, (P[2 * i + 1] + 0.5) * k);
+      trG.lineTo((P[2 * upto] + 0.5) * k + lx0 * E, (P[2 * upto + 1] + 0.5) * k + ly0 * E);
+      trG.stroke();
+      // ink, a hair off register with its outline
+      trG.lineCap = 'square'; trG.lineWidth = tw; trG.strokeStyle = inkPat[p] || C[p];
+      trG.beginPath();
+      trG.moveTo((P[2 * i0] + 0.5) * k - mr, (P[2 * i0 + 1] + 0.5) * k - mr);
+      for (let i = i0 + 1; i <= upto; i++) trG.lineTo((P[2 * i] + 0.5) * k - mr, (P[2 * i + 1] + 0.5) * k - mr);
+      trG.stroke();
+      ci[p] = upto;
+      const pad = E + sh + 2;
+      if (!dirt) { dirt = true; dX0 = minX - pad; dY0 = minY - pad; dX1 = maxX + pad; dY1 = maxY + pad; } else {
+        if (minX - pad < dX0) dX0 = minX - pad; if (minY - pad < dY0) dY0 = minY - pad; if (maxX + pad > dX1) dX1 = maxX + pad; if (maxY + pad > dY1) dY1 = maxY + pad;
+      }
+    }
+    function flushDirty() {
+      if (!dirt) return;
+      dirt = false;
+      const W = cbCan.width;
+      const H = cbCan.height;
+      cRhas = true; cR0 = dX0; cR1 = dY0; cR2 = dX1; cR3 = dY1;
+      const x0 = Math.max(0, Math.floor(dX0 * lyS));
+      const y0 = Math.max(0, Math.floor(dY0 * lyS));
+      const x1 = Math.min(W, Math.ceil(dX1 * lyS));
+      const y1 = Math.min(H, Math.ceil(dY1 * lyS));
+      if (x1 <= x0 || y1 <= y0) return;
+      cbG.setTransform(1, 0, 0, 1, 0, 0);
+      cbG.globalAlpha = 1;
+      cbG.drawImage(bgCan, x0, y0, x1 - x0, y1 - y0, x0, y0, x1 - x0, y1 - y0);
+      cbG.globalAlpha = C.dark ? 0.9 : 0.28;
+      cbG.drawImage(shCan, x0, y0, x1 - x0, y1 - y0, x0, y0, x1 - x0, y1 - y0);
+      cbG.globalAlpha = 1;
+    }
+    /** The part of each trail between its last stroked point and the head, in pixels (LS). A trail is only ever horizontal and
+     *  vertical, so when a correction has moved the head off the line the segment is drawn as an L (along the old heading, then
+     *  along the head's own), never as a slanted stroke. */
+    function liveSegs() {
+      const k = cell;
+      for (let n = 0; n < 2; n++) {
+        const p = PL[n];
+        const P = sim[p].path;
+        const v = vv[p];
+        const o = n * 10;
+        const x0 = (P[2 * ci[p]] + 0.5) * k;
+        const y0 = (P[2 * ci[p] + 1] + 0.5) * k;
+        const x1 = (v.x + 0.5) * k;
+        const y1 = (v.y + 0.5) * k;
+        const vert = v.d === 0 || v.d === 2;
+        const cx = vert ? x1 : x0; // the last leg runs along the head's heading
+        const cy = vert ? y0 : y1;
+        LS[o] = x0; LS[o + 1] = y0; LS[o + 2] = cx; LS[o + 3] = cy; LS[o + 4] = x1; LS[o + 5] = y1;
+        LS[o + 6] = DX[v.d]; LS[o + 7] = DY[v.d];
+        const lx = cx - x0;
+        const ly = cy - y0;
+        if (Math.abs(lx) + Math.abs(ly) > 1e-3) { LS[o + 8] = Math.sign(lx); LS[o + 9] = Math.sign(ly); } else { LS[o + 8] = LS[o + 6]; LS[o + 9] = LS[o + 7]; }
+      }
+    }
+    function strokeLive(n, ext, ox, oy) {
+      const o = n * 10;
+      const st = ci[PL[n]] === 0 ? ext : 0;
+      ctx.beginPath();
+      ctx.moveTo(LS[o] - LS[o + 8] * st + ox, LS[o + 1] - LS[o + 9] * st + oy);
+      ctx.lineTo(LS[o + 2] + ox, LS[o + 3] + oy);
+      ctx.lineTo(LS[o + 4] + LS[o + 6] * ext + ox, LS[o + 5] + LS[o + 7] * ext + oy);
+      ctx.stroke();
+    }
+
     function drawToken(t, now, idx) {
       const c = cell;
       const x = (t.x + 0.5) * c;
@@ -965,8 +1388,8 @@ registerGame({
       ctx.lineWidth = Math.max(1.2, c * 0.14);
       ctx.strokeStyle = C.ink;
       ctx.fillStyle = C.edge; ctx.globalAlpha = C.dark ? 0.9 : 0.28;
-      const [tsx, tsy] = shadowSign();
-      ctx.beginPath(); ctx.arc(x + c * 0.15 * tsx, y + c * 0.15 * tsy, R, 0, 7); ctx.fill();
+      const tsg = shadowSign();
+      ctx.beginPath(); ctx.arc(x + c * 0.15 * tsg[0], y + c * 0.15 * tsg[1], R, 0, 7); ctx.fill();
       ctx.globalAlpha = 1;
       ctx.fillStyle = C.hl;
       ctx.beginPath(); ctx.arc(x, y, R, 0, 7); ctx.fill(); ctx.stroke();
@@ -989,44 +1412,49 @@ registerGame({
       ctx.restore();
     }
     function drawBike(p, v, now, live) {
-      const s = { alive: live, boost: sim[p].boost, jump: sim[p].jump };
       const c = cell;
       const ow = Math.max(1.2, c * 0.15);
       ctx.save();
       ctx.translate((v.x + 0.5) * c, (v.y + 0.5) * c);
-      if (s.alive && !reduce) {
-        // ink bleed: a flat halo of the rider's ink around the head
-        ctx.globalAlpha = 0.26;
-        ctx.fillStyle = C[p];
-        ctx.beginPath(); ctx.arc(0, 0, c * (1.25 + 0.12 * Math.sin(now / 90 + (p === 'a' ? 0 : 2))), 0, 7); ctx.fill();
+      if (live) {
+        // a printed halo: a flat disc of the rider's ink with a second, slightly off-register ring (no blur, no shadowBlur)
+        const R = c * (1.25 + (reduce ? 0 : 0.12 * Math.sin(now / 90 + (p === 'a' ? 0 : 2))));
+        ctx.fillStyle = C[p]; ctx.strokeStyle = C[p];
+        ctx.globalAlpha = 0.22;
+        ctx.beginPath(); ctx.arc(0, 0, R, 0, 7); ctx.fill();
+        ctx.globalAlpha = 0.55; ctx.lineWidth = Math.max(1, c * 0.12);
+        ctx.beginPath(); ctx.arc(c * 0.1, c * 0.08, R * 0.8, 0, 7); ctx.stroke();
         ctx.globalAlpha = 1;
       }
       ctx.rotate((v.d * Math.PI) / 2);
       const w = c * 1.05;
       const l = c * 1.5;
-      if (s.alive && s.boost > 0) {
+      if (live && sim[p].boost > 0) {
         // speed lines behind a boosted rider
         ctx.strokeStyle = C.hl; ctx.lineWidth = Math.max(1.2, c * 0.18); ctx.lineCap = 'round';
         ctx.beginPath();
-        for (const sx of [-0.4, 0, 0.4]) { ctx.moveTo(sx * c, c * 0.9); ctx.lineTo(sx * c, c * (1.7 + 0.5 * Math.abs(sx * 2))); }
+        for (let q = -1; q <= 1; q++) { const sx = q * 0.4; ctx.moveTo(sx * c, c * 0.9); ctx.lineTo(sx * c, c * (1.7 + 0.5 * Math.abs(sx * 2))); }
         ctx.stroke();
       }
       ctx.lineWidth = ow * 1.1;
       ctx.strokeStyle = C.ink;
-      ctx.fillStyle = s.alive ? C.hl : C.card;
+      ctx.fillStyle = live ? C.hl : C.card;
       rr(-w / 2, -l / 2 - c * 0.18, w, l, Math.min(w, l) * 0.32);
       ctx.fill(); ctx.stroke();
       ctx.fillStyle = C[p];
       rr(-w / 2 + ow * 0.6, l * 0.1 - c * 0.18, w - ow * 1.2, l * 0.26, 1);
       ctx.fill();
-      if (s.alive && s.jump > 0) {
+      if (live && sim[p].jump > 0) {
         // a held jump: a paper ring around the bike
-        ctx.strokeStyle = C.ink; ctx.lineWidth = ow; ctx.setLineDash([c * 0.5, c * 0.4]);
-        ctx.beginPath(); ctx.arc(0, 0, c * 1.35, 0, 7); ctx.stroke(); ctx.setLineDash([]);
+        DASH[0] = c * 0.5; DASH[1] = c * 0.4;
+        ctx.strokeStyle = C.ink; ctx.lineWidth = ow; ctx.setLineDash(DASH);
+        ctx.beginPath(); ctx.arc(0, 0, c * 1.35, 0, 7); ctx.stroke(); ctx.setLineDash(NODASH);
       }
       ctx.restore();
     }
-    function drawBurst(cr, k) {
+    const DASH = [0, 0];
+    const NODASH = [];
+    function drawBurst(cr, k, age) {
       const g = LAYOUTS[sim.L];
       const c = cell;
       const ow = Math.max(1.2, c * 0.15);
@@ -1046,6 +1474,18 @@ registerGame({
       ctx.fillStyle = C.hl; ctx.fill(); ctx.stroke();
       star(bx, by, R * 0.55, R * 0.27, 7, 0.6);
       ctx.fillStyle = C.bad; ctx.fill(); ctx.lineWidth = ow * 0.8; ctx.stroke();
+      if (!reduce && age >= 0 && age < 600) {
+        // flat ink chips thrown out of the crash
+        const u = age / 600;
+        const e = 1 - (1 - u) * (1 - u);
+        const sz = c * 0.5 * (1 - u) + 0.8;
+        for (let i = 0; i < 10; i++) {
+          const a = i * 0.628 + 0.4;
+          const r = R * (1.1 + 1.9 * e) + (i % 2) * c * 0.6;
+          ctx.fillStyle = i % 3 === 0 ? C.a : i % 3 === 1 ? C.b : C.ink;
+          ctx.fillRect(bx + Math.cos(a) * r - sz / 2, by + Math.sin(a) * r - sz / 2, sz, sz);
+        }
+      }
     }
     const burstK = (age) => { if (reduce) return 1; const k0 = clamp(age / 380, 0, 1); return 1 + 2.2 * Math.pow(k0 - 1, 3) + 1.2 * Math.pow(k0 - 1, 2); };
     function drawFx(now) {
@@ -1053,8 +1493,8 @@ registerGame({
       const ow = Math.max(1.2, c * 0.15);
       for (let i = fx.length - 1; i >= 0; i--) {
         const f = fx[i];
-        const age = now - f.t0;
-        const life = f.k === 'spark' ? 420 : 520;
+        const age = Math.max(0, now - f.t0); // a rAF timestamp can precede an event handler's own clock reading
+        const life = f.k === 'spark' ? 420 : f.k === 'tap' ? 230 : 520;
         if (age > life) { fx.splice(i, 1); continue; }
         const u = age / life;
         const x = (f.x + 0.5) * c;
@@ -1066,6 +1506,10 @@ registerGame({
           ctx.fillStyle = C.hl;
           star(x, y, R, R * 0.42, 5, u * 1.2);
           ctx.fill(); ctx.stroke();
+        } else if (f.k === 'tap') {
+          ctx.globalAlpha = (1 - u * u) * 0.55; // a pressed-in echo of the rider's ink, never as solid as the trail itself
+          ctx.strokeStyle = C[f.p]; ctx.lineWidth = ow * 1.4;
+          ctx.beginPath(); ctx.arc(x, y, c * (0.8 + 1.6 * (1 - (1 - u) * (1 - u))), 0, 7); ctx.stroke();
         } else {
           ctx.strokeStyle = f.tk === 1 ? C.hl : C.ink; ctx.lineWidth = ow * 1.6;
           ctx.beginPath(); ctx.arc(x, y, c * (1 + 2.6 * u), 0, 7); ctx.stroke();
@@ -1073,15 +1517,15 @@ registerGame({
         ctx.globalAlpha = 1;
       }
     }
+    const tv = { a: mkView(), b: mkView() };
+    const FXY = [0, 0];
     function draw(now) {
       if (!ctx || !layout || !cfg) return;
       const g = LAYOUTS[layout];
       const c = cell;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.setTransform(canvas.width / cssW, 0, 0, canvas.height / cssH, 0, 0); // the canvas's own pixel density, so layer pixels map 1:1
       ctx.globalAlpha = 1;
-      ctx.fillStyle = C.card;
-      ctx.fillRect(0, 0, cssW, cssH);
-      if (!sim) return;
+      if (!sim || !vvReady) { ctx.fillStyle = C.card; ctx.fillRect(0, 0, cssW, cssH); needFull = true; return; }
       // the end-of-round story: crash at full size, a zoomed replay, then the board again
       const stage = endStage(now);
       let zoom = 1;
@@ -1096,9 +1540,10 @@ registerGame({
         T = t0 + (sim.t - t0) * clamp((u - 0.08) / 0.7, 0, 1);
         burstAge = u > 0.78 ? (u - 0.78) * REPLAY_MS : -1;
         // the camera rides along with the rider who crashed, settling on the crash cell
-        const fv = pathAt(sim, rw === 'a' ? 'b' : 'a', T);
+        const fv = pathAt(sim, rw === 'a' ? 'b' : 'a', T, tv.a);
         const k = clamp((u - 0.6) / 0.2, 0, 1);
-        fxy = [fv.x + (crashXY[0] - fv.x) * k, fv.y + (crashXY[1] - fv.y) * k];
+        FXY[0] = fv.x + (crashXY[0] - fv.x) * k; FXY[1] = fv.y + (crashXY[1] - fv.y) * k;
+        fxy = FXY;
       } else if (stage === 'banner' && !reduce) {
         const since = now - (skipped ? skipAt : crashAt + HOLD_MS + REPLAY_MS);
         if (since < 260 && !skipped) zoom = ZOOM - (ZOOM - 1) * (1 - Math.pow(1 - since / 260, 3));
@@ -1106,6 +1551,8 @@ registerGame({
       } else if (stage === 'banner') burstAge = 1e5;
       const zx = (fxy[0] + 0.5) * c;
       const zy = (fxy[1] + 0.5) * c;
+      const fast = zoom === 1 && T == null;
+      if (!fast) { ctx.fillStyle = C.card; ctx.fillRect(0, 0, cssW, cssH); }
       if (zoom !== 1) {
         let sx = zx;
         let sy = zy;
@@ -1119,123 +1566,158 @@ registerGame({
       }
       if (flip) { ctx.translate(cssW, cssH); ctx.rotate(Math.PI); }
       if (qr === 1) { ctx.translate(gH, 0); ctx.rotate(Math.PI / 2); } else if (qr === 3) { ctx.translate(0, gW); ctx.rotate(-Math.PI / 2); }
-      // the board, cached unless zoomed (the cache is a raster)
-      const key = `${layout}|${cell}|${dpr}|${cfg.sd}|${cfg.ar}|${C.ink}|${C.line}|${C.card}|${C.muted}|${flip}|${qr}`;
-      if (zoom === 1) {
-        if (!bgCan || bgKey !== key) {
-          bgCan = bgCan || document.createElement('canvas');
-          bgCan.width = Math.round(gW * dpr); bgCan.height = Math.round(gH * dpr);
-          const b = bgCan.getContext('2d');
-          b.setTransform(dpr, 0, 0, dpr, 0, 0);
-          drawBgVector(b, c, g.W, g.H, sim);
-          bgKey = key;
-        }
-        ctx.drawImage(bgCan, 0, 0, gW, gH);
-      } else drawBgVector(ctx, c, g.W, g.H, sim);
       const tShow = T == null ? sim.t : T;
+      let partial = false;
+      if (fast) {
+        const fresh = syncLayers();
+        if (fresh < 0) { // layers still being repainted, a step a frame: the empty card until they are
+          ctx.setTransform(canvas.width / cssW, 0, 0, canvas.height / cssH, 0, 0);
+          ctx.fillStyle = C.card; ctx.fillRect(0, 0, cssW, cssH); needFull = true;
+          return;
+        }
+        cRhas = false;
+        for (let n = 0; n < 2; n++) commit(PL[n], vv[PL[n]].i);
+        flushDirty();
+        liveSegs();
+        collectMoving();
+        // a still frame needs only the places where something moved (last frame's and this frame's), restored from the layers
+        partial = !needFull && fresh === 0 && !rcOver && !rpOver && stage === 'none';
+        if (partial) restoreFrom(cbCan); else ctx.drawImage(cbCan, 0, 0, gW, gH);
+      } else { drawBgVector(ctx, c, g.W, g.H, sim); ctx.save(); grainOver(ctx, canvas.width, canvas.height); ctx.restore(); needFull = true; } // the zoomed replay keeps the paper tooth too
       // tokens still lying on the grid
       if (sim.tl.length) {
-        sim.tl.forEach((t, i) => {
+        for (let i = 0; i < sim.tl.length; i++) {
+          const t = sim.tl[i];
           const pk = sim.pk.get(t.y * sim.W + t.x);
           if (pk === undefined || pk > tShow) drawToken(t, now, i);
-        });
+        }
       }
       const tw = Math.max(2.5, c * 0.6);
       const ow = Math.max(1.2, c * 0.15);
-      const [ssx, ssy] = shadowSign();
+      const sg = shadowSign();
       const sh = Math.max(1, c * 0.2);
-      const views = {};
-      for (const p of ['a', 'b']) views[p] = T == null ? viewOf(p) : pathAt(sim, p, T);
+      let views = vv;
+      if (T != null) { pathAt(sim, 'a', T, tv.a); pathAt(sim, 'b', T, tv.b); views = tv; }
       ctx.lineJoin = 'miter';
-      ctx.lineCap = 'square';
-      // hard offset shadow, then an ink outline, then each rider's ink
-      ctx.save();
-      ctx.translate(sh * ssx, sh * ssy);
-      ctx.strokeStyle = C.edge;
-      ctx.globalAlpha = C.dark ? 0.9 : 0.28;
-      ctx.lineWidth = tw + ow * 2;
-      for (const p of ['a', 'b']) { trace(sim[p], views[p]); ctx.stroke(); }
-      ctx.restore();
-      ctx.globalAlpha = 1;
-      ctx.strokeStyle = C.ink;
-      ctx.lineWidth = tw + ow * 2;
-      for (const p of ['a', 'b']) { trace(sim[p], views[p]); ctx.stroke(); }
-      ctx.lineWidth = tw;
-      for (const p of ['a', 'b']) { ctx.strokeStyle = C[p]; trace(sim[p], views[p]); ctx.stroke(); }
+      if (fast) {
+        // the growing end of each trail, in the same three passes as the layers (shadow under the stroked trail, ink over it)
+        ctx.lineCap = 'butt';
+        ctx.lineWidth = tw + ow * 2;
+        ctx.globalAlpha = C.dark ? 0.9 : 0.28;
+        ctx.strokeStyle = C.edge;
+        for (let n = 0; n < 2; n++) strokeLive(n, tw / 2 + ow, sh * sg[0], sh * sg[1]);
+        ctx.globalAlpha = 1;
+        if (partial) restoreFrom(trCan); else ctx.drawImage(trCan, 0, 0, gW, gH);
+        ctx.strokeStyle = C.ink;
+        for (let n = 0; n < 2; n++) strokeLive(n, tw / 2 + ow, 0, 0);
+        ctx.lineWidth = tw;
+        const mr = reduce ? 0 : Math.min(0.7, c * 0.07);
+        for (let n = 0; n < 2; n++) { ctx.strokeStyle = inkPat[PL[n]] || C[PL[n]]; strokeLive(n, tw / 2, -mr, -mr); }
+      } else {
+        ctx.lineCap = 'square';
+        // hard offset shadow, then an ink outline, then each rider's ink
+        ctx.save();
+        ctx.translate(sh * sg[0], sh * sg[1]);
+        ctx.strokeStyle = C.edge;
+        ctx.globalAlpha = C.dark ? 0.9 : 0.28;
+        ctx.lineWidth = tw + ow * 2;
+        for (let n = 0; n < 2; n++) { trace(sim[PL[n]], views[PL[n]]); ctx.stroke(); }
+        ctx.restore();
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = C.ink;
+        ctx.lineWidth = tw + ow * 2;
+        for (let n = 0; n < 2; n++) { trace(sim[PL[n]], views[PL[n]]); ctx.stroke(); }
+        ctx.lineWidth = tw;
+        for (let n = 0; n < 2; n++) { ctx.strokeStyle = C[PL[n]]; trace(sim[PL[n]], views[PL[n]]); ctx.stroke(); }
+      }
       // heads: a bright, outlined bike with a band of its rider's ink
-      for (const p of ['a', 'b']) drawBike(p, views[p], now, sim[p].alive || (T != null && T < sim.t - 0.05));
+      for (let n = 0; n < 2; n++) { const p = PL[n]; drawBike(p, views[p], now, sim[p].alive || (T != null && T < sim.t - 0.05)); }
       if (T == null) drawFx(now);
       // crash bursts
       if (sim.done && burstAge >= 0) {
-        const seen = new Set();
-        ctx.lineJoin = 'miter';
-        for (const p of ['a', 'b']) {
-          const s = sim[p];
-          if (s.alive || !s.crash) continue;
-          const kk = s.crash.join(',');
-          if (seen.has(kk)) continue;
-          seen.add(kk);
-          drawBurst(s.crash, burstK(burstAge));
-        }
+        ctx.lineJoin = 'miter'; ctx.lineCap = 'square';
+        const ca = sim.a.alive ? null : sim.a.crash;
+        const cb = sim.b.alive ? null : sim.b.crash;
+        if (ca) drawBurst(ca, burstK(burstAge), burstAge);
+        if (cb && !(ca && ca[0] === cb[0] && ca[1] === cb[1])) drawBurst(cb, burstK(burstAge), burstAge);
       }
+      if (fast) { RP.set(RC.subarray(0, rcN * 4)); rpN = rcN; rpOver = rcOver; needFull = false; }
     }
 
+    // the banner in the middle of the board; only rebuilt when what it says changes (no strings built per frame)
+    let msgNum = -1;
     function syncMsg(now) {
       if (!msgEl) return;
-      let html = '';
-      let key = '';
+      if (posPending) placeBanner();
       const stage = endStage(now);
-      if (phase === 'pick') { key = ''; } else if (paused) {
-        key = 'pz' + pz;
+      // a number that names what the banner should say: kind, pause reason, countdown, round, result, record stamps
+      let kind = 0;
+      if (phase === 'pick') kind = 0;
+      else if (paused) kind = 1;
+      else if (phase === 'count') kind = 2;
+      else if (phase === 'run' && now - goAt < 600) kind = 3;
+      else if ((phase === 'end' || phase === 'over') && sim && stage === 'banner') kind = 4;
+      const rcm = (rc.indexOf('long') >= 0 ? 1 : 0) | (rc.indexOf('shaves') >= 0 ? 2 : 0);
+      const num = kind === 0 ? 0 : ((((kind * 4 + pz) * 8 + (cd & 7)) * 16 + (round & 15)) * 4 + (rw === 'a' ? 1 : rw === 'b' ? 2 : 0)) * 4 + rcm;
+      if (rpEl) {
+        const on = stage === 'replay';
+        if (on !== rpEl.classList.contains('is-on')) {
+          rpEl.classList.toggle('is-on', on); // the caption's pop-in restarts by itself when the overlay is shown again
+          if (on) { capText = captionOf(); rpEl.querySelector('.cy-rp-cap').innerHTML = capText; }
+        }
+      }
+      if (num === msgNum) return;
+      msgNum = num;
+      let html = '';
+      if (kind === 1) {
         const who = local ? '' : api.name(pz === 1 ? 'a' : 'b');
         html = `<span>${local || document.hidden && host && pz === 1 ? 'Paused' : `<b>${esc(who)}</b> stepped away`}</span>`;
-      } else if (phase === 'count') { key = 'c' + cd + round; html = `<span class="is-num">${cd || 3}</span>`; } else if (phase === 'run' && now - goAt < 600) { key = 'go' + round; html = '<span class="is-num is-go">GO</span>'; } else if ((phase === 'end' || phase === 'over') && sim && stage === 'banner') {
+      } else if (kind === 2) html = `<span class="is-num">${cd || 3}</span>`;
+      else if (kind === 3) html = '<span class="is-num is-go">GO</span>';
+      else if (kind === 4) {
         const shaves = sim.a.sh + sim.b.sh;
         const stamps = rc.map((x) => `<i class="cy-stamp">${x === 'long' ? 'LONGEST RIDE!' : 'MOST SHAVES!'}</i>`).join('');
-        key = 'e' + round + rw + rc.join();
         const small = `<small>Close shaves: ${shaves}${modeLabel() ? ` · ${esc(modeLabel())}` : ''}</small>`;
         if (rw === 'a' || rw === 'b') html = `<span class="w-${rw}"><span class="cy-t"><b>${esc(api.name(rw))}</b> takes round ${round}</span>${small}${stamps}</span>`;
         else html = `<span class="w-d is-heat"><span class="cy-t">DEAD HEAT</span><small>${esc(captionOf())}. Close shaves: ${shaves}. Fresh start next round.</small>${stamps}</span>`;
       }
-      if (rpEl) {
-        const on = stage === 'replay';
-        if (on !== rpEl.classList.contains('is-on')) {
-          rpEl.classList.toggle('is-on', on);
-          if (on) {
-            const cap = rpEl.querySelector('.cy-rp-cap');
-            capText = captionOf();
-            cap.innerHTML = capText;
-            cap.style.animation = 'none'; void cap.offsetWidth; cap.style.animation = '';
-          }
-        }
-      }
-      if (key === msgKey) return;
-      msgKey = key;
       msgEl.innerHTML = html;
-      msgEl.classList.toggle('is-up', key[0] === 'e');
-      if (key[0] === 'e' && sim && cell) {
-        // keep the banner off the crash: it sits in the half of the board the crash isn't in
-        const f = crashFocus();
-        const y = qr === 0 ? (f[1] + 0.5) / sim.H : qr === 1 ? (f[0] + 0.5) / sim.W : 1 - (f[0] + 0.5) / sim.W;
-        const want = (flip ? 1 - y : y) < 0.5 ? 0.76 : 0.24;
-        // keep the whole banner inside the board, even on a short landscape board
-        const bh = cssH; // the canvas, not the (taller) board around it
-        const c0 = (board.clientHeight - cssH) / 2 - 3; // where the canvas starts inside the board
-        const sh = msgEl.firstElementChild ? msgEl.firstElementChild.offsetHeight : 0;
-        msgEl.style.top = Math.round(c0 + clamp(want * bh, sh / 2 + 6, Math.max(sh / 2 + 6, bh - sh / 2 - 6))) + 'px';
-      } else msgEl.style.top = '';
+      msgEl.classList.toggle('is-up', kind === 4);
+      if (kind === 4 && sim && cell) { posPending = true; msgEl.style.top = ''; } else { posPending = false; msgEl.style.top = ''; }
+    }
+    /** Keep the end banner off the crash, inside the board. Runs on the frame after the banner was written, so the layout it
+     *  reads is already settled instead of being forced in the middle of a frame. */
+    function placeBanner() {
+      posPending = false;
+      if (!msgEl || !sim || !cell || !msgEl.firstElementChild) return;
+      const f = crashFocus();
+      const y = qr === 0 ? (f[1] + 0.5) / sim.H : qr === 1 ? (f[0] + 0.5) / sim.W : 1 - (f[0] + 0.5) / sim.W;
+      const want = (flip ? 1 - y : y) < 0.5 ? 0.76 : 0.24;
+      const bh = cssH; // the canvas, not the (taller) board around it
+      const c0 = (boardH - cssH) / 2 - 3; // where the canvas starts inside the board
+      const sh = msgEl.firstElementChild.offsetHeight;
+      msgEl.style.top = Math.round(c0 + clamp(want * bh, sh / 2 + 6, Math.max(sh / 2 + 6, bh - sh / 2 - 6))) + 'px';
+    }
+    // a slow device draws fewer pixels: after a second and a half of frames well over budget the layers drop a step of resolution
+    function governor(raw, now) {
+      if (dpr <= 1 || document.hidden || phase !== 'run') { slowFor = 0; return; }
+      slowEma += (Math.min(raw, 100) - slowEma) * 0.05;
+      if (slowEma > 24) {
+        slowFor += raw;
+        if (slowFor > 1500 && canvas) { slowFor = 0; slowEma = 16.7; dprScale = Math.max(0.5, dprScale * 0.8); fit(); }
+      } else slowFor = 0;
     }
     function frame(now) {
       if (!alive) return;
       raf = requestAnimationFrame(frame);
-      const dt = Math.min(250, now - (lastNow || now));
+      const raw = now - (lastNow || now);
+      const dt = Math.min(MAX_DT, raw);
       lastNow = now;
-      if (host) hostUpdate(now, dt);
-      if (!host && sim && phase === 'run' && !paused && !sim.done) tdisp = Math.min(sim.t + 1, tdisp + dt / tickMs(cfg, Math.floor(tdisp)));
-      else if (!host && sim) tdisp = sim.t;
-      if (!host) stepBlend(dt);
+      if (host) hostUpdate(now, Math.min(250, raw)); // the simulation keeps real time through a hitch (a few ticks catch up); only the drawing clamps
+      if (!host) stepClock(now, dt);
+      updateViews(dt);
       syncMsg(now);
-      if (canvas) draw(now);
+      if (canvas) { draw(now); governor(raw, now); }
     }
 
     // ── pausing (host): the partner gone, or either tab in the background. Back: a fresh countdown ──
@@ -1251,7 +1733,7 @@ registerGame({
         publish();
       }
     }
-    const onVis = () => { if (host) syncPause(); else publishGuest(); if (!document.hidden) lastNow = 0; };
+    const onVis = () => { if (host) syncPause(); else publishGuest(); if (!document.hidden) { lastNow = 0; needFull = true; } };
     document.addEventListener('visibilitychange', onVis);
     offs.push(() => document.removeEventListener('visibilitychange', onVis));
     // a phone turned on its side: the next round gets the grid that fits (the host agrees it with the guest)
@@ -1305,7 +1787,7 @@ registerGame({
         shaves: sim ? sim.a.sh + sim.b.sh : 0, tdisp, tms: cfg && sim ? tickMs(cfg, sim.t) : 0, picker: pickShown,
       }),
       go: (o) => go(o),
-      view: (p) => (sim && cfg ? viewOf(p) : null),
+      view: (p) => { if (!(sim && cfg)) return null; if (!vvReady) updateViews(0); const v = vv[p]; return { i: v.i, x: v.x, y: v.y, d: v.d }; },
       skip: () => skipReplay(),
       // pure helpers for the tests
       make: (c) => { const s = newSim(c); return { ...summary(s), sym: isSymmetric(s.occ, s.W, s.H), blocks: s.occ.reduce((n, v) => n + (v === 3 ? 1 : 0), 0), st: s.st, toks: s.tl.map((t) => [t.x, t.y, t.k]) }; },
@@ -1315,6 +1797,9 @@ registerGame({
     };
     if (navigator.webdriver) window.__cycles = hook;
 
+    // while the picker is up: make the paper-tooth tile now, so the first round's repaint does not
+    const warm = setTimeout(() => { timers.delete(warm); try { if (alive) tintTile(); } catch { /* the board makes it when it needs it */ } }, 250);
+    timers.add(warm);
     if (host) phase = 'pick';
     if (local) showPicker();
     raf = requestAnimationFrame(frame);

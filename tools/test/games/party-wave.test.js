@@ -391,7 +391,7 @@ const shot = async (pg, name) => { if (SHOTS) await pg.screenshot({ path: `${SHO
 const inView = (pg, sels) => pg.evaluate((ss) => {
   const vh = innerHeight; const vw = innerWidth;
   const sc = document.querySelector('.wv-scroll');
-  const out = { vh, noScroll: sc.scrollHeight <= sc.clientHeight + 1, bad: [] };
+  const out = { vh, noScroll: sc.scrollHeight <= sc.clientHeight + 1, sh: `${sc.scrollHeight}/${sc.clientHeight} ` + [...sc.querySelectorAll('*')].filter((e) => e.getBoundingClientRect().bottom > sc.getBoundingClientRect().bottom + 0.5).map((e) => e.className + ':' + Math.round(e.getBoundingClientRect().bottom)).join(' '), bad: [] };
   for (const s of ss) {
     const e = document.querySelector(s);
     if (!e) { out.bad.push(`${s} missing`); continue; }
@@ -635,7 +635,7 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
     // 7: near-miss line (target + 5 is 5 off)
     assert((await GS.textContent('.wv-result-txt')).includes('1 off the bullseye!') || tgt0 + 5 > 100, 'the reveal says "1 off the bullseye!" for 5 off');
     // 5: the zone numbers are drawn above the needle
-    const order = await GS.evaluate(() => { const svg = document.querySelector('.wv-svg'); const kids = [...svg.children]; return [kids.findIndex((k) => k.querySelector && k.querySelector('.wv-needle')), kids.findIndex((k) => k.classList && k.classList.contains('wv-zlabels'))]; });
+    const order = await GS.evaluate(() => { const kids = [...document.querySelector('.wv-dial').children]; return [kids.findIndex((k) => k.querySelector && k.querySelector('.wv-needle')), kids.findIndex((k) => k.querySelector && k.querySelector('.wv-zlabels'))]; });
     assert(order[0] >= 0 && order[1] > order[0], 'the 4 / 3 / 2 labels sit above the needle, so a bullseye never hides its 4');
     // a reload on a reveal this phone has already shown does not replay it: Next is ready at once
     await reloadInto(h, GS, D.id);
@@ -674,7 +674,7 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
         for (const pg of [a, b]) await pg.setViewportSize({ width: w, height: hh });
         await LS.waitForTimeout(350);
         let m = await inView(LS, ['.wv-dial', '.wv-card', '.wv-go']);
-        assert(m.bad.length === 0 && m.noScroll, `${scheme} ${w}x${hh}: the guess screen shows the dial, its card and Lock it in without scrolling (${m.bad}${m.noScroll ? '' : ' scrolls'})`);
+        assert(m.bad.length === 0 && m.noScroll, `${scheme} ${w}x${hh}: the guess screen shows the dial, its card and Lock it in without scrolling (${m.bad}${m.noScroll ? '' : ' scrolls ' + m.sh})`);
         const dw = await LS.$eval('.wv-dial', (d) => d.getBoundingClientRect().width);
         assert(dw >= 125, `${scheme} ${w}x${hh}: the dial is still a usable size (${Math.round(dw)} px)`);
         await shot(LS, `${scheme}-${w}x${hh}-guess`);

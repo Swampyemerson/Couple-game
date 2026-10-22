@@ -261,16 +261,21 @@ export function decode(s) {
   if (!s) return [];
   return s.split(',').filter(Boolean).map((x) => { const k = +x.slice(-1); return { t: parseInt(x.slice(0, -1), 36), p: k < 4 ? 'a' : 'b', d: k & 3 }; });
 }
-/** Rebuild a round from its config plus its turn log, up to tick T. */
-export function rebuild(cfg, entries, T) {
-  const sim = newSim(cfg);
-  let i = 0;
+/** Step a sim on to tick T from a turn log, starting at log index i (0 for a fresh sim). Returns the index of the next
+ *  unread log entry, so a caller can carry on later from where this stopped (the guest does, on every presence frame). */
+export function advance(sim, entries, T, i = 0) {
   while (sim.t < T && !sim.done) {
     const t = sim.t + 1;
     const turns = {};
     while (i < entries.length && entries[i].t <= t) { if (entries[i].t === t) turns[entries[i].p] = entries[i].d; i++; }
     step(sim, turns);
   }
+  return i;
+}
+/** Rebuild a round from its config plus its turn log, up to tick T. */
+export function rebuild(cfg, entries, T) {
+  const sim = newSim(cfg);
+  advance(sim, entries, T, 0);
   return sim;
 }
 const hashOf = (arr) => { let h = 7; for (const v of arr) h = (Math.imul(h, 31) + v) | 0; return h; };
@@ -284,12 +289,15 @@ export function isSymmetric(occ, W, H) {
   return true;
 }
 
-/** Where rider p was at the fractional tick T: the index of the last whole path point plus the exact (x, y) and heading. */
-export function pathAt(sim, p, T) {
+const dirOf = (xa, ya, xb, yb) => (xb > xa ? 1 : xb < xa ? 3 : yb > ya ? 2 : 0);
+/** Where rider p was at the fractional tick T: the index of the last whole path point plus the exact (x, y) and heading.
+ *  Pass `out` ({i, x, y, d}) to fill it instead of allocating (the renderer calls this every frame). */
+export function pathAt(sim, p, T, out) {
+  const o = out || { i: 0, x: 0, y: 0, d: 0 };
   const c = sim[p];
   const P = c.path;
   const last = P.length / 2 - 1;
-  if (T >= sim.t) return { i: last, x: P[2 * last], y: P[2 * last + 1], d: c.d };
+  if (T >= sim.t) { o.i = last; o.x = P[2 * last]; o.y = P[2 * last + 1]; o.d = c.d; return o; }
   if (T < 0) T = 0;
   const k = Math.floor(T);
   const q = c.pi[k] + (T - k) * (c.pi[k + 1] - c.pi[k]);
@@ -297,10 +305,10 @@ export function pathAt(sim, p, T) {
   const g = q - i;
   const x0 = P[2 * i];
   const y0 = P[2 * i + 1];
-  const dirOf = (xa, ya, xb, yb) => (xb > xa ? 1 : xb < xa ? 3 : yb > ya ? 2 : 0);
   if (g > 0 && 2 * i + 3 < P.length) {
-    return { i, x: x0 + (P[2 * i + 2] - x0) * g, y: y0 + (P[2 * i + 3] - y0) * g, d: dirOf(x0, y0, P[2 * i + 2], P[2 * i + 3]) };
+    o.i = i; o.x = x0 + (P[2 * i + 2] - x0) * g; o.y = y0 + (P[2 * i + 3] - y0) * g; o.d = dirOf(x0, y0, P[2 * i + 2], P[2 * i + 3]);
+    return o;
   }
-  const d = i > 0 ? dirOf(P[2 * i - 2], P[2 * i - 1], x0, y0) : c.d0;
-  return { i, x: x0, y: y0, d };
+  o.i = i; o.x = x0; o.y = y0; o.d = i > 0 ? dirOf(P[2 * i - 2], P[2 * i - 1], x0, y0) : c.d0;
+  return o;
 }

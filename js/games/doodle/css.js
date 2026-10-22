@@ -15,9 +15,11 @@ export const CSS = `
 
     /* prompt cards */
     .g-doodle .dd-picks { width: 100%; display: flex; flex-direction: column; gap: 14px; margin-top: 6px; }
-    .g-doodle .dd-pick { position: relative; display: flex; align-items: center; gap: 14px; width: 100%; min-height: 76px; padding: 14px 16px; text-align: left; background: var(--g-card); color: var(--g-ink); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow); touch-action: manipulation; transition: transform 0.12s ease; }
-    .g-doodle .dd-pick:nth-child(1) { transform: rotate(-1.2deg); } .g-doodle .dd-pick:nth-child(2) { transform: rotate(0.8deg); } .g-doodle .dd-pick:nth-child(3) { transform: rotate(-0.5deg); }
-    .g-doodle .dd-pick:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge, var(--g-ink)); }
+    .g-doodle .dd-pick { position: relative; display: flex; align-items: center; gap: 14px; width: 100%; min-height: 76px; padding: 14px 16px; text-align: left; background: var(--g-card); color: var(--g-ink); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow); touch-action: manipulation; transform: rotate(var(--tilt, 0deg)); transition: transform 0.14s var(--g-ease-out); }
+    .g-doodle .dd-pick:nth-child(1) { --tilt: -1.2deg; } .g-doodle .dd-pick:nth-child(2) { --tilt: 0.8deg; } .g-doodle .dd-pick:nth-child(3) { --tilt: -0.5deg; }
+    .g-doodle .dd-pick:active, .g-doodle .dd-pick.is-pressed { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge, var(--g-ink)); }
+    .g-doodle .dd-picks .dd-pick { animation: dd-deal 0.42s var(--g-ease-spring) backwards; }
+    .g-doodle .dd-picks .dd-pick:nth-child(2) { animation-delay: 70ms; } .g-doodle .dd-picks .dd-pick:nth-child(3) { animation-delay: 140ms; }
     .g-doodle .dd-pick-word { font-family: var(--g-font-display); font-weight: 900; font-size: 1.35rem; line-height: 1.1; min-width: 0; overflow-wrap: anywhere; }
     .g-doodle .dd-pick-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
     .g-doodle .dd-pick-word.fm { font-size: 1.18rem; } .g-doodle .dd-pick-word.fs { font-size: 1.04rem; }
@@ -26,17 +28,22 @@ export const CSS = `
     .g-doodle .dd-pts { flex: none; font-weight: 800; color: var(--g-muted); font-size: 0.8rem; }
 
     /* paper */
-    .g-doodle .dd-paper { position: relative; flex: none; background: var(--g-card); border: 2px solid var(--g-ink); border-radius: calc(var(--g-radius) * 0.6); box-shadow: var(--g-shadow); overflow: hidden; }
+    .g-doodle .dd-paper { position: relative; flex: none; background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-card); border: 2px solid var(--g-ink); border-radius: calc(var(--g-radius) * 0.6); box-shadow: var(--g-shadow); overflow: hidden; }
     .g-doodle .dd-paper canvas { display: block; }
+    /* printed look: paper-coloured specks over the ink (a cached tile, drawn once per theme), so the ink never covers the paper tooth completely */
+    .g-doodle .dd-paper::before, .g-doodle .dd-cvw::after { content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none; border-radius: inherit; background: var(--dd-speck, none) 0 0 / 80px 80px; }
+    .g-doodle .dd-cvw { position: relative; display: block; width: fit-content; border-radius: 3px; }
+    /* Invisible Ink: each stroke is its own layer; the fade is a compositor opacity transition */
+    .g-doodle .dd-paper canvas.dd-layer { position: absolute; left: 0; top: 0; pointer-events: none; will-change: opacity; }
     .g-doodle .dd-paper.can-draw canvas { touch-action: none; }
     .g-doodle .dd-paper.can-draw canvas { cursor: crosshair; }
-    .g-doodle .dd-ink { position: absolute; left: 8px; right: 8px; bottom: 6px; height: 5px; border-radius: 3px; background: var(--g-line); opacity: 0; transition: opacity 0.2s; pointer-events: none; }
+    .g-doodle .dd-ink { position: absolute; z-index: 2; left: 8px; right: 8px; bottom: 6px; height: 5px; border-radius: 3px; background: var(--g-line); opacity: 0; transition: opacity 0.2s; pointer-events: none; overflow: hidden; }
     .g-doodle .dd-ink.on { opacity: 1; }
-    .g-doodle .dd-ink i { display: block; height: 100%; width: 0; border-radius: 3px; background: var(--g-ink); }
+    .g-doodle .dd-ink i { display: block; height: 100%; width: 100%; transform: scaleX(0); transform-origin: 0 50%; background: var(--g-ink); will-change: transform; }
     .g-doodle .dd-ink.low i { background: var(--g-bad); }
-    .g-doodle .dd-over-btn { position: absolute; right: 8px; bottom: 8px; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 6px 14px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); font-weight: 800; font-size: 0.85rem; box-shadow: var(--g-shadow); touch-action: manipulation; }
+    .g-doodle .dd-over-btn { position: absolute; z-index: 2; right: 8px; bottom: 8px; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 6px 14px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); font-weight: 800; font-size: 0.85rem; box-shadow: var(--g-shadow); touch-action: manipulation; }
     .g-doodle .dd-over-btn svg { width: 16px; height: 16px; }
-    .g-doodle .dd-over-btn:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge, var(--g-ink)); }
+    .g-doodle .dd-over-btn:active, .g-doodle .dd-over-btn.is-pressed { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge, var(--g-ink)); }
 
     /* top bar of the draw screen */
     .g-doodle .dd-word { font-family: var(--g-font-display); font-weight: 900; font-size: 1.15rem; line-height: 1.15; flex: 1; min-width: 0; overflow-wrap: anywhere; }
@@ -65,7 +72,7 @@ export const CSS = `
     .g-doodle .dd-tool { border-radius: 12px; border: 2px solid var(--g-ink); background: var(--g-card); box-shadow: var(--g-shadow); }
     .g-doodle .dd-tool svg { width: 22px; height: 22px; }
     .g-doodle .dd-tool:disabled { opacity: 0.35; box-shadow: none; }
-    .g-doodle .dd-tool:not(:disabled):active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge, var(--g-ink)); }
+    .g-doodle .dd-tool:not(:disabled):active, .g-doodle .dd-tool.is-pressed:not(:disabled) { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge, var(--g-ink)); }
     .g-doodle .dd-send { flex: 1; min-height: 48px; }
     .g-doodle .dd-actions { width: 100%; display: flex; gap: 8px; align-items: center; }
     .g-doodle .gm-btn:disabled { opacity: 0.4; }
@@ -98,9 +105,10 @@ export const CSS = `
     .g-doodle .dd-giveup.armed { color: var(--g-bad); }
 
     /* stamps + results */
-    .g-doodle .dd-stamp { position: absolute; left: 50%; top: 50%; padding: 0.12em 0.36em; border: 3px solid currentColor; border-radius: 8px; background: color-mix(in srgb, var(--g-card) 82%, transparent); font-family: var(--g-font-display); font-weight: 900; font-size: 2.3rem; line-height: 1.05; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; transform: translate(-50%, -50%) rotate(-9deg); pointer-events: none; }
+    .g-doodle .dd-stamp { position: absolute; z-index: 2; left: 50%; top: 50%; padding: 0.12em 0.36em; border: 3px solid currentColor; border-radius: 8px; background: color-mix(in srgb, var(--g-card) 82%, transparent); font-family: var(--g-font-display); font-weight: 900; font-size: 2.3rem; line-height: 1.05; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; transform: translate(-50%, -50%) rotate(-9deg); pointer-events: none; }
     .g-doodle .dd-stamp.good { color: var(--g-good); } .g-doodle .dd-stamp.bad { color: var(--g-bad); }
-    .g-doodle .dd-stamp.anim { animation: dd-stamp 0.42s cubic-bezier(.2,1.6,.4,1) both; }
+    .g-doodle .dd-stamp { text-shadow: var(--g-misreg); background-image: var(--g-grain); background-size: var(--g-grain-size); }
+    .g-doodle .dd-stamp.anim { animation: dd-stamp 0.46s var(--g-ease-out) both; }
     .g-doodle .dd-answer { text-align: center; display: flex; flex-direction: column; gap: 2px; }
     .g-doodle .dd-answer small { color: var(--g-muted); font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem; }
     .g-doodle .dd-answer b { font-family: var(--g-font-display); font-size: 1.6rem; font-weight: 900; line-height: 1.1; overflow-wrap: anywhere; }
@@ -145,7 +153,9 @@ export const CSS = `
     .g-doodle .dd-plaque span { font-family: var(--g-font-display); font-weight: 900; font-size: 1.05rem; line-height: 1.1; max-width: 12em; }
     .g-doodle .dd-wall { width: 100%; display: grid; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); gap: 20px 14px; padding: 16px 12px 14px; box-sizing: border-box; }
     .g-doodle .dd-frame { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 0; padding: 8px 8px 10px; text-align: left; background: var(--g-card); color: var(--g-ink); border: 2px solid var(--g-ink); border-radius: 6px; box-shadow: var(--g-shadow); touch-action: manipulation; transform: rotate(var(--tilt, 0deg)); transition: transform 0.15s ease; }
-    .g-doodle .dd-frame:active { transform: rotate(0deg) translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge, var(--g-ink)); }
+    .g-doodle .dd-frame:active, .g-doodle .dd-frame.is-pressed { transform: rotate(0deg) translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge, var(--g-ink)); }
+    .g-doodle .dd-frame.pre { opacity: 0; }
+    .g-doodle .dd-frame.enter { animation: dd-hang 0.5s var(--g-ease-spring) backwards; }
     .g-doodle .dd-frame canvas { display: block; border: 2px solid var(--g-line); border-radius: 3px; background: var(--g-card); }
     .g-doodle .dd-frame-title { margin-top: 8px; font-family: var(--g-font-display); font-weight: 900; font-size: 1rem; line-height: 1.15; overflow-wrap: anywhere; }
     .g-doodle .dd-frame-meta { margin-top: 3px; font-size: 0.8rem; font-weight: 800; color: var(--g-muted); overflow-wrap: anywhere; }
@@ -215,7 +225,8 @@ export const CSS = `
     .g-doodle .dd-start small { display: block; font-size: 0.72rem; font-weight: 800; opacity: 0.85; }
     .g-doodle .dd-sethead { position: relative; }
     .g-doodle .dd-fridge { position: absolute; right: 2px; top: 0; }
-    .g-doodle .dd-fridge-pic canvas { display: block; border: 2px solid var(--g-ink); border-radius: 4px; background: var(--g-card); transform: rotate(3deg); }
+    .g-doodle .dd-fridge-pic .dd-cvw { transform: rotate(3deg); }
+    .g-doodle .dd-fridge-pic canvas { display: block; border: 2px solid var(--g-ink); border-radius: 4px; background: var(--g-card); }
 
     /* twists, pay, ladder, Half & Half */
     .g-doodle .dd-twist { width: 100%; box-sizing: border-box; display: flex; align-items: baseline; gap: 10px; padding: 3px 10px; white-space: nowrap; overflow: hidden; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-hl); color: var(--g-on-ink); box-shadow: var(--g-shadow-sm); }
@@ -240,9 +251,9 @@ export const CSS = `
     .g-doodle .dd-live-row em { margin-left: 8px; }
     .g-doodle .dd-goldbar { width: 100%; box-sizing: border-box; text-align: center; font-weight: 900; padding: 6px 10px; border: 2px solid var(--g-ink); border-radius: 8px; background: var(--g-hl); color: var(--g-on-ink); box-shadow: var(--g-shadow-sm); }
     .g-doodle .dd-bonus { margin: 0; text-align: center; font-weight: 900; color: var(--g-good); }
-    .g-doodle .dd-papernote { position: absolute; left: 8px; top: 8px; padding: 2px 8px; border: 2px solid var(--g-ink); border-radius: 6px; background: var(--g-card); font-weight: 900; font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase; pointer-events: none; }
+    .g-doodle .dd-papernote { position: absolute; z-index: 2; left: 8px; top: 8px; padding: 2px 8px; border: 2px solid var(--g-ink); border-radius: 6px; background: var(--g-card); font-weight: 900; font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase; pointer-events: none; }
     .g-doodle .dd-paper.locked canvas { cursor: not-allowed; }
-    .g-doodle .dd-paper.locked::after { content: ''; position: absolute; inset: 0; background: var(--g-halftone) 0 0 / 5px 5px; opacity: 0.22; pointer-events: none; }
+    .g-doodle .dd-paper.locked::after { content: ''; position: absolute; z-index: 2; inset: 0; background: var(--g-halftone) 0 0 / 5px 5px; opacity: 0.22; pointer-events: none; }
     .g-doodle .dd-paper.gold, .g-doodle .dd-frame.gold { box-shadow: 0 0 0 4px var(--g-hl), var(--g-shadow); }
 
     /* the end: records strip, title badges, history */
@@ -255,6 +266,8 @@ export const CSS = `
     .g-doodle .dd-stamp2.s-best span, .g-doodle .dd-stamp2.s-first span, .g-doodle .dd-stamp2.s-gold span { color: var(--g-on-ink); }
     .g-doodle .dd-badges { width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .g-doodle .dd-badge2 { display: flex; flex-direction: column; gap: 1px; padding: 8px 10px; border: 2px solid var(--g-ink); border-radius: 10px; min-width: 0; }
+    .g-doodle .dd-mode[aria-checked="true"], .g-doodle .dd-pack[aria-checked="true"], .g-doodle .dd-chip.yes, .g-doodle .dd-chip.no, .g-doodle .dd-tier.t0, .g-doodle .dd-tier.t2, .g-doodle .dd-stamp2.s-best, .g-doodle .dd-stamp2.s-first, .g-doodle .dd-stamp2.s-gold,
+    .g-doodle .dd-frame-pts.zero, .g-doodle .dd-badge, .g-doodle .dd-rungs i { background-image: var(--g-grain); background-size: var(--g-grain-size); }
     .g-doodle .dd-badge2.p-a-b { background: var(--p-a-soft); } .g-doodle .dd-badge2.p-b-b { background: var(--p-b-soft); }
     .g-doodle .dd-badge2-who { font-weight: 900; font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--g-muted); }
     .g-doodle .dd-badge2 b { font-family: var(--g-font-display); font-weight: 900; font-size: 1rem; line-height: 1.15; }
@@ -283,9 +296,21 @@ export const CSS = `
     .g-doodle .dd-frame.pick { padding-bottom: 20px; }
     .g-doodle .dd-frame-pick { position: absolute; z-index: 1; bottom: -10px; right: 6px; padding: 2px 8px; border: 2px solid var(--g-ink); border-radius: 6px; background: var(--g-hl); color: var(--g-on-ink); font-weight: 900; font-size: 0.66rem; letter-spacing: 0.06em; text-transform: uppercase; box-shadow: var(--g-shadow-sm); transform: rotate(-4deg); }
 
+    /* printed on paper: the same tooth the room carries, under every raised card (colour stays whatever the card sets) */
+    .g-doodle .dd-pick, .g-doodle .dd-team, .g-doodle .dd-timer, .g-doodle .dd-chip, .g-doodle .dd-frame, .g-doodle .dd-card, .g-doodle .dd-lb-card, .g-doodle .dd-encore, .g-doodle .dd-live-row,
+    .g-doodle .dd-tool, .g-doodle .dd-mode, .g-doodle .dd-pack, .g-doodle .dd-toggle, .g-doodle .dd-papernote, .g-doodle .dd-over-btn, .g-doodle .dd-stamp2, .g-doodle .dd-plaque, .g-doodle .dd-badge2,
+    .g-doodle .dd-twist, .g-doodle .dd-goldbar, .g-doodle .dd-frame-pts, .g-doodle .dd-tier { background-image: var(--g-grain); background-size: var(--g-grain-size); }
+    .g-doodle .dd-badge2.p-a-b { background-image: var(--g-halftone-a), var(--g-grain); background-size: 5px 5px, var(--g-grain-size); }
+    .g-doodle .dd-badge2.p-b-b { background-image: var(--g-halftone-b), var(--g-grain); background-size: 5px 5px, var(--g-grain-size); }
+    .g-doodle .dd-tier.t1 { background-image: var(--g-halftone), var(--g-grain); background-size: 5px 5px, var(--g-grain-size); }
+    .g-doodle .dd-h, .g-doodle .dd-word, .g-doodle .dd-pick-word, .g-doodle .dd-answer b, .g-doodle .dd-plaque b, .g-doodle .dd-wait-name, .g-doodle .dd-encore-title { text-shadow: var(--g-misreg); }
+    .g-doodle .dd-word small { text-shadow: none; }
+    .g-doodle .dd-plaque b, .g-doodle .dd-plaque span { text-shadow: none; }
+    @keyframes dd-deal { 0% { transform: translateY(22px) rotate(calc(var(--tilt, 0deg) * 4)) scale(0.92); opacity: 0; } 100% { transform: rotate(var(--tilt, 0deg)); opacity: 1; } }
+    @keyframes dd-hang { 0% { transform: translateY(-16px) rotate(calc(var(--tilt, 0deg) * -4)) scale(0.9); opacity: 0; } 100% { transform: rotate(var(--tilt, 0deg)); opacity: 1; } }
     @keyframes dd-shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(3px); } }
     @keyframes dd-pop { 0% { transform: scale(0.6); opacity: 0; } 70% { transform: scale(1.08); opacity: 1; } 100% { transform: scale(1); } }
-    @keyframes dd-stamp { 0% { transform: translate(-50%, -50%) rotate(-9deg) scale(2.4); opacity: 0; } 100% { transform: translate(-50%, -50%) rotate(-9deg) scale(1); opacity: 1; } }
+    @keyframes dd-stamp { 0% { transform: translate(-50%, -50%) rotate(-14deg) scale(2.6); opacity: 0; } 55% { transform: translate(-50%, -50%) rotate(-8deg) scale(0.92); opacity: 1; } 78% { transform: translate(-50%, -50%) rotate(-9.5deg) scale(1.05); } 100% { transform: translate(-50%, -50%) rotate(-9deg) scale(1); opacity: 1; } }
     @keyframes dd-scribble { 0% { stroke-dashoffset: 420; } 70%, 100% { stroke-dashoffset: 0; } }
     @keyframes dd-pencil { 0% { offset-distance: 0%; } 70%, 100% { offset-distance: 100%; } }
     @keyframes dd-blink { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }

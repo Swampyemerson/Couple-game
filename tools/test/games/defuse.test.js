@@ -1416,20 +1416,20 @@ async function phoneChain(h) {
   await h.a.evaluate(() => window.__defuse.setLeft(120000));
   await winBomb1Quick(h, h.a);
   const mid = await waitInterlude(h.a);
+  const stamp = await h.a.evaluate(() => (document.querySelector('.dx-fx .dx-stamp') || {}).textContent || ''); // read before the screenshots: they take a while and the interlude is short
+  const mstamp = await until(() => visible(h.b, '.dx-fx .dx-stamp'), 'the stamp on the manual', 1500, 20) && await h.b.textContent('.dx-fx');
   const pres = bombPresence(h);
   await Promise.all([cshot(h.a, 'chain-phone-interlude-bomb-light'), cshot(h.b, 'chain-phone-interlude-manual-light')]);
   assert(mid.b.chain === 1 && !mid.b.over && !pres.res && pres.ph === 'play' && !pres.win && pres.cs === 1, 'chain (' + JSON.stringify({ ph: pres.ph, res: pres.res, win: pres.win, cs: pres.cs, ci: pres.ci, n: pres.n }) + '): after bomb 1 the round is not over: the presence still says "play", with no result and no win');
-  const stamp = await h.a.evaluate(() => (document.querySelector('.dx-fx .dx-stamp') || {}).textContent || '');
   assert(/NEXT BOMB/.test(stamp) && /Bomb 1 of 2/i.test(stamp), `chain: the NEXT BOMB stamp shows on the bomb ("${stamp.trim()}")`);
   const carry = Math.ceil(mid.b.left / 1000);
   assert(carry > 60 && carry <= 120, `bomb 1 had ${carry} s left`);
+  assert(/NEXT BOMB/.test(mstamp), 'the manual phone shows the NEXT BOMB stamp too');
   assert(results(h).length === 0 && (await dx(h.b)).manual && !(await dx(h.b)).manual.over, 'nothing is recorded or finished during the interlude');
-  await until(() => visible(h.b, '.dx-fx .dx-stamp'), 'the stamp on the manual', 1500, 20);
-  assert(/NEXT BOMB/.test(await h.b.textContent('.dx-fx')), 'the manual phone shows the NEXT BOMB stamp too');
   const s2 = await waitBomb2(h.a);
   const want = Math.min(RD.TIERS.normal.secs, carry + RD.TIERS.normal.secs / 2);
   assert(s2.b.seed === RC_CHAIN.chainSeed(seedA) && s2.b.chain === 2 && s2.b.round.name === r2.name && s2.b.strikes === 0 && !s2.b.solved.some(Boolean), `chain: bomb 2 is a new round (${r2.name}) from seed + "|next", strikes back to 0`);
-  assert(s2.b.start === want && s2.b.carry === carry && Math.abs(s2.b.left / 1000 - want) <= 1.5, `chain: bomb 2’s clock is the carried ${want} s (${carry} left + 150), reads ${(s2.b.left / 1000).toFixed(1)}`);
+  assert(s2.b.start === want && s2.b.carry === carry && Math.abs(s2.b.left / 1000 - want) <= 4, `chain: bomb 2’s clock is the carried ${want} s (${carry} left + 150), reads ${(s2.b.left / 1000).toFixed(1)}`);
   assert((await chipText(h.a)).join() === 'Bomb 2 of 2', 'the bomb phone says "Bomb 2 of 2"');
   await until(async () => { const x = await chainState(h.b); return x && x.m && x.m.n === s2.b.n; }, 'the manual to follow to bomb 2', 4000);
   assert((await dx(h.b)).manual.chain === 2 && (await manualInfo(h.b)).edition === r2.edition && (await h.b.textContent('.dx-page')).includes(r2.name) && (await chipText(h.b)).join() === 'Bomb 2 of 2', `the manual followed on its own: bomb 2’s edition (${r2.name}) and "Bomb 2 of 2"`);

@@ -15,6 +15,7 @@
 // input to the slot that owns it, gives each a host (strike / solve / clock / busy) and judges nothing itself.
 import { registerGame } from './core.js';
 import { CSS } from './defuse/css.js';
+import { FLAT_CSS } from './defuse/flat.js';
 import { REGISTRY, BY_ID, TIERS, TIER_ORDER, tierOf, buildRound, isScored, SURGE_SECS, BLACKOUT, GOLD_BONUS, HUSH_SECS } from './defuse/round.js';
 import { ctxOf, esc, fmt, cap } from './defuse/util.js';
 import { tabsOf, guideHTML } from './defuse/manual.js';
@@ -54,9 +55,34 @@ const PORT_SVG = {
   RJ45: '<svg viewBox="0 0 22 14" aria-hidden="true"><path d="M3 2h16v7h-3v3H6V9H3z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8 5v2M11 5v2M14 5v2" stroke="currentColor" stroke-width="1.6"/></svg>',
   SERIAL: '<svg viewBox="0 0 22 14" aria-hidden="true"><path d="M2 2h18l-2.5 10h-13z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M6 5h.1M9 5h.1M12 5h.1M15 5h.1M7.5 9h.1M11 9h.1M14.5 9h.1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
 };
-const ALLCSS = () => CSS + '\n' + REGISTRY.map((p) => p.css || '').join('\n');
+const ALLCSS = () => CSS + '\n' + REGISTRY.map((p) => p.css || '').join('\n') + '\n' + FLAT_CSS;
 
 const jlen = (x) => { try { return JSON.stringify(x).length; } catch { return 0; } };
+
+// ── flat upgrade helpers ──
+/** Restart a one-shot CSS animation without reading layout: the element swaps between two classes (base-a / base-b) that name identical keyframes under different names. */
+function retrigger(el, base) {
+  if (!el) return;
+  const a = base + '-a', b = base + '-b';
+  const on = el.classList.contains(a);
+  el.classList.remove(on ? a : b);
+  el.classList.add(on ? b : a);
+}
+/** Write only what changed: a repeated write still dirties style and layout. */
+const setText = (el, t) => { if (el && el.textContent !== t) el.textContent = t; };
+const setHidden = (els, hide) => { for (const el of els) if (el.hidden !== hide) el.hidden = hide; };
+/** Things that visibly press in on pointerdown (the action itself still happens on the click or key, as before). */
+const PRESS = 'button:not(:disabled):not(.gm-btn), .dx-wire, [role="button"]';
+/** Ink droplets for the finale: [x, y] offsets in px, a size and an ink, scattered round the middle. Display only, so Math.random is fine. */
+function dropsHTML(n, reach) {
+  let out = '';
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 + Math.random() * 0.6;
+    const d = reach * (0.45 + Math.random() * 0.55);
+    out += `<i class="dx-dot k${i % 3}" style="--x:${(Math.cos(a) * d).toFixed(0)}px;--y:${(Math.sin(a) * d * 0.8).toFixed(0)}px;--s:${(0.5 + Math.random() * 1.1).toFixed(2)};--dl:${(Math.random() * 0.12).toFixed(2)}s"></i>`;
+  }
+  return out;
+}
 
 registerGame({
   id: 'defuse',
@@ -108,6 +134,7 @@ registerGame({
     let phase = 'lobby'; // lobby | bomb | manual
     let B = null; // the bomb round (bomb side)
     let M = null; // the mirrored round (manual side)
+    let X = null; // the bomb screen's DOM handles, found once per render so the clock never queries or rebuilds anything
     let partnerHid = false;
     let lobbySince = 0; // when the partner's presence last said "lobby" during our round
     let partnerLobby = false;
@@ -355,7 +382,13 @@ registerGame({
           ${E.portPlate ? `<div class="dx-bay"><span class="dx-tag">Ports</span><div class="dx-ports" aria-label="${E.ports.length} ports">${E.ports.length ? E.ports.map((p) => `<span class="dx-port" data-port="${p}">${PORT_SVG[p] || ''}${p}</span>`).join('') : '<span class="dx-none">No ports</span>'}</div></div>` : ''}
         </aside>
         <div class="dx-mods" data-k="${k}">${g.slots.map(modHTML).join('')}</div>
-      </div><div class="dx-fx"></div><div class="dx-pause" role="status" hidden><div><b>Paused</b><span></span></div></div>`;
+      </div><div class="dx-fx"></div><div class="dx-flash" aria-hidden="true"></div><div class="dx-vig" aria-hidden="true"></div><div class="dx-pause" role="status" hidden><div><b>Paused</b><span></span></div></div>`;
+      X = {
+        times: $$('.dx-time'), lcds: $$('.dx-lcd'), shells: $$('.dx-topbar, .dx-bomb'), surgetxt: $$('.dx-surgetxt'), mods: $('.dx-mods'), bomb: $('.dx-bomb'),
+        flash: $('.dx-flash'), vig: $('.dx-vig'), pause: $('.dx-pause'),
+        flags: Object.fromEntries(['surge', 'dark', 'vent', 'hush'].map((k) => [k, $$(`[data-flag="${k}"]`)])),
+        sig: '', hurry: false,
+      };
       mountSlots(sv || null);
       updateBomb();
       toTop();
@@ -406,23 +439,30 @@ registerGame({
         if (!pz.hidden) pz.querySelector('span').textContent = B.pr === 'lobby' ? `${api.name(them)} went back to the lobby. The clock waits.` : B.pr === 'bg' ? `${api.name(them)} has the game in the background. The clock waits.` : B.pr === 'me' ? 'You left the game for a moment. The clock waits.' : `${api.name(them)} stepped away. The clock waits.`;
       }
     }
+    /** Repaint the flags, the surge text and the shell classes, but only when something they show has changed (it used to rewrite them every second). */
     function paintFlags() {
-      if (!B) return;
+      if (!B || !X) return;
       const sg = Math.ceil(B.surge.left / 1000);
-      const set = (name, text, on) => $$(`[data-flag="${name}"]`).forEach((f) => { f.hidden = !on; if (on && text != null) f.textContent = text; });
-      set('surge', `SURGE x2 · ${sg}s`, sg > 0);
-      set('dark', B.dark.phase === 1 ? 'GOING DARK' : 'BLACKOUT', B.dark.phase > 0);
-      set('vent', null, B.vent);
-      set('hush', `HUSH · ${Math.ceil(B.hush.left / 1000)}s`, B.hush.left > 0);
-      $$('.dx-surgetxt').forEach((t) => { t.textContent = B.note && B.note.until > performance.now() ? B.note.text : sg > 0 ? `x2 · ${sg}s` : ''; });
-      $$('.dx-time').forEach((t) => t.classList.toggle('is-surge', sg > 0));
-      const mods = $('.dx-mods');
-      if (mods) { mods.classList.toggle('is-dark', B.dark.phase === 2); mods.classList.toggle('is-warn', B.dark.phase === 1); }
-      $$('.dx-topbar, .dx-bomb').forEach((x) => x.classList.toggle('is-surge', sg > 0));
+      const hs = Math.ceil(B.hush.left / 1000);
+      const dk = B.dark.phase;
+      const stx = B.note && B.note.until > performance.now() ? B.note.text : sg > 0 ? `x2 · ${sg}s` : '';
+      const sig = `${sg}|${hs}|${dk}|${B.vent ? 1 : 0}|${stx}`;
+      if (sig === X.sig) return;
+      X.sig = sig;
+      const set = (list, text, on) => { setHidden(list, !on); if (on && text != null) for (const f of list) setText(f, text); };
+      set(X.flags.surge, `SURGE x2 · ${sg}s`, sg > 0);
+      set(X.flags.dark, dk === 1 ? 'GOING DARK' : 'BLACKOUT', dk > 0);
+      set(X.flags.vent, null, B.vent);
+      set(X.flags.hush, `HUSH · ${hs}s`, B.hush.left > 0);
+      for (const t of X.surgetxt) setText(t, stx);
+      for (const t of X.times) t.classList.toggle('is-surge', sg > 0);
+      if (X.mods) { X.mods.classList.toggle('is-dark', dk === 2); X.mods.classList.toggle('is-warn', dk === 1); }
+      for (const x of X.shells) x.classList.toggle('is-surge', sg > 0);
     }
     function shake(i) {
       const x = modEl(i);
-      if (x) { x.classList.remove('is-bad'); void x.offsetWidth; x.classList.add('is-bad'); later(() => x.classList.remove('is-bad'), 700); }
+      if (x) { x.classList.add('is-bad'); retrigger(x, 'shk'); later(() => x.classList.remove('is-bad'), 700); }
+      if (X && X.flash) { X.flash.classList.remove('is-hot'); retrigger(X.flash, 'fl'); } // the strike flash: one red sheet of ink, opacity only
     }
     function strikeSlot(i, why) {
       if (!B || B.over || B.inter) return;
@@ -477,18 +517,23 @@ registerGame({
       }
       if (changed) pub();
     }
+    /** The end-of-round stamp or blast, on both devices. The stamp and the ink burst are transform/opacity animations only; under reduced motion they sit still. */
     function finale(kind, res, fx) {
       const fxEl = $('.dx-fx');
       if (!fxEl) return;
       if (kind === 'chain') {
-        fxEl.innerHTML = `<div class="dx-stamp is-chain" role="status"><b>NEXT BOMB</b><span>Bomb 1 of 2 · defused</span>${res ? `<small>${esc(res)}</small>` : ''}</div>`;
+        fxEl.innerHTML = `<div class="dx-stamp is-chain" role="status"><b>NEXT BOMB</b><span>Bomb 1 of 2 · defused</span>${res ? `<small>${esc(res)}</small>` : ''}</div><div class="dx-ink" aria-hidden="true">${dropsHTML(10, 150)}</div>`;
       } else if (kind === 'win') {
         const md = fx && fx.md ? fx.md : 0;
-        fxEl.innerHTML = `<div class="dx-stamp" role="status"><b>DEFUSED</b><span>${esc(res && res.text ? res.text.replace(/^Defused /, '') : '')}</span>${fx && fx.ln ? `<small>${esc(fx.ln)}</small>` : ''}${md ? `<div class="dx-medal" aria-label="${MEDAL_NAME[md]} medal">${[1, 2, 3].map((n) => `<i class="${n <= md ? 'on' : ''}"></i>`).join('')}</div>` : ''}</div>`;
+        fxEl.innerHTML = `<div class="dx-stamp" role="status"><b>DEFUSED</b><span>${esc(res && res.text ? res.text.replace(/^Defused /, '') : '')}</span>${fx && fx.ln ? `<small>${esc(fx.ln)}</small>` : ''}${md ? `<div class="dx-medal" aria-label="${MEDAL_NAME[md]} medal">${[1, 2, 3].map((n) => `<i class="${n <= md ? 'on' : ''}"></i>`).join('')}</div>` : ''}</div><div class="dx-ink" aria-hidden="true">${dropsHTML(16, 190)}</div>`;
       } else {
         root.classList.add('is-boom');
         const pts = (R, r, n, ox = 0, oy = 0) => Array.from({ length: n * 2 }, (_, i) => { const a = (i * Math.PI) / n - Math.PI / 2; const k = i % 2 ? r : R * (0.82 + 0.18 * ((i * 7) % 5) / 4); return `${(50 + ox + Math.cos(a) * k).toFixed(1)},${(50 + oy + Math.sin(a) * k * 0.86).toFixed(1)}`; }).join(' ');
-        fxEl.innerHTML = `<div class="dx-boom" role="status"><svg viewBox="0 0 100 100" aria-hidden="true"><polygon class="b0" points="${pts(50, 28, 13, 3, 3)}"/><polygon class="b1" points="${pts(50, 28, 13)}"/><polygon class="b2" points="${pts(32, 19, 11)}"/></svg><b>BOOM</b></div>`;
+        fxEl.innerHTML = `<div class="dx-boom" role="status"><i class="dx-wave"></i><svg viewBox="0 0 100 100" aria-hidden="true"><polygon class="b0" points="${pts(50, 28, 13, 3, 3)}"/><polygon class="b1" points="${pts(50, 28, 13)}"/><polygon class="b2" points="${pts(32, 19, 11)}"/></svg><b>BOOM</b><span class="dx-ink" aria-hidden="true">${dropsHTML(22, 250)}</span></div>`;
+        // one short jolt and a hot flash: a big hit, so it earns the screen shake (CSS drops both under reduced motion)
+        const fl = $('.dx-flash');
+        if (fl) { fl.classList.add('is-hot'); retrigger(fl, 'fl'); }
+        retrigger($('.dx-bomb') || $('.dx-manual-wrap'), 'jolt');
       }
     }
     function endRound(win, res, fx) {
@@ -625,11 +670,16 @@ registerGame({
         }
       }
       const secs = Math.max(0, Math.ceil(B.left / 1000));
-      if (secs !== B.shownSecs) {
+      if (secs !== B.shownSecs && X) {
         B.shownSecs = secs;
-        $$('.dx-time').forEach((t) => { t.textContent = fmt(B.left); });
-        $$('.dx-bomb, .dx-topbar').forEach((x) => x.classList.toggle('is-hurry', secs <= 30));
-        if (!B.over && !B.inter && !B.pz && secs <= 30 && secs > 0) api.sfx('tick');
+        // once a second, and only the clock's own text: its box has a fixed size, so nothing around it is laid out again
+        const t = fmt(B.left);
+        for (const e of X.times) setText(e, t);
+        const hurry = secs <= 30;
+        if (hurry !== X.hurry) { X.hurry = hurry; for (const e of X.shells) e.classList.toggle('is-hurry', hurry); }
+        const live = !B.over && !B.inter && !B.pz;
+        if (live && secs <= 30 && secs > 0) api.sfx('tick');
+        if (live && secs <= 10 && secs > 0) { for (const e of X.lcds) retrigger(e, 'beat'); retrigger(X.vig, 'vg'); } // the last ten seconds: the clock beats and the edge of the screen flashes red
         paintFlags();
         pub();
       }
@@ -698,7 +748,7 @@ registerGame({
           <article class="dx-page">${guideHTML(g)}<div class="dx-hush" role="status" hidden><b>HUSH</b><span class="dx-hush-t"></span><em>Talk it through</em></div></article>
         </div>
         ${hasRelay ? '<div class="dx-drawer" data-drawer><button type="button" class="dx-drawer-head" data-act="drawer" aria-expanded="false"><span>Relay box</span><small>Tap to open or close</small></button><div class="dx-drawer-body"></div></div>' : ''}
-      </div><div class="dx-fx"></div><div class="dx-pause" role="status" hidden><div><b>Paused</b><span></span></div></div>`;
+      </div><div class="dx-fx"></div><div class="dx-flash" aria-hidden="true"></div><div class="dx-vig" aria-hidden="true"></div><div class="dx-pause" role="status" hidden><div><b>Paused</b><span></span></div></div>`;
     }
     function enterManual(s) {
       if (!s || typeof s.sd !== 'string' || !tierOf(s.rd)) return;
@@ -707,6 +757,11 @@ registerGame({
       M = { n: s.n, round, left: s.left, rate: s.rate || 1, at: performance.now(), strikes: s.st | 0, solved: String(s.sv || ''), pz: !!s.pz, over: false, frozen: false, shown: '', ra: [], seq: 0, stamp: Date.now().toString(36), relay: null, sg: 0, hs: 0, bo: 0, vn: 0, rsKey: '', chain: s.cs === 1 || s.cs === 2 ? s.cs : 0, ci: 0 };
       root.className = 'g-defuse is-manual';
       root.innerHTML = manualHTML();
+      M.x = {
+        times: $$('.dx-time'), bar: $('.dx-mbar'), lcd: $('.dx-mbar .dx-lcd'), strikes: $$('.dx-mbar .dx-strikes i'), lamps: $$('.dx-lamp'), tabs: $$('.dx-index [data-page]'), stNow: $$('[data-st]'),
+        surgetxt: $$('.dx-mbar .dx-surgetxt'), wrap: $('.dx-manual-wrap'), hush: $('.dx-hush'), hushT: $('.dx-hush .dx-hush-t'), flash: $('.dx-flash'), vig: $('.dx-vig'), pause: $('.dx-pause'),
+        flags: Object.fromEntries(['surge', 'dark', 'vent'].map((k) => [k, $$(`.dx-mbar [data-flag="${k}"]`)])), hurry: false,
+      };
       toTop();
       mountRelayPanel();
       const ids = ['basics', ...round.ids];
@@ -752,33 +807,36 @@ registerGame({
     }
     function showPage(id, quiet) {
       memo.page = id; keep();
-      $$('.dx-index [data-page]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.page === id)));
-      $$('.dx-sec').forEach((x) => { x.hidden = x.dataset.page !== id; });
+      // read first, then write: the tab strip's geometry does not depend on which page is showing
       const b = $(`.dx-index [data-page="${id}"]`);
       const strip = $('.dx-index');
-      if (b && strip && strip.scrollWidth > strip.clientWidth + 2) strip.scrollLeft = Math.max(0, b.offsetLeft - strip.clientWidth / 2 + b.offsetWidth / 2);
+      const to = b && strip && strip.scrollWidth > strip.clientWidth + 2 ? Math.max(0, b.offsetLeft - strip.clientWidth / 2 + b.offsetWidth / 2) : -1;
+      (M && M.x ? M.x.tabs : $$('.dx-index [data-page]')).forEach((t) => t.setAttribute('aria-selected', String(t.dataset.page === id)));
+      $$('.dx-sec').forEach((x) => { x.hidden = x.dataset.page !== id; });
+      if (to >= 0) strip.scrollLeft = to;
       if (!quiet) { const pg = $('.dx-page'); const bar = $('.dx-mbar'); if (pg && bar && pg.getBoundingClientRect().top < bar.offsetHeight) pg.scrollIntoView({ block: 'start' }); }
     }
     function manualState(s) {
       if (!M || !s) return;
       if (s.n !== M.n) return;
       const now = performance.now();
+      const x = M.x;
       M.left = s.left; M.rate = s.rate || 1; M.at = now; M.pz = !!s.pz;
       const st = s.st | 0;
       if (st > M.strikes) {
         api.sfx('bad'); api.haptic(90);
-        const bar = $('.dx-mbar');
-        if (bar) { bar.classList.remove('is-bad'); void bar.offsetWidth; bar.classList.add('is-bad'); }
+        if (x.bar) { x.bar.classList.add('is-bad'); retrigger(x.bar, 'shk'); }
+        if (x.flash) { x.flash.classList.remove('is-hot'); retrigger(x.flash, 'fl'); }
       }
       M.strikes = st;
       M.solved = String(s.sv || '');
-      $$('.dx-mbar .dx-strikes i').forEach((x, i) => x.classList.toggle('on', i < st));
-      $$('.dx-lamp').forEach((x) => x.classList.toggle('on', M.solved[+x.dataset.slot] === '1'));
-      $$('.dx-index [data-page]').forEach((b) => {
-        const idx = M.round.slots.map((x, i) => (x.id === b.dataset.page && isScored(x) ? i : -1)).filter((i) => i >= 0);
+      x.strikes.forEach((e, i) => e.classList.toggle('on', i < st));
+      x.lamps.forEach((e) => e.classList.toggle('on', M.solved[+e.dataset.slot] === '1'));
+      x.tabs.forEach((b) => {
+        const idx = M.round.slots.map((q, i) => (q.id === b.dataset.page && isScored(q) ? i : -1)).filter((i) => i >= 0);
         b.classList.toggle('is-done', idx.length > 0 && idx.every((i) => M.solved[i] === '1'));
       });
-      $$('[data-st]').forEach((x) => x.classList.toggle('is-now', +x.dataset.st === Math.min(2, st)));
+      x.stNow.forEach((e) => e.classList.toggle('is-now', +e.dataset.st === Math.min(2, st)));
       // timed events and the vent, mirrored from the bomb
       const sg = s.sg | 0, bo = s.bo | 0, vn = s.vn ? 1 : 0;
       if (sg && !M.sg) api.sfx('pop');
@@ -787,17 +845,15 @@ registerGame({
       const hs = Math.max(0, Math.min(HUSH_SECS, s.hs | 0));
       if (hs && !M.hs) api.sfx('tick');
       M.sg = sg; M.hs = hs; M.bo = bo; M.vn = vn;
-      const hw = $('.dx-manual-wrap'), hc = $('.dx-hush');
-      if (hw) hw.classList.toggle('is-hush', hs > 0);
-      if (hc) { hc.hidden = !(hs > 0); const ht = hc.querySelector('.dx-hush-t'); if (ht && hs > 0) ht.textContent = `${hs} s`; }
-      const set = (name, text, on) => $$(`.dx-mbar [data-flag="${name}"]`).forEach((f) => { f.hidden = !on; if (on && text != null) f.textContent = text; });
-      set('surge', `SURGE x2 · ${sg}s`, sg > 0);
-      set('dark', bo === 1 ? 'GOING DARK' : 'BLACKOUT', bo > 0);
-      set('vent', null, !!vn);
-      $$('.dx-mbar .dx-surgetxt').forEach((t) => { t.textContent = sg > 0 ? `x2 · ${sg}s` : ''; });
-      const mb = $('.dx-mbar');
-      if (mb) mb.classList.toggle('is-surge', sg > 0);
-      $$('.dx-mbar .dx-time').forEach((t) => t.classList.toggle('is-surge', sg > 0));
+      if (x.wrap) x.wrap.classList.toggle('is-hush', hs > 0);
+      if (x.hush) { setHidden([x.hush], !(hs > 0)); if (hs > 0) setText(x.hushT, `${hs} s`); }
+      const set = (list, text, on) => { setHidden(list, !on); if (on && text != null) for (const f of list) setText(f, text); };
+      set(x.flags.surge, `SURGE x2 · ${sg}s`, sg > 0);
+      set(x.flags.dark, bo === 1 ? 'GOING DARK' : 'BLACKOUT', bo > 0);
+      set(x.flags.vent, null, !!vn);
+      for (const t of x.surgetxt) setText(t, sg > 0 ? `x2 · ${sg}s` : '');
+      if (x.bar) x.bar.classList.toggle('is-surge', sg > 0);
+      for (const t of x.times) t.classList.toggle('is-surge', sg > 0);
       if (M.relay && M.relay.ctl && s.rs && typeof s.rs === 'object') {
         const key = JSON.stringify(s.rs);
         if (key !== M.rsKey) {
@@ -807,16 +863,15 @@ registerGame({
           if (d) d.classList.toggle('is-done', !!s.rs.d);
         }
       }
-      const pz = $('.dx-pause');
+      const pz = x.pause;
       if (pz) {
-        pz.hidden = !(M.pz && !M.over);
-        if (!pz.hidden) pz.querySelector('span').textContent = s.pr === 'lobby' ? 'The bomb is paused while you are not in the round.' : `The bomb is paused. ${api.name(them)} ${s.pr === 'bg' || s.pr === 'me' ? 'has the game in the background' : 'stepped away'}.`;
+        const hide = !(M.pz && !M.over);
+        if (pz.hidden !== hide) pz.hidden = hide;
+        if (!hide) setText(pz.querySelector('span'), s.pr === 'lobby' ? 'The bomb is paused while you are not in the round.' : `The bomb is paused. ${api.name(them)} ${s.pr === 'bg' || s.pr === 'me' ? 'has the game in the background' : 'stepped away'}.`);
       }
-      watchBarSoon();
       if (s.ci && !M.ci && !M.over) { M.ci = 1; api.sfx('win'); finale('chain', ''); } // bomb 1 of a chain is defused: the NEXT BOMB stamp, then bomb 2 arrives as a new round
       if (s.ph === 'over' && !M.over) manualOver(s.res, !!s.win, s.fx);
     }
-    function watchBarSoon() { const bar = $('.dx-mbar'); if (bar) root.style.setProperty('--dx-mbar-h', bar.offsetHeight + 'px'); }
     function manualOver(res, win, fx) {
       if (!M || M.over) return;
       M.over = true;
@@ -829,7 +884,14 @@ registerGame({
     function manualFrame(now) {
       const left = M.over || M.pz || M.frozen ? M.left : M.left - (now - M.at) * M.rate;
       const t = fmt(left);
-      if (t !== M.shown) { M.shown = t; $$('.dx-time').forEach((x) => { x.textContent = t; }); }
+      if (t === M.shown) return;
+      M.shown = t;
+      const x = M.x;
+      for (const e of x.times) setText(e, t);
+      const secs = Math.max(0, Math.ceil(left / 1000));
+      const hurry = secs <= 30;
+      if (hurry !== x.hurry) { x.hurry = hurry; if (x.bar) x.bar.classList.toggle('is-hurry', hurry); }
+      if (secs <= 10 && secs > 0 && !M.over && !M.pz && !M.frozen) { retrigger(x.lcd, 'beat'); retrigger(x.vig, 'vg'); } // the last ten seconds, on the manual too
     }
 
     // ── wiring ────────────────────────────────────────────────────────────
@@ -843,9 +905,28 @@ registerGame({
         if (e.target.closest('[data-act="relay-open"]')) setDrawer(true);
       }
     });
+    // press-in: the control sinks the moment the finger lands, held at least a beat so a quick tap still reads (the action itself waits for the click, as before, so a scroll that starts on a control cannot fire it)
+    let pressed = null;
+    let pressAt = 0;
+    function pressOut() {
+      const el = pressed;
+      if (!el) return;
+      pressed = null;
+      const wait = 90 - (performance.now() - pressAt);
+      if (wait > 8) later(() => el.classList.remove('is-press'), wait); else el.classList.remove('is-press');
+    }
+    function pressIn(e) {
+      if (e.button > 0 || !e.target || !e.target.closest) return;
+      const el = e.target.closest(PRESS);
+      if (!el || !root.contains(el)) return;
+      if (pressed && pressed !== el) { pressed.classList.remove('is-press'); }
+      pressed = el; pressAt = performance.now();
+      el.classList.add('is-press');
+    }
+    root.addEventListener('pointerdown', pressIn);
     root.addEventListener('pointerdown', bombDown);
-    const up = (e) => bombUp(e, false);
-    const cancel = (e) => bombUp(e, true);
+    const up = (e) => { pressOut(); bombUp(e, false); };
+    const cancel = (e) => { pressOut(); bombUp(e, true); };
     window.addEventListener('pointerup', up);
     window.addEventListener('pointercancel', cancel);
     root.addEventListener('keydown', bombKey);

@@ -23,6 +23,7 @@ import { W, H, RM, RP, GH, POST_R, DT, SERVE_V, MALLET_MAX, HIT_WALL, HIT_PILLAR
 import { createSound } from './hockey/sound.js';
 import { SETUP_CSS, createSetup } from './hockey/setup.js';
 import { readRecords, rallyResult, fastResult, matchResult, rivalryLine } from './hockey/records.js';
+import { grainTile, paintGrain, dots, dotRings, centreMark, malletSprite, puckSprite, splatSprite, linesSprite } from './hockey/art.js';
 
 const RAIL = 5;         // rail thickness (drawn outside the play field)
 const GOAL_MS = 1150;   // goal celebration before the countdown
@@ -42,6 +43,16 @@ const REMOTE_BLEND = 0.07; // s: a new sample's offset from that guess dies away
 const REMOTE_STALE = 0.12; // s: a finger that moves reports every ~50 ms, so a guest mallet silent this long is at rest: its speed dies away
 const STALL_MS = 1000;    // the HOG!/RESET stamp has the centre to itself this long before the serve countdown starts
 const CORRECT_RATE = 700; // u/s: the fastest a guest's puck display may close a correction
+const CORRECT_W = 34;     // rad/s: the guest's puck correction is a critically damped spring (95 % closed in ~140 ms), so its speed is continuous
+const PARTNER_DELAY = 130; // ms: the partner's mallet is read this far behind the clock, so it sits between two samples even with jitter and a lost packet (net.remoteInto)
+const PARTNER_LEAD = 100; // (the follower below takes ~40 ms of it back)
+const FOLLOW_TAU = 0.04; // s  // ms: ... and drawn this far ahead of that along its (also interpolated) velocity, so it is not a whole delay behind the puck
+const HARD_HIT = 120;     // impact speed (u/s) of a hit that gets hit-stop and a shake
+const STOP_MS = 50;       // hit-stop: 50 ms at HARD_HIT, up to STOP_MAX for the hardest
+const STOP_MAX = 80;
+const GOAL_STOP = 80;     // the freeze on a goal
+const DPR_MAX = 2;        // canvas pixel ratio cap (a 3x phone draws 2.25x fewer pixels)
+const QUALITY = [1, 0.8, 0.64, 0.5]; // dynamic resolution steps
 
 registerGame({
   id: 'hockey',
@@ -71,6 +82,14 @@ registerGame({
     .g-hockey .hk-slab { position: absolute; background: var(--g-card); box-shadow: var(--g-shadow-lg, var(--g-shadow)); }
     .g-hockey canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: none; }
     .g-hockey.is-local canvas { cursor: grab; }
+    /* three layers: the printed table (drawn on resize / theme change only), the scoreboard text (repainted when it changes), the live sprites */
+    .g-hockey .hk-tbl, .g-hockey .hk-hud { pointer-events: none; }
+    .g-hockey .hk-tbl { z-index: 1; } .g-hockey .hk-hud { z-index: 2; } .g-hockey .hk-live { z-index: 8; }
+    /* the mallets, pucks and speed lines are small cached sprites moved by transform alone (the compositor, no canvas redraw); the live canvas only holds stickers and overlays */
+    .g-hockey canvas.hk-sp { position: absolute; left: 0; top: 0; inset: auto; width: auto; height: auto; pointer-events: none; will-change: transform; transform-origin: 0 0; visibility: hidden; cursor: none; }
+    .g-hockey .hk-flash, .g-hockey .hk-slowf { position: absolute; pointer-events: none; opacity: 0; }
+    .g-hockey .hk-flash { z-index: 2; }
+    .g-hockey .hk-slowf { z-index: 9; box-sizing: border-box; border: 0 solid var(--g-ink); will-change: opacity; }
     ${SETUP_CSS}
   `,
   mount(el, api) {
@@ -87,13 +106,20 @@ registerGame({
     let coarse = coarseMQ.matches;
     let reduced = motionMQ.matches;
 
-    el.innerHTML = `<div class="g-hockey ${local ? 'is-local' : ''}"><div class="hk-rig"><div class="hk-slab"></div><canvas aria-label="Air hockey table"></canvas></div></div>`;
+    el.innerHTML = `<div class="g-hockey ${local ? 'is-local' : ''}"><div class="hk-rig"><div class="hk-slab"></div><canvas class="hk-live" aria-label="Air hockey table"></canvas><canvas class="hk-tbl" aria-hidden="true"></canvas><canvas class="hk-hud" aria-hidden="true"></canvas><div class="hk-flash"></div><div class="hk-slowf"></div></div></div>`;
     const root = el.querySelector('.g-hockey');
     const rig = root.querySelector('.hk-rig');
     const slab = root.querySelector('.hk-slab');
-    const cv = root.querySelector('canvas');
+    const cv = root.querySelector('.hk-live');        // the live sprites (mallets, pucks, stamps), cleared every frame; takes the touches
     const cx = cv.getContext('2d');
-    const layer = document.createElement('canvas'); // the printed table, redrawn on resize/theme
+    const tb = root.querySelector('.hk-tbl');         // the printed table: drawn on resize / theme change, then left alone
+    const tc = tb.getContext('2d');
+    const hd = root.querySelector('.hk-hud');         // scoreboard text: repainted only when a number changes
+    const hc = hd.getContext('2d');
+    const mkSp = (z) => { const e = document.createElement('canvas'); e.className = 'hk-sp'; e.setAttribute('aria-hidden', 'true'); e.style.zIndex = String(z); e.vis = false; e.tf = ''; e.ctx = e.getContext('2d'); rig.insertBefore(e, rig.querySelector('.hk-flash')); return e; };
+    const SP = { sl: [mkSp(3), mkSp(3)], mb: mkSp(4), ma: mkSp(4), ps: [mkSp(5), mkSp(5)], pb: [mkSp(6), mkSp(6)] }; // speed lines, the two mallets, the pucks' shadows and bodies
+    const flashEl = root.querySelector('.hk-flash');  // goal flash: an opacity animation on the compositor
+    const slowEl = root.querySelector('.hk-slowf');   // match-point slow-mo frame
     const readTokens = () => {
       const cs = getComputedStyle(document.documentElement);
       const t = api.tokens();
@@ -102,20 +128,26 @@ registerGame({
     let T = readTokens();
 
     // ── world ──
+    // px/py: where the mallet was one physics step ago, rx/ry: where it is drawn (the two blended by how far into the next step the clock is)
     const M = {
-      a: { who: 'a', x: W / 2, y: H - 22, vx: 0, vy: 0, tx: W / 2, ty: H - 22 },
-      b: { who: 'b', x: W / 2, y: 22, vx: 0, vy: 0, tx: W / 2, ty: 22 },
+      a: { who: 'a', x: W / 2, y: H - 22, vx: 0, vy: 0, tx: W / 2, ty: H - 22, px: W / 2, py: H - 22, rx: W / 2, ry: H - 22 },
+      b: { who: 'b', x: W / 2, y: 22, vx: 0, vy: 0, tx: W / 2, ty: 22, px: W / 2, py: 22, rx: W / 2, ry: 22 },
     };
     const score = { a: 0, b: 0 };
     const hits = { a: 0, b: 0 };
     const lastPick = (() => { const l = readRecords(api.data()).last; return l === 'surprise' || TABLES[l] ? l : 'classic'; })();
     let sel = lastPick;                     // the picker's choice: a table id or 'surprise'
     let table = tableOf(sel);
+    let ON = [];                            // the pucks in play on this table (rebuilt by setTable, never per frame)
     let env = newEnv(table, score);
     const gd = { a: GH, b: GH };            // goal half-widths as drawn (they glide to env's)
-    const newPuck = (i) => ({ i, x: W / 2, y: H / 2, vx: 0, vy: 0, on: true, ep: 0, back: 0, serveTo: 'a', t0: 0, half: null, stall: 0, slow: 0, sand: 0, sk: 0 });
+    const newPuck = (i) => ({ i, x: W / 2, y: H / 2, px: W / 2, py: H / 2, rx: W / 2, ry: H / 2, vx: 0, vy: 0, on: true, ep: 0, back: 0, serveTo: 'a', t0: 0, half: null, stall: 0, slow: 0, sand: 0, sk: 0 });
     const PK = [newPuck(0), newPuck(1)];
-    const pucksOn = () => PK.slice(0, table.pucks);
+    ON = PK.slice(0, table.pucks);
+    const pucksOn = () => ON;
+    function setTable(t) { table = t; ON = PK.slice(0, t.pucks); hudV++; }
+    const MS = [M.a, M.b];                  // the two mallets, as the physics wants them (no per-step array)
+    const parked = [];
     let phase = host ? 'setup' : 'wait'; // setup | count | play | goal | paused | over (guest: 'wait' until the host speaks)
     let phaseEnd = 0;
     let serveTo = Math.random() < 0.5 ? 'a' : 'b';
@@ -144,7 +176,15 @@ registerGame({
     let mpAt = -1e9;
     let prevPhaseR = null;
     let prevRender = 0;
-    let centreNow = [];          // what the middle-of-the-table lane shows this frame (test hook)
+    const centreNow = [];        // what the middle-of-the-table lane shows this frame (test hook)
+    let liveV = 0;               // bumps when the always-there parts of the live layer (goal mouths, Pillar) must repaint
+    let hudV = 1;                // bumps when the printed scoreboard must repaint (layout, theme, table)
+    let alpha = 1;               // how far into the next physics step the clock is: the draw blends the last two steps by it
+    let stopUntil = 0;           // hit-stop (host / one phone): the sim holds until this time
+    let lastStopAt = -1e9;
+    let gStop = 0;               // the same on the guest, from its own hits and the host's hz
+    let hostFreezes = false;     // the host streams hz, so it freezes too (an older host never does: then the guest never holds either)
+    let shakeAt = -1e9; let shakeAmp = 0; let shakeDur = 1; let shakeX = 0; let shakeY = 0;
     let hintK = 1;               // the hint's fade (it steps aside for anything printed in the middle)
     let tableAt = -1e9;
     let recs = readRecords(api.data()); // cached for the bands (refreshed a few times a second)
@@ -158,12 +198,18 @@ registerGame({
     const ptrs = new Map(); // pointerId -> who
 
     // ── effects ──
-    const fx = { flashWho: null, flashAt: -1e9, shakeAt: -1e9, stampAt: -1e9, stampWho: null };
-    const trails = [[], []];
+    const fx = { flashWho: null, flashAt: -1e9, stampAt: -1e9, stampWho: null, splatX: W / 2, splatY: 0 };
+    // speed-line trails: the last five drawn positions of each puck, in typed rings (nothing allocated per frame)
+    const trails = [{ x: new Float32Array(5), y: new Float32Array(5), n: 0 }, { x: new Float32Array(5), y: new Float32Array(5), n: 0 }];
+    const clearTrails = () => { trails[0].n = 0; trails[1].n = 0; };
+    const sqAt = [-1e9, -1e9]; const sqNx = [0, 0]; const sqNy = [1, 1]; const sqA = [0, 0]; // puck squash on a bounce: when, along which table-space normal, how hard
+    const pressAt = { a: -1e9, b: -1e9 };   // a finger just came down on this mallet
     const t0 = performance.now();
 
     // ── layout ──
     let cssW = 0; let cssH = 0; let dpr = 1; let s = 1; let ox = 0; let oy = 0; let view = 'up';
+    let qi = 0;                 // dynamic resolution step (QUALITY[qi] x the device ratio, which is capped at DPR_MAX)
+    let FX = 0; let FY = 0; let FW = 0; let FH = 0;   // the playing field's rectangle in css px
     let band = null;            // the printed scoreboard bands in the space the table's aspect leaves free (null when it is tight)
     // up: 'a' defends the bottom. down: turned round for 'b'. side: sideways, 'a' defends the left.
     // sideb: sideways for 'b' (their goal on the left). Wide screens use the sideways tables.
@@ -182,7 +228,9 @@ registerGame({
     function layout() {
       const r = rig.getBoundingClientRect();
       cssW = Math.max(1, r.width); cssH = Math.max(1, r.height);
-      dpr = Math.min(3, window.devicePixelRatio || 1);
+      cvL = r.left - shakeX; cvT = r.top - shakeY;
+      const nat = window.devicePixelRatio || 1;
+      dpr = Math.max(Math.min(1, nat), Math.min(DPR_MAX, nat) * QUALITY[qi]);
       // A phone held sideways (or any wide screen) gets the table sideways too, so it fills the screen.
       const wide = cssW >= cssH * 1.15;
       if (local) view = (!coarse && cssW >= cssH * 0.9) || wide ? 'side' : 'up';
@@ -192,10 +240,15 @@ registerGame({
       s = Math.min((cssW - 6) / (VW + m * 2), (cssH - 6) / (VH + m * 2), sideways() ? 5 : 4.6);
       s = Math.max(s, 0.5);
       ox = Math.round((cssW - VW * s) / 2); oy = Math.round((cssH - VH * s) / 2);
-      cv.width = Math.round(cssW * dpr); cv.height = Math.round(cssH * dpr);
-      layer.width = cv.width; layer.height = cv.height;
+      for (const k of [cv, tb, hd]) { k.width = Math.round(cssW * dpr); k.height = Math.round(cssH * dpr); }
       const rp = RAIL * s;
       Object.assign(slab.style, { left: `${ox - rp}px`, top: `${oy - rp}px`, width: `${VW * s + rp * 2}px`, height: `${VH * s + rp * 2}px`, borderRadius: `${Math.round(rp * 1.6)}px` });
+      { // the field's rectangle (the goal flash and the slow-mo frame sit exactly on it)
+        const ax = projX(0, 0); const ay = projY(0, 0); const bx = projX(W, H); const by = projY(W, H);
+        FX = Math.min(ax, bx); FY = Math.min(ay, by); FW = Math.abs(bx - ax); FH = Math.abs(by - ay);
+        for (const e of [flashEl, slowEl]) Object.assign(e.style, { left: `${FX}px`, top: `${FY}px`, width: `${FW}px`, height: `${FH}px` });
+        slowEl.style.borderWidth = `${7 * s}px`;
+      }
       // Free space past each end of the table: a scoreboard band goes there when it is roomy enough.
       band = null;
       if (!sideways()) {
@@ -205,6 +258,8 @@ registerGame({
         const gap = ox - rp - 2; const bw = Math.min(104, gap - 12);
         if (bw >= 46) { const bh = Math.min(VH * s + rp * 2, bw * 3.5); band = { kind: 'v', w: bw, h: bh, y: Math.round(cssH / 2 - bh / 2), left: Math.round(gap / 2 - bw / 2 + 1), right: Math.round(cssW - gap / 2 - bw / 2 - 1) }; }
       }
+      buildSprites();
+      hudV++; liveV++;
       drawTable();
     }
     /** Set a canvas transform so drawing happens in table units. */
@@ -217,10 +272,18 @@ registerGame({
     }
 
     // ── the printed table (static layer; goal mouths and the Pillar are drawn live) ──
+    // Printed in Riso inks on paper: the card stock takes the paper tooth (a grain of ink specks), the goal ends and the centre
+    // circle shade in halftone dots, the creases and the centre mark sit a hair off register. Drawn once per resize / theme change.
+    let grain = null;
+    function grainFor() {
+      const key = `${T.ink}|${T.dark}`;
+      if (!grain || grain.key !== key) grain = { key, tile: grainTile(T.ink, !!T.dark) };
+      return grain.tile;
+    }
     function drawTable() {
-      const c = layer.getContext('2d');
+      const c = tc;
       c.setTransform(1, 0, 0, 1, 0, 0);
-      c.clearRect(0, 0, layer.width, layer.height);
+      c.clearRect(0, 0, tb.width, tb.height);
       tableT(c);
       const inkW = px(2.5);
       // rail
@@ -229,16 +292,16 @@ registerGame({
       // halves, tinted with each player's soft ink
       c.fillStyle = T.bSoft || T.line; c.fillRect(0, 0, W, H / 2);
       c.fillStyle = T.aSoft || T.line; c.fillRect(0, H / 2, W, H / 2);
-      // halftone fade toward each goal end
-      for (const [w, y0, dir] of [['b', 0, 1], ['a', H, -1]]) {
-        c.fillStyle = T[w]; c.globalAlpha = 0.22;
-        for (let d = 2; d < 36; d += 3.2) {
-          const rr = 0.85 * (1 - d / 36);
-          const off = (Math.round(d / 3.2) % 2) * 1.6;
-          for (let x = 2 + off; x < W - 1; x += 3.2) { c.beginPath(); c.arc(x, y0 + dir * d, rr, 0, Math.PI * 2); c.fill(); }
-        }
-        c.globalAlpha = 1;
-      }
+      // halftone fade toward each goal end: dots that grow toward the rail
+      dots(c, 1.6, W - 1, 0, 36, 3.2, 1.05, (d) => 1 - d, T.b, 0.34);
+      dots(c, 1.6, W - 1, H - 36, H, 3.2, 1.05, (d) => d, T.a, 0.34);
+      // the centre circle sits in a ring of halftone
+      dotRings(c, W / 2, H / 2, 16.2, 27, 3, 0.95, T.ink, 0.24);
+      // creases: halftone fill in the player's ink, then the line itself
+      c.save(); c.beginPath(); c.rect(0, 0, W, H); c.clip();
+      dotRings(c, W / 2, 0, 3, 21.5, 2.8, 0.8, T.b, 0.3);
+      dotRings(c, W / 2, H, 3, 21.5, 2.8, 0.8, T.a, 0.3);
+      c.restore();
       // markings
       c.lineWidth = px(2);
       c.strokeStyle = T.ink;
@@ -246,16 +309,23 @@ registerGame({
       line(c, 0, H / 2, W, H / 2);
       c.setLineDash([]);
       c.beginPath(); c.arc(W / 2, H / 2, 14, 0, Math.PI * 2); c.stroke();
-      c.fillStyle = T.ink; c.beginPath(); c.arc(W / 2, H / 2, 1.3, 0, Math.PI * 2); c.fill();
+      centreMark(c, T, px(1));
       for (const [w, y0, a0, a1] of [['b', 0, 0, Math.PI], ['a', H, Math.PI, Math.PI * 2]]) {
-        // goal crease
+        // goal crease: the colour plate, with the thin key plate printed a hair off it
         c.strokeStyle = T[w]; c.lineWidth = px(3);
         c.beginPath(); c.arc(W / 2, y0, 22, a0, a1); c.stroke();
+        c.strokeStyle = T.ink; c.lineWidth = px(0.9); c.globalAlpha = 0.75;
+        c.beginPath(); c.arc(W / 2 + 0.55, y0 + (w === 'b' ? 0.45 : -0.45), 22.9, a0, a1); c.stroke(); c.globalAlpha = 1;
         // face-off spots
         c.fillStyle = T[w];
         const fy = y0 === 0 ? 34 : H - 34;
         for (const fx0 of [W * 0.22, W * 0.78]) { c.beginPath(); c.arc(fx0, fy, 1.6, 0, Math.PI * 2); c.fill(); c.strokeStyle = T.ink; c.lineWidth = px(1.5); c.beginPath(); c.arc(fx0, fy, 4.2, 0, Math.PI * 2); c.stroke(); }
       }
+      // paper tooth over the card stock (clipped to the rail so nothing speckles the space around the table)
+      c.save();
+      roundRect(c, -RAIL, -RAIL, W + RAIL * 2, H + RAIL * 2, RAIL * 1.6); c.clip();
+      paintGrain(c, grainFor(), tb.width, tb.height);
+      c.restore();
       // play field outline
       c.strokeStyle = T.ink; c.lineWidth = inkW;
       c.strokeRect(0, 0, W, H);
@@ -312,7 +382,9 @@ registerGame({
           c.beginPath(); if (vert) c.arc(a, q, rr, 0, Math.PI * 2); else c.arc(q, a, rr, 0, Math.PI * 2); c.fill();
         }
       }
-      c.globalAlpha = 1; c.restore();
+      c.globalAlpha = 1;
+      paintGrain(c, grainFor(), tb.width, tb.height); // (device pixels, clipped to the card)
+      c.restore();
       roundRect(c, 0, 0, g.w, g.h, r); c.strokeStyle = T.ink; c.lineWidth = Math.max(2, 2.5); c.stroke();
       c.restore();
     }
@@ -338,7 +410,7 @@ registerGame({
       };
       if (g.outer === 'up' || g.outer === 'down') {
         const { w: bw, h: bh } = g;
-        text(c, num, 30 * u, bh / 2 + 2 * u, 46 * u * (1 + 0.3 * flash), T[w], 0, T.ink);
+        misOn = true; text(c, num, 30 * u, bh / 2 + 2 * u, 46 * u * (1 + 0.3 * flash), T[w], 0, T.ink); misOn = false;
         c.strokeStyle = T.ink; c.globalAlpha = 0.45; c.lineWidth = Math.max(1.2, u * 1.4); c.setLineDash([u * 4, u * 3]);
         c.beginPath(); c.moveTo(58 * u, 11 * u); c.lineTo(58 * u, bh - 11 * u); c.stroke(); c.setLineDash([]); c.globalAlpha = 1;
         const rw = 96 * u; const mx = 68 * u; const midW = Math.max(10, bw - mx - rw - 6 * u);
@@ -366,7 +438,7 @@ registerGame({
         if ('letterSpacing' in c) c.letterSpacing = `${Math.round(1.2 * u)}px`;
         text(c, api.name(w).toUpperCase(), cxm, 14 * u, 9 * u, nameC, 0, null, 900, T.fontDisplay, bw - 8 * u);
         if ('letterSpacing' in c) c.letterSpacing = '0px';
-        text(c, num, cxm, bh * 0.31, 40 * u * (1 + 0.3 * flash), T[w], 0, T.ink);
+        misOn = true; text(c, num, cxm, bh * 0.31, 40 * u * (1 + 0.3 * flash), T[w], 0, T.ink); misOn = false;
         c.strokeStyle = T.ink; c.globalAlpha = 0.45; c.lineWidth = Math.max(1.2, u * 1.4); c.setLineDash([u * 4, u * 3]);
         c.beginPath(); c.moveTo(8 * u, bh * 0.485); c.lineTo(bw - 8 * u, bh * 0.485); c.stroke(); c.setLineDash([]); c.globalAlpha = 1;
         if (mpOn && phase !== 'over') { chip('MATCH', cxm - 18 * u, bh * 0.555, 8.5 * u, 36 * u); chip('POINT', cxm - 18 * u, bh * 0.555 + 14 * u, 8.5 * u, 36 * u); }
@@ -398,17 +470,58 @@ registerGame({
       api.sfx('hit');
       api.haptic(imp > 120 ? 14 : 8);
     }
+    let extrap = false;         // the guest is only guessing ahead (extrapolate): sounds as before, no juice
+    /** A few px of shake on the whole rig (compositor only). The bigger one wins; off under reduced motion. */
+    function shake(amp, dur) {
+      if (reduced) return;
+      const now = performance.now();
+      if (amp >= shakeAmp * Math.max(0, 1 - (now - shakeAt) / shakeDur)) { shakeAt = now; shakeAmp = amp; shakeDur = dur; }
+    }
+    /** The puck squashes along `n` (table space) when it hits something, then springs back (~130 ms). */
+    function squash(i, nx, ny, a) {
+      if (reduced || extrap) return;
+      sqAt[i] = performance.now(); sqNx[i] = nx; sqNy[i] = ny; sqA[i] = a;
+    }
+    function squashWall(p, mask, sp) {
+      let nx; let ny;
+      if (mask & HIT_PILLAR) { nx = p.x - W / 2; ny = p.y - H / 2; const d = Math.hypot(nx, ny) || 1; nx /= d; ny /= d; }
+      else if (p.x <= RP + 0.06) { nx = 1; ny = 0; } else if (p.x >= W - RP - 0.06) { nx = -1; ny = 0; }
+      else if (p.y <= RP + 0.06) { nx = 0; ny = 1; } else if (p.y >= H - RP - 0.06) { nx = 0; ny = -1; }
+      else { const d = Math.hypot(p.vx, p.vy) || 1; nx = p.vx / d; ny = p.vy / d; }
+      squash(p.i, nx, ny, clamp(sp / 170, 0.3, 1));
+    }
+    /** A hard mallet hit: a short hit-stop and a shake. The host / one phone freezes its sim (and streams hz so the guest freezes too). */
+    function hardHit(imp) {
+      if (reduced || extrap || imp < HARD_HIT) return;
+      const now = performance.now();
+      if (now - lastStopAt > 320) {
+        lastStopAt = now;
+        const ms = STOP_MS + clamp((imp - HARD_HIT) * 0.3, 0, STOP_MAX - STOP_MS);
+        if (host) stopUntil = now + ms; else if (hostFreezes) gStop = now + ms;
+      }
+      shake(1.6 + clamp((imp - HARD_HIT) / 90, 0, 1.4), 170);
+    }
     /** wall / Pillar sounds for a puck step's bounce mask (the goal frame is the host's POST event). */
     function bounceFx(mask, p) {
       if (!mask) return;
       const sp = Math.hypot(p.vx, p.vy);
       if (sp < 22) return;
+      squashWall(p, mask, sp);
       if (mask & HIT_PILLAR) { snd.pillar(sp); pillarAt = performance.now(); } else if (mask & HIT_WALL) snd.wall(sp);
     }
-    function goalFx(scorer) {
-      fx.flashWho = scorer; fx.flashAt = performance.now(); fx.shakeAt = fx.flashAt;
-      fx.stampWho = scorer; fx.stampAt = fx.flashAt;
-      for (const t of trails) t.length = 0;
+    let flashAnim = null;
+    function goalFx(scorer, gx) {
+      const now = performance.now();
+      fx.flashWho = scorer; fx.flashAt = now;
+      fx.stampWho = scorer; fx.stampAt = now;
+      fx.splatX = clamp(gx === undefined ? W / 2 : gx, 18, W - 18); fx.splatY = scorer === 'a' ? 0 : H;
+      shake(4.5, 240);
+      if (!reduced) {
+        if (host) stopUntil = Math.max(stopUntil, now + GOAL_STOP); else if (hostFreezes) gStop = Math.max(gStop, now + GOAL_STOP);
+        flashEl.style.background = T[scorer];
+        if (flashEl.animate) { if (flashAnim) flashAnim.cancel(); flashAnim = flashEl.animate([{ opacity: 0.5 }, { opacity: 0 }], { duration: 650, easing: 'ease-out' }); } else flashEl.style.opacity = '0';
+      }
+      clearTrails();
       api.sfx(local || scorer === me ? 'good' : 'bad');
       api.haptic(40);
     }
@@ -453,6 +566,8 @@ registerGame({
       lastHv = Math.max(lastHv, imp); // rides along so the guest can play the host's hit sounds
       if (now - lastHitAt[m.who] > 80) {
         lastHitAt[m.who] = now; hits[m.who]++; hitFx(imp);
+        if (imp >= 14) { const dx = p.x - m.x; const dy = p.y - m.y; const d = Math.hypot(dx, dy) || 1; squash(p.i, dx / d, dy / d, clamp(imp / 190, 0.3, 1)); }
+        hardHit(imp);
         if (lastHitter !== m.who && imp >= 14) { // a mallet just touching/squeezing a resting puck isn't a rally hit
           const before = boostOf(rally);
           rally++; lastHitter = m.who; rallyAt = now;
@@ -463,10 +578,10 @@ registerGame({
     function placePucks(serve) {
       PK.forEach((p, i) => {
         Object.assign(p, { x: table.pucks > 1 ? W / 2 + (i ? 14 : -14) : env.post ? W / 2 + (Math.random() < 0.5 ? -22 : 22) : W / 2, y: H / 2, vx: 0, vy: 0, on: true, back: 0, half: null, stall: 0, slow: 0, sand: 0, sk: 0 });
-        p.ep++;
+        p.ep++; p.px = p.x; p.py = p.y;
         p.serveTo = i ? other(serve) : serve; p.launch = true;
       });
-      for (const t of trails) t.length = 0;
+      clearTrails();
     }
     function startCount(serve) {
       phase = 'count';
@@ -504,7 +619,7 @@ registerGame({
       if (wins) winner = w;
       rally = 0; lastHitter = null; slowUsed = false; ts = 1; slowUntil = 0;
       api.setScore(score);
-      goalFx(w);
+      goalFx(w, pk.x);
       if (wins || table.pucks === 1) {
         phase = 'goal';
         const cb = wins && maxDef[w] >= 3;
@@ -528,7 +643,7 @@ registerGame({
       const [vx, vy] = serveVec(pk.serveTo);
       Object.assign(pk, { x: W / 2 + (pk.i ? 14 : -14), y: H / 2, vx, vy, on: true, back: 0, t0: now, half: null, stall: 0, slow: 0, sand: 0, sk: 0 });
       pk.ep++;
-      trails[pk.i].length = 0;
+      trails[pk.i].n = 0; pk.px = pk.x; pk.py = pk.y;
     }
     /** shot clock + squeezed-puck check for one puck over dt seconds */
     function stallTick(pk, dt) {
@@ -560,7 +675,7 @@ registerGame({
         }
       }
     }
-    function simulate(dt, now) {
+    function simulate(dt, now, dtm) {
       if (phase === 'setup') return;
       if (phase === 'goal' && now >= phaseEnd) {
         if (winner) finishMatch();
@@ -578,14 +693,17 @@ registerGame({
       if (phase === 'play') for (const pk of pucksOn()) if (!pk.on && pk.back && now >= pk.back) respawn(pk, now);
       // slow motion eases back
       if (now < slowUntil) ts = 0.5; else if (ts < 1) ts = Math.min(1, ts + dt / 0.12);
-      acc += dt; macc += dt;
+      // hit-stop: the clock holds (the picture stays put, the mallets wait where they are) and picks up where it left off;
+      // macc keeps counting real time so the mallets' speed afterwards is still distance over real time
+      acc += now < stopUntil ? 0 : dt; macc += dtm;
       let n = Math.floor(acc / DT);
       if (n > 14) { n = 14; acc = 0; } else acc -= n * DT;
       if (!n) return;
       const rdt = clamp(macc, DT, 0.1); macc = 0; // real time since the mallets last moved: their speed is dx / rdt, whatever n came out as
-      const ms = [M.a, M.b];
+      const ms = MS;
       const frozen = phase === 'paused' || phase === 'over';
-      const parked = pucksOn().filter((p) => p.on);
+      parked.length = 0;
+      for (const p of ON) if (p.on) parked.push(p);
       for (const m of ms) {
         trackHand(m, rdt);
         // While a puck is parked, it's an obstacle: aim beside it, never into it. (Pushing
@@ -607,16 +725,23 @@ registerGame({
         smoothVel(m, dx, dy, rdt);
       }
       for (let i = 1; i <= n; i++) {
+        if (phase === 'play' && now < stopUntil) { // a hard hit just landed: the rest of this frame waits too
+          for (const pk of ON) { pk.px = pk.x; pk.py = pk.y; }
+          for (const m of ms) { m.px = m.x; m.py = m.y; }
+          break;
+        }
         for (const m of ms) {
           const nx = m.sx + (m.dx * i) / n; const ny = m.sy + (m.dy * i) / n;
+          m.px = m.x; m.py = m.y;
           m.vx = m.wvx; m.vy = m.wvy; m.x = nx; m.y = ny;
           clampMallet(m, env);
           capToHand(m);
           if (phase !== 'play') for (const P of parked) unsqueeze(P, m, env); // keep mallets off parked pucks
         }
         if (phase === 'play') {
-          for (const pk of pucksOn()) {
+          for (const pk of ON) {
             if (!pk.on) continue;
+            pk.px = pk.x; pk.py = pk.y;
             const r = stepPuck(pk, ms, onHit, false, env, ts);
             if (r.mask) {
               bounceFx(r.mask, pk);
@@ -628,7 +753,7 @@ registerGame({
         }
       }
       if (phase === 'play') {
-        for (const pk of pucksOn()) if (pk.on) stallTick(pk, n * DT);
+        for (const pk of ON) if (pk.on) stallTick(pk, n * DT);
         if (phase === 'play') slowCheck(now);
       }
     }
@@ -662,7 +787,7 @@ registerGame({
       emit(7, W / 2, H / 2, 0);
     }
     function applyTable(id) {
-      table = tableOf(id);
+      setTable(tableOf(id));
       env = newEnv(table, score);
       gd.a = env.ghA; gd.b = env.ghB;
       placePucks(serveTo);
@@ -672,9 +797,16 @@ registerGame({
     let HS = null;              // latest host state
     let staleKey = null;        // a finished game's host state still in presence after a rematch
     let lastN = -1;
-    const mkG = (i) => ({ dp: { i, x: W / 2, y: H / 2, vx: 0, vy: 0 }, ox: 0, oy: 0, on: true, ep: -1, sk: 0, ov: null });
+    // dp: the predicted puck (stepped locally). ox/oy + ovx/ovy: the display correction (a critically damped spring that dies away in ~140 ms,
+    // so a new host state never makes the puck jump or change speed abruptly). rx/ry: where it was drawn last.
+    const mkG = (i) => ({ dp: { i, x: W / 2, y: H / 2, px: W / 2, py: H / 2, vx: 0, vy: 0 }, ox: 0, oy: 0, ovx: 0, ovy: 0, rx: W / 2, ry: H / 2, on: true, ep: -1, sk: 0, ov: null });
     const G = [mkG(0), mkG(1)];   // displayed (predicted) pucks and their display corrections (decay to 0)
-    const hostM = { who: 'a', x: W / 2, y: H - 22, vx: 0, vy: 0 };
+    const hostM = { who: 'a', x: W / 2, y: H - 22, vx: 0, vy: 0 };   // the host's mallet as drawn (interpolated between two samples)
+    const hostC = { who: 'a', x: W / 2, y: H - 22, vx: 0, vy: 0 };   // ... and where the puck prediction collides with it (a little ahead of the drawn one)
+    const GMS = [M[me], hostC];
+    const pm = { x: 0, y: 0, vx: 0, vy: 0, ok: false };  // the host's mallet on the interpolated path, and that path's smoothed velocity
+    const rem = {};             // net.remoteInto target: the host's state interpolated at now - PARTNER_DELAY (allocation-free)
+    if (net) net.delay = PARTNER_DELAY;
     // The host's match as last seen in progress. Mirrored in our presence, so a host that
     // reloads or closes and reopens the game picks the score back up instead of restarting 0–0.
     let keep = null;            // { k, s: [a, b], g, ph, tb }
@@ -684,12 +816,16 @@ registerGame({
       return net && net.synced ? net.now() - S.__t : now - S.recv + 40;
     }
     function extrapolate(S, a, now) {
-      const p = { i: 0, x: a[0], y: a[1], vx: a[2], vy: a[3] };
+      const p = { i: 0, x: a[0], y: a[1], px: a[0], py: a[1], vx: a[2], vy: a[3] };
       const lead = clamp(S.gl || 60, 15, 160);
-      const steps = Math.round(clamp(hostAge(S, now) + lead, 0, 280) / (DT * 1000));
-      const ms = [{ ...M[me] }, { ...hostM }];
+      // the host's puck waits out its hit-stop (hz ms left when it sent this), so the guess only moves for the rest of the time
+      const steps = Math.round(clamp(hostAge(S, now) + lead - (S.hz || 0), 0, 280) / (DT * 1000));
+      const ms = [{ ...M[me] }, { ...hostC }];
       const sts = S.ts || 1;
+      extrap = true;
       for (let i = 0; i < steps; i++) { const r = stepPuck(p, ms, guestHit, true, env, sts); if (r.mask) bounceFx(r.mask & ~HIT_FRAME, p); }
+      extrap = false;
+      p.px = p.x; p.py = p.y;
       return p;
     }
     function guestHit(m, imp, p) {
@@ -701,6 +837,9 @@ registerGame({
       g.ov = { hb: HS.h[1], until: now + clamp((net ? net.rtt : 80) + 160, 200, 450) };
       if (env.power && HS.lh !== me) { const r = boostOf((HS.ry || 0) + 1) / boostOf(HS.ry || 0); p.vx *= r; p.vy *= r; }
       hitFx(imp);
+      if (extrap) return;
+      if (imp >= 14) { const dx = p.x - m.x; const dy = p.y - m.y; const d = Math.hypot(dx, dy) || 1; squash(p.i, dx / d, dy / d, clamp(imp / 190, 0.3, 1)); }
+      hardHit(imp);
     }
     function onHostState(S) {
       if (!S || !Array.isArray(S.pk) || S.k === staleKey) return;
@@ -713,15 +852,27 @@ registerGame({
       if (!keep || S.k === keep.k || (S.g || 0) >= keep.g || S.res) keep = { k: S.k, s: [S.s[0], S.s[1]], g: S.g || 0, ph: S.res ? 'over' : S.ph, tb: S.tb };
       // which table
       const tid = TABLES[S.tb] ? S.tb : null;
-      if (tid && (tid !== table.id)) { table = tableOf(tid); env = newEnv(table, score); gd.a = env.ghA; gd.b = env.ghB; }
+      if (tid && (tid !== table.id)) { setTable(tableOf(tid)); env = newEnv(table, score); gd.a = env.ghA; gd.b = env.ghB; }
       if (S.ph === 'setup') { sel = S.tb; setup.select(S.tb); }
+      // hit-stop: a host that streams hz freezes on hard hits and goals; hold our own copy of the world for the same moment
+      if (typeof S.hz === 'number') {
+        hostFreezes = true;
+        if (S.hz > 0 && !reduced) { const left = S.hz - hostAge(S, now) - clamp(S.gl || 60, 15, 160); if (left > 0) gStop = Math.max(gStop, now + Math.min(left, STOP_MAX + 20)); }
+      }
       // events (once each, in order; a late joiner skips the old ones)
       if (Array.isArray(S.ev)) {
         for (const e of S.ev) if (e[0] > lastEv) { if (lastEv >= 0 || prev) runEvent(e[1], e[2], e[3], e[4]); lastEv = e[0]; }
       }
       if (prev) {
-        if (S.g > prev.g && S.sc) goalFx(S.sc);
-        if (S.h[0] > prev.h[0] && (S.hv || 0) >= HIT_FX) api.sfx('hit');
+        if (S.g > prev.g && S.sc) goalFx(S.sc, G[0].rx);
+        if (S.h[0] > prev.h[0] && (S.hv || 0) >= HIT_FX) {
+          api.sfx('hit');
+          // the host hit it: squash the puck nearest its mallet along the way it flew off, shake if it was hard
+          let bi = 0; let bd = 1e9;
+          for (let i = 0; i < table.pucks; i++) { const d = Math.hypot(G[i].dp.x - hostM.x, G[i].dp.y - hostM.y); if (d < bd) { bd = d; bi = i; } }
+          const a = S.pk[bi]; if (a) { const d = Math.hypot(a[2], a[3]) || 1; squash(bi, -a[2] / d, -a[3] / d, clamp((S.hv || 0) / 190, 0.3, 1)); }
+          if ((S.hv || 0) >= HARD_HIT) shake(1.6 + clamp(((S.hv || 0) - HARD_HIT) / 90, 0, 1.4), 170);
+        }
       }
       if (score.a !== S.s[0] || score.b !== S.s[1] || !prev) { score.a = S.s[0]; score.b = S.s[1]; api.setScore(score); setGoals(env, score); }
       phase = S.ph; ts = S.ts || 1; rally = S.ry || 0; lastHitter = S.lh || null;
@@ -735,32 +886,56 @@ registerGame({
         if (S.ph === 'play') {
           if (g.ov && S.h[1] <= g.ov.hb && now < g.ov.until) { g.ep = a[5]; return; } // keep our predicted hit
           g.ov = null;
-          const sx = g.dp.x + g.ox; const sy = g.dp.y + g.oy;
+          // what is on screen right now (blended step, plus the correction still to go) and how fast it is moving
+          const sx = g.rx; const sy = g.ry;
+          const svx = g.dp.vx + g.ovx; const svy = g.dp.vy + g.ovy;
           const ext = extrapolate(S, a, now);
           const ex = sx - ext.x; const ey = sy - ext.y;
           Object.assign(g.dp, ext, { i });
-          // Blend, never snap: only a reset (new epoch / phase change) or a huge error jumps.
-          if (prev && prev.ph === 'play' && wasOn && Math.hypot(ex, ey) < 160) { g.ox = ex; g.oy = ey; } else { g.ox = 0; g.oy = 0; trails[i].length = 0; }
+          // Blend, never snap: only a reset (new epoch / phase change) or a huge error jumps. The picture keeps its position AND its
+          // velocity across the new state; the spring then walks the difference out (so the puck never kinks or jumps).
+          if (prev && prev.ph === 'play' && wasOn && Math.hypot(ex, ey) < 160) { g.ox = ex; g.oy = ey; g.ovx = svx - ext.vx; g.ovy = svy - ext.vy; } else { g.ox = 0; g.oy = 0; g.ovx = 0; g.ovy = 0; g.rx = ext.x; g.ry = ext.y; trails[i].n = 0; }
         } else {
-          Object.assign(g.dp, { x: a[0], y: a[1], vx: 0, vy: 0, i });
-          g.ox = 0; g.oy = 0; g.ov = null;
+          Object.assign(g.dp, { x: a[0], y: a[1], px: a[0], py: a[1], vx: 0, vy: 0, i });
+          g.ox = 0; g.oy = 0; g.ovx = 0; g.ovy = 0; g.ov = null; g.rx = a[0]; g.ry = a[1];
         }
         g.ep = a[5];
       });
     }
-    function guestUpdate(dt, now) {
+    function guestUpdate(dt, now, dtm) {
       const S = HS;
-      // the host's mallet: extrapolate its last sample a little, then ease toward it
+      // The host's mallet: the host's stream interpolated 75 ms behind the newest sample (smooth, never a guess).
+      // Before the clock is synced, the old way: extrapolate the last sample a little, then ease toward it.
       if (S) {
-        const age = clamp(hostAge(S, now), 0, 70) / 1000;
-        const tx = S.m[0] + S.m[2] * age; const ty = S.m[1] + S.m[3] * age;
-        const k = 1 - Math.exp(-dt / 0.045);
-        const nx = hostM.x + (tx - hostM.x) * k; const ny = hostM.y + (ty - hostM.y) * k;
-        hostM.vx = S.m[2]; hostM.vy = S.m[3]; hostM.x = nx; hostM.y = ny;
+        const r = net && net.synced ? net.remoteInto(rem, net.now() - (performance.now() - now)) : null; // read at the frame's own timestamp, not at whenever this callback got to run
+        if (r && Array.isArray(r.m) && r.m.length > 3) {
+          // The streamed velocity is a noisy estimate, so the lead uses the velocity of the interpolated path itself, low-passed (~50 ms).
+          if (dt > 0.0005) {
+            const dx = r.m[0] - pm.x; const dy = r.m[1] - pm.y;
+            if (!pm.ok || dx * dx + dy * dy > 1600) { pm.vx = 0; pm.vy = 0; pm.ok = true; } else { const k = 1 - Math.exp(-dt / 0.05); pm.vx += (dx / dt - pm.vx) * k; pm.vy += (dy / dt - pm.vy) * k; }
+            pm.x = r.m[0]; pm.y = r.m[1];
+          }
+          hostM.vx = pm.vx; hostM.vy = pm.vy;
+          // ... and a short follower on top irons out what a lost packet leaves (the buffer then extrapolates for a moment and snaps back)
+          const tx = pm.x + pm.vx * PARTNER_LEAD / 1000; const ty = pm.y + pm.vy * PARTNER_LEAD / 1000;
+          const kf = 1 - Math.exp(-dt / FOLLOW_TAU);
+          if (!pm.drawn || (tx - hostM.x) * (tx - hostM.x) + (ty - hostM.y) * (ty - hostM.y) > 2500) { hostM.x = tx; hostM.y = ty; pm.drawn = true; } else { hostM.x += (tx - hostM.x) * kf; hostM.y += (ty - hostM.y) * kf; }
+        } else {
+          const age = clamp(hostAge(S, now), 0, 70) / 1000;
+          const tx = S.m[0] + S.m[2] * age; const ty = S.m[1] + S.m[3] * age;
+          const k = 1 - Math.exp(-dt / 0.045);
+          hostM.x += (tx - hostM.x) * k; hostM.y += (ty - hostM.y) * k;
+          hostM.vx = S.m[2]; hostM.vy = S.m[3];
+        }
         clampMallet(hostM, env);
-        M.a.x = hostM.x; M.a.y = hostM.y;
+        M.a.px = M.a.x = M.a.rx = hostM.x; M.a.py = M.a.y = M.a.ry = hostM.y;
+        // the puck prediction collides with where the mallet is about to be, not where it was drawn
+        const ld = net && net.synced ? (PARTNER_DELAY - PARTNER_LEAD + FOLLOW_TAU * 1000) / 1000 : 0;
+        hostC.x = hostM.x + hostM.vx * ld; hostC.y = hostM.y + hostM.vy * ld; hostC.vx = hostM.vx; hostC.vy = hostM.vy;
+        clampMallet(hostC, env);
       }
-      acc += dt; macc += dt;
+      const held = hostFreezes && now < gStop;   // hit-stop: the clock waits, the mallet waits with it
+      acc += held ? 0 : dt; macc += dtm;
       let n = Math.floor(acc / DT);
       if (n > 14) { n = 14; acc = 0; } else acc -= n * DT;
       const m = M[me];
@@ -774,20 +949,28 @@ registerGame({
         if (d > maxd) { dx *= maxd / d; dy *= maxd / d; }
         smoothVel(m, dx, dy, rdt);
         for (let i = 1; i <= n; i++) {
+          if (live && hostFreezes && now < gStop) { m.px = m.x; m.py = m.y; for (let j = 0; j < table.pucks; j++) { G[j].dp.px = G[j].dp.x; G[j].dp.py = G[j].dp.y; } break; } // our own hard hit just landed
           const nx = m.sx + (dx * i) / n; const ny = m.sy + (dy * i) / n;
+          m.px = m.x; m.py = m.y;
           m.vx = m.wvx; m.vy = m.wvy; m.x = nx; m.y = ny;
           clampMallet(m, env);
           capToHand(m);
-          if (live) for (let j = 0; j < table.pucks; j++) { const g = G[j]; if (g.on) { const r = stepPuck(g.dp, [m, hostM], guestHit, true, env, ts); if (r.mask) bounceFx(r.mask & ~HIT_FRAME, g.dp); } }
+          if (live) for (let j = 0; j < table.pucks; j++) { const g = G[j]; if (g.on) { g.dp.px = g.dp.x; g.dp.py = g.dp.y; const r = stepPuck(g.dp, GMS, guestHit, true, env, ts); if (r.mask) bounceFx(r.mask & ~HIT_FRAME, g.dp); } }
         }
       }
-      // close display corrections: exponential, ~100 ms, but never faster than CORRECT_RATE (no visible jump)
-      const k = Math.exp(-dt / 0.06);
-      for (const g of G) {
-        const mag = Math.hypot(g.ox, g.oy);
-        if (mag < 0.01) { g.ox = 0; g.oy = 0; continue; }
-        const step = Math.min(mag * (1 - k), CORRECT_RATE * dt);
-        g.ox -= (g.ox / mag) * step; g.oy -= (g.oy / mag) * step;
+      // close the display corrections: a critically damped spring (exact solution), ~140 ms to 95 %. Its velocity starts where the
+      // picture was already going, so there is no kick when a host state lands; capped at CORRECT_RATE so a big error never looks like a teleport.
+      if (!held) {
+        const e = Math.exp(-CORRECT_W * dt);
+        for (const g of G) {
+          if (!g.ox && !g.oy && !g.ovx && !g.ovy) continue;
+          if (Math.abs(g.ox) + Math.abs(g.oy) + Math.abs(g.ovx) + Math.abs(g.ovy) < 0.02) { g.ox = 0; g.oy = 0; g.ovx = 0; g.ovy = 0; continue; }
+          let j = g.ovx + CORRECT_W * g.ox; const nx = (g.ox + j * dt) * e; const nvx = (g.ovx - j * CORRECT_W * dt) * e;
+          j = g.ovy + CORRECT_W * g.oy; const ny = (g.oy + j * dt) * e; const nvy = (g.ovy - j * CORRECT_W * dt) * e;
+          g.ox = nx; g.oy = ny; g.ovx = nvx; g.ovy = nvy;
+          const sp = Math.hypot(g.ovx, g.ovy);
+          if (sp > CORRECT_RATE) { g.ovx *= CORRECT_RATE / sp; g.ovy *= CORRECT_RATE / sp; }
+        }
       }
     }
 
@@ -811,7 +994,7 @@ registerGame({
         m: [r1(M.a.x), r1(M.a.y), r1(M.a.vx), r1(M.a.vy)],
         s: [score.a, score.b], g: goals, sc: lastScorer, h: [hits.a, hits.b], hv: Math.round(lastHv),
         ry: rally, lh: lastHitter, ts: Math.round(ts * 100) / 100,
-        ev: evq,
+        ev: evq, hz: Math.max(0, Math.round(stopUntil - performance.now())),
         gl: Math.round(glag), res: result, away: document.hidden ? 1 : 0,
       };
     }
@@ -935,9 +1118,12 @@ registerGame({
     if (host) placePucks(serveTo);
 
     // ── input handlers ──
+    // The table's top-left on screen is cached: layout() sets it (ResizeObserver) and a new finger refreshes it. Reading the
+    // rect on every pointermove forced a layout each time; the shake offset is subtracted, so a moving rig doesn't shift the aim.
+    let cvL = 0; let cvT = 0;
+    function readRect() { const r = rig.getBoundingClientRect(); cvL = r.left - shakeX; cvT = r.top - shakeY; }
     function canonFromEvent(e) {
-      const r = cv.getBoundingClientRect();
-      return fromPx(e.clientX - r.left, e.clientY - r.top);
+      return fromPx(e.clientX - cvL, e.clientY - cvT);
     }
     /** The controlling finger moved: steer who's mallet. */
     function aim(who, e) {
@@ -955,10 +1141,12 @@ registerGame({
       if (e.pointerType !== 'mouse' && e.clientX < EDGE) return; // iOS back-swipe zone
       e.preventDefault();
       if (phase === 'setup') return;
+      readRect();
       let who;
       if (local) { const [, y] = canonFromEvent(e); who = y >= H / 2 ? 'a' : 'b'; } else who = me;
       const c = ctl[who];
       ptrs.set(e.pointerId, who);
+      pressAt[who] = performance.now();
       try { cv.setPointerCapture(e.pointerId); } catch { /* synthetic pointers can't be captured */ }
       const [x, y] = canonFromEvent(e);
       c.pos.set(e.pointerId, clampTarget(who, x, y, env));
@@ -1040,42 +1228,126 @@ registerGame({
     }
 
     // ── drawing ──
+    // Per frame the live canvas only blits cached sprites (mallets, pucks, splat) and draws a few strokes; the table, the grain and the
+    // scoreboard text live in their own layers (see layout / drawTable / paintHud).
+    const projX = (x, y) => (view === 'up' ? ox + x * s : view === 'down' ? ox + (W - x) * s : view === 'sideb' ? ox + y * s : ox + (H - y) * s);
+    const projY = (x, y) => (view === 'up' ? oy + y * s : view === 'down' ? oy + (H - y) * s : view === 'sideb' ? oy + (W - x) * s : oy + x * s);
     function disc(c, x, y, r, fill, stroke, lw) {
       c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2);
       if (fill) { c.fillStyle = fill; c.fill(); }
       if (stroke) { c.strokeStyle = stroke; c.lineWidth = lw; c.stroke(); }
     }
-    function drawMallet(c, w, x, y) {
-      const [px0, py0] = toPx(x, y); const r = RM * s; const lw = Math.max(1.5, s * 0.55);
-      const sh = Math.max(2, s * 0.9);
-      disc(c, px0 + sh, py0 + sh * 1.2, r, T.edge);
-      disc(c, px0, py0, r, T[w], T.ink, lw);
-      c.globalAlpha = 0.28; disc(c, px0, py0, r * 0.68, T.card); c.globalAlpha = 1;
-      disc(c, px0, py0, r * 0.68, null, T.ink, lw * 0.7);
-      disc(c, px0 + sh * 0.35, py0 + sh * 0.45, r * 0.4, T.edge);
-      disc(c, px0, py0, r * 0.4, T[w], T.ink, lw);
-      c.globalAlpha = 0.55; c.beginPath(); c.arc(px0, py0, r * 0.25, Math.PI * 1.05, Math.PI * 1.6); c.strokeStyle = T.card; c.lineWidth = lw; c.stroke(); c.globalAlpha = 1;
+    const spr = { m: {}, p: [], s: {}, l: [null, null], hot: [false, false] };   // sprites, rebuilt with the table (resize, theme)
+    /** Copy a cached sprite into its element (size in css px; the pixels are at the canvas ratio). */
+    function bind(e, sp, w, h) {
+      e.width = sp.cv.width; e.height = sp.cv.height;
+      e.style.width = `${w}px`; e.style.height = `${h}px`;
+      e.ctx.drawImage(sp.cv, 0, 0);
+      e.tf = '';
+    }
+    function buildSprites() {
+      spr.m.a = malletSprite(T, 'a', s, dpr); spr.m.b = malletSprite(T, 'b', s, dpr);
+      spr.p[0] = puckSprite(T, 0, s, dpr); spr.p[1] = puckSprite(T, 1, s, dpr);
+      spr.s.a = splatSprite(T, 'a', s, dpr); spr.s.b = splatSprite(T, 'b', s, dpr);
+      bind(SP.ma, spr.m.a, spr.m.a.half * 2, spr.m.a.half * 2); bind(SP.mb, spr.m.b, spr.m.b.half * 2, spr.m.b.half * 2);
+      for (let i = 0; i < 2; i++) {
+        bind(SP.ps[i], spr.p[i].shadow, spr.p[i].shadow.half * 2, spr.p[i].shadow.half * 2); bind(SP.pb[i], spr.p[i].body, spr.p[i].body.half * 2, spr.p[i].body.half * 2);
+        spr.hot[i] = false; setLines(i, false);
+      }
+    }
+    /** The speed lines come in two prints (plain, and the Power Puck's fatter key plate); swapping is a one-off small redraw. */
+    function setLines(i, hot) {
+      const k = hot ? 1 : 0;
+      if (spr.l[k] === null || spr.l[k].dpr !== dpr || spr.l[k].s !== s || spr.l[k].T !== T) { spr.l[k] = linesSprite(T, s, dpr, hot); spr.l[k].dpr = dpr; spr.l[k].s = s; spr.l[k].T = T; }
+      const sp = spr.l[k];
+      bind(SP.sl[i], sp, sp.w, sp.h);
+      spr.hot[i] = hot;
+    }
+    const q8 = (v) => Math.round(v * 8) / 8;
+    const q64 = (v) => Math.round(v * 64) / 64;
+    /** Show / hide a sprite element and set its transform (written only when it changed: nothing for a puck that sits still). */
+    function put(e, vis, tf) {
+      if (vis !== e.vis) { e.vis = vis; e.style.visibility = vis ? 'visible' : 'hidden'; }
+      if (vis && tf !== e.tf) { e.tf = tf; e.style.transform = tf; }
+    }
+    function placeMallet(w, now) {
+      const m = M[w]; const sp = spr.m[w]; const h = sp.half;
+      const X = projX(m.rx, m.ry); const Y = projY(m.rx, m.ry);
+      const k = reduced ? 0 : Math.max(0, 1 - (now - pressAt[w]) / 170);
+      const pop = 1 + 0.16 * k * k; // a finger just came down: the mallet pops up and settles
+      put(w === 'a' ? SP.ma : SP.mb, true, k > 0.001 ? `translate(${q8(X)}px, ${q8(Y)}px) scale(${q64(pop)}) translate(${-h}px, ${-h}px)` : `translate(${q8(X - h)}px, ${q8(Y - h)}px)`);
     }
     function heatColour(h, now) {
       const pulse = 0.5 + 0.5 * Math.sin(now / (170 - 110 * h));
       return { col: h > 0.55 ? T.bad : T.hl, a: reduced ? 0.8 : 0.45 + 0.55 * pulse };
     }
-    function drawPuck(c, x, y, i, heat, now) {
-      const [px0, py0] = toPx(x, y); const r = RP * s; const lw = Math.max(1.5, s * 0.5);
-      const sh = Math.max(1.5, s * 0.6);
-      disc(c, px0 + sh, py0 + sh * 1.2, r, T.edge);
-      if (heat > 0.05) { const hc = heatColour(heat, now); c.globalAlpha = hc.a; disc(c, px0, py0, r * (1.25 + 0.35 * heat), null, hc.col, Math.max(2, s * (0.5 + 0.9 * heat))); c.globalAlpha = 1; }
-      disc(c, px0, py0, r, i ? T.hl : T.ink, T.ink, lw);
-      disc(c, px0, py0, r * 0.62, null, i ? T.ink : T.card, Math.max(1, lw * 0.6));
-      disc(c, px0, py0, r * 0.16, i ? T.ink : T.card);
+    /** The puck: its hard shadow stays put while the body squashes along the hit normal and springs back. */
+    function placePuck(i, pk, show, now) {
+      const sp = spr.p[i]; const h = sp.body.half;
+      if (!show) { put(SP.ps[i], false, ''); put(SP.pb[i], false, ''); return; }
+      const X = projX(pk.rx, pk.ry); const Y = projY(pk.rx, pk.ry);
+      put(SP.ps[i], true, `translate(${q8(X - h)}px, ${q8(Y - h)}px)`);
+      const age = now - sqAt[i];
+      const k = age < 130 ? sqA[i] * (1 - age / 130) * (1 - age / 130) : 0;
+      if (k > 0.03) {
+        const nx = sqNx[i]; const ny = sqNy[i];
+        const ang = view === 'up' ? Math.atan2(ny, nx) : view === 'down' ? Math.atan2(-ny, -nx) : view === 'sideb' ? Math.atan2(-nx, ny) : Math.atan2(nx, -ny);
+        put(SP.pb[i], true, `translate(${q8(X)}px, ${q8(Y)}px) rotate(${q64(ang)}rad) scale(${q64(1 - 0.3 * k)}, ${q64(1 + 0.2 * k)}) translate(${-h}px, ${-h}px)`);
+      } else put(SP.pb[i], true, `translate(${q8(X - h)}px, ${q8(Y - h)}px)`);
     }
+    /** Comic-book speed lines behind a fast puck: the cached sprite, turned and stretched to the puck's speed. */
+    function placeLines(i, pk, tr, heat, show) {
+      const e = SP.sl[i];
+      if (!show || tr.n < 4) { put(e, false, ''); return; }
+      const hx = projX(pk.rx, pk.ry); const hy = projY(pk.rx, pk.ry);
+      const dx0 = hx - projX(tr.x[0], tr.y[0]); const dy0 = hy - projY(tr.x[0], tr.y[0]);
+      const len = Math.hypot(dx0, dy0); const r = RP * s;
+      if (len < r * 0.9) { put(e, false, ''); return; }
+      const dx = dx0 / len; const dy = dy0 / len;
+      const hot = heat > 0.05;
+      if (hot !== spr.hot[i]) setLines(i, hot);
+      const sp = spr.l[hot ? 1 : 0];
+      const L = Math.min(len * 1.3, r * (4.5 + 3 * heat));
+      put(e, true, `translate(${q8(hx - dx * r * 1.25)}px, ${q8(hy - dy * r * 1.25)}px) rotate(${q64(Math.atan2(dy, dx))}rad) scale(${q64(L / sp.max)}, 1) translate(${-sp.ox}px, ${-sp.oy}px)`);
+    }
+    /** The Power Puck's heat halo and pulsing hot plate go on the live canvas (they pulse every frame anyway). */
+    function drawHeat(c, i, pk, heat, now) {
+      const X = projX(pk.rx, pk.ry); const Y = projY(pk.rx, pk.ry);
+      const hc = heatColour(heat, now);
+      c.globalAlpha = hc.a; disc(c, X, Y, RP * s * (1.25 + 0.35 * heat), null, hc.col, Math.max(2, s * (0.5 + 0.9 * heat))); c.globalAlpha = 1;
+      const tr = trails[i];
+      const hx = X; const hy = Y;
+      const dx0 = hx - projX(tr.x[0], tr.y[0]); const dy0 = hy - projY(tr.x[0], tr.y[0]);
+      const len = Math.hypot(dx0, dy0); const r = RP * s;
+      if (tr.n < 4 || len < r * 0.9) return;
+      const dx = dx0 / len; const dy = dy0 / len; const nx = -dy; const ny = dx;
+      const L = Math.min(len * 1.3, r * (4.5 + 3 * heat));
+      c.strokeStyle = hc.col; c.globalAlpha = hc.a; c.lineWidth = Math.max(1, s * 0.25); c.lineCap = 'round';
+      c.beginPath();
+      for (let k = 0; k < 3; k++) {
+        const o = SL[k][0]; const f = SL[k][1];
+        const sx = hx - dx * r * 1.25 + nx * o * r; const sy = hy - dy * r * 1.25 + ny * o * r;
+        c.moveTo(sx, sy); c.lineTo(sx - dx * L * f, sy - dy * L * f);
+      }
+      c.stroke(); c.globalAlpha = 1;
+    }
+    let misOn = false;          // print a text with its pink and blue plates a hair off register
     function text(c, str, x, y, size, fill, rot = 0, stroke = null, weight = 900, font = T.fontDisplay, maxW = 0, align = 'center') {
       c.save(); c.translate(x, y); c.rotate(rot);
       c.font = `${weight} ${size}px ${font || 'system-ui'}`;
       if (maxW) { const w = c.measureText(str).width; if (w > maxW) { size *= maxW / w; c.font = `${weight} ${size}px ${font || 'system-ui'}`; } }
       c.textAlign = align; c.textBaseline = 'middle';
-      if (stroke) { c.lineJoin = 'round'; c.lineWidth = Math.max(2, size * 0.09); c.strokeStyle = stroke; c.strokeText(str, 0, 0); }
-      c.fillStyle = fill; c.fillText(str, 0, 0);
+      if (stroke) {
+        c.lineJoin = 'round'; const lw = Math.max(2, size * 0.09);
+        if (misOn && size >= 12) { // the two colour plates, a hair off the black key plate
+          c.lineWidth = lw + size * 0.035;
+          c.globalAlpha *= 0.8; c.strokeStyle = T.b; c.strokeText(str, size * 0.035, size * 0.025);
+          c.strokeStyle = T.a; c.strokeText(str, -size * 0.028, -size * 0.016);
+          c.globalAlpha /= 0.8;
+        }
+        c.lineWidth = lw; c.strokeStyle = stroke; c.strokeText(str, 0, 0);
+      }
+      c.fillStyle = fill; c.fillText(str, misOn && stroke && size >= 12 ? size * 0.012 : 0, misOn && stroke && size >= 12 ? size * 0.008 : 0);
       c.restore();
     }
     function keycap(c, x, y, sz, glyph) {
@@ -1099,44 +1371,30 @@ registerGame({
       c.globalAlpha = 1;
     }
 
-    // Comic-book speed lines behind a fast puck: crisp ink strokes, no blur. On the Power Puck the
-    // lines heat up (yellow, then red) and pulse.
-    function speedLines(c, pp, trail, heat, now) {
-      const [hx, hy] = toPx(pp.x, pp.y);
-      const [ox0, oy0] = toPx(trail[0][0], trail[0][1]);
-      let dx = hx - ox0; let dy = hy - oy0;
-      const len = Math.hypot(dx, dy);
-      if (len < RP * s * 0.9) return;
-      dx /= len; dy /= len;
-      const nx = -dy; const ny = dx; const r = RP * s;
-      const L = Math.min(len * 1.3, r * (4.5 + 3 * heat));
-      c.lineCap = 'round';
-      const hc = heat > 0.05 ? heatColour(heat, now) : null;
-      for (const pass of hc ? [0, 1] : [0]) {
-        c.strokeStyle = pass ? hc.col : T.ink; c.globalAlpha = pass ? hc.a : 1;
-        c.lineWidth = pass ? Math.max(1, s * 0.25) : Math.max(1.5, s * 0.45) + (hc ? s * 0.4 : 0);
-        for (const [o, f] of [[-0.62, 0.6], [0, 1], [0.62, 0.75]]) {
-          const sx = hx - dx * r * 1.25 + nx * o * r; const sy = hy - dy * r * 1.25 + ny * o * r;
-          c.beginPath(); c.moveTo(sx, sy); c.lineTo(sx - dx * L * f, sy - dy * L * f); c.stroke();
-        }
-      }
-      c.globalAlpha = 1;
-    }
+    const SL = [[-0.62, 0.6], [0, 1], [0.62, 0.75]];
     /** goal mouths (they can shrink) and the Pillar, drawn in table units over the printed table */
+    function stepGoals(dt) { // the drawn goal mouths glide to the real ones; a change repaints the live layer
+      for (const w of RD2) {
+        const target = w === 'a' ? env.ghA : env.ghB;
+        if (gd[w] === target) continue;
+        gd[w] += (target - gd[w]) * (reduced ? 1 : 1 - Math.exp(-dt * 8));
+        if (Math.abs(target - gd[w]) < 0.02) gd[w] = target;
+        liveV++;
+      }
+    }
     function drawLive(c, now) {
       tableT(c);
       const inkW = px(2.5);
-      for (const [w, y0] of [['b', 0], ['a', H]]) {
-        const target = w === 'a' ? env.ghA : env.ghB;
-        gd[w] += (target - gd[w]) * (reduced ? 1 : 0.12);
-        if (Math.abs(target - gd[w]) < 0.02) gd[w] = target;
+      for (let q = 0; q < 2; q++) {
+        const w = q ? 'a' : 'b'; const y0 = q ? H : 0;
         const gh = gd[w];
-        const outer = w === 'b' ? -RAIL : H + RAIL;
-        c.fillStyle = T.edge; c.fillRect(W / 2 - gh, w === 'b' ? -RAIL - 0.5 : H, gh * 2, RAIL + 0.5);
-        c.fillStyle = T[w]; c.fillRect(W / 2 - gh, w === 'b' ? -px(4) : H, gh * 2, px(4));
+        const outer = q ? H + RAIL : -RAIL;
+        c.fillStyle = T.edge; c.fillRect(W / 2 - gh, q ? H : -RAIL - 0.5, gh * 2, RAIL + 0.5);
+        c.fillStyle = T[w]; c.fillRect(W / 2 - gh, q ? H : -px(4), gh * 2, px(4));
         c.strokeStyle = T.ink; c.lineWidth = inkW; line(c, W / 2 - gh, outer, W / 2 + gh, outer);
         c.fillStyle = T.card; c.strokeStyle = T.ink; c.lineWidth = px(2);
-        for (const x0 of [W / 2 - gh, W / 2 + gh]) { c.beginPath(); c.arc(x0, y0, 1.6, 0, Math.PI * 2); c.fill(); c.stroke(); }
+        c.beginPath(); c.arc(W / 2 - gh, y0, 1.6, 0, Math.PI * 2); c.fill(); c.stroke();
+        c.beginPath(); c.arc(W / 2 + gh, y0, 1.6, 0, Math.PI * 2); c.fill(); c.stroke();
       }
       if (env.post) {
         const pulse = reduced ? 0 : Math.max(0, 1 - (now - pillarAt) / 220);
@@ -1148,54 +1406,94 @@ registerGame({
       }
       c.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
-    /** a printed sticker: the stamp's colour, a hard shadow, ink outline */
+    /** a printed sticker: the stamp's colour, a hard shadow, ink outline, the colour plates a hair off register */
     function sticker(c, str, x, y, size, fill, rot, maxW) {
       text(c, str, x + size * 0.05, y + size * 0.07, size, T.edge, rot, null, 900, T.fontDisplay, maxW);
+      misOn = true;
       text(c, str, x, y, size, fill, rot, T.ink, 900, T.fontDisplay, maxW);
+      misOn = false;
     }
     const colOf = (k) => (k === 'a' || k === 'b' ? T[k] : k === 'hl' ? T.hl : k === 'bad' ? T.bad : k === 'good' ? T.good : T.ink);
 
-    function render(now) {
-      const c = cx;
-      c.setTransform(1, 0, 0, 1, 0, 0);
-      c.clearRect(0, 0, cv.width, cv.height);
-      c.drawImage(layer, 0, 0);
-      c.setTransform(dpr, 0, 0, dpr, 0, 0);
-      const [fx0, fy0] = toPx(0, 0); const [fx1, fy1] = toPx(W, H);
-      const field = [Math.min(fx0, fx1), Math.min(fy0, fy1), Math.abs(fx1 - fx0), Math.abs(fy1 - fy0)];
-      const [ccx, ccy] = toPx(W / 2, H / 2);
-      const setupOn = phase === 'setup' || phase === 'wait';
-      if (now - recsAt > 400) { recsAt = now; recs = readRecords(api.data()); }
-      const dtR = Math.min(0.1, Math.max(0, (now - prevRender) / 1000)); prevRender = now;
-      drawLive(c, now);
-      if (band && phase !== 'wait') { drawBandText(c, 'b', now); drawBandText(c, 'a', now); }
-      // match point: the banner when the countdown starts, a small tag by the leader's score
-      const mp = ['a', 'b'].filter((w) => score[w] === table.toWin - 1 && !winner);
-      if (phase !== prevPhaseR) {
-        if (phase === 'count' && mp.length) { mpAt = now; snd.matchPoint(); }
-        prevPhaseR = phase;
-      }
-      // scores, printed on each half
+    // ── the scoreboard layer: text is repainted only when a number (or its pop) changes ──
+    const RD2 = ['a', 'b']; const RD1 = [me]; const mpList = []; const laneItems = [];
+    let slowShown = 0;
+    const hudSt = { a: { v: 0 }, b: { v: 0 }, sc: { v: 0 } };
+    function paintHud(now) {
+      hc.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (band && phase !== 'wait') { hudBand('b', now); hudBand('a', now); } else if (hudSt.a.drawn || hudSt.b.drawn) { hc.clearRect(0, 0, cssW, cssH); hudSt.a.v = hudSt.b.v = 0; hudSt.a.drawn = hudSt.b.drawn = false; }
+      if (!band) hudScores();
+    }
+    function hudBand(w, now) {
+      const g = bandRect(w);
+      if (!g) return;
+      const st = hudSt[w];
+      const mpOn = score[w] === table.toWin - 1 && !winner;
+      const flash = !reduced && fx.flashWho === w ? Math.max(0, 1 - (now - fx.flashAt) / 300) : 0;
+      const rallyOn = phase === 'play' && rally > 0;
+      const pop = reduced || !rallyOn ? 0 : Math.max(0, 1 - (now - rallyAt) / 200);
+      const fq = Math.round(flash * 24); const pq = Math.round(pop * 24);
+      const bq = mpOn && phase !== 'over' && !reduced ? Math.round(Math.sin(now / 260) * 6) : 0;
+      if (st.v === hudV && st.sc === score[w] && st.ry === rally && st.ro === rallyOn && st.mp === mpOn && st.ov === (phase === 'over') && st.fq === fq && st.pq === pq && st.bq === bq && st.rb === recs.rallyBest && st.rw === recs.rallyWho) return;
+      st.v = hudV; st.sc = score[w]; st.ry = rally; st.ro = rallyOn; st.mp = mpOn; st.ov = phase === 'over'; st.fq = fq; st.pq = pq; st.bq = bq; st.rb = recs.rallyBest; st.rw = recs.rallyWho; st.drawn = true;
+      const pad = 3;
+      hc.clearRect(g.x - pad, g.y - pad, g.w + pad * 2, g.h + pad * 2);
+      drawBandText(hc, w, now);
+    }
+    function hudScores() {
+      const st = hudSt.sc;
+      if (st.v === hudV && st.a === score.a && st.b === score.b) return;
+      st.v = hudV; st.a = score.a; st.b = score.b;
+      hc.clearRect(0, 0, cssW, cssH);
       const ss = Math.min(64, 15 * s);
+      hc.globalAlpha = 0.9; misOn = true;
       for (const w of ['a', 'b']) {
         const [x, y] = toPx(w === 'a' ? W - 14 : 14, w === 'a' ? H / 2 + 18 : H / 2 - 18);
-        if (!band) {
-          c.globalAlpha = 0.9;
-          text(c, String(score[w]), x, y, ss, T[w], readRot(w), T.ink);
-          c.globalAlpha = 1;
+        text(hc, String(score[w]), x, y, ss, T[w], readRot(w), T.ink);
+      }
+      misOn = false; hc.globalAlpha = 1;
+    }
+
+    /** blend the last two physics steps by how far into the next one the clock is (render interpolation), and project nothing yet */
+    function prepRender() {
+      const al = alpha;
+      for (const w of RD2) {
+        const m = M[w];
+        if (host || w === me) { m.rx = m.px + (m.x - m.px) * al; m.ry = m.py + (m.y - m.py) * al; } else { m.rx = m.x; m.ry = m.y; }
+      }
+      if (host) {
+        for (const pk of ON) { if (phase === 'play') { pk.rx = pk.px + (pk.x - pk.px) * al; pk.ry = pk.py + (pk.y - pk.py) * al; } else { pk.rx = pk.x; pk.ry = pk.y; } }
+      } else {
+        for (let i = 0; i < table.pucks; i++) {
+          const g = G[i]; const d = g.dp;
+          g.rx = d.px + (d.x - d.px) * al + g.ox; g.ry = d.py + (d.y - d.py) * al + g.oy;
         }
+      }
+    }
+    const easeBack = (t) => { const c1 = 1.70158; const u = t - 1; return 1 + (c1 + 1) * u * u * u + c1 * u * u; };
+
+    let liveOn = false;         // the live layer holds overlays right now
+    let liveDrawn = -1;         // liveV when it was last painted
+    /** Everything on the live canvas that is not a sprite: stickers, stamps, the 3-2-1, rings, hints, the pause veil. Painted only while something is up. */
+    function overlays(c, now, dtR, mp, since, setupOn) {
+      const fx0 = FX; const fy0 = FY; const fw = FW; const fh = FH;
+      const ccx = projX(W / 2, H / 2); const ccy = projY(W / 2, H / 2);
+      for (const w of RD2) {
         if (mp.includes(w) && !setupOn && phase !== 'count') { // (the countdown has its own banner)
           const [mx, my] = toPx(w === 'a' ? W - 14 : 14, w === 'a' ? H / 2 + 32 : H / 2 - 32);
           const bob = reduced ? 0 : Math.sin(now / 260) * 0.8;
           sticker(c, 'MATCH POINT', mx, my + bob, Math.max(8, 3.1 * s), T.hl, readRot(w), 30 * s);
         }
       }
-      // goal flash in the scorer's ink
-      const since = now - fx.flashAt;
-      if (!reduced && fx.flashWho && since < 650) {
-        c.globalAlpha = 0.5 * (1 - since / 650);
-        c.fillStyle = T[fx.flashWho]; c.fillRect(...field);
-        c.globalAlpha = 1;
+      // the goal: an ink splat in the scorer's colour blots in at the goal mouth (the flash is a DOM opacity animation)
+      if (fx.flashWho && since < GOAL_MS) {
+        const sp = spr.s[fx.flashWho];
+        const grow = reduced ? 1 : since < 240 ? easeBack(since / 240) : 1;
+        const fade = reduced ? (since < GOAL_MS - 80 ? 1 : 0) : since > GOAL_MS - 380 ? (GOAL_MS - since) / 380 : 1;
+        const inward = fx.splatY === 0 ? 15 : -15;
+        const X = projX(fx.splatX, fx.splatY + inward); const Y = projY(fx.splatX, fx.splatY + inward);
+        const hh = sp.half * Math.max(0.01, grow);
+        c.globalAlpha = 0.95 * fade; c.drawImage(sp.cv, X - hh, Y - hh, hh * 2, hh * 2); c.globalAlpha = 1;
       }
       // rally counter (4+), a sticker at 8+
       if (rally >= 4 && phase === 'play') {
@@ -1209,58 +1507,39 @@ registerGame({
       }
       // shot clock rings
       for (let i = 0; i < table.pucks; i++) {
-        const pk = host ? PK[i] : G[i];
-        const sk = host ? pk.sk : G[i].sk;
-        const on = host ? pk.on : G[i].on;
+        const sk = host ? PK[i].sk : G[i].sk;
+        const on = host ? PK[i].on : G[i].on;
         if (!on || !sk || phase !== 'play') continue;
-        const pp = host ? pk : { x: G[i].dp.x + G[i].ox, y: G[i].dp.y + G[i].oy };
-        const [px0, py0] = toPx(pp.x, pp.y);
+        const pp = host ? PK[i] : G[i];
+        const px0 = projX(pp.rx, pp.ry); const py0 = projY(pp.rx, pp.ry);
         const frac = Math.max(0, Math.min(1, sk / (HOG_WARN * 1000)));
         const rr = RP * s * 2.6;
         c.strokeStyle = T.bad; c.lineWidth = Math.max(2, s * 0.9); c.lineCap = 'round';
         c.beginPath(); c.arc(px0, py0, rr, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac); c.stroke();
         c.lineWidth = Math.max(1, s * 0.3); c.strokeStyle = T.ink; c.globalAlpha = 0.5; disc(c, px0, py0, rr + s * 0.9, null, T.ink, Math.max(1, s * 0.3)); c.globalAlpha = 1;
-        const half = pp.y >= H / 2 ? 'a' : 'b';
+        const half = pp.ry >= H / 2 ? 'a' : 'b';
         const [nx, ny] = toPx(W / 2, half === 'a' ? H / 2 + 30 : H / 2 - 30);
         c.globalAlpha = 0.9;
         text(c, String(Math.max(1, Math.ceil(sk / 1000))), nx, ny + (i ? s * 12 : 0), 15 * s, T.bad, readRot(half), T.ink);
         c.globalAlpha = 1;
       }
-      // pucks + trails
-      for (let i = 0; i < table.pucks; i++) {
-        const pk = host ? PK[i] : G[i];
-        if (!(host ? pk.on : G[i].on)) continue;
-        const pp = host ? pk : { x: G[i].dp.x + G[i].ox, y: G[i].dp.y + G[i].oy };
-        const showPuck = (phase !== 'goal' || since < 120) && (phase === 'play' || phase === 'count' || phase === 'setup' || (pp.y > 0 && pp.y < H)) && phase !== 'wait';
-        const tr = trails[i];
-        if (phase === 'play') { tr.push([pp.x, pp.y]); if (tr.length > 5) tr.shift(); } else if (phase !== 'paused') tr.length = 0;
-        const heat = env.power && phase === 'play' ? heatOf(rally) : 0;
-        if (showPuck && tr.length > 3) speedLines(c, pp, tr, heat, now);
-        if (showPuck) { pk._draw = pp; }
-      }
-      // mallets under the puck's shadow side, puck on top
-      for (const w of ['b', 'a']) drawMallet(c, w, M[w].x, M[w].y);
-      for (let i = 0; i < table.pucks; i++) {
-        const pk = host ? PK[i] : G[i];
-        if (!(host ? pk.on : G[i].on) || !pk._draw) continue;
-        const heat = env.power && phase === 'play' ? heatOf(rally) : 0;
-        drawPuck(c, pk._draw.x, pk._draw.y, i, heat, now);
-        pk._draw = null;
-      }
+      // the Power Puck's heat halo
+      if (env.power && phase === 'play' && heatOf(rally) > 0.05) for (let i = 0; i < table.pucks; i++) { const pk = host ? PK[i] : G[i]; if (pk.on && pk.show) drawHeat(c, i, pk, heatOf(rally), now); }
       // The middle of the table is one shared lane: the 3-2-1, the goal stamp, event stamps and the
       // table / match-point banners stack there, each in its own slot, instead of landing on top of
       // each other (or on the puck parked in the centre).
-      const readers = local && view === 'up' ? ['a', 'b'] : [me];
+      const readers = local && view === 'up' ? RD2 : RD1;
       const dual = !(local && view === 'up'); // one reader may use both sides of the puck; on a shared phone each keeps to their own half
       const left = phase === 'count' ? (host ? phaseEnd - now : HS ? HS.cd - (now - HS.recv) : 1e9) : 1e9;
-      for (let i = stamps.length - 1; i >= 0; i--) if (now - stamps[i].t0 > stamps[i].dur) stamps.splice(i, 1);
-      const items = [];
-      const ssince = now - fx.stampAt;
+      const items = laneItems; items.length = 0;
+      const ssince = Math.max(0, now - fx.stampAt);
       if (fx.stampWho && ssince < GOAL_MS) {
         items.push({ name: 'goal', t: -8.5, b: 14.5, pref: 1, draw(x, y, rot, dn) {
           const sc = reduced ? 1 : 1 + 0.35 * Math.max(0, 1 - ssince / 160);
           c.globalAlpha = ssince > GOAL_MS - 200 ? (GOAL_MS - ssince) / 200 : 1;
+          misOn = true;
           text(c, 'GOAL', x, y, 17 * s * sc, T[fx.stampWho], rot - 0.08, T.ink);
+          misOn = false;
           text(c, api.name(fx.stampWho), x, y + dn * 12 * s, 5 * s, T.ink, rot - 0.08, T.card, 900);
           c.globalAlpha = 1;
         } });
@@ -1269,7 +1548,7 @@ registerGame({
         const n = Math.max(1, Math.ceil(left / (COUNT_MS / 3)));
         const frac = 1 - ((left % (COUNT_MS / 3)) + COUNT_MS / 3) % (COUNT_MS / 3) / (COUNT_MS / 3);
         const pop = reduced ? 1 : 1 + 0.25 * Math.max(0, 1 - frac * 4);
-        items.push({ name: 'digit', t: -8.5, b: 8.5, pref: 1, draw(x, y, rot) { text(c, String(Math.min(3, n)), x, y, 22 * s * pop, T.hl, rot, T.ink); } });
+        items.push({ name: 'digit', t: -8.5, b: 8.5, pref: 1, draw(x, y, rot) { misOn = true; text(c, String(Math.min(3, n)), x, y, 22 * s * pop, T.hl, rot, T.ink); misOn = false; } });
       }
       stamps.forEach((st, k) => {
         if (!st.both) return;
@@ -1324,30 +1603,24 @@ registerGame({
         if (st.sub) text(c, st.sub, sx, sy + (st.rot ? -1 : 1) * sz * 0.66, Math.max(9, sz * 0.3), T.ink, st.rot - 0.07, T.card, 900, T.fontBody, 62 * s);
         c.globalAlpha = 1;
       }
-      centreNow = items.map((it) => it.name);
-      const centreBusy = items.length > 0 || stamps.length > 0 || pucksOn().some((p, i) => (host ? p.on && p.sk : G[i].on && G[i].sk));
-      // match-point slow motion: a printed frame closes in
-      if (ts < 0.98 && !reduced) {
-        const a = Math.min(1, (1 - ts) * 2.2);
-        c.globalAlpha = 0.22 * a; c.strokeStyle = T.ink; c.lineWidth = 7 * s;
-        c.strokeRect(field[0] + 3.5 * s, field[1] + 3.5 * s, field[2] - 7 * s, field[3] - 7 * s);
-        c.globalAlpha = 1;
-      }
+      centreNow.length = 0; for (const it of items) centreNow.push(it.name);
+      let centreBusy = items.length > 0 || stamps.length > 0;
+      if (!centreBusy) for (let i = 0; i < table.pucks; i++) if (host ? PK[i].on && PK[i].sk : G[i].on && G[i].sk) { centreBusy = true; break; }
       // hints stay until the first touch (or key press)
       if (!setupOn && phase !== 'over') {
         hintK += ((centreBusy ? 0 : 1) - hintK) * (1 - Math.exp(-dtR / (centreBusy ? 0.05 : 0.18)));
         const hintA = Math.min(1, (now - t0) / 500) * hintK;
         if (!coarse && local) {
-          for (const w of ['a', 'b']) {
+          for (const w of RD2) {
             if (ctl[w].used) continue;
-            const below = cssH - (field[1] + field[3]) - RAIL * s > 92;
+            const below = cssH - (fy0 + fh) - RAIL * s > 92;
             let x; let y;
-            if (view === 'side') { [x] = toPx(W / 2, w === 'a' ? H - 30 : 30); y = below ? field[1] + field[3] + RAIL * s + 52 : field[1] + field[3] - 46; }
+            if (view === 'side') { [x] = toPx(W / 2, w === 'a' ? H - 30 : 30); y = below ? fy0 + fh + RAIL * s + 52 : fy0 + fh - 46; }
             else { [x, y] = toPx(W / 2, w === 'a' ? H - 40 : 40); }
             legend(c, w, x, y, hintA * 0.95);
           }
         } else {
-          for (const w of local ? ['a', 'b'] : [me]) {
+          for (const w of local ? RD2 : RD1) {
             if (ctl[w].used) continue;
             const [x, y] = toPx(W / 2, sideways() ? (w === 'a' ? H - 46 : 46) : w === 'a' ? H - 42 : 42);
             c.globalAlpha = hintA * (reduced ? 1 : 0.65 + 0.35 * Math.sin(now / 420));
@@ -1357,15 +1630,66 @@ registerGame({
         }
       }
       if (phase === 'paused' || (!host && hostAway)) {
-        c.globalAlpha = 0.86; c.fillStyle = T.card; c.fillRect(...field); c.globalAlpha = 1;
+        c.globalAlpha = 0.86; c.fillStyle = T.card; c.fillRect(fx0, fy0, fw, fh); c.globalAlpha = 1;
         for (const w of readers) text(c, 'Paused', ccx, ccy + (readRot(w) ? -1 : 1) * 10 * s, 9 * s, T.ink, readRot(w), null, 900);
       }
-      // screen shake (on the whole rig, compositor-only)
-      const sk = now - fx.shakeAt;
-      if (!reduced && sk < 380) {
-        const a = 7 * (1 - sk / 380);
-        rig.style.transform = `translate(${(Math.random() - 0.5) * a * 2}px, ${(Math.random() - 0.5) * a * 2}px)`;
-      } else if (rig.style.transform) rig.style.transform = '';
+    }
+
+    function render(now, dt) {
+      prepRender();
+      const setupOn = phase === 'setup' || phase === 'wait';
+      if (now - recsAt > 400) { recsAt = now; recs = readRecords(api.data()); }
+      const dtR = Math.min(0.1, Math.max(0, (now - prevRender) / 1000)); prevRender = now;
+      stepGoals(dt);
+      paintHud(now);
+      // match point: the banner when the countdown starts, a small tag by the leader's score
+      const mp = mpList; mp.length = 0;
+      for (const w of RD2) if (score[w] === table.toWin - 1 && !winner) mp.push(w);
+      if (phase !== prevPhaseR) {
+        if (phase === 'count' && mp.length) { mpAt = now; snd.matchPoint(); }
+        prevPhaseR = phase;
+      }
+      for (let i = stamps.length - 1; i >= 0; i--) if (now - stamps[i].t0 > stamps[i].dur) stamps.splice(i, 1);
+      const since = Math.max(0, now - fx.flashAt);
+      // the sprites: trails, speed lines, mallets and pucks are moved by transform only
+      const heat = env.power && phase === 'play' ? heatOf(rally) : 0;
+      let clockOn = false;
+      for (let i = 0; i < 2; i++) {
+        const pk = i < table.pucks ? (host ? PK[i] : G[i]) : null;
+        const tr = trails[i];
+        if (!pk || !pk.on) { tr.n = 0; if (pk) pk.show = false; placeLines(i, pk, tr, 0, false); placePuck(i, pk, false, now); continue; }
+        if (phase === 'play') {
+          if (tr.n < 5) { tr.x[tr.n] = pk.rx; tr.y[tr.n] = pk.ry; tr.n++; } else { for (let k = 0; k < 4; k++) { tr.x[k] = tr.x[k + 1]; tr.y[k] = tr.y[k + 1]; } tr.x[4] = pk.rx; tr.y[4] = pk.ry; }
+        } else if (phase !== 'paused') tr.n = 0;
+        pk.show = (phase !== 'goal' || since < 120) && (phase === 'play' || phase === 'count' || phase === 'setup' || (pk.ry > 0 && pk.ry < H)) && phase !== 'wait';
+        placeLines(i, pk, tr, heat, pk.show);
+        placePuck(i, pk, pk.show, now);
+        if (pk.sk && phase === 'play') clockOn = true;
+      }
+      placeMallet('b', now); placeMallet('a', now);
+      // does the live canvas have anything to say? (it keeps its pixels between frames, so a quiet rally uploads nothing)
+      const hintOn = !setupOn && phase !== 'over' && (local ? !(ctl.a.used && ctl.b.used) : !ctl[me].used);
+      const need = (fx.flashWho !== null && since < GOAL_MS) || phase === 'count' || phase === 'paused' || (!host && hostAway) || stamps.length > 0
+        || (rally >= 4 && phase === 'play') || heat > 0.05 || clockOn || (mp.length > 0 && !setupOn) || hintOn
+        || (env.post && !reduced && now - pillarAt < 260);
+      if (need || liveOn || liveDrawn !== liveV) {
+        const c = cx;
+        c.setTransform(dpr, 0, 0, dpr, 0, 0);
+        c.clearRect(0, 0, cssW, cssH);
+        drawLive(c, now);
+        if (need) overlays(c, now, dtR, mp, since, setupOn); else { centreNow.length = 0; hintK += (1 - hintK) * (1 - Math.exp(-dtR / 0.18)); }
+        liveOn = need; liveDrawn = liveV;
+      } else { centreNow.length = 0; hintK += (1 - hintK) * (1 - Math.exp(-dtR / 0.18)); }
+      // match-point slow motion: a printed frame closes in (a DOM border; only its opacity moves)
+      const slowO = ts < 0.98 && !reduced ? 0.22 * Math.min(1, (1 - ts) * 2.2) : 0;
+      if (Math.abs(slowO - slowShown) > 0.004) { slowShown = slowO; slowEl.style.opacity = String(Math.round(slowO * 1000) / 1000); }
+      // screen shake (on the whole rig, compositor-only): a decaying wobble, a few px, never longer than a quarter second
+      const sk = Math.max(0, now - shakeAt);
+      if (!reduced && sk < shakeDur) {
+        const a = shakeAmp * (1 - sk / shakeDur) * (1 - sk / shakeDur);
+        shakeX = Math.round(Math.sin(sk * 0.11 + 1.3) * a * 10) / 10; shakeY = Math.round(Math.cos(sk * 0.09) * a * 10) / 10;
+        rig.style.transform = `translate(${shakeX}px, ${shakeY}px)`;
+      } else if (shakeX || shakeY) { shakeX = 0; shakeY = 0; rig.style.transform = ''; }
       // the picker follows the phase
       if (phase !== 'setup' && phase !== 'wait' && setup.visible) setup.hide();
       else if (phase === 'setup' && !setup.visible) setup.show();
@@ -1373,22 +1697,46 @@ registerGame({
 
     // ── loop ──
     let raf = 0;
-    let last = performance.now();
+    let last = 0;               // the previous frame's timestamp (0 = none yet)
     let dead = false;
-    function frame() {
+    let rethemeQ = false;
+    // Dynamic resolution: if the frame time stays high (and jittery: a steady 33 ms is a 30 Hz cap such as Low Power Mode, not load),
+    // the canvases step down to fewer pixels. Never back up, so it can't oscillate.
+    let wN = 0; let wSum = 0; let wMax = 0; let qAt = 0;
+    function watch(raw, now) {
+      if (document.hidden || raw > 400) { wN = 0; wSum = 0; wMax = 0; return; }
+      wN++; wSum += raw; if (raw > wMax) wMax = raw;
+      if (wN < 40) return;
+      const avg = wSum / wN; const mx = wMax;
+      wN = 0; wSum = 0; wMax = 0;
+      if (avg > 21 && mx > 40 && qi < QUALITY.length - 1 && now - qAt > 2000 && now - t0 > 1500) { qi++; qAt = now; layout(); }
+    }
+    const themeSig = (t) => `${t.ink}|${t.card}|${t.a}|${t.b}|${t.hl}|${t.bg}|${t.edge}|${t.aSoft}|${t.bSoft}|${t.line}|${t.dark}`;
+    function applyTheme() {
+      const nt = readTokens();
+      if (themeSig(nt) === themeSig(T)) return;
+      T = nt; hudV++; liveV++; buildSprites(); drawTable();
+    }
+    function frame(t) {
       if (dead) return;
       raf = requestAnimationFrame(frame);
-      const now = performance.now();
-      const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
+      const now = t || performance.now();
+      if (!last) last = now;
+      const raw = Math.max(0, now - last);
       last = now;
+      const dt = Math.min(0.05, raw / 1000);       // the simulation never takes a step longer than 50 ms of catching up
+      const dtm = Math.min(0.1, raw / 1000);       // ... but the mallets' speed is still distance over real time
+      watch(raw, now);
+      if (rethemeQ) { rethemeQ = false; applyTheme(); }
       keyDrive(dt);
       glideDrive(dt);
       if (host) {
         if (!local) remoteTarget(now, dt);
-        simulate(dt, now);
+        simulate(dt, now, dtm);
         if (!local) lastHv = Math.max(lastHv * 0.9, 0);
-      } else guestUpdate(dt, now);
-      render(now);
+      } else guestUpdate(dt, now, dtm);
+      alpha = Math.min(1, acc / DT);
+      render(now, dt);
       publish(now);
     }
 
@@ -1407,14 +1755,14 @@ registerGame({
     on(window, 'keyup', onKey);
     on(window, 'blur', onBlur);
     on(document, 'visibilitychange', () => {
-      last = performance.now();
+      last = 0;
       updatePause();
       if (document.hidden) {
         cancelAnimationFrame(raf); raf = 0;
         if (!local) api.setPresence(host ? { ...hostState(), n: ++myN, __t: Math.round(net.now()) } : { k: key, n: ++myN, __t: Math.round(net.now()), away: 1, m: [r1(M[me].x), r1(M[me].y)], ...keepState() });
       } else if (!raf && !dead) { raf = requestAnimationFrame(frame); publishSoon(); }
     });
-    const retheme = () => { T = readTokens(); drawTable(); };
+    const retheme = () => { rethemeQ = true; };
     const mq = (q, fn) => { const f = () => fn(q.matches); if (q.addEventListener) { q.addEventListener('change', f); offs.push(() => q.removeEventListener('change', f)); } };
     mq(darkMQ, retheme);
     mq(motionMQ, (v) => { reduced = v; });
@@ -1457,16 +1805,27 @@ registerGame({
           mallets: { a: { x: M.a.x, y: M.a.y }, b: { x: M.b.x, y: M.b.y } },
           targets: { a: { x: M.a.tx, y: M.a.ty }, b: { x: M.b.tx, y: M.b.ty } },
           centre: centreNow.slice(), hint: Math.round(hintK * 100) / 100, band: band ? band.kind : null, rtt: net ? net.rtt : 0, lag: Math.round(glag), override: G.some((g) => !!g.ov),
+          // what is on screen (the blended step plus the guest's display correction), and the render settings
+          render: {
+            puck: host ? { x: PK[0].rx, y: PK[0].ry } : { x: G[0].rx, y: G[0].ry },
+            pucks: ON.map((p, i) => (host ? { x: p.rx, y: p.ry } : { x: G[i].rx, y: G[i].ry })),
+            mallets: { a: { x: M.a.rx, y: M.a.ry }, b: { x: M.b.rx, y: M.b.ry } },
+            dpr, quality: qi, held: host ? performance.now() < stopUntil : performance.now() < gStop, hostFreezes, shake: Math.hypot(shakeX, shakeY),
+          },
         }),
         start: (id = 'classic') => { if (host) startMatch(id); },
         pick: (id) => { if (host && phase === 'setup') { sel = id; if (TABLES[id]) applyTable(id); setup.select(id); publishSoon(); } },
         score: (w) => { if (host && phase !== 'over') scoreGoal(w, 'test'); },
         goals: () => goalLog.slice(),
-        place: (x, y, vx = 0, vy = 0, i = 0) => { if (!host) return; Object.assign(PK[i], { x, y, vx, vy, on: true }); PK[i].ep++; phase = 'play'; publishSoon(); },
+        place: (x, y, vx = 0, vy = 0, i = 0) => { if (!host) return; Object.assign(PK[i], { x, y, px: x, py: y, vx, vy, on: true }); PK[i].ep++; phase = 'play'; publishSoon(); },
         setRally: (n, who = 'a') => { if (host) { rally = n; lastHitter = who; rallyAt = performance.now(); publishSoon(); } },
         toClient: (x, y) => { const r = cv.getBoundingClientRect(); const [px0, py0] = toPx(x, y); return [r.left + px0, r.top + py0]; },
         stamps: () => stamps.map((x) => x.text),
         events: () => evq.slice(),
+        // juice: the hit-stop clock, the shake and the puck squash (for the flat-hockey test)
+        hit: (imp = 200, i = 0) => { if (host) { hardHit(imp); squash(i, 0, 1, 1); } },
+        shakeNow: () => ({ x: shakeX, y: shakeY }),
+        quality: (q) => { qi = Math.max(0, Math.min(QUALITY.length - 1, q)); layout(); },
       };
     }
 
@@ -1474,6 +1833,7 @@ registerGame({
       destroy() {
         dead = true;
         cancelAnimationFrame(raf);
+        if (flashAnim) flashAnim.cancel();
         offs.forEach((f) => { try { f(); } catch { /* ignore */ } });
         if (net) net.destroy();
         if (window.__hockeyTest) delete window.__hockeyTest;

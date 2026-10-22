@@ -34,6 +34,19 @@ export const CSS = `
     .g-wave .wv-dial.live.drag { cursor: grabbing; }
     .g-wave .wv-dial:focus-visible { box-shadow: 0 0 0 3px var(--g-hl); }
     .g-wave .wv-svg { display: block; width: 100%; height: auto; overflow: visible; }
+    /* the dial is layers with one box: the needle and the lid are turned with transforms only (compositor), the artwork never repaints */
+    .g-wave .wv-lay { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; overflow: visible; pointer-events: none; }
+    .g-wave .wv-nl, .g-wave .wv-lidrot { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform-origin: 50% 84.615%; will-change: transform; pointer-events: none; }
+    .g-wave .wv-lidclip { position: absolute; left: 0; top: 0; width: 100%; height: 84.615%; overflow: hidden; pointer-events: none; }
+    .g-wave .wv-lidrot { height: 118.18%; }
+    /* the needle layers are a narrow box from the top of the dial down to the hub (24 x 132 of the dial's 240 x 156 units), turned about its
+       bottom middle: a full-size box turned that far would reach below the dial and make the screen scroll. The needle is drawn in it with
+       overflow visible, so nothing is cut. */
+    .g-wave .wv-nl { left: 45%; width: 10%; height: 84.615%; transform-origin: 50% 100%; }
+    /* paper tooth on the face, cut to the half disc */
+    .g-wave .wv-grainface { position: absolute; left: 0; top: 0; width: 100%; height: 84.615%; overflow: hidden; pointer-events: none; clip-path: ellipse(45% 81.82% at 50% 100%); background: var(--g-grain) 0 0 / var(--g-grain-size); }
+    .g-wave .wv-dial.thump { animation: wv-thump 0.3s var(--g-ease-out); }
+    .g-wave .wv-dial.slam { animation: wv-slam 0.5s var(--g-ease-out); }
     .g-wave .wv-shadow, .g-wave .wv-plinth-shadow { fill: var(--g-edge, var(--g-ink)); }
     .g-wave .wv-face { fill: var(--g-card); }
     .g-wave .wv-rim { fill: none; stroke: var(--g-ink); stroke-width: 2.5; stroke-linejoin: round; }
@@ -113,7 +126,7 @@ export const CSS = `
     .g-wave .wv-chip { padding: 1px 8px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-hl); color: var(--g-on-ink); font-weight: 900; font-size: 0.7rem; letter-spacing: 0.03em; }
     .g-wave .wv-chip.jp { background: var(--g-card); color: var(--g-ink); border-style: dashed; }
     .g-wave .wv-result.hide { visibility: hidden; }
-    .g-wave .wv-result.anim .wv-pts { animation: wv-stamp 0.4s cubic-bezier(.2,1.6,.4,1) both; }
+    .g-wave .wv-result.anim .wv-pts { animation: wv-stamp 0.48s var(--g-ease-out) both; }
     .g-wave .wv-wait { display: flex; align-items: center; gap: 10px; font-weight: 800; color: var(--g-muted); text-align: center; }
     .g-wave .wv-dots { display: inline-flex; gap: 4px; }
     .g-wave .wv-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--g-muted); animation: wv-blink 1.2s infinite; }
@@ -252,8 +265,18 @@ export const CSS = `
       .g-wave .wv-start { min-height: 44px; }
     }
 
+    /* printed on paper: the room's tooth under every raised card, display type slightly off register */
+    .g-wave .wv-team, .g-wave .wv-clue, .g-wave .wv-end, .g-wave .wv-pts, .g-wave .wv-plaque, .g-wave .wv-stamp, .g-wave .wv-medal, .g-wave .wv-row, .g-wave .wv-row-pts, .g-wave .wv-chip, .g-wave .wv-tw span,
+    .g-wave .wv-mode, .g-wave .wv-pack, .g-wave .wv-wg, .g-wave .wv-sure, .g-wave .wv-last { background-image: var(--g-grain); background-size: var(--g-grain-size); }
+    .g-wave .wv-medal.a { background-image: var(--g-halftone-a), var(--g-grain); background-size: 5px 5px, var(--g-grain-size); }
+    .g-wave .wv-medal.b { background-image: var(--g-halftone-b), var(--g-grain); background-size: 5px 5px, var(--g-grain-size); }
+    .g-wave .wv-h, .g-wave .wv-clue b, .g-wave .wv-result-txt > b, .g-wave .wv-pts, .g-wave .wv-medal b { text-shadow: var(--g-misreg); }
+    .g-wave .wv-mode[aria-checked="true"], .g-wave .wv-pack[aria-checked="true"], .g-wave .wv-wg[aria-pressed="true"], .g-wave .wv-sure[aria-pressed="true"], .g-wave .wv-pts.zero, .g-wave .wv-chip.jp, .g-wave .wv-chip.star,
+    .g-wave .wv-row-pts.zero, .g-wave .wv-tw span.dv, .g-wave .wv-stamp:nth-child(2n) { background-image: var(--g-grain); background-size: var(--g-grain-size); }
+    @keyframes wv-thump { 0% { transform: scale(1); } 28% { transform: scale(1.035); } 100% { transform: scale(1); } }
+    @keyframes wv-slam { 0% { transform: scale(1) rotate(0deg); } 18% { transform: scale(1.06) rotate(-1.2deg); } 38% { transform: scale(0.99) rotate(0.8deg); } 60% { transform: scale(1.02) rotate(-0.4deg); } 100% { transform: scale(1) rotate(0deg); } }
     @keyframes wv-pop { 0% { transform: scale(0.7); opacity: 0; } 70% { transform: scale(1.06); opacity: 1; } 100% { transform: scale(1); } }
-    @keyframes wv-stamp { 0% { transform: rotate(-4deg) scale(2.2); opacity: 0; } 100% { transform: rotate(-4deg) scale(1); opacity: 1; } }
+    @keyframes wv-stamp { 0% { transform: rotate(-12deg) scale(2.5); opacity: 0; } 52% { transform: rotate(-3deg) scale(0.9); opacity: 1; } 76% { transform: rotate(-4.5deg) scale(1.07); } 100% { transform: rotate(-4deg) scale(1); opacity: 1; } }
     @keyframes wv-bump { 0% { transform: scale(1); } 40% { transform: scale(1.5); } 100% { transform: scale(1); } }
     @keyframes wv-blink { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
     @keyframes wv-rise { from { transform: translateY(10px); opacity: 0; } to { transform: none; opacity: 1; } }

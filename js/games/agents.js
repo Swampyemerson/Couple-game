@@ -414,16 +414,15 @@ const css = `
 /* clue slip / form */
 .g-ag-slip { display: flex; justify-content: center; min-height: 0; container-type: inline-size; }
 .g-ag-slip:empty { display: none; }
-.g-ag-paper { box-sizing: border-box; max-width: 100%; min-width: 0; display: inline-flex; align-items: center; gap: 12px; padding: 6px 8px 7px 14px; background: var(--g-card); border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); box-shadow: var(--g-shadow); }
+.g-ag-paper { box-sizing: border-box; max-width: 100%; min-width: 0; display: inline-flex; align-items: center; gap: 12px; padding: 6px 8px 7px 14px; background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-card); border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); box-shadow: var(--g-shadow); }
 .g-ag-cluebox { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .g-ag-paper small { font-size: 0.7rem; font-weight: 800; color: var(--g-muted); text-transform: uppercase; letter-spacing: 0.1em; }
-.g-ag-clueword { font-family: var(--g-font-display); font-weight: 900; font-size: clamp(13px, calc((100cqw - 76px) / (var(--len) * 0.98)), 1.45rem); line-height: 1.08; letter-spacing: 0.04em; text-transform: uppercase; overflow-wrap: anywhere; }
+.g-ag-clueword { font-family: var(--g-font-display); font-weight: 900; font-size: clamp(13px, calc((100cqw - 76px) / (var(--len) * 0.98)), 1.45rem); line-height: 1.08; letter-spacing: 0.04em; text-transform: uppercase; overflow-wrap: anywhere; text-shadow: var(--g-misreg); }
 .g-ag-num { flex: none; min-width: 30px; height: 30px; padding: 0 4px; box-sizing: border-box; display: inline-grid; place-items: center; border-radius: 50%; background: var(--g-ink); color: var(--g-bg); font-weight: 900; font-size: 1.05rem; }
 .g-ag-form { width: 100%; max-width: 480px; display: flex; align-items: stretch; gap: 6px; }
-.g-ag-input { flex: 1 1 auto; min-width: 0; height: 48px; box-sizing: border-box; padding: 0 12px; border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); background: var(--g-card); color: var(--g-ink); font: 900 1.05rem var(--g-font-display); letter-spacing: 0.05em; text-transform: uppercase; box-shadow: var(--g-shadow); }
+.g-ag-input { flex: 1 1 auto; min-width: 0; height: 48px; box-sizing: border-box; padding: 0 12px; border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-card); color: var(--g-ink); font: 900 1.05rem var(--g-font-display); letter-spacing: 0.05em; text-transform: uppercase; box-shadow: var(--g-shadow); }
 .g-ag-input::placeholder { text-transform: none; letter-spacing: 0; font-family: var(--g-font-body); font-weight: 700; color: var(--g-muted); }
 .g-ag-input:focus { outline: 3px solid var(--g-hl); outline-offset: 1px; }
-.g-ag-input.shake { animation: g-ag-shake 0.4s ease; }
 .g-ag-step { flex-shrink: 0; display: flex; align-items: stretch; border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); background: var(--g-card); box-shadow: var(--g-shadow); overflow: hidden; }
 .g-ag-step button { width: 44px; min-height: 44px; color: var(--g-ink); font-weight: 900; font-size: 1.25rem; background: transparent; touch-action: manipulation; }
 .g-ag-step button:active { background: var(--g-hl-soft); }
@@ -445,7 +444,7 @@ const css = `
 .g-ag-main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .g-ag-wrap { container-type: inline-size; width: 100%; }
 .g-ag-grid { --gap: clamp(4px, 1.2cqw, 10px); --fs: 12px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--gap); }
-.g-ag-card { --cw: calc((100cqw - 4 * var(--gap)) / 5); --face: var(--g-card); --ink: var(--g-ink); position: relative; height: clamp(44px, min(calc(var(--cw) * 0.8), calc((100dvh - 395px) / 5)), 96px); min-width: 0; padding: 0 4px 9px; box-sizing: border-box; display: grid; place-items: center; overflow: hidden; border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); background-color: var(--face); color: var(--ink); box-shadow: var(--g-shadow); font-family: var(--g-font-body); font-weight: 900; text-transform: uppercase; cursor: default; transition: transform 0.12s ease; }
+.g-ag-card { --cw: calc((100cqw - 4 * var(--gap)) / 5); --face: var(--g-card); --ink: var(--g-ink); position: relative; height: clamp(44px, min(calc(var(--cw) * 0.8), calc((100dvh - 395px) / 5)), 96px); min-width: 0; padding: 0 4px 9px; box-sizing: border-box; display: grid; place-items: center; overflow: hidden; border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); background: var(--hatch, none), var(--g-grain) 0 0 / var(--g-grain-size), var(--face); color: var(--ink); box-shadow: var(--g-shadow); font-family: var(--g-font-body); font-weight: 900; text-transform: uppercase; cursor: default; transition: transform 0.1s var(--g-ease-out); }
 .g-ag-card::before { content: ''; position: absolute; left: 34%; right: 34%; bottom: 6px; height: 2px; border-radius: 1px; background: var(--g-line); }
 .g-ag-word { position: relative; z-index: 1; max-width: 100%; display: block; text-align: center; font-size: var(--fs); line-height: 1.02; letter-spacing: 0; white-space: nowrap; }
 .g-ag-word .hy { display: none; }
@@ -455,25 +454,25 @@ const css = `
 /* a card with an icon prints it where the rule would be */
 .g-ag-card.k-K::before, .g-ag-card.is-found::before, .g-ag-card.is-hit::before { display: none; }
 .g-ag-card.can { cursor: pointer; }
-.g-ag-card.can:active { transform: translate(2px, 2px); box-shadow: var(--g-shadow-sm); }
 .g-ag-card.is-sel { transform: translateY(-3px); box-shadow: 3px 5px 0 var(--g-edge); outline: 3px solid var(--g-hl); outline-offset: 1px; z-index: 2; }
+.g-ag-card.can:active, .g-ag-card.can.is-down { transform: translate(2px, 2px); box-shadow: var(--g-shadow-sm); transition: none; }
 .g-ag-card.dim { opacity: 0.55; }
 
 /* the key overlay (yours, or the clue-giver's own) */
 .g-ag-card.k-G { box-shadow: inset 0 0 0 3px var(--g-good), var(--g-shadow); }
 .g-ag-card.k-G::after { content: ''; position: absolute; top: 0; left: 0; border-top: 10px solid var(--g-good); border-right: 10px solid transparent; }
-.g-ag-card.k-K { background-image: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--g-ink) 16%, transparent) 6px 8px); box-shadow: inset 0 0 0 3px var(--g-ink), var(--g-shadow); }
+.g-ag-card.k-K { --hatch: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--g-ink) 16%, transparent) 6px 8px); box-shadow: inset 0 0 0 3px var(--g-ink), var(--g-shadow); }
 
 /* revealed */
-.g-ag-card.is-found { --face: var(--g-good); --ink: var(--ag-on-good); background-image: none; }
+.g-ag-card.is-found { --face: var(--g-good); --ink: var(--ag-on-good); --hatch: radial-gradient(circle, color-mix(in srgb, var(--g-edge) 24%, transparent) 1px, transparent 1.5px) 0 0 / 5px 5px; }
 .g-ag-card.is-found .g-ag-ico { width: 20px; height: 10px; bottom: 3px; opacity: 0.85; }
-.g-ag-card.is-hit { --face: var(--g-ink); --ink: var(--g-bg); background-image: none; }
-.g-ag-card.is-void { --face: color-mix(in srgb, var(--g-muted) 22%, var(--g-card)); --ink: var(--g-muted); box-shadow: none; }
+.g-ag-card.is-hit { --face: var(--g-ink); --ink: var(--g-bg); }
+.g-ag-card.is-void { --face: color-mix(in srgb, var(--g-muted) 22%, var(--g-card)); --ink: var(--g-muted); --hatch: radial-gradient(circle, color-mix(in srgb, var(--g-muted) 55%, transparent) 1px, transparent 1.6px) 0 0 / 5px 5px; box-shadow: none; }
 .g-ag-tag { position: absolute; z-index: 2; bottom: 2px; width: 16px; height: 16px; box-sizing: border-box; display: grid; place-items: center; border: 1.5px solid var(--g-ink); border-radius: 4px; font: 900 11px/1 var(--g-font-body); font-style: normal; color: var(--g-on-ink); }
 .g-ag-tag.t-a { left: 2px; background: var(--p-a); } .g-ag-tag.t-b { right: 2px; background: var(--p-b); }
 
 /* dock */
-.g-ag-dock { position: sticky; bottom: 0; z-index: 5; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 8px 0 max(6px, env(safe-area-inset-bottom)); background: var(--g-bg); }
+.g-ag-dock { position: sticky; bottom: 0; z-index: 5; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 8px 0 max(6px, env(safe-area-inset-bottom)); background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-bg); }
 .g-ag-dock.is-over { position: static; padding-bottom: 0; }
 .g-ag-dock:empty { display: none; }
 .g-ag-acts { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 10px; }
@@ -500,7 +499,7 @@ const css = `
 /* clue history */
 .g-ag-side h3 { margin: 0 0 8px; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--g-muted); }
 .g-ag-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.g-ag-log li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 8px 10px; background: var(--g-card); border: 2px solid var(--g-line); border-radius: var(--g-radius-sm); font-size: 0.85rem; }
+.g-ag-log li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 8px 10px; background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-card); border: 2px solid var(--g-line); border-radius: var(--g-radius-sm); font-size: 0.85rem; }
 .g-ag-log li.now { border-color: var(--g-ink); }
 .g-ag-log li.g-ag-empty { padding: 0; border: 0; background: none; color: var(--g-muted); }
 .g-ag-by { flex: none; width: 22px; height: 22px; box-sizing: border-box; display: inline-grid; place-items: center; border: 1.5px solid var(--g-ink); border-radius: 50%; color: var(--g-on-ink); font-weight: 900; font-size: 0.72rem; }
@@ -518,19 +517,19 @@ const css = `
 /* v2: rules card, sudden death, stamps */
 .g-ag-rules[hidden], .g-ag-banner[hidden] { display: none; }
 .g-agents.is-setup .g-ag-slip, .g-agents.is-setup .g-ag-wrap, .g-agents.is-setup .g-ag-dock, .g-agents.is-setup .g-ag-side, .g-agents.is-setup .g-ag-meta { display: none; }
-.g-ag-card-rules { box-sizing: border-box; width: 100%; max-width: 480px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; padding: 14px 12px 12px; background: var(--g-card); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow); }
-.g-ag-h { margin: 0; font: 900 1.05rem var(--g-font-display); text-transform: uppercase; letter-spacing: 0.04em; }
+.g-ag-card-rules { box-sizing: border-box; width: 100%; max-width: 480px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; padding: 14px 12px 12px; background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-card); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow); }
+.g-ag-h { margin: 0; font: 900 1.05rem var(--g-font-display); text-transform: uppercase; letter-spacing: 0.04em; text-shadow: var(--g-misreg); }
 .g-ag-wait { margin: 0; font-weight: 800; }
 .g-ag-opt { display: flex; flex-direction: column; gap: 6px; }
 .g-ag-seg { display: grid; gap: 6px; }
 .g-ag-seg.s3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .g-ag-seg.s2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.g-ag-seg button { min-height: 48px; box-sizing: border-box; padding: 5px 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); background: var(--g-card); color: var(--g-ink); text-align: center; touch-action: manipulation; }
+.g-ag-seg button { min-height: 48px; box-sizing: border-box; padding: 5px 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-card); color: var(--g-ink); text-align: center; touch-action: manipulation; }
 .g-ag-seg button b { font-weight: 900; font-size: 0.95rem; }
 .g-ag-seg button small { font-size: 0.68rem; font-weight: 700; line-height: 1.15; color: var(--g-muted); }
 .g-ag-seg button[aria-pressed="true"] { background: var(--g-ink); color: var(--g-bg); box-shadow: var(--g-shadow-sm); }
 .g-ag-seg button[aria-pressed="true"] small { color: inherit; opacity: 0.85; }
-.g-ag-playbar { position: sticky; bottom: 0; z-index: 5; box-sizing: border-box; width: 100%; max-width: 480px; margin: 0 auto; padding: 8px 0 max(6px, env(safe-area-inset-bottom)); background: var(--g-bg); }
+.g-ag-playbar { position: sticky; bottom: 0; z-index: 5; box-sizing: border-box; width: 100%; max-width: 480px; margin: 0 auto; padding: 8px 0 max(6px, env(safe-area-inset-bottom)); background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-bg); }
 @media (max-height: 700px) {
   .g-ag-card-rules { gap: 8px; padding: 10px; }
   .g-ag-h { display: none; }
@@ -540,7 +539,9 @@ const css = `
 .g-ag-ledger b { color: var(--g-ink); }
 .g-ag-banner { margin: 0; display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 900; font-size: 0.9rem; }
 .g-ag-last { color: var(--g-bad); text-transform: uppercase; letter-spacing: 0.06em; }
-.g-ag-stamp { display: inline-block; padding: 3px 9px; border: 3px solid currentColor; border-radius: 6px; font: 900 0.74rem/1.15 var(--g-font-display); letter-spacing: 0.06em; text-transform: uppercase; transform: rotate(var(--r, -3deg)); }
+.g-ag-stamp { display: inline-block; padding: 3px 9px; border: 3px solid currentColor; border-radius: 6px; font: 900 0.74rem/1.15 var(--g-font-display); letter-spacing: 0.06em; text-transform: uppercase; transform: rotate(var(--r, -3deg)); animation: g-ag-stampin 0.34s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+.g-ag-stamps .g-ag-stamp:nth-child(2) { animation-delay: 0.14s; } .g-ag-stamps .g-ag-stamp:nth-child(3) { animation-delay: 0.28s; } .g-ag-stamps .g-ag-stamp:nth-child(n+4) { animation-delay: 0.42s; }
+@keyframes g-ag-stampin { from { opacity: 0; transform: rotate(var(--r, -3deg)) scale(1.7); } to { opacity: 1; transform: rotate(var(--r, -3deg)) scale(1); } }
 .g-ag-stamp.k-rec { color: var(--p-b-text); }
 .g-ag-stamp.k-a { color: var(--p-a-text); }
 .g-ag-stamp.k-bad { color: var(--g-bad); }
@@ -556,7 +557,7 @@ const css = `
 .g-ag-paper.sm .g-ag-clueword { font-size: 1.05rem; }
 .g-ag-paper.sm { position: relative; }
 .g-ag-over { position: absolute; top: -9px; right: 6px; padding: 1px 6px; border: 2px solid var(--p-b-text); border-radius: 4px; background: var(--g-card); color: var(--p-b-text); font: 900 0.58rem/1.2 var(--g-font-display); letter-spacing: 0.06em; text-transform: uppercase; transform: rotate(3deg); }
-.g-ag-paper.meld, .g-ag-log li.meld { background: var(--g-hl); color: var(--g-on-ink); }
+.g-ag-paper.meld, .g-ag-log li.meld { background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-hl); color: var(--g-on-ink); }
 .g-ag-paper.meld small, .g-ag-log li.meld .g-ag-chip.r-N { color: var(--g-on-ink); }
 .g-ag-log li.meld { border-color: var(--g-ink); }
 .g-ag-melded { font: 900 0.62rem var(--g-font-display); letter-spacing: 0.06em; text-transform: uppercase; border: 2px solid currentColor; border-radius: 4px; padding: 1px 5px; transform: rotate(-3deg); }
@@ -616,22 +617,41 @@ const css = `
   .g-ag-card-rules { gap: 6px; padding: 8px 10px; }
 }
 
-/* motion */
-@keyframes g-ag-flip { 0% { transform: rotateY(0); } 50% { transform: rotateY(90deg); } 100% { transform: rotateY(0); } }
-@keyframes g-ag-face { 0%, 49% { background-color: var(--g-card); background-image: none; color: var(--g-ink); } 50%, 100% { background-color: var(--face); color: var(--ink); } }
+/* motion: transform and opacity only. A card turns over like a printed card: its old face (a blank card) covers the
+   new one and drops away at the half-turn, so no colour is ever animated. */
+@keyframes g-ag-flip {
+  0% { transform: perspective(560px) rotateY(0); animation-timing-function: cubic-bezier(0.5, 0, 0.9, 0.6); }
+  50% { transform: perspective(560px) rotateY(90deg) scale(1.1); }
+  50.01% { transform: perspective(560px) rotateY(-90deg) scale(1.1); animation-timing-function: cubic-bezier(0.2, 0.9, 0.3, 1); }
+  100% { transform: perspective(560px) rotateY(0) scale(1); }
+}
+@keyframes g-ag-cover { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+@keyframes g-ag-word { 0%, 49% { color: var(--g-ink); } 50%, 100% { color: var(--ink); } }
+@keyframes g-ag-icon { 0%, 49% { opacity: 0; } 50%, 100% { opacity: 1; } }
 @keyframes g-ag-thunk { 0% { transform: scale(1); } 35% { transform: scale(0.9); } 100% { transform: scale(1); } }
-@keyframes g-ag-shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-7px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(3px); } }
 @keyframes g-ag-pop { 0% { transform: scale(1); } 45% { transform: scale(1.08) rotate(-2deg); } 100% { transform: scale(1); } }
 @keyframes g-ag-in { from { opacity: 0; transform: translateY(-6px) rotate(-1deg); } to { opacity: 1; transform: none; } }
-.g-ag-card.reveal { animation: g-ag-flip 0.5s ease-in-out both, g-ag-face 0.5s linear both; }
+.g-ag-card.reveal { z-index: 3; animation: g-ag-flip 0.6s both; }
+.g-ag-card.reveal::before { display: block; content: ''; position: absolute; inset: 0; width: auto; height: auto; border-radius: 0; background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-card); animation: g-ag-cover 0.6s linear both; pointer-events: none; }
+.g-ag-card.reveal .g-ag-word { animation: g-ag-word 0.6s linear both; }
+.g-ag-card.reveal .g-ag-ico { animation: g-ag-icon 0.6s linear both; }
 .g-ag-card.thunk { animation: g-ag-thunk 0.35s ease both; }
 .g-ag-card.thunk .g-ag-tag { animation: g-ag-pop 0.35s ease both 0.1s; }
-.g-ag-grid.boom { animation: g-ag-shake 0.45s ease 0.45s both; }
+.g-ag-grid.boom { animation: g-shake 0.45s cubic-bezier(0.36, 0.07, 0.19, 0.97) 0.55s both; }
 .g-ag-grid.party .g-ag-card.is-found { animation: g-ag-pop 0.5s ease both; animation-delay: calc(var(--i) * 35ms + 0.4s); }
+.g-ag-grid.party .g-ag-card.reveal { animation: g-ag-flip 0.6s both; }
 .g-ag-paper.fresh { animation: g-ag-in 0.35s ease both; }
+.g-ag-wrap { position: relative; }
+.g-ag-burst { position: absolute; left: 50%; top: 50%; width: 0; height: 0; z-index: 6; pointer-events: none; }
+.g-ag-burst i { position: absolute; left: -5px; top: -6px; width: 10px; height: 12px; box-sizing: border-box; border: 1.5px solid var(--g-ink); border-radius: 1px; background: var(--c, var(--g-hl)); mix-blend-mode: multiply; will-change: transform, opacity; }
+:root[data-theme="dark"] .g-ag-burst i { mix-blend-mode: normal; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .g-ag-burst i { mix-blend-mode: normal; } }
 @media (prefers-reduced-motion: reduce) {
-  .g-ag-card.reveal, .g-ag-card.thunk, .g-ag-card.thunk .g-ag-tag, .g-ag-grid.boom, .g-ag-grid.party .g-ag-card.is-found, .g-ag-paper.fresh, .g-ag-input.shake { animation-duration: 1ms !important; animation-delay: 0s !important; }
+  .g-ag-card.reveal, .g-ag-card.thunk, .g-ag-card.thunk .g-ag-tag, .g-ag-grid.boom, .g-ag-grid.party .g-ag-card.is-found, .g-ag-grid.party .g-ag-card.reveal, .g-ag-paper.fresh, .g-ag-stamp { animation: none; }
+  .g-ag-card.reveal::before { display: none; }
+  .g-ag-card.reveal .g-ag-word, .g-ag-card.reveal .g-ag-ico { animation: none; }
   .g-ag-card { transition: none; }
+  .g-ag-burst { display: none; }
 }
 `;
 
@@ -686,6 +706,7 @@ registerGame({
     const grid = q('.g-ag-grid');
     const dock = q('.g-ag-dock');
     const logEl = q('.g-ag-log');
+    const wrap = q('.g-ag-wrap');
 
     let ctx = null;
     let sel = null; // selected card index (guesser)
@@ -708,6 +729,44 @@ registerGame({
     const who = (w) => `<span class="g-ag-who p-${w}">${nm(w)}</span>`;
     const stamp = () => Date.now();
     function safeData() { try { return api.data() || {}; } catch { return {}; } }
+    // Write markup only when it changed: an update that changes nothing must not rebuild (or restart the animations of) a region.
+    const put = (el, html) => { if (el.__h === html) return false; el.__h = html; el.innerHTML = html; return true; };
+    const reduced = () => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; } };
+    // Restart a one-shot kit animation without reading layout: if the class is already on, rewind its animations.
+    function replay(el, cls) {
+      if (el.classList.contains(cls) && typeof el.getAnimations === 'function') {
+        const list = el.getAnimations();
+        if (list.length) { for (const a of list) { a.currentTime = 0; a.play(); } return; }
+      }
+      el.classList.remove(cls);
+      el.classList.add(cls);
+    }
+    // Finale: paper confetti thrown from the board (WAAPI, transform + opacity, removed when it lands).
+    const CONFETTI = ['var(--p-a)', 'var(--p-b)', 'var(--g-hl)', 'var(--g-good)'];
+    function burst(host, n = 30) {
+      if (!host || reduced() || typeof host.animate !== 'function') return;
+      const box = document.createElement('div');
+      box.className = 'g-ag-burst';
+      box.setAttribute('aria-hidden', 'true');
+      let h = '';
+      for (let i = 0; i < n; i++) h += `<i style="--c:${CONFETTI[i % CONFETTI.length]}"></i>`;
+      box.innerHTML = h;
+      host.appendChild(box);
+      let left = n;
+      [...box.children].forEach((p, i) => {
+        const ang = (i / n) * Math.PI * 2 + (i % 3) * 0.17;
+        const d = 70 + (i % 6) * 26;
+        const dx = Math.cos(ang) * d * 1.45;
+        const dy = Math.sin(ang) * d - 60;
+        const rot = (i % 2 ? 1 : -1) * (180 + i * 19);
+        const a = p.animate([
+          { transform: 'translate(0, 0) scale(0.4) rotate(0deg)', opacity: 1 },
+          { transform: `translate(${dx * 0.7}px, ${dy * 0.7}px) scale(1) rotate(${rot * 0.6}deg)`, opacity: 1, offset: 0.4 },
+          { transform: `translate(${dx}px, ${dy + 90}px) scale(0.8) rotate(${rot}deg)`, opacity: 0 },
+        ], { duration: 950 + (i % 5) * 90, delay: (i % 5) * 30, easing: 'cubic-bezier(0.2, 0.7, 0.3, 1)', fill: 'both' });
+        a.onfinish = () => { if (--left === 0) box.remove(); };
+      });
+    }
 
     // A half-typed clue survives a reload (this device only).
     const DRAFT = 'ju.agents.draft.';
@@ -742,10 +801,16 @@ registerGame({
       const inner = parts ? `<span class="p">${up(parts[0])}<span class="hy">-</span></span><span class="p">${up(parts[1])}</span>` : up(w);
       return `<span class="g-ag-word" data-w="${w}">${inner}</span>`;
     }
-    function cardHTML(c, i, k) {
+    // The 25 cards are built once per word set; every update only patches the classes, label, icon and corner tags
+    // of the cards whose state changed (no board rebuild per tap, no layout read, a card in mid-flip keeps flipping).
+    const MANAGED = ['is-found', 'is-hit', 'is-void', 'k-G', 'k-K', 'can', 'dim', 'is-sel', 'reveal', 'thunk'];
+    let cardEls = [];
+    let cardSig = [];
+    let gridWords = '';
+    function cardInfo(c, i, k) {
       const s = c.state;
       const w = s.words[i];
-      const cls = ['g-ag-card'];
+      const cls = [];
       let ico = '';
       let label = up(w);
       if (s.found[i]) { cls.push('is-found'); ico = ICON.mask; label += ', agent found'; }
@@ -768,16 +833,41 @@ registerGame({
       if (sel === i) cls.push('is-sel');
       if (anim && anim.i === i) cls.push(anim.kind);
       const tags = s.found[i] || s.hit === i ? '' : `${s.miss.a.includes(i) ? `<i class="g-ag-tag t-a" aria-hidden="true">${ini('a')}</i>` : ''}${s.miss.b.includes(i) ? `<i class="g-ag-tag t-b" aria-hidden="true">${ini('b')}</i>` : ''}`;
-      return `<button class="${cls.join(' ')}" data-i="${i}" style="--i:${i}" aria-label="${label}"${can ? '' : ' aria-disabled="true"'}>${ico}${wordHTML(w)}${tags}</button>`;
+      return { cls, ico, label, can, tags };
     }
-
+    function buildGrid(c) {
+      gridWords = c.state.words.join(',');
+      grid.innerHTML = c.state.words.map((w, i) => `<button class="g-ag-card" data-i="${i}" style="--i:${i}">${wordHTML(w)}</button>`).join('');
+      cardEls = [...grid.children];
+      cardSig = [];
+      if (ro) { ro.disconnect(); ro.observe(grid); if (cardEls[0]) ro.observe(cardEls[0]); }
+      fit();
+    }
     function renderGrid() {
       const c = ctx;
       const role = roleOf(c);
-      if ((!c.viewer && !c.over) || role === 'setup' || role === 'await-setup') { grid.innerHTML = ''; return; }
+      if ((!c.viewer && !c.over) || role === 'setup' || role === 'await-setup') {
+        if (gridWords) { grid.innerHTML = ''; gridWords = ''; cardEls = []; cardSig = []; }
+        return;
+      }
+      if (c.state.words.join(',') !== gridWords) buildGrid(c);
       const k = shownKey(c);
-      grid.innerHTML = c.state.words.map((_, i) => cardHTML(c, i, k)).join('');
-      fit();
+      for (let i = 0; i < cardEls.length; i++) {
+        const info = cardInfo(c, i, k);
+        const cls = info.cls.join(' ');
+        const prev = cardSig[i];
+        if (prev && prev.cls === cls && prev.label === info.label && prev.ico === info.ico && prev.tags === info.tags) continue;
+        const el = cardEls[i];
+        cardSig[i] = { cls, label: info.label, ico: info.ico, tags: info.tags };
+        for (const m of MANAGED) { const on = info.cls.includes(m); if (el.classList.contains(m) !== on) el.classList.toggle(m, on); }
+        el.setAttribute('aria-label', info.label);
+        if (info.can) el.removeAttribute('aria-disabled'); else el.setAttribute('aria-disabled', 'true');
+        if (!prev || prev.ico !== info.ico || prev.tags !== info.tags) {
+          for (const n of el.querySelectorAll('.g-ag-ico, .g-ag-tag')) n.remove();
+          if (info.ico) el.insertAdjacentHTML('afterbegin', info.ico);
+          if (info.tags) el.insertAdjacentHTML('beforeend', info.tags);
+        }
+      }
     }
     // One type size for the whole board: the largest at which every word fits its card, on one
     // line or broken onto two at its syllable break. Measured, so any font works.
@@ -806,8 +896,12 @@ registerGame({
       grid.style.setProperty('--fs', `${fs.toFixed(1)}px`);
       for (const p of plan) p.sp.classList.toggle('two', p.one * fs > avail + 0.5);
     }
-    let fitW = 0;
-    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { const w = grid.clientWidth; if (w !== fitW) { fitW = w; fit(); } }) : null;
+    // refit when the grid's width or a card's height changes (rotation, the record line appearing), never per update
+    let fitKey = '';
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => {
+      const k = `${grid.clientWidth}x${cardEls[0] ? cardEls[0].clientHeight : 0}`;
+      if (k !== fitKey) { fitKey = k; fit(); }
+    }) : null;
     if (ro) ro.observe(grid);
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { if (grid.isConnected) fit(); });
 
@@ -934,21 +1028,21 @@ registerGame({
               : 'Out of time. The trail went cold.';
       }
       sayEl.classList.toggle('one', role === 'guess');
-      sayEl.innerHTML = (last && (role === 'give' || role === 'guess' || role === 'watch' || role === 'await-clue') ? '<b class="g-ag-last">Last call.</b> ' : '') + text;
+      put(sayEl, (last && (role === 'give' || role === 'guess' || role === 'watch' || role === 'await-clue') ? '<b class="g-ag-last">Last call.</b> ' : '') + text);
       const turnNow = s.phase === 'guess' && !s.over;
       if (sudden || (c.over && s.sd)) {
-        tokEl.innerHTML = '<span class="g-ag-tok sudden"></span><span>Sudden death</span>';
+        put(tokEl, '<span class="g-ag-tok sudden"></span><span>Sudden death</span>');
         tokEl.setAttribute('aria-label', 'Sudden death');
       } else {
-        tokEl.innerHTML = Array.from({ length: T }, (_, i) => `<span class="g-ag-tok${i < s.turns - (turnNow ? 1 : 0) ? ' used' : i === s.turns - 1 && turnNow ? ' now' : ''}${last && i === T - 1 ? ' last' : ''}"></span>`).join('') + (c.over && s.over === 'win' ? '' : `<span>${left} turn${left === 1 ? '' : 's'} left</span>`);
+        put(tokEl, Array.from({ length: T }, (_, i) => `<span class="g-ag-tok${i < s.turns - (turnNow ? 1 : 0) ? ' used' : i === s.turns - 1 && turnNow ? ' now' : ''}${last && i === T - 1 ? ' last' : ''}"></span>`).join('') + (c.over && s.over === 'win' ? '' : `<span>${left} turn${left === 1 ? '' : 's'} left</span>`));
         tokEl.setAttribute('aria-label', `${left} of ${T} turns left`);
       }
-      countEl.innerHTML = `Agents <b>${foundCount(s)}</b>/${TOTAL}`;
+      put(countEl, `Agents <b>${foundCount(s)}</b>/${TOTAL}`);
       // mind meld: the clue slip prints in gold for the turn that just ended
       const lastIdx = s.log.length - 1;
       const meldNow = lastIdx >= 0 && (s.over ? s.over === 'win' : s.phase === 'clue') && isMeld(s.log[lastIdx], turnDone(s, lastIdx));
       bannerEl.hidden = !meldNow;
-      if (meldNow) { const n = s.log[lastIdx].n; bannerEl.innerHTML = `<span class="g-ag-stamp k-gold" style="--r:-2deg">Mind meld</span> ${NUMWORD[n] || n} for ${NUMWORD[n] ? NUMWORD[n].toLowerCase() : n}.`; }
+      if (meldNow) { const n = s.log[lastIdx].n; put(bannerEl, `<span class="g-ag-stamp k-gold" style="--r:-2deg">Mind meld</span> ${NUMWORD[n] || n} for ${NUMWORD[n] ? NUMWORD[n].toLowerCase() : n}.`); }
     }
 
     function renderSlip() {
@@ -1011,12 +1105,12 @@ registerGame({
           <div class="g-ag-end"><button class="gm-btn" data-g="rematch">Play again</button><button class="gm-btn gm-btn-ghost" data-g="close">Back to games</button></div>`;
       }
       dock.classList.toggle('is-over', role === 'over');
-      dock.innerHTML = h;
+      put(dock, h);
     }
 
     function renderLog() {
       const s = ctx.state;
-      if (!s.log.length) { logEl.innerHTML = '<li class="g-ag-empty">No clues yet.</li>'; return; }
+      if (!s.log.length) { put(logEl, '<li class="g-ag-empty">No clues yet.</li>'); return; }
       const chips = (list) => list.map((p) => `<span class="g-ag-chip r-${p.r}" title="${p.r === 'G' ? 'agent' : p.r === 'K' ? 'assassin' : 'bystander'}">${s.words[p.i]}</span>`).join('');
       const rows = s.log.map((t, n) => {
         const meld = isMeld(t, turnDone(s, n));
@@ -1026,7 +1120,7 @@ registerGame({
       </li>`;
       }).reverse();
       if (s.sd && s.sd.length) rows.unshift(`<li class="g-ag-sd"><b>Sudden death</b><span class="g-ag-chips">${chips(s.sd)}</span></li>`);
-      logEl.innerHTML = rows.join('');
+      put(logEl, rows.join(''));
     }
 
     function render() {
@@ -1048,10 +1142,9 @@ registerGame({
         api.toast(r.error);
         api.sfx('bad');
         api.haptic(30);
-        input.classList.remove('shake');
-        void input.offsetWidth;
-        input.classList.add('shake');
-        later(() => input.classList.remove('shake'), 420);
+        input.classList.add('shake'); // marker; the motion is the kit's .g-shake
+        replay(input, 'g-shake');
+        later(() => input.classList.remove('shake', 'g-shake'), 420);
         return;
       }
       lockUntil = stamp() + 400;
@@ -1104,6 +1197,20 @@ registerGame({
       sel = null;
       if (!r.ok) { api.toast(r.error); api.sfx('bad'); render(); } else lockUntil = stamp() + 400;
     }
+    // A card dips the moment the finger lands (the kit's :active only shows once iOS has decided it's a tap); the pick itself
+    // still waits for the click, so starting a scroll on a card never selects it.
+    let downCard = null;
+    const liftCard = () => { if (downCard) { downCard.classList.remove('is-down'); downCard = null; } };
+    grid.addEventListener('pointerdown', (e) => {
+      const b = e.target.closest('.g-ag-card.can');
+      if (!b || (e.pointerType === 'mouse' && e.button !== 0)) return;
+      liftCard();
+      downCard = b;
+      b.classList.add('is-down');
+    });
+    grid.addEventListener('pointerup', () => later(liftCard, 60));
+    grid.addEventListener('pointercancel', liftCard);
+    grid.addEventListener('pointerleave', liftCard);
     grid.addEventListener('click', (e) => {
       const b = e.target.closest('.g-ag-card');
       if (!b || !ctx) return;
@@ -1117,9 +1224,7 @@ registerGame({
         return;
       }
       if (stamp() < lockUntil) { // right after a move: a stray second tap, not a new choice (but show it was felt)
-        b.classList.remove('thunk');
-        void b.offsetWidth;
-        b.classList.add('thunk');
+        replay(b, 'thunk');
         later(() => b.classList.remove('thunk'), 380);
         return;
       }
@@ -1174,8 +1279,9 @@ registerGame({
         render();
         grid.classList.toggle('boom', (s.over === 'burned' || s.over === 'caught') && !!anim);
         grid.classList.toggle('party', s.over === 'win' && !!anim);
+        if (s.over === 'win' && anim && wrap) later(() => burst(wrap), 520);
       },
-      destroy() { for (const t of timers) clearTimeout(t); timers.clear(); if (ro) ro.disconnect(); if (typeof offData === 'function') offData(); },
+      destroy() { liftCard(); for (const t of timers) clearTimeout(t); timers.clear(); if (ro) ro.disconnect(); if (typeof offData === 'function') offData(); },
     };
   },
 });

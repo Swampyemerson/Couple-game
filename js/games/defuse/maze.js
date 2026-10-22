@@ -183,7 +183,7 @@ const css = `
 .g-defuse .dx-mz-me rect { fill: var(--dx-white); stroke: var(--dx-dark); stroke-width: 1.5; }
 .g-defuse .dx-mz-bumps line { stroke: var(--dx-red); stroke-width: 3; stroke-linecap: round; }
 .g-defuse .dx-mz-pad { display: grid; grid-template-columns: repeat(3, 52px); grid-template-rows: repeat(2, 52px); gap: 9px; }
-.g-defuse .dx-mz-btn { display: grid; place-items: center; width: 52px; height: 52px; padding: 0; background: var(--dx-white); color: var(--dx-dark); border: 2.5px solid var(--g-ink); border-radius: 12px; box-shadow: 0 5px 0 var(--g-ink); transition: transform 0.06s, box-shadow 0.06s; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+.g-defuse .dx-mz-btn { display: grid; place-items: center; width: 52px; height: 52px; padding: 0; background: var(--dx-white); color: var(--dx-dark); border: 2.5px solid var(--g-ink); border-radius: 12px; box-shadow: 0 5px 0 var(--g-ink); transition: transform 0.16s var(--g-ease-spring); touch-action: manipulation; user-select: none; -webkit-user-select: none; }
 .g-defuse .dx-mz-btn svg { width: 28px; height: 28px; fill: none; stroke: currentColor; stroke-width: 3.6; stroke-linecap: round; stroke-linejoin: round; }
 .g-defuse .dx-mz-btn[data-dir="U"] { grid-column: 2; grid-row: 1; }
 .g-defuse .dx-mz-btn[data-dir="L"] { grid-column: 1; grid-row: 2; } .g-defuse .dx-mz-btn[data-dir="L"] svg { transform: rotate(-90deg); }
