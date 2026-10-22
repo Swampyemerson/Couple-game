@@ -42,7 +42,7 @@ const q = (arr, p) => arr.length ? arr[Math.min(arr.length - 1, Math.floor(arr.l
 (async () => {
   const rows = [];
   for (const g of games) {
-    const h = await launch({ port: 9300 + Math.floor(Math.random() * 400), only: [g], colorScheme: process.env.DARK ? 'dark' : 'light', coarse: true });
+    const h = await launch({ port: 9700 + Math.floor(Math.random() * 280), only: [g], colorScheme: process.env.DARK ? 'dark' : 'light', coarse: true });
     try {
       const pg = h.a;
       if (LIVE_ONLY.has(g)) {
