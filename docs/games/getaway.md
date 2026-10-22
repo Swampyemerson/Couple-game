@@ -871,6 +871,16 @@ signals or wires) the perf test now reads: Dockside ≤ 34 draw calls (laptop 33
 Santee ≤ 39 (35), triangles unchanged; the longest task from a map load to 600 ms after ready is an
 ordinary software-GL lobby frame (Santee 131 ms, Boulder 277 ms vs a 223 ms frame).
 
+Graphics pass 3 (surface upgrade, above) changed none of these: the perf test reads Dockside ≤ 32
+draw calls / 84k triangles, Boulder ≤ 51 / 137k, Santee ≤ 37 / 113k (phone), GPU geometry
+memory identical (7.4 / 39.9 / 49.2 MB, 30.7 / 30.7 / 29.7 B/vertex), no new texture, the same
+12 programs compiled behind the loading card, builds within noise of before (software GL:
+Dockside 231 → 244 ms, Boulder 936 → 1098, Santee 947 → 1099 on a shared machine; the wall-foot
+pass is ~20 ms for 700k triangles). On software GL the new shaders cost about 1.5× the old per
+pixel at the high tier (the `gfx` test's mid-tier chase got slow enough to time out before the
+distance gates, `pow` → multiplications and the cirrus-on-high-only trim); phones have ALU to spare
+but keep an eye on it: the heavy detail is all inside ~48 m and inside `#ifndef GTW_LOW`.
+
 These are maxima over every spawn plus sampled road points, in four directions each (near and far
 cameras). A busy chase (AI driving, traffic, effects) on Dockside: ≤ 30 draw calls, ≤ 116k
 triangles, game JS p50 1.7 ms / p95 4–5 ms per frame (that includes three's render submission).

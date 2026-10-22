@@ -60,18 +60,19 @@ for (const k of [0, 2, 10, 11, 12, 13, 14, 15, 16, 17, 25, 26]) WALLFX[k] = 1;
 /** Write the wall-height fraction into fxA for the vertical triangles idx[i0..i1). Vertices already carrying one are kept. */
 export function markWalls(pos, fxA, idx, i0, i1) {
   for (let t = i0; t + 2 < i1; t += 3) {
-    const a = idx[t]; const b = idx[t + 1]; const c = idx[t + 2];
-    const ca = Math.floor(fxA[a] + 1e-3);
-    if (ca !== Math.floor(fxA[b] + 1e-3) || ca !== Math.floor(fxA[c] + 1e-3) || !WALLFX[ca]) continue;
+    const a = idx[t]; const ca = fxA[a] | 0; // (codes and code + fraction are never negative: | 0 is a floor)
+    if (!WALLFX[ca]) continue;
+    const b = idx[t + 1]; const c = idx[t + 2];
+    if (ca !== (fxA[b] | 0) || ca !== (fxA[c] | 0)) continue;
     const a3 = a * 3; const b3 = b * 3; const c3 = c * 3;
     const ux = pos[b3] - pos[a3]; const uy = pos[b3 + 1] - pos[a3 + 1]; const uz = pos[b3 + 2] - pos[a3 + 2];
     const vx = pos[c3] - pos[a3]; const vy = pos[c3 + 1] - pos[a3 + 1]; const vz = pos[c3 + 2] - pos[a3 + 2];
     const nx = uy * vz - uz * vy; const ny = uz * vx - ux * vz; const nz = ux * vy - uy * vx;
     const l = Math.sqrt(nx * nx + ny * ny + nz * nz); if (!(l > 1e-12) || Math.abs(ny) / l > 0.5) continue;
     const ya = pos[a3 + 1]; const yb = pos[b3 + 1]; const yc = pos[c3 + 1]; const m = Math.min(ya, yb, yc);
-    if (fxA[a] - ca < 0.005) fxA[a] = ca + 0.01 + Math.min((ya - m) / 16, 0.97);
-    if (fxA[b] - ca < 0.005) fxA[b] = ca + 0.01 + Math.min((yb - m) / 16, 0.97);
-    if (fxA[c] - ca < 0.005) fxA[c] = ca + 0.01 + Math.min((yc - m) / 16, 0.97);
+    if (fxA[a] - ca < 0.005) fxA[a] = ca + 0.01 + Math.min((ya - m) * 0.0625, 0.97);
+    if (fxA[b] - ca < 0.005) fxA[b] = ca + 0.01 + Math.min((yb - m) * 0.0625, 0.97);
+    if (fxA[c] - ca < 0.005) fxA[c] = ca + 0.01 + Math.min((yc - m) * 0.0625, 0.97);
   }
 }
 
