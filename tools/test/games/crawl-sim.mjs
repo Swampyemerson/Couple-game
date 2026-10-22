@@ -207,7 +207,7 @@ export function runCrawl(mods, map, start, opts = {}) {
     }
     if (res === 3 && stickMag > 0.3) { deadRun += ddt; if (deadRun > M.maxDead) M.maxDead = deadRun; if (deadRun > 0.25 && !deadCounted) { M.deadStops++; deadCounted = true; } if (opts.steer && deadRun > 0.5) { const a = (turns++ % 2 ? -1 : 1) * Math.PI / 2; const c = Math.cos(a); const sn = Math.sin(a); const nx2 = mx * c - my * sn; my = mx * sn + my * c; mx = nx2; M.steers++; deadRun = 0; } } else { deadRun = 0; deadCounted = false; }
     if ((res === 1 || res === 2) && maxXfer && ++xfers >= maxXfer && endAt === Infinity) endAt = t + 0.6;
-    if (res === 1 || res === 2 || res === 4) {
+    if (res === 1 || res === 2 || res === 4 || res === 5) {
       // a transfer's own jump is geometry (≤ one body radius); more than that is a teleport
       if (dContact > 2 * expected + 0.02) { M.contactJumps++; }
       if (dContact > M.maxContactJump) M.maxContactJump = dContact;
@@ -225,7 +225,7 @@ export function runCrawl(mods, map, start, opts = {}) {
     if (res === 0 && sd > 0.1) { if (!lastDir) lastDir = [0, 0, 0]; lastDir[0] = SURF[0] / sd; lastDir[1] = SURF[1] / sd; lastDir[2] = SURF[2] / sd; }
     // heading direction flips between frames (the velocity direction itself, in world space)
     if (lastDir && sd > 0.1 && res === 0 && (SURF[0] * lastDir[0] + SURF[1] * lastDir[1] + SURF[2] * lastDir[2]) / sd < 0.0) M.dirFlips++;
-    if (res === 4) { M.released++; if (!release) break; }
+    if (res === 4 || res === 5) { M.released++; if (!release) break; }
     // 2. drawn pose
     move.bodyQuat(b, simQ);
     if (vs) {

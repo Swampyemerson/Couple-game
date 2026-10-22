@@ -2792,6 +2792,7 @@ export function createGame(el, api) {
             const res = crawlSteps(world, b, dashing ? null : fsOf[w], vx, vy, vz, dt); // fixed pieces of ≤ 1/60 s: the same at 30, 60 and 120 Hz
             if (res === 1 || res === 2) { stage.av[w].squash(0.25); if (b.ny < -0.7 && w === v) { C.autoPitch = -0.12; C.autoUntil = tSec + 0.9; } }
             if (res === 4) { stage.av[w].squash(0.4); snd.play('land'); }
+            if (res === 5) { stage.av[w].squash(0.5); snd.play('unstick'); } // the far edge of a thin top's underside: let go and drop
             P.texelDirtyAt = tSec + 0.2;
           } else fsOf[w].lock = false; // stopped: the next push maps from the screen again
           b.speed = moving ? Math.hypot(vx, vy, vz) : 0;
@@ -3383,7 +3384,7 @@ export function createGame(el, api) {
   let camFrame = 0; // cameras() calls so far (a follow rig that skipped a frame restarts from rest)
   const GUARD_OUT = 4; // m/s: ... and lets it out again (no pop when the thing that pulled it in is passed)
   const GUARD_V = 4; // m/s: the fastest the camera guard pulls a camera in towards its pivot
-  const RIG_TURN = 1.8; // rad/s: the fastest the follow rig swings the camera round the body to a new solver pick (8 while the player turns the view)
+  const RIG_TURN = 1.2; // rad/s: the fastest the follow rig swings the camera round the body to a new solver pick (8 while the player turns the view)
   /**
    * The third-person follow rig (hider orbit, seeker climb view). `look` (the point the camera orbits / aims
    * at, from the drawn body) goes through a critically damped spring (smoothT ≈ the time to catch up: no lag

@@ -13,7 +13,7 @@ export function mkBody() {
     cnx: 0, cnz: 0, pushT: 0, zip: null, stillT: 0,
     // crawl bookkeeping: surface-session id (bumped on every attach / detach / reset), and the face just left
     // (normal vn, heading vf) that world.crawl won't re-enter for vt seconds unless the motion reverses
-    sid: 0, vnx: 0, vny: 0, vnz: 0, vfx: 0, vfy: 0, vfz: 0, vt: 0, wt: 0, wtr: 0,
+    sid: 0, vnx: 0, vny: 0, vnz: 0, vfx: 0, vfy: 0, vfz: 0, vt: 0, wt: 0, wtr: 0, wb: 0,
     // walking feel: the smoothed (accelerated) velocity, last grounded / jumped times, held jump
     svx: 0, svz: 0, wasMoving: false, groundT: -1e9, jumpT: -1e9, jumpHeld: false,
   };
@@ -146,6 +146,12 @@ export function crawlStep(world, b, vx, vy, vz, dt) {
   }
   const pnx = b.nx; const pny = b.ny; const pnz = b.nz;
   const res = world.crawl(b, vx, vy, vz, dt);
+  if (res === 3 && b.wb && b.ny < -0.7) {
+    // hanging under a thin top at its far edge with the push unchanged (it has already been over one edge and under: no third wrap):
+    // let go and drop to the floor rather than wait for a fresh push
+    detachBody(world, b, 0.15, 0);
+    return 5;
+  }
   if (res === 1 || res === 2) {
     // a new face: keep the heading continuous (already set by crawl), refresh legacy fields
     b.cnx = 0; b.cnz = 0;
@@ -188,7 +194,7 @@ export const LOCK = { breakDeg: 40, blendS: 0.2, minMag: 0.25, maxS: 1.2, agree:
 /**
  * Crawl a frame's worth: dt is cut into pieces of at most CRAWL_DT. With a frame state (fs) a transfer
  * (res 1 / 2) starts the input-frame lock and re-aims the rest of the frame along the new heading.
- * Returns 4 if the body was released onto a floor, else the last transfer code (1 / 2), else 0 (moved) or
+ * Returns 4 if the body was released onto a floor, 5 if it let go of an underside and drops, else the last transfer code (1 / 2), else 0 (moved) or
  * 3 (blocked on every piece).
  */
 export function crawlSteps(world, b, fs, vx, vy, vz, dt) {
@@ -197,7 +203,7 @@ export function crawlSteps(world, b, fs, vx, vy, vz, dt) {
   let xfer = 0; let moved = false;
   for (let i = 0; i < n; i++) {
     const r = crawlStep(world, b, vx, vy, vz, h);
-    if (r === 4) return 4;
+    if (r === 4 || r === 5) return r;
     if (r === 1 || r === 2) {
       xfer = r; moved = true;
       if (fs) {
@@ -385,7 +391,7 @@ export function spring3Step(sp, tx, ty, tz, smoothTime, dt) {
  */
 export const VIS = {
   h: 0.2, // pivot height above the feet, × body size
-  wPos: 17, // position error spring ω (half-life ≈ 0.1 s)
+  wPos: 14, // position error spring ω (half-life ≈ 0.12 s)
   wRot: 20, // orientation error spring ω (half-life ≈ 0.085 s)
   jumpPos: 0.06, // a sim centre move beyond this + 1.5 × speed·dt is a discontinuity
   jumpUp: 0.15, // the up vector turning more than this (rad) in one frame is one

@@ -103,13 +103,13 @@ async function nodeSections() {
 
   // ── plank ──
   if (want('plank')) {
-    console.log('\n# plank: a stick held on a thin top (the coffee table is 3.6 cm) goes over the edge and under it once, then waits');
+    console.log('\n# plank: a stick held on a thin top (the coffee table is 3.6 cm) goes over the edge and under it once, then lets go and drops to the floor');
     for (const th of [0.03, 0.036, 0.06, 0.1]) {
       const map = arena([colBox(-0.6, 0.6, 0.5 - th, 0.5, -0.3, 0.3, 'top')]);
       const tr = [];
       const m = sim.runCrawl(mods, map, { x: -0.3, y: 0.5, z: 0, nx: 0, ny: 1, nz: 0, box: null }, { stick: [0, 1], yaw: -Math.PI / 2, T: 10, trace: tr });
-      const faces = tr.filter((r) => typeof r[0] === 'number' && r[1] && r[1] !== 3).map((r) => `${r[5]},${r[6]},${r[7]}`);
-      assert(m.res1 + m.res2 === 2 && faces.join('>') === '1,0,0>0,-1,0', `${(th * 100).toFixed(1)} cm top: top → side → underside, then no more wraps while the push is unchanged (${faces.join(' > ')}; before: 28 transfers in 10 s, round and round)`);
+      const faces = tr.filter((r) => typeof r[0] === 'number' && (r[1] === 1 || r[1] === 2)).map((r) => `${r[5]},${r[6]},${r[7]}`);
+      assert(m.res1 + m.res2 === 2 && faces.join('>') === '1,0,0>0,-1,0' && m.released === 1, `${(th * 100).toFixed(1)} cm top: top → side → underside, then it lets go at the far edge and drops (${faces.join(' > ')}, released ${m.released}; before: 28 transfers in 10 s, round and round)`);
     }
     // a released / turned stick starts a fresh push: the next wrap is allowed again
     const world = W.createWorld(arena([colBox(-0.6, 0.6, 0.45, 0.5, -0.3, 0.3, 'top')]));

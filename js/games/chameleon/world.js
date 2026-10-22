@@ -383,7 +383,7 @@ export function createWorld(map) {
   }
   function crawl(body, mx, my, mz, dt) {
     if (body.vt > 0) body.vt -= dt;
-    blkN = false;
+    blkN = false; body.wb = 0;
     let res = crawl1(body, mx, my, mz, dt);
     if (res === 3 && blkN) {
       // slide: the wanted move without its component into the blocking face, kept tangent to the surface
@@ -452,7 +452,7 @@ export function createWorld(map) {
       H = raycast(body.x - nx * dp, body.y - ny * dp, body.z - nz * dp, -dx, -dy, -dz, dist + 0.3, climbable, false);
       if (!H) continue;
       // (see WRAP_MAX)
-      if (H.nx * dx + H.ny * dy + H.nz * dz > 0.25 && !(body.wt >= WRAP_MAX && body.wtr < WRAP_FAR) && !vetoed(body, H.nx, H.ny, H.nz, ox0, oy0, oz0) && okContact(H, clear, r)) {
+      if (H.nx * dx + H.ny * dy + H.nz * dz > 0.25 && !vetoed(body, H.nx, H.ny, H.nz, ox0, oy0, oz0) && okContact(H, clear, r) && (!(body.wt >= WRAP_MAX && body.wtr < WRAP_FAR) || (body.wb = 1, false))) {
         leave(body, nx, ny, nz, ox0, oy0, oz0);
         body.wt = (body.wtr >= WRAP_FAR ? 0 : body.wt) + 1; body.wtr = 0;
         setContact(body, H.x, H.y, H.z, H.nx, H.ny, H.nz, H.box);
