@@ -307,8 +307,11 @@ background limit after `board.test.js`):
 | computer.test.js (cycles, defuse) | first full run: one cycles timing check failed (a turn on the phone-on-its-side registered a moment late). Rerun: PASS, 229 ok |
 | threed.test.js (another unit's game, run because games.css is shared) | PASS |
 
-`threed-bones`, `threed-tower`, `chameleon` and `getaway` were still running at push time. They belong to other units, and their games
-only see this unit's `games.css` additions (grain on the room background and panels). The coordinator's regression run covers them.
+| threed-bones.test.js, threed-tower.test.js (other units, shared games.css) | PASS |
+
+`chameleon` and `getaway` didn't complete here: the run hit its 2-hour background limit during chameleon. They belong to other units,
+and their games only see this unit's `games.css` additions (grain on the room background and panels). The coordinator's regression run
+covers them.
 
 Every flat game test file has a passing run on the final code. The failures above were one-off timing failures under heavy load.
 Each passed when rerun, and none touches rules or saved data.
