@@ -182,7 +182,7 @@ export function createGame(el, api) {
     // the third-person look target eases for 0.4 s after a stick / let-go (no 0.3 m dip at the attach)
     lkX: 0, lkY: 0, lkZ: 0, lkAt: false, lkUntil: 0,
     // the follow rig (cameras(): hider orbit + seeker climb view): pivot spring, the solver's eased offset, the auto-pitch spring
-    lookAt: -10, gd: 0, gdAt: -10, pv: mkSpring3(), pvKey: '', pvAt: -10, co: [0, 0, 0], pitchV: 0,
+    coV: 0, vsDur: 0.35, lookAt: -10, gd: 0, gdAt: -10, pv: mkSpring3(), pvKey: '', pvAt: -10, co: [0, 0, 0], pitchV: 0,
     // final QA: the body a close camera looks past fades (cameras()); the FOUND framing's swing off the seeker's line
     fade: { a: 1, b: 1 }, fadeW: null, fadeFrame: false, fadeFire: false, fadeTx: 0, fadeTy: 0, fadeTz: 0, fSide: 0,
     // the "You" sticker keeps clear of the role pill (hereMarker)
@@ -1875,7 +1875,7 @@ export function createGame(el, api) {
     }
     C.spect = m; U.spect = m; posesOpen = false; C.hereChk = tSec + 0.05; // (the role pill's new text: re-measured next frame but one)
     // whip the camera to the new view instead of cutting (cameras() eases the offset out)
-    C.vsAt = tSec; C.vsPend = true;
+    C.vsAt = tSec; C.vsPend = true; C.vsDur = VIEW_WHIP_S;
     if (silent) return;
     snd.play('whoosh');
     const mouse = controls && controls.st.usingMouse;
@@ -1925,7 +1925,11 @@ export function createGame(el, api) {
   function attachTo(w, x, y, z, nx, ny, nz, box, hx, hy, hz) {
     const b = body[w];
     const wasPose = b.pose;
+    // a seeker's first-person view keeps looking where it looked (attachBody turns the body's legacy yaw to face out of a wall,
+    // which flipped the view 180° in one frame; the climb view is seeded from this yaw)
+    const keepYaw = !C.climbV && w === viewer() && roleOf(w) === 'seeker' ? b.yaw : null;
     attachBody(stage.world, b, x, y, z, nx, ny, nz, box, hx, hy, hz);
+    if (keepYaw != null) b.yaw = keepYaw;
     b.lockY = !rules().climb;
     if (wasPose !== 'wall' && wasPose !== 'stand') { b.pose = 'stand'; stage.av[w].setPose('stand'); }
     popFx(w, b, theme.hl);
@@ -2716,6 +2720,7 @@ export function createGame(el, api) {
         controls.move(mv);
         mvMag = Math.min(1, Math.hypot(mv[0], mv[1]));
         if (climbV) {
+          if (lk[0] || lk[1]) C.lookAt = tSec;
           C.vYaw = wrapAngle(C.vYaw - lk[0] * sens); b.lookPitch = clamp(b.lookPitch - lk[1] * sens, -1.45, 1.45);
         } else if (fp) {
           // free look: the seeker can look almost straight up and down (ceiling hiders!)
@@ -2855,7 +2860,7 @@ export function createGame(el, api) {
     C.climbV = on;
     // first person ↔ the over-the-shoulder climb view: whip the camera across (the same eased glide as the eyes / watch switch)
     // instead of cutting from the eye to a spot ~2 m behind the body
-    C.vsAt = tSec; C.vsPend = true;
+    C.vsAt = tSec; C.vsPend = true; C.vsDur = 0.6; // (a longer glide than the eyes / watch switch: the camera crosses ~2 m)
   }
   /** History for tag confirmation (the victim checks the shooter's view against its true path). */
   function recordHist(w, b, t) {
@@ -3319,7 +3324,7 @@ export function createGame(el, api) {
       const nx = lookWant.x - camWant.x; const ny = lookWant.y - camWant.y; const nz = lookWant.z - camWant.z;
       C.vsLz = Math.abs(wrapAngle(Math.atan2(nx, nz) - C.vsLx)) + Math.abs(Math.atan2(ny, Math.hypot(nx, nz)) - C.vsLy); // how far the aim turns
     }
-    const vu = C.override ? 1 : (tSec - C.vsAt) / VIEW_WHIP_S;
+    const vu = C.override ? 1 : (tSec - C.vsAt) / C.vsDur;
     if (vu < 1 && (C.vsStep > 0.02 || C.vsLz > 0.05) && C.vsStep < 12) {
       const e = 1 - vu * vu * (3 - 2 * vu);
       camPos.set(camWant.x + C.vsOx * e, camWant.y + C.vsOy * e, camWant.z + C.vsOz * e);
@@ -3371,7 +3376,7 @@ export function createGame(el, api) {
   const tvS = [0, 0];
   let camFrame = 0; // cameras() calls so far (a follow rig that skipped a frame restarts from rest)
   const GUARD_V = 9; // m/s: the fastest the camera guard pulls a camera in towards its pivot
-  const RIG_TURN = 5; // rad/s: the fastest the follow rig swings the camera round the body to a new solver pick
+  const RIG_TURN = 2.6; // rad/s: the fastest the follow rig swings the camera round the body to a new solver pick (8 while the player turns the view)
   /**
    * The third-person follow rig (hider orbit, seeker climb view). `look` (the point the camera orbits / aims
    * at, from the drawn body) goes through a critically damped spring (smoothT ≈ the time to catch up: no lag
@@ -3385,31 +3390,33 @@ export function createGame(el, api) {
     const ox = want.x - piv.x; const oy = want.y - piv.y; const oz = want.z - piv.z;
     const rest = C.pvKey !== key || camFrame - C.pvAt > 1 || !C.pv.init || Math.hypot(look.x - C.pv.x, look.y - C.pv.y, look.z - C.pv.z) > 2.5;
     C.pvKey = key; C.pvAt = camFrame;
-    if (rest) { spring3Snap(C.pv, look.x, look.y, look.z); C.co[0] = ox; C.co[1] = oy; C.co[2] = oz; }
+    if (rest) { spring3Snap(C.pv, look.x, look.y, look.z); C.co[0] = ox; C.co[1] = oy; C.co[2] = oz; C.coV = 0; }
     else {
       spring3Step(C.pv, look.x, look.y, look.z, smoothT, dt);
       // the solver's offset eases by direction (10/s: a swing to another candidate is a quick glide, never a cut) and
-      // by length (pulled in at 14/s: the camera guard has already put it clear of the wall; out at 10/s)
+      // by length (a spring: the camera guard has already put the real camera clear of a wall)
       const lw = Math.hypot(ox, oy, oz) || 1e-6; const lc = Math.hypot(C.co[0], C.co[1], C.co[2]) || 1e-6;
-      const kd = 1 - Math.exp(-10 * dt); const kl = 1 - Math.exp(-(lw < lc ? 14 : 10) * dt);
+      const kd = 1 - Math.exp(-10 * dt);
       // direction: turn the current unit vector toward the wanted one by a fraction of the angle between them, about their
       // common axis (about the vertical when they're opposite: the camera swings round the body, never through it), at most
-      // RIG_TURN rad/s
+      // RIG_TURN rad/s (more while the player is dragging the view)
       let ax = C.co[0] / lc; let ay = C.co[1] / lc; let az = C.co[2] / lc; const bx = ox / lw; const by = oy / lw; const bz = oz / lw;
       let cx = ay * bz - az * by; let cy = az * bx - ax * bz; let cz = ax * by - ay * bx;
       const sn = Math.hypot(cx, cy, cz); const cs = ax * bx + ay * by + az * bz;
       const ang = Math.atan2(sn, cs);
       if (ang > 1e-4) {
         if (sn < 1e-3) { cx = Math.abs(ay) > 0.9 ? 1 : 0; cy = Math.abs(ay) > 0.9 ? 0 : 1; cz = 0; } else { cx /= sn; cy /= sn; cz /= sn; }
-        const st = Math.min(ang * kd, RIG_TURN * dt); const c1 = Math.cos(st); const s1 = Math.sin(st);
+        const st = Math.min(ang * kd, (tSec - C.lookAt < 0.35 ? 8 : RIG_TURN) * dt); const c1 = Math.cos(st); const s1 = Math.sin(st);
         // Rodrigues: a·cos + (k × a)·sin + k (k·a)(1 − cos)
         const kxa = cy * az - cz * ay; const kya = cz * ax - cx * az; const kza = cx * ay - cy * ax; const kd2 = (cx * ax + cy * ay + cz * az) * (1 - c1);
         const nx2 = ax * c1 + kxa * s1 + cx * kd2; const ny2 = ay * c1 + kya * s1 + cy * kd2; const nz2 = az * c1 + kza * s1 + cz * kd2;
         const nl = Math.hypot(nx2, ny2, nz2) || 1; ax = nx2 / nl; ay = ny2 / nl; az = nz2 / nl;
       }
-      const l2 = lc + (lw - lc) * kl;
+      // length: a critically damped spring (no kick at the start, no overshoot): in over ~0.18 s, out over ~0.25 s
+      spring1(lc, C.coV, lw, lw < lc ? 0.18 : 0.25, dt, tvS); const l2 = tvS[0]; C.coV = tvS[1];
       C.co[0] = ax * l2; C.co[1] = ay * l2; C.co[2] = az * l2;
     }
+    if (typeof window !== 'undefined' && window.__rigdbg) window.__rigdbg.push([performance.now(), ox, oy, oz, C.co[0], C.co[1], C.co[2], C.pv.x - look.x, C.pv.y - look.y, C.pv.z - look.z, piv.x, piv.y, piv.z, CS.pick, CS.d, rest ? 1 : 0]);
     want.set(piv.x + (C.pv.x - look.x) + C.co[0], piv.y + (C.pv.y - look.y) + C.co[1], piv.z + (C.pv.z - look.z) + C.co[2]);
     look.set(C.pv.x, C.pv.y, C.pv.z);
   }
