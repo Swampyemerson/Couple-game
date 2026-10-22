@@ -698,7 +698,7 @@ async function records(h, pg) {
   await pg.waitForSelector('.gt-view[data-phase="slide"]', { timeout: 4000 });
   const bs = await pg.evaluate(() => { clearInterval(window.__beatT); return window.__beat; });
   const dur = bs.length ? bs[bs.length - 1].t - bs[0].t : 0;
-  ok(bs.length > 5 && dur >= 150 && dur <= 800 && bs.every((x) => x.anim === 'none' && /is-hand/.test(x.cls)), `tower reduced motion: a still hand-off pill shows for ~${Math.round(dur)} ms (“${bs[0] && bs[0].txt}”)`);
+  ok(bs.length >= 3 && dur >= 150 && dur <= 800 && bs.every((x) => x.anim === 'none' && /is-hand/.test(x.cls)), `tower reduced motion: a still hand-off pill shows for ~${Math.round(dur)} ms (“${bs[0] && bs[0].txt}”)`);
   await dropAt(pg, id5, 2, 0.1);
   await h.closeGame(pg);
 

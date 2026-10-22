@@ -244,14 +244,16 @@ function syncRibbons(e) {
 
 // ── three.js renderer: two merged box batches (settled tower + moving pieces) ──
 // Each batch is 3 draw calls: vertex-coloured Lambert faces, an inverted-hull ink outline,
-// and ink crease lines. Buffers are preallocated and rewritten in place. On top: a printed
-// paper backdrop (one full-screen quad, one 256² grain texture) and the pedestal's shadow and
-// the perfect ring: 9 draw calls. Side faces are printed as a halftone (a gl_FragCoord dot
-// screen in the fragment shader); top faces stay flat ink.
+// and ink crease lines. Buffers are preallocated and rewritten in place. On top: the pedestal's
+// shadow and the perfect ring: 8 draw calls. The canvas is transparent: the printed paper (grain,
+// halftone, the ground band) is a pair of 256² tiles painted behind it by the DOM compositor, which
+// costs nothing per frame (a full-screen shader pass cost ~20 ms a frame on a software rasteriser).
+// Side faces are printed as a halftone (a gl_FragCoord dot screen in the fragment shader); top faces stay flat ink.
 const AO_BOTTOM = 0.85;    // vertex "ambient occlusion": the foot of a side face is a little darker (contact between levels)
 const HALFTONE_PX = 3;     // halftone cell on side faces (css px)
 const MISREG = 0.42;       // the ink outline is printed this far off register (as a share of its width), toward the bottom right
-const PAPER_N = 256;       // the paper grain texture (power of two, no mipmaps)
+const PAPER_N = 256;       // the paper tiles (power of two)
+const PAPER_BYTES = 2 * PAPER_N * PAPER_N * 4; // paper + ground tile, decoded
 const CULL_M = 1.9;        // world units: a block this far below the screen bottom is not drawn
 
 function makeUnit(THREE) {
@@ -353,12 +355,13 @@ function writeBox(B, U, i, e, rgb, out) {
   }
 }
 
-/** A tileable 256² paper grain, made once: R = fine fibre-and-speckle grain, G = a few pale fibres. */
-function makePaper(THREE) {
+/** The paper kit, made once: a tileable 256² grain (R: fibre-and-speckle, G: a few pale fibres) and a 45° dot screen
+ *  (16-texel period; B: small dots for the paper, A: big dots for the ground). One texel is half a css pixel. */
+function makePaperKit() {
   const n = PAPER_N;
   const a = new Float32Array(n * n);
   let s = 0x9e3779b1;
-  const rnd = () => { s = (Math.imul(s ^ (s >>> 15), 2246822519) + 374761393) >>> 0; s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
+  const rnd = () => { s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
   for (let i = 0; i < a.length; i++) a[i] = rnd();
   const b = new Float32Array(n * n); // a soft blotch layer (wrapped box blur)
   for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
@@ -368,22 +371,55 @@ function makePaper(THREE) {
   }
   const g = new Uint8Array(n * n);
   for (let k = 0; k < 420; k++) { // fibres: short strokes, wrapped
-    const ang = rnd() * Math.PI; const len = 5 + rnd() * 11; const x0 = rnd() * n; const y0 = rnd() * n;
+    const ang = rnd() * Math.PI; const len = 8 + rnd() * 20; const x0 = rnd() * n; const y0 = rnd() * n;
     const dx = Math.cos(ang); const dy = Math.sin(ang);
     for (let t = 0; t < len; t++) g[(((y0 + dy * t) | 0) & (n - 1)) * n + (((x0 + dx * t) | 0) & (n - 1))] = 255;
   }
-  const d = new Uint8Array(n * n * 4);
-  for (let i = 0; i < n * n; i++) {
-    const v = 0.5 + (a[i] - 0.5) * 0.55 + (b[i] - 0.5) * 2.6;
-    d[i * 4] = Math.max(0, Math.min(255, Math.round(v * 255)));
-    d[i * 4 + 1] = g[i]; d[i * 4 + 2] = 128; d[i * 4 + 3] = 255;
+  const P = 16; const half = P / 2; const r1 = Math.sqrt(0.15 * P * half / Math.PI); const r2 = Math.sqrt(0.3 * P * half / Math.PI);
+  const dotAt = (x, y, r) => { // distance to the nearest lattice dot → 0..1 coverage with a soft edge
+    const j0 = Math.round(y / half);
+    let best = 1e9;
+    for (let j = j0 - 1; j <= j0 + 1; j++) {
+      const cy = j * half; const off = (((j % 2) + 2) % 2) * half;
+      const i0 = Math.round((x - off) / P);
+      for (let i = i0 - 1; i <= i0 + 1; i++) { const dx = x - (i * P + off); const dy = y - cy; const d = dx * dx + dy * dy; if (d < best) best = d; }
+    }
+    return Math.max(0, Math.min(1, 0.5 + (r - Math.sqrt(best)) / 1.4));
+  };
+  const grain = new Float32Array(n * n); const fib = new Float32Array(n * n); const d1 = new Float32Array(n * n); const d2 = new Float32Array(n * n);
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const i = y * n + x;
+    grain[i] = (0.5 + (a[i] - 0.5) * 0.55 + (b[i] - 0.5) * 2.6) - 0.5;
+    fib[i] = g[i] / 255;
+    d1[i] = dotAt(x, y, r1); d2[i] = dotAt(x, y, r2);
   }
-  const tex = new THREE.DataTexture(d, n, n, THREE.RGBAFormat);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.magFilter = tex.minFilter = THREE.LinearFilter;
-  tex.generateMipmaps = false;
-  tex.needsUpdate = true;
-  return tex;
+  return { n, grain, fib, d1, d2 };
+}
+/** Paint the two tiles (paper, ground) in the palette's colours; returns data URLs. */
+function paintPaper(kit, pal, out) {
+  const n = kit.n;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = n;
+  const cx = cv.getContext('2d');
+  const img = cx.createImageData(n, n);
+  const ground = mix(pal.bg, pal.a, pal.dark ? 0.2 : 0.15);
+  const ground2 = mix(ground, pal.dark ? [0, 0, 0] : pal.a, pal.dark ? 0.3 : 0.2);
+  const tile = (base, dotCol, dotChan, dotAmt) => {
+    for (let i = 0; i < n * n; i++) {
+      const dA = dotChan === 1 ? kit.d1[i] * dotAmt : kit.d2[i] * dotAmt;
+      const f = kit.fib[i] * 0.035; const gr = kit.grain[i] * 0.04;
+      for (let k = 0; k < 3; k++) {
+        let v = base[k] * (1 - dA) + dotCol[k] * dA;
+        v += gr; v = v * (1 - f) + pal.ink[k] * f;
+        img.data[i * 4 + k] = Math.max(0, Math.min(255, Math.round(v * 255)));
+      }
+      img.data[i * 4 + 3] = 255;
+    }
+    cx.putImageData(img, 0, 0);
+    return cv.toDataURL('image/png');
+  };
+  out.paper = tile(pal.bg, pal.ink, 1, 0.04);
+  out.ground = tile(ground, ground2, 2, 1);
 }
 
 const DOT_GLSL = `
@@ -424,29 +460,10 @@ function patchFace(mat, uni, ped) {
   mat.customProgramCacheKey = () => 'tower-face-v2';
 }
 
-const BACK_VERT = 'void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }';
-const BACK_FRAG = `
-uniform sampler2D tPaper;
-uniform vec3 uPaper; uniform vec3 uInk; uniform vec3 uGround; uniform vec3 uGround2;
-uniform float uRatio; uniform float uHorizon;
-${DOT_GLSL}
-void main() {
-  vec2 fc = gl_FragCoord.xy;
-  vec4 t = texture2D(tPaper, fc / (256.0 * uRatio));
-  float below = 1.0 - step(uHorizon, fc.y);
-  vec3 col = mix(uPaper, uGround, below);
-  col = mix(col, uInk, dotMask(fc, 7.0 * uRatio, 0.15) * 0.035 * (1.0 - below));
-  col = mix(col, uGround2, dotMask(fc, 5.0 * uRatio, 0.24) * below);
-  col += (t.r - 0.5) * 0.04;
-  col = mix(col, uInk, t.g * 0.035);
-  col = mix(col, uInk, (1.0 - smoothstep(0.4 * uRatio, 1.5 * uRatio, abs(fc.y - uHorizon))) * 0.32);
-  gl_FragColor = vec4(col, 1.0);
-}`;
-
 function view3D(THREE, canvas, pal0) {
   let pal = pal0;
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: 'high-performance' });
-  let ratio = Math.min(2, window.devicePixelRatio || 1);
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: true, powerPreference: 'high-performance' });
+  let ratio = window.__r0 || Math.min(2, window.devicePixelRatio || 1);
   let W = 1; let Hh = 1;
   renderer.setPixelRatio(ratio);
   const scene = new THREE.Scene();
@@ -477,18 +494,10 @@ function view3D(THREE, canvas, pal0) {
   const shadow = new THREE.Mesh(planeGeo, shadowMat);
   shadow.scale.set(BASE + 0.1, 1, BASE + 0.1);
   shadow.position.set(0.42, -PED + 0.002, 0.42);
-  // the printed paper: one full-screen quad, drawn first, never writing depth
-  const paper = makePaper(THREE);
-  const back = { tPaper: { value: paper }, uPaper: { value: new THREE.Color() }, uInk: { value: new THREE.Color() }, uGround: { value: new THREE.Color() }, uGround2: { value: new THREE.Color() }, uRatio: { value: ratio }, uHorizon: { value: -1000 } };
-  const backMat = new THREE.ShaderMaterial({ uniforms: back, vertexShader: BACK_VERT, fragmentShader: BACK_FRAG, depthTest: false, depthWrite: false });
-  const backGeo = new THREE.PlaneGeometry(2, 2);
-  const backdrop = new THREE.Mesh(backGeo, backMat);
-  backdrop.frustumCulled = false;
-  backdrop.renderOrder = -10;
   const stat = makeBatch(THREE, U, { face: faceStat, hull: mats.hull, line: mats.line });
   const dyn = makeBatch(THREE, U, { face: faceDyn, hull: mats.hull, line: mats.line });
   stat.ensure(32); dyn.ensure(16);
-  scene.add(backdrop, shadow, stat.hull, stat.faces, stat.lines, dyn.hull, dyn.faces, dyn.lines, ring);
+  scene.add(shadow, stat.hull, stat.faces, stat.lines, dyn.hull, dyn.faces, dyn.lines, ring);
   let statOut = 0;
   let statN = -1;
   let statBlocksEnd = 0;
@@ -504,18 +513,13 @@ function view3D(THREE, canvas, pal0) {
   function setPalette(p) {
     pal = p;
     const c = (rgb) => new THREE.Color(rgb[0], rgb[1], rgb[2]);
-    renderer.setClearColor(c(p.bg), 1);
+    renderer.setClearColor(c(p.bg), 0); // transparent: the paper is behind the canvas
     mats.hull.color.copy(c(p.ink));
     mats.line.color.copy(c(p.ink));
     ringMat.color.copy(c(p.hl));
     shadowMat.color.copy(c(p.shadow));
     uni.uSA.value.copy(c(p.a));
     uni.uSB.value.copy(c(p.b));
-    back.uPaper.value.copy(c(p.bg));
-    back.uInk.value.copy(c(p.ink));
-    const ground = mix(p.bg, p.a, p.dark ? 0.2 : 0.15);
-    back.uGround.value.copy(c(ground));
-    back.uGround2.value.copy(c(mix(ground, p.dark ? [0, 0, 0] : p.a, p.dark ? 0.3 : 0.2)));
     statN = -1;
   }
   setPalette(pal);
@@ -523,10 +527,10 @@ function view3D(THREE, canvas, pal0) {
   const api = {
     kind: '3d',
     tris: 0,
-    texBytes: PAPER_N * PAPER_N * 4,
+    texBytes: 0,
     resize(w, h) { W = Math.max(1, w); Hh = Math.max(1, h); renderer.setSize(W, Hh, false); },
     get ratio() { return ratio; },
-    setRatio(r) { ratio = r; uni.uCell.value = HALFTONE_PX * r; back.uRatio.value = r; renderer.setPixelRatio(r); renderer.setSize(W, Hh, false); },
+    setRatio(r) { ratio = r; uni.uCell.value = HALFTONE_PX * r; renderer.setPixelRatio(r); renderer.setSize(W, Hh, false); },
     setPalette,
     setBase(w) { shadow.scale.set(w + 0.1, 1, w + 0.1); },
     compile() { // warm the shaders up before the first animation
@@ -551,8 +555,6 @@ function view3D(THREE, canvas, pal0) {
       // misregistration: the key plate is printed a hair to the bottom right (screen right = +x−z, screen up = −x−z and +y)
       const mo = out * MISREG;
       MOFF[0] = mo * (Math.SQRT1_2 + SINP * Math.SQRT1_2); MOFF[1] = -mo * COSP; MOFF[2] = mo * (SINP * Math.SQRT1_2 - Math.SQRT1_2);
-      // the paper's ground band: its horizon is the pedestal's back foot corner
-      back.uHorizon.value = (Hh / 2 + ((BASE * Math.SQRT1_2 * SINP - PED * COSP) - ty * COSP) * (Hh / vh)) * ratio;
       const blocks = m.blocks; const deco = m.deco || NONE; const extras = m.extras || NONE; const flecks = m.flecks || NONE;
       emitOut = out;
       if (m.staticDirty || statN < 0 || Math.abs(out - statOut) > statOut * 0.08 || lineOn !== statLine) {
@@ -605,8 +607,8 @@ function view3D(THREE, canvas, pal0) {
     },
     dispose() {
       try { renderer.forceContextLoss(); } catch { /* ignore */ }
-      stat.dispose(); dyn.dispose(); ringGeo.dispose(); planeGeo.dispose(); backGeo.dispose(); paper.dispose();
-      faceStat.dispose(); faceDyn.dispose(); mats.hull.dispose(); mats.line.dispose(); ringMat.dispose(); shadowMat.dispose(); backMat.dispose();
+      stat.dispose(); dyn.dispose(); ringGeo.dispose(); planeGeo.dispose();
+      faceStat.dispose(); faceDyn.dispose(); mats.hull.dispose(); mats.line.dispose(); ringMat.dispose(); shadowMat.dispose();
       renderer.dispose();
     },
   };
@@ -777,6 +779,10 @@ registerGame({
     .gm.is-immersive .g-tower { padding: 0; }
     .gm.is-immersive .g-tower .gt-view { border: 0; border-radius: 0; box-shadow: none; max-height: none; }
     .g-tower .gt-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+    /* the printed paper sits behind the (transparent) canvas: two 256² tiles painted from the palette, one texel = half a css px */
+    .g-tower .gt-paper, .g-tower .gt-ground { position: absolute; left: 0; right: 0; top: 0; height: 100%; background-size: 128px 128px; pointer-events: none; }
+    .g-tower .gt-ground { transform: translateY(-9999px); will-change: transform; }
+    .g-tower .gt-ground::before { content: ''; position: absolute; left: 0; right: 0; top: -1px; height: 2px; background: var(--g-ink); opacity: 0.32; }
     .g-tower .gt-hud { position: absolute; top: 10px; left: 56px; right: 56px; display: flex; flex-direction: column; align-items: center; gap: 5px; pointer-events: none; color: var(--g-ink); }
     .g-tower .gt-height { display: flex; align-items: baseline; gap: 6px; font-family: var(--g-font-display); }
     .g-tower .gt-height b { font-size: 2.7rem; font-weight: 900; line-height: 1; font-variant-numeric: tabular-nums; text-shadow: 2px 2px 0 var(--g-hl); }
@@ -904,6 +910,8 @@ registerGame({
     threeP.catch(noop);
     el.innerHTML = `<div class="g-tower">
       <div class="gt-view" data-phase="load" data-gl="" data-armed="0" data-mode="classic" tabindex="0" role="application" aria-label="Tower Together. Tap or press Space to drop the block on your turn.">
+        <div class="gt-paper" aria-hidden="true"></div>
+        <div class="gt-ground" aria-hidden="true"></div>
         <canvas class="gt-canvas" aria-hidden="true"></canvas>
         <div class="gt-hud" aria-hidden="true">
           <div class="gt-height"><b>0</b><span>high</span></div>
@@ -940,6 +948,8 @@ registerGame({
     const $ = (s) => el.querySelector(s);
     const wrap = $('.gt-view');
     const canvas = $('.gt-canvas');
+    const paperEl = $('.gt-paper');
+    const groundEl = $('.gt-ground');
     const hudEl = $('.gt-hud');
     const turnEl = $('.gt-turn');
     const beatEl = $('.gt-beat');
@@ -977,8 +987,11 @@ registerGame({
     let glLost = false;
     let cssW = 1;
     let cssH = 1;
+    let paperKit = null;
     let slowN = 0;          // dynamic resolution: frames that missed the vsync in this window
     let winN = 0;
+    let wmin = 1e9;
+    let refDt = 16.7;
     let acc = 0;            // fixed-step accumulator (s)
     let alpha = 0;          // how far into the next step the drawn frame is
     let hitstop = 0;        // s of frozen time left
@@ -1078,23 +1091,27 @@ registerGame({
         const moved = c.y !== lastCam[0] || c.zoom !== lastCam[1] || c.ox !== lastCam[2] || c.sx !== lastCam[3];
         if (moved) cullDeco(); // DOM and projections only when the camera actually moved
         calls = view.render(model);
-        if (moved) { placeGhost(); lastCam[0] = c.y; lastCam[1] = c.zoom; lastCam[2] = c.ox; lastCam[3] = c.sx; }
+        if (moved) { placeGhost(); placeGround(); lastCam[0] = c.y; lastCam[1] = c.zoom; lastCam[2] = c.ox; lastCam[3] = c.sx; }
         tunePerf(raw);
       }
       const t = T();
-      if (t) { t.frames = (t.frames || 0) + 1; t.calls = calls; t.tris = view ? view.tris : 0; t.texBytes = view ? view.texBytes : 0; t.ratio = view && view.ratio; t.drawn = slider ? slider.p : null; t.cam = c; }
-      if (anims.length || slider || model.pieces.length || model.flecks.length || sqList.length || model.ring || camBusy || hitstop > 0) raf = requestAnimationFrame(frame);
+      if (t) { t.frames = (t.frames || 0) + 1; t.calls = calls; t.tris = view ? view.tris : 0; t.texBytes = (view ? view.texBytes : 0) + PAPER_BYTES; t.ratio = view && view.ratio; t.drawn = slider ? slider.p : null; t.cam = c; }
+      if (anims.length || slider || model.pieces.length || model.flecks.length || sqList.length || model.ring || camBusy || hitstop > 0) { if (!raf) raf = requestAnimationFrame(frame); } // (a kick() during this frame has already asked)
       else lastT = 0;
     }
     function kick() { if (!raf && !dead && !paused && !glLost && view) raf = requestAnimationFrame(frame); }
-    // Dynamic resolution: when a good share of a window of frames misses the vsync, take the pixel ratio down a notch.
+    // Dynamic resolution: when a fifth of a window of frames misses the display's cadence, take the pixel ratio down a
+    // notch (it is the canvas hand-over to the compositor, not the scene, that costs on a slow device). The cadence is the
+    // fastest frame seen (a 60 or 120 Hz display), so a long frame is "slow" relative to what this screen can do.
     function tunePerf(rawMs) {
       if (!lastT || rawMs > 250) return; // a wake-up or a hidden tab is not load
       winN++;
-      if (rawMs > 20.5) slowN++;
-      if (winN < 40) return;
-      if (slowN > winN * 0.3 && view.ratio > 1) view.setRatio(Math.max(1, Math.round(view.ratio * 0.8 * 20) / 20));
-      winN = slowN = 0;
+      if (rawMs < wmin) wmin = rawMs;
+      if (rawMs > refDt * 1.45) slowN++;
+      if (winN < 24) return;
+      if (!window.__r0 && slowN >= winN * 0.2 && view.ratio > 1) view.setRatio(Math.max(1, Math.round(view.ratio * 0.7 * 20) / 20));
+      if (wmin > 4) refDt = Math.min(17.5, Math.max(4, wmin));
+      winN = slowN = 0; wmin = 1e9;
     }
     function tween(ms, step, ease = easeIO) {
       return new Promise((res) => {
@@ -1108,6 +1125,23 @@ registerGame({
     const hold = (e) => { e.holds = (e.holds || 0) + 1; e.live = true; };
     const release = (e) => { e.holds = Math.max(0, (e.holds || 0) - 1); if (!e.holds) { e.live = false; model.staticDirty = true; } };
     const touchCam = () => { lastCam[0] = NaN; };
+    // ── the printed paper behind the canvas ──
+    const paperUrls = { paper: '', ground: '' };
+    let groundY = NaN;
+    function paintPaperNow() {
+      try {
+        if (!paperKit) paperKit = makePaperKit();
+        paintPaper(paperKit, pal, paperUrls);
+        paperEl.style.backgroundImage = `url("${paperUrls.paper}")`;
+        groundEl.style.backgroundImage = `url("${paperUrls.ground}")`;
+      } catch (err) { console.warn('[tower] paper', err); }
+    }
+    /** The ground band starts at the pedestal's back foot corner and follows the camera. */
+    function placeGround() {
+      const c = model.cam;
+      const y = Math.round(cssH / 2 - ((BASE * Math.SQRT1_2 * SINP - PED * COSP) - c.y * COSP) * (cssH / c.viewH));
+      if (y !== groundY) { groundY = y; groundEl.style.transform = `translateY(${y}px)`; }
+    }
 
     function placeAt(e, prev, axis, o) {
       e.x = prev.x + (axis === 'x' ? o : 0);
@@ -1961,7 +1995,7 @@ registerGame({
       ghostW = 0;
       touchCam();
       if (runInfo && !panelEl.hidden) refit();
-      if (view) { view.resize(cssW, cssH); model.staticDirty = true; model.cam.viewH = baseViewH() * model.cam.zoom; cullDeco(); view.render(model); placeGhost(); }
+      if (view) { view.resize(cssW, cssH); model.staticDirty = true; model.cam.viewH = baseViewH() * model.cam.zoom; cullDeco(); view.render(model); placeGhost(); placeGround(); }
     });
     ro.observe(wrap);
     const rect = wrap.getBoundingClientRect();
@@ -1969,7 +2003,7 @@ registerGame({
 
     function onTheme() {
       pal = readPalette(api);
-      if (view) { view.setPalette(pal); model.staticDirty = true; if (!raf && !paused && !glLost) view.render(model); }
+      if (view) { paintPaperNow(); view.setPalette(pal); model.staticDirty = true; if (!raf && !paused && !glLost) view.render(model); }
     }
     const mq = matchMedia('(prefers-color-scheme: dark)');
     mq.addEventListener('change', onTheme);
@@ -2009,6 +2043,7 @@ registerGame({
 
     function useView(v, note) {
       view = v;
+      paintPaperNow();
       view.resize(cssW, cssH);
       view.setBase(spec().base);
       if (note) { const n = $('.gt-note'); n.textContent = note; n.hidden = false; }

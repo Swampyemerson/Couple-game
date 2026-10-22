@@ -653,7 +653,7 @@ function dieView3D(THREE, canvas, pal0, onImpact) {
   const matTex = new THREE.CanvasTexture(matCv);
   matTex.wrapS = matTex.wrapT = THREE.RepeatWrapping;
   matTex.repeat.set(24 / MAT_TILE, 12 / MAT_TILE);
-  matTex.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy ? renderer.capabilities.getMaxAnisotropy() : 1);
+  matTex.anisotropy = 1; // (the mat is a gentle 55° view: no need for anisotropic filtering, which is costly on weak GPUs)
   const grad = new THREE.DataTexture(new Uint8Array(GRAD), GRAD.length, 1, THREE.LuminanceFormat);
   grad.minFilter = grad.magFilter = THREE.NearestFilter;
   grad.generateMipmaps = false;
@@ -846,6 +846,7 @@ function dieView3D(THREE, canvas, pal0, onImpact) {
     },
     get ratio() { return ratio; },
     get texBytes() { return texBytes; },
+    get mode() { return st.mode; },
     get info() { return renderer.info.render; },
     /** The value on top, read from the orientation the renderer is given once the die has landed (0 if it hasn't). */
     top() { return st.mode === 'roll' || !squash.visible ? 0 : st.top; },
@@ -1543,6 +1544,8 @@ registerGame({
       if (dead || paused || glLost || !dv) return;
       const dt = lastT ? Math.min(0.05, Math.max(0, (now - lastT) / 1000)) : 1 / 60;
       lastT = now;
+      const t = T();
+      const c0 = t ? performance.now() : 0;
       const busy = dv.step(dt);
       dirty = false;
       const calls = dv.render();
@@ -1550,8 +1553,11 @@ registerGame({
         ema = ema * 0.92 + dt * 1000 * 0.08;
         if (++perfN > 50 && ema > 24 && dv.ratio > 1) { dv.setRatio(Math.max(1, dv.ratio - 0.25)); perfN = 0; ema = 16; }
       }
-      const t = T();
       if (t) {
+        const ms = performance.now() - c0; // main-thread cost of this frame's step + render (the bench reads the worst)
+        const cs = t.cost || (t.cost = []);
+        cs.push(ms);
+        if (cs.length > 900) cs.shift();
         t.frames = (t.frames || 0) + 1; t.calls = calls;
         if (dv.info) t.tris = dv.info.triangles;
         if (dv.texBytes !== undefined) t.texBytes = dv.texBytes;
