@@ -208,5 +208,5 @@ defuse      58.9  33   34  1.2    0   6.0   17.4       57.5  50   83  2.3    2  
 - **Cycles,** two runs each while riding:
   - before: 45.9 fps, 23% jank, longest task 138 ms;
   - after: 50.2–53.2 fps, 7–10% jank, longest task 198 ms. See the follow-up below.
-- **About 60 style recalcs/s** remain in the turn games. That comes from the chrome's whose-turn arrow (`gm-nudge`), an infinite
-  compositor animation. It is cheap; there is no layout or paint behind it.
+- **About 60 style recalcs/s** remain in the turn games. That is most likely the chrome's infinite whose-turn arrow
+  (`gm-nudge`), though I didn't isolate it. Layout and paint stay flat while it runs, so it's cheap.
