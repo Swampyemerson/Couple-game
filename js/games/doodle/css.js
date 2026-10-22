@@ -18,7 +18,7 @@ export const CSS = `
     .g-doodle .dd-pick { position: relative; display: flex; align-items: center; gap: 14px; width: 100%; min-height: 76px; padding: 14px 16px; text-align: left; background: var(--g-card); color: var(--g-ink); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow); touch-action: manipulation; transform: rotate(var(--tilt, 0deg)); transition: transform 0.14s var(--g-ease-out); }
     .g-doodle .dd-pick:nth-child(1) { --tilt: -1.2deg; } .g-doodle .dd-pick:nth-child(2) { --tilt: 0.8deg; } .g-doodle .dd-pick:nth-child(3) { --tilt: -0.5deg; }
     .g-doodle .dd-pick:active, .g-doodle .dd-pick.is-pressed { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge, var(--g-ink)); }
-    .g-doodle .dd-picks .dd-pick { animation: dd-deal 0.42s var(--g-ease-spring) both; }
+    .g-doodle .dd-picks .dd-pick { animation: dd-deal 0.42s var(--g-ease-spring) backwards; }
     .g-doodle .dd-picks .dd-pick:nth-child(2) { animation-delay: 70ms; } .g-doodle .dd-picks .dd-pick:nth-child(3) { animation-delay: 140ms; }
     .g-doodle .dd-pick-word { font-family: var(--g-font-display); font-weight: 900; font-size: 1.35rem; line-height: 1.1; min-width: 0; overflow-wrap: anywhere; }
     .g-doodle .dd-pick-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
@@ -155,7 +155,7 @@ export const CSS = `
     .g-doodle .dd-frame { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 0; padding: 8px 8px 10px; text-align: left; background: var(--g-card); color: var(--g-ink); border: 2px solid var(--g-ink); border-radius: 6px; box-shadow: var(--g-shadow); touch-action: manipulation; transform: rotate(var(--tilt, 0deg)); transition: transform 0.15s ease; }
     .g-doodle .dd-frame:active, .g-doodle .dd-frame.is-pressed { transform: rotate(0deg) translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge, var(--g-ink)); }
     .g-doodle .dd-frame.pre { opacity: 0; }
-    .g-doodle .dd-frame.enter { animation: dd-hang 0.5s var(--g-ease-spring) both; }
+    .g-doodle .dd-frame.enter { animation: dd-hang 0.5s var(--g-ease-spring) backwards; }
     .g-doodle .dd-frame canvas { display: block; border: 2px solid var(--g-line); border-radius: 3px; background: var(--g-card); }
     .g-doodle .dd-frame-title { margin-top: 8px; font-family: var(--g-font-display); font-weight: 900; font-size: 1rem; line-height: 1.15; overflow-wrap: anywhere; }
     .g-doodle .dd-frame-meta { margin-top: 3px; font-size: 0.8rem; font-weight: 800; color: var(--g-muted); overflow-wrap: anywhere; }

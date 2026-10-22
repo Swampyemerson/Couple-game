@@ -717,7 +717,8 @@ registerGame({
         if (isSel && sel.by === 'key') cls += ' is-cur';
         setCls(btn, cls);
         const want = v ? `${v}${k === fresh.newCell ? '+' : ''}` : ok ? `ghost-${actor}` : '';
-        if (btn.dataset.m !== want) {
+        // 'x+' (the stamp is playing) and 'x' are the same mark: a later paint must not rebuild it and cut the stamp
+        if ((btn.dataset.m || '').replace('+', '') !== want.replace('+', '')) {
           btn.dataset.m = want;
           btn.innerHTML = v ? cellSVG(v, k === fresh.newCell ? 'is-new' : '') : ok ? cellSVG(actor, 'ghost') : '';
         }

@@ -885,10 +885,13 @@ registerGame({
       skipped = true; skipAt = perf();
       if (local && phase === 'end') endDue = Math.min(endDue, skipAt + BANNER_MS);
     }
-    function crashFocus() {
+    const CF = [0, 0];
+    const CFXY = [0, 0];
+    function crashFocus() { // returns a shared pair: read it before the next call
       const loser = rw === 'a' ? 'b' : rw === 'b' ? 'a' : 'a';
-      const cr = sim[loser].crash || sim.a.crash || sim.b.crash || [0, 0];
-      return [clamp(cr[0], 0, sim.W - 1), clamp(cr[1], 0, sim.H - 1)];
+      const cr = sim[loser].crash || sim.a.crash || sim.b.crash || CF;
+      CFXY[0] = clamp(cr[0], 0, sim.W - 1); CFXY[1] = clamp(cr[1], 0, sim.H - 1);
+      return CFXY;
     }
     function captionOf() {
       const nm = (p) => esc(api.name(p));
@@ -1372,7 +1375,7 @@ registerGame({
       const ow = Math.max(1.2, c * 0.15);
       for (let i = fx.length - 1; i >= 0; i--) {
         const f = fx[i];
-        const age = now - f.t0;
+        const age = Math.max(0, now - f.t0); // a rAF timestamp can precede an event handler's own clock reading
         const life = f.k === 'spark' ? 420 : f.k === 'tap' ? 230 : 520;
         if (age > life) { fx.splice(i, 1); continue; }
         const u = age / life;
@@ -1396,6 +1399,7 @@ registerGame({
       }
     }
     const tv = { a: mkView(), b: mkView() };
+    const FXY = [0, 0];
     function draw(now) {
       if (!ctx || !layout || !cfg) return;
       const g = LAYOUTS[layout];
@@ -1419,7 +1423,8 @@ registerGame({
         // the camera rides along with the rider who crashed, settling on the crash cell
         const fv = pathAt(sim, rw === 'a' ? 'b' : 'a', T, tv.a);
         const k = clamp((u - 0.6) / 0.2, 0, 1);
-        fxy = [fv.x + (crashXY[0] - fv.x) * k, fv.y + (crashXY[1] - fv.y) * k];
+        FXY[0] = fv.x + (crashXY[0] - fv.x) * k; FXY[1] = fv.y + (crashXY[1] - fv.y) * k;
+        fxy = FXY;
       } else if (stage === 'banner' && !reduce) {
         const since = now - (skipped ? skipAt : crashAt + HOLD_MS + REPLAY_MS);
         if (since < 260 && !skipped) zoom = ZOOM - (ZOOM - 1) * (1 - Math.pow(1 - since / 260, 3));

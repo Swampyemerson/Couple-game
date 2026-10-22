@@ -126,15 +126,17 @@ export function malletSprite(T, who, s, dpr) {
   });
 }
 
-/** A puck (i = 0 the ink puck, 1 the yellow twin), with its hard shadow. */
+/** A puck (i = 0 the ink puck, 1 the yellow twin) as two sprites: { shadow, body }. The shadow stays put when the body squashes. */
 export function puckSprite(T, i, s, dpr) {
   const r = RP * s; const lw = Math.max(1.5, s * 0.5); const sh = Math.max(1.5, s * 0.6);
-  return sprite(r, sh * 1.4 + lw + 2, dpr, (c) => {
-    disc(c, sh, sh * 1.2, r, T.edge);
+  const extra = sh * 1.4 + lw + 2;
+  const shadow = sprite(r, extra, dpr, (c) => { disc(c, sh, sh * 1.2, r, T.edge); });
+  const body = sprite(r, extra, dpr, (c) => {
     disc(c, 0, 0, r, i ? T.hl : T.ink, T.ink, lw);
     disc(c, 0, 0, r * 0.62, null, i ? T.ink : T.card, Math.max(1, lw * 0.6));
     disc(c, 0, 0, r * 0.16, i ? T.ink : T.card);
   });
+  return { shadow, body };
 }
 
 /** The goal splat: a blot of the scorer's ink with droplets, a halftone halo and a key outline. Drawn big, scaled in. */

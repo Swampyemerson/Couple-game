@@ -8,7 +8,8 @@ const { launch } = require('../harness');
 let fails = 0;
 const assert = (c, m) => { if (!c) { fails++; console.log('FAIL -', m); throw new Error('FAIL: ' + m); } console.log('ok -', m); };
 
-const centre = (pg, sel) => pg.evaluate((s) => { const r = document.querySelector(s).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }, sel);
+// (uses the unpatched getBoundingClientRect once WATCH is installed, so the test's own measuring is not counted as a page read)
+const centre = (pg, sel) => pg.evaluate((s) => { const r = (window.__gb || Element.prototype.getBoundingClientRect).call(document.querySelector(s)); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }, sel);
 // Count every layout-forcing read the page makes while `fn` runs.
 const WATCH = () => {
   if (window.__reads) return;
@@ -19,6 +20,7 @@ const WATCH = () => {
     if (d && d.get) Object.defineProperty(Element.prototype, k, { configurable: true, get() { bump(); return d.get.call(this); } });
   }
   const gb = Element.prototype.getBoundingClientRect;
+  window.__gb = gb;
   Element.prototype.getBoundingClientRect = function () { bump(); return gb.call(this); };
   const gc = window.getComputedStyle;
   window.getComputedStyle = function (...a) { bump(); return gc.apply(this, a); };

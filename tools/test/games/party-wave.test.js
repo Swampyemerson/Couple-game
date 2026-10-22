@@ -635,7 +635,7 @@ const inView = (pg, sels) => pg.evaluate((ss) => {
     // 7: near-miss line (target + 5 is 5 off)
     assert((await GS.textContent('.wv-result-txt')).includes('1 off the bullseye!') || tgt0 + 5 > 100, 'the reveal says "1 off the bullseye!" for 5 off');
     // 5: the zone numbers are drawn above the needle
-    const order = await GS.evaluate(() => { const svg = document.querySelector('.wv-svg'); const kids = [...svg.children]; return [kids.findIndex((k) => k.querySelector && k.querySelector('.wv-needle')), kids.findIndex((k) => k.classList && k.classList.contains('wv-zlabels'))]; });
+    const order = await GS.evaluate(() => { const kids = [...document.querySelector('.wv-dial').children]; return [kids.findIndex((k) => k.querySelector && k.querySelector('.wv-needle')), kids.findIndex((k) => k.querySelector && k.querySelector('.wv-zlabels'))]; });
     assert(order[0] >= 0 && order[1] > order[0], 'the 4 / 3 / 2 labels sit above the needle, so a bullseye never hides its 4');
     // a reload on a reveal this phone has already shown does not replay it: Next is ready at once
     await reloadInto(h, GS, D.id);
