@@ -68,7 +68,7 @@ export function dotRings(c, cx, cy, r0, r1, step, rMax, color, alpha) {
 }
 
 /** The centre mark: two interlocking rings (one per player) over a yellow plate, each plate a hair off
- *  register. In light mode the overlap prints violet (multiply); on black stock the plates just stack. */
+ *  register. The rings print opaque in both themes: multiplied over the yellow plate they'd turn green and red. */
 export function centreMark(c, T, lw) {
   const cx = W / 2; const cy = H / 2; const R = 6.4; const gap = 3.5;
   c.save();
@@ -77,10 +77,8 @@ export function centreMark(c, T, lw) {
   c.fillStyle = T.hl; c.globalAlpha = 0.9;
   c.beginPath(); c.arc(cx + 1.2, cy + 0.9, R + gap + 1.6, 0, Math.PI * 2); c.fill(); c.globalAlpha = 1;
   const ring = (dx, col, ox, oy) => { c.strokeStyle = col; c.lineWidth = lw * 1.9; c.beginPath(); c.arc(cx + dx + ox, cy + oy, R, 0, Math.PI * 2); c.stroke(); };
-  if (!T.dark) c.globalCompositeOperation = 'multiply';
   ring(-gap, T.a, -0.55, -0.4);
   ring(gap, T.b, 0.6, 0.5);
-  c.globalCompositeOperation = 'source-over';
   // the key plate: a thin black outline of both rings, printed true
   c.strokeStyle = T.ink; c.lineWidth = lw * 0.55; c.globalAlpha = 0.9;
   c.beginPath(); c.arc(cx - gap, cy, R + lw * 0.95, 0, Math.PI * 2); c.stroke();
