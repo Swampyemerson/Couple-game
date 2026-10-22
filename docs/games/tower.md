@@ -144,8 +144,11 @@ comes back and the error is toasted.
   the small lift bump;
 - sliced pieces tumble under fixed-step gravity and, if they reach the pedestal top or the ground plane, bounce once (restitution
   0.3) and lie there, then shrink away; the pedestal bounce and the ground thud play `tick` and puff three flecks;
-- up to 12 ink, yellow and paper flecks (tiny boxes in the moving batch, pooled, ~0.4 s) puff from the top rim of a landed block:
-  5 on a slice, 10 on a perfect, a couple more for a gift or a landmark;
+- up to 12 light printed flecks (tiny boxes in the moving batch, pooled, ~0.4 s) puff from the top rim of a landed block:
+  5 on a slice, 10 on a perfect, a couple more for a gift or a landmark. A fleck (`ne`) has no ink hull (collapsed to a point) and
+  no crease lines, is flat-coloured from the palette (perfect: highlight yellow and a highlight/player mix; slice: the block's
+  own ink, some mixed; a few paper-white ones in dark mode), grows in over 50 ms and shrinks smoothly to nothing (no pop). In the
+  2D fallback they are filled without a stroke;
 - a perfect freezes time (sim, timelines, camera) for 45 ms;
 - a velocity kick on the camera spring: the world jolts down a few pixels and settles (1.1 slice, 1.6 perfect, 2.4 growth,
   gift or landmark).

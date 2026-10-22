@@ -222,7 +222,14 @@ function readPalette(api) {
   };
 }
 const TMP = [0, 0, 0];
+const FLK = [0, 0, 0];
 function colorOf(pal, e) { // a flash is a hard highlighter blink, like a second ink pass
+  if (e.ne) { // a fleck: light printed ink (highlight, the block's own ink, a mix of the two, or paper-white in dark mode), never the black key plate
+    const own = e.who === 'a' ? pal.a : e.who === 'b' ? pal.b : pal.base;
+    const c = e.tint === 'hl' ? pal.hl : e.tint === 'paper' ? (pal.dark ? pal.ink : pal.hl) : e.tint === 'mix' ? mix(pal.hl, own, 0.5) : own;
+    FLK[0] = c[0]; FLK[1] = c[1]; FLK[2] = c[2];
+    return FLK;
+  }
   const c = (e.flash || 0) >= 0.5 || e.tint === 'hl' ? pal.hl : e.tint === 'ink' ? pal.ink : e.tint === 'bg' ? pal.bg : e.who === 'a' ? pal.a : e.who === 'b' ? pal.b : pal.base;
   TMP[0] = c[0]; TMP[1] = c[1]; TMP[2] = c[2];
   return TMP;
@@ -325,8 +332,9 @@ function writeBox(B, U, i, e, rgb, out) {
   const cx = e.x; let cy = e.y + (e.lift || 0); const cz = e.z;
   const q = e.sq || 0; // landing squash: the foot stays put, y shrinks, x/z swell
   if (q) { sx *= 1 + q * 0.5; sz *= 1 + q * 0.5; cy -= sy * q / 2; sy *= 1 - q; }
-  const hx = sx + 2 * out; const hy = sy + 2 * out; const hz = sz + 2 * out;
-  const hox = MOFF[0]; const hoy = MOFF[1]; const hoz = MOFF[2];
+  const ne = e.ne;
+  const hx = ne ? 0 : sx + 2 * out; const hy = ne ? 0 : sy + 2 * out; const hz = ne ? 0 : sz + 2 * out; // a fleck's hull collapses to a point: no outline
+  const hox = ne ? 0 : MOFF[0]; const hoy = ne ? 0 : MOFF[1]; const hoz = ne ? 0 : MOFF[2];
   const rx = e.rx || 0; const rz = e.rz || 0;
   let m00 = 1; let m01 = 0; let m02 = 0; let m10 = 0; let m11 = 1; let m12 = 0; let m20 = 0; let m21 = 0; let m22 = 1;
   if (rx || rz) { // Euler XYZ with ry = 0: Rx * Rz
@@ -338,7 +346,6 @@ function writeBox(B, U, i, e, rgb, out) {
   const base = i * 72;
   // did this slot's colour change? (then the colour buffer is uploaded again)
   if (!B.dirtyC && (C[base] !== Math.fround(rgb[0] * ua[0]) || C[base + 1] !== Math.fround(rgb[1] * ua[0]) || C[base + 2] !== Math.fround(rgb[2] * ua[0]))) B.dirtyC = true;
-  const ne = e.ne;
   for (let j = 0; j < 72; j += 3) {
     const o = base + j;
     let x = up[j] * sx; let y = up[j + 1] * sy; let z = up[j + 2] * sz;
@@ -654,7 +661,7 @@ function view2D(canvas, pal0) {
       g.closePath();
       g.fillStyle = css(col, shade);
       g.fill();
-      g.stroke();
+      if (!e.ne) g.stroke();
     }
   }
   return {
@@ -1270,7 +1277,8 @@ registerGame({
       for (let i = 0; i < fl.length; i++) {
         const f = fl[i];
         f.x = f.ox + (f.cx - f.ox) * alpha; f.y = f.oy + (f.cy - f.oy) * alpha; f.z = f.oz + (f.cz - f.oz) * alpha;
-        const s = f.sz * (0.45 + 0.55 * Math.min(1, f.life / (f.ttl * 0.6)));
+        const u = Math.min(1, f.life / (f.ttl * 0.65)); const g = Math.min(1, (f.ttl - f.life) / 0.05); // shrink out smoothly, grow in over 50 ms
+        const s = f.sz * u * u * (3 - 2 * u) * g;
         f.w = f.h = f.d = s;
       }
       for (let i = 0; i < sqList.length; i++) { const e = sqList[i]; e.sq = e.sqo + (e.sqc - e.sqo) * alpha; }
@@ -1288,27 +1296,29 @@ registerGame({
       kick();
     }
     /** A few ink and paper flecks puff out of a point (never under reduced motion; at most MAX_FLECKS exist). */
-    function puffAt(x, y, z, n, who, ax = '', dir = 0) {
+    function puffAt(x, y, z, n, who, ax = '', dir = 0, kind = 'slice') {
       if (reduced()) return;
       for (let i = 0; i < n && fidle.length; i++) {
         const f = fidle.pop();
         const k = i % 4;
-        f.tint = k === 0 ? 'ink' : k === 1 ? 'hl' : k === 2 ? 'bg' : null;
+        const dk = pal.dark;
+        f.tint = kind === 'perfect' ? (k === 0 ? 'hl' : k === 1 ? 'mix' : k === 2 ? (dk ? 'paper' : 'hl') : 'mix')
+          : (k === 3 && dk ? 'paper' : k === 1 ? 'mix' : null);
         f.who = who;
         const a = rnd() * 6.2832; const sp = 0.7 + rnd() * 1.2;
         let vx = Math.cos(a) * sp; let vz = Math.sin(a) * sp;
         if (ax === 'x') vx = Math.abs(vx) * dir + dir * 0.3; else if (ax === 'z') vz = Math.abs(vz) * dir + dir * 0.3;
         f.cx = f.ox = x + (rnd() - 0.5) * 0.3; f.cy = f.oy = y + 0.02; f.cz = f.oz = z + (rnd() - 0.5) * 0.3;
         f.vx = vx; f.vz = vz; f.vy = 1.4 + rnd() * 1.7;
-        f.ttl = f.life = 0.34 + rnd() * 0.22; f.sz = 0.07 + rnd() * 0.06;
-        f.w = f.h = f.d = f.sz; f.x = f.cx; f.y = f.cy; f.z = f.cz;
+        f.ttl = f.life = 0.34 + rnd() * 0.22; f.sz = 0.06 + rnd() * 0.06;
+        f.w = f.h = f.d = 0; f.x = f.cx; f.y = f.cy; f.z = f.cz;
         model.flecks.push(f);
       }
       fx('flecks');
       kick();
     }
     /** The kept block has landed: flecks from its top rim (more on a perfect), toward the cut side if there was one. */
-    function puffRim(e, n, ax, dir) {
+    function puffRim(e, n, ax, dir, kind) {
       if (reduced()) return;
       const top = e.y + e.h / 2;
       for (let i = 0; i < n && fidle.length; i++) {
@@ -1316,7 +1326,7 @@ registerGame({
         const sgn = ax && rnd() < 0.6 ? dir : rnd() < 0.5 ? -1 : 1;
         const px = side ? e.x + sgn * e.w / 2 : e.x + (rnd() - 0.5) * e.w;
         const pz = side ? e.z + (rnd() - 0.5) * e.d : e.z + sgn * e.d / 2;
-        puffAt(px, top, pz, 1, e.who, side ? 'x' : 'z', sgn);
+        puffAt(px, top, pz, 1, e.who, side ? 'x' : 'z', sgn, kind);
       }
     }
     function blink(e, ms) {
@@ -1636,7 +1646,7 @@ registerGame({
         blink(e, 260);
         ringAt(e);
         squash(e, 0.2);
-        puffRim(e, big ? 12 : 10, '', 0);
+        puffRim(e, big ? 12 : 10, '', 0, 'perfect');
         kickCam(big ? 2.4 : 1.6);
         if (!rm) { hitstop = HITSTOP; fx('hitstop'); } // a beat of stillness on the perfect
         stamp(drop.grew && modeOf(s) === 'duet' && drop.streak % 2 === 0 ? 'Duet · it grew' : drop.grew ? 'Perfect · it grew' : drop.streak > 1 ? `Perfect ×${drop.streak}` : 'Perfect');
@@ -1652,7 +1662,7 @@ registerGame({
         api.haptic(10);
         settle(e);
         squash(e, 0.17);
-        puffRim(e, big ? 7 : 5, drop.axis, Math.sign(drop.o) || 1);
+        puffRim(e, big ? 7 : 5, drop.axis, Math.sign(drop.o) || 1, 'slice');
         kickCam(big ? 2.4 : 1.1);
         paintStreak(s);
         if (keep < 0.25) stamp('By a whisker!', 'is-near');
