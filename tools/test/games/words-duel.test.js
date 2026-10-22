@@ -664,8 +664,13 @@ async function onlineBo3(h, scheme) {
   await both('heart', 'river');
   await typeWord(a, 'river', 150);
   await typeWord(b, 'crane', 120);
-  await b.keyboard.type('heart'); await b.keyboard.press('Enter'); await b.waitForTimeout(250);
-  assert(/Revealing/.test(await sayOf(b)) && !(await b.isVisible('.g-wd-stamps')) && !(await b.isVisible('.g-wd-actions [data-g="rematch"]')), `the result line and stamps wait for the final flip (${await sayOf(b)})`);
+  await b.keyboard.type('heart'); await b.keyboard.press('Enter'); await b.waitForTimeout(150);
+  // one page round trip (three separate ones can stretch past the 1.1 s flip on a loaded box)
+  const waiting = await b.evaluate(() => {
+    const vis = (sel) => { const e = document.querySelector(sel); return !!e && !e.hidden && e.getClientRects().length > 0; };
+    return { say: document.querySelector('.g-wd-say').textContent, stamps: vis('.g-wd-stamps'), rematch: vis('.g-wd-actions [data-g="rematch"]') };
+  });
+  assert(/Revealing/.test(waiting.say) && !waiting.stamps && !waiting.rematch, `the result line and stamps wait for the final flip (${waiting.say})`);
   await h.settle(); await a.waitForTimeout(2600);
   s = await ex();
   const eng = await h.engine(a, id);
