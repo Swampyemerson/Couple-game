@@ -261,6 +261,12 @@ They checked end cards, rematch, page errors, horizontal scroll, readability, ta
 - **Shared-file changes.** `games.css` changes are additive. The only one other units can see is the grain on the game-room background,
   panels, sheets, end cards and cover boxes, plus the hub presence dot no longer blinking under an open game. The 3D games' immersive stage
   draws over the room background, so their scenes are unaffected.
+- **Existing race in Word Duel records.** `words-duel.test.js` failed once in the full run: the "records: snap, revenge" check saw
+  `a_snap_n: 2` and `a_revenge_n: 2` for one match. Both phones call `recordMatch` when a match ends. Its guard is the `recent_m`
+  list in the shared data, so if one phone's patch hasn't reached the other yet, both count the match. This logic is identical in the
+  original code (`wordduel.js` `maybeRecord`, `wordduel/records.js` `recordMatch`), and the test passed on rerun on both versions.
+  This unit didn't touch records, so it's left as is. A fix would be to let only the phone that made the final move record, or to
+  record from one side (e.g. the winner's phone).
 - **No README changes.** No game's description changes, since this upgrade is feel and look only.
 
 ## New and changed tests
@@ -279,3 +285,21 @@ They checked end cards, rematch, page errors, horizontal scroll, readability, ta
 - Existing tests were changed only for ports (`PORT` env), new markup selectors, and timing robustness on a loaded box. Each change is
   listed in its game's section above. No assertion was weakened except the hockey frame-count floor (200 → 100 measured frames); the
   jump threshold it guards is unchanged.
+
+## Test results (final branch state)
+
+Run one file at a time through `run-all.sh`, then the rest with a longer timeout (`run-all.sh` itself was stopped by a 30-minute
+background limit after `board.test.js`):
+
+| File | Result |
+|---|---|
+| smoke, app, migrate, daily, all-games | PASS |
+| net.test.js | flaky: failed once in the full run, then PASS 2/2 on this branch and 2/2 on the original (no net/core/harness changes here) |
+| board.test.js, flat-board.test.js | PASS |
+| fleet.test.js, flat-fleet.test.js | PASS |
+| words.test.js, words-agents.test.js, flat-words.test.js | PASS |
+| words-duel.test.js | see below: failed once in the full run, PASS on rerun |
+| party.test.js, party-doodle.test.js, party-wave.test.js, flat-party.test.js | PASS |
+| defuse.test.js, flat-defuse.test.js | PASS |
+| flat-hockey.test.js, flat-quickdraw.test.js | PASS |
+| flat-cycles.test.js | first run failed its own guard ("measured 0.8 s of pure riding", needs 1.2 s) because the box was loaded; PASS 39/39 on rerun |
