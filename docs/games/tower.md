@@ -80,6 +80,8 @@ device is highlighted (`localStorage`, not auto-sent).
 4. **Tall tower finale.** The finale fits the tower between the HUD and the end panel (and re-fits when the window changes);
    the ink outline scales down (and crease lines drop out) when blocks are tiny on screen.
 5. **Resume.** Coming back from a hidden tab (and after a WebGL restore) the slider restarts from its edge behind a short 3-2-1.
+   **Lost for good.** If the context is not restored within 3 s (`T().glGraceMs` in tests), the game switches to the 2D view on a
+   second canvas (a canvas that has had a WebGL context cannot give a 2D one) and plays on behind a 3-2-1; a later restore goes back to 3D.
 6. **Hand-off.** On one phone a ~600 ms "Sydney’s turn" beat comes before the next slider. It is a pill at the bottom, where the
    turn pill is (bottom right in landscape), so it never covers a stamp or a banner. Under reduced motion it is the same pill,
    still, for 400 ms.
@@ -185,7 +187,10 @@ One batch per kind of mesh: settled blocks (+ the ghost dashes and gift ribbons)
 each with faces, an inverted-hull outline and crease lines, plus the pedestal shadow and the perfect ring: 7-8 draw calls per
 frame. Buffers are preallocated and rewritten in place; nothing is allocated per frame. Only changed ranges go to the GPU: the
 static batch when it is dirty, positions of the moving batch every frame, its normals only while something tumbles and its
-colours only when one changed. The ghost, the culling and the ground band are updated only when the camera moved.
+colours only when one changed; normals also upload whenever a slot's normals differ from what it held (a slot that changes
+owner, e.g. the slider behind the streamer's four boxes, must not keep another box's normals on the GPU). The pedestal shadow is drawn
+first (`renderOrder -1`, no depth write) so it cannot break the foot's ink outline. At the finale the ghost ring is shown whole or
+not at all, and under reduced motion the finale camera snaps instead of springing. The ghost, the culling and the ground band are updated only when the camera moved.
 
 ## Tests
 
@@ -193,7 +198,7 @@ colours only when one changed. The ghost, the culling and the ground band are up
 PORT=8924 node tools/test/games/threed.test.js          # the shared 3D suite (tower + bones)
 PORT=8920 node tools/test/games/threed-tower.test.js    # old-log replay, modes, bug fixes, records, panel, visuals
 ```
-`ONLY=stray,hud,modes,once,flat,tall,visuals,records,polish,feel` runs part of the tower suite (`polish`: merged banners, overlap
+`ONLY=stray,hud,modes,once,flat,gl,tall,visuals,records,polish,feel` runs part of the tower suite (`polish`: merged banners, overlap
 checks in portrait and landscape, ghost ring vs the HUD, the notch). The "not ready" test holds the view not-ready with a hook
 (`window.__towerTest.hold`, a promise) instead of racing the loader. `feel`: the spring settles and the loop sleeps, a perfect
 squashes/puffs/freezes/kicks, and a drop equals the slider position under a 4x CPU throttle; the reduced-motion run checks that none of

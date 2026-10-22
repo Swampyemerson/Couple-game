@@ -956,6 +956,81 @@ async function flat(h, pg) {
   for (let i = h.errors.length - 1; i >= 0; i--) if (/Error creating WebGL context/.test(h.errors[i])) h.errors.splice(i, 1);
 }
 
+/** A 1×1 screenshot of the page, decoded: [r, g, b]. */
+async function pixelAt(pg, x, y) {
+  const png = await pg.screenshot({ clip: { x: Math.floor(x), y: Math.floor(y), width: 1, height: 1 }, scale: 'css' });
+  const zlib = require('zlib');
+  let o = 8; let ct = 2; const idat = [];
+  while (o < png.length) {
+    const len = png.readUInt32BE(o); const type = png.toString('ascii', o + 4, o + 8);
+    if (type === 'IHDR') ct = png[o + 8 + 9];
+    if (type === 'IDAT') idat.push(png.subarray(o + 8, o + 8 + len));
+    o += 12 + len;
+  }
+  const raw = zlib.inflateSync(Buffer.concat(idat)); // one filter byte, then the pixel (a lone pixel has no neighbours: every filter is the identity)
+  if (ct !== 2 && ct !== 6) throw new Error('unexpected png colour type ' + ct);
+  return [raw[1], raw[2], raw[3]];
+}
+
+/** Windy, level 3+: the slider sits behind the streamer's four boxes in the moving batch. Its top face must be lit like a placed block's. */
+async function windyLit(h, pg, name) {
+  await pg.setViewportSize({ width: 390, height: 844 });
+  await hook(pg);
+  await withRandom(pg, 0.3, () => h.newLocalGame(pg, 'tower'));
+  const id = await pg.evaluate(() => window.__lastMatchId);
+  await armed(pg);
+  await pg.tap('.gt-chip[data-mode="windy"]');
+  await waitMoves(pg, id, 1);
+  await dropAt(pg, id, 2, 0);      // two perfects: no tumbling pieces, so nothing uploads the moving batch's normals again by chance
+  await dropAt(pg, id, 3, 0);
+  await armed(pg);
+  await pg.waitForFunction(() => { const m = window.__towerTest.model; return m.slider && m.extras.length === 4 && !m.pieces.length; }, null, { timeout: 8000 });
+  const setHidden = (hid) => pg.evaluate((v) => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => v }); document.dispatchEvent(new Event('visibilitychange')); }, hid);
+  await setHidden(true); // the frame stands still while it is sampled
+  await h.wait(150);
+  const r = await pg.evaluate(() => {
+    const t = window.__towerTest; const s = t.model.slider; const v = document.querySelector('.gt-view').getBoundingClientRect();
+    const a = t.project(s.x, s.y + s.h / 2, s.z); // the slider's top face, centre
+    const c = t.pal()[s.who];
+    return { a: [a[0] + v.left, a[1] + v.top], want: [c[0] * 255, c[1] * 255, c[2] * 255] };
+  });
+  const top = await pixelAt(pg, ...r.a);
+  await shot(pg, `tower-windy-${name}.png`);
+  await setHidden(false);
+  // a top face takes the full sun: its printed colour is the ink itself (dark would be about 45% of it)
+  ok(top.every((v, i) => Math.abs(v - r.want[i]) < 14), `tower windy ${name}: the slider's top face is lit like a placed block's (${top} vs ink ${r.want.map(Math.round)})`);
+  await h.closeGame(pg);
+}
+
+/** A context that is lost and never comes back: after a grace period the flat view takes over and the game plays on; a late restore goes back to 3D. */
+async function glFlat(h, pg) {
+  await pg.setViewportSize({ width: 390, height: 844 });
+  await pg.evaluate(() => { window.__towerTest = { log: [], glGraceMs: 300 }; });
+  await h.newLocalGame(pg, 'tower');
+  const id = await pg.evaluate(() => window.__lastMatchId);
+  await dropAt(pg, id, 1, 0.3);
+  await armed(pg);
+  await pg.evaluate(() => { window.__lose = document.querySelector('.gt-canvas').getContext('webgl2').getExtension('WEBGL_lose_context'); window.__lose.loseContext(); });
+  await pg.waitForSelector('.gt-view[data-gl="lost"]', { timeout: 4000 });
+  await pg.waitForSelector('.gt-view[data-gl="2d"]', { timeout: 4000 });
+  ok(await pg.evaluate(() => window.__towerTest.log.includes('gl-flat') && !window.__towerTest.log.includes('restored')), 'tower context loss: with no restore the flat view takes over');
+  await armed(pg, 6000);
+  await dropAt(pg, id, 2, 0.4);
+  const e = await h.engine(pg, id);
+  ok(e.state.blocks.length === 3 && Math.abs(e.state.drop.o - 0.4) < 1e-9, 'tower context loss: a drop in the flat view records');
+  await h.wait(300);
+  const cv = await pg.evaluate(() => Array.from(document.querySelectorAll('.gt-canvas')).map((c) => c.style.display));
+  ok(cv.length === 2 && cv[0] === 'none' && cv[1] === '', 'tower context loss: the flat canvas is showing');
+  await shot(pg, 'tower-gl-flat.png');
+  await pg.evaluate(() => window.__lose.restoreContext());
+  await pg.waitForFunction(() => window.__towerTest.log.includes('restored'), null, { timeout: 4000 });
+  ok(await pg.getAttribute('.gt-view', 'data-gl') === 'ok', 'tower context loss: a late restore goes back to 3D');
+  await armed(pg, 6000);
+  await dropAt(pg, id, 3, 0.1);
+  ok(true, 'tower context loss: and the 3D view plays on');
+  await h.closeGame(pg);
+}
+
 /** Both phones finish the same online match: it is counted once. */
 async function onlineOnce(h) {
   const { id, S: a, O: b } = await pair(h);
@@ -1040,6 +1115,13 @@ async function calmFx(h, pg) {
   await h.wait(500);
   const t = await pg.evaluate(() => ({ fx: window.__towerTest.fx || {}, flecks: window.__towerTest.model.flecks.length, sq: window.__towerTest.model.blocks.some((e) => e.sq) }));
   ok(!t.fx.flecks && !t.fx.squash && !t.fx.kick && !t.fx.hitstop && t.flecks === 0 && !t.sq, `tower reduced motion: no flecks, squash, camera kick or hitstop (${JSON.stringify(t.fx)})`);
+  // the finale's zoom-out and pan snap into place
+  await dropAt(pg, id, ++n, 'miss');
+  await pg.waitForFunction(() => window.__towerTest.log.includes('finale'), null, { timeout: 8000 });
+  const c0 = await pg.evaluate(() => { const c = window.__towerTest.model.cam; return [c.y, c.zoom, c.ox]; });
+  await h.wait(400);
+  const c1 = await pg.evaluate(() => { const c = window.__towerTest.model.cam; return [c.y, c.zoom, c.ox]; });
+  ok(c0.every((v, i) => Math.abs(v - c1[i]) < 1e-9), `tower reduced motion: the finale camera is already in place, not springing (${c0.map((v) => v.toFixed(3))} vs ${c1.map((v) => v.toFixed(3))})`);
   await h.closeGame(pg);
 }
 
@@ -1062,6 +1144,7 @@ let failed = false;
     if (want('feel')) await feel(h);
     if (want('once')) await onlineOnce(h);
     if (want('flat')) await flat(h, h.b);
+    if (want('gl')) { await windyLit(h, h.a, 'light'); await glFlat(h, h.a); }
     if (want('visuals')) { await visuals(h, h.a, 390, 844, 'light-390'); await visuals(h, h.a, 844, 390, 'landscape-844'); }
     if (want('tall')) await tall(h, h.a);
     if (want('modes')) { await picker(h); await classicSkip(h, h.a); await modesUi(h, h.a); }

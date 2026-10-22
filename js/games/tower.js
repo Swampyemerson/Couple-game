@@ -494,7 +494,7 @@ function view3D(THREE, canvas, pal0) {
     line: new THREE.LineBasicMaterial(),
   };
   const ringMat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, side: THREE.DoubleSide });
-  const shadowMat = new THREE.MeshBasicMaterial();
+  const shadowMat = new THREE.MeshBasicMaterial({ depthWrite: false }); // drawn first, under everything: it never fights the foot's ink outline for depth
   const ringGeo = new THREE.RingGeometry(Math.SQRT1_2, Math.SQRT1_2 * 1.2, 4, 1, Math.PI / 4);
   ringGeo.rotateX(-Math.PI / 2);
   const planeGeo = new THREE.PlaneGeometry(1, 1);
@@ -503,7 +503,8 @@ function view3D(THREE, canvas, pal0) {
   ring.renderOrder = 2;
   const shadow = new THREE.Mesh(planeGeo, shadowMat);
   shadow.scale.set(BASE + 0.1, 1, BASE + 0.1);
-  shadow.position.set(0.42, -PED + 0.002, 0.42);
+  shadow.renderOrder = -1;
+  shadow.position.set(0.42, -PED - 0.01, 0.42);
   const stat = makeBatch(THREE, U, { face: faceStat, hull: mats.hull, line: mats.line });
   const dyn = makeBatch(THREE, U, { face: faceDyn, hull: mats.hull, line: mats.line });
   stat.ensure(32); dyn.ensure(16);
@@ -1499,9 +1500,12 @@ registerGame({
     function cullDeco() {
       const d = model.deco;
       let changed = false;
+      // at the finale the ring is all there or not there at all (a lone dash hanging under the HUD looks like a stray mark)
+      let any = false;
+      if (wrap.dataset.phase === 'over') for (let i = 0; i < d.length; i++) if (project(d[i].x, d[i].y, d[i].z)[1] < hudBottom) { any = true; break; }
       for (let i = 0; i < d.length; i++) {
         const e = d[i];
-        const off = project(e.x, e.y, e.z)[1] < hudBottom;
+        const off = any || project(e.x, e.y, e.z)[1] < hudBottom;
         if (off !== !!e.off) { e.off = off; changed = true; }
       }
       if (changed) model.staticDirty = true;
@@ -1720,6 +1724,12 @@ registerGame({
         const shift = cssW / 2 + half - room;
         if (shift > 0) goal.ox = Math.min(shift, Math.max(0, cssW / 2 - half - 8)) / sc;
       }
+      if (reduced()) { // no zoom-out animation: the camera is simply there (as in the intro)
+        const c = model.cam;
+        c.y = goal.y; c.zoom = goal.zoom; c.ox = goal.ox; camV.y = camV.zoom = camV.ox = 0;
+        c.viewH = baseViewH() * c.zoom;
+      }
+      cullDeco();
       kick();
     }
     function paintPanel(info) {
@@ -2034,6 +2044,39 @@ registerGame({
     }
     document.addEventListener('visibilitychange', onVis);
 
+    // A lost context stops every frame. Give the browser a moment to restore it; if it doesn't, play on with the flat
+    // version (on a second canvas: a canvas that has had a WebGL context can't give a 2D one), and go back to 3D if the
+    // context does come back later.
+    const GL_GRACE_MS = 3000;
+    let lostT = 0;
+    let view3 = null;   // the 3D view, parked while the flat one stands in for it
+    let canvas2 = null;
+    function glToFlat() {
+      if (dead || !view || view.kind !== '3d' || !glLost) return;
+      let v2;
+      try {
+        if (!canvas2) {
+          canvas2 = document.createElement('canvas');
+          canvas2.className = 'gt-canvas';
+          canvas2.setAttribute('aria-hidden', 'true');
+          canvas.after(canvas2);
+        }
+        v2 = view2D(canvas2, pal);
+      } catch (err) { console.warn('[tower] flat view', err); return; }
+      log('gl-flat');
+      view3 = view;
+      canvas.style.display = 'none'; canvas2.style.display = '';
+      view = v2;
+      view.resize(cssW, cssH);
+      view.setBase(spec().base);
+      glLost = false;
+      wrap.dataset.gl = '2d';
+      model.staticDirty = true;
+      lastT = 0;
+      view.render(model);
+      kick();
+      resumeCount();
+    }
     function onLost(e) {
       e.preventDefault();
       glLost = true;
@@ -2041,12 +2084,21 @@ registerGame({
       raf = 0;
       setArmed(false);
       wrap.dataset.gl = 'lost';
+      clearTimeout(lostT);
+      lostT = setTimeout(glToFlat, (T() && T().glGraceMs) || GL_GRACE_MS);
     }
     function onRestored() {
+      clearTimeout(lostT);
       // three.js re-creates its GL state in its own listener first; then rebuild ours from the model.
       setTimeout(() => {
         if (dead || !view) return;
-        try { view.restore(); } catch (err) { console.warn('[tower] restore', err); }
+        if (view3) { // back from the flat version
+          try { view3.resize(cssW, cssH); view3.setBase(spec().base); view3.setPalette(pal); view3.restore(); } catch (err) { console.warn('[tower] restore', err); view3 = null; return; }
+          view = view3; view3 = null;
+          canvas.style.display = ''; if (canvas2) canvas2.style.display = 'none';
+        } else {
+          try { view.restore(); } catch (err) { console.warn('[tower] restore', err); }
+        }
         glLost = false;
         model.staticDirty = true;
         wrap.dataset.gl = 'ok';
@@ -2102,7 +2154,7 @@ registerGame({
         if (!c || !c.state) return;
         if (openedOver === null) openedOver = !!c.over;
         const t = T();
-        if (t && t.model !== model) { t.model = model; t.project = (x, y, z) => project(x, y, z).slice(); t.hudBottom = () => hudBottom; } // test hook only
+        if (t && t.model !== model) { t.model = model; t.project = (x, y, z) => project(x, y, z).slice(); t.hudBottom = () => hudBottom; t.pal = () => pal; } // test hook only
         refreshBest(modeOf(c.state));
         if (c.over) { bestFrozen = true; if (!runInfo) runInfo = recordRun(c); } // counted the moment the run is known over, even if you leave before the finale
         enqueue(sync);
@@ -2126,11 +2178,13 @@ registerGame({
         wrap.removeEventListener('touchmove', onTouch);
         wrap.removeEventListener('touchend', onTouchEnd);
         pickEl.removeEventListener('click', onPickClick);
+        clearTimeout(lostT);
         canvas.removeEventListener('webglcontextlost', onLost, false);
         canvas.removeEventListener('webglcontextrestored', onRestored, false);
         if (typeof unData === 'function') { try { unData(); } catch { /* ignore */ } }
         if (view) { try { view.dispose(); } catch (err) { console.warn('[tower] dispose', err); } }
-        view = null;
+        if (view3) { try { view3.dispose(); } catch (err) { console.warn('[tower] dispose', err); } }
+        view = null; view3 = null;
         model.blocks.length = 0;
         model.pieces.length = 0;
         model.deco.length = 0;
