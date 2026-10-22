@@ -803,8 +803,9 @@ registerGame({
     const hostM = { who: 'a', x: W / 2, y: H - 22, vx: 0, vy: 0 };   // the host's mallet as drawn (interpolated between two samples)
     const hostC = { who: 'a', x: W / 2, y: H - 22, vx: 0, vy: 0 };   // ... and where the puck prediction collides with it (a little ahead of the drawn one)
     const GMS = [M[me], hostC];
+    const pm = { x: 0, y: 0, vx: 0, vy: 0, ok: false };  // the host's mallet on the interpolated path, and that path's smoothed velocity
     const rem = {};             // net.remoteInto target: the host's state interpolated at now - PARTNER_DELAY (allocation-free)
-    if (net) net.delay = (location.port && window.__hkD) || PARTNER_DELAY;
+    if (net) net.delay = PARTNER_DELAY;
     // The host's match as last seen in progress. Mirrored in our presence, so a host that
     // reloads or closes and reopens the game picks the score back up instead of restarting 0–0.
     let keep = null;            // { k, s: [a, b], g, ph, tb }
@@ -907,8 +908,14 @@ registerGame({
       if (S) {
         const r = net && net.synced ? net.remoteInto(rem) : null;
         if (r && Array.isArray(r.m) && r.m.length > 3) {
-          hostM.vx = r.m[2]; hostM.vy = r.m[3];
-          hostM.x = r.m[0] + hostM.vx * PARTNER_LEAD / 1000; hostM.y = r.m[1] + hostM.vy * PARTNER_LEAD / 1000;
+          // The streamed velocity is a noisy estimate, so the lead uses the velocity of the interpolated path itself, low-passed (~50 ms).
+          if (dt > 0.0005) {
+            const dx = r.m[0] - pm.x; const dy = r.m[1] - pm.y;
+            if (!pm.ok || dx * dx + dy * dy > 1600) { pm.vx = 0; pm.vy = 0; pm.ok = true; } else { const k = 1 - Math.exp(-dt / 0.05); pm.vx += (dx / dt - pm.vx) * k; pm.vy += (dy / dt - pm.vy) * k; }
+            pm.x = r.m[0]; pm.y = r.m[1];
+          }
+          hostM.vx = pm.vx; hostM.vy = pm.vy;
+          hostM.x = pm.x + pm.vx * PARTNER_LEAD / 1000; hostM.y = pm.y + pm.vy * PARTNER_LEAD / 1000;
         } else {
           const age = clamp(hostAge(S, now), 0, 70) / 1000;
           const tx = S.m[0] + S.m[2] * age; const ty = S.m[1] + S.m[3] * age;
