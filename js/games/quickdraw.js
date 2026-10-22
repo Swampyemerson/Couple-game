@@ -190,7 +190,7 @@ registerGame({
     .g-qd .qd-bs-ink { stroke: var(--g-ink); stroke-width: 1.8; stroke-linejoin: round; }
     .g-qd .qd-bs-plate { fill: var(--g-hl); stroke: none; }
     .g-qd .qd-burst[data-w="a"] .qd-bs-ink { fill: var(--p-a); } .g-qd .qd-burst[data-w="b"] .qd-bs-ink { fill: var(--p-b); }
-    .g-qd .qd-bs.bs-a { animation: qd-burst 0.46s var(--g-ease-out) both; } .g-qd .qd-bs.bs-b { animation: qd-burst2 0.46s var(--g-ease-out) both; }
+    .g-qd .qd-bs.bs-a { animation: qd-burst 0.46s steps(3, end) both; } .g-qd .qd-bs.bs-b { animation: qd-burst2 0.46s steps(3, end) both; }
     .g-qd .qd-horizon { stroke: var(--g-ink); stroke-width: 2.5; }
     .g-qd .qd-tufts { stroke: var(--g-ink); stroke-width: 1.6; fill: none; stroke-linecap: round; opacity: 0.55; }
     .g-qd .qd-cactus path { fill: var(--g-line); stroke: var(--g-ink); stroke-width: 1.8; stroke-linejoin: round; }
@@ -201,8 +201,8 @@ registerGame({
     .g-qd .qd-capp { fill: var(--g-ink); stroke: var(--g-ink); stroke-width: 1.6; stroke-linejoin: round; }
     .g-qd .qd-bellb { fill: var(--g-hl); stroke: var(--g-ink); stroke-width: 2.2; stroke-linejoin: round; }
     .g-qd .qd-bell { transform-box: fill-box; transform-origin: 50% 0; }
-    .g-qd .qd-bell.is-ring.x-a { animation: qd-swing 0.7s ease-out both; } .g-qd .qd-bell.is-ring.x-b { animation: qd-swing2 0.7s ease-out both; }
-    .g-qd .qd-bell.is-tink.x-a { animation: qd-tink 0.35s ease-out both; } .g-qd .qd-bell.is-tink.x-b { animation: qd-tink2 0.35s ease-out both; }
+    .g-qd .qd-bell.is-ring.x-a { animation: qd-swing 0.7s steps(3, end) both; } .g-qd .qd-bell.is-ring.x-b { animation: qd-swing2 0.7s steps(3, end) both; }
+    .g-qd .qd-bell.is-tink.x-a { animation: qd-tink 0.35s steps(2, end) both; } .g-qd .qd-bell.is-tink.x-b { animation: qd-tink2 0.35s steps(2, end) both; }
     .g-qd .qd-fig[data-w="a"] { --c: var(--p-a); }
     .g-qd .qd-fig[data-w="b"] { --c: var(--p-b); }
     .g-qd .qd-fig .qd-c { fill: var(--c); stroke: var(--g-ink); stroke-width: 2; stroke-linejoin: round; }
@@ -212,15 +212,15 @@ registerGame({
     .g-qd .qd-shadow { fill: var(--g-edge, var(--g-ink)); opacity: 0.22; }
     .g-qd .qd-flash { fill: var(--g-hl); stroke: var(--g-ink); stroke-width: 1.6; stroke-linejoin: round; display: none; }
     .g-qd .qd-puff circle { fill: var(--g-card); stroke: var(--g-ink); stroke-width: 1.4; }
-    .g-qd .qd-puff { display: none; transform-box: fill-box; transform-origin: 20% 60%; }
+    .g-qd .qd-puff { display: none; }
     .g-qd .qd-fig.is-flash .qd-flash { display: inline; animation: qd-muzzle 0.22s ease-out both; }
     .g-qd .qd-fig.is-flash .qd-puff, .g-qd .qd-fig.is-puff .qd-puff { display: inline; animation: qd-smoke 0.9s ease-out both; }
     .g-qd .qd-arm, .g-qd .qd-body { transform-box: view-box; transform-origin: 0 0; }
-    .g-qd .qd-arm { transform: rotate(76deg); transition: transform 0.09s cubic-bezier(0.3, 1.5, 0.5, 1); }
+    .g-qd .qd-arm { transform: rotate(76deg); }   /* the draw is instant */
     .g-qd .qd-fig.is-up .qd-arm { transform: rotate(-4deg); }
-    .g-qd .qd-body { transition: transform 0.5s cubic-bezier(0.55, 0, 0.75, 0.45); }
+    .g-qd .qd-body { transition: transform 0.5s steps(7, end); }   /* the fall is printed in frames: an SVG transform can't run on the compositor, so each step costs one cheap layout instead of thirty */
     .g-qd .qd-fig.is-down .qd-body { transform: rotate(-80deg); }
-    .g-qd .qd-hat { transform-box: fill-box; transform-origin: 50% 80%; transition: transform 0.55s cubic-bezier(0.2, 0.7, 0.4, 1), opacity 0.55s; }
+    .g-qd .qd-hat { transform-box: fill-box; transform-origin: 50% 80%; transition: transform 0.55s steps(6, end), opacity 0.55s; }
     .g-qd .qd-fig.is-hatless .qd-hat { transform: translate(-16px, -34px) rotate(-75deg); opacity: 0; }
     .g-qd .qd-kind { position: absolute; left: 6px; top: 5px; z-index: 2; padding: 1px 6px 0; font: 900 0.62rem/1.5 var(--g-font-body); letter-spacing: 0.1em; color: var(--g-on-ink); background: var(--g-hl); border: 2px solid var(--g-ink); border-radius: 4px; transform: rotate(-2deg); }
     .g-qd .qd-kind.qd-top { left: auto; right: 6px; transform: rotate(178deg); }
@@ -399,8 +399,8 @@ registerGame({
     @keyframes qd-stamp { 0% { opacity: 0; transform: translate(-50%, -50%) rotate(var(--sr)) scale(1.9); } 14% { opacity: 1; transform: translate(-50%, -50%) rotate(var(--sr)) scale(1); } 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -62%) rotate(var(--sr)) scale(1); } }
     @keyframes qd-hitstop { 0% { opacity: 0.5; } 100% { opacity: 0; } }
     @keyframes qd-hitstop2 { 0% { opacity: 0.5; } 100% { opacity: 0; } }
-    @keyframes qd-muzzle { 0% { transform: scale(0.4); opacity: 1; } 40% { transform: scale(1.15); opacity: 1; } 100% { opacity: 0; } }
-    @keyframes qd-smoke { 0% { opacity: 0; transform: translate(-3px, 2px) scale(0.5); } 25% { opacity: 1; } 100% { opacity: 0; transform: translate(7px, -9px) scale(1.5); } }
+    @keyframes qd-muzzle { 0%, 55% { opacity: 1; } 100% { opacity: 0; } }
+    @keyframes qd-smoke { 0% { opacity: 0; } 25% { opacity: 1; } 100% { opacity: 0; } }
     @keyframes qd-swing2 { 0% { transform: rotate(0); } 12% { transform: rotate(26deg); } 30% { transform: rotate(-20deg); } 50% { transform: rotate(13deg); } 70% { transform: rotate(-7deg); } 100% { transform: rotate(0); } }
     @keyframes qd-tink2 { 0% { transform: rotate(0); } 30% { transform: rotate(5deg); } 65% { transform: rotate(-4deg); } 100% { transform: rotate(0); } }
     @keyframes qd-swing { 0% { transform: rotate(0); } 12% { transform: rotate(26deg); } 30% { transform: rotate(-20deg); } 50% { transform: rotate(13deg); } 70% { transform: rotate(-7deg); } 100% { transform: rotate(0); } }

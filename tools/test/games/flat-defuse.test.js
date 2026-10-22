@@ -129,6 +129,15 @@ async function play(h) {
   assert(await h.b.evaluate(() => !!document.querySelector('.dx-index .is-press')), 'manual tabs press in too');
   await h.b.mouse.up(); await sleep(150);
 
+  // 3b. a real touch tap on a control costs about one layout (the text it changes), not the two to three a transform from "none" used to cost
+  const tp = await h.a.evaluate((sel) => { const e = document.querySelector(sel); e.scrollIntoView({ block: 'center' }); const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }, roll);
+  await sleep(500);
+  const t0m = await met();
+  for (let i = 0; i < 6; i++) { await h.a.touchscreen.tap(tp.x, tp.y); await sleep(450); }
+  const t1m = await met();
+  const lpt = (t1m.LayoutCount - t0m.LayoutCount) / 6;
+  assert(lpt <= 2.2, `a touch tap on a roller costs ${lpt.toFixed(1)} layouts (the clock adds about 0.5; it was 3.4 before press-in rested on a no-op transform)`);
+
   // 4. wire snip + strike juice
   const acts = await h.a.evaluate((i) => window.__defuse.drive(i), wi);
   const right = +/data-wire="(\d+)"/.exec(acts[0].sel)[1];

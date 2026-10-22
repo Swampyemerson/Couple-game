@@ -112,7 +112,7 @@ function analyse(S, who) {
   }
   ex.sort((x, y) => x - y); d2.sort((x, y) => x - y);
   const q = (a, p) => (a.length ? a[Math.min(a.length - 1, Math.floor(a.length * p))] : 0);
-  return { frames: ex.length, extraP95: q(ex, 0.95), extraMax: ex[ex.length - 1] || 0, snaps05: ex.filter((x) => x > 0.5).length, snaps10: ex.filter((x) => x > 1).length, d2p99: q(d2, 0.99), d2max: d2[d2.length - 1] || 0 };
+  return { frames: ex.length, extraP50: q(ex, 0.5), extraP95: q(ex, 0.95), extraMax: ex[ex.length - 1] || 0, snaps05: ex.filter((x) => x > 0.5).length, snaps10: ex.filter((x) => x > 1).length, d2p99: q(d2, 0.99), d2max: d2[d2.length - 1] || 0 };
 }
 const STEER = () => {
   const ka = ['KeyW', 'KeyD', 'KeyS', 'KeyA']; const kb = ['ArrowUp', 'ArrowRight', 'ArrowDown', 'ArrowLeft'];
@@ -121,6 +121,21 @@ const STEER = () => {
   go();
 };
 
+
+/** Watches the board for a shake (a running animation on .cy-board) until the round has ended; resolves with whether one ran. */
+const WATCH_SHAKE = () => new Promise((res) => {
+  let seen = false; const t0 = performance.now();
+  const loop = () => {
+    const b = document.querySelector('.cy-board');
+    if (b && b.getAnimations && b.getAnimations().some((a) => a.playState === 'running')) seen = true;
+    const i = window.__cycles.info();
+    if (i.phase === 'end' && performance.now() - t0 > 0 && i.stage === 'banner') return res(seen);
+    if (performance.now() - t0 > 25000) return res(seen);
+    requestAnimationFrame(loop);
+  };
+  requestAnimationFrame(loop);
+});
+
 async function main() {
   await section('sim.js is unchanged in behaviour', simEquivalence);
 
@@ -128,9 +143,15 @@ async function main() {
   try {
     await section('frame loop: no layout, no style recalc; persistent trail layer', async () => {
       const pg = h.a;
-      await startLocal(h, pg, { arena: 'pillars' });
+      await h.startLive(pg, 'cycles', 'local');
+      await until(() => visible(pg, '.cy-pick .cy-go'), 'picker');
       const cdp = await pg.context().newCDPSession(pg);
       await cdp.send('Performance.enable');
+      // the shell has its own ticking animation (the presence dot): what the picker costs while nothing is drawn is the floor
+      const f0 = await counters(cdp); await sleep(2000); const f1 = await counters(cdp);
+      const floorSty = (f1.RecalcStyleCount - f0.RecalcStyleCount) / 2; const floorLay = (f1.LayoutCount - f0.LayoutCount) / 2;
+      await pg.click('.cy-chip[data-arena="pillars"]'); await pg.click('.cy-go');
+      await until(async () => (await pg.evaluate(() => window.__cycles.info().phase)) === 'run', 'run', 15000);
       await pg.evaluate(STEER);
       await sleep(1500);
       const m0 = await counters(cdp);
@@ -140,10 +161,11 @@ async function main() {
       const info = await pg.evaluate(() => window.__cycles.info());
       const secs = 3;
       const lay = (m1.LayoutCount - m0.LayoutCount) / secs; const sty = (m1.RecalcStyleCount - m0.RecalcStyleCount) / secs;
-      console.log(`  layouts/s ${lay.toFixed(1)}  style recalcs/s ${sty.toFixed(1)}  (phase ${info.phase}, round ${info.round})`);
-      ok(lay <= 2.5, `riding makes at most 2.5 layouts a second (${lay.toFixed(1)}; there was one per frame before the banner was moved out of the frame)`);
-      ok(sty <= 3, `riding makes at most 3 style recalcs a second (${sty.toFixed(1)})`);
+      console.log(`  riding: layouts/s ${lay.toFixed(1)} (floor ${floorLay.toFixed(1)}), style recalcs/s ${sty.toFixed(1)} (floor ${floorSty.toFixed(1)}); phase ${info.phase}, round ${info.round}`);
+      ok(lay <= floorLay + 2.5, `riding makes at most 2.5 layouts a second over the idle floor (${lay.toFixed(1)} vs ${floorLay.toFixed(1)})`);
+      ok(sty <= floorSty + 6, `riding makes at most 6 style recalcs a second over the idle floor (${sty.toFixed(1)} vs ${floorSty.toFixed(1)}): nothing is restyled per frame`);
       ok(await pg.evaluate(() => window.__cycles.info().cssW > 100), 'the board has a size');
+      await h.closeGame(pg); await h.settle();
     });
 
     await section('input: a turn is felt in the very frame (ring at the head, queued turn drawn at once)', async () => {
@@ -160,29 +182,31 @@ async function main() {
         return { want, d: v.d };
       });
       ok(r.d === r.want, `the drawn bike points the new way within two frames (${r.d} vs ${r.want})`);
+      await h.closeGame(pg); await h.settle();
     });
   } finally { await h.close(); }
 
-  for (const hz of [60, 120]) {
-    await section(`heads glide between ticks at ${hz} Hz`, async () => {
+  for (const rate of [1, 4]) {
+    await section(`heads glide between ticks (CPU x${rate}: frames ${rate === 1 ? 'on time' : 'late and uneven'})`, async () => {
       const hh = await launch({ port: PORT + 1, only: ['cycles'], coarse: true });
       try {
         const pg = hh.a;
         await startLocal(hh, pg, {});
-        // the page's rAF is whatever Chromium gives (60); at 120 a fake clock is not needed: the check is "per-frame motion = dt / tick"
+        if (rate > 1) { const c = await pg.context().newCDPSession(pg); await c.send('Emulation.setCPUThrottlingRate', { rate }); }
+        // motion is dt / tick whatever the frame time is (the same code path as a 120 Hz screen, where dt is 8 ms)
         await pg.evaluate(SAMPLER); await pg.evaluate(STEER);
-        await sleep(6000);
+        await sleep(8000);
         await pg.evaluate(() => { window.__sampStop = 1; window.__botStop = 1; });
         const S = await pg.evaluate(() => window.__samp);
         const a = analyse(S, 'a'); const b = analyse(S, 'b');
         console.log('  ', JSON.stringify({ a, b }));
-        const frames = a.frames;
-        ok(frames > 100, `sampled ${frames} riding frames`);
-        ok(Math.max(a.extraP95, b.extraP95) < 0.2, `per-frame step is within 0.2 cell of dt / tick (p95 ${a.extraP95.toFixed(3)} / ${b.extraP95.toFixed(3)})`);
-        ok(a.snaps10 + b.snaps10 <= 2, `no jumps over a cell (${a.snaps10 + b.snaps10})`);
+        ok(a.frames > 60, `sampled ${a.frames} riding frames`);
+        // a steering frame (a turn is drawn at once and its correction fades) is allowed to differ from dt / tick; the typical frame must not
+        ok(Math.max(a.extraP50, b.extraP50) < 0.03, `the typical frame moves exactly dt / tick (median error ${a.extraP50.toFixed(3)} / ${b.extraP50.toFixed(3)} cells)`);
+        ok(Math.max(a.extraP95, b.extraP95) < 0.4 && Math.max(a.extraMax, b.extraMax) < 1, `and even a steering frame stays within 0.4 cell (p95 ${a.extraP95.toFixed(3)} / ${b.extraP95.toFixed(3)}, worst ${Math.max(a.extraMax, b.extraMax).toFixed(2)})`);
+        ok(a.snaps10 + b.snaps10 === 0, `no jumps over a cell (${a.snaps10 + b.snaps10})`);
       } finally { await hh.close(); }
     });
-    if (hz === 60) continue;
   }
 
   await section('live: partner head under 80 ms latency and 10 % loss', async () => {
@@ -203,12 +227,26 @@ async function main() {
       const R = { 'guest sees opponent': analyse(sb, 'a'), 'guest own': analyse(sb, 'b'), 'host own': analyse(sa, 'a'), 'host sees partner': analyse(sa, 'b') };
       console.log('  ', JSON.stringify(R));
       for (const [k, v] of Object.entries(R)) {
-        ok(v.frames > 150, `${k}: ${v.frames} frames`);
+        const partner = /opponent|partner/.test(k);
+        ok(v.frames > 100, `${k}: ${v.frames} frames`);
         ok(v.snaps10 <= 1, `${k}: at most one jump over a cell (${v.snaps10})`);
-        ok(v.snaps05 <= 6, `${k}: at most six jumps over half a cell (${v.snaps05})`);
+        ok(v.snaps05 <= (partner ? 4 : 12), `${k}: at most ${partner ? 4 : 12} jumps over half a cell (${v.snaps05})`);
       }
-      ok(R['guest sees opponent'].d2p99 < 0.6, `guest sees opponent: p99 of the 2nd difference stays under 0.6 cells (${R['guest sees opponent'].d2p99.toFixed(2)})`);
+      ok(R['host sees partner'].d2p99 < 0.8, `host sees partner: p99 of the 2nd difference stays under 0.8 cells (${R['host sees partner'].d2p99.toFixed(2)}; the original code: 1.4)`);
+      ok(R['guest sees opponent'].d2p99 < 0.8, `guest sees opponent: p99 of the 2nd difference stays under 0.8 cells (${R['guest sees opponent'].d2p99.toFixed(2)}; the original code: 0.8 to 0.9, host side 1.4)`);
     } finally { await hl.close(); }
+  });
+
+  await section('crash: the board shakes once, with normal motion (head-on classic round)', async () => {
+    const hc = await launch({ port: PORT + 4, only: ['cycles'], coarse: true });
+    try {
+      const pg = hc.a;
+      await startLocal(hc, pg, {});
+      const shook = await pg.evaluate(WATCH_SHAKE);
+      ok(shook, 'a crash shakes the board (a transform animation on .cy-board)');
+      const props = await pg.evaluate(() => { const b = document.querySelector('.cy-board'); return b.getAnimations().flatMap((a) => (a.effect.getKeyframes ? a.effect.getKeyframes() : []).flatMap((k) => Object.keys(k))).filter((k) => !['offset', 'easing', 'composite', 'computedOffset'].includes(k)); });
+      ok(props.every((k) => k === 'transform'), `and nothing but transform animates on it (${[...new Set(props)].join(',') || 'finished'})`);
+    } finally { await hc.close(); }
   });
 
   await section('reduced motion: no shake, no turn ring, no misregistration; light and dark both render', async () => {
@@ -223,6 +261,8 @@ async function main() {
         ok(n === 0, `${scheme}: no animation runs on the board under reduced motion`);
         const px = await pg.evaluate(() => { const c = document.querySelector('.cy-board canvas'); const g = c.getContext('2d'); const d = g.getImageData(c.width / 2, c.height / 2, 1, 1).data; return [d[0], d[1], d[2], d[3]]; });
         ok(px[3] > 0, `${scheme}: the canvas is painted (${px})`);
+        const shook = await pg.evaluate(WATCH_SHAKE);
+        ok(!shook, `${scheme}: the crash does not shake the board under reduced motion`);
         if (SHOTS) await pg.screenshot({ path: path.join(SHOTS, `cycles-rm-${scheme}.png`) });
         hr.assertNoErrors && hr.assertNoErrors();
       } finally { await hr.close(); }

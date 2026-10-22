@@ -22,7 +22,11 @@ export const FLAT_CSS = `
 .g-defuse .dx-surgetxt { contain: layout; }
 .g-defuse .dx-hush .dx-hush-t { display: inline-block; min-width: 4ch; text-align: center; }
 
-/* ── 2. press-in ── */
+/* ── 2. press-in ──
+   Going from transform: none to a transform makes an element a containing block, and Chromium answers that with a layout of the
+   page (measured: about 2.5 layouts per tap). Every pressable and animated control therefore rests on a no-op transform, so a press
+   or a beat only changes the transform value. :where() keeps this at the lowest specificity, so a module's own transform wins. */
+.g-defuse :where(.dx-gkey, .dx-pw-btn, .dx-mz-btn, .sx-sw, .dx-vent-key, .dx-relay-sw, .mx-step, .dx-pw-submit, .sx-set, .dx-relay-commit, .mx-tx, .dx-pad, .dx-index button, .dx-role, .dx-today, .dx-drawer-head, .dx-openrelay, .dx-tiers button, .mx-lamp, .dx-lcd, .dx-strikes i, .sx-lever, .dx-pw-strip, .dx-relay-lever i, .dx-led) { transform: translate(0, 0); }
 .g-defuse :is(.dx-gkey, .dx-pw-btn, .dx-mz-btn, .sx-sw, .dx-vent-key, .dx-relay-sw, .mx-step).is-press { transform: translateY(3px) !important; box-shadow: 0 1px 0 var(--g-ink) !important; transition: none !important; }
 .g-defuse :is(.dx-pw-submit, .sx-set, .dx-relay-commit, .mx-tx).is-press { transform: translateY(5px) !important; box-shadow: 0 1px 0 var(--g-ink) !important; transition: none !important; }
 .g-defuse .dx-pad.is-press { transform: translate(2px, 2px) !important; box-shadow: 0 0 0 var(--g-ink) !important; transition: none !important; }

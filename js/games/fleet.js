@@ -297,14 +297,18 @@ const polar = (n, radii, rot = 0) => Array.from({ length: n }, (_, i) => {
 }).join(' ');
 /** Ink droplets that fly out of an impact: [dx, dy, r] in chart units. */
 const DROPS = [[-36, -24, 4.5], [32, -30, 3.5], [40, 16, 4], [-30, 34, 3.5], [4, -42, 3], [10, 41, 4.5]];
-const dropsSVG = DROPS.map(([dx, dy, r]) => `<circle class="fl-drop" cx="50" cy="50" r="${r}" style="--dx:${dx}px;--dy:${dy}px"/>`).join('');
+// The spray and the ripple are plain HTML boxes (one transform + opacity animation each, on the compositor).
+// Animating many little SVG shapes per splash repaints on the main thread every frame, which is what made firing janky.
+const SPRAY_BG = DROPS.map(([dx, dy, r]) => `radial-gradient(circle at ${(10 + 0.8 * (50 + dx)).toFixed(1)}% ${(10 + 0.8 * (50 + dy)).toFixed(1)}%, var(--g-ink) 0 ${(r * 0.55).toFixed(1)}px, transparent ${(r * 0.55 + 0.6).toFixed(1)}px)`).join(', ');
+const FX_MISS = '<i class="fl-rip" aria-hidden="true"></i><i class="fl-spray" aria-hidden="true"></i>';
+const FX_HIT = '<i class="fl-spray" aria-hidden="true"></i>';
 const BURST = (() => {
   const outer = [42, 33, 45, 35, 41, 31, 44, 36];
   const pts = polar(16, Array.from({ length: 16 }, (_, i) => (i % 2 ? 17 : outer[i / 2])));
   // the yellow plate is printed a hair off register, so it peeks out from behind the red burst
-  return `<svg viewBox="0 0 100 100" aria-hidden="true" focusable="false"><polygon class="fl-plate" points="${pts}" transform="translate(3.5 3)"/><polygon class="fl-blot is-hit" points="${polar(14, [30, 22, 33, 21, 31, 24, 34, 22])}"/><polygon class="fl-burst" points="${pts}"/><circle class="fl-core" cx="50" cy="50" r="11"/>${dropsSVG}</svg>`;
+  return `<svg viewBox="0 0 100 100" aria-hidden="true" focusable="false"><polygon class="fl-plate" points="${pts}" transform="translate(3.5 3)"/><polygon class="fl-blot is-hit" points="${polar(14, [30, 22, 33, 21, 31, 24, 34, 22])}"/><polygon class="fl-burst" points="${pts}"/><circle class="fl-core" cx="50" cy="50" r="11"/></svg>`;
 })();
-const SPLASH = `<svg viewBox="0 0 100 100" aria-hidden="true" focusable="false"><polygon class="fl-blot" points="${polar(14, [23, 16, 25, 15, 24, 17, 26, 16, 23, 15, 25, 17, 24, 16])}"/><circle class="fl-ripple" cx="50" cy="50" r="30"/><circle class="fl-ring" cx="50" cy="50" r="22"/><circle class="fl-dot" cx="50" cy="50" r="8"/>${dropsSVG}</svg>`;
+const SPLASH = `<svg viewBox="0 0 100 100" aria-hidden="true" focusable="false"><polygon class="fl-blot" points="${polar(14, [23, 16, 25, 15, 24, 17, 26, 16, 23, 15, 25, 17, 24, 16])}"/><circle class="fl-ring" cx="50" cy="50" r="22"/><circle class="fl-dot" cx="50" cy="50" r="8"/></svg>`;
 const WRECK = '<svg viewBox="0 0 100 100" aria-hidden="true" focusable="false"><path class="fl-x-under" d="M31 31L69 69M69 31L31 69"/><path class="fl-x" d="M31 31L69 69M69 31L31 69"/></svg>';
 
 const at = (r, c, w = 1, h = 1) => `--r:${r};--c:${c};--w:${w};--h:${h}`;
@@ -448,10 +452,11 @@ const CSS = `
 .g-fleet .fl-core { fill: var(--g-hl); stroke: var(--g-ink); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .g-fleet .fl-blot { fill: color-mix(in srgb, var(--g-muted) 20%, transparent); stroke: none; }
 .g-fleet .fl-blot.is-hit { fill: color-mix(in srgb, var(--g-bad) 38%, transparent); }
-.g-fleet .fl-drop { fill: var(--g-ink); opacity: 0; }
 .g-fleet .fl-ring { fill: none; stroke: var(--g-muted); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .g-fleet .fl-dot { fill: var(--g-muted); }
-.g-fleet .fl-ripple { fill: none; stroke: var(--g-ink); stroke-width: 2; vector-effect: non-scaling-stroke; opacity: 0; }
+.g-fleet .fl-rip, .g-fleet .fl-spray { position: absolute; pointer-events: none; opacity: 0; }
+.g-fleet .fl-rip { inset: 12%; border: 2px solid var(--g-ink); border-radius: 50%; }
+.g-fleet .fl-spray { inset: 0; background: ${SPRAY_BG}; background-repeat: no-repeat; }
 .g-fleet .fl-x-under { fill: none; stroke: var(--g-ink); stroke-width: 6; stroke-linecap: round; vector-effect: non-scaling-stroke; }
 .g-fleet .fl-x { fill: none; stroke: var(--g-card); stroke-width: 2.5; stroke-linecap: round; vector-effect: non-scaling-stroke; }
 .g-fleet .is-mini .fl-x-under { stroke-width: 4; } .g-fleet .is-mini .fl-x { stroke-width: 1.5; }
@@ -632,8 +637,7 @@ const CSS = `
 @keyframes gfleet-pop { 0% { transform: scale(2.2); opacity: 0; } 55% { transform: scale(.85); opacity: 1; } 100% { transform: none; } }
 @keyframes gfleet-bloom { 0% { transform: scale(0) rotate(-50deg); } 55% { transform: scale(1.4) rotate(10deg); } 80% { transform: scale(.92) rotate(-3deg); } 100% { transform: none; } }
 @keyframes gfleet-ripple { 0% { transform: scale(.3); opacity: .9; } 100% { transform: scale(1.7); opacity: 0; } }
-@keyframes gfleet-splat { 0% { transform: scale(.15); } 50% { transform: scale(1.3); } 100% { transform: none; } }
-@keyframes gfleet-spray { 0% { transform: translate(0, 0) scale(.5); opacity: 1; } 100% { transform: translate(var(--dx), var(--dy)) scale(1); opacity: 0; } }
+@keyframes gfleet-spray { 0% { transform: scale(.25); opacity: 1; } 100% { transform: scale(1.12); opacity: 0; } }
 @keyframes gfleet-sink { 0% { transform: scale(1.3) rotate(-4deg); opacity: 0; } 22% { transform: scale(.94) rotate(1deg) translateY(0); opacity: 1; } 50% { transform: translateY(1%) rotate(1.5deg); } 100% { transform: translateY(3%) rotate(-1.8deg); } }
 @keyframes gfleet-founder { 0% { transform: none; } 35% { transform: translateY(8%) rotate(4deg); } 70% { transform: translateY(4%) rotate(-2.6deg); } 100% { transform: translateY(3%) rotate(-1.8deg); } }
 @keyframes gfleet-bubble { 0% { transform: translateY(0) scale(.5); opacity: 0; } 25% { opacity: .9; } 100% { transform: translateY(-190%) scale(1); opacity: 0; } }
@@ -647,9 +651,8 @@ const CSS = `
 .g-fleet .fl-mark.is-new { animation: gfleet-pop .38s cubic-bezier(.3, 1.4, .5, 1) both; animation-delay: var(--d, 0ms); }
 .g-fleet .fl-mark.is-new.is-hit { animation: none; }
 .g-fleet .fl-mark.is-new.is-hit svg { animation: gfleet-bloom .55s cubic-bezier(.3, 1.5, .5, 1) both; animation-delay: var(--d, 0ms); }
-.g-fleet .fl-mark.is-new .fl-ripple { transform-box: fill-box; transform-origin: center; animation: gfleet-ripple .75s ease-out both; animation-delay: calc(var(--d, 0ms) + 120ms); }
-.g-fleet .fl-mark.is-new .fl-blot { transform-box: fill-box; transform-origin: center; animation: gfleet-splat .42s var(--g-ease-out) both; animation-delay: var(--d, 0ms); }
-.g-fleet .fl-mark.is-new .fl-drop { transform-box: fill-box; transform-origin: center; animation: gfleet-spray .5s var(--g-ease-out) both; animation-delay: calc(var(--d, 0ms) + 50ms); }
+.g-fleet .fl-mark.is-new .fl-rip { animation: gfleet-ripple .75s ease-out forwards; animation-delay: calc(var(--d, 0ms) + 120ms); }
+.g-fleet .fl-mark.is-new .fl-spray { animation: gfleet-spray .5s var(--g-ease-out) forwards; animation-delay: calc(var(--d, 0ms) + 50ms); }
 .g-fleet .fl-mark.is-new.is-x { animation-duration: .3s; }
 .g-fleet .fl-scan.is-new { animation: gfleet-ping .5s cubic-bezier(.3, 1.4, .5, 1) both; }
 .g-fleet .fl-ship.is-sinking { animation: gfleet-sink 1.1s ease-out both; animation-delay: var(--d, 0ms); }
@@ -1233,7 +1236,7 @@ registerGame({
         tItems.push({
           k: `m${x.i}`,
           sig: kind,
-          html: `<span class="fl-mark ${kind}${isNew ? ' is-new' : ''}${last ? ' is-last' : ''}" style="${at(x.r, x.c)};--d:${d}ms">${!x.hit ? SPLASH : sunkBy >= 0 ? WRECK : BURST}</span>`,
+          html: `<span class="fl-mark ${kind}${isNew ? ' is-new' : ''}${last ? ' is-last' : ''}" style="${at(x.r, x.c)};--d:${d}ms">${!x.hit ? SPLASH : sunkBy >= 0 ? WRECK : BURST}${isNew && sunkBy < 0 ? (x.hit ? FX_HIT : FX_MISS) : ''}</span>`,
           patch: (n) => { if (n.classList.contains('is-last') !== last) n.classList.toggle('is-last', last); },
         });
       }
@@ -1261,7 +1264,7 @@ registerGame({
         const kind = !x.hit ? 'is-miss' : sunkBy >= 0 ? 'is-x' : 'is-hit';
         const isNew = freshAt.has(x.i) || (sunkBy >= 0 && freshAt.has(sunkBy));
         const d = freshAt.has(x.i) ? delay(x.i) : sunkBy >= 0 ? delay(sunkBy) + 400 : 0;
-        hItems.push({ k: `hm${x.i}`, sig: kind, html: `<span class="fl-mark ${kind}${isNew ? ' is-new' : ''}" style="${at(x.r, x.c)};--d:${d}ms">${!x.hit ? SPLASH : sunkBy >= 0 ? WRECK : BURST}</span>` });
+        hItems.push({ k: `hm${x.i}`, sig: kind, html: `<span class="fl-mark ${kind}${isNew ? ' is-new' : ''}" style="${at(x.r, x.c)};--d:${d}ms">${!x.hit ? SPLASH : sunkBy >= 0 ? WRECK : BURST}${isNew && sunkBy < 0 ? (x.hit ? FX_HIT : FX_MISS) : ''}</span>` });
       }
       sync(S.hlayer, hItems);
 

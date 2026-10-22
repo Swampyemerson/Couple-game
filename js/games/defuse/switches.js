@@ -294,9 +294,13 @@ export const SWITCHES = {
     </div>`;
     const root = box.querySelector('.sx');
     const btns = box.querySelectorAll('.sx-sw');
+    const shown = [];
     function paint() {
+      // only the switch that moved is touched: rewriting all five on every flick dirtied style and laid out the panel again
       btns.forEach((b, i) => {
         const up = sw[i] === 1;
+        if (shown[i] === up) return;
+        shown[i] = up;
         b.classList.toggle('is-up', up);
         b.classList.toggle('is-down', !up);
         b.dataset.pos = up ? 'up' : 'down';

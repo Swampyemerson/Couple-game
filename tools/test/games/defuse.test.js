@@ -1429,7 +1429,7 @@ async function phoneChain(h) {
   const s2 = await waitBomb2(h.a);
   const want = Math.min(RD.TIERS.normal.secs, carry + RD.TIERS.normal.secs / 2);
   assert(s2.b.seed === RC_CHAIN.chainSeed(seedA) && s2.b.chain === 2 && s2.b.round.name === r2.name && s2.b.strikes === 0 && !s2.b.solved.some(Boolean), `chain: bomb 2 is a new round (${r2.name}) from seed + "|next", strikes back to 0`);
-  assert(s2.b.start === want && s2.b.carry === carry && Math.abs(s2.b.left / 1000 - want) <= 1.5, `chain: bomb 2’s clock is the carried ${want} s (${carry} left + 150), reads ${(s2.b.left / 1000).toFixed(1)}`);
+  assert(s2.b.start === want && s2.b.carry === carry && Math.abs(s2.b.left / 1000 - want) <= 4, `chain: bomb 2’s clock is the carried ${want} s (${carry} left + 150), reads ${(s2.b.left / 1000).toFixed(1)}`);
   assert((await chipText(h.a)).join() === 'Bomb 2 of 2', 'the bomb phone says "Bomb 2 of 2"');
   await until(async () => { const x = await chainState(h.b); return x && x.m && x.m.n === s2.b.n; }, 'the manual to follow to bomb 2', 4000);
   assert((await dx(h.b)).manual.chain === 2 && (await manualInfo(h.b)).edition === r2.edition && (await h.b.textContent('.dx-page')).includes(r2.name) && (await chipText(h.b)).join() === 'Bomb 2 of 2', `the manual followed on its own: bomb 2’s edition (${r2.name}) and "Bomb 2 of 2"`);

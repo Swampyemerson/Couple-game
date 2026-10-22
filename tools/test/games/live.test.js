@@ -74,6 +74,8 @@ const qdCue = (pg, c, t = 14000) => pg.waitForFunction((c) => window.__qdTest &&
 const qdTap = (pg, sel) => pg.evaluate(() => matchMedia('(pointer: coarse)').matches).then((c) => (c ? pg.tap(sel) : pg.click(sel)));
 const qdGo = (pg) => qdTap(pg, '.g-qd .qd-go');
 const qdPick = async (pg, pack, series) => { if (pack) await qdTap(pg, `.g-qd [data-pack="${pack}"]`); if (series) await qdTap(pg, `.g-qd [data-series="${series}"]`); };
+/** A shot taken inside a timing window (a countdown, the gap between two draws): JPEG, because the paper grain makes a PNG of the screen take over a second. */
+const qdQuickShot = (h, pg, file) => h.shot(pg, file, { type: 'jpeg', quality: 60 });
 const qdPressed = (pg, attr, v) => pg.waitForFunction(([a, v]) => document.querySelector(`.g-qd [${a}="${v}"]`)?.getAttribute('aria-pressed') === 'true', [attr, v], { timeout: 4000 });
 const qdText = (pg, sel = '.qd-sig:not(.qd-top)') => pg.evaluate((sel) => { const s = document.querySelector(sel); return { word: s.querySelector('.qd-word').textContent.trim(), line: s.querySelector('.qd-line').textContent.trim(), times: s.querySelector('.qd-times').textContent.replace(/\s+/g, ' ').trim(), cls: s.className }; }, sel);
 const qdData = (pg) => pg.evaluate(() => { try { return JSON.parse(localStorage.getItem('ju.games.data.v1') || '{}').quickdraw || {}; } catch { return {}; } });
@@ -767,8 +769,8 @@ async function quickdrawLive(h, tag) {
   const rd = (await qd(a)).rd;
   assert(rd.both === 1 && rd.gap > 0, `tied at match point: Both barrels (second draw ${rd.gap} ms after the first)`);
   await qdCue(b, 'first');
-  await h.shot(b, `${SHOTS}/qd-${tag}-live-barrels-360-b.png`);
   await qdFireAt(b, 'steady', 30);
+  await qdQuickShot(h, b, `${SHOTS}/qd-${tag}-live-barrels-360-b.jpg`);   // after the tap: a shot inside the gap would eat it
   v = await verdictFor(a, 5);
   assert(v.w === 'a' && v.why === 'foul' && v.both === 1 && v.tally.a === 3 && v.tally.b === 2, 'firing on the first of the two draws is a foul: Emerson takes the duel 3-2');
   await a.waitForFunction(() => document.querySelector('#game-root .gm-end:not([hidden])'), null, { timeout: 5000 });
@@ -1009,8 +1011,8 @@ async function quickdrawRematch(h, tag) {
   assert(/Same again/.test(ha) && /Starting in \d/.test(hb) && await a.isVisible('.qd-again') && !(await b.isVisible('.qd-again')), `the host sees the countdown with a "Pick again" button, the guest sees it too ("${hb.trim()}")`);
   const btn = await a.evaluate(() => { const r = document.querySelector('.qd-again').getBoundingClientRect(); const g = document.querySelector('.qd-go').getBoundingClientRect(); return { h: r.height, w: r.width, gh: g.height }; });
   assert(btn.h >= 44 && btn.w >= 44 && btn.gh >= 44, `"Pick again" and GO are big enough (${Math.round(btn.w)}x${Math.round(btn.h)}, GO ${Math.round(btn.gh)} px)`);
-  await h.shot(a, `${SHOTS}/qd-${tag}-live-rematch-390-a.png`);
-  await h.shot(b, `${SHOTS}/qd-${tag}-live-rematch-360-b.png`);
+  await qdQuickShot(h, a, `${SHOTS}/qd-${tag}-live-rematch-390-a.jpg`);
+  await qdQuickShot(h, b, `${SHOTS}/qd-${tag}-live-rematch-360-b.jpg`);
   await qdTap(a, '.qd-again');
   await h.wait(3800);
   assert((await qd(a)).phase === 'setup' && (await qd(b)).phase === 'setup' && !(await qd(a)).started, 'Pick again: nothing starts by itself any more, on either phone');
@@ -1102,8 +1104,8 @@ async function quickdrawLocal(h, tag) {
   // 1-1 at match point: Both barrels. Sydney fires on the first draw: foul, Emerson takes the duel.
   await qdCue(a, 'first');
   assert((await qd(a)).rd.both === 1, 'one phone: Both barrels at 1-1');
-  await h.shot(a, `${SHOTS}/qd-${tag}-local-barrels-390.png`);
   await qdFireAt(a, 'steady', 20, { w: ['b'] });
+  await qdQuickShot(h, a, `${SHOTS}/qd-${tag}-local-barrels-390.jpg`);
   v = await verdictFor(a, 4);
   assert(v.w === 'a' && v.why === 'foul' && v.res, 'one phone: the first of the two draws is a trap');
   await a.waitForFunction(() => document.querySelector('#game-root .gm-end:not([hidden])'), null, { timeout: 5000 });

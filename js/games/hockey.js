@@ -803,7 +803,7 @@ registerGame({
     const hostC = { who: 'a', x: W / 2, y: H - 22, vx: 0, vy: 0 };   // ... and where the puck prediction collides with it (a little ahead of the drawn one)
     const GMS = [M[me], hostC];
     const rem = {};             // net.remoteInto target: the host's state interpolated at now - PARTNER_DELAY (allocation-free)
-    if (net) net.delay = PARTNER_DELAY;
+    if (net) net.delay = (location.port && window.__hkD) || PARTNER_DELAY; // TEMPDELAY
     // The host's match as last seen in progress. Mirrored in our presence, so a host that
     // reloads or closes and reopens the game picks the score back up instead of restarting 0–0.
     let keep = null;            // { k, s: [a, b], g, ph, tb }
@@ -917,7 +917,7 @@ registerGame({
         clampMallet(hostM, env);
         M.a.px = M.a.x = M.a.rx = hostM.x; M.a.py = M.a.y = M.a.ry = hostM.y;
         // the puck prediction collides with where the mallet is about to be, not where it was drawn
-        const ld = net && net.synced ? PARTNER_DELAY / 1000 : 0;
+        const ld = net && net.synced ? Math.min(PARTNER_DELAY, 75) / 1000 : 0;
         hostC.x = hostM.x + hostM.vx * ld; hostC.y = hostM.y + hostM.vy * ld; hostC.vx = hostM.vx; hostC.vy = hostM.vy;
         clampMallet(hostC, env);
       }

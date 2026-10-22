@@ -227,7 +227,7 @@ registerGame({
     const vv = { a: mkView(), b: mkView() }; // drawn views: raw plus the fading correction
     const bl = { a: { x: 0, y: 0, lx: 0, ly: 0, has: false, r: -1 }, b: { x: 0, y: 0, lx: 0, ly: 0, has: false, r: -1 } };
     let vvReady = false;
-    const LS = new Float64Array(12); // this frame's growing segments: per rider x0 y0 x1 y1 ux uy
+    const LS = new Float64Array(20); // this frame's growing segments, per rider: start x y, corner x y, head x y, end heading x y, start heading x y
     if (!host) { const s0 = api.partnerState(); if (s0 && s0.ph === 'over') staleMid = s0.mid; }
 
     el.innerHTML = '<div class="g-cycles"><p class="cy-ready">Getting the grid ready…</p></div>';
@@ -1124,7 +1124,12 @@ registerGame({
       ctx.drawImage(layer, sx, sy, ex - sx, ey - sy, sx / lyS, sy / lyS, (ex - sx) / lyS, (ey - sy) / lyS);
     }
     function restoreFrom(layer) {
-      for (let i = 0; i < rpN; i++) blit(layer, RP[4 * i], RP[4 * i + 1], RP[4 * i + 2], RP[4 * i + 3]);
+      for (let i = 0; i < rpN; i++) {
+        const o = 4 * i;
+        // a rectangle that did not move (a token) is restored once, as this frame's
+        if (i < rcN && RP[o] === RC[o] && RP[o + 1] === RC[o + 1] && RP[o + 2] === RC[o + 2] && RP[o + 3] === RC[o + 3]) continue;
+        blit(layer, RP[o], RP[o + 1], RP[o + 2], RP[o + 3]);
+      }
       for (let i = 0; i < rcN; i++) blit(layer, RC[4 * i], RC[4 * i + 1], RC[4 * i + 2], RC[4 * i + 3]);
       if (cRhas) blit(layer, cR0, cR1, cR2, cR3);
     }
@@ -1140,9 +1145,9 @@ registerGame({
       rcN = 0; rcOver = false;
       const padB = c * 2.8 + 3; // halo, speed lines, jump ring
       for (let n = 0; n < 2; n++) {
-        const o = n * 6;
-        const hx = LS[o + 2];
-        const hy = LS[o + 3];
+        const o = n * 10;
+        const hx = LS[o + 4];
+        const hy = LS[o + 5];
         addRect(Math.min(LS[o], hx) - padB, Math.min(LS[o + 1], hy) - padB, Math.max(LS[o], hx) + padB, Math.max(LS[o + 1], hy) + padB);
       }
       const padT = c * 1.3 + 3;
@@ -1280,31 +1285,37 @@ registerGame({
       cbG.drawImage(shCan, x0, y0, x1 - x0, y1 - y0, x0, y0, x1 - x0, y1 - y0);
       cbG.globalAlpha = 1;
     }
-    /** The part of each trail between its last stroked point and the head, as a segment in pixels (LS) with its heading. */
+    /** The part of each trail between its last stroked point and the head, in pixels (LS). A trail is only ever horizontal and
+     *  vertical, so when a correction has moved the head off the line the segment is drawn as an L (along the old heading, then
+     *  along the head's own), never as a slanted stroke. */
     function liveSegs() {
       const k = cell;
       for (let n = 0; n < 2; n++) {
         const p = PL[n];
         const P = sim[p].path;
         const v = vv[p];
-        const o = n * 6;
+        const o = n * 10;
         const x0 = (P[2 * ci[p]] + 0.5) * k;
         const y0 = (P[2 * ci[p] + 1] + 0.5) * k;
         const x1 = (v.x + 0.5) * k;
         const y1 = (v.y + 0.5) * k;
-        const dx = x1 - x0;
-        const dy = y1 - y0;
-        const L = Math.hypot(dx, dy);
-        LS[o] = x0; LS[o + 1] = y0; LS[o + 2] = x1; LS[o + 3] = y1;
-        if (L > 1e-3) { LS[o + 4] = dx / L; LS[o + 5] = dy / L; } else { LS[o + 4] = DX[v.d]; LS[o + 5] = DY[v.d]; }
+        const vert = v.d === 0 || v.d === 2;
+        const cx = vert ? x1 : x0; // the last leg runs along the head's heading
+        const cy = vert ? y0 : y1;
+        LS[o] = x0; LS[o + 1] = y0; LS[o + 2] = cx; LS[o + 3] = cy; LS[o + 4] = x1; LS[o + 5] = y1;
+        LS[o + 6] = DX[v.d]; LS[o + 7] = DY[v.d];
+        const lx = cx - x0;
+        const ly = cy - y0;
+        if (Math.abs(lx) + Math.abs(ly) > 1e-3) { LS[o + 8] = Math.sign(lx); LS[o + 9] = Math.sign(ly); } else { LS[o + 8] = LS[o + 6]; LS[o + 9] = LS[o + 7]; }
       }
     }
     function strokeLive(n, ext, ox, oy) {
-      const o = n * 6;
+      const o = n * 10;
       const st = ci[PL[n]] === 0 ? ext : 0;
       ctx.beginPath();
-      ctx.moveTo(LS[o] - LS[o + 4] * st + ox, LS[o + 1] - LS[o + 5] * st + oy);
-      ctx.lineTo(LS[o + 2] + LS[o + 4] * ext + ox, LS[o + 3] + LS[o + 5] * ext + oy);
+      ctx.moveTo(LS[o] - LS[o + 8] * st + ox, LS[o + 1] - LS[o + 9] * st + oy);
+      ctx.lineTo(LS[o + 2] + ox, LS[o + 3] + oy);
+      ctx.lineTo(LS[o + 4] + LS[o + 6] * ext + ox, LS[o + 5] + LS[o + 7] * ext + oy);
       ctx.stroke();
     }
 
@@ -1436,6 +1447,7 @@ registerGame({
           star(x, y, R, R * 0.42, 5, u * 1.2);
           ctx.fill(); ctx.stroke();
         } else if (f.k === 'tap') {
+          ctx.globalAlpha = (1 - u * u) * 0.55; // a pressed-in echo of the rider's ink, never as solid as the trail itself
           ctx.strokeStyle = C[f.p]; ctx.lineWidth = ow * 1.4;
           ctx.beginPath(); ctx.arc(x, y, c * (0.8 + 1.6 * (1 - (1 - u) * (1 - u))), 0, 7); ctx.stroke();
         } else {
