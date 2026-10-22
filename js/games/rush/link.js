@@ -24,6 +24,7 @@ const K = FIELDS.length;
 const LERP = Uint8Array.from(FIELDS.map((f) => f[1]));
 const NAMES = FIELDS.map((f) => f[0]);
 const RING = 40;
+const SLEW = 0.05; // guest clock correction while running, ms per ms
 
 export function emptyState() {
   const o = {};
@@ -79,7 +80,11 @@ export function createLink(api, { delay = 100 } = {}) {
   const host = !!api.isHost;
   const base = performance.now();
   const local = () => performance.now() - base;
-  let off = null;           // guest: host clock − local clock
+  // guest: host clock − local clock. Doubles that change every frame live on an object (see game.js K).
+  //   off: the offset in use; tgt: the latest estimate it slews towards; offT: local time `off` was advanced to
+  const C = { off: 0.5, tgt: 0.5, offT: 0.5, has: 0 };
+  C.off = 0; C.tgt = 0; C.offT = 0;
+  let sim = false;          // the sim is running (not a countdown / pause / lobby): slew, don't snap
   let pingId = 0;
   const pend = new Map();
   const csamp = [];         // { rtt, off }
@@ -88,7 +93,18 @@ export function createLink(api, { delay = 100 } = {}) {
   let fast = 2;
   let pingTick = 0;
   let lastReply = 0;
-  const now = () => (host ? net.now() : off == null ? net.now() : local() + off);
+  /** Move `off` towards its target by at most SLEW ms per ms of real time (continuous, so the clock never steps). */
+  function slew(t) {
+    if (t <= C.offT) return;
+    const m = (t - C.offT) * SLEW; const d = C.tgt - C.off;
+    C.off += d > m ? m : d < -m ? -m : d;
+    C.offT = t;
+  }
+  const now = () => {
+    if (host || !C.has) return net.now();
+    const t = local(); slew(t);
+    return t + C.off;
+  };
   function cping() {
     if (dead || host) return;
     pingTick++;
@@ -120,8 +136,13 @@ export function createLink(api, { delay = 100 } = {}) {
       if (csamp.length < 4) return;
       const best = csamp.slice().sort((x, y) => x.rtt - y.rtt).slice(0, 5).map((x) => x.off).sort((x, y) => x - y);
       const est = best[Math.floor(best.length / 2)];
-      if (off == null || fast === 2 || Math.abs(est - off) > 40) off = est;
-      else off += (est - off) * 0.3; // slew gently while running
+      // Snap while nothing depends on the clock yet (first sync, countdown, pause, lobby) or when it is
+      // far off (the host restarted); while the sim runs, slew at <= 5 % of real time. The old
+      // 30 % blend stepped the clock up to ~12 ms at a time and each step jumped the sim.
+      const D = window.__RUSH_DEBUG;
+      if (!C.has || !sim || Math.abs(est - C.off) > 40 || (D && D.oldPacing)) { C.off = est; C.offT = t1; C.has = 1; }
+      else slew(t1);
+      C.tgt = est;
     }));
     timers.push(setInterval(cping, 120));
   }
@@ -176,7 +197,11 @@ export function createLink(api, { delay = 100 } = {}) {
     get partner() { return partnerIid; },
     get net() { return net; },
     get rtt() { if (host || !csamp.length) return net.rtt; let m = Infinity; for (const x of csamp) if (x.rtt < m) m = x.rtt; return Math.round(m); },
-    get synced() { return host ? net.synced : csamp.length >= 8 && off != null; },
+    get synced() { return host ? net.synced : csamp.length >= 8 && !!C.has; },
+    /** Tell the clock whether the sim is running (it then slews instead of snapping). */
+    setSim(on) { sim = !!on; },
+    /** The shared-clock time of an instant on the performance.now() timeline (a vsync-aligned rAF timestamp). */
+    at(tp) { return host || !C.has ? net.now() + (tp - performance.now()) : (slew(local()), tp - base + C.off); },
     /** Clock ping level: 2 burst (countdown, pauses), 1 lobby, 0 running. */
     setFastSync(level) { fast = level === true ? 2 : level === false ? 0 : level | 0; },
     get ready() { return net.ready; },
@@ -190,7 +215,7 @@ export function createLink(api, { delay = 100 } = {}) {
     },
     on(type, fn) { (handlers[type] = handlers[type] || new Set()).add(fn); return () => handlers[type].delete(fn); },
     /** Stream my state (an object you reuse; numbers only, plus i = my instance id). */
-    publish(state) { state.i = iid; state.ts = Math.round(now()); net.publish(state); },
+    publish(state, ts) { state.i = iid; state.ts = Math.round(ts === undefined ? now() : ts); net.publish(state); },
     /** Interpolate the partner at shared time `at` into `out` (no allocation). False if no data. */
     sample(out, at) {
       if (!ring.n) return false;
@@ -234,7 +259,7 @@ export function createLink(api, { delay = 100 } = {}) {
     resetNet() {
       try { offRemote && offRemote(); net.destroy(); } catch { /* ignore */ }
       ring.n = 0; ring.head = 0; rawLatest = null;
-      csamp.length = 0; off = null; pend.clear();
+      csamp.length = 0; C.has = 0; pend.clear();
       initNet();
     },
     clearRemote() { ring.n = 0; ring.head = 0; },
