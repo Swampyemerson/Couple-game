@@ -4275,6 +4275,7 @@ export function createGame(el, api) {
         b.pose = 'stand'; stage.av[v].setPose('stand', true); snapOrient[v] = true;
         b.lookYaw = 0; b.lookPitch = pitch;
         C.vsAt = -10; C.autoUntil = 0; C.lkAt = !!b.at; C.lkUntil = 0; C.override = null;
+        C.pvKey = ''; C.gdAt = -10; // (a probe settles a view from rest: the follow rig starts on the solved spot, not 1.2 rad/s away from it)
         bodyCentre(v, tvA); const cx = tvA.x; const cy = tvA.y; const cz = tvA.z;
         let px; let py; let pz; let alpha = 1;
         if (kind === 'watch') {

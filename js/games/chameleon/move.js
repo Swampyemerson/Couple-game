@@ -396,6 +396,7 @@ export const VIS = {
   jumpPos: 0.06, // a sim centre move beyond this + 1.5 × speed·dt is a discontinuity
   jumpUp: 0.15, // the up vector turning more than this (rad) in one frame is one
   jumpAng: 0.2, // so is the whole orientation turning faster than turnRate (rad/s) — at least this many rad in one frame: a yaw reversal
+  maxTurn: 10, // rad/s: the drawn body's fastest turn (a 90° corner takes ~0.16 s)
   turnRate: 12, // that the sim makes in a couple of frames (dampAngle) glides instead of snapping round
   snapDist: 1.2, // a bigger jump is a teleport: no glide
 };
@@ -405,7 +406,7 @@ export function mkVis() {
     cx: 0, cy: 0, cz: 0, fx: 0, fy: 0, fz: 0, ux: 0, uy: 1, uz: 0, qx: 0, qy: 0, qz: 0, qw: 1,
     tx: 0, ty: 0, tz: 0, tux: 0, tuy: 1, tuz: 0, tqx: 0, tqy: 0, tqz: 0, tqw: 1,
     ox: 0, oy: 0, oz: 0, ovx: 0, ovy: 0, ovz: 0, ex: 0, ey: 0, ez: 0, ewx: 0, ewy: 0, ewz: 0,
-    jumps: 0, h: 0.2, lt: -1e9, wr: 20,
+    jumps: 0, h: 0.2, lt: -1e9, wr: 20, fresh: false,
   };
 }
 /** Next update starts on the sim pose (teleports, new rounds). */
@@ -420,12 +421,21 @@ const SE = [0, 0];
  * vertical) sets what counts as normal motion; size s scales the pivot height; free = a tongue-zip
  * in flight (a long, smooth glide: no kicks). Leaves the drawn pose in vs (centre c, feet f, up u, quat q).
  */
+const QL = [0, 0, 0, 0];
+/** log(a · conj(b)) as a rotation vector (the shorter way round) → QL[0..2], its angle → QL[3]. */
+function qlogDiff(ax, ay, az, aw, bx, by, bz, bw) {
+  let rx = aw * -bx + ax * bw + ay * -bz - az * -by; let ry = aw * -by - ax * -bz + ay * bw + az * -bx; let rz = aw * -bz + ax * -by - ay * -bx + az * bw; let rw = aw * bw - ax * -bx - ay * -by - az * -bz;
+  if (rw < 0) { rx = -rx; ry = -ry; rz = -rz; rw = -rw; }
+  const sl = Math.hypot(rx, ry, rz);
+  if (sl < 1e-6) { QL[0] = 0; QL[1] = 0; QL[2] = 0; QL[3] = 0; } else { const ang = 2 * Math.atan2(sl, rw); QL[0] = (rx / sl) * ang; QL[1] = (ry / sl) * ang; QL[2] = (rz / sl) * ang; QL[3] = ang; }
+  return QL;
+}
 export function visCore(vs, px, py, pz, qx, qy, qz, qw, speed, s, dt, free) {
   const h = VIS.h * s; vs.h = h;
   const ux = 2 * (qx * qy - qw * qz); const uy = 1 - 2 * (qx * qx + qz * qz); const uz = 2 * (qy * qz + qw * qx);
   const tcx = px + ux * h; const tcy = py + uy * h; const tcz = pz + uz * h;
   if (!vs.init || vs.snap) {
-    vs.init = true; vs.snap = false;
+    vs.init = true; vs.snap = false; vs.fresh = true;
     vs.ox = 0; vs.oy = 0; vs.oz = 0; vs.ovx = 0; vs.ovy = 0; vs.ovz = 0; vs.ex = 0; vs.ey = 0; vs.ez = 0; vs.ewx = 0; vs.ewy = 0; vs.ewz = 0;
     vs.cx = tcx; vs.cy = tcy; vs.cz = tcz; vs.qx = qx; vs.qy = qy; vs.qz = qz; vs.qw = qw;
   } else if (!free) {
@@ -440,17 +450,17 @@ export function visCore(vs, px, py, pz, qx, qy, qz, qw, speed, s, dt, free) {
     const qd = Math.abs(qx * vs.tqx + qy * vs.tqy + qz * vs.tqz + qw * vs.tqw);
     if (upd < Math.cos(VIS.jumpUp) || 2 * Math.acos(Math.min(1, qd)) > Math.max(VIS.jumpAng, VIS.turnRate * dt)) {
       // e := log(drawn_prev · conj(target_new)), kept in the shorter hemisphere
-      let ax = vs.qx; let ay = vs.qy; let az = vs.qz; let aw = vs.qw;
-      let rx = aw * -qx + ax * qw + ay * -qz - az * -qy; let ry = aw * -qy - ax * -qz + ay * qw + az * -qx; let rz = aw * -qz + ax * -qy - ay * -qx + az * qw; let rw = aw * qw - ax * -qx - ay * -qy - az * -qz;
-      if (rw < 0) { rx = -rx; ry = -ry; rz = -rz; rw = -rw; }
-      const sl = Math.hypot(rx, ry, rz);
-      if (sl < 1e-6) { vs.ex = 0; vs.ey = 0; vs.ez = 0; } else { const ang = 2 * Math.atan2(sl, rw); vs.wr = VIS.wRot * (ang > 1.57 ? 1 - 0.5 * Math.min(1, (ang - 1.57) / 1.57) : 1); vs.ex = (rx / sl) * ang; vs.ey = (ry / sl) * ang; vs.ez = (rz / sl) * ang; }
+      qlogDiff(vs.qx, vs.qy, vs.qz, vs.qw, qx, qy, qz, qw);
+      vs.ex = QL[0]; vs.ey = QL[1]; vs.ez = QL[2];
+      if (QL[3] > 0) vs.wr = VIS.wRot * (QL[3] > 1.57 ? 1 - 0.5 * Math.min(1, (QL[3] - 1.57) / 1.57) : 1);
     }
   } else if (free) {
     // a zip in flight: follow the sim pose exactly
     vs.ox = 0; vs.oy = 0; vs.oz = 0; vs.ovx = 0; vs.ovy = 0; vs.ovz = 0;
   }
   vs.tx = tcx; vs.ty = tcy; vs.tz = tcz; vs.tux = ux; vs.tuy = uy; vs.tuz = uz; vs.tqx = qx; vs.tqy = qy; vs.tqz = qz; vs.tqw = qw;
+  const fresh = vs.fresh; vs.fresh = false;
+  const pqx = vs.qx; const pqy = vs.qy; const pqz = vs.qz; const pqw = vs.qw;
   // springs: position offset and orientation error decay to zero
   const wp = VIS.wPos; const wr = vs.wr; // (a half-turn glides at half the rate: the peak turning speed of a flip round a thin plank stays under ~800°/s)
   stepExp(vs.ox, vs.ovx, wp, dt, SE); vs.ox = SE[0]; vs.ovx = SE[1];
@@ -466,6 +476,20 @@ export function visCore(vs, px, py, pz, qx, qy, qz, qw, speed, s, dt, free) {
     const sn = Math.sin(el / 2) / el; const ex = vs.ex * sn; const ey = vs.ey * sn; const ez = vs.ez * sn; const ew = Math.cos(el / 2);
     vs.qx = ew * qx + ex * qw + ey * qz - ez * qy; vs.qy = ew * qy - ex * qz + ey * qw + ez * qx; vs.qz = ew * qz + ex * qy - ey * qx + ez * qw; vs.qw = ew * qw - ex * qx - ey * qy - ez * qz;
     const n = Math.hypot(vs.qx, vs.qy, vs.qz, vs.qw) || 1; vs.qx /= n; vs.qy /= n; vs.qz /= n; vs.qw /= n;
+  }
+  // the drawn body never turns faster than VIS.maxTurn: the error spring closes a lag on top of a target that is itself turning (a yaw
+  // reversal the sim makes in a few frames), which can double the speed; the error is re-derived from what is actually drawn
+  if (!fresh && dt > 1e-4) {
+    const dot = pqx * vs.qx + pqy * vs.qy + pqz * vs.qz + pqw * vs.qw;
+    const ang = 2 * Math.acos(Math.min(1, Math.abs(dot))); const cap = VIS.maxTurn * dt;
+    if (ang > cap + 1e-4) {
+      const t = cap / ang; const sg = dot < 0 ? -1 : 1;
+      let nx = pqx * (1 - t) + vs.qx * sg * t; let ny = pqy * (1 - t) + vs.qy * sg * t; let nz = pqz * (1 - t) + vs.qz * sg * t; let nw = pqw * (1 - t) + vs.qw * sg * t;
+      const nl = Math.hypot(nx, ny, nz, nw) || 1; nx /= nl; ny /= nl; nz /= nl; nw /= nl;
+      vs.qx = nx; vs.qy = ny; vs.qz = nz; vs.qw = nw;
+      qlogDiff(nx, ny, nz, nw, qx, qy, qz, qw);
+      vs.ex = QL[0]; vs.ey = QL[1]; vs.ez = QL[2]; vs.ewx = 0; vs.ewy = 0; vs.ewz = 0;
+    }
   }
   vs.cx = tcx + vs.ox; vs.cy = tcy + vs.oy; vs.cz = tcz + vs.oz;
   vs.ux = 2 * (vs.qx * vs.qy - vs.qw * vs.qz); vs.uy = 1 - 2 * (vs.qx * vs.qx + vs.qz * vs.qz); vs.uz = 2 * (vs.qy * vs.qz + vs.qw * vs.qx);
