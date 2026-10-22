@@ -45,7 +45,8 @@ const STALL_MS = 1000;    // the HOG!/RESET stamp has the centre to itself this 
 const CORRECT_RATE = 700; // u/s: the fastest a guest's puck display may close a correction
 const CORRECT_W = 34;     // rad/s: the guest's puck correction is a critically damped spring (95 % closed in ~140 ms), so its speed is continuous
 const PARTNER_DELAY = 130; // ms: the partner's mallet is read this far behind the clock, so it sits between two samples even with jitter and a lost packet (net.remoteInto)
-const PARTNER_LEAD = 70;  // ms: ... and drawn this far ahead of that along its (also interpolated) velocity, so it is not a whole delay behind the puck
+const PARTNER_LEAD = 100; // (the follower below takes ~40 ms of it back)
+const FOLLOW_TAU = 0.04; // s  // ms: ... and drawn this far ahead of that along its (also interpolated) velocity, so it is not a whole delay behind the puck
 const HARD_HIT = 120;     // impact speed (u/s) of a hit that gets hit-stop and a shake
 const STOP_MS = 50;       // hit-stop: 50 ms at HARD_HIT, up to STOP_MAX for the hardest
 const STOP_MAX = 80;
@@ -906,7 +907,7 @@ registerGame({
       // The host's mallet: the host's stream interpolated 75 ms behind the newest sample (smooth, never a guess).
       // Before the clock is synced, the old way: extrapolate the last sample a little, then ease toward it.
       if (S) {
-        const r = net && net.synced ? net.remoteInto(rem) : null;
+        const r = net && net.synced ? net.remoteInto(rem, net.now() - (performance.now() - now)) : null; // read at the frame's own timestamp, not at whenever this callback got to run
         if (r && Array.isArray(r.m) && r.m.length > 3) {
           // The streamed velocity is a noisy estimate, so the lead uses the velocity of the interpolated path itself, low-passed (~50 ms).
           if (dt > 0.0005) {
@@ -915,7 +916,10 @@ registerGame({
             pm.x = r.m[0]; pm.y = r.m[1];
           }
           hostM.vx = pm.vx; hostM.vy = pm.vy;
-          hostM.x = pm.x + pm.vx * PARTNER_LEAD / 1000; hostM.y = pm.y + pm.vy * PARTNER_LEAD / 1000;
+          // ... and a short follower on top irons out what a lost packet leaves (the buffer then extrapolates for a moment and snaps back)
+          const tx = pm.x + pm.vx * PARTNER_LEAD / 1000; const ty = pm.y + pm.vy * PARTNER_LEAD / 1000;
+          const kf = 1 - Math.exp(-dt / FOLLOW_TAU);
+          if (!pm.drawn || (tx - hostM.x) * (tx - hostM.x) + (ty - hostM.y) * (ty - hostM.y) > 2500) { hostM.x = tx; hostM.y = ty; pm.drawn = true; } else { hostM.x += (tx - hostM.x) * kf; hostM.y += (ty - hostM.y) * kf; }
         } else {
           const age = clamp(hostAge(S, now), 0, 70) / 1000;
           const tx = S.m[0] + S.m[2] * age; const ty = S.m[1] + S.m[3] * age;
@@ -926,7 +930,7 @@ registerGame({
         clampMallet(hostM, env);
         M.a.px = M.a.x = M.a.rx = hostM.x; M.a.py = M.a.y = M.a.ry = hostM.y;
         // the puck prediction collides with where the mallet is about to be, not where it was drawn
-        const ld = net && net.synced ? (PARTNER_DELAY - PARTNER_LEAD) / 1000 : 0;
+        const ld = net && net.synced ? (PARTNER_DELAY - PARTNER_LEAD + FOLLOW_TAU * 1000) / 1000 : 0;
         hostC.x = hostM.x + hostM.vx * ld; hostC.y = hostM.y + hostM.vy * ld; hostC.vx = hostM.vx; hostC.vy = hostM.vy;
         clampMallet(hostC, env);
       }

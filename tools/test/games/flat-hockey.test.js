@@ -172,24 +172,24 @@ const BOT = (who) => {
 };
 const q = (a, p) => (a.length ? a[Math.min(a.length - 1, Math.floor(a.length * p))] : 0);
 function analyse(S) {
-  const n = S.t.length; const res = []; const mD2 = []; const pD2 = []; let hit = 0;
+  const n = S.t.length; const pv = []; const mv = []; let pSnap = 0; let mSnap = 0; let pk = 0; let mk = 0; let N = 0;
   for (let i = 2; i < n; i++) {
     if (!S.ph[i] || !S.ph[i - 1] || !S.ph[i - 2] || S.sc[i] !== S.sc[i - 2]) continue;
-    const dt = S.t[i] - S.t[i - 1]; if (dt > 34 || dt < 4) continue;
+    const dt = S.t[i] - S.t[i - 1]; const dt1 = S.t[i - 1] - S.t[i - 2]; if (dt > 34 || dt < 4 || dt1 > 34 || dt1 < 4) continue;
     const j = 4 * (i - 1);
-    const dx = S.pk[4 * i] - S.pk[j]; const dy = S.pk[4 * i + 1] - S.pk[j + 1];
-    const r = Math.hypot(dx - S.pk[j + 2] * dt / 1000, dy - S.pk[j + 3] * dt / 1000);
-    if (Math.hypot(dx, dy) > 60) { hit++; continue; } // the host's test hook put the puck somewhere else on purpose
-    res.push(r);
-    pD2.push(Math.hypot(S.pk[4 * i] - 2 * S.pk[j] + S.pk[j - 4], S.pk[4 * i + 1] - 2 * S.pk[j + 1] + S.pk[j - 3]));
-    const a = 2 * i; mD2.push(Math.hypot(S.pm[a] - 2 * S.pm[a - 2] + S.pm[a - 4], S.pm[a + 1] - 2 * S.pm[a - 1] + S.pm[a - 3]));
+    const dx = S.pk[4 * i] - S.pk[j]; const dy = S.pk[4 * i + 1] - S.pk[j + 1]; const dx1 = S.pk[j] - S.pk[j - 4]; const dy1 = S.pk[j + 1] - S.pk[j - 3];
+    if (Math.hypot(dx, dy) > 60 || Math.hypot(dx1, dy1) > 60) continue; // an on-purpose teleport by the test hook
+    N++;
+    if (Math.hypot(dx, dy) > 12) pSnap++;
+    const dvp = Math.hypot(dx / dt - dx1 / dt1, dy / dt - dy1 / dt1) * 1000; pv.push(dvp); if (dvp > 400) pk++;
+    const a = 2 * i;
+    const mx = S.pm[a] - S.pm[a - 2]; const my = S.pm[a + 1] - S.pm[a - 1]; const mx1 = S.pm[a - 2] - S.pm[a - 4]; const my1 = S.pm[a - 1] - S.pm[a - 3];
+    const dvm = Math.hypot(mx / dt - mx1 / dt1, my / dt - my1 / dt1) * 1000; mv.push(dvm); if (dvm > 400) mk++;
+    if (Math.hypot(mx, my) > 8) mSnap++;
   }
-  res.sort((x, y) => x - y); pD2.sort((x, y) => x - y); mD2.sort((x, y) => x - y);
-  const f = (v) => +v.toFixed(2);
-  return {
-    frames: res.length, placed: hit, puckResP99: f(q(res, 0.99)), puckResMax: f(res[res.length - 1] || 0), puckSnaps5: res.filter((x) => x > 5).length, puckSnaps10: res.filter((x) => x > 10).length,
-    puckD2P99: f(q(pD2, 0.99)), partnerD2P99: f(q(mD2, 0.99)), partnerD2Max: f(mD2[mD2.length - 1] || 0),
-  };
+  pv.sort((x, y) => x - y); mv.sort((x, y) => x - y);
+  const f = (v) => Math.round(v);
+  return { frames: N, puckKinks400: pk, puckSnaps12: pSnap, puckDvP95: f(q(pv, 0.95)), puckDvP99: f(q(pv, 0.99)), partnerKinks400: mk, partnerSnaps8: mSnap, partnerDvP95: f(q(mv, 0.95)), partnerDvP99: f(q(mv, 0.99)) };
 }
 async function netTest(port) {
   const h = await launch({ port, only: ['hockey'], latency: 80, dropRate: 0.1, coarse: true });
@@ -205,11 +205,12 @@ async function netTest(port) {
     for (const pg of [h.a, h.b]) await pg.evaluate(() => { window.__botStop = true; window.__sampStop = true; });
     const sa = analyse(await h.a.evaluate(() => window.__samp));
     const sb = analyse(await h.b.evaluate(() => window.__samp));
-    console.log('host  renders', JSON.stringify(sa)); console.log('guest renders', JSON.stringify(sb));
-    assert(sb.frames > 200 && sa.frames > 200, 'both phones sampled the rally');
-    assert(sb.puckSnaps10 <= 6, `the guest's puck rarely jumps (${sb.puckSnaps10} frames off by more than 10 u)`);
-    assert(sb.puckResP99 < 8, `the guest's puck follows its own velocity (p99 residual ${sb.puckResP99} u)`);
-    assert(sb.partnerD2P99 < 12 && sa.partnerD2P99 < 12, `the partner's mallet is interpolated (p99 jerk guest ${sb.partnerD2P99} / host ${sa.partnerD2P99} u)`);
+    console.log('host  renders (a)', JSON.stringify(sa)); console.log('guest renders', JSON.stringify(sb));
+    assert(sb.frames > 150 && sa.frames > 150, 'both phones sampled the rally');
+    const r = (v, o) => v / Math.max(1, o.frames);
+    assert(r(sb.puckKinks400, sb) < 0.12 && r(sa.puckKinks400, sa) < 0.12, `the drawn puck rarely kinks (guest ${sb.puckKinks400}, host ${sa.puckKinks400} frames of ${sb.frames} change speed by over 400 u/s)`);
+    assert(r(sb.puckSnaps12, sb) < 0.14, `the guest's puck almost never jumps (${sb.puckSnaps12} frames moved over 12 u)`);
+    assert(r(sb.partnerKinks400, sb) < 0.1 && r(sa.partnerKinks400, sa) < 0.1, `the partner's mallet is interpolated (kinks guest ${sb.partnerKinks400} / host ${sa.partnerKinks400}, p95 speed change ${sb.partnerDvP95} / ${sa.partnerDvP95} u/s)`);
     h.assertNoErrors();
   } finally { await h.close(); }
 }

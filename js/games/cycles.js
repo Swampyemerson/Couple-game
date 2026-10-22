@@ -35,11 +35,12 @@ const BANNER_MS = 1500; // the round banner
 const END_TOTAL = HOLD_MS + REPLAY_MS + BANNER_MS;
 const REPLAY_TICKS = 16;
 const ZOOM = 2.4;
-const MAX_DT = 64; // ms: the drawing's clamp: a longer frame is a hitch, not motion to animate through
+const MAX_DT = 50; // ms: the drawing's clamp: a longer frame is a hitch, not motion to animate through
 const OWN_AHEAD = 0.55; // guest: its own head is drawn this many ticks past the last confirmed one
 const OPP_GAP = 1.45; // guest: the opponent is drawn this many ticks behind its own clock (entity interpolation)
 const EXT_CAP = 1.6; // ticks a head may run on past the confirmed cell while the next presence frame is late
 const TAU_BLEND = 42; // ms: a correction fades with this time constant (about 100 ms to vanish)
+const BLEND_RATE = 0.014; // cells per ms: the fastest a correction may fade (a 3-cell one takes about 200 ms)
 const PL = ['a', 'b'];
 const SHADOW_SIGN = [[1, 1], [1, -1], [-1, -1], [-1, 1]];
 const KEYS = {
@@ -1012,7 +1013,9 @@ registerGame({
         } else { b.x = 0; b.y = 0; }
         b.lx = r.x; b.ly = r.y; b.has = true; b.r = round;
         if (b.x || b.y) {
-          const f = reduce ? 0 : Math.exp(-dt / TAU_BLEND);
+          // fade out exponentially, but never faster than BLEND_RATE cells a millisecond, so a long frame doesn't turn the fade into a pop
+          const mag = Math.hypot(b.x, b.y);
+          const f = reduce ? 0 : 1 - Math.min(mag * (1 - Math.exp(-dt / TAU_BLEND)), BLEND_RATE * dt) / mag;
           b.x *= f; b.y *= f;
           if (Math.abs(b.x) < 0.01 && Math.abs(b.y) < 0.01) { b.x = 0; b.y = 0; }
         }

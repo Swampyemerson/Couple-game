@@ -88,13 +88,14 @@ async function cyclesLivePhones(h) {
   assert(await visible(h.b, '.cy-pad.p-b'), 'guest phone shows its D-pad');
 
   // round 1: both steer with keys. Sydney turns (her) left into a wall; Emerson jinks left then up.
+  let r1Shots = null; // the screenshots run beside the round: on a loaded box they take longer than the round's 3 s end phase
   const r1 = await liveRound(h, 1, async () => {
     await h.b.keyboard.press('ArrowLeft');
     await h.a.keyboard.press('a'); await sleep(170); await h.a.keyboard.press('w');
     await sleep(400);
-    await shot(h.a, 'cycles-phone-live-host-light');
-    await shot(h.b, 'cycles-phone-live-guest-light');
+    r1Shots = Promise.all([shot(h.a, 'cycles-phone-live-host-light'), shot(h.b, 'cycles-phone-live-guest-light')]);
   });
+  await r1Shots;
   assert(turnsOf(r1.log, 'a').length === 2 && turnsOf(r1.log, 'b').length === 1, 'round 1: both players\' key turns are in the log');
   assert(r1.rw === 'a', 'round 1: Emerson takes it');
   await shot(h.b, 'cycles-phone-roundend-guest-light');

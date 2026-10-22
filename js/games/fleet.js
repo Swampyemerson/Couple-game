@@ -398,7 +398,7 @@ const CSS = `
 .g-fleet .fl-grid {
   --wave: color-mix(in srgb, var(--sea) 32%, transparent);
   grid-column: 2; grid-row: 2; position: relative; display: grid; grid-template-columns: repeat(8, var(--cs)); grid-auto-rows: var(--cs);
-  isolation: isolate; background: var(--g-card);
+  isolation: isolate; will-change: transform; background: var(--g-card); /* its own layer, so the sink jolt never re-rasterises it */
 }
 /* The printed sea lives on its own layer: painted once, then only composited. (Tiny repeating gradients
    in the grid's own background were re-rasterised every time a square or mark changed.) */
@@ -1398,7 +1398,7 @@ registerGame({
       const theirsNew = list.filter((x) => x.by !== v);
       const tChart = S.tchart;
       const hChart = S.hchart;
-      // each shot: a shell crosses the chart, then it lands (a jolt for a hit; a freeze-flash-jolt when it sinks a ship)
+      // each shot: a shell crosses the chart, then it lands (a splat, and a freeze-flash-jolt when it sinks a ship)
       list.forEach((x, k) => {
         const mineShot = x.by === v;
         const layer = mineShot ? S.tlayer : S.hlayer;
@@ -1406,7 +1406,6 @@ registerGame({
         const chart = mineShot ? tChart : hChart;
         fly(layer, x.r, x.c, k * 260, mineShot);
         if (x.hit && x.sunk >= 0) hitStop(chart, layer, grid, k * 260 + FL);
-        else if (x.hit) later(() => shakeEl(grid, 2, 180), k * 260 + FL);
       });
       const sunkMine = mineNew.filter((x) => x.sunk >= 0);
       const sunkTheirs = theirsNew.filter((x) => x.sunk >= 0);
