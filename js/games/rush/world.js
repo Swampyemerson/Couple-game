@@ -708,7 +708,7 @@ export function createWorld(THREE, P) {
     setDetail,
     stats,
     /** Everything that can be drawn, for shader warm-up. */
-    warmList: () => [liteProbe, coins, coinsFar, lows, highs, barrels, blocks, gates, marks, shadows, street, skyline, dome, ...Object.values(items), mtrains[0], pool[0].mesh, ...banners, markMesh[0]],
+    warmList: () => [coins, coinsFar, lows, highs, barrels, blocks, gates, marks, shadows, street, skyline, dome, ...Object.values(items), mtrains[0], pool[0].mesh, ...banners, markMesh[0], liteProbe],
     dispose() {
       for (const d of disposables) { try { d.dispose(); } catch { /* ignore */ } }
       for (const m of [coins, coinsFar, lows, highs, barrels, blocks, gates, marks, ...Object.values(items)]) { try { m.dispose(); } catch { /* ignore */ } }

@@ -33,7 +33,8 @@ export function analysePace(rec) {
     if (ok && psp[i] > 1) judderB.push((pz[i] - pz[i - 1] - psp[i] * dt) / (psp[i] / hz));
     const dx = cx[i] - cx[i - 1]; const dy = cy[i] - cy[i - 1];
     const lat = Math.hypot(dx, dy);
-    if (lat > 0.35 || Math.abs(-(cz[i] - cz[i - 1]) - sp[i] * dt) > 0.6) teleports++;
+    // (a crash / respawn moves the camera on purpose: down frames are skipped, as for judder)
+    if (ok && (lat > 0.35 || Math.abs(-(cz[i] - cz[i - 1]) - sp[i] * dt) > 0.6)) teleports++;
     if (lat / dt > camVmax) camVmax = lat / dt;
     if (i >= warm + 3) {
       const d1 = dt; const d0 = (ts[i - 1] - ts[i - 2]) / 1000; const dm = (ts[i - 2] - ts[i - 3]) / 1000;

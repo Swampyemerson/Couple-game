@@ -864,12 +864,16 @@ export function createGame(el, api) {
       if (now > from) { const d = now - from; M.runMs += Math.min(d, 250); if (d > 250) lost += d - 250; }
     }
     M.lastNow = now;
-    const target = Math.floor(M.runMs / (DT * 1000));
+    // The sim leads the clock by less than one step (ceil) and the picture interpolates back to the
+    // frame's exact time: plain floor + interpolation always shows the runner one step (8.3 ms) late,
+    // which at 120 Hz was a whole frame of extra swipe latency. (dbg.oldPacing: the old floor.)
+    const old = dbg && dbg.oldPacing;
+    const target = old ? Math.floor(M.runMs / (DT * 1000)) : Math.ceil(M.runMs / (DT * 1000) - 1e-9);
     let n = 0;
     while (M.steps < target && n < 40) { stepAll(); M.steps++; n++; }
     if (M.steps < target) { lost += M.runMs - M.steps * DT * 1000; M.runMs = M.steps * DT * 1000; }
     if (lost > 0 && rules) rules.simLost(lost);
-    M.alpha = clamp((M.runMs - M.steps * DT * 1000) / (DT * 1000), 0, 1);
+    M.alpha = old ? clamp((M.runMs - M.steps * DT * 1000) / (DT * 1000), 0, 1) : clamp(1 - (M.steps * DT * 1000 - M.runMs) / (DT * 1000), 0, 1);
   }
   function stepAll() {
     for (let li = 0; li < locals.length; li++) {
@@ -1071,7 +1075,7 @@ export function createGame(el, api) {
     // Stamp the sample with the instant its position is for: the sim stands at step `steps`, which is
     // `alpha` of a step before the paced time. (The partner draws from these stamps, so a stamp that
     // follows the callback's own delay would put jitter into their picture.)
-    link.publish(pub, dbg && dbg.oldPacing || !K.simT ? undefined : M.phase === 'run' && !isPaused(K.simT) ? M.lastNow - M.alpha * DT * 1000 : K.simT);
+    link.publish(pub, dbg && dbg.oldPacing || !K.simT ? undefined : M.phase === 'run' && !isPaused(K.simT) ? M.lastNow + (M.steps * DT * 1000 - M.runMs) : K.simT);
   }
 
   // ── frame ──
