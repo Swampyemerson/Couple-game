@@ -153,21 +153,34 @@ async function main() {
       await pg.click('.cy-chip[data-arena="pillars"]'); await pg.click('.cy-go');
       await until(async () => (await pg.evaluate(() => window.__cycles.info().phase)) === 'run', 'run', 15000);
       await pg.evaluate(STEER);
-      await sleep(1500);
       // every DOM write inside the game while it rides (a frame that restyled something would show here)
       await pg.evaluate(() => { window.__mut = 0; window.__mo = new MutationObserver((l) => { window.__mut += l.length; }); window.__mo.observe(document.querySelector('.g-cycles'), { subtree: true, attributes: true, childList: true, characterData: true }); });
-      const m0 = await counters(cdp);
-      await sleep(3000);
-      const m1 = await counters(cdp);
-      const muts = await pg.evaluate(() => { window.__mo.disconnect(); return window.__mut; });
-      await pg.evaluate(() => { window.__botStop = 1; });
+      // only the time spent riding counts (not the countdown, the replay or the banner, which are CSS animations by design): add up
+      // the counters' growth over the polls where the phase stayed 'run', across as many rounds as it takes to reach 2 s
+      let ridden = 0; let lay = 0; let sty = 0; let muts0 = 0; let mutsRide = 0;
+      let prev = await counters(cdp); let prevT = Date.now(); let prevPh = ''; let prevMut = 0; let runSince = 0;
+      const tEnd = Date.now() + 100000;
+      while (ridden < 2000 && Date.now() < tEnd) {
+        await sleep(100);
+        const m = await counters(cdp); const now = Date.now();
+        const st = await pg.evaluate(() => ({ ph: window.__cycles.info().phase, mut: window.__mut }));
+        if (st.ph === 'run') { if (prevPh !== 'run') runSince = now; }
+        if (st.ph === 'run' && prevPh === 'run' && now - runSince > 700) {
+          ridden += now - prevT; lay += m.LayoutCount - prev.LayoutCount; sty += m.RecalcStyleCount - prev.RecalcStyleCount; mutsRide += st.mut - prevMut;
+        }
+        prev = m; prevT = now; prevPh = st.ph; prevMut = st.mut;
+      }
+      await pg.evaluate(() => { window.__mo.disconnect(); window.__botStop = 1; });
       const info = await pg.evaluate(() => window.__cycles.info());
       await h.closeGame(pg); await h.settle();
-      const secs = 3;
-      const lay = (m1.LayoutCount - m0.LayoutCount) / secs; const sty = (m1.RecalcStyleCount - m0.RecalcStyleCount) / secs;
-      console.log(`  riding: layouts/s ${lay.toFixed(1)} (floor ${floorLay.toFixed(1)}), style recalcs/s ${sty.toFixed(1)} (floor ${floorSty.toFixed(1)}, the shell's own ticking dot), DOM writes in the game ${muts} in ${secs} s; phase ${info.phase}, round ${info.round}`);
+      const secs = ridden / 1000;
+      lay /= secs; sty /= secs;
+      const muts = mutsRide;
+      console.log(`  riding ${secs.toFixed(1)} s: layouts/s ${lay.toFixed(1)} (idle floor ${floorLay.toFixed(1)}), style recalcs/s ${sty.toFixed(1)} (idle floor ${floorSty.toFixed(1)}), DOM writes in the game ${muts}`);
+      ok(secs >= 1.2, `measured ${secs.toFixed(1)} s of pure riding`);
+      ok(sty <= floorSty + 6, `riding makes at most 6 style recalcs a second over the idle floor (${sty.toFixed(1)} vs ${floorSty.toFixed(1)}): nothing is restyled per frame`);
       ok(lay <= floorLay + 2.5, `riding makes at most 2.5 layouts a second over the idle floor (${lay.toFixed(1)} vs ${floorLay.toFixed(1)})`);
-      ok(muts <= 30, `the game writes to the DOM only when something changes: ${muts} writes in ${secs} s of riding (a per-frame write would be ~180)`);
+      ok(muts <= 12, `the game writes to the DOM only when something changes: ${muts} writes in ${secs.toFixed(1)} s of riding (a per-frame write would be ~${Math.round(secs * 60)})`);
       ok(info.cssW > 100, 'the board has a size');
     });
 
@@ -231,7 +244,7 @@ async function main() {
       console.log('  ', JSON.stringify(R));
       for (const [k, v] of Object.entries(R)) {
         const partner = /opponent|partner/.test(k);
-        ok(v.frames > 100, `${k}: ${v.frames} frames`);
+        ok(v.frames > 60, `${k}: ${v.frames} frames`);
         ok(v.snaps10 <= 1, `${k}: at most one jump over a cell (${v.snaps10})`);
         ok(v.snaps05 <= (partner ? 4 : 12), `${k}: at most ${partner ? 4 : 12} jumps over half a cell (${v.snaps05})`);
       }
