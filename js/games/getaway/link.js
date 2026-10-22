@@ -14,6 +14,9 @@ const F = FIELDS.length;
 const YAW = FIELDS.indexOf('yaw');
 const STEP = new Set(['fl', 'lv', 'ph', 'rd', 'pz', 'ry', 'sv']); // flags: newest wins, no lerp
 const STEPI = FIELDS.map((f) => STEP.has(f));
+const IX = FIELDS.indexOf('x'); const IZ = FIELDS.indexOf('z'); const IVX = FIELDS.indexOf('vx'); const IVZ = FIELDS.indexOf('vz'); const IR = FIELDS.indexOf('r'); const IGK = FIELDS.indexOf('gk');
+// the sender's simulation rate (gk, absent on an older version: 0 → 1): its velocities are per second of its own simulation
+const rate = (g) => (g > 0.05 && g < 1 ? g : 1);
 
 function wrap(a) { a = (a + Math.PI) % (Math.PI * 2); if (a < 0) a += Math.PI * 2; return a - Math.PI; }
 
@@ -52,6 +55,22 @@ export function createRemoteBuffer(size = 48) {
         else if (f === YAW) out.yaw = x0 + wrap(x1 - x0) * k;
         else out[FIELDS[f]] = x0 + (x1 - x0) * k;
       }
+      // Position and heading go along a cubic Hermite curve through the two samples with their velocity
+      // and yaw rate as tangents (C1 across samples: the speed no longer jumps at every 20 Hz sample as a
+      // straight line between them did). Where the tangents disagree with the chord (a bump landed between
+      // the samples, a warp) it stays the straight line, so a curve can never overshoot a collision.
+      const dts = Math.max(1, t[b] - t[a]) / 1000; const ga = rate(v[a * F + IGK]); const gb = rate(v[b * F + IGK]);
+      const m0x = v[a * F + IVX] * ga * dts; const m0z = v[a * F + IVZ] * ga * dts; const m1x = v[b * F + IVX] * gb * dts; const m1z = v[b * F + IVZ] * gb * dts;
+      const cx = v[b * F + IX] - v[a * F + IX]; const cz = v[b * F + IZ] - v[a * F + IZ];
+      const ch = Math.hypot(cx, cz);
+      const k2 = k * k; const k3 = k2 * k;
+      const h00 = 2 * k3 - 3 * k2 + 1; const h10 = k3 - 2 * k2 + k; const h01 = -2 * k3 + 3 * k2; const h11 = k3 - k2;
+      if (ch < 60 && Math.hypot(cx - 0.5 * (m0x + m1x), cz - 0.5 * (m0z + m1z)) <= 0.5 + 0.3 * ch) {
+        out.x = h00 * v[a * F + IX] + h10 * m0x + h01 * v[b * F + IX] + h11 * m1x;
+        out.z = h00 * v[a * F + IZ] + h10 * m0z + h01 * v[b * F + IZ] + h11 * m1z;
+      }
+      const dy = wrap(v[b * F + YAW] - v[a * F + YAW]); const q0 = v[a * F + IR] * ga * dts; const q1 = v[b * F + IR] * gb * dts;
+      if (Math.abs(dy - 0.5 * (q0 + q1)) <= 0.3 + 0.3 * Math.abs(dy)) out.yaw = v[a * F + YAW] + h10 * q0 + h01 * dy + h11 * q1;
       return 0;
     },
   };
