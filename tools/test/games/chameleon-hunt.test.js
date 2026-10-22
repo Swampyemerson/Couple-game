@@ -73,6 +73,12 @@ async function huntReady(h, { hider = 'b', side = 0 } = {}) {
   await wait(400);
   return { H, S };
 }
+/**
+ * How far off the hider's body centre a "near miss" aims. The whisker band is fixed (0.35 m from the skin, never smaller than
+ * for a size-1 body), but the skin shrinks with the hider: 0.55 m off a Large body is ~0.2 m from the skin, 0.55 m off a Petite
+ * one (the By-map default on the Living Room) is ~0.37 m, just outside the band. Aim ~0.2 m off the skin for any size.
+ */
+const nearSide = async (p, w = 'b') => Math.min(0.55, 0.2 + 0.3 * (await hook(p, 'sizes'))[w].scale);
 /** The newest round record (match history: survives the next round's reset). */
 const lastRec = (p) => p.evaluate(() => { const h = window.__cham.state().match.hist; return h[h.length - 1] || null; });
 const sticks = (p) => p.evaluate(() => Array.from(document.querySelectorAll('.chm-pops .chm-pop')).map((e) => e.textContent));
@@ -105,7 +111,8 @@ async function whiskerSection(port) {
     await startPair(h);
     await startMatch(h, { rules: { grace: 0, headStart: 0, seek: 60 } });
     const { H, S } = await huntReady(h);
-    const bc = await standAndAim(S, 'b', { side: 0.55 });
+    const near = await nearSide(S);
+    const bc = await standAndAim(S, 'b', { side: near });
     const hash0 = await hook(H, 'paintHash', 'b');
     // a miss well clear of the whisker band: nothing
     await aimFire(S, bc[0] + 1.6, bc[1], bc[2]);
@@ -113,7 +120,7 @@ async function whiskerSection(port) {
     assert((await mo(H)).whisker === 0 && (await mo(S)).whisker === 0, 'a wide miss (1.6 m off) is not a whisker');
     assert(await hook(H, 'paintHash', 'b') === hash0, '…and leaves the skin alone');
     // now a near miss
-    await aimFire(S, bc[0] + 0.55, bc[1], bc[2]);
+    await aimFire(S, bc[0] + near, bc[1], bc[2]);
     await H.waitForFunction(() => window.__cham.moments().whisker >= 1, null, { timeout: 6000 });
     await S.waitForFunction(() => window.__cham.moments().whisker >= 1, null, { timeout: 6000 });
     const s0 = await st(S);
@@ -187,9 +194,10 @@ async function whiskerHsSection(port) {
     const hider = s.viewer === 'a' ? 'b' : 'a';
     assert(hider === 'b', 'Sydney hid, Emerson seeks');
     assert(!(await a.isVisible('.chm-mo-mercy')) && !(await mo(a)).chips.mercy, 'hotseat: the Mercy chip is hidden (no one to send it to)');
-    const bc = await standAndAim(a, hider, { side: 0.55 });
+    const near = await nearSide(a, hider);
+    const bc = await standAndAim(a, hider, { side: near });
     const hash0 = await hook(a, 'paintHash', hider);
-    await aimFire(a, bc[0] + 0.55, bc[1], bc[2]);
+    await aimFire(a, bc[0] + near, bc[1], bc[2]);
     await a.waitForFunction(() => window.__cham.moments().whisker >= 1, null, { timeout: 6000 });
     await wait(400);
     const m1 = await mo(a);
@@ -523,9 +531,10 @@ async function dbSection(port) {
     await wait(500);
     assert(!(await mo(a)).chips.mercy && !(await mo(b)).chips.mercy, 'no Mercy chip in Double Blind');
     const bc = await hook(a, 'bodyCenter', 'b');
+    const near = await nearSide(a);
     await hook(a, 'teleport', bc[0] + 0.3, bc[2] + 2.6, Math.PI, 0);
-    await hook(a, 'aimAt', bc[0] + 0.55, bc[1], bc[2]);
-    await aimFire(a, bc[0] + 0.55, bc[1], bc[2]);
+    await hook(a, 'aimAt', bc[0] + near, bc[1], bc[2]);
+    await aimFire(a, bc[0] + near, bc[1], bc[2]);
     await wait(1500);
     await b.waitForFunction(() => window.__cham.moments().whisker >= 1, null, { timeout: 8000 });
     await a.waitForFunction(() => window.__cham.moments().whisker >= 1, null, { timeout: 8000 });
@@ -581,8 +590,9 @@ async function shotsSection(port) {
       assert(!bad.length, `[${tag}] Mercy chip overlaps nothing (${bad.join(',') || 'clear'})`);
       await shot(b, `${tag}-3-mercy-chip`);
       // a whisker, so the sticker + stain are on screen
-      const bc = await standAndAim(a, 'b', { side: 0.55 });
-      await aimFire(a, bc[0] + 0.55, bc[1], bc[2]);
+      const near = await nearSide(a);
+      const bc = await standAndAim(a, 'b', { side: near });
+      await aimFire(a, bc[0] + near, bc[1], bc[2]);
       await a.waitForFunction(() => window.__cham.moments().whisker >= 1, null, { timeout: 8000 });
       await wait(450);
       await shot(a, `${tag}-4-whisker-seeker`); await shot(b, `${tag}-4-whisker-hider`);
