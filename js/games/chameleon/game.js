@@ -182,7 +182,7 @@ export function createGame(el, api) {
     // the third-person look target eases for 0.4 s after a stick / let-go (no 0.3 m dip at the attach)
     lkX: 0, lkY: 0, lkZ: 0, lkAt: false, lkUntil: 0,
     // the follow rig (cameras(): hider orbit + seeker climb view): pivot spring, the solver's eased offset, the auto-pitch spring
-    coV: 0, vsDur: 0.35, lookAt: -10, gd: 0, gdAt: -10, pv: mkSpring3(), pvKey: '', pvAt: -10, co: [0, 0, 0], pitchV: 0,
+    coV: 0, vsDur: 0.35, lookAt: -10, gd: 0, gdAt: -10, pv: mkSpring3(), pvKey: '', pvAt: -10, co: [0, 0, 0], coU: [0, 0, 1], pitchV: 0,
     // final QA: the body a close camera looks past fades (cameras()); the FOUND framing's swing off the seeker's line
     fade: { a: 1, b: 1 }, fadeW: null, fadeFrame: false, fadeFire: false, fadeTx: 0, fadeTy: 0, fadeTz: 0, fSide: 0,
     // the "You" sticker keeps clear of the role pill (hereMarker)
@@ -3337,6 +3337,8 @@ export function createGame(el, api) {
       const k = 1 - Math.exp(-rate * dt);
       camPos.lerp(camWant, k); camLook.lerp(lookWant, k);
     }
+    let fwx = camLook.x - camPos.x; let fwy = camLook.y - camPos.y; let fwz = camLook.z - camPos.z; // (the rig's own view direction: the guard below must not change it)
+    if (rigid && !climbCam && !C.override && Math.hypot(fwx, fwy, fwz) < 1.5) { fwx = -C.coU[0] * 1.5; fwy = -C.coU[1] * 1.5; fwz = -C.coU[2] * 1.5; camLook.set(camPos.x + fwx, camPos.y + fwy, camPos.z + fwz); } // (a camera the solver put on top of the body keeps the rig's heading, not the direction of a vector that has shrunk to nothing)
     // the eased camera never cuts through a wall on its way to a solved spot once it's arrived near it
     // (not during a view whip or the FOUND whip from the shooter's eyes: those cross the map on purpose;
     // nor in the FOUND freeze-frame)
@@ -3347,10 +3349,13 @@ export function createGame(el, api) {
         camRad = CS.rad; let r = camReach(CS.px, CS.py, CS.pz, ex, ey, ez, el); camRad = CAM_R;
         // an occluder that appears across the whole view at once (a wrap onto the far side of a table: the old spot is now behind
         // the plank) pulls the camera in at no more than GUARD_V m/s, not by 2.8 m in one frame; in a wall's own approach (≤ 3 m/s) nothing differs
-        if (rigid && camFrame - C.gdAt <= 1) r = Math.min(el, Math.max(r, C.gd - GUARD_V * dt));
+        if (rigid && camFrame - C.gdAt <= 1) r = Math.min(el, Math.max(r, C.gd - GUARD_V * dt), C.gd + GUARD_OUT * dt);
         if (r < el - 0.005) camPos.set(CS.px + ex * r, CS.py + ey * r, CS.pz + ez * r);
       }
     }
+    // a camera pulled in close keeps looking the way the rig looks: re-deriving the aim from the clamped position turned it by
+    // tens of degrees in a frame when the look point (a spring lagging the body) was as far off as the camera was near
+    if (rigid && !climbCam) camLook.set(camPos.x + fwx, camPos.y + fwy, camPos.z + fwz);
     if (rigid && CS.on) { C.gd = Math.hypot(camPos.x - CS.px, camPos.y - CS.py, camPos.z - CS.pz); C.gdAt = camFrame; } // (where the guard left the camera: its pull-ins are rate-limited from here)
     // the climb view eases its position but aims exactly where the stick says (no aim lag)
     if (climbCam) camLook.copy(camPos).add(lookDir);
@@ -3376,8 +3381,9 @@ export function createGame(el, api) {
   const revC = { x: 0, y: 0, z: 0 };
   const tvS = [0, 0];
   let camFrame = 0; // cameras() calls so far (a follow rig that skipped a frame restarts from rest)
-  const GUARD_V = 9; // m/s: the fastest the camera guard pulls a camera in towards its pivot
-  const RIG_TURN = 2.6; // rad/s: the fastest the follow rig swings the camera round the body to a new solver pick (8 while the player turns the view)
+  const GUARD_OUT = 4; // m/s: ... and lets it out again (no pop when the thing that pulled it in is passed)
+  const GUARD_V = 4; // m/s: the fastest the camera guard pulls a camera in towards its pivot
+  const RIG_TURN = 1.8; // rad/s: the fastest the follow rig swings the camera round the body to a new solver pick (8 while the player turns the view)
   /**
    * The third-person follow rig (hider orbit, seeker climb view). `look` (the point the camera orbits / aims
    * at, from the drawn body) goes through a critically damped spring (smoothT ≈ the time to catch up: no lag
@@ -3391,7 +3397,7 @@ export function createGame(el, api) {
     const ox = want.x - piv.x; const oy = want.y - piv.y; const oz = want.z - piv.z;
     const rest = C.pvKey !== key || camFrame - C.pvAt > 1 || !C.pv.init || Math.hypot(look.x - C.pv.x, look.y - C.pv.y, look.z - C.pv.z) > 2.5;
     C.pvKey = key; C.pvAt = camFrame;
-    if (rest) { spring3Snap(C.pv, look.x, look.y, look.z); C.co[0] = ox; C.co[1] = oy; C.co[2] = oz; C.coV = 0; }
+    if (rest) { spring3Snap(C.pv, look.x, look.y, look.z); C.co[0] = ox; C.co[1] = oy; C.co[2] = oz; C.coV = 0; { const l0 = Math.hypot(ox, oy, oz) || 1; C.coU[0] = ox / l0; C.coU[1] = oy / l0; C.coU[2] = oz / l0; } }
     else {
       spring3Step(C.pv, look.x, look.y, look.z, smoothT, dt);
       // the solver's offset eases by direction (10/s: a swing to another candidate is a quick glide, never a cut) and
@@ -3415,7 +3421,7 @@ export function createGame(el, api) {
       }
       // length: a critically damped spring (no kick at the start, no overshoot): in over ~0.18 s, out over ~0.25 s
       spring1(lc, C.coV, lw, lw < lc ? 0.18 : 0.25, dt, tvS); const l2 = tvS[0]; C.coV = tvS[1];
-      C.co[0] = ax * l2; C.co[1] = ay * l2; C.co[2] = az * l2;
+      C.co[0] = ax * l2; C.co[1] = ay * l2; C.co[2] = az * l2; C.coU[0] = ax; C.coU[1] = ay; C.coU[2] = az;
     }
     want.set(piv.x + (C.pv.x - look.x) + C.co[0], piv.y + (C.pv.y - look.y) + C.co[1], piv.z + (C.pv.z - look.z) + C.co[2]);
     look.set(C.pv.x, C.pv.y, C.pv.z);

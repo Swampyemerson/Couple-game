@@ -371,7 +371,9 @@ export function createWorld(map) {
   /** Is a face (normal h) the one the body just left (within VETO_T) while the push (d) is still the one that left it? A push
    *  that turned (the stick reversed, or went round by 60°+) may go back; one that didn't can't ping-pong round an edge. */
   const VETO_T = 0.4;
-  const WRAP_GAP = 0.3; const WRAP_T = 0.8;
+  // convex wraps in a row: over a table's edge, down its side and under it is two; a third needs a fresh push (the stick released or
+  // turned 40°+: move.js surfaceVel) or WRAP_FAR m of walking, so a thin plank is not rolled round and round
+  const WRAP_MAX = 2; const WRAP_FAR = 1.6;
   function vetoed(body, hnx, hny, hnz, dx, dy, dz) {
     return body.vt > 0 && hnx * body.vnx + hny * body.vny + hnz * body.vnz > 0.9 && dx * body.vfx + dy * body.vfy + dz * body.vfz > 0.5;
   }
@@ -381,7 +383,6 @@ export function createWorld(map) {
   }
   function crawl(body, mx, my, mz, dt) {
     if (body.vt > 0) body.vt -= dt;
-    if (body.wt > 0) body.wt -= dt;
     blkN = false;
     let res = crawl1(body, mx, my, mz, dt);
     if (res === 3 && blkN) {
@@ -433,7 +434,7 @@ export function createWorld(map) {
     // 2. move
     const px = body.x; const py = body.y; const pz = body.z;
     body.x += dx * dist; body.y += dy * dist; body.z += dz * dist;
-    if (body.wtr > 0) body.wtr -= dist;
+    body.wtr += dist; // (distance since the last convex wrap)
     // 3. snap to the surface under the feet (same plane, maybe the next coplanar box) if the body
     //    fits there (a body already wedged somewhere it doesn't fit may always crawl out)
     H = raycast(body.x + nx * 0.06, body.y + ny * 0.06, body.z + nz * 0.06, -nx, -ny, -nz, 0.06 + 0.1, climbable, true);
@@ -450,11 +451,10 @@ export function createWorld(map) {
       const dp = k === 0 ? 0.05 : k === 1 ? 0.02 : 0.008;
       H = raycast(body.x - nx * dp, body.y - ny * dp, body.z - nz * dp, -dx, -dy, -dz, dist + 0.3, climbable, false);
       if (!H) continue;
-      // (a second wrap straight after one needs WRAP_GAP m of travel or WRAP_T s, or a fresh push: a thin plank would otherwise
-      // roll the body round and round it, flipping the camera over and over)
-      if (H.nx * dx + H.ny * dy + H.nz * dz > 0.25 && !(body.wt > 0 && body.wtr > 0) && !vetoed(body, H.nx, H.ny, H.nz, ox0, oy0, oz0) && okContact(H, clear, r)) {
+      // (see WRAP_MAX)
+      if (H.nx * dx + H.ny * dy + H.nz * dz > 0.25 && !(body.wt >= WRAP_MAX && body.wtr < WRAP_FAR) && !vetoed(body, H.nx, H.ny, H.nz, ox0, oy0, oz0) && okContact(H, clear, r)) {
         leave(body, nx, ny, nz, ox0, oy0, oz0);
-        body.wtr = WRAP_GAP; body.wt = WRAP_T;
+        body.wt = (body.wtr >= WRAP_FAR ? 0 : body.wt) + 1; body.wtr = 0;
         setContact(body, H.x, H.y, H.z, H.nx, H.ny, H.nz, H.box);
         reHead(body, -nx, -ny, -nz);
         return 2;
@@ -464,7 +464,7 @@ export function createWorld(map) {
     // the edge is there but the body can't (or needn't) turn it: keep going along the edge instead
     if (edge && !blkN) { blkN = true; blkS = 1; blkX = ex; blkY = ey; blkZ = ez; }
     // 5. nowhere to go: stay put
-    body.x = px; body.y = py; body.z = pz;
+    body.x = px; body.y = py; body.z = pz; body.wtr -= dist;
     return 3;
   }
 

@@ -127,7 +127,7 @@ export function runCrawl(mods, map, start, opts = {}) {
   const sp3 = hasSpring ? move.mkSpring3() : null;
   const hh = H_C * size;
   let s = seed * 9301 + 49297; const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
-  const M = { frames: 0, t: 0, res1: 0, res2: 0, res3: 0, res4: 0, blocked: 0, unslid: 0, deadStops: 0, maxDead: 0, screenRev: 0, contactJumps: 0, maxContactJump: 0, drawnJumps: 0, maxDrawnJump: 0, maxDrawnTurn: 0, maxDrawnFeetJump: 0, flips: 0, maxBurrow: 0, reversals: 0, stalls: 0, camJumps: 0, maxCamJump: 0, maxCamTurn: 0, path: 0, simPath: 0, released: 0, dirFlips: 0, maxSimTurn: 0, burrow: 0 };
+  const M = { frames: 0, t: 0, res1: 0, res2: 0, res3: 0, res4: 0, blocked: 0, steers: 0, unslid: 0, deadStops: 0, maxDead: 0, screenRev: 0, contactJumps: 0, maxContactJump: 0, drawnJumps: 0, maxDrawnJump: 0, maxDrawnTurn: 0, maxDrawnFeetJump: 0, flips: 0, maxBurrow: 0, reversals: 0, stalls: 0, camJumps: 0, maxCamJump: 0, maxCamTurn: 0, path: 0, simPath: 0, released: 0, dirFlips: 0, maxSimTurn: 0, burrow: 0 };
   const q = [0, 0, 0, 1]; const up = [0, 1, 0];
   const camLook = [0, 0, 0];
   const centreOf = (o) => { o[0] = b.x + b.nx * hh; o[1] = b.y + b.ny * hh; o[2] = b.z + b.nz * hh; };
@@ -167,7 +167,7 @@ export function runCrawl(mods, map, start, opts = {}) {
   let lastDir = null;
   let simQ = [q[0], q[1], q[2], q[3]];
   const winPos = []; // for the stall check
-  const mx = stick[0]; const my = stick[1];
+  let mx = stick[0]; let my = stick[1]; let turns = 0; // (steer: a player stuck for 0.5 s turns the stick a quarter turn; steers counts those)
   const stickMag = Math.min(1, Math.hypot(mx, my));
   for (let t = 0; t < Math.min(T, endAt);) {
     const ddt = Math.min(0.1, dt * (1 + jitter * (rnd() * 2 - 1)));
@@ -205,7 +205,7 @@ export function runCrawl(mods, map, start, opts = {}) {
         if (slid) M.unslid++;
       }
     }
-    if (res === 3 && stickMag > 0.3) { deadRun += ddt; if (deadRun > M.maxDead) M.maxDead = deadRun; if (deadRun > 0.25 && !deadCounted) { M.deadStops++; deadCounted = true; } } else { deadRun = 0; deadCounted = false; }
+    if (res === 3 && stickMag > 0.3) { deadRun += ddt; if (deadRun > M.maxDead) M.maxDead = deadRun; if (deadRun > 0.25 && !deadCounted) { M.deadStops++; deadCounted = true; } if (opts.steer && deadRun > 0.5) { const a = (turns++ % 2 ? -1 : 1) * Math.PI / 2; const c = Math.cos(a); const sn = Math.sin(a); const nx2 = mx * c - my * sn; my = mx * sn + my * c; mx = nx2; M.steers++; deadRun = 0; } } else { deadRun = 0; deadCounted = false; }
     if ((res === 1 || res === 2) && maxXfer && ++xfers >= maxXfer && endAt === Infinity) endAt = t + 0.6;
     if (res === 1 || res === 2 || res === 4) {
       // a transfer's own jump is geometry (≤ one body radius); more than that is a teleport
@@ -322,7 +322,7 @@ function depthIn(world, f) {
   return best;
 }
 
-const ADD = ['res1', 'res2', 'res3', 'res4', 'blocked', 'unslid', 'deadStops', 'screenRev', 'contactJumps', 'drawnJumps', 'flips', 'reversals', 'stalls', 'camJumps', 'released', 'dirFlips', 'burrow', 'frames'];
+const ADD = ['res1', 'res2', 'res3', 'res4', 'blocked', 'steers', 'unslid', 'deadStops', 'screenRev', 'contactJumps', 'drawnJumps', 'flips', 'reversals', 'stalls', 'camJumps', 'released', 'dirFlips', 'burrow', 'frames'];
 const MAXK = ['maxBurrow', 'maxDead', 'maxContactJump', 'maxDrawnJump', 'maxDrawnTurn', 'maxDrawnFeetJump', 'maxCamJump', 'maxCamTurn', 'maxSimTurn'];
 export function mkAgg() { const a = { runs: 0, simPath: 0 }; for (const k of ADD) a[k] = 0; for (const k of MAXK) a[k] = 0; a.runsWith = {}; for (const k of ADD) a.runsWith[k] = 0; a.p95 = {}; a._v = {}; for (const k of MAXK) a._v[k] = []; return a; }
 export function addAgg(a, m) {
@@ -345,7 +345,7 @@ export function sweepMap(mods, map, opts = {}) {
   for (const st of starts) {
     for (const stick of sticks) {
       const yaw = yaws[(i++) % yaws.length];
-      const m = runCrawl(mods, map, st, { stick, yaw, dt, T, size, jitter, world, seed: i, maxXfer });
+      const m = runCrawl(mods, map, st, { stick, yaw, dt, T, size, jitter, world, seed: i, maxXfer, steer: opts.steer !== false });
       addAgg(agg, m);
     }
   }

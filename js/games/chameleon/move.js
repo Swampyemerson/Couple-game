@@ -250,7 +250,7 @@ export function surfaceVel(b, fs, mx, my, proj, F, R, dt, out) {
   let want = A > lim ? 1 : 0;
   if (!want && fs.age > LOCK.maxS && ml > 1e-4 && (out[0] * ux + out[1] * uy + out[2] * uz) / ml > LOCK.agree) want = 1;
   if (want) fs.blend = Math.min(1, fs.blend + dt / LOCK.blendS); else fs.blend = Math.max(0, fs.blend - dt / 0.15);
-  if (fs.blend >= 1) { fs.lock = false; b.wt = 0; b.wtr = 0; return out; }
+  if (fs.blend >= 1) { fs.lock = false; if (A > lim) { b.wt = 0; b.wtr = 0; } return out; } // (a turned stick is a fresh push: wraps count from 0 again)
   if (ml > 1e-4) {
     const k = sstep(fs.blend);
     ux = ux * (1 - k) + (out[0] / ml) * k; uy = uy * (1 - k) + (out[1] / ml) * k; uz = uz * (1 - k) + (out[2] / ml) * k;
@@ -398,7 +398,7 @@ export function mkVis() {
     cx: 0, cy: 0, cz: 0, fx: 0, fy: 0, fz: 0, ux: 0, uy: 1, uz: 0, qx: 0, qy: 0, qz: 0, qw: 1,
     tx: 0, ty: 0, tz: 0, tux: 0, tuy: 1, tuz: 0, tqx: 0, tqy: 0, tqz: 0, tqw: 1,
     ox: 0, oy: 0, oz: 0, ovx: 0, ovy: 0, ovz: 0, ex: 0, ey: 0, ez: 0, ewx: 0, ewy: 0, ewz: 0,
-    jumps: 0, h: 0.2, lt: -1e9,
+    jumps: 0, h: 0.2, lt: -1e9, wr: 20,
   };
 }
 /** Next update starts on the sim pose (teleports, new rounds). */
@@ -437,7 +437,7 @@ export function visCore(vs, px, py, pz, qx, qy, qz, qw, speed, s, dt, free) {
       let rx = aw * -qx + ax * qw + ay * -qz - az * -qy; let ry = aw * -qy - ax * -qz + ay * qw + az * -qx; let rz = aw * -qz + ax * -qy - ay * -qx + az * qw; let rw = aw * qw - ax * -qx - ay * -qy - az * -qz;
       if (rw < 0) { rx = -rx; ry = -ry; rz = -rz; rw = -rw; }
       const sl = Math.hypot(rx, ry, rz);
-      if (sl < 1e-6) { vs.ex = 0; vs.ey = 0; vs.ez = 0; } else { const ang = 2 * Math.atan2(sl, rw); vs.ex = (rx / sl) * ang; vs.ey = (ry / sl) * ang; vs.ez = (rz / sl) * ang; }
+      if (sl < 1e-6) { vs.ex = 0; vs.ey = 0; vs.ez = 0; } else { const ang = 2 * Math.atan2(sl, rw); vs.wr = VIS.wRot * (ang > 1.57 ? 1 - 0.35 * Math.min(1, (ang - 1.57) / 1.57) : 1); vs.ex = (rx / sl) * ang; vs.ey = (ry / sl) * ang; vs.ez = (rz / sl) * ang; }
     }
   } else if (free) {
     // a zip in flight: follow the sim pose exactly
@@ -445,7 +445,7 @@ export function visCore(vs, px, py, pz, qx, qy, qz, qw, speed, s, dt, free) {
   }
   vs.tx = tcx; vs.ty = tcy; vs.tz = tcz; vs.tux = ux; vs.tuy = uy; vs.tuz = uz; vs.tqx = qx; vs.tqy = qy; vs.tqz = qz; vs.tqw = qw;
   // springs: position offset and orientation error decay to zero
-  const wp = VIS.wPos; const wr = VIS.wRot;
+  const wp = VIS.wPos; const wr = vs.wr; // (a half-turn glides at 0.65 × the rate: the peak turning speed of a flip round a thin plank stays under ~800°/s)
   stepExp(vs.ox, vs.ovx, wp, dt, SE); vs.ox = SE[0]; vs.ovx = SE[1];
   stepExp(vs.oy, vs.ovy, wp, dt, SE); vs.oy = SE[0]; vs.ovy = SE[1];
   stepExp(vs.oz, vs.ovz, wp, dt, SE); vs.oz = SE[0]; vs.ovz = SE[1];

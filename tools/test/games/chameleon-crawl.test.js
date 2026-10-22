@@ -10,10 +10,11 @@
 //           Counts what a player sees go wrong: drawn-body jumps (> 2 × a walking step), face flip-flops,
 //           dead stops (≥ 0.25 s blocked with the stick held), the largest drawn turn in one frame.
 //           Before this pass (same maps, same runs; Living Room): 31 655 drawn jumps, 29 980 flip-flops,
-//           718 dead stops, 0.28 m / 42° largest drawn move / turn per frame. After: ≤ 2 / 6 / 80 / 0.10 m / 22°.
+//           2085 stick turns needed, 0.28 m / 42° largest drawn move / turn per frame. After: ≤ 2 / 6 / 1400 / 0.10 m / 16°.
 //   box     floor → wall → top → far wall → floor with the stick held straight up: one pass, no flip-flop.
 //   thin    a table top 3 cm … 15 cm thick, approached straight and diagonally: the body wraps its edge (it
 //           used to stop dead on ≤ 4 cm tops), and a corner doesn't ping-pong.
+//   plank   a stick held on a thin top: over the edge and under it once, then no more wraps until a fresh push.
 //   slide   a wall approached at a grazing angle is slid along, not stopped at.
 //   lock    the input-frame lock: after a corner the body keeps its heading whatever the screen mapping says,
 //           steers with the stick, hands over after a 40°+ turn, drops on release.
@@ -51,14 +52,14 @@ async function nodeSections() {
       const map = await sim.loadMap(id);
       const t0 = Date.now();
       const a = sim.sweepMap(mods, map, { maxBoxes: id === 'house' ? 80 : 120 });
-      console.log(`  ${id}: ${a.starts} starts, ${a.runs} runs, ${a.frames} frames (${Date.now() - t0} ms): transfers ${a.res1 + a.res2} (concave ${a.res1}, convex ${a.res2}), blocked frames ${a.blocked}, dead stops ${a.deadStops}, flip-flops ${a.flips}, drawn jumps ${a.drawnJumps}, max drawn move ${a.maxDrawnJump.toFixed(3)} m/frame, feet ${a.maxDrawnFeetJump.toFixed(3)}, max drawn turn ${(a.maxDrawnTurn * 57.3).toFixed(0)}°/frame, max sim contact jump ${a.maxContactJump.toFixed(2)} m, drawn feet ≥ 4 cm in a prop ${a.burrow} frames`);
+      console.log(`  ${id}: ${a.starts} starts, ${a.runs} runs, ${a.frames} frames (${Date.now() - t0} ms): transfers ${a.res1 + a.res2} (concave ${a.res1}, convex ${a.res2}), blocked frames ${a.blocked}, stick turns ${a.steers}, flip-flops ${a.flips}, drawn jumps ${a.drawnJumps}, max drawn move ${a.maxDrawnJump.toFixed(3)} m/frame, feet ${a.maxDrawnFeetJump.toFixed(3)}, max drawn turn ${(a.maxDrawnTurn * 57.3).toFixed(0)}°/frame, max sim contact jump ${a.maxContactJump.toFixed(2)} m, drawn feet ≥ 4 cm in a prop ${a.burrow} frames`);
       const big = id === 'house';
       assert(a.flips <= 10, `${id}: no face flip-flop (${a.flips} in ${a.runs} runs; before: tens of thousands)`);
       assert(a.drawnJumps <= (big ? a.frames * 0.001 : 5), `${id}: the drawn body never jumps (${a.drawnJumps} frames with a move > 2 × the step; before ${big ? '81 330' : 'up to 50 000'})`);
       assert(a.maxDrawnJump <= (big ? 0.25 : 0.12), `${id}: largest drawn move in a 60 Hz frame ${a.maxDrawnJump.toFixed(3)} m (≤ ${big ? 0.25 : 0.12}; before 0.28-0.31 m)`);
-      assert(a.maxDrawnTurn <= 0.5, `${id}: largest drawn turn in a 60 Hz frame ${(a.maxDrawnTurn * 57.3).toFixed(0)}° (≤ 29°; before 42°)`);
-      assert(a.deadStops <= a.runs * 0.25, `${id}: dead stops with the stick held ${a.deadStops} of ${a.runs} runs (≤ 25 %; before 40-60 %: ${id === 'living' ? '718 of 1164' : id === 'candy' ? '524 of 1116' : 'about half'}; what's left is the map edge and pockets the body doesn't fit)`);
-      assert(a.blocked <= a.frames * 0.3, `${id}: blocked frames ${a.blocked} of ${a.frames} (≤ 30 %; before 46-58 %; a held stick that wraps a thin plank waits for the wrap pause, move.js/world.js WRAP_T)`);
+      assert(a.maxDrawnTurn <= 0.4, `${id}: largest drawn turn in a 60 Hz frame ${(a.maxDrawnTurn * 57.3).toFixed(0)}° (≤ 23°; before 42°)`);
+      assert(a.steers <= a.runs * 1.5, `${id}: a player who is stuck for 0.5 s turns the stick a quarter: ${a.steers} turns in ${a.runs} runs (≤ 1.5 per run; before ${id === 'living' ? '2085 of 1164' : id === 'candy' ? '2125 of 1218' : 'about 2 per run'}; a third wrap in a row waits for a fresh push, WRAP_MAX in world.js)`);
+      assert(a.blocked <= a.frames * 0.4, `${id}: blocked frames ${a.blocked} of ${a.frames} (≤ 40 %; before 28-31 % but with 2 turns per run: they hit flip-flop walls instead of stopping)`);
     }
   }
 
@@ -98,6 +99,22 @@ async function nodeSections() {
         else assert(flips <= 12, `${tag}: a diagonal push at the corner does not ping-pong (${flips} face flips in 4 s; before ~75)`);
       }
     }
+  }
+
+  // ── plank ──
+  if (want('plank')) {
+    console.log('\n# plank: a stick held on a thin top (the coffee table is 3.6 cm) goes over the edge and under it once, then waits');
+    for (const th of [0.03, 0.036, 0.06, 0.1]) {
+      const map = arena([colBox(-0.6, 0.6, 0.5 - th, 0.5, -0.3, 0.3, 'top')]);
+      const tr = [];
+      const m = sim.runCrawl(mods, map, { x: -0.3, y: 0.5, z: 0, nx: 0, ny: 1, nz: 0, box: null }, { stick: [0, 1], yaw: -Math.PI / 2, T: 10, trace: tr });
+      const faces = tr.filter((r) => typeof r[0] === 'number' && r[1] && r[1] !== 3).map((r) => `${r[5]},${r[6]},${r[7]}`);
+      assert(m.res1 + m.res2 === 2 && faces.join('>') === '1,0,0>0,-1,0', `${(th * 100).toFixed(1)} cm top: top → side → underside, then no more wraps while the push is unchanged (${faces.join(' > ')}; before: 28 transfers in 10 s, round and round)`);
+    }
+    // a released / turned stick starts a fresh push: the next wrap is allowed again
+    const world = W.createWorld(arena([colBox(-0.6, 0.6, 0.45, 0.5, -0.3, 0.3, 'top')]));
+    const go = (wt) => { const b = move.mkBody(); move.attachBody(world, b, 0.3, 0.5, 0, 0, 1, 0, null, 1, 0, 0); b.wt = wt; let n = 0; for (let i = 0; i < 90; i++) if (move.crawlSteps(world, b, null, 2.34, 0, 0, 1 / 60) === 2) n++; return n; };
+    assert(go(2) === 0 && go(0) === 1, `two wraps in a row block the third until the push is fresh (wrapped ${go(2)} with the count at 2, ${go(0)} after a reset)`);
   }
 
   // ── slide ──
@@ -360,7 +377,7 @@ async function browserSection() {
 }
 
 (async () => {
-  if (['sweep', 'box', 'thin', 'slide', 'lock', 'fps', 'vis'].some(want)) await nodeSections();
+  if (['sweep', 'box', 'thin', 'plank', 'slide', 'lock', 'fps', 'vis'].some(want)) await nodeSections();
   if (want('browser')) await browserSection();
   console.log(failures ? `\n${failures} check(s) failed` : '\nALL GOOD');
   process.exit(failures ? 1 : 0);
