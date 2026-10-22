@@ -526,7 +526,7 @@ registerGame({
 
 .g-ult .gu-side { order: 2; display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; max-width: 600px; min-width: 0; }
 .g-ult .gu-plate { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 16px 8px 10px; border-radius: 999px; background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-card); border: 2px solid var(--g-ink); box-shadow: var(--g-shadow); font: 900 0.95rem/1.2 var(--g-font-display); color: var(--g-ink); max-width: 100%; text-wrap: balance; }
-.g-ult .gu-plate-t { text-shadow: var(--g-misreg); }
+
 .g-ult .gu-plate.wait { color: var(--g-muted); border-color: var(--g-line); }
 .g-ult .gu-plate.wait .gu-plate-t { text-shadow: none; }
 .g-ult .gu-chip { flex: none; width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--g-ink); background: var(--g-card) !important; display: grid; place-items: center; }
@@ -554,7 +554,7 @@ registerGame({
 .g-ult .gu-tie { font-weight: 900; }
 .g-ult .gu-tok:disabled { cursor: default; }
 .g-ult .gu-light { color: var(--g-ink); }
-.g-ult .gu-moment, .g-ult .gu-deny { margin: 2px 0 0; padding: 8px 14px; max-width: 100%; text-align: center; text-wrap: balance; font: 900 0.92rem/1.25 var(--g-font-display); color: var(--g-ink); background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-hl); color: var(--g-on-ink); text-shadow: var(--g-misreg); border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); box-shadow: var(--g-shadow-sm); transform: rotate(-1.2deg); animation: gu-stampin 380ms cubic-bezier(0.3, 1.7, 0.5, 1) both; }
+.g-ult .gu-moment, .g-ult .gu-deny { margin: 2px 0 0; padding: 8px 14px; max-width: 100%; text-align: center; text-wrap: balance; font: 900 0.92rem/1.25 var(--g-font-display); color: var(--g-ink); background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-hl); color: var(--g-on-ink); border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); box-shadow: var(--g-shadow-sm); transform: rotate(-1.2deg); animation: gu-stampin 380ms cubic-bezier(0.3, 1.7, 0.5, 1) both; }
 .g-ult .gu-deny { position: absolute; left: 50%; top: 42%; z-index: 6; pointer-events: none; margin: 0; max-width: none; white-space: nowrap; font-size: 1.3rem; padding: 10px 20px; transform: translate(-50%, -50%) rotate(-7deg); animation: gu-denyin 360ms cubic-bezier(0.3, 1.7, 0.5, 1) both; }
 @keyframes gu-denyin { from { transform: translate(-50%, -50%) scale(1.7) rotate(-15deg); opacity: 0; } to { transform: translate(-50%, -50%) rotate(-7deg); opacity: 1; } }
 .g-ult .gu-ledger { margin: 0; text-align: center; font: 800 0.82rem/1.3 var(--g-font-body); color: var(--g-ink); text-wrap: balance; max-width: 34em; }

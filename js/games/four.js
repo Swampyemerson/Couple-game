@@ -484,7 +484,7 @@ registerGame({
 .g-four .g4-acts { display: flex; gap: 8px; }
 .g-four .g4-act { min-height: 44px; min-width: 96px; justify-content: center; font-size: 0.9rem; cursor: pointer; box-shadow: var(--g-shadow-sm); touch-action: manipulation; }
 .g-four .g4-act:active { transform: translate(2px, 2px); box-shadow: none; }
-.g-four .g4-moment { margin: 0; max-width: min(100%, 34ch); padding: 8px 14px; border: 2px solid var(--g-ink); border-radius: var(--g-radius); background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-hl); color: var(--g-on-ink); box-shadow: var(--g-shadow); font: 900 0.9rem/1.25 var(--g-font-display); text-shadow: var(--g-misreg); text-align: center; text-wrap: balance; transform: rotate(-1.5deg); opacity: 0; }
+.g-four .g4-moment { margin: 0; max-width: min(100%, 34ch); padding: 8px 14px; border: 2px solid var(--g-ink); border-radius: var(--g-radius); background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-hl); color: var(--g-on-ink); box-shadow: var(--g-shadow); font: 900 0.9rem/1.25 var(--g-font-display); text-align: center; text-wrap: balance; transform: rotate(-1.5deg); opacity: 0; }
 .g-four .g4-ledger { margin: 0; font: 800 0.8rem/1.3 var(--g-font-body); color: var(--g-muted); text-align: center; text-wrap: balance; opacity: 0; }
 .g-four .g4-ledger.show { opacity: 1; transition: opacity 400ms; }
 .g-four .g4-st-fill { fill: color-mix(in srgb, var(--g-ink) 38%, var(--g-card)); }
@@ -497,7 +497,7 @@ registerGame({
 .g-four [hidden] { display: none !important; }
 
 .g-four .g4-plate { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 16px 8px 10px; border-radius: 999px; background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-card); border: 2px solid var(--g-ink); box-shadow: var(--g-shadow); font: 900 0.98rem/1.2 var(--g-font-display); color: var(--g-ink); max-width: 100%; text-wrap: balance; }
-.g-four .g4-plate-t { text-shadow: var(--g-misreg); }
+
 .g-four .g4-plate.wait { color: var(--g-muted); border-color: var(--g-line); }
 .g-four .g4-plate.wait .g4-plate-t { text-shadow: none; }
 .g-four .g4-chip { flex: none; width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--g-ink); box-shadow: inset 0 0 0 4px color-mix(in srgb, var(--g-ink) 22%, transparent); }

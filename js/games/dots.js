@@ -513,13 +513,13 @@ registerGame({
 .g-dots .gd-card-t { margin: 0 0 8px; font: 900 1.02rem/1.25 var(--g-font-display); color: var(--g-ink); text-wrap: balance; }
 .g-dots .gd-done { min-height: 44px; padding: 6px 18px; cursor: pointer; }
 .g-dots .gd-plate { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 16px 8px 10px; border-radius: 999px; background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-card); border: 2px solid var(--g-ink); box-shadow: var(--g-shadow); font: 900 0.98rem/1.2 var(--g-font-display); color: var(--g-ink); max-width: 100%; text-wrap: balance; }
-.g-dots .gd-plate-t { text-shadow: var(--g-misreg); }
+
 .g-dots .gd-plate.wait { color: var(--g-muted); border-color: var(--g-line); }
 .g-dots .gd-plate.wait .gd-plate-t { text-shadow: none; }
 .g-dots .gd-plate.extra { background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-hl-soft); border-color: var(--g-ink); }
 .g-dots .gd-chip { flex: none; width: 22px; height: 22px; border-radius: 5px; border: 2px solid var(--g-ink); }
 .g-dots .gd-chip.none { background: transparent; border-style: dashed; }
-.g-dots .gd-m { margin: 2px 0 0; padding: 8px 14px; max-width: 100%; text-align: center; text-wrap: balance; font: 900 0.92rem/1.25 var(--g-font-display); text-shadow: var(--g-misreg); background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-hl); color: var(--g-on-ink); border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); box-shadow: var(--g-shadow-sm); transform: rotate(-1.2deg); animation: gd-stampin 380ms cubic-bezier(0.3, 1.7, 0.5, 1) both; }
+.g-dots .gd-m { margin: 2px 0 0; padding: 8px 14px; max-width: 100%; text-align: center; text-wrap: balance; font: 900 0.92rem/1.25 var(--g-font-display); background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-hl); color: var(--g-on-ink); border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); box-shadow: var(--g-shadow-sm); transform: rotate(-1.2deg); animation: gd-stampin 380ms cubic-bezier(0.3, 1.7, 0.5, 1) both; }
 @keyframes gd-stampin { from { transform: scale(1.4) rotate(-6deg); opacity: 0; } to { transform: rotate(-1.2deg); opacity: 1; } }
 .g-dots .gd-ledger { margin: 0; text-align: center; font: 800 0.8rem/1.3 var(--g-font-body); color: var(--g-ink); text-wrap: balance; }
 .g-dots .gd-ledger[hidden] { display: none; }

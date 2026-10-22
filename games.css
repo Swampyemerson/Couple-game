@@ -95,7 +95,7 @@
 /* paper and print textures (upgrade 2). All static images or CSS gradients: nothing here repaints per frame.
    .g-paper     adds the paper tooth to any surface (as a background layer under its own background colour)
    .g-grain     an overlay of grain on top of a surface's contents (ink sits in the paper, not on it)
-   .g-misreg    display text printed with the pink and blue plates slightly off register
+   .g-misreg    display text printed with the pink and blue plates slightly off register (big display type only, ≥ ~1.2rem: it blurs small text)
    .g-shade-a/b halftone shading in a player's ink
    .g-ink-in    one-shot: a piece is stamped onto the page (scale + settle, compositor only)
    .g-shake     one-shot: a short horizontal shake for a refused move
