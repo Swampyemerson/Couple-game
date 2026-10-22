@@ -1092,6 +1092,8 @@ async function lostContext(h, pg) {
   await pg.evaluate(() => { const c = document.querySelector('.gb-band canvas'); window.__lose = (c.getContext('webgl2') || c.getContext('webgl')).getExtension('WEBGL_lose_context'); window.__lose.loseContext(); });
   await pg.waitForSelector('.gb-band[data-gl="lost"]', { timeout: 4000 });
   let e = await h.engine(pg, id);
+  const sv = await pg.$eval('.gb-die2d .gb-die', (d) => Number(d.dataset.v)).catch(() => 0);
+  ok(sv === e.state.roll && (await pg.isVisible('.gb-die2d')) && (await pg.$$('.gb-die2d .gb-die')).length === 1, `bones context lost: the band shows the current die flat at once, not an empty band (${sv})`);
   await pg.tap(`.gb-tray[data-who="${e.acts[0]}"] .gb-col[data-col="0"]`); // the next die has nothing to tumble on
   await waitMoves(pg, id, 1);
   const t0 = Date.now();
