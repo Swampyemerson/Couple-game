@@ -52,12 +52,14 @@ async function joinLive(h, game) {
 function qdFireAt(pg, phase, delay, { key = null, w = null, lag = 0 } = {}) {
   return pg.evaluate(({ phase, delay, key, w, lag }) => new Promise((resolve) => {
     const root = document.querySelector('.g-qd');
-    const down = (p, i) => { const r = p.getBoundingClientRect(); p.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 7 + i, pointerType: 'touch', clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 })); };
+    const mk = (p, i) => { const r = p.getBoundingClientRect(); return new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 7 + i, pointerType: 'touch', clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }); };
+    const down = (p, i, ev) => p.dispatchEvent(ev || mk(p, i));
     const go = () => setTimeout(() => {
       if (key) window.dispatchEvent(new KeyboardEvent('keydown', { key, code: `Key${key.toUpperCase()}`, bubbles: true }));
       else {
         const pads = w ? w.map((x) => root.querySelector(`.qd-pad[data-w="${x}"]`)) : [root.querySelector('.qd-pad')];
-        pads.forEach((p, i) => { if (i * lag === 0) down(p, i); else setTimeout(() => down(p, i), i * lag); });
+        const evs = pads.map(mk);   // all events are made first: their timeStamps don't include the first handler's run time
+        pads.forEach((p, i) => { if (i * lag === 0) down(p, i, evs[i]); else setTimeout(() => down(p, i), i * lag); });
       }
       resolve(performance.now());
     }, delay);

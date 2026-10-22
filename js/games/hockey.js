@@ -44,7 +44,8 @@ const REMOTE_STALE = 0.12; // s: a finger that moves reports every ~50 ms, so a 
 const STALL_MS = 1000;    // the HOG!/RESET stamp has the centre to itself this long before the serve countdown starts
 const CORRECT_RATE = 700; // u/s: the fastest a guest's puck display may close a correction
 const CORRECT_W = 34;     // rad/s: the guest's puck correction is a critically damped spring (95 % closed in ~140 ms), so its speed is continuous
-const PARTNER_DELAY = 75; // ms: the partner's mallet is drawn this far behind the newest sample, between two samples (net.remoteInto)
+const PARTNER_DELAY = 130; // ms: the partner's mallet is read this far behind the clock, so it sits between two samples even with jitter and a lost packet (net.remoteInto)
+const PARTNER_LEAD = 70;  // ms: ... and drawn this far ahead of that along its (also interpolated) velocity, so it is not a whole delay behind the puck
 const HARD_HIT = 120;     // impact speed (u/s) of a hit that gets hit-stop and a shake
 const STOP_MS = 50;       // hit-stop: 50 ms at HARD_HIT, up to STOP_MAX for the hardest
 const STOP_MAX = 80;
@@ -803,7 +804,7 @@ registerGame({
     const hostC = { who: 'a', x: W / 2, y: H - 22, vx: 0, vy: 0 };   // ... and where the puck prediction collides with it (a little ahead of the drawn one)
     const GMS = [M[me], hostC];
     const rem = {};             // net.remoteInto target: the host's state interpolated at now - PARTNER_DELAY (allocation-free)
-    if (net) net.delay = (location.port && window.__hkD) || PARTNER_DELAY; // TEMPDELAY
+    if (net) net.delay = (location.port && window.__hkD) || PARTNER_DELAY;
     // The host's match as last seen in progress. Mirrored in our presence, so a host that
     // reloads or closes and reopens the game picks the score back up instead of restarting 0–0.
     let keep = null;            // { k, s: [a, b], g, ph, tb }
@@ -906,7 +907,8 @@ registerGame({
       if (S) {
         const r = net && net.synced ? net.remoteInto(rem) : null;
         if (r && Array.isArray(r.m) && r.m.length > 3) {
-          hostM.x = r.m[0]; hostM.y = r.m[1]; hostM.vx = r.m[2]; hostM.vy = r.m[3];
+          hostM.vx = r.m[2]; hostM.vy = r.m[3];
+          hostM.x = r.m[0] + hostM.vx * PARTNER_LEAD / 1000; hostM.y = r.m[1] + hostM.vy * PARTNER_LEAD / 1000;
         } else {
           const age = clamp(hostAge(S, now), 0, 70) / 1000;
           const tx = S.m[0] + S.m[2] * age; const ty = S.m[1] + S.m[3] * age;
@@ -917,7 +919,7 @@ registerGame({
         clampMallet(hostM, env);
         M.a.px = M.a.x = M.a.rx = hostM.x; M.a.py = M.a.y = M.a.ry = hostM.y;
         // the puck prediction collides with where the mallet is about to be, not where it was drawn
-        const ld = net && net.synced ? Math.min(PARTNER_DELAY, 75) / 1000 : 0;
+        const ld = net && net.synced ? (PARTNER_DELAY - PARTNER_LEAD) / 1000 : 0;
         hostC.x = hostM.x + hostM.vx * ld; hostC.y = hostM.y + hostM.vy * ld; hostC.vx = hostM.vx; hostC.vy = hostM.vy;
         clampMallet(hostC, env);
       }

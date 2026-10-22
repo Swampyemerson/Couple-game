@@ -35,6 +35,7 @@ const tapPad = (pg, w) => pg.evaluate((w) => {
 }, w);
 
 async function run(scheme, reduced, port) {
+  let fire0 = null;
   const tag = `${scheme}${reduced ? ' reduced' : ''}`;
   const h = await launch({ port, only: ['quickdraw'], colorScheme: scheme, coarse: true, who: ['a'], reducedMotion: reduced ? 'reduce' : 'no-preference' });
   const pg = h.a;
@@ -90,6 +91,7 @@ async function run(scheme, reduced, port) {
 
       // the tap: pressed in the very task of the pointerdown, no tween, timed from the event's timeStamp
       const t0 = await pg.evaluate(() => window.__qdTest.state().t0.a);
+      fire0 = await counters(cdp);
       const tap = await tapPad(pg, 'a');
       ok(tap.pressed, `${tag}: the pad is pressed in the same task as the pointerdown`);
       ok(/^0s$/.test(tap.transition.split(',')[0].trim()), `${tag}: ...with no tween on the press (transition ${tap.transition})`);
@@ -115,12 +117,21 @@ async function run(scheme, reduced, port) {
         ok(await pg.evaluate(() => getComputedStyle(document.querySelector('.qd-bs')).display === 'none'), `${tag}: the burst art is hidden`);
       }
       ok(a.every((r) => r.props.every((p) => SAFE.has(p))), `${tag}: the verdict animates transform/opacity only (${a.map((r) => `${r.name}[${r.props}]`).join(', ')})`);
-      const notch = await pg.evaluate(() => [...document.querySelectorAll('.qd-notches[data-w="a"] i')].filter((i) => i.classList.contains('on')).length);
-      ok(notch === 1, `${tag}: the tally has one notch for Emerson (${notch})`);
+      // the ms readout rolls like an odometer on reels moved by transform: the text is the final number from the start
+      const ms = await pg.evaluate(() => { const e = document.querySelector('.qd-sig:not(.qd-top) .qd-ms'); return e ? { text: e.textContent, v: e.dataset.v, rolling: e.classList.contains('rolling'), reels: e.querySelectorAll('.qd-col').length, selectable: e.textContent.trim() === e.dataset.v } : null; });
+      ok(ms && ms.selectable, `${tag}: the readout's text is the real number while it rolls (${ms && ms.text})`);
+      if (!reduced) ok(ms.rolling && ms.reels === String(ms.v).length, `${tag}: it rolls on one reel per digit (${ms.reels} reels)`);
+      else ok(!ms.rolling && ms.reels === 0, `${tag}: no roll under reduced motion`);
       if (!reduced) {
         const nn = (await running()).filter((r) => /qd-notch/.test(r.name)).length;
         ok(nn >= 1, `${tag}: the new notch is stamped in (${nn} running)`);
       }
+      await h.wait(900);
+      const f1 = await counters(cdp);
+      ok(f1.layouts - fire0.layouts <= 25, `${tag}: the tap, the verdict, the roll, the fall and the stamps take at most 25 layouts (${f1.layouts - fire0.layouts}; was about 55)`);
+      ok(await pg.evaluate(() => !document.querySelector('.qd-ms.rolling') && !document.querySelector('.qd-roll')), `${tag}: the reels are gone once the number has landed`);
+      const notch = await pg.evaluate(() => [...document.querySelectorAll('.qd-notches[data-w="a"] i')].filter((i) => i.classList.contains('on')).length);
+      ok(notch === 1, `${tag}: the tally has one notch for Emerson (${notch})`);
     });
 
     await section(`misfire (${tag})`, async () => {

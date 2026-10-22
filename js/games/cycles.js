@@ -35,7 +35,7 @@ const BANNER_MS = 1500; // the round banner
 const END_TOTAL = HOLD_MS + REPLAY_MS + BANNER_MS;
 const REPLAY_TICKS = 16;
 const ZOOM = 2.4;
-const MAX_DT = 64; // ms: a longer frame is a hitch, not time the sim has to catch up on
+const MAX_DT = 64; // ms: the drawing's clamp: a longer frame is a hitch, not motion to animate through
 const OWN_AHEAD = 0.55; // guest: its own head is drawn this many ticks past the last confirmed one
 const OPP_GAP = 1.45; // guest: the opponent is drawn this many ticks behind its own clock (entity interpolation)
 const EXT_CAP = 1.6; // ticks a head may run on past the confirmed cell while the next presence frame is late
@@ -1648,7 +1648,7 @@ registerGame({
       const raw = now - (lastNow || now);
       const dt = Math.min(MAX_DT, raw);
       lastNow = now;
-      if (host) hostUpdate(now, dt);
+      if (host) hostUpdate(now, Math.min(250, raw)); // the simulation keeps real time through a hitch (a few ticks catch up); only the drawing clamps
       if (!host) stepClock(now, dt);
       updateViews(dt);
       syncMsg(now);

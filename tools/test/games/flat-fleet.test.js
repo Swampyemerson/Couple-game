@@ -220,8 +220,8 @@ async function looksTest(h, scheme) {
   await startBattle(h);
   const r = await a.evaluate(() => {
     const cs = (sel) => getComputedStyle(document.querySelector(sel));
-    const grid = cs('.g-fleet .fl-target .fl-grid');
-    const home = cs('.g-fleet .fl-home .fl-grid');
+    const grid = cs('.g-fleet .fl-target .fl-sea');
+    const home = cs('.g-fleet .fl-home .fl-sea');
     const props = ['cursor', 'touchAction', 'userSelect', 'transition', 'animationName', 'pointerEvents', 'webkitTapHighlightColor', 'outlineStyle', 'textDecorationLine'];
     const target = cs('.g-fleet .fl-target .fl-h');
     const homeH = cs('.g-fleet .fl-home .fl-h');
@@ -232,6 +232,7 @@ async function looksTest(h, scheme) {
     for (const sheet of document.styleSheets) { try { walk(sheet.cssRules); } catch { /* cross-origin */ } }
     const headRules = rules.filter((x) => /(^|[^\w-])\.fl-(head|h)([^\w-]|$)/.test(x.selectorText) && /\.g-fleet/.test(x.selectorText));
     return {
+      seaLayer: grid.willChange + '/' + home.willChange, gridPaint: cs('.g-fleet .fl-target .fl-grid').backgroundImage,
       gridBg: grid.backgroundImage, homeBg: home.backgroundImage, seaA: grid.getPropertyValue('--sea'), seaB: home.getPropertyValue('--sea'),
       shadow: target.textShadow, same: props.filter((p) => target[p] !== homeH[p] || targetHead[p] !== homeHead[p]),
       headRuleCount: headRules.length, headBad: headRules.filter((x) => /:(active|hover|focus|focus-visible|focus-within)/.test(x.selectorText) || x.style.cursor || x.style.touchAction || x.style.pointerEvents || x.style.userSelect).map((x) => x.selectorText),
@@ -240,6 +241,7 @@ async function looksTest(h, scheme) {
     };
   });
   assert(/url\(/.test(r.gridBg) && /radial-gradient/.test(r.gridBg), `[riso ${scheme}] the target chart is paper grain + printed wave lines`);
+  assert(r.seaLayer === 'transform/transform' && r.gridPaint === 'none', `[riso ${scheme}] the printed sea is its own cached layer, so firing never repaints it (${r.seaLayer})`);
   assert(/url\(/.test(r.homeBg) && /radial-gradient/.test(r.homeBg), `[riso ${scheme}] and so is the home chart`);
   assert(r.seaA && r.seaB && r.seaA !== r.seaB, `[riso ${scheme}] each sea is printed in its owner's ink (${r.seaA.trim()} / ${r.seaB.trim()})`);
   assert(r.shadow && r.shadow !== 'none', `[riso ${scheme}] headings are printed off register`);

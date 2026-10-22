@@ -326,7 +326,7 @@ function chartHTML({ cls = '', cells, layer = '', extra = '' }) {
   return `<div class="fl-chart ${cls}">
     <div class="fl-lab fl-lab-c" aria-hidden="true">${[...LETTERS].map((l) => `<span>${l}</span>`).join('')}</div>
     <div class="fl-lab fl-lab-r" aria-hidden="true">${Array.from({ length: N }, (_, i) => `<span>${i + 1}</span>`).join('')}</div>
-    <div class="fl-grid">${cells}<div class="fl-layer">${layer}</div></div>${extra}
+    <div class="fl-grid">${cells}<i class="fl-sea" aria-hidden="true"></i><div class="fl-layer">${layer}</div></div>${extra}
   </div>`;
 }
 const plainCells = () => '<span class="fl-cell"></span>'.repeat(N * N);
@@ -398,6 +398,12 @@ const CSS = `
 .g-fleet .fl-grid {
   --wave: color-mix(in srgb, var(--sea) 32%, transparent);
   grid-column: 2; grid-row: 2; position: relative; display: grid; grid-template-columns: repeat(8, var(--cs)); grid-auto-rows: var(--cs);
+  isolation: isolate; background: var(--g-card);
+}
+/* The printed sea lives on its own layer: painted once, then only composited. (Tiny repeating gradients
+   in the grid's own background were re-rasterised every time a square or mark changed.) */
+.g-fleet .fl-sea {
+  position: absolute; inset: 0; z-index: -1; pointer-events: none; will-change: transform;
   background:
     var(--tooth),
     radial-gradient(circle at 50% 100%, transparent 5.4px, var(--wave) 5.9px 6.7px, transparent 7.2px) 0 0 / 20px 10px,
@@ -405,8 +411,8 @@ const CSS = `
     var(--g-card);
 }
 /* your own waters are the halftone plate: dots in your ink */
-.g-fleet .fl-home-chart .fl-grid { background: var(--tooth), var(--dots, var(--g-halftone)) 0 0 / 5px 5px, var(--g-card); }
-.g-fleet .fl-home-chart.is-mini .fl-grid { background-size: var(--g-grain-size), 4px 4px, auto; }
+.g-fleet .fl-home-chart .fl-sea { background: var(--tooth), var(--dots, var(--g-halftone)) 0 0 / 5px 5px, var(--g-card); }
+.g-fleet .fl-home-chart.is-mini .fl-sea { background-size: var(--g-grain-size), 4px 4px, auto; }
 .g-fleet[data-viewer="a"] .fl-home-chart { --dots: var(--g-halftone-a); } .g-fleet[data-viewer="b"] .fl-home-chart { --dots: var(--g-halftone-b); }
 .g-fleet .fl-grid::before { content: ''; position: absolute; inset: -2px; border: 2px solid var(--g-ink); box-shadow: var(--g-shadow); pointer-events: none; z-index: 4; }
 .g-fleet .fl-grid::after { content: ''; position: absolute; inset: -2px; border: 1.5px solid color-mix(in srgb, var(--p-b) 70%, transparent); transform: translate(1.5px, 1px); pointer-events: none; z-index: 4; }
