@@ -332,7 +332,7 @@ function wiresSVG(w) {
     return `<g class="dx-wire" data-wire="${i}" data-color="${c}" style="--w: var(--dx-${c})" role="button" tabindex="0" aria-label="Wire ${i + 1} of ${n}, ${c}">
       <rect class="hb" x="14" y="${y - WIRE_GAP / 2}" width="212" height="${WIRE_GAP}" fill="transparent" stroke="none" pointer-events="all"/>
       <g class="whole"><path class="o" d="${full}"/><path class="c" d="${full}"/><path class="s" d="${full}"/></g>
-      <g class="cut"><g transform="translate(-4 3)"><path class="o" d="${left}"/><path class="c" d="${left}"/><circle class="tip" cx="114" cy="${m + 1}" r="2.6"/></g><g transform="translate(4 4)"><path class="o" d="${right}"/><path class="c" d="${right}"/><circle class="tip" cx="126" cy="${m - 1}" r="2.6"/></g></g>
+      <g class="cut"><g class="half hl" style="--ox:114px;--oy:${m + 1}px"><path class="o" d="${left}"/><path class="c" d="${left}"/><circle class="tip" cx="114" cy="${m + 1}" r="2.6"/></g><g class="half hr" style="--ox:126px;--oy:${m - 1}px"><path class="o" d="${right}"/><path class="c" d="${right}"/><circle class="tip" cx="126" cy="${m - 1}" r="2.6"/></g><g class="spark" style="--ox:120px;--oy:${m}px"><path d="M120 ${m - 9}v-7M111 ${m - 6}l-5-5M129 ${m - 6}l5-5M108 ${m + 3}h-8M132 ${m + 3}h8"/></g></g>
       <circle class="dx-stud" cx="34" cy="${y}" r="4.5"/><circle class="dx-stud" cx="206" cy="${y}" r="4.5"/>
     </g>`;
   };
@@ -411,6 +411,8 @@ export const WIRES = {
       if (host.busy() || cut.has(i)) return;
       cut.add(i);
       mark();
+      const w = box.querySelector(`.dx-wire[data-wire="${i}"]`);
+      if (w) w.classList.add('is-snip'); // the snip animation plays for a wire cut now, not for one restored from a saved round
       host.sfx('flip');
       if (i === A.wire) host.solve(); else host.strike('wires');
     }

@@ -10,6 +10,8 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { launch, ROOT } = require('../harness');
 
+// Ports: PORT (default 9050) + 1..4, one per browser section.
+const PORT = Number(process.env.PORT) || 9050;
 const SHOTS = process.env.SHOTS || path.join(require('os').tmpdir(), 'fleet-shots');
 fs.mkdirSync(SHOTS, { recursive: true });
 const assert = (c, m) => { if (!c) throw new Error('FAIL: ' + m); console.log('ok -', m); };
@@ -1011,7 +1013,7 @@ async function arsenalLocal(h) {
 
 // ── laptop: hover, R to rotate, arrow keys + Enter ──
 async function laptop() {
-  const h = await launch({ port: 9303, only: ['fleet'], device: 'Desktop Chrome' });
+  const h = await launch({ port: PORT + 3, only: ['fleet'], device: 'Desktop Chrome' });
   const { a, b } = h;
   try {
     await realFonts(h);
@@ -1124,7 +1126,7 @@ async function laptop() {
 
     // light: online + same phone, the periscope, the regressions
     if (want('light')) {
-      h = await launch({ port: 9301, only: ['fleet'] });
+      h = await launch({ port: PORT + 1, only: ['fleet'] });
       if (await realFonts(h)) console.log('(using local copies of the app fonts for screenshots)');
       const r1 = await onlineGame(h, { scheme: 'light' });
       assert(h.results().length === 1 && h.results()[0].game === 'fleet' && h.results()[0].winner === r1.winner, 'the online result is recorded once');
@@ -1144,7 +1146,7 @@ async function laptop() {
 
     // dark: online classic again (screenshots), then a Salvo battle
     if (want('dark')) {
-      h = await launch({ port: 9302, only: ['fleet'], colorScheme: 'dark' });
+      h = await launch({ port: PORT + 2, only: ['fleet'], colorScheme: 'dark' });
       await realFonts(h);
       await onlineGame(h, { scheme: 'dark', drag: true });
       await h.closeGame(h.a); await h.closeGame(h.b);
@@ -1156,7 +1158,7 @@ async function laptop() {
 
     // Arsenal on one phone (light)
     if (want('arsenal')) {
-      h = await launch({ port: 9304, only: ['fleet'] });
+      h = await launch({ port: PORT + 4, only: ['fleet'] });
       await realFonts(h);
       await arsenalLocal(h);
       await salvoLocal(h);

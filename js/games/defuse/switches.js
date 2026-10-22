@@ -151,18 +151,18 @@ export const SWITCHES = {
 .g-defuse .dx-mod[data-mod="switches"] .sx-led[data-led-color="green"] { background: var(--dx-green); color: var(--dx-white); }
 .g-defuse .dx-mod[data-mod="switches"] .sx-led[data-led-color="off"] { color: transparent; }
 .g-defuse .dx-mod[data-mod="switches"] .sx-row { display: grid; grid-template-columns: repeat(5, minmax(44px, 1fr)); gap: 4px; }
-.g-defuse .dx-mod[data-mod="switches"] .sx-sw { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 44px; min-height: 134px; padding: 7px 2px 5px; background: var(--g-card); border: 2.5px solid var(--g-ink); border-radius: 10px; box-shadow: 0 4px 0 var(--g-edge, var(--g-ink)); transition: transform 0.06s, box-shadow 0.06s; }
+.g-defuse .dx-mod[data-mod="switches"] .sx-sw { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 44px; min-height: 134px; padding: 7px 2px 5px; background: var(--g-card); border: 2.5px solid var(--g-ink); border-radius: 10px; box-shadow: 0 4px 0 var(--g-edge, var(--g-ink)); transition: transform 0.16s var(--g-ease-spring); }
 .g-defuse .dx-mod[data-mod="switches"] .sx-sw:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--g-edge, var(--g-ink)); }
 .g-defuse .dx-mod[data-mod="switches"] .sx-slot { position: relative; flex: none; width: 26px; height: 84px; background: var(--dx-dark); border: 2.5px solid var(--g-ink); border-radius: 13px; }
 .g-defuse .dx-mod[data-mod="switches"] .sx-slot::before, .g-defuse .dx-mod[data-mod="switches"] .sx-slot::after { content: ''; position: absolute; left: 50%; margin-left: -4px; border: 4px solid transparent; }
 .g-defuse .dx-mod[data-mod="switches"] .sx-slot::before { top: 5px; border-bottom: 5px solid #5d5a66; border-top: 0; }
 .g-defuse .dx-mod[data-mod="switches"] .sx-slot::after { bottom: 5px; border-top: 5px solid #5d5a66; border-bottom: 0; }
-.g-defuse .dx-mod[data-mod="switches"] .sx-lever { position: absolute; left: 50%; top: 3px; z-index: 1; width: 36px; height: 40px; margin-left: -18px; background: var(--cap); border: 2.5px solid var(--g-ink); border-radius: 9px; box-shadow: 2px 3px 0 var(--g-edge, var(--g-ink)); transition: transform 0.12s cubic-bezier(0.3, 1.4, 0.5, 1); }
+.g-defuse .dx-mod[data-mod="switches"] .sx-lever { position: absolute; left: 50%; top: 3px; z-index: 1; width: 36px; height: 40px; margin-left: -18px; background: var(--cap); border: 2.5px solid var(--g-ink); border-radius: 9px; box-shadow: 2px 3px 0 var(--g-edge, var(--g-ink)); transition: transform 0.2s var(--g-ease-spring); }
 .g-defuse .dx-mod[data-mod="switches"] .sx-lever::after { content: ''; position: absolute; left: 6px; right: 6px; top: 50%; height: 3px; margin-top: -1.5px; border-radius: 2px; background: color-mix(in srgb, var(--dx-dark) 40%, transparent); }
 .g-defuse .dx-mod[data-mod="switches"] .sx-sw.is-down .sx-lever { transform: translateY(31px); }
 .g-defuse .dx-mod[data-mod="switches"] .sx-n { font: 400 1.05rem/1 var(--g-font-display); }
 .g-defuse .dx-mod[data-mod="switches"] .sx-pos { font: 800 0.7rem/1 var(--g-font-body); letter-spacing: 0.1em; color: var(--g-muted); }
-.g-defuse .dx-mod[data-mod="switches"] .sx-set { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 54px; background: var(--dx-yellow); color: var(--dx-dark); border: 3px solid var(--g-ink); border-radius: 12px; box-shadow: 0 6px 0 var(--g-edge, var(--g-ink)); font: 400 1.3rem/1 var(--g-font-display); letter-spacing: 0.12em; transition: transform 0.06s, box-shadow 0.06s; }
+.g-defuse .dx-mod[data-mod="switches"] .sx-set { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 54px; background: var(--dx-yellow); color: var(--dx-dark); border: 3px solid var(--g-ink); border-radius: 12px; box-shadow: 0 6px 0 var(--g-edge, var(--g-ink)); font: 400 1.3rem/1 var(--g-font-display); letter-spacing: 0.12em; transition: transform 0.16s var(--g-ease-spring); }
 .g-defuse .dx-mod[data-mod="switches"] .sx-set:active { transform: translateY(5px); box-shadow: 0 1px 0 var(--g-edge, var(--g-ink)); }
 .g-defuse .dx-mod[data-mod="switches"] .sx-sw:focus-visible, .g-defuse .dx-mod[data-mod="switches"] .sx-set:focus-visible { outline: 3px solid var(--p-a); outline-offset: 3px; }
 .g-defuse .dx-mod[data-mod="switches"] .sx[data-done="1"] button { pointer-events: none; }
@@ -294,9 +294,13 @@ export const SWITCHES = {
     </div>`;
     const root = box.querySelector('.sx');
     const btns = box.querySelectorAll('.sx-sw');
+    const shown = [];
     function paint() {
+      // only the switch that moved is touched: rewriting all five on every flick dirtied style and laid out the panel again
       btns.forEach((b, i) => {
         const up = sw[i] === 1;
+        if (shown[i] === up) return;
+        shown[i] = up;
         b.classList.toggle('is-up', up);
         b.classList.toggle('is-down', !up);
         b.dataset.pos = up ? 'up' : 'down';

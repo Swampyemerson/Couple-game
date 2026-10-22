@@ -46,6 +46,11 @@ function runner(x, y, s, ink, flip = 1) {
   return L(limbs, 'k', 7.4 * s) + L(limbs, ink, 3.6 * s) + C(x + 3 * s * flip, y - 16 * s, 4.6 * s, ink, 'k', 2);
 }
 
+// a little printed heart, centre (x, y), scale s
+const heart = (x, y, s, f, k, sw, ex = '') => P(`M${f1(x)} ${f1(y + 4 * s)}C${f1(x - 7 * s)} ${f1(y - 0.5 * s)} ${f1(x - 4 * s)} ${f1(y - 5 * s)} ${f1(x)} ${f1(y - 1.8 * s)}C${f1(x + 4 * s)} ${f1(y - 5 * s)} ${f1(x + 7 * s)} ${f1(y - 0.5 * s)} ${f1(x)} ${f1(y + 4 * s)}Z`, f, k, sw, ex);
+// an off-register second plate: the same drawing nudged and printed paler (no blend mode, so it holds in dark mode)
+const plate = (body, dx = 1.6, dy = 1.3, op = 0.5) => `<g style="transform:translate(${dx}px,${dy}px);opacity:${op}">${body}</g>`;
+
 // ── the covers ─────────────────────────────────────────────────────────
 function four() {
   const bx = 33, by = 30, cw = 13.43, rh = 12;
@@ -57,25 +62,30 @@ function four() {
     '.bbab..',
     'baabab.',
   ];
-  let holes = '', discs = '';
+  let holes = '', discs = '', shine = '';
   grid.forEach((row, j) => [...row].forEach((v, i) => {
     const x = bx + cw / 2 + i * cw, y = by + 7 + j * rh;
     holes += C(x, y, 4.6, 'sy');
-    if (v !== '.') discs += C(x, y, 4.6, v, 'k', 1.6) + C(x, y, 2.2, 'n', 'k', 1.1, 'opacity:.55');
+    if (v !== '.') {
+      discs += C(x, y, 4.6, v, 'k', 1.6) + C(x, y, 2.2, 'n', 'k', 1.1, 'opacity:.55');
+      if (v === 'a') shine += `M${f1(x - 3)} ${f1(y - 0.6)}a3.2 3.2 0 0 1 2.6 -2.4`;
+    }
   }));
   const fx = bx + cw / 2 + 4 * cw;
   return svg('sy',
-    dots(8, 8, 152, 26, 5, 'y', 1.3) +
-    R(bx, by, 94, 80, 'k', 'n', 0, 7) + holes + discs +
+    dots(8, 8, 152, 26, 5, 'y', 1.3) + dots(8, 30, 30, 96, 5, 'a', 1, 0.4) + dots(132, 40, 154, 96, 5, 'b', 1, 0.4) +
+    R(bx + 2.4, by + 2.2, 94, 80, 'b', 'n', 0, 7, 'opacity:.55') + R(bx, by, 94, 80, 'k', 'n', 0, 7) + holes +
+    dots(bx + 5, by + 62, bx + 90, by + 76, 6, 'w', 0.9, 0.2) + discs + L(shine, 'w', 1.1, 'opacity:.7') +
     L(`M${f1(fx - 5)} 4v6M${f1(fx + 5)} 2v8`, 'k', 2.2) +
-    C(fx + 1.6, 18.6, 6.4, 'y') + C(fx, 17, 6.4, 'b', 'k', 2.4) + C(fx, 17, 3, 'n', 'k', 1.2, 'opacity:.55') +
+    C(fx + 2.4, 19.4, 6.4, 'y') + C(fx, 17, 6.4, 'b', 'k', 2.4) + heart(fx, 17, 0.62, 'w', 'k', 0.9) +
     R(22, 94, 116, 10, 'k', 'n', 0, 3));
 }
 
 function dots_() {
   const x0 = 25, y0 = 17, s = 22;
   const X = (i) => x0 + i * s, Y = (j) => y0 + j * s;
-  const box = (i, j, ink) => R(X(i) + 4.5, Y(j) + 4.5, s - 6, s - 6, ink, 'n', 0, 2);
+  const box = (i, j, ink) => R(X(i) + 6, Y(j) + 6, s - 6, s - 6, ink === 'a' ? 'y' : 'sy', 'n', 0, 2, 'opacity:.8') + R(X(i) + 4.5, Y(j) + 4.5, s - 6, s - 6, ink, 'n', 0, 2) +
+    dots(X(i) + 7, Y(j) + 12, X(i) + s - 3, Y(j) + s - 4, 3.6, 'k', 0.6, 0.28);
   const h = (i, j, ink) => L(`M${X(i)} ${Y(j)}H${X(i + 1)}`, ink, 3.4);
   const v = (i, j, ink) => L(`M${X(i)} ${Y(j)}V${Y(j + 1)}`, ink, 3.4);
   let d = '';
@@ -86,6 +96,7 @@ function dots_() {
     h(3, 1, 'b') + h(4, 1, 'a') + h(3, 2, 'b') + h(4, 2, 'b') + h(3, 3, 'a') + v(3, 1, 'b') + v(4, 1, 'b') + v(5, 1, 'a') + v(3, 2, 'a') + v(4, 2, 'b') +
     h(2, 3, 'a') + v(1, 2, 'b') + h(0, 2, 'a') +
     L(`M${X(2)} ${Y(2)}H${X(2) + 13}`, 'y', 6) + L(`M${X(2)} ${Y(2)}H${X(2) + 13}`, 'k', 1.6, 'stroke-dasharray:3 3') +
+    heart(X(1) + 11.5, Y(0) + 11.5, 1.1, 'w', 'k', 1.2) + heart(X(3) + 11.5, Y(2) + 11.5, 1.1, 'w', 'k', 1.2) +
     d);
 }
 
@@ -105,10 +116,13 @@ function ultimate() {
   const ms = marks.map(([gi, gj, li, lj, m]) => (m === 'x' ? x(X(gi, li), Y(gj, lj), 1.8, 'a', 1.7) : o(X(gi, li), Y(gj, lj), 2, 'b', 1.6))).join('');
   return svg('sb',
     dots(4, 6, 40, 96, 5, 'b', 1.1, 0.55) + dots(120, 6, 158, 96, 5, 'b', 1.1, 0.55) +
-    R(ox, oy, cs * 3, cs * 3, 'w', 'k', 2.6, 4) +
+    R(ox + 3, oy + 3, cs * 3, cs * 3, 'b', 'n', 0, 4, 'opacity:.4') + R(ox, oy, cs * 3, cs * 3, 'w', 'k', 2.6, 4) +
     R(ox + cs + 2, oy + cs + 2, cs - 4, cs - 4, 'y', 'n', 0, 2) +
+    dots(ox + cs + 4, oy + 2 * cs - 10, ox + 2 * cs - 3, oy + 2 * cs - 3, 4, 'k', 0.6, 0.2) +
     small + ms +
-    x(ox + 13, oy + 13, 8, 'a', 4.6) + C(ox + 2 * cs + 13, oy + cs + 13, 8.4, 'n', 'b', 4.4) +
+    plate(x(ox + 13, oy + 13, 8, 'y', 4.6), 1.8, 1.5, 0.9) + x(ox + 13, oy + 13, 8, 'a', 4.6) +
+    plate(C(ox + 2 * cs + 13, oy + cs + 13, 8.4, 'n', 'a', 4.4), -1.8, 1.5, 0.45) + C(ox + 2 * cs + 13, oy + cs + 13, 8.4, 'n', 'b', 4.4) +
+    heart(ox + 2 * cs + 13, oy + 3 * cs - 13, 1, 'a', 'k', 1.2) +
     L(`M${ox + cs} ${oy + 3}V${oy + 3 * cs - 3}M${ox + 2 * cs} ${oy + 3}V${oy + 3 * cs - 3}M${ox + 3} ${oy + cs}H${ox + 3 * cs - 3}M${ox + 3} ${oy + 2 * cs}H${ox + 3 * cs - 3}`, 'k', 3));
 }
 
@@ -121,12 +135,13 @@ function fleet() {
   const hull = 'M30 41Q30 38 33 38H102Q120 38 130 50Q120 62 102 62H33Q30 62 30 59Z';
   return svg('sa',
     L(grid, 'k', 0.8, 'opacity:.2') +
-    P(hull, 'k', 'n', 0, 'transform:translate(3px,3px)') + P(hull, 'w', 'k', 2.6) +
+    dots(0, 66, 160, 100, 5, 'b', 1, 0.3) + dots(0, 66, 160, 100, 10, 'k', 0.8, 0.14) +
+    P(hull, 'k', 'n', 0, 'transform:translate(3px,3px)') + plate(P(hull, 'n', 'a', 2), -1.8, -1.4, 0.55) + P(hull, 'w', 'k', 2.6) +
     R(40, 45, 50, 10, 'sa', 'k', 1.8, 2) +
     C(54, 50, 6.2, 'k') + L('M54 50H69', 'k', 3.2) + C(84, 50, 5.4, 'k') + L('M84 50H97', 'k', 3) +
     dots(36, 42, 46, 58, 4, 'k', 0.8, 0.5) +
-    P(star(108, 48, 15, 6.5, 9, 8), 'b', 'k', 2.2) + P(star(108, 48, 7, 3.4, 7), 'y', 'k', 1.4) +
-    P('M14 82Q14 79 17 79H52Q60 79 64 85Q60 91 52 91H17Q14 91 14 88Z', 'w', 'k', 2.2) + C(40, 85, 3.4, 'b', 'k', 1.5) +
+    plate(P(star(108, 48, 15, 6.5, 9, 8), 'a'), 2.4, 1.8, 0.55) + P(star(108, 48, 15, 6.5, 9, 8), 'b', 'k', 2.2) + P(star(108, 48, 7, 3.4, 7), 'y', 'k', 1.4) +
+    P('M14 82Q14 79 17 79H52Q60 79 64 85Q60 91 52 91H17Q14 91 14 88Z', 'w', 'k', 2.2) + heart(40, 85, 0.8, 'a', 'k', 1.3) +
     peg(126, 20) + ripple(126, 20) + peg(140, 78) + ripple(140, 78) + peg(22, 22) + ripple(22, 22) + peg(96, 84));
 }
 
@@ -135,22 +150,24 @@ function wordduel() {
     ? R(x, y + 6, 18, 6, f, 'k', 2, 2)
     : R(x + 1.6, y + 1.6, 18, 18, 'k', 'n', 0, 3) + R(x, y, 18, 18, f, 'k', 2, 3));
   const row = (y, fills, flipAt = -1) => fills.map((f, i) => tile(27 + i * 22, y, f, i === flipAt)).join('');
-  const glyph = (x, y, k) => [
-    P(`M${x + 9} ${y + 4.5}L${x + 13.5} ${y + 13}H${x + 4.5}Z`, 'k'),
-    C(x + 9, y + 9, 3.8, 'n', 'k', 2.4),
-    C(x + 9, y + 9, 2.6, 'k'),
-    R(x + 4.5, y + 7.6, 9, 2.8, 'k', 'n', 0, 1.4),
+  const glyph = (x, y, k, ink = 'k') => [
+    P(`M${x + 9} ${y + 4.5}L${x + 13.5} ${y + 13}H${x + 4.5}Z`, ink),
+    C(x + 9, y + 9, 3.8, 'n', ink, 2.4),
+    C(x + 9, y + 9, 2.6, ink),
+    R(x + 4.5, y + 7.6, 9, 2.8, ink, 'n', 0, 1.4),
   ][k % 4];
-  const g1 = [0, 1, 2, 3, 1].map((k, i) => glyph(27 + i * 22, 10, k)).join('');
-  const g2 = [2, 0, 1, 3, 0].map((k, i) => (i === 3 ? '' : glyph(27 + i * 22, 33, k))).join('');
+  const ks1 = [0, 1, 2, 3, 1], ks2 = [2, 0, 1, 3, 0];
+  const g1 = plate(ks1.map((k, i) => glyph(27 + i * 22, 10, k, 'a')).join(''), 1.4, 1.1, 0.6) + ks1.map((k, i) => glyph(27 + i * 22, 10, k)).join('');
+  const g2 = plate(ks2.map((k, i) => (i === 3 ? '' : glyph(27 + i * 22, 33, k, 'y'))).join(''), 1.4, 1.1, 0.8) + ks2.map((k, i) => (i === 3 ? '' : glyph(27 + i * 22, 33, k))).join('');
   let keys = '';
   const kb = [[10, 21], [9, 26], [7, 36]];
   const hot = { '0,2': 'a', '0,6': 'y', '1,1': 'b', '1,4': 'a', '2,3': 'y', '0,8': 'l', '1,7': 'l', '2,0': 'l', '2,5': 'b' };
   kb.forEach(([n, x0], r) => { for (let i = 0; i < n; i++) keys += R(x0 + i * 11.8, 62 + r * 12, 9.6, 9.6, hot[`${r},${i}`] || 'w', 'k', 1.4, 2); });
   return svg('sy',
+    dots(0, 4, 160, 56, 5, 'y', 1.2, 0.55) + dots(0, 58, 160, 100, 5, 'a', 0.9, 0.25) +
     row(10, ['w', 'y', 'w', 'a', 'w']) + g1 +
     row(33, ['b', 'b', 'y', 'w', 'b'], 3) + g2 +
-    keys);
+    keys + heart(49.4, 66.8, 0.7, 'w', 'k', 0.9));
 }
 
 function agents() {
@@ -160,8 +177,11 @@ function agents() {
   map.forEach((row, j) => row.forEach((v, i) => {
     const x = x0 + i * (cw + gx), y = y0 + j * (ch + gy);
     if (i === 2 && j === 2) return;
+    if (v === 'a' || v === 'b') cards += R(x + 1.6, y + 1.4, cw, ch, 'y', 'n', 0, 2, 'opacity:.7');
     cards += R(x, y, cw, ch, v, 'n', 0, 2);
     if (v === 'w' || v === 'l') cards += L(`M${f1(x + 5)} ${f1(y + ch / 2 + 1)}H${f1(x + cw - 5)}`, 'k', 2.2, 'opacity:.35');
+    else cards += dots(x + 3, y + ch - 6, x + cw - 2, y + ch - 1, 3.4, 'k', 0.55, 0.3);
+    if (i === 4 && j === 4) cards += heart(x + cw / 2, y + ch / 2, 0.85, 'w', 'k', 0.9);
   }));
   const lx = x0 + 2 * (cw + gx), ly = y0 + 2 * (ch + gy);
   return svg('k',
@@ -175,12 +195,14 @@ function doodle() {
   const cat = 'M36 56c-1-9 3-17 9-21l-2-12 9 7c4-1 9-1 13 0l8-7-1 12c6 5 9 12 8 20-1 12-12 19-23 19-12 0-21-7-21-18z';
   return svg('w',
     dots(110, 6, 158, 40, 5, 'b', 1.1, 0.6) +
-    P(cat, 'n', 'y', 7) + G('translate(-2 -2)', P(cat, 'n', 'a', 3)) +
+    P(cat, 'sy') + dots(40, 66, 66, 70, 4, 'y', 0.9, 0.8) +
+    P(cat, 'n', 'y', 7) + G('translate(-2 -2)', P(cat, 'n', 'a', 3)) + G('translate(1.6 1.6)', P(cat, 'n', 'b', 1.4, 'opacity:.55')) +
+    heart(98, 26, 1.5, 'n', 'a', 2.2) + heart(88, 14, 0.9, 'a', 'n', 0, 'opacity:.8') + G('translate(1.4 1.2)', heart(98, 26, 1.5, 'n', 'b', 1.2, 'opacity:.5')) +
     C(48, 53, 2.6, 'a') + C(64, 53, 2.6, 'a') + L('M53 61q3 3 6 0', 'a', 2.6) +
     L('M40 60l-12-2M40 64l-12 3M71 60l13-2M71 64l13 3', 'a', 2.4) +
     L('M90 76c6-3 9 3 15 0s8-4 12-1', 'a', 3) +
     G('rotate(-38 118 72)',
-      R(116, 66, 58, 13, 'y', 'k', 2.4) + L('M118 70.3h54M118 74.6h54', 'k', 1.2, 'opacity:.4') +
+      R(117.6, 67.6, 58, 13, 'a', 'n', 0, 0, 'opacity:.5') + R(116, 66, 58, 13, 'y', 'k', 2.4) + L('M118 70.3h54M118 74.6h54', 'k', 1.2, 'opacity:.4') +
       R(160, 66, 7, 13, 'l', 'k', 2.2) + R(167, 66, 9, 13, 'b', 'k', 2.4, 3) +
       P('M116 66L103 72.5L116 79Z', 'w', 'k', 2.2) + P('M107.4 70.3L103 72.5L107.4 74.7Z', 'k')));
 }
@@ -196,7 +218,9 @@ function wave() {
   return svg('sb',
     dots(6, 6, 154, 30, 6, 'b', 1.2, 0.5) +
     P(`M${cx - r} ${cy}A${r} ${r} 0 0 1 ${cx + r} ${cy}Z`, 'w', 'k', 2.6) +
-    wedge(t - 18, t + 18, 'y') + wedge(t - 11, t + 11, 'b') + wedge(t - 4, t + 4, 'a') +
+    dots(34, 62, 126, 80, 5, 'b', 0.9, 0.3) +
+    plate(wedge(t - 18, t + 18, 'a'), 2.2, 1.6, 0.3) + wedge(t - 18, t + 18, 'y') + wedge(t - 11, t + 11, 'b') + wedge(t - 4, t + 4, 'a') +
+    heart(112, 66, 1.2, 'a', 'k', 1.3) +
     L(ticks, 'k', 1.4, 'opacity:.6') +
     P(`M${cx - r} ${cy}A${r} ${r} 0 0 1 ${cx + r} ${cy}`, 'n', 'k', 2.6) +
     R(14, cy, 132, 12, 'k', 'n', 0, 3) +
@@ -216,8 +240,8 @@ function hockey() {
     L('M62 40L88 33M64 47L88 40M70 54L90 47', 'y', 3.4) +
     C(102, 40, 7, 'k') + C(100.5, 38.5, 7, 'k', 'k', 0) + C(100.5, 38.5, 3, 'n', 'w', 1.4, 'opacity:.5') +
     C(58, 70, 4.6, 'y', 'k', 1.8) + C(58, 70, 1.6, 'k') + L('M50 76l-5 3M52 80l-5 2', 'k', 1.6, 'opacity:.6') +
-    C(44, 34, 12, 'a', 'k', 2.6) + C(44, 34, 5.6, 'a', 'k', 2.4) +
-    C(122, 66, 12, 'b', 'k', 2.6) + C(122, 66, 5.6, 'b', 'k', 2.4));
+    C(46.2, 36, 12, 'y', 'n', 0, 'opacity:.8') + C(44, 34, 12, 'a', 'k', 2.6) + C(44, 34, 5.6, 'a', 'k', 2.4) + heart(44, 34, 0.7, 'w', 'k', 0.9) +
+    C(124.2, 68, 12, 'y', 'n', 0, 'opacity:.8') + C(122, 66, 12, 'b', 'k', 2.6) + C(122, 66, 5.6, 'b', 'k', 2.4) + heart(122, 66, 0.7, 'w', 'k', 0.9));
 }
 
 function quickdraw() {
@@ -232,7 +256,8 @@ function quickdraw() {
   let sun = '';
   for (let y = 54; y < 70; y += 5) sun += `M40 ${y}H120`;
   return svg('sy',
-    C(80, 70, 32, 'b', 'k', 2.6) + L(sun, 'sy', 2.2) +
+    C(83, 72, 32, 'a', 'n', 0, 'opacity:.5') + C(80, 70, 32, 'b', 'k', 2.6) + L(sun, 'sy', 2.2) + dots(58, 58, 102, 67, 4, 'k', 0.7, 0.22) +
+    heart(80, 49, 1.15, 'a', 'k', 1.5) +
     R(0, 70, 160, 30, 'y') + L('M0 70H160', 'k', 2.6) +
     dots(4, 76, 156, 98, 5, 'k', 0.9, 0.35) +
     cactus(62, 22) + cactus(102, 14) +
@@ -284,10 +309,12 @@ function cycles() {
   const bike = (x, y, rot, ink) => G(`rotate(${rot} ${x} ${y})`, R(x - 9, y - 4.5, 18, 9, ink, 'w', 1.8, 4.5) + R(x + 1, y - 2.5, 5, 5, 'k', 'n', 0, 1.5));
   return svg('k',
     L(grid, 'w', 0.7, 'opacity:.16') +
+    dots(60, 36, 124, 80, 5, 'y', 0.9, 0.22) +
+    plate(L('M-4 74H44V34H86V50', 'y', 2.4), 2.2, 2, 0.45) + plate(L('M164 22H124V78H96V58', 'y', 2.4), 2.2, 2, 0.45) +
     trail('M-4 74H44V34H86V50', 'a') + trail('M164 22H124V78H96V58', 'b') +
     R(113, 7, 16, 16, 'w', 'n', 0, 1, 'opacity:.9') + R(116, 10, 10, 10, 'n', 'k', 1.2, 0, 'opacity:.5') +
     R(20, 78, 14, 14, 'w', 'n', 0, 1, 'opacity:.9') + R(23, 81, 8, 8, 'n', 'k', 1.2, 0, 'opacity:.5') +
-    C(138, 84, 8, 'y', 'k', 2) + L('M133.5 80l4.5 4-4.5 4M138 80l4.5 4-4.5 4', 'k', 1.9) +
+    C(140, 86, 8, 'a', 'n', 0, 'opacity:.5') + C(138, 84, 8, 'y', 'k', 2) + heart(138, 84, 0.95, 'a', 'k', 1.2) +
     bike(86, 58, 90, 'a') + bike(96, 66, -90, 'b') +
     P(star(91, 46, 13, 5, 10, 4), 'y', 'w', 1.8) + P(star(91, 46, 5.5, 2.6, 6, 30), 'w'));
 }
@@ -295,7 +322,8 @@ function cycles() {
 function defuse() {
   return svg('sb',
     dots(100, 4, 156, 96, 6, 'b', 1.1, 0.5) +
-    R(49, 21, 88, 66, 'k', 'n', 0, 8) + R(46, 18, 88, 66, 'w', 'k', 2.6, 8) +
+    R(49, 21, 88, 66, 'k', 'n', 0, 8) + R(44, 16.5, 88, 66, 'n', 'a', 1.4, 8, 'opacity:.6') + R(46, 18, 88, 66, 'w', 'k', 2.6, 8) +
+    dots(94, 54, 132, 82, 4, 'k', 0.6, 0.14) +
     L('M90 22V80M50 51H130', 'k', 1.6, 'opacity:.35') +
     C(64, 34, 9, 'y', 'k', 2.2) + P('M64 34V25A9 9 0 0 1 72.4 37.3Z', 'b', 'k', 2) +
     C(80, 28, 2.6, 'b', 'k', 1.4) + C(80, 37, 2.6, 'w', 'k', 1.4) +
@@ -304,7 +332,7 @@ function defuse() {
     R(54, 57, 4, 22, 'k') + R(80, 57, 4, 22, 'k') +
     L('M58 61C66 58 72 70 80 62', 'a', 3.2) + L('M58 69C66 76 72 64 80 70', 'y', 3.2) + L('M58 76C64 72 70 80 76 78', 'b', 3.2) + L('M80 76l-3 1', 'b', 3.2) +
     C(111, 68, 12, 'k') + C(110, 67, 12, 'b', 'k', 2.4) + E(106, 63, 4, 2.4, 'w', 'n', 0, 'opacity:.6', -30) +
-    G('rotate(-12 28 78)', R(10, 60, 38, 40, 'w', 'k', 2.2, 2) + L('M15 68h26M15 74h20M15 80h26M15 86h14', 'k', 1.6, 'opacity:.5') + P('M40 60h8v8z', 'l', 'k', 1.6) + R(15, 90, 10, 6, 'b', 'k', 1.4, 1)));
+    G('rotate(-12 28 78)', R(10, 60, 38, 40, 'w', 'k', 2.2, 2) + L('M15 68h26M15 74h20M15 80h26M15 86h14', 'k', 1.6, 'opacity:.5') + P('M40 60h8v8z', 'l', 'k', 1.6) + heart(34, 93, 0.8, 'a', 'k', 1.2)));
 }
 
 function rush() {

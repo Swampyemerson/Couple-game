@@ -33,6 +33,14 @@
   --g-font-display: 'Rammetto One', 'Arial Black', 'Helvetica Neue', Impact, system-ui, sans-serif;
   --g-font-body: 'Schibsted Grotesk', 'Helvetica Neue', Helvetica, Arial, system-ui, sans-serif;
   --g-halftone: radial-gradient(circle, rgb(24 23 29 / 0.2) 0.9px, transparent 1.3px);
+  --g-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .094 0 0 0 0 .09 0 0 0 0 .114 2.2 0 0 0 -1.0'/%3E%3C/filter%3E%3Crect width='100%' height='100%' filter='url(%23n)' opacity='.22'/%3E%3C/svg%3E");  /* paper tooth: tiled 180 px noise, use as a background layer */
+  --g-grain-size: 180px 180px;
+  --g-halftone-a: radial-gradient(circle, color-mix(in srgb, var(--p-a) 55%, transparent) 1px, transparent 1.5px);
+  --g-halftone-b: radial-gradient(circle, color-mix(in srgb, var(--p-b) 55%, transparent) 1px, transparent 1.5px);
+  --g-misreg: 1.25px 1px 0 color-mix(in srgb, var(--p-b) 62%, transparent), -0.75px -0.5px 0 color-mix(in srgb, var(--p-a) 52%, transparent);
+  --g-ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --g-ease-spring: cubic-bezier(0.3, 1.5, 0.5, 1);
+  --g-ease-snap: cubic-bezier(0.5, 0, 0.2, 1.4);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -43,6 +51,7 @@
     --g-on-ink: #141317; --g-white: #f1ece2; --g-edge: #000000; --g-dim: rgb(0 0 0 / 0.62);
     --g-halftone: radial-gradient(circle, rgb(241 236 226 / 0.12) 0.9px, transparent 1.3px);
     --g-on-signal: #141317;
+    --g-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .945 0 0 0 0 .925 0 0 0 0 .886 2.2 0 0 0 -1.0'/%3E%3C/filter%3E%3Crect width='100%' height='100%' filter='url(%23n)' opacity='.16'/%3E%3C/svg%3E");
   }
 }
 :root[data-theme="dark"] {
@@ -53,6 +62,7 @@
   --g-on-ink: #141317; --g-white: #f1ece2; --g-edge: #000000; --g-dim: rgb(0 0 0 / 0.62);
   --g-halftone: radial-gradient(circle, rgb(241 236 226 / 0.12) 0.9px, transparent 1.3px);
   --g-on-signal: #141317;
+  --g-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .945 0 0 0 0 .925 0 0 0 0 .886 2.2 0 0 0 -1.0'/%3E%3C/filter%3E%3Crect width='100%' height='100%' filter='url(%23n)' opacity='.16'/%3E%3C/svg%3E");
 }
 
 [hidden] { display: none !important; }
@@ -78,9 +88,36 @@
 .gm-btn-danger:active { box-shadow: 0 0 0 var(--g-edge); }
 .gm-btn-big { width: 100%; min-height: 54px; padding: 14px 18px; font-size: 1.08rem; }
 
-.g-panel { background: var(--g-card); color: var(--g-ink); border: var(--g-stroke) solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow); }
+.g-panel { background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-card); color: var(--g-ink); border: var(--g-stroke) solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow); }
 .g-panel.is-flat { box-shadow: none; }
-.g-panel.is-a { background: var(--p-a-soft); } .g-panel.is-b { background: var(--p-b-soft); } .g-panel.is-hl { background: var(--g-hl-soft); }
+.g-panel.is-a { background: var(--g-grain) 0 0 / var(--g-grain-size), var(--p-a-soft); } .g-panel.is-b { background: var(--g-grain) 0 0 / var(--g-grain-size), var(--p-b-soft); } .g-panel.is-hl { background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-hl-soft); }
+
+/* paper and print textures (upgrade 2). All static images or CSS gradients: nothing here repaints per frame.
+   .g-paper     adds the paper tooth to any surface (as a background layer under its own background colour)
+   .g-grain     an overlay of grain on top of a surface's contents (ink sits in the paper, not on it)
+   .g-misreg    display text printed with the pink and blue plates slightly off register (big display type only, ≥ ~1.2rem: it blurs small text)
+   .g-shade-a/b halftone shading in a player's ink
+   .g-ink-in    one-shot: a piece is stamped onto the page (scale + settle, compositor only)
+   .g-shake     one-shot: a short horizontal shake for a refused move
+   .g-pulse     looping: a gentle "look here" pulse
+   .g-pop       one-shot: pops in from nothing with a spring */
+.g-paper { background-image: var(--g-grain); background-size: var(--g-grain-size); }
+.g-grain { position: relative; }
+.g-grain::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: var(--g-grain) 0 0 / var(--g-grain-size); mix-blend-mode: multiply; }
+.g-misreg { text-shadow: var(--g-misreg); }
+.g-shade-a { background-image: var(--g-halftone-a); background-size: 5px 5px; }
+.g-shade-b { background-image: var(--g-halftone-b); background-size: 5px 5px; }
+.g-ink-in { animation: g-ink-in 0.32s var(--g-ease-spring) both; }
+.g-shake { animation: g-shake 0.36s cubic-bezier(0.36, 0.07, 0.19, 0.97) both; }
+.g-pulse { animation: g-pulse 1.4s ease-in-out infinite; }
+.g-pop { animation: g-pop 0.4s var(--g-ease-spring) both; }
+@keyframes g-ink-in { 0% { transform: scale(1.35) rotate(-4deg); opacity: 0; } 60% { transform: scale(0.94) rotate(1deg); opacity: 1; } 100% { transform: none; opacity: 1; } }
+@keyframes g-shake { 10%, 90% { transform: translateX(-1px); } 20%, 80% { transform: translateX(3px); } 30%, 50%, 70% { transform: translateX(-5px); } 40%, 60% { transform: translateX(5px); } }
+@keyframes g-pulse { 50% { transform: scale(1.06); } }
+@keyframes g-pop { 0% { transform: scale(0); } 100% { transform: none; } }
+@keyframes g-wipe { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes g-reg { 0% { transform: translate(3px, -2px); opacity: 0.4; } 100% { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .g-ink-in, .g-shake, .g-pulse, .g-pop { animation: none !important; } }
 
 .g-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 3px 11px; border: var(--g-stroke) solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); font: 800 0.8rem/1.1 var(--g-font-body); white-space: nowrap; }
 .g-chip.is-a { background: var(--p-a); color: var(--g-on-ink); }
@@ -118,7 +155,7 @@
 /* ════════ overlay root ════════ */
 #game-root {
   position: fixed; inset: 0; z-index: 40; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: none;
-  background: var(--g-bg); color: var(--g-ink); font-family: var(--g-font-body);
+  background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-bg); color: var(--g-ink); font-family: var(--g-font-body);
 }
 body.gm-open { overflow: hidden; }
 /* the page behind is pinned while the game room is open (core.js sets top to keep its place) */
@@ -230,6 +267,8 @@ body.gm-pinned { position: fixed; left: 0; right: 0; width: 100%; }
 .gm-end-kicker { font: 800 0.7rem/1.2 var(--g-font-body); letter-spacing: 0.14em; text-transform: uppercase; opacity: 0.78; margin-bottom: 6px !important; }
 .gm-end-head { position: relative; font-family: var(--g-font-display); font-weight: 900; font-size: clamp(1.8rem, 8.6vw, 2.4rem); line-height: 1.02; overflow-wrap: anywhere; text-shadow: 3px 3px 0 var(--g-white); animation: gm-register 0.7s 0.12s cubic-bezier(0.3, 1.4, 0.5, 1) both; }
 .gm-end-card.team .gm-end-head { max-width: calc(100% - 96px); }
+.gm-end-card { background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-card); }
+.gm-end-band::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: var(--g-grain) 0 0 / var(--g-grain-size); mix-blend-mode: multiply; }
 .gm-end-body { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px 16px; }
 .gm-end-sub { font-weight: 600; font-size: 1rem; line-height: 1.4; }
 .gm-end-rec { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 700; font-size: 0.9rem; }
@@ -278,6 +317,7 @@ body.gm-pinned { position: fixed; left: 0; right: 0; width: 100%; }
 /* ════════ game sheet (pick how to play) ════════ */
 .gs-wrap { min-height: 100%; display: grid; align-items: end; justify-items: center; padding: 28px 10px calc(10px + env(safe-area-inset-bottom, 0px)); background: var(--g-dim); animation: gm-fade 0.2s ease-out both; }
 .gs { width: min(100%, 520px); background: var(--g-card); color: var(--g-ink); border: 2.5px solid var(--g-ink); border-radius: 16px; box-shadow: var(--g-shadow-lg); overflow: hidden; animation: gm-up 0.34s cubic-bezier(0.2, 1.15, 0.4, 1) both; }
+.gs, .gm-sheet-card, .gm-curtain-card, .gm-wait-card { background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-card); }
 .gs-cover { aspect-ratio: 16 / 8.5; border-bottom: 2.5px solid var(--g-ink); background: var(--g-bg); }
 .gs-body { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px 16px; }
 .gs-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -313,7 +353,7 @@ body.gm-pinned { position: fixed; left: 0; right: 0; width: 100%; }
 }
 
 /* ════════ hub (the Games tab, inside the app) ════════ */
-body:has(.gh) { background: var(--g-bg); }
+body:has(.gh) { background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-bg); }
 .games-tab { min-height: 100dvh; }
 .gh { display: flex; flex-direction: column; gap: 22px; padding: 16px 16px 28px; color: var(--g-ink); font-family: var(--g-font-body); }
 .gh-head { display: flex; flex-direction: column; gap: 12px; }
@@ -323,6 +363,8 @@ body:has(.gh) { background: var(--g-bg); }
 .gh-presence-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; border: var(--g-stroke) solid var(--g-muted); }
 .gh-presence.is-here { color: var(--g-ink); }
 .gh-presence.is-here .gh-presence-dot { background: var(--g-good); border-color: var(--g-ink); animation: gm-blink 2.4s ease-in-out infinite; }
+/* the hub stays in the page under an open game: don't keep restyling it 60×/s behind the game */
+body.gm-open .gh-presence-dot { animation: none !important; }
 
 /* head-to-head: two ink blocks overprinting in the middle */
 .gh-score { position: relative; display: grid; grid-template-columns: 1fr 1fr; isolation: isolate; border: 2.5px solid var(--g-ink); border-radius: 14px; overflow: hidden; box-shadow: 5px 5px 0 var(--g-edge); background: #fff; }
@@ -387,6 +429,8 @@ body:has(.gh) { background: var(--g-bg); }
 .gh-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 12px; }
 .gh-card { position: relative; display: flex; flex-direction: column; min-width: 0; text-align: left; background: var(--g-card); color: var(--g-ink); border: var(--g-stroke) solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow); overflow: hidden; font-family: var(--g-font-body); transition: transform 0.09s, box-shadow 0.09s; }
 .gh-card:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--g-edge); }
+.gh-card-cover::after, .gs-cover::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: var(--g-grain) 0 0 / var(--g-grain-size); mix-blend-mode: multiply; }
+.gs-cover { position: relative; }
 .gh-card-cover { position: relative; display: block; aspect-ratio: 16 / 10; border-bottom: var(--g-stroke) solid var(--g-ink); background: var(--g-bg); }
 .gh-card-body { flex: 1; display: flex; flex-direction: column; gap: 4px; padding: 9px 10px 10px; min-width: 0; }
 .gh-card-title { font-family: var(--g-font-display); font-weight: 900; font-size: 0.98rem; line-height: 1.12; overflow-wrap: break-word; -webkit-hyphens: auto; hyphens: auto; }

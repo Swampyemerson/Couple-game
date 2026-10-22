@@ -88,13 +88,14 @@ async function cyclesLivePhones(h) {
   assert(await visible(h.b, '.cy-pad.p-b'), 'guest phone shows its D-pad');
 
   // round 1: both steer with keys. Sydney turns (her) left into a wall; Emerson jinks left then up.
+  let r1Shots = null; // the screenshots run beside the round: on a loaded box they take longer than the round's 3 s end phase
   const r1 = await liveRound(h, 1, async () => {
     await h.b.keyboard.press('ArrowLeft');
     await h.a.keyboard.press('a'); await sleep(170); await h.a.keyboard.press('w');
     await sleep(400);
-    await shot(h.a, 'cycles-phone-live-host-light');
-    await shot(h.b, 'cycles-phone-live-guest-light');
+    r1Shots = Promise.all([shot(h.a, 'cycles-phone-live-host-light'), shot(h.b, 'cycles-phone-live-guest-light')]);
   });
+  await r1Shots;
   assert(turnsOf(r1.log, 'a').length === 2 && turnsOf(r1.log, 'b').length === 1, 'round 1: both players\' key turns are in the log');
   assert(r1.rw === 'a', 'round 1: Emerson takes it');
   await shot(h.b, 'cycles-phone-roundend-guest-light');
@@ -559,7 +560,7 @@ async function cyclesBadNetwork(h, tag) {
           if (v && last && dt > 4) ex = Math.max(ex, Math.hypot(v.x - last[0], v.y - last[1]) - dt / H.info().tms); // beyond what steady riding covers
           if (v) last = [v.x, v.y];
           frames++;
-          if (now - T0 < 950 && !H.info().sim.done) requestAnimationFrame(loop); else res({ pending, ex, frames });
+          if (now - T0 < 950 && !H.info().sim.done) requestAnimationFrame(loop); else res({ pending, ex, frames, done: H.info().sim.done });
         };
         requestAnimationFrame(loop);
       }));
@@ -567,7 +568,7 @@ async function cyclesBadNetwork(h, tag) {
       await h.a.keyboard.press('a');
       const tr = await turn;
       assert(tr.pending.length === 1, `round ${n}: the guest's own turn is on screen at once (predicted)`);
-      assert(tr.frames > 12 && tr.ex < 0.75, `round ${n}: the guest's head does not pop when the host confirms its turn (worst extra step ${tr.ex.toFixed(2)} cells over ${tr.frames} frames)`);
+      assert((tr.frames > 12 || tr.done) && tr.ex < 0.75, `round ${n}: the guest's head does not pop when the host confirms its turn (worst extra step ${tr.ex.toFixed(2)} cells over ${tr.frames} frames${tr.done && tr.frames <= 12 ? ', the random arena ended the round first' : ''})`);
     });
     assert(r.sim.a.len + r.sim.b.len > 8, `round ${n}: ridden (${r.sim.t} ticks, ${r.sim.a.sh + r.sim.b.sh} close shaves)`);
     assert(r.rw === 'a' || r.rw === 'b' || r.rw === 'd', `round ${n}: both devices agree on the result (${r.rw})`);

@@ -21,7 +21,7 @@ export const CSS = `
 .g-defuse .dx-lobby { width: min(100%, 760px); margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
 .g-defuse .dx-lead { font-size: 1rem; line-height: 1.45; color: var(--g-muted); font-weight: 600; margin-top: 6px !important; }
 .g-defuse .dx-roles { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-.g-defuse .dx-role { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 14px 14px 12px; text-align: left; background: var(--g-card); border: 2.5px solid var(--g-ink); border-radius: 14px; box-shadow: var(--g-shadow, 3px 3px 0 var(--g-ink)); transition: transform 0.1s, box-shadow 0.1s, background-color 0.15s; min-height: 200px; }
+.g-defuse .dx-role { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 14px 14px 12px; text-align: left; background: var(--g-card); border: 2.5px solid var(--g-ink); border-radius: 14px; box-shadow: var(--g-shadow, 3px 3px 0 var(--g-ink)); transition: transform 0.16s var(--g-ease-spring); min-height: 200px; }
 .g-defuse .dx-role:active { transform: translate(3px, 3px); box-shadow: 0 0 0 var(--g-ink); }
 .g-defuse .dx-role svg { width: 58px; height: 58px; }
 .g-defuse .dx-role-name { font: 400 1.35rem/1 var(--g-font-display); }
@@ -73,7 +73,6 @@ export const CSS = `
 .g-defuse .dx-led { width: 18px; height: 18px; border-radius: 50%; border: 2.5px solid var(--g-ink); background: color-mix(in srgb, var(--g-ink) 18%, var(--g-card)); transition: background-color 0.15s; }
 .g-defuse .dx-mod.is-solved .dx-led { background: var(--g-good); box-shadow: 0 0 0 3px color-mix(in srgb, var(--g-good) 30%, transparent); }
 .g-defuse .dx-mod.is-bad .dx-led { background: var(--g-bad); }
-.g-defuse .dx-mod.is-bad { animation: dx-shake 0.32s ease-out; }
 .g-defuse .dx-mod.is-solved::after { content: ''; position: absolute; inset: 0; border-radius: 12px; background: repeating-linear-gradient(-45deg, transparent 0 9px, color-mix(in srgb, var(--g-good) 12%, transparent) 9px 11px); pointer-events: none; }
 .g-defuse .dx-mod-body { flex: 1; display: grid; place-items: center; padding-top: 8px; }
 .g-defuse .dx-wires { width: 100%; max-width: 290px; height: auto; display: block; overflow: visible; }
@@ -89,7 +88,7 @@ export const CSS = `
 .g-defuse .dx-wire:focus-visible .o { stroke: var(--p-a); }
 @media (hover: hover) { .g-defuse .dx-wire:not(.is-cut):hover .o { stroke-width: 13.5; } }
 .g-defuse .dx-btnwrap { display: flex; align-items: center; gap: 22px; }
-.g-defuse .dx-big { position: relative; width: 132px; height: 132px; border-radius: 50%; border: 3px solid var(--g-ink); background: var(--bc); color: var(--dx-dark); box-shadow: 0 9px 0 var(--g-ink); transform: translateY(-4px); transition: transform 0.07s, box-shadow 0.07s; touch-action: none; user-select: none; -webkit-user-select: none; }
+.g-defuse .dx-big { position: relative; width: 132px; height: 132px; border-radius: 50%; border: 3px solid var(--g-ink); background: var(--bc); color: var(--dx-dark); box-shadow: 0 9px 0 var(--g-ink); transform: translateY(-4px); transition: transform 0.16s var(--g-ease-spring); touch-action: none; user-select: none; -webkit-user-select: none; }
 .g-defuse .dx-big::before { content: ''; position: absolute; inset: 9px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--dx-dark) 30%, transparent); }
 .g-defuse .dx-big span { position: relative; font: 400 1.35rem/1 var(--g-font-display); letter-spacing: 0.04em; }
 .g-defuse .dx-big.is-down { transform: translateY(4px); box-shadow: 0 1px 0 var(--g-ink); }
@@ -98,7 +97,7 @@ export const CSS = `
 .g-defuse .dx-strip i { display: block; height: 100%; border-radius: 6px; background: #3a3842; transition: background-color 0.12s; }
 .g-defuse .dx-strip.is-on i { background: var(--sc); }
 .g-defuse .dx-keys { display: grid; grid-template-columns: repeat(2, 86px); gap: 12px; }
-.g-defuse .dx-gkey { position: relative; display: grid; place-items: center; width: 86px; height: 86px; padding: 18px 16px 12px; background: var(--dx-white); color: var(--dx-dark); border: 2.5px solid var(--g-ink); border-radius: 12px; box-shadow: 0 5px 0 var(--g-ink); transition: transform 0.06s, box-shadow 0.06s; }
+.g-defuse .dx-gkey { position: relative; display: grid; place-items: center; width: 86px; height: 86px; padding: 18px 16px 12px; background: var(--dx-white); color: var(--dx-dark); border: 2.5px solid var(--g-ink); border-radius: 12px; box-shadow: 0 5px 0 var(--g-ink); transition: transform 0.16s var(--g-ease-spring); }
 .g-defuse .dx-gkey:active { transform: translateY(4px); box-shadow: 0 1px 0 var(--g-ink); }
 .g-defuse .dx-gkey .dx-kled { position: absolute; top: 6px; left: 50%; width: 22px; height: 7px; margin-left: -11px; border-radius: 4px; border: 1.5px solid var(--dx-dark); background: #bdb8ad; }
 .g-defuse .dx-gkey.is-ok .dx-kled { background: var(--dx-green); } .g-defuse .dx-gkey.is-no .dx-kled { background: var(--dx-red); }
@@ -106,7 +105,7 @@ export const CSS = `
 .g-defuse .dx-gkey:focus-visible { outline: 3px solid var(--p-a); outline-offset: 3px; }
 .g-defuse .dx-seqwrap { display: flex; flex-direction: column; align-items: center; gap: 16px; }
 .g-defuse .dx-seq { display: grid; grid-template-columns: repeat(2, 74px); gap: 12px; transform: rotate(45deg); margin: 18px; }
-.g-defuse .dx-pad { position: relative; width: 74px; height: 74px; border: 2.5px solid var(--g-ink); border-radius: 12px; background: color-mix(in srgb, var(--pc) 34%, var(--g-card)); box-shadow: 3px 3px 0 var(--g-ink); transition: transform 0.06s, box-shadow 0.06s, background-color 0.08s; }
+.g-defuse .dx-pad { position: relative; width: 74px; height: 74px; border: 2.5px solid var(--g-ink); border-radius: 12px; background: color-mix(in srgb, var(--pc) 34%, var(--g-card)); box-shadow: 3px 3px 0 var(--g-ink); transition: transform 0.16s var(--g-ease-spring); }
 .g-defuse .dx-pad span { position: absolute; left: 7px; top: 5px; transform: rotate(-45deg); font: 800 0.72rem/1 var(--g-font-body); color: var(--g-ink); opacity: 0.75; }
 .g-defuse .dx-pad.is-lit { background: var(--pc); transform: translate(-2px, -2px); box-shadow: 5px 5px 0 var(--g-ink); }
 .g-defuse .dx-pad.is-lit span { color: var(--dx-dark); }
@@ -261,7 +260,7 @@ export const CSS = `
 .g-defuse .dx-mbar .dx-time { font-size: 1.7rem; margin: 0; }
 .g-defuse .dx-mbar .dx-strikes { gap: 5px; align-items: center; } .g-defuse .dx-mbar .dx-strikes .dx-tag { margin-right: 4px; } .g-defuse .dx-mbar .dx-strikes i { width: 22px; height: 22px; border-radius: 5px; }
 .g-defuse .dx-mbar .dx-strikes i.on::before, .g-defuse .dx-mbar .dx-strikes i.on::after { left: 3px; right: 3px; height: 2.5px; }
-.g-defuse .dx-mbar.is-bad { animation: dx-shake 0.36s ease-out; border-color: var(--g-bad); }
+.g-defuse .dx-mbar.is-bad { border-color: var(--g-bad); }
 .g-defuse .dx-mbar.is-surge { border-color: var(--dx-red); }
 .g-defuse .dx-lamps { display: flex; gap: 6px 10px; margin-left: auto; justify-content: flex-end; flex-wrap: wrap; }
 .g-defuse .dx-lamp { display: inline-flex; align-items: center; gap: 5px; font: 800 0.7rem/1 var(--g-font-body); letter-spacing: 0.06em; text-transform: uppercase; color: var(--g-muted); }
