@@ -239,7 +239,38 @@ sits under the countdown digit.
 
 ## Tests
 
-TESTS_PLACEHOLDER
+All runs below are on the final code, in this container.
+
+| Run | Result |
+|---|---|
+| `node tools/test/games/rush-feel.test.js` | ALL GOOD, 43 checks |
+| `ONLY=race,brawl,tandem,pause,daily node tools/test/games/rush.test.js` | ALL GOOD |
+| `ONLY=rival,loop,rejoin …` | ALL GOOD |
+| `ONLY=gen,split,leak,drop,dark …` | ALL GOOD |
+| `ONLY=seam …` | ALL GOOD |
+| `ONLY=heap …` | ALL GOOD |
+| `node tools/test/all-games.test.js` | ALL GOOD, all 16 games |
+
+- **`rush-feel.test.js`.** Asserts, for each refresh rate (60/120/30 Hz), that against the old clock and camera:
+  - drawn-runner judder is less than half the old value, and camera jerk RMS and peak are lower;
+  - swipe latency p95 is ≤ 2 periods + 9 ms and no worse than before;
+  - there are no camera teleports and no overshoot;
+  - the camera settles in 150–330 ms;
+  - Low Power Mode keeps its scale.
+
+  It also asserts the live phone budgets and that real swipes show within 1 frame.
+- **Things the rush suite pins that this update must not break:**
+  - Track v1 and v2 hashes are frozen and unchanged.
+  - The perfect bot stays clean over 500 chunks × 5 seeds on both versions.
+  - Lane change takes 100–150 ms.
+  - Start skew is < 50 ms and the resume Δ is 0 ms.
+  - Every shader is warmed behind the loading screen, with the count unchanged after events.
+  - JS per frame is 0.14 ms, with 560 B/frame of hot-path allocations (limit 2 KB) and no heap growth.
+- **Fixed during the run:**
+  - The perf assert in the `rival,loop,rejoin` part read `warmList()[0]` and failed when the graphics builder put the valve's
+    probe first in that list. The probe is now last.
+  - The feel bench counted a crash's intended camera move as a teleport. It now skips down frames, as it already did for
+    judder.
 
 ## Known issues
 
