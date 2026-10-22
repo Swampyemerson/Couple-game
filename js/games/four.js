@@ -235,10 +235,17 @@ function capSvg(c) {
   const gy = TOP + P + 120;
   return `<path class="g4-cap" d="${d}"/>
     <g transform="translate(${gx} ${gy})"><path class="g4-ghost-body" d="M-28 30V-6a28 28 0 0 1 56 0V30l-9.3-8-9.4 8-9.3-8-9.4 8-9.3-8z"/><circle class="g4-ghost-eye" cx="-10" cy="-5" r="5"/><circle class="g4-ghost-eye" cx="10" cy="-5" r="5"/></g>
-    <text class="g4-cap-t" x="${gx}" y="${TOP + P + 207}" text-anchor="middle">MAX 3</text>`;
+    <text class="g4-cap-t g4-reg-b" x="${gx + 1.6}" y="${TOP + P + 208}" text-anchor="middle">MAX 3</text><text class="g4-cap-t g4-reg-a" x="${gx - 1.2}" y="${TOP + P + 206.4}" text-anchor="middle">MAX 3</text><text class="g4-cap-t" x="${gx}" y="${TOP + P + 207}" text-anchor="middle">MAX 3</text>`;
 }
-const STONE_INNER = `<circle class="g4-st-body" r="${DISC}"/><path class="g4-st-crack" d="M8 -6L14 2L6 8L12 18"/><path class="g4-st-crack" d="M-20 -14A28 28 0 0 1 -4 -24"/>`;
-const DISC_INNER = `<circle class="g4-d-body" r="${DISC}"/><circle class="g4-d-ring" r="27"/><circle class="g4-d-groove" r="22"/><circle class="g4-d-dot" r="9"/>`;
+// The pieces are plain HTML boxes (so the fall, squash and shake run on the compositor) wrapping a tiny static SVG.
+// The ink fill is printed a hair off the black outline, like a second plate that is slightly out of register.
+const STONE_INNER = `<circle class="g4-st-fill" r="${DISC}" cx="-1.4" cy="-1"/><circle class="g4-st-body" r="${DISC}"/><path class="g4-st-crack" d="M8 -6L14 2L6 8L12 18"/><path class="g4-st-crack" d="M-20 -14A28 28 0 0 1 -4 -24"/>`;
+const DISC_INNER = `<circle class="g4-d-fill" r="${DISC}" cx="-1.4" cy="-1"/><circle class="g4-d-body" r="${DISC}"/><circle class="g4-d-ring" r="27"/><circle class="g4-d-groove" r="22"/><circle class="g4-d-dot" r="9"/>`;
+const discSvg = (inner) => `<svg class="g4-ds" viewBox="-${DISC} -${DISC} ${2 * DISC} ${2 * DISC}" aria-hidden="true">${inner}</svg>`;
+/** Position of a piece-sized box centred on a cell, as percentages of the board stage. */
+const boxAt = (x, y) => `left:${pct(cx(x) - DISC, VW)};top:${pct(cy(y) - DISC, VH)}`;
+/** translate() that puts a piece-sized box (placed at 0,0) on a point, in percent of its own size, so it scales with the board. */
+const slide = (px, py) => `translate(${(((px - DISC) / (2 * DISC)) * 100).toFixed(3)}%, ${(((py - DISC) / (2 * DISC)) * 100).toFixed(3)}%)`;
 const SVGNS = 'http://www.w3.org/2000/svg';
 const svgEl = (tag, cls) => { const e = document.createElementNS(SVGNS, tag); if (cls) e.setAttribute('class', cls); return e; };
 const clone = (x) => JSON.parse(JSON.stringify(x));
