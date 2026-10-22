@@ -1,4 +1,4 @@
-# Upgrade 2 — Getaway: smoothness and surfaces
+# Upgrade 2: Getaway smoothness and surfaces
 
 Unit: getaway (branch `claude/upd2-getaway`). Scope: car → camera feel, network interpolation of the partner's car, fixed
 timestep + render interpolation, frame pacing on iOS (60 Hz WKWebView, 120 Hz ProMotion), then a graphics and surface upgrade
@@ -118,7 +118,13 @@ same landmark coordinates, same nearest-road data, all 6 cats at identical posit
 
 ## Tests
 
-RESULTS_PLACEHOLDER
+All on the final tree, sequentially:
+- `node tools/test/games/getaway.test.js` (every section): **ALL GOOD**, 612 ok, 0 message-budget warnings.
+- `node tools/test/games/getaway-santee.test.js`: **all ok** (111 ok; includes the 8524 Boulder Way home and cats).
+- `node tools/test/games/getaway-boulder.test.js`: **all ok** (102 ok). The first run died on a Playwright protocol error
+  (`Failed to find browser context`, the browser itself, not an assertion); the rerun passed.
+- `node tools/test/all-games.test.js`: **ALL GOOD** (35 ok).
+- `getaway-feel.test.js`: passes (no page errors, finite metrics); its absolute numbers depend on machine load.
 
 ## Known issues
 
