@@ -30,7 +30,7 @@ between you.
 | Game | Kind | Best on |
 |---|---|---|
 | **Rail Rush**: 3D runner through six districts on the same track; Race, Brawl, Together or the Daily with a twist, dares and love notes | Live, versus/co-op | Phone |
-| **Blend & Seek**: paint yourself to vanish into a 3D room, then hunt each other; twists, the Cup and ten rooms | Live, versus | Either |
+| **Blend & Seek**: paint yourself to vanish into a 3D room, then hunt each other; crawl smoothly over walls and ceilings, hide as tiny as Micro; twists, the Cup and ten rooms | Live, versus | Either |
 | **Getaway**: 3D car chase; one runs, one's the cop (PIT, spike strips, lose the heat). Rounds scored in pairs, wildcard twists, a running Series | Live, versus | Either |
 | Ultimate Tic-Tac-Toe: nine boards; every move picks where your partner plays next. Balanced with a tiebreak for the second player; Hot Boards and Wildcards modes | Take turns, versus | Either |
 | Four in a Row · Dots & Boxes: new modes, streaks and records | Take turns, versus | Either |
