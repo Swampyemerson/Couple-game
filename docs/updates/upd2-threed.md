@@ -62,7 +62,24 @@ software GL. "Before" is commit `886b707`, run in a worktree in the same session
 - Latency runs from the `pointerdown` timestamp to the first rAF after the game has shown the response: the drop recorded, or
   the die in the tray.
 
-RESULTS_TABLE
+| | Tower light: before → after | Tower dark: before → after | Bones light: before → after | Bones dark: before → after |
+|---|---|---|---|---|
+| frame mean / sd (ms) | 19.3 / 6.7 → 18.6 / 5.7 | 18.9 / 6.0 → 18.4 / 5.2 | 16.9 / 2.4 → 17.0 / 3.5 | 17.1 / 3.4 → 17.1 / 3.6 |
+| frames > 25 ms | 92 / 621 (14.8 %) → 70 / 643 (10.9 %) | 81 / 636 (12.7 %) → 65 / 651 (10.0 %) | 9 / 985 → 13 / 879 | 14 / 899 → 19 / 1002 |
+| max frame (ms) | 66.7 → 50.1 | 50.1 → 50.0 | 50 → 99.9 | 66.7 → 83.4 |
+| tap → response, mean / p50 (ms) | 112 / 101 → 67 / 65 | 119 / 98 → 70 / 71 | 129 / 126 → 69 / 79 | 104 / 104 → 67 / 74 |
+| draw calls per frame (max) | 7 → 7 | 7 → 7 | 18 → 6 | 18 → 6 |
+| triangles per frame (max) | 242 → 362 | 242 → 362 | 52 → 758 | 52 → 758 |
+| GPU texture memory (GL uploads) | ~0 → ~0 | ~0 → ~0 | 512 KB (10 tex) → 1.40 MB (7 tex) | same |
+
+- **Latency:** tap to response is about 40 % faster in both games.
+- **Tower jitter:** frames over 25 ms fell by about a quarter.
+- **Knucklebones jitter:** it is back near its baseline after the fix round.
+  - The builder's first version, with a GL mat and a throw solved at roll start, had 31–37 slow frames.
+  - A few extra slow frames remain right after a landing, from the DOM redraw of the trays.
+  - The single 84–100 ms max frames are one-offs in this software-GL run.
+- **Bench noise:** each run is 8 rolls or drops, so ±5 slow frames is noise.
+
 
 Notes on the numbers:
 - **Latency.** About 15–40 ms of each latency figure passes before any page handler runs under the 4× throttle (event timestamp
@@ -145,11 +162,50 @@ An independent Sonnet verifier played both games with real taps:
 
 Every die face matched its roll, no die was placed twice, and every drop was recorded where it was drawn. There were no page errors.
 
-FIXES
+It found no blockers and no logic bugs. Fixed after the round:
+- **Tower, Windy mode:** the sliding block's top rendered dark. The normals of a reused batch slot were never uploaded. A
+  render-pixel test now guards it, and fails with the fix reverted.
+- **Tower, lost context:** a WebGL context lost and never restored froze the game. It now switches to the flat 2D view after
+  3 s, and back to 3D on a late restore. This bug predates the update.
+- **Outlines:** both games' ink outlines were broken at the foot by a near-coplanar blob shadow. The shadow now draws first,
+  without writing depth.
+- **Tower finale:**
+  - a stray ghost-ring dash under the "Best N" badge is now hidden;
+  - under reduced motion the zoom-out now snaps instead of animating.
+- **Knucklebones, lost context:** the band was empty for 3 s during a context loss. A flat stand-in die now shows the current
+  roll at once.
+- **Knucklebones, atlas:** trilinear sampling and up to 4× anisotropy, at no memory cost.
+
+Earlier fixes in the build round:
+- the Tower flecks printed as black blobs; they are now flat ink specks with no outline;
+- Knucklebones hitches: the throw is solved ahead, both ink atlases are pre-painted, and the mat moved to CSS.
 
 ## Tests
 
-TESTS
+All run on the final code, in parallel on separate ports:
+
+| command | result |
+|---|---|
+| `node tools/test/games/threed.test.js` | ALL GOOD (105 ok) |
+| `node tools/test/games/threed-bones.test.js` | ALL GOOD (406 ok) |
+| `node tools/test/games/threed-tower.test.js` | ALL GOOD (184 ok) |
+| `node tools/test/all-games.test.js` | ALL GOOD (35 ok) |
+| `node tools/test/games/threed-perf.js` | the table above (not pass/fail) |
+
+The one change in `threed.test.js`: `bonesOnline` waits for the move after a click, because `api.move` now follows the drawn
+placement by one frame.
+
+New assertions:
+- the die face equals the roll;
+- the drop equals the drawn slider under 4× throttle;
+- budgets in light and dark (≤ 12 calls, ≤ 3,000 triangles, ≤ 1.5 MB textures);
+- the loop sleeps when idle;
+- no effects under reduced motion;
+- the pressed state on finger-down;
+- no double die, locally and online;
+- the Windy slider is lit;
+- the flat fallback after an unrestored context loss;
+- sliced and one-shot throw solves are identical.
 
 ## Known issues and notes for the coordinator
 
