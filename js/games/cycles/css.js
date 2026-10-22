@@ -12,7 +12,7 @@ export const CSS = `
 .g-cycles .cy-msg > span { display: inline-flex; flex-direction: column; align-items: center; gap: 4px; background: var(--g-card); color: var(--g-ink); border: 2.5px solid var(--g-ink); border-radius: 12px; box-shadow: var(--g-shadow, 3px 3px 0 var(--g-ink)); background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-card); padding: 10px 16px; font-weight: 800; font-size: 1.02rem; line-height: 1.25; animation: cy-pop 0.32s cubic-bezier(0.2, 1.5, 0.4, 1) both; }
 .g-cycles .cy-msg .cy-t { white-space: nowrap; }
 .g-cycles .cy-msg small { font: 800 0.74rem/1.25 var(--g-font-body); letter-spacing: 0.06em; color: var(--g-muted); white-space: normal; }
-.g-cycles .cy-msg b { font-family: var(--g-font-display); font-weight: 400; text-shadow: var(--g-misreg); }
+.g-cycles .cy-msg b { font-family: var(--g-font-display); font-weight: 400; }
 .g-cycles .cy-msg .w-a b { color: var(--p-a-text, var(--p-a)); } .g-cycles .cy-msg .w-b b { color: var(--p-b-text, var(--p-b)); }
 .g-cycles .cy-msg .is-num { display: grid; place-items: center; width: var(--cy-s, 92px); height: var(--cy-s, 92px); padding: 0; border-radius: 50%; background: var(--g-halftone) 0 0 / 5px 5px, var(--g-hl); color: var(--g-on-ink); font: 400 calc(var(--cy-s, 92px) * 0.5)/1 var(--g-font-display); text-shadow: var(--g-misreg); box-shadow: var(--g-shadow-lg, 6px 6px 0 var(--g-ink)); }
 .g-cycles .cy-msg .is-go { display: grid; width: auto; height: auto; padding: calc(var(--cy-s, 92px) * 0.15) calc(var(--cy-s, 92px) * 0.24); border-radius: 16px; font-size: calc(var(--cy-s, 92px) * 0.42); transform: rotate(-4deg); }
@@ -67,7 +67,7 @@ export const CSS = `
 /* touch pads */
 .g-cycles .cy-pad { display: flex; align-items: center; justify-content: center; gap: 12px; flex: none; }
 .g-cycles .cy-pad.is-rot { transform: rotate(180deg); }
-.g-cycles .cy-pad-name { text-shadow: var(--g-misreg); font: 400 0.82rem/1 var(--g-font-display); writing-mode: vertical-rl; transform: rotate(180deg); }
+.g-cycles .cy-pad-name { font: 400 0.82rem/1 var(--g-font-display); writing-mode: vertical-rl; transform: rotate(180deg); }
 .g-cycles .cy-pad.p-a .cy-pad-name { color: var(--p-a-text, var(--p-a)); } .g-cycles .cy-pad.p-b .cy-pad-name { color: var(--p-b-text, var(--p-b)); }
 .g-cycles .cy-pad-keys { display: grid; grid-template-columns: repeat(3, 64px); grid-template-rows: repeat(2, 52px); gap: 7px; }
 .g-cycles .cy-pad.is-row .cy-pad-keys { grid-template-columns: repeat(4, 62px); grid-template-rows: 48px; }
@@ -84,7 +84,7 @@ export const CSS = `
 
 /* keyboard legends */
 .g-cycles .cy-legend { flex: none; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 14px 14px 16px; background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-card); border: 2.5px solid var(--g-ink); border-radius: 12px; box-shadow: var(--g-shadow, 3px 3px 0 var(--g-ink)); }
-.g-cycles .cy-legend-name { text-shadow: var(--g-misreg); font: 400 1.05rem/1.1 var(--g-font-display); max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-cycles .cy-legend-name { font: 400 1.05rem/1.1 var(--g-font-display); max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .g-cycles .cy-legend.p-a .cy-legend-name { color: var(--p-a-text, var(--p-a)); } .g-cycles .cy-legend.p-b .cy-legend-name { color: var(--p-b-text, var(--p-b)); }
 .g-cycles .cy-legend-tag { font: 800 0.66rem/1.2 var(--g-font-body); letter-spacing: 0.14em; text-transform: uppercase; color: var(--g-muted); text-align: center; }
 .g-cycles .cy-caps { display: grid; grid-template-columns: repeat(3, 40px); grid-template-rows: repeat(2, 40px); gap: 5px; }
