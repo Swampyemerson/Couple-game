@@ -1009,7 +1009,7 @@ async function togglesSection(port) {
     assert(!(await hook(a, 'stick')).at, 'Stick (E) does nothing');
     assert(!(await hook(a, 'zip')), 'tongue-zip refused');
     // walking into a wall holding forward doesn't stick either
-    await hook(a, 'teleport', -4.25, 1.6, -Math.PI / 2, 0);
+    await hook(a, 'teleport', -4.25, 0.4, -Math.PI / 2, 0); // (z 0.4: the upgrade's laundry basket and cushions now stand at z 1.1-1.8 on this wall)
     await hook(a, 'setCam', Math.PI / 2, 0.25, 2.3);
     await wait(200);
     await stickUp(a, 1200);
@@ -1426,7 +1426,7 @@ async function mapSliceSection(port) {
     const worstSlice = Math.max(...rows.map((r) => r.slice)); const worstSP90 = Math.max(...rows.map((r) => r.sp90));
     assert(worstSP90 < 40 * loadX(), `build slices keep to their budget (bound ×${loadX().toFixed(1)} for the box's load): p90 ≤ ${worstSP90} ms on every map (16 ms + one step; the longest ${worstSlice} ms; the longest task, frames included: ${Math.max(...rows.map((r) => r.longest))} ms)`);
     // a newer tap drops a half-built map: Next while the House is building goes on to the Market
-    await hook(a, 'setRules', { map: 'studio' }); await wait(300);
+    await hook(a, 'setRules', { map: 'candy' }); await wait(300); // the map before the House (Candy Works joined BASE_MAPS after Art Studio in v4)
     const n0 = (await hook(a, 'bootInfo')).builds.length;
     const next = () => a.evaluate(() => document.querySelector('.chm-mapcard .chm-arrow[aria-label="Next map"]').click());
     await next();
@@ -2887,7 +2887,7 @@ async function feelSection(port) {
       const e = await hook(a, 'effTimes');
       assert(e.scale === sc, `${id}: seek clock ×${e.scale}`);
     }
-    const rr = await hook(a, 'setRules', { map: 'living', first: 'b', rules: { hide: 30, seek: 20, pellets: 4, scans: 2, grace: 3, rounds: 2 } });
+    const rr = await hook(a, 'setRules', { map: 'living', first: 'b', rules: { size: 'large', hide: 30, seek: 20, pellets: 4, scans: 2, grace: 3, rounds: 2 } }); // (Large: the Classic default is By map now, Petite here, and a Petite jump rises 0.5 m)
     assert(rr.rules.seekScore === 'full' && rr.rules.blendBonus === 10, `Classic-derived rules: seeker scores "${rr.rules.seekScore}", blend bonus ${rr.rules.blendBonus}`);
     await a.tap('[data-act="start"]');
     await a.tap('[data-act="curtain"]');

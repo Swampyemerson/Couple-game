@@ -101,9 +101,14 @@ async function camoHide(p) {
 async function aimAtHider(p, hider) {
   const bc = await hook(p, 'bodyCenter', hider);
   let pick = [0.3, 2.4];
+  // a spot with a clear line from the shooter's real eye (it scales with the By-map size) to the hider
+  // (a fixed 0.45 m probe passed over low clutter that then blocked a Petite seeker's 0.28 m eye line)
   for (const [ox, oz] of [[0.3, 2.4], [-0.3, -2.4], [2.4, 0.3], [-2.4, -0.3], [1.7, 1.7], [-1.7, 1.7], [1.7, -1.7], [-1.7, -1.7], [0.3, 1.4], [-1.4, 0.3]]) {
-    const sx = bc[0] + ox; const sz = bc[2] + oz; const d = Math.hypot(ox, oz);
-    const hit = await hook(p, 'surfaceAt', sx, 0.45, sz, -ox / d, 0, -oz / d, d - 0.2);
+    await hook(p, 'teleport', bc[0] + ox, bc[2] + oz, Math.atan2(-ox, -oz), 0);
+    await wait(60);
+    const e = (await hook(p, 'camera')).p;
+    const dx = bc[0] - e[0]; const dy = bc[1] - e[1]; const dz = bc[2] - e[2]; const d = Math.hypot(dx, dy, dz);
+    const hit = await hook(p, 'surfaceAt', e[0], e[1], e[2], dx / d, dy / d, dz / d, d - 0.2);
     if (!hit) { pick = [ox, oz]; break; }
   }
   await hook(p, 'teleport', bc[0] + pick[0], bc[2] + pick[1], Math.atan2(-pick[0], -pick[1]), 0);
@@ -329,7 +334,7 @@ async function bountySection(port) {
     assert(m1.on && m1.hemi < 0.56 && m1.sun < m1.baseSun && m1.glint !== 'ffd23f', `dusk falls over the hunt (hemi ${m1.hemi.toFixed(2)}, sun ${m1.sun.toFixed(2)}, glints ${m1.glint})`);
     await waitPhase(a, 'time', 20000);
     const m2 = (await ti(a)).mood;
-    assert(!m2.on && m2.hemi === 0.56 && m2.sun === 0.52 && m2.glint === 'ffd23f' && m2.bg === m2.fogColor, 'at the round\'s end the lights, sky and glints are back exactly');
+    assert(!m2.on && m2.hemi === m2.baseHemi && m2.sun === m2.baseSun && m2.baseSun === 0.50 && m2.glint === 'ffd23f' && m2.bg === m2.fogColor, 'at the round\'s end the lights, sky and glints are back exactly');
     h.assertNoErrors();
   } catch (e) { console.error(e.message, h.errors); failures++; await shot(a, 'bounty-FAIL').catch(() => {}); } finally { await h.close(); }
 }
@@ -667,7 +672,7 @@ async function fogSection(port) {
     assert(shotRange && shotRange.range > 0 && shotRange.range <= 20.5 && Math.abs(shotRange.range - shotRange.far) < 5, `a pellet fired in the thick of it reaches ${shotRange && shotRange.range.toFixed(1)} m (the fog's far edge was ${shotRange && shotRange.far.toFixed(1)} m, not the 26 m of a clear day)`);
     for (const p of [a, b]) {
       const x = await ti(p);
-      assert(!x.mood.on && x.mood.fogFar === 26 && x.mood.fogNear === 11 && x.mood.hemi === 0.56 && x.mood.sun === 0.52 && x.mood.bg === x.mood.fogColor, 'at the round\'s end the fog is back exactly (11–26 m, lights, sky)');
+      assert(!x.mood.on && x.mood.fogFar === 26 && x.mood.fogNear === 11 && x.mood.hemi === x.mood.baseHemi && x.mood.sun === x.mood.baseSun && x.mood.baseHemi === 0.56 && x.mood.baseSun === 0.50 && x.mood.bg === x.mood.fogColor, 'at the round\'s end the fog is back exactly (11–26 m, lights, sky)');
     }
     h.assertNoErrors();
   } catch (e) { console.error(e.message, h.errors); failures++; await shot(a, 'fog-FAIL-a').catch(() => {}); await shot(b, 'fog-FAIL-b').catch(() => {}); } finally { await h.close(); }
@@ -705,7 +710,7 @@ async function duskSection(port) {
     assert((await hook(a, 'bootInfo')).programs === progs0 && (await hook(b, 'bootInfo')).programs === progsB0, `no shader was linked for the dusk (${progs0} programs before and after)`);
     await b.waitForFunction(() => window.__cham.state().phase.name !== 'seek', null, { timeout: 8000 });
     await wait(300);
-    for (const p of [a, b]) { const x = (await ti(p)).mood; assert(!x.on && x.hemi === 0.56 && x.sun === 0.52 && x.glint === 'ffd23f', 'back to the plain light at the round\'s end'); }
+    for (const p of [a, b]) { const x = (await ti(p)).mood; assert(!x.on && x.hemi === x.baseHemi && x.sun === x.baseSun && x.baseSun === 0.50 && x.glint === 'ffd23f', 'back to the plain light at the round\'s end'); }
     // the recap says what's next, both phones
     await waitPhase(a, 'recap', 8000);
     for (const p of [a, b]) assert(/Twist: Fog rolls in/.test(await p.textContent('.chm-nextline')), 'the recap\'s Next line announces the next twist');

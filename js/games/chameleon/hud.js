@@ -349,6 +349,14 @@ export const CSS = `
   .chm-lobby .chm-mapinfo { display: contents; }
   .chm-lobby .chm-mapinfo b { grid-area: name; }
   .chm-lobby .chm-facts { grid-area: facts; margin-top: 0; }
+  /* the size picker is a 4 x 2 grid now (+52 px over the old single row of five): the House lobby still fits 390 x 664 —
+     cells at exactly 44 px, a tighter card gap, "Hides first" on one line with its chips (as in landscape) */
+  .chm-lobby .chm-card { gap: 7px; padding: 14px 16px 12px; }
+  .chm-lobby .chm-mode { padding: 8px 9px 7px; gap: 2px; }
+  .chm-lobby .chm-mode small { font-size: .7rem; line-height: 1.2; }
+  .chm-lobby .chm-card .chm-sizes button { min-height: 44px; padding-top: 3px; padding-bottom: 3px; gap: 2px; }
+  .chm-lobby .chm-firstrow { flex-direction: row; align-items: center; justify-content: space-between; }
+  .chm-lobby .chm-firstrow .chm-chip { padding: 7px 10px; }
 }
 .chm-start { font-weight: 800; }
 .chm-start b { color: var(--g-ink); background: var(--g-hl); padding: 0 6px; border-radius: 6px; }
