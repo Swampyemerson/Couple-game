@@ -494,7 +494,16 @@ Sky and city (all from the theme inks):
   walls and portals; panel-seamed trains; Harbour plank quay and boats, corrugated sheds / containers / ship; Greenway grass hatching
   (procedural, from the grain; it fades with fog distance because a `step` has no mips), ribbed bark, cobbled deck, brick / stucco cottages;
   Old Town brick / stucco houses; Neon Market paving slabs, planked stalls, stucco shop fronts; Freight Yard gravel ground, corrugated sheds
-  and containers; ballast speckle on every track bed. Avatars skip the texture (`RR_RIM` program): the runners stay crisp flat toon.
+  and containers; ballast speckle on every track bed. Avatars skip the texture (`RR_RIM` program): the runners stay crisp flat toon, and
+  so do the instanced things (coins, barriers, gates, particles: `RR_LITE` programs without the print block).
+  **Quality valve** (world.js `syncView` / `setDetail`): the print costs a fetch plus ~100 predicated instructions per world fragment, which
+  is nothing on a phone GPU but 2-3x a frame in a CPU rasteriser (SwiftShader, the test machine), so when the frame rate stays under ~20 fps
+  for 2.5 s the world's big meshes (chunks, street, skyline, oncoming trains) swap to `matLite`, the same program with `RR_LITE` (no print, the light
+  rig and AO stay); it swaps back after 6 s over ~38 fps. `matLite` is compiled and drawn once in the warm-up (a hidden one-triangle probe in
+  `warmList`, built with the same attribute set as a chunk: three keys programs on `vertexAlphas`, i.e. on whether the geometry has a colour
+  attribute), so the program count stays at 11 and nothing compiles mid-run. `__RUSH_DEBUG.detailOn` pins it on (the before / after screenshots
+  use it). On the test machine the valve is therefore usually tripped: screenshots from the test run show the light rig, AO and sky but not
+  the print.
 - **Light rig per district** (bio.js `lightRigs`, world.js `applyLight`): sun direction (Harbour golden hour, low and warm; Greenway high
   and soft; Old Town afternoon from the other side; Neon Market dusk; Freight Yard hazy), hemisphere / key intensities (their sum stays
   ~1.12, so exposure doesn't move between districts), split toning (`uKey`, the lit colour, over `uShd`, the shadow tint: both
@@ -556,7 +565,7 @@ Sky and city (all from the theme inks):
 - Shaders: one toon program family (MeshBasicMaterial + hook; per-vertex 3-band light), the
   shadow-band halftone is one `fract` + one `dot` per shaded fragment. Every variant (world,
   instanced, instanced+colour, barriers, skinned+fade, shield bubble, sky, overlay, shadows,
-  banners) is compiled *and drawn once* behind the loading screen (10 programs); the test asserts
+  banners) is compiled *and drawn once* behind the loading screen (11 programs: the 10 before plus the print-free `matLite` quality-valve variant); the test asserts
   the count is unchanged after ink, zap, roadblock, rocket, shield and a crash.
 - Allocation discipline: the per-frame path creates no objects, arrays, strings or closures.
   Beyond that, for V8 (Android, laptops; JSC on iPhones NaN-boxes and never allocates for these):

@@ -645,7 +645,10 @@ export function createWorld(THREE, P) {
 
   // meshes the valve switches between mat and matLite; a hidden one-triangle probe keeps matLite compiled + drawn in the warm-up
   const detailMeshes = [street, skyline, ...pool.map((p) => p.mesh), ...mtrains];
-  const liteProbe = new THREE.Mesh(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, 0, 0, 0, 0], 3)), matLite);
+  // (the same attribute set as a chunk, or three would make a different program for it)
+  const probeGeo = new THREE.BufferGeometry();
+  for (const [k, n] of [['position', 3], ['normal', 3], ['color', 3], ['fx', 1], ['tuv', 2]]) probeGeo.setAttribute(k, new THREE.Float32BufferAttribute(new Float32Array(3 * n), n));
+  const liteProbe = new THREE.Mesh(probeGeo, matLite);
   liteProbe.frustumCulled = false; liteProbe.visible = false; scene.add(liteProbe);
   disposables.push(liteProbe.geometry);
   const followers = [street, skyline, dome];
