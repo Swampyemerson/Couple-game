@@ -130,7 +130,8 @@ registerGame({
     }
 
     // ── markup ──
-    const tile = (ch, mark, i, cls = '') => `<span class="g-wd-tile${ch ? ' has' : ''}${mark ? ` m-${mark}` : ''}${cls}" style="--i:${i}">${ch ? up(ch) : ''}</span>`;
+    // a flipping tile carries its letter in data-l: the old face (a plain card with that letter) covers the new one until the half-turn
+    const tile = (ch, mark, i, cls = '') => `<span class="g-wd-tile${ch ? ' has' : ''}${mark ? ` m-${mark}` : ''}${cls}" style="--i:${i}"${ch && cls.includes('flip') ? ` data-l="${up(ch)}"` : ''}>${ch ? up(ch) : ''}</span>`;
     function rowHTML(word, marks, { cls = '', tileCls = '', label = '' } = {}) {
       let h = '';
       for (let i = 0; i < 5; i++) h += tile(word ? word[i] || '' : '', marks ? marks[i] : '', i, tileCls);
@@ -215,7 +216,12 @@ registerGame({
       if (theirs.length) return `${nm(p)} used ${up(draft)} on you ${theirs.length === 1 ? 'once' : `${theirs.length} times`}. Bold.`;
       return '';
     }
-    function paintHint() { const h = area.querySelector('.g-wd-hint'); if (h && ctx) h.innerHTML = hintText(ctx); }
+    function paintHint() {
+      const h = area.querySelector('.g-wd-hint');
+      if (!h || !ctx) return;
+      const t = hintText(ctx);
+      if (h.dataset.t !== t) { h.dataset.t = t; h.innerHTML = t; }
+    }
 
     // keyboard: built once, then only classes and disabled flags change (keeps taps from dropping)
     const keyEls = {};
@@ -410,31 +416,86 @@ registerGame({
     }
 
     function draftRowEl() { return area.querySelector('.g-wd-row.is-draft'); }
+    // The draft row is patched in place: only the tile whose letter changed is touched, and a typed letter is
+    // stamped onto it with a transform + opacity animation (no layout read, nothing re-rendered per keystroke).
+    let dRow = null;
+    let dTiles = [];
+    let dShown = [];
+    const STAMP = [
+      { transform: 'scale(1.34) rotate(-4deg)', opacity: 0.3 },
+      { transform: 'scale(0.93) rotate(1deg)', opacity: 1, offset: 0.6 },
+      { transform: 'none', opacity: 1 },
+    ];
+    function stampTile(t, delay) {
+      if (reduced() || typeof t.animate !== 'function') return;
+      t.animate(STAMP, { duration: 180, delay, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)', fill: 'backwards' });
+    }
     function paintDraft(popAll = false) {
-      const row = draftRowEl();
-      if (!row) return;
-      row.querySelectorAll('.g-wd-tile').forEach((t, i) => {
-        const ch = draft[i] || '';
-        t.textContent = up(ch);
-        t.classList.toggle('has', !!ch);
-        t.classList.remove('pop');
-        if (ch && (popAll || i === draft.length - 1) && !reduced()) { void t.offsetWidth; t.classList.add('pop'); }
-      });
+      if (!dRow || !dRow.isConnected) {
+        dRow = draftRowEl();
+        dTiles = dRow ? [...dRow.children] : [];
+        dShown = dTiles.map((t) => t.textContent);
+      }
+      if (!dRow) return;
+      for (let i = 0; i < dTiles.length; i++) {
+        const ch = up(draft[i] || '');
+        const t = dTiles[i];
+        if (dShown[i] !== ch) {
+          dShown[i] = ch;
+          t.textContent = ch;
+          t.classList.toggle('has', !!ch);
+          if (ch) stampTile(t, popAll ? i * 28 : 0);
+        } else if (popAll && ch) stampTile(t, i * 28);
+      }
       paintHint();
+    }
+    // Restart a one-shot kit animation without reading layout: if the class is already on, rewind its animations.
+    function replay(el, cls) {
+      if (el.classList.contains(cls) && typeof el.getAnimations === 'function') {
+        const list = el.getAnimations();
+        if (list.length) { for (const a of list) { a.currentTime = 0; a.play(); } return; }
+      }
+      el.classList.remove(cls);
+      el.classList.add(cls);
     }
     function shake() {
       const row = draftRowEl();
       if (!row) return;
-      row.classList.remove('shake');
-      void row.offsetWidth;
-      row.classList.add('shake');
-      later(() => row.classList.remove('shake'), 420);
+      row.classList.add('shake'); // marker (tests, state), the motion is the kit's .g-shake
+      replay(row, 'g-shake');
+      later(() => row.classList.remove('shake', 'g-shake'), 420);
     }
     function bad(msg) {
       api.toast(msg);
       api.sfx('bad');
       api.haptic(30);
       shake();
+    }
+    // Win finale: paper confetti in the three inks thrown from the winning row (WAAPI, transform + opacity, removed when done).
+    const CONFETTI = ['var(--p-a)', 'var(--p-b)', 'var(--g-hl)', 'var(--g-good)'];
+    function burst(host) {
+      if (!host || reduced() || typeof host.animate !== 'function') return;
+      const box = document.createElement('div');
+      box.className = 'g-wd-burst';
+      box.setAttribute('aria-hidden', 'true');
+      let h = '';
+      for (let i = 0; i < 16; i++) h += `<i style="--c:${CONFETTI[i % CONFETTI.length]}"></i>`;
+      box.innerHTML = h;
+      host.appendChild(box);
+      let left = box.children.length;
+      [...box.children].forEach((p, i) => {
+        const ang = (i / 16) * Math.PI * 2 + (i % 3) * 0.21;
+        const d = 54 + (i % 5) * 16;
+        const dx = Math.cos(ang) * d * 1.5;
+        const dy = Math.sin(ang) * d - 34;
+        const rot = (i % 2 ? 1 : -1) * (160 + i * 23);
+        const a = p.animate([
+          { transform: 'translate(0, 0) scale(0.4) rotate(0deg)', opacity: 1 },
+          { transform: `translate(${dx * 0.7}px, ${dy * 0.7}px) scale(1) rotate(${rot * 0.6}deg)`, opacity: 1, offset: 0.45 },
+          { transform: `translate(${dx}px, ${dy + 46}px) scale(0.8) rotate(${rot}deg)`, opacity: 0 },
+        ], { duration: 780 + (i % 4) * 90, delay: (i % 4) * 25, easing: 'cubic-bezier(0.2, 0.7, 0.3, 1)', fill: 'both' });
+        a.onfinish = () => { if (--left === 0) box.remove(); };
+      });
     }
     const myFlip = () => !!(flip && ctx && flip.who === ctx.viewer && Date.now() < flip.until);
 
@@ -449,6 +510,7 @@ registerGame({
           win = { who: w, row };
           if (mine) { api.sfx('good'); api.haptic(20); }
           later(() => { if (win && win.who === w && win.row === row) { win = null; render(); } }, 1000);
+          later(() => burst(mine ? area.querySelector('.g-wd-row.win') : null), 60);
         } else if (mine && ctx && ctx.state && ctx.state.guesses && ctx.state.guesses[w] && ctx.state.guesses[w].length >= MAX) api.sfx('lose');
         render();
       }, flipMs());
@@ -542,9 +604,32 @@ registerGame({
 
     // on-screen keyboard and buttons (keep focus off the keys so Enter never re-presses one)
     kb.addEventListener('mousedown', (e) => e.preventDefault());
+    // A key answers on pointerdown (the letter lands and the key dips immediately, like a real keyboard); the click
+    // that follows is then ignored. A click with no pointerdown before it (keyboard focus, assistive tech: detail 0) still works.
+    let viaPointer = false;
+    let downAt = 0;
+    const upKey = (e) => {
+      const b = e.target.closest && e.target.closest('button[data-k]');
+      if (!b) return;
+      const wait = Math.max(0, 70 - (performance.now() - downAt));
+      if (wait) later(() => b.classList.remove('is-down'), wait); else b.classList.remove('is-down');
+    };
+    kb.addEventListener('pointerdown', (e) => {
+      const b = e.target.closest('button[data-k]');
+      if (!b || b.disabled || (e.pointerType === 'mouse' && e.button !== 0)) return;
+      viaPointer = true;
+      downAt = performance.now();
+      b.classList.add('is-down');
+      press(b.dataset.k);
+    });
+    kb.addEventListener('pointerup', upKey);
+    kb.addEventListener('pointercancel', upKey);
+    kb.addEventListener('pointerleave', upKey, true);
     kb.addEventListener('click', (e) => {
       const b = e.target.closest('button[data-k]');
-      if (!b || b.disabled) return;
+      const dup = viaPointer && e.detail !== 0;
+      viaPointer = false;
+      if (!b || b.disabled || dup) return;
       press(b.dataset.k);
     });
     area.addEventListener('click', (e) => {
