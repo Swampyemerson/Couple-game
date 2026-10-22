@@ -539,7 +539,7 @@ const css = `
 .g-ag-ledger b { color: var(--g-ink); }
 .g-ag-banner { margin: 0; display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 900; font-size: 0.9rem; }
 .g-ag-last { color: var(--g-bad); text-transform: uppercase; letter-spacing: 0.06em; }
-.g-ag-stamp { display: inline-block; padding: 3px 9px; border: 3px solid currentColor; border-radius: 6px; font: 900 0.74rem/1.15 var(--g-font-display); letter-spacing: 0.06em; text-transform: uppercase; transform: rotate(var(--r, -3deg)); text-shadow: var(--g-misreg); animation: g-ag-stampin 0.34s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+.g-ag-stamp { display: inline-block; padding: 3px 9px; border: 3px solid currentColor; border-radius: 6px; font: 900 0.74rem/1.15 var(--g-font-display); letter-spacing: 0.06em; text-transform: uppercase; transform: rotate(var(--r, -3deg)); animation: g-ag-stampin 0.34s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
 .g-ag-stamps .g-ag-stamp:nth-child(2) { animation-delay: 0.14s; } .g-ag-stamps .g-ag-stamp:nth-child(3) { animation-delay: 0.28s; } .g-ag-stamps .g-ag-stamp:nth-child(n+4) { animation-delay: 0.42s; }
 @keyframes g-ag-stampin { from { opacity: 0; transform: rotate(var(--r, -3deg)) scale(1.7); } to { opacity: 1; transform: rotate(var(--r, -3deg)) scale(1); } }
 .g-ag-stamp.k-rec { color: var(--p-b-text); }

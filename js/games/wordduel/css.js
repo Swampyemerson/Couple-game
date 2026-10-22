@@ -31,7 +31,7 @@ export const CSS = `
 .g-wd-pick { display: flex; flex-direction: column; align-items: center; gap: 12px; }
 .g-wd-pick .g-wd-board { --t: min(64px, calc((100cqw - 4 * var(--gap)) / 5)); }
 .g-wd-cap { margin: 0; font-size: 0.82rem; font-weight: 800; color: var(--g-muted); text-transform: uppercase; letter-spacing: 0.08em; }
-.g-wd-stamp { display: inline-block; padding: 3px 10px; border: 2px solid currentColor; border-radius: 6px; font-family: var(--g-font-display); font-weight: 900; font-size: 0.85rem; letter-spacing: 0.14em; text-transform: uppercase; transform: rotate(-4deg); text-shadow: var(--g-misreg); animation: g-wd-stampin 0.34s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+.g-wd-stamp { display: inline-block; padding: 3px 10px; border: 2px solid currentColor; border-radius: 6px; font-family: var(--g-font-display); font-weight: 900; font-size: 0.85rem; letter-spacing: 0.14em; text-transform: uppercase; transform: rotate(-4deg); animation: g-wd-stampin 0.34s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
 .g-wd-stamp.p-a { color: var(--p-a-text); } .g-wd-stamp.p-b { color: var(--p-b-text); }
 
 /* two boards side by side */
@@ -113,7 +113,7 @@ export const CSS = `
 .g-wd-pill { max-width: 100%; box-sizing: border-box; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-flex; align-items: center; min-height: 24px; padding: 0 9px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-card); color: var(--g-ink); font: 900 0.68rem/1 var(--g-font-body); letter-spacing: 0.1em; text-transform: uppercase; }
 .g-wd-pill.is-hl { background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-hl); color: var(--g-on-ink); }
 .g-wd-stamps { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 10px; }
-.g-wd-st { display: inline-block; padding: 3px 9px; border: 2.5px solid currentColor; border-radius: 6px; background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-card); text-shadow: var(--g-misreg); font-family: var(--g-font-display); font-weight: 900; font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; transform: rotate(var(--r, -4deg)); animation: g-wd-stampin 0.34s cubic-bezier(0.2, 1.4, 0.4, 1) both; animation-delay: calc(var(--n, 0) * 140ms + 250ms); }
+.g-wd-st { display: inline-block; padding: 3px 9px; border: 2.5px solid currentColor; border-radius: 6px; background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-card); font-family: var(--g-font-display); font-weight: 900; font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; transform: rotate(var(--r, -4deg)); animation: g-wd-stampin 0.34s cubic-bezier(0.2, 1.4, 0.4, 1) both; animation-delay: calc(var(--n, 0) * 140ms + 250ms); }
 .g-wd-st.p-a { color: var(--p-a-text); } .g-wd-st.p-b { color: var(--p-b-text); }
 .g-wd-st.hl { color: var(--g-on-ink); background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-hl); border-color: var(--g-ink); box-shadow: var(--g-shadow-sm); }
 @keyframes g-wd-stampin { from { opacity: 0; transform: rotate(var(--r, -4deg)) scale(1.7); } to { opacity: 1; transform: rotate(var(--r, -4deg)) scale(1); } }
