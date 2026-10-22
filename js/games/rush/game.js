@@ -227,7 +227,7 @@ export function createGame(el, api) {
   let ready3D = false; let glLost = false; let raf = 0;
   // Dynamic resolution: start a notch under full (min(dpr, 2) × 0.85), step down quickly when
   // frames run long, recover slowly. Scale range 0.55–1.
-  let W = 0; let H = 0; const baseDpr = Math.min(window.devicePixelRatio || 1, 2); let scale = 0.85;
+  let W = 0; let H = 0; const baseDpr = Math.min(window.devicePixelRatio || 1, 2); let scale = dbg && dbg.scale0 > 0 ? dbg.scale0 : 0.85; // (dbg.scale0: tests start smaller, with fixedScale, so software GL draws fast enough to see real pacing)
   // Doubles written every frame live on one object: V8 boxes a fresh HeapNumber for every double
   // stored in a closure variable, while object fields are updated in place (JSC boxes neither).
   const K = { tAnim: 0.5, lastTs: 0.5, ewma: 16.7, lowFor: 0.5, checkT: 0.5, coolT: 0.5, hudT: 0.5, scoreT: 0.5, lastPub: -1e9, hitStop: 0.5, hitPend: 0.5, wind: 0.5, mile: 0.5,

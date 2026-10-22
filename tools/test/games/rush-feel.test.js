@@ -32,6 +32,7 @@ const CPU = +(process.env.CPU || 4);
 const SECS = +(process.env.SECS || 20);
 const PORT = +(process.env.RUSH_PORT || 8975);
 const PART = process.env.PART || 'all';
+const SCALE = +(process.env.SCALE || 0);
 const assert = (c, m) => { if (!c) throw new Error('FAIL: ' + m); console.log('ok -', m); };
 const until = async (pg, fn, arg, ms = 15000, what = 'condition') => {
   try { await pg.waitForFunction(fn, arg, { timeout: ms, polling: 100 }); } catch { throw new Error('FAIL: timed out waiting for ' + what); }
@@ -227,7 +228,9 @@ async function benchPart() {
   const { a, b } = h;
   let out = null;
   try {
-    for (const pg of [a, b]) await pg.evaluate(() => { window.__RUSH_DEBUG = { raceLen: 30000, noTutorial: true }; });
+    // (SCALE: a small render scale with fixedScale makes software GL fast enough (~60 ms or less a frame) for rAF pacing to mean something
+    // on the partner comparison; the default is the game's own 0.85 and its dynamic resolution)
+    for (const pg of [a, b]) await pg.evaluate((sc) => { window.__RUSH_DEBUG = { raceLen: 30000, noTutorial: true, ...(sc ? { scale0: sc, fixedScale: true } : {}) }; }, SCALE);
     await h.startLive(a, 'rush', 'live');
     await h.settle();
     if (await b.isVisible('#gm-invite').catch(() => false)) await b.click('#gm-invite [data-g="invite-yes"]');
