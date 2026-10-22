@@ -194,6 +194,20 @@ function diceUnit() {
   T.throwTo(2, -1, 0.1, T.seededStream(7));
   const b = T.throwTo(4, 1, 0.2, T.seededStream(99));
   ok(b.n === a.n && Array.from(T.TP.slice(0, b.n * 3)).every((x, i) => x === A[i]) && Array.from(T.TQ.slice(0, b.n * 4)).every((x, i) => x === AQ[i]), 'bones physics: the same seed gives the same throw on every phone');
+  // a throw solved ahead of time in slices (one candidate at a time) is exactly the throw solved on the spot
+  let sliceBad = 0;
+  for (let n = 0; n < 24; n++) {
+    const value = (n % 6) + 1; const from = n % 2 ? 1 : -1; const yaw = (((n * 53) % 100) / 100 - 0.5) * 0.9;
+    const one = T.throwTo(value, from, yaw, T.seededStream(777 + n));
+    const A = Array.from(T.TP.slice(0, one.n * 3)).concat(Array.from(T.TQ.slice(0, one.n * 4))); const an = one.n; const ae = `${T.evN()}:${Array.from(T.evStep.slice(0, T.evN()))}`;
+    const rnd = T.seededStream(777 + n);
+    const job = T.jobFor(`u${n}`, from, yaw, rnd);
+    let slices = 0; while (!T.jobSlice(job)) slices++;
+    const two = T.throwTo(value, from, yaw, rnd, `u${n}`);
+    const Bv = Array.from(T.TP.slice(0, two.n * 3)).concat(Array.from(T.TQ.slice(0, two.n * 4)));
+    if (!two.ready || two.n !== an || Bv.some((x, i) => x !== A[i]) || `${T.evN()}:${Array.from(T.evStep.slice(0, T.evN()))}` !== ae) sliceBad++;
+  }
+  ok(sliceBad === 0, 'bones physics: a throw solved ahead of time, a candidate at a time, is exactly the throw solved on the spot (same steps, orientations and impacts)');
   // the same bounces whatever the value: only the last orientation differs by a cube rotation
   const hits = []; for (const v of [1, 2, 3]) { const th = T.throwTo(v, 1, 0.1, T.seededStream(321)); hits.push(`${th.n}:${T.evN()}:${Array.from(T.evStep.slice(0, T.evN())).join(',')}`); }
   ok(hits[0] === hits[1] && hits[1] === hits[2], 'bones physics: a different rolled value changes no bounce (same steps, same impacts)');
@@ -1150,6 +1164,39 @@ async function topFaceFlow(h, pg, want, how) {
   ok(worst.tex > 0 && worst.tex <= BUDGET.tex, `bones (${how}): ${(worst.tex / 1024).toFixed(0)} KB of textures (budget ${BUDGET.tex / 1024} KB)`);
   return worst;
 }
+/** The roll-start work is off the first frame: the throw is solved ahead while the game is idle, nothing is repainted by a roll
+ *  (both roller inks are painted once), a frame that would repeat the last isn't drawn, and the loop goes to sleep. */
+async function smoothRolls(h, pg, label) {
+  await pg.setViewportSize({ width: 390, height: 844 });
+  await hook(pg);
+  await h.newLocalGame(pg, 'bones');
+  const id = await pg.evaluate(() => window.__lastMatchId);
+  let paints0 = -1; let rolls = 0;
+  for (let move = 0; move < 7; move++) {
+    const e0 = await h.engine(pg, id);
+    const who = e0.acts[0];
+    await pg.waitForSelector(`.gb-tray[data-who="${who}"].is-picking`, { timeout: 20000 });
+    const st = await pg.evaluate(() => ({ ...window.__bonesTest.stats }));
+    if (paints0 < 0) paints0 = st.paints;
+    rolls++;
+    await h.wait(300); // idle: the next throw is solved in the gaps
+    const e = await h.engine(pg, id);
+    const col = [0, 1, 2].find((c) => e.state.grids[who][c].length < 3);
+    await pg.tap(`.gb-tray[data-who="${who}"] .gb-col[data-col="${col}"]`);
+    await waitMoves(pg, id, move + 1);
+  }
+  await pg.waitForSelector('.g-bones[data-phase="pick"]', { timeout: 20000 });
+  await h.wait(900);
+  const st = await pg.evaluate(() => ({ ...window.__bonesTest.stats, frames: window.__bonesTest.frames }));
+  ok(st.paints === paints0 && st.paints > 0, `bones smooth rolls (${label}): ${rolls + 1} rolls with both players' inks and no canvas repainted after the first (${st.paints} paints in all)`);
+  ok(st.ahead >= rolls - 1 && st.late <= 1, `bones smooth rolls (${label}): the throws were solved ahead of time while idle (${st.ahead} ahead, ${st.late} on the spot)`);
+  ok(st.renders <= st.frames, `bones smooth rolls (${label}): never more renders than frames (${st.renders} renders in ${st.frames} frames)`);
+  const f0 = await pg.evaluate(() => window.__bonesTest.frames);
+  await h.wait(500);
+  const f1 = await pg.evaluate(() => window.__bonesTest.frames);
+  ok(f1 === f0, `bones smooth rolls (${label}): the loop sleeps when nothing animates (${f1 - f0} frames in 500 ms)`);
+  await h.closeGame(pg);
+}
 /** Record, once per animation frame, how many dice sit in each tray (the ghost preview doesn't count). */
 const startRec = (pg) => pg.evaluate(() => {
   const R = window.__rec = { s: [], stop: false, down: 0 };
@@ -1321,6 +1368,7 @@ async function balance() {
     await pressedAndPlaced(h, h.a);
     await topFaceFlow(h, h.a, 12, 'tumble');
     await topFaceFlow(h, h.a, 8, 'skip');
+    await smoothRolls(h, h.a, 'light');
     await fullColumn(h, h.a);
     await tapToSkip(h, h.a);
     await finaleTiming(h, h.a);
@@ -1349,6 +1397,7 @@ async function balance() {
     failed = await group('dark', { port: PORT + 1, colorScheme: 'dark', reducedMotion: 'reduce' }, async (d) => {
       await layoutTests(d, d.a, 'dark');
       await topFaceFlow(d, d.a, 3, 'dark');
+      await dm(d);
       await tour(d, d.a, 360, 740, 'dark-360x740');
       await tour(d, d.a, 844, 390, 'dark-844x390');
     });

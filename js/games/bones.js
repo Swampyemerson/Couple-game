@@ -391,7 +391,7 @@ function topOfQuat(x, y, z, w) {
 
 const TP = new Float32Array((PH_MAX + 2) * 3); const TQ = new Float32Array((PH_MAX + 2) * 4); // the throw, as played
 const SP = new Float32Array((PH_MAX + 2) * 3); const SQ = new Float32Array((PH_MAX + 2) * 4); // the simulation
-const THROW = { n: 2, hh: 0.22, slept: true, hx: 1, hz: 0, travel: 0, restQ: new Float64Array(4) };
+const THROW = { n: 2, hh: 0.22, slept: true, hx: 1, hz: 0, travel: 0, ready: false, restQ: new Float64Array(4) };
 const QF = new Float64Array(4); const QT = new Float64Array(4); const QA = new Float64Array(4); const QB = new Float64Array(4);
 const MA = new Float64Array(9); const MB = new Float64Array(9); const MC = new Float64Array(9);
 /** Turn the nearly-flat rest orientation q (at q[o]) into an exactly flat one with the same yaw. */
@@ -478,6 +478,7 @@ function jobSlice(j) {
  */
 function throwTo(value, from, yf, rnd, id) {
   const j = jobFor(id || '', from, yf, rnd);
+  THROW.ready = j.done; // solved ahead of time?
   while (!jobSlice(j)) { /* the rest of the candidates, if it wasn't solved ahead of time */ }
   const r = { n: j.n, slept: j.slept };
   SP.set(j.P.subarray(0, (j.n + 1) * 3)); SQ.set(j.Q.subarray(0, (j.n + 1) * 4));
@@ -753,7 +754,9 @@ function dieView3D(THREE, canvas, pal0, onImpact, matEl) {
   const sameCol = (u, v) => !!u && !!v && u[0] === v[0] && u[1] === v[1] && u[2] === v[2];
   const palKey = (p) => [p.bg, p.ink, p.card, p.edge, p.a, p.b].map((c) => c.map((x) => Math.round(x * 255)).join(',')).join('|') + (p.dark ? 'd' : 'l');
   let paintedKey = '';
+  const stats = { paints: 0, ahead: 0, late: 0, renders: 0 }; // for the tests: canvas repaints, throws solved ahead / on the spot, renders
   function paintAtlas(v, col) { // the pips in this roller's colour for the off-register pass
+    stats.paints++;
     v.col = col;
     paintAtlasPips(v.cv.getContext('2d'), atlasBase, pal, col);
     v.tex.needsUpdate = true;
@@ -807,6 +810,7 @@ function dieView3D(THREE, canvas, pal0, onImpact, matEl) {
       if (matUrls.size > 4) matUrls.clear();
       matUrls.set(key, url);
     }
+    stats.paints++;
     matIn.style.backgroundImage = url ? `url("${url}")` : 'none';
   }
   function layoutMat() { // px per world unit at the die's distance; the plane tilts 90° − elevation and sits ty below the aim point
@@ -931,6 +935,7 @@ function dieView3D(THREE, canvas, pal0, onImpact, matEl) {
     },
     get ratio() { return ratio; },
     get texBytes() { return texBytes; },
+    get stats() { return stats; },
     get mode() { return st.mode; },
     get info() { return renderer.info.render; },
     /** The value on top, read from the orientation the renderer is given once the die has landed (0 if it hasn't). */
@@ -965,7 +970,7 @@ function dieView3D(THREE, canvas, pal0, onImpact, matEl) {
         st.res = res; st.calm = !!calm; st.fast = false; st.t = 0; st.evPtr = 0; st.lastSfx = -1; st.hold = 0; st.big = false;
         st.sq = st.sqv = 0; st.scale = 1; st.puffT = -1; puff.visible = false; st.yaw = yaw; st.wob = 0;
         setRoller(who === 'top' ? pal.topInk : pal.botInk);
-        if (calm) dropTo(value, yaw); else throwTo(value, from, yaw, rnd || seededStream(1 + value), id);
+        if (calm) dropTo(value, yaw); else { throwTo(value, from, yaw, rnd || seededStream(1 + value), id); if (THROW.ready) stats.ahead++; else stats.late++; }
         st.n = THROW.n; st.hh = THROW.hh;
         st.mode = 'roll';
         squash.visible = shadow.visible = true;
@@ -1024,7 +1029,7 @@ function dieView3D(THREE, canvas, pal0, onImpact, matEl) {
       }
       return 0;
     },
-    render() { renderer.render(scene, cam); return renderer.info.render.calls; },
+    render() { stats.renders++; renderer.render(scene, cam); return renderer.info.render.calls; },
     dispose() {
       if (st.res) { st.res(); st.res = null; }
       try { renderer.forceContextLoss(); } catch { /* ignore */ }
@@ -1150,7 +1155,7 @@ registerGame({
     'It ends when a grid fills. Higher total wins. The starter can pick a twist first.',
   ],
   init, next, apply, result, score,
-  _test: { recordsFor, rollAt, colPts, TWISTS, throwTo, dropTo, topOfQuat, seededStream, TP, TQ, THROW, evStep, evSpd, evN: () => evN, FACE_VALUES }, // for the tests
+  _test: { recordsFor, rollAt, colPts, TWISTS, throwTo, dropTo, jobFor, jobSlice, topOfQuat, seededStream, TP, TQ, THROW, evStep, evSpd, evN: () => evN, FACE_VALUES }, // for the tests
 
   css: `
     .g-bones { --gb-die: 52px; --gb-col: 52px; --gb-gap: 7px; --gb-pad: 8px; --gb-band: 112px; --gb-side: 62px;
@@ -1666,6 +1671,7 @@ registerGame({
         t.frames = (t.frames || 0) + 1; if (calls) t.calls = calls;
         if (dv.info && calls) t.tris = dv.info.triangles;
         if (dv.texBytes !== undefined) t.texBytes = dv.texBytes;
+        if (dv.stats) t.stats = dv.stats;
       }
       if (busy || dirty) raf = requestAnimationFrame(frame);
       else lastT = 0;
