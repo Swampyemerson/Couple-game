@@ -122,11 +122,67 @@ there is no best yet.
   streak, Rematch and Back ("Back" is short so it never wraps at 360 px). About 2 s later the engine's end card shows (`endDelay: 'manual'`, `api.showEnd()`); "See the tower"
   brings the panel back.
 
+## Feel and graphics (upgrade 2)
+
+All of it is view code; the rules and the move encoding are untouched.
+
+**Loop.** The rAF timestamp is the clock; a frame is clamped to 0.1 s. What integrates (sliced pieces, flecks, the landing
+squash) runs at a fixed 120 Hz (`STEP`, at most 12 steps a frame, an accumulator, the rest dropped) and is drawn interpolated
+between its last two states (`blendSim`). The slider is analytic and drawn exactly where the model has it, so the recorded
+`o` is the slider position of the last frame drawn (the tests check this under a 4x CPU throttle: `t.drawn`, `t.tapped`, the
+recorded move). The camera (y, zoom, ox) is an exact critically damped spring (`spring()`, 7.5 rad/s, about 0.7 s to settle);
+`camBusy` still lets the loop sleep when nothing moves. A frame loop can no longer be scheduled twice (a `kick()` inside a
+frame used to double it).
+
+**Input.** A tap freezes the block and the picker goes at once; the move itself (`api.move`: derive, db write and the engine's
+update chain, all synchronous) is sent after the frame that shows the frozen block (rAF, rAF, `setTimeout 0`; a 400 ms timer is
+the safety net for a page that is not drawing). Taps stay guarded (`frozen`, `pending`); if the engine says no, the slider
+comes back and the error is toasted.
+
+**Juice** (all of it off under reduced motion, except the sliced piece that falls away):
+- the kept block lands with a squash and stretch (y squashes up to 20 %, x and z swell, ~120 ms, springs back once) on top of
+  the small lift bump;
+- sliced pieces tumble under fixed-step gravity and, if they reach the pedestal top or the ground plane, bounce once (restitution
+  0.3) and lie there, then shrink away; the pedestal bounce and the ground thud play `tick` and puff three flecks;
+- up to 12 ink, yellow and paper flecks (tiny boxes in the moving batch, pooled, ~0.4 s) puff from the top rim of a landed block:
+  5 on a slice, 10 on a perfect, a couple more for a gift or a landmark;
+- a perfect freezes time (sim, timelines, camera) for 45 ms;
+- a velocity kick on the camera spring: the world jolts down a few pixels and settles (1.1 slice, 1.6 perfect, 2.4 growth,
+  gift or landmark).
+
+**Printed look.**
+- Side faces are printed as a halftone: a 45 degree dot screen from `gl_FragCoord` in the face material's fragment shader
+  (`onBeforeCompile`, cell 3 css px times the pixel ratio, coverage from how dark the face is lit); top faces stay flat ink.
+- Vertex AO: the foot of every side face is multiplied by 0.85.
+- The ink outline hull is printed 0.42 of its width off register toward the bottom right (a screen-space offset, so it keeps
+  its depth); the crease lines stay on the edges.
+- The pedestal is a printed plinth: two flat stripes (blue, pink) and a blue pin-stripe, done in the static batch's fragment
+  shader from world position, so no extra geometry or call.
+- The paper: the WebGL canvas is transparent and two 256 x 256 tiles (paper grain with fibres and a faint halftone, and a tinted
+  ground band with a bigger dot screen) are painted from the palette into the `.gt-paper` and `.gt-ground` divs behind it (one
+  texel = half a css px). The ground band starts at the pedestal's back foot corner and follows the camera (`placeGround`), so
+  nothing has an edge. They are repainted when the theme changes. (A full-screen GL quad did the same job but cost about 20 ms a
+  frame on the headless software rasteriser; the DOM layers cost nothing per frame.)
+- The 2D fallback draws the same model (squash and flecks included) on an opaque canvas; the paper layers sit under it.
+
+**Budgets** (checked in light and dark by the tests, `t.calls`, `t.tris`, `t.texBytes`): 8 draw calls (shadow, 3 + 3 for the two
+batches, ring while it plays), about 350 to 750 triangles, 512 KB of texture (the two decoded tiles). A tall tower draws only the
+blocks near the screen (the static batch is in level order, so it is one draw range), which keeps the triangle count flat.
+
+**Dynamic resolution.** A window of 16 frames in which a quarter miss the display's cadence (1.45 x the fastest frame seen)
+takes the pixel ratio down by 30 % (floor 1). On the headless rasteriser the canvas hand-over to the compositor (a `ReadPixels`)
+is what costs, in proportion to pixels, so this is what keeps frames steady on a slow device.
+
+Test hooks (`window.__towerTest`): `frames`, `calls`, `tris`, `texBytes`, `ratio`, `drawn` (the slider offset on screen),
+`tapped`, `fx` (counts of `squash`, `flecks`, `kick`, `hitstop` that actually fired), `cam`, `model` (`flecks`, `pieces`, ...).
+
 ## Performance
 
-One batch per kind of mesh: settled blocks (+ the ghost dashes and gift ribbons) and moving pieces (+ the streamer), each with
-faces, an inverted-hull outline and crease lines, plus the pedestal shadow and the perfect ring: 7-9 draw calls per frame.
-Buffers are preallocated; nothing is allocated per frame.
+One batch per kind of mesh: settled blocks (+ the ghost dashes and gift ribbons) and moving pieces (+ flecks and the streamer),
+each with faces, an inverted-hull outline and crease lines, plus the pedestal shadow and the perfect ring: 7-8 draw calls per
+frame. Buffers are preallocated and rewritten in place; nothing is allocated per frame. Only changed ranges go to the GPU: the
+static batch when it is dirty, positions of the moving batch every frame, its normals only while something tumbles and its
+colours only when one changed. The ghost, the culling and the ground band are updated only when the camera moved.
 
 ## Tests
 
@@ -134,7 +190,9 @@ Buffers are preallocated; nothing is allocated per frame.
 PORT=8924 node tools/test/games/threed.test.js          # the shared 3D suite (tower + bones)
 PORT=8920 node tools/test/games/threed-tower.test.js    # old-log replay, modes, bug fixes, records, panel, visuals
 ```
-`ONLY=stray,hud,modes,once,flat,tall,visuals,records,polish` runs part of the tower suite (`polish`: merged banners, overlap
+`ONLY=stray,hud,modes,once,flat,tall,visuals,records,polish,feel` runs part of the tower suite (`polish`: merged banners, overlap
 checks in portrait and landscape, ghost ring vs the HUD, the notch). The "not ready" test holds the view not-ready with a hook
-(`window.__towerTest.hold`, a promise) instead of racing the loader. Ports used: `PORT`, `PORT+1` (reduced motion
+(`window.__towerTest.hold`, a promise) instead of racing the loader. `feel`: the spring settles and the loop sleeps, a perfect
+squashes/puffs/freezes/kicks, and a drop equals the slider position under a 4x CPU throttle; the reduced-motion run checks that none of
+that happens. The graphics budget (calls, triangles, texture bytes) is checked in `visuals`, light and dark. Ports used: `PORT`, `PORT+1` (reduced motion
 records run), `PORT+2` (dark run).

@@ -463,7 +463,7 @@ function patchFace(mat, uni, ped) {
 function view3D(THREE, canvas, pal0) {
   let pal = pal0;
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: true, powerPreference: 'high-performance' });
-  let ratio = window.__r0 || Math.min(2, window.devicePixelRatio || 1);
+  let ratio = Math.min(2, window.devicePixelRatio || 1);
   let W = 1; let Hh = 1;
   renderer.setPixelRatio(ratio);
   const scene = new THREE.Scene();
@@ -781,7 +781,7 @@ registerGame({
     .g-tower .gt-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
     /* the printed paper sits behind the (transparent) canvas: two 256² tiles painted from the palette, one texel = half a css px */
     .g-tower .gt-paper, .g-tower .gt-ground { position: absolute; left: 0; right: 0; top: 0; height: 100%; background-size: 128px 128px; pointer-events: none; }
-    .g-tower .gt-ground { transform: translateY(-9999px); will-change: transform; }
+    .g-tower .gt-ground { transform: translateY(-9999px); }
     .g-tower .gt-ground::before { content: ''; position: absolute; left: 0; right: 0; top: -1px; height: 2px; background: var(--g-ink); opacity: 0.32; }
     .g-tower .gt-hud { position: absolute; top: 10px; left: 56px; right: 56px; display: flex; flex-direction: column; align-items: center; gap: 5px; pointer-events: none; color: var(--g-ink); }
     .g-tower .gt-height { display: flex; align-items: baseline; gap: 6px; font-family: var(--g-font-display); }
@@ -1108,8 +1108,8 @@ registerGame({
       winN++;
       if (rawMs < wmin) wmin = rawMs;
       if (rawMs > refDt * 1.45) slowN++;
-      if (winN < 24) return;
-      if (!window.__r0 && slowN >= winN * 0.2 && view.ratio > 1) view.setRatio(Math.max(1, Math.round(view.ratio * 0.7 * 20) / 20));
+      if (winN < 16) return;
+      if (slowN >= winN * 0.25 && view.ratio > 1) view.setRatio(Math.max(1, Math.round(view.ratio * 0.7 * 20) / 20));
       if (wmin > 4) refDt = Math.min(17.5, Math.max(4, wmin));
       winN = slowN = 0; wmin = 1e9;
     }
@@ -1128,7 +1128,11 @@ registerGame({
     // ── the printed paper behind the canvas ──
     const paperUrls = { paper: '', ground: '' };
     let groundY = NaN;
+    let paperKey = '';
     function paintPaperNow() {
+      const key = `${pal.bg}|${pal.ink}|${pal.a}|${pal.dark}`;
+      if (key === paperKey) return; // the palette didn't change: the tiles are still right
+      paperKey = key;
       try {
         if (!paperKit) paperKit = makePaperKit();
         paintPaper(paperKit, pal, paperUrls);
