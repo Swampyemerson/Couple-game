@@ -2715,7 +2715,7 @@ export function createGame(el, api) {
       const fp = ph === 'seek' && !(role === 'hider' && !hunt); // a hider's head start is third person
       // the seeker crawling (or zipping): a close over-the-shoulder view with its own absolute yaw
       const climbV = fp && role === 'seeker' && w === v && (b.at || !!b.zip);
-      if (w === v) syncClimbView(b, climbV);
+      if (w === v) syncClimbView(b, climbV, w);
       if (w === v && !fz && spect === 'eyes' && (mode2 === 'move' || mode2 === 'look')) {
         controls.move(mv);
         mvMag = Math.min(1, Math.hypot(mv[0], mv[1]));
@@ -2853,14 +2853,14 @@ export function createGame(el, api) {
   }
   /** The seeker's view switches between first person (free) and a close over-the-shoulder view
    *  (stuck to a surface or zipping): carry the view direction across so it never jumps. */
-  function syncClimbView(b, on) {
+  function syncClimbView(b, on, w) {
     if (on === C.climbV) return;
     if (on) { C.vYaw = wrapAngle(b.yaw + b.lookYaw); b.lookYaw = 0; }
     else { b.yaw = C.vYaw; b.lookYaw = 0; b.fx = Math.sin(b.yaw); b.fy = 0; b.fz = Math.cos(b.yaw); }
     C.climbV = on;
     // first person ↔ the over-the-shoulder climb view: whip the camera across (the same eased glide as the eyes / watch switch)
     // instead of cutting from the eye to a spot ~2 m behind the body
-    C.vsAt = tSec; C.vsPend = true; C.vsDur = 0.6; // (a longer glide than the eyes / watch switch: the camera crosses ~2 m)
+    if (!snapOrient[w]) { C.vsAt = tSec; C.vsPend = true; C.vsDur = 0.6; } // (a teleport cuts) a longer glide than the eyes / watch switch: the camera crosses ~2 m
   }
   /** History for tag confirmation (the victim checks the shooter's view against its true path). */
   function recordHist(w, b, t) {
@@ -3347,10 +3347,11 @@ export function createGame(el, api) {
         camRad = CS.rad; let r = camReach(CS.px, CS.py, CS.pz, ex, ey, ez, el); camRad = CAM_R;
         // an occluder that appears across the whole view at once (a wrap onto the far side of a table: the old spot is now behind
         // the plank) pulls the camera in at no more than GUARD_V m/s, not by 2.8 m in one frame; in a wall's own approach (≤ 3 m/s) nothing differs
-        if (rigid) { if (camFrame - C.gdAt <= 1) r = Math.min(el, Math.max(r, C.gd - GUARD_V * dt)); C.gd = Math.min(r, el); C.gdAt = camFrame; }
+        if (rigid && camFrame - C.gdAt <= 1) r = Math.min(el, Math.max(r, C.gd - GUARD_V * dt));
         if (r < el - 0.005) camPos.set(CS.px + ex * r, CS.py + ey * r, CS.pz + ez * r);
       }
     }
+    if (rigid && CS.on) { C.gd = Math.hypot(camPos.x - CS.px, camPos.y - CS.py, camPos.z - CS.pz); C.gdAt = camFrame; } // (where the guard left the camera: its pull-ins are rate-limited from here)
     // the climb view eases its position but aims exactly where the stick says (no aim lag)
     if (climbCam) camLook.copy(camPos).add(lookDir);
     // a camera that had to come in close fades the body it looks past (never hides it); eased
@@ -3416,7 +3417,6 @@ export function createGame(el, api) {
       spring1(lc, C.coV, lw, lw < lc ? 0.18 : 0.25, dt, tvS); const l2 = tvS[0]; C.coV = tvS[1];
       C.co[0] = ax * l2; C.co[1] = ay * l2; C.co[2] = az * l2;
     }
-    if (typeof window !== 'undefined' && window.__rigdbg) window.__rigdbg.push([performance.now(), ox, oy, oz, C.co[0], C.co[1], C.co[2], C.pv.x - look.x, C.pv.y - look.y, C.pv.z - look.z, piv.x, piv.y, piv.z, CS.pick, CS.d, rest ? 1 : 0]);
     want.set(piv.x + (C.pv.x - look.x) + C.co[0], piv.y + (C.pv.y - look.y) + C.co[1], piv.z + (C.pv.z - look.z) + C.co[2]);
     look.set(C.pv.x, C.pv.y, C.pv.z);
   }
