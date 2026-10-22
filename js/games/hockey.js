@@ -1490,7 +1490,7 @@ registerGame({
         const sp = spr.s[fx.flashWho];
         const grow = reduced ? 1 : since < 240 ? easeBack(since / 240) : 1;
         const fade = reduced ? (since < GOAL_MS - 80 ? 1 : 0) : since > GOAL_MS - 380 ? (GOAL_MS - since) / 380 : 1;
-        const inward = fx.splatY === 0 ? 8 : -8;
+        const inward = fx.splatY === 0 ? 15 : -15;
         const X = projX(fx.splatX, fx.splatY + inward); const Y = projY(fx.splatX, fx.splatY + inward);
         const hh = sp.half * Math.max(0.01, grow);
         c.globalAlpha = 0.95 * fade; c.drawImage(sp.cv, X - hh, Y - hh, hh * 2, hh * 2); c.globalAlpha = 1;

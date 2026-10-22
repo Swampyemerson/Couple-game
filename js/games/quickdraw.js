@@ -28,8 +28,11 @@
 //   callback. The cue frame now does the least possible (no layout: the signal word keeps its box and is scaled, the scene never
 //   resizes, nothing is read back), so the painted frame sits as close to `t0` as it can. Same fairness semantics as before.
 // * No layout thrash: stamp geometry is cached by a ResizeObserver, one-shots restart by swapping between two identical keyframe
-//   sets instead of forcing a reflow, the room dim runs on the compositor (WAAPI opacity), the ms count-up only writes when the
-//   number changes, and paint() skips unchanged strings.
+//   sets instead of forcing a reflow, the room dim runs on the compositor (WAAPI opacity), and paint() skips unchanged strings.
+//   The ms readout is the final number from the start and rolls like an odometer on digit reels moved by transform (WAAPI), so no
+//   text is rewritten per frame. An SVG child's transform animation can't be composited and costs a layout per frame, so the figures'
+//   fall, hat, burst and bell run in a few steps (steps()), the draw is instant, and the muzzle flash and smoke are opacity-only.
+//   Measured (iPhone 13, CPU 4x, real rounds): layouts 10-14/s -> 3/s, layout 28-36 -> 12 ms/s.
 // * Juice and Riso print: cue slam, an ink burst at the winner's muzzle, round shake, misfire shake, stamped tally notches, paper
 //   tooth, halftone shading and off-register plates under the big type. Every motion has a reduced-motion switch.
 import { registerGame } from './core.js';
