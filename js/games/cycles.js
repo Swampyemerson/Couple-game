@@ -70,11 +70,13 @@ function getGrainMask() {
   cv.width = n; cv.height = n;
   const g = cv.getContext('2d');
   const im = g.createImageData(n, n);
+  // alpha = v^2.4 * 255 for a uniform v, from a 1024-step table (a pow() per pixel is a visible hitch on a slow phone)
+  const lut = new Uint8Array(1024);
+  for (let i = 0; i < 1024; i++) lut[i] = Math.floor(Math.pow((i + 0.5) / 1024, 2.4) * 255);
   let r = 0x2545f491;
   for (let i = 0; i < n * n; i++) {
     r = (Math.imul(r, 1664525) + 1013904223) >>> 0;
-    const v = r / 4294967296;
-    im.data[i * 4 + 3] = Math.floor(Math.pow(v, 2.4) * 255);
+    im.data[i * 4 + 3] = lut[r >>> 22];
   }
   g.putImageData(im, 0, 0);
   grainMask = cv;
@@ -208,6 +210,7 @@ registerGame({
     let layerVer = 0;
     let lyAr = ''; let lySd = -1; let lyL = ''; let lyRound = -1;
     let lyS = 1; // device pixels per CSS pixel in the layers
+    let lyStep = 0; let lyHold = false; let lyBlank = false; // repaint steps still owed, a board just built, the trail layers known to be empty
     // partial repaint: a frame restores only the rectangles where something moved (last frame's and this frame's) from the layers
     const RECT_MAX = 48;
     const RC = new Float64Array(RECT_MAX * 4); // this frame's moving things, as grid-pixel rectangles x0 y0 x1 y1
@@ -218,6 +221,7 @@ registerGame({
     const ci = { a: 0, b: 0 }; // path points already stroked into the layers
     let dirt = false; let dX0 = 0; let dY0 = 0; let dX1 = 0; let dY1 = 0;
     const inkPat = { a: null, b: null };
+    let inkVer = -1; let inkS = 0;
     let dprScale = 1;
     let slowEma = 16.7;
     let slowFor = 0;
@@ -256,11 +260,15 @@ registerGame({
     function readColors() {
       const t = api.tokens();
       const col = (v, fb) => { probe.style.color = ''; probe.style.color = v || fb; return getComputedStyle(probe).color || v || fb; };
+      const was = C;
       C = {
         a: col(t.a, 'var(--p-a)'), b: col(t.b, 'var(--p-b)'), ink: col(t.ink, 'var(--g-ink)'), card: col(t.card, 'var(--g-card)'),
         line: col(t.line, 'var(--g-line)'), hl: col(t.hl, 'var(--g-hl)'), bad: col(t.bad, 'var(--g-bad)'), muted: col(t.muted, 'var(--g-muted)'),
         edge: col('var(--g-edge, var(--g-ink))'), dark: !!t.dark,
       };
+      let same = !!was.ink && was.dark === C.dark;
+      for (const k in C) if (was[k] !== C[k]) same = false;
+      if (same) return; // the observer also fires for class changes that are not a theme change
       bgVer++;
       if (pickShown) drawMinis();
     }
@@ -331,7 +339,7 @@ registerGame({
       if (ro) { ro.disconnect(); ro = null; }
       canvas = ctx = board = msgEl = rpEl = null;
       needFull = true;
-      bgCan = shCan = cbCan = trCan = null; bgG = shG = cbG = trG = null; layerVer = 0;
+      bgCan = shCan = cbCan = trCan = null; bgG = shG = cbG = trG = null; layerVer = 0; inkVer = -1; lyStep = 0; lyBlank = false;
       vvReady = false;
     }
     function build() {
@@ -368,6 +376,7 @@ registerGame({
       msgEl = root.querySelector('.cy-msg');
       rpEl = root.querySelector('.cy-rp');
       msgKey = '';
+      lyHold = true;
       if (window.ResizeObserver) { ro = new window.ResizeObserver(fit); ro.observe(board.parentElement); }
       fit();
       wireInputs();
@@ -385,6 +394,7 @@ registerGame({
       const sw = qr & 1 ? g.H : g.W; // the board as this screen sees it, in cells
       const sh = qr & 1 ? g.W : g.H;
       const c = Math.max(3, Math.floor(Math.min(bw / sw, bh / sh) * 4) / 4);
+      const oldCell = cell;
       cell = c;
       gW = Math.round(c * g.W);
       gH = Math.round(c * g.H);
@@ -393,13 +403,17 @@ registerGame({
       dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1) * dprScale); // never above 2; the governor in frame() lowers it on a slow device
       canvas.style.width = cssW + 'px';
       canvas.style.height = cssH + 'px';
-      canvas.width = Math.round(cssW * dpr);
-      canvas.height = Math.round(cssH * dpr);
-      needFull = true;
+      const pw = Math.round(cssW * dpr);
+      const ph = Math.round(cssH * dpr);
       board.classList.add('is-fit');
       board.style.width = cssW + 14 + 'px';
       // the countdown and GO stamps scale with a small board
       root.style.setProperty('--cy-s', clamp(Math.round(Math.min(cssW, cssH) * 0.3), 44, 92) + 'px');
+      // a resize observer fires once after the build with nothing changed: writing canvas.width would clear and reallocate it, and repaint every layer
+      if (canvas.width === pw && canvas.height === ph && oldCell === c) return;
+      canvas.width = pw;
+      canvas.height = ph;
+      needFull = true;
       bgVer++;
     }
     const modeLabel = () => `${ARENA_NAME[cfg && cfg.ar ? cfg.ar : matchAr] || ''}${md.bo ? ' + boosts' : ''}`;
@@ -1114,8 +1128,10 @@ registerGame({
         bgCan = document.createElement('canvas'); shCan = document.createElement('canvas'); cbCan = document.createElement('canvas'); trCan = document.createElement('canvas');
         bgG = bgCan.getContext('2d'); shG = shCan.getContext('2d'); cbG = cbCan.getContext('2d'); trG = trCan.getContext('2d');
       }
-      for (const cv of [bgCan, shCan, cbCan, trCan]) if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+      let sized = false;
+      for (const cv of [bgCan, shCan, cbCan, trCan]) if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; sized = true; }
       lyS = W / gW;
+      return sized; // freshly sized canvases are blank
     }
     /** Copy one grid-pixel rectangle of a layer onto the screen canvas, on whole canvas pixels so repeated blits leave no seams. */
     function blit(layer, x0, y0, x1, y1) {
@@ -1170,18 +1186,20 @@ registerGame({
     }
     let tintCan = null; let tintVer = -1;
     /** The shared noise mask tinted with the theme's ink (rebuilt when the theme changes), laid over a whole canvas at device resolution. */
+    function tintTile() {
+      if (tintCan && tintVer === bgVer) return;
+      const m = getGrainMask();
+      tintCan = document.createElement('canvas');
+      tintCan.width = m.width; tintCan.height = m.height;
+      const tg = tintCan.getContext('2d');
+      tg.fillStyle = C.ink; tg.fillRect(0, 0, m.width, m.height);
+      tg.globalCompositeOperation = 'destination-in';
+      tg.drawImage(m, 0, 0);
+      tintVer = bgVer;
+    }
     function grainOver(g, W, H) {
       try {
-        if (!tintCan || tintVer !== bgVer) {
-          const m = getGrainMask();
-          tintCan = document.createElement('canvas');
-          tintCan.width = m.width; tintCan.height = m.height;
-          const tg = tintCan.getContext('2d');
-          tg.fillStyle = C.ink; tg.fillRect(0, 0, m.width, m.height);
-          tg.globalCompositeOperation = 'destination-in';
-          tg.drawImage(m, 0, 0);
-          tintVer = bgVer;
-        }
+        tintTile();
         g.setTransform(1, 0, 0, 1, 0, 0);
         g.globalAlpha = C.dark ? 0.2 : 0.3;
         g.fillStyle = g.createPattern(tintCan, 'repeat');
@@ -1191,6 +1209,8 @@ registerGame({
     }
     /** Halftone ink: each rider's colour with a staggered dot screen, so a trail reads as printed rather than filled. */
     function makeInk() {
+      if (inkVer === bgVer && inkS === lyS && inkPat.a && inkPat.b) return; // the patterns belong to the colours and the pixel density, not to the round
+      inkVer = bgVer; inkS = lyS;
       inkPat.a = inkPat.b = null;
       try {
         const T = Math.max(4, Math.round(3.6 * lyS));
@@ -1208,22 +1228,51 @@ registerGame({
         }
       } catch { inkPat.a = inkPat.b = null; }
     }
-    function resetTrails() {
-      shG.setTransform(1, 0, 0, 1, 0, 0); shG.clearRect(0, 0, shCan.width, shCan.height);
-      trG.setTransform(1, 0, 0, 1, 0, 0); trG.clearRect(0, 0, trCan.width, trCan.height);
+    function resetTrails(blank) {
+      if (!blank) {
+        shG.setTransform(1, 0, 0, 1, 0, 0); shG.clearRect(0, 0, shCan.width, shCan.height);
+        trG.setTransform(1, 0, 0, 1, 0, 0); trG.clearRect(0, 0, trCan.width, trCan.height);
+      }
       cbG.setTransform(1, 0, 0, 1, 0, 0); cbG.globalAlpha = 1; cbG.drawImage(bgCan, 0, 0);
       ci.a = 0; ci.b = 0; dirt = false;
     }
+    /** Brings the layers up to date with the grid and the round. Returns 0 when they were, 1 when they have just been repainted, and
+     *  -1 when they are not ready yet. Before the first tick (the countdown) the repaint is spread over a few frames, one step
+     *  each (paper and grid, then the trail layers, then the back of the board), so no single frame carries all of it; the screen
+     *  shows the empty card meanwhile. Once riders are moving it is done in one go. */
     function syncLayers() {
-      let fresh = layerVer !== bgVer || !bgCan || lyAr !== cfg.ar || lySd !== cfg.sd || lyL !== cfg.L;
-      if (fresh) {
-        ensureCanvases();
+      const stale = layerVer !== bgVer || !bgCan || lyAr !== cfg.ar || lySd !== cfg.sd || lyL !== cfg.L;
+      const trStale = lyRound !== round || ci.a > sim.a.path.length / 2 - 1 || ci.b > sim.b.path.length / 2 - 1;
+      if (!stale && !trStale && lyStep === 0) return 0;
+      const calm = phase === 'count' && sim.t === 0 && !paused;
+      if (calm && lyHold) { lyHold = false; return -1; } // the frame that built the board does no painting
+      lyHold = false;
+      if (stale) {
+        lyBlank = ensureCanvases() || lyBlank;
         paintBg();
-        makeInk();
         layerVer = bgVer; lyAr = cfg.ar; lySd = cfg.sd; lyL = cfg.L; lyRound = -1;
+        lyStep = 1;
+        if (calm) return -1;
       }
-      if (lyRound !== round || ci.a > sim.a.path.length / 2 - 1 || ci.b > sim.b.path.length / 2 - 1) { resetTrails(); lyRound = round; fresh = true; }
-      return fresh;
+      if (lyStep === 1) {
+        makeInk();
+        if (!lyBlank) {
+          shG.setTransform(1, 0, 0, 1, 0, 0); shG.clearRect(0, 0, shCan.width, shCan.height);
+          trG.setTransform(1, 0, 0, 1, 0, 0); trG.clearRect(0, 0, trCan.width, trCan.height);
+        }
+        lyBlank = false;
+        lyStep = 2;
+        if (calm) return -1;
+      } else if (lyStep === 0) { // only the trails are stale (the same arena again): clear them now, copy the back next frame
+        makeInk();
+        shG.setTransform(1, 0, 0, 1, 0, 0); shG.clearRect(0, 0, shCan.width, shCan.height);
+        trG.setTransform(1, 0, 0, 1, 0, 0); trG.clearRect(0, 0, trCan.width, trCan.height);
+        lyStep = 2;
+        if (calm) return -1;
+      }
+      resetTrails(true);
+      lyRound = round; lyStep = 0;
+      return 1;
     }
     /** Stroke rider p's path from the last stroked point up to point `upto` into the layers. */
     function commit(p, upto) {
@@ -1521,13 +1570,18 @@ registerGame({
       let partial = false;
       if (fast) {
         const fresh = syncLayers();
+        if (fresh < 0) { // layers still being repainted, a step a frame: the empty card until they are
+          ctx.setTransform(canvas.width / cssW, 0, 0, canvas.height / cssH, 0, 0);
+          ctx.fillStyle = C.card; ctx.fillRect(0, 0, cssW, cssH); needFull = true;
+          return;
+        }
         cRhas = false;
         for (let n = 0; n < 2; n++) commit(PL[n], vv[PL[n]].i);
         flushDirty();
         liveSegs();
         collectMoving();
         // a still frame needs only the places where something moved (last frame's and this frame's), restored from the layers
-        partial = !needFull && !fresh && !rcOver && !rpOver && stage === 'none';
+        partial = !needFull && fresh === 0 && !rcOver && !rpOver && stage === 'none';
         if (partial) restoreFrom(cbCan); else ctx.drawImage(cbCan, 0, 0, gW, gH);
       } else { drawBgVector(ctx, c, g.W, g.H, sim); ctx.save(); grainOver(ctx, canvas.width, canvas.height); ctx.restore(); needFull = true; } // the zoomed replay keeps the paper tooth too
       // tokens still lying on the grid
@@ -1743,6 +1797,9 @@ registerGame({
     };
     if (navigator.webdriver) window.__cycles = hook;
 
+    // while the picker is up: make the paper-tooth tile now, so the first round's repaint does not
+    const warm = setTimeout(() => { timers.delete(warm); try { if (alive) tintTile(); } catch { /* the board makes it when it needs it */ } }, 250);
+    timers.add(warm);
     if (host) phase = 'pick';
     if (local) showPicker();
     raf = requestAnimationFrame(frame);
