@@ -1314,7 +1314,7 @@ async function uiTests(scheme, port) {
       ok(await mover.$$eval('.g-dots .gd-box.gd-open .gd-heart', (xs) => xs.length) === 1, `dots (${scheme}): picking Sweetheart previews the heart box`);
       await shot(mover, `dots-${scheme}-${first === 'a' ? 390 : 360}-picker-sweet`);
       await mover.tap('.g-dots .gd-mode[data-mode="scramble"]');
-      const pre = await mover.$$eval('.g-dots .gd-lo.gd-s', (xs) => xs.length);
+      const pre = await mover.$$eval('.g-dots .gd-ln.gd-s', (xs) => xs.length);
       ok(pre >= 4 && pre <= 6, `dots (${scheme}): picking Scramble previews its ${pre} pre-drawn lines`);
       await shot(mover, `dots-${scheme}-${first === 'a' ? 390 : 360}-picker-scramble`);
       await mover.tap('.g-dots .gd-mode[data-mode="quick"]');
@@ -1408,7 +1408,7 @@ async function uiTests(scheme, port) {
       const first = (await h.engine(h.a, id)).acts[0];
       await (first === 'a' ? h.a : h.b).tap('.g-dots .gd-mode[data-mode="sweet"]');
       const mover = first === 'a' ? h.a : h.b;
-      const heart = await mover.evaluate(() => { const g = document.querySelector('.g-dots .gd-box.gd-open'); const m = g.getAttribute('transform').match(/translate\(([\d.]+) ([\d.]+)\)/); return { x: Number(m[1]), y: Number(m[2]) }; });
+      const heart = await mover.evaluate(() => { const g = document.querySelector('.g-dots .gd-box.gd-open'); return { x: Number(g.dataset.x), y: Number(g.dataset.y) }; });
       const bc = Math.round((heart.x - 50 - 50) / 100);
       const br = Math.round((heart.y - 50 - 50) / 100);
       const edges = [`h-${br}-${bc}`, `h-${br + 1}-${bc}`, `v-${br}-${bc}`, `v-${br}-${bc + 1}`];

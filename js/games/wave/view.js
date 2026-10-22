@@ -116,6 +116,39 @@ export function createWaveView(el, api, env) {
     rafs.add(id);
   }
 
+  // A needle on a spring. Positions are dial values (0..100). The simulation runs in fixed 1/120 s steps from the real
+  // rAF time (clamped), and what is drawn is interpolated between the last two steps, so it moves the same at 30, 60 and
+  // 120 Hz and never stutters when a frame is late. The ends are walls: it bounces off them, never past.
+  function spring(apply, { x = 50, k = 520, z = 0.86, wall = 0.35 } = {}) {
+    const c = 2 * z * Math.sqrt(k); const H = 1 / 120;
+    let prev = x; let cur = x; let v = 0; let target = x; let acc = 0; let last = 0; let id = 0; let dead = false;
+    const frame = (now) => {
+      rafs.delete(id); id = 0;
+      if (dead) return;
+      let dt = last ? Math.min(0.05, (now - last) / 1000) : H;
+      last = now;
+      acc += dt;
+      while (acc >= H) {
+        prev = cur;
+        v += (k * (target - cur) - c * v) * H;
+        cur += v * H;
+        if (cur > 100) { cur = 100; v = -v * wall; } else if (cur < 0) { cur = 0; v = -v * wall; }
+        acc -= H;
+      }
+      if (Math.abs(target - cur) < 0.01 && Math.abs(v) < 0.02) { cur = prev = target; v = 0; last = 0; apply(cur); return; }
+      apply(prev + (cur - prev) * (acc / H));
+      id = requestAnimationFrame(frame); rafs.add(id);
+    };
+    const run = () => { if (!id && !dead) { id = requestAnimationFrame(frame); rafs.add(id); } };
+    return {
+      to(t) { target = t; if (reduced()) { cur = prev = t; v = 0; apply(t); return; } run(); },
+      kick(dv) { if (reduced()) return; v += dv; run(); },
+      snap(t) { cur = prev = target = t; v = 0; apply(t); },
+      get value() { return cur; },
+      stop() { dead = true; if (id) { cancelAnimationFrame(id); rafs.delete(id); id = 0; } },
+    };
+  }
+
   // ── small pieces ──
   const twistChip = (s, Rd) => {
     const tw = twOf(s, Rd);
@@ -154,38 +187,56 @@ export function createWaveView(el, api, env) {
   // zone: target (only when the viewer may see it). lid: the hiding screen. needle: { at, who, gold } or null.
   function dial(host, { card, zone = null, lid = false, needle = null, ghost = false, jp = false }) {
     const id = `wv${++uid}`;
-    const zoneSvg = zone == null ? '' : `<defs>${[[2, 3], [3, 6]].map(([p, w]) => `<pattern id="${id}s${p}" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(-35)"><rect width="8" height="8" class="wv-hlsoft"/><rect width="${w}" height="8" class="wv-hlfill"/></pattern>`).join('')}</defs>
-      <g class="wv-zone" clip-path="url(#${id}c)">${BANDS.map(([, p]) => `<path class="wv-zb${p}" d=""${p < 4 ? ` fill="url(#${id}s${p})"` : ''}/>`).join('')}</g>`;
+    const VB = 'viewBox="0 -4 240 156"';
+    // The dial is a stack of layers with the same box: the static face, the zone, the lid, grain, ticks, the needle and
+    // the plinth. The needle and the lid are plain elements turned with CSS transforms (compositor only), so
+    // moving them never repaints the artwork; only the zone paints while it opens.
+    const zoneSvg = zone == null ? '' : `<svg class="wv-lay wv-zl" ${VB} aria-hidden="true"><defs><clipPath id="${id}c"><path d="${FACE}"/></clipPath>${[[2, 3], [3, 6]].map(([p, w]) => `<pattern id="${id}s${p}" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(-35)"><rect width="8" height="8" class="wv-hlsoft"/><rect width="${w}" height="8" class="wv-hlfill"/></pattern>`).join('')}</defs>
+      <g class="wv-zone" clip-path="url(#${id}c)">${BANDS.map(([, p]) => `<path class="wv-zb${p}" d=""${p < 4 ? ` fill="url(#${id}s${p})"` : ''}/>`).join('')}</g></svg>`;
     const labelsSvg = zone == null ? '' : `<g class="wv-zlabels">${[2, 3, 4, 3, 2].map(() => '<text></text>').join('')}</g>`;
-    const needleSvg = needle ? `<g transform="translate(3 3)"><g class="wv-rot"><path class="wv-needle-shadow" d="${NEEDLE}"/></g></g>
-      <g class="wv-rot"><path class="wv-needle ${needle.who}${needle.gold ? ' jp' : ''}" d="${NEEDLE}"/></g>` : '';
-    host.innerHTML = `<div class="wv-dialbox"><div class="wv-dial${jp ? ' jp' : ''}" aria-label="Dial"><svg class="wv-svg" viewBox="0 -4 240 156" aria-hidden="true">
-      <defs><clipPath id="${id}c"><path d="${FACE}"/></clipPath>
-        <pattern id="${id}h" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(40)"><line x1="0" y1="0" x2="0" y2="8" class="wv-hatch"/></pattern></defs>
+    const lidHtml = lid ? `<div class="wv-lidclip"><div class="wv-lidrot"><svg class="wv-lay" ${VB} aria-hidden="true"><defs><pattern id="${id}h" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(40)"><line x1="0" y1="0" x2="0" y2="8" class="wv-hatch"/></pattern></defs><path class="wv-lid-face" d="${FACE}"/><path d="${FACE}" fill="url(#${id}h)"/></svg></div></div>` : '';
+    const needleHtml = needle ? `<div class="wv-nl sh"><svg class="wv-lay" ${VB} aria-hidden="true"><path class="wv-needle-shadow" d="${NEEDLE}"/></svg></div>
+      <div class="wv-nl n"><svg class="wv-lay" ${VB} aria-hidden="true"><path class="wv-needle ${needle.who}${needle.gold ? ' jp' : ''}" d="${NEEDLE}"/></svg></div>` : '';
+    host.innerHTML = `<div class="wv-dialbox"><div class="wv-dial${jp ? ' jp' : ''}" aria-label="Dial"><svg class="wv-svg" ${VB} aria-hidden="true">
       <path class="wv-shadow" d="${FACE}" transform="translate(4 4)"/>
       <rect class="wv-plinth-shadow" x="8" y="${CY + 2}" width="232" height="16" rx="4"/>
       <path class="wv-face" d="${FACE}"/>
+    </svg>
       ${zoneSvg}
-      ${lid ? `<g clip-path="url(#${id}c)"><g class="wv-lid"><path class="wv-lid-face" d="${FACE}"/><path d="${FACE}" fill="url(#${id}h)"/></g></g>` : ''}
-      ${ghost ? `<path class="wv-ghost" d="M${CX} ${CY}L${CX} ${CY - R + 14}"/>` : ''}
-      ${TICKS}
-      <path class="wv-rim" d="${FACE}"/>
-      ${needleSvg}
-      ${labelsSvg}
-      <rect class="wv-plinth" x="4" y="${CY - 1}" width="232" height="16" rx="4"/>
-      <circle class="wv-hub" cx="${CX}" cy="${CY}" r="13"/><circle class="wv-hub-dot" cx="${CX}" cy="${CY}" r="4.5"/>
-    </svg></div>${cardHTML(card)}</div>`;
+      ${lidHtml}
+      <div class="wv-grainface" aria-hidden="true"></div>
+      <svg class="wv-lay wv-lmid" ${VB} aria-hidden="true">
+        ${ghost ? `<path class="wv-ghost" d="M${CX} ${CY}L${CX} ${CY - R + 14}"/>` : ''}
+        ${TICKS}
+        <path class="wv-rim" d="${FACE}"/>
+      </svg>
+      ${needleHtml}
+      <svg class="wv-lay wv-ltop" ${VB} aria-hidden="true">
+        ${labelsSvg}
+        <rect class="wv-plinth" x="4" y="${CY - 1}" width="232" height="16" rx="4"/>
+        <circle class="wv-hub" cx="${CX}" cy="${CY}" r="13"/><circle class="wv-hub-dot" cx="${CX}" cy="${CY}" r="4.5"/>
+      </svg></div>${cardHTML(card)}</div>`;
     const box = host.firstChild;
     const d = box.querySelector('.wv-dial');
     const svg = box.querySelector('svg');
-    const rots = [...box.querySelectorAll('.wv-rot')];
-    const lidEl = box.querySelector('.wv-lid');
-    const setNeedle = (v) => { const a = f1((v - 50) * 1.8); rots.forEach((g) => g.setAttribute('transform', `rotate(${a} ${CX} ${CY})`)); };
+    const nlShadow = box.querySelector('.wv-nl.sh');
+    const nlNeedle = box.querySelector('.wv-nl.n');
+    const lidEl = box.querySelector('.wv-lidrot');
+    const lidClip = box.querySelector('.wv-lidclip');
+    // 3 user units to the right and down, as a share of the layer box (the shadow is lit from a fixed side)
+    const setNeedle = (v) => {
+      if (!nlNeedle) return;
+      const a = Math.round((v - 50) * 180) / 100;
+      nlNeedle.style.transform = `rotate(${a}deg)`;
+      nlShadow.style.transform = `translate(1.25%, 1.92%) rotate(${a}deg)`;
+    };
+    const zPaths = [...box.querySelectorAll('.wv-zone path')];
+    const zTexts = [...box.querySelectorAll('.wv-zlabels text')];
     const setZone = (k) => {
       if (zone == null) return;
-      const paths = box.querySelectorAll('.wv-zone path');
+      const paths = zPaths;
       BANDS.forEach(([w], i) => paths[i].setAttribute('d', wedge(zone - w * k, zone + w * k, R - 1)));
-      const texts = box.querySelectorAll('.wv-zlabels text');
+      const texts = zTexts;
       [[-13.5, 2], [-7, 3], [0, 4], [7, 3], [13.5, 2]].forEach(([o, p], i) => {
         const v = zone + o * k;
         const tx = texts[i];
@@ -194,7 +245,11 @@ export function createWaveView(el, api, env) {
         tx.setAttribute('x', f1(x)); tx.setAttribute('y', f1(y)); tx.textContent = p;
       });
     };
-    const setLid = (deg) => { if (lidEl) lidEl.setAttribute('transform', `rotate(${f1(deg)} ${CX} ${CY})`); };
+    const setLid = (deg) => {
+      if (!lidEl) return;
+      lidEl.style.transform = `rotate(${f1(deg)}deg)`;
+      lidClip.style.visibility = deg <= -179.5 ? 'hidden' : '';
+    };
     if (needle) setNeedle(needle.at);
     setZone(1);
     // size: as wide as the room allows, but never so tall that the dial and its card leave the screen
@@ -363,30 +418,31 @@ export function createWaveView(el, api, env) {
     dEl.setAttribute('aria-valuemin', '0');
     dEl.setAttribute('aria-valuemax', '100');
     dEl.setAttribute('aria-label', `Dial from ${plain(cardOf(env.CARDS, Rd.card)[0])} to ${plain(cardOf(env.CARDS, Rd.card)[1])}`);
-    let raf = 0; let lastTick = 0; let lastStep = Math.round(value / 2); let dragging = null;
+    let lastTick = 0; let lastStep = Math.round(value / 2); let dragging = null;
     const paintAria = () => { dEl.setAttribute('aria-valuenow', String(value)); dEl.setAttribute('aria-valuetext', `${value} of 100`); };
-    const loop = () => {
-      raf = 0;
-      const diff = value - shown;
-      shown = Math.abs(diff) < 0.15 || reduced() ? value : shown + diff * 0.38;
-      D.setNeedle(shown);
-      const step = Math.round(shown / 2);
+    // the needle follows the finger on a (nearly critically damped) spring: a transform per frame, nothing else
+    const needleSp = spring((x) => {
+      shown = x;
+      D.setNeedle(x);
+      const step = Math.round(x / 2);
       if (step !== lastStep) {
         lastStep = step;
         const now = performance.now();
         if (now - lastTick > 32) { lastTick = now; api.sfx('tick'); api.haptic(4); }
       }
-      if (shown !== value) raf = requestAnimationFrame(loop);
-    };
+    }, { x: value });
     const save = () => draftPut(slot, { at: value, sure });
     const setValue = (v) => {
       const nv = Math.max(0, Math.min(100, Math.round(v)));
       if (nv === value) return;
       value = nv; paintAria();
       save();
-      if (!raf) raf = requestAnimationFrame(loop);
+      needleSp.to(nv);
     };
-    const toSvg = (cx, cy) => { const m = D.svg.getScreenCTM(); return m ? new DOMPoint(cx, cy).matrixTransform(m.inverse()) : null; };
+    // the dial's box is measured once per touch (never per move); the move maths is plain arithmetic on it
+    let mb = null;
+    const measure = () => { const r = D.svg.getBoundingClientRect(); mb = r.width && r.height ? { l: r.left, t: r.top, sx: 240 / r.width, sy: 156 / r.height } : null; };
+    const toSvg = (cx, cy) => { if (!mb) measure(); return mb ? { x: (cx - mb.l) * mb.sx, y: (cy - mb.t) * mb.sy - 4 } : null; };
     const valueAt = (cx, cy) => {
       const p = toSvg(cx, cy);
       if (!p) return value;
@@ -398,6 +454,7 @@ export function createWaveView(el, api, env) {
       if (!ctx.canMove || dragging != null) return;
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       // a touch that starts on the plinth (below the baseline) is not a dial turn
+      measure();
       const p0 = toSvg(e.clientX, e.clientY);
       if (p0 && p0.y > CY + 1) return;
       e.preventDefault();
@@ -439,7 +496,7 @@ export function createWaveView(el, api, env) {
     paintAria(); paintSure();
     return {
       refresh() { goBtn.disabled = !ctx.canMove || vs.busy; },
-      destroy() { if (raf) cancelAnimationFrame(raf); },
+      destroy() { needleSp.stop(); },
     };
   }
 
@@ -475,10 +532,16 @@ export function createWaveView(el, api, env) {
     const team = node.querySelector('.wv-team');
     const goBtn = node.querySelector('.wv-go');
     let dead = false;
+    // The giver has not seen the guess yet: the needle swings in from the middle on a loose spring, bouncing off the
+    // ends. The guesser already knows where it is: it stays put and shivers once as the lid goes.
+    const fresh = ctx.viewer !== guesser;
+    const needleSp = spring((x) => D.setNeedle(x), { x: fresh && !reduced() ? 50 : Rd.at, k: 78, z: 0.3 });
+    if (fresh && !reduced()) D.setNeedle(50);
     const memo = memoGet();
     const replay = Number.isInteger(memo.rv) && memo.rv >= ri; // already shown on this device (a reload): no show, Next is ready
     const showResult = () => {
       if (dead) return;
+      if (!replay && !reduced() && Rd.points) { D.d.classList.add(Rd.jp ? 'slam' : 'thump'); }
       memoPut({ rv: Math.max(ri, Number.isInteger(memo.rv) ? memo.rv : -1) });
       if (goBtn) goBtn.disabled = false; // the next round waits for the stamp, so a double tap on Lock can't skip it
       res.classList.remove('hide');
@@ -489,17 +552,18 @@ export function createWaveView(el, api, env) {
       if (Rd.points && !reduced()) team.classList.add('bump');
       if (final && !vs.toRecap) vs.toRecap = setTimeout(finish, 3500);
     };
-    if (replay) { D.setLid(-180); D.setZone(1); showResult(); } else {
+    if (replay) { needleSp.snap(Rd.at); D.setLid(-180); D.setZone(1); showResult(); } else {
       D.setZone(0);
       D.setLid(0);
       api.sfx('flip');
+      if (fresh) needleSp.to(Rd.at); else setTimeout(() => { if (!dead) needleSp.kick(Rd.target >= Rd.at ? 36 : -36); }, 260);
       animate(650, (k) => D.setLid(-180 * easeInOut(k)), () => {
         D.setLid(-180);
         animate(520, (k) => D.setZone(easeOutBack(k)), () => { D.setZone(1); showResult(); });
       });
     }
     if (goBtn) goBtn.addEventListener('click', () => { api.sfx('tap'); if (final) finish(); else { vs.ack[ri] = true; memoPut({ ack: ri }); render(); } });
-    return { destroy() { dead = true; } };
+    return { destroy() { dead = true; needleSp.stop(); } };
   }
 
   // The final reveal is over (a tap, or a few seconds after the stamp): recap + the end card.

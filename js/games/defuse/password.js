@@ -45,7 +45,7 @@ const css = `
 .g-defuse .dx-pw { width: 100%; max-width: 340px; display: flex; flex-direction: column; align-items: stretch; gap: 14px; padding-bottom: 5px; }
 .g-defuse .dx-pw-cols { display: grid; grid-template-columns: repeat(5, minmax(44px, 1fr)); gap: 2px; padding: 6px 3px 10px; margin-inline: -6px; background: var(--dx-dark); border: 2.5px solid var(--g-ink); border-radius: 12px; box-shadow: inset 0 -5px 0 rgb(255 255 255 / 0.06), var(--g-shadow-sm, 2px 2px 0 var(--g-ink)); }
 .g-defuse .dx-pw-col { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 44px; }
-.g-defuse .dx-pw-btn { display: grid; place-items: center; min-width: 44px; height: 46px; padding: 0; background: var(--dx-white); color: var(--dx-dark); border: 2.5px solid var(--g-ink); border-radius: 10px; box-shadow: 0 4px 0 var(--g-ink); transition: transform 0.06s, box-shadow 0.06s; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+.g-defuse .dx-pw-btn { display: grid; place-items: center; min-width: 44px; height: 46px; padding: 0; background: var(--dx-white); color: var(--dx-dark); border: 2.5px solid var(--g-ink); border-radius: 10px; box-shadow: 0 4px 0 var(--g-ink); transition: transform 0.16s var(--g-ease-spring); touch-action: manipulation; user-select: none; -webkit-user-select: none; }
 .g-defuse .dx-pw-btn svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 3.6; stroke-linecap: round; stroke-linejoin: round; }
 .g-defuse .dx-pw-btn:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--g-ink); }
 .g-defuse .dx-pw-btn:focus-visible, .g-defuse .dx-pw-submit:focus-visible { outline: 3px solid var(--p-a); outline-offset: 3px; }
@@ -54,7 +54,7 @@ const css = `
 .g-defuse .dx-pw-strip i, .g-defuse .dx-pw-strip b { position: absolute; left: 0; right: 0; height: 40px; display: grid; place-items: center; font: 400 1.9rem/1 var(--g-font-display); font-style: normal; }
 .g-defuse .dx-pw-strip i:first-child { top: 0; opacity: 0.22; } .g-defuse .dx-pw-strip b { top: 40px; font-weight: 400; } .g-defuse .dx-pw-strip i:last-child { top: 80px; opacity: 0.22; }
 .g-defuse .dx-pw-win.is-no { background: color-mix(in srgb, var(--dx-red) 55%, var(--dx-white)); } .g-defuse .dx-pw-win.is-ok { background: color-mix(in srgb, var(--dx-green) 55%, var(--dx-white)); }
-.g-defuse .dx-pw-submit { min-height: 50px; padding: 0 18px; background: var(--dx-yellow); color: var(--dx-dark); border: 2.5px solid var(--g-ink); border-radius: 12px; box-shadow: 0 5px 0 var(--g-ink); font: 400 1.2rem/1 var(--g-font-display); letter-spacing: 0.14em; text-transform: uppercase; transition: transform 0.06s, box-shadow 0.06s; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+.g-defuse .dx-pw-submit { min-height: 50px; padding: 0 18px; background: var(--dx-yellow); color: var(--dx-dark); border: 2.5px solid var(--g-ink); border-radius: 12px; box-shadow: 0 5px 0 var(--g-ink); font: 400 1.2rem/1 var(--g-font-display); letter-spacing: 0.14em; text-transform: uppercase; transition: transform 0.16s var(--g-ease-spring); touch-action: manipulation; user-select: none; -webkit-user-select: none; }
 .g-defuse .dx-pw-submit:active { transform: translateY(4px); box-shadow: 0 1px 0 var(--g-ink); }
 .g-defuse .dx-mod.is-solved .dx-pw-btn, .g-defuse .dx-mod.is-solved .dx-pw-submit { opacity: 0.55; }
 

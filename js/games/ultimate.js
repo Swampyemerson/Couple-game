@@ -445,8 +445,8 @@ registerGame({
 .g-ult.is-over .gu-moment { padding: 6px 12px; }
 .g-ult .gu-wrap { order: 1; position: relative; width: min(100%, 600px, calc(100vh - 345px)); width: min(100%, 600px, calc(100dvh - 345px)); min-width: 270px; flex: none; }
 .g-ult .gu-big { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; background: var(--g-ink); border: 2px solid var(--g-ink); border-radius: var(--g-radius); overflow: hidden; box-shadow: var(--g-shadow); }
-.g-ult .gu-sb { position: relative; background: var(--g-card); padding: 6px; transition: background-color 160ms; }
-.g-ult .gu-cells { display: grid; grid-template-columns: repeat(3, 1fr); transition: opacity 200ms; }
+.g-ult .gu-sb { position: relative; background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-card); padding: 6px; }
+.g-ult .gu-cells { display: grid; grid-template-columns: repeat(3, 1fr); }
 .g-ult .gu-c { position: relative; aspect-ratio: 1; min-width: 0; margin: 0; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; border-right: 2px solid color-mix(in srgb, var(--g-ink) 30%, transparent); border-bottom: 2px solid color-mix(in srgb, var(--g-ink) 30%, transparent); -webkit-tap-highlight-color: transparent; }
 .g-ult .gu-c:nth-child(3n) { border-right: 0; }
 .g-ult .gu-c:nth-child(n+7) { border-bottom: 0; }
@@ -459,6 +459,9 @@ registerGame({
 .g-ult .gu-m { position: absolute; inset: 6%; width: 88%; height: 88%; overflow: visible; }
 .g-ult .gu-ink { fill: none; stroke: var(--g-ink); stroke-width: 9; stroke-linecap: round; }
 .g-ult .gu-col { fill: none; stroke-width: 5; stroke-linecap: round; }
+/* the player's ink plate is printed a hair off the black key plate */
+.g-ult .gu-col { transform: translate(1.2px, 0.8px); }
+.g-ult .gu-bm .gu-col { transform: translate(2.4px, 1.6px); }
 /* the player's ink goes on the mark itself, never on whatever board happens to be lit for them */
 .g-ult .gu-m.gu-a .gu-col, .g-ult .gu-bm.gu-a .gu-col { stroke: var(--p-a); }
 .g-ult .gu-m.gu-b .gu-col, .g-ult .gu-bm.gu-b .gu-col { stroke: var(--p-b); }
@@ -466,11 +469,11 @@ registerGame({
 .g-ult .gu-m.ghost .gu-ink { stroke-width: 8; }
 .g-ult .gu-m.ghost.gu-a .gu-col { stroke: color-mix(in srgb, var(--p-a) 30%, var(--g-card)); stroke-width: 4; }
 .g-ult .gu-m.ghost.gu-b .gu-col { stroke: color-mix(in srgb, var(--p-b) 30%, var(--g-card)); stroke-width: 4; }
-.g-ult .gu-m.is-new { animation: gu-pop 300ms cubic-bezier(0.3, 1.7, 0.5, 1) both; }
-@keyframes gu-pop { from { transform: scale(0.2) rotate(-25deg); opacity: 0; } to { transform: none; opacity: 1; } }
+.g-ult .gu-m.is-new { animation: gu-pop 340ms cubic-bezier(0.3, 1.2, 0.5, 1) both; }
+@keyframes gu-pop { 0% { transform: scale(0.2) rotate(-25deg); opacity: 0; } 55% { transform: scale(1.2) rotate(4deg); opacity: 1; } 80% { transform: scale(0.94); } 100% { transform: none; opacity: 1; } }
 
-.g-ult .gu-sb.is-open.gu-a { background: color-mix(in srgb, var(--p-a) 16%, var(--g-card)); }
-.g-ult .gu-sb.is-open.gu-b { background: color-mix(in srgb, var(--p-b) 16%, var(--g-card)); }
+.g-ult .gu-sb.is-open.gu-a { background-color: color-mix(in srgb, var(--p-a) 16%, var(--g-card)); }
+.g-ult .gu-sb.is-open.gu-b { background-color: color-mix(in srgb, var(--p-b) 16%, var(--g-card)); }
 .g-ult .gu-sb.is-open::before, .g-ult .gu-sb.is-theirs::before { content: ''; position: absolute; inset: 2px; border-radius: 6px; pointer-events: none; z-index: 1; }
 .g-ult .gu-sb.is-target::after { content: ''; position: absolute; inset: 6px; border-radius: 6px; pointer-events: none; z-index: 1; border: 3px dashed var(--g-ink); animation: gu-breathe 1.2s ease-in-out infinite; }
 .g-ult .gu-sb.gu-ta::after { border-color: var(--p-a); } .g-ult .gu-sb.gu-tb::after { border-color: var(--p-b); }
@@ -481,8 +484,8 @@ registerGame({
 .g-ult .gu-sb.is-theirs.gu-a::before { border: 3px dashed var(--p-a); }
 .g-ult .gu-sb.is-theirs.gu-b::before { border: 3px dashed var(--p-b); }
 /* a free move (every open board is legal) is a whisper, not nine shouting rings */
-.g-ult .gu-sb.is-open.is-free.gu-a { background: color-mix(in srgb, var(--p-a) 7%, var(--g-card)); }
-.g-ult .gu-sb.is-open.is-free.gu-b { background: color-mix(in srgb, var(--p-b) 7%, var(--g-card)); }
+.g-ult .gu-sb.is-open.is-free.gu-a { background-color: color-mix(in srgb, var(--p-a) 7%, var(--g-card)); }
+.g-ult .gu-sb.is-open.is-free.gu-b { background-color: color-mix(in srgb, var(--p-b) 7%, var(--g-card)); }
 .g-ult .gu-sb.is-open.is-free::before { animation: none; box-shadow: none; border: 2px solid; opacity: 0.4; }
 .g-ult .gu-sb.is-open.is-free.gu-a::before { border-color: var(--p-a); }
 .g-ult .gu-sb.is-open.is-free.gu-b::before { border-color: var(--p-b); }
@@ -490,15 +493,16 @@ registerGame({
 .g-ult .gu-sb.is-off .gu-cells { opacity: 0.6; }
 .g-ult .gu-sb.is-won .gu-cells { opacity: 0.16; }
 .g-ult .gu-sb.is-dead .gu-cells { opacity: 0.35; }
-.g-ult .gu-sb.is-idle:not(.is-won):not(.is-dead) { background: color-mix(in srgb, var(--g-card) 80%, var(--g-bg)); }
+.g-ult .gu-sb.is-idle:not(.is-won):not(.is-dead) { background-color: color-mix(in srgb, var(--g-card) 80%, var(--g-bg)); }
+/* a won board is printed in the winner's ink: a halftone screen over a tint of it */
+.g-ult .gu-sb.is-won.w-a { background: var(--g-halftone-a) 0 0 / 5px 5px, var(--g-grain) 0 0 / var(--g-grain-size), color-mix(in srgb, var(--p-a) 14%, var(--g-card)); }
+.g-ult .gu-sb.is-won.w-b { background: var(--g-halftone-b) 0 0 / 5px 5px, var(--g-grain) 0 0 / var(--g-grain-size), color-mix(in srgb, var(--p-b) 14%, var(--g-card)); }
 .g-ult .gu-sb.is-dead::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(-45deg, transparent 0 7px, color-mix(in srgb, var(--g-ink) 16%, transparent) 7px 9px); }
-.g-ult .gu-sb.shake { animation: gu-shake 340ms ease-out; }
-@keyframes gu-shake { 0%, 100% { transform: none; } 25% { transform: translateX(-5px); } 50% { transform: translateX(4px); } 75% { transform: translateX(-2px); } }
 .g-ult .gu-bm { position: absolute; inset: 6px; width: calc(100% - 12px); height: calc(100% - 12px); pointer-events: none; overflow: visible; }
 .g-ult .gu-bm .gu-ink { stroke-width: 21; }
 .g-ult .gu-bm .gu-col { stroke-width: 13; }
-.g-ult .gu-bm.is-new path, .g-ult .gu-bm.is-new circle { stroke-dasharray: 2 2; animation: gu-draw 520ms cubic-bezier(0.6, 0, 0.3, 1) both; animation-delay: var(--d, 0ms); }
-@keyframes gu-draw { from { stroke-dashoffset: 2; } to { stroke-dashoffset: 0; } }
+.g-ult .gu-bm.is-new { animation: gu-bigin 560ms cubic-bezier(0.3, 1.2, 0.5, 1) both; animation-delay: var(--d, 0ms); }
+@keyframes gu-bigin { 0% { transform: scale(2.1) rotate(-16deg); opacity: 0; } 50% { transform: scale(0.9) rotate(2deg); opacity: 1; } 75% { transform: scale(1.05); } 100% { transform: none; opacity: 1; } }
 .g-ult .gu-bm.is-cheer { transform-box: fill-box; transform-origin: center; animation: gu-cheer 560ms cubic-bezier(0.3, 1.6, 0.5, 1) both; animation-delay: var(--c, 0ms); }
 @keyframes gu-cheer { 0% { transform: none; } 45% { transform: scale(1.14) rotate(-5deg); } 100% { transform: none; } }
 /* Hot Boards: a Riso star in the corner; a won hot board wears a x2 stamp */
@@ -508,23 +512,23 @@ registerGame({
 .g-ult .gu-hot b { display: none; font: 900 0.62rem/1 var(--g-font-display); color: var(--g-on-ink); background: var(--g-hl); border: 1.5px solid var(--g-ink); border-radius: 4px; padding: 1px 3px; transform: rotate(-6deg); }
 .g-ult .gu-sb.is-hot.is-won .gu-hot b { display: block; }
 .g-ult .gu-sb.is-hot.is-won .gu-hot svg { width: 20px; height: 20px; }
-.g-ult .gu-sb.is-stamp .gu-hot { animation: gu-stamp 640ms cubic-bezier(0.3, 1.8, 0.5, 1) both; }
-@keyframes gu-stamp { 0% { transform: scale(0.3) rotate(-30deg); } 60% { transform: scale(1.5) rotate(8deg); } 100% { transform: none; } }
 .g-ult .gu-strike, .g-ult .gu-live { position: absolute; inset: 2px; width: calc(100% - 4px); height: calc(100% - 4px); pointer-events: none; overflow: visible; }
-.g-ult .gu-sk { fill: none; stroke-linecap: round; stroke-dasharray: 1 1; animation: gu-sk 480ms cubic-bezier(0.6, 0, 0.3, 1) both; animation-delay: var(--d, 0ms); }
-.g-ult .gu-sk-ink { stroke: var(--g-ink); stroke-width: 20; }
-.g-ult .gu-sk-hl { stroke: var(--g-hl); stroke-width: 11; }
+/* the winning line is two pill-shaped boxes inked in by scaling from the first board: transform only */
+.g-ult .gu-sk { position: absolute; height: 6.667%; transform: rotate(var(--rot)) scaleX(0); animation: gu-sk 520ms cubic-bezier(0.6, 0, 0.3, 1) both; animation-delay: var(--d, 0ms); }
+.g-ult .gu-sk i { position: absolute; display: block; border-radius: 999px; }
+.g-ult .gu-sk-ink { inset: 0; background: var(--g-ink); }
+.g-ult .gu-sk-hl { left: var(--hi); right: var(--hi); top: 20.5%; bottom: 20.5%; background: var(--g-hl); }
 .g-ult .gu-lv { fill: none; stroke: var(--g-ink); stroke-width: 5; stroke-linecap: round; stroke-dasharray: 2 11; opacity: 0.5; }
-@keyframes gu-sk { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes gu-sk { from { transform: rotate(var(--rot)) scaleX(0); } to { transform: rotate(var(--rot)) scaleX(1); } }
 @media (hover: hover) and (pointer: fine) {
   .g-ult .gu-sb.is-open .gu-c:not(:disabled):hover::before { background: color-mix(in srgb, var(--g-hl) 60%, transparent); }
 }
 
 .g-ult .gu-side { order: 2; display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; max-width: 600px; min-width: 0; }
-.g-ult .gu-plate { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 16px 8px 10px; border-radius: 999px; background: var(--g-card); border: 2px solid var(--g-ink); box-shadow: var(--g-shadow); font: 900 0.95rem/1.2 var(--g-font-display); color: var(--g-ink); max-width: 100%; text-wrap: balance; }
+.g-ult .gu-plate { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 16px 8px 10px; border-radius: 999px; background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-card); border: 2px solid var(--g-ink); box-shadow: var(--g-shadow); font: 900 0.95rem/1.2 var(--g-font-display); color: var(--g-ink); max-width: 100%; text-wrap: balance; }
+.g-ult .gu-plate-t { text-shadow: var(--g-misreg); }
 .g-ult .gu-plate.wait { color: var(--g-muted); border-color: var(--g-line); }
-.g-ult .gu-plate.pop { animation: gu-plate 260ms cubic-bezier(0.3, 1.5, 0.5, 1); }
-@keyframes gu-plate { from { transform: scale(0.92); } to { transform: none; } }
+.g-ult .gu-plate.wait .gu-plate-t { text-shadow: none; }
 .g-ult .gu-chip { flex: none; width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--g-ink); background: var(--g-card) !important; display: grid; place-items: center; }
 .g-ult .gu-chip .gu-m { position: static; width: 20px; height: 20px; }
 .g-ult .gu-chip.none { border-style: dashed; }
@@ -550,7 +554,7 @@ registerGame({
 .g-ult .gu-tie { font-weight: 900; }
 .g-ult .gu-tok:disabled { cursor: default; }
 .g-ult .gu-light { color: var(--g-ink); }
-.g-ult .gu-moment, .g-ult .gu-deny { margin: 2px 0 0; padding: 8px 14px; max-width: 100%; text-align: center; text-wrap: balance; font: 900 0.92rem/1.25 var(--g-font-display); color: var(--g-ink); background: var(--g-hl); color: var(--g-on-ink); border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); box-shadow: var(--g-shadow-sm); transform: rotate(-1.2deg); animation: gu-stampin 380ms cubic-bezier(0.3, 1.7, 0.5, 1) both; }
+.g-ult .gu-moment, .g-ult .gu-deny { margin: 2px 0 0; padding: 8px 14px; max-width: 100%; text-align: center; text-wrap: balance; font: 900 0.92rem/1.25 var(--g-font-display); color: var(--g-ink); background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-hl); color: var(--g-on-ink); text-shadow: var(--g-misreg); border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); box-shadow: var(--g-shadow-sm); transform: rotate(-1.2deg); animation: gu-stampin 380ms cubic-bezier(0.3, 1.7, 0.5, 1) both; }
 .g-ult .gu-deny { position: absolute; left: 50%; top: 42%; z-index: 6; pointer-events: none; margin: 0; max-width: none; white-space: nowrap; font-size: 1.3rem; padding: 10px 20px; transform: translate(-50%, -50%) rotate(-7deg); animation: gu-denyin 360ms cubic-bezier(0.3, 1.7, 0.5, 1) both; }
 @keyframes gu-denyin { from { transform: translate(-50%, -50%) scale(1.7) rotate(-15deg); opacity: 0; } to { transform: translate(-50%, -50%) rotate(-7deg); opacity: 1; } }
 .g-ult .gu-ledger { margin: 0; text-align: center; font: 800 0.82rem/1.3 var(--g-font-body); color: var(--g-ink); text-wrap: balance; max-width: 34em; }
@@ -580,7 +584,7 @@ registerGame({
       for (let i = 0; i < 9; i++) html += `<button type="button" class="gu-c" data-b="${b}" data-i="${i}" tabindex="-1"></button>`;
       html += `</div><svg class="gu-bm" viewBox="0 0 100 100" aria-hidden="true"></svg><span class="gu-hot" aria-hidden="true">${STAR}<b>×2</b></span></div>`;
     }
-    html += '</div><svg class="gu-live" viewBox="0 0 300 300" aria-hidden="true"></svg><svg class="gu-strike" viewBox="0 0 300 300" aria-hidden="true"></svg><p class="gu-deny" hidden>Denied!</p></div>';
+    html += '</div><svg class="gu-live" viewBox="0 0 300 300" aria-hidden="true"></svg><div class="gu-strike" aria-hidden="true"></div><p class="gu-deny" hidden>Denied!</p></div>';
     html += '<div class="gu-side">';
     html += '<div class="gu-top">';
     html += '<div class="gu-pick" hidden><div class="gu-chips" role="radiogroup" aria-label="Game mode">';
@@ -622,9 +626,13 @@ registerGame({
     let chosen = null; // the mode chip the first mover tapped (before the setup move is sent)
     let armed = false; // Wildcards: the player has armed their wildcard
     let bigShown = Array(9).fill(null); // which big marks are drawn (to animate new ones)
+    let cheered = ''; // the match whose finale has been played (a later paint must not start it again)
     const timers = new Set();
     const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); fn(); }, ms); timers.add(t); };
     const reduced = () => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; } };
+    // one-shot motion through the Web Animations API: restartable without reading layout, transform / opacity only
+    const play = (e, kf, o) => { if (!e || !e.animate || reduced()) return; try { e.animate(kf, o); } catch { /* old webview: no motion */ } };
+    const setCls = (e, v) => { if (e.className !== v) e.className = v; };
     const openBoards = (s) => s.big.map((x, b) => (x ? -1 : b)).filter((b) => b >= 0);
     const wildOn = (s) => armed && !!ctx && ctx.canMove && s.v === 2 && s.mode === 'wild' && s.force !== null && !!(s.wild && s.wild[ctx.actor]);
     const legalFor = (s) => (wildOn(s) ? openBoards(s) : s.force !== null ? [s.force] : openBoards(s));
@@ -669,19 +677,23 @@ registerGame({
         if (pv && target === b) cls += ` is-target gu-t${other(actor)}`;
         if (s.mode === 'hot' && s.hot && s.hot.includes(b)) cls += ' is-hot';
         if (few && !st && !onLine.has(b)) cls += ' is-idle';
-        if (rg.classList.contains('shake')) cls += ' shake';
-        if (rg.classList.contains('is-stamp')) cls += ' is-stamp';
-        rg.className = cls;
+        if (st === 'a' || st === 'b') cls += ` w-${st}`;
+        setCls(rg, cls);
         // big mark
         const bm = rg.querySelector('.gu-bm');
         if (st === 'a' || st === 'b') {
           const isNew = bigShown[b] !== st && fresh.animate;
+          // the mark is (re)built only when the board changes hands, so a later paint never restarts or cuts its stamp
           if (bigShown[b] !== st || bm.dataset.w !== st) {
             bm.innerHTML = BIG[st];
             bm.dataset.w = st;
+            bm.setAttribute('class', `gu-bm gu-${st}${isNew ? ' is-new' : ''}`);
+            if (isNew) {
+              bm.style.setProperty('--d', `${fresh.bigDelay}ms`);
+              // the board takes a little hit as the stamp lands
+              later(() => play(rg, [{ transform: 'scale(1)' }, { transform: 'scale(1.045)', offset: 0.35 }, { transform: 'scale(1)' }], { duration: 300, easing: 'ease-out' }), fresh.bigDelay + 230);
+            }
           }
-          bm.setAttribute('class', `gu-bm gu-${st}${isNew ? ' is-new' : ''}`);
-          bm.style.setProperty('--d', `${fresh.bigDelay}ms`);
         } else if (bm.dataset.w) { bm.innerHTML = ''; bm.dataset.w = ''; bm.setAttribute('class', 'gu-bm'); }
       });
       bigShown = s.big.slice();
@@ -703,51 +715,67 @@ registerGame({
         if (k === s.last && !c.over) cls += ' is-last';
         if (ok) cls += ' is-sel';
         if (isSel && sel.by === 'key') cls += ' is-cur';
-        btn.className = cls;
+        setCls(btn, cls);
         const want = v ? `${v}${k === fresh.newCell ? '+' : ''}` : ok ? `ghost-${actor}` : '';
         if (btn.dataset.m !== want) {
           btn.dataset.m = want;
           btn.innerHTML = v ? cellSVG(v, k === fresh.newCell ? 'is-new' : '') : ok ? cellSVG(actor, 'ghost') : '';
         }
-        btn.disabled = !c.canMove;
-        btn.tabIndex = rove && rove.b === b && rove.i === i ? 0 : -1;
-        btn.setAttribute('aria-label', `${NAMES[b]} board, square ${i + 1}${v ? `, ${api.name(v)}` : ''}`);
+        if (btn.disabled !== !c.canMove) btn.disabled = !c.canMove;
+        const ti = rove && rove.b === b && rove.i === i ? 0 : -1;
+        if (btn.tabIndex !== ti) btn.tabIndex = ti;
+        const label = `${NAMES[b]} board, square ${i + 1}${v ? `, ${api.name(v)}` : ''}`;
+        if (btn.getAttribute('aria-label') !== label) btn.setAttribute('aria-label', label);
       });
       // Last Light: the big lines still alive, drawn faintly when only a couple are left
-      live.innerHTML = '';
+      let liveHtml = '';
       if (!c.over && lightLines.length > 0 && lightLines.length <= 2) {
-        live.innerHTML = lightLines.map((n) => {
+        liveHtml = lightLines.map((n) => {
           const L = LINES[n];
           const [x1, y1] = dotPt(L[0]);
           const [x2, y2] = dotPt(L[2]);
           return `<path class="gu-lv" d="M${x1} ${y1}L${x2} ${y2}"/>`;
         }).join('');
       }
-      // finale
-      strike.innerHTML = '';
-      if (s.end && s.end.why === 'line') {
+      if (live.dataset.k !== liveHtml) { live.dataset.k = liveHtml; live.innerHTML = liveHtml; }
+      // finale: the winning line is inked through the three boards, then each of them cheers
+      let strikeHtml = '';
+      const strikeKey = s.end && s.end.why === 'line' ? `${c.matchId}|${s.end.line.join()}` : '';
+      if (strikeKey && strike.dataset.k !== strikeKey) {
         const L = s.end.line;
         const [x1, y1] = dotPt(L[0]);
         const [x2, y2] = dotPt(L[2]);
-        const dx = (x2 - x1) / 200 * 30;
-        const dy = (y2 - y1) / 200 * 30;
-        const d = `M${x1 - dx} ${y1 - dy}L${x2 + dx} ${y2 + dy}`;
-        const delay = fresh.finale;
-        strike.innerHTML = `<path class="gu-sk gu-sk-ink" pathLength="1" d="${d}" style="--d:${delay}ms"/><path class="gu-sk gu-sk-hl" pathLength="1" d="${d}" style="--d:${delay}ms"/>`;
+        const ex = ((x2 - x1) / 200) * 30;
+        const ey = ((y2 - y1) / 200) * 30;
+        const ax = x1 - ex;
+        const ay = y1 - ey;
+        const len = Math.hypot(x2 + ex - ax, y2 + ey - ay) + 20;
+        const rot = (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI;
+        const pc = (v) => `${((v / 300) * 100).toFixed(3)}%`;
+        strikeHtml = `<div class="gu-sk" style="left:${pc(ax - 10)};top:${pc(ay - 10)};width:${pc(len)};--rot:${rot.toFixed(2)}deg;--hi:${((4.5 / len) * 100).toFixed(2)}%;transform-origin:${((10 / len) * 100).toFixed(2)}% 50%;--d:${fresh.finale}ms"><i class="gu-sk-ink"></i><i class="gu-sk-hl"></i></div>`;
       }
+      if (strike.dataset.k !== strikeKey) { strike.dataset.k = strikeKey; strike.innerHTML = strikeHtml; }
       if (s.end && s.end.who) {
         const winners = s.end.why === 'line' ? s.end.line : s.big.map((x, b) => (x === s.end.who ? b : -1)).filter((b) => b >= 0);
-        winners.forEach((b, n) => {
-          const bm = regions[b].querySelector('.gu-bm');
-          const cheer = () => { bm.classList.remove('is-new'); bm.style.setProperty('--c', `${n * 100}ms`); bm.classList.add('is-cheer'); };
-          if (fresh.finale > 0) later(cheer, fresh.finale + 300); else cheer();
-        });
-      }
+        if (cheered !== c.matchId) {
+          cheered = c.matchId;
+          winners.forEach((b, n) => {
+            const bm = regions[b].querySelector('.gu-bm');
+            const cheer = () => { bm.classList.remove('is-new'); bm.style.setProperty('--c', `${n * 100}ms`); bm.classList.add('is-cheer'); };
+            if (fresh.finale > 0) later(cheer, fresh.finale + 300); else cheer();
+          });
+          // the whole table takes a thump when the line closes
+          if (fresh.finale > 0) later(() => play(bigEl, [{ transform: 'translateY(0)' }, { transform: 'translateY(0.9%)', offset: 0.3 }, { transform: 'translateY(0)' }], { duration: 260, easing: 'ease-out' }), fresh.finale + 480);
+        }
+      } else cheered = '';
       renderTop(c);
       renderPlate(pv, target);
       renderExtras(c);
-      fit();
+      const overChanged = !!c.over !== lastOverFit;
+      lastOverFit = !!c.over;
+      if (syncOver() && (!ro || overChanged)) fit();
     }
+    let lastOverFit = null;
 
     // the zone above the plate: mode picker | rivalry strip | mode label + wildcards
     function renderTop(c) {
@@ -774,9 +802,12 @@ registerGame({
         // the komi, visible before it matters: ties on boards go to whoever moves second
         const second = s.v === 2 ? secondMover(s) : other(c.first);
         const tie = $('.gu-tie');
-        tie.innerHTML = 'Ties → <b class="gu-nm"></b>';
-        tie.lastChild.textContent = api.name(second);
-        tie.lastChild.className = `gu-nm gu-nm-${second}`;
+        if (tie.dataset.k !== `${second}|${api.name(second)}`) {
+          tie.dataset.k = `${second}|${api.name(second)}`;
+          tie.innerHTML = 'Ties → <b class="gu-nm"></b>';
+          tie.lastChild.textContent = api.name(second);
+          tie.lastChild.className = `gu-nm gu-nm-${second}`;
+        }
         const chip = $('.gu-modechip');
         chip.hidden = s.mode !== 'hot';
         chip.textContent = 'Hot Boards · stars count double';
@@ -788,12 +819,15 @@ registerGame({
           const ready = !!(s.wild && s.wild[w]);
           const mine = c.canMove && c.actor === w && ready && s.force !== null;
           const isArmed = mine && armed;
-          tk.className = `gu-tok ${ready ? 'is-ready' : 'is-used'}${isArmed ? ' is-armed' : ''}`;
+          setCls(tk, `gu-tok ${ready ? 'is-ready' : 'is-used'}${isArmed ? ' is-armed' : ''}`);
           const me = c.canMove && c.actor === w;
           const label = me ? (!ready ? 'Wildcard used' : isArmed ? 'Wildcard armed' : 'Use wildcard') : `${api.name(w)}: ${ready ? 'ready' : 'used'}`;
           tk.setAttribute('aria-pressed', isArmed ? 'true' : 'false');
-          tk.innerHTML = `${cellSVG(w)}<span></span>`;
-          tk.lastChild.textContent = label;
+          if (tk.dataset.k !== label) {
+            tk.dataset.k = label;
+            tk.innerHTML = `${cellSVG(w)}<span></span>`;
+            tk.lastChild.textContent = label;
+          }
         });
       }
     }
@@ -858,21 +892,29 @@ registerGame({
         }
       }
       const chip = $('.gu-chip');
-      chip.className = `gu-chip ${who ? 'gu-' + who : 'none'}`;
-      chip.innerHTML = who ? cellSVG(who) : '';
+      setCls(chip, `gu-chip ${who ? 'gu-' + who : 'none'}`);
+      const ck = who || '';
+      if (chip.dataset.k !== ck) { chip.dataset.k = ck; chip.innerHTML = who ? cellSVG(who) : ''; }
       plate.classList.toggle('wait', wait);
-      $('.gu-plate-t').textContent = text;
+      const pt = $('.gu-plate-t');
+      if (pt.textContent !== text) pt.textContent = text;
     }
     // Phone on its side: the chrome above leaves little height, so size the board from what's left
     // (the empty status line is reclaimed while playing). Portrait sizing is pure CSS.
     const landscape = () => { try { return matchMedia('(orientation: landscape) and (max-height: 560px)').matches; } catch { return false; } };
     const setVar = (k, v) => { if (root.style.getPropertyValue(k) !== v) root.style.setProperty(k, v); };
-    function fit() {
+    // The pieces of fit() that are pure writes run on every paint; the part that measures (landscape only) runs from the
+    // ResizeObserver, after layout, so it never forces one.
+    function syncOver() {
       const over = !!(ctx && ctx.over);
-      root.classList.toggle('is-over', over);
-      if (!landscape()) { root.style.removeProperty('--gu-s'); setVar('--gu-lift', over ? '0' : '22'); return; }
-      const lift = over ? 0 : 18;
-      setVar('--gu-lift', String(lift));
+      if (root.classList.contains('is-over') !== over) root.classList.toggle('is-over', over);
+      if (!landscape()) { if (root.style.getPropertyValue('--gu-s')) root.style.removeProperty('--gu-s'); setVar('--gu-lift', over ? '0' : '22'); return false; }
+      setVar('--gu-lift', over ? '0' : '18');
+      return true;
+    }
+    function fit() {
+      if (!syncOver()) return;
+      const lift = ctx && ctx.over ? 0 : 18;
       const gm = el.closest('.gm');
       const pad = gm ? parseFloat(getComputedStyle(gm).paddingBottom) || 12 : 12;
       const top = el.getBoundingClientRect().top + window.scrollY;
@@ -888,13 +930,11 @@ registerGame({
       const st = gm && gm.querySelector('.gm-status');
       if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(() => fit()); ro.observe(el); if (st) ro.observe(st); }
     } catch { ro = null; }
-    const popPlate = () => { plate.classList.remove('pop'); void plate.offsetWidth; plate.classList.add('pop'); };
+    const popPlate = () => play(plate, [{ transform: 'scale(0.92)' }, { transform: 'none' }], { duration: 260, easing: 'cubic-bezier(0.3, 1.5, 0.5, 1)' });
     const calm = { animate: false, newCell: -1, bigDelay: 0, finale: 0 };
 
     function shake(b) {
-      const rg = regions[b];
-      rg.classList.remove('shake'); void rg.offsetWidth; rg.classList.add('shake');
-      later(() => rg.classList.remove('shake'), 360);
+      play(regions[b], [{ transform: 'translateX(0)' }, { transform: 'translateX(-6px)', offset: 0.2 }, { transform: 'translateX(5px)', offset: 0.45 }, { transform: 'translateX(-3px)', offset: 0.7 }, { transform: 'translateX(0)' }], { duration: 340, easing: 'ease-out' });
     }
     function refuse(b, msg) {
       api.toast(msg);
@@ -1077,9 +1117,8 @@ registerGame({
           finale: c.over && animate ? (wonNow ? 760 : 300) : 0,
         };
         if (hotNow) {
-          const rg = regions[lastB];
-          later(() => { rg.classList.remove('is-stamp'); void rg.offsetWidth; rg.classList.add('is-stamp'); }, 420);
-          later(() => rg.classList.remove('is-stamp'), 1200);
+          const star = regions[lastB].querySelector('.gu-hot');
+          later(() => play(star, [{ transform: 'scale(0.3) rotate(-30deg)' }, { transform: 'scale(1.5) rotate(8deg)', offset: 0.6 }, { transform: 'none' }], { duration: 640, easing: 'cubic-bezier(0.3, 1.8, 0.5, 1)' }), 420);
         }
         paint(fresh);
         // Denied!: this move won a small board the other player needed for a live big line

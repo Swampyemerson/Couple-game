@@ -268,7 +268,7 @@ export const RELAY = {
         if (next && typeof next === 'object') {
           if ((next.x | 0) > lastX) {
             lastX = next.x | 0;
-            root.classList.remove('is-bad'); void root.offsetWidth; root.classList.add('is-bad');
+            root.classList.add('is-bad'); { const on = root.classList.contains('shk-a'); root.classList.remove(on ? 'shk-a' : 'shk-b'); root.classList.add(on ? 'shk-b' : 'shk-a'); } // restart the shake without reading layout
             if (host2.sfx) host2.sfx('bad');
           } else if (next.d && !live.d && host2.sfx) host2.sfx('good');
           live = next;
@@ -299,7 +299,7 @@ export const RELAY = {
 .g-defuse .dx-relay-lamp b { font: 400 1.2rem/1 var(--g-font-display); letter-spacing: 0.04em; }
 .g-defuse .dx-relay-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (min-width: 560px) { .g-defuse .dx-relay-row { grid-template-columns: repeat(4, 1fr); } }
-.g-defuse .dx-relay-sw { display: flex; flex-direction: column; align-items: center; gap: 4px; min-height: 124px; padding: 10px 6px 8px; background: var(--g-card); color: var(--g-ink); border: 2.5px solid var(--g-ink); border-radius: 12px; box-shadow: 0 5px 0 var(--g-ink); transition: transform 0.06s, box-shadow 0.06s, background-color 0.1s; touch-action: manipulation; }
+.g-defuse .dx-relay-sw { display: flex; flex-direction: column; align-items: center; gap: 4px; min-height: 124px; padding: 10px 6px 8px; background: var(--g-card); color: var(--g-ink); border: 2.5px solid var(--g-ink); border-radius: 12px; box-shadow: 0 5px 0 var(--g-ink); transition: transform 0.16s var(--g-ease-spring); touch-action: manipulation; }
 .g-defuse .dx-relay-sw:active { transform: translateY(3px); box-shadow: 0 2px 0 var(--g-ink); }
 .g-defuse .dx-relay-sw.is-on { background: var(--g-hl-soft, var(--g-card)); }
 .g-defuse .dx-relay-sw:focus-visible, .g-defuse .dx-relay-commit:focus-visible { outline: 3px solid var(--p-a); outline-offset: 3px; }
@@ -307,16 +307,16 @@ export const RELAY = {
 .g-defuse .dx-relay-cap b { font: 400 1.45rem/1 var(--g-font-display); }
 .g-defuse .dx-relay-sw small { font: 800 0.7rem/1 var(--g-font-body); letter-spacing: 0.12em; text-transform: uppercase; color: var(--g-muted); }
 .g-defuse .dx-relay-lever { position: relative; width: 26px; height: 40px; border: 2.5px solid var(--g-ink); border-radius: 13px; background: var(--dx-dark, #18171d); }
-.g-defuse .dx-relay-lever i { position: absolute; left: 2px; right: 2px; bottom: 2px; height: 16px; border-radius: 50%; background: var(--dx-white, #f8f5ec); border: 2px solid var(--g-ink); transition: bottom 0.08s; }
-.g-defuse .dx-relay-sw.is-on .dx-relay-lever i { bottom: 18px; background: var(--dx-yellow, #ffd21f); }
+.g-defuse .dx-relay-lever i { position: absolute; left: 2px; right: 2px; bottom: 2px; height: 16px; border-radius: 50%; background: var(--dx-white, #f8f5ec); border: 2px solid var(--g-ink); transition: transform 0.18s var(--g-ease-spring); }
+.g-defuse .dx-relay-sw.is-on .dx-relay-lever i { transform: translateY(-16px); background: var(--dx-yellow, #ffd21f); }
 .g-defuse .dx-relay-state { font: 400 0.9rem/1 var(--g-font-display); letter-spacing: 0.06em; }
-.g-defuse .dx-relay-commit { min-height: 56px; padding: 8px 14px; background: var(--dx-yellow, #ffd21f); color: var(--dx-dark, #18171d); border: 2.5px solid var(--g-ink); border-radius: 12px; box-shadow: 0 5px 0 var(--g-ink); font: 400 1.3rem/1 var(--g-font-display); letter-spacing: 0.08em; touch-action: manipulation; transition: transform 0.06s, box-shadow 0.06s; }
+.g-defuse .dx-relay-commit { min-height: 56px; padding: 8px 14px; background: var(--dx-yellow, #ffd21f); color: var(--dx-dark, #18171d); border: 2.5px solid var(--g-ink); border-radius: 12px; box-shadow: 0 5px 0 var(--g-ink); font: 400 1.3rem/1 var(--g-font-display); letter-spacing: 0.08em; touch-action: manipulation; transition: transform 0.16s var(--g-ease-spring); }
 .g-defuse .dx-relay-commit:not(:disabled):active { transform: translateY(4px); box-shadow: 0 1px 0 var(--g-ink); }
 .g-defuse .dx-relay-box.is-done .dx-relay-sw, .g-defuse .dx-relay-commit:disabled { opacity: 0.6; box-shadow: 0 2px 0 var(--g-ink); }
 .g-defuse .dx-relay-msg { min-height: 1.3em; margin: 0 !important; font-weight: 800; font-size: 0.9rem; color: var(--g-bad); }
 .g-defuse .dx-relay-box.is-done .dx-relay-msg { color: var(--g-good); }
-.g-defuse .dx-relay-box.is-bad { border-color: var(--g-bad); animation: dx-shake 0.36s ease-out; }
-@media (prefers-reduced-motion: reduce) { .g-defuse .dx-relay-box.is-bad { animation: none; } .g-defuse .dx-relay-sw, .g-defuse .dx-relay-lever i { transition: none; } }
+.g-defuse .dx-relay-box.is-bad { border-color: var(--g-bad); }
+@media (prefers-reduced-motion: reduce) { .g-defuse .dx-relay-sw, .g-defuse .dx-relay-lever i { transition: none; } }
 @media (max-width: 440px) { .g-defuse .dx-relay-box { padding: 10px; } .g-defuse .dx-relay-card { transform: none; } }
 `,
 };

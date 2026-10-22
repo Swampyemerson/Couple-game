@@ -102,8 +102,8 @@ export const CSS = `
 .g-wd-strip { flex-wrap: wrap; max-width: 100%; row-gap: 2px; }
 .g-wd-row { position: relative; }
 .g-wd-row.is-dealt { margin-top: 11px; }
-.g-wd-board:has(.is-dealt) { --t: min(62px, calc((100cqw - 4 * var(--gap)) / 5), calc((100cqh - 5 * var(--gap) - 12px) / 6)); }
-.g-wd-col .g-wd-board:has(.is-dealt) { --t: min(44px, calc((50cqw - 6px - 4 * var(--gap)) / 5), calc((100cqh - 74px - 6 * var(--gap) - 12px) / 7)); }
+.g-wd-board.dl { --t: min(62px, calc((100cqw - 4 * var(--gap)) / 5), calc((100cqh - 5 * var(--gap) - 12px) / 6)); }
+.g-wd-col .g-wd-board.dl { --t: min(44px, calc((50cqw - 6px - 4 * var(--gap)) / 5), calc((100cqh - 74px - 6 * var(--gap) - 12px) / 7)); }
 .g-wd-row.is-dealt::before { content: 'Dealt'; position: absolute; left: -3px; top: -11px; z-index: 2; padding: 0 5px; font: 900 0.52rem/1.35 var(--g-font-body); letter-spacing: 0.12em; text-transform: uppercase; background: var(--g-ink); color: var(--g-bg); border-radius: 3px; transform: rotate(-3deg); pointer-events: none; }
 .g-wd-area.is-scroll { align-items: flex-start; overflow-y: auto; overscroll-behavior: contain; }
 .g-wd-area.is-scroll > * { margin-block: auto; }

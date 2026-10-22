@@ -41,7 +41,7 @@ function timeline(strokes) {
 class Paper {
   constructor(canvas, inks) { this.cv = canvas; this.g = canvas.getContext('2d'); this.inks = inks; this.size = 0; }
   fit(css) {
-    const dpr = Math.min(3, (typeof devicePixelRatio === 'number' && devicePixelRatio) || 1);
+    const dpr = Math.min(2, (typeof devicePixelRatio === 'number' && devicePixelRatio) || 1);
     this.size = css;
     this.cv.style.width = this.cv.style.height = `${css}px`;
     const px = Math.max(1, Math.round(css * dpr));
@@ -58,17 +58,37 @@ class Paper {
   }
   pen(st) { const c = this.inks()[st.c]; this.g.strokeStyle = c; this.g.fillStyle = c; this.g.lineWidth = WIDTHS[st.s]; }
   dot(st) { const [x, y] = st.pts[0]; this.pen(st); const g = this.g; g.beginPath(); g.arc(x + 0.5, y + 0.5, WIDTHS[st.s] / 2, 0, Math.PI * 2); g.fill(); }
-  // the curve piece that point k (k >= 1) completes
-  seg(st, k) {
+  // Pieces from..to (k >= 1, inclusive) as ONE continuous path: a rAF batch of the live stroke costs a single stroke() call.
+  segs(st, from, to) {
+    const p = st.pts;
+    if (to < from || from < 1) return;
+    const g = this.g; this.pen(st);
+    g.beginPath();
+    if (from === 1) g.moveTo(p[0][0] + 0.5, p[0][1] + 0.5);
+    else g.moveTo((p[from - 2][0] + p[from - 1][0]) / 2 + 0.5, (p[from - 2][1] + p[from - 1][1]) / 2 + 0.5);
+    for (let k = from; k <= to; k++) {
+      if (k === 1) g.lineTo((p[0][0] + p[1][0]) / 2 + 0.5, (p[0][1] + p[1][1]) / 2 + 0.5);
+      else g.quadraticCurveTo(p[k - 1][0] + 0.5, p[k - 1][1] + 0.5, (p[k - 1][0] + p[k][0]) / 2 + 0.5, (p[k - 1][1] + p[k][1]) / 2 + 0.5);
+    }
+    g.stroke();
+  }
+  // The part of piece k between fractions u0 and u1 (0..1) of the way along it: lets a replay move the pen
+  // continuously between two recorded points instead of hopping from point to point.
+  part(st, k, u0, u1) {
     const p = st.pts; const g = this.g;
+    let ax; let ay; let cx; let cy; let bx; let by;
+    if (k === 1) {
+      ax = p[0][0]; ay = p[0][1]; bx = (p[0][0] + p[1][0]) / 2; by = (p[0][1] + p[1][1]) / 2; cx = (ax + bx) / 2; cy = (ay + by) / 2;
+    } else {
+      ax = (p[k - 2][0] + p[k - 1][0]) / 2; ay = (p[k - 2][1] + p[k - 1][1]) / 2; cx = p[k - 1][0]; cy = p[k - 1][1]; bx = (p[k - 1][0] + p[k][0]) / 2; by = (p[k - 1][1] + p[k][1]) / 2;
+    }
+    const at = (t, a, c, b) => (1 - t) * (1 - t) * a + 2 * t * (1 - t) * c + t * t * b;
+    const d0x = (1 - u0) * (cx - ax) + u0 * (bx - cx); const d0y = (1 - u0) * (cy - ay) + u0 * (by - cy);
+    const sx = at(u0, ax, cx, bx); const sy = at(u0, ay, cy, by);
     this.pen(st);
     g.beginPath();
-    if (k === 1) { g.moveTo(p[0][0] + 0.5, p[0][1] + 0.5); g.lineTo((p[0][0] + p[1][0]) / 2 + 0.5, (p[0][1] + p[1][1]) / 2 + 0.5); }
-    else {
-      const a = p[k - 2]; const b = p[k - 1]; const c = p[k];
-      g.moveTo((a[0] + b[0]) / 2 + 0.5, (a[1] + b[1]) / 2 + 0.5);
-      g.quadraticCurveTo(b[0] + 0.5, b[1] + 0.5, (b[0] + c[0]) / 2 + 0.5, (b[1] + c[1]) / 2 + 0.5);
-    }
+    g.moveTo(sx + 0.5, sy + 0.5);
+    g.quadraticCurveTo(sx + (u1 - u0) * d0x + 0.5, sy + (u1 - u0) * d0y + 0.5, at(u1, ax, cx, bx) + 0.5, at(u1, ay, cy, by) + 0.5);
     g.stroke();
   }
   tail(st) {
@@ -97,19 +117,32 @@ class Paper {
 
 // Plays a drawing back on a Paper, at real speed squeezed into `cap` ms. `base` strokes are
 // already on the paper (the half of a Half & Half drawing that was shown first).
+// Time comes from the rAF timestamp (never a per-frame step), and the pen moves continuously along the
+// piece between two recorded points, so the replay looks the same at 30, 60 and 120 Hz.
 function player(paper, strokes, { cap: capMs = REPLAY_CAP, onDone = () => {}, base = [] } = {}) {
   const { T, total } = timeline(strokes);
   const k = total > capMs ? total / capMs : 1;
-  let si = 0; let pi = 0; let raf = 0; let t0 = 0; let done = false;
+  let si = 0; let pi = 0; let u0 = 0; let raf = 0; let t0 = 0; let done = false;
   const drawBase = () => { paper.reset(); for (const b of base) paper.stroke(b); };
   const finish = () => { if (done) return; done = true; cancelAnimationFrame(raf); onDone(); };
   const step = (now) => {
     if (!t0) t0 = now;
     const e = (now - t0) * k;
-    while (si < strokes.length && T[si][pi] <= e) {
-      const st = strokes[si];
-      if (pi >= 1) paper.seg(st, pi);
-      if (pi === st.pts.length - 1) { paper.tail(st); si++; pi = 0; } else pi++;
+    while (si < strokes.length) {
+      const st = strokes[si]; const Ts = T[si]; const n = st.pts.length;
+      if (pi === 0) {
+        if (Ts[0] > e) break;
+        if (n === 1) { paper.tail(st); si++; continue; }
+        pi = 1; u0 = 0;
+      }
+      if (Ts[pi] <= e) { // the point is reached: finish its piece
+        paper.part(st, pi, u0, 1); u0 = 0;
+        if (pi === n - 1) { paper.tail(st); si++; pi = 0; } else pi++;
+      } else { // between two points: advance the pen to where it is now
+        const u = (e - Ts[pi - 1]) / Math.max(1, Ts[pi] - Ts[pi - 1]);
+        if (u > u0 + 0.02) { paper.part(st, pi, u0, u); u0 = u; }
+        break;
+      }
     }
     if (si >= strokes.length) finish(); else raf = requestAnimationFrame(step);
   };
@@ -122,9 +155,29 @@ function player(paper, strokes, { cap: capMs = REPLAY_CAP, onDone = () => {}, ba
     redraw() {
       drawBase();
       for (let i = 0; i < Math.min(si, strokes.length); i++) paper.stroke(strokes[i]);
-      if (si < strokes.length && pi > 0) paper.stroke(strokes[si], pi, false);
+      if (si < strokes.length && pi > 0) { paper.stroke(strokes[si], pi, false); if (u0 > 0) paper.part(strokes[si], pi, 0, u0); }
     },
   };
+}
+
+// The printed look: a tile of paper-coloured specks that sits over the ink, so the ink never covers the paper
+// tooth completely (riso dropout). Made once per theme with a seeded generator, so it is the same every time.
+function speckTile(paper) {
+  try {
+    const N = 160;
+    const c = document.createElement('canvas');
+    c.width = c.height = N;
+    const g = c.getContext('2d');
+    if (!g) return '';
+    g.fillStyle = paper;
+    let r = 0x2f6e2b1;
+    const rnd = () => { r ^= r << 13; r ^= r >>> 17; r ^= r << 5; return ((r >>> 0) % 100000) / 100000; };
+    for (let i = 0; i < 1600; i++) {
+      g.globalAlpha = 0.25 + rnd() * 0.45;
+      g.fillRect(Math.floor(rnd() * N), Math.floor(rnd() * N), rnd() < 0.2 ? 2 : 1, rnd() < 0.2 ? 2 : 1);
+    }
+    return c.toDataURL('image/png');
+  } catch { return ''; }
 }
 
 const fmtClock = (sec) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
@@ -138,6 +191,16 @@ export function mountDoodle(el, api, K) {
   const nm = (w) => `<b class="p-${w}">${esc(api.name(w))}</b>`;
   let toks = api.tokens();
   const inks = () => [toks.ink, toks.a, toks.b, toks.good];
+  const paintSpeck = () => { const u = speckTile(toks.card); if (u) root.style.setProperty('--dd-speck', `url(${u})`); };
+  paintSpeck();
+  // a press shows on pointerdown (iOS only applies :active after a touch listener exists, and late)
+  const pressed = new Set();
+  const unpress = () => { pressed.forEach((b) => b.classList.remove('is-pressed')); pressed.clear(); };
+  root.addEventListener('pointerdown', (e) => {
+    const b = e.target.closest && e.target.closest('button:not(:disabled)');
+    if (b && root.contains(b)) { b.classList.add('is-pressed'); pressed.add(b); }
+  });
+  for (const t of ['pointerup', 'pointercancel', 'pointerleave', 'dragend']) root.addEventListener(t, unpress, true);
   const vs = { ack: {}, color: 0, size: 0, replayed: {}, galleryPlayed: false, wasOver: null, draft: null, early: {}, recorded: null };
   let ctx = null;
   let scr = null;
@@ -319,7 +382,10 @@ export function mountDoodle(el, api, K) {
     let fridge = null;
     if (pinned && pinned.length) {
       const fp = new Paper(document.createElement('canvas'), inks);
-      node.querySelector('.dd-fridge-pic').appendChild(fp.cv);
+      const fw = document.createElement('span');
+      fw.className = 'dd-cvw';
+      fw.appendChild(fp.cv);
+      node.querySelector('.dd-fridge-pic').appendChild(fw);
       fp.fit(44); fp.all(pinned);
       fridge = fp;
     }
@@ -400,15 +466,18 @@ export function mountDoodle(el, api, K) {
     let retryT = 0;
     let oneToast = false;
     const fade = kind === 'invisible';
-    const fades = [];
-    let fadeRaf = 0;
 
-    const used = () => charsOf(D.strokes) + (active ? 4 * active.st.pts.length + 4 : 0);
+    // charsOf walks every stroke: keep the committed total and refresh it only when the stroke list changes
+    let baseChars = charsOf(D.strokes);
+    const syncChars = () => { baseChars = charsOf(D.strokes); };
+    const used = () => baseChars + (active ? 4 * active.st.pts.length + 4 : 0);
+    let inkOn = null; let inkLow = null;
     const paintInk = () => {
       const f = used() / INK_CHARS;
-      ink.classList.toggle('on', f > 0.45);
-      ink.classList.toggle('low', f > 0.85);
-      ink.firstChild.style.width = `${Math.min(100, f * 100)}%`;
+      const on = f > 0.45; const low = f > 0.85;
+      if (on !== inkOn) { inkOn = on; ink.classList.toggle('on', on); }
+      if (low !== inkLow) { inkLow = low; ink.classList.toggle('low', low); }
+      ink.firstChild.style.transform = `scaleX(${Math.min(1, f).toFixed(3)})`; // compositor only, no layout
     };
     const paintTools = () => {
       node.querySelector('[data-a="undo"]').disabled = !D.hist.length || D.sent;
@@ -419,23 +488,49 @@ export function mountDoodle(el, api, K) {
       p.box.classList.toggle('locked', !!D.locked);
       paintInk();
     };
-    // Invisible Ink: strokes stay for a moment after the pen lifts, then fade (view only).
-    const fadeFrame = (now) => {
-      fadeRaf = 0;
-      p.paper.reset();
-      const g = p.paper.g;
-      let live = false;
-      for (const f of fades) {
-        const age = now - f.end;
-        const a = reduced() ? (age < 600 ? 1 : 0) : age < 150 ? 1 : Math.max(0, 1 - (age - 150) / 450);
-        if (a > 0) { g.globalAlpha = a; p.paper.stroke(f.st); live = true; }
+    // Invisible Ink: every stroke is drawn on a canvas layer of its own. When the pen lifts the layer waits a moment
+    // and fades out through a CSS opacity transition (compositor only): nothing is ever redrawn while it fades.
+    const layers = []; // { cv, paper, busy, t }
+    const spare = [];
+    const takeLayer = () => {
+      let L = spare.pop();
+      if (!L) {
+        const c = document.createElement('canvas');
+        c.className = 'dd-layer';
+        L = { cv: c, paper: new Paper(c, inks), busy: true, t: 0, size: 0 };
       }
-      g.globalAlpha = 1;
-      if (active) { p.paper.stroke(active.st, active.st.pts.length, false); live = true; }
-      while (fades.length && now - fades[0].end > 650) fades.shift();
-      if (live || fades.length) fadeRaf = requestAnimationFrame(fadeFrame);
+      L.busy = true; L.cv.style.transition = 'none'; L.cv.style.opacity = '1'; L.cv.hidden = false;
+      if (L.size !== p.paper.size) { L.paper.fit(p.paper.size); L.size = p.paper.size; } else L.paper.reset();
+      p.box.insertBefore(L.cv, ink);
+      layers.push(L);
+      return L;
     };
-    const kick = () => { if (!fadeRaf) fadeRaf = requestAnimationFrame(fadeFrame); };
+    const freeLayer = (L) => {
+      clearTimeout(L.t); L.busy = false; L.cv.hidden = true;
+      const at = layers.indexOf(L); if (at >= 0) layers.splice(at, 1);
+      if (L.cv.parentNode) L.cv.parentNode.removeChild(L.cv);
+      spare.push(L);
+    };
+    const fadeOut = (L) => {
+      if (reduced()) { L.t = setTimeout(() => freeLayer(L), 600); return; } // visible for a moment, then gone
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (!L.busy) return;
+        L.cv.style.transition = 'opacity 450ms linear 150ms'; L.cv.style.opacity = '0';
+      }));
+      L.t = setTimeout(() => freeLayer(L), 750);
+    };
+    const dropLayers = () => { for (const L of layers.slice()) if (!active || active.layer !== L) freeLayer(L); };
+
+    // One rAF per frame at most: draw whatever new points arrived (coalesced events and all) as a single path.
+    let drawRaf = 0;
+    const flush = () => {
+      drawRaf = 0;
+      if (!active) return;
+      const pts = active.st.pts; const n = pts.length;
+      if (n - 1 > active.drawn) { active.paper.segs(active.st, active.drawn + 1, n - 1); active.drawn = n - 1; }
+      paintInk();
+    };
+    const schedule = () => { if (!drawRaf) drawRaf = requestAnimationFrame(flush); };
 
     const send = () => {
       if (D.sent || !ctx.canMove) return false;
@@ -496,26 +591,32 @@ export function mountDoodle(el, api, K) {
         const dx = x - l[0]; const dy = y - l[1];
         if (dx * dx + dy * dy < 3) return;
       }
-      if (charsOf(D.strokes) + 1 + 3 + 4 * (pts.length + 1) > INK_CHARS) {
+      if (baseChars + 1 + 3 + 4 * (pts.length + 1) > INK_CHARS) {
         if (!warnedInk) { warnedInk = true; api.toast('Out of ink! Send it as it is.'); api.sfx('bad'); }
         return;
       }
       const dt = pts.length ? Math.max(0, Math.min(255, Math.round((now - active.t) / 8))) : 0;
       active.t = now;
       pts.push([x, y, dt]);
-      if (fade) kick(); else if (pts.length >= 2) p.paper.seg(active.st, pts.length - 1);
     };
     const endStroke = () => {
-      const a = active; active = null;
+      const a = active;
       if (!a) return;
-      if (a.st.pts.length) {
-        if (fade) { fades.push({ st: a.st, end: performance.now() }); kick(); } else p.paper.tail(a.st);
+      // draw what is still waiting for the next frame, then the tail, now (a lifted pen must never lose its last bit)
+      const n = a.st.pts.length;
+      if (n - 1 > a.drawn) { a.paper.segs(a.st, a.drawn + 1, n - 1); a.drawn = n - 1; }
+      active = null;
+      if (drawRaf) { cancelAnimationFrame(drawRaf); drawRaf = 0; }
+      if (n) {
+        a.paper.tail(a.st);
+        if (a.layer) fadeOut(a.layer);
         D.strokes.push(a.st);
         D.hist.push({ k: 'stroke' });
+        syncChars();
         D.lastEnd = performance.now();
         saveDrawing();
         if (D.grace) { D.grace = 0; lockPaper(); trySend(); }
-      }
+      } else if (a.layer) freeLayer(a.layer);
       paintTools();
     };
     cv.addEventListener('pointerdown', (e) => {
@@ -528,16 +629,20 @@ export function mountDoodle(el, api, K) {
       }
       try { cv.setPointerCapture(e.pointerId); } catch { /* synthetic pointer */ }
       const now = performance.now();
-      if (charsOf(D.strokes) + 8 > INK_CHARS) { if (!warnedInk) { warnedInk = true; api.toast('Out of ink! Send it as it is.'); } return; }
-      active = { id: e.pointerId, rect: cv.getBoundingClientRect(), t: e.timeStamp || now, st: { c: vs.color, s: vs.size, gap: Math.min(4095, Math.round((now - D.lastEnd) / 10)), pts: [] } };
+      if (baseChars + 8 > INK_CHARS) { if (!warnedInk) { warnedInk = true; api.toast('Out of ink! Send it as it is.'); } return; }
+      // the rect is read once per stroke (not per move); a stroke can't scroll or resize the page under the pen
+      const layer = fade ? takeLayer() : null;
+      active = { id: e.pointerId, rect: cv.getBoundingClientRect(), t: e.timeStamp || now, layer, paper: layer ? layer.paper : p.paper, drawn: 0, st: { c: vs.color, s: vs.size, gap: Math.min(4095, Math.round((now - D.lastEnd) / 10)), pts: [] } };
       addPoint(e);
+      if (active.st.pts.length) active.paper.dot(active.st); // the pen touches down: ink appears on this frame
+      schedule();
     });
     cv.addEventListener('pointermove', (e) => {
       if (!active || e.pointerId !== active.id) return;
       e.preventDefault();
       const list = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [];
       for (const ev of list.length ? list : [e]) addPoint(ev);
-      paintInk();
+      schedule();
     });
     const up = (e) => { if (active && e.pointerId === active.id) { e.preventDefault(); endStroke(); } };
     cv.addEventListener('pointerup', up);
@@ -548,7 +653,7 @@ export function mountDoodle(el, api, K) {
     cv.addEventListener('touchmove', stopTouch, { passive: false });
     cv.addEventListener('contextmenu', stopTouch);
 
-    const redrawAll = () => { if (fade) { fades.length = 0; p.paper.reset(); kick(); } else p.paper.all(D.strokes); };
+    const redrawAll = () => { if (fade) dropLayers(); else p.paper.all(D.strokes); };
     node.querySelector('.dd-tools').addEventListener('click', (e) => {
       const sw = e.target.closest('.dd-swatch'); const sz = e.target.closest('.dd-size');
       if (sw) { vs.color = Number(sw.dataset.c); api.sfx('tap'); }
@@ -560,11 +665,12 @@ export function mountDoodle(el, api, K) {
       const h = D.hist.pop();
       if (!h) return;
       if (h.k === 'stroke') D.strokes.pop(); else D.strokes = h.prev;
+      syncChars();
       redrawAll(); api.sfx('flip'); paintTools(); saveDrawing();
     });
     node.querySelector('[data-a="clear"]').addEventListener('click', () => {
       if (!D.strokes.length || (D.locked && D.over)) return;
-      D.hist.push({ k: 'clear', prev: D.strokes }); D.strokes = [];
+      D.hist.push({ k: 'clear', prev: D.strokes }); D.strokes = []; syncChars();
       redrawAll(); api.sfx('hit'); api.haptic(20); paintTools(); saveDrawing();
     });
     node.querySelector('.dd-send').addEventListener('click', () => { send(); });
@@ -573,9 +679,15 @@ export function mountDoodle(el, api, K) {
     tick();
     return {
       p, minPaper: 150,
-      redraw() { if (fade) kick(); else { p.paper.all(D.strokes); if (active) p.paper.stroke(active.st, active.st.pts.length, false); } },
+      redraw() {
+        if (fade) {
+          // a resize or a theme change: the fading ghosts just go, the stroke in progress is redrawn at the new size
+          dropLayers();
+          if (active && active.layer) { active.layer.paper.fit(p.paper.size); active.layer.size = p.paper.size; if (active.st.pts.length > 1) active.paper.stroke(active.st, active.st.pts.length, false); active.drawn = Math.max(0, active.st.pts.length - 1); }
+        } else { p.paper.all(D.strokes); if (active) { p.paper.stroke(active.st, active.st.pts.length, false); active.drawn = Math.max(0, active.st.pts.length - 1); } }
+      },
       refresh() { paintTools(); },
-      destroy() { clearInterval(timer); clearTimeout(retryT); if (fadeRaf) cancelAnimationFrame(fadeRaf); },
+      destroy() { clearInterval(timer); clearTimeout(retryT); if (drawRaf) cancelAnimationFrame(drawRaf); layers.concat(spare).forEach((L) => clearTimeout(L.t)); },
     };
   }
 
@@ -898,6 +1010,7 @@ export function mountDoodle(el, api, K) {
     const tilts = [-1.6, 1.2, 0.9, -1.1, -0.7, 1.5, -0.9];
     const modeName = is2 ? MODE_INFO[s.mode].title : 'Classic';
     const mp = masterpieceOf(s.rounds);
+    const enter = !vs.galleryPlayed && !reduced(); // the frames are hung one after another, once
     node.innerHTML = `<div class="dd-gal-head">
         <span class="dd-gal-kicker">The gallery${is2 ? ` · ${esc(modeName)}` : ''}</span>
         <div class="dd-plaque"><b>${s.score}<small>/${max}</small></b><span>${esc(ctx.result ? ctx.result.text : '')}</span></div>
@@ -908,8 +1021,8 @@ export function mountDoodle(el, api, K) {
       <div class="dd-badges">${['a', 'b'].map((w) => `<div class="dd-badge2 p-${w}-b"><span class="dd-badge2-who">${esc(api.name(w))}</span><b>${esc(badges[w].title)}</b><span>${esc(badges[w].line)}</span></div>`).join('')}</div>
       <p class="dd-history" hidden></p>
       <p class="dd-chase" hidden></p>
-      <div class="dd-wall">${s.rounds.map((R, i) => `<button class="dd-frame${R.gold ? ' gold' : ''}${mp && mp.i === i ? ' pick' : ''}" data-i="${i}" style="--tilt:${tilts[i % tilts.length]}deg" aria-label="Round ${i + 1}: ${esc(PROMPTS[R.choices[R.pick]].show)} by ${esc(api.name(R.drawer))}${R.gold ? ', golden frame' : ''}">
-          <canvas></canvas>
+      <div class="dd-wall">${s.rounds.map((R, i) => `<button class="dd-frame${R.gold ? ' gold' : ''}${mp && mp.i === i ? ' pick' : ''}${enter ? ' pre' : ''}" data-i="${i}" style="--tilt:${tilts[i % tilts.length]}deg" aria-label="Round ${i + 1}: ${esc(PROMPTS[R.choices[R.pick]].show)} by ${esc(api.name(R.drawer))}${R.gold ? ', golden frame' : ''}">
+          <span class="dd-cvw"><canvas></canvas></span>
           <span class="dd-frame-title">${esc(cap(PROMPTS[R.choices[R.pick]].show))}</span>
           <span class="dd-frame-meta">by ${nm(R.drawer)}${R.gold ? ' · golden' : ''}${is2 && s.mode === 'mixed' && R.twist && R.twist !== 'normal' ? ` · ${esc(TWIST_INFO[R.twist].title)}` : ''}</span>
           <span class="dd-frame-pts ${R.points ? '' : 'zero'}">${R.points ? `+${R.points}` : R.timeUp ? 'time up' : R.gaveUp ? 'pass' : 'missed'}</span>
@@ -917,7 +1030,7 @@ export function mountDoodle(el, api, K) {
           ${mp && mp.i === i ? '<span class="dd-frame-pick">Tonight’s pick</span>' : ''}
         </button>`).join('')}</div>
       ${s.enc ? `<div class="dd-encore"><span class="dd-gal-kicker">Encore</span><b class="dd-encore-title">${esc(cap(PROMPTS[s.enc.prompt].show))}</b>
-        <div class="dd-encore-pair">${['a', 'b'].map((w) => `<div class="dd-encore-cell"><div class="dd-encore-pic" data-w="${w}"><canvas></canvas></div><span class="dd-frame-meta">by ${nm(w)}${s.enc[w] === '' ? ' · out of time' : ''}</span>${s.enc[w] ? `<button class="gm-btn gm-btn-ghost dd-encpin" data-w="${w}" type="button">Pin to the fridge</button>` : ''}</div>`).join('')}</div></div>` : ''}
+        <div class="dd-encore-pair">${['a', 'b'].map((w) => `<div class="dd-encore-cell"><div class="dd-encore-pic" data-w="${w}"><span class="dd-cvw"><canvas></canvas></span></div><span class="dd-frame-meta">by ${nm(w)}${s.enc[w] === '' ? ' · out of time' : ''}</span>${s.enc[w] ? `<button class="gm-btn gm-btn-ghost dd-encpin" data-w="${w}" type="button">Pin to the fridge</button>` : ''}</div>`).join('')}</div></div>` : ''}
       <div class="dd-gal-actions"><button class="gm-btn" data-g="rematch">Play again</button><button class="gm-btn gm-btn-ghost" data-g="close">Back to games</button></div>`;
     const stripEl = node.querySelector('.dd-strip');
     const historyEl = node.querySelector('.dd-history');
@@ -985,10 +1098,13 @@ export function mountDoodle(el, api, K) {
     const playAll = () => {
       if (mo) { mo.disconnect(); mo = null; }
       papers.forEach((pp, i) => {
-        timers.push(setTimeout(() => { waiting[i] = false; players[i] = player(pp, drawings[i], { cap: 2600 }); }, 250 + i * 260));
+        timers.push(setTimeout(() => {
+          waiting[i] = false; players[i] = player(pp, drawings[i], { cap: 2600 });
+          const f = frames[i]; f.classList.remove('pre'); f.classList.add('enter');
+        }, 250 + i * 260));
       });
     };
-    if (!vs.galleryPlayed && !reduced()) {
+    if (enter) {
       vs.galleryPlayed = true;
       papers.forEach((pp, i) => { waiting[i] = true; pp.reset(); });
       const end = el.closest('.gm') && el.closest('.gm').querySelector('.gm-end');
@@ -1091,6 +1207,7 @@ export function mountDoodle(el, api, K) {
   const onTheme = () => {
     requestAnimationFrame(() => {
       toks = api.tokens();
+      paintSpeck();
       if (scr && scr.redraw) scr.redraw();
       if (lbRedraw) lbRedraw();
     });

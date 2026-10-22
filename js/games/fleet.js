@@ -283,22 +283,28 @@ function shipSVG(len, dir, simple = false) {
   else if (len === 2) deck = `<rect x="28" y="38" width="56" height="24" rx="5"/>${T(128, true)}`;
   else if (len === 3) deck = `${T(56, false)}<rect x="94" y="36" width="72" height="28" rx="5"/>${T(206, true)}`;
   else deck = `${T(50, false)}${T(100, false)}<rect x="136" y="35" width="82" height="30" rx="5"/><rect x="228" y="41" width="22" height="18" rx="4"/>${T(296, true)}`;
-  const body = `<path class="fl-hull" d="${hull}"/><g class="fl-deck">${deck}</g>`;
+  // two rows of halftone dots under the waterline (dots are a dashed round-capped line, so they stay 5 px apart at any size)
+  const dots = simple ? '' : `<path class="fl-dots" d="M18 66H${W - 78}"/><path class="fl-dots is-b" d="M22 71H${W - 84}"/>`;
+  const body = `<path class="fl-hull" d="${hull}"/>${dots}<path class="fl-hull-line" d="${hull}"/><g class="fl-deck">${deck}</g>`;
   return dir === 'v'
     ? `<svg viewBox="0 0 100 ${W}" aria-hidden="true" focusable="false"><g transform="translate(100 0) rotate(90)">${body}</g></svg>`
     : `<svg viewBox="0 0 ${W} 100" aria-hidden="true" focusable="false">${body}</svg>`;
 }
+const polar = (n, radii, rot = 0) => Array.from({ length: n }, (_, i) => {
+  const a = (Math.PI * 2 * i) / n - Math.PI / 2 + rot;
+  const rr = radii[i % radii.length];
+  return `${(50 + rr * Math.cos(a)).toFixed(1)},${(50 + rr * Math.sin(a)).toFixed(1)}`;
+}).join(' ');
+/** Ink droplets that fly out of an impact: [dx, dy, r] in chart units. */
+const DROPS = [[-36, -24, 4.5], [32, -30, 3.5], [40, 16, 4], [-30, 34, 3.5], [4, -42, 3], [10, 41, 4.5]];
+const dropsSVG = DROPS.map(([dx, dy, r]) => `<circle class="fl-drop" cx="50" cy="50" r="${r}" style="--dx:${dx}px;--dy:${dy}px"/>`).join('');
 const BURST = (() => {
   const outer = [42, 33, 45, 35, 41, 31, 44, 36];
-  const pts = [];
-  for (let i = 0; i < 16; i++) {
-    const a = (Math.PI * 2 * i) / 16 - Math.PI / 2;
-    const rr = i % 2 ? 17 : outer[i / 2];
-    pts.push(`${(50 + rr * Math.cos(a)).toFixed(1)},${(50 + rr * Math.sin(a)).toFixed(1)}`);
-  }
-  return `<svg viewBox="0 0 100 100" aria-hidden="true" focusable="false"><polygon class="fl-burst" points="${pts.join(' ')}"/><circle class="fl-core" cx="50" cy="50" r="11"/></svg>`;
+  const pts = polar(16, Array.from({ length: 16 }, (_, i) => (i % 2 ? 17 : outer[i / 2])));
+  // the yellow plate is printed a hair off register, so it peeks out from behind the red burst
+  return `<svg viewBox="0 0 100 100" aria-hidden="true" focusable="false"><polygon class="fl-plate" points="${pts}" transform="translate(3.5 3)"/><polygon class="fl-blot is-hit" points="${polar(14, [30, 22, 33, 21, 31, 24, 34, 22])}"/><polygon class="fl-burst" points="${pts}"/><circle class="fl-core" cx="50" cy="50" r="11"/>${dropsSVG}</svg>`;
 })();
-const SPLASH = '<svg viewBox="0 0 100 100" aria-hidden="true" focusable="false"><circle class="fl-ripple" cx="50" cy="50" r="30"/><circle class="fl-ring" cx="50" cy="50" r="22"/><circle class="fl-dot" cx="50" cy="50" r="8"/></svg>';
+const SPLASH = `<svg viewBox="0 0 100 100" aria-hidden="true" focusable="false"><polygon class="fl-blot" points="${polar(14, [23, 16, 25, 15, 24, 17, 26, 16, 23, 15, 25, 17, 24, 16])}"/><circle class="fl-ripple" cx="50" cy="50" r="30"/><circle class="fl-ring" cx="50" cy="50" r="22"/><circle class="fl-dot" cx="50" cy="50" r="8"/>${dropsSVG}</svg>`;
 const WRECK = '<svg viewBox="0 0 100 100" aria-hidden="true" focusable="false"><path class="fl-x-under" d="M31 31L69 69M69 31L31 69"/><path class="fl-x" d="M31 31L69 69M69 31L31 69"/></svg>';
 
 const at = (r, c, w = 1, h = 1) => `--r:${r};--c:${c};--w:${w};--h:${h}`;
@@ -320,6 +326,12 @@ function chartHTML({ cls = '', cells, layer = '', extra = '' }) {
   </div>`;
 }
 const plainCells = () => '<span class="fl-cell"></span>'.repeat(N * N);
+/** The 64 squares of a chart you tap. Built once per screen, then only patched. */
+const tapCells = (cls = 'fl-cell', off = true) => {
+  let out = '';
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) out += `<button type="button" class="${cls}" data-r="${r}" data-c="${c}" aria-label="${coord(r, c)}"${off ? ' disabled' : ''}></button>`;
+  return out;
+};
 
 /** A random legal fleet (UI only, so Math.random is fine). Prefers ships that don't touch. */
 function randomFleet() {
@@ -356,16 +368,22 @@ function randomFleet() {
 const DRAFTS = new Map();
 
 // ── styles ───────────────────────────────────────────────────────────────
+// Printed look: the sea is wave lines in a player's ink on grainy paper, ships are two-plate pieces
+// (ink, halftone dots under the waterline, a hard shadow), headings and stamps are off register.
+// Motion is transform + opacity only; every animation has a reduced-motion off switch at the end.
 const CSS = `
-.g-fleet { --gut: 14px; --fl-edge: var(--g-edge, var(--g-ink)); position: relative; container-type: inline-size; width: 100%; margin: 0 auto; padding: 0 0 4px; color: var(--g-ink); font-family: var(--g-font-body); -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+.g-fleet { --gut: 14px; --fl-edge: var(--g-edge, var(--g-ink)); --tooth: var(--g-grain) 0 0 / var(--g-grain-size); position: relative; container-type: inline-size; width: 100%; margin: 0 auto; padding: 0 0 4px; color: var(--g-ink); font-family: var(--g-font-body); -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 .g-fleet.is-hidden { min-height: 240px; }
+.g-fleet [hidden] { display: none !important; }
 .g-fleet .fl-place, .g-fleet .fl-battle, .g-fleet .fl-wait { --cell: min(52px, calc((100cqw - var(--gut)) / 8)); --mini: clamp(17px, calc(100cqw / 19), 26px); }
 .g-fleet .fl-place { --cell: min(40px, calc((100cqw - var(--gut)) / 8)); }
 .g-fleet h2, .g-fleet h3, .g-fleet p { margin: 0; }
 
-/* ── chart ── */
-.g-fleet .fl-chart { --cs: var(--cell); position: relative; display: grid; grid-template-columns: var(--gut) auto; grid-template-rows: calc(var(--gut) - 1px) auto; width: max-content; }
+/* ── chart: the sea is printed wave lines in an ink, on paper with some tooth ── */
+.g-fleet .fl-chart { --cs: var(--cell); --sea: var(--g-muted); position: relative; display: grid; grid-template-columns: var(--gut) auto; grid-template-rows: calc(var(--gut) - 1px) auto; width: max-content; }
 .g-fleet .fl-chart.is-mini { --cs: var(--mini); --gut: 12px; }
+.g-fleet[data-viewer="a"] .fl-home-chart { --sea: var(--p-a); } .g-fleet[data-viewer="b"] .fl-home-chart { --sea: var(--p-b); }
+.g-fleet[data-viewer="a"] .fl-target-chart { --sea: var(--p-b); } .g-fleet[data-viewer="b"] .fl-target-chart { --sea: var(--p-a); }
 .g-fleet .fl-lab { display: grid; font: 900 9px/1 var(--g-font-display); color: var(--g-muted); }
 .g-fleet .is-mini .fl-lab { font-size: 8px; }
 .g-fleet .fl-lab span { display: grid; place-items: center; transition: color .12s; }
@@ -373,8 +391,21 @@ const CSS = `
 .g-fleet .fl-lab-c { grid-column: 2; grid-row: 1; grid-template-columns: repeat(8, var(--cs)); padding-bottom: 3px; }
 .g-fleet .fl-lab-r { grid-column: 1; grid-row: 2; grid-template-rows: repeat(8, var(--cs)); padding-right: 4px; }
 .g-fleet .fl-lab-r span { justify-content: end; }
-.g-fleet .fl-grid { grid-column: 2; grid-row: 2; position: relative; display: grid; grid-template-columns: repeat(8, var(--cs)); grid-auto-rows: var(--cs); background: var(--g-card); }
+.g-fleet .fl-grid {
+  --wave: color-mix(in srgb, var(--sea) 32%, transparent);
+  grid-column: 2; grid-row: 2; position: relative; display: grid; grid-template-columns: repeat(8, var(--cs)); grid-auto-rows: var(--cs);
+  background:
+    var(--tooth),
+    radial-gradient(circle at 50% 100%, transparent 5.4px, var(--wave) 5.9px 6.7px, transparent 7.2px) 0 0 / 20px 10px,
+    radial-gradient(circle at 50% 100%, transparent 5.4px, var(--wave) 5.9px 6.7px, transparent 7.2px) 10px 5px / 20px 10px,
+    var(--g-card);
+}
+/* your own waters are the halftone plate: dots in your ink */
+.g-fleet .fl-home-chart .fl-grid { background: var(--tooth), var(--dots, var(--g-halftone)) 0 0 / 5px 5px, var(--g-card); }
+.g-fleet .fl-home-chart.is-mini .fl-grid { background-size: var(--g-grain-size), 4px 4px, auto; }
+.g-fleet[data-viewer="a"] .fl-home-chart { --dots: var(--g-halftone-a); } .g-fleet[data-viewer="b"] .fl-home-chart { --dots: var(--g-halftone-b); }
 .g-fleet .fl-grid::before { content: ''; position: absolute; inset: -2px; border: 2px solid var(--g-ink); box-shadow: var(--g-shadow); pointer-events: none; z-index: 4; }
+.g-fleet .fl-grid::after { content: ''; position: absolute; inset: -2px; border: 1.5px solid color-mix(in srgb, var(--p-b) 70%, transparent); transform: translate(1.5px, 1px); pointer-events: none; z-index: 4; }
 .g-fleet .fl-cell { display: block; width: var(--cs); height: var(--cs); margin: 0; padding: 0; border: 0; border-radius: 0; background: none; color: inherit; font: inherit; position: relative; box-shadow: inset -1px -1px 0 var(--g-line); touch-action: manipulation; -webkit-appearance: none; appearance: none; }
 .g-fleet .fl-cell:nth-child(8n+4) { box-shadow: inset -1px -1px 0 var(--g-line), inset -2px 0 0 var(--g-line); }
 .g-fleet .fl-cell:nth-child(n+25):nth-child(-n+32) { box-shadow: inset -1px -2px 0 var(--g-line); }
@@ -382,32 +413,42 @@ const CSS = `
 .g-fleet .fl-cell:focus { outline: none; }
 .g-fleet .fl-cell:focus-visible { outline: 3px solid var(--g-hl); outline-offset: -3px; z-index: 1; }
 .g-fleet .fl-layer { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
-.g-fleet .fl-ship, .g-fleet .fl-mark, .g-fleet .fl-hl, .g-fleet .fl-preview, .g-fleet .fl-scan, .g-fleet .fl-scope { position: absolute; left: calc(var(--c) * 12.5%); top: calc(var(--r) * 12.5%); width: calc(var(--w) * 12.5%); height: calc(var(--h) * 12.5%); }
+.g-fleet .fl-ship, .g-fleet .fl-mark, .g-fleet .fl-hl, .g-fleet .fl-scan, .g-fleet .fl-scope { position: absolute; left: calc(var(--c) * 12.5%); top: calc(var(--r) * 12.5%); width: calc(var(--w) * 12.5%); height: calc(var(--h) * 12.5%); }
 
-/* ── ships ── */
+/* ── ships: ink, halftone dots under the waterline, a hard shadow ── */
 .g-fleet .fl-ship, .g-fleet .fl-dock-ship, .g-fleet .fl-ghost, .g-fleet .fl-ro { --ship: var(--g-muted); }
 .g-fleet .p-a { --ship: var(--p-a); } .g-fleet .p-b { --ship: var(--p-b); }
 .g-fleet .fl-ship { display: block; margin: 0; padding: 0; border: 0; background: none; color: inherit; filter: drop-shadow(2px 2px 0 var(--fl-edge)); }
 .g-fleet .is-mini .fl-ship { filter: drop-shadow(1px 1px 0 var(--fl-edge)); }
 .g-fleet .fl-ship svg, .g-fleet .fl-mark svg, .g-fleet .fl-dock-ship svg, .g-fleet .fl-ghost svg, .g-fleet .fl-ro svg { display: block; width: 100%; height: 100%; overflow: visible; }
-.g-fleet .fl-hull { fill: var(--ship); stroke: var(--g-ink); stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.g-fleet .fl-hull { fill: var(--ship); stroke: none; }
+.g-fleet .fl-hull-line { fill: none; stroke: var(--g-ink); stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.g-fleet .fl-dots { fill: none; stroke: var(--fl-edge); stroke-opacity: .55; stroke-width: 2; stroke-linecap: round; stroke-dasharray: 0 5; vector-effect: non-scaling-stroke; }
+.g-fleet .fl-dots.is-b { stroke-dashoffset: 2.5; }
 .g-fleet .fl-deck > * { fill: var(--g-card); stroke: var(--g-ink); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .g-fleet .fl-deck > .fl-gun { fill: none; stroke-width: 2.5; stroke-linecap: round; }
-.g-fleet .is-mini .fl-hull { stroke-width: 1.5; }
-.g-fleet .is-mini .fl-deck > * { stroke-width: 1; }
+.g-fleet .is-mini .fl-hull-line, .g-fleet .fl-ro .fl-hull-line { stroke-width: 1.5; }
+.g-fleet .is-mini .fl-deck > *, .g-fleet .fl-ro .fl-deck > * { stroke-width: 1; }
+/* a wreck lies low and a little askew, whether it just sank or is being redrawn */
+.g-fleet .fl-ship.is-wreck { transform: translateY(3%) rotate(-1.8deg); }
 .g-fleet .fl-ship.is-wreck .fl-hull { fill: color-mix(in srgb, var(--ship) 52%, var(--fl-edge)); }
 .g-fleet .fl-ship.is-wreck .fl-deck > * { fill: color-mix(in srgb, var(--g-card) 50%, var(--fl-edge)); }
 .g-fleet .fl-ship.is-ghost { filter: none; }
-.g-fleet .fl-ship.is-ghost .fl-hull { fill: color-mix(in srgb, var(--ship) 28%, transparent); stroke-dasharray: 5 3; }
-.g-fleet .fl-ship.is-ghost .fl-deck { display: none; }
+.g-fleet .fl-ship.is-ghost .fl-hull { fill: color-mix(in srgb, var(--ship) 28%, transparent); }
+.g-fleet .fl-ship.is-ghost .fl-hull-line { stroke-dasharray: 5 3; }
+.g-fleet .fl-ship.is-ghost .fl-deck, .g-fleet .fl-ship.is-ghost .fl-dots { display: none; }
 .g-fleet .fl-scope { z-index: 1; }
 .g-fleet .fl-scope::after { content: ''; position: absolute; inset: 22% 8%; border: 1.5px dotted color-mix(in srgb, var(--g-ink) 38%, transparent); border-radius: 999px; }
 
-/* ── marks ── */
+/* ── marks: ink splats that stay as a printed stain ── */
 .g-fleet .fl-mark { display: grid; place-items: center; z-index: 3; }
 .g-fleet .fl-mark svg { width: 80%; height: 80%; }
+.g-fleet .fl-plate { fill: var(--g-hl); }
 .g-fleet .fl-burst { fill: var(--g-bad); stroke: var(--g-ink); stroke-width: 1.5; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .g-fleet .fl-core { fill: var(--g-hl); stroke: var(--g-ink); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.g-fleet .fl-blot { fill: color-mix(in srgb, var(--g-muted) 20%, transparent); stroke: none; }
+.g-fleet .fl-blot.is-hit { fill: color-mix(in srgb, var(--g-bad) 38%, transparent); }
+.g-fleet .fl-drop { fill: var(--g-ink); opacity: 0; }
 .g-fleet .fl-ring { fill: none; stroke: var(--g-muted); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .g-fleet .fl-dot { fill: var(--g-muted); }
 .g-fleet .fl-ripple { fill: none; stroke: var(--g-ink); stroke-width: 2; vector-effect: non-scaling-stroke; opacity: 0; }
@@ -429,6 +470,7 @@ const CSS = `
 .g-fleet .fl-target .fl-cell:not(:disabled):active, .g-fleet .fl-target .fl-cell.is-aim, .g-fleet .fl-target .fl-cell.is-pick { background: color-mix(in srgb, var(--g-hl) 55%, transparent); }
 .g-fleet .fl-target .fl-cell:not(:disabled):active::before, .g-fleet .fl-target .fl-cell.is-aim::before, .g-fleet .fl-target .fl-cell.is-pick::before { opacity: 1; transform: none; }
 .g-fleet .fl-target .fl-cell:not(:disabled):active::after, .g-fleet .fl-target .fl-cell.is-aim::after, .g-fleet .fl-target .fl-cell.is-pick::after { opacity: 1; }
+.g-fleet .fl-target .fl-cell:not(:disabled):active::before { transform: scale(.82); transition-duration: .05s; }
 .g-fleet .fl-target .fl-cell.is-pick { background: var(--g-hl); }
 .g-fleet .fl-target .fl-cell.is-aim:disabled::before { border-style: dashed; }
 .g-fleet .fl-target .fl-cell.is-zone { background: color-mix(in srgb, var(--g-hl) 42%, transparent); }
@@ -441,15 +483,15 @@ const CSS = `
 
 /* ── headers, pills, log ── */
 .g-fleet .fl-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-left: var(--gut); margin-bottom: 3px; min-height: 22px; }
-.g-fleet .fl-h { display: flex; align-items: center; gap: 7px; font: 900 .74rem/1.1 var(--g-font-display); text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; }
+.g-fleet .fl-h { display: flex; align-items: center; gap: 7px; font: 900 .74rem/1.1 var(--g-font-display); text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; text-shadow: var(--g-misreg); }
 .g-fleet .fl-sw { width: 12px; height: 12px; flex: none; background: var(--ship); border: 2px solid var(--g-ink); border-radius: 3px; }
-.g-fleet .fl-pill { flex: none; font: 800 .8rem/1 var(--g-font-body); padding: 7px 11px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--g-card); color: var(--g-ink); white-space: nowrap; }
-.g-fleet .fl-pill.is-mode { background: var(--g-hl); color: var(--g-on-ink); }
+.g-fleet .fl-pill { flex: none; font: 800 .8rem/1 var(--g-font-body); padding: 7px 11px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--tooth), var(--g-card); color: var(--g-ink); white-space: nowrap; }
+.g-fleet .fl-pill.is-mode { background: var(--tooth), var(--g-hl); color: var(--g-on-ink); }
 .g-fleet .fl-target.is-live .fl-grid::before { box-shadow: 5px 5px 0 0 var(--g-hl), 5px 5px 0 2px var(--fl-edge); }
 .g-fleet .fl-target { margin-bottom: 4px; }
 .g-fleet .fl-target:not(.is-live) .fl-cell { cursor: default; }
 .g-fleet .fl-pill.is-quiet { border-color: var(--g-line); color: var(--g-muted); }
-.g-fleet .fl-log { padding: 6px 10px; border: 2px solid var(--g-ink); border-radius: var(--g-radius); background: var(--g-card); font-size: .82rem; line-height: 1.45; display: flex; flex-direction: column; gap: 2px; min-height: 38px; justify-content: center; }
+.g-fleet .fl-log { padding: 6px 10px; border: 2px solid var(--g-ink); border-radius: var(--g-radius); background: var(--tooth), var(--g-card); font-size: .82rem; line-height: 1.45; display: flex; flex-direction: column; gap: 2px; min-height: 38px; justify-content: center; }
 .g-fleet .fl-log b { font-weight: 900; }
 .g-fleet .fl-tok { display: inline-block; padding: 0 7px; margin: 1px 2px 1px 0; border: 1.5px solid var(--g-ink); border-radius: 999px; font: 800 .76rem/1.55 var(--g-font-body); background: var(--g-card); color: var(--g-ink); white-space: nowrap; }
 .g-fleet .fl-tok.is-hit { background: var(--g-bad); color: var(--g-card); }
@@ -464,9 +506,9 @@ const CSS = `
 .g-fleet .fl-fire .gm-btn:disabled, .g-fleet .fl-wpn:disabled { opacity: .4; cursor: default; }
 .g-fleet .fl-fire-n { flex: 1; font: 800 .86rem/1.2 var(--g-font-body); white-space: nowrap; }
 .g-fleet .fl-fire-n b { font: 900 1.15rem/1 var(--g-font-display); }
-.g-fleet .fl-wpn { min-height: 44px; min-width: 44px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm, 6px); background: var(--g-card); color: var(--g-ink); font: 800 .84rem/1 var(--g-font-body); box-shadow: var(--g-shadow-sm); touch-action: manipulation; -webkit-appearance: none; appearance: none; }
+.g-fleet .fl-wpn { min-height: 44px; min-width: 44px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm, 6px); background: var(--tooth), var(--g-card); color: var(--g-ink); font: 800 .84rem/1 var(--g-font-body); box-shadow: var(--g-shadow-sm); touch-action: manipulation; -webkit-appearance: none; appearance: none; }
 .g-fleet .fl-wpn b { display: inline-grid; place-items: center; min-width: 20px; height: 20px; border-radius: 999px; background: var(--g-ink); color: var(--g-card); font: 900 .72rem/1 var(--g-font-body); }
-.g-fleet .fl-wpn[aria-pressed="true"] { background: var(--g-hl); color: var(--g-on-ink); transform: translate(2px, 2px); box-shadow: none; }
+.g-fleet .fl-wpn[aria-pressed="true"] { background: var(--tooth), var(--g-hl); color: var(--g-on-ink); transform: translate(2px, 2px); box-shadow: none; }
 .g-fleet .fl-wpn:not(:disabled):active { transform: translate(2px, 2px); box-shadow: none; }
 .g-fleet .fl-tip { font-size: .8rem; color: var(--g-muted); line-height: 1.35; }
 .g-fleet .fl-tip b { color: var(--g-ink); }
@@ -477,14 +519,13 @@ const CSS = `
 .g-fleet .fl-side .fl-head { padding-left: 0; min-height: 0; margin: 0; }
 .g-fleet .fl-roster { display: flex; flex-wrap: wrap; gap: 9px 12px; align-items: center; }
 .g-fleet .fl-ro { position: relative; width: calc(var(--len) * 16px); height: 16px; filter: drop-shadow(1px 1px 0 var(--fl-edge)); }
-.g-fleet .fl-ro .fl-hull { stroke-width: 1.5; }
-.g-fleet .fl-ro .fl-deck > * { stroke-width: 1; }
 .g-fleet .fl-ro.is-sunk svg { opacity: .35; }
 .g-fleet .fl-ro.is-sunk::after { content: ''; position: absolute; left: -2px; right: -2px; top: 50%; height: 2.5px; margin-top: -1.25px; background: var(--g-ink); border-radius: 2px; transform: rotate(-12deg); transform-origin: left center; }
 .g-fleet .fl-count { font: 700 .8rem/1.25 var(--g-font-body); color: var(--g-muted); }
 
 /* ── logbook ── */
-.g-fleet .fl-book { grid-area: book; padding: 10px 12px 8px; border: 2px solid var(--g-ink); border-radius: var(--g-radius); background: var(--g-card); box-shadow: var(--g-shadow); }
+.g-fleet .fl-book-slot { display: contents; }
+.g-fleet .fl-book { grid-area: book; padding: 10px 12px 8px; border: 2px solid var(--g-ink); border-radius: var(--g-radius); background: var(--tooth), var(--g-card); box-shadow: var(--g-shadow); }
 .g-fleet .fl-book .fl-head { padding-left: 0; margin-bottom: 6px; }
 .g-fleet .fl-book table { width: 100%; border-collapse: collapse; font-size: .8rem; }
 .g-fleet .fl-book th, .g-fleet .fl-book td { padding: 5px 4px; text-align: right; border-top: 1px solid var(--g-line); font-variant-numeric: tabular-nums; }
@@ -495,10 +536,11 @@ const CSS = `
 .g-fleet .fl-book-note { padding-top: 6px; font-size: .8rem; font-weight: 700; }
 .g-fleet .fl-captain { font-size: .8rem; font-weight: 700; line-height: 1.35; padding: 0 0 8px var(--gut); color: var(--g-ink); }
 
-/* ── stamps ── */
-.g-fleet .fl-stamp { position: absolute; left: calc(50% + var(--gut) / 2); top: calc(50% + var(--gut) / 2); z-index: 6; pointer-events: none; padding: 7px 16px 9px; border: 3px solid var(--g-ink); border-radius: 6px; background: var(--g-hl); color: var(--g-on-ink); box-shadow: 4px 4px 0 var(--fl-edge); text-align: center; white-space: nowrap; font: 900 clamp(1.25rem, 6.4cqw, 1.9rem)/1.05 var(--g-font-display); text-transform: uppercase; letter-spacing: .03em; transform: translate(-50%, -50%) rotate(-8deg); animation: gfleet-stamp 1.9s cubic-bezier(.2, .9, .3, 1.2) both; }
+/* ── stamps: printed on, a little off register ── */
+.g-fleet .fl-stamp { position: absolute; left: calc(50% + var(--gut) / 2); top: calc(50% + var(--gut) / 2); z-index: 6; pointer-events: none; padding: 7px 16px 9px; border: 3px solid var(--g-ink); border-radius: 6px; background: var(--tooth), var(--g-hl); color: var(--g-on-ink); box-shadow: 4px 4px 0 var(--fl-edge); text-align: center; white-space: nowrap; font: 900 clamp(1.25rem, 6.4cqw, 1.9rem)/1.05 var(--g-font-display); text-transform: uppercase; letter-spacing: .03em; transform: translate(-50%, -50%) rotate(-8deg); animation: gfleet-stamp 1.9s cubic-bezier(.2, .9, .3, 1.2) both; }
+.g-fleet .fl-stamp::before { content: ''; position: absolute; inset: -3px; border: 1.5px solid color-mix(in srgb, var(--p-b) 75%, transparent); border-radius: 6px; transform: translate(2.5px, 2px); pointer-events: none; }
 .g-fleet .fl-stamp small { display: block; margin-top: 5px; max-width: 72cqw; margin-inline: auto; white-space: normal; font: 800 max(.72rem, .4em)/1.2 var(--g-font-body); letter-spacing: .06em; }
-.g-fleet .fl-stamp.is-bad { background: var(--g-bad); color: var(--g-on-ink); }
+.g-fleet .fl-stamp.is-bad { background: var(--tooth), var(--g-bad); color: var(--g-on-ink); }
 .g-fleet .is-mini .fl-stamp { font-size: .9rem; padding: 4px 8px 5px; border-width: 2px; box-shadow: 2px 2px 0 var(--fl-edge); }
 
 /* ── placement ── */
@@ -509,26 +551,30 @@ const CSS = `
 .g-fleet .fl-hint b { color: var(--g-ink); }
 .g-fleet .fl-setup { display: flex; flex-wrap: nowrap; gap: 4px 7px; align-items: center; padding-left: var(--gut); margin: 2px 0 5px; }
 .g-fleet .fl-rules { display: flex; gap: 5px; flex: 1 1 auto; min-width: 0; }
-.g-fleet .fl-rule { flex: 1 1 0; min-width: 0; min-height: 42px; padding: 0 4px; border: 2px solid var(--g-ink); border-radius: 10px; background: var(--g-card); color: var(--g-ink); font: 800 .8rem/1 var(--g-font-body); box-shadow: var(--g-shadow-sm); white-space: nowrap; touch-action: manipulation; -webkit-appearance: none; appearance: none; }
-.g-fleet .fl-rule[aria-pressed="true"] { background: var(--g-hl); color: var(--g-on-ink); }
+.g-fleet .fl-rule { flex: 1 1 0; min-width: 0; min-height: 42px; padding: 0 4px; border: 2px solid var(--g-ink); border-radius: 10px; background: var(--tooth), var(--g-card); color: var(--g-ink); font: 800 .8rem/1 var(--g-font-body); box-shadow: var(--g-shadow-sm); white-space: nowrap; touch-action: manipulation; -webkit-appearance: none; appearance: none; }
+.g-fleet .fl-rule[aria-pressed="true"] { background: var(--tooth), var(--g-hl); color: var(--g-on-ink); }
 .g-fleet .fl-rule:not(:disabled):active { transform: translate(2px, 2px); box-shadow: none; }
 .g-fleet .fl-stake { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; color: var(--g-muted); font-size: .76rem; }
 .g-fleet .fl-stake .g-label { white-space: nowrap; } @container (max-width: 380px) { .g-fleet .fl-stake .g-label { display: none; } }
-.g-fleet .fl-stake select { width: clamp(104px, 33vw, 150px); min-height: 42px; padding: 0 8px; border: 2px solid var(--g-ink); border-radius: 10px; background: var(--g-card); color: var(--g-ink); font: 800 14px/1.1 var(--g-font-body); box-shadow: var(--g-shadow-sm); touch-action: manipulation; }
+.g-fleet .fl-stake select { width: clamp(104px, 33vw, 150px); min-height: 42px; padding: 0 8px; border: 2px solid var(--g-ink); border-radius: 10px; background: var(--tooth), var(--g-card); color: var(--g-ink); font: 800 14px/1.1 var(--g-font-body); box-shadow: var(--g-shadow-sm); touch-action: manipulation; }
 .g-fleet .fl-setup .fl-rules-note { margin: 0; padding: 0; flex: 1 1 100%; }
 .g-fleet .fl-rules-note { font-size: .8rem; line-height: 1.3; color: var(--g-muted); padding: 0 0 6px var(--gut); }
 .g-fleet .fl-rules-note b { color: var(--g-ink); }
 .g-fleet .is-edit .fl-ship { pointer-events: auto; cursor: grab; touch-action: none; -webkit-appearance: none; appearance: none; }
 .g-fleet .is-edit .fl-ship:focus-visible { outline: 3px solid var(--g-hl); outline-offset: 2px; }
+.g-fleet .is-edit .fl-ship:active { filter: drop-shadow(1px 1px 0 var(--fl-edge)); }
 .g-fleet .is-edit .fl-cell { cursor: pointer; }
 .g-fleet .fl-ship.is-lifted { opacity: .25; filter: none; }
-.g-fleet .fl-preview { z-index: 3; border: 2.5px dashed var(--g-ink); background: color-mix(in srgb, var(--g-good) 30%, transparent); }
+/* the drag preview moves by transform only: its size is set when the ship changes, its square when the finger crosses a line */
+.g-fleet .fl-preview { position: absolute; left: 0; top: 0; width: calc(var(--w) * var(--cs)); height: calc(var(--h) * var(--cs)); transform: translate(calc(var(--c) * var(--cs)), calc(var(--r) * var(--cs))); transition: transform .09s var(--g-ease-out); will-change: transform; box-sizing: border-box; z-index: 3; border: 2.5px dashed var(--g-ink); background: color-mix(in srgb, var(--g-good) 30%, transparent); }
 .g-fleet .fl-preview.is-bad { border-color: var(--g-bad); background: color-mix(in srgb, var(--g-bad) 28%, transparent); }
 .g-fleet .fl-dock { display: flex; flex-wrap: wrap; gap: 10px 10px; min-height: var(--cell); }
 .g-fleet .fl-dock-ship, .g-fleet .fl-slot { position: relative; width: calc(var(--len) * var(--cell)); height: var(--cell); flex: none; }
-.g-fleet .fl-dock-ship { display: block; margin: 0; padding: 0; border: 0; background: none; color: inherit; touch-action: none; cursor: grab; filter: drop-shadow(2px 2px 0 var(--fl-edge)); transition: transform .15s; -webkit-appearance: none; appearance: none; }
+.g-fleet .fl-dock-ship { display: block; margin: 0; padding: 0; border: 0; background: none; color: inherit; touch-action: none; cursor: grab; filter: drop-shadow(2px 2px 0 var(--fl-edge)); transition: transform .15s var(--g-ease-out); -webkit-appearance: none; appearance: none; }
+.g-fleet .fl-dock-ship:active { transform: translate(1px, 1px); filter: drop-shadow(1px 1px 0 var(--fl-edge)); transition-duration: .04s; }
 .g-fleet .fl-dock-ship.is-sel { transform: translateY(-4px); filter: drop-shadow(3px 5px 0 var(--fl-edge)); }
 .g-fleet .fl-dock-ship.is-sel::after { content: ''; position: absolute; left: 12%; right: 12%; bottom: -9px; height: 4px; border-radius: 2px; background: var(--g-hl); box-shadow: 0 0 0 1.5px var(--g-ink); }
+.g-fleet .fl-dock-ship.is-lifted { opacity: .35; }
 .g-fleet .fl-dock-ship:focus-visible { outline: 3px solid var(--g-hl); outline-offset: 3px; }
 .g-fleet .fl-slot { border: 2px dashed var(--g-line); border-radius: 10px; }
 .g-fleet .fl-dock-done { width: 100%; min-height: var(--cell); display: grid; place-items: center; text-align: center; font: 700 .9rem/1.3 var(--g-font-body); color: var(--g-muted); border: 2px dashed var(--g-line); border-radius: var(--g-radius); padding: 8px; }
@@ -538,8 +584,10 @@ const CSS = `
 .g-fleet .fl-actions { display: flex; gap: 10px; }
 .g-fleet .fl-actions .gm-btn { flex: 1; min-height: 48px; }
 .g-fleet .fl-actions .gm-btn:disabled { opacity: .4; cursor: default; }
-.g-fleet .fl-ghost { position: absolute; z-index: 30; pointer-events: none; filter: drop-shadow(4px 5px 0 var(--fl-edge)); transform: rotate(-2deg) scale(1.05); }
-.g-fleet .fl-wait .fl-note-card { padding: 12px 14px; border: 2px solid var(--g-ink); border-radius: var(--g-radius); background: var(--g-card); box-shadow: var(--g-shadow); text-align: center; display: flex; flex-direction: column; gap: 6px; }
+/* the ship in your hand: positioned by transform only (left/top stay 0) */
+.g-fleet .fl-ghost { position: absolute; left: 0; top: 0; z-index: 30; pointer-events: none; will-change: transform; filter: drop-shadow(4px 5px 0 var(--fl-edge)); }
+.g-fleet .fl-ghost svg { animation: gfleet-lift .18s var(--g-ease-spring) both; }
+.g-fleet .fl-wait .fl-note-card { padding: 12px 14px; border: 2px solid var(--g-ink); border-radius: var(--g-radius); background: var(--tooth), var(--g-card); box-shadow: var(--g-shadow); text-align: center; display: flex; flex-direction: column; gap: 6px; }
 .g-fleet .fl-wait .fl-note-card b { font: 900 1rem/1.2 var(--g-font-display); }
 .g-fleet .fl-wait .fl-note-card span { color: var(--g-muted); font-size: .88rem; }
 
@@ -569,16 +617,30 @@ const CSS = `
   }
 }
 
+/* ── effects: shells in flight, the impact flash, the finale's paper confetti ── */
+.g-fleet .fl-shell, .g-fleet .fl-flash { position: absolute; left: 0; top: 0; pointer-events: none; opacity: 0; }
+.g-fleet .fl-shell { width: 12.5%; height: 12.5%; z-index: 5; will-change: transform; }
+.g-fleet .fl-shell::before { content: ''; position: absolute; left: 36%; top: 36%; width: 28%; height: 28%; border-radius: 50%; background: var(--g-ink); box-shadow: 1.5px 1.5px 0 color-mix(in srgb, var(--p-b) 70%, transparent); }
+.g-fleet .fl-shell::after { content: ''; position: absolute; left: calc(50% - 1px); top: 54%; width: 2px; height: 190%; background: repeating-linear-gradient(180deg, var(--g-ink) 0 5px, transparent 5px 9px); opacity: .55; }
+.g-fleet .fl-shell.is-down::after { top: auto; bottom: 54%; }
+.g-fleet .fl-flash { inset: 0; width: 100%; height: 100%; z-index: 6; background: var(--g-hl); }
+.g-fleet .fl-conf { position: absolute; top: 55%; width: 9px; height: 13px; border: 1.5px solid var(--g-ink); pointer-events: none; opacity: 0; z-index: 7; }
+.g-fleet .fl-conf.c-a { background: var(--p-a); } .g-fleet .fl-conf.c-b { background: var(--p-b); } .g-fleet .fl-conf.c-h { background: var(--g-hl); } .g-fleet .fl-conf.c-i { background: var(--g-card); }
+.g-fleet .fl-conf.is-dot { width: 10px; height: 10px; border-radius: 50%; }
+
 /* ── motion ── */
 @keyframes gfleet-pop { 0% { transform: scale(2.2); opacity: 0; } 55% { transform: scale(.85); opacity: 1; } 100% { transform: none; } }
 @keyframes gfleet-bloom { 0% { transform: scale(0) rotate(-50deg); } 55% { transform: scale(1.4) rotate(10deg); } 80% { transform: scale(.92) rotate(-3deg); } 100% { transform: none; } }
 @keyframes gfleet-ripple { 0% { transform: scale(.3); opacity: .9; } 100% { transform: scale(1.7); opacity: 0; } }
-@keyframes gfleet-sink { 0% { transform: scale(1.3) rotate(-4deg); opacity: 0; } 25% { transform: scale(.94) rotate(1deg); opacity: 1; } 50% { transform: translateY(5%) rotate(-2.5deg); } 75% { transform: translateY(2%) rotate(1deg); } 100% { transform: none; } }
-@keyframes gfleet-founder { 0% { transform: none; } 35% { transform: translateY(6%) rotate(3deg); } 70% { transform: translateY(3%) rotate(-1.5deg); } 100% { transform: none; } }
-@keyframes gfleet-shake { 0%, 100% { transform: none; } 20% { transform: translate(-3px, 1px); } 40% { transform: translate(3px, -1px); } 60% { transform: translate(-2px, 0); } 80% { transform: translate(2px, 1px); } }
+@keyframes gfleet-splat { 0% { transform: scale(.15); } 50% { transform: scale(1.3); } 100% { transform: none; } }
+@keyframes gfleet-spray { 0% { transform: translate(0, 0) scale(.5); opacity: 1; } 100% { transform: translate(var(--dx), var(--dy)) scale(1); opacity: 0; } }
+@keyframes gfleet-sink { 0% { transform: scale(1.3) rotate(-4deg); opacity: 0; } 22% { transform: scale(.94) rotate(1deg) translateY(0); opacity: 1; } 50% { transform: translateY(1%) rotate(1.5deg); } 100% { transform: translateY(3%) rotate(-1.8deg); } }
+@keyframes gfleet-founder { 0% { transform: none; } 35% { transform: translateY(8%) rotate(4deg); } 70% { transform: translateY(4%) rotate(-2.6deg); } 100% { transform: translateY(3%) rotate(-1.8deg); } }
+@keyframes gfleet-bubble { 0% { transform: translateY(0) scale(.5); opacity: 0; } 25% { opacity: .9; } 100% { transform: translateY(-190%) scale(1); opacity: 0; } }
 @keyframes gfleet-stamp { 0% { transform: translate(-50%, -50%) scale(2.3) rotate(-16deg); opacity: 0; } 18% { transform: translate(-50%, -50%) scale(.94) rotate(-8deg); opacity: 1; } 26% { transform: translate(-50%, -50%) scale(1) rotate(-8deg); } 82% { opacity: 1; } 100% { transform: translate(-50%, -50%) scale(1) rotate(-8deg); opacity: 0; } }
 @keyframes gfleet-strike { 0% { transform: rotate(-12deg) scaleX(0); } 100% { transform: rotate(-12deg) scaleX(1); } }
-@keyframes gfleet-drop { 0% { transform: translateY(-14%) scale(1.08); } 60% { transform: translateY(2%) scale(.98); } 100% { transform: none; } }
+@keyframes gfleet-drop { 0% { transform: translateY(-12%) scale(1.07); } 45% { transform: translateY(2%) scale(1.05, .92); } 70% { transform: scale(.985, 1.02); } 100% { transform: none; } }
+@keyframes gfleet-lift { 0% { transform: scale(.9); } 100% { transform: none; } }
 @keyframes gfleet-pulse { 0%, 100% { transform: none; } 50% { transform: scale(1.18); } }
 @keyframes gfleet-reveal { 0% { opacity: 0; transform: scale(.9); } 100% { opacity: 1; transform: none; } }
 @keyframes gfleet-ping { 0% { transform: scale(.4); opacity: 0; } 60% { transform: scale(1.06); opacity: 1; } 100% { transform: none; } }
@@ -586,19 +648,20 @@ const CSS = `
 .g-fleet .fl-mark.is-new.is-hit { animation: none; }
 .g-fleet .fl-mark.is-new.is-hit svg { animation: gfleet-bloom .55s cubic-bezier(.3, 1.5, .5, 1) both; animation-delay: var(--d, 0ms); }
 .g-fleet .fl-mark.is-new .fl-ripple { transform-box: fill-box; transform-origin: center; animation: gfleet-ripple .75s ease-out both; animation-delay: calc(var(--d, 0ms) + 120ms); }
+.g-fleet .fl-mark.is-new .fl-blot { transform-box: fill-box; transform-origin: center; animation: gfleet-splat .42s var(--g-ease-out) both; animation-delay: var(--d, 0ms); }
+.g-fleet .fl-mark.is-new .fl-drop { transform-box: fill-box; transform-origin: center; animation: gfleet-spray .5s var(--g-ease-out) both; animation-delay: calc(var(--d, 0ms) + 50ms); }
 .g-fleet .fl-mark.is-new.is-x { animation-duration: .3s; }
 .g-fleet .fl-scan.is-new { animation: gfleet-ping .5s cubic-bezier(.3, 1.4, .5, 1) both; }
 .g-fleet .fl-ship.is-sinking { animation: gfleet-sink 1.1s ease-out both; animation-delay: var(--d, 0ms); }
+.g-fleet .fl-ship.is-sinking::before, .g-fleet .fl-ship.is-sinking::after { content: ''; position: absolute; left: 30%; top: 30%; width: 14%; padding-top: 14%; border: 1.5px solid var(--g-ink); border-radius: 50%; background: var(--g-card); opacity: 0; animation: gfleet-bubble 1s ease-out both; animation-delay: calc(var(--d, 0ms) + 350ms); }
+.g-fleet .fl-ship.is-sinking::after { left: 58%; top: 40%; width: 9%; padding-top: 9%; animation-delay: calc(var(--d, 0ms) + 520ms); }
 .g-fleet .fl-ship.is-foundering { animation: gfleet-founder .9s ease-in-out both; animation-delay: var(--d, 0ms); }
 .g-fleet .fl-ship.is-ghost { animation: gfleet-reveal .5s ease-out both; animation-delay: calc(400ms + var(--k, 0) * 140ms); }
-.g-fleet .fl-chart.is-shake .fl-grid { animation: gfleet-shake .38s ease-out; animation-delay: var(--d, 0ms); }
 .g-fleet .fl-ro.is-new::after { animation: gfleet-strike .45s ease-out both; animation-delay: var(--d, 0ms); }
-.g-fleet .fl-ship.is-drop { animation: gfleet-drop .34s cubic-bezier(.3, 1.5, .5, 1) both; animation-delay: calc(var(--k, 0) * 45ms); }
+.g-fleet .fl-ship.is-drop { animation: gfleet-drop .36s cubic-bezier(.3, 1.5, .5, 1) both; animation-delay: calc(var(--k, 0) * 45ms); }
 .g-fleet .fl-hl.is-last { animation: gfleet-pulse .9s ease-in-out 3; animation-delay: var(--d, 0ms); }
-.g-fleet .is-shake-x { animation: gfleet-shake .38s ease-out; }
 @media (prefers-reduced-motion: reduce) {
   .g-fleet *, .g-fleet *::before, .g-fleet *::after { animation: none !important; transition: none !important; }
-  .g-fleet .fl-ghost { transform: none; }
 }
 `;
 
@@ -629,10 +692,15 @@ registerGame({
     el.appendChild(root);
     const fine = typeof matchMedia === 'function' && matchMedia('(hover: hover) and (pointer: fine)').matches;
     const book = gameDataApi('fleet');
+    const rmq = (() => { try { return matchMedia('(prefers-reduced-motion: reduce)'); } catch { return null; } })();
+    const reducedMotion = () => !!(rmq && rmq.matches);
+    const FLIGHT = 150; // ms a shell takes to land (0 under reduced motion)
+    const flight = () => (reducedMotion() ? 0 : FLIGHT);
 
     let ctx = null;
     let V = null; // whose eyes we draw for (never anyone else's fleet)
     let view = 'hidden';
+    let sh = null; // the screen's persistent skeleton: built once per screen, then only patched
     let sel = 0; // dock ship picked for tap-to-place
     let selDir = 'h';
     let active = -1; // last ship touched (R rotates it)
@@ -646,22 +714,123 @@ registerGame({
     let seenPhase = null;
     let aim = { r: 3, c: 3 };
     let kbd = false;
+    let aimOn = false; // an aim cursor is showing (mouse hover or keyboard)
     let pick = []; // salvo: squares aimed this turn, in tap order
     let weapon = 'shot'; // arsenal: 'shot' | 'sonar' | 'torp'
     let tdir = 'h';
     let armed = null; // arsenal: the square a special is aimed at (tap it again to fire)
     let booked = null; // match id whose records this screen has written
+    let geo = null; // cached rects for placement (read at pointerdown / on demand, dropped on resize, scroll and repaint)
+    let hoverKey = '';
     const timers = new Set();
     const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); fn(); }, ms); timers.add(t); return t; };
     const stop = (t) => { clearTimeout(t); timers.delete(t); };
     // Same phone: a move that passes the turn makes the engine drop the pass-the-phone curtain at
     // once. So it's shown here first (splashes, sinks, sound, "pass the phone"), then played.
     let hold = null; // { mv, state, from, t }
-    const reducedMotion = () => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; } };
     const nm = (w) => api.name(w);
     const shown = () => (hold ? hold.state : ctx.state); // the state on screen
     const namesOf = (s, w) => shipNames(s.seed, w);
     const shipName = (s, w, idx) => namesOf(s, w)[idx] || `${s.fleets[w] ? s.fleets[w][idx].len : ''}-ship`;
+
+    // ── patching helpers: the DOM is built once per screen and only the parts that changed are touched ──
+    const tpl = document.createElement('template');
+    const make = (html) => { tpl.innerHTML = html; return tpl.content.firstElementChild; };
+    const setHTML = (node, html) => { if (node._h !== html) { node._h = html; node.innerHTML = html; } };
+    const setText = (node, text) => { if (node._t !== text) { node._t = text; node.textContent = text; } };
+    /** Keep `layer`'s keyed children in step with `items` ({ k, sig, html, patch? }). A child is rebuilt
+     *  only when its sig changes, so running animations on the others are never cut short. */
+    function sync(layer, items) {
+      const m = layer._m || (layer._m = new Map());
+      const seen = new Set();
+      for (const it of items) {
+        seen.add(it.k);
+        let n = m.get(it.k);
+        if (!n || n._s !== it.sig) {
+          const nn = make(it.html);
+          nn._s = it.sig;
+          if (n) n.replaceWith(nn); else layer.appendChild(nn);
+          m.set(it.k, nn);
+          n = nn;
+        }
+        if (it.patch) it.patch(n);
+      }
+      for (const [k, n] of m) if (!seen.has(k)) { n.remove(); m.delete(k); }
+    }
+
+    // ── motion helpers (Web Animations: transform + opacity only, all off under reduced motion) ──
+    const shakeKF = (px) => [{ transform: 'translate(0,0)' }, { transform: `translate(${-px}px,${px * 0.3}px)` }, { transform: `translate(${px}px,${-px * 0.3}px)` }, { transform: `translate(${-px * 0.7}px,0)` }, { transform: `translate(${px * 0.5}px,${px * 0.2}px)` }, { transform: 'translate(0,0)' }];
+    function shakeEl(node, px = 2, ms = 200) {
+      if (!node || reducedMotion() || !node.animate) return;
+      try { node.animate(shakeKF(px), { duration: ms, easing: 'ease-out' }); } catch { /* ignore */ }
+    }
+    /** A shell crosses the chart to land on (r, c). Mine fly up from my side, theirs fall onto my fleet. */
+    function fly(layer, r, c, delay, up) {
+      if (reducedMotion() || !layer || !layer.animate) return;
+      const n = document.createElement('i');
+      n.className = `fl-shell${up ? '' : ' is-down'}`;
+      n.setAttribute('aria-hidden', 'true');
+      layer.appendChild(n);
+      const y0 = up ? (N + 0.2) * 100 : -1.4 * 100;
+      try {
+        const a = n.animate([
+          { transform: `translate(${c * 100}%,${y0}%) scale(.7)`, opacity: 1, offset: 0 },
+          { transform: `translate(${c * 100}%,${r * 100}%) scale(1)`, opacity: 1, offset: 0.92 },
+          { transform: `translate(${c * 100}%,${r * 100}%) scale(1)`, opacity: 0, offset: 1 },
+        ], { duration: FLIGHT, delay, easing: 'cubic-bezier(.45,0,.9,.6)', fill: 'both' });
+        a.onfinish = () => n.remove();
+      } catch { n.remove(); }
+    }
+    /** A one-frame-ish flash of the yellow plate over a chart. */
+    function flash(layer) {
+      if (!layer || !layer.animate) return;
+      const n = document.createElement('i');
+      n.className = 'fl-flash';
+      n.setAttribute('aria-hidden', 'true');
+      layer.appendChild(n);
+      try { const a = n.animate([{ opacity: 0 }, { opacity: 0.5, offset: 0.3 }, { opacity: 0 }], { duration: 190 }); a.onfinish = () => n.remove(); } catch { n.remove(); }
+    }
+    /** The big moment (a ship goes down): everything on the chart freezes for a beat, flashes, then jolts. */
+    function hitStop(chart, layer, grid, at) {
+      if (reducedMotion()) return;
+      later(() => {
+        if (!chart.isConnected) return;
+        let running = [];
+        try { running = chart.getAnimations ? chart.getAnimations({ subtree: true }).filter((a) => a.playState === 'running') : []; } catch { running = []; }
+        for (const a of running) { try { a.pause(); } catch { /* ignore */ } }
+        flash(layer);
+        later(() => {
+          for (const a of running) { try { a.play(); } catch { /* ignore */ } }
+          shakeEl(grid, 4, 240);
+        }, 85);
+      }, at);
+    }
+    /** The finale: printed paper confetti pops off the chart. */
+    function confetti(layer, n) {
+      if (reducedMotion() || !layer || !layer.animate) return;
+      const kinds = ['c-a', 'c-b', 'c-h', 'c-i', 'c-a', 'c-b'];
+      const nodes = [];
+      for (let i = 0; i < n; i++) {
+        const p = document.createElement('i');
+        p.className = `fl-conf ${kinds[i % kinds.length]}${i % 5 === 4 ? ' is-dot' : ''}`;
+        p.style.left = `${8 + Math.random() * 84}%`;
+        p.setAttribute('aria-hidden', 'true');
+        layer.appendChild(p);
+        const dx = (Math.random() - 0.5) * 220;
+        const rise = 90 + Math.random() * 120;
+        const fall = 30 + Math.random() * 90;
+        const rot = (Math.random() - 0.5) * 540;
+        nodes.push(p);
+        try {
+          const a = p.animate([
+            { transform: 'translate(0,0) rotate(0deg)', opacity: 1, offset: 0 },
+            { transform: `translate(${dx * 0.7}px,${-rise}px) rotate(${rot * 0.6}deg)`, opacity: 1, offset: 0.4 },
+            { transform: `translate(${dx}px,${fall}px) rotate(${rot}deg)`, opacity: 0, offset: 1 },
+          ], { duration: 1250 + Math.random() * 450, delay: Math.random() * 160, easing: 'cubic-bezier(.2,.7,.4,1)', fill: 'both' });
+          a.onfinish = () => p.remove();
+        } catch { p.remove(); }
+      }
+    }
 
     // ── periscope ──
     // A local-only view aid for Emerson's own phone in a two-phone match: a long press on the
@@ -708,7 +877,7 @@ registerGame({
       api.sfx('bad');
       api.haptic(30);
       if (msg) api.toast(msg);
-      if (elx) { elx.classList.remove('is-shake-x'); void elx.offsetWidth; elx.classList.add('is-shake-x'); }
+      shakeEl(elx, 4, 360);
     }
 
     // ── logbook (shared records: api data for 'fleet') ──
@@ -745,7 +914,7 @@ registerGame({
       const [w, n] = String(B.streak || '').split(':');
       return (w === 'a' || w === 'b') && Number(n) > 0 ? { w, n: Number(n) } : null;
     }
-    /** One line of rivalry for the placement screen. */
+    /** One line of rivalry for the placement screen (the inside of its paragraph, or ''). */
     function captainsLine(S) {
       const B = readBook();
       const bits = [];
@@ -756,7 +925,7 @@ registerGame({
       const fa = best('a');
       const fb = best('b');
       if (fa != null || fb != null) bits.push(`Fewest shots to win (${MODES[mode].name}): ${[['a', fa], ['b', fb]].filter(([, x]) => x != null).map(([w, x]) => `${esc(nm(w))} ${x}`).join(' · ')}.`);
-      return bits.length ? `<p class="fl-captain">${bits.join(' ')}</p>` : '';
+      return bits.join(' ');
     }
     function logbookHTML(S, matchId) {
       const B = readBook();
@@ -793,6 +962,7 @@ registerGame({
       const c = ctx;
       if (!c || !V) {
         view = 'hidden';
+        sh = null;
         root.className = 'g-fleet is-hidden';
         root.removeAttribute('data-viewer');
         root.innerHTML = '';
@@ -821,7 +991,41 @@ registerGame({
       const right = !s.stake && canSet
         ? `<label class="fl-stake"><span class="g-label">Play for</span><select data-stake aria-label="Play for"><option value="">glory only</option>${Object.entries(STAKES).map(([k, t]) => `<option value="${k}">${esc(t)}</option>`).join('')}</select></label>`
         : (s.stake ? `<p class="fl-rules-note fl-stake-set"><b>Playing for ${esc(STAKES[s.stake])}${byStake}.</b></p>` : '');
-      return `<div class="fl-setup">${left}${right}</div>`;
+      return `${left}${right}`;
+    }
+
+    // ── placement ──
+    /** Build the placement screen once: the chart and its 64 squares never change, only the ships, dock and rules row do. */
+    function buildPlace(v) {
+      const key = `p|${v}|${ctx.mode}|${ctx.matchId}|${nm('a')}|${nm('b')}`;
+      if (sh && sh.key === key && root.isConnected) return sh;
+      geo = null;
+      hoverKey = '';
+      const hint = fine
+        ? 'Drag a ship on, or pick one and click. Click a ship or press <b>R</b> to turn it.'
+        : 'Drag a ship on, or tap to drop. Tap a ship to turn.';
+      root.className = 'g-fleet';
+      root.innerHTML = `<div class="fl-place">
+        <div class="fl-main">
+          <header class="fl-head"><h2 class="fl-h p-${v}"><span class="fl-sw"></span>${ctx.mode === 'local' ? `${esc(nm(v))}’s fleet` : 'Your fleet'}</h2><span class="fl-pill is-quiet"></span></header>
+          <div class="fl-setup"></div>
+          <p class="fl-captain" hidden></p>
+          <p class="fl-hint">${hint}</p>
+          ${chartHTML({ cls: 'fl-home-chart is-edit', cells: tapCells('fl-cell', false), layer: '<div class="fl-preview" hidden></div>' })}
+        </div>
+        <div class="fl-aside">
+          <div class="fl-dock" aria-label="Ships to place"></div>
+          <p class="fl-named" hidden></p>
+          <p class="fl-note" hidden></p>
+          <div class="fl-actions">
+            <button type="button" class="gm-btn gm-btn-ghost" data-fl="shuffle">Shuffle</button>
+            <button type="button" class="gm-btn" data-fl="ready" disabled>Ready</button>
+          </div>
+        </div>
+      </div>`;
+      const q = (s2) => root.querySelector(s2);
+      sh = { key, kind: 'place', pill: q('.fl-pill'), setup: q('.fl-setup'), cap: q('.fl-captain'), layer: q('.fl-layer'), preview: q('.fl-preview'), dock: q('.fl-dock'), named: q('.fl-named'), note: q('.fl-note'), ready: q('[data-fl="ready"]') };
+      return sh;
     }
 
     function paintPlace() {
@@ -830,50 +1034,43 @@ registerGame({
       const s = ctx.state;
       const d = draft();
       const names = namesOf(s, v);
+      const S = buildPlace(v);
       if (sel < 0 || d[sel]) sel = nextUnplaced(d, Math.max(0, sel));
       const placed = d.filter(Boolean).length;
-      let cells = '';
-      for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) cells += `<button type="button" class="fl-cell" data-r="${r}" data-c="${c}" aria-label="${coord(r, c)}"></button>`;
-      const ships = d.map((o, i) => (o
-        ? `<button type="button" class="fl-ship p-${v}${fx.drop === i || fx.shuffle ? ' is-drop' : ''}" data-ship="${i}" data-len="${SIZES[i]}" style="${shipAt(shipOf(d, i))};--k:${i}" aria-label="The ${esc(names[i])}, ${SIZES[i]} long, at ${coord(o.r, o.c)}, ${o.dir === 'h' ? 'across' : 'down'}. Tap to turn it.">${shipSVG(SIZES[i], o.dir)}</button>`
-        : '')).join('');
-      const dock = placed === SIZES.length
+      S.pill.className = `fl-pill${placed === SIZES.length ? '' : ' is-quiet'}`;
+      setText(S.pill, `${placed}/5 at sea`);
+      setHTML(S.setup, setupHTML(s));
+      const cap2 = captainsLine(s);
+      S.cap.hidden = !cap2;
+      setHTML(S.cap, cap2);
+      const ships = d.map((o, i) => (o ? {
+        k: `s${i}`,
+        sig: `${o.r},${o.c},${o.dir}`,
+        html: `<button type="button" class="fl-ship p-${v}${fx.drop === i || fx.shuffle ? ' is-drop' : ''}" data-ship="${i}" data-len="${SIZES[i]}" style="${shipAt(shipOf(d, i))};--k:${i}" aria-label="The ${esc(names[i])}, ${SIZES[i]} long, at ${coord(o.r, o.c)}, ${o.dir === 'h' ? 'across' : 'down'}. Tap to turn it.">${shipSVG(SIZES[i], o.dir)}</button>`,
+      } : null)).filter(Boolean);
+      sync(S.layer, ships);
+      setHTML(S.dock, placed === SIZES.length
         ? `<div class="fl-dock-done">All five at sea. Drag to adjust, or hit Ready.</div>`
         : SIZES.map((len, i) => (d[i]
           ? `<span class="fl-slot" style="--len:${len}" aria-hidden="true"></span>`
-          : `<button type="button" class="fl-dock-ship p-${v}${sel === i ? ' is-sel' : ''}" data-ship="${i}" data-len="${len}" style="--len:${len}" aria-label="The ${esc(names[i])}, ${len} long${sel === i ? ', picked' : ''}" aria-pressed="${sel === i}">${shipSVG(len, 'h')}</button>`)).join('');
-      const named = sel >= 0 && !d[sel] ? `<p class="fl-named">Picked: <b>the ${esc(names[sel])}</b> (${SIZES[sel]} long)</p>` : '';
+          : `<button type="button" class="fl-dock-ship p-${v}${sel === i ? ' is-sel' : ''}" data-ship="${i}" data-len="${len}" style="--len:${len}" aria-label="The ${esc(names[i])}, ${len} long${sel === i ? ', picked' : ''}" aria-pressed="${sel === i}">${shipSVG(len, 'h')}</button>`)).join(''));
+      const named = sel >= 0 && !d[sel] ? `Picked: <b>the ${esc(names[sel])}</b> (${SIZES[sel]} long)` : '';
+      S.named.hidden = !named;
+      setHTML(S.named, named);
       const foe = foeOf(v);
-      const note = ctx.mode === 'online' && s.fleets[foe] ? `<p class="fl-note">${esc(nm(foe))} is ready and waiting.</p>` : '';
-      const hint = fine
-        ? 'Drag a ship on, or pick one and click. Click a ship or press <b>R</b> to turn it.'
-        : 'Drag a ship on, or tap to drop. Tap a ship to turn.';
-      root.className = 'g-fleet';
-      root.innerHTML = `<div class="fl-place">
-        <div class="fl-main">
-          <header class="fl-head"><h2 class="fl-h p-${v}"><span class="fl-sw"></span>${ctx.mode === 'local' ? `${esc(nm(v))}’s fleet` : 'Your fleet'}</h2><span class="fl-pill${placed === SIZES.length ? '' : ' is-quiet'}">${placed}/5 at sea</span></header>
-          ${setupHTML(s)}
-          ${captainsLine(s)}
-          <p class="fl-hint">${hint}</p>
-          ${chartHTML({ cls: 'fl-home-chart is-edit', cells, layer: `${ships}<div class="fl-preview" hidden></div>` })}
-        </div>
-        <div class="fl-aside">
-          <div class="fl-dock" aria-label="Ships to place">${dock}</div>
-          ${named}
-          ${note}
-          <div class="fl-actions">
-            <button type="button" class="gm-btn gm-btn-ghost" data-fl="shuffle">Shuffle</button>
-            <button type="button" class="gm-btn" data-fl="ready"${placed === SIZES.length && ctx.canMove ? '' : ' disabled'}>Ready</button>
-          </div>
-        </div>
-      </div>`;
-      if (fx.shake != null) { const t = root.querySelector(`.fl-ship[data-ship="${fx.shake}"]`); if (t) t.classList.add('is-shake-x'); }
+      const note = ctx.mode === 'online' && s.fleets[foe] ? `${esc(nm(foe))} is ready and waiting.` : '';
+      S.note.hidden = !note;
+      setHTML(S.note, note);
+      S.ready.disabled = !(placed === SIZES.length && ctx.canMove);
+      if (fx.shake != null) { const t = S.layer._m && S.layer._m.get(`s${fx.shake}`); if (t) shakeEl(t, 4, 360); }
       fx = {};
+      geo = null;
       api.setStatus(ctx.mode === 'local' ? `${nm(v)}, hide your fleet` : 'Hide your fleet');
     }
 
     function paintWait() {
       view = 'wait';
+      sh = null;
       const v = V;
       const s = ctx.state;
       const foe = foeOf(v);
@@ -889,8 +1086,95 @@ registerGame({
       api.setStatus(`Waiting for ${nm(foe)} to hide their fleet…`);
     }
 
+    // ── battle ──
     /** What a special weapon aimed at (r, c) would cover. */
     const footprint = (r, c) => (weapon === 'sonar' ? sonarCells(r, c) : weapon === 'torp' ? torpCells(r, c, tdir) : [[r, c]]);
+
+    /** Build the battle screen once per viewer: both charts' 128 squares persist, panels are patched. */
+    function buildBattle(v, foe) {
+      const key = `b|${v}|${ctx.mode}|${ctx.matchId}|${nm('a')}|${nm('b')}`;
+      if (sh && sh.key === key && root.isConnected) return sh;
+      aimOn = kbd;
+      root.className = 'g-fleet';
+      root.innerHTML = `<div class="fl-battle">
+        <section class="fl-target" aria-label="${esc(nm(foe))}’s waters">
+          <header class="fl-head"><h2 class="fl-h p-${foe}"><span class="fl-sw"></span>${esc(nm(foe))}’s waters</h2><span class="fl-pill" hidden></span></header>
+          ${chartHTML({ cls: 'fl-target-chart', cells: tapCells('fl-cell', true) })}
+          <div class="fl-tools-slot"></div>
+        </section>
+        <div class="fl-log" aria-live="polite"></div>
+        <section class="fl-home" aria-label="Your fleet">
+          <header class="fl-head"><h2 class="fl-h p-${v}"><span class="fl-sw"></span>${ctx.mode === 'local' ? esc(nm(v)) : 'Your fleet'}</h2></header>
+          ${chartHTML({ cls: 'fl-home-chart is-mini', cells: plainCells() })}
+        </section>
+        <section class="fl-side" aria-label="${esc(nm(foe))}’s fleet">
+          <header class="fl-head"><h2 class="fl-h p-${foe}"><span class="fl-sw"></span>Their fleet</h2></header>
+          <div class="fl-roster"></div>
+          <p class="fl-count"></p>
+          <p class="fl-kit" data-rg="kit" hidden></p>
+          <p class="fl-kit" data-rg="stake" hidden></p>
+        </section>
+        <div class="fl-book-slot"></div>
+      </div>`;
+      const q = (s2) => root.querySelector(s2);
+      const tchart = q('.fl-target .fl-chart');
+      const hchart = q('.fl-home .fl-chart');
+      const cells = [...tchart.querySelectorAll('.fl-cell')];
+      cells.forEach((b, i) => { b._c = 'fl-cell'; b._l = coord(Math.floor(i / N), i % N); b._d = true; });
+      sh = {
+        key, kind: 'battle', battle: q('.fl-battle'), target: q('.fl-target'), pill: q('.fl-target .fl-pill'),
+        tchart, hchart, tgrid: tchart.querySelector('.fl-grid'), hgrid: hchart.querySelector('.fl-grid'),
+        tlayer: tchart.querySelector('.fl-layer'), hlayer: hchart.querySelector('.fl-layer'), cells,
+        cols: [...tchart.querySelectorAll('.fl-lab-c span')], rows: [...tchart.querySelectorAll('.fl-lab-r span')],
+        tools: q('.fl-tools-slot'), log: q('.fl-log'), roster: q('.fl-roster'), count: q('.fl-count'),
+        kit: q('[data-rg="kit"]'), stake: q('[data-rg="stake"]'), book: q('.fl-book-slot'),
+      };
+      return sh;
+    }
+
+    /** Patch the 64 target squares from the state on screen and the aim/pick UI state. Only squares that changed are touched. */
+    function paintTargetCells() {
+      if (!sh || sh.kind !== 'battle' || !ctx || !V) return;
+      const s = shown();
+      const v = V;
+      const mode = modeOf(s);
+      const over = s.phase === 'over';
+      const myTurn = ctx.canMove && !(hold && !over);
+      const special = mode === 'arsenal' && weapon !== 'shot' && myTurn;
+      const shotAt = new Map();
+      for (const x of s.shots) if (x.by === v) shotAt.set(x.r * N + x.c, x);
+      const picked = new Set(pick.map(([r, c2]) => r * N + c2));
+      const zone = new Set();
+      if (special && armed) for (const [r, c2] of footprint(armed.r, armed.c)) zone.add(r * N + c2);
+      else if (special && aimOn) for (const [r, c2] of footprint(aim.r, aim.c)) zone.add(r * N + c2);
+      const usable = (r, col, x) => {
+        if (!myTurn) return false;
+        if (!special) return !x;
+        if (weapon === 'sonar') return true;
+        return torpCells(r, col, tdir).some(([rr, cc]) => !shotAt.has(rr * N + cc));
+      };
+      for (let r = 0; r < N; r++) {
+        for (let col = 0; col < N; col++) {
+          const i = r * N + col;
+          const x = shotAt.get(i);
+          const aimed = kbd && aimOn && aim.r === r && aim.c === col;
+          const z = zone.has(i);
+          const cls = `fl-cell${x ? ' is-shot' : ''}${aimed ? ' is-aim' : ''}${picked.has(i) ? ' is-pick' : ''}${z ? ' is-zone' : ''}${z && armed && armed.r === r && armed.c === col ? ' is-core' : ''}`;
+          const lab = `${coord(r, col)}${x ? (x.hit ? ', hit' : ', miss') : ''}`;
+          const dis = !usable(r, col, x);
+          const b = sh.cells[i];
+          if (b._c !== cls) { b._c = cls; b.className = cls; }
+          if (b._l !== lab) { b._l = lab; b.setAttribute('aria-label', lab); }
+          if (b._d !== dis) { b._d = dis; b.disabled = dis; }
+        }
+      }
+      for (let k = 0; k < N; k++) {
+        const on1 = aimOn && aim.c === k;
+        const on2 = aimOn && aim.r === k;
+        if (sh.cols[k].classList.contains('is-on') !== on1) sh.cols[k].classList.toggle('is-on', on1);
+        if (sh.rows[k].classList.contains('is-on') !== on2) sh.rows[k].classList.toggle('is-on', on2);
+      }
+    }
 
     function paintBattle(fresh, battleStart, freshScans) {
       view = 'battle';
@@ -898,14 +1182,16 @@ registerGame({
       const s = shown();
       const v = V;
       const foe = foeOf(v);
+      const S = buildBattle(v, foe);
       const mode = modeOf(s);
       const over = s.phase === 'over';
       const shots = s.shots;
       const scans = s.scans || [];
       const myFleet = s.fleets[v];
       const theirFleet = s.fleets[foe]; // read ONLY for sunk ships (or once the game is over)
+      const FL = flight();
       const freshAt = new Map(fresh.map((i, k) => [i, k]));
-      const delay = (i) => (freshAt.has(i) ? freshAt.get(i) * 260 : 0);
+      const delay = (i) => (freshAt.has(i) ? freshAt.get(i) * 260 + FL : 0);
       const mine = [];
       const theirs = [];
       shots.forEach((x, i) => (x.by === v ? mine : theirs).push({ ...x, i }));
@@ -919,67 +1205,65 @@ registerGame({
       const foeRunSet = new Set(foeRun);
       const lastFoe = foeRun.length ? foeRun[foeRun.length - 1] : -1;
       if (weapon !== 'shot' && !(mode === 'arsenal' && s.kit && s.kit[v][weapon] > 0)) { weapon = 'shot'; armed = null; } // nothing left to fire
-      const special = mode === 'arsenal' && weapon !== 'shot' && myTurn;
       const need = mode === 'salvo' ? salvoSize(s, v) : 0;
       if (!myTurn) { pick = []; armed = null; }
 
       // their waters (what I know: my shots, my pings, plus ships I've sunk)
-      const shotAt = new Map(mine.map((x) => [x.r * N + x.c, x]));
-      const picked = new Set(pick.map(([r, c2]) => r * N + c2));
-      const zone = new Set(special && armed ? footprint(armed.r, armed.c).map(([r, c2]) => r * N + c2) : []);
-      const usable = (r, col, x) => {
-        if (!myTurn) return false;
-        if (!special) return !x;
-        if (weapon === 'sonar') return true;
-        return torpCells(r, col, tdir).some(([rr, cc]) => !shotAt.has(rr * N + cc));
-      };
-      let tCells = '';
-      for (let r = 0; r < N; r++) {
-        for (let col = 0; col < N; col++) {
-          const x = shotAt.get(r * N + col);
-          const aimed = kbd && aim.r === r && aim.c === col;
-          const z = zone.has(r * N + col);
-          tCells += `<button type="button" class="fl-cell${x ? ' is-shot' : ''}${aimed ? ' is-aim' : ''}${picked.has(r * N + col) ? ' is-pick' : ''}${z ? ' is-zone' : ''}${z && armed.r === r && armed.c === col ? ' is-core' : ''}" data-r="${r}" data-c="${col}" aria-label="${coord(r, col)}${x ? (x.hit ? ', hit' : ', miss') : ''}"${usable(r, col, x) ? '' : ' disabled'}></button>`;
-        }
-      }
-      let tLayer = '';
+      paintTargetCells();
+      const tItems = [];
       for (const [idx, at2] of sunkTheirs) {
         const o = theirFleet[idx];
         const isNew = freshAt.has(at2);
-        tLayer += `<div class="fl-ship p-${foe} is-wreck${isNew ? ' is-sinking' : ''}" data-len="${o.len}" style="${shipAt(o)};--d:${delay(at2) + 280}ms">${shipSVG(o.len, o.dir)}</div>`;
+        tItems.push({ k: `w${idx}`, sig: 'w', html: `<div class="fl-ship p-${foe} is-wreck${isNew ? ' is-sinking' : ''}" data-len="${o.len}" style="${shipAt(o)};--d:${delay(at2) + 280}ms">${shipSVG(o.len, o.dir)}</div>` });
       }
       if (over) {
         let k = 0;
-        theirFleet.forEach((o, idx) => { if (!sunkTheirs.has(idx)) tLayer += `<div class="fl-ship p-${foe} is-ghost" data-len="${o.len}" style="${shipAt(o)};--k:${k++}">${shipSVG(o.len, o.dir)}</div>`; });
+        theirFleet.forEach((o, idx) => { if (!sunkTheirs.has(idx)) tItems.push({ k: `g${idx}`, sig: 'g', html: `<div class="fl-ship p-${foe} is-ghost" data-len="${o.len}" style="${shipAt(o)};--k:${k++}">${shipSVG(o.len, o.dir)}</div>` }); });
       } else if (scope && scopeOK()) {
-        theirFleet.forEach((o, idx) => { if (!sunkTheirs.has(idx)) tLayer += `<i class="fl-scope" style="${shipAt(o)}" aria-hidden="true"></i>`; });
+        theirFleet.forEach((o, idx) => { if (!sunkTheirs.has(idx)) tItems.push({ k: `sp${idx}`, sig: 'sp', html: `<i class="fl-scope" style="${shipAt(o)}" aria-hidden="true"></i>` }); });
       }
       const freshScanSet = new Set(freshScans);
-      scans.forEach((x, k) => { if (x.by === v) tLayer += scanBox(x, freshScanSet.has(k) ? ' is-new' : ''); });
+      scans.forEach((x, k) => { if (x.by === v) tItems.push({ k: `sc${k}`, sig: `${x.n}`, html: scanBox(x, freshScanSet.has(k) ? ' is-new' : '') }); });
       for (const x of mine) {
         const sunkBy = x.hit ? onSunk(theirFleet, sunkTheirs, x.r, x.c) : -1;
         const kind = !x.hit ? 'is-miss' : sunkBy >= 0 ? 'is-x' : 'is-hit';
         const isNew = freshAt.has(x.i) || (sunkBy >= 0 && freshAt.has(sunkBy));
         const d = freshAt.has(x.i) ? delay(x.i) : sunkBy >= 0 ? delay(sunkBy) + 520 : 0;
         const last = x.i === lastMine && !over && (pending || mode !== 'salvo');
-        tLayer += `<span class="fl-mark ${kind}${isNew ? ' is-new' : ''}${last ? ' is-last' : ''}" style="${at(x.r, x.c)};--d:${d}ms">${!x.hit ? SPLASH : sunkBy >= 0 ? WRECK : BURST}</span>`;
+        tItems.push({
+          k: `m${x.i}`,
+          sig: kind,
+          html: `<span class="fl-mark ${kind}${isNew ? ' is-new' : ''}${last ? ' is-last' : ''}" style="${at(x.r, x.c)};--d:${d}ms">${!x.hit ? SPLASH : sunkBy >= 0 ? WRECK : BURST}</span>`,
+          patch: (n) => { if (n.classList.contains('is-last') !== last) n.classList.toggle('is-last', last); },
+        });
       }
+      sync(S.tlayer, tItems);
 
       // my fleet (their shots on it; their latest volley highlighted; their pings)
-      let hLayer = myFleet.map((o, idx) => {
+      const hItems = myFleet.map((o, idx) => {
         const at2 = sunkMine.has(idx) ? sunkMine.get(idx) : -1;
         const cls = at2 >= 0 ? ` is-wreck${freshAt.has(at2) ? ' is-foundering' : ''}` : '';
-        return `<div class="fl-ship p-${v}${cls}" data-len="${o.len}" style="${shipAt(o)};--d:${at2 >= 0 ? delay(at2) + 200 : 0}ms">${shipSVG(o.len, o.dir, true)}</div>`;
-      }).join('');
-      scans.forEach((x, k) => { if (x.by === foe) hLayer += scanBox(x, ` is-theirs${freshScanSet.has(k) ? ' is-new' : ''}`); });
-      for (const x of theirs) if (foeRunSet.has(x.i)) hLayer += `<span class="fl-hl${x.i === lastFoe ? ' is-last' : ''}" style="${at(x.r, x.c)};--d:${delay(x.i) + 300}ms"></span>`;
+        return { k: `f${idx}`, sig: at2 >= 0 ? 'w' : 'f', html: `<div class="fl-ship p-${v}${cls}" data-len="${o.len}" style="${shipAt(o)};--d:${at2 >= 0 ? delay(at2) + 200 : 0}ms">${shipSVG(o.len, o.dir, true)}</div>` };
+      });
+      scans.forEach((x, k) => { if (x.by === foe) hItems.push({ k: `sc${k}`, sig: `${x.n}`, html: scanBox(x, ` is-theirs${freshScanSet.has(k) ? ' is-new' : ''}`) }); });
+      for (const x of theirs) {
+        if (!foeRunSet.has(x.i)) continue;
+        const last = x.i === lastFoe;
+        hItems.push({
+          k: `h${x.i}`,
+          sig: 'h',
+          html: `<span class="fl-hl${last ? ' is-last' : ''}" style="${at(x.r, x.c)};--d:${delay(x.i) + 300}ms"></span>`,
+          patch: (n) => { if (n.classList.contains('is-last') !== last) n.classList.toggle('is-last', last); },
+        });
+      }
       for (const x of theirs) {
         const sunkBy = x.hit ? onSunk(myFleet, sunkMine, x.r, x.c) : -1;
         const kind = !x.hit ? 'is-miss' : sunkBy >= 0 ? 'is-x' : 'is-hit';
         const isNew = freshAt.has(x.i) || (sunkBy >= 0 && freshAt.has(sunkBy));
         const d = freshAt.has(x.i) ? delay(x.i) : sunkBy >= 0 ? delay(sunkBy) + 400 : 0;
-        hLayer += `<span class="fl-mark ${kind}${isNew ? ' is-new' : ''}" style="${at(x.r, x.c)};--d:${d}ms">${!x.hit ? SPLASH : sunkBy >= 0 ? WRECK : BURST}</span>`;
+        hItems.push({ k: `hm${x.i}`, sig: kind, html: `<span class="fl-mark ${kind}${isNew ? ' is-new' : ''}" style="${at(x.r, x.c)};--d:${d}ms">${!x.hit ? SPLASH : sunkBy >= 0 ? WRECK : BURST}</span>` });
       }
+      sync(S.hlayer, hItems);
 
       // their fleet roster (sizes only, crossed off and named as they sink)
       const theirNames = namesOf(s, foe);
@@ -993,7 +1277,7 @@ registerGame({
         const idx = (sunkByLen[len] || [])[used[len] - 1];
         const sunk = idx != null;
         const isNew = sunk && freshSunk.has(idx);
-        return `<span class="fl-ro p-${foe}${sunk ? ' is-sunk' : ''}${isNew ? ' is-new' : ''}" style="--len:${len};--d:${fresh.length * 260 + 500}ms" role="img" aria-label="${len}-long, ${sunk ? `sunk: the ${esc(theirNames[idx])}` : 'afloat'}"${sunk ? ` title="The ${esc(theirNames[idx])}"` : ''}>${shipSVG(len, 'h', true)}</span>`;
+        return `<span class="fl-ro p-${foe}${sunk ? ' is-sunk' : ''}${isNew ? ' is-new' : ''}" style="--len:${len}${isNew ? `;--d:${fresh.length * 260 + FL + 500}ms` : ''}" role="img" aria-label="${len}-long, ${sunk ? `sunk: the ${esc(theirNames[idx])}` : 'afloat'}"${sunk ? ` title="The ${esc(theirNames[idx])}"` : ''}>${shipSVG(len, 'h', true)}</span>`;
       }).join('');
       const left = SIZES.length - sunkList.length;
       const kitLine = (w) => (s.kit ? `${s.kit[w].sonar} sonar · ${s.kit[w].torp} torpedo${s.kit[w].torp === 1 ? '' : 'es'}` : '');
@@ -1070,49 +1354,54 @@ registerGame({
         </div>${tip ? `<p class="fl-tip">${tip}</p>` : ''}</div>`;
       }
 
-      root.className = 'g-fleet';
-      root.innerHTML = `<div class="fl-battle${over ? ' has-book' : ''}">
-        <section class="fl-target${myTurn ? ' is-live' : ''}" aria-label="${esc(nm(foe))}’s waters">
-          <header class="fl-head"><h2 class="fl-h p-${foe}"><span class="fl-sw"></span>${esc(nm(foe))}’s waters</h2>${pill ? `<span class="fl-pill${over ? '' : ' is-mode'}">${esc(pill)}</span>` : ''}</header>
-          ${chartHTML({ cls: 'fl-target-chart', cells: tCells, layer: tLayer })}
-          ${tools}
-        </section>
-        <div class="fl-log" aria-live="polite">${lines.join('')}</div>
-        <section class="fl-home" aria-label="Your fleet">
-          <header class="fl-head"><h2 class="fl-h p-${v}"><span class="fl-sw"></span>${c.mode === 'local' ? esc(nm(v)) : 'Your fleet'}</h2></header>
-          ${chartHTML({ cls: 'fl-home-chart is-mini', cells: plainCells(), layer: hLayer })}
-        </section>
-        <section class="fl-side" aria-label="${esc(nm(foe))}’s fleet">
-          <header class="fl-head"><h2 class="fl-h p-${foe}"><span class="fl-sw"></span>Their fleet</h2></header>
-          <div class="fl-roster">${roster}</div>
-          <p class="fl-count">${left === 0 ? 'All five sunk' : left === 1 ? 'One ship left!' : `${left} of 5 still afloat`}</p>
-          ${s.kit ? `<p class="fl-kit">Their kit: ${kitLine(foe)}</p>` : ''}
-          ${s.stake ? `<p class="fl-kit">Playing for ${esc(STAKES[s.stake])}</p>` : ''}
-        </section>
-        ${over ? logbookHTML(s, c.matchId) : ''}
-      </div>`;
+      // the panels: each is rewritten only when its text changed
+      S.battle.classList.toggle('has-book', over);
+      S.target.classList.toggle('is-live', myTurn);
+      S.pill.hidden = !pill;
+      S.pill.className = `fl-pill${over ? '' : ' is-mode'}`;
+      setText(S.pill, pill);
+      setHTML(S.tools, tools);
+      setHTML(S.log, lines.join(''));
+      setHTML(S.roster, roster);
+      setText(S.count, left === 0 ? 'All five sunk' : left === 1 ? 'One ship left!' : `${left} of 5 still afloat`);
+      const kitTxt = s.kit ? `Their kit: ${kitLine(foe)}` : '';
+      S.kit.hidden = !kitTxt;
+      setText(S.kit, kitTxt);
+      const stakeTxt = s.stake ? `Playing for ${STAKES[s.stake]}` : '';
+      S.stake.hidden = !stakeTxt;
+      setText(S.stake, stakeTxt);
+      setHTML(S.book, over ? logbookHTML(s, c.matchId) : '');
 
       // effects for anything new
       if (fresh.length || freshScans.length) effects(fresh, over, freshScans);
-      else if (battleStart) stamp(root.querySelector('.fl-target .fl-chart'), 'Battle stations', `${MODES[mode].name} · ${s.first === v ? (c.mode === 'local' ? `${nm(v)} fires first` : 'You fire first') : `${nm(foe)} fires first`}`, 0);
+      else if (battleStart) stamp(S.tchart, 'Battle stations', `${MODES[mode].name} · ${s.first === v ? (c.mode === 'local' ? `${nm(v)} fires first` : 'You fire first') : `${nm(foe)} fires first`}`, 0);
     }
 
     function effects(fresh, over, freshScans = []) {
       const s = shown();
       const v = V;
+      const S = sh;
+      if (!S || S.kind !== 'battle') return;
+      const FL = flight();
       const list = fresh.map((i) => s.shots[i]);
       const lastK = list.length - 1;
       const mineNew = list.filter((x) => x.by === v);
       const theirsNew = list.filter((x) => x.by !== v);
-      const tChart = root.querySelector('.fl-target .fl-chart');
-      const hChart = root.querySelector('.fl-home .fl-chart');
+      const tChart = S.tchart;
+      const hChart = S.hchart;
+      // each shot: a shell crosses the chart, then it lands (a jolt for a hit; a freeze-flash-jolt when it sinks a ship)
       list.forEach((x, k) => {
-        const chart = x.by === v ? tChart : hChart;
-        if (x.hit && chart) later(() => { chart.style.setProperty('--d', '0ms'); chart.classList.remove('is-shake'); void chart.offsetWidth; chart.classList.add('is-shake'); }, k * 260);
+        const mineShot = x.by === v;
+        const layer = mineShot ? S.tlayer : S.hlayer;
+        const grid = mineShot ? S.tgrid : S.hgrid;
+        const chart = mineShot ? tChart : hChart;
+        fly(layer, x.r, x.c, k * 260, mineShot);
+        if (x.hit && x.sunk >= 0) hitStop(chart, layer, grid, k * 260 + FL);
+        else if (x.hit) later(() => shakeEl(grid, 2, 180), k * 260 + FL);
       });
       const sunkMine = mineNew.filter((x) => x.sunk >= 0);
       const sunkTheirs = theirsNew.filter((x) => x.sunk >= 0);
-      const wait = Math.max(0, lastK) * 260;
+      const wait = Math.max(0, lastK) * 260 + FL;
       const torpBonus = mineNew.some((x) => x.bonus === 'torp') ? ' · +1 torpedo' : '';
       const sonarBonus = theirsNew.some((x) => x.kit === 'sonar') ? ' · +1 sonar' : '';
       // a hot streak: the run of hits you just extended crossed 3 (or 5)
@@ -1131,23 +1420,23 @@ registerGame({
         const left = afloat(s, foe);
         const finalWait = s.final && s.phase === 'battle';
         stamp(tChart, finalWait ? 'All sunk!' : sunkMine.length > 1 ? 'Double sink!' : 'Sunk!', over ? 'That’s the whole fleet' : finalWait ? `${nm(foe)} gets one last salvo` : `The ${shipName(s, foe, x.sunk)}${left === 1 ? ' · one to go' : ''}${torpBonus}`, wait + 280);
-        api.sfx('hit'); api.haptic(40);
+        later(() => api.sfx('hit'), FL); api.haptic(40);
         later(() => api.sfx('good'), wait + 300);
       } else if (sunkTheirs.length) {
         const x = sunkTheirs[sunkTheirs.length - 1];
         stamp(hChart, 'Sunk', `your ${shipName(s, v, x.sunk)}${sonarBonus}`, wait + 200, true);
-        api.sfx('hit'); api.haptic(40);
+        later(() => api.sfx('hit'), FL); api.haptic(40);
         later(() => api.sfx('bad'), wait + 240);
       } else if (hot) {
         stamp(tChart, hot, `${tailHits(s, v)} in a row${torpBonus}`, wait + 200);
-        api.sfx('hit'); api.haptic(25);
+        later(() => api.sfx('hit'), FL); api.haptic(25);
         later(() => api.sfx('good'), wait + 220);
       } else if (mineNew.some((x) => x.hit) && s.shots.findIndex((x) => x.hit) === s.shots.indexOf(mineNew.find((x) => x.hit))) {
         stamp(tChart, 'First hit!', 'Drew first blood', wait + 200);
-        api.sfx('hit'); api.haptic(25);
+        later(() => api.sfx('hit'), FL); api.haptic(25);
       } else if (list.length) {
         const last = list[lastK];
-        if (last.hit) { api.sfx('hit'); api.haptic(25); } else api.sfx(last.by === v ? 'pop' : 'tick');
+        if (last.hit) { later(() => api.sfx('hit'), FL); api.haptic(25); } else later(() => api.sfx(last.by === v ? 'pop' : 'tick'), FL);
       }
       if (s.final && s.phase === 'battle' && s.turn === v && theirsNew.length) stamp(tChart, 'Last salvo!', 'Sink them all to draw', wait + 1300);
       const scans = s.scans || [];
@@ -1156,6 +1445,14 @@ registerGame({
         if (!x) continue;
         if (x.by === v) { stamp(tChart, `Ping: ${x.n}`, x.n ? `ship square${x.n === 1 ? '' : 's'} near ${coord(x.r, x.c)}` : `all clear around ${coord(x.r, x.c)}`, 120); api.sfx('pop'); later(() => api.sfx('tick'), 160); }
         else if (!list.length) { stamp(hChart, 'Pinged', `near ${coord(x.r, x.c)}`, 120, true); api.sfx('tick'); }
+      }
+      // the finale: whoever won gets a shower of printed paper; the loser's waters rumble
+      if (over && list.length) {
+        later(() => {
+          if (!S.tlayer.isConnected) return;
+          if (s.winner && s.winner !== v) shakeEl(S.hgrid, 5, 300);
+          else confetti(S.tlayer, s.winner ? 26 : 12);
+        }, wait + 420);
       }
     }
 
@@ -1174,21 +1471,8 @@ registerGame({
 
     // ── aiming (hover + keyboard) ──
     function paintAim(show) {
-      const chart = root.querySelector('.fl-target .fl-chart');
-      if (!chart) return;
-      chart.querySelectorAll('.fl-cell.is-aim').forEach((b) => b.classList.remove('is-aim'));
-      chart.querySelectorAll('.fl-lab span.is-on').forEach((b) => b.classList.remove('is-on'));
-      if (!armed) chart.querySelectorAll('.fl-cell.is-zone').forEach((b) => b.classList.remove('is-zone', 'is-core'));
-      if (!show) return;
-      const cell = chart.querySelector(`.fl-cell[data-r="${aim.r}"][data-c="${aim.c}"]`);
-      if (cell && kbd) cell.classList.add('is-aim');
-      if (!armed && weapon !== 'shot' && modeOf(ctx.state) === 'arsenal') {
-        for (const [r, c] of footprint(aim.r, aim.c)) { const b = chart.querySelector(`.fl-cell[data-r="${r}"][data-c="${c}"]`); if (b) b.classList.add('is-zone'); }
-      }
-      const cols = chart.querySelectorAll('.fl-lab-c span');
-      const rows = chart.querySelectorAll('.fl-lab-r span');
-      if (cols[aim.c]) cols[aim.c].classList.add('is-on');
-      if (rows[aim.r]) rows[aim.r].classList.add('is-on');
+      aimOn = !!show;
+      paintTargetCells();
     }
 
     /** Play a battle move. Same phone: a move that passes the turn is shown first, then played. */
@@ -1291,7 +1575,7 @@ registerGame({
         if (fits(d, i, cand)) { place(i, cand, 'turn'); return; }
       }
       active = i;
-      bad('No room to turn it there.', root.querySelector(`.fl-place .fl-ship[data-ship="${i}"]`));
+      bad('No room to turn it there.', sh && sh.layer && sh.layer._m ? sh.layer._m.get(`s${i}`) : null);
     }
     function tapPlace(r, c) {
       const d = draft();
@@ -1321,41 +1605,58 @@ registerGame({
       if (res.ok) { api.sfx('good'); api.haptic(20); } else bad(res.error);
     }
 
-    // preview box during drags / hover
-    function showPreview(o, len, ok) {
-      const p = root.querySelector('.fl-place .fl-preview');
-      if (!p) return;
-      if (!o) { p.hidden = true; return; }
-      p.hidden = false;
-      p.setAttribute('style', shipAt({ ...o, len }));
-      p.classList.toggle('is-bad', !ok);
-    }
-    function gridInfo() {
+    // ── geometry for placement: read once (pointerdown, or the first hover after a repaint / resize / scroll), never per move ──
+    function measure() {
       const g = root.querySelector('.fl-place .fl-grid');
-      if (!g) return null;
-      const rect = g.getBoundingClientRect();
-      return { rect, cs: rect.width / N };
+      if (!g) { geo = null; return null; }
+      const gr = g.getBoundingClientRect();
+      const rr = root.getBoundingClientRect();
+      geo = { gl: gr.left, gt: gr.top, gw: gr.width, cs: gr.width / N, rl: rr.left, rt: rr.top };
+      return geo;
+    }
+    const getGeo = () => geo || measure();
+    const dropGeo = () => { geo = null; if (drag) drag.dirty = true; };
+    let ro = null;
+    try { if (typeof ResizeObserver === 'function') { ro = new ResizeObserver(() => dropGeo()); ro.observe(root); } } catch { ro = null; }
+    window.addEventListener('resize', dropGeo);
+    window.addEventListener('scroll', dropGeo, { capture: true, passive: true });
+
+    /** The dashed box that shows where the ship would land. It moves by transform; its size changes only when the ship does. */
+    function showPreview(o, len, ok) {
+      const p = sh && sh.kind === 'place' ? sh.preview : null;
+      if (!p) return;
+      if (!o) { if (!p.hidden) p.hidden = true; return; }
+      const w = o.dir === 'h' ? len : 1;
+      const h = o.dir === 'v' ? len : 1;
+      const st = p.style;
+      if (p._w !== w) { p._w = w; st.setProperty('--w', w); }
+      if (p._h !== h) { p._h = h; st.setProperty('--h', h); }
+      st.setProperty('--r', o.r);
+      st.setProperty('--c', o.c);
+      if (p._ok !== ok) { p._ok = ok; p.classList.toggle('is-bad', !ok); }
+      if (p.hidden) p.hidden = false;
     }
     function cellUnder(x, y) {
-      const gi = gridInfo();
-      if (!gi) return null;
-      const c = Math.floor((x - gi.rect.left) / gi.cs);
-      const r = Math.floor((y - gi.rect.top) / gi.cs);
+      const g = getGeo();
+      if (!g) return null;
+      const c = Math.floor((x - g.gl) / g.cs);
+      const r = Math.floor((y - g.gt) / g.cs);
       return onChart(r, c) ? { r, c } : null;
     }
 
-    // ── drag ──
+    // ── drag: the ship in your hand is moved by transform in a rAF, from rects read once at pointerdown ──
     function startDrag(e, t) {
       const i = Number(t.dataset.ship);
       const d = draft();
       const from = t.classList.contains('fl-dock-ship') ? 'dock' : 'chart';
       const rect = t.getBoundingClientRect();
-      drag = { i, from, el: t, id: e.pointerId, x0: e.clientX, y0: e.clientY, offX: e.clientX - rect.left, offY: e.clientY - rect.top, dir: from === 'chart' ? d[i].dir : 'h', moved: false, ghost: null, target: null, over: false, scale: 1 };
+      measure();
+      drag = { i, from, el: t, id: e.pointerId, x0: e.clientX, y0: e.clientY, px: e.clientX, py: e.clientY, offX: e.clientX - rect.left, offY: e.clientY - rect.top, srcW: rect.width, srcH: rect.height, dir: from === 'chart' ? d[i].dir : 'h', moved: false, ghost: null, target: null, over: false, key: '', raf: 0, dirty: false };
       try { t.setPointerCapture(e.pointerId); } catch { /* ignore */ }
     }
     function ghostSize() {
-      const gi = gridInfo();
-      const cs = gi ? gi.cs : 40;
+      const g = getGeo();
+      const cs = g ? g.cs : 40;
       const len = SIZES[drag.i];
       return { cs, w: drag.dir === 'h' ? len * cs : cs, h: drag.dir === 'v' ? len * cs : cs };
     }
@@ -1365,33 +1666,46 @@ registerGame({
       drag.ghost.style.height = `${h}px`;
       drag.ghost.innerHTML = shipSVG(SIZES[drag.i], drag.dir);
     }
-    function moveDrag(x, y) {
-      const rr = root.getBoundingClientRect();
-      const g = drag.ghost;
-      g.style.left = `${x - drag.offX - rr.left}px`;
-      g.style.top = `${y - drag.offY - rr.top}px`;
-      const gi = gridInfo();
-      if (!gi) return;
-      const { cs } = gi;
-      const len = SIZES[drag.i];
-      const wc = drag.dir === 'h' ? len : 1;
-      const hc = drag.dir === 'v' ? len : 1;
-      const R = gi.rect;
-      drag.over = x > R.left - cs * 0.5 && x < R.right + cs * 0.5 && y > R.top - cs * 0.5 && y < R.bottom + cs * 0.5;
-      if (!drag.over) { drag.target = null; showPreview(null); return; }
-      const c = clamp(Math.round((x - drag.offX - R.left) / cs), 0, N - wc);
-      const r = clamp(Math.round((y - drag.offY - R.top) / cs), 0, N - hc);
-      const o = { r, c, dir: drag.dir };
-      const ok = fits(draft(), drag.i, o);
-      drag.target = ok ? o : null;
+    function dragFrame() {
+      const dg = drag;
+      if (!dg) return;
+      dg.raf = 0;
+      if (!dg.ghost) return;
+      if (dg.dirty) { dg.dirty = false; measure(); }
+      const g = getGeo();
+      if (!g) return;
+      const x = dg.px;
+      const y = dg.py;
+      dg.ghost.style.transform = `translate3d(${(x - dg.offX - g.rl).toFixed(1)}px,${(y - dg.offY - g.rt).toFixed(1)}px,0)${reducedMotion() ? '' : ' rotate(-2deg) scale(1.05)'}`;
+      const { cs } = g;
+      const len = SIZES[dg.i];
+      const wc = dg.dir === 'h' ? len : 1;
+      const hc = dg.dir === 'v' ? len : 1;
+      const over = x > g.gl - cs * 0.5 && x < g.gl + g.gw + cs * 0.5 && y > g.gt - cs * 0.5 && y < g.gt + g.gw + cs * 0.5;
+      if (!over) {
+        if (dg.key !== 'out') { dg.key = 'out'; dg.over = false; dg.target = null; showPreview(null); }
+        return;
+      }
+      dg.over = true;
+      const c = clamp(Math.round((x - dg.offX - g.gl) / cs), 0, N - wc);
+      const r = clamp(Math.round((y - dg.offY - g.gt) / cs), 0, N - hc);
+      const key = `${r},${c},${dg.dir}`;
+      if (key === dg.key) return;
+      dg.key = key;
+      const o = { r, c, dir: dg.dir };
+      const ok = fits(draft(), dg.i, o);
+      dg.target = ok ? o : null;
       showPreview(o, len, ok);
     }
     function endDrag(commit) {
       const dg = drag;
       drag = null;
       if (!dg) return;
+      if (dg.raf) cancelAnimationFrame(dg.raf);
       try { dg.el.releasePointerCapture(dg.id); } catch { /* ignore */ }
       if (dg.ghost) dg.ghost.remove();
+      dg.el.classList.remove('is-lifted');
+      showPreview(null);
       if (!dg.moved) { if (deferred) render(); return; }
       suppressClick = true;
       const d = draft();
@@ -1420,43 +1734,63 @@ registerGame({
     root.addEventListener('pointermove', (e) => {
       if (press && e.pointerId === press.id && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 12) pressEnd();
       if (drag && e.pointerId === drag.id) {
+        drag.px = e.clientX;
+        drag.py = e.clientY;
         if (!drag.moved) {
           if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 7) return;
           drag.moved = true;
           // the ghost is drawn at chart scale, so keep the grab point proportional
-          const rect = drag.el.getBoundingClientRect();
           const gs = ghostSize();
-          drag.offX *= gs.w / Math.max(1, rect.width);
-          drag.offY *= gs.h / Math.max(1, rect.height);
+          drag.offX *= gs.w / Math.max(1, drag.srcW);
+          drag.offY *= gs.h / Math.max(1, drag.srcH);
           drag.ghost = document.createElement('div');
           drag.ghost.className = `fl-ghost p-${V}`;
           paintGhost();
           root.appendChild(drag.ghost);
           drag.el.classList.add('is-lifted');
           api.sfx('tap');
+          dragFrame();
         }
         e.preventDefault();
-        moveDrag(e.clientX, e.clientY);
+        if (!drag.raf) drag.raf = requestAnimationFrame(dragFrame);
         return;
       }
       if (e.pointerType !== 'mouse') return;
       if (view === 'place' && ctx && ctx.canMove) {
         const cell = e.target.closest('.is-edit .fl-cell') ? cellUnder(e.clientX, e.clientY) : null;
         if (cell && sel >= 0) {
+          const key = `${cell.r},${cell.c},${sel},${selDir}`;
+          if (key === hoverKey) return;
+          hoverKey = key;
           const o = fitAt(sel, cell.r, cell.c, selDir);
           showPreview(o, SIZES[sel], fits(draft(), sel, o));
-        } else showPreview(null);
+        } else if (hoverKey) { hoverKey = ''; showPreview(null); }
       } else if (view === 'battle') {
         const b = e.target.closest('.fl-target .fl-cell');
-        if (b && !b.disabled) { aim = { r: Number(b.dataset.r), c: Number(b.dataset.c) }; paintAim(true); } else if (!kbd) paintAim(false);
+        if (b && !b.disabled) {
+          const r = Number(b.dataset.r);
+          const c = Number(b.dataset.c);
+          if (!aimOn || aim.r !== r || aim.c !== c) { aim = { r, c }; paintAim(true); }
+        } else if (!kbd && aimOn) paintAim(false);
       }
     });
     root.addEventListener('change', (e) => { const sel2 = e.target.closest && e.target.closest('select[data-stake]'); if (sel2) chooseStake(sel2.value); });
     root.addEventListener('contextmenu', (e) => { if (press) e.preventDefault(); }); // Android's long-press menu would cancel the press
-    root.addEventListener('pointerleave', () => { pressEnd(); if (!drag && view === 'place') showPreview(null); if (view === 'battle' && !kbd) paintAim(false); });
-    root.addEventListener('pointerup', (e) => { pressEnd(); if (drag && e.pointerId === drag.id) endDrag(true); });
+    root.addEventListener('pointerleave', () => { pressEnd(); if (!drag && view === 'place') { hoverKey = ''; showPreview(null); } if (view === 'battle' && !kbd && aimOn) paintAim(false); });
+    root.addEventListener('pointerup', (e) => {
+      pressEnd();
+      if (drag && e.pointerId === drag.id) {
+        if (drag.moved) { drag.px = e.clientX; drag.py = e.clientY; if (drag.raf) { cancelAnimationFrame(drag.raf); drag.raf = 0; } dragFrame(); }
+        endDrag(true);
+      }
+    });
     root.addEventListener('pointercancel', (e) => { pressEnd(); if (drag && e.pointerId === drag.id) endDrag(false); });
-    root.addEventListener('lostpointercapture', (e) => { if (drag && e.pointerId === drag.id && drag.moved) endDrag(true); });
+    root.addEventListener('lostpointercapture', (e) => {
+      if (!drag || e.pointerId !== drag.id || !drag.moved) return;
+      if (drag.raf) { cancelAnimationFrame(drag.raf); drag.raf = 0; }
+      dragFrame();
+      endDrag(true);
+    });
 
     root.addEventListener('click', (e) => {
       if (suppressClick) { suppressClick = false; return; }
@@ -1512,13 +1846,15 @@ registerGame({
         if (drag && drag.moved) {
           drag.dir = drag.dir === 'h' ? 'v' : 'h';
           const tmp = drag.offX; drag.offX = drag.offY; drag.offY = tmp;
+          drag.key = '';
           paintGhost();
           api.sfx('flip');
+          if (!drag.raf) drag.raf = requestAnimationFrame(dragFrame);
           return;
         }
         const d = draft();
-        const preview = root.querySelector('.fl-place .fl-preview');
-        if (sel >= 0 && preview && !preview.hidden) { selDir = selDir === 'h' ? 'v' : 'h'; api.sfx('flip'); showPreview(null); return; }
+        const preview = sh && sh.kind === 'place' ? sh.preview : null;
+        if (sel >= 0 && preview && !preview.hidden) { selDir = selDir === 'h' ? 'v' : 'h'; api.sfx('flip'); hoverKey = ''; showPreview(null); return; }
         if (active >= 0 && d[active]) { rotate(active, 0); return; }
         if (sel >= 0) { selDir = selDir === 'h' ? 'v' : 'h'; api.sfx('flip'); api.toast(selDir === 'h' ? 'Placing across' : 'Placing down'); }
         return;
@@ -1538,7 +1874,7 @@ registerGame({
         if (kbd) aim = { r: clamp(aim.r + step[0], 0, N - 1), c: clamp(aim.c + step[1], 0, N - 1) };
         kbd = true;
         paintAim(true);
-        if (onCell) { const nb = root.querySelector(`.fl-target .fl-cell[data-r="${aim.r}"][data-c="${aim.c}"]`); if (nb && !nb.disabled) nb.focus(); }
+        if (onCell) { const nb = sh && sh.kind === 'battle' ? sh.cells[aim.r * N + aim.c] : null; if (nb && !nb.disabled) nb.focus(); }
         api.sfx('tick');
         return;
       }
@@ -1546,7 +1882,7 @@ registerGame({
         if (onControl || onCell) return; // the native click does it: a focused square fires at itself
         e.preventDefault();
         if (!kbd) { kbd = true; paintAim(true); return; }
-        const b = root.querySelector(`.fl-target .fl-cell[data-r="${aim.r}"][data-c="${aim.c}"]`);
+        const b = sh && sh.kind === 'battle' ? sh.cells[aim.r * N + aim.c] : null;
         if (b && !b.disabled) tapTarget(aim.r, aim.c);
       }
     };
@@ -1572,7 +1908,7 @@ registerGame({
           else if (seenViewer !== v && scans.length && scans[scans.length - 1].by !== v && scans[scans.length - 1].at >= (fresh[0] ?? shots.length)) freshScans = [scans.length - 1];
           battleStart = seenPhase === 'place' && s.phase === 'battle' && !shots.length;
           live = seenPhase != null && seenPhase !== 'over' && s.phase === 'over';
-          if (shots.length !== seenShots || scans.length !== seenScans || seenViewer !== v) { pick = []; armed = null; weapon = 'shot'; }
+          if (shots.length !== seenShots || scans.length !== seenScans || seenViewer !== v) { pick = []; armed = null; weapon = 'shot'; if (!kbd) aimOn = false; }
           seenViewer = v;
           seenShots = shots.length;
           seenScans = scans.length;
@@ -1592,6 +1928,10 @@ registerGame({
         pressEnd();
         document.removeEventListener('keydown', onKey);
         document.removeEventListener('visibilitychange', onVis);
+        window.removeEventListener('resize', dropGeo);
+        window.removeEventListener('scroll', dropGeo, { capture: true });
+        if (ro) { try { ro.disconnect(); } catch { /* ignore */ } }
+        if (drag && drag.raf) cancelAnimationFrame(drag.raf);
         for (const t of timers) clearTimeout(t);
         timers.clear();
         drag = null;

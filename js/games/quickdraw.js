@@ -19,6 +19,19 @@
 // 90 ms at most, because the guest's clock is only known to within a few tens of ms on an uneven
 // line), otherwise the earlier jump loses. Once one valid reaction R is in and the other player can't beat it any more, the host decides (about
 // R + rtt + 250 ms) instead of waiting for the slow hand.
+//
+// Flat upgrade 2 (feel + smoothness; rules, verdicts and message formats are untouched):
+// * Input: a tap acts on pointerdown. The pad is pressed in the same frame (no transition, the shadow snaps), the reaction is
+//   timed from the event's own timeStamp (mapped to the shared clock as `now - (performance.now() - ts)`), and nothing heavy runs
+//   before the press: paint() only touches what changed.
+// * Cue: still shown from a rAF callback that a timer arms for the shared-clock instant, and `t0` is still taken at the top of that
+//   callback. The cue frame now does the least possible (no layout: the signal word keeps its box and is scaled, the scene never
+//   resizes, nothing is read back), so the painted frame sits as close to `t0` as it can. Same fairness semantics as before.
+// * No layout thrash: stamp geometry is cached by a ResizeObserver, one-shots restart by swapping between two identical keyframe
+//   sets instead of forcing a reflow, the room dim runs on the compositor (WAAPI opacity), the ms count-up only writes when the
+//   number changes, and paint() skips unchanged strings.
+// * Juice and Riso print: cue slam, an ink burst at the winner's muzzle, round shake, misfire shake, stamped tally notches, paper
+//   tooth, halftone shading and off-register plates under the big type. Every motion has a reduced-motion switch.
 import { registerGame } from './core.js';
 import { createNet } from './net.js';
 
@@ -100,11 +113,15 @@ function star(cx, cy, r1, r2, n) {
 }
 
 // A cowboy facing right, feet at (0,0). The arm pivots at the shoulder.
+const LEGS = 'M-9 0 L-5.5 -31 L5.5 -31 L9 0 L3.6 0 L0 -17 L-3.6 0 Z';
+const CHEST = 'M-10.5 -27 L-8 -50 Q0 -54.5 8 -50 L10.5 -27 Q0 -24.5 -10.5 -27 Z';
 const FIGURE = `
   <ellipse class="qd-shadow" cx="0" cy="1.5" rx="15" ry="2.8"/>
   <g class="qd-body">
-    <path class="qd-c" d="M-9 0 L-5.5 -31 L5.5 -31 L9 0 L3.6 0 L0 -17 L-3.6 0 Z"/>
-    <path class="qd-c" d="M-10.5 -27 L-8 -50 Q0 -54.5 8 -50 L10.5 -27 Q0 -24.5 -10.5 -27 Z"/>
+    <g class="qd-plate" transform="translate(1.9 1.3)"><path d="${LEGS}"/><path d="${CHEST}"/></g>
+    <path class="qd-c" d="${LEGS}"/>
+    <path class="qd-ht" d="${LEGS}"/>
+    <path class="qd-c" d="${CHEST}"/>
     <path class="qd-belt" d="M-10.2 -30.5 Q0 -28.5 10.2 -30.5"/>
     <circle class="qd-head" cx="0" cy="-58.5" r="7"/>
     <g class="qd-hat"><path d="M-16 -63.5 Q0 -60 16 -63.5 L13.5 -60.2 Q0 -57.6 -13.5 -60.2 Z"/><path d="M-7.2 -62.5 L-6 -72.5 Q0 -75.8 6 -72.5 L7.2 -62.5 Z"/></g>
@@ -117,10 +134,14 @@ const FIGURE = `
   </g>`;
 
 const CACTUS = 'M-3.5 0 V-30 Q0 -34 3.5 -30 V0 Z M-3.5 -14 H-8.5 Q-11 -14 -11 -17 V-23 Q-8.8 -25.6 -6.8 -23 V-19 H-3.5 Z M3.5 -18 H8 Q10.5 -18 10.5 -21 V-26 Q8.4 -28.4 6.4 -26 V-22.4 H3.5 Z';
+/** The ink burst printed at a winner's muzzle: the winner's ink with the other plate a hair off register. */
+const BURST = (w, x) => `<g class="qd-burst" data-w="${w}" transform="translate(${x} 54)"><g class="qd-bs"><polygon class="qd-bs-plate" points="${star(1.8, 1.4, 27, 10, 9)}"/><polygon class="qd-bs-ink" points="${star(0, 0, 27, 10, 9)}"/></g></g>`;
 const SCENE = (left, right) => `
   <svg class="qd-svg" viewBox="0 -8 320 132" preserveAspectRatio="xMidYMax meet" role="img" aria-label="Two gunslingers face each other at high noon">
+    <defs><pattern id="qd-dots" width="5" height="5" patternUnits="userSpaceOnUse"><circle cx="2.5" cy="2.5" r="1"/></pattern></defs>
     <circle class="qd-sun" cx="160" cy="98" r="34"/>
     <path class="qd-ground" d="M-400 104 H720 V500 H-400 Z"/>
+    <path class="qd-ground-ht" d="M-400 104 H720 V500 H-400 Z"/>
     <path class="qd-tufts" d="M28 112 l4 -4 M118 116 l3 -3 l3 3 M196 113 l4 -4 M292 117 l3 -3 l3 3 M74 119 h8 M236 120 h8"/>
     <g class="qd-cactus" transform="translate(30 104) scale(0.8)"><path d="${CACTUS}"/></g>
     <g class="qd-cactus" transform="translate(292 104) scale(0.62)"><path d="${CACTUS}"/></g>
@@ -129,6 +150,7 @@ const SCENE = (left, right) => `
     <g class="qd-bellg" transform="translate(160 0)"><path class="qd-cord" d="M0 -400 V12"/><g class="qd-bell"><path class="qd-bellb" d="M-11 40 Q-10 22 0 20 Q10 22 11 40 Z M-13 40 H13"/><circle class="qd-bellb" cx="0" cy="18" r="2.6"/><circle class="qd-bellb" cx="0" cy="43.4" r="2.8"/></g></g>
     <g class="qd-fig" data-w="${left}" transform="translate(86 104)">${FIGURE}</g>
     <g class="qd-fig" data-w="${right}" transform="translate(234 104) scale(-1 1)">${FIGURE}</g>
+    ${BURST(left, 119.5)}${BURST(right, 200.5)}
   </svg>`;
 
 registerGame({
@@ -148,28 +170,39 @@ registerGame({
   ],
 
   css: `
-    .g-qd { --qd-gap: 8px; position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--qd-gap); padding: 2px 0 4px; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; font-family: var(--g-font-body); color: var(--g-ink); }
+    .g-qd { --qd-gap: 8px; --qd-ds: 1.3; --qd-dots: radial-gradient(circle, color-mix(in srgb, var(--g-ink) 30%, transparent) 1.1px, transparent 1.7px); --qd-paper: var(--g-grain) 0 0 / var(--g-grain-size); position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--qd-gap); padding: 2px 0 4px; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; font-family: var(--g-font-body); color: var(--g-ink); }
     .g-qd.is-live { touch-action: manipulation; cursor: crosshair; }
     .g-qd .qd-dim { position: absolute; inset: -8px; background: var(--g-edge, var(--g-ink)); opacity: 0; pointer-events: none; z-index: 3; }
     .g-qd .qd-mid { position: relative; flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
-    .g-qd .qd-scene { position: relative; flex: 1 1 0; min-height: 0; max-height: 260px; display: flex; background: var(--g-card); border: 2.5px solid var(--g-ink); border-radius: 12px; box-shadow: var(--g-shadow); overflow: hidden; transition: background-color 0.06s; }
+    .g-qd .qd-scene { position: relative; flex: 1 1 0; min-height: 0; max-height: 260px; display: flex; background: var(--g-card); border: 2.5px solid var(--g-ink); border-radius: 12px; box-shadow: var(--g-shadow); overflow: hidden; }
+    .g-qd .qd-scene::after { content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none; background: var(--qd-paper); opacity: 0.7; }   /* paper tooth over the whole print */
     .g-qd[data-kind="classic"][data-lit="1"] .qd-scene { background: var(--g-hl); }
     .g-qd .qd-svg { display: block; flex: 1 1 0; min-height: 0; width: 100%; height: 100%; margin: 0 auto; overflow: visible; }
     .g-qd .qd-sun { fill: var(--g-hl); stroke: var(--g-ink); stroke-width: 2.5; }
     .g-qd[data-kind="classic"][data-lit="1"] .qd-sun { fill: var(--g-card); }
     .g-qd .qd-ground { fill: var(--g-hl-soft, var(--g-bg)); }
+    .g-qd .qd-ground-ht, .g-qd .qd-ht { fill: url(#qd-dots); stroke: none; pointer-events: none; }
+    .g-qd #qd-dots circle { fill: var(--g-ink); opacity: 0.2; }
+    .g-qd .qd-plate path { fill: var(--pl); stroke: none; }
+    .g-qd .qd-fig[data-w="a"] { --pl: var(--p-b); } .g-qd .qd-fig[data-w="b"] { --pl: var(--p-a); }
+    .g-qd .qd-burst { pointer-events: none; }
+    .g-qd .qd-bs { opacity: 0; transform-box: fill-box; transform-origin: 50% 50%; }
+    .g-qd .qd-bs-ink { stroke: var(--g-ink); stroke-width: 1.8; stroke-linejoin: round; }
+    .g-qd .qd-bs-plate { fill: var(--g-hl); stroke: none; }
+    .g-qd .qd-burst[data-w="a"] .qd-bs-ink { fill: var(--p-a); } .g-qd .qd-burst[data-w="b"] .qd-bs-ink { fill: var(--p-b); }
+    .g-qd .qd-bs.bs-a { animation: qd-burst 0.46s var(--g-ease-out) both; } .g-qd .qd-bs.bs-b { animation: qd-burst2 0.46s var(--g-ease-out) both; }
     .g-qd .qd-horizon { stroke: var(--g-ink); stroke-width: 2.5; }
     .g-qd .qd-tufts { stroke: var(--g-ink); stroke-width: 1.6; fill: none; stroke-linecap: round; opacity: 0.55; }
     .g-qd .qd-cactus path { fill: var(--g-line); stroke: var(--g-ink); stroke-width: 1.8; stroke-linejoin: round; }
     .g-qd .qd-lantern, .g-qd .qd-bellg { display: none; }
     .g-qd[data-kind="colour"] .qd-lantern, .g-qd[data-kind="bell"] .qd-bellg { display: inline; }
     .g-qd .qd-cord { stroke: var(--g-ink); stroke-width: 2; fill: none; }
-    .g-qd .qd-glass { fill: var(--lc, var(--g-card)); stroke: var(--g-ink); stroke-width: 2.4; transition: fill 0.05s; }
+    .g-qd .qd-glass { fill: var(--lc, var(--g-card)); stroke: var(--g-ink); stroke-width: 2.4; }
     .g-qd .qd-capp { fill: var(--g-ink); stroke: var(--g-ink); stroke-width: 1.6; stroke-linejoin: round; }
     .g-qd .qd-bellb { fill: var(--g-hl); stroke: var(--g-ink); stroke-width: 2.2; stroke-linejoin: round; }
     .g-qd .qd-bell { transform-box: fill-box; transform-origin: 50% 0; }
-    .g-qd .qd-bell.is-ring { animation: qd-swing 0.7s ease-out both; }
-    .g-qd .qd-bell.is-tink { animation: qd-tink 0.35s ease-out both; }
+    .g-qd .qd-bell.is-ring.x-a { animation: qd-swing 0.7s ease-out both; } .g-qd .qd-bell.is-ring.x-b { animation: qd-swing2 0.7s ease-out both; }
+    .g-qd .qd-bell.is-tink.x-a { animation: qd-tink 0.35s ease-out both; } .g-qd .qd-bell.is-tink.x-b { animation: qd-tink2 0.35s ease-out both; }
     .g-qd .qd-fig[data-w="a"] { --c: var(--p-a); }
     .g-qd .qd-fig[data-w="b"] { --c: var(--p-b); }
     .g-qd .qd-fig .qd-c { fill: var(--c); stroke: var(--g-ink); stroke-width: 2; stroke-linejoin: round; }
@@ -193,21 +226,26 @@ registerGame({
     .g-qd .qd-kind.qd-top { left: auto; right: 6px; transform: rotate(178deg); }
     .g-qd .qd-kind[hidden] { display: none; }
     .g-qd .qd-flashout { position: absolute; inset: 0; z-index: 2; background: var(--g-white, #fff); opacity: 0; pointer-events: none; }
-    .g-qd .qd-flashout.go { animation: qd-hitstop 0.2s ease-out both; }
-    .g-qd .qd-stamp { --sr: -7deg; position: absolute; left: 50%; z-index: 4; margin: 0; padding: 4px 12px 2px; white-space: nowrap; font-family: var(--g-font-display); font-weight: 900; font-size: clamp(1.05rem, 5.4vw, 1.7rem); line-height: 1.2; letter-spacing: 0.03em; color: var(--g-on-ink); background: var(--g-hl); border: 3px solid var(--g-ink); border-radius: 8px; box-shadow: var(--g-shadow); pointer-events: none; opacity: 0; transform: translate(-50%, -50%) rotate(var(--sr)); }
+    .g-qd .qd-flashout.go-a { animation: qd-hitstop 0.2s ease-out both; } .g-qd .qd-flashout.go-b { animation: qd-hitstop2 0.2s ease-out both; }
+    .g-qd .qd-scene.sk-a { animation: qd-quake 0.24s linear both; } .g-qd .qd-scene.sk-b { animation: qd-quake2 0.24s linear both; }
+    .g-qd .qd-scene.sl-a { animation: qd-slamshake 0.2s linear both; } .g-qd .qd-scene.sl-b { animation: qd-slamshake2 0.2s linear both; }
+    .g-qd .sh-a { animation: qd-shake 0.34s cubic-bezier(0.36, 0.07, 0.19, 0.97) both; } .g-qd .sh-b { animation: qd-shake2 0.34s cubic-bezier(0.36, 0.07, 0.19, 0.97) both; }
+    .g-qd .qd-stamp { --sr: -7deg; position: absolute; left: 50%; z-index: 4; margin: 0; padding: 4px 12px 2px; white-space: nowrap; font-family: var(--g-font-display); font-weight: 900; font-size: clamp(1.05rem, 5.4vw, 1.7rem); line-height: 1.2; letter-spacing: 0.03em; color: var(--g-on-ink); background: var(--qd-paper), var(--g-hl); text-shadow: var(--g-misreg); border: 3px solid var(--g-ink); border-radius: 8px; box-shadow: var(--g-shadow); pointer-events: none; opacity: 0; transform: translate(-50%, -50%) rotate(var(--sr)); }
     .g-qd .qd-stamp.qd-top { --sr: 173deg; }
-    .g-qd .qd-stamp.is-bad { background: var(--g-bad); color: var(--g-white, #fff); }
-    .g-qd .qd-stamp.is-good { background: var(--g-good); color: var(--g-white, #fff); }
-    .g-qd .qd-stamp.is-a { background: var(--p-a); } .g-qd .qd-stamp.is-b { background: var(--p-b); }
-    .g-qd .qd-stamp.go { animation: qd-stamp 1s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+    .g-qd .qd-stamp.is-bad { background: var(--qd-paper), var(--g-bad); color: var(--g-on-signal, #fff); text-shadow: none; }
+    .g-qd .qd-stamp.is-good { background: var(--qd-paper), var(--g-good); color: var(--g-on-signal, #fff); text-shadow: none; }
+    .g-qd .qd-stamp.is-a { background: var(--qd-paper), var(--p-a); } .g-qd .qd-stamp.is-b { background: var(--qd-paper), var(--p-b); }
+    .g-qd .qd-stamp.go-a { animation: qd-stamp 1s cubic-bezier(0.2, 1.4, 0.4, 1) both; } .g-qd .qd-stamp.go-b { animation: qd-stamp2 1s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
 
     .g-qd .qd-sig { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 2px; justify-content: center; flex: 0 0 auto; }
-    .g-qd .qd-word { font-family: var(--g-font-display); font-weight: 900; font-size: clamp(1.7rem, 8.5vw, 2.7rem); line-height: 1.1; letter-spacing: 0.01em; padding: 0 12px; border: 3px solid transparent; border-radius: 10px; min-height: 1.15em; }
+    .g-qd .qd-word { font-family: var(--g-font-display); font-weight: 900; font-size: clamp(1.7rem, 8.5vw, 2.7rem); line-height: 1.1; letter-spacing: 0.01em; padding: 0 12px; border: 3px solid transparent; border-radius: 10px; min-height: 1.15em; text-shadow: var(--g-misreg); }
+    .g-qd .qd-ms { display: inline-block; min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; }
     .g-qd .qd-sig.is-steady .qd-word { color: var(--g-muted); animation: qd-breathe 1.2s ease-in-out infinite; }
     .g-qd .qd-sig.is-cue .qd-word { color: var(--g-muted); animation: none; }
-    .g-qd .qd-sig.is-draw .qd-word { background: var(--g-hl); color: var(--g-on-ink); border-color: var(--g-ink); box-shadow: var(--g-shadow-lg, var(--g-shadow)); transform: rotate(-3deg); margin-bottom: 4px; font-size: clamp(2.1rem, 11.5vw, 3.4rem); animation: qd-pop 0.16s cubic-bezier(0.2, 1.6, 0.4, 1) both; }
-    .g-qd .qd-sig.is-foul .qd-word { color: var(--g-bad); }
-    .g-qd .qd-sig.is-bang .qd-word { color: var(--qd-win); text-shadow: 3px 3px 0 var(--g-edge, var(--g-ink)); transform: rotate(-4deg); animation: qd-pop 0.22s cubic-bezier(0.2, 1.6, 0.4, 1) both; }
+    .g-qd .qd-sig.is-draw .qd-word { background: var(--qd-paper), var(--g-hl); color: var(--g-on-ink); border-color: var(--g-ink); box-shadow: var(--g-shadow-lg, var(--g-shadow)); transform: rotate(-3deg) scale(var(--qd-ds)); transform-origin: 50% 0; animation: qd-slam 0.24s cubic-bezier(0.2, 1.3, 0.4, 1) both; }   /* the signal is the steady word scaled up: nothing around it ever moves */
+    .g-qd .qd-sig.is-draw { position: relative; z-index: 2; }
+    .g-qd .qd-sig.is-foul .qd-word { color: var(--g-bad); animation: qd-shake 0.34s cubic-bezier(0.36, 0.07, 0.19, 0.97) both; }
+    .g-qd .qd-sig.is-bang .qd-word { color: var(--qd-win); text-shadow: 3px 3px 0 var(--g-edge, var(--g-ink)), var(--g-misreg); transform: rotate(-4deg); animation: qd-pop 0.22s cubic-bezier(0.2, 1.6, 0.4, 1) both; }
     .g-qd .qd-sig.is-bang.p-a { --qd-win: var(--p-a); } .g-qd .qd-sig.is-bang.p-b { --qd-win: var(--p-b); }
     .g-qd .qd-line { font-weight: 800; font-size: 0.95rem; line-height: 1.25; min-height: 1.25em; }
     .g-qd .qd-times { font-weight: 700; font-size: 0.92rem; line-height: 1.25; color: var(--g-ink); min-height: 1.25em; font-variant-numeric: tabular-nums; }
@@ -227,19 +265,23 @@ registerGame({
     .g-qd .qd-who.t-a { color: var(--p-a-text, var(--p-a)); } .g-qd .qd-who.t-b { color: var(--p-b-text, var(--p-b)); }
     .g-qd .qd-to { font-size: 0.74rem; color: var(--g-muted); font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; text-align: center; }
     .g-qd .qd-notches { display: inline-flex; gap: 5px; }
-    .g-qd .qd-notches i { width: 10px; height: 22px; border: 2px solid var(--g-ink); border-radius: 2px; background: var(--g-card); transform: skewX(-14deg); }
-    .g-qd .qd-notches[data-w="a"] i.on { background: var(--p-a); }
-    .g-qd .qd-notches[data-w="b"] i.on { background: var(--p-b); }
+    .g-qd .qd-notches i { width: 10px; height: 22px; border: 2px solid var(--g-ink); border-radius: 2px; background: var(--g-card); transform: skewX(-14deg); position: relative; }
+    .g-qd .qd-notches[data-w="a"] i.on { background: var(--qd-dots) 0 0 / 4px 4px, var(--p-a); }
+    .g-qd .qd-notches[data-w="b"] i.on { background: var(--qd-dots) 0 0 / 4px 4px, var(--p-b); }
     .g-qd .qd-notches.num { font-weight: 900; font-size: 1.25rem; line-height: 1; font-variant-numeric: tabular-nums; }
-    .g-qd .qd-notches i.on.new { animation: qd-pop 0.3s cubic-bezier(0.2, 1.6, 0.4, 1) both; }
+    .g-qd .qd-notches i.on.new { animation: qd-notch 0.42s var(--g-ease-spring) both; }
 
     .g-qd .qd-pads { display: flex; gap: 12px; flex: 1 1 0; min-height: 0; }
-    .g-qd .qd-pad { flex: 1; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 52px; padding: 6px 10px; border: 2.5px solid var(--g-ink); border-radius: 14px; box-shadow: var(--g-shadow-lg, var(--g-shadow)); color: var(--g-on-ink); font-family: var(--g-font-body); touch-action: manipulation; transition: transform 0.06s, box-shadow 0.06s, opacity 0.2s; overflow: hidden; }
-    .g-qd .qd-pad[data-w="a"] { background: var(--p-a); } .g-qd .qd-pad[data-w="b"] { background: var(--p-b); }
-    .g-qd .qd-pad.is-press { transform: translate(4px, 4px); box-shadow: 0 0 0 var(--g-edge, var(--g-ink)); }
-    .g-qd .qd-pad.is-idle { background: var(--g-card); color: var(--g-muted); }
+    .g-qd .qd-pad { flex: 1; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 52px; padding: 6px 10px; border: 2.5px solid var(--g-ink); border-radius: 14px; box-shadow: var(--g-shadow-lg, var(--g-shadow)); color: var(--g-on-ink); font-family: var(--g-font-body); touch-action: manipulation; transition: transform 0.1s var(--g-ease-out), opacity 0.2s; overflow: hidden; }
+    .g-qd .qd-pad > * { position: relative; z-index: 1; }
+    .g-qd .qd-pad::before { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 42%; z-index: 0; pointer-events: none; background: var(--qd-dots) 0 0 / 5px 5px; }
+    .g-qd .qd-pad[data-w="a"] { background: var(--qd-paper), var(--p-a); } .g-qd .qd-pad[data-w="b"] { background: var(--qd-paper), var(--p-b); }
+    .g-qd .qd-pad.is-press { transition: none; transform: translate(4px, 4px); box-shadow: 0 0 0 var(--g-edge, var(--g-ink)); }   /* pressed in the very frame of the tap: no tween, the shadow snaps */
+    .g-qd .qd-pad.is-idle { background: var(--qd-paper), var(--g-card); color: var(--g-muted); }
+    .g-qd .qd-pad.is-idle::before { opacity: 0.5; }
+    .g-qd .qd-pad.is-idle .qd-pad-cta { text-shadow: none; }
     .g-qd .qd-pad.is-idle .qd-pad-name { color: var(--g-ink); }
-    .g-qd .qd-pad-cta { font-family: var(--g-font-display); font-weight: 900; font-size: clamp(1.4rem, 6.5vw, 2.1rem); line-height: 1; letter-spacing: 0.04em; }
+    .g-qd .qd-pad-cta { font-family: var(--g-font-display); font-weight: 900; font-size: clamp(1.4rem, 6.5vw, 2.1rem); line-height: 1; letter-spacing: 0.04em; text-shadow: var(--g-misreg); }
     .g-qd .qd-pad-name { font-weight: 900; font-size: 0.95rem; line-height: 1.1; }
     .g-qd .qd-pad-hint { font-weight: 800; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 6px; }
     .g-qd .qd-pad .qd-notches i { border-color: var(--g-ink); height: 18px; }
@@ -253,7 +295,6 @@ registerGame({
     .g-qd.is-phone .qd-pad.qd-top.is-press { transform: rotate(180deg) translate(-4px, -4px); box-shadow: none; }
     .g-qd.is-phone .qd-sig.qd-top { transform: rotate(180deg); }
     .g-qd.is-phone .qd-word { font-size: clamp(1.4rem, 7vw, 2.1rem); }
-    .g-qd.is-phone .qd-sig.is-draw .qd-word { font-size: clamp(1.8rem, 9vw, 2.6rem); }
     .g-qd.is-phone .qd-line, .g-qd.is-phone .qd-times { font-size: 0.8rem; }
     .g-qd.is-phone .qd-pad { flex-direction: row; gap: 10px; flex-wrap: wrap; align-content: center; }
     /* small portrait phones: slimmer pads and signal panels, so the scene keeps a readable size */
@@ -263,7 +304,6 @@ registerGame({
       .g-qd.is-phone .qd-pad-cta { font-size: clamp(1.25rem, 6vw, 1.7rem); }
       .g-qd.is-phone .qd-mid { gap: 3px; }
       .g-qd.is-phone .qd-word { font-size: clamp(1.15rem, 5.6vw, 1.7rem); border-width: 2px; padding: 0 10px; }
-      .g-qd.is-phone .qd-sig.is-draw .qd-word { font-size: clamp(1.5rem, 7.4vw, 2.2rem); margin-bottom: 2px; }
       .g-qd.is-phone .qd-sig { gap: 0; }
       .g-qd.is-phone .qd-line, .g-qd.is-phone .qd-times { font-size: 0.74rem; line-height: 1.2; min-height: 1.2em; }
       .g-qd.is-phone .qd-kind { font-size: 0.56rem; top: 4px; }
@@ -288,17 +328,16 @@ registerGame({
       .g-qd.is-live .qd-pads { flex: 1; height: auto; max-width: none; margin: 0; }
       .g-qd.is-desk .qd-pads { height: clamp(64px, 24vh, 150px); }
       .g-qd .qd-word { font-size: clamp(1.3rem, 6vh, 2.1rem); }
-      .g-qd .qd-sig.is-draw .qd-word { font-size: clamp(1.6rem, 8vh, 2.6rem); }
       .g-qd .qd-line, .g-qd .qd-times { font-size: 0.78rem; }
       .g-qd .qd-notches i { height: 16px; }
       .g-qd .qd-pad-cta { font-size: clamp(1.2rem, 8vh, 1.8rem); }
     }
 
     /* the pre-duel picker */
-    .g-qd .qd-setup { position: absolute; inset: 0; z-index: 6; display: flex; align-items: center; justify-content: center; background: var(--g-bg); overflow: auto; }
+    .g-qd .qd-setup { position: absolute; inset: 0; z-index: 6; display: flex; align-items: center; justify-content: center; background: var(--qd-paper), var(--g-bg); overflow: auto; }
     .g-qd .qd-setup[hidden] { display: none; }
     .g-qd[data-phase="setup"] > :not(.qd-setup), .g-qd.is-setup > :not(.qd-setup) { visibility: hidden; }
-    .g-qd .qd-setup-card { width: calc(100% - 6px); max-width: 480px; display: flex; flex-direction: column; gap: 8px; padding: 10px; margin: auto auto auto 2px; background: var(--g-card); border: 2.5px solid var(--g-ink); border-radius: 14px; box-shadow: var(--g-shadow); }
+    .g-qd .qd-setup-card { width: calc(100% - 6px); max-width: 480px; display: flex; flex-direction: column; gap: 8px; padding: 10px; margin: auto auto auto 2px; background: var(--qd-paper), var(--g-card); border: 2.5px solid var(--g-ink); border-radius: 14px; box-shadow: var(--g-shadow); }
     .g-qd .qd-setup-head { margin: 0; font-family: var(--g-font-display); font-weight: 900; font-size: 1.15rem; line-height: 1.15; }
     .g-qd .qd-opts { display: grid; gap: 6px; }
     .g-qd .qd-packs { grid-template-columns: repeat(3, 1fr); }
@@ -306,10 +345,10 @@ registerGame({
     .g-qd .qd-hand { grid-template-columns: 1fr; }
     .g-qd .qd-hand[hidden] { display: none; }
     .g-qd .qd-hand .qd-opt { min-height: 44px; flex-direction: row; flex-wrap: wrap; gap: 0 8px; }
-    .g-qd .qd-opt { min-height: 46px; padding: 4px 4px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; font-family: var(--g-font-body); color: var(--g-ink); background: var(--g-card); border: 2px solid var(--g-ink); border-radius: 10px; box-shadow: var(--g-shadow-sm, 2px 2px 0 var(--g-ink)); touch-action: manipulation; text-align: center; }
+    .g-qd .qd-opt { min-height: 46px; padding: 4px 4px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; font-family: var(--g-font-body); color: var(--g-ink); background: var(--qd-paper), var(--g-card); border: 2px solid var(--g-ink); border-radius: 10px; box-shadow: var(--g-shadow-sm, 2px 2px 0 var(--g-ink)); touch-action: manipulation; text-align: center; }
     .g-qd .qd-opt b { font-weight: 900; font-size: 0.86rem; line-height: 1.1; }
     .g-qd .qd-opt small { font-weight: 700; font-size: 0.66rem; line-height: 1.1; color: var(--g-muted); }
-    .g-qd .qd-opt[aria-pressed="true"] { background: var(--g-hl); transform: translate(2px, 2px); box-shadow: none; }
+    .g-qd .qd-opt[aria-pressed="true"] { background: var(--qd-paper), var(--g-hl); transform: translate(2px, 2px); box-shadow: none; }
     .g-qd .qd-opt[aria-pressed="true"] small { color: var(--g-on-ink); }
     .g-qd .qd-opt[aria-pressed="true"] b { color: var(--g-on-ink); }
     .g-qd .qd-opt:active { transform: translate(2px, 2px); box-shadow: none; }
@@ -340,22 +379,38 @@ registerGame({
       .g-qd .qd-gorow .qd-go, .g-qd .qd-gorow .qd-again { min-height: 48px; }
     }
     @keyframes qd-pop { from { transform: scale(1.5) rotate(-3deg); opacity: 0; } to { opacity: 1; } }
+    @keyframes qd-slam { 0% { transform: rotate(-9deg) scale(calc(var(--qd-ds) * 1.9)); opacity: 0; } 55% { transform: rotate(-2deg) scale(calc(var(--qd-ds) * 0.93)); opacity: 1; } 100% { transform: rotate(-3deg) scale(var(--qd-ds)); opacity: 1; } }
+    @keyframes qd-notch { 0% { transform: skewX(-14deg) scale(1.9, 1.5) translateY(-5px); opacity: 0; } 55% { transform: skewX(-14deg) scale(0.9, 0.94); opacity: 1; } 100% { transform: skewX(-14deg); opacity: 1; } }
+    @keyframes qd-burst { 0% { transform: scale(0.25) rotate(-12deg); opacity: 1; } 35% { transform: scale(1.12) rotate(2deg); opacity: 1; } 100% { transform: scale(1.3) rotate(4deg); opacity: 0; } }
+    @keyframes qd-burst2 { 0% { transform: scale(0.25) rotate(-12deg); opacity: 1; } 35% { transform: scale(1.12) rotate(2deg); opacity: 1; } 100% { transform: scale(1.3) rotate(4deg); opacity: 0; } }
+    @keyframes qd-quake { 0% { transform: translate(0, 0); } 18% { transform: translate(3px, -2px); } 36% { transform: translate(-3px, 2px); } 55% { transform: translate(2px, 1px); } 78% { transform: translate(-1px, -1px); } 100% { transform: translate(0, 0); } }
+    @keyframes qd-quake2 { 0% { transform: translate(0, 0); } 18% { transform: translate(3px, -2px); } 36% { transform: translate(-3px, 2px); } 55% { transform: translate(2px, 1px); } 78% { transform: translate(-1px, -1px); } 100% { transform: translate(0, 0); } }
+    @keyframes qd-slamshake { 0% { transform: translate(0, 0); } 25% { transform: translate(0, 3px); } 55% { transform: translate(0, -2px); } 100% { transform: translate(0, 0); } }
+    @keyframes qd-slamshake2 { 0% { transform: translate(0, 0); } 25% { transform: translate(0, 3px); } 55% { transform: translate(0, -2px); } 100% { transform: translate(0, 0); } }
+    @keyframes qd-shake { 10%, 90% { translate: -1px 0; } 20%, 80% { translate: 3px 0; } 30%, 50%, 70% { translate: -5px 0; } 40%, 60% { translate: 5px 0; } }
+    @keyframes qd-shake2 { 10%, 90% { translate: -1px 0; } 20%, 80% { translate: 3px 0; } 30%, 50%, 70% { translate: -5px 0; } 40%, 60% { translate: 5px 0; } }
     @keyframes qd-breathe { 50% { opacity: 0.55; } }
+    @keyframes qd-stamp2 { 0% { opacity: 0; transform: translate(-50%, -50%) rotate(var(--sr)) scale(1.9); } 14% { opacity: 1; transform: translate(-50%, -50%) rotate(var(--sr)) scale(1); } 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -62%) rotate(var(--sr)) scale(1); } }
     @keyframes qd-stamp { 0% { opacity: 0; transform: translate(-50%, -50%) rotate(var(--sr)) scale(1.9); } 14% { opacity: 1; transform: translate(-50%, -50%) rotate(var(--sr)) scale(1); } 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -62%) rotate(var(--sr)) scale(1); } }
-    @keyframes qd-hitstop { 0% { opacity: 0.85; } 100% { opacity: 0; } }
+    @keyframes qd-hitstop { 0% { opacity: 0.5; } 100% { opacity: 0; } }
+    @keyframes qd-hitstop2 { 0% { opacity: 0.5; } 100% { opacity: 0; } }
     @keyframes qd-muzzle { 0% { transform: scale(0.4); opacity: 1; } 40% { transform: scale(1.15); opacity: 1; } 100% { opacity: 0; } }
     @keyframes qd-smoke { 0% { opacity: 0; transform: translate(-3px, 2px) scale(0.5); } 25% { opacity: 1; } 100% { opacity: 0; transform: translate(7px, -9px) scale(1.5); } }
+    @keyframes qd-swing2 { 0% { transform: rotate(0); } 12% { transform: rotate(26deg); } 30% { transform: rotate(-20deg); } 50% { transform: rotate(13deg); } 70% { transform: rotate(-7deg); } 100% { transform: rotate(0); } }
+    @keyframes qd-tink2 { 0% { transform: rotate(0); } 30% { transform: rotate(5deg); } 65% { transform: rotate(-4deg); } 100% { transform: rotate(0); } }
     @keyframes qd-swing { 0% { transform: rotate(0); } 12% { transform: rotate(26deg); } 30% { transform: rotate(-20deg); } 50% { transform: rotate(13deg); } 70% { transform: rotate(-7deg); } 100% { transform: rotate(0); } }
     @keyframes qd-tink { 0% { transform: rotate(0); } 30% { transform: rotate(5deg); } 65% { transform: rotate(-4deg); } 100% { transform: rotate(0); } }
     @media (prefers-reduced-motion: reduce) {
       .g-qd *, .g-qd *::before { animation: none !important; transition: none !important; }
       .g-qd .qd-stamp.go { opacity: 1; }
+      .g-qd .qd-bs { display: none; }
     }
   `,
   mount(el, api) {
     const local = api.mode === 'local';
     const coarse = matchMedia('(pointer: coarse)').matches;
-    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const rmq = matchMedia('(prefers-reduced-motion: reduce)');
+    const calm = () => rmq.matches;           // reduced motion: no shakes, bursts, tweens or count-ups
     const layout = local ? (coarse ? 'phone' : 'desk') : 'live';
     const ref = local || api.isHost;            // the referee decides rounds
     const me = local ? null : api.me;
@@ -404,6 +459,9 @@ registerGame({
     const sceneEl = $1('.qd-scene');
     const stampNodes = $$('.qd-stamp');
     const setup = $1('.qd-setup');
+    const padEl = { a: $1('.qd-pad[data-w="a"]'), b: $1('.qd-pad[data-w="b"]') };
+    const flashout = $1('.qd-flashout');
+    const burstEl = { a: $1('.qd-burst[data-w="a"] .qd-bs'), b: $1('.qd-burst[data-w="b"] .qd-bs') };
 
     // ── timers (all tracked, all cleared in destroy) ──
     let dead = false;
@@ -412,6 +470,18 @@ registerGame({
     const later = (fn, ms) => { const id = setTimeout(() => { timers.delete(id); if (!dead) fn(); }, Math.max(0, ms)); timers.add(id); return id; };
     const cancel = (id) => { if (id) { clearTimeout(id); timers.delete(id); } };
     const onFrame = (fn) => { const id = requestAnimationFrame((t) => { rafs.delete(id); if (!dead) fn(t); }); rafs.add(id); return id; };
+    /** Restart a CSS one-shot without reading layout: flip between two identical keyframe sets (`<cls>-a` / `<cls>-b`). */
+    function oneShot(el, cls) {
+      if (!el || calm()) return;
+      const a = `${cls}-a`; const b = `${cls}-b`;
+      const on = el.classList.contains(a);
+      el.classList.remove(on ? a : b); el.classList.add(on ? b : a);
+    }
+    /** Writes that skip unchanged values, so a repaint with nothing new costs no style or layout work. */
+    const setH = (el, v) => { if (el.__h !== v) { el.__h = v; el.innerHTML = v; } };
+    const setC = (el, v) => { if (el.__c !== v) { el.__c = v; el.className = v; } };
+    const setHidden = (el, v) => { if (el.__v !== v) { el.__v = v; el.hidden = v; } };
+    const setDs = (el, k, v) => { if (el.dataset[k] !== v) el.dataset[k] = v; };
 
     // ── sound: small synths (the shared kit's sfx for the rest) ──
     function tone(f, d, { type = 'sine', vol = 0.1, at = 0, slide = 0 } = {}) {
@@ -445,42 +515,61 @@ registerGame({
     let forced = null;         // test hook: overrides the next round
     const duel = { best: { a: null, b: null }, pb: { a: null, b: null } };
 
+    // ── geometry, measured once per resize (never inside an animation frame) ──
+    const geo = { ok: false, two: false, onPads: false, y: [0, 0], pad: [0, 0] };
+    function measure() {
+      const two = stampNodes.length > 1 && getComputedStyle(stampNodes[1]).display !== 'none'; // one phone, portrait: one for each player
+      const sceneH = sceneEl.offsetHeight; const sceneTop = sceneEl.offsetTop;
+      // a small scene (a short phone) is mostly art: each player's stamp lands on their own pad instead
+      geo.two = two; geo.onPads = two && sceneH < 200;
+      if (geo.onPads) {
+        const midTop = stampNodes[0].parentElement.getBoundingClientRect().top;
+        ['a', 'b'].forEach((w, i) => { const p = padEl[w].getBoundingClientRect(); geo.pad[i] = p.top + p.height / 2 - midTop; });
+      }
+      for (let i = 0; i < 2; i++) geo.y[i] = sceneTop + sceneH * (two ? (i ? 0.3 : 0.7) : 0.5);
+      geo.ok = true;
+    }
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { if (!dead) measure(); }) : null;
+    if (ro) { ro.observe(root); ro.observe(sceneEl); }
+
     // ── stamps ──
     const stamps = [];
     let stamping = false;
+    let stampFlip = false;
     function nextStamp() {
-      if (!stamps.length) { stamping = false; stampNodes.forEach((n) => n.classList.remove('go')); return; }
+      if (!stamps.length) { stamping = false; stampNodes.forEach((n) => n.classList.remove('go', 'go-a', 'go-b')); return; }
       stamping = true;
       const s = stamps.shift();
-      const two = stampNodes.length > 1 && getComputedStyle(stampNodes[1]).display !== 'none'; // one phone, portrait: one for each player
-      // a small scene (a short phone) is mostly art: each player's stamp lands on their own pad instead
-      const onPads = two && sceneEl.offsetHeight < 200;
-      const midTop = onPads ? stampNodes[0].parentElement.getBoundingClientRect().top : 0;
+      if (!geo.ok) measure();           // reads first, before any write below
+      stampFlip = !stampFlip;
       stampNodes.forEach((n, i) => {
         n.textContent = s.text;
-        n.className = `qd-stamp${i ? ' qd-top' : ''}${s.cls ? ` ${s.cls}` : ''}`;
-        if (onPads) {
-          const p = root.querySelector(`.qd-pad[data-w="${i ? 'b' : 'a'}"]`).getBoundingClientRect();
-          n.style.top = `${p.top + p.height / 2 - midTop}px`;
-        } else n.style.top = `${sceneEl.offsetTop + sceneEl.offsetHeight * (two ? (i ? 0.3 : 0.7) : 0.5)}px`;
+        n.className = `qd-stamp${i ? ' qd-top' : ''}${s.cls ? ` ${s.cls}` : ''} go go-${stampFlip ? 'a' : 'b'}`;
+        n.style.top = `${geo.onPads ? geo.pad[i] : geo.y[geo.two ? i : 0]}px`;
       });
-      void stampNodes[0].offsetWidth;
-      stampNodes.forEach((n) => n.classList.add('go'));
       if (s.snd) s.snd();
       later(nextStamp, s.ms || 950);
     }
     function stamp(text, cls, snd, ms) {
       if (stamps.length > 3) return;
       stamps.push({ text, cls, snd, ms });
-      if (!stamping) nextStamp();
+      if (!stamping) { stamping = true; onFrame(nextStamp); }   // next frame: the resize observer has seen this verdict's layout
     }
 
     // ── one round, on this device ──
     function endRound() { if (cur) cur.ids.forEach(cancel); }
+    // The room darkens while you wait: an opacity ramp on the compositor (WAAPI), tracked so a new target starts where it is now.
+    const dm = { from: 0, to: 0, t0: 0, ms: 0, anim: null };
     function dimTo(op, ms) {
-      dim.style.transition = ms ? `opacity ${ms}ms linear` : 'none';
+      const k = dm.ms ? Math.min(1, (performance.now() - dm.t0) / dm.ms) : 1;
+      const from = dm.from + (dm.to - dm.from) * k;
+      if (dm.anim) { dm.anim.cancel(); dm.anim = null; }
+      dm.from = from; dm.to = op; dm.t0 = performance.now(); dm.ms = ms && !calm() && dim.animate ? ms : 0;
       dim.style.opacity = String(op);
+      if (dm.ms && from !== op) dm.anim = dim.animate([{ opacity: from }, { opacity: op }], { duration: ms, easing: 'linear' });
     }
+    /** The whole scene jolts (a cue slamming in, a hit landing). */
+    const jolt = (cls) => { const o = cls === 'sl' ? 'sk' : 'sl'; sceneEl.classList.remove(`${o}-a`, `${o}-b`); oneShot(sceneEl, cls); };
     /** How much later player `w`'s own signal shows this round (the Gunslinger handicap). */
     const shiftOf = (w) => (cur && cur.rd.ho ? cur.rd.ho[w] | 0 : 0);
     function beginRound(rd) {
@@ -513,7 +602,7 @@ registerGame({
       else if (rd.sd) stamp('SUDDEN DEATH', 'is-bad', () => api.sfx('flip'), 1300);
       // the tension builds: the room darkens a little and the clock gets quieter
       const total = Math.max(300, cur.D - net.now());
-      dimTo(0, 0); void dim.offsetWidth; dimTo(0.2, total);
+      dimTo(0, 0); dimTo(0.2, total);
       let tickN = 0;
       const tick = () => {
         if (!cur || cur.r !== r || phase !== 'steady') return;
@@ -547,7 +636,8 @@ registerGame({
         else if (kind === 'decoys') { api.sfx('hit'); }
         else if (kind === 'bell') { tink(); }
         if (kind === 'colour') lantern.style.setProperty('--lc', first ? 'var(--g-hl)' : `var(${DECOY_COLOURS[cue.i % 3][1]})`);
-        if (kind === 'bell') { bellEl.classList.remove('is-ring', 'is-tink'); void bellEl.getBoundingClientRect(); bellEl.classList.add(first ? 'is-ring' : 'is-tink'); }
+        if (kind === 'bell') swingBell(first ? 'is-ring' : 'is-tink');
+        if (first || kind === 'decoys') jolt('sl');   // a bluff in the Decoys pack lands exactly like the real thing
       }
       paint();
       cur.ids.push(later(() => {
@@ -556,6 +646,12 @@ registerGame({
         if (scene) { cur.cue = 'none'; root.dataset.cue = ''; if (kind === 'colour') lantern.style.removeProperty('--lc'); }
         paint();
       }, cue.k === 'first' ? 480 : DECOY_MS));
+    }
+    /** Ring or tink the bell: restart its swing by swapping between two identical keyframe sets (no reflow). */
+    function swingBell(cls) {
+      const flip = bellEl.classList.contains('x-a');
+      bellEl.classList.remove('is-ring', 'is-tink', flip ? 'x-a' : 'x-b');
+      bellEl.classList.add(cls, flip ? 'x-b' : 'x-a');
     }
     function showDraw(r, ws, scene) {
       if (!cur || cur.r !== r || (phase !== 'steady' && phase !== 'draw')) return;
@@ -568,7 +664,8 @@ registerGame({
         root.dataset.cue = 'real';
         dimTo(0, 80);
         if (kind === 'colour') lantern.style.setProperty('--lc', 'var(--g-hl)');
-        if (kind === 'bell') { bellEl.classList.remove('is-ring', 'is-tink'); void bellEl.getBoundingClientRect(); bellEl.classList.add('is-ring'); ring(); } else api.sfx('hit');
+        if (kind === 'bell') { swingBell('is-ring'); ring(); } else api.sfx('hit');
+        jolt('sl');
       }
       paint();
       cur.ids.push(later(() => tooSlow(r, ws), SLOW_MS));
@@ -608,6 +705,7 @@ registerGame({
       cur.res[w] = res;
       const f = figs[w];
       if (f) { f.classList.add('is-up'); f.classList.toggle('is-flash', Number.isFinite(res.reaction)); f.classList.toggle('is-puff', !!res.foul); }
+      if (res.foul) oneShot(padEl[w], 'sh');   // a misfire: the pad rattles at once
       if (!local) { phase = 'wait'; paint(); countUp(); } else paint();
       if (ref) refReceive(w, cur.r, res);
       else sendShot(res);
@@ -789,7 +887,12 @@ registerGame({
       api.setScore(tl);
       paint(prev);
       countUp();
-      if (v.why === 'time') { const fl = $1('.qd-flashout'); fl.classList.remove('go'); void fl.offsetWidth; fl.classList.add('go'); }
+      if (v.why === 'time') {
+        oneShot(flashout, 'go');     // hit-stop flash
+        jolt('sk');                  // a few pixels of shake: the big moment only
+        if (v.w && burstEl[v.w]) oneShot(burstEl[v.w], 'bs');   // ink burst at the winner's muzzle
+      }
+      for (const x of ['a', 'b']) if (v[x] && v[x].foul && !(cur && cur.res[x])) oneShot(padEl[x], 'sh'); // a foul reported from the other phone
       if (!v.res) api.sfx(v.w ? (local || v.w === me ? 'win' : 'lose') : 'flip'); else api.sfx('pop');
       // stamps: the verdict's headline moments
       if ((v.a && v.a.foul) || (v.b && v.b.foul)) stamp('JUMPED THE GUN', 'is-bad', null, 1000);
@@ -841,11 +944,14 @@ registerGame({
     let heard = ref;           // the guest has seen the host's choice at least once
     const goBtn = $1('.qd-go');
     const againBtn = $1('.qd-again');
+    let setupDone = false;     // the picker is already hidden and nothing in it can change any more
     function renderSetup() {
-      setup.hidden = started;
+      if (started && setupDone) return;
+      setupDone = started;
+      setHidden(setup, started);
       root.classList.toggle('is-setup', !started);
       setup.classList.toggle('is-locked', !ref);
-      $1('.qd-setup-head').innerHTML = ref ? (autoLeft ? 'Same again?' : local ? 'Pick your duel' : 'Pick the duel') : autoLeft ? `Same again? Starting in ${autoLeft}…` : `${N(other(me))} is picking…`;
+      setH($1('.qd-setup-head'), ref ? (autoLeft ? 'Same again?' : local ? 'Pick your duel' : 'Pick the duel') : autoLeft ? `Same again? Starting in ${autoLeft}…` : `${N(other(me))} is picking…`);
       for (const b of setup.querySelectorAll('[data-pack]')) { b.setAttribute('aria-pressed', String(heard && b.dataset.pack === pick.p)); b.setAttribute('aria-disabled', String(!ref)); }
       for (const b of setup.querySelectorAll('[data-series]')) { b.setAttribute('aria-pressed', String(heard && b.dataset.series === pick.s)); b.setAttribute('aria-disabled', String(!ref)); }
       $1('.qd-pack-desc').textContent = heard ? PACKS[pick.p].desc : '';
@@ -985,19 +1091,22 @@ registerGame({
     };
 
     // ── paint ──
+    let countTok = 0;
+    /** The ms readouts run up to their number. One shared loop; a text node is only written when the number changes. */
     function countUp() {
-      if (reduce) return;
-      for (const e of $$('.qd-ms')) {
-        const v = Number(e.dataset.v); if (!Number.isFinite(v)) continue;
-        const t0 = performance.now();
-        const step = () => {
-          const k = Math.min(1, (performance.now() - t0) / 340);
-          e.textContent = String(Math.round(v * (1 - (1 - k) ** 3)));
-          if (k < 1) onFrame(step);
-        };
-        e.textContent = '0';
-        onFrame(step);
-      }
+      if (calm()) return;
+      const els = $$('.qd-ms').filter((e) => Number.isFinite(Number(e.dataset.v)));
+      if (!els.length) return;
+      const tok = ++countTok; let t0 = 0;
+      for (const e of els) e.textContent = '0';
+      const step = (t) => {
+        if (tok !== countTok) return;
+        if (!t0) t0 = t;
+        const k = Math.min(1, (t - t0) / 340);
+        for (const e of els) { const v = String(Math.round(Number(e.dataset.v) * (1 - (1 - k) ** 3))); if (e.textContent !== v) e.textContent = v; }
+        if (k < 1) onFrame(step);
+      };
+      onFrame(step);
     }
     const hoOf = (v, x) => (v && v.ho ? v.ho[x] | 0 : 0);
     const plus = (o) => (o ? ` <span class="qd-hc-n">+${o}</span>` : '');
@@ -1073,43 +1182,47 @@ registerGame({
       const count = Math.max(S.win, tl.a, tl.b);
       for (const nEl of $$('.qd-notches')) {
         const w = nEl.dataset.w;
-        if (count > 6) { nEl.classList.add('num'); nEl.textContent = String(tl[w]); continue; } // a long Showdown: just the number
+        const sig = `${count}|${tl[w]}`;
+        if (nEl.__n === sig) continue;
+        nEl.__n = sig;
+        if (count > 6) { nEl.classList.add('num'); nEl.textContent = String(tl[w]); nEl.__k = 0; continue; } // a long Showdown: just the number
         nEl.classList.remove('num');
-        if (nEl.children.length !== count) nEl.innerHTML = '<i></i>'.repeat(count);
+        if (nEl.__k !== count || nEl.children.length !== count) { nEl.innerHTML = '<i></i>'.repeat(count); nEl.__k = count; }
         [...nEl.children].forEach((i, k) => i.classList.toggle('on', k < tl[w]));
       }
     }
+    const sigEls = $$('.qd-sig').map((el) => ({ el, top: el.classList.contains('qd-top'), word: el.querySelector('.qd-word'), line: el.querySelector('.qd-line'), times: el.querySelector('.qd-times') }));
+    const hcEls = $$('.qd-hc'); const kindEls = $$('.qd-kind'); const padList = $$('.qd-pad'); const toEl = $1('.qd-to');
     function paint(prevTally) {
-      root.dataset.phase = phase;
-      const sideOf = (el) => (el.classList.contains('qd-top') ? 'b' : layout === 'live' ? me : 'a'); // whose half of the signal this is
+      setDs(root, 'phase', phase);
+      const sideOf = (top) => (top ? 'b' : layout === 'live' ? me : 'a'); // whose half of the signal this is
       const stOf = {};
-      for (const s of $$('.qd-sig')) {
-        const side = sideOf(s);
+      for (const s of sigEls) {
+        const side = sideOf(s.top);
         const st = stOf[side] || (stOf[side] = sigState(side));
-        s.className = `qd-sig${s.classList.contains('qd-top') ? ' qd-top' : ''}${st.cls ? ` ${st.cls}` : ''}`;
-        const w = s.querySelector('.qd-word');
-        if (st.html) w.innerHTML = st.word; else w.textContent = st.word;
-        s.querySelector('.qd-line').innerHTML = st.line;
-        s.querySelector('.qd-times').innerHTML = st.times || '';
+        setC(s.el, `qd-sig${s.top ? ' qd-top' : ''}${st.cls ? ` ${st.cls}` : ''}`);
+        setH(s.word, st.word);
+        setH(s.line, st.line);
+        setH(s.times, st.times || '');
       }
       // scene lighting (classic: the whole sky turns) once every player on this device has their signal
       const all = (k) => !!cur && sides.every((w) => (k === 'real' ? cur.t0[w] != null : cur.cs[w].k === k));
-      root.dataset.lit = (phase === 'draw' && all('real')) || (phase === 'steady' && all('first')) ? '1' : '';
-      for (const t of $$('.qd-hc')) {
+      setDs(root, 'lit', (phase === 'draw' && all('real')) || (phase === 'steady' && all('first')) ? '1' : '');
+      for (const t of hcEls) {
         const hcw = started && cfg.h && cfg.h.o > 0 && cfg.h.w === t.dataset.w;
-        t.hidden = !hcw;
-        if (hcw) t.textContent = `handicap +${cfg.h.o} ms`;
+        setHidden(t, !hcw);
+        if (hcw) { const txt = `handicap +${cfg.h.o} ms`; if (t.__t !== txt) { t.__t = txt; t.textContent = txt; } }
       }
       renderNotches();
       if (prevTally) for (const nEl of $$('.qd-notches:not(.num)')) { const w = nEl.dataset.w; [...nEl.children].forEach((i, k) => i.classList.toggle('new', k < tl[w] && k >= prevTally[w])); }
-      const to = $1('.qd-to'); if (to) to.textContent = suddenOf(tl, cfg) ? 'sudden death' : seriesOf(cfg).by > 1 ? 'first to 5, by 2' : `first to ${seriesOf(cfg).win}`;
+      if (toEl) { const txt = suddenOf(tl, cfg) ? 'sudden death' : seriesOf(cfg).by > 1 ? 'first to 5, by 2' : `first to ${seriesOf(cfg).win}`; if (toEl.__t !== txt) { toEl.__t = txt; toEl.textContent = txt; } }
       const rd = cur && cur.rd;
       const showSign = rd && (phase === 'steady' || phase === 'draw') && (cfg.p !== 'classic' || rd.both || rd.sd);
-      for (const kindEl of $$('.qd-kind')) {
-        kindEl.hidden = !showSign;
-        if (showSign) kindEl.textContent = rd.both ? 'BOTH BARRELS' : rd.sd ? 'SUDDEN DEATH' : `${cfg.p === 'mixed' ? 'MIXED · ' : ''}${KIND_SIGN[rd.kind]}`;
+      for (const kindEl of kindEls) {
+        setHidden(kindEl, !showSign);
+        if (showSign) { const txt = rd.both ? 'BOTH BARRELS' : rd.sd ? 'SUDDEN DEATH' : `${cfg.p === 'mixed' ? 'MIXED · ' : ''}${KIND_SIGN[rd.kind]}`; if (kindEl.__t !== txt) { kindEl.__t = txt; kindEl.textContent = txt; } }
       }
-      for (const p of $$('.qd-pad')) {
+      for (const p of padList) {
         const w = p.dataset.w;
         const armed = (phase === 'steady' || phase === 'draw') && cur && !cur.res[w];
         p.classList.toggle('is-idle', !armed);
@@ -1121,9 +1234,9 @@ registerGame({
     const offs = [];
     const on = (t, ev, fn, o) => { t.addEventListener(ev, fn, o); offs.push(() => t.removeEventListener(ev, fn, o)); };
     const press = (w) => {
-      const p = root.querySelector(`.qd-pad[data-w="${w}"]`);
+      const p = padEl[w];
       if (!p) return;
-      p.classList.add('is-press');
+      p.classList.add('is-press');   // the first thing a tap does: it is on screen in this same frame
       later(() => p.classList.remove('is-press'), 110);
     };
     on(root, 'pointerdown', (e) => {
@@ -1208,6 +1321,8 @@ registerGame({
     return {
       destroy() {
         dead = true;
+        if (ro) ro.disconnect();
+        if (dm.anim) { dm.anim.cancel(); dm.anim = null; }
         timers.forEach((id) => clearTimeout(id)); timers.clear();
         rafs.forEach((id) => cancelAnimationFrame(id)); rafs.clear();
         offs.forEach((f) => { try { f(); } catch { /* ignore */ } });

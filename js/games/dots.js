@@ -360,7 +360,7 @@ const geomOf = (B) => {
   const px = (c) => MARGIN + c * S;
   const ends = (l, r, c) => (l === 'h' ? [px(c), px(r), px(c + 1), px(r)] : [px(c), px(r), px(c), px(r + 1)]);
   return {
-    S, px, B,
+    S, px, B, ends,
     boxIn: S / 2 - 9,
     lineD: (l, r, c) => { const [x1, y1, x2, y2] = ends(l, r, c); return `M${x1} ${y1}L${x2} ${y2}`; },
     hit(l, r, c) {
@@ -431,46 +431,66 @@ registerGame({
   css: `
 .g-dots { --gd-s: min(94vw, 420px); flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 12px; padding: 16px 4px 8px; overflow-x: hidden; overflow-y: auto; user-select: none; -webkit-user-select: none; touch-action: manipulation; }
 .g-dots.is-land { padding-top: 6px; flex-direction: row; align-items: center; justify-content: center; gap: 18px; }
-.g-dots .gd-wrap { position: relative; flex: none; width: var(--gd-s); height: var(--gd-s); background: var(--g-card); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow); }
+.g-dots .gd-wrap { position: relative; flex: none; width: var(--gd-s); height: var(--gd-s); background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-card); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow); }
 .g-dots .gd-wrap::after { content: ''; position: absolute; inset: 6px; border: 1px solid var(--g-ink); border-radius: calc(var(--g-radius) - 5px); opacity: 0.3; pointer-events: none; }
-.g-dots .gd-svg { display: block; width: 100%; height: 100%; overflow: visible; }
+/* two SVG sheets (guides below, dots and tap targets above) with the pieces between them as HTML boxes, so draw-ins, stamps and
+   the selection pulse are transform / opacity only. Everything is placed in percent of the board, so nothing is ever measured. */
+.g-dots .gd-svg { position: absolute; inset: 0; display: block; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.g-dots .gd-svg-top { pointer-events: auto; }
+.g-dots .gd-layer { position: absolute; inset: 0; pointer-events: none; isolation: isolate; }
 .g-dots .gd-guide { fill: none; stroke: var(--g-muted); stroke-width: 3.5; stroke-linecap: round; stroke-dasharray: 0.1 12; opacity: 0.55; }
 .g-dots .gd-guide.off { display: none; }
 .g-dots .gd-dot { fill: var(--g-ink); }
-.g-dots .gd-ln { fill: none; stroke: var(--g-ink); stroke-width: 8; stroke-linecap: round; }
-.g-dots .gd-ln.is-new { stroke-dasharray: 1 1; animation: gd-draw 300ms cubic-bezier(0.5, 0, 0.3, 1) both; }
-.g-dots .gd-lo { fill: none; stroke-width: 15; stroke-linecap: round; opacity: 0.9; }
-.g-dots .gd-lo.gd-a { stroke: var(--p-a); } .g-dots .gd-lo.gd-b { stroke: var(--p-b); } .g-dots .gd-lo.gd-s { stroke: var(--g-line); }
-.g-dots .gd-ln-hl { fill: none; stroke: var(--g-hl); stroke-width: 26; stroke-linecap: round; animation: gd-fade 300ms ease-out both; }
-@keyframes gd-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+.g-dots .gd-dot-reg { fill: var(--p-b); opacity: 0.7; }
+/* a line: the black pen stroke, over a band of the player's ink that is printed a hair off register */
+.g-dots .gd-ln { position: absolute; border-radius: 999px; background: var(--g-ink); transform-origin: var(--ox, 0) var(--oy, 50%); }
+.g-dots .gd-ln::before { content: ''; position: absolute; inset: calc(var(--gd-s) * -0.007); border-radius: inherit; z-index: -1; opacity: 0.92; transform: translate(calc(var(--gd-s) * 0.003), calc(var(--gd-s) * 0.002)); }
+.g-dots .gd-ln.gd-a::before { background: var(--g-grain) 0 0 / var(--g-grain-size), var(--p-a); }
+.g-dots .gd-ln.gd-b::before { background: var(--g-grain) 0 0 / var(--g-grain-size), var(--p-b); }
+.g-dots .gd-ln.gd-s::before { background: var(--g-line); }
+.g-dots .gd-ln.is-recent::after { content: ''; position: absolute; inset: calc(var(--gd-s) * -0.0185); border-radius: inherit; z-index: -2; background: var(--g-hl); animation: gd-fade 300ms ease-out both; animation-delay: var(--dl, 0ms); }
+.g-dots .gd-ln.is-new { animation: gd-draw 300ms cubic-bezier(0.5, 0, 0.3, 1) both; animation-delay: var(--dl, 0ms); }
+.g-dots .gd-ln.is-new.gd-v { animation-name: gd-drawv; }
+@keyframes gd-draw { from { transform: scale(0, 1); } 70% { transform: scale(1, 1.5); } to { transform: none; } }
+@keyframes gd-drawv { from { transform: scale(1, 0); } 70% { transform: scale(1.5, 1); } to { transform: none; } }
 @keyframes gd-fade { from { opacity: 0; } to { opacity: 1; } }
-.g-dots .gd-box rect { stroke: var(--g-ink); stroke-width: 2px; vector-effect: non-scaling-stroke; }
-.g-dots .gd-box.gd-a rect, .g-dots .gd-chip.gd-a { fill: var(--p-a); background: var(--p-a); }
-.g-dots .gd-box.gd-b rect, .g-dots .gd-chip.gd-b { fill: var(--p-b); background: var(--p-b); }
-.g-dots .gd-box text { fill: var(--g-on-ink); font-family: var(--g-font-display); font-weight: 900; text-anchor: middle; dominant-baseline: central; }
-.g-dots .gd-box .gd-stamp { transform-box: fill-box; transform-origin: center; }
-.g-dots .gd-box.is-new .gd-stamp { animation: gd-stamp 380ms cubic-bezier(0.3, 1.6, 0.5, 1) both; animation-delay: var(--sd, 0ms); }
+/* a box: an outlined square with the ink printed slightly off, a halftone shade and the owner's initial */
+.g-dots .gd-box { position: absolute; display: grid; place-items: center; border: 2px solid var(--g-ink); border-radius: 1.4%; animation-delay: var(--sd, 0ms); }
+.g-dots .gd-box::before { content: ''; position: absolute; inset: -2px; border-radius: inherit; z-index: -1; transform: translate(calc(var(--gd-s) * 0.0024), calc(var(--gd-s) * 0.0018)); }
+.g-dots .gd-box::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: var(--g-halftone) 0 0 / 5px 5px; -webkit-mask-image: linear-gradient(135deg, transparent 40%, #000); mask-image: linear-gradient(135deg, transparent 40%, #000); }
+.g-dots .gd-box.gd-a::before, .g-dots .gd-chip.gd-a { background: var(--g-grain) 0 0 / var(--g-grain-size), var(--p-a); }
+.g-dots .gd-box.gd-b::before, .g-dots .gd-chip.gd-b { background: var(--g-grain) 0 0 / var(--g-grain-size), var(--p-b); }
+.g-dots .gd-box b { position: relative; z-index: 1; color: var(--g-on-ink); font: 900 1em/1 var(--g-font-display); text-shadow: var(--g-misreg); }
+.g-dots .gd-box.is-new { animation: gd-stamp 380ms cubic-bezier(0.3, 1.6, 0.5, 1) both; animation-delay: var(--sd, 0ms); }
 @keyframes gd-stamp { from { transform: scale(1.5) rotate(-12deg); opacity: 0; } 60% { opacity: 1; } to { transform: none; opacity: 1; } }
+.g-dots .gd-box svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; z-index: 1; }
 .g-dots .gd-heart { fill: var(--p-b-soft); stroke: var(--g-ink); stroke-width: 2px; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
 .g-dots .gd-box .gd-heart { fill: none; stroke: var(--g-on-ink); opacity: 0.55; }
+.g-dots .gd-box.gd-open { border-color: transparent; }
+.g-dots .gd-box.gd-open::after { display: none; }
 .g-dots .gd-box.gd-open .gd-heart { fill: var(--p-b-soft); stroke: var(--g-ink); opacity: 1; }
-.g-dots.is-done .gd-box.is-win .gd-stamp { animation: gd-cheer 520ms cubic-bezier(0.3, 1.6, 0.5, 1) both; animation-delay: var(--wd, 0ms); }
+.g-dots.is-done .gd-box.is-win { animation: gd-cheer 520ms cubic-bezier(0.3, 1.6, 0.5, 1) both; animation-delay: var(--wd, 0ms); }
 @keyframes gd-cheer { 0% { transform: none; } 45% { transform: scale(1.12) rotate(-4deg); } 100% { transform: none; } }
-.g-dots.is-done.has-winner .gd-box:not(.is-win) { opacity: 0.45; transition: opacity 500ms; }
-.g-dots .gd-pl, .g-dots .gd-pl-ink { fill: none; stroke-linecap: round; opacity: 0; }
-.g-dots .gd-pl { stroke-width: 8; }
-.g-dots .gd-pl-ink { stroke: var(--g-ink); stroke-width: 14; }
-.g-dots .gd-pg.gd-a .gd-pl { stroke: var(--p-a); } .g-dots .gd-pg.gd-b .gd-pl { stroke: var(--p-b); }
-.g-dots .gd-pg.is-hover .gd-pl { opacity: 0.6; }
-.g-dots .gd-pg.is-sel .gd-pl-ink { opacity: 1; }
-.g-dots .gd-pg.is-sel .gd-pl { opacity: 1; stroke-width: 7; stroke-linecap: butt; stroke-dasharray: 12 8; animation: gd-march 700ms linear infinite; }
-@keyframes gd-march { to { stroke-dashoffset: -20; } }
-.g-dots .gd-gb { stroke: none; opacity: 0.3; }
-.g-dots .gd-gb.gd-a { fill: var(--p-a); } .g-dots .gd-gb.gd-b { fill: var(--p-b); }
+.g-dots.has-winner .gd-box { transition: opacity 500ms; }
+.g-dots.is-done.has-winner .gd-box:not(.is-win) { opacity: 0.45; }
+/* the line under your finger / the cursor: a pen outline for the pending line, ink on top */
+.g-dots .gd-pg { position: absolute; display: none; border-radius: 999px; }
+.g-dots .gd-pg.is-hover, .g-dots .gd-pg.is-sel { display: block; }
+.g-dots .gd-pg::before { content: ''; position: absolute; inset: calc(var(--gd-s) * -0.006); border-radius: inherit; background: var(--g-ink); opacity: 0; }
+.g-dots .gd-pg::after { content: ''; position: absolute; inset: 0; border-radius: inherit; }
+.g-dots .gd-pg.gd-a::after { background: var(--p-a); } .g-dots .gd-pg.gd-b::after { background: var(--p-b); }
+.g-dots .gd-pg.is-hover::after { opacity: 0.6; }
+.g-dots .gd-pg.is-sel::before { opacity: 1; }
+.g-dots .gd-pg.is-sel { animation: gd-throb 800ms ease-in-out infinite; }
+@keyframes gd-throb { 50% { transform: scale(var(--tx, 1.04), var(--ty, 1.25)); } }
+.g-dots .gd-puff { position: absolute; border: 3px solid var(--g-ink); border-radius: 1.4%; pointer-events: none; opacity: 0; }
+.g-dots .gd-puff.gd-a { border-color: var(--p-a); } .g-dots .gd-puff.gd-b { border-color: var(--p-b); }
+.g-dots .gd-gb { position: absolute; border-radius: 1.4%; opacity: 0.3; }
+.g-dots .gd-gb.gd-a { background: var(--p-a); } .g-dots .gd-gb.gd-b { background: var(--p-b); }
 .g-dots .gd-hit { fill: transparent; pointer-events: all; cursor: pointer; outline: none; }
 .g-dots .gd-hit.is-drawn { cursor: default; }
 .g-dots.is-locked .gd-hit { pointer-events: none; cursor: default; }
-.g-dots .gd-pop { position: absolute; left: 50%; top: -14px; z-index: 3; max-width: 88%; padding: 8px 16px; transform: translateX(-50%) rotate(-3deg); background: var(--g-hl); color: var(--g-on-ink); border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); box-shadow: var(--g-shadow); font: 900 1.05rem/1.15 var(--g-font-display); text-align: center; text-wrap: balance; pointer-events: none; }
+.g-dots .gd-pop { position: absolute; left: 50%; top: -14px; z-index: 3; max-width: 88%; padding: 8px 16px; transform: translateX(-50%) rotate(-3deg); background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-hl); color: var(--g-on-ink); border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); box-shadow: var(--g-shadow); font: 900 1.05rem/1.15 var(--g-font-display); text-shadow: var(--g-misreg); text-align: center; text-wrap: balance; pointer-events: none; }
 .g-dots .gd-side { position: relative; }
 .g-dots.is-land .gd-pop { top: auto; bottom: 100%; margin-bottom: 6px; width: max-content; max-width: 100%; padding: 6px 12px; font-size: 0.92rem; }
 .g-dots.is-looked .gd-plate { display: none; }
@@ -488,18 +508,18 @@ registerGame({
 .g-dots .gd-mode:focus-visible, .g-dots .gd-done:focus-visible { outline: 3px solid var(--p-a); outline-offset: 2px; }
 .g-dots .gd-desc { margin: 0; text-align: center; color: var(--g-ink); font: 700 0.84rem/1.3 var(--g-font-body); text-wrap: balance; }
 .g-dots .gd-modeline { margin: 0; }
-.g-dots .gd-card { width: 100%; padding: 10px 12px; text-align: center; background: color-mix(in srgb, var(--p-b-soft) 70%, var(--g-card)); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow-sm); }
+.g-dots .gd-card { width: 100%; padding: 10px 12px; text-align: center; background: var(--g-grain) 0 0 / var(--g-grain-size), color-mix(in srgb, var(--p-b-soft) 70%, var(--g-card)); border: 2px solid var(--g-ink); border-radius: var(--g-radius); box-shadow: var(--g-shadow-sm); }
 .g-dots .gd-card-k { margin: 0 0 2px; font: 800 0.7rem/1.2 var(--g-font-body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--g-ink); }
 .g-dots .gd-card-t { margin: 0 0 8px; font: 900 1.02rem/1.25 var(--g-font-display); color: var(--g-ink); text-wrap: balance; }
 .g-dots .gd-done { min-height: 44px; padding: 6px 18px; cursor: pointer; }
-.g-dots .gd-plate { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 16px 8px 10px; border-radius: 999px; background: var(--g-card); border: 2px solid var(--g-ink); box-shadow: var(--g-shadow); font: 900 0.98rem/1.2 var(--g-font-display); color: var(--g-ink); max-width: 100%; text-wrap: balance; }
+.g-dots .gd-plate { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 16px 8px 10px; border-radius: 999px; background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-card); border: 2px solid var(--g-ink); box-shadow: var(--g-shadow); font: 900 0.98rem/1.2 var(--g-font-display); color: var(--g-ink); max-width: 100%; text-wrap: balance; }
+.g-dots .gd-plate-t { text-shadow: var(--g-misreg); }
 .g-dots .gd-plate.wait { color: var(--g-muted); border-color: var(--g-line); }
-.g-dots .gd-plate.pop { animation: gd-plate 280ms cubic-bezier(0.3, 1.6, 0.5, 1); }
-.g-dots .gd-plate.extra { background: var(--g-hl-soft); border-color: var(--g-ink); }
-@keyframes gd-plate { from { transform: scale(0.9); } to { transform: none; } }
+.g-dots .gd-plate.wait .gd-plate-t { text-shadow: none; }
+.g-dots .gd-plate.extra { background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-hl-soft); border-color: var(--g-ink); }
 .g-dots .gd-chip { flex: none; width: 22px; height: 22px; border-radius: 5px; border: 2px solid var(--g-ink); }
 .g-dots .gd-chip.none { background: transparent; border-style: dashed; }
-.g-dots .gd-m { margin: 2px 0 0; padding: 8px 14px; max-width: 100%; text-align: center; text-wrap: balance; font: 900 0.92rem/1.25 var(--g-font-display); background: var(--g-hl); color: var(--g-on-ink); border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); box-shadow: var(--g-shadow-sm); transform: rotate(-1.2deg); animation: gd-stampin 380ms cubic-bezier(0.3, 1.7, 0.5, 1) both; }
+.g-dots .gd-m { margin: 2px 0 0; padding: 8px 14px; max-width: 100%; text-align: center; text-wrap: balance; font: 900 0.92rem/1.25 var(--g-font-display); text-shadow: var(--g-misreg); background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-hl); color: var(--g-on-ink); border: 2px solid var(--g-ink); border-radius: var(--g-radius-sm); box-shadow: var(--g-shadow-sm); transform: rotate(-1.2deg); animation: gd-stampin 380ms cubic-bezier(0.3, 1.7, 0.5, 1) both; }
 @keyframes gd-stampin { from { transform: scale(1.4) rotate(-6deg); opacity: 0; } to { transform: rotate(-1.2deg); opacity: 1; } }
 .g-dots .gd-ledger { margin: 0; text-align: center; font: 800 0.8rem/1.3 var(--g-font-body); color: var(--g-ink); text-wrap: balance; }
 .g-dots .gd-ledger[hidden] { display: none; }
@@ -514,14 +534,12 @@ registerGame({
     root.className = 'g-dots';
     root.innerHTML = `
       <div class="gd-wrap">
-        <svg class="gd-svg" viewBox="0 0 ${VB} ${VB}">
-          <g class="gd-boxes"></g>
-          <g class="gd-guides"></g>
-          <g class="gd-hls"></g>
-          <g class="gd-unders"></g>
-          <g class="gd-lines"></g>
-          <g class="gd-ghosts"></g>
-          <g class="gd-pg"><path class="gd-pl-ink" d="M0 0"/><path class="gd-pl" d="M0 0"/></g>
+        <div class="gd-layer gd-boxes"></div>
+        <svg class="gd-svg" viewBox="0 0 ${VB} ${VB}" aria-hidden="true"><g class="gd-guides"></g></svg>
+        <div class="gd-layer gd-lines"></div>
+        <div class="gd-layer gd-ghosts"></div>
+        <div class="gd-layer"><div class="gd-pg"></div></div>
+        <svg class="gd-svg gd-svg-top" viewBox="0 0 ${VB} ${VB}">
           <g class="gd-dots"></g>
           <g class="gd-hits" role="group" aria-label="Lines between the dots"></g>
         </svg>
@@ -539,12 +557,10 @@ registerGame({
       </div>`;
     el.appendChild(root);
     const $ = (s) => root.querySelector(s);
-    const svg = $('.gd-svg');
+    const svg = $('.gd-svg-top');
     const wrap = $('.gd-wrap');
     const boxLayer = $('.gd-boxes');
     const guideLayer = $('.gd-guides');
-    const hlLayer = $('.gd-hls');
-    const underLayer = $('.gd-unders');
     const lineLayer = $('.gd-lines');
     const ghostLayer = $('.gd-ghosts');
     const dotLayer = $('.gd-dots');
@@ -590,15 +606,20 @@ registerGame({
     const timers = new Set();
     const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); fn(); }, ms); timers.add(t); return t; };
     const reduced = () => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; } };
+    // one-shot motion through the Web Animations API: restartable without reading layout, transform / opacity only
+    const play = (e, kf, o) => { if (!e || !e.animate || reduced()) return; try { e.animate(kf, o); } catch { /* old webview: no motion */ } };
+    const setCls = (e, v) => { if (e.getAttribute('class') !== v) e.setAttribute('class', v); };
+    const u = (v) => `${((v / VB) * 100).toFixed(3)}%`; // board units to percent of the board (it is square)
 
     // ── sizing: the board takes what the stage leaves, beside the plate in landscape ──
+    // Runs from the ResizeObserver (after layout, so reading sizes costs nothing extra) and writes only when something changed.
     function fit() {
       const W = root.clientWidth - 8;
       const H0 = root.clientHeight;
       if (W < 80 || H0 < 100) return;
       const land = W > (H0 - 26) * 1.2;
       const H = H0 - (land ? 14 : 26);
-      root.classList.toggle('is-land', land);
+      if (root.classList.contains('is-land') !== land) root.classList.toggle('is-land', land);
       // in landscape the stamp lives beside the board, not over it
       const host = land ? side : wrap;
       if (pop.parentNode !== host) host.appendChild(pop);
@@ -606,10 +627,11 @@ registerGame({
       if (land) size = Math.min(H, W - 230 - 18, 620);
       else size = Math.min(W, 540, H - side.offsetHeight - 12);
       size = Math.max(Math.floor(size), land ? 140 : 190);
-      root.style.setProperty('--gd-s', `${size}px`);
+      if (size !== lastSize) { lastSize = size; root.style.setProperty('--gd-s', `${size}px`); }
     }
+    let lastSize = 0;
     let ro = null;
-    try { ro = new ResizeObserver(() => fit()); ro.observe(root); } catch { /* old webview: fit runs on every update */ }
+    try { ro = new ResizeObserver(() => fit()); ro.observe(root); ro.observe(side); } catch { /* old webview: fit runs on every resize */ }
     window.addEventListener('resize', fit);
 
     // ── the board for this many dots (rebuilt only when the size changes) ──
@@ -617,12 +639,29 @@ registerGame({
       const B = N - 1;
       G = geomOf(B);
       gN = N;
+      for (const e of lineEls.values()) e.remove();
+      lineEls.clear();
+      for (const e of boxEls.values()) e.remove();
+      boxEls.clear();
+      offKeys = new Set();
       guideLayer.innerHTML = linesOf(N).map(([l, r, c]) => `<path class="gd-guide" data-k="${key(l, r, c)}" d="${G.lineD(l, r, c)}"/>`).join('');
       const dots = [];
-      for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) dots.push(`<circle class="gd-dot" cx="${G.px(c)}" cy="${G.px(r)}" r="8.5"/>`);
+      for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) dots.push(`<circle class="gd-dot-reg" cx="${G.px(c) + 1.5}" cy="${G.px(r) + 1}" r="8.5"/><circle class="gd-dot" cx="${G.px(c)}" cy="${G.px(r)}" r="8.5"/>`);
       dotLayer.innerHTML = dots.join('');
       hits.innerHTML = linesOf(N).map(([l, r, c]) => `<polygon class="gd-hit" tabindex="-1" data-k="${key(l, r, c)}" data-l="${l}" data-r="${r}" data-c="${c}" points="${G.hit(l, r, c)}" role="button" aria-label="${l === 'h' ? 'Across' : 'Down'} line, row ${r + 1}, column ${c + 1}"/>`).join('');
       cursor = null;
+    }
+    const lineEls = new Map(); // key -> the drawn line's element
+    const boxEls = new Map(); // box index -> its element
+    let offKeys = new Set(); // lines whose dotted guide is hidden
+    const PEN = 8; // the black stroke's width, in board units
+    /** left/top/width/height of a line's pill (stroke width PEN, round ends), in percent of the board. */
+    function lineBox(l, r, c) {
+      const [x1, y1, x2, y2] = G.ends(l, r, c);
+      const h = l === 'h';
+      const w = h ? x2 - x1 + PEN : PEN;
+      const ht = h ? PEN : y2 - y1 + PEN;
+      return { st: `left:${u(x1 - PEN / 2)};top:${u(y1 - PEN / 2)};width:${u(w)};height:${u(ht)}`, h };
     }
 
     const lastOwnerRun = (s) => {
@@ -638,62 +677,101 @@ registerGame({
       const { B } = dimOf(s);
       const order = s.order;
       const recent = new Set(c.over ? [] : order.slice(lastOwnerRun(s)));
-      let lines = '';
-      let unders = '';
-      let hls = '';
-      const off = new Set();
+      const want = new Set();
       const lineAt = (kk, i, owner, isNew) => {
-        const d = G.lineD(...unkey(kk));
-        const delay = isNew ? (i - fresh.from) * fresh.gap : 0;
-        if (recent.has(kk)) hls += `<path class="gd-ln-hl" d="${d}" style="animation-delay:${delay}ms"/>`;
-        unders += `<path class="gd-lo gd-${owner}" d="${d}"/>`;
-        lines += `<path class="gd-ln${isNew ? ' is-new' : ''}" pathLength="1" d="${d}" style="animation-delay:${delay}ms"/>`;
-        off.add(kk);
+        want.add(kk);
+        let e = lineEls.get(kk);
+        if (e && e.dataset.o !== owner) { e.remove(); e = null; }
+        if (!e) {
+          const [l, r, cc] = unkey(kk);
+          const lb = lineBox(l, r, cc);
+          e = document.createElement('div');
+          e.dataset.o = owner;
+          e.className = `gd-ln gd-${owner}${lb.h ? '' : ' gd-v'}${isNew ? ' is-new' : ''}`;
+          e.setAttribute('style', `${lb.st};--dl:${isNew ? (i - fresh.from) * fresh.gap : 0}ms;${lb.h ? '--ox:0;--oy:50%' : '--ox:50%;--oy:0'}`);
+          lineLayer.appendChild(e);
+          lineEls.set(kk, e);
+        }
+        e.classList.toggle('is-recent', recent.has(kk));
       };
       if (s.pre) for (const kk of s.pre) lineAt(kk, -1, 's', false);
       order.forEach((kk, i) => lineAt(kk, i, drawn(s, ...unkey(kk)), i >= fresh.from));
-      for (const g of guideLayer.children) g.classList.toggle('off', off.has(g.dataset.k));
-      lineLayer.innerHTML = lines;
-      underLayer.innerHTML = unders;
-      hlLayer.innerHTML = hls;
+      for (const [kk, e] of lineEls) if (!want.has(kk)) { e.remove(); lineEls.delete(kk); }
+      // the dotted guides: only the ones whose line was drawn or erased since the last paint change
+      for (const kk of want) if (!offKeys.has(kk)) { const g = guideLayer.querySelector(`[data-k="${kk}"]`); if (g) g.classList.add('off'); }
+      for (const kk of offKeys) if (!want.has(kk)) { const g = guideLayer.querySelector(`[data-k="${kk}"]`); if (g) g.classList.remove('off'); }
+      offKeys = want;
       // boxes
       const winner = c.over && c.result ? c.result.winner : null;
-      let boxes = '';
-      const fs = Math.round(G.S * 0.46);
+      const haveBox = new Set();
       s.boxes.forEach((w, bi) => {
         const br = Math.floor(bi / B);
         const bc = bi % B;
-        const x = G.px(bc) + G.S / 2;
-        const y = G.px(br) + G.S / 2;
         const heart = bi === s.heart;
-        const hs = (G.boxIn * 0.9) / 17;
-        if (!w) {
-          if (heart) boxes += `<g class="gd-box gd-open" transform="translate(${x} ${y})"><path class="gd-heart" transform="scale(${hs.toFixed(3)})" d="${HEART_D}"/></g>`;
-          return;
+        if (!w && !heart) return;
+        haveBox.add(bi);
+        const st = w ? `${w}${heart ? 'h' : ''}` : 'open';
+        let e = boxEls.get(bi);
+        if (e && e.dataset.st !== st) { e.remove(); e = null; }
+        if (!e) {
+          const x = G.px(bc) + G.S / 2;
+          const y = G.px(br) + G.S / 2;
+          const isNew = !!w && fresh.boxes.has(bi);
+          const hs = (G.boxIn * 0.9) / 17;
+          e = document.createElement('div');
+          e.dataset.st = st;
+          e.dataset.x = x;
+          e.dataset.y = y;
+          e.className = `gd-box ${w ? `gd-${w}` : 'gd-open'}${isNew ? ' is-new' : ''}`;
+          e.setAttribute('style', `left:${u(x - G.boxIn)};top:${u(y - G.boxIn)};width:${u(2 * G.boxIn)};height:${u(2 * G.boxIn)};font-size:calc(var(--gd-s) * ${(G.S * 0.46 / VB).toFixed(4)});--sd:${isNew ? fresh.boxes.get(bi) : 0}ms`);
+          e.innerHTML = `${heart ? `<svg viewBox="${-G.boxIn} ${-G.boxIn} ${2 * G.boxIn} ${2 * G.boxIn}"><path class="gd-heart" transform="scale(${hs.toFixed(3)})" d="${HEART_D}"/></svg>` : ''}${w ? '<b></b>' : ''}`;
+          if (w) e.lastChild.textContent = initial(w);
+          boxLayer.appendChild(e);
+          boxEls.set(bi, e);
+          if (isNew && !reduced()) later(() => puffAt(x, y, w), (fresh.boxes.get(bi) || 0) + 120);
         }
-        const isNew = fresh.boxes.has(bi);
-        const sd = isNew ? fresh.boxes.get(bi) : 0;
-        boxes += `<g class="gd-box gd-${w}${isNew ? ' is-new' : ''}${winner === w ? ' is-win' : ''}" transform="translate(${x} ${y})"><g class="gd-stamp" style="--sd:${sd}ms;--wd:${bi * 25}ms"><rect x="${-G.boxIn}" y="${-G.boxIn}" width="${2 * G.boxIn}" height="${2 * G.boxIn}" rx="7"/>${heart ? `<path class="gd-heart" transform="scale(${hs.toFixed(3)})" d="${HEART_D}"/>` : ''}<text y="3" style="font-size:${fs}px">${initial(w)}</text></g></g>`;
+        e.classList.toggle('is-win', !!w && winner === w);
+        e.style.setProperty('--wd', `${bi * 25}ms`);
       });
-      boxLayer.innerHTML = boxes;
+      for (const [bi, e] of boxEls) if (!haveBox.has(bi)) { e.remove(); boxEls.delete(bi); }
       for (const h of hits.children) {
         const own = drawn(s, h.dataset.l, Number(h.dataset.r), Number(h.dataset.c));
-        h.classList.toggle('is-drawn', !!own);
-        h.setAttribute('aria-disabled', String(!c.canMove || !!own));
-        h.setAttribute('aria-label', `${h.dataset.l === 'h' ? 'Across' : 'Down'} line, row ${Number(h.dataset.r) + 1}, column ${Number(h.dataset.c) + 1}${own ? (own === 's' ? ', already drawn' : `, drawn by ${api.name(own)}`) : ''}`);
+        const drawnNow = !!own;
+        if (h.classList.contains('is-drawn') !== drawnNow) h.classList.toggle('is-drawn', drawnNow);
+        const dis = String(!c.canMove || drawnNow);
+        if (h.getAttribute('aria-disabled') !== dis) h.setAttribute('aria-disabled', dis);
+        const label = `${h.dataset.l === 'h' ? 'Across' : 'Down'} line, row ${Number(h.dataset.r) + 1}, column ${Number(h.dataset.c) + 1}${own ? (own === 's' ? ', already drawn' : `, drawn by ${api.name(own)}`) : ''}`;
+        if (h.getAttribute('aria-label') !== label) h.setAttribute('aria-label', label);
       }
       ensureCursor(s);
     }
+    /** An expanding ring of ink where a box closed (a transform / opacity one-shot). */
+    function puffAt(x, y, w) {
+      const e = document.createElement('i');
+      e.className = `gd-puff gd-${w}`;
+      e.setAttribute('style', `left:${u(x - G.boxIn)};top:${u(y - G.boxIn)};width:${u(2 * G.boxIn)};height:${u(2 * G.boxIn)}`);
+      boxLayer.appendChild(e);
+      play(e, [{ transform: 'scale(1)', opacity: 0.7 }, { transform: 'scale(1.6)', opacity: 0 }], { duration: 480, easing: 'cubic-bezier(0.2, 0.7, 0.3, 1)' });
+      later(() => e.remove(), 520);
+    }
 
+    let selAt = '';
+    let ghostKey = '';
     function renderSel() {
       const c = ctx;
       const on = sel && c && c.canMove && view;
       const who = (c && c.actor) || 'a';
-      if (!on) { pg.setAttribute('class', 'gd-pg'); ghostLayer.innerHTML = ''; return; }
-      for (const p of pg.children) p.setAttribute('d', G.lineD(sel.l, sel.r, sel.c));
-      pg.setAttribute('class', `gd-pg gd-${who} ${sel.by === 'tap' || sel.by === 'key' ? 'is-sel' : 'is-hover'}`);
-      ghostLayer.innerHTML = wouldClose(view, sel.l, sel.r, sel.c)
-        .map(([br, bc]) => `<rect class="gd-gb gd-${who}" x="${G.px(bc) + G.S / 2 - G.boxIn}" y="${G.px(br) + G.S / 2 - G.boxIn}" width="${2 * G.boxIn}" height="${2 * G.boxIn}" rx="7"/>`).join('');
+      if (!on) { setCls(pg, 'gd-pg'); if (ghostKey) { ghostLayer.innerHTML = ''; ghostKey = ''; } selAt = ''; return; }
+      const at = `${sel.l}${sel.r}${sel.c}`;
+      if (at !== selAt) { selAt = at; const lb = lineBox(sel.l, sel.r, sel.c); pg.setAttribute('style', `${lb.st};--tx:${lb.h ? 1.03 : 1.25};--ty:${lb.h ? 1.25 : 1.03}`); }
+      setCls(pg, `gd-pg gd-${who} ${sel.by === 'tap' || sel.by === 'key' ? 'is-sel' : 'is-hover'}`);
+      const closes = wouldClose(view, sel.l, sel.r, sel.c);
+      const gk = `${who}|${closes.join(';')}`;
+      if (gk !== ghostKey) {
+        ghostKey = gk;
+        ghostLayer.innerHTML = closes
+          .map(([br, bc]) => `<i class="gd-gb gd-${who}" style="left:${u(G.px(bc) + G.S / 2 - G.boxIn)};top:${u(G.px(br) + G.S / 2 - G.boxIn)};width:${u(2 * G.boxIn)};height:${u(2 * G.boxIn)}"></i>`).join('');
+      }
     }
 
     // ── keyboard: one tab stop, arrows move between lines ──
@@ -866,15 +944,13 @@ registerGame({
       ledgerEl.hidden = !(c.over && momentOn && ledgerText);
       ledgerEl.textContent = ledgerText;
     }
-    const popPlate = () => { plate.classList.remove('pop'); void plate.offsetWidth; plate.classList.add('pop'); };
+    const popPlate = () => play(plate, [{ transform: 'scale(0.9)' }, { transform: 'none' }], { duration: 280, easing: 'cubic-bezier(0.3, 1.6, 0.5, 1)' });
 
     // ── the little stamp over the board: chain counter, sacrifice call ──
     function say(text) {
       pop.textContent = text;
       pop.hidden = false;
-      pop.classList.remove('in');
-      void pop.offsetWidth;
-      if (!reduced()) pop.classList.add('in');
+      play(pop, [{ transform: 'translateX(-50%) rotate(-3deg) scale(0.6)', opacity: 0 }, { transform: 'translateX(-50%) rotate(-3deg)', opacity: 1 }], { duration: 360, easing: 'cubic-bezier(0.3, 1.6, 0.5, 1)' });
       clearTimeout(popTimer);
       popTimer = later(() => { pop.hidden = true; }, 1700);
     }
@@ -900,6 +976,8 @@ registerGame({
     }
 
     // ── input ──
+    // a refused line: the board shakes its head
+    const shakeBoard = () => play(wrap, [{ transform: 'translateX(0)' }, { transform: 'translateX(-1.6%)', offset: 0.2 }, { transform: 'translateX(1.4%)', offset: 0.4 }, { transform: 'translateX(-0.9%)', offset: 0.6 }, { transform: 'translateX(0.4%)', offset: 0.8 }, { transform: 'translateX(0)' }], { duration: 340, easing: 'ease-out' });
     function pick(l, r, c, by) {
       if (!ctx || !ctx.canMove) return;
       const same = sel && sel.l === l && sel.r === r && sel.c === c;
@@ -921,14 +999,27 @@ registerGame({
       if (!ctx.state.ver && ctx.state.order.length === 0) {
         // the first line of a match: the mode goes first, in the same breath
         const set = api.move({ setup: 2, mode: selMode });
-        if (!set.ok) { api.toast(set.error); api.sfx('bad'); clearSel(); return; }
+        if (!set.ok) { api.toast(set.error); api.sfx('bad'); shakeBoard(); clearSel(); return; }
       }
       const res = api.move({ l, r, c });
-      if (!res.ok) { api.toast(res.error); api.sfx('bad'); api.haptic(40); clearSel(); }
+      if (!res.ok) { api.toast(res.error); api.sfx('bad'); api.haptic(40); shakeBoard(); clearSel(); }
     }
     const hitOf = (e) => { const h = e.target.closest && e.target.closest('.gd-hit'); return h ? [h.dataset.l, Number(h.dataset.r), Number(h.dataset.c)] : null; };
 
-    svg.addEventListener('pointerdown', (e) => { lastPT = e.pointerType || ''; });
+    // press-in: the line shows under the finger the instant it lands (the tap itself still decides what happens)
+    let pressed = false;
+    svg.addEventListener('pointerdown', (e) => {
+      lastPT = e.pointerType || '';
+      if (lastPT === 'mouse' || !ctx || !ctx.canMove || !view || sel) return;
+      const h = hitOf(e);
+      if (!h || drawn(view, ...h)) return;
+      pressed = true;
+      sel = { l: h[0], r: h[1], c: h[2], by: 'hover' };
+      renderSel();
+    });
+    const unpress = () => { if (pressed) { pressed = false; if (sel && sel.by === 'hover') { sel = null; renderSel(); } } };
+    svg.addEventListener('pointercancel', unpress);
+    svg.addEventListener('pointerup', () => { if (pressed) later(unpress, 0); });
     svg.addEventListener('pointermove', (e) => {
       if (e.pointerType !== 'mouse' || !ctx || !ctx.canMove || !view) return;
       const h = hitOf(e);
@@ -943,7 +1034,7 @@ registerGame({
       lastPT = '';
       const [l, r, c] = h;
       if (pt === 'mouse') { commit(l, r, c); return; }
-      if (drawn(view, l, r, c)) { api.toast('That line is already drawn'); api.sfx('bad'); clearSel(); return; }
+      if (drawn(view, l, r, c)) { api.toast('That line is already drawn'); api.sfx('bad'); shakeBoard(); clearSel(); return; }
       if (sel && sel.by === 'tap' && sel.l === l && sel.r === r && sel.c === c) commit(l, r, c);
       else pick(l, r, c, 'tap');
     });
@@ -969,7 +1060,7 @@ registerGame({
       if (!(e.target.closest && e.target.closest('.gd-done'))) return;
       if (ctx) lsPut(lsKey(ctx.matchId), '1');
       renderCard();
-      fit();
+      if (!ro) fit();
     });
 
     // ── records: counted once per match, by whichever phone sees it end ──
@@ -1024,7 +1115,7 @@ registerGame({
       renderStrip();
       renderPlate();
       renderSel();
-      fit();
+      if (!ro) fit();
     }
 
     api.setStatus(''); // the plate says it all; the stage's status line stays empty (and hidden) while playing
@@ -1059,7 +1150,7 @@ registerGame({
         if (!c.canMove) sel = null;
         const heartFresh = s0.heart != null && boxDelay.has(s0.heart);
         cardReady = !heartFresh;
-        if (heartFresh) { lsPut(lsKey(c.matchId), ''); later(() => { cardReady = true; renderCard(); fit(); }, boxDelay.get(s0.heart) + 500); }
+        if (heartFresh) { lsPut(lsKey(c.matchId), ''); later(() => { cardReady = true; renderCard(); if (!ro) fit(); }, boxDelay.get(s0.heart) + 500); }
         renderBoard(c, s, { from, gap, boxes: boxDelay });
         renderCard();
         root.classList.toggle('is-locked', !c.canMove);
@@ -1077,7 +1168,7 @@ registerGame({
         const wait = boxDelay.size ? Math.max(...boxDelay.values()) + 420 : 0;
         if (c.over) {
           if (wait) later(() => root.classList.add('is-done'), wait); else root.classList.add('is-done');
-          if (prevOver === false) later(() => { momentOn = true; renderPlate(); fit(); }, wait + 150); else momentOn = true;
+          if (prevOver === false) later(() => { momentOn = true; renderPlate(); if (!ro) fit(); }, wait + 150); else momentOn = true;
         }
         prevOver = c.over;
         paint();
@@ -1098,7 +1189,7 @@ registerGame({
       onEndClosed() {
         // the stage's own status line now carries the result and the Rematch button, so the plate steps aside
         root.classList.add('is-looked');
-        fit();
+        if (!ro) fit();
       },
       destroy() {
         for (const t of timers) clearTimeout(t);

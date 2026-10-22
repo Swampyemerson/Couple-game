@@ -573,7 +573,7 @@ async function agentsRegressions(h) {
   try { await unitTests(); } catch (e) { console.error(e.message); fails++; }
   for (const scheme of ['light', 'dark']) {
     const full = scheme === 'light';
-    const h = await launch({ port: scheme === 'light' ? 8930 : 8931, only: ['wordduel', 'agents'], colorScheme: scheme });
+    const h = await launch({ port: scheme === 'light' ? 9130 : 9131, only: ['wordduel', 'agents'], colorScheme: scheme });
     try {
       await wordDuelOnline(h, scheme, full);
       await wordDuelLocal(h, scheme);

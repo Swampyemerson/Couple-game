@@ -151,7 +151,9 @@ registerGame({
           h += rowHTML(draft, null, { cls: ' is-draft', label: 'Your guess' });
         } else h += rowHTML('', null, { label: '' });
       }
-      return `<div class="g-wd-board" role="group">${h}</div>`;
+      // .dl marks a board whose first row is the dealt opener (it needs a little more height; a :has() rule here
+      // would restyle every tile on each keystroke)
+      return `<div class="g-wd-board${dealt && list[0] === dealt ? ' dl' : ''}" role="group">${h}</div>`;
     }
     const dealtOf = (s) => (s.v === 2 && s.opts.dealt && s.opener ? s.opener : '');
     const liveBoard = (w, s, o = {}) => boardHTML(w, target(s, w), s.guesses[w], {

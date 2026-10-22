@@ -92,7 +92,7 @@ export const MORSE = {
 .g-defuse .dx-mod[data-mod="morse"] .mx-pips i { width: 12px; height: 12px; border: 2px solid var(--g-ink); border-radius: 50%; background: var(--g-card); }
 .g-defuse .dx-mod[data-mod="morse"] .mx-pips i.is-now { background: var(--g-hl); }
 .g-defuse .dx-mod[data-mod="morse"] .mx-tune { width: 100%; display: grid; grid-template-columns: 52px minmax(0, 1fr) 52px; gap: 8px; align-items: center; }
-.g-defuse .dx-mod[data-mod="morse"] .mx-step { display: grid; place-items: center; width: 52px; height: 56px; padding: 0; background: var(--dx-white); color: var(--dx-dark); border: 2.5px solid var(--g-ink); border-radius: 12px; box-shadow: 0 5px 0 var(--g-edge, var(--g-ink)); transition: transform 0.06s, box-shadow 0.06s; }
+.g-defuse .dx-mod[data-mod="morse"] .mx-step { display: grid; place-items: center; width: 52px; height: 56px; padding: 0; background: var(--dx-white); color: var(--dx-dark); border: 2.5px solid var(--g-ink); border-radius: 12px; box-shadow: 0 5px 0 var(--g-edge, var(--g-ink)); transition: transform 0.16s var(--g-ease-spring); }
 .g-defuse .dx-mod[data-mod="morse"] .mx-step svg { width: 26px; height: 26px; fill: currentColor; }
 .g-defuse .dx-mod[data-mod="morse"] .mx-step:active { transform: translateY(4px); box-shadow: 0 1px 0 var(--g-edge, var(--g-ink)); }
 .g-defuse .dx-mod[data-mod="morse"] .mx-lcd { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 56px; padding: 4px 6px 5px; background: var(--dx-dark); border: 2.5px solid var(--g-ink); border-radius: 10px; box-shadow: inset 0 -4px 0 rgb(255 255 255 / 0.06); }
@@ -101,7 +101,7 @@ export const MORSE = {
 .g-defuse .dx-mod[data-mod="morse"] .mx-scale { display: flex; align-items: flex-end; justify-content: space-between; gap: 2px; width: calc(100% - 8px); height: 16px; }
 .g-defuse .dx-mod[data-mod="morse"] .mx-scale i { flex: 1; max-width: 3px; height: 7px; background: var(--g-muted); border-radius: 1px; }
 .g-defuse .dx-mod[data-mod="morse"] .mx-scale i.is-now { height: 16px; background: var(--dx-red); }
-.g-defuse .dx-mod[data-mod="morse"] .mx-tx { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 54px; padding: 0 14px; background: #b3282c; color: #fff8ea; border: 3px solid var(--g-ink); border-radius: 12px; box-shadow: 0 6px 0 var(--g-edge, var(--g-ink)); font: 400 1.3rem/1 var(--g-font-display); letter-spacing: 0.1em; transition: transform 0.06s, box-shadow 0.06s; }
+.g-defuse .dx-mod[data-mod="morse"] .mx-tx { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 54px; padding: 0 14px; background: #b3282c; color: #fff8ea; border: 3px solid var(--g-ink); border-radius: 12px; box-shadow: 0 6px 0 var(--g-edge, var(--g-ink)); font: 400 1.3rem/1 var(--g-font-display); letter-spacing: 0.1em; transition: transform 0.16s var(--g-ease-spring); }
 .g-defuse .dx-mod[data-mod="morse"] .mx-tx small { font: 800 0.7rem/1 var(--g-font-body); letter-spacing: 0.16em; }
 .g-defuse .dx-mod[data-mod="morse"] .mx-tx:active { transform: translateY(5px); box-shadow: 0 1px 0 var(--g-edge, var(--g-ink)); }
 .g-defuse .dx-mod[data-mod="morse"] .mx-step:focus-visible, .g-defuse .dx-mod[data-mod="morse"] .mx-tx:focus-visible { outline: 3px solid var(--p-a); outline-offset: 3px; }
