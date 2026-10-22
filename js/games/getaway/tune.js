@@ -109,6 +109,14 @@ export const CAM = {
   far: { dist: 12.5, height: 5.6, look: 1.0, ahead: 7 },
   fov: 60, fovSpeed: 15, fovNitro: 10, portraitFov: 74,
   accPull: 0.12, // m of follow distance per m/s² of forward acceleration (throttle out, brakes in; clamped +1 / −1.8)
+  // Critically damped springs (smooth.js critDamp; ω in rad/s: it settles in ≈ 4.7/ω s, no overshoot, any frame rate):
+  yawW: 6.0, yawFF: 0.5,   // heading: soft; 50% of the car's yaw rate is fed forward (no steady lag, still a little view of the car's flank in a turn)
+  lookW: 20,               // look-back flip: quick (a flip settles in ~0.25 s)
+  distW: 8, distIn: 22,    // follow distance: stiffer; pulling in (a wall behind) faster than out
+  heightW: 4.5,            // height: soft
+  leadT: 0.3, leadMax: 5.5, // the aim point leads the car along its velocity by this many seconds (each axis capped at leadMax m)
+  leadTurn: 1.5, leadSide: 2.2, // …and tilts into a turn: m of sideways aim per rad/s of yaw rate (capped at leadSide m)
+  leadW: 2.6,              // the look-ahead springs toward its goal this softly (car micro-jitter never reaches the camera's rotation)
 };
 
 export const TRAFFIC = {

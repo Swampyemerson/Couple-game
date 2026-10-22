@@ -53,12 +53,13 @@ export function createCarView(THREE, P, U, kind, ink, mats, livery = 0) {
   }
   const api = {
     group, tilt, body, red: null, blue: null, mat,
-    /** pose: x y z yaw pitch roll; flat 0..1 sags the car */
-    pose(x, y, z, yaw, pitch, roll, flat) {
+    /** pose: x y z yaw pitch roll; flat 0..1 sags the car. given: the caller supplies pitch / roll
+     *  (default: only when either is non-zero; false lets update() lean the car from its acceleration) */
+    pose(x, y, z, yaw, pitch, roll, flat, given) {
       group.position.set(x, y, z);
       group.rotation.set(0, Math.PI - yaw, 0);
       st.x = x; st.y = y; st.z = z; st.yaw = yaw;
-      st.given = !!(pitch || roll);
+      st.given = given === undefined ? !!(pitch || roll) : !!given;
       if (st.given) { st.pitch = pitch; st.roll = roll; }
       tilt.rotation.set(st.pitch, 0, -st.roll, 'YXZ');
       tilt.position.y = -0.12 * flat;
@@ -79,8 +80,9 @@ export function createCarView(THREE, P, U, kind, ink, mats, livery = 0) {
      * Per-frame state from the car c (fields are feature-detected): braking / vf (reverse),
      * hp (scratches; a drop dents the side it came from), surf (dirt), vx/vz (lean when the
      * physics gives no pitch/roll). Pushes lights and the contact shadow. Call after pose().
+     * heave: the body's heave in m (default c.heave; the game passes the interpolated one).
      */
-    update(c, dt) {
+    update(c, dt, heave) {
       if (!group.visible || !c) return;
       dt = Math.min(0.1, dt || 0.016);
       const vx = c.vx || 0; const vz = c.vz || 0;
@@ -95,7 +97,8 @@ export function createCarView(THREE, P, U, kind, ink, mats, livery = 0) {
         st.pitch += st.vp * dt; st.roll += st.vr * dt;
         tilt.rotation.set(st.pitch, 0, -st.roll, 'YXZ');
       }
-      if (typeof c.heave === 'number' && Number.isFinite(c.heave)) tilt.position.y += Math.max(-0.15, Math.min(0.15, c.heave));
+      const hv = heave === undefined ? c.heave : heave;
+      if (typeof hv === 'number' && Number.isFinite(hv)) tilt.position.y += Math.max(-0.15, Math.min(0.15, hv));
       // damage: scratches with hp, a dent where the hit came from
       const hp = c.hp == null ? 100 : c.hp;
       if (hp > st.hp + 20) api.reset();

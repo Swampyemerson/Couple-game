@@ -407,8 +407,8 @@ timers) at half speed on a slow phone, so it sat twice as long in a jam. Each de
 fast its simulation runs against the wall clock (`gk`, smoothed over ~0.3 s; 1 when it keeps up,
 less under 8 fps or in slow motion) and the partner dead-reckons its car by that much: at full
 velocity a slow partner's car was drawn and collided 1–3 m ahead of where it was. The
-drawn partner car is the prediction plus an error offset that decays to zero (no steady lag), plus
-a short push-out when the bodies touch.
+drawn partner car follows the prediction with a critically damped spring (no steady lag, no velocity
+kink when a sample moves the prediction; see Netcode), plus a short push-out when the bodies touch.
 
 **PIT tiers** (`judgePit`, on the runner's device): contact on the rear 40% (`lz < −0.5`), the cop
 moving the same way at ≥ 12 m/s, headings within 57°, the runner at ≥ 7 m/s. The contact normal's
@@ -431,16 +431,55 @@ Kerbs (road ↔ verge at speed) bounce the suspension and push a `kerb` event; h
 ground shakes it. Surfaces ease in over ~0.15 s (no wall-like step at the kerb), and a road's
 `sidewalk` drives like concrete (`lot`), not grass.
 
+**Frame loop and smoothness** (game.js `frame`, smooth.js). The simulation is a 120 Hz fixed step,
+the display is 60 Hz (WKWebView), 120 Hz (ProMotion Safari) or irregular, so what is drawn is not
+the last step but a **render interpolation** (Gaffer's "Fix Your Timestep"): each local car (both in
+practice and split, mine in live, the AI's) keeps the pose from before its last step (`keepPrev`
+in `simStep`) and is drawn at `lerp(prev, cur, acc / step)` (`blendPose`; yaw wraps; also pitch,
+roll, heave, wheel spin, steer). The drawn pose (`P2[w].dp`) feeds the car views, wheel instances,
+the cop's lightbar and my headlights, the car's skid, smoke, dust and nitro emitters, the name tag
+and the see-through cone, the traffic's draw time (`− (1 − alpha) × step`, so my car and the
+traffic it passes are drawn at the same moment) and the camera; the physics car (collisions,
+publish, HUD, audio) is never touched. The picture is thus one step (8.3 ms, 16.7 ms on a slow
+frame) behind the state, which makes the drawn displacement per frame exactly speed × the time
+between frames at any frame rate (it was off by up to a whole step: at 60 Hz a frame showed 1 or
+2 steps in an irregular order). Alpha is 1 after the step cap (`n ≥ maxN`) and holds through a
+hit-stop; a new car object (a new round), a jump of more than 3 m (the AI's unstick warp, a test
+teleport) or a camera jump of 25 m resets it, so nothing lerps or springs across a spawn.
+**Frame pacing** (`createPacer`): the display interval is estimated from the rAF deltas (the
+median of the last 30 normal deltas finds the multiples, total time over total multiples gives
+the interval, snapped to 24–240 Hz when within 1.5%); what the simulation is owed (this delta +
+the carried `debt`) is snapped to the nearest whole multiple of it when within ±25% of one, the
+remainder is carried in the debt (wall time − fed time, so it stays within a quarter of an interval
+and never drifts from the shared clock: live mode still keeps pace). Hitches and irregular frames
+pass through with their debt. The snapped delta (`sdt`) drives the accumulator, the camera, the
+effects and the partner's picture; the 125 ms clamp and the slow-frame rule (> 50 ms: step 1/60,
+8 substeps) are unchanged and still use the raw delta. `rclock` is a smoothed render clock (`sdt`,
+pulled to the net clock at 3/s) the partner's car is drawn at, so rAF callback jitter does not
+reach it. Input is read in `simStep` from the state the pointer / key handlers left before the
+frame (nothing is sampled after the step or applied a frame later).
+
 **Camera.** A chase camera behind and above (near: 7.4 m back, 2.9 m up; far: 12.5 m, 5.6 m; ×1.3
-in portrait), easing towards the direction of travel while sliding so drifts read. The rig is
-smoothed in the car's frame, not in world space: the yaw eases at 5.5/s and a 1-D follow distance
-eases at 6/s out and 9/s in (`cr.d`), then the position is placed from them every frame. (A
-world-space spring lagged v/9 m at speed — 11.8 m instead of 8.8 m at 169 km/h — and rode its
-1.35× hard clamp three frames in four above 140 km/h.) The distance goal is `dist + min(2.2,
-speed × 0.03) + clamp(accF × 0.12, −1.8, +1)`: full throttle pushes the lens out about a metre,
-a hard stop dives it in up to 1.8 m (`CAM.accPull`). It is pulled in (and lifted) when a building
-is between it and the car. FOV 60° + 15° with speed + 10° on nitro (74° base in portrait), easing
-at 6/s on the way up and 3/s back down so nitro reads as a lunge. Look-back (B / button) flips it for 1.6 s. C or the CAM button
+in portrait), easing towards the direction of travel while sliding so drifts read (the blend fades
+in over 3–6 m/s and out past 100° of slip: it used to step at 4 m/s). The rig is a set of
+**critically damped springs** (`critDamp`: the exact solution over the step, so stable at any dt
+and frame-rate independent, with stored velocities: the exponential it replaces jumps in velocity
+whenever its goal moves) in the car's frame, not in world space, then the position is placed from
+them every frame relative to the drawn car (a world-space spring lagged v/9 m at speed — 11.8 m
+instead of 8.8 m at 169 km/h — and rode its 1.35× hard clamp three frames in four above 140
+km/h). Different stiffness per axis (`CAM` in tune.js, ω in rad/s): the **yaw** is soft (ω 6, with
+half of the car's yaw rate fed forward: the view turns with the car and keeps a little of its
+flank in a turn; a look-back flips it at ω 20, ~0.25 s), the 1-D **follow distance** `cr.d` stiffer
+(ω 8 out, 22 in so an occluding wall snaps the lens in), the **height** soft (ω 4.5, never under
+the ground + 1 m). The distance goal is `dist + min(2.2, speed × 0.03) + clamp(accF × 0.12, −1.8,
++1)`: full throttle pushes the lens out about a metre, a hard stop dives it in up to 1.8 m
+(`CAM.accPull`); the distance never passes its own ceiling. It is pulled in (and lifted) when a
+building is between it and the car. **Look-ahead**: the aim point leads the car along its
+velocity (0.3 s, at most 5.5 m) and tilts into a turn by the yaw rate (1.5 m per rad/s, at most
+2.2 m, fading in over the first 8 m/s), both through soft springs (ω 2.6) so the view opens into
+corners and the car's micro-jitter never reaches the camera's rotation; none while looking back.
+FOV 60° + 15° with speed + 10° on nitro (74° base in portrait), easing at 6/s on the way up and
+3/s back down so nitro reads as a lunge. Look-back (B / button) flips it for 1.6 s. C or the CAM button
 toggles near/far (remembered per device; the setting is the default). Shake on impacts (quartered
 when reduced motion is on). Speed lines over 86 km/h.
 
@@ -505,9 +544,19 @@ sequence. On top of that:
   boost, braking, handbrake, spinning, flat, siren, skidding, water). They go into an
   allocation-free ring buffer. The partner car is **interpolated at now − 100 ms, then
   dead-reckoned forward** by the delay with its velocity and yaw rate (≤ 320 ms, × the sender's
-  sim rate `gk`). The drawn car
-  converges on that prediction (k = 10/s; a 12–40 m error slews at 4/s, ~250 ms; a snap only past
-  40 m). Collisions are resolved against this predicted pose. A **stalled stream** (the newest
+  sim rate `gk`). Between two samples the position and heading go along a **cubic Hermite curve**
+  with the samples' velocity (× `gk`) and yaw rate as tangents (C1 across samples: a straight line
+  made the speed jump at every 20 Hz sample; a circle at 30 m/s now has 0 mm of error against
+  9 mm); where the tangents disagree with the chord (a bump landed between the samples, a warp) it
+  falls back to the line, so a curve cannot overshoot a collision. The wire format is unchanged.
+  The drawn car follows that prediction (shifted by the smoothed render clock's few ms) with a
+  **critically damped spring with the prediction's velocity fed forward** (ω 14; a 12–40 m error
+  ω 6, ~250 ms; a snap only past 40 m): no steady lag (5 cm in a 10 m/s² stop), and no velocity
+  kink when a new sample moves the prediction, which the old exponential offset decay (k = 10/s)
+  had at every one. The stream carries no pitch or roll, so the picture of the partner's car gets
+  a body (`remoteBody`): pitch from the longitudinal acceleration of its successive predicted
+  speeds, roll from speed × yaw rate, through car.js's own gains, limits and spring (±0.07 /
+  ±0.09 rad, ≈ 1.6 Hz). Collisions are resolved against this predicted pose. A **stalled stream** (the newest
   sample older than 400 ms, `STALE_MS`: the partner's phone hitched) makes the partner's car a
   ghost: not solid on either phone (`p.stale`, `S.linkStale` for a HUD chip / faded drawing)
   until the stream is back for one more sample interval (≥ 120 ms: the interpolation then has
@@ -688,6 +737,34 @@ the backdrop renders first in its own pass with its own far plane, fog-free. Eff
 (a 1,400-quad ring buffer), tyre smoke, dust off road, sparks on impacts and rims, damage smoke and
 fire, nitro flames, knocked-over props falling in the direction of the hit, speed lines.
 
+**Surface upgrade (graphics pass 3, all in `gfx.js`, no new textures, no new draw calls).** Lighting
+is a warm key / cool fill: the per-vertex sun share tints sunlit surfaces with the map's sun colour
+and shade with its sky (`uKey` / `uFill`, unit luminance, set per map in `world.js`), plus a soft
+sky rim on edges facing away. **Roads**: aggregate grit and bright stones (fading out by ~48 m),
+repair patches, faint cracks, rubber in the wheel paths and oil between them (lane coordinate),
+dusty lane edges, a low-sun sheen, dark puddles reflecting the sky at night, and worn, chipped
+paint on every lane line and crosswalk (any `road` pixel whose vertex colour is far brighter than
+the asphalt). Curb tops and sidewalks run their 1.6 m slab joints along the walk (`aux` = heading).
+**Buildings**: windows are anti-aliased with white / dark frames, sills with a shadow, mullions or
+transoms, floor-slab lines and, per window, blinds, curtains or bare glass; at night about 4 in 10
+are lit (a few TV-blue); every wall is darkened towards its foot (fx fraction, see
+getaway-maps.md); brick has per-brick tone, burnt bricks and weathering, stucco grain and rain
+streaks, concrete streaks, shingles moss. All patterns measure the pixel's world footprint
+(`gPx` = √ of the cross product of the position derivatives, taken in uniform control flow) and
+fade to their average colour before a cell is ~2 pixels, so nothing shimmers or moirés. **Materials**:
+car paint gets a lower-body shade and a tight clear-coat glint, glass a sliding sun streak, chrome
+a darker, more contrasty reflection; foliage has yellow-green branch tone and clumps; grass dry
+and lush patches, near blades and a few flowers; water two moving ripple layers with sun / moon
+glitter and foam (Dockside's flat water quads now carry `water`). **Sky** (`makeSky`): warm sun
+side and cool anti-sun side, a wide halo, self-shadowed cumulus (one shade tap towards the sun) with
+a riso halftone in the shade, high cirrus streaks, drifting; at night a moon with maria and halo,
+two sizes of twinkling coloured stars (high tier), a faint milky band and a warm city glow on
+the horizon. Tiers: **low** keeps the old cost (no detail, no sky clouds) plus the tint; **mid**
+(phones) gets everything above except the second star layer and the third cloud octave; **high**
+all of it. The extra fragment cost is a few noise taps per pixel on road, grass and walls inside
+~48 m (distance-gated, so it vanishes where it couldn't be seen), the sky's cloud pair, and one
+`dFdx/dFdy` pair; the vertex layout is unchanged.
+
 All audio is synthesised (WebAudio, the app's shared context and mute switch). A **pursuit
 bed** (Settings → Music): a pulsing bass riff always, hi-hats above intensity 0.4, a two-note brass
 stab every 2 bars above 0.75, 100 → 140 bpm, with intensity I = 0.35 × (1 − distance/200) + 0.4 ×
@@ -723,7 +800,7 @@ so a long grind can't pile up voices.
   reports `level`, `resizes` and `hold`; the `gfx` test drives it with a synthetic frame time.
 - **Vertex packing** (`gfx.js Builder.geometryOut` / `packGeometry`): position f32×3, normal i8×3
   and colour u8×3 (normalised, each padded to a 4-byte stride), fx f32, aux (lane coordinate) f32,
-  uv u16×2 — 24 B/vertex (28 with lane coordinates) instead of 44–52. Every vertex buffer has a
+  uv u16×2 — 24 B/vertex (28 with lane coordinates) instead of 44–52. The wall-foot height for the base AO rides in the fraction of fx (`code + 0.01 + h/16`, shaders read `floor(fx + 0.001)`), so it costs no attribute. Every vertex buffer has a
   4-byte-multiple stride and offset 0: Metal (WebKit's ANGLE backend on iPhones) cannot fetch
   3-, 2- or 1-byte strides or non-normalised small integers and would convert each such buffer
   into a padded copy on first draw (a hitch, and the memory back); a tighter 21 B layout was

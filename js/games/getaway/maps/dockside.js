@@ -194,11 +194,11 @@ const landmarks = [
 
 const PAL = ['#e9d8c4', '#c9d8e8', '#f0c9b4', '#d4e2c4', '#e8d3a1', '#cdbfe0', '#d9b8a8', '#bcd3d0'];
 
-function slab(b, x0, z0, x1, z1, dy, col, step = 20) {
+function slab(b, x0, z0, x1, z1, dy, col, step = 20, fx = 0) {
   const nx = Math.max(1, Math.ceil((x1 - x0) / step)); const nz = Math.max(1, Math.ceil((z1 - z0) / step));
   for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
     const a = x0 + ((x1 - x0) * i) / nx; const c = x0 + ((x1 - x0) * (i + 1)) / nx; const p = z0 + ((z1 - z0) * j) / nz; const q = z0 + ((z1 - z0) * (j + 1)) / nz;
-    b.quadUp(a, height(a, p) + dy, p, a, height(a, q) + dy, q, c, height(c, q) + dy, q, c, height(c, p) + dy, p, col);
+    b.quadUp(a, height(a, p) + dy, p, a, height(a, q) + dy, q, c, height(c, q) + dy, q, c, height(c, p) + dy, p, col, fx);
   }
 }
 
@@ -208,7 +208,7 @@ export const DOCKSIDE = {
   heat: 140, // lose-the-heat distance when the setting is at its default (a tight grid: 180 m was reached in 1 round of 8)
   sky: { top: '#7fb0e3', horizon: '#f2e6cf', fog: '#efe4cf', fogNear: 140, fogFar: 560, sun: { bearing: 220, elev: 34 } },
   build(THREE, kit) {
-    const P = kit.palette; const dark = kit.dark;
+    const P = kit.palette; const dark = kit.dark; const FX = kit.FX || {}; // surface codes (an older engine: plain)
     const builders = new Map();
     const bAt = (x, z) => { const g = kit.chunk(x, z); let b = builders.get(g); if (!b) { b = kit.builder(); builders.set(g, b); } return b; };
     const mixc = (a, c, k) => [a[0] + (c[0] - a[0]) * k, a[1] + (c[1] - a[1]) * k, a[2] + (c[2] - a[2]) * k];
@@ -220,8 +220,8 @@ export const DOCKSIDE = {
     for (const bl of blocks) {
       const e = 3.2;
       const b = bAt((bl.x0 + bl.x1) / 2, (bl.z0 + bl.z1) / 2);
-      if (bl === PARK) slab(b, bl.x0 - e, bl.z0 - e, bl.x1 + e, bl.z1 + e, 0.13, shade([0.5, 0.7, 0.4]));
-      else slab(b, bl.x0 - e, bl.z0 - e, bl.x1 + e, bl.z1 + e, 0.13, walk);
+      if (bl === PARK) slab(b, bl.x0 - e, bl.z0 - e, bl.x1 + e, bl.z1 + e, 0.13, shade([0.5, 0.7, 0.4]), 20, FX.grass);
+      else slab(b, bl.x0 - e, bl.z0 - e, bl.x1 + e, bl.z1 + e, 0.13, walk, 20, FX.concrete);
     }
     // buildings
     for (const bd of buildings) {
@@ -230,17 +230,17 @@ export const DOCKSIDE = {
       const col = shade(hexc(PAL[bd.c % PAL.length]));
       if (bd.kind === 'house') {
         b.boxOn(bd.x, y0, bd.z, bd.w, bd.h * 0.62 + 0.5, bd.d, 0, col, 0.1, 2);
-        b.add(b.T.roof, bd.x, y0 + bd.h * 0.62 + 0.5 + bd.h * 0.2, bd.z, bd.w + 1.2, bd.h * 0.4, bd.d + 1.2, 0, shade([0.66, 0.32, 0.26]), 0.1);
+        b.add(b.T.roof, bd.x, y0 + bd.h * 0.62 + 0.5 + bd.h * 0.2, bd.z, bd.w + 1.2, bd.h * 0.4, bd.d + 1.2, 0, shade([0.66, 0.32, 0.26]), 0.1, FX.tile | 0);
         b.boxOn(bd.x + bd.w * 0.25, y0, bd.z + bd.d / 2 + 0.05, 1.4, 2.6, 0.2, 0, shade([0.4, 0.28, 0.2]), 0);
       } else if (bd.kind === 'shed') {
-        b.boxOn(bd.x, y0, bd.z, bd.w, bd.h, bd.d, 0, mixc(col, [0.5, 0.55, 0.6], 0.4), 0.12, 0);
-        b.add(b.T.roof, bd.x, y0 + bd.h + 1.5, bd.z, bd.w + 0.6, 3, bd.d + 0.6, 0, roofC, 0.1);
+        b.boxOn(bd.x, y0, bd.z, bd.w, bd.h, bd.d, 0, mixc(col, [0.5, 0.55, 0.6], 0.4), 0.12, FX.metal | 0);
+        b.add(b.T.roof, bd.x, y0 + bd.h + 1.5, bd.z, bd.w + 0.6, 3, bd.d + 0.6, 0, roofC, 0.1, FX.metal | 0);
         for (let k = -1; k <= 1; k += 2) b.boxOn(bd.x + k * bd.w * 0.25, y0, bd.z + bd.d / 2 + 0.06, bd.w * 0.3, Math.min(5, bd.h * 0.6), 0.12, 0, shade([0.36, 0.38, 0.42]), 0);
       } else {
         b.boxOn(bd.x, y0, bd.z, bd.w, bd.h, bd.d, 0, col, 0.14, 2);
-        b.boxOn(bd.x, y0 + bd.h, bd.z, bd.w + 0.6, 0.6, bd.d + 0.6, 0, mixc(col, [0, 0, 0], 0.22), 0.08);
+        b.boxOn(bd.x, y0 + bd.h, bd.z, bd.w + 0.6, 0.6, bd.d + 0.6, 0, mixc(col, [0, 0, 0], 0.22), 0.08, FX.concrete | 0);
         if (bd.h > 30) b.boxOn(bd.x + bd.w * 0.15, y0 + bd.h + 0.6, bd.z - bd.d * 0.1, bd.w * 0.35, 3.5, bd.d * 0.35, 0, roofC, 0.08);
-        b.boxOn(bd.x, y0, bd.z, bd.w + 0.4, 4.2, bd.d + 0.4, 0, mixc(col, [0.2, 0.2, 0.25], 0.35), 0.06); // shopfront band
+        b.boxOn(bd.x, y0, bd.z, bd.w + 0.4, 4.2, bd.d + 0.4, 0, mixc(col, [0.2, 0.2, 0.25], 0.35), 0.06, FX.concrete | 0); // shopfront band
       }
     }
     // clock tower
@@ -255,13 +255,13 @@ export const DOCKSIDE = {
     // gasworks
     for (const [dx, dz, r] of [[-22, -18, 13], [18, -20, 15], [0, 22, 12]]) {
       const b = bAt(GAS.x + dx, GAS.z + dz);
-      b.cyl(GAS.x + dx, 0, GAS.z + dz, r, 20, shade([0.6, 0.66, 0.7]), 0.16);
+      b.cyl(GAS.x + dx, 0, GAS.z + dz, r, 20, shade([0.6, 0.66, 0.7]), 0.16, FX.metal | 0);
       for (let k = 0; k < 6; k++) { const a = (k / 6) * Math.PI * 2; b.boxOn(GAS.x + dx + Math.cos(a) * (r + 0.5), 0, GAS.z + dz + Math.sin(a) * (r + 0.5), 0.6, 22, 0.6, a, shade([0.3, 0.32, 0.36]), 0.05); }
       b.add(b.T.box, GAS.x + dx, 20.3, GAS.z + dz, r * 2.05, 0.6, r * 2.05, 0, shade([0.5, 0.55, 0.6]), 0.06);
     }
     // water + canal banks
     const wc = dark ? [0.1, 0.18, 0.34] : [0.36, 0.6, 0.82]; const wc2 = dark ? [0.16, 0.26, 0.44] : [0.56, 0.76, 0.92];
-    const quad = (x0, z0, x1, z1, y, c) => { const b = bAt((x0 + x1) / 2, (z0 + z1) / 2); b.quadUp(x0, y, z0, x0, y, z1, x1, y, z1, x1, y, z0, c); };
+    const quad = (x0, z0, x1, z1, y, c) => { const b = bAt((x0 + x1) / 2, (z0 + z1) / 2); b.quadUp(x0, y, z0, x0, y, z1, x1, y, z1, x1, y, z0, c, FX.water | 0); }; // (shaded water: moving ripples, glints)
     for (let z = CANAL.z0; z < HARBOR_Z; z += 40) quad(CANAL.x0, z, CANAL.x1, Math.min(HARBOR_Z, z + 40), -0.8, wc);
     for (let x = B.x0; x < B.x1; x += 100) for (let z = HARBOR_Z; z < B.z1 + 400; z += 100) {
       if (x >= -200 && x < -20 && z < 520) continue;
@@ -269,7 +269,7 @@ export const DOCKSIDE = {
     }
     // ripples: short light dashes on the water
     const rr = kit.seeded(7);
-    for (let k = 0; k < 160; k++) {
+    for (let k = 0; k < (FX.water ? 0 : 160); k++) { // (the water shader ripples by itself; the static dashes are for an engine without it)
       const x = B.x0 + rr() * (B.x1 - B.x0); const z = HARBOR_Z + 8 + rr() * 140;
       if (x > -205 && x < -15 && z < 525) continue;
       quad(x, z, x + 4 + rr() * 6, z + 0.5, -0.76, wc2);
@@ -286,7 +286,7 @@ export const DOCKSIDE = {
     slab(bAt(-110, 480), -200, HARBOR_Z, -20, 520, 0.02, shade([0.62, 0.5, 0.38]), 30);
     for (let x = -200; x < -20; x += 6) bAt(x, 482).boxOn(x + 3, 0.03, 482, 0.12, 0.02, 76, 0, shade([0.5, 0.4, 0.3]), 0);
     // beach
-    slab(bAt(-360, 430), -520, 416, -210, HARBOR_Z, -0.01, shade([0.93, 0.84, 0.62]), 40);
+    slab(bAt(-360, 430), -520, 416, -210, HARBOR_Z, -0.01, shade([0.93, 0.84, 0.62]), 40, FX.sand | 0);
     // containers
     for (let k = 0; k < 6; k++) {
       const x = -150 + (k % 3) * 34; const z = 470 + Math.floor(k / 3) * 22;
