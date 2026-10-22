@@ -1164,6 +1164,23 @@ async function topFaceFlow(h, pg, want, how) {
   ok(worst.tex > 0 && worst.tex <= BUDGET.tex, `bones (${how}): ${(worst.tex / 1024).toFixed(0)} KB of textures (budget ${BUDGET.tex / 1024} KB)`);
   return worst;
 }
+/** The printed mat is a CSS layer behind a transparent canvas (not a textured plane in GL): present, painted in the palette's
+ *  paper, laid on the floor by a perspective transform, and the canvas itself is see-through. */
+async function matLayer(h, pg, label) {
+  await pg.setViewportSize({ width: 390, height: 844 });
+  await h.newLocalGame(pg, 'bones');
+  await pg.waitForSelector('.gb-band[data-gl="ok"] .gb-mat:not([hidden])', { timeout: 15000 });
+  const m = await pg.evaluate(() => {
+    const w = document.querySelector('.gb-band .gb-mat'); const i = w.firstElementChild;
+    const cs = getComputedStyle(i); const ws = getComputedStyle(w);
+    const cv = document.querySelector('.gb-band canvas');
+    const gl = cv.getContext('webgl2') || cv.getContext('webgl');
+    const a = gl && gl.getContextAttributes();
+    return { img: cs.backgroundImage.slice(0, 22), tf: cs.transform, persp: ws.perspective, alpha: !!(a && a.alpha), w: i.getBoundingClientRect().width, bw: w.getBoundingClientRect().width };
+  });
+  ok(m.img.startsWith('url("data:image/png') && m.tf !== 'none' && m.persp !== 'none' && m.alpha, `bones mat (${label}): the printed mat is a CSS layer (tile image, ${m.persp} perspective, tilted by a 3D transform) behind a transparent canvas`);
+  await h.closeGame(pg);
+}
 /** The roll-start work is off the first frame: the throw is solved ahead while the game is idle, nothing is repainted by a roll
  *  (both roller inks are painted once), a frame that would repeat the last isn't drawn, and the loop goes to sleep. */
 async function smoothRolls(h, pg, label) {
@@ -1369,6 +1386,7 @@ async function balance() {
     await topFaceFlow(h, h.a, 12, 'tumble');
     await topFaceFlow(h, h.a, 8, 'skip');
     await smoothRolls(h, h.a, 'light');
+    await matLayer(h, h.a, 'light');
     await fullColumn(h, h.a);
     await tapToSkip(h, h.a);
     await finaleTiming(h, h.a);
@@ -1397,7 +1415,7 @@ async function balance() {
     failed = await group('dark', { port: PORT + 1, colorScheme: 'dark', reducedMotion: 'reduce' }, async (d) => {
       await layoutTests(d, d.a, 'dark');
       await topFaceFlow(d, d.a, 3, 'dark');
-      await dm(d);
+      await matLayer(d, d.a, 'dark');
       await tour(d, d.a, 360, 740, 'dark-360x740');
       await tour(d, d.a, 844, 390, 'dark-844x390');
     });
