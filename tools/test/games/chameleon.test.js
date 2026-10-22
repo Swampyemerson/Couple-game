@@ -342,7 +342,7 @@ async function hsRound(h, { hider, round, style }) {
       assert(await H.$eval('.chm-acts [data-act="scurry"]', (b) => b.disabled), `round ${round}: the scurry is used up`);
       await wait(400);
       const c2 = await hook(Sk, 'bodyCenter', hider);
-      await hook(Sk, 'teleport', c2[0] + 0.9, c2[2] + 1.9, Math.PI);
+      await hook(Sk, 'teleport', c2[0] + 0.8, c2[2] + 0.3, Math.PI, 0); // close and on the floor: the Living Room's new clutter can stand between a 2 m shot and a Petite hider
     }
     await hook(Sk, 'aimAt', ...(await hook(Sk, 'bodyCenter', hider)));
     await wait(250);
