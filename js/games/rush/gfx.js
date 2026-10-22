@@ -13,6 +13,21 @@ export const FX_BED = 5;      // track bed: sleepers from world z
 export const FX_STRIPE = 6;   // diagonal ink stripes (barriers)
 export const FX_TRAINWIN = 7; // train side windows from world z
 export const FX_PAPER = 8;    // diagonal paper-coloured stripes
+// Material ids, ORed onto the fx code (fx = code + 16 * material): the world shader prints the detail
+// texture (or a procedural pattern) on the face as ink. Only on flat boxes and quads: the uv is box-projected
+// from the face normal when the geometry is written (GeoBuf.add), so it is exact there.
+export const M_BRICK = 16;    // brick courses (R)
+export const M_PLANK = 32;    // boards (G)
+export const M_COBBLE = 48;   // cobbles (B)
+export const M_CORR = 64;     // corrugated sheet / bark: vertical ribs (G, transposed)
+export const M_GRASS = 80;    // grass hatching (procedural, from the grain)
+export const M_RAIL = 96;     // rails: a glint sweeps along them
+export const M_WATER = 112;   // water: animated ripples
+export const M_GRAVEL = 128;  // ballast / gravel (speckle from the grain, A)
+export const M_BLOCK = 144;   // concrete blocks (R, large)
+export const M_TILE = 160;    // paving slabs (B, large)
+export const M_PLASTER = 176; // stucco mottling (A)
+export const M_PANEL = 192;   // panel seams (G, wide, transposed)
 
 // ── colours ──
 let cctx = null;
@@ -120,27 +135,123 @@ export function makeUniforms(THREE, P) {
     uSun: { value: new THREE.Vector3(-0.42, 0.8, 0.43).normalize() },
     // ambient, sky (hemisphere), sun, halftone threshold
     uLk: { value: new THREE.Vector4(P.dark ? 0.62 : 0.6, P.dark ? 0.2 : 0.22, P.dark ? 0.26 : 0.3, 0.9) },
+    // split toning: the key light's colour and the shadow band's tint (both luminance ~1), per district
+    uKey: { value: new THREE.Color(1, 1, 1) },
+    uShd: { value: new THREE.Color(1, 1, 1) },
+    // ambient occlusion on walls: ground y, strength, height of the gradient
+    uAo: { value: new THREE.Vector4(-4, 0.3, 9, 0) },
+    // time: x glint phase 0..1, y seconds (water), z glint strength
+    uTm: { value: new THREE.Vector4(0, 0, P.dark ? 0.85 : 0.55, 0) },
     uDot: { value: 4 },
+    uDetail: { value: makeDetailTexture(THREE) },
   };
 }
 export function applyPaletteUniforms(U, P) {
   U.uNight.value = P.dark ? 1 : 0;
   U.uGlass.value.fromArray(P.glass); U.uLit.value.fromArray(P.lit); U.uInk.value.fromArray(P.outline);
   U.uPaper.value.fromArray(P.white); U.uSleeper.value.fromArray(P.sleeper);
+  U.uTm.value.z = P.dark ? 0.85 : 0.55;
+}
+
+// ── detail texture: ONE 256x256 RGBA tile, four grayscale patterns (1 = bare paper, 0 = full ink) ──
+//   R brick courses (running bond, per-brick tone)   G boards with butt joints and a rounded profile
+//   B cobbles (staggered rounded stones)             A paper grain: fibres + speckle
+// Built once at load into a DataTexture (no canvas: premultiplied alpha would corrupt the channels), tileable by
+// construction (periodic grids and periodic noise). The shader uses the channel as ink darkening.
+export function makeDetailTexture(THREE) {
+  const N = 256;
+  const d = new Uint8Array(N * N * 4);
+  const hs = (x, y, s) => { let h = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + Math.imul(s | 0, 1274126177)) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); h ^= h >>> 16; return (h >>> 0) / 4294967296; };
+  const sm = (t) => t * t * (3 - 2 * t);
+  // periodic value noise: lattice of px x py cells over the tile
+  const vn = (x, y, px, py, s) => {
+    const fx = x * px / N; const fy = y * py / N;
+    const x0 = Math.floor(fx); const y0 = Math.floor(fy);
+    const tx = sm(fx - x0); const ty = sm(fy - y0);
+    const a = hs(x0 % px, y0 % py, s); const b = hs((x0 + 1) % px, y0 % py, s);
+    const c = hs(x0 % px, (y0 + 1) % py, s); const e = hs((x0 + 1) % px, (y0 + 1) % py, s);
+    return (a + (b - a) * tx) + ((c + (e - c) * tx) - (a + (b - a) * tx)) * ty;
+  };
+  const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      const o = (y * N + x) * 4;
+      // R: brick (rows 16 px, bricks 32 px, running bond)
+      const row = y >> 4; const yy = y & 15;
+      const xs = (x + ((row & 1) << 4)) & 255; const xx = xs & 31; const bc = xs >> 5;
+      let r;
+      if (yy < 2 || xx < 2) r = 0.04 * hs(x, y, 1);
+      else {
+        r = 0.7 + 0.3 * hs(bc, row, 2) + (hs(x, y, 3) - 0.5) * 0.12 + (vn(x, y, 16, 16, 4) - 0.5) * 0.16;
+        if (yy === 2 || xx === 2) r *= 0.9;
+      }
+      d[o] = clamp01(r) * 255;
+      // G: boards (32 px), butt joints, rounded profile, long grain streaks
+      const bi = y >> 5; const by = y & 31;
+      const jx = Math.floor(hs(bi, 0, 5) * 256);
+      let g;
+      if (by < 2 || ((x - jx) & 255) < 2 || ((x - jx - 128) & 255) < 2) g = 0.03;
+      else {
+        const prof = Math.sqrt(Math.sin(Math.PI * (by - 1.5) / 30));
+        g = 0.68 + 0.17 * prof + 0.15 * vn(x, y, 8, 128, 6) + (hs(x, y, 7) - 0.5) * 0.06;
+      }
+      d[o + 1] = clamp01(g) * 255;
+      // B: cobbles (cells 32 px, alternate rows shifted half a cell, jittered rounded stones with a gap)
+      const cr = y >> 5; const cxs = (x + ((cr & 1) << 4)) & 255; const cc = cxs >> 5;
+      const dx = (cxs & 31) - 16 - (hs(cc, cr, 8) - 0.5) * 3; const dy = (y & 31) - 16 - (hs(cc, cr, 9) - 0.5) * 3;
+      const rx = 12 + hs(cc, cr, 10) * 2; const ry = 11.5 + hs(cc, cr, 11) * 2;
+      const ax = Math.abs(dx) / rx; const ay = Math.abs(dy) / ry;
+      const dd = ax * ax * ax + ay * ay * ay;
+      let b;
+      if (dd >= 1) b = 0.03;
+      else b = (0.66 + 0.34 * hs(cc, cr, 12)) * (0.8 + 0.2 * (1 - Math.sqrt(dd))) + (hs(x, y, 13) - 0.5) * 0.08;
+      d[o + 2] = clamp01(b) * 255;
+      // A: paper grain: speckle + soft blotches (fibres added below)
+      const a = 0.5 + (hs(x, y, 14) - 0.5) * 0.5 + (vn(x, y, 32, 32, 15) - 0.5) * 0.36 + (vn(x, y, 8, 8, 16) - 0.5) * 0.2;
+      d[o + 3] = clamp01(a) * 255;
+    }
+  }
+  // fibres: short strokes at random angles, wrapping round the tile
+  for (let k = 0; k < 700; k++) {
+    let fx = hs(k, 0, 17) * N; let fy = hs(k, 1, 17) * N;
+    const ang = hs(k, 2, 17) * 6.2832; const len = 5 + hs(k, 3, 17) * 9; const dv = (hs(k, 4, 17) - 0.5) * 70;
+    const cx = Math.cos(ang); const cy = Math.sin(ang);
+    for (let i = 0; i < len; i++) {
+      const px = ((Math.floor(fx) % N) + N) % N; const py = ((Math.floor(fy) % N) + N) % N;
+      const o = (py * N + px) * 4 + 3;
+      d[o] = Math.max(0, Math.min(255, d[o] + dv));
+      fx += cx; fy += cy;
+    }
+  }
+  const t = new THREE.DataTexture(d, N, N, THREE.RGBAFormat);
+  t.wrapS = THREE.RepeatWrapping; t.wrapT = THREE.RepeatWrapping;
+  t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.generateMipmaps = true; t.anisotropy = 4; t.flipY = false;
+  t.needsUpdate = true;
+  return t;
 }
 
 // The world material is MeshBasicMaterial (no per-light loops) with a tiny hook: the toon band is
-// computed per vertex from one sun direction + sky term (exact on flat faces, soft on round ones),
-// ink hulls / glow / sky are unlit, the shadow band gets a screen-space halftone, and the skyline
-// is only partly fogged. All patterns (windows, sleepers, stripes) are geometry, so the fragment
-// shader stays about as cheap as plain MeshBasicMaterial.
+// computed per vertex from one sun direction + sky term (exact on flat faces, soft on round ones), tinted
+// by a key colour (lit) and a shadow tint (split toning, both per district); ink hulls / glow / sky are
+// unlit, the shadow band gets a screen-space halftone, and the skyline is only partly fogged. Patterns
+// (windows, sleepers, stripes) are geometry; the surface print (brick, boards, cobbles, hatching, paper
+// grain) is ONE texture fetch of the detail tile plus a few ALU in the fragment shader, and the wall
+// ambient occlusion is one smoothstep of the world y.
 const VERT_PRE = `#include <common>
 attribute float fx;
+attribute vec2 tuv;
 uniform vec3 uSun;
 uniform vec4 uLk;
+uniform vec3 uKey;
+uniform vec3 uShd;
 uniform float uNight;
 varying float vFx;
-varying float vShade;
+varying vec3 vShade;
+varying vec4 vTx;
+#ifdef RR_RIM
+varying float vRim;
+#endif
 #ifdef RR_NEAR
 varying float vViewZ;
 #endif`;
@@ -148,9 +259,15 @@ const VERT_POST = `#include <fog_vertex>
 #ifdef RR_NEAR
 vViewZ = - mvPosition.z;
 #endif
-vFx = fx;
-if ( fx > 0.5 && fx < 1.5 || fx > 3.5 && fx < 4.5 ) vShade = 1.0;
-else if ( fx > 2.5 && fx < 3.5 ) vShade = 1.06 + 0.14 * uNight;
+float rrM = floor( fx * 0.0625 + 0.001 );
+float rrF = fx - rrM * 16.0;
+float rrWy = 1000.0;
+vFx = rrF;
+#ifdef RR_RIM
+vRim = 0.0;
+#endif
+if ( rrF > 0.5 && rrF < 1.5 || rrF > 3.5 && rrF < 4.5 ) vShade = vec3( 1.0 );
+else if ( rrF > 2.5 && rrF < 3.5 ) vShade = vec3( 1.06 + 0.14 * uNight );
 else {
   vec3 rrN = normal;
   #ifdef USE_SKINNING
@@ -163,19 +280,37 @@ else {
   rrN = normalize( mat3( modelMatrix ) * rrN );
   float ndl = dot( rrN, uSun );
   float band = ndl > 0.28 ? 1.0 : ( ndl > -0.22 ? 0.58 : 0.22 );
-  vShade = uLk.x + uLk.y * ( 0.5 + 0.5 * rrN.y ) + uLk.z * band;
-}`;
+  vShade = uShd * ( uLk.x + uLk.y * ( 0.5 + 0.5 * rrN.y ) ) + uKey * ( uLk.z * band );
+  #if !defined( USE_INSTANCING ) && !defined( USE_SKINNING )
+    if ( abs( rrN.y ) < 0.5 ) rrWy = position.y;
+  #endif
+  #ifdef RR_RIM
+    vRim = pow( 1.0 - clamp( dot( normalize( ( viewMatrix * vec4( rrN, 0.0 ) ).xyz ), normalize( - mvPosition.xyz ) ), 0.0, 1.0 ), 2.2 );
+  #endif
+}
+vTx = vec4( tuv, rrM, rrWy );`;
 const FRAG_PRE = `#include <common>
 uniform vec4 uLk;
 uniform float uDot;
+uniform float uNight;
+uniform vec3 uInk;
+uniform vec3 uPaper;
+uniform vec4 uAo;
+uniform vec4 uTm;
+uniform sampler2D uDetail;
 #ifdef RR_FADE
 uniform float uFade;
+#endif
+#ifdef RR_RIM
+uniform vec4 uRim;
+varying float vRim;
 #endif
 #ifdef RR_NEAR
 varying float vViewZ;
 #endif
 varying float vFx;
-varying float vShade;`;
+varying vec3 vShade;
+varying vec4 vTx;`;
 // Shadow-band halftone: one fract + one dot product per shaded fragment (squared radius, no sqrt).
 // Runners (the only skinned program) can also fade out through a halftone screen when the partner
 // runs between the camera and you; the discard lives only in that program.
@@ -194,10 +329,48 @@ if ( vViewZ < 6.2 ) {
 }
 #endif
 diffuseColor.rgb *= vShade;
-if ( vShade < uLk.w && vFx < 0.5 ) {
+if ( vShade.g < uLk.w && vFx < 0.5 ) {
   vec2 g = fract( gl_FragCoord.xy / uDot ) - 0.5;
   diffuseColor.rgb *= 1.0 - ( 1.0 - smoothstep( 0.0324, 0.09, dot( g, g ) ) ) * 0.17;
-}`;
+}
+#ifdef RR_RIM
+// rim light in the runner's colour: readable against busy backgrounds
+diffuseColor.rgb = mix( diffuseColor.rgb, uRim.rgb, vRim * uRim.a );
+#else
+vec4 rrT = texture2D( uDetail, vTx.xy );
+if ( vFx < 0.5 || ( vFx > 4.5 && vFx < 8.5 ) ) {
+  vec3 c = diffuseColor.rgb;
+  float m = vTx.z;
+  float p = 1.0; float k = 0.0;
+  if ( m > 0.5 ) {
+    if ( m < 1.5 ) { p = rrT.r; k = 0.36; }
+    else if ( m < 2.5 ) { p = rrT.g; k = 0.3; }
+    else if ( m < 3.5 ) { p = rrT.b; k = 0.3; }
+    else if ( m < 4.5 ) { p = rrT.g; k = 0.34; }
+    else if ( m < 5.5 ) { p = 1.0 - step( 0.8, fract( ( vTx.x + vTx.y * 0.6 ) * 9.0 + rrT.a * 1.4 ) ); k = 0.22 * ( 1.0 - smoothstep( 30.0, 75.0, fogDepth ) ); }
+    else if ( m < 6.5 ) {
+      // rails: a glint sweeps along them, front slanted across the lanes
+      float s = fract( vTx.x - uTm.x );
+      c += uPaper * ( smoothstep( 0.0, 0.003, s ) * ( 1.0 - smoothstep( 0.005, 0.024, s ) ) * uTm.z * ( 1.0 - smoothstep( 40.0, 100.0, fogDepth ) ) );
+    } else if ( m < 7.5 ) {
+      // water: two crossing sets of thin ripples drifting with time, fading out with distance
+      float w1 = sin( vTx.x * 38.0 + sin( vTx.y * 9.0 + uTm.y * 0.8 ) * 1.7 - uTm.y * 1.5 );
+      float w2 = sin( vTx.y * 31.0 + sin( vTx.x * 7.0 - uTm.y * 0.6 ) * 1.4 + uTm.y * 1.2 );
+      float rp = max( smoothstep( 0.86, 0.97, w1 ), smoothstep( 0.9, 0.98, w2 ) );
+      c = mix( c, uPaper, rp * ( 0.55 - 0.2 * uNight ) * ( 1.0 - smoothstep( 35.0, 90.0, fogDepth ) ) );
+    }
+    else if ( m < 8.5 ) { p = smoothstep( 0.3, 0.7, rrT.a ); k = 0.17; }
+    else if ( m < 9.5 ) { p = rrT.r; k = 0.3; }
+    else if ( m < 10.5 ) { p = rrT.b; k = 0.28; }
+    else if ( m < 11.5 ) { p = smoothstep( 0.2, 0.8, rrT.a ); k = 0.11; }
+    else { p = rrT.g; k = 0.42; }
+  }
+  c = mix( c, uInk, ( 1.0 - p ) * k );
+  c *= 1.0 + ( rrT.a - 0.5 ) * 0.15;
+  c *= 1.0 - uAo.y * ( 1.0 - smoothstep( 0.0, uAo.z, vTx.w - uAo.x ) );
+  diffuseColor.rgb = c;
+}
+#endif`;
 const FRAG_END = `if ( vFx > 3.5 && vFx < 4.5 ) {
   gl_FragColor.rgb = mix( vColor, fogColor, 0.3 );
 } else {
@@ -207,19 +380,23 @@ const FRAG_END = `if ( vFx > 3.5 && vFx < 4.5 ) {
 /** The shared world material. One instance for the world (+ instanced variants), one skinned per runner. */
 export function makeToon(THREE, grad, U, { skinning = false, extra = null } = {}) {
   const m = new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true, skinning });
-  // (three r128 only defines USE_SKINNING for vertex shaders, so the fade gets its own define)
-  if (extra && extra.uFade) m.defines = { RR_FADE: '' };
-  if (extra && extra.near) m.defines = { RR_NEAR: '' };
+  // (three r128 only defines USE_SKINNING for vertex shaders, so the fade and the rim get their own defines)
+  const defs = {};
+  if (extra && extra.uFade) defs.RR_FADE = '';
+  if (extra && extra.uRim) defs.RR_RIM = '';
+  if (extra && extra.near) defs.RR_NEAR = '';
+  if (Object.keys(defs).length) m.defines = defs;
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, U);
     if (extra && extra.uFade) sh.uniforms.uFade = extra.uFade;
+    if (extra && extra.uRim) sh.uniforms.uRim = extra.uRim;
     sh.vertexShader = sh.vertexShader.replace('#include <common>', VERT_PRE).replace('#include <fog_vertex>', VERT_POST);
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', FRAG_PRE)
       .replace('#include <color_fragment>', FRAG_COLOR)
       .replace('#include <fog_fragment>', FRAG_END);
   };
-  m.customProgramCacheKey = () => 'rush-toon-v4';
+  m.customProgramCacheKey = () => 'rush-toon-v5';
   return m;
 }
 
@@ -332,6 +509,7 @@ export function makeTemplates(THREE) {
     disc12: tpl(new THREE.CylinderGeometry(0.5, 0.5, 1, 12, 1), 'smooth'),
     quad: tpl(new THREE.PlaneGeometry(1, 1), 'box'),
     quadUp: tpl(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), 'box'),
+    fan: tpl(new THREE.CircleGeometry(0.5, 16).rotateX(-Math.PI / 2), 'box'), // flat disc facing up (light pools)
     roof: tpl(gableRoof(THREE), 'box'),
     tri: tpl(triangle(THREE, true), 'box'),
     pen: tpl(triangle(THREE, false), 'box'),
@@ -352,6 +530,24 @@ export function makeTemplates(THREE) {
 }
 
 // ── geometry writer ──
+// Detail-texture repeats per metre by material id (fx >> 4), and how the uv is made: 0 box-projected, 1 box-projected
+// with u and v swapped (ribs run vertically), 2 along the track (rails: u = distance + a slant across the lanes).
+const MAT_SCALE = new Float32Array(16);
+const MAT_SPECIAL = new Uint8Array(16);
+MAT_SCALE[0] = 0.5;            // paper grain
+MAT_SCALE[1] = 1 / 3.2;        // brick: 0.4 x 0.2 m bricks
+MAT_SCALE[2] = 1 / 2.56;       // boards 0.32 m
+MAT_SCALE[3] = 1 / 3.2;        // cobbles 0.4 m
+MAT_SCALE[4] = 1 / 1.6; MAT_SPECIAL[4] = 1; // corrugation: ribs 0.2 m
+MAT_SCALE[5] = 0.5;            // grass hatching
+MAT_SCALE[6] = 1 / 40; MAT_SPECIAL[6] = 2;  // rail glint period 40 m
+MAT_SCALE[7] = 1 / 8;          // water
+MAT_SCALE[8] = 1 / 0.64;       // gravel: fine speckle from the grain
+MAT_SCALE[9] = 1 / 9.6;        // concrete blocks 1.2 x 0.6 m
+MAT_SCALE[10] = 1 / 6.4;       // paving slabs 0.8 m
+MAT_SCALE[11] = 1 / 3.2;       // stucco
+MAT_SCALE[12] = 1 / 5.12; MAT_SPECIAL[12] = 1; // panel seams every 0.64 m
+
 /** Preallocated vertex buffers you can fill with transformed templates and reuse. */
 export class GeoBuf {
   constructor(THREE, maxV, { skin = false, dynamic = true } = {}) {
@@ -361,6 +557,7 @@ export class GeoBuf {
     this.nrm = new Float32Array(maxV * 3);
     this.col = new Float32Array(maxV * 3);
     this.fx = new Float32Array(maxV);
+    this.uv = new Float32Array(maxV * 2); // detail-texture uv per vertex (see add)
     this.idx = new Uint16Array(this.maxI);
     this.skin = skin;
     if (skin) { this.si = new Uint16Array(maxV * 4); this.sw = new Float32Array(maxV * 4); }
@@ -371,6 +568,7 @@ export class GeoBuf {
     g.setAttribute('normal', new THREE.BufferAttribute(this.nrm, 3).setUsage(use));
     g.setAttribute('color', new THREE.BufferAttribute(this.col, 3).setUsage(use));
     g.setAttribute('fx', new THREE.BufferAttribute(this.fx, 1).setUsage(use));
+    g.setAttribute('tuv', new THREE.BufferAttribute(this.uv, 2).setUsage(use));
     if (skin) {
       g.setAttribute('skinIndex', new THREE.BufferAttribute(this.si, 4));
       g.setAttribute('skinWeight', new THREE.BufferAttribute(this.sw, 4));
@@ -392,6 +590,16 @@ export class GeoBuf {
     const c = Math.cos(ry); const s = Math.sin(ry);
     const P = this.pos; const N = this.nrm; const C = this.col; const F = this.fx;
     const pass = ol > 0 ? 2 : 1;
+    // detail uv: material m = fx >> 4. Flat materials project the face along its dominant normal axis
+    // (top: x,z · x-facing: z,y · z-facing: x,y); no material = a skewed world projection for the paper grain.
+    // Subtracting a whole number of tiles taken at the primitive's centre keeps uv small (no precision loss far
+    // down the track) without changing the phase, so neighbouring primitives still line up.
+    const mm = (fx / 16) | 0;
+    const sc = MAT_SCALE[mm]; const sp = MAT_SPECIAL[mm];
+    const UV = this.uv;
+    let ucn = 0; let vcn = 0;
+    if (mm === 0) { ucn = Math.floor((tx + 0.37 * ty) * sc); vcn = Math.floor((tz + 0.61 * ty) * sc); }
+    else if (sp === 2) { ucn = Math.floor((-tz + 1.7 * tx) * sc); vcn = 0; }
     for (let h = 0; h < pass; h++) {
       const base = this.nv;
       const col = h ? ink : rgb;
@@ -414,6 +622,22 @@ export class GeoBuf {
         N[o] = nx * c + nz * s; N[o + 1] = ny; N[o + 2] = -nx * s + nz * c;
         C[o] = col[0]; C[o + 1] = col[1]; C[o + 2] = col[2];
         F[base + i] = f;
+        {
+          const wx = P[o]; const wy = P[o + 1]; const wz = P[o + 2];
+          let u; let v;
+          if (mm === 0) { u = (wx + 0.37 * wy) * sc - ucn; v = (wz + 0.61 * wy) * sc - vcn; }
+          else if (sp === 2) { u = (-wz + 1.7 * wx) * sc - ucn; v = 0; }
+          else {
+            const ax = Math.abs(N[o]); const ay = Math.abs(N[o + 1]); const az = Math.abs(N[o + 2]);
+            let cu; let cv;
+            if (ay >= ax && ay >= az) { u = wx; v = wz; cu = tx; cv = tz; }
+            else if (ax >= az) { u = wz; v = wy; cu = tz; cv = ty; }
+            else { u = wx; v = wy; cu = tx; cv = ty; }
+            if (sp === 1) { const q = u; u = v; v = q; const r = cu; cu = cv; cv = r; }
+            u = u * sc - Math.floor(cu * sc); v = v * sc - Math.floor(cv * sc);
+          }
+          UV[(base + i) * 2] = u; UV[(base + i) * 2 + 1] = v;
+        }
         if (this.skin) { const q = (base + i) * 4; this.si[q] = this.bone; this.si[q + 1] = 0; this.si[q + 2] = 0; this.si[q + 3] = 0; this.sw[q] = 1; this.sw[q + 1] = 0; this.sw[q + 2] = 0; this.sw[q + 3] = 0; }
       }
       const I = this.idx; let ni = this.ni;
@@ -431,7 +655,7 @@ export class GeoBuf {
   /** Upload what was written. */
   commit(radius = 200, cx = 0, cy = 0, cz = 0) {
     const g = this.geo;
-    for (const k of ['position', 'normal', 'color', 'fx']) {
+    for (const k of ['position', 'normal', 'color', 'fx', 'tuv']) {
       const a = g.getAttribute(k);
       a.updateRange.offset = 0; a.updateRange.count = this.nv * a.itemSize; a.needsUpdate = true;
     }
@@ -448,6 +672,7 @@ export class GeoBuf {
     g.setAttribute('normal', new THREE.BufferAttribute(this.nrm.slice(0, this.nv * 3), 3));
     g.setAttribute('color', new THREE.BufferAttribute(this.col.slice(0, this.nv * 3), 3));
     g.setAttribute('fx', new THREE.BufferAttribute(this.fx.slice(0, this.nv), 1));
+    g.setAttribute('tuv', new THREE.BufferAttribute(this.uv.slice(0, this.nv * 2), 2));
     if (this.skin) {
       g.setAttribute('skinIndex', new THREE.BufferAttribute(this.si.slice(0, this.nv * 4), 4));
       g.setAttribute('skinWeight', new THREE.BufferAttribute(this.sw.slice(0, this.nv * 4), 4));

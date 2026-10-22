@@ -22,6 +22,7 @@ import { createRivalry, PICK_NAME } from './rivalry.js';
 import { createExtras } from './extras.js';
 import { createLink, emptyState } from './link.js';
 import { createRules, MODES, MODE_LABEL, fmtM } from './modes.js';
+import { analysePace } from './bench.js';
 
 const PH = { loading: 0, lobby: 1, countdown: 2, run: 3, finale: 4, over: 5 };
 const F_AIR = 1; const F_ROLL = 2; const F_DOWN = 4; const F_INV = 8; const F_SHIELD = 16; const F_DONE = 32;
@@ -69,6 +70,7 @@ const AB = ['a', 'b'];
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* private mode */ } };
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const r2 = (x) => Math.round(x * 100) / 100;
 
 let liveGames = 0; // instances alive (test hook)
 
@@ -173,7 +175,7 @@ export function createGame(el, api) {
     return {
       w, name: api.name(w), local: !live || w === meW, r: null, bot: null, auto: false, av: null, rig: null, view: null,
       rs: { x: (w === 'a' ? -1 : 1) * LANE_W, y: 0, z: 0, ground: 0, speed: 0, air: false, vy: 0, roll: false, rollT: 0, stumble: 0, down: false, downT: 0, win: false, idle: true, invuln: false, shield: false, t: 0, visible: true, laneX: (w === 'a' ? -1 : 1) * LANE_W, bump: 0, boost: false },
-      prev: { z: 0, x: 0, y: 0 }, net: emptyState(), weapon: null, weaponRoll: 0, shoveCD: 0, revive: null, downId: 0, downAt: 0, pushOff: 0,
+      prev: { z: 0, x: 0, y: 0 }, sm: { z: 0.5, t: 0.5, ok: 0 }, net: emptyState(), weapon: null, weaponRoll: 0, shoveCD: 0, revive: null, downId: 0, downAt: 0, pushOff: 0,
       stats: { shoves: 0, slams: 0, inks: 0, hits: 0, revives: 0, dodges: 0 }, fly, hist: new Float64Array(HN * 7), histN: 0, histHead: 0,
       lastHorn: -1, lastRumble: -1, outT: -1, lastGround: false, tut: 0, css: `var(--p-${w})`, hk: { gap: null, ban: 0 },
       // the partner's last in-match state, kept so a reloaded host can be handed its run back
@@ -181,6 +183,7 @@ export function createGame(el, api) {
     };
   }
   const players = { a: mkPlayer('a'), b: mkPlayer('b') };
+  players.a.sm.z = 0; players.a.sm.t = 0; players.b.sm.z = 0; players.b.sm.t = 0; // (a double field from the start: no map change later)
   const locals = live ? [meW] : ['a', 'b'];
   const viewers = live ? [meW] : ['a', 'b'];
   // the Daily's twist, dares, love notes (extras.js); world / P are read lazily (created in init3D)
@@ -227,10 +230,16 @@ export function createGame(el, api) {
   let W = 0; let H = 0; const baseDpr = Math.min(window.devicePixelRatio || 1, 2); let scale = 0.85;
   // Doubles written every frame live on one object: V8 boxes a fresh HeapNumber for every double
   // stored in a closure variable, while object fields are updated in place (JSC boxes neither).
-  const K = { tAnim: 0.5, lastTs: 0.5, ewma: 16.7, lowFor: 0.5, checkT: 0.5, coolT: 0.5, hudT: 0.5, scoreT: 0.5, lastPub: -1e9, hitStop: 0.5, hitPend: 0.5, wind: 0.5, mile: 0.5 };
+  const K = { tAnim: 0.5, lastTs: 0.5, ewma: 16.7, lowFor: 0.5, checkT: 0.5, coolT: 0.5, hudT: 0.5, scoreT: 0.5, lastPub: -1e9, hitStop: 0.5, hitPend: 0.5, wind: 0.5, mile: 0.5,
+    // frame pacing (see pace()): the detected display period, the paced clock (performance.now timeline and shared clock), the paced step
+    period: 16.667, raw: 16.667, pt: 0.5, simT: 0.5, dtMs: 16.667, capE: 0.5, capScale: 0.85, upMax: 1.5, upT: 0.5, ivN: 0, pOk: 0, candP: 0.5, candN: 0, cap: 0, capN: 0, badN: 0, winN: 0.5, winM: 0.5, capT: 0.5, skipDraw: 0, bench: 0 };
   K.tAnim = 0; K.lastTs = 0; K.lowFor = 0; K.checkT = 0; K.coolT = 0; K.hudT = 0; K.scoreT = 0; K.hitStop = 0; K.hitPend = 0; K.wind = 0;
+  K.pt = 0; K.simT = 0; K.winN = 0; K.winM = 0; K.capE = 0; K.upT = 0; K.capT = 0; K.upMax = 1; K.candP = 0;
+  // recent rAF intervals (ring) and a scratch copy for the order statistic: no allocation per frame
+  const ivl = new Float32Array(16); const ivs = new Float32Array(16);
+  const PERIODS = [1000 / 120, 1000 / 90, 1000 / 60, 1000 / 30];
   let frameN = 0;
-  const perf = { dts: new Float32Array(600), work: new Float32Array(600), n: 0, calls: 0, tris: 0, maxCalls: 0, maxTris: 0, programs0: 0, scaleDowns: 0, scaleUps: 0 };
+  const perf = { dts: new Float32Array(600), work: new Float32Array(600), n: 0, calls: 0, tris: 0, maxCalls: 0, maxTris: 0, programs0: 0, scaleDowns: 0, scaleUps: 0, capHolds: 0 };
   let rules = null; let rival = null;
   const pal = { a: null, b: null, hl: null };
   const lobbyTrack = createTrack(1);
@@ -990,15 +999,33 @@ export function createGame(el, api) {
     void dt;
   }
   function updateRemoteRS(p, now) {
-    const n = p.net; const s = p.rs;
+    const n = p.net; const s = p.rs; const sm = p.sm;
     const have = link.sample(n, now - link.delay);
     const inMatch = have && n.ep === M.epoch && (n.ph === PH.run || n.ph === PH.countdown || n.ph === PH.finale || n.ph === PH.over) && (M.phase !== 'lobby');
     if (!inMatch) {
       s.z = 0; s.x = s.laneX = (p.w === 'a' ? -1 : 1) * LANE_W; s.y = 0; s.ground = 0; s.idle = true; s.down = false; s.air = false; s.roll = false; s.stumble = 0; s.speed = 0; s.win = false; s.shield = false; s.invuln = false;
+      sm.ok = 0;
       return;
     }
     const f = n.f;
-    s.z = n.z + ((f & F_RUN) ? n.sp * link.delay / 1000 : 0);
+    // Where the partner is now: their 20 Hz stream interpolated, dead-reckoned forward by the buffer delay.
+    const tz = n.z + ((f & F_RUN) ? n.sp * link.delay / 1000 : 0);
+    if (dbg && dbg.oldPacing) s.z = tz;
+    else {
+      // That target moves in 50 ms segments with every network wobble in it, so it is not what gets drawn.
+      // The drawn z advances by speed × elapsed every frame, like the local runner, and the gap to the
+      // target closes by a gentle exponential (time constant 0.25 s); a gap over 3 m (a respawn, a
+      // rematch, a long stall) snaps.
+      const dts = sm.ok ? (now - sm.t) / 1000 : 0;
+      sm.t = now;
+      if (!sm.ok || dts < 0 || dts > 0.5) { sm.z = tz; sm.ok = 1; }
+      else {
+        if (f & F_RUN) sm.z += n.sp * dts;
+        const e = tz - sm.z;
+        if (e > 3 || e < -3) sm.z = tz; else sm.z += e * (1 - Math.exp(-dts * 4));
+      }
+      s.z = sm.z;
+    }
     s.x = n.x + p.pushOff; s.y = n.y; s.ground = n.g > -50 ? n.g : 0; s.speed = n.sp; s.vy = n.vy;
     s.air = !!(f & F_AIR); s.roll = !!(f & F_ROLL); s.rollT = n.rp; s.stumble = n.st; s.down = !!(f & F_DOWN); s.downT = n.dt;
     s.invuln = !!(f & F_INV); s.shield = !!(f & F_SHIELD); s.laneX = n.l * LANE_W; s.bump = 0; s.boost = !!(f & F_BOOST);
@@ -1041,19 +1068,82 @@ export function createGame(el, api) {
       pub.l = meW === 'a' ? -1 : 1; pub.f = 0; pub.h = HEARTS; pub.c = 0; pub.fn = -1; pub.w = 0; pub.sv = 0; pub.cb = 0;
       pub.tr = wear[meW].tr; pub.ht = wear[meW].ht;
     }
-    link.publish(pub);
+    // Stamp the sample with the instant its position is for: the sim stands at step `steps`, which is
+    // `alpha` of a step before the paced time. (The partner draws from these stamps, so a stamp that
+    // follows the callback's own delay would put jitter into their picture.)
+    link.publish(pub, dbg && dbg.oldPacing || !K.simT ? undefined : M.phase === 'run' && !isPaused(K.simT) ? M.lastNow - M.alpha * DT * 1000 : K.simT);
   }
 
   // ── frame ──
   let trimN = 0;
+  /**
+   * The frame clock. A rAF timestamp is the vsync the frame is for; performance.now() / the shared
+   * clock read inside the callback also contains however long the callback waited behind input
+   * handlers, GC and timers, and advancing the sim by that makes the drawn runner's per-frame step
+   * jitter (the callback delay shows up 1:1 as judder). So the sim and the camera run on a paced
+   * clock built from `ts`:
+   *  - the display period is the low quartile of the last 16 intervals (robust to missed vsyncs),
+   *    snapped to 120 / 90 / 60 / 30 Hz when within 12 %, and switched only after three agreeing checks;
+   *  - each interval within 15 % of a whole number of periods is advanced as exactly that many
+   *    (removes timestamp noise; a dropped vsync is still two periods);
+   *  - a drift corrector (3 % of the error a frame) keeps the paced clock on the real one, and any
+   *    error over one period, a gap over 250 ms, a pause or a background resync it outright.
+   * K.pt is the paced time on the performance.now() timeline; K.simT the same instant on the shared
+   * clock (link.at; solo it is the same number). Never goes backwards.
+   */
+  function pace(ts, w0) {
+    if (ts > w0 + 4) ts = w0; // not on this timeline (never seen): trust the callback time
+    const raw = K.lastTs ? ts - K.lastTs : 0;
+    K.lastTs = ts;
+    const prev = K.pt;
+    K.raw = raw > 0 ? (raw < 250 ? raw : 250) : K.period;
+    if (!(raw > 0) || raw > 250) { K.pt = ts; K.dtMs = K.raw; }
+    else {
+      if (raw < 60) {
+        ivl[K.ivN & 15] = raw; K.ivN++;
+        if (K.ivN >= 8 && (K.ivN & 3) === 0) detectPeriod();
+      }
+      const P = K.period; const n = Math.round(raw / P);
+      K.pt += n >= 1 && Math.abs(raw - n * P) <= 0.15 * P ? n * P : raw;
+      const err = ts - K.pt;
+      if (err > P || err < -P) K.pt = ts; else K.pt += err * 0.03;
+      if (K.pt < prev + 1) K.pt = prev + 1;
+      K.dtMs = K.pt - prev;
+    }
+    let v = live ? link.at(K.pt) : K.pt;
+    if (v < K.simT && K.simT - v < 250) v = K.simT; // (a clock that really jumped back, a host restart, is followed)
+    K.simT = v;
+  }
+  function detectPeriod() {
+    const m = K.ivN < 16 ? K.ivN : 16;
+    for (let i = 0; i < m; i++) { // insertion sort of a copy
+      const x = ivl[i]; let j = i - 1;
+      while (j >= 0 && ivs[j] > x) { ivs[j + 1] = ivs[j]; j--; }
+      ivs[j + 1] = x;
+    }
+    const q = ivs[m >> 2];
+    let best = 0; let bd = 1e9;
+    for (let i = 0; i < 4; i++) { const d = Math.abs(q - PERIODS[i]) / PERIODS[i]; if (d < bd) { bd = d; best = i; } }
+    if (bd > 0.12) return;
+    const c = PERIODS[best];
+    if (c === K.period) { K.candN = 0; K.pOk = 1; return; }
+    if (c === K.candP) K.candN++; else { K.candP = c; K.candN = 1; }
+    if (K.candN >= 3 || !K.pOk) { K.period = c; K.candN = 0; K.pOk = 1; }
+  }
   function frame(ts) {
     if (dead) return;
     raf = requestAnimationFrame(frame);
-    const dtMs = K.lastTs ? Math.min(250, ts - K.lastTs) : 16.7;
-    K.lastTs = ts;
-    const dt = dtMs / 1000;
     const w0 = performance.now();
-    const now = clock();
+    let dtMs; let now;
+    if (dbg && dbg.oldPacing) { // the unpaced clock (kept to measure against: __rush.pace)
+      dtMs = K.lastTs ? Math.min(250, ts - K.lastTs) : 16.7;
+      K.lastTs = ts; K.raw = dtMs;
+      now = clock();
+    } else {
+      pace(ts, w0);
+      dtMs = K.dtMs; now = K.simT;
+    }
+    const dt = dtMs / 1000;
     // hit-stop: the picture holds on the impact frame (the sim keeps its clock; only the drawing freezes)
     const frozen = K.hitStop > 0;
     if (frozen) K.hitStop -= dt;
@@ -1061,19 +1151,19 @@ export function createGame(el, api) {
     frameN++;
     if (M.phase === 'over' && (perf.n % 6) !== 0) { perf.n++; return; } // idle behind the end card
     logic(now, dt, frozen);
-    if (!glLost) { render(frozen ? 0 : dt, now); if (!frozen) updateTag(); }
+    if (!glLost) { render(frozen ? 0 : dt, now, !K.skipDraw); if (!frozen) updateTag(); }
     if (K.hitPend > 0) { K.hitStop = K.hitPend; K.hitPend = 0; }
-    track(dtMs, performance.now() - w0);
+    if (!K.bench) track(K.raw, performance.now() - w0);
   }
 
   function logic(now, dt, frozen) {
-    if (live) { netLogic(now); link.setFastSync(M.phase === 'countdown' || ((M.phase === 'run') && (M.paused || now < M.resumeAt + 500)) || M.rejoin ? 2 : M.phase === 'run' ? 0 : 1); }
+    if (live) { netLogic(now); link.setSim(M.phase === 'run' && !isPaused(now)); link.setFastSync(M.phase === 'countdown' || ((M.phase === 'run') && (M.paused || now < M.resumeAt + 500)) || M.rejoin ? 2 : M.phase === 'run' ? 0 : 1); }
     pauseLogic(now);
     if (M.phase === 'lobby') lobbyUI();
     else if (M.phase === 'countdown') {
       if (now >= M.startAt && !isPaused(now)) {
         M.phase = 'run';
-        M.startedWall = Date.now() - (now - M.startAt);
+        M.startedWall = Date.now() - (clock() - M.startAt); // (the shared clock now, not the frame's paced time: a wall-clock estimate of GO)
         M.firstRunWall = Date.now();
       }
     }
@@ -1147,7 +1237,7 @@ export function createGame(el, api) {
     K.hudT += dt;
     updateHud(now, dt);
     // presence: 20/s in a match (net.js throttles), 10/s in the lobby where nothing moves
-    if (live && ready3D && (M.phase !== 'lobby' || now - K.lastPub >= 95)) { K.lastPub = now; publish(); }
+    if (live && ready3D && !K.bench && (M.phase !== 'lobby' || now - K.lastPub >= 95)) { K.lastPub = now; publish(); }
     if (M.phase === 'run') {
       K.scoreT += dt;
       if (K.scoreT > 0.5) {
@@ -1399,6 +1489,7 @@ export function createGame(el, api) {
     let nz = 0;
     for (let i = 0; i < viewers.length; i++) zsBuf[nz++] = players[viewers[i]].rs.z;
     if (M.phase === 'lobby') zsBuf[nz++] = -90;
+    fx.ambient(tr.seed, zsBuf, nz, K.tAnim); // district motes around each viewer
     world.ensure(tr, zsBuf, nz, M.phase === 'run' ? 1 : 9);
     // blob shadows
     let ns = 0;
@@ -1465,16 +1556,63 @@ export function createGame(el, api) {
   }
 
   // ── perf + dynamic resolution ──
+  // Judged against the display's own period (K.period, detected in pace()), not an absolute 18.4 ms:
+  // every 250 ms, the share of vsyncs the frames missed (an interval of n periods missed n - 1) is
+  // checked. Down after two windows over 9 % (one over 35 % acts at once, with the bigger step);
+  // up after 4 s under 3 %. A 120 Hz display is judged against 8.3 ms (never below 0.7), a Low Power
+  // Mode phone (rAF capped at 30 Hz) against 33 ms. A steady ~33 ms cadence is ambiguous (a 30 Hz
+  // cap, or a 60 Hz screen the GPU can only feed every other vsync), so it is treated as the second
+  // until proven otherwise: step down, and if two steps change nothing about the cadence it is a
+  // refresh cap, so the scale from before the test comes back and holds (until the cadence leaves
+  // ~33 ms or gets much worse).
   function track(dtMs, workMs) {
     const i = perf.n % 600;
     perf.dts[i] = dtMs; perf.work[i] = workMs; perf.n++;
-    K.ewma = K.ewma * 0.9 + dtMs * 0.1;
+    K.ewma = K.ewma * 0.9 + (dtMs < 100 ? dtMs : 100) * 0.1;
     K.checkT += dtMs;
+    const slow = K.period > 25 && K.pOk === 1; // a steady ~33 ms cadence
+    const P = slow ? 1000 / 60 : K.period;     // (ambiguous cadence: count vsyncs as 60 Hz, then test for a cap)
+    const nv = Math.round(dtMs / P);
+    K.winN += nv < 1 ? 1 : nv; K.winM += nv < 1 ? 0 : nv - 1;
     if (K.checkT < 250 || !renderer) return;
     K.checkT = 0;
+    const miss = K.winM / K.winN; K.winN = 0; K.winM = 0;
     if (dbg && dbg.fixedScale) return;
-    // Quick down (every 250 ms while frames run long; bigger steps when far off), slow up (after
-    // 4 s of comfortable frames, then a 2 s cool-down), so it settles instead of oscillating.
+    if (dbg && dbg.oldPacing) { trackOld(); return; }
+    if (K.pOk === 0 && K.ewma < 60 && K.ivN < 8) return; // not enough intervals yet to know the display
+    if (K.coolT > 0) K.coolT -= 250;
+    if (K.upT > 0) { K.upT -= 250; if (K.upT <= 0) K.upMax = 1; }
+    if (K.cap === 2) { // held at a refresh cap
+      if (!slow || K.ewma > 48) K.cap = 0; else return;
+    }
+    if (K.cap === 1) { // testing whether a step down changes anything
+      K.capT += 250;
+      if (K.capT < 1500) return;
+      if (K.ewma > K.capE * 0.9 && slow) {
+        if (K.capN < 2 && scale > 0.55) { K.capN++; K.capT = 0; K.capE = K.ewma; scale = Math.max(0.55, Math.round((scale - 0.08) * 100) / 100); perf.scaleDowns++; resize(); }
+        else { scale = K.capScale; K.cap = 2; K.capN = 0; K.lowFor = 0; K.coolT = 4000; perf.capHolds++; resize(); }
+      } else { K.cap = 0; K.capN = 0; K.coolT = 4000; }
+      return;
+    }
+    const lo = K.period < 12 ? 0.7 : 0.55;
+    if (miss > 0.09 && scale > lo + 0.001) {
+      K.badN++;
+      if (K.badN >= 2 || miss > 0.35) {
+        K.badN = 0;
+        const from = scale;
+        if (slow) { K.cap = 1; K.capN = 0; K.capT = 0; K.capScale = scale; K.capE = K.ewma; scale = Math.max(lo, Math.round((scale - 0.08) * 100) / 100); }
+        else scale = Math.max(lo, Math.round((scale - (miss > 0.35 ? 0.15 : 0.08)) * 100) / 100);
+        K.lowFor = 0; K.coolT = 4000; perf.scaleDowns++;
+        if (!slow) { K.upMax = from - 0.05; K.upT = 60000; } // don't climb back to where it failed for a minute
+        resize();
+      }
+    } else if (miss < 0.03) {
+      K.badN = 0; K.lowFor += 250;
+      if (K.lowFor >= 4000 && K.coolT <= 0 && scale < K.upMax && scale < 1) { scale = Math.min(1, Math.round((scale + 0.05) * 100) / 100); K.lowFor = 0; K.coolT = 2000; perf.scaleUps++; resize(); }
+    } else { K.badN = 0; K.lowFor = 0; }
+  }
+  /** The first version: judged against an absolute 18.4 ms (kept to compare: __RUSH_DEBUG.oldPacing). */
+  function trackOld() {
     if (K.coolT > 0) K.coolT -= 250;
     if (K.ewma > 18.4 && scale > 0.55) {
       scale = Math.max(0.55, Math.round((scale - (K.ewma > 26 ? 0.15 : 0.08)) * 100) / 100);
@@ -1540,6 +1678,88 @@ export function createGame(el, api) {
         const ms = performance.now() - t0;
         M.lastNow = clock();
         return { frames: n, msPerFrame: ms / n };
+      },
+      /**
+       * Frame-pacing bench. Drives frame() synchronously with synthetic vsync timestamps (no GL draw,
+       * performance.now() and rAF replaced for the duration, then restored), so pacing can be measured
+       * where real frame times are meaningless (software GL) and compared old vs new on one build.
+       * opts: hz (60 | 120 | 30), n frames, jitterMs (callback delay, 0..jitterMs, so performance.now()
+       * inside the callback is ts + delay), spikes (share of frames with an extra ~7-21 ms delay),
+       * drops (share of missed vsyncs), tsNoise (± ms on the timestamp), lanes (a lane change every k
+       * frames at a random sub-frame time, through onAction), old (true | 'pacing' | 'cam': run the
+       * previous clock / camera), who, seed, warm (frames left out of the numbers), draw (really draw).
+       * Returns analysePace() of what the viewer would have seen. Run it in a phase 'run' match.
+       */
+      pace(o = {}) {
+        if (!ready3D || M.phase !== 'run' || !players[o.who || (split ? 'a' : meW)].r) return null;
+        const who = o.who || (split ? 'a' : meW); const pw = other(who);
+        const hz = o.hz || 60; const P = 1000 / hz; const n = o.n || 300; const warm = o.warm === undefined ? 24 : o.warm;
+        const jit = o.jitterMs === undefined ? 3 : o.jitterMs; const drops = o.drops === undefined ? 0.02 : o.drops;
+        const spikeP = o.spikes === undefined ? 0.01 : o.spikes; const noise = o.tsNoise === undefined ? 0.2 : o.tsNoise;
+        const every = o.lanes | 0;
+        let seed = (o.seed || 12345) | 0;
+        const rnd = () => { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return (seed >>> 0) / 4294967296; };
+        const sv = {
+          now: performance.now, own: Object.prototype.hasOwnProperty.call(performance, 'now'), rafFn: window.requestAnimationFrame, raf,
+          oldP: dbg.oldPacing, oldC: dbg.oldCam,
+        };
+        if (o.old !== undefined) { dbg.oldPacing = o.old === true || o.old === 'pacing'; dbg.oldCam = o.old === true || o.old === 'cam'; }
+        const pl = players[who]; const cam = pl.rig.cam.position;
+        const rec = { hz, warm, n, ts: new Float64Array(n), z: new Float64Array(n), x: new Float64Array(n), sp: new Float64Array(n), cx: new Float64Array(n), cy: new Float64Array(n), cz: new Float64Array(n), pz: new Float64Array(n), psp: new Float64Array(n), skip: new Uint8Array(n), inp: [] };
+        const t0 = sv.now.call(performance);
+        let cur = t0;
+        performance.now = () => cur;
+        window.requestAnimationFrame = () => 0;
+        K.bench = 1; K.skipDraw = o.draw ? 0 : 1;
+        K.lastTs = 0; K.ivN = 0; K.pOk = 0; K.candN = 0; K.period = 1000 / 60; K.hitStop = 0; K.hitPend = 0;
+        for (const w of locals) { const r = players[w].r; if (r) r.invulnT = Math.max(r.invulnT, 90); }
+        // o.track: also run the dynamic-resolution judge on these frames (from scale o.scale0, default 0.85); everything it touches is put back after
+        const tk = o.track ? { scale, d: perf.scaleDowns, u: perf.scaleUps, h: perf.capHolds, ewma: K.ewma, lowFor: K.lowFor, coolT: K.coolT, checkT: K.checkT, cap: K.cap, capN: K.capN, capT: K.capT, capE: K.capE, capScale: K.capScale, upMax: K.upMax, upT: K.upT, fixed: dbg.fixedScale } : null;
+        if (tk) { dbg.fixedScale = false; scale = o.scale0 || 0.85; K.ewma = P; K.lowFor = 0; K.coolT = 0; K.checkT = 0; K.cap = 0; K.capN = 0; K.badN = 0; K.winN = 0; K.winM = 0; K.upMax = 1; K.upT = 0; perf.scaleDowns = 0; perf.scaleUps = 0; perf.capHolds = 0; }
+        let vn = t0 + P; let prev = t0; let wall = 0;
+        try {
+          for (let i = 0; i < n; i++) {
+            const ts = vn + (rnd() - 0.5) * 2 * noise;
+            if (every && i >= warm && (i - warm) % every === 0) {
+              const r = pl.r; const lane = r.lane;
+              cur = prev + (0.05 + 0.9 * rnd()) * (vn - prev); // the finger lands somewhere between two frames
+              const dir = lane >= 1 ? -1 : lane <= -1 ? 1 : rnd() < 0.5 ? -1 : 1;
+              onAction(who, dir < 0 ? A_LEFT : A_RIGHT);
+              if (r.lane !== lane) rec.inp.push({ i, te: cur, dir, target: r.lane * LANE_W });
+            }
+            let delay = rnd() * jit;
+            if (rnd() < spikeP) delay += 7 + rnd() * 14;
+            cur = ts + delay;
+            const w0 = sv.now.call(performance);
+            frame(ts);
+            wall += sv.now.call(performance) - w0;
+            if (tk) track(K.raw, 0);
+            const s = pl.rs; const q = players[pw].rs;
+            rec.ts[i] = vn; rec.z[i] = s.z; rec.x[i] = s.x; rec.sp[i] = s.speed; rec.cx[i] = cam.x; rec.cy[i] = cam.y; rec.cz[i] = cam.z;
+            rec.pz[i] = q.z; rec.psp[i] = q.speed; rec.skip[i] = (pl.r && pl.r.down) || q.down ? 1 : 0;
+            prev = vn;
+            let miss = Math.floor(delay / P);
+            while (rnd() < drops && miss < 8) miss++;
+            vn += P * (1 + miss);
+          }
+        } finally {
+          rec.period = K.period;
+          if (sv.own) performance.now = sv.now; else delete performance.now;
+          window.requestAnimationFrame = sv.rafFn; raf = sv.raf;
+          dbg.oldPacing = sv.oldP; dbg.oldCam = sv.oldC;
+          K.bench = 0; K.skipDraw = 0; K.lastTs = 0; K.simT = 0; K.pOk = 0; K.ivN = 0; K.period = 1000 / 60;
+          M.lastNow = clock(); M.ruleAt = M.lastNow;
+        }
+        const out = analysePace(rec);
+        if (tk) {
+          out.res = { scale, scaleDowns: perf.scaleDowns, scaleUps: perf.scaleUps, capHolds: perf.capHolds, cap: K.cap };
+          scale = tk.scale; perf.scaleDowns = tk.d; perf.scaleUps = tk.u; perf.capHolds = tk.h; K.ewma = tk.ewma; K.lowFor = tk.lowFor; K.coolT = tk.coolT; K.checkT = tk.checkT;
+          K.cap = tk.cap; K.capN = tk.capN; K.capT = tk.capT; K.capE = tk.capE; K.capScale = tk.capScale; K.upMax = tk.upMax; K.upT = tk.upT; dbg.fixedScale = tk.fixed;
+          resize();
+        }
+        if (o.raw) out.raw = { ts: Array.from(rec.ts), x: Array.from(rec.x), cx: Array.from(rec.cx), z: Array.from(rec.z), inp: rec.inp };
+        out.wallMsPerFrame = r2(wall / n); out.period = r2(rec.period);
+        return out;
       },
       /** Feel numbers measured on a fresh runner with the real sim. */
       probe() {

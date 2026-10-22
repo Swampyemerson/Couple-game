@@ -17,6 +17,10 @@ sounds, music ducks and CRASH!/FELL!/SLAMMED! pops equal the local runners' real
 crash: a Brawl slam shows only the mode's "SLAMMED! by …"); `split`
 queues a combo payout (`__rush.emit('a', 'bonus', 5)`) and checks it lands on the ladder with no crash.
 
+`tools/test/games/rush-feel.test.js` measures feel: draw calls / triangles / texture memory and swipe response on two throttled phones
+(real frames), and, because software GL makes real frame pacing unmeasurable here, the synthetic vsync bench (`__rush.pace`, see Performance)
+at 60 / 120 / 30 Hz, previous vs current clock and camera, with the before / after table asserted. `PART=bench` or `PART=live` runs one half.
+
 ## Controls
 
 | | Phone (swipe, default) | Phone ("Buttons" setting) | Computer, live | Computer, one device |
@@ -47,6 +51,31 @@ lane change 0.13 s cubic ease-out (test: 100–150 ms), jump apex 1.69 m / 0.75 
 sneakers apex 3.9 m (reaches train roofs). Side clip = stumble (−40 % speed, decays over 0.9 s,
 camera shake, bounce back to the lane you came from). Head-on = crash: −1 heart (3), 1.6 s down,
 respawn in the clearest lane with 2 s of ghost invulnerability. Shield absorbs one crash or attack.
+
+**Frame pacing (pace() in game.js).** The sim and the camera run on a *paced* clock built from the vsync-aligned
+rAF timestamp, not from `performance.now()` / the shared clock read inside the callback (that includes however long the
+callback waited behind input handlers, GC and timers, and the delay showed up 1:1 as judder in the drawn runner's
+per-frame advance). The display period is the low quartile of the last 16 intervals (robust to missed vsyncs; the spec
+said median), snapped to 8.3 / 11.1 / 16.7 / 33.3 ms when within 12 % and switched only after three agreeing checks. Each interval
+within 15 % of a whole number of periods advances as exactly that many (a dropped vsync is still two periods), a drift
+corrector (3 % of the error a frame) keeps the paced clock on the real one, and an error over one period, a gap over 250 ms,
+a pause or a background resyncs it. `K.pt` is the paced time on the `performance.now()` timeline, `K.simT` the same instant on
+the shared clock (`link.at(K.pt)`; solo they are equal); it never goes backwards. `clock()` stays for everything that is not
+a frame (button handlers, start / resume moments, rule messages, network stamps). Measured with the synthetic vsync bench
+(callback delay 0-3 ms plus spikes, 2 % missed vsyncs): the drawn runner's judder RMS went from 0.16 / 0.29 / 0.09 frames
+of advance (60 / 120 / 30 Hz) to under 0.001. Input latency is unchanged (the action still applies the moment the
+`pointermove` fires, and the next frame draws it): p95 32 / 16 / 65 ms from the event to the vsync that shows 2 cm of
+movement, i.e. under 2 periods + 9 ms.
+
+**Camera (createRig in fx.js, mode `run`).** Lateral x and look x, vertical y and look y, and roll are critically damped
+springs (Game Programming Gems 4.4 SmoothDamp, velocity kept as state) instead of first-order exponentials, which answered
+a lane change (the follow target steps by 0.73 m the frame of the swipe) with an instant velocity: infinite jerk. Sideways is two
+springs in series (0.025 s smoothing the target, 0.09 s following it) so the acceleration is continuous too; y / look y use
+0.18 s, roll 0.14 s. Result on the bench: camera lateral jerk RMS 6.2k -> 1.3k m/s³ at 60 Hz (16.6k -> 1.7k at 120 Hz,
+2.9k -> 1.1k at 30 Hz), peak 40k -> 5k, no overshoot, settled in ~0.27 s, 1 cm of travel within the first 60 Hz frame
+(120 Hz: the third frame; the runner itself is on screen from the first) and the same shape at 30 / 60 / 120 Hz. Shake,
+kick and FOV are as before; lobby, finale and spectate keep the exponential follow, and a snap (`rig.snap()`) still places
+the camera with zero velocity. `__RUSH_DEBUG.oldPacing` / `oldCam` bring back the previous clock and camera for comparison.
 
 **Forgiving-but-fair hits.** The collision loop used to stop at `z0 > z + HALF_D + 0.6`, with no
 other front test, so a hit fired 0.6 m (~25 ms at speed) before the runner's hull reached the
@@ -300,6 +329,16 @@ lane lean and camera roll, landing dust and magnet trails were already there.
   both sides stamp their stream with that clock. The host answers at most ~11 pings/s (after a
   stall it would otherwise answer the whole backlog at once, over budget, with useless timings).
   Measured start skew in the harness: 8–12 ms at 80 ms latency on a heavily loaded machine.
+- Clock slew (guest): while the sim runs the offset moves towards the latest estimate at <= 5 % of real time (0.05 ms per
+  ms, continuous, so shared time stays monotonic and never steps; it used to blend 30 % per pong, up to a 12 ms step each time that
+  jumped the sim, and snap beyond 40 ms). Snaps stay for the first sync, countdowns, pauses and the lobby (`link.setSim(false)`:
+  nothing depends on the clock yet) and for a gap over 40 ms (a host restart). `link.at(perfTime)` maps a `performance.now()` instant to
+  the shared clock (the paced frame time).
+- Stamps: a presence sample carries the instant its position is for (`pace()` time minus the sub-step remainder of the sim),
+  not the time the callback happened to run, so the partner's buffer gets evenly spaced samples.
+- The partner's drawn z (`updateRemoteRS`): advances by `speed x elapsed` every frame like the local runner and closes the gap to the
+  interpolated, dead-reckoned target with an exponential (time constant 0.25 s); a gap over 3 m (respawn, teleport, rematch) snaps. The
+  ghost marker, name tag and Brawl lag compensation (which reads `net.remote` history, not `rs`) are unaffected.
 - Message budget (~40/s per device, `h.warnings` in the harness): presence 20/s in a match and
   10/s in the lobby, plus the pings above and a few reliable events. The tests assert no warnings.
 - Start: host sends `start {mode, seed, at: now+3500, len, cap, th, goal, goalIdx, day, v, ep, mod}`: `v` the
@@ -387,12 +426,13 @@ edge and points at them.
 
 Printed-diorama toon look from `api.tokens()`: one toon shader (MeshBasicMaterial + a small hook,
 cheaper than MeshToonMaterial's per-light loops) with vertex colours and a per-vertex `fx` code:
-3 toon bands from one sun direction plus a sky term, computed per vertex (exact on the flat boxes
-the world is made of), unlit ink outlines (inverted hulls baked into the same merged geometry, so
+3 toon bands from one sun direction plus a sky term, tinted by a key colour and a shadow tint (split
+toning, per district), computed per vertex (exact on the flat boxes the world is made of), a printed
+surface texture on walls, ground and trains (one detail tile, see "Surface print"), unlit ink outlines (inverted hulls baked into the same merged geometry, so
 outlines cost no draw calls), glow for lamps / tokens / lit windows, a half-fogged skyline, and a
 screen-space halftone in the shadow band. Every pattern is geometry, not shader math: window
 ribbons / columns / grids (lit at random in dark mode, which is a night city with light linework),
-sleepers, hazard stripes, train windows. The same shader runs as three material instances (plain,
+sleepers, hazard stripes, train windows (the surface print is the one pattern that is shader work). The same shader runs as three material instances (plain,
 instanced, instanced with colour) because three r128 recomputes program parameters whenever one
 material alternates between plain and instanced draws. Players in `--p-a`/`--p-b`, coins and pickups `--g-hl`,
 outlines `--g-ink`, paper `--g-bg`/`--g-card` (fog = paper). Runners are one skinned mesh each
@@ -404,7 +444,8 @@ Sky and city (all from the theme inks):
 - **Sky dome**: two inks printed as a halftone gradient (dots grow from the horizon up; the sky
   fragment shader is one `fract` + `dot` + `step`). Day: paper to a blue tint, a yellow sun with an
   ink rim and halo, misregistered Riso clouds (white over an offset pink copy). Night: a violet
-  halftone, a moon with craters, stars, lit windows in the skyline.
+  halftone, a moon with craters, stars, lit windows in the skyline. On top of the geometry clouds each
+  district has its own cloud layer in the dome shader (see "Effects").
 - **Colour script**: the sky's two inks (and the fog, which always matches the horizon) warm with
   the fastest viewer's speed (a rocket pushes it further): blue → yellow/pink by day, blue → pink
   neon by night. Uniforms only, quantized, no recompiles.
@@ -420,8 +461,9 @@ Sky and city (all from the theme inks):
   zone carries a gate arch over the track with the name in baked pixel letters (on the tunnel's entry lintel when the zone starts
   in a tunnel): no extra draw call. `world.setDistrictAt(seed, z)` (per view, before rendering it) blends the sky tint, the fog and
   the far street layer (the harbour's water) over the 100 m around a zone boundary: uniforms and one tiny colour buffer, quantized
-  to 1/32, no recompiles. Lit windows beside the track are warm white (`P.warm`), never the coin yellow. Chunk buffers peak
-  at ~13.7k vertices (Downtown 11.7k), district chunks cost +0..+1.5k triangles over Downtown on identical content.
+  to 1/32, no recompiles (the same blend carries the light rig and cloud layer below). Lit windows beside the track are warm
+  white (`P.warm`), never the coin yellow. Chunk buffers peak at ~12.5k vertices (Downtown 9.1k), district chunks cost
+  +0..+1.5k triangles over Downtown on identical content.
 - **Skyline**: two rings of flat silhouettes (setback towers with antennas, spires, domed halls,
   water towers, one needle tower), the far ring paler. Tunnel portals are concrete with a hazard band.
 - **Trains with faces**: windscreen "eyes" with glints and a destination board. Parked trains doze
@@ -437,19 +479,60 @@ Sky and city (all from the theme inks):
   from the vanishing point, plus a corner-only vignette: two draw calls in clip space, no
   full-screen layer (the old DOM speed-line layer was 160 % × 160 % of the screen, ~7.6 Mpx at 3×).
   With `prefers-reduced-motion` there are no speed lines and camera shake is quartered.
+- **Surface print** (gfx.js `makeDetailTexture`, `GeoBuf.add`, the `FRAG_COLOR` hook): ONE 256 x 256 RGBA detail tile, built once at
+  load into a `DataTexture` (not a canvas: premultiplied alpha would corrupt the channels; ~10 ms; repeat-wrapped, mipmapped,
+  anisotropy 4, 0.35 MB with mips): R brick courses (running bond, per-brick tone), G boards with butt joints and a rounded profile,
+  B cobbles, A paper grain (speckle, blotches, fibres). A face picks a material through the `fx` attribute (`fx = code + 16 x material`,
+  `M_BRICK` .. `M_PANEL` in gfx.js; the vertex shader decodes it, so the codes 0..8 and every range check on them are unchanged). `GeoBuf.add`
+  bakes the uv into a second attribute (`tuv`) while it writes the geometry: flat materials project the face along its dominant normal axis
+  (top x,z / x-facing z,y / z-facing x,y: exact on the boxes and quads of the world, so only boxes and quads carry a material), the
+  paper grain uses a skewed world projection on everything, rails use the distance along the track, and a whole number of tiles taken
+  at the primitive's centre is subtracted, so the uv stay small far down the track (mediump-safe, no `fract` of a big world
+  coordinate) without changing the phase: neighbouring primitives still line up. The fragment shader costs one fetch and a few ALU: the pattern
+  darkens toward the outline ink, `mix(c, uInk, (1 - p) x k)` (by night `uInk` is light, so the lines become light linework), then
+  +-7 % paper grain and the wall ambient occlusion. Materials: Downtown brick low-rise, block / stucco towers, concrete deck, parapets, tunnel
+  walls and portals; panel-seamed trains; Harbour plank quay and boats, corrugated sheds / containers / ship; Greenway grass hatching
+  (procedural, from the grain; it fades with fog distance because a `step` has no mips), ribbed bark, cobbled deck, brick / stucco cottages;
+  Old Town brick / stucco houses; Neon Market paving slabs, planked stalls, stucco shop fronts; Freight Yard gravel ground, corrugated sheds
+  and containers; ballast speckle on every track bed. Avatars skip the texture (`RR_RIM` program): the runners stay crisp flat toon.
+- **Light rig per district** (bio.js `lightRigs`, world.js `applyLight`): sun direction (Harbour golden hour, low and warm; Greenway high
+  and soft; Old Town afternoon from the other side; Neon Market dusk; Freight Yard hazy), hemisphere / key intensities (their sum stays
+  ~1.12, so exposure doesn't move between districts), split toning (`uKey`, the lit colour, over `uShd`, the shadow tint: both
+  luminance-normalised mixes of the inks, e.g. warm gold key over cool blue shadows in the Harbour, violet shadows in Neon Market, rust
+  in the Freight Yard, green in Greenway; at night the shadows lean toward the district's glow), wall ambient occlusion (`uAo`: ground
+  y, strength, height; one `smoothstep` of the fragment's world y on vertical faces, so the foot of every wall and the lower storeys of
+  the canyon are darker; instanced and skinned programs get none) and the cloud layer's colours. All uniforms, blended with the sky tint
+  in `setDistrict` (quantized to 1/32, nothing allocated, no recompiles); the per-vertex shade is a vec3 now (`vShade`). The lobby
+  and finale views still flip the sun's z. **Rim light**: the runners' program (`RR_RIM`, one more define on the existing skinned
+  program) mixes each runner's colour (lightened) into the silhouette, `pow(1 - n.v, 2.2) x 0.62`.
+- **Effects**, all inside the budgets (one more draw call at most, when the sparkle-bit mesh would otherwise be idle):
+  - Ambient motes (fx.js `ambient`, called once per frame from `render()`): 28 per viewer on the existing instanced bits mesh: Harbour spray
+    over the water and gulls (flapping), Greenway leaves and petals, Old Town confetti flutter, Neon Market lantern sparks, Freight Yard
+    embers and dust. Stateless: each lives on a fixed lattice of the track inside a 64 m window ahead of its viewer (denser near
+    the runner), re-rolls its look every lap, takes its district from its own chunk (so a zone boundary changes them physically), allocates
+    nothing. Off with `prefers-reduced-motion`.
+  - Rail glints (`M_RAIL`): a ~2 m highlight sweeps ahead along the rails every 40 m, on a front slanted across the lanes (`uTm.x`).
+  - Harbour water (`M_WATER`, the quad that was flat): two crossing sets of thin ripples (a few `sin` of the uv and `uTm.y`), fading with distance.
+  - Night light pools (bio.js `lightPool`): stepped warm discs (unlit glow code, ~35 vertices) baked into the chunk under the catenary lamps
+    (on the outer lanes' bed; the sleepers under a lamp pick up the light), flood masts, stall canopies (in the stall's lantern colour) and the
+    new Greenway lamp posts. By day none.
+  - Sky: a per-district cloud layer in the dome shader: two flat cloud masks (the body and a copy a hair off-register, as the riso
+    clouds already were) from a few `sin` of azimuth and elevation, drifting slowly (`uTs`), plus a glow band above the horizon: Harbour low
+    stratus streaks, Greenway puffs, Old Town warm streaks, Neon Market a pink horizon glow, Freight Yard smog. Downtown keeps its geometry clouds.
 
 ## Performance
 
 - Draw calls: each 100 m chunk is ONE merged mesh (track, scenery, parked trains, outlines)
   in pooled preallocated buffers; coins/pickups/barriers/roadblocks/particles/shadows are
   `InstancedMesh`; runners are skinned (1 call each); sky dome 1; overlay 2. Measured on a phone
-  view: 14–23 calls in a busy race (test budget ≤ 30), 33–42k triangles (test budget ≤ 60k; was
+  view: 15–20 calls in a busy race (p50 18, test budget ≤ 30), 29–46k triangles (p50 36–38k, test budget ≤ 60k; was
   45–58k: coins are 12-sided now, 156 triangles each, drawn to 132 m where fog takes them anyway;
-  runners 4.5k each with 8-segment capsules). Chunk buffers hold ≤ 18k vertices (peak ~10.3k).
+  runners 4.5k each with 8-segment capsules). Chunk buffers hold ≤ 18k vertices (peak ~12.5k). Textures: ~2.0 MB of GPU memory
+  in all (the 256 x 256 detail tile with mips is 0.35 MB of that; budget 4 MB).
 - The phone budget (30 calls / 60k triangles) is per frame on a phone, where there is only ever one
   view (two-phone live: 18–20 calls / 43–47k). **Split screen is laptop-only** (one keyboard, two
   views of the same frame, each its own camera, so each view draws its own chunks, sky and
-  overlay: 38–40 calls / 88–91k triangles at 1280×800, i.e. each view stays inside the phone
+  overlay: 39–40 calls / 87–93k triangles at 1280×800, i.e. each view stays inside the phone
   budget). Its budget is the **laptop split budget, ≤ 50 calls / 120k triangles per frame**
   (asserted in the `split` test section). Halving the far distance per view would bring it near
   the phone numbers, but at the cost of pop-in on the screen size that shows it most, for a GPU
@@ -457,9 +540,19 @@ Sky and city (all from the theme inks):
 - Far layers (street, skyline, sky dome) draw after the near world (`renderOrder`), so early depth
   testing skips every pixel a building or train already covers.
 - `antialias:false`, `alpha:false`, `stencil:false`, `powerPreference:'high-performance'`.
-  Dynamic resolution: pixel ratio `min(dpr,2) × scale`, scale starts at 0.85, steps down by
-  0.08 (0.15 when far off) every 250 ms while the frame-time EWMA is over 18.4 ms, and steps up by
-  0.05 only after 4 s under 15.4 ms plus a cool-down; range 0.55–1.
+  Dynamic resolution: pixel ratio `min(dpr,2) × scale`, scale starts at 0.85, range 0.55–1, steps of
+  0.08 down (0.15 when far off) and 0.05 up with cool-downs, judged against the display period (below).
+- Dynamic resolution is judged against the *detected display period* (`track()` in game.js), not an absolute 18.4 ms: every 250 ms
+  the share of vsyncs the frames missed (an interval of n periods missed n - 1). Down after two windows over 9 % (one over 35 % acts at once,
+  with a 0.15 step), up by 0.05 after 4 s under 3 % (and never back to a scale that just failed, for a minute). A 120 Hz display is judged
+  against 8.3 ms and never goes below 0.7. A phone in Low Power Mode (rAF capped at 30 Hz) used to be judged against 18.4 ms
+  and sank to 0.55 for nothing; a steady ~33 ms cadence is ambiguous (a cap, or a 60 Hz screen the GPU feeds every other vsync), so it
+  steps down twice and, if the cadence did not change, restores the scale from before the test and holds (`perf.capHolds`).
+  `dbg.fixedScale` still freezes it. Note a 60 Hz phone can now climb from 0.85 to 1: the old up rule needed intervals under 15.4 ms,
+  which only a 120 Hz display ever produced.
+- `__rush.pace(opts)` (debug hook; maths in `bench.js`) drives `frame()` with synthetic vsync timestamps (hz, jitter, spikes, missed
+  vsyncs, lane changes at random sub-frame times, old/new clock and camera, optionally the resolution judge) because software GL here draws a
+  frame in ~120 ms; `rush-feel.test.js` prints the before / after table and asserts it.
 - Shaders: one toon program family (MeshBasicMaterial + hook; per-vertex 3-band light), the
   shadow-band halftone is one `fract` + one `dot` per shaded fragment. Every variant (world,
   instanced, instanced+colour, barriers, skinned+fade, shield bubble, sky, overlay, shadows,

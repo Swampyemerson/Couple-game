@@ -4,7 +4,7 @@
 // that replace the building rows beside the track. Everything here only runs while a chunk is
 // built (once per 100 m), never per frame, and only writes into the chunk's merged buffer.
 // The track, trains, barriers, gaps and coins are never touched.
-import { FX_PLAIN, FX_GLOW, mix } from './gfx.js';
+import { FX_PLAIN, FX_GLOW, M_BRICK, M_PLANK, M_COBBLE, M_CORR, M_GRASS, M_WATER, M_GRAVEL, M_BLOCK, M_TILE, M_PLASTER, mix } from './gfx.js';
 import { CHUNK } from './tune.js';
 import { DISTRICT_FIRST, DISTRICT_ZONE } from './track.js';
 
@@ -17,12 +17,26 @@ export function qz(b, T, x, y, d, w, h, rgb, fx) { b.add(T.quad, x, y, -d, w, h,
 /** Quad facing ±x (side = +1 faces +x) centred at (x, y, d), `len` along the track. */
 export function qx(b, T, side, x, y, d, len, h, rgb, fx) { b.add(T.quad, x, y, -d, len, h, 1, side * Math.PI / 2, rgb, fx, 0, rgb); }
 /** Quad facing up centred at (x, y, d). */
-export function qu(b, T, x, y, d, w, len, rgb) { b.add(T.quadUp, x, y, -d, w, 1, len, 0, rgb, FX_PLAIN, 0, rgb); }
+export function qu(b, T, x, y, d, w, len, rgb, fx = FX_PLAIN) { b.add(T.quadUp, x, y, -d, w, 1, len, 0, rgb, fx, 0, rgb); }
 /** Diagonal stripes across a front face (local coords, z = face plane). */
 export function stripes(b, T, x0, y0, x1, y1, z, rgb, n) {
   const w = (x1 - x0) / n;
   const h = y1 - y0;
   for (let i = 0; i < n; i++) b.add(T.stripe, x0 + (i + 0.5) * w, (y0 + y1) / 2, z, w * 0.95, h, 1, 0, rgb, FX_PLAIN, 0, rgb);
+}
+
+/**
+ * A stepped light pool on a surface at night (a no-op by day): nested discs, each a step warmer than the last
+ * (unlit, so they glow like the lamp above them). `base` is the surface colour, `tint` the lamp colour; rx / rz the
+ * outer radii. About 40 vertices; baked into the chunk mesh, no draw call.
+ */
+export function lightPool(b, T, P, x, y, d, rx, rz, base, tint, rings = 2, step = 0.006) {
+  if (!P.dark) return;
+  const g = mix(base, [0, 0, 0], 0.17);
+  for (let i = 0; i < rings; i++) {
+    const k = 1 - i * (0.6 / rings);
+    b.add(T.fan, x, y + i * step, -d, rx * 2 * k, 1, rz * 2 * k, 0, mix(g, tint, 0.28 + 0.2 * i), FX_GLOW, 0, tint);
+  }
 }
 
 /** Windows on a facade. Facing ±x (side) along d, or facing +z across x. Lit ones (night) are warm white. */
@@ -152,7 +166,50 @@ export function makeBio(P) {
     B.sign = null; // pixel-letter runs, built once below
   }
   for (const B of list) B.sign = signRuns(B.name.toUpperCase());
+  // surfaces (material ids, see gfx.js): what the deck beside the track and the ground are made of
+  downtown.deckMat = M_BLOCK; harbour.deckMat = M_PLANK; green.deckMat = M_COBBLE; old.deckMat = M_COBBLE; neon.deckMat = M_TILE; yard.deckMat = M_GRAVEL;
+  harbour.groundMat = M_TILE; green.groundMat = M_GRASS; neon.groundMat = M_TILE; yard.groundMat = M_GRAVEL;
+  lightRigs(P, list, rust);
   return list;
+}
+
+/**
+ * Per-district light rig, blended at zone boundaries (uniforms only): sun direction, hemisphere / key intensities,
+ * the key light's colour and the shadow band's tint (split toning: shadows lean toward a district ink instead
+ * of just getting darker), wall ambient occlusion, and the sky's cloud layer. Every colour is a mix of the
+ * theme inks (so light and dark both follow); lights are normalised to luminance ~1 so exposure stays put.
+ */
+function lightRigs(P, list, rust) {
+  const dk = P.dark; const m = mix;
+  const lum = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  const unit = (c) => { const k = 1 / Math.max(0.25, lum(c)); return [Math.min(1.4, c[0] * k), Math.min(1.4, c[1] * k), Math.min(1.4, c[2] * k)]; };
+  const tint = (c, k) => unit(m([1, 1, 1], c, k));
+  const W = P.white;
+  const orange = m(P.bad, P.hl, 0.5);
+  // [sun x,y,z] [ambient, sky, key] key colour, shadow tint, ao [ground y, strength, height], sky: cloud colour, offset colour, [band centre, width, glow, strength], [az freq, el freq, threshold, drift]
+  const R = dk ? [
+    { sun: [-0.42, 0.8, 0.43], lk: [0.62, 0.2, 0.26], key: tint(P.a, 0.14), shd: tint(P.a, 0.12), ao: [-4, 0.44, 12], cl: [m(P.bg, P.a, 0.12), m(P.bg, P.a, 0.05), [0.2, 0.2, 0, 0], [3, 12, 0.5, 0.004]] },
+    { sun: [-0.6, 0.42, 0.55], lk: [0.58, 0.2, 0.3], key: tint(m(P.a, P.hl, 0.35), 0.22), shd: tint(P.a, 0.4), ao: [-2.6, 0.42, 4], cl: [m(P.bg, P.a, 0.22), m(P.bg, P.a, 0.1), [0.18, 0.15, 0.25, 1], [2, 26, 0.5, 0.004]] },
+    { sun: [-0.28, 0.92, 0.3], lk: [0.64, 0.2, 0.24], key: tint(m(P.a, P.good, 0.5), 0.18), shd: tint(P.good, 0.34), ao: [-1.6, 0.36, 3.2], cl: [m(P.bg, P.good, 0.2), m(P.bg, P.good, 0.08), [0.3, 0.28, 0, 1], [3, 9, 0.52, 0.004]] },
+    { sun: [0.56, 0.52, 0.5], lk: [0.6, 0.2, 0.28], key: tint(m(P.hl, P.bad, 0.4), 0.2), shd: tint(m(P.b, P.a, 0.5), 0.34), ao: [-4, 0.4, 10], cl: [m(P.bg, P.bad, 0.22), m(P.bg, P.b, 0.1), [0.2, 0.2, 0.2, 1], [2, 20, 0.52, 0.004]] },
+    { sun: [-0.5, 0.3, 0.62], lk: [0.55, 0.22, 0.3], key: tint(m(P.b, P.a, 0.4), 0.34), shd: tint(m(P.a, P.b, 0.5), 0.5), ao: [-1.2, 0.42, 3.6], cl: [m(P.bg, P.b, 0.3), m(P.bg, P.a, 0.12), [0.14, 0.12, 0.6, 1], [2, 22, 0.5, 0.004]] },
+    { sun: [-0.35, 0.62, 0.5], lk: [0.64, 0.2, 0.26], key: tint(m(P.hl, P.bad, 0.4), 0.2), shd: tint(rust, 0.36), ao: [-2.6, 0.42, 4.2], cl: [m(P.bg, rust, 0.22), m(P.bg, rust, 0.1), [0.14, 0.22, 0.2, 1], [2, 14, 0.4, 0.004]] },
+  ] : [
+    { sun: [-0.42, 0.8, 0.43], lk: [0.6, 0.22, 0.3], key: tint(P.hl, 0.1), shd: tint(P.a, 0.1), ao: [-4, 0.4, 12], cl: [W, m(P.bg, P.b, 0.42), [0.3, 0.3, 0, 0], [3, 9, 0.5, 0.004]] },
+    { sun: [-0.64, 0.4, 0.55], lk: [0.5, 0.2, 0.42], key: tint(m(P.hl, P.bad, 0.25), 0.42), shd: tint(P.a, 0.46), ao: [-2.6, 0.38, 4], cl: [m(W, P.a, 0.06), m(P.card, P.a, 0.3), [0.2, 0.17, 0, 1], [2, 26, 0.5, 0.004]] },
+    { sun: [-0.28, 0.92, 0.3], lk: [0.68, 0.24, 0.22], key: tint(P.hl, 0.14), shd: tint(m(P.good, P.a, 0.4), 0.3), ao: [-1.6, 0.3, 3.2], cl: [W, m(P.card, P.good, 0.4), [0.3, 0.3, 0, 1], [3, 9, 0.5, 0.004]] },
+    { sun: [0.58, 0.52, 0.5], lk: [0.54, 0.2, 0.38], key: tint(m(P.hl, P.bad, 0.4), 0.4), shd: tint(m(P.b, P.a, 0.5), 0.32), ao: [-4, 0.34, 10], cl: [m(W, P.hl, 0.22), m(P.card, P.b, 0.4), [0.22, 0.2, 0, 1], [2, 20, 0.52, 0.004]] },
+    { sun: [-0.5, 0.3, 0.62], lk: [0.48, 0.22, 0.4], key: tint(m(P.b, P.hl, 0.35), 0.3), shd: tint(m(P.a, P.b, 0.4), 0.5), ao: [-1.2, 0.38, 3.6], cl: [m(W, P.b, 0.18), m(P.card, P.a, 0.4), [0.16, 0.14, 0.5, 1], [2, 22, 0.5, 0.004]] },
+    { sun: [-0.35, 0.62, 0.5], lk: [0.66, 0.2, 0.26], key: tint(m(P.hl, P.bad, 0.35), 0.22), shd: tint(rust, 0.3), ao: [-2.6, 0.38, 4.2], cl: [m(m(P.muted, W, 0.5), rust, 0.15), m(rust, P.card, 0.45), [0.15, 0.24, 0, 1], [2, 14, 0.38, 0.004]] },
+  ];
+  for (let i = 0; i < list.length; i++) {
+    const r = R[i];
+    const sl = Math.hypot(r.sun[0], r.sun[1], r.sun[2]);
+    list[i].rig = {
+      sun: [r.sun[0] / sl, r.sun[1] / sl, r.sun[2] / sl], lk: r.lk, key: r.key, shd: r.shd, ao: r.ao,
+      cl: r.cl[0], cm: r.cl[1], cs: r.cl[2], sh: r.cl[3],
+    };
+  }
 }
 
 // ── district gate: pixel letters baked as quads ──
@@ -246,7 +303,7 @@ const rr = (r, a, e) => a + r() * (e - a);
 const pk = (r, a) => a[Math.floor(r() * a.length)];
 
 /** Ground slab beside the track (top at y1), from the parapet outward. */
-function ground(X, side, x1, y1, col) { bx(X.b, X.T, side * 4.7, -8, X.d0, side * x1, y1, X.d1, col, FX_PLAIN, 0, X.ink); }
+function ground(X, side, x1, y1, col) { bx(X.b, X.T, side * 4.7, -8, X.d0, side * x1, y1, X.d1, col, FX_PLAIN | (X.B.groundMat || 0), 0, X.ink); }
 
 /** A row of back buildings: simple boxes (base y0, heights hmin..hmax) with windows. */
 function backRow(X, side, x0, x1, y0, hmin, hmax, cols, wmin, wmax, roofCol) {
@@ -259,7 +316,7 @@ function backRow(X, side, x0, x1, y0, hmin, hmax, cols, wmin, wmax, roofCol) {
       const h = hmin + r() * (hmax - hmin);
       const col = mix(pk(r, cols), P.bg, 0.2);
       const xa = side > 0 ? inner : -inner - 14; const xb = side > 0 ? inner + 14 : -inner;
-      bx(b, T, xa, y0, e, xb, h, ee, col, FX_PLAIN, 0.12, ink);
+      bx(b, T, xa, y0, e, xb, h, ee, col, FX_PLAIN | M_BLOCK, 0.12, ink);
       if (roofCol) b.add(T.roof, (xa + xb) / 2, h + 1.6, -(e + ee) / 2, ee - e + 0.4, 3.2, 14.4, Math.PI / 2, roofCol, FX_PLAIN, 0.06, ink);
       windows(b, T, r, P, -side, side > 0 ? xa - 0.02 : xb + 0.02, e + 1, ee - 1, y0 > -3 ? y0 : -2, h, 0);
     }
@@ -273,6 +330,7 @@ function mast(X, x, y0, d, h) {
   bx(b, T, x - 0.12, y0, d - 0.12, x + 0.12, y0 + h, d + 0.12, P.pole, FX_PLAIN, 0.025, ink);
   bx(b, T, x - 0.7, y0 + h, d - 0.35, x + 0.7, y0 + h + 0.4, d + 0.35, P.shadeInk, FX_PLAIN, 0.03, ink);
   qz(b, T, x, y0 + h + 0.2, d - 0.37, 1.2, 0.26, P.warm, FX_GLOW);
+  lightPool(b, T, P, x * 1.08, y0 + 0.02, d, 3.2, 3.4, X.B.ground || X.B.deck, P.warm);
 }
 
 /** A stack of shipping containers (bays of 12 m along d, `lv` levels, 5 m deep). */
@@ -283,7 +341,7 @@ function containers(X, side, x0, y0, d, bays, lv, cols) {
     for (let l = 0; l < lv; l++) {
       const col = pk(r, cols);
       const ya = y0 + l * 2.6;
-      bx(b, T, xa, ya, d + k * 12 + 0.1, xb, ya + 2.55, d + (k + 1) * 12 - 0.1, col, FX_PLAIN, 0.05, ink);
+      bx(b, T, xa, ya, d + k * 12 + 0.1, xb, ya + 2.55, d + (k + 1) * 12 - 0.1, col, FX_PLAIN | M_CORR, 0.05, ink);
       const dark = mix(col, X.P.ink, 0.28);
       for (let q = 0; q < 4; q++) qx(b, T, -side, xa - side * 0.01, ya + 1.3, d + k * 12 + 1.6 + q * 3, 0.22, 2.1, dark, FX_PLAIN);
     }
@@ -294,7 +352,7 @@ function containers(X, side, x0, y0, d, bays, lv, cols) {
 function shed(X, side, x0, y0, d, len, depth, h, wall, roof) {
   const { b, T, P, r, ink } = X;
   const xa = side * x0; const xb = side * (x0 + depth);
-  bx(b, T, xa, y0, d, xb, y0 + h, d + len, wall, FX_PLAIN, 0.08, ink);
+  bx(b, T, xa, y0, d, xb, y0 + h, d + len, wall, FX_PLAIN | M_CORR, 0.08, ink);
   b.add(T.roof, (xa + xb) / 2, y0 + h + 0.9, -(d + len / 2), depth + 0.8, 1.8, len + 0.4, 0, roof, FX_PLAIN, 0.06, ink);
   const rib = mix(wall, P.ink, 0.2);
   for (let k = d + 0.8; k < d + len - 0.5; k += 1.6) qx(b, T, -side, xa - side * 0.01, y0 + h * 0.5, k, 0.2, h - 0.4, rib, FX_PLAIN);
@@ -312,9 +370,9 @@ function harbour(X) {
   const mid = (d0 + d1) / 2;
   for (const side of [-1, 1]) {
     if (side === ws) {
-      bx(b, T, side * 4.7, -8, d0, side * 9.4, -1.0, d1, B.quay, FX_PLAIN, 0.05, ink);
+      bx(b, T, side * 4.7, -8, d0, side * 9.4, -1.0, d1, B.quay, FX_PLAIN | M_PLANK, 0.05, ink);
       qu(b, T, side * 9.0, -0.99, mid, 0.3, CHUNK, P.white);
-      qu(b, T, side * 50, -3.3, mid, 82, CHUNK, B.water);
+      qu(b, T, side * 50, -3.3, mid, 82, CHUNK, B.water, FX_PLAIN | M_WATER);
       for (let k = 0; k < 5; k++) qu(b, T, side * rr(r, 12, 44), -3.28, d0 + rr(r, 4, 94), 0.4, rr(r, 4, 10), B.foam);
       for (let k = 0; k < 4; k++) b.add(T.cyl6, side * 8.5, -0.55, -(d0 + 12 + k * 25), 0.6, 0.9, 0.6, 0, P.shadeInk, FX_PLAIN, 0.03, ink);
       // boats
@@ -322,7 +380,7 @@ function harbour(X) {
       for (let k = 0; k < nb; k++) {
         const bd = d0 + 8 + k * 38 + r() * 14; const bxx = side * rr(r, 13, 20); const len = rr(r, 7, 11);
         const col = pk(r, B.cont);
-        bx(b, T, bxx - 1.7, -3.9, bd, bxx + 1.7, -2.2, bd + len, col, FX_PLAIN, 0.06, ink);
+        bx(b, T, bxx - 1.7, -3.9, bd, bxx + 1.7, -2.2, bd + len, col, FX_PLAIN | M_PLANK, 0.06, ink);
         bx(b, T, bxx - 1.7, -2.2, bd, bxx + 1.7, -1.9, bd + len, P.white, FX_PLAIN, 0.03, ink);
         bx(b, T, bxx - 1.0, -1.9, bd + len * 0.1, bxx + 1.0, -0.2, bd + len * 0.1 + 3, P.white, FX_PLAIN, 0.05, ink);
         qx(b, T, -side, bxx - side * 1.01, -1.0, bd + len * 0.1 + 1.5, 1.8, 0.5, P.glass, FX_PLAIN);
@@ -331,7 +389,7 @@ function harbour(X) {
       // cargo ship
       if (!tun && r() < 0.5) {
         const sd = d0 + rr(r, 4, 30); const L = 52; const sx = side * rr(r, 32, 40);
-        bx(b, T, sx - 5, -3.9, sd, sx + 5, 1.6, sd + L, mix(P.muted, P.ink, 0.35), FX_PLAIN, 0.1, ink);
+        bx(b, T, sx - 5, -3.9, sd, sx + 5, 1.6, sd + L, mix(P.muted, P.ink, 0.35), FX_PLAIN | M_CORR, 0.1, ink);
         bx(b, T, sx - 5.05, -3.9, sd, sx + 5.05, -2.4, sd + L, B.crane, FX_PLAIN, 0.02, ink);
         bx(b, T, sx - 3, 1.6, sd + L - 11, sx + 3, 7.2, sd + L - 2, P.white, FX_PLAIN, 0.07, ink);
         qz(b, T, sx, 5.6, sd + L - 11.02, 5, 0.8, P.glass, FX_PLAIN);
@@ -403,7 +461,7 @@ function greenway(X) {
       const inner = rr(r, 10.2, 11.6); const depth = 6;
       const xa = side * inner; const xb = side * (inner + depth);
       const wall = pk(r, B.bld); const h = rr(r, 3.2, 4.2);
-      bx(b, T, xa, G, d, xb, G + h, d + len, wall, FX_PLAIN, 0.07, ink);
+      bx(b, T, xa, G, d, xb, G + h, d + len, wall, FX_PLAIN | (B.bld.indexOf(wall) % 2 ? M_BRICK : M_PLASTER), 0.07, ink);
       const rh = 2.2;
       b.add(T.roof, (xa + xb) / 2, G + h + rh / 2, -(d + len / 2), len + 0.6, rh, depth + 0.7, Math.PI / 2, pk(r, B.roof), FX_PLAIN, 0.06, ink);
       b.add(T.tri, xa - side * 0.3, G + h + rh / 3, -(d + len / 2), len, rh, 1, -side * Math.PI / 2, wall, FX_PLAIN, 0, wall);
@@ -411,6 +469,15 @@ function greenway(X) {
       windows(b, T, r, P, -side, xa - side * 0.02, d + len * 0.5, d + len - 0.4, G - 1.2, G + h + 0.6, 2, 0.7);
       if (r() < 0.6) bx(b, T, (xa + xb) / 2 - 0.4, G + h + rh * 0.4, d + len * 0.7 - 0.4, (xa + xb) / 2 + 0.4, G + h + rh + 1.0, d + len * 0.7 + 0.4, mix(wall, P.ink, 0.3), FX_PLAIN, 0.04, ink);
       d += len + rr(r, 6, 14);
+    }
+    // lamp posts along the hedge line (their light pools show at night)
+    for (let ld = Math.ceil(d0 / 40) * 40 + 11 + (side > 0 ? 20 : 0); ld < d1; ld += 40) {
+      if (ld < d0 + 1 || (tun && ld > tun[0] - 2 && ld < tun[1] + 2)) continue;
+      const lx = side * 6.5;
+      bx(b, T, lx - 0.07, G, ld - 0.07, lx + 0.07, G + 3.4, ld + 0.07, P.pole, FX_PLAIN, 0.02, ink);
+      bx(b, T, lx - 0.3, G + 3.4, ld - 0.3, lx + 0.3, G + 3.62, ld + 0.3, P.shadeInk, FX_PLAIN, 0.025, ink);
+      bx(b, T, lx - 0.22, G + 3.26, ld - 0.22, lx + 0.22, G + 3.4, ld + 0.22, P.warm, FX_GLOW, 0, ink);
+      lightPool(b, T, P, lx, G + 0.02, ld, 3.2, 3.2, B.lawn, P.warm);
     }
     // trees: a line beside the hedge, a deeper row behind
     for (let row = 0; row < 2; row++) {
@@ -420,7 +487,7 @@ function greenway(X) {
         const x = side * (row ? rr(r, 15, 28) : rr(r, 6.8, 8.6));
         const col = r() < 0.1 ? B.blossom : pk(r, B.crown);
         const th = 2.0 * s; const base = G;
-        bx(b, T, x - 0.25 * s, base, d - 0.25 * s, x + 0.25 * s, base + th + 0.6, d + 0.25 * s, B.trunk, FX_PLAIN, 0, ink);
+        bx(b, T, x - 0.25 * s, base, d - 0.25 * s, x + 0.25 * s, base + th + 0.6, d + 0.25 * s, B.trunk, FX_PLAIN | M_CORR, 0, ink);
         if (tun && base + th + 4.4 * s > 6.4) { d += rr(r, 8, 12); continue; }
         if (kind < 0.56) b.add(T.octa, x, base + th + 2.2 * s, -d, 4.4 * s, 5.4 * s, 4.4 * s, r() * 3, col, FX_PLAIN, 0.05, ink);
         else if (kind < 0.68) b.add(T.lowSphere, x, base + th + 1.7 * s, -d, 4.6 * s, 4.0 * s, 4.6 * s, r() * 3, col, FX_PLAIN, 0.05, ink);
@@ -452,7 +519,7 @@ function oldTown(X) {
       const wall = pk(r, B.bld);
       const x0 = side * inner; const x1 = side * (inner + depth);
       const rh = tun ? 1.6 : rr(r, 2.6, 3.6);
-      bx(b, T, Math.min(x0, x1), -8, d + 0.12, Math.max(x0, x1), h, de - 0.12, wall, FX_PLAIN, 0.07, ink);
+      bx(b, T, Math.min(x0, x1), -8, d + 0.12, Math.max(x0, x1), h, de - 0.12, wall, FX_PLAIN | (B.bld.indexOf(wall) % 2 ? M_BRICK : M_PLASTER), 0.07, ink);
       b.add(T.roof, (x0 + x1) / 2, h + rh / 2, -(d + de) / 2, de - d + 0.3, rh, depth + 0.6, Math.PI / 2, pk(r, B.roof), FX_PLAIN, 0.06, ink);
       b.add(T.tri, x0 - side * 0.3, h + rh / 3, -(d + de) / 2, de - d - 0.1, rh, 1, -side * Math.PI / 2, mix(wall, P.card, 0.2), FX_PLAIN, 0, wall);
       windows(b, T, r, P, -side, x0 - side * 0.02, d + 0.9, de - 0.9, -2.2, h, 2, 0.5);
@@ -494,7 +561,8 @@ function neonMarket(X) {
     while (d < d1 - 4) {
       const col = pk(r, B.glow);
       const x = side * 7.2;
-      bx(b, T, x - 1.1, G, d - 1.7, x + 1.1, G + 1.0, d + 1.7, B.wood, FX_PLAIN, 0, ink);
+      bx(b, T, x - 1.1, G, d - 1.7, x + 1.1, G + 1.0, d + 1.7, B.wood, FX_PLAIN | M_PLANK, 0, ink);
+      lightPool(b, T, P, x + side * 0.4, G + 0.02, d, 3.0, 3.6, B.ground, col);
       bx(b, T, x - 0.6, G + 1.0, d - 1.0, x + 0.2, G + 1.5, d - 0.2, pk(r, B.glow), FX_PLAIN, 0, ink);
       bx(b, T, x + side * 0.9 - 0.06, G, d - 1.6, x + side * 0.9 + 0.06, G + 2.7, d + 1.6, P.pole, FX_PLAIN, 0.0, ink);
       bx(b, T, x - 1.5, G + 2.6, d - 2.1, x + 1.5, G + 2.85, d + 2.1, col, FX_PLAIN, 0.05, ink);
@@ -512,7 +580,7 @@ function neonMarket(X) {
         const h = tun ? 3 + r() * 3 : G + rr(r, 6, 13);
         const col = pk(r, B.bld);
         const xa = Math.min(side * inner, side * (inner + depth)); const xb = Math.max(side * inner, side * (inner + depth));
-        bx(b, T, xa, -8, d + 0.3, xb, h, de - 0.3, col, FX_PLAIN, 0.09, ink);
+        bx(b, T, xa, -8, d + 0.3, xb, h, de - 0.3, col, FX_PLAIN | M_PLASTER, 0.09, ink);
         bx(b, T, xa - 0.2, h, d + 0.15, xb + 0.2, h + 0.4, de - 0.15, mix(col, P.ink, 0.2), FX_PLAIN, 0.05, ink);
         windows(b, T, r, P, -side, side * inner - side * 0.02, d + 1, de - 1, G - 0.4, h, r() < 0.5 ? 0 : 1, 0.75);
         const nc = pk(r, B.glow);
