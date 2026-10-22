@@ -2148,10 +2148,13 @@ export function createGame(el, api) {
     const tx = d.x - fx0 * dGoal; const tz = d.z - fz0 * dGoal;
     const t = geo.segBlocked(d.x, d.z, tx, tz, 3);
     if (t < 1) dGoal = Math.max(3.2, dGoal * t - 0.8);
+    const dWas = cr.d;
     critDamp(cr.d - dGoal, cr.dV, dGoal < cr.d ? CAM.distIn : CAM.distW, dt);
     cr.d = dGoal + SPR.e; cr.dV = SPR.v;
-    const dMax = (mode.dist + 2.2 + 1) * portraitK; // (a spring started from a velocity may not pass the rig's own ceiling)
-    if (cr.d > dMax) { cr.d = dMax; if (cr.dV > 0) cr.dV = 0; }
+    // (a spring started from a velocity may not pass the rig's own ceiling; a rig already above it,
+    // e.g. far → near on CAM, eases in on the spring instead of being cut to it in one frame)
+    const dMax = (mode.dist + 2.2 + 1) * portraitK;
+    if (cr.d > dMax && cr.d > dWas) { cr.d = Math.max(dMax, dWas); if (cr.dV > 0) cr.dV = 0; }
     const gx = d.x - fx0 * cr.d; const gz = d.z - fz0 * cr.d;
     // height: soft, never under the ground
     const gnd = geo.ground(gx, gz);
