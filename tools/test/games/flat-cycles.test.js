@@ -285,6 +285,32 @@ async function main() {
     }
   });
 
+  await section('round start: the board repaint is spread over frames and is finished well inside the countdown', async () => {
+    const hs = await launch({ port: PORT + 4, only: ['cycles'], coarse: true });
+    try {
+      const pg = hs.a;
+      await hs.startLive(pg, 'cycles', 'local');
+      await until(() => visible(pg, '.cy-pick .cy-go'), 'picker');
+      await pg.evaluate(() => { // longest rAF callback + first frame with a painted board, from the click on
+        window.__st = { t0: performance.now(), painted: 0, frames: 0 };
+        const f = () => {
+          const c = document.querySelector('.cy-board canvas');
+          if (c && c.width > 300 && !window.__st.painted) { const d = c.getContext('2d').getImageData(c.width / 2, c.height / 2, 24, 24).data; const seen = new Set(); for (let i = 0; i < d.length; i += 4) seen.add(d[i] + ',' + d[i + 1] + ',' + d[i + 2]); if (seen.size > 2) window.__st.painted = performance.now() - window.__st.t0; }
+          window.__st.frames++;
+          if (window.__st.frames < 90) requestAnimationFrame(f);
+        };
+        requestAnimationFrame(f);
+      });
+      await pg.click('.cy-go');
+      await sleep(1500);
+      const st = await pg.evaluate(() => window.__st);
+      ok(st.painted > 0 && st.painted < 900, `the paper and grid are on the canvas within the first moments of the countdown (${Math.round(st.painted)} ms)`);
+      const info = await pg.evaluate(() => window.__cycles.info());
+      ok(info.phase === 'count' || info.phase === 'run', `and the round is still on its way (${info.phase})`);
+      hs.assertNoErrors && hs.assertNoErrors();
+    } finally { await hs.close(); }
+  });
+
   console.log(`\n${passed} ok`);
   if (failures.length) { console.error('\nFAILURES:\n' + failures.join('\n')); process.exit(1); }
   console.log('ALL GOOD');
