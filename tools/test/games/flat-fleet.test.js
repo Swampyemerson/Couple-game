@@ -244,7 +244,7 @@ async function looksTest(h, scheme) {
   assert(r.seaLayer === 'transform/transform' && r.gridPaint === 'none', `[riso ${scheme}] the printed sea is its own cached layer, so firing never repaints it (${r.seaLayer})`);
   assert(/url\(/.test(r.homeBg) && /radial-gradient/.test(r.homeBg), `[riso ${scheme}] and so is the home chart`);
   assert(r.seaA && r.seaB && r.seaA !== r.seaB, `[riso ${scheme}] each sea is printed in its owner's ink (${r.seaA.trim()} / ${r.seaB.trim()})`);
-  assert(r.shadow && r.shadow !== 'none', `[riso ${scheme}] headings are printed off register`);
+  assert(r.shadow === 'none', `[riso ${scheme}] small chart headings stay crisp (no off-register shadow, same as the original)`);
   assert(/url\(/.test(r.tooth), `[riso ${scheme}] panels carry the paper tooth`);
   assert(r.hull === 5, `[riso ${scheme}] ships are drawn as two-plate pieces`);
   assert(!r.same.length, `[hidden ${scheme}] the target heading looks and behaves like every other heading (differs in: ${r.same.join(', ') || 'nothing'})`);
