@@ -177,3 +177,36 @@ Every game keeps its rules, move encodings, setup options, records and saved dat
   - Under 80 ms and 10% loss, partner snaps over half a cell on the host fell from 4 to 0, and the p99 second difference from 1.4 to 0.4–0.7.
 - `cycles/sim.js` was refactored: `advance()` plus an allocation-free `pathAt`. It matches the original on 180 random turn logs (8,969 ticks, 14,400 `pathAt` checks).
 - Tests: `computer.test.js` (229), `live.test.js` (434) and the new `flat-cycles.test.js` (37).
+
+## Before and after (flat-perf, iPhone 13, CPU 4×, 8 s of random taps)
+
+The original code (worktree at 96db9c8) and this branch were measured back to back under the same machine load:
+
+```
+                 BEFORE                                       AFTER
+game        fps  p99  max jank% long lay/s layms/s     fps  p99  max jank% long lay/s layms/s
+four        56.9  33  100  2.3    4  60.9   31.6       55.0  83  117  3.7    6   6.7   16.9
+dots        58.3  33   83  1.3    1   3.6    8.3       58.7  33   67  1.1    1   3.5    6.2
+ultimate    55.9  50   83  4.4    3   3.8   19.8       56.2  50   50  4.9    1   3.1   13.4
+fleet       59.1  17   83  0.2    1   0.2    6.8       58.8  17  133  0.4    1   0.2   10.0
+wordduel    59.4  17   50  0.2    1   0.2    4.3       58.8  17   83  0.6    1   0.2    6.8
+agents      59.5  17   33  0.2    0   0.2    1.8       57.7  33   50  2.8    0   0.2    2.3
+doodle      59.2  17   83  0.2    1   0.5    5.9       59.1  17   50  0.6    0   0.5    1.3
+wave        59.0  17   83  0.4    1   0.4    4.0       59.0  17  100  0.2    1   0.4    6.8
+hockey      23.2  83  117 90.3   32   2.0    3.2       51.0  50  250 11.1    4   3.1    5.3
+quickdraw   57.8  33   67  2.3    1  13.7   36.8       59.4  17   33  0.4    0   5.0    9.2
+defuse      58.9  33   34  1.2    0   6.0   17.4       57.5  50   83  2.3    2   5.3   18.5
+```
+
+- **The probe is blunt.** It taps random things, so for the secret turn games it mostly sees the pass-the-phone curtain, and for
+  Cycles it depends on whether a round actually started. That is why each builder also wrote a focused probe that plays real
+  moves; their numbers are in the per-game sections above.
+- **The big wins** are hockey (23 → 51 fps, jank 90% → 11%), four's layout thrash (61 → 7 layouts/s), and quickdraw
+  (layout 37 → 9 ms/s, p99 33 → 17 ms).
+- **The turn games without a problem stay at 57–59 fps.** They now carry the extra juice, and their small changes in max frame
+  are within run-to-run noise on this shared box.
+- **Cycles,** two runs each while riding:
+  - before: 45.9 fps, 23% jank, longest task 138 ms;
+  - after: 50.2–53.2 fps, 7–10% jank, longest task 198 ms. See the follow-up below.
+- **About 60 style recalcs/s** remain in the turn games. That comes from the chrome's whose-turn arrow (`gm-nudge`), an infinite
+  compositor animation. It is cheap; there is no layout or paint behind it.
