@@ -363,6 +363,8 @@ body:has(.gh) { background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-bg
 .gh-presence-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; border: var(--g-stroke) solid var(--g-muted); }
 .gh-presence.is-here { color: var(--g-ink); }
 .gh-presence.is-here .gh-presence-dot { background: var(--g-good); border-color: var(--g-ink); animation: gm-blink 2.4s ease-in-out infinite; }
+/* the hub stays in the page under an open game: don't keep restyling it 60×/s behind the game */
+body.gm-open .gh-presence-dot { animation: none !important; }
 
 /* head-to-head: two ink blocks overprinting in the middle */
 .gh-score { position: relative; display: grid; grid-template-columns: 1fr 1fr; isolation: isolate; border: 2.5px solid var(--g-ink); border-radius: 14px; overflow: hidden; box-shadow: 5px 5px 0 var(--g-edge); background: #fff; }

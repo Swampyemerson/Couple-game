@@ -106,8 +106,8 @@ export const FLAT_CSS = `
 /* the casing: grain, plus halftone shading that thickens toward the lower right (as if lit from the top left) and a pink plate printed a hair off register */
 .g-defuse .dx-bomb { background: var(--g-grain) 0 0 / var(--g-grain-size), var(--g-card); }
 .g-defuse .dx-bomb::before { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: radial-gradient(circle, color-mix(in srgb, var(--g-ink) 34%, transparent) 1.25px, transparent 1.9px) 0 0 / 6px 6px; -webkit-mask-image: linear-gradient(150deg, transparent 38%, #000 100%); mask-image: linear-gradient(150deg, transparent 38%, #000 100%); opacity: 0.6; }
-.g-defuse .dx-bomb::after { content: ''; position: absolute; inset: 3px; border-radius: inherit; border: 2px solid var(--dx-plate-b); transform: translate(2px, 1.5px); pointer-events: none; mix-blend-mode: var(--dx-mix); }
-.g-defuse .dx-plate, .g-defuse .dx-mod-tag, .g-defuse .dx-h, .g-defuse .dx-role-name { text-shadow: var(--g-misreg); }
+.g-defuse .dx-bomb::after { content: ''; position: absolute; inset: 3px; border-radius: inherit; border: 2px solid var(--dx-plate-b); transform: translate(2px, 1.5px); pointer-events: none; }
+.g-defuse .dx-plate, .g-defuse .dx-h, .g-defuse .dx-role-name { text-shadow: var(--g-misreg); }
 .g-defuse .dx-lcd { background-image: repeating-linear-gradient(0deg, transparent 0 2px, rgb(255 255 255 / 0.04) 2px 3px); }
 .g-defuse .dx-sticker { position: relative; overflow: hidden; }
 .g-defuse .dx-sticker::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 5px; background: var(--p-b); mix-blend-mode: multiply; opacity: 0.85; pointer-events: none; }
