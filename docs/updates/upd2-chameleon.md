@@ -216,3 +216,36 @@ The run hit the 2 h background limit inside `chameleon.test.js` after 607 checks
 ## README line
 
 | Blend & Seek | Paint yourself to vanish, then hunt each other in 3D: crawl smoothly over walls and ceilings, hide as tiny as Micro, in richer rooms. |
+
+## Addendum: after the coordinator's merge (22 Oct, 13:20–16:40 UTC)
+
+`claude/relaxed-dijkstra-2cy8al` (up to ec505b1, which includes the coordinator's own hunt-test fix) is merged into this branch.
+`chameleon-hunt.test.js` merged cleanly and I didn't touch it afterwards. Root causes of the failures the coordinator reported:
+
+| Failure | Cause | Fix |
+|---|---|---|
+| twists: Bounty spot ≥ 2.3 m, fog / dusk restore | Already fixed in 8bf9350 (picker starved by new clutter; the test hard-coded the old sun 0.52) | none needed |
+| twists `dbsd` waitPhase at :814 | The test checked the shot line at a fixed 0.45 m, but a By-map Petite seeker's eye is 0.28 m, so new low clutter blocked the shot | Test: `aimAtHider` probes from the shooter's real camera to the hider |
+| `toggles` "stayed on the floor" | Already fixed in 8bf9350: the old start point was behind the new laundry basket. The controller still refuses walls with climbing off | none needed |
+| `blendfair` timeout after "no side hint…" | **Real (game).** The side hint needs the head-on view ≥ 75 %, but the baked paper grain costs a stamp about 4 points head-on (now 74 %) | `game.js` `sideOnly`: 75 → 70 |
+| `mapslice` timeout | **Older than this upgrade.** Candy Works joined BASE_MAPS after Art Studio in v4, so "Next" from Art Studio reaches Candy, never the House the test waits for | Test: the run starts from Candy Works, the map before the House |
+| maps `rooms` "browser closed" | Not an assertion. With the richer rooms, the six view × theme passes (~4.3 min each in software GL) no longer fit the 40-min per-file limit | none. Each of the six passes was run separately and all are ALL GOOD |
+
+Every chameleon suite except hunt, one at a time, after the merge:
+
+| Suite | Result |
+|---|---|
+| crawl | ALL GOOD |
+| cu | ALL GOOD |
+| gfx | ALL GOOD |
+| maps | every section ALL GOOD (`rooms` run per view/theme; see above) |
+| paint2 | 1 failure in the full run (camo meter "stale" dimming under load); `ONLY=meter` passes 2 / 2 alone |
+| rivalry | all passed |
+| sizes | ALL GOOD |
+| twists | ALL GOOD |
+| upd2 | done (measurement) |
+| chameleon.test.js | 674 ok, 2 sections failed |
+
+The two `chameleon.test.js` failures:
+- `timinglive` fails only under load; it passes alone.
+- `uxfinal` "rematch 1: round 1's hider" times out the same way on the base commit (it used to be hidden behind the lobby assert).
