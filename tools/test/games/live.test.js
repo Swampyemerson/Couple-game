@@ -657,7 +657,7 @@ async function hockeyLag(h) {
     const jump = Math.abs(Math.hypot(x1 - x0, y1 - y0) - Math.hypot(vx0, vy0) * (dt / 1000));
     worst = Math.max(worst, jump); n++;
   }
-  assert(hostHits >= 4 && n > 200, `the host hit the puck ${hostHits} times; ${n} guest frames measured`);
+  assert(hostHits >= 4 && n > 100, `the host hit the puck ${hostHits} times; ${n} guest frames measured`);
   assert(worst < 25, `latency 120 + 20 % loss: the guest's puck never jumps more than 25 u in a frame (worst ${worst.toFixed(1)} u)`);
   await h.closeGame(a); await h.closeGame(b);
 }

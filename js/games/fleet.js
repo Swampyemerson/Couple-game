@@ -396,7 +396,7 @@ const CSS = `
 .g-fleet .fl-lab-r { grid-column: 1; grid-row: 2; grid-template-rows: repeat(8, var(--cs)); padding-right: 4px; }
 .g-fleet .fl-lab-r span { justify-content: end; }
 .g-fleet .fl-grid {
-  --wave: color-mix(in srgb, var(--sea) 32%, transparent);
+  --wave: color-mix(in srgb, var(--sea) 24%, transparent);
   grid-column: 2; grid-row: 2; position: relative; display: grid; grid-template-columns: repeat(8, var(--cs)); grid-auto-rows: var(--cs);
   isolation: isolate; will-change: transform; background: var(--g-card); /* its own layer, so the sink jolt never re-rasterises it */
 }
@@ -494,7 +494,7 @@ const CSS = `
 
 /* ── headers, pills, log ── */
 .g-fleet .fl-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-left: var(--gut); margin-bottom: 3px; min-height: 22px; }
-.g-fleet .fl-h { display: flex; align-items: center; gap: 7px; font: 900 .74rem/1.1 var(--g-font-display); text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; text-shadow: var(--g-misreg); }
+.g-fleet .fl-h { display: flex; align-items: center; gap: 7px; font: 900 .74rem/1.1 var(--g-font-display); text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; }
 .g-fleet .fl-sw { width: 12px; height: 12px; flex: none; background: var(--ship); border: 2px solid var(--g-ink); border-radius: 3px; }
 .g-fleet .fl-pill { flex: none; font: 800 .8rem/1 var(--g-font-body); padding: 7px 11px; border: 2px solid var(--g-ink); border-radius: 999px; background: var(--tooth), var(--g-card); color: var(--g-ink); white-space: nowrap; }
 .g-fleet .fl-pill.is-mode { background: var(--tooth), var(--g-hl); color: var(--g-on-ink); }
