@@ -9,7 +9,8 @@ then hunts in first person with a handful of paint pellets.
 `kind: 'live'`, modes `live` (two devices) and `local` (one device, hotseat), phone + computer,
 versus, `immersive: true` (draws its own HUD with both scores). Entry: `js/games/chameleon.js`;
 modules in `js/games/chameleon/`; tests in `tools/test/games/chameleon.test.js` plus the v4 files
-`chameleon-twists / -hunt / -rivalry / -paint2 / -maps / -cu.test.js` (see "v4" below).
+`chameleon-twists / -hunt / -rivalry / -paint2 / -maps / -cu.test.js` (see "v4" below) and the v5
+files `chameleon-crawl / -sizes / -gfx / -upd2.test.js` (see "v5").
 
 ## Modes
 
@@ -22,6 +23,100 @@ The host picks mode, map, a preset (or any custom mix of settings, below) and wh
 the start screen; the guest sees every change live (and their diorama backdrop switches with the
 host's map choice).
 
+
+## v5 (upgrade 2): smooth surfaces, smaller chameleons, richer rooms (Oct 2026)
+
+Asked for: "the chameleon can really jump around as you switch surfaces and be hard to do", "still too easy
+to find chameleons on the smaller maps, so maybe even smaller chameleons", "a general graphical/texture
+upgrade". Report with research, before/after numbers and tests: `docs/updates/upd2-chameleon.md`.
+
+### Surface transitions (`move.js`, `world.js`, `game.js`, `controls.js`)
+
+- **Drawn pose ≠ sim pose.** The avatar used to be drawn at the raw contact point (its feet), so every
+  concave transfer or convex wrap teleported it ~0.3–0.4 m and turned it about the feet. Now `mkVis` /
+  `visCore` / `visUpdate` keep a drawn centre (feet + up · 0.2 · size) and a drawn orientation that follow
+  the sim through critically damped error springs (`VIS`: position ω 17 ≈ 0.1 s half-life, rotation ω 20,
+  drawn turn capped at 10 rad/s). Steady motion has no lag; a sim jump glides; jumps over 1.2 m (new
+  round, teleport, zip) snap (`visSnap`). The partner's body is drawn through the same layer. Presence
+  still publishes the sim state (wire format unchanged).
+- **Fixed crawl substeps.** `crawlSteps` runs `world.crawl` in equal substeps of ≤ 1/60 s (`CRAWL_DT`),
+  so a 30 Hz, 60 Hz or 120 Hz phone crawls the same path (30 vs 60 Hz same-face agreement 59 % → 96 %).
+- **Input-frame lock** (`surfaceVel`, `crawlFrame`, `LOCK`). The screen-relative stick mapping flips
+  after a surface change (the camera is still where it was), so a held stick ping-ponged between two
+  faces (a floor → box crossing made 200 transfers in 8 s). Now a transfer with the stick held keeps the
+  new heading; turning the stick ≤ 40° steers it; past 40° a 0.2 s blend hands back to the screen mapping;
+  letting go (or 1.2 s with the screen mapping agreeing) drops the lock. Holding "up" walks
+  floor → wall → ceiling and keeps going.
+- **Forgiving corners and edges** (`world.crawl`). Convex wraps need only n·d > 0.25 (was 0.7) with probes
+  at 5 / 2 / 0.8 cm depth, so ≥ 3 cm table tops and diagonal approaches wrap; a blocked crawl slides
+  along the obstacle (and along an edge) instead of dead-stopping; the face just left can't be re-entered
+  for 0.4 s while the push is unchanged; a second wrap needs 0.3 m of travel or 0.8 s, a third in a row a
+  fresh push (stick released or turned 40°+) or 1.6 m. At a thin plank's far underside edge the body lets
+  go and drops to the floor (`crawlStep` code 5): top → underside → floor in 1.7 s, no loop.
+- **Camera follow rig** (`followRig`, `spring1` / `spring3*` = SmoothDamp). Hider orbit and seeker climb
+  view follow a spring pivot; solver pick changes (solveCam) blend through the rig (direction ≤ 1.2 rad/s,
+  8 while dragging; length a critically damped spring); the guard pulls in / lets out at ≤ 4 m/s; the rig
+  keeps its own forward through the guard (it used to re-derive it from a clamped camera: 85–140° in one
+  frame); pitch under ceilings is a spring; the view swings round a wall it's behind at ≤ 2.4 rad/s. The
+  seeker's first-person ↔ climb-view switch whips over 0.6 s (skipped after teleports), and sticking keeps
+  the view yaw (it used to flip 180°).
+- **Joystick**: dead zone 0.12, response curve ^1.25, floating base that follows a thumb > 1.3 radii out.
+- **Squeeze at small sizes**: the squeeze profile is capped at 0.9 × the body's own radius / head (same as
+  before for sizes ≥ Petite). The paint camera frames small bodies closer (`paintK` = 0.25 + 0.75 s below
+  Medium, 0.4 m floor).
+
+### Sizes and "By map" (`rules.js`, `cards.js`, `game.js`, `maps.js` daily)
+
+| id | label | scale |
+|---|---|---|
+| `micro` | Micro (new) | 0.32 |
+| `mini` | Tiny (new) | 0.45 |
+| `tiny` | Petite (was "Tiny"; same 0.6) | 0.6 |
+| `small` / `medium` / `large` / `huge` | unchanged | 0.8 / 1.0 / 1.3 / 1.8 |
+
+Size ids never change scale (saved setups store ids). A new value `auto` ("By map") picks a size per map
+from `SIZE_TABLES[preset]` (by map id, then the map's size class), via `resolveSize(rules, mapEntry)` /
+`sizeScaleFor`; game.js resolves it for the current round's map (Mix it up follows the map). All three
+presets use `auto`; Custom uses Classic's table.
+
+| map | Easy | Classic | Hard |
+|---|---|---|---|
+| Living Room, Garden, Art Studio, Candy Works | Medium | Petite | Tiny |
+| Greenhouse, Launderette | Large | Small | Petite |
+| Market, House | Huge | Medium | Small |
+| Museum, CU Boulder | Huge | Large | Medium |
+
+The lobby picker is a 4 × 2 grid (By map first, every cell ≥ 44 px) with "By map · <size>" for the
+selected map. Saved-data compatibility: `loadSaved()` → `migrateRules` turns a saved setup equal to an old
+preset (old size large / huge / medium) into that preset with `auto`; any other saved size stays; saves now
+carry `sz: 1` so a deliberate Large is never mistaken for old Classic. The daily "Tiny chameleons" twist
+uses `mini`, other days pick from auto ×3 / tiny / medium. On-screen size of a hider at 3 m (Living Room,
+side-on): Large 9753 px², Petite 1671, Tiny 862, Micro 388.
+
+### Rooms and lighting (`atlas.js`, `maps/patterns.js`, `geo.js`, `stage.js`, `toon.js`, `camo.js`, maps)
+
+- Paper grain (± 3.2 % per channel) baked into every atlas tile except `white`; most painters redrawn with
+  more detail; new `plaster`, `metal`, `trellis`, `braid`, `tiles`; a skyline packer (`packRects`) fits
+  more tiles into the same 1024² page (5.4 MB with mips, unchanged).
+- Baked ambient occlusion in vertex colours (`boxGeo` `cell` / `cuts`): floors darken softly along walls and
+  round props (never below 0.66), wall feet 20 % over 0.3 m.
+- Lights: warm sun 0xffe3bf, cool-ish sky fill 0xf9faff, warm ground bounce 0xf2e0c4; a 4-step ramp
+  (0.40, 0.58, 0.76, 0.88). Bodies share lights and ramp; camo.js `LIGHT` matches.
+- Camo stays fair: grain and AO live in the atlas texels / vertex colours that the eyedropper, the stamp
+  and the blend score already read (worst-case ΔE ≈ 3 for the grain). The Living Room eyedropper probe
+  moved from the (now grained) wallpaper to the toy-chest lid.
+- New hiding props: Living Room (trellis and braided rugs, cushion nest, bolster, laundry basket and shirt
+  pile, book stacks, a coat rail 20 cm off the wall, pet bed, quilt, magazines; colliders 56 → 70), Garden
+  (sand pit, pot stack, compost bin, ivy on both fences, picnic blanket and basket, scarecrow; 38 → 59),
+  Art Studio (canvas rack, ladder, paper-roll bin, plan chest, cardboard stack, folding screen, bunting;
+  36 → 54), Candy Works (gift-box stack, sprinkle pouf). Draw calls unchanged.
+
+### Tests
+
+`chameleon-crawl.test.js` (Node crawl sweeps of every edge/corner + browser joystick runs: sweep, box,
+thin, plank, slide, lock, fps, vis, browser), `crawl-sim.mjs` (the headless harness), `chameleon-sizes.test.js`
+(rules, bymap, lobby, play, mix), `chameleon-gfx.test.js` (every map light + dark, budgets),
+`chameleon-upd2.test.js` (before/after measurement: `xfeel`, `xfeels`, `xperf`, `xseek`; prints `METRIC` json).
 
 ## v4: twists, couple moments, rivalry, two new maps (Oct 2026 update)
 

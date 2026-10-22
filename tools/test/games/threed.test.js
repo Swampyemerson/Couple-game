@@ -314,6 +314,7 @@ async function bonesOnline(h) {
     if (col !== sim.moves[n].col) throw new Error(`FAIL: bones online: turn ${n + 1} diverged from the Node simulation`);
     if (!usedKey && n >= 2) { await me.keyboard.press(String(col + 1)); usedKey = true; } else await me.click(`.gb-tray[data-who="${who}"] .gb-col[data-col="${col}"]`);
     n++;
+    await waitMoves(me, id, n); // the engine move follows the drawn placement by a frame
     const after = await h.engine(me, id);
     if (after.state.last && after.state.last.n === n - 1 && after.state.last.destroyed) {
       smashes++;

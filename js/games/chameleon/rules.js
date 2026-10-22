@@ -2,15 +2,51 @@
 // per-device "last used" memory. The host owns them; they travel inside `setup` (lobby) and the
 // match info of every phase message, so both devices always play by the same, validated rules.
 
-/** Chameleon sizes: scale of the body, collider, step/jump/camera offsets, brush and hit radius. */
+/**
+ * Chameleon sizes: scale of the body, collider, step/jump/camera offsets, brush and hit radius.
+ * Smallest first. Saved setups store the ids, so an id never changes its scale: 'tiny' stays 0.6
+ * (the lobby now labels it "Petite"); 'mini' (0.45, label "Tiny") and 'micro' (0.32) are newer.
+ */
 export const SIZES = [
-  { id: 'tiny', label: 'Tiny', s: 0.6 },
+  { id: 'micro', label: 'Micro', s: 0.32 },
+  { id: 'mini', label: 'Tiny', s: 0.45 },
+  { id: 'tiny', label: 'Petite', s: 0.6 },
   { id: 'small', label: 'Small', s: 0.8 },
   { id: 'medium', label: 'Medium', s: 1.0 },
   { id: 'large', label: 'Large', s: 1.3 },
   { id: 'huge', label: 'Huge', s: 1.8 },
 ];
-export const sizeScale = (id) => (SIZES.find((x) => x.id === id) || SIZES[3]).s;
+/** The size setting that picks a size per map (see resolveSize); every preset uses it. */
+export const SIZE_AUTO = { id: 'auto', label: 'By map' };
+/** The scale of a real size id ('auto' needs a map: resolveSize / sizeScaleFor); unknown ids → Large, as before. */
+export const sizeScale = (id) => (SIZES.find((x) => x.id === id) || SIZES.find((x) => x.id === 'large')).s;
+export const sizeLabel = (id) => (id === SIZE_AUTO.id ? SIZE_AUTO.label : (SIZES.find((x) => x.id === id) || {}).label || String(id));
+
+/**
+ * "By map": a size per map, by preset, so a small room doesn't get the same body as a whole
+ * house. Keyed by map id first, then by the map's size class (S / M / L / XL), so a new map gets
+ * something sensible without a table entry. Hard is one step smaller than Classic, Easy is bigger.
+ */
+export const SIZE_TABLES = {
+  classic: { id: { living: 'tiny', garden: 'tiny', studio: 'tiny', candy: 'tiny', greenhouse: 'small', launderette: 'small', market: 'medium', house: 'medium', museum: 'large', cuboulder: 'large' }, cls: { S: 'tiny', M: 'small', L: 'medium', XL: 'large' } },
+  hard: { id: { living: 'mini', garden: 'mini', studio: 'mini', candy: 'mini', greenhouse: 'tiny', launderette: 'tiny', market: 'small', house: 'small', museum: 'medium', cuboulder: 'medium' }, cls: { S: 'mini', M: 'tiny', L: 'small', XL: 'medium' } },
+  easy: { id: { living: 'medium', garden: 'medium', studio: 'medium', candy: 'medium', greenhouse: 'large', launderette: 'large', market: 'huge', house: 'huge', museum: 'huge', cuboulder: 'huge' }, cls: { S: 'medium', M: 'large', L: 'huge', XL: 'huge' } },
+};
+/**
+ * The real size id these rules play with on this map: a fixed size is itself; 'auto' looks the map
+ * up in the table of the rules' preset (easy / hard; classic and custom use Classic's). Pure: the
+ * same rules + map give the same id on both phones. `mapEntry` is a MAPS entry ({ id, size }).
+ */
+export function resolveSize(rules, mapEntry) {
+  const v = rules && rules.size;
+  if (v !== SIZE_AUTO.id) return SIZES.some((x) => x.id === v) ? v : 'large';
+  const pre = rules.preset || presetOf(rules);
+  const T = SIZE_TABLES[pre === 'easy' || pre === 'hard' ? pre : 'classic'];
+  const m = mapEntry || {};
+  return T.id[m.id] || T.cls[m.size] || T.cls.M;
+}
+/** The body scale these rules give on this map. */
+export const sizeScaleFor = (rules, mapEntry) => sizeScale(resolveSize(rules, mapEntry));
 
 /** n0..n1 in steps of k (inclusive). */
 const span = (n0, n1, k) => { const out = []; for (let v = n0; v <= n1; v += k) out.push(v); return out; };
@@ -21,7 +57,7 @@ export const SEEK_SECS = [...span(20, 120, 5), ...span(130, 180, 10), ...span(19
 
 /** Allowed values per field (the first entry is never the default; see PRESETS.classic). */
 export const OPTIONS = {
-  size: SIZES.map((x) => x.id),
+  size: [SIZE_AUTO.id, ...SIZES.map((x) => x.id)],
   rounds: [2, 4, 6],
   hide: HIDE_SECS,
   // 'timer': the hide clock runs (Ready still starts the hunt early); 'ready': no clock at all,
@@ -99,9 +135,9 @@ export const PRESETS = {
   // Easy used to be a seeker walkover (Huge + strong blinks + fast seeker + no escapes: 96 % found in
   // the Living Room, mean 4 s): now Huge and 8 pellets stay, but blinks are 'on', the seeker walks at
   // normal speed, the hider gets one escape and a 10 s head start, so the camouflage matters.
-  easy: { size: 'huge', rounds: 4, hide: 45, hideEnd: 'timer', countdown: 3, headStart: 10, grace: 0, seek: 120, pellets: 8, scans: 0, scanCd: 20, escapes: 1, seekSpeed: 'normal', heartbeat: false, blink: 'on', stamp: true, climb: true, seekClimb: true, climbSpeed: 'fast', huntPaint: 'off', minimap: true, seekScore: 'off', wager: 0, sights: true, blendBonus: 0, twists: 'some', underdog: true, sudden: true },
-  classic: { size: 'large', rounds: 4, hide: 60, hideEnd: 'timer', countdown: 3, headStart: 0, grace: 0, seek: 90, pellets: 6, scans: 0, scanCd: 20, escapes: 1, seekSpeed: 'normal', heartbeat: true, blink: 'on', stamp: true, climb: true, seekClimb: true, climbSpeed: 'normal', huntPaint: 'tell', minimap: true, seekScore: 'full', wager: 5, sights: true, blendBonus: 10, twists: 'some', underdog: true, sudden: true },
-  hard: { size: 'medium', rounds: 4, hide: 75, hideEnd: 'timer', countdown: 3, headStart: 0, grace: 5, seek: 90, pellets: 5, scans: 3, scanCd: 30, escapes: 2, seekSpeed: 'normal', heartbeat: true, blink: 'off', stamp: true, climb: true, seekClimb: true, climbSpeed: 'slow', huntPaint: 'on', minimap: false, seekScore: 'time', wager: 5, sights: false, blendBonus: 20, twists: 'some', underdog: true, sudden: true },
+  easy: { size: 'auto', rounds: 4, hide: 45, hideEnd: 'timer', countdown: 3, headStart: 10, grace: 0, seek: 120, pellets: 8, scans: 0, scanCd: 20, escapes: 1, seekSpeed: 'normal', heartbeat: false, blink: 'on', stamp: true, climb: true, seekClimb: true, climbSpeed: 'fast', huntPaint: 'off', minimap: true, seekScore: 'off', wager: 0, sights: true, blendBonus: 0, twists: 'some', underdog: true, sudden: true },
+  classic: { size: 'auto', rounds: 4, hide: 60, hideEnd: 'timer', countdown: 3, headStart: 0, grace: 0, seek: 90, pellets: 6, scans: 0, scanCd: 20, escapes: 1, seekSpeed: 'normal', heartbeat: true, blink: 'on', stamp: true, climb: true, seekClimb: true, climbSpeed: 'normal', huntPaint: 'tell', minimap: true, seekScore: 'full', wager: 5, sights: true, blendBonus: 10, twists: 'some', underdog: true, sudden: true },
+  hard: { size: 'auto', rounds: 4, hide: 75, hideEnd: 'timer', countdown: 3, headStart: 0, grace: 5, seek: 90, pellets: 5, scans: 3, scanCd: 30, escapes: 2, seekSpeed: 'normal', heartbeat: true, blink: 'off', stamp: true, climb: true, seekClimb: true, climbSpeed: 'slow', huntPaint: 'on', minimap: false, seekScore: 'time', wager: 5, sights: false, blendBonus: 20, twists: 'some', underdog: true, sudden: true },
 };
 export const PRESET_IDS = ['easy', 'classic', 'hard'];
 export const PRESET_LABEL = { easy: 'Easy', classic: 'Classic', hard: 'Hard', custom: 'Custom' };
@@ -189,11 +225,30 @@ export function applyPreset(id) {
 
 // ── per-device memory ──
 const KEY = 'chm.setup.v2';
+/** The sizes the presets had before "By map" (a saved setup that equals one of them is that preset). */
+const OLD_PRESET_SIZE = { easy: 'huge', classic: 'large', hard: 'medium' };
+/**
+ * Saved rules from before "By map": when they equal an old preset exactly (old size included) the
+ * player had picked Classic / Easy / Hard, so they keep it (size → 'auto') instead of turning
+ * into Custom. Any other saved size is a deliberate choice and stays. Pure.
+ */
+export function migrateRules(saved) {
+  if (!saved || typeof saved !== 'object') return saved;
+  const r = sanitizeRules(saved);
+  for (const id of PRESET_IDS) {
+    if (r.size === OLD_PRESET_SIZE[id] && RULE_KEYS.every((k) => (k === 'size' ? true : same(PRESETS[id][k], r[k])))) return sanitizeRules({ ...r, size: SIZE_AUTO.id });
+  }
+  return r;
+}
 export function loadSaved() {
-  try { const raw = localStorage.getItem(KEY); return raw ? JSON.parse(raw) : null; } catch { return null; }
+  try {
+    const raw = localStorage.getItem(KEY); const o = raw ? JSON.parse(raw) : null;
+    // saves from this build carry `sz: 1` (an explicit Large is then a choice, not the old Classic)
+    return o && typeof o === 'object' && o.rules && !o.sz ? { ...o, rules: migrateRules(o.rules) } : o;
+  } catch { return null; }
 }
 export function saveSetup(setup) {
-  try { localStorage.setItem(KEY, JSON.stringify({ mode: setup.mode, map: setup.map, rules: setup.rules, mix: !!setup.mix })); } catch { /* private mode etc. */ }
+  try { localStorage.setItem(KEY, JSON.stringify({ mode: setup.mode, map: setup.map, rules: setup.rules, mix: !!setup.mix, sz: 1 })); } catch { /* private mode etc. */ }
 }
 const TIPS = 'chm.tips.v2';
 export function tipsSeen() { try { return localStorage.getItem(TIPS) === '1'; } catch { return false; } }
@@ -213,7 +268,7 @@ export function fmtRule(k, v) {
     case 'hide': case 'seek': case 'scanCd': return v >= 60 && v % 60 === 0 ? `${v / 60} min` : v >= 60 ? `${Math.floor(v / 60)}:${String(v % 60).padStart(2, '0')}` : `${v} s`;
     case 'scans': return v === 0 ? 'Unlimited' : String(v);
     case 'rounds': return `${v}`;
-    case 'size': return (SIZES.find((x) => x.id === v) || {}).label || v;
+    case 'size': return sizeLabel(v);
     case 'seekSpeed': return v === 'slow' ? 'Slow' : v === 'fast' ? 'Fast' : 'Normal';
     case 'blink': return v === 'off' ? 'Off' : v === 'strong' ? 'Strong' : 'On';
     default: return typeof v === 'boolean' ? (v ? 'On' : 'Off') : String(v);

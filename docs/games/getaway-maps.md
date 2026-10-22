@@ -176,19 +176,19 @@ or through `kit.mat(name, color, opts)` (a toon material with that code; merges 
 | Name (`kit.FX.name`) | Code | Look |
 |---|---|---|
 | `plain` / `ink` / `windows` (`office`) / `glow` / `far` | 0–4 | as before (plain ground now gets a faint noise) |
-| `road` | 5 | asphalt grain, patches; lane wear when the vertex `aux` attribute holds the lane coordinate |
+| `road` | 5 | asphalt: aggregate grain, repair patches, faint cracks, rubber in the wheel paths and oil between them when the vertex `aux` attribute holds the lane coordinate, dark puddles at night; worn, chipped paint wherever the vertex colour is bright (lane lines, crosswalks) |
 | `paint` / `glass` / `chrome` / `trim` | 6–9 | car paint (sky reflection, sun glint), reflective glass, chrome, untinted plastic |
-| `house` | 10 | residential windows: 1–2 per 4.4 m, 3 m storeys, lit at night |
+| `house` | 10 | residential windows: 1–2 per 4.4 m, 3 m storeys, white frames, sills, blinds / curtains / bare glass per window, a few lit (some TV-blue) at night |
 | `shop` | 11 | big storefront panes (2.8 × 3.9 m cells) |
 | `tower` | 12 | glass curtain wall (1.55 × 3.6 m) |
-| `brick` | 13 | brick courses with mortar (fades to flat colour with distance — no moiré) |
-| `stucco` | 14 | soft trowel noise |
+| `brick` | 13 | brick courses with mortar, per-brick tone, odd burnt bricks, weathering streaks (anti-aliased: fades to the average colour as a course nears a pixel — no moiré) |
+| `stucco` | 14 | soft trowel noise, sand-float grain, rain streaks |
 | `tile` | 15 | clay barrel-tile rows on sloped roofs (rows follow height, ridges follow the eave) |
 | `shingle` | 16 | staggered asphalt shingles |
-| `concrete` | 17 | 1.6 m slab joints (sidewalks, plazas, walls) |
-| `grass` | 18 | multi-scale green variation with dry patches |
+| `concrete` | 17 | 1.6 m slab joints, per-slab tone (sidewalks, plazas, walls; the engine's curbs and sidewalks run them along the walk via `aux` = heading) |
+| `grass` | 18 | multi-scale green variation, dry and lush patches, near-camera blades and a few flowers |
 | `dirt` / `sand` | 19 | grain and pebbles |
-| `water` | 24 | animated ripples reflecting the sky, sun glitter |
+| `water` | 24 | two layers of moving ripples reflecting the sky, sun / moon glitter, faint foam (flat water quads are enough: `quadUp(…, color, FX.water)`) |
 | `metal` | 25 | corrugated sheet (roofs, sheds) |
 | `wood` | 26 | vertical planks (fences, decks) |
 | `rock` | 27 | strata + noise (outcrops, cliffs) |
@@ -198,6 +198,14 @@ or through `kit.mat(name, color, opts)` (a toon material with that code; merges 
 Window codes (2, 10–12) only draw on vertical faces; they measure storeys from world y, so put
 them on walls standing near the ground they sit on. Colours still come from vertex colours: a
 `brick` wall is your brick colour plus mortar lines.
+
+**Wall bases (ambient occlusion).** Every vertical face of a wall code (0, 2, 10–17, 25, 26) is
+darkened towards its foot, whatever the terrain: the engine writes the height above the foot of
+each wall triangle into the fraction of that vertex's `fx` (`code + 0.01 + min(h/16, 0.97)`;
+`Builder.add` for engine builders, `mergeGroup` for every merged map mesh, `kit.pack` for a map's
+own indexed buffers). Shaders read the code as `floor(fx + 0.001)`, so a map keeps writing plain
+integer codes and never needs to know. Walls whose foot isn't where the triangle's lowest vertex
+is (a wall piece floating above a window opening) just get a soft shade under it.
 
 **Helpers.**
 
@@ -231,7 +239,7 @@ them on walls standing near the ground they sit on. Colours still come from vert
 
 **Memory.** The engine's geometry is packed: position f32×3, normal i8×3 and colour u8×3
 (normalised, each in a 4-byte stride: iPhone GPUs need 4-byte-aligned vertex buffers), fx and aux
-f32 — 24–28 B/vertex. Every
+f32 — 24–28 B/vertex (the wall-foot height rides in fx's fraction, no extra attribute). Every
 `kit.builder()` mesh comes out packed; a map that builds its own float buffers (Boulder) calls
 `kit.pack(geometry)` once before handing the mesh over (uv → u16 too, when it is in 0..1). A
 packed normal / colour is an interleaved attribute: read it with `getX/Y/Z` (× 1/127, × 1/255), not `.array[i * 3]`. Once

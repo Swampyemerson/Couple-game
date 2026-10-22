@@ -34,7 +34,7 @@ export function F(b, x, z, yaw = 0, oy = 0) {
 
 /** Axis-aligned box from min/max corners. */
 export function aabb(b, x0, y0, z0, x1, y1, z1, o = {}) {
-  const g = boxGeo(x1 - x0, y1 - y0, z1 - z0, { faces: o.faces, fit: o.fit, round: o.round || 0 });
+  const g = boxGeo(x1 - x0, y1 - y0, z1 - z0, { faces: o.faces, fit: o.fit, round: o.round || 0, cell: o.cell || 0, cuts: o.cuts || null });
   return b.add(g, { ...o, at: [(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2] });
 }
 
@@ -76,10 +76,11 @@ export function wall(b, cfg) {
       const uFwd = alongX ? side === 'p' : side === 'n';
       const ru = Array.isArray(rep) ? rep[0] : rep; const rv = Array.isArray(rep) ? rep[1] : rep; // rep may be [u, v]
       const uo = uFwd ? sa / ru : -sb / ru;
-      const geo = alongX ? boxGeo(L, H, t / 2, { faces }) : boxGeo(t / 2, H, L, { faces });
+      const cuts = ya < 0.001 && H > 0.5 ? [0.3] : null;
+      const geo = alongX ? boxGeo(L, H, t / 2, { faces, cuts }) : boxGeo(t / 2, H, L, { faces, cuts });
       b.add(geo, {
         at: alongX ? [mid, y + ya + H / 2, fixed + off] : [fixed + off, y + ya + H / 2, mid],
-        color: d.color || '#ffffff', tile: d.tile, rep, uvOff: [uo, ya / rv + (d.v || 0)], outline,
+        color: d.color || '#ffffff', tile: d.tile, rep, uvOff: [uo, ya / rv + (d.v || 0)], outline, ao: cuts ? 'wall' : undefined, aoBase: y,
       });
     }
     const hx = alongX ? L / 2 : t / 2; const hz = alongX ? t / 2 : L / 2;
@@ -113,7 +114,7 @@ export function wall(b, cfg) {
  *   floor(b, x0, z0, x1, z1, y, { tile, rep, color })
  */
 export function floor(b, x0, z0, x1, z1, y, o = {}) {
-  aabb(b, x0, y, z0, x1, y + 0.006, z1, { faces: ['py'], tile: o.tile, rep: o.rep || 1, color: o.color || '#ffffff', outline: false, uvOff: o.uvOff });
+  aabb(b, x0, y, z0, x1, y + 0.006, z1, { faces: ['py'], tile: o.tile, rep: o.rep || 1, color: o.color || '#ffffff', outline: false, uvOff: o.uvOff, cell: o.cell === 0 ? 0 : 0.5, ao: o.cell === 0 ? undefined : 'floor' });
 }
 export function slab(b, x0, z0, x1, z1, yTop, o = {}) {
   const th = o.thick || 0.2;

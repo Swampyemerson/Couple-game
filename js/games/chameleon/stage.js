@@ -60,9 +60,12 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
   // skin read brighter than the surface it copies). The ground colour is a warm, light bounce so
   // ceilings and undersides (which only get the darkest toon step of the sun) don't go muddy;
   // bodies share these lights and the ramp, so a stamp still matches what the seeker sees.
-  const BASE_HEMI = 0.56; const BASE_SUN = 0.52;
-  const hemi = new THREE.HemisphereLight(0xfffaf0, 0xefe3d0, BASE_HEMI);
-  const sun = new THREE.DirectionalLight(0xfff1dc, BASE_SUN);
+  // Graphics pass: a warm / cool split. The key (sun) is warm cream, the fill (hemisphere sky) a touch
+  // cool and its ground bounce warm, so lit faces read warm and the shade sides lean cool; the ramp has
+  // four steps now (0.40 → 0.88). Peak on a lit face = hemi 0.56 + sun 0.50 × 0.88 = 1.0 (nothing clips).
+  const BASE_HEMI = 0.56; const BASE_SUN = 0.50;
+  const hemi = new THREE.HemisphereLight(0xf9faff, 0xf2e0c4, BASE_HEMI);
+  const sun = new THREE.DirectionalLight(0xffe3bf, BASE_SUN);
   sun.position.set(-3.2, 8, 4.6);
   scene.add(hemi, sun, sun.target);
 
@@ -123,7 +126,7 @@ export function createStage(THREE, host, { theme, maxDpr = 2 }) {
     let r = mapRes.get(m);
     if (r) return r;
     const tex = new THREE.CanvasTexture(m.atlas.canvas);
-    tex.anisotropy = Math.min(2, renderer.capabilities.getMaxAnisotropy());
+    tex.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
     tex.minFilter = THREE.LinearMipmapLinearFilter;
     r = { tex, meshes: [], backs: [], reach: 0 };
     for (const ch of m.chunks) {

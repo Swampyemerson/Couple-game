@@ -6,6 +6,12 @@ import { listeners } from './util.js';
 
 const EDGE = 20;
 const JOY_R = 52;
+// stick response: a dead zone (a resting thumb never creeps the body), then a gentle curve so small
+// deflections steer finely and full deflection is full speed; the floating base follows a thumb that
+// drifts far from where it landed (so the stick never has to be re-found in the middle of a climb)
+const DEAD = 0.12;
+const CURVE = 1.25;
+const FOLLOW = 1.3; // the base follows once the thumb is this many radii away
 const TAP_SLOP = 9;
 
 export function createControls({ surface, root, joyBase, joyKnob, onAction, paint, isActive }) {
@@ -127,8 +133,18 @@ export function createControls({ surface, root, joyBase, joyKnob, onAction, pain
       case 'joy': {
         let jx = x - p.x0; let jy = y - p.y0;
         const l = Math.hypot(jx, jy);
-        if (l > JOY_R) { jx = (jx / l) * JOY_R; jy = (jy / l) * JOY_R; }
-        st.moveX = jx / JOY_R; st.moveY = -jy / JOY_R;
+        if (l > JOY_R * FOLLOW) {
+          // drifted far: drag the base along so the thumb sits FOLLOW radii out in the same direction
+          const k = (l - JOY_R * FOLLOW) / l;
+          p.x0 += jx * k; p.y0 += jy * k; jx = x - p.x0; jy = y - p.y0;
+          if (joyBase) joyBase.style.transform = `translate(${p.x0 - JOY_R}px, ${p.y0 - JOY_R}px)`;
+        }
+        const l2 = Math.hypot(jx, jy);
+        if (l2 > JOY_R) { jx = (jx / l2) * JOY_R; jy = (jy / l2) * JOY_R; }
+        // direction from the raw offset; magnitude through the dead zone + curve
+        const m = Math.min(1, l2 / JOY_R);
+        const mm = m <= DEAD ? 0 : Math.pow((m - DEAD) / (1 - DEAD), CURVE);
+        st.moveX = l2 > 1e-6 ? (jx / l2) * mm : 0; st.moveY = l2 > 1e-6 ? (-jy / l2) * mm : 0;
         if (joyKnob) joyKnob.style.transform = `translate(${jx}px, ${jy}px)`;
         break;
       }

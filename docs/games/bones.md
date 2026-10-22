@@ -163,6 +163,71 @@ the end card's own text; they are in the band, which stays readable behind the c
   portrait and 667 × 375 / 844 × 390 landscape (trays side by side with the band between). Column buttons are at least 44 px wide
   even when the die is narrower. Down to 320 × 568 the dice are 37 px.
 
+## Feel and graphics (upgrade 2)
+
+All view code: the rules, the roll values and the twists are untouched, and old logs replay as before.
+
+**Dice physics.** The scripted bounce table is gone. `throwTo()` solves the whole throw once (the search runs ahead of the roll, see below): a rounded cube
+(eight corner spheres, radius 0.1) against the floor, gravity, speculative contacts with a sequential-impulse solver (restitution
+about 0.4 that fades with speed, Coulomb friction 0.9, a little damping, a sleep threshold), at a fixed 1/120 s step, at most 1.4 s
+(168 steps), into preallocated typed arrays (`TP` positions, `TQ` quaternions). The launch is one of up to 24 seeded candidates
+(`api.rand(seed, 'throw', n, k)`), so both phones solve the same throw; the search stops at the first good one, and the one that
+comes in from the roller's side, comes to rest near the centre and falls asleep in time wins. **The search doesn't depend on the rolled value**, only on (seed, turn, side, yaw), so it is a *job* (`jobFor` / `jobSlice`, two
+slots, the best candidate's steps and impacts kept per job). As soon as `update()` shows the next turn, `prepNext()` hands the view
+`prepare(id, who, yaw, rnd)`, which runs one candidate per timer tick between frames; `roll()` finds the finished job by its id
+(`seed:n`) and only composes it (about 1-2 ms at 4× CPU, down from about 45 ms), or finishes whatever is left on the spot if it
+isn't done yet (the first roll of a page, a turn that arrives and rolls at once). A job and a one-shot solve give exactly the same
+throw (a test compares them). The result is made exact afterwards: the simulated rest orientation is composed with
+the one of the 24 cube rotations `C` that puts the wanted value on top (`rest · C`), and the whole throw is turned about the
+vertical (a floor doesn't care) so it ends on the band centre with the old final yaw. The cube is symmetric, so every contact is
+unchanged. If the die isn't asleep at the cap, the last 120 ms blend to a flat rest. Playback is the rAF clock with an alpha
+between stored steps (nlerp for the quaternion). Contacts above a speed threshold fire the tick (louder and higher the harder,
+a thump under big ones, at most one per 60 ms). `fast()` (tap to skip) jumps to the last step; reduced motion (`calm`) skips the
+simulation and drops the die 0.25 units. `window.__bonesTest.top` is the face on top, read from the quaternion the renderer was
+given at landing; the tests compare it with the rolled value for tumbles, skips and reduced motion.
+
+**Juice** (nothing under reduced motion): squash and stretch along world up on hard impacts (a spring, at most 12 % squash and 7 %
+stretch), a hard-edged blob shadow that tightens to the die as it lands, a puff of 10 ink flecks (one `Points` draw) on the first big
+impact, a 3-frame hitstop on the final settle and a short rock. A smash gets a 50 ms hitstop (CSS animations paused) before the
+crack, then a 150 ms, 3 px band shake (WAAPI transform).
+
+**Input latency.** At 4× CPU the old path was: pointerdown, about 10 ms to the click, about 25-55 ms of `api.move` (replays the
+match twice, writes it out) and the sync chain, only then the die drew, and the next frame showed it (99 ms). Now a pickable column
+is pressed on pointerdown (`is-press`, no `preventDefault`), the pick runs on finger-up on the same column (the click that follows is
+ignored), the die is drawn into the tray straight away (only the mover's half is rebuilt) and `api.move` is deferred to after that frame
+(`rAF` then a task, with a 120 ms backup for hidden pages). `sync()` consumes the pending placement so it isn't drawn or sounded twice.
+Blind Draw keeps the old path (the die must tumble in before it is revealed); keyboard clicks still work.
+
+**Graphics.** One chamfered/rounded die geometry (216 vertices, 300 triangles), two 512 × 256 face atlases (six faces plus two spare
+cells, mipmapped) with paper grain and pips printed in ink over a second pass in the roller's colour a hair off register: one atlas
+per player ink, both painted when the palette changes, and the die swaps `map` between them when the roller changes (a roll never
+repaints a canvas or uploads a texture; `compile()` uploads both with their mipmaps at start-up),
+`MeshToonMaterial` with a three-step `NearestFilter` gradient (top, front and side print in three tones), a hemisphere light (paper
+above, ink below) and one sun, inverted-hull ink outline and crease lines on the rounded edges. The band floor is a printed mat, and it is not
+drawn in GL: the canvas is transparent (`alpha: true`, premultiplied) and the mat is a CSS layer behind it (`.gb-mat`, the same
+trick as Tower's paper). The 256² tileable tile (paper, felt fibres, a 45° halftone screen, tinted from the palette `bg` / `ink`,
+re-read on a theme change, kept as a data URL per palette) is the background of one big element laid on the floor by a CSS 3D
+transform that matches the camera (`perspective` = the camera's focal length in px, `rotateX(90° − elevation)`, shifted by the aim
+height), so the foreshortening is that of the textured plane it replaced. The headless bench renders GL in software, where the
+full-band textured plane was most of the per-frame cost; now GL fills only the die, its hard blob shadow and the printed target ring
+(four ticks) on the die's own pixels. Dark mode lightens the die card a little so it reads on black stock. Budget per frame: 5-6 draw
+calls, about 760 triangles, about 1.33 MB of textures (`t.texBytes`: two atlases and the toon ramp; the mat costs none). The flat DOM die still
+works. `restore()` repaints every texture.
+
+**One render per frame, and none when nothing changed.** The bench saw about 18 draws per frame because `renderNow()` rendered at once
+in the resize / theme / start paths on top of the frame loop's own render. Now only a real canvas resize (which clears it) renders at
+once; everything else marks the view dirty and the loop renders once. `resize()` and `setZoom()` do nothing when the size is
+unchanged. `step()` returns 0 (asleep: the loop stops and no raf is queued), 1 (going on but the picture is the same: the hitstop
+frames) or 2 (the picture changed), and the loop only renders for 2 or a requested redraw, so the frame after the last move no
+longer repeats the picture. The palette is only repainted when its colours really changed (the theme observer also fires for
+unrelated `class` changes).
+
+**Frame hitches (bench, iPhone 13 profile, CPU 4×, 24 rolls per scheme).** Frames over 25 ms per ~3000: light 158 → 39, dark 133 → 50
+(these were mostly the roll start: the throw search, an atlas repaint and its upload landing in one frame, plus the mat's fill). What
+is left is the DOM redraw of both trays when the roll lands.
+
+Test hooks added: `t.top`, `t.tris`, `t.texBytes`, `t.pressed`, `t.stats` (`paints`, `ahead`, `late`, `renders`: canvas repaints, throws solved ahead of time or on the spot, GL renders) (and `press:N`, `shake` in the log).
+
 ## Tests
 
 ```

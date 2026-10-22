@@ -87,7 +87,7 @@ function build(atlas, kit) {
     b.add(boxGeo(2.4, 0.5, 0.03, { fit: true, faces: ['pz'] }), { at: [-1.6, 2.0, -d / 2 + 0.02], tile: 'signSweets', rep: 1, color: '#ffffff', outline: false });
     yield 'sprinkle rug';
     // the sprinkle rug in the middle (busy ground)
-    b.add(boxGeo(3.2, 0.012, 2.4), { at: [0.3, 0.006, 0.9], tile: 'sprinkles', rep: 0.9, color: '#ffffff', outline: true });
+    b.add(boxGeo(3.2, 0.012, 2.4, { cell: 0.4 }), { at: [0.3, 0.006, 0.9], tile: 'sprinkles', rep: 0.9, color: '#ffffff', outline: true, ao: 'floor' });
     yield 'jar shelves';
     // ── jar shelves along the left wall: jars of sweets with gaps to tuck into ──
     const js = F(b, -w / 2 + 0.3, -0.3, Math.PI / 2);
@@ -179,6 +179,16 @@ function build(atlas, kit) {
     b.collide(-0.85, 1.9, -1.05, 0.05, 2.06, -0.15, { wall: false, perch: true, name: 'perch:chandelier' });
     for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2; b.add(sphereGeo(0.09, 0.07, 0.09, { w: 8, h: 6 }), { at: [-0.4 + Math.cos(a) * 0.4, 1.9, -0.6 + Math.sin(a) * 0.4], color: [C.red, C.yellow, C.blue, C.mintD, C.purple][i % 5] }); }
 
+    yield 'gift boxes';
+    // (graphics pass) a stack of wrapped gift boxes in the back-right corner and a sprinkle pouf: more patterned cover
+    const gf = F(b, 4.2, -2.2, 0.25);
+    gf.box(0.8, 0.45, 0.6, [0, 0.225, 0], { color: '#ffffff', tile: 'lolly', rep: 0.5, collide: { wall: true, name: 'gift' } });
+    gf.box(0.84, 0.46, 0.1, [0, 0.23, 0], { color: C.rose, outline: false });
+    gf.box(0.6, 0.35, 0.5, [0.05, 0.625, 0.02], { color: '#ffffff', tile: 'stripePink', rep: 0.6, yaw: 0.35, collide: { wall: true, name: 'gift' } });
+    gf.box(0.4, 0.3, 0.4, [-0.3, 0.15, 0.55], { color: '#ffffff', tile: 'sprinkles', rep: 0.5, yaw: -0.3, collide: { wall: true, name: 'gift' } });
+    gf.blob(0, 0.1, 0.7, 0.55, { a: 0.24 });
+    b.add(cylGeo(0.36, 0.38, 0.38, { radial: 16 }), { at: [-1.7, 0.19, -1.75], color: '#ffffff', tile: 'sprinkles', rep: 0.45, collide: { wall: true, name: 'pouf' } });
+    b.blob(-1.7, -1.75, 0.5, 0.5, { a: 0.22 });
     yield 'spots';
     b.spot('lobby', { x: 1.0, z: 2.9 });
     b.spot('hiderSpawn', { x: 0.0, z: 2.0, yaw: Math.PI });

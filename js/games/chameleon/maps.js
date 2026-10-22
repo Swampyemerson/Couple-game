@@ -43,6 +43,7 @@ import { createAtlas, P } from './atlas.js';
 import { seeded } from './util.js';
 import { EXTRA_MAPS } from './maps/index.js';
 import { CANDY } from './maps/candy.js';
+import { Q } from './maps/patterns.js';
 
 const BASE_MAPS = [
   { id: 'living', name: 'Living Room', blurb: 'Rugs, stripes and a very full bookshelf.', build: (a) => living(a), size: 'S', rooms: 1, climbs: 3, info: { w: 10, d: 8, rooms: [{ name: 'Living room', x0: -5, z0: -4, x1: 5, z1: 4 }] } },
@@ -82,12 +83,12 @@ function frame(b, x, z, yaw = 0) {
 // ── shared furniture ──
 function room(b, { w, d, h = 2.5, front = 0.7, t = 0.16, floorTile, floorRep = 1.2, floorColor = '#ffffff', walls, plinth = '#5a3d2b', ceiling = null }) {
   // floor slab (diorama plinth)
-  b.add(boxGeo(w + t * 2, 0.32, d + t * 2, { faces: ['py'] }), { at: [0, -0.16, 0], tile: floorTile, rep: floorRep, color: floorColor, outline: false });
+  b.add(boxGeo(w + t * 2, 0.32, d + t * 2, { faces: ['py'], cell: 0.4 }), { at: [0, -0.16, 0], tile: floorTile, rep: floorRep, color: floorColor, outline: false, ao: 'floor' });
   b.add(boxGeo(w + t * 2 + 0.24, 0.3, d + t * 2 + 0.24, { round: 0.04 }), { at: [0, -0.2, 0], color: plinth });
   // walls: back (-z), left (-x), right (+x), front (+z, low)
   const W = walls || {};
   const wall = (cfg, at, sw, sh, sd, axis) => {
-    b.add(boxGeo(sw, sh, sd, {}), { at, color: cfg.color || '#ffffff', tile: cfg.tile, rep: cfg.rep || 1, uvOff: cfg.uvOff, outline: axis === 'front', collide: { wall: true, name: axis } });
+    b.add(boxGeo(sw, sh, sd, { cuts: axis === 'front' ? null : [0.3] }), { at, color: cfg.color || '#ffffff', tile: cfg.tile, rep: cfg.rep || 1, uvOff: cfg.uvOff, outline: axis === 'front', collide: { wall: true, name: axis }, ao: axis === 'front' ? undefined : 'wall', aoBase: 0 });
     // a crisp ink cap along the top edge instead of a full hull (cheap)
     if (axis !== 'front') b.add(boxGeo(sw + 0.002, 0.03, sd + 0.002, { faces: ['py', 'px', 'nx', 'pz', 'nz'] }), { at: [at[0], sh - 0.015, at[2]], color: W.cap || '#3a2f2a', outline: false });
   };
@@ -176,6 +177,15 @@ function living(atlas) {
   atlas.add('curtain', P.stripes({ cols: [C.rose, '#f7f3ea', C.terracotta, '#f7f3ea'], widths: [3, 1, 1, 1], n: 2 }), { size: 'M' });
   atlas.add('wains', P.stripes({ cols: ['#6f8f7a', '#5f7f6a'], widths: [5, 1], n: 4 }), { size: 'M' });
   atlas.add('ceilboards', P.stripes({ cols: ['#fffaf0', '#e9dcc4', '#fbf4e6', '#e3d5bb'], widths: [7, 0.5, 7, 0.5], n: 3 }), { size: 'M' });
+  // (graphics pass) more pattern per room: a busy trellis rug, a braided rug, plaid / argyle / floral / quilt fabrics, spine variants
+  atlas.add('trellis', P.trellis({ ground: '#efe2c8', a: C.coral, b: C.teal, c: C.mustard, ink: C.ink }), { size: 'M' });
+  atlas.add('braid', P.braid({ cols: [C.terracotta, '#f3e7cf', C.teal, C.mustard, C.sage] }), { size: 'L', repeat: false });
+  atlas.add('plaid', Q.plaid({ bg: '#f3e7cf', a: C.teal, b: C.brick }), { size: 'M' });
+  atlas.add('argyle', Q.argyle({ a: C.sage, b: C.teal, c: '#f3e7cf', line: C.mustard }), { size: 'M' });
+  atlas.add('floral', Q.floral({ bg: '#f7ecd9', cols: [C.coral, C.rose, C.plum, C.mustard], leaf: C.leaf, n: 14 }), { size: 'M' });
+  atlas.add('quilt', Q.quilt({ cols: [C.coral, C.teal, C.mustard, C.sage, C.plum], n: 4 }), { size: 'M' });
+  atlas.add('spine2', P.spine({ band: '#f6e7b8', style: 1 }), { size: 'S', repeat: false });
+  atlas.add('spine3', P.spine({ band: '#f6e7b8', style: 2 }), { size: 'S', repeat: false });
 
   return function* fill(b) {
     const w = 10; const d = 8;
@@ -196,7 +206,7 @@ function living(atlas) {
 
     yield 'rug';
     // Rug + coffee table
-    b.add(boxGeo(3.6, 0.012, 2.6, { fit: true }), { at: [-0.5, 0.006, -1.1], tile: 'kilim', rep: 1, outline: true });
+    b.add(boxGeo(3.6, 0.012, 2.6, { fit: true, cell: 0.4 }), { at: [-0.5, 0.006, -1.1], tile: 'kilim', rep: 1, outline: true, ao: 'floor' });
     const ct = frame(b, -0.5, -1.25);
     ct.box(1.25, 0.05, 0.65, [0, 0.47, 0], { color: '#8d5a3b', tile: 'wood', rep: 0.5, round: 0.015, collide: true });
     for (const [lx, lz] of [[-0.55, -0.26], [0.55, -0.26], [-0.55, 0.26], [0.55, 0.26]]) ct.box(0.05, 0.45, 0.05, [lx, 0.225, lz], { color: '#6b4430' });
@@ -347,6 +357,53 @@ function living(atlas) {
     tc.box(1.04, 0.06, 0.54, [0, 0.52, 0], { color: C.brick, round: 0.02, collide: true });
     tc.blob(0, 0, 0.6, 0.32);
 
+    yield 'rugs and clutter';
+    // (graphics pass) a busier floor and more places to vanish: a trellis rug under the dining nook, a braided
+    // rug under the floor cushions, a cushion nest in the back corner, a laundry basket and a shirt pile, stacks of
+    // books, an extra plant, a coat rail with garments hanging 20 cm off the wall (squeeze behind), a pet bed.
+    b.add(boxGeo(2.7, 0.012, 2.0, { cell: 0.4 }), { at: [-2.9, 0.006, 2.35], tile: 'trellis', rep: 0.9, color: '#ffffff', outline: true, ao: 'floor' });
+    b.add(cylGeo(0.95, 0.95, 0.012, { radial: 28, fit: true }), { at: [2.65, 0.006, 2.2], tile: 'braid', rep: 1, color: '#ffffff', outline: true });
+    const nest = frame(b, 4.15, -3.25, -0.4);
+    nest.box(0.78, 0.17, 0.7, [0, 0.085, 0], { color: '#ffffff', tile: 'pstripe', rep: 0.5, round: 0.07, collide: true });
+    nest.box(0.66, 0.15, 0.62, [0.05, 0.245, 0.02], { color: '#ffffff', tile: 'floral', rep: 0.5, round: 0.07, yaw: 0.5, collide: true });
+    nest.box(0.52, 0.14, 0.5, [-0.02, 0.385, 0], { color: '#ffffff', tile: 'argyle', rep: 0.45, round: 0.06, yaw: -0.4, collide: true });
+    nest.blob(0, 0, 0.55, 0.5, { a: 0.26 });
+    b.add(cylGeo(0.12, 0.12, 0.62, { radial: 14 }), { at: [3.4, 0.12, -3.45], rot: [Math.PI / 2, 0.45, 0], color: '#ffffff', tile: 'chevron', rep: [0.45, 0.4], collide: true });
+    b.blob(3.4, -3.45, 0.42, 0.25, { a: 0.2 });
+    const lb = frame(b, -4.45, 1.5);
+    lb.lathe([[0.22, 0], [0.27, 0.2], [0.3, 0.5], [0.28, 0.5]], [0, 0, 0], { color: '#d8c7a5', tile: 'weave', rep: 0.14, collide: true });
+    [[-0.05, 0.5, 0.0, 0.2, 0.1, 0.17, 'plaid'], [0.1, 0.54, -0.05, 0.17, 0.09, 0.15, 'pstripe'], [-0.12, 0.52, 0.1, 0.15, 0.1, 0.14, 'floral'], [0.06, 0.58, 0.08, 0.13, 0.08, 0.12, 'pdots']]
+      .forEach(([lx, ly, lz, rx, ry, rz, t], i) => lb.sph(rx, ry, rz, [lx, ly, lz], { color: '#ffffff', tile: t, rep: 0.3, rot: [0, i * 1.3, 0.2 * (i % 2 ? 1 : -1)], w: 10, h: 6 }));
+    lb.blob(0, 0, 0.4, 0.4);
+    b.add(sphereGeo(0.32, 0.11, 0.24, { w: 12, h: 6, thetaMax: Math.PI / 2 }), { at: [-3.75, 0, 1.3], rot: [0, 0.5, 0], color: '#ffffff', tile: 'plaid', rep: 0.4, collide: true });
+    b.add(sphereGeo(0.22, 0.09, 0.18, { w: 10, h: 6, thetaMax: Math.PI / 2 }), { at: [-3.5, 0.06, 1.15], rot: [0, 2.1, 0], color: '#ffffff', tile: 'floral', rep: 0.4, collide: true });
+    b.blob(-3.7, 1.28, 0.5, 0.35, { a: 0.2 });
+    const bookStack = (x, z, cols, yaw0) => {
+      let y = 0;
+      cols.forEach((c, i) => {
+        const hh = 0.035 + (i % 3) * 0.012; const bw = 0.28 - (i % 2) * 0.04; const bd = 0.2;
+        b.add(boxGeo(bw, hh, bd, { round: 0.004 }), { at: [x + (i % 2 ? 0.01 : -0.01), y + hh / 2, z], yaw: yaw0 + i * 0.35, color: c, tile: 'spine', rep: [bw, bd], outline: i === 0 });
+        y += hh;
+      });
+      b.collide(x - 0.16, 0, z - 0.16, x + 0.16, y, z + 0.16, { wall: true, name: 'books' });
+      b.blob(x, z, 0.26, 0.24, { a: 0.2 });
+    };
+    bookStack(-3.55, -2.3, [C.teal, C.brick, C.mustard, C.plum, C.coral, '#f3e7cf'], 0.2);
+    bookStack(3.3, -2.7, [C.sage, C.coral, C.ink, C.mustard], -0.4);
+    plant(b, 4.5, -2.35, 1.1, { seed: 'liv4', pot: '#c86f5b', leaf: '#4f7d4f', leaf2: '#86b06a' });
+    const cr = frame(b, -4.93, 2.6, Math.PI / 2); // local +z faces into the room
+    cr.box(1.0, 0.04, 0.05, [0, 1.78, 0.2], { color: '#7a4e35', tile: 'wood', rep: 0.6 });
+    for (const lx of [-0.45, 0.45]) cr.box(0.03, 0.03, 0.2, [lx, 1.78, 0.1], { color: '#3a2a2a', outline: false });
+    [['plaid', -0.32, 1.05, 0.34], ['argyle', 0.02, 0.95, 0.38], ['floral', 0.36, 1.12, 0.3]].forEach(([t, lx, hh, ww], i) => {
+      cr.box(ww, hh, 0.05, [lx, 1.76 - hh / 2, 0.2], { color: '#ffffff', tile: t, rep: 0.4, round: 0.02, rot: [0, 0, 0.03 * (i - 1)], collide: { wall: true } });
+    });
+    b.add(cylGeo(0.36, 0.4, 0.14, { radial: 20 }), { at: [2.05, 0.07, 3.45], color: '#ffffff', tile: 'pdots', rep: 0.4, collide: true });
+    b.add(cylGeo(0.26, 0.26, 0.02, { radial: 18 }), { at: [2.05, 0.15, 3.45], color: C.rose, outline: false });
+    b.blob(2.05, 3.45, 0.5, 0.5, { a: 0.22 });
+    // magazines on the coffee table's lower shelf, a quilt over the sofa seat
+    for (const [lx, lz, col, yw] of [[-0.2, 0.05, C.coral, 0.2], [0.05, -0.05, C.teal, -0.15], [0.3, 0.08, C.mustard, 0.4]]) ct.box(0.3, 0.012, 0.22, [lx, 0.145, lz], { color: col, yaw: yw, outline: false });
+    sf.box(0.95, 0.03, 0.72, [0.05, 0.495, 0.1], { color: '#ffffff', tile: 'quilt', rep: 0.5, yaw: 0.15, outline: false });
+
     yield 'v2 climbing';
     // v2 climbing: an exposed rafter across the room (crawl up a wall, then along under it),
     // a pendant lamp hanging from it over the dining table (hang from the shade, perch on the
@@ -381,7 +438,7 @@ function living(atlas) {
     b.spot('rug', { x: -1.5, z: -0.45, yaw: 0 });
     yield 'probes for the';
     // Probes for the eyedropper test: a wallpaper stripe centre, a plain wall, the teal side table top.
-    b.probe('wallpaper-sage-stripe', [-5.16 + 8.095 * 0.8, 2.0, -d / 2 + 0.001], [0, 0, 1], C.sage);
+    b.probe('toy-chest-lid', [0.6, 0.551, 3.55], [0, 1, 0], C.brick); // (a plain-coloured surface: the wallpaper's stripe carries paper grain now)
     b.probe('right-wall-paint', [w / 2 - 0.001, 1.6, 2.0], [-1, 0, 0], '#e9cdb1');
     b.probe('side-table-teal', [-2.35 + 0.17, 0.571, -3.4 + 0.05], [0, 1, 0], C.teal);
   };
@@ -413,12 +470,18 @@ function garden(atlas) {
   atlas.add('spine', P.spine({}), { size: 'S', repeat: false });
   atlas.add('yarn', P.bands({ cols: ['#ffffff', '#d6d6d6'], n: 4 }), { size: 'S' });
   atlas.add('bark', P.bands({ cols: ['#ffffff', '#cfcfcf', '#e8e8e8'], widths: [3, 1, 2], n: 5 }), { size: 'S' });
+  // (graphics pass) a sand pit, a picnic blanket, a scarecrow's plaid shirt, tintable boards and cardboard
+  atlas.add('sand', P.soil({ base: '#e6cf9c', speck: '#cdb27a', stone: '#f4e6c1' }), { size: 'M' });
+  atlas.add('picnic', P.check({ a: '#fbf7ee', b: C.red, n: 4 }), { size: 'M' });
+  atlas.add('plaid', Q.plaid({ bg: '#f2d9a6', a: C.blue, b: C.red }), { size: 'M' });
+  atlas.add('floral', Q.floral({ bg: '#fbf7ee', cols: [C.pink, C.yellow, C.purple], leaf: '#4f7d3c', n: 14 }), { size: 'M' });
+  atlas.add('plaster', P.plaster({ base: 246, mottle: 0.06 }), { size: 'M' });
 
   return function* fill(b) {
     const w = 12; const d = 10;
     yield 'ground';
     // ground + plinth (soil sides)
-    b.add(boxGeo(w + 0.6, 0.3, d + 0.6, { faces: ['py'] }), { at: [0, -0.15, 0], tile: 'lawn', rep: 1.6, color: '#ffffff', outline: false });
+    b.add(boxGeo(w + 0.6, 0.3, d + 0.6, { faces: ['py'], cell: 0.5 }), { at: [0, -0.15, 0], tile: 'lawn', rep: 1.6, color: '#ffffff', outline: false, ao: 'floor' });
     b.add(boxGeo(w + 0.9, 0.5, d + 0.9, { round: 0.05 }), { at: [0, -0.28, 0], color: '#6b4a32' });
     b.add(boxGeo(w + 0.95, 0.08, d + 0.95, { round: 0.03 }), { at: [0, -0.05, 0], color: '#7bb156' });
     yield 'fence';
@@ -567,6 +630,46 @@ function garden(atlas) {
     bb.cyl(0.28, 0.28, 0.01, [0, 0.8, 0], { color: '#8cc7d9', outline: false });
     bb.blob(0, 0, 0.32, 0.32);
 
+    yield 'garden extras';
+    // (graphics pass) more to hide in and behind: a sand pit with a bucket and a castle, a stack of terracotta pots,
+    // a slatted compost bin, ivy on both fences, a picnic blanket with a basket and cushions, a scarecrow in a plaid shirt
+    const sp = frame(b, -4.0, -1.2);
+    sp.box(1.3, 0.04, 1.3, [0, 0.02, 0], { color: '#ffffff', tile: 'sand', rep: 0.7, outline: false });
+    for (const sz of [-1, 1]) sp.box(1.44, 0.16, 0.07, [0, 0.08, sz * 0.685], { color: C.wood, tile: 'wood', rep: 0.5, collide: true });
+    for (const sx of [-1, 1]) sp.box(0.07, 0.16, 1.3, [sx * 0.685, 0.08, 0], { color: C.wood, tile: 'wood', rep: 0.5, collide: true });
+    sp.cyl(0.1, 0.075, 0.13, [0.35, 0.1, 0.3], { color: C.red, collide: true });
+    sp.cyl(0.0, 0.17, 0.26, [-0.15, 0.17, -0.1], { color: '#d9bf86', radial: 10, collide: true });
+    sp.box(0.03, 0.2, 0.1, [-0.38, 0.12, 0.28], { color: C.blue, rot: [0, 0.4, 0.5] });
+    sp.blob(0, 0, 0.9, 0.9, { a: 0.14 });
+    const ps = frame(b, -4.5, 0.2);
+    for (let i = 0; i < 3; i++) ps.lathe([[0.15 * 0.9, 0], [0.21 * 0.9, 0.38 * 0.8 * 0.9], [0.23 * 0.9, 0.38 * 0.9], [0.2 * 0.9, 0.38 * 0.9], [0.18 * 0.9, 0.38 * 0.86 * 0.9]], [i * 0.02, i * 0.17, 0], { color: '#c8693f', tile: 'rings', rep: [0.4, 0.36], collide: true });
+    ps.lathe([[0.15 * 0.8, 0], [0.21 * 0.8, 0.3], [0.23 * 0.8, 0.38 * 0.8]], [0.38, 0, 0.05], { color: '#b85a35', tile: 'rings', rep: [0.4, 0.36], collide: true });
+    ps.blob(0.1, 0, 0.5, 0.35);
+    const cb = frame(b, 5.25, 0.3);
+    cb.box(0.9, 0.85, 0.8, [0, 0.425, 0], { color: '#ffffff', tile: 'planksV', rep: 0.7, collide: { wall: true } });
+    cb.box(0.98, 0.06, 0.88, [0, 0.88, 0], { color: C.woodD, tile: 'wood', rep: 0.5, collide: true });
+    for (const [lx, lz, rr] of [[-0.2, 0.1, 0.16], [0.15, -0.1, 0.18], [0.0, 0.2, 0.12]]) cb.sph(rr, rr * 0.7, rr, [lx, 0.97, lz], { color: C.hedgeL, tile: 'leafy', rep: 0.4, collide: true });
+    cb.blob(0, 0, 0.7, 0.62, { a: 0.24 });
+    b.add(boxGeo(0.06, 0.95, 2.0), { at: [-5.92, 0.575, 0.5], color: '#ffffff', tile: 'leafy', rep: 0.9, collide: { wall: true, name: 'ivy' } });
+    b.add(boxGeo(0.06, 0.95, 1.8), { at: [5.92, 0.575, 1.8], color: '#ffffff', tile: 'leafy', rep: 0.9, collide: { wall: true, name: 'ivy' } });
+    b.add(boxGeo(1.8, 0.012, 1.3, { cell: 0.45 }), { at: [2.4, 0.006, -2.7], tile: 'picnic', rep: 0.5, color: '#ffffff', yaw: 0.2, outline: true, ao: 'floor' });
+    const pb = frame(b, 2.0, -2.8, 0.2);
+    pb.lathe([[0.22, 0], [0.26, 0.2], [0.27, 0.24], [0.24, 0.24]], [0, 0, 0], { color: '#c99a5b', tile: 'weave', rep: 0.14, collide: true });
+    pb.box(0.5, 0.04, 0.36, [0, 0.27, 0], { color: '#c99a5b', tile: 'weave', rep: 0.14, rot: [0, 0.3, 0.35], outline: false });
+    for (const [lx, lz, tl] of [[0.6, 0.15, 'pdots'], [0.5, -0.35, 'floral']]) pb.box(0.4, 0.12, 0.4, [lx, 0.06, lz], { color: '#ffffff', tile: tl === 'pdots' ? 'towel3' : tl, rep: 0.35, round: 0.05, yaw: lx, collide: true });
+    pb.cyl(0.11, 0.09, 0.02, [-0.5, 0.02, 0.25], { color: C.white, outline: false });
+    pb.blob(0.1, 0, 0.9, 0.6, { a: 0.14 });
+    const sc = frame(b, 5.2, 4.3, -0.5);
+    sc.cyl(0.03, 0.035, 1.75, [0, 0.875, 0], { color: C.woodD, radial: 8 });
+    sc.cyl(0.025, 0.025, 1.15, [0, 1.3, 0], { color: C.woodD, radial: 8, rot: [0, 0, Math.PI / 2] });
+    sc.box(0.46, 0.5, 0.07, [0, 1.12, 0], { color: '#ffffff', tile: 'plaid', rep: 0.35, round: 0.02, collide: { wall: true } });
+    for (const sx of [-1, 1]) sc.box(0.14, 0.4, 0.06, [sx * 0.5, 1.2, 0], { color: '#ffffff', tile: 'plaid', rep: 0.35, rot: [0, 0, sx * 0.25] });
+    sc.sph(0.13, 0.15, 0.13, [0, 1.6, 0], { color: '#e8d3a2' });
+    sc.cyl(0.0, 0.15, 0.2, [0, 1.84, 0], { color: '#7a4e35', radial: 10 });
+    sc.cyl(0.22, 0.22, 0.02, [0, 1.74, 0], { color: '#7a4e35', radial: 12 });
+    for (let i = 0; i < 6; i++) sc.cyl(0.006, 0.006, 0.24, [(i - 2.5) * 0.06, 0.74, 0.03], { color: '#d9bf86', rot: [0.1, 0, 0.3 * (i - 2.5) / 2.5], outline: false, radial: 4 });
+    sc.blob(0, 0, 0.35, 0.35, { a: 0.18 });
+
     b.spot('lobby', { x: 0.6, z: 2.6 });
     b.spot('hiderSpawn', { x: 0, z: 1.8, yaw: Math.PI });
     b.spot('seekerSpawn', { x: 0, z: 4.3, yaw: Math.PI });
@@ -606,6 +709,11 @@ function studio(atlas) {
   atlas.add('dropcloth', P.cloth({ bg: '#e2d7c3', fold: '#cdbfa6', cols: [C.blue, C.red, C.yellow] }), { size: 'M' });
   atlas.add('herring', P.herringbone({ a: '#c99a6b', b: '#b8875b', seam: '#8a5d3b' }), { size: 'M' });
   atlas.add('ceilpanel', P.check({ a: '#f1ede4', b: '#e4ddd0', n: 2 }), { size: 'M' });
+  // (graphics pass) cardboard, painted steel, a plaid shirt for the bin of rags
+  atlas.add('plaster', P.plaster({ base: 244, mottle: 0.07 }), { size: 'M' });
+  atlas.add('metal', P.metal({ panels: 3 }), { size: 'M' });
+  atlas.add('plaid', Q.plaid({ bg: '#f4efe6', a: C.red, b: C.blue }), { size: 'M' });
+  atlas.add('trellis', P.trellis({ ground: '#f4efe6', a: C.teal, b: C.pink, c: C.yellow, ink: C.ink }), { size: 'M' });
 
   return function* fill(b) {
     const w = 10; const d = 8;
@@ -623,7 +731,7 @@ function studio(atlas) {
 
     yield 'checker rug and';
     // Checker rug and drop cloth
-    b.add(boxGeo(2.4, 0.012, 2.4), { at: [1.6, 0.006, 0.9], tile: 'checker', rep: 0.6, color: '#ffffff' });
+    b.add(boxGeo(2.4, 0.012, 2.4, { cell: 0.4 }), { at: [1.6, 0.006, 0.9], tile: 'checker', rep: 0.6, color: '#ffffff', ao: 'floor' });
     b.add(boxGeo(2.8, 0.02, 2.0, { round: 0.008 }), { at: [-2.4, 0.01, -1.4], tile: 'dropcloth', rep: 0.8, color: '#ffffff', yaw: 0.15 });
 
     yield 'easels with canvases';
@@ -718,6 +826,50 @@ function studio(atlas) {
     b.add(sphereGeo(0.7, 0.32, 0.55, { w: 14, h: 8, thetaMax: Math.PI / 2 }), { at: [3.6, 0, 0.3], tile: 'dropcloth', rep: 0.5, color: '#ffffff', collide: true });
     b.blob(3.6, 0.3, 0.75, 0.6);
 
+    yield 'studio extras';
+    // (graphics pass) a rack of canvases leaning on the back wall (gaps behind them), a step ladder, a bin of rolled
+    // paper, a steel plan chest, a stack of cardboard boxes, a folding screen of three papers, paper bunting
+    [['art1', -1.55, 0.42, 0.95, 0.2], ['art3', -1.05, 0.5, 1.1, 0.14], ['art4', -0.53, 0.5, 0.85, 0.22], ['art2', -0.05, 0.42, 1.0, 0.12], ['art5', 0.45, 0.5, 0.9, 0.18]].forEach(([t, x, cw, chh, tl]) => {
+      b.add(boxGeo(cw, chh, 0.04, { fit: true }), { at: [x, chh / 2 + 0.03, -d / 2 + 0.04 + chh * 0.5 * Math.sin(tl)], rot: [-tl, 0, 0], tile: t, rep: 1, color: '#ffffff', collide: { wall: true } });
+    });
+    b.blob(-0.55, -d / 2 + 0.35, 1.3, 0.3, { a: 0.22 });
+    const ld = frame(b, -4.4, -2.0, 0.3);
+    for (const sx of [-1, 1]) {
+      ld.box(0.04, 1.3, 0.05, [sx * 0.22, 0.65, -0.1], { color: C.ink, rot: [0.1, 0, sx * -0.04] });
+      ld.box(0.04, 1.2, 0.05, [sx * 0.22, 0.6, 0.3], { color: C.ink, rot: [-0.22, 0, sx * -0.04] });
+    }
+    for (const y of [0.3, 0.55, 0.8, 1.05]) ld.box(0.44, 0.03, 0.1 + (1.05 - y) * 0.1, [0, y, 0.02], { color: C.yellow, collide: { wall: false } });
+    ld.blob(0, 0.1, 0.4, 0.45, { a: 0.2 });
+    const pbin = frame(b, 4.4, -1.1);
+    pbin.cyl(0.27, 0.24, 0.5, [0, 0.25, 0], { color: '#8c5a3c', tile: 'plaster', rep: 0.5, collide: true });
+    [[-0.08, 0.2, '#f8f5ee', 0.08], [0.1, 0.18, '#f4b6a6', 0.12], [0.0, -0.12, '#9fb4c7', 0.06], [-0.15, -0.05, '#f2c14e', 0.15]].forEach(([lx, lz, col, tl]) => pbin.cyl(0.05, 0.05, 0.72, [lx, 0.58, lz], { color: col, rot: [tl, 0, tl * 1.4 * (lx < 0 ? -1 : 1)], radial: 10 }));
+    pbin.blob(0, 0, 0.4, 0.4, { a: 0.22 });
+    const plan = frame(b, -4.6, 3.4, Math.PI / 2);
+    plan.box(1.25, 0.95, 0.5, [0, 0.475, 0], { color: '#8aa0b4', tile: 'metal', rep: [1.25, 0.95], collide: { wall: true } });
+    for (let i = 0; i < 3; i++) { plan.box(1.1, 0.012, 0.01, [0, 0.16 + i * 0.3, 0.255], { color: C.ink, outline: false }); plan.box(0.2, 0.03, 0.03, [0, 0.3 + i * 0.3, 0.27], { color: '#d8d0c2', outline: false }); }
+    plan.box(0.5, 0.22, 0.4, [-0.3, 1.06, 0], { color: '#ffffff', tile: 'plaster', rep: 0.4, collide: true });
+    plan.blob(0, 0, 0.8, 0.4, { a: 0.22 });
+    const bx = frame(b, 3.3, -3.45, 0.15);
+    bx.box(0.72, 0.5, 0.56, [0, 0.25, 0], { color: '#c49a68', tile: 'plaster', rep: 0.5, collide: { wall: true } });
+    bx.box(0.5, 0.4, 0.46, [0.05, 0.7, 0.02], { color: '#b88a58', tile: 'plaster', rep: 0.5, yaw: 0.3, collide: true });
+    bx.box(0.74, 0.012, 0.12, [0, 0.505, 0], { color: '#ffffff', tile: 'tape', rep: [0.4, 0.4], outline: false });
+    bx.box(0.5, 0.3, 0.42, [0.62, 0.15, 0.1], { color: '#d7b27c', tile: 'plaster', rep: 0.5, yaw: -0.2, collide: true });
+    bx.blob(0.2, 0, 0.8, 0.5, { a: 0.24 });
+    const fsr = frame(b, -3.3, 0.15, Math.PI / 2);
+    [['swatch', -0.6, 0.08, 0.5, 0.9], ['tape', 0, -0.08, -0.5, 1.2], ['splat', 0.6, 0.08, 0.5, 0.9]].forEach(([t, lx, lz, yw, rp]) => {
+      fsr.box(0.7, 1.6, 0.04, [lx, 0.8, lz], { color: '#ffffff', tile: t, rep: rp, yaw: yw, collide: { wall: true } });
+      fsr.box(0.72, 0.04, 0.06, [lx, 1.62, lz], { color: C.ink, yaw: yw, outline: false });
+    });
+    fsr.blob(0, 0, 1.0, 0.35, { a: 0.2 });
+    // paper bunting on two strings across the room (decoration only: nothing to stick to)
+    for (const bz of [-1.0, 1.9]) {
+      const n = 14;
+      for (let i = 0; i < n; i++) {
+        const t = i / (n - 1); const x = -4.6 + t * 9.2; const sag = Math.sin(t * Math.PI) * 0.25;
+        b.add(cylGeo(0.0, 0.07, 0.15, { radial: 3 }), { at: [x, 2.42 - sag - 0.075, bz], rot: [0, 0, Math.PI], color: all[(i + (bz > 0 ? 3 : 0)) % all.length], outline: false });
+      }
+    }
+
     b.spot('lobby', { x: 1.6, z: 1.0 });
     b.spot('hiderSpawn', { x: 0.3, z: 0.8, yaw: Math.PI });
     b.spot('seekerSpawn', { x: 0, z: 3.4, yaw: Math.PI });
@@ -769,7 +921,7 @@ export function dayKey(d = new Date()) {
 /** Today's hide twists: one rule change on top of Classic. */
 export const TWISTS = [
   { id: 'floor', label: 'Floor only', sub: 'no walls, no ceilings', rules: { climb: false, seekClimb: false } },
-  { id: 'tiny', label: 'Tiny chameleons', sub: 'small and quick', rules: { size: 'tiny' } },
+  { id: 'tiny', label: 'Tiny chameleons', sub: 'small and quick', rules: { size: 'mini' } }, // (the id is the twist's; 'mini' is the size labelled Tiny)
   { id: 'pellets', label: '3 pellets', sub: 'make every shot count', rules: { pellets: 3 } },
   { id: 'head', label: '10 s head start', sub: 'the hider keeps moving', rules: { headStart: 10 } },
   { id: 'paint', label: 'Paint while hunted', sub: 'repaint silently', rules: { huntPaint: 'on' } },
@@ -787,7 +939,8 @@ export function dailyPlan(day) {
   for (let i = order.length - 1; i > 0; i--) { const j = rc.int(i + 1); [order[i], order[j]] = [order[j], order[i]]; }
   const rnd = seeded(`daily:${day}`);
   const twist = TWISTS[(n + rnd.int(TWISTS.length)) % TWISTS.length];
-  const size = twist.id === 'tiny' ? 'tiny' : ['small', 'medium', 'large', 'large', 'huge'][rnd.int(5)];
+  // 'auto' = By map (rules.js resolveSize), so a small room never gets a Huge body; the odd day is a fixed size
+  const size = twist.id === 'tiny' ? 'mini' : ['auto', 'auto', 'auto', 'tiny', 'medium'][rnd.int(5)];
   return { day, map: order[((n % N) + N) % N], twist, size, first: rnd() < 0.5 ? 'a' : 'b', rounds: 2 };
 }
 

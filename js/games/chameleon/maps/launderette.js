@@ -103,8 +103,8 @@ const socksTile = () => (g, w, h, r) => {
 
 function build(atlas) {
   atlas.add('floor', P.checker({ a: '#f7fbfa', b: C.aqua, n: 4 }), { size: 'L' });
-  atlas.add('subway', P.bricks({ brick: '#f7fbfa', alt: '#edf4f3', mortar: '#bfd0ce', rows: 12, cols: 6 }), { size: 'L' });
-  atlas.add('subwayAqua', P.bricks({ brick: '#8fd6cd', alt: '#7fcbc2', mortar: '#d9efec', rows: 12, cols: 6 }), { size: 'M' });
+  atlas.add('subway', P.tiles({ a: '#f7fbfa', b: '#edf4f3', grout: '#bfd0ce', rows: 12, cols: 6 }), { size: 'L' }); // (graphics pass) glazed tiles, not bricks
+  atlas.add('subwayAqua', P.tiles({ a: '#8fd6cd', b: '#7fcbc2', grout: '#d9efec', rows: 12, cols: 6 }), { size: 'M' });
   atlas.add('washer', washerFront(), { w: 128, h: 144, repeat: false });
   atlas.add('dryer', dryerFront(), { w: 128, h: 144, repeat: false });
   atlas.add('socks', socksTile(), { size: 'L' });

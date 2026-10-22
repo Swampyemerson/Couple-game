@@ -118,6 +118,14 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
   U.uSkyTop.value.fromArray(skyTop); U.uSkyHor.value.fromArray(skyHor);
   U.uSunCol.value.fromArray(dark ? [0.55, 0.62, 0.8] : sunCol);
   U.uFogSun.value.fromArray(dark ? fogC : mix(fogC, sunCol, 0.55));
+  { // warm key / cool fill tints (unit luminance, so the brightness stays): per map from its sun colour and sky
+    const unit = (c) => { const l = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2] || 1; return [c[0] / l, c[1] / l, c[2] / l]; };
+    const key = dark ? mix([1, 1, 1], [0.66, 0.78, 1.0], 0.55) : mix([1, 1, 1], sunCol, 0.75);
+    const fill = dark ? mix([1, 1, 1], [0.55, 0.7, 1.0], 0.65) : mix([1, 1, 1], mix(skyTop, [1, 1, 1], 0.25), 0.6);
+    const kk = unit(key); const ff = unit(fill);
+    const sat = (c, a) => [1 + (c[0] - 1) * a, 1 + (c[1] - 1) * a, 1 + (c[2] - 1) * a];
+    U.uKey.value.fromArray(sat(kk, dark ? 0.8 : 0.65)); U.uFill.value.fromArray(sat(ff, dark ? 0.8 : 0.5));
+  }
   U.uGroundC.value.fromArray(dark ? [0.03, 0.03, 0.05] : mix(cssRGB(map.ground || '#7a8a5a'), [0.2, 0.2, 0.2], 0.5));
   const skyMesh = makeSky(THREE, skyTop, skyHor, dark ? moonDir : sunDir, dark, { sunCol: dark ? [0.85, 0.88, 0.95] : sunCol, clouds: sky.clouds == null ? 0.5 : sky.clouds, tier });
   farScene.add(skyMesh);
@@ -161,10 +169,11 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
   // see-through thin things (poles, lamps, signals, signs, map wires): one mesh per cell of
   // SEE_CELL × SEE_CELL chunks, distance-culled in update() and frustum-culled by three
   const seeCells = new Map();
+  const wallBuilder = () => { const b = new Builder(THREE, P.outline); b.walls = true; return b; }; // (walls: the base-AO height in aux, gfx.js)
   function seeCell(x, z) {
     const k = `${Math.floor(x / (CH * SEE_CELL))},${Math.floor(z / (CH * SEE_CELL))}`;
     let s = seeCells.get(k);
-    if (!s) { s = { b: new Builder(THREE, P.outline), mesh: null, x: 0, z: 0, r: CH * SEE_CELL * 0.75, tris: 0 }; seeCells.set(k, s); }
+    if (!s) { s = { b: wallBuilder(), mesh: null, x: 0, z: 0, r: CH * SEE_CELL * 0.75, tris: 0 }; seeCells.set(k, s); }
     return s;
   }
   function chunkAt(x, z) {
@@ -172,7 +181,7 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
     let c = chunks.get(k);
     if (!c) {
       const g = new THREE.Group(); g.name = 'chunk ' + k; g.matrixAutoUpdate = false;
-      c = { key: k, cx, cz, group: g, b: new Builder(THREE, P.outline), bt: seeCell(x, z).b, sc: seeCell(x, z), dec: new Decals(), props: [], parked: [], mesh: null, x: (cx + 0.5) * CH, y: 0, z: (cz + 0.5) * CH, r: CH * 0.75, tris: 0 };
+      c = { key: k, cx, cz, group: g, b: wallBuilder(), bt: seeCell(x, z).b, sc: seeCell(x, z), dec: new Decals(), props: [], parked: [], mesh: null, x: (cx + 0.5) * CH, y: 0, z: (cz + 0.5) * CH, r: CH * 0.75, tris: 0 };
       chunks.set(k, c); scene.add(g);
     }
     return c;
@@ -301,9 +310,14 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
         for (const sd of [-1, 1]) {
           const ya = (sd > 0 ? hr[i] : hl[i]); const yb = (sd > 0 ? hr[i + 1] : hl[i + 1]);
           const pt = (k, o) => [(k ? bx : ax) + (k ? nx[i + 1] : nx[i]) * o * sd, (k ? bz : az) + (k ? nz[i + 1] : nz[i]) * o * sd];
-          const strip = (o0, o1, y0a, y0b, y1a, y1b, colr, f) => {
+          // hd: the walk's heading in aux (concrete slab joints run along it)
+          const hd = 1 + Math.PI + Math.atan2(bz - az, bx - ax);
+          const strip = (o0, o1, y0a, y0b, y1a, y1b, colr, f, head = false) => {
             const a0 = pt(0, o0); const b0 = pt(1, o0); const b1 = pt(1, o1); const a1 = pt(0, o1);
-            if (sd > 0) c.quadUp(a0[0], y0a, a0[1], b0[0], y0b, b0[1], b1[0], y1b, b1[1], a1[0], y1a, a1[1], colr, f);
+            if (head) {
+              if (sd > 0) c.quadUpA(a0[0], y0a, a0[1], b0[0], y0b, b0[1], b1[0], y1b, b1[1], a1[0], y1a, a1[1], colr, f, hd, hd, hd, hd);
+              else c.quadUpA(a1[0], y1a, a1[1], b1[0], y1b, b1[1], b0[0], y0b, b0[1], a0[0], y0a, a0[1], colr, f, hd, hd, hd, hd);
+            } else if (sd > 0) c.quadUp(a0[0], y0a, a0[1], b0[0], y0b, b0[1], b1[0], y1b, b1[1], a1[0], y1a, a1[1], colr, f);
             else c.quadUp(a1[0], y1a, a1[1], b1[0], y1b, b1[1], b0[0], y0b, b0[1], a0[0], y0a, a0[1], colr, f);
           };
           if (tier === 'high') strip(hw - 0.45, hw, ya + lift + 0.004, yb + lift + 0.004, ya + lift + 0.004, yb + lift + 0.004, gutC, FX.lot);
@@ -311,8 +325,8 @@ export async function buildWorld(THREE, map, geo, P, U, { quality = 'high', onPr
           { const a0 = pt(0, hw); const b0 = pt(1, hw); const yl0 = ya + lift; const yl1 = yb + lift; const yt0 = ya + CURB_H; const yt1 = yb + CURB_H;
             if (sd > 0) c.poly([[a0[0], yl0, a0[1]], [a0[0], yt0, a0[1]], [b0[0], yt1, b0[1]], [b0[0], yl1, b0[1]]], mix(curbC, [0, 0, 0], 0.12), FX.concrete);
             else c.poly([[a0[0], yl0, a0[1]], [b0[0], yl1, b0[1]], [b0[0], yt1, b0[1]], [a0[0], yt0, a0[1]]], mix(curbC, [0, 0, 0], 0.12), FX.concrete); }
-          strip(hw, hw + 0.35, ya + CURB_H, yb + CURB_H, ya + CURB_H, yb + CURB_H, curbC, FX.concrete);
-          if (walk > 0) strip(hw + 0.35, hw + 0.35 + walk, ya + CURB_H, yb + CURB_H, ya + CURB_H, yb + CURB_H, walkC, FX.concrete);
+          strip(hw, hw + 0.35, ya + CURB_H, yb + CURB_H, ya + CURB_H, yb + CURB_H, curbC, FX.concrete, true);
+          if (walk > 0) strip(hw + 0.35, hw + 0.35 + walk, ya + CURB_H, yb + CURB_H, ya + CURB_H, yb + CURB_H, walkC, FX.concrete, true);
         }
       }
     }

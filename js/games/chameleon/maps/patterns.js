@@ -180,6 +180,7 @@ export const Q = {
     g.strokeStyle = line; g.lineWidth = 2; g.setLineDash([6, 5]);
     g.beginPath(); g.moveTo(0, 0); g.lineTo(w, h); g.moveTo(w, 0); g.lineTo(0, h); g.moveTo(w / 2, 0); g.lineTo(w, h / 2); g.lineTo(w / 2, h); g.lineTo(0, h / 2); g.closePath(); g.stroke();
     g.setLineDash([]);
+    g.save(); g.globalAlpha = 0.08; g.strokeStyle = '#000'; g.lineWidth = 1; for (let i = -h; i < w + h; i += 4) { g.beginPath(); g.moveTo(i, 0); g.lineTo(i + h, h); g.stroke(); } g.restore();
   },
 
   /** Fish scales / scallops. */
@@ -289,6 +290,10 @@ export const Q = {
     g.fillRect(w * 0.62, 0, w * 0.06, h); g.fillRect(0, h * 0.62, w, h * 0.06);
     g.fillRect(w * 0.84, 0, w * 0.02, h); g.fillRect(0, h * 0.84, w, h * 0.02);
     g.globalAlpha = 1;
+    // twill: diagonal weave lines (period 4 px divides every tile size, so it tiles)
+    g.save(); g.globalAlpha = 0.09; g.strokeStyle = '#000'; g.lineWidth = 1;
+    for (let i = -h; i < w + h; i += 4) { g.beginPath(); g.moveTo(i, 0); g.lineTo(i + h, h); g.stroke(); }
+    g.restore();
   },
 };
 

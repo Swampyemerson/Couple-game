@@ -342,7 +342,7 @@ async function hsRound(h, { hider, round, style }) {
       assert(await H.$eval('.chm-acts [data-act="scurry"]', (b) => b.disabled), `round ${round}: the scurry is used up`);
       await wait(400);
       const c2 = await hook(Sk, 'bodyCenter', hider);
-      await hook(Sk, 'teleport', c2[0] + 0.9, c2[2] + 1.9, Math.PI);
+      await hook(Sk, 'teleport', c2[0] + 0.8, c2[2] + 0.3, Math.PI, 0); // close and on the floor: the Living Room's new clutter can stand between a 2 m shot and a Petite hider
     }
     await hook(Sk, 'aimAt', ...(await hook(Sk, 'bodyCenter', hider)));
     await wait(250);
@@ -793,7 +793,9 @@ async function crawlSection(port) {
     assert(bb.at && (near([bb.nx, bb.ny, bb.nz], [1, 0, 0], 0.01) || bb.ny < -0.9), `walking into the wall with forward held sticks to it (normal ${fmt3([bb.nx, bb.ny, bb.nz])}, y ${bb.y.toFixed(2)})`);
     // crawl up with the same stick: screen-relative, so "up the screen" is up the wall
     const y0 = bb.y;
-    await stickUp(b, 1500);
+    // (1.0 s: up the wall and onto the rafter. The input-frame lock keeps the body going the way it was heading after the
+    // corner, so a longer hold now carries on along the beam to its far end instead of flip-flopping at the corner)
+    await stickUp(b, 1000);
     bb = await hook(b, 'body');
     assert(bb.at && (bb.ny < -0.9 || bb.y > y0 + 1.0), `pushing up the screen crawls up the wall (y ${y0.toFixed(2)} → ${bb.y.toFixed(2)}, normal ${fmt3([bb.nx, bb.ny, bb.nz])})`);
     if (bb.ny > -0.9) { const r = await hook(b, 'crawl', 0, 1.5, 0, 60); bb = await hook(b, 'body'); void r; }
@@ -888,7 +890,7 @@ async function sizeSection(port) {
   const { a, b } = h;
   try {
     await startPair(h, SLOW);
-    const want = { tiny: 0.6, small: 0.8, medium: 1.0, large: 1.3, huge: 1.8 };
+    const want = { micro: 0.32, mini: 0.45, tiny: 0.6, small: 0.8, medium: 1.0, large: 1.3, huge: 1.8 }; // (sizes pass: 'auto' = By map is covered by chameleon-sizes.test.js)
     for (const [id, s] of Object.entries(want)) {
       await a.click(`.chm-lobby .chm-card > .chm-col .chm-sizes [data-v="${id}"]`);
       await b.waitForFunction((v) => window.__cham.state().setup.rules.size === v, id, { timeout: 5000 });
@@ -918,7 +920,7 @@ async function settingsSection(port) {
     await a.click('.chm-lobby .chm-presets [data-v="easy"]');
     await b.waitForFunction(() => window.__cham.state().setup.rules.preset === 'easy', null, { timeout: 5000 });
     let rb = (await st(b)).setup.rules;
-    assert(rb.size === 'huge' && rb.pellets === 8 && rb.blink === 'on' && rb.escapes === 1 && rb.headStart === 10 && rb.seekSpeed === 'normal' && rb.heartbeat === false && rb.minimap === true, 'Easy preset applied on the guest (huge, 8 pellets, blinks on, 1 escape, 10 s head start, normal seeker, no heartbeat)');
+    assert(rb.size === 'auto' && rb.preset === 'easy' && rb.pellets === 8 && rb.blink === 'on' && rb.escapes === 1 && rb.headStart === 10 && rb.seekSpeed === 'normal' && rb.heartbeat === false && rb.minimap === true, 'Easy preset applied on the guest (By map size, 8 pellets, blinks on, 1 escape, 10 s head start, normal seeker, no heartbeat)');
     assert(await b.isVisible('.chm-presets button.on[data-v="easy"]'), 'guest sees Easy selected');
     // the settings sheet: host edits, guest watches live
     await a.click('.chm-lobby [data-act="settings"]');
@@ -943,12 +945,12 @@ async function settingsSection(port) {
     await hook(a, 'setRules', { rules: { pellets: 999, size: 'gigantic', hide: 47, scans: -3 } });
     await b.waitForFunction(() => window.__cham.state().setup.rules.pellets === 10, null, { timeout: 5000 });
     const ra = (await st(a)).setup.rules; rb = (await st(b)).setup.rules;
-    assert(JSON.stringify(ra) === JSON.stringify(rb) && ra.size === 'large' && ra.hide === 45 && ra.scans === 0, `invalid values are snapped (pellets 10, size large, hide 45 s, scans unlimited) and both agree`);
+    assert(JSON.stringify(ra) === JSON.stringify(rb) && ra.size === 'auto' && ra.hide === 45 && ra.scans === 0, `invalid values are snapped (pellets 10, size By map, hide 45 s, scans unlimited) and both agree`);
     // Hard preset
     await a.click('.chm-sheet .chm-presets [data-v="hard"]');
     await b.waitForFunction(() => window.__cham.state().setup.rules.preset === 'hard', null, { timeout: 5000 });
     rb = (await st(b)).setup.rules;
-    assert(rb.size === 'medium' && rb.minimap === false && rb.blink === 'off' && rb.scans === 3 && rb.escapes === 2, 'Hard preset: medium size, no minimap, no blink glints, 3 scans, 2 escapes');
+    assert(rb.size === 'auto' && rb.preset === 'hard' && rb.minimap === false && rb.blink === 'off' && rb.scans === 3 && rb.escapes === 2, 'Hard preset: By map size, no minimap, no blink glints, 3 scans, 2 escapes');
     await a.click('.chm-sheet [data-k="pellets"][data-step="-1"]'); // custom: 4 pellets
     await b.waitForFunction(() => window.__cham.state().setup.rules.pellets === 4, null, { timeout: 5000 });
     await a.click('.chm-sheet .chm-go[data-act="settings"]');
@@ -1717,7 +1719,7 @@ async function seekClimbSection(port) {
     assert(await a.isVisible('.chm-acts [data-act="stick"].on'), 'Stick shows as on (Let go)');
     // crawl up with the joystick: screen-relative from the climb view
     const y0 = ab.y;
-    await stickUp(a, 1300);
+    await stickUp(a, 900); // (the input-frame lock keeps the body going over the rafter after the corner: a longer hold walks on along the beam)
     ab = await hook(a, 'body');
     assert(ab.at && (ab.y > y0 + 0.6 || ab.ny < -0.9), `pushing up crawls the seeker up the wall (y ${y0.toFixed(2)} → ${ab.y.toFixed(2)})`);
     await wait(500);

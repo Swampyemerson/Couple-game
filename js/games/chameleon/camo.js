@@ -43,7 +43,7 @@ export const BLEND = { views: 5, dist: 2.6, ang: 0.87, front: 1, exact: 0.6, k: 
 /** The scene's lights as the toon shader applies them (stage.js; setBlendLights copies the real
  *  ones in): hemisphere sky / ground rgb × intensity, the sun's rgb × intensity, its direction,
  *  and the toon ramp's steps (MeshToonMaterial: step = ramp[floor((n·L × 0.5 + 0.5) × steps)]). */
-export const LIGHT = { sky: [1, 0.98, 0.941], ground: [0.937, 0.89, 0.816], hemi: 0.56, sun: [1, 0.945, 0.863], sunI: 0.52, dir: [-0.3275, 0.8188, 0.4708], ramp: [0.42, 0.62, 0.84] };
+export const LIGHT = { sky: [0.976, 0.98, 1], ground: [0.949, 0.878, 0.769], hemi: 0.56, sun: [1, 0.89, 0.749], sunI: 0.5, dir: [-0.3275, 0.8188, 0.4708], ramp: [0.4, 0.58, 0.76, 0.88] };
 /** Copy the stage's real lights (THREE.HemisphereLight, THREE.DirectionalLight) and toon ramp in. */
 export function setBlendLights(hemi, sun, ramp) {
   if (hemi) { LIGHT.sky = [hemi.color.r, hemi.color.g, hemi.color.b]; LIGHT.ground = [hemi.groundColor.r, hemi.groundColor.g, hemi.groundColor.b]; LIGHT.hemi = hemi.intensity; }

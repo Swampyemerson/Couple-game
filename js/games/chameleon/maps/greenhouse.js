@@ -63,7 +63,7 @@ function build(atlas) {
     const r = seeded('greenhouse');
     yield 'ground plinth boundary';
     // ── ground, plinth, boundary ──
-    b.add(boxGeo(W + 0.6, 0.3, D + 0.6, { faces: ['py'] }), { at: [0, -0.15, 0], tile: 'lawn', rep: 1.6, color: '#ffffff', outline: false });
+    b.add(boxGeo(W + 0.6, 0.3, D + 0.6, { faces: ['py'], cell: 0.6 }), { at: [0, -0.15, 0], tile: 'lawn', rep: 1.6, color: '#ffffff', outline: false, ao: 'floor' });
     b.add(boxGeo(W + 0.9, 0.5, D + 0.9, { round: 0.05 }), { at: [0, -0.28, 0], color: '#6b4a32' });
     b.add(boxGeo(W + 0.95, 0.08, D + 0.95, { round: 0.03 }), { at: [0, -0.05, 0], color: '#7bb156' });
     yield 'back';
