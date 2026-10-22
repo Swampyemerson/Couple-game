@@ -1426,7 +1426,7 @@ async function mapSliceSection(port) {
     const worstSlice = Math.max(...rows.map((r) => r.slice)); const worstSP90 = Math.max(...rows.map((r) => r.sp90));
     assert(worstSP90 < 40 * loadX(), `build slices keep to their budget (bound ×${loadX().toFixed(1)} for the box's load): p90 ≤ ${worstSP90} ms on every map (16 ms + one step; the longest ${worstSlice} ms; the longest task, frames included: ${Math.max(...rows.map((r) => r.longest))} ms)`);
     // a newer tap drops a half-built map: Next while the House is building goes on to the Market
-    await hook(a, 'setRules', { map: 'studio' }); await wait(300);
+    await hook(a, 'setRules', { map: 'candy' }); await wait(300); // the map before the House (Candy Works joined BASE_MAPS after Art Studio in v4)
     const n0 = (await hook(a, 'bootInfo')).builds.length;
     const next = () => a.evaluate(() => document.querySelector('.chm-mapcard .chm-arrow[aria-label="Next map"]').click());
     await next();

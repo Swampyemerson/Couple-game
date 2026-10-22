@@ -101,9 +101,14 @@ async function camoHide(p) {
 async function aimAtHider(p, hider) {
   const bc = await hook(p, 'bodyCenter', hider);
   let pick = [0.3, 2.4];
+  // a spot with a clear line from the shooter's real eye (it scales with the By-map size) to the hider
+  // (a fixed 0.45 m probe passed over low clutter that then blocked a Petite seeker's 0.28 m eye line)
   for (const [ox, oz] of [[0.3, 2.4], [-0.3, -2.4], [2.4, 0.3], [-2.4, -0.3], [1.7, 1.7], [-1.7, 1.7], [1.7, -1.7], [-1.7, -1.7], [0.3, 1.4], [-1.4, 0.3]]) {
-    const sx = bc[0] + ox; const sz = bc[2] + oz; const d = Math.hypot(ox, oz);
-    const hit = await hook(p, 'surfaceAt', sx, 0.45, sz, -ox / d, 0, -oz / d, d - 0.2);
+    await hook(p, 'teleport', bc[0] + ox, bc[2] + oz, Math.atan2(-ox, -oz), 0);
+    await wait(60);
+    const e = (await hook(p, 'camera')).p;
+    const dx = bc[0] - e[0]; const dy = bc[1] - e[1]; const dz = bc[2] - e[2]; const d = Math.hypot(dx, dy, dz);
+    const hit = await hook(p, 'surfaceAt', e[0], e[1], e[2], dx / d, dy / d, dz / d, d - 0.2);
     if (!hit) { pick = [ox, oz]; break; }
   }
   await hook(p, 'teleport', bc[0] + pick[0], bc[2] + pick[1], Math.atan2(-pick[0], -pick[1]), 0);

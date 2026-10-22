@@ -1283,7 +1283,7 @@ export function createGame(el, api) {
   /** The score's front view holds up but a side view doesn't: parallax (a stamp on a busy pattern
    *  seen from the side), which paint barely fixes. The hints say so instead of "paint over the stripes". */
   function sideOnly(J) {
-    if (J.nv < 2 || J.views[0] < 75) return false;
+    if (J.nv < 2 || J.views[0] < 70) return false; // 70 (was 75): the baked paper grain costs a stamp ~4 points head-on
     let lo = 101; for (let v = 1; v < J.nv; v++) if (J.views[v] >= 0 && J.views[v] < lo) lo = J.views[v];
     return lo <= J.views[0] - 10;
   }
