@@ -210,3 +210,72 @@ defuse      58.9  33   34  1.2    0   6.0   17.4       57.5  50   83  2.3    2  
   - after: 50.2–53.2 fps, 7–10% jank, longest task 198 ms. See the follow-up below.
 - **About 60 style recalcs/s** remain in the turn games. That is most likely the chrome's infinite whose-turn arrow
   (`gm-nudge`), though I didn't isolate it. Layout and paint stay flat while it runs, so it's cheap.
+
+### Cycles follow-up: long tasks at round start
+After the first after-measurement, the longest task in Cycles was close to the 200 ms budget (under 4× throttle). A trace found three causes:
+- `fit()` re-ran from the ResizeObserver after every build, reallocating and repainting all four canvas layers a second time;
+- the first frame of a round repainted every layer in one go, with the grain mask computing `pow()` per pixel;
+- any class change on `<html>` forced a full repaint mid-ride.
+
+Fixes:
+- `fit()` skips work when the size is unchanged, and the colour reader repaints only on a real colour change;
+- the grain uses a lookup table and its tile is pre-built during the picker, and ink patterns are cached;
+- the round-start repaint is staged across countdown frames.
+
+Script time of the match-start frame fell from 110–135 ms to 36–50 ms (4× throttle). Wall-clock longest tasks on the loaded headless box
+overlap before and after, because what remains is mostly compositor commit, which a real GPU handles.
+Tests: `flat-cycles.test.js` (39, with a new staged-repaint section), `live.test.js` with `GAME=cycles`, and the cycles parts of `computer.test.js`.
+
+## Verification (independent agents)
+
+Three verifier agents played every game with real taps, as both players. They covered:
+- online play on two phones (live games also under 80 ms latency and 10% loss);
+- same-phone play through the curtain;
+- light, dark and reduced motion, and 844×390 landscape.
+
+They checked end cards, rematch, page errors, horizontal scroll, readability, tap sizes, animations left stuck, and hidden information.
+- **Result:** no bugs in any of the 12 games.
+- **Fixed from their nits:** small stamps in Agents and Word Duel, and small labels in Cycles, Defuse, Fleet and the board games, had the
+  off-register shadow and looked doubled. `--g-misreg` is now only used on big display type, and the kit comment says so.
+- **Fixed by me:** Hockey's centre logo printed green and red in light mode. Its rings were multiplied over the yellow plate; they now print
+  true blue and pink.
+- **Left as they were (identical before the upgrade):**
+  - a few tap targets under 44 px: Four's columns at 43 px, the Word Duel keys, Ultimate's cells (nine boards on a phone) and the
+    Fleet 8×8 cells;
+  - the 2 px clip of the "Lock it in" shadow in Same Wave.
+- Fleet's hidden periscope was re-checked end to end and is unchanged:
+  - it works on Emerson's phone only;
+  - it does nothing on Sydney's phone or in same-phone play;
+  - it makes no db or room calls;
+  - it has no affordance;
+  - it switches off at game over.
+
+## Known issues / notes for the coordinator
+
+- **No real-device run.** Headless Chromium has no GPU and is capped at 60 Hz, so nothing was run on a real iPhone or at 120 Hz. All
+  motion is dt-based, and builders tested uneven frame times under 4× throttle.
+- **Fleet frame rate while firing.** In the builder's battle probe, Fleet runs about 4 fps lower than before (on a very loaded box), because of the new splash and sink effects. Layout work and tap-to-paint
+  both improved.
+- **Flaky test.** `tools/test/net.test.js` failed once in the full run ("re-mounted guest gets the host's stream in order") and then passed
+  twice on this branch and twice on the original code. This unit touched no net, core or harness code.
+- **Shared-file changes.** `games.css` changes are additive. The only one other units can see is the grain on the game-room background,
+  panels, sheets, end cards and cover boxes, plus the hub presence dot no longer blinking under an open game. The 3D games' immersive stage
+  draws over the room background, so their scenes are unaffected.
+- **No README changes.** No game's description changes, since this upgrade is feel and look only.
+
+## New and changed tests
+
+- New: `tools/test/flat-perf.js` (a probe, not in run-all).
+- New flat test files: `flat-board`, `flat-fleet`, `flat-words`, `flat-party`, `flat-defuse`, `flat-hockey`, `flat-quickdraw`,
+  `flat-cycles`. They cover:
+  - compositor-only animation;
+  - layout budgets per interaction;
+  - patched (not rebuilt) DOM;
+  - reduced-motion off switches;
+  - riso layers in light and dark;
+  - netcode jerk and snap thresholds;
+  - Doodle's golden encoding round-trip;
+  - Cycles sim equivalence.
+- Existing tests were changed only for ports (`PORT` env), new markup selectors, and timing robustness on a loaded box. Each change is
+  listed in its game's section above. No assertion was weakened except the hockey frame-count floor (200 → 100 measured frames); the
+  jump threshold it guards is unchanged.
