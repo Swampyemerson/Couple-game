@@ -221,8 +221,10 @@ for (let i = 0; i < 8; i++) { CORN[i * 3] = i & 1 ? PH_HALF : -PH_HALF; CORN[i *
 const CA = new Float64Array(24); const CN = new Float64Array(8); const CJ = new Float64Array(8);
 const CTX = new Float64Array(8); const CTZ = new Float64Array(8); const CVT = new Float64Array(8);
 const EV_MAX = 24;
-const evStep = new Int16Array(EV_MAX); const evSpd = new Float32Array(EV_MAX);
+const evStep = new Int16Array(EV_MAX); const evSpd = new Float32Array(EV_MAX); // the impacts of the throw being played
 let evN = 0;
+const sStep = new Int16Array(EV_MAX); const sSpd = new Float32Array(EV_MAX); // the impacts of the launch being simulated
+let sN = 0;
 
 function simStep(i, record) {
   const s = SS; const h = PH_H;
@@ -299,7 +301,7 @@ function simStep(i, record) {
     const g = s[1] + a10 * CORN[c * 3] + a11 * CORN[c * 3 + 1] + a12 * CORN[c * 3 + 2] - R_DIE;
     if (g < 0.006) touch++;
   }
-  if (record && impact > 1.2 && (evN === 0 || i - evStep[evN - 1] >= 4) && evN < EV_MAX) { evStep[evN] = i; evSpd[evN] = impact; evN++; }
+  if (record && impact > 1.2 && (sN === 0 || i - sStep[sN - 1] >= 4) && sN < EV_MAX) { sStep[sN] = i; sSpd[sN] = impact; sN++; }
   return touch;
 }
 
@@ -312,7 +314,7 @@ function simRun(rnd, k, P, Q, record) {
   s[0] = 0; s[1] = 1.1 + 0.7 * rnd(b + 3); s[2] = 0;
   s[7] = 5.6 + 2 * rnd(b + 4); s[8] = -0.5 + 2 * rnd(b + 5); s[9] = (rnd(b + 6) - 0.5) * 2.4;
   s[10] = (rnd(b + 7) - 0.5) * 16; s[11] = (rnd(b + 8) - 0.5) * 10; s[12] = -(6 + 9 * rnd(b + 9));
-  evN = 0;
+  sN = 0;
   P[0] = s[0]; P[1] = s[1]; P[2] = s[2]; Q[0] = s[3]; Q[1] = s[4]; Q[2] = s[5]; Q[3] = s[6];
   let still = 0; let n = 0; let slept = false;
   for (let i = 1; i <= PH_MAX; i++) {
@@ -420,27 +422,68 @@ function yawOfFlat(q) {
 const wrapQuarter = (x) => x - Math.round(x / HALF_PI) * HALF_PI;
 
 /**
+ * The throw for a launch that is solved in slices (one candidate per slice) while the game is idle, so the roll that
+ * needs it only has to compose it. The value on top plays no part in the search, only in the finish (see throwTo), so a
+ * job depends on (seed, n, side, yaw) alone and can be solved as soon as the next turn is known.
+ */
+const JOB_CANDS = 24;
+function newJob() {
+  return {
+    id: '', from: 0, yf: 0, rnd: null, aD: 0, k: 0, cost: 1e9, bk: 0, n: 0, slept: true, done: false, used: 0,
+    evN: 0, evStep: new Int16Array(EV_MAX), evSpd: new Float32Array(EV_MAX),
+    P: new Float32Array((PH_MAX + 2) * 3), Q: new Float32Array((PH_MAX + 2) * 4),
+  };
+}
+const JOBS = [newJob(), newJob()];
+let jobTick = 0;
+/** The job for this throw: a finished or part-solved one with the same id, else the least recently used slot, restarted. */
+function jobFor(id, from, yf, rnd) {
+  let j = null;
+  if (id) for (const x of JOBS) if (x.id === id && x.from === from && x.yf === yf) j = x; // (no id: always a fresh solve)
+  if (!j) {
+    j = JOBS[0].used <= JOBS[1].used ? JOBS[0] : JOBS[1];
+    j.id = id; j.from = from; j.yf = yf; j.rnd = rnd; j.aD = Math.atan2(from * 0.8, -from * 3.3); // direction of travel, start to centre
+    j.k = 0; j.cost = 1e9; j.bk = 0; j.done = false;
+  }
+  j.used = ++jobTick;
+  return j;
+}
+/** One more candidate launch of a job (the seeded stream's k-th); keeps the best so far. Returns true when the job is done. */
+function jobSlice(j) {
+  if (j.done) return true;
+  const k = j.k++;
+  const r = simRun(j.rnd, k, SP, SQ, true);
+  snapFlat(SQ, r.n * 4, QF);
+  const rx = SP[r.n * 3]; const rz = SP[r.n * 3 + 2];
+  const L = Math.hypot(rx, rz);
+  const eps = wrapQuarter(j.yf + yawOfFlat(QF) - (Math.atan2(rz, rx) - j.aD));
+  const cost = 3 * Math.abs(eps) + 0.5 * Math.abs(L - 3.9) + 1.2 * Math.max(0, 3.1 - L) + (r.slept ? 0 : 1.5);
+  if (cost < j.cost) { // keep this run: the steps and the impacts
+    j.cost = cost; j.bk = k; j.n = r.n; j.slept = r.slept; j.evN = sN;
+    j.P.set(SP.subarray(0, (r.n + 1) * 3)); j.Q.set(SQ.subarray(0, (r.n + 1) * 4));
+    for (let i = 0; i < sN; i++) { j.evStep[i] = sStep[i]; j.evSpd[i] = sSpd[i]; }
+  }
+  if (cost < 0.3 || j.k >= JOB_CANDS) j.done = true;
+  return j.done;
+}
+
+/**
  * Precompute the whole throw for a die that must land showing `value`, into TP / TQ (one entry per 1/120 s).
  * `from` is +1 (top player, in from the far right) or -1 (bottom player, near left); `yf` the final yaw; `rnd(k)` the
- * shared seeded stream. The simulated cube comes to rest on some face; because a cube is symmetric, composing the
+ * shared seeded stream; `id` names the throw (seed and turn) so a job solved ahead of time is found again. The simulated
+ * cube comes to rest on some face; because a cube is symmetric, composing the
  * orientation with one of its 24 rotations C (rest·C shows `value` on top) changes nothing about the contacts, so every
  * bounce stays exactly as simulated while the result is the rolled value. The simulation is then turned about the
  * vertical (no change for a floor) and slid so it ends on the centre.
  */
-function throwTo(value, from, yf, rnd) {
-  const aD = Math.atan2(from * 0.8, -from * 3.3); // direction of travel, start to centre
-  let best = 0; let bestCost = 1e9;
-  for (let k = 0; k < 24; k++) { // several launches from the same seeded stream; keep the one that suits the stage
-    const r = simRun(rnd, k, SP, SQ, false);
-    snapFlat(SQ, r.n * 4, QF);
-    const rx = SP[r.n * 3]; const rz = SP[r.n * 3 + 2];
-    const L = Math.hypot(rx, rz);
-    const eps = wrapQuarter(yf + yawOfFlat(QF) - (Math.atan2(rz, rx) - aD));
-    const cost = 3 * Math.abs(eps) + 0.5 * Math.abs(L - 3.9) + 1.2 * Math.max(0, 3.1 - L) + (r.slept ? 0 : 1.5);
-    if (cost < bestCost) { bestCost = cost; best = k; }
-    if (cost < 0.3) break;
-  }
-  const r = simRun(rnd, best, SP, SQ, true);
+function throwTo(value, from, yf, rnd, id) {
+  const j = jobFor(id || '', from, yf, rnd);
+  while (!jobSlice(j)) { /* the rest of the candidates, if it wasn't solved ahead of time */ }
+  const r = { n: j.n, slept: j.slept };
+  SP.set(j.P.subarray(0, (j.n + 1) * 3)); SQ.set(j.Q.subarray(0, (j.n + 1) * 4));
+  evN = j.evN;
+  for (let i = 0; i < evN; i++) { evStep[i] = j.evStep[i]; evSpd[i] = j.evSpd[i]; }
+  const aD = j.aD; const bestCost = j.cost; const best = j.bk;
   const n = r.n;
   THROW.cost = bestCost; THROW.k = best;
   // the last stretch eases into an exactly flat rest (a few steps if it slept, 120 ms if the cap cut it short)
@@ -625,10 +668,11 @@ function ringGeometry(THREE, r0, r1, seg) {
 }
 
 const PUFF_N = 10;
-function dieView3D(THREE, canvas, pal0, onImpact) {
+function dieView3D(THREE, canvas, pal0, onImpact, matEl) {
   let pal = pal0;
   let roller = pal0.a;
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: 'high-performance' });
+  // transparent canvas (premultiplied): the printed mat is a CSS layer behind it, so GL only fills the die, its shadow and the ring
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: true, premultipliedAlpha: true, powerPreference: 'high-performance' });
   let ratio = Math.min(2, window.devicePixelRatio || 1);
   let W = 1; let H = 1;
   renderer.setPixelRatio(ratio);
@@ -646,40 +690,35 @@ function dieView3D(THREE, canvas, pal0, onImpact) {
   sun.position.set(-0.5, 0.82, -0.12);
   scene.add(hemi, sun, sun.target);
 
-  const atlasCv = document.createElement('canvas'); atlasCv.width = ATLAS_W; atlasCv.height = ATLAS_H;
+  // two atlases, one per roller ink (the off-register second pass is in the roller's colour): both are painted when the
+  // palette changes and the die just swaps between them, so a roll never repaints or re-uploads a canvas
   const atlasBase = document.createElement('canvas'); atlasBase.width = ATLAS_W; atlasBase.height = ATLAS_H;
-  const matCv = document.createElement('canvas'); matCv.width = matCv.height = MAT_N;
-  const atlasTex = new THREE.CanvasTexture(atlasCv);
-  const matTex = new THREE.CanvasTexture(matCv);
-  matTex.wrapS = matTex.wrapT = THREE.RepeatWrapping;
-  matTex.repeat.set(24 / MAT_TILE, 12 / MAT_TILE);
-  matTex.anisotropy = 1; // (the mat is a gentle 55° view: no need for anisotropic filtering, which is costly on weak GPUs)
+  const mkAtlas = () => { const cv = document.createElement('canvas'); cv.width = ATLAS_W; cv.height = ATLAS_H; return { cv, tex: new THREE.CanvasTexture(cv), col: null }; };
+  const atl = [mkAtlas(), mkAtlas()];
+  const matCv = document.createElement('canvas'); matCv.width = matCv.height = MAT_N; // the mat tile, painted once per palette and handed to CSS
+  const matUrls = new Map();
   const grad = new THREE.DataTexture(new Uint8Array(GRAD), GRAD.length, 1, THREE.LuminanceFormat);
   grad.minFilter = grad.magFilter = THREE.NearestFilter;
   grad.generateMipmaps = false;
   grad.unpackAlignment = 1;
   grad.needsUpdate = true;
-  const texBytes = Math.round(ATLAS_W * ATLAS_H * 4 * 4 / 3 + MAT_N * MAT_N * 4 * 4 / 3 + GRAD.length * 4);
+  const texBytes = Math.round(2 * ATLAS_W * ATLAS_H * 4 * 4 / 3 + GRAD.length * 4);
 
   const dieGeo = roundedDieGeometry(THREE);
   const creaseGeo = creaseGeometry(THREE);
   const shadowGeo = new THREE.CircleGeometry(0.6, 20);
   shadowGeo.rotateX(-HALF_PI);
-  const matGeo = new THREE.PlaneGeometry(24, 12);
-  matGeo.rotateX(-HALF_PI);
   const ringGeo = ringGeometry(THREE, 1.0, 1.05, 64);
   const puffGeo = new THREE.BufferGeometry();
   const puffPos = new Float32Array(PUFF_N * 3);
   puffGeo.setAttribute('position', new THREE.BufferAttribute(puffPos, 3));
-  const dieMat = new THREE.MeshToonMaterial({ map: atlasTex, gradientMap: grad, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+  const dieMat = new THREE.MeshToonMaterial({ map: atl[0].tex, gradientMap: grad, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
   const hullMat = new THREE.MeshBasicMaterial({ side: THREE.BackSide });
   const lineMat = new THREE.LineBasicMaterial();
   const shadowMat = new THREE.MeshBasicMaterial();
-  const floorMat = new THREE.MeshBasicMaterial({ map: matTex });
   const ringMat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
   const puffMat = new THREE.PointsMaterial({ size: 3, sizeAttenuation: false });
 
-  const floor = new THREE.Mesh(matGeo, floorMat);
   const ring = new THREE.Mesh(ringGeo, ringMat);
   ring.position.y = 0.002;
   const squash = new THREE.Group(); // scales along the world axes (the die inside it turns)
@@ -692,7 +731,7 @@ function dieView3D(THREE, canvas, pal0, onImpact) {
   const shadow = new THREE.Mesh(shadowGeo, shadowMat);
   const puff = new THREE.Points(puffGeo, puffMat);
   puff.frustumCulled = false;
-  scene.add(floor, ring, shadow, squash, puff);
+  scene.add(ring, shadow, squash, puff);
   squash.visible = false; shadow.visible = false; puff.visible = false;
 
   const qWob = new THREE.Quaternion();
@@ -703,10 +742,26 @@ function dieView3D(THREE, canvas, pal0, onImpact) {
   };
   const puffV = new Float32Array(PUFF_N * 3);
   let puffSeed = 1;
+  let prepJob = null; let prepT = 0;
+  function pump() { // one candidate launch per timer tick, between frames
+    prepT = 0;
+    const j = prepJob;
+    if (!j) return;
+    if (jobSlice(j)) prepJob = null; else prepT = setTimeout(pump, 0);
+  }
 
-  function setPalette(p) {
+  const sameCol = (u, v) => !!u && !!v && u[0] === v[0] && u[1] === v[1] && u[2] === v[2];
+  const palKey = (p) => [p.bg, p.ink, p.card, p.edge, p.a, p.b].map((c) => c.map((x) => Math.round(x * 255)).join(',')).join('|') + (p.dark ? 'd' : 'l');
+  let paintedKey = '';
+  function paintAtlas(v, col) { // the pips in this roller's colour for the off-register pass
+    v.col = col;
+    paintAtlasPips(v.cv.getContext('2d'), atlasBase, pal, col);
+    v.tex.needsUpdate = true;
+  }
+  /** Colours and canvases from the palette. The textures are only repainted when the palette really changed. */
+  function setPalette(p, force) {
     pal = p;
-    renderer.setClearColor(new THREE.Color(p.bg[0], p.bg[1], p.bg[2]), 1);
+    renderer.setClearColor(0x000000, 0); // transparent: the printed mat is behind the canvas
     hullMat.color.setRGB(p.ink[0], p.ink[1], p.ink[2]);
     lineMat.color.setRGB(p.ink[0], p.ink[1], p.ink[2]);
     puffMat.color.setRGB(p.ink[0], p.ink[1], p.ink[2]);
@@ -717,14 +772,18 @@ function dieView3D(THREE, canvas, pal0, onImpact) {
     hemi.color.setRGB(p.card[0] / m, p.card[1] / m, p.card[2] / m);
     const gnd = p.dark ? [0.42, 0.42, 0.46] : mix3([1, 1, 1], p.ink, 0.62);
     hemi.groundColor.setRGB(gnd[0], gnd[1], gnd[2]);
-    paintAtlasBase(atlasBase.getContext('2d'), p);
-    paintAtlasPips(atlasCv.getContext('2d'), atlasBase, p, roller);
-    atlasTex.needsUpdate = true;
-    paintMat(matCv.getContext('2d'), p);
-    matTex.needsUpdate = true;
-    grad.needsUpdate = true;
+    const key = palKey(p);
+    if (key !== paintedKey || force) {
+      paintAtlasBase(atlasBase.getContext('2d'), p);
+      paintAtlas(atl[0], p.a); paintAtlas(atl[1], p.b);
+      setMat(key);
+      paintedKey = key;
+      grad.needsUpdate = true;
+    }
+    pickAtlas();
     setShadowColor();
   }
+  function pickAtlas() { dieMat.map = (atl.find((v) => sameCol(v.col, roller)) || atl[0]).tex; }
   function setShadowColor() { // hard shadow: the key plate (black on dark stock), a touch of the roller's ink
     const c = mix3(pal.edge, roller, 0.3);
     shadowMat.color.setRGB(c[0], c[1], c[2]);
@@ -732,9 +791,34 @@ function dieView3D(THREE, canvas, pal0, onImpact) {
   function setRoller(c) {
     if (!c || c === roller) return;
     roller = c;
-    paintAtlasPips(atlasCv.getContext('2d'), atlasBase, pal, roller);
-    atlasTex.needsUpdate = true;
+    if (!atl.some((v) => sameCol(v.col, c))) paintAtlas(atl[1], c); // not one of the two inks the atlases were painted for (never in play)
+    pickAtlas();
     setShadowColor();
+  }
+  // ── the printed mat, a CSS layer behind the canvas: the tile as a background, laid on the floor plane by a perspective
+  // transform that matches the camera (so it looks exactly like the textured plane it replaces, for no GL fill) ──
+  const matIn = matEl ? matEl.firstElementChild : null;
+  function setMat(key) {
+    if (!matIn) return;
+    let url = matUrls.get(key);
+    if (!url) {
+      paintMat(matCv.getContext('2d'), pal);
+      try { url = matCv.toDataURL('image/png'); } catch { url = ''; }
+      if (matUrls.size > 4) matUrls.clear();
+      matUrls.set(key, url);
+    }
+    matIn.style.backgroundImage = url ? `url("${url}")` : 'none';
+  }
+  function layoutMat() { // px per world unit at the die's distance; the plane tilts 90° − elevation and sits ty below the aim point
+    if (!matIn || H < 2) return;
+    const tanH = Math.tan(CAM_FOV * Math.PI / 360);
+    const f = (H / 2) / tanH; const sc = f / dist;
+    matEl.style.perspective = `${f.toFixed(1)}px`;
+    const st2 = matIn.style;
+    st2.width = `${(24 * sc).toFixed(1)}px`; st2.height = `${(12 * sc).toFixed(1)}px`;
+    st2.margin = `${(-6 * sc).toFixed(1)}px 0 0 ${(-12 * sc).toFixed(1)}px`;
+    st2.backgroundSize = `${(MAT_TILE * sc).toFixed(2)}px ${(MAT_TILE * sc).toFixed(2)}px`;
+    st2.transform = `translate3d(0, ${(sc * CAM_TARGET_Y * Math.cos(CAM_EL)).toFixed(2)}px, ${(-sc * CAM_TARGET_Y * Math.sin(CAM_EL)).toFixed(2)}px) rotateX(${(90 - CAM_EL * 180 / Math.PI).toFixed(3)}deg)`;
   }
   setPalette(pal);
 
@@ -842,6 +926,7 @@ function dieView3D(THREE, canvas, pal0, onImpact) {
       cam.aspect = W / H;
       cam.updateProjectionMatrix();
       setHull();
+      layoutMat();
       return true;
     },
     get ratio() { return ratio; },
@@ -851,25 +936,36 @@ function dieView3D(THREE, canvas, pal0, onImpact) {
     /** The value on top, read from the orientation the renderer is given once the die has landed (0 if it hasn't). */
     top() { return st.mode === 'roll' || !squash.visible ? 0 : st.top; },
     /** Pull the camera back (k > 1) so the die is smaller in a tall band. */
-    setZoom(k) { if (dist === CAM_DIST * k) return false; dist = CAM_DIST * k; placeCam(); setHull(); return true; },
+    setZoom(k) { if (dist === CAM_DIST * k) return false; dist = CAM_DIST * k; placeCam(); setHull(); layoutMat(); return true; },
     setRatio(r) { ratio = r; renderer.setPixelRatio(r); renderer.setSize(W, H, false); },
     setPalette,
+    /** Compile the programs and upload both atlases (with their mipmaps) now, so the first roll draws without a hitch. */
     compile() {
       const vis = squash.visible;
       squash.visible = shadow.visible = puff.visible = true;
       renderer.compile(scene, cam);
+      const keep = dieMat.map;
+      for (const v of atl) { dieMat.map = v.tex; renderer.render(scene, cam); }
+      dieMat.map = keep;
       squash.visible = shadow.visible = vis; puff.visible = st.puffT >= 0;
     },
-    restore() { setPalette(pal); renderer.setPixelRatio(ratio); renderer.setSize(W, H, false); this.compile(); },
+    restore() { setPalette(pal, true); renderer.setPixelRatio(ratio); renderer.setSize(W, H, false); this.compile(); },
+    /** Solve the throw for a coming roll in small slices while the game is idle (see throwTo). `rnd(k)` is the shared seeded stream. */
+    prepare(id, who, yaw, rnd) {
+      const j = jobFor(id, who === 'top' ? 1 : -1, yaw, rnd);
+      if (j.done) return;
+      prepJob = j;
+      if (!prepT) prepT = setTimeout(pump, 0);
+    },
     /** Throw the die and land showing `value`. Resolves when it lands. `rnd(k)` is the shared seeded stream. */
-    roll(value, who, yaw, calm, rnd) {
+    roll(value, who, yaw, calm, rnd, id) {
       if (st.res) st.res();
       return new Promise((res) => {
         const from = who === 'top' ? 1 : -1; // bottom player's die comes in from the near left
         st.res = res; st.calm = !!calm; st.fast = false; st.t = 0; st.evPtr = 0; st.lastSfx = -1; st.hold = 0; st.big = false;
         st.sq = st.sqv = 0; st.scale = 1; st.puffT = -1; puff.visible = false; st.yaw = yaw; st.wob = 0;
         setRoller(who === 'top' ? pal.topInk : pal.botInk);
-        if (calm) dropTo(value, yaw); else throwTo(value, from, yaw, rnd || seededStream(1 + value));
+        if (calm) dropTo(value, yaw); else throwTo(value, from, yaw, rnd || seededStream(1 + value), id);
         st.n = THROW.n; st.hh = THROW.hh;
         st.mode = 'roll';
         squash.visible = shadow.visible = true;
@@ -890,6 +986,7 @@ function dieView3D(THREE, canvas, pal0, onImpact) {
       const r = st.res; st.res = null; st.mode = 'idle'; st.scale = 1; st.sq = st.sqv = 0;
       if (r) r();
     },
+    /** Advance the animation. 0: nothing is animating (the loop can sleep), 1: still going but the picture is the same, 2: the picture changed. */
     step(dt) {
       if (st.mode === 'roll') {
         st.t += dt;
@@ -900,17 +997,17 @@ function dieView3D(THREE, canvas, pal0, onImpact) {
           juice(dt);
           sample(i, f - i);
         }
-        return true;
+        return 2;
       }
       if (st.mode === 'settle') {
-        if (st.hold > 0) { st.hold--; return true; } // hitstop: the picture stays put for a few frames
+        if (st.hold > 0) { st.hold--; return 1; } // hitstop: the picture stays put for a few frames (nothing to redraw)
         st.settleT += dt;
         juice(dt);
         const k = st.settleT;
         st.wob = k < 0.3 ? 0.075 * Math.exp(-k * 13) * Math.sin(k * 52) : 0;
         if (k >= 0.3 && st.sq === 0 && st.puffT < 0) { st.mode = 'idle'; st.wob = 0; }
         sample(st.n - 1, 0);
-        return true;
+        return 2;
       }
       if (st.mode === 'hide') {
         st.hideT += dt;
@@ -923,17 +1020,18 @@ function dieView3D(THREE, canvas, pal0, onImpact) {
           const r = st.res; st.res = null;
           if (r) r();
         }
-        return true;
+        return 2;
       }
-      return false;
+      return 0;
     },
     render() { renderer.render(scene, cam); return renderer.info.render.calls; },
     dispose() {
       if (st.res) { st.res(); st.res = null; }
       try { renderer.forceContextLoss(); } catch { /* ignore */ }
-      for (const g of [dieGeo, creaseGeo, shadowGeo, matGeo, ringGeo, puffGeo]) g.dispose();
-      for (const t of [atlasTex, matTex, grad]) t.dispose();
-      for (const m of [dieMat, hullMat, lineMat, shadowMat, floorMat, ringMat, puffMat]) m.dispose();
+      clearTimeout(prepT); prepT = 0; prepJob = null;
+      for (const g of [dieGeo, creaseGeo, shadowGeo, ringGeo, puffGeo]) g.dispose();
+      for (const t of [atl[0].tex, atl[1].tex, grad]) t.dispose();
+      for (const m of [dieMat, hullMat, lineMat, shadowMat, ringMat, puffMat]) m.dispose();
       renderer.dispose();
     },
   };
@@ -1110,6 +1208,9 @@ registerGame({
     .g-bones .gb-bot .gb-die.shift { animation: gb-shift-b 0.28s ease-out both; }
     .g-bones .gb-top .gb-die.shift { animation: gb-shift-t 0.28s ease-out both; }
     .g-bones .gb-band { position: relative; height: var(--gb-band); border: 2px solid var(--g-ink); border-radius: var(--g-radius); background: var(--g-card); box-shadow: var(--g-shadow); touch-action: none; }
+    .g-bones .gb-band .gb-mat { position: absolute; inset: 0; overflow: hidden; border-radius: calc(var(--g-radius) - 2px); pointer-events: none; }
+    .g-bones .gb-band .gb-mat[hidden] { display: none; }
+    .g-bones .gb-band .gb-mat i { position: absolute; left: 50%; top: 50%; display: block; transform-origin: 50% 50%; background-repeat: repeat; }
     .g-bones .gb-band canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; border-radius: calc(var(--g-radius) - 2px); }
     .g-bones .gb-lab { position: absolute; top: 50%; transform: translateY(-50%); max-width: 36%; display: flex; flex-direction: column; gap: 4px; font-weight: 900; font-size: 0.86rem; line-height: 1.15; pointer-events: none; transition: opacity 0.12s; }
     .g-bones .gb-lab > * { max-width: 100%; }
@@ -1254,6 +1355,7 @@ registerGame({
       <div class="gb-board">
         <section class="gb-half gb-top"><div class="gb-scores"></div><div class="gb-name"></div><div class="gb-tray"></div><div class="gb-total">0</div><div class="gb-picker" hidden></div></section>
         <div class="gb-band" aria-live="polite">
+          <div class="gb-mat" hidden aria-hidden="true"><i></i></div>
           <canvas aria-hidden="true"></canvas>
           <div class="gb-die2d" hidden aria-hidden="true"></div>
           <div class="gb-q" hidden aria-hidden="true"><em>?</em></div>
@@ -1270,6 +1372,7 @@ registerGame({
     const root = $('.g-bones');
     const band = $('.gb-band');
     const canvas = band.querySelector('canvas');
+    const matEl = band.querySelector('.gb-mat');
     const labL = $('.gb-lab-l');
     const labR = $('.gb-lab-r');
     const badge = $('.gb-badge');
@@ -1546,20 +1649,22 @@ registerGame({
       lastT = now;
       const t = T();
       const c0 = t ? performance.now() : 0;
-      const busy = dv.step(dt);
-      dirty = false;
-      const calls = dv.render();
+      let redraw = dirty; // somebody asked for a redraw (palette, zoom, restore)
       if (dv.kind === '3d') {
         ema = ema * 0.92 + dt * 1000 * 0.08;
-        if (++perfN > 50 && ema > 24 && dv.ratio > 1) { dv.setRatio(Math.max(1, dv.ratio - 0.25)); perfN = 0; ema = 16; }
+        if (++perfN > 50 && ema > 24 && dv.ratio > 1) { dv.setRatio(Math.max(1, dv.ratio - 0.25)); perfN = 0; ema = 16; redraw = true; } // (a new pixel ratio clears the canvas)
       }
+      const busy = dv.step(dt); // 0 asleep, 1 going on but the picture is the same, 2 the picture changed
+      dirty = false;
+      let calls = 0;
+      if (busy === 2 || redraw) calls = dv.render(); // a frame that would repeat the last one isn't drawn
       if (t) {
         const ms = performance.now() - c0; // main-thread cost of this frame's step + render (the bench reads the worst)
         const cs = t.cost || (t.cost = []);
         cs.push(ms);
         if (cs.length > 900) cs.shift();
-        t.frames = (t.frames || 0) + 1; t.calls = calls;
-        if (dv.info) t.tris = dv.info.triangles;
+        t.frames = (t.frames || 0) + 1; if (calls) t.calls = calls;
+        if (dv.info && calls) t.tris = dv.info.triangles;
         if (dv.texBytes !== undefined) t.texBytes = dv.texBytes;
       }
       if (busy || dirty) raf = requestAnimationFrame(frame);
@@ -1605,7 +1710,7 @@ registerGame({
       const t = T();
       if (t) t.top = 0;
       // the throw is simulated from the seeded stream both phones share, so they see the same tumble
-      const p = dv.roll(value, w === topW ? 'top' : 'bot', yaw, reduced() || skipping, (k) => api.rand(s.seed, 'throw', n, k));
+      const p = dv.roll(value, w === topW ? 'top' : 'bot', yaw, reduced() || skipping, (k) => api.rand(s.seed, 'throw', n, k), `${s.seed}:${n}`);
       kick();
       await p;
       if (dead) throw DEAD;
@@ -2051,6 +2156,14 @@ registerGame({
     let lostT = 0;
     let dv3 = null; // the 3D view, parked while flat dice are standing in for it
     /** Put the current die (if one is showing) back on whichever view is live. */
+    /** The coming roll's throw is solved while the game is idle (a few ms at a time), so the die can leave the hand at once.
+     *  It depends on the seed, the turn number and the side the die comes in from, nothing else (not on the value). */
+    function prepNext() {
+      const s = ctxNow && ctxNow.state;
+      if (!dv || !dv.prepare || !s || s.over || dead || reduced() || isBlind() || dieN === s.n) return;
+      const n = s.n;
+      try { dv.prepare(`${s.seed}:${n}`, s.turn === topW ? 'top' : 'bot', (api.rand(s.seed, 'yaw', n) - 0.5) * 0.9, (k) => api.rand(s.seed, 'throw', n, k)); } catch (err) { console.warn('[bones] prepare', err); }
+    }
     function redrawDie() {
       const c = ctxNow;
       const s = c && c.state;
@@ -2064,7 +2177,7 @@ registerGame({
       log('gl-flat');
       dv3 = dv;
       try { dv3.abort(); } catch (err) { console.warn('[bones] abort', err); }
-      canvas.hidden = true;
+      canvas.hidden = true; matEl.hidden = true;
       band.dataset.gl = '2d';
       dv = dieView2D($('.gb-die2d'));
       glLost = false;
@@ -2089,7 +2202,7 @@ registerGame({
           try { dv.dispose(); } catch { /* ignore */ }
           $('.gb-die2d').hidden = true;
           dv = dv3; dv3 = null;
-          canvas.hidden = false;
+          canvas.hidden = false; matEl.hidden = false;
           setSides();
           dv.resize(band.clientWidth, band.clientHeight);
         } else if (dv) {
@@ -2112,10 +2225,11 @@ registerGame({
       dv.resize(band.clientWidth, band.clientHeight);
       try { dv.compile(); } catch (err) { console.warn('[bones] warm-up', err); }
       renderNow();
+      prepNext();
       readyRes();
     }
     function fallback(note) {
-      canvas.hidden = true;
+      canvas.hidden = true; matEl.hidden = true;
       band.dataset.gl = '2d';
       useView(dieView2D($('.gb-die2d')));
       if (note) api.toast(note);
@@ -2126,7 +2240,7 @@ registerGame({
     threeP.then((THREE) => {
       if (dead || dv) return;
       let v;
-      try { v = dieView3D(THREE, canvas, pal, impactSound); } catch (err) {
+      try { v = dieView3D(THREE, canvas, pal, impactSound, matEl); } catch (err) {
         console.warn('[bones] WebGL unavailable', err);
         fallback('3D dice aren’t available here, so these are flat ones.');
         return;
@@ -2134,6 +2248,7 @@ registerGame({
       canvas.addEventListener('webglcontextlost', onLost, false);
       canvas.addEventListener('webglcontextrestored', onRestored, false);
       band.dataset.gl = 'ok';
+      matEl.hidden = false;
       useView(v);
     }, () => {
       if (dead || dv) return;
@@ -2144,6 +2259,7 @@ registerGame({
       update(c) {
         ctxNow = c;
         if (!c || !c.state) return;
+        prepNext();
         if (openedOver === null) openedOver = !!c.over;
         // The match just ended on this phone: write the records now, before any animation, so a mover who
         // leaves during the finale still counts it (idempotent per match via last_id).
