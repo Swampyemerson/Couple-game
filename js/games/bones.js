@@ -176,23 +176,458 @@ function readPalette(api) {
   const t = api.tokens();
   return {
     a: rgbOf(t.a, '#2f5bea'), b: rgbOf(t.b, '#f0428b'), card: rgbOf(t.card, '#ffffff'),
-    ink: rgbOf(t.ink, '#1d1b22'), hl: rgbOf(t.hl, '#ffd23f'),
+    ink: rgbOf(t.ink, '#1d1b22'), hl: rgbOf(t.hl, '#ffd23f'), bg: rgbOf(t.bg, '#f4efe3'), edge: rgbOf(t.edge, '#1d1b22'), dark: !!t.dark,
   };
 }
 const easeOut = (k) => 1 - (1 - k) ** 3;
 
 // ── the 3D dice tray ──────────────────────────────────────────────────
-// Material order of a BoxGeometry is +x, -x, +y, -y, +z, -z. Opposite faces sum to 7.
+// Faces of the (rounded) die, in the order +x, -x, +y, -y, +z, -z. Opposite faces sum to 7.
 const FACE_VALUES = [2, 5, 1, 6, 3, 4];
 // Euler rotation that turns each value's face to the top (+y).
 const FACE_UP = { 1: [0, 0, 0], 6: [Math.PI, 0, 0], 2: [0, 0, Math.PI / 2], 5: [0, 0, -Math.PI / 2], 3: [-Math.PI / 2, 0, 0], 4: [Math.PI / 2, 0, 0] };
+// Each face as a frame seen from outside: n out of the face, u right, v up (u × v = n). Pips are drawn in (u, v).
+const FACE_FRAME = [
+  { n: [1, 0, 0], u: [0, 0, -1], v: [0, 1, 0] },
+  { n: [-1, 0, 0], u: [0, 0, 1], v: [0, 1, 0] },
+  { n: [0, 1, 0], u: [1, 0, 0], v: [0, 0, -1] },
+  { n: [0, -1, 0], u: [1, 0, 0], v: [0, 0, 1] },
+  { n: [0, 0, 1], u: [1, 0, 0], v: [0, 1, 0] },
+  { n: [0, 0, -1], u: [-1, 0, 0], v: [0, 1, 0] },
+];
 const CAM_FOV = 28;
 const CAM_DIST = 4.5;
 const CAM_EL = 55 * Math.PI / 180;
 const CAM_TARGET_Y = 0.45;
+const HALF_PI = Math.PI / 2;
 
-function dieView3D(THREE, canvas, pal0, onTick) {
+// ── dice physics ──────────────────────────────────────────────────────
+// A rounded cube (eight corner spheres of radius R_DIE on a cube of side 1) falls on the floor y = 0. Impulse solver with
+// speculative contacts, restitution that fades with speed, Coulomb friction, a little damping and a sleep threshold,
+// stepped at a fixed h = 1/120 s. The whole throw is solved once when the roll starts (the rolled value is known up
+// front), stored per step, then played back with interpolation. Nothing here is random: every number comes from the
+// seeded `rnd(k)` both phones share. The rolled value is made exact afterwards by composing a cube-symmetry rotation (see throwTo).
+const PH_H = 1 / 120;
+const PH_G = 45;
+const R_DIE = 0.1;
+const PH_HALF = 0.5 - R_DIE;
+const PH_MAX = 168; // 1.4 s
+const PH_E = 0.4; // restitution at full speed (fades below 4 units/s)
+const PH_MU = 0.9;
+const PH_IINV = 6; // 1 / inertia of a unit cube of unit mass
+const SS = new Float64Array(13); // px py pz | qx qy qz qw | vx vy vz | wx wy wz
+const CORN = new Float64Array(24);
+for (let i = 0; i < 8; i++) { CORN[i * 3] = i & 1 ? PH_HALF : -PH_HALF; CORN[i * 3 + 1] = i & 2 ? PH_HALF : -PH_HALF; CORN[i * 3 + 2] = i & 4 ? PH_HALF : -PH_HALF; }
+const CA = new Float64Array(24); const CN = new Float64Array(8); const CJ = new Float64Array(8);
+const CTX = new Float64Array(8); const CTZ = new Float64Array(8); const CVT = new Float64Array(8);
+const EV_MAX = 24;
+const evStep = new Int16Array(EV_MAX); const evSpd = new Float32Array(EV_MAX);
+let evN = 0;
+
+function simStep(i, record) {
+  const s = SS; const h = PH_H;
+  s[8] -= PH_G * h;
+  const x = s[3]; const y = s[4]; const z = s[5]; const w = s[6];
+  const r00 = 1 - 2 * (y * y + z * z); const r01 = 2 * (x * y - z * w); const r02 = 2 * (x * z + y * w);
+  const r10 = 2 * (x * y + z * w); const r11 = 1 - 2 * (x * x + z * z); const r12 = 2 * (y * z - x * w);
+  const r20 = 2 * (x * z - y * w); const r21 = 2 * (y * z + x * w); const r22 = 1 - 2 * (x * x + y * y);
+  let nc = 0;
+  let impact = 0;
+  for (let c = 0; c < 8; c++) {
+    const cx = CORN[c * 3]; const cy = CORN[c * 3 + 1]; const cz = CORN[c * 3 + 2];
+    const ay = r10 * cx + r11 * cy + r12 * cz;
+    const gap = s[1] + ay - R_DIE;
+    const ax = r00 * cx + r01 * cy + r02 * cz; const az = r20 * cx + r21 * cy + r22 * cz;
+    const vn = s[8] + s[12] * ax - s[10] * az;
+    if (gap > 0.002 && gap + vn * h > 0.002) continue; // can't reach the floor this step
+    const o = nc * 3;
+    CA[o] = ax; CA[o + 1] = ay - R_DIE; CA[o + 2] = az;
+    CN[nc] = 1 + PH_IINV * (ax * ax + az * az);
+    CJ[nc] = 0; CTX[nc] = 0; CTZ[nc] = 0;
+    let target = gap > 0 ? -gap / h : 0;
+    if (vn < -0.9 && gap + vn * h <= 0.002) {
+      const e = PH_E * Math.min(1, -vn / 4);
+      target = Math.max(target, -e * vn);
+      if (-vn > impact) impact = -vn;
+    }
+    CVT[nc] = target;
+    nc++;
+  }
+  for (let it = 0; it < 6; it++) {
+    for (let c = 0; c < nc; c++) {
+      const o = c * 3; const ax = CA[o]; const ay = CA[o + 1]; const az = CA[o + 2];
+      const vn = s[8] + s[12] * ax - s[10] * az;
+      let d = (CVT[c] - vn) / CN[c];
+      const nj = Math.max(0, CJ[c] + d);
+      d = nj - CJ[c]; CJ[c] = nj;
+      s[8] += d; s[10] -= PH_IINV * az * d; s[12] += PH_IINV * ax * d;
+      // friction: two axes, held inside the friction cone
+      const lim = PH_MU * CJ[c];
+      const vx = s[7] + s[11] * az - s[12] * ay;
+      const vz = s[9] + s[10] * ay - s[11] * ax;
+      let jx = CTX[c] - vx / (1 + PH_IINV * (ay * ay + az * az));
+      let jz = CTZ[c] - vz / (1 + PH_IINV * (ax * ax + ay * ay));
+      const m = Math.hypot(jx, jz);
+      if (m > lim) { const k = lim / (m || 1); jx *= k; jz *= k; }
+      const dx = jx - CTX[c]; const dz = jz - CTZ[c];
+      CTX[c] = jx; CTZ[c] = jz;
+      s[7] += dx; s[9] += dz;
+      s[10] += PH_IINV * ay * dz; s[11] += PH_IINV * (az * dx - ax * dz); s[12] -= PH_IINV * ay * dx;
+    }
+  }
+  // damping: the felt eats a little spin and slide, the air next to nothing
+  if (nc) { const k = 1 - 1.5 * h; s[10] *= k; s[11] *= k; s[12] *= k; const f = 1 - 1.5 * h; s[7] *= f; s[9] *= f; } else { const k = 1 - 0.1 * h; s[10] *= k; s[11] *= k; s[12] *= k; }
+  s[0] += s[7] * h; s[1] += s[8] * h; s[2] += s[9] * h;
+  const wx = s[10]; const wy = s[11]; const wz = s[12];
+  const hq = 0.5 * h;
+  const nx = x + hq * (wx * w + wy * z - wz * y);
+  const ny = y + hq * (wy * w + wz * x - wx * z);
+  const nz = z + hq * (wz * w + wx * y - wy * x);
+  const nw = w + hq * (-wx * x - wy * y - wz * z);
+  const il = 1 / Math.hypot(nx, ny, nz, nw);
+  s[3] = nx * il; s[4] = ny * il; s[5] = nz * il; s[6] = nw * il;
+  // push out of the floor, then count what is touching it
+  const q0 = s[3]; const q1 = s[4]; const q2 = s[5]; const q3 = s[6];
+  const a10 = 2 * (q0 * q1 + q2 * q3); const a11 = 1 - 2 * (q0 * q0 + q2 * q2); const a12 = 2 * (q1 * q2 - q0 * q3);
+  let low = 1e9; let touch = 0;
+  for (let c = 0; c < 8; c++) {
+    const g = s[1] + a10 * CORN[c * 3] + a11 * CORN[c * 3 + 1] + a12 * CORN[c * 3 + 2] - R_DIE;
+    if (g < low) low = g;
+  }
+  if (low < 0) { s[1] -= low; low = 0; }
+  for (let c = 0; c < 8; c++) {
+    const g = s[1] + a10 * CORN[c * 3] + a11 * CORN[c * 3 + 1] + a12 * CORN[c * 3 + 2] - R_DIE;
+    if (g < 0.006) touch++;
+  }
+  if (record && impact > 1.2 && (evN === 0 || i - evStep[evN - 1] >= 4) && evN < EV_MAX) { evStep[evN] = i; evSpd[evN] = impact; evN++; }
+  return touch;
+}
+
+/** One launch (candidate k of the seeded stream) into P (x y z per step) and Q (x y z w per step). Returns { n, slept }. */
+function simRun(rnd, k, P, Q, record) {
+  const s = SS; const b = k * 16;
+  const u1 = rnd(b); const u2 = rnd(b + 1) * 6.283185307; const u3 = rnd(b + 2) * 6.283185307;
+  const a = Math.sqrt(1 - u1); const c = Math.sqrt(u1);
+  s[3] = a * Math.sin(u2); s[4] = a * Math.cos(u2); s[5] = c * Math.sin(u3); s[6] = c * Math.cos(u3);
+  s[0] = 0; s[1] = 1.1 + 0.7 * rnd(b + 3); s[2] = 0;
+  s[7] = 5.6 + 2 * rnd(b + 4); s[8] = -0.5 + 2 * rnd(b + 5); s[9] = (rnd(b + 6) - 0.5) * 2.4;
+  s[10] = (rnd(b + 7) - 0.5) * 16; s[11] = (rnd(b + 8) - 0.5) * 10; s[12] = -(6 + 9 * rnd(b + 9));
+  evN = 0;
+  P[0] = s[0]; P[1] = s[1]; P[2] = s[2]; Q[0] = s[3]; Q[1] = s[4]; Q[2] = s[5]; Q[3] = s[6];
+  let still = 0; let n = 0; let slept = false;
+  for (let i = 1; i <= PH_MAX; i++) {
+    const touch = simStep(i, record);
+    n = i;
+    P[i * 3] = s[0]; P[i * 3 + 1] = s[1]; P[i * 3 + 2] = s[2];
+    Q[i * 4] = s[3]; Q[i * 4 + 1] = s[4]; Q[i * 4 + 2] = s[5]; Q[i * 4 + 3] = s[6];
+    const v2 = s[7] * s[7] + s[8] * s[8] + s[9] * s[9]; const w2 = s[10] * s[10] + s[11] * s[11] + s[12] * s[12];
+    if (touch >= 4 && v2 < 0.04 && w2 < 0.25) { if (++still >= 10) { slept = true; break; } } else still = 0;
+  }
+  return { n, slept };
+}
+
+// small quaternion / matrix helpers on plain arrays (no allocation in the loops that use them)
+function qMulInto(out, o, a, ao, b, bo) {
+  const ax = a[ao]; const ay = a[ao + 1]; const az = a[ao + 2]; const aw = a[ao + 3];
+  const bx = b[bo]; const by = b[bo + 1]; const bz = b[bo + 2]; const bw = b[bo + 3];
+  out[o] = aw * bx + ax * bw + ay * bz - az * by;
+  out[o + 1] = aw * by - ax * bz + ay * bw + az * bx;
+  out[o + 2] = aw * bz + ax * by - ay * bx + az * bw;
+  out[o + 3] = aw * bw - ax * bx - ay * by - az * bz;
+}
+function qToM(q, o, m) {
+  const x = q[o]; const y = q[o + 1]; const z = q[o + 2]; const w = q[o + 3];
+  m[0] = 1 - 2 * (y * y + z * z); m[1] = 2 * (x * y - z * w); m[2] = 2 * (x * z + y * w);
+  m[3] = 2 * (x * y + z * w); m[4] = 1 - 2 * (x * x + z * z); m[5] = 2 * (y * z - x * w);
+  m[6] = 2 * (x * z - y * w); m[7] = 2 * (y * z + x * w); m[8] = 1 - 2 * (x * x + y * y);
+}
+function mToQ(m, out) {
+  const tr = m[0] + m[4] + m[8];
+  let x; let y; let z; let w; let s;
+  if (tr > 0) { s = Math.sqrt(tr + 1) * 2; w = s / 4; x = (m[7] - m[5]) / s; y = (m[2] - m[6]) / s; z = (m[3] - m[1]) / s; }
+  else if (m[0] > m[4] && m[0] > m[8]) { s = Math.sqrt(1 + m[0] - m[4] - m[8]) * 2; w = (m[7] - m[5]) / s; x = s / 4; y = (m[1] + m[3]) / s; z = (m[2] + m[6]) / s; }
+  else if (m[4] > m[8]) { s = Math.sqrt(1 + m[4] - m[0] - m[8]) * 2; w = (m[2] - m[6]) / s; x = (m[1] + m[3]) / s; y = s / 4; z = (m[5] + m[7]) / s; }
+  else { s = Math.sqrt(1 + m[8] - m[0] - m[4]) * 2; w = (m[3] - m[1]) / s; x = (m[2] + m[6]) / s; y = (m[5] + m[7]) / s; z = s / 4; }
+  const l = Math.hypot(x, y, z, w) || 1;
+  out[0] = x / l; out[1] = y / l; out[2] = z / l; out[3] = w / l;
+}
+const rotYq = (a, out) => { out[0] = 0; out[1] = Math.sin(a / 2); out[2] = 0; out[3] = Math.cos(a / 2); };
+
+// Orientation (as a quaternion) that shows each value on top, with the pips upright for the camera.
+const FACE_Q = {};
+const FACE_M = {};
+{
+  const rx = (a) => [1, 0, 0, 0, Math.cos(a), -Math.sin(a), 0, Math.sin(a), Math.cos(a)];
+  const rz = (a) => [Math.cos(a), -Math.sin(a), 0, Math.sin(a), Math.cos(a), 0, 0, 0, 1];
+  const mm = (a, b) => { const o = new Array(9).fill(0); for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) for (let k = 0; k < 3; k++) o[i * 3 + j] += a[i * 3 + k] * b[k * 3 + j]; return o; };
+  for (const v of FACE_VALUES) {
+    const e = FACE_UP[v];
+    const fv = mm(rx(e[0]), rz(e[2]));
+    const vl = FACE_FRAME[FACE_VALUES.indexOf(v)].v;
+    const d = [fv[0] * vl[0] + fv[1] * vl[1] + fv[2] * vl[2], fv[3] * vl[0] + fv[4] * vl[1] + fv[5] * vl[2], fv[6] * vl[0] + fv[7] * vl[1] + fv[8] * vl[2]];
+    let bestB = 0; let bestD = -9;
+    for (let k = 0; k < 4; k++) { // spin it about the vertical so the top of the pips points away from the camera
+      const bb = k * HALF_PI;
+      const zz = -d[0] * Math.sin(bb) + d[2] * Math.cos(bb);
+      if (-zz > bestD) { bestD = -zz; bestB = bb; }
+    }
+    const ry = [Math.cos(bestB), 0, Math.sin(bestB), 0, 1, 0, -Math.sin(bestB), 0, Math.cos(bestB)];
+    const m = mm(ry, fv);
+    FACE_M[v] = Float64Array.from(m);
+    FACE_Q[v] = new Float64Array(4);
+    mToQ(FACE_M[v], FACE_Q[v]);
+  }
+}
+/** The value on the top face of a die with this orientation (x y z w). */
+function topOfQuat(x, y, z, w) {
+  const a = 2 * (x * y + z * w); const b = 1 - 2 * (x * x + z * z); const c = 2 * (y * z - x * w); // world up, in the die's own axes
+  const A = Math.abs(a); const B = Math.abs(b); const C = Math.abs(c);
+  if (B >= A && B >= C) return FACE_VALUES[b > 0 ? 2 : 3];
+  if (A >= C) return FACE_VALUES[a > 0 ? 0 : 1];
+  return FACE_VALUES[c > 0 ? 4 : 5];
+}
+
+const TP = new Float32Array((PH_MAX + 2) * 3); const TQ = new Float32Array((PH_MAX + 2) * 4); // the throw, as played
+const SP = new Float32Array((PH_MAX + 2) * 3); const SQ = new Float32Array((PH_MAX + 2) * 4); // the simulation
+const THROW = { n: 2, hh: 0.22, slept: true, hx: 1, hz: 0, travel: 0, restQ: new Float64Array(4) };
+const QF = new Float64Array(4); const QT = new Float64Array(4); const QA = new Float64Array(4); const QB = new Float64Array(4);
+const MA = new Float64Array(9); const MB = new Float64Array(9); const MC = new Float64Array(9);
+/** Turn the nearly-flat rest orientation q (at q[o]) into an exactly flat one with the same yaw. */
+function snapFlat(q, o, out) {
+  qToM(q, o, MA);
+  let k = 0;
+  if (Math.abs(MA[4]) > Math.abs(MA[3 + k])) k = 1;
+  if (Math.abs(MA[5]) > Math.abs(MA[3 + k])) k = 2;
+  const sg = MA[3 + k] < 0 ? -1 : 1;
+  const ux = MA[k] * sg; const uy = MA[3 + k] * sg; const uz = MA[6 + k] * sg; // that axis of the die, which is nearly up
+  QA[0] = -uz; QA[1] = 0; QA[2] = ux; QA[3] = 1 + uy; // shortest arc from u to +y
+  const l = Math.hypot(QA[0], QA[2], QA[3]) || 1;
+  QA[0] /= l; QA[2] /= l; QA[3] /= l;
+  qMulInto(out, 0, QA, 0, q, o);
+  const il = 1 / Math.hypot(out[0], out[1], out[2], out[3]);
+  out[0] *= il; out[1] *= il; out[2] *= il; out[3] *= il;
+}
+/** Yaw (about +y) that lines a flat die up with the world axes, in -π/4..π/4, and the axis it was measured on. */
+function yawOfFlat(q) {
+  qToM(q, 0, MA);
+  let k = 0;
+  if (Math.abs(MA[4]) > Math.abs(MA[3])) k = 1;
+  if (Math.abs(MA[5]) > Math.abs(MA[3 + k])) k = 2;
+  const j = (k + 1) % 3;
+  const al = Math.atan2(MA[6 + j], MA[j]);
+  return al - Math.round(al / HALF_PI) * HALF_PI;
+}
+const wrapQuarter = (x) => x - Math.round(x / HALF_PI) * HALF_PI;
+
+/**
+ * Precompute the whole throw for a die that must land showing `value`, into TP / TQ (one entry per 1/120 s).
+ * `from` is +1 (top player, in from the far right) or -1 (bottom player, near left); `yf` the final yaw; `rnd(k)` the
+ * shared seeded stream. The simulated cube comes to rest on some face; because a cube is symmetric, composing the
+ * orientation with one of its 24 rotations C (rest·C shows `value` on top) changes nothing about the contacts, so every
+ * bounce stays exactly as simulated while the result is the rolled value. The simulation is then turned about the
+ * vertical (no change for a floor) and slid so it ends on the centre.
+ */
+function throwTo(value, from, yf, rnd) {
+  const aD = Math.atan2(from * 0.8, -from * 3.3); // direction of travel, start to centre
+  let best = 0; let bestCost = 1e9;
+  for (let k = 0; k < 24; k++) { // several launches from the same seeded stream; keep the one that suits the stage
+    const r = simRun(rnd, k, SP, SQ, false);
+    snapFlat(SQ, r.n * 4, QF);
+    const rx = SP[r.n * 3]; const rz = SP[r.n * 3 + 2];
+    const L = Math.hypot(rx, rz);
+    const eps = wrapQuarter(yf + yawOfFlat(QF) - (Math.atan2(rz, rx) - aD));
+    const cost = 3 * Math.abs(eps) + 0.5 * Math.abs(L - 3.9) + 1.2 * Math.max(0, 3.1 - L) + (r.slept ? 0 : 1.5);
+    if (cost < bestCost) { bestCost = cost; best = k; }
+    if (cost < 0.3) break;
+  }
+  const r = simRun(rnd, best, SP, SQ, true);
+  const n = r.n;
+  THROW.cost = bestCost; THROW.k = best;
+  // the last stretch eases into an exactly flat rest (a few steps if it slept, 120 ms if the cap cut it short)
+  snapFlat(SQ, n * 4, QF);
+  const M = Math.min(n, r.slept ? 8 : 14);
+  const ex = SP[n * 3]; const ez = SP[n * 3 + 2];
+  const bx = SP[(n - M) * 3]; const bz = SP[(n - M) * 3 + 2];
+  const px = r.slept ? ex : bx + (ex - bx) * 0.5; const pz = r.slept ? ez : bz + (ez - bz) * 0.5;
+  for (let i = n - M; i <= n; i++) {
+    const t = (i - (n - M)) / M; const e = t * t * (3 - 2 * t);
+    const o = i * 4;
+    const dot = SQ[o] * QF[0] + SQ[o + 1] * QF[1] + SQ[o + 2] * QF[2] + SQ[o + 3] * QF[3];
+    const sg = dot < 0 ? -1 : 1;
+    let x = SQ[o] + (QF[0] * sg - SQ[o]) * e; let y = SQ[o + 1] + (QF[1] * sg - SQ[o + 1]) * e;
+    let z = SQ[o + 2] + (QF[2] * sg - SQ[o + 2]) * e; let w = SQ[o + 3] + (QF[3] * sg - SQ[o + 3]) * e;
+    const l = 1 / Math.hypot(x, y, z, w); x *= l; y *= l; z *= l; w *= l;
+    SQ[o] = x; SQ[o + 1] = y; SQ[o + 2] = z; SQ[o + 3] = w;
+    SP[i * 3 + 1] += (0.5 - SP[i * 3 + 1]) * e;
+    SP[i * 3] += (px - SP[i * 3]) * e; SP[i * 3 + 2] += (pz - SP[i * 3 + 2]) * e;
+  }
+  const rx = SP[n * 3]; const rz = SP[n * 3 + 2];
+  const a2 = (Math.atan2(rz, rx) - aD) + wrapQuarter(yf + yawOfFlat(QF) - (Math.atan2(rz, rx) - aD)); // world yaw for the whole throw
+  // C: the cube rotation with (yaw · rest · C) = (final yaw · the face-up orientation of `value`)
+  rotYq(a2, QA); qMulInto(QB, 0, QA, 0, QF, 0); qToM(QB, 0, MA);
+  rotYq(yf, QA); qMulInto(QT, 0, QA, 0, FACE_Q[value], 0); qToM(QT, 0, MB);
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) { let sum = 0; for (let k = 0; k < 3; k++) sum += MA[k * 3 + i] * MB[k * 3 + j]; MC[i * 3 + j] = Math.round(sum); }
+  mToQ(MC, QB); // QB = C
+  rotYq(a2, QA);
+  const ca = Math.cos(a2); const sa = Math.sin(a2);
+  for (let i = 0; i <= n; i++) {
+    const dx = SP[i * 3] - rx; const dz = SP[i * 3 + 2] - rz;
+    TP[i * 3] = dx * ca + dz * sa; TP[i * 3 + 1] = SP[i * 3 + 1]; TP[i * 3 + 2] = -dx * sa + dz * ca;
+    qMulInto(QT, 0, QA, 0, SQ, i * 4);
+    qMulInto(TQ, i * 4, QT, 0, QB, 0);
+  }
+  THROW.n = n + 1; THROW.hh = PH_H; THROW.slept = r.slept;
+  const hl = Math.hypot(TP[0], TP[2]) || 1;
+  THROW.hx = -TP[0] / hl; THROW.hz = -TP[2] / hl; THROW.travel = hl;
+  rotYq(yf, QA); qMulInto(THROW.restQ, 0, QA, 0, FACE_Q[value], 0);
+  return THROW;
+}
+/** A short drop, no tumble (reduced motion, tap-to-skip, redraws). */
+function dropTo(value, yf) {
+  rotYq(yf, QA); qMulInto(QT, 0, QA, 0, FACE_Q[value], 0);
+  for (let i = 0; i < 2; i++) { TP[i * 3] = 0; TP[i * 3 + 1] = i ? 0.5 : 0.75; TP[i * 3 + 2] = 0; for (let c = 0; c < 4; c++) TQ[i * 4 + c] = QT[c]; }
+  THROW.n = 2; THROW.hh = 0.22; THROW.slept = true; THROW.hx = 1; THROW.hz = 0; THROW.travel = 0; evN = 0;
+  for (let c = 0; c < 4; c++) THROW.restQ[c] = QT[c];
+  return THROW;
+}
+/** A seeded stream for callers that don't have one (tests, redraws). */
+function seededStream(seed) { return (i) => { let t = (seed + Math.imul(i + 1, 0x9e3779b9)) >>> 0; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+
+// ── textures, drawn once with a 2D canvas ─────────────────────────────
+const ATLAS_W = 512; const ATLAS_H = 256; const CELL = 128; const CELL_PAD = 4; // 4 × 2 cells of 128 px: six faces and two spare
+const MAT_N = 256; const MAT_TILE = 1.6; // the play mat tiles every 1.6 world units
+const GRAD = [128, 192, 255]; // three printed tones for the banded toon shading
+function lcg(seed) { let a = seed >>> 0; return () => { a = (Math.imul(a, 1664525) + 1013904223) >>> 0; return a / 4294967296; }; }
+const mix3 = (a, b, k) => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
+const rgba = (c, a) => `rgba(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)},${a})`;
+/** Paper + faint grain for all eight atlas cells (CPU-side canvas, drawn on a palette change). */
+function paintAtlasBase(g, pal) {
+  g.fillStyle = cssOf(pal.dark ? mix3(pal.card, pal.ink, 0.17) : pal.card); // on black stock the die is a lighter grey card, so its faces still read
+  g.fillRect(0, 0, ATLAS_W, ATLAS_H);
+  const rnd = lcg(7);
+  for (let i = 0; i < 8 * 150; i++) { // paper grain: tiny ink specks at low strength
+    g.fillStyle = rgba(pal.ink, 0.04 + rnd() * 0.07);
+    const sz = rnd() < 0.8 ? 1 : 2;
+    g.fillRect(Math.floor(rnd() * ATLAS_W), Math.floor(rnd() * ATLAS_H), sz, sz);
+  }
+}
+/** The pips: printed ink with a second pass in the roller's colour a hair off register. */
+function paintAtlasPips(g, base, pal, roller) {
+  g.drawImage(base, 0, 0);
+  const R = 11.5; const sp = (CELL - 2 * CELL_PAD) / 4;
+  FACE_VALUES.forEach((v, i) => {
+    const cx = (i % 4) * CELL + CELL_PAD; const cy = (i >> 2) * CELL + CELL_PAD;
+    const dot = (x, y, col) => { g.fillStyle = col; g.beginPath(); g.arc(x, y, R, 0, Math.PI * 2); g.fill(); };
+    const pts = PIPS[v].map(([r, c]) => [cx + sp + c * sp, cy + sp + r * sp]);
+    for (const [x, y] of pts) dot(x + 1.8, y + 1.5, cssOf(roller)); // off-register second ink
+    for (const [x, y] of pts) dot(x, y, cssOf(pal.ink));
+  });
+}
+/** The tileable play mat: paper, a faint halftone screen, felt fibres. Wrapped so the tile has no seam. */
+function paintMat(g, pal) {
+  const N = MAT_N;
+  g.fillStyle = cssOf(pal.bg);
+  g.fillRect(0, 0, N, N);
+  const rnd = lcg(11);
+  const spot = (x, y, w, h, col) => { // draws a spot and its wrapped copies
+    g.fillStyle = col;
+    for (let dx = -N; dx <= N; dx += N) for (let dy = -N; dy <= N; dy += N) {
+      const X = x + dx; const Y = y + dy;
+      if (X + w < 0 || Y + h < 0 || X > N || Y > N) continue;
+      g.fillRect(X, Y, w, h);
+    }
+  };
+  for (let i = 0; i < 900; i++) spot(Math.floor(rnd() * N), Math.floor(rnd() * N), rnd() < 0.8 ? 1 : 2, 1, rgba(pal.ink, 0.03 + rnd() * 0.05));
+  for (let i = 0; i < 160; i++) { // felt fibres
+    const x = rnd() * N; const y = rnd() * N; const a = rnd() * Math.PI; const l = 3 + rnd() * 5;
+    g.strokeStyle = rgba(pal.ink, 0.04);
+    g.lineWidth = 1;
+    for (let dx = -N; dx <= N; dx += N) for (let dy = -N; dy <= N; dy += N) {
+      g.beginPath(); g.moveTo(x + dx, y + dy); g.lineTo(x + dx + Math.cos(a) * l, y + dy + Math.sin(a) * l); g.stroke();
+    }
+  }
+  // halftone screen at 45°: dots every 16 px along the diagonals
+  g.fillStyle = rgba(pal.ink, 0.075);
+  const P = 16;
+  for (let j = 0; j < N / (P / 2); j++) for (let i = 0; i < N / P; i++) {
+    const x = i * P + (j & 1 ? P / 2 : 0) + P / 4; const y = j * (P / 2) + P / 4;
+    g.beginPath(); g.arc(x, y, 2.3, 0, Math.PI * 2); g.fill();
+  }
+}
+
+/** The die: a cube with rounded edges (R_DIE), 6 faces × 5 × 5 quads, smooth normals, UVs into the face atlas. */
+function roundedDieGeometry(THREE) {
+  const stops = [-0.5, -0.5 + R_DIE / 2, -0.5 + R_DIE, 0.5 - R_DIE, 0.5 - R_DIE / 2, 0.5];
+  const K = stops.length;
+  const pos = new Float32Array(6 * K * K * 3); const nor = new Float32Array(6 * K * K * 3); const uv = new Float32Array(6 * K * K * 2);
+  const idx = [];
+  for (let f = 0; f < 6; f++) {
+    const { n, u, v } = FACE_FRAME[f];
+    const cx = (f % 4) * CELL + CELL_PAD; const cy = (f >> 2) * CELL + CELL_PAD; const span = CELL - 2 * CELL_PAD;
+    for (let iu = 0; iu < K; iu++) {
+      for (let iv = 0; iv < K; iv++) {
+        const a = stops[iu]; const b = stops[iv];
+        const p = [0, 0, 0];
+        for (let c = 0; c < 3; c++) p[c] = n[c] * 0.5 + u[c] * a + v[c] * b;
+        const q = p.map((t) => Math.max(-PH_HALF, Math.min(PH_HALF, t)));
+        const d = [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
+        const l = Math.hypot(d[0], d[1], d[2]) || 1;
+        const o = (f * K * K + iu * K + iv);
+        for (let c = 0; c < 3; c++) { nor[o * 3 + c] = d[c] / l; pos[o * 3 + c] = q[c] + (d[c] / l) * R_DIE; }
+        uv[o * 2] = (cx + (a + 0.5) * span) / ATLAS_W;
+        uv[o * 2 + 1] = 1 - (cy + (0.5 - b) * span) / ATLAS_H;
+      }
+    }
+    for (let iu = 0; iu < K - 1; iu++) {
+      for (let iv = 0; iv < K - 1; iv++) {
+        const o = f * K * K + iu * K + iv;
+        idx.push(o, o + K, o + K + 1, o, o + K + 1, o + 1);
+      }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  return g;
+}
+/** Ink creases along the crest of the twelve rounded edges. */
+function creaseGeometry(THREE) {
+  const c = PH_HALF + R_DIE * Math.SQRT1_2; const e = PH_HALF;
+  const v = [];
+  for (const s1 of [-1, 1]) for (const s2 of [-1, 1]) {
+    v.push(-e, s1 * c, s2 * c, e, s1 * c, s2 * c); // along x
+    v.push(s1 * c, -e, s2 * c, s1 * c, e, s2 * c); // along y
+    v.push(s1 * c, s2 * c, -e, s1 * c, s2 * c, e); // along z
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(v), 3));
+  return g;
+}
+/** A printed target ring (and four tick marks) on the mat where the die lands, one flat mesh. */
+function ringGeometry(THREE, r0, r1, seg) {
+  const pos = []; const idx = [];
+  const quad = (a, b, c, d) => { const o = pos.length / 3; pos.push(...a, ...b, ...c, ...d); idx.push(o, o + 1, o + 2, o + 2, o + 1, o + 3); };
+  for (let i = 0; i < seg; i++) {
+    const a0 = (i / seg) * Math.PI * 2; const a1 = ((i + 1) / seg) * Math.PI * 2;
+    quad([r0 * Math.cos(a0), 0, r0 * Math.sin(a0)], [r0 * Math.cos(a1), 0, r0 * Math.sin(a1)], [r1 * Math.cos(a0), 0, r1 * Math.sin(a0)], [r1 * Math.cos(a1), 0, r1 * Math.sin(a1)]);
+  }
+  for (let k = 0; k < 4; k++) {
+    const a = k * HALF_PI; const ca = Math.cos(a); const sa = Math.sin(a);
+    const at = (rr, w) => [rr * ca - w * sa, 0, rr * sa + w * ca];
+    quad(at(r1 + 0.05, -0.035), at(r1 + 0.05, 0.035), at(r1 + 0.22, -0.035), at(r1 + 0.22, 0.035));
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+  g.setIndex(idx);
+  return g;
+}
+
+const PUFF_N = 10;
+function dieView3D(THREE, canvas, pal0, onImpact) {
   let pal = pal0;
+  let roller = pal0.a;
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: 'high-performance' });
   let ratio = Math.min(2, window.devicePixelRatio || 1);
   let W = 1; let H = 1;
@@ -205,61 +640,101 @@ function dieView3D(THREE, canvas, pal0, onTick) {
     cam.lookAt(0, CAM_TARGET_Y, 0);
   }
   placeCam();
-  const amb = new THREE.AmbientLight(0xffffff, 0.5);
+  // paper above, ink below, one sun: with the three-step ramp the faces print in three distinct tones
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x777777, 0.42);
   const sun = new THREE.DirectionalLight(0xffffff, 0.62);
-  sun.position.set(0.4, 1, 0.6);
-  scene.add(amb, sun, sun.target);
-  const box = new THREE.BoxGeometry(1, 1, 1);
-  const edgeGeo = new THREE.EdgesGeometry(box);
-  const plane = new THREE.PlaneGeometry(1, 1);
-  plane.rotateX(-Math.PI / 2);
-  const faces = FACE_VALUES.map((v) => {
-    const c = document.createElement('canvas');
-    c.width = c.height = 128;
-    return { v, c, tex: new THREE.CanvasTexture(c) };
-  });
-  const mats = faces.map((f) => new THREE.MeshLambertMaterial({ map: f.tex, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }));
+  sun.position.set(-0.5, 0.82, -0.12);
+  scene.add(hemi, sun, sun.target);
+
+  const atlasCv = document.createElement('canvas'); atlasCv.width = ATLAS_W; atlasCv.height = ATLAS_H;
+  const atlasBase = document.createElement('canvas'); atlasBase.width = ATLAS_W; atlasBase.height = ATLAS_H;
+  const matCv = document.createElement('canvas'); matCv.width = matCv.height = MAT_N;
+  const atlasTex = new THREE.CanvasTexture(atlasCv);
+  const matTex = new THREE.CanvasTexture(matCv);
+  matTex.wrapS = matTex.wrapT = THREE.RepeatWrapping;
+  matTex.repeat.set(24 / MAT_TILE, 12 / MAT_TILE);
+  matTex.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy ? renderer.capabilities.getMaxAnisotropy() : 1);
+  const grad = new THREE.DataTexture(new Uint8Array(GRAD), GRAD.length, 1, THREE.LuminanceFormat);
+  grad.minFilter = grad.magFilter = THREE.NearestFilter;
+  grad.generateMipmaps = false;
+  grad.unpackAlignment = 1;
+  grad.needsUpdate = true;
+  const texBytes = Math.round(ATLAS_W * ATLAS_H * 4 * 4 / 3 + MAT_N * MAT_N * 4 * 4 / 3 + GRAD.length * 4);
+
+  const dieGeo = roundedDieGeometry(THREE);
+  const creaseGeo = creaseGeometry(THREE);
+  const shadowGeo = new THREE.CircleGeometry(0.6, 20);
+  shadowGeo.rotateX(-HALF_PI);
+  const matGeo = new THREE.PlaneGeometry(24, 12);
+  matGeo.rotateX(-HALF_PI);
+  const ringGeo = ringGeometry(THREE, 1.0, 1.05, 64);
+  const puffGeo = new THREE.BufferGeometry();
+  const puffPos = new Float32Array(PUFF_N * 3);
+  puffGeo.setAttribute('position', new THREE.BufferAttribute(puffPos, 3));
+  const dieMat = new THREE.MeshToonMaterial({ map: atlasTex, gradientMap: grad, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
   const hullMat = new THREE.MeshBasicMaterial({ side: THREE.BackSide });
   const lineMat = new THREE.LineBasicMaterial();
   const shadowMat = new THREE.MeshBasicMaterial();
+  const floorMat = new THREE.MeshBasicMaterial({ map: matTex });
+  const ringMat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+  const puffMat = new THREE.PointsMaterial({ size: 3, sizeAttenuation: false });
+
+  const floor = new THREE.Mesh(matGeo, floorMat);
+  const ring = new THREE.Mesh(ringGeo, ringMat);
+  ring.position.y = 0.002;
+  const squash = new THREE.Group(); // scales along the world axes (the die inside it turns)
   const die = new THREE.Group();
-  const mesh = new THREE.Mesh(box, mats);
-  const hull = new THREE.Mesh(box, hullMat);
-  const lines = new THREE.LineSegments(edgeGeo, lineMat);
+  const mesh = new THREE.Mesh(dieGeo, dieMat);
+  const hull = new THREE.Mesh(dieGeo, hullMat);
+  const lines = new THREE.LineSegments(creaseGeo, lineMat);
   die.add(hull, mesh, lines);
-  const shadow = new THREE.Mesh(plane, shadowMat);
-  scene.add(shadow, die);
-  die.visible = false;
-  shadow.visible = false;
+  squash.add(die);
+  const shadow = new THREE.Mesh(shadowGeo, shadowMat);
+  const puff = new THREE.Points(puffGeo, puffMat);
+  puff.frustumCulled = false;
+  scene.add(floor, ring, shadow, squash, puff);
+  squash.visible = false; shadow.visible = false; puff.visible = false;
 
-  const qFinal = new THREE.Quaternion();
-  const qSpin = new THREE.Quaternion();
-  const qYaw = new THREE.Quaternion();
-  const qFace = {};
-  for (const v of Object.keys(FACE_UP)) qFace[v] = new THREE.Quaternion().setFromEuler(new THREE.Euler(...FACE_UP[v]));
-  const UP = new THREE.Vector3(0, 1, 0);
-  const st = { mode: 'idle', t: 0, dur: 1, sx: 0, sz: 0, axis: new THREE.Vector3(1, 0, 0), total: 0, yaw: 0, bounce: 0, scale: 1, res: null, calm: false };
-  const BT = [0, 0.3, 0.56, 0.74, 0.86, 1];
-  const BH = [1.1, 0.42, 0.15, 0.05, 0];
+  const qWob = new THREE.Quaternion();
+  const wobAxis = new THREE.Vector3(0, 0, 1);
+  const st = {
+    mode: 'idle', t: 0, hh: 0.22, n: 2, res: null, calm: false, fast: false, evPtr: 0, lastSfx: -1, hold: 0, settleT: 0,
+    sq: 0, sqv: 0, top: 0, wob: 0, puffT: -1, big: false, scale: 1, hideT: 0, hideDur: 0.16, yaw: 0,
+  };
+  const puffV = new Float32Array(PUFF_N * 3);
+  let puffSeed = 1;
 
-  function drawFace(f) {
-    const g = f.c.getContext('2d');
-    g.fillStyle = cssOf(pal.card);
-    g.fillRect(0, 0, 128, 128);
-    g.fillStyle = cssOf(pal.ink);
-    for (const [r, c] of PIPS[f.v]) {
-      g.beginPath();
-      g.arc(32 + c * 32, 32 + r * 32, 12, 0, Math.PI * 2);
-      g.fill();
-    }
-    f.tex.needsUpdate = true;
-  }
   function setPalette(p) {
     pal = p;
-    renderer.setClearColor(new THREE.Color(p.card[0], p.card[1], p.card[2]), 1);
+    renderer.setClearColor(new THREE.Color(p.bg[0], p.bg[1], p.bg[2]), 1);
     hullMat.color.setRGB(p.ink[0], p.ink[1], p.ink[2]);
     lineMat.color.setRGB(p.ink[0], p.ink[1], p.ink[2]);
-    faces.forEach(drawFace);
+    puffMat.color.setRGB(p.ink[0], p.ink[1], p.ink[2]);
+    const rc = mix3(p.bg, p.ink, p.dark ? 0.4 : 0.34);
+    ringMat.color.setRGB(rc[0], rc[1], rc[2]);
+    // paper above, ink below: hemisphere sky is the paper tint (normalised, so a dark card doesn't darken the die)
+    const m = Math.max(p.card[0], p.card[1], p.card[2], 0.01);
+    hemi.color.setRGB(p.card[0] / m, p.card[1] / m, p.card[2] / m);
+    const gnd = p.dark ? [0.42, 0.42, 0.46] : mix3([1, 1, 1], p.ink, 0.62);
+    hemi.groundColor.setRGB(gnd[0], gnd[1], gnd[2]);
+    paintAtlasBase(atlasBase.getContext('2d'), p);
+    paintAtlasPips(atlasCv.getContext('2d'), atlasBase, p, roller);
+    atlasTex.needsUpdate = true;
+    paintMat(matCv.getContext('2d'), p);
+    matTex.needsUpdate = true;
+    grad.needsUpdate = true;
+    setShadowColor();
+  }
+  function setShadowColor() { // hard shadow: the key plate (black on dark stock), a touch of the roller's ink
+    const c = mix3(pal.edge, roller, 0.3);
+    shadowMat.color.setRGB(c[0], c[1], c[2]);
+  }
+  function setRoller(c) {
+    if (!c || c === roller) return;
+    roller = c;
+    paintAtlasPips(atlasCv.getContext('2d'), atlasBase, pal, roller);
+    atlasTex.needsUpdate = true;
+    setShadowColor();
   }
   setPalette(pal);
 
@@ -267,109 +742,183 @@ function dieView3D(THREE, canvas, pal0, onTick) {
     const visH = 2 * dist * Math.tan(CAM_FOV * Math.PI / 360);
     return 2.2 * visH / H;
   }
-  function pose(x, h, z) {
-    const q = die.quaternion;
-    // half the die's height along world y for this orientation, so a corner never sinks into the floor
-    const half = 0.5 * (Math.abs(2 * (q.x * q.y + q.w * q.z)) + Math.abs(1 - 2 * (q.x * q.x + q.z * q.z)) + Math.abs(2 * (q.y * q.z - q.w * q.x)));
-    const s = st.scale;
-    die.position.set(x, half * s + h, z);
-    die.scale.set(s, s, s);
-    const o = outline();
-    hull.scale.set(1 + 2 * o, 1 + 2 * o, 1 + 2 * o);
-    shadow.position.set(x + 0.13 * s, 0.003, z + 0.13 * s);
-    const sh = Math.max(0.55, 1 - h * 0.22) * s;
-    shadow.scale.set(sh, 1, sh);
-    shadow.rotation.y = st.yaw;
+  function setHull() { const o = 1 + 2 * outline(); hull.scale.set(o, o, o); }
+
+  /** Put the die and its shadow where the throw is at step i (+ α of the way to i + 1). */
+  function sample(i, a) {
+    const i1 = Math.min(i + 1, st.n - 1);
+    const p0 = i * 3; const p1 = i1 * 3; const q0 = i * 4; const q1 = i1 * 4;
+    const x = TP[p0] + (TP[p1] - TP[p0]) * a; const y = TP[p0 + 1] + (TP[p1 + 1] - TP[p0 + 1]) * a; const z = TP[p0 + 2] + (TP[p1 + 2] - TP[p0 + 2]) * a;
+    let dot = TQ[q0] * TQ[q1] + TQ[q0 + 1] * TQ[q1 + 1] + TQ[q0 + 2] * TQ[q1 + 2] + TQ[q0 + 3] * TQ[q1 + 3];
+    const sg = dot < 0 ? -1 : 1;
+    const qx = TQ[q0] + (TQ[q1] * sg - TQ[q0]) * a; const qy = TQ[q0 + 1] + (TQ[q1 + 1] * sg - TQ[q0 + 1]) * a;
+    const qz = TQ[q0 + 2] + (TQ[q1 + 2] * sg - TQ[q0 + 2]) * a; const qw = TQ[q0 + 3] + (TQ[q1 + 3] * sg - TQ[q0 + 3]) * a;
+    dot = 1 / Math.hypot(qx, qy, qz, qw);
+    die.quaternion.set(qx * dot, qy * dot, qz * dot, qw * dot);
+    place(x, y, z);
+  }
+  function place(x, y, z) {
+    let lift = 0;
+    if (st.mode === 'settle' && st.wob) { // a short rock on landing: tilt about the horizontal, keep the low edge on the floor
+      qWob.setFromAxisAngle(wobAxis, st.wob);
+      die.quaternion.premultiply(qWob);
+      lift = 0.5 * Math.abs(Math.sin(st.wob));
+    }
+    squash.position.set(x, 0, z);
+    die.position.set(0, y + lift, 0);
+    const sy = (1 - st.sq) * st.scale; const sx = (1 + 0.5 * st.sq) * st.scale;
+    squash.scale.set(sx, sy, sx);
+    const clear = Math.max(0, y - 0.5);
+    const c = Math.min(clear, 1.5);
+    // a hard offset shadow (never blurred): it tightens to the die as it lands
+    const off = 0.1 + 0.11 * c;
+    shadow.position.set(x + off * st.scale, 0.006, z + off * st.scale);
+    const k = (1 + 0.2 * c + 0.5 * Math.max(0, st.sq)) * st.scale;
+    shadow.scale.set(k, 1, k * 0.94);
+  }
+  function juice(dt) { // squash & stretch spring, ink flecks
+    if (!st.calm && (st.sq !== 0 || st.sqv !== 0)) {
+      const n = Math.ceil(dt / 0.008);
+      const h = dt / n;
+      for (let i = 0; i < n; i++) {
+        st.sqv += (-1440 * st.sq - 24 * st.sqv) * h; // ω ≈ 38 /s, well under-damped: a bounce or two
+        st.sq += st.sqv * h;
+      }
+      st.sq = Math.max(-0.07, Math.min(0.12, st.sq));
+      if (Math.abs(st.sq) < 0.002 && Math.abs(st.sqv) < 0.05) { st.sq = 0; st.sqv = 0; }
+    }
+    if (st.puffT >= 0) {
+      st.puffT += dt;
+      if (st.puffT > 0.4) { st.puffT = -1; puff.visible = false; } else {
+        for (let i = 0; i < PUFF_N; i++) {
+          puffV[i * 3 + 1] -= 9 * dt;
+          puffPos[i * 3] += puffV[i * 3] * dt; puffPos[i * 3 + 1] = Math.max(0.01, puffPos[i * 3 + 1] + puffV[i * 3 + 1] * dt); puffPos[i * 3 + 2] += puffV[i * 3 + 2] * dt;
+        }
+        puffGeo.attributes.position.needsUpdate = true;
+        puffMat.size = st.puffT < 0.28 ? 3 : 2; // flecks shrink at the end (three scales the size by the pixel ratio itself)
+      }
+    }
+  }
+  function impact(speed, x, z) {
+    if (speed > 2.5 && !st.calm) st.sqv += 0.55 * Math.min(speed, 12);
+    if (!st.big && speed > 4 && !st.calm) { // the first big impact kicks up a puff of ink flecks
+      st.big = true;
+      for (let i = 0; i < PUFF_N; i++) {
+        puffSeed = (Math.imul(puffSeed, 1664525) + 1013904223) >>> 0;
+        const a = (i / PUFF_N) * Math.PI * 2 + (puffSeed / 4294967296) * 0.6;
+        const sp = 0.9 + (puffSeed & 255) / 255 * 1.1;
+        puffPos[i * 3] = x + Math.cos(a) * 0.35; puffPos[i * 3 + 1] = 0.05; puffPos[i * 3 + 2] = z + Math.sin(a) * 0.35;
+        puffV[i * 3] = Math.cos(a) * sp; puffV[i * 3 + 1] = 1.4 + ((puffSeed >> 8) & 255) / 255 * 1.6; puffV[i * 3 + 2] = Math.sin(a) * sp;
+      }
+      puffGeo.attributes.position.needsUpdate = true;
+      st.puffT = 0; puff.visible = true; puffMat.size = 3;
+    }
+    if (st.t - st.lastSfx >= 0.06 && speed > 1.4) { st.lastSfx = st.t; onImpact(speed); }
+  }
+  function land() { // the die is at rest: show the final pose, then a hitstop and a short rock
+    const last = st.n - 1;
+    st.sq = st.sqv = 0; st.scale = 1; st.wob = 0;
+    st.mode = 'idle';
+    sample(last, 0);
+    st.top = topOfQuat(die.quaternion.x, die.quaternion.y, die.quaternion.z, die.quaternion.w); // read back from what the renderer is given
+    const r = st.res; st.res = null;
+    if (st.calm || st.fast) { st.puffT = -1; puff.visible = false; } else {
+      st.mode = 'settle'; st.settleT = 0; st.hold = 3;
+      st.sq = 0.06; // the final slam, held for a few frames
+      wobAxis.set(THROW.hz, 0, -THROW.hx);
+      sample(last, 0);
+    }
+    if (r) r();
   }
 
   return {
     kind: '3d',
+    /** Returns true if the canvas was resized (which clears it, so the caller must draw at once). */
     resize(w, h) {
-      W = Math.max(1, w); H = Math.max(1, h);
+      w = Math.max(1, w); h = Math.max(1, h);
+      if (w === W && h === H) return false;
+      W = w; H = h;
       renderer.setSize(W, H, false);
       cam.aspect = W / H;
       cam.updateProjectionMatrix();
-      const o = outline();
-      hull.scale.set(1 + 2 * o, 1 + 2 * o, 1 + 2 * o);
+      setHull();
+      return true;
     },
     get ratio() { return ratio; },
+    get texBytes() { return texBytes; },
+    get info() { return renderer.info.render; },
+    /** The value on top, read from the orientation the renderer is given once the die has landed (0 if it hasn't). */
+    top() { return st.mode === 'roll' || !squash.visible ? 0 : st.top; },
     /** Pull the camera back (k > 1) so the die is smaller in a tall band. */
-    setZoom(k) { dist = CAM_DIST * k; placeCam(); const o = outline(); hull.scale.set(1 + 2 * o, 1 + 2 * o, 1 + 2 * o); },
+    setZoom(k) { if (dist === CAM_DIST * k) return false; dist = CAM_DIST * k; placeCam(); setHull(); return true; },
     setRatio(r) { ratio = r; renderer.setPixelRatio(r); renderer.setSize(W, H, false); },
     setPalette,
     compile() {
-      const vis = die.visible;
-      die.visible = shadow.visible = true;
+      const vis = squash.visible;
+      squash.visible = shadow.visible = puff.visible = true;
       renderer.compile(scene, cam);
-      die.visible = shadow.visible = vis;
+      squash.visible = shadow.visible = vis; puff.visible = st.puffT >= 0;
     },
     restore() { setPalette(pal); renderer.setPixelRatio(ratio); renderer.setSize(W, H, false); this.compile(); },
-    /** Tumble in and land showing `value`. Resolves when it lands. */
-    roll(value, who, yaw, calm) {
+    /** Throw the die and land showing `value`. Resolves when it lands. `rnd(k)` is the shared seeded stream. */
+    roll(value, who, yaw, calm, rnd) {
       if (st.res) st.res();
       return new Promise((res) => {
         const from = who === 'top' ? 1 : -1; // bottom player's die comes in from the near left
-        st.mode = 'roll'; st.t = 0; st.calm = calm; st.res = res; st.bounce = 0;
-        st.dur = calm ? 0.22 : 1.05;
-        st.sx = calm ? 0 : 3.3 * from;
-        st.sz = calm ? 0 : -0.8 * from;
-        st.yaw = yaw;
-        const len = Math.hypot(st.sx, st.sz) || 1;
-        st.axis.set(-st.sz / len, 0, st.sx / len); // up × travel direction (travel = -start)
-        st.total = calm ? 0 : len / 0.5 + Math.PI * 1.5;
-        st.scale = 1;
-        qYaw.setFromAxisAngle(UP, yaw);
-        qFinal.copy(qYaw).multiply(qFace[value]);
-        const c = who === 'top' ? pal.topInk : pal.botInk;
-        if (c) shadowMat.color.setRGB(c[0], c[1], c[2]);
-        die.visible = shadow.visible = true;
+        st.res = res; st.calm = !!calm; st.fast = false; st.t = 0; st.evPtr = 0; st.lastSfx = -1; st.hold = 0; st.big = false;
+        st.sq = st.sqv = 0; st.scale = 1; st.puffT = -1; puff.visible = false; st.yaw = yaw; st.wob = 0;
+        setRoller(who === 'top' ? pal.topInk : pal.botInk);
+        if (calm) dropTo(value, yaw); else throwTo(value, from, yaw, rnd || seededStream(1 + value));
+        st.n = THROW.n; st.hh = THROW.hh;
+        st.mode = 'roll';
+        squash.visible = shadow.visible = true;
+        setHull();
+        sample(0, 0);
       });
     },
     hide(calm) {
-      if (!die.visible) return Promise.resolve();
+      if (!squash.visible) return Promise.resolve();
       if (st.res) { st.res(); st.res = null; }
-      return new Promise((res) => { st.mode = 'hide'; st.t = 0; st.dur = calm ? 0.05 : 0.16; st.res = res; });
+      return new Promise((res) => { st.mode = 'hide'; st.hideT = 0; st.hideDur = calm ? 0.05 : 0.16; st.res = res; st.sq = st.sqv = 0; st.wob = 0; });
     },
     setInks(top, bot) { pal.topInk = top; pal.botInk = bot; },
     /** Jump the current roll / hide to its end state on the next frame. */
-    fast() { if (st.mode === 'roll' || st.mode === 'hide') st.t = st.dur; },
+    fast() { if (st.mode === 'roll') { st.fast = true; st.t = (st.n - 1) * st.hh; } else if (st.mode === 'hide') st.hideT = st.hideDur; else if (st.mode === 'settle') { st.hold = 0; st.settleT = 9; } },
     /** The GL context is gone for good: settle whatever was waiting on a frame (nothing will draw it). */
     abort() {
-      const r = st.res; st.res = null; st.mode = 'idle'; st.scale = 1;
+      const r = st.res; st.res = null; st.mode = 'idle'; st.scale = 1; st.sq = st.sqv = 0;
       if (r) r();
     },
     step(dt) {
       if (st.mode === 'roll') {
         st.t += dt;
-        const k = Math.min(1, st.t / st.dur);
-        const pe = easeOut(k);
-        let h = 0;
-        let seg = 0;
-        while (seg < BH.length - 1 && k > BT[seg + 1]) seg++;
-        const u = (k - BT[seg]) / (BT[seg + 1] - BT[seg]);
-        if (st.calm) h = 0.25 * (1 - k);
-        else if (seg === 0) h = BH[0] * (1 - u * u);
-        else h = BH[seg] * 4 * u * (1 - u);
-        if (!st.calm && seg !== st.bounce) { st.bounce = seg; onTick(seg); }
-        qSpin.setFromAxisAngle(st.axis, -st.total * (1 - pe));
-        die.quaternion.copy(qSpin).multiply(qFinal);
-        pose(st.sx * (1 - pe), h, st.sz * (1 - pe));
-        if (k >= 1) {
-          st.mode = 'idle';
-          die.quaternion.copy(qFinal);
-          pose(0, 0, 0);
-          const r = st.res; st.res = null;
-          if (r) r();
+        const T = (st.n - 1) * st.hh;
+        if (st.t >= T) { if (!st.fast && !st.calm) while (st.evPtr < evN) { impact(evSpd[st.evPtr], squash.position.x, squash.position.z); st.evPtr++; } land(); } else {
+          const f = st.t / st.hh; const i = Math.floor(f);
+          if (!st.calm && !st.fast) while (st.evPtr < evN && evStep[st.evPtr] <= f) { impact(evSpd[st.evPtr], squash.position.x, squash.position.z); st.evPtr++; }
+          juice(dt);
+          sample(i, f - i);
         }
         return true;
       }
+      if (st.mode === 'settle') {
+        if (st.hold > 0) { st.hold--; return true; } // hitstop: the picture stays put for a few frames
+        st.settleT += dt;
+        juice(dt);
+        const k = st.settleT;
+        st.wob = k < 0.3 ? 0.075 * Math.exp(-k * 13) * Math.sin(k * 52) : 0;
+        if (k >= 0.3 && st.sq === 0 && st.puffT < 0) { st.mode = 'idle'; st.wob = 0; }
+        sample(st.n - 1, 0);
+        return true;
+      }
       if (st.mode === 'hide') {
-        st.t += dt;
-        const k = Math.min(1, st.t / st.dur);
+        st.hideT += dt;
+        const k = Math.min(1, st.hideT / st.hideDur);
         st.scale = 1 - easeOut(k);
-        pose(die.position.x, 0, die.position.z);
+        juice(dt);
+        place(squash.position.x, die.position.y, squash.position.z);
         if (k >= 1) {
-          st.mode = 'idle'; die.visible = shadow.visible = false; st.scale = 1;
+          st.mode = 'idle'; squash.visible = shadow.visible = false; st.scale = 1; st.puffT = -1; puff.visible = false;
           const r = st.res; st.res = null;
           if (r) r();
         }
@@ -381,10 +930,9 @@ function dieView3D(THREE, canvas, pal0, onTick) {
     dispose() {
       if (st.res) { st.res(); st.res = null; }
       try { renderer.forceContextLoss(); } catch { /* ignore */ }
-      box.dispose(); edgeGeo.dispose(); plane.dispose();
-      faces.forEach((f) => f.tex.dispose());
-      mats.forEach((m) => m.dispose());
-      hullMat.dispose(); lineMat.dispose(); shadowMat.dispose();
+      for (const g of [dieGeo, creaseGeo, shadowGeo, matGeo, ringGeo, puffGeo]) g.dispose();
+      for (const t of [atlasTex, matTex, grad]) t.dispose();
+      for (const m of [dieMat, hullMat, lineMat, shadowMat, floorMat, ringMat, puffMat]) m.dispose();
       renderer.dispose();
     },
   };
@@ -400,6 +948,7 @@ function dieView2D(host) {
     kind: '2d',
     resize() {}, setRatio() {}, setPalette() {}, compile() {}, restore() {}, setInks() {},
     get ratio() { return 1; },
+    top() { const d = host.querySelector('.gb-die'); return d ? Number(d.dataset.v) || 0 : 0; },
     fast() { if (res) { clearInterval(timer); const v = host.querySelector('.gb-die'); const done = res; res = null; if (v) v.classList.add('landed'); done(); } },
     roll(value, who, yaw, calm) {
       clearInterval(timer);
@@ -502,7 +1051,7 @@ registerGame({
     'It ends when a grid fills. Higher total wins. The starter can pick a twist first.',
   ],
   init, next, apply, result, score,
-  _test: { recordsFor, rollAt, colPts, TWISTS }, // for the tests
+  _test: { recordsFor, rollAt, colPts, TWISTS, throwTo, dropTo, topOfQuat, seededStream, TP, TQ, THROW, evStep, evSpd, evN: () => evN, FACE_VALUES }, // for the tests
 
   css: `
     .g-bones { --gb-die: 52px; --gb-col: 52px; --gb-gap: 7px; --gb-pad: 8px; --gb-band: 112px; --gb-side: 62px;
@@ -533,7 +1082,8 @@ registerGame({
     .g-bones .gb-top .gb-col { flex-direction: column-reverse; }
     .g-bones .gb-col.can { cursor: pointer; }
     .g-bones .gb-col.can::before { content: ''; position: absolute; inset: -4px -2px; z-index: -1; border: 2px solid var(--g-ink); border-radius: calc(var(--gb-die) * 0.3); background: var(--g-hl); box-shadow: var(--g-shadow-sm); transition: transform 0.08s, box-shadow 0.08s; }
-    .g-bones .gb-col.can:active::before { transform: translate(2px, 2px); box-shadow: 0 0 0 var(--g-edge); }
+    .g-bones .gb-col.can:active::before, .g-bones .gb-col.can.is-press::before { transform: translate(2px, 2px); box-shadow: 0 0 0 var(--g-edge); }
+    .g-bones.is-hit * { animation-play-state: paused !important; } /* hitstop before a smash cracks */
     .g-bones .gb-col.can .gb-die.ghost { animation: gb-hint 0.9s ease-in-out infinite alternate; }
     .g-bones .gb-col:focus-visible { outline: 3px solid var(--g-ink); outline-offset: 7px; }
     .g-bones .gb-slot { position: relative; display: block; width: var(--gb-die); height: var(--gb-die); border-radius: 24%; border: 2px dashed var(--g-line); }
@@ -737,6 +1287,7 @@ registerGame({
     let shownMoves = -1;
     let dieN = -1;
     let picking = false;
+    let opt = null; // a placement already drawn by pick(), waiting for the engine's update
     let finaleDone = false;
     let openedOver = null; // was the match already finished when this view first saw it?
     let dv = null;
@@ -753,6 +1304,31 @@ registerGame({
     const log = (ev) => { const t = T(); if (t) { (t.log || (t.log = [])).push(ev); (t.at || (t.at = [])).push(performance.now()); } };
     const sfx = (name) => { log(`sfx:${name}`); api.sfx(name); };
 
+    /** A die hitting the table: the existing tick, louder and higher the harder it lands (a thump under the big ones). */
+    function impactSound(speed) {
+      log('sfx:tick');
+      try {
+        if (api.muted && api.muted()) return;
+        const ctx = api.audio && api.audio();
+        if (!ctx) return;
+        const t = ctx.currentTime + 0.002;
+        const v = Math.min(1, speed / 9);
+        const o = ctx.createOscillator(); const g = ctx.createGain();
+        o.type = 'square';
+        o.frequency.setValueAtTime(760 + 120 * Math.min(speed, 9), t);
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(0.02 + 0.05 * v, t + 0.004);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.03);
+        o.connect(g).connect(ctx.destination); o.start(t); o.stop(t + 0.04);
+        if (speed > 4.5) {
+          const o2 = ctx.createOscillator(); const g2 = ctx.createGain();
+          o2.type = 'sine';
+          o2.frequency.setValueAtTime(170, t); o2.frequency.exponentialRampToValueAtTime(70, t + 0.07);
+          g2.gain.setValueAtTime(0.0001, t); g2.gain.exponentialRampToValueAtTime(0.06 + 0.12 * v, t + 0.006); g2.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+          o2.connect(g2).connect(ctx.destination); o2.start(t); o2.stop(t + 0.1);
+        }
+      } catch { /* no audio */ }
+    }
     function setSides() {
       halves.bot.classList.remove('gb-a', 'gb-b'); halves.top.classList.remove('gb-a', 'gb-b');
       halves.bot.classList.add(`gb-${bottom}`); halves.top.classList.add(`gb-${topW}`);
@@ -837,8 +1413,11 @@ registerGame({
       root.style.setProperty('--gb-pad', `${L.pad}px`);
       root.style.setProperty('--gb-side', `${L.side}px`);
       root.style.setProperty('--gb-band', `${L.band}px`);
-      if (dv && dv.setZoom) dv.setZoom(L.land ? 1.75 : 1);
-      if (dv) { dv.resize(band.clientWidth, band.clientHeight); renderNow(); }
+      if (dv) {
+        const zoomed = dv.setZoom ? dv.setZoom(L.land ? 1.75 : 1) : false;
+        const cleared = dv.resize(band.clientWidth, band.clientHeight);
+        if (cleared) renderNow(true); else if (zoomed) renderNow();
+      }
     }
     window.addEventListener('resize', layout);
     const ro = new ResizeObserver(() => layout());
@@ -895,6 +1474,7 @@ registerGame({
       o.gold = gold;
       for (const [k, w] of [['top', topW], ['bot', bottom]]) {
         const h = halves[k];
+        if (o.only && w !== o.only) { h.classList.remove('is-turn'); continue; } // only the half that changed is rebuilt
         const tray = h.querySelector('.gb-tray');
         tray.innerHTML = trayHTML(w, grids[w], o);
         tray.classList.toggle('is-picking', o.pick === w);
@@ -964,18 +1544,31 @@ registerGame({
       const dt = lastT ? Math.min(0.05, Math.max(0, (now - lastT) / 1000)) : 1 / 60;
       lastT = now;
       const busy = dv.step(dt);
+      dirty = false;
       const calls = dv.render();
       if (dv.kind === '3d') {
         ema = ema * 0.92 + dt * 1000 * 0.08;
         if (++perfN > 50 && ema > 24 && dv.ratio > 1) { dv.setRatio(Math.max(1, dv.ratio - 0.25)); perfN = 0; ema = 16; }
       }
       const t = T();
-      if (t) { t.frames = (t.frames || 0) + 1; t.calls = calls; }
-      if (busy) raf = requestAnimationFrame(frame);
+      if (t) {
+        t.frames = (t.frames || 0) + 1; t.calls = calls;
+        if (dv.info) t.tris = dv.info.triangles;
+        if (dv.texBytes !== undefined) t.texBytes = dv.texBytes;
+      }
+      if (busy || dirty) raf = requestAnimationFrame(frame);
       else lastT = 0;
     }
+    let dirty = false;
     function kick() { if (!raf && !dead && !paused && !glLost && dv) raf = requestAnimationFrame(frame); }
-    function renderNow() { if (dv && !paused && !glLost && !dead) dv.render(); }
+    /** Ask for a redraw. One render per animation frame: the frame loop does it. Only a resize (which clears the canvas)
+     *  is drawn at once, so the canvas never shows a blank frame. */
+    function renderNow(now) {
+      if (!dv || paused || glLost || dead) return;
+      if (now) { dirty = false; dv.render(); }
+      dirty = dirty || !now;
+      if (dirty) kick();
+    }
     // Tap-to-skip: while a roll / placement plays out, a tap fast-forwards it to the settled board.
     let skipping = false;
     let animating = false;
@@ -1003,11 +1596,15 @@ registerGame({
       band.dataset.roll = '';
       const s = ctxNow.state;
       const yaw = (api.rand(s.seed, 'yaw', n) - 0.5) * 0.9;
-      const p = dv.roll(value, w === topW ? 'top' : 'bot', yaw, reduced() || skipping);
+      const t = T();
+      if (t) t.top = 0;
+      // the throw is simulated from the seeded stream both phones share, so they see the same tumble
+      const p = dv.roll(value, w === topW ? 'top' : 'bot', yaw, reduced() || skipping, (k) => api.rand(s.seed, 'throw', n, k));
       kick();
       await p;
       if (dead) throw DEAD;
       band.dataset.roll = String(value);
+      if (t) t.top = dv.top ? dv.top() : 0; // the face that is up, read back from the orientation the renderer was given
       sfx('flip');
     }
     let bandT = 0;
@@ -1038,23 +1635,45 @@ registerGame({
       if (reduced()) e._t = setTimeout(() => e.classList.remove('show'), 1300);
       log(`stamp:${text}`);
     }
-    async function place(L, pre, s) {
+    /** A small shake of the band (CSS transform, 2–3 px, 150 ms) on a smash. */
+    function shakeBand() {
+      if (reduced() || skipping || typeof band.animate !== 'function') return;
+      log('shake');
+      try {
+        band.animate([
+          { transform: 'translate(0, 0)' }, { transform: 'translate(-3px, 1px)' }, { transform: 'translate(3px, -1px)' },
+          { transform: 'translate(-2px, 0)' }, { transform: 'translate(2px, 1px)' }, { transform: 'translate(0, 0)' },
+        ], { duration: 150, easing: 'linear' });
+      } catch { /* no WAAPI */ }
+    }
+    /** `opt` = the placement was already drawn when the column was picked (see pick()): don't draw or sound it twice. */
+    async function place(L, pre, s, opt) {
       const rm = reduced();
       const opp = other(L.who);
       const mid = cloneGrids(pre);
       mid[L.who][L.col].push(L.value);
-      log('place');
-      labR.innerHTML = `<b>Rolled ${L.value}</b><span>Column ${L.col + 1}</span>`;
-      const hidden = dv.hide(rm || skipping);
-      kick();
-      draw(mid, { newAt: { who: L.who, col: L.col }, bump: { who: L.who, col: L.col } });
-      sfx('place');
-      api.haptic(10);
+      let hidden;
+      if (opt) hidden = opt.hidden;
+      else {
+        log('place');
+        labR.innerHTML = `<b>Rolled ${L.value}</b><span>Column ${L.col + 1}</span>`;
+        hidden = dv.hide(rm || skipping);
+        kick();
+        draw(mid, { newAt: { who: L.who, col: L.col }, bump: { who: L.who, col: L.col } });
+        sfx('place');
+        api.haptic(10);
+      }
       await hidden;
       await sleep(rm ? 60 : 300);
       if (L.destroyed > 0) {
+        if (!rm) { // hitstop: the whole board holds still for a beat before it cracks
+          root.classList.add('is-hit');
+          await sleep(50);
+          root.classList.remove('is-hit');
+        }
         draw(mid, { doomed: { who: opp, col: L.col, value: L.value, stage: 'crack' } });
         log('crack');
+        shakeBand();
         labR.innerHTML = `<b>${L.wipe ? 'Wiped out' : 'Smash'}</b><span>${L.destroyed === 1 ? 'One die' : `${L.destroyed} dice`} knocked out</span>`;
         sfx('hit');
         api.haptic(30);
@@ -1127,14 +1746,17 @@ registerGame({
         const replay = !first || c.mode === 'local' || L.who !== c.me;
         if (!replay) { draw(s.grids); shownMoves = c.moves; continue; }
         const pre = preGrids(s);
-        draw(pre, { noTurn: true });
+        // this move was drawn already when the column was picked: keep that picture, don't redraw the tray
+        const o = opt && opt.n === L.n && opt.who === L.who && opt.col === L.col ? opt : null;
+        opt = null;
+        if (!o) draw(pre, { noTurn: true });
         await ready;
         if (dieN !== L.n) {
           if (first) await sleep(reduced() ? 0 : 250);
           await roll(L.value, L.who, L.n);
           await sleep(reduced() ? 60 : 350);
         }
-        await place(L, pre, s);
+        await place(L, pre, s, o);
         shownMoves = c.moves;
       }
       const c = ctxNow;
@@ -1175,6 +1797,7 @@ registerGame({
     function showIdle() {
       const c = ctxNow;
       if (!c || !c.state || c.over) return;
+      if (opt) { if (performance.now() - opt.at < 3000) return; opt = null; } // a placement is on its way in: leave the picture alone
       const s = c.state;
       const blind = s.tw === 'blind';
       setBadge(s);
@@ -1221,7 +1844,7 @@ registerGame({
       const s = c.state;
       root.dataset.phase = 'over';
       draw(s.grids, { noTurn: true });
-      setBand('over');
+      if (!finaleDone) setBand('over'); // (a second look at the finished match must not wipe the recap)
       setMystery(false);
       showPicker(false);
       dv.hide(true);
@@ -1281,8 +1904,46 @@ registerGame({
       picking = false;
       root.dataset.phase = 'busy';
       sfx('tap');
-      const r = api.move({ col });
-      if (!r.ok) { api.toast(r.error); showIdle(); }
+      const s = c.state;
+      const actor = c.actor;
+      const mine = dv && !isBlind() && dieN === s.n && shownMoves === c.moves;
+      if (!mine) { // blind draws tumble in as they land, so there is nothing to show yet: plain path
+        const r = api.move({ col });
+        if (!r.ok) { api.toast(r.error); showIdle(); }
+        return;
+      }
+      // Show the placement NOW, on this frame, and let the engine catch up on the next one: api.move replays the whole
+      // match twice and writes it out (tens of ms on a phone), and the tray used to wait for all of that.
+      const value = s.roll;
+      animating = true;
+      log('place');
+      labR.innerHTML = `<b>Rolled ${value}</b><span>Column ${col + 1}</span>`;
+      const hidden = dv.hide(reduced() || skipping);
+      kick();
+      const mid = cloneGrids(s.grids);
+      mid[actor][col].push(value);
+      draw(mid, { newAt: { who: actor, col }, bump: { who: actor, col }, noTurn: true, only: actor });
+      sfx('place');
+      api.haptic(10);
+      opt = { n: s.n, who: actor, col, value, hidden, at: performance.now() };
+      const mark = opt;
+      let fired = false;
+      const fire = () => {
+        if (fired) return;
+        fired = true;
+        clearTimeout(backup);
+        if (dead) return;
+        const r = api.move({ col });
+        if (!r.ok) { // can't happen (the engine accepted the same move a moment ago), but put the board back if it does
+          if (opt === mark) opt = null;
+          api.toast(r.error);
+          animating = false; skipping = false;
+          showIdle();
+          redrawDie();
+        }
+      };
+      const backup = setTimeout(fire, 120); // a hidden page gets no animation frames
+      requestAnimationFrame(() => setTimeout(fire, 0)); // after this frame has been painted
     }
     function sendTwist(id) {
       const c = ctxNow;
@@ -1297,11 +1958,39 @@ registerGame({
       const r = api.move({ tw: id });
       if (!r.ok) { api.toast(r.error); showIdle(); }
     }
+    // Pressing a pickable column shows it pressed at once (no preventDefault: iOS needs the click for everything else).
+    // The pick itself goes on finger-up on the same column, a few ms ahead of the click, which is then ignored.
+    let pressEl = null;
+    let tapAt = 0;
+    function clearPress() { if (pressEl) { pressEl.classList.remove('is-press'); pressEl = null; } }
+    function onPointerDown(e) {
+      const b = e.target && e.target.closest ? e.target.closest('.gb-col.can') : null;
+      if (!b || !root.contains(b) || !picking) return;
+      const tray = b.closest('.gb-tray');
+      if (!tray || !tray.classList.contains('is-picking')) return;
+      clearPress();
+      b.classList.add('is-press');
+      pressEl = b;
+      log(`press:${b.dataset.col}`);
+      const t = T();
+      if (t) t.pressed = Number(b.dataset.col);
+    }
+    function onPointerUp(e) {
+      const b = pressEl;
+      if (!b) return;
+      clearPress();
+      if (e.button > 0 || e.isPrimary === false || !b.isConnected) return;
+      const at = document.elementFromPoint(e.clientX, e.clientY);
+      if (!at || !b.contains(at)) return; // the finger slid off the column
+      tapAt = performance.now();
+      pick(Number(b.dataset.col));
+    }
     function onClick(e) {
       const pk = e.target.closest('.gb-pk');
       if (pk && root.contains(pk)) { sendTwist(pk.dataset.tw); return; }
       const b = e.target.closest('.gb-col');
       if (!b || !root.contains(b)) return;
+      if (e.detail > 0 && tapAt && performance.now() - tapAt < 500) return; // that tap was picked on finger-up already
       const tray = b.closest('.gb-tray');
       if (!tray || !tray.classList.contains('is-picking')) return;
       pick(Number(b.dataset.col));
@@ -1326,6 +2015,9 @@ registerGame({
     }
     el.addEventListener('pointerdown', onStageDown);
     root.addEventListener('click', onClick);
+    root.addEventListener('pointerdown', onPointerDown);
+    root.addEventListener('pointerup', onPointerUp);
+    root.addEventListener('pointercancel', clearPress);
     root.addEventListener('touchend', onTouchEnd);
     band.addEventListener('touchstart', onBandTouch, { passive: false });
     band.addEventListener('touchmove', onBandTouch, { passive: false });
@@ -1428,7 +2120,7 @@ registerGame({
     threeP.then((THREE) => {
       if (dead || dv) return;
       let v;
-      try { v = dieView3D(THREE, canvas, pal, () => sfx('tick')); } catch (err) {
+      try { v = dieView3D(THREE, canvas, pal, impactSound); } catch (err) {
         console.warn('[bones] WebGL unavailable', err);
         fallback('3D dice aren’t available here, so these are flat ones.');
         return;
@@ -1466,6 +2158,9 @@ registerGame({
         document.removeEventListener('visibilitychange', onVis);
         document.removeEventListener('keydown', onKey);
         root.removeEventListener('click', onClick);
+        root.removeEventListener('pointerdown', onPointerDown);
+        root.removeEventListener('pointerup', onPointerUp);
+        root.removeEventListener('pointercancel', clearPress);
         el.removeEventListener('pointerdown', onStageDown);
         window.removeEventListener('resize', layout);
         root.removeEventListener('touchend', onTouchEnd);

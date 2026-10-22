@@ -218,6 +218,7 @@ function readPalette(api) {
     a: rgbOf(t.a, '#2f5bea'), b: rgbOf(t.b, '#f0428b'), base: rgbOf(t.card, '#ffffff'),
     bg, ink, hl: rgbOf(t.hl, '#ffd23f'),
     shadow: t.dark ? mix(bg, [0, 0, 0], 0.5) : mix(bg, ink, 0.16),
+    dark: !!t.dark,
   };
 }
 const TMP = [0, 0, 0];
@@ -243,7 +244,16 @@ function syncRibbons(e) {
 
 // ── three.js renderer: two merged box batches (settled tower + moving pieces) ──
 // Each batch is 3 draw calls: vertex-coloured Lambert faces, an inverted-hull ink outline,
-// and ink crease lines. Buffers are preallocated and rewritten in place.
+// and ink crease lines. Buffers are preallocated and rewritten in place. On top: a printed
+// paper backdrop (one full-screen quad, one 256² grain texture) and the pedestal's shadow and
+// the perfect ring: 9 draw calls. Side faces are printed as a halftone (a gl_FragCoord dot
+// screen in the fragment shader); top faces stay flat ink.
+const AO_BOTTOM = 0.85;    // vertex "ambient occlusion": the foot of a side face is a little darker (contact between levels)
+const HALFTONE_PX = 3;     // halftone cell on side faces (css px)
+const MISREG = 0.42;       // the ink outline is printed this far off register (as a share of its width), toward the bottom right
+const PAPER_N = 256;       // the paper grain texture (power of two, no mipmaps)
+const CULL_M = 1.9;        // world units: a block this far below the screen bottom is not drawn
+
 function makeUnit(THREE) {
   const box = new THREE.BoxGeometry(1, 1, 1);
   const edges = new THREE.EdgesGeometry(box);
@@ -252,7 +262,9 @@ function makeUnit(THREE) {
     nrm: Float32Array.from(box.attributes.normal.array),
     idx: Array.from(box.index.array),
     edge: Float32Array.from(edges.attributes.position.array),
+    ao: new Float32Array(24),
   };
+  for (let k = 0; k < 24; k++) u.ao[k] = Math.abs(u.nrm[k * 3 + 1]) < 0.5 && u.pos[k * 3 + 1] < 0 ? AO_BOTTOM : 1;
   box.dispose();
   edges.dispose();
   return u;
@@ -264,7 +276,7 @@ function makeBatch(THREE, U, mats) {
   const gL = new THREE.BufferGeometry();
   const B = {
     faces: new THREE.Mesh(gF, mats.face), hull: new THREE.Mesh(gH, mats.hull), lines: new THREE.LineSegments(gL, mats.line),
-    cap: 0, P: null, N: null, C: null, H: null, E: null, attrs: [],
+    cap: 0, P: null, N: null, C: null, H: null, E: null, attrs: [], aN: null, aC: null, rotPrev: false, dirtyC: false, rot: false,
   };
   for (const o of [B.faces, B.hull, B.lines]) o.frustumCulled = false;
   const dyn = (arr, n) => new THREE.BufferAttribute(arr, n).setUsage(THREE.DynamicDrawUsage);
@@ -282,45 +294,154 @@ function makeBatch(THREE, U, mats) {
     gF.setIndex(new THREE.BufferAttribute(I, 1));
     gH.setAttribute('position', aH); gH.setIndex(new THREE.BufferAttribute(I, 1));
     gL.setAttribute('position', aE);
-    B.attrs = [aP, aN, aC, aH, aE];
+    B.attrs = [aP, aH, aE]; B.aN = aN; B.aC = aC;
     B.cap = cap;
+    B.dirtyC = true; B.rot = true; B.rotPrev = true;
   };
-  B.commit = (n) => {
-    gF.setDrawRange(0, n * 36); gH.setDrawRange(0, n * 36); gL.setDrawRange(0, n * 24);
-    for (const a of B.attrs) { a.updateRange.offset = 0; a.updateRange.count = Math.max(1, n * 72); a.needsUpdate = true; }
-    B.faces.visible = B.hull.visible = n > 0;
-    B.lines.visible = n > 0 && B.lineOn !== false;
+  /** Draw boxes [from, n). Positions are uploaded; normals only while something tumbles, colours only when one changed. */
+  B.range = (n, from = 0) => { // which boxes are drawn (no upload)
+    gF.setDrawRange(from * 36, Math.max(0, n - from) * 36); gH.setDrawRange(from * 36, Math.max(0, n - from) * 36); gL.setDrawRange(from * 24, Math.max(0, n - from) * 24);
+    B.faces.visible = B.hull.visible = n > from;
+    B.lines.visible = n > from && B.lineOn !== false;
+  };
+  B.commit = (n, from = 0, all = true) => {
+    B.range(n, from);
+    const cnt = Math.max(1, n * 72);
+    for (const a of B.attrs) { a.updateRange.offset = 0; a.updateRange.count = cnt; a.needsUpdate = true; }
+    if (all || B.rot || B.rotPrev) { B.aN.updateRange.offset = 0; B.aN.updateRange.count = cnt; B.aN.needsUpdate = true; }
+    if (all || B.dirtyC) { B.aC.updateRange.offset = 0; B.aC.updateRange.count = cnt; B.aC.needsUpdate = true; }
+    B.rotPrev = B.rot; B.rot = false; B.dirtyC = false;
   };
   B.dispose = () => { gF.dispose(); gH.dispose(); gL.dispose(); };
   return B;
 }
 
+const MOFF = [0, 0, 0]; // the ink outline's misregistration, world units (set each render)
 function writeBox(B, U, i, e, rgb, out) {
   const P = B.P; const N = B.N; const C = B.C; const H = B.H; const E = B.E;
-  const sx = e.w; const sy = e.h; const sz = e.d;
-  const cx = e.x; const cy = e.y + (e.lift || 0); const cz = e.z;
+  let sx = e.w; let sy = e.h; let sz = e.d;
+  const cx = e.x; let cy = e.y + (e.lift || 0); const cz = e.z;
+  const q = e.sq || 0; // landing squash: the foot stays put, y shrinks, x/z swell
+  if (q) { sx *= 1 + q * 0.5; sz *= 1 + q * 0.5; cy -= sy * q / 2; sy *= 1 - q; }
   const hx = sx + 2 * out; const hy = sy + 2 * out; const hz = sz + 2 * out;
+  const hox = MOFF[0]; const hoy = MOFF[1]; const hoz = MOFF[2];
   const rx = e.rx || 0; const rz = e.rz || 0;
   let m00 = 1; let m01 = 0; let m02 = 0; let m10 = 0; let m11 = 1; let m12 = 0; let m20 = 0; let m21 = 0; let m22 = 1;
   if (rx || rz) { // Euler XYZ with ry = 0: Rx * Rz
     const a = Math.cos(rx); const b = Math.sin(rx); const c = Math.cos(rz); const d = Math.sin(rz);
     m00 = c; m01 = -d; m02 = 0; m10 = a * d; m11 = a * c; m12 = -b; m20 = b * d; m21 = b * c; m22 = a;
+    B.rot = true;
   }
-  const up = U.pos; const un = U.nrm; const ue = U.edge;
+  const up = U.pos; const un = U.nrm; const ue = U.edge; const ua = U.ao;
   const base = i * 72;
+  // did this slot's colour change? (then the colour buffer is uploaded again)
+  if (!B.dirtyC && (C[base] !== Math.fround(rgb[0] * ua[0]) || C[base + 1] !== Math.fround(rgb[1] * ua[0]) || C[base + 2] !== Math.fround(rgb[2] * ua[0]))) B.dirtyC = true;
+  const ne = e.ne;
   for (let j = 0; j < 72; j += 3) {
     const o = base + j;
     let x = up[j] * sx; let y = up[j + 1] * sy; let z = up[j + 2] * sz;
     P[o] = m00 * x + m01 * y + m02 * z + cx; P[o + 1] = m10 * x + m11 * y + m12 * z + cy; P[o + 2] = m20 * x + m21 * y + m22 * z + cz;
     x = up[j] * hx; y = up[j + 1] * hy; z = up[j + 2] * hz;
-    H[o] = m00 * x + m01 * y + m02 * z + cx; H[o + 1] = m10 * x + m11 * y + m12 * z + cy; H[o + 2] = m20 * x + m21 * y + m22 * z + cz;
+    H[o] = m00 * x + m01 * y + m02 * z + cx + hox; H[o + 1] = m10 * x + m11 * y + m12 * z + cy + hoy; H[o + 2] = m20 * x + m21 * y + m22 * z + cz + hoz;
     x = un[j]; y = un[j + 1]; z = un[j + 2];
     N[o] = m00 * x + m01 * y + m02 * z; N[o + 1] = m10 * x + m11 * y + m12 * z; N[o + 2] = m20 * x + m21 * y + m22 * z;
-    C[o] = rgb[0]; C[o + 1] = rgb[1]; C[o + 2] = rgb[2];
+    const a = ua[j / 3];
+    C[o] = rgb[0] * a; C[o + 1] = rgb[1] * a; C[o + 2] = rgb[2] * a;
+    if (ne) { E[o] = cx; E[o + 1] = cy; E[o + 2] = cz; continue; } // tiny flecks: no crease lines
     x = ue[j] * sx; y = ue[j + 1] * sy; z = ue[j + 2] * sz;
     E[o] = m00 * x + m01 * y + m02 * z + cx; E[o + 1] = m10 * x + m11 * y + m12 * z + cy; E[o + 2] = m20 * x + m21 * y + m22 * z + cz;
   }
 }
+
+/** A tileable 256² paper grain, made once: R = fine fibre-and-speckle grain, G = a few pale fibres. */
+function makePaper(THREE) {
+  const n = PAPER_N;
+  const a = new Float32Array(n * n);
+  let s = 0x9e3779b1;
+  const rnd = () => { s = (Math.imul(s ^ (s >>> 15), 2246822519) + 374761393) >>> 0; s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
+  for (let i = 0; i < a.length; i++) a[i] = rnd();
+  const b = new Float32Array(n * n); // a soft blotch layer (wrapped box blur)
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    let t = 0;
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) t += a[((y + dy) & (n - 1)) * n + ((x + dx) & (n - 1))];
+    b[y * n + x] = t / 25;
+  }
+  const g = new Uint8Array(n * n);
+  for (let k = 0; k < 420; k++) { // fibres: short strokes, wrapped
+    const ang = rnd() * Math.PI; const len = 5 + rnd() * 11; const x0 = rnd() * n; const y0 = rnd() * n;
+    const dx = Math.cos(ang); const dy = Math.sin(ang);
+    for (let t = 0; t < len; t++) g[(((y0 + dy * t) | 0) & (n - 1)) * n + (((x0 + dx * t) | 0) & (n - 1))] = 255;
+  }
+  const d = new Uint8Array(n * n * 4);
+  for (let i = 0; i < n * n; i++) {
+    const v = 0.5 + (a[i] - 0.5) * 0.55 + (b[i] - 0.5) * 2.6;
+    d[i * 4] = Math.max(0, Math.min(255, Math.round(v * 255)));
+    d[i * 4 + 1] = g[i]; d[i * 4 + 2] = 128; d[i * 4 + 3] = 255;
+  }
+  const tex = new THREE.DataTexture(d, n, n, THREE.RGBAFormat);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.magFilter = tex.minFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+const DOT_GLSL = `
+float dotMask(vec2 q, float cell, float cov) { // 45° dot screen: 1 inside a dot of the given coverage
+  vec2 r = vec2(0.70710678 * (q.x + q.y), 0.70710678 * (q.x - q.y)) / cell;
+  float d = length(fract(r) - 0.5) * cell;
+  float rad = cell * sqrt(max(cov, 0.0) / 3.14159);
+  return 1.0 - smoothstep(rad - 0.7, rad + 0.7, d);
+}`;
+const FACE_FRAG = `
+  vec3 col = outgoingLight;
+  if (vWN.y < 0.5) {
+    float lit = clamp(dot(outgoingLight, vec3(0.3333)) / max(dot(diffuseColor.rgb, vec3(0.3333)), 0.001), 0.0, 1.5);
+    float cov = clamp((1.0 - lit) * 1.1, 0.0, 0.55);
+    vec3 baseC = diffuseColor.rgb * 0.97;
+    col = mix(baseC, diffuseColor.rgb * 0.56, dotMask(gl_FragCoord.xy, uCell, cov));
+    if (uPed > 0.5 && vWP.y < -0.01) { // the pedestal is a printed plinth: two flat stripes, then a tinted pin-stripe
+      float yy = vWP.y;
+      float u = abs(vWN.x) > 0.5 ? vWP.z : vWP.x;
+      float pin = step(0.5, fract(u * 2.6 + 0.25)) * step(yy, -0.82);
+      col = mix(col, mix(col, uSA, 0.42), pin);
+      col = mix(col, uSA, step(-0.5, yy) * step(yy, -0.22));
+      col = mix(col, uSB, step(-0.7, yy) * step(yy, -0.58));
+    }
+  }
+  gl_FragColor = vec4( col, diffuseColor.a );`;
+/** Lambert faces with the halftone side shading (and, on the static batch, the pedestal print). */
+function patchFace(mat, uni, ped) {
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uCell = uni.uCell; sh.uniforms.uSA = uni.uSA; sh.uniforms.uSB = uni.uSB; sh.uniforms.uPed = { value: ped };
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWP;\nvarying vec3 vWN;')
+      .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvWN = normal;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>\nvarying vec3 vWP;\nvarying vec3 vWN;\nuniform float uCell;\nuniform float uPed;\nuniform vec3 uSA;\nuniform vec3 uSB;\n${DOT_GLSL}`)
+      .replace('gl_FragColor = vec4( outgoingLight, diffuseColor.a );', FACE_FRAG);
+  };
+  mat.customProgramCacheKey = () => 'tower-face-v2';
+}
+
+const BACK_VERT = 'void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }';
+const BACK_FRAG = `
+uniform sampler2D tPaper;
+uniform vec3 uPaper; uniform vec3 uInk; uniform vec3 uGround; uniform vec3 uGround2;
+uniform float uRatio; uniform float uHorizon;
+${DOT_GLSL}
+void main() {
+  vec2 fc = gl_FragCoord.xy;
+  vec4 t = texture2D(tPaper, fc / (256.0 * uRatio));
+  float below = 1.0 - step(uHorizon, fc.y);
+  vec3 col = mix(uPaper, uGround, below);
+  col = mix(col, uInk, dotMask(fc, 7.0 * uRatio, 0.15) * 0.035 * (1.0 - below));
+  col = mix(col, uGround2, dotMask(fc, 5.0 * uRatio, 0.24) * below);
+  col += (t.r - 0.5) * 0.04;
+  col = mix(col, uInk, t.g * 0.035);
+  col = mix(col, uInk, (1.0 - smoothstep(0.4 * uRatio, 1.5 * uRatio, abs(fc.y - uHorizon))) * 0.32);
+  gl_FragColor = vec4(col, 1.0);
+}`;
 
 function view3D(THREE, canvas, pal0) {
   let pal = pal0;
@@ -335,8 +456,13 @@ function view3D(THREE, canvas, pal0) {
   sun.position.set(LIGHT[0], LIGHT[1], LIGHT[2]);
   scene.add(amb, sun, sun.target);
   const U = makeUnit(THREE);
+  const uni = { uCell: { value: HALFTONE_PX * ratio }, uSA: { value: new THREE.Color() }, uSB: { value: new THREE.Color() } };
+  const faceOpts = { vertexColors: true, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 };
+  const faceStat = new THREE.MeshLambertMaterial(faceOpts);
+  const faceDyn = new THREE.MeshLambertMaterial(faceOpts);
+  patchFace(faceStat, uni, 1);
+  patchFace(faceDyn, uni, 0);
   const mats = {
-    face: new THREE.MeshLambertMaterial({ vertexColors: true, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }),
     hull: new THREE.MeshBasicMaterial({ side: THREE.BackSide }),
     line: new THREE.LineBasicMaterial(),
   };
@@ -351,14 +477,24 @@ function view3D(THREE, canvas, pal0) {
   const shadow = new THREE.Mesh(planeGeo, shadowMat);
   shadow.scale.set(BASE + 0.1, 1, BASE + 0.1);
   shadow.position.set(0.42, -PED + 0.002, 0.42);
-  const stat = makeBatch(THREE, U, mats);
-  const dyn = makeBatch(THREE, U, mats);
+  // the printed paper: one full-screen quad, drawn first, never writing depth
+  const paper = makePaper(THREE);
+  const back = { tPaper: { value: paper }, uPaper: { value: new THREE.Color() }, uInk: { value: new THREE.Color() }, uGround: { value: new THREE.Color() }, uGround2: { value: new THREE.Color() }, uRatio: { value: ratio }, uHorizon: { value: -1000 } };
+  const backMat = new THREE.ShaderMaterial({ uniforms: back, vertexShader: BACK_VERT, fragmentShader: BACK_FRAG, depthTest: false, depthWrite: false });
+  const backGeo = new THREE.PlaneGeometry(2, 2);
+  const backdrop = new THREE.Mesh(backGeo, backMat);
+  backdrop.frustumCulled = false;
+  backdrop.renderOrder = -10;
+  const stat = makeBatch(THREE, U, { face: faceStat, hull: mats.hull, line: mats.line });
+  const dyn = makeBatch(THREE, U, { face: faceDyn, hull: mats.hull, line: mats.line });
   stat.ensure(32); dyn.ensure(16);
-  scene.add(shadow, stat.hull, stat.faces, stat.lines, dyn.hull, dyn.faces, dyn.lines, ring);
+  scene.add(backdrop, shadow, stat.hull, stat.faces, stat.lines, dyn.hull, dyn.faces, dyn.lines, ring);
   let statOut = 0;
   let statN = -1;
+  let statBlocksEnd = 0;
   let statLine = true;
   let emitOut = 0;
+  const statSlot = []; // block level → its first box in the static batch (-1: it is in the moving batch)
   const emit = (B, i, e) => { // a box, plus its ribbons when it is a gift
     writeBox(B, U, i++, e, colorOf(pal, e), emitOut);
     if (e.rib) { syncRibbons(e); for (let k = 0; k < 3; k++) writeBox(B, U, i++, e.rib[k], colorOf(pal, e.rib[k]), emitOut); }
@@ -373,15 +509,24 @@ function view3D(THREE, canvas, pal0) {
     mats.line.color.copy(c(p.ink));
     ringMat.color.copy(c(p.hl));
     shadowMat.color.copy(c(p.shadow));
+    uni.uSA.value.copy(c(p.a));
+    uni.uSB.value.copy(c(p.b));
+    back.uPaper.value.copy(c(p.bg));
+    back.uInk.value.copy(c(p.ink));
+    const ground = mix(p.bg, p.a, p.dark ? 0.2 : 0.15);
+    back.uGround.value.copy(c(ground));
+    back.uGround2.value.copy(c(mix(ground, p.dark ? [0, 0, 0] : p.a, p.dark ? 0.3 : 0.2)));
     statN = -1;
   }
   setPalette(pal);
 
   const api = {
     kind: '3d',
+    tris: 0,
+    texBytes: PAPER_N * PAPER_N * 4,
     resize(w, h) { W = Math.max(1, w); Hh = Math.max(1, h); renderer.setSize(W, Hh, false); },
     get ratio() { return ratio; },
-    setRatio(r) { ratio = r; renderer.setPixelRatio(r); renderer.setSize(W, Hh, false); },
+    setRatio(r) { ratio = r; uni.uCell.value = HALFTONE_PX * r; back.uRatio.value = r; renderer.setPixelRatio(r); renderer.setSize(W, Hh, false); },
     setPalette,
     setBase(w) { shadow.scale.set(w + 0.1, 1, w + 0.1); },
     compile() { // warm the shaders up before the first animation
@@ -393,8 +538,7 @@ function view3D(THREE, canvas, pal0) {
     restore() { setPalette(pal); renderer.setPixelRatio(ratio); renderer.setSize(W, Hh, false); statN = -1; api.compile(); },
     render(m) {
       const vh = m.cam.viewH; const vw = vh * (W / Hh);
-      cam.left = -vw / 2; cam.right = vw / 2; cam.top = vh / 2; cam.bottom = -vh / 2;
-      cam.updateProjectionMatrix();
+      if (cam.top !== vh / 2 || cam.right !== vw / 2) { cam.left = -vw / 2; cam.right = vw / 2; cam.top = vh / 2; cam.bottom = -vh / 2; cam.updateProjectionMatrix(); }
       const sx = (m.cam.sx || 0) + (m.cam.ox || 0);
       const tx = sx * Math.SQRT1_2; const tz = -sx * Math.SQRT1_2; const ty = m.cam.y;
       cam.position.set(tx + VIEW[0] * 60, ty + VIEW[1] * 60, tz + VIEW[2] * 60);
@@ -404,7 +548,12 @@ function view3D(THREE, canvas, pal0) {
       const out = OUTLINE_PX * Math.min(1, Math.max(0.35, bpx / 9)) * vh / Hh;
       const lineOn = bpx >= 5;
       m.outPx = out * Hh / vh; m.lineOn = lineOn; // (read by the tests)
-      const blocks = m.blocks; const deco = m.deco || NONE; const extras = m.extras || NONE;
+      // misregistration: the key plate is printed a hair to the bottom right (screen right = +x−z, screen up = −x−z and +y)
+      const mo = out * MISREG;
+      MOFF[0] = mo * (Math.SQRT1_2 + SINP * Math.SQRT1_2); MOFF[1] = -mo * COSP; MOFF[2] = mo * (SINP * Math.SQRT1_2 - Math.SQRT1_2);
+      // the paper's ground band: its horizon is the pedestal's back foot corner
+      back.uHorizon.value = (Hh / 2 + ((BASE * Math.SQRT1_2 * SINP - PED * COSP) - ty * COSP) * (Hh / vh)) * ratio;
+      const blocks = m.blocks; const deco = m.deco || NONE; const extras = m.extras || NONE; const flecks = m.flecks || NONE;
       emitOut = out;
       if (m.staticDirty || statN < 0 || Math.abs(out - statOut) > statOut * 0.08 || lineOn !== statLine) {
         let n = 0;
@@ -412,23 +561,36 @@ function view3D(THREE, canvas, pal0) {
         n += deco.length;
         stat.ensure(n);
         n = 0;
-        for (let i = 0; i < blocks.length; i++) { const e = blocks[i]; if (!e.live) n = emit(stat, n, e); }
+        statSlot.length = blocks.length;
+        for (let i = 0; i < blocks.length; i++) { const e = blocks[i]; if (!e.live) { statSlot[i] = n; n = emit(stat, n, e); } else statSlot[i] = -1; }
+        statBlocksEnd = n;
         for (let i = 0; i < deco.length; i++) if (!deco[i].off) n = emit(stat, n, deco[i]);
         stat.lineOn = lineOn;
-        stat.commit(n);
+        stat.dirtyC = true;
+        stat.commit(n, 0, true);
         statN = n; statOut = out; statLine = lineOn; m.staticDirty = false;
+      }
+      { // a tall tower: the blocks far below the screen are not drawn (the batch is in level order, so it is one range)
+        let from = 0;
+        const lo = Math.floor((ty * COSP - vh / 2 - CULL_M) / (BH * COSP));
+        if (lo > 0) {
+          from = statBlocksEnd;
+          for (let i = lo; i < statSlot.length; i++) if (statSlot[i] >= 0) { from = statSlot[i]; break; }
+        }
+        stat.range(statN, from);
       }
       let n = 0;
       for (let i = 0; i < blocks.length; i++) if (blocks[i].live) n += blocks[i].rib ? 4 : 1;
-      n += m.pieces.length + extras.length + (m.slider ? (m.slider.rib ? 4 : 1) : 0);
+      n += m.pieces.length + extras.length + flecks.length + (m.slider ? (m.slider.rib ? 4 : 1) : 0);
       dyn.ensure(n);
       n = 0;
       for (let i = 0; i < blocks.length; i++) { const e = blocks[i]; if (e.live) n = emit(dyn, n, e); }
       for (let i = 0; i < m.pieces.length; i++) n = emit(dyn, n, m.pieces[i]);
+      for (let i = 0; i < flecks.length; i++) n = emit(dyn, n, flecks[i]);
       for (let i = 0; i < extras.length; i++) n = emit(dyn, n, extras[i]);
       if (m.slider) n = emit(dyn, n, m.slider);
       dyn.lineOn = lineOn;
-      dyn.commit(n);
+      dyn.commit(n, 0, false);
       const r = m.ring;
       ring.visible = !!r;
       if (r) {
@@ -438,12 +600,13 @@ function view3D(THREE, canvas, pal0) {
         ringMat.opacity = 1 - r.k * r.k;
       }
       renderer.render(scene, cam);
+      api.tris = renderer.info.render.triangles;
       return renderer.info.render.calls;
     },
     dispose() {
       try { renderer.forceContextLoss(); } catch { /* ignore */ }
-      stat.dispose(); dyn.dispose(); ringGeo.dispose(); planeGeo.dispose();
-      mats.face.dispose(); mats.hull.dispose(); mats.line.dispose(); ringMat.dispose(); shadowMat.dispose();
+      stat.dispose(); dyn.dispose(); ringGeo.dispose(); planeGeo.dispose(); backGeo.dispose(); paper.dispose();
+      faceStat.dispose(); faceDyn.dispose(); mats.hull.dispose(); mats.line.dispose(); ringMat.dispose(); shadowMat.dispose(); backMat.dispose();
       renderer.dispose();
     },
   };
@@ -470,6 +633,7 @@ function view2D(canvas, pal0) {
     const rot = (x, y, z, out) => { out[0] = M[0] * x + M[1] * y + M[2] * z; out[1] = M[3] * x + M[4] * y + M[5] * z; out[2] = M[6] * x + M[7] * y + M[8] * z; return out; };
     const col = colorOf(pal, e).slice();
     const n = [0, 0, 0];
+    const q = e.sq || 0; const ew = e.w * (1 + q * 0.5); const ed = e.d * (1 + q * 0.5); const eh = e.h * (1 - q); const dy = -e.h * q / 2;
     for (const [ax, sg] of FACES) {
       const nl = [0, 0, 0]; nl[ax] = sg;
       rot(nl[0], nl[1], nl[2], n);
@@ -481,8 +645,8 @@ function view2D(canvas, pal0) {
       for (let k = 0; k < 4; k++) {
         const l = [0, 0, 0];
         l[ax] = sg * 0.5; l[u] = (k === 0 || k === 3) ? -0.5 : 0.5; l[v] = k < 2 ? -0.5 : 0.5;
-        rot(l[0] * e.w, l[1] * e.h, l[2] * e.d, corner);
-        const X = corner[0] + e.x; const Y = corner[1] + e.y + (e.lift || 0); const Z = corner[2] + e.z;
+        rot(l[0] * ew, l[1] * eh, l[2] * ed, corner);
+        const X = corner[0] + e.x; const Y = corner[1] + e.y + (e.lift || 0) + dy; const Z = corner[2] + e.z;
         if (k) g.lineTo(px(X, Z), py(X, Y, Z)); else g.moveTo(px(X, Z), py(X, Y, Z));
       }
       g.closePath();
@@ -493,6 +657,8 @@ function view2D(canvas, pal0) {
   }
   return {
     kind: '2d',
+    tris: 0,
+    texBytes: 0,
     resize(w, h) { W = Math.max(1, w); Hh = Math.max(1, h); canvas.width = Math.round(W * ratio); canvas.height = Math.round(Hh * ratio); },
     get ratio() { return ratio; },
     setRatio(r) { ratio = r; canvas.width = Math.round(W * ratio); canvas.height = Math.round(Hh * ratio); },
@@ -521,6 +687,7 @@ function view2D(canvas, pal0) {
       for (const e of m.deco || NONE) if (!e.off) draw(e);
       for (const e of m.blocks) draw(e);
       for (const e of m.pieces) draw(e);
+      for (const e of m.flecks || NONE) draw(e);
       for (const e of m.extras || NONE) draw(e);
       if (m.slider) draw(m.slider);
       const r = m.ring;
@@ -549,6 +716,24 @@ const easeIO = (k) => (k < 0.5 ? 2 * k * k : 1 - ((-2 * k + 2) ** 2) / 2);
 const easeOut = (k) => 1 - (1 - k) ** 3;
 const backOut = (k) => 1 + 2.70158 * (k - 1) ** 3 + 1.70158 * (k - 1) ** 2;
 const noop = () => {};
+
+// ── simulation: a fixed timestep for what integrates, exact springs for the camera ──
+const STEP = 1 / 120;      // simulation step (s): pieces, flecks and squash run at this rate and are drawn interpolated
+const MAX_DT = 0.1;        // a frame is never simulated longer than this (s)
+const MAX_STEPS = 12;      // at most this many steps per frame (the rest is dropped, no spiral of death)
+const GRAV = 15;           // world units / s²
+const CAM_W = 7.5;         // camera spring (rad/s): critically damped, about the old ease's settle time
+const SQ_K = 1600;         // landing squash spring: stiffness
+const SQ_C = 44;           // and damping (a little under critical, so it springs back once)
+const HITSTOP = 0.045;     // s: the sim and the timelines freeze on a perfect
+const MAX_FLECKS = 12;
+let spX = 0; let spV = 0;
+/** Critically damped spring, exact for any dt (Juckett): position and velocity after dt, in spX / spV. */
+function spring(x, v, goal, w, dt) {
+  const d = x - goal; const e = Math.exp(-w * dt); const j = v + w * d;
+  spX = goal + (d + j * dt) * e;
+  spV = (v - w * j * dt) * e;
+}
 
 // ── the game ──────────────────────────────────────────────────────────
 const MILESTONES = {
@@ -771,7 +956,8 @@ registerGame({
     $('.gt-t-b .gt-n').textContent = api.name('b');
     const T = () => (typeof window !== 'undefined' && window.__towerTest) || null; // test hook only
     const log = (ev) => { const t = T(); if (t) (t.log || (t.log = [])).push(ev); };
-    const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const rmq = matchMedia('(prefers-reduced-motion: reduce)');
+    const reduced = () => rmq.matches;
     const coarse = () => matchMedia('(pointer: coarse)').matches;
     // Turn games don't get api.data() from the engine (live games do), so use the same store directly.
     const store = typeof api.data === 'function' && typeof api.setData === 'function' ? api : gameDataApi('tower');
@@ -791,8 +977,13 @@ registerGame({
     let glLost = false;
     let cssW = 1;
     let cssH = 1;
-    let ema = 16;
-    let perfN = 0;
+    let slowN = 0;          // dynamic resolution: frames that missed the vsync in this window
+    let winN = 0;
+    let acc = 0;            // fixed-step accumulator (s)
+    let alpha = 0;          // how far into the next step the drawn frame is
+    let hitstop = 0;        // s of frozen time left
+    let rndS = 0x2545f491;
+    const camV = { y: 0, zoom: 0, ox: 0 }; // spring velocities
     let readyRes;
     let openedOver = null;
     let bestRef = 0;        // the best height in this mode before this run (frozen once the run is over)
@@ -804,6 +995,7 @@ registerGame({
     let beatMoves = -1;
     let pickBusy = false;
     let hudBottom = 100;
+    let callsTop = '';
     let ghostY = 0; let ghostHalf = 2; let ghostW = 64; let ghostOn = false; let ghostX = -1; let ghostYpx = -1;
     let bTimer = 0;
     let unData = null;
@@ -811,9 +1003,13 @@ registerGame({
     let bShown = null;
     let bBusy = false;
     const ready = new Promise((r) => { readyRes = r; });
-    const model = { blocks: [], pieces: [], slider: null, ring: null, deco: [], extras: EMPTY, cam: { y: CAM_LEAD, zoom: 1, viewH: 12, sx: 0, ox: 0 }, staticDirty: true, mode: 'classic', modeSet: false };
+    const model = { blocks: [], pieces: [], flecks: [], slider: null, ring: null, deco: [], extras: EMPTY, cam: { y: CAM_LEAD, zoom: 1, viewH: 12, sx: 0, ox: 0 }, staticDirty: true, mode: 'classic', modeSet: false };
     const goal = { y: CAM_LEAD, zoom: 1, ox: 0 };
-    const anims = new Set();
+    const anims = [];
+    const sqList = [];      // blocks that are squashing
+    const fidle = [];       // the fleck pool (at most MAX_FLECKS exist, ever)
+    for (let i = 0; i < MAX_FLECKS; i++) fidle.push({ x: 0, y: 0, z: 0, w: 0.1, h: 0.1, d: 0.1, who: null, tint: 'ink', live: true, ne: true, flash: 0, lift: 0, rx: 0, rz: 0, ox: 0, oy: 0, oz: 0, cx: 0, cy: 0, cz: 0, vx: 0, vy: 0, vz: 0, life: 0, ttl: 1, sz: 0.1 });
+    const lastCam = [NaN, 0, 0, 0];  // the camera the ghost and the culling were last placed for
     const flagE = [{ tint: 'ink' }, { tint: 'hl' }, { tint: 'hl' }, { tint: 'hl' }].map((p) => ({ x: 0, y: 0, z: 0, w: 0.1, h: 0.1, d: 0.1, who: null, live: true, lift: 0, rx: 0, rz: 0, flash: 0, ...p }));
 
     const baseViewH = () => Math.max(VIEW_W * cssH / cssW, MIN_VIEW_H);
@@ -839,61 +1035,79 @@ registerGame({
     }
 
     // ── loop ──
+    // The slider is analytic and drawn exactly where the model has it (what you see is what you drop). What
+    // integrates (falling pieces, flecks, the landing squash) runs at a fixed 120 Hz and is drawn interpolated
+    // between its last two states; the camera is an exact spring, so it needs no steps. The clock is the rAF time.
+    const rnd = () => { rndS ^= rndS << 13; rndS ^= rndS >>> 17; rndS ^= rndS << 5; return (rndS >>> 0) / 4294967296; };
+    const fx = (k) => { const t = T(); if (t) { const o = t.fx || (t.fx = {}); o[k] = (o[k] || 0) + 1; } };
     function frame(now) {
       raf = 0;
       if (dead || paused || glLost) return;
-      const dt = lastT ? Math.min(0.05, Math.max(0, (now - lastT) / 1000)) : 1 / 60;
+      const raw = lastT ? now - lastT : 16.7;
+      const dt = lastT ? Math.min(MAX_DT, Math.max(0, raw / 1000)) : 1 / 60;
       lastT = now;
-      for (const a of anims) {
-        a.t += dt * 1000;
+      let sdt = dt;
+      if (hitstop > 0) { hitstop -= dt; sdt = 0; } // a perfect freezes time for a beat
+      let w = 0;
+      for (let i = 0; i < anims.length; i++) {
+        const a = anims[i];
+        a.t += sdt * 1000;
         const k = Math.min(1, a.t / a.dur);
         a.step(a.ease(k));
-        if (k >= 1) { anims.delete(a); a.res(); }
+        if (k >= 1) a.res(); else anims[w++] = a;
       }
+      anims.length = w;
       stepSlider(dt);
-      stepPieces(dt);
+      acc += sdt;
+      let n = 0;
+      while (acc >= STEP && n < MAX_STEPS) { simStep(); acc -= STEP; n++; }
+      if (acc >= STEP) acc = 0; // way behind (a stalled tab): drop the rest
+      alpha = acc / STEP;
+      blendSim();
       const c = model.cam;
-      const f = 1 - Math.exp(-dt * 4.5);
-      c.y += (goal.y - c.y) * f;
-      c.zoom += (goal.zoom - c.zoom) * f;
-      c.ox += (goal.ox - c.ox) * f;
-      const camBusy = Math.abs(goal.y - c.y) > 0.002 || Math.abs(goal.zoom - c.zoom) > 0.0005 || Math.abs(goal.ox - c.ox) > 0.002;
-      if (!camBusy) { c.y = goal.y; c.zoom = goal.zoom; c.ox = goal.ox; }
+      if (sdt > 0) {
+        spring(c.y, camV.y, goal.y, CAM_W, sdt); c.y = spX; camV.y = spV;
+        spring(c.zoom, camV.zoom, goal.zoom, CAM_W, sdt); c.zoom = spX; camV.zoom = spV;
+        spring(c.ox, camV.ox, goal.ox, CAM_W, sdt); c.ox = spX; camV.ox = spV;
+      }
+      const camBusy = Math.abs(goal.y - c.y) > 0.002 || Math.abs(camV.y) > 0.02 || Math.abs(goal.zoom - c.zoom) > 0.0005 || Math.abs(camV.zoom) > 0.003 || Math.abs(goal.ox - c.ox) > 0.002 || Math.abs(camV.ox) > 0.02;
+      if (!camBusy) { c.y = goal.y; c.zoom = goal.zoom; c.ox = goal.ox; camV.y = camV.zoom = camV.ox = 0; }
       c.viewH = baseViewH() * c.zoom;
       let calls = 0;
       if (view) {
-        cullDeco();
+        const moved = c.y !== lastCam[0] || c.zoom !== lastCam[1] || c.ox !== lastCam[2] || c.sx !== lastCam[3];
+        if (moved) cullDeco(); // DOM and projections only when the camera actually moved
         calls = view.render(model);
-        placeGhost();
-        tunePerf(dt);
+        if (moved) { placeGhost(); lastCam[0] = c.y; lastCam[1] = c.zoom; lastCam[2] = c.ox; lastCam[3] = c.sx; }
+        tunePerf(raw);
       }
       const t = T();
-      if (t) { t.frames = (t.frames || 0) + 1; t.calls = calls; t.ratio = view && view.ratio; }
-      if (anims.size || slider || model.pieces.length || model.ring || camBusy) raf = requestAnimationFrame(frame);
+      if (t) { t.frames = (t.frames || 0) + 1; t.calls = calls; t.tris = view ? view.tris : 0; t.texBytes = view ? view.texBytes : 0; t.ratio = view && view.ratio; t.drawn = slider ? slider.p : null; t.cam = c; }
+      if (anims.length || slider || model.pieces.length || model.flecks.length || sqList.length || model.ring || camBusy || hitstop > 0) raf = requestAnimationFrame(frame);
       else lastT = 0;
     }
     function kick() { if (!raf && !dead && !paused && !glLost && view) raf = requestAnimationFrame(frame); }
-    // Dynamic resolution: step the pixel ratio down while frames run slow.
-    function tunePerf(dt) {
-      if (!lastT) return;
-      ema = ema * 0.92 + dt * 1000 * 0.08;
-      if (++perfN > 50 && ema > 24 && view.ratio > 1) {
-        view.setRatio(Math.max(1, view.ratio - 0.25));
-        perfN = 0;
-        ema = 16;
-      }
+    // Dynamic resolution: when a good share of a window of frames misses the vsync, take the pixel ratio down a notch.
+    function tunePerf(rawMs) {
+      if (!lastT || rawMs > 250) return; // a wake-up or a hidden tab is not load
+      winN++;
+      if (rawMs > 20.5) slowN++;
+      if (winN < 40) return;
+      if (slowN > winN * 0.3 && view.ratio > 1) view.setRatio(Math.max(1, Math.round(view.ratio * 0.8 * 20) / 20));
+      winN = slowN = 0;
     }
     function tween(ms, step, ease = easeIO) {
       return new Promise((res) => {
         if (dead) return;
         if (!(ms > 0)) { step(1); res(); return; }
-        anims.add({ t: 0, dur: ms, step, ease, res });
+        anims.push({ t: 0, dur: ms, step, ease, res });
         kick();
       });
     }
     const wait = (ms) => tween(ms, noop, lin);
     const hold = (e) => { e.holds = (e.holds || 0) + 1; e.live = true; };
     const release = (e) => { e.holds = Math.max(0, (e.holds || 0) - 1); if (!e.holds) { e.live = false; model.staticDirty = true; } };
+    const touchCam = () => { lastCam[0] = NaN; };
 
     function placeAt(e, prev, axis, o) {
       e.x = prev.x + (axis === 'x' ? o : 0);
@@ -945,36 +1159,153 @@ registerGame({
         q.w = alongX ? L : 0.08; q.d = alongX ? 0.08 : L; q.h = 0.24 - 0.05 * k;
       }
     }
-    function stepPieces(dt) {
-      const ps = model.pieces;
-      for (let i = ps.length - 1; i >= 0; i--) {
-        const p = ps[i];
-        p.vy -= 15 * dt;
-        p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
-        p.rx += p.wx * dt; p.rz += p.wz * dt;
-        p.t += dt;
-        if (p.t > 2.4) ps.splice(i, 1);
+    // ── the fixed-step world: sliced pieces, flecks, landing squash ──
+    /** Where a falling piece lands: the pedestal top if it is over it, else the ground plane. */
+    function floorAt(x, z) {
+      const b0 = model.blocks[0];
+      const hb = (b0 ? b0.w : BASE) / 2;
+      return Math.abs(x) <= hb && Math.abs(z) <= hb ? 0 : -PED;
+    }
+    function onScreen(x, y, z) { const p = project(x, y, z); return p[0] > 0 && p[0] < cssW && p[1] > 0 && p[1] < cssH; }
+    /** One piece, one step. Returns false when it is gone. */
+    function stepPiece(p) {
+      const c = p.c; const o = p.o;
+      o[0] = c[0]; o[1] = c[1]; o[2] = c[2]; o[3] = c[3]; o[4] = c[4];
+      p.t += STEP;
+      if (p.rest >= 0) { // lying where it landed: it shrinks away like a wiped print
+        p.rest += STEP;
+        p.vx *= 0.9; p.vz *= 0.9; p.wx *= 0.88; p.wz *= 0.88;
+        c[0] += p.vx * STEP; c[2] += p.vz * STEP; c[3] += p.wx * STEP; c[4] += p.wz * STEP;
+        p.sc = p.rest < 0.5 ? 1 : Math.max(0, 1 - (p.rest - 0.5) / 0.22);
+        return p.sc > 0;
       }
+      p.vy -= GRAV * STEP;
+      c[0] += p.vx * STEP; c[1] += p.vy * STEP; c[2] += p.vz * STEP; c[3] += p.wx * STEP; c[4] += p.wz * STEP;
+      if (!p.calm && p.vy < 0) { // reaches the pedestal top or the ground: one small bounce, then it lies there
+        const ca = Math.cos(c[3]);
+        const hy = (Math.abs(ca * Math.sin(c[4])) * p.bw + Math.abs(ca * Math.cos(c[4])) * p.bh + Math.abs(Math.sin(c[3])) * p.bd) / 2;
+        const fl = floorAt(c[0], c[2]);
+        if (c[1] - hy < fl) {
+          c[1] = fl + hy;
+          if (!p.bounced) {
+            p.bounced = true;
+            p.vy = -p.vy * 0.3; p.vx *= 0.55; p.vz *= 0.55; p.wx *= 0.45; p.wz *= 0.45;
+            if (onScreen(c[0], c[1], c[2])) { api.sfx('tick'); puffAt(c[0], fl, c[2], 3, p.who); }
+          } else { p.vy = 0; p.rest = 0; }
+        }
+      }
+      return p.t < 3.2;
+    }
+    function stepFleck(f) {
+      f.ox = f.cx; f.oy = f.cy; f.oz = f.cz;
+      f.life -= STEP;
+      if (f.life <= 0) return false;
+      f.vy -= 10 * STEP;
+      f.cx += f.vx * STEP; f.cy += f.vy * STEP; f.cz += f.vz * STEP;
+      return true;
+    }
+    function simStep() {
+      const ps = model.pieces;
+      for (let i = ps.length - 1; i >= 0; i--) if (!stepPiece(ps[i])) ps.splice(i, 1);
+      const fl = model.flecks;
+      for (let i = fl.length - 1; i >= 0; i--) {
+        if (!stepFleck(fl[i])) { fidle.push(fl[i]); fl[i] = fl[fl.length - 1]; fl.pop(); }
+      }
+      for (let i = sqList.length - 1; i >= 0; i--) {
+        const e = sqList[i];
+        e.sqo = e.sqc;
+        e.sqv += (-SQ_K * e.sqc - SQ_C * e.sqv) * STEP;
+        e.sqc += e.sqv * STEP;
+        if (Math.abs(e.sqc) < 0.002 && Math.abs(e.sqv) < 0.04) { e.sqc = e.sqo = e.sq = e.sqv = 0; sqList.splice(i, 1); release(e); }
+      }
+    }
+    /** Write the drawn state: previous·(1−α) + current·α. */
+    function blendSim() {
+      const ps = model.pieces;
+      for (let i = 0; i < ps.length; i++) {
+        const p = ps[i]; const c = p.c; const o = p.o;
+        p.x = o[0] + (c[0] - o[0]) * alpha; p.y = o[1] + (c[1] - o[1]) * alpha; p.z = o[2] + (c[2] - o[2]) * alpha;
+        p.rx = o[3] + (c[3] - o[3]) * alpha; p.rz = o[4] + (c[4] - o[4]) * alpha;
+        p.w = p.bw * p.sc; p.h = p.bh * p.sc; p.d = p.bd * p.sc;
+      }
+      const fl = model.flecks;
+      for (let i = 0; i < fl.length; i++) {
+        const f = fl[i];
+        f.x = f.ox + (f.cx - f.ox) * alpha; f.y = f.oy + (f.cy - f.oy) * alpha; f.z = f.oz + (f.cz - f.oz) * alpha;
+        const s = f.sz * (0.45 + 0.55 * Math.min(1, f.life / (f.ttl * 0.6)));
+        f.w = f.h = f.d = s;
+      }
+      for (let i = 0; i < sqList.length; i++) { const e = sqList[i]; e.sq = e.sqo + (e.sqc - e.sqo) * alpha; }
     }
     function addPiece(src, axis, dir) {
       const calm = reduced();
+      const x = src.x; const y = src.y; const z = src.z;
       model.pieces.push({
-        x: src.x, y: src.y, z: src.z, w: src.w, h: src.h, d: src.d, who: src.who, tint: src.tint, flash: 0, lift: 0, live: true,
-        rx: 0, rz: 0, t: 0,
+        x, y, z, w: src.w, h: src.h, d: src.d, bw: src.w, bh: src.h, bd: src.d, who: src.who, tint: src.tint, flash: 0, lift: 0, live: true,
+        rx: 0, rz: 0, t: 0, sc: 1, rest: -1, bounced: false, calm,
+        c: Float64Array.of(x, y, z, 0, 0), o: Float64Array.of(x, y, z, 0, 0),
         vx: calm ? 0 : axis === 'x' ? dir * 1.5 : 0, vz: calm ? 0 : axis === 'z' ? dir * 1.5 : 0, vy: calm ? -1 : 1.1,
         wx: calm ? 0 : axis === 'z' ? dir * 3.2 : 0, wz: calm ? 0 : axis === 'x' ? -dir * 3.2 : 0,
       });
       kick();
+    }
+    /** A few ink and paper flecks puff out of a point (never under reduced motion; at most MAX_FLECKS exist). */
+    function puffAt(x, y, z, n, who, ax = '', dir = 0) {
+      if (reduced()) return;
+      for (let i = 0; i < n && fidle.length; i++) {
+        const f = fidle.pop();
+        const k = i % 4;
+        f.tint = k === 0 ? 'ink' : k === 1 ? 'hl' : k === 2 ? 'bg' : null;
+        f.who = who;
+        const a = rnd() * 6.2832; const sp = 0.7 + rnd() * 1.2;
+        let vx = Math.cos(a) * sp; let vz = Math.sin(a) * sp;
+        if (ax === 'x') vx = Math.abs(vx) * dir + dir * 0.3; else if (ax === 'z') vz = Math.abs(vz) * dir + dir * 0.3;
+        f.cx = f.ox = x + (rnd() - 0.5) * 0.3; f.cy = f.oy = y + 0.02; f.cz = f.oz = z + (rnd() - 0.5) * 0.3;
+        f.vx = vx; f.vz = vz; f.vy = 1.4 + rnd() * 1.7;
+        f.ttl = f.life = 0.34 + rnd() * 0.22; f.sz = 0.07 + rnd() * 0.06;
+        f.w = f.h = f.d = f.sz; f.x = f.cx; f.y = f.cy; f.z = f.cz;
+        model.flecks.push(f);
+      }
+      fx('flecks');
+      kick();
+    }
+    /** The kept block has landed: flecks from its top rim (more on a perfect), toward the cut side if there was one. */
+    function puffRim(e, n, ax, dir) {
+      if (reduced()) return;
+      const top = e.y + e.h / 2;
+      for (let i = 0; i < n && fidle.length; i++) {
+        const side = rnd() < 0.5;
+        const sgn = ax && rnd() < 0.6 ? dir : rnd() < 0.5 ? -1 : 1;
+        const px = side ? e.x + sgn * e.w / 2 : e.x + (rnd() - 0.5) * e.w;
+        const pz = side ? e.z + (rnd() - 0.5) * e.d : e.z + sgn * e.d / 2;
+        puffAt(px, top, pz, 1, e.who, side ? 'x' : 'z', sgn);
+      }
     }
     function blink(e, ms) {
       hold(e);
       e.flash = 1;
       tween(ms, (k) => { e.flash = k < 1 ? 1 : 0; }, lin).then(() => { e.flash = 0; release(e); });
     }
-    function settle(e) { // the kept block lands with a tiny bump
+    /** The kept block lands with a short squash and stretch (y squashes, x and z swell, then it springs back). */
+    function squash(e, amt) {
+      if (reduced()) return;
+      if (e.sqv === undefined) { e.sqc = e.sqo = e.sqv = e.sq = 0; }
+      if (!sqList.includes(e)) { hold(e); sqList.push(e); }
+      e.sqc = e.sqo = amt; e.sqv = 0; e.sq = amt;
+      fx('squash');
+      kick();
+    }
+    /** A tiny kick of the camera, as a velocity on its spring: the world jolts down a few pixels and settles back. */
+    function kickCam(v) {
+      if (reduced()) return;
+      camV.y += v;
+      fx('kick');
+      kick();
+    }
+    function settle(e) { // the kept block lands with a tiny bump (and the squash)
       if (reduced()) return;
       hold(e);
-      tween(150, (k) => { e.lift = 0.07 * (1 - k); }, easeOut).then(() => { e.lift = 0; release(e); });
+      tween(150, (k) => { e.lift = 0.04 * (1 - k); }, easeOut).then(() => { e.lift = 0; release(e); });
     }
     function ringAt(e) {
       const r = { x: e.x, y: e.y + e.h / 2, z: e.z, w: e.w, d: e.d, k: 0 };
@@ -1093,6 +1424,7 @@ registerGame({
       bestEl.hidden = !ghostOn;
       ghostX = ghostYpx = -1;
       model.staticDirty = true;
+      touchCam();
       measureHud();
     }
     function placeGhost() {
@@ -1105,7 +1437,13 @@ registerGame({
       if (vis !== !ghostEl.hidden) ghostEl.hidden = !vis;
       if (vis && (x !== ghostX || y !== ghostYpx)) { ghostX = x; ghostYpx = y; ghostEl.style.transform = `translate(${x}px, ${y}px)`; }
     }
-    function measureHud() { hudBottom = hudEl.offsetTop + hudEl.offsetHeight + 4; callsEl.style.top = `${Math.round(hudBottom + 10)}px`; wrap.style.setProperty('--gt-hud-b', `${Math.round(hudBottom + 8)}px`); }
+    function measureHud() {
+      const hb = hudEl.offsetTop + hudEl.offsetHeight + 4;
+      if (hb !== hudBottom) touchCam();
+      hudBottom = hb;
+      const top = `${Math.round(hb + 10)}px`;
+      if (top !== callsTop) { callsTop = top; callsEl.style.top = top; wrap.style.setProperty('--gt-hud-b', `${Math.round(hb + 8)}px`); }
+    }
     /** Hide the ghost ring's dashes that sit above the bottom of the HUD (they would print over the numbers). */
     function cullDeco() {
       const d = model.deco;
@@ -1204,12 +1542,12 @@ registerGame({
     async function intro() {
       const top = model.blocks.length - 1;
       const y1 = camYFor(top);
-      if (top < 2 || reduced()) { model.cam.y = goal.y = y1; kick(); return; }
+      if (top < 2 || reduced()) { model.cam.y = goal.y = y1; camV.y = 0; kick(); return; }
       const y0 = camYFor(0);
-      model.cam.y = goal.y = y0;
+      model.cam.y = goal.y = y0; camV.y = 0;
       phase('intro');
       log('intro');
-      await tween(Math.min(1800, 550 + top * 55), (k) => { model.cam.y = goal.y = y0 + (y1 - y0) * k; }, easeIO);
+      await tween(Math.min(1800, 550 + top * 55), (k) => { model.cam.y = goal.y = y0 + (y1 - y0) * k; camV.y = 0; }, easeIO);
     }
     async function slideIn(drop) {
       phase('replay');
@@ -1248,16 +1586,21 @@ registerGame({
       const sp = spec();
       const nb = s.blocks[lv];
       const size = drop.axis === 'x' ? prev.w : prev.d;
+      const big = !!(drop.grew || drop.gift || drop.bonus); // growth, a gift or a landmark: a bigger moment
       e.live = false;
       hold(e);
       model.blocks.push(e);
       if (drop.perfect) {
-        const fx = e.x; const fz = e.z;
-        await tween(rm ? 0 : 90, (k) => { e.x = fx + (nb.x - fx) * k; e.z = fz + (nb.z - fz) * k; }, easeOut);
+        const ex = e.x; const ez = e.z;
+        await tween(rm ? 0 : 90, (k) => { e.x = ex + (nb.x - ex) * k; e.z = ez + (nb.z - ez) * k; }, easeOut);
         ding(drop.streak);
         api.haptic(15);
         blink(e, 260);
         ringAt(e);
+        squash(e, 0.2);
+        puffRim(e, big ? 12 : 10, '', 0);
+        kickCam(big ? 2.4 : 1.6);
+        if (!rm) { hitstop = HITSTOP; fx('hitstop'); } // a beat of stillness on the perfect
         stamp(drop.grew && modeOf(s) === 'duet' && drop.streak % 2 === 0 ? 'Duet · it grew' : drop.grew ? 'Perfect · it grew' : drop.streak > 1 ? `Perfect ×${drop.streak}` : 'Perfect');
         paintStreak(s);
       } else {
@@ -1270,6 +1613,9 @@ registerGame({
         api.sfx('place');
         api.haptic(10);
         settle(e);
+        squash(e, 0.17);
+        puffRim(e, big ? 7 : 5, drop.axis, Math.sign(drop.o) || 1);
+        kickCam(big ? 2.4 : 1.1);
         paintStreak(s);
         if (keep < 0.25) stamp('By a whisker!', 'is-near');
         else if (Math.abs(drop.o) <= 1.6 * perfectTol(size, sp.tol)) stamp('So close!', 'is-near');
@@ -1541,6 +1887,8 @@ registerGame({
       }
       let o = r3(s.p);
       if (t && typeof t.next === 'number') { o = t.next; t.next = null; }
+      // Freeze and show the block first; the engine (derive, db write, update chain) is heavy and synchronous, so
+      // the move itself goes out right after the frame that shows the frozen block (see sendMove).
       s.frozen = true;
       setArmed(false);
       placeAt(s.e, s.prev, s.axis, o);
@@ -1548,24 +1896,38 @@ registerGame({
       if (t) t.tapped = o;
       api.sfx('tap');
       hidePick(); // the first drop settles the mode (classic): the picker goes at once
-      const r = api.move({ o });
-      if (!r.ok) {
-        pending = null;
-        if (slider) { slider.frozen = false; setArmed(true); }
-        updatePick();
-        api.toast(r.error);
-        return false;
-      }
       turnEl.classList.remove('is-go');
+      kick();
+      sendMove(o, s);
       return true;
+    }
+    /** Send the drop after the frame that shows it frozen has been drawn (rAF, then a task), once. A timer is the
+     *  safety net for a page that is not drawing. If the engine says no, the slider comes back. */
+    function sendMove(o, s) {
+      let done = false;
+      const go = () => {
+        if (done) return;
+        done = true;
+        if (dead) return;
+        try { wrap.focus({ preventScroll: true }); } catch { /* ignore */ }
+        const r = api.move({ o });
+        if (!r.ok) {
+          pending = null;
+          if (slider === s) { s.frozen = false; setArmed(true); }
+          updatePick();
+          api.toast(r.error);
+        }
+      };
+      requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(go, 0)));
+      setTimeout(go, 400);
     }
     const inUi = (e) => !!(e.target && e.target.closest && e.target.closest('button, .gt-pick, .gt-panel'));
     function onPointer(e) {
       if (e.button !== undefined && e.button !== 0) return;
       if (inUi(e)) return;
       if (e.pointerType === 'touch' && e.clientX < 20) return; // leave the iOS back-swipe alone
+      if (tryDrop()) { e.preventDefault(); return; }
       try { wrap.focus({ preventScroll: true }); } catch { /* ignore */ }
-      if (tryDrop()) e.preventDefault();
     }
     function onTouch(e) { if (!inUi(e)) e.preventDefault(); } // no page scroll or sheet dismiss from the play surface
     let unlocked = false;
@@ -1597,6 +1959,7 @@ registerGame({
       cssW = r.width; cssH = r.height;
       measureHud();
       ghostW = 0;
+      touchCam();
       if (runInfo && !panelEl.hidden) refit();
       if (view) { view.resize(cssW, cssH); model.staticDirty = true; model.cam.viewH = baseViewH() * model.cam.zoom; cullDeco(); view.render(model); placeGhost(); }
     });
@@ -1698,7 +2061,9 @@ registerGame({
         if (raf) cancelAnimationFrame(raf);
         raf = 0;
         clearTimeout(bTimer);
-        anims.clear();
+        anims.length = 0;
+        sqList.length = 0;
+        model.flecks.length = 0;
         ro.disconnect();
         mo.disconnect();
         mq.removeEventListener('change', onTheme);

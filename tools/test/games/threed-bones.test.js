@@ -164,6 +164,42 @@ async function unit() {
   ok(!('tw' in pin.s) || pin.s.tw === undefined, 'bones: a game with no setup move carries no twist');
   await twistRules();
   recordTests();
+  diceUnit();
+}
+
+// ── the die's physics, in Node: the rolled value is exact, the throw is a real throw ──
+function diceUnit() {
+  const T = B._test;
+  let wrong = 0; let off = 0; let jumps = 0; let slow = 0; let near = 0; let sleepers = 0;
+  const N = 360; const t0 = Date.now();
+  const sums = { travel: 0, dur: 0 };
+  for (let n = 0; n < N; n++) {
+    const value = (n % 6) + 1; const from = n % 2 ? 1 : -1; const yaw = (((n * 37) % 100) / 100 - 0.5) * 0.9;
+    const th = T.throwTo(value, from, yaw, T.seededStream(5000 + n));
+    const L = th.n - 1;
+    if (T.topOfQuat(T.TQ[L * 4], T.TQ[L * 4 + 1], T.TQ[L * 4 + 2], T.TQ[L * 4 + 3]) !== value) wrong++;
+    if (Math.abs(T.TP[L * 3]) > 1e-3 || Math.abs(T.TP[L * 3 + 2]) > 1e-3 || Math.abs(T.TP[L * 3 + 1] - 0.5) > 1e-3) off++;
+    for (let i = 1; i <= L; i++) if (Math.hypot(T.TP[i * 3] - T.TP[i * 3 - 3], T.TP[i * 3 + 1] - T.TP[i * 3 - 2], T.TP[i * 3 + 2] - T.TP[i * 3 - 1]) > 0.25) { jumps++; break; }
+    if (L / 120 > 1.401) slow++;
+    if (Math.abs(T.TP[0]) < 2.4 || Math.sign(T.TP[0]) !== from) near++; // starts well off to its own side
+    if (th.slept) sleepers++;
+    sums.travel += th.travel; sums.dur += L / 120;
+  }
+  ok(wrong === 0, `bones physics: the top face is the rolled value in all ${N} simulated throws (every value, both sides, any final yaw)`);
+  ok(off === 0, 'bones physics: every throw comes to rest on the band centre, flat on the floor (y = 0.5)');
+  ok(jumps === 0 && slow === 0, `bones physics: no step jumps more than a quarter of a die, and none runs past 1.4 s`);
+  ok(near === 0, `bones physics: the top player throws in from the far right and the bottom player from the near left (mean run-up ${(sums.travel / N).toFixed(1)}, ${(sums.dur / N).toFixed(2)} s)`);
+  ok(sleepers / N > 0.97, `bones physics: the die falls asleep before the 1.4 s cap in ${Math.round(100 * sleepers / N)}% of throws`);
+  const a = T.throwTo(4, 1, 0.2, T.seededStream(99)); const A = Array.from(T.TP.slice(0, a.n * 3)); const AQ = Array.from(T.TQ.slice(0, a.n * 4));
+  T.throwTo(2, -1, 0.1, T.seededStream(7));
+  const b = T.throwTo(4, 1, 0.2, T.seededStream(99));
+  ok(b.n === a.n && Array.from(T.TP.slice(0, b.n * 3)).every((x, i) => x === A[i]) && Array.from(T.TQ.slice(0, b.n * 4)).every((x, i) => x === AQ[i]), 'bones physics: the same seed gives the same throw on every phone');
+  // the same bounces whatever the value: only the last orientation differs by a cube rotation
+  const hits = []; for (const v of [1, 2, 3]) { const th = T.throwTo(v, 1, 0.1, T.seededStream(321)); hits.push(`${th.n}:${T.evN()}:${Array.from(T.evStep.slice(0, T.evN())).join(',')}`); }
+  ok(hits[0] === hits[1] && hits[1] === hits[2], 'bones physics: a different rolled value changes no bounce (same steps, same impacts)');
+  const d = T.dropTo(5, 0.3);
+  ok(d.n === 2 && T.topOfQuat(T.TQ[4], T.TQ[5], T.TQ[6], T.TQ[7]) === 5, 'bones physics: the reduced-motion drop lands showing its value too');
+  ok(Date.now() - t0 < 6000, `bones physics: ${N} throws solved in ${Date.now() - t0} ms (about ${((Date.now() - t0) / N).toFixed(1)} ms each)`);
 }
 
 // ── twists, Last Word, facts, commentary ──────────────────────────────
@@ -722,7 +758,7 @@ async function onlineRecords(h) {
   ok(da.games_n === 1 && db.games_n === 1 && doc.games_n === 1 && da.last_id === id && db.last_id === id && doc.last_id === id, 'bones records online: both phones recorded the match exactly once (shared doc, last_id)');
   ok(da.form === db.form && da.streak_len === db.streak_len && da.streak_who === db.streak_who && da.tw_oracle_n === 1 && db.tw_oracle_n === 1, 'bones records online: and they agree on the streak, form and twist counts');
   const bands = [await h.a.textContent('.gb-band'), await h.b.textContent('.gb-band')];
-  ok(bands.every((t) => /Final/.test(t) && /by\s*\d+|apiece/.test(t)), 'bones records online: both phones show the final banner');
+  ok(bands.every((t) => /Final/.test(t) && /by\s*\d+|apiece/.test(t)), 'bones records online: both phones show the final banner' + JSON.stringify(bands));
   // the partner reopens the finished match: the finale replays, nothing is recorded
   await h.closeGame(h.b);
   // (the hub only lists a finished match until its end card has been seen: make it look unseen, as if Sydney had been away)
@@ -1069,7 +1105,145 @@ async function lostContext(h, pg) {
   await waitMoves(pg, id, 5);
   await pg.waitForSelector('.g-bones[data-phase="pick"]', { timeout: 8000 });
   ok((await pg.evaluate(() => window.__bonesTest.frames || 0)) > f0 + 10, 'bones context lost: …and the next die tumbles in 3D again');
+  const g2 = await gl(pg);
+  ok(g2.calls > 0 && g2.calls <= BUDGET.calls && g2.tris > 0 && g2.tex > 0 && g2.tex <= BUDGET.tex, `bones context lost: after the restore it draws again (${g2.calls} calls, ${g2.tris} triangles, textures redrawn: ${(g2.tex / 1024).toFixed(0)} KB)`);
+  e = await h.engine(pg, id);
+  await pg.waitForSelector(`.gb-tray[data-who="${e.acts[0]}"].is-picking`, { timeout: 8000 });
+  ok((await pg.evaluate(() => window.__bonesTest.top)) === e.state.roll, 'bones context lost: …and the die on top after the restore is still the rolled value');
   await h.closeGame(pg);
+}
+
+// ── the die shows what was rolled; budgets; pressed state; the placement is drawn once ──
+const BUDGET = { calls: 12, tris: 3000, tex: 1.5 * 1024 * 1024 };
+const gl = (pg) => pg.evaluate(() => ({ calls: window.__bonesTest.calls || 0, tris: window.__bonesTest.tris || 0, tex: window.__bonesTest.texBytes || 0 }));
+/** Play `want` rolls with real taps (tumbling, tap-to-skip, or reduced motion) and check the top face of the die, read back from
+ *  the orientation the renderer was given, against the rolled value every time. */
+async function topFaceFlow(h, pg, want, how) {
+  await pg.setViewportSize({ width: 390, height: 844 });
+  await hook(pg);
+  const bad = []; const worst = { calls: 0, tris: 0, tex: 0 };
+  let seen = 0;
+  while (seen < want) {
+    await h.newLocalGame(pg, 'bones');
+    const id = await pg.evaluate(() => window.__lastMatchId);
+    for (let move = 0; move < 13 && seen < want; move++) {
+      const e0 = await h.engine(pg, id);
+      const who = e0.acts[0];
+      await pg.waitForSelector(`.gb-tray[data-who="${who}"].is-picking`, { timeout: 20000 });
+      const e = await h.engine(pg, id);
+      const r = await pg.evaluate(() => ({ top: window.__bonesTest.top, roll: document.querySelector('.gb-band').dataset.roll }));
+      if (r.top !== e.state.roll || r.roll !== String(e.state.roll)) bad.push(`${how} #${seen}: rolled ${e.state.roll}, top ${r.top}, band ${r.roll}`);
+      const g = await gl(pg);
+      for (const k of Object.keys(worst)) worst[k] = Math.max(worst[k], g[k]);
+      seen++;
+      const col = [0, 1, 2].find((c) => e.state.grids[who][c].length < 3);
+      await pg.tap(`.gb-tray[data-who="${who}"] .gb-col[data-col="${col}"]`);
+      if (how === 'skip') { await h.wait(move % 2 ? 450 : 900); await pg.tap('.gb-band'); } // skip the placement, or the next die mid-tumble
+      await waitMoves(pg, id, move + 1);
+    }
+    await pg.waitForSelector('.g-bones[data-phase="pick"]', { timeout: 20000 });
+    await h.closeGame(pg);
+  }
+  ok(!bad.length, `bones top face (${how}): the face on top is the rolled value, ${seen} rolls checked${bad.length ? ' PROBLEMS: ' + bad.slice(0, 4).join('; ') : ''}`);
+  ok(worst.calls > 0 && worst.calls <= BUDGET.calls, `bones (${how}): ${worst.calls} draw calls per frame (budget ${BUDGET.calls})`);
+  ok(worst.tris > 0 && worst.tris <= BUDGET.tris, `bones (${how}): ${worst.tris} triangles per frame (budget ${BUDGET.tris})`);
+  ok(worst.tex > 0 && worst.tex <= BUDGET.tex, `bones (${how}): ${(worst.tex / 1024).toFixed(0)} KB of textures (budget ${BUDGET.tex / 1024} KB)`);
+  return worst;
+}
+/** Record, once per animation frame, how many dice sit in each tray (the ghost preview doesn't count). */
+const startRec = (pg) => pg.evaluate(() => {
+  const R = window.__rec = { s: [], stop: false, down: 0 };
+  document.addEventListener('pointerdown', () => { R.down = performance.now(); }, { capture: true, once: true });
+  const count = (w) => document.querySelectorAll(`.gb-tray[data-who="${w}"] .gb-die:not(.ghost)`).length;
+  const news = (w) => document.querySelectorAll(`.gb-tray[data-who="${w}"] .gb-die.is-new`).length;
+  const f = () => { R.s.push({ t: performance.now(), a: count('a'), b: count('b'), na: news('a'), nb: news('b'), place: window.__bonesTest.log.filter((x) => x === 'place').length }); if (!R.stop) requestAnimationFrame(f); };
+  requestAnimationFrame(f);
+});
+const stopRec = (pg) => pg.evaluate(() => { window.__rec.stop = true; return { s: window.__rec.s, down: window.__rec.down }; });
+/** `who`'s tray must go before → before + 1 once, straight away, never drop back, never show two new dice. */
+function checkRec(rec, who, before, what) {
+  const k = who;
+  const seq = rec.s.map((x) => x[k]);
+  const first = rec.s.findIndex((x) => x[k] === before + 1);
+  const over = seq.some((n) => n > before + 1);
+  let dips = 0; for (let i = 1; i < seq.length; i++) if (seq[i] < seq[i - 1]) dips++;
+  const twice = rec.s.some((x) => x['n' + k] > 1);
+  ok(first >= 0 && !over && !dips && !twice, `bones placement (${what}): the die appears once and stays (${before} → ${before + 1}; never ${Math.max(...seq)} at once, no flicker, ${dips} dips, new-die class on at most one)`);
+  return first >= 0 ? rec.s[first].t - rec.down : -1;
+}
+async function pressedAndPlaced(h, pg) {
+  await pg.setViewportSize({ width: 390, height: 844 });
+  await hook(pg);
+  await h.newLocalGame(pg, 'bones');
+  const id = await pg.evaluate(() => window.__lastMatchId);
+  let e = await h.engine(pg, id);
+  const who = e.acts[0];
+  await pg.waitForSelector(`.gb-tray[data-who="${who}"].is-picking`, { timeout: 15000 });
+  const sel = `.gb-tray[data-who="${who}"] .gb-col[data-col="1"]`;
+  const p = await pg.evaluate((s) => {
+    const el = document.querySelector(s); const r = el.getBoundingClientRect();
+    const ev = (t) => new PointerEvent(t, { bubbles: true, cancelable: true, pointerId: 7, pointerType: 'touch', isPrimary: true, button: 0, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 });
+    el.dispatchEvent(ev('pointerdown'));
+    const on = el.classList.contains('is-press') && window.__bonesTest.pressed === 1 && window.__bonesTest.log.includes('press:1');
+    const prevented = false;
+    el.dispatchEvent(ev('pointercancel')); // a drag that turns into a scroll: nothing is placed
+    return { on, off: !el.classList.contains('is-press'), prevented };
+  }, sel);
+  ok(p.on, 'bones input: pointerdown on a pickable column shows it pressed at once (class is-press, press:1 logged), before anything is placed');
+  ok(p.off && (await movesOf(h, pg, id)) === 0, 'bones input: …and a cancelled press (scroll, drag away) puts it back and places nothing');
+  const pd = await pg.evaluate((s) => new Promise((res) => { const el = document.querySelector(s); el.addEventListener('pointerdown', (ev) => res(ev.defaultPrevented), { once: true }); el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 8, pointerType: 'touch', isPrimary: true })); el.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, pointerId: 8, pointerType: 'touch', isPrimary: true })); }), sel);
+  ok(pd === false, 'bones input: pointerdown is not preventDefault-ed (iOS would drop the click)');
+  // a real tap: exactly one move, one die, drawn on the next frame
+  await startRec(pg);
+  await pg.tap(sel);
+  await waitMoves(pg, id, 1);
+  await pg.waitForSelector('.g-bones[data-phase="pick"]', { timeout: 15000 });
+  const rec = await stopRec(pg);
+  const dt = checkRec(rec, who, 0, 'local');
+  ok(dt >= 0 && dt < 250, `bones input: the die is in the tray ${Math.round(dt)} ms after the finger went down (the engine's update follows a frame later)`);
+  e = await h.engine(pg, id);
+  ok(e.lists[who].length === 1 && (await logOf(pg)).filter((x) => x === 'place').length === 1, 'bones input: …one move, one "place" (the click that follows the finger-up is not a second pick)');
+  ok((await pg.$$eval(`.gb-tray[data-who="${who}"] .gb-die:not(.ghost)`, (x) => x.length)) === 1 && (await pg.$$eval('.gb-tray .gb-die.is-new', (x) => x.length)) <= 1, 'bones input: …and the tray holds exactly the one die the engine has');
+  // keyboard / programmatic click still works (no pointer events)
+  const who2 = e.acts[0];
+  await pg.waitForSelector(`.gb-tray[data-who="${who2}"].is-picking`, { timeout: 15000 });
+  await pg.evaluate((w) => document.querySelector(`.gb-tray[data-who="${w}"] .gb-col[data-col="2"]`).click(), who2);
+  await waitMoves(pg, id, 2);
+  ok(true, 'bones input: a plain click (keyboard, assistive tech) still places a die');
+  await h.closeGame(pg);
+}
+/** The same on two phones: the mover's own tray and the partner's both end with exactly the engine's dice. */
+async function onlinePlaced(h) {
+  const P = { a: h.a, b: h.b };
+  for (const p of [h.a, h.b]) { await p.setViewportSize({ width: 390, height: 844 }); await hook(p); }
+  const id = await h.newOnlineGame(h.a, 'bones');
+  await h.openMatch(h.b, id);
+  const first = (await h.engine(h.a, id)).first;
+  for (let round = 0; round < 3; round++) {
+    const e = await h.engine(h.a, id);
+    const who = e.acts[0]; const mover = P[who]; const watcher = P[other(who)];
+    await mover.waitForSelector(`.gb-tray[data-who="${who}"].is-picking`, { timeout: 20000 });
+    await watcher.waitForSelector('.g-bones[data-phase="wait"], .g-bones[data-phase="pick"]', { timeout: 20000 });
+    const before = e.state.grids[who].reduce((n, c) => n + c.length, 0);
+    const col = [0, 1, 2].find((c) => e.state.grids[who][c].length < 3);
+    await mover.evaluate(() => { window.__bonesTest.log = []; });
+    await startRec(mover); await startRec(watcher);
+    await mover.tap(`.gb-tray[data-who="${who}"] .gb-col[data-col="${col}"]`);
+    await waitMoves(h.a, id, round + 1); await waitMoves(h.b, id, round + 1);
+    await mover.waitForFunction(() => document.querySelector('.g-bones').dataset.phase !== 'busy', null, { timeout: 15000 });
+    await h.wait(900);
+    const rm = await stopRec(mover); const rw = await stopRec(watcher);
+    // dice in the mover's tray: smashes only ever take the OPPONENT's dice, so counting the mover's own is clean
+    checkRec(rm, who, before, `online, ${who === first ? 'starter' : 'other'}'s phone`);
+    const seqW = rw.s.map((x) => x[who]);
+    ok(!seqW.some((n) => n > before + 1), `bones placement (online): the partner's phone never shows two dice for one move (${Math.max(...seqW)} ≤ ${before + 1})`);
+    const e2 = await h.engine(h.a, id);
+    const have = await Promise.all([mover, watcher].map((p) => p.evaluate((w) => ({ a: document.querySelectorAll('.gb-tray[data-who="a"] .gb-die:not(.ghost)').length, b: document.querySelectorAll('.gb-tray[data-who="b"] .gb-die:not(.ghost)').length }), who)));
+    const want = { a: e2.state.grids.a.reduce((n, c) => n + c.length, 0), b: e2.state.grids.b.reduce((n, c) => n + c.length, 0) };
+    ok(have.every((x) => x.a === want.a && x.b === want.b), `bones placement (online, move ${round + 1}): both phones end with the engine's dice (${want.a} + ${want.b})`);
+    ok((await logOf(mover)).filter((x) => x === 'place').length === 1, 'bones placement (online): …and the mover logged one "place" for the move');
+  }
+  await h.closeGame(h.a).catch(() => {}); await h.closeGame(h.b).catch(() => {});
 }
 
 // ── main ──────────────────────────────────────────────────────────────
@@ -1144,16 +1318,21 @@ async function balance() {
   };
   let failed = await group('light', { port: PORT }, async (h) => {
     await layoutTests(h, h.a, 'light');
+    await pressedAndPlaced(h, h.a);
+    await topFaceFlow(h, h.a, 12, 'tumble');
+    await topFaceFlow(h, h.a, 8, 'skip');
     await fullColumn(h, h.a);
     await tapToSkip(h, h.a);
     await finaleTiming(h, h.a);
     await lostContext(h, h.a);
     await onlineTwists(h);
+    await onlinePlaced(h);
     await bandStates(h);
   });
   // long flows with reduced motion, so a whole game takes seconds
   if (!failed) {
     failed = await group('reduced', { port: PORT + 2, reducedMotion: 'reduce' }, async (q) => {
+      await topFaceFlow(q, q.a, 14, 'reduced motion');
       await celebrations(q, q.a);
       await lastWord(q, q.a);
       await lastWord(q, q.a, 320, 568);
@@ -1169,6 +1348,7 @@ async function balance() {
   if (!failed) {
     failed = await group('dark', { port: PORT + 1, colorScheme: 'dark', reducedMotion: 'reduce' }, async (d) => {
       await layoutTests(d, d.a, 'dark');
+      await topFaceFlow(d, d.a, 3, 'dark');
       await tour(d, d.a, 360, 740, 'dark-360x740');
       await tour(d, d.a, 844, 390, 'dark-844x390');
     });
