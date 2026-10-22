@@ -39,7 +39,7 @@ async function startPair(h, tune = SLOW) {
 }
 async function startMatch(h, { map = 'living', first = 'b', rules = {} } = {}) {
   const { a, b } = h;
-  await hook(a, 'setRules', { map, first, rules });
+  await hook(a, 'setRules', { map, first, rules: { size: 'large', ...rules } }); // (Large: the body these shots were tuned for; the Classic default is By map now, Petite in the Living Room)
   await b.waitForFunction(([m, f]) => window.__cham.state().mapId === m && window.__cham.state().setup.first === f, [map, first], { timeout: 20000 });
   await a.tap('[data-act="start"]');
 }
@@ -103,7 +103,7 @@ async function whiskerSection(port) {
   const { a, b } = h;
   try {
     await startPair(h);
-    await startMatch(h, { rules: { grace: 0, headStart: 0, seek: 60 } });
+    await startMatch(h, { rules: { size: 'large', grace: 0, headStart: 0, seek: 60 } });
     const { H, S } = await huntReady(h);
     const bc = await standAndAim(S, 'b', { side: 0.55 });
     const hash0 = await hook(H, 'paintHash', 'b');
@@ -178,7 +178,7 @@ async function whiskerHsSection(port) {
     await h.startLive(a, 'chameleon', 'local');
     await waitReady(a);
     await wait(1200);
-    await hook(a, 'setRules', { rules: { grace: 0, headStart: 0 } });
+    await hook(a, 'setRules', { rules: { size: 'large', grace: 0, headStart: 0 } });
     await hsStart(a, 'b');
     assert(!(await mo(a)).chips.mercy, 'no Mercy chip in the hide phase');
     await camoHide(a);
@@ -286,7 +286,7 @@ async function noteSection(port) {
   const { a, b } = h;
   try {
     await startPair(h, { ...SLOW, final: 20000 });
-    await startMatch(h, { rules: { grace: 0, headStart: 0, rounds: 2 } });
+    await startMatch(h, { rules: { size: 'large', grace: 0, headStart: 0, rounds: 2 } });
     await waitPhase(b, 'hide', 25000); await waitPhase(a, 'hide', 5000);
     assert(!(await a.isVisible('.chm-mo-note')), 'the blindfolded seeker has no Note chip');
     await camoHide(b);
@@ -358,7 +358,7 @@ async function noteHsSection(port) {
     await h.startLive(a, 'chameleon', 'local');
     await waitReady(a);
     await wait(1200);
-    await hook(a, 'setRules', { rules: { grace: 0, headStart: 0 } });
+    await hook(a, 'setRules', { rules: { size: 'large', grace: 0, headStart: 0 } });
     await hsStart(a, 'b');
     await camoHide(a);
     await a.tap('.chm-mo-note');
@@ -467,7 +467,7 @@ async function dramaHsSection(port) {
     await h.startLive(a, 'chameleon', 'local');
     await waitReady(a);
     await wait(1200);
-    await hook(a, 'setRules', { rules: { grace: 0, headStart: 0, rounds: 2 } });
+    await hook(a, 'setRules', { rules: { size: 'large', grace: 0, headStart: 0, rounds: 2 } });
     await hsStart(a, 'b');
     await camoHide(a);
     await hsLock(a); await hsSeek(a);
@@ -509,7 +509,7 @@ async function dbSection(port) {
   const { a, b } = h;
   try {
     await startPair(h, SLOW);
-    await hook(a, 'setRules', { mode: 'db', map: 'living', rules: { grace: 0, headStart: 0, seek: 60 } });
+    await hook(a, 'setRules', { mode: 'db', map: 'living', rules: { size: 'large', grace: 0, headStart: 0, seek: 60 } });
     await b.waitForFunction(() => window.__cham.state().setup.mode === 'db', null, { timeout: 20000 });
     await a.tap('[data-act="start"]');
     await waitPhase(a, 'hide', 25000); await waitPhase(b, 'hide', 5000);
@@ -555,7 +555,7 @@ async function shotsSection(port) {
     try {
       if (vp) for (const p of [a, b]) await p.setViewportSize(vp);
       await startPair(h, { ...SLOW, final: 20000 });
-      await startMatch(h, { rules: { grace: 0, headStart: 0 } });
+      await startMatch(h, { rules: { size: 'large', grace: 0, headStart: 0 } });
       await waitPhase(b, 'hide', 25000); await waitPhase(a, 'hide', 5000);
       await camoHide(b);
       await b.waitForFunction(() => window.__cham.moments().chips.note, null, { timeout: 8000 });

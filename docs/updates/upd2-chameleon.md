@@ -172,7 +172,28 @@ New test files:
 Existing tests:
 - `chameleon-maps.test.js` (426 ok), and `ONLY=spawns,maps,blendfair,camsweep,crawl,seekclimb,spectate,foundcam,match,hotseat,dark,db,sizes,settings,settings3` of `chameleon.test.js`.
 
-Final regression (`tools/test/run-all.sh chameleon` and `tools/test/all-games.test.js`): see the end of this file.
+Final regression (`tools/test/all-games.test.js` + `tools/test/run-all.sh chameleon`, 12:20 UTC, loaded box):
+
+| Suite | Result |
+|---|---|
+| all-games | ALL GOOD |
+| chameleon-crawl | 90 ok, ALL GOOD |
+| chameleon-cu | 52 ok, ALL GOOD |
+| chameleon-gfx | 145 ok, ALL GOOD |
+| chameleon-maps | 426 ok, ALL GOOD |
+| chameleon-paint2 | 166 ok, ALL GOOD |
+| chameleon-rivalry | 118 ok, all passed |
+| chameleon-sizes | 209 ok, ALL GOOD |
+| chameleon-upd2 | done (measurement) |
+| chameleon-twists | 3 failures. Fixed: the tests hard-coded the old sun 0.52. The Bounty spot picker now keeps drawing scatter points until it has enough, because the new Living Room clutter rejected most of them. The bounty, fog and dusk sections now pass. `dbsd` failed once under load and passes alone, on this branch and on the base. |
+| chameleon-hunt | 7 sections failed: the tests assumed the old Large default (the whisker band scales with size). They now pin `size: 'large'` and are ALL GOOD. |
+| chameleon.test.js | 607 ok, 3 failures, all fixed. Short phones: the lobby now fits again on 390×664 and 375×667 (618 / 618 px; hud.js short-portrait rules, cells still 44 px). `toggles`: the test's start point moved off the new laundry basket. `feel`: Jump now pins Large. |
+
+Still failing after these fixes, and failing the same way on the base commit:
+- the `uxfinal` "rematch 1: round 1's hider" timeout (it used to be hidden behind the lobby assert);
+- the `mapslice` House cold-build 15 s timeout.
+
+The run hit the 2 h background limit inside `chameleon.test.js` after 607 checks. The sections it didn't reach (the `camsweep`, `crawl`, `seekclimb`, `match`, `spectate` and `foundcam` group, and `hotseat`, `dark` and `db`) were run individually earlier this session and passed.
 
 ## Known issues
 
@@ -185,9 +206,11 @@ Final regression (`tools/test/run-all.sh chameleon` and `tools/test/all-games.te
 - **Micro step height.** A Micro body still steps up 0.2 m (`dims`: `max(0.2, 0.24·s)`), which is more than its own height. This is harmless.
 - **Easy got harder on small rooms.** Easy on the small rooms is now Medium instead of Huge.
 - **Pre-existing failures.** These fail identically on an untouched copy of the base commit:
-  - `chameleon.test.js` `feel`: the hotseat Jump rise is 0.50 against 0.6 needed under load.
-  - `chameleon-hunt.test.js`: 7 waitForFunction timeouts under load.
+  - the `uxfinal` rematch timeout;
+  - the `mapslice` House cold-build timeout;
   - `ONLY=ux`: "best strokes-in-a-hide".
+- **Bounty spot on the Living Room.** The clutter leaves no point ≥ 3.8 m from every spawn, so the spot falls back to the farthest candidate (2.5 m) and repeats between matches.
+- **360×640 lobby.** It still scrolls (618 / 604 px), as it did before this upgrade.
 - **Big maps.** They got only the grain, extra pattern detail and AO, with no new clutter. The window light pools from the brief were not done.
 
 ## README line

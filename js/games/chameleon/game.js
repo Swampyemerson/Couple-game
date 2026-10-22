@@ -858,6 +858,7 @@ export function createGame(el, api) {
       if (Math.hypot(bb.x - x, bb.z - z) > 0.05 || W.boxAt(x, gy + 0.28, z, 0.05, SOLID)) return;
       if (cands.some((c) => Math.hypot(c.x - x, c.z - z) < 0.8)) return;
       cands.push({ x, y: gy, z });
+      return true;
     };
     for (const k of ['lobby', 'camo', 'rug']) if (sp[k]) add(sp[k].x, sp[k].z, floorBelow(sp[k].y || 0));
     for (const p of mp.probes || []) {
@@ -870,10 +871,11 @@ export function createGame(el, api) {
     // …and a seeded scatter of floor points over each floor's footprint (the same list on both phones: it only depends on the map),
     // so a small map's spot is no longer one of a few probes / spawns. Each must stand clear (no collider within a body's width).
     { const B = W.bounds; const rs = seeded(`bpool:${mp.id}`); const per = Math.max(24, Math.min(60, Math.round(((B.maxX - B.minX) * (B.maxZ - B.minZ)) / 3)));
-      for (const fy of floors) for (let i = 0; i < per; i++) {
+      // (graphics pass: a furnished small map rejects most random points, so keep drawing, up to 5 × per tries, until `per` stand)
+      for (const fy of floors) for (let i = 0, got = 0; i < per * 5 && got < per; i++) {
         const x = B.minX + 0.6 + rs() * (B.maxX - B.minX - 1.2); const z = B.minZ + 0.6 + rs() * (B.maxZ - B.minZ - 1.2);
         if (W.boxAt(x, fy + 0.3, z, 0.45, SOLID)) continue;
-        add(x, z, fy);
+        if (add(x, z, fy)) got++;
       } }
     const avoid = (sp.hiderSpawns || []).concat(sp.seekerSpawns || []);
     const inf = mp.info || {}; const minD = clamp(Math.hypot(inf.w || 10, inf.d || 8) * 0.3, 2.5, 5);

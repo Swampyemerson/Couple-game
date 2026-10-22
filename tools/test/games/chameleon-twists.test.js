@@ -329,7 +329,7 @@ async function bountySection(port) {
     assert(m1.on && m1.hemi < 0.56 && m1.sun < m1.baseSun && m1.glint !== 'ffd23f', `dusk falls over the hunt (hemi ${m1.hemi.toFixed(2)}, sun ${m1.sun.toFixed(2)}, glints ${m1.glint})`);
     await waitPhase(a, 'time', 20000);
     const m2 = (await ti(a)).mood;
-    assert(!m2.on && m2.hemi === 0.56 && m2.sun === 0.52 && m2.glint === 'ffd23f' && m2.bg === m2.fogColor, 'at the round\'s end the lights, sky and glints are back exactly');
+    assert(!m2.on && m2.hemi === m2.baseHemi && m2.sun === m2.baseSun && m2.baseSun === 0.50 && m2.glint === 'ffd23f' && m2.bg === m2.fogColor, 'at the round\'s end the lights, sky and glints are back exactly');
     h.assertNoErrors();
   } catch (e) { console.error(e.message, h.errors); failures++; await shot(a, 'bounty-FAIL').catch(() => {}); } finally { await h.close(); }
 }
@@ -667,7 +667,7 @@ async function fogSection(port) {
     assert(shotRange && shotRange.range > 0 && shotRange.range <= 20.5 && Math.abs(shotRange.range - shotRange.far) < 5, `a pellet fired in the thick of it reaches ${shotRange && shotRange.range.toFixed(1)} m (the fog's far edge was ${shotRange && shotRange.far.toFixed(1)} m, not the 26 m of a clear day)`);
     for (const p of [a, b]) {
       const x = await ti(p);
-      assert(!x.mood.on && x.mood.fogFar === 26 && x.mood.fogNear === 11 && x.mood.hemi === 0.56 && x.mood.sun === 0.52 && x.mood.bg === x.mood.fogColor, 'at the round\'s end the fog is back exactly (11–26 m, lights, sky)');
+      assert(!x.mood.on && x.mood.fogFar === 26 && x.mood.fogNear === 11 && x.mood.hemi === x.mood.baseHemi && x.mood.sun === x.mood.baseSun && x.mood.baseHemi === 0.56 && x.mood.baseSun === 0.50 && x.mood.bg === x.mood.fogColor, 'at the round\'s end the fog is back exactly (11–26 m, lights, sky)');
     }
     h.assertNoErrors();
   } catch (e) { console.error(e.message, h.errors); failures++; await shot(a, 'fog-FAIL-a').catch(() => {}); await shot(b, 'fog-FAIL-b').catch(() => {}); } finally { await h.close(); }
@@ -705,7 +705,7 @@ async function duskSection(port) {
     assert((await hook(a, 'bootInfo')).programs === progs0 && (await hook(b, 'bootInfo')).programs === progsB0, `no shader was linked for the dusk (${progs0} programs before and after)`);
     await b.waitForFunction(() => window.__cham.state().phase.name !== 'seek', null, { timeout: 8000 });
     await wait(300);
-    for (const p of [a, b]) { const x = (await ti(p)).mood; assert(!x.on && x.hemi === 0.56 && x.sun === 0.52 && x.glint === 'ffd23f', 'back to the plain light at the round\'s end'); }
+    for (const p of [a, b]) { const x = (await ti(p)).mood; assert(!x.on && x.hemi === x.baseHemi && x.sun === x.baseSun && x.baseSun === 0.50 && x.glint === 'ffd23f', 'back to the plain light at the round\'s end'); }
     // the recap says what's next, both phones
     await waitPhase(a, 'recap', 8000);
     for (const p of [a, b]) assert(/Twist: Fog rolls in/.test(await p.textContent('.chm-nextline')), 'the recap\'s Next line announces the next twist');
