@@ -1025,7 +1025,10 @@ export function createGame(el, api) {
       if (!sm.ok || dts < 0 || dts > 0.5) { sm.z = tz; sm.ok = 1; }
       else {
         if (f & F_RUN) sm.z += n.sp * dts;
-        const e = tz - sm.z;
+        // (when they stop running, a crash or a pause, the target drops by the dead-reckoning lead: hold
+        // there instead of gliding ~2 m backwards; the next run or a > 3 m gap realigns)
+        let e = tz - sm.z;
+        if (!(f & F_RUN) && e < 0 && e > -3) e = 0;
         if (e > 3 || e < -3) sm.z = tz; else sm.z += e * (1 - Math.exp(-dts * 4));
       }
       s.z = sm.z;

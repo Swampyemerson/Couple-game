@@ -337,7 +337,7 @@ export function createRig(THREE) {
       if (spring) {
         // sideways 0.025 s into 0.09 s, vertical 0.18 s (ground steps up onto a roof, jumps), roll 0.14 s
         S[0] = st.x; S[2] = st.y; S[4] = st.lx; S[6] = st.ly;
-        D[2] = dt < 0.1 ? dt : 0.1;
+        D[2] = dt < 0.25 ? dt : 0.25;
         D[1] = 0.025; D[0] = px; damp(5); D[0] = lx; damp(6);
         D[1] = 0.09; D[0] = S[10]; damp(0); D[0] = S[12]; damp(2);
         D[1] = 0.18; D[0] = py; damp(1); D[0] = ly; damp(3);
@@ -360,7 +360,7 @@ export function createRig(THREE) {
       look.set(st.lx + sx * 0.5, st.ly + sy * 0.5, st.lz);
       cam.lookAt(look);
       const rollT = mode === 'run' ? -(tg.laneX - tg.x) * 0.012 : 0;
-      if (spring) { S[8] = st.roll; D[2] = dt < 0.1 ? dt : 0.1; D[1] = 0.14; D[0] = rollT; damp(4); st.roll = S[8]; }
+      if (spring) { S[8] = st.roll; D[2] = dt < 0.25 ? dt : 0.25; D[1] = 0.14; D[0] = rollT; damp(4); st.roll = S[8]; }
       else st.roll += (rollT - st.roll) * (1 - Math.exp(-dt * 8));
       cam.rotateZ(st.roll);
       // narrower than before so obstacles 50 m out are ~10 % larger; speed still widens it

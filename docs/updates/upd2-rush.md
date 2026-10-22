@@ -208,7 +208,34 @@ Screenshots (before / after, all six districts, light and dark, same positions):
 
 ## Verification
 
-VERIFY_PLACEHOLDER
+An independent Sonnet verifier ran at 570b61c. It used two iPhone 13 pages, real CDP touch swipes and `page.tap()`, in light and
+dark, plus laptop split screen. It found **no blockers and no majors**.
+
+**What passed:**
+- **Modes:** all four start by taps, and the guest follows the host's mode live.
+- **Input:** swipes in all four directions work on both phones in every mode. The page never scrolls. Pause, resume,
+  settings, the menu sticker, the note chip and the weapon slot all respond to taps.
+- **Districts:** all six were shot at the gate and mid-zone, on both phones, light and dark. Obstacles and coins still pop
+  against the print. There were no black faces, seams, z-fighting, mis-coloured night scenes, or particles over the track.
+- **Mirror twist:** still swaps left and right.
+- **Pause and background:** pause, page hidden and the partner leaving or coming back all resume with no jump in the run.
+- **Rematch:** works twice in a row, still 11 programs.
+- **Abuse:** 80 rapid swipe pairs and swipes during a crash all registered, with no exceptions.
+- **Landscape:** 667×375 and 844×390 during a run were clean.
+- **Errors:** no page, shader or WebGL errors.
+- **Budgets:** phone 17–22 calls and ≤ 43.6k triangles. Split screen 43–44 calls and 99–105k triangles. Programs stayed equal
+  to the warm-up count after every event.
+
+**Two minor items came from this diff, and both are fixed:**
+1. The camera spring capped its per-frame step at 0.1 s, so on a very slow page (≥ 0.5 s frames) the camera took ~1.6 s to
+   settle. The cap is now 0.25 s, the same as the sim's (`fx.js` `createRig`).
+2. When the partner crashed, the drawn partner glided ~2 m backwards, because the dead-reckoning lead was dropped and the
+   smoothing pulled them back. While the partner isn't running, the drawn z now holds instead of moving back
+   (`updateRemoteRS`).
+
+**Not from this diff, and left alone** (listed under Known issues): a theme switch in the lobby doesn't recolour the 3D world
+until the next mount; the engine's end card in landscape needs a scroll to reach Rematch; on a first run, the tutorial label
+sits under the countdown digit.
 
 ## Tests
 
@@ -216,7 +243,22 @@ TESTS_PLACEHOLDER
 
 ## Known issues
 
-KNOWN_PLACEHOLDER
+- **Motion artefacts are unchecked on a device.** Texture shimmer, moiré or swimming in motion couldn't be judged here
+  (2–8 fps software GL, so only stills were reviewed). The tile is mipmapped with anisotropy 4. Check it on an iPhone.
+- **120 Hz resolution.** A 120 Hz phone now holds its start scale of 0.85 instead of climbing to 1. The new rule only climbs
+  after 4 s under 3 % missed vsyncs at the detected period, and the bench's 120 Hz case doesn't climb. This is a deliberate
+  margin for a GPU running twice as many frames. The old rule reached 1.0 there, and 60 Hz phones now reach 1.0 where they
+  couldn't before.
+- **Quality valve in the container.** The valve trips in this container (software GL at 2–8 fps), so test screenshots in
+  `SHOTS` show the light rigs, AO and sky but not the surface print. Set `__RUSH_DEBUG.detailOn = true` to pin it on.
+- **Night light pools** are plain stepped discs and read slightly beige. Old Town and Downtown only get lamp light from the
+  gantries.
+- **Pre-existing, not touched:**
+  - A theme switch while in the lobby doesn't recolour the 3D world; the palette is read at mount.
+  - The engine end card's Rematch button is below the fold at 667×375, but reachable by scrolling.
+  - On a first run, the "Swipe left or right" tutorial label sits partly under the countdown digit.
+- **Live-part numbers are environment-driven.** Live frame times and judder in `rush-feel.test.js` swing with machine load.
+  Only the bench part is asserted for pacing.
 
 ## README line
 
