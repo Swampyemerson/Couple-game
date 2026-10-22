@@ -138,8 +138,8 @@ export function makeUniforms(THREE, P) {
     // split toning: the key light's colour and the shadow band's tint (both luminance ~1), per district
     uKey: { value: new THREE.Color(1, 1, 1) },
     uShd: { value: new THREE.Color(1, 1, 1) },
-    // ambient occlusion on walls: ground y, strength, height of the gradient
-    uAo: { value: new THREE.Vector4(-4, 0.3, 9, 0) },
+    // ambient occlusion on walls, as clamp(y * x + y', z, 1) (world.js applyLight turns ground y / strength / height into it)
+    uAo: { value: new THREE.Vector4(0.03, 0.5, 0.7, 0) },
     // time: x glint phase 0..1, y seconds (water), z glint strength
     uTm: { value: new THREE.Vector4(0, 0, P.dark ? 0.85 : 0.55, 0) },
     uDot: { value: 4 },
@@ -246,15 +246,15 @@ uniform vec4 uLk;
 uniform vec3 uKey;
 uniform vec3 uShd;
 uniform float uNight;
-varying float vFx;
-varying vec3 vShade;
-varying vec4 vTx;
+varying vec4 vSh;   // shade rgb, fx code
+varying vec4 vTx;   // detail uv, world y (walls only), material (-1: no print)
 #ifdef RR_RIM
 varying float vRim;
 #endif
 #ifdef RR_NEAR
 varying float vViewZ;
 #endif`;
+// (Few varyings on purpose: every extra vec4 is a per-pixel interpolation, and a software rasterizer pays dearly.)
 const VERT_POST = `#include <fog_vertex>
 #ifdef RR_NEAR
 vViewZ = - mvPosition.z;
@@ -262,12 +262,12 @@ vViewZ = - mvPosition.z;
 float rrM = floor( fx * 0.0625 + 0.001 );
 float rrF = fx - rrM * 16.0;
 float rrWy = 1000.0;
-vFx = rrF;
+vec3 rrL;
 #ifdef RR_RIM
 vRim = 0.0;
 #endif
-if ( rrF > 0.5 && rrF < 1.5 || rrF > 3.5 && rrF < 4.5 ) vShade = vec3( 1.0 );
-else if ( rrF > 2.5 && rrF < 3.5 ) vShade = vec3( 1.06 + 0.14 * uNight );
+if ( rrF > 0.5 && rrF < 1.5 || rrF > 3.5 && rrF < 4.5 ) { rrL = vec3( 1.0 ); rrM = -1.0; }
+else if ( rrF > 2.5 && rrF < 3.5 ) { rrL = vec3( 1.06 + 0.14 * uNight ); rrM = -1.0; }
 else {
   vec3 rrN = normal;
   #ifdef USE_SKINNING
@@ -280,15 +280,17 @@ else {
   rrN = normalize( mat3( modelMatrix ) * rrN );
   float ndl = dot( rrN, uSun );
   float band = ndl > 0.28 ? 1.0 : ( ndl > -0.22 ? 0.58 : 0.22 );
-  vShade = uShd * ( uLk.x + uLk.y * ( 0.5 + 0.5 * rrN.y ) ) + uKey * ( uLk.z * band );
+  rrL = uShd * ( uLk.x + uLk.y * ( 0.5 + 0.5 * rrN.y ) ) + uKey * ( uLk.z * band );
   #if !defined( USE_INSTANCING ) && !defined( USE_SKINNING )
     if ( abs( rrN.y ) < 0.5 ) rrWy = position.y;
   #endif
   #ifdef RR_RIM
     vRim = pow( 1.0 - clamp( dot( normalize( ( viewMatrix * vec4( rrN, 0.0 ) ).xyz ), normalize( - mvPosition.xyz ) ), 0.0, 1.0 ), 2.2 );
   #endif
+  if ( rrF > 1.5 && rrF < 4.5 ) rrM = -1.0;
 }
-vTx = vec4( tuv, rrM, rrWy );`;
+vSh = vec4( rrL, rrF );
+vTx = vec4( tuv, rrWy, rrM );`;
 const FRAG_PRE = `#include <common>
 uniform vec4 uLk;
 uniform float uDot;
@@ -308,12 +310,14 @@ varying float vRim;
 #ifdef RR_NEAR
 varying float vViewZ;
 #endif
-varying float vFx;
-varying vec3 vShade;
+varying vec4 vSh;
 varying vec4 vTx;`;
 // Shadow-band halftone: one fract + one dot product per shaded fragment (squared radius, no sqrt).
 // Runners (the only skinned program) can also fade out through a halftone screen when the partner
 // runs between the camera and you; the discard lives only in that program.
+// Surface print (everything but the runners): ONE fetch of the detail tile, a channel picked by the material id
+// (a uniform-coherent chain: every fragment of a primitive takes the same branch), ink darkening toward the outline
+// ink, paper grain, wall AO. Unlit codes (outlines, glow, sky) skip it (material -1).
 const FRAG_COLOR = `#include <color_fragment>
 #ifdef RR_FADE
 if ( uFade > 0.0 ) {
@@ -328,8 +332,8 @@ if ( vViewZ < 6.2 ) {
   if ( dot( q, q ) * 4.0 < ( 6.2 - vViewZ ) * 0.55 ) discard;
 }
 #endif
-diffuseColor.rgb *= vShade;
-if ( vShade.g < uLk.w && vFx < 0.5 ) {
+diffuseColor.rgb *= vSh.rgb;
+if ( vSh.g < uLk.w && vSh.w < 0.5 ) {
   vec2 g = fract( gl_FragCoord.xy / uDot ) - 0.5;
   diffuseColor.rgb *= 1.0 - ( 1.0 - smoothstep( 0.0324, 0.09, dot( g, g ) ) ) * 0.17;
 }
@@ -337,18 +341,21 @@ if ( vShade.g < uLk.w && vFx < 0.5 ) {
 // rim light in the runner's colour: readable against busy backgrounds
 diffuseColor.rgb = mix( diffuseColor.rgb, uRim.rgb, vRim * uRim.a );
 #else
-vec4 rrT = texture2D( uDetail, vTx.xy );
-if ( vFx < 0.5 || ( vFx > 4.5 && vFx < 8.5 ) ) {
-  vec3 c = diffuseColor.rgb;
-  float m = vTx.z;
+vec3 c = diffuseColor.rgb;
+#ifndef RR_LITE
+float m = vTx.w;
+if ( m > -0.5 ) {
+  vec4 t = texture2D( uDetail, vTx.xy );
   float p = 1.0; float k = 0.0;
   if ( m > 0.5 ) {
-    if ( m < 1.5 ) { p = rrT.r; k = 0.36; }
-    else if ( m < 2.5 ) { p = rrT.g; k = 0.3; }
-    else if ( m < 3.5 ) { p = rrT.b; k = 0.3; }
-    else if ( m < 4.5 ) { p = rrT.g; k = 0.34; }
-    else if ( m < 5.5 ) { p = 1.0 - step( 0.8, fract( ( vTx.x + vTx.y * 0.6 ) * 9.0 + rrT.a * 1.4 ) ); k = 0.22 * ( 1.0 - smoothstep( 30.0, 75.0, fogDepth ) ); }
-    else if ( m < 6.5 ) {
+    if ( m < 1.5 ) { p = t.r; k = 0.36; }
+    else if ( m < 2.5 ) { p = t.g; k = 0.3; }
+    else if ( m < 3.5 ) { p = t.b; k = 0.3; }
+    else if ( m < 4.5 ) { p = t.g; k = 0.34; }
+    else if ( m < 5.5 ) {
+      // grass hatching from the grain (fades with distance: a step has no mips)
+      p = 1.0 - step( 0.8, fract( ( vTx.x + vTx.y * 0.6 ) * 9.0 + t.a * 1.4 ) ); k = 0.22 * ( 1.0 - smoothstep( 30.0, 75.0, fogDepth ) );
+    } else if ( m < 6.5 ) {
       // rails: a glint sweeps along them, front slanted across the lanes
       float s = fract( vTx.x - uTm.x );
       c += uPaper * ( smoothstep( 0.0, 0.003, s ) * ( 1.0 - smoothstep( 0.005, 0.024, s ) ) * uTm.z * ( 1.0 - smoothstep( 40.0, 100.0, fogDepth ) ) );
@@ -359,19 +366,20 @@ if ( vFx < 0.5 || ( vFx > 4.5 && vFx < 8.5 ) ) {
       float rp = max( smoothstep( 0.86, 0.97, w1 ), smoothstep( 0.9, 0.98, w2 ) );
       c = mix( c, uPaper, rp * ( 0.55 - 0.2 * uNight ) * ( 1.0 - smoothstep( 35.0, 90.0, fogDepth ) ) );
     }
-    else if ( m < 8.5 ) { p = smoothstep( 0.3, 0.7, rrT.a ); k = 0.17; }
-    else if ( m < 9.5 ) { p = rrT.r; k = 0.3; }
-    else if ( m < 10.5 ) { p = rrT.b; k = 0.28; }
-    else if ( m < 11.5 ) { p = smoothstep( 0.2, 0.8, rrT.a ); k = 0.11; }
-    else { p = rrT.g; k = 0.42; }
+    else if ( m < 8.5 ) { p = t.a; k = 0.28; }
+    else if ( m < 9.5 ) { p = t.r; k = 0.3; }
+    else if ( m < 10.5 ) { p = t.b; k = 0.28; }
+    else if ( m < 11.5 ) { p = t.a; k = 0.2; }
+    else { p = t.g; k = 0.42; }
   }
   c = mix( c, uInk, ( 1.0 - p ) * k );
-  c *= 1.0 + ( rrT.a - 0.5 ) * 0.15;
-  c *= 1.0 - uAo.y * ( 1.0 - smoothstep( 0.0, uAo.z, vTx.w - uAo.x ) );
-  diffuseColor.rgb = c;
+  c *= 1.0 + ( t.a - 0.5 ) * 0.15;
 }
+#endif
+c *= clamp( vTx.z * uAo.x + uAo.y, uAo.z, 1.0 );
+diffuseColor.rgb = c;
 #endif`;
-const FRAG_END = `if ( vFx > 3.5 && vFx < 4.5 ) {
+const FRAG_END = `if ( vSh.w > 3.5 && vSh.w < 4.5 ) {
   gl_FragColor.rgb = mix( vColor, fogColor, 0.3 );
 } else {
   #include <fog_fragment>
@@ -385,6 +393,7 @@ export function makeToon(THREE, grad, U, { skinning = false, extra = null } = {}
   if (extra && extra.uFade) defs.RR_FADE = '';
   if (extra && extra.uRim) defs.RR_RIM = '';
   if (extra && extra.near) defs.RR_NEAR = '';
+  if (extra && extra.lite) defs.RR_LITE = '';
   if (Object.keys(defs).length) m.defines = defs;
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, U);
@@ -542,7 +551,7 @@ MAT_SCALE[4] = 1 / 1.6; MAT_SPECIAL[4] = 1; // corrugation: ribs 0.2 m
 MAT_SCALE[5] = 0.5;            // grass hatching
 MAT_SCALE[6] = 1 / 40; MAT_SPECIAL[6] = 2;  // rail glint period 40 m
 MAT_SCALE[7] = 1 / 8;          // water
-MAT_SCALE[8] = 1 / 0.64;       // gravel: fine speckle from the grain
+MAT_SCALE[8] = 1 / 0.64;       // gravel: fine speckle from the grain (A channel)
 MAT_SCALE[9] = 1 / 9.6;        // concrete blocks 1.2 x 0.6 m
 MAT_SCALE[10] = 1 / 6.4;       // paving slabs 0.8 m
 MAT_SCALE[11] = 1 / 3.2;       // stucco

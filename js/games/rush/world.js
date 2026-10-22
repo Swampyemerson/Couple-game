@@ -62,11 +62,14 @@ export function createWorld(THREE, P) {
   // Same shader, separate instances per object kind: three r128 recomputes program parameters
   // (and allocates) whenever one material alternates between plain and instanced draws.
   const mat = makeToon(THREE, null, U);
-  const matInst = makeToon(THREE, null, U);
-  const matInstC = makeToon(THREE, null, U);
+  // Same program minus the surface print (RR_LITE), for the world's big meshes when the quality valve trips (see syncView)
+  const matLite = makeToon(THREE, null, U, { extra: { lite: true } });
+  // (the instanced things never print the surface texture: coins, barriers, gates and particles keep the paper grain out)
+  const matInst = makeToon(THREE, null, U, { extra: { lite: true } });
+  const matInstC = makeToon(THREE, null, U, { extra: { lite: true } });
   // barriers: instanced, plus a halftone dissolve once they're behind your runner, near the camera
   // (the discard lives in this program only, so the world keeps its early depth rejection)
-  const matBar = makeToon(THREE, null, U, { extra: { near: true } });
+  const matBar = makeToon(THREE, null, U, { extra: { near: true, lite: true } });
   // One skinned material per runner (same program): each has its own fade, so the partner can
   // dissolve through a halftone screen when they run between your camera and you.
   const fade = { a: { value: 0 }, b: { value: 0 } };
@@ -76,7 +79,7 @@ export function createWorld(THREE, P) {
   setRim(P);
   const avatarMats = { a: makeToon(THREE, null, U, { skinning: true, extra: { uFade: fade.a, uRim: rim.a } }), b: makeToon(THREE, null, U, { skinning: true, extra: { uFade: fade.b, uRim: rim.b } }) };
   const avatarMat = avatarMats.a;
-  const disposables = [mat, matInst, matInstC, matBar, avatarMats.a, avatarMats.b, U.uDetail.value];
+  const disposables = [mat, matLite, matInst, matInstC, matBar, avatarMats.a, avatarMats.b, U.uDetail.value];
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color().fromArray(P.bg);
@@ -392,13 +395,16 @@ export function createWorld(THREE, P) {
   // District light rig (sun, key / shadow tints, intensities, wall AO) and cloud layer, blended like the sky
   // tint: uniforms only, nothing allocated. `lightSign` flips the sun's z for the lobby / finale views.
   let lightSign = 1;
+  const gov = { t: -1, last: 0, e: 16.7, hold: 0, on: true, fixed: !!(typeof window !== 'undefined' && window.__RUSH_DEBUG && window.__RUSH_DEBUG.detailOn) };
   function applyLight() {
     const A = BIO[dA].rig; const B = BIO[dB].rig; const q = dQ;
     U.uSun.value.set(lerp(A.sun[0], B.sun[0], q), lerp(A.sun[1], B.sun[1], q), lerp(A.sun[2], B.sun[2], q) * lightSign).normalize();
     U.uLk.value.set(lerp(A.lk[0], B.lk[0], q), lerp(A.lk[1], B.lk[1], q), lerp(A.lk[2], B.lk[2], q), U.uLk.value.w);
     U.uKey.value.setRGB(lerp(A.key[0], B.key[0], q), lerp(A.key[1], B.key[1], q), lerp(A.key[2], B.key[2], q));
     U.uShd.value.setRGB(lerp(A.shd[0], B.shd[0], q), lerp(A.shd[1], B.shd[1], q), lerp(A.shd[2], B.shd[2], q));
-    U.uAo.value.set(lerp(A.ao[0], B.ao[0], q), lerp(A.ao[1], B.ao[1], q), lerp(A.ao[2], B.ao[2], q), 0);
+    // wall AO as one clamp(y * a + b, lo, 1): ground y g, strength st, height h -> a = st / h, b = 1 - st - g * a, lo = 1 - st
+    const ag = lerp(A.ao[0], B.ao[0], q); const ast = lerp(A.ao[1], B.ao[1], q); const ah = lerp(A.ao[2], B.ao[2], q);
+    U.uAo.value.set(ast / ah, 1 - ast - ag * ast / ah, 1 - ast, 0);
     skyU.uCl.value.setRGB(lerp(A.cl[0], B.cl[0], q), lerp(A.cl[1], B.cl[1], q), lerp(A.cl[2], B.cl[2], q));
     skyU.uCm.value.setRGB(lerp(A.cm[0], B.cm[0], q), lerp(A.cm[1], B.cm[1], q), lerp(A.cm[2], B.cm[2], q));
     // the cloud layer fades out by shrinking its band while the other district has none (strength flag flips at the midpoint)
@@ -521,6 +527,19 @@ export function createWorld(THREE, P) {
     if (sunFront !== !!v.front) { sunFront = !!v.front; lightSign = sunFront ? -1 : 1; applyLight(); }
     // clocks for the rail glints, the water and the clouds (small numbers: the shader stays precise on mediump)
     U.uTm.value.x = (v.time * 0.1) % 1; U.uTm.value.y = v.time % 3600; skyU.uTs.value = v.time % 3600;
+    // Quality valve: the surface print (one texture fetch + a few ALU per world fragment) switches off when the frame
+    // rate stays under ~20 fps for 2.5 s (a weak GPU, or a CPU rasteriser), and back on after 6 s over ~38 fps. Phones
+    // at 30 / 60 fps never reach it. (Once per frame: a split-screen frame syncs twice.)
+    if (v.time !== gov.t) {
+      gov.t = v.time;
+      const nw = performance.now(); const dtm = nw - gov.last; gov.last = nw;
+      if (dtm > 0 && dtm < 1000 && !gov.fixed) {
+        gov.e += (dtm - gov.e) * 0.04;
+        if (gov.on) {
+          if (gov.e > 50) { gov.hold += dtm; if (gov.hold > 2500) { gov.hold = 0; setDetail(false); } } else gov.hold = 0;
+        } else if (gov.e < 26) { gov.hold += dtm; if (gov.hold > 6000) { gov.hold = 0; setDetail(true); } } else gov.hold = 0;
+      }
+    }
     let nc = 0;
     const ic = itemCount;
     ic.fill(0);
@@ -624,6 +643,11 @@ export function createWorld(THREE, P) {
     shadows.instanceMatrix.needsUpdate = true;
   }
 
+  // meshes the valve switches between mat and matLite; a hidden one-triangle probe keeps matLite compiled + drawn in the warm-up
+  const detailMeshes = [street, skyline, ...pool.map((p) => p.mesh), ...mtrains];
+  const liteProbe = new THREE.Mesh(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, 0, 0, 0, 0], 3)), matLite);
+  liteProbe.frustumCulled = false; liteProbe.visible = false; scene.add(liteProbe);
+  disposables.push(liteProbe.geometry);
   const followers = [street, skyline, dome];
   for (let i = 0; i < 3; i++) followers[i].matrixAutoUpdate = false;
   /** The far layers sit around the camera (translation only, written straight into the matrices). */
@@ -649,6 +673,11 @@ export function createWorld(THREE, P) {
     gates.count = n;
     gates.instanceMatrix.needsUpdate = true;
   }
+  function setDetail(on) {
+    gov.on = on;
+    const m = on ? mat : matLite;
+    for (const o of detailMeshes) o.material = m;
+  }
   /** Forget built chunks (the track changed). */
   function reset() {
     for (const p of pool) { p.ci = null; p.mesh.visible = false; p.used = 0; }
@@ -671,9 +700,12 @@ export function createWorld(THREE, P) {
     scene, mat, matInst, matInstC, avatarMat, avatarMats, fade, U, T, P,
     ensure, syncView, setCoinAhead, setShadows, follow, setPalette, setGates, setMarks, reset, setMood, setDistrict, setDistrictAt,
     chunkCount: () => byChunk.size,
+    /** Whether the surface print is on (the quality valve may switch it off on a slow device). */
+    detailOn: () => gov.on,
+    setDetail,
     stats,
     /** Everything that can be drawn, for shader warm-up. */
-    warmList: () => [coins, coinsFar, lows, highs, barrels, blocks, gates, marks, shadows, street, skyline, dome, ...Object.values(items), mtrains[0], pool[0].mesh, ...banners, markMesh[0]],
+    warmList: () => [liteProbe, coins, coinsFar, lows, highs, barrels, blocks, gates, marks, shadows, street, skyline, dome, ...Object.values(items), mtrains[0], pool[0].mesh, ...banners, markMesh[0]],
     dispose() {
       for (const d of disposables) { try { d.dispose(); } catch { /* ignore */ } }
       for (const m of [coins, coinsFar, lows, highs, barrels, blocks, gates, marks, ...Object.values(items)]) { try { m.dispose(); } catch { /* ignore */ } }
