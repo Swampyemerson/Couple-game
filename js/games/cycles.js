@@ -1165,20 +1165,28 @@ registerGame({
       bgG.fillStyle = C.card;
       bgG.fillRect(0, 0, gW, gH);
       drawBgVector(bgG, cell, g.W, g.H, sim);
-      // paper tooth: the shared noise mask tinted with the theme's ink, at device resolution, over everything on the board
+      // paper tooth, at device resolution, over everything on the board
+      grainOver(bgG, bgCan.width, bgCan.height);
+    }
+    let tintCan = null; let tintVer = -1;
+    /** The shared noise mask tinted with the theme's ink (rebuilt when the theme changes), laid over a whole canvas at device resolution. */
+    function grainOver(g, W, H) {
       try {
-        const m = getGrainMask();
-        const tint = document.createElement('canvas');
-        tint.width = m.width; tint.height = m.height;
-        const tg = tint.getContext('2d');
-        tg.fillStyle = C.ink; tg.fillRect(0, 0, tint.width, tint.height);
-        tg.globalCompositeOperation = 'destination-in';
-        tg.drawImage(m, 0, 0);
-        bgG.setTransform(1, 0, 0, 1, 0, 0);
-        bgG.globalAlpha = C.dark ? 0.2 : 0.3;
-        bgG.fillStyle = bgG.createPattern(tint, 'repeat');
-        bgG.fillRect(0, 0, bgCan.width, bgCan.height);
-        bgG.globalAlpha = 1;
+        if (!tintCan || tintVer !== bgVer) {
+          const m = getGrainMask();
+          tintCan = document.createElement('canvas');
+          tintCan.width = m.width; tintCan.height = m.height;
+          const tg = tintCan.getContext('2d');
+          tg.fillStyle = C.ink; tg.fillRect(0, 0, m.width, m.height);
+          tg.globalCompositeOperation = 'destination-in';
+          tg.drawImage(m, 0, 0);
+          tintVer = bgVer;
+        }
+        g.setTransform(1, 0, 0, 1, 0, 0);
+        g.globalAlpha = C.dark ? 0.2 : 0.3;
+        g.fillStyle = g.createPattern(tintCan, 'repeat');
+        g.fillRect(0, 0, W, H);
+        g.globalAlpha = 1;
       } catch { /* no pattern: a flat board */ }
     }
     /** Halftone ink: each rider's colour with a staggered dot screen, so a trail reads as printed rather than filled. */
@@ -1521,7 +1529,7 @@ registerGame({
         // a still frame needs only the places where something moved (last frame's and this frame's), restored from the layers
         partial = !needFull && !fresh && !rcOver && !rpOver && stage === 'none';
         if (partial) restoreFrom(cbCan); else ctx.drawImage(cbCan, 0, 0, gW, gH);
-      } else { drawBgVector(ctx, c, g.W, g.H, sim); needFull = true; }
+      } else { drawBgVector(ctx, c, g.W, g.H, sim); ctx.save(); grainOver(ctx, canvas.width, canvas.height); ctx.restore(); needFull = true; } // the zoomed replay keeps the paper tooth too
       // tokens still lying on the grid
       if (sim.tl.length) {
         for (let i = 0; i < sim.tl.length; i++) {
