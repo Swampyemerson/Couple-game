@@ -6,8 +6,10 @@
 
 // ── primitive generators: return { pos, nrm, uv, idx } plain arrays ──
 
-/** Axis-aligned box centred on the origin. uv in metres (or 0..1 per face with fit). Optional rounding. */
-export function boxGeo(w, h, d, { seg = 1, round = 0, fit = false, faces = null } = {}) {
+/** Axis-aligned box centred on the origin. uv in metres (or 0..1 per face with fit). Optional rounding.
+ *  cell: the up / down faces are cut into a grid of ≤ cell metres (so per-vertex lighting has something to
+ *  interpolate); cuts: heights (metres above the box's bottom) at which the side faces get an extra row of vertices. */
+export function boxGeo(w, h, d, { seg = 1, round = 0, fit = false, faces = null, cell = 0, cuts = null } = {}) {
   const pos = []; const nrm = []; const uv = []; const idx = [];
   const hx = w / 2; const hy = h / 2; const hz = d / 2;
   const F = [
@@ -23,9 +25,18 @@ export function boxGeo(w, h, d, { seg = 1, round = 0, fit = false, faces = null 
     if (faces && !faces.includes(name)) continue;
     const base = pos.length / 3;
     const hn = Math.abs(n[0]) * hx + Math.abs(n[1]) * hy + Math.abs(n[2]) * hz;
-    for (let j = 0; j <= s; j++) {
-      for (let i = 0; i <= s; i++) {
-        const a = i / s - 0.5; const b = j / s - 0.5;
+    // vertex rows / columns as fractions 0..1 along the face's u and v axes
+    let nu = s; let nv = s; let fv = null;
+    if (cell > 0 && (name === 'py' || name === 'ny')) { nu = Math.max(s, Math.ceil(su / cell)); nv = Math.max(s, Math.ceil(sv / cell)); }
+    else if (cuts && cuts.length && name !== 'py' && name !== 'ny') {
+      fv = [0]; for (const c of [...cuts].sort((p, q) => p - q)) if (c > 0.001 && c < h - 0.001) fv.push(c / h);
+      for (let k = 1; k < s; k++) fv.push(k / s); fv.push(1);
+      fv = [...new Set(fv.map((q) => Math.round(q * 1e6) / 1e6))].sort((p, q) => p - q); nv = fv.length - 1;
+    }
+    for (let j = 0; j <= nv; j++) {
+      for (let i = 0; i <= nu; i++) {
+        const fu = i / nu; const fvj = fv ? fv[j] : j / nv;
+        const a = fu - 0.5; const b = fvj - 0.5;
         let x = n[0] * hn + u[0] * a * su + v[0] * b * sv;
         let y = n[1] * hn + u[1] * a * su + v[1] * b * sv;
         let z = n[2] * hn + u[2] * a * su + v[2] * b * sv;
@@ -39,12 +50,12 @@ export function boxGeo(w, h, d, { seg = 1, round = 0, fit = false, faces = null 
           if (L > 1e-6) { dx /= L; dy /= L; dz /= L; x = ix + dx * round; y = iy + dy * round; z = iz + dz * round; nx = dx; ny = dy; nz = dz; }
         }
         pos.push(x, y, z); nrm.push(nx, ny, nz);
-        if (fit) uv.push(0.002 + (i / s) * 0.996, 0.002 + (j / s) * 0.996);
+        if (fit) uv.push(0.002 + fu * 0.996, 0.002 + fvj * 0.996);
         else uv.push((a + 0.5) * su, (b + 0.5) * sv);
       }
     }
-    const row = s + 1;
-    for (let j = 0; j < s; j++) for (let i = 0; i < s; i++) {
+    const row = nu + 1;
+    for (let j = 0; j < nv; j++) for (let i = 0; i < nu; i++) {
       const k = base + j * row + i;
       idx.push(k, k + 1, k + row + 1, k, k + row + 1, k + row);
     }
@@ -229,9 +240,15 @@ function rotMatrix(rx, ry, rz) {
  * chunker the whole map is one geometry (the v1 behaviour).
  */
 export const BACKDROP = -1;
+// baked lighting (vertex colours only ever darken): contact occlusion on floors and at the foot of walls
+export const AO_REACH = 0.42; // m: how far a prop's occlusion reaches over the floor
+export const AO_FLOOR = 0.26; // darkening at a prop's edge (× its weight)
+export const AO_MIN = 0.7;    // no vertex is darkened below this fraction of its colour
+export const AO_WALL = 0.2;   // darkening at the very foot of a wall
+export const AO_WALL_H = 0.3; // m above the wall's base where it fades out
 export function createBuilder({ tiles, ink = [0.11, 0.1, 0.13], chunker = null }) {
   const chunks = new Map(); // key -> { P, N, U, C, T, O, IDX, HULL }
-  const chunkOf = (k) => { let c = chunks.get(k); if (!c) { c = { key: k, P: [], N: [], U: [], C: [], T: [], O: [], IDX: [], HULL: [] }; chunks.set(k, c); } return c; };
+  const chunkOf = (k) => { let c = chunks.get(k); if (!c) { c = { key: k, P: [], N: [], U: [], C: [], T: [], O: [], A: [], IDX: [], HULL: [] }; chunks.set(k, c); } return c; };
   const colliders = []; const blobs = []; const probes = []; const spots = {}; const rooms = [];
   const white = tiles.white;
   const tp = []; const tn = [];
@@ -272,12 +289,19 @@ export function createBuilder({ tiles, ink = [0.11, 0.1, 0.13], chunker = null }
     // backdrop: far scenery (skylines, mountains) in its own chunk: no fog, never culled
     const ck = opts.backdrop ? BACKDROP : opts.chunk != null ? opts.chunk : chunker && n ? chunker(sx / n, sy / n, sz / n) : 0;
     const K = chunkOf(ck);
-    const { P, N, U, C, T, O, IDX, HULL } = K;
+    const { P, N, U, C, T, O, A, IDX, HULL } = K;
     const base = P.length / 3;
+    // baked ambient occlusion (vertex colours, so the eyedropper, the stamp and the blend score see it):
+    //   ao: 'wall'  a base-of-wall darkening over the first AO_WALL_H metres above opts.aoBase (needs boxGeo cuts)
+    //   ao: 'floor' this primitive's up-facing vertices are darkened at finish() by the props standing on / near it
+    const aoWall = opts.ao === 'wall'; const aoBase = opts.aoBase || 0; const aoFloor = opts.ao === 'floor' ? 1 : 0;
     for (let i = 0; i < n; i++) {
       P.push(tp[i * 3], tp[i * 3 + 1], tp[i * 3 + 2]); N.push(tn[i * 3], tn[i * 3 + 1], tn[i * 3 + 2]);
       U.push(g.uv[i * 2] / ru + off[0], g.uv[i * 2 + 1] / rv + off[1]);
-      C.push(col[0], col[1], col[2]);
+      let kk = 1;
+      if (aoWall && Math.abs(tn[i * 3 + 1]) < 0.5) { const q = (tp[i * 3 + 1] - aoBase) / AO_WALL_H; kk = q >= 1 ? 1 : 1 - AO_WALL * (1 - Math.max(0, q)) * (1 - Math.max(0, q)); }
+      C.push(col[0] * kk, col[1] * kk, col[2] * kk);
+      A.push(aoFloor && tn[i * 3 + 1] > 0.8 ? 1 : 0);
       T.push(tile[0], tile[1], tile[2], tile[3]);
       O.push(0, 0, 0);
     }
@@ -304,7 +328,7 @@ export function createBuilder({ tiles, ink = [0.11, 0.1, 0.13], chunker = null }
         const L = Math.hypot(ox, oy, oz) || 1;
         P.push(tp[i * 3], tp[i * 3 + 1], tp[i * 3 + 2]);
         N.push(-tn[i * 3], -tn[i * 3 + 1], -tn[i * 3 + 2]);
-        U.push(0, 0); C.push(ink[0], ink[1], ink[2]); T.push(white[0], white[1], white[2], white[3]);
+        U.push(0, 0); C.push(ink[0], ink[1], ink[2]); T.push(white[0], white[1], white[2], white[3]); A.push(0);
         O.push(ox / L, oy / L, oz / L);
       }
       for (let k = 0; k < g.idx.length; k += 3) HULL.push(hb + g.idx[k], hb + g.idx[k + 2], hb + g.idx[k + 1]);
@@ -346,6 +370,50 @@ export function createBuilder({ tiles, ink = [0.11, 0.1, 0.13], chunker = null }
   /** Label a room (culling, minimap, preview). floor: index into info.floors (default 0). */
   function room(name, x0, z0, x1, z1, o = {}) { rooms.push({ name, x0: Math.min(x0, x1), z0: Math.min(z0, z1), x1: Math.max(x0, x1), z1: Math.max(z0, z1), floor: o.floor || 0, landmark: o.landmark || '' }); }
 
+  // Contact occlusion on floors: every vertex flagged ao:'floor' (the up-facing ones, at the floor's own
+  // height) is darkened by the props within AO_REACH metres that stand on that floor (colliders whose
+  // base is near it): a soft ring round furniture and along walls. Thin things (legs, poles) count for less.
+  let aoSet = null; // { G, grid, occ, key }: the colliders that can occlude a floor, binned once per build
+  function aoOccluders() {
+    if (aoSet) return aoSet;
+    const G = 0.5; const grid = new Map(); const key = (i, j) => i * 8192 + j;
+    const occ = [];
+    for (const c of colliders) {
+      const hgt = c.maxY - c.minY;
+      if (hgt < 0.06 || c.ceil || c.climb === false || c.perch || (c.name && c.name.startsWith('perch:'))) continue;
+      const dx = c.maxX - c.minX; const dz = c.maxZ - c.minZ;
+      if (dx < 0.02 || dz < 0.02) continue;
+      const oi = occ.length; occ.push({ c, wt: Math.max(0.3, Math.min(1, Math.min(dx, dz) / 0.3)) * Math.min(1, hgt / 0.3) });
+      for (let i = Math.floor((c.minX - AO_REACH) / G); i <= Math.floor((c.maxX + AO_REACH) / G); i++) for (let j = Math.floor((c.minZ - AO_REACH) / G); j <= Math.floor((c.maxZ + AO_REACH) / G); j++) { const k = key(i, j); let L = grid.get(k); if (!L) grid.set(k, (L = [])); L.push(oi); }
+    }
+    aoSet = { G, grid, occ, key };
+    return aoSet;
+  }
+  function* bakeAO(K) {
+    const { P, C, A } = K; const nv = A.length;
+    let any = false; for (let i = 0; i < nv; i++) if (A[i]) { any = true; break; }
+    if (!any) return;
+    const { G, grid, occ, key } = aoOccluders(); yield 'ao';
+    let n = 0;
+    for (let v = 0; v < nv; v++) {
+      if (!A[v]) continue;
+      if (++n % 3000 === 0) yield 'ao';
+      const x = P[v * 3]; const fy = P[v * 3 + 1]; const z = P[v * 3 + 2];
+      const L = grid.get(key(Math.floor(x / G), Math.floor(z / G)));
+      if (!L) continue;
+      let ao = 1;
+      for (const oi of L) {
+        const { c, wt } = occ[oi];
+        if (c.minY > fy + 0.35 || c.maxY < fy + 0.06) continue;
+        const ex = x < c.minX ? c.minX - x : x > c.maxX ? x - c.maxX : 0; const ez = z < c.minZ ? c.minZ - z : z > c.maxZ ? z - c.maxZ : 0;
+        const d = Math.hypot(ex, ez); if (d >= AO_REACH) continue;
+        const t = 1 - d / AO_REACH; ao *= 1 - AO_FLOOR * wt * t * t;
+      }
+      if (ao < AO_MIN) ao = AO_MIN;
+      C[v * 3] *= ao; C[v * 3 + 1] *= ao; C[v * 3 + 2] *= ao;
+    }
+  }
+
   // a generator: one attribute per step (a big chunk's conversions were one 5–10 ms block)
   function* finishChunk(THREE, K) {
     const { P, N, U, C, T, O, IDX, HULL } = K;
@@ -371,8 +439,9 @@ export function createBuilder({ tiles, ink = [0.11, 0.1, 0.13], chunker = null }
     if (!chunks.size) chunkOf(0);
     const parts = [];
     for (const K of [...chunks.values()].sort((a, b) => a.key - b.key).filter((k) => k.IDX.length || chunks.size === 1)) {
+      yield* bakeAO(K);
       parts.push(yield* finishChunk(THREE, K));
-      K.P = K.N = K.U = K.C = K.T = K.O = K.IDX = K.HULL = null; // the typed copies are all that's kept
+      K.P = K.N = K.U = K.C = K.T = K.O = K.A = K.IDX = K.HULL = null; // the typed copies are all that's kept
       yield K.key;
     }
     // Blob shadows: one merged quad mesh.

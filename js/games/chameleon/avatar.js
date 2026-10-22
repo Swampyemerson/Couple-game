@@ -518,7 +518,8 @@ export function createAvatar(THREE, kit, { gradientMap, texture }) {
     /** Highlight outline for the reveal (null to hide). */
     setReveal(color, width = 0.014) {
       const on = !!color;
-      if (on) { hullMat.uniforms.uColor.value.set(color); hullMat.uniforms.uW.value = width; }
+      // (the hull lives in the body's local space, so it shrinks with the size: below 0.6 it keeps the 0.6 body's world width, or Micro's outline is a 5 mm hairline)
+      if (on) { hullMat.uniforms.uColor.value.set(color); hullMat.uniforms.uW.value = st.size > 0 && st.size < 0.6 ? width * (0.6 / st.size) : width; }
       for (const h of hulls) h.visible = on;
     },
     /** Hide head parts (first-person view from inside the head). */

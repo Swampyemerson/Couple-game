@@ -1,7 +1,7 @@
 // Overlay cards for Blend & Seek: pure HTML builders (state in, markup out).
 import { esc, fmtTime } from './util.js';
 import { MAPS, mapPool, dailyPlan, dayKey } from './maps.js';
-import { SIZES, OPTIONS, PRESET_LABEL, PRESET_SUB, fmtRule, timeScale, hideScale, effSeconds, LOCAL_DEAD } from './rules.js';
+import { SIZES, SIZE_AUTO, resolveSize, OPTIONS, PRESET_LABEL, PRESET_SUB, fmtRule, timeScale, hideScale, effSeconds, LOCAL_DEAD } from './rules.js';
 
 const nameSpan = (api, w) => `<b class="chm-name-${w}">${esc(api.name(w))}</b>`;
 
@@ -23,7 +23,7 @@ export function errorCard(msg) {
 }
 
 // ── lobby ──────────────────────────────────────────────────────────────
-const SIZE_DOT = { tiny: 9, small: 12, medium: 15, large: 19, huge: 24 };
+const SIZE_DOT = { micro: 6, mini: 8, tiny: 10, small: 12, medium: 15, large: 19, huge: 24 };
 
 /** A tiny floor plan of a map from its rooms (SVG, riso print): each floor is a panel, rooms are
  *  overprinted in the three ink tints (slightly mis-registered, like a riso pass), with a key-plate
@@ -87,9 +87,14 @@ function mapCard(api, setup, canEdit) {
   </div>`;
 }
 
-function sizeSeg(rules, canEdit) {
+/** "By map" first, then the seven sizes smallest to largest: a 4 × 2 grid (every cell ≥ 44 px, readable at 360 px). By map says what it means on the selected map. */
+function sizeSeg(rules, canEdit, setup) {
   const dis = canEdit ? '' : 'disabled';
-  return `<div class="chm-sizes" role="radiogroup" aria-label="Chameleon size">${SIZES.map((z) => `<button class="${rules.size === z.id ? 'on' : ''}" data-lobby="rule" data-k="size" data-v="${z.id}" role="radio" aria-checked="${rules.size === z.id}" ${dis}><i style="width:${SIZE_DOT[z.id]}px;height:${Math.round(SIZE_DOT[z.id] * 0.62)}px"></i>${z.label}</button>`).join('')}</div>`;
+  const m = setup && MAPS.find((x) => x.id === setup.map);
+  const via = resolveSize(rules, m || MAPS[0]);
+  const cell = (id, label, dot, extra = '') => `<button class="${rules.size === id ? 'on' : ''}" data-lobby="rule" data-k="size" data-v="${id}" role="radio" aria-checked="${rules.size === id}" ${dis}><i style="width:${SIZE_DOT[dot]}px;height:${Math.round(SIZE_DOT[dot] * 0.62)}px"></i><span>${label}</span>${extra}</button>`;
+  const viaLabel = (SIZES.find((z) => z.id === via) || {}).label || '';
+  return `<div class="chm-sizes" role="radiogroup" aria-label="Chameleon size">${cell(SIZE_AUTO.id, SIZE_AUTO.label, via, `<em>${esc(viaLabel)}</em>`)}${SIZES.map((z) => cell(z.id, z.label, z.id)).join('')}</div>`;
 }
 
 // Mix it up (maps pass): a toggle tile beside Today's hide, so the variety row costs one line, not two
@@ -127,7 +132,7 @@ export function lobbyCard(api, { canEdit, local, setup, waitingFor, sheet, bests
     </div><div class="chm-col">
     ${mapCard(api, setup, canEdit)}
     ${bests}
-    <div class="chm-lrow"><h3>Chameleon size</h3>${sizeSeg(rules, canEdit)}</div>
+    <div class="chm-lrow"><h3>Chameleon size</h3>${sizeSeg(rules, canEdit, setup)}</div>
     ${mode === 'hs' ? `<div class="chm-lrow chm-firstrow"><h3>Hides first</h3><div class="chm-chips">${['a', 'b'].map((w) => `<button class="chm-chip p${w} ${first === w ? 'on' : ''}" data-lobby="first" data-v="${w}"><i></i>${esc(api.name(w))}</button>`).join('')}</div></div>` : ''}
     <div class="chm-lbtns">
       <button class="chm-more" data-act="settings" aria-haspopup="dialog">${GEAR}<span>${canEdit ? 'Settings' : 'See settings'}</span></button>
@@ -184,7 +189,7 @@ export function settingsSheet(api, { canEdit, local, setup, waitingFor, music = 
     <div class="chm-chips chm-mapchips">${MAPS.map((m) => `<button class="chm-chip ${setup.map === m.id ? 'on' : ''}" data-lobby="map" data-v="${m.id}" ${canEdit ? '' : 'disabled'}>${esc(m.name)}</button>`).join('')}</div>
     <h3>Round</h3>
     <div class="chm-sets">
-    ${row('Chameleon size', 'Bigger is easier to spot', sizeSeg(r, canEdit))}
+    ${row('Chameleon size', 'Smaller is harder to find. By map fits the room', sizeSeg(r, canEdit, setup))}
     ${hs ? row('Rounds', 'Each of you hides half of them', stepper(r, 'rounds', canEdit)) : ''}
     ${row('Paint pellets', hs ? 'Per hunt' : 'Each (one fewer in Double Blind)', stepper(r, 'pellets', canEdit))}
     ${row('Chirp scans', 'Per hunt', stepper(r, 'scans', canEdit))}
@@ -447,12 +452,17 @@ export const CARDS_CSS = `
 .chm-step output { line-height: 44px; }
 /* settings sheet touch targets: every segment >= 44 x 44, sliders 44 px tall, the size picker's five buttons >= 44 px wide */
 .chm-seg2 button { height: 44px; }
-.chm-set .chm-sizes, .chm-sheet .chm-sizes { width: 236px; }
-.chm-set .chm-sizes button, .chm-sheet .chm-sizes button { min-height: 44px; min-width: 44px; }
-@media (max-width: 380px) { .chm-set .chm-sizes button, .chm-sheet .chm-sizes button { font-size: .5rem; letter-spacing: 0; padding-left: 0; padding-right: 0; } }
+/* size picker (sizes pass): By map + seven sizes in a 4 x 2 grid, every cell >= 44 px tall; cells are divided by a 2 px ink gap */
+.chm-sizes { grid-template-columns: repeat(4, 1fr); gap: 2px; background: var(--g-ink); }
+.chm-sizes button, .chm-set .chm-sizes button, .chm-sheet .chm-sizes button, .chm-lobby .chm-sizes button { min-height: 48px; min-width: 44px; justify-content: center; border-left: 0 !important; padding: 4px 1px; }
+.chm-sizes button span { display: block; line-height: 1; }
+.chm-sizes button em { display: block; font-style: normal; font-size: .84em; font-weight: 800; letter-spacing: 0; line-height: 1; opacity: .8; text-transform: none; }
+.chm-sizes button[disabled]:not(.on) { opacity: 1; color: var(--g-muted); }
+.chm-set .chm-sizes, .chm-sheet .chm-sizes { width: 100%; }
 .chm-set:has(.chm-sizes) { flex-wrap: wrap; row-gap: 6px; }
-.chm-set:has(.chm-sizes) > span { flex: 1 1 120px; }
-.chm-set:has(.chm-sizes) .chm-sizes { margin-left: auto; }
+.chm-set:has(.chm-sizes) > span { flex: 1 1 100%; }
+.chm-set:has(.chm-sizes) .chm-sizes { flex: 1 1 100%; margin-left: 0; }
+@media (max-width: 380px) { .chm-sizes button, .chm-set .chm-sizes button, .chm-sheet .chm-sizes button { font-size: .56rem; letter-spacing: 0; } }
 .chm-range { height: 44px; margin: 0; }
 .chm-sheet .chm-mapinfo small { white-space: normal; overflow: visible; text-overflow: clip; }
 .chm-set.dead { opacity: .5; }

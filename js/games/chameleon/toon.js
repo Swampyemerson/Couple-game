@@ -2,8 +2,8 @@
 // the ink outline hull expanded in the vertex shader), a toon material for chameleon bodies
 // (same lighting so painted colours match the world), blob shadows and fx.
 
-/** 3-step toon ramp (kept soft so a good paint job can actually blend). */
-export function makeGradient(THREE, steps = [0.42, 0.62, 0.84]) {
+/** 4-step toon ramp (kept soft so a good paint job can actually blend). */
+export function makeGradient(THREE, steps = [0.40, 0.58, 0.76, 0.88]) {
   const data = new Uint8Array(steps.length * 4);
   steps.forEach((v, i) => { const c = Math.round(v * 255); data[i * 4] = c; data[i * 4 + 1] = c; data[i * 4 + 2] = c; data[i * 4 + 3] = 255; });
   const t = new THREE.DataTexture(data, steps.length, 1, THREE.RGBAFormat);

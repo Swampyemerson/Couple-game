@@ -51,6 +51,7 @@ const FAKE_THREE = (() => {
   return { BufferGeometry: Geo, Float32BufferAttribute: Attr, BufferAttribute: Attr };
 })();
 
+let PACK = null; // atlas.js packRects, set by loadModules()
 function fakeAtlas(size = 1024) {
   const SIZES = { S: 48, M: 112, L: 240, XL: 496 }; const PAD = 8;
   const reqs = []; const tiles = {}; const dropped = [];
@@ -62,18 +63,12 @@ function fakeAtlas(size = 1024) {
     finish() {
       reqs.push({ key: 'white', iw: 48, ih: 48 });
       const keys = new Set();
-      const order = [...reqs].sort((a, b) => b.ih - a.ih || b.iw - a.iw);
-      let x = 0; let y = 0; let shelf = 0;
-      for (const r of order) {
-        if (keys.has(r.key)) throw new Error('duplicate atlas key ' + r.key);
-        keys.add(r.key);
-        const W = r.iw + PAD * 2; const H = r.ih + PAD * 2;
-        if (x + W > size) { x = 0; y += shelf; shelf = 0; }
-        if (y + H > size) { dropped.push(r.key); continue; }
-        tiles[r.key] = [x / size, y / size, r.iw / size, r.ih / size];
-        x += W; shelf = Math.max(shelf, H);
-      }
-      return { tiles, used: y + shelf, dropped, keys: [...keys] };
+      for (const r of reqs) { if (keys.has(r.key)) throw new Error('duplicate atlas key ' + r.key); keys.add(r.key); }
+      // the game's own skyline packer (atlas.js packRects), so "every tile fits" is the real answer
+      const pk = PACK(reqs.map((r) => ({ key: r.key, w: r.iw, h: r.ih })), size, size);
+      for (const r of reqs) { const at = pk.at[r.key]; if (at) tiles[r.key] = [(at.x + PAD) / size, (at.y + PAD) / size, r.iw / size, r.ih / size]; }
+      dropped.push(...pk.dropped);
+      return { tiles, used: pk.used, dropped, keys: [...keys] };
     },
     reqs,
   };
@@ -81,7 +76,8 @@ function fakeAtlas(size = 1024) {
 
 async function loadModules() {
   const imp = (f) => import(pathToFileURL(path.join(ROOT, 'js/games/chameleon', f)).href);
-  const [maps, geo, extra, world, move] = await Promise.all([imp('maps.js'), imp('geo.js'), imp('maps/index.js'), imp('world.js'), imp('move.js')]);
+  const [maps, geo, extra, world, move, atlas] = await Promise.all([imp('maps.js'), imp('geo.js'), imp('maps/index.js'), imp('world.js'), imp('move.js'), imp('atlas.js')]);
+  PACK = atlas.packRects;
   return { maps, geo, extra: extra.EXTRA_MAPS, world, move };
 }
 

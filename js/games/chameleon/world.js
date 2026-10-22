@@ -357,9 +357,43 @@ export function createWorld(map) {
    * Slide an attached body along its surface by velocity (mx,my,mz) (tangent) for dt.
    * Returns 0 moved / still, 1 concave transfer, 2 convex wrap, 3 blocked (stayed).
    * After a transfer, body.n is the new face normal and body.f the new heading.
+   *
+   * Smoothness rules (surface-transition pass): a face the body just left (vn, for vt seconds) is not
+   * re-entered unless the motion reverses (no flip-flop at a corner); a body pushed against something
+   * it can't climb (or at a grazing angle) slides along it instead of stopping dead.
    */
+  let blkN = false; let blkX = 0; let blkY = 0; let blkZ = 0; let blkS = -1; // the nearest face the feelers saw but didn't take (blkS −1), or the edge face it couldn't wrap onto (+1)
+  /** Is a face (normal h) the one the body just left (within VETO_T) while the push (d) is still the one that left it? A push
+   *  that turned (the stick reversed, or went round by 60°+) may go back; one that didn't can't ping-pong round an edge. */
+  const VETO_T = 0.4;
+  function vetoed(body, hnx, hny, hnz, dx, dy, dz) {
+    return body.vt > 0 && hnx * body.vnx + hny * body.vny + hnz * body.vnz > 0.9 && dx * body.vfx + dy * body.vfy + dz * body.vfz > 0.5;
+  }
+  function leave(body, nx, ny, nz, dx, dy, dz) {
+    body.vnx = nx; body.vny = ny; body.vnz = nz; body.vt = VETO_T;
+    body.vfx = dx; body.vfy = dy; body.vfz = dz;
+  }
   function crawl(body, mx, my, mz, dt) {
+    if (body.vt > 0) body.vt -= dt;
+    blkN = false;
+    let res = crawl1(body, mx, my, mz, dt);
+    if (res === 3 && blkN) {
+      // slide: the wanted move without its component into the blocking face, kept tangent to the surface
+      const nx = body.nx; const ny = body.ny; const nz = body.nz;
+      let dn = mx * nx + my * ny + mz * nz; mx -= nx * dn; my -= ny * dn; mz -= nz * dn;
+      dn = mx * blkX + my * blkY + mz * blkZ;
+      if (dn * blkS > 0) {
+        mx -= blkX * dn; my -= blkY * dn; mz -= blkZ * dn;
+        dn = mx * nx + my * ny + mz * nz; mx -= nx * dn; my -= ny * dn; mz -= nz * dn;
+        if (mx * mx + my * my + mz * mz > 0.0004) { blkN = false; res = crawl1(body, mx, my, mz, dt); }
+      }
+    }
+    return res;
+  }
+  function crawl1(body, mx, my, mz, dt) {
     const nx = body.nx; const ny = body.ny; const nz = body.nz;
+    // (the push as asked for, before it is made tangent: what the veto compares)
+    const oL = Math.hypot(mx, my, mz) || 1; const ox0 = mx / oL; const oy0 = my / oL; const oz0 = mz / oL;
     // keep the velocity tangent
     const dn = mx * nx + my * ny + mz * nz;
     mx -= nx * dn; my -= ny * dn; mz -= nz * dn;
@@ -372,16 +406,19 @@ export function createWorld(map) {
     // 1. concave: a face ahead, facing us → climb onto it. Two feelers: one at belly height,
     //    one just above the surface (catches skirting boards, sills, shelf lips)
     const look = dist + r * 0.85;
-    let H = null;
+    let H = null; let solid = false;
     for (let k = 0; k < 2; k++) {
       const h = k === 0 ? 0.035 : Math.min(0.6 * r, 0.16);
       const ox = body.x + nx * h; const oy = body.y + ny * h; const oz = body.z + nz * h;
       const G = raycast(ox, oy, oz, dx, dy, dz, k === 0 ? Math.min(look, dist + 0.06) : look, null, true);
       // a non-climbable face (invisible guards, glass) is a solid stop, never a new surface
-      if (G && G.box && G.box.climb === false && G.t < dist + r * 0.85) return 3;
-      if (G && G.nx * dx + G.ny * dy + G.nz * dz < -0.5 && okContact(G, clear, r)) { H = G; break; }
+      if (G && G.box && G.box.climb === false && G.t < dist + r * 0.85) { solid = true; blkN = true; blkS = -1; blkX = G.nx; blkY = G.ny; blkZ = G.nz; break; }
+      if (G && G.nx * dx + G.ny * dy + G.nz * dz < -0.5 && !vetoed(body, G.nx, G.ny, G.nz, ox0, oy0, oz0) && okContact(G, clear, r)) { H = G; break; }
+      if (G && G.t < dist + r * 0.85 && !blkN && G.nx * nx + G.ny * ny + G.nz * nz < 0.5) { blkN = true; blkS = -1; blkX = G.nx; blkY = G.ny; blkZ = G.nz; }
     }
+    if (solid) return 3;
     if (H) {
+      leave(body, nx, ny, nz, ox0, oy0, oz0);
       setContact(body, H.x, H.y, H.z, H.nx, H.ny, H.nz, H.box);
       reHead(body, nx, ny, nz);
       return 1;
@@ -397,13 +434,24 @@ export function createWorld(map) {
       body.x = H.x; body.y = H.y; body.z = H.z; body.box = H.box;
       return 0;
     }
-    // 4. convex edge: wrap round onto the side face we just walked off
-    H = raycast(body.x - nx * 0.05, body.y - ny * 0.05, body.z - nz * 0.05, -dx, -dy, -dz, dist + 0.3, climbable, false);
-    if (H && H.nx * dx + H.ny * dy + H.nz * dz > 0.7 && okContact(H, clear, r)) {
-      setContact(body, H.x, H.y, H.z, H.nx, H.ny, H.nz, H.box);
-      reHead(body, -nx, -ny, -nz);
-      return 2;
+    // 4. convex edge: wrap round onto the side face we just walked off. The probe starts a little under
+    //    the surface plane, looking back; thin edges (a shelf, a table top ≥ 3 cm) are caught by the
+    //    shallower probes (a deep one would pass under them)
+    let edge = false; let ex = 0; let ey = 0; let ez = 0;
+    for (let k = 0; k < 3; k++) {
+      const dp = k === 0 ? 0.05 : k === 1 ? 0.02 : 0.008;
+      H = raycast(body.x - nx * dp, body.y - ny * dp, body.z - nz * dp, -dx, -dy, -dz, dist + 0.3, climbable, false);
+      if (!H) continue;
+      if (H.nx * dx + H.ny * dy + H.nz * dz > 0.25 && !vetoed(body, H.nx, H.ny, H.nz, ox0, oy0, oz0) && okContact(H, clear, r)) {
+        leave(body, nx, ny, nz, ox0, oy0, oz0);
+        setContact(body, H.x, H.y, H.z, H.nx, H.ny, H.nz, H.box);
+        reHead(body, -nx, -ny, -nz);
+        return 2;
+      }
+      if (!edge && H.nx * nx + H.ny * ny + H.nz * nz < 0.5) { edge = true; ex = H.nx; ey = H.ny; ez = H.nz; }
     }
+    // the edge is there but the body can't (or needn't) turn it: keep going along the edge instead
+    if (edge && !blkN) { blkN = true; blkS = 1; blkX = ex; blkY = ey; blkZ = ez; }
     // 5. nowhere to go: stay put
     body.x = px; body.y = py; body.z = pz;
     return 3;

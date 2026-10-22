@@ -12,13 +12,13 @@ import { recordRound, recordMatch, cupOutcome, bestsStrip, dailyLine, recapLines
 import { loadWear, saveWear, resolveWear, newUnlocks, packWear, unpackWear, wardrobeSheet, EYE_RGB, SLOT_LABEL } from './wardrobe.js';
 import { clamp, dampAngle, wrapAngle, hexToRgb, cssColor, luminance, listeners, fmtTime, mixHex, esc, seeded, packQuat, unpackQuat } from './util.js';
 import { MAPS, mapArea, mapCacheInfo, mapBuildStats, mapJobsInfo, mixPlan, dailyPlan, dayKey, roomAt } from './maps.js';
-import { sanitizeSetup, sanitizeRules, applyPreset, stepRule, setRule, loadSaved, saveSetup, sizeScale, SPEED_MUL, CLIMB_MUL, tipsSeen, markTipsSeen, PRESETS, timeScale, hideScale, effSeconds, sprintMul, dbSpeed, OPTIONS, fmtRule, rulesFor } from './rules.js';
+import { sanitizeSetup, sanitizeRules, applyPreset, stepRule, setRule, loadSaved, saveSetup, sizeScaleFor, SPEED_MUL, CLIMB_MUL, tipsSeen, markTipsSeen, PRESETS, timeScale, hideScale, effSeconds, sprintMul, dbSpeed, OPTIONS, fmtRule, rulesFor } from './rules.js';
 import { TWIST_CSS, DUSK, BOUNTY, UNDERDOG, SUDDEN, twistById, pickTwists, fogStep, fogMood, duskStep, duskMood, paletteFor, mapSwatches, pickBounty, underdogOf, wagerPay, dailyTwistFor, twistChip, noteChip, suddenChip, inject, tagNextLine, twistRows, injectRows } from './twists.js';
 import { REVEAL } from './paint.js';
 // H: whisker shots, mercy chirp, notes on the skin, last-second drama
 import { createMoments, momentLines, noteLines } from './moments.js';
 import { createBlendJob, startBlend, stepBlend, scoreBlend, createMeter, startErrorMap, stepErrorMap, setBlendLights, blendDiag, dropBackdrop, releaseBackdrop, blendProbe, stampSampler, BLEND } from './camo.js';
-import { mkBody, sizeBody, resetBody, headingYaw, attachBody, detachBody, freeStep, crawlStep, inputOnSurface, bodyQuat, quatUpY, spotKind, surfaceKind, accelStep, coyoteJump, shortHop, JUMP } from './move.js';
+import { mkBody, sizeBody, resetBody, headingYaw, attachBody, detachBody, freeStep, crawlStep, crawlSteps, surfaceVel, mkFrameState, mkVis, visUpdate, visCore, visSnap, mkSpring3, spring3Snap, spring3Step, spring1, bodyQuat, quatUpY, spotKind, surfaceKind, accelStep, coyoteJump, shortHop, JUMP } from './move.js';
 import { SQUEEZE_R } from './world.js';
 
 const DUR0 = { title: 1800, title2: 900, final: 12000, hide: 60000, lockMax: 7000, seekLead: 1600, seek: 90000, found: 3400, recap: 6500, resume: 3000, lead: 380, foundLead: 260 };
@@ -168,6 +168,9 @@ export function createGame(el, api) {
 
   // physics bodies for locally controlled players (see move.js)
   const body = { a: mkBody(), b: mkBody() };
+  // the drawn pose of each body (move.js visUpdate: sim pose + decaying error, pivoted about the centre) and each body's crawl input state (input-frame lock)
+  const dpose = { a: mkVis(), b: mkVis() };
+  const fsOf = { a: mkFrameState(), b: mkFrameState() };
   const rem = {}; for (const f of FIELDS) rem[f] = 0;
   const remT = {}; for (const f of FIELDS) remT[f] = 0;
   const hist = { t: new Float64Array(96), x: new Float32Array(96), y: new Float32Array(96), z: new Float32Array(96), n: 0, i: 0 };
@@ -178,6 +181,8 @@ export function createGame(el, api) {
     spect: 'eyes', fcX: 0, fcY: 0, fcZ: 0, fcYaw: 0, fcPitch: 0, fcTop: 3, fcBottom: 0.12, climbV: false, climbNear: false, vYaw: 0,
     // the third-person look target eases for 0.4 s after a stick / let-go (no 0.3 m dip at the attach)
     lkX: 0, lkY: 0, lkZ: 0, lkAt: false, lkUntil: 0,
+    // the follow rig (cameras(): hider orbit + seeker climb view): pivot spring, the solver's eased offset, the auto-pitch spring
+    pv: mkSpring3(), pvKey: '', pvAt: -10, co: [0, 0, 0], pitchV: 0,
     // final QA: the body a close camera looks past fades (cameras()); the FOUND framing's swing off the seeker's line
     fade: { a: 1, b: 1 }, fadeW: null, fadeFrame: false, fadeFire: false, fadeTx: 0, fadeTy: 0, fadeTz: 0, fSide: 0,
     // the "You" sticker keeps clear of the role pill (hereMarker)
@@ -207,7 +212,7 @@ export function createGame(el, api) {
   /** The rules in force: the match's (both devices agree via the phase protocol), else the lobby's. */
   // (one phone: the rules that do nothing there are switched off, rules.js LOCAL_DEAD)
   const rules = () => rulesFor(S.match && S.match.rules ? S.match.rules : S.setup.rules, local);
-  const sizeS = () => sizeScale(rules().size);
+  const sizeS = () => sizeScaleFor(rules(), curMapEntry()); // 'By map' resolves on the current round's map (rules.js resolveSize)
   const curMapEntry = () => MAPS.find((m) => m.id === (S.match ? S.match.map : S.setup.map)) || MAPS[0];
   const mapTime = () => timeScale(curMapEntry());
   const mapHideTime = () => hideScale(curMapEntry());
@@ -2714,7 +2719,7 @@ export function createGame(el, api) {
           if (role === 'hider') { b.lookYaw = clamp(wrapAngle(b.lookYaw), -1.9, 1.9); b.lookPitch = clamp(b.lookPitch, -1.2, 1.2); }
         } else {
           C.yaw -= lk[0] * sens; C.pitch = clamp(C.pitch + lk[1] * sens * 0.8, -1.05, 1.2);
-          if (lk[0] || lk[1]) C.autoUntil = 0;
+          if (lk[0] || lk[1]) { C.autoUntil = 0; C.pitchV = 0; }
         }
         if (mode2 === 'move') {
           const sizeMul = 0.85 + 0.15 * b.s;
@@ -2722,11 +2727,13 @@ export function createGame(el, api) {
           if (b.at && fp) sp *= CLIMB_MUL[ru.climbSpeed]; // the seeker on a wall or ceiling
           if (b.sq) sp *= SPEED.squeeze;
           if (b.at && (!fp || climbV)) {
-            // sticky feet: screen-relative input mapped onto the surface
+            // sticky feet: screen-relative input mapped onto the surface through the camera the player sees
+            // (last frame's rendered one: its basis comes straight from the camera's world matrix); after a
+            // corner the input-frame lock keeps the body going the way it was heading (move.js surfaceVel)
             stage.camera.updateMatrixWorld();
             stage.camera.getWorldDirection(tvA); camF[0] = tvA.x; camF[1] = tvA.y; camF[2] = tvA.z;
-            if (climbV) { camR[0] = -Math.cos(C.vYaw); camR[1] = 0; camR[2] = Math.sin(C.vYaw); } else { camR[0] = Math.cos(C.yaw); camR[1] = 0; camR[2] = -Math.sin(C.yaw); }
-            inputOnSurface(b, mv[0], mv[1], projOut, camF, camR, surfV);
+            { const me = stage.camera.matrixWorld.elements; camR[0] = me[0]; camR[1] = me[1]; camR[2] = me[2]; }
+            surfaceVel(b, fsOf[w], mv[0], mv[1], projOut, camF, camR, dt, surfV);
             const csp = sp * SPEED.crawl;
             vx = surfV[0] * csp; vy = surfV[1] * csp; vz = surfV[2] * csp;
           } else {
@@ -2773,11 +2780,11 @@ export function createGame(el, api) {
           if (moving) {
             if (b.pose !== 'stand' && b.pose !== 'wall') { b.pose = b.pose === 'corner' ? 'wall' : 'stand'; stage.av[w].setPose(b.pose); }
             b.cnx = 0; b.cnz = 0;
-            const res = crawlStep(world, b, vx, vy, vz, dt);
+            const res = crawlSteps(world, b, dashing ? null : fsOf[w], vx, vy, vz, dt); // fixed pieces of ≤ 1/60 s: the same at 30, 60 and 120 Hz
             if (res === 1 || res === 2) { stage.av[w].squash(0.25); if (b.ny < -0.7 && w === v) { C.autoPitch = -0.12; C.autoUntil = tSec + 0.9; } }
             if (res === 4) { stage.av[w].squash(0.4); snd.play('land'); }
             P.texelDirtyAt = tSec + 0.2;
-          }
+          } else fsOf[w].lock = false; // stopped: the next push maps from the screen again
           b.speed = moving ? Math.hypot(vx, vy, vz) : 0;
           b.svx = 0; b.svz = 0;
           recordHist(w, b, t);
@@ -2918,10 +2925,13 @@ export function createGame(el, api) {
       let vis = true;
       if (controlsOf(w)) {
         const b = body[w];
-        rt.position.set(b.x, b.y, b.z);
-        // surface orientation: slerp toward it so edges and corners turn smoothly
-        bodyQuat(b, qTmp); qOwn.set(qTmp[0], qTmp[1], qTmp[2], qTmp[3]);
-        if (snapOrient[w]) { rt.quaternion.copy(qOwn); snapOrient[w] = false; } else rt.quaternion.slerp(qOwn, 1 - Math.exp(-16 * dt));
+        // the drawn pose: the sim pose with its discontinuities (transfers, wraps, stick / let-go, step-ups,
+        // push-outs) turned into a quick glide pivoted about the body's centre; teleports snap
+        const vs = dpose[w];
+        if (snapOrient[w]) { visSnap(vs); snapOrient[w] = false; }
+        visUpdate(vs, b, dt);
+        rt.position.set(vs.fx, vs.fy, vs.fz);
+        rt.quaternion.set(vs.qx, vs.qy, vs.qz, vs.qw);
         if (a.pose !== b.pose) a.setPose(b.pose);
         a.st.wallN = null;
         a.st.speed = b.speed;
@@ -2933,10 +2943,15 @@ export function createGame(el, api) {
         if (ok && remHint.set && rem.v === 0 && (ph === 'seek' || ph === 'lock')) useHint();
         vis = ok && rem.v > 0.5;
         if (ok) {
-          rt.position.set(rem.x, rem.y, rem.z);
-          // published orientation, already slerped between samples by the link buffer
-          if (rem.qw != null && rem.q) { qOwn.set(rem.qx, rem.qy, rem.qz, rem.qw); rt.quaternion.slerp(qOwn, 1 - Math.exp(-30 * dt)); }
-          else { rt.quaternion.setFromAxisAngle(Y_AXIS, rem.yaw); }
+          // published pose (already interpolated between samples by the link buffer) through the same drawn-pose
+          // layer as my own body: a corner the partner turns glides over a tenth of a second instead of popping
+          const vs = dpose[w];
+          if (tSec - vs.lt > 0.4) visSnap(vs); // it was hidden / not updated: appear where it is
+          vs.lt = tSec;
+          if (rem.qw != null && rem.q) qOwn.set(rem.qx, rem.qy, rem.qz, rem.qw); else qOwn.setFromAxisAngle(Y_AXIS, rem.yaw);
+          visCore(vs, rem.x, rem.y, rem.z, qOwn.x, qOwn.y, qOwn.z, qOwn.w, rem.sp, a.st.size, dt, false);
+          rt.position.set(vs.fx, vs.fy, vs.fz);
+          rt.quaternion.set(vs.qx, vs.qy, vs.qz, vs.qw);
           const pose = POSES[Math.round(rem.po)] || 'stand';
           if (a.pose !== pose) a.setPose(pose);
           a.st.wallN = null;
@@ -3125,7 +3140,7 @@ export function createGame(el, api) {
     const cam = stage.camera;
     const ph = S.phase.name; const v = viewer();
     const role = v ? roleOf(v) : null;
-    let snap = false; let overview = false; let climbCam = false;
+    let snap = false; let overview = false; let climbCam = false; let rigid = false;
     let rate = 10;
     C.frameCard = false;
     stage.vm.visible = false;
@@ -3209,10 +3224,12 @@ export function createGame(el, api) {
     } else if (ph === 'seek' && v && role === 'seeker' && C.climbV) {
       // the seeker on a wall / ceiling (or zipping): close over-the-shoulder, aim = screen centre
       climbCamWant(body[v], C.vYaw, body[v].lookPitch, camWant, lookDir);
-      lookWant.copy(camWant).add(lookDir);
+      lookWant.copy(climbPiv);
       camGuard(climbPiv);
+      followRig('climb', climbPiv, lookWant, camWant, 0.07, dt);
+      lookWant.copy(camWant).add(lookDir);
       C.fadeW = v; C.fadeFire = C.climbNear;
-      climbCam = true; rate = 14;
+      climbCam = true; rigid = true; rate = 14;
     } else if (ph === 'seek' && v && (role === 'seeker' || role === 'both' || (role === 'hider' && !local && hunting(t)))) {
       const b = body[v];
       if (role === 'hider') {
@@ -3234,19 +3251,13 @@ export function createGame(el, api) {
     } else if (v && (ph === 'hide' || ph === 'lock' || (ph === 'seek' && role === 'hider'))) {
       // hiding (and a hider's head start): third-person orbit
       const b = body[v];
-      bodyCentre(v, lookWant);
-      lookWant.y += (b.at ? 0.05 : 0.14) * b.s;
-      // a stick / let-go jumps the body centre (feet → contact) by ~0.3 m: ease the look target at rate 6
-      // for 0.4 s instead of following it (the player's chosen pitch is left alone)
-      if (!!b.at !== C.lkAt) { C.lkAt = !!b.at; C.lkUntil = tSec + 0.4; }
-      if (tSec < C.lkUntil && Math.abs(lookWant.x - C.lkX) + Math.abs(lookWant.y - C.lkY) + Math.abs(lookWant.z - C.lkZ) < 1.2) {
-        const k = 1 - Math.exp(-6 * dt);
-        C.lkX += (lookWant.x - C.lkX) * k; C.lkY += (lookWant.y - C.lkY) * k; C.lkZ += (lookWant.z - C.lkZ) * k;
-        lookWant.set(C.lkX, C.lkY, C.lkZ);
-      } else { C.lkX = lookWant.x; C.lkY = lookWant.y; C.lkZ = lookWant.z; }
-      // under a ceiling the camera eases below the body (world-up always: no rolling horizon)
-      if (C.autoUntil > tSec) C.pitch += (C.autoPitch - C.pitch) * (1 - Math.exp(-5 * dt));
-      else if (!b.at && C.pitch < 0.05) C.pitch += (0.32 - C.pitch) * (1 - Math.exp(-2.5 * dt));
+      bodyCentre(v, tv3); // the drawn body's centre (already smooth through stick / let-go / transfers)
+      lookWant.set(tv3.x, tv3.y + (b.at ? 0.05 : 0.14) * b.s, tv3.z);
+      // under a ceiling the camera eases below the body (world-up always: no rolling horizon): the pitch
+      // follows a critically damped spring, not an exponential
+      if (C.autoUntil > tSec) { spring1(C.pitch, C.pitchV, C.autoPitch, 0.4, dt, tvS); C.pitch = tvS[0]; C.pitchV = tvS[1]; }
+      else if (!b.at && C.pitch < 0.05) { spring1(C.pitch, C.pitchV, 0.32, 0.6, dt, tvS); C.pitch = tvS[0]; C.pitchV = tvS[1]; }
+      else C.pitchV = 0;
       const dist = C.dist * (0.55 + 0.45 * b.s);
       const cp = Math.cos(C.pitch);
       camWant.set(lookWant.x + Math.sin(C.yaw) * cp * dist, lookWant.y + Math.sin(C.pitch) * dist, lookWant.z + Math.cos(C.yaw) * cp * dist);
@@ -3261,9 +3272,10 @@ export function createGame(el, api) {
           camWant.set(lookWant.x + ux / l * dist, lookWant.y + uy / l * dist, lookWant.z + uz / l * dist);
         }
       }
-      // (solved from the body centre itself: the look point sits a little above it and eases)
-      bodyCentre(v, tv3);
+      // (solved from the body centre itself: the look point sits a little above it)
       solveCam(tv3, camWant, !!b.at, b.nx, b.ny, b.nz, 0.6, CAMK.orbit, C.yaw + Math.PI, camMinD(b.s));
+      followRig('orbit', tv3, lookWant, camWant, 0.08, dt);
+      rigid = true;
       camGuard(tv3);
       C.fadeW = v;
       rate = 12;
@@ -3300,7 +3312,7 @@ export function createGame(el, api) {
       const yaw1 = Math.atan2(nx, nz); const h1 = Math.hypot(nx, nz); const pit1 = Math.atan2(ny, h1);
       const yaw = yaw1 + wrapAngle(C.vsLx - yaw1) * e; const pit = pit1 + (C.vsLy - pit1) * e; const cp = Math.cos(pit);
       camLook.set(camPos.x + Math.sin(yaw) * cp, camPos.y + Math.sin(pit), camPos.z + Math.cos(yaw) * cp);
-    } else if (snap) { camPos.copy(camWant); camLook.copy(lookWant); }
+    } else if (snap || rigid) { camPos.copy(camWant); camLook.copy(lookWant); }
     else if (rate > 0) {
       const k = 1 - Math.exp(-rate * dt);
       camPos.lerp(camWant, k); camLook.lerp(lookWant, k);
@@ -3338,6 +3350,29 @@ export function createGame(el, api) {
     void t;
   }
   const revC = { x: 0, y: 0, z: 0 };
+  const tvS = [0, 0];
+  /**
+   * The third-person follow rig (hider orbit, seeker climb view). `look` (the point the camera orbits / aims
+   * at, from the drawn body) goes through a critically damped spring (smoothT ≈ the time to catch up: no lag
+   * on a still body, no overshoot, speed carried across frames); the camera is that sprung point plus the
+   * solver's offset from `piv` (where solveCam cast from), which eases: IN at once (a wall pulled it close:
+   * 40/s), OUT over ~0.3 s (10/s), so an occlusion fix never pops. Rewrites `want` (absolute camera spot) and
+   * `look` (the sprung point); `piv` is untouched (camGuard sweeps from it). A different rig, or a gap of
+   * 0.25 s, restarts from rest (view switches ride their own whip, cameras()).
+   */
+  function followRig(key, piv, look, want, smoothT, dt) {
+    const ox = want.x - piv.x; const oy = want.y - piv.y; const oz = want.z - piv.z;
+    const rest = C.pvKey !== key || tSec - C.pvAt > 0.25 || !C.pv.init || Math.hypot(look.x - C.pv.x, look.y - C.pv.y, look.z - C.pv.z) > 2.5;
+    C.pvKey = key; C.pvAt = tSec;
+    if (rest) { spring3Snap(C.pv, look.x, look.y, look.z); C.co[0] = ox; C.co[1] = oy; C.co[2] = oz; }
+    else {
+      spring3Step(C.pv, look.x, look.y, look.z, smoothT, dt);
+      const k = 1 - Math.exp(-(Math.hypot(ox, oy, oz) < Math.hypot(C.co[0], C.co[1], C.co[2]) ? 40 : 10) * dt);
+      C.co[0] += (ox - C.co[0]) * k; C.co[1] += (oy - C.co[1]) * k; C.co[2] += (oz - C.co[2]) * k;
+    }
+    want.set(piv.x + (C.pv.x - look.x) + C.co[0], piv.y + (C.pv.y - look.y) + C.co[1], piv.z + (C.pv.z - look.z) + C.co[2]);
+    look.set(C.pv.x, C.pv.y, C.pv.z);
+  }
   /** Where the seeker's climb camera wants to be for view (yaw, pitch): over the right shoulder of
    *  the body (shoulderCam). dir = view dir. Also flags a body sitting on the line of fire (faded). */
   function climbCamWant(b, yaw, pitch, out, dir) {
@@ -3437,8 +3472,12 @@ export function createGame(el, api) {
   }
   /** Centre of a body (what cameras look at): contact point + half a body along the normal. */
   function bodyCentre(w, out) {
-    const b = body[w]; const s2 = b.s;
-    if (b.at) { const off = b.pose === 'hang' ? 0.45 : 0.18; out.set(b.x + b.nx * off * s2, b.y + b.ny * off * s2, b.z + b.nz * off * s2); }
+    const b = body[w]; const s2 = b.s; const vs = dpose[w];
+    // (the drawn pose once it has one: smooth through every transfer, wrap, stick and let-go; the sim pose before that)
+    if (vs.init && !snapOrient[w] && !vs.snap) {
+      const off = (b.at ? (b.pose === 'hang' ? 0.45 : 0.18) : b.sq ? 0.08 : 0.28) * s2;
+      out.set(vs.fx + vs.ux * off, vs.fy + vs.uy * off, vs.fz + vs.uz * off);
+    } else if (b.at) { const off = b.pose === 'hang' ? 0.45 : 0.18; out.set(b.x + b.nx * off * s2, b.y + b.ny * off * s2, b.z + b.nz * off * s2); }
     else out.set(b.x, b.y + (b.sq ? 0.08 : 0.28) * s2, b.z);
     return out;
   }
