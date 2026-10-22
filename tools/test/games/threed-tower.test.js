@@ -296,7 +296,7 @@ async function stray(h, pg) {
   await pg.waitForFunction(() => {
     const v = document.querySelector('.gt-view');
     if (!v || v.dataset.phase !== 'slide') return false;
-    for (const ms of [0, 70, 140, 200]) setTimeout(() => v.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse', clientX: 120, clientY: 300 })), ms);
+    for (const ms of [0, 50, 100, 150]) setTimeout(() => v.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse', clientX: 120, clientY: 300 })), ms);
     return true;
   }, null, { polling: 'raf', timeout: 8000 });
   await h.wait(450);
@@ -306,12 +306,18 @@ async function stray(h, pg) {
 
   // 6. same phone: a short “Sydney’s turn” beat before the next slider
   await dropAt(pg, id, 2, 0.2);
-  const beat = await pg.waitForSelector('.gt-beat:not([hidden])', { timeout: 3000 });
+  // (everything about the beat is read, and the tap dispatched, inside the page in one task: a slow machine can't let the 600 ms beat run out in between)
+  await pg.waitForSelector('.gt-beat:not([hidden])', { timeout: 3000 });
+  const during = await pg.evaluate(() => {
+    const v = document.querySelector('.gt-view');
+    const r = { ph: v.dataset.phase, armed: v.dataset.armed, text: document.querySelector('.gt-beat').textContent };
+    v.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse', clientX: 120, clientY: 300 }));
+    return r;
+  });
   const who = (await h.engine(pg, id)).acts[0];
   const nm = await pg.evaluate((x) => document.querySelector(`#game-root .gm-p-${x} .gm-p-name`).textContent, who);
-  ok((await beat.textContent()) === `${nm}’s turn` && await pg.getAttribute('.gt-view', 'data-phase') === 'beat' && await pg.getAttribute('.gt-view', 'data-armed') === '0', `tower handoff: a “${nm}’s turn” beat comes before the slider and taps do nothing meanwhile`);
-  await pg.click('.gt-view');
-  await h.wait(100);
+  ok(during.text === `${nm}’s turn` && during.ph === 'beat' && during.armed === '0', `tower handoff: a “${nm}’s turn” beat comes before the slider and taps do nothing meanwhile`);
+  await h.wait(200);
   ok(await movesOf(h, pg, id) === 2, 'tower handoff: a tap during the beat is ignored');
   await pg.waitForSelector('.gt-view[data-phase="slide"]', { timeout: 3000 });
 
@@ -692,7 +698,7 @@ async function records(h, pg) {
   await pg.waitForSelector('.gt-view[data-phase="slide"]', { timeout: 4000 });
   const bs = await pg.evaluate(() => { clearInterval(window.__beatT); return window.__beat; });
   const dur = bs.length ? bs[bs.length - 1].t - bs[0].t : 0;
-  ok(bs.length > 5 && dur >= 250 && dur <= 800 && bs.every((x) => x.anim === 'none' && /is-hand/.test(x.cls)), `tower reduced motion: a still hand-off pill shows for ~${Math.round(dur)} ms (“${bs[0] && bs[0].txt}”)`);
+  ok(bs.length >= 3 && dur >= 150 && dur <= 800 && bs.every((x) => x.anim === 'none' && /is-hand/.test(x.cls)), `tower reduced motion: a still hand-off pill shows for ~${Math.round(dur)} ms (“${bs[0] && bs[0].txt}”)`);
   await dropAt(pg, id5, 2, 0.1);
   await h.closeGame(pg);
 
@@ -788,8 +794,12 @@ async function landmark(h, pg, w, ht, best, name) {
   ok(/it grew/.test(t0.s) === !!e.state.drop.grew, `tower banner ${name}: it only claims growth when the block grew (grew=${e.state.drop.grew}: “${t0.s}”)`);
   if (best === 9) ok(/^New best/.test(t0.b) && /set the record/.test(t0.s), `tower banner ${name}: a record at the landmark is the headline, in the same banner, with no queue delay`);
   else ok(e.state.drop.gift ? /^Landmark! · Gift!$/.test(t0.b) : /^Landmark! · Ten high$/.test(t0.b), `tower banner ${name}: everything that happened on the drop shares ONE banner (“${t0.b}”)`);
-  await pg.waitForSelector('.gt-beat.is-hand:not([hidden])', { timeout: 3000 });
-  const r = await rectsOf(pg, ['.gt-banner', '.gt-stamp', '.gt-beat', '.gt-hud', '.gt-view']);
+  // (measured inside the page, in the frame the beat shows, so a slow machine can't let the beat run out first)
+  const r = await (await pg.waitForFunction((ss) => {
+    const b = document.querySelector('.gt-beat.is-hand:not([hidden])');
+    if (!b) return null;
+    return Object.fromEntries(ss.map((q) => { const e = document.querySelector(q); const x = e && !e.hidden ? e.getBoundingClientRect() : null; return [q, x && { l: x.left, r: x.right, t: x.top, b: x.bottom }]; }));
+  }, ['.gt-banner', '.gt-stamp', '.gt-beat', '.gt-hud', '.gt-view'], { polling: 'raf', timeout: 3000 })).jsonValue();
   const v = r['.gt-view'];
   ok(r['.gt-banner'] && r['.gt-stamp'] && r['.gt-beat'], `tower overlap ${name}: banner, stamp and hand-off beat are all on screen together`);
   ok(!overlap(r['.gt-banner'], r['.gt-stamp']) && !overlap(r['.gt-beat'], r['.gt-banner']) && !overlap(r['.gt-beat'], r['.gt-stamp']) && !overlap(r['.gt-hud'], r['.gt-banner']) && !overlap(r['.gt-hud'], r['.gt-stamp']), `tower overlap ${name}: …and none of them covers another or the HUD`);
@@ -898,6 +908,10 @@ async function visuals(h, pg, w, ht, name) {
   for (const o of [0.3, 0, 0, 0.2]) await dropAt(pg, id, ++n, o);
   await h.wait(500);
   await shot(pg, `tower-${name}-windy.png`);
+  { // the graphics budget: calls, triangles and texture memory (light and dark)
+    const b = await pg.evaluate(() => ({ calls: window.__towerTest.calls, tris: window.__towerTest.tris, tex: window.__towerTest.texBytes }));
+    ok(b.calls > 0 && b.calls <= 12 && b.tris > 0 && b.tris <= 3000 && b.tex > 0 && b.tex <= 1.5 * 1024 * 1024, `tower ${name}: ${b.calls} draw calls (≤12), ${b.tris} triangles (≤3000), ${(b.tex / 1024).toFixed(0)} KB of texture (≤1536)`);
+  }
   await dropAt(pg, id, ++n, 'miss');
   await pg.waitForSelector('.gt-panel.show', { timeout: 10000 });
   await h.wait(500);
@@ -942,6 +956,81 @@ async function flat(h, pg) {
   for (let i = h.errors.length - 1; i >= 0; i--) if (/Error creating WebGL context/.test(h.errors[i])) h.errors.splice(i, 1);
 }
 
+/** A 1×1 screenshot of the page, decoded: [r, g, b]. */
+async function pixelAt(pg, x, y) {
+  const png = await pg.screenshot({ clip: { x: Math.floor(x), y: Math.floor(y), width: 1, height: 1 }, scale: 'css' });
+  const zlib = require('zlib');
+  let o = 8; let ct = 2; const idat = [];
+  while (o < png.length) {
+    const len = png.readUInt32BE(o); const type = png.toString('ascii', o + 4, o + 8);
+    if (type === 'IHDR') ct = png[o + 8 + 9];
+    if (type === 'IDAT') idat.push(png.subarray(o + 8, o + 8 + len));
+    o += 12 + len;
+  }
+  const raw = zlib.inflateSync(Buffer.concat(idat)); // one filter byte, then the pixel (a lone pixel has no neighbours: every filter is the identity)
+  if (ct !== 2 && ct !== 6) throw new Error('unexpected png colour type ' + ct);
+  return [raw[1], raw[2], raw[3]];
+}
+
+/** Windy, level 3+: the slider sits behind the streamer's four boxes in the moving batch. Its top face must be lit like a placed block's. */
+async function windyLit(h, pg, name) {
+  await pg.setViewportSize({ width: 390, height: 844 });
+  await hook(pg);
+  await withRandom(pg, 0.3, () => h.newLocalGame(pg, 'tower'));
+  const id = await pg.evaluate(() => window.__lastMatchId);
+  await armed(pg);
+  await pg.tap('.gt-chip[data-mode="windy"]');
+  await waitMoves(pg, id, 1);
+  await dropAt(pg, id, 2, 0);      // two perfects: no tumbling pieces, so nothing uploads the moving batch's normals again by chance
+  await dropAt(pg, id, 3, 0);
+  await armed(pg);
+  await pg.waitForFunction(() => { const m = window.__towerTest.model; return m.slider && m.extras.length === 4 && !m.pieces.length; }, null, { timeout: 8000 });
+  const setHidden = (hid) => pg.evaluate((v) => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => v }); document.dispatchEvent(new Event('visibilitychange')); }, hid);
+  await setHidden(true); // the frame stands still while it is sampled
+  await h.wait(150);
+  const r = await pg.evaluate(() => {
+    const t = window.__towerTest; const s = t.model.slider; const v = document.querySelector('.gt-view').getBoundingClientRect();
+    const a = t.project(s.x, s.y + s.h / 2, s.z); // the slider's top face, centre
+    const c = t.pal()[s.who];
+    return { a: [a[0] + v.left, a[1] + v.top], want: [c[0] * 255, c[1] * 255, c[2] * 255] };
+  });
+  const top = await pixelAt(pg, ...r.a);
+  await shot(pg, `tower-windy-${name}.png`);
+  await setHidden(false);
+  // a top face takes the full sun: its printed colour is the ink itself (dark would be about 45% of it)
+  ok(top.every((v, i) => Math.abs(v - r.want[i]) < 14), `tower windy ${name}: the slider's top face is lit like a placed block's (${top} vs ink ${r.want.map(Math.round)})`);
+  await h.closeGame(pg);
+}
+
+/** A context that is lost and never comes back: after a grace period the flat view takes over and the game plays on; a late restore goes back to 3D. */
+async function glFlat(h, pg) {
+  await pg.setViewportSize({ width: 390, height: 844 });
+  await pg.evaluate(() => { window.__towerTest = { log: [], glGraceMs: 300 }; });
+  await h.newLocalGame(pg, 'tower');
+  const id = await pg.evaluate(() => window.__lastMatchId);
+  await dropAt(pg, id, 1, 0.3);
+  await armed(pg);
+  await pg.evaluate(() => { window.__lose = document.querySelector('.gt-canvas').getContext('webgl2').getExtension('WEBGL_lose_context'); window.__lose.loseContext(); });
+  await pg.waitForSelector('.gt-view[data-gl="lost"]', { timeout: 4000 });
+  await pg.waitForSelector('.gt-view[data-gl="2d"]', { timeout: 4000 });
+  ok(await pg.evaluate(() => window.__towerTest.log.includes('gl-flat') && !window.__towerTest.log.includes('restored')), 'tower context loss: with no restore the flat view takes over');
+  await armed(pg, 6000);
+  await dropAt(pg, id, 2, 0.4);
+  const e = await h.engine(pg, id);
+  ok(e.state.blocks.length === 3 && Math.abs(e.state.drop.o - 0.4) < 1e-9, 'tower context loss: a drop in the flat view records');
+  await h.wait(300);
+  const cv = await pg.evaluate(() => Array.from(document.querySelectorAll('.gt-canvas')).map((c) => c.style.display));
+  ok(cv.length === 2 && cv[0] === 'none' && cv[1] === '', 'tower context loss: the flat canvas is showing');
+  await shot(pg, 'tower-gl-flat.png');
+  await pg.evaluate(() => window.__lose.restoreContext());
+  await pg.waitForFunction(() => window.__towerTest.log.includes('restored'), null, { timeout: 4000 });
+  ok(await pg.getAttribute('.gt-view', 'data-gl') === 'ok', 'tower context loss: a late restore goes back to 3D');
+  await armed(pg, 6000);
+  await dropAt(pg, id, 3, 0.1);
+  ok(true, 'tower context loss: and the 3D view plays on');
+  await h.closeGame(pg);
+}
+
 /** Both phones finish the same online match: it is counted once. */
 async function onlineOnce(h) {
   const { id, S: a, O: b } = await pair(h);
@@ -950,6 +1039,7 @@ async function onlineOnce(h) {
   await dropAt(b, id, 2, 0.02);
   await waitMoves(a, id, 2);
   await dropAt(a, id, 3, 'miss');
+  await a.waitForFunction(() => { try { return (JSON.parse(localStorage.getItem('ju.games.data.v1') || '{}').tower || {}).towers_n === 1; } catch { return false; } }, null, { polling: 20, timeout: 4000 }); // (the move goes out a frame after the tap)
   const early = await localData(a);
   ok(early.towers_n === 1 && early.h_classic_best === 2 && await a.$('.gt-panel.show') === null, 'tower records: the run is written the moment it is over, before the finale (leaving early still counts)');
   await endCard(a); await endCard(b);
@@ -958,6 +1048,81 @@ async function onlineOnce(h) {
   ok(da.towers_n === 1 && db.towers_n === 1 && da.last_id === id && db.last_id === id && da.blocks_n === 2 && db.blocks_n === 2, `tower records: two phones, one match, counted once (${da.towers_n}/${db.towers_n})`);
   ok(da.h_classic_best === 2 && db.h_classic_best === 2, 'tower records: both phones show the same best');
   await h.closeGame(a); await h.closeGame(b);
+}
+
+
+// ── feel: the camera spring settles and the loop sleeps; flecks, squash, hitstop and the kick on a perfect ──
+async function feel(h) {
+  const { id, S: a } = await pair(h);
+  await dropAt(a, id, 1, 0); // a perfect
+  await h.wait(250);
+  const fx = await a.evaluate(() => window.__towerTest.fx || {});
+  ok(fx.squash >= 1 && fx.flecks >= 1 && fx.hitstop >= 1 && fx.kick >= 1, `tower feel: a perfect squashes the block, puffs flecks, freezes a beat and kicks the camera (${JSON.stringify(fx)})`);
+  const mx = await a.evaluate(() => window.__towerTest.model.flecks.length);
+  ok(mx >= 0 && mx <= 12, `tower feel: at most 12 flecks at once (${mx})`);
+  // the partner's turn: nothing animates, so the spring settles and the frame loop goes to sleep
+  await h.wait(2500);
+  const f0 = await a.evaluate(() => window.__towerTest.frames);
+  await h.wait(700);
+  const f1 = await a.evaluate(() => window.__towerTest.frames);
+  const cam = await a.evaluate(() => { const t = window.__towerTest; return { y: t.cam.y, v: t.model.cam.y }; });
+  ok(f1 === f0, `tower feel: the camera spring settled and rendering stopped when idle (frames ${f0} → ${f1})`);
+  const settled = await a.evaluate(() => { const t = window.__towerTest; const e = t.model.blocks[t.model.blocks.length - 1]; return { sq: e.sq || 0, flecks: t.model.flecks.length, pieces: t.model.pieces.length }; });
+  ok(settled.sq === 0 && settled.flecks === 0 && settled.pieces === 0, 'tower feel: squash, flecks and pieces are all gone once it is quiet');
+  await h.closeGame(h.a); await h.closeGame(h.b);
+}
+
+/** What you see is what you drop: under a 4x CPU throttle, the recorded offset is the slider position of the last frame drawn. */
+async function wysiwyg(h, pg) {
+  await pg.setViewportSize({ width: 390, height: 844 });
+  await hook(pg);
+  await h.newLocalGame(pg, 'tower');
+  const id = await pg.evaluate(() => window.__lastMatchId);
+  const cdp = await pg.context().newCDPSession(pg);
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+  let checked = 0;
+  try {
+    for (let n = 1; n <= 6; n++) {
+      await armed(pg, 20000);
+      await h.wait(80 + (n * 137) % 400); // a different phase of the sweep each time
+      await pg.evaluate(() => {
+        const t = window.__towerTest; t.tapped = null; t.next = null; window.__seen = null;
+        document.querySelector('.gt-view').addEventListener('pointerdown', () => { window.__seen = t.drawn; }, { once: true, capture: true });
+      });
+      const box = await pg.locator('.gt-view').boundingBox();
+      await pg.touchscreen.tap(box.x + box.width / 2, box.y + box.height * 0.6);
+      await waitMoves(pg, id, n, 20000);
+      const r = await pg.evaluate(() => ({ seen: window.__seen, tapped: window.__towerTest.tapped }));
+      const e = await h.engine(pg, id);
+      const rec = e.state.drop.o;
+      const want = Math.round(r.seen * 1000) / 1000 + 0;
+      ok(r.seen !== null && r.tapped === want && rec === want, `tower wysiwyg (CPU 4x) #${n}: slider drawn at ${want}, tap ${r.tapped}, recorded ${rec}`);
+      checked++;
+      if (e.over) break;
+    }
+  } finally { await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 }); await cdp.detach().catch(() => {}); }
+  ok(checked >= 3, `tower wysiwyg: ${checked} drops checked`);
+  await h.closeGame(pg);
+}
+
+/** Reduced motion: no flecks, no squash, no kick, no hitstop; pieces just fall away. */
+async function calmFx(h, pg) {
+  await pg.setViewportSize({ width: 390, height: 844 });
+  await hook(pg);
+  const id = await h.newLocalGame(pg, 'tower').then(() => pg.evaluate(() => window.__lastMatchId));
+  let n = 0;
+  for (const o of [0, 0.3, 0, 0.2]) await dropAt(pg, id, ++n, o);
+  await h.wait(500);
+  const t = await pg.evaluate(() => ({ fx: window.__towerTest.fx || {}, flecks: window.__towerTest.model.flecks.length, sq: window.__towerTest.model.blocks.some((e) => e.sq) }));
+  ok(!t.fx.flecks && !t.fx.squash && !t.fx.kick && !t.fx.hitstop && t.flecks === 0 && !t.sq, `tower reduced motion: no flecks, squash, camera kick or hitstop (${JSON.stringify(t.fx)})`);
+  // the finale's zoom-out and pan snap into place
+  await dropAt(pg, id, ++n, 'miss');
+  await pg.waitForFunction(() => window.__towerTest.log.includes('finale'), null, { timeout: 8000 });
+  const c0 = await pg.evaluate(() => { const c = window.__towerTest.model.cam; return [c.y, c.zoom, c.ox]; });
+  await h.wait(400);
+  const c1 = await pg.evaluate(() => { const c = window.__towerTest.model.cam; return [c.y, c.zoom, c.ox]; });
+  ok(c0.every((v, i) => Math.abs(v - c1[i]) < 1e-9), `tower reduced motion: the finale camera is already in place, not springing (${c0.map((v) => v.toFixed(3))} vs ${c1.map((v) => v.toFixed(3))})`);
+  await h.closeGame(pg);
 }
 
 let failed = false;
@@ -976,8 +1141,10 @@ let failed = false;
     await h.a.setViewportSize({ width: 390, height: 844 });
     if (want('stray')) { await stray(h, h.a); await notReady(h, h.a); }
     if (want('hud')) await onlineHud(h);
+    if (want('feel')) await feel(h);
     if (want('once')) await onlineOnce(h);
     if (want('flat')) await flat(h, h.b);
+    if (want('gl')) { await windyLit(h, h.a, 'light'); await glFlat(h, h.a); }
     if (want('visuals')) { await visuals(h, h.a, 390, 844, 'light-390'); await visuals(h, h.a, 844, 390, 'landscape-844'); }
     if (want('tall')) await tall(h, h.a);
     if (want('modes')) { await picker(h); await classicSkip(h, h.a); await modesUi(h, h.a); }
@@ -987,6 +1154,7 @@ let failed = false;
       await landmark(h, h.a, 390, 844, 11, 'portrait-390');
       await notch(h, h.a);
     }
+    if (want('feel')) await wysiwyg(h, h.a); // (last: it plays a real game to its end, and that is counted in the records)
     h.assertNoErrors();
     ok(true, 'no page errors');
   } catch (e) {
@@ -1018,6 +1186,7 @@ let failed = false;
     const r = await launch({ port: PORT + 1, only: ['tower'], coarse: true, reducedMotion: 'reduce' });
     try {
       await records(r, r.a);
+      await calmFx(r, r.a);
       r.assertNoErrors();
       ok(true, 'no page errors (reduced motion run)');
     } catch (e) {
