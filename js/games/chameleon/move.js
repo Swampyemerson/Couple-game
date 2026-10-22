@@ -391,11 +391,12 @@ export function spring3Step(sp, tx, ty, tz, smoothTime, dt) {
  */
 export const VIS = {
   h: 0.2, // pivot height above the feet, × body size
-  wPos: 14, // position error spring ω (half-life ≈ 0.12 s)
+  wPos: 17, // position error spring ω (half-life ≈ 0.1 s)
   wRot: 20, // orientation error spring ω (half-life ≈ 0.085 s)
   jumpPos: 0.06, // a sim centre move beyond this + 1.5 × speed·dt is a discontinuity
   jumpUp: 0.15, // the up vector turning more than this (rad) in one frame is one
-  jumpAng: 0.9, // so is the whole orientation turning more than this
+  jumpAng: 0.2, // so is the whole orientation turning faster than turnRate (rad/s) — at least this many rad in one frame: a yaw reversal
+  turnRate: 12, // that the sim makes in a couple of frames (dampAngle) glides instead of snapping round
   snapDist: 1.2, // a bigger jump is a teleport: no glide
 };
 export function mkVis() {
@@ -437,13 +438,13 @@ export function visCore(vs, px, py, pz, qx, qy, qz, qw, speed, s, dt, free) {
     }
     const upd = ux * vs.tux + uy * vs.tuy + uz * vs.tuz;
     const qd = Math.abs(qx * vs.tqx + qy * vs.tqy + qz * vs.tqz + qw * vs.tqw);
-    if (upd < Math.cos(VIS.jumpUp) || 2 * Math.acos(Math.min(1, qd)) > VIS.jumpAng) {
+    if (upd < Math.cos(VIS.jumpUp) || 2 * Math.acos(Math.min(1, qd)) > Math.max(VIS.jumpAng, VIS.turnRate * dt)) {
       // e := log(drawn_prev · conj(target_new)), kept in the shorter hemisphere
       let ax = vs.qx; let ay = vs.qy; let az = vs.qz; let aw = vs.qw;
       let rx = aw * -qx + ax * qw + ay * -qz - az * -qy; let ry = aw * -qy - ax * -qz + ay * qw + az * -qx; let rz = aw * -qz + ax * -qy - ay * -qx + az * qw; let rw = aw * qw - ax * -qx - ay * -qy - az * -qz;
       if (rw < 0) { rx = -rx; ry = -ry; rz = -rz; rw = -rw; }
       const sl = Math.hypot(rx, ry, rz);
-      if (sl < 1e-6) { vs.ex = 0; vs.ey = 0; vs.ez = 0; } else { const ang = 2 * Math.atan2(sl, rw); vs.wr = VIS.wRot * (ang > 1.57 ? 1 - 0.35 * Math.min(1, (ang - 1.57) / 1.57) : 1); vs.ex = (rx / sl) * ang; vs.ey = (ry / sl) * ang; vs.ez = (rz / sl) * ang; }
+      if (sl < 1e-6) { vs.ex = 0; vs.ey = 0; vs.ez = 0; } else { const ang = 2 * Math.atan2(sl, rw); vs.wr = VIS.wRot * (ang > 1.57 ? 1 - 0.5 * Math.min(1, (ang - 1.57) / 1.57) : 1); vs.ex = (rx / sl) * ang; vs.ey = (ry / sl) * ang; vs.ez = (rz / sl) * ang; }
     }
   } else if (free) {
     // a zip in flight: follow the sim pose exactly
@@ -451,7 +452,7 @@ export function visCore(vs, px, py, pz, qx, qy, qz, qw, speed, s, dt, free) {
   }
   vs.tx = tcx; vs.ty = tcy; vs.tz = tcz; vs.tux = ux; vs.tuy = uy; vs.tuz = uz; vs.tqx = qx; vs.tqy = qy; vs.tqz = qz; vs.tqw = qw;
   // springs: position offset and orientation error decay to zero
-  const wp = VIS.wPos; const wr = vs.wr; // (a half-turn glides at 0.65 × the rate: the peak turning speed of a flip round a thin plank stays under ~800°/s)
+  const wp = VIS.wPos; const wr = vs.wr; // (a half-turn glides at half the rate: the peak turning speed of a flip round a thin plank stays under ~800°/s)
   stepExp(vs.ox, vs.ovx, wp, dt, SE); vs.ox = SE[0]; vs.ovx = SE[1];
   stepExp(vs.oy, vs.ovy, wp, dt, SE); vs.oy = SE[0]; vs.ovy = SE[1];
   stepExp(vs.oz, vs.ovz, wp, dt, SE); vs.oz = SE[0]; vs.ovz = SE[1];
