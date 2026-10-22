@@ -285,7 +285,7 @@ function makeBatch(THREE, U, mats) {
   const gL = new THREE.BufferGeometry();
   const B = {
     faces: new THREE.Mesh(gF, mats.face), hull: new THREE.Mesh(gH, mats.hull), lines: new THREE.LineSegments(gL, mats.line),
-    cap: 0, P: null, N: null, C: null, H: null, E: null, attrs: [], aN: null, aC: null, rotPrev: false, dirtyC: false, rot: false,
+    cap: 0, P: null, N: null, C: null, H: null, E: null, attrs: [], aN: null, aC: null, rotPrev: false, dirtyC: false, dirtyN: false, rot: false,
   };
   for (const o of [B.faces, B.hull, B.lines]) o.frustumCulled = false;
   const dyn = (arr, n) => new THREE.BufferAttribute(arr, n).setUsage(THREE.DynamicDrawUsage);
@@ -305,7 +305,7 @@ function makeBatch(THREE, U, mats) {
     gL.setAttribute('position', aE);
     B.attrs = [aP, aH, aE]; B.aN = aN; B.aC = aC;
     B.cap = cap;
-    B.dirtyC = true; B.rot = true; B.rotPrev = true;
+    B.dirtyC = true; B.dirtyN = true; B.rot = true; B.rotPrev = true;
   };
   /** Draw boxes [from, n). Positions are uploaded; normals only while something tumbles, colours only when one changed. */
   B.range = (n, from = 0) => { // which boxes are drawn (no upload)
@@ -317,9 +317,9 @@ function makeBatch(THREE, U, mats) {
     B.range(n, from);
     const cnt = Math.max(1, n * 72);
     for (const a of B.attrs) { a.updateRange.offset = 0; a.updateRange.count = cnt; a.needsUpdate = true; }
-    if (all || B.rot || B.rotPrev) { B.aN.updateRange.offset = 0; B.aN.updateRange.count = cnt; B.aN.needsUpdate = true; }
+    if (all || B.rot || B.rotPrev || B.dirtyN) { B.aN.updateRange.offset = 0; B.aN.updateRange.count = cnt; B.aN.needsUpdate = true; }
     if (all || B.dirtyC) { B.aC.updateRange.offset = 0; B.aC.updateRange.count = cnt; B.aC.needsUpdate = true; }
-    B.rotPrev = B.rot; B.rot = false; B.dirtyC = false;
+    B.rotPrev = B.rot; B.rot = false; B.dirtyC = false; B.dirtyN = false;
   };
   B.dispose = () => { gF.dispose(); gH.dispose(); gL.dispose(); };
   return B;
@@ -353,7 +353,10 @@ function writeBox(B, U, i, e, rgb, out) {
     x = up[j] * hx; y = up[j + 1] * hy; z = up[j + 2] * hz;
     H[o] = m00 * x + m01 * y + m02 * z + cx + hox; H[o + 1] = m10 * x + m11 * y + m12 * z + cy + hoy; H[o + 2] = m20 * x + m21 * y + m22 * z + cz + hoz;
     x = un[j]; y = un[j + 1]; z = un[j + 2];
-    N[o] = m00 * x + m01 * y + m02 * z; N[o + 1] = m10 * x + m11 * y + m12 * z; N[o + 2] = m20 * x + m21 * y + m22 * z;
+    const n0 = m00 * x + m01 * y + m02 * z; const n1 = m10 * x + m11 * y + m12 * z; const n2 = m20 * x + m21 * y + m22 * z;
+    // a slot whose normals differ from what the GPU holds (its content moved to another slot) must upload them again
+    if (!B.dirtyN && (N[o] !== Math.fround(n0) || N[o + 1] !== Math.fround(n1) || N[o + 2] !== Math.fround(n2))) B.dirtyN = true;
+    N[o] = n0; N[o + 1] = n1; N[o + 2] = n2;
     const a = ua[j / 3];
     C[o] = rgb[0] * a; C[o + 1] = rgb[1] * a; C[o + 2] = rgb[2] * a;
     if (ne) { E[o] = cx; E[o + 1] = cy; E[o + 2] = cz; continue; } // tiny flecks: no crease lines

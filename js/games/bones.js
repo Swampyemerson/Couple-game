@@ -694,7 +694,7 @@ function dieView3D(THREE, canvas, pal0, onImpact, matEl) {
   // two atlases, one per roller ink (the off-register second pass is in the roller's colour): both are painted when the
   // palette changes and the die just swaps between them, so a roll never repaints or re-uploads a canvas
   const atlasBase = document.createElement('canvas'); atlasBase.width = ATLAS_W; atlasBase.height = ATLAS_H;
-  const mkAtlas = () => { const cv = document.createElement('canvas'); cv.width = ATLAS_W; cv.height = ATLAS_H; return { cv, tex: new THREE.CanvasTexture(cv), col: null }; };
+  const mkAtlas = () => { const cv = document.createElement('canvas'); cv.width = ATLAS_W; cv.height = ATLAS_H; const tex = new THREE.CanvasTexture(cv); tex.minFilter = THREE.LinearMipmapLinearFilter; tex.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy ? renderer.capabilities.getMaxAnisotropy() : 1); return { cv, tex, col: null }; };
   const atl = [mkAtlas(), mkAtlas()];
   const matCv = document.createElement('canvas'); matCv.width = matCv.height = MAT_N; // the mat tile, painted once per palette and handed to CSS
   const matUrls = new Map();
@@ -722,6 +722,7 @@ function dieView3D(THREE, canvas, pal0, onImpact, matEl) {
 
   const ring = new THREE.Mesh(ringGeo, ringMat);
   ring.position.y = 0.002;
+  ring.renderOrder = -2; // ring, then the shadow, then the die: the shadow never writes depth, so it can't punch holes in the outline hull at the foot
   const squash = new THREE.Group(); // scales along the world axes (the die inside it turns)
   const die = new THREE.Group();
   const mesh = new THREE.Mesh(dieGeo, dieMat);
@@ -730,6 +731,8 @@ function dieView3D(THREE, canvas, pal0, onImpact, matEl) {
   die.add(hull, mesh, lines);
   squash.add(die);
   const shadow = new THREE.Mesh(shadowGeo, shadowMat);
+  shadow.renderOrder = -1;
+  shadowMat.depthWrite = false;
   const puff = new THREE.Points(puffGeo, puffMat);
   puff.frustumCulled = false;
   scene.add(ring, shadow, squash, puff);
@@ -1940,6 +1943,7 @@ registerGame({
       animating = false;
       skipping = false;
       if (dv3 && !$('.gb-die2d').querySelector('.gb-die')) redrawDie(); // flat dice standing in for a lost 3D view
+      else if (glLost && !dv3) lostStandIn();
     }
     /** Records and rivalry: fold this match into the shared per-game data (once; both phones agree). */
     let recap = null;
@@ -2190,9 +2194,19 @@ registerGame({
       setSides();
       redrawDie();
     }
+    /** While the context is lost (before the flat dice take over) the canvas is blank: show the current die flat in its place. */
+    function lostStandIn() {
+      const s = ctxNow && ctxNow.state;
+      const host = $('.gb-die2d');
+      if (!s || s.over || isBlind() || dieN !== s.n || host.querySelector('.gb-die')) return;
+      host.className = 'gb-die2d';
+      host.innerHTML = dieHTML(s.roll, 'landed');
+      host.hidden = false;
+    }
     function onLost(e) {
       e.preventDefault();
       glLost = true;
+      lostStandIn();
       if (raf) cancelAnimationFrame(raf);
       raf = 0;
       band.dataset.gl = 'lost';
@@ -2203,6 +2217,7 @@ registerGame({
       clearTimeout(lostT);
       setTimeout(() => { // three.js re-creates its GL state in its own listener first
         if (dead) return;
+        if (!dv3) { const h2 = $('.gb-die2d'); h2.hidden = true; h2.innerHTML = ''; } // the stand-in for a short loss
         if (dv3) { // back from flat dice
           try { dv3.restore(); } catch (err) { console.warn('[bones] restore', err); dv3 = null; return; }
           try { dv.dispose(); } catch { /* ignore */ }
